@@ -21,6 +21,10 @@ import { HUD } from './tokens';
 import { acquiringPct, acquiringRank } from './lockPct';
 
 export interface ThreatSummary {
+  /** Every NPC locking you (`lockedByN`, else the rows' count). */
+  total: number;
+  /** Rows shown: the nearest lockers, completed locks first. */
+  rows: number;
   locked: number;
   lockedName: string;
   acquiring: number;
@@ -53,7 +57,8 @@ function nameOf(mirror: RenderMirror, key: string): string {
 export function summariseThreats(mirror: RenderMirror): ThreatSummary | null {
   const list = mirror.localLockedBy;
   if (!list || list.length === 0) return null;
-  const out: ThreatSummary = { locked: 0, lockedName: '', acquiring: 0, acquiringName: '', acquiringPct: -1 };
+  const total = Math.max(mirror.localLockedByTotal ?? 0, list.length);
+  const out: ThreatSummary = { total, rows: list.length, locked: 0, lockedName: '', acquiring: 0, acquiringName: '', acquiringPct: -1 };
   const lockedNames = new Set<string>();
   for (const l of list) {
     const n = nameOf(mirror, l.t);
@@ -64,9 +69,20 @@ export function summariseThreats(mirror: RenderMirror): ThreatSummary | null {
     }
   }
   if (out.acquiring > 0) out.acquiringPct = acquiringPct(out.acquiringPct);
+  // The rows rank completed locks first, so an acquiring row (or no lockers
+  // off the list) means every completed lock is a row: the rest of the total
+  // is acquiring. Every row locked with more off the list: at least that many.
+  const lockedAtLeast = total > list.length && out.acquiring === 0;
+  if (!lockedAtLeast) out.acquiring = total - out.locked;
   // One kind: "Fighter" (+ " ×2" in the view). Mixed kinds: "3 ships".
-  out.lockedName = lockedNames.size === 1 ? [...lockedNames][0]! : `${out.locked} ships`;
+  out.lockedName = lockedAtLeast ? `${out.locked}+ ships`
+    : lockedNames.size === 1 ? [...lockedNames][0]! : `${out.locked} ships`;
   return out;
+}
+
+/** The total chip, shown only when lockers are off the rows: "20 ON YOU". */
+export function threatTotalText(t: ThreatSummary): string | null {
+  return t.total > t.rows ? `${t.total} ON YOU` : null;
 }
 
 /** Pure: the most advanced lock the pilot is still building (null = none). */
@@ -91,7 +107,7 @@ export function summariseOwnLock(mirror: RenderMirror, names: ReadonlyArray<stri
 const FLASH_CSS = '@keyframes eqxFcThreat{0%,100%{opacity:1}50%{opacity:.55}}.eqx-fc-threat-locked{animation:eqxFcThreat .6s ease-in-out infinite}@media (prefers-reduced-motion: reduce){.eqx-fc-threat-locked{animation:none}}';
 
 function sig(t: ThreatSummary | null, o: OwnLockSummary | null): string {
-  return `${t ? `${t.locked}|${t.lockedName}|${t.acquiring}|${t.acquiringName}|${Math.floor(t.acquiringPct / 5)}` : '-'}#${
+  return `${t ? `${t.total}/${t.rows}|${t.locked}|${t.lockedName}|${t.acquiring}|${t.acquiringName}|${Math.floor(t.acquiringPct / 5)}` : '-'}#${
     o ? `${o.group}|${o.target}|${Math.floor(o.pct / 2)}|${o.failsafe}|${o.losing}` : '-'}`;
 }
 
@@ -123,6 +139,7 @@ export function LockStatusBand({ scale = 1 }: { scale?: number }): JSX.Element |
       {t && (
         <div
           data-testid="fc-threats"
+          data-total={t.total}
           data-locked={t.locked}
           data-acquiring={t.acquiring}
           className={t.locked > 0 ? 'eqx-fc-threat-locked' : undefined}
@@ -147,6 +164,9 @@ export function LockStatusBand({ scale = 1 }: { scale?: number }): JSX.Element |
             <span>
               {t.locked > 0 ? '+ ' : ''}{t.acquiringName} LOCKING ON YOU <span style={{ fontFamily: HUD.font.num }}>{t.acquiringPct}%</span>
             </span>
+          )}
+          {threatTotalText(t) !== null && (
+            <span data-testid="fc-threat-total" data-total={t.total} style={{ opacity: 0.8 }}>· {threatTotalText(t)}</span>
           )}
         </div>
       )}

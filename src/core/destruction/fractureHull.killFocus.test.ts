@@ -8,7 +8,7 @@
  * densest at the kill point, and cuts must run across the hull, not along it.
  */
 import { describe, expect, it } from 'vitest';
-import { fractureHull, fracturePlan, FRACTURE_MAX_PIECES, type FracturePiece } from './fractureHull.js';
+import { fractureHull, fracturePlan, projectToOutline, FRACTURE_MAX_PIECES, type FracturePiece } from './fractureHull.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { shipHullOutline } from '../geometry/shipHullOutline.js';
 
@@ -449,5 +449,175 @@ describe('fracture v7: chunky pieces at the impact, big sections elsewhere', () 
       expect(fore, `seed ${seed}: sections fore of the impact`).toBeLessThanOrEqual(2);
       expect(aft, `seed ${seed}: sections aft of the impact`).toBeLessThanOrEqual(2);
     }
+  });
+});
+
+/**
+ * Fracture v9 kill cuts (plan "beam slices, railgun channels"; owner
+ * 2026-11-14): a heavy-beam kill slices the hull dead straight along the
+ * beam's line through the kill point (a side shot cuts side to side, a bow
+ * shot lengthways); a railgun kill erases a straight channel as wide as the
+ * bolt along the slug's line.
+ */
+describe('fracture v9: kill cuts follow the shot', () => {
+  const HULL = area(pts);
+  /** Grid tolerance: cut points are snapped to 1/64 u. */
+  const TOL = 0.05;
+  const bow = projectToOutline(hull, { x: 0, y: -1e5 });
+  const SHOTS: ReadonlyArray<readonly [string, V, V]> = [
+    ['side shot (port, amidships)', sidePoint(0.5), { x: 1, y: 0 }],
+    ['quartering shot (port, aft)', sidePoint(0.7), { x: 1, y: -0.6 }],
+    ['bow shot (down the keel)', bow, { x: 0, y: 1 }],
+  ];
+  const LEVELS_CUT: ReadonlyArray<readonly [number, number, number]> = [
+    [0.05, 0.1, 0], [0.5, 0.9, 0], [1.39, 2.4, 0], [0.5, 0.9, 1],
+  ];
+  const dist = (p: V, k: V, d: V): number => {
+    const l = Math.hypot(d.x, d.y);
+    return ((p.x - k.x) * -d.y + (p.y - k.y) * d.x) / l;
+  };
+  /** Length of the hull's chord along the line through k along d. */
+  const chord = (k: V, d: V): number => {
+    const l = Math.hypot(d.x, d.y);
+    const ts: number[] = [];
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[i]!;
+      const b = pts[(i + 1) % pts.length]!;
+      const da = dist(a, k, d);
+      const db = dist(b, k, d);
+      if ((da < 0) === (db < 0)) continue;
+      const s = da / (da - db);
+      const x = a.x + (b.x - a.x) * s;
+      const y = a.y + (b.y - a.y) * s;
+      ts.push(((x - k.x) * d.x + (y - k.y) * d.y) / l);
+    }
+    ts.sort((p, q) => p - q);
+    let len = 0;
+    for (let i = 0; i + 1 < ts.length; i += 2) len += ts[i + 1]! - ts[i]!;
+    return len;
+  };
+  /** Total length of cut edges lying on the line offset `off` either side
+   *  (both ends within TOL, same side). */
+  const onLine = (pieces: FracturePiece[], k: V, d: V, off: number): number => {
+    let len = 0;
+    for (const p of pieces) {
+      for (let i = 0; i < p.outline.length; i++) {
+        if (!p.cutEdges[i]) continue;
+        const a = p.outline[i]!;
+        const b = p.outline[(i + 1) % p.outline.length]!;
+        const da = dist(a, k, d);
+        const db = dist(b, k, d);
+        if (Math.abs(Math.abs(da) - off) > TOL || Math.abs(Math.abs(db) - off) > TOL) continue;
+        if (off > 0 && Math.sign(da) !== Math.sign(db)) continue;
+        len += Math.hypot(b.x - a.x, b.y - a.y);
+      }
+    }
+    return len;
+  };
+
+  for (const [name, at, dir] of SHOTS) {
+    it(`${name}: the slice is one dead-straight cut along the shot through the kill point`, () => {
+      for (let seed = 1; seed <= 12; seed++) {
+        for (const [kb, rr, snap] of LEVELS_CUT) {
+          const input = {
+            hull, seed, killPoint: at, maxPieces: FRACTURE_MAX_PIECES, killBlowDamage: kb, recentDamageRate: rr,
+            snapChance: snap, cut: { kind: 'slice' as const, dirX: dir.x * 3, dirY: dir.y * 3, width: 0 },
+          };
+          const tag = `seed ${seed} kb ${kb} snap ${snap}`;
+          const plan = fracturePlan(input);
+          const k = plan.killPoint;
+          // The plan's line: through the kill point, along the shot.
+          expect(plan.primary!.point, tag).toEqual(k);
+          expect(Math.abs(plan.primary!.dir.x * dir.y - plan.primary!.dir.y * dir.x), tag).toBeLessThan(1e-12);
+          const pieces = fractureHull(input);
+          expect(pieces.length, tag).toBeGreaterThanOrEqual(2);
+          // No piece straddles the line: the cut is the line itself.
+          for (const p of pieces) {
+            let lo = Infinity;
+            let hi = -Infinity;
+            for (const v of p.outline) {
+              const s = dist(v, k, dir);
+              lo = Math.min(lo, s);
+              hi = Math.max(hi, s);
+            }
+            expect(lo >= -TOL || hi <= TOL, `${tag}: a piece straddles the slice`).toBe(true);
+          }
+          // Its whole chord is straight cut edge, once on each side.
+          const c = chord(k, dir);
+          expect(onLine(pieces, k, dir, 0), tag).toBeGreaterThan(2 * c * 0.98);
+          let sum = 0;
+          for (const p of pieces) sum += p.area;
+          expect(Math.abs(sum - HULL) / HULL, `${tag}: area`).toBeLessThan(5e-3);
+        }
+      }
+    });
+
+    it(`${name}: the channel erases a straight strip as wide as the bolt`, () => {
+      const W = 0.08 * L;
+      for (let seed = 1; seed <= 12; seed++) {
+        for (const [kb, rr, snap] of LEVELS_CUT) {
+          const input = {
+            hull, seed, killPoint: at, maxPieces: FRACTURE_MAX_PIECES, killBlowDamage: kb, recentDamageRate: rr,
+            snapChance: snap, cut: { kind: 'channel' as const, dirX: dir.x, dirY: dir.y, width: W },
+          };
+          const tag = `seed ${seed} kb ${kb} snap ${snap}`;
+          const k = fracturePlan(input).killPoint;
+          const pieces = fractureHull(input);
+          expect(pieces.length, tag).toBeGreaterThanOrEqual(2);
+          let left = 0;
+          let right = 0;
+          let sum = 0;
+          for (const p of pieces) {
+            sum += p.area;
+            for (const v of p.outline) {
+              expect(Math.abs(dist(v, k, dir)), `${tag}: a vertex inside the channel`).toBeGreaterThanOrEqual(W / 2 - TOL);
+            }
+            if (dist(p.centroid, k, dir) < 0) left++;
+            else right++;
+          }
+          expect(left, `${tag}: pieces one side`).toBeGreaterThanOrEqual(1);
+          expect(right, `${tag}: pieces the other side`).toBeGreaterThanOrEqual(1);
+          // Both walls are straight cut edge; the gap between them is W.
+          const c = chord(k, dir);
+          expect(onLine(pieces, k, dir, W / 2), tag).toBeGreaterThan(c * 0.8);
+          const lost = (HULL - sum) / (W * c);
+          expect(lost, `${tag}: erased area ≈ width × chord`).toBeGreaterThan(0.8);
+          expect(lost, `${tag}: erased area ≈ width × chord`).toBeLessThan(1.2);
+        }
+      }
+    });
+  }
+
+  it('a slice that would shave a sliver off the edge slides inward along the shot', () => {
+    // A shot grazing the port edge, along the keel: through the kill point it
+    // would leave a sliver. The line keeps its direction and moves inward.
+    const at = sidePoint(0.5);
+    for (let seed = 1; seed <= 8; seed++) {
+      const input = {
+        hull, seed, killPoint: at, maxPieces: FRACTURE_MAX_PIECES, snapChance: 1,
+        cut: { kind: 'slice' as const, dirX: 0.02, dirY: 1, width: 0 },
+      };
+      const plan = fracturePlan(input);
+      expect(plan.primary!.point.x).toBeGreaterThan(plan.killPoint.x);
+      expect(Math.abs(plan.primary!.dir.x * 1 - plan.primary!.dir.y * 0.02)).toBeLessThan(1e-12);
+      const pieces = fractureHull(input);
+      expect(pieces.length).toBe(2);
+      for (const p of pieces) expect(p.area / HULL).toBeGreaterThanOrEqual(0.03);
+    }
+  });
+
+  it('a channel along the edge just erases the sliver', () => {
+    const input = {
+      hull, seed: 3, killPoint: sidePoint(0.5), maxPieces: FRACTURE_MAX_PIECES, snapChance: 1,
+      cut: { kind: 'channel' as const, dirX: 0, dirY: 1, width: 0.02 * L },
+    };
+    const pieces = fractureHull(input);
+    expect(pieces.length).toBeGreaterThanOrEqual(1);
+    for (const p of pieces) expect(p.area / HULL).toBeGreaterThanOrEqual(0.03);
+  });
+
+  it('a zero direction is no cut: the normal break-up', () => {
+    const base = { hull, seed: 5, killPoint: sidePoint(0.4), maxPieces: FRACTURE_MAX_PIECES, killBlowDamage: 0.5, recentDamageRate: 0.9 };
+    expect(fractureHull({ ...base, cut: { kind: 'slice', dirX: 0, dirY: 0, width: 0 } })).toEqual(fractureHull(base));
   });
 });

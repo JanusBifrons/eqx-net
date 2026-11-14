@@ -36,6 +36,13 @@ describe('radarLockTint', () => {
     expect(radarLockTint('s:5', groups, [{ t: 's:5', s: 2, p: 100 }])).toBe(THREAT_COLOUR);
   });
 
+  it('capped rows (owner 2026-11-14): only the listed lockers tint; one off the list stays its category colour', () => {
+    // The server lists the 8 nearest lockers of 20 (the total rides `lockedByN`).
+    const rows = [1, 2, 3, 4, 5, 6, 7, 8].map((e) => ({ t: `s:${e}`, s: 2, p: 100 }));
+    for (const r of rows) expect(radarLockTint(r.t, undefined, rows)).toBe(THREAT_COLOUR);
+    expect(radarLockTint('s:15', undefined, rows)).toBe(LOCK_TINT_NONE);
+  });
+
   it('unrelated contact → none', () => {
     expect(radarLockTint('s:7', groups, [{ t: 's:9', s: 2, p: 100 }])).toBe(LOCK_TINT_NONE);
   });

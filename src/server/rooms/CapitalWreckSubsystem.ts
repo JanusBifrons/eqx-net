@@ -35,7 +35,7 @@
  *
  * Hand-rolled-mock testable: everything room-shaped comes in as hooks.
  */
-import { buildWreckPieces, MAX_LIVE_SUBCAP_WRECK_PIECES, MAX_LIVE_WRECK_PIECES, WRECK_RECENT_DAMAGE_TICKS, wreckBodyParams, type WreckDeathPose } from '../../core/destruction/wreckPieces.js';
+import { buildWreckPieces, hullLocalCutAngle, MAX_LIVE_SUBCAP_WRECK_PIECES, MAX_LIVE_WRECK_PIECES, WRECK_RECENT_DAMAGE_TICKS, wreckBodyParams, type WreckDeathPose } from '../../core/destruction/wreckPieces.js';
 import { DESTRUCTION_PROFILES } from '../../shared-types/shipScale/destruction.js';
 import { fnv1a32, fnvMixU32 } from '../../core/random/rng.js';
 import { getShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
@@ -44,14 +44,36 @@ import type { Vec2 } from '../../core/swarm/asteroidShape.js';
 import { FRACTURE_ALGO_VERSION } from '../../core/destruction/fractureHull.js';
 import type { WreckDescriptor } from '../../shared-types/messages/snapshotMessages.js';
 import { wreckCrackTicks } from '../../shared-types/wreckTiming.js';
+import { WEAPONS, type WeaponId } from '../../core/combat/WeaponCatalogue.js';
+import { shipShapeScale } from '../../core/geometry/shipHullOutline.js';
 
 const BUCKETS = 6;
 const BUCKET_TICKS = WRECK_RECENT_DAMAGE_TICKS / BUCKETS;
+
+/** The last hit on a tracked hull (a pooled entry: read, don't keep). */
+export interface LastHitView {
+  readonly hasPoint: boolean;
+  readonly x: number;
+  readonly y: number;
+  /** The shot's direction of travel (any length); `hasDir` false ⇒ unknown
+   *  (splash, ram, a path that doesn't know it). */
+  readonly hasDir: boolean;
+  readonly dirX: number;
+  readonly dirY: number;
+  /** The weapon that landed it; null ⇒ unknown (ram, mine, untagged path). */
+  readonly weaponId: WeaponId | null;
+  readonly lastDamage: number;
+  readonly shooterId: string;
+}
 
 interface HitEntry {
   hasPoint: boolean;
   x: number;
   y: number;
+  hasDir: boolean;
+  dirX: number;
+  dirY: number;
+  weaponId: WeaponId | null;
   lastDamage: number;
   shooterId: string;
   /** Damage per bucket; `stamp[i]` is the bucket index it holds. */
@@ -183,13 +205,20 @@ export class CapitalWreckSubsystem {
 
   /** Record a hit on `targetId` (called for every damaging hit). Cheap for
    *  non-capitals (one kind lookup). `hitX/hitY` absent ⇒ the attacker's
-   *  position stands in at death. */
-  noteHit(targetId: string, shooterId: string, damage: number, hitX: number | undefined, hitY: number | undefined): void {
+   *  position stands in at death. `dirX/dirY` (the shot's travel) and
+   *  `weaponId` are kept for the last hit only; absent ⇒ unknown. */
+  noteHit(
+    targetId: string, shooterId: string, damage: number, hitX: number | undefined, hitY: number | undefined,
+    dirX?: number, dirY?: number, weaponId?: WeaponId,
+  ): void {
     if (damage <= 0) return;
     if (this.d.wreckKindOf(targetId) === null) return;
     let e = this.entries.get(targetId);
     if (e === undefined) {
-      e = this.pool.pop() ?? { hasPoint: false, x: 0, y: 0, lastDamage: 0, shooterId: '', dmg: new Float64Array(BUCKETS), stamp: new Int32Array(BUCKETS).fill(-1) };
+      e = this.pool.pop() ?? {
+        hasPoint: false, x: 0, y: 0, hasDir: false, dirX: 0, dirY: 0, weaponId: null,
+        lastDamage: 0, shooterId: '', dmg: new Float64Array(BUCKETS), stamp: new Int32Array(BUCKETS).fill(-1),
+      };
       e.dmg.fill(0);
       e.stamp.fill(-1);
       this.entries.set(targetId, e);
@@ -197,6 +226,10 @@ export class CapitalWreckSubsystem {
     e.hasPoint = hitX !== undefined && hitY !== undefined;
     e.x = hitX ?? 0;
     e.y = hitY ?? 0;
+    e.hasDir = dirX !== undefined && dirY !== undefined && (dirX !== 0 || dirY !== 0);
+    e.dirX = e.hasDir ? dirX! : 0;
+    e.dirY = e.hasDir ? dirY! : 0;
+    e.weaponId = weaponId ?? null;
     e.lastDamage = damage;
     e.shooterId = shooterId;
     const b = Math.floor(this.d.serverTick() / BUCKET_TICKS);
@@ -217,6 +250,12 @@ export class CapitalWreckSubsystem {
       if (s >= 0 && now - s < BUCKETS) sum += e.dmg[i]!;
     }
     return sum;
+  }
+
+  /** The last hit recorded on `targetId` (the pooled entry itself, no copy:
+   *  read it before the next `noteHit` / death), or null if none. */
+  lastHit(targetId: string): LastHitView | null {
+    return this.entries.get(targetId) ?? null;
   }
 
   /** Forget a target that left without dying (evicted, despawned). */
@@ -251,9 +290,24 @@ export class CapitalWreckSubsystem {
     const attackerWorld = e !== undefined && e.shooterId !== '' ? this.d.positionOf(e.shooterId) : null;
     const killBlowDamage = e !== undefined ? e.lastDamage / hull : 0;
     const recentDamageRate = e !== undefined ? this.recentDamage(e) / hull : 0;
+    // Kill cut (fracture v9): the killing weapon's `killCut`, along the
+    // killing shot's direction turned into the hull's frame. No direction
+    // (splash, ram) or no weapon ⇒ the normal break-up.
+    let cutKind: 'slice' | 'channel' | undefined;
+    let cutAng: number | undefined;
+    let cutW: number | undefined;
+    const killCut = e !== undefined && e.hasDir && e.weaponId !== null ? WEAPONS.get(e.weaponId)?.killCut : undefined;
+    if (e !== undefined && killCut !== undefined) {
+      cutKind = killCut.kind;
+      cutAng = hullLocalCutAngle(pose, { x: e.dirX, y: e.dirY });
+      // The wire width is in the hull's 1× frame.
+      if (killCut.kind === 'channel') cutW = killCut.width / shipShapeScale(getShipKind(kindId));
+    }
     this.forget(targetId);
     const seed = this.forcedSeed ?? fnvMixU32(fnv1a32(targetId), this.d.serverTick() >>> 0);
-    const { pieces, fracture } = buildWreckPieces({ kindId, pose, killWorld, attackerWorld, seed, killBlowDamage, recentDamageRate });
+    const { pieces, fracture } = buildWreckPieces({
+      kindId, pose, killWorld, attackerWorld, seed, killBlowDamage, recentDamageRate, cutKind, cutAng, cutW,
+    });
     if (pieces.length > 0) despawnDyingBody?.();
     const n = this.deaths++;
     const wreckId = this.allocWreckId();
@@ -304,6 +358,9 @@ export class CapitalWreckSubsystem {
           killBlowDamage: fracture.killBlowDamage, recentDamageRate: fracture.recentDamageRate,
           snapChance: fracture.snapChance, algoVersion: FRACTURE_ALGO_VERSION,
           deathTick: tick,
+          // Emit-when-present: an un-cut wreck's descriptor is unchanged.
+          ...(fracture.cutKind !== undefined ? { cutKind: fracture.cutKind, cutAng: fracture.cutAng } : {}),
+          ...(fracture.cutW !== undefined ? { cutW: fracture.cutW } : {}),
         },
         pieces: spawned,
         ids: spawnedIds,

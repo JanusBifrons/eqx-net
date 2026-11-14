@@ -146,7 +146,8 @@ export interface ProjectilePipelineDeps {
   lingeringShip?: (shipInstanceId: string) => ShipState | undefined;
   /** Damage sink — invoked on a confirmed hit. (dirX, dirY) is the shot's
    *  direction of travel (any length) on a direct hit: a capital wreck piece
-   *  it lands on is knocked along it (overkill knock-back). */
+   *  it lands on is knocked along it (overkill knock-back). `weaponId` is the
+   *  projectile's weapon (direct hits and splash alike). */
   applyDamage: (
     targetId: string,
     shooterId: string,
@@ -155,6 +156,7 @@ export interface ProjectilePipelineDeps {
     hitY?: number,
     dirX?: number,
     dirY?: number,
+    weaponId?: WeaponId,
   ) => void;
   /** Shield-fence plan — if this tick's step crosses an ACTIVE shield wall,
    *  absorb the projectile (apply the wall's grid-power damage) and return true
@@ -376,7 +378,7 @@ export class ProjectilePipeline {
       }
 
       if (bestTargetId !== null) {
-        d.applyDamage(bestTargetId, proj.ownerId, proj.damage, bestHitX, bestHitY, proj.vx, proj.vy);
+        d.applyDamage(bestTargetId, proj.ownerId, proj.damage, bestHitX, bestHitY, proj.vx, proj.vy, proj.weaponId);
         const blastR = this.blast(proj, bestHitX, bestHitY, bestTargetId);
         this.liveProjectiles.delete(projId);
         if (event) d.onShellEnd?.(projId, serverTick, bestHitX, bestHitY, blastR);
@@ -459,7 +461,7 @@ export class ProjectilePipeline {
       if (id === proj.ownerId || id === directId) return;
       const dist = Math.max(0, Math.hypot(cx - x, cy - y) - r);
       const dmg = shellBlastDamage(proj.damage, dist, R, splash.falloffMin);
-      if (dmg > 0) d.applyDamage(id, proj.ownerId, dmg, x, y);
+      if (dmg > 0) d.applyDamage(id, proj.ownerId, dmg, x, y, undefined, undefined, proj.weaponId);
     };
     for (const [pid] of d.playerToSlot) {
       const ship = d.getActiveShip(pid);

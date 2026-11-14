@@ -20,6 +20,11 @@ interface WeaponDefBase {
    *  `src/core/combat/Energy.ts` and `docs/plans/weapons-energy-ai-overhaul.md`
    *  §3. */
   energyCost: number;
+  /** How a kill by this weapon breaks the hull (docs/architecture/
+   *  capital-destruction.md "Kill cuts"): `slice` cuts it dead straight along
+   *  the shot's line through the kill point; `channel` erases a straight strip
+   *  `width` world units wide along that line. Absent ⇒ the normal break-up. */
+  killCut?: WeaponKillCut;
 }
 
 export interface HitscanWeaponDef extends WeaponDefBase {
@@ -38,6 +43,9 @@ export interface HitscanWeaponDef extends WeaponDefBase {
    *  telegraph; the charge state rides `drones[].charging`). Absent ⇒ instant. */
   chargeTicks?: number;
 }
+
+/** A weapon's kill cut (`WeaponDefBase.killCut`). */
+export type WeaponKillCut = { kind: 'slice' } | { kind: 'channel'; width: number };
 
 export interface ProjectileWeaponDef extends WeaponDefBase {
   mode: 'projectile';

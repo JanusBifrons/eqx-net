@@ -21,8 +21,13 @@
  * Steady state allocates nothing (#14): an entry and its wire row are created
  * when an NPC starts locking someone, then mutated in place; the per-step
  * sweep uses a generation stamp.
+ *
+ * The wire carries at most `LOCKED_BY_WIRE_ROWS` rows per pilot (owner
+ * 2026-11-14): completed locks first, then nearest. `totalFor` counts every
+ * locker (the snapshot's `lockedByN`), so the cost stays flat however many
+ * hostiles lock on. The pick is an insertion into a reused top-N scratch.
  */
-import { LOCK_TUNING, sensorFor, signatureFor } from '../../shared-types/combat/lockProfile.js';
+import { LOCK_TUNING, LOCKED_BY_WIRE_ROWS, sensorFor, signatureFor } from '../../shared-types/combat/lockProfile.js';
 import { capLockSeconds, lockSeconds, type LockInputs } from '../../core/combat/lockTime.js';
 import type { ShipKind } from '../../shared-types/shipKinds/types.js';
 import { groupGeometry } from './LockSubsystem.js';
@@ -67,7 +72,14 @@ interface Entry {
   locked: boolean;
   lostFor: number;
   gen: number;
+  /** Squared distance to the pilot at its last lock step (wire ranking). */
+  d2: number;
   wire: WireLockedBy;
+}
+
+/** Wire rank: a completed lock beats one still building; then the nearer. */
+function outranks(a: Entry, b: Entry): boolean {
+  return a.locked !== b.locked ? a.locked : a.d2 < b.d2;
 }
 
 interface PilotState {
@@ -93,6 +105,8 @@ export class NpcLockSubsystem {
     refSize: 1, tracking: 1, reach: 1, sensor: 1, pilotSpeed: 1, signature: 1, dx: 0, dy: 0, dvx: 0, dvy: 0,
   };
   private gen = 0;
+  /** Top-N scratch for the wire pick (reused across pilots; #14). */
+  private readonly top: Entry[] = [];
   // Per-step scratch for the visitor (no closure allocation per pilot).
   private curState: PilotState | null = null;
   private curPilotId = '';
@@ -137,9 +151,15 @@ export class NpcLockSubsystem {
     }
   }
 
+  /** The pilot's wire rows: the top `LOCKED_BY_WIRE_ROWS` lockers (shared ref). */
   wireFor(pilotId: string): WireLockedBy[] | undefined {
     const st = this.pilots.get(pilotId);
     return st && st.wire.length > 0 ? st.wire : undefined;
+  }
+
+  /** Every NPC locking (or holding a lock on) the pilot, rows or not. */
+  totalFor(pilotId: string): number {
+    return this.pilots.get(pilotId)?.entries.size ?? 0;
   }
 
   /** True when `npcId` holds a completed lock on `pilotId`. */
@@ -187,13 +207,13 @@ export class NpcLockSubsystem {
       this.deps.forEachHostileNpc(pilotId, this.visit);
       // Sweep: NPCs that stopped locking this step keep their progress for the
       // grace window, then drop.
-      let changed = false;
       for (const [id, e] of st.entries) {
         if (e.gen === this.gen) continue;
         e.lostFor += LOCK_DT;
-        if (e.lostFor > LOCK_TUNING.lostGraceSeconds) { st.entries.delete(id); changed = true; }
+        if (e.lostFor > LOCK_TUNING.lostGraceSeconds) st.entries.delete(id);
       }
-      if (changed || st.wire.length !== st.entries.size) this.rebuildWire(st);
+      // Re-ranked every step: locks complete and distances change.
+      if (st.entries.size > 0 || st.wire.length > 0) this.rebuildWire(st);
     }
     // Pilots who left fire control.
     if (this.pilots.size > 0) {
@@ -257,11 +277,12 @@ export class NpcLockSubsystem {
       return;
     }
     if (!e) {
-      e = { npcId, progress: 0, locked: false, lostFor: 0, gen: 0, wire: { t: `s:${entityId}`, s: 1, p: 0 } };
+      e = { npcId, progress: 0, locked: false, lostFor: 0, gen: 0, d2: 0, wire: { t: `s:${entityId}`, s: 1, p: 0 } };
       st.entries.set(npcId, e);
     }
     e.gen = this.gen;
     e.lostFor = 0;
+    e.d2 = d2;
     if (!e.locked) {
       e.progress = secs === 0 ? 1 : Math.min(1, e.progress + LOCK_DT / Math.max(0.05, secs));
       if (e.progress >= 1) e.locked = true;
@@ -280,8 +301,18 @@ export class NpcLockSubsystem {
     }
   };
 
+  /** The top `LOCKED_BY_WIRE_ROWS` entries by `outranks`, into `st.wire`. */
   private rebuildWire(st: PilotState): void {
-    st.wire.length = 0;
-    for (const e of st.entries.values()) st.wire.push(e.wire);
+    const top = this.top;
+    let n = 0;
+    for (const e of st.entries.values()) {
+      if (n === LOCKED_BY_WIRE_ROWS && !outranks(e, top[n - 1]!)) continue;
+      let i = n < LOCKED_BY_WIRE_ROWS ? n++ : n - 1;
+      while (i > 0 && outranks(e, top[i - 1]!)) { top[i] = top[i - 1]!; i--; }
+      top[i] = e;
+    }
+    const wire = st.wire;
+    wire.length = n;
+    for (let i = 0; i < n; i++) wire[i] = top[i]!.wire;
   }
 }

@@ -1008,13 +1008,6 @@ export class SectorRoom extends Room<SectorState> {
   private capitalWrecks: CapitalWreckSubsystem | null = null;
   private capitalWrecksOn = false;
   private subcapWrecksOn = false;
-  /** A beam's impact point for the NEXT applyDamage call only (the AI beam
-   *  path has no hitX/hitY on its damage call); cleared by applyDamage. */
-  private pendingImpactX: number | undefined = undefined;
-  private pendingImpactY: number | undefined = undefined;
-  /** The AI beam's direction for the same call (wreck knock-back). */
-  private pendingDirX: number | undefined = undefined;
-  private pendingDirY: number | undefined = undefined;
   /** Reused `WRECK_IMPULSE` command (overkill knock-back, #14). */
   private readonly _wreckImpulseCmd = { type: 'WRECK_IMPULSE' as const, entityId: '', jx: 0, jy: 0, px: 0, py: 0 };
   /** Reused `WRECK_RIGID_IMPULSE` command (a hit during the crack hold, #14). */
@@ -1413,13 +1406,17 @@ export class SectorRoom extends Room<SectorState> {
      *  so a test that isn't about locking can fire (lock-to-fire is universal).
      *  Returns how many groups took it. */
     forceLock: (playerId: string, targetKey: string, groupId?: string) => number;
+    /** The room damage choke point; true iff this call destroyed the target. */
     applyDamage: (
       targetId: string,
       shooterId: string,
       damage: number,
       hitX?: number,
       hitY?: number,
-    ) => void;
+      dirX?: number,
+      dirY?: number,
+      weaponId?: WeaponId,
+    ) => boolean;
     /** GEP P4 — lets the structureEntity integration test find a kind=2 record
      *  and assert it is damageable (seeded into swarmHealth). */
     swarmRegistry: {
@@ -1519,8 +1516,8 @@ export class SectorRoom extends Room<SectorState> {
       postToWorker: (cmd) => this.postToWorker(cmd),
       forceLock: (pid, key, groupId) => this.locks.forceLock(pid, key, groupId),
       blockShotAtWall: (fx, fy, dx, dy, maxDist, damage) => this.blockShotAtWall(fx, fy, dx, dy, maxDist, damage),
-      applyDamage: (targetId, shooterId, damage, hitX, hitY) =>
-        this.applyDamage(targetId, shooterId, damage, hitX, hitY),
+      applyDamage: (targetId, shooterId, damage, hitX, hitY, dirX, dirY, weaponId) =>
+        this.applyDamage(targetId, shooterId, damage, hitX, hitY, dirX, dirY, weaponId),
       swarmRegistry: this.swarmRegistry,
       swarmHealth: this.swarmHealth,
       structureRegistry: this.structureRegistry,
@@ -2078,8 +2075,8 @@ export class SectorRoom extends Room<SectorState> {
         this.spawnServerProjectile(ownerId, x, y, vx, vy, dmg, r, mt, wId),
       spawnServerMissile: (ownerId, x, y, dx, dy, def) =>
         this.spawnServerMissile(ownerId, x, y, dx, dy, def),
-      applyDamage: (targetId, shooterId, damage, hitX, hitY, dirX, dirY) =>
-        this.applyDamage(targetId, shooterId, damage, hitX, hitY, dirX, dirY),
+      applyDamage: (targetId, shooterId, damage, hitX, hitY, dirX, dirY, weaponId) =>
+        this.applyDamage(targetId, shooterId, damage, hitX, hitY, dirX, dirY, weaponId),
       blockBeamAtWall: (fx, fy, dx, dy, maxDist, damage) =>
         this.blockShotAtWall(fx, fy, dx, dy, maxDist, damage),
       broadcast: (type, msg) => this.broadcast(type, msg),
@@ -2113,9 +2110,8 @@ export class SectorRoom extends Room<SectorState> {
       shipPoseCache: this.shipPoseCache,
       playerHitscanDist: (s, fx, fy, dx, dy, md, cx, cy, ang) =>
         this.playerHitscanDist(s, fx, fy, dx, dy, md, cx, cy, ang),
-      applyDamage: (targetId, shooterId, damage) =>
-        this.applyDamage(targetId, shooterId, damage),
-      noteBeamImpact: (x, y, dx, dy) => this.noteBeamImpact(x, y, dx, dy),
+      applyDamage: (targetId, shooterId, damage, hitX, hitY, dirX, dirY, weaponId) =>
+        this.applyDamage(targetId, shooterId, damage, hitX, hitY, dirX, dirY, weaponId),
       // Friendly fire (owner decision 2026-11-10): the beam meets whatever is
       // in its path, its own side and neutral structures included.
       nonPlayerRayHit: (fx, fy, dx, dy, maxDist, skipId) =>
@@ -2253,8 +2249,8 @@ export class SectorRoom extends Room<SectorState> {
       lingeringShip: (sid) => this.state.ships.get(sid),
       // Only a pilot's own shot can land on a loot pod; AI and turret bolts pass it.
       shotHitsLootPods: (ownerId) => this.playerToSlot.has(ownerId),
-      applyDamage: (targetId, shooterId, damage, hitX, hitY, dirX, dirY) =>
-        this.applyDamage(targetId, shooterId, damage, hitX, hitY, dirX, dirY),
+      applyDamage: (targetId, shooterId, damage, hitX, hitY, dirX, dirY, weaponId) =>
+        this.applyDamage(targetId, shooterId, damage, hitX, hitY, dirX, dirY, weaponId),
       wallBlocksProjectile: (x, y, sx, sy, damage) => {
         if (!this.shieldWalls.blockProjectile(x, y, sx, sy, damage, this.gameClock.now())) return false;
         this.broadcastWallHit('bolt');
@@ -2377,6 +2373,7 @@ export class SectorRoom extends Room<SectorState> {
       depositProgressOf: (shipInstanceId) => this.depositProgress.get(shipInstanceId),
       lockGroupsOf: (pid) => this.locks.wireFor(pid),
       lockedByOf: (pid) => this.npcLocks.wireFor(pid),
+      lockedByTotalOf: (pid) => this.npcLocks.totalFor(pid),
       warpArrived: (playerId) => this.warpTravel.arrivedRecently(playerId, this.serverTick),
       isJoining: (playerId) => this.pendingJoin.has(playerId),
       transitSpooling: (playerId) => this.transitOrchestrator?.isInFlight(playerId) === true,
@@ -5137,34 +5134,30 @@ export class SectorRoom extends Room<SectorState> {
     }
   }
 
+  /** The one damage choke point. (hitX, hitY) is where the shot landed,
+   *  (dirX, dirY) its direction of travel, `weaponId` what fired it; each is
+   *  absent when the path doesn't know it. Returns true iff THIS call
+   *  destroyed the target (the router's own `destroyed` result). */
   private applyDamage(
     targetId: string, shooterId: string, damage: number, hitX?: number, hitY?: number, dirX?: number, dirY?: number,
-  ): void {
-    // S2a: a beam impact noted for THIS call only (never leaks to a later one).
-    const impactX = hitX ?? this.pendingImpactX;
-    const impactY = hitY ?? this.pendingImpactY;
-    const shotDx = dirX ?? this.pendingDirX;
-    const shotDy = dirY ?? this.pendingDirY;
-    this.pendingImpactX = undefined;
-    this.pendingImpactY = undefined;
-    this.pendingDirX = undefined;
-    this.pendingDirY = undefined;
+    weaponId?: WeaponId,
+  ): boolean {
     // Overkill knock-back (owner request 2026-11-13): a shot landing on a
     // capital wreck piece (immune, so the router below does nothing) shoves
     // it along the shot from the hit point. Only hits that know their point
     // AND direction (shells, player and NPC beams); missiles push through
     // their own splash impulse, rams through the contact itself.
-    if (this.capitalWrecks !== null && damage > 0 && impactX !== undefined && impactY !== undefined
-      && shotDx !== undefined && shotDy !== undefined) {
-      this.capitalWrecks.onWreckHit(targetId, impactX, impactY, shotDx, shotDy, damage);
+    if (this.capitalWrecks !== null && damage > 0 && hitX !== undefined && hitY !== undefined
+      && dirX !== undefined && dirY !== undefined) {
+      this.capitalWrecks.onWreckHit(targetId, hitX, hitY, dirX, dirY, damage);
     }
     // Phase 4 warp travel: a ship on its run is out of the world (an NPC's too, W2a).
-    if (this.warpTravel.isTravelling(targetId)) return;
-    if (this.npcWarps.size > 0 && this.botWarpPhase(targetId) === 2) return;
+    if (this.warpTravel.isTravelling(targetId)) return false;
+    if (this.npcWarps.size > 0 && this.botWarpPhase(targetId) === 2) return false;
     // v4 A — alien gates can't be damaged; whoever hits one is disabled.
     if (this.gateGuard.gateCount > 0 && this.gateGuard.isGate(targetId)) {
       if (damage > 0) this.gateGuard.onGateAttacked(targetId, shooterId, this.gameClock.now());
-      return;
+      return false;
     }
     if (damage > 0) this.noteEconomicHit(targetId, shooterId);
     if (damage > 0) this.noteStandingHit(targetId, shooterId);
@@ -5226,26 +5219,16 @@ export class SectorRoom extends Room<SectorState> {
         // R2.18 — a Shield Pylon is undamageable while its wall is up: route the
         // hit into an active wall and skip the pylon damage entirely.
         if (s.kind === 'shield_pylon' && this.shieldWalls.absorbForPylon(targetId, damage, this.gameClock.now())) {
-          return;
+          return false;
         }
       }
     }
     // S2a — remember the last hit on a capital (point, damage, recent rate)
     // before it lands, so its death knows where and how hard it was hit.
     if (this.capitalWrecks !== null && damage > 0) {
-      this.capitalWrecks.noteHit(targetId, shooterId, damage, impactX, impactY);
+      this.capitalWrecks.noteHit(targetId, shooterId, damage, hitX, hitY, dirX, dirY, weaponId);
     }
-    this.damageRouter.apply(targetId, shooterId, damage, hitX, hitY);
-  }
-
-  /** The AI beam's impact point, for the wreck hit tracker only (the damage
-   *  event keeps its legacy pose fallback, so the wire is unchanged). */
-  private noteBeamImpact(x: number, y: number, dx: number, dy: number): void {
-    if (this.capitalWrecks === null) return;
-    this.pendingImpactX = x;
-    this.pendingImpactY = y;
-    this.pendingDirX = dx;
-    this.pendingDirY = dy;
+    return this.damageRouter.apply(targetId, shooterId, damage, hitX, hitY);
   }
 
   /** Capital destruction S2a: build the wreck subsystem (flag on only). */

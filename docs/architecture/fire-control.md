@@ -317,7 +317,8 @@ Target keys: `s:<entityId>` (swarm) or `p:<playerId>`.
 
 **Snapshot (#16), own active pilot only, shared refs mutated in place:**
 - `states[].groups`: `[{id, m: 0 auto | 1 manual, l: [{t, s: 0 failsafe | 1 acquiring | 2 locked, p: 0..100, r?: 1 released}]}]`
-- `states[].lockedBy`: `[{t, s: 1 | 2, p}]`: NPCs locking the pilot.
+- `states[].lockedBy`: `[{t, s: 1 | 2, p}]`: NPCs locking the pilot, at most `LOCKED_BY_WIRE_ROWS` (8, `lockProfile.ts`) rows: completed locks first, then nearest. `NpcLockSubsystem.rebuildWire` picks them each lock step by insertion into a reused top-N scratch (#14).
+- `states[].lockedByN`: how many NPCs lock the pilot in all; sent only when more than the rows (absent ⇒ the rows are everyone). The HUD threat banner shows it ("8+ SHIPS HAVE YOU LOCKED · 20 ON YOU"); the radar threat tint and aim marks use the rows only. Because rows rank completed locks first, an acquiring row means every completed lock is listed, so the rest of the total is acquiring.
 
 ## Client
 
@@ -440,6 +441,8 @@ Moved verbatim from the old "Thresholds" section of `src/server/CLAUDE.md`. The 
 - **Fire control — NPC lock step**: O(pilots × hostile NPCs) every 6 ticks now that every pilot is tracked; ~0.015 ms at 56 drones × 4 pilots, ~0.037 ms at 56 × 10 (`benchmarks/npc-locks.bench.ts`, laptop 2026-11-09). The room's `forEachHostileNpc` scans the whole swarm per pilot; budget 0.1 ms per step.
 
 ## History
+
+- **2026-11-14, `lockedBy` capped to the nearest 8.** Owner decision: with locks at any distance every hostile in a sector could lock a pilot, and the own-ship `lockedBy` slice grew to ~20 rows in `capital-fleet` (+~4 KB/s per pilot, growing with sector size). The slice now carries only the 8 top lockers (completed first, then nearest) plus `lockedByN`, the total, so its cost is flat however many enemies lock on.
 
 - **2026-11-14, locks at any distance.** Owner decision: players, NPC ships and structures lock at any distance; distance only makes a lock slower; only firing is range-limited (per-turret fire range to the hull, the sibling fire-range changes). Lead calls in the same change: NPC hostility is refreshed by a lock only inside that NPC's fire range (before: "out of reach ⇒ lock drops ⇒ forgets 30 s later"; now "out of fire range ⇒ no refresh ⇒ forgets 30 s later"); AUTO groups release their own pick once it leaves fire range and re-pick, manual locks persist; AUTO's pick stays limited to what it could fire at. The wire `c` flag and the HUD now say CAN'T TRACK instead of OUT OF RANGE. See "Locks work at any distance" above.
 - **2026-11-14, heavy guns prefer big targets.** Owner decision: when guns choose their own target, heavy guns take capitals and structures in fire range first and fighters only as a fallback; AA and light guns keep small fast targets. Extended the one rule (`mountPriority`) to player AUTO (was nearest-first), the turret share-out of a group's locks (was turret-index round-robin) and structures (were ranked as light capitals, behind true capitals). The `coastal-duel` showcase bug (every battleship turret, 16" included, sat on the pilot's fighter by the battery) was a sticky-target bug: at the turrets' first search after `test_aggro` the battery was not yet in the hostile-structure set (it joins ~5 s later), so the fighter was the only candidate, and a turret holding a target never searched again while that target stayed engageable. Now a holding turret re-searches on its beat for a strictly preferred class. See "Heavy guns prefer what they can hurt" above.
