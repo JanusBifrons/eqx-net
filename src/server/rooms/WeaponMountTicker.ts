@@ -209,6 +209,9 @@ export class WeaponMountTicker {
     this.targetCount = n + 1;
   };
 
+  /** An AI pilot's aim point this tick (reused, #14). */
+  private readonly _aimPoint = { x: 0, y: 0 };
+
   /** Fire control: reused lock-target pose (alloc-free, #14). */
   private readonly _fcTarget = { x: 0, y: 0, vx: 0, vy: 0 };
 
@@ -401,17 +404,32 @@ export class WeaponMountTicker {
         continue;
       }
 
-      const prevTargetId = this.droneSlotTargets.get(rec.id) ?? null;
-      const target = pickTarget(droneX, droneY, targets, prevTargetId, isHostile, {
-        maxDistance: mountTargetReach(kind, mounts),
-      });
-      this.droneSlotTargets.set(rec.id, target?.id ?? null);
-
       let angles = this.droneMountAngles.get(rec.id);
       if (!angles || angles.length !== mounts.length) {
         angles = new Float32Array(mounts.length);
         this.droneMountAngles.set(rec.id, angles);
       }
+
+      // The AI pilot's own fight first (owner 2026-11-14: "The turrets also
+      // aren't turning to shoot the direction they do"): its guns fire down
+      // their barrels (AiFireResolver), so its turrets must train on the
+      // lead point it is shooting at, whatever the target is (a pilot,
+      // another faction's ship, a structure). Only hostile PILOTS were
+      // candidates here, so in a ship-vs-ship fight the turrets sat at rest
+      // while the pilot fired.
+      const aim = this._aimPoint;
+      const pilotAim = behaviour as { aimPoint?: (out: { x: number; y: number }) => boolean } | null | undefined;
+      if (pilotAim?.aimPoint?.(aim) === true) {
+        this.droneSlotTargets.set(rec.id, null);
+        this.slewDroneMounts(angles, mounts, droneX, droneY, droneAngle, aim.x, aim.y);
+        continue;
+      }
+
+      const prevTargetId = this.droneSlotTargets.get(rec.id) ?? null;
+      const target = pickTarget(droneX, droneY, targets, prevTargetId, isHostile, {
+        maxDistance: mountTargetReach(kind, mounts),
+      });
+      this.droneSlotTargets.set(rec.id, target?.id ?? null);
 
       if (target === null) {
         for (let i = 0; i < mounts.length; i++) {
@@ -420,18 +438,23 @@ export class WeaponMountTicker {
         continue;
       }
 
-      const cosA = Math.cos(droneAngle);
-      const sinA = Math.sin(droneAngle);
-      for (let i = 0; i < mounts.length; i++) {
-        const mount = mounts[i]!;
-        const mountWorldX = droneX + (mount.localX * cosA - mount.localY * sinA);
-        const mountWorldY = droneY + (mount.localX * sinA + mount.localY * cosA);
-        const dx = target.x - mountWorldX;
-        const dy = target.y - mountWorldY;
-        const worldBearing = Math.atan2(-dx, dy);
-        const mountLocalBearing = wrapPi(worldBearing - droneAngle - mount.baseAngle);
-        angles[i] = rotateMountToward(angles[i]!, mountLocalBearing, mount, DT_SEC);
-      }
+      this.slewDroneMounts(angles, mounts, droneX, droneY, droneAngle, target.x, target.y);
+    }
+  }
+
+  /** Slew every mount of a drone at (x, y, ang) toward world point (tx, ty). */
+  private slewDroneMounts(
+    angles: Float32Array, mounts: ReadonlyArray<WeaponMount>, x: number, y: number, ang: number, tx: number, ty: number,
+  ): void {
+    const cosA = Math.cos(ang);
+    const sinA = Math.sin(ang);
+    for (let i = 0; i < mounts.length; i++) {
+      const mount = mounts[i]!;
+      const mountWorldX = x + (mount.localX * cosA - mount.localY * sinA);
+      const mountWorldY = y + (mount.localX * sinA + mount.localY * cosA);
+      const worldBearing = Math.atan2(-(tx - mountWorldX), ty - mountWorldY);
+      const mountLocalBearing = wrapPi(worldBearing - ang - mount.baseAngle);
+      angles[i] = rotateMountToward(angles[i]!, mountLocalBearing, mount, DT_SEC);
     }
   }
 
