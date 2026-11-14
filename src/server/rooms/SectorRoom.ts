@@ -73,6 +73,7 @@ import { ScrapSpawner } from '../spawn/ScrapSpawner.js';
 // Vec2 was used by the inline WorkerCmd union; now in PhysicsWorkerProxy.
 import type { ShipPhysicsState } from '../../core/physics/World.js';
 import { AiController } from '../../core/ai/AiController.js';
+import { AiInputBatch } from '../../core/ai/AiInputBatch.js';
 import { HostileDroneBehaviour } from '../../core/ai/HostileDroneBehaviour.js';
 import { PassiveDroneBehaviour } from '../../core/ai/PassiveDroneBehaviour.js';
 // pickTarget / rotateMountToward / wrapPi / MountTargetView now used
@@ -1190,6 +1191,8 @@ export class SectorRoom extends Room<SectorState> {
   /** Interned index keys ("0", "1", …), cached so syncing never allocates. */
   private readonly structureOwnerKeys: string[] = [];
   private aiController!: AiController;
+  /** Pilot layer: this tick's AI control keys, posted as ONE AI_INPUTS. */
+  private readonly aiInputBatch = new AiInputBatch();
   /** Reused per-tick view for the AI controller — avoids per-tick allocation. */
   private aiPlayerScratch: AiPlayerView[] = [];
   /** Wave-system Phase 1 — per-room faction hostility/peace ledger, membership
@@ -1715,7 +1718,11 @@ export class SectorRoom extends Room<SectorState> {
         return { x: this.sabF32[b + SLOT_X_OFF]!, y: this.sabF32[b + SLOT_Y_OFF]! };
       },
       evict: (rec) => this.evictSwarmEntity(rec, { broadcast: false, emitDestroyed: false }),
+      isInView: (rec) => this.droneInAnyView(rec),
       bus: this.bus,
+      now: () => this.gameClock.now(),
+      // At most once per 10 s per room (LoadShedder throttles).
+      log: (line, msg) => logger.info({ sectorKey: this.sectorKey, roomId: this.roomId, shed: line.shed, skippedInView: line.skippedInView }, msg),
     });
 
     // Fill slot pool (push in reverse so slot 0 is popped first).
@@ -2054,6 +2061,17 @@ export class SectorRoom extends Room<SectorState> {
           slot, fx, fy, torque,
           ...(setAngvel !== undefined ? { setAngvel } : {}),
         });
+      },
+      // Pilot layer: AI ships flown by control keys, batched into ONE
+      // AI_INPUTS message a tick (no brain emits keys yet).
+      postInput: (slot, bits) => {
+        // v4 A — a disabled NPC ship's engines are off (no keys held).
+        this.aiInputBatch.push(slot, this.gateGuard.isSlotDisabled(slot, this.gameClock.now()) ? 0 : bits);
+      },
+      flushInputs: () => {
+        if (this.aiInputBatch.count === 0) return;
+        this.postToWorker(this.aiInputBatch.cmd);
+        this.aiInputBatch.clear();
       },
     });
 
@@ -2593,8 +2611,8 @@ export class SectorRoom extends Room<SectorState> {
       : undefined;
     this.swarmSpawner = new SwarmSpawner(this.swarmRegistry, {
       takeSlot: () => this.freeSlots.pop(),
-      postSpawnObstacle: (slot, id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups, angle, parts, shieldKindId, spin) =>
-        this.postToWorker({ type: 'SPAWN_OBSTACLE', slot, obstacleId: id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups, angle, parts, ...(shieldKindId ? { shieldKindId } : {}), ...(spin ? { angvel: spin.angvel, angularDamping: spin.angularDamping } : {}) }),
+      postSpawnObstacle: (slot, id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups, angle, parts, shieldKindId, spin, shipKindId) =>
+        this.postToWorker({ type: 'SPAWN_OBSTACLE', slot, obstacleId: id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups, angle, parts, ...(shieldKindId ? { shieldKindId } : {}), ...(spin ? { angvel: spin.angvel, angularDamping: spin.angularDamping } : {}), ...(shipKindId !== undefined ? { shipKindId } : {}) }),
       sabF32: this.sabF32,
       sabU32: this.sabU32,
       registerAi: (id, slot, behaviour) => this.aiController.register(id, slot, behaviour),
@@ -5412,6 +5430,25 @@ export class SectorRoom extends Room<SectorState> {
     if (this.capitalWrecks === null || !isCapitalKindId(kindId)) return 0;
     return this.capitalWrecks.onDeath(targetId, kindId as ShipKindId,
       { x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy, angle: pose.angle, angvel: pose.angvel ?? 0 }, maxHull);
+  }
+
+  /** LoadShedder: can ANY connected player see this drone? The same view the
+   *  swarm broadcast uses: each client's interest window (`interestScratch`,
+   *  built by `SwarmBroadcaster` this tick or the last). A client with no
+   *  slot (spectating after parking a hull, between hulls, still joining) is
+   *  sent the whole swarm at full fidelity, so it sees everything; so does a
+   *  client whose window isn't built yet. Shedding only what nobody sees keeps
+   *  it invisible (soak 2026-11-14). Alloc-free (#14). */
+  private droneInAnyView(rec: SwarmEntityRecord): boolean {
+    const clients = this.clients;
+    for (let i = 0; i < clients.length; i++) {
+      const sid = clients[i]!.sessionId;
+      const pid = this.sessionToPlayer.get(sid);
+      if (pid === undefined || !this.playerToSlot.has(pid)) return true;
+      const view = this.interestScratch.get(sid);
+      if (view === undefined || view.has(rec.entityId)) return true;
+    }
+    return false;
   }
 
   /** Iterates positions of currently-alive players, for the LoadShedder.
@@ -9089,7 +9126,7 @@ export class SectorRoom extends Room<SectorState> {
       ? parsed.data.shipId
       : '';
     if (this.sectorKey !== null && requestedShipId !== '') {
-      const rec = getPlayerShipStore().get(requestedShipId);
+      let rec = getPlayerShipStore().get(requestedShipId);
       if (rec !== null && rec.playerId === playerId && rec.lastSectorKey === this.sectorKey) {
         // EVICT-THEN-RESTORE (playtest 2026-06-10 Issue 6 — "respawn as an
         // existing ship → locked/broken"). If the requested hull is STILL
@@ -9104,11 +9141,15 @@ export class SectorRoom extends Room<SectorState> {
         // surviving timer later DELETES the now-active ship. Reachable from any
         // "resume a ship that lingered in the target sector". `evictOwnerlessShip`
         // despawns `linger-<id>`, cancels the timer, frees the slot, deletes the
-        // stale schema entry, and markStored's the pose — which the `rec` we read
-        // above already mirrors, so the restore lands at the same place.
+        // stale schema entry, and markStored's the hull's LIVE pose. That write
+        // REPLACES the roster record (`put` stores a new object), so re-read the
+        // row: the `rec` fetched above still holds the pose from when the hull
+        // was parked, and a hull bumped or pushed since then came back at its
+        // old spot (2026-11-13, exposed by the arcade-handling retune).
         if (this.lingeringSlots.has(requestedShipId) || this.ownerlessShips.has(requestedShipId)) {
           serverLogEvent('respawn_evict_lingering', { playerId, shipInstanceId: requestedShipId });
           this.evictOwnerlessShip(requestedShipId);
+          rec = getPlayerShipStore().get(requestedShipId) ?? rec;
         }
         spawnX = rec.lastX;
         spawnY = rec.lastY;

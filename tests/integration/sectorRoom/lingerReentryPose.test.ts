@@ -157,9 +157,10 @@ describe('SectorRoom integration — R2.33 re-entry pose (bumped lingering hull)
     await harness.advance(200);
 
     // THE LOCK: A re-enters X at its LIVE post-bump pose, not the (0,0) abandon
-    // pose — even via the roster fall-through (rec.lastX is kept fresh by the
-    // persist + evict markStore). A regression that reverted to a frozen read
-    // here would land ~0 and fail.
+    // pose — even via the roster fall-through (the restore re-reads the row
+    // after the evict's markStored). The bump here is tuning-dependent and was
+    // only ~20 u under the old handling, inside this tolerance; the MOVED case
+    // below is the tuning-independent lock.
     const aActive = samples.filter((s) => s.playerId === PID_A && s.isActive);
     expect(aActive.length).toBeGreaterThan(0);
     const reentered = aActive[aActive.length - 1]!;
@@ -168,5 +169,50 @@ describe('SectorRoom integration — R2.33 re-entry pose (bumped lingering hull)
       `re-entered X at y=${reentered.y.toFixed(1)} but the live bumped hull was at y=${liveBump.y.toFixed(1)} — ` +
         `roster restore read the stale abandon pose (R2.33 / Path 3)`,
     ).toBeGreaterThan(liveBump.y - 12);
+  }, 35_000);
+
+  it('resuming a DIFFERENT parked ship that MOVED far from its abandon pose lands where it really is', async () => {
+    // Same fall-through as above, but the parked hull is moved by a fixed,
+    // tuning-independent displacement (worker SET_POSITION) instead of a bump.
+    // Found 2026-11-13 by the arcade-handling retune (#566): with quicker
+    // thrust B pushed X ~115 u and the resume landed at (0,0). The restore read
+    // the roster row it fetched BEFORE `evictOwnerlessShip` re-stored the live
+    // pose (`put` replaces the record object, so the earlier `rec` is stale).
+    // The old slow bump moved X only ~20 u, inside the case above's tolerance.
+    const PID_A = randomUUID();
+    const aX = await harness.connectActive(PID_A, { spawnX: 0, spawnY: 0, shipKind: 'fighter' });
+    const room = harness.getServerRoom()!;
+    const state = room.state as SectorState;
+    let shipX = '';
+    for (const [id, ship] of state.ships) {
+      if (ship.playerId === PID_A && ship.isActive) { shipX = id; break; }
+    }
+    expect(shipX).not.toBe('');
+
+    await harness.disconnectClient(aX);
+    await harness.events.waitFor({ tag: 'player_lingered', where: (d) => d['playerId'] === PID_A });
+    const aY = await harness.connectActive(PID_A, { isNewShip: true, shipKind: 'fighter', spawnX: 1500, spawnY: 1500 });
+
+    // Move the parked X 400 u north, at rest.
+    room._internals.postToWorker({
+      type: 'SET_POSITION', entityId: `linger-${shipX}`, x: 0, y: 400, angle: 0, vx: 0, vy: 0, angvel: 0,
+    });
+    await harness.advance(200);
+
+    await harness.disconnectClient(aY);
+    await harness.events.waitFor({ tag: 'player_lingered', where: (d) => d['playerId'] === PID_A });
+    const samples: Sample[] = [];
+    const a2 = await harness.connectActive(PID_A, { shipId: shipX });
+    collect(a2, samples);
+    await harness.advance(200);
+
+    const aActive = samples.filter((s) => s.id === shipX && s.isActive);
+    expect(aActive.length).toBeGreaterThan(0);
+    const reentered = aActive[aActive.length - 1]!;
+    expect(
+      Math.hypot(reentered.x, reentered.y - 400),
+      `re-entered X at (${reentered.x.toFixed(1)}, ${reentered.y.toFixed(1)}) but it was parked at (0, 400) — ` +
+        `the restore read the roster row from before the evict re-stored the live pose`,
+    ).toBeLessThan(10);
   }, 35_000);
 });

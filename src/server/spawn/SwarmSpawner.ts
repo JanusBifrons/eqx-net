@@ -9,10 +9,10 @@ import { STRUCTURE_DEFAULT_MASS } from '../../core/swarm/structureConstants.js';
 import { SCRAP_DEFAULT_MASS, SCRAP_LINEAR_DAMPING } from '../../core/swarm/scrapConstants.js';
 import { SCRAP_COLLISION_GROUPS, WRECK_COLLISION_GROUPS } from '../../core/physics/collisionGroups.js';
 import { SWARM_KIND_SCRAP } from '../../shared-types/swarmWireFormat.js';
-import { SHIP_KINDS_LIST, GAMEPLAY_SHIP_KINDS_LIST, type ShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
+import { SHIP_KINDS_LIST, GAMEPLAY_SHIP_KINDS_LIST, shipKindToIndex, type ShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
 import { structureHalfExtents, structureHullPoints } from '../../shared-types/structureKinds.js';
 import { gateColliderPolygons, gateWorldAxisBoxes } from '../../core/structures/gateGeometry.js';
-import { massOf } from '../../shared-types/shipScale/tuning.js';
+import { massOf, NPC_MASS_FALLBACK } from '../../shared-types/shipScale/tuning.js';
 
 export interface AsteroidSpec {
   id: string;
@@ -56,8 +56,10 @@ export interface SpawnerHooks {
    *  scrap but does collide with everything else (scrap-on-death Phase 2b-i).
    *  `angle` (scrap, kind=3) rotates the body at spawn so a recentred scrap
    *  collider is oriented to match the dying ship; every other caller passes 0
-   *  / undefined (legacy axis-aligned spawn). */
-  postSpawnObstacle: (slot: number, id: string, x: number, y: number, vx: number, vy: number, radius: number, mass: number, vertices?: ReadonlyArray<Vec2>, linearDamping?: number, staticBody?: boolean, collisionGroups?: number, angle?: number, parts?: ReadonlyArray<ReadonlyArray<Vec2>>, shieldKindId?: string, spin?: { angvel: number; angularDamping: number }) => void;
+   *  / undefined (legacy axis-aligned spawn). `shipKindId` (drones only) is
+   *  the drone kind's catalogue index (`shipKindToIndex`): the worker flies the
+   *  body as that kind when the AI drives it with control keys (AI_INPUTS). */
+  postSpawnObstacle: (slot: number, id: string, x: number, y: number, vx: number, vy: number, radius: number, mass: number, vertices?: ReadonlyArray<Vec2>, linearDamping?: number, staticBody?: boolean, collisionGroups?: number, angle?: number, parts?: ReadonlyArray<ReadonlyArray<Vec2>>, shieldKindId?: string, spin?: { angvel: number; angularDamping: number }, shipKindId?: number) => void;
   /** Direct write into the SAB so the first update() tick reads a sane pose. */
   sabF32: Float32Array;
   sabU32: Uint32Array;
@@ -82,7 +84,7 @@ export interface SpawnerHooks {
 }
 
 const DRONE_DEFAULT_RADIUS = 14;
-export const DRONE_DEFAULT_MASS = 2;
+export const DRONE_DEFAULT_MASS = NPC_MASS_FALLBACK;
 
 /**
  * Owns swarm entity creation. Allocates a slot, primes the SAB, posts a
@@ -428,7 +430,10 @@ export class SwarmSpawner {
     // (`shipShieldColliderDesc`: ball(radius + shieldPad), a capital's rounded
     // hull), the same one it gets back on regen (owner's rule 2026-11-10).
     const shieldKindId = kind === 1 && shipKind ? shipKind.id : undefined;
-    this.hooks.postSpawnObstacle(slot, a.id, a.x, a.y, a.vx, a.vy, a.radius, mass, vertices, linearDamping, staticBody, collisionGroups, spawnAngle, structureParts, shieldKindId);
+    // Pilot layer: the drone's catalogue index, so the worker can fly it with
+    // player controls (AI_INPUTS → applyShipInput) as its own kind.
+    const shipKindId = kind === 1 && shipKind ? shipKindToIndex(shipKind.id) : undefined;
+    this.hooks.postSpawnObstacle(slot, a.id, a.x, a.y, a.vx, a.vy, a.radius, mass, vertices, linearDamping, staticBody, collisionGroups, spawnAngle, structureParts, shieldKindId, undefined, shipKindId);
 
     // Phase 5d: insert into the interest grid so this entity participates in
     // per-client filtering. Indexed by the dense u16 entityId since that's

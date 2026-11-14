@@ -192,9 +192,57 @@ export interface AiIntent {
    *  input path so a drone can match a player's turn rate without fighting
    *  damping. */
   setAngvel?: number;
+  /** Pilot layer (AI flies with player controls): this tick's control keys,
+   *  packed as {@link AiInputBits}. When set (even to 0 = no key held), it
+   *  REPLACES `fx` / `fy` / `torque` / `setAngvel`: the worker runs
+   *  `applyShipInput(body, kind, keys)` on the slot, the SAME function a
+   *  pilot's keys go through (thrust, lateral grip, maxSpeed clamp, capital
+   *  torque turning). `AiController` batches these into ONE `AI_INPUTS`
+   *  worker message per tick. Absent ⇒ the impulse path, unchanged. */
+  input?: AiInputBits;
   /** `targetId`: the entity the shot is aimed at (the fire gate checks the
    *  shooter holds a lock on it when it is a pilot). */
   fire?: { dirX: number; dirY: number; targetId: string };
+}
+
+/**
+ * A ship's control keys packed into one byte (pilot layer). The bit layout is
+ * fixed by the `AI_INPUT_*` constants; the worker decodes with
+ * {@link decodeAiInputBits}. Server-only (main thread → physics worker in a
+ * `Uint8Array`), never on the network wire.
+ */
+export type AiInputBits = number;
+export const AI_INPUT_THRUST = 1;
+export const AI_INPUT_REVERSE = 2;
+export const AI_INPUT_TURN_LEFT = 4;
+export const AI_INPUT_TURN_RIGHT = 8;
+export const AI_INPUT_BOOST = 16;
+
+/** Pack control keys into {@link AiInputBits}. */
+export function packAiInputBits(
+  thrust: boolean,
+  reverse: boolean,
+  turnLeft: boolean,
+  turnRight: boolean,
+  boost: boolean,
+): AiInputBits {
+  return (thrust ? AI_INPUT_THRUST : 0)
+    | (reverse ? AI_INPUT_REVERSE : 0)
+    | (turnLeft ? AI_INPUT_TURN_LEFT : 0)
+    | (turnRight ? AI_INPUT_TURN_RIGHT : 0)
+    | (boost ? AI_INPUT_BOOST : 0);
+}
+
+/** Unpack {@link AiInputBits} into a caller-owned key record (no allocation). */
+export function decodeAiInputBits(
+  bits: AiInputBits,
+  out: { thrust: boolean; reverse?: boolean; turnLeft: boolean; turnRight: boolean; boost?: boolean },
+): void {
+  out.thrust = (bits & AI_INPUT_THRUST) !== 0;
+  out.reverse = (bits & AI_INPUT_REVERSE) !== 0;
+  out.turnLeft = (bits & AI_INPUT_TURN_LEFT) !== 0;
+  out.turnRight = (bits & AI_INPUT_TURN_RIGHT) !== 0;
+  out.boost = (bits & AI_INPUT_BOOST) !== 0;
 }
 
 export interface IAiBehaviour {

@@ -10,27 +10,26 @@
  * with a GUARD POST fights from its post: it never commands motion that takes
  * it beyond its guard radius. A capital with no post keeps the stand-off.
  *
- * The brain is driven through a simple integrator matching the worker's AI
- * path: the intent's (fx, fy) is an impulse per tick (dv = f / mass), the turn
- * is the commanded angvel, and the body sheds speed by its kind's
- * `linearDamping`.
+ * The brain flies with player controls (virtual pilot); its keys are driven
+ * through a kinematic model of `applyShipInput` (thrust / reverse along the
+ * hull axis, the capital's torque turn, damping, grip, speed clamp).
  */
 import { describe, it, expect } from 'vitest';
 import { HostileDroneBehaviour, BROADSIDE_STANDOFF } from './HostileDroneBehaviour.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { shipTuning } from '../../shared-types/shipScale/tuning.js';
 import type { AiEntity, AiWorldView } from '../contracts/IAiBehaviour.js';
+import { stepKinematic } from './pilotTestKit.js';
 
 const KIND = getShipKind('battleship');
 const DT = 1 / 60;
-const MASS = KIND.mass!;
 
 type Mut<T> = { -readonly [K in keyof T]: T[K] };
 
 interface Run { maxFromPost: number; finalFromPost: number; finalFromTarget: number }
 
 function simulate(b: HostileDroneBehaviour, start: AiEntity, target: { x: number; y: number }, post: { x: number; y: number }, seconds: number): Run {
-  const self: Mut<AiEntity> = { ...start };
+  const self: Mut<AiEntity> & { angvel: number } = { ...start, angvel: start.angvel ?? 0 };
   const view: Mut<AiWorldView> = { players: [{ id: 'p', x: target.x, y: target.y, vx: 0, vy: 0 }], tick: 200, dtSec: DT };
   let maxFromPost = 0;
   for (let i = 0; i < seconds * 60; i++) {
@@ -39,15 +38,8 @@ function simulate(b: HostileDroneBehaviour, start: AiEntity, target: { x: number
     // hit and lock step); without this it forgets the target after 30 s.
     b.markHostile('p', view.tick);
     const intent = b.tick(self, view);
-    self.vx += intent.fx / MASS;
-    self.vy += intent.fy / MASS;
-    const damp = 1 / (1 + KIND.linearDamping * DT);
-    self.vx *= damp;
-    self.vy *= damp;
-    if (intent.setAngvel !== undefined) self.angvel = intent.setAngvel;
-    self.angle += self.angvel * DT;
-    self.x += self.vx * DT;
-    self.y += self.vy * DT;
+    expect(intent.input).toBeDefined();
+    stepKinematic(self, KIND, intent);
     maxFromPost = Math.max(maxFromPost, Math.hypot(self.x - post.x, self.y - post.y));
   }
   return { maxFromPost, finalFromPost: Math.hypot(self.x - post.x, self.y - post.y), finalFromTarget: Math.hypot(self.x - target.x, self.y - target.y) };

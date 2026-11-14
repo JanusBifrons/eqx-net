@@ -444,6 +444,16 @@ export class MountVisualManager {
 
   /** Remove a ship's mount cluster and free its graphics. Call from the
    *  same despawn path that destroys the ship sprite. */
+  /** Forget a ship's cluster WITHOUT destroying it: its sprite lives on (a
+   *  dying capital held until its wreck is drawn) and destroys the cluster
+   *  with its children; a recycled id then builds a fresh one. */
+  detachShip(shipId: string): void {
+    const cluster = this.clusters.get(shipId);
+    if (!cluster) return;
+    for (const m of cluster.perMount.values()) if (m.gun?.layers) this.machinedGuns--;
+    this.clusters.delete(shipId);
+  }
+
   removeShip(shipId: string): void {
     const cluster = this.clusters.get(shipId);
     if (!cluster) return;

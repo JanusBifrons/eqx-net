@@ -6,6 +6,8 @@ import { HostileDroneBehaviour } from './HostileDroneBehaviour.js';
 import { DriftingAsteroidBehaviour } from './DriftingAsteroidBehaviour.js';
 import type { AiEntity, AiWorldView } from '../contracts/IAiBehaviour.js';
 import { WEAPON_COOLDOWN_TICKS } from '../combat/Weapons.js';
+import { getShipKind } from '../../shared-types/shipKinds.js';
+import { boostOf, stepKinematic, throttleOf, turnOf } from './pilotTestKit.js';
 
 const droneAt = (x: number, y: number, angle = 0, angvel = 0): AiEntity => ({
   id: 'drone-1', x, y, vx: 0, vy: 0, angle, angvel,
@@ -50,9 +52,13 @@ describe('HostileDroneBehaviour — IDLE patrol', () => {
     // new behaviour.
     const b = new HostileDroneBehaviour();
     const intent = b.tick(droneAt(500, 0, 0, 0), viewWith([]));
-    // Some component of motion should be non-zero.
-    const motion = Math.abs(intent.fx) + Math.abs(intent.fy) + Math.abs(intent.torque);
-    expect(motion).toBeGreaterThan(0);
+    // It flies with control keys (virtual pilot): some key is held, and no
+    // AI-only impulse is ever produced.
+    expect(intent.input).toBeDefined();
+    expect(intent.input).not.toBe(0);
+    expect(intent.fx).toBe(0);
+    expect(intent.fy).toBe(0);
+    expect(intent.setAngvel).toBeUndefined();
     // IDLE drones never fire.
     expect(intent.fire).toBeUndefined();
   });
@@ -69,31 +75,16 @@ describe('HostileDroneBehaviour — IDLE patrol', () => {
 
   it('IDLE drone outside the patrol radius steers back inward over many ticks', () => {
     // Spawn the drone well outside the patrol radius. With the inward
-    // bias active, repeated ticks of patrol intent — applied through a
-    // simple Euler integrator that mimics Rapier's drag — should bring
-    // the drone closer to origin over time.
+    // bias active, its control keys — integrated by a kinematic model of
+    // applyShipInput — should bring it closer to origin over time.
     const b = new HostileDroneBehaviour();
-    let x = 5000, y = 0, angle = 0, angvel = 0;
-    let vx = 0, vy = 0;
-    const drag = 0.97; // approximation of Rapier linear damping per tick
+    const kind = getShipKind('fighter');
+    const body = { x: 5000, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
     for (let t = 0; t < 1200; t++) {
-      const intent = b.tick({ id: 'd', x, y, vx, vy, angle, angvel }, viewWith([], t));
-      // Linear: velocity Verlet–ish. Mass=1 for simplicity.
-      vx = vx * drag + intent.fx;
-      vy = vy * drag + intent.fy;
-      x += vx * (1 / 60);
-      y += vy * (1 / 60);
-      // Angular: drones now use the player snap-set path
-      // (`setAngvel` rather than torque), so the integrator just adopts
-      // the requested angvel directly. Falls back to a damped-residual
-      // step when the intent didn't request a setAngvel (defensive).
-      if (intent.setAngvel !== undefined) {
-        angvel = intent.setAngvel;
-      } else {
-        angvel = angvel * 0.85 + intent.torque;
-      }
-      angle += angvel * (1 / 60);
+      const intent = b.tick({ id: 'd', ...body }, viewWith([], t));
+      stepKinematic(body, kind, intent);
     }
+    const { x, y } = body;
     const finalR = Math.hypot(x, y);
     // Drone should have moved measurably toward origin (started at 5000).
     expect(finalR).toBeLessThan(5000);
@@ -110,7 +101,7 @@ describe('HostileDroneBehaviour — Part C target selection', () => {
     b.markHostile('full', 100);
     b.markHostile('wounded', 100);
     const intent = b.tick(droneAt(0, 0, 0, 0), view);
-    return intent.setAngvel ?? intent.torque ?? 0;
+    return turnOf(intent);
   };
   const at = (id: string, x: number, y: number, health: number): AiWorldView['players'][number] => ({
     id, x, y, vx: 0, vy: 0, health, maxHealth: 100,
@@ -135,11 +126,11 @@ describe('HostileDroneBehaviour — Part C target selection', () => {
     b.markHostile('right', 100);
     // Acquire `left` first (only it in view).
     const t1 = b.tick(droneAt(0, 0, 0, 0), view([at('left', -100, 0, 100)], 200));
-    const turn1 = t1.setAngvel ?? t1.torque ?? 0;
+    const turn1 = turnOf(t1);
     // Within the dwell window an equidistant `right` appears. Dwell holds `left`
     // → turn keeps the same sign (still steering toward the left target).
     const t2 = b.tick(droneAt(0, 0, 0, 0), view([at('left', -100, 0, 100), at('right', 100, 0, 100)], 210));
-    const turn2 = t2.setAngvel ?? t2.torque ?? 0;
+    const turn2 = turnOf(t2);
     expect(Math.sign(turn2)).toBe(Math.sign(turn1));
     expect(turn1).not.toBe(0);
   });
@@ -166,7 +157,7 @@ describe('HostileDroneBehaviour — wave-system Phase 2 structure targeting', ()
     const b = new HostileDroneBehaviour();
     for (const id of markIds) b.markHostile(id, 100);
     const intent = b.tick(droneAt(0, 0, 0, 0), v);
-    return intent.setAngvel ?? intent.torque ?? 0;
+    return turnOf(intent);
   };
 
   it('targets a hostile structure when it is the only candidate', () => {
@@ -270,10 +261,9 @@ describe('HostileDroneBehaviour — COMBAT pursuit', () => {
       droneAt(0, 0, 0, 0),
       viewWith([{ id: 'far', x: 0, y: 700 }, { id: 'near', x: 0, y: 400 }]),
     );
-    // Already aimed at near → bearing error ≈ 0 → setAngvel drops into
-    // the dead zone and is 0 (or undefined).
-    expect(Math.abs(intent.setAngvel ?? 0)).toBeLessThan(0.1);
-    expect(intent.fy).toBeGreaterThan(0);
+    // Already aimed at near → bearing error ≈ 0 → no turn key; thrust in.
+    expect(turnOf(intent)).toBe(0);
+    expect(throttleOf(intent)).toBe(1);
   });
 
   it('ignores non-hostile players (a bystander cannot bait the drone)', () => {
@@ -294,21 +284,22 @@ describe('HostileDroneBehaviour — COMBAT pursuit', () => {
     const b = new HostileDroneBehaviour();
     b.markHostile('p', 0);
     const intent = b.tick(droneAt(0, 0, 0, 0), viewWith([{ id: 'p', x: 100, y: 0 }]));
-    // Drones now snap-set angvel (player parity); off-bearing should
-    // produce a non-zero target angvel rather than a torque.
-    expect(intent.setAngvel ?? 0).not.toBe(0);
+    // Off-bearing ⇒ a turn key toward it (target on the right ⇒ turn right).
+    expect(turnOf(intent)).toBe(-1);
   });
 
-  it.runIf(AT_AUTHORED_SHIP_SCALE)('thrust is along the drone\'s current forward, not toward the target', () => {
-    // Drone at angle=π/2 → forward = (-sin(π/2), cos(π/2)) = (-1, 0). Target
-    // placed in the approach window (> STOP_DIST ≈ 336 for the fighter bolt)
-    // so the drone thrusts forward (−x) rather than hovering inside the stop
-    // distance — proving thrust follows the body's facing, not the bearing.
+  it.runIf(AT_AUTHORED_SHIP_SCALE)('flies with player keys only: facing away, it turns rather than thrust sideways', () => {
+    // Drone at angle=π/2 → forward = (-1, 0); target behind it at +x in the
+    // approach window. A player can only push along the nose, so the pilot
+    // turns toward the target and never thrusts away from it (owner rule
+    // 2026-11-13: no AI-only impulse toward the target).
     const b = new HostileDroneBehaviour();
     b.markHostile('p', 0);
     const intent = b.tick(droneAt(0, 0, Math.PI / 2, 0), viewWith([{ id: 'p', x: 400, y: 0 }]));
-    expect(intent.fx).toBeLessThan(0);
-    expect(intent.fy).toBeCloseTo(0, 5);
+    expect(intent.fx).toBe(0);
+    expect(intent.fy).toBe(0);
+    expect(turnOf(intent)).not.toBe(0);
+    expect(throttleOf(intent)).not.toBe(1);
   });
 
   it('fires when in range, aimed, and off cooldown', () => {
@@ -365,7 +356,7 @@ describe('HostileDroneBehaviour — COMBAT pursuit', () => {
       dtSec: 1 / 60,
     };
     const intent = b.tick(droneAt(0, 0, 0, 0), moving);
-    expect(intent.setAngvel ?? 0).not.toBe(0);
+    expect(turnOf(intent)).toBe(-1); // leads to the right (+x)
   });
 
   it('FIRES along the lead vector (intercept point), not straight at the target', () => {
@@ -403,18 +394,22 @@ describe('HostileDroneBehaviour — COMBAT pursuit', () => {
     expect(Math.abs(intent2.fire!.dirX)).toBeLessThan(0.01);
   });
 
-  it('boosts forward thrust when the hostile target is far', () => {
-    // fighter (bolt) fireRange ≈ 560 ⇒ engage-boost threshold = 1.5× ≈ 840.
-    // Target at 1000 (> 840 → boosted) vs 400 (approach window → base thrust).
+  it('boosts (thrust + boost keys) when the hostile target is far, not when near', () => {
+    // Engage-boost threshold = 1.5 × fireRange. Target at 3 × fireRange
+    // (boosted) vs 0.8 × (approach window, no boost).
     const b1 = new HostileDroneBehaviour();
     b1.markHostile('p', 0);
-    const farIntent = b1.tick(droneAt(0, 0, 0, 0), viewWith([{ id: 'p', x: 0, y: 1000 }]));
+    const farIntent = b1.tick(droneAt(0, 0, 0, 0), viewWith([{ id: 'p', x: 0, y: b1.getFireRange() * 3 }]));
 
     const b2 = new HostileDroneBehaviour();
     b2.markHostile('p', 0);
-    const nearIntent = b2.tick(droneAt(0, 0, 0, 0), viewWith([{ id: 'p', x: 0, y: 400 }]));
+    const nearIntent = b2.tick(droneAt(0, 0, 0, 0), viewWith([{ id: 'p', x: 0, y: b2.getFireRange() * 0.8 }]));
 
-    expect(farIntent.fy).toBeGreaterThan(nearIntent.fy);
+    expect(throttleOf(farIntent)).toBe(1);
+    expect(boostOf(farIntent)).toBe(true);
+    expect(boostOf(nearIntent)).toBe(false);
+    // Boost is paid from the NPC's energy pool, as a pilot's is.
+    expect(b1.getEnergy()).toBeLessThan(b2.getEnergy());
   });
 
   it('uses the wider point-blank fire arc when the target is very close', () => {
@@ -457,10 +452,10 @@ describe('HostileDroneBehaviour — weapon-aware engagement (overhaul §4)', () 
     b.markHostile('p', 0);
     const range = b.getFireRange();
     // Drone at origin facing +y; target straight ahead well inside the
-    // back-off band (fireRange × 0.4). It must thrust in REVERSE (−y) to kite.
+    // back-off band (fireRange × 0.4). It must press REVERSE (−y) to kite.
     const close = 0.2 * range;
     const intent = b.tick(droneAt(0, 0, 0, 0), viewWith([{ id: 'p', x: 0, y: close }], 100));
-    expect(intent.fy).toBeLessThan(0);
+    expect(throttleOf(intent)).toBe(-1);
   });
 
   it('a missile drone only fires from long range (out of range up close)', () => {
@@ -479,7 +474,7 @@ describe('HostileDroneBehaviour — weapon-aware engagement (overhaul §4)', () 
     // Beyond the (short) beam range → no fire, and it thrusts forward to close.
     const farIntent = b.tick(droneAt(0, 0, 0, 0), viewWith([{ id: 'p', x: 0, y: range * 3 }], 100));
     expect(farIntent.fire).toBeUndefined();
-    expect(farIntent.fy).toBeGreaterThan(0); // boring in
+    expect(throttleOf(farIntent)).toBe(1); // boring in
     // In close range + aligned → fires.
     const closeIntent = b.tick(droneAt(0, 0, 0, 0), viewWith([{ id: 'p', x: 0, y: range * 0.8 }], 200));
     expect(closeIntent.fire).toBeDefined();
@@ -492,8 +487,7 @@ describe('HostileDroneBehaviour — weapon-aware engagement (overhaul §4)', () 
     b.markHostile('p', 0);
     const ia = a.tick(droneAt(10, 20, 0.3, 0), viewWith([{ id: 'p', x: 300, y: 800 }], 100));
     const ib = b.tick(droneAt(10, 20, 0.3, 0), viewWith([{ id: 'p', x: 300, y: 800 }], 100));
-    expect(ia.fx).toBeCloseTo(ib.fx, 10);
-    expect(ia.fy).toBeCloseTo(ib.fy, 10);
-    expect(ia.setAngvel ?? 0).toBeCloseTo(ib.setAngvel ?? 0, 10);
+    expect(ia.input).toBeDefined();
+    expect(ia.input).toBe(ib.input);
   });
 });

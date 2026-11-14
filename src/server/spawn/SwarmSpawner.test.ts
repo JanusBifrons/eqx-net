@@ -5,7 +5,7 @@ import { ASTEROID_DEFAULT_MASS } from '../../core/swarm/asteroidConstants.js';
 import { SCRAP_LINEAR_DAMPING, SCRAP_DEFAULT_MASS } from '../../core/swarm/scrapConstants.js';
 import { SCRAP_COLLISION_GROUPS } from '../../core/physics/collisionGroups.js';
 import { SWARM_KIND_SCRAP } from '../../shared-types/swarmWireFormat.js';
-import { SHIP_KINDS, SHIP_KINDS_LIST } from '../../shared-types/shipKinds.js';
+import { SHIP_KINDS, SHIP_KINDS_LIST, shipKindToIndex } from '../../shared-types/shipKinds.js';
 import type { Vec2 } from '../../core/swarm/asteroidShape.js';
 import {
   SAB_TOTAL_BYTES,
@@ -21,6 +21,7 @@ interface PostedCmd {
   staticBody?: boolean;
   collisionGroups?: number;
   angle?: number;
+  shipKindId?: number;
 }
 
 describe('SwarmSpawner', () => {
@@ -42,8 +43,8 @@ describe('SwarmSpawner', () => {
     lagCompRegistered = [];
     spawner = new SwarmSpawner(registry, {
       takeSlot: () => availableSlots.pop(),
-      postSpawnObstacle: (slot, id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups, angle) =>
-        posted.push({ slot, id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups, angle }),
+      postSpawnObstacle: (slot, id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups, angle, _parts, _shield, _spin, shipKindId) =>
+        posted.push({ slot, id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups, angle, shipKindId }),
       sabF32: f32,
       sabU32: u32,
       registerLagComp: (id) => lagCompRegistered.push(id),
@@ -67,6 +68,18 @@ describe('SwarmSpawner', () => {
     expect(cap.staticBody).toBe(true); // the P0 fix — structures never move
     expect(drone.staticBody).toBeFalsy(); // drones fly
     expect(rock.staticBody).toBeFalsy(); // asteroids stay dynamic / bump-able
+  });
+
+  // Pilot layer: the worker must know a drone's kind to fly it with player
+  // controls (AI_INPUTS → applyShipInput), so a drone spawn carries its
+  // catalogue index; asteroids and structures carry none.
+  it('drone spawn carries its ship-kind catalogue index; others none', () => {
+    spawner.spawnDrone({ id: 'drone-k', x: 0, y: 0, kind: 'fighter' });
+    spawner.spawnAsteroid({ id: 'rock-k', x: 0, y: 0, vx: 0, vy: 0, radius: 30 });
+    spawner.spawnStructure({ id: 'cap-k', x: 0, y: 0, radius: 60, shipKind: 'capital' });
+    expect(posted.find((p) => p.id === 'drone-k')!.shipKindId).toBe(shipKindToIndex('fighter'));
+    expect(posted.find((p) => p.id === 'rock-k')!.shipKindId).toBeUndefined();
+    expect(posted.find((p) => p.id === 'cap-k')!.shipKindId).toBeUndefined();
   });
 
   // Phase V — a ROTATED structure must spawn with a rotated physics body. The

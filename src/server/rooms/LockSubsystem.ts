@@ -178,9 +178,6 @@ export class LockSubsystem {
   };
   private readonly inputs: LockInputs = {
     refSize: 1, tracking: 1, reach: 1, sensor: 1, pilotSpeed: 1, signature: 1, dx: 0, dy: 0, dvx: 0, dvy: 0,
-    // Player heavy (absRange) guns lock small / fast targets slowly, never
-    // impossibly (owner, 2026-11-10). NPC lock paths never set this.
-    neverImpossible: true,
   };
 
   constructor(private readonly deps: LockSubsystemDeps) {}

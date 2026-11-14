@@ -2,16 +2,22 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { AiController, type AiIntentSink } from './AiController.js';
 import { HostileDroneBehaviour } from './HostileDroneBehaviour.js';
 import { DriftingAsteroidBehaviour } from './DriftingAsteroidBehaviour.js';
-import type { AiEntity, AiPlayerView } from '../contracts/IAiBehaviour.js';
+import { AI_INPUT_THRUST, type AiEntity, type AiInputBits, type AiPlayerView } from '../contracts/IAiBehaviour.js';
 import { WEAPON_COOLDOWN_TICKS } from '../combat/Weapons.js';
 
-interface PostedIntent { slot: number; fx: number; fy: number; torque: number }
+interface PostedIntent { slot: number; fx: number; fy: number; torque: number; input?: AiInputBits }
 
+/** Records impulse intents and (pilot layer) input-bit posts alike. */
 class CapturingSink implements AiIntentSink {
   posted: PostedIntent[] = [];
+  flushes = 0;
   postIntent(slot: number, fx: number, fy: number, torque: number): void {
     this.posted.push({ slot, fx, fy, torque });
   }
+  postInput(slot: number, bits: AiInputBits): void {
+    this.posted.push({ slot, fx: 0, fy: 0, torque: 0, input: bits });
+  }
+  flushInputs(): void { this.flushes++; }
 }
 
 const playerAt = (id: string, x: number, y: number): AiPlayerView => ({ id, x, y, vx: 0, vy: 0 });
@@ -44,16 +50,18 @@ describe('AiController', () => {
     expect(ctrl.size()).toBe(0);
   });
 
-  it('drone produces a nonzero impulse toward the nearest player', () => {
+  it('drone flies toward the nearest player with control keys (thrust), one flush a tick', () => {
     ctrl.register('drone-1', 5, new HostileDroneBehaviour());
-    // Drone at origin facing +y, player at (0, 100). Drone is aimed → forward thrust along +y.
-    ctrl.tick(0, 1 / 60, [playerAt('p1', 0, 100)], (id) =>
+    // Drone at origin facing +y, player far ahead. Drone is aimed → thrust key.
+    ctrl.markHostile('drone-1', 'p1', 0);
+    ctrl.tick(0, 1 / 60, [playerAt('p1', 0, 5000)], (id) =>
       id === 'drone-1' ? entityAt(id, 0, 0, 0, 0) : null,
     );
     expect(sink.posted).toHaveLength(1);
     const intent = sink.posted[0]!;
     expect(intent.slot).toBe(5);
-    expect(intent.fy).toBeGreaterThan(0);
+    expect((intent.input ?? 0) & AI_INPUT_THRUST).toBeTruthy();
+    expect(sink.flushes).toBe(1);
   });
 
   it('skips entities whose snapshot is unavailable', () => {
