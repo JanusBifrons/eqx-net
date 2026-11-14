@@ -36,9 +36,9 @@ test.describe('Fleet overlay vs camera @feature', () => {
     );
     const hullAt = async (): Promise<{ x: number; y: number } | null> => {
       const p = await page.evaluate(() => {
-        const m = (globalThis as { __eqxClient?: { mirror: { localPlayerId: string | null; lingeringShips?: Map<string, { ownerPlayerId?: string; x: number; y: number }> } } }).__eqxClient?.mirror;
+        const m = (globalThis as { __eqxClient?: { mirror: { localPlayerId: string | null; ships: Map<string, { isActive?: boolean; ownerPlayerId?: string; x: number; y: number }> } } }).__eqxClient?.mirror;
         const toScreen = (globalThis as { __eqxWorldToScreen?: (x: number, y: number) => { x: number; y: number } }).__eqxWorldToScreen;
-        for (const e of m?.lingeringShips?.values() ?? []) {
+        for (const e of [...(m?.ships?.values() ?? [])].filter((e) => e.isActive === false)) {
           if (e.ownerPlayerId === m?.localPlayerId && toScreen) return toScreen(e.x, e.y);
         }
         return null;

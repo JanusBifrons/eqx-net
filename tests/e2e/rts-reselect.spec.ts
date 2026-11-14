@@ -22,10 +22,10 @@ interface Hull { id: string; sx: number; sy: number }
 
 async function ownHulls(page: Page): Promise<Hull[]> {
   const raw = await page.evaluate(() => {
-    const m = (globalThis as { __eqxClient?: { mirror: { localPlayerId: string | null; lingeringShips?: Map<string, { ownerPlayerId?: string; x: number; y: number }> } } }).__eqxClient?.mirror;
+    const m = (globalThis as { __eqxClient?: { mirror: { localPlayerId: string | null; ships: Map<string, { isActive?: boolean; ownerPlayerId?: string; x: number; y: number }> } } }).__eqxClient?.mirror;
     const toScreen = (globalThis as { __eqxWorldToScreen?: (x: number, y: number) => { x: number; y: number } }).__eqxWorldToScreen;
     const out: { id: string; sx: number; sy: number }[] = [];
-    for (const [id, e] of m?.lingeringShips ?? []) {
+    for (const [id, e] of [...(m?.ships ?? [])].filter(([, e]) => e.isActive === false)) {
       if (e.ownerPlayerId !== m?.localPlayerId || !toScreen) continue;
       const s = toScreen(e.x, e.y);
       out.push({ id, sx: s.x, sy: s.y });

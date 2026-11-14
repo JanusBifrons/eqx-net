@@ -171,8 +171,8 @@ test('spectator input is pan, not thrust — the ship does NOT move on W', async
   // predicted phantom, fixed 2026-11-12; spectate-no-phantom-own-ship.spec.ts).
   const parkedPos = (): Promise<{ x: number; y: number } | null> =>
     page.evaluate(() => {
-      const m = (globalThis as { __eqxClient?: { mirror: { localPlayerId: string | null; lingeringShips?: Map<string, { ownerPlayerId?: string; x: number; y: number }> } } }).__eqxClient?.mirror;
-      for (const e of m?.lingeringShips?.values() ?? []) if (e.ownerPlayerId === m?.localPlayerId) return { x: e.x, y: e.y };
+      const m = (globalThis as { __eqxClient?: { mirror: { localPlayerId: string | null; ships: Map<string, { isActive?: boolean; ownerPlayerId?: string; x: number; y: number }> } } }).__eqxClient?.mirror;
+      for (const e of [...(m?.ships?.values() ?? [])].filter((e) => e.isActive === false)) if (e.ownerPlayerId === m?.localPlayerId) return { x: e.x, y: e.y };
       return null;
     });
 
@@ -180,8 +180,8 @@ test('spectator input is pan, not thrust — the ship does NOT move on W', async
   // a CI runner), so wait for it rather than read it at a fixed delay.
   await page.waitForFunction(
     () => {
-      const m = (globalThis as { __eqxClient?: { mirror: { localPlayerId: string | null; lingeringShips?: Map<string, { ownerPlayerId?: string }> } } }).__eqxClient?.mirror;
-      for (const e of m?.lingeringShips?.values() ?? []) if (e.ownerPlayerId === m?.localPlayerId) return true;
+      const m = (globalThis as { __eqxClient?: { mirror: { localPlayerId: string | null; ships: Map<string, { isActive?: boolean; ownerPlayerId?: string }> } } }).__eqxClient?.mirror;
+      for (const e of [...(m?.ships?.values() ?? [])].filter((e) => e.isActive === false)) if (e.ownerPlayerId === m?.localPlayerId) return true;
       return false;
     }, undefined,
     { timeout: 10_000 },
@@ -190,9 +190,9 @@ test('spectator input is pan, not thrust — the ship does NOT move on W', async
   await page.waitForTimeout(600);
   const before = await parkedPos();
   // CI-only failure (train #528/#529): the parked hull arrived, then left
-  // lingeringShips. Dump the client's view so the next CI run names the cause.
+  // the parked hulls (mirror.ships, isActive=false). Dump the client's view so the next CI run names the cause.
   const view = before !== null ? '' : await page.evaluate(() => {
-    const c = (globalThis as { __eqxClient?: { mirror: { localPlayerId: string | null; localShipInstanceId?: string | null; ships: Map<string, unknown>; lingeringShips?: Map<string, { ownerPlayerId?: string }> }; room?: { state?: { ships?: Map<string, { playerId: string; isActive: boolean; alive: boolean }> } } } }).__eqxClient;
+    const c = (globalThis as { __eqxClient?: { mirror: { localPlayerId: string | null; localShipInstanceId?: string | null; ships: Map<string, { isActive?: boolean; ownerPlayerId?: string }> }; room?: { state?: { ships?: Map<string, { playerId: string; isActive: boolean; alive: boolean }> } } } }).__eqxClient;
     const st = (globalThis as { __eqxStore?: { getState(): { pilotMode?: string; phase?: string } } }).__eqxStore?.getState();
     const schema: unknown[] = [];
     c?.room?.state?.ships?.forEach((s, k) => { if (s.playerId === c.mirror.localPlayerId) schema.push({ k, isActive: s.isActive, alive: s.alive }); });
@@ -200,7 +200,7 @@ test('spectator input is pan, not thrust — the ship does NOT move on W', async
       pilotMode: st?.pilotMode, phase: st?.phase,
       localId: c?.mirror.localPlayerId, localInstance: c?.mirror.localShipInstanceId,
       ships: [...(c?.mirror.ships.keys() ?? [])],
-      lingering: [...(c?.mirror.lingeringShips?.entries() ?? [])].map(([k, e]) => [k, e.ownerPlayerId]),
+      lingering: [...([...(c?.mirror.ships?.entries() ?? [])].filter(([, e]) => e.isActive === false))].map(([k, e]) => [k, e.ownerPlayerId]),
       schema,
     });
   });

@@ -34,10 +34,10 @@ interface Hull { id: string; x: number; y: number; sx: number; sy: number }
 /** Own parked hulls with their game pose and on-page pixel position. */
 async function ownHulls(page: Page): Promise<Hull[]> {
   const raw = await page.evaluate(() => {
-    const m = (globalThis as { __eqxClient?: { mirror: { localPlayerId: string | null; lingeringShips?: Map<string, { ownerPlayerId?: string; x: number; y: number }> } } }).__eqxClient?.mirror;
+    const m = (globalThis as { __eqxClient?: { mirror: { localPlayerId: string | null; ships: Map<string, { isActive?: boolean; ownerPlayerId?: string; x: number; y: number }> } } }).__eqxClient?.mirror;
     const toScreen = (globalThis as { __eqxWorldToScreen?: (x: number, y: number) => { x: number; y: number } }).__eqxWorldToScreen;
     const out: { id: string; x: number; y: number; sx: number; sy: number }[] = [];
-    for (const [id, e] of m?.lingeringShips ?? []) {
+    for (const [id, e] of [...(m?.ships ?? [])].filter(([, e]) => e.isActive === false)) {
       if (e.ownerPlayerId !== m?.localPlayerId) continue;
       const s = toScreen ? toScreen(e.x, e.y) : { x: NaN, y: NaN };
       out.push({ id, x: e.x, y: e.y, sx: s.x, sy: s.y });
@@ -51,9 +51,9 @@ async function ownHulls(page: Page): Promise<Hull[]> {
 async function waitOwnHullCount(page: Page, n: number): Promise<void> {
   await page.waitForFunction(
     (want) => {
-      const m = (globalThis as { __eqxClient?: { mirror: { localPlayerId: string | null; lingeringShips?: Map<string, { ownerPlayerId?: string }> } } }).__eqxClient?.mirror;
+      const m = (globalThis as { __eqxClient?: { mirror: { localPlayerId: string | null; ships: Map<string, { isActive?: boolean; ownerPlayerId?: string }> } } }).__eqxClient?.mirror;
       let c = 0;
-      for (const e of m?.lingeringShips?.values() ?? []) if (e.ownerPlayerId === m?.localPlayerId) c++;
+      for (const e of [...(m?.ships?.values() ?? [])].filter((e) => e.isActive === false)) if (e.ownerPlayerId === m?.localPlayerId) c++;
       return c === want;
     },
     n,
