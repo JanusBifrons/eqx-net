@@ -177,6 +177,38 @@ aimTolerance = baseTolerance + maxTurretHalfArc
 
 The fire DIRECTION the body AI provides (`(fwdX, fwdY)`) is still body-forward; per-mount adjustment is added downstream in `handleAiFire` via `+ mount.baseAngle + currentMountAngle`.
 
+## Weapon catalogue, fire classes and energy (core)
+
+**Catalogue** (`src/core/combat/WeaponCatalogue.ts`): the single source of truth for weapon definitions.
+- Each entry is a discriminated `WeaponDef = HitscanWeaponDef | ProjectileWeaponDef` describing damage, cooldown, `energyCost` (per slot trigger) and mode-specific params (range for hitscan; speed / radius / maxTicks for projectile). Lookup via `getWeapon(id)`.
+- **Append-only and pure:** no DI, no I/O. Adding a weapon = adding a record + listing its id in `WEAPON_IDS`.
+- The data-driven loadout binds weapons to mounts (`mount.weaponId`). The server fires `getWeapon(mount.weaponId)` per barrel and IGNORES the client's claimed `weapon` field (see `PlayerFireResolver` / `AiFireResolver`), and parameterises `spawnServerProjectile` from the `WeaponDef`. The client uses the same lookup for ghost spawn speed and the renderer-side bolt visual.
+- **Do not branch on weapon id in `src/core` paths:** read fields off the `WeaponDef`. The Open/Closed boundary is the catalogue, not a switch statement.
+- `src/core/combat/Weapons.ts` keeps the combat constants and pure geometry helpers (`HITSCAN_DAMAGE`, `PROJECTILE_DAMAGE`, `HITSCAN_RANGE`, `PROJECTILE_SPEED`, `WEAPON_COOLDOWN_TICKS`, `rayHitsSphere()`), now derived from the catalogue.
+
+**Hitscan falloff: "optimal + beyond", linear.**
+- A `HitscanWeaponDef.range` is the OPTIMAL range: FULL `damage` out to it.
+- `falloff: { minDamageFrac, maxRangeMul }` adds a LINEAR fringe BEYOND optimal: the ray casts to `range × maxRangeMul` (the beam weapon: 250 → 325, `maxRangeMul` 1.3, so the tail is short and clearly ends), and `hitscanFalloffFrac(dist, optimalRange, maxRange, minDamageFrac)` scales damage linearly from full at `range` to `minDamageFrac` at `maxRange`. The owner chose linear: a constant fall per unit reads as a smooth taper that matches the visual beam taper.
+- `maxRangeMul` absent or ≤ 1 ⇒ flat full damage in range (back-compat).
+- The aim line and auto-fire still use `range` (optimal), so the guide stays at the reliable reach; only the ray and damage extend.
+- **Server-authoritative:** the `WeaponFireSink.hitscan(ctx, range, damage, falloffMinDamageFrac?, maxRange?)` fifth param threads maxRange into BOTH resolvers; the client reads the scaled damage off the `DamageEvent`, never predicts it. The client beam visual (`BeamSpritePool`) draws solid to optimal, then fades to nothing across optimal → maxRange, so the visible taper == the damage band. 🔴 netgate (live combat path).
+- Locks: `hitscanFalloff.test.ts` (full to optimal, linear beyond), `weapons.test.ts` (maxRange threaded to the sink), `tests/e2e/laser-falloff-probe.spec.ts` (a no-hit beam ends and tapers).
+
+**Fire classes** (`src/core/combat/weapons/`, GEP B3): the catalogue stays the pure DATA source; this layer wraps each `WeaponDef` in a stateless flyweight (`HitscanWeapon` / `ProjectileWeapon` / `MissileWeapon` over the `Weapon` base) that owns its per-mode FIRE DECISION via a virtual `resolveFire(ctx, sink)`.
+- Both fire resolvers collapse to one `getWeaponObject(mount.weaponId).resolveFire(ctx, this)` call (the resolver IS the `WeaponFireSink`).
+- Fire is low-frequency, so the virtual dispatch is cheap; the per-hit damage path stays monomorphic (HC#5).
+- The server work (lag-comp sweep, spawn, `laser_fired` broadcast) lives behind the zone-pure `WeaponFireSink`, injected per resolver, so player-vs-AI hitscan differences live in the sink, not the weapon.
+- Adding a weapon = a catalogue row (its `mode` picks the leaf in `weapons/index.ts`); no resolver edit. Parity: `weapons/weapons.test.ts`.
+
+**Energy** (`src/core/combat/Energy.ts`): pure scalar helpers `spendEnergy` / `regenEnergyStep` / `canAfford` + `resolveSlotEnergyCost` (a per-slot `energyCost` override wins, else the MAX over the slot's mounts' weapon `energyCost`: drain once per slot).
+- **Shared brain** (unlike `ShieldHull.ts`): energy is driven by the player's own fire and boost input, so the server owns the value and the client predicts via the SAME helpers (`ColyseusClient.predEnergy`).
+- Allocation-free (scalar in/out, `mount.find`, no array build), safe in the per-tick hot loop.
+- Drone FIRE is not energy-gated; drone BOOST is (virtual pilot, its own server-side pool). `BOOST_TICK_COST` is the per-tick boost drain.
+
+**Turret reach** (`src/core/combat/mountReach.ts`, capitals Phase 3): `mountTargetReach(kind, mounts)` is the ONE target-pick radius both sides use (server `WeaponMountTicker`, client `tickLocalMountAim`). It returns `HITSCAN_RANGE` for every non-capital, and for a capital its longest gun's engage range plus that mount's offset. `hasTurretFireControl(kind)` marks kinds whose turrets fire one by one (capitals).
+
+**History.** Energy arrived with the weapons/energy/AI overhaul (2026-06-02). Falloff: R2.29 tapered within range, P3.13 replaced it with reverse-square beyond range, and the Equinox laser issue (2026-06-14) replaced that with the linear fringe (`maxRangeMul` tightened 1.5 → 1.3, after the "renders infinitely" beam; the reverse-square's "slow-then-cliff" felt like damage dropped to 0 instantly beyond range).
+
 ## Engineering room — `mount-test`
 
 For phone-side smoke testing of multi-mount kinds:
