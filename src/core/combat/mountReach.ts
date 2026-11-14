@@ -82,9 +82,10 @@ export function mountInReach(dx: number, dy: number, reach: number, t: MountRang
   return dx * dx + dy * dy <= r * r;
 }
 
-/** Per mount list: max(mount reach + mount offset), the cheap far reject. */
+/** Per mount list: max(mount reach + mount offset), the cheap far reject
+ *  (cached per mount-list identity). */
 const outerCache = new WeakMap<ReadonlyArray<WeaponMount>, number>();
-function outerReach(mounts: ReadonlyArray<WeaponMount>): number {
+export function mountsOuterReach(mounts: ReadonlyArray<WeaponMount>): number {
   let r = outerCache.get(mounts);
   if (r === undefined) {
     r = 0;
@@ -112,7 +113,7 @@ export function mountsReachTarget(
   tx: number, ty: number, t: MountRangeTarget | null | undefined, slack = 1,
 ): boolean {
   if (mounts.length === 0) return false;
-  const gate = outerReach(mounts) * slack + mountRangeBound(t);
+  const gate = mountsOuterReach(mounts) * slack + mountRangeBound(t);
   const cdx = tx - sx;
   const cdy = ty - sy;
   if (cdx * cdx + cdy * cdy > gate * gate) return false;
