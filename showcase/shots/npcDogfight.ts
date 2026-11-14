@@ -1,7 +1,7 @@
 import type { Shot, ShotContext } from '../types.js';
 
-/** Live NPC ships in the spectator's mirror. */
-async function npcCount(ctx: ShotContext): Promise<number> {
+/** Live AI pilot ships in the spectator's mirror. */
+async function pilotCount(ctx: ShotContext): Promise<number> {
   return ctx.page.evaluate(() => {
     const m = (globalThis as { __eqxClient?: { mirror: { swarm: Map<number, { kind: number }> } } }).__eqxClient?.mirror;
     let n = 0;
@@ -20,15 +20,15 @@ async function sideCounts(ctx: ShotContext): Promise<{ robots: number; drones: n
 }
 
 /**
- * A small NPC dogfight: three drone fighters against three robots (sides that
+ * A small AI pilot dogfight: three drone fighters against three robots (sides that
  * fight on sight), filmed from spectator mode with a held camera over the
  * fight. No cues during the take; it ends ~3 s after one side is gone.
  */
 export const npcDogfight: Shot = {
   id: 'npc-dogfight',
   section: 'mechanics',
-  title: 'NPC dogfight (3v3)',
-  caption: 'Three drone fighters meet three robots. Nobody is steering them: they chase, turn and break on their own.',
+  title: 'AI pilots dogfight (3v3)',
+  caption: 'Three drone fighters meet three robot squares, all flown by AI pilots. Nobody is steering them: they chase, turn and break on their own.',
   features: ['M19'],
   docs: [],
   reel: false,
@@ -46,7 +46,7 @@ export const npcDogfight: Shot = {
     await ctx.spectate();
     const k = ctx.viewport.width / 1920;
     await ctx.cinema.play([{ atMs: 0, smoothMs: 0, shot: { kind: 'hold', x: 0, y: 0, zoom: 0.9 * k } }]);
-    ctx.log(`  [npc-dogfight] NPCs at take start: ${await npcCount(ctx)}`);
+    ctx.log(`  [npc-dogfight] AI pilots at take start: ${await pilotCount(ctx)}`);
   },
   async run(ctx) {
     const t0 = Date.now();

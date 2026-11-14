@@ -177,4 +177,19 @@ describe('HostileDroneBehaviour — morale wiring (slice 6b)', () => {
     for (let t = 1; t <= 30; t++) b.tick(self(K.maxHealth), view(t));
     expect(seen.length).toBe(1);
   });
+
+  it('a Fight-on roll holds MORALE_LOCK_TICKS before the next roll; a trigger meanwhile rolls after it', () => {
+    // Melee scene 2026-11-14: a fighter rolled Hull50, then Hull25 0.4 s later,
+    // then Burst: every trigger a fresh chance to flee. The lock is per roll.
+    const { b, seen, view } = setup([], MORALE_OUTCOME.FightOn);
+    let t = 1;
+    for (; t <= 30; t++) b.tick(self(0.45 * K.maxHealth), view(t));
+    expect(seen.length, 'hull 50 % rolled').toBe(1);
+    const lockEnd = t + MORALE_LOCK_TICKS;
+    for (; t < lockEnd - 30; t++) b.tick(self(0.2 * K.maxHealth), view(t));
+    expect(seen.length, 'no second roll inside the lock').toBe(1);
+    for (; t <= lockEnd + 60; t++) b.tick(self(0.2 * K.maxHealth), view(t));
+    expect(seen.length, 'the hull 25 % trigger rolls once the lock ends').toBe(2);
+    expect(seen[1]!.hullFrac).toBeCloseTo(0.2, 5);
+  });
 });

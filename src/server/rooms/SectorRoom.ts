@@ -398,7 +398,7 @@ import { isCapitalKindId } from '../../core/combat/capitalHits.js';
 import { shipAimRadius, shipRayHit, shipSweepHit } from '../../core/combat/shipHitShape.js';
 import { CapitalWreckSubsystem } from './CapitalWreckSubsystem.js';
 import { wreckRayHit } from '../../core/destruction/wreckHits.js';
-import { isWreckPiece } from '../net/SwarmEntityRegistry.js';
+import { isLootPod, isWreckPiece } from '../net/SwarmEntityRegistry.js';
 import { LineOfFireGate } from './LineOfFireGate.js';
 import { stampShipScale } from '../../shared-types/shipScale/welcomeScale.js';
 import { stampNavalRange } from '../../shared-types/combat/navalRange.js';
@@ -2195,6 +2195,8 @@ export class SectorRoom extends Room<SectorState> {
       swarmRegistry: this.swarmRegistry,
       lingeringSlots: this.lingeringSlots,
       lingeringShip: (sid) => this.state.ships.get(sid),
+      // Only a pilot's own shot can land on a loot pod; AI and turret bolts pass it.
+      shotHitsLootPods: (ownerId) => this.playerToSlot.has(ownerId),
       applyDamage: (targetId, shooterId, damage, hitX, hitY, dirX, dirY) =>
         this.applyDamage(targetId, shooterId, damage, hitX, hitY, dirX, dirY),
       wallBlocksProjectile: (x, y, sx, sy, damage) => {
@@ -8147,6 +8149,8 @@ export class SectorRoom extends Room<SectorState> {
     }
     for (const rec of this.swarmRegistry.all()) {
       if (rec.id === skipId) continue;
+      // Nobody fights a loot pod (owner 2026-11-13): AI and turret beams pass it.
+      if (isLootPod(rec)) continue;
       const b = slotBase(rec.slot);
       const d = this.swarmRayHit(
         rec, fx, fy, dx, dy, best,

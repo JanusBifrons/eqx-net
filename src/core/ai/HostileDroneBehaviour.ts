@@ -579,6 +579,10 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   private _moraleRoll: MoraleRollFn = rollMorale;
   /** A forced FallBack holds until this tick (Flee holds until the warp). */
   private _moraleLockUntil = -1;
+  /** No morale roll before this tick: every roll, Fight on included, holds
+   *  `MORALE_LOCK_TICKS`. Triggers are not checked meanwhile, so one that
+   *  arms inside the lock still rolls once it ends. */
+  private _moraleNextRollAt = -1;
   /** A FallBack still on its way to its friends gives up at this tick. */
   private _fallBackCapUntil = -1;
   /** Last roll's outcome (-1 = never rolled). */
@@ -1583,9 +1587,10 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       // Morale: a trigger (hull 50 / 25 %, burst, capital lost, outnumbered)
       // rolls the die; FallBack / Flee then run locked. A fleeing ship keeps
       // fleeing.
-      const trig = this._morale.update(tick, c.hullFrac, c.allies, c.enemies);
+      const trig = tick >= this._moraleNextRollAt ? this._morale.update(tick, c.hullFrac, c.allies, c.enemies) : -1;
       if (trig !== -1 && p.current !== MANOEUVRE_FLEE) {
         const outcome = this.rollMoraleNow(tick, c.hullFrac);
+        this._moraleNextRollAt = tick + MORALE_LOCK_TICKS;
         this._lastMorale = outcome;
         if (outcome === MORALE_OUTCOME.FallBack) {
           this.switchManoeuvre(MANOEUVRE_FALL_BACK, tick);

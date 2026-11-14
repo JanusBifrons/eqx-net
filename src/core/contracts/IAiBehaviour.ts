@@ -313,7 +313,8 @@ export interface IAiBehaviour {
    */
   markHostile?(shooterId: string, atTick: number): void;
   purgeHostility?(playerId: string): void;
-  /** Damage this entity took (morale, AI slice 6b). Server-only: the room's
+  /** Hull damage this entity took (morale, AI slice 6b; shield hits are not
+   *  fed). Server-only: the room's
    *  damage path calls it through `AiController.noteDamage` with the
    *  entity's own max hull (an elite's is 4× its kind's). Plain-field write,
    *  alloc-free. */
