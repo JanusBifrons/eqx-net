@@ -128,6 +128,19 @@ export interface AiWorldView {
    *  brain writes its own, reads a wingman's. Owned by `AiController`.
    *  Absent ⇒ no lane awareness. */
   readonly aims?: IAiAimBoard;
+  /** Who each side's brains currently target (spread targets, 2026-11-14): a
+   *  brain claims its body target, the others read the count. Owned by
+   *  `AiController`. Absent ⇒ no spreading (every target scores unclaimed). */
+  readonly claims?: IAiTargetClaims;
+}
+
+/** Body-target claims per NPC side (spread targets). One claim per brain;
+ *  `count` is how many brains of `side` hold `targetId` right now. Alloc-free
+ *  on the hot path (a target id seen for the first time adds one map entry). */
+export interface IAiTargetClaims {
+  /** Set (or clear, with `null`) this brain's claim. */
+  claim(entityId: string, side: string, targetId: string | null): void;
+  count(side: string, targetId: string): number;
 }
 
 /** Each brain's current aim point, keyed by entity id (AI slice 5b).
