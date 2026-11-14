@@ -1640,6 +1640,134 @@ A take that drops writes no series to its JSON ledger, so the tables above
 (from the runner's per-sample log lines) are the record. Timings come from
 a shared host and compare within this section only.
 
+#### Soak with time dilation on vs off (2026-11-14, `perf/subcap-final`)
+
+**Question:** there is no hard 2,000-piece cap. The game's own slowdown is
+meant to be the safety valve. The earlier soaks ran in a test room with the
+slowdown off. With it on, does the sector slow down as the debris grows, and
+does the client stay smooth?
+
+**Answer: the client stays smooth for the full 10 minutes in every take, with
+or without dilation. The slowdown barely took part.** No take dropped the
+client: up to ~1,450–1,640 pieces at the end, against drops at 1,440–1,710 in
+the soak above. Frame p95 held at 16.7–16.8 ms until the last 30 s. The cost
+fixes on this branch did that (the 600 u wreck prediction radius, #547 deltas
+and the fixes above), not dilation. The controller only answered brief server
+stalls: it slowed the sector for 8–18 s, then came back to 1×. It reached the
+0.7 floor once, in the last ~15 s of take ON-2 (~1,590 pieces). That window
+also had the only client trouble in that take (frame p95 33 ms, 59 hitches),
+so dilation did not keep that moment smooth. One window can't say whether the
+slowdown caused that trouble or only came with it.
+
+**How it was measured.**
+- New scene `fleet-fight-soak-lite-dilated` (`perfScenes.ts`): the same room
+  as `fleet-fight-soak-lite` plus `autoTimeScale: true` **and
+  `perfFixedLoad: false`**. Every perf room is defined with
+  `perfFixedLoad: true`, which skips the slowdown controller, the cost clock
+  and the load shedder. With that left on, `autoTimeScale` does nothing. So in
+  this scene the room protects itself the way a real sector does, and that
+  includes the load shedder (below).
+- The runner now logs the sector's speed and load factor in each sample
+  (`/dev/perf` `timeScale`). It also allows a dilated scene up to 1/0.7 × its
+  length in wall time.
+- Command: `pnpm perf:scenes --scenes fleet-fight-soak-lite-dilated
+  --head-only --reps 1 --sample-ms 30000 --head-params perfcounts=1
+  --head-env EQX_WAKE_CENSUS=1 --no-load-gate`, port offset 300, head
+  `febef59d` plus the scene change. Sub-cap flag on through the room option.
+- Three takes:
+  - **OFF:** the first take, run before the `perfFixedLoad` fix. The
+    controller code was skipped, so this room behaves exactly like
+    `fleet-fight-soak-lite`.
+  - **ON-1** and **ON-2:** dilation really on. ON-2 kept the server log, which
+    records every speed change.
+- Host: desktop (RTX 5070 Ti, 16 threads), 9–11 GB free, CPU 8–40 % before
+  each take. Other sessions were on the host, but no suites ran during the
+  takes.
+- Ignore the runner's end-of-take summary line (e.g. "rx 233,256 KB/s, frame
+  p95 49.9"). It reads the client after the last per-sample reset, over a few
+  seconds after the scene ended. The per-sample rows below are the record.
+
+**OFF (dilation off), one row a minute.**
+
+| t | pieces | asleep (all / >20 s) | tick p50 / p95 | worker p95 | speed | frame p50 / p95 / p99 | hitches | rx KB/s |
+|---|---|---|---|---|---|---|---|---|
+| 60 s | 84 | 33 % / 35 % | 0.8 / 1.0 | 0.8 | 1 | 16.7 / 16.7 / 16.8 | 7 | 405 |
+| 120 s | 225 | 38 % / 57 % | 1.5 / 1.9 | 1.4 | 1 | 16.7 / 16.7 / 16.8 | 3 | 925 |
+| 180 s | 353 | 59 % / 73 % | 2.5 / 3.1 | 2.1 | 1 | 16.7 / 16.7 / 16.8 | 0 | 1,449 |
+| 240 s | 499 | 59 % / 63 % | 3.8 / 4.3 | 3.2 | 1 | 16.7 / 16.8 / 16.8 | 2 | 1,884 |
+| 300 s | 708 | 52 % / 65 % | 4.5 / 5.2 | 4.5 | 1 | 16.7 / 16.8 / 16.8 | 1 | 2,579 |
+| 360 s | 874 | 38 % / 56 % | 5.9 / 7.6 | 8.5 | 1 | 16.7 / 16.8 / 16.8 | 0 | 3,081 |
+| 420 s | 1,063 | 28 % / 41 % | 6.9 / 8.7 | 10.8 | 1 | 16.7 / 16.8 / 16.8 | 1 | 3,880 |
+| 480 s | 1,238 | 42 % / 58 % | 8.1 / 9.5 | 12.2 | 1 | 16.7 / 16.8 / 16.8 | 4 | 4,377 |
+| 540 s | 1,449 | 46 % / 52 % | 8.5 / 10.9 | 16.5 | 1 | 16.7 / 16.7 / 16.8 | 1 | 4,657 |
+| 595 s | 1,639 | 44 % / 44 % | 8.9 / 11.7 | **23.5** | 1 | 16.7 / 16.8 / **33.4** | **20** | 5,563 |
+
+**ON-2 (dilation on), one row a minute.** The speed column is the sector's
+speed when the sample was read.
+
+| t | pieces | asleep (all / >20 s) | tick p50 / p95 | worker p95 | speed | frame p50 / p95 / p99 | hitches | rx KB/s |
+|---|---|---|---|---|---|---|---|---|
+| 60 s | 97 | 23 % / 64 % | 0.8 / 1.1 | 0.9 | 1 | 16.7 / 16.8 / 16.8 | 3 | 369 |
+| 120 s | 216 | 63 % / 65 % | 1.8 / 2.4 | 1.8 | 1 | 16.7 / 16.8 / 16.8 | 4 | 923 |
+| 180 s | 358 | 53 % / 63 % | 2.9 / 3.6 | 2.6 | 1 | 16.7 / 16.8 / 16.8 | 3 | 1,466 |
+| 240 s | 505 | 59 % / 66 % | 4.5 / 5.6 | 3.9 | 1 | 16.7 / 16.7 / 16.8 | 0 | 2,036 |
+| 298 s | 635 | 49 % / 59 % | 5.6 / 7.0 (p99 29) | 5.2 | **0.80** | 16.7 / 16.8 / 16.8 | 3 | 2,524 |
+| 357 s | 808 | 51 % / 63 % | 6.9 / 8.5 | 6.0 | 1 | 16.7 / 16.8 / 16.8 | 1 | 3,305 |
+| 416 s | 1,043 | 32 % / 58 % | 7.6 / 9.3 | 8.7 | 1 | 16.7 / 16.7 / 16.8 | 2 | 4,004 |
+| 476 s | 1,232 | 35 % / 56 % | 8.7 / 10.7 | 13.5 | 1 | 16.7 / 16.8 / 16.8 | 1 | 4,899 |
+| 536 s | 1,432 | 58 % / 58 % | 8.2 / 9.9 | 11.7 | 1 | 16.7 / 16.7 / 16.8 | 0 | 5,394 |
+| 594 s | 1,588 | 63 % / 59 % | 9.8 / 13.1 | **21.4** | **0.70** | 16.7 / **33.3** / 33.4 | **59** | 5,724 |
+
+Times are in ms. ON-2's rx tracks OFF within ~10–20 % (ON-1: 4.7 MB/s at
+1,312 pieces). Wreck descriptors stayed at ~1 a snapshot in every take, so the
+#547 deltas work. Most of the 4–5.5 MB/s at 1,200–1,640 pieces is the msgpack
+side (2.4–3.0 MB/s) plus the swarm channel (1.8–2.6 MB/s). With ~400 ships
+alive at the end, it is not the descriptor lists any more.
+
+**What the slowdown did (ON-2 server log, every speed change).**
+
+| scene time (≈) | pieces | change | trigger |
+|---|---|---|---|
+| ~290 s | ~620 | 1 → 0.75, back to 1 in 5 % steps over 18 s | 25 % of a window's ticks late (tick p99 29 ms) |
+| ~372 s | ~870 | 1 → 0.92, back to 1 in 16 s | 8 % late (tick p95 19.8 ms in that sample) |
+| ~580 s | ~1,550 | 1 → 0.90, back to 1 in 6 s | 10 % late |
+| ~595 s | ~1,590 | 1 → 0.86 → **0.70** within 1 s; still at 0.70 when the scene ended | 14 %, then 35 % late |
+
+- **ON-1** shows the same pattern. Speed read 1 at every sample except
+  t = 537 s (0.95, ~1,370 pieces). That take's server log was not kept.
+- **Load shedder:** when the speed sits at the floor and ticks run over
+  budget, `LoadShedder` quietly removes the drones farthest from the pilot.
+  In both ON takes, ships vanished without leaving debris right where the
+  speed dipped. ON-1: ~325 ships between t = 510 and 537 s, while pieces grew
+  by only 60. ON-2: ~200 ships in the last 30 s. A dying ship always breaks
+  into pieces, so these ships were shed, not killed; the shedder writes no
+  log line, so this is inferred from the counts. In the fight this looks like
+  part of a fleet disappearing. It is the existing second safety valve, not
+  dilation, and it fires only at the 0.7 floor.
+
+**Against the questions.**
+
+| Question | Result |
+|---|---|
+| Does the controller slow the sector? | **Rarely and briefly.** It reacts to server lateness (late ticks). At these counts the server's tick p95 stays at 1–13 ms and the physics worker p95 at 1–16 ms until ~1,500 pieces. So it slows only on stalls: four times in ON-2, down to 0.75–0.92 for 6–18 s, then the 0.7 floor at ~1,590 pieces. |
+| When the client first drops | **Never** in any take (OFF to 1,639 pieces, ON-1 to 1,449, ON-2 to 1,588). The first client trouble: frame p99 33 ms and 20 hitches in OFF's last sample (1,639 pieces); frame p95 33 ms and 59 hitches in ON-2's last sample (1,588 pieces, speed 0.7). Both coincide with the physics worker p95 passing ~20 ms. |
+| Asleep share (pieces older than 20 s) | 41–73 %, mostly 52–65 %, in every take. Lower than the 73–77 % above. Dilation does not change it. |
+| Bytes/s | 0.4 MB/s at ~100 pieces, ~2.5–3.0 MB/s at ~650–720, 4.4–5.9 MB/s at 1,230–1,640. About the same with dilation on and off. |
+
+**Verdict, in plain words.** At the debris counts a 10-minute,
+1,200-death fight leaves behind (up to ~1,600 pieces), the client now stays
+smooth on its own. Time dilation is not what keeps it smooth: the slowdown
+only answers the server falling behind, and at these counts the server
+rarely does. When the server does start to fall behind (~1,550–1,650 pieces,
+physics worker p95 past ~20 ms), the slowdown does kick in. But in the one
+window we caught, the client already showed 33 ms frames with dilation on,
+just as it did without. And at the floor, the load shedder deletes ships.
+So dilation is a valve for the SERVER, not a guarantee for the client.
+Whether it can hold the line past ~1,600 pieces needs a longer take (15–20
+min) with the server log kept, where the speed stays at 0.7 for minutes, not
+seconds. Watch the shedder in that take: whole fleets disappearing is worse
+for players than slow motion.
+
 ## 4. Determinism strategy
 
 Every client must produce the same pieces as the server, bit for bit, from

@@ -34,6 +34,10 @@ export interface ScenePerfView {
    *  Phase 1, print-only): 60 Hz ticks real time allowed, ticks the worker
    *  ran, the difference, and how many the worker's catch-up cap dropped. */
   simTime: { wallTicks: number; simTicks: number; latenessTicks: number; droppedTicks: number };
+  /** The sector's game speed now (`scale`), the automatic slowdown's load
+   *  factor [0.7, 1], and whether the slowdown runs in this room (soak
+   *  readout, print-only). */
+  timeScale: { scale: number; loadFactor: number; auto: boolean };
   /** Dev-only wreck wake census (`EQX_WAKE_CENSUS=1` on the server; the
    *  worker's `WakeCensusSample`, every 5 s), else null. */
   wakeCensus: unknown;

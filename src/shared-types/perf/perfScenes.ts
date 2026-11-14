@@ -115,6 +115,36 @@ export const PERF_SCENES: readonly PerfScene[] = [
     soak: true,
   },
   {
+    // The lite soak with the sector's automatic slowdown ON (time scale
+    // Phase 5, `LoadSpeedController`, 0.7 floor), as in a real sector: test
+    // rooms have it off unless they opt in. Asks whether the game's own time
+    // dilation keeps the client smooth as the debris grows. The scene clock
+    // is game time, so a slowed take runs up to 1/0.7 × longer in wall time.
+    // `perfFixedLoad: false` is load-bearing: perf rooms default to fixed
+    // load, which skips the slowdown controller (and the cost clock and load
+    // shedder) even with `autoTimeScale` on. Here the room protects itself
+    // exactly as a real sector does.
+    id: 'fleet-fight-soak-lite-dilated',
+    title: 'The lite debris soak with the automatic slowdown on (time dilation)',
+    room: {
+      droneCount: 0,
+      asteroidConfig: [],
+      subcapWrecks: true,
+      autoTimeScale: true,
+      perfFixedLoad: false,
+      sceneScript: [
+        { ...fight('blue', 'fighter', -300, 1200, 10), repeatEveryMs: 10_000, repeatUntilMs: 600_000 },
+        { ...fight('red', 'robot-square', 300, 1200, 10), repeatEveryMs: 10_000, repeatUntilMs: 600_000 },
+        { atMs: 600_000, action: 'end' },
+      ],
+    },
+    spawn: { x: 0, y: -400 },
+    camera: { x: 0, y: 1200, zoom: 0.45 },
+    durationMs: 600_000,
+    minSwarm: 10,
+    soak: true,
+  },
+  {
     id: 'teleport-raid',
     title: '40 ships warp in beside an NPC citadel at t = 5 s',
     room: {

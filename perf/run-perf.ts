@@ -190,7 +190,10 @@ async function runOnce(browser: Browser, arm: Arm, scene: PerfScene, log: (m: st
     let profileState: 'idle' | 'running' | 'done' = 'idle';
     let profileStopAt = 0;
     // Wait for the scene to end (server side).
-    const deadline = Date.now() + scene.durationMs + 60_000;
+    // The scene clock is game time: a room with the automatic slowdown on
+    // (floor 0.7) can take up to 1/0.7 × the scene in wall time.
+    const slowest = scene.room['autoTimeScale'] === true ? 0.7 : 1;
+    const deadline = Date.now() + scene.durationMs / slowest + 60_000;
     let room: Record<string, any> | undefined;
     for (;;) {
       room = (await devPerf(arm.servers.serverUrl)).rooms.find((r) => r['players'] > 0);
@@ -222,7 +225,7 @@ async function runOnce(browser: Browser, arm: Arm, scene: PerfScene, log: (m: st
           profileStopAt = Date.now() + cpuProfile.ms;
           log(`    cpu profile started at ${smp.wreckPieces} pieces (${cpuProfile.ms} ms)`);
         }
-        log(`    t=${smp.sceneS.toFixed(0)}s pieces ${smp.wreckPieces} (asleep ${smp.wreckSleepingPct}%${smp.oldAsleepPct !== null ? `, >20 s old ${smp.oldAsleepPct}% of ${smp.oldPieces}` : ''}, awake-but-still ${smp.wreckAwakeSlowPct}%) swarm ${smp.swarm} (asleep ${smp.sleepingPct}%) · tick p50/p95/p99 ${smp.tickP50}/${smp.tickP95}/${smp.tickP99} ms · worker p95 ${smp.workerP95} · bodies/tick ${smp.bodiesPerTick} · swarm rec/tick ${smp.swarmRecordsPerTick} B/tick ${smp.swarmBytesPerTick} · rx ${smp.rxKBps} KB/s (swarm ${smp.rxSwarmKBps}, msgs ${smp.rxMsgKBps}) · wreck desc/snap ${smp.wreckDescPerSnapshot} · frame p50/p95/p99 ${smp.frameP50}/${smp.frameP95}/${smp.frameP99} · hitches ${smp.hitches} · render p95 ${smp.renderP95} · draws p95 ${smp.drawCallsP95} · objects ${smp.displayObjects}`);
+        log(`    t=${smp.sceneS.toFixed(0)}s pieces ${smp.wreckPieces} (asleep ${smp.wreckSleepingPct}%${smp.oldAsleepPct !== null ? `, >20 s old ${smp.oldAsleepPct}% of ${smp.oldPieces}` : ''}, awake-but-still ${smp.wreckAwakeSlowPct}%) swarm ${smp.swarm} (asleep ${smp.sleepingPct}%) · speed ${smp.timeScale.toFixed(3)} (load ${smp.loadFactor.toFixed(2)}) · tick p50/p95/p99 ${smp.tickP50}/${smp.tickP95}/${smp.tickP99} ms · worker p95 ${smp.workerP95} · bodies/tick ${smp.bodiesPerTick} · swarm rec/tick ${smp.swarmRecordsPerTick} B/tick ${smp.swarmBytesPerTick} · rx ${smp.rxKBps} KB/s (swarm ${smp.rxSwarmKBps}, msgs ${smp.rxMsgKBps}) · wreck desc/snap ${smp.wreckDescPerSnapshot} · frame p50/p95/p99 ${smp.frameP50}/${smp.frameP95}/${smp.frameP99} · hitches ${smp.hitches} · render p95 ${smp.renderP95} · draws p95 ${smp.drawCallsP95} · objects ${smp.displayObjects}`);
       }
       if (cpuProfile && profileState === 'running' && Date.now() >= profileStopAt) {
         const { profile } = await cdp.send('Profiler.stop');
@@ -289,6 +292,8 @@ export interface SoakSample {
   /** Asleep share of pieces older than 20 s, from the wake census (server
    *  `EQX_WAKE_CENSUS=1`; null without it). Latest census, up to 5 s old. */
   oldAsleepPct: number | null; oldPieces: number | null;
+  /** The sector's game speed and the slowdown's load factor at read time. */
+  timeScale: number; loadFactor: number;
 }
 
 interface SampleMark { atMs: number; rx: number; rxSwarm: number; work: Record<string, any> | null }
@@ -321,6 +326,7 @@ function soakSample(room: Record<string, any>, c: any, last: SampleMark, now: nu
     renderP95: c.render?.render?.p95 ?? 0, drawCallsP95: c.render?.counts?.drawCalls?.p95 ?? null, displayObjects: c.render?.displayObjects ?? 0,
     oldAsleepPct: room['wakeCensus'] ? pct(room['wakeCensus'].oldAsleep ?? 0, room['wakeCensus'].oldPieces ?? 0) : null,
     oldPieces: room['wakeCensus']?.oldPieces ?? null,
+    timeScale: room['timeScale']?.scale ?? 1, loadFactor: room['timeScale']?.loadFactor ?? 1,
   };
 }
 
