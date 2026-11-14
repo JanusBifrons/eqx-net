@@ -107,6 +107,36 @@ NPC capitals (`capitalHits.ts`, the pad not modelled), shield up or down;
 the client's beam-end snap (`ColyseusClient.shieldEdgeDist`) does the
 same (#15). Lock: `tests/integration/sectorRoom/capitalShieldHugsHull.test.ts`.
 
+## One hit shape per ship KIND, whoever flies it (2026-11-13)
+
+Owner's rule: "Ships turning, acceleration, weapons, everything is related to
+the ship, regardless of pilot." Every weapon path that can hit a ship goes
+through `src/core/combat/shipHitShape.ts`, keyed by the ship's kind and
+whether its shield is up, never by who flies it:
+
+| shield | non-capital | capital |
+|---|---|---|
+| up | bubble: `kind.radius + shipTuning(kind).shieldPad` (= `shieldBubbleRadius`) | hull outline |
+| down | hull polygon (gated by `shipHitBound`) | hull outline |
+
+Callers: `SectorRoom.playerHitscanDist` / `playerProjectileSweep` (players and
+parked hulls), `SectorRoom.swarmRayHit` (NPC beams, structure beams, the NPC
+line-of-fire gate), `PlayerFireResolver` (player beams on drones),
+`ProjectilePipeline.sweepSwarm` (bolts and shells on drones),
+`MissileSimulation` (players, parked hulls, drones), and on the client
+`DisplayPoseHitscan` + `ColyseusClient.shieldEdgeDist` (#15). The projectile
+broadphase bins a ship by `shipHitBound(kind)` (contains bubble and hull).
+Shell splash measures each ship's edge at `shipSplashRadius(kind)` (its own
+radius, #18), player, parked or NPC alike.
+
+Before this, a drone was hit on `rec.radius` (= `kind.radius`) with no pad and
+no hull refinement for non-capitals; a player fighter was 20 u (the 2× pad)
+larger in every direction while its shield was up. Splash measured player ships
+as a 12 u fighter (`GLOBAL_SHIP_TUNING.hitRadius`, 24 u at 2×), so a player
+battleship (radius 2,876 u) took no splash where an NPC battleship took it;
+missiles hit a player on the same fighter `hitRadius` circle. Lock:
+`tests/integration/sectorRoom/shipHitShapeParity.test.ts`.
+
 ## Ramming aggregation (load-bearing)
 
 A shield-down hull is N triangle colliders, so one physical ram emits up

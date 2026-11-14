@@ -119,11 +119,15 @@ describe('capital hits follow the hull', () => {
 
   it('every drone hit site calls the shared refinement (server and client, #15)', () => {
     const src = (p: string): string => readFileSync(p, 'utf8');
-    expect(src('src/server/rooms/ProjectilePipeline.ts')).toContain('refineSweepHit(rec.shipKind');
-    expect(src('src/server/rooms/PlayerFireResolver.ts')).toContain('refineRayHit(rec.shipKind');
-    expect(src('src/client/net/ColyseusClient.ts')).toContain('refineRayHit(sw.shipKind');
-    // Pilot capitals (active or parked) go through the same helpers (2026-11-13).
-    expect(src('src/server/rooms/SectorRoom.ts')).toContain('refineRayHit(ship.kind, null');
-    expect(src('src/server/rooms/SectorRoom.ts')).toContain('refineSweepHit(ship.kind, null');
+    // Since 2026-11-13 every ship hit (player or NPC, any size) goes through
+    // `shipHitShape.ts`, which refines capitals to the hull.
+    expect(src('src/server/rooms/ProjectilePipeline.ts')).toContain('shipSweepHit(rec.shipKind');
+    expect(src('src/server/rooms/PlayerFireResolver.ts')).toContain('shipRayHit(rec.shipKind');
+    expect(src('src/client/net/ColyseusClient.ts')).toContain('shipRayHit(sw.shipKind');
+    expect(src('src/client/combat/displayPoseHitscan.ts')).toContain('shipRayHit(e.shipKind');
+    expect(src('src/server/rooms/SectorRoom.ts')).toContain('shipRayHit(ship.kind');
+    expect(src('src/server/rooms/SectorRoom.ts')).toContain('shipSweepHit(ship.kind');
+    expect(src('src/server/rooms/SectorRoom.ts')).toContain('shipRayHit(rec.shipKind');
+    expect(src('src/server/rooms/MissileSimulation.ts')).toContain('shipSweepHit(rec.shipKind');
   });
 });

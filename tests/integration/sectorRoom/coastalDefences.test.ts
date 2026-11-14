@@ -24,7 +24,12 @@ describe('SectorRoom integration — coastal defences', () => {
 
   it('the gun line powers up, every battery opens fire, and its barrels ride the snapshot', { timeout: 90_000 }, async () => {
     harness = await bootSectorTestServer(structuredClone(SHOWCASE_COASTAL_OPTS) as unknown as Record<string, unknown>);
-    const cr = await harness.connectActive(SHOWCASE_PILOT_ID === '' ? randomUUID() : randomUUID(), { initialHull: 1_000_000 });
+    // The pilot sits west of the default spawn so the quad AA's short-range
+    // autocannon bolts (projectiles[], ±3,072 u box) are in view. From (0, -2700)
+    // only the last stretch of a bolt to the far fighter was in the box; since
+    // NPC fighters are hit on their shield bubble like a player's (2026-11-13,
+    // `shipHitShape.ts`) the bolts land before that stretch.
+    const cr = await harness.connectActive(SHOWCASE_PILOT_ID === '' ? randomUUID() : randomUUID(), { initialHull: 1_000_000, spawnX: -1500, spawnY: -1500 });
     const room = matchMaker.getLocalRoomById(cr.roomId) as unknown as SectorRoom;
     const internal = room._internals;
 

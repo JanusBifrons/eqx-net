@@ -207,6 +207,16 @@ export const WeaponSlotSchema = z
 export type WeaponSlot = z.infer<typeof WeaponSlotSchema>;
 
 // ---------------------------------------------------------------------------
+// AI role — the tactical archetype an NPC of this kind flies as.
+// ---------------------------------------------------------------------------
+
+export const AI_ROLES = [
+  'scout', 'interceptor', 'fighter', 'gunship', 'missileBoat', 'capital', 'robot', 'civilian',
+] as const;
+export const AiRoleSchema = z.enum(AI_ROLES);
+export type AiRole = z.infer<typeof AiRoleSchema>;
+
+// ---------------------------------------------------------------------------
 // ShipKind — the absolute (not multiplicative) tuning record. Adding a new
 // kind never requires diffing against a base — every value is final.
 // ---------------------------------------------------------------------------
@@ -347,14 +357,13 @@ export const ShipKindSchema = z
       .object({
         /** Per-tick forward impulse the drone applies via `applyImpulse`. */
         thrust: z.number().positive(),
-        /** P-controller proportional gain on bearing error.
-         *  Effective torque = `turnKp * bearingError - 1.5 * angvel`. */
-        turnKp: z.number().positive(),
-        /** Hard cap on the magnitude of the torque-impulse the drone may
-         *  apply per tick. */
-        maxTorque: z.number().positive(),
       })
       .strict(),
+    /** Tactical role an NPC flying this kind plays (AI overhaul slice 3). Keys
+     *  `roleProfile(role)` in `src/core/ai/tactics/roleProfiles.ts` (sensor
+     *  range, range band, aggression, manoeuvre + morale weights). Data only;
+     *  not on any wire. */
+    aiRole: AiRoleSchema,
 
     shape: ShipShapeSchema,
 

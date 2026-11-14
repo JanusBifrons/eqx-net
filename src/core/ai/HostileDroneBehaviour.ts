@@ -14,7 +14,7 @@ import {
   PLAYERS_SIDE,
   type NpcAllegianceId,
 } from '../../shared-types/allegiances.js';
-import { pickTarget, type MountTargetView } from './WeaponMountController.js';
+import { pickTarget, type MountTargetView, type PickTargetOptions } from './WeaponMountController.js';
 import { arrive, makeSteerOutput, type SteerOutput } from './steering.js';
 import {
   type FlockAccumulator,
@@ -29,6 +29,7 @@ import {
 } from './flocking.js';
 import type { AiEntityPoseOut } from '../contracts/IAiBehaviour.js';
 import { shipTuning } from '../../shared-types/shipScale/tuning.js';
+import { roleSensorRange } from './tactics/roleProfiles.js';
 
 /** Aim cone (radians). Drones won't fire unless their nose is within this many radians of the target. */
 const DRONE_AIM_TOLERANCE = 0.25; // ~14°
@@ -126,7 +127,7 @@ const LEADER_CRUISE_THROTTLE = 0.55;
  * Hostile drone: steers toward nearest player and fires hitscan when in range
  * and roughly aimed. Cooldown matches the player weapon (10 ticks @ 60 Hz).
  *
- * Per-kind tuning (`thrust`, `turnKp`, `maxTorque`) is read from the
+ * Per-kind tuning (`thrust`) is read from the
  * `ShipKind.ai` block of the kind the drone spawned with — each drone in a
  * sector can be a different kind and steer with that kind's character. The
  * forward-vector convention matches `World.applyInput`: nose points
@@ -262,6 +263,19 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    *  need no lead). 2026-06-03 — replaces the single hardcoded
    *  LEAD_AIM_MUZZLE_SPEED, which 2×-over-led the 1600 u/s bolt. */
   private readonly leadMuzzleSpeed: number;
+  /** Sensor range (world units): NEW body-target picks are capped here
+   *  (`roleSensorRange(kind.aiRole, fireRange)`, AI overhaul slice 3). A held
+   *  target is kept beyond it, and a known (ledger) hostile beyond it is still
+   *  picked when nothing is in range, so director-ordered hunters still go. */
+  private readonly sensorRange: number;
+  /** Reused body-pick options (alloc-free, #14); `ticksSincePrevTarget` is
+   *  written each tick. */
+  private readonly _pickOpts: PickTargetOptions;
+  /** Same options without the sensor cap: the out-of-sensor fallback pick. */
+  private readonly _pickOptsUncapped: PickTargetOptions;
+  /** Bound once (no per-tick closure). Unused while every candidate carries
+   *  its own `hostile` flag, kept for the pickTarget signature. */
+  private readonly _isHostile = (id: string): boolean => this.hostileTo.has(id);
 
   /** 2026-05-31 — pooled per-instance scratches (Invariant #14). Pre-fix
    *  this class returned a fresh AiIntent literal per tick (~15 drones ×
@@ -335,10 +349,28 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       this.stopDistFactor = BROADSIDE_STANDOFF;
       this.backoffInsideFactor = 0;
     }
+    this.sensorRange = roleSensorRange(this.kind.aiRole, this.fireRange);
+    this._pickOpts = {
+      healthWeight: DRONE_TARGET_HEALTH_WEIGHT,
+      dwellTicks: DRONE_TARGET_DWELL_TICKS,
+      ticksSincePrevTarget: 0,
+      priorityBias: STRUCTURE_PRIORITY_BIAS,
+      maxDistance: this.sensorRange,
+      prevMaxDistance: Infinity,
+    };
+    this._pickOptsUncapped = {
+      healthWeight: DRONE_TARGET_HEALTH_WEIGHT,
+      dwellTicks: DRONE_TARGET_DWELL_TICKS,
+      ticksSincePrevTarget: 0,
+      priorityBias: STRUCTURE_PRIORITY_BIAS,
+    };
   }
 
   /** Test-visible engagement profile. */
   getFireRange(): number { return this.fireRange; }
+  getSensorRange(): number { return this.sensorRange; }
+  /** Test-visible: the body target currently held (null = none). */
+  getTargetId(): string | null { return this.prevTargetId; }
   getWeaponMode(): WeaponMode { return this.weaponMode; }
 
   /** Test-visible peek at the current state. */
@@ -525,15 +557,20 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       return this.leaderId !== null ? this.tickFlock(self, view) : this.tickPatrol(self);
     }
 
-    const target = pickTarget(
-      self.x, self.y, cand, this.prevTargetId, (id) => this.hostileTo.has(id),
-      {
-        healthWeight: DRONE_TARGET_HEALTH_WEIGHT,
-        dwellTicks: DRONE_TARGET_DWELL_TICKS,
-        ticksSincePrevTarget: view.tick - this.prevTargetSinceTick,
-        priorityBias: STRUCTURE_PRIORITY_BIAS,
-      },
-    );
+    // Sensor cap (AI overhaul slice 3): NEW picks only within the role's
+    // sensor range; the held target stays eligible at any range
+    // (`prevMaxDistance: Infinity`). Nothing in range and nothing held ⇒ fall
+    // back to the uncapped pick, so a director-ordered / retaliation contact
+    // (`hostileTo`, set via markHostile) across the sector is still hunted.
+    // On-sight candidates never reach the fallback beyond ON_SIGHT_ENGAGE_RANGE
+    // (they aren't hostile there), and the sensor range is floored at it.
+    const sinceTicks = view.tick - this.prevTargetSinceTick;
+    this._pickOpts.ticksSincePrevTarget = sinceTicks;
+    let target = pickTarget(self.x, self.y, cand, this.prevTargetId, this._isHostile, this._pickOpts);
+    if (target === null && anyHostile) {
+      this._pickOptsUncapped.ticksSincePrevTarget = sinceTicks;
+      target = pickTarget(self.x, self.y, cand, this.prevTargetId, this._isHostile, this._pickOptsUncapped);
+    }
     const newId = target?.id ?? null;
     if (newId !== this.prevTargetId) this.prevTargetSinceTick = view.tick;
     this.prevTargetId = newId;
@@ -1013,6 +1050,39 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     return sign * ramp * this.kind.maxAngvel;
   }
 
+  // ── Line-of-fire feedback (friendly fire; plan composed-harbor §4) ──────
+  // The room's LineOfFireGate held this NPC's shot because a friendly body
+  // was on the line. Plain fields only (#14); game ticks, never wall time
+  // (#20). Read by later slices (the blocked-fire nudge + utility scoring).
+  private _blockScore = 0;
+  private _blockScoreTick = 0;
+  private _lastBlockedTick = -1_000_000;
+  private _blockerX = 0;
+  private _blockerY = 0;
+
+  /** At most one count per tick (a capital's barrels may each report). */
+  noteBlocked(tick: number, blockerX: number, blockerY: number): void {
+    this._blockerX = blockerX;
+    this._blockerY = blockerY;
+    if (tick === this._lastBlockedTick) return;
+    this._blockScore = this.getRecentBlocks(tick) + 1;
+    this._blockScoreTick = tick;
+    this._lastBlockedTick = tick;
+  }
+
+  /** Decaying count of recent blocks: halves every `BLOCK_HALF_LIFE_TICKS`. */
+  getRecentBlocks(tick: number): number {
+    if (this._blockScore === 0) return 0;
+    const age = tick - this._blockScoreTick;
+    if (age <= 0) return this._blockScore;
+    return this._blockScore * Math.pow(0.5, age / BLOCK_HALF_LIFE_TICKS);
+  }
+
+  /** Tick of the latest block (-1_000_000 when never blocked). */
+  getLastBlockedTick(): number { return this._lastBlockedTick; }
+  /** World position of the latest blocking ally. */
+  getLastBlockerX(): number { return this._blockerX; }
+  getLastBlockerY(): number { return this._blockerY; }
 }
 
 /** Wrap an angle into [-π, π]. Standalone so both `tickPatrol` and
@@ -1024,3 +1094,7 @@ function wrapPi(rad: number): number {
   while (r < -Math.PI) r += 2 * Math.PI;
   return r;
 }
+
+/** Line-of-fire feedback: the recent-block count halves every this many game
+ *  ticks (0.5 s at 60 Hz). */
+export const BLOCK_HALF_LIFE_TICKS = 30;
