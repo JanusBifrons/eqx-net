@@ -4829,6 +4829,7 @@ export class SectorRoom extends Room<SectorState> {
   private readonly _swarmViewPool: Array<{
     id: string; x: number; y: number; vx: number; vy: number;
     allegiance: string; health?: number; maxHealth?: number; radius: number;
+    kindId: string | null; angle: number; shieldUp: boolean;
   }> = [];
   private readonly aiSwarmScratch: AiSwarmView[] = [];
 
@@ -4876,7 +4877,7 @@ export class SectorRoom extends Room<SectorState> {
       const b = slotBase(rec.slot);
       let v = pool[n];
       if (!v) {
-        v = { id: '', x: 0, y: 0, vx: 0, vy: 0, allegiance: 'drones', radius: 0 };
+        v = { id: '', x: 0, y: 0, vx: 0, vy: 0, allegiance: 'drones', radius: 0, kindId: null, angle: 0, shieldUp: false };
         pool[n] = v;
       }
       v.id = rec.id;
@@ -4888,6 +4889,9 @@ export class SectorRoom extends Room<SectorState> {
       v.health = this.swarmHealth.get(rec.id);
       v.maxHealth = getShipKind(rec.shipKind).maxHealth;
       v.radius = rec.radius;
+      v.kindId = rec.shipKind ?? null;
+      v.angle = this.sabF32[b + SLOT_ANGLE_OFF]!;
+      v.shieldUp = !rec.shieldDown;
       out.push(v);
       n++;
     }

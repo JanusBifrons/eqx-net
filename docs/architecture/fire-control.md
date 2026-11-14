@@ -221,9 +221,15 @@ Cost (laptop, 2026-11-14): `turretGather.count.test.ts` real 60 hostiles /
 alongside, a drone holding fire beyond reach with a lock, a coastal barbette vs
 a bow-on battleship), `turretLockPick.test.ts`.
 
+The drone brain (`HostileDroneBehaviour.tickCombat` / `tickBroadside`) also
+ranges to the hull: its "in range", stop, back-off, point-blank and broadside
+stand-off distances compare `fireRange × factor` with the hull distance
+(centre − `shipHitBound` when that is already past `fireRange`, else
+`shipHullDistance`), from the `kindId`/`angle`/`shieldUp` the room puts on
+`AiPlayerView` / `AiSwarmView`. Lock: `HostileDroneBehaviour.hullRange.test.ts`.
+
 Not yet hull-based: lock time (`lockSeconds`, centre distance; locks have no
-reach gate at all since 2026-11-14) and the drone brain's own `fireRange`
-decision still measure centre to centre.
+reach gate at all since 2026-11-14).
 
 ### Player fire gate: range per mount, to the hull
 
