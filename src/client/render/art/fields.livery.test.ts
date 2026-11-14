@@ -11,6 +11,7 @@ import { forgeShip, lin, liveryGrey, liveryPaint, MAT, paintLivery, shipExtent, 
 import { MAT_COUNT, matTables } from './shade.js';
 import { getShipKind, SHIP_KINDS_LIST } from '../../../shared-types/shipKinds.js';
 import { AT_AUTHORED_SHIP_SCALE } from '../../../shared-types/shipScale/config.js';
+import { sizeClassOf } from '../../../shared-types/shipScale/tuning.js';
 
 /** ~240 texels across whatever the size: fast, still every feature. */
 const ppuFor = (id: string): number => Math.min(2, 120 / shipExtent(id));
@@ -183,3 +184,117 @@ describe('MAT.LIVERY', () => {
     expect(f.albedo[i * 3]).toBeCloseTo(lin(liveryPaint(LIVERY.team))[0] * 0.5, 6);
   });
 });
+
+describe("livery treatment 'a' (rim / edge band)", () => {
+  const TEAM = 0x4fd0e8;
+  const RIM: Livery = { treatment: 'a', team: TEAM, sigil: 0xffd23a };
+  const KINDS_A = SHIP_KINDS_LIST.map((k) => k.id).filter((id) => id !== 'cargo-pod');
+  const isCapital = (id: string): boolean => sizeClassOf(getShipKind(id)) === 'capital';
+  // A capital's deck is a 0.86 inset of the hull line, so its hull band is ~7 %
+  // of the half-beam: at the fast ppu that is ~1 texel. Sample capitals 3x finer
+  // (still well under a real bake's ppu).
+  const ppuA = (id: string): number => ppuFor(id) * (isCapital(id) ? 3 : 1);
+
+  /** Median, over the middle half of the rows, of the LIVERY run at the left edge. */
+  function edgeRun(f: Fields): number {
+    const { g } = f;
+    let y0 = g.h, y1 = -1;
+    for (let i = 0; i < f.cov.length; i++) if (f.cov[i]! > 0) { const y = Math.floor(i / g.w); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+    const runs: number[] = [];
+    for (let y = Math.round(y0 + (y1 - y0) * 0.25); y <= Math.round(y0 + (y1 - y0) * 0.75); y++) {
+      let x = 0;
+      while (x < g.w && f.cov[y * g.w + x]! <= 0) x++;
+      let r = 0;
+      while (x + r < g.w && f.mat[y * g.w + x + r] === MAT.LIVERY) r++;
+      runs.push(r);
+    }
+    runs.sort((a, b) => a - b);
+    return runs[Math.floor(runs.length / 2)] ?? 0;
+  }
+
+  it.each(KINDS_A)('%s: a team-colour rim >= 2 texels wide, silhouette unchanged', (id) => {
+    const plain = forgeShip(id, { ppu: ppuA(id) });
+    const f = forgeShip(id, { ppu: ppuA(id), livery: RIM });
+    let covered = 0, liv = 0;
+    for (let i = 0; i < f.cov.length; i++) {
+      expect(f.cov[i]).toBe(plain.cov[i]);
+      if (f.cov[i]! > 0) covered++;
+      if (f.mat[i] === MAT.LIVERY) liv++;
+    }
+    if (isCapital(id)) expect(liv).toBeGreaterThan(0);
+    else expect(liv / covered).toBeGreaterThanOrEqual(0.02);
+    expect(edgeRun(f)).toBeGreaterThanOrEqual(2);
+  });
+
+  it('LIVERY texels carry the team hue', () => {
+    const [h0] = hsl(...hex3(liveryPaint(TEAM)));
+    for (const id of ['fighter', 'missile-frigate', 'battleship']) {
+      const f = forgeShip(id, { ppu: ppuFor(id), livery: RIM });
+      let n = 0;
+      for (let i = 0; i < f.mat.length; i++) {
+        if (f.mat[i] !== MAT.LIVERY) continue;
+        expect(f.key[i]).toBe(liveryPaint(TEAM));
+        const [h] = hsl(linToSrgb8(f.albedo[i * 3]!), linToSrgb8(f.albedo[i * 3 + 1]!), linToSrgb8(f.albedo[i * 3 + 2]!));
+        expect(Math.abs(((h - h0 + 540) % 360) - 180)).toBeLessThan(8);
+        n++;
+      }
+      expect(n).toBeGreaterThan(0);
+    }
+  });
+
+  it('a capital keeps its deck and superstructure grey', () => {
+    const id = 'battleship';
+    const parts = shipParts(getShipKind(id));
+    const hull = parts.findIndex((p) => p.role === 'hull');
+    expect(hull).toBeGreaterThanOrEqual(0);
+    const f = forgeShip(id, { ppu: ppuFor(id), livery: RIM });
+    const { g } = f;
+    const deck = parts.filter((p) => p.role === 'deck' || p.role === 'superstructure');
+    expect(deck.length).toBeGreaterThan(0);
+    // A LIVERY texel never lies well inside a deck / superstructure part.
+    for (let i = 0; i < f.mat.length; i++) {
+      if (f.mat[i] !== MAT.LIVERY) continue;
+      const wx = (i % g.w + 0.5 - g.ox) / g.ppu, wy = (Math.floor(i / g.w) + 0.5 - g.oy) / g.ppu;
+      for (const p of deck) {
+        const inset = 2 / g.ppu;
+        const inside = [[0, 0], [inset, 0], [-inset, 0], [0, inset], [0, -inset]].every(([dx, dy]) => pointIn(p.pts, wx + dx!, wy + dy!));
+        expect(inside).toBe(false);
+      }
+    }
+  });
+
+  it('frigates and cruisers carry a pinstripe inside the rim', () => {
+    // A pinstripe is a LIVERY texel separated from the edge by a grey gap.
+    const stripe = (id: string): number => {
+      const f = forgeShip(id, { ppu: ppuFor(id), livery: RIM });
+      const { g } = f;
+      let n = 0;
+      for (let y = 0; y < g.h; y++) {
+        let x = 0;
+        while (x < g.w && f.cov[y * g.w + x]! <= 0) x++;
+        while (x < g.w && f.mat[y * g.w + x] === MAT.LIVERY) x++;
+        let gap = 0;
+        while (x < g.w && f.cov[y * g.w + x]! > 0 && f.mat[y * g.w + x] !== MAT.LIVERY) { x++; gap++; }
+        if (gap > 0 && x < g.w && f.mat[y * g.w + x] === MAT.LIVERY && x < g.w / 2) n++;
+      }
+      return n;
+    };
+    const mid = SHIP_KINDS_LIST.filter((k) => ['frigate', 'cruiser'].includes(sizeClassOf(k)));
+    expect(mid.length).toBeGreaterThan(0);
+    for (const k of mid) expect(stripe(k.id), k.id).toBeGreaterThan(0);
+  });
+
+  it.each(['b', 'c'] as const)("treatment '%s' paints nothing yet", (t) => {
+    const f = forgeShip('fighter', { ppu: ppuFor('fighter'), livery: { ...RIM, treatment: t } });
+    expect(f.mat.some((m) => m === MAT.LIVERY)).toBe(false);
+  });
+});
+
+function pointIn(pts: ReadonlyArray<readonly [number, number]>, x: number, y: number): boolean {
+  let c = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const [xi, yi] = pts[i]!, [xj, yj] = pts[j]!;
+    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) c = !c;
+  }
+  return c;
+}

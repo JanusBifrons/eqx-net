@@ -17,6 +17,7 @@ import { shipShapeScale } from '../../../core/geometry/shipHullOutline.js';
 import { generateAsteroidVertices } from '../../../core/swarm/asteroidShape.js';
 import { NAVAL_BARREL_SPAN } from '../../../core/combat/muzzle.js';
 import { planBowFeatures, type BowFeature } from './bowDetail.js';
+import { sizeClassOf } from '../../../shared-types/shipScale/tuning.js';
 
 export const MAT = {
   NONE: 0,
@@ -301,6 +302,27 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
   }
   const paintBands = [true, true, R() < 0.45, true, R() < 0.5];
 
+  // Livery treatment 'a' (rim / edge band): the team colour runs along the
+  // outer edge, everything inside stays grey. Frigates and cruisers add a thin
+  // pinstripe inside the rim; capitals carry a narrower rim on the hull part
+  // only (deck and superstructure stay grey). Never under 2 texels wide.
+  // `dist` counts whole texels to the nearest outside centre (a full edge
+  // texel is 1), so < 2.5 texels keeps two full texels plus the AA edge.
+  const minLiv = 2.5 / g.ppu;
+  const sizeCls = sizeClassOf(kind);
+  const rimA = livery?.treatment === 'a';
+  const rimW0 = Math.max(minLiv, Math.min(0.22 * maxDu, bw * 1.1));
+  const rimW = sizeCls === 'capital' ? Math.max(minLiv, Math.min(rimW0, 0.05 * maxDu)) : rimW0;
+  const pin = sizeCls === 'frigate' || sizeCls === 'cruiser';
+  const pinLo = 1.6 * rimW, pinHi = pinLo + Math.max(0.3 * rimW, minLiv);
+  const hullRole = parts.findIndex((p) => (p as { role?: string }).role === 'hull');
+  const hullLayer = hullRole >= 0 ? hullRole : 0;
+  const liveryAt = (du: number, i: number): boolean => {
+    if (!rimA) return false;
+    if (sizeCls === 'capital') return du < rimW && (parts.length <= 1 || layer[i] === hullLayer || layer[i] === -1);
+    return du < rimW || (pin && du >= pinLo && du < pinHi && pinHi < maxDu * 0.8);
+  };
+
   const metal = lin(PALETTE.metal);
   const noiseSeed = hashStr(seedKey + ':grime');
   const panelSeed = hashStr(seedKey + ':panels');
@@ -344,6 +366,9 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
         setAlbedo(f, i, surf, 0.38);
         mat = MAT.TRIM;
         h -= Math.min(0.3, Hmax * 0.05);
+      } else if (livery && liveryAt(du, i)) {
+        paintLivery(f, i, livery.team, pv * (0.95 + 0.08 * nz));
+        mat = MAT.LIVERY;
       } else {
         setAlbedo(f, i, surf, pv * (0.95 + 0.08 * nz));
       }
