@@ -167,6 +167,8 @@ Every mount renders three Pixi `Graphics` children parented to the host sprite v
 2. **Aim line** — a dotted 6/4 dash chain from the barrel tip extending along the mount's current fire direction, **for the bound weapon's effective reach** (pure `aimLineLengthForMount` → `weaponAutoFireRange`; hitscan→`range`, projectile→0.85×, missile→0.5×). Alpha 0.25 so it doesn't dominate. (Was a hardcoded 500 u for every mount — the interceptor beam, range 250, drew its guide at 2× reach: R2.14, 2026-06-12.)
 3. (Phase 4b plan) **Aim arc indicator** — a faint wedge from `arcMin..arcMax`. Currently deferred; was descoped from Phase 4b because static aim-line + visible turret rotation made it redundant for the smoke-test feel. Re-instate if a future iteration wants explicit arc visibility.
 
+**Drawn angle of a snapshot-driven ship (drones, capitals).** `net/displayMountAngles.ts` carries the latest 20 Hz snapshot angle forward at the turret's measured turning rate so the barrel turns every frame. The carried-forward angle is kept inside the mount's arc (`arcMin..arcMax`, the same bounds as the server's `rotateMountToward`): a gun slewing into its stop otherwise swung up to 10° past it and sprang back (take 7, 2026-11-14, the gunship's forward gun, which the AI pilot's orbit holds at its stop most of a fight). Lock: `displayMountAngles.test.ts` "never draws a barrel past its arc stop".
+
 `BARREL_LENGTH = 20` deliberately matches the 20 u server-side self-hit clearance offset in `handleFire`/`handleAiFire` — so the beam emerges from the visible barrel tip rather than 12 u past it. **Don't change one without the other.**
 
 ## Equinox R2 beam fixes (2026-06-12)
