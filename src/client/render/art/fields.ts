@@ -28,7 +28,20 @@ export const MAT = {
   LIGHT: 6,
   WINDOW: 7,
   ROCK: 8,
+  /** Owner-faction enamel on a liveried hull (written only via `paintLivery`). */
+  LIVERY: 9,
 } as const;
+
+/** Which spot treatment a livery uses (the spots come in later slices). */
+export type LiveryTreatment = 'a' | 'b' | 'c';
+/** A ship livery: grey hull, the owner's colours only in chosen spots. */
+export interface Livery {
+  treatment: LiveryTreatment;
+  /** Team colour, sRGB hex. */
+  team: number;
+  /** Sigil colour, sRGB hex. */
+  sigil: number;
+}
 
 export interface Fields {
   g: Grid;
@@ -54,6 +67,8 @@ export interface Fields {
   vents?: Array<{ x: number; y: number; hw: number; hh: number }>;
   /** Capital bow fittings stamped into the hull (bowDetail.ts; ships). */
   bow?: BowFeature[];
+  /** The livery this set was forged with (ships; absent = catalogue paint). */
+  livery?: Livery;
 }
 
 /** sRGB hex → linear rgb. */
@@ -108,13 +123,74 @@ export const PALETTE = {
   navStarboard: 0x3bff7a,
 };
 
-/** Soften a catalogue colour into a paint: less neon, a touch darker. */
-export function paintOf(hex: number): number {
+/** Pull a colour toward its channel mean by `s`, then darken by `d`. */
+function muted(hex: number, s: number, d: number): number {
   const r = (hex >> 16) & 255, g = (hex >> 8) & 255, b = hex & 255;
   const grey = (r + g + b) / 3;
-  const s = 0.78, d = 0.86;
   const m = (c: number): number => Math.round(Math.max(0, Math.min(255, (grey + (c - grey) * s) * d)));
   return (m(r) << 16) | (m(g) << 8) | m(b);
+}
+
+/** Soften a catalogue colour into a paint: less neon, a touch darker. */
+export function paintOf(hex: number): number {
+  return muted(hex, 0.78, 0.86);
+}
+
+/** A livery's team colour as enamel: only lightly muted, still strong. */
+export function liveryPaint(hex: number): number {
+  return muted(hex, 0.92, 0.95);
+}
+
+/** Livery grey: HSL lightness core band (the capitals' hull and deck greys). */
+const LIV_L_LO = 0.38, LIV_L_HI = 0.55;
+/** Soft shoulders outside the band: darker / lighter parts approach
+ *  LO - 0.35 / HI + 0.14 asymptotically, so order is kept and the capitals'
+ *  dark stacks and pale upper decks barely move. */
+const LIV_L_SOFT_LO = 0.35, LIV_L_SOFT_HI = 0.14;
+/** Saturation: kept up to the knee, soft-capped toward the ceiling (the
+ *  capitals' bluish hull grey, s 0.17, lands ~0.13); loud colours (s >= 0.6)
+ *  settle at 0.10, a trace of their hue. */
+const LIV_S_KNEE = 0.1, LIV_S_CEIL = 0.14, LIV_S_LOUD = 0.1;
+
+/**
+ * Catalogue colour -> livery hull grey. Hue is kept as a trace (saturation
+ * soft-capped ~0.10); HSL lightness is identity inside the capitals' hull band
+ * (0.38-0.55) with soft, monotone shoulders outside it, so a dark part stays
+ * darker than a light one. The capitals' catalogue greys move by at most ~2.7
+ * CIE76 dE (fields.livery.test.ts); a neon sub-cap colour becomes a grey with
+ * a hint of its hue at about its own lightness.
+ */
+export function liveryGrey(hex: number): number {
+  const r = ((hex >> 16) & 255) / 255, g = ((hex >> 8) & 255) / 255, b = (hex & 255) / 255;
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+  const l = (mx + mn) / 2;
+  const dl = mx - mn;
+  let h = 0, s = 0;
+  if (dl > 0) {
+    s = l > 0.5 ? dl / (2 - mx - mn) : dl / (mx + mn);
+    h = (mx === r ? (g - b) / dl + (g < b ? 6 : 0) : mx === g ? (b - r) / dl + 2 : (r - g) / dl + 4) / 6;
+  }
+  let s2 = s <= LIV_S_KNEE ? s : LIV_S_KNEE + (LIV_S_CEIL - LIV_S_KNEE) * Math.tanh((s - LIV_S_KNEE) / (LIV_S_CEIL - LIV_S_KNEE));
+  const loud = Math.min(1, Math.max(0, (s - 0.25) / 0.35));
+  s2 -= (s2 - LIV_S_LOUD) * loud * loud * (3 - 2 * loud);
+  const l2 = l < LIV_L_LO ? LIV_L_LO - LIV_L_SOFT_LO * Math.tanh((LIV_L_LO - l) / LIV_L_SOFT_LO)
+    : l > LIV_L_HI ? LIV_L_HI + LIV_L_SOFT_HI * Math.tanh((l - LIV_L_HI) / LIV_L_SOFT_HI)
+      : l;
+  const q = l2 < 0.5 ? l2 * (1 + s2) : l2 + s2 - l2 * s2, p = 2 * l2 - q;
+  const ch = (t: number): number => {
+    t = ((t % 1) + 1) % 1;
+    const v = t < 1 / 6 ? p + (q - p) * 6 * t : t < 1 / 2 ? q : t < 2 / 3 ? p + (q - p) * (2 / 3 - t) * 6 : p;
+    return Math.round(Math.max(0, Math.min(1, v)) * 255);
+  };
+  return (ch(h + 1 / 3) << 16) | (ch(h) << 8) | ch(h - 1 / 3);
+}
+
+/** Paint one texel in a livery's team enamel (for the spot treatments). */
+export function paintLivery(f: Fields, i: number, team: number, k = 1): void {
+  const c = liveryPaint(team);
+  f.mat[i] = MAT.LIVERY;
+  f.key[i] = c;
+  setAlbedo(f, i, lin(c), k);
 }
 
 /** World-space part polygons for a ship kind (same transform as the game). */
@@ -141,8 +217,12 @@ export function shipExtent(id: string): number {
 export interface ShipForgeOpts {
   /** Texels per world unit. */
   ppu: number;
-  /** Override the paint (faction colour). Default: the catalogue colour. */
+  /** Override the paint (faction colour). Default: the catalogue colour.
+   *  Ignored when `livery` is set. */
   paint?: number;
+  /** Livery: every part colour becomes its `liveryGrey`; the team colour is
+   *  kept for spot treatments (and a robot's core ring). Overrides `paint`. */
+  livery?: Livery;
   /** Forge these parts instead of the kind's hull (a scrap component). */
   parts?: Array<{ pts: Poly; color: number }>;
   /** Seed text for the plating (default: the kind id). */
@@ -172,8 +252,10 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
   const arch = archetypeOf(kind.id);
   const parts = opts.parts ?? shipParts(kind);
   const g = gridFor(parts.map((p) => p.pts), opts.ppu, 3);
-  const basePaint = opts.paint ?? parts[0]!.color;
+  const livery = opts.livery;
+  const basePaint = livery ? liveryGrey(parts[0]!.color) : opts.paint ?? parts[0]!.color;
   const f = newFields(g, paintOf(basePaint));
+  if (livery) f.livery = livery;
   const n = g.w * g.h;
   const seedKey = opts.seedKey ?? kind.id;
   const R = rng(hashStr(seedKey));
@@ -183,7 +265,7 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
   const partCols: number[] = [];
   parts.forEach((p, idx) => {
     const c = rasterPoly(g, p.pts);
-    partCols.push(p.color);
+    partCols.push(livery ? liveryGrey(p.color) : p.color);
     for (let i = 0; i < n; i++) {
       if (c[i]! > f.cov[i]!) f.cov[i] = c[i]!;
       if (c[i]! > 0.5) layer[i] = idx;
@@ -376,7 +458,7 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
   } else {
     // A robot's core: a glowing ring.
     const rr = Math.max(1, maxDu * 0.35);
-    const e = lin(kind.shape.kind === 'polygon' ? kind.shape.color : 0xff4060);
+    const e = lin(livery ? liveryPaint(livery.team) : kind.shape.kind === 'polygon' ? kind.shape.color : 0xff4060);
     put(0, 0, rr, rr, (i, k) => {
       if (k > 0.45 && k < 0.8) {
         f.mat[i] = MAT.LIGHT;
