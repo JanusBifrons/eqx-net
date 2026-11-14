@@ -116,6 +116,8 @@ export interface AiWorldView {
    *  engageable pilot hulls, rebuilt once per tick by the server. SERVER-ONLY,
    *  no wire surface (same rationale as `structures`). Absent ⇒ no index. */
   readonly neighbours?: IAiNeighbourQuery;
+  /** The controller's work counters (absent ⇒ nothing counts). */
+  readonly stats?: AiTickStats;
 }
 
 /**
@@ -164,6 +166,14 @@ export interface AiEntity {
   readonly vy: number;
   readonly angle: number;
   readonly angvel: number;
+  /** Current hull health (server-filled; absent ⇒ unknown, read as full). */
+  readonly health?: number;
+}
+
+/** Per-room AI work counters a behaviour may bump (print-only, server). */
+export interface AiTickStats {
+  /** Decision-layer re-scores (running total). */
+  decisions: number;
 }
 
 /**
