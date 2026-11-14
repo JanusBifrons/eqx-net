@@ -16,6 +16,9 @@ import { easedSnapTurn, makeSnapTurnState } from './virtualPilot.js';
 // wider turret window, not the hull cone.
 const FIXED_GUN_KIND = 'patrol-fighter';
 const R = shipBubbleRadius(FIXED_GUN_KIND);
+// "At range": well inside the kind's fire range at any ship scale (840 u at
+// the 2x default, 560 u at the authored 1x).
+const D = 0.7 * new HostileDroneBehaviour(FIXED_GUN_KIND).getFireRange();
 
 function firesAt(bearing: number, dist: number, hitRadius: number | undefined): boolean {
   const brain = new HostileDroneBehaviour(FIXED_GUN_KIND);
@@ -34,16 +37,16 @@ describe('fixed-gun fire gate: the hull cone', () => {
   });
 
   it('fires with the nose inside the hull cone at range', () => {
-    const cone = Math.atan(R / 600);
+    const cone = Math.atan(R / D);
     expect(cone).toBeLessThan(FC_MOUNT_FIRE_TOLERANCE);
-    expect(firesAt(cone * 0.5, 600, R)).toBe(true);
+    expect(firesAt(cone * 0.5, D, R)).toBe(true);
   });
 
   it('holds fire outside the hull cone, even inside the 0.2 rad player window', () => {
-    const cone = Math.atan((R + 3) / 600);
+    const cone = Math.atan((R + 3) / D);
     const between = (cone + FC_MOUNT_FIRE_TOLERANCE) / 2;
     expect(between).toBeLessThan(FC_MOUNT_FIRE_TOLERANCE);
-    expect(firesAt(between, 600, R)).toBe(false);
+    expect(firesAt(between, D, R)).toBe(false);
   });
 
   it('never fires wider than 0.2 rad, however close or big the target', () => {
