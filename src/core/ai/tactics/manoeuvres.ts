@@ -231,7 +231,7 @@ export class TailManoeuvre implements IManoeuvre {
     out.facing = ctx.dist <= R && speed > 1e-6
       && (wvx * ctx.ux + wvy * ctx.uy) / speed > TAIL_AIM_COS ? FACE_AIM_LEAD : FACE_MOVE;
     // Afterburner to catch up: far off, or the target is pulling away and
-    // we are short of the station.
+    // we are short of the station (a runner close in: the brain's chase rule).
     out.boost = ctx.dist > TAIL_BOOST_RANGE * R || (ctx.closing < 0 && d > TAIL_ARRIVE * R);
   }
   isDone(): boolean { return false; }
@@ -354,6 +354,18 @@ const STRAFE_RELOCK_FRAC = 0.9;
 /** A strafing extend's course runs at least this cos away from the target
  *  (60° off straight away): it opens the range at half its speed or more. */
 const STRAFE_EXTEND_OUT = 0.5;
+
+/** A target opening the range within this cos (45°) of my course is running
+ *  from my dive, not behind me after a pass. Before 2026-11-14 a dive at a
+ *  ship that turned and ran locked the pass (inside the pull distance, or any
+ *  opening gap inside half a fire range) and flew the pass's fixed heading and
+ *  the 1.5–3 s extend AWAY from it: boost lit, gap 300 → 1100 u in 3 s
+ *  (boostChase). */
+export const RUN_CHASE_AHEAD_COS = Math.SQRT1_2;
+function runnerAhead(ctx: TacticalContext): boolean {
+  const v = Math.hypot(ctx.vx, ctx.vy);
+  return v > 1e-6 && ctx.vx * ctx.ux + ctx.vy * ctx.uy > RUN_CHASE_AHEAD_COS * v;
+}
 
 /**
  * Boom-and-zoom: dive at full speed (boosting) at the lead, guns on it;
@@ -542,7 +554,12 @@ export class AttackRunManoeuvre implements IManoeuvre {
     }
     if (this.phase === RUN_DIVE) {
       if (ctx.tick >= this.phaseEnd) { this.phase = RUN_DONE; return; }
-      if (ctx.dist < runPullDist(ctx) || (ctx.closing < 0 && ctx.dist < 0.5 * ctx.fireRange)) {
+      // A target opening the range ahead of my course is running from the
+      // dive: no pass to fly yet, the dive (boosting at the lead) chases it
+      // (`RUN_CHASE_AHEAD_COS`). Otherwise an opening gap means the pass
+      // went by.
+      const running = ctx.closing < 0 && runnerAhead(ctx);
+      if (!running && (ctx.dist < runPullDist(ctx) || (ctx.closing < 0 && ctx.dist < 0.5 * ctx.fireRange))) {
         this.lockPass(ctx);
         this.phase = RUN_PASS;
         this.phaseEnd = ctx.tick + RUN_PASS_MAX_S * TICKS_PER_S;
@@ -579,6 +596,13 @@ export class AttackRunManoeuvre implements IManoeuvre {
         ? (beyond > 0 && ctx.tick >= this.phaseEnd)
           || ctx.tick >= this.phaseEnd + (RUN_STRAFE_PASS_CAP - 1) * RUN_PASS_MAX_S * TICKS_PER_S
         : ctx.tick >= this.phaseEnd;
+      // Not past the target yet and it is running from me (ahead of my
+      // course, opening the range): it outran the pass. The run is over; the
+      // picker chooses again (a chase, or a fresh dive that chases it).
+      if (!strafe && beyond < 0 && ctx.closing < 0 && runnerAhead(ctx)) {
+        this.phase = RUN_DONE;
+        return;
+      }
       if (beyond > ctx.overshoot || timeUp || closeIn) {
         this.phase = RUN_EXTEND;
         const s = RUN_EXTEND_MIN_S + (RUN_EXTEND_MAX_S - RUN_EXTEND_MIN_S) * rngUnit(ctx);

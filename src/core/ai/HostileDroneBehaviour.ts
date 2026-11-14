@@ -71,7 +71,7 @@ import {
   type ManoeuvreId,
   type TacticalContext,
 } from './tactics/manoeuvre.js';
-import { AttackRunManoeuvre, BreakManoeuvre, HoldManoeuvre, TailManoeuvre } from './tactics/manoeuvres.js';
+import { AttackRunManoeuvre, BreakManoeuvre, HoldManoeuvre, RUN_CHASE_AHEAD_COS, TailManoeuvre } from './tactics/manoeuvres.js';
 import { FallBackManoeuvre, FleeManoeuvre, KiteManoeuvre, OrbitManoeuvre } from './tactics/stanceManoeuvres.js';
 import {
   MORALE_LOCK_TICKS,
@@ -199,6 +199,14 @@ const RUN_NOW_PILOT_PARAMS: Readonly<PilotParams> = { ...RUN_PILOT_PARAMS, throt
  *  (`ENERGY_POOL_MUL`) a quarter of the pool is a Break's worth and still
  *  leaves the pilot more boost to open a fight with than before. */
 const BOOST_RESERVE_FRAC = 0.25;
+/** The chase boosts when the wanted speed beats the kind's cruise (what thrust
+ *  alone holds) by this share (`chaseBoost`). */
+const CHASE_SPEED_FRAC = 1.1;
+/** …and only after a ship running from me: its own speed away from me along
+ *  the line at least this share of my cruise (`SLOW_SPEED_FRAC`'s 0.5). A gap
+ *  that opens because I moved (a nudge, a stand-off) is no chase; a structure,
+ *  a still ship or one coming at me is closed on by the manoeuvre's own rule. */
+const CHASE_RUN_FRAC = 0.5;
 /** Forget a hostile player after this many ticks of no fresh damage from
  *  them. 1800 ticks @ 60 Hz = 30 s. Mirrors the player's own intuition that
  *  if they've been clean for half a minute, the drone has lost interest. */
@@ -1340,11 +1348,35 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     // Afterburner: whenever the manoeuvre wants it, above the reserve; a
     // Break, or a ship running from a tailer (`spendReserve`), may spend the
     // reserve (the pool itself still runs dry).
-    const boost = goal.boost
+    // A chase (`chaseBoost`) burns down to the reserve like any other boost.
+    const boost = (goal.boost || this.chaseBoost(ux, uy, wvx, wvy))
       && (this.energy >= BOOST_RESERVE_FRAC * this.energyMax || this._picker.current === MANOEUVRE_BREAK
         || goal.spendReserve);
     return this.fly(self, facing, wvx, wvy, boost,
       goal.throttleNow ? RUN_NOW_PILOT_PARAMS : goal.spendReserve ? RUN_PILOT_PARAMS : COMBAT_PILOT_PARAMS);
+  }
+
+  /**
+   * The chase (owner 2026-11-14: "why doesn't the fighter … ever use its boost
+   * to catch up and chase down the ship it was fighting?!"): the manoeuvre's
+   * wanted velocity runs at the target (within `RUN_CHASE_AHEAD_COS` of the
+   * line to it) faster than thrust alone holds (`CHASE_SPEED_FRAC` × cruise),
+   * the target is a ship running from me (its own speed away along the line
+   * at least `CHASE_RUN_FRAC` × my cruise), still worth chasing (inside
+   * sensor range), and it is opening the range or still out of gun range. Whatever the manoeuvre: Tail only
+   * boosted with its station half a fire range off, and its station sits
+   * 0.3 × fire range behind a close target, so a runner inside ~0.8 × fire
+   * range was followed at cruise (~260 u/s, no boost) while it opened the
+   * range at up to ~360 u/s (boostChase diag). A course away from the target
+   * (an extend, a kite, a flight) never counts.
+   */
+  private chaseBoost(ux: number, uy: number, wvx: number, wvy: number): boolean {
+    const c = this._tac;
+    const cruise = this.handling.cruiseSpeed;
+    if (!c.targetIsShip || c.tvx * c.ux + c.tvy * c.uy < CHASE_RUN_FRAC * cruise) return false;
+    if (!(c.closing < 0 || c.dist > this.fireRange) || c.dist >= this.sensorRange) return false;
+    const w = Math.hypot(wvx, wvy);
+    return w > CHASE_SPEED_FRAC * cruise && wvx * ux + wvy * uy > RUN_CHASE_AHEAD_COS * w;
   }
 
   /**
