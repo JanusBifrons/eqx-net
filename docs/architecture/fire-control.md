@@ -139,7 +139,12 @@ volley, then its turrets went home.
 
 **Cost.** NPC lock step is O(pilots × hostile NPCs) at 10 Hz:
 `benchmarks/npc-locks.bench.ts` measures ~0.015 ms for 56 drones × 4 pilots and
-~0.037 ms for 56 × 10 (laptop, 2026-11-09).
+~0.037 ms for 56 × 10 (laptop, 2026-11-09). Locks at any distance (2026-11-14)
+complete every hostile pair and add a fire-range test per pair for the
+hostility refresh (`mountsReachTarget`, the pilot's shape resolved once per
+pilot, a circle fast path for a shield-up hull); interleaved A/B on a loaded
+laptop, mean per step: 56 × 10 in reach 0.057 → 0.084 ms, 56 × 10 20 km out
+0.047 → 0.087 ms, 8 battleships × 10 pilots 0.024 → 0.029 ms. Budget 0.1 ms.
 
 **Test triggers.** testMode join option `instantLock: true` (URL `?instantLock=1`):
 every lock completes on the next step (a failsafe still commits its hostile

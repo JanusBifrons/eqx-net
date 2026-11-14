@@ -64,7 +64,7 @@ export interface MountRangeTarget {
 }
 
 /** A circle round the target's centre containing its whole hit shape. */
-export function mountRangeBound(t: MountRangeTarget | null | undefined): number {
+function mountRangeBound(t: MountRangeTarget | null | undefined): number {
   if (!t) return 0;
   if (t.kindId != null) return shipHitBound(t.kindId);
   return t.radius ?? 0;
@@ -137,7 +137,7 @@ export function prepareRangeTarget(t: MountRangeTarget | null | undefined, out: 
 /** The radius when the target's hit shape is a plain circle (a non-capital
  *  ship with its shield up: its bubble; a kindless target: its `radius`),
  *  else -1 (a hull polygon: `mountInReach` decides). */
-export function mountRangeCircle(t: MountRangeTarget | null | undefined): number {
+function mountRangeCircle(t: MountRangeTarget | null | undefined): number {
   if (t?.kindId != null) return t.shieldUp === true && !isCapitalKindId(t.kindId) ? shipBubbleRadius(t.kindId) : -1;
   return t?.radius ?? 0;
 }
