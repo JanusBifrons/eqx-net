@@ -294,6 +294,8 @@ function _pa5(n: number): number { return parseFloat(n.toFixed(5)); }
 
 /** Shared empty `lockedBy` (no allocation per snapshot). */
 const NO_LOCKED_BY: ReadonlyArray<{ t: string; s: number; p: number }> = [];
+/** A welcome from a wreck room with no live wreck (slice 3). */
+const NO_WRECK_LIST: readonly import('@shared-types/messages/snapshotMessages').WreckDescriptor[] = [];
 
 export class ColyseusGameClient {
   /**
@@ -1568,6 +1570,12 @@ export class ColyseusGameClient {
       // Capital wrecks on: a dying capital explodes at its kill point (the
       // wreck break-up), not as a hull-sized blast (money-shot review).
       this.mirror.capitalWrecks = msg.capitalWrecks === true;
+      // Sub-capital break-up slice 3: the welcome carries the FULL live wreck
+      // set (#16); snapshots then carry only adds, removes and a slow resync.
+      if (msg.capitalWrecks === true) {
+        this._wrecks.apply(msg.wrecks ?? NO_WRECK_LIST);
+        this.mirror.wrecks = this._wrecks.descriptors;
+      }
       this._shellStore.clear();
       this._navalHitHold.flush(this._heldDamageSink);
       if (this._shellEvents) {
@@ -2882,6 +2890,7 @@ export class ColyseusGameClient {
   private killEntity(id: string): void {
     // Trigger explosion sprite on this frame (renderer consumes then App.tsx clears).
     this.mirror.explodingShips?.add(id);
+    this.flushQueuedDamageFx(id);
 
     // Immediately remove physics body so hitscan and collisions cannot hit it.
     this.predWorld?.despawnShip(id);
@@ -2974,7 +2983,39 @@ export class ColyseusGameClient {
     // sprite position (looked up by id), and `swarm-${entityId}` is the
     // sprite key, so the existing explosion machinery just works.
     this.mirror.explodingShips?.add(wireId);
+    this.flushQueuedDamageFx(wireId);
     useUIStore.getState().setSwarmCount(this.mirror.swarm?.size ?? 0);
+  }
+
+  /**
+   * The target just died: release, NOW, every hit visual still queued for
+   * it, so its number completes in the explosion's frame and never climbs
+   * over the wreck afterwards (fight-clip review 2026-11-13). Two queues
+   * delay a real hit's number on purpose: the smooth-beam splits of a
+   * predicted hitscan hit, and naval hits held for their drawn shell burst.
+   * The hits were dealt before the death, so they are flushed, not dropped;
+   * the renderer then closes the number (`DamageNumberManager.markDead`, fed
+   * by the same `explodingShips` frame). Rare path (a death).
+   */
+  private flushQueuedDamageFx(targetId: string): void {
+    const scheduled = this._scheduledDamageSpawns;
+    if (scheduled.length > 0) {
+      const pending = this.mirror.pendingDamageNumbers;
+      // Forward, so the splits land in schedule order.
+      let w = 0;
+      for (let r = 0; r < scheduled.length; r++) {
+        const s = scheduled[r]!;
+        if (s.targetId === targetId) {
+          pending?.push({ targetId: s.targetId, x: s.x, y: s.y, damage: s.damage, tag: s.tag });
+        } else {
+          scheduled[w++] = s;
+        }
+      }
+      scheduled.length = w;
+    }
+    if (this._navalHitHold.size > 0) {
+      this._navalHitHold.flushTarget(targetId, this._heldDamageSink);
+    }
   }
 
   private handleRespawnAck(msg: RespawnAckMessage): void {
@@ -3263,13 +3304,11 @@ export class ColyseusGameClient {
     // construction). Pose lives in `mirror.swarm` (kind=2); joined by entityId.
     this.syncStructures(snap.structureTargets, snap.structureMountAngles);
 
-    // Capital destruction S2b: the wreck descriptors (the full live list when
-    // present; absent = not this snapshot). Pieces whose wreck is known get
-    // their predWorld body in syncSwarmIntoPredWorld and a sprite.
-    if (snap.wrecks !== undefined) {
-      this._wrecks.apply(snap.wrecks);
-      this.mirror.wrecks = this._wrecks.descriptors;
-    }
+    // Capital destruction S2b / sub-capital break-up slice 3: the wreck
+    // descriptor deltas (adds, removes, resync chunk; the full set came with
+    // the welcome). Pieces whose wreck is known get their predWorld body in
+    // syncSwarmIntoPredWorld and a sprite.
+    if (this._wrecks.applySnapshot(snap)) this.mirror.wrecks = this._wrecks.descriptors;
 
     // Server-authoritative boost + thrust sets — exhaust-trail renderer.
     applyBoostingThrustingSets(snap, this.mirror);

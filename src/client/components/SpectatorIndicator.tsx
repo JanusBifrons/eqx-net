@@ -16,8 +16,12 @@ const SX = {
   gap: 0.5,
   px: { xs: 0.75, sm: 1 },
   py: { xs: 0.25, sm: 0.4 },
-  bgcolor: 'rgba(0,255,136,0.14)',
-  border: '1px solid rgba(0,255,136,0.4)',
+  // The same dark HUD backing as the lock band's target chip. It was a 14%
+  // green wash, so ships, fireballs and damage numbers showed through the
+  // chip and its text ran into a world number beside it ("SPECTATING64",
+  // showcase review 2026-11-13). Lock: tests/e2e/spectator-mode.spec.ts.
+  bgcolor: 'rgba(6,10,20,0.75)',
+  border: '1px solid rgba(0,255,136,0.55)',
   borderRadius: 1,
   color: '#7dffc0',
   fontSize: { xs: 10, sm: 12 },

@@ -9,3 +9,13 @@ export function acquiringPct(p: number): number {
   if (!(p > 0)) return 0;
   return p >= 99 ? 99 : Math.floor(p);
 }
+
+/**
+ * Which still-acquiring own lock the HUD shows when several compete (the
+ * banner's own row, and the one in-world tag per target): a lock still
+ * building beats one draining after a let-go, then the furthest along.
+ * Shared so the two never disagree. Pure, alloc-free.
+ */
+export function acquiringRank(l: { p: number; r?: number }): number {
+  return (l.r === 1 ? 0 : 1000) + l.p;
+}

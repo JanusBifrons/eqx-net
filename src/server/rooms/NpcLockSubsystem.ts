@@ -13,7 +13,10 @@
  * lock on THEIR own target (`WeaponMountTicker.tickCapitalMounts`), so a
  * capital holds one lock per pilot it engages, built with whichever of its
  * gun sizes locks that pilot fastest (AA on a fighter, the main battery on a
- * capital). Structure turrets are not gated yet (PR 1d).
+ * capital). Every profile uses the same `lockSeconds` rule as a player ship
+ * of that kind with that gun (owner 2026-11-13: "It's the same ship and the
+ * same gun, so it gets the same lock"): a 16" gun locks a fighter slowly,
+ * never impossibly.
  *
  * Steady state allocates nothing (#14): an entry and its wire row are created
  * when an NPC starts locking someone, then mutated in place; the per-step

@@ -504,8 +504,10 @@ export class WeaponMountTicker {
         for (let j = 0; j < targets.length; j++) {
           const t = targets[j]!;
           if (!this.canEngage(kind, mount, t, mx, my, ang, reach, selfVx, selfVy, isHostile)) continue;
-          // A structure this gun can't lock from here (past `maxSeconds` by
-          // the shared lock rules) is no target for it: lock to fire.
+          // A structure this gun can't lock from here (out of reach, or past
+          // `maxSeconds` for a sub-capital gun, by the shared ship lock rules)
+          // is no target for it: lock to fire. A heavy gun locks a small
+          // structure slowly, never impossibly (owner 2026-11-13).
           if (sig[j]! >= 0 && !Number.isFinite(this.structureLockSecs(mount, reach, sensor, sig[j]!, t, mx, my, selfVx, selfVy))) continue;
           const dx = t.x - mx, dy = t.y - my;
           const d2 = dx * dx + dy * dy;

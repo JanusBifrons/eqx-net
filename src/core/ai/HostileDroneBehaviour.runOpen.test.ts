@@ -165,7 +165,8 @@ describe('HostileDroneBehaviour — an attack run started nose to nose opens the
     const b = new HostileDroneBehaviour(F);
     const brain = b as unknown as Brain;
     const self: AiEntity = { id: 'a', x: 0, y: 0, vx: 0, vy: 170, angle: 0, angvel: 0 };
-    const other: KinematicBody = { x: miss, y: 500, vx: 0, vy: -170, angle: Math.PI, angvel: 0 };
+    // Close enough (~0.45 s off) that even the arcade turn rate needs to start now.
+    const other: KinematicBody = { x: miss, y: 150, vx: 0, vy: -170, angle: Math.PI, angvel: 0 };
     brain._tac.tick = 100;
     expect(brain.hullAvoid(self, oneShip(other, 'b', F.radius, 'robots'))).toBe(true);
     // Passing on my right: dodge left.

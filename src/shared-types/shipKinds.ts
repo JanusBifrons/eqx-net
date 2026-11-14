@@ -175,7 +175,12 @@ export const SHIP_KINDS = Object.freeze({
  * MUST bump this value by 1 in the same PR. Mount-layout changes are not
  * auto-handled — they require a separate migration story.
  */
-export const SHIP_KIND_CATALOGUE_VERSION = 25;
+// 24 → 25 (2026-11-13): arcade (Micro Machines) handling + toughness layer
+// (`shipScale/arcadeHandling.ts`) changes every non-capital gameplay kind's
+// damping, thrust, turn rate, hull, shield and regen.
+// 25 → 26 (2026-11-14): energy pool ×2 for every kind (`ENERGY_POOL_MUL`,
+// shipScale/defineShipKind.ts).
+export const SHIP_KIND_CATALOGUE_VERSION = 26;
 
 // The shield bubble pad is `shipTuning(kind).shieldPad` (shipScale/tuning.ts),
 // and the bubble radius is `shieldBubbleRadius(kind)`. The fixed

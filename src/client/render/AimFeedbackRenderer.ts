@@ -3,7 +3,7 @@ import type { RenderMirror } from '@core/contracts/IRenderer';
 import { getShipKind } from '@shared-types/shipKinds';
 import { ACQUIRE_COLOUR, FAILSAFE_COLOUR, THREAT_COLOUR, groupColour } from '../hud/groupColours';
 import { hullHalfBeam, lockMarkFrame, threatDiamondHalf, threatPointerRadius, threatRingRadius, THREAT_TIP_PX, type LockMarkFrame } from './lockMarkFrame';
-import { acquiringPct } from '../hud/lockPct';
+import { acquiringPct, acquiringRank } from '../hud/lockPct';
 
 /**
  * Fire-control world-space feedback for the local pilot: lock rings and
@@ -26,6 +26,27 @@ const DASH_OFF = 10;
 /** The faint full threat ring drawn while anything locks you (owner's choice 2026-11-10). */
 const THREAT_RING_FAINT_WIDTH = 1.5;
 const THREAT_RING_FAINT_ALPHA = 0.22;
+
+type LockEntry = { t: string; s: number; p: number; r?: number };
+
+/**
+ * True when another still-acquiring lock on the same target (any group)
+ * outranks lock `li` of group `gi`; ties go to the first. Alloc-free (#14).
+ */
+export function outrankedOnTarget(groups: ReadonlyArray<{ l: ReadonlyArray<LockEntry> }>, gi: number, li: number, l: LockEntry): boolean {
+  const mine = acquiringRank(l);
+  for (let gj = 0; gj < groups.length; gj++) {
+    const ls = groups[gj]!.l;
+    for (let lj = 0; lj < ls.length; lj++) {
+      if (gj === gi && lj === li) continue;
+      const o = ls[lj]!;
+      if (o.s === 2 || o.t !== l.t) continue;
+      const theirs = acquiringRank(o);
+      if (theirs > mine || (theirs === mine && (gj < gi || (gj === gi && lj < li)))) return true;
+    }
+  }
+  return false;
+}
 
 export class AimFeedbackRenderer {
   /** Lock rings, group brackets, firing lines, threats, guide. */
@@ -134,7 +155,8 @@ export class AimFeedbackRenderer {
    * Own locks, per weapon group:
    *  - LOCKING (red) / FAILSAFE (yellow): a heavy closing ring with progress,
    *    four ticks that tighten in as it builds, a dashed link from the ship and
-   *    a "LOCKING 62%" tag;
+   *    a "LOCKING 62%" tag, once per target (the furthest-along lock when
+   *    several groups build on the same ship);
    *  - LOCKED: corner brackets in the group's colour (nested when several groups
    *    share a target) and a faint firing line.
    * Locks ON the local ship (`localLockedBy`): the whole ring round the ship
@@ -152,7 +174,12 @@ export class AimFeedbackRenderer {
     if (groups) {
       for (let gi = 0; gi < groups.length; gi++) {
         const grp = groups[gi]!;
-        for (const l of grp.l) {
+        for (let li = 0; li < grp.l.length; li++) {
+          const l = grp.l[li]!;
+          // One acquiring ring + tag per target: when several groups build a
+          // lock on the same ship only the furthest-along one is drawn (two
+          // stacked "LOCKING n%" tags, fight-clip review 2026-11-13).
+          if (l.s !== 2 && outrankedOnTarget(groups, gi, li, l)) continue;
           if (!this.targetPose(mirror, l.t)) continue;
           const mf = this.markFrame(sx, sy, px);
           const x = mf.x, y = -mf.y;

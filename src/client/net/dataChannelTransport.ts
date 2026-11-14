@@ -38,6 +38,36 @@ export interface DataChannelSnapshotReceiverOpts {
 
 const unpackr = new Unpackr({});
 
+/** msgpack fixstr encodings of the snapshot keys that are DELTAS
+ *  (`wreckAdds`, `wreckRemoves`): header byte 0xa0 | length, then ASCII. */
+function fixstrKey(key: string): Uint8Array {
+  const out = new Uint8Array(key.length + 1);
+  out[0] = 0xa0 | key.length;
+  for (let i = 0; i < key.length; i++) out[i + 1] = key.charCodeAt(i);
+  return out;
+}
+const WRECK_ADDS_KEY = fixstrKey('wreckAdds');
+const WRECK_REMOVES_KEY = fixstrKey('wreckRemoves');
+
+function containsBytes(hay: Uint8Array, needle: Uint8Array): boolean {
+  const n = needle.length;
+  const first = needle[0]!;
+  outer: for (let i = 0, end = hay.length - n; i <= end; i++) {
+    if (hay[i] !== first) continue;
+    for (let j = 1; j < n; j++) if (hay[i + j] !== needle[j]) continue outer;
+    return true;
+  }
+  return false;
+}
+
+/** Does a raw snapshot frame carry wreck deltas? A false positive (the key
+ *  bytes inside some string) only costs one decode; no false negatives,
+ *  since the encoder writes plain map keys. */
+export function carriesWreckDeltas(buf: Uint8Array | ArrayBuffer): boolean {
+  const view = buf instanceof ArrayBuffer ? new Uint8Array(buf) : buf;
+  return containsBytes(view, WRECK_ADDS_KEY) || containsBytes(view, WRECK_REMOVES_KEY);
+}
+
 export class DataChannelSnapshotReceiver {
   private _lastSeenServerTick = -1;
   private readonly _opts: DataChannelSnapshotReceiverOpts;
@@ -79,6 +109,13 @@ export class DataChannelSnapshotReceiver {
    * process the pending buffer.
    */
   enqueueBinary(buf: Uint8Array | ArrayBuffer): void {
+    // Sub-capital break-up slice 3 (LESSONS 2026-11-12): wreck adds/removes
+    // ride only a few snapshots (absent = no change), so a superseded frame
+    // that carries one must not vanish undecoded. Decode + dispatch it first,
+    // in order; the snapshot coalescer then carries its deltas forward. A
+    // byte scan for the two keys keeps every other superseded frame free.
+    const prev = this._pendingBytes;
+    if (prev !== null && carriesWreckDeltas(prev)) this._decodeAndDispatch(prev);
     this._pendingBytes = buf;
   }
 

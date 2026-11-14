@@ -10,6 +10,7 @@
 import { ShipKindSchema, type ShipKind } from '../shipKinds/types.js';
 import { effectiveScale, scaleShipKind } from './tuning.js';
 import { KIND_SCALE_OVERRIDES } from './config.js';
+import { applyArcadeHandling } from './arcadeHandling.js';
 
 const UNSCALED = new Map<string, ShipKind>();
 
@@ -45,7 +46,10 @@ export function defineShipKind(raw: unknown): ShipKind {
     ...(o.sizeClass ? { sizeClass: o.sizeClass } : {}),
     ...(o.thrusters ? { thrusters: o.thrusters } : {}),
   };
-  return withEnergyPool(scaleShipKind(kind, effectiveScale(kind)));
+  // Arcade (Micro Machines) handling + toughness layer, per handling class
+  // (owner direction 2026-11-13; `arcadeHandling.ts`), then the energy pool
+  // (every kind, `ENERGY_POOL_MUL`).
+  return withEnergyPool(applyArcadeHandling(scaleShipKind(kind, effectiveScale(kind)), parsed));
 }
 
 /** The authored (1×) kind, before the catalogue scaled it. */
@@ -68,5 +72,5 @@ export function unscaledShipKinds(): ShipKind[] {
 export function defineCapitalShipKind(raw: unknown): ShipKind {
   const parsed = ShipKindSchema.parse(raw);
   UNSCALED.set(parsed.id, parsed);
-  return withEnergyPool({ ...parsed, appliedScale: 1 });
+  return withEnergyPool(applyArcadeHandling({ ...parsed, appliedScale: 1 }, parsed));
 }

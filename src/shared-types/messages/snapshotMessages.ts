@@ -46,6 +46,10 @@ export interface WelcomeMessage {
    *  explosion at the kill point instead of the hull-sized death blast
    *  (money-shot review). Absent = no wrecks. */
   capitalWrecks?: true;
+  /** Sub-capital break-up slice 3 — the FULL set of live wreck descriptors at
+   *  join (#16). Snapshots then carry only `wreckAdds` / `wreckRemoves` and a
+   *  slow `wreckSync`. Absent = none (or wrecks off). */
+  wrecks?: WreckDescriptor[];
 }
 
 /** PR 3a (account-bound identity) — sent to a session immediately before the
@@ -59,6 +63,67 @@ export interface SessionReplacedMessage {
 /** WebSocket close code used for a `session_replaced` disconnect (4000-4999
  *  is the application range). */
 export const SESSION_REPLACED_CLOSE_CODE = 4002;
+
+/** Wreck ids are u16, never 0; a resync range's `hi` may be one past the end. */
+export const WRECK_ID_END = 0x10000;
+/** Most descriptors a welcome may carry (every u16 wreck id). */
+const MAX_WELCOME_WRECKS = WRECK_ID_END - 1;
+
+/** Sub-capital break-up slice 3 (#3) — one wreck's fracture inputs. Mirrors
+ *  `WreckDescriptor`; the bidirectional assignability lock in
+ *  `messages.test.ts` fails typecheck if they drift. */
+export const WreckDescriptorSchema = z
+  .object({
+    wreckId: z.number().int().min(1).max(WRECK_ID_END - 1),
+    parentKind: z.string().min(1).max(64),
+    seed: z.number().int().min(0).max(0xffffffff),
+    killX: z.number().finite(),
+    killY: z.number().finite(),
+    killBlowDamage: z.number().finite(),
+    recentDamageRate: z.number().finite(),
+    snapChance: z.number().finite(),
+    algoVersion: z.number().int(),
+    deathTick: z.number().int().optional(),
+  })
+  .strict();
+
+/** The snapshot's wreck fields (#3). The snapshot as a whole is the
+ *  documented high-cadence carve-out (not zod-parsed on ingest); the client
+ *  checks these fields with the alloc-free `isWreckDescriptor` /
+ *  `isWreckId`, which `wreckWire.test.ts` locks to these schemas. */
+export const WreckAddsSchema = z.array(WreckDescriptorSchema).max(256);
+export const WreckRemovesSchema = z.array(z.number().int().min(1).max(WRECK_ID_END - 1)).max(256);
+export const WreckSyncSchema = z
+  .object({
+    lo: z.number().int().min(1).max(WRECK_ID_END),
+    hi: z.number().int().min(1).max(WRECK_ID_END),
+    d: z.array(WreckDescriptorSchema).max(64),
+  })
+  .strict();
+
+function finite(v: unknown): boolean {
+  return typeof v === 'number' && Number.isFinite(v);
+}
+
+/** Alloc-free twin of `WreckRemovesSchema`'s element check. */
+export function isWreckId(v: unknown): v is number {
+  return typeof v === 'number' && Number.isInteger(v) && v >= 1 && v < WRECK_ID_END;
+}
+
+/** Alloc-free twin of `WreckDescriptorSchema` (shape only; unknown keys are
+ *  ignored here, as the store only reads the named fields). Used on the
+ *  snapshot hot path instead of a zod parse (#14). */
+export function isWreckDescriptor(v: unknown): v is WreckDescriptor {
+  if (typeof v !== 'object' || v === null) return false;
+  const d = v as Record<string, unknown>;
+  return isWreckId(d['wreckId'])
+    && typeof d['parentKind'] === 'string' && d['parentKind'].length > 0 && d['parentKind'].length <= 64
+    && typeof d['seed'] === 'number' && Number.isInteger(d['seed']) && d['seed'] >= 0 && d['seed'] <= 0xffffffff
+    && finite(d['killX']) && finite(d['killY']) && finite(d['killBlowDamage'])
+    && finite(d['recentDamageRate']) && finite(d['snapChance'])
+    && typeof d['algoVersion'] === 'number' && Number.isInteger(d['algoVersion'])
+    && (d['deathTick'] === undefined || (typeof d['deathTick'] === 'number' && Number.isInteger(d['deathTick'])));
+}
 
 /** Campaign 6.1 (anti-patterns review C-core 3) — defensive ingest schema for
  *  `welcome`. The server builds this itself (never parses through it); the
@@ -85,6 +150,7 @@ export const WelcomeSchema = z
     shellEvents: z.literal(true).optional(),
     shellsInFlight: z.array(ShellSalvoSchema).max(256).optional(),
     capitalWrecks: z.literal(true).optional(),
+    wrecks: z.array(WreckDescriptorSchema).max(MAX_WELCOME_WRECKS).optional(),
   })
   .strict();
 
@@ -401,14 +467,24 @@ export interface SnapshotMessage {
    *  round-robin over what this recipient was sent, at most
    *  `SHELL_KEY_PER_SNAPSHOT`. Absent when nothing is due. */
   shellKey?: ShellKeyRecord[];
-  /** Capital destruction S2b — one fracture descriptor per live capital wreck
-   *  (docs/architecture/capital-destruction.md §S2). The client rebuilds every
-   *  piece's geometry from it with the shared deterministic
-   *  `wreckPieceGeometry`; no vertex is on the wire. Sent at 2 Hz to each
-   *  recipient and on every snapshot for 3 broadcasts after the set changes
-   *  (an empty array then means "no wrecks"); absent otherwise. A late joiner
-   *  rebuilds every wreck from it (#16). */
-  wrecks?: WreckDescriptor[];
+  /** Wreck descriptors as DELTAS (sub-capital break-up slice 3;
+   *  docs/architecture/capital-destruction.md "Wreck descriptors on the
+   *  wire"). The full set rides the welcome (`WelcomeMessage.wrecks`). A
+   *  snapshot carries the descriptors added within the last
+   *  `WRECK_DELTA_WINDOW` broadcasts (one per wreck; a recycled id carries
+   *  its new descriptor)... */
+  wreckAdds?: WreckDescriptor[];
+  /** ...the wreck ids gone within that window (never also in `wreckAdds`)... */
+  wreckRemoves?: number[];
+  /** ...and, on one snapshot in `WRECK_RESYNC_EVERY`, a resync chunk: the
+   *  live wrecks with `lo <= wreckId < hi` are EXACTLY `d` (a client drops
+   *  any other id it holds in that range). The chunks walk the id space, so
+   *  a client that missed an add or a remove converges (#16). Apply order:
+   *  sync, then removes, then adds (deltas are never older than the chunk).
+   *  All three are absent-means-no-change: a coalescer that drops a
+   *  snapshot must carry them forward. No vertex is on the wire: the client
+   *  rebuilds pieces with the shared `wreckPieceGeometry`. */
+  wreckSync?: WreckSync;
   /** Game time scale (per sector): this sector's speed and the server tick
    *  it took effect from. Emitted only while the speed isn't 1 (#16: a late
    *  joiner converges from the snapshot alone). Shared object, never copied. */
@@ -439,6 +515,16 @@ export interface WreckDescriptor {
    *  starts its molten cut-edge glow from it; absent ⇒ drawn already cool
    *  (as a late joiner sees it). Not a fracture input. */
   deathTick?: number;
+}
+
+/** A rolling-resync chunk of the live wreck set (`SnapshotMessage.wreckSync`). */
+export interface WreckSync {
+  /** First wreck id the chunk covers. */
+  lo: number;
+  /** One past the last id it covers (`WRECK_ID_END` = to the end). */
+  hi: number;
+  /** Every live wreck with `lo <= wreckId < hi`. */
+  d: WreckDescriptor[];
 }
 
 /** A sector's game speed keyframe (time scale stream). */

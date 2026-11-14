@@ -2986,6 +2986,13 @@ Owner: "They absolutely should collide by design." In a clip a heavy cruiser und
 - **Effects at the kill point hide under the kill blast.** A crack front paced evenly over distance and ripples placed "on the far part of the cracks" were still under the fireball on v7's short cracks. Pace and place presentation against the blast's covered radius, and draw glow only on the piece's own side of a cut (centred glow fills an opening gap and reads as a dark strip).
 - **Never gate a polygon hit test on `rayHitsSphere`.** It returns null once the segment starts inside the circle and past its closest point; stepping shells then passed through the far half of capital hulls (three server paths, two client paths) and wreck pieces. Gate on `segmentNearCircle`.
 
+## 2026-11-13 — Fire control: a per-pilot flag on a ship rule split the same gun into two lock times
+Commit: fix/npc-lock-parity
+
+The 2026-11-10 "heavy guns lock small targets slowly, never impossibly" rule was implemented as an opt-in input flag (`LockInputs.neverImpossible`) set only by the player `LockSubsystem`. NPC lock paths (`NpcLockSubsystem`, the capital turret's structure lock in `WeaponMountTicker`) never set it, so a battleship's 16" locked a still fighter 5 km out in ~38 s for a player and never (Infinity) for an NPC. The owner's rule is "Ships turning, acceleration, weapons, everything is related to the ship, regardless of pilot"; asked about locks: "Same rule as players — an NPC's heavy gun locks a small fast ship slowly, but always gets there in the end. It's the same ship and the same gun, so it gets the same lock."
+
+Fix: the flag is gone. `lockSeconds` keys the rule on what the shooter IS, not who flies it: a heavy (`absRange`) gun under ship tuning skips the `maxSeconds` gate; fixed batteries keep their own rule through their own tuning (`clampAtMax`). Lesson: when a rule belongs to a ship, gun or structure kind, express it in the kind's data or tuning, never as a flag one caller remembers to pass; a second caller silently gets the old behaviour. Lock: `tests/unit/npcLockParity.test.ts` (same kind + gun + target ⇒ same lock time, and the NPC capital then fires).
+
 ## 2026-11-13 — Ram damage keyed on mass difference ignored speed and angle
 
 - **What happened.** The 2026-06-12 fix for "ram damage too high" made damage proportional to `(mOther − mSelf)/(mOther + mSelf)` times a speed factor on |relative velocity|. Two equal ships then dealt 0 at any speed, and a glancing scrape counted the same as a head-on hit. The owner: "You're telling me speed and angle of attack have no bearing? Wtf?!"
@@ -2993,12 +3000,33 @@ Owner: "They absolutely should collide by design." In a clip a heavy cruiser und
 - **Lesson.** A "too high" complaint is a tuning problem; answer it by scaling the constant, not by changing which inputs matter. A model whose inputs drop the physical cause (speed, angle) reads as broken the first time someone rams on purpose. Lock the SHAPE of the dependence (monotone in angle and speed, equal masses equal), not the numbers.
 - **Physics to remember.** Two equal ships head-on at v each take what one takes hitting an immovable wall at v, so "a fighter into a parked capital" is not worse than a fighter head-on; only an oncoming capital is.
 
+## 2026-11-13 — Arcade handling: re-solve thrust from Rapier's damping, and lock feel with a measuring harness
+Commit: feat/arcade-handling (PR TBD)
+
+Owner: "make it more like micro machines and make fights a bit longer. Also don't forget the afterburner to gain speed fast". At the 2× default a fighter took ~11 s to reach 90 % of cruise (τ = 1/d ≈ 4.7 s) and 3.2 s to turn round, so in a fight it never reached its own top speed and filmed fights looked floaty.
+
+- **Raise damping and thrust by the same factor, never thrust alone.** Rapier damps velocity by `1 / (1 + d·dt)` a step, so a per-tick impulse `a` settles at `a / (d·dt)`: thrust × k with damping × k keeps cruise to the unit while the rise time drops by k. Re-solving with the old `1 − e^(−d/60)` formula left cruise 3 % low at the new dampings (the ShipKindPhysics closed-form check also drifts at a 1× scout's damping 8; it is a 10 % typo guard now, the literals live in the tuning lock).
+- **A per-class multiplier layer beats editing records.** `shipScale/arcadeHandling.ts` runs inside `defineShipKind`, so the 1× authored records stay as written, every consumer (player input, prediction, drone `ai.thrust` + `maxAngvel` turn) reads the same numbers (#15), and capitals (solver-authored, locked to WW2 reference turn times) are simply a row of 1s.
+- **Halving lateral grip was wrong once turns got 4× faster:** a held 90° turn at cruise then left 0.6 of cruise sideways. Grip unchanged leaves ~0.55, bled by the high damping within ~0.3 s.
+- **Fast turns wrap angles.** Any test that holds a turn for a second and reads `rotation()` now passes ±π (a 1× scout turns 12.6 rad/s); the harness unwraps per tick.
+- **Tests that coast a ship with no input assumed near-zero damping** (a 150 u run-up to a glancing contact stopped after ~80 u). Pose such probes close, but leave 2–3 ticks of flight: the worker reads impact speed from the PREVIOUS tick's velocity, which is 0 on the tick a ship is posed (a 16 u gap gave a head-on ram of 0).
+- **Ramming scales with the pool.** `RAM_DAMAGE_PER_ENERGY` / `RAM_DAMAGE_MAX` × 1.75 with the fighter pool, so #558's "~55 % of the pool head-on" holds.
+- **Measure, then lock bands.** `ShipHandling.arcade.test.ts` drives every kind through the real `PhysicsWorld` and prints t90, cruise, boost, 180°, brake, slide and TTK (`EQX_HANDLING_REPORT=1`); its per-class bands are the regression lock. Before/after table: docs/architecture/ship-physics-handling.md "Arcade (Micro Machines) tuning, 2026-11-13".
+
 ## 2026-11-13 — The same ship was a smaller target when an NPC flew it
 
 - **Symptom (audit).** A player's ship was hit on its shield bubble (`kind.radius + shieldPad`) while its shield was up, but an NPC drone of the same kind on a bare `kind.radius` circle (no pad), and on that circle even with its shield DOWN (only capitals were refined to the hull). Shell splash measured a player ship and a parked hull as a 12 u fighter (`GLOBAL_SHIP_TUNING.hitRadius`) but a drone as its own radius, so a capital pilot shrugged off splash an NPC capital took; missiles hit a player on the fighter `hitRadius` circle. Owner's rule: "everything is related to the ship, regardless of pilot."
 - **Why it survived.** Each weapon path (player bolt, player beam, NPC beam, structure beam, missile, splash, client beam-end) had its own copy of "what shape is a ship", written at different times. The player copy was fixed in 2026-05-27 and the drone copies never followed.
 - **Fix.** ONE helper, `src/core/combat/shipHitShape.ts` (`shipRayHit` / `shipSweepHit` / `shipHitBound` / `shipSplashRadius`), keyed by ship KIND and shield state, used by every server path and by the client (`DisplayPoseHitscan`, `shieldEdgeDist`, #15). The projectile broadphase bins ships by `shipHitBound` (bubble and hull), or a shot at the edge of the bubble was never offered to the narrow phase. Lock: `tests/integration/sectorRoom/shipHitShapeParity.test.ts` fires the same shell, beam and missile at the same kind flown by a player and by an NPC.
 - **Rule.** Any new weapon path that can hit a ship must call `shipHitShape.ts`, never `rec.radius` or a tuning `hitRadius`. A record's `radius` is not its hit shape.
+
+## 2026-11-14 — An NPC beam ran through its target to the edge of the screen
+
+- **Symptom (hostile review of filmed NPC fights).** An NPC interceptor's wing turrets were drawn on the pilot, but its beam ran straight past the ship to max range.
+- **Cause.** Server, not renderer. `AiFireResolver.fireNow` fired a mount at the AI's AIM vector plus the mount's slewed angle. A turret's slewed angle is ship-relative and already turned onto the target, so the shot went out at twice the hull's bearing error: a real server miss (full-range distance on the wire). The client draws a remote beam down the visible barrel (hull + base + slewed angle) for the server's distance, so the miss was drawn through the target.
+- **Fix.** A turning mount fires down its barrel (hull angle + base + slewed angle), the angle the client draws. A fixed mount keeps the exact aim vector (the 2026-06-03 accuracy fix). Lock: `AiFireResolver.test.ts` "a turret beam leaves along its visible barrel" (wire ray direction == drawn barrel, #15).
+- **Lesson.** When a drawn beam disagrees with its target, check that the server's ray and the drawn ray are the SAME ray before touching the beam-end maths. Adding a relative angle to an absolute direction is a frame mix-up that no hit-shape fix can hide.
+- **Still open.** A FIXED mount's beam is drawn along the hull's nose while the server fires along the aim vector (within the AI's aim cone), so a hit can end beside the target rather than on it.
 
 ## 2026-11-13 — Same keys, different ship: an NPC body is twice a player's mass
 

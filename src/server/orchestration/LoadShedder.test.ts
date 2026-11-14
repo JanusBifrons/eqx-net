@@ -25,6 +25,10 @@ function makeShedder(opts: {
   players: Pos[];
   evicted: SwarmEntityRecord[];
   bus?: Bus;
+  /** Ids some player can see. Omitted ⇒ nothing is in view. */
+  inView?: Set<string>;
+  now?: () => number;
+  log?: (obj: { shed: number; skippedInView: number }, msg: string) => void;
 }): LoadShedder {
   const bus = opts.bus ?? new Bus();
   return new LoadShedder({
@@ -32,7 +36,10 @@ function makeShedder(opts: {
     getPlayers: () => opts.players,
     getPosition: (rec) => opts.posByRec.get(rec)!,
     evict: (rec) => opts.evicted.push(rec),
+    isInView: (rec) => opts.inView?.has(rec.id) === true,
     bus,
+    now: opts.now ?? (() => 0),
+    ...(opts.log ? { log: opts.log } : {}),
   });
 }
 
@@ -162,5 +169,59 @@ describe('LoadShedder', () => {
     expect(shedder.consider(0.7, 18)).toBe(0);
     expect(evicted.length).toBe(0);
     expect(emit).not.toHaveBeenCalled();
+  });
+
+  // Soak 2026-11-14: ~200–325 ships vanished in the middle of a fight. The
+  // shedder picked the farthest drones but never asked whether anyone could
+  // see them. A shed must be invisible: in-view drones are never candidates.
+  it('never sheds a drone a player can see, even the farthest one', () => {
+    const positions = Array.from({ length: 20 }, (_, i) => ({
+      id: `d${i}`, kind: 1 as const, x: (i + 1) * 100, y: 0,
+    }));
+    const { registry, posByRec } = makeRegistry(positions);
+    const evicted: SwarmEntityRecord[] = [];
+    const inView = new Set(positions.map((p) => p.id));
+    const shedder = makeShedder({ registry, posByRec, players: [{ x: 0, y: 0 }], evicted, inView });
+    for (let i = 0; i < 10; i++) expect(shedder.consider(0.7, 30)).toBe(0);
+    expect(evicted).toEqual([]);
+  });
+
+  it('sheds the farthest out-of-view drones and skips in-view ones', () => {
+    // d0..d9 near and seen; f0..f2 far and unseen; the farthest of all is seen.
+    const { registry, posByRec } = makeRegistry([
+      ...Array.from({ length: 10 }, (_, i) => ({ id: `d${i}`, kind: 1 as const, x: (i + 1) * 100, y: 0 })),
+      { id: 'f0', kind: 1, x: 20_000, y: 0 },
+      { id: 'f1', kind: 1, x: 30_000, y: 0 },
+      { id: 'f2', kind: 1, x: 25_000, y: 0 },
+      { id: 'seen-far', kind: 1, x: 90_000, y: 0 },
+    ]);
+    const evicted: SwarmEntityRecord[] = [];
+    const inView = new Set([...Array.from({ length: 10 }, (_, i) => `d${i}`), 'seen-far']);
+    const shedder = makeShedder({ registry, posByRec, players: [{ x: 0, y: 0 }], evicted, inView });
+    expect(shedder.consider(0.7, 30)).toBe(1); // ceil(3 out-of-view × 0.10) = 1
+    expect(evicted.map((r) => r.id)).toEqual(['f1']);
+  });
+
+  it('logs shed and in-view-skipped counts at most once per 10 s', () => {
+    const { registry, posByRec } = makeRegistry([
+      { id: 'near', kind: 1, x: 100, y: 0 },
+      ...Array.from({ length: 30 }, (_, i) => ({ id: `f${i}`, kind: 1 as const, x: 50_000 + i, y: 0 })),
+    ]);
+    const evicted: SwarmEntityRecord[] = [];
+    let t = 0;
+    const logs: Array<{ shed: number; skippedInView: number }> = [];
+    const shedder = makeShedder({
+      registry, posByRec, players: [{ x: 0, y: 0 }], evicted, inView: new Set(['near']),
+      now: () => t, log: (obj) => logs.push({ ...obj }),
+    });
+    shedder.consider(0.7, 30); // first log at once: 3 shed (ceil 30 × 0.1), 1 skipped
+    expect(logs).toEqual([{ shed: 3, skippedInView: 1 }]);
+    t = 5_000;
+    shedder.consider(0.7, 30);
+    expect(logs.length).toBe(1);
+    t = 10_000;
+    shedder.consider(0.7, 30); // totals since the last line
+    expect(logs).toEqual([{ shed: 3, skippedInView: 1 }, { shed: 6, skippedInView: 2 }]);
+    expect(evicted.map((r) => r.id)).not.toContain('near');
   });
 });

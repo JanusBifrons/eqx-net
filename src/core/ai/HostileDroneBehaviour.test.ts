@@ -351,7 +351,10 @@ describe('HostileDroneBehaviour — COMBAT pursuit', () => {
     const b = new HostileDroneBehaviour();
     b.markHostile('p', 0);
     const moving: AiWorldView = {
-      players: [{ id: 'p', x: 0, y: 200, vx: 100, vy: 0 }],
+      // vx 400: the lead angle (~0.24 rad) is wider than one snap-turn step at
+      // every ship scale (arcade turn rates make a step ~0.07 rad at 2x and wider
+      // at the authored 1x), so the closest stop is a turn, not holding still.
+      players: [{ id: 'p', x: 0, y: 200, vx: 400, vy: 0 }],
       tick: 100,
       dtSec: 1 / 60,
     };

@@ -61,6 +61,7 @@ import { SwarmEntityRegistry, type SwarmEntityRecord } from '../net/SwarmEntityR
 import { LoadShedder } from '../orchestration/LoadShedder.js';
 import { SpatialGrid } from '../interest/SpatialGrid.js';
 import { BinarySwarmBroadcast } from '../net/BinarySwarmBroadcast.js';
+import { CollisionBroadcastGate } from '../net/CollisionBroadcastGate.js';
 import {
   createIdleTracker,
   type LastInputCache,
@@ -181,8 +182,9 @@ import { usesAmmo } from '../../shared-types/ammo.js';
 /** P2d — one unit of munitions (a turret's magazine reload). */
 const ONE_MUNITION = Object.freeze({ munitions: 1 });
 /** Welcome extras for a room that breaks capitals into wrecks (shared, frozen). */
-const WRECK_WELCOME: { capitalWrecks?: true } = Object.freeze({ capitalWrecks: true as const });
-const NO_WELCOME_FIELDS: { capitalWrecks?: true } = Object.freeze({});
+const WRECK_WELCOME: WreckWelcomeFields = Object.freeze({ capitalWrecks: true as const });
+const NO_WELCOME_FIELDS: WreckWelcomeFields = Object.freeze({});
+type WreckWelcomeFields = { capitalWrecks?: true; wrecks?: import('../../shared-types/messages.js').WreckDescriptor[] };
 
 /** P2c — give each asteroid in a roster its resource kind, rolled from the
  *  sector's features and seeded by the asteroid's id (stable across restarts). */
@@ -846,6 +848,9 @@ export class SectorRoom extends Room<SectorState> {
    *  postMessage facade). Extracted to PhysicsWorkerProxy.ts (commit 20
    *  of v3 refactor plan). */
   private physicsWorkerProxy!: PhysicsWorkerProxy;
+  /** Which contacts go out as `collision_resolved` (lasting contacts are
+   *  re-sent only every 150 ms; see CollisionBroadcastGate). */
+  private readonly collisionGate = new CollisionBroadcastGate();
   /** /dev/memory: this room's physics worker heap. */
   workerHeapStats(gc = false): Promise<{ usedBytes: number; totalBytes: number; workerIndex: number } | null> {
     return this.physicsWorkerProxy ? this.physicsWorkerProxy.heapStats(gc) : Promise.resolve(null);
@@ -979,6 +984,14 @@ export class SectorRoom extends Room<SectorState> {
    *  path has no hitX/hitY on its damage call); cleared by applyDamage. */
   private pendingImpactX: number | undefined = undefined;
   private pendingImpactY: number | undefined = undefined;
+  /** The AI beam's direction for the same call (wreck knock-back). */
+  private pendingDirX: number | undefined = undefined;
+  private pendingDirY: number | undefined = undefined;
+  /** Reused `WRECK_IMPULSE` command (overkill knock-back, #14). */
+  private readonly _wreckImpulseCmd = { type: 'WRECK_IMPULSE' as const, entityId: '', jx: 0, jy: 0, px: 0, py: 0 };
+  /** Reused `WRECK_RIGID_IMPULSE` command (a hit during the crack hold, #14). */
+  private readonly _wreckRigidImpulseCmd: { type: 'WRECK_RIGID_IMPULSE'; entityIds: readonly string[]; jx: number; jy: number; px: number; py: number } =
+    { type: 'WRECK_RIGID_IMPULSE', entityIds: [], jx: 0, jy: 0, px: 0, py: 0 };
   /** C1 — pilots who moved cargo by hand. Auto-deposit stays off for them
    *  until they fly out of deposit range of their storage, so a withdrawal
    *  from your own storage isn't banked straight back 2 s later. */
@@ -1453,6 +1466,9 @@ export class SectorRoom extends Room<SectorState> {
     setWreckSeed: (seed: number | null) => void;
     /** S2b — the live wreck descriptors (the snapshot's `wrecks[]`). */
     wreckDescriptors: () => readonly import('../../shared-types/messages.js').WreckDescriptor[];
+    /** Slice 3 — remove a swarm entity the normal way (a wreck piece reaches
+     *  `pieceGone`, so its wreck's descriptor retires once all are gone). */
+    evictSwarm: (id: string) => void;
     /** The first non-player thing a ray meets (NPC / turret beam path). */
     rayHit: (fx: number, fy: number, dx: number, dy: number, maxDist: number, skipId: string) => { id: string; dist: number } | null;
   } {
@@ -1525,6 +1541,10 @@ export class SectorRoom extends Room<SectorState> {
       wreckParts: (id) => this.swarmRegistry.get(id)?.wreckParts ?? null,
       setWreckSeed: (seed) => { if (this.capitalWrecks) this.capitalWrecks.forcedSeed = seed; },
       wreckDescriptors: () => this.capitalWrecks?.descriptors() ?? [],
+      evictSwarm: (id) => {
+        const rec = this.swarmRegistry.get(id);
+        if (rec) this.evictSwarmEntity(rec, { broadcast: true, emitDestroyed: false });
+      },
       rayHit: (fx, fy, dx, dy, maxDist, skipId) => {
         const h = this.nonPlayerRayHit(fx, fy, dx, dy, maxDist, skipId);
         return h ? { id: h.id, dist: h.dist } : null;
@@ -1594,7 +1614,11 @@ export class SectorRoom extends Room<SectorState> {
         return { x: this.sabF32[b + SLOT_X_OFF]!, y: this.sabF32[b + SLOT_Y_OFF]! };
       },
       evict: (rec) => this.evictSwarmEntity(rec, { broadcast: false, emitDestroyed: false }),
+      isInView: (rec) => this.droneInAnyView(rec),
       bus: this.bus,
+      now: () => this.gameClock.now(),
+      // At most once per 10 s per room (LoadShedder throttles).
+      log: (line, msg) => logger.info({ sectorKey: this.sectorKey, roomId: this.roomId, shed: line.shed, skippedInView: line.skippedInView }, msg),
     });
 
     // Fill slot pool (push in reverse so slot 0 is popped first).
@@ -2006,8 +2030,8 @@ export class SectorRoom extends Room<SectorState> {
         this.spawnServerProjectile(ownerId, x, y, vx, vy, dmg, r, mt, wId),
       spawnServerMissile: (ownerId, x, y, dx, dy, def) =>
         this.spawnServerMissile(ownerId, x, y, dx, dy, def),
-      applyDamage: (targetId, shooterId, damage, hitX, hitY) =>
-        this.applyDamage(targetId, shooterId, damage, hitX, hitY),
+      applyDamage: (targetId, shooterId, damage, hitX, hitY, dirX, dirY) =>
+        this.applyDamage(targetId, shooterId, damage, hitX, hitY, dirX, dirY),
       blockBeamAtWall: (fx, fy, dx, dy, maxDist, damage) =>
         this.blockShotAtWall(fx, fy, dx, dy, maxDist, damage),
       broadcast: (type, msg) => this.broadcast(type, msg),
@@ -2037,7 +2061,7 @@ export class SectorRoom extends Room<SectorState> {
         this.playerHitscanDist(s, fx, fy, dx, dy, md, cx, cy, ang),
       applyDamage: (targetId, shooterId, damage) =>
         this.applyDamage(targetId, shooterId, damage),
-      noteBeamImpact: (x, y) => this.noteBeamImpact(x, y),
+      noteBeamImpact: (x, y, dx, dy) => this.noteBeamImpact(x, y, dx, dy),
       // Friendly fire (owner decision 2026-11-10): the beam meets whatever is
       // in its path, its own side and neutral structures included.
       nonPlayerRayHit: (fx, fy, dx, dy, maxDist, skipId) =>
@@ -2171,8 +2195,8 @@ export class SectorRoom extends Room<SectorState> {
       swarmRegistry: this.swarmRegistry,
       lingeringSlots: this.lingeringSlots,
       lingeringShip: (sid) => this.state.ships.get(sid),
-      applyDamage: (targetId, shooterId, damage, hitX, hitY) =>
-        this.applyDamage(targetId, shooterId, damage, hitX, hitY),
+      applyDamage: (targetId, shooterId, damage, hitX, hitY, dirX, dirY) =>
+        this.applyDamage(targetId, shooterId, damage, hitX, hitY, dirX, dirY),
       wallBlocksProjectile: (x, y, sx, sy, damage) => {
         if (!this.shieldWalls.blockProjectile(x, y, sx, sy, damage, this.gameClock.now())) return false;
         this.broadcastWallHit('bolt');
@@ -4990,12 +5014,27 @@ export class SectorRoom extends Room<SectorState> {
     }
   }
 
-  private applyDamage(targetId: string, shooterId: string, damage: number, hitX?: number, hitY?: number): void {
+  private applyDamage(
+    targetId: string, shooterId: string, damage: number, hitX?: number, hitY?: number, dirX?: number, dirY?: number,
+  ): void {
     // S2a: a beam impact noted for THIS call only (never leaks to a later one).
     const impactX = hitX ?? this.pendingImpactX;
     const impactY = hitY ?? this.pendingImpactY;
+    const shotDx = dirX ?? this.pendingDirX;
+    const shotDy = dirY ?? this.pendingDirY;
     this.pendingImpactX = undefined;
     this.pendingImpactY = undefined;
+    this.pendingDirX = undefined;
+    this.pendingDirY = undefined;
+    // Overkill knock-back (owner request 2026-11-13): a shot landing on a
+    // capital wreck piece (immune, so the router below does nothing) shoves
+    // it along the shot from the hit point. Only hits that know their point
+    // AND direction (shells, player and NPC beams); missiles push through
+    // their own splash impulse, rams through the contact itself.
+    if (this.capitalWrecks !== null && damage > 0 && impactX !== undefined && impactY !== undefined
+      && shotDx !== undefined && shotDy !== undefined) {
+      this.capitalWrecks.onWreckHit(targetId, impactX, impactY, shotDx, shotDy, damage);
+    }
     // Phase 4 warp travel: a ship on its run is out of the world (an NPC's too, W2a).
     if (this.warpTravel.isTravelling(targetId)) return;
     if (this.npcWarps.size > 0 && this.botWarpPhase(targetId) === 2) return;
@@ -5078,10 +5117,12 @@ export class SectorRoom extends Room<SectorState> {
 
   /** The AI beam's impact point, for the wreck hit tracker only (the damage
    *  event keeps its legacy pose fallback, so the wire is unchanged). */
-  private noteBeamImpact(x: number, y: number): void {
+  private noteBeamImpact(x: number, y: number, dx: number, dy: number): void {
     if (this.capitalWrecks === null) return;
     this.pendingImpactX = x;
     this.pendingImpactY = y;
+    this.pendingDirX = dx;
+    this.pendingDirY = dy;
   }
 
   /** Capital destruction S2a: build the wreck subsystem (flag on only). */
@@ -5113,6 +5154,18 @@ export class SectorRoom extends Room<SectorState> {
         return rec ? this.sabF32[slotBase(rec.slot) + SLOT_ANGLE_OFF]! : null;
       },
       kickPiece: (id, dvx, dvy, dw) => this.postToWorker({ type: 'WRECK_KICK', entityId: id, dvx, dvy, dw }),
+      // A reused command (#14): postMessage clones it synchronously.
+      impulsePiece: (id, jx, jy, px, py) => {
+        const c = this._wreckImpulseCmd;
+        c.entityId = id; c.jx = jx; c.jy = jy; c.px = px; c.py = py;
+        this.postToWorker(c);
+      },
+      // During the crack hold: the whole wreck as one rigid body (#14 as above).
+      impulseWreck: (ids, jx, jy, px, py) => {
+        const c = this._wreckRigidImpulseCmd;
+        c.entityIds = ids; c.jx = jx; c.jy = jy; c.px = px; c.py = py;
+        this.postToWorker(c);
+      },
     });
   }
 
@@ -5128,6 +5181,25 @@ export class SectorRoom extends Room<SectorState> {
     if (this.capitalWrecks === null || !isCapitalKindId(kindId)) return 0;
     return this.capitalWrecks.onDeath(targetId, kindId as ShipKindId,
       { x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy, angle: pose.angle, angvel: pose.angvel ?? 0 }, maxHull);
+  }
+
+  /** LoadShedder: can ANY connected player see this drone? The same view the
+   *  swarm broadcast uses: each client's interest window (`interestScratch`,
+   *  built by `SwarmBroadcaster` this tick or the last). A client with no
+   *  slot (spectating after parking a hull, between hulls, still joining) is
+   *  sent the whole swarm at full fidelity, so it sees everything; so does a
+   *  client whose window isn't built yet. Shedding only what nobody sees keeps
+   *  it invisible (soak 2026-11-14). Alloc-free (#14). */
+  private droneInAnyView(rec: SwarmEntityRecord): boolean {
+    const clients = this.clients;
+    for (let i = 0; i < clients.length; i++) {
+      const sid = clients[i]!.sessionId;
+      const pid = this.sessionToPlayer.get(sid);
+      if (pid === undefined || !this.playerToSlot.has(pid)) return true;
+      const view = this.interestScratch.get(sid);
+      if (view === undefined || view.has(rec.entityId)) return true;
+    }
+    return false;
   }
 
   /** Iterates positions of currently-alive players, for the LoadShedder.
@@ -8268,8 +8340,14 @@ export class SectorRoom extends Room<SectorState> {
   /** The welcome's shell-event fields for a joining client (§5, #16). */
   /** Capital destruction: tell the client this room breaks dying capitals
    *  into wrecks, so it explodes them at the kill point (money-shot review). */
-  private wreckWelcomeFields(): { capitalWrecks?: true } {
-    return this.capitalWrecks !== null ? WRECK_WELCOME : NO_WELCOME_FIELDS;
+  private wreckWelcomeFields(): WreckWelcomeFields {
+    if (this.capitalWrecks === null) return NO_WELCOME_FIELDS;
+    // Sub-capital break-up slice 3: the FULL live wreck set rides the join
+    // payload (#16); snapshots carry only adds, removes and a slow resync.
+    // `client.send` encodes at once, so the shared slice is safe to attach.
+    const live = this.capitalWrecks.descriptors();
+    if (live.length === 0) return WRECK_WELCOME;
+    return { capitalWrecks: true, wrecks: live as import('../../shared-types/messages.js').WreckDescriptor[] };
   }
 
   private shellWelcomeFields(client: Client, playerId: string): { shellEvents?: true; shellsInFlight?: ShellSalvo[] } {
@@ -8331,6 +8409,7 @@ export class SectorRoom extends Room<SectorState> {
       },
       onContactBatch: (tick, contacts) => {
         if (this.sceneWork.active) this.sceneWork.contacts += contacts.length;
+        this.collisionGate.sweep(tick);
         // Stage 2 of the network-feel roadmap: each contact above the
         // worker's CONTACT_FORCE_FLOOR is broadcast to all clients in
         // the room as `collision_resolved`. AOI filter is deferred —
@@ -8366,27 +8445,33 @@ export class SectorRoom extends Room<SectorState> {
             impulse: p.force,
             tick,
           });
-          // eA/eB name each side as the client knows it, so it can draw a
-          // shield contact on a raised shield (user report 2026-11-07).
-          const msg: CollisionResolvedMessage = {
-            type: 'collision_resolved',
-            aId: p.aId,
-            bId: p.bId,
-            vA: p.vA,
-            vB: p.vB,
-            impulse: p.force,
-            tick,
-          };
-          const eA = this.clientEntityCode(p.aId), eB = this.clientEntityCode(p.bId);
-          if (eA !== undefined) msg.eA = eA;
-          if (eB !== undefined) msg.eB = eB;
-          this.broadcast('collision_resolved', msg);
-          serverLogEvent('collision_resolved', {
-            aId: p.aId,
-            bId: p.bId,
-            impulse: parseFloat(p.force.toFixed(3)),
-            tick,
-          });
+          // Lasting contacts (ships pressed together) arrive every tick;
+          // the client keeps at most a few a second, so only a pair's first
+          // contact, an impact, or one every 150 ms goes out (the ram
+          // damage below still sees every tick). See CollisionBroadcastGate.
+          if (this.collisionGate.shouldSend(p.aId, p.bId, p.normalSpeed, tick)) {
+            // eA/eB name each side as the client knows it, so it can draw a
+            // shield contact on a raised shield (user report 2026-11-07).
+            const msg: CollisionResolvedMessage = {
+              type: 'collision_resolved',
+              aId: p.aId,
+              bId: p.bId,
+              vA: p.vA,
+              vB: p.vB,
+              impulse: p.force,
+              tick,
+            };
+            const eA = this.clientEntityCode(p.aId), eB = this.clientEntityCode(p.bId);
+            if (eA !== undefined) msg.eA = eA;
+            if (eB !== undefined) msg.eB = eB;
+            this.broadcast('collision_resolved', msg);
+            serverLogEvent('collision_resolved', {
+              aId: p.aId,
+              bId: p.bId,
+              impulse: parseFloat(p.force.toFixed(3)),
+              tick,
+            });
+          }
           // Ramming damage (impact-based model, 2026-11-13; see Ramming.ts).
           // Each side takes its OWN damage (normal-impact energy shared by
           // weight: equal ships equally, the lighter more); the OTHER id is the "shooter" (kill-feed + hostility
@@ -8774,7 +8859,7 @@ export class SectorRoom extends Room<SectorState> {
       ? parsed.data.shipId
       : '';
     if (this.sectorKey !== null && requestedShipId !== '') {
-      const rec = getPlayerShipStore().get(requestedShipId);
+      let rec = getPlayerShipStore().get(requestedShipId);
       if (rec !== null && rec.playerId === playerId && rec.lastSectorKey === this.sectorKey) {
         // EVICT-THEN-RESTORE (playtest 2026-06-10 Issue 6 — "respawn as an
         // existing ship → locked/broken"). If the requested hull is STILL
@@ -8789,11 +8874,15 @@ export class SectorRoom extends Room<SectorState> {
         // surviving timer later DELETES the now-active ship. Reachable from any
         // "resume a ship that lingered in the target sector". `evictOwnerlessShip`
         // despawns `linger-<id>`, cancels the timer, frees the slot, deletes the
-        // stale schema entry, and markStored's the pose — which the `rec` we read
-        // above already mirrors, so the restore lands at the same place.
+        // stale schema entry, and markStored's the hull's LIVE pose. That write
+        // REPLACES the roster record (`put` stores a new object), so re-read the
+        // row: the `rec` fetched above still holds the pose from when the hull
+        // was parked, and a hull bumped or pushed since then came back at its
+        // old spot (2026-11-13, exposed by the arcade-handling retune).
         if (this.lingeringSlots.has(requestedShipId) || this.ownerlessShips.has(requestedShipId)) {
           serverLogEvent('respawn_evict_lingering', { playerId, shipInstanceId: requestedShipId });
           this.evictOwnerlessShip(requestedShipId);
+          rec = getPlayerShipStore().get(requestedShipId) ?? rec;
         }
         spawnX = rec.lastX;
         spawnY = rec.lastY;
