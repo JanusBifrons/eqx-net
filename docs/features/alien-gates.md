@@ -14,7 +14,7 @@ Plan `soft-leaping-truffle` v4, phase A. Every sector has a ring of ancient gate
 
 ## Where they sit
 
-Each sector's gates are worked out by pure shared code (`src/core/galaxy/alienGates.ts`):
+Each sector's gates are worked out by pure shared code (`src/core/galaxy/alienGates.ts`: `alienGateSites`, `alienGateCandidates`, and the owner `ALIEN_GATE_OWNER`). Server seeding and the client inspector both read it:
 
 - **The ideal site** is 4100 units from the centre, along the galaxy-map bearing to the neighbour. Its twin sits on the matching edge of the neighbour, facing back.
 - **The gates are placed after the sector's NPC bases**, so a big base never loses its site to a gate. Each gate takes the free spot nearest its ideal site (`alienGateCandidates`, a 250-unit grid searched nearest-first). Asteroids under a gate are cleared quietly.
