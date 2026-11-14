@@ -1,76 +1,55 @@
 # CLAUDE.md — EQX Peri (Root)
 
-You are working in **EQX Peri**, a multiplayer space game. This file is your north star; read it before making any non-trivial change. Zone-specific rules live in:
+You are working in **EQX Peri**, a multiplayer space game. Read this before any non-trivial change. Zone rules load when you touch a file in the zone: [src/core/CLAUDE.md](src/core/CLAUDE.md), [src/server/CLAUDE.md](src/server/CLAUDE.md), [src/client/CLAUDE.md](src/client/CLAUDE.md).
 
-- [src/core/CLAUDE.md](src/core/CLAUDE.md)
-- [src/server/CLAUDE.md](src/server/CLAUDE.md)
-- [src/client/CLAUDE.md](src/client/CLAUDE.md)
+**What goes where.** CLAUDE.md files hold **rules only**: short, present tense, no dates, no PR numbers, no history. How a subsystem works, thresholds and tuning values, and history go in the matching guide under `docs/architecture/` or `docs/features/` (history in the guide's "History" section), with a one-line pointer from CLAUDE.md. Gotchas go in [docs/LESSONS.md](docs/LESSONS.md). Every CLAUDE.md is injected into every agent's context, so each line here costs on every call.
 
-Non-obvious lessons learned during implementation go in [docs/LESSONS.md](docs/LESSONS.md).
-
-The Master Architecture Blueprint is the authoritative design document; the approved phased plan file (under `C:\Users\alecv\.claude\plans\`) is the executable roadmap. When the blueprint and a zone CLAUDE.md appear to disagree, the most recently-updated CLAUDE.md wins (it reflects what was actually learned while building).
+The Master Architecture Blueprint is the authoritative design document; the approved plan under `C:\Users\alecv\.claude\plans\` is the roadmap. When the blueprint and a zone CLAUDE.md disagree, the most recently updated CLAUDE.md wins.
 
 ---
 
 ## Cross-Phase Invariants (ALL must hold at every phase gate)
 
-1. **Boundary integrity.** `src/core` imports no client or server library. `src/server` imports no client library. `src/client` imports no server-only package or Node-only API. CI-enforced via `eslint-plugin-import` `no-restricted-imports` **and `dependency-cruiser`** (`.dependency-cruiser.cjs` encodes the same boundaries as a real module graph; the `verify` CI job runs `depcruise src`). The canary fixture at [src/core/\_\_fixtures\_\_/leak.ts.disabled](src/core/__fixtures__/leak.ts.disabled) exists to prove this enforcement is live; toggling its extension must break CI (it trips BOTH the ESLint rule and depcruise's `core-no-ui-or-node-libs`).
-2. **Zustand purity.** No spatial field (`x`, `y`, `vx`, `vy`, `angle`, `rotation`, `position`, `velocity`) may appear in the Zustand store. Lint rule in `eslint.config.js` blocks it — **including SUFFIXED coordinates (`*X`/`*Y`, campaign 3.4)**: a handful of genuinely discrete keys (arrival-picker settings, drawer-gated `devData` diagnostics) are allowlisted BY NAME in the rule with justifications; a new coordinate key must argue its way onto that list, never be named around the lint. Lock: `tests/unit/zustandPurityLint.test.ts`. Spatial state lives in the render mirror polled by Pixi; UI state lives in Zustand.
-3. **Network validation.** Every inbound server message has a zod schema. Malformed packets are dropped with a sampled `pino.warn` — they never reach game logic.
+1. **Boundary integrity.** `src/core` imports no client or server library. `src/server` imports no client library. `src/client` imports no server-only package or Node-only API. CI-enforced by `eslint-plugin-import` `no-restricted-imports` and `dependency-cruiser` (`.dependency-cruiser.cjs`; the `verify` job runs `depcruise src`). The canary [src/core/\_\_fixtures\_\_/leak.ts.disabled](src/core/__fixtures__/leak.ts.disabled) proves enforcement is live: toggling its extension must break both checks.
+2. **Zustand purity.** No spatial field (`x`, `y`, `vx`, `vy`, `angle`, `rotation`, `position`, `velocity`, nor suffixed `*X`/`*Y` coordinates) in the Zustand store; the lint rule in `eslint.config.js` blocks it. The few discrete keys allowlisted by name each carry a justification; a new coordinate key must argue its way onto that list, never be named around the lint. Lock: `tests/unit/zustandPurityLint.test.ts`. Spatial state lives in the render mirror polled by Pixi.
+3. **Network validation.** Every inbound server message has a zod schema. Malformed packets are dropped with a sampled `pino.warn`; they never reach game logic.
 4. **Fixed timestep.** `world.step(1/60)` inside a `while (accumulator >= fixedDt)` catch-up loop. No variable-dt physics anywhere.
-5. **DI seams.** `src/core` never constructs a renderer / audio / network sink / persistence. Implementations are injected by the appropriate zone at bootstrap via the contracts in `src/core/contracts/`.
-6. **SOLID adherence** (see below). Enforced at code-review time.
-7. **CLAUDE.md currency.** Every PR that changes an invariant, adds a contract, introduces a threshold, or teaches a non-obvious lesson updates the relevant CLAUDE.md file in the same PR. If you find yourself about to merge without updating CLAUDE.md, stop and ask whether this PR is actually teaching something.
-8. **Green bars before done.** `pnpm typecheck && pnpm lint && pnpm test && pnpm e2e && pnpm bench` all pass. For any change touching the live-loop (client `net/`, `prediction/`, physics, render loop, snapshot decode/interpolate, mount aim, `SectorRoom` tick/snapshot), **`pnpm e2e:netgate` baseline-relative-green is also required** — the deterministic suite verifies logic in isolation and is not a playability signal (2026-05-19 incident; see "Netcode-health gate" section below + `docs/LESSONS.md` 2026-05-19/20).
-9. **Tests accompany every behavioural change.** Any PR that changes physics behaviour, prediction logic, obstacle sync, or collision handling MUST include a new or updated E2E test in `tests/e2e/` that would have caught the regression. "I manually verified it works" is not sufficient — manual checks are not repeatable and do not protect future PRs. If no test is added, the PR is incomplete.
-10. **Documentation as a shipped artefact.** Every major feature ships with at least one prose guide under `docs/features/` (player-facing behaviour) or `docs/architecture/` (system internals). [`docs/LESSONS.md`](docs/LESSONS.md) captures gotchas; CLAUDE.md captures rules; `docs/` captures the *story* — the why, the migration path, the future plans. See `docs/architecture/galaxy-graph.md`, `docs/architecture/persistence-and-migrations.md`, and `docs/architecture/ship-physics-handling.md` for examples.
-11. **Ship-kind catalogue is append-only.** The single source of truth for ship types is [src/shared-types/shipKinds.ts](src/shared-types/shipKinds.ts). The catalogue's `SHIP_KINDS_LIST` order is part of the swarm wire format (drone kinds encode as a `u8` index). Adding a new kind: append a record. Removing or reordering kinds: bump `SWARM_WIRE_VERSION` and verify decoder hard-fails on the old version. See [docs/features/ship-kinds.md](docs/features/ship-kinds.md). **The same append-only contract binds [src/shared-types/structureKinds.ts](src/shared-types/structureKinds.ts)** — `STRUCTURE_KINDS_LIST` order is the structure subtype index that rides the *shared* `shipKind` u8 byte when the pose-core `kind` is 2 (so a structure subtype and a drone ship-kind never collide — they're demuxed on `kind`). Append a record; never reorder/remove. Bump `STRUCTURE_KIND_CATALOGUE_VERSION` only when an EXISTING record changes: since campaign 6.2 a bump discards every saved structure on the next boot, and an appended kind leaves saved rows valid (amended 2026-11-01 with the gate kinds). See [docs/architecture/structures-and-power-grid.md](docs/architecture/structures-and-power-grid.md). **Ship VISUAL shapes can be COMPOSITE** (`ShipShape` is a discriminated union `polygon | composite`; `composite` carries a single `hull` for the live collider + `parts[]` for the multi-component visual, all read through the `shipHullOutline(kind)` seam so polygon kinds stay byte-identical). On death a composite ship breaks into one **scrap** swarm entity per component: `SWARM_KIND_SCRAP = 3` rides the binary wire with a new `componentIndex` u8 (the shared `shipKind` byte carries the PARENT ship-kind index, demuxed on `kind`), which bumped `SWARM_WIRE_VERSION 3 → 4` (decoder hard-fails v3). Scrap geometry is looked up client-side by `(parentShipKind, componentIndex)` — never on the wire. See [docs/architecture/composite-ships-and-scrap.md](docs/architecture/composite-ships-and-scrap.md). **Capital wreck pieces** (`SWARM_KIND_WRECK = 4`) added a trailing `u16 wreckId`: `SWARM_WIRE_VERSION 4 → 5` (stride 36, decoder hard-fails v4). Their geometry is rebuilt client-side from the wreck's descriptor (full set in the welcome, then snapshot adds / removes / resync) with the shared deterministic `wreckPieceGeometry` — never on the wire. See [docs/architecture/capital-destruction.md](docs/architecture/capital-destruction.md).
-12. **Mount-angle state has exactly one ownership site; drone DRAWN pose has exactly one path (interpolation); every remote moving entity's COLLISION body has one path (the remote-entity anchor).** `WeaponMountController.tickSlot` (and the `pickTarget` + `rotateMountToward` primitives it composes) is the only path that may write per-mount rotation angles. The server's player update AND server's drone update (`SectorRoom.tickPlayerMounts` / `tickDroneMounts`) call it; the client's *local-player* prediction calls it. **Since lock-to-fire (#19) a player's mounts aim only at their weapon group's lock target** (locked, else the one being acquired; none ⇒ home): the server's `WeaponMountTicker.tickPlayer` and the client's `ColyseusClient.fcTickMountAngles` (THE client mount-angle path) apply the same rule via `rotateMountToward`; there is no player auto-target any more. **Drones no longer compute mount angles client-side** — post the drone-snapshot-interpolation pivot (2026-05-18) the client has no drone AI at all; it just applies the authoritative slim `SnapshotMessage.drones[].mountAngles` to the swarm mirror. Likewise **drone POSE is now pure snapshot-interpolation** off the binary swarm wire (`interpolateSwarmPose`, display-delay buffer + teleport guard) for DRAWING. **One paradigm for every remote moving entity (players, drones, scrap; 2026-11-08, user decision "one system"): predWorld collision runs on the predicted timeline from the latest server state; rendering is per entity type.** Each snapshot, `preResetRemoteShips` resets remote ships to `snap.states` AND drones/scrap to their latest authoritative binary-wire state (`anchorRemoteSwarmBodies`, read off the pose ring at `snap.serverTick`); the reconcile replay and every `tickPhysics` step then move all of them forward together. Nothing re-poses a drone/scrap body per frame (the retired "kinematic follower" put it at the display-delayed pose, ~100 ms + lead behind the local prediction: a correction on every melee contact, `docs/LESSONS.md` 2026-11-08). So a drone's body LEADS its sprite, as a remote ship's body can lead its lerp-offset sprite; the local beam and hit-prediction rays test drones/scrap at the DRAWN pose (`DisplayPoseHitscan`, the pose the turret aims at); the server stays hit-authoritative. Do not add a second drone-specific collision path. The "chapter 2 lockstep / one correction path per state surface" concern **dissolves for drones** — there is no client drone sim, so there is no second path to fight; the rule still binds the local player's mount angles + pose. The binary swarm wire is at **v5** (capital destruction S2b added `SWARM_KIND_WRECK` + a `u16 wreckId`, 2026-11-12; v4 was composite-ships scrap-on-death's `SWARM_KIND_SCRAP` + `componentIndex` byte, 2026-06-13). Capital wreck pieces are remote moving entities too: same anchor as scrap; `SnapshotMessage.drones[]` is a slim turret/shield slice (`{ id, mountAngles?, shieldDown? }`) — drone x/y/vx/vy/angle/angvel flow ONLY on the binary channel. Load-bearing: `POSE_RING_DEPTH` must cover `DISPLAY_DELAY_MS` at the *in-interest binary cadence* (~1000/60 ms), not the 50 ms JSON rate (the Step-4 regression — see `docs/architecture/drone-snapshot-interpolation.md`). See [docs/architecture/weapon-mounts.md](docs/architecture/weapon-mounts.md) and [docs/architecture/drone-snapshot-interpolation.md](docs/architecture/drone-snapshot-interpolation.md).
-13. **Smoke-test bug reports require a failing test BEFORE the fix.** When the user (or anyone) reports a bug from manual play / smoke testing, the response order is **non-negotiable**:
-    1. **Reproduce in a test first.** Write an E2E spec in `tests/e2e/` (or an integration test in `tests/integration/`) that drives the same flow the user described and ASSERTS the broken behaviour. The test must FAIL on the current code — if it passes, the test doesn't match the bug and the test itself is wrong.
-    2. **Then fix.** With the failing test as a regression lock, ship the fix and confirm the test now passes.
-    3. **Commit the test + fix together.** Reverting the fix should re-fail the test. Future contributors get the bug + the lock in one history-readable unit.
-
-    Why: the user's bandwidth for smoke-testing is finite and the burden compounds. Every bug found via manual play that we patch *without* a test means the same bug will resurface in a different smoke-test cycle. Tests are how the burden goes back down. "I manually verified" is not sufficient (already enforced by Invariant #9); this invariant is the smoke-test-specific corollary that says **the test must come first, not as a follow-up**.
-
-    Practical workflow for a smoke-test bug:
-    - Get the user's diagnostic capture (`diag/captures/<timestamp>-<id>/`); reconstruct exact steps from `lifecycle.ndjson` + `combat.ndjson` so the test mirrors the real flow.
-    - Pick the test layer that's *minimal* for the bug — but **the level where the bug LIVES, not the level that's easiest to write**. If the bug is at a postMessage / structured-clone / worker boundary, the test MUST cross that boundary (Playwright + a probe page is the canonical pattern — see `src/client/__offscreen-spike__/damage-number-probe-main.ts` + `tests/e2e/damage-number-lifetime.spec.ts`). Unit-testing the inner class in isolation when the bug lives at an integration seam is the anti-pattern this invariant exists to prevent. If the failing test against the existing bug **passes** the first time you run it, the test is in the wrong place — pick a different level.
-    - When unsure where the bug lives, write BOTH a unit test (for the class behaviour) AND an integration test (for the boundary). The unit test is fast insurance; the integration test is the regression lock for the actual failure mode. The 2026-05-14 damage-number incident is the canonical "got the level wrong on the first try" example: a unit test on `DamageNumberManager` passed easily, the user smoke-tested again, the bug was still there because it lived at `WorkerRendererClient ↔ worker` structured-clone, not in the manager.
-    - State the reproduction recipe in the test docstring with the diagnostic dir-id and the exact symptom the user reported, in their own words where possible.
-    - Use `harness.events.waitFor(...)` (integration) or `data-testid`-driven Playwright actions (E2E) so the test fails LOUDLY with a specific assertion, not a generic timeout.
-    - **When a bug report SURVIVES a fix attempt, the second attempt must start by writing its failing test at a DIFFERENT level than the first attempt's tests.** A surviving bug is strong evidence the first tests were at the wrong level (the 2026-07 anti-patterns review found the missile-jitter, beam-falloff, and incoming-warp histories all show repeated same-level testing across failed rounds). Same-level test + new theory = the same blind spot.
-
-    See `tests/integration/sectorRoom/DETERMINISM.md` for the integration-test recipe, `tests/e2e/drawer-galaxy-map-open-close.spec.ts` for the canonical "user reported, repro'd in test" pattern, and `tests/e2e/damage-number-lifetime.spec.ts` for the "boundary-crossing integration test via probe page" pattern.
-14. **No new hot-loop allocation.** From this PR forward, any new code added inside a function called transitively from `update()` (server room tick), `tick()` (any system tick), `render()` / RAF callback, `handleSnapshot()`, `tickPhysics()`, or `onMessage()` must not allocate — no `new Set/Map/Array/Float32Array/...`, no `{}` / `[]` literals, no `.map/.filter/.slice/.concat`, no `Array.from`, no `JSON.parse/stringify` or `structuredClone`, no template literals building key strings. Reuse module-scope scratch, class fields, or the helpers in [src/core/pool/](src/core/pool/). For the "build a Set of seen IDs, then sweep cache" idiom, prefer the generation-counter pattern (`frameId++` stamps) over any pool. Existing pre-landed allocations are `// TODO: alloc-debt` and tolerated until backfilled; do not allow new ones. Full rationale, exemplars, and the code-review checklist live in [docs/architecture/memory-allocation-paradigm.md](docs/architecture/memory-allocation-paradigm.md). Lint enforcement is a deliberate follow-up PR, not this rule — until then, this is a code-review contract. **The `// TODO: alloc-debt` tag is load-bearing accounting** — the 2026-07 anti-patterns review found the convention had decayed to 2 uses repo-wide while untagged tolerated allocations existed in every zone; tag any allocation you knowingly tolerate, or the tolerated-vs-new distinction this invariant depends on stops working.
-15. **Two-sided contracts change on both sides or not at all.** Any value or behaviour that exists on both sides of the wire — a visual band mirroring a damage band, a client guard mirroring a server guard, a collider that must match a predWorld twin, a constant like a muzzle offset — must either live in shared code (`src/shared-types` / `src/core`) imported by both sides, or ship with a test that FAILS when the two sides disagree. A fix landed on one side of such a contract is the single most common cause of "fixed it three times and it's still broken" (2026-07 anti-patterns review, Part B1: the server-only 0-damage guard, the client-only beam band, the dynamic-server/kinematic-client scrap). Code review should ask of every fix: "what is the other side of this, and did we touch it?"
-16. **Client-visible state must be reconstructible from snapshot ∪ join payload.** Discrete events (`bot_aggro`, `warp_warning`, …) are accelerants for latency, never the source of truth — a late joiner, a dropped packet, or a mid-wave arrival must still converge to the correct state from the snapshot stream alone. Adding client-visible state propagated ONLY by an event is a code-review rejection (2026-07 review, Part B2: hostility and incoming-warp state each failed 3+ fix attempts because no snapshot carrier existed). The slim-JSON snapshot fields (`level`, `mounts`, `shieldDown`, `hp`) are the template: emit-when-non-default, no wire-version bump.
-17. **Liveness predicates are enumerated, not improvised.** A ship is exactly one of ACTIVE / LINGERING / DEAD. Every loop over `state.ships` (or players) must gate on a named shared predicate for the states it covers — never an ad-hoc mix of `ship.alive`, `ship.isActive`, and map-membership checks. Divergent improvised predicates are how lingering hulls regenerated invisible shields while their mounts never ticked (2026-07 review, Part B3 + A11). When adding a per-ship subsystem loop, state in a comment which liveness classes it covers and why. **TRAVELLING (2026-11-07):** an ACTIVE hull on a warp run (`ShipState.travelling`) is out of the world: world-facing loops (AI targets, damage, turrets, loot) skip it; pilot-only loops (energy, shield regen) keep running. See [docs/architecture/travel-state.md](docs/architecture/travel-state.md). **ENGAGEABLE (2026-11-12, owner: "Spectating is no longer a way to dodge a fight"):** NPC fire control (NPC locks, drone + capital turret candidates, structure-turret pilot scans) engages a pilot through `isEngageablePilotHull` / `SectorRoom.engageablePilotHull`: their ACTIVE hull, or the LINGERING hull they parked by Spectate, keyed by the pilot's id.
-18. **Size-dependent numbers come from `shipTuning`, never a constant.** Anything that should follow a ship's size (muzzle clearance, hit radius, shield pad, turret and nozzle sizes, spawn clearance, loot pickup, flock spacing, AI standoff, bake pixels-per-unit) is read from `shipTuning(kind)` / `tuningFor(id)` in [src/shared-types/shipScale/](src/shared-types/shipScale/), which both sides import. Ship size is a knob (`EQX_SHIP_SCALE`, per-kind `EQX_SHIP_KIND_SCALE`, `sizeClass`), and capitals are many times a fighter, so a fixed `20` or `?? 16` is a bug at any other size. Locks: `tests/unit/shipScaleInvariants.test.ts` (every kind at 1/2/4× plus a synthetic capital) and `muzzleParity.test.ts`. The shipping default is **2× B** (`DEFAULT_SHIP_SCALE` / `DEFAULT_SHIP_TUNING`); catalogue numbers are authored at 1×. Tests that lock authored 1× numbers use `describe.runIf(AT_AUTHORED_SHIP_SCALE)` and CI runs them at `EQX_SHIP_SCALE=1 EQX_SHIP_TUNING=A`; run them locally with `pnpm test:authored-scale`. See [docs/architecture/ship-scale.md](docs/architecture/ship-scale.md).
-19. **No player weapon fires without a completed lock on its target** (user decision 2026-11-09; NPC drones must lock players too; NPC capital turrets and structure turrets follow in PR 1d). Every player is tracked by `LockSubsystem` from join; `PlayerFireResolver` refuses a group with no LOCKED target, and any mount whose barrel doesn't bear on it per the shared `mountBearsOn(weaponId, …)` (naval guns: the shot within `TURRET_FIRE_MISS` of the target, like NPC capitals; others: `FC_MOUNT_FIRE_TOLERANCE`) (separate turrets fire independently when each is on target; a multi-barrel turret fires all its barrels together), without spending cooldown or energy. No legacy pass-through may come back (an untracked player has no locks). The client mirrors the gate in `fcFireTick` (#15). Lock claims are verified (`lock_track` against the shared `lockLineScore`) and rate-limited. Tests that aren't about locking use the `instantLock` trigger (plus `anyTarget` when AUTO must pick a neutral target), `harness.lockTarget` or the E2E `lockOn` helper, never a bypass. See [docs/architecture/fire-control.md](docs/architecture/fire-control.md).
-20. **Game time is the default; each sector has its own speed (time scale, 2026-11-12).** A sector runs at a speed of 0.25–4×: the automatic slowdown under load (0.7 floor, `LoadSpeedController`) or a forced demo/test speed (`SectorRoom.setTimeScale`). Everything that measures gameplay or presentation time follows it with no code of its own:
-    - **Server:** the room's `gameClock` (`this.gameClock.now()` / `.after` / `.every`); cross-sector work uses the process clock (`gameNow()` / `gameSetTimeout` / `gameSetInterval`, `src/server/time/gameTime.ts`).
+5. **DI seams.** `src/core` never constructs a renderer / audio / network sink / persistence. Zones inject implementations at bootstrap via the contracts in `src/core/contracts/`.
+6. **SOLID adherence** (see below). Enforced at code review.
+7. **Docs currency.** A PR that changes an invariant, adds a contract, introduces a threshold or teaches a non-obvious lesson updates the docs in the same PR: a rule → the zone CLAUDE.md (≤ 3 lines, per "What goes where"); a threshold, tuning value or how-it-works text → the matching `docs/architecture/` guide; a gotcha → `docs/LESSONS.md`. About to merge without touching any of them? Stop and ask whether the PR is teaching something.
+8. **Green bars before done.** `pnpm typecheck && pnpm lint && pnpm test && pnpm e2e && pnpm bench` all pass. A change touching the live loop (client `net/`, `prediction/`, physics, render loop, snapshot decode/interpolate, mount aim, `SectorRoom` tick/snapshot) also needs `pnpm e2e:netgate` baseline-relative green: the deterministic suite verifies logic, not playability.
+9. **Tests accompany every behavioural change.** A PR that changes physics, prediction, obstacle sync or collision handling includes a new or updated E2E test in `tests/e2e/` that would have caught the regression. "I manually verified it" is not sufficient; without the test the PR is incomplete.
+10. **Documentation as a shipped artefact.** Every major feature ships with a prose guide under `docs/features/` (player-facing) or `docs/architecture/` (internals): the why, the migration path, the future plans. Examples: `galaxy-graph.md`, `persistence-and-migrations.md`, `ship-physics-handling.md`.
+11. **Ship- and structure-kind catalogues are append-only.** [src/shared-types/shipKinds.ts](src/shared-types/shipKinds.ts) is the single source of ship types; `SHIP_KINDS_LIST` order is part of the swarm wire format (u8 index). Append a record; removing or reordering bumps `SWARM_WIRE_VERSION`, and the decoder must hard-fail the old version. The same binds [src/shared-types/structureKinds.ts](src/shared-types/structureKinds.ts) (`STRUCTURE_KINDS_LIST` order rides the shared `shipKind` byte when the pose-core `kind` is 2). Bump `STRUCTURE_KIND_CATALOGUE_VERSION` only when an EXISTING record changes: a bump discards every saved structure; an appended kind does not. Geometry of composite-ship scrap and capital wreck pieces is derived client-side by shared deterministic code, never sent on the wire. Detail: [ship-kinds](docs/features/ship-kinds.md), [structures](docs/architecture/structures-and-power-grid.md), [composite ships + scrap](docs/architecture/composite-ships-and-scrap.md), [capital destruction](docs/architecture/capital-destruction.md).
+12. **One owner per moving-entity state.**
+    - **Mount angles:** `WeaponMountController.tickSlot` (with its `pickTarget` / `rotateMountToward` primitives) is the only writer of per-mount angles; the server's player and drone updates and the client's local-player prediction call it. A player's mounts aim only at their weapon group's lock target (locked, else the one being acquired; none ⇒ home): server `WeaponMountTicker.tickPlayer`, client `ColyseusClient.fcTickMountAngles` (the one client mount-angle path).
+    - **Drones have no client AI:** drone mount angles come from `SnapshotMessage.drones[].mountAngles` (a slim `{ id, mountAngles?, shieldDown? }` slice); drone, scrap and wreck pose flows only on the binary swarm wire and is DRAWN only by snapshot interpolation (`interpolateSwarmPose`). `POSE_RING_DEPTH` must cover `DISPLAY_DELAY_MS` at the in-interest binary cadence (~1000/60 ms), not the 50 ms JSON rate.
+    - **Collision bodies:** every remote moving entity has one path. Each snapshot, `preResetRemoteShips` resets remote ships to `snap.states` and drones/scrap/wrecks to their authoritative state at `snap.serverTick` (`anchorRemoteSwarmBodies`); reconcile replay and `tickPhysics` then move them forward together. Nothing re-poses a body per frame; local beam and hit-prediction rays test drones/scrap at the drawn pose (`DisplayPoseHitscan`); the server stays hit-authoritative. Never add a second drone-specific collision path.
+    - Detail: [weapon-mounts](docs/architecture/weapon-mounts.md), [drone-snapshot-interpolation](docs/architecture/drone-snapshot-interpolation.md).
+13. **Smoke-test bug reports get a failing test BEFORE the fix.** Order is non-negotiable: (1) reproduce in an E2E or integration test that drives the reported flow and FAILS on current code; (2) fix; (3) commit test and fix together, so reverting the fix re-fails the test. Write the test at the level where the bug LIVES (crossing a worker / postMessage / structured-clone boundary if the bug is there), not where it is easiest; a test that passes first time is in the wrong place. When a bug survives a fix, the next attempt's failing test must be at a DIFFERENT level. Workflow (captures → steps, level choice, docstring recipe): [diagnostic-captures](docs/architecture/diagnostic-captures.md#from-a-smoke-test-report-to-a-failing-test).
+14. **No new hot-loop allocation.** Code reached from `update()` (room tick), any `tick()`, `render()` / RAF, `handleSnapshot()`, `tickPhysics()` or `onMessage()` must not allocate: no `new Set/Map/Array/TypedArray`, no `{}` / `[]` literals, no `.map/.filter/.slice/.concat`, `Array.from`, `JSON.parse/stringify`, `structuredClone`, or template-literal keys. Reuse module scratch, class fields or [src/core/pool/](src/core/pool/); for seen-ID sweeps use a generation counter. Tag every knowingly tolerated allocation `// TODO: alloc-debt` (the tag is the accounting); never add new ones. Detail: [memory-allocation-paradigm](docs/architecture/memory-allocation-paradigm.md).
+15. **Two-sided contracts change on both sides or not at all.** A value or behaviour on both sides of the wire (a visual band mirroring a damage band, a client guard mirroring a server guard, a collider with a predWorld twin, a muzzle offset) lives in shared code (`src/shared-types` / `src/core`) or ships with a test that FAILS when the sides disagree. Review every fix with: "what is the other side of this, and did we touch it?"
+16. **Client-visible state is reconstructible from snapshot ∪ join payload.** Discrete events (`bot_aggro`, `warp_warning`, …) only speed things up; a late joiner or dropped packet must converge from snapshots alone. Client-visible state carried ONLY by an event is a review rejection. Template: the slim snapshot fields (`level`, `mounts`, `shieldDown`, `hp`), emit-when-non-default, no wire-version bump.
+17. **Liveness predicates are enumerated, not improvised.** A ship is exactly one of ACTIVE / LINGERING / DEAD. Every loop over `state.ships` (or players) gates on a named shared predicate, never an ad-hoc mix of `ship.alive`, `ship.isActive` and map membership; a new per-ship loop states in a comment which classes it covers and why. **TRAVELLING:** an ACTIVE hull on a warp run (`ShipState.travelling`) is out of the world: world-facing loops (AI targets, damage, turrets, loot) skip it; pilot-only loops (energy, shield regen) keep running ([travel-state](docs/architecture/travel-state.md)). **ENGAGEABLE:** NPC fire control (NPC locks, drone and capital turret candidates, structure-turret pilot scans) engages a pilot through `isEngageablePilotHull` / `SectorRoom.engageablePilotHull`: their ACTIVE hull, or the LINGERING hull they parked by Spectate (spectating never dodges a fight).
+18. **Size-dependent numbers come from `shipTuning`, never a constant.** Anything that follows ship size (muzzle clearance, hit radius, shield pad, turret/nozzle sizes, spawn clearance, loot pickup, flock spacing, AI standoff, bake pixels-per-unit) is read from `shipTuning(kind)` / `tuningFor(id)` in [src/shared-types/shipScale/](src/shared-types/shipScale/). A fixed `20` or `?? 16` is a bug. The shipping default is 2× B; catalogue numbers are authored at 1×; tests locking authored numbers use `describe.runIf(AT_AUTHORED_SHIP_SCALE)` (run locally: `pnpm test:authored-scale`). Locks: `shipScaleInvariants.test.ts`, `muzzleParity.test.ts`. Detail: [ship-scale](docs/architecture/ship-scale.md).
+19. **No weapon fires without a completed lock on its target.** Every player is tracked by `LockSubsystem` from join; `PlayerFireResolver` refuses a group with no LOCKED target, and any mount whose barrel doesn't bear on it per the shared `mountBearsOn(weaponId, …)`, without spending cooldown or energy. NPC ships and structure turrets lock their targets too. No legacy pass-through. The client mirrors the gate in `fcFireTick` (#15). Lock claims are verified (`lock_track` against `lockLineScore`) and rate-limited. Tests not about locking use the `instantLock` trigger (plus `anyTarget` for AUTO on a neutral), `harness.lockTarget` or the E2E `lockOn` helper, never a bypass. Detail: [fire-control](docs/architecture/fire-control.md).
+20. **Game time is the default; each sector has its own speed.** A sector runs at 0.25–4× (automatic load slowdown with a 0.7 floor via `LoadSpeedController`, or a forced speed via `SectorRoom.setTimeScale`). Everything measuring gameplay or presentation time follows it with no code of its own:
+    - **Server:** the room's `gameClock` (`now()` / `.after` / `.every`); cross-sector work uses `gameNow()` / `gameSetTimeout` / `gameSetInterval` (`src/server/time/gameTime.ts`).
     - **Ticks:** the room loop and its physics world run 60 × speed fixed 1/60 s ticks per wall second (#4 holds).
     - **Client:** `ColyseusClient.gameClock` for tick math; `PixiRenderer.fxNow()` for every effect.
-    - **Enforced by lint:** `Date.now` / `performance.now` / `setTimeout` / `setInterval` are an ERROR in `src/core`, `src/server`, `src/client/render` and `src/client/effects` outside a named real-time allowlist (persistence, networking, auth, UI, measurement, wall-stamped interpolation) in `eslint.config.js`. A one-off real-time line carries `-- real time: <why>`.
-    - **Never** add a per-feature speed factor: if new code needs the speed, it is reading the wrong clock.
-    - **Story:** [docs/architecture/game-time-scale.md](docs/architecture/game-time-scale.md).
+    - **Lint:** `Date.now` / `performance.now` / `setTimeout` / `setInterval` are errors in `src/core`, `src/server`, `src/client/render`, `src/client/effects` outside the named real-time allowlist in `eslint.config.js`; a one-off real-time line carries `-- real time: <why>`.
+    - **Never** add a per-feature speed factor: code that needs the speed is reading the wrong clock. Detail: [game-time-scale](docs/architecture/game-time-scale.md).
 
 ---
 
 ## Event Bus Architecture (read before adding any signalling)
 
-EQX Peri uses **two distinct channels**, never blended:
+Two channels, never blended:
 
-- **Discrete event bus** (`eventemitter3`, wrapped in `src/core/events/Bus.ts`) — instantaneous low-frequency events only: spawn/despawn, fire, destroy, sleep/wake, TiDi rate change, transit state transition. Subscribers: Howler, Zustand, Pino, persistence.
-- **Continuous state polling** — per-frame spatial data (positions, velocities, rotations) is read directly from the render state mirror / SAB. **Never** emitted as events.
+- **Discrete event bus** (`eventemitter3`, wrapped in `src/core/events/Bus.ts`): instantaneous low-frequency events only (spawn/despawn, fire, destroy, sleep/wake, TiDi rate change, transit transitions). Subscribers: Howler, Zustand, Pino, persistence.
+- **Continuous state polling:** per-frame spatial data is read directly from the render state mirror / SAB, **never** emitted as events.
 
-Rules:
-
-- Bus event shapes live as a single discriminated union in `src/core/events/Bus.ts`. No stringly-typed emits.
-- Adding a continuous-data event is a code-review rejection.
-- The renderer never subscribes to the bus for positions. Lint-enforced inside `src/client/render/`.
-- The bus is per-process. Cross-process propagation happens over a wire (Colyseus, SAB, postMessage) and is re-emitted onto the receiver's local bus.
+Rules: bus event shapes are one discriminated union in `Bus.ts` (no stringly-typed emits); a continuous-data event is a review rejection; the renderer never subscribes to the bus for positions (lint-enforced in `src/client/render/`); the bus is per-process, and cross-process signals arrive over a wire and are re-emitted on the receiver's bus.
 
 ---
 
@@ -78,15 +57,15 @@ Rules:
 
 | Surface | Budget | Notes |
 |---|---|---|
-| Physics tick (server + client `predWorld`) | 16.67 ms (60 Hz) | Fixed timestep (invariant #4); variable-dt is forbidden |
-| Drawer click → visible | ≤ 500 ms | Current floor 1.22 s; see `docs/LESSONS.md` 2026-05-13 "Drawer perf paradigm + MUI sx-hoist rules" |
-| Inline `sx={{...}}` allocation | Avoid per-render | Hoist static sx to module-level const; `useMemo` for dynamic; see [src/client/layout/Drawer/AdvancedDrawer.tsx](src/client/layout/Drawer/AdvancedDrawer.tsx) |
-| GC pauses | < 2 ms | Captured via `diag/drawer-lag-trace/cdp-perf.json` + `scripts/analyze-cdp-profile.mjs` |
-| Structures at base scale (NPC bases: wire, server tick, client frame, prediction) | Every number in [src/shared-types/structureBudgets.ts](src/shared-types/structureBudgets.ts), each with its measurement | Locked by `tests/unit/structureBudgets.test.ts` + the `structures-scale` bench + `structureScale.measure.test.ts`. A budget is raised only by a reviewed change citing a NEW measurement — never widened to get green; shrink the design instead. Ledger: [docs/architecture/structure-network-scale.md](docs/architecture/structure-network-scale.md) |
-| SectorRoom `update()` per-tick | Per the budgets in [src/server/CLAUDE.md](src/server/CLAUDE.md) (interest grid, lag-comp buffer, backpressure) | |
-| Perf-scene COUNTS (every PR, any machine) | `src/shared-types/perf/perfBudgets.ts`: server work per tick + rx (`COUNT_BUDGETS`), client draw calls / display objects / atlas pages (`CLIENT_COUNT_BUDGETS`; texture uploads are print-only since 2026-11-12: they track how fast the host bakes art) | Server: `perfSceneCounts.test.ts` (integration). Client: `pnpm perf:counts` (CI `perf-counts`, advisory). Budget = max of calibration runs + 25 %, `measured` names them. See `docs/architecture/perf-scenes.md` "per-PR count gates" |
+| Physics tick (server + client `predWorld`) | 16.67 ms (60 Hz) | Fixed timestep (#4) |
+| Drawer click → visible | ≤ 500 ms | See `docs/LESSONS.md` "Drawer perf paradigm + MUI sx-hoist rules" |
+| Inline `sx={{...}}` allocation | Avoid per-render | Hoist static sx to a module const; `useMemo` for dynamic |
+| GC pauses | < 2 ms | `scripts/analyze-cdp-profile.mjs` |
+| Structures at base scale | Every number in [src/shared-types/structureBudgets.ts](src/shared-types/structureBudgets.ts), each with its measurement | Raised only by a reviewed change citing a NEW measurement; never widened to get green. Ledger: [structure-network-scale](docs/architecture/structure-network-scale.md) |
+| SectorRoom `update()` per tick | Per [src/server/CLAUDE.md](src/server/CLAUDE.md) | |
+| Perf-scene COUNTS (every PR) | `src/shared-types/perf/perfBudgets.ts` (`COUNT_BUDGETS`, `CLIENT_COUNT_BUDGETS`) | Server: `perfSceneCounts.test.ts`; client: `pnpm perf:counts`. Budget = max of calibration runs + 25 %. See [perf-scenes](docs/architecture/perf-scenes.md) |
 
-**Gate on counts, compare timings (plan machine-independent-perf WS3, 2026-11-08).** Wall-clock time depends on the host (the laptop's same-code spread reaches ×2), so a per-PR test must never assert a wall-clock bound: count the work instead (calls made, ticks stepped, bytes encoded, draw calls) or print the time and gate nothing. Timings are judged only by `pnpm perf:scenes` (same machine, same session, interleaved A/B). A count is host-independent only if what is drawn or simulated is too: the client count gate pins the effects tier (`?perfcounts=1`), renders with SwiftShader everywhere, and windows on SCENE time (ticks), never wall time. Adding a count budget: calibrate here AND on CI; a count that differs materially between them is not host-independent and stays print-only.
+**Gate on counts, compare timings.** A per-PR test never asserts a wall-clock bound: count the work (calls, ticks, bytes, draw calls) or print the time and gate nothing. Timings are judged only by `pnpm perf:scenes` (same machine, interleaved A/B). A new count budget is calibrated locally AND on CI; one that differs materially between them stays print-only.
 
 ---
 
@@ -94,159 +73,105 @@ Rules:
 
 | Zone | Allowed runtime libs | Purpose |
 |---|---|---|
-| Root tooling | `typescript`, `vite`, `tsx`, `pnpm`, `vitest`, `@vitest/coverage-v8`, `@playwright/test`, `eslint` + `eslint-plugin-import`, `prettier`, `dependency-cruiser`, `knip`, `vite-plugin-pwa` + `@vite-pwa/assets-generator` (PWA manifest + service worker + icon generation — see `docs/architecture/web-push.md`) | Build, test, lint, coverage, boundary-DAG + dead-code audit (refactor engagement — see `MANIFEST_APPARATUS.md`) |
-| `src/core/` | `@dimforge/rapier2d-compat`, `eventemitter3`, `zod` v4 (types; `z.record(enum, v)` is exhaustive in v4 — use `z.partialRecord` for subsets, see LESSONS 2026-10-31), `poly-decomp` (convex decomposition for ship hulls), TS stdlib. No DOM, no Node-only APIs (except `worker_threads` behind a contract). | Physics, event bus, pure logic, DI contracts |
-| `src/server/` | `colyseus` (`@colyseus/core` carries a local `pnpm patch` for nanoid 3 — `patches/`; re-check on any colyseus bump), `@colyseus/schema`, `@colyseus/ws-transport`, `express`, `zod`, `node:sqlite` (built-in; replaced `better-sqlite3` — see `src/server/CLAUDE.md` + `docs/LESSONS.md`), `pino` + `pino-pretty` + `pino-roll` (rolling-NDJSON gameplay audit log — see `docs/architecture/gameplay-audit-log.md`), `web-push` (Web Push notifications, e.g. "your base is under attack" — see `docs/architecture/web-push.md`). Optional Phase 9 (multi-VM only): `@colyseus/redis-driver`, `@colyseus/redis-presence`. | Authoritative simulation host, persistence, lag comp, backpressure, orchestration |
-| `src/client/` | `colyseus.js`, `react`, `react-dom`, `@mui/material`, `@mui/icons-material`, `@emotion/*`, `pixi.js` v8, `pixi-viewport`, `howler`, `zustand`, `nipplejs` | UI, rendering, audio, input, client prediction |
-| `src/shared-types/` | Pure TS + zod schemas only | Cross-zone contracts (message shapes, SAB layout constants) |
+| Root tooling | `typescript`, `vite`, `tsx`, `pnpm`, `vitest`, `@vitest/coverage-v8`, `@playwright/test`, `eslint` + `eslint-plugin-import`, `prettier`, `dependency-cruiser`, `knip`, `vite-plugin-pwa` + `@vite-pwa/assets-generator` | Build, test, lint, coverage, boundary DAG, dead code, PWA |
+| `src/core/` | `@dimforge/rapier2d-compat`, `eventemitter3`, `zod` v4 (`z.record(enum, v)` is exhaustive; use `z.partialRecord` for subsets), `poly-decomp`, TS stdlib. No DOM, no Node-only APIs (except `worker_threads` behind a contract) | Physics, event bus, pure logic, DI contracts |
+| `src/server/` | `colyseus` (`@colyseus/core` carries a local `pnpm patch` in `patches/`; re-check on any colyseus bump), `@colyseus/schema`, `@colyseus/ws-transport`, `express`, `zod`, `node:sqlite`, `pino` + `pino-pretty` + `pino-roll`, `web-push`. Multi-VM only: `@colyseus/redis-driver`, `@colyseus/redis-presence` | Authoritative simulation, persistence, lag comp, backpressure |
+| `src/client/` | `colyseus.js`, `react`, `react-dom`, `@mui/material`, `@mui/icons-material`, `@emotion/*`, `pixi.js` v8, `pixi-viewport`, `howler`, `zustand`, `nipplejs` | UI, rendering, audio, input, prediction |
+| `src/shared-types/` | Pure TS + zod schemas only | Cross-zone contracts |
 
 ---
 
 ## SOLID Adherence (project-specific bindings)
 
-- **S — Single Responsibility.** Each zone has one concern; each module has one axis of change. `PixiRenderer` never handles input. `Reconciler` never touches rendering. `SectorRoom` never formats Pino lines directly.
-- **O — Open/Closed.** New weapons / AI / sectors are added by implementing existing contracts (`IWeapon`, `IAiBehaviour`, `ISectorDefinition`), not by editing switch statements.
-- **L — Liskov Substitution.** Any `IRenderer` (e.g., a headless test one) is drop-in for the Pixi one. Any `INetworkSink` (e.g., a loopback one) is drop-in for the Colyseus one.
-- **I — Interface Segregation.** Contracts are narrow: `IRenderer`, `IAudio`, `INetworkSink` are separate, never merged.
-- **D — Dependency Inversion.** `src/core` declares abstractions; server and client supply concretions via constructor injection at bootstrap. Dependency direction goes *into* core, never out — enforced by ESLint `no-restricted-imports`.
+- **S:** each zone has one concern; each module one axis of change. `PixiRenderer` never handles input; `Reconciler` never renders; `SectorRoom` never formats Pino lines.
+- **O:** new weapons / AI / sectors implement existing contracts (`IWeapon`, `IAiBehaviour`, `ISectorDefinition`), not new switch arms.
+- **L:** any `IRenderer` / `INetworkSink` (headless, loopback) is drop-in for the real one.
+- **I:** contracts stay narrow; `IRenderer`, `IAudio`, `INetworkSink` are never merged.
+- **D:** `src/core` declares abstractions; server and client inject concretions at bootstrap. Dependencies point into core, never out.
 
 ---
 
 ## Repo Map
 
-- `src/core/` — zone-pure simulation. Read `src/core/CLAUDE.md`.
-- `src/server/` — Node + Colyseus authority. Read `src/server/CLAUDE.md`.
-- `src/client/` — Browser UI + rendering. Read `src/client/CLAUDE.md`.
-- `src/shared-types/` — wire contracts.
-- `tests/e2e/` — Playwright multi-browser scenarios.
-- `benchmarks/` — vitest-bench suites.
-- `docs/LESSONS.md` — chronological log of non-obvious findings.
-- `docs/SHELF.md` — design work deliberately parked to revisit (e.g. NPC formations).
-- `.github/workflows/ci.yml` — the enforcement pipeline.
-- `eslint.config.js` — boundary rules. Treat modifications here with great care; weakening a pattern is equivalent to weakening invariant #1.
-
----
+- `src/core/`, `src/server/`, `src/client/`: zones, each with its own CLAUDE.md. `src/shared-types/`: wire contracts.
+- `tests/e2e/` Playwright; `benchmarks/` vitest-bench; `.github/workflows/ci.yml` the enforcement pipeline.
+- `docs/architecture/`, `docs/features/`: guides. `docs/LESSONS.md`: chronological gotchas. `docs/SHELF.md`: deliberately parked design work.
+- `eslint.config.js`: boundary rules. Weakening a pattern there is weakening invariant #1.
 
 ## Phase-Gate Ritual
 
-At each phase's acceptance gate:
-
-1. **Update the relevant CLAUDE.md** for any zone whose rules, contracts, or thresholds changed.
-2. **Append to `docs/LESSONS.md`** if this phase surfaced a gotcha, benchmark surprise, or failure mode.
-3. **Review Cross-Phase Invariants** — if one was added or amended, update this file.
-
-Phase 0 seeds all CLAUDE.md files; every subsequent phase amends them.
+At each phase gate: update the zone CLAUDE.md rules and the guides whose content changed (#7); append gotchas to `docs/LESSONS.md`; review the invariants and amend this file if one changed.
 
 ---
 
-## Commit cadence — commit at every passing milestone, not at session end
+## Keep context small (token budget)
 
-Long uncommitted sessions are a recovery hazard. If Vite HMR cycles go wrong, the laptop sleeps and wakes with a broken shell wrapper, or a long task hangs and the session has to bail — **every minute since the last commit is at risk**. Reconstructing "what belongs in which commit" from a sprawling working tree afterwards is far harder than committing each piece when it shipped. (2026-05-10: a multi-hour session ran galaxy-map refactor → AI plumbing → ship labels → error overlay end-to-end without a single commit. Don't repeat that.)
+Every call re-reads the whole context, so its size sets the bill.
+- **Hand off early.** At a milestone (a PR merges, a stream stage closes) or once context passes ~250k tokens, write the handoff and start a fresh session.
+- **Keep subagents in one zone.** Tell each subagent which zone it works in and to stay there: every zone it touches loads that zone's CLAUDE.md for the rest of its life.
+- **Search narrow, read by range.** Use the Grep tool or `git grep` scoped to `src/ docs/ tests/ scripts/`, never the repo root. Read files over 600 lines by range after `grep -n`. Cap shell output (`| head -40`). Don't re-read CLAUDE.md files through the shell; they are already in context.
 
-**The rule**: commit after every implementation milestone where the inner loop (`pnpm typecheck && pnpm lint && pnpm test`) is green AND the change forms a coherent unit. That usually maps to a step within a multi-step plan — *Step 1 wiring, Step 2 patrol, ...* — commit each separately, even when later steps are still pending.
+## Commit cadence
 
-**Do**:
-- Commit each step when the inner loop is green. Imperative subject + plan reference: `feat(ai): hostility plumbing (Step 1, plan: <name>)`.
-- Group only related changes per commit. If you find yourself touching three unrelated zones in one step, that's a smell — split.
-- Before stopping a session: `git status` clean OR you have intentionally-noted pending work. If neither holds, that is a process bug — flag it before logging off.
+Commit at every milestone where the inner loop (`pnpm typecheck && pnpm lint && pnpm test`) is green and the change is a coherent unit, usually one plan step per commit, subject in the imperative with the plan reference. Group only related changes. Never commit yellow code to save progress; `--no-verify` is forbidden. Before a session ends, `git status` is clean or the pending work is noted.
 
-**Don't**:
-- Wait until "the whole plan is done" to commit. If a plan has five steps, the working tree should reach `git status` clean five times along the way (modulo small bridge edits).
-- Bundle unrelated work because it happened in the same session.
-- Commit yellow code "to save progress" — fix the test or revert before committing. `--no-verify` is forbidden by default (root CLAUDE.md, "Committing changes with git").
+## Clean up at every stage (standing user directive)
 
-**Default behaviour for AI assistants in this repo**: when a step ships green, prompt the user with the proposed commit (subject + summary) and offer to run `git add -p` / `git commit`. Don't commit without explicit consent (per the "only commit when explicitly asked" rule), but don't silently let the diff sprawl either — surface the commit moment.
+"Clean up as much memory as you can at each stage" (a plan step, a commit, a test/netgate/showcase run, the session end):
+1. **RAM / processes:** when a run finishes, and before EVERY recording (showcase take, perf scene), stop what this session started (dev 2567/5173, showcase 2767/5373, netgate vite/proxies, headless Chrome, ffmpeg, `tsx watch`; never the user's own Chrome) and check free RAM.
+2. **Disk:** scratch lives in the session scratchpad, not `diag/_*`; delete it when its stage ends. Remove a `.claude/worktrees/<x>` worktree once its branch is merged and clean (keep `netgate-baseline` / `netgate-head`). Never delete committed evidence or a dirty worktree without asking.
+3. **Auto-memory:** keep `MEMORY.md` under 24 KB, one ~150-char line per note; collapse or delete notes when their plan finishes or a later note supersedes them.
 
----
+## NEVER build a parallel system (standing user directive)
 
-## Clean up at every stage (2026-11-05, standing user directive)
-
-"Clean up as much memory as you can at each stage." A stage = a plan step, a commit, a test/netgate/showcase run, or the end of a session. Three kinds of memory, all three every time:
-
-1. **Machine RAM / processes.** When a run finishes (pass or fail), stop what it started: dev servers (2567/5173), showcase servers (2767/5373), netgate vite/proxies, headless Chrome, `tsx watch`. Check `netstat -ano | findstr ":2567 :5173 :2767 :5373" | findstr LISTENING` and the `node.exe` count; stop anything this session left. Don't leave background tasks running across stages unless the next step needs them. **Before EVERY recording (showcase take, perf scene) as well, not only after (2026-11-08, user: "be sure you clean up stuff using memory every time before recording a video"):** those ports, leftover `node.exe`, headless Chrome / ffmpeg from earlier runs (never the user's own Chrome), and check free RAM; a recording on a starved 8 GB laptop gets reaped or films hitches.
-2. **Disk clutter.** Scratch goes in the session scratchpad, not `diag/_*`. When a stage ends, delete the scratch it created (probe scripts, `_commit-*.txt`, `_pr-body-*.md` once the PR exists, screenshots already reviewed). Remove a `.claude/worktrees/<x>` worktree once its branch is merged and the tree is clean (keep `netgate-baseline`/`netgate-head`: they're reused). Old `showcase-out/<arm>` runs go once their clips are published. Never delete committed evidence (`diag/captures/` that a doc cites) or a dirty worktree without asking.
-3. **Claude's notes (auto-memory).** Keep `MEMORY.md` under its 24 KB load limit: one line per note, ~150 chars. When a plan finishes, collapse its status note to one line (or delete it if the repo/PR history already says it), and delete notes a later one supersedes. Rules that must hold on both machines go here, not in a memory.
-
-## NEVER build a parallel system (2026-11-14, standing user directive)
-
-Owner: "NEVER build a parallel system." When a feature needs something the game already does (AI pilots and tactics, ship drawing, an entity type, a fire path, a UI surface), EXTEND that system with the hooks the feature needs. Never write a sibling version next to it, however much easier or "safer for its tests" that looks.
-
-**Why:** the RTS command work (2026-11-14) wrote a new `WingmanBehaviour` AI for player-owned ships beside the NPC AI, and drew them through the parked-hull path. The copy lacked the NPC dogfight work (the fleet lost every fight) and the ships looked different (see-through, frozen turrets, no shield bump flash). The owner had asked to be questioned before planning; the plan's "don't adapt the existing brain, write a new one" call was never put to them.
+Owner: "NEVER build a parallel system." When a feature needs something the game already does (AI pilots and tactics, ship drawing, an entity type, a fire path, a UI surface), EXTEND that system with the hooks it needs. Never write a sibling next to it, however much easier or "safer for its tests" that looks. (A sibling `WingmanBehaviour` once lacked the NPC dogfight work and drew ships differently; the owner had never been asked.)
 
 **Every plan gets a hostile review for parallel systems, then the owner is ASKED:**
-1. Before a plan is presented or any building starts, a separate hostile reviewer agent checks it. Give it the plan and the codebase, not your conclusion. It must name, for each new module / class / behaviour / renderer / message the plan adds, the existing system that already does that job (search the code for it), and say whether the plan extends it or duplicates it.
+1. Before a plan is presented or building starts, a separate hostile reviewer agent gets the plan and the codebase (not your conclusion). For each new module / class / behaviour / renderer / message, it names the existing system that already does that job and says whether the plan extends or duplicates it.
 2. Any duplicate is a blocker: rewrite the plan to extend the existing system.
-3. If a sibling really seems necessary, it goes to the owner as an AskUserQuestion in plain words ("the game already has X; I want to build a second Y because Z — OK?") BEFORE any code. Never decide it yourself, and never bury it in a plan file.
-4. Subagent briefs must say the same: "extend existing systems; if you think a new parallel one is needed, stop and report instead".
+3. If a sibling really seems necessary, ask the owner with AskUserQuestion in plain words ("the game already has X; I want to build a second Y because Z — OK?") BEFORE any code. Never decide it yourself or bury it in a plan file.
+4. Subagent briefs say the same: "extend existing systems; if you think a new parallel one is needed, stop and report instead".
 
-## End every message with a status line (2026-11-01, standing user directive)
+## End every message with a status line (standing user directive)
 
-The last line of every message is one of:
-- **Continuing:** what happens next (no action needed from the user);
-- **Done:** nothing left;
-- **Waiting on you:** a short pointer to the decision.
+The last line of every message is **Continuing:** (what happens next), **Done:** (nothing left) or **Waiting on you:** (a short pointer to the decision).
 
-**Never end a turn to wait for "continue" (2026-11-01, standing user directive).** When a plan is approved, execute ALL of it: commit, push, PR (auto-merge) each piece, then start the next piece in the same turn. A phase boundary, an in-flight PR (branch off it) or the size of what's left is NOT a reason to stop. In the user's words: "Execute the plan in full without pausing unless it's for a good reason. Waiting for me to say continue is not a good reason." Stop only when the whole plan is done, or for a genuine user decision (AskUserQuestion) or a hard blocker. **Pending CI or a long background run is not a reason to stop either (2026-11-12, user: "It's not efficient to just sit around waiting on the CI. Can you not proceed with productive work?")**: start the next independent item meanwhile, in a second worktree or port lane so it doesn't disturb the run.
+- **Never end a turn to wait for "continue".** When a plan is approved, execute ALL of it: commit, push, PR (auto-merge) each piece, then start the next piece in the same turn. A phase boundary, an in-flight PR (branch off it) or the size of what's left is not a reason to stop; stop only when the plan is done, for a genuine user decision, or a hard blocker.
+- **Pending CI or a long run is not a reason to stop:** start the next independent item meanwhile, in a second worktree or port lane.
+- **Decisions go through the AskUserQuestion tool, never as questions in prose.**
 
-**Decisions go through the AskUserQuestion prompt tool, never as questions in prose.** The user called prose questions "very annoying" and asked to be "prompted properly". Asks buried in a long report get missed ("I've no idea what you want from me").
+## Pushing branches & opening PRs
 
-## Pushing branches & opening PRs — `gh` IS installed (2026-06-16)
-
-`gh` (GitHub CLI, v2.94+) is installed (winget `GitHub.cli`, user scope at `%LOCALAPPDATA%\Microsoft\WinGet\Packages\GitHub.cli_*\bin\gh.exe`, on the user PATH for new shells) and authenticated via `%APPDATA%\GitHub CLI\hosts.yml`. **Stop saying "gh isn't installed / branches are local" — it is.** Push + open a PR is a one-liner; **never leave finished, green work unpushed waiting to "ask" — when the user says push/PR (or the task implies shipping), do it.**
-
-**`gh` is FULLY authed** — `read:org` was added 2026-06-16 (`gh auth refresh`), so `gh pr create / edit / list / view / checks / diff` ALL work natively:
+`gh` is installed and fully authed (user PATH; `%LOCALAPPDATA%\Microsoft\WinGet\Packages\GitHub.cli_*\bin\gh.exe`). Never leave finished, green work unpushed.
 
 ```
+git fetch origin && git checkout -b <branch> origin/main      # every new branch
+git fetch origin && git merge --no-edit origin/main            # right before push; re-run the inner loop
 git push -u origin <branch>
-gh pr create --base main --head <branch> --title "…" --body-file diag/_pr-body-<x>.md
-gh pr merge <n> --auto --merge   # ALWAYS — enable auto-merge the instant the PR exists (see below)
-gh pr checks <n>   # CI status; gh pr view/edit/list/diff also fine
+gh pr create --base main --head <branch> --title "…" --body-file <scratchpad>/pr-body.md
+gh pr merge <n> --auto --merge                                 # ALWAYS, the instant the PR exists
 ```
 
-**ALWAYS enable auto-merge the instant a PR is created — unprompted, every time (2026-06-21, standing user directive).** The push→PR step is NOT complete until `gh pr merge <n> --auto --merge` has run. Repo facts: default merge method is `--merge` (`viewerDefaultMergeMethod=MERGE`), `deleteBranchOnMerge=true` (branch auto-cleaned), and `--auto` HOLDS the PR until the required CI checks pass, then merges — so this is safe, not a blind merge (verified on #127: it waited for e2e-smoke/integration/netgate-run/unit/verify to go green, then merged). **Why this is a hard rule and not a nicety:** the user runs Claude Code on **two machines**, so a per-machine local memory of "set auto-merge" does NOT follow them between boxes — it kept getting dropped and they had to remind me on every PR. This lives in CLAUDE.md (in git → both machines) precisely so it can't break down that way. Don't stop at `gh pr create`; chain the auto-merge and report "auto-merge on" alongside the PR URL.
-
-**Auto-memory is PER-MACHINE — durable/shared rules belong HERE, not in a memory (2026-06-21, standing user directive).** The file-based auto-memory at `~/.claude/projects/<project>/memory/` lives on a SINGLE machine's disk and does **not** sync across machines. The user runs Claude Code on **two machines**, so any rule recorded only as a memory silently fails to apply on the other box — which is exactly how the auto-merge rule above kept breaking down. **Routing rule for where a learning goes:** machine-specific facts (a local path, a per-box workaround, e.g. [the WMI dev-server relaunch]) or genuinely private notes → a memory is appropriate. Anything that must hold on EVERY machine / for any contributor — process rules, conventions, standing directives, project gotchas — → write it in CLAUDE.md (or `docs/LESSONS.md`), because it's in git and travels with the repo. When in doubt, prefer CLAUDE.md: a memory that *should* have been a repo doc is invisible the moment the user switches machines.
-
-**Keep the branch synced with `main` — sync BEFORE every push + PR (2026-06-18, user process directive).** A branch cut off an older `main` goes stale the instant another PR merges, so the user repeatedly hits GitHub's "Update branch" gate before merge. Avoid it:
-
-1. **Cut every new branch off a freshly-fetched `main`:** `git fetch origin && git checkout -b <branch> origin/main`.
-2. **Sync `main` in right before `git push -u` + `gh pr create`:** `git fetch origin && git merge --no-edit origin/main`, then **re-run the inner loop** (`pnpm typecheck && pnpm lint && pnpm test`) since the merge can change behaviour.
-3. **Re-sync just before the PR is actually merged** — and for a STACK of related PRs, **re-sync each remaining branch after any one of them merges** (merging A staleness B/C). A quick `git fetch && git rev-list --count origin/<branch>..origin/main` tells you if a branch is behind (0 ⇒ current).
-
-Use `git merge` (not `rebase`) for an already-pushed PR branch so no force-push is needed; `rebase` is fine only for an unpushed, clean branch. This is the standing default now — don't wait for the user to ask for an "update branch".
-
-Fallback (only if gh's token rotates / loses scope): the REST scripts via git's GCM credential — `diag/adb-shots/_create-*.mjs` (`POST /repos/JanusBifrons/eqx-net/pulls`) + `_edit-pr<n>.mjs` (`PATCH /…/pulls/<n>`); token = `printf 'protocol=https\nhost=github.com\n\n' | git credential fill | sed -n 's/^password=//p'` → `Authorization: Bearer`. These need only `repo`, so they work even without read:org. (History: before the refresh, gh's GraphQL commands — list/edit/status/create — failed with `requires read:org`; the REST scripts were the workaround.)
-
-Other notes:
-- A fresh shell hasn't reloaded PATH → call gh by full path once, or in-PowerShell `$env:Path += ";$env:LOCALAPPDATA\Microsoft\WinGet\Packages\..."`.
-- If gh auth ever breaks (token rotated), re-add the scope with `gh auth refresh -h github.com -s read:org` — run it in **PowerShell / Windows Terminal** (a real PTY), NOT Git Bash/MinTTY (which errors `could not prompt: Incorrect function`); in Git Bash, prefix with `winpty`. Or re-mint hosts.yml directly: `printf 'github.com:\n    oauth_token: %s\n    user: JanusBifrons\n    git_protocol: https\n' "$TOKEN" > "$APPDATA/GitHub CLI/hosts.yml"` (`$TOKEN` from `git credential fill`).
+- **Auto-merge is part of opening a PR (standing user directive):** `--auto` holds the PR until required CI passes, so it is safe. Report "auto-merge on" with the PR URL.
+- **Stay synced with `main`:** sync before every push, re-sync before merge, and for a stack re-sync each remaining branch after any one merges (`git rev-list --count origin/<branch>..origin/main` = 0 means current). Use `git merge`, not rebase, on a pushed branch.
+- **Auto-memory is per machine; the user works on two.** Machine-specific facts may go in a memory; any rule, convention or project gotcha goes in the repo (a rule in CLAUDE.md, anything else in `docs/`). When in doubt, put it in the repo.
+- If gh auth breaks: `gh auth refresh -h github.com -s read:org` in PowerShell / Windows Terminal (not Git Bash; there prefix `winpty`).
 
 ---
 
-## Verification Protocol (apply after every server-touching change)
+## Verification Protocol (after every server-touching change)
 
-After any change to `src/server/` or its config, **boot the server before reporting success**:
-
-```
-timeout 8 pnpm dev:server
-```
-
-A clean boot prints `INFO: EQX Peri server started port: 2567` with no uncaught exceptions. A crash (exit code non-143) means the change broke the runtime even if typecheck passes — fix it before moving on. Exit code 143 is normal (SIGTERM from `timeout`).
-
-This exists because TypeScript's type system cannot catch runtime issues like decorator transform mismatches, missing `Symbol.metadata`, or ESM resolution failures that only surface at Node.js startup.
-
-If port 2567 is already taken, **kill the existing process and reclaim it** — see the next section. Don't dodge onto `PORT=2568`; that just leaves zombies behind.
+Boot the server before reporting success: `timeout 8 pnpm dev:server`. A clean boot prints `INFO: EQX Peri server started port: 2567`; exit 143 is the normal SIGTERM, anything else means the change broke the runtime (decorator transforms, `Symbol.metadata`, ESM resolution) even if typecheck passes. If 2567 is taken, check its owner (next section): stop it only if this session started it; otherwise boot on offset ports.
 
 ---
 
-## Work in a worktree; check port owners before using a port (standing user directive, 2026-11-08)
+## Work in a worktree; check port owners before using a port (standing user directive)
 
-Several Claude sessions run on the same machine at once. So:
+Several Claude sessions run on this machine at once. So:
 
 - **All work happens in a git worktree** under `.claude/worktrees/<name>` on its own branch, never in the main checkout.
-- **Before starting, using or opening any port, check who owns it** (`netstat -ano | findstr LISTENING | findstr ":<port>"`, then the PID's command line). Only stop processes your session started (match the worktree path in the command line); another session's server is never yours to kill, even on the canonical ports.
-- **Check immediately before launching, not in parallel with the launch:** a recorder or server another session started a second earlier will otherwise collide. Prefer offset ports (`EQX_E2E_PORT_OFFSET` for Playwright, `EQX_SHOWCASE_PORT_OFFSET`, `NETGATE_PORT_OFFSET`, or `PORT=` + `EQX_SERVER_PORT=` + `vite --port … --strictPort` for a manual dev pair) when another session is active.
-- The "Claude owns the servers, kill before starting" rule below applies to processes **this** session or worktree started.
+- **Before starting, using or opening any port, check who owns it** (`netstat -ano | findstr LISTENING | findstr ":<port>"`, then the PID's command line). Stop only processes your session started (match the worktree path in the command line); another session's server is never yours to kill, even on the canonical ports.
+- **Check immediately before launching, not in parallel with the launch.** When another session is active, prefer offset ports (`EQX_E2E_PORT_OFFSET`, `EQX_SHOWCASE_PORT_OFFSET`, `NETGATE_PORT_OFFSET`, or `PORT=` + `EQX_SERVER_PORT=` + `vite --port … --strictPort`).
 
 ## Stale dev servers cause "phantom" E2E failures
 
