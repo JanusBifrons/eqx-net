@@ -42,9 +42,12 @@ export function isLingeringHull(ship: ShipLivenessView): boolean {
  *  there: NPCs keep their locks and keep firing at it. Spectating is no longer
  *  a way to dodge a fight."): the hull NPC fire control locks and engages on a
  *  connected pilot's behalf. Covers ACTIVE hulls, plus the one LINGERING hull
- *  the pilot parked by toggling Spectate (`parkedBySpectate`). Other lingering
- *  hulls (disconnected, displaced) reach the AI by their own id instead.
+ *  that is still the pilot's ship (`stillThePilots`): the hull they parked by
+ *  toggling Spectate, or the parked hull they are taking the controls of,
+ *  in-world through its join handshake (`isActive` flips on arrival; it is
+ *  the same ship, so AI pilots' locks on it hold). Other lingering hulls
+ *  (disconnected, displaced) reach the AI by their own id instead.
  *  TRAVELLING is not excluded here; a caller that skips it says so. */
-export function isEngageablePilotHull(ship: ShipLivenessView, parkedBySpectate: boolean): boolean {
-  return isPilotedActive(ship) || (parkedBySpectate && isLingeringHull(ship));
+export function isEngageablePilotHull(ship: ShipLivenessView, stillThePilots: boolean): boolean {
+  return isPilotedActive(ship) || (stillThePilots && isLingeringHull(ship));
 }

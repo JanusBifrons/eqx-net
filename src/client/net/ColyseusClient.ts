@@ -3039,8 +3039,27 @@ export class ColyseusGameClient {
       this.ensureRemoteShipBody(to, body, entry.kind);
     }
     moveKey(this._damageFlashFrames, from, to);
+    this.rekeyLockState(from, to);
     this.mirror.pendingShipRekeys?.push(from, to);
     logEvent('ship_rekeyed', { from, to });
+  }
+
+  /**
+   * The lock state that names a re-keyed ship follows it (`p:<from>` →
+   * `p:<to>`), as the server's `LockSubsystem.shipKeyMoved` does: the own
+   * groups' lock targets (lock line, marks, turret aim, fire gate read them
+   * until the next snapshot's `groups` slice, which the server already
+   * re-keyed, #16), the held lock-line candidate and the last `lock_track`
+   * sent (so the line neither re-sends nor lets go of the same ship).
+   */
+  private rekeyLockState(from: string, to: string): void {
+    const fromKey = this.shipLockKey(from);
+    const toKey = this.shipLockKey(to);
+    for (const g of this._fcGroups) {
+      for (const l of g.l) if (l.t === fromKey) (l as { t: string }).t = toKey;
+    }
+    if (this.mirror.localLockCandidate === fromKey) this.mirror.localLockCandidate = toKey;
+    if (this._trackKey === fromKey) this._trackKey = toKey;
   }
 
   /**

@@ -70,6 +70,8 @@ export interface WireGroup { id: string; m: 0 | 1; l: WireLock[] }
 interface GroupState {
   id: string;
   mode: GroupMode;
+  /** The slot's own start mode (`defaultMode`, else AUTO), before any pilot override. */
+  slotMode: GroupMode;
   capacity: number;
   refSize: number;
   tracking: number;
@@ -218,6 +220,62 @@ export class LockSubsystem {
     p.wire.length = 0;
   }
 
+  /**
+   * A ship's key moved: its owner took its controls (shipInstanceId → their
+   * playerId) or let go of them (playerId → shipInstanceId). It is the SAME
+   * ship, so its locks follow it (RTS Part A, "lockable whoever flies it"):
+   *  - every lock held ON it, here and in `into`, is re-keyed `p:<from>` →
+   *    `p:<to>` (stage, progress and track kept);
+   *  - the ship's OWN weapon groups (with their locks) move from `from` in
+   *    this machine to `to` in `into` (this one, or the sibling: a pilot's
+   *    `locks` ↔ the AI pilots' `wingmanLocks`). The destination keeps its
+   *    own testMode flags, and its start mode sets each group's mode (an AI
+   *    pilot flies MAN; a pilot gets the slots' start modes back).
+   * `into` null: nobody flies the ship any more (no AI pilot), so its own
+   * locks drop. Rare (a hand-over), never per tick.
+   */
+  shipKeyMoved(from: string, to: string, into: LockSubsystem | null): void {
+    if (from === to) return;
+    const fromKey = `p:${from}`;
+    const toKey = `p:${to}`;
+    this.renameTarget(fromKey, toKey);
+    if (into !== null && into !== this) into.renameTarget(fromKey, toKey);
+    const src = this.players.get(from);
+    if (src === undefined) return;
+    if (into === null) { this.clearLocks(from); return; }
+    let dst = into.players.get(to);
+    if (dst === undefined) {
+      dst = { instant: src.instant, anyTarget: src.anyTarget, startManual: src.startManual, kindId: '', activatedSig: -1, sensor: 1, groups: [], wire: [] };
+      into.players.set(to, dst);
+    }
+    // Swap the group lists: the destination takes the ship's, the source is left empty.
+    const groups = src.groups;
+    const wire = src.wire;
+    src.groups = dst.groups;
+    src.wire = dst.wire;
+    dst.groups = groups;
+    dst.wire = wire;
+    dst.kindId = src.kindId;
+    dst.activatedSig = src.activatedSig;
+    dst.sensor = src.sensor;
+    this.clearLocks(from);
+    for (const g of groups) {
+      g.mode = dst.startManual ? 'manual' : g.slotMode;
+      g.wire.m = g.mode === 'auto' ? 0 : 1;
+    }
+  }
+
+  /** Re-key every lock on target `fromKey` to `toKey` (see `shipKeyMoved`). */
+  private renameTarget(fromKey: string, toKey: string): void {
+    for (const p of this.players.values()) {
+      for (const g of p.groups) {
+        let hit = false;
+        for (const e of g.locks) if (e.target === fromKey) { e.target = toKey; hit = true; }
+        if (hit) this.syncWireShape(g);
+      }
+    }
+  }
+
   /** (Re)build the player's groups when their ship kind or activated mounts change. */
   private sync(playerId: string, p: PlayerLocks): boolean {
     const ship = this.deps.shipOf(playerId);
@@ -239,6 +297,7 @@ export class LockSubsystem {
       p.groups.push({
         id: slot.id,
         mode,
+        slotMode: slot.defaultMode ?? 'auto',
         capacity: lockCapacityFor(ship.kind, slot, NO_PILOT_MODS),
         refSize: geo.refSize,
         tracking: geo.tracking,

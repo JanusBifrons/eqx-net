@@ -1501,6 +1501,8 @@ export class SectorRoom extends Room<SectorState> {
      *  so a test that isn't about locking can fire (lock-to-fire is universal).
      *  Returns how many groups took it. */
     forceLock: (playerId: string, targetKey: string, groupId?: string) => number;
+    /** The weapon-group lock slice of a ship (a pilot by playerId, an AI-flown hull by shipInstanceId). */
+    locksOf: (id: string) => ReadonlyArray<{ id: string; l: ReadonlyArray<{ t: string; s: number }> }> | undefined;
     applyDamage: (
       targetId: string,
       shooterId: string,
@@ -1599,6 +1601,7 @@ export class SectorRoom extends Room<SectorState> {
       aiPlayerScratch: this.aiPlayerScratch,
       postToWorker: (cmd) => this.postToWorker(cmd),
       forceLock: (pid, key, groupId) => this.locks.forceLock(pid, key, groupId),
+      locksOf: (id) => this.locksFor(id).wireFor(id),
       blockShotAtWall: (fx, fy, dx, dy, maxDist, damage) => this.blockShotAtWall(fx, fy, dx, dy, maxDist, damage),
       applyDamage: (targetId, shooterId, damage, hitX, hitY) =>
         this.applyDamage(targetId, shooterId, damage, hitX, hitY),
@@ -4635,6 +4638,23 @@ export class SectorRoom extends Room<SectorState> {
     return this.fleet.size > 0 && this.fleet.isAttached(id) ? this.wingmanLocks : this.locks;
   }
 
+  /**
+   * A player ship's lock key moved (`p:<playerId>` ↔ `p:<shipInstanceId>`):
+   * its owner took or let go of its controls. The ONE seam for it, called
+   * where the server re-keys the hull (`displaceActiveHullToLingering`,
+   * `reclaimLingeringHull`): every lock on the ship, in both player lock
+   * machines, follows it, and so do its own locks (`fromLocks` → `toLocks`,
+   * null = nobody flies it: they drop). See `LockSubsystem.shipKeyMoved`.
+   */
+  private moveShipLocks(from: string, to: string, fromLocks: LockSubsystem, toLocks: LockSubsystem | null): void {
+    fromLocks.shipKeyMoved(from, to, toLocks);
+    // Locks held on the ship in the sibling machine, when it isn't `toLocks`.
+    const sibling = fromLocks === this.locks ? this.wingmanLocks : this.locks;
+    if (toLocks !== sibling) sibling.shipKeyMoved(from, to, sibling);
+    // AI pilots' cached target → lock key (`wingmanLockKey`) may name the old key.
+    this.wingmanFireKeys.clear();
+  }
+
   /** RTS slice 5: whose hostility a lock reads — a wingman hull's OWNER, else the pilot. */
   private lockOwner(id: string): string {
     if (this.fleet.size === 0) return id;
@@ -4855,7 +4875,11 @@ export class SectorRoom extends Room<SectorState> {
       // Flying a hull again (respawn, rejoin, reclaim): no longer spectating.
       if (this.spectateParkedHull.size > 0) this.spectateParkedHull.delete(playerId);
       const pose = this.shipPoseCache.get(playerId);
-      if (!pose || !isEngageablePilotHull(active, false)) return null;
+      // A reclaimed parked hull stays in the world through its join handshake
+      // (`inWorld`, as others keep seeing it): taking its controls must not
+      // drop the AI pilots' locks on it.
+      const inWorld = this.pendingJoin.size > 0 &&this.pendingJoin.get(playerId)?.inWorld === true;
+      if (!pose || !isEngageablePilotHull(active, inWorld)) return null;
       out.ship = active; out.pose = pose;
       return out;
     }
@@ -10107,6 +10131,11 @@ export class SectorRoom extends Room<SectorState> {
       if (rec.kind === SWARM_KIND_DRONE || rec.kind === 2) key = `s:${rec.entityId}`;
     } else if (this.getActiveShip(targetId)?.alive || this.lingeringSlots.has(targetId)) {
       key = `p:${targetId}`;
+    } else {
+      // A ship named by its shipInstanceId that its owner now flies: its lock
+      // key is the pilot's (`resolveLockTarget`), so the lock follows the ship.
+      const ship = this.state.ships.get(targetId);
+      if (ship?.alive && ship.playerId !== '' && this.resolveActiveShipKey(ship.playerId) === targetId) key = `p:${ship.playerId}`;
     }
     if (key === null) return null;
     if (cached !== undefined) { cached.id = targetId; cached.key = key; } else this.wingmanFireKeys.set(sid, { id: targetId, key });
@@ -10269,6 +10298,8 @@ export class SectorRoom extends Room<SectorState> {
     ship.isActive = false;
     this.postToWorker({ type: 'REKEY_SHIP', oldId: playerId, newId: `linger-${shipInstanceId}` });
     this.attachWingman(shipInstanceId);
+    // Same ship, new key: its locks (held on it and its own) follow it to the AI pilot.
+    this.moveShipLocks(playerId, shipInstanceId, this.locks, this.fleet.isAttached(shipInstanceId) ? this.wingmanLocks : null);
     serverLogEvent('pilot_swap_displaced', { playerId, shipInstanceId, sectorKey: this.sectorKey });
   }
 
@@ -10309,6 +10340,8 @@ export class SectorRoom extends Room<SectorState> {
     const rec = getPlayerShipStore().get(shipId);
     if (rec === null || rec.playerId !== playerId) return;
 
+    // The ship AI pilots engage as this pilot right now (flown, or parked by Spectate).
+    const engagedBefore = this.getActiveShip(playerId)?.shipInstanceId ?? this.spectateParkedHull.get(playerId);
     // Displace the player's current active hull (if they were piloting one) into
     // a lingering hull, so they don't keep two active hulls.
     this.displaceActiveHullToLingering(playerId);
@@ -10326,6 +10359,12 @@ export class SectorRoom extends Room<SectorState> {
       angle:  this.sabF32[b + SLOT_ANGLE_OFF]!,
       angvel: this.sabF32[b + SLOT_ANGVEL_OFF]!,
     };
+    // Same ship, new key: its locks (held on it and its own) follow it from the
+    // AI pilot to the owner, BEFORE `detachWingman` forgets the AI pilot's.
+    this.moveShipLocks(shipId, playerId, this.wingmanLocks, this.locks);
+    // AI pilots' locks on this pilot name the pilot, not a ship: they hold on
+    // only if the pilot stays with the ship they were on.
+    if (engagedBefore !== shipId) this.npcLocks.forget(playerId);
     // The owner takes the helm: a squad member stays in its squad, which forms
     // up on it (pilot-led) and gets it back as AI leader on release (4b).
     this.detachWingman(shipId, true);

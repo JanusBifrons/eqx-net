@@ -148,11 +148,25 @@ resolves, so neither you nor your AI pilots can lock your own fleet; AUTO never
 picks a player ship). A wingman's attack order or retaliation on another
 player's hull locks it the same way (`wingmanLockKey`). The key names the
 SHIP's current role: when the owner takes the controls the hull becomes their
-active ship (`p:<playerId>`) and a lock on `p:<shipInstanceId>` drops, and the
-reverse when they park it. NPC locks on a parked hull stay keyed by the pilot
-(`engageablePilotHull`, Spectate-parked hull only) and `lockedBy` still rides
-the own ACTIVE ship only, so no threat ring is drawn round a parked hull.
-Lock: `tests/integration/sectorRoom/lockAiFlownHull.test.ts`.
+active ship (`p:<playerId>`), and the reverse when they park it. It is the same
+ship, so its locks follow it through ONE "ship key moved" op at the server's
+re-key sites (`displaceActiveHullToLingering`, `reclaimLingeringHull` →
+`SectorRoom.moveShipLocks` → `LockSubsystem.shipKeyMoved`): every lock held on
+it in both player lock machines is re-keyed `p:<from>` → `p:<to>` (stage and
+progress kept), and the ship's own groups move between the pilot's `locks` and
+the AI pilots' `wingmanLocks` (an AI pilot flies them in MAN; a pilot gets the
+slots' start modes back). `wingmanLockKey` maps an order target named by a
+shipInstanceId its owner now flies to `p:<playerId>`. The client follows in
+`rekeyShip` (`rekeyLockState`: own groups' lock targets, lock-line candidate,
+last `lock_track` sent) until the next `groups` slice, which the server already
+re-keyed (#16). NPC locks on a pilot stay keyed by the pilot
+(`engageablePilotHull`: active, Spectate-parked, or a parked hull they are
+taking back while its join handshake runs); they drop only when the pilot moves
+to a DIFFERENT ship. `lockedBy` still rides the own ACTIVE ship only, so no
+threat ring is drawn round a parked hull.
+Locks: `tests/integration/sectorRoom/lockAiFlownHull.test.ts`,
+`tests/integration/sectorRoom/lockFollowsShipKey.test.ts`,
+`LockSubsystem.test.ts` "shipKeyMoved", `ColyseusClient.lockRekey.test.ts`.
 
 **Snapshot (#16), own active pilot only, shared refs mutated in place:**
 - `states[].groups`: `[{id, m: 0 auto | 1 manual, l: [{t, s: 0 failsafe | 1 acquiring | 2 locked, p: 0..100, r?: 1 released}]}]`
