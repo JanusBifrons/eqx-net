@@ -64,7 +64,7 @@ export const fleetMelee: Shot = {
   id: 'fleet-melee',
   section: 'mechanics',
   title: 'Fleet melee',
-  caption: 'A fighter joins a drone-versus-robot fight already under way and goes after the robots, firing only once locked; the NPCs hold fire while an ally is in the line and can still hit their own side.',
+  caption: 'A fighter joins a fight between the drone and robot factions already under way and goes after the robot ships, firing only once locked; the AI pilots hold fire while an ally is in the line and can still hit their own side.',
   features: ['M19'],
   docs: ['allegiances', 'fire-control'],
   reel: false,
