@@ -188,10 +188,28 @@ export function liveryGrey(hex: number): number {
 
 /** Paint one texel in a livery's team enamel (for the spot treatments). */
 export function paintLivery(f: Fields, i: number, team: number, k = 1): void {
-  const c = liveryPaint(team);
+  paintEnamel(f, i, liveryPaint(team), k);
+}
+
+/** Paint one texel in a livery enamel of this exact colour (a faded step). */
+function paintEnamel(f: Fields, i: number, c: number, k: number): void {
   f.mat[i] = MAT.LIVERY;
   f.key[i] = c;
   setAlbedo(f, i, lin(c), k);
+}
+
+/** sRGB mix of two colours, t = 0 -> a, 1 -> b. */
+function mixHex(a: number, b: number, t: number): number {
+  const m = (s: number): number => Math.round(((a >> s) & 255) * (1 - t) + ((b >> s) & 255) * t);
+  return (m(16) << 16) | (m(8) << 8) | m(0);
+}
+
+/** Treatment 'b' fade: team colour stepped to grey in 3 discrete steps
+ *  (1, 2/3, 1/3 of the team colour) over bow fraction [t0, t1); -1 past it. */
+function fadeStep(team: number, grey: number, tb: number, t0: number, t1: number): number {
+  if (tb >= t1) return -1;
+  const s = tb < t0 ? 0 : Math.min(2, Math.floor(((tb - t0) / (t1 - t0)) * 3));
+  return s === 0 ? team : mixHex(team, grey, s / 3);
 }
 
 /** World-space part polygons for a ship kind (same transform as the game). */
@@ -317,10 +335,63 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
   const pinLo = 1.6 * rimW, pinHi = pinLo + Math.max(0.3 * rimW, minLiv);
   const hullRole = parts.findIndex((p) => (p as { role?: string }).role === 'hull');
   const hullLayer = hullRole >= 0 ? hullRole : 0;
-  const liveryAt = (du: number, i: number): boolean => {
-    if (!rimA) return false;
-    if (sizeCls === 'capital') return du < rimW && (parts.length <= 1 || layer[i] === hullLayer || layer[i] === -1);
-    return du < rimW || (pin && du >= pinLo && du < pinHi && pinHi < maxDu * 0.8);
+  const onHullLayer = (i: number): boolean => parts.length <= 1 || layer[i] === hullLayer || layer[i] === -1;
+
+  // Livery treatment 'b' (nose, tips and fade): the team colour on the
+  // extremities, like a squadron's painted noses and wingtips. Sub-caps paint
+  // the nose cone (bow fraction < NOSE_B) and the wingtips (the outer
+  // 1 - TIP_B of each wide row); frigates and cruisers also fade their outer
+  // two paint bands to grey behind the nose in 3 discrete steps (the key
+  // drives the pixel-look ramps, so only 3 keys); capitals fade the bow of the
+  // hull layer only. Robots get only the tips. Plus a tail beacon (sub-caps)
+  // or team running lights (capitals), stamped after the nozzles.
+  const treatB = livery?.treatment === 'b';
+  const teamHex = livery ? liveryPaint(livery.team) : 0;
+  const NOSE_B = 0.22, TIP_B = 0.72, WIDE_ROW_B = 0.6, WING_OVER_MEDIAN = 1.2, ROBOT_TIP_B = 0.86;
+  const halfRow = new Float32Array(treatB ? g.h : 0);
+  let maxHalf = 0, maxRad = 0, wingRow = 0;
+  if (treatB) {
+    for (let i = 0; i < n; i++) {
+      if (f.cov[i]! <= 0.5) continue;
+      const ty = Math.floor(i / g.w);
+      const wx = Math.abs((i % g.w + 0.5 - g.ox) / g.ppu), wy = (ty + 0.5 - g.oy) / g.ppu;
+      if (wx > halfRow[ty]!) halfRow[ty] = wx;
+      maxHalf = Math.max(maxHalf, wx);
+      maxRad = Math.max(maxRad, Math.hypot(wx, wy));
+    }
+    // A wing is a row clearly wider than the hull's typical (median) row: a
+    // slab-sided frigate has none, and a rim down its flank is treatment 'a'.
+    const rows = Array.from(halfRow).filter((h) => h > 0).sort((a, b) => a - b);
+    wingRow = Math.max(WIDE_ROW_B * maxHalf, WING_OVER_MEDIAN * (rows[rows.length >> 1] ?? 0));
+  }
+  /** A wingtip texel: in a wing row, outside TIP_B of the half-span and of
+   *  that row's half-width (never a band under 2 texels). Robots: only their
+   *  outermost corners, port and starboard. */
+  const tipAt = (wx: number, wy: number, ty: number): boolean => {
+    const hr = halfRow[ty]!;
+    const ax = Math.abs(wx);
+    if (arch === 'robot') return ax >= Math.min(TIP_B * maxHalf, maxHalf - minLiv) && Math.hypot(wx, wy) > Math.min(ROBOT_TIP_B * maxRad, maxRad - minLiv);
+    if (hr < wingRow) return false;
+    // Outside TIP_B of the hull's whole half-span (true tips, not a rim down
+    // the side) and of this row's own half-width.
+    const span = Math.min(TIP_B * maxHalf, maxHalf - minLiv);
+    if (ax < span || hr - span < minLiv) return false; // no 1-texel sliver where a tip starts
+    return ax >= hr - Math.max((1 - TIP_B) * hr, minLiv);
+  };
+
+  /** The livery colour of this texel, or -1 for none (grey). */
+  const liveryHexAt = (du: number, i: number, wx: number, wy: number, ty: number): number => {
+    if (rimA) {
+      if (sizeCls === 'capital') return du < rimW && onHullLayer(i) ? teamHex : -1;
+      return du < rimW || (pin && du >= pinLo && du < pinHi && pinHi < maxDu * 0.8) ? teamHex : -1;
+    }
+    if (!treatB) return -1;
+    const tb = (wy - yMin) / len;
+    if (sizeCls === 'capital') return onHullLayer(i) ? fadeStep(teamHex, f.paint, tb, 0, 0.35) : -1;
+    if (arch !== 'robot' && tb < NOSE_B) return teamHex;
+    if (tipAt(wx, wy, ty)) return teamHex;
+    if (pin && du < 2 * spacing) return fadeStep(teamHex, f.paint, tb, 0.15, 0.4);
+    return -1;
   };
 
   const metal = lin(PALETTE.metal);
@@ -362,12 +433,13 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
       const col = lin(colHex);
       const surf = mat === MAT.PAINT ? col : metal;
       f.key[i] = mat === MAT.PAINT ? colHex : PALETTE.metal;
+      const livHex = livery && !inGroove ? liveryHexAt(du, i, wx, wy, ty) : -1;
       if (inGroove) {
         setAlbedo(f, i, surf, 0.38);
         mat = MAT.TRIM;
         h -= Math.min(0.3, Hmax * 0.05);
-      } else if (livery && liveryAt(du, i)) {
-        paintLivery(f, i, livery.team, pv * (0.95 + 0.08 * nz));
+      } else if (livHex >= 0) {
+        paintEnamel(f, i, livHex, pv * (0.95 + 0.08 * nz));
         mat = MAT.LIVERY;
       } else {
         setAlbedo(f, i, surf, pv * (0.95 + 0.08 * nz));
@@ -499,7 +571,9 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
 
   if (opts.rings) for (const rg of opts.rings) stampTurretRing(f, rg.x, rg.y, rg.r);
 
-  // Nozzles at the stern.
+  // Nozzles at the stern. `sternLine`: the front edge of the nozzle bank (the
+  // tail beacon sits ahead of it).
+  let sternLine = yMax;
   if (arch !== 'robot' && !opts.scrap) {
     // Stern = the hull outline's rear extent (same rule as render/pixi/engineGeometry.ts).
     let stern = 0;
@@ -539,6 +613,7 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
     // about an eighth of the hull length so the exhaust still reads zoomed out.
     const plume = t ? Math.max(1, (0.24 * kind.radius) / (8.4 * nr)) : 1;
     const eng = lin(PALETTE.engine);
+    sternLine = ny - nr * 0.85;
     for (const nx of xs) {
       f.nozzles.push(plume > 1 ? { x: nx, y: ny + nr * 0.6, r: nr, len: plume } : { x: nx, y: ny + nr * 0.6, r: nr });
       putRect(nx, ny, nr, nr * 0.85, (i, bev) => {
@@ -564,14 +639,38 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
     if (wx > wideX) { wideX = wx; wideY = (Math.floor(i / g.w) + 0.5 - g.oy) / g.ppu; }
   }
   const inset = Math.max(0.5, 1.5 / g.ppu);
-  for (const [sx, col] of [[-1, PALETTE.navPort], [1, PALETTE.navStarboard]] as const) {
-    const lx = sx * (wideX - inset);
-    f.navLights.push({ x: lx, y: wideY, color: col });
+  const lampR = Math.max(0.35, 0.8 / g.ppu);
+  const lamp = (lx: number, ly: number, col: number): void => {
+    f.navLights.push({ x: lx, y: ly, color: col });
     const e = lin(col);
-    put(lx, wideY, Math.max(0.35, 0.8 / g.ppu), Math.max(0.35, 0.8 / g.ppu), (i) => {
+    put(lx, ly, lampR, lampR, (i) => {
       f.mat[i] = MAT.LIGHT;
       f.emis[i * 3] = e[0]; f.emis[i * 3 + 1] = e[1]; f.emis[i * 3 + 2] = e[2];
     });
+  };
+  for (const [sx, col] of [[-1, PALETTE.navPort], [1, PALETTE.navStarboard]] as const) lamp(sx * (wideX - inset), wideY, col);
+
+  if (treatB && livery) {
+    if (sizeCls !== 'capital') {
+      // Tail beacon: on the centreline, just ahead of the nozzles (a robot:
+      // just inside its rear edge), where the hull is deep enough to hold it.
+      const step = 0.5 / g.ppu;
+      for (let by = sternLine - lampR * 2; by > yMin + len * 0.5; by -= step) {
+        if (distAt(0, by) >= lampR * 2) { lamp(0, by, teamHex); break; }
+      }
+    } else {
+      // Running lights: up to 4 a side along the hull edge, clear of the
+      // red/green nav lights.
+      for (let k = 0; k < 4; k++) {
+        const ly = yMin + len * (0.18 + k * 0.2);
+        const ty = Math.floor(ly * g.ppu + g.oy);
+        if (ty < 0 || ty >= g.h || Math.abs(ly - wideY) < len * 0.06) continue;
+        const lx = halfRow[ty]! - inset;
+        if (lx <= inset || distAt(lx, ly) <= 0) continue;
+        lamp(-lx, ly, teamHex);
+        lamp(lx, ly, teamHex);
+      }
+    }
   }
   return f;
 }

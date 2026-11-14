@@ -284,9 +284,131 @@ describe("livery treatment 'a' (rim / edge band)", () => {
     for (const k of mid) expect(stripe(k.id), k.id).toBeGreaterThan(0);
   });
 
-  it.each(['b', 'c'] as const)("treatment '%s' paints nothing yet", (t) => {
-    const f = forgeShip('fighter', { ppu: ppuFor('fighter'), livery: { ...RIM, treatment: t } });
+  it("treatment 'c' paints nothing yet", () => {
+    const f = forgeShip('fighter', { ppu: ppuFor('fighter'), livery: { ...RIM, treatment: 'c' } });
     expect(f.mat.some((m) => m === MAT.LIVERY)).toBe(false);
+  });
+});
+
+describe("livery treatment 'b' (nose, tips and fade)", () => {
+  const TEAM = 0x4fd0e8;
+  const NOSE: Livery = { treatment: 'b', team: TEAM, sigil: 0xffd23a };
+  const ALL = SHIP_KINDS_LIST.map((k) => k.id);
+  const cls = (id: string): string => sizeClassOf(getShipKind(id));
+
+  /** Texel -> (bow fraction 0 = nose .. 1 = stern, |x| / half-span) over the covered box. */
+  function frame(f: Fields): (i: number) => { tb: number; ax: number } {
+    const { g } = f;
+    let x1 = 0, y0 = Infinity, y1 = -Infinity;
+    for (let i = 0; i < f.cov.length; i++) {
+      if (f.cov[i]! <= 0.5) continue;
+      const wx = (i % g.w + 0.5 - g.ox) / g.ppu, wy = (Math.floor(i / g.w) + 0.5 - g.oy) / g.ppu;
+      x1 = Math.max(x1, Math.abs(wx)); y0 = Math.min(y0, wy); y1 = Math.max(y1, wy);
+    }
+    return (i) => ({
+      tb: ((Math.floor(i / g.w) + 0.5 - g.oy) / g.ppu - y0) / (y1 - y0),
+      ax: Math.abs((i % g.w + 0.5 - g.ox) / g.ppu) / x1,
+    });
+  }
+
+  it.each(ALL)('%s: silhouette (cov) unchanged', (id) => {
+    const plain = forgeShip(id, { ppu: ppuFor(id) });
+    const f = forgeShip(id, { ppu: ppuFor(id), livery: NOSE });
+    let diff = 0;
+    for (let i = 0; i < f.cov.length; i++) if (f.cov[i] !== plain.cov[i]) diff++;
+    expect(diff).toBe(0);
+  });
+
+  it('a fighter has team paint on its nose and wingtips, none mid-hull', () => {
+    const f = forgeShip('fighter', { ppu: ppuFor('fighter'), livery: NOSE });
+    const at = frame(f);
+    let nose = 0, tipL = 0, tipR = 0, mid = 0;
+    const { g } = f;
+    for (let i = 0; i < f.mat.length; i++) {
+      if (f.mat[i] !== MAT.LIVERY) continue;
+      const { tb, ax } = at(i);
+      expect(f.key[i]).toBe(liveryPaint(TEAM));
+      if (tb < 0.2) nose++;
+      if (tb > 0.75 && ax > 0.8) { if ((i % g.w + 0.5 - g.ox) < 0) tipL++; else tipR++; }
+      if (tb > 0.35 && tb < 0.75 && ax < 0.3) mid++;
+    }
+    expect(nose).toBeGreaterThanOrEqual(4);
+    expect(tipL).toBeGreaterThanOrEqual(4);
+    expect(tipR).toBe(tipL); // mirrored
+    expect(mid).toBe(0);
+  });
+
+  it('every wingtip run is at least 2 texels wide', () => {
+    const f = forgeShip('fighter', { ppu: ppuFor('fighter'), livery: NOSE });
+    const { g } = f;
+    const at = frame(f);
+    for (let y = 0; y < g.h; y++) {
+      let x = 0;
+      while (x < g.w && f.cov[y * g.w + x]! <= 0.5) x++;
+      if (x >= g.w || at(y * g.w + x).tb < 0.3) continue; // nose rows are solid paint
+      let r = 0;
+      while (x + r < g.w && f.mat[y * g.w + x + r] === MAT.LIVERY) r++;
+      if (r > 0) expect(r, `row ${y}`).toBeGreaterThanOrEqual(2);
+    }
+  });
+
+  it.each(ALL.filter((id) => ['frigate', 'cruiser'].includes(cls(id))))('%s: the bow fade uses at most 3 livery keys', (id) => {
+    const f = forgeShip(id, { ppu: ppuFor(id), livery: NOSE });
+    const at = frame(f);
+    const fade = new Set<number>(), all = new Set<number>();
+    for (let i = 0; i < f.mat.length; i++) {
+      if (f.mat[i] !== MAT.LIVERY) continue;
+      all.add(f.key[i]!);
+      const { tb } = at(i);
+      if (tb >= 0.15 && tb < 0.4) fade.add(f.key[i]!);
+      expect(tb, 'no fade paint past the fade zone except tips').toBeLessThan(at(i).ax > 0.6 ? 2 : 0.45);
+    }
+    expect(fade.size).toBeGreaterThan(0);
+    expect(fade.size).toBeLessThanOrEqual(3);
+    expect(all.size).toBeLessThanOrEqual(3);
+    expect(all.has(liveryPaint(TEAM))).toBe(true);
+  });
+
+  it('missile-frigate fades in exactly 3 steps', () => {
+    const f = forgeShip('missile-frigate', { ppu: ppuFor('missile-frigate'), livery: NOSE });
+    const keys = new Set<number>();
+    for (let i = 0; i < f.mat.length; i++) if (f.mat[i] === MAT.LIVERY) keys.add(f.key[i]!);
+    expect(keys.size).toBe(3);
+  });
+
+  it.each(ALL.filter((id) => cls(id) !== 'capital'))('%s: a team-coloured tail beacon on the centreline', (id) => {
+    const plain = forgeShip(id, { ppu: ppuFor(id) });
+    const f = forgeShip(id, { ppu: ppuFor(id), livery: NOSE });
+    expect(f.navLights.length).toBe(plain.navLights.length + 1);
+    const b = f.navLights.find((l) => l.color === liveryPaint(TEAM));
+    expect(b).toBeDefined();
+    expect(b!.x).toBe(0);
+    expect(b!.y).toBeGreaterThan(0); // aft half (Pixi-up: +y is the stern)
+    const { g } = f;
+    const i = Math.floor(b!.y * g.ppu + g.oy) * g.w + Math.floor(g.ox);
+    expect(f.mat[i]).toBe(MAT.LIGHT);
+  });
+
+  it('a scrap piece carries no beacon', () => {
+    const f = forgeShip('fighter', { ppu: ppuFor('fighter'), livery: NOSE, scrap: true });
+    expect(f.navLights).toHaveLength(0);
+  });
+
+  it.each(CAPITALS)('%s: at most 8 team running lights, bow fade on the hull only', (id) => {
+    const plain = forgeShip(id, { ppu: ppuFor(id) });
+    const f = forgeShip(id, { ppu: ppuFor(id), livery: NOSE });
+    const extra = f.navLights.length - plain.navLights.length;
+    expect(extra).toBeGreaterThan(0);
+    expect(extra).toBeLessThanOrEqual(8);
+    for (const l of f.navLights.slice(plain.navLights.length)) expect(l.color).toBe(liveryPaint(TEAM));
+    const at = frame(f);
+    const keys = new Set<number>();
+    for (let i = 0; i < f.mat.length; i++) {
+      if (f.mat[i] !== MAT.LIVERY) continue;
+      keys.add(f.key[i]!);
+      expect(at(i).tb).toBeLessThan(0.37);
+    }
+    expect(keys.size).toBeLessThanOrEqual(3);
   });
 });
 
