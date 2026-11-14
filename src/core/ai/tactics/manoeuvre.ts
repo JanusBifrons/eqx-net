@@ -88,6 +88,8 @@ export interface TacticalContext {
   /** cos(the target's nose, target → self): +1 when it points straight at me.
    *  1 when its facing is unknown (assume its guns may bear). */
   targetBowCos: number;
+  /** The target's nose (unit); (0, 0) when its facing is unknown. */
+  tFwdX: number; tFwdY: number;
   // Weapons and handling.
   fireRange: number;
   cruiseSpeed: number;
@@ -144,7 +146,7 @@ export function makeTacticalContext(): TacticalContext {
     x: 0, y: 0, vx: 0, vy: 0, angle: 0, fwdX: 0, fwdY: 1,
     tx: 0, ty: 0, tvx: 0, tvy: 0, targetIsShip: true,
     dist: 0, ux: 0, uy: 0, aimX: 0, aimY: 0, leadAngle: 0, offBoresight: 0,
-    closing: 0, targetAspectCos: 0, threatBearingCos: 0, targetBowCos: 1,
+    closing: 0, targetAspectCos: 0, threatBearingCos: 0, targetBowCos: 1, tFwdX: 0, tFwdY: 0,
     fireRange: 1, cruiseSpeed: 1, maxSpeed: 1, overshoot: 1,
     maxAngvel: 1, accel: 1, brakeAccel: 1, radius: 1,
     hullFrac: 1, recentHits: 0, recentBlocks: 0, allies: 0, enemies: 0,

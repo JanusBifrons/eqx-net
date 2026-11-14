@@ -22,6 +22,7 @@ import {
   AttackRunManoeuvre,
   BreakManoeuvre,
   HoldManoeuvre,
+  runOpenDist,
   runPullDist,
   STRAFE_EXTEND_OVERSHOOTS,
   STRAFE_MISS_OVERSHOOTS,
@@ -193,8 +194,10 @@ describe('AttackRunManoeuvre (boom-and-zoom)', () => {
     const limit = Math.round(((1.1 * 1500) / CRUISE) * 60);
     expect(m.isDone(ctxAt(0, -1400, 0, 0, { tick: limit - 1 }))).toBe(false);
     expect(m.isDone(ctxAt(0, -1400, 0, 0, { tick: limit + 1 }))).toBe(true);
+    // Just outside the pass distance (here the overshoot): a dive at once.
     const near = new AttackRunManoeuvre();
-    near.begin(ctxAt(0, -300, 0, 0, { tick: 0 }));
+    near.begin(ctxAt(0, -(OVER + 50), 0, 0, { tick: 0 }));
+    expect(near.diving).toBe(true);
     expect(near.isDone(ctxAt(0, -1400, 0, 0, { tick: 5 * 60 + 1 }))).toBe(true);
   });
   it('pulls off earlier the faster it closes and the slower it turns (the kind handling)', () => {
@@ -219,6 +222,69 @@ describe('AttackRunManoeuvre (boom-and-zoom)', () => {
     const pb = run(b, ctxAt(150, 0, -150, 0, { tick: 1 }));
     expect(Math.sign(pa.dirY)).not.toBe(0);
     expect(Math.sign(pa.dirY)).toBe(-Math.sign(pb.dirY));
+  });
+});
+
+describe('AttackRunManoeuvre started inside its pass distance: open the range first (2026-11-14)', () => {
+  // Filmed: a Robot Orb picked a run ~100 u off a heavy at 3–95 u/s and went
+  // straight into its pass from a standstill, nose to nose. A pilot first
+  // extends away, boosting, off the target's nose, then turns back.
+  it('extends away with boost, off the target nose, out to the open distance, then dives', () => {
+    // Target 100 u north (+y), its nose pointing east (+x): open to the west.
+    const m = new AttackRunManoeuvre();
+    const c = ctxAt(0, 0, 0, 100, { tick: 10, vy: 10, tvx: 30, tFwdX: 1, tFwdY: 0, radius: 30 });
+    expect(c.dist).toBeLessThan(runPullDist(c));
+    m.begin(c);
+    expect(m.diving).toBe(false);
+    const d = run(m, c);
+    expect(d.dirY).toBeLessThan(-0.3); // away from the target
+    expect(d.dirX).toBeLessThan(-0.6); // off its nose (it points +x)
+    expect(goal.boost).toBe(true);
+    expect(goal.spendReserve).toBe(true);
+    expect(goal.speed).toBe(MAX);
+    expect(goal.facing).toBe(FACE_MOVE);
+    expect(m.isDone(c)).toBe(false);
+    // The nose the other way picks the other side.
+    const m2 = new AttackRunManoeuvre();
+    const c2 = ctxAt(0, 0, 0, 100, { tick: 10, tFwdX: -1, tFwdY: 0 });
+    m2.begin(c2);
+    expect(run(m2, c2).dirX).toBeGreaterThan(0.6);
+    // The side is latched: the target swinging its nose mid-open changes nothing.
+    const c3 = ctxAt(0, -200, 0, 100, { tick: 40, tFwdX: -1, tFwdY: 0 });
+    expect(run(m, c3).dirX).toBeLessThan(-0.6);
+    // Still inside the open distance: still opening, not diving.
+    const open = runOpenDist(c);
+    expect(open).toBeGreaterThanOrEqual(1.5 * OVER);
+    const c4 = ctxAt(0, 100 - (open - 10), 0, 100, { tick: 100 });
+    run(m, c4);
+    expect(m.diving).toBe(false);
+    // Out at the open distance: turn back for the dive (toward the target,
+    // here one at fighting speed: a slow one gets the strafing swing-round).
+    const c5 = ctxAt(0, 100 - (open + 10), 0, 100, { tick: 101, vy: -200, ...MOVING });
+    const back = run(m, c5);
+    expect(m.diving).toBe(true);
+    expect(back.dirY).toBeGreaterThan(0.9);
+    expect(m.isDone(c5)).toBe(false);
+  });
+  it('a ship already flying at speed (half its cruise or more) flies the pass: no open', () => {
+    const m = new AttackRunManoeuvre();
+    m.begin(ctxAt(0, 0, 0, 300, { tick: 0, vy: 0.5 * CRUISE, tvy: 0.5 * CRUISE }));
+    expect(m.diving).toBe(true);
+  });
+  it('a target running away from me opens the range itself: the open ends and the dive chases', () => {
+    const m = new AttackRunManoeuvre();
+    m.begin(ctxAt(0, 0, 0, 250, { tick: 0 }));
+    expect(m.diving).toBe(false);
+    run(m, ctxAt(0, 0, 0, 250, { tick: 5, tvy: 0.4 * CRUISE }));
+    expect(m.diving).toBe(false);
+    run(m, ctxAt(0, 0, 0, 250, { tick: 6, tvy: 0.6 * CRUISE }));
+    expect(m.diving).toBe(true);
+  });
+  it('an open that never gets the range ends the run (5 s)', () => {
+    const m = new AttackRunManoeuvre();
+    m.begin(ctxAt(0, 0, 0, 100, { tick: 0 }));
+    expect(m.isDone(ctxAt(0, 0, 0, 100, { tick: 5 * 60 - 1 }))).toBe(false);
+    expect(m.isDone(ctxAt(0, 0, 0, 100, { tick: 5 * 60 }))).toBe(true);
   });
 });
 
