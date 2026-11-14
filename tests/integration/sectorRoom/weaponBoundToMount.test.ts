@@ -60,9 +60,10 @@ describe('SectorRoom integration — weapon bound to mount (server ignores claim
     const internals = shooter.room as unknown as FireTestInternals;
 
     // Lock-to-fire is universal: park a ship dead ahead (far, so the bolt is
-    // still in flight when we look) and lock it.
+    // still in flight when we look, but inside the laser's reach: the fire
+    // gate measures range per mount to the target's hull) and lock it.
     const target = randomUUID();
-    await harness.connectActive(target, { shipKind: 'fighter', spawnX: 0, spawnY: 1500 });
+    await harness.connectActive(target, { shipKind: 'fighter', spawnX: 0, spawnY: 1300 });
     harness.lockTarget(shooter.pid, target);
 
     // Let the worker write the shooter's pose so the fire path resolves a
