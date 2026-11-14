@@ -97,12 +97,19 @@ export interface AiFireResolverDeps {
     fromX: number, fromY: number, dirX: number, dirY: number, maxDist: number,
     cx: number, cy: number, angle: number,
   ) => number | null;
-  /** Damage sink — invoked on a confirmed hit. */
-  applyDamage: (targetId: string, shooterId: string, damage: number) => void;
-  /** S2a: the beam's impact point, called just before `applyDamage` (feeds the
-   *  capital wreck hit tracker and the wreck knock-back along (dx, dy); the
-   *  damage event is unchanged). */
-  noteBeamImpact?: (x: number, y: number, dx: number, dy: number) => void;
+  /** Damage sink — invoked on a confirmed hit. (hitX, hitY) is the beam's
+   *  impact point, (dirX, dirY) its direction (capital wreck hit tracker and
+   *  knock-back), `weaponId` the firing weapon. */
+  applyDamage: (
+    targetId: string,
+    shooterId: string,
+    damage: number,
+    hitX?: number,
+    hitY?: number,
+    dirX?: number,
+    dirY?: number,
+    weaponId?: WeaponId,
+  ) => void;
   /** Friendly fire (owner decision 2026-11-10) — the first non-player thing
    *  along the beam: every swarm entity (drones of ANY side, structures of ANY
    *  owner, asteroids, scrap) and lingering hulls, skipping only `skipId` (the
@@ -151,6 +158,9 @@ export class AiFireResolver implements WeaponFireSink {
   };
   // Per-fire-event sink state — set in resolve() before the salvo.
   private _shooterId = '';
+  /** The weapon of the barrel now resolving (set per mount before
+   *  `resolveFire`), so a beam hit tells applyDamage what landed it. */
+  private _weaponId: WeaponId | undefined = undefined;
   private _wireShooterId = '';
 
   /**
@@ -359,6 +369,7 @@ export class AiFireResolver implements WeaponFireSink {
       ctx.shooterVx = svx;
       ctx.shooterVy = svy;
       ctx.mountId = mount.id;
+      this._weaponId = mount.weaponId;
       // A naval turret fires a full salvo: one shell per barrel, each from
       // its own drawn barrel tip (shared offsets, core/combat/muzzle.ts).
       const naval = navalTurret(droneKind, mount);
@@ -439,9 +450,9 @@ export class AiFireResolver implements WeaponFireSink {
       const effDamage = falloffMinDamageFrac !== undefined
         ? damage * hitscanFalloffFrac(hitDist, range, rayRange, falloffMinDamageFrac)
         : damage;
-      // S2a: the beam's impact point, for the capital wreck hit tracker only.
-      d.noteBeamImpact?.(rayFromX + ndx * hitDist, rayFromY + ndy * hitDist, ndx, ndy);
-      d.applyDamage(hitId, this._shooterId, effDamage);
+      // The impact point and direction ride the damage call itself (wreck hit
+      // tracker, knock-back; the damage event reports the true impact point).
+      d.applyDamage(hitId, this._shooterId, effDamage, rayFromX + ndx * hitDist, rayFromY + ndy * hitDist, ndx, ndy, this._weaponId);
     }
 
     const blocked = wallDist !== null;

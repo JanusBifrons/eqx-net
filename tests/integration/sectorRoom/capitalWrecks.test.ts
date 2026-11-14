@@ -207,9 +207,24 @@ describe('SectorRoom integration — capital wrecks (S2a)', () => {
     await harness.connectActive(victim, { shipKind: 'battleship', spawnX: 8000, spawnY: 0 });
     await harness.advance(100);
     // The shield takes the first hit whole (no spill-over); the second kills.
-    internal.applyDamage(victim, 'shooter-x', 1e9);
-    internal.applyDamage(victim, 'shooter-x', 1e9);
+    // applyDamage reports true on the killing call only.
+    expect(internal.applyDamage(victim, 'shooter-x', 1e9)).toBe(false);
+    expect(internal.applyDamage(victim, 'shooter-x', 1e9)).toBe(true);
     expect(wrecks(internal).length).toBeGreaterThanOrEqual(2);
+    expect(internal.applyDamage(victim, 'shooter-x', 1e9)).toBe(false);
+  }, 25_000);
+
+  it('applyDamage returns true only on the call that destroys an NPC capital', async () => {
+    const internal = await boot(true);
+    internal.spawnTestDrone('bb', 6000, 0, 'battleship');
+    await harness.advance(100);
+    internal.swarmHealth.set('bb', 100);
+    // A chip that leaves it alive, a hit with point + direction + weapon that
+    // kills it, then a hit on the gone hull.
+    expect(internal.applyDamage('bb', 'shooter-x', 10)).toBe(false);
+    expect(internal.applyDamage('bb', 'shooter-x', 1e7, 6000, 0, 1, 0, 'naval_l')).toBe(true);
+    expect(internal.swarmRegistry.get('bb')).toBeFalsy();
+    expect(internal.applyDamage('bb', 'shooter-x', 1e7)).toBe(false);
   }, 25_000);
 
   it('with the flag off a capital dies exactly as today: no wreck bodies', async () => {
