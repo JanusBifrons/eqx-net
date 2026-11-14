@@ -346,12 +346,13 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
   // the nose cone (bow fraction < NOSE_B) and the wingtips (the outer
   // 1 - TIP_B of each wide row); frigates and cruisers also fade their outer
   // two paint bands to grey behind the nose in 3 discrete steps (the key
-  // drives the pixel-look ramps, so only 3 keys); capitals fade the bow of the
-  // hull layer only. Robots get only the tips. Plus a tail beacon (sub-caps)
+  // drives the pixel-look ramps, so only 3 keys); capitals fade the bow and,
+  // mirrored, the stern of the hull layer only (the same 3 keys, so both ends
+  // match; the nozzles are stamped over the stern). Robots get only the tips. Plus a tail beacon (sub-caps)
   // or team running lights (capitals), stamped after the nozzles.
   const treatB = livery?.treatment === 'b';
   const teamHex = livery ? liveryPaint(livery.team) : 0;
-  const NOSE_B = 0.22, TIP_B = 0.72, WIDE_ROW_B = 0.6, WING_OVER_MEDIAN = 1.2, ROBOT_TIP_B = 0.86;
+  const CAP_FADE_B = 0.35, NOSE_B = 0.22, TIP_B = 0.72, WIDE_ROW_B = 0.6, WING_OVER_MEDIAN = 1.2, ROBOT_TIP_B = 0.86;
   const halfRow = new Float32Array(treatB ? g.h : 0);
   let maxHalf = 0, maxRad = 0, wingRow = 0;
   if (treatB) {
@@ -391,7 +392,11 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
     }
     if (!treatB) return -1;
     const tb = (wy - yMin) / len;
-    if (sizeCls === 'capital') return onHullLayer(i) ? fadeStep(teamHex, f.paint, tb, 0, 0.35) : -1;
+    if (sizeCls === 'capital') {
+      if (!onHullLayer(i)) return -1;
+      const bow = fadeStep(teamHex, f.paint, tb, 0, CAP_FADE_B);
+      return bow >= 0 ? bow : fadeStep(teamHex, f.paint, 1 - tb, 0, CAP_FADE_B);
+    }
     if (arch !== 'robot' && tb < NOSE_B) return teamHex;
     if (tipAt(wx, wy, ty)) return teamHex;
     if (pin && du < 2 * spacing) return fadeStep(teamHex, f.paint, tb, 0.15, 0.4);
@@ -456,10 +461,12 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
   // Livery treatment 'c' (grey, small accents + faction sigil): a team ring
   // round the canopy, team collars on the nozzles, and the faction's emblem
   // on the largest clear flat area (the deck, fore and aft, on capitals),
-  // or a dorsal chevron where no area is big enough. The plated height field
-  // is kept: any texel a later fitting changes is no place for an emblem.
+  // or a dorsal chevron where no area is big enough. A capital carries its
+  // two deck emblems under every treatment. The plated height field is kept:
+  // any texel a later fitting changes is no place for an emblem.
   const treatC = livery?.treatment === 'c' && !opts.scrap;
-  const hBase = treatC ? f.height.slice() : undefined;
+  const sigilsOn = treatC || (!!livery && !opts.scrap && sizeCls === 'capital');
+  const hBase = sigilsOn ? f.height.slice() : undefined;
 
   const put = (cx: number, cy: number, rx: number, ry: number, fn: (i: number, k: number) => void): void => {
     const x0 = Math.floor((cx - rx) * g.ppu + g.ox), x1 = Math.ceil((cx + rx) * g.ppu + g.ox);
@@ -660,7 +667,7 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
     }
   }
 
-  if (treatC && livery && hBase) {
+  if (sigilsOn && livery && hBase) {
     const deck = sizeCls === 'capital' ? parts.findIndex((p) => (p as { role?: string }).role === 'deck') : -1;
     stampSigils(f, livery, hBase, deck >= 0 ? (i) => layer[i] === deck : null, yMin, len);
   }
@@ -730,7 +737,7 @@ const CHEV_T0 = 0.35, CHEV_T1 = 0.55, CHEV_SPAN = 0.7, CHEV_MIN_STROKE = 2, CHEV
 const CHEV_SHRINK = [0.75, 0.55] as const;
 
 /**
- * Treatment 'c': stamp the faction emblem (`sigil.ts`) in the team colour on
+ * Treatment 'c' (and every capital livery): stamp the faction emblem (`sigil.ts`) in the team colour on
  * the largest clear flat area of the hull: texels still at their plated
  * height (no canopy, greeble, vent, bow fitting, nozzle or turret ring) of
  * paint, bare metal or seam, mirror-symmetric, on capitals the deck layer

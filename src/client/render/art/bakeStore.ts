@@ -11,7 +11,7 @@ import { isLitKey, type Baked } from './bake.js';
 import type { LightRig } from './shade.js';
 
 /** Bump whenever forge output changes, or old art would be served. */
-export const FORGE_VERSION = 'r2.5-lv1'; // r2.5: capital bow fittings (bowDetail.ts); -lv1: ship livery branch (treatment 'c' sigils)
+export const FORGE_VERSION = 'r2.5-lv2'; // r2.5: capital bow fittings (bowDetail.ts); -lv1/lv2: ship livery branch (sigils, capital stern fade)
 
 const DB = 'eqx-art-lab';
 const STORE = 'bakes';

@@ -253,10 +253,13 @@ describe("livery treatment 'a' (rim / edge band)", () => {
     const { g } = f;
     const deck = parts.filter((p) => p.role === 'deck' || p.role === 'superstructure');
     expect(deck.length).toBeGreaterThan(0);
-    // A LIVERY texel never lies well inside a deck / superstructure part.
+    const marks = f.sigils ?? [];
+    // A LIVERY texel never lies well inside a deck / superstructure part
+    // (bar the deck sigils every capital carries).
     for (let i = 0; i < f.mat.length; i++) {
       if (f.mat[i] !== MAT.LIVERY) continue;
       const wx = (i % g.w + 0.5 - g.ox) / g.ppu, wy = (Math.floor(i / g.w) + 0.5 - g.oy) / g.ppu;
+      if (marks.some((m) => Math.hypot(wx - m.x, wy - m.y) <= m.r)) continue;
       for (const p of deck) {
         const inset = 2 / g.ppu;
         const inside = [[0, 0], [inset, 0], [-inset, 0], [0, inset], [0, -inset]].every(([dx, dy]) => pointIn(p.pts, wx + dx!, wy + dy!));
@@ -538,7 +541,14 @@ describe("livery treatment 'b' (nose, tips and fade)", () => {
     expect(f.navLights).toHaveLength(0);
   });
 
-  it.each(CAPITALS)('%s: at most 8 team running lights, bow fade on the hull only', (id) => {
+  /** Is this texel inside one of the hull's recorded sigil discs? */
+  const inSigil = (f: Fields, i: number): boolean => {
+    const { g } = f;
+    const wx = (i % g.w + 0.5 - g.ox) / g.ppu, wy = (Math.floor(i / g.w) + 0.5 - g.oy) / g.ppu;
+    return (f.sigils ?? []).some((m) => Math.hypot(wx - m.x, wy - m.y) <= m.r);
+  };
+
+  it.each(CAPITALS)('%s: at most 8 team running lights, bow and stern fade on the hull only', (id) => {
     const plain = forgeShip(id, { ppu: ppuFor(id) });
     const f = forgeShip(id, { ppu: ppuFor(id), livery: NOSE });
     const extra = f.navLights.length - plain.navLights.length;
@@ -546,13 +556,91 @@ describe("livery treatment 'b' (nose, tips and fade)", () => {
     expect(extra).toBeLessThanOrEqual(8);
     for (const l of f.navLights.slice(plain.navLights.length)) expect(l.color).toBe(liveryPaint(TEAM));
     const at = frame(f);
-    const keys = new Set<number>();
+    const keys = new Set<number>(), bowKeys = new Set<number>(), sternKeys = new Set<number>();
+    let stern = 0;
     for (let i = 0; i < f.mat.length; i++) {
       if (f.mat[i] !== MAT.LIVERY) continue;
       keys.add(f.key[i]!);
-      expect(at(i).tb).toBeLessThan(0.37);
+      if (inSigil(f, i)) continue;
+      const { tb } = at(i);
+      expect(tb < 0.37 || tb > 0.63, `tb ${tb}`).toBe(true);
+      if (tb < 0.37) bowKeys.add(f.key[i]!);
+      else { sternKeys.add(f.key[i]!); stern++; }
     }
+    expect(stern).toBeGreaterThan(0);
     expect(keys.size).toBeLessThanOrEqual(3);
+    expect(bowKeys.size).toBeLessThanOrEqual(3);
+    expect(sternKeys.size).toBeLessThanOrEqual(3);
+    // The stern steps through the bow's own keys: the ends match.
+    for (const k of sternKeys) expect(bowKeys.has(k)).toBe(true);
+  });
+
+  it('a capital stern fade is on the hull layer only', () => {
+    const id = 'battleship';
+    const parts = shipParts(getShipKind(id));
+    const deck = parts.filter((p) => p.role === 'deck' || p.role === 'superstructure');
+    const f = forgeShip(id, { ppu: ppuFor(id) * 3, livery: NOSE });
+    const { g } = f;
+    const at = frame(f);
+    for (let i = 0; i < f.mat.length; i++) {
+      if (f.mat[i] !== MAT.LIVERY || inSigil(f, i) || at(i).tb <= 0.63) continue;
+      const wx = (i % g.w + 0.5 - g.ox) / g.ppu, wy = (Math.floor(i / g.w) + 0.5 - g.oy) / g.ppu;
+      const inset = 2 / g.ppu;
+      for (const p of deck) {
+        const inside = [[0, 0], [inset, 0], [-inset, 0], [0, inset], [0, -inset]].every(([dx, dy]) => pointIn(p.pts, wx + dx!, wy + dy!));
+        expect(inside).toBe(false);
+      }
+    }
+  });
+
+  it.each(['battleship', 'destroyer'])('%s: bow and stern carry comparable team paint (within 2x)', (id) => {
+    const f = forgeShip(id, { ppu: ppuFor(id) * 3, livery: NOSE });
+    const at = frame(f);
+    let bow = 0, stern = 0;
+    for (let i = 0; i < f.mat.length; i++) {
+      if (f.mat[i] !== MAT.LIVERY || inSigil(f, i)) continue;
+      const { tb } = at(i);
+      if (tb < 0.35) bow++;
+      else if (tb > 0.65) stern++;
+    }
+    expect(bow).toBeGreaterThan(0);
+    expect(stern).toBeGreaterThan(0);
+    expect(stern / bow).toBeGreaterThanOrEqual(0.5);
+    expect(stern / bow).toBeLessThanOrEqual(2);
+  });
+});
+
+describe('capital sigils under every treatment', () => {
+  const TEAM = 0x4fd0e8;
+  const isCap = (id: string): boolean => sizeClassOf(getShipKind(id)) === 'capital';
+  const ppuS = (id: string): number => (isCap(id) ? ppuFor(id) * 6 : ppuFor(id));
+  const ringsOf = (id: string): Array<{ x: number; y: number; r: number }> => shipTurrets(id).map((t) => ({ x: t.px, y: t.py, r: t.ring }));
+
+  for (const treatment of ['a', 'b', 'c'] as const) {
+    it.each(CAPITALS)(`%s: two deck sigils under '${treatment}'`, (id) => {
+      const f = forgeShip(id, { ppu: ppuS(id), livery: { treatment, team: TEAM, sigil: 0x1a2b3c }, rings: ringsOf(id) });
+      expect((f.sigils ?? []).map((m) => m.kind)).toEqual(['sigil', 'sigil']);
+    });
+  }
+
+  for (const treatment of ['a', 'b'] as const) {
+    it.each(SUBCAPS)(`%s: no sigil under '${treatment}'`, (id) => {
+      const f = forgeShip(id, { ppu: ppuS(id), livery: { treatment, team: TEAM, sigil: 0x1a2b3c } });
+      expect(f.sigils).toBeUndefined();
+    });
+  }
+
+  it.each(['a', 'b'] as const)("a capital scrap piece carries no sigil under '%s'", (treatment) => {
+    const f = forgeShip('battleship', { ppu: ppuFor('battleship') * 6, livery: { treatment, team: TEAM, sigil: 0x1a2b3c }, scrap: true });
+    expect(f.sigils).toBeUndefined();
+  });
+
+  it.each(CAPITALS)("%s: silhouette (cov) unchanged under 'a'", (id) => {
+    const plain = forgeShip(id, { ppu: ppuFor(id) });
+    const f = forgeShip(id, { ppu: ppuFor(id), livery: { treatment: 'a', team: TEAM, sigil: 0x1a2b3c } });
+    let diff = 0;
+    for (let i = 0; i < f.cov.length; i++) if (f.cov[i] !== plain.cov[i]) diff++;
+    expect(diff).toBe(0);
   });
 });
 
