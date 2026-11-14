@@ -8,7 +8,8 @@
  *
  * Expected: a hostile capital beyond main-battery reach stops opening the
  * range at once (brakes with its real reverse thrust), closes to reach and
- * fires, using its own slow handling (no teleport, no handling change). A
+ * fires (fire range is to the target's hull, so it may already reach the
+ * hull once it has stopped opening), using its own slow handling (no teleport, no handling change). A
  * capital already in reach keeps holding its broadside stand-off.
  *
  * Layout: battleship at the origin, bow +y (angle 0), making 40 u/s ahead
@@ -84,7 +85,13 @@ describe('SectorRoom integration — hostile capital closes the range', () => {
     // was still opening at ~15 u/s there.
     expect(peakAt, 'the range kept opening').toBeLessThan(25);
     expect(peak - r0, 'the range opened too far before it stopped').toBeLessThan(600);
-    expect(last, 'the battleship was not closing the range').toBeLessThan(peak);
+    // Fire range is measured from each turret to the target's HULL (owner
+    // 2026-11-14), so a 16" can reach the cruiser's hull while the centres are
+    // still a few hundred u past `REACH` (centre to centre). The battleship
+    // must stop opening and then either close or already be firing: the loop
+    // ends at the first salvo, which may come at the peak itself.
+    expect(last, 'the range opened again after its peak').toBeLessThanOrEqual(peak);
+    expect(last < peak || firedAt > 0, 'the battleship neither closed the range nor fired').toBe(true);
     expect(firedAt, 'the 16" battery never fired').toBeGreaterThan(0);
   });
 
