@@ -73,7 +73,8 @@ function mountRangeBound(t: MountRangeTarget | null | undefined): number {
 /**
  * Is target `t` at offset (dx, dy) from a mount within `reach` of it, measured
  * to the nearest point of its hit shape? The one range gate of every turret
- * (NPC capitals and drones, structures, the player lock share-out). Cheap
+ * (NPC capitals and drones, structures, the player lock share-out, and the
+ * player fire gate `mountFiresOn` / `LockSubsystem` on a `FireTargetShape`). Cheap
  * first: a ship is rejected on its bounding circle before the polygon.
  * Pure, allocation-free.
  */
