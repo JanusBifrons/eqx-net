@@ -46,9 +46,11 @@ export interface LockTuning {
   clampAtMax?: boolean;
   /** Failsafe ring duration multiple for neutral / allied targets. */
   failsafeMul: number;
-  /** A locked/acquiring target may be out of reach this long before it drops. */
+  /** A locked/acquiring target may be untrackable this long before it drops. */
   lostGraceSeconds: number;
-  /** Locks start/persist out to reach × this (a small grace band). */
+  /** Locks work at any distance (owner 2026-11-14); this is only the AUTO
+   *  release band: an AUTO pick is dropped once no mount reaches it within
+   *  reach × this (hysteresis over the in-reach pick). */
   reachSlack: number;
 }
 

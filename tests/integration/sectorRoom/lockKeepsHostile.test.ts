@@ -102,13 +102,18 @@ describe('SectorRoom integration — a pilot\'s lock keeps the NPC hostile', () 
     await waitUntil(() => tick() - cancelledAt >= 60, 5000, '1 s after cancel');
     expect(hostile()).toBe(true);
     // The drone's OWN lock on the pilot also keeps it hostile (owner
-    // 2026-11-12), so the pilot leaves its reach; its lock drops...
+    // 2026-11-12), but only inside its fire range (locks work at any distance
+    // since 2026-11-14), so the pilot leaves its fire range...
     (server as unknown as { postToWorker(cmd: unknown): void }).postToWorker({
       type: 'SET_POSITION', entityId: pid, x: 0, y: -4000, angle: 0, vx: 0, vy: 0, angvel: 0,
     });
-    await waitUntil(() => lockedBy === undefined || lockedBy.length === 0, 8000, 'NPC lock drops out of reach');
-    // ...and once 30 s have passed since the last hostile act, it forgets.
+    const movedAt = tick();
+    await waitUntil(() => tick() - movedAt >= 30, 5000, 'the move lands');
+    // ...and once 30 s have passed since the last hostile act, it forgets,
+    // even though its lock reaches any distance...
     await ageAndWait();
     expect(hostile()).toBe(false);
+    // ...and, no longer hostile, it stops locking the pilot.
+    await waitUntil(() => lockedBy === undefined || lockedBy.length === 0, 8000, 'NPC lock drops once it forgets');
   }, 40_000);
 });

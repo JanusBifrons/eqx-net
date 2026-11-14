@@ -155,7 +155,7 @@ import { tuningFor } from '@shared-types/shipScale/lookup';
 // A group fires only when a barrel bears on its lock: the shared rule (#15).
 import { fillFireTargetShape, mountFiresOn, newFireTargetShape, type FireTargetShape } from '@core/combat/fireControlBearing';
 import { pickTurretLock } from '@core/combat/turretLockPick';
-import { hasTurretFireControl, mountWeaponReach, weaponIdReach } from '@core/combat/mountReach';
+import { hasTurretFireControl, mountWeaponReach, weaponIdReach, type MountRangeTarget } from '@core/combat/mountReach';
 /** No aim guides (the mirror's `localAimMountIds`): the lock rings replace them. */
 const EMPTY_AIM_IDS: readonly string[] = Object.freeze([]);
 import { getWeapon, weaponAutoFireRange, type WeaponDef, type WeaponId } from '@core/combat/WeaponCatalogue';
@@ -5836,6 +5836,9 @@ export class ColyseusGameClient {
   private readonly _fcSalvo = new Set<string>();
   private readonly _fcPickX = new Float64Array(8);
   private readonly _fcPickY = new Float64Array(8);
+  /** Per-lock hit shapes for `pickTurretLock`'s hull range gate (reused, #14). */
+  private readonly _fcPickShapes: { -readonly [K in keyof MountRangeTarget]: MountRangeTarget[K] }[] =
+    Array.from({ length: 8 }, () => ({ kindId: null, angle: 0, shieldUp: false, radius: 0 }));
   private readonly _fcPickKeys: string[] = [];
   /** Parsed lock keys (`s:<n>` / `p:<id>`), so per-frame lookups never slice strings. */
   private readonly _fcKeys = new Map<string, { swarm: number; player: string | null }>();
@@ -6083,6 +6086,24 @@ export class ColyseusGameClient {
     return k;
   }
 
+  /** A lock target's hit shape for the shared turret range gate
+   *  (`pickTurretLock` → `mountInReach`), from the mirror: the same fields the
+   *  server's `resolveLockTarget` fills (#15). */
+  private fcTargetShape(key: string, out: { -readonly [K in keyof MountRangeTarget]: MountRangeTarget[K] }): void {
+    const k = this.fcKey(key);
+    if (k.player !== null) {
+      const s = this.mirror.ships.get(k.player);
+      out.kindId = s?.kind ?? null; out.angle = s?.angle ?? 0; out.shieldUp = s?.shieldDown !== true; out.radius = 0;
+      return;
+    }
+    const e = this.mirror.swarm?.get(k.swarm);
+    const ship = e !== undefined && e.kind === 1 && e.shipKind != null;
+    out.kindId = ship ? e.shipKind! : null;
+    out.angle = ship ? e.angle : 0;
+    out.shieldUp = ship && e.shieldDown !== true;
+    out.radius = ship || e === undefined ? 0 : e.radius;
+  }
+
   /**
    * World pose + hit shape of a lock target from the render mirror (false =
    * not visible). The same fields the server's `resolveLockTarget` fills
@@ -6143,6 +6164,7 @@ export class ColyseusGameClient {
       if (!this.fcTargetPose(l.t, this._fcPickPose)) continue;
       this._fcPickX[keys.length] = this._fcPickPose.x;
       this._fcPickY[keys.length] = this._fcPickPose.y;
+      this.fcTargetShape(l.t, this._fcPickShapes[keys.length]!);
       keys.push(l.t);
     }
     if (keys.length === 0) return first;
@@ -6151,7 +6173,7 @@ export class ColyseusGameClient {
     const sinA = Math.sin(sAngle);
     const mx = sx + (m.localX * cosA - m.localY * sinA);
     const my = sy + (m.localX * sinA + m.localY * cosA);
-    return keys[pickTurretLock(m, sAngle, mx, my, def.reach, def.ordinal, keys.length, this._fcPickX, this._fcPickY)]!;
+    return keys[pickTurretLock(m, sAngle, mx, my, def.reach, def.ordinal, keys.length, this._fcPickX, this._fcPickY, this._fcPickShapes)]!;
   }
   private readonly _fcPickPose: FireTargetShape = newFireTargetShape();
 

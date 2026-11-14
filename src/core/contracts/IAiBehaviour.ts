@@ -31,6 +31,11 @@ export interface AiPlayerView {
    *  (robot reputation ≥ ROBOT_TRUCE_AT): robots no longer engage them on sight.
    *  Retaliation (`hostileTo`) still applies. Server-populated only. */
   truce?: boolean;
+  /** Hull shape (kind, heading, shield) so the brain ranges to the HULL, as
+   *  the fire gate does. Absent ⇒ ranged from the centre. */
+  readonly kindId?: string | null;
+  readonly angle?: number;
+  readonly shieldUp?: boolean;
 }
 
 /**
@@ -67,6 +72,10 @@ export interface AiSwarmView {
   readonly allegiance: string;
   readonly health?: number;
   readonly maxHealth?: number;
+  /** Hull shape, as on `AiPlayerView`. */
+  readonly kindId?: string | null;
+  readonly angle?: number;
+  readonly shieldUp?: boolean;
 }
 
 /**
