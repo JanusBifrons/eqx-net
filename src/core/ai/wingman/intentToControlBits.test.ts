@@ -109,4 +109,35 @@ describe('intentToControlBits', () => {
     expect(reverseAccelFor({ thrustImpulse: 2, reverseFactor: 0.5 }, 2)).toBeCloseTo(30);
     expect(reverseAccelFor({ thrustImpulse: 2, reverseFactor: 0.5 }, 0)).toBe(0);
   });
+
+  describe('facing (a wingman fighting: nose on the target, range by thrust / reverse)', () => {
+    function face(dvx: number, dvy: number, faceAngle: number, p: ReturnType<typeof pose>) {
+      const intent = makeControlIntent();
+      intent.dvx = dvx; intent.dvy = dvy; intent.face = true; intent.faceAngle = faceAngle;
+      return intentToControlBits(intent, p, STATS, makeWingmanControls());
+    }
+
+    it('backing off from a target dead ahead: reverses, never turns its tail to it', () => {
+      // Target ahead (+Y), the brain wants to open the range (move −Y).
+      const c = face(0, -100, 0, pose(0));
+      expect(c.reverse).toBe(true);
+      expect(c.thrust).toBe(false);
+      expect(c.turnLeft || c.turnRight).toBe(false);
+      // Without facing the same wish turns the ship round (the old behaviour).
+      const old = run(0, -100, pose(0));
+      expect(old.turnLeft || old.turnRight).toBe(true);
+    });
+
+    it('turns toward the face angle, not the desired velocity', () => {
+      // Wants to move +X, but the target is to the left (heading +π/2).
+      const c = face(100, 0, Math.PI / 2, pose(0));
+      expect(c.turnLeft).toBe(true);
+      expect(c.turnRight).toBe(false);
+    });
+
+    it('holds still on station (no push) while on target', () => {
+      const c = face(0, 0, 0, pose(0));
+      expect(c.thrust || c.reverse || c.turnLeft || c.turnRight || c.boost).toBe(false);
+    });
+  });
 });

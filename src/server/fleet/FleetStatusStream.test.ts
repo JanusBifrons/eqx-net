@@ -54,6 +54,22 @@ describe('FleetStatusStream', () => {
     expect(rb[0]!.escortId).toBe('a');
   });
 
+  it('appends the shield % (index 13) when the room reports it', () => {
+    const sent: { sessionId: string; msg: FleetStatusMessage }[] = [];
+    const stream = new FleetStatusStream({
+      fleet: { statusFor: () => [status('h1')], brainOf: () => null },
+      forEachSession: (cb) => cb('s', 'a'),
+      hullPct: () => 100,
+      shieldPct: () => 39.6,
+      send: (sessionId, msg) => sent.push({ sessionId, msg }),
+    });
+    stream.sendAll();
+    const t = sent[0]!.msg.s[0]!;
+    expect(t).toHaveLength(14);
+    expect(FleetStatusMessageSchema.safeParse(sent[0]!.msg).success).toBe(true);
+    expect(decodeFleetStatusRow(t).shieldPct).toBe(40);
+  });
+
   it('carries the patrol route', () => {
     const route: [number, number][] = [[0, 0], [5, 6], [7, 8]];
     const { stream, sent } = harness({ a: [status('h1', { mode: 'patrol', activity: 'patrolling' })] }, {

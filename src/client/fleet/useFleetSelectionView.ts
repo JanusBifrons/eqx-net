@@ -16,6 +16,8 @@ export interface FleetShipView {
   id: string;
   name: string;
   hullPct: number | null;
+  /** Shield 0..100, null until the server reports it. */
+  shieldPct: number | null;
   activity: string;
 }
 
@@ -45,6 +47,7 @@ export function useFleetSelectionView(): FleetSelectionView {
         id,
         name: fleetShipName(mirror, id),
         hullPct: row ? Math.round(row.hullPct) : null,
+        shieldPct: row?.shieldPct !== undefined ? Math.round(row.shieldPct) : null,
         activity: describeActivity(row, fleetTargetName(mirror, row?.targetId ?? null)),
       };
     });

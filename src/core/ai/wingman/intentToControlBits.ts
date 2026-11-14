@@ -17,6 +17,12 @@
  *    when faster than wanted (overshoot / closing in) or when facing away
  *    while still moving forward.
  *  - Boost only when asked, well aligned and already thrusting.
+ *  - FACING (`intent.face`, a wingman fighting): turn the nose to
+ *    `faceAngle` and push only along it (thrust / reverse toward the desired
+ *    velocity's forward part), like a pilot keeping a fixed gun on target.
+ *    Before it, the nose always followed the desired velocity, so a wingman
+ *    backing off from a closing robot turned its tail to it and never fired
+ *    (RTS take 2026-11-14).
  *
  * Pure and allocation-free: the caller owns `out`.
  */
@@ -28,10 +34,18 @@ export interface ControlIntent {
   dvy: number;
   /** The brain allows boost (long leg). The adapter still gates it on facing. */
   boost: boolean;
+  /**
+   * Point the nose at `faceAngle` (ship angle, rad) instead of along the
+   * desired velocity: a pilot fighting with a fixed forward gun keeps the
+   * target on the nose and uses thrust / reverse for range. The desired
+   * velocity then only sets the push along the nose.
+   */
+  face: boolean;
+  faceAngle: number;
 }
 
 export function makeControlIntent(): ControlIntent {
-  return { dvx: 0, dvy: 0, boost: false };
+  return { dvx: 0, dvy: 0, boost: false, face: false, faceAngle: 0 };
 }
 
 /** Thrust only while the nose is within this of the desired heading (rad). */
@@ -76,30 +90,9 @@ export function headingOf(dx: number, dy: number): number {
   return Math.atan2(-dx, dy);
 }
 
-export function intentToControlBits(
-  intent: ControlIntent,
-  pose: WingmanPose,
-  stats: WingmanShipStats,
-  out: WingmanControls,
-): WingmanControls {
-  out.thrust = false; out.reverse = false; out.turnLeft = false; out.turnRight = false; out.boost = false;
-
-  const fx = -Math.sin(pose.angle), fy = Math.cos(pose.angle);
-  const vFwd = pose.vx * fx + pose.vy * fy;
-  const band = Math.max(1, stats.maxSpeed * CONTROL_SPEED_BAND);
-  const want = Math.sqrt(intent.dvx * intent.dvx + intent.dvy * intent.dvy);
-
-  if (want < stats.maxSpeed * CONTROL_STOP_FRAC) {
-    // Brake in place: no turning, push against the forward motion down to
-    // what one held key can remove (lateral grip bleeds sideways drift).
-    const bb = brakeBand(stats);
-    if (vFwd > bb) out.reverse = true;
-    else if (vFwd < -bb) out.thrust = true;
-    return out;
-  }
-
-  // --- Turn toward the desired heading.
-  const err = wrapPi(headingOf(intent.dvx, intent.dvy) - pose.angle);
+/** Turn key toward a heading error `err` (rad): a deadband of half a tick's
+ *  turn on snap-turn hulls; the helm's coast angle on torque-turned hulls. */
+function turnToward(err: number, pose: WingmanPose, stats: WingmanShipStats, out: WingmanControls): void {
   const absErr = Math.abs(err);
   const torqueTurn = stats.turnTorque !== undefined && stats.turnTorque > 0;
   let deadband: number;
@@ -118,6 +111,47 @@ export function intentToControlBits(
   if (absErr > deadband) {
     if (err > 0) out.turnLeft = true; else out.turnRight = true;
   }
+}
+
+export function intentToControlBits(
+  intent: ControlIntent,
+  pose: WingmanPose,
+  stats: WingmanShipStats,
+  out: WingmanControls,
+): WingmanControls {
+  out.thrust = false; out.reverse = false; out.turnLeft = false; out.turnRight = false; out.boost = false;
+
+  const fx = -Math.sin(pose.angle), fy = Math.cos(pose.angle);
+  const vFwd = pose.vx * fx + pose.vy * fy;
+  const band = Math.max(1, stats.maxSpeed * CONTROL_SPEED_BAND);
+  const want = Math.sqrt(intent.dvx * intent.dvx + intent.dvy * intent.dvy);
+
+  if (intent.face) {
+    // Fighting: nose on the target, range by thrust / reverse along the nose
+    // (sideways drift bleeds through lateral grip, as for a pilot).
+    const err = wrapPi(intent.faceAngle - pose.angle);
+    turnToward(err, pose, stats, out);
+    const wantFwd = intent.dvx * fx + intent.dvy * fy;
+    if (vFwd < wantFwd - band) out.thrust = true;
+    else if (vFwd > wantFwd + band) out.reverse = true;
+    out.boost = intent.boost && out.thrust && Math.abs(err) < CONTROL_BOOST_CONE
+      && want > 0 && wantFwd > want * Math.cos(CONTROL_BOOST_CONE);
+    return out;
+  }
+
+  if (want < stats.maxSpeed * CONTROL_STOP_FRAC) {
+    // Brake in place: no turning, push against the forward motion down to
+    // what one held key can remove (lateral grip bleeds sideways drift).
+    const bb = brakeBand(stats);
+    if (vFwd > bb) out.reverse = true;
+    else if (vFwd < -bb) out.thrust = true;
+    return out;
+  }
+
+  // --- Turn toward the desired heading.
+  const err = wrapPi(headingOf(intent.dvx, intent.dvy) - pose.angle);
+  const absErr = Math.abs(err);
+  turnToward(err, pose, stats, out);
 
   // --- Speed along the nose.
   if (absErr < CONTROL_THRUST_CONE) {

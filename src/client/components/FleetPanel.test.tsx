@@ -169,6 +169,16 @@ describe('FleetPanel (desktop)', () => {
     expect(after[0]).toHaveTextContent('80%');
     expect(after[1]).toHaveTextContent('Scout');
     expect(after[1]).toHaveTextContent('Retreating – hull 20%');
+
+    // Shield next to hull, and a morale retreat says why.
+    applyFleetStatus([
+      row('a', { activity: 'attacking', hullPct: 100, shieldPct: 40 }),
+      row('b', { activity: 'retreating', hullPct: 100, shieldPct: 0, moraleOutcome: 'fallBack' }),
+    ]);
+    act(() => { vi.advanceTimersByTime(FLEET_STATUS_POLL_MS + 10); });
+    const third = screen.getAllByTestId('fleet-ship-row');
+    expect(third[0]).toHaveTextContent('Shield 40% · Hull 100%');
+    expect(third[1]).toHaveTextContent('Falling back – shields down');
   });
 
   it(`caps the list at ${FLEET_PANEL_MAX_ROWS} rows then "+N more"`, () => {

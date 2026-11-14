@@ -43,7 +43,9 @@ const optNum = z.number().finite().nullable();
  *  0 id, 1 mode idx, 2 stance idx, 3 activity idx, 4 targetId|null,
  *  5 hullPct (0..100 int), 6 morale idx (-1 none), 7 squadId|null,
  *  8 order idx (-1 none), 9 orderX|null, 10 orderY|null (move order dest),
- *  11 escortId|null, 12 route: flat [x0,y0,x1,y1,…] (patrol) | null.
+ *  11 escortId|null, 12 route: flat [x0,y0,x1,y1,…] (patrol) | null,
+ *  13 shieldPct (0..100 int; appended 2026-11-14, optional so an older
+ *  sender still parses).
  */
 const FleetStatusTupleSchema = z.tuple([
   z.string().min(1).max(64),
@@ -59,6 +61,7 @@ const FleetStatusTupleSchema = z.tuple([
   optNum,
   optId,
   z.array(z.number().finite()).max(32).nullable(),
+  z.number().int().min(0).max(100).optional(),
 ]);
 
 export const FleetStatusMessageSchema = z
@@ -79,6 +82,8 @@ export interface FleetStatusRowWire {
   activity: FleetStatusActivity;
   targetId: string | null;
   hullPct: number;
+  /** Shield 0..100 (absent from an older sender). */
+  shieldPct?: number;
   moraleOutcome?: FleetStatusMorale;
   squadId?: string;
   orderKind?: FleetStatusOrder;
@@ -95,7 +100,7 @@ export function encodeFleetStatusRow(r: FleetStatusRowWire): FleetStatusTuple {
     route = [];
     for (const [x, y] of r.route) route.push(x, y);
   }
-  return [
+  const t: FleetStatusTuple = [
     r.id,
     FLEET_STATUS_MODES.indexOf(r.mode),
     FLEET_STATUS_STANCES.indexOf(r.stance),
@@ -110,11 +115,13 @@ export function encodeFleetStatusRow(r: FleetStatusRowWire): FleetStatusTuple {
     r.escortId ?? null,
     route,
   ];
+  if (r.shieldPct !== undefined) t.push(r.shieldPct);
+  return t;
 }
 
 /** Decode one validated tuple. */
 export function decodeFleetStatusRow(t: FleetStatusTuple): FleetStatusRowWire {
-  const [id, mode, stance, activity, targetId, hullPct, morale, squadId, order, ox, oy, escortId, route] = t;
+  const [id, mode, stance, activity, targetId, hullPct, morale, squadId, order, ox, oy, escortId, route, shieldPct] = t;
   const row: FleetStatusRowWire = {
     id,
     mode: FLEET_STATUS_MODES[mode]!,
@@ -123,6 +130,7 @@ export function decodeFleetStatusRow(t: FleetStatusTuple): FleetStatusRowWire {
     targetId,
     hullPct,
   };
+  if (shieldPct !== undefined) row.shieldPct = shieldPct;
   if (morale >= 0) row.moraleOutcome = FLEET_STATUS_MORALE[morale]!;
   if (squadId !== null) row.squadId = squadId;
   if (order >= 0) row.orderKind = FLEET_STATUS_ORDERS[order]!;

@@ -256,6 +256,39 @@ describe('WingmanBehaviour — hunt', () => {
     expect(b2.activity).toBe('guarding');
   });
 
+  it('keeps its nose on a target that closes in, backing off on reverse (RTS take 2026-11-14)', () => {
+    // A robot charging the hunter: before the fix the stand-off velocity
+    // (away from the target) turned the fighter's tail to it, so its fixed
+    // forward gun never bore (err up to 180°; 2 hits in 16 s).
+    const bx = 1_620_000;
+    const { id, stats } = spawnFighter(bx, 0);
+    const b = brain(stats, { attackStandoff: 300, sensorRange: 2500 });
+    const hostile = { x: bx, y: 700, vx: 0, vy: -60 };
+    const view = makeView();
+    view.nearestHostile = (_sx, _sy, _range, out) => {
+      out.x = hostile.x; out.y = hostile.y; out.vx = hostile.vx; out.vy = hostile.vy;
+      return 'robot';
+    };
+    b.setMode('hunt');
+    let worst = 0;
+    for (let t = 0; t < 60 * 6; t++) {
+      step(id, b, view, () => { hostile.y += hostile.vy / 60; });
+      const p = poseOf(id);
+      const want = Math.atan2(-(hostile.x - p.x), hostile.y - p.y);
+      let err = want - p.angle;
+      err = Math.atan2(Math.sin(err), Math.cos(err));
+      if (t > 60) worst = Math.max(worst, Math.abs(err));
+    }
+    expect(b.activity).toBe('attacking');
+    expect(worst, 'nose stays on the closing target').toBeLessThan(0.2);
+    const p = poseOf(id);
+    const d = dist(p.x, p.y, hostile.x, hostile.y);
+    expect(d, 'it holds the stand-off as the target comes on').toBeGreaterThan(300 * 0.7);
+    expect(d).toBeLessThan(300 * 1.5);
+    const vFwd = -Math.sin(p.angle) * p.vx + Math.cos(p.angle) * p.vy;
+    expect(vFwd, 'backing off on reverse, nose still on the target').toBeLessThan(0);
+  });
+
   it('the default sensor range is the role sensor range (floored at ON_SIGHT)', () => {
     const { stats } = spawnFighter(1_650_000, 0);
     expect(brain(stats).huntSensorRange).toBeGreaterThanOrEqual(1600);

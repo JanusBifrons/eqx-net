@@ -40,6 +40,7 @@ import {
 } from '../../core/ai/wingman/types.js';
 import { fnv1a32 } from '../../core/random/rng.js';
 import { deriveStatMultipliers, type StatAlloc } from '../../core/leveling/shipStats.js';
+import { getWeapon } from '../../core/combat/WeaponCatalogue.js';
 import type { ShipKind } from '../../shared-types/shipKinds/types.js';
 import { massOf, shipTuning } from '../../shared-types/shipScale/tuning.js';
 import {
@@ -223,11 +224,15 @@ export function wingmanConfigFor(kind: ShipKind, statAlloc?: StatAlloc, fireRang
     reverseAccel: reverseAccelFor(kind, mass, mul.topSpeed),
   };
   const t = shipTuning(kind);
+  // Lead the target like a pilot does: the primary gun's shot speed (a beam
+  // needs no lead). The same data an NPC of this kind leads with.
+  const primary = getWeapon(kind.mounts?.[0]?.weaponId ?? 'hitscan');
   return {
     stats,
     arriveRadius: t.wingmanArrive,
     guardRadius: t.guardRadiusMin,
     aiRole: kind.aiRole,
+    ...(primary.mode !== 'hitscan' ? { muzzleSpeed: primary.speed } : {}),
     ...(fireRange !== undefined ? { fireRange } : {}),
   };
 }

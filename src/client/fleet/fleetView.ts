@@ -38,12 +38,36 @@ export function describeActivity(row: FleetStatusRow | undefined, targetName?: s
     case 'attacking':
       return `Attacking${t}`;
     case 'retreating':
-      return `Retreating – hull ${Math.round(row.hullPct)}%`;
+      return describeRetreat(row);
     case 'formingUp':
       return 'Forming up';
     case 'guarding':
       return `Guarding${t}`;
   }
+}
+
+/**
+ * Why a ship is pulling out, in plain words. A morale roll says how hard it
+ * runs ("Falling back" / "Fleeing") and what scared it: the hull it has lost,
+ * or "shields down" while its hull is still whole. An ordered retreat just
+ * says "Retreating".
+ */
+function describeRetreat(row: FleetStatusRow): string {
+  const hull = Math.round(row.hullPct);
+  const why = hull >= 100 && row.shieldPct !== undefined && row.shieldPct <= 0
+    ? 'shields down'
+    : `hull ${hull}%`;
+  if (row.moraleOutcome === 'flee') return `Fleeing – ${why}`;
+  if (row.moraleOutcome === 'fallBack') return `Falling back – ${why}`;
+  return row.mode === 'retreat' ? 'Retreating' : `Retreating – ${why}`;
+}
+
+/** Shield and hull in plain words: "Shield 40% · Hull 100%" ("Hull 100%"
+ *  when the shield is not reported). */
+export function describeShieldHull(shieldPct: number | null | undefined, hullPct: number | null | undefined): string {
+  const hull = hullPct === null || hullPct === undefined ? '--' : `${Math.round(hullPct)}%`;
+  if (shieldPct === null || shieldPct === undefined) return `Hull ${hull}`;
+  return `Shield ${Math.round(shieldPct)}% · Hull ${hull}`;
 }
 
 /** The one value every item shares; `'mixed'` when they differ; null when none known. */

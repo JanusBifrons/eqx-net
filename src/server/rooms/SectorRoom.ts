@@ -3007,6 +3007,12 @@ export class SectorRoom extends Room<SectorState> {
         const s = this.state.ships.get(id);
         return s && s.maxHealth > 0 ? (s.health / s.maxHealth) * 100 : null;
       },
+      shieldPct: (id) => {
+        const s = this.state.ships.get(id);
+        if (!s) return null;
+        const max = effectiveShipShieldMax(getShipKind(s.kind).shieldMax, s.statAlloc);
+        return max > 0 ? (s.shield / max) * 100 : null;
+      },
       send: (sessionId, msg) => {
         const client = this.clients.find((c) => c.sessionId === sessionId);
         try { client?.send('fleet_status', msg); } catch { /* closing */ }
@@ -5401,11 +5407,15 @@ export class SectorRoom extends Room<SectorState> {
     if (this.capitalWrecks !== null && damage > 0) {
       this.capitalWrecks.noteHit(targetId, shooterId, damage, impactX, impactY);
     }
-    this.damageRouter.apply(targetId, shooterId, damage, hitX, hitY);
     // RTS slice 5: an AI-flown hull's morale + "who hit me" (Defensive stance).
-    if (damage > 0 && this.fleet.size > 0 && this.fleet.isAttached(targetId)) {
-      this.noteWingmanDamage(targetId, shooterId, damage);
-    }
+    // Morale weighs the HULL a hit took, never what the shield soaked (a few
+    // shield hits rolled a retreat at hull 100 %: RTS take 2026-11-14), so
+    // read the hull either side of the hit.
+    const wingHullBefore = damage > 0 && this.fleet.size > 0 && this.fleet.isAttached(targetId)
+      ? this.state.ships.get(targetId)?.health ?? -1
+      : -1;
+    this.damageRouter.apply(targetId, shooterId, damage, hitX, hitY);
+    if (wingHullBefore >= 0) this.noteWingmanDamage(targetId, shooterId, wingHullBefore);
   }
 
   /** The AI beam's impact point, for the wreck hit tracker only (the damage
@@ -10167,15 +10177,18 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   /** RTS slice 5: a hit on an AI-flown hull feeds its morale (with the
-   *  attacker's position as the threat) and its "recently hit by" record. */
-  private noteWingmanDamage(targetId: string, shooterId: string, damage: number): void {
+   *  attacker's position as the threat) and its "recently hit by" record.
+   *  `hullBefore` is the hull before the hit: morale counts only the hull
+   *  LOST (0 when the shield took it all; the attacker is still recorded). */
+  private noteWingmanDamage(targetId: string, shooterId: string, hullBefore: number): void {
     const ship = this.state.ships.get(targetId);
     if (!ship || !ship.alive) return;
     const maxHull = ship.maxHealth > 0 ? ship.maxHealth : 1;
+    const hullLost = Math.max(0, hullBefore - Math.max(0, ship.health));
     const p = this.wingmanTargetPose;
     const known = shooterId !== '' && this.entityPoseInto(shooterId, p);
     this.fleet.noteDamage(
-      targetId, damage, maxHull, Math.max(0, ship.health) / maxHull,
+      targetId, hullLost, maxHull, Math.max(0, ship.health) / maxHull,
       known ? p.x : undefined, known ? p.y : undefined, shooterId, this.serverTick,
     );
   }

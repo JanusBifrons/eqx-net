@@ -230,6 +230,8 @@ export class PlayerFireResolver implements WeaponFireSink {
   private _effTick = 0;
   /** The pilot's client for this fire's `hit_ack`; null for a wingman shot. */
   private _ackClient: Client | null = null;
+  /** True inside `fireHull`: the shooter pose is live, never the ring's. */
+  private _hullShot = false;
   private _ackShotId = '';
   // Review must-fix #1 — the shooter's per-instance outgoing-DAMAGE multiplier
   // (`mul.damage`, derived from ship.statAlloc), set once per resolve() and
@@ -289,7 +291,12 @@ export class PlayerFireResolver implements WeaponFireSink {
     if (!ship.alive) return false;
     const t = this.deps.serverTick();
     this._ackClient = null;
-    return this.fireCore(shipInstanceId, ship, slotId, t, t, t, 0, 'hull');
+    this._hullShot = true;
+    try {
+      return this.fireCore(shipInstanceId, ship, slotId, t, t, t, 0, 'hull');
+    } finally {
+      this._hullShot = false;
+    }
   }
 
   /** The shooter's live pose: an active pilot (playerId key) or a lingering hull. */
@@ -444,7 +451,12 @@ export class PlayerFireResolver implements WeaponFireSink {
     ship.energy = spendEnergy(ship.energy, slotEnergyCost);
 
     // Lag-comp rewind → fallback → angle anchor.
-    const rewoundShooter = d.snapshotRing.getPoseAt(shooterId, effTick);
+    // A wingman (`fireHull`) fires from its LIVE pose: no claim, no rewind.
+    // The ring is keyed by id, and a hull id it once saw (a fleet hull spawned
+    // through a player slot) reads back an unwritten (0, 0, angle 0) entry, so
+    // every bolt left the world origin heading north (RTS take 2026-11-14:
+    // 2 hits on the robots, 29 on the wingmen near the origin).
+    const rewoundShooter = this._hullShot ? null : d.snapshotRing.getPoseAt(shooterId, effTick);
     const fallbackShooter = this.livePose(shooterId);
     const sx = rewoundShooter?.x ?? fallbackShooter?.x;
     const sy = rewoundShooter?.y ?? fallbackShooter?.y;

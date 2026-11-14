@@ -122,6 +122,9 @@ export interface WingmanConfig {
   /** The ship's fire range (u), for the role sensor range. Default 0 ⇒ the
    *  `ON_SIGHT_ENGAGE_RANGE` floor. */
   readonly fireRange?: number;
+  /** The primary gun's shot speed (u/s): the nose leads a moving target by
+   *  the shot's flight time, as a pilot aims. Absent ⇒ no lead (a beam). */
+  readonly muzzleSpeed?: number;
   /** Hunt search radius (u). Default `roleSensorRange(aiRole, fireRange)`. */
   readonly sensorRange?: number;
   /** Morale die weights. Default `roleProfile(aiRole).moraleWeights`. */
@@ -144,6 +147,9 @@ export const WINGMAN_ARRIVE_SPEED_FRAC = 0.03;
 export const WINGMAN_FALLBACK_DIST_MUL = 2;
 /** Morale Flee: run this many guard radii away from the threat. */
 export const WINGMAN_FLEE_DIST_MUL = 5;
+/** Engaging, the nose holds on the target inside this × the attack stand-off
+ *  (or the configured fire range, if longer). */
+export const WINGMAN_FACE_STANDOFF_MUL = 2;
 /** Escort: the escorted ship's heading follows its velocity above this
  *  fraction of OUR max speed (below it, the last heading is kept). */
 export const WINGMAN_ESCORT_HEADING_SPEED_FRAC = 0.05;
@@ -169,6 +175,10 @@ export class WingmanBehaviour implements IWingmanBrain {
   private guardRadius: number;
   private readonly boostDistance: number;
   private readonly attackStandoff: number;
+  /** Engaging a target this close or closer, the nose stays on it (u). */
+  private readonly faceRange: number;
+  /** Shot speed for the lead (u/s); 0 ⇒ aim straight at the target. */
+  private readonly muzzleSpeed: number;
   private readonly sensorRange: number;
   private readonly moraleWeights: MoraleWeights;
   private readonly moraleSeedId: number;
@@ -261,6 +271,8 @@ export class WingmanBehaviour implements IWingmanBrain {
     this.guardRadius = config.guardRadius;
     this.boostDistance = config.boostDistance ?? config.guardRadius * 3;
     this.attackStandoff = config.attackStandoff ?? config.guardRadius * 0.5;
+    this.faceRange = Math.max(this.attackStandoff * WINGMAN_FACE_STANDOFF_MUL, config.fireRange ?? 0);
+    this.muzzleSpeed = config.muzzleSpeed !== undefined && config.muzzleSpeed > 0 ? config.muzzleSpeed : 0;
     this._mode = config.mode ?? 'defend';
     this._stance = config.stance ?? 'defensive';
     const role = config.aiRole ?? 'fighter';
@@ -318,7 +330,6 @@ export class WingmanBehaviour implements IWingmanBrain {
   }
   /** True while running from a FallBack / Flee morale roll. */
   get isMoraleRetreating(): boolean { return this.moraleRetreating; }
-
   // ---- Commands (discrete, event-driven) ----------------------------------
   /**
    * Change the standing mode. Does not cancel a direct order; cancels a morale
@@ -478,7 +489,7 @@ export class WingmanBehaviour implements IWingmanBrain {
     this.lastTick = view.tick;
     if (!this.postValid) this.setGuardPost(self.x, self.y);
     const it = this.intent;
-    it.dvx = 0; it.dvy = 0; it.boost = false;
+    it.dvx = 0; it.dvy = 0; it.boost = false; it.face = false;
 
     if (this.moraleDirty) this.checkMorale(self, view.tick);
     if (this.moraleRetreating) {
@@ -832,6 +843,24 @@ export class WingmanBehaviour implements IWingmanBrain {
     // Feed the target's velocity forward so the wingman keeps station on it.
     this.intent.dvx += tp.vx;
     this.intent.dvy += tp.vy;
+    // In gun range, fight like a pilot: nose on the target (a fixed forward
+    // gun only bears that way), range by thrust / reverse. Flying the
+    // stand-off velocity instead pointed the nose anywhere, and backing off
+    // from a closing target turned the tail to it (RTS take 2026-11-14:
+    // 2 hits landed in 16 s). holdFire never shoots, so it just flies.
+    if (this._stance !== 'holdFire' && dist > 1e-6 && dist <= this.faceRange) {
+      // Lead by the shot's flight time, in the shooter's frame (the shot
+      // carries the ship's velocity), the same first-order intercept an NPC
+      // of this kind uses.
+      let ax = dx, ay = dy;
+      if (this.muzzleSpeed > 0) {
+        const t = dist / this.muzzleSpeed;
+        ax += (tp.vx - self.vx) * t;
+        ay += (tp.vy - self.vy) * t;
+      }
+      this.intent.face = true;
+      this.intent.faceAngle = headingOf(ax, ay);
+    }
     this._activity = dist > standoff * 1.5 ? 'chasing' : 'attacking';
   }
 }

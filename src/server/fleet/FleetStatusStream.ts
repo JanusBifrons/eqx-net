@@ -37,6 +37,8 @@ export interface FleetStatusStreamDeps {
   forEachSession(cb: (sessionId: string, playerId: string) => void): void;
   /** Hull 0..100 of `shipId`, or null when unknown. */
   hullPct(shipId: string): number | null;
+  /** Shield 0..100 of `shipId`, or null when unknown (then not sent). */
+  shieldPct?(shipId: string): number | null;
   send(sessionId: string, msg: FleetStatusMessage): void;
   /** The id the OWNER's client knows a target / escort ship by (slice 4b: the
    *  fleet names the ship the owner flies by shipInstanceId, the client by
@@ -97,7 +99,8 @@ export class FleetStatusStream {
       for (let i = 0; i < brain.patrolRouteLength; i++) route.push(brain.patrolRouteX(i), brain.patrolRouteY(i));
     }
     const morale = brain?.moraleOutcome ?? null;
-    return [
+    const shield = this.deps.shieldPct?.(r.id) ?? null;
+    const t: FleetStatusTuple = [
       r.id,
       FLEET_STATUS_MODES.indexOf(r.mode),
       FLEET_STATUS_STANCES.indexOf(r.stance),
@@ -112,5 +115,8 @@ export class FleetStatusStream {
       this.wire(ownerId, brain?.escortId ?? null),
       route,
     ];
+    // Appended (index 13): the panel shows shield next to hull.
+    if (shield !== null) t.push(Math.max(0, Math.min(100, Math.round(shield))));
+    return t;
   }
 }

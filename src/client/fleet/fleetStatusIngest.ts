@@ -31,6 +31,7 @@ export function ingestFleetStatus(raw: unknown): boolean {
     if (w.route !== undefined) row.route = w.route;
     if (w.escortId !== undefined) row.escortId = w.escortId;
     if (w.moraleOutcome !== undefined) row.moraleOutcome = w.moraleOutcome;
+    if (w.shieldPct !== undefined) row.shieldPct = w.shieldPct;
     rows.push(row);
   }
   applyFleetStatus(rows, { replace: true });

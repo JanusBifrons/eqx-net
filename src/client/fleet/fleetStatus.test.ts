@@ -6,7 +6,7 @@ import {
   resetFleetStatus,
   type FleetStatusUpdate,
 } from './fleetStatus.js';
-import { describeActivity, fleetShipName, fleetTargetName, sharedValue } from './fleetView.js';
+import { describeActivity, describeShieldHull, fleetShipName, fleetTargetName, sharedValue } from './fleetView.js';
 import type { RenderMirror } from '@core/contracts/IRenderer';
 
 const row = (id: string, over: Partial<FleetStatusUpdate> = {}): FleetStatusUpdate => ({
@@ -70,6 +70,23 @@ describe('describeActivity', () => {
     expect(describeActivity(row('a', { activity: 'patrolling' }))).toBe('Patrolling');
     expect(describeActivity(row('a', { activity: 'idle' }))).toBe('Idle');
     expect(describeActivity(undefined)).toBe('No report yet');
+  });
+
+  it('says why a ship is pulling out, in plain words', () => {
+    // Morale roll after real hull loss.
+    expect(describeActivity(row('a', { activity: 'retreating', hullPct: 20, moraleOutcome: 'flee' }))).toBe('Fleeing – hull 20%');
+    expect(describeActivity(row('a', { activity: 'retreating', hullPct: 45, moraleOutcome: 'fallBack' }))).toBe('Falling back – hull 45%');
+    // Hull whole but the shield is gone.
+    expect(describeActivity(row('a', { activity: 'retreating', hullPct: 100, shieldPct: 0, moraleOutcome: 'fallBack' })))
+      .toBe('Falling back – shields down');
+    // Ordered to retreat: no reason to give.
+    expect(describeActivity(row('a', { activity: 'retreating', mode: 'retreat', hullPct: 100 }))).toBe('Retreating');
+  });
+
+  it('shield and hull read together', () => {
+    expect(describeShieldHull(40, 100)).toBe('Shield 40% · Hull 100%');
+    expect(describeShieldHull(null, 80)).toBe('Hull 80%');
+    expect(describeShieldHull(null, null)).toBe('Hull --');
   });
 });
 

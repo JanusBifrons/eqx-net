@@ -1,7 +1,7 @@
 import { memo, useCallback } from 'react';
 import { Box, Button, ToggleButton } from '@mui/material';
 import { WINGMAN_MODES, WINGMAN_STANCES, type WingmanMode, type WingmanStance } from '@core/ai/wingman/types';
-import { MODE_LABELS, STANCE_LABELS } from '../fleet/fleetView.js';
+import { MODE_LABELS, STANCE_LABELS, describeShieldHull } from '../fleet/fleetView.js';
 import type { FleetCommands } from '../fleet/fleetCommands.js';
 import { useIsCompact } from '../layout/useIsCompact.js';
 import { useUIStore } from '../state/store.js';
@@ -51,7 +51,7 @@ const BTN_SX = { py: 0.1, px: 0.75, minWidth: 0, fontSize: 10, lineHeight: 1.4, 
 const LIST_SX = { display: 'flex', flexDirection: 'column', gap: '1px', mt: 0.25 } as const;
 const SHIP_SX = { display: 'flex', gap: 1, fontSize: 10, lineHeight: 1.35 } as const;
 const SHIP_NAME_SX = { minWidth: 70, fontWeight: 600 } as const;
-const SHIP_HULL_SX = { minWidth: 34, textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: 'rgba(223,232,245,0.75)' } as const;
+const SHIP_HULL_SX = { minWidth: 34, whiteSpace: 'nowrap', textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: 'rgba(223,232,245,0.75)' } as const;
 const SHIP_ACT_SX = { color: 'rgba(223,232,245,0.75)' } as const;
 const MORE_SX = { fontSize: 9, color: 'rgba(223,232,245,0.55)' } as const;
 
@@ -153,7 +153,7 @@ const ShipRow = memo(function ShipRow({ ship }: { ship: FleetShipView }): JSX.El
   return (
     <Box sx={SHIP_SX} data-testid="fleet-ship-row" data-ship-id={ship.id}>
       <Box component="span" sx={SHIP_NAME_SX}>{ship.name}</Box>
-      <Box component="span" sx={SHIP_HULL_SX}>{ship.hullPct === null ? '--' : `${ship.hullPct}%`}</Box>
+      <Box component="span" sx={SHIP_HULL_SX} data-testid="fleet-ship-shield-hull">{describeShieldHull(ship.shieldPct, ship.hullPct)}</Box>
       <Box component="span" sx={SHIP_ACT_SX}>{ship.activity}</Box>
     </Box>
   );

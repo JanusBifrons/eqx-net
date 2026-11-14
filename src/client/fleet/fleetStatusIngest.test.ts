@@ -41,6 +41,16 @@ describe('ingestFleetStatus (fleet_status handler)', () => {
     expect(getFleetStatus('b')).toBeUndefined();
   });
 
+  it('carries the appended shield % (and still reads a sender without it)', () => {
+    const base = { mode: 'hunt', stance: 'aggressive', activity: 'attacking', targetId: null, hullPct: 100 } as const;
+    expect(ingestFleetStatus({
+      type: 'fleet_status',
+      s: [encodeFleetStatusRow({ id: 'w', ...base, shieldPct: 40 }), encodeFleetStatusRow({ id: 'old', ...base })],
+    })).toBe(true);
+    expect(getFleetStatus('w')?.shieldPct).toBe(40);
+    expect(getFleetStatus('old')?.shieldPct).toBeUndefined();
+  });
+
   it('drops an invalid message without touching the status', () => {
     const v = getFleetStatusVersion();
     expect(ingestFleetStatus({ type: 'fleet_status', s: [['x', 99]] })).toBe(false);

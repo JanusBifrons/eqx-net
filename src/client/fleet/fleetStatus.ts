@@ -23,6 +23,8 @@ export interface FleetStatusRow {
   targetId: string | null;
   /** Hull, 0..100. */
   hullPct: number;
+  /** Shield, 0..100, when the server reports it. */
+  shieldPct?: number;
   /** Morale 0..100 when the brain reports it. */
   morale?: number;
   /** Squad the ship belongs to, when in one. */
@@ -72,6 +74,7 @@ export function applyFleetStatus(updates: readonly FleetStatusUpdate[], opts?: {
       activity: u.activity,
       targetId: u.targetId,
       hullPct: u.hullPct,
+      ...(u.shieldPct !== undefined ? { shieldPct: u.shieldPct } : {}),
       ...(u.morale !== undefined ? { morale: u.morale } : {}),
       ...(u.squadId !== undefined ? { squadId: u.squadId } : {}),
       ...(u.orderKind !== undefined ? { orderKind: u.orderKind } : {}),
@@ -93,6 +96,7 @@ function sameRow(a: FleetStatusRow, b: FleetStatusRow): boolean {
     a.activity === b.activity &&
     a.targetId === b.targetId &&
     a.hullPct === b.hullPct &&
+    a.shieldPct === b.shieldPct &&
     a.morale === b.morale &&
     a.squadId === b.squadId &&
     a.orderKind === b.orderKind &&
