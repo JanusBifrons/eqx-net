@@ -118,6 +118,20 @@ export interface AiWorldView {
   readonly neighbours?: IAiNeighbourQuery;
   /** The controller's work counters (absent ⇒ nothing counts). */
   readonly stats?: AiTickStats;
+  /** Per-entity current aim points (fire-lane awareness, AI slice 5b): a
+   *  brain writes its own, reads a wingman's. Owned by `AiController`.
+   *  Absent ⇒ no lane awareness. */
+  readonly aims?: IAiAimBoard;
+}
+
+/** Each brain's current aim point, keyed by entity id (AI slice 5b).
+ *  Alloc-free: `read` fills `readX/readY` and returns false when `id` has
+ *  not aimed lately. */
+export interface IAiAimBoard {
+  write(id: string, x: number, y: number, tick: number): void;
+  read(id: string, tick: number): boolean;
+  readonly readX: number;
+  readonly readY: number;
 }
 
 /**

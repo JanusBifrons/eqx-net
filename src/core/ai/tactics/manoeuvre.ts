@@ -92,6 +92,9 @@ export interface TacticalContext {
   hullFrac: number;
   /** Hits taken lately (decaying count, ~1 s half-life). */
   recentHits: number;
+  /** Shots the line-of-fire gate held lately (decaying, 0.5 s half-life;
+   *  `HostileDroneBehaviour.getRecentBlocks`). Slice 5b, `fireLanes.ts`. */
+  recentBlocks: number;
   /** Same-side / enemy ships near me (grid count at decision time). */
   allies: number;
   enemies: number;
@@ -129,7 +132,7 @@ export function makeTacticalContext(): TacticalContext {
     dist: 0, ux: 0, uy: 0, aimX: 0, aimY: 0, leadAngle: 0, offBoresight: 0,
     closing: 0, targetAspectCos: 0, threatBearingCos: 0,
     fireRange: 1, cruiseSpeed: 1, maxSpeed: 1, overshoot: 1,
-    hullFrac: 1, recentHits: 0, allies: 0, enemies: 0,
+    hullFrac: 1, recentHits: 0, recentBlocks: 0, allies: 0, enemies: 0,
     bandMin: 0, bandMax: 1, turretHalfArc: 0, sensorRange: 1,
     sensorEnemies: 0, threatX: 0, threatY: 0, hasAnchor: false, anchorX: 0, anchorY: 0,
     holdAlong: 0, holdBoost: false,

@@ -74,14 +74,17 @@ describe('scoreManoeuvres', () => {
     scoreManoeuvres(ctx(0.5, 0, 1, { recentHits: 6 }), FIGHTER, s);
     expect(argmax(s)).not.toBe(MANOEUVRE_BREAK);
   });
-  it('missile boats kite and turreted gunships orbit (slice 6b); a fixed-gun gunship holds', () => {
+  it('missile boats kite and turreted gunships orbit (slice 6b); a fixed-gun gunship stands off nose on', () => {
     for (const dN of [0.5, 1, 2]) {
       scoreManoeuvres(ctx(dN, 0, 1), roleProfile('missileBoat'), s);
       expect(argmax(s), `missileBoat dN=${dN}`).toBe(MANOEUVRE_KITE);
       scoreManoeuvres(ctx(dN, 0, 1, { turretHalfArc: Math.PI / 2 }), roleProfile('gunship'), s);
       expect(argmax(s), `gunship dN=${dN}`).toBe(MANOEUVRE_ORBIT);
+      // A fixed gun can't bear while it circles, so it keeps its nose on from
+      // its band: Hold, or Kite since Hold's stand-off share is scaled by
+      // (1 − aggression) (on-sight group fights, 2026-11-13).
       scoreManoeuvres(ctx(dN, 0, 1), roleProfile('gunship'), s);
-      expect(argmax(s), `fixed-gun gunship dN=${dN}`).toBe(MANOEUVRE_HOLD);
+      expect([MANOEUVRE_HOLD, MANOEUVRE_KITE], `fixed-gun gunship dN=${dN}`).toContain(argmax(s));
     }
   });
   it('a pair dogfights, a pack of wingmen holds its ring (keeps its spacing)', () => {

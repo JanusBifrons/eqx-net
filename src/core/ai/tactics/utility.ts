@@ -27,6 +27,7 @@ import {
   type TacticalContext,
 } from './manoeuvre.js';
 import type { Rng } from '../../random/rng.js';
+import { persistentBlockBias } from './fireLanes.js';
 
 /** Re-score every this many ticks (5 Hz) while a pilot is near… */
 export const DECIDE_PERIOD = 12;
@@ -128,6 +129,9 @@ export function scoreManoeuvres(ctx: TacticalContext, role: RoleProfile, out: Fl
   far = far < 0 ? 0 : far > 1 ? 1 : far;
   let run = w.attackRun * (0.5 + 0.5 * far) * (0.8 + 0.4 * role.aggression);
   if (tailed) run *= 0.5;
+  // Persistent blocking (slice 5b): a wingman keeps sitting on my line, so
+  // come in again from a new angle.
+  run *= 1 + persistentBlockBias(ctx.recentBlocks);
   out[MANOEUVRE_ATTACK_RUN] = run * pack;
 
   let brk = 0;
