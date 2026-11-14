@@ -259,7 +259,7 @@ import {
 } from '../../shared-types/messages/webrtcSignalingMessages.js';
 import { SwarmBroadcaster } from './SwarmBroadcaster.js';
 import { EntitySyncRouter } from './EntitySyncRouter.js';
-import { isEngageablePilotHull, isPilotedActive } from '../../core/entity/shipLiveness.js';
+import { isEngageablePilotHull, isLingeringHull, isPilotedActive } from '../../core/entity/shipLiveness.js';
 import { MalformedMessageTracker } from './MalformedMessageTracker.js';
 import { guarded } from './guardedLoop.js';
 import { SectorPersistence } from './SectorPersistence.js';
@@ -929,7 +929,7 @@ export class SectorRoom extends Room<SectorState> {
     readPose: (id, out) => this.readLingeringPose(id, out),
     postInput: (id, c, tick) => this.postWingmanInput(id, c, tick),
     // RTS slice 4b: the pilot's boost gate (InputHandler) on the HULL's own
-    // pool; `tickEnergy` drains `boostingWingmen` like `boostingPlayers`.
+    // pool; `tickEnergy` drains its shipInstanceId entry in `boostingPlayers`.
     canBoost: (id) => canAfford(this.state.ships.get(id)?.energy ?? 0, BOOST_TICK_COST),
     // Attack / escort targets: NPCs and other swarm entities, an own LINGERING
     // hull (escort a wingman), a pilot's ACTIVE ship keyed by playerId (attack
@@ -1300,18 +1300,17 @@ export class SectorRoom extends Room<SectorState> {
   };
   /** PlayerIds currently holding boost (energy-affordable), regardless of
    *  thrust. Surfaced on every snapshot so all clients can render an exhaust
-   *  trail for that ship; also drives the per-tick boost energy drain. */
+   *  trail for that ship; also drives the per-tick boost energy drain.
+   *  KEY: playerId for a pilot's ACTIVE ship (InputHandler), shipInstanceId
+   *  for an AI-flown LINGERING hull (`postWingmanInput`, cleared in
+   *  `detachWingman`); the two id spaces never collide. Hull entries reach
+   *  the snapshot via the broadcaster's slot-FLAGS read (RTS Part A S2). */
   private readonly boostingPlayers = new Set<string>();
   /** PlayerIds currently holding thrust (regardless of boost). Surfaced on
    *  every snapshot so observers can see a baseline thrust flame whenever
    *  a ship is accelerating. No longer a strict superset of `boostingPlayers`
    *  (boost without thrust is now valid). */
   private readonly thrustingPlayers = new Set<string>();
-  /** RTS slice 4b — AI-flown lingering hulls holding boost, keyed by
-   *  shipInstanceId (never playerId: a pilot and their parked hulls share
-   *  one). Set by `postWingmanInput` (the energy-gated bit), cleared on
-   *  detach; `tickEnergy` drains one boost tick each. */
-  private readonly boostingWingmen = new Set<string>();
   /** Last client input tick the physics worker confirmed it applied, read from SAB.
    *  Owned by SnapshotBroadcaster (extracted); aliased here for the
    *  worker-read site + the room's onJoin/onLeave callers. */
@@ -5298,8 +5297,12 @@ export class SectorRoom extends Room<SectorState> {
       const energyMax = effectiveShipEnergyMax(kind.energyMax ?? 100, ship.statAlloc);
       ship.energy = regenEnergyStep(ship.energy, energyMax, kind.energyRegenRate ?? 0.25);
     }
-    for (const playerId of this.boostingPlayers) {
-      const ship = this.getActiveShip(playerId);
+    // Keys: playerId (a pilot's ACTIVE ship) or shipInstanceId (an AI-flown
+    // LINGERING hull, RTS slice 4b; the fleet re-checks `canBoost` every
+    // tick, so this can't drive it below 0). Liveness by predicate (#17).
+    for (const id of this.boostingPlayers) {
+      const hull = this.lingeringSlots.has(id) ? this.state.ships.get(id) : undefined;
+      const ship = hull !== undefined ? (isLingeringHull(hull) ? hull : undefined) : this.getActiveShip(id);
       if (!ship) continue;
       ship.energy = spendEnergy(ship.energy, BOOST_TICK_COST);
     }
@@ -5312,13 +5315,6 @@ export class SectorRoom extends Room<SectorState> {
       const kind = getShipKind(ship.kind);
       const energyMax = effectiveShipEnergyMax(kind.energyMax ?? 100, ship.statAlloc);
       ship.energy = regenEnergyStep(ship.energy, energyMax, kind.energyRegenRate ?? 0.25);
-    }
-    // RTS slice 4b: a wingman holding boost pays per tick like a pilot (the
-    // fleet re-checks `canBoost` every tick, so this can't drive it below 0).
-    // Covers LINGERING hulls with a brain only (#17: detach clears the set).
-    for (const id of this.boostingWingmen) {
-      const ship = this.state.ships.get(id);
-      if (ship?.alive) ship.energy = spendEnergy(ship.energy, BOOST_TICK_COST);
     }
   }
 
@@ -9896,7 +9892,7 @@ export class SectorRoom extends Room<SectorState> {
    *  in the worker can't become the reclaimed hull's held input (the worker
    *  holds the last input until the pilot's first arrives). Idempotent. */
   private detachWingman(shipInstanceId: string, keepSquad = false): void {
-    this.boostingWingmen.delete(shipInstanceId);
+    this.boostingPlayers.delete(shipInstanceId);
     if (!this.fleet.isAttached(shipInstanceId)) return;
     this.fleet.detach(shipInstanceId, keepSquad ? KEEP_SQUAD : undefined);
     // RTS slice 5: drop the hull's wingman fire state (locks, turret angles,
@@ -9957,8 +9953,8 @@ export class SectorRoom extends Room<SectorState> {
     cmd.turnRight = c.turnRight;
     cmd.boost = c.boost;
     cmd.reverse = c.reverse;
-    if (c.boost) this.boostingWingmen.add(shipInstanceId);
-    else this.boostingWingmen.delete(shipInstanceId);
+    if (c.boost) this.boostingPlayers.add(shipInstanceId);
+    else this.boostingPlayers.delete(shipInstanceId);
     this.postToWorker(cmd);
   }
 

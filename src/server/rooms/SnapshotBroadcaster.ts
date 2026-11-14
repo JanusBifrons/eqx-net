@@ -787,6 +787,12 @@ export class SnapshotBroadcaster {
       entry.lastInput.turnRight = !!(lflags & FLAG_INPUT_TURN_RIGHT);
       entry.lastInput.boost     = !!(lflags & FLAG_INPUT_BOOST);
       entry.lastInput.reverse   = !!(lflags & FLAG_INPUT_REVERSE);
+      // RTS Part A S2: an AI-flown hull's flame rides the SAME carriers as
+      // every ship (snapshot thrustingIds / boostingIds), keyed by its
+      // shipInstanceId (never collides with a playerId), read from the
+      // mirrored INPUT bits. Alive LINGERING hulls only (#17, checked above).
+      if (entry.lastInput.thrust) this._thrustingIdsScratch.push(shipInstanceId);
+      if (entry.lastInput.boost) this._boostingIdsScratch.push(shipInstanceId);
       entry.energy = 0;
       // R2.32 — a lingering hull keeps its at-disconnect shield state so a
       // parked hull whose shield was broken still renders hull-exposed.
@@ -810,6 +816,9 @@ export class SnapshotBroadcaster {
     // Boosting/thrusting filter — small lists, sent in every snapshot.
     // Class-field scratches cleared at the top of broadcast().
     const boostingIds = this._boostingIdsScratch;
+    // `boostingPlayers` also holds AI-flown hulls' shipInstanceIds (energy
+    // drain); those were pushed from the lingering loop above and fail this
+    // playerId alive filter, so none appears twice.
     for (const id of d.boostingPlayers) if (this._aliveIdsScratch.has(id)) boostingIds.push(id);
     const thrustingIds = this._thrustingIdsScratch;
     for (const id of d.thrustingPlayers) if (this._aliveIdsScratch.has(id)) thrustingIds.push(id);
