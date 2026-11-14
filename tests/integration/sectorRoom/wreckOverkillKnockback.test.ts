@@ -68,7 +68,8 @@ describe('SectorRoom integration: overkill shells knock wreck pieces back', () =
       killBlowDamage: d!.killBlowDamage, recentDamageRate: d!.recentDamageRate, snapChance: d!.snapChance,
     });
     const ids = [...internal.swarmRegistry.all()].filter((r) => r.kind === WRECK_KIND).map((r) => r.id);
-    expect(ids.length).toBeGreaterThanOrEqual(6);
+    // Fracture v7 breaks a hull into 3–7 chunky pieces.
+    expect(ids.length).toBeGreaterThanOrEqual(3);
     const massOf = (id: string): number => geom.find((g) => g.index === Number(id.slice(id.lastIndexOf('-') + 1)))!.mass;
 
     // The biggest piece, and the wreck's centre of mass.
