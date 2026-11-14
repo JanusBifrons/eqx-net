@@ -6,6 +6,8 @@
  * the brain MOVE: a blocked ship side-steps off the line, and ships keep out
  * of wingmen's fire lanes. Ships fly only with player controls.
  *
+ * The target is a player structure the pack stands off (see `OWNER`).
+ *
  * Each scene runs twice, with the feature on and off (`setFireLaneAvoidance`,
  * a module switch in core: the harness runs the room in this process), and
  * counts the gate's holds (`aiController.noteBlocked`) and friendly hits
@@ -20,9 +22,14 @@ interface Room {
   _internals: {
     swarmRegistry: { all(): Iterable<{ id: string; kind: number; shipKind?: string }> };
     swarmHealth: Map<string, number>;
+    structureRegistry: { all(): Iterable<{ id: string; kind: string }> };
     setNpcLineOfFire(on: boolean): void;
   };
-  aiController: { noteBlocked(id: string, tick: number, x: number, y: number): void };
+  aiController: {
+    noteBlocked(id: string, tick: number, x: number, y: number): void;
+    markHostile(id: string, other: string, tick: number): void;
+  };
+  factionLedger: { markFactionHostileToDrones(owner: string): void };
   serverTick: number;
   applyDamage: (t: string, s: string, ...rest: unknown[]) => void;
 }
@@ -32,8 +39,19 @@ interface SceneResult {
   blocks: number;
   blocksBeforeWarm: number;
   friendlyHits: number;
-  pilotHits: number;
+  targetHits: number;
 }
+
+/** The pack's target: a player structure at the origin whose owner's
+ *  faction is hostile to drones, so the pack stands off it (Hold) in a
+ *  column, each ship in the next one's line. Until 2026-11-14 the target was
+ *  a parked pilot; a parked ship now gets strafing runs (dive, pass, swing
+ *  round), which spread the pack out by themselves: the lane-avoidance-off
+ *  control was never blocked (column 0, pack 0 in 20 s), so these bars
+ *  measured nothing. A pilot flying a slow circle did not block either
+ *  (column 0 / 0): the pack dogfights it. */
+const OWNER = randomUUID();
+const STRUCTURE_KIND = 'capital';
 
 async function runScene(
   on: boolean,
@@ -52,21 +70,28 @@ async function runScene(
     dronePoses: poses.map((p) => ({ kind: 'fighter', x: p.x, y: p.y, angle: 0, hullExposed: false })),
     lockTimeCapS: 0,
     defaultSpawnX: 0,
-    defaultSpawnY: 0,
+    defaultSpawnY: 6000,
+    prebuiltStructures: [{ kind: STRUCTURE_KIND, x: 0, y: 0 }],
+    prebuiltStructuresOwner: OWNER,
   });
-  const pilot = randomUUID();
-  await harness.connectActive(pilot, { startHostile: true, initialHull: 1_000_000, initialShield: 1_000_000 });
+  // A PENDING observer (far off) creates the room; the AI only targets
+  // ACTIVE hulls, so the structure is the only target.
+  await harness.connectAs(randomUUID());
   const room = harness.getServerRoom()! as unknown as Room;
+  const target = [...room._internals.structureRegistry.all()].find((s) => s.kind === STRUCTURE_KIND)!.id;
+  room._internals.swarmHealth.set(target, 1e9);
+  room.factionLedger.markFactionHostileToDrones(OWNER);
   room._internals.setNpcLineOfFire(gate);
   const recs = [...room._internals.swarmRegistry.all()].filter((r) => r.kind === 1);
   // Endless hulls: no drone dies mid-window (friendly fire hurts).
   for (const rec of recs) room._internals.swarmHealth.set(rec.id, 1e9);
   const ids = recs.filter((r) => r.shipKind === 'fighter').map((r) => r.id);
   expect(ids.length).toBe(poses.length);
+  for (const id of ids) room.aiController.markHostile(id, target, room.serverTick);
   const pack = new Set(ids);
   const shooter = onlyShooter === undefined ? null : ids[onlyShooter]!;
   let warm = false;
-  const r: SceneResult = { blocks: 0, blocksBeforeWarm: 0, friendlyHits: 0, pilotHits: 0 };
+  const r: SceneResult = { blocks: 0, blocksBeforeWarm: 0, friendlyHits: 0, targetHits: 0 };
   const ai = room.aiController;
   const origNote = ai.noteBlocked.bind(ai);
   ai.noteBlocked = (id, tick, x, y) => {
@@ -79,7 +104,7 @@ async function runScene(
   const origDmg = room.applyDamage.bind(room);
   room.applyDamage = (t: string, s: string, ...rest: unknown[]) => {
     if (warm && pack.has(t) && pack.has(s)) r.friendlyHits++;
-    if (warm && t === pilot) r.pilotHits++;
+    if (warm && t === target) r.targetHits++;
     origDmg(t, s, ...rest);
   };
   await harness.advance(warmMs);
@@ -97,7 +122,7 @@ describe('SectorRoom integration — NPC fire lanes (AI slice 5b)', () => {
   }, 15_000);
 
   it('a drone whose shot an ally blocks clears its line: blocked attempts after the first second drop by ≥ 50 %', { timeout: 60_000 }, async () => {
-    // A column on the pilot: the shooter's wingman sits right on its line.
+    // A column on the target: the shooter's wingman sits right on its line.
     const poses = [{ x: 0, y: -700 }, { x: 0, y: -520 }];
     const on = await runScene(true, poses, 1000, 6000, 0);
     harness = on.harness;
@@ -110,7 +135,7 @@ describe('SectorRoom integration — NPC fire lanes (AI slice 5b)', () => {
     expect(on.result.blocks, 'side-steps clear the line').toBeLessThanOrEqual(off.result.blocks * 0.5);
   });
 
-  // Four drones in a column on one pilot: each sits in the next one's line.
+  // Four drones in a column on one target: each sits in the next one's line.
   it('a 4-drone pack on one target: fewer held shots with the gate, fewer friendly hits without it (20 s each)', { timeout: 200_000 }, async () => {
     const poses = [{ x: 0, y: -850 }, { x: 0, y: -700 }, { x: 0, y: -550 }, { x: 0, y: -400 }];
     const out: Record<string, SceneResult> = {};
@@ -133,6 +158,6 @@ describe('SectorRoom integration — NPC fire lanes (AI slice 5b)', () => {
     // Without the gate, lane avoidance alone: fewer friendly hits.
     expect(nogateOff.friendlyHits, 'the control shoots its wingmen').toBeGreaterThan(20);
     expect(nogateOn.friendlyHits, 'ships leave wingmen lanes: friendly hits halve').toBeLessThanOrEqual(nogateOff.friendlyHits * 0.5);
-    expect(gateOn.pilotHits, 'the pack still fights').toBeGreaterThan(0);
+    expect(gateOn.targetHits, 'the pack still fights').toBeGreaterThan(0);
   });
 });
