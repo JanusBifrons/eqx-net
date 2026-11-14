@@ -8,7 +8,7 @@ import {
   type ShipKindId,
 } from '../../shared-types/shipKinds.js';
 import { configureShipCollider, shipShieldColliderDesc } from './colliderConfig.js';
-import { applyShipInput, type ShipInputMultipliers } from './applyShipInput.js';
+import { applyShipInput, type ShipInputArgs, type ShipInputMultipliers } from './applyShipInput.js';
 import { newWarpState, stepWarp, WARP_ALIGN_GAIN, WARP_EXIT_SPEED, WARP_SPEED, WARP_SPOOL_TICKS, type WarpPhase, type WarpState } from './warpDrive.js';
 /** NPC warp-to: a bot engages only once within this of facing its target (rad). */
 const BOT_WARP_ALIGN_RAD = 0.06;
@@ -18,7 +18,7 @@ const BOT_WARP_MIN_TURN = Math.PI / 20;
 import { castHitscan } from './hitscanRay.js';
 import { wallGeometry } from '../structures/ShieldWall.js';
 import { PAD_PUSH_ACCEL, padPushDir } from '../../shared-types/teleport.js';
-import { massOf, shipAngularInertia } from '../../shared-types/shipScale/tuning.js';
+import { shipBodyInertia, shipBodyMass } from '../../shared-types/shipScale/tuning.js';
 import { CapitalOverlapResolver, newCapitalEntry } from './capitalOverlap.js';
 
 const FIXED_DT = 1 / 60;
@@ -86,6 +86,13 @@ interface ShipBody {
   statMul?: ShipInputMultipliers;
   /** In-sector warp-to state; created on the first warp request. */
   warp?: WarpState;
+  /** Pilot layer: the ShipKind an AI slot flies with when driven by input
+   *  bits (`applyAiInput`). Set at drone spawn (`SPAWN_OBSTACLE.shipKindId`).
+   *  Kept apart from `kind` (an obstacle's placeholder default kind, which
+   *  other paths such as the bot warp align still read). */
+  pilotKind?: ShipKind;
+  /** True once `applyAiInput` has given the body its kind's damping. */
+  piloted?: boolean;
 }
 
 export class PhysicsWorld {
@@ -222,14 +229,10 @@ export class PhysicsWorld {
     // `kind.radius` — they're a kind-feel knob, not a function of the
     // current collider geometry (the pad doesn't change ship handling).
     this.world.createCollider(shipShieldColliderDesc(kind), body);
-    // Per-kind mass with a `default 1` back-compat path: every legacy
-    // kind sat at mass 1 historically (the pinned value below), so
-    // omitting `kind.mass` keeps every existing physics test byte-
-    // identical. Inertia stays the disc formula `0.5 * m * r²` so a
-    // heavier kind also rotates proportionally more sluggishly under
-    // torque — same physical reality as a denser uniform disc.
-    const m = massOf(kind, 1);
-    body.setAdditionalMassProperties(m, { x: 0, y: 0 }, shipAngularInertia(m, kind.radius), true);
+    // The kind's one mass + inertia source (`shipBodyMass` /
+    // `shipBodyInertia`), shared with every NPC body of the kind: ship
+    // stats belong to the ship, never the pilot (owner 2026-11-13).
+    body.setAdditionalMassProperties(shipBodyMass(kind), { x: 0, y: 0 }, shipBodyInertia(kind), true);
     body.recomputeMassPropertiesFromColliders();
     const rec: ShipBody = { body, kind, exposed: false };
     this.bodies.set(id, rec);
@@ -359,7 +362,14 @@ export class PhysicsWorld {
     // default groups (collide with all), so every existing caller is unchanged.
     if (collisionGroups !== undefined) collider.setCollisionGroups(collisionGroups);
     this.world.createCollider(collider, body);
-    if (isBall) {
+    if (isBall && shieldKind) {
+      // An NPC ship: the SAME mass + inertia as a pilot ship of its kind
+      // (`spawnShip`), whatever mass the caller passed. Ship stats belong to
+      // the ship, never the pilot (owner 2026-11-13); server worker and
+      // client predWorld both land here (#15).
+      body.setAdditionalMassProperties(shipBodyMass(shieldKind), { x: 0, y: 0 }, shipBodyInertia(shieldKind), true);
+      body.recomputeMassPropertiesFromColliders();
+    } else if (isBall) {
       // Pin mass to the disc-equivalent (mass param, I = 0.5 m r^2),
       // identical to what the legacy density ball produced. See spawnShip.
       body.setAdditionalMassProperties(mass, { x: 0, y: 0 }, 0.5 * mass * radius * radius, true);
@@ -781,6 +791,43 @@ export class PhysicsWorld {
     const rec = this.bodies.get(id);
     if (!rec) return;
     rec.statMul = mul;
+  }
+
+  /** Pilot layer: record the ShipKind an AI slot flies with (`applyAiInput`)
+   *  and give the body that kind's linear + angular damping NOW, as
+   *  `spawnShip` does, so an NPC ship's body matches a pilot's of the same
+   *  kind from its first tick (ship stats belong to the ship, owner
+   *  2026-11-13). Server worker only: the client predWorld drone body keeps
+   *  damping 0 (it coasts between server anchors). Unknown id ⇒ no-op. */
+  setPilotKind(id: string, kind: ShipKind): void {
+    const rec = this.bodies.get(id);
+    if (!rec) return;
+    rec.pilotKind = kind;
+    rec.piloted = true;
+    rec.body.setLinearDamping(kind.linearDamping);
+    rec.body.setAngularDamping(kind.angularDamping);
+  }
+
+  /**
+   * Pilot layer: drive an AI body with player controls, through the SAME
+   * `applyShipInput` a pilot's keys use (thrust, lateral grip, maxSpeed clamp,
+   * capital torque turning, per-instance stat multipliers). Flies as
+   * `pilotKind` (falls back to the record's `kind`).
+   *
+   * A drone already has its kind's damping from `setPilotKind` at spawn; a
+   * body flown without one gets the kind's damping on the first call (a
+   * released snap-turn would otherwise spin forever). Unknown id ⇒ no-op.
+   */
+  applyAiInput(id: string, input: ShipInputArgs): void {
+    const rec = this.bodies.get(id);
+    if (!rec) return;
+    const kind = rec.pilotKind ?? rec.kind;
+    if (rec.piloted !== true) {
+      rec.piloted = true;
+      rec.body.setLinearDamping(kind.linearDamping);
+      rec.body.setAngularDamping(kind.angularDamping);
+    }
+    applyShipInput(rec.body, kind, input, rec.statMul);
   }
 
   /**
