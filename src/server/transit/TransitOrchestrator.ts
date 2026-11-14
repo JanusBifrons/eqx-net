@@ -99,11 +99,12 @@ export interface TransitHostRoom {
    *  goes back to its mode. */
   releaseFleetShips(commanderId: string, shipIds: readonly string[]): void;
   /** The point the group arrives round when no arrival point was picked
-   *  (a hull's live pose). Null ⇒ none of the ids has a pose. */
+   *  (the largest hull's live pose). Null ⇒ none of the ids has a pose. */
   fleetAnchor(shipIds: readonly string[]): { x: number; y: number } | null;
   /** Move the parked hulls to `destSectorKey`, round `anchor`. Returns the
    *  ids that moved; the rest stay here (and are released). Removing a hull
-   *  here runs `detachWingman` → `dropHull`, which the commit ignores. */
+   *  here runs `detachWingman` → `dropHull`, which the commit ignores. The
+   *  hand-off writes each moved hull's `sector_change` audit. */
   handOffHulls(shipIds: readonly string[], destSectorKey: string, anchor: { x: number; y: number }): readonly string[];
 }
 
@@ -698,12 +699,10 @@ export class TransitOrchestrator {
     }
 
     // (3) The parked hulls.
+    // (Each moved hull's `sector_change` audit is written by the hand-off.)
     const moved = hulls.length > 0 ? this.room.handOffHulls(hulls, dest, anchor) : [];
     const from = this.room.sectorKey ?? undefined;
     const adjacent = from ? isNeighbour(from, dest) : undefined;
-    for (const id of moved) {
-      auditEvent({ event: 'sector_change', entityKind: 'hull', id, sector: from, from, to: dest, adjacent });
-    }
     if (piloted !== null && client) {
       auditEvent({ event: 'sector_change', entityKind: 'player', id: cmd, sector: from, from, to: dest, adjacent });
     }

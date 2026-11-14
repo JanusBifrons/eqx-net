@@ -235,7 +235,7 @@ target, so follow takes over without a jump.
 Still rebuilt: the radar icon (its category changes anyway). A reconnect onto a
 lingering hull (`onJoin` rebind) still hides the hull from others while it joins.
 
-## 4b. Fleet warp (in progress: slices S1–S2 built)
+## 4b. Fleet warp (in progress: slices S1–S3 built)
 
 In Command view, "Warp here" warps the SELECTED ships together and the
 commander's view follows them (plan `rts-fleet-warp`). It is a branch of the
@@ -274,12 +274,39 @@ in-sector and never touches another room.
   with `spawnX/spawnY` = the arrival anchor: the picked point, clamped, else a
   hull's pose), then `handOffHulls(ids, dest, anchor)`. No client ⇒ no seat,
   the hulls still go. A failed seat aborts the jump (`destination_unavailable`)
-  and releases the ships. Hulls the hand-off did not move are released. Each
-  moved hull gets a `sector_change` audit (`entityKind: 'hull'`).
+  and releases the ships. Hulls the hand-off did not move are released.
+- **The hull hand-off (S3).** `handOffHulls` and the teleporter's
+  cross-sector branch (`dispatchRiders`) share ONE helper,
+  `SectorRoom.handOffHullsTo(toRoom, moves, arrival)`. Per hull: the far room's
+  `canReceiveHull(id)` (a free physics slot, id not already there) is asked
+  BEFORE anything changes here, so a hull that can't fit stays put (and is
+  released); then `fleet.exportShip(id)`, `removeLingeringHullQuietly`,
+  roster `markStored` to the far sector, the far room's
+  `receiveLingeringHull(row)` and a `sector_change` audit (`entityKind:
+  'hull'`, teleporter included). Squads with a member that moved are re-formed
+  there from the moved members (`receiveFleetSquads` → `restoreSquads`, squad
+  mode dropped). The far room is found with `TeleportBroker.room()`. Each hull
+  stays LINGERING at both ends (#17); in the destination it is built by the
+  same restore path a hydrate uses, so it is hit and targeted like any other
+  parked hull there.
+- **Arrival poses.** The pure `fleetArrivalPoses(hulls, anchor, out)`
+  (`transit/fleetArrivalPoses.ts`): the LARGEST hull (by `hullExtent`) lands
+  on the anchor, the others keep their offsets from it, each clamped to the
+  bounds. `fleetAnchor` returns the largest hull's pose; the showcase cue
+  `test_fleet_warp` uses the same function. Velocity is zeroed, heading kept.
+  The destination nudges each `warp` arrival clear with `landingPoint(…,
+  onlySkipShipId)`: unlike a pilot's landing, the owner's own ships and hulls
+  ARE obstacles (only the ship being placed is skipped), so a fleet never lands
+  on its own parked hull; the roster pose follows the nudge. A `teleport`
+  arrival keeps its exact place on the pad.
+- **Brains (owner rule, teleporter too).** On arrival the AI pilot GUARDS WHERE
+  IT LANDS (`defend` at the landing point); stance and squad carry; an old
+  route / post / escort belonged to the old sector and is dropped.
+- **Crash duplicates.** `restoreLingeringHullsFromSnapshot` skips a row whose
+  roster `lastSectorKey` is another sector (the hand-off re-homed it).
 - **No destination capacity check** (owner: time dilation handles a crowd).
   The physics slot pool is a separate limit: see below.
-- **Not yet:** `handOffHulls` is a stub (S3 extracts the teleporter's hand-off),
-  arrival poses (S4), brains carried (S5), the client view switch (S7).
+- **Not yet:** the client view switch (S7).
 
 ### The physics slot pool (a hard limit today)
 
@@ -292,17 +319,14 @@ cap), and the lag-comp `SnapshotRing` has its own smaller fixed capacity (a
 full ring silently skips `registerEntity`). When the pool is empty:
 
 - a fresh join is refused (`client.leave(1001)`);
-- `restoreLingeringHullsFromSnapshot` (also `receiveLingeringHull`, the
-  teleporter's far side) logs `no free slot for lingering-hull reconstruction`
-  and skips the row. The teleporter has already removed the hull from the
-  source and `markStored` its roster row at the destination, so the ship
-  vanishes from the world (its roster row survives, so it is not deleted, but
-  it is nowhere in space until respawned from the roster).
+- `restoreLingeringHullsFromSnapshot` logs `no free slot for lingering-hull
+  reconstruction` and skips the row;
+- a cross-sector hull hand-off (teleporter or fleet warp) checks the far room's
+  `canReceiveHull` first and leaves a hull that can't fit where it is (built,
+  S3).
 
-Making it not lose ships, smallest first: (1) check `hasFreeSlot()` on the far
-room BEFORE removing a hull at the source (the plan's capacity fix; a hull
-that can't fit stays put); (2) let load-shedding free slots (it already sheds
-out-of-view drones); (3) make the pool grow: a growable `SharedArrayBuffer`
+Making more room, smallest first: (1) let load-shedding free slots (it already
+sheds out-of-view drones); (2) make the pool grow: a growable `SharedArrayBuffer`
 (`maxByteLength`, length-tracking views) plus resizing every table sized to
 `MAX_ENTITIES` in the worker and broadcaster, a bigger change touching the
 physics worker.
@@ -314,7 +338,7 @@ physics worker.
   `wingmanFireTarget.test.ts`.
 - Room: `tests/integration/sectorRoom/` `fleetCommandMessages`,
   `wingmanMovesParkedHull`, `wingmanFights`, `wingmanBoost`, `pilotLedSquad`,
-  `commandDefaultJoin`.
+  `commandDefaultJoin`, `fleetWarp` (S3 hand-off), `teleporterAcross`.
 - Client units: `commandPointerRouter`, `tapAction`, `fleetSelection*`,
   `FleetOverlay*`, `fleetPick`, `FleetPanel`, `fleetStatusIngest`,
   `gameRafLoop.orders`, `protocol`.

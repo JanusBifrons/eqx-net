@@ -122,7 +122,9 @@ import { stream } from '../../core/random/rng.js';
 import { HostileActLedger } from '../../core/relations/HostileActLedger.js';
 import { ProductionSubsystem } from '../structures/ProductionSubsystem.js';
 import { TeleporterSubsystem, type PartnerLink } from '../structures/TeleporterSubsystem.js';
-import { getTeleportBroker, type RiderBatch, type TeleportRoom } from '../teleport/TeleportBroker.js';
+import { getTeleportBroker, type HandedOffHull, type RiderBatch, type TeleportRoom } from '../teleport/TeleportBroker.js';
+import type { FleetSavedSquad } from '../fleet/fleetPersistence.js';
+import { fleetArrivalPoses, largestHullIndex, type FleetArrivalPose, type FleetHullPose } from '../transit/fleetArrivalPoses.js';
 import { linkEnds } from '../../core/bases/transitNetwork.js';
 import { hopDistance } from '../livingworld/population.js';
 import {
@@ -175,7 +177,7 @@ import { TARGET_MINUTES as CONVOY_TARGET_MINUTES } from '../../core/economy/conv
 import { RECIPES, blueprintProductFor, isRecipeId } from '../../shared-types/recipes.js';
 import { blueprintQuality } from '../../shared-types/blueprints.js';
 import { asteroidYield, asteroidYieldWeightPerUnit, rollAsteroidResource, type AsteroidFieldFeature, type AsteroidResourceId } from '../../shared-types/asteroidResources.js';
-import { getSector } from '../../core/galaxy/galaxy.js';
+import { getSector, isNeighbour } from '../../core/galaxy/galaxy.js';
 import type { GoodId } from '../../shared-types/goods.js';
 import { usesAmmo } from '../../shared-types/ammo.js';
 
@@ -428,6 +430,12 @@ import { advanceSchedule, tickPeriodMs, type CatchUpResult } from '../../core/ph
 /** Stamp the ship scale and the naval range mode onto a welcome (shared
  *  contracts: shipScale/welcomeScale.ts, combat/navalRange.ts). */
 const withShipScale = (w: WelcomeMessage): WelcomeMessage => stampNavalRange(stampShipScale(w));
+
+/** One parked hull for `handOffHullsTo`: where it lands in the far sector. */
+interface HullMove {
+  shipInstanceId: string;
+  x: number; y: number; vx: number; vy: number; angle: number; angvel: number;
+}
 
 /** C3 — a ship cargo target (see `SectorRoom.shipTarget`). */
 interface ShipCargoTarget {
@@ -2967,7 +2975,9 @@ export class SectorRoom extends Room<SectorState> {
       },
       collectRiders: (from) => this.collectRiders(from),
       dispatchRiders: (batch, toRoom, to) => this.dispatchRiders(batch, toRoom, to),
-      receiveLingeringHull: (row) => this.restoreLingeringHullsFromSnapshot([row]),
+      canReceiveHull: (shipInstanceId) => this.freeSlots.length > 0 && !this.state.ships.has(shipInstanceId),
+      receiveLingeringHull: (row) => this.receiveHandedOffHull(row),
+      receiveFleetSquads: (rows) => { this.fleet.restoreSquads(rows); },
       sendToPlayer: (pid, type, msg) => this.sendToPlayerHere(pid, type, msg),
     };
     if (this.sectorKey !== null) getTeleportBroker().register(this.teleportRoom);
@@ -3384,17 +3394,21 @@ export class SectorRoom extends Room<SectorState> {
         this.malformed.record(client.sessionId, 'test_fleet_warp');
         return;
       }
-      let lead: { id: string; slot: number; radius: number } | null = null;
-      for (const rec of this.swarmRegistry.all()) if (rec.kind === 1 && (lead === null || rec.radius > lead.radius)) lead = rec;
-      if (lead === null) return;
-      const lb = slotBase(lead.slot);
-      const lx = this.sabF32[lb + SLOT_X_OFF]!, ly = this.sabF32[lb + SLOT_Y_OFF]!;
-      for (const rec of [...this.swarmRegistry.all()]) { // TODO: alloc-debt (test cue only)
+      // The fleet warp's arrival rule (`fleetArrivalPoses`), on the room's ships.
+      const ids: string[] = []; // TODO: alloc-debt (test cue only)
+      const hulls: FleetHullPose[] = [];
+      for (const rec of this.swarmRegistry.all()) {
         if (rec.kind !== 1) continue;
         const b = slotBase(rec.slot);
-        const tx = parsed.data.x + this.sabF32[b + SLOT_X_OFF]! - lx, ty = parsed.data.y + this.sabF32[b + SLOT_Y_OFF]! - ly;
-        this.warpBot(rec.id, tx, ty);
-        this.setBotMoveTarget(rec.id, tx, ty); // hold there after the drop
+        ids.push(rec.id);
+        hulls.push({ x: this.sabF32[b + SLOT_X_OFF]!, y: this.sabF32[b + SLOT_Y_OFF]!, radius: rec.radius });
+      }
+      const poses: FleetArrivalPose[] = [];
+      if (fleetArrivalPoses(hulls, parsed.data, poses) === -1) return;
+      for (let i = 0; i < ids.length; i++) {
+        const tx = poses[i]!.x, ty = poses[i]!.y;
+        this.warpBot(ids[i]!, tx, ty);
+        this.setBotMoveTarget(ids[i]!, tx, ty); // hold there after the drop
       }
     });
 
@@ -6373,7 +6387,12 @@ export class SectorRoom extends Room<SectorState> {
       if (this.state.ships.has(r.shipInstanceId)) continue;
       // Roster row gone ⇒ abandoned before shutdown ⇒ do NOT resurrect it as a
       // lingering hull (the abandon→scrap flow already removed it).
-      if (getPlayerShipStore().get(r.shipInstanceId) === null) continue;
+      const rosterRow = getPlayerShipStore().get(r.shipInstanceId);
+      if (rosterRow === null) continue;
+      // The roster says the ship is in ANOTHER sector (a hand-off re-homed it
+      // with `markStored` and this sector's snapshot still lists it, e.g. a
+      // crash before the next save) ⇒ that sector owns it; never a duplicate.
+      if (this.sectorKey !== null && rosterRow.lastSectorKey !== this.sectorKey) continue;
       const kind = getShipKind(r.kind);
       const slot = this.freeSlots.pop();
       if (slot === undefined) {
@@ -6393,7 +6412,7 @@ export class SectorRoom extends Room<SectorState> {
       // statAlloc is read BEFORE the hull/shield seed so the maxHull/shield
       // upgrade multipliers apply to a restored lingering hull too (review
       // must-fix #1 — the `effectiveShip*` helpers are the one source).
-      const lingerRow = getPlayerShipStore().get(r.shipInstanceId);
+      const lingerRow = rosterRow;
       ship.level = lingerRow?.level ?? 1;
       ship.statAlloc = lingerRow?.statAlloc ?? {};
       ship.mounts = lingerRow?.mounts ?? [];
@@ -6444,8 +6463,9 @@ export class SectorRoom extends Room<SectorState> {
     // RTS slice 9 — re-apply each brain's saved standing job once EVERY hull
     // of the batch is attached (an escort target may be a later row). The
     // subsystem re-validates ownership + escort targets; squads follow in
-    // `restoreFleetSquads`. Rows without the fields (older snapshots, a
-    // teleporter's cross-sector hand-over) keep the default brain.
+    // `restoreFleetSquads`. Rows without the fields (older snapshots) keep the
+    // default brain; a cross-sector hand-off row arrives as "defend here"
+    // (`receiveHandedOffHull`).
     for (const r of rows) {
       if (r.mode === undefined && r.stance === undefined) continue;
       if (!this.fleet.isAttached(r.shipInstanceId)) continue;
@@ -7110,21 +7130,113 @@ export class SectorRoom extends Room<SectorState> {
     for (const p of batch.pilots) {
       this.transitOrchestrator?.teleportOut(p.playerId, dest, { x: to.x + p.dx, y: to.y + p.dy });
     }
-    for (const h of batch.hulls) {
-      if (!this.removeLingeringHullQuietly(h.shipInstanceId)) continue;
-      const x = to.x + h.dx;
-      const y = to.y + h.dy;
-      getPlayerShipStore().markStored(h.shipInstanceId, {
-        x, y, vx: h.vx, vy: h.vy, angle: h.angle, angvel: h.angvel, health: h.health, sectorKey: dest,
-      });
-      toRoom.receiveLingeringHull({
-        shipInstanceId: h.shipInstanceId, playerId: h.playerId, kind: h.kind,
-        x, y, vx: h.vx, vy: h.vy, angle: h.angle, angvel: h.angvel, health: h.health, shieldDown: h.shieldDown,
-      });
+    if (batch.hulls.length > 0) {
+      const moves: HullMove[] = [];
+      for (const h of batch.hulls) {
+        moves.push({
+          shipInstanceId: h.shipInstanceId, x: to.x + h.dx, y: to.y + h.dy,
+          vx: h.vx, vy: h.vy, angle: h.angle, angvel: h.angvel,
+        });
+      }
+      this.handOffHullsTo(toRoom, moves, 'teleport');
     }
     for (const b of batch.bots) {
       getTeleportBroker().moveBot(b.botId, this.sectorKey, dest, to.x + b.dx, to.y + b.dy);
     }
+  }
+
+  /**
+   * THE cross-sector hand-off of parked (LINGERING, #17) hulls, shared by the
+   * teleporter and the fleet warp. Per hull, in order: (1) ask the far room
+   * whether it can take it (a free physics slot) BEFORE touching it here, so
+   * a hull that can't fit stays put and is never lost; (2) take its AI pilot's
+   * standing job (`exportShip`); (3) remove it here quietly; (4) re-home its
+   * roster row to the far sector (`markStored`); (5) rebuild it there
+   * (`receiveLingeringHull`, which applies the arrival rule: guard where it
+   * lands, stance carries); (6) a `sector_change` audit. Then the squads any
+   * moved hull belonged to are re-formed there from the members that moved
+   * (squad mode dropped: the old sector's routes and posts stay behind).
+   * Returns the ids that moved; the rest are still here.
+   */
+  private handOffHullsTo(toRoom: TeleportRoom, moves: readonly HullMove[], arrival: 'warp' | 'teleport'): string[] {
+    const dest = toRoom.sectorKey;
+    const moved: string[] = [];
+    if (dest === null) return moved;
+    // Squads are read BEFORE any removal: a detach shrinks / dissolves them.
+    const squads = this.fleet.exportSquads();
+    const from = this.sectorKey ?? undefined;
+    const adjacent = from !== undefined ? isNeighbour(from, dest) : undefined;
+    for (const m of moves) {
+      const id = m.shipInstanceId;
+      const ship = this.state.ships.get(id);
+      if (ship === undefined || !this.lingeringSlots.has(id) || !isLingeringHull(ship)) continue;
+      if (!toRoom.canReceiveHull(id)) {
+        logger.warn({ shipInstanceId: id, from, to: dest }, 'hull hand-off: destination has no free slot; the hull stays');
+        continue;
+      }
+      const job = this.fleet.exportShip(id);
+      const playerId = ship.playerId, kind = ship.kind, health = ship.health, shieldDown = ship.shield <= 0;
+      if (!this.removeLingeringHullQuietly(id)) continue;
+      getPlayerShipStore().markStored(id, {
+        x: m.x, y: m.y, vx: m.vx, vy: m.vy, angle: m.angle, angvel: m.angvel, health, sectorKey: dest,
+      });
+      const ok = toRoom.receiveLingeringHull({
+        ...(job ?? {}),
+        shipInstanceId: id, playerId, kind,
+        x: m.x, y: m.y, vx: m.vx, vy: m.vy, angle: m.angle, angvel: m.angvel,
+        health, shieldDown, arrival,
+      });
+      if (!ok) {
+        // Checked above, so this is a bug; the roster row (now in `dest`)
+        // survives, so the ship is not deleted.
+        logger.error({ shipInstanceId: id, from, to: dest }, 'hull hand-off: destination refused the hull after the check');
+        continue;
+      }
+      moved.push(id);
+      auditEvent({ event: 'sector_change', entityKind: 'hull', id, sector: from, from, to: dest, adjacent });
+    }
+    if (moved.length > 0 && squads.length > 0) {
+      const carried: FleetSavedSquad[] = [];
+      for (const sq of squads) {
+        const members = sq.memberIds.filter((mid) => moved.includes(mid));
+        if (members.length === 0) continue;
+        carried.push({ id: sq.id, ownerId: sq.ownerId, leaderId: sq.leaderId, memberIds: members, shape: sq.shape });
+      }
+      if (carried.length > 0) toRoom.receiveFleetSquads(carried);
+    }
+    return moved;
+  }
+
+  /**
+   * The far side of {@link handOffHullsTo}: rebuild a handed-off hull here.
+   * A fleet `warp` arrival is nudged clear of what is already here, the
+   * owner's own ships included (only this ship is skipped), clamped to the
+   * bounds, with its roster pose updated to match. Then the arrival rule
+   * (owner): the AI pilot GUARDS WHERE IT LANDS; its stance carries (and its
+   * squad, re-formed by `receiveFleetSquads`); its old route / post / escort
+   * belonged to the old sector and is dropped.
+   */
+  private receiveHandedOffHull(row: HandedOffHull): boolean {
+    let x = row.x, y = row.y;
+    if (row.arrival === 'warp') {
+      const p = this.landingPoint(row.playerId, x, y, row.kind, row.shipInstanceId);
+      const c = clampToSectorBounds(p.x, p.y);
+      if (c.x !== x || c.y !== y) {
+        x = c.x; y = c.y;
+        getPlayerShipStore().markStored(row.shipInstanceId, {
+          x, y, vx: row.vx, vy: row.vy, angle: row.angle, angvel: row.angvel, health: row.health,
+          ...(this.sectorKey !== null ? { sectorKey: this.sectorKey } : {}),
+        });
+      }
+    }
+    this.restoreLingeringHullsFromSnapshot([{
+      shipInstanceId: row.shipInstanceId, playerId: row.playerId, kind: row.kind,
+      x, y, vx: row.vx, vy: row.vy, angle: row.angle, angvel: row.angvel,
+      health: row.health, shieldDown: row.shieldDown,
+      mode: 'defend', modeData: { x, y },
+      ...(row.stance !== undefined ? { stance: row.stance } : {}),
+    }]);
+    return this.lingeringSlots.has(row.shipInstanceId);
   }
 
   /** A parked hull left this sector by teleporter: drop it here without scrap,
@@ -11396,8 +11508,13 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   /** The nearest spot to (x, y) clear of structures, swarm entities, and other
-   *  players' ships and parked hulls (the pilot's own are not obstacles). */
-  private landingPoint(playerId: string, x: number, y: number, kind: string | undefined): { x: number; y: number } {
+   *  players' ships and parked hulls (the pilot's own are not obstacles).
+   *  With `onlySkipShipId` (a fleet warp placing one of its hulls) the
+   *  owner's own ships and hulls ARE obstacles; only that ship is skipped. */
+  private landingPoint(
+    playerId: string, x: number, y: number, kind: string | undefined, onlySkipShipId?: string,
+  ): { x: number; y: number } {
+    const skipOwn = onlySkipShipId === undefined;
     const near = 8000;
     const boxes: SiteBox[] = [];
     for (const r of this.structureRegistry.all()) pushSolidBoxes(r, boxes);
@@ -11409,14 +11526,14 @@ export class SectorRoom extends Room<SectorState> {
       circles.push({ x: ex, y: ey, r: rec.radius });
     }
     for (const [pid, pose] of this.shipPoseCache) {
-      if (pid === playerId || Math.abs(pose.x - x) > near || Math.abs(pose.y - y) > near) continue;
+      if ((skipOwn && pid === playerId) || Math.abs(pose.x - x) > near || Math.abs(pose.y - y) > near) continue;
       const kind = this.getActiveShip(pid)?.kind;
       circles.push({ x: pose.x, y: pose.y, r: kind ? tuningFor(kind).spawnClearance : 60 });
     }
     for (const [shipId, pose] of this.lingeringPoseCache) {
-      if (Math.abs(pose.x - x) > near || Math.abs(pose.y - y) > near) continue;
+      if (shipId === onlySkipShipId || Math.abs(pose.x - x) > near || Math.abs(pose.y - y) > near) continue;
       const hull = this.state.ships.get(shipId);
-      if (hull?.playerId === playerId) continue;
+      if (skipOwn && hull?.playerId === playerId) continue;
       circles.push({ x: pose.x, y: pose.y, r: hull?.kind ? tuningFor(hull.kind).spawnClearance : 60 });
     }
     return nearestClearPoint(x, y, boxes, kind ? tuningFor(kind).spawnClearance : 60, 6000, circles);
@@ -12157,22 +12274,50 @@ export class SectorRoom extends Room<SectorState> {
         }
         this.fleetStatusSoonFor(commanderId);
       },
-      // The first hull with a live pose. TODO(RTS fleet warp S4): the largest
-      // hull, via the shared `fleetArrivalPoses`.
+      // The LARGEST hull's live pose (the `fleetArrivalPoses` rule: it lands
+      // on the anchor and the others keep their offsets from it).
       fleetAnchor: (shipIds: readonly string[]): { x: number; y: number } | null => {
-        for (let i = 0; i < shipIds.length; i++) {
-          const slot = this.lingeringSlots.get(shipIds[i]!);
-          if (slot === undefined) continue;
-          const b = slotBase(slot);
-          return { x: this.sabF32[b + SLOT_X_OFF]!, y: this.sabF32[b + SLOT_Y_OFF]! };
-        }
-        return null;
+        const hulls = this.fleetHullPoses(shipIds, null);
+        const lead = largestHullIndex(hulls);
+        return lead === -1 ? null : { x: hulls[lead]!.x, y: hulls[lead]!.y };
       },
-      // TODO(RTS fleet warp S3): the cross-sector hull hand-off shared with the
-      // teleporter. Until then nothing moves; the orchestrator releases the
-      // hulls that stayed.
-      handOffHulls: (): readonly string[] => NO_HULLS_MOVED,
+      // The parked hulls go through the ONE hand-off the teleporter uses, in
+      // formation round the anchor (velocity zeroed, heading kept).
+      handOffHulls: (shipIds: readonly string[], destSectorKey: string, anchor: { x: number; y: number }): readonly string[] => {
+        const toRoom = getTeleportBroker().room(destSectorKey);
+        if (toRoom === null) return NO_HULLS_MOVED;
+        const ids: string[] = [];
+        const hulls = this.fleetHullPoses(shipIds, ids);
+        const poses: FleetArrivalPose[] = [];
+        if (fleetArrivalPoses(hulls, anchor, poses) === -1) return NO_HULLS_MOVED;
+        const moves: HullMove[] = [];
+        for (let i = 0; i < ids.length; i++) {
+          const slot = this.lingeringSlots.get(ids[i]!)!;
+          moves.push({
+            shipInstanceId: ids[i]!, x: poses[i]!.x, y: poses[i]!.y,
+            vx: 0, vy: 0, angle: this.sabF32[slotBase(slot) + SLOT_ANGLE_OFF]!, angvel: 0,
+          });
+        }
+        return this.handOffHullsTo(toRoom, moves, 'warp');
+      },
     };
+  }
+
+  /** Live pose + extent of each of `shipIds` that is a parked hull here (a
+   *  fleet warp; discrete, allocates). `idsOut` (when given) gets the ids in
+   *  the same order. */
+  private fleetHullPoses(shipIds: readonly string[], idsOut: string[] | null): FleetHullPose[] {
+    const out: FleetHullPose[] = [];
+    for (let i = 0; i < shipIds.length; i++) {
+      const id = shipIds[i]!;
+      const slot = this.lingeringSlots.get(id);
+      const ship = this.state.ships.get(id);
+      if (slot === undefined || ship === undefined) continue;
+      const b = slotBase(slot);
+      out.push({ x: this.sabF32[b + SLOT_X_OFF]!, y: this.sabF32[b + SLOT_Y_OFF]!, radius: hullExtent(ship.kind) });
+      idsOut?.push(id);
+    }
+    return out;
   }
 
   /** Send the commander's fleet status soon (after a warp hold / release). */
