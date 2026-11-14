@@ -30,6 +30,11 @@
  *    this handling, boost or not (0.55–0.57 with a 10 % boost reserve,
  *    0.54 with 25 %). Holding > 60 % would need a wider, slower arc or the
  *    afterburner held through the turn: a design choice, not a bug.
+ *  - All of the above is before the arcade handling (main, merged
+ *    2026-11-14: damping and thrust x16-18, turn x4.2). After it, 4 runs
+ *    read worst 0.63 / 0.57 / 0.24 / 0.19 with 3-5 turn-backs; the two runs
+ *    with deep dips also flew Breaks (the pilot's AUTO guns hit the orb).
+ *    Not characterised further; another reason it gates nothing.
  * The number of turn-backs is logged too: it is usually 3 a run, but the
  * picker sometimes keeps the orb in Tail for most of the 30 s (Tail 497 /
  * run 74 samples, 0 turn-backs, in one of ~10 runs on 2026-11-14), which is

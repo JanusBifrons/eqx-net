@@ -7,12 +7,17 @@
  *
  * Scene: one NPC fighter 700 u from a pilot who never touches the stick
  * (its AUTO guns still shoot back), 30 s. One strafing cycle (dive, pass,
- * swing round) takes ~11–12 s for a fighter at the default 2x scale, so 30 s
+ * swing round) took ~11–12 s for a fighter at the default 2x scale (~5 s since
+ * the arcade handling), so 30 s
  * is the shortest window that holds three.
  *  - the attacker keeps moving: speed > 40 % of its cruise on ≥ 90 % of
  *    samples (before the change: 10 %, a Tail holding nose-on);
  *  - it flies passes: ≥ 3 closest approaches (inside 0.25 × fire range, then
- *    back out past 0.6 × fire range: a pass and a swing-round);
+ *    back out past 0.5 × fire range: a pass and a swing-round). It was
+ *    0.6 × until the arcade handling (main, 2026-11-13) tightened the turn:
+ *    a fighter now dives to ~120 u, extends and swings round at 450–495 u
+ *    (0.54–0.59 × fire range) and comes again, ~6 passes in 30 s, which the
+ *    0.6 re-arm counted as one (2026-11-14 trace);
  *  - the dives shoot: it lands hits on the pilot;
  *  - no rams (contacts between the two).
  * The ship flies only with player controls (virtual pilot).
@@ -107,7 +112,7 @@ describe('SectorRoom integration — strafing runs on a parked ship', () => {
       if (d > maxD) maxD = d;
       pilotDrift = Math.max(pilotDrift, Math.hypot(q.x - p0.x, q.y - p0.y));
       if (armed && d < 0.25 * R) { passes++; armed = false; }
-      else if (!armed && d > 0.6 * R) armed = true;
+      else if (!armed && d > 0.5 * R) armed = true;
       hist[brain.getManoeuvre()]!++;
     }
     const movingFrac = moving / Math.max(1, samples);
