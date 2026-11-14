@@ -18,7 +18,7 @@
  */
 import { sectorSpace, SOLAR_SECTORS } from '../../shared-types/sectorBounds.js';
 import { pocketCentre } from '../../core/galaxy/sectorSites.js';
-import type { Bus } from '../../core/events/Bus.js';
+import type { Bus, BusEventPayloads } from '../../core/events/Bus.js';
 import { ELITE_ID_PREFIX, ELITE_KINDS, eliteName } from '../../shared-types/elites.js';
 import type { ShipKindId } from '../../shared-types/shipKinds.js';
 import type { WorldNotice } from '../../shared-types/worldNotice.js';
@@ -70,7 +70,11 @@ export class EliteDirector {
   private readonly rng: Rng;
   private readonly now: () => number;
   private readonly respawnMs: number;
-  private readonly subs: Array<{ bus: Bus; fn: (e: { type: 'ENTITY_DESTROYED'; entityId: string }) => void }> = [];
+  private readonly subs: Array<{
+    bus: Bus;
+    fn: (e: { type: 'ENTITY_DESTROYED'; entityId: string }) => void;
+    onDeparted: (e: BusEventPayloads['BOT_DESPAWNED']) => void;
+  }> = [];
   private generation = 0;
 
   constructor(
@@ -92,14 +96,23 @@ export class EliteDirector {
       const fn = (e: { type: 'ENTITY_DESTROYED'; entityId: string }): void => {
         if (e.entityId.startsWith(ELITE_ID_PREFIX)) this.onEliteDestroyed(e.entityId);
       };
+      // An elite that fled (its own morale warp-out) is gone: its slot frees
+      // like a loss, with no bounty (only a kill pays) and no kill notice.
+      const onDeparted = (e: BusEventPayloads['BOT_DESPAWNED']): void => {
+        if (e.reason === 'fled' && e.botId.startsWith(ELITE_ID_PREFIX)) this.onEliteDestroyed(e.botId, true);
+      };
       bus.on('ENTITY_DESTROYED', fn);
-      this.subs.push({ bus, fn });
+      bus.on('BOT_DESPAWNED', onDeparted);
+      this.subs.push({ bus, fn, onDeparted });
     }
     this.tick(this.now());
   }
 
   stop(): void {
-    for (const s of this.subs) s.bus.off('ENTITY_DESTROYED', s.fn);
+    for (const s of this.subs) {
+      s.bus.off('ENTITY_DESTROYED', s.fn);
+      s.bus.off('BOT_DESPAWNED', s.onDeparted);
+    }
     this.subs.length = 0;
   }
 
@@ -172,14 +185,15 @@ export class EliteDirector {
     return keys[Math.floor(this.rng() * keys.length)]!;
   }
 
-  private onEliteDestroyed(id: string): void {
+  /** An elite is gone: killed, or (`fled`) warped out on its own morale. */
+  private onEliteDestroyed(id: string, fled = false): void {
     const slot = this.slots.find((s) => s.alive && s.id === id);
     if (!slot) return;
     slot.alive = false;
     slot.sectorKey = null;
     slot.respawnAtMs = this.now() + this.respawnMs;
-    serverLogEvent('elite_destroyed', { id, name: slot.name });
-    this.announce({ type: 'world_notice', kind: 'elite_killed', message: `${slot.name} has been destroyed!` });
+    serverLogEvent(fled ? 'elite_fled' : 'elite_destroyed', { id, name: slot.name });
+    if (!fled) this.announce({ type: 'world_notice', kind: 'elite_killed', message: `${slot.name} has been destroyed!` });
   }
 
   private announce(notice: WorldNotice): void {

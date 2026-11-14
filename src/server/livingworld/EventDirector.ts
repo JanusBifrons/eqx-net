@@ -21,7 +21,7 @@
  */
 import { sectorSpace, SOLAR_SECTORS } from '../../shared-types/sectorBounds.js';
 import { pocketCentre } from '../../core/galaxy/sectorSites.js';
-import type { Bus } from '../../core/events/Bus.js';
+import type { Bus, BusEventPayloads } from '../../core/events/Bus.js';
 import type { ShipKindId } from '../../shared-types/shipKinds.js';
 import {
   EVENT_ID_PREFIX,
@@ -83,7 +83,11 @@ export class EventDirector {
   private active: ActiveEvent | null = null;
   private nextAtMs: number;
   private seq = 0;
-  private readonly subs: Array<{ bus: Bus; fn: (e: { type: 'ENTITY_DESTROYED'; entityId: string }) => void }> = [];
+  private readonly subs: Array<{
+    bus: Bus;
+    fn: (e: { type: 'ENTITY_DESTROYED'; entityId: string }) => void;
+    onDeparted: (e: BusEventPayloads['BOT_DESPAWNED']) => void;
+  }> = [];
 
   constructor(
     private readonly rooms: ReadonlyMap<string, LivingWorldRoom>,
@@ -101,13 +105,22 @@ export class EventDirector {
       const fn = (e: { type: 'ENTITY_DESTROYED'; entityId: string }): void => {
         if (e.entityId.startsWith(EVENT_ID_PREFIX)) this.onMobDestroyed(e.entityId);
       };
+      // An event mob that fled (its own morale warp-out) is gone for the
+      // event's progress, like a loss (2026-11-14).
+      const onDeparted = (e: BusEventPayloads['BOT_DESPAWNED']): void => {
+        if (e.reason === 'fled' && e.botId.startsWith(EVENT_ID_PREFIX)) this.onMobDestroyed(e.botId, true);
+      };
       bus.on('ENTITY_DESTROYED', fn);
-      this.subs.push({ bus, fn });
+      bus.on('BOT_DESPAWNED', onDeparted);
+      this.subs.push({ bus, fn, onDeparted });
     }
   }
 
   stop(): void {
-    for (const s of this.subs) s.bus.off('ENTITY_DESTROYED', s.fn);
+    for (const s of this.subs) {
+      s.bus.off('ENTITY_DESTROYED', s.fn);
+      s.bus.off('BOT_DESPAWNED', s.onDeparted);
+    }
     this.subs.length = 0;
   }
 
@@ -203,10 +216,13 @@ export class EventDirector {
     }
   }
 
-  private onMobDestroyed(id: string): void {
+  /** An event mob is gone: killed, or (`fled`) warped out on its own morale.
+   *  A fled mothership escaped: the event fades. Raiders that flee still
+   *  clear the incursion (the cache is the reward for clearing it). */
+  private onMobDestroyed(id: string, fled = false): void {
     const a = this.active;
     if (a === null || !a.mobs.delete(id)) return;
-    if (a.kind === 'mothership' && id === a.bossId) this.finish(a, 'completed', this.now());
+    if (a.kind === 'mothership' && id === a.bossId) this.finish(a, fled ? 'faded' : 'completed', this.now());
     else if (a.kind === 'incursion' && a.mobs.size === 0) {
       this.rooms.get(a.sectorKey)?.dropEventLoot?.(rollIncursionCache(this.rng), a.x, a.y);
       this.finish(a, 'completed', this.now());
