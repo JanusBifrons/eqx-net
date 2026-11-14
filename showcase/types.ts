@@ -116,6 +116,10 @@ export interface Shot {
   /** Cap the clip's video bitrate (kbit/s) for clips shared on their own
    *  that must stay small. Default: quality-only (CRF 18). */
   maxBitrateKbps?: number;
+  /** Show the caption only for the first N ms of the clip (it fades out
+   *  then), for a take whose action needs the whole frame. Default: the
+   *  whole clip. */
+  captionHoldMs?: number;
   /** Log in with the dev test-token account first (default true). */
   auth?: boolean;
   /** Seed localStorage before load (e.g. the wave base owner id). */

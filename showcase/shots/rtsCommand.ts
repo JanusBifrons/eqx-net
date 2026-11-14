@@ -36,10 +36,10 @@ async function ownHulls(page: Page): Promise<Hull[]> {
     const canvas = document.querySelector('[data-testid="game-surface"]')?.getBoundingClientRect();
     const out: Array<{ id: string; x: number; y: number; sx: number; sy: number }> = [];
     if (!m || !g.__eqxWorldToScreen) return out;
-    // AI-flown own ships are ordinary ships in the mirror, not active (the
-    // one the pilot flies is the active one).
+    // Own ships are ordinary ships in the mirror (AI-flown ones not active,
+    // the one the pilot flies active); the take wants all of them.
     for (const [id, e] of m.ships) {
-      if (e.isActive !== false || e.ownerPlayerId !== m.localPlayerId) continue;
+      if (e.ownerPlayerId !== m.localPlayerId) continue;
       const s = g.__eqxWorldToScreen(e.x, e.y);
       out.push({ id, x: e.x, y: e.y, sx: s.x + (canvas?.x ?? 0), sy: s.y + (canvas?.y ?? 0) });
     }
@@ -116,11 +116,12 @@ async function panToFleet(ctx: ShotContext, stop: { done: boolean }, target: 'fl
       }
       if (cx !== null && cy !== null) {
         const dx = (cx - width / 2) / width, dy = (cy - height / 2) / height;
-        // Start panning past 15 % off-centre, stop once back within 6 %.
-        await set('d', dx > (held.has('d') ? 0.06 : 0.15));
-        await set('a', dx < -(held.has('a') ? 0.06 : 0.15));
-        await set('s', dy > (held.has('s') ? 0.06 : 0.15));
-        await set('w', dy < -(held.has('w') ? 0.06 : 0.15));
+        // Start panning past 15 % (fight: 8 %) off-centre, stop once back within 6 % (3 %).
+        const go = target === 'fight' ? 0.08 : 0.15, stay = target === 'fight' ? 0.03 : 0.06;
+        await set('d', dx > (held.has('d') ? stay : go));
+        await set('a', dx < -(held.has('a') ? stay : go));
+        await set('s', dy > (held.has('s') ? stay : go));
+        await set('w', dy < -(held.has('w') ? stay : go));
       }
       await ctx.sleep(100);
     }
@@ -223,12 +224,13 @@ export const rtsCommand: Shot = {
   server: 'lean',
   target: {
     room: 'showcase-rts',
-    params: { shipKind: 'fighter', startMode: 'command', zoom: 0.5, touchviz: 1 },
+    params: { shipKind: 'fighter', startMode: 'command', zoom: 0.7, touchviz: 1 },
   },
   hud: 'full',
   // The action and the fleet panel fill the lower half: a small caption at
   // the top right keeps clear of both.
   captionLayout: 'corner',
+  captionHoldMs: 7000,
   durationMs: 85_000,
   endsWithRun: true,
   async prepare(ctx) {
@@ -245,7 +247,10 @@ export const rtsCommand: Shot = {
     const t0 = Date.now();
     const mark = (what: string): void => ctx.log(`  [rts ${((Date.now() - t0) / 1000).toFixed(1)} s] ${what}`);
 
-    await ctx.sleep(1000);
+    // A click on empty space gives the page focus, so the WASD camera keys work.
+    await m.glideTo(W * 0.86, H * 0.62, { ms: 400 });
+    await page.mouse.click(W * 0.86, H * 0.62);
+    await ctx.sleep(300);
 
     // 1. Box-select all five, right-click them somewhere away from the robots.
     await boxSelectAll(ctx, m);
@@ -283,8 +288,10 @@ export const rtsCommand: Shot = {
     mark('double-click a squad member');
     const flying = await waitUntil(ctx, async () => (await controlMode(page)) === 'fly', 6000);
     mark(`fly=${flying}`);
-    await m.glideTo(W * 0.82, H * 0.2, { ms: 500 });
-    await ctx.sleep(700);
+    await ctx.sleep(500);
+    // Close-up while flying: wheel in on the flown ship.
+    await wheel(ctx, m, -3);
+    await m.glideTo(W * 0.82, H * 0.2, { ms: 400 });
     await page.keyboard.down('ArrowUp');
     await ctx.sleep(1500);
     await page.keyboard.down('ArrowRight');
@@ -293,13 +300,18 @@ export const rtsCommand: Shot = {
     await ctx.sleep(2200);
     await page.keyboard.up('ArrowUp');
     mark(`flown ship on screen at ${JSON.stringify(await flownShip(page))}`);
-    await ctx.sleep(1800);
+    await ctx.sleep(800);
+    await wheel(ctx, m, 3);
+    await ctx.sleep(700);
 
     // 4. Command: hand it back to its wingman, free camera again.
     await clickButton(ctx, m, 'spectator-toggle');
     const cmd = await waitUntil(ctx, async () => (await controlMode(page)) === 'command', 6000);
     mark(`command=${cmd}`);
-    await ctx.sleep(1200);
+    // The handed-back ship keeps its speed for a moment: let it slow, then
+    // the box-drag below pans/zooms until all five are on the canvas.
+    await ctx.sleep(2500);
+    await waitUntil(ctx, async () => (await ownHulls(page)).length >= 5, 3000);
 
     // 5. Re-select, Hunt + Aggressive, right-click toward the robots; the fight plays out.
     await boxSelectAll(ctx, m);
@@ -334,9 +346,16 @@ export const rtsCommand: Shot = {
         await m.glideTo(W * 0.82, H * 0.2, { ms: 300 });
       }
     };
-    // The fight plays out: end ~4 s after it is decided, or at the cap.
-    const engaged = await waitUntil(ctx, async () => /Chasing|Attacking/.test(await rows(page)), 15_000);
+    // The fight plays out: end ~3 s after it is decided, or at the cap.
+    const engaged = await waitUntil(ctx, async () => /Attacking/.test(await rows(page)), 15_000);
     mark(`engaged=${engaged}; rows: ${await rows(page)}`);
+    // Close-up on the fight for a few seconds, then back out.
+    await wheel(ctx, m, -3);
+    await m.glideTo(W * 0.82, H * 0.2, { ms: 300 });
+    await ctx.sleep(5500);
+    await wheel(ctx, m, 3);
+    await m.glideTo(W * 0.82, H * 0.2, { ms: 300 });
+    mark('close-up done');
     const end = Date.now() + 32_000;
     let quietSince = 0;
     let last = '';
@@ -346,7 +365,7 @@ export const rtsCommand: Shot = {
       const fighting = /Chasing|Attacking/.test(r) && (await robots(page)).length > 0;
       if (!fighting) {
         if (quietSince === 0) quietSince = Date.now();
-        else if (Date.now() - quietSince > 4000) break;
+        else if (Date.now() - quietSince > 3000) break;
       } else quietSince = 0;
       await keepFightInView();
       await ctx.sleep(500);
