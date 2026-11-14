@@ -241,6 +241,8 @@ describe('AttackRunManoeuvre started inside its pass distance: open the range fi
     expect(d.dirX).toBeLessThan(-0.6); // off its nose (it points +x)
     expect(goal.boost).toBe(true);
     expect(goal.spendReserve).toBe(true);
+    // Commits at once: the pilot drops its throttle hold (eased pilot, 2026-11-14).
+    expect(goal.throttleNow).toBe(true);
     expect(goal.speed).toBe(MAX);
     expect(goal.facing).toBe(FACE_MOVE);
     expect(m.isDone(c)).toBe(false);

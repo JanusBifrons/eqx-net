@@ -48,10 +48,15 @@ export interface ManoeuvreGoal {
    *  burns everything it has). The brain clears it before each `writeGoal`,
    *  so only a manoeuvre that sets it gets it. */
   spendReserve: boolean;
+  /** The throttle must change at once (an attack run opening the range from
+   *  nose to nose: thrust held on toward the target for the combat throttle
+   *  hold flew it ~8 ticks the wrong way). The pilot skips its throttle hold;
+   *  cleared before each `writeGoal` like `spendReserve`. */
+  throttleNow: boolean;
 }
 
 export function makeManoeuvreGoal(): ManoeuvreGoal {
-  return { speed: 0, facing: FACE_AUTO, boost: false, spendReserve: false };
+  return { speed: 0, facing: FACE_AUTO, boost: false, spendReserve: false, throttleNow: false };
 }
 
 /**

@@ -158,6 +158,8 @@ const COMBAT_PILOT_PARAMS: Readonly<PilotParams> = {
  *  and under the combat cone it would hardly ever light the afterburner while
  *  running for its life. The boost still pushes along the nose (mostly away). */
 const RUN_PILOT_PARAMS: Readonly<PilotParams> = { ...COMBAT_PILOT_PARAMS, boostConeCos: 0 };
+/** `ManoeuvreGoal.throttleNow`: running, with no throttle hold. */
+const RUN_NOW_PILOT_PARAMS: Readonly<PilotParams> = { ...RUN_PILOT_PARAMS, throttleHoldTicks: 0 };
 /** Combat boost keeps this share of the energy pool in reserve; only a Break
  *  (getting out from under fire) may burn below it. */
 const BOOST_RESERVE_FRAC = 0.25;
@@ -1029,6 +1031,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       this.runDecision(self, view, nb);
       clearContextMaps(this._ctxMaps);
       this._goal.spendReserve = false;
+      this._goal.throttleNow = false;
       this._manoeuvres[this._picker.current]!.writeGoal(this._tac, this._ctxMaps, this._goal);
       intent = this.flyCombatContext(self, nb, view.aims, ux, uy, desiredAngle, dist <= this.fireRange, this._goal);
       if (this._picker.current === MANOEUVRE_FLEE && this._flee.wantsWarpOut(view.tick)) {
@@ -1208,7 +1211,8 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     const boost = goal.boost
       && (this.energy >= BOOST_RESERVE_FRAC * this.energyMax || this._picker.current === MANOEUVRE_BREAK
         || goal.spendReserve);
-    return this.fly(self, facing, wvx, wvy, boost, goal.spendReserve ? RUN_PILOT_PARAMS : COMBAT_PILOT_PARAMS);
+    return this.fly(self, facing, wvx, wvy, boost,
+      goal.throttleNow ? RUN_NOW_PILOT_PARAMS : goal.spendReserve ? RUN_PILOT_PARAMS : COMBAT_PILOT_PARAMS);
   }
 
   /**

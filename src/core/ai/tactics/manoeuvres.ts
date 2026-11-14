@@ -381,6 +381,9 @@ export class AttackRunManoeuvre implements IManoeuvre {
       // within 90° of the course, reserve included (`spendReserve`).
       out.boost = true;
       out.spendReserve = true;
+      // Commit at once: the throttle drops whatever it held toward the
+      // target (reverse while the nose swings round, then thrust).
+      out.throttleNow = true;
       return;
     }
     if (this.phase === RUN_DIVE) {
