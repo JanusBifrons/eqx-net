@@ -42,8 +42,12 @@ export interface AiTickCtx {
    *  controller ticks and handed to every behaviour as `view.neighbours`.
    *  Absent ⇒ no index (byte-identical). */
   aiNeighbourGrid?: AiNeighbourGrid;
-  /** Add this tick's kind-1 combat drones (every allegiance) to the grid. */
+  /** Add this tick's kind-1 combat drones (every allegiance) to the grid,
+   *  and this tick's wreck pieces to `aiWreckGrid` (one registry walk). */
   visitAiNeighbourDrones?: (grid: AiNeighbourGrid) => void;
+  /** This tick's wreck pieces (hull avoidance steers round them), rebuilt
+   *  here with `aiNeighbourGrid`; handed to brains as `view.debris`. */
+  aiWreckGrid?: AiNeighbourGrid;
   shipPoseCache: Map<string, PoseRecord>;
   aiPlayerScratch: AiPlayerView[];
   /** Wave-system Phase 2 — reused per-tick buffer for the faction-filtered
@@ -88,6 +92,8 @@ export function runAiTick(ctx: AiTickCtx): void {
   ctx.aiPlayerScratch.length = 0;
   const grid = ctx.aiNeighbourGrid;
   grid?.begin();
+  const wrecks = grid ? ctx.aiWreckGrid : undefined;
+  wrecks?.begin();
   for (const [pid] of ctx.playerToSlot) {
     const ship = ctx.getActiveShip(pid);
     if (!ship?.alive) continue;
@@ -123,6 +129,7 @@ export function runAiTick(ctx: AiTickCtx): void {
     }
     ctx.visitAiNeighbourDrones?.(grid);
     grid.end();
+    wrecks?.end();
   }
   // Build the faction-filtered structure target list ONCE per tick (shared by
   // every drone via the AiWorldView — never per-drone, #14). Empty/absent ⇒
@@ -140,7 +147,7 @@ export function runAiTick(ctx: AiTickCtx): void {
   }
   ctx.aiController.tick(
     ctx.serverTick, 1 / 60, ctx.aiPlayerScratch, ctx.swarmEntitySnapshot, structures,
-    ctx.resolveEntityInto, swarms, grid,
+    ctx.resolveEntityInto, swarms, grid, wrecks,
   );
   ctx.phaseTime('aiTick');
 

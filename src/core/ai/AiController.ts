@@ -270,6 +270,9 @@ export class AiController {
     /** AI steering 2a — this tick's neighbour index (server-only; absent ⇒
      *  `view.neighbours` undefined, byte-identical). */
     neighbours?: IAiNeighbourQuery,
+    /** This tick's wreck-piece index (server-only; absent ⇒ `view.debris`
+     *  undefined: no debris avoidance). */
+    debris?: IAiNeighbourQuery,
   ): void {
     if (this.entities.size === 0) return;
     // NOTE: this `{ players, tick, dtSec }` literal is the ONE remaining
@@ -281,7 +284,7 @@ export class AiController {
     // every behaviour. The 60/sec rate is negligible vs the rest of
     // the engine; leave as-is. See `swarmEntitySnapshot` doc for the
     // full GC-pressure story.
-    const view: AiWorldView = { players, structures, swarms, tick, dtSec, resolveEntityInto, neighbours, stats: this.stats, aims: this.aims, claims: this.claims };
+    const view: AiWorldView = { players, structures, swarms, tick, dtSec, resolveEntityInto, neighbours, debris, stats: this.stats, aims: this.aims, claims: this.claims };
     this.inputsQueued = 0;
     for (const [id, reg] of this.entities) {
       this.runEntity(id, reg, view, tick, entitySnapshot);

@@ -1456,6 +1456,8 @@ export class SectorRoom extends Room<SectorState> {
     setNpcLineOfFire: (on: boolean) => void;
     /** AI steering 2c: hand brains the neighbour grid (default on). */
     setAiNeighbours: (on: boolean) => void;
+    /** Off ⇒ brains get no `view.debris` (no wreck-piece avoidance): A/B control. */
+    setAiWreckAvoid: (on: boolean) => void;
     /** Does NPC `id`'s brain treat `otherId` as hostile (stance or ledger)? */
     npcHostileTo: (id: string, otherId: string) => boolean;
     /** Mine Layers' live mines (integration tests). */
@@ -1541,6 +1543,7 @@ export class SectorRoom extends Room<SectorState> {
       },
       setNpcLineOfFire: (on) => { this.npcLineOfFire = on; },
       setAiNeighbours: (on) => { this.aiNeighboursOn = on; },
+      setAiWreckAvoid: (on) => { this.aiWreckAvoidOn = on; },
       npcHostileTo: (id, otherId) => this.aiController.isEntityHostileToPlayer(id, otherId),
       mineField: this.mineField,
       rebuildStructuresSlice: () => this.rebuildStructuresSlice(),
@@ -4868,6 +4871,11 @@ export class SectorRoom extends Room<SectorState> {
   /** AI steering 2a — per-tick neighbour index over combat drones + pilot
    *  hulls, rebuilt once per tick in `runAiTick` (alloc-free, #14). */
   private readonly aiNeighbourGrid = new AiNeighbourGrid();
+  /** This tick's wreck pieces for AI hull avoidance (`view.debris`), filled
+   *  in the same registry walk as `aiNeighbourGrid` (alloc-free, #14). */
+  private readonly aiWreckGrid = new AiNeighbourGrid();
+  /** Tests (`_internals.setAiWreckAvoid`): off ⇒ no `view.debris`. */
+  private aiWreckAvoidOn = true;
   /** Tests (`_internals.setAiNeighbours`): off ⇒ brains get no `view.neighbours`
    *  (no combat separation), the A/B control for slice 2c. */
   private aiNeighboursOn = true;
@@ -4877,6 +4885,16 @@ export class SectorRoom extends Room<SectorState> {
     this.swarmRegistry.forEachRecord(this._addAiNeighbourDrone);
   };
   private readonly _addAiNeighbourDrone = (rec: SwarmEntityRecord): void => {
+    if (rec.kind === SWARM_KIND_WRECK) {
+      // Off (tests' A/B control): the grid is not rebuilt this tick either.
+      if (!this.aiWreckAvoidOn) return;
+      const w = slotBase(rec.slot);
+      this.aiWreckGrid.addDebris(
+        rec.id, this.sabF32[w + SLOT_X_OFF]!, this.sabF32[w + SLOT_Y_OFF]!,
+        this.sabF32[w + SLOT_VX_OFF]!, this.sabF32[w + SLOT_VY_OFF]!, rec.radius,
+      );
+      return;
+    }
     if (rec.kind !== SWARM_KIND_DRONE) return;
     const b = slotBase(rec.slot);
     this.aiNeighbourGrid.addDrone(
@@ -11713,6 +11731,7 @@ export class SectorRoom extends Room<SectorState> {
       fillSwarmTargets: (out) => this.fillSwarmTargets(out),
       aiNeighbourGrid: this.aiNeighboursOn ? this.aiNeighbourGrid : undefined,
       visitAiNeighbourDrones: this._visitAiNeighbourDrones,
+      aiWreckGrid: this.aiWreckAvoidOn ? this.aiWreckGrid : undefined,
       hasTruce: (pid) => this.playerTruce(pid),
       // Living World P1a-2 (decision 7) — offline hulls are fair game.
       isPlayerConnected: this._isPlayerConnected,
@@ -11774,7 +11793,8 @@ export class SectorRoom extends Room<SectorState> {
         this.markSceneSim(this.sceneSimEnd);
         this.sceneWork.endTick(this.sabU32[COUNT_IDX] ?? 0, this.aiController.size());
         if (this.lineOfFireGate) this.sceneWork.lineOfFire(this.lineOfFireGate.checks, this.lineOfFireGate.narrow);
-        this.sceneWork.aiNeighbours(this.aiNeighbourGrid.queriesTotal);
+        // Wreck-piece queries (hull avoidance) count as neighbour work too.
+        this.sceneWork.aiNeighbours(this.aiNeighbourGrid.queriesTotal + this.aiWreckGrid.queriesTotal);
         this.sceneWork.aiDecisions(this.aiController.stats.decisions);
         this.sceneWork.wreckPiecesTick(this.capitalWrecks?.liveCount() ?? 0);
       }
