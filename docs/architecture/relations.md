@@ -89,3 +89,21 @@ B1 shipped the seam only. B2 wired it in. Its locks:
 A player has no swarm entity id, so a turret's target slot in `structureTargets` holds `-(ownerIdx + 2)`. `ownerIdx` indexes the room-state `structureOwners` table, where the server interns the target player.
 - The server encodes with `encodePlayerTurretTarget`.
 - The client decodes with `decodePlayerTurretTarget` into `turretTargetPlayerId`, then aims the barrel and the aim line at that ship.
+
+## Server implementation notes
+
+> Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.
+
+- **Owners like `npc:<allegiance>:<baseId>` are NPC bases.** Every "is this hostile?" decision about a structure goes through `relationOf`, using the room's ONE `relationCtx` (which holds the hostile-act ledger). Don't compare owner strings inline.
+- **Turrets:**
+  - A player-owned turret keeps the A1 drone grid, unchanged.
+  - An NPC-owned turret uses a second per-tick grid of every NPC ship plus every ACTIVE player ship (#17), filtered by `relationOf(target, owner) === 'hostile'` (`NearestPointGrid.nearestWhere`).
+  - Missiles from an NPC turret home on the same rule.
+- **Hostile acts:** `applyDamage` records one when a player, or a player's turret, hits an NPC structure. They expire on the 1 Hz grid pulse.
+- **NPC owners are excluded from player-faction systems:**
+  - `factionBaseReadiness`: no waves;
+  - `FactionLedger.factionOf`: no escalation;
+  - `SectorPersistence`: NPC bases regenerate from their seed.
+- **Display names:** `resolveOwnerName` gives "<Side> base", never a raw id.
+- **A turret aiming at a player** rides `structureTargets` as an owner-table index (`encodePlayerTurretTarget`).
+- Lock: `tests/integration/sectorRoom/npcOwnership.test.ts`. Story: [docs/architecture/relations.md](../architecture/relations.md).
