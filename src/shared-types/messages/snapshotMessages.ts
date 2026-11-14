@@ -319,8 +319,13 @@ export interface SnapshotMessage {
        *  Absent ⇒ not a fire-control pilot (or no groups). */
       groups?: Array<{ id: string; m: 0 | 1; l: Array<{ t: string; s: number; p: number; r?: 1; c?: 1 }> }>;
       /** Fire control — NPCs locking this pilot: `t` = `s:<entityId>`,
-       *  `s` 1 acquiring / 2 locked, `p` 0..100. Own pilot only; absent ⇒ none. */
+       *  `s` 1 acquiring / 2 locked, `p` 0..100. Own pilot only; absent ⇒ none.
+       *  At most `LOCKED_BY_WIRE_ROWS` rows: completed locks first, then nearest. */
       lockedBy?: Array<{ t: string; s: 1 | 2; p: number }>;
+      /** Fire control — how many NPCs lock this pilot in all, sent only when
+       *  more than the `lockedBy` rows (absent ⇒ the rows are everyone). The
+       *  HUD banner's count. No `SWARM_WIRE_VERSION` bump (slim JSON field). */
+      lockedByN?: number;
       /** Phase 4 (Dynamic weapon mounts, WS-B3) — the hull's ACTIVATED latent
        *  mount slots (`{ slotId, weaponId }[]`). PUBLIC (unlike `statAlloc`):
        *  emitted for EVERY ship (active + lingering) that has ≥ 1 activated
