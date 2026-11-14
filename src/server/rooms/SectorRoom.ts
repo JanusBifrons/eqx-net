@@ -267,7 +267,8 @@ import { SceneWorkCounters } from './scene/SceneWorkCounters.js';
 import type { EventLoopUtilization } from 'node:perf_hooks';
 import { FrameTimeRing } from '../../core/perf/FrameTimeRing.js';
 import { OwnerlessShipEvictor } from './OwnerlessShipEvictor.js';
-import { FleetCommandSubsystem, type FleetPose } from '../fleet/FleetCommandSubsystem.js';
+import { FleetCommandSubsystem, type FleetPose, type FleetModeData } from '../fleet/FleetCommandSubsystem.js';
+import { FleetStatusStream } from '../fleet/FleetStatusStream.js';
 import type { WingmanControls } from '../../core/ai/wingman/types.js';
 import { LeaveHandler } from './LeaveHandler.js';
 import { mirrorSabPoses } from './SabPoseMirror.js';
@@ -364,6 +365,12 @@ import {
   RepairShipSchema,
   PilotShipSchema,
   SpectateSchema,
+  CommandSchema,
+  FleetOrderSchema,
+  SetModeSchema,
+  SetStanceSchema,
+  FormSquadSchema,
+  DisbandSquadSchema,
   ApplyShipUpgradeSchema,
   RespecShipSchema,
   ActivateMountSchema,
@@ -638,6 +645,12 @@ const MAX_INPUTS_PER_TICK = 3;
  *  A pilot sends one on a lock-line change, two when switching groups mid-hold;
  *  a flood beyond this is silently dropped (src/server/CLAUDE.md thresholds). */
 export const MAX_LOCK_MSGS_PER_TICK = 3;
+/** RTS fleet commands per session per tick (all five kinds together). The
+ *  client sends one per click / key / panel button; a flood beyond this is
+ *  silently dropped (src/server/CLAUDE.md thresholds). */
+export const MAX_FLEET_MSGS_PER_TICK = 4;
+/** The one `stop` order object (the brain only reads it). */
+const FLEET_STOP_ORDER = { kind: 'stop' } as const;
 // LAG_COMP_WINDOW now used inside PlayerFireResolver.ts
 
 /** Click-to-inspect live-stats emit cadence (Item B5). ~5 Hz on its OWN
@@ -901,13 +914,27 @@ export class SectorRoom extends Room<SectorState> {
     // TODO slice 4b energy: lingering hulls have no energy regen/drain yet
     // (`tickEnergy` only handles piloted active hulls), so wingmen never boost.
     canBoost: () => false,
+    // Attack / escort targets: NPCs and other swarm entities, an own LINGERING
+    // hull (escort a wingman) or a pilot's ACTIVE ship keyed by playerId
+    // (escort the ship the owner flies). Live SAB poses (#14: one scratch).
     resolvePoseInto: (id, out) => {
       const p = this.wingmanTargetPose;
-      if (!this.swarmEntityPoseInto(id, p)) return false;
+      if (!this.readLingeringPose(id, p) && !this.readActiveShipPose(id, p) && !this.swarmEntityPoseInto(id, p)) return false;
       out.x = p.x; out.y = p.y; out.vx = p.vx; out.vy = p.vy;
       return true;
     },
+    // The ship the caller flies, by the id the brain resolves above: the
+    // playerId (the client's fleet selection names the active ship the same
+    // way). Null while spectating.
+    pilotShipOf: (playerId) => {
+      const ship = this.getActiveShip(playerId);
+      return ship?.alive && this.playerToSlot.has(playerId) ? playerId : null;
+    },
+    // TODO firing slice: `nearestHostile` (hunt target choice) and the
+    // damage-path `fleet.noteDamage(...)` call (morale) land with targeting.
   });
+  /** Reused `set_mode` parameters (#14; the brain copies the route). */
+  private readonly fleetModeScratch: FleetModeData = {};
   /** Scratch for a wingman attack target's pose (#14). */
   private readonly wingmanTargetPose = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
   /** Reused wingman INPUT command (postMessage clones synchronously, #14). */
@@ -1211,6 +1238,18 @@ export class SectorRoom extends Room<SectorState> {
     this.lockMsgCountThisTick.set(sessionId, n + 1);
     return true;
   }
+  /** RTS fleet commands (`fleet_order` / `set_mode` / `set_stance` /
+   *  `form_squad` / `disband_squad`) received this tick, per session. */
+  private readonly fleetMsgCountThisTick = new Map<string, number>();
+  /** Count one fleet command for `sessionId`; false = over this tick's cap (drop it). */
+  private fleetMsgAllowed(sessionId: string): boolean {
+    const n = this.fleetMsgCountThisTick.get(sessionId) ?? 0;
+    if (n >= MAX_FLEET_MSGS_PER_TICK) return false;
+    this.fleetMsgCountThisTick.set(sessionId, n + 1);
+    return true;
+  }
+  /** RTS slice 7 — the owner-only `fleet_status` stream (on the selection-stats timer). */
+  private fleetStatus!: FleetStatusStream;
   /** PlayerIds currently holding boost (energy-affordable), regardless of
    *  thrust. Surfaced on every snapshot so all clients can render an exhaust
    *  trail for that ship; also drives the per-tick boost energy drain. */
@@ -1397,6 +1436,9 @@ export class SectorRoom extends Room<SectorState> {
     /** RTS slice 4 — the wingman brains on lingering hulls. Tests issue orders
      *  through its owner-checked API (`applyOrder(ownerId, [shipId], order)`). */
     fleet: FleetCommandSubsystem;
+    /** RTS slice 7 — send the owner-only `fleet_status` to every client now
+     *  (tests; the timer sends it every other selection-stats fire). */
+    sendFleetStatus: () => void;
     aiPlayerScratch: AiPlayerView[];
     postToWorker: (cmd: WorkerCmd) => void;
     /** Fire control test hook: make `targetKey` (`s:<entityId>` | `p:<playerId>`)
@@ -1498,6 +1540,7 @@ export class SectorRoom extends Room<SectorState> {
       lingeringSlots: this.lingeringSlots,
       restoreLingeringHulls: (rows) => this.restoreLingeringHullsFromSnapshot(rows),
       fleet: this.fleet,
+      sendFleetStatus: () => this.fleetStatus.sendAll(),
       aiPlayerScratch: this.aiPlayerScratch,
       postToWorker: (cmd) => this.postToWorker(cmd),
       forceLock: (pid, key, groupId) => this.locks.forceLock(pid, key, groupId),
@@ -2875,8 +2918,30 @@ export class SectorRoom extends Room<SectorState> {
         client?.send('entity_stats', this.ownerGateStats(sessionId, msg));
       },
     });
-    // eslint-disable-next-line no-restricted-globals -- real time: a UI refresh rate for the inspector, not game time
-    this.selectionStatsTimer = setInterval(guarded('selection-stats-tick', () => this.selectionStats.tick()), SELECTION_STATS_INTERVAL_MS);
+    // RTS slice 7 — owner-only fleet status rides the same timer, every other
+    // fire (~2.5 Hz). Private per owner, so a message, not a snapshot field.
+    this.fleetStatus = new FleetStatusStream({
+      fleet: this.fleet,
+      forEachSession: (cb) => {
+        for (const c of this.clients) {
+          const pid = this.sessionToPlayer.get(c.sessionId);
+          if (pid !== undefined) cb(c.sessionId, pid);
+        }
+      },
+      hullPct: (id) => {
+        const s = this.state.ships.get(id);
+        return s && s.maxHealth > 0 ? (s.health / s.maxHealth) * 100 : null;
+      },
+      send: (sessionId, msg) => {
+        const client = this.clients.find((c) => c.sessionId === sessionId);
+        try { client?.send('fleet_status', msg); } catch { /* closing */ }
+      },
+    });
+    // eslint-disable-next-line no-restricted-globals -- real time: a UI refresh rate for the inspector and fleet panel, not game time
+    this.selectionStatsTimer = setInterval(guarded('selection-stats-tick', () => {
+      this.selectionStats.tick();
+      this.fleetStatus.tick();
+    }), SELECTION_STATS_INTERVAL_MS);
     this.selectionStatsTimer.unref?.();
 
     // Structures plan (Phase 3-5) — testMode scenario seeding: a pre-built,
@@ -3958,11 +4023,71 @@ export class SectorRoom extends Room<SectorState> {
       }
       const playerId = this.sessionToPlayer.get(client.sessionId);
       if (!playerId) return;
-      const parked = this.getActiveShip(playerId)?.shipInstanceId;
-      this.displaceActiveHullToLingering(playerId);
-      // Owner decision 2026-11-12: the parked hull is still there. NPC fire
-      // control keeps engaging it on the pilot's behalf (their locks hold).
-      if (parked && this.lingeringSlots.has(parked)) this.spectateParkedHull.set(playerId, parked);
+      this.enterSpectate(playerId);
+    });
+    // RTS command layer — `command` enters command view; today an alias of
+    // `spectate` (same code path), so the parked hull becomes a wingman.
+    this.onMessage('command', (client: Client, raw: unknown) => {
+      if (!CommandSchema.safeParse(raw).success) {
+        this.malformed.record(client.sessionId, 'command');
+        return;
+      }
+      const playerId = this.sessionToPlayer.get(client.sessionId);
+      if (!playerId) return;
+      this.enterSpectate(playerId);
+    });
+
+    // ── RTS command layer (slice 6b) — fleet commands ──────────────────────
+    // Routed to the owner-checked `FleetCommandSubsystem` with the caller's
+    // playerId. Ids are checked PER ID there: a foreign / unknown id drops
+    // silently, and so does the caller's ACTIVE ship (its id is the playerId
+    // in the client's selection; it is never attached because the player is
+    // flying it). Rate-limited per session per tick like lock messages.
+    this.onMessage('fleet_order', (client: Client, raw: unknown) => {
+      if (!this.fleetMsgAllowed(client.sessionId)) return;
+      const p = FleetOrderSchema.safeParse(raw);
+      if (!p.success) { this.malformed.record(client.sessionId, 'fleet_order'); return; }
+      const pid = this.sessionToPlayer.get(client.sessionId);
+      if (pid === undefined) return;
+      const d = p.data;
+      // One order object per accepted command: the brain keeps it as its order.
+      if (d.kind === 'move') this.fleet.applyOrder(pid, d.shipIds, { kind: 'move', x: d.x!, y: d.y! });
+      else if (d.kind === 'attack') this.fleet.applyOrder(pid, d.shipIds, { kind: 'attack', targetId: d.targetId! });
+      else this.fleet.applyOrder(pid, d.shipIds, FLEET_STOP_ORDER);
+    });
+    this.onMessage('set_mode', (client: Client, raw: unknown) => {
+      if (!this.fleetMsgAllowed(client.sessionId)) return;
+      const p = SetModeSchema.safeParse(raw);
+      if (!p.success) { this.malformed.record(client.sessionId, 'set_mode'); return; }
+      const pid = this.sessionToPlayer.get(client.sessionId);
+      if (pid === undefined) return;
+      const md = this.fleetModeScratch;
+      md.x = undefined; md.y = undefined;
+      md.route = p.data.route;
+      md.escortId = p.data.escortId;
+      this.fleet.setMode(pid, p.data.shipIds, p.data.mode, md);
+      md.route = undefined; md.escortId = undefined;
+    });
+    this.onMessage('set_stance', (client: Client, raw: unknown) => {
+      if (!this.fleetMsgAllowed(client.sessionId)) return;
+      const p = SetStanceSchema.safeParse(raw);
+      if (!p.success) { this.malformed.record(client.sessionId, 'set_stance'); return; }
+      const pid = this.sessionToPlayer.get(client.sessionId);
+      if (pid !== undefined) this.fleet.setStance(pid, p.data.shipIds, p.data.stance);
+    });
+    this.onMessage('form_squad', (client: Client, raw: unknown) => {
+      if (!this.fleetMsgAllowed(client.sessionId)) return;
+      const p = FormSquadSchema.safeParse(raw);
+      if (!p.success) { this.malformed.record(client.sessionId, 'form_squad'); return; }
+      const pid = this.sessionToPlayer.get(client.sessionId);
+      if (pid !== undefined) this.fleet.formSquad(pid, p.data.shipIds);
+    });
+    this.onMessage('disband_squad', (client: Client, raw: unknown) => {
+      if (!this.fleetMsgAllowed(client.sessionId)) return;
+      const p = DisbandSquadSchema.safeParse(raw);
+      if (!p.success) { this.malformed.record(client.sessionId, 'disband_squad'); return; }
+      const pid = this.sessionToPlayer.get(client.sessionId);
+      if (pid !== undefined) this.fleet.disbandSquad(pid, p.data.squadId);
     });
 
     // ── Phase 4 WS-B2 — ship stat upgrades (free allocation + respec) ──────
@@ -9359,6 +9484,8 @@ export class SectorRoom extends Room<SectorState> {
     // ~5 Hz stats emitter doesn't keep resolving for a gone session (covers
     // disconnect AND inter-sector transit, both of which fire onLeave).
     this.selectionStats?.clearSession(client.sessionId);
+    this.fleetStatus?.clearSession(client.sessionId);
+    this.fleetMsgCountThisTick.delete(client.sessionId);
 
     // Campaign 1.3 — forget this connection's malformed-packet counter.
     this.malformed.clear(client.sessionId);
@@ -9540,6 +9667,21 @@ export class SectorRoom extends Room<SectorState> {
     return true;
   }
 
+  /** Fleet hook: a pilot's ACTIVE ship's live SAB pose, keyed by playerId
+   *  (escort / attack target). False when they have no live active ship. */
+  private readActiveShipPose(playerId: string, out: FleetPose): boolean {
+    const slot = this.playerToSlot.get(playerId);
+    if (slot === undefined || !this.getActiveShip(playerId)?.alive) return false;
+    const b = slotBase(slot);
+    out.x = this.sabF32[b + SLOT_X_OFF]!;
+    out.y = this.sabF32[b + SLOT_Y_OFF]!;
+    out.vx = this.sabF32[b + SLOT_VX_OFF]!;
+    out.vy = this.sabF32[b + SLOT_VY_OFF]!;
+    out.angle = this.sabF32[b + SLOT_ANGLE_OFF]!;
+    out.angvel = this.sabF32[b + SLOT_ANGVEL_OFF]!;
+    return true;
+  }
+
   /** Fleet hook: post a wingman's controls as the hull's INPUT, the same
    *  command a pilot's keys produce (InputHandler). One reused object (#14). */
   private postWingmanInput(shipInstanceId: string, c: Readonly<WingmanControls>, tick: number): void {
@@ -9554,6 +9696,16 @@ export class SectorRoom extends Room<SectorState> {
     cmd.boost = c.boost;
     cmd.reverse = c.reverse;
     this.postToWorker(cmd);
+  }
+
+  /** STOP PILOTING (the `spectate` and `command` messages): park the caller's
+   *  active hull as a lingering wingman and remember it as their parked hull. */
+  private enterSpectate(playerId: string): void {
+    const parked = this.getActiveShip(playerId)?.shipInstanceId;
+    this.displaceActiveHullToLingering(playerId);
+    // Owner decision 2026-11-12: the parked hull is still there. NPC fire
+    // control keeps engaging it on the pilot's behalf (their locks hold).
+    if (parked && this.lingeringSlots.has(parked)) this.spectateParkedHull.set(playerId, parked);
   }
 
   private displaceActiveHullToLingering(playerId: string): void {
@@ -11367,6 +11519,7 @@ export class SectorRoom extends Room<SectorState> {
   private update(): void {
     this.inputCountThisTick.clear();
     this.lockMsgCountThisTick.clear();
+    this.fleetMsgCountThisTick.clear();
     // Phase 8 — galaxy sectors always run the simulation step regardless of
     // player count, so the world feels alive (drones patrol, asteroids drift,
     // sleep transitions fire) even when nobody's logged in. Engineering rooms

@@ -74,6 +74,7 @@ function sameIds(a: readonly string[], b: readonly string[] | undefined): boolea
 const TRADE_TOAST_TTL_MS = 6_000;
 import { cargoCapacityForMaxHealth } from '@shared-types/goods';
 import { applySelectionStats } from './selectionStats.js';
+import { ingestFleetStatus } from '../fleet/fleetStatusIngest.js';
 import {
   createRemotePredictionGuard,
   shouldForwardPredict,
@@ -1898,6 +1899,11 @@ export class ColyseusGameClient {
       const parsed = EntityStatsSchema.safeParse(raw);
       if (!parsed.success) return;
       applySelectionStats(parsed.data);
+    });
+    // RTS slice 7 — the owner-only fleet status stream (~2 Hz, the whole owned
+    // fleet each time) → the `fleet/fleetStatus` singleton the panel polls.
+    room.onMessage('fleet_status', (raw: unknown) => {
+      ingestFleetStatus(raw);
     });
 
     room.onMessage('damage', (raw: unknown) => {

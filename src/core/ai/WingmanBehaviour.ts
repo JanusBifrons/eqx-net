@@ -251,6 +251,9 @@ export class WingmanBehaviour implements IWingmanBrain {
   get patrolWaypointIndex(): number { return this.routeIdx; }
   /** Patrol: number of waypoints (0 when not patrolling a route). */
   get patrolRouteLength(): number { return this.routeLen; }
+  /** Patrol: waypoint `i` (0 ≤ i < patrolRouteLength), x then y. */
+  patrolRouteX(i: number): number { return this.routeX[i]!; }
+  patrolRouteY(i: number): number { return this.routeY[i]!; }
   /** Escort: the ship being escorted, or null. */
   get escortId(): string | null { return this._escortId; }
   /** Hunt search radius (u). */

@@ -1,0 +1,50 @@
+import { describe, it, expect, beforeEach } from 'vitest';
+import { ingestFleetStatus } from './fleetStatusIngest.js';
+import { getFleetStatus, getFleetStatusVersion, resetFleetStatus } from './fleetStatus.js';
+import { encodeFleetStatusRow } from '@shared-types/messages';
+
+describe('ingestFleetStatus (fleet_status handler)', () => {
+  beforeEach(() => resetFleetStatus());
+
+  it('decodes rows into the status singleton, mapping every field', () => {
+    const ok = ingestFleetStatus({
+      type: 'fleet_status',
+      s: [
+        encodeFleetStatusRow({
+          id: 'h1', mode: 'patrol', stance: 'aggressive', activity: 'patrolling', targetId: null, hullPct: 77,
+          route: [[1, 2], [3, 4]], moraleOutcome: 'flee',
+        }),
+        encodeFleetStatusRow({
+          id: 'h2', mode: 'escort', stance: 'defensive', activity: 'moving', targetId: 's:9', hullPct: 12,
+          orderKind: 'move', orderX: 50, orderY: 60, escortId: 'h1', squadId: 'sq-3',
+        }),
+      ],
+    });
+    expect(ok).toBe(true);
+    expect(getFleetStatus('h1')).toEqual({
+      mode: 'patrol', stance: 'aggressive', activity: 'patrolling', targetId: null, hullPct: 77,
+      route: [[1, 2], [3, 4]], moraleOutcome: 'flee',
+    });
+    expect(getFleetStatus('h2')).toEqual({
+      mode: 'escort', stance: 'defensive', activity: 'moving', targetId: 's:9', hullPct: 12,
+      orderKind: 'move', orderX: 50, orderY: 60, escortId: 'h1', squadId: 'sq-3',
+    });
+  });
+
+  it('replaces: ships missing from the next message are dropped', () => {
+    const row = (id: string) => encodeFleetStatusRow({ id, mode: 'defend', stance: 'defensive', activity: 'idle', targetId: null, hullPct: 100 });
+    ingestFleetStatus({ type: 'fleet_status', s: [row('a'), row('b')] });
+    ingestFleetStatus({ type: 'fleet_status', s: [row('b')] });
+    expect(getFleetStatus('a')).toBeUndefined();
+    expect(getFleetStatus('b')).toBeDefined();
+    ingestFleetStatus({ type: 'fleet_status', s: [] });
+    expect(getFleetStatus('b')).toBeUndefined();
+  });
+
+  it('drops an invalid message without touching the status', () => {
+    const v = getFleetStatusVersion();
+    expect(ingestFleetStatus({ type: 'fleet_status', s: [['x', 99]] })).toBe(false);
+    expect(ingestFleetStatus(null)).toBe(false);
+    expect(getFleetStatusVersion()).toBe(v);
+  });
+});

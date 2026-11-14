@@ -149,6 +149,13 @@ export type {
   EntityStatsMessage,
 } from './messages/selectionMessages.js';
 
+// RTS command layer slice 7 — owner-only fleet status stream (server → client)
+export {
+  FleetStatusMessageSchema,
+  encodeFleetStatusRow,
+  decodeFleetStatusRow,
+} from './messages/fleetStatusMessages.js';
+
 // Missile subsystem (server → client)
 export {
   MissileFiredEventSchema,

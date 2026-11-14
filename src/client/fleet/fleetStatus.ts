@@ -29,13 +29,15 @@ export interface FleetStatusRow {
   squadId?: string;
   /** Direct order in progress, when any. */
   orderKind?: FleetOrderKind;
-  /** Move-order destination, game space (slice 15a; with `orderKind: 'move'`). */
+  /** Move-order destination (world units), with `orderKind === 'move'`. */
   orderX?: number;
   orderY?: number;
-  /** Patrol route waypoints, game space, a closed loop (slice 15a; patrol mode). */
+  /** Patrol route waypoints, while patrolling. */
   route?: readonly (readonly [number, number])[];
-  /** The ship being escorted (slice 15a; escort mode). */
+  /** The ship being escorted, while escorting. */
   escortId?: string;
+  /** The latest morale roll while it matters (FallBack / Flee = retreating). */
+  moraleOutcome?: 'fightOn' | 'fallBack' | 'flee';
 }
 
 /** A status row as delivered by the stream: the row plus its ship id. */
@@ -77,6 +79,7 @@ export function applyFleetStatus(updates: readonly FleetStatusUpdate[], opts?: {
       ...(u.orderY !== undefined ? { orderY: u.orderY } : {}),
       ...(u.route !== undefined ? { route: u.route } : {}),
       ...(u.escortId !== undefined ? { escortId: u.escortId } : {}),
+      ...(u.moraleOutcome !== undefined ? { moraleOutcome: u.moraleOutcome } : {}),
     });
     changed = true;
   }
@@ -96,13 +99,14 @@ function sameRow(a: FleetStatusRow, b: FleetStatusRow): boolean {
     a.orderX === b.orderX &&
     a.orderY === b.orderY &&
     a.escortId === b.escortId &&
+    a.moraleOutcome === b.moraleOutcome &&
     sameRoute(a.route, b.route)
   );
 }
 
 function sameRoute(
-  a: FleetStatusRow['route'],
-  b: FleetStatusRow['route'],
+  a: readonly (readonly [number, number])[] | undefined,
+  b: readonly (readonly [number, number])[] | undefined,
 ): boolean {
   if (a === b) return true;
   if (a === undefined || b === undefined || a.length !== b.length) return false;
