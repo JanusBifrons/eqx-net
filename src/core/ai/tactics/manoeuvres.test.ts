@@ -260,13 +260,16 @@ describe('AttackRunManoeuvre started inside its pass distance: open the range fi
     const c4 = ctxAt(0, 100 - (open - 10), 0, 100, { tick: 100 });
     run(m, c4);
     expect(m.diving).toBe(false);
-    // Out at the open distance: turn back for the dive (toward the target,
-    // here one at fighting speed: a slow one gets the strafing swing-round).
+    // Out at the open distance: the dive starts. Still flying away at speed,
+    // it swings round in an arc (course square to the velocity), even on a
+    // target at fighting speed; once the velocity has turned, toward it.
     const c5 = ctxAt(0, 100 - (open + 10), 0, 100, { tick: 101, vy: -200, ...MOVING });
     const back = run(m, c5);
     expect(m.diving).toBe(true);
-    expect(back.dirY).toBeGreaterThan(0.9);
+    expect(Math.abs(back.dirY)).toBeLessThan(0.2);
     expect(m.isDone(c5)).toBe(false);
+    const c6 = ctxAt(0, 100 - (open + 10), 0, 100, { tick: 102, vx: 200, vy: 10, ...MOVING });
+    expect(run(m, c6).dirY).toBeGreaterThan(0.9);
   });
   it('a ship already flying at speed (half its cruise or more) flies the pass: no open', () => {
     const m = new AttackRunManoeuvre();
@@ -339,11 +342,20 @@ describe('AttackRunManoeuvre on a parked ship: strafing runs (owner 2026-11-14)'
     // Velocity turned across the target line: the dive (toward it).
     const d2 = run(m, ctxAt(0, 500, 0, 0, { tick: 1, vx: CRUISE, vy: -10 }));
     expect(d2.dirY).toBeLessThan(-0.9);
-    // A target at fighting speed gets the plain dive at once (no arc).
+    // A target at fighting speed gets the same arc (filmed take 5,
+    // 2026-11-14: gated on a slow target only, a robot orb braked 122 → 14
+    // u/s to turn back on a pilot at 47–187 u/s).
     const n = new AttackRunManoeuvre();
     const c3 = ctxAt(0, 500, 0, 0, { tick: 0, vx: 0, vy: CRUISE, tvx: 0, tvy: -130 });
     n.begin(c3);
-    expect(run(n, c3).dirY).toBeLessThan(-0.9);
+    const a = run(n, c3);
+    expect(Math.abs(a.dirY)).toBeLessThan(0.2);
+    expect(goal.boost).toBe(true);
+    // Slow (under a quarter of cruise) or already turned toward it: the dive.
+    const slow = new AttackRunManoeuvre();
+    const c4 = ctxAt(0, 500, 0, 0, { tick: 0, vx: 0, vy: 0.2 * CRUISE, tvx: 0, tvy: -130 });
+    slow.begin(c4);
+    expect(run(slow, c4).dirY).toBeLessThan(-0.9);
   });
 });
 

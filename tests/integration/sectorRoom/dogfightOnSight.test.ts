@@ -114,7 +114,12 @@ async function fight(harness: SectorTestHarness, perSide: number, label: string)
   let minDist = Infinity;
   let prevT = Date.now();
   const start = prevT;
+  // Boost duty (print-only): afterburner ticks / ship ticks, first 3 s and after.
+  const boostAt = (): number => { let n = 0; for (const b of brains.values()) n += b.getBoostTicks(); return n; };
+  const boost0 = boostAt();
+  let boost3 = -1, ms3 = 0;
   while (Date.now() - start < FIGHT_MS) {
+    if (boost3 < 0 && Date.now() - start >= 3000) { boost3 = boostAt(); ms3 = Date.now() - start; }
     await harness.advance(SAMPLE_MS);
     const now = Date.now();
     const dt = (now - prevT) / 1000;
@@ -165,6 +170,10 @@ async function fight(harness: SectorTestHarness, perSide: number, label: string)
       if (behind) totalBehind += dt;
     }
   }
+  const msAll = Date.now() - start;
+  const shipTicks = (ms: number): number => Math.max(1, ids.length * ms * 0.06);
+  const dutyEarly = (boost3 - boost0) / shipTicks(ms3);
+  const dutyLate = (boostAt() - boost3) / shipTicks(msAll - ms3);
   const stats: FightStats = {
     combatSamples,
     hist,
@@ -176,7 +185,7 @@ async function fight(harness: SectorTestHarness, perSide: number, label: string)
     boostFrac: boosting / Math.max(1, combatSamples),
     minDist,
   };
-  console.log(`[dogfight-on-sight ${label}] R=${[...brains.values()][0]!.getFireRange().toFixed(0)} cruise=${[...brains.values()].map((b) => b.getCruiseSpeed().toFixed(0)).join("/")} samples=${combatSamples} hist(hold,tail,run,break)=${hist.join(',')} holdFrac=${stats.holdFrac.toFixed(2)} meanAngvel=${stats.meanAngvel.toFixed(2)} toeFrac=${stats.toeFrac.toFixed(2)} onTail(longest/total)=${stats.longestBehindS.toFixed(2)}/${stats.totalBehindS.toFixed(2)}s boostFrac=${stats.boostFrac.toFixed(2)} minDist=${minDist.toFixed(0)}`);
+  console.log(`[dogfight-on-sight ${label}] R=${[...brains.values()][0]!.getFireRange().toFixed(0)} cruise=${[...brains.values()].map((b) => b.getCruiseSpeed().toFixed(0)).join("/")} samples=${combatSamples} hist(hold,tail,run,break)=${hist.join(',')} holdFrac=${stats.holdFrac.toFixed(2)} meanAngvel=${stats.meanAngvel.toFixed(2)} toeFrac=${stats.toeFrac.toFixed(2)} onTail(longest/total)=${stats.longestBehindS.toFixed(2)}/${stats.totalBehindS.toFixed(2)}s boostFrac=${stats.boostFrac.toFixed(2)} boostDuty(0-3s/3s+)=${dutyEarly.toFixed(2)}/${dutyLate.toFixed(2)} minDist=${minDist.toFixed(0)}`);
   return stats;
 }
 

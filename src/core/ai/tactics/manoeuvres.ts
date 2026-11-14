@@ -301,8 +301,9 @@ export const STRAFE_EXTEND_OVERSHOOTS = 1;
 /** Strafing a parked or slow target: the dive aims this share of the overshoot
  *  beside it (see `runMiss`). */
 export const STRAFE_MISS_OVERSHOOTS = 0.25;
-/** The strafing swing-round arcs (course square to the velocity) while the
- *  ship still flies away from the target faster than this × cruise. */
+/** A dive's swing-round arcs (course square to the velocity) while the ship
+ *  still flies away from the target faster than this × cruise (any target
+ *  ship, slow or not). */
 const STRAFE_SWING_MIN_SPEED = 0.25;
 
 /**
@@ -391,13 +392,17 @@ export class AttackRunManoeuvre implements IManoeuvre {
       // Perpendicular to the target line (left-hand normal).
       let gx = ctx.aimX - ctx.uy * miss - ctx.x;
       let gy = ctx.aimY + ctx.ux * miss - ctx.y;
-      // Strafing a parked or slow target, still flying away from it after the
-      // extend: swing round in an arc, course square to the velocity on the
-      // target's side, so thrust curves the velocity instead of cancelling
-      // it. Aiming straight back at the target turned the ship in place:
-      // the speed fell to ~30 % of cruise for ~3 s every pass (strafeParked).
+      // A dive started while still flying away from the target (after an
+      // extend, or out of the open): swing round in an arc, course square to
+      // the velocity on the target's side, so thrust curves the velocity
+      // instead of cancelling it. Aiming straight back at the target turned
+      // the ship in place: the speed fell to ~30 % of cruise for ~3 s every
+      // pass (strafeParked). Whatever the target's speed (owner: "everyone
+      // accelerates all the time in combat"): gated on a slow target only,
+      // a robot orb on a pilot at 47–187 u/s braked 122 → 14 u/s to turn
+      // back (filmed take 5, 2026-11-14; attackRunTurnBack).
       const v = Math.hypot(ctx.vx, ctx.vy);
-      if (ctx.targetIsShip && targetSlow(ctx) && v > STRAFE_SWING_MIN_SPEED * ctx.cruiseSpeed
+      if (ctx.targetIsShip && v > STRAFE_SWING_MIN_SPEED * ctx.cruiseSpeed
         && ctx.vx * ctx.ux + ctx.vy * ctx.uy < 0) {
         const s = ctx.vx * ctx.uy - ctx.vy * ctx.ux >= 0 ? 1 : -1;
         gx = (-ctx.vy / v) * s;

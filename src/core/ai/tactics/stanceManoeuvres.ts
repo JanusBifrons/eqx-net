@@ -404,6 +404,11 @@ export class FleeManoeuvre implements IManoeuvre {
     out.spendReserve = pursued;
   }
   isDone(): boolean { return false; }
+  /** No hostile target at all (the brain has nothing to fight): as clear as
+   *  no enemy in sensors. Starts the clear clock if it isn't running. */
+  noteClear(tick: number): void {
+    if (this.clearSince < 0) this.clearSince = tick;
+  }
   /** Clear for long enough, or fled for long enough: time to jump. */
   wantsWarpOut(tick: number): boolean {
     return (this.clearSince >= 0 && tick - this.clearSince >= FLEE_CLEAR_TICKS) || tick - this.start >= FLEE_MAX_TICKS;

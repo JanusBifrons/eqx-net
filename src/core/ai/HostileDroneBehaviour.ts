@@ -161,8 +161,10 @@ const RUN_PILOT_PARAMS: Readonly<PilotParams> = { ...COMBAT_PILOT_PARAMS, boostC
 /** `ManoeuvreGoal.throttleNow`: running, with no throttle hold. */
 const RUN_NOW_PILOT_PARAMS: Readonly<PilotParams> = { ...RUN_PILOT_PARAMS, throttleHoldTicks: 0 };
 /** Combat boost keeps this share of the energy pool in reserve; only a Break
- *  (getting out from under fire) may burn below it. */
-const BOOST_RESERVE_FRAC = 0.25;
+ *  (getting out from under fire) or a run (`spendReserve`) may burn below
+ *  it. 0.10 (owner 2026-11-14, was 0.25): NPCs use the afterburner more in a
+ *  fight, with the same pool as a player (no AI-only regen). */
+const BOOST_RESERVE_FRAC = 0.1;
 /** Forget a hostile player after this many ticks of no fresh damage from
  *  them. 1800 ticks @ 60 Hz = 30 s. Mirrors the player's own intuition that
  *  if they've been clean for half a minute, the drone has lost interest. */
@@ -766,6 +768,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     //    to players) takes the pre-P0 fast path, byte-identical.
     const canEngageOnSight = this.onSightPlayers || (view.swarms !== undefined && view.swarms.length > 0);
     if (this.state === 'IDLE' && !canEngageOnSight) {
+      if (this._picker.current === MANOEUVRE_FLEE) return this.tickFleeClear(self, view.tick);
       return this.leaderId !== null ? this.tickFlock(self, view) : this.tickPatrol(self);
     }
 
@@ -887,6 +890,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     // An IDLE entity with nothing on-sight-hostile in range keeps patrolling /
     // flocking (it never entered COMBAT; no state change).
     if (this.state === 'IDLE' && !anyHostile) {
+      if (this._picker.current === MANOEUVRE_FLEE) return this.tickFleeClear(self, view.tick);
       return this.leaderId !== null ? this.tickFlock(self, view) : this.tickPatrol(self);
     }
 
@@ -908,9 +912,31 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     if (newId !== this.prevTargetId) this.prevTargetSinceTick = view.tick;
     this.prevTargetId = newId;
     view.claims?.claim(self.id, this.allegiance, newId);
-    if (target === null) return this.tickPatrol(self);
+    if (target === null) {
+      if (this._picker.current === MANOEUVRE_FLEE) return this.tickFleeClear(self, view.tick);
+      return this.tickPatrol(self);
+    }
 
     return this.tickCombat(self, view, target);
+  }
+
+  /**
+   * A fleeing ship with no hostile target left (it outran the on-sight reach
+   * of its enemies, or they died): it is clear. Keep running along the escape
+   * line at full speed with boost and warp out once Flee's clear time (or its
+   * cap) is up. Filmed take 5 (perf-dogfight-3v3, 2026-11-14): with the
+   * warp-out asked only in the combat branch, a ship that lost its target
+   * patrolled instead and drifted in the sector, never warping.
+   */
+  private tickFleeClear(self: AiEntity, tick: number): AiIntent {
+    const f = this._flee;
+    f.noteClear(tick);
+    this._tac.tick = tick;
+    const v = this.handling.maxSpeed;
+    const boostOk = this.energy >= BOOST_RESERVE_FRAC * this.energyMax;
+    const intent = this.fly(self, Math.atan2(-f.dirX, f.dirY), f.dirX * v, f.dirY * v, boostOk, RUN_PILOT_PARAMS);
+    if (f.wantsWarpOut(tick)) this.requestWarpOut(self, intent);
+    return intent;
   }
 
   // ── Patrol ──────────────────────────────────────────────────────────

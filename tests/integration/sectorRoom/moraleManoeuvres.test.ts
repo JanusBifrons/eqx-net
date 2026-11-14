@@ -12,6 +12,9 @@
  *      its spool ends it leaves the sector the way any departing NPC does
  *      (`warp_out` where it stood, then gone from the room). The 3v3 take of
  *      2026-11-14 had a fled drone jump ~12.7 km and park in the room.
+ *  (d) In the dogfight-3v3 perf scene, a drone forced to Flee whose enemies
+ *      are then gone (no hostile target left) warps out ~2 s later and
+ *      leaves. The 3v3 take 5 of 2026-11-14 had one drift in the room instead.
  *
  * The roll is forced through the brain's `setMoraleRoll` test seam; the
  * trigger is real (hull at 20 % crosses the 25 % threshold).
@@ -24,6 +27,7 @@ import { MANOEUVRE_FALL_BACK, MANOEUVRE_FLEE, MANOEUVRE_KITE } from '../../../sr
 import { MORALE_OUTCOME } from '../../../src/core/ai/tactics/morale.js';
 import { roleProfile } from '../../../src/core/ai/tactics/roleProfiles.js';
 import { getShipKind } from '../../../src/shared-types/shipKinds.js';
+import { PERF_SCENES } from '../../../src/shared-types/perf/perfScenes.js';
 
 const SAMPLE_MS = 50;
 
@@ -265,5 +269,88 @@ describe('SectorRoom integration — Kite and the morale die (AI slice 6b)', () 
     // Where it stood (its last sample, at most a sample's flight away), not
     // at the in-sector drop 4 x sensor range off.
     expect(Math.hypot(out!.x - last.x, out!.y - last.y), 'the warp_out is where it stood').toBeLessThan(0.25 * mb.getSensorRange());
+  });
+});
+
+describe('SectorRoom integration — a ship that fled the filmed 3v3 warps out', () => {
+  let harness: SectorTestHarness | undefined;
+  afterEach(async () => { if (harness) await harness.cleanup(); harness = undefined; }, 15_000);
+
+  // Filmed take 5 (perf-dogfight-3v3, 2026-11-14): drone blue-0 rolled Flee at
+  // ~19 s and ran at 168–249 u/s with boost; ~4 s later it had no target
+  // left (robots engage on sight, not by grudge: out of their reach nothing
+  // was hostile to it any more) and at the end of the take (27.6 s) it was
+  // still in the sector, drifting at 30 u/s, never warped. The brain asked
+  // about the warp-out only inside its combat branch, which a ship with no
+  // hostile target never reaches (it patrols), so neither the 2 s "clear"
+  // rule nor the 6 s cap could fire.
+  // Scene: the `dogfight-3v3` perf scene (on sight, nothing marked hostile,
+  // the pilot parked far off). After 10 s of fighting one drone drops to
+  // 20 % hull (the morale trigger), its die forced to Flee, and it takes no
+  // more damage. A second later its wingmen have destroyed the three robots
+  // (lethal hits through the room's damage path), so it is clear: no enemy
+  // left, as when the take's runner outran the robots' reach. It must warp
+  // out (spool, then leave with a warp_out) within a few seconds of that.
+  it('(d) a drone in dogfight-3v3, forced Flee, warps out and leaves within a few seconds of getting clear', { timeout: 90_000 }, async () => {
+    const scene = PERF_SCENES.find((s) => s.id === 'dogfight-3v3')!;
+    harness = await bootSectorTestServer({
+      ...scene.room, sectorKey: null, defaultSpawnX: 0, defaultSpawnY: -20_000,
+    } as never);
+    const client = await harness.connectActive(randomUUID());
+    const room = harness.getServerRoom() as unknown as Room;
+    let ships: Array<{ id: string; shipKind?: string }> = [];
+    for (let i = 0; i < 40 && ships.length < 6; i++) {
+      await harness.advance(SAMPLE_MS);
+      ships = [...room._internals.swarmRegistry.all()].filter((r) => r.kind === 1);
+    }
+    expect(ships.length).toBe(6);
+    const blues = ships.filter((r) => r.shipKind === 'fighter');
+    const robots = ships.filter((r) => r.shipKind !== 'fighter');
+    const me = blues[0]!.id;
+    const wingman = blues[1]!.id;
+    const mb = brain(room, me);
+    for (const r of ships) {
+      if (r.id !== me) room._internals.swarmHealth.set(r.id, 1e9);
+      brain(room, r.id).setMoraleRoll(() => MORALE_OUTCOME.FightOn);
+    }
+    const orig = room.applyDamage.bind(room);
+    room.applyDamage = (t: string, src: string, ...rest: unknown[]) => { if (t !== me) orig(t, src, ...rest); };
+    await harness.advance(10_000);
+    mb.setMoraleRoll(() => MORALE_OUTCOME.Flee);
+    room._internals.swarmHealth.set(me, 0.2 * getShipKind('fighter').maxHealth);
+    const warpOuts: Array<{ playerId: string }> = [];
+    client.onMessage('warp_out', (m: { playerId: string }) => { warpOuts.push(m); });
+
+    let fleeAtMs = -1, clearAtMs = -1, warpAtMs = -1, goneAtMs = -1;
+    const t0 = Date.now();
+    while (Date.now() - t0 < 20_000) {
+      await harness.advance(SAMPLE_MS);
+      const now = Date.now() - t0;
+      if (!room._internals.swarmPose(me)) { goneAtMs = now; break; }
+      if (fleeAtMs < 0 && mb.getManoeuvre() === MANOEUVRE_FLEE) fleeAtMs = now;
+      if (fleeAtMs >= 0 && clearAtMs < 0 && now - fleeAtMs >= 1000) {
+        // Lethal hits until all three are gone (a shield may soak the first).
+        let alive = 0;
+        for (const r of robots) {
+          if (room._internals.swarmPose(r.id) === null) continue;
+          alive++;
+          room._internals.swarmHealth.set(r.id, 1);
+          orig(r.id, wingman, 1_000_000);
+        }
+        if (alive === 0) clearAtMs = now;
+      }
+      if (warpAtMs < 0 && room.botWarpPhase(me) !== 0) warpAtMs = now;
+    }
+    await harness.advance(200);
+    const robotsLeft = robots.filter((r) => room._internals.swarmPose(r.id) !== null).length;
+    console.log(`[flee3v3] fleeAt=${fleeAtMs}ms clearAt=${clearAtMs}ms warpAt=${warpAtMs}ms gone=${goneAtMs}ms robotsLeft=${robotsLeft} warpOuts=${mb.getWarpOutCount()} broadcast=${warpOuts.some((m) => m.playerId === me)}`);
+    expect(fleeAtMs, 'ran FLEE').toBeGreaterThanOrEqual(0);
+    expect(robotsLeft, 'no enemy left: clear').toBe(0);
+    expect(mb.getWarpOutCount(), 'asked to warp out once').toBe(1);
+    expect(warpAtMs, 'the room started its warp').toBeGreaterThanOrEqual(0);
+    // Clear for FLEE_CLEAR_TICKS (2 s), plus sampling slack.
+    expect(warpAtMs - clearAtMs, 'warp within ~3 s of getting clear').toBeLessThan(3000);
+    expect(goneAtMs, 'left the room').toBeGreaterThan(warpAtMs);
+    expect(warpOuts.some((m) => m.playerId === me), 'the room broadcast its warp_out').toBe(true);
   });
 });
