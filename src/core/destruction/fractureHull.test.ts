@@ -20,6 +20,7 @@ import {
 } from './fractureHull.js';
 import { SHIP_KINDS } from '../../shared-types/shipKinds.js';
 import { shipHullOutline } from '../geometry/shipHullOutline.js';
+import { DESTRUCTION_PROFILES } from '../../shared-types/shipScale/destruction.js';
 
 type V = { x: number; y: number };
 
@@ -564,6 +565,40 @@ describe('fractureHull', () => {
     }).toEqual(GOLDEN_DAMAGE);
   });
 
+  it('golden: v9 kill cuts (slice and channel, capital and sub-capital) are locked', () => {
+    const sub = DESTRUCTION_PROFILES.subcap.fracture!;
+    const run = (h: ReadonlyArray<readonly [number, number]>, opts: Partial<FractureInput>, width: number) => {
+      // A side hit amidships (not a wingtip): the outline point nearest a
+      // point part-way out to starboard at mid-length.
+      let y0 = Infinity;
+      let y1 = -Infinity;
+      let x1 = -Infinity;
+      for (const [x, y] of h) { y0 = Math.min(y0, y); y1 = Math.max(y1, y); x1 = Math.max(x1, x); }
+      const side = projectToOutline(h, { x: 0.6 * x1, y: (y0 + y1) / 2 });
+      const bow = projectToOutline(h, { x: 0, y: -1e5 });
+      const base = { hull: h, seed: 20261114, maxPieces: FRACTURE_MAX_PIECES, killBlowDamage: 0.8, recentDamageRate: 0.6, ...opts };
+      const one = (k: V, dirX: number, dirY: number, kind: 'slice' | 'channel') => {
+        const pieces = fractureHull({ ...base, killPoint: k, cut: { kind, dirX, dirY, width } });
+        return { pieces: pieces.length, hash: hashPieces(pieces) };
+      };
+      return {
+        slice: one(side, -1, 0.15, 'slice'),
+        channel: one(side, -1, 0.15, 'channel'),
+        bowSlice: one(bow, 0.05, 1, 'slice'),
+        bowChannel: one(bow, 0.05, 1, 'channel'),
+      };
+    };
+    const fighter = shipHullOutline(SHIP_KINDS['fighter']);
+    expect({
+      capital: run(hull('battleship'), {}, 120),
+      subcap: run(fighter, {
+        maxPieces: sub.maxPieces, snapChance: sub.snapChance, fanCracks: sub.fanCracks, farCrack: sub.farCrack,
+        chunkyPieces: sub.chunkyPieces, chunkyMinWidthBeams: sub.chunkyMinWidthBeams, soundMinShare: sub.soundMinShare,
+        extraChunkChance: sub.extraChunkChance, jag: sub.jag,
+      }, 1.5),
+    }).toEqual(GOLDEN_CUT);
+  });
+
   it.runIf(!!process.env.EQX_FRACTURE_SVG)('prints review SVGs (kill points on the hull edge)', async () => {
     // Real hits land on the hull's edge: bow, beam, quarter and the port bow.
     const bs = hull('battleship');
@@ -619,7 +654,26 @@ describe('fractureHull', () => {
 // Voronoi seeds and no far cracks; zone cracks either side of the primary and
 // up to two fan cracks from the kill point leave 2–4 chunky pieces at the
 // impact and one big section each side. The snap is unchanged.
-const GOLDEN = { version: 8, pieces: 4, hash: 1220196282 };
+// v8: the sub-capital `soundMinShare` option; capital output unchanged.
+// v9: the optional kill `cut` (slice / channel); without one the output is
+// unchanged (same hashes), so only the version moved.
+const GOLDEN = { version: 9, pieces: 4, hash: 1220196282 };
+/** v9 kill cuts: a battleship and a fighter (sub-capital profile), each
+ *  sliced and channelled by a side shot and a bow shot. */
+const GOLDEN_CUT = {
+  capital: {
+    slice: { pieces: 5, hash: 2611606597 },
+    channel: { pieces: 6, hash: 1932162009 },
+    bowSlice: { pieces: 2, hash: 3552817541 },
+    bowChannel: { pieces: 2, hash: 3239178352 },
+  },
+  subcap: {
+    slice: { pieces: 2, hash: 318138258 },
+    channel: { pieces: 2, hash: 1695779947 },
+    bowSlice: { pieces: 2, hash: 4233612981 },
+    bowChannel: { pieces: 2, hash: 3819904497 },
+  },
+};
 const GOLDEN_DAMAGE = { shatter: { pieces: 5, hash: 443402828 }, snap: { pieces: 2, hash: 2389120540 } };
 
 function hashPieces(pieces: ReadonlyArray<FracturePiece>): number {

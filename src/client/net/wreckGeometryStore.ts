@@ -31,7 +31,8 @@ interface Entry {
 function sameInputs(a: WreckDescriptor, b: WreckDescriptor): boolean {
   return a.parentKind === b.parentKind && a.seed === b.seed && a.killX === b.killX && a.killY === b.killY
     && a.killBlowDamage === b.killBlowDamage && a.recentDamageRate === b.recentDamageRate
-    && a.snapChance === b.snapChance && a.algoVersion === b.algoVersion;
+    && a.snapChance === b.snapChance && a.algoVersion === b.algoVersion
+    && a.cutKind === b.cutKind && a.cutAng === b.cutAng && a.cutW === b.cutW;
 }
 
 /** Is this descriptor one this client can rebuild? */
@@ -49,6 +50,10 @@ export function rebuildWreckPieces(d: WreckDescriptor): WreckPieceGeometry[] {
     killBlowDamage: d.killBlowDamage,
     recentDamageRate: d.recentDamageRate,
     snapChance: d.snapChance,
+    // The v9 kill cut rides as-is (absent = no cut).
+    cutKind: d.cutKind,
+    cutAng: d.cutAng,
+    cutW: d.cutW,
   });
 }
 

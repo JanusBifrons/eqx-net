@@ -71,6 +71,13 @@ export const LOCK_TUNING: LockTuning = {
   reachSlack: 1.1,
 };
 
+/** Own-ship `lockedBy` rows sent per snapshot: the nearest lockers, completed
+ *  locks first (owner 2026-11-14). Why: locks work at any distance, so every
+ *  hostile in the sector can lock you; the rows feed radar and aim marks for
+ *  the threats that matter, and `lockedByN` carries the total, keeping the
+ *  wire cost flat however many enemies there are. */
+export const LOCKED_BY_WIRE_ROWS = 8;
+
 /**
  * Each weapon size's REFERENCE target size (u) and TRACKING (rad/s it can
  * follow comfortably). A gun built for capitals (XL) finds a fighter-sized

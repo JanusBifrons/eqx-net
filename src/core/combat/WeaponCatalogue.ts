@@ -48,7 +48,15 @@ export interface HitscanWeaponDef extends WeaponDefBase {
    *  falloff ⇒ flat damage. SERVER-AUTHORITATIVE — the client reads the scaled
    *  number off the `DamageEvent`, never predicts it (avoids desync). */
   falloff?: { minDamageFrac: number; maxRangeMul?: number };
+  /** How a kill by this weapon breaks the hull (docs/architecture/
+   *  capital-destruction.md "Kill cuts"): `slice` cuts it dead straight along
+   *  the shot's line through the kill point; `channel` erases a straight strip
+   *  `width` world units wide along that line. Absent ⇒ the normal break-up. */
+  killCut?: WeaponKillCut;
 }
+
+/** A weapon's kill cut (`WeaponDefBase.killCut`). */
+export type WeaponKillCut = { kind: 'slice' } | { kind: 'channel'; width: number };
 
 export interface ProjectileWeaponDef extends WeaponDefBase {
   mode: 'projectile';

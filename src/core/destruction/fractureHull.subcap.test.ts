@@ -9,7 +9,7 @@
  * simple outlines, convex parts, no slivers.
  */
 import { describe, expect, it } from 'vitest';
-import { fractureHull, FRACTURE_QUANTUM, type FractureInput, type FracturePiece } from './fractureHull.js';
+import { fractureHull, fracturePlan, FRACTURE_QUANTUM, type FractureInput, type FracturePiece } from './fractureHull.js';
 import { wreckPieceGeometry } from './wreckPieces.js';
 import { SHIP_KINDS, SHIP_KINDS_LIST } from '../../shared-types/shipKinds.js';
 import { shipTuning } from '../../shared-types/shipScale/tuning.js';
@@ -292,4 +292,63 @@ describe('capital fracture is unchanged by the profile options', () => {
       }
     }
   });
+});
+
+describe('sub-capital kill cuts (fracture v9)', () => {
+  /** A shot into the hull from the kill point's side, turned a seeded
+   *  ±40° off straight at the centre. */
+  function cutInput(hull: ReadonlyArray<readonly [number, number]>, seed: number, v: number, kind: 'slice' | 'channel', width: number): FractureInput {
+    const base = { ...subcapInput(hull, seed, v), soundMinShare: SUB.soundMinShare };
+    const ang = Math.atan2(-base.killPoint.y, -base.killPoint.x) + (((seed * 37) % 81) - 40) * (Math.PI / 180);
+    return { ...base, cut: { kind, dirX: Math.cos(ang), dirY: Math.sin(ang), width } };
+  }
+
+  for (const kind of SUBCAP_KINDS) {
+    it(`${kind.id}: slices and channels leave valid pieces, the channel strip empty`, () => {
+      const hull = shipHullOutline(kind);
+      const hp = hull.map(([x, y]) => ({ x, y }));
+      const hullArea = Math.abs(area(hp));
+      const scale = Math.sqrt(hullArea);
+      const W = 0.12 * scale;
+      for (let seed = 0; seed < 20; seed++) {
+        for (const v of VIOLENCE) {
+          for (const cutKind of ['slice', 'channel'] as const) {
+            const input = cutInput(hull, seed, v, cutKind, W);
+            const tag = `${kind.id} ${cutKind} seed ${seed} violence ${v}`;
+            const pieces = fractureHull(input);
+            expect(pieces.length, tag).toBeGreaterThanOrEqual(cutKind === 'slice' ? 2 : 1);
+            let sum = 0;
+            for (const p of pieces) {
+              sum += p.area;
+              expect(isSimple(p.outline), `${tag}: simple outline`).toBe(true);
+              let partSum = 0;
+              for (const part of p.convexParts) {
+                expect(isConvexCcw(part, scale), `${tag}: convex part`).toBe(true);
+                partSum += area(part);
+              }
+              expect(Math.abs(partSum - p.area), `${tag}: parts tile the piece`).toBeLessThan(1e-6 * hullArea + 1e-9);
+              expect(p.area / hullArea, `${tag}: piece share`).toBeGreaterThanOrEqual(0.05);
+            }
+            if (cutKind === 'slice') {
+              expect(Math.abs(sum - hullArea) / hullArea, `${tag}: area`).toBeLessThan(5e-3);
+            } else {
+              expect(sum, `${tag}: the channel took area`).toBeLessThan(hullArea);
+              const k = input.cut!;
+              const l = Math.hypot(k.dirX, k.dirY);
+              const plan = fracturePlan(input);
+              const kp = plan.killPoint;
+              for (const p of pieces) {
+                for (const q of p.outline) {
+                  const d = Math.abs(((q.x - kp.x) * -k.dirY + (q.y - kp.y) * k.dirX) / l);
+                  expect(d, `${tag}: a vertex inside the channel`).toBeGreaterThanOrEqual(W / 2 - 0.05);
+                }
+              }
+            }
+          }
+        }
+      }
+      // Deterministic.
+      expect(fractureHull(cutInput(hull, 3, 1, 'slice', W))).toEqual(fractureHull(cutInput(hull, 3, 1, 'slice', W)));
+    });
+  }
 });

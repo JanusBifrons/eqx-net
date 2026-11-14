@@ -35,6 +35,14 @@ const samples: Array<[string, unknown]> = [
   ['infinite damage', { ...good, killBlowDamage: Number.POSITIVE_INFINITY }],
   ['fractional algo', { ...good, algoVersion: 6.5 }],
   ['missing snapChance', { ...good, snapChance: undefined }],
+  // Fracture v9 kill cut (optional; the reader lands before the server sends it).
+  ['slice cut', { ...good, cutKind: 'slice', cutAng: 65535 }],
+  ['channel cut', { ...good, cutKind: 'channel', cutAng: 0, cutW: 12.5 }],
+  ['unknown cut kind', { ...good, cutKind: 'laser', cutAng: 3 }],
+  ['cut angle past u16', { ...good, cutKind: 'slice', cutAng: 65536 }],
+  ['fractional cut angle', { ...good, cutKind: 'slice', cutAng: 2.5 }],
+  ['negative channel width', { ...good, cutKind: 'channel', cutAng: 1, cutW: -1 }],
+  ['NaN channel width', { ...good, cutKind: 'channel', cutAng: 1, cutW: Number.NaN }],
   ['null', null],
 ];
 
