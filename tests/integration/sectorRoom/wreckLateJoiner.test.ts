@@ -15,7 +15,7 @@ import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import { decodeSwarmPacket } from '../../../src/client/net/BinarySwarmDecoder.js';
 import { WreckGeometryStore } from '../../../src/client/net/wreckGeometryStore.js';
 import type { RenderMirror } from '../../../src/core/contracts/IRenderer.js';
-import type { WreckDescriptor } from '../../../src/shared-types/messages/snapshotMessages.js';
+import type { SnapshotMessage, WreckDescriptor } from '../../../src/shared-types/messages/snapshotMessages.js';
 
 const WRECK_KIND = 4;
 
@@ -40,17 +40,23 @@ describe('SectorRoom integration — late joiner rebuilds capital wrecks (S2b)',
     expect(internal.wreckDescriptors()).toHaveLength(1);
     await harness.advance(1500); // well past the change window: only the 2 Hz cadence remains
 
-    // The late joiner, near the wreck so its pieces are in interest.
+    // The late joiner, near the wreck so its pieces are in interest. Slice 3:
+    // the full set rides the WELCOME; snapshots carry only deltas + resync.
     const mirror: RenderMirror = { ships: new Map(), localPlayerId: null };
     const store = new WreckGeometryStore();
     let gotWrecks: WreckDescriptor[] | undefined;
+    let fullListOnSnapshot = false;
     const late = await harness.connectAs(randomUUID(), { shipKind: 'fighter', spawnX: 0, spawnY: -500 });
-    late.onMessage('swarm', (buf: Uint8Array) => decodeSwarmPacket(buf, mirror));
-    late.onMessage('snapshot', (snap: { wrecks?: WreckDescriptor[] }) => {
-      if (snap.wrecks !== undefined) {
-        gotWrecks = snap.wrecks;
-        store.apply(snap.wrecks);
+    late.onMessage('welcome', (msg: { wrecks?: WreckDescriptor[] }) => {
+      if (msg.wrecks !== undefined) {
+        gotWrecks = msg.wrecks;
+        store.apply(msg.wrecks);
       }
+    });
+    late.onMessage('swarm', (buf: Uint8Array) => decodeSwarmPacket(buf, mirror));
+    late.onMessage('snapshot', (snap: SnapshotMessage) => {
+      if ((snap as { wrecks?: unknown }).wrecks !== undefined) fullListOnSnapshot = true;
+      store.applySnapshot(snap);
     });
     late.send('client_ready', { type: 'client_ready' });
     const deadline = Date.now() + 4000;
@@ -60,8 +66,9 @@ describe('SectorRoom integration — late joiner rebuilds capital wrecks (S2b)',
       if (gotWrecks !== undefined && seen === serverPieces.length) break;
       await harness.advance(100);
     }
-    expect(gotWrecks, 'the late joiner got the wrecks[] descriptor').toBeDefined();
+    expect(gotWrecks, 'the late joiner got the full wreck set in its welcome').toBeDefined();
     expect(gotWrecks).toHaveLength(1);
+    expect(fullListOnSnapshot, 'snapshots never carry the full list any more').toBe(false);
 
     const clientPieces = [...mirror.swarm!.values()].filter((e) => e.kind === WRECK_KIND);
     expect(clientPieces.length, 'every wreck piece rides the binary wire').toBe(serverPieces.length);
@@ -76,6 +83,61 @@ describe('SectorRoom integration — late joiner rebuilds capital wrecks (S2b)',
       expect(g!.parts).toStrictEqual(r.wreckParts);
       expect(Math.fround(g!.radius)).toBe(Math.fround(r.radius));
     }
+  }, 20_000);
+
+  it('a connected client gets a new wreck as ONE add (not the whole list), and a gone wreck as a remove', async () => {
+    harness = await bootSectorTestServer({
+      sectorKey: 'sol-prime', droneCount: 0, testMode: true, peacefulDrones: true, asteroidConfig: [],
+      capitalWrecks: true,
+    });
+    const store = new WreckGeometryStore();
+    const adds: number[][] = [];
+    const removes: number[][] = [];
+    const room = await harness.connectAs(randomUUID(), { shipKind: 'fighter', spawnX: 0, spawnY: -500 });
+    room.onMessage('welcome', (msg: { wrecks?: WreckDescriptor[] }) => { if (msg.wrecks) store.apply(msg.wrecks); });
+    room.onMessage('swarm', () => {});
+    room.onMessage('snapshot', (snap: SnapshotMessage) => {
+      if (snap.wreckAdds) adds.push(snap.wreckAdds.map((d) => d.wreckId));
+      if (snap.wreckRemoves) removes.push([...snap.wreckRemoves]);
+      store.applySnapshot(snap);
+    });
+    room.send('client_ready', { type: 'client_ready' });
+    const srv = (harness.getServerRoom() as unknown as SectorRoom)._internals;
+    srv.setWreckSeed(7);
+    const kill = async (id: string, x: number): Promise<void> => {
+      expect(srv.spawnTestDrone(id, x, 3000, 'battleship')).toBe(true);
+      await harness.advance(100);
+      const at = srv.wreckState(id)!;
+      srv.applyDamage(id, 'shooter-x', 1e7, at.x + 50, at.y);
+    };
+    const pump = async (ms: number): Promise<void> => {
+      const end = Date.now() + ms;
+      while (Date.now() < end) { harness.sendThrust(room); await harness.advance(100); }
+    };
+    await kill('bb1', -3000);
+    await pump(800);
+    expect(store.size(), 'the first wreck arrived as an add').toBe(1);
+    adds.length = 0;
+
+    await kill('bb2', 3000);
+    await pump(800);
+    const live = [...srv.wreckDescriptors()];
+    expect(live).toHaveLength(2);
+    const newId = live[1]!.wreckId;
+    expect(adds.length, 'the add rode at least one snapshot').toBeGreaterThanOrEqual(1);
+    for (const a of adds) expect(a, 'one add (the new wreck), never the whole live set').toEqual([newId]);
+    expect(store.size()).toBe(2);
+
+    // Every piece of the first wreck leaves the world: its id rides wreckRemoves.
+    const gone = live[0]!.wreckId;
+    for (const r of [...srv.swarmRegistry.all()]) {
+      if (r.kind === WRECK_KIND && r.wreckId === gone) srv.evictSwarm(r.id);
+    }
+    expect(srv.wreckDescriptors()).toHaveLength(1);
+    await pump(800);
+    expect(removes.flat()).toContain(gone);
+    expect(store.has(gone)).toBe(false);
+    expect(store.has(newId)).toBe(true);
   }, 20_000);
 
   it('the test_kill_capitals trigger kills a shielded capital and leaves its wreck', async () => {
