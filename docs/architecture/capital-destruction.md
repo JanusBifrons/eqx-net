@@ -1975,8 +1975,14 @@ line; a railgun kill erases a straight channel as wide as the bolt.
   normal break-up. Locks: `CapitalWreckSubsystem.test.ts` "killCut";
   `tests/integration/sectorRoom/capitalWrecks.test.ts` "killCut slice kill"
   (tests give the laser a `killCut` for the test and restore it).
-- **Not yet:** no catalogue weapon sets `killCut`; the instant hold and the
-  cut glow.
+- **The railgun** (plan step 7, 2026-11-14) is the first catalogue weapon
+  with a `killCut`: `{ kind: 'channel', width: RAILGUN_BOLT_WIDTH }` (16 u, the
+  slug's drawn bolt, ≥ 2 × its 5 u radius so it clears both halves). Its slug
+  passes through what it kills at full damage and ignores wreck pieces
+  ([shell-events](shell-events.md#railgun-pass-through-2026-11-14)). Lock:
+  `tests/integration/sectorRoom/railgun.test.ts` (two capitals on one line:
+  both cut with a channel of the bolt's width, the third stops the slug).
+- **Not yet:** the heavy beam's `slice`; the instant hold and the cut glow.
 - Locks: `fractureHull.test.ts` "golden: v9 kill cuts" (battleship and
   fighter, side and bow, slice and channel); `fractureHull.killFocus.test.ts`
   "fracture v9" (the slice's cut is collinear with the shot through the kill

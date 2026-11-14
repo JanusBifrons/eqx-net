@@ -31,6 +31,18 @@ describe('applyDroneMountAngles — charge telegraph', () => {
     expect(m.swarm!.get(1)!.chargingMask).toBe(0);
   });
 
+  it('carries per-mount charge offsets, replaces them each snapshot, and clears them with the charge', () => {
+    const m = mirrorWith([1]);
+    applyDroneMountAngles(snap([{ id: 1, chargingMask: 0b11, chargeStartTick: 900, chargeOffsets: [0, 120] }]), m);
+    expect(m.swarm!.get(1)!.chargeOffsets).toEqual([0, 120]);
+    // Both now charge from the same tick: the server omits the offsets.
+    applyDroneMountAngles(snap([{ id: 1, chargingMask: 0b11, chargeStartTick: 900 }]), m);
+    expect(m.swarm!.get(1)!.chargeOffsets).toBeUndefined();
+    applyDroneMountAngles(snap([{ id: 1, chargingMask: 0b11, chargeStartTick: 900, chargeOffsets: [0, 120] }]), m);
+    applyDroneMountAngles(snap(undefined), m);
+    expect(m.swarm!.get(1)!.chargeOffsets).toBeUndefined();
+  });
+
   it('take 12 — an AI ship holding boost is marked boosting, and clears when it lets go', () => {
     const m = mirrorWith([1, 2]);
     applyDroneMountAngles(snap([{ id: 1, boost: true }, { id: 2, hostile: true }]), m);

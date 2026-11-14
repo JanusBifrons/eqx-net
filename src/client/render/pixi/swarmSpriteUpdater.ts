@@ -413,7 +413,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
       if (tele !== undefined) {
         const mask = entry.chargingMask ?? 0;
         if (mask !== 0 && sprite.children[sprite.children.length - 1] !== tele.root) sprite.addChild(tele.root);
-        updateChargeTelegraph(tele, mask, entry.chargeStartTick, entry.lastUpdateTick, fxNow, entry.displayMountAngles ?? entry.mountAngles);
+        updateChargeTelegraph(tele, mask, entry.chargeStartTick, entry.lastUpdateTick, fxNow, entry.displayMountAngles ?? entry.mountAngles, entry.chargeOffsets);
       }
       // P4a — a named elite wears a slowly-pulsing gold ring.
       let ring = eliteRings.get(sprite);

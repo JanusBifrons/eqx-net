@@ -399,6 +399,12 @@ export interface SnapshotMessage {
      *  with `chargingMask`). The telegraph ramps from it on the game clock,
      *  so a late joiner sees the charge at its true progress (#16). */
     chargeStartTick?: number;
+    /** Per-mount charge starts (railgun battleships: several main turrets
+     *  charging from different ticks): one entry per SET bit of
+     *  `chargingMask`, lowest bit first, each that mount's start in ticks
+     *  AFTER `chargeStartTick` (0..65535). Emit-when-non-default: absent when
+     *  every charging mount began on `chargeStartTick` (a lone charge always). */
+    chargeOffsets?: number[];
     /** Take 12 — true while this AI ship's pilot holds the boost key: the
      *  client draws the same boost flame a pilot's ship gets (#16).
      *  Emit-when-true; absence means "not boosting". */

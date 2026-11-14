@@ -183,6 +183,10 @@ export interface SwarmRenderState {
   /** Server tick the earliest charge began (snapshot `drones[].chargeStartTick`);
    *  the telegraph ramps from it on the game clock. */
   chargeStartTick?: number;
+  /** Per-mount starts as ticks after `chargeStartTick`, one per set bit of
+   *  `chargingMask` (snapshot `drones[].chargeOffsets`); absent = every
+   *  charging mount began on `chargeStartTick`. */
+  chargeOffsets?: readonly number[];
   /** This AI ship's pilot holds the boost key (snapshot `drones[].boost`).
    *  Drives the same boost flame a pilot's ship gets. Snapshot cadence. */
   boosting?: boolean;

@@ -42,6 +42,7 @@ import { litPass } from './art/litPass.js';
 import { engineLightAstern, engineLightHeight, engineLightIntensity, engineLightReach } from './art/lightingSettings.js';
 import { WarpSpoolFx, type SpoolFxShip, type Nozzle } from './pixi/WarpSpoolFx.js';
 import { WARP_SPOOL_TICKS } from '@core/physics/warpDrive';
+import { NAVAL_SHELL_WEAPON_IDS } from '@core/combat/shellFlight';
 import { MachinedFlatSprite } from './art/MachinedFlatSprite.js';
 import { warmUpJobs } from './art/warmUp.js';
 import { Backdrop } from './art/fx/Backdrop.js';
@@ -2627,8 +2628,9 @@ export class PixiRenderer implements IRenderer {
     if (mirror.projectiles) for (const p of mirror.projectiles.values()) {
       if (p.beam) continue;
       const w = p.weaponId ?? '';
-      const K = w === 'naval_siege' ? 10 : w === 'naval_xxl' ? 7 : w === 'naval_xl' ? 6 : w === 'naval_l' ? 4.5 : w === 'naval_m' ? 3 : w === 'naval_s' ? 2 : 1;
-      const color = w.startsWith('naval_') || w === 'autocannon' ? 0xffc070 : 0x9fd8ff;
+      const K = w === 'naval_siege' ? 10 : w === 'naval_xxl' ? 7 : w === 'naval_xl' || w === 'railgun' ? 6 : w === 'naval_l' ? 4.5 : w === 'naval_m' ? 3 : w === 'naval_s' ? 2 : 1;
+      // The railgun slug burns white-blue; powder shells and autocannon amber.
+      const color = w === 'railgun' ? 0xcfe8ff : NAVAL_SHELL_WEAPON_IDS.has(w) || w === 'autocannon' ? 0xffc070 : 0x9fd8ff;
       const x = p.x, y = -p.y;
       sc.addLight(x, y, 5 * K, color, K > 1 ? 0.36 * K : 0.9, 55 * K);
     }

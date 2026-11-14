@@ -180,7 +180,7 @@ export interface SnapshotBroadcasterDeps {
   isDroneHostileTo: (droneId: string, playerId: string) => boolean;
   /** The one per-mount charge store (`WeaponMountTicker.charges`): the
    *  slice's `chargingMask` / `chargeStartTick` (the telegraph, #16). */
-  droneCharges?: Pick<MountCharges, 'mask' | 'startTick'>;
+  droneCharges?: Pick<MountCharges, 'mask' | 'startTick' | 'offsetsInto'>;
   /** The AI pilot holds the boost key this tick (the boost flame, #16). */
   isDroneBoosting?: (droneId: string) => boolean;
   /** Living World P1a — the carried hold of a ship instance (a SHARED reference
@@ -375,6 +375,8 @@ type MutableDroneEntry = {
   /** Per-mount charge bits + the earliest charge's start tick (emit-when-non-zero). */
   chargingMask?: number;
   chargeStartTick?: number;
+  /** Per-mount charge start offsets (emit-when-non-default). */
+  chargeOffsets?: number[];
   /** The AI pilot holds boost (emit-when-true). */
   boost?: boolean;
   elite?: string;
@@ -646,7 +648,7 @@ export class SnapshotBroadcaster {
     arr: MutableDroneEntry[], i: number,
     id: number, mountAngles: number[] | undefined, shieldDown: boolean,
     hp: number | undefined, hostile: boolean, chargingMask = 0, chargeStartTick = 0, elite?: string, fac?: string,
-    warp: 0 | 1 | 2 | 3 = 0, boost = false,
+    warp: 0 | 1 | 2 | 3 = 0, boost = false, chargeOffsets?: number[],
   ): void {
     const slot = arr[i];
     if (!slot) {
@@ -656,6 +658,7 @@ export class SnapshotBroadcaster {
       if (hp !== undefined) fresh.hp = hp;
       if (hostile) fresh.hostile = true;
       if (chargingMask !== 0) { fresh.chargingMask = chargingMask; fresh.chargeStartTick = chargeStartTick; }
+      if (chargeOffsets !== undefined) fresh.chargeOffsets = chargeOffsets;
       if (boost) fresh.boost = true;
       if (elite !== undefined) fresh.elite = elite;
       if (fac !== undefined) fresh.fac = fac;
@@ -665,6 +668,7 @@ export class SnapshotBroadcaster {
     }
     if (chargingMask !== 0) { slot.chargingMask = chargingMask; slot.chargeStartTick = chargeStartTick; }
     else { delete slot.chargingMask; delete slot.chargeStartTick; }
+    setOrDrop(slot, 'chargeOffsets', chargeOffsets);
     if (boost) slot.boost = true;
     else delete slot.boost;
     if (elite !== undefined) slot.elite = elite;
@@ -1069,6 +1073,12 @@ export class SnapshotBroadcaster {
           // Charge-up telegraph: per-mount bits + start tick (emit-when-non-zero, #16).
           const chargingMask = d.droneCharges?.mask(rec.id) ?? 0;
           const chargeStartTick = chargingMask !== 0 ? d.droneCharges!.startTick(rec.id) : 0;
+          // Per-mount starts, only when the charging mounts began apart.
+          let chargeOffsets: number[] | undefined;
+          if (chargingMask !== 0 && (chargingMask & (chargingMask - 1)) !== 0) {
+            const off = this.acquireMountAngles(0);
+            if (d.droneCharges!.offsetsInto(rec.id, chargeStartTick, off)) chargeOffsets = off;
+          }
           // P4a — an elite always reports (its name drives the label, #16).
           const elite = rec.elite?.name;
           // v4 M2 — a patrol always reports whose it is (#16: the client tint).
@@ -1082,6 +1092,7 @@ export class SnapshotBroadcaster {
           SnapshotBroadcaster.writeDroneSlot(
             dronesScratch, dronesCount,
             eid, droneMountAnglesArr, rec.shieldDown ?? false, hpPct, hostile, chargingMask, chargeStartTick, elite, fac, warp, boost,
+            chargeOffsets,
           );
           dronesCount++;
         }

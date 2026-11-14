@@ -253,7 +253,7 @@ export function applyDroneMountAngles(
   if (chargingIds.size > 0) {
     for (const id of chargingIds) {
       const sw = mirror.swarm?.get(id);
-      if (sw) { sw.chargingMask = 0; sw.chargeStartTick = undefined; }
+      if (sw) { sw.chargingMask = 0; sw.chargeStartTick = undefined; sw.chargeOffsets = undefined; }
     }
     chargingIds.clear();
   }
@@ -290,6 +290,7 @@ export function applyDroneMountAngles(
     if (d.chargingMask !== undefined && d.chargingMask !== 0) {
       sw.chargingMask = d.chargingMask;
       sw.chargeStartTick = d.chargeStartTick;
+      sw.chargeOffsets = d.chargeOffsets;
       chargingIds.add(d.id);
     }
     if (d.boost === true) {
