@@ -50,6 +50,9 @@ export interface DestructionFractureOptions {
   readonly chunkyPieces: boolean;
   /** Least piece width in beams with `chunkyPieces` (default 0.45). */
   readonly chunkyMinWidthBeams?: number;
+  /** Least share of the hull on each side of the sound primary crack with
+   *  `chunkyPieces` (default 0.15). */
+  readonly soundMinShare?: number;
   /** Chance of the one extra crack at violence 0 with `chunkyPieces`. */
   readonly extraChunkChance?: number;
   /** Jag of the cut edges (default depth 4, roughness 0.22). */
@@ -190,6 +193,11 @@ const SUBCAP: DestructionProfile = {
     farCrack: false,
     chunkyPieces: true,
     chunkyMinWidthBeams: 0.36,
+    // Take 9 review (2026-11-14): at the default 15 % the big piece was up
+    // to ~85 % of the hull, "the hull stays whole". 1/3 on the small side
+    // keeps the largest piece at <= 70 % after the jag. Lock:
+    // `wreckPieces.subcapParting.test.ts` "read as broken".
+    soundMinShare: 0.33,
     extraChunkChance: 0.4,
     jag: { depth: 1, roughness: 0.06 },
   },
@@ -206,9 +214,14 @@ const SUBCAP: DestructionProfile = {
   // robot pieces still touching ~1 s after the break; the seam pass opened
   // each cut at only 1.4 % of the radius a second). ×40: every shared cut
   // opens at >= ~0.56 radius/s, a gap of ~1/3 of the radius or more 1 s
-  // after the break. Locks: `wreckPieces.subcapParting.test.ts` (the kicks)
-  // + `subcapWrecks.test.ts` (the real server at 1 s). Slice 5 re-tunes.
-  separateScale: 40,
+  // after the break. Take 9 review (2026-11-14): that still read as a whole
+  // hull with a crack, and two pieces carrying the dead ship's few hundred
+  // u/s "drift side by side like two live ships" (~1 radius apart in all
+  // under damping 0.6/s). ×160: every cut opens and every pair of centres
+  // parts at >= ~2.2 radii/s (fighter ~53 u/s), ~1.7 radii apart 1 s after
+  // the break and ~3.7 at rest. Locks: `wreckPieces.subcapParting.test.ts`
+  // (the kicks) + `subcapWrecks.test.ts` (the real server at 1 s).
+  separateScale: 160,
   // Owner on the v5 film (2026-11-13): "they spin too much when destroyed".
   // The pieces carried the dying hull's whole turn (a fighter hard over at
   // 2 rad/s threw them at ~115 °/s); ×0.3 keeps a lazy tumble (≤ ~35 °/s

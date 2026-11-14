@@ -276,6 +276,7 @@ export function wreckPieceGeometry(input: WreckFractureInputs): WreckPieceGeomet
     farCrack: opts.farCrack,
     chunkyPieces: opts.chunkyPieces,
     chunkyMinWidthBeams: opts.chunkyMinWidthBeams,
+    soundMinShare: opts.soundMinShare,
     extraChunkChance: opts.extraChunkChance,
     jag: opts.jag,
   });

@@ -168,14 +168,27 @@ describe('SectorRoom integration — sub-capital wrecks (sub-cap break-up slice 
    * wreck's pieces must stand clearly apart 1 game s later (~1/3 of the hull
    * radius), and still come to rest and sleep (tests below). With the old
    * seam speed a missile frigate's narrowest gap was ~0.08 radii.
+   *
+   * Take 9 review (2026-11-14): a robot-square's hull "stays whole" and an
+   * orange heavy's two pieces "drift side by side for ~18 s, like two live
+   * ships flying together": at ~0.6 radii/s of parting they were still
+   * ~0.3 radii apart 1 s after the break (the old bar). Each ship is now
+   * killed while flying (the pieces inherit its velocity) and every pair
+   * must be >= 0.75 radii apart 1 game s later.
    */
-  for (const kind of ['fighter', 'robot-hexagon', 'missile-frigate'] as const) {
+  for (const kind of ['fighter', 'robot-square', 'robot-circle', 'heavy', 'robot-hexagon', 'missile-frigate'] as const) {
     it(`a ${kind}'s pieces stand clearly apart 1 s after the break, wherever it was hit`, async () => {
       const int = await boot({ subcapWrecks: true });
       const outline = shipShapeToPolygon(getShipKind(kind));
       const HITS = 4;
       for (let h = 0; h < HITS; h++) expect(int().spawnTestDrone(`g${h}`, 3000 + h * 2000, 0, kind)).toBe(true);
       await harness.advance(100);
+      const k = getShipKind(kind);
+      for (let h = 0; h < HITS; h++) {
+        const p0 = int().wreckState(`g${h}`)!;
+        int().postToWorker({ type: 'SET_POSITION', entityId: `g${h}`, x: p0.x, y: p0.y, angle: p0.angle, vx: 0.8 * k.maxSpeed, vy: 0, angvel: 0 });
+      }
+      await harness.advance(20);
       const wrecks: string[][] = [];
       for (let h = 0; h < HITS; h++) {
         const at = int().wreckState(`g${h}`)!;
@@ -199,7 +212,7 @@ describe('SectorRoom integration — sub-capital wrecks (sub-cap break-up slice 
       }
       console.log(`[subcap-gap] ${kind}: narrowest gap over ${HITS} hit points ${least.toFixed(1)} u = ${(least / r).toFixed(2)} radii after ${elapsed.toFixed(2)} game s`);
       expect(elapsed).toBeLessThan(1.3);
-      expect(least / r, `${kind}: narrowest gap after ~1 s, in hull radii`).toBeGreaterThanOrEqual(0.25);
+      expect(least / r, `${kind}: narrowest gap after ~1 s, in hull radii`).toBeGreaterThanOrEqual(0.75);
     }, 20_000);
   }
 

@@ -836,7 +836,7 @@ on the profile, not a branch in the code.
 - **Parting and knock-back** are per unit of hull radius (`shipTuning`), tuned
   for capitals, and invisible at fighter size (a fighter's pieces parted at
   ~0.1 u/s and read as one hull with a crack). The sub-cap profile scales
-  them: `pushScale` 30, `separateScale` 40, `dampingScale` 10. The push runs
+  them: `pushScale` 30, `separateScale` 40 (160 since the take 9 review, see "Reads as broken"), `dampingScale` 10. The push runs
   away from the kill point, so on a hit at one end it moves every piece the
   same way: at ×50 alone it left robot pieces touching ~1 s after the break
   (round-2 review). `separateScale` raises the seam pass's least opening
@@ -1807,6 +1807,78 @@ break-up are ON in every room by default.
   (`perfBudgets.ts`, `measuredBreakUp`). The 10-minute soak above stays
   smooth to ~1,600 pieces and never drops the client.
 
+### Reads as broken (take 9 review, 2026-11-14)
+
+**What the review saw.** A robot-square died and its hull "stays whole, a
+grey pod pops out, only a faint red cut line", then "reads as a robot
+sitting still" for 13 s. An orange heavy's two pieces "drift side by side
+for ~18 s, like two live ships flying together". A robot's hull "stays
+whole ~1.5 s before parting".
+
+**Cause, measured** (`buildWreckPieces` over 200 deaths per kind; the
+server agreed):
+
+| Kind | Pieces (2 / 3) | Largest piece, max (mean) | Slowest pair parts at | Gap 1 s later |
+|---|---|---|---|---|
+| robot-square | 193 / 7 | 73 % (61 %) | 0.61 r/s = 14.6 u/s | 0.47 r |
+| robot-circle | 198 / 2 | 69 % (60 %) | 0.60 r/s = 18.1 u/s | 0.47 r |
+| heavy | 170 / 30 | 85 % (65 %) | 0.56 r/s = 18.0 u/s | 0.46 r |
+| fighter | 182 / 18 | 80 % (64 %) | 0.55 r/s = 13.1 u/s | 0.44 r |
+
+- The sound primary crack only had to leave 15 % of the hull on its small
+  side, so on 1 death in 3 (heavy, fighter, gunship, scout) the big piece
+  was 70–85 % of the hull: a whole-looking ship with a chip off.
+- The pieces parted at ~0.55–0.6 radii/s. Under damping 0.6/s that is
+  about ONE radius in all, while both pieces carry the dead ship's few
+  hundred u/s (that momentum is kept: the debris drifts on, then rests).
+  So they flew on side by side, and the parting was too slow to see in the
+  first second.
+- Not decorations: a piece is its art mesh plus the 1 s glow. No turret
+  cluster, text, charge ring or elite ring (sprite path is `kind === 1`
+  only), no engine exhaust (`PixiRenderer.drawFxEngines` draws drones
+  only), no lock (a lock key resolves ships and structures only;
+  `MissileSimulation` skips kind 4), no far-zoom icon or radar contact. The
+  "grey pod" is the kill's loot pod in its normal colour, beside the wreck.
+
+**Fix** (profile data, no branch):
+
+- `fractureHull` option `soundMinShare` (default 0.15, capitals unchanged);
+  the sub-cap profile sets 0.33, so each side of the primary crack holds a
+  third of the hull or more and no piece is over 70 % after the jag.
+  `FRACTURE_ALGO_VERSION` 8 (sub-cap output changed; the capital golden
+  hash is the same).
+- `separateScale` 40 → 160: every cut opens, and every pair of piece
+  centres parts, at `wreckSeparate` (1.4 % of the radius a second, #18) ×
+  160 ≈ 2.2 radii/s. The halves visibly come apart in the first frames and
+  drift off from each other, ~3.7 radii apart at rest. Momentum is kept
+  (equal and opposite impulses), so the debris still drifts along the dead
+  ship's path and sleeps.
+
+**After** (same measure, 60 deaths per kind at 0.8 × top speed):
+
+| Kind | Largest piece | Slowest pair parts at | Gap 1 s later (server, killed while flying) |
+|---|---|---|---|
+| robot-square | 68 % | 2.44 r/s = 58.7 u/s | 1.66 r |
+| robot-circle | 68 % | 2.46 r/s = 73.7 u/s | 1.78 r |
+| heavy | 68 % | 2.31 r/s = 73.9 u/s | 1.73 r |
+| fighter | 66 % | 2.20 r/s = 52.8 u/s | 1.74 r |
+
+Every other sub-cap kind: largest ≤ 68 %, slowest pair ≥ 2.16 r/s. The
+fastest single piece drifts < 6 radii in all (a fighter ~116 u). Pieces
+still sleep: a fighter at rest ~4.8 game s, at full speed and turning
+~9.5 s, a missile frigate ~7.9 s, a robot hexagon ~7.7 s. Piece counts are
+unchanged (2–3), and `perfSceneCounts` stays inside the
+`measuredBreakUp` budgets (fleet-fight 74.8 bodies/tick, 12.9 wreck
+pieces, 282 KB/s; wide-view 93.2 bodies/tick, 365 KB/s), so the budgets
+are not re-set.
+
+Locks: `wreckPieces.subcapParting.test.ts` "read as broken" (every
+sub-cap kind: 2–3 pieces, largest ≤ 70 %, every pair parting ≥ 2 radii/s);
+`subcapWrecks.test.ts` "stand clearly apart" (fighter, robot-square,
+robot-circle, heavy, robot hexagon, missile frigate killed while flying,
+narrowest gap ≥ 0.75 radii 1 game s later; 0.42–0.47 before);
+`swarmSpriteUpdater.subcapWreck.test.ts` "no live-ship decorations".
+
 ## 4. Determinism strategy
 
 Every client must produce the same pieces as the server, bit for bit, from
@@ -1925,6 +1997,7 @@ Moved from `src/core/CLAUDE.md` (2026-11-14); kept for the record.
 - **v5: the shatter stays at the kill point and cuts run across a long hull** (hostile review of a filmed heavy-cruiser death). Seed density falls as 1/d⁴ over a 0.4 % floor; the Voronoi bisectors use a metric stretched 2× along the keel (`bisector`, still convex cells that tile); beyond one falloff radius seeds keep a least keel-wise spacing. Lock: `fractureHull.killFocus.test.ts`.
 - **v6: cracks fan out from the kill point; the far field breaks along a few uneven, tilted cracks** (money-shot review: v5 cut a comb of even square bands and a ladder at the kill point). `crackLines` (its own seeded stream) adds fan cracks through the kill point and far cracks at seeded stations and tilts; the Voronoi seeds stay inside the fan (no far floor); cracks and the primary line are jagged, after `weldTJunctions` pairs T-junction edges. Lock: the v6 describe in `fractureHull.killFocus.test.ts` (far pieces, far tilt, radial cracks) on top of the v5 locks.
 - **v7: the hull breaks only where it was hit, into a few ENORMOUS chunks** (owner review 2026-11-13: v6 sliced the far hull where no shell hit and cut a comb of slivers at the impact; "The last hit's impact sets the split"). No Voronoi seeds, no far cracks: two jagged zone cracks ~a beam either side of the primary and 0–2 fan cracks from the kill point (`LocalLine`, split only their zone half) leave 2–4 chunks at the impact and one big section each side. A very heavy blow (≥ max hull) on a long hull rarely (12 %) adds ONE far crack. Piece count still rises with size and violence, but stays ~3–7. A fan crack only splits a section where every part it leaves is chunky (≥ `FAN_MIN_WIDTH_BEAMS` 0.45 beam wide, ≤ `FAN_MAX_ASPECT` 2.6× longer than that; filmed take 2026-11-13: a long thin triangle along the port edge). Lock: the v7 describe in `fractureHull.killFocus.test.ts` (no thin sliver, no long thin piece of any size, no far cut, 2–5 near pieces, ≤ 2 sections each side).
+- **v8: sub-capital pieces are never nearly the whole hull** (take 9 review 2026-11-14). The `soundMinShare` option (default 0.15); the sub-cap profile sets 0.33. Capital output unchanged. Lock: `wreckPieces.subcapParting.test.ts` "read as broken".
 ## Server implementation notes
 
 > Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.

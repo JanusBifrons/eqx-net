@@ -541,3 +541,33 @@ describe('sub-capital wrecks: the quiet look (slice 4)', () => {
     expect(icons.iconCount).toBe(0);
   });
 });
+
+/**
+ * Take 9 review (2026-11-14): "two pieces drift side by side like two live
+ * ships". A piece must never wear a live ship's decorations: no turret
+ * cluster (`MountVisualManager`), no text (name tag, damage number), no
+ * charge telegraph or elite ring, only its art mesh and the brief cut glow.
+ * (Engine exhaust is gated to drones in `PixiRenderer.drawFxEngines`; locks
+ * resolve ships and structures only, server `SectorRoom` lock target and
+ * `MissileSimulation`.)
+ */
+describe('sub-capital wreck pieces carry no live-ship decorations (take 9)', () => {
+  for (const kind of ['robot-square', 'robot-circle', 'heavy', 'fighter']) {
+    it(`${kind}: no turret cluster, no text, nothing but the art and the glow`, () => {
+      const sinks: Sinks = { breaks: 0, blasts: 0, ripples: 0 };
+      const ctx = makeCtx(stubArt(fighterArt()), sinks);
+      const m = mirrorFor(desc(kind, 77), DEATH_TICK + 3);
+      ctx.fxNowMs = 10_000;
+      updateSwarmSprites(m, ctx);
+      updateSwarmSprites(m, ctx);
+      const ps = pieces(ctx);
+      expect(ps.length).toBeGreaterThanOrEqual(2);
+      for (const [key, sp] of ctx.sprites) {
+        expect(sp).toBeInstanceOf(WreckPieceSprite);
+        expect(ctx.mountVisuals.mountCountForShip(key), `${key}: turret cluster`).toBe(0);
+        for (const ch of sp.children) expect(ch, `${key}: only meshes (art + glow)`).toBeInstanceOf(Mesh);
+        expect(drawables(sp)).toBeLessThanOrEqual(2);
+      }
+    });
+  }
+});

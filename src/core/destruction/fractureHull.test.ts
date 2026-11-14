@@ -619,7 +619,7 @@ describe('fractureHull', () => {
 // Voronoi seeds and no far cracks; zone cracks either side of the primary and
 // up to two fan cracks from the kill point leave 2–4 chunky pieces at the
 // impact and one big section each side. The snap is unchanged.
-const GOLDEN = { version: 7, pieces: 4, hash: 1220196282 };
+const GOLDEN = { version: 8, pieces: 4, hash: 1220196282 };
 const GOLDEN_DAMAGE = { shatter: { pieces: 5, hash: 443402828 }, snap: { pieces: 2, hash: 2389120540 } };
 
 function hashPieces(pieces: ReadonlyArray<FracturePiece>): number {
