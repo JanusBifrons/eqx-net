@@ -161,7 +161,7 @@ How each subsystem works (and its history) is in the "Server notes" section of t
 ## Fire control: lock-to-fire is universal (root invariant #19)
 
 - **Every player is tracked:** `LockSubsystem` from `onJoin` to leave (`LeaveHandler.forgetLocks`). Never reintroduce a pass-through ("legacy rules") for an untracked player.
-- **Fire gate:** a group fires only with a LOCKED target, and only the mounts that bear on it per the shared `mountBearsOn` (naval guns `TURRET_FIRE_MISS`, others `FC_MOUNT_FIRE_TOLERANCE`); none bearing ⇒ `hit_ack { rejected }`, no cooldown or energy spent. Lock: `playerNavalFireTolerance.test.ts`.
+- **Fire gate:** a group fires only with a LOCKED target, and only the mounts that pass the shared `mountFiresOn`: in the mount's own reach of the target's hit shape AND bearing per `mountBearsOn` (naval guns `TURRET_FIRE_MISS`, others `FC_MOUNT_FIRE_TOLERANCE`); none ⇒ `hit_ack { rejected }`, no cooldown or energy spent. Locks: `playerNavalFireTolerance.test.ts`, `playerTurretFireRange.test.ts`.
 - **Turret aim:** player mounts aim only at their group's lock (locked, else acquiring), else home; capital per-turret picks use the shared `pickTurretLock` (#15). No player auto-target or manual-aim mount path.
 - **Heavy guns lock small targets slowly, never impossibly, whoever flies the ship:** player and NPC take ONE `lockSeconds` path; never add a per-pilot flag (a pilot difference is a bug). Locks: `npcLockParity.test.ts`, `lockTime.test.ts`, `fireControlLocks.test.ts`.
 - **`lock_track` is verified** with the shared `lockLineHolds`; a failing claim releases the lock. Lock: `LockSubsystem.test.ts` "lock_track is verified".

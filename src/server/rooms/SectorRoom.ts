@@ -244,9 +244,10 @@ import { resolveSlotMounts, mountWorldOrigin } from './mountGeometry.js';
 import { isLatentSlot, resolveInstanceMounts, resolveInstanceFireMounts } from '../../shared-types/shipKinds/slots.js';
 import { ROSTER_CAP, type ActivatedMount } from '../playerShips/PlayerShipStore.js';
 import { WeaponMountTicker } from './WeaponMountTicker.js';
-import { LockSubsystem, type LockTargetView } from './LockSubsystem.js';
+import { LockSubsystem, newLockTargetView, type LockTargetView } from './LockSubsystem.js';
 import { NpcLockSubsystem } from './NpcLockSubsystem.js';
-import { mountBearsOn } from '../../core/combat/fireControlBearing.js';
+import { fillFireTargetShape, mountFiresOn, newFireTargetShape, type FireTargetShape } from '../../core/combat/fireControlBearing.js';
+import { weaponIdReach } from '../../core/combat/mountReach.js';
 import { PhysicsWorkerProxy, type WorkerCmd } from './PhysicsWorkerProxy.js';
 import { ProjectilePipeline } from './ProjectilePipeline.js';
 import { MissileSimulation } from './MissileSimulation.js';
@@ -4391,7 +4392,7 @@ export class SectorRoom extends Room<SectorState> {
    */
   // ── Fire control (exp/fire-control) ─────────────────────────────────────
   private readonly _lockPose: AiEntityPoseOut = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
-  private readonly _lockTarget: LockTargetView = { x: 0, y: 0, vx: 0, vy: 0, signature: 1, hostile: false };
+  private readonly _lockTarget: LockTargetView = newLockTargetView();
   /** Activated-mount geometry per player, cached by the ship's `mounts` ref. */
   private readonly _lockActivated = new Map<string, { ref: unknown; mounts: ReadonlyArray<WeaponMount> }>();
 
@@ -4480,13 +4481,27 @@ export class SectorRoom extends Room<SectorState> {
           const dx = this._lockPose.x - sx;
           const dy = this._lockPose.y - sy;
           const d = dx * dx + dy * dy;
-          if (d < bestD && bears(this._lockPose.x, this._lockPose.y)) { bestD = d; best = rec.entityId; }
+          if (d >= bestD) continue;
+          this.fillSwarmFireShape(rec, this._lockPose, this._autoPickShape);
+          if (bears(this._autoPickShape)) { bestD = d; best = rec.entityId; }
         }
         return best < 0 ? null : `s:${best}`;
       },
       commitHostileAct: (pid, key) => this.commitLockHostileAct(pid, key),
       refreshHostility: (pid, key) => this.refreshLockHostility(pid, key),
     });
+  }
+
+  private readonly _autoPickShape: FireTargetShape = newFireTargetShape();
+
+  /**
+   * The fire-gate shape of an NPC ship or structure at `pose` (#15: the
+   * client's `fcTargetPose` fills the same fields from the swarm wire): a
+   * ship by its kind, heading and shield (the shape its hits use,
+   * `shipHitShape`), a structure by its radius (its lock signature).
+   */
+  private fillSwarmFireShape(rec: SwarmEntityRecord, pose: { x: number; y: number; angle: number }, out: FireTargetShape): void {
+    fillFireTargetShape(out, pose.x, pose.y, pose.angle, rec.kind === 1, rec.shipKind ?? null, !rec.shieldDown, rec.radius);
   }
 
   /** Resolve a lock key (`s:<entityId>` | `p:<playerId>`) to a damageable target. */
@@ -4504,8 +4519,8 @@ export class SectorRoom extends Room<SectorState> {
         out.hostile = this.npcHostileTo(rec.id, pid);
       }
       if (!this.swarmEntityPoseInto(rec.id, this._lockPose)) return false;
-      out.x = this._lockPose.x; out.y = this._lockPose.y; out.vx = this._lockPose.vx; out.vy = this._lockPose.vy;
-      out.signature = rec.kind === 1 ? getShipKind(rec.shipKind ?? null).radius : rec.radius;
+      out.vx = this._lockPose.vx; out.vy = this._lockPose.vy;
+      this.fillSwarmFireShape(rec, this._lockPose, out);
       return true;
     }
     if (key.startsWith('p:')) {
@@ -4515,7 +4530,8 @@ export class SectorRoom extends Room<SectorState> {
       const p = this.shipPoseCache.get(other);
       if (!ship || !ship.alive || !p) return false;
       out.x = p.x; out.y = p.y; out.vx = p.vx; out.vy = p.vy;
-      out.signature = getShipKind(ship.kind).radius;
+      // Fire shape: the hit shape the pilot's ship is hit on (shipHitShape).
+      fillFireTargetShape(out, p.x, p.y, p.angle, true, ship.kind, ship.shield > 0, 0);
       out.hostile = false; // PvP always runs the failsafe first
       return true;
     }
@@ -4556,16 +4572,17 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   /**
-   * Fire control: true when a mount's barrel points at its group's lock within
-   * `FC_MOUNT_FIRE_TOLERANCE`. A turret clamped at its arc limit with the
-   * target outside the arc fails, so it can't fire.
+   * Fire control: true when the mount may fire at its group's lock: the
+   * target's hit shape is within the mount's own weapon reach, measured from
+   * the mount, and its barrel bears on it (shared `mountFiresOn`, the same
+   * call as the client's fire passes, #15). A turret clamped at its arc
+   * limit with the target outside the arc fails, so it can't fire.
    */
-  private mountBearsOnLock(pid: string, mountId: string, ox: number, oy: number, angle: number, weaponId: string): boolean {
-    if (!this.lockAimTarget(pid, mountId, this._fcBearPose)) return false;
-    // Shared with the client's ghost-bolt pass (#15).
-    return mountBearsOn(weaponId, ox, oy, angle, this._fcBearPose.x, this._fcBearPose.y);
+  private mountBearsOnLock(pid: string, mountId: string, ox: number, oy: number, angle: number, weaponId: WeaponId): boolean {
+    const key = this.locks.aimKeyFor(pid, mountId);
+    if (key === null || !this.resolveLockTarget(pid, key, this._lockTarget)) return false;
+    return mountFiresOn(weaponId, weaponIdReach(weaponId), ox, oy, angle, this._lockTarget);
   }
-  private readonly _fcBearPose = { x: 0, y: 0, vx: 0, vy: 0 };
 
   /** Turret aim: the pose of the mount's group lock target (false = none). */
   private lockAimTarget(pid: string, mountId: string, out: { x: number; y: number; vx: number; vy: number }): boolean {
