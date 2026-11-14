@@ -42,10 +42,14 @@ export class Rng {
     this.s = seed >>> 0;
   }
 
-  /** Restart the stream from `seed` in place (no allocation): for an owner that
-   *  learns its seed after construction, e.g. an AI brain keyed by entity id. */
-  reseed(seed: number): void {
+  /**
+   * Restart the stream from `seed` (same sequence as `new Rng(seed)`), so a
+   * hot-path caller can keep ONE module-scope instance instead of allocating
+   * per draw (#14).
+   */
+  reseed(seed: number): this {
     this.s = seed >>> 0;
+    return this;
   }
 
   /** Next uniformly distributed unsigned 32-bit integer (mulberry32). */
