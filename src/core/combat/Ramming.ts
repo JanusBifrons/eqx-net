@@ -36,8 +36,13 @@
  * an ONCOMING capital adds its own speed to vN and hurts far more.
  *
  * Calibration (2× default ship scale): a fighter (mass 8, top speed ~601 u/s,
- * shield 150 + hull 150) head-on with another at both ships' full speed
- * (vN ≈ 1202) ⇒ ~166 each (~55 % of its 300 pool). Speeds and masses both
+ * boosted top ~565 u/s,
+ * shield 263 + hull 263 since the 2026-11-13 arcade toughness layer) head-on
+ * with another at both ships' full speed
+ * (vN ≈ 1202) ⇒ ~291 each (~55 % of its 525 pool; ~256 at the boosted top
+ * speed). Both ram constants were scaled ×1.75 with the fighter pool so the
+ * #558 calibration ("ramming as a weapon") holds while every other fight got
+ * longer (owner 2026-11-13: "make fights a bit longer"). Speeds and masses both
  * follow ship size (#18: mass ∝ s³, top speed ∝ √(1/s)), so the floor is a
  * plain speed and the masses come from the bodies. Constants are tuning
  * values; the regression lock is the SHAPE (normal-speed driven, angle
@@ -52,11 +57,12 @@ export const RAM_MIN_IMPACT_SPEED = 50;
 /** Damage per unit of normal impact energy (½·μ·(vN − floor)², game units).
  *  Tuned so a full-speed fighter head-on removes ~55 % of each fighter's
  *  combined shield + hull (see the header). The "ramming as a weapon" knob. */
-export const RAM_DAMAGE_PER_ENERGY = 1.25e-4;
+export const RAM_DAMAGE_PER_ENERGY = 2.1875e-4;
 /** Hard cap on ramming damage to ONE body per body-pair per tick. High enough
  *  that a fighter can be crushed outright by an oncoming capital (its pool is
- *  300), low enough that two capitals colliding don't one-shot each other. */
-export const RAM_DAMAGE_MAX = 400;
+ *  525 since the arcade toughness layer; the cap was 400 when it was 300), low enough that
+ *  two capitals colliding don't one-shot each other. */
+export const RAM_DAMAGE_MAX = 700;
 /** Converts the contact's aggregated FORCE to an impact SPEED when the worker
  *  did not supply a measured closing speed (old captures / replay). When
  *  `Contact.normalSpeed` / `impactSpeed` is present it is used instead. */

@@ -150,5 +150,8 @@ describe('fighters are unchanged by the capital fix', () => {
   });
 });
 
-/** Recorded on origin/main 4acf52bc (before the capital fix). */
-const FIGHTER_GOLDEN = [-20.1346, 717.9221, -6.0342, 212.2417, 0, -144.1048, 605.6046, -41.3006, 48.4329, 91.3277, 662.3862, 30.1318, 62.6111];
+/** Recorded on origin/main 4acf52bc (before the capital fix); re-recorded
+ *  2026-11-13 for the arcade handling tune (owner: "make it more like micro
+ *  machines"), which changed fighter damping/thrust/turn but not the capital
+ *  pass: the far battleship must still change nothing. */
+const FIGHTER_GOLDEN = [2.1959, 2849.1687, -0, 565.0793, 0, -97.3151, 605.7349, 0, 0, 442.8289, 1423.6107, 93.2275, 200.6718];

@@ -74,9 +74,18 @@ describe('virtualPilot — turning', () => {
     const target = 2.0;
     const r = fly(w, fighter, 240, () => ({ facing: target, vx: 0, vy: 0, boost: false }));
     const end = r.angles[r.angles.length - 1]!;
-    expect(Math.abs(wrapAngle(end - target))).toBeLessThanOrEqual(DEFAULT_PILOT_PARAMS.deadzone + 1e-3);
-    // Once there it stays: the last second never leaves the deadzone.
-    for (const a of r.angles.slice(-60)) expect(Math.abs(wrapAngle(a - target))).toBeLessThan(0.03);
+    // A snap turn moves the nose in whole ticks of maxAngvel/60 (0.07 rad at
+    // the arcade 4.2 rad/s) and stops dead on release, so the closest it can
+    // stop is the nearer of the two ticks either side of the heading: within
+    // half a tick. The pilot's deadzone is max(deadzone, half a tick) for that
+    // reason (`turnBits`); the bound is the same rule, from the live kind.
+    const tol = Math.max(DEFAULT_PILOT_PARAMS.deadzone, (fighter.maxAngvel / 60) * 0.5) + 1e-3;
+    expect(Math.abs(wrapAngle(end - target))).toBeLessThanOrEqual(tol);
+    // Once there it stays: the last second never leaves the deadzone, and the
+    // nose does not move at all (no hunt about the heading).
+    const settled = r.angles.slice(-60);
+    for (const a of settled) expect(Math.abs(wrapAngle(a - target))).toBeLessThanOrEqual(tol);
+    expect(Math.abs(settled[0]! - settled[settled.length - 1]!)).toBeLessThan(1e-6);
     expect(r.turnFlips).toBe(0);
   });
 

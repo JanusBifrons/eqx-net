@@ -124,3 +124,44 @@ Three knobs per kind, in order of impact:
 3. **`lateralGrip`** sets the drift visibility. Lower = more drift, exponentially. Use the half-life table above.
 
 `maxAngvel` and `maxSpeed` are aim-able and self-explanatory. `reverseFactor` and `boostMultiplier` are usually fine at 0.4–0.5 and 2.0 respectively.
+
+## Arcade (Micro Machines) tuning, 2026-11-13
+
+Owner direction: "I don't mind adjustments to the health, shields and acceleration and handling to make it more like micro machines and make fights a bit longer. Also don't forget the afterburner to gain speed fast..." Handling belongs to the ship, not the pilot, so this tunes the **kinds**: players, client prediction and NPC drones all read the result off the catalogue.
+
+**Where:** [shipScale/arcadeHandling.ts](../../src/shared-types/shipScale/arcadeHandling.ts). `defineShipKind` applies it after the size scale, as one row per **handling class** (`classifyHandling`, from the AUTHORED hull: light ≤ 120, medium ≤ 220, heavy above). No record was hand-edited.
+
+| class | × linearDamping | × thrust (and drone `ai.thrust`) | × maxAngvel | × hull / shield / regen |
+|---|---|---|---|---|
+| light | 16 | 16 | 4.2 | 1.6 |
+| medium | 18 | 18 | 4.2 | 1.75 |
+| heavy | 18 | 18 | 4.2 | 1.75 |
+| capital, exempt | 1 | 1 | 1 | 1 |
+
+- **Damping sets the time constant; thrust scales with it so cruise is unchanged.** Rapier scales velocity by `1 / (1 + d·dt)` a step, so a per-tick impulse `a` settles at `a / (d·dt)`: thrust × k and damping × k keep the terminal speed exactly (the measured cruise matches to the unit). Weapon leads, AI standoffs and the `maxSpeed` cap keep their meaning. The old exponential formula in the section above is ~3 % off at the new dampings; use the Rapier form.
+- **The afterburner** (`boostMultiplier`, unchanged at 2× for fighters) now reaches its boosted terminal in ~0.6 s instead of never. Energy is unchanged: a fighter's 150 pool at `BOOST_TICK_COST` 1/tick and 0.25/tick regen gives ~3.3 s of boost from full, bursts not permanent.
+- **Grip is unchanged.** Halving it was tried: slide after a held 90° turn at cruise rose to 0.6 of cruise (too icy once turns got 4× faster). At grip × 1 a quick 90° still leaves ~0.55 of cruise sideways, which the high damping bleeds within ~0.3 s: a visible slide, then bite.
+- **Toughness** scales by class; shield regen rate follows the max so regen TIME to full is unchanged. Weapons are unchanged.
+- **Exempt:** engineering rigs, kinds with no afterburner (robot nexus, loot pods) and **capitals**, whose handling comes from the WW2-grounded solver and is locked against its reference turn-response targets (`capitalShips.test.ts`, `capitalReference.test.ts`). Making capitals "less glacial" is a change to those reference targets, not this layer.
+- **Ramming** keeps its #558 calibration relative to the pool: `RAM_DAMAGE_PER_ENERGY` 1.25e-4 → 2.1875e-4 and `RAM_DAMAGE_MAX` 400 → 700 (both × 1.75, the fighter pool growth). Unscaled, a full-speed head-on fell from ~55 % to ~32 % of a fighter's pool and failed the "ramming is a weapon" lock. Now two fighters head-on at the boosted top speed (vN ≈ 1130) deal ~256 each, ~49 % of the 525 pool; at `maxSpeed` ~291 (55 %). Never a one-shot. One constant pair to revert if the owner wants rams to last longer too.
+- **XP side effect:** `xpForKill` reads the victim's `maxHealth`, so kills of tuned kinds give ~1.6–1.75× the XP.
+
+Measured at the 2× shipping scale by [ShipHandling.arcade.test.ts](../../src/core/physics/ShipHandling.arcade.test.ts) (real `PhysicsWorld` + `applyShipInput`; `EQX_HANDLING_REPORT=1` prints the table). t90 = rest to 90 % of cruise; 180° = nose round from rest; brake = distance to stop from cruise with reverse held; slide = lateral speed left after a held 90° turn at cruise, ÷ cruise; TTK = shield + hull under one 72 dps laser, no misses.
+
+| kind | t90 s (before → after) | cruise u/s | boost u/s | boost t90 s | 180° s | brake u | slide | TTK s |
+|---|---|---|---|---|---|---|---|---|
+| fighter | 10.9 → 0.63 | 283 | 566 | 10.9 → 0.63 | 3.15 → 0.75 | 598 → 34 | 0.38 → 0.55 | 4.2 → 7.3 |
+| scout | 6.5 → 0.43 | 255 | 509 → 485 | 6.5 → 0.32 | 2.10 → 0.50 | 323 → 20 | 0.32 → 0.53 | 2.5 → 4.0 |
+| interceptor | 8.2 → 0.53 | 265 | 530 → 526 | 8.2 → 0.50 | 2.52 → 0.60 | 421 → 27 | 0.33 → 0.54 | 3.3 → 5.3 |
+| gunship | 13.1 → 0.75 | 297 | 529 → 504 | 6.9 → 0.33 | 3.93 → 0.95 | 834 → 47 | 0.41 → 0.54 | 5.8 → 10.2 |
+| heavy | 16.3 → 0.93 | 318 | 636 | 16.3 → 0.93 | 4.50 → 1.08 | 1117 → 63 | 0.48 → 0.58 | 7.5 → 13.1 |
+| missile-frigate | 21.6 → 1.23 | 283 | 424 → 411 | 7.8 → 0.38 | 7.87 → 1.88 | 1481 → 83 | 0.38 → 0.49 | 12.5 → 21.9 |
+| patrol-fighter (NPC) | 10.9 → 0.63 | 283 | 566 | 10.9 → 0.63 | 3.15 → 0.75 | 598 → 34 | 0.38 → 0.55 | 5.6 → 9.7 |
+| robot-square (NPC) | 9.3 → 0.62 | 242 | 364 | 9.3 → 0.62 | 2.87 → 0.68 | 440 → 28 | 0.36 → 0.55 | 2.8 → 4.4 |
+| robot-circle (NPC) | 9.3 → 0.55 | 267 | 400 | 9.3 → 0.55 | 2.42 → 0.58 | 484 → 27 | 0.41 → 0.58 | 5.0 → 8.8 |
+| robot-hexagon (NPC) | 8.2 → 0.48 | 318 | 366 → 339 | 1.5 → 0.03 | 3.93 → 0.95 | 505 → 28 | 0.29 → 0.42 | 9.4 → 16.5 |
+| robot-harvester (NPC) | 8.2 → 0.48 | 255 | 356 | 8.2 → 0.48 | 3.15 → 0.75 | 404 → 23 | 0.34 → 0.48 | 6.3 → 10.9 |
+| trader-hauler (NPC) | 3.9 → 0.20 | 295 → 271 | 295 → 271 | — | 5.72 → 1.37 | 413 → 20 | 0.20 → 0.25 | 19.4 → 34.0 |
+| capitals | unchanged (8–38 s) | 155–180 | no afterburner | — | unchanged (156–170 s) | 348–1645 | 0.01 | unchanged |
+
+(The trader's measured cruise drops because its old 3.9 s rise never quite settled inside the old maxSpeed clamp; its terminal is the clamp.) The harness locks per-class bands (t90, 180°, TTK floor, afterburner ratio and rise time for flyable kinds, slide between 0.1 and 0.75, brake under 0.4 s of cruise travel), so a later change can't drift back to floaty or fragile without failing.
