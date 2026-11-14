@@ -352,6 +352,87 @@ export const SpectateSchema = z
   })
   .strict();
 
+/* ── RTS command layer (slice 6a) ─────────────────────────────────────────
+ * Fleet command wire schemas. Mirror `src/core/ai/wingman/types.ts`
+ * (`WINGMAN_MODES` / `WINGMAN_STANCES` / `WingmanOrder`) — kept as local zod
+ * enums so `src/shared-types/` stays self-contained (parity asserted in
+ * `tests/unit/fleetMessages.test.ts`). Owner-gating of `shipIds` is server-side. */
+
+/** Mirrors `WINGMAN_MODES`. Append-only. */
+export const WingmanModeSchema = z.enum(['patrol', 'defend', 'hunt', 'escort', 'retreat']);
+/** Mirrors `WINGMAN_STANCES`. Append-only. */
+export const WingmanStanceSchema = z.enum(['aggressive', 'defensive', 'holdFire']);
+
+const FleetShipIdSchema = z.string().min(1).max(64);
+const FleetShipIdsSchema = z.array(FleetShipIdSchema).min(1).max(64);
+const FiniteSchema = z.number().finite();
+
+/** Client → server: a one-off order (`WingmanOrder`) for the given owned ships.
+ *  `move` needs finite `x`,`y`; `attack` needs `targetId`. Strict. */
+export const FleetOrderSchema = z
+  .object({
+    type: z.literal('fleet_order'),
+    shipIds: FleetShipIdsSchema,
+    kind: z.enum(['move', 'attack', 'stop']),
+    x: FiniteSchema.optional(),
+    y: FiniteSchema.optional(),
+    targetId: z.string().min(1).max(64).optional(),
+  })
+  .strict()
+  .refine((m) => m.kind !== 'move' || (m.x !== undefined && m.y !== undefined), {
+    message: 'move requires x and y',
+  })
+  .refine((m) => m.kind !== 'attack' || m.targetId !== undefined, {
+    message: 'attack requires targetId',
+  });
+
+/** Client → server: set the standing wingman mode for the given ships.
+ *  `route` (patrol waypoints, max 16), `guardRadius` (defend) and `escortId`
+ *  (escort) are optional mode parameters. Strict. */
+export const SetModeSchema = z
+  .object({
+    type: z.literal('set_mode'),
+    shipIds: FleetShipIdsSchema,
+    mode: WingmanModeSchema,
+    route: z.array(z.tuple([FiniteSchema, FiniteSchema])).max(16).optional(),
+    guardRadius: FiniteSchema.positive().optional(),
+    escortId: z.string().min(1).max(64).optional(),
+  })
+  .strict();
+
+/** Client → server: set the fire stance for the given ships. Strict. */
+export const SetStanceSchema = z
+  .object({
+    type: z.literal('set_stance'),
+    shipIds: FleetShipIdsSchema,
+    stance: WingmanStanceSchema,
+  })
+  .strict();
+
+/** Client → server: group 2..24 owned ships into a squad. Strict. */
+export const FormSquadSchema = z
+  .object({
+    type: z.literal('form_squad'),
+    shipIds: z.array(FleetShipIdSchema).min(2).max(24),
+  })
+  .strict();
+
+/** Client → server: break up a squad. Strict. */
+export const DisbandSquadSchema = z
+  .object({
+    type: z.literal('disband_squad'),
+    squadId: z.string().min(1).max(64),
+  })
+  .strict();
+
+/** Client → server: enter command (RTS) view. Future replacement for
+ *  `spectate`. Strict, no payload. */
+export const CommandSchema = z
+  .object({
+    type: z.literal('command'),
+  })
+  .strict();
+
 /** Stat-pool ids spendable by the upgrade modal (Phase 4 WS-B2). Mirrors
  *  `STAT_IDS` in `src/core/leveling/shipStats.ts` — kept as a local zod enum so
  *  `src/shared-types/` stays self-contained (the parity is asserted in
@@ -443,6 +524,12 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
   RepairShipSchema,
   PilotShipSchema,
   SpectateSchema,
+  FleetOrderSchema,
+  SetModeSchema,
+  SetStanceSchema,
+  FormSquadSchema,
+  DisbandSquadSchema,
+  CommandSchema,
   ApplyShipUpgradeSchema,
   RespecShipSchema,
   ActivateMountSchema,
@@ -464,6 +551,12 @@ export type SetGateAccessMessage = z.infer<typeof SetGateAccessSchema>;
 export type SetRecipeMessage = z.infer<typeof SetRecipeSchema>;
 export type PilotShipMessage = z.infer<typeof PilotShipSchema>;
 export type SpectateMessage = z.infer<typeof SpectateSchema>;
+export type FleetOrderMessage = z.infer<typeof FleetOrderSchema>;
+export type SetModeMessage = z.infer<typeof SetModeSchema>;
+export type SetStanceMessage = z.infer<typeof SetStanceSchema>;
+export type FormSquadMessage = z.infer<typeof FormSquadSchema>;
+export type DisbandSquadMessage = z.infer<typeof DisbandSquadSchema>;
+export type CommandMessage = z.infer<typeof CommandSchema>;
 export type StatId = z.infer<typeof StatIdSchema>;
 export type WireStatAlloc = z.infer<typeof StatAllocSchema>;
 export type ApplyShipUpgradeMessage = z.infer<typeof ApplyShipUpgradeSchema>;

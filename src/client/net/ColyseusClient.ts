@@ -17,6 +17,9 @@ import { GameClock } from '@core/clock/GameClock';
 import { glideToward } from '@shared-types/timeScale';
 import { SPOOL_DURATION_MS } from '@core/transit/TransitStateMachine';
 import type { SnapshotMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage, TransitStateMessage, WarpInEvent, WarpOutEvent, ShieldEventMessage, BotAggroEvent, GcPauseEventMessage, GridPulseEvent } from '@shared-types/messages';
+import type { FleetOrderMessage, SetModeMessage, SetStanceMessage, FormSquadMessage, DisbandSquadMessage } from '@shared-types/messages';
+/** RTS slice 6a: the fleet command messages `sendFleetCommand` dispatches. */
+export type FleetCommandMessage = FleetOrderMessage | SetModeMessage | SetStanceMessage | FormSquadMessage | DisbandSquadMessage;
 import { parseWelcome } from './parseWelcome';
 import { TRANSFER_PULSE_MS as GRID_PULSE_WINDOW_MS } from '@core/structures/structureGridConstants';
 import { PhysicsWorld, type ShipPhysicsState } from '@core/physics/World';
@@ -680,6 +683,18 @@ export class ColyseusGameClient {
     // lingering hull (syncMirror skips the own ship while spectating).
     if (localId) this.mirror.ships.delete(localId);
     logEvent('spectate_requested', {});
+    return true;
+  }
+
+  /**
+   * RTS command layer (slice 6a): send a fleet command message
+   * (`fleet_order` / `set_mode` / `set_stance` / `form_squad` /
+   * `disband_squad`). Pure dispatch — no local state; the server owns the
+   * wingman brains. Returns true when dispatched (false with no live room).
+   */
+  sendFleetCommand(msg: FleetCommandMessage): boolean {
+    if (!this.room) return false;
+    this.room.send(msg.type, msg);
     return true;
   }
 
