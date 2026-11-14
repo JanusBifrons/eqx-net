@@ -139,6 +139,11 @@ export interface WreckBuildInput {
   killBlowDamage: number;
   /** Damage over the last ~3 s / max hull. */
   recentDamageRate: number;
+  /** v9 kill cut, copied into the fracture inputs as they are (absent = the
+   *  normal break-up; see `WreckFractureInputs`). */
+  cutKind?: 'slice' | 'channel';
+  cutAng?: number;
+  cutW?: number;
 }
 
 export interface WreckPieceSpec {
@@ -519,6 +524,13 @@ export function buildWreckPieces(input: WreckBuildInput): WreckBuild {
     recentDamageRate: input.recentDamageRate,
     snapChance: DESTRUCTION_PROFILES[shipTuning(kind).destruction].fracture?.snapChance ?? FRACTURE_SNAP_CHANCE,
   };
+  // Only a cut kill carries the cut fields (an un-cut wreck's inputs keep
+  // their old shape).
+  if (input.cutKind !== undefined && input.cutAng !== undefined) {
+    fracture.cutKind = input.cutKind;
+    fracture.cutAng = input.cutAng;
+    if (input.cutW !== undefined) fracture.cutW = input.cutW;
+  }
   const geom = wreckPieceGeometry(fracture);
 
   // Outward push away from the kill point: fastest there, falling off with

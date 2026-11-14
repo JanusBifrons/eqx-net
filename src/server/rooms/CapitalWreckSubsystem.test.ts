@@ -4,7 +4,9 @@
  */
 import { describe, expect, it } from 'vitest';
 import { CapitalWreckSubsystem, type WreckPieceSpawn } from './CapitalWreckSubsystem.js';
-import { buildWreckPieces, WRECK_ANGULAR_DAMPING, WRECK_LINEAR_DAMPING, WRECK_RECENT_DAMAGE_TICKS } from '../../core/destruction/wreckPieces.js';
+import { WEAPONS, type WeaponId, type WeaponKillCut } from '../../core/combat/WeaponCatalogue.js';
+import { shipShapeScale } from '../../core/geometry/shipHullOutline.js';
+import { buildWreckPieces, hullLocalCutAngle, WRECK_ANGULAR_DAMPING, WRECK_LINEAR_DAMPING, WRECK_RECENT_DAMAGE_TICKS } from '../../core/destruction/wreckPieces.js';
 import { SUBCAP_WRECK_COLLISION_GROUPS, WRECK_COLLISION_GROUPS } from '../../core/physics/collisionGroups.js';
 import { DESTRUCTION_PROFILES } from '../../shared-types/shipScale/destruction.js';
 import { wreckCrackTicks } from '../../shared-types/wreckTiming.js';
@@ -43,6 +45,18 @@ function make(kinds: Record<string, string> = { cap: 'battleship' }, withRigid =
 
 const pose = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
 
+/** Give a catalogue weapon a kill cut for `fn` (no weapon has one yet), then
+ *  restore the record. */
+function withKillCut(id: WeaponId, cut: WeaponKillCut, fn: () => void): void {
+  const def = WEAPONS.get(id)!;
+  const had = 'killCut' in def;
+  const prev = def.killCut;
+  def.killCut = cut;
+  try { fn(); } finally {
+    if (had) def.killCut = prev; else delete def.killCut;
+  }
+}
+
 describe('CapitalWreckSubsystem', () => {
   it('feeds the last hit point, the final blow and the recent damage into the fracture', () => {
     const { sys, spawned, setTick } = make();
@@ -78,6 +92,50 @@ describe('CapitalWreckSubsystem', () => {
     // Non-capitals are not tracked.
     sys.noteHit('fighter', 'attacker', 50, 0, 0, 1, 0, 'laser');
     expect(sys.lastHit('fighter')).toBeNull();
+  });
+
+  it('a kill by a killCut weapon puts the cut (hull-frame angle, 1× width) in the fracture and the descriptor', () => {
+    const turned = { ...pose, angle: 0.7 };
+    const dir = { x: 0.6, y: -0.8 };
+    const ang = hullLocalCutAngle(turned, dir);
+    for (const cut of [{ kind: 'slice' } as const, { kind: 'channel', width: 120 } as const]) {
+      withKillCut('laser', cut, () => {
+        const { sys, spawned } = make();
+        sys.forcedSeed = 9;
+        sys.noteHit('cap', 'attacker', 2000, 120, 40, dir.x, dir.y, 'laser');
+        expect(sys.onDeath('cap', 'battleship', turned, 10_000)).toBeGreaterThan(0);
+        const cutW = cut.kind === 'channel' ? cut.width / shipShapeScale(getShipKind('battleship')) : undefined;
+        const d = sys.descriptors()[0]!;
+        expect(d.cutKind).toBe(cut.kind);
+        expect(d.cutAng).toBe(ang);
+        expect(d.cutW).toBe(cutW);
+        if (cutW === undefined) expect('cutW' in d).toBe(false);
+        // The spawned pieces are the cut fracture's.
+        const want = buildWreckPieces({
+          kindId: 'battleship', pose: turned, killWorld: { x: 120, y: 40 }, attackerWorld: { x: 5000, y: 0 },
+          seed: 9, killBlowDamage: 0.2, recentDamageRate: 0.2, cutKind: cut.kind, cutAng: ang, cutW,
+        }).pieces;
+        expect(spawned.map((s) => [s.x, s.y])).toEqual(want.map((p) => [p.x, p.y]));
+      });
+    }
+  });
+
+  it('without a killCut weapon (or with no shot direction) the descriptor carries no cut', () => {
+    const run = (dirX: number | undefined, weapon: 'laser' | undefined) => {
+      const { sys } = make();
+      sys.forcedSeed = 9;
+      sys.noteHit('cap', 'attacker', 2000, 120, 40, dirX, dirX === undefined ? undefined : 0, weapon);
+      sys.onDeath('cap', 'battleship', pose, 10_000);
+      return sys.descriptors()[0]!;
+    };
+    const plain = run(1, 'laser');
+    for (const k of ['cutKind', 'cutAng', 'cutW']) expect(k in plain).toBe(false);
+    withKillCut('laser', { kind: 'slice' }, () => {
+      // No direction (splash) or no weapon (ram): the normal break-up.
+      expect(run(undefined, 'laser')).toEqual(plain);
+      expect(run(1, undefined)).toEqual(plain);
+      expect(run(1, 'laser').cutKind).toBe('slice');
+    });
   });
 
   it('ignores hits on non-capitals and breaks a hull once per death tick', () => {

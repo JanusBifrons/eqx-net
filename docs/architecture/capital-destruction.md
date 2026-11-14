@@ -1965,10 +1965,18 @@ line; a railgun kill erases a straight channel as wide as the bolt.
   is fine there: only the integer reaches the fracture). The client store
   rebuilds a recycled id whose only change is the cut. The readers land
   before any server sends the fields (the welcome schema is strict).
-- **Not yet:** `CapitalWreckSubsystem.onDeath` does not set the cut (it
-  needs the killing shot's direction and weapon id from `applyDamage`); its
-  descriptor must then copy `cutKind` / `cutAng` / `cutW` from the fracture
-  inputs.
+- **Server death wiring.** `CapitalWreckSubsystem.onDeath` reads the last
+  hit (`lastHit`: direction + `weaponId`); when that weapon has a `killCut`
+  and the hit has a direction, it passes `cutKind`, `cutAng`
+  (`hullLocalCutAngle(pose, dir)`) and, for a channel, `cutW` (world width ÷
+  `shipShapeScale`) through `WreckBuildInput` into the fracture inputs, and
+  the descriptor copies them (emit-when-present: an un-cut wreck's
+  descriptor is unchanged). No direction (splash, ram) or no weapon ⇒ the
+  normal break-up. Locks: `CapitalWreckSubsystem.test.ts` "killCut";
+  `tests/integration/sectorRoom/capitalWrecks.test.ts` "killCut slice kill"
+  (tests give the laser a `killCut` for the test and restore it).
+- **Not yet:** no catalogue weapon sets `killCut`; the instant hold and the
+  cut glow.
 - Locks: `fractureHull.test.ts` "golden: v9 kill cuts" (battleship and
   fighter, side and bow, slice and channel); `fractureHull.killFocus.test.ts`
   "fracture v9" (the slice's cut is collinear with the shot through the kill
@@ -2107,7 +2115,7 @@ Moved from `src/core/CLAUDE.md` (2026-11-14); kept for the record.
 ### Capital wrecks (capital destruction S2a + S2b, 2026-11-12)
 
 - **Switch `capitalWrecks`: ON by default since 2026-11-14** (owner: "land it switched on"). `wreckSwitchOn` (`rooms/wreckSwitch.ts`): env `EQX_CAPITAL_WRECKS=0|1` forces it for every room; otherwise room option `false` opts out. Both switches off ⇒ `SectorRoom.capitalWrecks` is null and nothing changes.
-- **Hit tracking** is `CapitalWreckSubsystem.noteHit`, called from `applyDamage` before the router; pooled entries, no per-hit allocation (#14). Each entry keeps the last hit's point, direction (`dirX`, `dirY`, `hasDir`) and `weaponId` (null when unknown: ram, mine, structure turret); read it with `lastHit(id)`. Pass the hit point, direction and weapon wherever a path knows them: player beams (`PlayerFireResolver`), NPC beams (`AiFireResolver`) and projectiles (`ProjectilePipeline`, splash with no direction) all do, as plain `applyDamage` args; there is no side channel. The NPC beam's `DamageEvent` therefore reports its true impact point, like a player beam's. The fracture does not read direction or weapon yet (plan step 2).
+- **Hit tracking** is `CapitalWreckSubsystem.noteHit`, called from `applyDamage` before the router; pooled entries, no per-hit allocation (#14). Each entry keeps the last hit's point, direction (`dirX`, `dirY`, `hasDir`) and `weaponId` (null when unknown: ram, mine, structure turret); read it with `lastHit(id)`. Pass the hit point, direction and weapon wherever a path knows them: player beams (`PlayerFireResolver`), NPC beams (`AiFireResolver`) and projectiles (`ProjectilePipeline`, splash with no direction) all do, as plain `applyDamage` args; there is no side channel. The NPC beam's `DamageEvent` therefore reports its true impact point, like a player beam's. The death reads them for a weapon's kill cut ("Kill cuts" above).
 - **`applyDamage` returns true iff that call destroyed the target** (`DamageRouter.apply` threads `out.destroyed` back; nothing recomputes it). Lock: `capitalWrecks.test.ts` "applyDamage returns true only on the call…".
 - **Death hooks** (all before the dying body is despawned): drone capitals in `spawnScrapFromDrone`, active hulls in the `SHIP_DESTROYED` handler (which also despawns the dead body, slot kept), lingering hulls via the `spawnScrapFromLingeringHull` seam. Abandon is not a death: no wreck. **The dying body's DESPAWN is posted BEFORE the first piece spawn** (`onDeath(…, despawnDyingBody)`, all three hooks pass the body's slot and id): the worker handles each command as its own message and may step between two of them, so a despawn posted after the spawns left the pieces inside the old hull for a step and the push-out shoved them (2026-11-14, `subcapWrecks.test.ts` "never touch their own dying hull"). Never post a dying body's despawn after its pieces.
 - **Wreck pieces are swarm kind 4** (`isWreckPiece`): immune, solid, block every weapon (`core/destruction/wreckHits.ts`). A new weapon or hit path must handle kind 4 (or the shot passes through a wall the server simulates). Persistence still skips them (S2c).
