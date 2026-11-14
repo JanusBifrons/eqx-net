@@ -20,7 +20,7 @@ function serverWreck(kind: string, seed: number, hit: { x: number; y: number }, 
   const spawned: WreckPieceSpawn[] = [];
   const sys = new CapitalWreckSubsystem({
     serverTick: () => 5000,
-    capitalKindOf: () => kind as 'battleship',
+    wreckKindOf: () => kind as 'battleship',
     positionOf: () => null,
     spawnPiece: (s) => { spawned.push(s); return true; },
     removePiece: () => {},

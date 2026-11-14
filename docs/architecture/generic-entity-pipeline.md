@@ -59,6 +59,15 @@ rendering / damage come for free.
    once; the dispatch/sync/render seams read the descriptor instead of branching
    on id-string shape.
 
+## Zone split
+
+`src/core/entity/` + the `IDamageable` / `INetworkSynced` / `IRenderContributor` contracts make a new world-object type "a leaf + a descriptor".
+
+- **Core (zone-pure).** The append-only `EntityKindRegistry` ([src/core/entity/EntityKindRegistry.ts](../../src/core/entity/EntityKindRegistry.ts)) maps each `EntityKindTag` to its sync, render and damageable descriptors. `IDamageable` declares the damage surface: `HealthBinding`, a stateless per-kind accessor over the live store (never a value copy), plus the reused `Interaction` / `InteractionResultMut`. Core stays blind to the wire.
+- **Server.** The kind-specific orchestration (broadcast, bus and worker side-effects) is a server concern. The leaf classes in `src/server/entity/leaves/` (`ShipEntity` / `DroneEntity` / `StructureEntity`) implement `Entity` and compose these contracts as data. `DamageRouter` routes a hit via `EntityResolver` to the leaf and one monomorphic `applyInteraction` (HC#5: never a per-class virtual `receiveInteraction`).
+- **Two different types.** `Entity` is a separate type from `AiEntity` (`IAiBehaviour.ts`); don't conflate them.
+- **Append-only.** Kinds and pose-core bytes are append-only (mirrors invariant #11).
+
 ## What each phase delivered
 
 | Phase | Deliverable | Key files |

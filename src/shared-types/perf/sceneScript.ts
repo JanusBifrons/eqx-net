@@ -20,6 +20,12 @@ const SpawnStep = z.object({
   spread: z.number().min(0).max(20_000).optional(),
   warpIn: z.boolean().optional(),
   hostile: z.boolean().optional(),
+  /** Play this spawn again every `repeatEveryMs` while the repeat's time is
+   *  before `repeatUntilMs` (a long soak's reinforcements without one step
+   *  per wave; the 64-step seed guard still holds). Repeat `k` uses the tag
+   *  `<tag>-r<k>`. */
+  repeatEveryMs: z.number().min(1000).max(600_000).optional(),
+  repeatUntilMs: z.number().min(0).max(600_000).optional(),
 }).strict();
 
 const EndStep = z.object({

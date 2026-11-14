@@ -24,8 +24,14 @@
  *     We cap WELL below that and emit `streaming_truncated_final` if
  *     the cap engages.
  *   - 404 fail-stop: if the endpoint is unmounted (e.g., production),
- *     disable streaming permanently for this session after the first
- *     404 so we don't infinite-loop on broken fetch.
+ *     disable streaming for this session, but only after
+ *     FAIL_STOP_MIN_404S consecutive 404s spanning > FAIL_STOP_WINDOW_MS.
+ *     A lone 404 (dev server mid-restart) is transient and retried.
+ *   - Fetch timeout (FETCH_TIMEOUT_MS): a POST that never settles
+ *     (backend died holding the socket) is aborted so the in-flight
+ *     lock cannot wedge streaming forever.
+ *   - The final-beacon latch re-arms when the tab is visible again, so
+ *     every hide gets its own final flush.
  *   - Pending buffer overflow + per-entry sequence: handled in
  *     `ClientLogger.ts`'s `drainPendingStream()`.
  *
@@ -46,12 +52,23 @@ const CADENCE_MS = 2_000;
  *  well under so headers + JSON overhead don't push us over. */
 const BEACON_MAX_BYTES = 32_768;
 
+/** Production fail-stop: disable only after this many consecutive 404s
+ *  spanning more than FAIL_STOP_WINDOW_MS (a dev-server restart answers
+ *  for a few seconds at most). */
+const FAIL_STOP_MIN_404S = 5;
+const FAIL_STOP_WINDOW_MS = 30_000;
+
+/** Abort a POST that has not settled by then (clears `_inFlight`). */
+const FETCH_TIMEOUT_MS = 10_000;
+
 let _sessionId: string | null = null;
 let _batchSeq = 0;
 let _inFlight = false;
 let _disabled = false;
 let _timer: ReturnType<typeof setInterval> | null = null;
-let _flushedFinal = false; // guards against multiple final beacons
+let _flushedFinal = false; // one final beacon per hide; re-armed on visible
+let _consecutive404 = 0;
+let _first404AtMs = 0;
 
 function makeSessionId(): string {
   // Mirror the manual-capture id format (`<ISO timestamp>-<random>`)
@@ -101,13 +118,22 @@ async function flushFetch(): Promise<void> {
 
   _inFlight = true;
   const body = buildBatchBody(pending, false);
+  const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const abortTimer = ctrl ? setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS) : null;
   try {
     const res = await fetch('/diag/capture/stream', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
+      ...(ctrl ? { signal: ctrl.signal } : {}),
     });
     if (res.status === 404) {
+      const now = Date.now();
+      if (_consecutive404 === 0) _first404AtMs = now;
+      _consecutive404++;
+      if (_consecutive404 < FAIL_STOP_MIN_404S || now - _first404AtMs <= FAIL_STOP_WINDOW_MS) {
+        return; // transient (backend restarting): retry next interval
+      }
       _disabled = true;
       if (_timer) clearInterval(_timer);
       _timer = null;
@@ -116,6 +142,7 @@ async function flushFetch(): Promise<void> {
       console.warn('[streamingDiag] /diag/capture/stream returned 404 — streaming disabled for this session');
       return;
     }
+    _consecutive404 = 0;
     if (res.status === 409) {
       // Server already applied this seq (duplicate retry). Bump our
       // seq forward and continue — the entries we just sent were
@@ -136,6 +163,7 @@ async function flushFetch(): Promise<void> {
     // Network error / abort. Same as transient — drained entries are
     // lost to streaming but stay in the ring.
   } finally {
+    if (abortTimer) clearTimeout(abortTimer);
     _inFlight = false;
   }
 }
@@ -214,6 +242,7 @@ export function installStreamingDiag(): void {
   _batchSeq = 0;
   _disabled = false;
   _flushedFinal = false;
+  _consecutive404 = 0;
 
   _timer = setInterval(() => {
     flushFetch().catch(() => {
@@ -227,6 +256,7 @@ export function installStreamingDiag(): void {
     // signal that the page is going away.
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') flushFinalBeacon();
+      else _flushedFinal = false; // tab is back: the next hide flushes again
     });
   }
   if (typeof window !== 'undefined') {

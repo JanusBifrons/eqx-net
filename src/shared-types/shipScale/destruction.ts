@@ -50,6 +50,9 @@ export interface DestructionFractureOptions {
   readonly chunkyPieces: boolean;
   /** Least piece width in beams with `chunkyPieces` (default 0.45). */
   readonly chunkyMinWidthBeams?: number;
+  /** Least share of the hull on each side of the sound primary crack with
+   *  `chunkyPieces` (default 0.15). */
+  readonly soundMinShare?: number;
   /** Chance of the one extra crack at violence 0 with `chunkyPieces`. */
   readonly extraChunkChance?: number;
   /** Jag of the cut edges (default depth 4, roughness 0.22). */
@@ -77,6 +80,33 @@ export interface DestructionFx {
   readonly glowStyle: WreckGlowStyle;
   /** How long the cut-edge glow lasts (s). */
   readonly glowSeconds: number;
+  /** The longest the client holds the dying hull on screen while it waits
+   *  for its wreck pieces to be drawable (game ms; `dyingHullHold.ts`). The
+   *  hold ends the frame every piece is drawn, so this is only the deadline
+   *  for a lost or late wreck. 0: no hold. */
+  readonly dyingHoldMs: number;
+  /** A dead tint multiplied onto the pieces' art (and the held hull) from
+   *  their first frame. Null: no dead tint. Null for every profile since the
+   *  owner's call (2026-11-13, after the v4 debris film): "The darkened scrap
+   *  just doesn't look right, what's the logic? Why would it darken when
+   *  destroyed? It should just be broken, same brightness?" */
+  readonly deadTint: number | null;
+  /** The pieces' art wears the per-piece `burntTint` (slightly darker,
+   *  darkest at the kill point: the capital look). False: the art keeps the
+   *  ship's normal brightness and colour (sub-capitals), and a hit flash goes
+   *  on the art only, never the glow. */
+  readonly burntArt: boolean;
+  /** The pieces draw the parent's DEAD bake (no glowing robot core, canopy,
+   *  engines or running lights) instead of the live one. Take 10 review
+   *  (2026-11-14): a robot-square's biggest piece kept the robot's glowing
+   *  eye and "reads as a live robot". Not darkening: same paint and light. */
+  readonly deadArt: boolean;
+  /** The ship's normal death explosion, scaled (radius / smoke linger), while
+   *  the room breaks this profile into wrecks (welcome `subcapWrecks` for a
+   *  sub-capital). 1: unchanged. Owner 2026-11-13: "Shrink it", so the
+   *  break-up and the fight stay readable and capitals feel bigger. */
+  readonly deathBlastScale: number;
+  readonly deathBlastLinger: number;
 }
 
 export interface DestructionProfile {
@@ -87,8 +117,33 @@ export interface DestructionProfile {
   readonly holdMs: number;
   /** Multiplier on `shipTuning(kind).wreckPushMax/Min`. */
   readonly pushScale: number;
+  /** Multiplier on `shipTuning(kind).wreckSeparate`, the least speed at
+   *  which every shared cut opens (`buildWreckPieces`' seam pass). The push
+   *  runs away from the kill point, so it moves the pieces off TOGETHER; this
+   *  is what opens the cracks. */
+  readonly separateScale: number;
+  /** Multiplier on the pieces' spin at the break: the dying hull's turn
+   *  (ω, and the ω × r it gives each piece) and the seeded kick spin
+   *  (`buildWreckPieces`). 1: the hull's full spin carries on. */
+  readonly spinScale: number;
   /** Multiplier on the wreck pieces' linear and angular damping. */
   readonly dampingScale: number;
+  /** Multipliers on the overkill knock-back (`shipTuning(kind)
+   *  .wreckKnockSpeed` / `.wreckKnockMax`, applied there so every reader
+   *  gets the profile's value). */
+  readonly knockScale: number;
+  readonly knockMaxScale: number;
+  /** A hit on a RESTING (asleep) piece wakes and shoves it only when its
+   *  uncapped knock (J ÷ piece mass) is at least this × `wreckKnockMax`;
+   *  a lighter hit still stops the shot but leaves the piece asleep. 0 =
+   *  every hit shoves (capitals). Wreck sleep fix, 2026-11-13. */
+  readonly knockWakeScale: number;
+  /** Settle-to-sleep (wreck sleep fix, 2026-11-13): a piece slower than this
+   *  × its kind's radius (u/s) and spinning slower than `settleSpin` (rad/s)
+   *  for `WRECK_SETTLE_STEPS` steps is put to sleep (`World.setSleepSettle`),
+   *  instead of drifting on down to Rapier's own 0.4 u/s. 0 = off. */
+  readonly settlePerRadius: number;
+  readonly settleSpin: number;
   /** Pieces of one wreck collide with each other. */
   readonly piecesCollide: boolean;
   readonly fx: DestructionFx;
@@ -102,7 +157,15 @@ const CAPITAL: DestructionProfile = {
   fracture: { maxPieces: 64, snapChance: 0.2, fanCracks: true, farCrack: true, chunkyPieces: false },
   holdMs: 1200,
   pushScale: 1,
+  separateScale: 1,
+  spinScale: 1,
   dampingScale: 1,
+  knockScale: 1,
+  knockMaxScale: 1,
+  // Heavy chunks are knocked by every hit and drift on (owner, 2026-11-13).
+  knockWakeScale: 0,
+  settlePerRadius: 0,
+  settleSpin: 0,
   piecesCollide: true,
   fx: {
     breakBurst: true,
@@ -112,6 +175,12 @@ const CAPITAL: DestructionProfile = {
     hullDeathBlastReplaced: true,
     glowStyle: 'full',
     glowSeconds: 4.5,
+    dyingHoldMs: 1500,
+    deadTint: null,
+    burntArt: true,
+    deadArt: false,
+    deathBlastScale: 1,
+    deathBlastLinger: 1,
   },
 };
 
@@ -119,24 +188,73 @@ const SUBCAP: DestructionProfile = {
   id: 'subcap',
   // 2-3 pieces: the primary crack through the hit (moved toward the middle
   // only where it would clip a sliver), and sometimes one more chunk. Chunky
-  // at 0.3 beam (a fighter is barely longer than its beam, so v7's 0.45
-  // would never allow a third piece) with v7's aspect guard; a short, gentle
-  // jag so a piece is at most ~6 convex parts.
+  // at 0.36 beam (a fighter is barely longer than its beam, so v7's 0.45
+  // would never allow a third piece; 0.3 left thin strips, hostile review
+  // 2026-11-13) with v7's aspect guard. One shallow kink per cut, not a
+  // saw-tooth (depth 2 gave the drone pieces shard outlines): clean chunks.
   fracture: {
     maxPieces: 3,
     snapChance: 0.2,
     fanCracks: false,
     farCrack: false,
     chunkyPieces: true,
-    chunkyMinWidthBeams: 0.3,
+    chunkyMinWidthBeams: 0.36,
+    // Take 9 review (2026-11-14): at the default 15 % the big piece was up
+    // to ~85 % of the hull, "the hull stays whole"; at 1/3 a robot-square's
+    // ~68 % piece with its middle still read as a live robot (take 10).
+    // 0.43 on the small side keeps the largest piece at <= 60 % after the
+    // jag (57-58 % measured). Lock:
+    // `wreckPieces.subcapParting.test.ts` "read as broken".
+    soundMinShare: 0.43,
     extraChunkChance: 0.4,
-    jag: { depth: 2, roughness: 0.12 },
+    jag: { depth: 1, roughness: 0.06 },
   },
   holdMs: 0,
-  // A gentle push, and enough damping that pieces settle (and can sleep in
-  // the physics engine) within ~10-20 s. Slice 5 tunes both from measurement.
-  pushScale: 0.5,
-  dampingScale: 5,
+  // The parting push is per unit of hull radius (`wreckPushMax/Min`: 1 % /
+  // 0.4 % of the radius per second), which reads at capital scale but left a
+  // fighter's pieces as one hull with a crack (~0.1 u/s; hostile review
+  // 2026-11-13). ×30 throws the wreck off the kill point; damping ×10 (slice
+  // 2's measured value: linear 0.6/s, sleep in ~14 game s) brings it to
+  // rest; no piece drifts over ~1.5 radii. Lock: `destructionProfile.test.ts`.
+  pushScale: 30,
+  // That push runs away from the kill point, so on a hit at one end every
+  // piece goes the SAME way: ×50 alone left the cracks shut (round-2 review:
+  // robot pieces still touching ~1 s after the break; the seam pass opened
+  // each cut at only 1.4 % of the radius a second). ×40: every shared cut
+  // opens at >= ~0.56 radius/s, a gap of ~1/3 of the radius or more 1 s
+  // after the break. Take 9 review (2026-11-14): that still read as a whole
+  // hull with a crack, and two pieces carrying the dead ship's few hundred
+  // u/s "drift side by side like two live ships" (~1 radius apart in all
+  // under damping 0.6/s). ×160 (2.2 radii/s) still read small on the take
+  // 10 film. ×240: every cut opens and every pair of centres parts at
+  // >= ~3.3 radii/s (fighter ~86 u/s), ~2.5+ radii apart 1 s after the
+  // break and ~6 at rest. Locks: `wreckPieces.subcapParting.test.ts`
+  // (the kicks) + `subcapWrecks.test.ts` (the real server at 1 s).
+  separateScale: 240,
+  // Owner on the v5 film (2026-11-13): "they spin too much when destroyed".
+  // The pieces carried the dying hull's whole turn (a fighter hard over at
+  // 2 rad/s threw them at ~115 °/s); ×0.3 keeps a lazy tumble (≤ ~35 °/s
+  // from a 2 rad/s turn). Lock: `wreckPieces.subcapParting.test.ts`.
+  spinScale: 0.3,
+  dampingScale: 10,
+  // Shots on debris shove it a little (owner, slice 2 report): a small-arms
+  // hit moves half a fighter wreck ~10-25 u/s, a naval shell at most ~18
+  // u/s (fighter), then the damping slows it. The capital rule ("a blow
+  // worth the whole hull moves it at wreckKnockSpeed") is < 1 u/s at
+  // fighter size.
+  knockScale: 320,
+  knockMaxScale: 30,
+  // Wreck sleep fix (2026-11-13; soak census in capital-destruction.md "Soak
+  // results"): in a live fight ~40 % of wake-ups were small-arms knocks and
+  // ~45 % slow ships brushing a resting piece, and each wake cost ~9 s of
+  // drift down to Rapier's 0.4 u/s. A laser (12 dmg) on half a fighter is
+  // ~15 u/s uncapped, a 5" shell ~75 u/s, so at 2× the 18 u/s cap small arms
+  // leave a resting piece asleep and real hits still shove it. A piece under
+  // 1/8 of a radius a second (fighter 3 u/s) and 0.3 rad/s for half a second
+  // goes to sleep. Locks: `World.sleepSettle.test.ts`, `subcapWreckSleep.test.ts`.
+  knockWakeScale: 2,
+  settlePerRadius: 0.125,
+  settleSpin: 0.3,
   piecesCollide: false,
   fx: {
     breakBurst: false,
@@ -146,6 +264,18 @@ const SUBCAP: DestructionProfile = {
     hullDeathBlastReplaced: false,
     glowStyle: 'simple',
     glowSeconds: 1,
+    // Brief: no crack hold, so a sub-cap's pieces are drawable at once. The
+    // held hull sits under its death explosion; 600 ms of it read as "dead
+    // ship sits there, then pops" (round-2 review), so the pieces take over
+    // within 250 ms or the hull goes.
+    dyingHoldMs: 250,
+    // No darkening (owner 2026-11-13: "It should just be broken, same
+    // brightness"): pieces and held hull keep the ship's normal art.
+    deadTint: null,
+    burntArt: false,
+    deadArt: true,
+    deathBlastScale: 0.5,
+    deathBlastLinger: 0.5,
   },
 };
 
@@ -154,7 +284,14 @@ const NONE: DestructionProfile = {
   fracture: null,
   holdMs: 0,
   pushScale: 0,
+  separateScale: 1,
+  spinScale: 1,
   dampingScale: 1,
+  knockScale: 1,
+  knockMaxScale: 1,
+  knockWakeScale: 0,
+  settlePerRadius: 0,
+  settleSpin: 0,
   piecesCollide: false,
   fx: {
     breakBurst: false,
@@ -164,6 +301,12 @@ const NONE: DestructionProfile = {
     hullDeathBlastReplaced: false,
     glowStyle: 'none',
     glowSeconds: 0,
+    dyingHoldMs: 0,
+    deadTint: null,
+    burntArt: false,
+    deadArt: false,
+    deathBlastScale: 1,
+    deathBlastLinger: 1,
   },
 };
 

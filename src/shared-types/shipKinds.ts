@@ -180,6 +180,8 @@ export const SHIP_KINDS = Object.freeze({
 // damping, thrust, turn rate, hull, shield and regen.
 // 25 → 26 (2026-11-14): energy pool ×2 for every kind (`ENERGY_POOL_MUL`,
 // shipScale/defineShipKind.ts).
+// 25 → 26 (2026-11-14): fighter, scout, heavy, robot-square, robot-circle and
+// robot-hexagon nose guns become small-arc turrets (`noseTurretMount`).
 export const SHIP_KIND_CATALOGUE_VERSION = 26;
 
 // The shield bubble pad is `shipTuning(kind).shieldPad` (shipScale/tuning.ts),

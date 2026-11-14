@@ -106,13 +106,16 @@ so it unit-tests like `TransitOrchestrator`):
 
 ## The power grid (Phase 3 — shipped)
 
-**Zone-pure core** (`src/core/structures/`):
+**Zone-pure core** (`src/core/structures/`; it works over an abstract `GridNode`
+view, never the server `StructureRegistry`):
 - `Connection.ts` — an undirected intra-sector link (`getOtherNode`, flash
   window, `connectionLength`).
 - `Grid.ts` — `canConnect` (the hub model: hub-required / per-kind
   `maxConnections` cap / edge-to-edge `CONNECTION_MAX_RANGE` / no-self/dup /
   line-of-sight), BFS connected components (**built-only — the dead-end rule:
-  you can't relay THROUGH an unbuilt node**), power aggregation (`powered`
+  you can't relay THROUGH an unbuilt node; an unbuilt node is still a transfer
+  destination, and this is load-bearing for the construction flow's outward
+  expansion**), power aggregation (`powered`
   requires a Capital in the component AND net ≥ 0), and A* routing + a route
   cache dropped on every rebuild.
 - `structureGridConstants.ts` — `CONNECTION_MAX_RANGE`, `TRANSFER_PULSE_MS`,
@@ -332,7 +335,8 @@ and a bump would reset saved structures).
 **Geometry** lives in one zone-pure module, `src/core/structures/gateGeometry.ts`,
 read by both sides (#15):
 - **Collider parts:** a gate's physics body is its posts (and an airlock's side
-  walls) as separate convex parts (`gateColliderPolygons`), on the server worker
+  walls) as separate convex parts (`gateColliderPolygons`, passed to
+  `World.spawnObstacle(..., parts)`), on the server worker
   and the client prediction world, so the gap between them is open. Weapon hits
   test the same parts (`SwarmEntityRecord.boxes`, `rayHitsBox(..., boxes)`).
 - **Spans:** the shield across a gap (`gateSpans`; gate: one, airlock: A at

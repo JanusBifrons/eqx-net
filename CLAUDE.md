@@ -2,7 +2,7 @@
 
 You are working in **EQX Peri**, a multiplayer space game. Read this before any non-trivial change. Zone rules load when you touch a file in the zone: [src/core/CLAUDE.md](src/core/CLAUDE.md), [src/server/CLAUDE.md](src/server/CLAUDE.md), [src/client/CLAUDE.md](src/client/CLAUDE.md).
 
-**What goes where.** CLAUDE.md files hold **rules only**: short, present tense, no dates, no PR numbers, no history. How a subsystem works, thresholds and tuning values, and history go in the matching guide under `docs/architecture/` or `docs/features/` (history in the guide's "History" section), with a one-line pointer from CLAUDE.md. Gotchas go in [docs/LESSONS.md](docs/LESSONS.md). Every CLAUDE.md is injected into every agent's context, so each line here costs on every call.
+**What goes where.** CLAUDE.md files hold **rules only**: short, present tense, no dates, no PR numbers, no history. How a subsystem works, thresholds and tuning values, and history go in the matching guide under `docs/architecture/` or `docs/features/` (history in the guide's "History" section), with a one-line pointer from CLAUDE.md. Gotchas go in [docs/LESSONS.md](docs/LESSONS.md). Every CLAUDE.md is injected into every agent's context, so each line here costs on every call. CI enforces a byte budget per file (`node scripts/audit-god-files.mjs --claude-md`): when one is over, move text out, never raise the budget.
 
 The Master Architecture Blueprint is the authoritative design document; the approved plan under `C:\Users\alecv\.claude\plans\` is the roadmap. When the blueprint and a zone CLAUDE.md disagree, the most recently updated CLAUDE.md wins.
 
@@ -153,7 +153,7 @@ gh pr merge <n> --auto --merge                                 # ALWAYS, the ins
 ```
 
 - **Auto-merge is part of opening a PR (standing user directive):** `--auto` holds the PR until required CI passes, so it is safe. Report "auto-merge on" with the PR URL.
-- **Stay synced with `main`:** sync before every push, re-sync before merge, and for a stack re-sync each remaining branch after any one merges (`git rev-list --count origin/<branch>..origin/main` = 0 means current). Use `git merge`, not rebase, on a pushed branch.
+- **Sync once, then leave it:** merge `origin/main` once right before the first push. The ruleset does NOT require branches to be up to date, and every merge to `main` reruns the full suite, so do not re-sync a branch just because it is behind (each re-sync reruns CI and piles PRs up). Re-sync only when the PR shows a conflict (`gh pr view <n> --json mergeStateStatus` = `DIRTY`) or you need code that landed since. Use `git merge`, not rebase, on a pushed branch.
 - **Auto-memory is per machine; the user works on two.** Machine-specific facts may go in a memory; any rule, convention or project gotcha goes in the repo (a rule in CLAUDE.md, anything else in `docs/`). When in doubt, put it in the repo.
 - If gh auth breaks: `gh auth refresh -h github.com -s read:org` in PowerShell / Windows Terminal (not Git Bash; there prefix `winpty`).
 
@@ -202,7 +202,7 @@ Several Claude sessions run on this machine at once. So:
 ## Showcase video (`pnpm showcase`) — a feature adds a shot
 
 **Before filming or reviewing a clip, read [docs/architecture/showcase-pipeline.md](docs/architecture/showcase-pipeline.md)** ("Filming and review rules"; camera: [cinematic-camera.md](docs/architecture/cinematic-camera.md)).
-- A new player-facing feature ships with a shot, or a reasoned `SHOWCASE_EXEMPT`/`SHOWCASE_PENDING` entry in `showcase/registry.ts` (`tests/unit/showcaseCoverage.test.ts` fails CI otherwise).
+- A new player-facing feature ships with a shot, or a reasoned `SHOWCASE_EXEMPT`/`SHOWCASE_PENDING` entry in `showcase/registry.ts` (`tests/unit/showcaseCoverage.test.ts` fails CI otherwise). A docs page that will never be filmed exempts itself with `<!-- showcase-exempt: <reason> -->` near its top, so a docs PR stays markdown-only.
 - Record the game as it is: never hide UI or effects, re-stage, or change behaviour only for a clip; the follow camera while piloting, a pan only in spectator mode, no test cue during the take. Fix genuine bugs (failing test first); "poor video" findings go to the owner as notes.
 - Clips film the full HUD (no `cleanworld`) and the player's look (`PLAYER_LOOK`).
 - A hostile reviewer checks every clip (full-res frames at key moments + the clip's goal) before the user sees it; send it straight away, as finished if it passes, else labelled WIP with the caveats; then fix and re-film.

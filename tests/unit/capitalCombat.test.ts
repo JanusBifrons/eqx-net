@@ -4,7 +4,12 @@
  * steering. The end-to-end lock is
  * tests/integration/sectorRoom/capitalEngagement.test.ts.
  */
-import { describe, it, expect } from 'vitest';
+import { afterAll, describe, it, expect, vi } from 'vitest';
+
+// Pinned to legacy naval ranges (the default is real): the gun table and the
+// stand-off geometry below are the legacy ones (real: navalRangeSwitch.test.ts).
+vi.hoisted(() => vi.stubEnv('EQX_NAVAL_RANGE', 'legacy'));
+afterAll(() => vi.unstubAllEnvs());
 import { getWeapon, weaponAutoFireRange, WEAPON_IDS, isWeaponId } from '../../src/core/combat/WeaponCatalogue';
 import { mountTargetReach, mountWeaponReach, hasTurretFireControl } from '../../src/core/combat/mountReach';
 import { HITSCAN_RANGE } from '../../src/core/combat/Weapons';

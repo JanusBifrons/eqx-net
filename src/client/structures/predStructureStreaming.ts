@@ -10,9 +10,10 @@ import {
   PREDWORLD_STRUCTURE_RADIUS,
 } from '../../shared-types/structureBudgets.js';
 
-/** Should the prediction world hold this body? `present`: it does already. */
-export function wantPredBody(present: boolean, edgeDistance: number): boolean {
-  return edgeDistance <= PREDWORLD_STRUCTURE_RADIUS + (present ? PREDWORLD_STRUCTURE_HYSTERESIS : 0);
+/** Should the prediction world hold this body? `present`: it does already.
+ *  `radius`: the streaming radius (wreck pieces use PREDWORLD_WRECK_RADIUS). */
+export function wantPredBody(present: boolean, edgeDistance: number, radius: number = PREDWORLD_STRUCTURE_RADIUS): boolean {
+  return edgeDistance <= radius + (present ? PREDWORLD_STRUCTURE_HYSTERESIS : 0);
 }
 
 /** Distance from point (px, py) to the segment (ax, ay)–(bx, by). */

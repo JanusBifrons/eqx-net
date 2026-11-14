@@ -29,9 +29,12 @@ import { shipTuning } from '../../shared-types/shipScale/tuning.js';
 import { CAPITAL_TURRETS } from '../../shared-types/shipScale/capitalTurrets.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 
-/** A fixed gun at the hull centre (no arc): drawn as a chin gun. */
+/** A forward gun at the hull centre: drawn as a chin gun, its shot leaving at
+ *  the kind's muzzle clearance. Positional only: a nose turret (fighter,
+ *  scout, heavy, robot-square/-circle/-hexagon: `noseTurretMount`) keeps the
+ *  chin gun's art and muzzle and only trains within its small arc. */
 export function isChinMount(m: WeaponMount): boolean {
-  return m.localX === 0 && m.localY === 0 && m.arcMin === 0 && m.arcMax === 0;
+  return m.localX === 0 && m.localY === 0 && m.baseAngle === 0;
 }
 
 export function isRackWeapon(weaponId: string): boolean {

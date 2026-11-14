@@ -4,7 +4,7 @@
  * no class instances). Locked by `protocol.test.ts`.
  */
 
-import type { RenderMirror, WarpCenter } from '@core/contracts/IRenderer';
+import type { RenderMirror, SwarmRenderState, WarpCenter } from '@core/contracts/IRenderer';
 import type { EffectQuality } from '@core/contracts/IEffects';
 import type { CameraCue } from '@core/contracts/cameraScript';
 import type { WarpParams } from './warpParams.js';
@@ -72,7 +72,35 @@ export interface BootMsg {
  */
 export interface MirrorUpdateMsg {
   type: 'MIRROR_UPDATE';
+  /** The mirror WITHOUT `swarm` (it rides `swarmDelta`). */
   mirror: RenderMirror;
+  /** The swarm as a change set against the worker's own copy (absent ⇒
+   *  `mirror.swarm` is posted whole, the legacy shape). */
+  swarmDelta?: SwarmDeltaMsg;
+}
+
+/**
+ * The swarm map as a change set (render-mirror post delta, 2026-11-13). The
+ * worker keeps its own copy (`SwarmMirrorReplica`) and applies this each
+ * MIRROR_UPDATE, so the per-frame post costs what CHANGED, not every entry
+ * (a sleeping wreck piece costs nothing). Encoder + replica:
+ * `render/worker/swarmMirrorDelta.ts`; parity lock `swarmMirrorDelta.test.ts`.
+ */
+export interface SwarmDeltaMsg {
+  /** Clear the worker's copy before applying (first post, or a new swarm Map). */
+  reset: boolean;
+  /** `mirror.swarm` exists (false ⇒ the worker's mirror gets no swarm). */
+  present: boolean;
+  /** Entries sent whole (new, or a non-pose field changed), with their ids. */
+  fullIds: number[];
+  full: SwarmRenderState[];
+  /** Entries gone since the last post. */
+  removed: number[];
+  /** Pose-only changes packed as float64 records (layout in
+   *  `swarmMirrorDelta.ts`); transferred, and handed back on FEEDBACK. */
+  pose: ArrayBuffer | null;
+  /** Float64 slots used in `pose`. */
+  poseLen: number;
 }
 
 /** GalaxyMapLayer overlay state — driven by Zustand useEffects in `App.tsx`. */

@@ -87,7 +87,7 @@ How each subsystem works (and its history) is in the "Server notes" section of t
 - 🔴 Classify by the registry kind, never an id prefix. `fillSwarmTargets` builds the cross-allegiance view once per tick, only with ≥ 2 allegiances present. `isHostileToPlayer` = stance OR ledger. Only a hit on a DRONE escalates the `FactionLedger`.
 - `npcOnly` kinds are refused on join (`isPlayableShipKindId`); `LoadShedder` skips `shedImmune` kinds. Allegiance decides targeting, never what a shot hits.
 - 🔴 Every shot hits the first thing in its path, own side included; the only skips are the shooter, a capital's own deck (`mountLineClear`) and, for any shot but a pilot's, a loot pod (`isLootPod`). A friendly accidental hit damages but never marks hostile or escalates (`isFriendlyFire`).
-- NPCs hold fire while a friendly is on the line, only via `LineOfFireGate` (never a second scan); players are never gated. `friendlyFire.test.ts`, `npcLineOfFire.test.ts`.
+- NPCs hold fire while a friendly (or, for an NPC ship, a wreck piece) is on the line, only via `LineOfFireGate` (never a second scan); players are never gated. `friendlyFire.test.ts`, `npcLineOfFire.test.ts`.
 - Proximity queries in the drone brain go through `AiNeighbourGrid`, never a per-behaviour swarm scan (`AiNeighbourGrid.test.ts`).
 
 **Cargo and storage** ([loot-and-cargo](../../docs/features/loot-and-cargo.md)):
@@ -161,7 +161,7 @@ How each subsystem works (and its history) is in the "Server notes" section of t
 ## Fire control: lock-to-fire is universal (root invariant #19)
 
 - **Every player is tracked:** `LockSubsystem` from `onJoin` to leave (`LeaveHandler.forgetLocks`). Never reintroduce a pass-through ("legacy rules") for an untracked player.
-- **Fire gate:** a group fires only with a LOCKED target, and only the mounts that bear on it per the shared `mountBearsOn` (naval guns `TURRET_FIRE_MISS`, others `FC_MOUNT_FIRE_TOLERANCE`); none bearing ⇒ `hit_ack { rejected }`, no cooldown or energy spent. Lock: `playerNavalFireTolerance.test.ts`.
+- **Fire gate:** a group fires only with a LOCKED target, and only the mounts that pass the shared `mountFiresOn`: in the mount's own reach of the target's hit shape AND bearing per `mountBearsOn` (naval guns `TURRET_FIRE_MISS`, others `FC_MOUNT_FIRE_TOLERANCE`); none ⇒ `hit_ack { rejected }`, no cooldown or energy spent. Locks: `playerNavalFireTolerance.test.ts`, `playerTurretFireRange.test.ts`.
 - **Turret aim:** player mounts aim only at their group's lock (locked, else acquiring), else home; capital per-turret picks use the shared `pickTurretLock` (#15). No player auto-target or manual-aim mount path.
 - **Heavy guns lock small targets slowly, never impossibly, whoever flies the ship:** player and NPC take ONE `lockSeconds` path; never add a per-pilot flag (a pilot difference is a bug). Locks: `npcLockParity.test.ts`, `lockTime.test.ts`, `fireControlLocks.test.ts`.
 - **`lock_track` is verified** with the shared `lockLineHolds`; a failing claim releases the lock. Lock: `LockSubsystem.test.ts` "lock_track is verified".
@@ -271,7 +271,7 @@ How each subsystem works (and its history) is in the "Server notes" section of t
 
 ## Capital wrecks
 
-- **Behind `capitalWrecks` / `EQX_CAPITAL_WRECKS=1`, off by default.** Hit tracking is pooled (#14). Test trigger: `test_kill_capitals`, room `wreck-test`.
+- **Break-up ON by default** (`capitalWrecks` / `subcapWrecks`, owner 2026-11-14): a room opts out with `false`, env `EQX_*_WRECKS=0` forces it off (`wreckSwitchOn`); one death effect per ship (a breaking kind never sheds scrap). Hit tracking is pooled (#14). Test trigger: `test_kill_capitals`, room `wreck-test`.
 - **Wreck pieces (kind 4) block every weapon:** a new weapon or hit path must handle kind 4 and pass its shot direction (knock-back). Locks: `wreckOverkillKnockback.test.ts`, `wreckRigidHold.test.ts`.
 - **Snapshots carry wreck deltas only:** never the whole list, never vertices; every piece removal reaches `pieceGone`. Locks: `SnapshotBroadcaster.wreckDeltas.test.ts`, `wreckWireConvergence.test.ts`, `wreckLateJoiner.test.ts`.
 - Detail: [capital-destruction.md](../../docs/architecture/capital-destruction.md#server-implementation-notes).

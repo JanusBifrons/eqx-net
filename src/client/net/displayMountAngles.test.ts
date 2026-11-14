@@ -59,5 +59,25 @@ describe('drawn turret angles between snapshots', () => {
     expect(d.every((x) => x > 0), 'never holds').toBe(true);
     expect(Math.max(...d) / Math.min(...d)).toBeLessThan(2.5);
   });
+it('never draws a barrel past its arc stop (filmed fleet-melee gunship)', () => {
+    // Take 7 measurement (2026-11-14): the gunship's forward gun (traverse
+    // 3 rad/s, arc ±45°) ran into its stop and the server held it there for
+    // 89 % of the fight, but the drawn barrel, carried forward at the last
+    // turning rate, swung up to 10° past the stop and sprang back: a twitch
+    // at the stop instead of a gun laid against it.
+    const arc = Math.PI / 4;
+    const mounts = [{ rotationSpeed: 3, arcMin: -arc, arcMax: arc }];
+    const entry: DisplayMountEntry = {};
+    let worst = 0;
+    for (let f = 0; f < 90; f++) {
+      // The server slews at full traverse into the stop, then holds it.
+      if (f % 3 === 0) entry.mountAngles = [Math.min(3 * f * DT, arc)];
+      slewDisplayMountAngles(entry, mounts, DT);
+      worst = Math.max(worst, entry.displayMountAngles![0]! - arc);
+    }
+    expect(worst).toBeLessThanOrEqual(0);
+    expect(entry.displayMountAngles![0]).toBeCloseTo(arc, 6);
+  });
 });
+
 

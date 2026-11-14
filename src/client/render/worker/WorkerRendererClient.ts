@@ -26,8 +26,10 @@ import type {
   RenderPerfReading,
   PerfProbeOp,
 } from '@core/contracts/IRenderer';
+import { SwarmDeltaEncoder } from './swarmMirrorDelta.js';
 import type {
   MainToWorkerMsg,
+  MirrorUpdateMsg,
   WorkerToMainMsg,
   SerialisedPointerEvent,
   SerialisedWheelEvent,
@@ -110,6 +112,15 @@ export class WorkerRendererClient implements IRenderer {
    *  pointer during a placement drag (playtest 2026-06-10 Issue 9). */
   private _placementActive = false;
   private readonly feedback: RendererFeedback = emptyFeedback();
+  /** Swarm change-set encoder + the reused MIRROR_UPDATE message / transfer
+   *  list (no per-frame allocation, #14). */
+  private readonly _swarmDelta = new SwarmDeltaEncoder();
+  private readonly _mirrorMsg: MirrorUpdateMsg = {
+    type: 'MIRROR_UPDATE',
+    mirror: null as unknown as RenderMirror,
+    swarmDelta: this._swarmDelta.msg,
+  };
+  private readonly _poseTransfer: Transferable[] = [new ArrayBuffer(0)];
   private onOverlayTap: OverlayTapHandler | null = null;
   private onGalaxyHover: GalaxyHoverHandler | null = null;
   private initResolve: (() => void) | null = null;
@@ -376,14 +387,14 @@ export class WorkerRendererClient implements IRenderer {
     // `isDiagEnabled()`: `JSON.stringify(mirror)` every frame is NOT
     // free, so it must be off in production. When off, this is a single
     // `this.post(...)` call exactly as before — zero added cost.
-    if (isDiagEnabled()) {
-      const cloneStart = performance.now();
-      this.post({ type: 'MIRROR_UPDATE', mirror });
-      const costMs = performance.now() - cloneStart;
-      logEvent('mirror_clone', { costMs, approxBytes: JSON.stringify(mirror).length });
-    } else {
-      this.post({ type: 'MIRROR_UPDATE', mirror });
-    }
+    //
+    // Render-mirror post delta (2026-11-13): the swarm map does NOT ride the
+    // clone. `SwarmDeltaEncoder` sends only what changed since the last post
+    // (a resting wreck piece costs nothing) and the worker's
+    // `SwarmMirrorReplica` keeps the full copy. `swarm` is detached from the
+    // mirror for the (synchronous) clone and put straight back. No worker ⇒
+    // nothing is encoded (the encoder's shadow must match what was SENT).
+    if (this.worker) this.postMirror(mirror);
     // Per-frame drain queues: `pendingDamageNumbers` and
     // `pendingHealthBarHits` are mutated in place by the consumer
     // (`PixiRenderer.update`) in the main-thread path. In the worker
@@ -402,6 +413,36 @@ export class WorkerRendererClient implements IRenderer {
     if (mirror.pendingDamageNumberCancels) mirror.pendingDamageNumberCancels.length = 0;
     if (mirror.pendingHealthBarHits) mirror.pendingHealthBarHits.length = 0;
     if (mirror.pendingWarpEvents) mirror.pendingWarpEvents.length = 0;
+  }
+
+  /** Post one MIRROR_UPDATE: the mirror minus `swarm`, plus the swarm delta. */
+  private postMirror(mirror: RenderMirror): void {
+    const swarm = mirror.swarm;
+    const delta = this._swarmDelta.encode(swarm);
+    const msg = this._mirrorMsg;
+    msg.mirror = mirror;
+    mirror.swarm = undefined;
+    const transfer = delta.pose !== null ? this._poseTransfer : undefined;
+    if (transfer) transfer[0] = delta.pose!;
+    try {
+      if (isDiagEnabled()) {
+        const cloneStart = performance.now();
+        this.post(msg, transfer);
+        const costMs = performance.now() - cloneStart;
+        logEvent('mirror_clone', {
+          costMs,
+          approxBytes: JSON.stringify(mirror).length,
+          swarmFull: delta.full.length,
+          swarmPose: this._swarmDelta.stats.pose,
+          swarmPoseFloats: delta.poseLen,
+        });
+      } else {
+        this.post(msg, transfer);
+      }
+    } finally {
+      mirror.swarm = swarm;
+      this._swarmDelta.posted();
+    }
   }
 
   /**
@@ -702,6 +743,7 @@ export class WorkerRendererClient implements IRenderer {
         break;
       }
       case 'FEEDBACK': {
+        if (msg.swarmBuf) this._swarmDelta.returnBuffer(msg.swarmBuf);
         // Mutate in place to preserve reference identity.
         this.feedback.haloArrowCount = msg.feedback.haloArrowCount;
         this.feedback.damageNumberActiveCount = msg.feedback.damageNumberActiveCount;

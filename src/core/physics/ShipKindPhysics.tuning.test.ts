@@ -91,6 +91,7 @@ describe.runIf(AT_AUTHORED_SHIP_SCALE)('ship-kind tuning lock (2026-05-18 slow-d
     // 24 → 25 on 2026-11-13: arcade (Micro Machines) handling + toughness layer
     // (owner: "make it more like micro machines and make fights a bit longer").
     // 25 → 26 on 2026-11-14: energy pool ×2 for every kind (ENERGY_POOL_MUL).
+    // Also 25 → 26 on perf/subcap-final: nose guns become small-arc turrets (merged at 26).
     expect(SHIP_KIND_CATALOGUE_VERSION).toBe(26);
   });
 

@@ -26,9 +26,12 @@ export interface PerfScene {
   durationMs: number;
   /** A run is valid only if at least this many swarm entities are live at the end. */
   minSwarm: number;
+  /** A long soak: left out of a default `pnpm perf:scenes` run (name it
+   *  with `--scenes`). */
+  soak?: boolean;
 }
 
-const fight = (tag: string, kind: string, x: number, y: number, count: number, atMs = 0): SceneStep =>
+const fight = (tag: string, kind: string, x: number, y: number, count: number, atMs = 0): Extract<SceneStep, { action: 'spawn' }> =>
   ({ atMs, action: 'spawn', tag, kind, count, x, y, spread: 260 });
 
 /** Both sides, reinforced every 10 s: a 30-ship clash is over in ~10 s, so
@@ -79,6 +82,85 @@ export const PERF_SCENES: readonly PerfScene[] = [
     camera: { x: 0, y: 1200, zoom: 0.45 },
     durationMs: 30_000,
     minSwarm: 30,
+  },
+  {
+    // Sub-capital break-up slice 5 (plan subcapital-breakup.md): the
+    // fleet-fight setup played for ten minutes with `subcapWrecks` on, so
+    // every kill leaves permanent pieces that drift to a stop and sleep. Run
+    // with `--sample-ms 30000` for the over-time curve (pieces alive, sleeping
+    // share, tick cost, wire, frame time); `--base-env EQX_SUBCAP_WRECKS=0`
+    // is the same scene with the flag forced off. Results:
+    // docs/architecture/capital-destruction.md "Soak results".
+    id: 'fleet-fight-soak',
+    title: 'The fleet fight for 10 minutes with sub-cap wrecks on (debris soak)',
+    room: {
+      droneCount: 0,
+      asteroidConfig: [],
+      subcapWrecks: true,
+      sceneScript: [
+        { ...fight('blue', 'fighter', -300, 1200, 30), repeatEveryMs: 10_000, repeatUntilMs: 600_000 },
+        { ...fight('red', 'robot-square', 300, 1200, 30), repeatEveryMs: 10_000, repeatUntilMs: 600_000 },
+        { atMs: 600_000, action: 'end' },
+      ],
+    },
+    spawn: { x: 0, y: -400 },
+    camera: { x: 0, y: 1200, zoom: 0.45 },
+    durationMs: 600_000,
+    minSwarm: 30,
+    soak: true,
+  },
+  {
+    // The same soak at 10 ships a side a wave. The full soak's 30-a-side
+    // waves outrun the killing (~250 more ships alive a minute), so its client
+    // falls over within ~2.5 min whatever the debris does; at 10 a side the
+    // fight stays bounded and the debris is what grows (slice 5 soak results).
+    id: 'fleet-fight-soak-lite',
+    title: 'A bounded 10-a-side fleet fight for 10 minutes with sub-cap wrecks on (debris soak)',
+    room: {
+      droneCount: 0,
+      asteroidConfig: [],
+      subcapWrecks: true,
+      sceneScript: [
+        { ...fight('blue', 'fighter', -300, 1200, 10), repeatEveryMs: 10_000, repeatUntilMs: 600_000 },
+        { ...fight('red', 'robot-square', 300, 1200, 10), repeatEveryMs: 10_000, repeatUntilMs: 600_000 },
+        { atMs: 600_000, action: 'end' },
+      ],
+    },
+    spawn: { x: 0, y: -400 },
+    camera: { x: 0, y: 1200, zoom: 0.45 },
+    durationMs: 600_000,
+    minSwarm: 10,
+    soak: true,
+  },
+  {
+    // The lite soak with the sector's automatic slowdown ON (time scale
+    // Phase 5, `LoadSpeedController`, 0.7 floor), as in a real sector: test
+    // rooms have it off unless they opt in. Asks whether the game's own time
+    // dilation keeps the client smooth as the debris grows. The scene clock
+    // is game time, so a slowed take runs up to 1/0.7 × longer in wall time.
+    // `perfFixedLoad: false` is load-bearing: perf rooms default to fixed
+    // load, which skips the slowdown controller (and the cost clock and load
+    // shedder) even with `autoTimeScale` on. Here the room protects itself
+    // exactly as a real sector does.
+    id: 'fleet-fight-soak-lite-dilated',
+    title: 'The lite debris soak with the automatic slowdown on (time dilation)',
+    room: {
+      droneCount: 0,
+      asteroidConfig: [],
+      subcapWrecks: true,
+      autoTimeScale: true,
+      perfFixedLoad: false,
+      sceneScript: [
+        { ...fight('blue', 'fighter', -300, 1200, 10), repeatEveryMs: 10_000, repeatUntilMs: 600_000 },
+        { ...fight('red', 'robot-square', 300, 1200, 10), repeatEveryMs: 10_000, repeatUntilMs: 600_000 },
+        { atMs: 600_000, action: 'end' },
+      ],
+    },
+    spawn: { x: 0, y: -400 },
+    camera: { x: 0, y: 1200, zoom: 0.45 },
+    durationMs: 600_000,
+    minSwarm: 10,
+    soak: true,
   },
   {
     id: 'teleport-raid',
@@ -155,8 +237,8 @@ export const PERF_SCENES: readonly PerfScene[] = [
     // battleships, hostile, open fire on a capital pilot 15 km off (NPC
     // capital turrets engage pilots and structures, never other NPCs, and a
     // main gun never locks a fighter, hence the battleship pilot). Locks are
-    // capped at 2 s so the guns open inside the window. Run it with
-    // EQX_NAVAL_RANGE=real (+ the client's navalRange=real). Slice 3 measured
+    // capped at 2 s so the guns open inside the window. Runs at real naval
+    // ranges (the default since 2026-11-14). Slice 3 measured
     // events off vs on with it (rx 254 -> 67 KB/s); since slice 4 there is no
     // switch, so it now tracks the naval-shell wire cost base vs head.
     id: 'naval-broadside',
