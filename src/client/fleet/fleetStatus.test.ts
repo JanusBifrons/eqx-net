@@ -101,8 +101,10 @@ describe('sharedValue', () => {
 
 describe('fleet names (no ids shown)', () => {
   const mirror = {
-    ships: new Map([['p1', { x: 0, y: 0, angle: 0, vx: 0, vy: 0, kind: 'fighter' }]]),
-    lingeringShips: new Map([['h1', { x: 0, y: 0, angle: 0, vx: 0, vy: 0, kind: 'scout', ownerPlayerId: 'p1' }]]),
+    ships: new Map([
+      ['p1', { x: 0, y: 0, angle: 0, vx: 0, vy: 0, kind: 'fighter' }],
+      ['h1', { x: 0, y: 0, angle: 0, vx: 0, vy: 0, kind: 'scout', ownerPlayerId: 'p1', isActive: false }],
+    ]),
     swarm: new Map([
       [7, { kind: 1, shipKind: undefined }],
       [8, { kind: 2 }],

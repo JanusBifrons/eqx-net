@@ -19,6 +19,7 @@ import { getStructureKind } from '@shared-types/structureKinds';
 import { LOCK_TUNING } from '@shared-types/combat/lockProfile';
 import type { EntityKind } from '../render/entityVisuals';
 import { acquiringPct } from '../hud/lockPct';
+import { isParkedHull } from '../render/shipOwnership';
 
 /** A weapon group's lock reach basis (the server's `groupGeometry().reach`). */
 export interface GroupReach {
@@ -142,6 +143,10 @@ export function buildContactRows(
   });
   mirror.ships.forEach((s, pid) => {
     if (pid === localId) return;
+    // Pilots' ACTIVE ships only (#17): a parked / AI-flown hull has no `p:`
+    // lock key the server resolves yet. TODO(RTS Part A): lockable AI-flown
+    // ships (owner: lockable like any ship) in a later two-sided slice.
+    if (isParkedHull(mirror, pid, s)) return;
     const name = s.displayName ?? (s.kind ? getShipKind(s.kind).displayName : 'Pilot');
     add(`p:${pid}`, 'ship', name, s.x, s.y, false);
   });

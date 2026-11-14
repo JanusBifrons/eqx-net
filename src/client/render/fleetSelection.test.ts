@@ -19,10 +19,9 @@ function mirror(): RenderMirror {
     ships: new Map([
       [ME, { x: 0, y: 0, angle: 0 }],
       ['other', { x: 50, y: 50, angle: 0 }],
-    ]),
-    lingeringShips: new Map([
-      ['hull-1', { x: 100, y: 0, angle: 0, ownerPlayerId: ME }],
-      ['hull-2', { x: 200, y: 0, angle: 0, ownerPlayerId: 'other' }],
+      // Parked hulls share the one ship list (RTS Part A S3).
+      ['hull-1', { x: 100, y: 0, angle: 0, ownerPlayerId: ME, isActive: false }],
+      ['hull-2', { x: 200, y: 0, angle: 0, ownerPlayerId: 'other', isActive: false }],
     ]),
   } as unknown as RenderMirror;
 }

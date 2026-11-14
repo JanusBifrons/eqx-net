@@ -61,17 +61,10 @@ export interface ShipRenderState {
    *  `src/client/render/shipOwnership.ts` (#17), never ad hoc. */
   isActive?: boolean;
   /** The playerId that owns this hull. Active entries in `mirror.ships` are
-   *  keyed by it; parked hulls in `lingeringShips` (shipInstanceId-keyed)
-   *  always carry it. Read through `shipOwner` / `isOwnedByMe`. */
+   *  keyed by it; parked (AI-flown) hulls, keyed by shipInstanceId in the same
+   *  map since RTS Part A S3, always carry it. Read through `shipOwner` / `isOwnedByMe`. */
   ownerPlayerId?: string;
 }
-
-/** A parked hull's entry in `RenderMirror.lingeringShips`: a ship entry whose
- *  owner is always known (`ownerPlayerId` is the ship entry's own field, made
- *  required here), plus the wingman flame flags. */
-export type LingeringShipRenderState = ShipRenderState
-  & Required<Pick<ShipRenderState, 'ownerPlayerId'>>
-  & { thrusting?: boolean; boosting?: boolean };
 
 /**
  * One swarm-channel render entry. Replaces the Phase 1–4 `ObstacleRenderState`:
@@ -478,18 +471,13 @@ export interface RenderMirror {
    *  performance.now base; deltas only). The cinematic camera's velocity
    *  estimate uses it. Absent ⇒ the renderer's clock. */
   frameTimeMs?: number;
+  /** EVERY ship (RTS Part A S3, one ship list): active ships keyed by their
+   *  pilot's playerId (local prediction is playerId-keyed), parked / AI-flown
+   *  hulls (wire `isActive=false`) keyed by shipInstanceId. Which key a wire
+   *  ship gets is `client/net/shipMirrorKey.ts`; loops that treat the two
+   *  differently gate on the named predicates in
+   *  `client/render/shipOwnership.ts` (`isParkedHull`, #17). */
   ships: Map<string, ShipRenderState>;
-  /** Phase 6b — lingering player hulls (isActive=false on the wire).
-   *  These are NOT in `mirror.ships` (which is playerId-keyed and would
-   *  collide with a player's currently-piloted hull). The renderer iterates
-   *  this map separately and draws with a grey-ish tint
-   *  to signal "this hull is parked but still belongs to a real player".
-   *  Pose fields populated from `SnapshotMessage.states[*]` entries whose
-   *  `isActive === false`; identity (kind, displayName) carried alongside.
-   *  `thrusting` (RTS slice 4c): the hull's wingman holds thrust, from the
-   *  snapshot's `lastInput` (absent ⇒ off); the renderer draws its flame.
-   *  `boosting` (slice 4b): the same for the boost bit (boost exhaust). */
-  lingeringShips?: Map<string, LingeringShipRenderState>;
   /**
    * Swarm entities (asteroids + drones) shipped via the binary swarm channel.
    * Keyed by the server's dense u16 entityId. Sleeping entries remain in the
@@ -803,7 +791,7 @@ export interface RendererFeedback {
    * drawn-artefact signal (NOT the registered count). Lets the worker-boundary
    * lingering-render probe assert a parked hull's shield aura actually draws
    * (P3.12 / WS-C3): pre-fix `getEntityPose` returned null for lingering hulls
-   * (their sprites live in `lingeringSprites`, not `sprites`), so the ring
+   * (their sprites lived in a separate map before RTS Part A S3), so the ring
    * registered but stayed `visible=false` → this count was 0. Mirrors
    * `damageNumberActiveCount` as a test-observable.
    */

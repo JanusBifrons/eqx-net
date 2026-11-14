@@ -24,6 +24,7 @@ import { Container, Sprite, Texture } from 'pixi.js';
 import type { RenderMirror } from '../../../core/contracts/IRenderer.js';
 import { getShipKind } from '../../../shared-types/shipKinds.js';
 import { DEFAULT_RADAR_PREFS, type RadarPrefs } from '../../../shared-types/settings/radar.js';
+import { isParkedHull } from '../shipOwnership.js';
 
 /**
  * Thresholds, in CSS px of the TRUE sprite's on-screen diameter.
@@ -164,6 +165,9 @@ export class FarZoomIcons {
     const g = ++this.gen;
     let n = 0;
     for (const [id, ship] of mirror.ships) {
+      // ACTIVE ships only (#17): parked hulls had no far icon before RTS
+      // Part A S3. TODO(RTS Part A S6): far icons for AI-flown ships.
+      if (isParkedHull(mirror, id, ship)) continue;
       const sprite = sprites.get(id);
       if (!sprite) continue;
       const radius = getShipKind(ship.kind ?? null).radius;

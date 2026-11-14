@@ -25,7 +25,7 @@ export function sendPilotShip(shipId: string): boolean {
  * STOP PILOTING → command view (RTS slice 10; was `sendSpectate`). The inverse
  * of {@link sendPilotShip}: tell the server to park our active hull as an
  * AI-flown lingering hull (`command`, an alias of `spectate`) so it stays
- * in-world AND appears in our own `lingeringShips` for the Fly menu. No-op
+ * in-world AND appears in our own parked hulls for the Fly menu. No-op
  * server-side when we have no active hull (death / command-view join).
  * Returns true when dispatched.
  */

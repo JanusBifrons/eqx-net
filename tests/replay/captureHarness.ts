@@ -60,7 +60,6 @@ interface Internals {
     swarm?: Map<number, unknown>;
     boostingShips?: Set<string>;
     thrustingShips?: Set<string>;
-    lingeringShips?: Map<string, unknown>;
     projectiles?: Map<string, unknown>;
     liveBeams?: Map<number, unknown>;
     remoteLasers?: Map<string, unknown>;
@@ -169,7 +168,6 @@ export async function replayCapture(
   // Initialise mirror collections the production code expects.
   internals.mirror.ships = internals.mirror.ships ?? new Map();
   internals.mirror.swarm = internals.mirror.swarm ?? new Map();
-  internals.mirror.lingeringShips = internals.mirror.lingeringShips ?? new Map();
   internals.mirror.projectiles = internals.mirror.projectiles ?? new Map();
   internals.mirror.liveBeams = internals.mirror.liveBeams ?? new Map();
   internals.mirror.remoteLasers = internals.mirror.remoteLasers ?? new Map();

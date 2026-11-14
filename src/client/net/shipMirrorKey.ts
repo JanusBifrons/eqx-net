@@ -10,7 +10,7 @@
  *                        while it is still `isActive=false` during the
  *                        pending-join handshake (the bootstrap chain needs it
  *                        in `mirror.ships`).
- *  - `shipInstanceId`  — a parked hull (`mirror.lingeringShips`): any inactive
+ *  - `shipInstanceId`  — a parked hull (`mirror.ships`, same list since S3): any inactive
  *                        ship that is not the pending welcome ship, including
  *                        the local player's displaced hulls and the hull they
  *                        parked by Spectate / Command.

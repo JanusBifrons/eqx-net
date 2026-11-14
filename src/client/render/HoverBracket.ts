@@ -85,11 +85,6 @@ export class HoverBracket {
           radius = sw.radius;
         }
       }
-    } else if (mirror.lingeringShips?.has(hoveredId)) {
-      const l = mirror.lingeringShips.get(hoveredId)!;
-      ex = l.x;
-      ey = l.y;
-      radius = shipRadius(l.kind);
     }
 
     if (ex === undefined || ey === undefined) {

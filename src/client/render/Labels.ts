@@ -1,5 +1,6 @@
 import { Container, Text, TextStyle } from 'pixi.js';
 import type { RenderMirror } from '@core/contracts/IRenderer';
+import { isParkedHull } from './shipOwnership.js';
 
 /**
  * Per-entity text label manager. One small text label appears above every
@@ -118,6 +119,9 @@ export class LabelManager {
     // Players (skip self — own ship gets no label).
     for (const [playerId, ship] of mirror.ships) {
       if (playerId === localId) continue;
+      // Pilots' ACTIVE ships only (#17): parked hulls had no name label
+      // before RTS Part A S3. TODO(RTS Part A S6): the AI pilots' label rule.
+      if (isParkedHull(mirror, playerId, ship)) continue;
       // Phase 4 warp travel: a ship on its warp run is out of the world.
       if (ship.warp === 2) continue;
       const key = `p:${playerId}`;

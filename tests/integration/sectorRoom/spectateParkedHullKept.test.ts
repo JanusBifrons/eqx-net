@@ -1,9 +1,9 @@
 /**
- * Spectate: the parked hull stays in the client's lingering list.
+ * Spectate: the parked hull stays in the client's ship list (as a parked hull).
  *
  * Context (CI, train #528 and #529, `spectator-mode.spec.ts`, every retry,
  * never locally): in `test-sector-fast` the own parked hull appeared in
- * `mirror.lingeringShips` 10 ms after Spectate and was gone 600 ms later.
+ * the client's parked hulls 10 ms after Spectate and was gone 600 ms later.
  * The client's snapshot router evicts any lingering hull missing from ONE
  * snapshot, so this locks both sides of the wire in a live room: every
  * server snapshot after Spectate carries the parked hull (isActive=false) and
@@ -24,8 +24,7 @@ interface ClientInternals {
   mirror: {
     localPlayerId: string | null;
     localShipInstanceId?: string | null;
-    ships: Map<string, { x: number; y: number; vx: number; vy: number; angle: number; kind?: string }>;
-    lingeringShips?: Map<string, { ownerPlayerId?: string }>;
+    ships: Map<string, { x: number; y: number; vx: number; vy: number; angle: number; kind?: string; ownerPlayerId?: string; isActive?: boolean }>;
   };
   syncMirror(state: unknown): void;
   handleSnapshot(snap: SnapshotMessage): void;
@@ -53,7 +52,6 @@ describe('spectate: the parked hull stays listed', () => {
     const c = client as unknown as ClientInternals;
     c.predWorld = await PhysicsWorld.create();
     c.room = cr;
-    if (!c.mirror.lingeringShips) c.mirror.lingeringShips = new Map();
     const state = cr.state as unknown as { ships: Map<string, { playerId: string; kind: string }> };
     let instanceId = '';
     let kind = 'fighter';
@@ -82,7 +80,7 @@ describe('spectate: the parked hull stays listed', () => {
       snapsAfter++;
       if (!inSnap) missingFromSnap.push(snap.serverTick);
       let listed = false;
-      for (const e of c.mirror.lingeringShips!.values()) if (e.ownerPlayerId === pid) listed = true;
+      for (const e of c.mirror.ships.values()) if (e.ownerPlayerId === pid && e.isActive === false) listed = true;
       if (!listed) missingOnClient.push(snap.serverTick);
     });
 

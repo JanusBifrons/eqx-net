@@ -29,8 +29,7 @@ const gfxOf = (o: FleetOverlay): G => (o as unknown as { gfx: G }).gfx;
 
 const m = {
   localPlayerId: 'me',
-  ships: new Map([['me', { x: 10, y: 20, angle: 0 }]]),
-  lingeringShips: new Map([['hull-1', { x: -5, y: 5, angle: 0, ownerPlayerId: 'me' }]]),
+  ships: new Map([['me', { x: 10, y: 20, angle: 0 }], ['hull-1', { x: -5, y: 5, angle: 0, ownerPlayerId: 'me', isActive: false }]]),
 } as unknown as RenderMirror;
 
 const identity = (x: number, y: number, out: { x: number; y: number }): void => { out.x = x; out.y = y; };

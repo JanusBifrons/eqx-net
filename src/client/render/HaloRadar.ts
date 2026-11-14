@@ -27,6 +27,7 @@ import type { Camera } from './worker/Camera';
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import { springStep, type SpringState } from '@core/math/CritDampedSpring';
 import { getShipKind } from '../../shared-types/shipKinds.js';
+import { isParkedHull } from './shipOwnership.js';
 import {
   defaultRadarPrefs,
   EMPTY_RADAR_INSETS,
@@ -347,6 +348,9 @@ export class HaloRadar {
     if (cats.player.enabled) {
       for (const [id, sh] of mirror.ships) {
         if (id === localId) continue;
+        // Pilots' ACTIVE ships only; parked hulls are the 'lingering' category
+        // below (#17). TODO(RTS Part A S6): one category from the predicate.
+        if (isParkedHull(mirror, id, sh)) continue;
         let key = this.shipKeys.get(id);
         if (key === undefined) { key = `ship:${id}`; this.shipKeys.set(id, key); }
         const r = getShipKind(sh.kind).radius;
@@ -363,8 +367,10 @@ export class HaloRadar {
         }
       }
     }
-    if (cats.lingering.enabled && mirror.lingeringShips) {
-      for (const [id, sh] of mirror.lingeringShips) {
+    if (cats.lingering.enabled) {
+      for (const [id, sh] of mirror.ships) {
+        // LINGERING hulls only (#17); same ship list since RTS Part A S3.
+        if (!isParkedHull(mirror, id, sh)) continue;
         let key = this.lingerKeys.get(id);
         if (key === undefined) { key = `linger:${id}`; this.lingerKeys.set(id, key); }
         const r = getShipKind(sh.kind).radius;

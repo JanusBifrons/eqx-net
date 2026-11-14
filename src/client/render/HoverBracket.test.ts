@@ -73,9 +73,9 @@ describe('HoverBracket', () => {
     expect(gfxOf(bracket).x).toBe(5);
   });
 
-  it('resolves a lingering hull from mirror.lingeringShips', () => {
+  it('resolves a parked hull from the one ship list (RTS Part A S3)', () => {
     const m = mirror({
-      lingeringShips: new Map([['linger-1', { x: 11, y: 22, angle: 0, vx: 0, vy: 0, kind: 'fighter', ownerPlayerId: 'o1' }]]) as never,
+      ships: new Map([['linger-1', { x: 11, y: 22, angle: 0, vx: 0, vy: 0, kind: 'fighter', ownerPlayerId: 'o1', isActive: false }]]) as never,
     });
     expect(bracket.update(m, 'linger-1')).toBe(true);
     expect(gfxOf(bracket).x).toBe(11);

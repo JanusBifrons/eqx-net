@@ -158,7 +158,7 @@ export const WelcomeSchema = z
  *  player into COMMAND view (a `startMode: 'command'` join parked their hull as
  *  an AI-flown lingering hull at the arrival flip). The client drops its local
  *  prediction body and enters command view (`pilotMode = 'spectator'`). Sent
- *  once per such join; the snapshot (own hull inactive + in `lingeringShips`)
+ *  once per such join; the snapshot (own hull inactive + a parked hull in `mirror.ships`)
  *  is the state carrier (#16), this only flips the local mode at once. */
 export const ControlModeMessageSchema = z
   .object({

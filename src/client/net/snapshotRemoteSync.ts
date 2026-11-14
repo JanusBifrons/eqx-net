@@ -32,6 +32,7 @@ import type { PhysicsWorld, ShipPhysicsState } from '@core/physics/World';
 import { SWARM_KIND_DRONE, SWARM_KIND_SCRAP, SWARM_KIND_WRECK } from '@shared-types/swarmWireFormat';
 import { shouldForwardPredict, type RemotePredictionGuard } from './remotePredictionGuard';
 import { STAGE_3_MAX_LOOKAHEAD_TICKS } from './predictionTuning';
+import { isParkedHull } from '../render/shipOwnership';
 
 /**
  * A remote ship's control bits as the latest snapshot gave them, kept per
@@ -461,5 +462,24 @@ export function applyActivatedMounts(snap: SnapshotMessage, mirror: RenderMirror
     } else if (ship.activatedMounts !== undefined) {
       ship.activatedMounts = undefined;
     }
+  }
+}
+
+/**
+ * R2.32 — a PARKED hull's shield state from the snapshot (`states[].shieldDown`,
+ * emit-when-true, sent for active ships and parked hulls alike). Since RTS
+ * Part A S3 the hull lives in `mirror.ships` like any ship; this replaces the
+ * per-field copy the snapshot router made into the old parked-hull map, so a
+ * late joiner still sees a parked hull's broken shield (#16). Gated to parked
+ * hulls (`isParkedHull`, #17): an ACTIVE ship's `shieldDown` keeps its one
+ * writer, the shield events (`handleShield` / `handleDamage`), exactly as
+ * before S3. TODO(RTS Part A): one writer for every ship. Alloc-free.
+ */
+export function applyParkedHullShieldDown(snap: SnapshotMessage, mirror: RenderMirror): void {
+  for (const id in snap.states) {
+    const ship = mirror.ships.get(id);
+    if (!ship || !isParkedHull(mirror, id, ship)) continue;
+    const down = snap.states[id]!.shieldDown === true ? true : undefined;
+    if (ship.shieldDown !== down) ship.shieldDown = down;
   }
 }

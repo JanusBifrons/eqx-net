@@ -29,10 +29,10 @@ function ownFleet(): void {
   setGameClient(
     fakeClient({
       localPlayerId: 'p1',
-      lingeringShips: new Map<string, unknown>([
-        ['ship-1', { ownerPlayerId: 'p1', kind: 'fighter' }],
-        ['ship-3', { ownerPlayerId: 'p1', kind: 'scout' }],
-        ['ship-2', { ownerPlayerId: 'other', kind: 'scout' }], // NOT mine → excluded
+      ships: new Map<string, unknown>([
+        ['ship-1', { ownerPlayerId: 'p1', kind: 'fighter', isActive: false }],
+        ['ship-3', { ownerPlayerId: 'p1', kind: 'scout', isActive: false }],
+        ['ship-2', { ownerPlayerId: 'other', kind: 'scout', isActive: false }], // NOT mine → excluded
       ]),
     }),
   );
@@ -108,7 +108,7 @@ describe('PilotSpectatorToggle — Command / Fly (RTS slice 10)', () => {
 
   it('Fly with NO own ships shows the "No ships to fly" placeholder', () => {
     useUIStore.setState({ pilotMode: 'spectator' });
-    setGameClient(fakeClient({ localPlayerId: 'p1', lingeringShips: new Map() }));
+    setGameClient(fakeClient({ localPlayerId: 'p1', ships: new Map() }));
     render(<PilotSpectatorToggle />);
     fireEvent.click(screen.getByTestId('pilot-toggle'));
     expect(screen.getByTestId('pilot-menu-empty')).toHaveTextContent('No ships to fly');

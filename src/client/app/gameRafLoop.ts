@@ -42,6 +42,7 @@ import type { ColyseusGameClient } from '../net/ColyseusClient.js';
 import type { FleetPickResultWire, IRenderer } from '@core/contracts/IRenderer';
 import { placeInspector, type InspectorAnchor } from './inspectorPlacement.js';
 import { isInspectorHeld } from './inspectorHold.js';
+import { isParkedHull, shipOwner } from '../render/shipOwnership.js';
 
 /** Reused each frame (no per-frame allocation, #14). */
 const inspectorAt: InspectorAnchor = { left: 0, top: 0 };
@@ -491,25 +492,28 @@ function writeE2EDataset(
   localShip: { x: number; y: number; angle: number } | null,
 ): void {
   // Expose all ship positions for E2E cross-client position assertions.
+  // ONE pass over the one ship list (RTS Part A S3), split by the liveness
+  // predicate (#17) so both E2E attributes keep their pre-S3 contents:
+  // `data-ship-positions` = pilots' ships (playerId keys), and
+  // `data-lingering-positions` = parked / AI-flown hulls (disconnected /
+  // displaced / commanded, isActive=false), keyed by shipInstanceId with the
+  // owning playerId; the linger suite reads it to assert an observer SEES a
+  // player's parked hull.
+  const mirror = gameClient.mirror;
   const posMap: Record<string, { x: number; y: number }> = {};
-  for (const [id, s] of gameClient.mirror.ships) {
-    posMap[id] = { x: parseFloat(s.x.toFixed(3)), y: parseFloat(s.y.toFixed(3)) };
-  }
-  el.dataset['shipPositions'] = JSON.stringify(posMap);
-  // Lingering hulls (disconnected / displaced, isActive=false). These are
-  // NOT in mirror.ships (they route to mirror.lingeringShips), so the linger
-  // E2E suite reads this to assert a remote observer SEES a player's parked
-  // hull. Keyed by shipInstanceId; carries the owning playerId.
   const lingerMap: Record<string, { x: number; y: number; ownerPlayerId: string }> = {};
-  if (gameClient.mirror.lingeringShips) {
-    for (const [id, l] of gameClient.mirror.lingeringShips) {
+  for (const [id, s] of mirror.ships) {
+    if (isParkedHull(mirror, id, s)) {
       lingerMap[id] = {
-        x: parseFloat(l.x.toFixed(3)),
-        y: parseFloat(l.y.toFixed(3)),
-        ownerPlayerId: l.ownerPlayerId,
+        x: parseFloat(s.x.toFixed(3)),
+        y: parseFloat(s.y.toFixed(3)),
+        ownerPlayerId: shipOwner(id, s),
       };
+    } else {
+      posMap[id] = { x: parseFloat(s.x.toFixed(3)), y: parseFloat(s.y.toFixed(3)) };
     }
   }
+  el.dataset['shipPositions'] = JSON.stringify(posMap);
   el.dataset['lingeringPositions'] = JSON.stringify(lingerMap);
   el.dataset['localPlayerId'] = localId ?? '';
   el.dataset['predStats'] = JSON.stringify(gameClient.stats);

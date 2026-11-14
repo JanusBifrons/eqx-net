@@ -1,27 +1,25 @@
 /**
- * Snapshot ship-states routing — splits incoming `snap.states` into
- * (a) active player-keyed entries the rest of `handleSnapshot` uses
- * and (b) lingering (inactive) hulls routed to the mirror's
- * shipInstanceId-keyed `lingeringShips` map.
+ * Snapshot ship-states routing (RTS Part A S3: ONE ship list). Re-keys the
+ * incoming `snap.states` (shipInstanceId-keyed on the wire) to the mirror's
+ * keys: an active ship (and the own welcome ship while pending-join) under
+ * its pilot's playerId, every parked / AI-flown hull under its
+ * shipInstanceId. Both kinds then go through the SAME downstream paths
+ * (`preResetRemoteShips`, `applyShipLevels`, `applyActivatedMounts`, the
+ * remote-ship body path). The key rule is `shipMirrorKey`, shared with
+ * `syncMirror`.
  *
- * Why: the wire keys by `shipInstanceId` (Phase 6a) — same playerId
- * can have an active and a lingering hull simultaneously. The
- * predWorld + reconciler use `playerId` internally for active hulls
- * (Phase 6b C-ii strategy), so we re-key actives into a separate
- * object and route lingers to their own map. Identity fields (kind,
- * displayName) flow via the Colyseus schema diff in `syncMirror`;
- * this only refreshes pose per snapshot.
- *
- * The lingering map is reconciled at the end: any id missing from
- * this snapshot is evicted (15-min server timeout, or destroyed)
- * along with its predWorld body via the `LingeringPredBodyManager`.
+ * Parked hulls' mirror entries are created here (pose seed, owner,
+ * `isActive=false`); identity (kind, displayName) comes from the schema diff
+ * in `syncMirror`. A hull's lifetime is this router's: a hull missing from a
+ * snapshot (evicted by the 15-min timer, destroyed, re-keyed by a take
+ * controls) goes through the ONE drop path (`ctx.dropShip`, i.e.
+ * `ColyseusClient.dropRemoteShip`), which also drops its predWorld body.
  */
 
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import type { SnapshotMessage } from '@shared-types/messages';
-import type { PhysicsWorld } from '@core/physics/World';
-import type { LingeringPredBodyManager } from './LingeringPredBodyManager.js';
 import { shipMirrorKey, type ShipMirrorKeyLocal } from './shipMirrorKey.js';
+import { isParkedHull } from '../render/shipOwnership.js';
 
 /** Reused every snapshot (#14). */
 const _keyLocalScratch: ShipMirrorKeyLocal = {
@@ -30,145 +28,79 @@ const _keyLocalScratch: ShipMirrorKeyLocal = {
 
 export interface ShipRouterCtx {
   mirror: RenderMirror;
-  predWorld: PhysicsWorld | null;
-  lingerBodies: LingeringPredBodyManager;
-  tryEnsureLingerPredBody: (shipInstanceId: string) => void;
-  /** The local player chose Spectate: their inactive hull is PARKED, not a
-   *  pending join, so it must reach `lingeringShips` (the Pilot menu lists
-   *  your parked ships from there). Optional; absent ⇒ false. */
+  /** The local player chose Spectate / Command: their inactive hull is
+   *  PARKED, not a pending join, so it keys by shipInstanceId (the Pilot menu
+   *  lists your parked ships). Optional; absent ⇒ false. */
   localSpectating?: boolean;
   /** Persistent scratch — reused across calls to avoid per-snapshot allocs. */
-  lingeringSeenScratch: Set<string>;
-  lingeringToEvictScratch: string[];
+  hullSeenScratch: Set<string>;
+  hullEvictScratch: string[];
+  /** The ONE remote-ship drop path (mirror entry, body, prediction maps). */
+  dropShip: (key: string) => void;
 }
 
 /**
- * Translates `snap.states` (shipInstanceId-keyed wire format) into
- * playerId-keyed active entries, routing lingering (inactive) hulls
- * into `mirror.lingeringShips`. Mutates `snap.states` in place
- * (Probe 8 alloc-saver — Colyseus parses the message fresh, no
- * aliasing risk).
+ * Translates `snap.states` into mirror-keyed entries (playerId for active
+ * ships, shipInstanceId for parked hulls). Mutates `snap.states` in place
+ * (Probe 8 alloc-saver — Colyseus parses the message fresh, no aliasing
+ * risk).
  *
- * Plan: crispy-kazoo, Commit 8 — local-self exemption.
- * The joiner's OWN ship lands in `snap.states` with `isActive=false`
- * during the pending-join handshake window. Without the exemption,
- * own ship gets routed to `lingeringShips` and the bootstrap chain
- * (tryInitPredWorld → firstFrameRendered → sendClientReady) stalls
- * forever because `mirror.ships.has(localPlayerId)` stays false.
- * Routing the OWN ship to `mirror.ships` regardless of `isActive` keeps
- * the local player's predWorld + render path intact; other clients
- * still filter the same entry out for THEIR own translators (it's
- * just not THEIR localPlayerId). See `tests/e2e/spawn-handshake.spec.ts`
- * for the regression lock.
+ * Plan: crispy-kazoo, Commit 8 — local-self exemption (via `shipMirrorKey`).
+ * The joiner's OWN ship lands in `snap.states` with `isActive=false` during
+ * the pending-join handshake window. It keys by playerId so the bootstrap
+ * chain (tryInitPredWorld → firstFrameRendered → sendClientReady) finds
+ * `mirror.ships.has(localPlayerId)`. See `tests/e2e/spawn-handshake.spec.ts`.
  */
 export function routeSnapshotShipStates(snap: SnapshotMessage, ctx: ShipRouterCtx): void {
-  const { mirror, predWorld, lingerBodies, tryEnsureLingerPredBody,
-    lingeringSeenScratch, lingeringToEvictScratch } = ctx;
-  const statesByPlayerId: SnapshotMessage['states'] = {};
-  if (!mirror.lingeringShips) mirror.lingeringShips = new Map();
-  // 2026-05-25 heap-growth gate step 1: reuse persistent Set scratch
-  // instead of `new Set<string>()` per snapshot.
-  const lingeringSeen = lingeringSeenScratch;
-  lingeringSeen.clear();
+  const { mirror, hullSeenScratch, hullEvictScratch } = ctx;
+  const statesByKey: SnapshotMessage['states'] = {};
+  const hullSeen = hullSeenScratch;
+  hullSeen.clear();
   const keyLocal = _keyLocalScratch;
   keyLocal.localPlayerId = mirror.localPlayerId;
   keyLocal.localShipInstanceId = mirror.localShipInstanceId ?? null;
   keyLocal.localSpectating = ctx.localSpectating === true;
-  // 2026-05-25 heap-growth gate step 4: `for…in` instead of
-  // `Object.entries` — saves the per-snapshot [key,value] tuple array.
+  // `for…in` instead of `Object.entries` — no per-snapshot tuple array.
   for (const shipInstanceId in snap.states) {
     const entry = snap.states[shipInstanceId]!;
-    // The ONE ship-key rule (`shipMirrorKey`, shared with syncMirror): an
-    // active ship, or the own WELCOME ship while pending-join, keys by
-    // playerId; every other inactive hull — the player's DISPLACED hulls and
-    // the one they parked by Spectate included — keys by shipInstanceId and
-    // routes to lingeringShips, so the owner sees their pool in-world
-    // (2026-06-03 "I can't see the lingering ships") and a displaced hull
-    // never clobbers the active ship at statesByPlayerId[playerId] (the
-    // 2026-06-03 "pinned in my old interceptor" bug). A null key (own ACTIVE
-    // entry while spectating) still feeds the reconciler under the playerId:
-    // this slice is pose input, not the drawn mirror.
+    // The ONE ship-key rule (`shipMirrorKey`, shared with syncMirror). A null
+    // key (own ACTIVE entry while spectating) still feeds the reconciler
+    // under the playerId: this slice is pose input, not the drawn mirror.
     const key = shipMirrorKey(shipInstanceId, entry.playerId, entry.isActive !== false, keyLocal);
     if (key === null || key === entry.playerId) {
-      // Includes the own joining ship (isActive=false on the server): it MUST
-      // stay in `mirror.ships`, or the bootstrap chain stalls on
-      // rendererFirstFrameRendered.
-      statesByPlayerId[entry.playerId] = entry;
+      statesByKey[entry.playerId] = entry;
       continue;
     }
-    // Route to the lingering map. We update pose every snapshot;
-    // identity fields come from the schema diff and are preserved.
-    // Probe 8 (mobile-perf-investigation, 2026-05-24) — pool the
-    // lingering entry in place. Same rationale as Probe 7's ship
-    // pooling: kind / displayName preserved by NOT touching them.
-    let lingerEntry = mirror.lingeringShips.get(shipInstanceId);
-    if (!lingerEntry) {
-      lingerEntry = {
-        x: entry.x, y: entry.y, vx: entry.vx, vy: entry.vy,
-        angle: entry.angle,
+    // A parked hull: same map, its own key. Pooled entry (Probe 8): pose is
+    // only SEEDED here; afterwards it comes from the predWorld body (the
+    // remote-ship path), or from the snapshot while the hull has no body.
+    statesByKey[shipInstanceId] = entry;
+    hullSeen.add(shipInstanceId);
+    let hull = mirror.ships.get(shipInstanceId);
+    if (!hull) {
+      hull = {
+        x: entry.x, y: entry.y, vx: entry.vx, vy: entry.vy, angle: entry.angle,
         ownerPlayerId: entry.playerId,
         isActive: false,
-        // R2.32 — carry the shield state so the parked hull renders its aura.
-        shieldDown: entry.shieldDown,
-        // Phase 4 WS-B1 — carry the public level so the parked hull shows its
-        // badge (absent ⇒ level 1, no badge).
-        level: entry.level,
-        // Phase 4 WS-B3 — carry the public activated mounts so the parked hull
-        // renders its extra turrets (absent ⇒ none). Copied (slim list, only
-        // on a discrete change in practice — the wire omits it when empty).
-        activatedMounts: entry.mounts
-          ? entry.mounts.map((m) => ({ slotId: m.slotId, weaponId: m.weaponId }))
-          : undefined,
       };
-      mirror.lingeringShips.set(shipInstanceId, lingerEntry);
+      mirror.ships.set(shipInstanceId, hull);
     } else {
-      lingerEntry.x = entry.x;
-      lingerEntry.y = entry.y;
-      lingerEntry.vx = entry.vx;
-      lingerEntry.vy = entry.vy;
-      lingerEntry.angle = entry.angle;
-      lingerEntry.ownerPlayerId = entry.playerId;
-      lingerEntry.isActive = false;
-      lingerEntry.shieldDown = entry.shieldDown;
-      lingerEntry.level = entry.level;
-      lingerEntry.activatedMounts = entry.mounts
-        ? entry.mounts.map((m) => ({ slotId: m.slotId, weaponId: m.weaponId }))
-        : undefined;
+      hull.ownerPlayerId = entry.playerId;
+      hull.isActive = false;
     }
-    // RTS slice 4c — the wingman's angvel + input bits: the predWorld body
-    // turns/thrusts between snapshots and the renderer draws its flame.
-    lingerEntry.thrusting = lingerBodies.noteSnapshot(shipInstanceId, entry.angvel, entry.lastInput);
-    lingerEntry.boosting = lingerBodies.boostOf(shipInstanceId);
-    lingeringSeen.add(shipInstanceId);
-    // Phase 6b — spawn / refresh the predWorld body so the local
-    // player can collide with the parked hull. The helper handles the
-    // race between this site (pose) and syncMirror (kind) — see its
-    // doc comment.
-    tryEnsureLingerPredBody(shipInstanceId);
   }
-  // Remove lingering hulls that didn't appear in this snapshot (evicted
-  // by the 15-min timer, or destroyed) — plus despawn their predWorld
-  // bodies so the local player stops colliding with ghosts.
-  // 2026-05-25 heap-growth gate step 1: collect ids to evict into a
-  // persistent scratch array instead of `[...keys()]` spread alloc.
-  // Two-phase (collect then evict) so we don't mutate the Map mid-iter.
-  const toEvict = lingeringToEvictScratch;
+  // Drop parked hulls that didn't appear in this snapshot. Collect then drop
+  // (no mutation mid-iteration), into a persistent scratch (#14). Active
+  // ships' lifetime is the schema diff's (`syncMirror`), not this sweep's.
+  const toEvict = hullEvictScratch;
   toEvict.length = 0;
-  for (const id of mirror.lingeringShips.keys()) {
-    if (!lingeringSeen.has(id)) toEvict.push(id);
+  for (const [key, ship] of mirror.ships) {
+    if (!hullSeen.has(key) && isParkedHull(mirror, key, ship)) toEvict.push(key);
   }
-  for (const id of toEvict) {
-    mirror.lingeringShips.delete(id);
-    if (predWorld) lingerBodies.despawn(id, predWorld);
-  }
-  // Probe 8 — mutate snap.states in place rather than spreading into
-  // a new object. `snap` is the parameter from `room.onMessage` and
-  // is owned by us for the duration of this handler — Colyseus
-  // freshly-parses it per message, no aliasing concern. Saves one
-  // object allocation per snapshot (the spread also copied references
-  // to all the other snap fields — projectiles, drones,
-  // boostingIds, etc.).
-  snap.states = statesByPlayerId;
+  for (let i = 0; i < toEvict.length; i++) ctx.dropShip(toEvict[i]!);
+  toEvict.length = 0;
+  // Probe 8 — swap in the re-keyed states (no spread of the whole snap).
+  snap.states = statesByKey;
 }
 
 /**

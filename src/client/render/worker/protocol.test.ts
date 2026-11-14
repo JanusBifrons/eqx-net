@@ -115,7 +115,6 @@ describe('renderer-worker protocol', () => {
           localPlayerId: null,
           serverTick: 0,
           swarm: new Map(),
-          lingeringShips: new Map(),
           projectiles: new Map(),
           serverGhostX: 0,
           serverGhostY: 0,

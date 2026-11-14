@@ -7,6 +7,7 @@ import { getGameClient } from '../net/clientSingleton';
 import { getShipKind } from '@shared-types/shipKinds';
 import { sendCommand, sendPilotShip } from '../ships/shipActionsClient';
 import type { ControlMode } from '../state/storeTypes';
+import { isOwnedByMe, isParkedHull } from '../render/shipOwnership';
 
 /**
  * The ALWAYS-VISIBLE Command ⇄ Fly toggle (two joined MUI `ToggleButton`s).
@@ -62,10 +63,10 @@ interface PilotableShip {
 function getPilotableShips(): PilotableShip[] {
   const out: PilotableShip[] = [];
   const mirror = getGameClient()?.mirror;
-  const localId = mirror?.localPlayerId;
-  if (!mirror || !localId || !mirror.lingeringShips) return out;
-  for (const [id, l] of mirror.lingeringShips) {
-    if (l.ownerPlayerId === localId) out.push({ shipId: id, label: getShipKind(l.kind).displayName });
+  if (!mirror || !mirror.localPlayerId) return out;
+  // My PARKED hulls only (#17), from the one ship list (RTS Part A S3).
+  for (const [id, s] of mirror.ships) {
+    if (isParkedHull(mirror, id, s) && isOwnedByMe(mirror, id, s)) out.push({ shipId: id, label: getShipKind(s.kind).displayName });
   }
   return out;
 }

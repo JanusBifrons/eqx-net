@@ -93,7 +93,7 @@ function kindName(kind: string | undefined): string | undefined {
 /** A player-facing name for one of your own ships: its kind ("Fighter"). */
 export function fleetShipName(mirror: RenderMirror | null | undefined, id: string): string {
   if (!mirror) return 'Ship';
-  const s = mirror.ships.get(id) ?? mirror.lingeringShips?.get(id);
+  const s = mirror.ships.get(id);
   return kindName(s?.kind) ?? 'Ship';
 }
 
@@ -104,7 +104,7 @@ export function fleetShipName(mirror: RenderMirror | null | undefined, id: strin
  */
 export function fleetTargetName(mirror: RenderMirror | null | undefined, id: string | null): string | undefined {
   if (!mirror || !id) return undefined;
-  const s = mirror.ships.get(id) ?? mirror.lingeringShips?.get(id);
+  const s = mirror.ships.get(id);
   if (s) return kindName(s.kind) ?? 'Ship';
   const n = Number(id.startsWith('swarm-') ? id.slice(6) : id);
   if (!Number.isInteger(n)) return undefined;

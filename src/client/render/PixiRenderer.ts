@@ -38,7 +38,7 @@ import { DoubleTapTracker } from './input/doubleTap.js';
 import { createFleetPickState, decidePickTap, pickAddPoint, pickFinishPatrol, pickStart, type FleetPickResult } from './input/fleetPick.js';
 import { applySelection, boxSelectOwn, collectFleetShips, isOwnShipPresent, pickOwnShipAt, sameSelection, tapSelectOwn } from './fleetSelection.js';
 import { FleetOverlay, type OrderFlash } from './FleetOverlay.js';
-import { decideLingeringSpriteAction, decideExplosionPosition, type SpriteDecision } from './spriteUpdateDecisions';
+import { decideExplosionPosition } from './spriteUpdateDecisions';
 import { shouldLatchFirstFrame } from './firstFrameLatch.js';
 import { EffectsService, effectsDisabledByUrl } from '../effects/EffectsService';
 import { readFxKillSwitches, type FxKillSwitches } from './fxKillSwitches';
@@ -65,7 +65,7 @@ import { FxFences, FxShields } from './art/fx/FxShields.js';
 import { DEFAULT_SHIP_KIND } from '../../shared-types/shipKinds.js';
 import { shieldBubbleRadiusForEntity } from './pixi/shieldBubbleRadius.js';
 import { ART_OFF, type ArtOptions } from './art/artMode.js';
-import { buildArtShipSprite, isMachinedSprite, shipArtSwap, shipHandleFor, updateArtShipLight, type ShipArtCtx } from './art/shipArtSprites.js';
+import { isMachinedSprite, updateArtShipLight, type ShipArtCtx } from './art/shipArtSprites.js';
 import { BeamSpritePool, type BeamView } from './BeamSpritePool';
 import {
   CameraDirector,
@@ -83,10 +83,7 @@ import { BackgroundGrid } from './BackgroundGrid';
 import { StarfieldBackground } from './StarfieldBackground';
 import { logEvent, isDiagEnabled } from '../debug/ClientLogger';
 import { getShipKind } from '../../shared-types/shipKinds';
-import { shipPrimaryColor } from '@core/geometry/shipHullOutline';
 import {
-  buildShipGfxFromShape,
-  shapeForKind,
   buildGhostGfx,
   applyMountOffset,
   buildExplosionGfx,
@@ -96,6 +93,7 @@ import { getStructureKind } from '@shared-types/structureKinds';
 import { setCanvasPointerCapture } from './pointerCapture.js';
 import { FrameTimeRing } from '@core/perf/FrameTimeRing';
 import { localCameraKey } from './camera/localCameraKey';
+import { isParkedHull } from './shipOwnership.js';
 import type { RenderPerfReading, PerfProbeOp, RenderCountReading } from '@core/contracts/IRenderer';
 
 // Most colour + builder constants moved to pixi/spriteBuilders.ts;
@@ -334,7 +332,6 @@ export class PixiRenderer implements IRenderer {
     const shown = this._artShown;
     shown.clear();
     for (const sp of this.sprites.values()) noteShownArt(sp, shown);
-    for (const e of this.lingeringSprites.values()) noteShownArt(e.sprite, shown);
     art.collect(inUse, shown);
     inUse.clear();
     shown.clear();
@@ -446,21 +443,19 @@ export class PixiRenderer implements IRenderer {
   private readonly swarmPoseScratch: InterpolatedPose = { x: 0, y: 0, angle: 0 };
   /** 2026-05-25 heap-growth gate step 6 — persistent scratches for the
    *  five containers `update()` allocated per frame (60-90 Hz). Each
-   *  is `.clear()`'d at the start of `update()` and refilled. The
-   *  `lingeringPosesView` Map's per-entry `{x, y}` literals are also
-   *  pooled via `_explosionPoseEntries` (grow-once, reused thereafter).
+   *  is `.clear()`'d at the start of `update()` and refilled.
    *  Pre-fix: 5 containers + N{x,y} entries per frame = real allocator
    *  pressure under combat (see capture lnnkkh, 2026-05-25). */
   private readonly _updateSeenScratch = new Set<string>();
   /** Dying capitals drawn at their last pose until their wreck pieces are
    *  (capital-breakup take B, 2026-11-13: the hull vanished ~0.5 s first). */
   private readonly _dyingHulls = new DyingHullHold();
-  /** Sprite key → the ship kind it was built for (active, swarm, parked).
+  /** Sprite key → the ship kind it was built for (every ship, swarm).
    *  Bound once (no per-frame closure, #14). */
   private readonly _spriteShipKind = (id: string): string | null | undefined => {
     const sp = this.sprites.get(id);
     if (sp !== undefined) return shipSpriteKinds.get(sp) ?? this._swarmSpriteSigs.get(id)?.shipKind;
-    return this.lingeringSprites.get(id)?.kind;
+    return undefined;
   };
   /** The sweep's per-id cleanup; `held` keeps the turret cluster on the
    *  still-drawn sprite. Bound once (#14). */
@@ -507,8 +502,6 @@ export class PixiRenderer implements IRenderer {
   private readonly _directorLookup: CameraTargetLookup = this.createDirectorLookup();
   private readonly _updateRemoteHitTargetsScratch = new Set<string>();
   private readonly _updateLocalHitTargetsScratch = new Set<string>();
-  private readonly _updateLingeringPosesView = new Map<string, { x: number; y: number }>();
-  private readonly _updateLingeringPoseEntries: { x: number; y: number }[] = [];
   private readonly _updateProjSeenScratch = new Set<string>();
   /** 2026-05-26 heap-growth gate step 12 — pooled per-frame ctx objects
    *  for the extracted sprite updaters. Pre-fix each `update()` call
@@ -1093,12 +1086,10 @@ export class PixiRenderer implements IRenderer {
         // updateSwarmSprites). Returns null for entities not in the
         // sprite map (despawned, never spawned, off-interest).
         getEntityPose: (entityId: string) => {
-          // Active ships + drones live in `this.sprites`; PARKED lingering hulls
-          // live in the SEPARATE `this.lingeringSprites` map. Effects registered
-          // for a lingering hull (the shield aura — P3.12 / WS-C3) must resolve
-          // its pose too, or the ring registers but `ShieldAura` hides it every
-          // frame (the "lingering ships don't draw a shield" bug). Fall back.
-          const sp = this.sprites.get(entityId) ?? this.lingeringSprites.get(entityId)?.sprite;
+          // Every ship (parked hulls too, RTS Part A S3) + drones live in
+          // `this.sprites`, so a parked hull's shield aura resolves its pose
+          // (P3.12 / WS-C3: the "lingering ships don't draw a shield" bug).
+          const sp = this.sprites.get(entityId);
           if (!sp) return null;
           // Pure seam helper: converts the Pixi sprite pose BACK to game
           // space (Y-up, angle un-negated). Mutates the reused scratch so
@@ -2027,46 +2018,21 @@ export class PixiRenderer implements IRenderer {
     updateShipSprites(mirror, this._shipUpdaterCtx);
 
     // Explosion sprites spawned this frame for destroyed ships.
-    // 2026-05-13 — look up the targetId across both sprite maps
-    // (active ships by playerId, lingering hulls by shipInstanceId).
-    // Previously this only checked `this.sprites` (active-only) and
-    // defaulted to (0,0) when a lingering hull was destroyed — the
-    // user's "explosion appeared at zero zero" bug. Helper is in
-    // `spriteUpdateDecisions.ts` and is unit-tested there.
+    // 2026-05-13 — the "explosion appeared at zero zero" bug (a parked
+    // hull's sprite lived in a separate map). Since RTS Part A S3 every
+    // ship's sprite is in `this.sprites` (active by playerId, parked by
+    // shipInstanceId). Helper in `spriteUpdateDecisions.ts`, unit-tested.
     // A capital dying into a wreck stays drawn until its pieces are (marked
     // here while its sprite is still mapped; the sweeps below hand it over).
     noteDyingHulls(mirror.explodingShips, mirror.capitalWrecks, this._spriteShipKind, this._dyingHulls, this.fxNow());
     if (mirror.explodingShips) {
-      // Wrap the lingering-sprite cache to expose just the {x, y}
-      // pose the helper expects. The cache value also carries `kind`
-      // which the helper doesn't need.
-      // 2026-05-25 heap-growth gate step 6: persistent Map + pooled
-      // {x,y} entries (peak == lingering-sprite count; grow-once).
-      const lingeringPosesView = this._updateLingeringPosesView;
-      lingeringPosesView.clear();
-      const lingeringPoseEntries = this._updateLingeringPoseEntries;
-      let lingeringPoseIdx = 0;
-      for (const [id, entry] of this.lingeringSprites) {
-        let pose = lingeringPoseEntries[lingeringPoseIdx];
-        if (!pose) {
-          pose = { x: 0, y: 0 };
-          lingeringPoseEntries[lingeringPoseIdx] = pose;
-        }
-        pose.x = entry.sprite.x;
-        pose.y = entry.sprite.y;
-        lingeringPosesView.set(id, pose);
-        lingeringPoseIdx++;
-      }
       for (const targetId of mirror.explodingShips) {
-        // PRESERVE the decideExplosionPosition lookup — the 2026-05-13
-        // Phase 6b fix. Naive `mirror.ships.get(targetId)?.pose` here
-        // would regress the "explosion at (0,0)" bug when a lingering
-        // hull (mirror.lingeringShips) is destroyed. The helper unifies
-        // the two sprite maps.
+        // PRESERVE the decideExplosionPosition lookup (the 2026-05-13 fix):
+        // the dying ship's mirror entry is already gone (killEntity), so the
+        // pose comes from its still-mapped SPRITE, never a (0,0) default.
         const pose = decideExplosionPosition({
           targetId,
-          activeShipsByPlayerId: this.sprites,
-          lingeringShipsByShipInstanceId: lingeringPosesView,
+          shipSprites: this.sprites,
         });
         if (!pose) continue; // ship not in any map — skip the VFX
 
@@ -2752,7 +2718,6 @@ export class PixiRenderer implements IRenderer {
     // Phase 1 — name labels above remote ships and drones (skip self).
     this.labels?.update(mirror);
 
-    this.updateLingeringShips(mirror);
     // Dying capitals: hand over to wreck pieces drawn this frame, or give up
     // at the deadline; the rest keep their light frame at the last pose.
     this._dyingHulls.settle(this.fxNow());
@@ -2773,19 +2738,12 @@ export class PixiRenderer implements IRenderer {
     // Phase 4 of the worker migration will replace this with a FEEDBACK
     // postMessage from the renderer worker; the contract surface stays
     // the same (caller does `renderer.getFeedback()`).
+    // Every ship, parked hulls included (R2.32: the worker-boundary probe
+    // asserts a parked hull's barrels render; covers ACTIVE + LINGERING, #17).
     this.feedback.mountCounts.clear();
     for (const shipId of mirror.ships.keys()) {
       const count = this.mountVisuals.mountCountForShip(shipId);
       if (count > 0) this.feedback.mountCounts.set(shipId, count);
-    }
-    // R2.32 — lingering (parked) hulls also carry weapon-barrel clusters; surface
-    // their mount counts (reusing the existing mountCounts feedback field) so the
-    // worker-boundary probe can assert the barrels actually render.
-    if (mirror.lingeringShips) {
-      for (const id of mirror.lingeringShips.keys()) {
-        const count = this.mountVisuals.mountCountForShip(id);
-        if (count > 0) this.feedback.mountCounts.set(id, count);
-      }
     }
     this.feedback.haloArrowCount = this.halo.getDebugVisibleArrowCount();
     this.feedback.damageNumberActiveCount = this.damageNumbers?.getActiveCount() ?? 0;
@@ -2997,7 +2955,7 @@ export class PixiRenderer implements IRenderer {
 
   /** New engine exhaust for every ship sprite with Machined art: players
    *  pass their thrust / boost input, drones (`swarm-*`) follow their speed.
-   *  Lingering hulls and scrap are skipped. Reads the sprite's resolved pose
+   *  Scrap is skipped. Reads the sprite's resolved pose
    *  (one pose per frame). Ships it draws skip today's particle emitter. */
   /** Warp-to visuals for every visible ship (one resolved sprite pose each). */
   private drawWarpFx(mirror: RenderMirror): void {
@@ -3007,6 +2965,9 @@ export class PixiRenderer implements IRenderer {
     const local = mirror.localPlayerId;
     const s = this._warpShipScratch;
     for (const [id, ship] of mirror.ships) {
+      // ACTIVE ships only (#17): a parked hull has no warp phase and was never
+      // drawn here before RTS Part A S3.
+      if (isParkedHull(mirror, id, ship)) continue;
       const sp = this.sprites.get(id);
       // A remote ship on its run is hidden but still tracked (its departure).
       if (!sp || (!sp.visible && ship.warp !== 2)) continue;
@@ -3078,6 +3039,8 @@ export class PixiRenderer implements IRenderer {
       if (!h || h.job.type !== 'ship' || !h.ship) continue;
       let thrust: -1 | 0 | 1, boost: -1 | 0 | 1;
       if (mirror.ships.has(key)) {
+        // Every ship, AI-flown hulls included: their flame bits ride the
+        // same snapshot carriers under their shipInstanceId (RTS Part A S2).
         thrust = mirror.thrustingShips?.has(key) ? 1 : 0;
         boost = mirror.boostingShips?.has(key) ? 1 : 0;
       } else if (key.startsWith('swarm-') && this._swarmSpriteKinds.get(key) === 1) {
@@ -3087,22 +3050,6 @@ export class PixiRenderer implements IRenderer {
         thrust = -1; boost = -1;
       } else continue;
       this.drawFxEngineFor(fx, key, sp, h, thrust, boost, dt, now);
-    }
-    // RTS slice 4c — lingering hulls flown by a wingman: their sprites live
-    // in `lingeringSprites` (art key `linger-<id>`), the thrust bit rides the
-    // lingering mirror entry (snapshot `lastInput`), and so does the boost
-    // bit (slice 4b: wingmen boost on long legs, energy-gated server-side).
-    if (mirror.lingeringShips) {
-      for (const [id, entry] of this.lingeringSprites) {
-        const sp = entry.sprite;
-        if (!sp.visible) continue;
-        const h = this._artCtx.handles.get(entry.artKey);
-        if (!h || h.job.type !== 'ship' || !h.ship) continue;
-        const le = mirror.lingeringShips.get(id);
-        const thrust: -1 | 0 | 1 = le?.thrusting === true ? 1 : 0;
-        const boost: -1 | 0 | 1 = le?.boosting === true ? 1 : 0;
-        this.drawFxEngineFor(fx, entry.artKey, sp, h, thrust, boost, dt, now);
-      }
     }
     fx.endFrame();
   }
@@ -3204,20 +3151,14 @@ export class PixiRenderer implements IRenderer {
     // event. Pre-fix the aura was gated on `shieldDown === false`
     // (explicit), so an unscathed just-spawned ship rendered no aura —
     // user perception: "I spawn in without a shield up."
+    // Every ship: ACTIVE and LINGERING (R2.32: a parked hull keeps its shield
+    // and shows its aura), #17.
     for (const [id, ship] of mirror.ships) {
       if (ship.shieldDown !== true) seen.add(id);
     }
     if (mirror.swarm) {
       for (const [id, sw] of mirror.swarm) {
         if (sw.shieldDown !== true && sw.kind === 1) seen.add(`swarm-${id}`);
-      }
-    }
-    // R2.32 — lingering (parked) hulls render their shield aura too. They are
-    // shipInstanceId-keyed (no `swarm-` prefix) and kept OUT of mirror.ships, so
-    // the radius lookup below also falls back to mirror.lingeringShips.
-    if (mirror.lingeringShips) {
-      for (const [id, ship] of mirror.lingeringShips) {
-        if (ship.shieldDown !== true) seen.add(id);
       }
     }
 
@@ -3253,102 +3194,6 @@ export class PixiRenderer implements IRenderer {
   /** Wall-clock of the last `effects.tick` call. Used to derive dt for the
    *  next call. 0 ⇒ first frame (use a default 16.67 ms to seed). */
   private lastEffectsTickNowMs = 0;
-
-  /** Phase 6b — lingering hulls (players who disconnected within the
-   *  15-min linger window OR whose ships have been displaced from
-   *  `playerToSlot` by a fresh spawn) are drawn with the SAME silhouette
-   *  + colour as the live ship (they still belong to a real player), with
-   *  a slight alpha drop (0.75) as a visual cue for "this hull is parked,
-   *  the pilot isn't currently flying it".
-   *
-   *  Phase A3: the create-vs-rebuild-vs-reposition decision is delegated
-   *  to `decideLingeringSpriteAction` (pure, unit-tested). The previous
-   *  inline version's `if (!ship.kind) continue` skip left lingering
-   *  hulls permanently invisible when the schema diff was late; the
-   *  extracted helper makes the fallback-kind behaviour an explicit
-   *  contract and prevents regression. */
-  /** Lingering hull sprites. Per-entry `stamp` field implements the
-   *  generation-counter pattern (R5 in the paradigm doc) — bump
-   *  `_lingeringFrameId` at the top of `updateLingeringShips`, stamp
-   *  every touched entry, sweep entries whose stamp lags. Replaces the
-   *  per-frame `new Set<string>()` the audit identified at this site. */
-  private readonly lingeringSprites = new Map<string, { sprite: Container; kind: string; stamp: number; artKey: string }>();
-  private _lingeringFrameId = 0;
-  private updateLingeringShips(mirror: RenderMirror): void {
-    if (!mirror.lingeringShips || mirror.lingeringShips.size === 0) {
-      if (this.lingeringSprites.size > 0) {
-        for (const [id, entry] of this.lingeringSprites) {
-          // A parked capital that died into a wreck stays drawn until its pieces are.
-          if (this._dyingHulls.tryHold(id, entry.sprite, this.fxNow())) {
-            this.mountVisuals.detachShip(id);
-            continue;
-          }
-          this.mountVisuals.removeShip(id); // R2.32 — free the weapon-barrel cluster
-          entry.sprite.destroy();
-        }
-        this.lingeringSprites.clear();
-      }
-      return;
-    }
-    // Generation-counter sweep (invariant #14, R5). Pre-Phase-4 this
-    // path allocated `new Set<string>()` per RAF (60-100 fps depending
-    // on device); the stamp field on each entry now carries the same
-    // signal with zero allocation.
-    const frameId = ++this._lingeringFrameId;
-    for (const [shipInstanceId, ship] of mirror.lingeringShips) {
-      const decision = decideLingeringSpriteAction({
-        cached: this.lingeringSprites.get(shipInstanceId),
-        currentKind: ship.kind,
-        fallbackKind: 'fighter',
-      });
-      let entry = this.lingeringSprites.get(shipInstanceId);
-      // Machined art: a parked hull swaps to its Machined sprite once ready.
-      const artKey = this.lingeringSprites.get(shipInstanceId)?.artKey ?? `linger-${shipInstanceId}`; // built once per hull (cached on the entry)
-      const kind = 'kind' in decision ? decision.kind : (entry?.kind ?? 'fighter');
-      const lingerHandle = shipHandleFor(this._artCtx, artKey, kind, undefined);
-      let action: SpriteDecision['action'] = decision.action;
-      if (entry && action === 'reposition' && shipArtSwap(this._artCtx, entry.sprite, lingerHandle) !== 'keep') action = 'rebuild';
-      if (action === 'rebuild') {
-        this.mountVisuals.removeShip(shipInstanceId); // drop the old cluster before its sprite dies
-        entry!.sprite.destroy();
-        this.lingeringSprites.delete(shipInstanceId);
-        entry = undefined;
-      }
-      if (action === 'create' || action === 'rebuild') {
-        const shape = shapeForKind(kind);
-        const sprite = buildArtShipSprite(lingerHandle, () => buildShipGfxFromShape(shape, shipPrimaryColor(getShipKind(kind))));
-        sprite.alpha = 0.75;
-        this.shipContainer.addChild(sprite);
-        // R2.32 — give the parked hull its weapon barrels. Parented to the
-        // sprite so they inherit its pose; frozen at baseAngle (no
-        // applyMountAngles call — an abandoned hull isn't aiming).
-        this.mountVisuals.ensureForShip(shipInstanceId, kind, sprite);
-        entry = { sprite, kind, stamp: frameId, artKey };
-        this.lingeringSprites.set(shipInstanceId, entry);
-      }
-      // 'skip' is not produced by the lingering decision today. Be
-      // defensive anyway.
-      if (action === 'skip' || !entry) continue;
-      entry.stamp = frameId;
-      entry.sprite.x = ship.x;
-      entry.sprite.y = -ship.y;
-      entry.sprite.rotation = -ship.angle;
-      updateArtShipLight(this._artCtx, entry.sprite);
-    }
-    for (const [id, entry] of this.lingeringSprites) {
-      if (entry.stamp !== frameId) {
-        // A parked capital that died into a wreck stays drawn until its
-        // pieces are (the capital-breakup take's cruiser was one).
-        if (this._dyingHulls.tryHold(id, entry.sprite, this.fxNow())) this.mountVisuals.detachShip(id);
-        else {
-          this.mountVisuals.removeShip(id); // R2.32 — free the weapon-barrel cluster
-          entry.sprite.destroy();
-        }
-        this.lingeringSprites.delete(id);
-        this._artCtx.handles.delete(entry.artKey);
-      }
-    }
-  }
 
   /**
    * Attach a screen-space overlay container to the stage, **above** the
@@ -3482,7 +3327,7 @@ export class PixiRenderer implements IRenderer {
   private readonly _fxShieldRadius = new Map<string, number>();
   /** Pixi-space pose of an entity's sprite, for the new shields. */
   private readonly _fxShieldPose = (id: string, out: { x: number; y: number }): boolean => {
-    const sp = this.sprites.get(id) ?? this.lingeringSprites.get(id)?.sprite;
+    const sp = this.sprites.get(id);
     if (!sp) return false;
     out.x = sp.x; out.y = sp.y;
     return true;
@@ -3720,9 +3565,9 @@ export class PixiRenderer implements IRenderer {
   private cameraSprite(id: string): Container | undefined {
     if (id !== 'local') return this.sprites.get(id);
     const m = this._lastMirror;
-    const lk = localCameraKey(m?.localPlayerId ?? null, this._isDrawnSprite, m?.lingeringShips);
+    const lk = localCameraKey(m ?? null, this._isDrawnSprite);
     if (lk === null) return undefined;
-    return lk.parked ? this.lingeringSprites.get(lk.key)?.sprite : this.sprites.get(lk.key);
+    return this.sprites.get(lk.key);
   }
   private readonly _isDrawnSprite = (key: string): boolean => {
     const sp = this.sprites.get(key);
@@ -3768,7 +3613,7 @@ export class PixiRenderer implements IRenderer {
     const o = this.fleetOverlay;
     const id = o?.lastRingId ?? null;
     if (o === null || id === null) return;
-    const sp = this.sprites.get(id) ?? this.lingeringSprites.get(id)?.sprite;
+    const sp = this.sprites.get(id);
     if (sp === undefined) return;
     const g = sp.parent ? sp.parent.toGlobal(sp.position, this._ringProbePt) : null;
     if (g === null) return;
@@ -3845,9 +3690,6 @@ export class PixiRenderer implements IRenderer {
     for (const [id, sp] of this.sprites) {
       if (isMachinedSprite(sp)) machined++;
       else if (!id.startsWith('swarm-') || this._artCtx.handles.has(id)) classic++;
-    }
-    for (const e of this.lingeringSprites.values()) {
-      if (isMachinedSprite(e.sprite)) machined++; else classic++;
     }
     // Capital destruction S2b: drawn wreck pieces (visible sprites of kind 4).
     // S3: textured pieces (parent art), pieces whose cut edges still glow,

@@ -11,7 +11,7 @@ import BuildIcon from '@mui/icons-material/Build';
 import { useUIStore } from '../state/store';
 import { selectionStats } from '../net/selectionStats';
 import { toSelectWire } from '../net/selectionClient';
-import { isOwnedByMe } from '../render/shipOwnership';
+import { isOwnedByMe, isParkedHull } from '../render/shipOwnership';
 import { getGameClient } from '../net/clientSingleton';
 import { sendStructureAction, sendUpgradeStructure, sendRefineSalvage, sendRepairShip, sendSetGateAccess, sendSetRecipe, sendBlueprintSlot } from '../structures/structureActionsClient';
 import { BP_RUNS_ORIGINAL, decodeGood, effectiveRecipe, isProcessorKind, nextRecipe, prodStatusLine, type ProdState } from '@shared-types/production';
@@ -702,8 +702,10 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
   // owner's server-propagated display name); never surface the raw ownerPlayerId
   // (no ids in the UI). Absent name ⇒ "Abandoned hull"; the info line is the kind.
   if (kind === 'lingering') {
-    const l = client.mirror.lingeringShips?.get(id);
-    if (!l) return null;
+    // A parked hull lives in the one ship list under its shipInstanceId
+    // (RTS Part A S3); only a parked hull gets this panel (#17).
+    const l = client.mirror.ships.get(id);
+    if (!l || !isParkedHull(client.mirror, id, l)) return null;
     const data: PanelData = {
       name: l.displayName || 'Abandoned hull',
       hpPct: 0,
@@ -716,7 +718,7 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
     };
     // WS-A2 — a lingering hull the LOCAL player owns is reclaimable via the
     // in-world Pilot action. The selection id IS the shipInstanceId (the
-    // lingeringShips map key), which is exactly what `pilot_ship` needs.
+    // its `mirror.ships` key), which is exactly what `pilot_ship` needs.
     if (isOwnedByMe(client.mirror, id, l)) data.pilotShipId = id;
     return data;
   }

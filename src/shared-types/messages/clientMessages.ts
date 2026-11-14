@@ -341,9 +341,9 @@ export const PilotShipSchema = z
  *  the player toggles Spectate while flying an active hull, and the server
  *  DISPLACES that hull into a lingering hull (via `displaceActiveHullToLingering`)
  *  so the just-left ship is parked in-world AND re-appears in the player's own
- *  `lingeringShips` — which is what the in-world Pilot dropdown lists. Without
+ *  the client's parked hulls — which is what the in-world Pilot dropdown lists. Without
  *  this, Spectate was a pure client flip, the active hull stayed `isActive=true`
- *  (never in `lingeringShips`), and the Pilot dropdown was always empty ("no
+ *  (never a parked hull), and the Pilot dropdown was always empty ("no
  *  ships to pilot… I just spawned one"). No-op server-side when the player has no
  *  active hull (death-spectator / join-as-spectator). Strict, no payload. */
 export const SpectateSchema = z

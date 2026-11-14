@@ -81,6 +81,7 @@ import {
   type RemotePredictionGuard,
 } from './remotePredictionGuard';
 import { shipMirrorKey, type ShipMirrorKeyLocal } from './shipMirrorKey.js';
+import { isOwnedByMe, isParkedHull } from '../render/shipOwnership.js';
 import {
   createWelford,
   type WelfordState,
@@ -94,7 +95,6 @@ import {
   type DropDetector,
 } from './snapshotDropDetector';
 import { recoverInputTickFromStarvation, skipStalledBacklog, stallResumeAction } from './inputTickRecovery';
-import { LingeringPredBodyManager } from './LingeringPredBodyManager.js';
 import { SnapshotCoalescer } from './SnapshotCoalescer.js';
 import { ClientEntityFactory } from './entity/ClientEntityFactory.js';
 import { WreckGeometryStore } from './wreckGeometryStore.js';
@@ -143,7 +143,7 @@ export function travelApproach(tau: number): [number, number] {
   return [TRAVEL_BRAKE_D + TRAVEL_GLIDE_V * (s - (s * s) / (2 * TRAVEL_GLIDE_S)), TRAVEL_GLIDE_V * (1 - s / TRAVEL_GLIDE_S)];
 }
 import { DisplayPoseHitscan } from '../combat/displayPoseHitscan.js';
-import { preResetRemoteShips, applyRemoteShipInputs, type RemoteInput, type PreResetEntry, anchorRemoteSwarmBodies, authoritativeSwarmStateAt, isRemoteMovingSwarmKind, applyDroneMountAngles, applyAsteroidResources, applyShipLevels, applyShipWarp, applyActivatedMounts, type PreResetRemoteCtx } from './snapshotRemoteSync.js';
+import { preResetRemoteShips, applyRemoteShipInputs, type RemoteInput, type PreResetEntry, authoritativeSwarmStateAt, isRemoteMovingSwarmKind, applyDroneMountAngles, applyAsteroidResources, applyShipLevels, applyShipWarp, applyActivatedMounts, applyParkedHullShieldDown, type PreResetRemoteCtx } from './snapshotRemoteSync.js';
 import { computeRemoteLerpOffsets, stepRemoteShipOffset, type RemoteShipOffset } from './remoteLerpOffsets.js';
 import { useUIStore, type ConnectionStatus } from '../state/store';
 import { logEvent, isDiagEnabled, isFullDiagMode, isRammingProbeEnabled, isGhostProbeEnabled } from '../debug/ClientLogger';
@@ -531,23 +531,10 @@ export class ColyseusGameClient {
     registeredAiId: null,
   };
 
-  /** IDs of remote ships currently spawned in the prediction world. */
+  /** IDs of remote ships currently spawned in the prediction world: other
+   *  pilots' ships (playerId keys) AND parked / AI-flown hulls (bare
+   *  shipInstanceId keys, RTS Part A S3: one remote-ship path for both). */
   private predRemoteShipIds = new Set<string>();
-  /** Phase 6b lingering-hull predWorld bridge. Owns:
-   *   - `predLingeringIds` Set (which `linger-${...}` bodies are spawned)
-   *   - `_lingeringShipOffsets` Map (per-frame visual lerp toward
-   *     authoritative pose; avoids the visible teleport when a
-   *     free-running pred body gets reconciled).
-   *   - `ensure` (formerly `tryEnsureLingerPredBody`) — called from
-   *     handleSnapshot AND syncMirror; no-op when the mirror entry
-   *     isn't fully populated.
-   *  Extracted to `colyseus/LingeringPredBodyManager.ts`. */
-  private readonly lingerBodies = new LingeringPredBodyManager();
-
-  private tryEnsureLingerPredBody(shipInstanceId: string): void {
-    if (!this.predWorld) return;
-    this.lingerBodies.ensure(shipInstanceId, this.predWorld, this.mirror);
-  }
   /** Per-remote-ship render lerp offsets — applied in updateMirror() to smooth server corrections.
    *  Stage 1: each entry holds critically-damped spring states for x, y and angle
    *  decaying toward zero. Half-life per drift magnitude matches Reconciler. */
@@ -666,7 +653,7 @@ export class ColyseusGameClient {
   /**
    * Equinox Phase-5 audit — STOP PILOTING → spectate. The inverse of
    * {@link pilotInSectorShip}: tell the server to displace our active hull into a
-   * lingering hull (so it parks in-world AND surfaces in our own `lingeringShips`
+   * lingering hull (so it parks in-world AND surfaces in our own parked hulls
    * for the Pilot dropdown). Drop the local predWorld body — same one-ownership-
    * site discipline as the pilot swap / death — so prediction doesn't fight the
    * now-parked hull; re-piloting re-anchors via the fresh `welcome`. No-op
@@ -985,15 +972,11 @@ export class ColyseusGameClient {
     afterX: 0, afterY: 0,
   };
   /** 2026-05-25 heap-growth gate step 1 — persistent Set scratch for
-   *  tracking lingering shipInstanceIds seen in the current snapshot.
-   *  Pre-fix allocated `new Set<string>()` per snapshot (20 Hz).
-   *  Cleared via `.clear()` at the top of each handleSnapshot call. */
-  private readonly _lingeringSeenScratch = new Set<string>();
-  /** 2026-05-25 heap-growth gate step 1 — persistent array scratch for
-   *  the lingering-eviction loop. Pre-fix used
-   *  `[...this.mirror.lingeringShips.keys()]` (a per-snapshot array
-   *  allocation). Cleared via `length = 0` at the eviction site. */
-  private readonly _lingeringToEvictScratch: string[] = [];
+   *  tracking parked-hull shipInstanceIds seen in the current snapshot
+   *  (the router's hull sweep). Cleared at the top of each call. */
+  private readonly _hullSeenScratch = new Set<string>();
+  /** Persistent array scratch for the router's hull-eviction loop (#14). */
+  private readonly _hullEvictScratch: string[] = [];
   /** Phase 4 (plan: quirky-rabbit) — class-field Set scratches replacing
    *  the per-call `new Set<string>()` literals at the syncMirror /
    *  updateLiveBeam sites. Each is cleared at the top of its consumer;
@@ -1017,25 +1000,19 @@ export class ColyseusGameClient {
   private _pendingStateForSync: unknown = null;
   private readonly _liveBeamMountIdsScratch = new Set<string>();
   private readonly _syncProjectilesSeenScratch = new Set<string>();
-  /** 2026-05-26 heap-growth gate step 12 — pre-bound method for
-   *  `routeSnapshotShipStates` ctx. Pre-fix the call site allocated
-   *  a fresh arrow `(id) => this.tryEnsureLingerPredBody(id)` per
-   *  snapshot (20 Hz). Bound once at construction. */
-  private readonly _boundTryEnsureLingerPredBody = (id: string): void => {
-    this.tryEnsureLingerPredBody(id);
+  /** Pre-bound drop path for the `routeSnapshotShipStates` ctx (bound once,
+   *  no per-snapshot closure; heap-growth gate step 12). */
+  private readonly _boundDropRemoteShip = (key: string): void => {
+    this.dropRemoteShip(key);
   };
   /** 2026-05-26 heap-growth gate step 12 — pooled ctx for
-   *  `routeSnapshotShipStates`. All references stable except
-   *  `predWorld` (null until first welcome), which is mutated on the
-   *  ctx before each call. Pre-fix every snapshot (20 Hz) allocated
-   *  a fresh 6-field ctx literal + the bound arrow above. */
+   *  `routeSnapshotShipStates`. `localSpectating` is the only volatile
+   *  field, set before each call. */
   private readonly _routeSnapshotShipStatesCtx: ShipRouterCtx = {
     mirror: this.mirror,
-    predWorld: null,
-    lingerBodies: this.lingerBodies,
-    tryEnsureLingerPredBody: this._boundTryEnsureLingerPredBody,
-    lingeringSeenScratch: this._lingeringSeenScratch,
-    lingeringToEvictScratch: this._lingeringToEvictScratch,
+    hullSeenScratch: this._hullSeenScratch,
+    hullEvictScratch: this._hullEvictScratch,
+    dropShip: this._boundDropRemoteShip,
   };
   /** 2026-05-26 heap-growth gate step 12 — pooled ctx for
    *  `preResetRemoteShips`. Same pattern as above; `predWorld` is the
@@ -1677,41 +1654,18 @@ export class ColyseusGameClient {
       // Empty string from engineering rooms or pre-Phase-5 servers ⇒ null.
       ui.setLocalShipInstanceId(msg.shipInstanceId && msg.shipInstanceId !== '' ? msg.shipInstanceId : null);
 
-      // Plan: crispy-kazoo, Commit 8 — rescue own ship from lingeringShips.
+      // Plan: crispy-kazoo, Commit 8 — re-key our own ship from its hull key.
       // Pre-welcome our own ship is `isActive=false` (server's spawn-
-      // handshake design) and the snapshot translator + syncMirror both
-      // route isActive=false → mirror.lingeringShips because they don't
-      // yet know our localPlayerId. Now that welcome has arrived, lift
-      // our ship out so `tryInitPredWorld` can find it.
-      if (this.mirror.lingeringShips && this.mirror.lingeringShips.size > 0) {
-        const ownShipInstanceId = msg.shipInstanceId;
-        for (const [shipInstanceId, lEntry] of this.mirror.lingeringShips) {
-          const matchesByInstance = ownShipInstanceId !== '' && shipInstanceId === ownShipInstanceId;
-          // Only fall back to owner-match when the server sent NO instance id
-          // (engineering rooms). With a real id, rescue EXACTLY the welcome's
-          // active ship — never a same-player OLD lingering hull the player
-          // just displaced (which `matchesByPlayer` used to wrongly grab,
-          // seeding the local body at the stale hull's pose + leaving the new
-          // ship stuck in lingeringShips — the 2026-06-03 displace bug).
-          const matchesByPlayer = ownShipInstanceId === '' && lEntry.ownerPlayerId === msg.playerId;
-          if (matchesByInstance || matchesByPlayer) {
-            const mirrorEntry: ShipRenderState = {
-              x: lEntry.x, y: lEntry.y, vx: lEntry.vx, vy: lEntry.vy, angle: lEntry.angle,
-            };
-            if (lEntry.kind !== undefined) mirrorEntry.kind = lEntry.kind;
-            if (lEntry.displayName !== undefined) mirrorEntry.displayName = lEntry.displayName;
-            this.mirror.ships.set(msg.playerId, mirrorEntry);
-            this.mirror.lingeringShips.delete(shipInstanceId);
-            logEvent('rescued_own_ship_from_lingering', {
-              shipInstanceId,
-              playerId: msg.playerId,
-              x: lEntry.x,
-              y: lEntry.y,
-            });
-            break;
-          }
-        }
-      }
+      // handshake design) and the snapshot router + syncMirror both key it
+      // by shipInstanceId as a parked hull, because they don't yet know our
+      // localPlayerId. A take-controls swap (WS-A2 / RTS) does the same: the
+      // hull we take was a parked, AI-flown hull under its shipInstanceId,
+      // with its own remote predWorld body. Now that welcome has arrived,
+      // re-key it to our playerId: drop the hull key through the ONE drop
+      // path FIRST (its remote body goes, so `tryInitPredWorld` below never
+      // overlaps two bodies; RTS Part A S3), then seed the local entry at
+      // the hull's last pose.
+      this.rekeyOwnShipFromHull(msg.playerId, msg.shipInstanceId);
 
       // Phase 4 WS-A2 — a SAME-SECTOR pilot swap re-anchors via this same
       // welcome path. When the welcome's shipInstanceId matches the swap we
@@ -2965,6 +2919,45 @@ export class ColyseusGameClient {
    * body is never in `predRemoteShipIds`, so it is not despawned here; it has
    * its own ownership site.
    */
+  /**
+   * Welcome-time re-key of our own ship from its parked-hull key (see the
+   * welcome handler). With a real welcome ship id, takes EXACTLY that hull —
+   * never a same-player OLD hull the player just displaced (seeding the local
+   * body at the stale hull's pose was the 2026-06-03 displace bug). Only with
+   * NO instance id (engineering rooms) does it fall back to the first parked
+   * hull we own. The hull key is dropped through `dropRemoteShip` before the
+   * playerId entry is seeded, so exactly one mirror entry and (after
+   * `tryInitPredWorld`) one body remain. Renderer state (sprite, art, turret
+   * cluster) is rebuilt under the new key for now; carrying it over is the
+   * next slice. Lock: `ColyseusClient.pilotSwap.test.ts`.
+   */
+  private rekeyOwnShipFromHull(playerId: string, welcomeShipInstanceId: string): void {
+    let hullKey: string | null = null;
+    if (welcomeShipInstanceId !== '') {
+      const e = this.mirror.ships.get(welcomeShipInstanceId);
+      if (e !== undefined && isParkedHull(this.mirror, welcomeShipInstanceId, e)) hullKey = welcomeShipInstanceId;
+    } else {
+      for (const [key, e] of this.mirror.ships) {
+        if (isParkedHull(this.mirror, key, e) && isOwnedByMe(this.mirror, key, e)) { hullKey = key; break; }
+      }
+    }
+    if (hullKey === null || hullKey === playerId) return;
+    const hull = this.mirror.ships.get(hullKey)!;
+    this.dropRemoteShip(hullKey);
+    const mirrorEntry: ShipRenderState = {
+      x: hull.x, y: hull.y, vx: hull.vx, vy: hull.vy, angle: hull.angle,
+    };
+    if (hull.kind !== undefined) mirrorEntry.kind = hull.kind;
+    if (hull.displayName !== undefined) mirrorEntry.displayName = hull.displayName;
+    this.mirror.ships.set(playerId, mirrorEntry);
+    logEvent('rescued_own_ship_from_lingering', {
+      shipInstanceId: hullKey,
+      playerId,
+      x: hull.x,
+      y: hull.y,
+    });
+  }
+
   private dropRemoteShip(key: string, mode: 'gone' | 'outOfWorld' = 'gone'): void {
     if (this.predRemoteShipIds.delete(key)) this.predWorld?.despawnShip(key);
     this._remoteShipOffsets.delete(key);
@@ -2983,11 +2976,18 @@ export class ColyseusGameClient {
    * replaced the syncMirror, tryInitPredWorld-retro and warp-arrival copies).
    * Spawns at `pose` and tracks it in `predRemoteShipIds`; a no-op returning
    * false when the body already exists. Callers keep their own gates (known
-   * local id, not on a warp run). TODO(RTS Part A blocker B2): spawn only from
-   * a real SNAPSHOT pose, never the schema's pose-less (0,0) — today the
-   * syncMirror and retro callers still pass the schema/mirror pose.
+   * local id, not on a warp run).
+   *
+   * ONE spawn rule (RTS Part A blocker B2): a remote body (another pilot's
+   * ship OR a parked / AI-flown hull) spawns ONLY from a real SNAPSHOT pose.
+   * The parameter is the snapshot's own ship-state type, so the schema diff
+   * (which carries no pose: its x/y are 0) cannot be passed; the callers are
+   * the per-snapshot `spawnRemoteShipBodies` and the warp-arrival snap. A
+   * body spawned at the schema's (0,0) parked an invisible, shootable ghost
+   * at the world origin (the 2026-06-03 "laser stops short at (0,0)" bug).
+   * Lock: `ColyseusClient.lingeringJitter.test.ts`.
    */
-  private ensureRemoteShipBody(key: string, pose: ShipPhysicsState, kind: string | undefined): boolean {
+  private ensureRemoteShipBody(key: string, pose: SnapshotMessage['states'][string], kind: string): boolean {
     const pw = this.predWorld;
     if (!pw || pw.hasShip(key)) return false;
     pw.spawnShip(key, pose.x, pose.y, kind);
@@ -3219,13 +3219,11 @@ export class ColyseusGameClient {
     // setter is a no-op if already true.
     useUIStore.getState().setLocalPoseResolved(true);
     logEvent('cc_predworld_init', { x: existing.x, y: existing.y });
-    // Retrospectively spawn any remote ships that arrived in the initial Colyseus
-    // state patch (before localId was set, so syncMirror skipped predWorld spawn).
-    for (const [id, state] of this.mirror.ships) {
-      if (id === playerId) continue;
-      this.ensureRemoteShipBody(id, state, state.kind);
-    }
-    // Likewise for swarm entries: a binary `swarm` packet may have arrived
+    // Remote ships (other pilots and parked hulls) get their bodies from the
+    // next snapshot (`spawnRemoteShipBodies`): one spawn rule, snapshot pose
+    // only (B2). The old retro spawn here used the mirror's pose, which for a
+    // ship known only from the schema diff was (0,0).
+    // Swarm entries: a binary `swarm` packet may have arrived
     // before predWorld existed; bring those bodies up now.
     this.syncSwarmIntoPredWorld();
   }
@@ -3354,16 +3352,16 @@ export class ColyseusGameClient {
       logEvent('respawn_first_snapshot', { msSinceWelcome });
     }
 
-    // Phase 6a / 6b — translate the shipInstanceId-keyed wire format
-    // to a playerId-keyed local view + route inactive (lingering)
-    // hulls to mirror.lingeringShips. See snapshotShipRouter.ts.
-    // Ctx pooled to `this._routeSnapshotShipStatesCtx` (heap-growth
-    // gate step 12). `predWorld` is the only volatile field — mutate
-    // before the call. Other fields, including the pre-bound
-    // `tryEnsureLingerPredBody` arrow, are stable.
-    this._routeSnapshotShipStatesCtx.predWorld = this.predWorld;
+    // Phase 6a / RTS Part A S3 — re-key the shipInstanceId-keyed wire format
+    // to the mirror's keys (playerId for active ships, shipInstanceId for
+    // parked / AI-flown hulls; ONE ship list). See snapshotShipRouter.ts.
+    // Ctx pooled to `this._routeSnapshotShipStatesCtx` (heap-growth gate
+    // step 12); `localSpectating` is the only volatile field.
     this._routeSnapshotShipStatesCtx.localSpectating = useUIStore.getState().pilotMode === 'spectator';
     routeSnapshotShipStates(snap, this._routeSnapshotShipStatesCtx);
+    // Remote bodies (other pilots + parked hulls) spawn here, from the
+    // snapshot pose only (B2).
+    this.spawnRemoteShipBodies(snap);
 
     // Wire-discipline P3: projectiles arrive on the snapshot, interest-filtered
     // per recipient. Sync into the mirror first so the rest of this handler can
@@ -3391,18 +3389,19 @@ export class ColyseusGameClient {
     // Server-authoritative boost + thrust sets — exhaust-trail renderer.
     applyBoostingThrustingSets(snap, this.mirror);
 
-    // Phase 4 WS-B1 — mirror each ACTIVE hull's PUBLIC level (states[].level,
-    // now playerId-keyed post-route) onto mirror.ships so the renderer paints
-    // the in-world level badge. Lingering hulls carry their level via the
-    // router (mirror.lingeringShips), above.
+    // Phase 4 WS-B1 — mirror every ship's PUBLIC level (states[].level,
+    // mirror-keyed post-route: active ships and parked hulls alike) onto
+    // mirror.ships so the renderer paints the in-world level badge.
     applyShipLevels(snap, this.mirror);
+    // R2.32 — a parked hull's shield state rides the snapshot (an active
+    // ship's comes from the shield events; see applyParkedHullShieldDown).
+    applyParkedHullShieldDown(snap, this.mirror);
     applyShipWarp(snap, this.mirror);
     this.syncRemoteWarpBodies(snap);
 
-    // Phase 4 WS-B3 — mirror each ACTIVE hull's PUBLIC activated latent mounts
-    // (states[].mounts, playerId-keyed post-route) onto mirror.ships so the
-    // renderer draws the extra turrets. Lingering hulls carry their activated
-    // mounts via the router (mirror.lingeringShips), above.
+    // Phase 4 WS-B3 — mirror every ship's PUBLIC activated latent mounts
+    // (states[].mounts, mirror-keyed post-route, parked hulls included) onto
+    // mirror.ships so the renderer draws the extra turrets.
     applyActivatedMounts(snap, this.mirror);
 
     // Phase 6 — surface the server's TiDi rate to the HUD + audio,
@@ -3500,21 +3499,24 @@ export class ColyseusGameClient {
 
     if (!localId || !this.reconciler) {
       if (this.predWorld) {
-        // Sync remote ships — keep them at their latest server position until
-        // the reconciler bootstraps so they don't drift before the first reconcile.
-        // Phase 5c: swarm entities (asteroids, drones) are not in predWorld;
-        // they live render-only in mirror.swarm and lerp between binary
-        // swarm packets server-authoritatively.
-        // step 4: for…in (no tuple-array alloc).
-        for (const remoteId in snap.states) {
-          if (remoteId === localId) continue;
-          const state = snap.states[remoteId]!;
-          if (this.predWorld.hasShip(remoteId)) this.predWorld.setShipState(remoteId, state);
-        }
-        // Same anchor for drones/scrap (the remote-entity paradigm).
-        if (this.mirror.swarm) {
-          anchorRemoteSwarmBodies(this.predWorld, this.mirror.swarm, snap.serverTick, this._swarmBodyKeyCache, this._swarmAnchorScratch);
-        }
+        // No own ship to reconcile (command view / spectating — the RTS
+        // default — or the reconciler hasn't bootstrapped): remote ships
+        // still take the SAME per-snapshot path as while piloting, minus the
+        // replay. `preResetRemoteShips` anchors every remote body (other
+        // pilots AND parked / AI-flown hulls) to its snapshot state, records
+        // its input bits for forward prediction and its mount angles, and
+        // anchors drones/scrap; the decaying offsets hide the correction.
+        // (RTS Part A S3: the deleted parked-hull manager did this for hulls
+        // only; other pilots' ships were teleported with frozen turrets.)
+        this._preResetRemoteShipsCtx.predWorld = this.predWorld;
+        const preResetRemotePos = preResetRemoteShips(snap, localId ?? '', this._preResetRemoteShipsCtx);
+        computeRemoteLerpOffsets({
+          predWorld: this.predWorld,
+          preResetRemotePos,
+          remoteShipOffsets: this._remoteShipOffsets,
+          predGuard: this._predGuard,
+          stats: this.stats,
+        });
       }
       return;
     }
@@ -4097,11 +4099,9 @@ export class ColyseusGameClient {
     // `playerId`; rename and resolve the owner via the `playerId` field
     // on the schema entry. Mirror / predWorld / remoteHistory remain
     // playerId-keyed internally (C-ii strategy), matching the snapshot
-    // ingest translation in handleSnapshot. Lingering hulls (isActive
-    // === false) get routed into `mirror.lingeringShips` (shipInstanceId-
-    // keyed) so they don't collide with the active hull's playerId in
-    // `mirror.ships`.
-    if (!this.mirror.lingeringShips) this.mirror.lingeringShips = new Map();
+    // ingest translation in handleSnapshot. Parked hulls (isActive ===
+    // false) key by shipInstanceId in the SAME `mirror.ships` (RTS Part A
+    // S3), so they don't collide with the active hull's playerId.
     const keyLocal = this._syncMirrorKeyLocal;
     keyLocal.localPlayerId = this.mirror.localPlayerId;
     keyLocal.localShipInstanceId = this.mirror.localShipInstanceId ?? null;
@@ -4127,33 +4127,33 @@ export class ColyseusGameClient {
       // capital-turrets take). Lock: spectateOwnHullDrawnPose.test.ts.
       const key = shipMirrorKey(shipInstanceId, playerId, isActive, keyLocal);
       if (key !== null && key !== playerId) {
-        // Phase 6b — populate identity for the lingering hull. Pose
-        // arrives separately in the snapshot's `states` slice and is
-        // mirrored in handleSnapshot. We only set kind / displayName /
-        // ownerPlayerId here from the schema diff (low-frequency).
-        // Probe 8 — pool the entry; identity fields update, pose owned
-        // by handleSnapshot (sibling path), preserved by NOT touching.
+        // Phase 6b / RTS Part A S3 — identity for a parked hull, in the ONE
+        // ship list under its shipInstanceId. Pose arrives separately in the
+        // snapshot's `states` slice (router seed, then the remote-ship body).
+        // We only set kind / displayName / ownerPlayerId here from the schema
+        // diff (low-frequency). Probe 8 — pool the entry; pose preserved by
+        // NOT touching it. A hull's LIFETIME is the snapshot router's (its
+        // eviction sweep), so the departed sweep below skips hull keys.
         const kind = typeof sh['kind'] === 'string' ? (sh['kind'] as string) : undefined;
         const displayName = typeof sh['displayName'] === 'string' ? (sh['displayName'] as string) : undefined;
-        let lEntry = this.mirror.lingeringShips.get(shipInstanceId);
+        let lEntry = this.mirror.ships.get(shipInstanceId);
         if (!lEntry) {
           lEntry = {
             x: 0, y: 0, vx: 0, vy: 0, angle: 0,
             ownerPlayerId: playerId,
             isActive: false,
           };
-          this.mirror.lingeringShips.set(shipInstanceId, lEntry);
+          this.mirror.ships.set(shipInstanceId, lEntry);
         } else {
           lEntry.ownerPlayerId = playerId;
           lEntry.isActive = false;
         }
         if (kind !== undefined) lEntry.kind = kind;
         if (displayName !== undefined) lEntry.displayName = displayName;
-        // Laser-"ghost-at-(0,0)" fix (2026-06-03). This path is now
+        // Laser-"ghost-at-(0,0)" fix (2026-06-03) + B2. This path is
         // IDENTITY-ONLY — it does NOT spawn the predWorld body. The
-        // snapshot path (snapshotShipRouter.routeSnapshotShipStates →
-        // tryEnsureLingerPredBody) is the SOLE spawn site. Removed: the
-        // old Phase-6b race-fallback spawn here.
+        // snapshot path (`spawnRemoteShipBodies`) is the SOLE spawn site.
+        // Removed: the old Phase-6b race-fallback spawn here.
         //
         // Why removed: this entry is seeded at (0,0) above (the schema
         // diff carries no pose). The old race-fallback spawned the body
@@ -4214,25 +4214,18 @@ export class ColyseusGameClient {
         // Update the existing entry IN PLACE: replacing it wiped the fields
         // only the snapshot writes (warp, level, shieldDown, mountAngles), so
         // they flickered at the patch rate (an onlooker's warp spool glow never
-        // built). Lock: ColyseusClient.remoteMirrorPreserve.test.ts.
+        // built). Lock: ColyseusClient.remoteMirrorPreserve.test.ts. The
+        // schema carries no pose (its x/y are 0), so an existing entry's pose
+        // is left alone: it is the snapshot's / the body's.
         const prevEntry = this.mirror.ships.get(playerId);
         if (prevEntry) {
-          prevEntry.x = parsed.x;
-          prevEntry.y = parsed.y;
-          prevEntry.vx = parsed.vx;
-          prevEntry.vy = parsed.vy;
-          prevEntry.angle = parsed.angle;
           if (kind !== undefined) prevEntry.kind = kind;
           if (displayName !== undefined) prevEntry.displayName = displayName;
         } else {
           this.mirror.ships.set(playerId, mirrorEntry);
         }
-
-        // Guard: only spawn if we know who the local player is. A ship on its
-        // warp run is out of the world (syncRemoteWarpBodies restores it).
-        if (localId !== null && this.mirror.ships.get(playerId)?.warp !== 2) {
-          this.ensureRemoteShipBody(playerId, parsed, kind);
-        }
+        // No body spawn here (B2): the schema has no pose. The next snapshot
+        // spawns it at its real pose (`spawnRemoteShipBodies`).
       } else if (!this.predWorld?.hasShip(playerId)) {
         this.mirror.ships.set(playerId, mirrorEntry);
         this.tryInitPredWorld(playerId);
@@ -4246,8 +4239,12 @@ export class ColyseusGameClient {
       }
     }
 
-    // Remove departed ships.
-    for (const key of this.mirror.ships.keys()) {
+    // Remove departed ships. Covers ACTIVE ships only (#17): a parked hull's
+    // lifetime is the snapshot router's eviction sweep (pre-S3 it lived in a
+    // separate map this sweep never saw), and a hull is not a player leaving,
+    // so it never purges hostility.
+    for (const [key, entry] of this.mirror.ships) {
+      if (isParkedHull(this.mirror, key, entry)) continue;
       if (!seen.has(key)) {
         this.dropRemoteShip(key);
         // Phase 1 AI: a player has left the sector (transit out, disconnect,
@@ -4258,6 +4255,8 @@ export class ColyseusGameClient {
       }
     }
 
+    // Owner (2026-11-14): the ship counter counts EVERY ship, parked /
+    // AI-flown hulls included (they are in `mirror.ships` since S3).
     useUIStore.getState().setShipCount(this.mirror.ships.size);
   }
 
@@ -4825,27 +4824,9 @@ export class ColyseusGameClient {
       }
     }
 
-    // Phase 6b (2026-05-13, third iteration) — lingering hull
-    // visualised with the same predict-and-reconcile pattern as
-    // remote player ships. Body integrates physics locally between
-    // snapshots; snapshot arrival reconciles the body to the
-    // server-authoritative pose and registers a spring-decayed lerp
-    // offset on the sprite. Sprite = body pose + decaying offset,
-    // smoothly converging to the body's true position over ~200 ms.
-    //
-    // Why not just teleport the body and snap the sprite?
-    //   First iteration: sprite at snapshot pose, body integrating
-    //     → fly-through (sprite static, body collision elsewhere).
-    //   Second iteration: sprite tracking body → snap-back (body
-    //     drifts forward of snapshot, every snapshot teleports both
-    //     backwards).
-    //   This iteration: sprite = body + offset → body always tracks
-    //     server reality; offset smooths the visual after each
-    //     reconcile so the user doesn't see the teleport directly.
-    //     Exactly how remote ships have always worked.
-    if (this.predWorld) {
-      this.lingerBodies.applyPerFrameOffsets(this.predWorld, this.mirror, this.lastFrameMs);
-    }
+    // Parked / AI-flown hulls ride the remote-ship loop above (RTS Part A S3:
+    // their bodies are in `predRemoteShipIds` under the bare shipInstanceId),
+    // so the old parked-hull offset loop is gone.
 
     // Ghost projectiles — advance and write to mirror.projectiles.
     if (this.mirror.projectiles) {
@@ -5648,10 +5629,8 @@ export class ColyseusGameClient {
    */
   private applyRemoteInputs(): void {
     if (!this.predWorld) return;
+    // Every remote ship: other pilots and parked / AI-flown hulls alike.
     applyRemoteShipInputs(this.predWorld, this.predRemoteShipIds, this._remoteLastInputs, this._remoteForwardTicks, this._predGuard);
-    // RTS slice 4c — lingering hulls flown by a server wingman forward-
-    // predict the same way (their own bounded lookahead).
-    this.lingerBodies.applyInputs(this.predWorld);
   }
 
   /**
@@ -5779,7 +5758,7 @@ export class ColyseusGameClient {
       // `?probe=ghost` diagnostic (laser "ghost at (0,0)" investigation,
       // 2026-06-03). When the beam stops on a body whose pose is within
       // ε of world origin, log the hitId — its namespace prefix names the
-      // culprit class (`linger-`/`swarm-`/raw playerId). Gate is
+      // culprit class (`swarm-`/raw playerId or shipInstanceId). Gate is
       // cached + webdriver-OFF, so production / E2E / netgate allocate
       // nothing here; the object literal is only built on a rare actual
       // origin-hit while the probe is on. Confirms the lingering-hull fix
@@ -6040,6 +6019,11 @@ export class ColyseusGameClient {
   /** Other pilots' ships on the lock line. Bound once. */
   private readonly _lgVisitShip = (s: ShipRenderState, pid: string): void => {
     if (pid === this._lgLocalId) return;
+    // Covers other pilots' ACTIVE ships only (#17). A parked / AI-flown hull
+    // has no `p:<id>` lock key the server can resolve yet. TODO(RTS Part A):
+    // locking AI-flown ships (owner: lockable like any ship) comes in a later
+    // two-sided slice; until then they stay off the lock line, as before S3.
+    if (isParkedHull(this.mirror, pid, s)) return;
     this.lgConsider(this.shipLockKey(pid), s.x, s.y, getShipKind(s.kind ?? null).radius);
   };
 
@@ -6095,7 +6079,12 @@ export class ColyseusGameClient {
     if (!id || !active) return false;
     let key: string | null = null;
     if (id.startsWith('swarm-')) key = `s:${id.slice(6)}`;
-    else if (this.mirror.ships.has(id) && id !== this.mirror.localPlayerId) key = `p:${id}`;
+    else {
+      // Other pilots' active ships only: a parked hull has no server-side
+      // lock key yet (TODO(RTS Part A): lockable AI-flown ships, two-sided).
+      const ship = this.mirror.ships.get(id);
+      if (ship !== undefined && id !== this.mirror.localPlayerId && !isParkedHull(this.mirror, id, ship)) key = `p:${id}`;
+    }
     if (key === null) return false;
     this.requestLock(active, key);
     return true;
@@ -6488,6 +6477,8 @@ export class ColyseusGameClient {
    * away and the arrival would be drawn off-screen). Per snapshot, alloc-free.
    */
   private syncRemoteWarpBodies(snap: SnapshotMessage): void {
+    // Covers every remote mirror entry: other pilots and parked hulls (a
+    // hull's warp is absent on the wire, so it never matches 2 / 3).
     const pw = this.predWorld;
     const localId = this.mirror.localPlayerId;
     if (!pw || localId === null) return;
@@ -6513,6 +6504,32 @@ export class ColyseusGameClient {
       }
     }
   }
+  /**
+   * THE remote-body spawn site (RTS Part A S3 + blocker B2): for every remote
+   * ship in this snapshot (other pilots under their playerId, parked /
+   * AI-flown hulls under their shipInstanceId, post-route), spawn its
+   * predWorld body at the SNAPSHOT pose once the mirror entry knows its kind
+   * (the schema diff). Until then the entry is drawn at the snapshot pose.
+   * Never the local ship (its body is `tryInitPredWorld`'s), never before the
+   * welcome, never a ship on its warp run (`syncRemoteWarpBodies` lands it).
+   * Covers ACTIVE and LINGERING remote ships (#17): both are in the world.
+   */
+  private spawnRemoteShipBodies(snap: SnapshotMessage): void {
+    const pw = this.predWorld;
+    const localId = this.mirror.localPlayerId;
+    for (const key in snap.states) {
+      if (key === localId) continue;
+      const entry = this.mirror.ships.get(key);
+      if (entry === undefined) continue;
+      if (pw !== null && pw.hasShip(key)) continue;
+      const st = snap.states[key]!;
+      if (st.warp === 2) continue;
+      entry.x = st.x; entry.y = st.y; entry.vx = st.vx; entry.vy = st.vy; entry.angle = st.angle;
+      if (localId === null || entry.kind === undefined) continue;
+      this.ensureRemoteShipBody(key, st, entry.kind);
+    }
+  }
+
   /** Remote ships already snapped to their arrival pose (warp 3). */
   private readonly _arrivalSnapped = new Set<string>();
 

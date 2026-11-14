@@ -23,7 +23,7 @@ vi.mock('../ships/shipActionsClient.js', () => ({
 }));
 
 /** Flexible fake client — seed any mirror maps the panel reads (swarm /
- *  lingeringShips / structures). */
+ *  ships / structures). */
 function fakeClient(mirror: Record<string, unknown>): ColyseusGameClient {
   return { mirror } as unknown as ColyseusGameClient;
 }
@@ -347,7 +347,7 @@ describe('EntityStatsPanel', () => {
   });
 
   it('a lingering hull shows WHOSE it is, no hull bar (R2.23)', () => {
-    setGameClient(fakeClient({ lingeringShips: new Map([['linger-9', { ownerPlayerId: 'player-abc', displayName: 'Nova', kind: 'heavy', x: 0, y: 0 }]]) }));
+    setGameClient(fakeClient({ ships: new Map([['linger-9', { isActive: false, ownerPlayerId: 'player-abc', displayName: 'Nova', kind: 'heavy', x: 0, y: 0 }]]) }));
     useUIStore.setState({ selectedEntityId: 'linger-9', selectedEntityKind: 'lingering' });
     render(<EntityStatsPanel />);
     expect(screen.getByTestId('entity-stats-name')).toHaveTextContent('Nova');
@@ -361,7 +361,7 @@ describe('EntityStatsPanel', () => {
     setGameClient(
       fakeClient({
         localPlayerId: 'me',
-        lingeringShips: new Map([['ship-mine', { ownerPlayerId: 'me', displayName: 'My Hull', kind: 'fighter', x: 0, y: 0 }]]),
+        ships: new Map([['ship-mine', { isActive: false, ownerPlayerId: 'me', displayName: 'My Hull', kind: 'fighter', x: 0, y: 0 }]]),
       }),
     );
     useUIStore.setState({ selectedEntityId: 'ship-mine', selectedEntityKind: 'lingering' });
@@ -369,7 +369,7 @@ describe('EntityStatsPanel', () => {
     const btn = screen.getByTestId('ship-action-pilot');
     expect(btn).toBeInTheDocument();
     fireEvent.click(btn);
-    // The selection id IS the shipInstanceId (the lingeringShips map key).
+    // The selection id IS the shipInstanceId (its `mirror.ships` key).
     expect(sendPilotShip).toHaveBeenCalledWith('ship-mine');
   });
 
@@ -377,7 +377,7 @@ describe('EntityStatsPanel', () => {
     setGameClient(
       fakeClient({
         localPlayerId: 'me',
-        lingeringShips: new Map([['ship-theirs', { ownerPlayerId: 'someone-else', displayName: 'Their Hull', kind: 'fighter', x: 0, y: 0 }]]),
+        ships: new Map([['ship-theirs', { isActive: false, ownerPlayerId: 'someone-else', displayName: 'Their Hull', kind: 'fighter', x: 0, y: 0 }]]),
       }),
     );
     useUIStore.setState({ selectedEntityId: 'ship-theirs', selectedEntityKind: 'lingering' });

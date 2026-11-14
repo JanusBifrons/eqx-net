@@ -2,8 +2,8 @@
  * Own-fleet selection (RTS stream slice 13a). Pure: no Pixi, no DOM.
  *
  * "Your ships" are the local player's active ship (`mirror.ships` keyed by
- * `localPlayerId`) plus their lingering (parked) hulls in
- * `mirror.lingeringShips` (`ownerPlayerId === localPlayerId`). Ids follow the
+ * `localPlayerId`) plus their parked hulls (`isParkedHull`, owned by me; the
+ * same `mirror.ships` since RTS Part A S3). Ids follow the
  * `pickEntityAt` / `SelectionBracket` convention: the active ship is its
  * playerId, a lingering hull is its shipInstanceId.
  *
@@ -12,7 +12,7 @@
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import { getShipKind } from '@shared-types/shipKinds';
 import { TAP_SLOP } from './pickEntity.js';
-import { isOwnedByMe, isShipIAmFlying, shipOwner } from './shipOwnership.js';
+import { isOwnedByMe, isParkedHull, isShipIAmFlying, shipOwner } from './shipOwnership.js';
 
 export interface FleetShip {
   id: string;
@@ -34,13 +34,9 @@ function shipRadius(kind: string | undefined): number {
  */
 export function collectFleetShips(mirror: RenderMirror): FleetShip[] {
   const out: FleetShip[] = [];
+  // Every ship: ACTIVE and LINGERING (#17), one list since RTS Part A S3.
   for (const [id, s] of mirror.ships) {
     out.push({ id, x: s.x, y: s.y, ownerPlayerId: shipOwner(id, s), radius: shipRadius(s.kind) });
-  }
-  if (mirror.lingeringShips) {
-    for (const [id, l] of mirror.lingeringShips) {
-      out.push({ id, x: l.x, y: l.y, ownerPlayerId: shipOwner(id, l), radius: shipRadius(l.kind) });
-    }
   }
   return out;
 }
@@ -184,6 +180,7 @@ export function sameSelection(a: ReadonlySet<string>, b: ReadonlySet<string>): b
 /** Whether `id` is still an own ship in the mirror (used to prune). */
 export function isOwnShipPresent(id: string, mirror: RenderMirror): boolean {
   if (isShipIAmFlying(mirror, id)) return true;
-  const l = mirror.lingeringShips?.get(id);
-  return l !== undefined && isOwnedByMe(mirror, id, l);
+  // Else one of my PARKED hulls (pre-S3 behaviour: never another active ship).
+  const s = mirror.ships.get(id);
+  return s !== undefined && isParkedHull(mirror, id, s) && isOwnedByMe(mirror, id, s);
 }

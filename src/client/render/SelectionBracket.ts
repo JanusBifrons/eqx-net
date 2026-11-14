@@ -21,7 +21,7 @@ import { interpolateSwarmPose, type InterpolatedPose } from '../net/swarmInterpo
  * the renderer owns (`_selectedId`) resolves the same live pose every frame:
  *   - ship  → `mirror.ships.get(id)`
  *   - drone / structure → `mirror.swarm.get(Number(id.slice('swarm-'.length)))`
- *   - lingering → `mirror.lingeringShips.get(id)`
+ *   - parked hull → `mirror.ships.get(id)` too (shipInstanceId key, RTS Part A S3)
  *
  * `update(mirror, id)` returns `true` when the entity was resolved (bracket
  * drawn), `false` when `id` is null OR the entity is gone — the caller clears
@@ -102,12 +102,6 @@ export class SelectionBracket {
           radius = sw.radius;
         }
       }
-    } else if (mirror.lingeringShips?.has(selectedId)) {
-      // WS-9 (R2.23/R2.30) — a selected lingering hull resolves from its own map.
-      const l = mirror.lingeringShips.get(selectedId)!;
-      ex = l.x;
-      ey = l.y;
-      radius = shipRadius(l.kind);
     }
 
     if (ex === undefined || ey === undefined) {

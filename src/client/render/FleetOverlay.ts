@@ -48,8 +48,6 @@ export const MAX_ORDER_SEGMENTS = 256;
 export function resolveEntityPos(mirror: RenderMirror, id: string, out: { x: number; y: number }): boolean {
   const ship = mirror.ships.get(id);
   if (ship !== undefined) { out.x = ship.x; out.y = ship.y; return true; }
-  const l = mirror.lingeringShips?.get(id);
-  if (l !== undefined) { out.x = l.x; out.y = l.y; return true; }
   if (mirror.swarm !== undefined && id.length > 6 && id.startsWith('swarm-')) {
     let n = 0;
     for (let i = 6; i < id.length; i++) {
@@ -172,13 +170,8 @@ export class FleetOverlay {
       let y: number;
       let kind: string | undefined;
       const ship = mirror.ships.get(id);
-      if (ship !== undefined) {
-        x = ship.x; y = ship.y; kind = ship.kind;
-      } else {
-        const l = mirror.lingeringShips?.get(id);
-        if (l === undefined) continue;
-        x = l.x; y = l.y; kind = l.kind;
-      }
+      if (ship === undefined) continue;
+      x = ship.x; y = ship.y; kind = ship.kind;
       project(x, -y, s);
       const r = Math.max(MIN_RING_PX, ((getShipKind(kind)?.radius ?? SHIP_FALLBACK_RADIUS) + RING_PAD) * zoom);
       g.circle(s.x, s.y, r);

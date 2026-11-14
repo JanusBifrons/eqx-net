@@ -31,7 +31,7 @@ type Fn = ReturnType<typeof vi.fn>;
 type G = { visible: boolean; moveTo: Fn; lineTo: Fn; stroke: Fn; circle: Fn; fill: Fn };
 const gfxOf = (o: FleetOverlay): G => (o as unknown as { gfx: G }).gfx;
 
-const m = { localPlayerId: 'me', ships: new Map(), lingeringShips: new Map() } as unknown as RenderMirror;
+const m = { localPlayerId: 'me', ships: new Map() } as unknown as RenderMirror;
 const identity = (x: number, y: number, out: { x: number; y: number }): void => { out.x = x; out.y = y; };
 const noFlash = (): OrderFlash => ({ x: 0, y: 0, attack: false, t0: -1 });
 

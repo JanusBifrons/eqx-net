@@ -50,10 +50,9 @@ beforeEach(() => {
   setGameClient({
     getRoom: () => null,
     mirror: {
-      ships: new Map(),
-      lingeringShips: new Map([
-        ['a', { x: 0, y: 0, angle: 0, vx: 0, vy: 0, kind: 'fighter', ownerPlayerId: 'me' }],
-        ['b', { x: 0, y: 0, angle: 0, vx: 0, vy: 0, kind: 'scout', ownerPlayerId: 'me' }],
+      ships: new Map([
+        ['a', { x: 0, y: 0, angle: 0, vx: 0, vy: 0, kind: 'fighter', ownerPlayerId: 'me', isActive: false }],
+        ['b', { x: 0, y: 0, angle: 0, vx: 0, vy: 0, kind: 'scout', ownerPlayerId: 'me', isActive: false }],
       ]),
       swarm: new Map([[42, { kind: 1, shipKind: undefined }]]),
     },

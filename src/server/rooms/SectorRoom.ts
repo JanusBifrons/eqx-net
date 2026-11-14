@@ -16,6 +16,7 @@ import {
 } from '../debug/GcMonitor.js';
 import type { GcPauseEventMessage } from '../../shared-types/messages.js';
 import type { CollisionResolvedMessage } from '../../shared-types/messages.js';
+import { wireShipBodyId } from '../../shared-types/shipBodyIds.js';
 import type { WarpWarningEvent, WarpWarningClearEvent } from '../../shared-types/messages.js';
 import type { GridFlowMaterial } from '../../shared-types/messages.js';
 import { SESSION_REPLACED_CLOSE_CODE, type SessionReplacedMessage } from '../../shared-types/messages.js';
@@ -4090,7 +4091,7 @@ export class SectorRoom extends Room<SectorState> {
     // Equinox Phase-5 audit — STOP PILOTING → spectate (the inverse of
     // `pilot_ship`). The player toggled Spectate while flying an active hull;
     // DISPLACE it into a lingering hull so it's parked in-world AND surfaces in
-    // the player's own `lingeringShips` for the in-world Pilot dropdown. Owner-
+    // the player's own parked hulls for the in-world Pilot dropdown. Owner-
     // gated by construction (`displaceActiveHullToLingering` only touches the
     // CALLER's own active hull) + no-op when they have none (already spectating).
     this.onMessage('spectate', (client: Client, raw: unknown) => {
@@ -8740,10 +8741,13 @@ export class SectorRoom extends Room<SectorState> {
           if (this.collisionGate.shouldSend(p.aId, p.bId, p.normalSpeed, tick)) {
             // eA/eB name each side as the client knows it, so it can draw a
             // shield contact on a raised shield (user report 2026-11-07).
+            // Ids as the CLIENT keys bodies: a parked hull's `linger-<sid>`
+            // worker body is the bare sid client-side (RTS Part A S3; the ONE
+            // mapping, `wireShipBodyId`, #15).
             const msg: CollisionResolvedMessage = {
               type: 'collision_resolved',
-              aId: p.aId,
-              bId: p.bId,
+              aId: wireShipBodyId(p.aId),
+              bId: wireShipBodyId(p.bId),
               vA: p.vA,
               vB: p.vB,
               impulse: p.force,
@@ -10198,7 +10202,7 @@ export class SectorRoom extends Room<SectorState> {
   /** RTS slice 10 — a `startMode: 'command'` join reached its arrival flip:
    *  park the hull through the same path as the `command` message and tell the
    *  client (`control_mode`) so it drops its prediction body and enters command
-   *  view. The snapshot (own hull inactive, in `lingeringShips`) carries the
+   *  view. The snapshot (own hull inactive, a parked hull in `mirror.ships`) carries the
    *  state (#16); the message only makes the flip immediate. */
   private startInCommand(playerId: string, sessionId: string): void {
     this.enterSpectate(playerId);

@@ -2,8 +2,8 @@
  * RTS Part A S1 — every remote ship turns smoothly on screen, on the ONE
  * remote-ship path (snapshot reset → forward prediction with the snapshot's
  * input bits → decaying x/y/ANGLE offsets). Ported from the parked-hull
- * manager's steady-turn test (`LingeringPredBodyManager.test.ts`), which this
- * path replaces at S3.
+ * manager's steady-turn test (the deleted `LingeringPredBodyManager.test.ts`);
+ * since S3 parked hulls ride this same path.
  *
  * The test flies a real fighter on an authoritative "server" PhysicsWorld
  * with a held turn + thrust, sends a snapshot every 3 ticks (20 Hz) and drives
