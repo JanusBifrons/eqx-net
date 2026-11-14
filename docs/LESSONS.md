@@ -3041,3 +3041,30 @@ Owner: "make it more like micro machines and make fights a bit longer. Also don'
 - **Finding (virtual pilot, slice 1b):** NPCs now press a player's keys through the same `applyShipInput`, yet a drone of a kind still accelerates at half the player's rate and tops out at half its thrust-only speed. `SwarmSpawner` spawns a drone with `massOf(kind, 2)` (`DRONE_DEFAULT_MASS`), a player ship with `massOf(kind, 1)`, and `thrustImpulse` is an impulse, so Δv = J/m. Boost reaches `maxSpeed` either way.
 - **Rule:** anything that reasons about how an NPC body responds (the pilot's braking, arrive ramps, tests) must use the spawned mass, `NPC_MASS_FALLBACK` from `shipScale/tuning.ts` (now the spawner's source too), never `thrustImpulse` alone. Whether NPC bodies should match the player's mass is an owner balance call (it also changes ramming), not a pilot fix.
 - **Also:** the old impulse brain needed `HostileDroneBehaviour` to know nothing about inertia. A capital flown by keys turns by torque, so the pilot must stop the turn early on the coast `ω / angularDamping` (Rapier's damping sums to exactly that), or it swings past the heading by ~4° and hunts.
+
+## 2026-11-14 — "notepack skips undefined" stopped being true: the snapshot paid for every empty key
+
+- **Symptom:** capital-fleet's rx rose from ~17 to ~21 KB/s per pilot over three days with no single big change; the snapshot JSON alone went 9.8 → 13.1 KB/s for one pilot's ship and a few drones.
+- **Cause:** `SnapshotBroadcaster` cleared pooled wire fields with `field = undefined`, written when the encoder was notepack.io, which skipped undefined values. Both encoders now in use (Colyseus 0.16's msgpackr on the WebSocket, the WebRTC `Packr`) write an undefined own property as its key name plus a 3-byte ext. So every "emit-when-non-default" field (#16) still cost 14–25 B a snapshot when empty: ~30 keys, ~8 of the 13 KB/s. Each feature that added an optional field added its key to every snapshot.
+- **Fix:** `setOrDrop(obj, key, v)` deletes the key when `v` is undefined. Snapshot JSON 13.1 → 5.5 KB/s; capital-fleet rx 13.2–14.0 KB/s. Lock: `tests/unit/snapshotAbsentKeys.test.ts` (packs with both production encoders).
+- **Rule:** on a pooled wire object, "absent" means deleted, never `undefined`. A per-field byte breakdown must count key names too: summing `pack(value)` per field hid the keys (the "unexplained" ~1.3 KB/s).
+
+## 2026-11-14 — A pool keyed by size shares one buffer between every entity of that size
+
+- **Finding (nose turrets, showcase take 9):** the snapshot broadcaster pooled `mountAngles` arrays by length. The message is encoded only when sent, so every one-turret ship in a recipient's snapshot pointed at the same array and the wire carried the last ship's angle for all of them. It stayed hidden while almost no drone had exactly one turning mount; once six kinds got nose turrets, every AI pilot's gun was drawn at some other ship's angle. Renderer, art path and display follower were all correct.
+- **Rule:** a pooled buffer that ends up inside an outgoing message is pooled per ENTRY (a cursor reset per message, or keyed by entity), never per size. A test of a broadcaster copies its arrays at send time, as the encoder reads them, with two entities of the same shape.
+
+## 2026-11-14 — Streaming capture: a one-shot fail-stop turns a transient blip into a silent, permanent stop
+
+- **Finding (capture `2026-11-14T17-46-29Z-qrspcq`):** `streamingDiag.ts` disabled streaming for the tab on the FIRST 404 and had no fetch timeout, so one 404 or one never-settling POST while the dev backend restarted stopped the capture for good, with only a console warning. The `_flushedFinal` latch also never re-armed, so only the first tab-hide got a final beacon (fetch streaming itself carried on after a hide, as the capture shows).
+- **Rule:** a client diag/telemetry loop treats every failure as transient: abort hung requests (10 s), and fail-stop only on a sustained signal (5+ consecutive 404s spanning > 30 s). Latches tied to a lifecycle event re-arm on the opposite event. Lock: `streamingDiag.resilience.test.ts`.
+
+## 2026-11-14 — Interpolation samples stamped at drain time jitter as much as the drain does
+
+- **Finding (fleet-melee follow, take 10: "the ship jitters, or is it the camera"):** a per-frame probe showed the camera moving evenly (jerk 0.03 u) while the drawn drone stepped 0–5.3 u per frame at a ~2.8 u cruise. The pose ring stamped each binary packet with the time it was DECODED, and packets decode once per RAF, so two ticks in one frame shared a stamp. The "display delay makes us immune to arrival jitter" claim only holds if the samples carry the time they stand for.
+- **Rule:** stamp an interpolation sample with its source time (server tick on a fitted clock, `swarmArrivalStampMs`), never with when the client happened to process it. When a followed entity "jitters", measure the drawn pose and the camera separately per frame before touching either. The source time must be right too: a packet labelled with a tick read earlier than its poses (room loop vs physics worker loop) pops the drone one step forward (take 11); label it with the SAB tick read right before the encode (`sabPoseTick`).
+
+## 2026-11-14 — A new welcome key must reach clients before the server sends it
+
+- **Finding (PR #584, netgate red 3×):** switching the sub-cap break-up on made the server send `subcapWrecks: true` in `welcome`. `WelcomeSchema` is `.strict()`, so the netgate's baseline arm (origin/main client against the HEAD server) dropped the whole welcome (`welcome_malformed_dropped`) and never showed a ship: `waitForFunction` timed out on "Ships > 0", with no console error.
+- **Rule:** an additive key on a strict server→client message lands reader-first: the schema change ships to `main` on its own, then the server starts sending it. The netgate baseline arm enforces this one-release skew.

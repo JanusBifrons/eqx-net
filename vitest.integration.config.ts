@@ -33,6 +33,14 @@ import path from 'node:path';
  * rely on `process.chdir()` (workers don't support it — e.g.
  * `src/server/routes/diagRouter.test.ts`). So integration tests live in
  * their own config invoked via `pnpm test:integration`.
+ *
+ * Naval ranges: the suite runs at the game's default (`real`, owner decision
+ * 2026-11-14); nothing here pins the mode. The catalogue is built once for
+ * the whole (unisolated) worker, so a test can't pin a mode per file: a test
+ * that is ABOUT one mode needs its own config. `tests/integration/navalReal/`
+ * (pinned `real` explicitly, so it stays put if the default ever moves) runs
+ * in `pnpm test:naval-real` (vitest.naval-real.config.ts) and is excluded
+ * here so it doesn't run twice. See docs/architecture/real-scale-ranges.md.
  */
 export default defineConfig({
   resolve: {
@@ -63,7 +71,7 @@ export default defineConfig({
     include: [
       'tests/integration/**/*.test.ts',
     ],
-    exclude: ['**/node_modules/**', 'dist/**', '**/.claude/**'],
+    exclude: ['**/node_modules/**', 'dist/**', '**/.claude/**', 'tests/integration/navalReal/**'],
     pool: 'threads',
     poolOptions: {
       threads: {

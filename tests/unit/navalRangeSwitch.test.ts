@@ -1,8 +1,9 @@
 /**
- * The naval range switch (ranges plan slice 14, owner decision 2026-11-10):
- * `EQX_NAVAL_RANGE=legacy` (default) leaves every naval gun as it was;
- * `real` gives each gun its real maximum range in the game's km (1 km =
- * 1,000 u) as its ENGAGE reach, with the time of flight real ÷ 3.
+ * The naval range switch (ranges plan slice 14, owner decision 2026-11-10;
+ * real made the default 2026-11-14): `real` (default) gives each gun its real
+ * maximum range in the game's km (1 km = 1,000 u) as its ENGAGE reach, with
+ * the time of flight real ÷ 3; `EQX_NAVAL_RANGE=legacy` leaves every naval
+ * gun as it was.
  *
  * Both sides build the catalogue from the same switch (#15): the server stamps
  * its mode on the welcome and the client checks it; workers get it in their
@@ -15,7 +16,7 @@ import {
   navalGunBallisticsFor, projectileEngageReach,
 } from '../../src/shared-types/combat/navalGuns.js';
 import {
-  NAVAL_RANGE, navalRangeMismatch, navalRangeWorkerNameSuffix, resolveNavalRange, stampNavalRange,
+  DEFAULT_NAVAL_RANGE, NAVAL_RANGE, navalRangeMismatch, navalRangeWorkerNameSuffix, resolveNavalRange, stampNavalRange,
 } from '../../src/shared-types/combat/navalRange.js';
 import { WelcomeSchema } from '../../src/shared-types/messages/snapshotMessages.js';
 
@@ -49,17 +50,25 @@ afterEach(() => {
 });
 
 describe('naval range switch — resolution', () => {
-  it('is legacy unless asked for real, from env, page global or worker name', () => {
-    expect(resolveNavalRange({})).toBe('legacy');
+  it('is real unless asked for legacy, from env, page global or worker name', () => {
+    expect(DEFAULT_NAVAL_RANGE).toBe('real');
+    expect(resolveNavalRange({})).toBe('real');
+    expect(resolveNavalRange({ env: { EQX_NAVAL_RANGE: 'legacy' } })).toBe('legacy');
     expect(resolveNavalRange({ env: { EQX_NAVAL_RANGE: 'real' } })).toBe('real');
-    expect(resolveNavalRange({ env: { EQX_NAVAL_RANGE: 'bogus' } })).toBe('legacy');
+    expect(resolveNavalRange({ env: { EQX_NAVAL_RANGE: 'bogus' } })).toBe('real');
+    expect(resolveNavalRange({ global: { __EQX_NAVAL_RANGE__: 'legacy' } })).toBe('legacy');
     expect(resolveNavalRange({ global: { __EQX_NAVAL_RANGE__: 'real' } })).toBe('real');
-    expect(resolveNavalRange({ workerName: `renderer;shipScale=2${navalRangeWorkerNameSuffix('real')}` })).toBe('real');
     expect(resolveNavalRange({ workerName: `renderer;shipScale=2${navalRangeWorkerNameSuffix('legacy')}` })).toBe('legacy');
+    expect(resolveNavalRange({ workerName: `renderer;shipScale=2${navalRangeWorkerNameSuffix('real')}` })).toBe('real');
   });
 
-  it('the default process (no env) runs legacy', () => {
-    if (process.env['EQX_NAVAL_RANGE'] === undefined) expect(NAVAL_RANGE).toBe('legacy');
+  it('the worker suffix carries only the non-default mode (legacy)', () => {
+    expect(navalRangeWorkerNameSuffix('legacy')).toBe(';navalRange=legacy');
+    expect(navalRangeWorkerNameSuffix('real')).toBe('');
+  });
+
+  it('the default process (no env) runs real', () => {
+    if (process.env['EQX_NAVAL_RANGE'] === undefined) expect(NAVAL_RANGE).toBe('real');
   });
 });
 
@@ -149,18 +158,23 @@ describe('naval range switch — catalogue', () => {
 });
 
 describe('naval range switch — server/client parity (#15)', () => {
-  it('a legacy welcome is unchanged and reads as no mismatch on a legacy client', () => {
+  it('a legacy server stamps it explicitly; a legacy client agrees, a real client is told the fix', () => {
     const w = stampNavalRange({ type: 'welcome' as const, playerId: 'p' }, 'legacy');
-    expect('navalRange' in w).toBe(false);
+    expect(w.navalRange).toBe('legacy');
     expect(navalRangeMismatch(w, 'legacy')).toBeNull();
+    expect(navalRangeMismatch(w, 'real')).toEqual({ server: 'legacy', client: 'real', fix: '?navalRange=legacy' });
   });
 
-  it('a real server stamps it; a real client agrees, a legacy client is told the fix', () => {
+  it('a real server stamps it explicitly; a real client agrees, a legacy client is told the fix', () => {
     const w = stampNavalRange({ type: 'welcome' as const, playerId: 'p' }, 'real');
     expect(w.navalRange).toBe('real');
     expect(navalRangeMismatch(w, 'real')).toBeNull();
     expect(navalRangeMismatch(w, 'legacy')).toEqual({ server: 'real', client: 'legacy', fix: '?navalRange=real' });
-    expect(navalRangeMismatch({}, 'real')?.server).toBe('legacy');
+  });
+
+  it('a welcome without the field (an older legacy-default server) reads as legacy, never as the new default', () => {
+    expect(navalRangeMismatch({}, 'real')).toEqual({ server: 'legacy', client: 'real', fix: '?navalRange=legacy' });
+    expect(navalRangeMismatch({}, 'legacy')).toBeNull();
   });
 
   it('the stamped welcome passes the client\'s welcome schema', () => {
@@ -175,10 +189,12 @@ describe('naval range switch — server/client parity (#15)', () => {
   });
 
   it('workers inherit the mode through shipScaleWorkerName', async () => {
-    vi.stubEnv('EQX_NAVAL_RANGE', 'real');
-    vi.resetModules();
-    const cfg = await import('../../src/shared-types/shipScale/config.js');
-    const nr = await import('../../src/shared-types/combat/navalRange.js');
-    expect(nr.resolveNavalRange({ workerName: cfg.shipScaleWorkerName('renderer') })).toBe('real');
+    for (const mode of ['legacy', 'real'] as const) {
+      vi.stubEnv('EQX_NAVAL_RANGE', mode);
+      vi.resetModules();
+      const cfg = await import('../../src/shared-types/shipScale/config.js');
+      const nr = await import('../../src/shared-types/combat/navalRange.js');
+      expect(nr.resolveNavalRange({ workerName: cfg.shipScaleWorkerName('renderer') })).toBe(mode);
+    }
   });
 });

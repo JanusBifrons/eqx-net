@@ -8,7 +8,11 @@
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { barrelBearsOn, FC_MOUNT_FIRE_TOLERANCE, mountBearsOn, mountFireTolerance } from '../../src/core/combat/fireControlBearing.js';
+import {
+  barrelBearsOn, FC_MOUNT_FIRE_TOLERANCE, fillFireTargetShape, mountBearsOn, mountFireTolerance, mountFiresOn,
+  newFireTargetShape,
+} from '../../src/core/combat/fireControlBearing.js';
+import { mountInReach } from '../../src/core/combat/mountReach.js';
 import { TURRET_FIRE_MISS, TURRET_FIRE_TOLERANCE } from '../../src/core/combat/mountFireControl.js';
 
 describe('barrelBearsOn (#15)', () => {
@@ -28,16 +32,53 @@ describe('barrelBearsOn (#15)', () => {
     expect(barrelBearsOn(0, 0, -Math.PI + t * 0.5, 0, -100)).toBe(true);
   });
 
-  it('the server fire gate and the client ghost pass both call the per-weapon rule', () => {
+  it('the server fire gate and the client fire passes both call the shared gate (range + bearing)', () => {
     const server = readFileSync('src/server/rooms/SectorRoom.ts', 'utf8');
     const client = readFileSync('src/client/net/ColyseusClient.ts', 'utf8');
-    expect(server).toMatch(/mountBearsOn\(weaponId,/);
-    expect(client).toMatch(/mountBearsOn\(/);
+    // `mountFiresOn` = per-mount range to the hull (`mountInReach`) AND
+    // the per-weapon bearing rule (`mountBearsOn`), on a shape both fill with
+    // `fillFireTargetShape`.
+    expect(server).toMatch(/mountFiresOn\(weaponId,/);
+    expect(client).toMatch(/mountFiresOn\(/);
+    expect(server).toMatch(/fillFireTargetShape\(/);
+    expect(client).toMatch(/fillFireTargetShape\(/);
+    // A bare mountBearsOn call would skip the range half on that side.
+    expect(server).not.toMatch(/[^.\w]mountBearsOn\(/);
+    expect(client).not.toMatch(/[^.\w]mountBearsOn\(/);
     // A bare barrelBearsOn call would skip the naval window on that side.
     expect(server).not.toMatch(/[^.\w]barrelBearsOn\(/);
     expect(client).not.toMatch(/[^.\w]barrelBearsOn\(/);
     expect(server).not.toMatch(/const FC_MOUNT_FIRE_TOLERANCE =/);
     expect(client).not.toMatch(/const FC_MOUNT_FIRE_TOLERANCE =/);
+  });
+});
+
+/**
+ * Fire range is per mount to the target's hit shape (owner, 2026-11-14).
+ */
+describe('mountInReach on a FireTargetShape / mountFiresOn', () => {
+  it('a battleship alongside is in an AA mount\'s reach by its hull, not its centre', () => {
+    const t = newFireTargetShape();
+    fillFireTargetShape(t, 1_700, 0, 0, true, 'battleship', true, 0);
+    // Starboard AA mount of a battleship at the origin facing +y (aa-s1).
+    expect(Math.hypot(1_700 - 168, 0 - 920)).toBeGreaterThan(1_428); // centre: out
+    expect(mountInReach(t.x - 168, t.y - 920, 1_428, t)).toBe(true); // hull: in
+    expect(mountInReach(t.x + 168, t.y - 920, 1_428, t)).toBe(false); // the port mount: out
+  });
+
+  it('a structure is reached by centre distance − its radius (its lock signature)', () => {
+    const t = newFireTargetShape();
+    fillFireTargetShape(t, 0, 500, 0, false, null, false, 100);
+    expect(mountInReach(t.x, t.y, 401, t)).toBe(true);
+    expect(mountInReach(t.x, t.y, 399, t)).toBe(false);
+  });
+
+  it('mountFiresOn needs both the range and the bearing', () => {
+    const t = newFireTargetShape();
+    fillFireTargetShape(t, 0, 500, 0, false, null, false, 100);
+    expect(mountFiresOn('laser', 450, 0, 0, 0, t)).toBe(true);
+    expect(mountFiresOn('laser', 350, 0, 0, 0, t)).toBe(false); // out of reach
+    expect(mountFiresOn('laser', 450, 0, 0, Math.PI / 2, t)).toBe(false); // off bearing
   });
 });
 

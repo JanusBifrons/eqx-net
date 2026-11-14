@@ -168,14 +168,28 @@ describe('SectorRoom integration — sub-capital wrecks (sub-cap break-up slice 
    * wreck's pieces must stand clearly apart 1 game s later (~1/3 of the hull
    * radius), and still come to rest and sleep (tests below). With the old
    * seam speed a missile frigate's narrowest gap was ~0.08 radii.
+   *
+   * Take 9 review (2026-11-14): a robot-square's hull "stays whole" and an
+   * orange heavy's two pieces "drift side by side for ~18 s, like two live
+   * ships flying together": at ~0.6 radii/s of parting they were still
+   * ~0.3 radii apart 1 s after the break (the old bar). Each ship is now
+   * killed while flying (the pieces inherit its velocity) and every pair
+   * must be >= 1.5 radii apart 1 game s later (take 10: 1.36-1.9 at x160, 1.67-2.9
+   * at x240 over runs: the seed follows the death tick).
    */
-  for (const kind of ['fighter', 'robot-hexagon', 'missile-frigate'] as const) {
+  for (const kind of ['fighter', 'robot-square', 'robot-circle', 'heavy', 'robot-hexagon', 'missile-frigate'] as const) {
     it(`a ${kind}'s pieces stand clearly apart 1 s after the break, wherever it was hit`, async () => {
       const int = await boot({ subcapWrecks: true });
       const outline = shipShapeToPolygon(getShipKind(kind));
       const HITS = 4;
       for (let h = 0; h < HITS; h++) expect(int().spawnTestDrone(`g${h}`, 3000 + h * 2000, 0, kind)).toBe(true);
       await harness.advance(100);
+      const k = getShipKind(kind);
+      for (let h = 0; h < HITS; h++) {
+        const p0 = int().wreckState(`g${h}`)!;
+        int().postToWorker({ type: 'SET_POSITION', entityId: `g${h}`, x: p0.x, y: p0.y, angle: p0.angle, vx: 0.8 * k.maxSpeed, vy: 0, angvel: 0 });
+      }
+      await harness.advance(20);
       const wrecks: string[][] = [];
       for (let h = 0; h < HITS; h++) {
         const at = int().wreckState(`g${h}`)!;
@@ -199,7 +213,7 @@ describe('SectorRoom integration — sub-capital wrecks (sub-cap break-up slice 
       }
       console.log(`[subcap-gap] ${kind}: narrowest gap over ${HITS} hit points ${least.toFixed(1)} u = ${(least / r).toFixed(2)} radii after ${elapsed.toFixed(2)} game s`);
       expect(elapsed).toBeLessThan(1.3);
-      expect(least / r, `${kind}: narrowest gap after ~1 s, in hull radii`).toBeGreaterThanOrEqual(0.25);
+      expect(least / r, `${kind}: narrowest gap after ~1 s, in hull radii`).toBeGreaterThanOrEqual(1.5);
     }, 20_000);
   }
 
@@ -330,6 +344,45 @@ describe('SectorRoom integration — sub-capital wrecks (sub-cap break-up slice 
     expect(byKind(int(), WRECK_KIND)).toHaveLength(0);
     expect(int().wreckCounts().total).toBe(0);
   }, 20_000);
+
+  /**
+   * Take 11 "ghost ship" (fleet-melee, 29-36 s): a dead heavy's orange piece
+   * flew beside a live robot square for seconds, then drifted on alone, and
+   * read as a live ship. The square was firing at a target past the piece;
+   * every shot stopped on the piece and its knock-back shoved it on ahead of
+   * the square at the square's speed (the melee diag: pieces 10-19 s after
+   * the death still at ~100 u/s, 50-100 hits each). An AI pilot holds fire
+   * while a wreck piece is on its line, as it does for an ally, so it never
+   * pours fire into debris.
+   */
+  it('an AI pilot holds fire while a wreck piece is on its line of fire (no debris shoved along like a live ship)', async () => {
+    const int = await boot({ subcapWrecks: true });
+    int().spawnTestDrone('dead', 3000, 0, 'fighter');
+    await harness.advance(100);
+    int().applyDamage('dead', 'shooter-x', 1e7);
+    const pieces = byKind(int(), WRECK_KIND).map((p) => p.id);
+    expect(pieces.length).toBeGreaterThanOrEqual(2);
+    await secondsToSleep(int, pieces, int().serverTick, 30);
+    const p = int().wreckState(pieces[0]!)!;
+    // The shooter 150 u below the piece, its target 150 u above: the piece
+    // sits on the line of fire.
+    int().spawnTestDrone('lof-shooter', p.x, p.y - 150, 'fighter');
+    int().spawnTestDrone('lof-target', p.x, p.y + 150, 'robot-square');
+    await harness.advance(100);
+    const room = harness.getServerRoom() as unknown as { capitalWrecks: { onWreckHit: (id: string, ...rest: unknown[]) => boolean } };
+    const wreckHits: string[] = [];
+    const orig = room.capitalWrecks.onWreckHit.bind(room.capitalWrecks);
+    room.capitalWrecks.onWreckHit = (id: string, ...rest: unknown[]) => { wreckHits.push(id); return orig(id, ...rest); };
+    const checks0 = int().lineOfFireCounts().checks;
+    for (let i = 0; i < 5; i++) {
+      int().aiFire('lof-shooter', 0, 1, 'lof-target');
+      await harness.advance(150);
+    }
+    expect(int().lineOfFireCounts().checks, 'the shots were checked').toBeGreaterThan(checks0);
+    expect(wreckHits, 'held fire: no shot landed on the wreck piece').toEqual([]);
+    const after = int().wreckState(pieces[0]!)!;
+    expect(Math.hypot(after.x - p.x, after.y - p.y), 'the piece was not shoved').toBeLessThan(1);
+  }, 40_000);
 
   it('a havok keeps its scrap (one per component), with the flag on: no wreck pieces', async () => {
     const int = await boot({ subcapWrecks: true });

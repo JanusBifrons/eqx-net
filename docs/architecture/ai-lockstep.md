@@ -167,3 +167,115 @@ The diagnostic signature of this class of bug is distinctive: per-event metrics 
 ## Future improvement noted but not shipped
 
 A history-replay design would replace the input-driven replay with **per-tick player-pose lookup**. Server would keep a 12-tick player pose ring and ship a `players_history[]` slice in the snapshot (~12 ticks × 24 bytes/player ≈ 300 B/player). The client's reconciler would replay drones against those historical poses instead of input-driving the player. This eliminates the AI's input-prediction divergence entirely. Mobile feel is already excellent without it; the design is parked in `C:\Users\alecv\.claude\plans\i-m-starting-to-lose-zesty-blanket.md` under "Deferred" for if the residual sharp-turn outliers ever become a real complaint.
+
+## Input symmetry reference
+
+Moved from `src/core/CLAUDE.md` (section "AI lockstep — Input Symmetry Rule").
+
+> **⚠️ SUPERSEDED FOR DRONES (2026-05-18, drone-snapshot-interpolation
+> pivot).** The client no longer runs `AiController`/`HostileDroneBehaviour`
+> for drones at all — drones are pure snapshot-interpolated from the
+> binary wire (see [docs/architecture/drone-snapshot-interpolation.md](../../docs/architecture/drone-snapshot-interpolation.md)).
+> The Input-Symmetry Rule below is therefore **moot for drones** (there is
+> no client drone brain whose inputs could diverge) but remains the
+> governing principle for any *future* shared client/server brain and for
+> the `damage`/`bot_aggro` → `markHostile` server→client mirror (the
+> surviving hostility ledger). **The "Corollary — replay re-sim is
+> relevance-CULLED (Option A)" section below is fully RETIRED**: the
+> replay re-sim, `droneRelevance.ts`, `DRONE_RESIM_BUDGET`,
+> `AiController.tickOnly`, and the `replaySeed` drone anchor were all
+> deleted. `AiController.tick` is now server-authoritative-only. Player
+> prediction is unaffected by all of this.
+
+`src/core/ai/HostileDroneBehaviour.tick(self, view)` is pure: same arguments produce the same `(fx, fy, torque)` impulse on both sides. The same instance of this code runs on the server (under `AiController` in `SectorRoom`) and on the client (under the same `AiController` in `ColyseusClient`). The brain is shared; for client-side prediction to match server reality, **the brain's sensory inputs must match too**.
+
+**The rule**: any field consumed by `IAiBehaviour` MUST flow on the same channel and at the same cadence on both sides. Adding a behaviour-visible field requires a wire-format bump, not "we'll wire it up later." The 2026-05-09 chapter-2 work shipped wire-format v3 specifically to add `angvel` after discovering the AI's `1.5·ω` damping term was reading SAB-authoritative ω on the server and unsynced predWorld ω on the client — drone bearing diverged every tick because of one missing field.
+
+**Concrete inputs the AI reads, with where each must come from on each side:**
+
+| field | server | client |
+|---|---|---|
+| `self.x, y, vx, vy, angle` | SAB at `SLOT_*_OFF` | predWorld via `setShipState` from snapshot's `drones[]` slice |
+| `self.angvel` | SAB at `SLOT_ANGVEL_OFF` | **wire-format v3 carries it; `setShipState` propagates** |
+| `view.players[].x, y, vx, vy` | `shipPoseCache` from SAB at `serverTick` | predWorld; remote ships are reset to `snap.states[remoteId]` pre-replay |
+| `view.tick` | `serverTick` | `inputTick` (different reference frame; only used for fire cooldown) |
+| `view.dtSec` | 1/60 | 1/60 |
+| `kind` (per-drone tuning from catalogue) | catalogue lookup at register | catalogue lookup at register, with `entry.shipKind` from packet |
+
+**The diagnostic signature when this rule is violated**: per-event metrics like `swarm_snap_diagnostics.snapDistance` get *worse* after a fix that "should help structurally," not better. That's the diagnostic for two-correction-paths-fighting (chapter 2 capture `2026-05-09T17-25-27-695Z-82ncsd` is the canonical example).
+
+**One correction path per state surface**: don't run a second reset path on top of an existing one. Phase C added the snapshot drone anchor; the load-bearing follow-up (commit `d1e7ecf`) was to GATE the binary-packet `setShipState` path for in-snapshot drones so the two paths don't fight. See [docs/architecture/ai-lockstep.md](../../docs/architecture/ai-lockstep.md) for the full walkthrough.
+
+The regression lock for this is [`tests/e2e/feel-test-lockstep.spec.ts`](../../tests/e2e/feel-test-lockstep.spec.ts) — its p50 thresholds will fail the moment a dual-correction-path bug reappears.
+
+### Corollary — Living World "hunters" reuse `markHostile`, never a new behaviour (2026-05-16)
+
+A Living World hunter bot is **just a drone made hostile to a player it
+wasn't shot by** — it runs the *unchanged* `HostileDroneBehaviour`
+`COMBAT` branch. The `LivingWorldDirector` drives the *existing*
+`markHostile`/`purgeHostility` channel (server) and the server broadcasts
+one discrete `bot_aggro` the client feeds into its own
+`_aiController.markHostile` — the exact server→client twin of the proven
+`damage`→`markHostile` mirror. **Do NOT add a `proactive` (or any new)
+`HostileDroneBehaviour` branch, and do NOT add a per-drone behaviour flag
+to the binary swarm wire.** Reason: the client constructs + ticks its own
+`HostileDroneBehaviour` for in-interest drones, so a server-only
+behaviour difference is exactly the dual-path divergence the Input
+Symmetry Rule above forbids — whereas `markHostile` already fires
+symmetrically on both sides, so hunting needs zero new lockstep surface
+and zero `SWARM_WIRE_VERSION` bump. This was a deliberate design fork
+(the rejected alternative — a `proactive` branch + a `drones[]`-slice
+flag — is recorded in [docs/architecture/living-world.md](../../docs/architecture/living-world.md)).
+
+## History
+
+Moved from `src/core/CLAUDE.md` (2026-11-14); kept for the record.
+
+### Corollary — replay re-sim is relevance-CULLED, and that is prediction-only (Option A, 2026-05-17)
+
+Tick-accurate N-drone client lockstep is **intrinsically O(ticksAhead × N)**
+— the per-replay-tick re-sim *is* the Phase C mechanism, not an accident
+(48 ms at N=500/ticksAhead=48 → the 116–266 ms sector-change stall, diag
+`a3f5na`). The fix (`prediction/droneRelevance.ts`
++ `AiController.tickOnly`, both since deleted) brain-re-sims only the NEAR
+set (hostile / within `HITSCAN_RANGE×2` / recently large-corrected); the FAR
+majority is **dead-reckoned, NOT frozen** — `replaySeed` re-anchors it and
+the unfrozen replay `world.tick()` integrates it ballistically. Replay
+*brain* cost → O(k × ticksAhead), k ≪ N. (Freezing FAR was tried and
+reverted: it regressed the quiet-host canary `swarmSnapP50` 11→20; dead-reckon
+→ 1.6, *better* than `main`. `Reconciler.ts`/`World.ts` stay identical to
+`main` — no `freeze` param. See `docs/architecture/reconciler-replay-scaling.md`
+§9.)
+
+Two rules this must not break:
+
+1. **Culling is CLIENT-PREDICTION-ONLY. The server's `AiController.tick`
+   still ticks every drone authoritatively — `tickOnly` is a client-replay
+   path only.** Never cull the server's authoritative tick to "match": that
+   would change authority, not just prediction, and is exactly the
+   server-only-divergence the Input Symmetry Rule forbids. Authority stays
+   whole; only the client's *prediction fidelity* is spent selectively.
+2. **The relevance predicate must read the same server-authoritative anchor
+   the re-sim will read** (the snapshot `drones[]` pose / `replaySeed`), NOT
+   a free-evolving predWorld pose — otherwise NEAR/FAR membership itself
+   diverges from what the server would compute, reintroducing a
+   per-side-divergent input. `partitionDronesByRelevance` takes the anchor
+   pose for this reason; keep it that way.
+
+`tickOnly` iterates the NEAR set, NEVER a predicate over the full registry
+(a predicate-over-`tick` keeps the O(ticksAhead × N) scan even when it culls
+the brain work — measured + rejected, `docs/LESSONS.md` 2026-05-17). This is
+NOT a second correction path: the SAME `AiController` path advances NEAR
+drones, only scoped.
+
+**The cull is radius AND budget (2026-05-17, diag m6rq2t).** Radius alone
+gives zero relief when the player is *inside* the bot pack (NEAR≈ALL) — the
+progressive in-fight reconcile-cost spiral. `partitionDronesByRelevance`
+also enforces a hard per-snapshot `DRONE_RESIM_BUDGET` (default 12): keep
+only the K most-relevant (hostile → closest → id), demote the overflow to
+FAR/dead-reckon, so per-snapshot brain cost is O(replayWindow × K), K
+bounded regardless of pack size. Default-ON (unbounded in-pack re-sim *is*
+the bug); byte-identical when NEAR ≤ K (steady-state + canary untouched).
+Do NOT remove the budget to "re-sim more for accuracy" — that
+reintroduces the spiral the 500-target cannot afford. Full story:
+[docs/architecture/reconciler-replay-scaling.md](../../docs/architecture/reconciler-replay-scaling.md).

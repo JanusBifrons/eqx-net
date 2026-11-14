@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { RenderMirror } from '@core/contracts/IRenderer';
-import { summariseOwnLock, summariseThreats } from './LockStatusBand';
+import { summariseOwnLock, summariseThreats, threatTotalText } from './LockStatusBand';
 
 function mirror(over: Partial<RenderMirror>): RenderMirror {
   return {
@@ -31,6 +31,32 @@ describe('summariseThreats', () => {
     expect(t.acquiring).toBe(1);
     expect(t.acquiringPct).toBe(60);
     expect(t.lockedName).not.toMatch(/s:\d/); // never an id
+  });
+});
+
+// Owner 2026-11-14: the server sends rows only for the nearest lockers
+// (completed first) plus `lockedByN`, the TOTAL; the banner shows the total.
+describe('summariseThreats — capped rows + total', () => {
+  const locked8 = [4, 5, 4, 5, 4, 5, 4, 5].map((e) => ({ t: `s:${e}`, s: 2 as const, p: 100 }));
+  it('every row locked and more lockers off the list: "8+ ships" and the total', () => {
+    const t = summariseThreats(mirror({ localLockedBy: locked8, localLockedByTotal: 20 }))!;
+    expect(t.total).toBe(20);
+    expect(t.locked).toBe(8);
+    expect(t.lockedName).toBe('8+ ships');
+    expect(threatTotalText(t)).toBe('20 ON YOU');
+  });
+  it('an acquiring row means every completed lock is listed: the rest of the total is acquiring', () => {
+    const rows = [...locked8.slice(0, 3), ...[4, 5, 4, 5, 4].map((e) => ({ t: `s:${e}`, s: 1 as const, p: 30 }))];
+    const t = summariseThreats(mirror({ localLockedBy: rows, localLockedByTotal: 20 }))!;
+    expect(t.locked).toBe(3);
+    expect(t.lockedName).toMatch(/3 ships|fighter/i);
+    expect(t.acquiring).toBe(17);
+    expect(threatTotalText(t)).toBe('20 ON YOU');
+  });
+  it('no total on the wire: the rows are everyone, no total chip', () => {
+    const t = summariseThreats(mirror({ localLockedBy: locked8.slice(0, 2) }))!;
+    expect(t.total).toBe(2);
+    expect(threatTotalText(t)).toBeNull();
   });
 });
 

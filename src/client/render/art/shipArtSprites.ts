@@ -27,13 +27,14 @@ export interface ShipArtCtx {
   turrets?: boolean;
 }
 
-/** The handle a ship should use now (re-acquired only on a kind/paint change). */
-export function shipHandleFor(actx: ShipArtCtx, key: string, kindId: string, paint: number | undefined): ArtHandle | null {
+/** The handle a ship should use now (re-acquired only on a kind/paint change).
+ *  `dead`: a wreck piece's bake (no live lights; see `BakeJob`). */
+export function shipHandleFor(actx: ShipArtCtx, key: string, kindId: string, paint: number | undefined, dead = false): ArtHandle | null {
   if (!actx.art) return null;
   let h = actx.handles.get(key);
   const rings = actx.turrets === true && hasTurrets(kindId, false);
-  if (!h || h.stale === true || h.job.type !== 'ship' || h.job.id !== kindId || h.job.paint !== paint || (h.job.rings === true) !== rings) {
-    h = actx.art.ship(kindId, paint, true, rings);
+  if (!h || h.stale === true || h.job.type !== 'ship' || h.job.id !== kindId || h.job.paint !== paint || (h.job.rings === true) !== rings || (h.job.dead === true) !== dead) {
+    h = actx.art.ship(kindId, paint, true, rings, dead);
     actx.handles.set(key, h);
   }
   return h;

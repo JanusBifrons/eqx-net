@@ -393,6 +393,16 @@ Two slash commands live in `.claude/skills/` so any dev who clones the repo gets
 
 Phase 4a (Playwright `init-agents --loop=claude` planner / generator / healer) needs Playwright v1.56+; this repo is on 1.49.0. Deferred until the upgrade lands as a separate dependency story — agents are breadth-only per the plan, gates AI-fenced.
 
+## Unit and component test layers
+
+**Test layers** (introduced for Phase 5):
+- `vitest` `*.test.tsx` files run under `jsdom` (per-file env via `vitest.config.ts` `environmentMatchGlobs`); `*.test.ts` continues to run under `node` (server logic, schemas, helpers).
+- `@testing-library/react` + `@testing-library/jest-dom` for component assertions. Matchers registered in `vitest.setup.ts` (dynamic-imported only when `typeof document !== 'undefined'` so node-env tests don't pay the cost).
+- `@testing-library/user-event` available for keyboard/text-input flows when needed; the existing Phase 5 tests use `fireEvent.click` for button activations.
+- `fast-check` is installed for property-based testing of pure functions (use when the surface naturally benefits — Phase 6 has more candidates than Phase 5).
+- `@colyseus/testing` is installed for in-process room integration tests; the version pinned in `package.json` reports a peer-dep mismatch (0.17.x vs colyseus 0.16) — re-pin to 0.16-compat when Phase 6b lands and actually exercises it.
+- `@stryker-mutator/core` + `@stryker-mutator/vitest-runner` are installed for mutation testing; configuration deferred until Phase 6 ships (the suite needs stable tests to mutate).
+
 ## History
 
 - **Why the bespoke-trigger rule exists (2026-05-17).** The slow-down-gameplay PR (+50 % shield + hull, 10× warp spool) silently broke every combat smoke spec that assumed pre-tuning TTK. The wrong fix was bumping timeouts (15 s → 30 s → 45 s); the right fix was the `initialHull=1` / `initialShield=0` server-side override that makes a 1-tick kill test possible. The bump-pattern would have broken again on the NEXT tuning pass; the bespoke trigger is invariant under future combat-tuning changes.

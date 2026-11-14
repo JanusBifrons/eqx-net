@@ -16,7 +16,7 @@
  * "Multi-mount fire path" section).
  */
 
-import { hasTurretFireControl, mountWeaponReach } from '../../core/combat/mountReach.js';
+import { hasTurretFireControl, mountInReach, mountWeaponReach } from '../../core/combat/mountReach.js';
 import { barrelBearsOn, mountFireTolerance } from '../../core/combat/fireControlBearing.js';
 import { DEFAULT_SHIP_KIND, getShipKind, type ShipKind, type WeaponMount } from '../../shared-types/shipKinds.js';
 import {
@@ -45,7 +45,24 @@ export interface SwarmRecLookup {
   get(id: string): { entityId: number; shipKind?: string | null } | null | undefined;
 }
 
+/** A fire target's centre and hit shape, for the per-mount range gate. */
+export interface AiFireTargetShape {
+  x: number;
+  y: number;
+  kindId?: string | null;
+  angle?: number;
+  shieldUp?: boolean;
+  radius?: number;
+}
+
 export interface AiFireResolverDeps {
+  /** Fire range (owner decision 2026-11-14): fill `out` with `targetId`'s
+   *  live centre and hit shape (a ship's kind, heading and shield, else a
+   *  circle radius); false when unknown. A mount fires only when the target's
+   *  hull is within its own weapon reach of it (`mountInReach`). Must not
+   *  touch the `swarmEntitySnapshot` scratch. Absent / unknown ⇒ no range
+   *  gate (unit harnesses, a shot with no target). */
+  targetShape?: (targetId: string, out: AiFireTargetShape) => boolean;
   /** Fire control: refuse a shot at `targetId` when it is a pilot this NPC
    *  holds no completed lock on. Absent ⇒ never blocked. */
   fireBlocked?: (shooterId: string, targetId: string) => boolean;
@@ -80,12 +97,19 @@ export interface AiFireResolverDeps {
     fromX: number, fromY: number, dirX: number, dirY: number, maxDist: number,
     cx: number, cy: number, angle: number,
   ) => number | null;
-  /** Damage sink — invoked on a confirmed hit. */
-  applyDamage: (targetId: string, shooterId: string, damage: number) => void;
-  /** S2a: the beam's impact point, called just before `applyDamage` (feeds the
-   *  capital wreck hit tracker and the wreck knock-back along (dx, dy); the
-   *  damage event is unchanged). */
-  noteBeamImpact?: (x: number, y: number, dx: number, dy: number) => void;
+  /** Damage sink — invoked on a confirmed hit. (hitX, hitY) is the beam's
+   *  impact point, (dirX, dirY) its direction (capital wreck hit tracker and
+   *  knock-back), `weaponId` the firing weapon. */
+  applyDamage: (
+    targetId: string,
+    shooterId: string,
+    damage: number,
+    hitX?: number,
+    hitY?: number,
+    dirX?: number,
+    dirY?: number,
+    weaponId?: WeaponId,
+  ) => void;
   /** Friendly fire (owner decision 2026-11-10) — the first non-player thing
    *  along the beam: every swarm entity (drones of ANY side, structures of ANY
    *  owner, asteroids, scrap) and lingering hulls, skipping only `skipId` (the
@@ -134,6 +158,9 @@ export class AiFireResolver implements WeaponFireSink {
   };
   // Per-fire-event sink state — set in resolve() before the salvo.
   private _shooterId = '';
+  /** The weapon of the barrel now resolving (set per mount before
+   *  `resolveFire`), so a beam hit tells applyDamage what landed it. */
+  private _weaponId: WeaponId | undefined = undefined;
   private _wireShooterId = '';
 
   /**
@@ -177,7 +204,11 @@ export class AiFireResolver implements WeaponFireSink {
     // a gun that doesn't bear would fire visibly off its target (owner
     // 2026-11-14: "turrets aren't turning to shoot the direction they do").
     // None bears ⇒ hold, spending no cooldown (a turret still slewing).
-    const bearMask = this.bearingMask(shooterId, hullAngle, slotMounts, dirNdx, dirNdy);
+    // Range: a mount fires only when the target's hull is within its own
+    // weapon reach of it, measured from the mount (owner 2026-11-14; a lock
+    // alone is no licence to fire from any distance).
+    const shape = targetId !== '' && d.targetShape?.(targetId, this._targetShape) === true ? this._targetShape : null;
+    const bearMask = this.bearingMask(shooterId, selfX, selfY, hullAngle, slotMounts, dirNdx, dirNdy, shape);
     if (bearMask === 0) return;
 
     // Slot-level cooldown gate (mirrors PlayerFireResolver). The slot fires
@@ -214,19 +245,32 @@ export class AiFireResolver implements WeaponFireSink {
     this.fireNow(shooterId, -1, bearMask);
   }
 
+  /** Reused target shape for the range gate (#14). */
+  private readonly _targetShape: AiFireTargetShape = { x: 0, y: 0, kindId: null, angle: 0, shieldUp: false, radius: 0 };
+
   /** Bit i set ⇔ slot mount i's barrel (hull + base + slewed angle) bears on
    *  the aim direction within its weapon's window (`mountFireTolerance`, the
-   *  pilot's rule, #19). Mounts past bit 30 always count as bearing. */
+   *  pilot's rule, #19) AND, with a known `target`, the target's hull is
+   *  within the mount's own weapon reach of its world origin (`mountInReach`).
+   *  Mounts past bit 30 always count as bearing. */
   private bearingMask(
-    shooterId: string, hullAngle: number, slotMounts: ReadonlyArray<WeaponMount>, dirX: number, dirY: number,
+    shooterId: string, sx: number, sy: number, hullAngle: number, slotMounts: ReadonlyArray<WeaponMount>,
+    dirX: number, dirY: number, target: AiFireTargetShape | null,
   ): number {
     const angles = this.deps.droneMountAngles.get(shooterId);
+    const cosA = Math.cos(hullAngle), sinA = Math.sin(hullAngle);
     let mask = 0;
     for (let i = 0; i < slotMounts.length; i++) {
       if (i > 30) { mask |= 1 << 30; continue; }
       const m = slotMounts[i]!;
+      const reach = mountWeaponReach(m);
+      if (target !== null) {
+        const mx = sx + (m.localX * cosA - m.localY * sinA);
+        const my = sy + (m.localX * sinA + m.localY * cosA);
+        if (!mountInReach(target.x - mx, target.y - my, reach, target)) continue;
+      }
       const a = hullAngle + m.baseAngle + (angles?.[i] ?? 0);
-      if (barrelBearsOn(0, 0, a, dirX, dirY, mountFireTolerance(m.weaponId, mountWeaponReach(m)))) mask |= 1 << i;
+      if (barrelBearsOn(0, 0, a, dirX, dirY, mountFireTolerance(m.weaponId, reach))) mask |= 1 << i;
     }
     return mask;
   }
@@ -325,6 +369,7 @@ export class AiFireResolver implements WeaponFireSink {
       ctx.shooterVx = svx;
       ctx.shooterVy = svy;
       ctx.mountId = mount.id;
+      this._weaponId = mount.weaponId;
       // A naval turret fires a full salvo: one shell per barrel, each from
       // its own drawn barrel tip (shared offsets, core/combat/muzzle.ts).
       const naval = navalTurret(droneKind, mount);
@@ -405,9 +450,9 @@ export class AiFireResolver implements WeaponFireSink {
       const effDamage = falloffMinDamageFrac !== undefined
         ? damage * hitscanFalloffFrac(hitDist, range, rayRange, falloffMinDamageFrac)
         : damage;
-      // S2a: the beam's impact point, for the capital wreck hit tracker only.
-      d.noteBeamImpact?.(rayFromX + ndx * hitDist, rayFromY + ndy * hitDist, ndx, ndy);
-      d.applyDamage(hitId, this._shooterId, effDamage);
+      // The impact point and direction ride the damage call itself (wreck hit
+      // tracker, knock-back; the damage event reports the true impact point).
+      d.applyDamage(hitId, this._shooterId, effDamage, rayFromX + ndx * hitDist, rayFromY + ndy * hitDist, ndx, ndy, this._weaponId);
     }
 
     const blocked = wallDist !== null;

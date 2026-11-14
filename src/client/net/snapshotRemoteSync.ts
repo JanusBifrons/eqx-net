@@ -235,6 +235,8 @@ const chargingIds = new Set<number>();
 const eliteIds = new Set<number>();
 /** Entity ids warping per the previous snapshot (reused — #14). */
 const warpIds = new Set<number>();
+/** Entity ids boosting per the previous snapshot (reused — #14). */
+const boostIds = new Set<number>();
 
 export function applyDroneMountAngles(
   snap: SnapshotMessage,
@@ -272,6 +274,14 @@ export function applyDroneMountAngles(
     }
     warpIds.clear();
   }
+  // Take 12 — an AI pilot's boost clears on absence the same way.
+  if (boostIds.size > 0) {
+    for (const id of boostIds) {
+      const sw = mirror.swarm?.get(id);
+      if (sw) sw.boosting = false;
+    }
+    boostIds.clear();
+  }
   if (!snap.drones || snap.drones.length === 0) return;
   for (const d of snap.drones) {
     if (d.hostile === true && onHostile) onHostile(d.id);
@@ -280,6 +290,10 @@ export function applyDroneMountAngles(
     if (d.charging === true) {
       sw.charging = true;
       chargingIds.add(d.id);
+    }
+    if (d.boost === true) {
+      sw.boosting = true;
+      boostIds.add(d.id);
     }
     if (d.elite !== undefined) {
       sw.eliteName = d.elite;

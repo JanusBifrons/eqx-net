@@ -36,7 +36,7 @@ export interface AiTickCtx {
   aiController: AiController;
   serverTick: number;
   playerToSlot: Map<string, number>;
-  getActiveShip: (playerId: string) => { alive: boolean; isActive: boolean; health: number; maxHealth: number; travelling?: boolean; kind?: string } | undefined;
+  getActiveShip: (playerId: string) => { alive: boolean; isActive: boolean; health: number; maxHealth: number; travelling?: boolean; kind?: string; shield?: number } | undefined;
   /** AI steering 2a — the per-tick neighbour grid, rebuilt here before the
    *  controller ticks and handed to every behaviour as `view.neighbours`.
    *  Absent ⇒ no index (byte-identical). */
@@ -99,6 +99,7 @@ export function runAiTick(ctx: AiTickCtx): void {
     ctx.aiPlayerScratch.push({
       id: pid, x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy,
       health: ship.health, maxHealth: ship.maxHealth,
+      kindId: ship.kind ?? null, angle: pose.angle, shieldUp: (ship.shield ?? 0) > 0,
       // P2 — robot truce (robot rep ≥ ROBOT_TRUCE_AT): no on-sight engagement.
       truce: ctx.hasTruce?.(pid) === true,
     });

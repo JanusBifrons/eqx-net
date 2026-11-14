@@ -16,7 +16,8 @@ import { TargetAction } from './TargetAction';
 
 /**
  * User report (1v3 clip, 2026-11-08): LOCK in the info box "did nothing". The
- * target was out of reach, so the lock sat at 0 % and dropped after the grace
+ * lock could not progress (then: out of reach; since 2026-11-14 locks work at
+ * any distance, so only an untrackable target), so it sat at 0 % and dropped after the grace
  * with no feedback. The server now marks such a lock `blocked`; the button must
  * say so.
  */
@@ -41,12 +42,12 @@ describe('TargetAction', () => {
     expect(lockSelected).toHaveBeenCalledOnce();
   });
 
-  it('shows OUT OF RANGE for a lock the server cannot progress; a tap cancels it', () => {
+  it("shows CAN'T TRACK for a lock the server cannot progress (untrackable; locks work at any distance); a tap cancels it", () => {
     setLock({ target: 's:7', stage: 1, blocked: true });
     render(<TargetAction isOwn={false} />);
     const btn = screen.getByTestId('fc-target');
     expect(btn.getAttribute('data-state')).toBe('blocked');
-    expect(btn.textContent).toBe('OUT OF RANGE');
+    expect(btn.textContent).toBe("CAN'T TRACK");
     fireEvent.click(btn);
     expect(cancelLock).toHaveBeenCalledWith('primary', 's:7');
   });

@@ -46,9 +46,11 @@ export interface LockTuning {
   clampAtMax?: boolean;
   /** Failsafe ring duration multiple for neutral / allied targets. */
   failsafeMul: number;
-  /** A locked/acquiring target may be out of reach this long before it drops. */
+  /** A locked/acquiring target may be untrackable this long before it drops. */
   lostGraceSeconds: number;
-  /** Locks start/persist out to reach × this (a small grace band). */
+  /** Locks work at any distance (owner 2026-11-14); this is only the AUTO
+   *  release band: an AUTO pick is dropped once no mount reaches it within
+   *  reach × this (hysteresis over the in-reach pick). */
   reachSlack: number;
 }
 
@@ -68,6 +70,13 @@ export const LOCK_TUNING: LockTuning = {
   lostGraceSeconds: 1.5,
   reachSlack: 1.1,
 };
+
+/** Own-ship `lockedBy` rows sent per snapshot: the nearest lockers, completed
+ *  locks first (owner 2026-11-14). Why: locks work at any distance, so every
+ *  hostile in the sector can lock you; the rows feed radar and aim marks for
+ *  the threats that matter, and `lockedByN` carries the total, keeping the
+ *  wire cost flat however many enemies there are. */
+export const LOCKED_BY_WIRE_ROWS = 8;
 
 /**
  * Each weapon size's REFERENCE target size (u) and TRACKING (rad/s it can

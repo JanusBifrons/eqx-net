@@ -13,7 +13,7 @@ import type { StructureRecord } from './StructureRegistry.js';
 import type { TargetClass } from '../../core/combat/mountTargeting.js';
 
 /** Lock signatures (hull radius, u) by class, like the ship catalogue's. */
-const SIG: Record<TargetClass, number> = { small: 10, subcapital: 30, 'small-capital': 55, capital: 200 };
+const SIG: Record<TargetClass, number> = { small: 10, subcapital: 30, 'small-capital': 55, capital: 200, structure: 80 };
 
 interface Shot { mountIdx: number; ndx: number; ndy: number; target: string }
 
@@ -110,8 +110,11 @@ describe('StructureMountTicker — the capital fire-control rules on defence str
     const h = setup('coastal_turret_11in');
     h.set([{ id: 'cap', x: 0, y: 3000, vx: 60, vy: 0 }]);
     h.step(300);
-    // Lead bearing: the target ~1.4 s ahead (3000 u / 2200 u/s) at 60 u/s ≈ 82 u right.
-    const want = Math.atan2(-(60 * (3000 / 2200)), 3000);
+    // Lead bearing: the target one shell flight ahead (3000 u / the 11" shell
+    // speed, either naval range mode) at 60 u/s.
+    const gun = getWeapon('naval_l');
+    if (gun.mode !== 'projectile') throw new Error('naval_l');
+    const want = Math.atan2(-(60 * (3000 / gun.speed)), 3000);
     expect(h.angle()).toBeCloseTo(want, 2);
     expect(h.angle()).toBeLessThan(-0.01); // not the 0 of the present bearing
   });

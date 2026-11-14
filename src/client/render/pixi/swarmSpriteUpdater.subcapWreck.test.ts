@@ -541,3 +541,75 @@ describe('sub-capital wrecks: the quiet look (slice 4)', () => {
     expect(icons.iconCount).toBe(0);
   });
 });
+
+/**
+ * Take 9 review (2026-11-14): "two pieces drift side by side like two live
+ * ships". A piece must never wear a live ship's decorations: no turret
+ * cluster (`MountVisualManager`), no text (name tag, damage number), no
+ * charge telegraph or elite ring, only its art mesh and the brief cut glow.
+ * (Engine exhaust is gated to drones in `PixiRenderer.drawFxEngines`; locks
+ * resolve ships and structures only, server `SectorRoom` lock target and
+ * `MissileSimulation`.)
+ */
+describe('sub-capital wreck pieces carry no live-ship decorations (take 9)', () => {
+  for (const kind of ['robot-square', 'robot-circle', 'heavy', 'fighter']) {
+    it(`${kind}: no turret cluster, no text, nothing but the art and the glow`, () => {
+      const sinks: Sinks = { breaks: 0, blasts: 0, ripples: 0 };
+      const ctx = makeCtx(stubArt(fighterArt()), sinks);
+      const m = mirrorFor(desc(kind, 77), DEATH_TICK + 3);
+      ctx.fxNowMs = 10_000;
+      updateSwarmSprites(m, ctx);
+      updateSwarmSprites(m, ctx);
+      const ps = pieces(ctx);
+      expect(ps.length).toBeGreaterThanOrEqual(2);
+      for (const [key, sp] of ctx.sprites) {
+        expect(sp).toBeInstanceOf(WreckPieceSprite);
+        expect(ctx.mountVisuals.mountCountForShip(key), `${key}: turret cluster`).toBe(0);
+        for (const ch of sp.children) expect(ch, `${key}: only meshes (art + glow)`).toBeInstanceOf(Mesh);
+        expect(drawables(sp)).toBeLessThanOrEqual(2);
+      }
+    });
+  }
+});
+
+/**
+ * Take 10 review (2026-11-14): the biggest piece of a dead robot-square
+ * "keeps the robot's glowing eye, so it reads as a live robot". A sub-cap
+ * piece now draws its parent's DEAD bake (`ArtService.ship(..., dead)`: no
+ * core, canopy, engines or running lights; `wreckPieceArt.test.ts`).
+ * Capitals keep their own bake (their look is locked elsewhere).
+ */
+describe('sub-capital wreck pieces draw the dead bake, never the live one (take 10)', () => {
+  function recordingArt(): { art: ArtService; calls: Array<{ id: string; dead: boolean }> } {
+    const calls: Array<{ id: string; dead: boolean }> = [];
+    const handles = new Map<string, ArtHandle>();
+    const art = {
+      lightRig: {},
+      ship: (id: string, paint?: number, _urgent?: boolean, rings?: boolean, dead?: boolean) => {
+        calls.push({ id, dead: dead === true });
+        const k = `${id}|${dead === true}`;
+        let h = handles.get(k);
+        if (!h) {
+          h = { key: k, job: { type: 'ship', id, paint, ...(rings ? { rings } : {}), ...(dead ? { dead } : {}) }, rig: {} as ArtHandle['rig'], state: 'ready', ship: fighterArt(), struct: null } as ArtHandle;
+          handles.set(k, h);
+        }
+        return h;
+      },
+    } as unknown as ArtService;
+    return { art, calls };
+  }
+
+  for (const kind of ['robot-square', 'robot-circle', 'heavy', 'fighter']) {
+    it(`${kind}: every piece asks for the dead bake`, () => {
+      const { art, calls } = recordingArt();
+      const ctx = makeCtx(art, { breaks: 0, blasts: 0, ripples: 0 });
+      const m = mirrorFor(desc(kind, 41), DEATH_TICK + 3);
+      ctx.fxNowMs = 10_000;
+      updateSwarmSprites(m, ctx);
+      updateSwarmSprites(m, ctx);
+      expect(pieces(ctx).length).toBeGreaterThanOrEqual(2);
+      expect(calls.length).toBeGreaterThan(0);
+      for (const c of calls) expect(c, `${kind}: a piece drew the live bake`).toEqual({ id: kind, dead: true });
+    });
+  }
+});

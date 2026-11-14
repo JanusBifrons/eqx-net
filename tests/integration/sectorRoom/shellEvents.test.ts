@@ -29,11 +29,16 @@ describe('SectorRoom integration — naval shells as events (slice 1)', () => {
   it('a 16" hit: the salvo reaches the target, and shell_end matches the DamageEvent', { timeout: 60_000 }, async () => {
     harness = await bootSectorTestServer({
       sectorKey: null, droneCount: 0, testMode: true, asteroidConfig: [],
-      // Same layout as capitalEngagement: the pilot 40° off the bow, 5,000 u.
+      // Same layout as capitalEngagement: the pilot 40° off the bow, 5,000 u,
+      // flying a heavy cruiser (a fighter's hit circle slips the 60 u turret
+      // fire tolerance at real-range shell speeds; see there).
+      pilotCapitals: true,
       dronePoses: [{ kind: 'battleship', x: 5000, y: 0, angle: (50 * Math.PI) / 180 }],
     });
     const pid = randomUUID();
-    const cr = await harness.connectActive(pid, { initialHull: 1_000_000, initialShield: 0, startHostile: true, instantLock: true });
+    const cr = await harness.connectActive(pid, {
+      shipKind: 'heavy-cruiser', initialHull: 1_000_000, initialShield: 0, startHostile: true, instantLock: true,
+    });
     const salvos: ShellSalvo[] = [];
     const ends: ShellEnd[] = [];
     const hits: DamageEvent[] = [];

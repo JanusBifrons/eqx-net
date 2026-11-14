@@ -5,7 +5,12 @@
  * Drives the REAL WeaponMountTicker (fake room, as capitalFireCadence) and the
  * REAL NpcLockSubsystem.
  */
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
+
+// Pinned to legacy naval ranges (the default is real): the ~38 s 16" lock
+// below is the legacy reach's. Set before any import builds the catalogue.
+vi.hoisted(() => vi.stubEnv('EQX_NAVAL_RANGE', 'legacy'));
+afterAll(() => vi.unstubAllEnvs());
 import { WeaponMountTicker, type SwarmRecord } from '../../src/server/rooms/WeaponMountTicker';
 import { NpcLockSubsystem, type NpcPose } from '../../src/server/rooms/NpcLockSubsystem';
 import { getShipKind } from '../../src/shared-types/shipKinds';
@@ -137,10 +142,22 @@ describe('testMode lockTimeCapS caps NPC locks (drones and capitals on pilots)',
     for (let i = 0; i < 4; i++) s.step();
     expect(s.isLocked('bs', 'f')).toBe(true);
   });
-  it("out of every gun's reach the cap does nothing", () => {
+  // Owner 2026-11-14: locks work at any distance, so the cap applies there too.
+  it("far past every gun's reach the cap still applies (locks work at any distance)", () => {
     const s = rig(0, 100_000);
-    for (let i = 0; i < 20; i++) s.step();
-    expect(s.isLocked('bs', 'f')).toBe(false);
+    s.step();
+    expect(s.isLocked('bs', 'f')).toBe(true);
+  });
+  it("far past every gun's reach, a capital locks with its longest gun (slowly), not its fast AA", () => {
+    const near = rig(undefined); // 5 km: only the 16" reaches
+    let nearSteps = 0;
+    while (!near.isLocked('bs', 'f') && nearSteps < 5000) { near.step(); nearSteps++; }
+    const far = rig(undefined, 60_000);
+    for (let i = 0; i < nearSteps; i++) far.step();
+    expect(far.isLocked('bs', 'f')).toBe(false); // slower than at 5 km, never the AA's few seconds
+    let farSteps = nearSteps;
+    while (!far.isLocked('bs', 'f') && farSteps < 20_000) { far.step(); farSteps++; }
+    expect(far.isLocked('bs', 'f')).toBe(true);
   });
 });
 

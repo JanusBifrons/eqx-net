@@ -66,8 +66,17 @@ import type { Vec2 } from '../swarm/asteroidShape.js';
  *  (`zoneFan`), so the impact leaves 2–4 chunky fragments and the rest of
  *  the hull stays as one big section each side. A very heavy blow on a long
  *  hull rarely (`FAR_CHANCE`) adds ONE far crack. The piece count still
- *  rises with size and violence, as more chunks and a wider zone. */
-export const FRACTURE_ALGO_VERSION = 7;
+ *  rises with size and violence, as more chunks and a wider zone.
+ *  v8 (take 9 review, 2026-11-14): the `soundMinShare` option; the
+ *  sub-capital profile sets 0.33, so its sound primary crack leaves no piece
+ *  over ~70 % of the hull. Capital output is unchanged (default 0.15).
+ *  v9 (beam slices, railgun channels, 2026-11-14): the optional `cut` input.
+ *  A `slice` runs the primary line dead straight along the shot through the
+ *  kill point (no tilt, no tip shift, no sound-primary move; slid toward the
+ *  centroid only when it would leave a sliver); a `channel` erases a strip
+ *  `width` wide along that line. Both are `EDGE_CUT` edges (never jagged).
+ *  No new seeded draw: a fracture without a cut is byte-identical to v8. */
+export const FRACTURE_ALGO_VERSION = 9;
 /** Default chance that a hull snaps cleanly in two along the primary line
  *  instead of shattering (owner: "just make it a chance"). */
 export const FRACTURE_SNAP_CHANCE = 0.2;
@@ -151,8 +160,19 @@ const EDGE_SECTION = 2;
 const EDGE_PRIMARY = 3;
 /** v6: a crack of the fan or a far crack (jagged like a Voronoi cut). */
 const EDGE_CRACK = 4;
+/** v9: a weapon's kill cut (`FractureInput.cut`): the slice line or a
+ *  channel wall. Dead straight, like a section cut. */
+const EDGE_CUT = 5;
+/** v9: a slice that would leave a piece under the profile minimum slides
+ *  toward the hull's centroid in this many equal steps (the line keeps the
+ *  shot's direction). */
+const CUT_SLIDE_STEPS = 16;
+/** v9: a part a channel leaves under this share of the hull is a sliver
+ *  and is erased with the channel (any profile). */
+const CHANNEL_SLIVER_SHARE = 0.05;
 /** Cut edges that get jagged: Voronoi cuts, and since v6 the cracks and the
- *  primary line (cracks, not bulkheads); section cuts stay straight. */
+ *  primary line (cracks, not bulkheads); section cuts and kill cuts stay
+ *  straight. */
 function jagged(k: number): boolean {
   return k === EDGE_VORONOI || k === EDGE_CRACK || k === EDGE_PRIMARY;
 }
@@ -214,12 +234,61 @@ export interface FractureInput {
   /** With `chunkyPieces`: the least piece width, in beams (default
    *  `FAN_MIN_WIDTH_BEAMS`, 0.45). The aspect guard is v7's `FAN_MAX_ASPECT`. */
   readonly chunkyMinWidthBeams?: number;
+  /** With `chunkyPieces`: the least share of the hull each side of the
+   *  sound primary crack must hold (default `SOUND_MIN_SHARE`, 0.15).
+   *  Sub-capitals raise it so no piece is nearly the whole hull. */
+  readonly soundMinShare?: number;
   /** Jagged cut edges: most midpoint-subdivision levels per edge and the
    *  displacement per level as a fraction of the sub-segment (defaults
    *  `JAG_MAX_DEPTH` 4, `JAG_ROUGHNESS` 0.22). Sub-capitals use a shorter,
    *  gentler jag, so a piece stays a handful of convex parts and a crack
    *  across a small hull doesn't swing a piece's share of the area. */
   readonly jag?: { readonly depth: number; readonly roughness: number };
+  /** v9: the killing weapon's cut (absent = the normal break-up). The line
+   *  runs through the kill point along (dirX, dirY) in the hull's frame (any
+   *  length but zero; a zero direction means no cut). `slice`: that line is
+   *  the primary crack, dead straight. `channel`: the strip `width` wide
+   *  centred on it is erased. The secondary cracks and the piece count are
+   *  the same as without a cut. */
+  readonly cut?: FractureKillCut;
+}
+
+/** A kill cut in the hull's frame (`FractureInput.cut`). `width` is read
+ *  only by a `channel`. */
+export interface FractureKillCut {
+  readonly kind: 'slice' | 'channel';
+  readonly dirX: number;
+  readonly dirY: number;
+  readonly width: number;
+}
+
+/** A kill cut's direction travels as a u16 angle (`CUT_ANGLE_STEPS` per
+ *  turn, the wreck descriptor's `cutAng`). */
+export const CUT_ANGLE_STEPS = 65536;
+
+/**
+ * The unit direction of a u16 cut angle (`cutAng`: angle × 65536 / 2π, in
+ * the hull's 1× Pixi-up frame, x then y). Both sides turn the descriptor's
+ * angle into the fracture's `cut` direction with this, so it is arithmetic
+ * only (never sin/cos): the quarter-turn angle, folded to at most π/4, goes
+ * through fixed Taylor series (error < 1e-13), the quadrant by sign swaps.
+ */
+export function cutDirFromAngle(ang: number): Vec2 {
+  const a = (Math.round(ang) % CUT_ANGLE_STEPS + CUT_ANGLE_STEPS) % CUT_ANGLE_STEPS;
+  const quadrant = Math.floor(a / 16384);
+  const r = a - quadrant * 16384;
+  const fold = r > 8192;
+  const x = (fold ? 16384 - r : r) * (Math.PI / 32768);
+  const x2 = x * x;
+  // sin and cos of x ≤ π/4 (Horner, fixed order).
+  const sx = x * (1 - x2 / 6 * (1 - x2 / 20 * (1 - x2 / 42 * (1 - x2 / 72 * (1 - x2 / 110 * (1 - x2 / 156))))));
+  const cx = 1 - x2 / 2 * (1 - x2 / 12 * (1 - x2 / 30 * (1 - x2 / 56 * (1 - x2 / 90 * (1 - x2 / 132 * (1 - x2 / 182))))));
+  const c = fold ? sx : cx;
+  const s = fold ? cx : sx;
+  if (quadrant === 0) return { x: c, y: s };
+  if (quadrant === 1) return { x: -s, y: c };
+  if (quadrant === 2) return { x: -c, y: -s };
+  return { x: s, y: -c };
 }
 
 /** The seeded decisions taken before any geometry (exposed for S2 and tests). */
@@ -230,7 +299,9 @@ export interface FracturePlan {
   readonly targetPieces: number;
   /** The primary break line: through `point` (the kill point, on the hull
    *  outline) along unit `dir`, roughly across the keel (through the hull's
-   *  middle for a hit on a bow or stern tip). Null when the cap is 1. */
+   *  middle for a hit on a bow or stern tip). Null when the cap is 1. With
+   *  a v9 `cut` it is the cut's line: along the shot, through the kill point
+   *  (or slid toward the centroid off a sliver, for a slice). */
   readonly primary: { readonly point: Vec2; readonly dir: Vec2 } | null;
   /** The kill point the fracture uses: the input projected onto the hull
    *  outline (v3). For a side hit the primary line runs through it; for a
@@ -261,6 +332,7 @@ export function fractureHull(input: FractureInput): FracturePiece[] {
   const hull = normaliseHull(input.hull);
   if (hull.length < 3) return [];
   const plan = planFor(input, hull);
+  const cutKind = plan.cut === null ? null : plan.cut.kind;
   const cap = plan.snap ? clampCap(input.maxPieces) : plan.targetPieces;
   const hullArea = ringArea(hull);
   const scale = Math.sqrt(hullArea);
@@ -274,16 +346,34 @@ export function fractureHull(input: FractureInput): FracturePiece[] {
   const jagDepth = input.jag?.depth ?? JAG_MAX_DEPTH;
   const jagRoughness = input.jag?.roughness ?? JAG_ROUGHNESS;
   const primary = plan.primary
-    ? chunkyOnly
-      ? soundPrimary(hull, plan.primary, keel, hullArea, minArea, beam, chunkyWidth)
+    ? cutKind !== null
+      ? primaryCut(plan.primary, EDGE_CUT)
+      : chunkyOnly
+      ? soundPrimary(hull, plan.primary, keel, hullArea, minArea, beam, chunkyWidth, input.soundMinShare ?? SOUND_MIN_SHARE)
       : primaryCut(plan.primary)
     : null;
+  // v9 channel: the strip either side of the cut line is erased first; the
+  // other cracks then split what is left. A sliver beside the channel
+  // (`CHANNEL_SLIVER_SHARE`) is erased with it.
+  let start: P[][] = [hull];
+  if (cutKind === 'channel' && primary !== null) {
+    const half = plan.cut!.width / 2;
+    const minPart = CHANNEL_SLIVER_SHARE * hullArea;
+    start = [];
+    const sides = [
+      splitByLine(hull, primary.nx, primary.ny, primary.c - half, EDGE_CUT),
+      splitByLine(hull, -primary.nx, -primary.ny, -(primary.c + half), EDGE_CUT),
+    ];
+    for (const side of sides) for (const r of side) if (ringArea(r) >= minPart) start.push(r);
+  }
 
   // v7 cracks: zone cracks either side of the primary, a fan into the zone
-  // and (rarely) one far crack. A clean snap has none.
-  const drawn = plan.snap || plan.primary === null
+  // and (rarely) one far crack. A clean snap has none. With a v9 cut they
+  // are laid out from the line the hull would have cracked along without
+  // it (`crackPrimary`), so they are the same cracks.
+  const drawn = plan.snap || plan.crackPrimary === null
     ? { zone: [] as FractureLine[], fan: [] as LocalLine[], far: [] as FractureLine[] }
-    : crackLines(hull, input.seed >>> 0, kill, plan.primary, keel, plan.targetPieces, input.killBlowDamage);
+    : crackLines(hull, input.seed >>> 0, kill, plan.crackPrimary, keel, plan.targetPieces, input.killBlowDamage);
   // Profile options (sub-capitals): drop whole crack families after the
   // draws, so the seeded stream is the same whatever is used.
   const cracks = {
@@ -291,7 +381,10 @@ export function fractureHull(input: FractureInput): FracturePiece[] {
       ? drawn.zone
       : plan.snap || primary === null
         ? []
-        : extraCrack(hull, input.seed >>> 0, primary, keel, input.extraChunkChance ?? 0, input.killBlowDamage, input.recentDamageRate),
+        : extraCrack(
+          hull, input.seed >>> 0, cutKind !== null ? primaryCut(plan.crackPrimary!) : primary, keel,
+          input.extraChunkChance ?? 0, input.killBlowDamage, input.recentDamageRate,
+        ),
     fan: input.fanCracks === false ? [] : drawn.fan,
     far: input.farCrack === false ? [] : drawn.far,
   };
@@ -306,13 +399,17 @@ export function fractureHull(input: FractureInput): FracturePiece[] {
   let nFan = cracks.fan.length;
   for (;;) {
     const lines: FractureLine[] = [];
-    if (usePrimary) lines.push(primary!);
+    if (usePrimary && cutKind !== 'channel') lines.push(primary!);
     for (let i = 0; i < nZone; i++) lines.push(cracks.zone[i]!);
     if (useFar) for (const f of cracks.far) lines.push(f);
     if (useCuts) for (const c of cuts) lines.push(sectionLine(c));
-    const rings = splitIntoPieces(hull, lines, cracks.fan, nFan, beam);
+    const rings = splitIntoPieces(start, lines, cracks.fan, nFan, beam);
     const quantised = quantiseRings(rings, minArea);
-    const onlyPrimary = nFan === 0 && !useFar && !useCuts && nZone === 0;    if (quantised.length <= cap && (!chunkyOnly || onlyPrimary || allChunky(quantised, beam, chunkyWidth))) {
+    const onlyPrimary = nFan === 0 && !useFar && !useCuts && nZone === 0;
+    // v9: a kill cut is never dropped: with every other crack gone it stands
+    // whatever the count (a slice across a concave hull may cut three).
+    const cutStands = cutKind !== null && usePrimary && onlyPrimary;
+    if ((quantised.length <= cap || cutStands) && (!chunkyOnly || onlyPrimary || allChunky(quantised, beam, chunkyWidth))) {
       const jagged = jagCutEdges(weldTJunctions(quantised), input.seed >>> 0, scale, jagDepth, jagRoughness);
       return jagged.map(toPiece);
     }
@@ -331,7 +428,8 @@ export function fractureHull(input: FractureInput): FracturePiece[] {
 /** The seeded decisions `fractureHull` takes for `input`: snap or shatter,
  *  target piece count and the primary break line. */
 export function fracturePlan(input: FractureInput): FracturePlan {
-  return planFor(input, normaliseHull(input.hull));
+  const { snap, targetPieces, primary, killPoint } = planFor(input, normaliseHull(input.hull));
+  return { snap, targetPieces, primary, killPoint };
 }
 
 /**
@@ -359,7 +457,23 @@ function damageResponse(x: number | undefined): number {
   return v / (v + DAMAGE_KNEE);
 }
 
-function planFor(input: FractureInput, hull: P[]): FracturePlan {
+/** The plan plus what only `fractureHull` reads: the v9 cut (null without
+ *  one, with a zero direction or with no primary line) and the line the
+ *  secondary cracks are laid out from (the plan's primary without a cut;
+ *  with one, the line the hull would have cracked along without it). */
+interface InternalPlan extends FracturePlan {
+  readonly cut: { readonly kind: 'slice' | 'channel'; readonly width: number } | null;
+  readonly crackPrimary: FracturePlan['primary'];
+}
+
+/** The least share of the hull one piece of a v9 slice may hold: the sound
+ *  primary's share for a chunky (sub-capital) profile, else the tip-hit
+ *  share. */
+function cutMinShare(input: FractureInput): number {
+  return input.chunkyPieces === true ? (input.soundMinShare ?? SOUND_MIN_SHARE) : PRIMARY_MIN_SIDE;
+}
+
+function planFor(input: FractureInput, hull: P[]): InternalPlan {
   const cap = clampCap(input.maxPieces);
   // One decision stream, drawn in a fixed order whatever the mode.
   const rng = new Rng(fnvMixU32((input.seed >>> 0) ^ 0xb4ea7, 0x2));
@@ -401,6 +515,21 @@ function planFor(input: FractureInput, hull: P[]): FracturePlan {
     primary = { point, dir: { x: dx, y: dy } };
   }
 
+  // v9 kill cut: the primary line runs along the shot through the kill point
+  // (no tilt, no tip shift). No draw is added or skipped, so a fracture
+  // without a cut is unchanged.
+  const crackPrimary = primary;
+  let cut: InternalPlan['cut'] = null;
+  const ic = input.cut;
+  if (primary !== null && ic !== undefined) {
+    const cl = Math.sqrt(ic.dirX * ic.dirX + ic.dirY * ic.dirY);
+    if (cl > 0) {
+      const dir = { x: ic.dirX / cl, y: ic.dirY / cl };
+      cut = { kind: ic.kind, width: ic.kind === 'channel' && ic.width > 0 ? ic.width : 0 };
+      primary = { point: ic.kind === 'slice' ? slicePoint(hull, kill, dir, cutMinShare(input)) : kill, dir };
+    }
+  }
+
   const chance = input.snapChance ?? FRACTURE_SNAP_CHANCE;
   const snap = primary !== null && snapDraw < chance;
 
@@ -422,7 +551,38 @@ function planFor(input: FractureInput, hull: P[]): FracturePlan {
     const want = MIN_TARGET + Math.floor(sizeF * (FRACTURE_MAX_PIECES - MIN_TARGET) * x * x);
     targetPieces = Math.max(1, Math.min(cap, want));
   }
-  return { snap, targetPieces, primary, killPoint: kill };
+  return { snap, targetPieces, primary, killPoint: kill, cut, crackPrimary };
+}
+
+/**
+ * v9 slice: the point the slice line (along unit `dir`) runs through. The
+ * kill point, unless the line there leaves a piece under `minShare` of the
+ * hull (a shot along the hull's edge): then the line slides toward the
+ * centroid in `CUT_SLIDE_STEPS` steps, keeping its direction, until every
+ * piece clears; failing that it runs through the centroid. Arithmetic only.
+ */
+function slicePoint(hull: P[], kill: Vec2, dir: Vec2, minShare: number): Vec2 {
+  const total = ringArea(hull);
+  if (total <= 0) return kill;
+  const nx = -dir.y;
+  const ny = dir.x;
+  const cen = ringCentroid(hull);
+  const minArea = Math.max(4 * FRACTURE_QUANTUM * FRACTURE_QUANTUM, total * 1e-6);
+  for (let i = 0; i <= CUT_SLIDE_STEPS; i++) {
+    const f = i / CUT_SLIDE_STEPS;
+    const p = i === 0 ? kill : { x: q(kill.x + (cen.x - kill.x) * f), y: q(kill.y + (cen.y - kill.y) * f) };
+    const parts = quantiseRings(splitBoth([hull], { nx, ny, c: nx * p.x + ny * p.y, kind: EDGE_CUT }), minArea);
+    if (parts.length < 2) continue;
+    let ok = true;
+    for (const r of parts) {
+      if (ringArea(r) < minShare * total) {
+        ok = false;
+        break;
+      }
+    }
+    if (ok) return p;
+  }
+  return { x: q(cen.x), y: q(cen.y) };
 }
 
 /** Nearest point on the ring's edges to (x, y), snapped to the quantum. */
@@ -512,10 +672,10 @@ interface FractureLine {
   kind: number;
 }
 
-function primaryCut(p: NonNullable<FracturePlan['primary']>): FractureLine {
+function primaryCut(p: NonNullable<FracturePlan['primary']>, kind = EDGE_PRIMARY): FractureLine {
   const nx = -p.dir.y;
   const ny = p.dir.x;
-  return { nx, ny, c: nx * p.point.x + ny * p.point.y, kind: EDGE_PRIMARY };
+  return { nx, ny, c: nx * p.point.x + ny * p.point.y, kind };
 }
 
 /**
@@ -528,7 +688,7 @@ function primaryCut(p: NonNullable<FracturePlan['primary']>): FractureLine {
  */
 function soundPrimary(
   hull: P[], p: NonNullable<FracturePlan['primary']>, keel: Vec2, hullArea: number, minArea: number,
-  beam: number, minWidthBeams: number,
+  beam: number, minWidthBeams: number, minShare: number,
 ): FractureLine {
   const base = primaryCut(p);
   const cen = ringCentroid(hull);
@@ -536,7 +696,7 @@ function soundPrimary(
     const parts = quantiseRings(splitBoth([hull], l), minArea);
     if (parts.length !== 2) return false;
     for (const r of parts) {
-      if (ringArea(r) < SOUND_MIN_SHARE * hullArea) return false;
+      if (ringArea(r) < minShare * hullArea) return false;
       if (strict && !isChunky(r, beam, minWidthBeams)) return false;
     }
     return true;
@@ -795,10 +955,11 @@ function splitBoth(sections: P[][], l: FractureLine): P[][] {
   return next;
 }
 
-/** Split by every global line, then each of the first `nLocal` local lines
- *  splits only the sections whose centroid lies in its region. */
-function splitIntoPieces(hull: P[], lines: ReadonlyArray<FractureLine>, local: ReadonlyArray<LocalLine>, nLocal: number, beam: number): P[][] {
-  let sections: P[][] = [hull];
+/** Split `start` (the hull, or what a v9 channel left of it) by every
+ *  global line, then each of the first `nLocal` local lines splits only the
+ *  sections whose centroid lies in its region. */
+function splitIntoPieces(start: P[][], lines: ReadonlyArray<FractureLine>, local: ReadonlyArray<LocalLine>, nLocal: number, beam: number): P[][] {
+  let sections: P[][] = start;
   for (const l of lines) {
     if (l.nx === 0 && l.ny === 0) continue;
     sections = splitBoth(sections, l);

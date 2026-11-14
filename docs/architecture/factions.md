@@ -122,6 +122,21 @@ The policy is stored on the player's economy row and resolved once into a cached
 - **Military bases (M):** these fill in power and militia patrols.
 - **Teleporter tolls (T4):** these use the same standing and policy.
 
+## Client rules in detail
+
+Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each rule and points here.
+
+### Patrol ships (plan soft-leaping-truffle v4, M2)
+
+- `drones[].fac` (a garrison patrol's faction) is decoded once onto `SwarmRenderState.faction` (`applyDroneMountAngles`) and kept; `swarmSpriteUpdater` tints the ship with `npcFactionDef(fac).color` at its ONE tint site (the damage-flash branch: flash wins, else faction, else white). Setting the tint anywhere earlier in the pass is wiped by that reset (2026-11-03 bug). Locks: `snapshotRemoteSync.charging.test.ts`, `swarmSpriteUpdater.factionTint.test.ts`.
+
+### Factions tab (plan soft-leaping-truffle v4, F3)
+
+- `layout/Drawer/tabs/FactionsTab.tsx` is rebuilt ONLY from `GET /trade/factions` (#16), polled only while `drawerTab === 'factions' && isDrawerOpen`.
+- The policy selects send `set_faction_policy` (`sendSetFactionPolicy`) and refetch.
+- Rows show names, never ids. Standing labels come from the shared `standingLabel` scale (−100..100).
+- Locks: `FactionsTab.test.tsx`, `tests/e2e/factions-tab.spec.ts`.
+
 ## Server implementation notes
 
 > Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.
