@@ -218,6 +218,20 @@ const FACE_MOVE_EXIT = (80 * Math.PI) / 180;
 /** Below this wanted speed (× cruise) the nose stays on the lead point:
  *  the pilot's reverse handles a slow back-off without turning away. */
 const FACE_MOVE_MIN_SPEED = 0.25;
+/**
+ * Hull avoidance (ramming is a real weapon since #558, so an accidental ram
+ * hurts both ships). Any ship whose closest approach on the current
+ * velocities passes inside (both radii + `AVOID_MARGIN_RADII` × mine), sooner
+ * than the time I need to turn the nose sideways at my turn rate and slide
+ * clear with my thrust (× `AVOID_SAFETY`, + `AVOID_LATENCY_S`), makes me
+ * dodge: nose to the side away from it, thrust and boost. All from the
+ * kind's own handling and size, so it follows a retuned ship.
+ */
+const AVOID_MARGIN_RADII = 1;
+const AVOID_SAFETY = 1.3;
+const AVOID_LATENCY_S = 0.1;
+/** Look this many seconds of closing ahead for a ship to avoid. */
+const AVOID_LOOK_S = 3;
 
 // ── Decision layer (AI overhaul slice 4) ────────────────────────────────
 /** Recent-hit counter half-life (ticks): the "under heavy fire" signal. */
@@ -441,6 +455,11 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   private readonly friendlyToPilots: boolean;
   /** Facing latch: true while the nose follows the move heading, not the lead. */
   private _faceMove = false;
+  /** Hull avoidance: the dodge direction this tick (unit). */
+  private _avX = 0;
+  private _avY = 0;
+  /** Test-visible: ticks spent dodging a hull. */
+  private _avoidTicks = 0;
   /** Ticks flown with the afterburner lit (test-visible). */
   private _boostTicks = 0;
   /** Test-visible: did the last combat tick resolve through context steering? */
@@ -572,6 +591,10 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     tac.bandMax = this.role.rangeBand.max * this.fireRange;
     tac.turretHalfArc = this.maxTurretHalfArc;
     tac.sensorRange = this.sensorRange;
+    tac.maxAngvel = this.handling.maxAngvel;
+    tac.accel = this.handling.thrustAccel * 60;
+    tac.brakeAccel = this.handling.reverseAccel * 60;
+    tac.radius = this.kind.radius;
     this._pickOpts = {
       healthWeight: DRONE_TARGET_HEALTH_WEIGHT,
       dwellTicks: DRONE_TARGET_DWELL_TICKS,
@@ -1095,6 +1118,14 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       wvx *= h.maxSpeed / wv;
       wvy *= h.maxSpeed / wv;
     }
+    // Collision course with a hull (the target included)? Dodge it first.
+    if (!h.torqueTurn && this.hullAvoid(self, nb)) {
+      this._avoidTicks++;
+      this._faceMove = true;
+      const g = h.maxSpeed;
+      return this.fly(self, facingOf(this._avX, this._avY), self.vx + this._avX * g, self.vy + this._avY * g,
+        this.energy >= BOOST_RESERVE_FRAC * this.energyMax, COMBAT_PILOT_PARAMS);
+    }
     const moveAngle = wv > 1e-6 ? facingOf(wvx, wvy) : out.angle;
 
     // Facing (one nose). The manoeuvre may ask for it outright (an attack
@@ -1208,6 +1239,67 @@ export class HostileDroneBehaviour implements IAiBehaviour {
 
   /** Test-visible: combat ticks spent side-stepping a blocked line. */
   getNudgeTicks(): number { return this._nudgeCount; }
+
+  /** Test-visible: ticks spent dodging a hull (hull avoidance). */
+  getAvoidTicks(): number { return this._avoidTicks; }
+
+  /**
+   * The most urgent hull on a collision course with me (closest approach on
+   * the current velocities inside both radii + a margin, sooner than I can
+   * turn and slide clear). Writes the dodge direction to `_avX/_avY`: away
+   * from where it will pass, or, dead head-on, to my right of the relative
+   * velocity, which is the other ship's left of its own, so the two dodge
+   * apart. Allocation-free (#14).
+   */
+  private hullAvoid(self: AiEntity, nb: IAiNeighbourQuery): boolean {
+    const h = this.handling;
+    const r = this.kind.radius;
+    // The dodge burns the afterburner while the pool allows it.
+    const boostMul = this.energy >= BOOST_RESERVE_FRAC * this.energyMax ? (this.kind.boostMultiplier ?? 1) : 1;
+    const accel = h.thrustAccel * 60 * boostMul;
+    if (accel <= 0) return false;
+    const reach = AVOID_LOOK_S * (Math.hypot(self.vx, self.vy) + h.cruiseSpeed) + 4 * r;
+    const idx = this._nbIdx;
+    const n = nb.queryNeighbours(self.x, self.y, reach, COMBAT_NEIGHBOUR_K, idx, self.id);
+    const fx = -Math.sin(self.angle);
+    const fy = Math.cos(self.angle);
+    const minW2 = 0.01 * h.cruiseSpeed * h.cruiseSpeed;
+    let bestT = Infinity;
+    for (let k = 0; k < n; k++) {
+      const i = idx[k]!;
+      const px = nb.xAt(i) - self.x;
+      const py = nb.yAt(i) - self.y;
+      const wx = nb.vxAt(i) - self.vx;
+      const wy = nb.vyAt(i) - self.vy;
+      const w2 = wx * wx + wy * wy;
+      if (w2 < minW2) continue;
+      const t = -(px * wx + py * wy) / w2;
+      if (t <= 0 || t >= bestT) continue;
+      const mx = px + wx * t;
+      const my = py + wy * t;
+      const miss = Math.hypot(mx, my);
+      const clear = r + nb.radiusAt(i) + AVOID_MARGIN_RADII * r;
+      if (miss >= clear) continue;
+      let dx: number;
+      let dy: number;
+      if (miss > 0.05 * clear) {
+        dx = -mx / miss;
+        dy = -my / miss;
+      } else {
+        const wl = Math.sqrt(w2);
+        dx = wy / wl;
+        dy = -wx / wl;
+      }
+      const c = fx * dx + fy * dy;
+      const turn = Math.acos(c > 1 ? 1 : c < -1 ? -1 : c) / Math.max(h.maxAngvel, 1e-3);
+      const need = AVOID_SAFETY * (turn + Math.sqrt((2 * (clear - miss)) / accel)) + AVOID_LATENCY_S;
+      if (t > need) continue;
+      bestT = t;
+      this._avX = dx;
+      this._avY = dy;
+    }
+    return bestT < Infinity;
+  }
 
   /** Refresh the tactical context for this combat tick (plain writes, #14). */
   private fillTactical(
