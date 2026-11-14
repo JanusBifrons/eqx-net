@@ -188,8 +188,10 @@ describe('IncomingFireWarning', () => {
     const cam = fakeCamera();
     const warn = new IncomingFireWarning();
     warn.init(cam);
-    // naval_s: 60+ ticks of flight at ~1800 u/s reaches a few km, not 30.
-    const m = mirrorWith([['s', { x: -30_000, y: 0, vx: 1800, vy: 0, ownerId: 'swarm-9', weaponId: 'naval_s' }]]);
+    // naval_s at twice its whole flight out (either naval range mode).
+    const S = getWeapon('naval_s') as { speed: number; maxTicks: number };
+    const far = 2 * S.speed * (S.maxTicks / 60);
+    const m = mirrorWith([['s', { x: -far, y: 0, vx: S.speed, vy: 0, ownerId: 'swarm-9', weaponId: 'naval_s' }]]);
     warn.update(m, 0);
     expect(warn.markerCount()).toBe(0);
   });
