@@ -1,9 +1,9 @@
 /**
  * Capital destruction S2a (docs/architecture/capital-destruction.md §S2):
  * every capital, NPC or player-flown, breaks into wreck pieces that are solid
- * server bodies. Behind the `capitalWrecks` room option (off by default until
- * S3 gives the pieces their art; since S2b clients draw them plainly). With
- * the option off the room never constructs this class.
+ * server bodies. Behind the `capitalWrecks` room option, ON by default since
+ * 2026-11-14 (`wreckSwitchOn`). With both switches off the room never
+ * constructs this class.
  *
  * Two jobs:
  *  1. HIT TRACKING (per hit, from `SectorRoom.applyDamage`): for each capital

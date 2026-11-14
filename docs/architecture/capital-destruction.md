@@ -217,10 +217,10 @@ Each slice is one PR, about one agent session, tests first.
 **S2a: done (server only, behind a flag).** A capital's death, NPC or
 player-flown (active or parked), breaks it into wreck bodies on the server.
 
-- **Flag.** Room option `capitalWrecks` (or `EQX_CAPITAL_WRECKS=1`), off by
-  default: clients don't draw wrecks yet, and a playtest must never meet
-  invisible walls. Off ⇒ the room never builds the subsystem; behaviour is
-  identical to before. No room sets it today.
+- **Flag.** Room option `capitalWrecks` (env `EQX_CAPITAL_WRECKS`). Off by
+  default while clients couldn't draw wrecks; **ON by default in every room
+  since 2026-11-14** (see "Switched on" below). Off ⇒ the room never builds
+  the subsystem; behaviour is identical to before.
 - **Kill point.** `SectorRoom.applyDamage` records, per capital, the last
   hit's world point (projectile / shell / missile impact, player beam hit,
   NPC beam hit via `noteBeamImpact`). A hit with no point (ram, mining beam)
@@ -995,8 +995,8 @@ break-up:
 
 ### Sub-capital wrecks on the server (sub-capital break-up, slice 2, 2026-11-13)
 
-Behind the `subcapWrecks` room option (`EQX_SUBCAP_WRECKS=1`), off by
-default. There is still one wreck system: the capitals' subsystem
+Behind the `subcapWrecks` room option (env `EQX_SUBCAP_WRECKS`); off by
+default until 2026-11-14, ON by default since (see "Switched on" below). There is still one wreck system: the capitals' subsystem
 (`CapitalWreckSubsystem`, alias `WreckSubsystem`) now reads the dying kind's
 profile instead of assuming a capital.
 

@@ -587,8 +587,7 @@ export const gpuLitShips: Shot = {
  * that killed it. Real play, no cue during the take: the pilot's heavy cruiser
  * sits off the battleship's beam with little hull and no shield, the
  * battleship's 16-inch salvo kills it on camera, and the hull fractures where
- * the shells struck. Needs capital wrecks on (EQX_CAPITAL_WRECKS=1 on the
- * showcase server) until the feature ships.
+ * the shells struck. Capital wrecks are on by default (2026-11-14).
  */
 export const capitalBreakup: Shot = {
   id: 'capital-breakup',

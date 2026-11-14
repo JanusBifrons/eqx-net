@@ -70,6 +70,7 @@ import {
 import { SwarmSpawner, DRONE_DEFAULT_MASS, type AsteroidSpec } from '../spawn/SwarmSpawner.js';
 import { ScriptedPathBehaviour } from '../../core/ai/ScriptedPathBehaviour.js';
 import { ScrapSpawner } from '../spawn/ScrapSpawner.js';
+import { wreckSwitchOn } from './wreckSwitch.js';
 // Vec2 was used by the inline WorkerCmd union; now in PhysicsWorkerProxy.
 import type { ShipPhysicsState } from '../../core/physics/World.js';
 import { AiController } from '../../core/ai/AiController.js';
@@ -987,8 +988,9 @@ export class SectorRoom extends Room<SectorState> {
   private testLockTimeCapS: number | undefined = undefined;
   /** Round 3 D test switch (testMode `pilotCapitals`). */
   private testPilotCapitals = false;
-  /** Capital destruction S2a (`capitalWrecks` room option / EQX_CAPITAL_WRECKS=1):
-   *  a dying capital breaks into wreck bodies. Null = off (today's behaviour).
+  /** Capital destruction S2a (`capitalWrecks` room option / EQX_CAPITAL_WRECKS):
+   *  a dying capital breaks into wreck bodies. On by default since 2026-11-14
+   *  (`wreckSwitchOn`); null = both switches off.
    *  Sub-capital break-up slice 2: the same subsystem (the generalised wreck
    *  system) also breaks sub-capitals when `subcapWrecks` is on; it exists
    *  when EITHER flag is on, and `capitalWrecksOn` / `subcapWrecksOn` say
@@ -1867,13 +1869,14 @@ export class SectorRoom extends Room<SectorState> {
       /** Capital-ship R&D (round 3 D): a player may join flying a capital
        *  (capitals stay npcOnly everywhere else). testMode-only. */
       pilotCapitals?: boolean;
-      /** Capital destruction S2a: a dying capital breaks into wreck bodies
-       *  (drawn plainly since S2b; off by default until S3 art). */
+      /** Capital destruction: a dying capital breaks into wreck bodies. ON
+       *  by default (owner 2026-11-14); `false` opts this room out.
+       *  `EQX_CAPITAL_WRECKS=0|1` forces it for every room (`wreckSwitchOn`). */
       capitalWrecks?: boolean;
-      /** Sub-capital break-up slice 2: every other ship (polygon kinds; the
-       *  composite havok keeps its scrap) breaks into 2-3 quiet wreck pieces
-       *  that settle and sleep. Off by default (clients draw them plainly
-       *  until slice 4). `EQX_SUBCAP_WRECKS=1` turns it on for every room. */
+      /** Sub-capital break-up: every other ship (polygon kinds; the composite
+       *  havok keeps its scrap) breaks into 2-3 quiet wreck pieces that settle
+       *  and sleep. ON by default (owner 2026-11-14); `false` opts this room
+       *  out. `EQX_SUBCAP_WRECKS=0|1` forces it for every room. */
       subcapWrecks?: boolean;
       /** Wave-system E2E — owner id for `prebuiltStructures` (default `scenario`).
        *  Set to the joining test player's id so the seeded base is a real
@@ -3128,11 +3131,12 @@ export class SectorRoom extends Room<SectorState> {
       this.setTimeScale(ENV_TIME_SCALE);
     }
     this.testPilotCapitals = this.testMode && roomOpts.pilotCapitals === true;
-    this.capitalWrecksOn = roomOpts.capitalWrecks === true || process.env['EQX_CAPITAL_WRECKS'] === '1';
-    // `EQX_SUBCAP_WRECKS=0` forces it off even where the room asks for it: the
-    // off arm of the debris soak (perf scene `fleet-fight-soak`, slice 5).
-    const subcapEnv = process.env['EQX_SUBCAP_WRECKS'];
-    this.subcapWrecksOn = subcapEnv !== '0' && (roomOpts.subcapWrecks === true || subcapEnv === '1');
+    // Break-up is ON by default in every room (owner decision 2026-11-14:
+    // "land it switched on"). A room opts out with `capitalWrecks: false` /
+    // `subcapWrecks: false`; the env switch wins over the room either way:
+    // `=0` forces it off (tests, the off arm of the debris soak), `=1` on.
+    this.capitalWrecksOn = wreckSwitchOn(process.env['EQX_CAPITAL_WRECKS'], roomOpts.capitalWrecks);
+    this.subcapWrecksOn = wreckSwitchOn(process.env['EQX_SUBCAP_WRECKS'], roomOpts.subcapWrecks);
     if (this.capitalWrecksOn || this.subcapWrecksOn) this.initCapitalWrecks();
     // T1 (plan soft-leaping-truffle v3) — the sector's NPC base, after restore.
     if (roomOpts.galaxyBases === true && this.sectorKey !== null && getSector(this.sectorKey) && !isNpcBasesDisabled()) {

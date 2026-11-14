@@ -306,6 +306,21 @@ describe('SectorRoom integration — sub-capital wrecks (sub-cap break-up slice 
     expect(parents.filter((p) => p === 'battleship')).toHaveLength(1);
   }, 30_000);
 
+  it('switched on by default (owner 2026-11-14): a room that sets neither option breaks a fighter and a battleship', async () => {
+    // Env forces win over the room (`wreckSwitchOn`); this asserts the default.
+    if (process.env['EQX_SUBCAP_WRECKS'] === '0' || process.env['EQX_CAPITAL_WRECKS'] === '0') return;
+    const int = await boot({});
+    int().spawnTestDrone('f1', 3000, 0, 'fighter');
+    int().spawnTestDrone('bb', 9000, 0, 'battleship');
+    await harness.advance(100);
+    int().applyDamage('f1', 'shooter-x', 1e7);
+    int().applyDamage('bb', 'shooter-x', 1e9);
+    const parents = int().wreckDescriptors().map((d) => d.parentKind).sort();
+    expect(parents).toEqual(['battleship', 'fighter']);
+    expect(int().wreckCounts().subcap).toBeGreaterThanOrEqual(2);
+    expect(int().wreckCounts().total - int().wreckCounts().subcap).toBeGreaterThanOrEqual(2);
+  }, 30_000);
+
   it('with the flag off a fighter dies exactly as today: no pieces', async () => {
     const int = await boot({ subcapWrecks: false, capitalWrecks: true });
     int().spawnTestDrone('f1', 3000, 0, 'fighter');

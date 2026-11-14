@@ -1,8 +1,8 @@
 /**
  * Capital destruction S2a (docs/architecture/capital-destruction.md §S2): a
  * dying capital breaks into wreck pieces that are solid bodies on the server.
- * Behind the `capitalWrecks` room option (off by default: clients don't draw
- * wrecks until S3, and a playtest must never meet invisible walls).
+ * Behind the `capitalWrecks` room option, ON by default since 2026-11-14
+ * (owner: "land it switched on"); `capitalWrecks: false` opts a room out.
  *
  * Drives the real chain: applyDamage → DamageRouter → the capital's death
  * (swarm death policy / SHIP_DESTROYED) → CapitalWreckSubsystem →
