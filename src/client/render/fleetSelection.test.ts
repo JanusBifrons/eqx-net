@@ -4,6 +4,7 @@ import {
   applySelection,
   boxSelectOwn,
   collectFleetShips,
+  focusSurvives,
   isOwnShipPresent,
   pickOwnShipAt,
   sameSelection,
@@ -100,5 +101,19 @@ describe('applySelection', () => {
   it('sameSelection compares contents', () => {
     expect(sameSelection(new Set(['a', 'b']), new Set(['b', 'a']))).toBe(true);
     expect(sameSelection(new Set(['a']), new Set(['a', 'b']))).toBe(false);
+  });
+});
+
+describe('focusSurvives (RTS Part A: one selection)', () => {
+  it('no ships selected: any focus stays (inspecting a drone, a structure)', () => {
+    expect(focusSurvives(new Set(), 'swarm-7')).toBe(true);
+  });
+  it('ships selected: the focus stays only if it is one of them', () => {
+    expect(focusSurvives(new Set(['a', 'b']), 'a')).toBe(true);
+    expect(focusSurvives(new Set(['a', 'b']), 'swarm-7')).toBe(false);
+  });
+  it('a null focus never survives', () => {
+    expect(focusSurvives(new Set(['a']), null)).toBe(false);
+    expect(focusSurvives(new Set(), null)).toBe(false);
   });
 });

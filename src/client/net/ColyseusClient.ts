@@ -83,6 +83,7 @@ import {
 import { shipMirrorKey, type ShipMirrorKeyLocal } from './shipMirrorKey.js';
 import { isOwnedByMe, isParkedHull } from '../render/shipOwnership.js';
 import { findRekeySource } from './shipRekey.js';
+import { copySchemaHealth } from './shipSchemaHealth.js';
 import { moveKey, moveSetKey } from '../render/shipRekey.js';
 import {
   createWelford,
@@ -4250,6 +4251,7 @@ export class ColyseusGameClient {
         }
         if (kind !== undefined) lEntry.kind = kind;
         if (displayName !== undefined) lEntry.displayName = displayName;
+        copySchemaHealth(sh, lEntry);
         // Laser-"ghost-at-(0,0)" fix (2026-06-03) + B2. This path is
         // IDENTITY-ONLY — it does NOT spawn the predWorld body. The
         // snapshot path (`spawnRemoteShipBodies`) is the SOLE spawn site.
@@ -4343,6 +4345,7 @@ export class ColyseusGameClient {
         drawn.ownerPlayerId = playerId;
         drawn.isActive = isActive;
         drawn.shipInstanceId = shipInstanceId;
+        copySchemaHealth(sh, drawn);
       }
     }
 
@@ -6179,7 +6182,7 @@ export class ColyseusGameClient {
   /** Lock whatever the pilot has selected (inspector Target button / T key). */
   lockSelected(): boolean {
     const st = useUIStore.getState();
-    const id = st.selectedEntityId;
+    const id = st.selection.focusId;
     const active = st.activeGroupId;
     if (!id || !active) return false;
     let key: string | null = null;

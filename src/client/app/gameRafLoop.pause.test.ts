@@ -38,7 +38,7 @@ const storeState = vi.hoisted(() => ({
   localPoseResolved: true,
   arrivalTickFromServer: 123 as number | null,
   arrivalAcked: true,
-  setSelectedEntity: vi.fn(),
+  setSelection: vi.fn(),
 }));
 
 vi.mock('../state/store.js', () => ({

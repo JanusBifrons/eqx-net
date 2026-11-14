@@ -64,7 +64,7 @@ describe('FleetOverlay order lines', () => {
     ov = new FleetOverlay({ addChild: vi.fn() } as never);
   });
   const run = (sel: string[], o: Map<string, FleetOverlayShip> | null): G => {
-    ov.update(m, new Set(sel), null, noFlash(), 1000, identity, 1, null, o);
+    ov.update(m, new Set(sel), null, noFlash(), 1000, identity, null, o);
     return gfxOf(ov);
   };
 
@@ -110,13 +110,13 @@ describe('FleetOverlay order lines', () => {
     expect(ov.lastOrderSegments).toBe(0);
   });
 
-  it('uses one stroke per colour beyond the ring stroke', () => {
+  it('uses one stroke per colour (friendly lines, attack lines)', () => {
     const g = run(['me', 'hull-1'], orders(
       { ...base('me'), orderKind: 'move', destX: 100, destY: 50 },
       { ...base('hull-1'), orderKind: 'attack', targetId: 'swarm-42' },
     ));
-    // rings + friendly lines + attack lines
-    expect(g.stroke).toHaveBeenCalledTimes(3);
+    // friendly lines + attack lines (no ship marker here, RTS Part A)
+    expect(g.stroke).toHaveBeenCalledTimes(2);
   });
 
   it('caps total segments at MAX_ORDER_SEGMENTS', () => {
@@ -127,9 +127,10 @@ describe('FleetOverlay order lines', () => {
     expect(g.lineTo).toHaveBeenCalledTimes(MAX_ORDER_SEGMENTS);
   });
 
-  it('no orders model draws only rings (back-compat)', () => {
+  it('no orders model: a selection alone draws nothing (the marker is SelectionBracket, RTS Part A)', () => {
     const g = run(['me'], null);
     expect(g.lineTo).not.toHaveBeenCalled();
-    expect(ov.lastRingCount).toBe(1);
+    expect(g.circle).not.toHaveBeenCalled();
+    expect(g.visible).toBe(false);
   });
 });

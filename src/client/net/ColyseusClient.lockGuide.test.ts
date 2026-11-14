@@ -88,16 +88,16 @@ describe('lock line pick (updateLockGuide)', () => {
     ships.set(theirs, { x: 0, y: 260, vx: 0, vy: 0, angle: 0, kind: 'fighter', isActive: false, ownerPlayerId: 'other' });
     expect(client.updateLockGuide(0)).toBe(`p:${theirs}`);
     // lockSelected (inspector / T key) builds the same key; own fleet refused.
-    useUIStore.setState({ selectedEntityId: theirs });
+    useUIStore.setState({ selection: { ids: [], focusId: theirs, focusKind: 'ship' } });
     expect(client.lockSelected()).toBe(true);
     const [type, msg] = send.mock.calls.at(-1)! as [string, { target: string }];
     expect(type).toBe('lock_request');
     expect(msg.target).toBe(`p:${theirs}`);
-    useUIStore.setState({ selectedEntityId: mine });
+    useUIStore.setState({ selection: { ids: [], focusId: mine, focusKind: 'ship' } });
     expect(client.lockSelected()).toBe(false);
-    useUIStore.setState({ selectedEntityId: ME });
+    useUIStore.setState({ selection: { ids: [], focusId: ME, focusKind: 'ship' } });
     expect(client.lockSelected()).toBe(false);
-    useUIStore.setState({ selectedEntityId: null });
+    useUIStore.setState({ selection: { ids: [], focusId: null, focusKind: 'ship' } });
   });
 
   it('a held target claim carries b; the server check accepts it on that line', () => {

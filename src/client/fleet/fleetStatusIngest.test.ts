@@ -11,28 +11,28 @@ describe('ingestFleetStatus (fleet_status handler)', () => {
       type: 'fleet_status',
       s: [
         encodeFleetStatusRow({
-          id: 'h1', mode: 'patrol', stance: 'aggressive', activity: 'patrolling', targetId: null, hullPct: 77,
-          route: [[1, 2], [3, 4]], moraleOutcome: 'flee',
+          id: 'h1', mode: 'patrol', stance: 'aggressive', activity: 'patrolling', targetId: null,
+          route: [[1, 2], [3, 4]],
         }),
         encodeFleetStatusRow({
-          id: 'h2', mode: 'escort', stance: 'defensive', activity: 'moving', targetId: 's:9', hullPct: 12,
+          id: 'h2', mode: 'escort', stance: 'defensive', activity: 'moving', targetId: 's:9',
           orderKind: 'move', orderX: 50, orderY: 60, escortId: 'h1', squadId: 'sq-3',
         }),
       ],
     });
     expect(ok).toBe(true);
     expect(getFleetStatus('h1')).toEqual({
-      mode: 'patrol', stance: 'aggressive', activity: 'patrolling', targetId: null, hullPct: 77,
-      route: [[1, 2], [3, 4]], moraleOutcome: 'flee',
+      mode: 'patrol', stance: 'aggressive', activity: 'patrolling', targetId: null,
+      route: [[1, 2], [3, 4]],
     });
     expect(getFleetStatus('h2')).toEqual({
-      mode: 'escort', stance: 'defensive', activity: 'moving', targetId: 's:9', hullPct: 12,
+      mode: 'escort', stance: 'defensive', activity: 'moving', targetId: 's:9',
       orderKind: 'move', orderX: 50, orderY: 60, escortId: 'h1', squadId: 'sq-3',
     });
   });
 
   it('replaces: ships missing from the next message are dropped', () => {
-    const row = (id: string) => encodeFleetStatusRow({ id, mode: 'defend', stance: 'defensive', activity: 'idle', targetId: null, hullPct: 100 });
+    const row = (id: string) => encodeFleetStatusRow({ id, mode: 'defend', stance: 'defensive', activity: 'idle', targetId: null });
     ingestFleetStatus({ type: 'fleet_status', s: [row('a'), row('b')] });
     ingestFleetStatus({ type: 'fleet_status', s: [row('b')] });
     expect(getFleetStatus('a')).toBeUndefined();
@@ -42,7 +42,7 @@ describe('ingestFleetStatus (fleet_status handler)', () => {
   });
 
   it('carries the appended shield % (and still reads a sender without it)', () => {
-    const base = { mode: 'hunt', stance: 'aggressive', activity: 'attacking', targetId: null, hullPct: 100 } as const;
+    const base = { mode: 'hunt', stance: 'aggressive', activity: 'attacking', targetId: null } as const;
     expect(ingestFleetStatus({
       type: 'fleet_status',
       s: [encodeFleetStatusRow({ id: 'w', ...base, shieldPct: 40 }), encodeFleetStatusRow({ id: 'old', ...base })],

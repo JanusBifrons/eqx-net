@@ -1,5 +1,7 @@
 /**
- * Command view: selection rings stay on their ships while the camera moves.
+ * Command view: selection markers stay on their ships while the camera moves
+ * (since RTS Part A the marker is the one SelectionBracket, drawn in the
+ * ticker; the probe reads its first bracket).
  *
  * Reported (hostile review of the filmed rts-command take, 2026-11-14,
  * 17.25–17.4 s and ~20.5 s): during a camera pan every selection ring sat
@@ -24,7 +26,7 @@ const SURFACE = '[data-testid="game-surface"]';
 interface Probe { id: string; ringX: number; ringY: number; shipX: number; shipY: number; frames: number }
 
 test.describe('Fleet overlay vs camera @feature', () => {
-  test('selection rings stay on their ships during a camera pan', async ({ browser }) => {
+  test('selection markers stay on their ships during a camera pan', async ({ browser }) => {
     test.setTimeout(90_000);
     const a = await launchGalaxyTestClient(browser, {
       testId: randomUUID(), shipKind: 'fighter', spawnX: 0, spawnY: 0, startMode: 'command',

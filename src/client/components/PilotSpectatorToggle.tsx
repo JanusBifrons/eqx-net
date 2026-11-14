@@ -98,7 +98,7 @@ export function PilotSpectatorToggle(): JSX.Element | null {
   const onFlyClick = (e: React.MouseEvent<HTMLElement>): void => {
     if (!commanding) return; // already flying → no-op (the button is the active state)
     const own = getPilotableShips();
-    const selected = useUIStore.getState().fleetSelection;
+    const selected = useUIStore.getState().selection.ids;
     if (selected.length === 1) {
       const pick = own.find((s) => s.shipId === selected[0]);
       if (pick) {

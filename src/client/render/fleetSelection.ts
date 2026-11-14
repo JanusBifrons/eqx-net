@@ -170,6 +170,16 @@ export function applySelection(
   return next;
 }
 
+/**
+ * THE selection's focus rule (RTS Part A: one selection concept). The focus
+ * (the entity whose details panel shows) survives a change of the selected
+ * ships only when no ships are selected (then it may be anything you tapped)
+ * or it is one of them. False ⇒ the focus clears.
+ */
+export function focusSurvives(ships: ReadonlySet<string>, focusId: string | null): boolean {
+  return focusId !== null && (ships.size === 0 || ships.has(focusId));
+}
+
 /** True when both sets hold the same ids. */
 export function sameSelection(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
   if (a.size !== b.size) return false;

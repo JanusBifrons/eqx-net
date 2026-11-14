@@ -8,7 +8,7 @@
  * {@link applyFleetStatus}, which mutates THIS map and bumps a version
  * counter; the fleet panel POLLS the counter ({@link useFleetStatusVersion},
  * ~3 Hz) and re-reads rows only when it moved. Only the selected ids
- * (`fleetSelection`) live in Zustand (#2). No positions here either.
+ * (`selection.ids`) live in Zustand (#2). No positions here either.
  */
 import { useEffect, useState } from 'react';
 import type { WingmanActivity, WingmanMode, WingmanStance } from '@core/ai/wingman/types';
@@ -21,12 +21,11 @@ export interface FleetStatusRow {
   activity: WingmanActivity;
   /** The entity the ship is chasing / attacking / escorting, else null. */
   targetId: string | null;
-  /** Hull, 0..100. */
-  hullPct: number;
-  /** Shield, 0..100, when the server reports it. */
+  /** Shield, 0..100, when the server reports it. Shield stays here for now:
+   *  no per-ship shield carrier exists for parked hulls (RTS Part A). Hull is
+   *  NOT here: it is the room-state health on the mirror ship entry
+   *  (`net/shipSchemaHealth.ts`), and morale is not reported. */
   shieldPct?: number;
-  /** Morale 0..100 when the brain reports it. */
-  morale?: number;
   /** Squad the ship belongs to, when in one. */
   squadId?: string;
   /** Direct order in progress, when any. */
@@ -38,8 +37,6 @@ export interface FleetStatusRow {
   route?: readonly (readonly [number, number])[];
   /** The ship being escorted, while escorting. */
   escortId?: string;
-  /** The latest morale roll while it matters (FallBack / Flee = retreating). */
-  moraleOutcome?: 'fightOn' | 'fallBack' | 'flee';
 }
 
 /** A status row as delivered by the stream: the row plus its ship id. */
@@ -73,16 +70,13 @@ export function applyFleetStatus(updates: readonly FleetStatusUpdate[], opts?: {
       stance: u.stance,
       activity: u.activity,
       targetId: u.targetId,
-      hullPct: u.hullPct,
       ...(u.shieldPct !== undefined ? { shieldPct: u.shieldPct } : {}),
-      ...(u.morale !== undefined ? { morale: u.morale } : {}),
       ...(u.squadId !== undefined ? { squadId: u.squadId } : {}),
       ...(u.orderKind !== undefined ? { orderKind: u.orderKind } : {}),
       ...(u.orderX !== undefined ? { orderX: u.orderX } : {}),
       ...(u.orderY !== undefined ? { orderY: u.orderY } : {}),
       ...(u.route !== undefined ? { route: u.route } : {}),
       ...(u.escortId !== undefined ? { escortId: u.escortId } : {}),
-      ...(u.moraleOutcome !== undefined ? { moraleOutcome: u.moraleOutcome } : {}),
     });
     changed = true;
   }
@@ -95,15 +89,12 @@ function sameRow(a: FleetStatusRow, b: FleetStatusRow): boolean {
     a.stance === b.stance &&
     a.activity === b.activity &&
     a.targetId === b.targetId &&
-    a.hullPct === b.hullPct &&
     a.shieldPct === b.shieldPct &&
-    a.morale === b.morale &&
     a.squadId === b.squadId &&
     a.orderKind === b.orderKind &&
     a.orderX === b.orderX &&
     a.orderY === b.orderY &&
     a.escortId === b.escortId &&
-    a.moraleOutcome === b.moraleOutcome &&
     sameRoute(a.route, b.route)
   );
 }

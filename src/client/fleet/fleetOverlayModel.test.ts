@@ -8,7 +8,7 @@ import { applyFleetStatus, getFleetStatus, getFleetStatusVersion, resetFleetStat
 import { buildFleetOverlayModel, overlayShipFor, pushFleetOverlayModelIfChanged } from './fleetOverlayModel.js';
 
 const row = (id: string, over: Partial<FleetStatusUpdate> = {}): FleetStatusUpdate => ({
-  id, mode: 'defend', stance: 'defensive', activity: 'guarding', targetId: null, hullPct: 100, ...over,
+  id, mode: 'defend', stance: 'defensive', activity: 'guarding', targetId: null, ...over,
 });
 
 describe('fleetStatus slice-15a fields', () => {

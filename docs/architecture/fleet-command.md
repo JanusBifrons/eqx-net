@@ -136,15 +136,26 @@ stored twice). While it is on, both pointer paths (main-thread
 
 ### Selection, overlay and feedback sequence numbers
 
-The renderer owns the selection (`_fleetSel`, pure helpers in
-`render/fleetSelection.ts`), because only it can hit-test ships where they are
-drawn, and it may be in a worker. Results reach the main thread through
+There is **one** selection (RTS Part A, owner decision 2026-11-14). The
+renderer owns it, because only it can hit-test ships where they are drawn, and
+it may be in a worker: the selected ships (`_selShips`, pure helpers in
+`render/fleetSelection.ts`) and the focus (`_focusId/_focusKind`), the entity
+whose details panel (`EntityStatsPanel`) shows, i.e. the one you clicked. With
+ships selected the focus is one of them or none (`focusSurvives`); with none it
+can be anything you tapped (a drone, a structure, someone else's ship). Every
+selected ship and the focus get the same marker, `SelectionBracket`'s corner
+brackets (screen space, one Graphics, drawn in the ticker after the camera
+tick, never smaller than 14 px). Zustand holds it as one shape,
+`selection: { ids, focusId, focusKind }`; the server `select_entity` stats
+stream follows the focus. Before Part A there were two: an inspect selection
+(bracket) and a fleet selection (green rings), which the owner found
+confusing. Results reach the main thread through
 `RendererFeedback`, as **monotonic sequence numbers** plus payload, never
 one-shot booleans (a feedback frame can be read by several RAFs):
 
 | Feedback | Main-thread consumer (`gameRafLoop`) |
 |---|---|
-| `fleetSelSeq` / `fleetSelIds` | Mirror the ids into Zustand `fleetSelection` (ids only, #2). |
+| `fleetSelSeq` / `fleetSelIds` + `selectedPickId/Kind` | Mirror the ships and the focus into Zustand `selection` in one `setSelection` write (ids only, #2); a focus change starts / stops the `select_entity` stream. |
 | `orderSeq` / `orderKind` / `orderX/Y` / `orderTargetId` | Send each new order once (`sendFleetOrder`). |
 | `fleetPickSeq` / `fleetPickResult` / `fleetPickPoints` | Send the picked patrol / escort / retreat via `setMode`. |
 | `takeControlsSeq` / `takeControlsId` | Double-click on an own parked ship → `takeControls`. |
@@ -157,8 +168,8 @@ order, destination, target, escort, route) built by
 version moves; the renderer can't read `fleet/fleetStatus.ts` because it may be
 in another thread.
 
-`render/FleetOverlay.ts` is **one** screen-space `Graphics`: selection rings,
-drag box, order flash, hold cue, order lines (capped at `MAX_ORDER_SEGMENTS`),
+`render/FleetOverlay.ts` is **one** screen-space `Graphics` (it draws no ship
+marker; that is `SelectionBracket`): drag box, order flash, hold cue, order lines (capped at `MAX_ORDER_SEGMENTS`),
 patrol pick loop. One draw call, nothing per ship (the fleet-fight scene sits
 near the draw-call budget).
 
@@ -167,7 +178,17 @@ near the draw-call budget).
 `fleet/fleetStatus.ts` is a module singleton with a version counter, written
 only by the `fleet_status` handler (`fleet/fleetStatusIngest.ts`: zod parse,
 decode tuples, replace). `FleetPanel` (desktop) and `FleetStrip` (phone) poll it
-at ~3 Hz, like the selection stats; nothing about it is in Zustand. Commands go
+at ~3 Hz, like the selection stats; nothing about it is in Zustand.
+
+Hull % is not in the status: every ship's room-state `ShipState.health` /
+`maxHealth` is already synced to every client, so `syncMirror` copies them onto
+the mirror ship entries (`net/shipSchemaHealth.ts`) and the panel reads hull
+from there (polled at the same cadence, so a hull hit shows without a status
+change). Morale is not reported (a "Retreating" row says hull % or "shields
+down"). The `fleet_status` tuple is append-only, so its hull (5) and morale (6)
+slots stay, sent as `null` / `-1` and ignored; they still accept an older
+sender's numbers. Shield % stays in the status for now: there is no per-ship
+shield carrier for parked hulls. Commands go
 through `fleet/fleetCommands.ts`, whose network senders are plugged in at boot
 by `fleet/installFleetCommandSenders.ts`.
 
@@ -238,3 +259,9 @@ lingering hull (`onJoin` rebind) still hides the hull from others while it joins
   tested).
 - Fleet persistence across restarts is a separate slice
   (`SectorPersistence` / `FleetCommandSubsystem`).
+- Labels are configurable later (TODO). Today (RTS Part A): friendly ships
+  (the one you fly and your fleet) carry none, another player's AI-flown ship
+  gets the AI pilots' `AI XXX` callsign, a pilot keeps their name. The client
+  has no alliance data, so "friendly" means yours for now.
+- Shield % for parked hulls still rides `fleet_status` (no per-ship shield
+  carrier); it can move once one exists.

@@ -1,16 +1,18 @@
 /**
- * Lock for `SelectionBracket` (structures follow-up Item B4, invariant #14).
+ * Lock for `SelectionBracket`: THE selection marker (structures follow-up
+ * Item B4; RTS Part A: one selection concept, invariant #14).
  *
- * Asserts the single-pooled-Graphics + dirty-flag discipline:
- *  - one Graphics for the whole component (single selection)
- *  - geometry rebuilt ONLY when the bracket size (entity radius) changes;
- *    position-only frames do NOT call clear()
- *  - resolves the live pose from the mirror by id (ship / swarm-N / lingering)
- *  - returns false (and hides) when the entity vanishes or id is null
+ *  - one screen-space Graphics for every selected entity (one draw call)
+ *  - the same bracket around EVERY selected ship, plus the focus when it is
+ *    not one of them; never a second marker for the focus
+ *  - resolves live poses from the mirror by id (ship / swarm-N / parked hull)
+ *  - the focus anchor (`lastWorldX/Y`) for the details panel; `resolveFocus`
+ *    reports false (so the caller clears the focus) when the entity is gone
+ *  - a bracket keeps a minimum on-screen size at far zoom
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { RenderMirror } from '@core/contracts/IRenderer';
-import { SelectionBracket } from './SelectionBracket.js';
+import { MIN_HALF_PX, SelectionBracket } from './SelectionBracket.js';
 
 vi.mock('pixi.js', () => {
   class FakeContainer {
@@ -19,10 +21,6 @@ vi.mock('pixi.js', () => {
     visible = true;
     children: unknown[] = [];
     addChild(c: unknown): void { this.children.push(c); }
-    removeChild(c: unknown): void {
-      const i = this.children.indexOf(c);
-      if (i >= 0) this.children.splice(i, 1);
-    }
     destroy(_opts?: unknown): void { /* noop */ }
   }
   class FakeGraphics extends FakeContainer {
@@ -35,103 +33,83 @@ vi.mock('pixi.js', () => {
   return { Container: FakeContainer, Graphics: FakeGraphics };
 });
 
+type FakeGfx = {
+  clear: ReturnType<typeof vi.fn>;
+  moveTo: ReturnType<typeof vi.fn>;
+  stroke: ReturnType<typeof vi.fn>;
+  visible: boolean;
+};
+
 function mirror(over: Partial<RenderMirror>): RenderMirror {
   return { ships: new Map(), swarm: new Map(), localPlayerId: null, ...over } as RenderMirror;
 }
-
-function gfxOf(b: SelectionBracket): { clear: ReturnType<typeof vi.fn>; x: number; y: number; visible: boolean } {
-  return (b as unknown as { gfx: { clear: ReturnType<typeof vi.fn>; x: number; y: number; visible: boolean } }).gfx;
+function gfxOf(b: SelectionBracket): FakeGfx {
+  return (b as unknown as { gfx: FakeGfx }).gfx;
 }
+/** Identity projection: pixi-world (x, -gameY) in = screen out. */
+const project = (wx: number, wy: number, out: { x: number; y: number }): void => { out.x = wx; out.y = wy; };
+const ship = (x: number, y: number, extra: Record<string, unknown> = {}) => ({ x, y, angle: 0, vx: 0, vy: 0, kind: 'fighter', ...extra });
 
 describe('SelectionBracket', () => {
-  let parent: { addChild: ReturnType<typeof vi.fn> };
   let bracket: SelectionBracket;
 
   beforeEach(() => {
-    parent = { addChild: vi.fn() };
-    bracket = new SelectionBracket(parent as never);
+    bracket = new SelectionBracket({ addChild: vi.fn() } as never);
   });
 
-  it('null id hides the bracket and reports not-present', () => {
-    const present = bracket.update(mirror({}), null);
-    expect(present).toBe(false);
+  it('nothing selected: hidden, nothing drawn', () => {
+    bracket.draw(mirror({}), new Set(), null, project, 1);
     expect(gfxOf(bracket).visible).toBe(false);
+    expect(bracket.lastMarkerCount).toBe(0);
   });
 
-  it('resolves a ship pose (pixiY = -gameY) and reports present', () => {
-    const m = mirror({ ships: new Map([['p1', { x: 100, y: 200, angle: 0, vx: 0, vy: 0, kind: 'fighter' }]]) as never });
-    const present = bracket.update(m, 'p1');
-    expect(present).toBe(true);
+  it('draws the SAME bracket around every selected ship, in one stroke', () => {
+    const m = mirror({ ships: new Map([['a', ship(0, 0)], ['b', ship(100, 50)]]) as never });
+    bracket.draw(m, new Set(['a', 'b']), 'a', project, 1);
     const g = gfxOf(bracket);
     expect(g.visible).toBe(true);
-    expect(g.x).toBe(100);
-    expect(g.y).toBe(-200); // Y flip
+    expect(bracket.lastMarkerCount).toBe(2); // the focus (a) is not drawn twice
+    expect(g.moveTo).toHaveBeenCalledTimes(8); // 4 corners × 2 ships
+    expect(g.stroke).toHaveBeenCalledTimes(1);
   });
 
-  it('resolves a structure by swarm-<id>', () => {
-    const sw = { x: 5, y: 7, vx: 0, vy: 0, angle: 0, angvel: 0, prevX: 5, prevY: 7, prevAngle: 0, prevArrivalMs: 0, latestArrivalMs: 0, poseRing: [], ringHead: 0, radius: 50, kind: 2, sleeping: false, lastUpdateTick: 0 };
+  it('a focus outside the ship selection (inspecting a drone) gets the same bracket', () => {
+    const sw = { x: 5, y: 7, radius: 50, kind: 1 };
     const m = mirror({ swarm: new Map([[42, sw]]) as never });
-    const present = bracket.update(m, 'swarm-42');
-    expect(present).toBe(true);
-    expect(gfxOf(bracket).x).toBe(5);
+    bracket.draw(m, new Set(), 'swarm-42', project, 1);
+    expect(bracket.lastMarkerCount).toBe(1);
+    expect(bracket.lastMarkerId).toBe('swarm-42');
+    expect(bracket.lastMarker).toEqual({ x: 5, y: -7 }); // pixiY = -gameY
   });
 
-  it('reports not-present + hides when the entity has vanished', () => {
-    const m = mirror({ ships: new Map([['p1', { x: 0, y: 0, angle: 0, vx: 0, vy: 0, kind: 'fighter' }]]) as never });
-    expect(bracket.update(m, 'p1')).toBe(true);
-    // Entity gone next frame.
-    const empty = mirror({});
-    expect(bracket.update(empty, 'p1')).toBe(false);
+  it('skips ids that left the mirror; hides when none resolve', () => {
+    bracket.draw(mirror({}), new Set(['gone']), null, project, 1);
+    expect(bracket.lastMarkerCount).toBe(0);
     expect(gfxOf(bracket).visible).toBe(false);
   });
 
-  it('dirty flag: position-only frames do NOT rebuild geometry', () => {
-    const ship = { x: 0, y: 0, angle: 0, vx: 0, vy: 0, kind: 'fighter' };
-    const m = mirror({ ships: new Map([['p1', ship]]) as never });
-    bracket.update(m, 'p1');
+  it('keeps a minimum on-screen size at far zoom', () => {
+    const m = mirror({ ships: new Map([['a', ship(0, 0)]]) as never });
+    bracket.draw(m, new Set(['a']), null, project, 0.01);
     const g = gfxOf(bracket);
-    const clearsAfterFirst = g.clear.mock.calls.length;
-    expect(clearsAfterFirst).toBe(1); // first paint rebuilt once
-
-    // Move the ship (size unchanged) → should reposition but NOT clear again.
-    ship.x = 999;
-    ship.y = -123;
-    bracket.update(m, 'p1');
-    expect(g.clear.mock.calls.length).toBe(clearsAfterFirst); // no extra rebuild
-    expect(g.x).toBe(999);
-    expect(g.y).toBe(123); // -(-123)
+    // First corner starts at (x - half, y - half + arm): half = MIN_HALF_PX.
+    const [x0] = g.moveTo.mock.calls[0] as [number, number];
+    expect(x0).toBeCloseTo(-MIN_HALF_PX);
   });
 
-  it('dirty flag: a size change DOES rebuild geometry', () => {
-    const small = { x: 0, y: 0, angle: 0, vx: 0, vy: 0, kind: 'scout' }; // radius 10
-    const big = { x: 0, y: 0, angle: 0, vx: 0, vy: 0, kind: 'heavy' };
-    const m1 = mirror({ ships: new Map([['p1', small]]) as never });
-    bracket.update(m1, 'p1');
-    const g = gfxOf(bracket);
-    const after1 = g.clear.mock.calls.length;
-    // Select a bigger ship under the same id slot → different half-size.
-    const m2 = mirror({ ships: new Map([['p1', big]]) as never });
-    bracket.update(m2, 'p1');
-    expect(g.clear.mock.calls.length).toBeGreaterThan(after1);
+  it('resolveFocus: a parked hull resolves from the one ship list; the anchor sits above it', () => {
+    const m = mirror({ ships: new Map([['hull-1', ship(11, 22, { ownerPlayerId: 'o1', isActive: false })]]) as never });
+    expect(bracket.resolveFocus(m, 'hull-1')).toBe(true);
+    expect(bracket.lastWorldX).toBe(11);
+    expect(bracket.lastWorldY!).toBeLessThan(-22);
   });
 
-  it('resolves a parked hull from the one ship list (RTS Part A S3) (WS-9/R2.23)', () => {
-    const m = mirror({
-      ships: new Map([['linger-1', { x: 11, y: 22, angle: 0, vx: 0, vy: 0, kind: 'fighter', ownerPlayerId: 'o1', isActive: false }]]) as never,
-    });
-    expect(bracket.update(m, 'linger-1')).toBe(true);
-    expect(gfxOf(bracket).x).toBe(11);
-  });
-
-  it('exposes the above-entity projection point; null when nothing resolved (WS-9/R2.30)', () => {
-    const m = mirror({ ships: new Map([['p1', { x: 100, y: 200, angle: 0, vx: 0, vy: 0, kind: 'fighter' }]]) as never });
-    bracket.update(m, 'p1');
-    expect(bracket.lastWorldX).toBe(100); // game x (= pixi x)
-    expect(bracket.lastWorldY).not.toBeNull();
-    expect(bracket.lastWorldY!).toBeLessThan(-200); // ABOVE the entity (pixiY of the bracket top)
-    // Cleared when the selection drops.
-    bracket.update(m, null);
+  it('resolveFocus: false + no anchor when the focus is gone or null', () => {
+    const m = mirror({ ships: new Map([['p1', ship(0, 0)]]) as never });
+    expect(bracket.resolveFocus(m, 'p1')).toBe(true);
+    expect(bracket.resolveFocus(mirror({}), 'p1')).toBe(false);
     expect(bracket.lastWorldX).toBeNull();
+    expect(bracket.resolveFocus(m, null)).toBe(false);
     expect(bracket.lastWorldY).toBeNull();
   });
 });

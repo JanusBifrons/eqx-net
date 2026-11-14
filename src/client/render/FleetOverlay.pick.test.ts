@@ -36,7 +36,7 @@ const identity = (x: number, y: number, out: { x: number; y: number }): void => 
 const noFlash = (): OrderFlash => ({ x: 0, y: 0, attack: false, t0: -1 });
 
 function run(o: FleetOverlay, pick: ReturnType<typeof createFleetPickState> | null): void {
-  o.update(m, new Set(), null, noFlash(), 0, identity, 1, null, null, pick);
+  o.update(m, new Set(), null, noFlash(), 0, identity, null, null, pick);
 }
 
 describe('FleetOverlay — patrol pick preview', () => {

@@ -4,7 +4,7 @@ import { z } from 'zod';
  * RTS command layer, slice 7 — the owner-only `fleet_status` stream.
  *
  * Server → ONE client, ~2 Hz: the status of every AI-flown ship that client's
- * player owns in this room (mode, stance, activity, hull, morale, order...).
+ * player owns in this room (mode, stance, activity, order, shield...).
  *
  * WHY A MESSAGE AND NOT A SNAPSHOT FIELD (root invariant #16): the snapshot
  * goes to everyone in interest, while a wingman's mode / stance / orders are
@@ -24,14 +24,14 @@ export const FLEET_STATUS_ACTIVITIES = [
   'idle', 'moving', 'patrolling', 'chasing', 'attacking', 'retreating', 'formingUp', 'guarding',
 ] as const;
 export const FLEET_STATUS_ORDERS = ['move', 'attack', 'stop'] as const;
-/** Index = `MORALE_OUTCOME` value (core/ai/tactics/morale.ts). */
-export const FLEET_STATUS_MORALE = ['fightOn', 'fallBack', 'flee'] as const;
+/** Slot 6 (morale) is RETIRED; it still accepts the old index range so an
+ *  older sender parses (fightOn / fallBack / flee). */
+const RETIRED_MORALE_COUNT = 3;
 
 type FleetStatusMode = (typeof FLEET_STATUS_MODES)[number];
 type FleetStatusStance = (typeof FLEET_STATUS_STANCES)[number];
 type FleetStatusActivity = (typeof FLEET_STATUS_ACTIVITIES)[number];
 type FleetStatusOrder = (typeof FLEET_STATUS_ORDERS)[number];
-type FleetStatusMorale = (typeof FLEET_STATUS_MORALE)[number];
 
 const idx = (n: number) => z.number().int().min(0).max(n - 1);
 const optIdx = (n: number) => z.number().int().min(-1).max(n - 1);
@@ -41,11 +41,18 @@ const optNum = z.number().finite().nullable();
 /**
  * One ship. Order:
  *  0 id, 1 mode idx, 2 stance idx, 3 activity idx, 4 targetId|null,
- *  5 hullPct (0..100 int), 6 morale idx (-1 none), 7 squadId|null,
- *  8 order idx (-1 none), 9 orderX|null, 10 orderY|null (move order dest),
- *  11 escortId|null, 12 route: flat [x0,y0,x1,y1,…] (patrol) | null,
- *  13 shieldPct (0..100 int; appended 2026-11-14, optional so an older
- *  sender still parses).
+ *  5 RETIRED (was hullPct; sent null), 6 RETIRED (was morale idx; sent -1),
+ *  7 squadId|null, 8 order idx (-1 none), 9 orderX|null, 10 orderY|null
+ *  (move order dest), 11 escortId|null, 12 route: flat [x0,y0,x1,y1,…]
+ *  (patrol) | null, 13 shieldPct (0..100 int; appended 2026-11-14, optional
+ *  so an older sender still parses).
+ *
+ * RTS Part A (owner decision): hull % comes from room-state
+ * `ShipState.health` (synced for every ship, copied onto the mirror by
+ * `syncMirror`), and morale is not reported. The tuple is append-only, so
+ * slots 5 and 6 stay and are never filled: the decoder ignores them, and
+ * they still accept an older sender's numbers. Shield % stays here for now
+ * (no per-ship shield carrier exists for parked hulls).
  */
 const FleetStatusTupleSchema = z.tuple([
   z.string().min(1).max(64),
@@ -53,8 +60,8 @@ const FleetStatusTupleSchema = z.tuple([
   idx(FLEET_STATUS_STANCES.length),
   idx(FLEET_STATUS_ACTIVITIES.length),
   optId,
-  z.number().int().min(0).max(100),
-  optIdx(FLEET_STATUS_MORALE.length),
+  z.number().int().min(0).max(100).nullable(),
+  optIdx(RETIRED_MORALE_COUNT),
   optId,
   optIdx(FLEET_STATUS_ORDERS.length),
   optNum,
@@ -81,10 +88,8 @@ export interface FleetStatusRowWire {
   stance: FleetStatusStance;
   activity: FleetStatusActivity;
   targetId: string | null;
-  hullPct: number;
   /** Shield 0..100 (absent from an older sender). */
   shieldPct?: number;
-  moraleOutcome?: FleetStatusMorale;
   squadId?: string;
   orderKind?: FleetStatusOrder;
   orderX?: number;
@@ -106,8 +111,8 @@ export function encodeFleetStatusRow(r: FleetStatusRowWire): FleetStatusTuple {
     FLEET_STATUS_STANCES.indexOf(r.stance),
     FLEET_STATUS_ACTIVITIES.indexOf(r.activity),
     r.targetId,
-    r.hullPct,
-    r.moraleOutcome === undefined ? -1 : FLEET_STATUS_MORALE.indexOf(r.moraleOutcome),
+    null, // retired: hull
+    -1, // retired: morale
     r.squadId ?? null,
     r.orderKind === undefined ? -1 : FLEET_STATUS_ORDERS.indexOf(r.orderKind),
     r.orderX ?? null,
@@ -121,17 +126,16 @@ export function encodeFleetStatusRow(r: FleetStatusRowWire): FleetStatusTuple {
 
 /** Decode one validated tuple. */
 export function decodeFleetStatusRow(t: FleetStatusTuple): FleetStatusRowWire {
-  const [id, mode, stance, activity, targetId, hullPct, morale, squadId, order, ox, oy, escortId, route, shieldPct] = t;
+  // Slots 5 and 6 are retired (hull, morale): ignored.
+  const [id, mode, stance, activity, targetId, , , squadId, order, ox, oy, escortId, route, shieldPct] = t;
   const row: FleetStatusRowWire = {
     id,
     mode: FLEET_STATUS_MODES[mode]!,
     stance: FLEET_STATUS_STANCES[stance]!,
     activity: FLEET_STATUS_ACTIVITIES[activity]!,
     targetId,
-    hullPct,
   };
   if (shieldPct !== undefined) row.shieldPct = shieldPct;
-  if (morale >= 0) row.moraleOutcome = FLEET_STATUS_MORALE[morale]!;
   if (squadId !== null) row.squadId = squadId;
   if (order >= 0) row.orderKind = FLEET_STATUS_ORDERS[order]!;
   if (ox !== null) row.orderX = ox;

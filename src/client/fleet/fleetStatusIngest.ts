@@ -22,7 +22,6 @@ export function ingestFleetStatus(raw: unknown): boolean {
       stance: w.stance,
       activity: w.activity,
       targetId: w.targetId,
-      hullPct: w.hullPct,
     };
     if (w.squadId !== undefined) row.squadId = w.squadId;
     if (w.orderKind !== undefined) row.orderKind = w.orderKind;
@@ -30,7 +29,6 @@ export function ingestFleetStatus(raw: unknown): boolean {
     if (w.orderY !== undefined) row.orderY = w.orderY;
     if (w.route !== undefined) row.route = w.route;
     if (w.escortId !== undefined) row.escortId = w.escortId;
-    if (w.moraleOutcome !== undefined) row.moraleOutcome = w.moraleOutcome;
     if (w.shieldPct !== undefined) row.shieldPct = w.shieldPct;
     rows.push(row);
   }

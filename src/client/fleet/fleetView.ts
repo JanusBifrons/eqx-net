@@ -23,7 +23,7 @@ export const STANCE_LABELS: Record<WingmanStance, string> = {
 };
 
 /** What a ship is doing, in plain words ("Chasing Drone", "Retreating – hull 20%"). */
-export function describeActivity(row: FleetStatusRow | undefined, targetName?: string): string {
+export function describeActivity(row: FleetStatusRow | undefined, targetName?: string, hullPct: number | null = null): string {
   if (!row) return 'No report yet';
   const t = targetName ? ` ${targetName}` : '';
   switch (row.activity) {
@@ -38,7 +38,7 @@ export function describeActivity(row: FleetStatusRow | undefined, targetName?: s
     case 'attacking':
       return `Attacking${t}`;
     case 'retreating':
-      return describeRetreat(row);
+      return describeRetreat(row, hullPct);
     case 'formingUp':
       return 'Forming up';
     case 'guarding':
@@ -47,19 +47,18 @@ export function describeActivity(row: FleetStatusRow | undefined, targetName?: s
 }
 
 /**
- * Why a ship is pulling out, in plain words. A morale roll says how hard it
- * runs ("Falling back" / "Fleeing") and what scared it: the hull it has lost,
- * or "shields down" while its hull is still whole. An ordered retreat just
- * says "Retreating".
+ * Why a ship is pulling out, in plain words: the hull it has lost, or
+ * "shields down" while its hull is still whole. An ordered retreat just says
+ * "Retreating". Hull comes from the mirror ship entry (RTS Part A: the
+ * status stream no longer carries hull or morale); unknown ⇒ no reason given.
  */
-function describeRetreat(row: FleetStatusRow): string {
-  const hull = Math.round(row.hullPct);
+function describeRetreat(row: FleetStatusRow, hullPct: number | null): string {
+  if (row.mode === 'retreat' || hullPct === null) return 'Retreating';
+  const hull = Math.round(hullPct);
   const why = hull >= 100 && row.shieldPct !== undefined && row.shieldPct <= 0
     ? 'shields down'
     : `hull ${hull}%`;
-  if (row.moraleOutcome === 'flee') return `Fleeing – ${why}`;
-  if (row.moraleOutcome === 'fallBack') return `Falling back – ${why}`;
-  return row.mode === 'retreat' ? 'Retreating' : `Retreating – ${why}`;
+  return `Retreating – ${why}`;
 }
 
 /** Shield and hull in plain words: "Shield 40% · Hull 100%" ("Hull 100%"

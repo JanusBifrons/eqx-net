@@ -103,8 +103,12 @@ beyond a banded grouping distance → project → spring-smooth → fade-in.
 7. **Device-aware defaults and settings** (§4) — touch is its own design, not a
    scaled-down desktop.
 8. **Categories are radar-only** (hostile, neutral, player, structure, asteroid,
-   scrap, lingering); the first four reuse the shared `ENTITY_VISUALS` shapes and
+   scrap, loot, trader); the first four reuse the shared `ENTITY_VISUALS` shapes and
    colours. Off-by-default categories are range-filtered before the sort.
+   RTS Part A: there is no category for a ship an AI pilot flies (the old
+   `lingering`, retired; an old saved pref carrying it parses with the key
+   dropped): every ship is a `player` contact, your own fleet in
+   `OWN_SHIP_COLOUR` (white, the far icons' "you"), others in the player colour.
 9. **Lock marks** (fire control). NPC locks start beyond the screen edge, so an
    off-screen contact locking the local ship (own-ship `lockedBy`, acquiring or
    locked) draws in threat red, and one of the pilot's own LOCKED targets
@@ -131,7 +135,7 @@ Sizes are CSS px (the renderer's resolution handles device pixel ratio).
 | Visibility hysteresis | 16 px | 12 px | R4 |
 | Min spacing (de-overlap) | 12 px | 10 px | R3 |
 | Max icons | 24 | 12 | R3 — fewer on a small screen |
-| Categories on | hostile, player, neutral, structure | hostile, player, structure, neutral | asteroids / scrap / lingering off by default |
+| Categories on | hostile, player, neutral, structure | hostile, player, structure, neutral | asteroids / scrap off by default |
 
 These are starting values to be **validated in the `radar-sandbox` room**
 (objects at graded distances and bearings incl. corners, drones flying in/out

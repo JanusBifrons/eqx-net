@@ -148,7 +148,7 @@ export function BottomControlPanel(): JSX.Element | null {
   const setPlacementKind = useUIStore((s) => s.setPlacementKind);
   // RTS slice 14: own ships selected in command view → the fleet panel/strip
   // takes this slot. Stay MOUNTED (hidden) and leave 1–9 alone meanwhile.
-  const fleetSelected = useUIStore((s) => s.fleetSelection.length > 0);
+  const fleetSelected = useUIStore((s) => s.selection.ids.length > 0);
 
   const inGame = phase === 'game' && !isTouchDevice();
   const showing = inGame && spectating && !fleetSelected;

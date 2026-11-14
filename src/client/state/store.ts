@@ -14,6 +14,7 @@ import type {
   Phase,
   DevData,
   UIStore,
+  UISelection,
 } from './storeTypes.js';
 
 // Re-export the type surface so existing import sites (40+ files using
@@ -30,7 +31,9 @@ export type {
   Phase,
   DevData,
   UIStore,
+  UISelection,
 };
+export type { SelectionFocusKind } from './storeTypes.js';
 
 // The store is constructed before auth resolves, so we hydrate from the
 // anonymous slot first. `applyUserPrefs(userId)` is called from App.tsx once
@@ -45,6 +48,10 @@ export type {
 export function selectControlMode(s: Pick<UIStore, 'pilotMode'>): ControlMode {
   return s.pilotMode === 'spectator' ? 'command' : 'fly';
 }
+
+const EMPTY_IDS: readonly string[] = Object.freeze([]);
+/** Nothing selected (one shared object, so an empty selection never re-renders). */
+export const EMPTY_SELECTION: UISelection = Object.freeze({ ids: EMPTY_IDS, focusId: null, focusKind: null });
 
 /** Living World P1a — monotonic id for pickup popups. */
 let lootFeedSeq = 0;
@@ -164,9 +171,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
   warpPickerOpen: false,
   contactsOpen: false,
   warpHeldTo: null,
-  selectedEntityId: null,
-  selectedEntityKind: null,
-  fleetSelection: [],
+  selection: EMPTY_SELECTION,
   fleetOrderMode: 'move',
   fleetPick: null,
   helmAvailable: false,
@@ -286,9 +291,13 @@ export const useUIStore = create<UIStore>((set, get) => ({
   setWarpPickerOpen: (open) => set({ warpPickerOpen: open }),
   setContactsOpen: (open) => set({ contactsOpen: open }),
   setWarpHeldTo: (label) => set({ warpHeldTo: label }),
-  setSelectedEntity: (id, kind) => set({ selectedEntityId: id, selectedEntityKind: kind }),
   // No ships left to command ⇒ nothing to pick a target for (slice 14b).
-  setFleetSelection: (ids) => set(ids.length === 0 ? { fleetSelection: [], fleetPick: null } : { fleetSelection: [...ids] }),
+  setSelection: (ids, focusId, focusKind) => {
+    const selection: UISelection = ids.length === 0 && focusId === null
+      ? EMPTY_SELECTION
+      : { ids: ids.length === 0 ? EMPTY_IDS : [...ids], focusId, focusKind: focusId === null ? null : focusKind };
+    set(ids.length === 0 ? { selection, fleetPick: null } : { selection });
+  },
   setFleetOrderMode: (mode) => set({ fleetOrderMode: mode }),
   setFleetPick: (kind) => set({ fleetPick: kind === null ? null : { kind, points: 0, doneSeq: 0 } }),
   setFleetPickPoints: (points) => set((s) => (

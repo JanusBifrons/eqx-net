@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 import {
   FLEET_STATUS_ACTIVITIES,
   FLEET_STATUS_MODES,
-  FLEET_STATUS_MORALE,
   FLEET_STATUS_STANCES,
   FleetStatusMessageSchema,
   decodeFleetStatusRow,
@@ -10,7 +9,6 @@ import {
   type FleetStatusRowWire,
 } from './fleetStatusMessages.js';
 import { WINGMAN_MODES, WINGMAN_STANCES, type WingmanActivity } from '../../core/ai/wingman/types.js';
-import { MORALE_OUTCOME } from '../../core/ai/tactics/morale.js';
 
 describe('fleet_status wire format', () => {
   it('round-trips a full row through encode → schema → decode', () => {
@@ -20,8 +18,7 @@ describe('fleet_status wire format', () => {
       stance: 'holdFire',
       activity: 'patrolling',
       targetId: 's:42',
-      hullPct: 63,
-      moraleOutcome: 'fallBack',
+      shieldPct: 40,
       squadId: 'sq-1',
       orderKind: 'move',
       orderX: 120.5,
@@ -35,13 +32,28 @@ describe('fleet_status wire format', () => {
   });
 
   it('round-trips a minimal row (no optional fields)', () => {
-    const row: FleetStatusRowWire = { id: 'h', mode: 'defend', stance: 'defensive', activity: 'guarding', targetId: null, hullPct: 100 };
+    const row: FleetStatusRowWire = { id: 'h', mode: 'defend', stance: 'defensive', activity: 'guarding', targetId: null };
     const parsed = FleetStatusMessageSchema.parse({ type: 'fleet_status', s: [encodeFleetStatusRow(row)] });
     expect(decodeFleetStatusRow(parsed.s[0]!)).toEqual(row);
   });
 
+  it('hull and morale slots are retired (RTS Part A): never filled, and an older sender still parses', () => {
+    const t = encodeFleetStatusRow({ id: 'h', mode: 'defend', stance: 'defensive', activity: 'idle', targetId: null });
+    expect(t[5]).toBeNull();
+    expect(t[6]).toBe(-1);
+    // An older sender filled them: still valid, and the decoder ignores them.
+    const old = [...t] as unknown[];
+    old[5] = 63;
+    old[6] = 1;
+    const parsed = FleetStatusMessageSchema.safeParse({ type: 'fleet_status', s: [old] });
+    expect(parsed.success).toBe(true);
+    const row = decodeFleetStatusRow(parsed.success ? parsed.data.s[0]! : t);
+    expect('hullPct' in row).toBe(false);
+    expect('moraleOutcome' in row).toBe(false);
+  });
+
   it('rejects out-of-range indices and extra keys', () => {
-    const t = encodeFleetStatusRow({ id: 'h', mode: 'defend', stance: 'defensive', activity: 'idle', targetId: null, hullPct: 50 });
+    const t = encodeFleetStatusRow({ id: 'h', mode: 'defend', stance: 'defensive', activity: 'idle', targetId: null });
     const bad = [...t] as unknown[];
     bad[1] = FLEET_STATUS_MODES.length;
     expect(FleetStatusMessageSchema.safeParse({ type: 'fleet_status', s: [bad] }).success).toBe(false);
@@ -54,8 +66,5 @@ describe('fleet_status wire format', () => {
     // Compile-time: every table entry is a WingmanActivity.
     const acts: readonly WingmanActivity[] = FLEET_STATUS_ACTIVITIES;
     expect(acts.length).toBe(8);
-    expect(FLEET_STATUS_MORALE[MORALE_OUTCOME.FightOn]).toBe('fightOn');
-    expect(FLEET_STATUS_MORALE[MORALE_OUTCOME.FallBack]).toBe('fallBack');
-    expect(FLEET_STATUS_MORALE[MORALE_OUTCOME.Flee]).toBe('flee');
   });
 });

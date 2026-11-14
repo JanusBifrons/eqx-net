@@ -36,7 +36,7 @@ import { CommandPointerRouter, type BoxRect, type HoldArmed, type RouterAction, 
 import { decideTapAction, type FleetOrderMode } from './input/tapAction.js';
 import { DoubleTapTracker } from './input/doubleTap.js';
 import { createFleetPickState, decidePickTap, pickAddPoint, pickFinishPatrol, pickStart, type FleetPickResult } from './input/fleetPick.js';
-import { applySelection, boxSelectOwn, collectFleetShips, isOwnShipPresent, pickOwnShipAt, sameSelection, tapSelectOwn } from './fleetSelection.js';
+import { applySelection, boxSelectOwn, collectFleetShips, focusSurvives, isOwnShipPresent, pickOwnShipAt, sameSelection, tapSelectOwn } from './fleetSelection.js';
 import { FleetOverlay, type OrderFlash } from './FleetOverlay.js';
 import { decideExplosionPosition } from './spriteUpdateDecisions';
 import { shouldLatchFirstFrame } from './firstFrameLatch.js';
@@ -222,7 +222,7 @@ export class PixiRenderer implements IRenderer {
   private readonly _cmdRouter = new CommandPointerRouter(false);
   /** Own-ship fleet selection (ids per the pick convention). Replaced (never
    *  mutated) on a gesture; pruned in place in `update()` when a ship leaves. */
-  private _fleetSel: Set<string> = new Set();
+  private _selShips: Set<string> = new Set();
   /** RTS slice 10: double tap / click on an own parked ship = take the controls. */
   private readonly _doubleTap = new DoubleTapTracker();
   /** Drag box in screen px while a box gesture is live (reused object). */
@@ -252,8 +252,8 @@ export class PixiRenderer implements IRenderer {
    * (the main thread mirrors it into Zustand for panel visibility). The id form
    * matches the `HealthBarManager`/`SelectionBracket` lookup convention.
    */
-  private _selectedId: string | null = null;
-  private _selectedKind: PickedEntityKind | null = null;
+  private _focusId: string | null = null;
+  private _focusKind: PickedEntityKind | null = null;
   /** WS-10 (R2.4) — the entity the desktop pointer is HOVERING over (set from
    *  pointer-move via `pickEntityAt`). Renderer-local, NEVER Zustand (updates at
    *  move cadence — invariant #2). Drives the lighter `HoverBracket` outline. */
@@ -504,9 +504,9 @@ export class PixiRenderer implements IRenderer {
     this._farIcons.forgetShip(from, sprite);
     this._fxEngines?.rekey(from, to);
     this._fxShields?.rekey(from, to);
-    if (this._selectedId === from) this._selectedId = to;
+    if (this._focusId === from) this._focusId = to;
     if (this._hoveredId === from) this._hoveredId = to;
-    if (moveSetKey(this._fleetSel, from, to)) this.publishFleetSelection();
+    if (moveSetKey(this._selShips, from, to)) this.publishFleetSelection();
     this._shipRekeysApplied++;
   }
 
@@ -1170,10 +1170,10 @@ export class PixiRenderer implements IRenderer {
     this.levelUpIcons = new LevelUpIconManager(this.world, this.camera);
     this.healthBars = new HealthBarManager(this.world);
     this.labels = new LabelManager(this.world, !this._cleanWorld);
-    // Click-to-inspect selection bracket (Item B4). Parented to the world
-    // container (camera-transformed, world space like the health bars) so the
-    // 4-corner bracket tracks the selected entity as it (and the camera) moves.
-    this.selectionBracket = new SelectionBracket(this.world);
+    // THE selection marker (Item B4; RTS Part A): one 4-corner bracket per
+    // selected entity, screen space on the stage like the fleet overlay, drawn
+    // in the ticker after the camera tick (`drawFleetOverlay`).
+    this.selectionBracket = new SelectionBracket(this.app.stage);
     this.hoverBracket = new HoverBracket(this.world);
     this.aimFeedback = new AimFeedbackRenderer(this.world);
 
@@ -1438,7 +1438,7 @@ export class PixiRenderer implements IRenderer {
     const gy = -w.y;
     const pick = this._fleetPick;
     const own = pick.kind === 'escort' ? pickOwnShipAt(gx, gy, collectFleetShips(m), m.localPlayerId) : null;
-    switch (decidePickTap(pick.kind, own, own !== null && this._fleetSel.has(own), pick.count)) {
+    switch (decidePickTap(pick.kind, own, own !== null && this._selShips.has(own), pick.count)) {
       case 'addPoint':
         pickAddPoint(pick, gx, gy);
         this.feedback.fleetPickPoints = pick.count;
@@ -1470,7 +1470,8 @@ export class PixiRenderer implements IRenderer {
     const a = this.camera.screenToWorld(x0, y0);
     const b = this.camera.screenToWorld(x1, y1);
     const hits = boxSelectOwn(a.x, -a.y, b.x, -b.y, collectFleetShips(m), m.localPlayerId, this._squadOf);
-    this.setFleetSelection(applySelection(this._fleetSel, hits, additive));
+    // The focus stays only if it is still one of the selected ships.
+    this.setSelection(applySelection(this._selShips, hits, additive), this._focusId, this._focusKind);
   }
 
   /** Command-view tap (`decideTapAction`): an own ship selects it; a touch/pen
@@ -1484,7 +1485,7 @@ export class PixiRenderer implements IRenderer {
     const gy = -w.y;
     const fleet = collectFleetShips(m);
     const own = pickOwnShipAt(gx, gy, fleet, m.localPlayerId);
-    const touchOrder = own === null && pointerType !== 'mouse' && this._fleetSel.size > 0;
+    const touchOrder = own === null && pointerType !== 'mouse' && this._selShips.size > 0;
     // Pick only when an order needs to know what is under the finger.
     const hit = touchOrder ? pickEntityAt(gx, gy, m) : null;
     const attackable = hit !== null && this.isAttackable(hit.id, hit.kind, m);
@@ -1493,7 +1494,7 @@ export class PixiRenderer implements IRenderer {
       hitOwn: own !== null,
       hitEntity: hit !== null,
       hitAttackable: attackable,
-      hasSelection: this._fleetSel.size > 0,
+      hasSelection: this._selShips.size > 0,
       orderMode: this._fleetOrderMode,
       additive,
     });
@@ -1508,10 +1509,19 @@ export class PixiRenderer implements IRenderer {
       return;
     }
     switch (action) {
-      case 'select':
+      case 'select': {
         // Slice 15a: whole squad; a tap on an exactly-selected squad narrows.
-        this.setFleetSelection(tapSelectOwn(this._fleetSel, own!, additive, fleet, m.localPlayerId, this._squadOf));
+        // The tapped ship becomes the focus (its details panel); shift-tapping
+        // it off keeps the old focus if that is still selected.
+        const next = tapSelectOwn(this._selShips, own!, additive, fleet, m.localPlayerId, this._squadOf);
+        if (next.has(own!)) {
+          const entry = m.ships.get(own!);
+          this.setSelection(next, own, entry !== undefined && isParkedHull(m, own!, entry) ? 'lingering' : 'ship');
+        } else {
+          this.setSelection(next, this._focusId, this._focusKind);
+        }
         return;
+      }
       case 'orderMove':
         this.publishOrder(gx, gy, null);
         return;
@@ -1521,7 +1531,7 @@ export class PixiRenderer implements IRenderer {
       case 'none':
         return;
       case 'deselect':
-        this.setFleetSelection(new Set());
+        this.setSelection(new Set(), null, null);
         this.handleGameplayTap(screenX, screenY);
         return;
       case 'inspect':
@@ -1532,14 +1542,14 @@ export class PixiRenderer implements IRenderer {
 
   /** Not own, not an asteroid: something the fleet can be told to attack. */
   private isAttackable(id: string, kind: string, m: RenderMirror): boolean {
-    return kind !== 'asteroid' && !this._fleetSel.has(id) && !isOwnShipPresent(id, m);
+    return kind !== 'asteroid' && !this._selShips.has(id) && !isOwnShipPresent(id, m);
   }
 
   /** Command-view right-click: attack a non-own entity under the cursor, else
    *  move to the point. Needs a selection. */
   private commandOrder(screenX: number, screenY: number): void {
     const m = this._lastMirror;
-    if (m === null || this._fleetSel.size === 0) return;
+    if (m === null || this._selShips.size === 0) return;
     const w = this.camera.screenToWorld(screenX, screenY);
     const gx = w.x;
     const gy = -w.y;
@@ -1564,24 +1574,46 @@ export class PixiRenderer implements IRenderer {
     this._orderFlash.t0 = performance.now();
   }
 
-  /** Replace the fleet selection and publish it (only when it changed). */
-  private setFleetSelection(next: Set<string>): void {
-    if (sameSelection(this._fleetSel, next)) return;
-    this._fleetSel = next;
+  /**
+   * THE selection (RTS Part A: one selection concept): the selected ships
+   * (`_selShips`, each gets the same `SelectionBracket` marker) and the focus
+   * (`_focusId/_focusKind`, the entity whose details panel shows: the one you
+   * clicked). Rule: with ships selected, the focus is one of them or null;
+   * with none it can be anything you tapped. Publishes the ship set only when
+   * it changed; the focus is published every frame in `update()`.
+   */
+  private setSelection(nextShips: Set<string>, focusId: string | null, focusKind: PickedEntityKind | null): void {
+    const keepFocus = focusSurvives(nextShips, focusId);
+    this._focusId = keepFocus ? focusId : null;
+    this._focusKind = keepFocus ? focusKind : null;
+    if (sameSelection(this._selShips, nextShips)) return;
+    this._selShips = nextShips;
     this.publishFleetSelection();
+  }
+
+  /** Focus an entity (inspect tap). Focusing one that is not a selected ship
+   *  ends the ship selection (the rule in {@link setSelection}). */
+  private setFocus(id: string | null, kind: PickedEntityKind | null): void {
+    if (id !== null && this._selShips.size > 0 && !this._selShips.has(id)) this.setSelection(new Set(), id, kind);
+    else this.setSelection(this._selShips, id, kind);
   }
 
   /**
    * Per frame: drop selected ids that are no longer own ships in the mirror
-   * (in place, no allocation unless one went). The overlay itself is drawn
-   * in the ticker (`drawFleetOverlay`), after this frame's camera tick.
+   * (in place, no allocation unless one went); a dropped focus goes with them.
+   * The markers and the overlay are drawn in the ticker, after this frame's
+   * camera tick.
    */
   private updateFleetSelection(mirror: RenderMirror): void {
-    if (this._fleetSel.size > 0) {
+    if (this._selShips.size > 0) {
       let pruned = false;
-      for (const id of this._fleetSel) {
+      for (const id of this._selShips) {
         if (!isOwnShipPresent(id, mirror)) {
-          this._fleetSel.delete(id);
+          this._selShips.delete(id);
+          if (id === this._focusId) {
+            this._focusId = null;
+            this._focusKind = null;
+          }
           pruned = true;
         }
       }
@@ -1590,27 +1622,29 @@ export class PixiRenderer implements IRenderer {
   }
 
   /**
-   * Redraw the command-view overlay (rings, box, order lines, flash, hold cue,
-   * pick route). Runs in the Pixi ticker AFTER `camera.tick`, right before the
-   * frame renders, so the overlay projects through the SAME camera transform
-   * the world is drawn with this frame. It used to run inside `update()`,
-   * i.e. with the camera as it stood BEFORE this frame's tick: during a pan or
-   * a glide every ring sat a frame of camera motion (~20 px) off its ship and
-   * the ships "snapped into" the rings when the camera stopped (RTS review
-   * 2026-11-14; lock `tests/e2e/fleet-overlay-camera.spec.ts`).
+   * Redraw the selection markers and the command-view overlay (box, order
+   * lines, flash, hold cue, pick route). Runs in the Pixi ticker AFTER
+   * `camera.tick`, right before the frame renders, so both project through
+   * the SAME camera transform the world is drawn with this frame. The overlay
+   * used to run inside `update()`, i.e. with the camera as it stood BEFORE
+   * this frame's tick: during a pan or a glide every marker sat a frame of
+   * camera motion (~20 px) off its ship and the ships "snapped into" them
+   * when the camera stopped (RTS review 2026-11-14; lock
+   * `tests/e2e/fleet-overlay-camera.spec.ts`).
    */
   private drawFleetOverlay(): void {
     const mirror = this._lastMirror;
-    if (mirror === null || this.fleetOverlay === null) return;
+    if (mirror === null) return;
+    this.selectionBracket?.draw(mirror, this._selShips, this._focusId, this._fleetProject, this.camera.scale.x);
+    if (this.fleetOverlay === null) return;
     this.fleetOverlay.update(
       mirror,
-      this._fleetSel,
+      this._selShips,
       this._fleetBoxActive ? this._fleetBoxRect : null,
       this._orderFlash,
       // eslint-disable-next-line no-restricted-properties -- real time: the selection overlay is UI
       performance.now(),
       this._fleetProject,
-      this.camera.scale.x,
       // eslint-disable-next-line no-restricted-properties -- real time: pointer stamps are Date.now() (both paths)
       this._cmdRouter.holdArmedAt(Date.now(), this._holdArmed),
       this._fleetModel,
@@ -1620,7 +1654,7 @@ export class PixiRenderer implements IRenderer {
 
   private publishFleetSelection(): void {
     // Allocates on a selection change only (a gesture or a ship leaving).
-    this.feedback.fleetSelIds = Array.from(this._fleetSel);
+    this.feedback.fleetSelIds = Array.from(this._selShips);
     this.feedback.fleetSelSeq++;
   }
 
@@ -1831,8 +1865,7 @@ export class PixiRenderer implements IRenderer {
     const gameY = -w.y;
     const hit = pickEntityAt(gameX, gameY, this._lastMirror);
     if (hit === null) {
-      this._selectedId = null;
-      this._selectedKind = null;
+      this.setFocus(null, null);
       // Helm orders: a capital pilot's tap on empty space sets the course.
       const m = this._lastMirror;
       const own = m.localPlayerId ? m.ships.get(m.localPlayerId) : undefined;
@@ -1841,12 +1874,10 @@ export class PixiRenderer implements IRenderer {
         this.feedback.helmCourseY = gameY;
         this.feedback.helmCourseSeq++;
       }
-    } else if (hit.id === this._selectedId) {
-      this._selectedId = null; // re-tap toggles off
-      this._selectedKind = null;
+    } else if (hit.id === this._focusId) {
+      this.setFocus(null, null); // re-tap toggles off
     } else {
-      this._selectedId = hit.id;
-      this._selectedKind = hit.kind;
+      this.setFocus(hit.id, hit.kind);
     }
   }
 
@@ -1962,17 +1993,9 @@ export class PixiRenderer implements IRenderer {
   devSelectAtWorld(gameX: number, gameY: number): string | null {
     if (this._lastMirror === null) return null;
     const hit = pickEntityAt(gameX, gameY, this._lastMirror);
-    if (hit === null) {
-      this._selectedId = null;
-      this._selectedKind = null;
-    } else if (hit.id === this._selectedId) {
-      this._selectedId = null;
-      this._selectedKind = null;
-    } else {
-      this._selectedId = hit.id;
-      this._selectedKind = hit.kind;
-    }
-    return this._selectedId;
+    if (hit === null || hit.id === this._focusId) this.setFocus(null, null);
+    else this.setFocus(hit.id, hit.kind);
+    return this._focusId;
   }
 
   /** The zoom range follows the ship you fly: on a change of kind, the
@@ -2140,7 +2163,7 @@ export class PixiRenderer implements IRenderer {
     // Phase 5 — bolder defensive range ring on the hovered/selected turret. The
     // selection/hover ids are `swarm-<entityId>` (structures ride the swarm
     // channel); prefer the selected one.
-    const highlightedSel = this._selectedId ?? this._hoveredId;
+    const highlightedSel = this._focusId ?? this._hoveredId;
     this.connectorRenderer.highlightedStructureId =
       highlightedSel !== null && highlightedSel.startsWith('swarm-')
         ? parseInt(highlightedSel.slice('swarm-'.length), 10)
@@ -2700,30 +2723,27 @@ export class PixiRenderer implements IRenderer {
     if (this._lockMarksVisible) this.aimFeedback?.update(mirror, this.camera.scale.x);
     else this.aimFeedback?.hide();
 
-    // Click-to-inspect selection bracket (Item B4). The renderer owns
-    // `_selectedId`; the bracket resolves its live pose from the mirror each
-    // frame (single pooled Graphics + dirty flag). If the selected entity has
-    // vanished from the mirror (despawned / left interest), the bracket reports
-    // it and we clear the selection so the panel + stats channel tear down.
-    if (this._selectedId !== null) {
-      const stillPresent = this.selectionBracket?.update(mirror, this._selectedId) ?? false;
-      if (!stillPresent) {
-        this._selectedId = null;
-        this._selectedKind = null;
-      }
-    } else {
-      this.selectionBracket?.update(mirror, null);
+    // The selection's focus (Item B4; RTS Part A). The renderer owns
+    // `_focusId`; the bracket resolves its live pose from the mirror each frame
+    // (the markers themselves are drawn in the ticker, `drawFleetOverlay`). If
+    // the focus has vanished from the mirror (despawned / left interest), clear
+    // it so the panel + stats channel tear down.
+    const focusPresent = this.selectionBracket?.resolveFocus(mirror, this._focusId) ?? false;
+    if (!focusPresent && this._focusId !== null) {
+      this._focusId = null;
+      this._focusKind = null;
     }
     // Publish the current selection for the main thread → Zustand bridge.
-    this.feedback.selectedPickId = this._selectedId;
-    this.feedback.selectedPickKind = this._selectedKind;
+    this.feedback.selectedPickId = this._focusId;
+    this.feedback.selectedPickKind = this._focusKind;
 
     // WS-10 (R2.4) — hover outline. Suppress it on the already-SELECTED entity so
     // the two brackets never stack on the same target. If the hovered entity
     // vanished from the mirror, clear `_hoveredId`. Renderer-local id published
     // for the E2E bridge (data-hover-pick-id) — NEVER Zustand (#2).
     // Below the full HUD (showcase `?hud=`) the hover outline is not drawn.
-    const hoverTarget = this._hoveredId === this._selectedId || !this._lockMarksVisible ? null : this._hoveredId;
+    const hovered = this._hoveredId;
+    const hoverTarget = hovered === null || hovered === this._focusId || this._selShips.has(hovered) || !this._lockMarksVisible ? null : hovered;
     if (hoverTarget !== null) {
       const stillHovered = this.hoverBracket?.update(mirror, hoverTarget) ?? false;
       if (!stillHovered) this._hoveredId = null;
@@ -3480,10 +3500,11 @@ export class PixiRenderer implements IRenderer {
   setSpectator(active: boolean): void {
     this._spectator = active;
     // RTS command view == spectating for now (a later slice renames it).
-    // Leaving it drops any live box and clears the fleet selection.
+    // Leaving it drops any live box and clears the ship selection (and the
+    // focus with it when the focus was one of those ships).
     const cancel = this._cmdRouter.setEnabled(active);
     for (let i = 0; i < cancel.length; i++) this.applyRouterAction(cancel[i]!);
-    if (!active && this._fleetSel.size > 0) this.setFleetSelection(new Set());
+    if (!active && this._selShips.size > 0) this.setSelection(new Set(), null, null);
     if (!active) this.setFleetPick(null);
     // The radar is camera-relative while spectating. Pushed here (not read
     // from the store) so it works on the worker path too.
@@ -3656,22 +3677,22 @@ export class PixiRenderer implements IRenderer {
   private readonly _ringProbePt = { x: 0, y: 0 };
 
   /** Ticker, after the camera tick (the transform this frame renders with):
-   *  the first selection ring as drawn vs its ship sprite's screen point. */
+   *  the first selection marker as drawn vs its ship sprite's screen point. */
   private captureFleetRingProbe(): void {
-    const o = this.fleetOverlay;
-    const id = o?.lastRingId ?? null;
+    const o = this.selectionBracket;
+    const id = o?.lastMarkerId ?? null;
     if (o === null || id === null) return;
     const sp = this.sprites.get(id);
     if (sp === undefined) return;
     const g = sp.parent ? sp.parent.toGlobal(sp.position, this._ringProbePt) : null;
     if (g === null) return;
     const p = this._ringProbe;
-    p.id = id; p.ringX = o.lastRing.x; p.ringY = o.lastRing.y; p.shipX = g.x; p.shipY = g.y; p.frames++;
+    p.id = id; p.ringX = o.lastMarker.x; p.ringY = o.lastMarker.y; p.shipX = g.x; p.shipY = g.y; p.frames++;
   }
 
   /**
    * Test-only (RTS review 2026-11-14): turns the per-frame ring probe on and
-   * returns the latest capture: the first selection ring's drawn centre and its
+   * returns the latest capture: the first selection marker's drawn centre and its
    * ship's screen point, both as the frame renders. Read by the
    * `__eqxFleetRingProbe` DEV hook (`?worker=0`). Not used by gameplay.
    */

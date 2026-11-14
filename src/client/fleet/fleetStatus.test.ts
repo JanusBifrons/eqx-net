@@ -15,7 +15,6 @@ const row = (id: string, over: Partial<FleetStatusUpdate> = {}): FleetStatusUpda
   stance: 'defensive',
   activity: 'guarding',
   targetId: null,
-  hullPct: 100,
   ...over,
 });
 
@@ -36,9 +35,9 @@ describe('fleetStatus singleton', () => {
     const v = getFleetStatusVersion();
     applyFleetStatus([row('a')]);
     expect(getFleetStatusVersion()).toBe(v);
-    applyFleetStatus([row('a', { hullPct: 50 })]);
+    applyFleetStatus([row('a', { shieldPct: 50 })]);
     expect(getFleetStatusVersion()).toBe(v + 1);
-    expect(getFleetStatus('a')?.hullPct).toBe(50);
+    expect(getFleetStatus('a')?.shieldPct).toBe(50);
   });
 
   it('replace drops rows missing from the update; upsert keeps them', () => {
@@ -52,7 +51,7 @@ describe('fleetStatus singleton', () => {
   });
 
   it('holds no spatial fields', () => {
-    applyFleetStatus([row('a', { morale: 70, orderKind: 'move' })]);
+    applyFleetStatus([row('a', { orderKind: 'move' })]);
     const r = getFleetStatus('a')!;
     for (const k of ['x', 'y', 'vx', 'vy', 'angle']) expect(k in r).toBe(false);
   });
@@ -65,7 +64,7 @@ describe('describeActivity', () => {
     expect(describeActivity(row('a', { activity: 'chasing' }), 'Drone')).toBe('Chasing Drone');
     expect(describeActivity(row('a', { activity: 'chasing' }))).toBe('Chasing');
     expect(describeActivity(row('a', { activity: 'attacking' }), 'Fighter')).toBe('Attacking Fighter');
-    expect(describeActivity(row('a', { activity: 'retreating', hullPct: 19.6 }))).toBe('Retreating – hull 20%');
+    expect(describeActivity(row('a', { activity: 'retreating' }), undefined, 19.6)).toBe('Retreating – hull 20%');
     expect(describeActivity(row('a', { activity: 'formingUp' }))).toBe('Forming up');
     expect(describeActivity(row('a', { activity: 'patrolling' }))).toBe('Patrolling');
     expect(describeActivity(row('a', { activity: 'idle' }))).toBe('Idle');
@@ -73,14 +72,13 @@ describe('describeActivity', () => {
   });
 
   it('says why a ship is pulling out, in plain words', () => {
-    // Morale roll after real hull loss.
-    expect(describeActivity(row('a', { activity: 'retreating', hullPct: 20, moraleOutcome: 'flee' }))).toBe('Fleeing – hull 20%');
-    expect(describeActivity(row('a', { activity: 'retreating', hullPct: 45, moraleOutcome: 'fallBack' }))).toBe('Falling back – hull 45%');
+    // Hull lost (hull from the mirror ship entry, RTS Part A).
+    expect(describeActivity(row('a', { activity: 'retreating' }), undefined, 45)).toBe('Retreating – hull 45%');
     // Hull whole but the shield is gone.
-    expect(describeActivity(row('a', { activity: 'retreating', hullPct: 100, shieldPct: 0, moraleOutcome: 'fallBack' })))
-      .toBe('Falling back – shields down');
-    // Ordered to retreat: no reason to give.
-    expect(describeActivity(row('a', { activity: 'retreating', mode: 'retreat', hullPct: 100 }))).toBe('Retreating');
+    expect(describeActivity(row('a', { activity: 'retreating', shieldPct: 0 }), undefined, 100)).toBe('Retreating – shields down');
+    // Ordered to retreat, or hull not known yet: no reason to give.
+    expect(describeActivity(row('a', { activity: 'retreating', mode: 'retreat' }), undefined, 100)).toBe('Retreating');
+    expect(describeActivity(row('a', { activity: 'retreating' }))).toBe('Retreating');
   });
 
   it('shield and hull read together', () => {

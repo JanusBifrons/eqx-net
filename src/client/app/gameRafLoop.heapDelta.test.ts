@@ -111,7 +111,7 @@ function makeDeps(): GameRafLoopDeps {
       // allocation, not the stub's.
       // Carries the selection-bridge (98e76b32) + helm-course (8906d5bb)
       // fields at their idle values so the loop's transition checks see "no
-      // change" and never reach setSelectedEntity / setHelmCourse (not on the
+      // change" and never reach setSelection / setHelmCourse (not on the
       // stubs) — same shape as gameRafLoop.pause.test.ts's feedback stub.
       const stableFeedback = {
         firstFrameRendered: false,

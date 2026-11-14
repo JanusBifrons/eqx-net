@@ -68,10 +68,10 @@ export const FEATURE_TRIGGERS = [
   {
     // RTS command layer: Command view selection, orders, the fleet panel, wingman brains.
     area: 'fleet command',
-    paths: ['src/client/fleet/', 'src/client/render/input/', 'src/client/render/fleetSelection', 'src/client/render/FleetOverlay',
+    paths: ['src/client/fleet/', 'src/client/render/input/', 'src/client/render/fleetSelection', 'src/client/render/FleetOverlay', 'src/client/render/SelectionBracket',
       'src/client/components/FleetPanel', 'src/client/components/FleetStrip', 'src/client/components/FleetPickBar',
       'src/server/fleet/', 'src/core/ai/WingmanBehaviour', 'src/core/ai/wingman/', 'src/shared-types/messages/fleetStatusMessages'],
-    specs: ['fleet-command', 'spectator-mode', 'rts-take-controls', 'fleet-overlay-camera'],
+    specs: ['fleet-command', 'spectator-mode', 'rts-take-controls', 'fleet-overlay-camera', 'entity-inspect'],
   },
   {
     area: 'beams',

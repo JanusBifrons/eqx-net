@@ -44,7 +44,7 @@ import type { StructureRenderState } from '@core/contracts/IRenderer';
 /**
  * Click-to-inspect live stats panel (structures follow-up Item B6).
  *
- * Visible only while an entity is selected (`selectedEntityId` in Zustand — the
+ * Visible only while an entity is selected (`selection.focusId` in Zustand — the
  * discrete, purity-clean selection id). Tiny, anchored via the Slot system
  * (App mounts it in a `<Slot>`, like `ShieldHullBar`). Shows the entity name +
  * a hull bar (+ a shield bar for ships).
@@ -173,8 +173,8 @@ interface PanelData {
 }
 
 export function EntityStatsPanel(): JSX.Element | null {
-  const selectedId = useUIStore((s) => s.selectedEntityId);
-  const selectedKind = useUIStore((s) => s.selectedEntityKind);
+  const selectedId = useUIStore((s) => s.selection.focusId);
+  const selectedKind = useUIStore((s) => s.selection.focusKind);
   const [data, setData] = useState<PanelData | null>(null);
 
   useEffect(() => {

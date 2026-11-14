@@ -4,7 +4,7 @@
  * The panel and strip call these; the network slice plugs its senders in with
  * {@link setFleetCommands} at boot. Until then every command is a no-op
  * (except `takeControls`, which already has a sender: `sendPilotShip`).
- * Ids are own-ship ids as in `fleetSelection` (active ship = playerId,
+ * Ids are own-ship ids as in `selection.ids` (active ship = playerId,
  * parked hull = shipInstanceId).
  */
 import type { WingmanMode, WingmanStance } from '@core/ai/wingman/types';

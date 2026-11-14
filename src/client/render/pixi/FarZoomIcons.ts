@@ -23,8 +23,8 @@
 import { Container, Sprite, Texture } from 'pixi.js';
 import type { RenderMirror } from '../../../core/contracts/IRenderer.js';
 import { getShipKind } from '../../../shared-types/shipKinds.js';
-import { DEFAULT_RADAR_PREFS, type RadarPrefs } from '../../../shared-types/settings/radar.js';
-import { isParkedHull } from '../shipOwnership.js';
+import { DEFAULT_RADAR_PREFS, OWN_SHIP_COLOUR, type RadarPrefs } from '../../../shared-types/settings/radar.js';
+import { isOwnedByMe } from '../shipOwnership.js';
 
 /**
  * Thresholds, in CSS px of the TRUE sprite's on-screen diameter.
@@ -55,10 +55,11 @@ export function isIconOnly(screenDiamPx: number, wasIconOnly: boolean): boolean 
 export type FarIconRelation = 'self' | 'friendly' | 'hostile' | 'neutral' | 'trader';
 
 /** Relationship of an entity to the local player, as the radar and contacts
- *  list read it: other pilots are friendly; a drone is hostile when its AI
+ *  list read it: `isOwn` = yours (the ship you fly or your fleet); other
+ *  pilots' ships (AI-flown too) are friendly; a drone is hostile when its AI
  *  targets you (`isHostileToLocal`), a trade hauler is a trader, else neutral. */
-export function farIconRelation(isLocal: boolean, isPlayer: boolean, hostile: boolean, shipKind: string | undefined): FarIconRelation {
-  if (isLocal) return 'self';
+export function farIconRelation(isOwn: boolean, isPlayer: boolean, hostile: boolean, shipKind: string | undefined): FarIconRelation {
+  if (isOwn) return 'self';
   if (isPlayer) return 'friendly';
   if (hostile) return 'hostile';
   return shipKind === 'trader-hauler' ? 'trader' : 'neutral';
@@ -80,8 +81,9 @@ export const DEFAULT_FAR_ICON_COLOURS: Readonly<FarIconColours> = {
   neutral: D.neutral.color,
   trader: D.trader.color,
 };
-/** Your own ship: white, apart from every relationship colour. */
-export const FAR_ICON_SELF_COLOUR = 0xffffff;
+/** Your own ships (the one you fly and your fleet): white, apart from every
+ *  relationship colour (shared with the radar, `OWN_SHIP_COLOUR`). */
+export const FAR_ICON_SELF_COLOUR = OWN_SHIP_COLOUR;
 
 /** Texture size (px) the chevron is painted at; scaled down to `sizePx`. */
 const ICON_TEX_PX = 32;
@@ -177,14 +179,14 @@ export class FarZoomIcons {
     const g = ++this.gen;
     let n = 0;
     for (const [id, ship] of mirror.ships) {
-      // ACTIVE ships only (#17): parked hulls had no far icon before RTS
-      // Part A S3. TODO(RTS Part A S6): far icons for AI-flown ships.
-      if (isParkedHull(mirror, id, ship)) continue;
+      // Every ship, ACTIVE and LINGERING (#17): a ship an AI pilot flies gets
+      // an icon like any ship (RTS Part A owner decision). Yours (the one you
+      // fly and your fleet) in the own colour, anyone else's as a pilot.
       const sprite = sprites.get(id);
       if (!sprite) continue;
       const radius = getShipKind(ship.kind ?? null).radius;
-      const isLocal = id === mirror.localPlayerId;
-      const colour = this.colourOf(farIconRelation(isLocal, !isLocal, false, ship.kind));
+      const own = isOwnedByMe(mirror, id, ship);
+      const colour = this.colourOf(farIconRelation(own, !own, false, ship.kind));
       if (this.apply(this.ships, id, sprite, radius, scale, colour, g)) n++;
     }
     if (mirror.swarm) {

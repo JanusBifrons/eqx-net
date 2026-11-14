@@ -3,9 +3,10 @@
  *
  * Runs on the room's ~5 Hz selection-stats timer and sends every OTHER fire
  * (~2 Hz). Each connected client gets the FULL status of the AI-flown ships
- * its player owns (`FleetCommandSubsystem.statusFor`) plus hull %, the
- * current morale roll, the move-order destination, the patrol route and the
- * escort target, as compact tuples (`shared-types/messages/fleetStatusMessages`).
+ * its player owns (`FleetCommandSubsystem.statusFor`) plus the move-order
+ * destination, the patrol route, the escort target and shield %, as compact
+ * tuples (`shared-types/messages/fleetStatusMessages`). Hull % is not sent
+ * (every client reads room-state `ShipState.health`); morale is not reported.
  *
  * Why a per-owner message, not a snapshot field (root invariant #16): the
  * snapshot is shared by everyone in interest, while a wingman's mode, orders
@@ -35,9 +36,8 @@ export interface FleetStatusStreamDeps {
   fleet: Pick<FleetCommandSubsystem, 'statusFor' | 'brainOf'>;
   /** Connected clients: call `cb(sessionId, playerId)` once per session. */
   forEachSession(cb: (sessionId: string, playerId: string) => void): void;
-  /** Hull 0..100 of `shipId`, or null when unknown. */
-  hullPct(shipId: string): number | null;
-  /** Shield 0..100 of `shipId`, or null when unknown (then not sent). */
+  /** Shield 0..100 of `shipId`, or null when unknown (then not sent). Shield
+   *  stays on this stream: no per-ship shield carrier exists for parked hulls. */
   shieldPct?(shipId: string): number | null;
   send(sessionId: string, msg: FleetStatusMessage): void;
   /** The id the OWNER's client knows a target / escort ship by (slice 4b: the
@@ -91,14 +91,12 @@ export class FleetStatusStream {
 
   private encode(r: FleetShipStatus, ownerId: string): FleetStatusTuple {
     const brain = this.deps.fleet.brainOf(r.id);
-    const hull = this.deps.hullPct(r.id);
     const order = r.order;
     let route: number[] | null = null;
     if (brain !== null && brain.mode === 'patrol' && brain.patrolRouteLength > 0) {
       route = [];
       for (let i = 0; i < brain.patrolRouteLength; i++) route.push(brain.patrolRouteX(i), brain.patrolRouteY(i));
     }
-    const morale = brain?.moraleOutcome ?? null;
     const shield = this.deps.shieldPct?.(r.id) ?? null;
     const t: FleetStatusTuple = [
       r.id,
@@ -106,8 +104,11 @@ export class FleetStatusStream {
       FLEET_STATUS_STANCES.indexOf(r.stance),
       FLEET_STATUS_ACTIVITIES.indexOf(r.activity),
       this.wire(ownerId, r.targetId),
-      hull === null ? 0 : Math.max(0, Math.min(100, Math.round(hull))),
-      morale === null ? -1 : morale,
+      // Slots 5 (hull) and 6 (morale) are RETIRED (RTS Part A): hull comes
+      // from room-state ShipState.health on every client, morale is not
+      // reported. The slots stay (append-only tuple) and are never filled.
+      null,
+      -1,
       r.squadId,
       order === null ? -1 : FLEET_STATUS_ORDERS.indexOf(order.kind),
       order !== null && order.kind === 'move' ? order.x : null,

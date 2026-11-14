@@ -378,9 +378,15 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
       _lastHelmCourseSeq = selFb.helmCourseSeq;
       gameClient.setHelmCourse(selFb.helmCourseX, selFb.helmCourseY);
     }
-    if (selFb.fleetSelSeq !== _lastFleetSelSeq) {
+    // THE selection (RTS Part A): the selected ships (`fleetSelIds`) and the
+    // focus (`selectedPickId/Kind`, the entity whose details panel shows) are
+    // ONE renderer-owned selection, mirrored into the ONE store shape in one
+    // write whenever either part moves (on change only).
+    const selId = selFb.selectedPickId;
+    const focusMoved = selId !== _lastPublishedSelectedId;
+    if (selFb.fleetSelSeq !== _lastFleetSelSeq || focusMoved) {
       _lastFleetSelSeq = selFb.fleetSelSeq;
-      useUIStore.getState().setFleetSelection(selFb.fleetSelIds);
+      useUIStore.getState().setSelection(selFb.fleetSelIds, selId, selFb.selectedPickKind);
     }
     // Squads + order markers for the renderer (posted only on a version move).
     lastFleetOverlayVersion = pushFleetOverlayModelIfChanged(renderer, lastFleetOverlayVersion);
@@ -427,11 +433,10 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
         useUIStore.getState().setFleetPick(null);
       }
     }
-    const selId = selFb.selectedPickId;
-    if (selId !== _lastPublishedSelectedId) {
+    if (focusMoved) {
+      // The focus moved: run the server stats stream for the new focus.
       _lastPublishedSelectedId = selId;
       const selKind = selFb.selectedPickKind;
-      useUIStore.getState().setSelectedEntity(selId, selKind);
       resetSelectionStats(); // drop stale numbers across a selection change
       if (selId === null) {
         sendDeselectEntity();

@@ -27,10 +27,11 @@ import type { Camera } from './worker/Camera';
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import { springStep, type SpringState } from '@core/math/CritDampedSpring';
 import { getShipKind } from '../../shared-types/shipKinds.js';
-import { isParkedHull } from './shipOwnership.js';
+import { isOwnedByMe } from './shipOwnership.js';
 import {
   defaultRadarPrefs,
   EMPTY_RADAR_INSETS,
+  OWN_SHIP_COLOUR,
   type RadarCategory,
   type RadarInsets,
   type RadarPrefs,
@@ -90,7 +91,6 @@ const CATEGORY_RANK: Record<RadarCategory, number> = {
   player: 1,
   neutral: 2,
   structure: 3,
-  lingering: 4,
   scrap: 5,
   asteroid: 6,
   loot: 4,
@@ -173,7 +173,6 @@ export class HaloRadar {
   private readonly partition: PartitionScratch = { result: [], wedges: new Map(), wedgeReps: [] };
   private readonly swarmKeys = new Map<number, string>();
   private readonly shipKeys = new Map<string, string>();
-  private readonly lingerKeys = new Map<string, string>();
   /** Fire-control lock keys (`s:<id>` / `p:<id>`), built once per id. */
   private readonly swarmLockKeys = new Map<number, string>();
   private readonly shipLockKeys = new Map<string, string>();
@@ -346,11 +345,12 @@ export class HaloRadar {
       }
     }
     if (cats.player.enabled) {
+      // Every ship, ACTIVE and LINGERING (#17): a ship an AI pilot flies is a
+      // ship like any other (RTS Part A owner decision). Your own fleet draws
+      // in the own colour; anyone else's ship in the player colour.
       for (const [id, sh] of mirror.ships) {
         if (id === localId) continue;
-        // Pilots' ACTIVE ships only; parked hulls are the 'lingering' category
-        // below (#17). TODO(RTS Part A S6): one category from the predicate.
-        if (isParkedHull(mirror, id, sh)) continue;
+        const colour = isOwnedByMe(mirror, id, sh) ? OWN_SHIP_COLOUR : cats.player.color;
         let key = this.shipKeys.get(id);
         if (key === undefined) { key = `ship:${id}`; this.shipKeys.set(id, key); }
         const r = getShipKind(sh.kind).radius;
@@ -363,29 +363,7 @@ export class HaloRadar {
             if (lk === undefined) { lk = `p:${id}`; this.shipLockKeys.set(id, lk); }
             tint = radarLockTint(lk, lockGroups, lockedBy);
           }
-          writeCandidate(raw, n++, key, sh.x, sh.y, 'player', cats.player.color, dist, r, tint);
-        }
-      }
-    }
-    if (cats.lingering.enabled) {
-      for (const [id, sh] of mirror.ships) {
-        // LINGERING hulls only (#17); same ship list since RTS Part A S3.
-        if (!isParkedHull(mirror, id, sh)) continue;
-        let key = this.lingerKeys.get(id);
-        if (key === undefined) { key = `linger:${id}`; this.lingerKeys.set(id, key); }
-        const r = getShipKind(sh.kind).radius;
-        if (this.consider(key, sh.x, sh.y, r, refX, refY, W, H, s, maxRange, hyst, frameId)) {
-          const dist = Math.hypot(sh.x - refX, sh.y - refY);
-          if (dist < closest) closest = dist;
-          // Another player's AI-flown ship is lockable like any player's
-          // ship (`p:<shipInstanceId>`): tint it by your locks on it too.
-          let tint = LOCK_TINT_NONE;
-          if (anyLocks) {
-            let lk = this.shipLockKeys.get(id);
-            if (lk === undefined) { lk = `p:${id}`; this.shipLockKeys.set(id, lk); }
-            tint = radarLockTint(lk, lockGroups, lockedBy);
-          }
-          writeCandidate(raw, n++, key, sh.x, sh.y, 'lingering', cats.lingering.color, dist, r, tint);
+          writeCandidate(raw, n++, key, sh.x, sh.y, 'player', colour, dist, r, tint);
         }
       }
     }
@@ -459,9 +437,10 @@ export class HaloRadar {
       const cat = c.cat ?? 'neutral';
       const cp = cats[cat];
       const glow = cat === 'hostile' && prefs.hostileGlow;
-      // A lock mark (`c.marked`) carries its tint in `c.color`; a wedge rep
-      // inherits it from its nearest member only if that member is marked.
-      const color = c.marked === true ? c.color : cp.color;
+      // A contact carries its own colour in `c.color`: the category colour,
+      // the own colour for your fleet (RTS Part A), or a lock mark's tint. A
+      // wedge group icon draws in its category colour.
+      const color = c.marked === true || c.grouped !== true ? c.color : cp.color;
       trackPoint(this.param[k]!, track, this.pt);
       let entry = this.icons.get(c.key);
       if (!entry) {

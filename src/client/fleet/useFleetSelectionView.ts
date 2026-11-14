@@ -4,11 +4,12 @@
  * singleton) and names from the render mirror, recomputed only when the
  * selection or the status version changes.
  */
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { WingmanMode, WingmanStance } from '@core/ai/wingman/types';
 import { useUIStore } from '../state/store.js';
 import { getGameClient } from '../net/clientSingleton.js';
-import { getFleetStatus, useFleetStatusVersion, type FleetStatusRow } from './fleetStatus.js';
+import { shipHullPct } from '../net/shipSchemaHealth.js';
+import { FLEET_STATUS_POLL_MS, getFleetStatus, useFleetStatusVersion, type FleetStatusRow } from './fleetStatus.js';
 import { describeActivity, fleetShipName, fleetTargetName, sharedValue } from './fleetView.js';
 import { fleetCommands, type FleetCommands } from './fleetCommands.js';
 
@@ -33,22 +34,26 @@ export interface FleetSelectionView {
 }
 
 export function useFleetSelectionView(): FleetSelectionView {
-  const ids = useUIStore((s) => s.fleetSelection);
+  const ids = useUIStore((s) => s.selection.ids);
   const inGame = useUIStore((s) => s.phase === 'game');
   const commandView = useUIStore((s) => s.pilotMode === 'spectator');
   const active = inGame && commandView && ids.length > 0;
   const version = useFleetStatusVersion(active);
+  // Hull lives on the mirror ship entries (room-state health, RTS Part A),
+  // not in the status rows: poll it at the same cadence.
+  const hulls = useSelectedHullSignature(ids, active);
   return useMemo(() => {
     const rows: (FleetStatusRow | undefined)[] = ids.map((id) => getFleetStatus(id));
     const mirror = getGameClient()?.mirror;
     const ships = ids.map((id, i) => {
       const row = rows[i];
+      const hullPct = shipHullPct(mirror?.ships.get(id));
       return {
         id,
         name: fleetShipName(mirror, id),
-        hullPct: row ? Math.round(row.hullPct) : null,
+        hullPct,
         shieldPct: row?.shieldPct !== undefined ? Math.round(row.shieldPct) : null,
-        activity: describeActivity(row, fleetTargetName(mirror, row?.targetId ?? null)),
+        activity: describeActivity(row, fleetTargetName(mirror, row?.targetId ?? null), hullPct),
       };
     });
     return {
@@ -59,8 +64,29 @@ export function useFleetSelectionView(): FleetSelectionView {
       stance: sharedValue(rows.map((r) => r?.stance)),
       squadId: squadOf(rows),
     };
-    // `version` is the poll signal: re-read the singleton when it moves.
-  }, [ids, active, version]);
+    // `version` / `hulls` are the poll signals: re-read when either moves.
+  }, [ids, active, version, hulls]);
+}
+
+/** The selected ships' hull %s as one string (the memo's poll signal). */
+function hullSignature(ids: readonly string[]): string {
+  const mirror = getGameClient()?.mirror;
+  let s = '';
+  for (const id of ids) s += `${shipHullPct(mirror?.ships.get(id)) ?? '-'},`;
+  return s;
+}
+
+/** Re-read the selected ships' hull every {@link FLEET_STATUS_POLL_MS} while
+ *  `active`; commits a React update only when a hull % moved. */
+function useSelectedHullSignature(ids: readonly string[], active: boolean): string {
+  const [sig, setSig] = useState(() => hullSignature(ids));
+  useEffect(() => {
+    if (!active) return;
+    setSig(hullSignature(ids));
+    const handle = window.setInterval(() => setSig(hullSignature(ids)), FLEET_STATUS_POLL_MS);
+    return () => window.clearInterval(handle);
+  }, [ids, active]);
+  return sig;
 }
 
 /** The squad all the rows share; 'mixed' if some are in a squad and not all the

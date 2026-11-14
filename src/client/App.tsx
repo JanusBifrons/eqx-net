@@ -537,7 +537,7 @@ function GameSurface({
       (vx, vy) => rendererRef.current?.setPanVelocity(vx, vy),
       () => {
         // RTS "hold": stop the current fleet selection (no-op when empty).
-        const ids = useUIStore.getState().fleetSelection;
+        const ids = useUIStore.getState().selection.ids;
         if (ids.length > 0) sendFleetOrder([...ids], { kind: 'stop' });
       },
     );

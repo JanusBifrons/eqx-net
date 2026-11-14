@@ -40,7 +40,7 @@ function ownFleet(): void {
 
 describe('PilotSpectatorToggle — Command / Fly (RTS slice 10)', () => {
   beforeEach(() => {
-    useUIStore.setState({ phase: 'game', pilotMode: 'pilot', isDead: false, fleetSelection: [] });
+    useUIStore.setState({ phase: 'game', pilotMode: 'pilot', isDead: false, selection: { ids: [], focusId: null, focusKind: null } });
     vi.mocked(sendPilotShip).mockReset();
     vi.mocked(sendCommand).mockReset();
   });
@@ -76,7 +76,7 @@ describe('PilotSpectatorToggle — Command / Fly (RTS slice 10)', () => {
   });
 
   it('Fly with ONE own ship selected takes that ship at once (no menu)', () => {
-    useUIStore.setState({ pilotMode: 'spectator', fleetSelection: ['ship-3'] });
+    useUIStore.setState({ pilotMode: 'spectator', selection: { ids: ['ship-3'], focusId: null, focusKind: null } });
     ownFleet();
     render(<PilotSpectatorToggle />);
     fireEvent.click(screen.getByTestId('pilot-toggle'));
@@ -85,7 +85,7 @@ describe('PilotSpectatorToggle — Command / Fly (RTS slice 10)', () => {
   });
 
   it('Fly with a foreign ship selected falls back to the menu (never flies it)', () => {
-    useUIStore.setState({ pilotMode: 'spectator', fleetSelection: ['ship-2'] });
+    useUIStore.setState({ pilotMode: 'spectator', selection: { ids: ['ship-2'], focusId: null, focusKind: null } });
     ownFleet();
     render(<PilotSpectatorToggle />);
     fireEvent.click(screen.getByTestId('pilot-toggle'));

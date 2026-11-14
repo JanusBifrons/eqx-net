@@ -69,6 +69,12 @@ export interface ShipRenderState {
    *  pilot's playerId) carries it so a re-key (taking or letting go of the
    *  controls) finds the entry it moves (`net/shipRekey.ts`). */
   shipInstanceId?: string;
+  /** RTS Part A step 8: the room-state `ShipState.health` / `maxHealth`,
+   *  copied by `syncMirror` for every ship (pilot- or AI-flown). The fleet
+   *  panel's hull % reads these (`net/shipSchemaHealth.ts`). Absent until the
+   *  schema brings them. Discrete scalars, never spatial (#2). */
+  health?: number;
+  maxHealth?: number;
 }
 
 /**
@@ -953,7 +959,7 @@ export interface RendererFeedback {
    * owns the selected entity (set on a gameplay tap that resolves to an
    * entity via `pickEntityAt`, toggled off on re-tap, cleared on empty-space
    * tap) and publishes its id here so the main thread can mirror it into the
-   * discrete Zustand `selectedEntityId` (panel visibility). `null` when nothing
+   * discrete Zustand `selection.focusId` (panel visibility). `null` when nothing
    * is selected. The id form matches the `HealthBarManager` lookup convention:
    * `playerId` for a ship, `swarm-<entityId>` for a drone/structure. Non-spatial
    * / UI-affordance surface — not consumed by gameplay logic.

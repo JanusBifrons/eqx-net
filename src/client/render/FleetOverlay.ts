@@ -1,6 +1,5 @@
 import { Container, Graphics } from 'pixi.js';
 import type { FleetOverlayShip, RenderMirror } from '@core/contracts/IRenderer';
-import { getShipKind } from '@shared-types/shipKinds';
 import type { BoxRect, HoldArmed } from './input/commandPointerRouter.js';
 import type { FleetPickState } from './input/fleetPick.js';
 
@@ -9,7 +8,6 @@ import type { FleetPickState } from './input/fleetPick.js';
  *
  * ONE screen-space `Graphics` (one draw call, draw-call budget) cleared and
  * redrawn each frame with:
- *  - a ring around every selected own ship,
  *  - the drag-selection box (screen px),
  *  - a short-lived flash at the latest order point,
  *  - an expanding ring at a touch held long enough to draw a box (slice 12),
@@ -17,23 +15,21 @@ import type { FleetPickState } from './input/fleetPick.js';
  *    the attack target's current pose, to the escorted ship, and the patrol
  *    route loop; capped at {@link MAX_ORDER_SEGMENTS} per frame.
  * Nothing is created per ship. Hidden when there is nothing to draw.
+ * Selected ships themselves are marked by `SelectionBracket` (RTS Part A:
+ * one selection, one marker style); this overlay draws no ship marker.
  *
  * Positions are resolved from the mirror (game space, y up) and projected to
  * screen through the injected `project` (pixi-world in, so y is negated).
  */
-const RING_COLOR = 0x7dff9a;
 const BOX_COLOR = 0x7dff9a;
 const MOVE_FLASH_COLOR = 0x7dff9a;
 const ATTACK_FLASH_COLOR = 0xff5a4a;
-const RING_PAD = 6;
-const MIN_RING_PX = 8;
 export const ORDER_FLASH_MS = 450;
 /** Hold cue: ring grows from HOLD_RING_R0 by HOLD_RING_GROW px over HOLD_RING_MS. */
 export const HOLD_RING_MS = 300;
 const HOLD_RING_R0 = 18;
 const HOLD_RING_GROW = 14;
 const HOLD_COLOR = 0x7dff9a;
-const SHIP_FALLBACK_RADIUS = 20;
 const ORDER_LINE_COLOR = 0x7dff9a;
 const ATTACK_LINE_COLOR = 0xff5a4a;
 const DEST_DOT_PX = 3;
@@ -112,11 +108,6 @@ export class FleetOverlay {
   private readonly _from = { x: 0, y: 0 };
   private readonly _game = { x: 0, y: 0 };
   private _segments = 0;
-  /** First ring drawn in the last update: its ship id and screen centre (test/diag hook). */
-  lastRingId: string | null = null;
-  readonly lastRing = { x: NaN, y: NaN };
-  /** Rings drawn in the last update (test/diag hook). */
-  lastRingCount = 0;
   /** The hold-to-box cue was drawn in the last update (test/diag hook). */
   lastHoldCue = false;
   /** Order segments drawn in the last update (test/diag hook). */
@@ -137,7 +128,6 @@ export class FleetOverlay {
     flash: OrderFlash,
     nowMs: number,
     project: ProjectFn,
-    zoom: number,
     /** Touch held past the box threshold (screen px), or null. */
     hold: HoldArmed | null = null,
     /** Own ships' squads + orders by id (slice 15a), or null. */
@@ -151,39 +141,21 @@ export class FleetOverlay {
     this.lastHoldCue = hold !== null;
     const routeCount = pick !== null && pick.kind === 'patrol' ? pick.count : 0;
     this.lastPickPoints = routeCount;
-    if (selected.size === 0 && box === null && !flashLive && hold === null && routeCount === 0) {
+    const hasOrders = orders !== null && orders.size > 0 && selected.size > 0;
+    if (!hasOrders && box === null && !flashLive && hold === null && routeCount === 0) {
       if (g.visible) {
         g.clear();
         g.visible = false;
       }
-      this.lastRingCount = 0;
-      this.lastRingId = null;
       this.lastOrderSegments = 0;
       return;
     }
     g.clear();
     g.visible = true;
     const s = this._scratch;
-    let rings = 0;
-    for (const id of selected) {
-      let x: number;
-      let y: number;
-      let kind: string | undefined;
-      const ship = mirror.ships.get(id);
-      if (ship === undefined) continue;
-      x = ship.x; y = ship.y; kind = ship.kind;
-      project(x, -y, s);
-      const r = Math.max(MIN_RING_PX, ((getShipKind(kind)?.radius ?? SHIP_FALLBACK_RADIUS) + RING_PAD) * zoom);
-      g.circle(s.x, s.y, r);
-      if (rings === 0) { this.lastRingId = id; this.lastRing.x = s.x; this.lastRing.y = s.y; }
-      rings++;
-    }
-    if (rings > 0) g.stroke({ width: 1.5, color: RING_COLOR, alpha: 0.9 });
-    else this.lastRingId = null;
-    this.lastRingCount = rings;
 
     this._segments = 0;
-    if (orders !== null && orders.size > 0 && selected.size > 0) {
+    if (hasOrders) {
       // Two passes, one stroke each: friendly lines, then attack lines.
       this.drawOrders(g, mirror, selected, orders, project, false);
       this.drawOrders(g, mirror, selected, orders, project, true);

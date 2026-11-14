@@ -17,7 +17,6 @@ function harness(owned: Record<string, FleetShipStatus[]>, brains: Record<string
       brainOf: (id: string) => (brains[id] as WingmanBehaviour | undefined) ?? null,
     },
     forEachSession: (cb) => { for (const [s, p] of sessions) cb(s, p); },
-    hullPct: (id) => (id === 'gone' ? null : 42.4),
     send: (sessionId, msg) => sent.push({ sessionId, msg }),
   });
   return { stream, sent };
@@ -46,9 +45,13 @@ describe('FleetStatusStream', () => {
     expect(FleetStatusMessageSchema.safeParse(forA).success).toBe(true);
     const ra = forA.s.map(decodeFleetStatusRow);
     expect(ra).toEqual([{
-      id: 'h1', mode: 'defend', stance: 'defensive', activity: 'guarding', targetId: null, hullPct: 42,
-      moraleOutcome: 'fallBack', squadId: 'sq-1', orderKind: 'move', orderX: 10, orderY: -5,
+      id: 'h1', mode: 'defend', stance: 'defensive', activity: 'guarding', targetId: null,
+      squadId: 'sq-1', orderKind: 'move', orderX: 10, orderY: -5,
     }]);
+    // Hull and morale are retired (RTS Part A): never filled, even with a
+    // morale roll on the brain. Hull reaches clients as room-state health.
+    expect(forA.s[0]![5]).toBeNull();
+    expect(forA.s[0]![6]).toBe(-1);
     const rb = forB.s.map(decodeFleetStatusRow);
     expect(rb.map((r) => r.id)).toEqual(['h2']);
     expect(rb[0]!.escortId).toBe('a');
@@ -59,7 +62,6 @@ describe('FleetStatusStream', () => {
     const stream = new FleetStatusStream({
       fleet: { statusFor: () => [status('h1')], brainOf: () => null },
       forEachSession: (cb) => cb('s', 'a'),
-      hullPct: () => 100,
       shieldPct: () => 39.6,
       send: (sessionId, msg) => sent.push({ sessionId, msg }),
     });

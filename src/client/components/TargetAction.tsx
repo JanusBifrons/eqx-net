@@ -15,8 +15,8 @@ import { groupColourHex } from '../hud/groupColours';
 const LOCKABLE = new Set(['ship', 'lingering', 'drone', 'structure']);
 
 export function TargetAction({ isOwn }: { isOwn: boolean }): JSX.Element | null {
-  const kind = useUIStore((s) => s.selectedEntityKind);
-  const selected = useUIStore((s) => s.selectedEntityId);
+  const kind = useUIStore((s) => s.selection.focusKind);
+  const selected = useUIStore((s) => s.selection.focusId);
   const groups = useUIStore((s) => s.fcGroups);
   const active = useUIStore((s) => s.activeGroupId);
   const client = getGameClient();

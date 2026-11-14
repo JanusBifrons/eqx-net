@@ -3013,10 +3013,6 @@ export class SectorRoom extends Room<SectorState> {
           if (pid !== undefined) cb(c.sessionId, pid);
         }
       },
-      hullPct: (id) => {
-        const s = this.state.ships.get(id);
-        return s && s.maxHealth > 0 ? (s.health / s.maxHealth) * 100 : null;
-      },
       shieldPct: (id) => {
         const s = this.state.ships.get(id);
         if (!s) return null;

@@ -10,8 +10,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const storeState = vi.hoisted(() => ({
   clientReadySent: true,
   phase: 'game',
-  setSelectedEntity: vi.fn(),
-  setFleetSelection: vi.fn(),
+  setSelection: vi.fn(),
   setFleetPick: vi.fn(),
   setFleetPickPoints: vi.fn(),
 }));

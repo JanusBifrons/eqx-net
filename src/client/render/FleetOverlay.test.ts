@@ -1,7 +1,8 @@
 /**
  * Lock for `FleetOverlay` (RTS slice 13a): ONE Graphics for the whole overlay
- * (draw-call budget), rings per selected own ship, the drag box, a fading
- * order flash, and hidden when there is nothing to draw.
+ * (draw-call budget), the drag box, a fading order flash, the hold cue, and
+ * hidden when there is nothing to draw. Selected ships are marked by
+ * `SelectionBracket`, never here (RTS Part A: one selection, one marker).
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { RenderMirror } from '@core/contracts/IRenderer';
@@ -49,21 +50,19 @@ describe('FleetOverlay', () => {
   });
 
   it('is hidden with nothing selected, no box and no flash', () => {
-    ov.update(m, new Set(), null, noFlash(), 1000, identity, 1);
+    ov.update(m, new Set(), null, noFlash(), 1000, identity);
     expect(gfxOf(ov).visible).toBe(false);
   });
 
-  it('draws one ring per resolvable selected ship at its projected (pixi y-down) pose', () => {
-    ov.update(m, new Set(['me', 'hull-1', 'gone']), null, noFlash(), 1000, identity, 1);
+  it('draws no ship marker of its own: selected ships alone leave it hidden (RTS Part A, one marker = SelectionBracket)', () => {
+    ov.update(m, new Set(['me', 'hull-1']), null, noFlash(), 1000, identity);
     const g = gfxOf(ov);
-    expect(g.visible).toBe(true);
-    expect(ov.lastRingCount).toBe(2);
-    expect(g.circle.mock.calls[0]!.slice(0, 2)).toEqual([10, -20]);
-    expect(g.circle.mock.calls[1]!.slice(0, 2)).toEqual([-5, -5]);
+    expect(g.visible).toBe(false);
+    expect(g.circle).not.toHaveBeenCalled();
   });
 
   it('draws the drag box in screen space', () => {
-    ov.update(m, new Set(), { x0: 50, y0: 40, x1: 10, y1: 100 }, noFlash(), 1000, identity, 1);
+    ov.update(m, new Set(), { x0: 50, y0: 40, x1: 10, y1: 100 }, noFlash(), 1000, identity);
     const g = gfxOf(ov);
     expect(g.visible).toBe(true);
     expect(g.rect).toHaveBeenCalledWith(10, 40, 40, 60);
@@ -71,34 +70,34 @@ describe('FleetOverlay', () => {
 
   it('shows the order flash for ORDER_FLASH_MS, then hides', () => {
     const flash: OrderFlash = { x: 3, y: 4, attack: true, t0: 1000 };
-    ov.update(m, new Set(), null, flash, 1000 + ORDER_FLASH_MS / 2, identity, 1);
+    ov.update(m, new Set(), null, flash, 1000 + ORDER_FLASH_MS / 2, identity);
     expect(gfxOf(ov).visible).toBe(true);
     expect(gfxOf(ov).circle.mock.calls[0]!.slice(0, 2)).toEqual([3, -4]);
-    ov.update(m, new Set(), null, flash, 1000 + ORDER_FLASH_MS + 1, identity, 1);
+    ov.update(m, new Set(), null, flash, 1000 + ORDER_FLASH_MS + 1, identity);
     expect(gfxOf(ov).visible).toBe(false);
   });
 
   it('clears and redraws every frame while visible (single Graphics)', () => {
-    const sel = new Set(['me']);
-    ov.update(m, sel, null, noFlash(), 1000, identity, 1);
-    ov.update(m, sel, null, noFlash(), 1016, identity, 1);
+    const box = { x0: 0, y0: 0, x1: 10, y1: 10 };
+    ov.update(m, new Set(), box, noFlash(), 1000, identity);
+    ov.update(m, new Set(), box, noFlash(), 1016, identity);
     expect(gfxOf(ov).clear).toHaveBeenCalledTimes(2);
   });
 
   it('draws the hold-to-box cue as an expanding ring at the finger, with nothing else on', () => {
-    ov.update(m, new Set(), null, noFlash(), 1000, identity, 1, { x: 70, y: 80, armedMs: 0 });
+    ov.update(m, new Set(), null, noFlash(), 1000, identity, { x: 70, y: 80, armedMs: 0 });
     const g = gfxOf(ov);
     expect(g.visible).toBe(true);
     expect(ov.lastHoldCue).toBe(true);
     const r0 = g.circle.mock.calls[0]![2] as number;
     expect(g.circle.mock.calls[0]!.slice(0, 2)).toEqual([70, 80]);
-    ov.update(m, new Set(), null, noFlash(), 1100, identity, 1, { x: 70, y: 80, armedMs: HOLD_RING_MS });
+    ov.update(m, new Set(), null, noFlash(), 1100, identity, { x: 70, y: 80, armedMs: HOLD_RING_MS });
     const r1 = g.circle.mock.calls[1]![2] as number;
     expect(r1).toBeGreaterThan(r0);
     // capped once fully grown
-    ov.update(m, new Set(), null, noFlash(), 1200, identity, 1, { x: 70, y: 80, armedMs: HOLD_RING_MS * 5 });
+    ov.update(m, new Set(), null, noFlash(), 1200, identity, { x: 70, y: 80, armedMs: HOLD_RING_MS * 5 });
     expect(g.circle.mock.calls[2]![2]).toBe(r1);
-    ov.update(m, new Set(), null, noFlash(), 1300, identity, 1, null);
+    ov.update(m, new Set(), null, noFlash(), 1300, identity, null);
     expect(g.visible).toBe(false);
     expect(ov.lastHoldCue).toBe(false);
   });

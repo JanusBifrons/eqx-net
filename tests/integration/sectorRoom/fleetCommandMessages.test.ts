@@ -81,7 +81,7 @@ describe('SectorRoom integration — fleet command messages + fleet_status (RTS 
     const order = internals.fleet.brainOf(shipId)!.order;
     expect(order?.kind, 'the owner order is accepted').toBe('move');
 
-    // Status: A gets its hull with the move destination; B gets an empty list.
+    // Status: A gets its ship with the move destination; B gets an empty list.
     internals.sendFleetStatus();
     await harness.advance(100);
     const lastA = statusA.at(-1)!;
@@ -89,7 +89,10 @@ describe('SectorRoom integration — fleet command messages + fleet_status (RTS 
     expect(lastA[0]!.orderKind).toBe('move');
     expect(lastA[0]!.orderX).toBe(800);
     expect(lastA[0]!.orderY).toBe(0);
-    expect(lastA[0]!.hullPct).toBeGreaterThan(0);
+    // Hull is not on this stream any more (RTS Part A): every client reads it
+    // from room state; the parked hull's schema health is live there.
+    expect('hullPct' in lastA[0]!).toBe(false);
+    expect(state.ships.get(shipId)!.health).toBeGreaterThan(0);
     for (const rows of statusB) expect(rows.find((r) => r.id === shipId), 'B never hears about A’s hull').toBeUndefined();
     // B parks its own hull too: B's stream lists exactly that hull, never A's.
     let shipB = '';
