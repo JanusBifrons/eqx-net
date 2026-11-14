@@ -58,6 +58,7 @@ import {
   MANOEUVRE_FALL_BACK,
   MANOEUVRE_FLEE,
   MANOEUVRE_HOLD,
+  PARKED_SPEED_FRAC,
   type IManoeuvre,
   type ManoeuvreGoal,
   type ManoeuvreId,
@@ -223,8 +224,6 @@ const FACE_MOVE_MIN_SPEED = 0.25;
 const HIT_HALF_LIFE_TICKS = 60;
 /** Ally / enemy counts read at decision time within this × fire range. */
 const COUNT_RANGE_MUL = 1.5;
-/** A target counts as moving (it has a heading) above this share of our cruise. */
-const ASPECT_MIN_SPEED_FRAC = 0.1;
 /** A fleeing ship warps out this many × its sensor range along its escape
  *  heading (well clear of the fight it ran from; #18: sensor range follows
  *  the ship's fire range). */
@@ -328,6 +327,8 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     y: number;
     vx: number;
     vy: number;
+    /** Facing (rad), NaN when unknown (structures, views without it). */
+    angle: number;
     health?: number;
     maxHealth?: number;
     priority: number;
@@ -735,7 +736,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     for (const p of view.players) {
       let c = cand[n];
       if (!c) {
-        c = { id: '', x: 0, y: 0, vx: 0, vy: 0, priority: 0, ship: true, hostile: false };
+        c = { id: '', x: 0, y: 0, vx: 0, vy: 0, angle: NaN, priority: 0, ship: true, hostile: false };
         cand[n] = c;
       }
       c.id = p.id;
@@ -743,6 +744,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       c.y = p.y;
       c.vx = p.vx;
       c.vy = p.vy;
+      c.angle = p.angle ?? NaN;
       c.health = p.health;
       c.maxHealth = p.maxHealth;
       c.priority = 0;
@@ -762,7 +764,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       for (const s of structs) {
         let c = cand[n];
         if (!c) {
-          c = { id: '', x: 0, y: 0, vx: 0, vy: 0, priority: 0, ship: true, hostile: false };
+          c = { id: '', x: 0, y: 0, vx: 0, vy: 0, angle: NaN, priority: 0, ship: true, hostile: false };
           cand[n] = c;
         }
         c.id = s.id;
@@ -770,6 +772,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
         c.y = s.y;
         c.vx = 0;
         c.vy = 0;
+        c.angle = NaN;
         c.health = s.health;
         c.maxHealth = s.maxHealth;
         c.priority = s.priority;
@@ -795,7 +798,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
         if (!h) continue;
         let c = cand[n];
         if (!c) {
-          c = { id: '', x: 0, y: 0, vx: 0, vy: 0, priority: 0, ship: true, hostile: false };
+          c = { id: '', x: 0, y: 0, vx: 0, vy: 0, angle: NaN, priority: 0, ship: true, hostile: false };
           cand[n] = c;
         }
         c.id = s.id;
@@ -803,6 +806,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
         c.y = s.y;
         c.vx = s.vx;
         c.vy = s.vy;
+        c.angle = s.angle ?? NaN;
         c.health = s.health;
         c.maxHealth = s.maxHealth;
         c.priority = 0;
@@ -1235,8 +1239,11 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     // d(dist)/dt = (v_target − v_self)·u; closing is its negative.
     c.closing = -((target.vx - self.vx) * ux + (target.vy - self.vy) * uy);
     const ts = Math.hypot(target.vx, target.vy);
-    c.targetAspectCos = ts > ASPECT_MIN_SPEED_FRAC * this.handling.cruiseSpeed ? -(target.vx * ux + target.vy * uy) / ts : 0;
+    c.targetAspectCos = ts > PARKED_SPEED_FRAC * this.handling.cruiseSpeed ? -(target.vx * ux + target.vy * uy) / ts : 0;
     c.threatBearingCos = c.fwdX * ux + c.fwdY * uy;
+    // The same bearing from the target's side: its nose vs target → me.
+    const ta = (target as { angle?: number }).angle;
+    c.targetBowCos = ta === undefined || Number.isNaN(ta) ? 1 : Math.sin(ta) * ux - Math.cos(ta) * uy;
     const hp = self.health;
     c.hullFrac = hp === undefined ? 1 : Math.max(0, Math.min(1, hp / this.kind.maxHealth));
     c.holdAlong = along;

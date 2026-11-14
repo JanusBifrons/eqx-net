@@ -100,7 +100,7 @@ export function runAiTick(ctx: AiTickCtx): void {
     const pose = ctx.shipPoseCache.get(pid);
     if (!pose) continue;
     ctx.aiPlayerScratch.push({
-      id: pid, x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy,
+      id: pid, x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy, angle: pose.angle,
       health: ship.health, maxHealth: ship.maxHealth,
       // P2 — robot truce (robot rep ≥ ROBOT_TRUCE_AT): no on-sight engagement.
       truce: ctx.hasTruce?.(pid) === true,

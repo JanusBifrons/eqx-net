@@ -41,6 +41,7 @@ import {
   MANOEUVRE_HOLD,
   MANOEUVRE_TAIL,
 } from '../../../src/core/ai/tactics/manoeuvre.js';
+import { MORALE_OUTCOME } from '../../../src/core/ai/tactics/morale.js';
 
 const SAMPLE_MS = 50;
 const FIGHT_MS = 20_000;
@@ -86,6 +87,10 @@ async function fight(harness: SectorTestHarness, perSide: number, label: string)
   expect(ids.length).toBe(2 * perSide);
   for (const id of ids) room._internals.swarmHealth.set(id, 1e9);
   const brains = new Map(ids.map((id) => [id, room.aiController.getBehaviour(id) as HostileDroneBehaviour]));
+  // Endless nerve too (as in dogfight.test.ts): this suite is about the
+  // dogfight, and a burst of hits would roll the morale die and a fleeing ship
+  // would warp out of it. Morale has its own suite (moraleManoeuvres.test.ts).
+  for (const b of brains.values()) b.setMoraleRoll(() => MORALE_OUTCOME.FightOn);
 
   const hist = new Array<number>(MANOEUVRE_COUNT).fill(0);
   const prev = new Map<string, { x: number; y: number; angle: number }>();

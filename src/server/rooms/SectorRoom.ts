@@ -4754,7 +4754,7 @@ export class SectorRoom extends Room<SectorState> {
       if (!pose) continue;
       out.push({
         id: shipInstanceId, ownerId: ship.playerId,
-        x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy,
+        x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy, angle: pose.angle,
         health: ship.health, maxHealth: ship.maxHealth,
       });
     }
@@ -4763,7 +4763,7 @@ export class SectorRoom extends Room<SectorState> {
   /** Allegiances P0 — pooled per-tick swarm-combatant views (never reallocated
    *  once grown, #14). Targeting only. */
   private readonly _swarmViewPool: Array<{
-    id: string; x: number; y: number; vx: number; vy: number;
+    id: string; x: number; y: number; vx: number; vy: number; angle: number;
     allegiance: string; health?: number; maxHealth?: number; radius: number;
   }> = [];
   private readonly aiSwarmScratch: AiSwarmView[] = [];
@@ -4815,7 +4815,7 @@ export class SectorRoom extends Room<SectorState> {
       const b = slotBase(rec.slot);
       let v = pool[n];
       if (!v) {
-        v = { id: '', x: 0, y: 0, vx: 0, vy: 0, allegiance: 'drones', radius: 0 };
+        v = { id: '', x: 0, y: 0, vx: 0, vy: 0, angle: 0, allegiance: 'drones', radius: 0 };
         pool[n] = v;
       }
       v.id = rec.id;
@@ -4823,6 +4823,7 @@ export class SectorRoom extends Room<SectorState> {
       v.y = this.sabF32[b + SLOT_Y_OFF]!;
       v.vx = this.sabF32[b + SLOT_VX_OFF]!;
       v.vy = this.sabF32[b + SLOT_VY_OFF]!;
+      v.angle = this.sabF32[b + SLOT_ANGLE_OFF]!;
       v.allegiance = allegianceOfKind(rec.shipKind);
       v.health = this.swarmHealth.get(rec.id);
       v.maxHealth = getShipKind(rec.shipKind).maxHealth;

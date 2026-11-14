@@ -81,6 +81,9 @@ export interface TacticalContext {
   targetAspectCos: number;
   /** cos(my nose, self → target): −1 when the target sits right behind me. */
   threatBearingCos: number;
+  /** cos(the target's nose, target → self): +1 when it points straight at me.
+   *  1 when its facing is unknown (assume its guns may bear). */
+  targetBowCos: number;
   // Weapons and handling.
   fireRange: number;
   cruiseSpeed: number;
@@ -130,7 +133,7 @@ export function makeTacticalContext(): TacticalContext {
     x: 0, y: 0, vx: 0, vy: 0, angle: 0, fwdX: 0, fwdY: 1,
     tx: 0, ty: 0, tvx: 0, tvy: 0, targetIsShip: true,
     dist: 0, ux: 0, uy: 0, aimX: 0, aimY: 0, leadAngle: 0, offBoresight: 0,
-    closing: 0, targetAspectCos: 0, threatBearingCos: 0,
+    closing: 0, targetAspectCos: 0, threatBearingCos: 0, targetBowCos: 1,
     fireRange: 1, cruiseSpeed: 1, maxSpeed: 1, overshoot: 1,
     hullFrac: 1, recentHits: 0, recentBlocks: 0, allies: 0, enemies: 0,
     bandMin: 0, bandMax: 1, turretHalfArc: 0, sensorRange: 1,
@@ -138,6 +141,28 @@ export function makeTacticalContext(): TacticalContext {
     holdAlong: 0, holdBoost: false,
     rng: new Rng(1),
   };
+}
+
+/** A target moving slower than this share of MY cruise speed is parked: it
+ *  has no heading, no six to sit on, and cannot be tailing me (~14 u/s for a
+ *  fighter at cruise ~141 u/s; a pilot who lets go of the stick drifts under
+ *  it within seconds of linear damping). */
+export const PARKED_SPEED_FRAC = 0.1;
+
+/** Is the target parked (below `PARKED_SPEED_FRAC` × my cruise)? */
+export function targetParked(ctx: TacticalContext): boolean {
+  const v = PARKED_SPEED_FRAC * ctx.cruiseSpeed;
+  return ctx.tvx * ctx.tvx + ctx.tvy * ctx.tvy <= v * v;
+}
+
+/** A ship's guns bear on what sits within this cos of its bow (~60°): the
+ *  heavy-fire Break rule's arc (`HEAVY_FIRE_BOW_COS`), applied from either
+ *  side. */
+export const GUNS_BEAR_COS = 0.5;
+
+/** Is the target's bow on me (am I inside its forward arc)? */
+export function targetAimsAtMe(ctx: TacticalContext): boolean {
+  return ctx.targetBowCos >= GUNS_BEAR_COS;
 }
 
 /** Uniform float in [0, 1) from the context's stream. */

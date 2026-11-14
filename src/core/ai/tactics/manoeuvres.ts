@@ -18,6 +18,8 @@ import {
   MANOEUVRE_HOLD,
   MANOEUVRE_TAIL,
   rngUnit,
+  targetAimsAtMe,
+  targetParked,
   type IManoeuvre,
   type ManoeuvreGoal,
   type TacticalContext,
@@ -58,8 +60,12 @@ const TAIL_ARRIVE = 0.5;
 const TAIL_BOOST_RANGE = 1.5;
 /** Least speed while off the station, × cruise (a tail never hovers). */
 const TAIL_MIN_SPEED = 0.8;
-/** The target counts as moving above this share of our cruise speed. */
-const MOVING_FRAC = 0.1;
+/** Parked target looking elsewhere: closer than this share of the circle
+ *  distance (`TAIL_BEHIND` × fire range) the ship flies the circle course
+ *  outward first, and puts its nose on the target only once back past the
+ *  EXIT share (hysteresis), as a pilot opens out after a collision. */
+export const TAIL_EXTEND_ENTER = 0.6;
+export const TAIL_EXTEND_EXIT = 0.9;
 /** In fire range the nose stays on the lead while the wanted course is
  *  within this cos of the target line (60°). */
 const TAIL_AIM_COS = Math.cos(AIM_CONE);
@@ -78,17 +84,19 @@ export class TailManoeuvre implements IManoeuvre {
   /** Last goal's wanted velocity (test-visible). */
   wantVx = 0;
   wantVy = 0;
-  begin(): void { /* stateless */ }
+  /** Opening out from a parked target before turning the guns on it. */
+  extending = false;
+  begin(): void { this.extending = false; }
   writeGoal(ctx: TacticalContext, maps: ContextMaps, out: ManoeuvreGoal): void {
     const R = ctx.fireRange;
-    const tSpeed = Math.hypot(ctx.tvx, ctx.tvy);
-    if (ctx.targetIsShip && tSpeed <= MOVING_FRAC * ctx.cruiseSpeed) {
+    if (ctx.targetIsShip && targetParked(ctx)) {
       this.circle(ctx, maps, out);
       return;
     }
+    const tSpeed = Math.hypot(ctx.tvx, ctx.tvy);
     let bx: number;
     let by: number;
-    if (ctx.targetIsShip && tSpeed > MOVING_FRAC * ctx.cruiseSpeed) {
+    if (ctx.targetIsShip) {
       bx = -ctx.tvx / tSpeed;
       by = -ctx.tvy / tSpeed;
     } else {
@@ -151,11 +159,24 @@ export class TailManoeuvre implements IManoeuvre {
   isDone(): boolean { return false; }
 
   /**
-   * A (nearly) stopped ship has no six: circle it at `TAIL_BEHIND × fireRange`
-   * at the floor speed, round the side the nose already points to, steering in
-   * or out by the range error. Sending the ship to a station straight back
-   * out on its own side (the old rule) made a close pair turn in place nose to
-   * nose, stopped, for seconds (toe to toe; on-sight integration 2026-11-13).
+   * A parked ship (`targetParked`) has no six: circle it at `TAIL_BEHIND ×
+   * fireRange` at the floor speed, round the side the nose already points to,
+   * steering in or out by the range error. Sending the ship to a station
+   * straight back out on its own side (the old rule) made a close pair turn in
+   * place nose to nose, stopped, for seconds (toe to toe; on-sight integration
+   * 2026-11-13). Facing in fire range (owner decision 2026-11-14):
+   *  - the target's bow is OFF me (`targetAimsAtMe` false): nose on the lead
+   *    and shoot. A parked ship looking elsewhere is the easiest shot there
+   *    is; a nose flying the circle never fired at it (npcFireLanes: fighters
+   *    on a parked pilot circled it nose-out). Thrust and reverse along the
+   *    nose hold the range; the circle's tangent is only carried momentum.
+   *    Well inside the circle distance (`TAIL_EXTEND_ENTER`) it first flies
+   *    the circle course outward: turning in place to aim at a ship it just
+   *    collided with left both stopped nose-off for seconds (dogfight 1v1
+   *    toe to toe on 5 / 18 runs, 2026-11-14).
+   *  - its bow is ON me: keep circling (nose on the lead only while the course
+   *    runs within 60° of it), so two stopped ships facing each other never
+   *    settle into a nose-to-nose stand-off (dogfight 1v1: no Break, one pass).
    */
   private circle(ctx: TacticalContext, maps: ContextMaps, out: ManoeuvreGoal): void {
     const R = ctx.fireRange;
@@ -171,8 +192,18 @@ export class TailManoeuvre implements IManoeuvre {
     this.wantVy = ctx.tvy + dy * speed;
     addInterestToward(maps, this.wantVx, this.wantVy, 1, GOAL_SHAPE);
     out.speed = Math.hypot(this.wantVx, this.wantVy);
-    out.facing = ctx.dist <= R && (this.wantVx * ctx.ux + this.wantVy * ctx.uy) / out.speed > TAIL_AIM_COS
-      ? FACE_AIM_LEAD : FACE_MOVE;
+    const ring = TAIL_BEHIND * R;
+    if (this.extending) {
+      if (ctx.dist > TAIL_EXTEND_EXIT * ring) this.extending = false;
+    } else if (ctx.dist < TAIL_EXTEND_ENTER * ring) {
+      this.extending = true;
+    }
+    if (ctx.dist > R) out.facing = FACE_MOVE;
+    else if (!targetAimsAtMe(ctx)) out.facing = this.extending ? FACE_MOVE : FACE_AIM_LEAD;
+    else {
+      out.facing = (this.wantVx * ctx.ux + this.wantVy * ctx.uy) / out.speed > TAIL_AIM_COS
+        ? FACE_AIM_LEAD : FACE_MOVE;
+    }
     out.boost = false;
   }
 }

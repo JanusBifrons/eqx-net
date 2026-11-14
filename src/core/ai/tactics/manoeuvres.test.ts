@@ -18,7 +18,15 @@ import {
   type IManoeuvre,
   type TacticalContext,
 } from './manoeuvre.js';
-import { AttackRunManoeuvre, BreakManoeuvre, HoldManoeuvre, TAIL_BEHIND, TailManoeuvre } from './manoeuvres.js';
+import {
+  AttackRunManoeuvre,
+  BreakManoeuvre,
+  HoldManoeuvre,
+  TAIL_BEHIND,
+  TAIL_EXTEND_ENTER,
+  TAIL_EXTEND_EXIT,
+  TailManoeuvre,
+} from './manoeuvres.js';
 
 const R = 800;
 const CRUISE = 150;
@@ -99,15 +107,55 @@ describe('TailManoeuvre', () => {
     const c = ctxAt(0, 0, 0, 500, { tvx: 0, tvy: 140 });
     run(new TailManoeuvre(), c);
     expect(goal.facing).toBe(FACE_AIM_LEAD);
-    // Circling a slow target in range: a ship thrusts only along its nose, so
-    // a nose held on the target cannot fly the circle (the filmed robots that
-    // "barely move, keep facing the drones"). It flies the course.
-    const c1 = ctxAt(0, 0, 0, TAIL_BEHIND * R, { vx: 10, vy: 0 });
-    run(new TailManoeuvre(), c1);
-    expect(goal.facing).toBe(FACE_MOVE);
     // Out of range: the course.
     const c2 = ctxAt(0, 0, 0, 1.2 * R, { tvx: 140, tvy: 0 });
     run(new TailManoeuvre(), c2);
+    expect(goal.facing).toBe(FACE_MOVE);
+  });
+  it('a parked target looking elsewhere: guns on it in range, not the circle nose-out', () => {
+    // A parked pilot has no six; circling it with the nose along the course
+    // never fired at it (npcFireLanes, 2026-11-14). Its bow is off me (I sit
+    // behind it): nose on the lead in range.
+    const t = new TailManoeuvre();
+    run(t, ctxAt(0, 0, 0, TAIL_BEHIND * R, { vx: 10, vy: 0, targetBowCos: -1 }));
+    expect(goal.facing).toBe(FACE_AIM_LEAD);
+    run(t, ctxAt(0, 0, 0, 0.95 * R, { vx: 10, vy: 0, targetBowCos: 0.4 }));
+    expect(goal.facing).toBe(FACE_AIM_LEAD);
+    // Out of range it still flies its course in.
+    run(t, ctxAt(0, 0, 0, 1.2 * R, { vx: 10, vy: 0, targetBowCos: -1 }));
+    expect(goal.facing).toBe(FACE_MOVE);
+  });
+  it('too close to a parked target looking elsewhere: opens out first, then turns the guns on it', () => {
+    // After a collision both ships sit nearly stopped and nose-off; turning in
+    // place to aim kept them toe to toe for seconds (dogfight 1v1, 2026-11-14).
+    const ring = TAIL_BEHIND * R;
+    const t = new TailManoeuvre();
+    t.begin();
+    const d = run(t, ctxAt(0, 0, 0, 0.3 * ring, { vx: 10, vy: 0, targetBowCos: -1 }));
+    expect(goal.facing).toBe(FACE_MOVE);
+    expect(d.dirY).toBeLessThan(0); // the course opens the range (target is +y)
+    expect(goal.speed).toBeCloseTo(0.8 * CRUISE, 5);
+    // Still opening between ENTER and EXIT (hysteresis)…
+    run(t, ctxAt(0, 0, 0, 0.5 * (TAIL_EXTEND_ENTER + TAIL_EXTEND_EXIT) * ring, { vx: 10, vy: 0, targetBowCos: -1 }));
+    expect(goal.facing).toBe(FACE_MOVE);
+    // …guns on once past EXIT, and they stay on back inside it.
+    run(t, ctxAt(0, 0, 0, 1.05 * TAIL_EXTEND_EXIT * ring, { vx: 10, vy: 0, targetBowCos: -1 }));
+    expect(goal.facing).toBe(FACE_AIM_LEAD);
+    run(t, ctxAt(0, 0, 0, 0.5 * (TAIL_EXTEND_ENTER + TAIL_EXTEND_EXIT) * ring, { vx: 10, vy: 0, targetBowCos: -1 }));
+    expect(goal.facing).toBe(FACE_AIM_LEAD);
+  });
+  it('a parked target aimed at me: keeps circling (no nose-to-nose stand-off)', () => {
+    // Two stopped ships facing each other must not both sit still and trade
+    // fire (the toe to toe #565 removed; dogfight 1v1 lost every Break and
+    // all but one pass with it, 2026-11-14). Bow on me: fly the circle.
+    const t = new TailManoeuvre();
+    const d = run(t, ctxAt(0, 0, 0, TAIL_BEHIND * R, { vx: 10, vy: 0, targetBowCos: 1 }));
+    expect(goal.facing).toBe(FACE_MOVE);
+    expect(Math.abs(d.dirY)).toBeLessThan(0.3);
+    // Just inside its arc (~60°) counts; unknown facing (default) counts too.
+    run(t, ctxAt(0, 0, 0, TAIL_BEHIND * R, { vx: 10, vy: 0, targetBowCos: 0.55 }));
+    expect(goal.facing).toBe(FACE_MOVE);
+    run(t, ctxAt(0, 0, 0, TAIL_BEHIND * R, { vx: 10, vy: 0 }));
     expect(goal.facing).toBe(FACE_MOVE);
   });
 });

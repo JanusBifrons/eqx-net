@@ -15,6 +15,7 @@ import {
   MANOEUVRE_ORBIT,
   MANOEUVRE_TAIL,
   makeTacticalContext,
+  PARKED_SPEED_FRAC,
   type TacticalContext,
 } from './manoeuvre.js';
 import {
@@ -31,11 +32,13 @@ import {
 const R = 800;
 const FIGHTER = roleProfile('fighter');
 
-/** dN = dist / R; aspect = targetAspectCos; bearing = threatBearingCos. */
+/** dN = dist / R; aspect = targetAspectCos; bearing = threatBearingCos. The
+ *  target flies at 100 u/s (2/3 cruise) unless `extra` says otherwise. */
 function ctx(dN: number, aspect = 0, bearing = 1, extra: Partial<TacticalContext> = {}): TacticalContext {
   const c = makeTacticalContext();
   c.fireRange = R;
   c.cruiseSpeed = 150;
+  c.tvy = 100;
   c.dist = dN * R;
   c.targetAspectCos = aspect;
   c.threatBearingCos = bearing;
@@ -67,6 +70,21 @@ describe('scoreManoeuvres', () => {
   });
   it('a ship just passed and flying away is not "tailing" me', () => {
     expect(isTailed(ctx(0.4, -0.9, -0.9))).toBe(false);
+  });
+  it('a parked ship in my rear cone is not "tailing" me: no Break from circling it', () => {
+    // A Tail circling a stopped pilot puts it behind me on every lap; with it
+    // counted as tailing, fighters flipped Tail / Break every 0.5–1 s and
+    // never fired (npcFireLanes, 2026-11-14). The brain reports aspect 0 for
+    // a target under PARKED_SPEED_FRAC × cruise.
+    const parked = ctx(0.4, 0, -0.9, { tvx: 0, tvy: 0.5 * PARKED_SPEED_FRAC * 150 });
+    expect(isTailed(parked)).toBe(false);
+    scoreManoeuvres(parked, FIGHTER, s);
+    expect(s[MANOEUVRE_BREAK]).toBe(0);
+    // Moving just above the threshold, the same geometry is a threat.
+    expect(isTailed(ctx(0.4, 0, -0.9, { tvx: 0, tvy: 1.5 * PARKED_SPEED_FRAC * 150 }))).toBe(true);
+    // A parked ship that is actually hitting me from off the bow still breaks me.
+    scoreManoeuvres(ctx(0.4, 0, -0.9, { tvx: 0, tvy: 0, recentHits: 6 }), FIGHTER, s);
+    expect(argmax(s)).toBe(MANOEUVRE_BREAK);
   });
   it('heavy fire from off the bow breaks; from dead ahead it fights back', () => {
     scoreManoeuvres(ctx(0.5, 0, 0, { recentHits: 6 }), FIGHTER, s);

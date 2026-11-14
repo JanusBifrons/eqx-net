@@ -17,6 +17,10 @@ export interface AiPlayerView {
   readonly y: number;
   readonly vx: number;
   readonly vy: number;
+  /** Facing (rad; forward (-sin, cos)). Optional: absent = unknown. The
+   *  dogfight layer reads it to tell a parked target aimed at the drone from
+   *  one that is not (`TacticalContext.targetBowCos`). Server-populated. */
+  readonly angle?: number;
   /** Current hull health + its max, for health-weighted target selection
    *  (drones focus the wounded). Optional — when absent the picker falls back
    *  to pure nearest. Server-populated; the client never builds drone views
@@ -63,6 +67,8 @@ export interface AiSwarmView {
   readonly y: number;
   readonly vx: number;
   readonly vy: number;
+  /** Facing (rad; forward (-sin, cos)). Optional: absent = unknown. */
+  readonly angle?: number;
   /** The entity's NPC allegiance (derived from its ship kind). */
   readonly allegiance: string;
   readonly health?: number;

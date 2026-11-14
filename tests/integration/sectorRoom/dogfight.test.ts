@@ -20,7 +20,8 @@
  *    stationary (< 0.25 × cruise speed: the kind's `maxSpeed` is the boost
  *    clamp, ~4× cruise, so a share of it would count a cruising ship as
  *    stopped) less than 20 % of the time;
- *  - a ship with a hostile sitting on its tail breaks within 1 s.
+ *  - a ship with a hostile on its tail (already flying: a parked ship never
+ *    tails) breaks within 1 s.
  * Ships fly only with player controls (virtual pilot); nothing here pushes them.
  */
 import { describe, it, expect, afterEach } from 'vitest';
@@ -51,7 +52,7 @@ interface Room {
   applyDamage: (t: string, s: string, ...rest: unknown[]) => void;
 }
 
-async function boot(poses: Array<{ kind: string; x: number; y: number; angle: number }>) {
+async function boot(poses: Array<{ kind: string; x: number; y: number; angle: number; vx?: number; vy?: number }>) {
   const harness = await bootSectorTestServer({
     sectorKey: null,
     droneCount: 0,
@@ -164,9 +165,11 @@ describe('SectorRoom integration — NPC dogfight (AI slice 4)', () => {
   });
 
   it('a ship with a hostile on its tail breaks within 1 s', { timeout: 60_000 }, async () => {
-    // B ahead, nose +y (angle 0); A 300 u behind it, nose on B's six.
+    // B ahead, nose +y (angle 0); A 300 u behind it, nose on B's six, already
+    // flying at it at 70 u/s (about half a fighter's cruise): a parked ship
+    // never tails (2026-11-14), so a tailer staged at rest would not be one.
     const s = await boot([
-      { kind: KIND_A, x: 0, y: -300, angle: 0 },
+      { kind: KIND_A, x: 0, y: -300, angle: 0, vx: 0, vy: 70 },
       { kind: KIND_B, x: 0, y: 0, angle: 0 },
     ]);
     harness = s.harness;

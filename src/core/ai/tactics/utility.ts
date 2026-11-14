@@ -22,7 +22,9 @@ import {
   MANOEUVRE_HOLD,
   MANOEUVRE_KITE,
   MANOEUVRE_ORBIT,
+  GUNS_BEAR_COS,
   MANOEUVRE_TAIL,
+  targetParked,
   type ManoeuvreId,
   type TacticalContext,
 } from './manoeuvre.js';
@@ -50,13 +52,16 @@ export const TAILED_COS = -0.5;
 export const TAILED_RANGE = 1.1;
 /** …and it is not flying away from me (cos(its velocity, it → me) above
  *  this; a ship I have just passed opens the range and is no threat). A
- *  barely moving target counts (aspect 0): its guns may still bear. */
+ *  parked target (`targetParked`) never tails me: a Tail circling a stopped
+ *  pilot puts it in my rear cone on every lap, and breaking from it flipped
+ *  Tail / Break every 0.5–1 s with no shot fired (npcFireLanes, 2026-11-14).
+ *  A parked ship that actually shoots me still breaks me via heavy fire. */
 export const TAILED_ASPECT_COS = -0.2;
 /** Recent hits that count as heavy fire; it only breaks a ship whose
  *  attacker is off its bow (cos below this, ~60°): one it can shoot back at
  *  it fights. */
 export const HEAVY_HITS = 4;
-export const HEAVY_FIRE_BOW_COS = 0.5;
+export const HEAVY_FIRE_BOW_COS = GUNS_BEAR_COS;
 /** Hold's share of the role's stand-off weights (orbit / kite), scaled by
  *  (1 − aggression): a reckless role does not park. Orbit and Kite score their
  *  full weight (slice 6b), so a stand-off role prefers them and Hold stays the
@@ -91,7 +96,7 @@ export function decisionDue(tick: number, slot: number, lod: boolean): boolean {
 /** Is the target behind me within reach (the Break trigger)? */
 export function isTailed(ctx: TacticalContext): boolean {
   return ctx.targetIsShip && ctx.threatBearingCos < TAILED_COS && ctx.dist < TAILED_RANGE * ctx.fireRange
-    && ctx.targetAspectCos > TAILED_ASPECT_COS;
+    && ctx.targetAspectCos > TAILED_ASPECT_COS && !targetParked(ctx);
 }
 
 /** Raw scores (before jitter / stickiness) into `out[MANOEUVRE_COUNT]`. */

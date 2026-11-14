@@ -102,8 +102,9 @@ describe('HostileDroneBehaviour — dogfight decision layer (slice 4)', () => {
   it('a tailed fighter breaks after the decision cadence plus its reaction time, not before', () => {
     const b = new HostileDroneBehaviour(KB);
     b.markHostile('a', 0);
-    // A sits 300 u behind B (B's nose +y), barely moving.
-    const A = { id: 'a', x: 0, y: -300, vx: 0, vy: 0, allegiance: 'drones' };
+    // A sits 300 u behind B (B's nose +y), flying at it (a parked ship never
+    // tails: see the next test).
+    const A = { id: 'a', x: 0, y: -300, vx: 0, vy: 60, allegiance: 'drones' };
     const reaction = roleProfile(KB.aiRole).reactionTicks;
     let decidedAt = -1;
     let brokeAt = -1;
@@ -116,5 +117,21 @@ describe('HostileDroneBehaviour — dogfight decision layer (slice 4)', () => {
     }
     expect(decidedAt).toBeGreaterThan(0);
     expect(brokeAt - decidedAt).toBe(reaction);
+  });
+  it("reads the target's facing from the view into targetBowCos (unknown = aimed at me)", () => {
+    const bowCos = (angle: number | undefined): number => {
+      const b = new HostileDroneBehaviour(KB);
+      b.markHostile('a', 0);
+      // A parked 300 u north of B.
+      const A: AiSwarmView = { id: 'a', x: 0, y: 300, vx: 0, vy: 0, allegiance: 'drones', ...(angle === undefined ? {} : { angle }) };
+      b.tick({ id: 'b', x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 },
+        { players: [], tick: 1, dtSec: 1 / 60, swarms: [A], neighbours: NO_NB });
+      return (b as unknown as { _tac: { targetBowCos: number } })._tac.targetBowCos;
+    };
+    // Forward is (-sin, cos): angle π points A south, at B.
+    expect(bowCos(Math.PI)).toBeCloseTo(1, 5);
+    expect(bowCos(0)).toBeCloseTo(-1, 5);
+    expect(bowCos(Math.PI / 2)).toBeCloseTo(0, 5);
+    expect(bowCos(undefined)).toBe(1);
   });
 });
