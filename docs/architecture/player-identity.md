@@ -99,6 +99,16 @@ call-site changes. Logout clears the account key.
   server-side.
 - Takeover is per-server-process (all rooms are in one process today).
 
+## Client rules in detail
+
+Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each rule and points here.
+
+### Durable Identity
+
+- `playerId` is persisted in `localStorage` as `eqxPlayerId`. Read at bootstrap, sent in the `identify` handshake.
+- **PR 3a (2026-10-31): while logged in, the playerId is the ACCOUNT's** (`eqxAccountPlayerId`, from auth responses' `user.playerId` + the room `welcome`). `loadStoredPlayerId()` returns it while a token is stored, else the anonymous `eqxPlayerId`; logout clears it. Always go through `identity/token.ts` — never read `eqxPlayerId` directly. The server ignores the claim for a logged-in join anyway. See [docs/architecture/player-identity.md](player-identity.md).
+- Never reuse Colyseus `sessionId` as a durable identifier — it rotates on every reconnect. `playerId` is what lets Phase 8 Limbo reconciliation work.
+
 ## Server implementation notes
 
 > Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.
@@ -116,3 +126,7 @@ call-site changes. Logout clears the account key.
 ## History
 
 - Account binding of `playerId` landed in PR 3a (2026-10-31); its server rules section in `src/server/CLAUDE.md` was headed "Player identity is ACCOUNT-bound (PR 3a, 2026-10-31)".
+
+### Phase 6a foundation (2026-05-13)
+
+`SnapshotMessage.states` is now keyed by `shipInstanceId` on the wire (was `playerId` pre-6a) and each entry carries `playerId` + `isActive` so the client can recover owner identity + skip lingering hulls. **The mirror, predWorld, and reconciler remain playerId-keyed internally** — `ColyseusClient.handleSnapshot` translates the wire format to a playerId-keyed local view at the top of the function (C-ii strategy). Render / HUD / radar code is unchanged. `isActive === false` entries (Phase 6b lingering hulls — not yet emitted by the server) are filtered out at the translation boundary so they're invisible to existing snapshot-apply logic until 6b chooses to surface them. The server's `state.ships` MapSchema also stays keyed by playerId in 6a; only `SnapshotMessage` and the future Phase 6b schema-rekey use shipInstanceId as the key.

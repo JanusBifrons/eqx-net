@@ -43,3 +43,12 @@ A defence structure that seeds a base's approaches with proximity mines (plan so
   - a friendly pilot parked on a mine is safe;
   - mines leave with the layer.
 - `growBase.test.ts`: only strongholds and citadels mine their approaches.
+
+## Client rules in detail
+
+Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each rule and points here.
+
+### Mines (Mine Layer)
+
+- `mirror.mines` is filled ONLY from room state `mines` by `ColyseusClient.syncMines` (in place, generation sweep, alloc-free once rows exist). `ConnectorRenderer.drawMines` draws each on the per-frame layer: the trigger ring plus a blinking canister, cyan for own and red for anyone else's.
+- `mine_detonated` pushes a `pendingMissileExplosions` entry (`missileId: -1`) for the blast. It is an accelerator: the mine leaving room state is the truth.
