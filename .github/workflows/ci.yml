@@ -153,12 +153,22 @@ jobs:
   # test (single-threaded, no isolation — see the config's header for the
   # tinypool/decorator/node:sqlite rationale). Separated from the unit job
   # because it has a different pool configuration and a distinct failure
-  # surface (wire format, broadcast gates, schema diff). Its own required
-  # status check.
-  integration-tests:
+  # surface (wire format, broadcast gates, schema diff).
+  #
+  # SHARDED 4 ways on separate runners (one serial suite took ~19.5 min against
+  # a 20-min timeout and set every PR's wall clock). Separate runners, never
+  # parallel vitest processes in one job: the harness picks random ports and
+  # the tests are timing-sensitive. `--shard` splits by file; the longest file
+  # is ~70 s. The required check is the `integration-tests` summary job below,
+  # so the ruleset is unchanged; Auto-retry re-runs only a failed shard.
+  integration-shard:
     needs: changes
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -173,14 +183,40 @@ jobs:
       - name: Install dependencies
         if: needs.changes.outputs.code == 'true'
         run: pnpm install --frozen-lockfile
-      - name: Integration tests
+      - name: Integration tests (shard ${{ matrix.shard }}/4)
         if: needs.changes.outputs.code == 'true'
-        run: pnpm run test:integration
+        run: pnpm run test:integration --shard=${{ matrix.shard }}/4
       # The real-scale naval range switch (EQX_NAVAL_RANGE=real) needs its own
       # run: the catalogue is built once per process (real-scale-ranges.md).
+      # ~1 min; rides on shard 1.
       - name: Integration tests (real naval ranges)
-        if: needs.changes.outputs.code == 'true'
+        if: needs.changes.outputs.code == 'true' && matrix.shard == 1
         run: pnpm run test:naval-real
+
+  # The REQUIRED `integration-tests` check: passes only if every shard passed
+  # (a docs-only PR's shards succeed after skipping their steps). Fail-closed
+  # on any failure, cancellation or skip, like the netgate summary job.
+  integration-tests:
+    needs: [changes, integration-shard]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Resolve integration result
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          SHARDS_RESULT: ${{ needs.integration-shard.result }}
+        run: |
+          set -euo pipefail
+          if [ "$CHANGES_RESULT" != "success" ]; then
+            echo "integration-tests FAILED: the changes filter broke (result=$CHANGES_RESULT)"
+            exit 1
+          fi
+          if [ "$SHARDS_RESULT" != "success" ]; then
+            echo "integration-tests FAILED: shard result=$SHARDS_RESULT (see the integration-shard jobs)"
+            exit 1
+          fi
+          echo "integration-tests PASS (all 4 shards)"
 
   # Heap-delta suite (`vitest.gc.config.ts`: forks pool + --expose-gc, strictly
   # serial). Locks invariant #14 (no hot-loop allocation) for the pooled
