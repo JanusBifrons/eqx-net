@@ -25,6 +25,8 @@ export interface ShipArtCtx {
   sunAz: number;
   /** Machined turrets (new effects): ringed hull / deck bakes and baked guns. */
   turrets?: boolean;
+  /** Ship livery treatment (`?livery=`, look R&D); absent = today's paint. */
+  livery?: import('./artMode.js').LiveryTreatment;
 }
 
 /** The handle a ship should use now (re-acquired only on a kind/paint change). */

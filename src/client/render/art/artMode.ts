@@ -15,6 +15,9 @@ import { defaultLightingPreset, lightingFromSearch, presetSettings, type Lightin
 
 export type ArtMode = 'classic' | 'machined';
 
+/** Ship livery look treatments under trial (`?livery=`). */
+export type LiveryTreatment = 'a' | 'b' | 'c';
+
 export interface ArtOptions {
   mode: ArtMode;
   /** Test-only bake delay (`?artDelayMs=`). */
@@ -29,6 +32,8 @@ export interface ArtOptions {
    *  guns, scrap (and per settings structures and rocks) lit live from maps
    *  instead of baked sun frames. Absent = today's baked art. */
   lighting?: LightingSettings;
+  /** Ship livery treatment (`?livery=a|b|c`, look R&D). Absent = today's paint. */
+  livery?: LiveryTreatment;
 }
 
 export const ART_OFF: ArtOptions = { mode: 'classic' };
@@ -44,7 +49,15 @@ export function resolveArtMode(search: string, isAutomation: boolean, saved: Art
   const explicit = readArtMode(search);
   const sl = readShipLight(search);
   if (explicit === null && sl !== null && sl !== 'baked') return 'machined';
+  // A livery is drawn on Machined art only: asking for one implies Machined.
+  if (explicit === null && readLivery(search) !== undefined) return 'machined';
   return explicit ?? saved ?? (isAutomation ? 'classic' : 'machined');
+}
+
+/** `?livery=a|b|c|off` ('off' = none), else undefined. */
+export function readLivery(search: string): LiveryTreatment | undefined {
+  const m = /[?&]livery=(a|b|c|off)\b/.exec(search);
+  return m && m[1] !== 'off' ? (m[1] as LiveryTreatment) : undefined;
 }
 
 /** `?shiplight=gpu|high|medium|low|baked` (gpu = high), or null. */

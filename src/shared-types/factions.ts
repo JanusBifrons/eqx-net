@@ -320,3 +320,42 @@ export const PlayerFactionsViewSchema = z.object({
   policy: PlayerPolicyWireSchema,
 });
 export type PlayerFactionsView = z.infer<typeof PlayerFactionsViewSchema>;
+
+// ── Ship liveries ───────────────────────────────────────────────────────────
+
+/** FNV-1a 32-bit of a string (unsigned). Local copy: shared-types stays free of core. */
+function fnv1a(s: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
+/**
+ * The player livery palette: 12 hues 30° apart (offset 15° so none lands on
+ * the pure primaries), saturation 0.6, lightness 0.55 — reads on grey hulls.
+ */
+export const PLAYER_LIVERY: readonly number[] = Object.freeze(
+  Array.from({ length: 12 }, (_, i) => hslToRgb(15 + i * 30, 0.6, 0.55)),
+);
+
+function liverySlot(id: FactionId): number {
+  return fnv1a(id) % PLAYER_LIVERY.length;
+}
+
+/** The single colour authority for a faction's ships: an NPC faction's own
+ *  colour (drones, robots, traders included), else a player's palette slot. */
+export function teamColorOf(id: FactionId): number {
+  const def = NPC_FACTIONS.get(id);
+  if (def) return def.color;
+  return PLAYER_LIVERY[liverySlot(id)]!;
+}
+
+/** A deterministic 16-bit sigil seed for a faction's ship markings. */
+export function teamSigilOf(id: FactionId): number {
+  const h = fnv1a(id);
+  if (NPC_FACTIONS.has(id)) return h & 0xffff;
+  return ((liverySlot(id) << 12) | ((h >>> 16) & 0x0fff)) & 0xffff;
+}
