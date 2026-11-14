@@ -202,7 +202,7 @@ Several Claude sessions run on this machine at once. So:
 ## Showcase video (`pnpm showcase`) — a feature adds a shot
 
 **Before filming or reviewing a clip, read [docs/architecture/showcase-pipeline.md](docs/architecture/showcase-pipeline.md)** ("Filming and review rules"; camera: [cinematic-camera.md](docs/architecture/cinematic-camera.md)).
-- A new player-facing feature ships with a shot, or a reasoned `SHOWCASE_EXEMPT`/`SHOWCASE_PENDING` entry in `showcase/registry.ts` (`tests/unit/showcaseCoverage.test.ts` fails CI otherwise).
+- A new player-facing feature ships with a shot, or a reasoned `SHOWCASE_EXEMPT`/`SHOWCASE_PENDING` entry in `showcase/registry.ts` (`tests/unit/showcaseCoverage.test.ts` fails CI otherwise). A docs page that will never be filmed exempts itself with `<!-- showcase-exempt: <reason> -->` near its top, so a docs PR stays markdown-only.
 - Record the game as it is: never hide UI or effects, re-stage, or change behaviour only for a clip; the follow camera while piloting, a pan only in spectator mode, no test cue during the take. Fix genuine bugs (failing test first); "poor video" findings go to the owner as notes.
 - Clips film the full HUD (no `cleanworld`) and the player's look (`PLAYER_LOOK`).
 - A hostile reviewer checks every clip (full-res frames at key moments + the clip's goal) before the user sees it; send it straight away, as finished if it passes, else labelled WIP with the caveats; then fix and re-film.
