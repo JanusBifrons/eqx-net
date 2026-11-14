@@ -508,8 +508,10 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   private readonly handling: PilotHandling;
   /** Virtual-pilot state (reaction latch), owned per drone. */
   private readonly _pilot: PilotState = makePilotState();
-  /** Boost energy (server-only): the kind's pool, regenerated each tick and
-   *  spent per boosted tick with the shared `Energy.ts` helpers, as a pilot's. */
+  /** Ship energy (server-only): the kind's pool, regenerated each tick and
+   *  spent per boosted tick AND per weapon slot trigger (`trySpendEnergy`,
+   *  called by the fire resolvers) with the shared `Energy.ts` helpers, as a
+   *  pilot's. */
   private energy: number;
   private readonly energyMax: number;
   private readonly energyRegen: number;
@@ -2005,7 +2007,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     return out;
   }
 
-  /** Test-visible: the NPC's boost energy pool. */
+  /** Test-visible: the ship's energy pool (boost AND weapons). */
   getEnergy(): number { return this.energy; }
 
   /** Test-visible: ticks flown with the afterburner lit. */
@@ -2029,6 +2031,18 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     out.y = this._aimY;
     return true;
   }
+
+  /** Spend `cost` from the ship's one energy pool if it can pay (a player's
+   *  `canAfford` → `spendEnergy`); false ⇒ nothing spent. The fire resolvers
+   *  call this per slot trigger, so guns and boost share the pool. */
+  trySpendEnergy(cost: number): boolean {
+    if (!canAfford(this.energy, cost)) return false;
+    this.energy = spendEnergy(this.energy, cost);
+    return true;
+  }
+
+  /** The pool as a 0..1 fraction of the kind's `energyMax` (for tactics). */
+  getEnergyFrac(): number { return this.energyMax > 0 ? this.energy / this.energyMax : 0; }
 
   // ── Line-of-fire feedback (friendly fire; plan composed-harbor §4) ──────
   // The room's LineOfFireGate held this NPC's shot because a friendly body

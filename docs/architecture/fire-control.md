@@ -246,6 +246,14 @@ Full story: [docs/architecture/fire-control.md](fire-control.md). There is ONE H
 - **NPC capital turrets engage hostile STRUCTURES too** (2026-11-10): the candidates are the pilots plus the room's per-tick hostile-structure set (`hostileStructures` dep → `hostileStructureCircles`, built by `fillStructureTargets`), still filtered by the drone's `hostileTo`. A structure target is gated by the TURRET's own lock (`droneMountLocks`, `stepLock` per tick with that mount size's `WEAPON_LOCK_PROFILE`, its gun's reach, the hull's `sensorFor`, the structure's radius as signature; uncapped: a heavy gun locks a small structure slowly, a sub-capital gun past `maxSeconds` skips it in its search). Before this a capital could not fire at a structure at all (it never fires as a hull). Locks: `capitalLockGate.test.ts`, `tests/integration/sectorRoom/coastalDuel.test.ts`.
 - **Not yet gated:** a drone shot at a non-pilot target (an NPC or structure) that strays into a pilot.
 
+### AI pilot weapon energy
+
+Owner rule 2026-11-13: "Ships turning, acceleration, weapons, everything is related to the ship, regardless of pilot." An AI pilot's ship pays a player's energy for boost AND weapons from ONE server-only pool on its brain (`HostileDroneBehaviour`: the kind's `energyMax ?? 100` / `energyRegenRate ?? 0.25`, the numbers a player's ship of that kind has; an authored `energyMax` is already doubled by `ENERGY_POOL_MUL`). `IAiBehaviour.trySpendEnergy(cost)` is the one spend seam; `getEnergyFrac()` is for the brain's tactics.
+
+- **Sub-capitals** (`AiFireResolver.resolve`): the slot trigger pays `resolveSlotEnergyCost` once, after every fire gate (lock, line of fire, a barrel that bears inside the pilot's hull cone `AiIntent.fire.cone`, cooldown), so energy is spent only by a shot that actually fires. A short pool refuses the shot and spends no cooldown, as `PlayerFireResolver` does.
+- **Capital turrets** (`fireMount`): each mount pays the player capital's per-mount share (slot cost / mounts); a refusal returns false and `WeaponMountTicker` keeps the reload.
+- Locks: `ai/HostileDroneBehaviour.energy.test.ts`, `AiFireResolver.test.ts` (energy gate), `tests/unit/capitalFireCadence.test.ts`, `tests/integration/sectorRoom/npcWeaponEnergy.test.ts`.
+
 ### From the server Thresholds section
 
 Moved verbatim from the old "Thresholds" section of `src/server/CLAUDE.md`. The rules stay there in short form; current values are in [server-thresholds](server-thresholds.md). Dates, plan names and "was" notes below are history.
