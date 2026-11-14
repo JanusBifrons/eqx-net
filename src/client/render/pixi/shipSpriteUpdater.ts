@@ -50,6 +50,11 @@ export interface ShipSpriteCtx {
   seenScratch: Set<string>;
 }
 
+/** The ship kind each active-ship sprite was built for (dies with the
+ *  sprite). The renderer reads it when the ship dies, after its mirror entry
+ *  is gone (a dying capital is held until its wreck is drawn). */
+export const shipSpriteKinds = new WeakMap<Container, string>();
+
 export function updateShipSprites(mirror: RenderMirror, ctx: ShipSpriteCtx): void {
   for (const [playerId, ship] of mirror.ships) {
     ctx.seenScratch.add(playerId);
@@ -68,6 +73,7 @@ export function updateShipSprites(mirror: RenderMirror, ctx: ShipSpriteCtx): voi
       sprite = buildArtShipSprite(handle, () => buildShipGfxFromShape(shapeForKind(ship.kind)));
       ctx.shipContainer.addChild(sprite);
       ctx.sprites.set(playerId, sprite);
+      shipSpriteKinds.set(sprite, ship.kind ?? 'fighter');
     }
     const shipKind = getShipKind(ship.kind ?? null);
     // WS-B3 — the per-instance mount list `[...kind.mounts, ...activated]`. When

@@ -28,6 +28,8 @@ const MAX_BURSTS = 24;
 
 interface Burst {
   active: boolean; x: number; y: number; r: number; t0: number; seed: number;
+  /** Smoke linger (1 = every ordinary death; < 1 lifts sooner). */
+  linger: number;
   flash: Sprite; fire: Sprite; subs: Sprite[]; ring: Sprite; embers: Sprite[]; smoke: Sprite[];
 }
 
@@ -77,7 +79,10 @@ export class FxExplosions {
    *  art lights the world from it, whatever spawned it). */
   onSpawn: ((x: number, y: number, r: number) => void) | null = null;
 
-  spawn(x: number, y: number, r: number, nowMs: number): boolean {
+  /** `linger` scales how long the smoke hangs (1 = every ordinary death; a
+   *  capital's kill blast passes less so the cracks under it show: owner
+   *  decision 2026-11-13, "smaller kill blast"). */
+  spawn(x: number, y: number, r: number, nowMs: number, linger = 1): boolean {
     if (!this.ready()) return false;
     this.onSpawn?.(x, -y, r);
     let b: Burst | undefined;
@@ -87,6 +92,7 @@ export class FxExplosions {
       else { b = this.bursts[0]!; for (const c of this.bursts) if (c.t0 < b.t0) b = c; }
     }
     b.active = true; b.x = x; b.y = -y; b.r = r; b.t0 = nowMs / 1000; b.seed = (this.seq++ * 2.399) % 6.283;
+    b.linger = linger;
     return true;
   }
 
@@ -101,8 +107,12 @@ export class FxExplosions {
     for (const b of this.bursts) {
       if (!b.active) continue;
       const age = t - b.t0;
-      if (age >= BURST_LIFE_S || age < 0) { this.hide(b); b.active = false; continue; }
       const R = b.r;
+      const L = b.linger;
+      // A shorter linger ends the burst sooner, but never before its fire
+      // and embers have played.
+      const end = L === 1 ? BURST_LIFE_S : Math.max(BURST_LIFE_S * L, 1.5 * fireballLife(R));
+      if (age >= end || age < 0) { this.hide(b); b.active = false; continue; }
       b.flash.visible = true;
       b.flash.position.set(b.x, b.y); b.flash.scale.set((R * 3.4) / b.flash.texture.width);
       b.flash.alpha = envelope(age, 0.015, 0.3) * 0.6;
@@ -149,7 +159,7 @@ export class FxExplosions {
         const d = R * 0.45 * (1 - Math.exp(-age * 1.3)) + age * 6;
         s.position.set(b.x + Math.cos(a) * d, b.y + Math.sin(a) * d);
         s.scale.set((R * 1.1 * (0.7 + age * 0.5)) / s.texture.width); s.rotation = a + age * 0.15;
-        s.alpha = 0.55 * envelope(age - 0.12, 0.35, 3.2);
+        s.alpha = 0.55 * envelope(age - 0.12, 0.35 * L, 3.2 * L);
       }
     }
   }
@@ -188,7 +198,7 @@ export class FxExplosions {
     const embers: Sprite[] = [];
     for (let j = 0; j < EMBERS; j++) embers.push(mk(spark, this.fireLayer, 0xffffff, 1));
     const flash = mk(glow, this.fireLayer, 0xfff2d8);
-    return { active: false, x: 0, y: 0, r: 0, t0: 0, seed: 0, flash, fire, subs, ring: ringS, embers, smoke: smokeSprites };
+    return { active: false, x: 0, y: 0, r: 0, t0: 0, seed: 0, linger: 1, flash, fire, subs, ring: ringS, embers, smoke: smokeSprites };
   }
 }
 
