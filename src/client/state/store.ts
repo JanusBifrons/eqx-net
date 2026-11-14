@@ -10,6 +10,7 @@ import type {
   RosterEntry,
   TransitState,
   PilotMode,
+  ControlMode,
   Phase,
   DevData,
   UIStore,
@@ -25,6 +26,7 @@ export type {
   RosterEntry,
   TransitState,
   PilotMode,
+  ControlMode,
   Phase,
   DevData,
   UIStore,
@@ -35,6 +37,15 @@ export type {
 // `useAuthStore.user` is known and re-reads from the per-user slot. If you
 // log in for the first time on a device, the legacy `eqxSettings` global key
 // migrates into the per-user slot on that re-read (see `userPrefs.ts`).
+/**
+ * RTS command layer (slice 10) — the player-facing control mode derived from
+ * the stored `pilotMode` (see `ControlMode`). A pure selector, so there is ONE
+ * stored field and the two names can never drift.
+ */
+export function selectControlMode(s: Pick<UIStore, 'pilotMode'>): ControlMode {
+  return s.pilotMode === 'spectator' ? 'command' : 'fly';
+}
+
 /** Living World P1a — monotonic id for pickup popups. */
 let lootFeedSeq = 0;
 const initialPersisted     = loadSettings(null);

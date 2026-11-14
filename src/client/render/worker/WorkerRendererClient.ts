@@ -92,6 +92,8 @@ function emptyFeedback(): RendererFeedback {
     orderX: 0,
     orderY: 0,
     orderTargetId: null,
+    takeControlsSeq: 0,
+    takeControlsId: null,
     fleetPickPoints: 0,
     fleetPickSeq: 0,
     fleetPickResult: null,
@@ -767,6 +769,8 @@ export class WorkerRendererClient implements IRenderer {
         this.feedback.orderX = msg.feedback.orderX;
         this.feedback.orderY = msg.feedback.orderY;
         this.feedback.orderTargetId = msg.feedback.orderTargetId;
+        this.feedback.takeControlsSeq = msg.feedback.takeControlsSeq;
+        this.feedback.takeControlsId = msg.feedback.takeControlsId;
         this.feedback.fleetPickPoints = msg.feedback.fleetPickPoints;
         if (msg.feedback.fleetPickSeq !== this.feedback.fleetPickSeq) {
           this.feedback.fleetPickSeq = msg.feedback.fleetPickSeq;

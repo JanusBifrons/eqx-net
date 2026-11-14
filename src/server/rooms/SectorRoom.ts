@@ -371,6 +371,7 @@ import {
   PilotShipSchema,
   SpectateSchema,
   CommandSchema,
+  StartModeSchema,
   FleetOrderSchema,
   SetModeSchema,
   SetStanceSchema,
@@ -642,6 +643,15 @@ const JoinOptionsSchema = z
      *  on engineering rooms which have no roster to park a lingering hull into.
      *  NOT testMode-gated — it's a real player-facing entry mode. */
     spectator: z.boolean().optional(),
+    /** RTS command layer (slice 10) — how the player lands: `command` parks
+     *  the hull as an AI-flown lingering hull at the arrival flip (the same
+     *  path as the `command` / `spectate` messages) and tells the client
+     *  (`control_mode`), so they arrive in command view; `fly` (and absent)
+     *  = at the controls, as before. Galaxy rooms only (an engineering room
+     *  has no roster to park into, nor a way to take the helm back). The
+     *  client sends `command` for normal galaxy play; server-reserved transit
+     *  arrivals carry none, so a pilot who warps keeps flying. */
+    startMode: StartModeSchema.optional(),
   })
   .passthrough();
 
@@ -964,6 +974,11 @@ export class SectorRoom extends Room<SectorState> {
    *  reclaims a hull or leaves, and lazily once the hull is no longer parked.
    *  Read through `engageablePilotHull`. */
   private readonly spectateParkedHull = new Map<string, string>();
+  /** RTS slice 10 — players whose join asked `startMode: 'command'` (galaxy
+   *  rooms only). `drainPendingJoin` parks their hull via `enterSpectate` at
+   *  the arrival flip and sends `control_mode`; cleared there, on leave and on
+   *  an in-sector reclaim. */
+  private readonly pendingCommandStart = new Set<string>();
 
   // Wrecks RETIRED (Equinox P6.3 / C3) — an abandoned hull now shatters into
   // SCRAP (kind 3) and leaves the world. The former WreckLifecycleCoordinator
@@ -8245,6 +8260,9 @@ export class SectorRoom extends Room<SectorState> {
             arrivalTick: rec.arrivalTick,
             currentTick,
           });
+          // RTS slice 10 — a command-view join: park the just-activated hull
+          // (an AI-flown wingman) and tell the client to enter command view.
+          if (this.pendingCommandStart.delete(playerId)) this.startInCommand(playerId, rec.sessionId);
         } else if (rec.spectator === true) {
           // Equinox Phase 5 (WS-3) — join-as-spectator: there is NO hull to
           // activate (the player joined with no ship at all). The warp-in
@@ -8789,6 +8807,16 @@ export class SectorRoom extends Room<SectorState> {
     if (parsed.success && parsed.data.spectator === true && this.sectorKey !== null) {
       this.joinAsSpectator(client, playerId, userId);
       return;
+    }
+
+    // RTS slice 10 — `startMode: 'command'`: spawn / rebind as normal (the
+    // client's join readiness runs the proven handshake), then park the hull
+    // at the arrival flip so the player lands in command view. Galaxy rooms
+    // only; absent / `fly` keeps the pilot join.
+    if (parsed.success && parsed.data.startMode === 'command' && this.sectorKey !== null) {
+      this.pendingCommandStart.add(playerId);
+    } else {
+      this.pendingCommandStart.delete(playerId);
     }
 
     // ── Phase 8 sub-phase B — REBIND PATH ──────────────────────────────────
@@ -9596,6 +9624,7 @@ export class SectorRoom extends Room<SectorState> {
     const leavingPlayerId = this.sessionToPlayer.get(client.sessionId);
     if (leavingPlayerId) {
       this.pendingJoin.delete(leavingPlayerId);
+      this.pendingCommandStart.delete(leavingPlayerId);
       // Presence — drop this session's connected refcount (push offline gate).
       unregisterConnectedPlayer(leavingPlayerId);
     }
@@ -10067,6 +10096,18 @@ export class SectorRoom extends Room<SectorState> {
     if (parked && this.lingeringSlots.has(parked)) this.spectateParkedHull.set(playerId, parked);
   }
 
+  /** RTS slice 10 — a `startMode: 'command'` join reached its arrival flip:
+   *  park the hull through the same path as the `command` message and tell the
+   *  client (`control_mode`) so it drops its prediction body and enters command
+   *  view. The snapshot (own hull inactive, in `lingeringShips`) carries the
+   *  state (#16); the message only makes the flip immediate. */
+  private startInCommand(playerId: string, sessionId: string): void {
+    this.enterSpectate(playerId);
+    const client = this.clients.find((c) => c.sessionId === sessionId);
+    client?.send('control_mode', { type: 'control_mode', mode: 'command' });
+    serverLogEvent('command_start', { playerId, sectorKey: this.sectorKey });
+  }
+
   private displaceActiveHullToLingering(playerId: string): void {
     const ship = this.getActiveShip(playerId);
     const slot = this.playerToSlot.get(playerId);
@@ -10146,6 +10187,7 @@ export class SectorRoom extends Room<SectorState> {
     this.displaceActiveHullToLingering(playerId);
     // Piloting again: they are no longer spectating a parked hull.
     this.spectateParkedHull.delete(playerId);
+    this.pendingCommandStart.delete(playerId);
 
     // Reclaim the target's slot from the lingering maps back into the active maps.
     const b = slotBase(slot);

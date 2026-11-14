@@ -22,16 +22,17 @@ export function sendPilotShip(shipId: string): boolean {
 }
 
 /**
- * STOP PILOTING → spectate (Equinox Phase-5 audit). The inverse of
- * {@link sendPilotShip}: tell the server to displace our active hull into a
- * lingering hull so it parks in-world AND appears in our own `lingeringShips`
- * for the Pilot dropdown. No-op server-side when we have no active hull
- * (death-spectator / join-as-spectator). Returns true when dispatched.
+ * STOP PILOTING → command view (RTS slice 10; was `sendSpectate`). The inverse
+ * of {@link sendPilotShip}: tell the server to park our active hull as an
+ * AI-flown lingering hull (`command`, an alias of `spectate`) so it stays
+ * in-world AND appears in our own `lingeringShips` for the Fly menu. No-op
+ * server-side when we have no active hull (death / command-view join).
+ * Returns true when dispatched.
  */
-export function sendSpectate(): boolean {
+export function sendCommand(): boolean {
   const client = getGameClient();
   if (!client) return false;
-  return client.sendSpectate();
+  return client.sendCommand();
 }
 
 // ── RTS command layer (slice 6a): fleet command senders ──────────────────

@@ -436,6 +436,14 @@ export const CommandSchema = z
   })
   .strict();
 
+/** RTS command layer (slice 10) — the `startMode` JOIN option: how the player
+ *  lands in the sector. `command` = command view (free camera over the fleet,
+ *  the hull parked and AI-flown at the arrival flip); `fly` = at the controls.
+ *  The server treats an absent value as `fly`; the client sends `command` by
+ *  default for normal galaxy play (`client/app/startMode.ts`). */
+export const StartModeSchema = z.enum(['command', 'fly']);
+export type StartMode = z.infer<typeof StartModeSchema>;
+
 /** Stat-pool ids spendable by the upgrade modal (Phase 4 WS-B2). Mirrors
  *  `STAT_IDS` in `src/core/leveling/shipStats.ts` — kept as a local zod enum so
  *  `src/shared-types/` stays self-contained (the parity is asserted in

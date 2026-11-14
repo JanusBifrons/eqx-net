@@ -62,6 +62,8 @@ let _lastHelmCourseSeq = 0;
  *  an order is only recorded for now (no network send until a later slice). */
 let _lastFleetSelSeq = 0;
 let _lastOrderSeq = 0;
+/** RTS slice 10 — last drained `feedback.takeControlsSeq` (double tap). */
+let _lastTakeControlsSeq = 0;
 /** RTS slice 14b — last drained `fleetPickPoints` / `fleetPickSeq`. */
 let _lastPickPoints = 0;
 let _lastPickSeq = 0;
@@ -399,6 +401,16 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
         targetId: selFb.orderTargetId,
         ships: selFb.fleetSelIds.length,
       });
+    }
+    // RTS slice 10: double tap / click on an own parked ship = take its
+    // controls (once per seq; the same sender as the panel's Take controls).
+    if (selFb.takeControlsSeq !== _lastTakeControlsSeq) {
+      _lastTakeControlsSeq = selFb.takeControlsSeq;
+      const takeId = selFb.takeControlsId;
+      if (takeId !== null) {
+        fleetCommands().takeControls(takeId);
+        logEvent('fleet_take_controls', { via: 'double_tap' });
+      }
     }
     // Fleet map pick (slice 14b): mirror the picked-point count (discrete),
     // and send a finished pick once per seq as set_mode for the selection.

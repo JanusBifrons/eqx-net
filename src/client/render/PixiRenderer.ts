@@ -32,6 +32,7 @@ import { HoverBracket } from './HoverBracket';
 import { pickEntityAt, type PickedEntityKind } from './pickEntity';
 import { CommandPointerRouter, type BoxRect, type HoldArmed, type RouterAction, type RouterPointerEvent } from './input/commandPointerRouter.js';
 import { decideTapAction, type FleetOrderMode } from './input/tapAction.js';
+import { DoubleTapTracker } from './input/doubleTap.js';
 import { createFleetPickState, decidePickTap, pickAddPoint, pickFinishPatrol, pickStart, type FleetPickResult } from './input/fleetPick.js';
 import { applySelection, boxSelectOwn, collectFleetShips, isOwnShipPresent, pickOwnShipAt, sameSelection, tapSelectOwn } from './fleetSelection.js';
 import { FleetOverlay, type OrderFlash } from './FleetOverlay.js';
@@ -221,6 +222,8 @@ export class PixiRenderer implements IRenderer {
   /** Own-ship fleet selection (ids per the pick convention). Replaced (never
    *  mutated) on a gesture; pruned in place in `update()` when a ship leaves. */
   private _fleetSel: Set<string> = new Set();
+  /** RTS slice 10: double tap / click on an own parked ship = take the controls. */
+  private readonly _doubleTap = new DoubleTapTracker();
   /** Drag box in screen px while a box gesture is live (reused object). */
   private readonly _fleetBoxRect: BoxRect = { x0: 0, y0: 0, x1: 0, y1: 0 };
   private _fleetBoxActive = false;
@@ -561,6 +564,8 @@ export class PixiRenderer implements IRenderer {
     orderX: 0,
     orderY: 0,
     orderTargetId: null,
+    takeControlsSeq: 0,
+    takeControlsId: null,
     fleetPickPoints: 0,
     fleetPickSeq: 0,
     fleetPickResult: null,
@@ -1423,6 +1428,16 @@ export class PixiRenderer implements IRenderer {
       orderMode: this._fleetOrderMode,
       additive,
     });
+    // RTS slice 10: a second tap on the same own PARKED ship (not the active
+    // one, which is flown already) takes its controls. Any other tap breaks
+    // the pair.
+    const parked = own !== null && own !== m.localPlayerId ? own : null;
+    // eslint-disable-next-line no-restricted-properties -- real time: pointer stamps are Date.now() (both paths)
+    if (this._doubleTap.tap(parked, Date.now(), screenX, screenY)) {
+      this.feedback.takeControlsId = parked;
+      this.feedback.takeControlsSeq++;
+      return;
+    }
     switch (action) {
       case 'select':
         // Slice 15a: whole squad; a tap on an exactly-selected squad narrows.

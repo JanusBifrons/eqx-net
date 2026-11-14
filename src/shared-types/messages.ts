@@ -41,6 +41,7 @@ export {
   FormSquadSchema,
   DisbandSquadSchema,
   CommandSchema,
+  StartModeSchema,
   StatIdSchema,
   StatAllocSchema,
   ApplyShipUpgradeSchema,
@@ -71,6 +72,7 @@ export type {
   FormSquadMessage,
   DisbandSquadMessage,
   CommandMessage,
+  StartMode,
   StatId,
   WireStatAlloc,
   ApplyShipUpgradeMessage,
@@ -89,7 +91,6 @@ export { SESSION_REPLACED_CLOSE_CODE } from './messages/snapshotMessages.js';
 // the 20 Hz `snapshot` is the documented invariant-#3 carve-out — see the
 // SnapshotMessage docstring).
 export { WelcomeSchema } from './messages/snapshotMessages.js';
-
 // Combat outcomes (server → client)
 export {
   CollisionResolvedMessageSchema,

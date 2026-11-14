@@ -258,6 +258,8 @@ describe('renderer-worker protocol', () => {
             orderX: 10,
             orderY: -20,
             orderTargetId: 'swarm-5',
+            takeControlsSeq: 2,
+            takeControlsId: 'hull-9',
             fleetPickPoints: 3,
             fleetPickSeq: 4,
             fleetPickResult: { kind: 'patrol', route: [[0, 0], [100, -50], [30, 80]] },
@@ -298,6 +300,8 @@ describe('renderer-worker protocol', () => {
         expect(back.feedback.fleetSelIds).toEqual(['p1', 'hull-9']);
         expect(back.feedback.orderKind).toBe('attack');
         expect(back.feedback.orderTargetId).toBe('swarm-5');
+        expect(back.feedback.takeControlsSeq).toBe(2);
+        expect(back.feedback.takeControlsId).toBe('hull-9');
         expect(back.feedback.fleetPickPoints).toBe(3);
         expect(back.feedback.fleetPickSeq).toBe(4);
         expect(back.feedback.fleetPickResult).toEqual({ kind: 'patrol', route: [[0, 0], [100, -50], [30, 80]] });

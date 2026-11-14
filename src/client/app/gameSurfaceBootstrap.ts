@@ -23,6 +23,7 @@ import {
 import { isTouchDevice } from '../input/TouchInput.js';
 import { getSector } from '@core/galaxy/galaxy';
 import { logEvent } from '../debug/ClientLogger.js';
+import { resolveStartMode } from './startMode.js';
 import type { IRenderer } from '@core/contracts/IRenderer';
 
 /**
@@ -231,6 +232,10 @@ export function buildJoinSpec(
   // side. Lets the spectator-join E2E drive the flow deterministically without
   // clicking the SectorInfoDrawer "Spectate" CTA.
   if (urlParams.has('spectator')) extraJoinOptions['spectator'] = urlParams.get('spectator') === '1';
+  // RTS slice 10 — land in command view (galaxy play) or at the controls
+  // (test rooms, `?startMode=fly`, an explicit "pilot that ship"). See startMode.ts.
+  const startMode = resolveStartMode(roomName, urlParams.get('startMode'), extraJoinOptions);
+  if (startMode !== undefined) extraJoinOptions['startMode'] = startMode;
 
   // Display name for the HUD.
   const builtin: Record<string, string> = {

@@ -37,6 +37,7 @@ const fb = {
   selectedPickId: null, selectedPickKind: null, helmCourseSeq: 0, helmCourseX: 0, helmCourseY: 0,
   fleetSelSeq: 0, fleetSelIds: [] as string[], orderSeq: 0, orderKind: 'move' as 'move' | 'attack',
   orderX: 0, orderY: 0, orderTargetId: null as string | null,
+  takeControlsSeq: 0, takeControlsId: null as string | null,
   fleetPickPoints: 0, fleetPickSeq: 0, fleetPickResult: null as FleetPickResultWire | null,
 };
 
@@ -131,5 +132,19 @@ describe('gameRafLoop — fleet map picks are sent as set_mode (slice 14b)', () 
     loop(60);
     expect(storeState.setFleetPickPoints).toHaveBeenCalledTimes(1);
     expect(storeState.setFleetPickPoints).toHaveBeenCalledWith(3);
+  });
+});
+
+describe('gameRafLoop — double tap on an own ship takes its controls (RTS slice 10)', () => {
+  it('sends takeControls once per seq', () => {
+    const takeControls = vi.fn();
+    setFleetCommands({ takeControls });
+    const loop = buildLoop();
+    loop(16.67);
+    Object.assign(fb, { takeControlsSeq: fb.takeControlsSeq + 1, takeControlsId: 'hull-3' });
+    loop(40);
+    loop(60);
+    expect(takeControls).toHaveBeenCalledTimes(1);
+    expect(takeControls).toHaveBeenCalledWith('hull-3');
   });
 });

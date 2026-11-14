@@ -125,6 +125,18 @@ export type TransitState = 'DOCKED' | 'SPOOLING' | 'IN_TRANSIT' | 'ARRIVED';
 export type PilotMode = 'pilot' | 'spectator';
 
 /**
+ * RTS command layer (slice 10) — the player-facing name of {@link PilotMode}:
+ * `fly` (at the controls) or `command` (free camera over your fleet, your ships
+ * AI-flown). The STORED field stays `pilotMode` (the join-readiness gate, the
+ * renderer's `setSpectator`, e2e probes and ~70 call sites read it); read this
+ * view through `selectControlMode` and never store it twice. Normal galaxy play
+ * starts in `command`: the join's `startMode` decides it, and the server flips
+ * the client at the arrival flip (`control_mode`). Before a join the store
+ * holds `fly` (`pilotMode = 'pilot'`), which the ship-bound readiness gate needs.
+ */
+export type ControlMode = 'fly' | 'command';
+
+/**
  * Top-level UX phase. Lifted to Zustand so drawer tabs (Profile Logout,
  * Settings "Return to menu") can change it without prop-drilling through
  * App → ... → tab.

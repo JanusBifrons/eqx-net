@@ -50,6 +50,7 @@ import { ShellSalvoStore } from './shellSalvoStore';
 import { NavalHitHold, type HeldDamage } from './navalHitHold';
 import { CollisionResolvedMessageSchema, HitAckSchema, DamageEventSchema, MissileFiredEventSchema, MissileDetonatedEventSchema, WallHitEventSchema, EntityStatsSchema, WarpWarningSchema, WarpWarningClearSchema, BaseReadySchema, ShipLevelUpEventSchema, ShipUpgradeAppliedEventSchema, MountActivatedEventSchema } from '@shared-types/messages';
 import { LootCollectedEventSchema, CargoDepositedEventSchema, NoticeEventSchema } from '@shared-types/messages/lootMessages';
+import { ControlModeMessageSchema } from '@shared-types/messages/snapshotMessages';
 import { formatLootPickup, LOOT_FEED_TTL_MS, cargoChanged } from './lootView';
 import { toastForNotice } from './tradeView';
 import { TradeNoticeSchema } from '../../shared-types/economy.js';
@@ -675,16 +676,47 @@ export class ColyseusGameClient {
   sendSpectate(): boolean {
     if (!this.room) return false;
     this.room.send('spectate', { type: 'spectate' });
+    this.dropLocalShipForCommand();
+    logEvent('spectate_requested', {});
+    return true;
+  }
+
+  /**
+   * RTS command layer (slice 10) — let go of the controls: enter command view.
+   * Sends `command` (the server parks the hull as an AI-flown wingman, the same
+   * path as `spectate`) and does the same local drop. The caller flips
+   * `pilotMode` first (as the toggle does for spectate). Returns true when
+   * dispatched.
+   */
+  sendCommand(): boolean {
+    if (!this.room) return false;
+    this.room.send('command', { type: 'command' });
+    this.dropLocalShipForCommand();
+    logEvent('command_requested', {});
+    return true;
+  }
+
+  /** RTS slice 10 — the server's `control_mode: command` (a command-view join
+   *  parked our hull at the arrival flip): flip the mode, then drop the local
+   *  ship exactly as a toggle-to-command does. Idempotent. Public for tests. */
+  enterCommandFromServer(): void {
+    const ui = useUIStore.getState();
+    if (ui.pilotMode !== 'spectator') ui.setPilotMode('spectator');
+    this.dropLocalShipForCommand();
+    logEvent('command_view_entered', { source: 'join' });
+  }
+
+  /** The local half of stop-piloting (spectate / command / a command-view
+   *  join): drop the predWorld body (one ownership site, like the pilot swap /
+   *  death) and the own drawn entry. The hull is parked now and comes back as a
+   *  lingering hull (syncMirror skips the own ship while spectating). */
+  private dropLocalShipForCommand(): void {
     const localId = this.mirror.localPlayerId;
     if (localId && this.predWorld?.hasShip(localId)) {
       this.predWorld.despawnShip(localId);
       this.reconciler = null;
     }
-    // And its drawn entry: the hull is parked now and comes back as a
-    // lingering hull (syncMirror skips the own ship while spectating).
     if (localId) this.mirror.ships.delete(localId);
-    logEvent('spectate_requested', {});
-    return true;
   }
 
   /**
@@ -2303,6 +2335,14 @@ export class ColyseusGameClient {
     });
     // Living World P1a — pickup popup (UI accelerator only; cargo truth rides
     // the own-ship snapshot slice). zod-validated (invariant #3).
+    // RTS slice 10 — a command-view join: the server parked our hull at the
+    // arrival flip. Enter command view now (the snapshot carries the parked
+    // hull as lingering, #16; this only makes the flip immediate). zod (#3).
+    room.onMessage('control_mode', (raw: unknown) => {
+      const parsed = ControlModeMessageSchema.safeParse(raw);
+      if (!parsed.success || parsed.data.mode !== 'command') return;
+      this.enterCommandFromServer();
+    });
     room.onMessage('notice', (raw: unknown) => {
       const parsed = NoticeEventSchema.safeParse(raw);
       if (!parsed.success) return;
@@ -2939,6 +2979,8 @@ export class ColyseusGameClient {
       // construction. `isDead` is intentionally NOT set (it gated the modal);
       // `pilotMode='spectator'` is the discrete flag the camera/input/build
       // branches read. Remote interpolation keeps running so drones stay smooth.
+      // RTS slice 10: that IS command view (`selectControlMode` → 'command'),
+      // a free camera over the rest of the fleet, never a dead-hull follow.
       if (shouldEnterSpectatorOnDeath(id, this.mirror.localPlayerId)) {
         useUIStore.getState().setPilotMode('spectator');
       }

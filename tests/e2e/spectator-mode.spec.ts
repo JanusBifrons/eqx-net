@@ -273,3 +273,29 @@ test('pilot/spectate toggle round-trips pilot↔spectator', async ({ browser }) 
   );
   await ctx.close();
 });
+
+test('RTS slice 10: a command-view join lands in Command, ship parked; Fly takes it back', async ({ browser }) => {
+  test.setTimeout(60_000);
+  // Normal galaxy play joins with startMode=command: the hull spawns, is parked
+  // (AI-flown) at the arrival flip, and the player lands in command view. The
+  // galaxy-test room defaults to fly, so this opts in explicitly.
+  const { ctx, page } = await launchGalaxyTestClient(browser, {
+    testId: randomUUID(), shipKind: 'fighter', startMode: 'command',
+  });
+  await page.waitForFunction(
+    () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-pilot-mode') === 'spectator', undefined,
+    { timeout: 15_000 },
+  );
+  await expect(page.locator('[data-testid="spectator-indicator"]')).toHaveText(/Command view/i);
+  await expect(page.locator('[data-testid="pilot-spectator-toggle"]')).toHaveAttribute('data-control-mode', 'command');
+
+  // Fly with nothing selected lists our parked ship; picking it takes the controls.
+  await page.locator('[data-testid="pilot-toggle"]').click();
+  await page.locator('[data-testid^="pilot-menu-ship-"]').first().click({ timeout: 10_000 });
+  await page.waitForFunction(
+    () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-pilot-mode') === 'pilot', undefined,
+    { timeout: 10_000 },
+  );
+  await expect(page.locator('[data-testid="spectator-indicator"]')).toHaveCount(0);
+  await ctx.close();
+});

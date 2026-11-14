@@ -138,6 +138,8 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
             orderX: fb.orderX,
             orderY: fb.orderY,
             orderTargetId: fb.orderTargetId,
+            takeControlsSeq: fb.takeControlsSeq,
+            takeControlsId: fb.takeControlsId,
             fleetPickPoints: fb.fleetPickPoints,
             fleetPickSeq: fb.fleetPickSeq,
             fleetPickResult: fb.fleetPickResult,

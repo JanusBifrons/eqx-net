@@ -901,6 +901,14 @@ export interface RendererFeedback {
   orderY: number;
   orderTargetId: string | null;
   /**
+   * RTS slice 10: a double tap / double click on one of your own parked ships
+   * in command view = take the controls of it. `takeControlsSeq` bumps per
+   * double tap; `takeControlsId` is the ship (lingering hull shipInstanceId).
+   * The main thread sends `pilot_ship` once per seq.
+   */
+  takeControlsSeq: number;
+  takeControlsId: string | null;
+  /**
    * RTS slice 14b: "pick on the map" for patrol / escort / retreat.
    * `fleetPickPoints` is the number of patrol waypoints picked so far (the
    * points stay in the renderer). `fleetPickSeq` bumps when a pick finishes;
