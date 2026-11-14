@@ -54,3 +54,13 @@ Later (shelved): the weighted break-up roll (SHELF.md), cargo holds that drop as
 
 - Many worktrees under `.claude/worktrees` came from today's agents. Merged branches can go; keep `subcap-combined`, `soak-combined`, `perf/subcap-final` and `subcap-film`.
 - The perf runner left nested `perf-base` worktrees, each with a `node_modules` link. Remove the link with `rmdir` before removing the worktree.
+
+## Known red AI-quality tests (quarantined when #611 landed, 2026-11-14)
+
+Owner decision: land the AI-pilot branch with these skipped (`it.skip` plus a comment); no bar was changed. Un-skip each in the PR that makes it pass.
+
+- `kiteRunSmoothDuel` (a): the missile frigate opens or holds its gap on 0.70 of samples, bar 0.80.
+- `kiteRunSmoothDuel` (b): a fighter against a Robot Orb flips manoeuvre / turn key more than against a Robot Cube (Cube 1.10 turn reversals/s locally).
+- `npcFireLanes` "4-drone pack": flaky on CI (gate-on friendly hits 2 vs gate-off 0); passed locally on the merge tip.
+
+Fixed on the way in: the charge laser missed a parked pilot every time because the AI flew its strafing pass during the wind-up (now it holds its line, `docs/architecture/ai-pilots.md`); that also fixed `attackRunTurnBack` (0 hits before). Four fire-control tests were re-staged for the dogfighting AI and the per-mount range gate (still targets via `peacefulDrones`; `npcWeaponEnergy` target moved into reach).

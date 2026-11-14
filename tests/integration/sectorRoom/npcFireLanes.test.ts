@@ -136,7 +136,11 @@ describe('SectorRoom integration — NPC fire lanes (AI slice 5b)', () => {
   });
 
   // Four drones in a column on one target: each sits in the next one's line.
-  it('a 4-drone pack on one target: fewer held shots with the gate, fewer friendly hits without it (20 s each)', { timeout: 200_000 }, async () => {
+  // QUARANTINED (owner decision 2026-11-14, landing #611): flaky on CI (gate-on friendly
+  // hits 2 vs 0 gate-off; passes locally) and left for follow-up; the bar is unchanged. See
+  // docs/HANDOFF-2026-11-13-night.md "Known red AI-quality tests". Un-skip in
+  // the PR that makes it pass.
+  it.skip('a 4-drone pack on one target: fewer held shots with the gate, fewer friendly hits without it (20 s each)', { timeout: 200_000 }, async () => {
     const poses = [{ x: 0, y: -850 }, { x: 0, y: -700 }, { x: 0, y: -550 }, { x: 0, y: -400 }];
     const out: Record<string, SceneResult> = {};
     for (const gate of [true, false]) {

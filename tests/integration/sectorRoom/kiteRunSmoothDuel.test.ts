@@ -126,7 +126,11 @@ describe('SectorRoom integration — a Kite runs when attacked; a fighter fights
   let harness: SectorTestHarness | undefined;
   afterEach(async () => { if (harness) await harness.cleanup(); harness = undefined; }, 15_000);
 
-  it('(a) a missile frigate attacked by a fighter turns and runs: gap opens or holds at its band on >= 80 % of samples, >= 80 % cruise while running', { timeout: 60_000 }, async () => {
+  // QUARANTINED (owner decision 2026-11-14, landing #611): red on the AI-pilot
+  // branch before merge and left for follow-up; the bar is unchanged. See
+  // docs/HANDOFF-2026-11-13-night.md "Known red AI-quality tests". Un-skip in
+  // the PR that makes it pass.
+  it.skip('(a) a missile frigate attacked by a fighter turns and runs: gap opens or holds at its band on >= 80 % of samples, >= 80 % cruise while running', { timeout: 60_000 }, async () => {
     // A fighter coming in from beyond the frigate's band (0.6–1.0 × 1400),
     // nose on: the frigate faces it until it crosses the band edge, then
     // turns and runs. Caught already INSIDE the band nose to nose (1100 u,
@@ -168,7 +172,11 @@ describe('SectorRoom integration — a Kite runs when attacked; a fighter fights
     expect(k.runFast / k.running, 'running at >= 80 % of cruise').toBeGreaterThanOrEqual(0.8);
   });
 
-  it('(b) a fighter against a Robot Orb flips manoeuvre and turn key no more than against a Robot Cube', { timeout: 120_000 }, async () => {
+  // QUARANTINED (owner decision 2026-11-14, landing #611): red on the AI-pilot
+  // branch before merge and left for follow-up; the bar is unchanged. See
+  // docs/HANDOFF-2026-11-13-night.md "Known red AI-quality tests". Un-skip in
+  // the PR that makes it pass.
+  it.skip('(b) a fighter against a Robot Orb flips manoeuvre and turn key no more than against a Robot Cube', { timeout: 120_000 }, async () => {
     const rows: string[] = [];
     const run = async (robot: string): Promise<DuelStats> => {
       const s = await boot([
