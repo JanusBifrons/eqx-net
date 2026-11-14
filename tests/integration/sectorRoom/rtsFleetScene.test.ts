@@ -50,6 +50,14 @@ describe('perf scene rts-fleet — an AI-flown fleet of parked hulls', () => {
     // One owner ⇒ at most one swarm scan per tick, however many wingmen ask.
     expect(work.wingmanHostileScansPerTick).toBeLessThanOrEqual(1);
     expect(work.wingmanHostileQueriesPerTick).toBeGreaterThan(work.wingmanHostileScansPerTick);
+    // The AI target view of the parked hulls allocates nothing per tick: a
+    // second build hands back the same 40 view objects, with fresh values.
+    const visit = (room as unknown as { _visitLingeringTargets(out: unknown[]): void })._visitLingeringTargets;
+    const a: Array<{ id: string; x: number }> = [], b: Array<{ id: string; x: number }> = [];
+    visit(a); visit(b);
+    expect(a).toHaveLength(40);
+    for (let i = 0; i < a.length; i++) expect(b[i], `view ${i} is reused`).toBe(a[i]);
+    expect(new Set(b.map((v) => v.id)).size, 'one view per hull').toBe(40);
     // The wingmen fight: drones of the first wave have died.
     let firstWaveAlive = 0;
     for (let i = 0; i < 20; i++) if (room._internals.swarmHealth.has(`scene-foe0-${i}`)) firstWaveAlive++;

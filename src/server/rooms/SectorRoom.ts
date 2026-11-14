@@ -5026,20 +5026,33 @@ export class SectorRoom extends Room<SectorState> {
 
   /** Living World P1a-2 (decision 7) — append every alive, displaced LINGERING
    *  hull (id = shipInstanceId, ownerId = its player) to the AI player view.
-   *  Small set (parked hulls); bound once. The object literal per hull mirrors
-   *  the existing `aiPlayerScratch` push pattern. // TODO: alloc-debt */
+   *  Bound once. Views come from `_lingerViewPool` (grown once per new
+   *  high-water mark, then reused every tick, #14): with an AI-flown fleet of
+   *  parked hulls (RTS, up to the 200-ship roster) a literal per hull per tick
+   *  was the biggest allocation on this path. Safe to reuse: the AI copies
+   *  each view into its own candidate buffer and keeps no reference. */
+  private readonly _lingerViewPool: Array<{
+    id: string; ownerId: string; x: number; y: number; vx: number; vy: number; health: number; maxHealth: number;
+  }> = [];
   private readonly _visitLingeringTargets = (out: AiPlayerView[]): void => {
     if (this.lingeringSlots.size === 0) return;
-    for (const [shipInstanceId] of this.lingeringSlots) {
+    const pool = this._lingerViewPool;
+    let n = 0;
+    for (const shipInstanceId of this.lingeringSlots.keys()) {
       const ship = this.state.ships.get(shipInstanceId);
       if (!ship?.alive) continue;
       const pose = this.lingeringPoseCache.get(shipInstanceId);
       if (!pose) continue;
-      out.push({
-        id: shipInstanceId, ownerId: ship.playerId,
-        x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy,
-        health: ship.health, maxHealth: ship.maxHealth,
-      });
+      let v = pool[n];
+      if (v === undefined) {
+        v = { id: '', ownerId: '', x: 0, y: 0, vx: 0, vy: 0, health: 0, maxHealth: 0 }; // high-water growth only
+        pool[n] = v;
+      }
+      n++;
+      v.id = shipInstanceId; v.ownerId = ship.playerId;
+      v.x = pose.x; v.y = pose.y; v.vx = pose.vx; v.vy = pose.vy;
+      v.health = ship.health; v.maxHealth = ship.maxHealth;
+      out.push(v);
     }
   };
 
