@@ -592,6 +592,11 @@ export class WorkerRendererClient implements IRenderer {
     this.post({ type: 'GLIDE_CAMERA', gameX, gameY, durationMs });
   }
 
+  /** RTS fleet warp (S8) — see `IRenderer.selectFleetShips`. */
+  selectFleetShips(ids: readonly string[]): void {
+    this.post({ type: 'SELECT_FLEET_SHIPS', ids: [...ids] });
+  }
+
   /**
    * Phase 5 — set the spectator WASD free-pan velocity (SCREEN px/sec). Posted
    * on a key state change (not per frame); the worker integrates it in

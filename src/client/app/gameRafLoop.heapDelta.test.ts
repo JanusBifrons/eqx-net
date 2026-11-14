@@ -91,6 +91,7 @@ function makeDeps(): GameRafLoopDeps {
       tickInbound: () => {},
       updateMirror: () => {},
       consumePendingCameraGlide: () => null,
+      consumePendingFleetArrival: () => null,
       mirror: {
         ships: new Map(),
         swarm: undefined,

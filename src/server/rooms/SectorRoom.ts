@@ -2452,7 +2452,12 @@ export class SectorRoom extends Room<SectorState> {
         const rec = this.pendingJoin.get(playerId);
         return rec !== undefined && rec.inWorld !== true;
       },
-      transitSpooling: (playerId) => this.transitOrchestrator?.isInFlight(playerId) === true,
+      // A pilot's own transit (keyed by playerId) or a ship spooling in a fleet
+      // warp (keyed by shipInstanceId: parked hulls and a flown member).
+      transitSpooling: (id) => {
+        const t = this.transitOrchestrator;
+        return t !== null && t !== undefined && (t.isInFlight(id) || t.fleetGroupOf(id) !== null);
+      },
       playerMountAngles: this.mountTicker.playerMountAngles,
       droneMountAngles: this.mountTicker.droneMountAngles,
       missileSim: this.missileSim,
@@ -7236,7 +7241,13 @@ export class SectorRoom extends Room<SectorState> {
       mode: 'defend', modeData: { x, y },
       ...(row.stance !== undefined ? { stance: row.stance } : {}),
     }]);
-    return this.lingeringSlots.has(row.shipInstanceId);
+    const placed = this.lingeringSlots.has(row.shipInstanceId);
+    // RTS fleet warp (S4): every client here draws the drop for a hull that
+    // just warped in. The "just arrived" window is the WarpTravelTracker's
+    // (keyed by the shipInstanceId, which never collides with a playerId);
+    // the snapshot reads it through `warpArrived`.
+    if (placed && row.arrival === 'warp') this.warpTravel.markArrived(row.shipInstanceId, this.serverTick);
+    return placed;
   }
 
   /** A parked hull left this sector by teleporter: drop it here without scrap,
@@ -9085,7 +9096,12 @@ export class SectorRoom extends Room<SectorState> {
     // hull. Galaxy rooms only (engineering rooms have no roster/persistence;
     // they fall through to the normal pilot join).
     if (parsed.success && parsed.data.spectator === true && this.sectorKey !== null) {
-      this.joinAsSpectator(client, playerId, userId);
+      // RTS fleet warp (S7): a commander following their fleet arrives with
+      // the fleet's anchor as spawnX/spawnY (the seat reservation's options).
+      const spawn = parsed.data.spawnX !== undefined && parsed.data.spawnY !== undefined
+        ? clampToSectorBounds(parsed.data.spawnX, parsed.data.spawnY)
+        : null;
+      this.joinAsSpectator(client, playerId, userId, spawn);
       return;
     }
 
@@ -9844,16 +9860,22 @@ export class SectorRoom extends Room<SectorState> {
    * client's load curtain lifts the proven way; `drainPendingJoin`'s activation
    * branch no-ops for a shipless entry (`getActiveShip` is undefined).
    */
-  private joinAsSpectator(client: Client, playerId: string, userId: string | null): void {
+  private joinAsSpectator(
+    client: Client, playerId: string, userId: string | null,
+    spawn: { x: number; y: number } | null = null,
+  ): void {
     this.sessionToPlayer.set(client.sessionId, playerId);
     this.playerToSession.set(playerId, client.sessionId);
     // Presence — mark connected (push-offline gate); decremented in onLeave.
     registerConnectedPlayer(playerId);
     this.playerToUser.set(playerId, userId);
 
-    // Seed a fixed origin pose so the per-recipient snapshot broadcaster does
-    // not skip this shipless spectator (see the method doc).
-    this.shipPoseCache.set(playerId, { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 });
+    // Seed a fixed pose so the per-recipient snapshot broadcaster does not
+    // skip this shipless spectator (see the method doc): the origin, or the
+    // given spawn point (RTS fleet warp: the commander's interest window
+    // starts on the fleet they followed in, so its ships stream in at once).
+    const sx = spawn?.x ?? 0, sy = spawn?.y ?? 0;
+    this.shipPoseCache.set(playerId, { x: sx, y: sy, vx: 0, vy: 0, angle: 0, angvel: 0 });
 
     const currentServerTick = Atomics.load(this.sabU32, TICK_IDX);
     const welcome: WelcomeMessage = {
@@ -9884,8 +9906,8 @@ export class SectorRoom extends Room<SectorState> {
       joinTick: currentServerTick,
       watchdogTick: currentServerTick + CLIENT_READY_TIMEOUT_TICKS,
       arrivalTick: null,
-      spawnX: 0,
-      spawnY: 0,
+      spawnX: sx,
+      spawnY: sy,
       sessionId: client.sessionId,
       spectator: true,
     });

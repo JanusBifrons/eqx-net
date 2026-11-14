@@ -31,7 +31,7 @@ import type { Bus } from '../../core/events/Bus.js';
 import type { PlayerShipStore } from '../playerShips/PlayerShipStore.js';
 import { isNeighbour } from '../../core/galaxy/galaxy.js';
 import { auditEvent } from '../audit/GameplayAuditLog.js';
-import type { TransitStateMessage, TransitCancelReason } from '../../shared-types/messages.js';
+import type { TransitStateMessage, TransitCancelReason, TransitReadyMessage } from '../../shared-types/messages.js';
 import { randomUUID } from 'node:crypto';
 import {
   SLOT_X_OFF, SLOT_Y_OFF, SLOT_VX_OFF, SLOT_VY_OFF, SLOT_ANGLE_OFF, SLOT_ANGVEL_OFF,
@@ -720,7 +720,10 @@ export class TransitOrchestrator {
       } satisfies TransitStateMessage);
       client.send('transit_ready', {
         type: 'transit_ready', reservation, transitToken: inFlight.transitToken, targetSectorKey: dest,
-      });
+        // A commander with no ship follows as a spectator: name the ships that
+        // went, so their client re-selects them and glides the camera there.
+        ...(piloted === null ? { shipIds: moved } : {}),
+      } satisfies TransitReadyMessage);
       if (piloted !== null) {
         this.room.broadcast('warp_out', { type: 'warp_out', playerId: cmd, x: pilotX, y: pilotY }, { except: client });
       }

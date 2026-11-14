@@ -277,6 +277,15 @@ export interface GlideCameraMsg {
 }
 
 /**
+ * RTS fleet warp (S8) — set THE selection to these own ships (posted once on
+ * arrival with the fleet). Drives `PixiRenderer.selectFleetShips`.
+ */
+export interface SelectFleetShipsMsg {
+  type: 'SELECT_FLEET_SHIPS';
+  ids: string[];
+}
+
+/**
  * Cinematic camera — play a cue script (`null` = stop, hand back to gameplay).
  * Drives `PixiRenderer.setCameraScript` → `CameraDirector`. Posted once per
  * script, never per frame. See docs/architecture/cinematic-camera.md.
@@ -423,6 +432,7 @@ export type MainToWorkerMsg =
   | SetRadarSuppressedMsg
   | SetHudOverlaysMsg
   | GlideCameraMsg
+  | SelectFleetShipsMsg
   | SetCameraScriptMsg
   | PanCameraMsg
   | SetDiagMarkersMsg

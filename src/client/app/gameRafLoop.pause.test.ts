@@ -105,6 +105,7 @@ function buildLoop(fake: Fake): { loop: (now: number) => void; animFrameRef: { c
     updateMirror: fake.updateMirror,
     sendClientReady: fake.sendClientReady,
     consumePendingCameraGlide: () => null,
+    consumePendingFleetArrival: () => null,
     mirror: {
       localPlayerId: 'ship-1',
       ships: new Map(),

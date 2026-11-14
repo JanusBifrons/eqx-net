@@ -298,6 +298,12 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
         break;
       }
 
+      case 'SELECT_FLEET_SHIPS': {
+        if (!renderer) return;
+        renderer.selectFleetShips(msg.ids);
+        break;
+      }
+
       case 'SET_CAMERA_SCRIPT': {
         if (!renderer) return;
         renderer.setCameraScript(msg.cues);

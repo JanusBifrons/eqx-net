@@ -236,6 +236,14 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
     // posts the GLIDE_CAMERA message promptly.
     const glide = gameClient.consumePendingCameraGlide();
     if (glide) renderer.glideCameraTo(glide.x, glide.y, PILOT_SWAP_GLIDE_MS);
+    // RTS fleet warp (S8) — a commander who followed their fleet: once the
+    // warped ships are in the new sector's mirror, select them again (the
+    // ONE selection, in the renderer) and glide the camera to them. One-shot.
+    const fleetArrival = gameClient.consumePendingFleetArrival();
+    if (fleetArrival) {
+      renderer.selectFleetShips(fleetArrival.ids);
+      renderer.glideCameraTo(fleetArrival.x, fleetArrival.y, PILOT_SWAP_GLIDE_MS);
+    }
     const renderStart = performance.now();
     const shouldRender = !useWorker || (++workerUpdateCounter % 2) === 0;
     if (shouldRender) renderer.update(gameClient.mirror);

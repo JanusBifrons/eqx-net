@@ -50,6 +50,8 @@ import { NavalHitHold, type HeldDamage } from './navalHitHold';
 import { CollisionResolvedMessageSchema, HitAckSchema, DamageEventSchema, MissileFiredEventSchema, MissileDetonatedEventSchema, WallHitEventSchema, EntityStatsSchema, WarpWarningSchema, WarpWarningClearSchema, BaseReadySchema, ShipLevelUpEventSchema, ShipUpgradeAppliedEventSchema, MountActivatedEventSchema } from '@shared-types/messages';
 import { LootCollectedEventSchema, CargoDepositedEventSchema, NoticeEventSchema } from '@shared-types/messages/lootMessages';
 import { ControlModeMessageSchema } from '@shared-types/messages/snapshotMessages';
+import { parseTransitReadyShipIds } from '@shared-types/messages';
+import { isCommanderFleetFollow, transitStartsLocalTrip, stepFleetArrival, type FleetArrival, type FleetArrivalWatch } from './fleetWarpFollow';
 import { formatLootPickup, LOOT_FEED_TTL_MS, cargoChanged } from './lootView';
 import { toastForNotice } from './tradeView';
 import { TradeNoticeSchema } from '../../shared-types/economy.js';
@@ -792,6 +794,31 @@ export class ColyseusGameClient {
     if (!ship) return null; // wait until the new pose is mirrored
     this._pilotSwapGlidePending = false;
     return { x: ship.x, y: ship.y };
+  }
+
+  /** RTS fleet warp (S8): the ships a commander followed, waiting to show up
+   *  in the destination's mirror (armed in the `transit_ready` handler). */
+  private _fleetArrival: FleetArrivalWatch | null = null;
+
+  /**
+   * RTS fleet warp (S8) — one-shot: once the ships the commander followed are
+   * in the destination's mirror, returns their ids (to re-select: the ONE
+   * selection lives in the renderer) and their centroid (the camera glide
+   * target), then clears. Null while waiting or when nothing is pending. The
+   * RAF loop calls it each frame, like `consumePendingCameraGlide`.
+   */
+  consumePendingFleetArrival(): FleetArrival | null {
+    const w = this._fleetArrival;
+    if (w === null) return null;
+    const r = stepFleetArrival(w, this.mirror.ships, this.clock.now());
+    if (r === null) return null;
+    this._fleetArrival = null;
+    if (r === 'drop') {
+      logEvent('fleet_warp_follow_lost', { ids: w.ids.length });
+      return null;
+    }
+    logEvent('fleet_warp_follow_arrived', { ids: r.ids.length, of: w.ids.length });
+    return r;
   }
 
   private inputTick = 0;
@@ -2517,8 +2544,9 @@ export class ColyseusGameClient {
       } else if (msg.state === 'IN_TRANSIT') {
         // Phase 4 travel state: the trip starts the moment the spool commits
         // (the room swap follows a moment later, mid-trip), so the ship leaves
-        // at once instead of sitting still waiting for the swap.
-        if (!this.isTravelling()) {
+        // at once instead of sitting still waiting for the swap. Not in
+        // Command view: there is no local ship (a fleet warp; S7).
+        if (!this.isTravelling() && transitStartsLocalTrip(ui.pilotMode)) {
           this.beginTravel();
           ui.setTravelling(true);
         }
@@ -2546,14 +2574,23 @@ export class ColyseusGameClient {
       }
     });
 
-    room.onMessage('transit_ready', async (msg: { reservation: unknown; targetSectorKey: string }) => {
+    room.onMessage('transit_ready', async (msg: { reservation: unknown; targetSectorKey: string; shipIds?: unknown }) => {
+      // RTS fleet warp (S7): a commander in Command view follows their fleet
+      // on a spectator seat. Same room change as every transit; only the
+      // local ship's trip is skipped (there is none), so the load curtain
+      // covers the switch, and the warped ships are re-selected on arrival.
+      const fleetIds = parseTransitReadyShipIds(msg.shipIds);
+      const commanderFollow = isCommanderFleetFollow(fleetIds, useUIStore.getState().pilotMode);
+      this._fleetArrival = commanderFollow && fleetIds !== undefined && fleetIds.length > 0
+        ? { ids: fleetIds, armedAtMs: this.clock.now(), firstSeenAtMs: null }
+        : null;
       // Phase 4 travel state: the old sector stays live (and falls behind) until
       // the ship has flown out of it; only then does the room swap happen.
-      if (!this.isTravelling()) {
+      if (!commanderFollow && !this.isTravelling()) {
         this.beginTravel();
         useUIStore.getState().setTravelling(true);
       }
-      const outWait = this.travelOutRemainingMs();
+      const outWait = commanderFollow ? 0 : this.travelOutRemainingMs();
       if (outWait > 0) await new Promise((r) => setTimeout(r, outWait));
       // CRITICAL — leave the source room BEFORE consuming the destination
       // reservation. `client.consumeSeatReservation` opens a NEW WS without
@@ -2607,8 +2644,10 @@ export class ColyseusGameClient {
       // (NOT folded into it — that method is src/client/net prediction
       // state; SRP).
       // Phase 4 travel state: the trip starts now and IS the loading screen —
-      // set before the readiness re-arm so the curtain never rises.
-      if (!this.isTravelling()) {
+      // set before the readiness re-arm so the curtain never rises. A
+      // commander following their fleet has no ship to fly: the curtain
+      // rises for the switch instead (a short spinner).
+      if (!commanderFollow && !this.isTravelling()) {
         this.beginTravel();
         useUIStore.getState().setTravelling(true);
       }

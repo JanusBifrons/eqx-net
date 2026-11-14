@@ -94,6 +94,7 @@ import { setCanvasPointerCapture } from './pointerCapture.js';
 import { FrameTimeRing } from '@core/perf/FrameTimeRing';
 import { localCameraKey } from './camera/localCameraKey';
 import { isParkedHull } from './shipOwnership.js';
+import { warpFxFeedsShip } from './warpFxGate.js';
 import { forEachShipRekey, moveKey, moveSetKey, probeIdentity } from './shipRekey.js';
 import type { RenderPerfReading, PerfProbeOp, RenderCountReading } from '@core/contracts/IRenderer';
 
@@ -3033,10 +3034,16 @@ export class PixiRenderer implements IRenderer {
     this._spoolFx.beginFrame(this.fxNow(), this.world.scale.x);
     const local = mirror.localPlayerId;
     const s = this._warpShipScratch;
+    const hullFed = this._hullWarpFed;
     for (const [id, ship] of mirror.ships) {
-      // ACTIVE ships only (#17): a parked hull has no warp phase and was never
-      // drawn here before RTS Part A S3.
-      if (isParkedHull(mirror, id, ship)) continue;
+      // ACTIVE ships always; a parked hull (#17 LINGERING) only while it has a
+      // warp phase (RTS fleet warp S4: its group spools / it just arrived),
+      // and one frame after (warpFxGate.ts).
+      const parked = isParkedHull(mirror, id, ship);
+      if (!warpFxFeedsShip(parked, ship.warp, parked && hullFed.has(id))) continue;
+      if (parked) {
+        if (ship.warp === undefined) hullFed.delete(id); else hullFed.add(id);
+      }
       const sp = this.sprites.get(id);
       // A remote ship on its run is hidden but still tracked (its departure).
       if (!sp || (!sp.visible && ship.warp !== 2)) continue;
@@ -3046,6 +3053,10 @@ export class PixiRenderer implements IRenderer {
       s.x = sp.x; s.y = sp.y; s.rotation = sp.rotation; s.warp = ship.warp; s.stern = stern; s.isLocal = id === local;
       fx.draw(id, s);
       this.drawSpoolFx(id, ship.warp, ship.kind, sp, id === local ? mirror.localSpoolMs : undefined);
+    }
+    // Hulls that left (warped out, or the sector changed): forget them.
+    if (hullFed.size > 0) {
+      for (const id of hullFed) if (!mirror.ships.has(id)) hullFed.delete(id); // TODO: alloc-debt (iterator; only while a hull warps)
     }
     // W2a — NPCs warping (flagship fleets). Fed while their phase is set and
     // one frame after it clears, so a cancelled spool settles to idle instead
@@ -3437,6 +3448,9 @@ export class PixiRenderer implements IRenderer {
   private readonly _warpStern = new Map<string, number>();
   /** W2a — drones fed to WarpFx last frame (their sprite keys). */
   private readonly _droneWarpFed = new Set<string>();
+  /** Parked hulls fed to the warp effects last frame (`warpFxFeedsShip`).
+   *  A hull that left the mirror is dropped on the next frame's sweep. */
+  private readonly _hullWarpFed = new Set<string>();
   /** W2a — `swarm-<id>` keys, built once per drone (no per-frame string). */
   private readonly _droneWarpKeys = new Map<number, string>();
   private droneWarpKey(eid: number): string {
@@ -3555,6 +3569,16 @@ export class PixiRenderer implements IRenderer {
   glideCameraTo(gameX: number, gameY: number, durationMs: number): void {
     if (!this.initialized) return;
     this.camera.glideTo(gameX, -gameY, durationMs);
+  }
+
+  /** RTS fleet warp (S8) — these own ships become THE selection (focus
+   *  cleared), through the one `setSelection`. Ids that are not own ships in
+   *  the last mirror are skipped (the per-frame prune would drop them). */
+  selectFleetShips(ids: readonly string[]): void {
+    const m = this._lastMirror;
+    const next = new Set<string>();
+    for (const id of ids) if (m === null || isOwnShipPresent(id, m)) next.add(id);
+    this.setSelection(next, null, null);
   }
 
   /**

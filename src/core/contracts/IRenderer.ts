@@ -1183,6 +1183,13 @@ export interface IRenderer {
    */
   glideCameraTo(gameX: number, gameY: number, durationMs: number): void;
   /**
+   * RTS fleet warp (S8) — make these own ships THE selection (the one the
+   * renderer owns; the focus is cleared). Ids not present as own ships in the
+   * mirror are skipped. Used once when a commander arrives with the fleet
+   * they warped: the same shipInstanceIds, re-selected in the new sector.
+   */
+  selectFleetShips(ids: readonly string[]): void;
+  /**
    * Phase 5 — set the SPECTATOR WASD free-pan velocity in SCREEN px/sec. The
    * main thread computes it from the held WASD/arrow keys and calls this ONLY on
    * a key state change (not per frame); the `Camera.tick` integrates it. (0, 0)

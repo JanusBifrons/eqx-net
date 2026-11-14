@@ -45,7 +45,8 @@ import { ErrorBoundary } from './components/ErrorOverlay';
 import { HyperspaceOverlay } from './components/HyperspaceOverlay';
 import { WarpScreen } from './components/WarpScreen';
 import { LostConnectionOverlay } from './components/LostConnectionOverlay';
-import { engageTransit, cancelTransit } from './net/transitClient';
+import { cancelTransit } from './net/transitClient';
+import { fleetWarpRequest, sendWarpHere } from './app/fleetWarp';
 import { isSpectating } from './spectator/spectatorMode';
 import { logEvent } from './debug/ClientLogger';
 import { captureDeviceInfo } from './debug/deviceInfo';
@@ -407,6 +408,10 @@ function GameSurface({
   const handleEngageTransit = useCallback((targetSectorKey: string) => {
     const room = clientRef.current?.getRoom();
     if (!room) return;
+    // RTS fleet warp: in Command view the SELECTED ships warp (none = no warp;
+    // the drawer button is disabled then). Fly mode is unchanged.
+    const ui = useUIStore.getState();
+    if (!fleetWarpRequest(ui.pilotMode, ui.selection.ids).allowed) return;
     // F-transit-instrument — t0 for the transit timeline. The user's
     // "warp-out" == opening the in-game galaxy MAP and tapping a
     // neighbour, which routes here. Gated/no-op unless ?diag=1 /
@@ -424,7 +429,7 @@ function GameSurface({
     } else if (s.arrivalMode === 'home') {
       arrival = { x: s.homePosX, y: s.homePosY };
     }
-    engageTransit(room, targetSectorKey, arrival);
+    sendWarpHere(room, targetSectorKey, arrival, s.pilotMode, s.selection.ids);
   }, []);
   const handleCancelTransit = useCallback(() => {
     const room = clientRef.current?.getRoom();
