@@ -19,7 +19,9 @@ import type { Room as ClientRoom } from 'colyseus.js';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import type { SectorState } from '../../../src/server/rooms/schema/SectorState.js';
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
-import type { DamageEvent } from '../../../src/shared-types/messages.js';
+import type { DamageEvent, SnapshotMessage } from '../../../src/shared-types/messages.js';
+import { ColyseusGameClient } from '../../../src/client/net/ColyseusClient.js';
+import { PhysicsWorld } from '../../../src/core/physics/World.js';
 import { getShipKind } from '../../../src/shared-types/shipKinds.js';
 
 async function waitUntil(pred: () => boolean, ms: number, what: string): Promise<void> {
@@ -79,4 +81,64 @@ describe('SectorRoom integration — a player beam hits a parked hull by its rea
     }
     expect(hits.length, 'the beam went through the parked hull').toBeGreaterThan(0);
   });
+
+  // Shield flash on an AI-flown ship (owner clip 2026-11-14): a shot on the
+  // parked hull's raised shield names it by its sid, the REAL client queues a
+  // shield-tinted impact for that sid, and the hull is a `mirror.ships` entry
+  // with its shield up (the renderer's `_activeShieldIds` / sprite key).
+  it('a shot on a parked hull\'s shield reaches the client as a shield impact on its sid', { timeout: 30_000 }, async () => {
+    const parkedPid = randomUUID();
+    const parked = (await harness.connectActive(parkedPid, {
+      shipKind: 'heavy-cruiser', spawnX: 60, spawnY: HULL_Y, initialHull: 1_000_000, initialShield: 1_000_000,
+    })) as ClientRoom<SectorState>;
+    const server = harness.getServerRoom() as unknown as SectorRoom;
+    let shipId = '';
+    for (const [, s] of server.state.ships) if (s.playerId === parkedPid && s.isActive) shipId = s.shipInstanceId;
+    parked.send('spectate', { type: 'spectate' });
+    await waitUntil(() => server._internals.lingeringSlots.has(shipId), 3000, 'the hull is parked');
+
+    const shooterPid = randomUUID();
+    const shooter = (await harness.connectActive(shooterPid, {
+      shipKind: 'interceptor', spawnX: 0, spawnY: 0, groupMode: 'manual',
+    })) as ClientRoom<SectorState>;
+    const obs = new ColyseusGameClient();
+    const c = obs as unknown as ObserverInternals;
+    c.predWorld = await PhysicsWorld.create();
+    c.mirror.localPlayerId = 'observer';
+    shooter.onStateChange((s) => c.syncMirror(s));
+    shooter.onMessage('snapshot', (snap: SnapshotMessage) => c.handleSnapshot(snap));
+    const hits: DamageEvent[] = [];
+    shooter.onMessage('damage', (e: DamageEvent) => { if (e.targetId === shipId) hits.push(e); });
+    const drone = [...server._internals.swarmRegistry.all()].find((r) => r.kind === 1)!;
+    harness.lockTarget(shooterPid, drone.id);
+    for (let i = 0; i < 4 && hits.length === 0; i++) {
+      shooter.send('fire', {
+        type: 'fire', tick: server._internals.serverTick, clientShotId: `s${i}`,
+        weapon: 'hitscan', dirAngle: 0, slotId: 'primary',
+      });
+      await harness.advance(400);
+    }
+    const hit = hits.find((e) => e.hitLayer === 'shield');
+    expect(hit, 'a shield-layer hit named by the hull sid').toBeDefined();
+    const hull = c.mirror.ships.get(shipId);
+    expect(hull, 'the hull is in the client ship list under its sid').toBeDefined();
+    expect(hull!.shieldDown, 'its shield is drawn up').not.toBe(true);
+    c.mirror.pendingEffectTriggers.length = 0;
+    c.handleDamage(hit!);
+    expect(c.mirror.pendingEffectTriggers).toContainEqual(
+      expect.objectContaining({ kind: 'impact', tint: 0x88ddff, entityId: shipId }),
+    );
+  });
 });
+
+interface ObserverInternals {
+  predWorld: PhysicsWorld | null;
+  mirror: {
+    localPlayerId: string | null;
+    ships: Map<string, { shieldDown?: boolean }>;
+    pendingEffectTriggers: Array<{ kind: string; tint?: number; entityId?: string }>;
+  };
+  syncMirror(state: unknown): void;
+  handleSnapshot(snap: SnapshotMessage): void;
+  handleDamage(evt: DamageEvent): void;
+}

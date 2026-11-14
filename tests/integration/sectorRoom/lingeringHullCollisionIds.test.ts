@@ -23,12 +23,13 @@ import type { CollisionResolvedMessage, SnapshotMessage } from '../../../src/sha
 import { ColyseusGameClient } from '../../../src/client/net/ColyseusClient.js';
 import { PhysicsWorld } from '../../../src/core/physics/World.js';
 import { LINGER_BODY_PREFIX } from '../../../src/shared-types/shipBodyIds.js';
+import { pushCollisionShieldContacts, type ShieldContactTrigger } from '../../../src/client/net/collisionShieldContacts.js';
 
 const PID = randomUUID();
 
 interface ClientInternals {
   predWorld: PhysicsWorld | null;
-  mirror: { localPlayerId: string | null };
+  mirror: { localPlayerId: string | null; ships: Map<string, { x: number; y: number }> };
   syncMirror(state: unknown): void;
   handleSnapshot(snap: SnapshotMessage): void;
 }
@@ -82,6 +83,17 @@ describe('collision_resolved names a parked hull by the id the client keys its b
     const m = onHull[0]!;
     expect(c.predWorld!.hasShip(m.aId), `client has no body "${m.aId}"`).toBe(true);
     expect(c.predWorld!.hasShip(m.bId), `client has no body "${m.bId}"`).toBe(true);
+
+    // Shield contact on the AI-flown hull (owner clip 2026-11-14: no shield
+    // flash when AI-flown ships bump): the hull side is named a ship (-1,
+    // keyed as the client keys it) and the REAL client helper draws a
+    // contact for the hull's sid.
+    const hullCode = m.aId === hullId ? m.eA : m.eB;
+    expect(hullCode, 'collision_resolved names the hull as a ship (-1)').toBe(-1);
+    expect(c.mirror.ships.has(hullId), 'the hull is in the client ship list').toBe(true);
+    const contacts: ShieldContactTrigger[] = [];
+    pushCollisionShieldContacts(m, c.mirror, 0, new Map(), contacts);
+    expect(contacts.map((t) => t.entityId)).toContain(hullId);
     await harness.disconnectClient(client2);
   }, 25_000);
 });

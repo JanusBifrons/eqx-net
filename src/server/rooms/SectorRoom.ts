@@ -8851,11 +8851,18 @@ export class SectorRoom extends Room<SectorState> {
     await this.physicsWorkerProxy.start();
   }
 
-  /** How the client knows a physics body: -1 = an active pilot's ship (id is
-   *  the playerId), >= 0 = a swarm entity id, undefined = neither. */
+  /** How the client knows a physics body: -1 = a ship, keyed as the client
+   *  keys it (`wireShipBodyId`: an active pilot's playerId, or an AI-flown
+   *  hull's bare sid), >= 0 = a swarm entity id, undefined = neither. */
   private clientEntityCode(id: string): number | undefined {
     const rec = this.swarmRegistry.get(id);
     if (rec) return rec.entityId;
+    const wireId = wireShipBodyId(id);
+    if (wireId !== id) {
+      // A `linger-<sid>` body: an AI-flown (LINGERING) hull.
+      const hull = this.lingeringSlots.has(wireId) ? this.state.ships.get(wireId) : undefined;
+      return hull && isLingeringHull(hull) ? -1 : undefined;
+    }
     return this.getActiveShip(id)?.isActive === true ? -1 : undefined;
   }
 
