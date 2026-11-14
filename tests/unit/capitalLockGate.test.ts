@@ -5,7 +5,12 @@
  * Drives the REAL WeaponMountTicker (fake room, as capitalFireCadence) and the
  * REAL NpcLockSubsystem.
  */
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
+
+// Pinned to legacy naval ranges (the default is real): the ~38 s 16" lock
+// below is the legacy reach's. Set before any import builds the catalogue.
+vi.hoisted(() => vi.stubEnv('EQX_NAVAL_RANGE', 'legacy'));
+afterAll(() => vi.unstubAllEnvs());
 import { WeaponMountTicker, type SwarmRecord } from '../../src/server/rooms/WeaponMountTicker';
 import { NpcLockSubsystem, type NpcPose } from '../../src/server/rooms/NpcLockSubsystem';
 import { getShipKind } from '../../src/shared-types/shipKinds';

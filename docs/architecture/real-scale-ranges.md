@@ -1,18 +1,22 @@
 # Real-scale naval ranges
 
-The naval guns (`naval_*`: capital turrets and the coastal batteries) can run at their real ranges. It is a switch, off by default.
+The naval guns (`naval_*`: capital turrets and the coastal batteries) run at their real ranges. It is a switch, ON by default; `legacy` (the old, shorter reaches) is opt-in.
 
 ## The switch
 
+Owner decision 2026-11-14: real ranges are the default. Before that (from 2026-11-10) the switch was off by default and `real` was the opt-in.
+
 | Where | How |
 |---|---|
-| Server (Node, tests) | env `EQX_NAVAL_RANGE=real` (anything else, or unset, is `legacy`) |
-| Page | `?navalRange=real` (the inline script in `src/client/index.html` sets `__EQX_NAVAL_RANGE__` before any module loads) |
-| Workers | the worker name carries `;navalRange=real` (`shipScaleWorkerName` appends `navalRangeWorkerNameSuffix`) |
+| Server (Node, tests) | env `EQX_NAVAL_RANGE=legacy` (anything else, or unset, is `real`) |
+| Page | `?navalRange=legacy` (the inline script in `src/client/index.html` sets `__EQX_NAVAL_RANGE__` before any module loads) |
+| Workers | the worker name carries `;navalRange=legacy` (`shipScaleWorkerName` appends `navalRangeWorkerNameSuffix`; only the non-default mode is carried) |
 
 It is read once at module load in `src/shared-types/combat/navalRange.ts` (the same pattern as `EQX_SHIP_SCALE` and `EQX_CAPITAL_STYLE`). The weapon catalogue is built from it at load, so the switch is per **process**, not per room.
 
-Both sides must agree (invariant #15): the server fires from its catalogue, the client draws range rings, lock rings and aim guides from its own. The server stamps its mode on every welcome (`stampNavalRange`, sent only when `real`, so a legacy welcome is unchanged), and the client logs `naval_range_mismatch` with the fix (`?navalRange=real`) when they differ (`navalRangeMismatch`).
+Both sides must agree (invariant #15): the server fires from its catalogue, the client draws range rings, lock rings and aim guides from its own. The server stamps its mode on every welcome, both values (`stampNavalRange`), and the client logs `naval_range_mismatch` with the fix (`?navalRange=<server's mode>`) when they differ (`navalRangeMismatch`). A welcome WITHOUT the field came from a server built before the default flipped, which ran `legacy`, so the client reads a missing field as `legacy`: an old server can never pass for the new default.
+
+Tests that lock legacy numbers or legacy-sized geometry pin the mode at the top of the file, before any import builds the catalogue: `vi.hoisted(() => vi.stubEnv('EQX_NAVAL_RANGE', 'legacy'))` plus `afterAll(() => vi.unstubAllEnvs())` (e.g. `capitalCombat.test.ts`, `coastalDefences.test.ts`, `npcLockParity.test.ts`).
 
 ## The numbers (owner decision 2026-11-10)
 
@@ -80,4 +84,4 @@ The tables live in `src/shared-types/combat/navalGuns.ts` (`REAL_NAVAL_GUNS`, de
 ## Tests
 
 - `tests/unit/navalRangeSwitch.test.ts`: legacy unchanged, real matches the table and the ratios, coastal ranges follow, welcome parity, worker name.
-- `tests/integration/navalReal/coastalRealRange.test.ts` (`pnpm test:naval-real`, its own CI step): a 16" barbette engages a battleship 30 km out and its shell hits it ~23 s later.
+- `tests/integration/navalReal/coastalRealRange.test.ts` (`pnpm test:naval-real`, its own CI step; it sets `real` explicitly, so it stays put if the default ever moves): a 16" barbette engages a battleship 30 km out and its shell hits it ~23 s later.

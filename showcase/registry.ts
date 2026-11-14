@@ -181,7 +181,7 @@ export const SHOWCASE_EXEMPT: Record<string, string> = {
 
 /** Docs whose feature exists but cannot be staged on main yet — with what unblocks it. */
 export const SHOWCASE_PENDING: Record<string, string> = {
-  'real-scale-ranges': 'Off by default (EQX_NAVAL_RANGE=real); filmed with the coastal-duel shot once the camera can show a 30 km shot (follow-up slice).',
+  'real-scale-ranges': 'On by default since 2026-11-14 (EQX_NAVAL_RANGE=legacy opts out); filmed with the coastal-duel shot once the camera can show a 30 km shot (follow-up slice).',
   'contacts-overview':
     'The list earns its place on a capital at real-scale range (16" at 30 km); film it beside the real-scale-ranges shot once that 30 km camera lands, opening the list and locking a far fighter from it.',
   'ship-scale': 'R&D: the 1×/2×A/2×B comparison clips are filmed by running existing shots at EQX_SHIP_SCALE; a dedicated shot lands with the rollout.',
