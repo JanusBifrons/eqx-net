@@ -6,7 +6,7 @@
  * release on and what gates the "locks keep it hostile" refresh.
  */
 import { describe, it, expect } from 'vitest';
-import { mountsReachTarget, mountWeaponReach, type MountRangeTarget } from './mountReach.js';
+import { mountInReach, mountsReachTarget, mountWeaponReach, prepareRangeTarget, type MountRangeTarget } from './mountReach.js';
 import { shipHitBound } from './shipHitShape.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import type { WeaponMount } from '../../shared-types/shipKinds/types.js';
@@ -49,6 +49,37 @@ describe('mountsReachTarget', () => {
     expect(mountsReachTarget([m], 0, 0, 0, 0, 500 + r - 1, circle(0))).toBe(true);
     // Turned half round: the mount is now 500 u behind; the same point is out.
     expect(mountsReachTarget([m], 0, 0, Math.PI, 0, 500 + r - 1, circle(0))).toBe(false);
+  });
+
+  it('agrees with a plain per-mount `mountInReach` loop (the circle fast path and the prepared shape change nothing)', () => {
+    const bs = getShipKind('battleship');
+    const shooters: Array<ReadonlyArray<WeaponMount>> = [mounts, bs.mounts ?? []];
+    const targets: MountRangeTarget[] = [
+      ship('fighter'), { kindId: 'fighter', angle: 0.7, shieldUp: false }, ship('battleship'),
+      { kindId: 'battleship', angle: 2, shieldUp: false }, circle(150), circle(0),
+    ];
+    const prep = { bound: 0, circle: 0 };
+    let checked = 0;
+    for (const ms of shooters) {
+      for (const t of targets) {
+        prepareRangeTarget(t, prep);
+        for (let d = 0; d < 9000; d += 137) {
+          for (const a of [0, 1.1, 2.9]) {
+            const tx = Math.sin(a) * d, ty = Math.cos(a) * d;
+            let want = false;
+            for (const m of ms) {
+              const mx = (m.localX * Math.cos(0.4) - m.localY * Math.sin(0.4));
+              const my = m.localX * Math.sin(0.4) + m.localY * Math.cos(0.4);
+              if (mountInReach(tx - mx, ty - my, mountWeaponReach(m), t)) { want = true; break; }
+            }
+            expect(mountsReachTarget(ms, 0, 0, 0.4, tx, ty, t)).toBe(want);
+            expect(mountsReachTarget(ms, 0, 0, 0.4, tx, ty, t, 1, prep)).toBe(want);
+            checked++;
+          }
+        }
+      }
+    }
+    expect(checked).toBeGreaterThan(500);
   });
 
   it('no mounts: never in range', () => {

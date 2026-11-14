@@ -26,7 +26,7 @@ import { LOCK_TUNING, sensorFor, signatureFor } from '../../shared-types/combat/
 import { capLockSeconds, lockSeconds, type LockInputs } from '../../core/combat/lockTime.js';
 import type { ShipKind } from '../../shared-types/shipKinds/types.js';
 import { groupGeometry } from './LockSubsystem.js';
-import { hasTurretFireControl, mountRangeBound, mountsOuterReach, mountsReachTarget, type MountRangeTarget } from '../../core/combat/mountReach.js';
+import { hasTurretFireControl, mountsReachTarget, prepareRangeTarget, type MountRangeTarget, type RangeTargetPrep } from '../../core/combat/mountReach.js';
 import type { WeaponMount } from '../../shared-types/shipKinds/types.js';
 
 /** Wire row: who is locking the pilot. `t` = `s:<entityId>`, `s` 1 acquiring / 2 locked, `p` 0..100. */
@@ -97,8 +97,8 @@ export class NpcLockSubsystem {
   private curState: PilotState | null = null;
   private curPilotId = '';
   private curSignature = 1;
-  /** The pilot's hit-shape bound (`mountRangeBound`), once per pilot. */
-  private curBound = 0;
+  /** The pilot's range shape (bound, circle), resolved once per pilot. */
+  private readonly curPrep: RangeTargetPrep = { bound: 0, circle: 0 };
   private curInstant = false;
   private curCap: number | undefined = undefined;
 
@@ -181,7 +181,7 @@ export class NpcLockSubsystem {
       const pt = this.pilotTarget;
       pt.angle = this.pilot.angle ?? 0; pt.shieldUp = this.pilot.shieldUp !== false;
       pt.kindId = kind.id; pt.radius = 0;
-      this.curBound = mountRangeBound(pt);
+      prepareRangeTarget(pt, this.curPrep);
       this.curInstant = this.deps.instantLock?.(pilotId) === true;
       this.curCap = this.deps.lockTimeCapS?.();
       this.deps.forEachHostileNpc(pilotId, this.visit);
@@ -240,7 +240,7 @@ export class NpcLockSubsystem {
       inp.sensor = g.sensor;
       const s = capLockSeconds(lockSeconds(inp, LOCK_TUNING), inp, this.curCap);
       // `mayBeInReach` with the pilot's bound hoisted out of the pair loop.
-      const r = g.reach * LOCK_TUNING.reachSlack + this.curBound;
+      const r = g.reach * LOCK_TUNING.reachSlack + this.curPrep.bound;
       if (d2 <= r * r) {
         anyInReach = true;
         if (s < secs) secs = s;
@@ -272,13 +272,10 @@ export class NpcLockSubsystem {
     // its FIRE range (lead call, 2026-11-14): a lock now holds at any
     // distance, so without this gate a far lock would keep it hostile
     // forever. Outside fire range the refresh stops and the 30 s decay runs.
-    // Cheap first: past every mount's reach + offset + the pilot's bound.
+    // The pilot's range shape is resolved once per pilot (`curPrep`).
     const refresh = this.deps.refreshHostility;
-    if (!refresh) return;
-    const mounts = kind.mounts ?? NO_MOUNTS;
-    const gate = mountsOuterReach(mounts) + this.curBound;
-    if (d2 > gate * gate) return;
-    if (mountsReachTarget(mounts, this.npc.x, this.npc.y, this.npc.angle ?? 0, this.pilot.x, this.pilot.y, this.pilotTarget)) {
+    if (refresh && mountsReachTarget(kind.mounts ?? NO_MOUNTS, this.npc.x, this.npc.y, this.npc.angle ?? 0,
+      this.pilot.x, this.pilot.y, this.pilotTarget, 1, this.curPrep)) {
       refresh(npcId, this.curPilotId);
     }
   };

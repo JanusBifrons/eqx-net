@@ -13,7 +13,8 @@ import type { ShipKind, WeaponMount } from '../../shared-types/shipKinds.js';
 import { SHIP_KINDS_LIST } from '../../shared-types/shipKinds.js';
 import { HITSCAN_RANGE } from './Weapons.js';
 import { getWeapon, weaponAutoFireRange, type WeaponId } from './WeaponCatalogue.js';
-import { shipHitBound, shipWithinHullReach } from './shipHitShape.js';
+import { shipBubbleRadius, shipHitBound, shipWithinHullReach } from './shipHitShape.js';
+import { isCapitalKindId } from './capitalHits.js';
 
 /** Engage range of one mount's weapon, from the mount. */
 export function mountWeaponReach(mount: Pick<WeaponMount, 'weaponId'>): number {
@@ -82,22 +83,6 @@ export function mountInReach(dx: number, dy: number, reach: number, t: MountRang
   return dx * dx + dy * dy <= r * r;
 }
 
-/** Per mount list: max(mount reach + mount offset), the cheap far reject
- *  (cached per mount-list identity). */
-const outerCache = new WeakMap<ReadonlyArray<WeaponMount>, number>();
-export function mountsOuterReach(mounts: ReadonlyArray<WeaponMount>): number {
-  let r = outerCache.get(mounts);
-  if (r === undefined) {
-    r = 0;
-    for (const m of mounts) {
-      const v = mountWeaponReach(m) + Math.hypot(m.localX, m.localY);
-      if (v > r) r = v;
-    }
-    outerCache.set(mounts, r);
-  }
-  return r;
-}
-
 /**
  * Is target `t` at (tx, ty) inside FIRE range of ANY of `mounts` on a hull at
  * (sx, sy, sAngle)? Each mount is tested from its own world position with its
@@ -111,9 +96,13 @@ export function mountsOuterReach(mounts: ReadonlyArray<WeaponMount>): number {
 export function mountsReachTarget(
   mounts: ReadonlyArray<WeaponMount>, sx: number, sy: number, sAngle: number,
   tx: number, ty: number, t: MountRangeTarget | null | undefined, slack = 1,
+  prep?: RangeTargetPrep,
 ): boolean {
   if (mounts.length === 0) return false;
-  const gate = mountsOuterReach(mounts) * slack + mountRangeBound(t);
+  const bound = prep ? prep.bound : mountRangeBound(t);
+  const circle = prep ? prep.circle : mountRangeCircle(t);
+  const reaches = mountReaches(mounts);
+  const gate = reaches[0]! * slack + bound;
   const cdx = tx - sx;
   const cdy = ty - sy;
   if (cdx * cdx + cdy * cdy > gate * gate) return false;
@@ -121,11 +110,55 @@ export function mountsReachTarget(
   const sinA = Math.sin(sAngle);
   for (let i = 0; i < mounts.length; i++) {
     const m = mounts[i]!;
-    const mx = sx + (m.localX * cosA - m.localY * sinA);
-    const my = sy + (m.localX * sinA + m.localY * cosA);
-    if (mountInReach(tx - mx, ty - my, mountWeaponReach(m) * slack, t)) return true;
+    const dx = tx - (sx + (m.localX * cosA - m.localY * sinA));
+    const dy = ty - (sy + (m.localX * sinA + m.localY * cosA));
+    const reach = reaches[i + 1]! * slack;
+    if (circle >= 0) {
+      // A circle hit shape: exactly `mountInReach`'s answer, without the
+      // per-call kind lookups.
+      const r = reach + circle;
+      if (dx * dx + dy * dy <= r * r) return true;
+    } else if (mountInReach(dx, dy, reach, t)) return true;
   }
   return false;
+}
+
+/** A target's range shape resolved once (per pilot, not per pair): its
+ *  `mountRangeBound` and `mountRangeCircle`. */
+export interface RangeTargetPrep { bound: number; circle: number }
+
+/** Fill `out` for target `t` (alloc-free). */
+export function prepareRangeTarget(t: MountRangeTarget | null | undefined, out: RangeTargetPrep): RangeTargetPrep {
+  out.bound = mountRangeBound(t);
+  out.circle = mountRangeCircle(t);
+  return out;
+}
+
+/** The radius when the target's hit shape is a plain circle (a non-capital
+ *  ship with its shield up: its bubble; a kindless target: its `radius`),
+ *  else -1 (a hull polygon: `mountInReach` decides). */
+export function mountRangeCircle(t: MountRangeTarget | null | undefined): number {
+  if (t?.kindId != null) return t.shieldUp === true && !isCapitalKindId(t.kindId) ? shipBubbleRadius(t.kindId) : -1;
+  return t?.radius ?? 0;
+}
+
+/** [outer reach, reach of mount 0, mount 1, …] per mount list (cached by
+ *  identity; built once per kind). */
+const reachCache = new WeakMap<ReadonlyArray<WeaponMount>, Float64Array>();
+function mountReaches(mounts: ReadonlyArray<WeaponMount>): Float64Array {
+  let r = reachCache.get(mounts);
+  if (r === undefined) {
+    r = new Float64Array(mounts.length + 1);
+    for (let i = 0; i < mounts.length; i++) {
+      const m = mounts[i]!;
+      const reach = mountWeaponReach(m);
+      r[i + 1] = reach;
+      const v = reach + Math.hypot(m.localX, m.localY);
+      if (v > r[0]!) r[0] = v;
+    }
+    reachCache.set(mounts, r);
+  }
+  return r;
 }
 
 /** Cheap candidate test for a turret's target search: the target's centre is
