@@ -22,3 +22,13 @@ The trip IS the loading screen; the player shouldn't notice it (the user: "like 
 - **In:** after `TRAVEL_MIN_S` (minus the approach) and once the destination is loaded, the ship is placed on approach out along its heading (`mirror.travelJumpX/Y`; the renderer shifts the sky by it so the stars carry on), brakes from warp to a glide, then glides onto its arrival point (`travelApproach`), so what's near the arrival point is flown past at a visible speed. Landing opens `joinMinimumElapsed` → `client_ready` → the ship arrives for everyone (`warp: 3`).
 - **Feel knobs** (`ColyseusClient`): `TRAVEL_OUT_S` 3, `TRAVEL_MIN_S` 25 (the user: "20–30 s, it needs to feel significant"), `TRAVEL_BRAKE_S` 2.5, `TRAVEL_GLIDE_V` 2500, `TRAVEL_GLIDE_D` 4000.
 - **Known gap:** newly baked art re-uploads its whole atlas page, a GPU stall (0.25–0.6 s on integrated graphics) wherever a batch of new art lands. Fix in progress: upload new art in small pieces.
+
+## Server implementation notes
+
+> Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.
+
+### From the server Thresholds section
+
+Moved verbatim from the old "Thresholds" section of `src/server/CLAUDE.md`. The rules stay there in short form; current values are in [server-thresholds](server-thresholds.md). Dates, plan names and "was" notes below are history.
+
+- **Phase 5 — in-game roster switching via transit (2026-05-13)**: `EngageTransitSchema` gains an optional `shipId: z.string().min(1)` field. When present, `TransitOrchestrator.beginTransit(playerId, target, arrival?, shipId?)` validates ownership via `playerShipStore.get(shipId).playerId === playerId` BEFORE spinning up the state machine — foreign / unknown ids reject with `destination_unavailable` (single load-bearing check that prevents ship-hijack via the wire). On commit the `shipId` is threaded through `reserveSeatFor` options to the destination room's `onJoin`, where the existing Phase 3 shipId-bind path (`JoinOptionsSchema.shipId`) hydrates the named roster row instead of the source ship's Limbo entry. The orchestrator's 4th constructor arg is the `PlayerShipStore`; omitting it makes any shipId-carrying request reject as unknown (safe-by-default). Absent `shipId` ⇒ legacy path (the source ship continues into the destination, exactly as Phase 8 sub-phase B). The CLIENT'S in-game spawn-from-roster does NOT use this path — it dispatches a `pendingShipSwap` Zustand intent that App.tsx executes as a direct leave-current-room + join-new-room cycle (loading spinner via 'connecting' phase). The transit-orchestrator shipId path is kept as a future seam (server-side validated; not invoked by current UI).

@@ -222,3 +222,13 @@ design (no admin-tool requirement yet).
 - **SQLite-backed runtime-mutable graph** — only if seasonal reshuffles / an
   admin tool become a goal; the `GalaxySector` shape is already the right
   contract for that swap.
+
+## Server implementation notes
+
+> Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.
+
+### From the server Thresholds section
+
+Moved verbatim from the old "Thresholds" section of `src/server/CLAUDE.md`. The rules stay there in short form; current values are in [server-thresholds](server-thresholds.md). Dates, plan names and "was" notes below are history.
+
+- **Phase 8 (sub-phase A — shipped) — Persistent galaxy substrate**: 7-sector hexagonal sunflower defined in [src/core/galaxy/galaxy.ts](../../src/core/galaxy/galaxy.ts) (Sol Prime centre + 6 outers). Each galaxy sector is registered as `gameServer.define('galaxy-${key}', SectorRoom, { sectorKey, ... })` and **eagerly created** at boot via `matchMaker.createRoom` (see [src/server/index.ts](../../src/server/index.ts) `main()`), so they hydrate from snapshots before any traveller arrives and so future seat reservations always land on a live room. Engineering rooms (`sector`, `test-sector`, `swarm-soak`, `swarm-tidi`, `swarm-tidi-burn`) keep `sectorKey === null`, lazy-create on first join, and have no persistent identity. Galaxy `SectorRoom`s persist swarm health every 60 s (and on `onDispose`) via the dormant-since-Phase-7 `saveSnapshot` op now activated, keyed by `sectorKey` not `roomId`. Hydration on `onCreate` reads the most recent row from `game_snapshots`, validates `schemaVersion === CURRENT_SCHEMA_VERSION` (mismatch ⇒ silent fresh-spawn), and discards rows older than 24 h. Bumping `CURRENT_SCHEMA_VERSION` in [src/server/rooms/SectorSnapshot.ts](../../src/server/rooms/SectorSnapshot.ts) is the canonical "tear down all sectors and reseed" knob. Galaxy sectors run the simulation step regardless of player count (so the world feels alive when empty); the broadcast loop short-circuits when `clients.length === 0`. See [docs/architecture/galaxy-graph.md](galaxy-graph.md) and [docs/architecture/persistence-and-migrations.md](persistence-and-migrations.md). Sub-phase B layers Limbo (15 min disconnect TTL, 30 s transit-in-flight) and 15-second `setSeatReservationTime` for inter-sector hyperspace transit on top.

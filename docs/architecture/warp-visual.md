@@ -232,3 +232,13 @@ the markers to confirm, not a license to lighten the chain blind.
 - `docs/architecture/snapshot-cadence.md` — the idle-suppression the
   join-grace overrides.
 - `docs/HANDOFF-warp-spool-perf-followup.md` — the open perf work.
+
+## Server implementation notes
+
+> Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.
+
+### From the server Thresholds section
+
+Moved verbatim from the old "Thresholds" section of `src/server/CLAUDE.md`. The rules stay there in short form; current values are in [server-thresholds](server-thresholds.md). Dates, plan names and "was" notes below are history.
+
+- **Warp/transit join-broadcast grace (2026-05-15)**: `JOIN_BROADCAST_GRACE_TICKS = 300` (5 s @ 60 Hz, [rooms/SectorRoom.ts](../../src/server/rooms/SectorRoom.ts)). On every join / spawn / reconnect-rebind the room sets `forceBroadcastUntilTick = currentTick + JOIN_BROADCAST_GRACE_TICKS`; while `serverTick < forceBroadcastUntilTick` the broadcast gate treats the sector as non-idle **regardless of motion** (`inJoinGrace` short-circuits `isSectorIdle`), so a just-joined stationary client gets the steady snapshot stream it needs to reconcile its prediction. Without it, Stage-5 idle-suppression starved a freshly-spawned stationary ship of snapshots until the player moved — then the first snapshot snapped the stale free-run prediction hundreds of units (the "warp / change-sector → stay still → move → teleport" smoke-test bug, diag 2026-05-15). 5 s deliberately matches the client's `joinMinimumElapsed` warp-curtain floor so the first correction lands *beneath* the curtain. Companion `warp_in` / `warp_out` broadcasts (`TransitOrchestrator` / `SectorRoom` → [src/shared-types/messages.ts](../../src/shared-types/messages.ts)) drive remote-ship warp visuals. Locked by [tests/integration/sectorRoom/joinBroadcastGrace.test.ts](../../tests/integration/sectorRoom/joinBroadcastGrace.test.ts) + [warpBroadcasts.test.ts](../../tests/integration/sectorRoom/warpBroadcasts.test.ts). Full feature story: [docs/architecture/warp-visual.md](warp-visual.md).
