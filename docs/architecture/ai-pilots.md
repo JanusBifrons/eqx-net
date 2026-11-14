@@ -17,7 +17,7 @@ An NPC brain never emits an impulse or an angvel snap. It picks a FACING and a W
 - **Every mode flies this way:** `HostileDroneBehaviour` uses it for combat, broadside, guard, patrol, move-to and flock. Its decisions (targets, ranges, fire gate) are unchanged.
 - **Pace:** out of combat it chooses `CALM_CRUISE_FRAC` (0.45) of its cruise speed (the pace the retired `ai.thrust` gave); in combat it has full handling and boost.
 - **Difficulty** knobs are the pilot's reaction latch and aim, never weaker engines.
-- **Hold the line while a charge winds up:** a charge shot leaves down the barrel when its wind-up ends, so while `view.isCharging(self.id)` (the server's `AiFireResolver.isCharging`, set on `AiController.isCharging`; server-only, no wire) the combat brain flies nose-on to the lead at the target's velocity instead of its manoeuvre. Without it a robot orb on a strafing pass slid ~400 u in the 1.2 s wind-up and missed even a parked pilot (6 of 6). Locks: `chargeLaser.test.ts`, `attackRunTurnBack.test.ts`.
+- **Hold the line while a charge winds up:** a charge shot leaves down the barrel when its wind-up ends, so while `view.isCharging(self.id)` (any mount charging in the server's `WeaponMountTicker.charges`, set on `AiController.isCharging`; server-only, no wire) the combat brain flies nose-on to the lead at the target's velocity instead of its manoeuvre. Without it a robot orb on a strafing pass slid ~400 u in the 1.2 s wind-up and missed even a parked pilot (6 of 6). Locks: `chargeLaser.test.ts`, `attackRunTurnBack.test.ts`.
 
 Locks: `ai/virtualPilot.test.ts` (real Rapier body, fighter and capital, with and without a tick of lag) and the `HostileDroneBehaviour*.test.ts` suites (keys via `ai/pilotTestKit.ts`).
 

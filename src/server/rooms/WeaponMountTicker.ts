@@ -161,8 +161,89 @@ export interface WeaponMountTickerDeps {
    *  structure takes longer than this many seconds while in reach (0 = the
    *  first tick). Absent / undefined = the lock rules unchanged. */
   lockTimeCapS?: () => number | undefined;
+  /** testMode `chargeTicksCap` (room / join option): no capital-turret
+   *  charge lasts longer than this many ticks (0 = the shot goes on the next
+   *  tick it may). Undefined = each weapon's own `chargeTicks`. */
+  chargeTicksCap?: () => number | undefined;
 }
 
+
+/** A mount that is not charging (the charge-start sentinel; ticks are ≥ 0). */
+export const NOT_CHARGING = -1;
+
+/**
+ * THE per-mount charge store (plan step 6): for each AI ship, the server tick
+ * each mount began charging, or `NOT_CHARGING`, indexed like the ship's slot
+ * mounts (`resolveSlotMounts`). Capital turrets (`tickCapitalMounts`) and the
+ * AI salvo path (`AiFireResolver`) both read and write it; the snapshot's
+ * `drones[].chargingMask` / `chargeStartTick` read it. One Int32Array per
+ * ship, made on its first charge and reused (#14); `forget` on removal (a
+ * dead ship's charge never fires).
+ */
+export class MountCharges {
+  readonly starts = new Map<string, Int32Array>();
+
+  /** The ship's start array, made (all idle) on first use or a size change. */
+  startsFor(droneId: string, n: number): Int32Array {
+    let a = this.starts.get(droneId);
+    if (!a || a.length !== n) { a = new Int32Array(n).fill(NOT_CHARGING); this.starts.set(droneId, a); }
+    return a;
+  }
+
+  /** Bit i set ⇔ mount i is charging (or holding a completed charge).
+   *  Mounts past bit 30 are not reported. */
+  mask(droneId: string): number {
+    const a = this.starts.get(droneId);
+    if (a === undefined) return 0;
+    let m = 0;
+    for (let i = 0; i < a.length && i < 31; i++) if (a[i]! !== NOT_CHARGING) m |= 1 << i;
+    return m;
+  }
+
+  /** The earliest start tick among the ship's charging mounts, or
+   *  `NOT_CHARGING` when none charges. */
+  startTick(droneId: string): number {
+    const a = this.starts.get(droneId);
+    if (a === undefined) return NOT_CHARGING;
+    let t = NOT_CHARGING;
+    for (let i = 0; i < a.length; i++) {
+      const s = a[i]!;
+      if (s !== NOT_CHARGING && (t === NOT_CHARGING || s < t)) t = s;
+    }
+    return t;
+  }
+
+  /**
+   * Each charging mount's start as ticks after `base` (the earliest start,
+   * `startTick`), one per set bit of `mask`, lowest bit first, into `out`
+   * (length set). Returns false (and leaves `out` empty) when every
+   * charging mount began on `base`: the snapshot then omits the offsets.
+   * Clamped to u16. Alloc-free.
+   */
+  offsetsInto(droneId: string, base: number, out: number[]): boolean {
+    out.length = 0;
+    const a = this.starts.get(droneId);
+    if (a === undefined) return false;
+    let any = false;
+    let k = 0;
+    for (let i = 0; i < a.length && i < 31; i++) {
+      const s = a[i]!;
+      if (s === NOT_CHARGING) continue;
+      let off = s - base;
+      if (off < 0) off = 0;
+      else if (off > 65_535) off = 65_535;
+      if (off !== 0) any = true;
+      out[k++] = off;
+    }
+    if (!any) out.length = 0;
+    return any;
+  }
+
+  /** The ship left the world (death, eviction, shed): drop its charges. */
+  forget(droneId: string): void {
+    this.starts.delete(droneId);
+  }
+}
 
 const DT_SEC = 1 / 60;
 /** The on-target rules live with the shared fire control (plan
@@ -186,6 +267,9 @@ export class WeaponMountTicker {
   readonly droneSlotTargets = new Map<string, string | null>();
   /** Capital fire control: last fire tick per mount, keyed by drone id. */
   readonly droneMountReload = new Map<string, Int32Array>();
+  /** Per-mount charge state beside the reload (plan step 6): the ONE charge
+   *  store, shared with `AiFireResolver`. */
+  readonly charges = new MountCharges();
 
   /** Pooled per-tick player candidates (rebuilt by tickDrone). Logical-length
    *  over physical slot (plan: quirky-rabbit, Phase 5): slots are reused and
@@ -572,6 +656,9 @@ export class WeaponMountTicker {
         per[i] = null;
         if (lock.target !== '') resetLock(lock, '');
         angles[i] = rotateMountToward(angles[i]!, 0, mount, DT_SEC);
+        // A 'locked-direction' charge fires when it completes, target or not;
+        // a 'when-bearing' one holds until the gun bears on a target again.
+        this.releaseLockedCharge(droneId, i, mount, tick, reload);
         continue;
       }
       const t = targets[best]!;
@@ -597,8 +684,17 @@ export class WeaponMountTicker {
       const dist = Math.hypot(dx, dy);
       const want = leadArcBearing(dx, dy, t.vx - selfVx, t.vy - selfVy, w.mode === 'hitscan' ? 0 : w.speed, ang, mount.baseAngle);
       angles[i] = rotateMountToward(angles[i]!, want, mount, DT_SEC);
+      // Charge-up (plan step 6): the turret keeps tracking while it charges.
+      // 'locked-direction' fires the moment the charge completes; a charging
+      // 'when-bearing' gun waits out the charge, then fires through the
+      // normal gates below (held while they fail).
+      if (this.releaseLockedCharge(droneId, i, mount, tick, reload)) continue;
+      const chargeT = w.chargeTicks ?? 0;
+      const chargeStarts = chargeT > 0 ? this.charges.startsFor(droneId, n) : null;
+      const charging = chargeStarts !== null && chargeStarts[i]! !== NOT_CHARGING;
+      if (charging && tick - chargeStarts[i]! < this.chargeTicksOf(chargeT)) continue;
       if (!engageable) continue; // held through a brief loss: aim, don't fire
-      if (tick - reload[i]! < w.cooldownTicks) continue;
+      if (!charging && tick - reload[i]! < w.cooldownTicks) continue;
       // On target = the shot would pass within TURRET_FIRE_MISS of the aim
       // point (an angle alone is a 250 u miss at 5,000 u).
       if (!onTarget(want, angles[i]!, dist)) continue;
@@ -616,10 +712,39 @@ export class WeaponMountTicker {
         const muzzle = shipShotMuzzle(kind, mount, true);
         if (d.lineOfFireBlocked(droneId, t.id, mx + ndx * muzzle, my + ndy * muzzle, ndx, ndy, dist - muzzle)) continue;
       }
-      // Energy refused (a player capital's rule): keep the reload, retry next tick.
+      // A charge weapon that is loaded, locked and bearing begins its charge
+      // instead of firing (the turret keeps tracking).
+      if (chargeStarts !== null && !charging) { chargeStarts[i] = tick; continue; }
+      // Energy refused (a player capital's rule): keep the reload (and a
+      // completed charge), retry next tick.
       if (d.fireDroneMount!(droneId, i) === false) continue;
+      if (chargeStarts !== null) chargeStarts[i] = NOT_CHARGING;
       reload[i] = tick;
     }
+  }
+
+  /** A 'locked-direction' charge on capital mount i that has completed fires
+   *  now, down the barrel, whatever it bears on (true = it fired, or is still
+   *  charging: the caller does nothing more with this mount this tick). */
+  private releaseLockedCharge(
+    droneId: string, i: number, mount: WeaponMount, tick: number, reload: Int32Array,
+  ): boolean {
+    const starts = this.charges.starts.get(droneId);
+    if (starts === undefined || starts[i]! === NOT_CHARGING) return false;
+    const w = getWeapon(mount.weaponId);
+    if (w.chargeRelease === 'when-bearing') return false;
+    if (tick - starts[i]! < this.chargeTicksOf(w.chargeTicks ?? 0)) return true;
+    starts[i] = NOT_CHARGING;
+    reload[i] = tick;
+    this.deps.fireDroneMount!(droneId, i);
+    return true;
+  }
+
+  /** A capital turret's charge length: the weapon's, under the testMode
+   *  `chargeTicksCap` when set. */
+  private chargeTicksOf(chargeTicks: number): number {
+    const cap = this.deps.chargeTicksCap?.();
+    return cap !== undefined && cap < chargeTicks ? cap : chargeTicks;
   }
 
   /** Cleanup hook: drop all per-player state on leave/transit/death. */
@@ -689,6 +814,7 @@ export class WeaponMountTicker {
     this.droneMountAngles.delete(droneId);
     this.droneSlotTargets.delete(droneId);
     this.droneMountReload.delete(droneId);
+    this.charges.forget(droneId);
     this.droneMountTargetIds.delete(droneId);
     this.droneMountLastOk.delete(droneId);
   }

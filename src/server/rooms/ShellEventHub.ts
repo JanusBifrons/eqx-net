@@ -13,6 +13,10 @@
  * `SHELL_RETEST_TICKS` against the viewer's current pose. `shell_end` reaches
  * every viewer that was sent the shell. A miss sends nothing.
  *
+ * A pass-through kill (the railgun, `onEnd(…, continues)`) is a `shell_end`
+ * tuple with `continues: 1` and does NOT retire the shell: it stays live, so
+ * re-tests, keyframes and the join payload keep describing it (#16).
+ *
  * Slice 1 runs BESIDE the per-tick `projectiles[]` path; the client ignores
  * these until slice 2. Steady state allocates nothing (#14): shell records,
  * message objects and tuples are pooled; per-viewer state is a slot index
@@ -86,6 +90,15 @@ class ShellInfo {
 
 type MutSalvo = { -readonly [K in keyof ShellSalvo]: ShellSalvo[K] };
 
+/** One pass-through hit waiting for the flush (pooled). */
+class PassHit {
+  info: ShellInfo | null = null;
+  tick = 0;
+  x = 0;
+  y = 0;
+  r = 0;
+}
+
 export class ShellEventHub {
   private readonly byId = new Map<string, ShellInfo>();
   private readonly live: ShellInfo[] = [];
@@ -95,6 +108,9 @@ export class ShellEventHub {
   private freshCount = 0;
   private readonly ended: ShellInfo[] = [];
   private endedCount = 0;
+  /** Pass-through hits since the last flush (pooled; the shells stay live). */
+  private readonly passes: PassHit[] = [];
+  private passCount = 0;
 
   private readonly slots = new Map<string, number>();
   private readonly freeSlots: number[] = [];
@@ -112,6 +128,8 @@ export class ShellEventHub {
   private readonly shTuples: ShellTuple[] = [];
   private readonly endMsg: { type: 'shell_end'; e: ShellEndTuple[] } = { type: 'shell_end', e: [] };
   private readonly endTuples: ShellEndTuple[] = [];
+  /** Pooled 6-element pass-through tuples (`continues: 1`). */
+  private readonly passTuples: ShellEndTuple[] = [];
   private readonly pose: ShellPoseMut = { x: 0, y: 0 };
   private readonly poseEnd: ShellPoseMut = { x: 0, y: 0 };
 
@@ -162,9 +180,17 @@ export class ShellEventHub {
     this.fresh[this.freshCount++] = info;
   }
 
-  onEnd(projId: string, tick: number, x: number, y: number, blastRadius: number): void {
+  onEnd(projId: string, tick: number, x: number, y: number, blastRadius: number, continues = false): void {
     const info = this.byId.get(projId);
     if (!info) return;
+    if (continues) {
+      // A pass-through kill: report the hit, keep the shell live.
+      let p = this.passes[this.passCount];
+      if (p === undefined) { p = new PassHit(); this.passes[this.passCount] = p; }
+      this.passCount++;
+      p.info = info; p.tick = tick; p.x = x; p.y = y; p.r = blastRadius;
+      return;
+    }
     info.endTick = tick;
     info.endX = x;
     info.endY = y;
@@ -237,12 +263,14 @@ export class ShellEventHub {
     const retest = this.liveCount > 0 && tick % SHELL_RETEST_TICKS === 0;
     this.sentSalvos = 0;
     this.sentEnds = 0;
-    if (this.freshCount === 0 && this.endedCount === 0 && !retest) return;
+    if (this.freshCount === 0 && this.endedCount === 0 && this.passCount === 0 && !retest) return;
     this.flushTick = tick;
     this.flushRetest = retest;
     this.deps.forEachViewer(this.visitViewer);
     for (let i = 0; i < this.freshCount; i++) this.fresh[i] = undefined as unknown as ShellInfo;
     this.freshCount = 0;
+    for (let i = 0; i < this.passCount; i++) this.passes[i]!.info = null;
+    this.passCount = 0;
     for (let i = 0; i < this.endedCount; i++) {
       const info = this.ended[i]!;
       this.ended[i] = undefined as unknown as ShellInfo;
@@ -260,10 +288,20 @@ export class ShellEventHub {
     this.sendGroup(v, slot, this.fresh, this.freshCount, true, now);
     // 2. The re-test: live shells this viewer hasn't been sent.
     if (this.flushRetest) this.sendGroup(v, slot, this.live, this.liveCount, false, now);
-    // 3. Ends of shells this viewer has.
-    if (this.endedCount > 0) {
+    // 3. Hits of shells this viewer has: pass-through hits first (a shell
+    //    that passed through and then ended this flush lists both, in order).
+    if (this.endedCount > 0 || this.passCount > 0) {
       const e = this.endMsg.e;
       let k = 0;
+      for (let i = 0; i < this.passCount; i++) {
+        const p = this.passes[i]!;
+        if (p.info === null || p.info.sent[slot] !== 1) continue;
+        let tup = this.passTuples[k];
+        if (!tup) { tup = ['', 0, 0, 0, 0, 1]; this.passTuples[k] = tup; }
+        tup[0] = p.info.id; tup[1] = p.tick; tup[2] = p.x; tup[3] = p.y; tup[4] = p.r;
+        e[k++] = tup;
+        if (k === END_MAX) { e.length = k; this.deps.send(v.sessionId, 'shell_end', this.endMsg); this.sentEnds++; k = 0; }
+      }
       for (let i = 0; i < this.endedCount; i++) {
         const info = this.ended[i]!;
         if (info.silent || info.sent[slot] !== 1) continue;

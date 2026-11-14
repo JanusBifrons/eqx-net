@@ -40,7 +40,7 @@ import { Container, Graphics, Matrix, Sprite } from 'pixi.js';
 import type { ArtHandle } from './art/ArtService.js';
 import { isMachinedSprite, type ShipArtCtx } from './art/shipArtSprites.js';
 import { muzzleReach, shipTurrets, structureTurrets, type TurretPlace } from './art/turretLayout.js';
-import { flashFrameAt, heatAfter, recoilAt, NAVAL_FLASH_LIFE_S, MUZZLE_FLASH_LIFE_S, muzzleLightAt, navalMuzzleLight, type MuzzleLight, MUZZLE_SMOKE_PUFFS, muzzleSmokePuff, type SmokePuff } from './art/fx/turretFx.js';
+import { flashFrameAt, heatAfter, muzzleHeft, recoilAt, NAVAL_FLASH_LIFE_S, MUZZLE_FLASH_LIFE_S, muzzleLightAt, navalMuzzleLight, type MuzzleLight, MUZZLE_SMOKE_PUFFS, muzzleSmokePuff, type SmokePuff } from './art/fx/turretFx.js';
 import { NAVAL_BARREL_SPAN } from '@core/combat/muzzle';
 import { getWeapon, isWeaponId } from '@core/combat/WeaponCatalogue';
 import type { EffectQuality } from '@core/contracts/IEffects';
@@ -470,9 +470,12 @@ export class MountVisualManager {
     const dt = Math.max(0, Math.min(0.1, t - gun.lastT));
     gun.lastT = t;
     const fam = gun.place.family;
-    const kicks = fam === 'bolt' || fam === 'missile';
+    // The railgun draws as a charge gun but fires a slug: a heavier kick and
+    // flash than a powder gun's (`muzzleHeft`).
+    const heft = muzzleHeft(gun.place.mount.weaponId);
+    const kicks = fam === 'bolt' || fam === 'missile' || heft > 1;
     const since = t - gun.lastShot;
-    const kick = kicks ? recoilAt(since) * Math.max(gun.place.len, gun.place.wid) * (fam === 'missile' ? 0.06 : 0.2) : 0;
+    const kick = kicks ? recoilAt(since / heft) * Math.max(gun.place.len, gun.place.wid) * (fam === 'missile' ? 0.06 : 0.2) * heft : 0;
     const aa = gun.aa;
     const houseKick = aa ? 0 : kick;
     layers.a.y = houseKick; layers.b.y = houseKick;
@@ -504,7 +507,7 @@ export class MountVisualManager {
       // propellant smoke blown forward along it (children of the pivot, so
       // they follow the barrels' rotation and recoil).
       if (flash) flash.visible = false;
-      this.animateNavalMuzzles(gun, naval, kicks ? since : -1, kick);
+      this.animateNavalMuzzles(gun, naval, kicks ? since : -1, kick, heft);
     } else if (flash) {
       const frames = this.flashFrames();
       const fr = kicks && frames ? flashFrameAt(since, frames.length) : -1;
@@ -533,23 +536,25 @@ export class MountVisualManager {
 
   /** Per-barrel flash + forward smoke for a naval turret, `since` seconds
    *  after its last salvo (-1 = not firing). Alloc-free (#14). */
-  private animateNavalMuzzles(gun: MachinedGun, naval: { barrels: number; houseW: number }, since: number, kick: number): void {
+  private animateNavalMuzzles(gun: MachinedGun, naval: { barrels: number; houseW: number }, since: number, kick: number, heft = 1): void {
     const w = gun.place.wid;
     const n = naval.barrels;
     const pitch = n > 1 ? (naval.houseW * NAVAL_BARREL_SPAN) / (n - 1) : 0;
     const frames = this.flashFrames();
-    const fr = since >= 0 && frames ? flashFrameAt(since, frames.length, NAVAL_FLASH_LIFE_S) : -1;
+    const life = NAVAL_FLASH_LIFE_S * heft;
+    const fr = since >= 0 && frames ? flashFrameAt(since, frames.length, life) : -1;
     const flashes = gun.barrelFlashes;
     if (flashes) {
       // GPU-lit art: the salvo lights the gun, its neighbours and the deck.
       // Every naval calibre (16" down to the 5" secondaries) lights in
       // proportion to its gun, and the light outlives the flash briefly.
-      const lk = since >= 0 && frames ? muzzleLightAt(since, NAVAL_FLASH_LIFE_S) : 0;
+      const lk = since >= 0 && frames ? muzzleLightAt(since, life) : 0;
       if (lk > 0 && litPass.settings && litPass.settings.pointLights > 0 && flashes.length > 0) {
         const L = navalMuzzleLight(w, this._light);
         const mid = flashes[flashes.length >> 1]!;
         if (fr < 0) { mid.x = ((flashes.length >> 1) - (n - 1) / 2) * pitch; mid.y = -gun.reach + kick; }
-        litPass.attachLight(mid, 0xff9a48, L.intensity * lk, L.reach, L.z);
+        // The railgun's flash burns white-blue, not powder orange.
+        litPass.attachLight(mid, heft > 1 ? 0xcfe4ff : 0xff9a48, L.intensity * lk * heft, L.reach * heft, L.z);
       }
       for (let b = 0; b < flashes.length; b++) {
         const f = flashes[b]!;
@@ -558,7 +563,7 @@ export class MountVisualManager {
         f.texture = frames![fr]!;
         f.x = (b - (n - 1) / 2) * pitch;
         f.y = -gun.reach + kick;
-        f.scale.set((w * 7) / 64, (w * 22) / 64);
+        f.scale.set((w * 7 * heft) / 64, (w * 22 * heft) / 64);
       }
     }
     const smokes = gun.smokes;

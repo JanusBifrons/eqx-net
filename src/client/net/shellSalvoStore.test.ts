@@ -5,6 +5,7 @@ import type { ShellSalvo } from '@shared-types/messages/shellEvents';
 import type { ProjectileRenderState, RenderMirror } from '@core/contracts/IRenderer';
 import { getWeapon } from '@core/combat/WeaponCatalogue';
 import { shellPathEndTick } from '@core/combat/shellFlight';
+import { shellBurstSize } from '../render/art/fx/turretFx';
 
 const radiusOf = (w: 'naval_xl' | 'naval_l'): number => { const d = getWeapon(w); return d.mode === 'hitscan' ? -1 : d.radius; };
 const XL_R = radiusOf('naval_xl');
@@ -106,5 +107,33 @@ describe('ShellSalvoStore (shells as events, client ingest + drawing)', () => {
     st.applySalvo({ ...salvo, sh: [['proj-9', 0, 0, 0, 0]] });
     expect(old).toContain(st.map.get('proj-9'));
     expect(st.map.size).toBe(1);
+  });
+
+  it('a pass-through hit (railgun, continues: 1) bursts when the display reaches it and the slug keeps flying', () => {
+    const st = new ShellSalvoStore();
+    st.applySalvo({ type: 'shell_salvo', s: 1, o: 'swarm-3', w: 'railgun', t: 1000, n: 400, sh: [['proj-r', 0, 0, 6000, 0]] });
+    const proj = new Map<string, ProjectileRenderState>();
+    const bursts: number[] = [];
+    st.applyEnd({ type: 'shell_end', e: [['proj-r', 1010, 1000, 0, 0, 1], ['proj-r', 1020, 2000, 0, 0, 1]] }, bursts);
+    expect(st.map.get('proj-r')!.endTick).toBe(-1); // not ended: still a live shell
+    expect(st.pendingPasses).toBe(2);
+    st.place(proj, 1009, bursts);
+    expect(bursts).toEqual([]);
+    st.place(proj, 1010, bursts);
+    const big = shellBurstSize('railgun', getWeapon('railgun').mode === 'projectile' ? (getWeapon('railgun') as { radius: number }).radius : 0);
+    expect(bursts).toEqual([1000, 0, big]);
+    expect(big).toBeGreaterThan(5); // scaled up from the slug's small radius
+    expect(proj.get('proj-r')?.event).toBe(true); // still drawn
+    bursts.length = 0;
+    st.place(proj, 1030, bursts);
+    expect(bursts).toEqual([2000, 0, big]);
+    expect(st.pendingPasses).toBe(0);
+    expect(proj.has('proj-r')).toBe(true);
+    // The final end stops it as usual.
+    bursts.length = 0;
+    st.applyEnd({ type: 'shell_end', e: [['proj-r', 1040, 4000, 0, 0]] }, bursts);
+    st.place(proj, 1040, bursts);
+    expect(bursts).toEqual([4000, 0, big]);
+    expect(proj.has('proj-r')).toBe(false);
   });
 });

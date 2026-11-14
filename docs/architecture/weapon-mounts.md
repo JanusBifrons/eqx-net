@@ -228,6 +228,31 @@ The fire DIRECTION the body AI provides (`(fwdX, fwdY)`) is still body-forward; 
 
 **History.** Energy arrived with the weapons/energy/AI overhaul (2026-06-02). Falloff: R2.29 tapered within range, P3.13 replaced it with reverse-square beyond range, and the Equinox laser issue (2026-06-14) replaced that with the linear fringe (`maxRangeMul` tightened 1.5 → 1.3, after the "renders infinitely" beam; the reverse-square's "slow-then-cliff" felt like damage dropped to 0 instantly beyond range).
 
+## Charge-up: one store, one telegraph
+
+Some AI weapons charge before they fire: the robot orb's charge laser and the capital railgun. Players have no charge weapon (`PlayerFireResolver` has no charge logic).
+
+**Catalogue** (`WeaponDefBase`, any mode):
+- `chargeTicks`: the shot fires this many ticks after the trigger. Absent ⇒ instant.
+- `chargeRelease`: what a completed charge does.
+  - `'locked-direction'` (default; the robot charge laser): fire at once, down the barrel, whatever it bears on. A target that moved during the wind-up is missed.
+  - `'when-bearing'` (the railgun): fire only when the mount bears on its target through the normal gates (reach, on target, line clear, lock, line of fire). If it doesn't bear, hold the charge and fire the moment it does.
+- `chargeTelegraph`: how the client shows it. `'ring-line'` (default, the robot: a hot ring round the hull plus a faint line to the range) or `'mount-glow'` (a glow on the charging gun only, ramping up, no aim line).
+
+**One store** (`WeaponMountTicker.charges`, a `MountCharges`): per AI ship, one `Int32Array` beside `droneMountReload`, indexed like the slot mounts, holding the tick each mount began charging or `NOT_CHARGING`. Made on a ship's first charge and reused (#14); `clearDrone` drops it, so a ship that dies or is evicted never fires its charge.
+- **Capital turrets** (`tickCapitalMounts`): a mount with `chargeTicks` that is loaded, has a locked target and bears on it starts charging instead of firing. The turret keeps tracking while it charges. On completion, `'locked-direction'` fires at once (`releaseLockedCharge`, even with no target); `'when-bearing'` runs the normal fire gates and holds while they fail. The reload starts when the shot leaves.
+- **AI salvo path** (`AiFireResolver.resolve`, non-capital drones): a slot with a charge weapon writes the trigger tick for each bearing mount into the same store; `releaseCharges(tick)` (once per tick, after the AI tick) fires the mounts whose charge (the slot's longest `chargeTicks`) has elapsed, down their barrels from the current pose. It skips capitals, which release their own.
+
+**Snapshot** (#16, emit-when-non-zero): `drones[].chargingMask` (bit i = slot mount i charging or holding a charge) and `drones[].chargeStartTick` (the earliest charging mount's start), read from the store by `SnapshotBroadcaster` (`droneCharges`). They replaced the old `drones[].charging` boolean. **Per-mount starts:** a rail battleship's main turrets may begin charging on different ticks, so `drones[].chargeOffsets` carries one entry per SET bit of the mask (lowest bit first): that mount's start in ticks after `chargeStartTick`, clamped to u16 (`MountCharges.offsetsInto`, written into a pooled array). Emit-when-non-default: absent when every charging mount began on `chargeStartTick` (always for a lone charge). The client mirrors them as `SwarmRenderState.chargingMask` / `chargeStartTick` / `chargeOffsets` and clears them when a drone drops out of the slice.
+
+**Client telegraph** (`render/pixi/chargeTelegraph.ts`, the one charge renderer, built once per sprite by `swarmSpriteUpdater`): per kind, the ring + line (`buildChargeTelegraphGfx`) if any mount uses `'ring-line'`, and a glow at each `'mount-glow'` mount (placed and sized from `turretLayout.shipTurrets`, turned with the drawn mount angle). The glow ramps from the start tick on the game clock: the start is latched as `fxNow − (entity tick − chargeStartTick) × 1/60 s`, so a late joiner sees the true progress and slow motion slows the ramp (#20). Each glow ramps from its own mount's start (`chargeOffsets`), so turrets that began apart glow apart. `turretFx.familyFor(…, charge)` draws any non-missile charge weapon as the 'charge' gun family.
+
+**The railgun** (`WeaponCatalogue.ts` `RAILGUN_DEF`): a capital main-battery projectile turret, `chargeTicks` 360 (6 s), `'when-bearing'`, `'mount-glow'`, `cooldownTicks` 2400, damage 2400, radius 5, `killCut: { kind: 'channel', width: RAILGUN_BOLT_WIDTH }` (16 u, the drawn bolt, ≥ 2 × radius). Being on the naval list (`NAVAL_SHELL_WEAPON_IDS`) it fires an event shell, uses the naval turret bearing rule (`mountFireTolerance`: `TURRET_FIRE_MISS`) and is never locally predicted (`localFirePredicts`). It draws as the 'charge' gun family but kicks and flashes heavier than a powder gun (`turretFx.muzzleHeft`, `RAILGUN_MUZZLE_HEFT`: recoil, flash size, flash time and a white-blue light); its slug is the long white `'slug'` streak (`FxProjectiles`, width = the bolt width). Pass-through: [shell-events](shell-events.md#railgun-pass-through-2026-11-14).
+
+**Test trigger `chargeTicksCap`** (testMode room / join option, URL `?chargeTicksCap=N`, harness `chargeTicksCap`): no capital-turret charge lasts longer than N ticks (`WeaponMountTicker.chargeTicksOf`), so a test can line ships up on a rail line and fire without the 6 s wait. The client telegraph still ramps over the weapon's own charge.
+
+Locks: `tests/unit/capitalMountCharge.test.ts` (charge then fire, hold off bearing, locked-direction, death cancels), `tests/integration/sectorRoom/capitalMountCharge.test.ts` (snapshot mask + start, fires after the charge, death cancels), `tests/integration/sectorRoom/chargeLaser.test.ts` (robot), `SnapshotBroadcaster.droneCharge.test.ts` (incl. per-mount offsets), `snapshotRemoteSync.charging.test.ts`, `chargeTelegraph.test.ts` (incl. per-mount ramps), `tests/integration/sectorRoom/railgun.test.ts` (`chargeTicksCap`).
+
 ## Engineering room — `mount-test`
 
 For phone-side smoke testing of multi-mount kinds:

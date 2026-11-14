@@ -13,20 +13,34 @@ function snap(drones: SnapshotMessage['drones']): SnapshotMessage {
   return { drones } as unknown as SnapshotMessage;
 }
 
-describe('applyDroneMountAngles — P3c charge telegraph', () => {
-  it('marks charging drones, and clears them when they drop out of the slice', () => {
+describe('applyDroneMountAngles — charge telegraph', () => {
+  it('marks charging mounts with their start tick, and clears them when they drop out of the slice', () => {
     const m = mirrorWith([1, 2]);
-    applyDroneMountAngles(snap([{ id: 1, charging: true }, { id: 2, hostile: true }]), m);
-    expect(m.swarm!.get(1)!.charging).toBe(true);
-    expect(m.swarm!.get(2)!.charging).toBeFalsy();
+    applyDroneMountAngles(snap([{ id: 1, chargingMask: 0b101, chargeStartTick: 900 }, { id: 2, hostile: true }]), m);
+    expect(m.swarm!.get(1)!.chargingMask).toBe(0b101);
+    expect(m.swarm!.get(1)!.chargeStartTick).toBe(900);
+    expect(m.swarm!.get(2)!.chargingMask ?? 0).toBe(0);
     // Next snapshot: drone 1 finished charging and has nothing else to report,
-    // so the server omits it entirely — the client must still clear the bit.
+    // so the server omits it entirely — the client must still clear the bits.
     applyDroneMountAngles(snap([{ id: 2, hostile: true }]), m);
-    expect(m.swarm!.get(1)!.charging).toBe(false);
+    expect(m.swarm!.get(1)!.chargingMask).toBe(0);
+    expect(m.swarm!.get(1)!.chargeStartTick).toBeUndefined();
     // And with no drones slice at all.
-    applyDroneMountAngles(snap([{ id: 1, charging: true }]), m);
+    applyDroneMountAngles(snap([{ id: 1, chargingMask: 1, chargeStartTick: 5 }]), m);
     applyDroneMountAngles(snap(undefined), m);
-    expect(m.swarm!.get(1)!.charging).toBe(false);
+    expect(m.swarm!.get(1)!.chargingMask).toBe(0);
+  });
+
+  it('carries per-mount charge offsets, replaces them each snapshot, and clears them with the charge', () => {
+    const m = mirrorWith([1]);
+    applyDroneMountAngles(snap([{ id: 1, chargingMask: 0b11, chargeStartTick: 900, chargeOffsets: [0, 120] }]), m);
+    expect(m.swarm!.get(1)!.chargeOffsets).toEqual([0, 120]);
+    // Both now charge from the same tick: the server omits the offsets.
+    applyDroneMountAngles(snap([{ id: 1, chargingMask: 0b11, chargeStartTick: 900 }]), m);
+    expect(m.swarm!.get(1)!.chargeOffsets).toBeUndefined();
+    applyDroneMountAngles(snap([{ id: 1, chargingMask: 0b11, chargeStartTick: 900, chargeOffsets: [0, 120] }]), m);
+    applyDroneMountAngles(snap(undefined), m);
+    expect(m.swarm!.get(1)!.chargeOffsets).toBeUndefined();
   });
 
   it('take 12 — an AI ship holding boost is marked boosting, and clears when it lets go', () => {

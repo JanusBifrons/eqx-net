@@ -199,4 +199,57 @@ describe('ShellEventHub', () => {
     for (let i = 0; i < 100; i++) quiet.flush();
     expect(visits).toBe(0);
   });
+
+  it('a pass-through hit (railgun) sends a continues tuple and keeps the shell live (keyframe, join)', () => {
+    viewers.push(viewer('a', 3_000, 0));
+    hub.onSpawn('proj-1', rec('drone-7', tick, 0, 0));
+    // Killed something on the very tick it was fired: the salvo still goes
+    // first, then the pass-through hit.
+    hub.onEnd('proj-1', tick, 1_000, 0, 0, true);
+    hub.flush();
+    expect(salvosTo('a')).toHaveLength(1);
+    const e1 = endsTo('a');
+    expect(e1).toHaveLength(1);
+    expect(ShellEndSchema.safeParse(e1[0]).success).toBe(true);
+    expect(e1[0]!.e).toEqual([['proj-1', tick, 1_000, 0, 0, 1]]);
+    expect(hub.size()).toBe(1); // still live
+    // A late joiner still gets it (#16), and the keyframe still describes it.
+    const late = viewer('late', 3_000, 0);
+    expect(hub.joinPayload(late)?.flatMap((m) => m.sh.map((t) => t[0]))).toEqual(['proj-1']);
+    tick += SHELL_KEY_PERIOD_TICKS;
+    const out: ShellKeyRecord[] = [];
+    expect(hub.keyframeFor('a', out)).toBe(1);
+    expect(out[0]![0]).toBe('proj-1');
+    // Next: one more pass-through, then the final hit, in ONE flush: in order.
+    sent.length = 0;
+    hub.onEnd('proj-1', tick, 2_000, 0, 0, true);
+    hub.onEnd('proj-1', tick, 2_050, 0, 0);
+    hub.flush();
+    const e2 = endsTo('a');
+    expect(e2).toHaveLength(1);
+    expect(e2[0]!.e).toEqual([['proj-1', tick, 2_000, 0, 0, 1], ['proj-1', tick, 2_050, 0, 0]]);
+    expect(ShellEndSchema.safeParse(e2[0]).success).toBe(true);
+    expect(hub.size()).toBe(0);
+    // Nothing left over for the next flush.
+    sent.length = 0;
+    hub.flush();
+    expect(endsTo('a')).toHaveLength(0);
+  });
+
+  it('a pass-through hit reaches only viewers that were sent the shell', () => {
+    viewers.push(viewer('a', 3_000, 0), viewer('far', 0, 90_000));
+    hub.onSpawn('proj-1', rec('drone-7', tick, 0, 0));
+    hub.flush();
+    hub.onEnd('proj-1', tick + 1, 1_000, 0, 0, true);
+    hub.flush();
+    expect(endsTo('a')).toHaveLength(1);
+    expect(endsTo('far')).toHaveLength(0);
+  });
+
+  it('the shell_end schema takes an optional continues flag of 1 only', () => {
+    expect(ShellEndSchema.safeParse({ type: 'shell_end', e: [['p', 1, 0, 0, 0, 1]] }).success).toBe(true);
+    expect(ShellEndSchema.safeParse({ type: 'shell_end', e: [['p', 1, 0, 0, 0]] }).success).toBe(true);
+    expect(ShellEndSchema.safeParse({ type: 'shell_end', e: [['p', 1, 0, 0, 0, 2]] }).success).toBe(false);
+    expect(ShellEndSchema.safeParse({ type: 'shell_end', e: [['p', 1, 0, 0, 0, 1, 1]] }).success).toBe(false);
+  });
 });

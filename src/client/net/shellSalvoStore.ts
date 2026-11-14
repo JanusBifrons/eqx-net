@@ -13,6 +13,10 @@
  *   `shell_end` only MARKS a shell; `place()` bursts it (`bursts` queue) and
  *   removes it when the display tick reaches the hit, so the explosion is where
  *   the drawn shell is. A miss is removed silently at `shellPathEndTick`.
+ * - A pass-through hit (`shell_end` tuple with `continues: 1`, the railgun)
+ *   queues a burst for when the display reaches it and leaves the shell
+ *   flying: it is not marked ended, so `navalHitHold` still matches the
+ *   next hit on its path.
  *
  * Records and projectile entries are pooled and mutated in place (#14).
  */
@@ -20,6 +24,7 @@ import type { ProjectileRenderState, ShellSalvoRenderInfo } from '@core/contract
 import { shellPathEndTick, SHELL_TICK_DT_S } from '@core/combat/shellFlight';
 import type { ShellEnd, ShellKeyRecord, ShellSalvo } from '@shared-types/messages/shellEvents';
 import { getWeapon, isWeaponId } from '@core/combat/WeaponCatalogue';
+import { shellBurstSize } from '../render/art/fx/turretFx.js';
 
 /** A shell's own radius when its gun is unknown (a burst still shows). */
 const DEFAULT_SHELL_RADIUS = 3;
@@ -29,9 +34,19 @@ function shellRadiusOf(w: string): number {
   return def && def.mode !== 'hitscan' ? def.radius : DEFAULT_SHELL_RADIUS;
 }
 
+/** Floats per queued pass-through burst: `[tick, x, y, burstSize]`. */
+const PASS_STRIDE = 4;
+
 export class ShellSalvoStore {
   readonly map = new Map<string, ShellSalvoRenderInfo>();
   private readonly free: ShellSalvoRenderInfo[] = [];
+  /** Pass-through hits waiting for the display clock: `PASS_STRIDE` floats
+   *  each (pooled, compacted in place; #14). */
+  private readonly passes: number[] = [];
+  private passLen = 0;
+
+  /** Pass-through bursts still waiting for the display (tests, diagnostics). */
+  get pendingPasses(): number { return this.passLen / PASS_STRIDE; }
 
   private put(
     id: string, s: number, t: number, n: number,
@@ -71,6 +86,15 @@ export class ShellSalvoStore {
         if (bursts) bursts.push(e[2], e[3], DEFAULT_SHELL_RADIUS);
         continue;
       }
+      if (e[5] === 1) {
+        // A pass-through kill: burst there when the display reaches it; the
+        // shell flies on (its end, if any, comes in a later tuple).
+        const p = this.passes;
+        const i = this.passLen;
+        p[i] = e[1]; p[i + 1] = e[2]; p[i + 2] = e[3]; p[i + 3] = shellBurstSize(r.w, r.wr);
+        this.passLen = i + PASS_STRIDE;
+        continue;
+      }
       r.endTick = e[1]; r.ex = e[2]; r.ey = e[3];
     }
   }
@@ -85,7 +109,7 @@ export class ShellSalvoStore {
     for (const [id, r] of this.map) {
       const hit = r.endTick >= 0 && displayTick >= r.endTick;
       if (hit || displayTick > shellPathEndTick(r.t, r.n)) {
-        if (hit) bursts.push(r.ex, r.ey, r.wr);
+        if (hit) bursts.push(r.ex, r.ey, shellBurstSize(r.w, r.wr));
         if (projectiles.get(id)?.event === true) projectiles.delete(id);
         this.drop(id);
         continue;
@@ -108,12 +132,32 @@ export class ShellSalvoStore {
       p.event = true;
     }
     for (const [id, p] of projectiles) if (p.event === true && !this.map.has(id)) projectiles.delete(id);
+    if (this.passLen > 0) this.burstPasses(displayTick, bursts);
+  }
+
+  /** Burst the pass-through hits the display has reached; keep the rest. */
+  private burstPasses(displayTick: number, bursts: number[]): void {
+    const p = this.passes;
+    let w = 0;
+    for (let i = 0; i < this.passLen; i += PASS_STRIDE) {
+      if (displayTick >= p[i]!) {
+        bursts.push(p[i + 1]!, p[i + 2]!, p[i + 3]!);
+        continue;
+      }
+      if (w !== i) { p[w] = p[i]!; p[w + 1] = p[i + 1]!; p[w + 2] = p[i + 2]!; p[w + 3] = p[i + 3]!; }
+      w += PASS_STRIDE;
+    }
+    this.passLen = w;
   }
 
   /** Forget shells past their path by `tick` (backstop when no frames run). */
   sweep(tick: number): void {
     for (const [id, r] of this.map) if (tick > shellPathEndTick(r.t, r.n)) this.drop(id);
+    // No frames ran: pass-through bursts the display passed are stale.
+    if (this.passLen > 0) this.burstPasses(tick, this.staleBursts);
+    this.staleBursts.length = 0;
   }
+  private readonly staleBursts: number[] = [];
 
   private drop(id: string): void {
     const r = this.map.get(id);
@@ -126,5 +170,6 @@ export class ShellSalvoStore {
   clear(): void {
     for (const r of this.map.values()) this.free.push(r);
     this.map.clear();
+    this.passLen = 0;
   }
 }

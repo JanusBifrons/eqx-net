@@ -176,9 +176,17 @@ export interface SwarmRenderState {
    *  auto-fire). Absent ⇒ treated as 1 (full): the server omits `hp` for
    *  undamaged drones. Low-cadence (snapshot rate), not per-frame. */
   healthFrac?: number;
-  /** Living World P3c — this drone is winding up a CHARGE weapon (snapshot
-   *  `drones[].charging`). Drives the telegraph glow. Snapshot cadence. */
-  charging?: boolean;
+  /** Charge-up: bit i set while slot mount i charges (snapshot
+   *  `drones[].chargingMask`; 0 / absent = none). Drives the one charge
+   *  telegraph. Snapshot cadence. */
+  chargingMask?: number;
+  /** Server tick the earliest charge began (snapshot `drones[].chargeStartTick`);
+   *  the telegraph ramps from it on the game clock. */
+  chargeStartTick?: number;
+  /** Per-mount starts as ticks after `chargeStartTick`, one per set bit of
+   *  `chargingMask` (snapshot `drones[].chargeOffsets`); absent = every
+   *  charging mount began on `chargeStartTick`. */
+  chargeOffsets?: readonly number[];
   /** This AI ship's pilot holds the boost key (snapshot `drones[].boost`).
    *  Drives the same boost flame a pilot's ship gets. Snapshot cadence. */
   boosting?: boolean;

@@ -134,4 +134,28 @@ describe('naval hit flash waits for the drawn shell (display tick)', () => {
     internals.handleDamage(shellHit());
     expect(internals._damageFlashFrames.get('cruiser')).toBe(6);
   });
+
+  it('a railgun pass-through hit (continues: 1) releases its flash at that hit; the next victim waits for its own', () => {
+    // A slug at 6,000 u/s (100 u/tick) from x = 0, fired at tick 1000: it
+    // kills 'first' at tick 1010 (x = 1000) and flies on to 'second' at 1020.
+    internals._shellStore.applySalvo({
+      type: 'shell_salvo', s: 2, o: 'swarm-9', w: 'railgun', t: 1000, n: 400, sh: [['proj-r', 0, 0, 6000, 0]],
+    });
+    internals.mirror.ships.set('first', { x: 1000, y: 0, vx: 0, vy: 0, angle: 0 });
+    internals.mirror.ships.set('second', { x: 2000, y: 0, vx: 0, vy: 0, angle: 0 });
+    internals.handleDamage(shellHit({ targetId: 'first', hitX: 1000, hitY: 0 }));
+    internals.applyShellEnd({ type: 'shell_end', e: [['proj-r', 1010, 1000, 0, 0, 1]] });
+    // The slug is still live after the pass, so the second hit is held too.
+    internals.handleDamage(shellHit({ targetId: 'second', hitX: 2000, hitY: 0 }));
+    expect(internals._damageFlashFrames.size).toBe(0);
+    internals.placeShells(1010);
+    expect(internals._damageFlashFrames.has('first')).toBe(true);
+    expect(internals._damageFlashFrames.has('second')).toBe(false);
+    expect(internals.mirror.projectiles!.has('proj-r')).toBe(true); // flies on
+    internals.applyShellEnd({ type: 'shell_end', e: [['proj-r', 1020, 2000, 0, 0]] });
+    internals.placeShells(1019);
+    expect(internals._damageFlashFrames.has('second')).toBe(false);
+    internals.placeShells(1020);
+    expect(internals._damageFlashFrames.has('second')).toBe(true);
+  });
 });

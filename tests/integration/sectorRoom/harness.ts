@@ -187,6 +187,8 @@ export async function bootSectorTestServer(opts: {
   breakInMs?: number;
   /** Bespoke test trigger: no NON-player lock takes longer than this (s); 0 = the first step. */
   lockTimeCapS?: number;
+  /** Bespoke test trigger: no capital-turret charge takes longer than this (ticks). */
+  chargeTicksCap?: number;
   /** Time scale trigger: this sector's game speed (0.25–4). */
   timeScale?: number;
   /** The `test-sector-fast` physics speed-up (room option `testTimeScale`). */
@@ -280,6 +282,7 @@ export async function bootSectorTestServer(opts: {
     pocketPads: opts.pocketPads,
     breakInMs: opts.breakInMs,
     lockTimeCapS: opts.lockTimeCapS,
+    chargeTicksCap: opts.chargeTicksCap,
     timeScale: opts.timeScale,
     testTimeScale: opts.testTimeScale,
     autoTimeScale: opts.autoTimeScale,
