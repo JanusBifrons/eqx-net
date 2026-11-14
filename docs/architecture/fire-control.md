@@ -118,6 +118,24 @@ testMode join option `groupMode: 'manual'` (URL `?groupMode=manual`,
 AUTO (which `anyTarget` widens to any target) never kills a fragile target
 before the test switches the group it wants to AUTO or locks it.
 
+### Range to the hull, not the centre (geometry only, not yet wired)
+
+Owner decision 2026-11-14: fire range is measured from each turret (its mount's
+world position) to the nearest point of the target's true hit shape, not
+centre to centre (a battleship's AA, reach ~1,428 u, could not reach another
+battleship with hulls touching). `shipHullDistance(kindId, shieldUp, px, py,
+cx, cy, angle)` in `src/core/combat/shipHitShape.ts` gives that distance (0
+inside), against the same shape the hits use: a capital's hull polygon
+(`shipCollisionParts`, the one `capitalHits` / `shipRayHit` refine against), a
+non-capital's shield bubble with its shield up, its hull polygon with it down.
+The polygon maths is `pointToShipPolygonDistance` in `Weapons.ts`, beside
+`rayHitsShipPolygon`. Fire gates call `shipWithinHullReach(..., reach)`: it
+first rejects on the cheap bounding circle (`centreDist > shipHitBound + reach`
+⇒ out, the polygon is never touched) and measures the hull only inside that
+band. Both are allocation-free. Locks: `tests/unit/shipHullDistance.test.ts`
+(beam vs bow, inside = 0, bubble, agreement with the capital ray hit, the far
+reject never reading the polygon) and `shipHullDistance.heapDelta.test.ts`.
+
 ## Server
 
 | Piece | File | Role |
