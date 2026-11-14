@@ -3046,3 +3046,8 @@ Owner: "make it more like micro machines and make fights a bit longer. Also don'
 
 - **Finding (nose turrets, showcase take 9):** the snapshot broadcaster pooled `mountAngles` arrays by length. The message is encoded only when sent, so every one-turret ship in a recipient's snapshot pointed at the same array and the wire carried the last ship's angle for all of them. It stayed hidden while almost no drone had exactly one turning mount; once six kinds got nose turrets, every AI pilot's gun was drawn at some other ship's angle. Renderer, art path and display follower were all correct.
 - **Rule:** a pooled buffer that ends up inside an outgoing message is pooled per ENTRY (a cursor reset per message, or keyed by entity), never per size. A test of a broadcaster copies its arrays at send time, as the encoder reads them, with two entities of the same shape.
+
+## 2026-11-14 — Interpolation samples stamped at drain time jitter as much as the drain does
+
+- **Finding (fleet-melee follow, take 10: "the ship jitters, or is it the camera"):** a per-frame probe showed the camera moving evenly (jerk 0.03 u) while the drawn drone stepped 0–5.3 u per frame at a ~2.8 u cruise. The pose ring stamped each binary packet with the time it was DECODED, and packets decode once per RAF, so two ticks in one frame shared a stamp. The "display delay makes us immune to arrival jitter" claim only holds if the samples carry the time they stand for.
+- **Rule:** stamp an interpolation sample with its source time (server tick on a fitted clock, `swarmArrivalStampMs`), never with when the client happened to process it. When a followed entity "jitters", measure the drawn pose and the camera separately per frame before touching either.

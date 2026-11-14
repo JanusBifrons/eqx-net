@@ -187,6 +187,22 @@ drone-pose channel), NOT the 20 Hz JSON snapshot interval;
 `angvel·dt` instead of freezing it. `DISPLAY_DELAY_MS` is the on-device
 tuning knob (start 80–110 ms).
 
+**Ring stamps come from the server tick, not the drain time.** Binary packets
+are drained once per RAF, so stamping each with its drain time put two ticks
+that landed in one frame at the SAME time and left the next frame without a
+sample: the lerp then ran at 0×, then 2× speed, and a cruising drone stepped
+0–5 u per frame instead of an even ~2.8 u (the fleet-melee follow jitter;
+the follow camera's spring smoothed its own motion, so the ship shook on
+screen). The live client decodes with `stampByTick`, which stamps each packet
+`swarmArrivalStampMs(tick, now)`: `tick × tickMs + offset` (tick ms = 1000/60
+÷ the sector speed), where `offset` follows the least-delayed arrival at once
+and drifts up toward later ones by `TICK_CLOCK_DRIFT_UP` (1 %) a packet, never
+stamps a packet later than it arrived, and re-seeds when an arrival is more
+than `TICK_CLOCK_RESYNC_MS` (1 s) off (new room, reconnect, long stall). A
+speed change keeps the newest stamp in place. Lock:
+`src/client/net/swarmInterpolation.tickStamp.test.ts` (drain-time stamps step
+error 3.1 u, tick stamps 0.16 u).
+
 ## The Step-4 regression (read this before touching ring/delay constants)
 
 Raising `DISPLAY_DELAY_MS` to 100 with `POSE_RING_DEPTH` left at **4** was a
