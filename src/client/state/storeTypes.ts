@@ -270,6 +270,9 @@ export interface UIStore {
   /** RTS command view (slice 13a): ids of the own ships selected in command
    *  view (renderer-owned, mirrored on change only). Ids only, no positions (#2). */
   fleetSelection: readonly string[];
+  /** RTS command view (slice 14): the compact fleet strip's order-mode toggle,
+   *  what a tap on the map orders the selected ships to do. Discrete UI choice. */
+  fleetOrderMode: 'move' | 'attack';
   /** Helm orders (capital-ship R&D round 3 D), discrete UI state only: whether
    *  the ship you fly takes helm orders, whether a course is set, and the speed
    *  setting (0 stop, 1 one third, 2 two thirds, 3 full). The course point
@@ -521,6 +524,7 @@ export interface UIStore {
   ) => void;
   /** Mirror the renderer's command-view fleet selection (ids only). */
   setFleetSelection: (ids: readonly string[]) => void;
+  setFleetOrderMode: (mode: 'move' | 'attack') => void;
   setEnergyMax: (max: number) => void;
   setHelmState: (available: boolean, active: boolean, speed: 0 | 1 | 2 | 3) => void;
   setCargo: (cargo: CargoView | null, capacity: number) => void;

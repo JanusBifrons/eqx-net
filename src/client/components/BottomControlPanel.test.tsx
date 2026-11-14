@@ -23,6 +23,7 @@ describe('BottomControlPanel (Phase 5 WS-4)', () => {
       selectedShipKind: 'fighter',
       activeSlotId: 'primary',
       placementKind: null,
+      fleetSelection: [],
     });
   });
 
@@ -117,6 +118,26 @@ describe('BottomControlPanel (Phase 5 WS-4)', () => {
     useUIStore.setState({ pilotMode: 'spectator' });
     render(<BottomControlPanel />);
     pressKey('2'); // BUILD order: capital(1), connector(2), …
+    expect(useUIStore.getState().placementKind).toBe('connector');
+  });
+
+  // RTS slice 14: with own ships selected in command view the fleet panel takes
+  // the slot. The palette stays mounted (hidden) and 1–9 build nothing.
+  it('FLEET SELECTED — the palette hides (still mounted) and number keys build nothing', () => {
+    useUIStore.setState({ pilotMode: 'spectator', fleetSelection: ['ship-a'] });
+    render(<BottomControlPanel />);
+    const panel = screen.getByTestId('bottom-control-panel');
+    expect(panel).toHaveAttribute('data-panel-mode', 'hidden');
+    expect(getComputedStyle(panel).display).toBe('none');
+    pressKey('2');
+    expect(useUIStore.getState().placementKind).toBeNull();
+    // Clearing the selection brings the palette and the hotkeys back, same node.
+    act(() => {
+      useUIStore.setState({ fleetSelection: [] });
+    });
+    expect(screen.getByTestId('bottom-control-panel')).toBe(panel);
+    expect(panel).toHaveAttribute('data-panel-mode', 'build');
+    pressKey('2');
     expect(useUIStore.getState().placementKind).toBe('connector');
   });
 });

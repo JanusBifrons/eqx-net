@@ -146,9 +146,12 @@ export function BottomControlPanel(): JSX.Element | null {
   const spectating = useUIStore((s) => s.pilotMode === 'spectator');
   const placementKind = useUIStore((s) => s.placementKind);
   const setPlacementKind = useUIStore((s) => s.setPlacementKind);
+  // RTS slice 14: own ships selected in command view → the fleet panel/strip
+  // takes this slot. Stay MOUNTED (hidden) and leave 1–9 alone meanwhile.
+  const fleetSelected = useUIStore((s) => s.fleetSelection.length > 0);
 
   const inGame = phase === 'game' && !isTouchDevice();
-  const showing = inGame && spectating;
+  const showing = inGame && spectating && !fleetSelected;
   // Economy v2 — packed-structure stock, asked for only while the row shows.
   const packedStock = usePackedStock(showing);
 
