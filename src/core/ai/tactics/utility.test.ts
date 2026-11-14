@@ -82,9 +82,32 @@ describe('scoreManoeuvres', () => {
     expect(s[MANOEUVRE_BREAK]).toBe(0);
     // Moving just above the threshold, the same geometry is a threat.
     expect(isTailed(ctx(0.4, 0, -0.9, { tvx: 0, tvy: 1.5 * PARKED_SPEED_FRAC * 150 }))).toBe(true);
-    // A parked ship that is actually hitting me from off the bow still breaks me.
+    // A parked ship hitting me from behind does not break me either: the
+    // strafing run's extend flies out from under its guns (owner 2026-11-14;
+    // a heavy-fire Break cut every extend short, strafeParked).
     scoreManoeuvres(ctx(0.4, 0, -0.9, { tvx: 0, tvy: 0, recentHits: 6 }), FIGHTER, s);
-    expect(argmax(s)).toBe(MANOEUVRE_BREAK);
+    expect(argmax(s)).toBe(MANOEUVRE_ATTACK_RUN);
+  });
+  it('a parked ship gets strafing runs at any range: no Tail, no Hold (owner 2026-11-14)', () => {
+    // "Dive in firing, pass, swing round and come again, like a fighter on a
+    // ground target. Always moving." The replaced rule tailed it and held
+    // the nose on it: the filmed Robot Orb hovered nose-on at ~380 u.
+    for (const role of [FIGHTER, roleProfile('interceptor'), roleProfile('scout')]) {
+      for (const dN of [0.1, 0.3, 0.6, 1, 2]) {
+        for (const allies of [0, 3]) {
+          scoreManoeuvres(ctx(dN, 0, 1, { tvx: 0, tvy: 0, allies }), role, s);
+          expect(argmax(s)).toBe(MANOEUVRE_ATTACK_RUN);
+          expect(s[MANOEUVRE_TAIL]).toBe(0);
+          expect(s[MANOEUVRE_HOLD]).toBe(0);
+        }
+      }
+    }
+    // A turreted robot may circle it instead (turrets bear while it circles
+    // at cruise): Orbit or a run, never a hold or a tail.
+    scoreManoeuvres(ctx(0.4, 0, 1, { tvx: 0, tvy: 0, turretHalfArc: Math.PI / 2 }), roleProfile('robot'), s);
+    expect([MANOEUVRE_ORBIT, MANOEUVRE_ATTACK_RUN]).toContain(argmax(s));
+    expect(s[MANOEUVRE_TAIL]).toBe(0);
+    expect(s[MANOEUVRE_HOLD]).toBe(0);
   });
   it('heavy fire from off the bow breaks; from dead ahead it fights back', () => {
     scoreManoeuvres(ctx(0.5, 0, 0, { recentHits: 6 }), FIGHTER, s);
@@ -170,6 +193,17 @@ describe('ManoeuvrePicker', () => {
     expect(p.decide(ctx(0.4, 0.8, -0.9, { tick: 5000 }), FIGHTER, false)).toBe(MANOEUVRE_BREAK);
     // Done, still far off: another run.
     expect(p.decide(ctx(2, 1, 1, { tick: 5000 }), FIGHTER, true)).toBe(MANOEUVRE_ATTACK_RUN);
+  });
+
+  it('strafing a parked ship: each finished run is followed by another, a running Tail gives way', () => {
+    const p = flat();
+    p.switchTo(MANOEUVRE_ATTACK_RUN, 0);
+    // The extend ended close by (0.5 × fire range): another run, not a Tail.
+    expect(p.decide(ctx(0.5, 0, -1, { tick: 5000, tvx: 0, tvy: 0 }), FIGHTER, true)).toBe(MANOEUVRE_ATTACK_RUN);
+    // A Tail running when its target stops is replaced after the commit time.
+    const q = flat();
+    q.switchTo(MANOEUVRE_TAIL, 1000);
+    expect(q.decide(ctx(0.5, 0, 1, { tick: 1000 + MIN_COMMIT_TICKS, tvx: 0, tvy: 0 }), FIGHTER, false)).toBe(MANOEUVRE_ATTACK_RUN);
   });
 
   it('no Break straight after one (cooldown), so a tailed ship fights back in between', () => {
