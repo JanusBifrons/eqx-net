@@ -3728,6 +3728,10 @@ export class ColyseusGameClient {
     // correction replays the whole prediction world). No local ship ⇒ keep all.
     const localId = this.mirror.localPlayerId;
     const me = localId ? this.mirror.ships.get(localId) : undefined;
+    // Wreck pieces stream by the GAP between hulls: the local hull's radius
+    // (213 u for a 2× crossguard) is not part of the PREDWORLD_WRECK_RADIUS
+    // travel budget.
+    const myHull = me ? getShipKind(me.kind ?? null).radius : 0;
     for (const [entityId, entry] of this.mirror.swarm) {
       // HC#2: an unrecognised pose-core kind resolves to `null` and is SKIPPED —
       // it never falls through to the drone path (the old `else`-is-drone branch
@@ -3746,8 +3750,9 @@ export class ColyseusGameClient {
       // the predWorld put 56 % of the client main thread into Rapier's step).
       // A piece only matters to prediction where the local ship can touch it.
       if ((entry.kind === 2 || entry.kind === SWARM_KIND_WRECK) && me) {
-        const edge = Math.hypot(entry.x - me.x, entry.y - me.y) - entry.radius;
-        const radius = entry.kind === SWARM_KIND_WRECK ? PREDWORLD_WRECK_RADIUS : PREDWORLD_STRUCTURE_RADIUS;
+        const wreck = entry.kind === SWARM_KIND_WRECK;
+        const edge = Math.hypot(entry.x - me.x, entry.y - me.y) - entry.radius - (wreck ? myHull : 0);
+        const radius = wreck ? PREDWORLD_WRECK_RADIUS : PREDWORLD_STRUCTURE_RADIUS;
         if (!wantPredBody(this.predWorld.hasShip(key), edge, radius)) continue; // unseen ⇒ swept below
       }
       seen.add(key);

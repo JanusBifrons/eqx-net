@@ -8,7 +8,8 @@
  *
  * Two locks, both COUNTS (root CLAUDE.md "gate on counts"):
  *  1. a piece only gets a predWorld body near the local ship (the structure
- *     streaming radius), and gains one as the ship comes near;
+ *     wreck streaming radius, PREDWORLD_WRECK_RADIUS 600 u), and gains one as
+ *     the ship comes near;
  *  2. a piece the server reports ASLEEP stays asleep in the predWorld through
  *     the anchor and the following steps (#15: matches the server body), and
  *     the local ship touching it still wakes it (collision unchanged).
@@ -22,7 +23,10 @@ import { CapitalWreckSubsystem, type WreckPieceSpawn } from '../../src/server/ro
 import type { WreckGeometryStore } from '../../src/client/net/wreckGeometryStore.js';
 import type { WreckDescriptor } from '../../src/shared-types/messages/snapshotMessages.js';
 import { anchorRemoteSwarmBodies } from '../../src/client/net/snapshotRemoteSync.js';
-import { PREDWORLD_STRUCTURE_RADIUS } from '../../src/shared-types/structureBudgets.js';
+import { PREDWORLD_STRUCTURE_HYSTERESIS, PREDWORLD_WRECK_RADIUS } from '../../src/shared-types/structureBudgets.js';
+import { PLAYABLE_SHIP_KINDS_LIST, getShipKind } from '../../src/shared-types/shipKinds.js';
+import { LEVEL_CAP } from '../../src/core/leveling/shipXp.js';
+import { deriveStatMultipliers, pointBudget } from '../../src/core/leveling/shipStats.js';
 import type { ShipPhysicsState } from '../../src/core/physics/World.js';
 
 type Internals = {
@@ -89,7 +93,67 @@ describe('wreck pieces: predWorld cost per piece', () => {
     expect(c.predSwarmKeys.size, 'bodies beside the pile').toBe(200);
     for (const key of c.predSwarmKeys) expect(c.predWorld!.hasShip(key)).toBe(true);
     // Within the radius: the whole pile spans < 600 u.
-    expect(4000 + 19 * 30 - 4300).toBeLessThan(PREDWORLD_STRUCTURE_RADIUS);
+    expect(4000 + 19 * 30 - 4300).toBeLessThan(PREDWORLD_WRECK_RADIUS);
+  });
+
+  it('a field out to 800 u: only pieces within 600 u of the pilot get bodies, one beside the pilot always does', async () => {
+    const client = new ColyseusGameClient();
+    const c = client as unknown as Internals;
+    c.predWorld = await PhysicsWorld.create();
+    c.mirror.localPlayerId = 'me';
+    c.mirror.ships.set('me', { x: 0, y: 0 });
+    const { desc, pieces } = fighterWreck();
+    c._wrecks.apply([desc]);
+    const p = pieces[0]!;
+    const swarm = new Map<number, SwarmRenderState>();
+    // 8 spokes x 16 rings, centre distance 50..800 u, plus one piece beside the pilot.
+    // Streaming is by the gap between hulls: piece edge to the local hull.
+    const hull = getShipKind(null).radius;
+    let id = 1;
+    let near = 0;
+    for (let ring = 1; ring <= 16; ring++) {
+      const d = ring * 50;
+      for (let s = 0; s < 8; s++) {
+        const a = (s / 8) * Math.PI * 2;
+        swarm.set(id++, pieceEntry(desc, p, d * Math.cos(a), d * Math.sin(a), false));
+        if (d - p.radius - hull <= PREDWORLD_WRECK_RADIUS) near++;
+      }
+    }
+    const beside = id;
+    swarm.set(beside, pieceEntry(desc, p, 30, 0, false));
+    c.mirror.swarm = swarm;
+
+    c.syncSwarmIntoPredWorld();
+    expect(near, 'the field reaches past the radius').toBeLessThan(16 * 8);
+    expect(c.predSwarmKeys.size, 'bodies = pieces whose edge is within 600 u, + the one beside').toBe(near + 1);
+    expect(c.predWorld!.hasShip(`swarm-${beside}`), 'the piece beside the pilot').toBe(true);
+    for (const key of c.predSwarmKeys) {
+      const e = swarm.get(Number(key.slice('swarm-'.length)))!;
+      expect(Math.hypot(e.x, e.y) - e.radius - hull).toBeLessThanOrEqual(PREDWORLD_WRECK_RADIUS);
+    }
+
+    // Hysteresis: 200 u east, the pieces that had a body keep it out to 600 + 300 u,
+    // pieces newly within reach join, and the one beside the pilot is still there.
+    c.mirror.ships.set('me', { x: 200, y: 0 });
+    c.syncSwarmIntoPredWorld();
+    for (const [eid, e] of swarm) {
+      const edge = Math.hypot(e.x - 200, e.y) - e.radius - hull;
+      if (edge <= PREDWORLD_WRECK_RADIUS) expect(c.predWorld!.hasShip(`swarm-${eid}`), `piece ${eid} at ${edge.toFixed(0)} u`).toBe(true);
+      if (edge > PREDWORLD_WRECK_RADIUS + PREDWORLD_STRUCTURE_HYSTERESIS) expect(c.predWorld!.hasShip(`swarm-${eid}`)).toBe(false);
+    }
+  });
+
+  it('the fastest ship cannot cross the wreck radius within a reconcile replay', () => {
+    // Boost adds thrust only; applyShipInput clamps at maxSpeed x the levelled
+    // topSpeed. The local hull's radius is outside the budget (streaming is by
+    // the gap between hulls), so only the travel counts.
+    const topSpeedMul = deriveStatMultipliers({ topSpeed: pointBudget(LEVEL_CAP) }).topSpeed;
+    let vmax = 0;
+    for (const k of PLAYABLE_SHIP_KINDS_LIST) vmax = Math.max(vmax, k.maxSpeed * topSpeedMul);
+    const REPLAY_TICKS = 20; // a typical correction (structureBudgets.ts, PREDWORLD_STRUCTURE_RADIUS)
+    const travel = (vmax * REPLAY_TICKS) / 60;
+    // "Well inside": at least a fifth of the radius to spare.
+    expect(travel, `fastest ${vmax.toFixed(1)} u/s x ${REPLAY_TICKS} ticks`).toBeLessThanOrEqual(PREDWORLD_WRECK_RADIUS * 0.8);
   });
 
   it('a piece the server reports asleep stays asleep through the anchor and the replayed steps', async () => {

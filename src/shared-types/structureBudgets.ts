@@ -97,10 +97,25 @@ export const PREDWORLD_STRUCTURE_RADIUS = 1500;
 /** Extra distance before a streamed-in structure body is released again, so
  *  a ship hovering at the edge doesn't churn bodies. */
 export const PREDWORLD_STRUCTURE_HYSTERESIS = 300;
-/** WIP (perf/subcap-final): wreck pieces get their own, smaller prediction
- *  radius. A piece only matters to prediction where the local ship can touch
- *  it within a replay window or a predicted weapon can reach it (<= 325 u).
- *  The speed x replay-window justification and its test are still to come. */
+/** Wreck pieces (swarm kind 4) get their own, smaller prediction radius: at
+ *  the structure radius most of a pile still had a predWorld body and the
+ *  predWorld step was 23 % of the client main thread (decisive soak,
+ *  2026-11-13). Measured as the GAP between hulls: piece edge to the local
+ *  hull's edge (ColyseusClient.syncSwarmIntoPredWorld subtracts both radii).
+ *  A piece only matters to prediction where the local ship can touch it
+ *  during a reconcile replay, or a predicted weapon can reach it (<= 325 u).
+ *  Why 600 u is safe (shipping 2x scale):
+ *   - Fastest playable ship: havok, maxSpeed 850 u/s. Boost adds thrust only;
+ *     applyShipInput still clamps at maxSpeed x the topSpeed stat.
+ *   - Fully levelled (LEVEL_CAP 10 => 9 points, +5 % each): 1232.5 u/s.
+ *   - A correction replays ~20 ticks (1/3 s): 283 u un-levelled, 411 u
+ *     levelled. Both well inside 600 u; the set is re-checked on every swarm
+ *     packet, and a piece already in keeps its body out to 600 + 300 u.
+ *   - The hull is not part of the budget: a 2x crossguard's radius is 213 u,
+ *     which is why the gap, not the centre distance, is used.
+ *  Not covered: a stall that fills the 128-tick input ring (~2.1 s) replays
+ *  further than any radius short of the sector (a rubber-band anyway), and
+ *  warp cruise (20,000 u/s). Locked by tests/unit/wreckPredCost.test.ts. */
 export const PREDWORLD_WRECK_RADIUS = 600;
 
 /** Frame-time p99 regression allowed with a citadel on screen. */

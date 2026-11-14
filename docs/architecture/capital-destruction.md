@@ -1496,9 +1496,21 @@ full soak's ship pile-up drops its client earlier whatever the debris does.
    - Wreck pieces stream at the structure radius (1,500 u + 300 u). The
      pilot's collisions only need pieces it can reach within the replay
      window, and its beams reach ≤ 325 u.
-   - Stream kind 4 at its own, much smaller radius (e.g. ~600 u, from the
-     fastest ship's speed × the replay window + beam reach). Lock the count
-     in `wreckPredCost.test.ts`.
+   - **Done (`perf/subcap-final`):** kind 4 streams at its own radius,
+     `PREDWORLD_WRECK_RADIUS` = 600 u (+ the same 300 u hysteresis),
+     measured as the gap between hulls (piece edge to the local hull's
+     edge, so a 213 u crossguard isn't short-changed). Why 600 u is safe,
+     at the shipping 2× scale: the fastest playable ship is the havok at
+     850 u/s (boost adds thrust, not top speed; the cap is maxSpeed × the
+     topSpeed stat), 1,232.5 u/s fully levelled (9 points × 5 %). A
+     correction replays ~20 ticks (1/3 s): 283 u un-levelled, 411 u
+     levelled, both well inside 600 u, and beams reach ≤ 325 u. Not covered:
+     a stall that fills the 128-tick input ring (~2.1 s), and warp cruise;
+     both are a rubber-band whatever the radius. Locks in
+     `wreckPredCost.test.ts`: a field of pieces out to 800 u gets bodies
+     only within 600 u (the piece beside the pilot always), pieces already
+     in keep them to 900 u, and the fastest ship's travel in a 20-tick
+     replay is ≤ 0.8 × the radius.
    - Second step: a sleeping piece needs no body in the reconcile replay
      unless the local ship's swept path reaches it.
    - Re-profile at ~1,100 pieces with the pilot inside the pile as well as
