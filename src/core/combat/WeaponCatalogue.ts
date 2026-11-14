@@ -25,6 +25,21 @@ interface WeaponDefBase {
    *  the shot's line through the kill point; `channel` erases a straight strip
    *  `width` world units wide along that line. Absent ⇒ the normal break-up. */
   killCut?: WeaponKillCut;
+  /** Charge-up (any weapon mode): the shot fires `chargeTicks` after the
+   *  trigger instead of at once. The per-mount charge state lives in ONE
+   *  store (`WeaponMountTicker.droneMountChargeStart`), shared by the AI salvo
+   *  path and capital turrets; it rides the snapshot as `drones[].chargingMask`
+   *  + `chargeStartTick`. AI pilots only. Absent ⇒ instant. */
+  chargeTicks?: number;
+  /** What a completed charge does. 'locked-direction' (default): fire at once
+   *  down the barrel, so a target that moved during the wind-up is missed
+   *  (the robot charge laser). 'when-bearing': fire only when the mount bears
+   *  on its target; otherwise hold the charge and fire the moment it bears. */
+  chargeRelease?: 'locked-direction' | 'when-bearing';
+  /** How the client telegraphs the charge. 'ring-line' (default): a hot ring
+   *  round the hull and a faint line out to the range. 'mount-glow': a glow on
+   *  the charging gun only, ramping up over the charge, no aim line. */
+  chargeTelegraph?: 'ring-line' | 'mount-glow';
 }
 
 export interface HitscanWeaponDef extends WeaponDefBase {
@@ -38,10 +53,6 @@ export interface HitscanWeaponDef extends WeaponDefBase {
    *  falloff ⇒ flat damage. SERVER-AUTHORITATIVE — the client reads the scaled
    *  number off the `DamageEvent`, never predicts it (avoids desync). */
   falloff?: { minDamageFrac: number; maxRangeMul?: number };
-  /** Living World P3c — NPC wind-up: the shot fires `chargeTicks` after the
-   *  trigger, along the direction locked when the charge began (a dodgeable
-   *  telegraph; the charge state rides `drones[].charging`). Absent ⇒ instant. */
-  chargeTicks?: number;
 }
 
 /** A weapon's kill cut (`WeaponDefBase.killCut`). */

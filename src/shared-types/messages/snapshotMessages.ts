@@ -384,10 +384,16 @@ export interface SnapshotMessage {
      *  bytes; absence does NOT force-clear (the client ledger's time-decay
      *  owns forgetting, exactly as with the event path). */
     hostile?: boolean;
-    /** Living World P3c — true while this drone winds up a CHARGE weapon (the
-     *  robot orb's charge laser): the client draws the telegraph. Emit-when-
-     *  true; absence means "not charging" (the wind-up is ~1.2 s). */
-    charging?: boolean;
+    /** Charge-up: bit i set while slot mount i charges a CHARGE weapon (or
+     *  holds a completed 'when-bearing' charge); the client draws each
+     *  weapon's telegraph (`chargeTelegraph`). Emit-when-non-zero; absence
+     *  means "not charging". Read from the one server store
+     *  (`WeaponMountTicker.charges`). */
+    chargingMask?: number;
+    /** The server tick the earliest charging mount began charging (present
+     *  with `chargingMask`). The telegraph ramps from it on the game clock,
+     *  so a late joiner sees the charge at its true progress (#16). */
+    chargeStartTick?: number;
     /** Take 12 — true while this AI ship's pilot holds the boost key: the
      *  client draws the same boost flame a pilot's ship gets (#16).
      *  Emit-when-true; absence means "not boosting". */

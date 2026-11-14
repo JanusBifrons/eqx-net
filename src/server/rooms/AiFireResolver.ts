@@ -32,6 +32,7 @@ import type { LaserFiredEvent } from '../../shared-types/messages.js';
 import type { ShipState } from './schema/SectorState.js';
 import { shipShotMuzzle, navalTurret, navalBarrelOffset } from '../../core/combat/muzzle.js';
 import { NEVER_FIRED } from '../../core/combat/fireTemporal.js';
+import { NOT_CHARGING, type MountCharges } from './WeaponMountTicker.js';
 
 /** Per-player pose the resolver reads to test target hits. */
 export interface ShipPose {
@@ -56,6 +57,11 @@ export interface AiFireTargetShape {
 }
 
 export interface AiFireResolverDeps {
+  /** THE per-mount charge store (`WeaponMountTicker.charges`), shared with
+   *  capital turrets: a charge weapon's trigger writes each bearing mount's
+   *  start tick, `releaseCharges` fires them. Absent ⇒ a charge weapon fires
+   *  at once (unit harnesses). */
+  mountCharges?: MountCharges;
   /** Fire range (owner decision 2026-11-14): fill `out` with `targetId`'s
    *  live centre and hit shape (a ship's kind, heading and shield, else a
    *  circle radius); false when unknown. A mount fires only when the target's
@@ -223,23 +229,17 @@ export class AiFireResolver implements WeaponFireSink {
     if (tick - lastFireCt < slotCooldown) return;
     d.lastFireClientTick.set(shooterId, tick);
 
-    // Living World P3c — a CHARGE weapon winds up instead of firing: lock the
-    // direction now, fire it `chargeTicks` later from `releaseCharges` (the
-    // telegraph rides `drones[].charging`). One reused record per shooter.
-    let chargeTicks = 0;
-    for (let i = 0; i < slotMounts.length; i++) {
-      const w = getWeapon(slotMounts[i]!.weaponId);
-      if (w.mode === 'hitscan' && (w.chargeTicks ?? 0) > chargeTicks) chargeTicks = w.chargeTicks!;
-    }
-    if (chargeTicks > 0) {
-      let c = this.charges.get(shooterId);
-      if (c === undefined) {
-        c = { active: false, readyTick: 0, mask: -1 };
-        this.charges.set(shooterId, c);
+    // Living World P3c — a CHARGE weapon winds up instead of firing: each
+    // mount that bears now starts charging in the shared per-mount store
+    // (`WeaponMountTicker.charges`, the snapshot's `chargingMask`), and
+    // `releaseCharges` fires them `chargeTicks` later.
+    const charges = d.mountCharges;
+    if (charges !== undefined && slotChargeTicks(slotMounts) > 0) {
+      const starts = charges.startsFor(shooterId, slotMounts.length);
+      for (let i = 0; i < slotMounts.length; i++) {
+        const bears = i > 30 ? (bearMask & (1 << 30)) !== 0 : (bearMask & (1 << i)) !== 0;
+        starts[i] = bears ? tick : NOT_CHARGING;
       }
-      c.active = true;
-      c.readyTick = tick + chargeTicks;
-      c.mask = bearMask;
       return;
     }
     this.fireNow(shooterId, -1, bearMask);
@@ -287,32 +287,37 @@ export class AiFireResolver implements WeaponFireSink {
   /** Quad AA: the next barrel to fire, per shooter and mount index. */
   private readonly aaBarrel = new Map<string, Uint8Array>();
 
-  /** Release every charge whose wind-up has elapsed (call once per server
-   *  tick, after the AI tick). Fires the mounts that bore at the trigger pull
-   *  from the shooter's CURRENT pose, down their barrels (where the gun is
-   *  drawn), so a target that dodged the wind-up is missed. Allocation-free. */
+  /** Release every salvo-path charge whose wind-up has elapsed (call once per
+   *  server tick, after the AI tick). Fires the mounts that bore at the
+   *  trigger pull from the shooter's CURRENT pose, down their barrels (where
+   *  the gun is drawn), so a target that dodged the wind-up is missed (the
+   *  'locked-direction' rule). Capital turrets release their own charges in
+   *  `WeaponMountTicker.tickCapitalMounts`. Allocation-free. */
   releaseCharges(tick: number): void {
-    if (this.charges.size === 0) return;
-    for (const [id, c] of this.charges) {
-      if (!c.active || tick < c.readyTick) continue;
-      c.active = false;
-      this.fireNow(id, -1, c.mask);
+    const charges = this.deps.mountCharges;
+    if (charges === undefined || charges.starts.size === 0) return;
+    for (const [id, starts] of charges.starts) {
+      const rec = this.deps.swarmRegistry.get(id);
+      if (!rec) continue;
+      const kind = getShipKind(rec.shipKind ?? DEFAULT_SHIP_KIND);
+      if (hasTurretFireControl(kind)) continue;
+      const chargeTicks = slotChargeTicks(this.deps.resolveSlotMounts(kind));
+      let mask = 0;
+      for (let i = 0; i < starts.length; i++) {
+        const s = starts[i]!;
+        if (s === NOT_CHARGING || tick - s < chargeTicks) continue;
+        starts[i] = NOT_CHARGING;
+        mask |= 1 << Math.min(i, 30);
+      }
+      if (mask !== 0) this.fireNow(id, -1, mask);
     }
   }
 
-  /** The drone is mid wind-up (the snapshot `drones[].charging` bit). */
-  isCharging(shooterId: string): boolean {
-    return this.charges.get(shooterId)?.active === true;
-  }
-
-  /** The shooter left the world — drop its charge. */
+  /** The shooter left the world. Its charges live in the shared store,
+   *  dropped by `WeaponMountTicker.clearDrone` on the same eviction. */
   forget(shooterId: string): void {
-    this.charges.delete(shooterId);
     this.aaBarrel.delete(shooterId);
   }
-
-  /** P3c — per-shooter wind-up records (reused; never per-tick allocated). */
-  private readonly charges = new Map<string, { active: boolean; readyTick: number; mask: number }>();
 
   /** Fire the shooter's active slot now, each mount down its own barrel.
    *  `onlyMount` ≥ 0 fires that mount alone; `mask` picks mounts by bit. */
@@ -490,4 +495,15 @@ export class AiFireResolver implements WeaponFireSink {
   spawnMissile(ctx: WeaponFireContext, def: MissileWeaponDef): void {
     this.deps.spawnServerMissile(this._shooterId, ctx.fromX, ctx.fromY, ctx.dirX, ctx.dirY, def);
   }
+}
+
+/** The salvo path's charge time: the longest `chargeTicks` among the slot's
+ *  mounts (the slot fires as one trigger), 0 ⇒ no charge weapon. */
+function slotChargeTicks(slotMounts: ReadonlyArray<WeaponMount>): number {
+  let t = 0;
+  for (let i = 0; i < slotMounts.length; i++) {
+    const c = getWeapon(slotMounts[i]!.weaponId).chargeTicks ?? 0;
+    if (c > t) t = c;
+  }
+  return t;
 }
