@@ -709,6 +709,9 @@ export interface RenderMirror {
   /** Fire control: NPCs locking the local pilot (own-ship `lockedBy` slice, shared ref).
    *  `t` = `s:<entityId>`, `s` 1 acquiring / 2 locked, `p` 0..100. */
   localLockedBy?: ReadonlyArray<{ t: string; s: number; p: number }>;
+  /** Fire control: how many NPCs lock the local pilot in all (`lockedByN`);
+   *  0 ⇒ the `localLockedBy` rows are everyone. The rows are only the nearest. */
+  localLockedByTotal?: number;
   /** When false, the renderer hides the orange server-ghost diamond. Default true. */
   showServerGhost?: boolean;
   /**
