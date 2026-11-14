@@ -463,10 +463,16 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
     // that wants player-equivalent snap-turn just sets the target angvel
     // and leaves `torque = 0`. (Setting both is allowed but redundant.)
     // NPC warp-to first: while a warp owns a bot's body its intent is dropped.
+    // A ship flown by control keys hands its keys to the spool, which flies
+    // it like a pilot's (thrust works, the drive turns it): `null` on a tick
+    // with no new keys.
     for (const [slot, r] of botWarps) {
       const id = slotToPlayer.get(slot);
       if (id === undefined) { botWarps.delete(slot); continue; }
-      if (physics.botWarp(id, r.on ? r : null)) { aiIntents.delete(slot); aiInputPending[slot] = -1; continue; }
+      const bits = aiInputPending[slot]!;
+      let keys: typeof aiKeys | null = null;
+      if (bits >= 0) { decodeAiInputBits(bits, aiKeys); keys = aiKeys; }
+      if (physics.botWarp(id, r.on ? r : null, keys)) { aiIntents.delete(slot); aiInputPending[slot] = -1; continue; }
       // Idle: arrived (or cancelled). Clear the latch and forget the slot.
       if (!r.on || physics.warpArrived(id)) { physics.botWarp(id, null); botWarps.delete(slot); }
     }

@@ -36,8 +36,31 @@ describe('applyDroneMountAngles — P3c charge telegraph', () => {
     expect(m.swarm!.get(2)!.warp).toBeUndefined();
     applyDroneMountAngles(snap([{ id: 1, warp: 2 }]), m);
     expect(m.swarm!.get(1)!.warp).toBe(2);
+    applyDroneMountAngles(snap([{ id: 1, warp: 3 }]), m); // dropped out (the arrival)
+    expect(m.swarm!.get(1)!.warp).toBe(3);
     // Idle again: the server omits it, so the phase must clear.
     applyDroneMountAngles(snap(undefined), m);
+    expect(m.swarm!.get(1)!.warp).toBeUndefined();
+    // A spool that is dropped (cancelled) clears too.
+    applyDroneMountAngles(snap([{ id: 1, warp: 1 }]), m);
+    applyDroneMountAngles(snap(undefined), m);
+    expect(m.swarm!.get(1)!.warp).toBeUndefined();
+  });
+
+  it('a drone that leaves on its run (morale warp-out) stays on the run until the swarm stream removes it', () => {
+    // Take 7 (2026-11-14): the room drops a ship that fled from the snapshot
+    // while its run is under way; the swarm stream removes it in a separate
+    // packet. Clearing the phase first would show the hull again (and draw an
+    // arrival) for the frames in between.
+    const m = mirrorWith([1]);
+    applyDroneMountAngles(snap([{ id: 1, warp: 1 }]), m);
+    applyDroneMountAngles(snap([{ id: 1, warp: 2 }]), m);
+    applyDroneMountAngles(snap(undefined), m);
+    expect(m.swarm!.get(1)!.warp, 'still on the run').toBe(2);
+    applyDroneMountAngles(snap([{ id: 9, hostile: true }]), m);
+    expect(m.swarm!.get(1)!.warp).toBe(2);
+    // Bounded: if it is somehow never removed it settles after a few snapshots.
+    for (let i = 0; i < 12; i++) applyDroneMountAngles(snap(undefined), m);
     expect(m.swarm!.get(1)!.warp).toBeUndefined();
   });
 

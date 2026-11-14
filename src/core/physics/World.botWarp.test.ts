@@ -6,6 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import { PhysicsWorld } from './World.js';
 import { WARP_SPOOL_TICKS } from './warpDrive.js';
+import { getShipKind } from '../../shared-types/shipKinds.js';
 
 async function bot(): Promise<PhysicsWorld> {
   const w = await PhysicsWorld.create();
@@ -53,6 +54,27 @@ describe('World.botWarp', () => {
     // It engaged facing the target: nose (-sin θ, cos θ) ≈ (-1, 0).
     const s0 = w.getShipState('bot')!;
     expect(-Math.sin(s0.angle)).toBeLessThan(-0.99);
+  });
+
+  it('a ship flown by control keys keeps flying while it spools, like a pilot (thrust works, the drive turns it)', async () => {
+    // Take 7 (2026-11-14): a fleeing fighter sat dead still for the 3 s spool
+    // and then vanished. A pilot's ship keeps its thrust while spooling.
+    const w = await bot();
+    w.setPilotKind('bot', getShipKind('fighter'));
+    const keys = { thrust: true, turnLeft: false, turnRight: false, boost: false, reverse: false };
+    w.applyAiInput('bot', keys);
+    w.tick(1 / 60);
+    const target = { x: 0, y: 60_000 }; // dead ahead (nose +y at angle 0)
+    const turnKeys = { ...keys, turnLeft: true }; // turn keys are ignored, as a pilot's are
+    for (let i = 0; i < WARP_SPOOL_TICKS - 5; i++) {
+      expect(w.botWarp('bot', target, i % 2 === 0 ? turnKeys : null)).toBe(true);
+      w.tick(1 / 60);
+    }
+    expect(w.warpPhase('bot')).toBe('spool');
+    const mid = w.getShipState('bot')!;
+    expect(mid.y, 'flew on along its line').toBeGreaterThan(300);
+    expect(Math.hypot(mid.vx, mid.vy), 'still moving at the end of the spool').toBeGreaterThan(100);
+    expect(Math.abs(mid.angle), 'the drive kept it facing the target').toBeLessThan(0.1);
   });
 
   it('dropping the request during the spool cancels it; with no warp it never owns the body', async () => {

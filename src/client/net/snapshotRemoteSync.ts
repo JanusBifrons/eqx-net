@@ -228,6 +228,16 @@ const chargingIds = new Set<number>();
 const eliteIds = new Set<number>();
 /** Entity ids warping per the previous snapshot (reused — #14). */
 const warpIds = new Set<number>();
+/** Drones last seen on their warp RUN that the snapshot has since dropped:
+ *  id → snapshots left to keep the run phase (reused — #14). */
+const leftOnRun = new Map<number, number>();
+/** Snapshots a drone that went missing on its run keeps the run phase. An
+ *  in-sector run always ends with an explicit "just arrived" (3), so a run
+ *  that simply stops being reported means the ship LEFT (a morale warp-out):
+ *  the swarm stream removes it, but that is a separate packet and may land
+ *  a frame later. Clearing the phase first showed the hull again, with an
+ *  arrival flash, before it vanished. Bounded, in case it never goes. */
+const LEFT_ON_RUN_SNAPSHOTS = 10;
 
 export function applyDroneMountAngles(
   snap: SnapshotMessage,
@@ -258,10 +268,18 @@ export function applyDroneMountAngles(
     eliteIds.clear();
   }
   // W2a — an NPC warp phase clears on absence (the server omits idle drones).
+  if (leftOnRun.size > 0) {
+    for (const [id, n] of leftOnRun) {
+      const sw = mirror.swarm?.get(id);
+      if (!sw || n <= 1) { if (sw) sw.warp = undefined; leftOnRun.delete(id); } else leftOnRun.set(id, n - 1);
+    }
+  }
   if (warpIds.size > 0) {
     for (const id of warpIds) {
       const sw = mirror.swarm?.get(id);
-      if (sw) sw.warp = undefined;
+      if (!sw) continue;
+      if (sw.warp === 2) leftOnRun.set(id, LEFT_ON_RUN_SNAPSHOTS); // left: keep it on the run
+      else sw.warp = undefined;
     }
     warpIds.clear();
   }
@@ -281,6 +299,7 @@ export function applyDroneMountAngles(
     if (d.warp !== undefined) {
       sw.warp = d.warp;
       warpIds.add(d.id);
+      leftOnRun.delete(d.id);
     }
     // v4 M2 — a patrol ship's faction never changes, so it is kept once seen.
     if (d.fac !== undefined) sw.faction = d.fac;
