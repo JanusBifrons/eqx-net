@@ -470,3 +470,137 @@ connect/disconnect UI, persistence of placed structures.
   seeds a powered grid that mines + fires.
 - `tests/e2e/structure-scenario.spec.ts` — grid power / mining bank climb / turret
   kills drone reach the client (via the pre-built scenario room).
+
+## Server implementation notes
+
+> Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.
+
+**Player-driven structure placement (structures plan, Phase 2).** Beyond the
+testMode `structurePoses` seed, players place structures over the wire:
+`place_structure` / `remove_structure` (zod `.strict()`,
+`src/shared-types/messages/clientMessages.ts`) → `SectorRoom` handlers (resolve
+owner via `sessionToPlayer`) → [StructurePlacementSubsystem](../../src/server/structures/StructurePlacementSubsystem.ts)
+(decision logic over injected hooks — spawn / health-seed / despawn / clamp / id —
+unit-tested like `TransitOrchestrator`) + [StructureRegistry](../../src/server/structures/StructureRegistry.ts)
+(ownership + construction state). Placement model: every structure lands a
+**blueprint** at `SCAFFOLDING_HP_FRACTION` (10 %) HP, `isConstructed:false`,
+non-operational; the **Capital** is the exception (`constructionCost===0` ⇒
+pre-built, full HP, the mineral bank). Placement does NOT pre-charge minerals —
+the cost is drained DURING construction by the Phase-3 grid pulse, so a blueprint
+can be placed with an empty bank and waits. The structure subtype rides the
+**shared `shipKind` byte** (kind=2 path; `SwarmSpawner.spawnStructure` sets
+`rec.shipKind`) — no stride/`SWARM_WIRE_VERSION` bump. `remove` is owner-gated.
+**Phase-4 C2 — placement is OBSTACLE-aware.** `place()` rejected overlap against
+PLACED STRUCTURES only, so a Capital dropped on a rock LANDED ("places on an
+asteroid"). It now routes BOTH the structure AND the asteroid check through the
+shared pure [`canPlaceStructureAt`/`placementRejection`](../../src/core/structures/placementRules.ts)
+(sum-of-radii circle, the same `getObstacles` → `gatherStructureObstacles` hook
+the auto-connect LOS already used). Low-frequency message path — no wire change,
+NO netgate. The client ghost can call the SAME predicate for a red-invalid tint
+(deferred). Locks: `placementRules.test.ts` (pure), `StructurePlacementSubsystem.test.ts`
+(obstacle reject), `tests/integration/sectorRoom/structurePlacementValidation.test.ts`
+(the real `getObstacles` wiring, capital-on-asteroid rejected end-to-end).
+`SectorRoom._internals` exposes `structureRegistry` + the swarm record `shipKind`
+for the integration test.
+
+**Power grid (structures plan, Phase 3).** `StructureRegistry` carries the
+connection adjacency (+ `topologyDirty` + per-structure `minerals`; `remove()`
+severs). `structureGridView.autoConnectStructure` runs on every place, per-owner.
+**WS-5 R2.17 — it MULTI-connects:** it links the placed structure to EVERY
+in-range legal hub (not just the nearest) in deterministic `(edgeDistance, id)`
+order, until the structure's own `maxConnections` OR the global
+`PLACEMENT_MAX_CONNECTIONS = 6` cap is hit (re-checking `canConnect` each
+iteration against the live adjacency, so a hub filling mid-loop is respected). A
+leaf (cap 1) therefore still grabs only the nearest hub — only wide hubs
+(Connector, cap 6) fan out. It returns the NEAREST connected id (back-compatible
+single-id return). Legality is WS-5 R2.10's `canConnect`: capital-only-connectors
+(the Capital links ONLY to a Connector — keyed on `GridNode.isConnector`, NOT
+pylons) + per-kind `connectionRange` (the Capital's is `CAPITAL_CONNECTION_RANGE
+= 300`; `canConnect` takes the `min` of the two endpoints' ranges). The same
+`autoConnectStructure` drives the 1 Hz reconnect sweep (`StructureGridSubsystem`
+retries stranded leaves) and the `structure-scenario-test` seed. The client
+PLACEMENT PREVIEW mirrors this: `ConnectorRenderer.drawPlacementPreview` caps the
+GREEN would-connect lines at `PLACEMENT_MAX_CONNECTIONS` and draws the rest as
+RED **overflow** (`placementPreviewConnectionCount` = green ≤ 6,
+`placementPreviewOverflowCount` = the over-cap remainder). **Multi-connect grows
+the `structures[].connTo` JSON slice length → netgate (invariant #8) applies to
+R2.17.** `StructureGridSubsystem.pulse()` is the **1 Hz
+heartbeat** — directly callable so integration tests drive it deterministically
+(no wall-clock wait), `unref`'d + OFF the 60 Hz tick: rebuild-if-dirty →
+construction flow (drain a routable Capital; complete ⇒ build + reset HP + dirty;
+dry ⇒ pause) → repair → deconstruction → flashes. `SectorRoom` owns the timer,
+rebuilds the `structures[]` slice (entityId-keyed; same array ref per recipient,
+absent when none), broadcasts `grid_pulse`, severs on structure death via
+`evictSwarmEntity`. `_internals.pulseStructureGrid` + `getStructuresSlice` are
+the test seams. **Netgate (invariant #8): the `structures[]` slice + `grid_pulse`
+touch the snapshot/broadcast path, so `pnpm e2e:netgate` is required for grid
+changes.** **Phase-4 C3 — the slice carries `hpPct` (0-100 INTEGER percent, the
+`drones[].hp` convention) for EVERY structure**, sourced in `rebuildStructuresSlice`
+from `swarmHealth` ÷ `getStructureKind(kind).maxHealth`. The client decodes it to
+`StructureRenderState.hpPct` (0..1) so the inspector renders the hull bar on the
+FIRST polled frame after selection — killing the "hull pops in" round-trip lag
+(the `entity_stats` packet now only refines it). 🔴 netgate (slice byte change;
+PASS confirmed). Lock: `entity-inspect.spec.ts` first-frame no-spinner assertion. Phase 4 adds the mining + transfer pulse steps (`findNearestAsteroid`
+hook; power-gated extraction → local buffer → haul to Capital). Phase 5 adds
+`tickTurrets` on a faster `TURRET_TICK_MS` timer — built+powered turrets target
+the nearest drone (`findNearestDrone`) and fire (`applyDamage` + `laser_fired`);
+a **bespoke fire path**, NOT `AiFireResolver` (which targets players). **WS-8
+(R2.15) generalised `tickTurrets`** from the hard-coded `'turret'` kind to a
+data-driven predicate (a structure with a `weaponRange` + a weaponised mount —
+auto-includes the new `laser_bolt_turret`/`missile_turret`, EXCLUDES the Miner)
+and dispatches on the bound weapon's `mode`: `hitscan` → the continuous beam
+(unchanged); `projectile` → a dodgeable bolt via `spawnServerProjectile`;
+`missile` → a homing missile via `spawnServerMissile`. The new kinds use the
+SHOT model — one shot per the KIND's `fireRateMs` (NOT the weapon's rapid player
+cooldown, which would firehose) — damage landing on impact via the
+projectile/missile sim (rendered off `projectiles[]`/`missiles[]`). Two guards:
+the projectile swarm-pass skips the firing owner (`rec.id === proj.ownerId`) so
+a bolt can't detonate on its own turret; and `isMissileTargetHostile` gives a
+`pstruct-` owner a **drones-only** (swarm kind 1) homing predicate — without it
+a structure missile falls through to the player-shooter branch and targets other
+players + friendly structures. Missile SPLASH is unchanged (CAN hit the owner's
+base — realistic, by user choice). 🔴 netgate (new projectile/missile
+spawn+broadcast). The testMode **scenario trigger** (`prebuiltStructures`/`scenarioDrones`/
+`scenarioAsteroids` → `seedStructureScenario`, the `structure-scenario-test`
+room) seeds a pre-built powered grid for E2E (the place-ahead UI overlaps stacked
+placements; this seeds the end state). **Batteries (batteries plan)** add a full
+stored-power buffer: `processBatteryPower()` runs each pulse (before the
+power-gated steps) — a component SURPLUS charges its batteries (`storedPower` on
+`StructureRecord`, capped at the catalogue `powerStorageCapacity`); a DEFICIT
+discharges them to keep the component `powered` IF their combined charge covers
+the per-pulse shortfall, else it browns out. The subsystem's `powerSummaryFor`
+is now **battery-backed** (raw `netPower`, but `powered` stays true while charge
+covers a deficit) — the turret/miner gates AND the `structures[]` snapshot slice
+read it. The slice carries `storedPower`/`storedPowerMax` for batteries
+(inspector CHRG readout); no `SWARM_WIRE_VERSION` bump (JSON slice). The pure
+`Grid` stays instantaneous (its golden tests hold); the battery layer is
+server-side, over `Grid.forEachComponent`/`componentMembers`. See [docs/architecture/structures-and-power-grid.md](../../docs/architecture/structures-and-power-grid.md).
+
+**Shield fence (shield-fence plan).** `shield_pylon` is a HUB; two built+connected
+same-owner pylons project a blocking **shield wall** in their span. The wall is a
+DERIVED collider (geometry from the two pylon poses via the pure
+`core/structures/ShieldWall.ts`), NOT a swarm/wire entity. `ShieldWallManager`
+(`src/server/structures/`) forms/teardowns walls + drives the collider (worker
+`SPAWN_WALL`/`SET_WALL_ACTIVE`/`REMOVE_WALL`; **wall bodies live in `PhysicsWorld`'s
+`wallBodies` map, NOT `this.bodies`**, or the per-tick `getAllShipStates` SAB-write
+hits a slot-less body). Damage = grid SURPLUS soaks → component BATTERIES drain →
+overwhelm both = STUN (collider disabled). Ships block free (static body); weapons
+absorb main-thread (`blockBeamAtWall` in the fire resolvers, `wallBlocksProjectile`
+in `ProjectilePipeline` → `ShieldWallManager.blockShot`/`blockProjectile`). Two
+JSON `structures[]` fields (`shieldWallTo`/`wallActive`) drive the client span +
+predWorld collider (`syncPredWalls`). AI targets pylons (`structurePriority`).
+**R2.18 (WS-6) — a pylon is UNDAMAGEABLE while ANY of its walls is up.** The
+single damage choke point `SectorRoom.applyDamage` guards: if the target is a
+`shield_pylon` and `ShieldWallManager.absorbForPylon` finds an ACTIVE wall, the
+hit is routed into that wall (via the SAME `onWallHit` grid-power model
+span-crossing shots use → surplus soak → battery drain → stun) and the pylon
+takes 0 (no damage event). Covers EVERY source — beams/turrets/projectiles AND
+ramming all funnel through `applyDamage`. `absorbForPylon` iterates ALL walls on
+the pylon and absorbs at the first ACTIVE one (NOT `wallStateFor`, which returns
+only the first wall's state — a 3-wall pylon must stay protected if any single
+wall is up). So a pylon-with-active-wall takes TWO lethal hits to kill: the
+first stuns the wall, the second (now wall-down) lands. Wall stun timing is
+wall-clock (`Date.now`), matching every other `shieldWalls` call site.
+**Root-cause fix shipped alongside:** the swarm shield-regen pass borrowed a
+fighter shield for damaged structures + posted `SET_HULL_EXPOSED` (collider
+corruption); now gated on `rec.kind === 1`. See [docs/architecture/structures-and-power-grid.md](../../docs/architecture/structures-and-power-grid.md) + [docs/features/shield-fence.md](../../docs/features/shield-fence.md).
