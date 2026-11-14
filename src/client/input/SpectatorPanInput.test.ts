@@ -73,3 +73,24 @@ describe('SpectatorPanInput (Phase 5 WASD pan)', () => {
     pan.dispose();
   });
 });
+
+describe('SpectatorPanInput H = hold (RTS stop)', () => {
+  it('fires onHold on H only while enabled, not from a text input, and never pans', () => {
+    const onChange = vi.fn();
+    const onHold = vi.fn();
+    const p = new SpectatorPanInput(onChange as unknown as (vx: number, vy: number) => void, onHold);
+    keydown('KeyH');
+    expect(onHold).not.toHaveBeenCalled();
+    p.setEnabled(true);
+    onChange.mockClear();
+    keydown('KeyH');
+    expect(onHold).toHaveBeenCalledTimes(1);
+    expect(onChange).not.toHaveBeenCalled();
+    const input = document.createElement('input');
+    document.body.appendChild(input);
+    input.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyH', bubbles: true }));
+    expect(onHold).toHaveBeenCalledTimes(1);
+    input.remove();
+    p.dispose();
+  });
+});

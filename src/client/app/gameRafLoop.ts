@@ -35,6 +35,7 @@ import { turretFireCrossesWall } from '../structures/fenceFireHint.js';
 import { commitChosenPlacement } from '../structures/structurePlacementClient.js';
 import { sendSelectEntity, sendDeselectEntity } from '../net/selectionClient.js';
 import { resetSelectionStats } from '../net/selectionStats.js';
+import { sendFleetOrder } from '../ships/shipActionsClient.js';
 import type { ColyseusGameClient } from '../net/ColyseusClient.js';
 import type { IRenderer } from '@core/contracts/IRenderer';
 import { placeInspector, type InspectorAnchor } from './inspectorPlacement.js';
@@ -357,7 +358,16 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
     }
     if (selFb.orderSeq !== _lastOrderSeq) {
       _lastOrderSeq = selFb.orderSeq;
-      // No server send yet (later slice): record the order for diagnostics.
+      // Send the order for the current selection (one small object per
+      // order; nothing is allocated on frames where the seq is unchanged).
+      const ids = selFb.fleetSelIds;
+      if (ids.length > 0) {
+        if (selFb.orderKind === 'move') {
+          sendFleetOrder(ids.slice(), { kind: 'move', x: selFb.orderX, y: selFb.orderY });
+        } else if (selFb.orderKind === 'attack' && selFb.orderTargetId !== null) {
+          sendFleetOrder(ids.slice(), { kind: 'attack', targetId: selFb.orderTargetId });
+        }
+      }
       logEvent('fleet_order', {
         seq: selFb.orderSeq,
         kind: selFb.orderKind,

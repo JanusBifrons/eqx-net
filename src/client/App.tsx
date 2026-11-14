@@ -34,6 +34,7 @@ import { mergePlayerPresence } from './app/galaxyPresence';
 import { loadStoredPlayerId } from './identity/token';
 import { Keyboard } from './input/Keyboard';
 import { SpectatorPanInput } from './input/SpectatorPanInput';
+import { sendFleetOrder } from './ships/shipActionsClient';
 import { TouchInput, isTouchDevice } from './input/TouchInput';
 import { useUIStore, useGameReady, useIsLoadingActive } from './state/store';
 import { useAuthStore } from './auth/authStore';
@@ -508,8 +509,13 @@ function GameSurface({
     // Phase 5 — spectator WASD free-pan: feed the held-key velocity to the
     // renderer's camera. Self-gated by setEnabled (the spectating effect arms it
     // only on desktop while spectating).
-    spectatorPanRef.current = new SpectatorPanInput((vx, vy) =>
-      rendererRef.current?.setPanVelocity(vx, vy),
+    spectatorPanRef.current = new SpectatorPanInput(
+      (vx, vy) => rendererRef.current?.setPanVelocity(vx, vy),
+      () => {
+        // RTS "hold": stop the current fleet selection (no-op when empty).
+        const ids = useUIStore.getState().fleetSelection;
+        if (ids.length > 0) sendFleetOrder([...ids], { kind: 'stop' });
+      },
     );
     installProfileWindow();
 

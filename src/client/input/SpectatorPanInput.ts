@@ -17,6 +17,12 @@
 /** Screen px/sec at full single-axis deflection. */
 export const SPECTATOR_PAN_SPEED = 800;
 
+function isTextEntryTarget(t: EventTarget | null): boolean {
+  if (!(t instanceof HTMLElement)) return false;
+  const tag = t.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || t.isContentEditable;
+}
+
 export class SpectatorPanInput {
   private up = false;
   private down = false;
@@ -26,9 +32,13 @@ export class SpectatorPanInput {
   private lastVx = 0;
   private lastVy = 0;
   private readonly onChange: (vx: number, vy: number) => void;
+  private readonly onHold: (() => void) | undefined;
 
-  constructor(onChange: (vx: number, vy: number) => void) {
+  /** `onHold` fires on an `H` press (RTS "hold / stop" for the current fleet
+   *  selection) while enabled and focus is not in a text field. */
+  constructor(onChange: (vx: number, vy: number) => void, onHold?: () => void) {
     this.onChange = onChange;
+    this.onHold = onHold;
     window.addEventListener('keydown', this.onKeyDown);
     window.addEventListener('keyup', this.onKeyUp);
   }
@@ -56,6 +66,10 @@ export class SpectatorPanInput {
 
   private onKeyDown = (e: KeyboardEvent): void => {
     if (!this.enabled || e.repeat) return;
+    if (e.code === 'KeyH') {
+      if (this.onHold && !isTextEntryTarget(e.target)) this.onHold();
+      return;
+    }
     if (this.set(e.code, true)) this.emit();
   };
 
