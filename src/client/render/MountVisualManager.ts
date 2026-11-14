@@ -36,7 +36,7 @@
  * effectively underneath the ship body and are not visually intrusive.
  */
 
-import { Container, Graphics, Sprite } from 'pixi.js';
+import { Container, Graphics, Matrix, Sprite } from 'pixi.js';
 import type { ArtHandle } from './art/ArtService.js';
 import { isMachinedSprite, type ShipArtCtx } from './art/shipArtSprites.js';
 import { muzzleReach, shipTurrets, structureTurrets, type TurretPlace } from './art/turretLayout.js';
@@ -121,6 +121,8 @@ interface MachinedGun {
   beamUntil: number;
   heat: number;
   lastT: number;
+  /** The arc-local mount angle last applied (for `aimProbe`). */
+  aim: number;
 }
 
 interface AaBarrels {
@@ -683,7 +685,7 @@ export class MountVisualManager {
     const travel = w && w.mode !== 'hitscan' ? w.speed * SHOT_FIRST_SEEN_S : 0;
     return {
       place, pivot, handle, layers: null, reach, matchDist: Math.max(SHOT_MATCH_DIST, reach, travel),
-      flash: null, tip: null, barrelFlashes: null, smokes: null, aa, lastShot: -9, beamUntil: -1, heat: 0, lastT: this.nowS,
+      flash: null, tip: null, barrelFlashes: null, smokes: null, aa, lastShot: -9, beamUntil: -1, heat: 0, lastT: this.nowS, aim: 0,
     };
   }
 
@@ -735,6 +737,7 @@ export class MountVisualManager {
           gfx.turret.visible = false;
           this.machinedGuns++;
         }
+        gun.aim = current;
         if (gun.layers && gun.handle.ship) {
           gun.pivot.rotation = spriteRotation;
           // Lit by the gun's own world rotation, like a hull.
@@ -758,6 +761,31 @@ export class MountVisualManager {
         gfx.aimLine.visible = this.aimLinesVisible && shipId === this.localId && this.localAim.includes(mount.id);
       }
     }
+  }
+
+  /**
+   * Test probe (`__eqxArtStats().turretAim`): per drawn Machined gun, the
+   * mount angle last applied (`aim`, arc-local, + = left) and the angle the
+   * drawn gun art stands at relative to its hull (`drawn`, same convention),
+   * read from the art's world transform. Debug only (allocates).
+   */
+  aimProbe(): Array<{ id: string; mount: string; aim: number; drawn: number; shown: boolean }> {
+    const out: Array<{ id: string; mount: string; aim: number; drawn: number; shown: boolean }> = [];
+    const m = new Matrix(), h = new Matrix();
+    for (const [id, cluster] of this.clusters) {
+      for (const [mountId, g] of cluster.perMount) {
+        const gun = g.gun;
+        if (!gun?.layers) continue;
+        gun.layers.a.getGlobalTransform(m, false);
+        cluster.container.getGlobalTransform(h, false);
+        const rel = -(Math.atan2(m.b, m.a) - Math.atan2(h.b, h.a)) - gun.place.mount.baseAngle;
+        const drawn = Math.atan2(Math.sin(rel), Math.cos(rel));
+        let shown = true;
+        for (let p: Container | null = gun.layers.a; p; p = p.parent) if (!p.visible || !p.renderable) { shown = false; break; }
+        out.push({ id, mount: mountId, aim: gun.aim, drawn, shown });
+      }
+    }
+    return out;
   }
 
   /** Tear down every cluster. Call from PixiRenderer.dispose. */

@@ -536,6 +536,35 @@ export const LEGACY_FORWARD_MOUNT: WeaponMount = Object.freeze({
   weaponId: 'hitscan',
 }) as WeaponMount;
 
+/** Half-arc of a nose turret (owner 2026-11-14, "make them real turrets",
+ *  then "don't retune anything except giving them a small arc"): ±20°, one
+ *  value for every kind. 20° (0.349 rad) is just wider than the ±0.3 rad a
+ *  fixed gun counted as covering for locks (`FIXED_GUN_HALF_ARC`,
+ *  `LockSubsystem` `FIXED_BEAR`), so no target a fixed gun could lock falls
+ *  outside the turret's arc. */
+export const NOSE_TURRET_HALF_ARC = Math.PI / 9;
+
+/** Slew rates reused from the existing turret kinds (no new tuning): a
+ *  fighter-sized hull (radius ≤ 15) slews like the interceptor's wing
+ *  turrets and the fighter's latent wings (4 rad/s); a heavier hull like
+ *  the gunship's turrets (3 rad/s). */
+export const NOSE_TURRET_SLEW_LIGHT = 4;
+export const NOSE_TURRET_SLEW_HEAVY = 3;
+
+/** A nose turret: the legacy forward mount (same spot, same chin-gun art and
+ *  muzzle) that trains ±`NOSE_TURRET_HALF_ARC` at `rotationSpeed`. Used by
+ *  fighter, scout, heavy, robot-square, robot-circle, robot-hexagon — for
+ *  every pilot of the kind, players included. */
+export function noseTurretMount(weaponId: WeaponMount['weaponId'], rotationSpeed: number): WeaponMount {
+  return {
+    ...LEGACY_FORWARD_MOUNT,
+    weaponId,
+    arcMin: -NOSE_TURRET_HALF_ARC,
+    arcMax: NOSE_TURRET_HALF_ARC,
+    rotationSpeed,
+  };
+}
+
 export const LEGACY_PRIMARY_SLOT: WeaponSlot = Object.freeze({
   id: 'primary',
   displayName: 'Primary',

@@ -25,15 +25,47 @@ function docBasenames(dir: string): string[] {
     .map((f) => f.replace(/\.md$/, ''));
 }
 
-const ALL_DOCS = [...docBasenames('docs/features'), ...docBasenames('docs/architecture')];
+const DOC_DIRS = ['docs/features', 'docs/architecture'];
+const ALL_DOCS = DOC_DIRS.flatMap(docBasenames);
 const FILMED = new Set(SHOTS.flatMap((s) => s.docs));
+
+/**
+ * A doc can exempt itself in markdown, so adding a guide stays a docs-only
+ * PR (CI skips the suites for .md-only changes):
+ *   <!-- showcase-exempt: <reason, > 10 chars> -->
+ * anywhere in the first 20 lines. Returns the reason, or undefined.
+ */
+const MD_EXEMPT = /<!--\s*showcase-exempt:\s*(.+?)\s*-->/;
+function inDocExemption(doc: string): string | undefined {
+  for (const dir of DOC_DIRS) {
+    let text: string;
+    try {
+      text = readFileSync(path.join(ROOT, dir, `${doc}.md`), 'utf8');
+    } catch {
+      continue;
+    }
+    const m = MD_EXEMPT.exec(text.split('\n').slice(0, 20).join('\n'));
+    if (m) return m[1];
+  }
+  return undefined;
+}
+const DOC_EXEMPT: Record<string, string> = Object.fromEntries(
+  ALL_DOCS.flatMap((d) => {
+    const why = inDocExemption(d);
+    return why === undefined ? [] : [[d, why]];
+  }),
+);
 
 describe('showcase coverage', () => {
   it('every feature/architecture doc is filmed, exempt or pending', () => {
     const missing = ALL_DOCS.filter(
-      (d) => !FILMED.has(d) && !(d in SHOWCASE_EXEMPT) && !(d in SHOWCASE_PENDING),
+      (d) => !FILMED.has(d) && !(d in SHOWCASE_EXEMPT) && !(d in SHOWCASE_PENDING) && !(d in DOC_EXEMPT),
     );
-    expect(missing, `add a shot (shot.docs) or a SHOWCASE_EXEMPT/PENDING entry in showcase/registry.ts for: ${missing.join(', ')}`).toEqual([]);
+    expect(
+      missing,
+      `add a shot (shot.docs), a SHOWCASE_EXEMPT/PENDING entry in showcase/registry.ts, ` +
+        `or a "<!-- showcase-exempt: <reason> -->" line near the top of the doc, for: ${missing.join(', ')}`,
+    ).toEqual([]);
   });
 
   it('shots, exemptions and pending entries only name docs that exist', () => {
@@ -43,7 +75,7 @@ describe('showcase coverage', () => {
   });
 
   it('every exemption and pending entry gives a reason', () => {
-    for (const [doc, why] of Object.entries({ ...SHOWCASE_EXEMPT, ...SHOWCASE_PENDING })) {
+    for (const [doc, why] of Object.entries({ ...SHOWCASE_EXEMPT, ...SHOWCASE_PENDING, ...DOC_EXEMPT })) {
       expect(why.trim().length, doc).toBeGreaterThan(10);
     }
   });
