@@ -3020,6 +3020,14 @@ Owner: "make it more like micro machines and make fights a bit longer. Also don'
 - **Fix.** ONE helper, `src/core/combat/shipHitShape.ts` (`shipRayHit` / `shipSweepHit` / `shipHitBound` / `shipSplashRadius`), keyed by ship KIND and shield state, used by every server path and by the client (`DisplayPoseHitscan`, `shieldEdgeDist`, #15). The projectile broadphase bins ships by `shipHitBound` (bubble and hull), or a shot at the edge of the bubble was never offered to the narrow phase. Lock: `tests/integration/sectorRoom/shipHitShapeParity.test.ts` fires the same shell, beam and missile at the same kind flown by a player and by an NPC.
 - **Rule.** Any new weapon path that can hit a ship must call `shipHitShape.ts`, never `rec.radius` or a tuning `hitRadius`. A record's `radius` is not its hit shape.
 
+## 2026-11-14 — An NPC beam ran through its target to the edge of the screen
+
+- **Symptom (hostile review of filmed NPC fights).** An NPC interceptor's wing turrets were drawn on the pilot, but its beam ran straight past the ship to max range.
+- **Cause.** Server, not renderer. `AiFireResolver.fireNow` fired a mount at the AI's AIM vector plus the mount's slewed angle. A turret's slewed angle is ship-relative and already turned onto the target, so the shot went out at twice the hull's bearing error: a real server miss (full-range distance on the wire). The client draws a remote beam down the visible barrel (hull + base + slewed angle) for the server's distance, so the miss was drawn through the target.
+- **Fix.** A turning mount fires down its barrel (hull angle + base + slewed angle), the angle the client draws. A fixed mount keeps the exact aim vector (the 2026-06-03 accuracy fix). Lock: `AiFireResolver.test.ts` "a turret beam leaves along its visible barrel" (wire ray direction == drawn barrel, #15).
+- **Lesson.** When a drawn beam disagrees with its target, check that the server's ray and the drawn ray are the SAME ray before touching the beam-end maths. Adding a relative angle to an absolute direction is a frame mix-up that no hit-shape fix can hide.
+- **Still open.** A FIXED mount's beam is drawn along the hull's nose while the server fires along the aim vector (within the AI's aim cone), so a hit can end beside the target rather than on it.
+
 ## 2026-11-13 — Same keys, different ship: an NPC body is twice a player's mass
 
 - **Finding (virtual pilot, slice 1b):** NPCs now press a player's keys through the same `applyShipInput`, yet a drone of a kind still accelerates at half the player's rate and tops out at half its thrust-only speed. `SwarmSpawner` spawns a drone with `massOf(kind, 2)` (`DRONE_DEFAULT_MASS`), a player ship with `massOf(kind, 1)`, and `thrustImpulse` is an impulse, so Δv = J/m. Boost reaches `maxSpeed` either way.
