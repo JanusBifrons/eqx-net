@@ -20,25 +20,42 @@ async function robotCount(ctx: ShotContext): Promise<number> {
   }).catch(() => 0);
 }
 
-/**
- * Ids of the live drone-faction ships, fighters first, each group by
- * ascending id: the follow order. The pilot's own ship is not in the swarm
- * mirror, so every entry here is flown by its AI pilot.
- */
-async function droneFollowOrder(ctx: ShotContext): Promise<number[]> {
+/** The drone-faction ships in the mirror (not robots, not a faction's
+ *  patrol ships, which fly in their faction's colour). The pilot's own ship
+ *  is not in the swarm mirror, so every entry is flown by its AI pilot. */
+interface DroneShips {
+  /** Every drone-faction ship still in the mirror (warping or not). */
+  present: number[];
+  /** Ones to cut to: fighters first (ascending id), then the other drone
+   *  ships, only when no fighter is left. Ships spooling or on a warp run
+   *  are left out: they are about to leave. */
+  order: number[];
+  shipKind: Record<number, string>;
+}
+
+async function droneShips(ctx: ShotContext): Promise<DroneShips> {
   return ctx.page.evaluate(() => {
-    const m = (globalThis as { __eqxClient?: { mirror: { swarm: Map<number, { kind: number; shipKind?: string }> } } }).__eqxClient?.mirror;
+    const m = (globalThis as { __eqxClient?: { mirror: { swarm: Map<number, { kind: number; shipKind?: string; faction?: string; warp?: number }> } } }).__eqxClient?.mirror;
+    const present: number[] = [];
     const fighters: number[] = [];
     const others: number[] = [];
+    const shipKind: Record<number, string> = {};
     m?.swarm.forEach((e, id) => {
-      if (e.kind !== 1 || !e.shipKind || e.shipKind.startsWith('robot')) return;
+      if (e.kind !== 1 || !e.shipKind || e.shipKind.startsWith('robot') || e.faction !== undefined) return;
+      present.push(id);
+      shipKind[id] = e.shipKind;
+      if (e.warp !== undefined) return;
       (e.shipKind === 'fighter' ? fighters : others).push(id);
     });
     fighters.sort((a, b) => a - b);
     others.sort((a, b) => a - b);
-    return [...fighters, ...others];
-  }).catch(() => []);
+    return { present, order: fighters.length > 0 ? fighters : others, shipKind };
+  }).catch(() => ({ present: [], order: [], shipKind: {} }));
 }
+
+/** How long the camera holds where the followed ship left before it cuts,
+ *  so its warp departure plays on screen. */
+const DEPARTURE_HOLD_MS = 1500;
 
 /** Follow-camera zoom on the followed fighter (1920-wide frame). */
 const FOLLOW_ZOOM = 1.0;
@@ -57,8 +74,10 @@ async function follow(ctx: ShotContext, id: number): Promise<void> {
  * when the take opens. The pilot joins and spectates (owner decision
  * 2026-11-14: the followed ship is flown by its AI pilot, not a test
  * script); the camera follows the first drone-faction fighter by id. If it
- * dies, the camera cuts to the next drone fighter (then any drone ship), so
- * the clip stays on the action. The AI pilots hold fire while an ally is in
+ * dies or warps out, the camera holds on where it left (its departure plays)
+ * and then cuts to the next drone-faction fighter, or another drone-faction
+ * ship only when no fighter is left (never a robot, a faction patrol ship or
+ * a ship already warping out), so the clip stays on the action. The AI pilots hold fire while an ally is in
  * the line and hit their own side when one drifts in after the shot; shields
  * meet as bubbles. No test cues at all: no aggro, no survive params, no lock
  * cues. The take ends ~3 s after the last robot dies (`endsWithRun`).
@@ -84,7 +103,7 @@ export const fleetMelee: Shot = {
     }, undefined, { timeout: 60_000, polling: 250 });
     // Watch as a spectator: the camera may then follow an AI-flown ship.
     await ctx.spectate();
-    const order = await droneFollowOrder(ctx);
+    const { order } = await droneShips(ctx);
     if (order.length === 0) throw new Error('fleet-melee: no drone-faction ship to follow');
     await follow(ctx, order[0]!);
     // The two sides close and open fire on their own; roll once they meet.
@@ -97,19 +116,24 @@ export const fleetMelee: Shot = {
     const t = (): string => ((Date.now() - t0) / 1000).toFixed(1);
     // The fighter followed at take start (startWhen picked it; re-read in
     // case it died during the 2 s settle).
-    let order = await droneFollowOrder(ctx);
-    let followed = order[0] ?? null;
+    let ships = await droneShips(ctx);
+    let followed = ships.order[0] ?? null;
     if (followed !== null) await follow(ctx, followed);
-    ctx.log(`  [fleet-melee] t=${t()}s following swarm-${followed}`);
-    // Stay on the followed ship; when it dies, cut to the next one in the
-    // follow order. Once the last robot is gone, hold ~3 s on the aftermath
-    // and end the take (endsWithRun).
+    ctx.log(`  [fleet-melee] t=${t()}s following swarm-${followed} (${followed !== null ? ships.shipKind[followed] : '-'})`);
+    // Stay on the followed ship, through a warp spool too (it flies on and
+    // leaves with the warp departure). Once it is gone (died or warped out),
+    // hold on where it left for DEPARTURE_HOLD_MS, then cut to the next
+    // drone-faction fighter (another drone ship only when no fighter is
+    // left). Once the last robot is gone, hold ~3 s on the aftermath and end
+    // the take (endsWithRun).
     while (left() > 0 && (await robotCount(ctx)) > 0) {
-      order = await droneFollowOrder(ctx);
-      if (followed === null || !order.includes(followed)) {
-        const next = order[0] ?? null;
+      ships = await droneShips(ctx);
+      if (followed === null || !ships.present.includes(followed)) {
+        if (followed !== null) await ctx.sleep(Math.min(DEPARTURE_HOLD_MS, left()));
+        ships = await droneShips(ctx);
+        const next = ships.order[0] ?? null;
         if (next !== null) {
-          ctx.log(`  [fleet-melee] t=${t()}s swarm-${followed} gone; cut to swarm-${next}`);
+          ctx.log(`  [fleet-melee] t=${t()}s swarm-${followed} gone; cut to swarm-${next} (${ships.shipKind[next]})`);
           followed = next;
           await follow(ctx, next);
         } else if (followed !== null) {
