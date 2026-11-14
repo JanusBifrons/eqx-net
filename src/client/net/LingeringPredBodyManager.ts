@@ -41,6 +41,8 @@ import type { PhysicsWorld, ShipInput } from '@core/physics/World';
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import {
   ANGLE_NOISE_THRESHOLD,
+  REMOTE_ANGLE_OFFSET_HALF_LIFE_MS as ANGLE_OFFSET_HALF_LIFE_MS,
+  REMOTE_ANGLE_SPRING_VEL_END as ANGLE_SPRING_VEL_END,
   REMOTE_SPRING_POS_END,
   REMOTE_SPRING_VEL_END_MS,
   STAGE_3_MAX_LOOKAHEAD_TICKS,
@@ -62,16 +64,11 @@ interface LingerMotion {
   angvel: number;
   /** Reused input object; mutated in place on a snapshot carrying bits. */
   input: ShipInput;
-  /** True once the wire has carried bits for this hull. */
+  /** True while the latest snapshot carried bits (absent = idle). */
   hasInput: boolean;
   /** Ticks of input applied since the last snapshot reset. */
   forwardTicks: number;
 }
-
-/** Half-life for the angle offset spring. A little longer than the
- *  position one: a 20 Hz rotation residual reads as a twitch, not a slide. */
-const ANGLE_OFFSET_HALF_LIFE_MS = 40;
-const ANGLE_SPRING_VEL_END = 0.05; // rad/s
 
 function wrapPi(a: number): number {
   return Math.atan2(Math.sin(a), Math.cos(a));
@@ -95,10 +92,11 @@ export class LingeringPredBodyManager {
   private readonly motion = new Map<string, LingerMotion>();
 
   /**
-   * Record the hull's snapshot angvel and (when the wire carried them) its
-   * input bits. Absent bits mean "unchanged" (the server's idle-bits dedupe),
-   * so the previous bits are kept. Call BEFORE `ensure()` for the same
-   * snapshot. Returns the hull's current thrust bit (for the renderer).
+   * Record the hull's snapshot angvel and input bits. Absent bits mean IDLE
+   * (RTS Part A S1: the server sends the bits on every snapshot while any is
+   * held, so a dropped snapshot can't leave the flame or the forward
+   * prediction stuck on). Call BEFORE `ensure()` for the same snapshot.
+   * Returns the hull's current thrust bit (for the renderer).
    */
   noteSnapshot(shipInstanceId: string, angvel: number, bits: LingerInputBits | undefined): boolean {
     let m = this.motion.get(shipInstanceId);
@@ -120,6 +118,13 @@ export class LingeringPredBodyManager {
       m.input.boost = bits.boost;
       m.input.reverse = bits.reverse;
       m.hasInput = true;
+    } else {
+      m.input.thrust = false;
+      m.input.turnLeft = false;
+      m.input.turnRight = false;
+      m.input.boost = false;
+      m.input.reverse = false;
+      m.hasInput = false;
     }
     return m.input.thrust;
   }

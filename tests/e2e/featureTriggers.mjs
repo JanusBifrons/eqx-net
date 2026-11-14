@@ -12,6 +12,13 @@
  */
 export const FEATURE_TRIGGERS = [
   {
+    // RTS Part A S1: remote ships' input bits + offsets (held bits every snapshot, absent = idle).
+    area: 'remote ship prediction',
+    paths: ['src/client/net/snapshotRemoteSync', 'src/client/net/remoteLerpOffsets', 'src/server/net/snapshotScheduler',
+      'src/server/rooms/SnapshotBroadcaster'],
+    specs: ['remote-ship-held-thrust'],
+  },
+  {
     area: 'structures',
     paths: ['src/server/structures/', 'src/core/structures/', 'src/client/structures/', 'src/shared-types/structureKinds',
       'src/client/components/StructurePlacementBanner', 'src/client/components/SpeedDialMenu', 'src/client/components/buildCategories',

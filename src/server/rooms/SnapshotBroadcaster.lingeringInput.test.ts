@@ -82,21 +82,25 @@ describe('SnapshotBroadcaster — lingering hull input bits (RTS slice 4c)', () 
     const hull = sent[0]!.states[HULL]!;
     expect(hull.isActive).toBe(false);
     expect(hull.lastInput).toEqual({ thrust: true, turnLeft: true, turnRight: false, boost: false, reverse: false });
-    // The pilot's active ship reads its own slot (no bits held).
-    expect(sent[0]!.states['inst-p0']!.lastInput?.thrust).toBe(false);
+    // The pilot's active ship reads its own slot: no bits held ⇒ absent.
+    expect(sent[0]!.states['inst-p0']!.lastInput).toBeUndefined();
   });
 
-  it('dedupes per hull: unchanged bits are omitted for both the active ship and the parked hull', () => {
+  it('held bits ride EVERY snapshot; idle bits are never sent (absent = idle)', () => {
     const { broadcaster, sent, sabU32 } = setup();
     sabU32[slotBase(HULL_SLOT) + SLOT_FLAGS_OFF] = FLAG_INPUT_THRUST;
     runUntil(broadcaster, sent, 3);
     expect(sent.length).toBeGreaterThanOrEqual(3);
-    expect(sent[1]!.states[HULL]!.lastInput).toBeUndefined();
-    expect(sent[1]!.states['inst-p0']!.lastInput).toBeUndefined();
-    // A change is sent again.
+    // RTS Part A S1: the old per-recipient dedupe omitted unchanged bits, and
+    // the client then stopped forward-predicting a held key after one snapshot.
+    for (const snap of sent) expect(snap.states[HULL]!.lastInput?.thrust).toBe(true);
+    // The pilot's active ship holds nothing: no bits on the wire at all.
+    for (const snap of sent) expect(snap.states['inst-p0']!.lastInput).toBeUndefined();
+    // Letting go: the next snapshot carries no bits (idle), and neither does any after.
     sabU32[slotBase(HULL_SLOT) + SLOT_FLAGS_OFF] = 0;
     const before = sent.length;
-    runUntil(broadcaster, sent, before + 1);
-    expect(sent[before]!.states[HULL]!.lastInput?.thrust).toBe(false);
+    runUntil(broadcaster, sent, before + 2);
+    expect(sent[before]!.states[HULL]!.lastInput).toBeUndefined();
+    expect(sent[before + 1]!.states[HULL]!.lastInput).toBeUndefined();
   });
 });

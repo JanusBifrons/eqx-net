@@ -140,6 +140,8 @@ const FEATURE_SPECS: string[] = [
   '**/auto-fire.spec.ts',
   '**/avatar-menu-logout.spec.ts',
   '**/boost-facing.spec.ts',
+  // RTS Part A S1 — an observer forward-predicts a remote pilot's held keys.
+  '**/remote-ship-held-thrust.spec.ts',
   '**/combat/*.spec.ts',
   '**/missile-frigate-homing.spec.ts',
   '**/collision-events.spec.ts',

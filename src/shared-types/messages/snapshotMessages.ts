@@ -243,6 +243,9 @@ export interface SnapshotMessage {
        *  invariant). Phase 6b introduces `isActive=false` for lingering
        *  hulls; client uses this to gate visibility / interaction. */
       isActive: boolean;
+      /** Present on EVERY snapshot while any bit is held; absent = idle
+       *  (RTS Part A S1, server `shouldIncludeLastInput`, client
+       *  `preResetRemoteShips`). Never deduped: the client drops snapshots. */
       lastInput?: {
         thrust: boolean;
         turnLeft: boolean;

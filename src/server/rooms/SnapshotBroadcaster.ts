@@ -14,8 +14,6 @@
  *     loops drift, which caused ~25% missed broadcasts pre-Phase-3).
  *   - `sabAppliedTicks` — per-player worker-applied tick anchor (read
  *     by the per-recipient snapshot for `ackedTick`).
- *   - `lastInputCaches` — per-session caches that decide when to
- *     omit `lastInput` from the wire (idle-bits dedupe).
  *   - `interestScratch` — per-session 9-cell drone interest sets,
  *     reused by `update()`'s swarm-broadcast block.
  *
@@ -47,8 +45,6 @@ import { SWARM_KIND_STRUCTURE } from '../../shared-types/swarmWireFormat.js';
 import {
   shouldBroadcastFar,
   shouldIncludeLastInput,
-  createLastInputCache,
-  type LastInputCache,
   type ShipInputBits,
 } from '../net/snapshotScheduler.js';
 import { checkBackpressure } from '../net/Backpressure.js';
@@ -394,8 +390,6 @@ export class SnapshotBroadcaster {
   broadcastCounter = 0;
   /** Per-player worker-applied tick. Updated from the room's worker SAB read. */
   readonly sabAppliedTicks = new Map<string, number>();
-  /** Per-session lastInput dedupe caches. */
-  readonly lastInputCaches = new Map<string, LastInputCache>();
   /** Per-session 9-cell drone interest sets (populated by the room's
    *  swarm-broadcast block earlier in update()). */
   readonly interestScratch = new Map<string, Set<number>>();
@@ -706,7 +700,6 @@ export class SnapshotBroadcaster {
 
   /** Drop per-session caches on disconnect. */
   onClientLeave(sessionId: string): void {
-    this.lastInputCaches.delete(sessionId);
     this.interestScratch.delete(sessionId);
     this.deps.shellEvents?.()?.forgetViewer(sessionId);
   }
@@ -851,12 +844,6 @@ export class SnapshotBroadcaster {
       const recipientPose = d.shipPoseCache.get(recipientPlayerId);
       if (!recipientPose) continue;
 
-      let lastInputCache = this.lastInputCaches.get(client.sessionId);
-      if (!lastInputCache) {
-        lastInputCache = createLastInputCache();
-        this.lastInputCaches.set(client.sessionId, lastInputCache);
-      }
-
       // Build per-recipient states map. The Record itself MUST be
       // freshly allocated (notepack.io would encode stale keys from a
       // reused Record). The VALUES inside are pooled in
@@ -865,10 +852,10 @@ export class SnapshotBroadcaster {
       for (const ship of allShips) {
         // A ship still joining is its own pilot's business until it arrives.
         if (ship.joining && ship.playerId !== recipientPlayerId) continue;
-        // Keyed by HULL, not pilot: a player's active ship and lingering
-        // hulls share one playerId, and a shared key made each look
-        // "changed" on every snapshot (RTS slice 4c).
-        const includeLastInput = shouldIncludeLastInput(lastInputCache, ship.shipInstanceId, ship.lastInput);
+        // Held bits ride every snapshot; idle ⇒ absent (RTS Part A S1, see
+        // `shouldIncludeLastInput`). Stateless, so a dropped snapshot can
+        // never leave a control stuck on at a viewer.
+        const includeLastInput = shouldIncludeLastInput(ship.lastInput);
         // A lingering hull's turrets are its own (an AI-flown hull's are keyed
         // by shipInstanceId, RTS slice 5), never its owner's active ship's.
         const angles = d.playerMountAngles.get(ship.isActive ? ship.playerId : ship.shipInstanceId);

@@ -64,7 +64,6 @@ import { BinarySwarmBroadcast } from '../net/BinarySwarmBroadcast.js';
 import { CollisionBroadcastGate } from '../net/CollisionBroadcastGate.js';
 import {
   createIdleTracker,
-  type LastInputCache,
   type IdleTracker,
 } from '../net/snapshotScheduler.js';
 import { SwarmSpawner, DRONE_DEFAULT_MASS, type AsteroidSpec } from '../spawn/SwarmSpawner.js';
@@ -1332,9 +1331,6 @@ export class SectorRoom extends Room<SectorState> {
    *  cadence with no per-client phasing. */
   /** Owned by SnapshotBroadcaster (extracted). */
   private get broadcastCounter(): number { return this.snapshotBroadcaster.broadcastCounter; }
-  /** Stage 5 — per-recipient cache of the last lastInput bits sent for
-   *  each ship. Owned by SnapshotBroadcaster (extracted). */
-  private get lastInputCaches(): Map<string, LastInputCache> { return this.snapshotBroadcaster.lastInputCaches; }
   /** Stage 5 — sector-wide idle tracker. Updated each update() with
    *  motion / projectile-in-flight signals; when isSectorIdle returns
    *  true, the snapshot broadcast block short-circuits entirely. */
@@ -2391,7 +2387,7 @@ export class SectorRoom extends Room<SectorState> {
     });
 
     // Per-client snapshot broadcaster. Owns broadcastCounter,
-    // sabAppliedTicks, lastInputCaches, interestScratch. Composes the
+    // sabAppliedTicks, interestScratch. Composes the
     // per-client 20Hz phase-staggered loop with the global "all alive
     // ships" digest. Extracted to SnapshotBroadcaster.ts.
     this.snapshotBroadcaster = new SnapshotBroadcaster({

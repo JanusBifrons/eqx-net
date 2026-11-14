@@ -36,7 +36,6 @@ function padFieldId(id: number): string {
 }
 import { pointSegmentDistance, wantPredBody } from '../structures/predStructureStreaming.js';
 import { Reconciler, type InputRecord } from '@core/prediction/Reconciler';
-import { springStep, type SpringState } from '@core/math/CritDampedSpring';
 import {
   applyCollisionResolved,
   createCollisionGuard,
@@ -79,7 +78,6 @@ import { ingestFleetStatus } from '../fleet/fleetStatusIngest.js';
 import {
   createRemotePredictionGuard,
   forgetRemote,
-  shouldForwardPredict,
   type RemotePredictionGuard,
 } from './remotePredictionGuard';
 import { shipMirrorKey, type ShipMirrorKeyLocal } from './shipMirrorKey.js';
@@ -145,8 +143,8 @@ export function travelApproach(tau: number): [number, number] {
   return [TRAVEL_BRAKE_D + TRAVEL_GLIDE_V * (s - (s * s) / (2 * TRAVEL_GLIDE_S)), TRAVEL_GLIDE_V * (1 - s / TRAVEL_GLIDE_S)];
 }
 import { DisplayPoseHitscan } from '../combat/displayPoseHitscan.js';
-import { preResetRemoteShips, anchorRemoteSwarmBodies, authoritativeSwarmStateAt, isRemoteMovingSwarmKind, applyDroneMountAngles, applyAsteroidResources, applyShipLevels, applyShipWarp, applyActivatedMounts, type PreResetRemoteCtx } from './snapshotRemoteSync.js';
-import { computeRemoteLerpOffsets } from './remoteLerpOffsets.js';
+import { preResetRemoteShips, applyRemoteShipInputs, type RemoteInput, type PreResetEntry, anchorRemoteSwarmBodies, authoritativeSwarmStateAt, isRemoteMovingSwarmKind, applyDroneMountAngles, applyAsteroidResources, applyShipLevels, applyShipWarp, applyActivatedMounts, type PreResetRemoteCtx } from './snapshotRemoteSync.js';
+import { computeRemoteLerpOffsets, stepRemoteShipOffset, type RemoteShipOffset } from './remoteLerpOffsets.js';
 import { useUIStore, type ConnectionStatus } from '../state/store';
 import { logEvent, isDiagEnabled, isFullDiagMode, isRammingProbeEnabled, isGhostProbeEnabled } from '../debug/ClientLogger';
 import { readHeapUsedMb } from './perfStats';
@@ -260,9 +258,6 @@ function bwStats(): BwStats | null {
 import {
   NOISE_THRESHOLD,
   ANGLE_NOISE_THRESHOLD,
-  REMOTE_SPRING_POS_END,
-  REMOTE_SPRING_VEL_END_MS,
-  STAGE_3_MAX_LOOKAHEAD_TICKS,
 } from './predictionTuning.js';
 import { shipScaleMismatch } from '@shared-types/shipScale/welcomeScale';
 import { navalRangeMismatch } from '@shared-types/combat/navalRange';
@@ -556,10 +551,7 @@ export class ColyseusGameClient {
   /** Per-remote-ship render lerp offsets — applied in updateMirror() to smooth server corrections.
    *  Stage 1: each entry holds two critically-damped spring states (one per axis)
    *  decaying toward zero. Half-life per drift magnitude matches Reconciler. */
-  private readonly _remoteShipOffsets = new Map<
-    string,
-    { sx: SpringState; sy: SpringState; halfLifeMs: number }
-  >();
+  private readonly _remoteShipOffsets = new Map<string, RemoteShipOffset>();
 
   /** Stage 2 collision-event guard — sliding rate-limit window per ship,
    *  plus latest snapshot tick for the stale-event drop check. Updated by
@@ -572,10 +564,7 @@ export class ColyseusGameClient {
    *  applyRemoteInputs() during the replay and tickPhysics input loops to
    *  forward-predict remote ships using the same input intent the server
    *  is applying. */
-  private readonly _remoteLastInputs = new Map<
-    string,
-    { thrust: boolean; turnLeft: boolean; turnRight: boolean; boost: boolean; reverse: boolean }
-  >();
+  private readonly _remoteLastInputs = new Map<string, RemoteInput>();
   /** Stage 3 — per-remote count of forward-prediction ticks applied since
    *  the last snapshot. Reset on snapshot arrival; gated against
    *  STAGE_3_MAX_LOOKAHEAD_TICKS so a long network stall doesn't produce
@@ -609,6 +598,8 @@ export class ColyseusGameClient {
     totalDriftUnits: 0,
     maxAngleDriftRad: 0,
     totalAngleDriftRad: 0,
+    remoteCorrTotalUnits: 0,
+    remoteCorrSamples: 0,
     snapshotJitterMs: 0,
     rollingCorrRate: 0,
     collisionEventsApplied: 0,
@@ -884,12 +875,12 @@ export class ColyseusGameClient {
   /** 2026-05-25 heap-growth gate step 3 — persistent Map scratch for
    *  pre-reset remote-ship positions inside handleSnapshot. Pre-fix
    *  allocated `new Map<>()` per snapshot. `.clear()` at top of use. */
-  private readonly _preResetRemotePosScratch = new Map<string, { x: number; y: number }>();
+  private readonly _preResetRemotePosScratch = new Map<string, PreResetEntry>();
   /** 2026-05-25 heap-growth gate step 3 — pool of `{x, y}` entries
    *  reused inside `_preResetRemotePosScratch`. Per-snapshot peak ==
    *  remote-ship count; grows once, never shrinks (bounded by max
    *  concurrent remotes in the room). */
-  private readonly _preResetRemotePosEntries: { x: number; y: number }[] = [];
+  private readonly _preResetRemotePosEntries: PreResetEntry[] = [];
   /** Reused state object for the per-snapshot drone/scrap body anchor
    *  (`anchorRemoteSwarmBodies`, part of the remote-entity anchor). Mutate,
    *  then pass; the World copies into Rapier synchronously (#14). */
@@ -3645,6 +3636,7 @@ export class ColyseusGameClient {
           preResetRemotePos,
           remoteShipOffsets: this._remoteShipOffsets,
           predGuard: this._predGuard,
+          stats: this.stats,
         });
       }
 
@@ -4798,21 +4790,16 @@ export class ColyseusGameClient {
         const s = this.predWorld.getShipState(remoteId);
         if (!s) continue;
         const off = this._remoteShipOffsets.get(remoteId);
-        let ox = 0, oy = 0;
+        let ox = 0, oy = 0, oa = 0;
         if (off) {
-          // Stage 1: critically-damped spring. Frame-rate independent and
-          // matches Reconciler's local-ship offset shape. Threshold-based
-          // termination ends the spring once both axes are at the noise
-          // floor (position and velocity).
-          springStep(off.sx, 0, off.halfLifeMs, this.lastFrameMs);
-          springStep(off.sy, 0, off.halfLifeMs, this.lastFrameMs);
+          // Stage 1: critically-damped springs (x, y and angle; RTS Part A
+          // S1 added the angle). Frame-rate independent and matches
+          // Reconciler's local-ship offset shape; the entry ends once every
+          // axis is at the noise floor (position and velocity).
+          const stillMoving = stepRemoteShipOffset(off, this.lastFrameMs);
           ox = off.sx.x;
           oy = off.sy.x;
-          const stillMoving =
-            Math.abs(off.sx.x) > REMOTE_SPRING_POS_END ||
-            Math.abs(off.sy.x) > REMOTE_SPRING_POS_END ||
-            Math.abs(off.sx.v) > REMOTE_SPRING_VEL_END_MS ||
-            Math.abs(off.sy.v) > REMOTE_SPRING_VEL_END_MS;
+          oa = off.sa.x;
           if (!stillMoving) this._remoteShipOffsets.delete(remoteId);
         }
         // Probe 7 — mutate in place. Same rationale as the local-ship
@@ -4825,7 +4812,7 @@ export class ColyseusGameClient {
             y: s.y + oy,
             vx: s.vx,
             vy: s.vy,
-            angle: s.angle,
+            angle: s.angle + oa,
           };
           this.mirror.ships.set(remoteId, entry);
         } else {
@@ -4833,7 +4820,7 @@ export class ColyseusGameClient {
           entry.y = s.y + oy;
           entry.vx = s.vx;
           entry.vy = s.vy;
-          entry.angle = s.angle;
+          entry.angle = s.angle + oa;
         }
       }
     }
@@ -5661,15 +5648,7 @@ export class ColyseusGameClient {
    */
   private applyRemoteInputs(): void {
     if (!this.predWorld) return;
-    for (const remoteId of this.predRemoteShipIds) {
-      const lastInput = this._remoteLastInputs.get(remoteId);
-      if (!lastInput) continue;
-      if (!shouldForwardPredict(this._predGuard, remoteId)) continue;
-      const ticks = this._remoteForwardTicks.get(remoteId) ?? 0;
-      if (ticks >= STAGE_3_MAX_LOOKAHEAD_TICKS) continue;
-      this.predWorld.applyInput(remoteId, lastInput);
-      this._remoteForwardTicks.set(remoteId, ticks + 1);
-    }
+    applyRemoteShipInputs(this.predWorld, this.predRemoteShipIds, this._remoteLastInputs, this._remoteForwardTicks, this._predGuard);
     // RTS slice 4c — lingering hulls flown by a server wingman forward-
     // predict the same way (their own bounded lookahead).
     this.lingerBodies.applyInputs(this.predWorld);

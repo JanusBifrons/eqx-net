@@ -30,18 +30,35 @@ import type { SnapshotMessage } from '@shared-types/messages';
 import type { RenderMirror, SwarmRenderState, PoseRingEntry } from '@core/contracts/IRenderer';
 import type { PhysicsWorld, ShipPhysicsState } from '@core/physics/World';
 import { SWARM_KIND_DRONE, SWARM_KIND_SCRAP, SWARM_KIND_WRECK } from '@shared-types/swarmWireFormat';
+import { shouldForwardPredict, type RemotePredictionGuard } from './remotePredictionGuard';
+import { STAGE_3_MAX_LOOKAHEAD_TICKS } from './predictionTuning';
 
-type RemoteInput = {
+/**
+ * A remote ship's control bits as the latest snapshot gave them, kept per
+ * ship and reused (one object per remote, never re-allocated per snapshot).
+ *
+ * Wire contract (RTS Part A S1, two-sided with the server's
+ * `shouldIncludeLastInput`): the server sends `lastInput` on EVERY snapshot
+ * while any bit is held and omits it when the controls are idle. So absent =
+ * idle: `held` goes false and the ship is not forward-predicted (it coasts,
+ * as before). Never "keep the previous bits" on absence: the client drops
+ * snapshots on purpose (coalescer), and a dropped release would stick on.
+ */
+export interface RemoteInput {
   thrust: boolean;
   turnLeft: boolean;
   turnRight: boolean;
   boost: boolean;
   reverse: boolean;
-};
+  /** False when the latest snapshot carried no bits (idle). */
+  held: boolean;
+}
 
 export interface PreResetEntry {
   x: number;
   y: number;
+  /** Predicted angle before the reset (rad), for the angle offset spring. */
+  angle: number;
 }
 
 export interface PreResetRemoteCtx {
@@ -83,22 +100,35 @@ export function preResetRemoteShips(
     if (current) {
       let entry = preResetEntries[preResetEntryIdx];
       if (!entry) {
-        entry = { x: 0, y: 0 };
+        entry = { x: 0, y: 0, angle: 0 };
         preResetEntries[preResetEntryIdx] = entry;
       }
       entry.x = current.x;
       entry.y = current.y;
+      entry.angle = current.angle;
       preReset.set(remoteId, entry);
       preResetEntryIdx++;
     }
     ctx.predWorld.setShipState(remoteId, state);
     // Stage 3 — capture each remote's last-applied input from the
     // snapshot for forward-prediction during the upcoming replay
-    // and the next tickPhysics window.
-    if (state.lastInput) {
-      ctx.remoteLastInputs.set(remoteId, { ...state.lastInput });
-    } else {
-      ctx.remoteLastInputs.delete(remoteId);
+    // and the next tickPhysics window. Absent = idle (see RemoteInput).
+    // One reused object per remote (#14): no per-snapshot spread.
+    const bits = state.lastInput;
+    let held = ctx.remoteLastInputs.get(remoteId);
+    if (bits) {
+      if (!held) {
+        held = { thrust: false, turnLeft: false, turnRight: false, boost: false, reverse: false, held: false };
+        ctx.remoteLastInputs.set(remoteId, held);
+      }
+      held.thrust = bits.thrust === true;
+      held.turnLeft = bits.turnLeft === true;
+      held.turnRight = bits.turnRight === true;
+      held.boost = bits.boost === true;
+      held.reverse = bits.reverse === true;
+      held.held = true;
+    } else if (held) {
+      held.held = false;
     }
     // Reset the lookahead-cap counter for this remote — the upcoming
     // replay starts a fresh forward-prediction window from serverTick.
@@ -118,13 +148,14 @@ export function preResetRemoteShips(
       }
     }
   }
-  // Drop entries for remotes that are no longer in the snapshot.
-  for (const tracked of [...ctx.remoteLastInputs.keys()]) {
-    if (!(tracked in snap.states)) {
-      ctx.remoteLastInputs.delete(tracked);
-      ctx.remoteForwardTicks.delete(tracked);
-    }
-  }
+  // Drop entries for remotes that are no longer in the snapshot. Map.forEach
+  // with a module-scope callback: no spread array, no closure (#14); deleting
+  // the visited key during forEach is safe.
+  sweepStates = snap.states;
+  sweepCtx = ctx;
+  ctx.remoteLastInputs.forEach(sweepGoneRemote);
+  sweepStates = null;
+  sweepCtx = null;
   // The same anchor for the other remote MOVING entities (drones, scrap):
   // latest authoritative state at this snapshot's serverTick. The replay and
   // every tickPhysics step then carry them on the prediction timeline exactly
@@ -133,6 +164,42 @@ export function preResetRemoteShips(
     anchorRemoteSwarmBodies(ctx.predWorld, ctx.mirror.swarm, snap.serverTick, ctx.swarmBodyKeys, ctx.swarmAnchorScratch);
   }
   return preReset;
+}
+
+let sweepStates: SnapshotMessage['states'] | null = null;
+let sweepCtx: PreResetRemoteCtx | null = null;
+function sweepGoneRemote(_v: RemoteInput, id: string): void {
+  if (sweepStates === null || sweepCtx === null) return;
+  if (!(id in sweepStates)) {
+    sweepCtx.remoteLastInputs.delete(id);
+    sweepCtx.remoteForwardTicks.delete(id);
+  }
+}
+
+/**
+ * Stage 3 — apply each remote ship's held input to predWorld for one tick of
+ * forward prediction. Called once per replay tick (the reconciler's
+ * per-replay hook) and once per `tickPhysics` input-loop tick, before
+ * `predWorld.tick`. Skips idle remotes (absent bits), remotes the hysteresis
+ * guard has disabled, and remotes past `STAGE_3_MAX_LOOKAHEAD_TICKS` since
+ * their last snapshot (a long stall must not run away). Alloc-free.
+ */
+export function applyRemoteShipInputs(
+  predWorld: PhysicsWorld,
+  remoteIds: Iterable<string>,
+  remoteLastInputs: ReadonlyMap<string, RemoteInput>,
+  remoteForwardTicks: Map<string, number>,
+  guard: RemotePredictionGuard,
+): void {
+  for (const remoteId of remoteIds) {
+    const input = remoteLastInputs.get(remoteId);
+    if (!input || !input.held) continue;
+    if (!shouldForwardPredict(guard, remoteId)) continue;
+    const ticks = remoteForwardTicks.get(remoteId) ?? 0;
+    if (ticks >= STAGE_3_MAX_LOOKAHEAD_TICKS) continue;
+    predWorld.applyInput(remoteId, input);
+    remoteForwardTicks.set(remoteId, ticks + 1);
+  }
 }
 
 /** True for the swarm kinds that MOVE and get a dynamic predWorld body that
