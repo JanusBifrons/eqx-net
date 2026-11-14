@@ -52,4 +52,51 @@ describe('capital fire cadence', () => {
     console.log(rows.join('\n'));
     expect(fires.size).toBeGreaterThan(0);
   });
+
+  // NPC weapon energy (owner rule 2026-11-13): a turret shot the ship's pool
+  // can't pay is refused (fireDroneMount → false) and spends no reload, as a
+  // player capital's refused turret spends neither cooldown nor energy.
+  it('a refused (no-energy) turret shot keeps its reload and fires as soon as it can pay', () => {
+    const sab = new Float32Array(new ArrayBuffer(SAB_TOTAL_BYTES));
+    const b = slotBase(10);
+    const recs: SwarmRecord[] = [{ id: 'bs', slot: 10, kind: 1, shipKind: 'battleship' }];
+    const pose = { x: 3000, y: 0, vx: 0, vy: 10, angle: 0 };
+    sab[b + SLOT_X_OFF] = 0; sab[b + SLOT_Y_OFF] = 0; sab[b + SLOT_ANGLE_OFF] = 0;
+    const ship = { alive: true, isActive: true, kind: 'battleship' } as unknown as ShipState;
+    let tick = 0;
+    let poolOk = false;
+    const attempts = new Map<number, number>();
+    const fired = new Map<number, number[]>();
+    const t = new WeaponMountTicker({
+      sabF32: sab,
+      playerToSlot: new Map([['p', 0]]),
+      swarmRegistry: { all: () => recs, size: () => 1 },
+      shipPoseCache: new Map([['p', pose]]),
+      getActiveShip: () => ship,
+      aiController: { getBehaviour: () => ({ hostileTo: new Set(['p']) }) },
+      swarmHealth: () => new Map(),
+      resolveSlotMounts: (k) => k.mounts,
+      resolveInstanceMounts: () => getShipKind('fighter').mounts,
+      resolveInstanceFireMounts: () => getShipKind('fighter').mounts,
+      currentTick: () => tick,
+      fireDroneMount: (_id, i) => {
+        if (!attempts.has(i)) attempts.set(i, tick);
+        if (!poolOk) return false;
+        (fired.get(i) ?? fired.set(i, []).get(i)!).push(tick);
+        return true;
+      },
+    });
+    const PAY_AT = 2500;
+    for (tick = 0; tick < PAY_AT + 5; tick++) {
+      if (tick === PAY_AT) poolOk = true;
+      pose.y += 10 / 60;
+      t.tickDrone();
+    }
+    expect(attempts.size, 'some turret tried to fire while the pool was empty').toBeGreaterThan(0);
+    for (const [i, first] of attempts) {
+      if (first >= PAY_AT) continue;
+      // A refused attempt spent no reload: the first paid tick fires it.
+      expect(fired.get(i)?.[0], `mount ${i} first tried @${first}`).toBe(PAY_AT);
+    }
+  });
 });

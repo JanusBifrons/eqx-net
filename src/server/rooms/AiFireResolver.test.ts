@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { AiFireResolver, type AiFireResolverDeps } from './AiFireResolver.js';
 import type { WeaponFireContext } from '../../core/combat/weapons/Weapon.js';
 import type { ShipState } from './schema/SectorState.js';
+import { getShipKind } from '../../shared-types/shipKinds.js';
+import { resolveSlotEnergyCost } from '../../core/combat/Energy.js';
 
 /**
  * Locks the NPC beam's target selection in `AiFireResolver.hitscan`: the
@@ -115,5 +117,67 @@ describe('AiFireResolver.hitscan — first thing in the path', () => {
     const { resolver, rec } = makeResolver({ playerHits: new Map([['p1', 40]]) });
     resolver.hitscan(ray(), 500, 5);
     expect(rec.damage).toEqual([{ targetId: 'p1', shooterId: '', damage: 5 }]);
+  });
+});
+
+// NPC weapon energy (owner rule 2026-11-13): an NPC ship pays a player's
+// energy per trigger. A sub-capital pays `resolveSlotEnergyCost` once per
+// slot trigger; a capital turret pays its share (cost / mounts), as a player
+// capital's partial salvo does (PlayerFireResolver). A short pool refuses
+// the shot and spends no cooldown.
+describe('AiFireResolver — energy gate', () => {
+  function energyResolver(kindId: string, pool: { e: number }) {
+    const kind = getShipKind(kindId);
+    const spends: number[] = [];
+    let spawned = 0;
+    const lastFire = new Map<string, number>();
+    const deps: AiFireResolverDeps = {
+      trySpendEnergy: (_id, cost) => {
+        spends.push(cost);
+        if (pool.e + 1e-6 < cost) return false;
+        pool.e -= cost;
+        return true;
+      },
+      lastFireClientTick: lastFire,
+      swarmEntitySnapshot: () => ({ id: 'n', x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 }),
+      swarmRegistry: { get: () => ({ entityId: 1, shipKind: kindId }) },
+      resolveSlotMounts: (k) => k.mounts,
+      mountWorldOrigin: (x, y) => ({ x, y }),
+      droneMountAngles: new Map(),
+      playerToSlot: new Map(),
+      getActiveShip: () => undefined,
+      shipPoseCache: new Map(),
+      playerHitscanDist: () => null,
+      applyDamage: () => {},
+      broadcast: () => {},
+      spawnServerProjectile: () => { spawned++; },
+      spawnServerMissile: () => { spawned++; return 1; },
+    };
+    return { resolver: new AiFireResolver(deps), spends, lastFire, kind, spawned: () => spawned };
+  }
+
+  it('a fighter trigger spends the slot cost; an empty pool refuses without spending the cooldown', () => {
+    const pool = { e: 1000 };
+    const { resolver, spends, lastFire, kind, spawned } = energyResolver('fighter', pool);
+    const cost = resolveSlotEnergyCost(kind);
+    resolver.resolve('n', 0, 1, 100, 't');
+    expect(spends).toEqual([cost]);
+    expect(pool.e).toBeCloseTo(1000 - cost, 9);
+    expect(spawned()).toBeGreaterThan(0);
+    pool.e = 0;
+    const before = spawned();
+    resolver.resolve('n', 0, 1, 200, 't');
+    expect(spawned(), 'refused').toBe(before);
+    expect(lastFire.get('n'), 'cooldown not spent').toBe(100);
+  });
+
+  it('a capital turret pays its share of the slot cost; refused ⇒ false', () => {
+    const pool = { e: 1000 };
+    const { resolver, spends, kind } = energyResolver('battleship', pool);
+    const share = resolveSlotEnergyCost(kind) / Math.min(kind.mounts.length, 31);
+    expect(resolver.fireMount('n', 0)).toBe(true);
+    expect(spends[0]).toBeCloseTo(share, 9);
+    pool.e = 0;
+    expect(resolver.fireMount('n', 0)).toBe(false);
   });
 });
