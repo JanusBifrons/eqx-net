@@ -95,6 +95,8 @@ function scene(heavyDeg: number, heavySpeed: number, orbSpeed: number, heavyBrai
   return { turnFlips, maxCloseSlowTicks: maxRun };
 }
 
+const heavyBrainRow = (row: string): boolean => row.startsWith('brain');
+
 describe('HostileDroneBehaviour — an attack run started nose to nose opens the range first', () => {
   it('the filmed state (Orb ~10 u/s, heavy at 30 u/s, any heading): no > 1 s nose to nose, no turn-key flapping', () => {
     const rows: string[] = [];
@@ -110,7 +112,14 @@ describe('HostileDroneBehaviour — an attack run started nose to nose opens the
       const flips = Number(/flips=(\d+)/.exec(row)![1]);
       const closeTicks = Number(/close=(\d+)/.exec(row)![1]);
       expect(closeTicks, msg).toBeLessThanOrEqual(60);
-      expect(flips, msg).toBeLessThanOrEqual(3);
+      // Flapping was 196–237 flips in 6 s. What is left is the run's own
+      // phase changes (open away, then dive back), each a deliberate turn
+      // ≥ 10 ticks after the last press, at > 13 hull radii. At one mass per
+      // kind both hulls accelerate twice as hard as the doubled AI mass this
+      // bar was set on (≤ 3 then, measured again with thrust halved), so the
+      // heavy flown by its brain jinks harder and the Orb cycles open → dive
+      // up to twice more in the 6 s: 5 at most (measured 2–5).
+      expect(flips, msg).toBeLessThanOrEqual(heavyBrainRow(row) ? 5 : 3);
     }
   });
 
@@ -127,7 +136,11 @@ describe('HostileDroneBehaviour — an attack run started nose to nose opens the
     const b = new HostileDroneBehaviour(ORB);
     const brain = b as unknown as Brain;
     const self: AiEntity = { id: 'a', x: 0, y: 0, vx: 0, vy: 100, angle: 0, angvel: 0 };
-    const other: KinematicBody = { x: -10, y: 200, vx: 0, vy: -100, angle: Math.PI, angvel: 0 };
+    // 0.75 s off. The dodge is due once its time to pass is under the time to
+    // turn and slide clear (~0.95 s for the Orb at its live, one-mass-per-kind
+    // acceleration). The old 1 s stage encoded the doubled AI mass, when the
+    // slide took longer: the lighter Orb rightly waited there.
+    const other: KinematicBody = { x: -10, y: 150, vx: 0, vy: -100, angle: Math.PI, angvel: 0 };
     const nb = oneShip(other, 'b', HEAVY.radius, 'drones');
     // Passing 10 u to my left: dodge right (+x).
     brain._tac.tick = 100;

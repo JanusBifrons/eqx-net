@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest';
 // Some cases lock AUTHORED 1× numbers (ranges, distances inside today's
 // standoff); they run at 1× via `pnpm test:authored-scale` (ship-scale.md).
 import { AT_AUTHORED_SHIP_SCALE } from '../../shared-types/shipScale/config.js';
-import { HostileDroneBehaviour } from './HostileDroneBehaviour.js';
+import { HostileDroneBehaviour, hullFireCone } from './HostileDroneBehaviour.js';
+import { shipBubbleRadius } from '../combat/shipHitShape.js';
 import { DriftingAsteroidBehaviour } from './DriftingAsteroidBehaviour.js';
 import type { AiEntity, AiWorldView } from '../contracts/IAiBehaviour.js';
 import { WEAPON_COOLDOWN_TICKS } from '../combat/Weapons.js';
@@ -384,17 +385,27 @@ describe('HostileDroneBehaviour — COMBAT pursuit', () => {
     // intercept point.
     const b = new HostileDroneBehaviour(); // fighter (bolt), muzzle 1600
     b.markHostile('p', 0);
-    // Drone at origin facing +y; target dead ahead at (0,200) moving +x.
+    // Drone at origin facing +y; target dead ahead at (0,200) crossing +x.
     // Intercept is to the RIGHT, so fire.dirX must be positive (it would
     // be exactly 0 — straight up the body-forward axis — pre-fix).
+    // A fixed gun fires only with the nose inside the cone the target's hull
+    // covers (`hullFireCone`), so the crossing speed comes from the live kind:
+    // a lead of 3/4 of that cone (sin θ = vx / bolt speed). A fixed vx 200
+    // put the lead outside the cone at the authored 1x scale (narrower hulls),
+    // where the pilot rightly held fire.
+    const kind = getShipKind(null);
+    const bolt = getWeapon(kind.mounts?.[0]?.weaponId ?? 'hitscan');
+    const boltSpeed = bolt.mode === 'hitscan' ? 1e6 : bolt.speed;
+    const shotRadius = bolt.mode === 'hitscan' ? 0 : bolt.radius;
+    const lead = 0.75 * hullFireCone(shipBubbleRadius(null) + shotRadius, 200);
     const movingRight: AiWorldView = {
-      players: [{ id: 'p', x: 0, y: 200, vx: 200, vy: 0 }],
+      players: [{ id: 'p', x: 0, y: 200, vx: boltSpeed * Math.sin(lead), vy: 0 }],
       tick: 100,
       dtSec: 1 / 60,
     };
     const intent = b.tick(droneAt(0, 0, 0, 0), movingRight);
     expect(intent.fire).toBeDefined();
-    expect(intent.fire!.dirX).toBeGreaterThan(0.05); // leads +x, not (0,1)
+    expect(intent.fire!.dirX).toBeGreaterThan(0.5 * Math.sin(lead)); // leads +x, not (0,1)
     expect(Math.hypot(intent.fire!.dirX, intent.fire!.dirY)).toBeCloseTo(1, 5);
 
     // Stationary target → no lead → fires straight at it (dirX ≈ 0).

@@ -1909,7 +1909,13 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    */
   private tickMoveTo(self: AiEntity, tx: number, ty: number): AiIntent {
     const steer = arrive(self.x, self.y, tx, ty, MOVE_ARRIVE_SLOW_RADIUS, this._steerScratch);
-    if (steer.thrustScale <= 0) return this.fly(self, self.angle, 0, 0, false);
+    // Arrived: inside the distance one tap of thrust carries this hull before
+    // damping stops it (live thrust per tick / damping), any press can only
+    // overshoot the slot, so the pilot brakes to zero and lets go, as a player
+    // who has arrived does. Without it a light hull (a fighter gains 18 u/s a
+    // tick) taps forward and back across the slot for ever.
+    const tapCoast = this.handling.linearDamping > 0 ? this.handling.thrustAccel / this.handling.linearDamping : 0;
+    if (steer.thrustScale <= 0 || steer.dist <= tapCoast) return this.fly(self, self.angle, 0, 0, false);
     // A flock leader cruises SLOWER than its full-cruise followers so they
     // tighten into the herd around it (the "make the leader wait" lever).
     const cruise = this.handling.cruiseSpeed * CALM_CRUISE_FRAC * (this._flockLeaderCruise ? LEADER_CRUISE_THROTTLE : 1);
