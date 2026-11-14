@@ -31,7 +31,7 @@ import {
   resolveFlock,
 } from './flocking.js';
 import type { AiEntityPoseOut } from '../contracts/IAiBehaviour.js';
-import { massOf, NPC_MASS_FALLBACK, shipTuning } from '../../shared-types/shipScale/tuning.js';
+import { shipBodyMass, shipTuning } from '../../shared-types/shipScale/tuning.js';
 import { AI_INPUT_BOOST } from '../contracts/IAiBehaviour.js';
 import { BOOST_TICK_COST, canAfford, regenEnergyStep, spendEnergy } from '../combat/Energy.js';
 import {
@@ -624,8 +624,8 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     this.combatSeparation = shipTuning(this.kind).combatSeparation;
     this.shieldPad = shipTuning(this.kind).shieldPad;
     this.role = roleProfile(this.kind.aiRole);
-    // The body's mass is SwarmSpawner's: the kind's own, else NPC_MASS_FALLBACK.
-    this.handling = makePilotHandling(this.kind, massOf(this.kind, NPC_MASS_FALLBACK));
+    // The body's mass is the ship kind's (`shipBodyMass`), same as a pilot's.
+    this.handling = makePilotHandling(this.kind, shipBodyMass(this.kind));
     this.energyMax = this.kind.energyMax ?? 100;
     this.energyRegen = this.kind.energyRegenRate ?? 0.25;
     this.energy = this.energyMax;
