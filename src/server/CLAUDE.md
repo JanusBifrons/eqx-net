@@ -313,7 +313,7 @@ Update this section when a threshold is set.
 - **Patrols (M2).** `PatrolSubsystem` (`bases/`, room-owned, 1 Hz on the structure pulse): `patrol-fighter`s (Traders allegiance, so never hostile on sight) fly the base's corners outside its fence and are marked hostile (`markBotHostileToFaction`, quiet refresh once already hostile) to any pilot near the base whose `relationOf` to the owner is hostile. `drones[].fac` is emitted for every patrol in interest (it is in the slice's "anything to report" check). Ids start `patrol-` (in `isDirectorBotId`).
 - Story: [docs/features/military-bases.md](../../docs/features/military-bases.md).
 
-## Fleet command / wingmen (RTS command layer, slice 3; not yet wired into SectorRoom)
+## Fleet command / wingmen (RTS command layer, slices 3–4; no network handlers yet)
 
 - `fleet/FleetCommandSubsystem.ts` holds one `WingmanBehaviour` per AI-flown owned ship (the lingering hulls, slice 4) over injected hooks (`ownerOf`, `readPose`, `postInput`, optional `canBoost` / `resolvePoseInto`).
 - **Commands are owner-checked PER ID through `ownerOf`**; foreign / unknown ids drop silently; at most `FLEET_MAX_IDS_PER_COMMAND` (64) ids are read; squads are 2–24 ships (data only for now).
@@ -321,6 +321,10 @@ Update this section when a threshold is set.
 - **Boost goes through the pilot's energy gate** (`canBoost`), re-checked every tick while held.
 - Size-dependent radii from `shipTuning` (`guardRadiusMin`, `wingmanArrive`, #18); stats via `wingmanConfigFor(kind, statAlloc)`.
 - Kill switch `EQX_DISABLE_WINGMEN=1` (attach is a no-op). Lock: `FleetCommandSubsystem.test.ts`.
+- **Wired into `SectorRoom` (slice 4):** every LINGERING hull is AI-flown. `attachWingman(id)` runs at every entry into `lingeringSlots` (spectate/pilot-swap displace, onJoin fresh-spawn displace, snapshot restore, cross-sector `receiveLingeringHull`, after the REKEY/SPAWN) and `detachWingman(id)` at every exit (reclaim BEFORE the REKEY back, quiet teleporter removal, abandon→scrap, lingering death via `onLingeringHullDeath`, `evictOwnerlessShip`). Adding a new `lingeringSlots.set` / `.delete`? Call the matching helper next to it. Detach posts neutral controls so a queued wingman INPUT can't become the reclaimed hull's held input.
+- **The wingman's INPUT** goes to the hull's lingering slot at `inputTick = serverTick` (one reused command object); `fleet.tick(serverTick)` runs once per `update()`, beside `runAiTick`. Default brain = Defend at the parking spot, Defensive stance, so a parked hull stays put.
+- **No boost yet** (`canBoost: () => false`, TODO slice 4b): lingering hulls have no energy regen/drain. A live upgrade of a lingering hull pushes `SET_STAT_MUL` to its `linger-<id>` body and re-attaches the brain (the order is dropped); a restored hull's body gets its multipliers at restore. A teleporter swap moves the brain's guard post with the hull.
+- **Test hook:** `_internals.fleet` (the owner-checked API). Lock: `tests/integration/sectorRoom/wingmanMovesParkedHull.test.ts`.
 
 ## Fire control: lock-to-fire is universal (root invariant #19)
 

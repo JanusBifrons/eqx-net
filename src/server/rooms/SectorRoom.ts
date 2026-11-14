@@ -267,6 +267,8 @@ import { SceneWorkCounters } from './scene/SceneWorkCounters.js';
 import type { EventLoopUtilization } from 'node:perf_hooks';
 import { FrameTimeRing } from '../../core/perf/FrameTimeRing.js';
 import { OwnerlessShipEvictor } from './OwnerlessShipEvictor.js';
+import { FleetCommandSubsystem, type FleetPose } from '../fleet/FleetCommandSubsystem.js';
+import type { WingmanControls } from '../../core/ai/wingman/types.js';
 import { LeaveHandler } from './LeaveHandler.js';
 import { mirrorSabPoses } from './SabPoseMirror.js';
 import { updateSwarmInterestGrid } from './swarmInterestUpdater.js';
@@ -887,6 +889,31 @@ export class SectorRoom extends Room<SectorState> {
    *  but keyed by shipInstanceId. Updated once per `update()` from
    *  the SAB so the snapshot can include them. */
   private readonly lingeringPoseCache = new Map<string, ShipPhysicsState>();
+  /** RTS slice 4 — the wingman brains. Every LINGERING hull (a key of
+   *  `lingeringSlots`) is attached at each entry into that map and detached at
+   *  each exit (`attachWingman` / `detachWingman`); the brain flies it with the
+   *  pilot's INPUT command on the hull's slot. Liveness covered: LINGERING
+   *  only (#17) — an ACTIVE hull is flown by its pilot, a DEAD one is gone. */
+  private readonly fleet = new FleetCommandSubsystem({
+    ownerOf: (id) => (this.lingeringSlots.has(id) ? (this.state.ships.get(id)?.playerId ?? null) : null),
+    readPose: (id, out) => this.readLingeringPose(id, out),
+    postInput: (id, c, tick) => this.postWingmanInput(id, c, tick),
+    // TODO slice 4b energy: lingering hulls have no energy regen/drain yet
+    // (`tickEnergy` only handles piloted active hulls), so wingmen never boost.
+    canBoost: () => false,
+    resolvePoseInto: (id, out) => {
+      const p = this.wingmanTargetPose;
+      if (!this.swarmEntityPoseInto(id, p)) return false;
+      out.x = p.x; out.y = p.y; out.vx = p.vx; out.vy = p.vy;
+      return true;
+    },
+  });
+  /** Scratch for a wingman attack target's pose (#14). */
+  private readonly wingmanTargetPose = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
+  /** Reused wingman INPUT command (postMessage clones synchronously, #14). */
+  private readonly wingmanInputCmd: Extract<WorkerCmd, { type: 'INPUT' }> = {
+    type: 'INPUT', slot: 0, inputTick: 0, thrust: false, turnLeft: false, turnRight: false, boost: false, reverse: false,
+  };
   /** playerId → shipInstanceId of the hull the pilot parked by toggling
    *  Spectate (owner decision 2026-11-12: NPCs keep their locks and keep
    *  firing at it). Set by the `spectate` handler; cleared when the pilot
@@ -1367,6 +1394,9 @@ export class SectorRoom extends Room<SectorState> {
     /** Phase 5 (persistence v5) — drive the lingering-hull boot reconstruction
      *  directly (no DB cycle) for the round-trip integration test. */
     restoreLingeringHulls: (rows: readonly SectorSnapshotLingeringHull[]) => void;
+    /** RTS slice 4 — the wingman brains on lingering hulls. Tests issue orders
+     *  through its owner-checked API (`applyOrder(ownerId, [shipId], order)`). */
+    fleet: FleetCommandSubsystem;
     aiPlayerScratch: AiPlayerView[];
     postToWorker: (cmd: WorkerCmd) => void;
     /** Fire control test hook: make `targetKey` (`s:<entityId>` | `p:<playerId>`)
@@ -1467,6 +1497,7 @@ export class SectorRoom extends Room<SectorState> {
       ownerlessShips: this.ownerlessShips,
       lingeringSlots: this.lingeringSlots,
       restoreLingeringHulls: (rows) => this.restoreLingeringHullsFromSnapshot(rows),
+      fleet: this.fleet,
       aiPlayerScratch: this.aiPlayerScratch,
       postToWorker: (cmd) => this.postToWorker(cmd),
       forceLock: (pid, key, groupId) => this.locks.forceLock(pid, key, groupId),
@@ -5991,6 +6022,11 @@ export class SectorRoom extends Room<SectorState> {
         entityId: bodyKey,
         x: r.x, y: r.y, angle: r.angle, vx: r.vx, vy: r.vy, angvel: r.angvel,
       });
+      // RTS slice 4: the rebuilt body moves under a wingman, so it takes its
+      // upgrade multipliers like the original body had (the brain's stats
+      // assume them).
+      this.applyStatMulToWorker(bodyKey, ship.statAlloc);
+      this.attachWingman(r.shipInstanceId);
       serverLogEvent('lingering_hull_reconstructed', {
         shipInstanceId: r.shipInstanceId,
         playerId: r.playerId,
@@ -6679,6 +6715,7 @@ export class SectorRoom extends Room<SectorState> {
     const ship = this.state.ships.get(shipInstanceId);
     const slot = this.lingeringSlots.get(shipInstanceId);
     if (ship === undefined || slot === undefined) return false;
+    this.detachWingman(shipInstanceId);
     this.lingeringSlots.delete(shipInstanceId);
     this.lingeringPoseCache.delete(shipInstanceId);
     this.freeSlots.push(slot);
@@ -6777,7 +6814,15 @@ export class SectorRoom extends Room<SectorState> {
       }
       if (m.lingerId !== undefined) {
         const pose = this.lingeringPoseCache.get(m.lingerId);
-        if (pose) { pose.x = m.nx; pose.y = m.ny; }
+        if (pose) {
+          // RTS slice 4: a wingman's guard post rides the jump with its hull,
+          // or the brain would fly straight back to the old pad.
+          const brain = this.fleet.brainOf(m.lingerId);
+          if (brain !== null && brain.guardPostX !== null && brain.guardPostY !== null) {
+            brain.setGuardPost(brain.guardPostX + (m.nx - pose.x), brain.guardPostY + (m.ny - pose.y));
+          }
+          pose.x = m.nx; pose.y = m.ny;
+        }
       }
     }
     if (moves.length > 0) {
@@ -8585,6 +8630,7 @@ export class SectorRoom extends Room<SectorState> {
             oldId: playerId,
             newId: `linger-${existingShip.shipInstanceId}`,
           });
+          this.attachWingman(existingShip.shipInstanceId);
         }
         // Fall through to the fresh-spawn / shipId-restore path below.
         // The fresh spawn will allocate a NEW slot from freeSlots
@@ -9372,6 +9418,7 @@ export class SectorRoom extends Room<SectorState> {
    * keep showing a sector the player can no longer enter.
    */
   private evictOwnerlessShip(shipInstanceId: string): void {
+    this.detachWingman(shipInstanceId); // RTS slice 4 (no-op unless a lingering hull)
     this.ownerlessShipEvictor.evict(shipInstanceId);
   }
 
@@ -9433,6 +9480,82 @@ export class SectorRoom extends Room<SectorState> {
    * (keyed by shipInstanceId) so the displaced hull keeps broadcasting. No-op when
    * the player has no live active hull (the spectator case).
    */
+  // ── RTS slice 4 — wingman brains on lingering hulls ───────────────────────
+
+  /**
+   * Hand a just-parked lingering hull to a wingman brain (Defend at its
+   * current spot, Defensive stance). Call right AFTER the hull's
+   * `lingeringSlots.set` and any `REKEY_SHIP` / `SPAWN` for its body, so the
+   * fresh (neutral) controls posted here land after the rekey cleared the
+   * slot's held input. Re-attaching replaces the brain. No-op under
+   * `EQX_DISABLE_WINGMEN`.
+   */
+  private attachWingman(shipInstanceId: string): void {
+    const ship = this.state.ships.get(shipInstanceId);
+    const slot = this.lingeringSlots.get(shipInstanceId);
+    if (ship === undefined || slot === undefined || this.fleet.isDisabled) return;
+    const b = slotBase(slot);
+    this.fleet.attach(
+      shipInstanceId,
+      ship.playerId,
+      { kind: getShipKind(ship.kind), statAlloc: ship.statAlloc },
+      { x: this.sabF32[b + SLOT_X_OFF]!, y: this.sabF32[b + SLOT_Y_OFF]! },
+    );
+    // Fresh neutral controls: the brain's first re-plan is up to 5 ticks away.
+    const cmd = this.wingmanInputCmd;
+    cmd.slot = slot;
+    cmd.inputTick = this.serverTick;
+    cmd.thrust = false; cmd.turnLeft = false; cmd.turnRight = false; cmd.boost = false; cmd.reverse = false;
+    this.postToWorker(cmd);
+  }
+
+  /** Stop flying a hull: its owner reclaimed it, or it left the world. Call
+   *  next to every `lingeringSlots.delete` (BEFORE it, and before a reclaim's
+   *  REKEY back). Posts neutral controls last, so a wingman INPUT still queued
+   *  in the worker can't become the reclaimed hull's held input (the worker
+   *  holds the last input until the pilot's first arrives). Idempotent. */
+  private detachWingman(shipInstanceId: string): void {
+    if (!this.fleet.isAttached(shipInstanceId)) return;
+    this.fleet.detach(shipInstanceId);
+    const slot = this.lingeringSlots.get(shipInstanceId);
+    if (slot === undefined) return;
+    const cmd = this.wingmanInputCmd;
+    cmd.slot = slot;
+    cmd.inputTick = this.serverTick;
+    cmd.thrust = false; cmd.turnLeft = false; cmd.turnRight = false; cmd.boost = false; cmd.reverse = false;
+    this.postToWorker(cmd);
+  }
+
+  /** Fleet hook: a lingering hull's live SAB pose; false once it isn't one. */
+  private readLingeringPose(shipInstanceId: string, out: FleetPose): boolean {
+    const slot = this.lingeringSlots.get(shipInstanceId);
+    if (slot === undefined) return false;
+    const b = slotBase(slot);
+    out.x = this.sabF32[b + SLOT_X_OFF]!;
+    out.y = this.sabF32[b + SLOT_Y_OFF]!;
+    out.vx = this.sabF32[b + SLOT_VX_OFF]!;
+    out.vy = this.sabF32[b + SLOT_VY_OFF]!;
+    out.angle = this.sabF32[b + SLOT_ANGLE_OFF]!;
+    out.angvel = this.sabF32[b + SLOT_ANGVEL_OFF]!;
+    return true;
+  }
+
+  /** Fleet hook: post a wingman's controls as the hull's INPUT, the same
+   *  command a pilot's keys produce (InputHandler). One reused object (#14). */
+  private postWingmanInput(shipInstanceId: string, c: Readonly<WingmanControls>, tick: number): void {
+    const slot = this.lingeringSlots.get(shipInstanceId);
+    if (slot === undefined) return;
+    const cmd = this.wingmanInputCmd;
+    cmd.slot = slot;
+    cmd.inputTick = tick;
+    cmd.thrust = c.thrust;
+    cmd.turnLeft = c.turnLeft;
+    cmd.turnRight = c.turnRight;
+    cmd.boost = c.boost;
+    cmd.reverse = c.reverse;
+    this.postToWorker(cmd);
+  }
+
   private displaceActiveHullToLingering(playerId: string): void {
     const ship = this.getActiveShip(playerId);
     const slot = this.playerToSlot.get(playerId);
@@ -9466,6 +9589,7 @@ export class SectorRoom extends Room<SectorState> {
     this.playerToActiveShipInstance.delete(playerId);
     ship.isActive = false;
     this.postToWorker({ type: 'REKEY_SHIP', oldId: playerId, newId: `linger-${shipInstanceId}` });
+    this.attachWingman(shipInstanceId);
     serverLogEvent('pilot_swap_displaced', { playerId, shipInstanceId, sectorKey: this.sectorKey });
   }
 
@@ -9522,6 +9646,7 @@ export class SectorRoom extends Room<SectorState> {
       angle:  this.sabF32[b + SLOT_ANGLE_OFF]!,
       angvel: this.sabF32[b + SLOT_ANGVEL_OFF]!,
     };
+    this.detachWingman(shipId);
     this.lingeringSlots.delete(shipId);
     this.lingeringPoseCache.delete(shipId);
     const ownerlessTimer = this.ownerlessShips.get(shipId);
@@ -9679,6 +9804,7 @@ export class SectorRoom extends Room<SectorState> {
     this.spawnHullScrap(ship.kind as ShipKindId, pose, shipInstanceId);
     this.spillOrLoseShipHold(shipInstanceId, ship.playerId, pose, 'abandoned');
 
+    this.detachWingman(shipInstanceId);
     this.lingeringSlots.delete(shipInstanceId);
     this.lingeringPoseCache.delete(shipInstanceId);
     this.freeSlots.push(slot);
@@ -9732,6 +9858,8 @@ export class SectorRoom extends Room<SectorState> {
     pose: { x: number; y: number; vx: number; vy: number } | undefined,
     sourceId: string,
   ): void {
+    // RTS slice 4: the dying hull stops being flown before the leaf frees its slot.
+    this.detachWingman(ship.shipInstanceId);
     this.awardKillXp(sourceId, getShipKind(ship.kind).maxHealth);
     // Hardcore: the dead hull's hold spills where it died (atomic with the
     // ship-hold delete). With no pose the hold is simply lost.
@@ -11010,6 +11138,15 @@ export class SectorRoom extends Room<SectorState> {
       }
       // The active player's worker body is keyed by playerId.
       this.applyStatMulToWorker(playerId, alloc);
+    } else if (this.lingeringSlots.has(shipId)) {
+      // RTS slice 4: a LINGERING hull here is flown by a wingman. Its body
+      // takes the new physics multipliers now (keyed `linger-<id>`) and the
+      // brain is rebuilt from the new alloc so its stats match the body.
+      // Non-physics caps are re-seeded on reclaim, as before.
+      const ship = this.state.ships.get(shipId);
+      if (ship !== undefined) ship.statAlloc = alloc;
+      this.applyStatMulToWorker(`linger-${shipId}`, alloc);
+      if (this.fleet.isAttached(shipId)) this.attachWingman(shipId);
     }
 
     client.send('ship_upgrade_applied', {
@@ -11420,6 +11557,10 @@ export class SectorRoom extends Room<SectorState> {
       handleAiFire: (shooterId, dirX, dirY, tick, targetId) => this.handleAiFire(shooterId, dirX, dirY, tick, targetId),
       phaseTime,
     });
+    // RTS slice 4 — wingmen re-plan (~10 Hz, staggered) and post their
+    // control bits as the hulls' INPUT, beside the NPC AI's intents so both
+    // reach the worker before its next step.
+    this.fleet.tick(this.serverTick);
     // Living World P3c — fire every NPC charge weapon whose wind-up elapsed.
     this.aiFireResolver.releaseCharges(this.serverTick);
 

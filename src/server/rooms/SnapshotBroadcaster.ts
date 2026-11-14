@@ -766,7 +766,9 @@ export class SnapshotBroadcaster {
     }
     // Phase 6b — append lingering hulls. Pose from lingeringPoseCache;
     // owner from state.ships entry's playerId; isActive=false. lastInput
-    // is all-false (the worker doesn't apply input to lingering hulls).
+    // is all-false. (Since RTS slice 4 a wingman flies the hull with INPUT
+    // bits, so its thrust flame doesn't show yet; its pose still rides every
+    // snapshot from the per-tick SAB mirror.)
     for (const [shipInstanceId] of d.lingeringSlots) {
       const ship = d.shipsMap.get(shipInstanceId);
       if (!ship || !ship.alive) continue;
