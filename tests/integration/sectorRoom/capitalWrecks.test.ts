@@ -16,7 +16,10 @@ import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import { shipShapeToPolygon } from '../../../src/core/geometry/shipHullDecomp.js';
 import { shipHullOutline } from '../../../src/core/geometry/shipHullOutline.js';
 import { getShipKind } from '../../../src/shared-types/shipKinds.js';
-import { fracturePlan } from '../../../src/core/destruction/fractureHull.js';
+import { cutDirFromAngle, fracturePlan } from '../../../src/core/destruction/fractureHull.js';
+import { wreckPieceGeometry } from '../../../src/core/destruction/wreckPieces.js';
+import { shipShapeScale } from '../../../src/core/geometry/shipHullOutline.js';
+import { WEAPONS } from '../../../src/core/combat/WeaponCatalogue.js';
 import { WRECK_CRACK_MS } from '../../../src/shared-types/wreckTiming.js';
 
 type V = { x: number; y: number };
@@ -225,6 +228,86 @@ describe('SectorRoom integration — capital wrecks (S2a)', () => {
     expect(internal.applyDamage('bb', 'shooter-x', 1e7, 6000, 0, 1, 0, 'naval_l')).toBe(true);
     expect(internal.swarmRegistry.get('bb')).toBeFalsy();
     expect(internal.applyDamage('bb', 'shooter-x', 1e7)).toBe(false);
+  }, 25_000);
+
+  it('a killCut slice kill: the descriptor carries the shot direction in the hull frame and the pieces split straight along the shot', async () => {
+    // No weapon has a kill cut yet: give the laser one for this test only.
+    const laser = WEAPONS.get('laser')!;
+    const had = 'killCut' in laser;
+    const prev = laser.killCut;
+    laser.killCut = { kind: 'slice' };
+    try {
+      const internal = await boot(true);
+      internal.setWreckSeed(shatterSeed());
+      expect(internal.spawnTestDrone('bb', 6000, 0, 'battleship')).toBe(true);
+      await harness.advance(100);
+      const at = internal.wreckState('bb')!;
+      const hit = worldHull('battleship', at.x, at.y, at.angle)[4]!;
+      // A shot from outside the hull through the hit point toward the centre.
+      const len = Math.hypot(at.x - hit.x, at.y - hit.y);
+      const dir = { x: (at.x - hit.x) / len, y: (at.y - hit.y) / len };
+      expect(internal.applyDamage('bb', 'shooter-x', 1e7, hit.x, hit.y, dir.x, dir.y, 'laser')).toBe(true);
+      const desc = internal.wreckDescriptors().find((d) => d.parentKind === 'battleship')!;
+      expect(desc.cutKind).toBe('slice');
+      expect(desc.cutW).toBeUndefined();
+      // The shot in the hull's math-up frame (turned back by the hull's angle),
+      // then Pixi-up (y flipped): the angle the descriptor must carry.
+      const c = Math.cos(at.angle);
+      const sn = Math.sin(at.angle);
+      const hx = dir.x * c + dir.y * sn;
+      const hy = -dir.x * sn + dir.y * c;
+      const got = cutDirFromAngle(desc.cutAng!);
+      expect(got.x * hx + got.y * -hy).toBeGreaterThan(Math.cos(0.002));
+
+      // Rebuild the pieces from the descriptor (what a client does): a cut
+      // edge runs dead straight along the shot through the kill point,
+      // across the whole hull. The same wreck without the cut does not.
+      const s = shipShapeScale(getShipKind('battleship'));
+      const k = { x: desc.killX * s, y: -desc.killY * s };
+      const d = { x: hx, y: hy };
+      const dist = (p: V): number => (p.x - k.x) * -d.y + (p.y - k.y) * d.x;
+      const onShotLine = (cut: boolean): number => {
+        const inputs = {
+          kindId: 'battleship' as const, seed: desc.seed, killX: desc.killX, killY: desc.killY,
+          killBlowDamage: desc.killBlowDamage, recentDamageRate: desc.recentDamageRate, snapChance: desc.snapChance,
+          ...(cut ? { cutKind: desc.cutKind, cutAng: desc.cutAng } : {}),
+        };
+        let total = 0;
+        for (const g of wreckPieceGeometry(inputs)) {
+          let run = 0;
+          for (let i = 0; i < g.outline.length; i++) {
+            if (!g.cutEdges[i]) continue;
+            const a = g.outline[i]!;
+            const b = g.outline[(i + 1) % g.outline.length]!;
+            const pa = { x: a.x + g.cx, y: a.y + g.cy };
+            const pb = { x: b.x + g.cx, y: b.y + g.cy };
+            // 2 u: the u16 angle's quantisation over the hull's beam.
+            if (Math.abs(dist(pa)) < 2 && Math.abs(dist(pb)) < 2) run += Math.hypot(pb.x - pa.x, pb.y - pa.y);
+          }
+          total += run;
+        }
+        return total;
+      };
+      // The chord of the hull along that line (math-up, scaled frame).
+      const hull = shipShapeToPolygon(getShipKind('battleship'));
+      const ts: number[] = [];
+      for (let i = 0; i < hull.length; i++) {
+        const a = hull[i]!;
+        const b = hull[(i + 1) % hull.length]!;
+        const da = dist(a);
+        const db = dist(b);
+        if ((da < 0) === (db < 0)) continue;
+        const f = da / (da - db);
+        ts.push((a.x + (b.x - a.x) * f - k.x) * d.x + (a.y + (b.y - a.y) * f - k.y) * d.y);
+      }
+      ts.sort((p, q) => p - q);
+      const chord = ts[ts.length - 1]! - ts[0]!;
+      // Every cut edge is on two pieces: the whole chord, counted twice.
+      expect(onShotLine(true)).toBeGreaterThan(1.9 * chord);
+      expect(onShotLine(false)).toBeLessThan(0.5 * chord);
+    } finally {
+      if (had) laser.killCut = prev; else delete laser.killCut;
+    }
   }, 25_000);
 
   it('with the flag off a capital dies exactly as today: no wreck bodies', async () => {
