@@ -70,6 +70,8 @@ export function sigilDesign(seed: number): SigilDesign {
   let fold = 3 + Math.floor(r() * 4);
   // A triangular badge leaves no room for a glyph.
   if (archetype === 'badge') fold = 4 + (fold % 3);
+  // No six-pointed stars: they read as a real-world religious symbol, not a faction mark.
+  if (archetype === 'burst' && fold === 6) fold = 5;
   const anyGlyph = Math.floor(r() * 16);
   const solidGlyph = pick(SOLID_GLYPHS);
   const gap = 0.14 + r() * 0.03;
