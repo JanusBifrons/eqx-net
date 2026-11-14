@@ -153,7 +153,7 @@ gh pr merge <n> --auto --merge                                 # ALWAYS, the ins
 ```
 
 - **Auto-merge is part of opening a PR (standing user directive):** `--auto` holds the PR until required CI passes, so it is safe. Report "auto-merge on" with the PR URL.
-- **Stay synced with `main`:** sync before every push, re-sync before merge, and for a stack re-sync each remaining branch after any one merges (`git rev-list --count origin/<branch>..origin/main` = 0 means current). Use `git merge`, not rebase, on a pushed branch.
+- **Sync once, then leave it:** merge `origin/main` once right before the first push. The ruleset does NOT require branches to be up to date, and every merge to `main` reruns the full suite, so do not re-sync a branch just because it is behind (each re-sync reruns CI and piles PRs up). Re-sync only when the PR shows a conflict (`gh pr view <n> --json mergeStateStatus` = `DIRTY`) or you need code that landed since. Use `git merge`, not rebase, on a pushed branch.
 - **Auto-memory is per machine; the user works on two.** Machine-specific facts may go in a memory; any rule, convention or project gotcha goes in the repo (a rule in CLAUDE.md, anything else in `docs/`). When in doubt, put it in the repo.
 - If gh auth breaks: `gh auth refresh -h github.com -s read:org` in PowerShell / Windows Terminal (not Git Bash; there prefix `winpty`).
 
