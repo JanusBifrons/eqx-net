@@ -189,6 +189,7 @@ Update this section when a threshold is set.
 
 - **Pad holds** move only via `StorageService.padLoad` / `padUnload` / `padSwap` / `padSwapAcross` / `takePadForSpill` (one group each). Capacitor charge never discharges batteries.
 - **Director bots** cross only via `TeleportBroker.moveBot` → `LivingWorldDirector.teleportBot`. Rooms register with the broker on create and unregister on dispose. Lock: `teleporter.test.ts`.
+- **Pairing consent:** only the owner of the asked teleporter can accept a `teleport_pair_request` (`teleport_pair_answer` handler in `SectorRoom` checks `req.toOwner` and the target's owner). Lock: `teleporterAcross.test.ts`.
 - **Alien gates** are unbuildable and invulnerable; pair a gate only through `findAlienTwin`, never a pre-computed uid. `evictSwarmEntity` must `forget` the ship; the disable runs through the shared `gateDisabledInput` (#15). Locks: `AlienGateGuard.test.ts`, `disableParity.test.ts`, `alienGates.test.ts`.
 - Detail: [teleporters.md](../../docs/features/teleporters.md#server-implementation-notes), [alien-gates.md](../../docs/features/alien-gates.md#server-implementation-notes).
 
@@ -226,6 +227,7 @@ Update this section when a threshold is set.
 ## Game time is the default
 
 - **Inside a room** read `this.gameClock.now()` and schedule with `this.gameClock.after` / `.every`; outside, use `gameNow()` / `gameSetTimeout` / `gameSetInterval`. Subsystems take `now` deps defaulting to `gameNow`.
+- **Saved timestamps are game time** (`gameNow()` stamps in holds, wallets, directors, economy): they drift from wall time while the speed isn't 1×; never mix in a `Date.now()` stamp.
 - **Real time** only for a file on the `eslint.config.js` allowlist or a line with `// eslint-disable-next-line no-restricted-properties -- real time: <why>`; never to dodge the rule. Detail: [game-time-scale.md](../../docs/architecture/game-time-scale.md#server-implementation-notes).
 
 ## Pino Sampling Policy
