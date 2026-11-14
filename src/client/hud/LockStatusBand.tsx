@@ -18,7 +18,7 @@ import { getGameClient } from '../net/clientSingleton';
 import { useUIStore } from '../state/store';
 import { FAILSAFE_COLOUR, THREAT_COLOUR_HEX, groupColourHex } from './groupColours';
 import { HUD } from './tokens';
-import { acquiringPct } from './lockPct';
+import { acquiringPct, acquiringRank } from './lockPct';
 
 export interface ThreatSummary {
   locked: number;
@@ -74,10 +74,13 @@ export function summariseOwnLock(mirror: RenderMirror, names: ReadonlyArray<stri
   const groups = mirror.localGroups;
   if (!groups) return null;
   let best: OwnLockSummary | null = null;
+  let bestRank = -1;
   for (let gi = 0; gi < groups.length; gi++) {
     for (const l of groups[gi]!.l) {
       if (l.s === 2) continue;
-      if (best && l.p <= best.pct) continue;
+      const rank = acquiringRank(l);
+      if (best && rank <= bestRank) continue;
+      bestRank = rank;
       best = { group: names[gi] ?? groups[gi]!.id, groupIndex: gi, target: nameOf(mirror, l.t), pct: l.p, failsafe: l.s === 0, losing: l.r === 1 };
     }
   }
