@@ -85,6 +85,20 @@ function hasAnyStatAlloc(alloc: Record<string, number>): boolean {
   return false;
 }
 
+/**
+ * Write `v` into a pooled wire object, or REMOVE the key when `v` is
+ * undefined. Emit-when-non-default (#16) needs the key absent: both snapshot
+ * encoders (Colyseus's msgpackr on the WebSocket, the WebRTC `Packr`) write an
+ * own property whose value is `undefined` as the key name plus a 3-byte ext.
+ * The old comments here assumed notepack.io, which skipped them; it doesn't
+ * run any more. Those keys were ~8 of capital-fleet's 13 KB/s snapshot JSON
+ * (2026-11-14). Alloc-free (#14); the client reads absent and undefined alike.
+ */
+export function setOrDrop<T extends object, K extends keyof T>(o: T, k: K, v: T[K] | undefined): void {
+  if (v !== undefined) o[k] = v as T[K];
+  else if (k in o) delete (o as Record<PropertyKey, unknown>)[k as PropertyKey];
+}
+
 /** Naval shells travel as events (ShellEventHub), never in `projectiles[]`. */
 const NAVAL_SHELL_IDS = NAVAL_SHELL_WEAPON_IDS;
 
@@ -439,8 +453,8 @@ export class SnapshotBroadcaster {
   //     (a small finite set — mount counts 1..MAX_MOUNTS).
   //   - snap is a class-field `MutableSnapshotMessage` mutated per
   //     recipient and cast back to SnapshotMessage at send time. The
-  //     spread-empty quirk goes away — optional fields are set to
-  //     `undefined` when absent, which notepack.io's encoder skips.
+  //     spread-empty quirk goes away — optional fields are
+  //     removed when absent (`setOrDrop`: msgpackr encodes `undefined`).
   //
   // Wire safety: client.send synchronously msgpack-encodes the message
   // before returning (verified Phase 2). Reusing the same shapes
@@ -624,7 +638,8 @@ export class SnapshotBroadcaster {
   ): void {
     const slot = arr[i];
     if (!slot) {
-      const fresh: MutableDroneEntry = { id, mountAngles };
+      const fresh: MutableDroneEntry = { id };
+      if (mountAngles !== undefined) fresh.mountAngles = mountAngles;
       if (shieldDown) fresh.shieldDown = true;
       if (hp !== undefined) fresh.hp = hp;
       if (hostile) fresh.hostile = true;
@@ -644,9 +659,9 @@ export class SnapshotBroadcaster {
     if (warp !== 0) slot.warp = warp;
     else delete slot.warp;
     slot.id = id;
-    // Always assign; undefined means "drop the field on the wire" via
-    // notepack.io's encoder which skips undefined values.
-    slot.mountAngles = mountAngles;
+    // Absent, never `undefined`: msgpackr encodes an undefined property (see
+    // `setOrDrop`). Far drones carry no angles, so this was 15 B each.
+    setOrDrop(slot, 'mountAngles', mountAngles);
     if (shieldDown) slot.shieldDown = true;
     else delete slot.shieldDown;
     if (hp !== undefined) slot.hp = hp;
@@ -886,66 +901,66 @@ export class SnapshotBroadcaster {
         entry.angvel = ship.pose.angvel ?? 0;
         entry.playerId = ship.playerId;
         entry.isActive = ship.isActive;
-        // Always assign — notepack.io's encoder skips undefined values,
-        // so this is wire-equivalent to the legacy spread-when-truthy
-        // pattern and avoids the per-ship `{ lastInput }` literal alloc.
-        entry.lastInput = includeLastInput ? ship.lastInput : undefined;
-        entry.mountAngles = mountAnglesArr;
+        // `setOrDrop` removes the key when undefined (zero bytes, the same
+        // wire shape as the legacy spread-when-truthy) and avoids the
+        // per-ship `{ lastInput }` literal alloc.
+        setOrDrop(entry, 'lastInput', includeLastInput ? ship.lastInput : undefined);
+        setOrDrop(entry, 'mountAngles', mountAnglesArr);
         // Energy: own ACTIVE ship only (the local player's predicted
         // resource). Always assign — undefined for every other ship and
-        // every remote recipient (notepack skips undefined). Integer-
+        // every remote recipient (key removed). Integer-
         // quantised. Reused pooled entry → must clear for non-owners.
-        entry.energy = (ship.playerId === recipientPlayerId && ship.isActive)
+        setOrDrop(entry, 'energy', (ship.playerId === recipientPlayerId && ship.isActive)
           ? Math.round(ship.energy)
-          : undefined;
-        // R2.32 — emit shieldDown only when true (notepack skips undefined →
+          : undefined);
+        // R2.32 — emit shieldDown only when true (key removed →
         // zero bytes for an undamaged sector); clear the pooled entry otherwise.
-        entry.shieldDown = ship.shieldDown ? true : undefined;
-        // Phase 4 WS-B1 — public level. Emit only when > 1 (notepack skips
-        // undefined → zero bytes for an un-levelled sector; the client treats
+        setOrDrop(entry, 'shieldDown', ship.shieldDown ? true : undefined);
+        // Phase 4 WS-B1 — public level. Emit only when > 1 (key removed →
+        // zero bytes for an un-levelled sector; the client treats
         // absent as level 1). Clear the pooled entry otherwise.
-        entry.level = ship.level > 1 ? ship.level : undefined;
+        setOrDrop(entry, 'level', ship.level > 1 ? ship.level : undefined);
         // Phase 4 WS-B2 — per-instance stat allocation. Like energy, emit on the
         // recipient's OWN ACTIVE ship only (the local player's predicted physics
         // multipliers re-anchor from this), AND only when non-empty (un-upgraded
         // ⇒ undefined ⇒ zero bytes; the client treats absent as no upgrade).
         // Shared reference — no per-tick alloc (invariant #14).
         const ownActive = ship.playerId === recipientPlayerId && ship.isActive;
-        entry.statAlloc =
-          ownActive && hasAnyStatAlloc(ship.statAlloc) ? ship.statAlloc : undefined;
+        setOrDrop(entry, 'statAlloc',
+          ownActive && hasAnyStatAlloc(ship.statAlloc) ? ship.statAlloc : undefined);
         // Living World P1a (#16) — the own ACTIVE hull's carried hold, only when
         // non-empty (zero bytes otherwise). Shared reference (no per-tick alloc).
         const hold = ownActive && this.deps.shipHoldOf !== undefined
           ? this.deps.shipHoldOf(ship.shipInstanceId)
           : undefined;
-        entry.cargo = hold !== undefined && !isHoldEmpty(hold) ? hold : undefined;
-        entry.depositing = ownActive ? this.deps.depositProgressOf?.(ship.shipInstanceId) : undefined;
+        setOrDrop(entry, 'cargo', hold !== undefined && !isHoldEmpty(hold) ? hold : undefined);
+        setOrDrop(entry, 'depositing', ownActive ? this.deps.depositProgressOf?.(ship.shipInstanceId) : undefined);
         // Fire control (#16): the own pilot's groups + locks (shared ref).
-        entry.groups = ownActive ? this.deps.lockGroupsOf?.(ship.playerId) : undefined;
-        entry.lockedBy = ownActive ? this.deps.lockedByOf?.(ship.playerId) : undefined;
+        setOrDrop(entry, 'groups', ownActive ? this.deps.lockGroupsOf?.(ship.playerId) : undefined);
+        setOrDrop(entry, 'lockedBy', ownActive ? this.deps.lockedByOf?.(ship.playerId) : undefined);
         // P5 (#16) — the own ACTIVE hull's fitted blueprints, emit-when-non-empty
         // (shared reference; the encoder never mutates it).
         const fitted = ownActive ? this.deps.fittedOf?.(ship.shipInstanceId) : undefined;
-        entry.fitted = fitted !== undefined && fitted.length > 0 ? (fitted as string[]) : undefined;
+        setOrDrop(entry, 'fitted', fitted !== undefined && fitted.length > 0 ? (fitted as string[]) : undefined);
         // Economy v2 W1 (#16) — the own player's wallet balance (a number, no alloc).
-        entry.wallet = ownActive ? this.deps.walletOf?.(ship.playerId) : undefined;
+        setOrDrop(entry, 'wallet', ownActive ? this.deps.walletOf?.(ship.playerId) : undefined);
         // v4 T2 (#16) — teleport epoch: the owner re-seeds prediction on a change.
-        entry.poseEpoch = ownActive && ship.poseEpoch > 0 ? ship.poseEpoch : undefined;
+        setOrDrop(entry, 'poseEpoch', ownActive && ship.poseEpoch > 0 ? ship.poseEpoch : undefined);
         // Phase 4 (#16) — warp phase, PUBLIC: the build-up (1), the run (2:
         // out of the world, other clients hide the ship) and the arrival (3).
         // Zero bytes otherwise.
-        entry.warp = ship.warp === 1 || ship.warp === 2 || ship.warp === 3 ? ship.warp : undefined;
+        setOrDrop(entry, 'warp', ship.warp === 1 || ship.warp === 2 || ship.warp === 3 ? ship.warp : undefined);
         // v4 A (#16) — the alien-gate disable, emitted while it runs.
         const dis = ownActive ? (this.deps.disabledMsOf?.(ship.playerId) ?? 0) : 0;
-        entry.disabledMs = dis > 0 ? Math.ceil(dis) : undefined;
+        setOrDrop(entry, 'disabledMs', dis > 0 ? Math.ceil(dis) : undefined);
         // WS-B3 — activated mounts are PUBLIC (every recipient, active +
         // lingering), emit-when-non-empty. Shared reference (no per-tick alloc,
         // #14); the renderer looks up geometry by (shipKind, slotId). Clear the
         // pooled entry for un-upgraded ships. The readonly→mutable cast is safe:
         // the encoder reads the array synchronously and never mutates it.
-        entry.mounts = ship.mounts.length > 0
+        setOrDrop(entry, 'mounts', ship.mounts.length > 0
           ? (ship.mounts as { slotId: string; weaponId: string }[])
-          : undefined;
+          : undefined);
         states[ship.shipInstanceId] = entry;
       }
 
@@ -1099,49 +1114,49 @@ export class SnapshotBroadcaster {
       const recipientAcked = this.sabAppliedTicks.get(recipientPlayerId) ?? 0;
 
       // Class-field SnapshotMessage scratch — mutated per recipient.
-      // notepack.io's encoder skips undefined values, so the
-      // conditional `field = cond ? value : undefined` lines below
+      // `setOrDrop` removes an absent optional key, so the
+      // conditional `cond ? value : undefined` writes below
       // produce a byte-identical wire shape to the legacy spread.
       const snap = this._snapScratch;
       snap.type = 'snapshot';
       snap.serverTick = serverTick;
       snap.states = states;
       snap.ackedTick = recipientAcked;
-      snap.boostingIds = boostingIds.length > 0 ? boostingIds : undefined;
-      snap.thrustingIds = thrustingIds.length > 0 ? thrustingIds : undefined;
-      snap.projectiles = projectilesCount > 0 ? projectilesScratch : undefined;
-      snap.missiles = missilesCount > 0 ? missilesScratch : undefined;
-      snap.drones = dronesCount > 0 ? dronesScratch : undefined;
-      snap.asteroids = asteroidsCount > 0 ? asteroidsScratch : undefined;
+      setOrDrop(snap, 'boostingIds', boostingIds.length > 0 ? boostingIds : undefined);
+      setOrDrop(snap, 'thrustingIds', thrustingIds.length > 0 ? thrustingIds : undefined);
+      setOrDrop(snap, 'projectiles', projectilesCount > 0 ? projectilesScratch : undefined);
+      setOrDrop(snap, 'missiles', missilesCount > 0 ? missilesScratch : undefined);
+      setOrDrop(snap, 'drones', dronesCount > 0 ? dronesScratch : undefined);
+      setOrDrop(snap, 'asteroids', asteroidsCount > 0 ? asteroidsScratch : undefined);
       // Structures plan, Phase 3 — the same cached slice array (rebuilt at the
       // 1 Hz pulse, NOT per tick) is attached by reference to every recipient.
       // Undefined when no structures exist (zero cost).
-      snap.structureTargets = this.deps.getStructuresSlice?.();
-      snap.structureMountAngles = this.deps.getStructureMountAngles?.();
+      setOrDrop(snap, 'structureTargets', this.deps.getStructuresSlice?.());
+      setOrDrop(snap, 'structureMountAngles', this.deps.getStructureMountAngles?.());
       // Shells as events (§5): the keyframe of in-flight shells this recipient
       // was sent (pooled records, alloc-free once warm).
       const shellSrc = this.deps.shellEvents?.();
       if (shellSrc) {
         const keyN = shellSrc.keyframeFor(client.sessionId, this._shellKeyScratch);
         this._shellKeyScratch.length = keyN;
-        snap.shellKey = keyN > 0 ? this._shellKeyScratch : undefined;
+        setOrDrop(snap, 'shellKey', keyN > 0 ? this._shellKeyScratch : undefined);
       } else {
-        snap.shellKey = undefined;
+        setOrDrop(snap, 'shellKey', undefined);
       }
       // Wreck descriptors as deltas (sub-capital break-up slice 3): the
       // window's adds and removes, plus the resync chunk on this recipient's
       // one snapshot in WRECK_RESYNC_EVERY. The full set rode the welcome
       // (#16). Shared arrays, attached by reference (#14).
       if (wreckWire !== null) {
-        snap.wreckAdds = wreckWire.adds.length > 0 ? wreckWire.adds : undefined;
-        snap.wreckRemoves = wreckWire.removes.length > 0 ? wreckWire.removes : undefined;
-        snap.wreckSync = wreckWire.syncDue(this.broadcastCounter) ? wreckWire.sync : undefined;
+        setOrDrop(snap, 'wreckAdds', wreckWire.adds.length > 0 ? wreckWire.adds : undefined);
+        setOrDrop(snap, 'wreckRemoves', wreckWire.removes.length > 0 ? wreckWire.removes : undefined);
+        setOrDrop(snap, 'wreckSync', wreckWire.syncDue(this.broadcastCounter) ? wreckWire.sync : undefined);
       } else {
-        snap.wreckAdds = undefined;
-        snap.wreckRemoves = undefined;
-        snap.wreckSync = undefined;
+        setOrDrop(snap, 'wreckAdds', undefined);
+        setOrDrop(snap, 'wreckRemoves', undefined);
+        setOrDrop(snap, 'wreckSync', undefined);
       }
-      snap.timeScale = this.deps.timeScale?.();
+      setOrDrop(snap, 'timeScale', this.deps.timeScale?.());
       // plan: imperative-taco-r2 — stamp server-send time so the client
       // can separate network in-transit delay from server-side silence
       // during recv_gap_long events. `performance.now()` is a primitive
@@ -1158,7 +1173,10 @@ export class SnapshotBroadcaster {
       // "router/AP vs phone WiFi modem" question raised after capture
       // 5vjj4e. Single integer; back-fills to 0 on the client read.
       const sockWithBuffer = (client as unknown as { socket?: { bufferedAmount?: number } }).socket;
-      snap.wsBufferedAmountBytes = sockWithBuffer?.bufferedAmount ?? 0;
+      // Emit-when-non-zero (the client reads absent as 0): an idle socket's 0
+      // cost ~25 B a snapshot (2026-11-14 trim).
+      const buffered = sockWithBuffer?.bufferedAmount ?? 0;
+      setOrDrop(snap, 'wsBufferedAmountBytes', buffered > 0 ? buffered : undefined);
       // Phase 1 swift-otter routing seam — _sendSnapshotFn is either the
       // legacy WS-send default or a WebRtcChannelManager-backed router
       // wired in by SectorRoom. Try/catch is a belt-and-braces guard so

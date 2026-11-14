@@ -3042,6 +3042,13 @@ Owner: "make it more like micro machines and make fights a bit longer. Also don'
 - **Rule:** anything that reasons about how an NPC body responds (the pilot's braking, arrive ramps, tests) must use the spawned mass, `NPC_MASS_FALLBACK` from `shipScale/tuning.ts` (now the spawner's source too), never `thrustImpulse` alone. Whether NPC bodies should match the player's mass is an owner balance call (it also changes ramming), not a pilot fix.
 - **Also:** the old impulse brain needed `HostileDroneBehaviour` to know nothing about inertia. A capital flown by keys turns by torque, so the pilot must stop the turn early on the coast `ω / angularDamping` (Rapier's damping sums to exactly that), or it swings past the heading by ~4° and hunts.
 
+## 2026-11-14 — "notepack skips undefined" stopped being true: the snapshot paid for every empty key
+
+- **Symptom:** capital-fleet's rx rose from ~17 to ~21 KB/s per pilot over three days with no single big change; the snapshot JSON alone went 9.8 → 13.1 KB/s for one pilot's ship and a few drones.
+- **Cause:** `SnapshotBroadcaster` cleared pooled wire fields with `field = undefined`, written when the encoder was notepack.io, which skipped undefined values. Both encoders now in use (Colyseus 0.16's msgpackr on the WebSocket, the WebRTC `Packr`) write an undefined own property as its key name plus a 3-byte ext. So every "emit-when-non-default" field (#16) still cost 14–25 B a snapshot when empty: ~30 keys, ~8 of the 13 KB/s. Each feature that added an optional field added its key to every snapshot.
+- **Fix:** `setOrDrop(obj, key, v)` deletes the key when `v` is undefined. Snapshot JSON 13.1 → 5.5 KB/s; capital-fleet rx 13.2–14.0 KB/s. Lock: `tests/unit/snapshotAbsentKeys.test.ts` (packs with both production encoders).
+- **Rule:** on a pooled wire object, "absent" means deleted, never `undefined`. A per-field byte breakdown must count key names too: summing `pack(value)` per field hid the keys (the "unexplained" ~1.3 KB/s).
+
 ## 2026-11-14 — A pool keyed by size shares one buffer between every entity of that size
 
 - **Finding (nose turrets, showcase take 9):** the snapshot broadcaster pooled `mountAngles` arrays by length. The message is encoded only when sent, so every one-turret ship in a recipient's snapshot pointed at the same array and the wire carried the last ship's angle for all of them. It stayed hidden while almost no drone had exactly one turning mount; once six kinds got nose turrets, every AI pilot's gun was drawn at some other ship's angle. Renderer, art path and display follower were all correct.
