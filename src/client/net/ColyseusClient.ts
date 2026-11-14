@@ -2890,6 +2890,7 @@ export class ColyseusGameClient {
   private killEntity(id: string): void {
     // Trigger explosion sprite on this frame (renderer consumes then App.tsx clears).
     this.mirror.explodingShips?.add(id);
+    this.flushQueuedDamageFx(id);
 
     // Immediately remove physics body so hitscan and collisions cannot hit it.
     this.predWorld?.despawnShip(id);
@@ -2982,7 +2983,39 @@ export class ColyseusGameClient {
     // sprite position (looked up by id), and `swarm-${entityId}` is the
     // sprite key, so the existing explosion machinery just works.
     this.mirror.explodingShips?.add(wireId);
+    this.flushQueuedDamageFx(wireId);
     useUIStore.getState().setSwarmCount(this.mirror.swarm?.size ?? 0);
+  }
+
+  /**
+   * The target just died: release, NOW, every hit visual still queued for
+   * it, so its number completes in the explosion's frame and never climbs
+   * over the wreck afterwards (fight-clip review 2026-11-13). Two queues
+   * delay a real hit's number on purpose: the smooth-beam splits of a
+   * predicted hitscan hit, and naval hits held for their drawn shell burst.
+   * The hits were dealt before the death, so they are flushed, not dropped;
+   * the renderer then closes the number (`DamageNumberManager.markDead`, fed
+   * by the same `explodingShips` frame). Rare path (a death).
+   */
+  private flushQueuedDamageFx(targetId: string): void {
+    const scheduled = this._scheduledDamageSpawns;
+    if (scheduled.length > 0) {
+      const pending = this.mirror.pendingDamageNumbers;
+      // Forward, so the splits land in schedule order.
+      let w = 0;
+      for (let r = 0; r < scheduled.length; r++) {
+        const s = scheduled[r]!;
+        if (s.targetId === targetId) {
+          pending?.push({ targetId: s.targetId, x: s.x, y: s.y, damage: s.damage, tag: s.tag });
+        } else {
+          scheduled[w++] = s;
+        }
+      }
+      scheduled.length = w;
+    }
+    if (this._navalHitHold.size > 0) {
+      this._navalHitHold.flushTarget(targetId, this._heldDamageSink);
+    }
   }
 
   private handleRespawnAck(msg: RespawnAckMessage): void {

@@ -36,8 +36,9 @@ import { DEFAULT_BASE_URL } from './helpers/ports';
 const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 
 interface DamageProbeApi {
-  pushDamage: (x: number, y: number, damage: number) => void;
+  pushDamage: (x: number, y: number, damage: number, targetId?: string) => void;
   postFrame: () => void;
+  explode: (targetId: string) => void;
   getActiveCount: () => number;
   getPendingQueueLength: () => number;
 }
@@ -170,5 +171,38 @@ test('a single damage number expires within its lifetime on quiet frames', async
     `After 80 quiet frames past LIFETIME_FRAMES (60), the damage number should have expired. ` +
       `Got ${count}. If this fails, PixiRenderer is not ticking DamageNumberManager.update() ` +
       `every frame.`,
+  ).toBe(0);
+});
+
+test('after the target explodes, late hits on it never keep its number alive', async ({ page }) => {
+  test.setTimeout(20_000);
+  // Hostile review of filmed fight clips (2026-11-13): "floating damage
+  // numbers keep CLIMBING over a ship AFTER it has exploded." The death
+  // reaches the worker only as the one-frame `explodingShips` trigger in the
+  // structured-cloned mirror, so this is locked at that boundary.
+  await page.evaluate(() => {
+    const p = (window as unknown as ProbeWindow).__damageProbe!;
+    p.pushDamage(100, 50, 42, 'victim');
+    p.postFrame();
+    p.explode('victim');
+    p.postFrame();
+  });
+  // In-flight hits keep landing on the dead id for 40 frames, then 45 quiet
+  // frames: 85 frames after the death, past the number's 60-frame lifetime.
+  // Before the fix each late hit reset the stay window (and climbed the
+  // total), so the number was still on screen until frame 40 + 60 = 100.
+  for (let i = 0; i < 85; i++) {
+    await page.evaluate((late) => {
+      const p = (window as unknown as ProbeWindow).__damageProbe!;
+      if (late) p.pushDamage(100, 50, 5, 'victim');
+      p.postFrame();
+    }, i < 40);
+    await page.waitForTimeout(20);
+  }
+  await page.waitForTimeout(500);
+  expect(
+    await getActiveCount(page),
+    'A dead target\'s number must finish its float and expire; late hits on the dead id ' +
+      'must not add to it or keep it alive.',
   ).toBe(0);
 });
