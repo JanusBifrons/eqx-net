@@ -112,7 +112,7 @@ describe('HostileDroneBehaviour — leader-led flocking (non-combat herding)', (
     // speed after a step lies in [(CALM − a/2)·k, (CALM + a/2)·k], k = 1/(1 +
     // d·dt) the per-tick damping. From the live kind: at arcade damping one
     // tick of thrust is ~14% of CALM, so a fixed ±10% band no longer fits.
-    const h = makePilotHandling(KIND, massOf(KIND, NPC_MASS_FALLBACK));
+    const h = makePilotHandling(KIND, shipBodyMass(KIND));
     const k = 1 / (1 + h.linearDamping / 60);
     expect(r.end).toBeGreaterThanOrEqual((CALM - h.thrustAccel / 2) * k - 1e-6);
     expect(r.end).toBeLessThanOrEqual((CALM + h.thrustAccel / 2) * k + 1e-6);
