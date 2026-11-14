@@ -154,6 +154,7 @@ const FEATURE_SPECS: string[] = [
   // RTS command layer: box-select, orders, stance, squads, patrol pick, Fly.
   '**/fleet-command.spec.ts',
   '**/rts-take-controls.spec.ts',
+  '**/rts-reselect.spec.ts',
   '**/fleet-overlay-camera.spec.ts',
   '**/cinematic-camera.spec.ts',
   '**/respawn-cascade-input-routing.spec.ts',
