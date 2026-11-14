@@ -124,6 +124,14 @@ export const BROADSIDE_STANDOFF = 0.75;
 const BROADSIDE_RANGE_STEER = 0.6;
 /** Speed while broadside, per unit of range error (fraction of cruise). */
 const BROADSIDE_SPEED = 0.6;
+/** Within this share of the stand-off either side the capital is AT its
+ *  stand-off: beam straight on, keys off, the hull rests. Without it a range a
+ *  few tens of units off asked for a sub-1 u/s creep along the beam (which
+ *  barely changes the range), the pilot kept tapping thrust and the hull never
+ *  rested, so its pose went out every tick (perf scene capital-duel, PR #549:
+ *  swarm wire 0.24 → 3.1 KB/s). Outside the band the error is measured from
+ *  its edge, so heading bias and speed still start from zero. */
+const BROADSIDE_RANGE_DEADBAND = 0.05;
 /** Guard post (owner decision 2026-11-11): a guarding capital fights from its
  *  post. Inside this share of its guard radius it holds station with its beam
  *  to the target; beyond it, it closes on the post. */
@@ -1554,8 +1562,11 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     const stbd = wrapAngle(bearing - Math.PI / 2);
     const usePort = Math.abs(wrapAngle(port - self.angle)) <= Math.abs(wrapAngle(stbd - self.angle));
     const standoff = this.fireRange * BROADSIDE_STANDOFF;
-    // + when too far (turn in toward the target), − when too close.
-    const err = Math.max(-1, Math.min(1, (dist - standoff) / standoff));
+    // + when too far (turn in toward the target), − when too close; 0 inside
+    // the dead-band (at the stand-off: hold the beam, keys off).
+    const raw = Math.max(-1, Math.min(1, (dist - standoff) / standoff));
+    const over = Math.max(0, Math.abs(raw) - BROADSIDE_RANGE_DEADBAND) / (1 - BROADSIDE_RANGE_DEADBAND);
+    const err = raw < 0 ? -over : over;
     const bias = err * BROADSIDE_RANGE_STEER;
     const desired = usePort ? wrapAngle(port - bias) : wrapAngle(stbd + bias);
     // Hold station: steam only to correct range (none at the stand-off), or

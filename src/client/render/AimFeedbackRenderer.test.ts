@@ -105,3 +105,51 @@ describe('AimFeedbackRenderer.hide', () => {
     expect(children.every((c) => !c.visible)).toBe(true);
   });
 });
+
+// Fight-clip review 2026-11-13: "LOCKING n%" showed DOUBLED over one target.
+// Each weapon group building a lock on the same ship drew its own ring + tag,
+// so two groups locking one fighter put two tags (at slightly different
+// heights, as the tag rides the closing ticks) over it. One target, one tag:
+// the furthest-along lock's progress.
+describe('AimFeedbackRenderer own-lock tags', () => {
+  type Tag = { visible: boolean; text: string };
+  const tagsOf = (r: AimFeedbackRenderer): Tag[] => (r as unknown as { tags: Tag[] }).tags.filter((t) => t.visible);
+  function own(groups: RenderMirror['localGroups']): RenderMirror {
+    return { ...mirror(undefined), localGroups: groups } as RenderMirror;
+  }
+
+  it('two groups locking the same target: one tag, showing the furthest-along lock', () => {
+    const { r, g } = setup();
+    r.update(own([
+      { id: 'fore', m: 0, l: [{ t: 'p:npc', s: 1, p: 30 }] },
+      { id: 'aft', m: 0, l: [{ t: 'p:npc', s: 1, p: 62 }] },
+    ] as RenderMirror['localGroups']), 1);
+    const tags = tagsOf(r);
+    expect(tags).toHaveLength(1);
+    expect(tags[0]!.text).toBe('LOCKING 62%');
+    // One progress ring (track circle) on the target, not one per group.
+    const NX = SX + 400;
+    expect(g.circle.mock.calls.filter((c) => c[0] === NX)).toHaveLength(1);
+  });
+
+  it('a building lock beats a draining one on the same target', () => {
+    const { r } = setup();
+    r.update(own([
+      { id: 'fore', m: 0, l: [{ t: 'p:npc', s: 1, p: 70, r: 1 }] },
+      { id: 'aft', m: 0, l: [{ t: 'p:npc', s: 1, p: 20 }] },
+    ] as RenderMirror['localGroups']), 1);
+    const tags = tagsOf(r);
+    expect(tags).toHaveLength(1);
+    expect(tags[0]!.text).toBe('LOCKING 20%');
+  });
+
+  it('two different targets still get a tag each', () => {
+    const { r } = setup();
+    const m = own([
+      { id: 'fore', m: 0, l: [{ t: 'p:npc', s: 1, p: 30 }, { t: 'p:npc2', s: 1, p: 50 }] },
+    ] as RenderMirror['localGroups']);
+    m.ships.set('npc2', { x: SX - 400, y: SY, angle: 0, vx: 0, vy: 0, kind: 'fighter' } as never);
+    r.update(m, 1);
+    expect(tagsOf(r).map((t) => t.text).sort()).toEqual(['LOCKING 30%', 'LOCKING 50%']);
+  });
+});
