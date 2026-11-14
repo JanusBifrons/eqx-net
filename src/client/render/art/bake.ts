@@ -5,7 +5,7 @@
  * in the bake workers (`bake.worker.ts`). A bake is a list of RGBA frames plus
  * the few facts the runtime needs (size, density, light and nozzle spots).
  */
-import { forgeRock, forgeScrap, forgeShip, forgeStructure, forgeTurretGun, shipExtent, type Fields, type GunFamily } from './fields.js';
+import { forgeRock, forgeScrap, forgeShip, forgeStructure, forgeTurretGun, shipExtent, type Fields, type GunFamily, type Livery } from './fields.js';
 import { shipTurrets, structureTurrets } from './turretLayout.js';
 import { bakeFxImg, FX_VERSION, isFxId } from './fx/fxTextures.js';
 import { litFrame, type Frame, type LightRig } from './shade.js';
@@ -65,7 +65,7 @@ export type LitFlag = { lit?: boolean };
 
 export type BakeJob =
   /** `rings` (R&D, rnd/turrets): cut turret rings into the hull at its mounts. */
-  | ({ type: 'ship'; id: string; paint?: number; rings?: boolean } & LitFlag)
+  | ({ type: 'ship'; id: string; paint?: number; rings?: boolean; livery?: Livery } & LitFlag)
   /** `rot`: the structure's sprite rotation (radians, quarter turns). The sun
    *  is baked relative to it, so a turned structure is still lit from the
    *  sector's sun rather than having its lighting turn with it. */
@@ -86,7 +86,7 @@ const SCALE_TAG = SHIP_SCALE === 1 ? '' : `@s${SHIP_SCALE}`;
 /** The cache key a job's result is stored under (shared by main and workers). */
 export function bakeKey(j: BakeJob): string {
   if (j.type !== 'fx' && j.lit) return `L${litKeyBody(j)}`;
-  if (j.type === 'ship') return `m:${j.id}:${j.paint ?? ''}${j.rings ? ':R' : ''}${isCapitalKind(j.id) ? ':T' : ''}${SCALE_TAG}`;
+  if (j.type === 'ship') return `m:${j.id}:${j.paint ?? ''}${j.rings ? ':R' : ''}${isCapitalKind(j.id) ? ':T' : ''}${j.livery ? liveryTag(j.livery) : ''}${SCALE_TAG}`;
   if (j.type === 'turret') return `g:${j.id}:${j.paint}:${j.len.toFixed(2)}:${j.wid.toFixed(2)}:${j.cap.toFixed(2)}:${j.ppu}${j.naval ? `:n${j.naval.barrels}:${j.naval.houseW.toFixed(2)}:${j.naval.houseL.toFixed(2)}${j.naval.part ? `:${j.naval.part}` : ''}` : ''}`;
   if (j.type === 'scrap') return `s:${j.id}:${j.component}${SCALE_TAG}`;
   if (j.type === 'fx') return `x:${FX_VERSION}:${j.id}:${j.variant ?? ''}:${j.seed ?? ''}`;
@@ -94,6 +94,9 @@ export function bakeKey(j: BakeJob): string {
   const q = quarterTurns(j.rot ?? 0);
   return `m:${j.id}:${j.seed}:${j.accent ?? ''}${q ? `:r${q}` : ''}${j.rings ? ':R' : ''}`;
 }
+
+/** A liveried ship's key suffix (absent livery adds nothing). */
+function liveryTag(l: Livery): string { return `:L${l.treatment}${l.team.toString(16)}:${l.sigil.toString(16)}`; }
 
 /** A lit job's key (prefixed `L` by bakeKey): no sun, and no turn for
  *  structures and rocks (the mesh turns; the maps don't change). */
@@ -213,7 +216,7 @@ export function runBake(j: BakeJob, rig: LightRig): Baked {
   if (j.type === 'ship' || j.type === 'scrap') {
     const rings = j.type === 'ship' && j.rings ? shipTurrets(j.id).map((t) => ({ x: t.px, y: t.py, r: t.ring })) : undefined;
     const f = j.type === 'ship'
-      ? forgeShip(j.id, { ppu: shipPpu(j.id), paint: j.paint, rings })
+      ? forgeShip(j.id, { ppu: shipPpu(j.id), paint: j.paint, rings, ...(j.livery ? { livery: j.livery } : {}) })
       : forgeScrap(j.id, j.component, { ppu: scrapPpu(j.id) });
     if (j.lit) return litBaked(f, j.type === 'ship' && isCapitalKind(j.id) ? TILE_MAX_SIDE : Infinity);
     const frames: Frame[] = [];

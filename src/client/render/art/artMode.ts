@@ -15,8 +15,9 @@ import { defaultLightingPreset, lightingFromSearch, presetSettings, type Lightin
 
 export type ArtMode = 'classic' | 'machined';
 
-/** Ship livery look treatments under trial (`?livery=`). */
-export type LiveryTreatment = 'a' | 'b' | 'c';
+/** Ship livery look treatments under trial (`?livery=`); owned by fields.ts. */
+import type { LiveryTreatment } from './fields.js';
+export type { LiveryTreatment };
 
 export interface ArtOptions {
   mode: ArtMode;

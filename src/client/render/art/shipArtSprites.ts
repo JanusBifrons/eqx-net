@@ -26,16 +26,27 @@ export interface ShipArtCtx {
   /** Machined turrets (new effects): ringed hull / deck bakes and baked guns. */
   turrets?: boolean;
   /** Ship livery treatment (`?livery=`, look R&D); absent = today's paint. */
-  livery?: import('./artMode.js').LiveryTreatment;
+  livery?: import('./fields.js').LiveryTreatment;
 }
 
 /** The handle a ship should use now (re-acquired only on a kind/paint change). */
-export function shipHandleFor(actx: ShipArtCtx, key: string, kindId: string, paint: number | undefined): ArtHandle | null {
+/** `team`/`sigil` (owner colours): with `actx.livery` set and a team given,
+ *  the hull is liveried (sigil defaults to the team colour). The change check
+ *  compares scalars only; the Livery object is built only on re-acquire. */
+export function shipHandleFor(
+  actx: ShipArtCtx, key: string, kindId: string, paint: number | undefined, team?: number, sigil?: number,
+): ArtHandle | null {
   if (!actx.art) return null;
   let h = actx.handles.get(key);
   const rings = actx.turrets === true && hasTurrets(kindId, false);
-  if (!h || h.stale === true || h.job.type !== 'ship' || h.job.id !== kindId || h.job.paint !== paint || (h.job.rings === true) !== rings) {
-    h = actx.art.ship(kindId, paint, true, rings);
+  const treat = team !== undefined ? actx.livery : undefined;
+  const sig = sigil ?? team ?? 0;
+  const lv = h?.job.type === 'ship' ? h.job.livery : undefined;
+  const liveryChanged = treat === undefined
+    ? lv !== undefined
+    : lv === undefined || lv.treatment !== treat || lv.team !== team || lv.sigil !== sig;
+  if (!h || h.stale === true || h.job.type !== 'ship' || h.job.id !== kindId || h.job.paint !== paint || (h.job.rings === true) !== rings || liveryChanged) {
+    h = actx.art.ship(kindId, paint, true, rings, treat !== undefined && team !== undefined ? { treatment: treat, team, sigil: sig } : undefined);
     actx.handles.set(key, h);
   }
   return h;

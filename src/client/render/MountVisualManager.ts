@@ -49,6 +49,7 @@ import { LitShipMesh } from './art/litShipShader.js';
 import { litPass } from './art/litPass.js';
 import { MachinedShipSprite } from './art/MachinedShipSprite.js';
 import type { ShipArt } from './art/ArtService.js';
+import { liveryGrey } from './art/fields.js';
 
 /** A gun's (or AA barrel's) two layers: baked sun frames cross-faded, or
  *  (GPU-lit art) one lit mesh in `a`, lit by `litPass`, and `b` unused. */
@@ -651,7 +652,7 @@ export class MountVisualManager {
     for (const p of places) if (p.mount.id === mount.id) place = p;
     if (!place) return null; // e.g. an activated latent mount, a miner drill
     const job = actx.handles.get(id)?.job;
-    const paint = job?.type === 'ship' ? (job.paint ?? color) : job?.type === 'struct' ? (job.accent ?? color) : color;
+    const paint = job?.type === 'ship' ? (job.livery ? liveryGrey(color) : (job.paint ?? color)) : job?.type === 'struct' ? (job.accent ?? color) : color;
     const pivot = new Container();
     pivot.position.set(place.px, place.py);
     pivot.rotation = -mount.baseAngle;

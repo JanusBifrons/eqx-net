@@ -1,0 +1,61 @@
+/** Per-ship livery plumbing: bake keys and shipHandleFor's re-acquire check. */
+import { describe, it, expect } from 'vitest';
+import { bakeKey, type BakeJob } from './bake.js';
+import { shipHandleFor, type ShipArtCtx } from './shipArtSprites.js';
+import type { ArtHandle, ArtService } from './ArtService.js';
+import type { Livery } from './fields.js';
+
+const L: Livery = { treatment: 'a', team: 0x3a7bff, sigil: 0xffd23a };
+
+describe('bakeKey with livery', () => {
+  it('is unchanged without a livery', () => {
+    expect(bakeKey({ type: 'ship', id: 'fighter', paint: 0x123456 })).toBe(bakeKey({ type: 'ship', id: 'fighter', paint: 0x123456, livery: undefined }));
+    expect(bakeKey({ type: 'ship', id: 'fighter' })).not.toContain(':L');
+  });
+  it('differs per treatment, team and sigil (lit too)', () => {
+    const k = (l: Livery, lit = false): string => bakeKey({ type: 'ship', id: 'fighter', livery: l, lit });
+    const keys = [k(L), k({ ...L, treatment: 'b' }), k({ ...L, team: 0xff0000 }), k({ ...L, sigil: 0x00ff00 }), bakeKey({ type: 'ship', id: 'fighter' })];
+    expect(new Set(keys).size).toBe(keys.length);
+    expect(k(L, true)).not.toBe(bakeKey({ type: 'ship', id: 'fighter', lit: true }));
+  });
+});
+
+function ctx(livery?: Livery['treatment']): { actx: ShipArtCtx; calls: (Livery | undefined)[] } {
+  const calls: (Livery | undefined)[] = [];
+  const art = {
+    ship: (id: string, paint?: number, _u?: boolean, rings?: boolean, lv?: Livery): ArtHandle => {
+      calls.push(lv);
+      const job: BakeJob = { type: 'ship', id, paint, ...(rings ? { rings } : {}), ...(lv ? { livery: lv } : {}) };
+      return { key: bakeKey(job), job, rig: undefined as never, state: 'pending', ship: null, struct: null };
+    },
+  } as unknown as ArtService;
+  return { actx: { art, handles: new Map(), sunAz: 0, ...(livery ? { livery } : {}) }, calls };
+}
+
+describe('shipHandleFor livery', () => {
+  it('re-acquires only when a livery scalar changes', () => {
+    const { actx, calls } = ctx('a');
+    const h1 = shipHandleFor(actx, 'k', 'fighter', undefined, L.team, L.sigil);
+    expect(calls).toEqual([L]);
+    expect(shipHandleFor(actx, 'k', 'fighter', undefined, L.team, L.sigil)).toBe(h1);
+    expect(calls).toHaveLength(1);
+    shipHandleFor(actx, 'k', 'fighter', undefined, 0xff0000, L.sigil);
+    shipHandleFor(actx, 'k', 'fighter', undefined, 0xff0000, 0x00ff00);
+    shipHandleFor(actx, 'k', 'fighter', undefined, 0xff0000, 0x00ff00);
+    actx.livery = 'c';
+    shipHandleFor(actx, 'k', 'fighter', undefined, 0xff0000, 0x00ff00);
+    expect(calls.map((c) => c && `${c.treatment}${c.team}:${c.sigil}`)).toEqual([
+      `a${L.team}:${L.sigil}`, `a${0xff0000}:${L.sigil}`, `a${0xff0000}:${0x00ff00}`, `c${0xff0000}:${0x00ff00}`,
+    ]);
+  });
+  it('flag off or no team: no livery, existing callers unchanged', () => {
+    const { actx, calls } = ctx();
+    shipHandleFor(actx, 'k', 'fighter', undefined, L.team, L.sigil);
+    shipHandleFor(actx, 'k', 'fighter', undefined);
+    expect(calls).toEqual([undefined]);
+    const on = ctx('b');
+    shipHandleFor(on.actx, 'k', 'fighter', undefined);
+    shipHandleFor(on.actx, 'k', 'fighter', undefined, L.team);
+    expect(on.calls).toEqual([undefined, { treatment: 'b', team: L.team, sigil: L.team }]);
+  });
+});
