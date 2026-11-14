@@ -33,8 +33,9 @@ export interface WelcomeMessage {
   shipTuning?: 'A' | 'B';
   /** Per-kind size overrides (EQX_SHIP_KIND_SCALE), sent only when set. */
   shipKindScale?: string;
-  /** The server's naval range mode (`EQX_NAVAL_RANGE`), sent only when
-   *  `real`; absent ⇒ `legacy`. The client's must match (combat/navalRange.ts). */
+  /** The server's naval range mode (`EQX_NAVAL_RANGE`), always sent; absent
+   *  ⇒ `legacy` (a server from before real became the default). The client's
+   *  must match (combat/navalRange.ts). */
   navalRange?: 'legacy' | 'real';
   /** Shells as events (shell-events.md §7): set only when the server sends
    *  naval shells as `shell_salvo` / `shell_end` (always, since slice 4). */
