@@ -62,3 +62,12 @@ warning appears under the ghost whenever a shield wall lies within its range.
 See [docs/architecture/structures-and-power-grid.md](../architecture/structures-and-power-grid.md)
 for the system internals (the derived-collider wall, the grid-power/stun model,
 and the battery buffer).
+
+## Client rules in detail
+
+Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each rule and points here.
+
+### Turret-vs-fence placement hint
+
+- A fence blocks every shot, its owner's turret fire included. While a shot-firing kind is placed, `PlacementFenceHint` (mounted hidden) is shown under the ghost by `gameRafLoop` when `turretFireCrossesWall` (`structures/fenceFireHint.ts`: pure, alloc-free, over the shared `visitDerivedWalls`) finds a wall within the turret's range. It toggles on change only, using direct DOM writes and no React re-render. It works on desktop and touch.
+- Locks: `fenceFireHint.test.ts`, `PlacementFenceHint.test.tsx`, `tests/e2e/turret-fence-hint.spec.ts`.

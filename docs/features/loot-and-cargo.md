@@ -252,6 +252,24 @@ Ships have cargo you can open too. Select one and use **Open cargo**:
   `lingeringDeathDeletesRoster.test.ts` (A1, failing-first).
 - Test trigger: the `initialCargo` join option (testMode) seeds a hold.
 
+## Client rules in detail
+
+Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each rule and points here.
+
+### Cargo HUD (Living World P1a-1, plan peppy-jumping-pinwheel)
+
+- The local ship's hold is decoded ONLY from the authoritative own-ship `SnapshotMessage.states[].cargo` slice (`ColyseusClient.applyLocalCargo`, invariant #16). It writes the discrete Zustand `cargo`/`cargoCapacity` ONLY when the contents changed (`net/lootView.ts` `cargoChanged`, field-by-field, alloc-free), so a steady hold costs zero React renders.
+- `loot_collected` (zod-validated) only pushes a short-lived popup line (`lootFeed`, capped at 4, `LOOT_FEED_TTL_MS`). Never derive cargo from it.
+- `CargoChip` lives in the `top-left` slot at `order={3}` (under the sector chip). Testids: `cargo-chip` (`data-cargo-weight/capacity/fill`), `cargo-breakdown`, `loot-feed-line`. It shows NO credits.
+
+- Loot pods render through the EXISTING scrap path (`parentShipKind 'cargo-pod'`, `componentIndex` = tier colour). There's no separate pod renderer.
+
+### Cargo panel (plan soft-leaping-truffle v3, C1)
+
+- `components/CargoPanel.tsx` (opened by `CargoAction` from the inspector, for any BUILT storage structure) is rebuilt ONLY from `cargo_state` replies (#16). It polls while mounted. The reply carries the structure's hold AND the ship's hold, so the panes never disagree.
+- Rows come from the pure `components/cargoRows.ts`: names, never ids (uids ride inside the requests).
+- Every client → server message sender must pass its server schema: add a case to `tests/unit/tradeClientWireParity.test.ts` (strict schemas need the `type` the client's `send()` adds; LESSONS 2026-11-01).
+
 ## Server implementation notes
 
 > Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.
