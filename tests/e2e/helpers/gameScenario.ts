@@ -141,6 +141,8 @@ export interface GalaxyTestClientOpts {
   waitForInPlay?: boolean;
   /** RTS slice 10 — `?startMode=`; default `fly` (galaxy play itself defaults to command view). */
   startMode?: 'fly' | 'command';
+  /** Extra URL params (e.g. `{ art: 'machined', fx: 'new' }`), set last. */
+  extraParams?: Record<string, string>;
 }
 
 /**
@@ -175,6 +177,7 @@ export async function launchGalaxyTestClient(browser: Browser, opts: GalaxyTestC
   if (opts.zoom !== undefined) params.set('zoom', String(opts.zoom));
   if (opts.instantLock) params.set('instantLock', '1');
   if (opts.startMode !== undefined) params.set('startMode', opts.startMode);
+  for (const [k, v] of Object.entries(opts.extraParams ?? {})) params.set(k, v);
   await page.goto(`${BASE_URL}?${params}`);
   // Galaxy rooms lazy-create + boot a physics worker on first join, so allow
   // a longer ready window than the engineering-room helper.
