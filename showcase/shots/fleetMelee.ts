@@ -1,8 +1,7 @@
 import type { Shot, ShotContext } from '../types.js';
-import { flyTo, face } from './_pilot.js';
 
-/** Live NPC ships in the pilot's mirror. */
-async function npcCount(ctx: ShotContext): Promise<number> {
+/** Live AI-flown ships (drones and robots) in the spectator's mirror. */
+async function aiShipCount(ctx: ShotContext): Promise<number> {
   return ctx.page.evaluate(() => {
     const m = (globalThis as { __eqxClient?: { mirror: { swarm: Map<number, { kind: number }> } } }).__eqxClient?.mirror;
     let n = 0;
@@ -11,7 +10,7 @@ async function npcCount(ctx: ShotContext): Promise<number> {
   }).catch(() => 0);
 }
 
-/** Live robots in the pilot's mirror (works while spectating too). */
+/** Live robots in the mirror (works while spectating). */
 async function robotCount(ctx: ShotContext): Promise<number> {
   return ctx.page.evaluate(() => {
     const m = (globalThis as { __eqxClient?: { mirror: { swarm: Map<number, { kind: number; shipKind?: string }> } } }).__eqxClient?.mirror;
@@ -21,50 +20,54 @@ async function robotCount(ctx: ShotContext): Promise<number> {
   }).catch(() => 0);
 }
 
-/** Is the pilot still flying (not spectating after a death)? */
-async function piloting(ctx: ShotContext): Promise<boolean> {
+/**
+ * Ids of the live drone-faction ships, fighters first, each group by
+ * ascending id: the follow order. The pilot's own ship is not in the swarm
+ * mirror, so every entry here is flown by its AI pilot.
+ */
+async function droneFollowOrder(ctx: ShotContext): Promise<number[]> {
   return ctx.page.evaluate(() => {
-    const s = (globalThis as { __eqxStore?: { getState(): { pilotMode?: string } } }).__eqxStore?.getState();
-    return s?.pilotMode !== 'spectator';
-  }).catch(() => false);
+    const m = (globalThis as { __eqxClient?: { mirror: { swarm: Map<number, { kind: number; shipKind?: string }> } } }).__eqxClient?.mirror;
+    const fighters: number[] = [];
+    const others: number[] = [];
+    m?.swarm.forEach((e, id) => {
+      if (e.kind !== 1 || !e.shipKind || e.shipKind.startsWith('robot')) return;
+      (e.shipKind === 'fighter' ? fighters : others).push(id);
+    });
+    fighters.sort((a, b) => a - b);
+    others.sort((a, b) => a - b);
+    return [...fighters, ...others];
+  }).catch(() => []);
 }
 
-/** The nearest robot (the side hostile to the pilot), as a player picks a foe. */
-async function nearestRobot(ctx: ShotContext): Promise<{ x: number; y: number } | null> {
-  return ctx.page.evaluate(() => {
-    const m = (globalThis as { __eqxClient?: { mirror: { localPlayerId?: string | null; ships: Map<string, { x: number; y: number }>; swarm: Map<number, { kind: number; shipKind?: string; x: number; y: number }> } } }).__eqxClient?.mirror;
-    const me = m?.localPlayerId ? m.ships.get(m.localPlayerId) : undefined;
-    if (!m || !me) return null;
-    let best: { x: number; y: number } | null = null;
-    let bd = Infinity;
-    m.swarm.forEach((e) => {
-      if (e.kind !== 1 || !e.shipKind?.startsWith('robot')) return;
-      const d = (e.x - me.x) ** 2 + (e.y - me.y) ** 2;
-      if (d < bd) { bd = d; best = { x: e.x, y: e.y }; }
-    });
-    return best;
-  }).catch(() => null);
+/** Follow-camera zoom on the followed fighter (1920-wide frame). */
+const FOLLOW_ZOOM = 1.0;
+
+/** Point the cinematic camera at one AI-flown ship: the follow spring of
+ *  play (a switch reads as a quick ~250 ms cut). */
+async function follow(ctx: ShotContext, id: number): Promise<void> {
+  const k = ctx.viewport.width / 1920;
+  await ctx.cinema.play([{ atMs: 0, smoothMs: 250, shot: { kind: 'track', target: `swarm-${id}`, zoom: FOLLOW_ZOOM * k, leadMs: 250 } }]);
 }
 
 /**
- * Friendly fire and the fight rules (allegiances.md "Fire paths"), filmed as a
- * player sees it. A drone pack and a robot squad (sides that fight on sight)
- * are posed in two ranks each, shields up, and are already fighting when the
- * take opens. A fighter flies in from the south with the follow camera and
- * goes after the nearest robot (robots are hostile to pilots on sight), with
- * its gun group on AUTO: it fires only once its lock completes, and the robots
- * lock it back (the threat ring). NPCs hold fire while an ally is in the line
- * and hit their own side when one drifts in after the shot; shields meet as
- * bubbles. No test cues at all: no aggro, no survive params, no lock cues. If
- * the fighter dies, the take keeps rolling in the spectator view the game
- * switches to. The take ends ~3 s after the last robot dies (`endsWithRun`),
- * so the clip doesn't idle after the fight (it used to run on ~35 s).
+ * Friendly fire and the fight rules (allegiances.md "Fire paths"), seen from
+ * one AI pilot's side. A drone pack and a robot squad (sides that fight on
+ * sight) are posed in two ranks each, shields up, and are already fighting
+ * when the take opens. The pilot joins and spectates (owner decision
+ * 2026-11-14: the followed ship is flown by its AI pilot, not a test
+ * script); the camera follows the first drone-faction fighter by id. If it
+ * dies, the camera cuts to the next drone fighter (then any drone ship), so
+ * the clip stays on the action. The AI pilots hold fire while an ally is in
+ * the line and hit their own side when one drifts in after the shot; shields
+ * meet as bubbles. No test cues at all: no aggro, no survive params, no lock
+ * cues. The take ends ~3 s after the last robot dies (`endsWithRun`).
  */
 export const fleetMelee: Shot = {
   id: 'fleet-melee',
   section: 'mechanics',
   title: 'Fleet melee',
-  caption: 'A fighter joins a drone-versus-robot fight already under way and goes after the robots, firing only once locked; the NPCs hold fire while an ally is in the line and can still hit their own side.',
+  caption: 'A drone-faction fighter flown by its AI pilot in a melee against the robot faction; the AI pilots hold fire while an ally is in the line and can still hit their own side.',
   features: ['M19'],
   docs: ['allegiances', 'fire-control'],
   reel: false,
@@ -79,26 +82,44 @@ export const fleetMelee: Shot = {
       m?.swarm.forEach((e) => { if (e.kind === 1) n++; });
       return n >= 12;
     }, undefined, { timeout: 60_000, polling: 250 });
+    // Watch as a spectator: the camera may then follow an AI-flown ship.
+    await ctx.spectate();
+    const order = await droneFollowOrder(ctx);
+    if (order.length === 0) throw new Error('fleet-melee: no drone-faction ship to follow');
+    await follow(ctx, order[0]!);
     // The two sides close and open fire on their own; roll once they meet.
     await ctx.sleep(2000);
-    ctx.log(`  [fleet-melee] NPCs at take start: ${await npcCount(ctx)}`);
+    ctx.log(`  [fleet-melee] AI ships at take start: ${await aiShipCount(ctx)}; following swarm-${order[0]}`);
   },
   async run(ctx) {
     const t0 = Date.now();
     const left = (): number => 44_000 - (Date.now() - t0);
-    while (left() > 1000 && (await piloting(ctx))) {
-      const r = await nearestRobot(ctx);
-      if (!r) break; // the robots are gone: the pilot sits and watches the rest
-      // Close to gun range, then hold the nose on it for a moment.
-      await flyTo(ctx, r.x, r.y, { arrive: 220, maxMs: Math.min(3000, left()), cruise: 260, passThrough: true });
-      const r2 = await nearestRobot(ctx);
-      if (r2 && left() > 1000) await face(ctx, r2.x, r2.y, 700);
+    const t = (): string => ((Date.now() - t0) / 1000).toFixed(1);
+    // The fighter followed at take start (startWhen picked it; re-read in
+    // case it died during the 2 s settle).
+    let order = await droneFollowOrder(ctx);
+    let followed = order[0] ?? null;
+    if (followed !== null) await follow(ctx, followed);
+    ctx.log(`  [fleet-melee] t=${t()}s following swarm-${followed}`);
+    // Stay on the followed ship; when it dies, cut to the next one in the
+    // follow order. Once the last robot is gone, hold ~3 s on the aftermath
+    // and end the take (endsWithRun).
+    while (left() > 0 && (await robotCount(ctx)) > 0) {
+      order = await droneFollowOrder(ctx);
+      if (followed === null || !order.includes(followed)) {
+        const next = order[0] ?? null;
+        if (next !== null) {
+          ctx.log(`  [fleet-melee] t=${t()}s swarm-${followed} gone; cut to swarm-${next}`);
+          followed = next;
+          await follow(ctx, next);
+        } else if (followed !== null) {
+          ctx.log(`  [fleet-melee] t=${t()}s no drone-faction ship left`);
+          followed = null;
+        }
+      }
+      await ctx.sleep(Math.min(250, left()));
     }
-    ctx.log(`  [fleet-melee] t=${((Date.now() - t0) / 1000).toFixed(1)}s piloting=${await piloting(ctx)} NPCs=${await npcCount(ctx)}`);
-    // Watch the rest of the fight; once the last robot is gone, hold ~3 s on
-    // the aftermath and end the take (endsWithRun).
-    while (left() > 0 && (await robotCount(ctx)) > 0) await ctx.sleep(Math.min(500, left()));
     if (left() > 0) await ctx.sleep(Math.min(3000, left()));
-    ctx.log(`  [fleet-melee] end piloting=${await piloting(ctx)} NPCs=${await npcCount(ctx)}`);
+    ctx.log(`  [fleet-melee] end t=${t()}s following swarm-${followed} AI ships=${await aiShipCount(ctx)} robots=${await robotCount(ctx)}`);
   },
 };
