@@ -177,6 +177,38 @@ aimTolerance = baseTolerance + maxTurretHalfArc
 
 The fire DIRECTION the body AI provides (`(fwdX, fwdY)`) is still body-forward; per-mount adjustment is added downstream in `handleAiFire` via `+ mount.baseAngle + currentMountAngle`.
 
+## Weapon catalogue, fire classes and energy (core)
+
+**Catalogue** (`src/core/combat/WeaponCatalogue.ts`): the single source of truth for weapon definitions.
+- Each entry is a discriminated `WeaponDef = HitscanWeaponDef | ProjectileWeaponDef` describing damage, cooldown, `energyCost` (per slot trigger) and mode-specific params (range for hitscan; speed / radius / maxTicks for projectile). Lookup via `getWeapon(id)`.
+- **Append-only and pure:** no DI, no I/O. Adding a weapon = adding a record + listing its id in `WEAPON_IDS`.
+- The data-driven loadout binds weapons to mounts (`mount.weaponId`). The server fires `getWeapon(mount.weaponId)` per barrel and IGNORES the client's claimed `weapon` field (see `PlayerFireResolver` / `AiFireResolver`), and parameterises `spawnServerProjectile` from the `WeaponDef`. The client uses the same lookup for ghost spawn speed and the renderer-side bolt visual.
+- **Do not branch on weapon id in `src/core` paths:** read fields off the `WeaponDef`. The Open/Closed boundary is the catalogue, not a switch statement.
+- `src/core/combat/Weapons.ts` keeps the combat constants and pure geometry helpers (`HITSCAN_DAMAGE`, `PROJECTILE_DAMAGE`, `HITSCAN_RANGE`, `PROJECTILE_SPEED`, `WEAPON_COOLDOWN_TICKS`, `rayHitsSphere()`), now derived from the catalogue.
+
+**Hitscan falloff: "optimal + beyond", linear.**
+- A `HitscanWeaponDef.range` is the OPTIMAL range: FULL `damage` out to it.
+- `falloff: { minDamageFrac, maxRangeMul }` adds a LINEAR fringe BEYOND optimal: the ray casts to `range × maxRangeMul` (the beam weapon: 250 → 325, `maxRangeMul` 1.3, so the tail is short and clearly ends), and `hitscanFalloffFrac(dist, optimalRange, maxRange, minDamageFrac)` scales damage linearly from full at `range` to `minDamageFrac` at `maxRange`. The owner chose linear: a constant fall per unit reads as a smooth taper that matches the visual beam taper.
+- `maxRangeMul` absent or ≤ 1 ⇒ flat full damage in range (back-compat).
+- The aim line and auto-fire still use `range` (optimal), so the guide stays at the reliable reach; only the ray and damage extend.
+- **Server-authoritative:** the `WeaponFireSink.hitscan(ctx, range, damage, falloffMinDamageFrac?, maxRange?)` fifth param threads maxRange into BOTH resolvers; the client reads the scaled damage off the `DamageEvent`, never predicts it. The client beam visual (`BeamSpritePool`) draws solid to optimal, then fades to nothing across optimal → maxRange, so the visible taper == the damage band. 🔴 netgate (live combat path).
+- Locks: `hitscanFalloff.test.ts` (full to optimal, linear beyond), `weapons.test.ts` (maxRange threaded to the sink), `tests/e2e/laser-falloff-probe.spec.ts` (a no-hit beam ends and tapers).
+
+**Fire classes** (`src/core/combat/weapons/`, GEP B3): the catalogue stays the pure DATA source; this layer wraps each `WeaponDef` in a stateless flyweight (`HitscanWeapon` / `ProjectileWeapon` / `MissileWeapon` over the `Weapon` base) that owns its per-mode FIRE DECISION via a virtual `resolveFire(ctx, sink)`.
+- Both fire resolvers collapse to one `getWeaponObject(mount.weaponId).resolveFire(ctx, this)` call (the resolver IS the `WeaponFireSink`).
+- Fire is low-frequency, so the virtual dispatch is cheap; the per-hit damage path stays monomorphic (HC#5).
+- The server work (lag-comp sweep, spawn, `laser_fired` broadcast) lives behind the zone-pure `WeaponFireSink`, injected per resolver, so player-vs-AI hitscan differences live in the sink, not the weapon.
+- Adding a weapon = a catalogue row (its `mode` picks the leaf in `weapons/index.ts`); no resolver edit. Parity: `weapons/weapons.test.ts`.
+
+**Energy** (`src/core/combat/Energy.ts`): pure scalar helpers `spendEnergy` / `regenEnergyStep` / `canAfford` + `resolveSlotEnergyCost` (a per-slot `energyCost` override wins, else the MAX over the slot's mounts' weapon `energyCost`: drain once per slot).
+- **Shared brain** (unlike `ShieldHull.ts`): energy is driven by the player's own fire and boost input, so the server owns the value and the client predicts via the SAME helpers (`ColyseusClient.predEnergy`).
+- Allocation-free (scalar in/out, `mount.find`, no array build), safe in the per-tick hot loop.
+- Drone FIRE is not energy-gated; drone BOOST is (virtual pilot, its own server-side pool). `BOOST_TICK_COST` is the per-tick boost drain.
+
+**Turret reach** (`src/core/combat/mountReach.ts`, capitals Phase 3): `mountTargetReach(kind, mounts)` is the ONE target-pick radius both sides use (server `WeaponMountTicker`, client `tickLocalMountAim`). It returns `HITSCAN_RANGE` for every non-capital, and for a capital its longest gun's engage range plus that mount's offset. `hasTurretFireControl(kind)` marks kinds whose turrets fire one by one (capitals).
+
+**History.** Energy arrived with the weapons/energy/AI overhaul (2026-06-02). Falloff: R2.29 tapered within range, P3.13 replaced it with reverse-square beyond range, and the Equinox laser issue (2026-06-14) replaced that with the linear fringe (`maxRangeMul` tightened 1.5 → 1.3, after the "renders infinitely" beam; the reverse-square's "slow-then-cliff" felt like damage dropped to 0 instantly beyond range).
+
 ## Engineering room — `mount-test`
 
 For phone-side smoke testing of multi-mount kinds:
@@ -220,6 +252,36 @@ Run `EQX_CAPTURE_BASELINE=1 pnpm test tests/unit/network-bandwidth.test.ts` to r
 - **Per-mount weapon swapping**. The catalogue already stores `weaponId` per mount as data; a future loadout UI swaps it without touching ship-kind definitions.
 - **PvP-aware hostility for player turrets**. Today player turret AI picks "any drone (kind=1)" as hostile via a trivial filter. PvP will need a faction model.
 - **Aim arc indicator**. Drawn as a faint wedge from `baseAngle + arcMin` to `baseAngle + arcMax`. Skipped during Phase 4b smoke testing as the rotating turret + dotted aim line already conveyed the arc visually; reinstate if telemetry shows new players struggle to "read" each kind's mount capability.
+
+## Client rules in detail
+
+Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each rule and points here.
+
+- **Dynamic weapon mounts — latent slots (Equinox Phase 4 WS-B3).** Ship kinds declare LATENT mount slots (`ShipKind.latentMounts`, inactive geometry); a ship-level upgrade `activate_mount { shipId, slotId, weaponId }` activates one PER SHIP INSTANCE (persisted in the roster `mounts` JSON). The activated mounts are PUBLIC — they ride `SnapshotMessage.states[].mounts` (emit-when-non-empty, NO `SWARM_WIRE_VERSION` bump — slim JSON like `level`), mirrored ONCE via `applyActivatedMounts` ([net/snapshotRemoteSync.ts](../../src/client/net/snapshotRemoteSync.ts)) onto `mirror.ships[id].activatedMounts` (active hulls) + the lingering entry inside `snapshotShipRouter` (parked hulls). **GEOMETRY is looked up CLIENT-SIDE by `(kind, slotId)` from the catalogue — never on the wire (the scrap-collider trick).** The per-instance mount list `[...kind.mounts, ...activated]` is resolved by the shared pure `resolveInstanceMounts` / `resolveInstanceFireMounts` ([@shared-types/shipKinds/slots](../../src/shared-types/shipKinds/slots.ts)) — the SAME resolvers the server uses, so the predicted aim + beam + ghosts match the authoritative mount angles (lockstep, invariant #12). It is the `mountAngles[]` index space (`tickLocalMountAim` sizes its array by it; `localShipMounts` / `updateLiveBeam` / `sendFire` use the firing set). The renderer draws the extra barrels via `shipSpriteUpdater` → `MountVisualManager.ensureForInstance` (rebuilds the cluster when the activated set changes via `mountSig`). The UI is the `UpgradeModal`'s "Weapon mounts" section (`onActivateMount` → `ColyseusGameClient.activateMount`; closes/refreshes on the `mount_activated` echo, which patches the Zustand roster's `mounts`). Locks: `slots.dynamicMounts.test.ts`, `snapshotRemoteSync.activatedMounts.test.ts`, `MountVisualManager.test.ts`, `UpgradeModal.test.tsx` (WS-B3 describe), `tests/integration/sectorRoom/activateMount.test.ts`. **Netgate required** (mount/fire + snapshot are live-loop) — deferred to the human gate. Full story: [docs/architecture/weapon-mounts.md](../../docs/architecture/weapon-mounts.md).
+
+### Multi-mount mirror surfaces (Phase 2c–4c, 2026-05-11)
+
+The renderer mirror exposes per-mount data on three surfaces, all keyed by mount id (from the ship-kind catalogue):
+
+- `ShipRenderState.mountAngles?: number[]` — per-mount slewed angle in arc-local frame, **indexed by catalogue mount-order** (`kind.mounts`). For the **local player**, populated each tick by `ColyseusClient.tickLocalMountAim` → `fcTickMountAngles` (predicted, aimed at each group's lock). For **remote players**, populated by the snapshot handler from `snap.states[id].mountAngles` (authoritative). Undefined ⇒ renderer falls back to `baseAngle`. **Catalogue-indexing is load-bearing AND was latently violated (2026-06-05 fix).** Both readers index by catalogue order — the live-beam direction (`localKind.mounts.findIndex(m => m.id === mountId)`) and the turret sprites (`shipSpriteUpdater` → `MountVisualManager.applyMountAngles(id, kind.mounts, mountAngles)`). The local writer `tickLocalMountAim` USED to size + index the array by the **active SLOT's** mounts (`localShipMounts()` = `resolveSlotMounts`, slot-local order) — correct ONLY while a slot is the full catalogue in catalogue order (true for every ship today, so the bug was latent). The write now goes through `fcTickMountAngles(angles, catalogueMounts, …)` (fire control; the former `combat/localMountAim.ts` helper is deleted): it writes catalogue-indexed, one entry per instance mount, each aiming at its group's lock. The moment a kind ships a slot that is a subset/reorder of `kind.mounts`, slot-local indexing made the local player's beams + turrets read the WRONG mount's angle (or `undefined` → base) — remote players were always fine (server writes catalogue-indexed).
+- `SwarmRenderState.mountAngles?: number[]` — same field on drones. Populated only for **in-interest drones** from `snap.drones[].mountAngles`. Out-of-interest drones leave it undefined and their barrels render at `baseAngle` until they re-enter interest.
+- `RenderMirror.liveBeams: Map<mountId, BeamData>` and `RenderMirror.remoteLasers: Map<shooterId, Map<mountId, BeamData>>` — per-mount beam state. The pre-2c single `liveBeam` and flat `remoteLasers` shapes are gone.
+
+**Per-frame `mirror.ships.set()` rebuild MUST preserve `mountAngles`.** The local-ship update in `ColyseusClient.updateMirror()` and the remote-ship update in `syncMirror()` both reconstruct each ship's mirror entry from scratch (predWorld pose + lerp offset). Non-spatial fields need explicit `...(prev?.X ? { X: prev.X } : {})` preservation or they wipe at 60 Hz. The fields currently in this category: `kind`, `displayName`, `mountAngles`. Adding any new non-spatial field to `ShipRenderState`? Add it to BOTH rebuild sites or it disappears silently.
+
+
+
+`MountVisualManager` ([src/client/render/MountVisualManager.ts](../../src/client/render/MountVisualManager.ts)) owns per-mount Pixi `Graphics` (turret sprite + dotted aim line). One cluster per ship sprite (player AND drone), pooled across the ship's lifetime. The `applyMountAngles(shipId, mounts, angles?)` method updates rotations each frame; undefined `angles` snaps every mount to baseAngle. Renderer despawn path calls `removeShip(shipId)` to free the cluster.
+
+`BARREL_LENGTH = 20` deliberately matches the 20 u server-side self-hit clearance in `SectorRoom.handleFire`/`handleAiFire` so beams emerge from the *visible* barrel tip. Don't change one without the other.
+
+The aim-line preview is drawn as a dotted chain (Pixi v8 `Graphics` has no native dashed stroke — we draw short segments manually). Its length is **per-mount, = the bound weapon's effective reach** via the pure `aimLineLengthForMount` (`render/aimLineLength.ts` → `weaponAutoFireRange`: hitscan→`range` e.g. 250, projectile→0.85× max travel, missile→0.5× max travel). It used to be a hardcoded 500 for every mount, so the interceptor beam (range 250) drew its guide at 2× the actual reach (R2.14, 2026-06-12). `6 u on / 4 u off`, alpha 0.25; the dash chain rotates with the parent mount container; no per-frame redraw. Lock: `aimLineLength.test.ts`.
+
+See [docs/architecture/weapon-mounts.md](weapon-mounts.md) for the call-graph and the "do not add a second correction path" rule.
+
+### Beam length is `scale.x ÷ texture.width`, NOT `scale.x = worldLen` (Equinox laser issue, 2026-06-14)
+
+`BeamSpritePool` draws each beam segment as a stretched `Sprite`. A Pixi sprite renders `worldLen = scale.x × texture.width`, so the world length must be set as **`scale.x = worldLen / texture.width`**. The solid core uses the 1×1 `Texture.WHITE` (÷1, fine), but the **gradient + fade textures are 256 px WIDE** (they have to be — that's where the horizontal fade lives). Setting `scale.x = worldLen` on those rendered the fade tail **256× too long** (a 75 u tail → ~19 200 u): the "fade" stretched off any screen at any zoom, so in empty space the beam looked SOLID to infinity and "never tapered" — the long-standing "laser renders infinitely / flies off the screen" bug. **Headless unit tests fall back to `Texture.WHITE` (1×1) for the canvas textures, so they could NEVER see this** — the fix had "passed" four rounds of screenshots while staying broken on-device. Lock: `BeamSpritePool.solidTaper.test.ts` now injects a genuine 256-px `Texture` and asserts the DRAWN world length (`scale.x × texture.width`, exposed by `solidLenAt`/`fadeTailAt`) equals the intended length. **The damage falloff is LINEAR + bounded at `range × maxRangeMul` (interceptor 250 → 325); the matching visual is solid to `optimalRange × VISUAL_BEAM_SOLID_FRAC` (`ColyseusClient`, default 0.4 = inner 100 u) then a long gradual fade to nothing at maxRange — purely visual, `solidDist` never feeds damage.** Verified end-to-end (no-hit empty-space + hit cases) by `tests/e2e/laser-falloff-probe.spec.ts`, which forces `?zoom=` for a deterministic capture (the spawn camera-zoom ease otherwise lands before/after screenshots at different scales — a real comparison trap that masked the bug, see `docs/LESSONS.md` 2026-06-14).
 
 ## Core contract reference
 
@@ -271,3 +333,5 @@ Moved verbatim from the old "Thresholds" section of `src/server/CLAUDE.md`. The 
 Player aim before lock-to-fire (superseded by root invariant #19: player mounts now aim only at their group's lock):
 
   - **Player aim is hostile-only + health-weighted (Part C, weapon-autofire-boost-mechanics).** `WeaponMountTicker.tickPlayer` filters candidates through the drone's `hostileTo` set (per-player, same source as `tickDrone`) and biases the pick toward low-HP drones via the SHARED `PLAYER_AIM_HEALTH_WEIGHT` / `PLAYER_AIM_SWITCH_MARGIN` constants — **identical options to the client's `tickLocalMountAim`** so the predicted beam and this authoritative mount angle agree (mount-angle lockstep, Invariant #12). Drone health comes from `swarmHealth` (passed LAZILY — `() => this.swarmHealth` — because the shield/hull router that owns the map is constructed AFTER the ticker in `SectorRoom`'s constructor; eager eval threw at boot). The same `swarmHealth` feeds the snapshot `drones[].hp` so client + server read the same health signal.
+
+The visible bug when this rule was broken: the local player's interceptor showed two correctly-rotated wing beams via the one-shot ghost projectile path (which carries pre-computed endpoints) but the continuous `liveBeam` rendered straight forward — because the renderer re-derives beam direction from `mirror.ships.get(localId).mountAngles` each frame, and that field was being wiped between `tickLocalMountAim`'s write and the renderer's read.

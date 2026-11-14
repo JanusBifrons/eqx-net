@@ -80,6 +80,11 @@ Plan `peppy-jumping-pinwheel`, economy v2, phase W1. This follows Eve Online:
   wallet is refused.
 - `WalletChip.test.tsx`.
 
+## Client rules in detail
+
+Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each rule and points here.
+
+- **Economy v2 W1 — the wallet.** Credits are virtual: never cargo. the GameHud status capsule (testid `wallet-chip` / `data-wallet`) shows the one balance from the Zustand `wallet`, written ONLY from the own-ship snapshot `states[].wallet` field when it changes (#16). Bounty and repair UIs check and pay from the wallet; no storage picker for payment.
 ## Server implementation notes
 
 > Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.

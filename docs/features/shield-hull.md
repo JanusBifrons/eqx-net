@@ -52,6 +52,30 @@ gunship 140/140.
 See [docs/architecture/collision-layers.md](../architecture/collision-layers.md)
 for the engine internals.
 
+## Client rules in detail
+
+Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each rule and points here.
+
+### Shield/Hull client (2026-05-16)
+
+- `shieldPct` is a discrete, purity-clean Zustand scalar (sibling of
+  `hullPct`). the GameHud status capsule's shield/hull rings are the tiny HUD;
+  the bar's CSS width-transition IS the locked "client tweens the
+  shield bar" — Halo regen arrives as discrete anchors (DamageEvent /
+  ShieldEventMessage), NEVER a continuous stream. No JS animation loop.
+- `handleDamage` uses the event-provided per-kind `hullMax/shieldMax`
+  — NOT the global `SHIP_MAX_HEALTH` (fixing a latent %-base bug for
+  any kind whose maxHealth ≠ 500).
+- predWorld collider swap mirrors the AUTHORITATIVE shield-down only;
+  the client never computes the 0-cross. Drones: ONE ownership site
+  (`syncSwarmIntoPredWorld`, idempotent `setHullExposed`); the snapshot
+  loop only keeps `sw.shieldDown` consistent — do NOT add a second
+  swap site (chapter-2; a snapshot-channel variant was tried + reverted
+  for a spawn-gap p50 regression — docs/LESSONS.md 2026-05-16).
+- Internals: [docs/architecture/collision-layers.md](../architecture/collision-layers.md).
+- **The drawn bubble is the shield collider (2026-11-10).** Both shield visuals (the legacy `ShieldAura` ring and `FxShields`) draw at `render/pixi/shieldBubbleRadius.ts` `shieldBubbleRadiusForEntity` = `shieldBubbleRadius(kind)` (shieldVisualRadius + `shipTuning` pad), the same radius `shipShieldColliderDesc` mounts. `ShieldAura` adds no pad of its own. A drone's predWorld body spawns with that collider (`droneClientLeaf` passes its kind to `spawnObstacle`). Lock: `tests/unit/shieldColliderParity.test.ts`.
+- **Visual shield aura (M8 — effects subsystem)**: `ShipRenderState.shieldDown` is the per-ship shield-up bit used by the in-world aura (`src/client/effects/perEffect/ShieldAura.ts`). Populated by `handleDamage` (broken on `newShield<=0`) + `handleShield` (cleared on `restored`/`regen_complete`). Drones use the existing `swarm[].shieldDown` decoded from the binary wire. Known limitation: remote players who joined the sector AFTER their shield broke (no DamageEvent observed) start with `shieldDown=undefined` — the aura is OFF (matches the snapshot-derived ideal). Future: lift the bit onto the snapshot's `states[*]` wire and the manager treats `undefined` as "shield up" only when the snapshot tier has been observed. The aura uses ONE single shared GlowFilter on the shield container (NOT per-entity) per hostile-review #4 — protects the 2026-05-21 warp-disable cost lesson.
+
 ## Server implementation notes
 
 > Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.

@@ -120,6 +120,41 @@ components.
   30 are fighter-sized) is an open owner decision (found 2026-11-12). Its death
   blast does follow the hull (`blastRadiusFor`).
 
+## Client rules in detail
+
+Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each rule and points here.
+
+### Composite ship + scrap render (2026-06-13)
+
+- **Composite ships**: `buildCompositeShipGfx` (`render/pixi/spriteBuilders.ts`)
+  bakes a `ShipShape` `composite`'s `parts[]` into ONE `Graphics` (one sprite /
+  one draw); `buildShipGfxFromShape` delegates to it. Pixi-up local space (the
+  sprite transform handles the world Y-flip). `shipShapeSvg.tsx` renders the
+  picker silhouette the same way.
+- **Scrap (pose-core kind 3)** is a new client leaf
+  (`net/entity/leaves/scrapClientLeaf.ts`) routed by `ClientEntityFactory`
+  (`case SWARM_KIND_SCRAP`). It is a convexHull predWorld collider
+  built from the parent kind's component collider
+  (`shipScrapGroups(entry.shipKind)[entry.componentIndex].collider`, mapped
+  `x*scale,-y*scale` — IDENTICAL to the server `ScrapSpawner`), in
+  `SCRAP_COLLISION_GROUPS`. **It is DRONE-like, NOT asteroid-like (Phase-5
+  desync fix, 2026-06-14):** spawned **UNLOCKED** at the server's
+  `SCRAP_DEFAULT_MASS`. Its body follows the remote-entity anchor like a drone
+  (latest server state each snapshot, stepped on the predicted timeline — see
+  the one-paradigm rule above), so the local player's predicted shove matches
+  the server's dynamic mass-1 scrap; its sprite joins the `=== 1` drawn-pose
+  path in `updateMirror` + `swarmSpriteUpdater` (`resolveEntityDisplayPose`,
+  not a second render-now `interpolateSwarmPose`). **Locking it (the old asteroid-like behaviour)
+  made it an infinite-mass wall the player bounced off in prediction while the
+  server let them shove it — every snapshot reconciled that divergence as the
+  user's "huge spike in corrections".** `buildScrapGfx(parentKind, componentIndex)`
+  renders the component's recentred sub-shapes from the catalogue, keeping the
+  part colours so a dead ship visibly comes apart. `swarmSpriteUpdater` has a
+  kind-3 create branch. Scrap geometry is NEVER on the wire — looked up by
+  `(parentShipKind, componentIndex)`. Lock: `scrapClientLeaf.test.ts` (a ship
+  driven into a scrap fragment must shove it, not bounce). See
+  [docs/architecture/composite-ships-and-scrap.md](composite-ships-and-scrap.md).
+
 ## Core reference
 
 Moved from `src/core/CLAUDE.md` (section "Composite ships + scrap geometry").
@@ -177,6 +212,30 @@ is EXCLUDED from `SectorPersistence` (transient debris). Wire: `SWARM_KIND_SCRAP
 + a `componentIndex` byte bumped `SWARM_WIRE_VERSION 3 → 4` → **netgate applies**
 (invariant #8). Locks: `ScrapSpawner.test.ts` + `scrapOnDeath.test.ts`
 (integration). See [docs/architecture/composite-ships-and-scrap.md](../../docs/architecture/composite-ships-and-scrap.md).
+
+## Core reference
+
+Moved from `src/core/CLAUDE.md` (section "Composite ships + scrap geometry").
+
+- `ShipShape` is a discriminated union (`polygon | composite`). The
+  `shipHullOutline(kind)` seam (`geometry/shipHullOutline.ts`) returns the
+  composite `hull` or the polygon `points` — **every collision/physics reader
+  goes through it**, so polygon kinds are byte-identical. The
+  "silhouette == collider" invariant is RELAXED for composites: the collider is
+  the authored gross `hull`; the visual `parts[]` are detail (per-part live
+  collision is intentionally NOT modelled). `shipShapeScale` / `shipPrimaryColor`
+  are the sibling accessors.
+- `geometry/shipScrapGroups.ts` precomputes ONCE at module load (like
+  `shipHullDecomp`) one scrap GROUP per composite component — a silhouette
+  (`canScrap:true`) + its detail parts (role-prefix), each recentred on the
+  component centroid, with a convex-hull collider. Polygon kinds → empty. The
+  death→scrap path (server) and `buildScrapGfx` (client) both read it.
+- `physics/collisionGroups.ts` `SCRAP_COLLISION_GROUPS` (membership bit 1 /
+  filter ~bit 1) makes scrap NOT collide with other scrap but collide with
+  everything else. Threaded through `World.spawnObstacle`'s optional
+  `collisionGroups` param (→ worker `SPAWN_OBSTACLE`). `swarm/scrapConstants.ts`
+  holds the tuning (burst/damping/HP/MAX_LIVE_SCRAP). Full story:
+  [docs/architecture/composite-ships-and-scrap.md](../../docs/architecture/composite-ships-and-scrap.md).
 
 ## History
 

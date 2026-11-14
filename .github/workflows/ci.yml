@@ -71,6 +71,10 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      # CLAUDE.md byte budgets (token-waste review 2026-11-14, slice A10). Runs on
+      # every PR, docs-only included: the runner's preinstalled node is enough.
+      - name: CLAUDE.md byte budgets
+        run: node scripts/audit-god-files.mjs --claude-md
       - uses: pnpm/action-setup@v4
         if: needs.changes.outputs.code == 'true'
         with:

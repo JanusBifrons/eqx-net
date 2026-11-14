@@ -1,6 +1,11 @@
 #!/usr/bin/env node
 /**
- * audit-god-files.mjs — Inv #13 enforcement.
+ * audit-god-files.mjs — file-size enforcement: god files + CLAUDE.md budgets.
+ *
+ *   `--claude-md` checks only the CLAUDE.md byte budgets (CLAUDE_MD_BUDGETS;
+ *   run by the CI `verify` job on every PR). The CLAUDE.md files are injected
+ *   into every agent context; they hold rules only (root CLAUDE.md
+ *   "What goes where").
  *
  * Two layers of protection:
  *
@@ -69,6 +74,46 @@ const ALLOWLIST = {
   },
 };
 
+/**
+ * Byte budgets for the auto-injected instruction files (repo-root-relative),
+ * measured with LF line endings. Set from the sizes after the 2026-11-14
+ * CLAUDE.md diet plus ~5% headroom. Lower a budget when a file shrinks;
+ * never raise one to fit new text: move detail to a docs/ guide instead.
+ */
+const CLAUDE_MD_BUDGETS = {
+  'CLAUDE.md': 32000,
+  'src/server/CLAUDE.md': 35500,
+  'src/client/CLAUDE.md': 31500,
+  'src/core/CLAUDE.md': 19500,
+  'plans/CLAUDE.md': 3000,
+};
+
+function claudeMdViolations() {
+  const out = [];
+  for (const [rel, budget] of Object.entries(CLAUDE_MD_BUDGETS)) {
+    let text;
+    try {
+      text = readFileSync(join(REPO_ROOT, rel), 'utf8');
+    } catch {
+      continue;
+    }
+    // Count LF bytes so a CRLF checkout measures the same as the blob.
+    const bytes = Buffer.byteLength(text.replace(/\r\n/g, '\n'));
+    if (bytes > budget) out.push({ rel, bytes, budget });
+  }
+  return out;
+}
+
+function reportClaudeMd(violations) {
+  for (const v of violations) {
+    console.error(
+      `  ${v.rel}: ${v.bytes} bytes > budget ${v.budget}. CLAUDE.md holds rules only: ` +
+        `move how-it-works text, thresholds and history to the matching docs/architecture guide ` +
+        `and leave a one-line pointer (root CLAUDE.md "What goes where").`,
+    );
+  }
+}
+
 /** Skip-list for files we deliberately leave > 600 LOC out of scope. Empty. */
 const SKIP = new Set([]);
 
@@ -93,6 +138,16 @@ function loc(file) {
 }
 
 function main() {
+  if (process.argv.includes('--claude-md')) {
+    const v = claudeMdViolations();
+    if (v.length === 0) {
+      console.log(`✓ audit-god-files --claude-md: ${Object.keys(CLAUDE_MD_BUDGETS).length} files within budget`);
+      process.exit(0);
+    }
+    console.error(`✗ audit-god-files --claude-md: ${v.length} file(s) over budget\n`);
+    reportClaudeMd(v);
+    process.exit(1);
+  }
   const reportMode = process.argv.includes('--report');
   const violations = [];
   const allFiles = [];
@@ -138,14 +193,16 @@ function main() {
     process.exit(0);
   }
 
-  if (violations.length === 0) {
+  const mdViolations = claudeMdViolations();
+  if (violations.length === 0 && mdViolations.length === 0) {
     console.log(
       `✓ audit-god-files: 0 violations (ceiling ${CEILING_LOC} LOC, ${Object.keys(ALLOWLIST).length} allowlisted)`,
     );
     process.exit(0);
   }
 
-  console.error(`✗ audit-god-files: ${violations.length} violation(s)\n`);
+  console.error(`✗ audit-god-files: ${violations.length + mdViolations.length} violation(s)\n`);
+  reportClaudeMd(mdViolations);
   for (const v of violations) {
     if (v.kind === 'ceiling') {
       console.error(
