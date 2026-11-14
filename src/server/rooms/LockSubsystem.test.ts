@@ -37,7 +37,7 @@ function harness(kindId = 'fighter'): {
       anyTargetArgs.push(anyTarget);
       if (auto === null) return null;
       const t = targets.get(auto);
-      return t && bears(t.x, t.y) ? auto : null;
+      return t && bears(t) ? auto : null;
     },
     commitHostileAct: (_p, key) => commits.push(key),
     refreshHostility: (_p, key) => refreshes.push(key),
@@ -47,9 +47,9 @@ function harness(kindId = 'fighter'): {
   return { locks, targets, commits, refreshes, setAuto: (k) => { auto = k; }, anyTargetArgs };
 }
 
-const still = (x: number, hostile: boolean): LockTargetView => ({ x, y: 0, vx: 0, vy: 0, signature: 30, hostile });
+const still = (x: number, hostile: boolean): LockTargetView => ({ x, y: 0, vx: 0, vy: 0, angle: 0, ship: false, kindId: null, shieldUp: false, signature: 30, hostile });
 /** Crossing far too fast for a fighter's guns to track (past `maxSeconds`). */
-const crossing = (x: number, hostile: boolean): LockTargetView => ({ x, y: 0, vx: 0, vy: 5000, signature: 30, hostile });
+const crossing = (x: number, hostile: boolean): LockTargetView => ({ ...still(x, hostile), vy: 5000 });
 /** Lock-line bearing straight ahead (+y; ship-angle convention: forward = (-sin b, cos b)). */
 const AHEAD = 0;
 const steps = (l: LockSubsystem, n: number): void => { for (let i = 0; i < n; i++) l.step(); };
@@ -110,13 +110,13 @@ describe('LockSubsystem', () => {
 
   it('auto groups acquire their own hostile target; manual groups do not', () => {
     const h = harness();
-    h.targets.set('s:4', { x: 0, y: 200, vx: 0, vy: 0, signature: 30, hostile: true } /* ahead: inside the fixed guns' window */);
+    h.targets.set('s:4', { x: 0, y: 200, vx: 0, vy: 0, angle: 0, ship: false, kindId: null, shieldUp: false, signature: 30, hostile: true } /* ahead: inside the fixed guns' window */);
     h.setAuto('s:4');
     steps(h.locks, 40);
     expect(h.locks.hasLocked('p1', 'primary')).toBe(true);
 
     const m = harness();
-    m.targets.set('s:4', { x: 0, y: 200, vx: 0, vy: 0, signature: 30, hostile: true } /* ahead: inside the fixed guns' window */);
+    m.targets.set('s:4', { x: 0, y: 200, vx: 0, vy: 0, angle: 0, ship: false, kindId: null, shieldUp: false, signature: 30, hostile: true } /* ahead: inside the fixed guns' window */);
     m.setAuto('s:4');
     m.locks.setMode('p1', 'primary', 'manual');
     steps(m.locks, 40);
@@ -128,7 +128,7 @@ describe('LockSubsystem', () => {
     // fighter because their AUTO locks were already building when the pilot
     // flipped them to MAN.
     const h = harness();
-    h.targets.set('s:4', { x: 0, y: 200, vx: 0, vy: 0, signature: 30, hostile: true });
+    h.targets.set('s:4', { x: 0, y: 200, vx: 0, vy: 0, angle: 0, ship: false, kindId: null, shieldUp: false, signature: 30, hostile: true });
     h.setAuto('s:4');
     steps(h.locks, 1); // AUTO picks s:4 and starts acquiring
     expect(h.locks.wireFor('p1')?.find((g) => g.id === 'primary')?.l.length).toBe(1);
@@ -281,7 +281,7 @@ describe('LockSubsystem', () => {
     // Both together: AUTO wide AND the picked (neutral) target locks at once.
     const both = harness();
     both.locks.enable('p1', true, null, true);
-    both.targets.set('s:1', { x: 0, y: 200, vx: 0, vy: 0, signature: 30, hostile: false });
+    both.targets.set('s:1', { x: 0, y: 200, vx: 0, vy: 0, angle: 0, ship: false, kindId: null, shieldUp: false, signature: 30, hostile: false });
     both.setAuto('s:1');
     steps(both.locks, 2);
     expect(both.anyTargetArgs.every((a) => a === true)).toBe(true);
@@ -291,7 +291,7 @@ describe('LockSubsystem', () => {
   it('testMode groupMode=manual: every group starts in MAN and AUTO never self-picks', () => {
     const h = harness('missile-frigate');
     h.locks.enable('p1', true, 'manual');
-    h.targets.set('s:1', { x: 0, y: 200, vx: 0, vy: 0, signature: 30, hostile: true }); // dead ahead
+    h.targets.set('s:1', { x: 0, y: 200, vx: 0, vy: 0, angle: 0, ship: false, kindId: null, shieldUp: false, signature: 30, hostile: true }); // dead ahead
     h.setAuto('s:1');
     steps(h.locks, 5);
     const wire = h.locks.wireFor('p1')!;
@@ -320,7 +320,7 @@ describe('LockSubsystem', () => {
 
   describe('held locks (the lock line)', () => {
     const pct = (h: ReturnType<typeof harness>): number => h.locks.wireFor('p1')![0]!.l[0]?.p ?? -1;
-    const ahead = (y: number): LockTargetView => ({ x: 0, y, vx: 0, vy: 0, signature: 30, hostile: true });
+    const ahead = (y: number): LockTargetView => ({ x: 0, y, vx: 0, vy: 0, angle: 0, ship: false, kindId: null, shieldUp: false, signature: 30, hostile: true });
 
     it('builds only while held: let go part-way and it drains back to 0, then drops', () => {
       const h = harness();
@@ -404,14 +404,14 @@ describe('LockSubsystem', () => {
 
   it('AUTO only picks a target inside the group arc (gunship Aft ignores a ship dead ahead)', () => {
     const h = harness('gunship');
-    h.targets.set('s:9', { x: 0, y: 300, vx: 0, vy: 0, signature: 30, hostile: true });
+    h.targets.set('s:9', { x: 0, y: 300, vx: 0, vy: 0, angle: 0, ship: false, kindId: null, shieldUp: false, signature: 30, hostile: true });
     h.setAuto('s:9');
     steps(h.locks, 3);
     const wire = h.locks.wireFor('p1')!;
     expect(wire.find((g) => g.id === 'fore')!.l.length).toBe(1);
     expect(wire.find((g) => g.id === 'aft')!.l.length).toBe(0);
     // Behind the ship: Aft takes it, Fore doesn't.
-    h.targets.set('s:9', { x: 0, y: -300, vx: 0, vy: 0, signature: 30, hostile: true });
+    h.targets.set('s:9', { x: 0, y: -300, vx: 0, vy: 0, angle: 0, ship: false, kindId: null, shieldUp: false, signature: 30, hostile: true });
     h.locks.cancelLock('p1', 'fore');
     steps(h.locks, 3);
     const w2 = h.locks.wireFor('p1')!;

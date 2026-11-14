@@ -12,12 +12,18 @@
 import type { ShipKind, WeaponMount } from '../../shared-types/shipKinds.js';
 import { SHIP_KINDS_LIST } from '../../shared-types/shipKinds.js';
 import { HITSCAN_RANGE } from './Weapons.js';
-import { getWeapon, weaponAutoFireRange } from './WeaponCatalogue.js';
+import { getWeapon, weaponAutoFireRange, type WeaponId } from './WeaponCatalogue.js';
 import { shipHitBound, shipWithinHullReach } from './shipHitShape.js';
 
 /** Engage range of one mount's weapon, from the mount. */
 export function mountWeaponReach(mount: Pick<WeaponMount, 'weaponId'>): number {
-  return weaponAutoFireRange(getWeapon(mount.weaponId));
+  return weaponIdReach(mount.weaponId);
+}
+
+/** `mountWeaponReach` by weapon id (fire gates holding only the id; no
+ *  wrapper object per call, #14). */
+export function weaponIdReach(weaponId: WeaponId): number {
+  return weaponAutoFireRange(getWeapon(weaponId));
 }
 
 const cache = new Map<string, number>();

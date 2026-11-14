@@ -14,26 +14,24 @@ import { lockSeconds, type LockInputs } from '../../core/combat/lockTime.js';
 import { newLock, stepLock, LOCK_STAGE_CODE, LOCK_TRACK, type LockEntry } from '../../core/combat/lockState.js';
 import { lockLineHolds } from '../../core/combat/lockLine.js';
 import { pickTurretLock } from '../../core/combat/turretLockPick.js';
-import { mountWeaponReach, mountsReachTarget, type MountRangeTarget } from '../../core/combat/mountReach.js';
+import { mountWeaponReach, type MountRangeTarget } from '../../core/combat/mountReach.js';
+import { mountReachesTarget, type FireTargetShape } from '../../core/combat/fireControlBearing.js';
 import { getWeapon, weaponAutoFireRange } from '../../core/combat/WeaponCatalogue.js';
 import type { ShipKind, WeaponMount, WeaponSlot } from '../../shared-types/shipKinds/types.js';
 
-/** A lockable target, resolved each lock step. */
-export interface LockTargetView {
-  x: number;
-  y: number;
+/** A lockable target, resolved each lock step. Its `FireTargetShape` half
+ *  (pose, heading, hit shape; `signature` = lock signature, u) is what the
+ *  fire gate measures range against (`mountReachesTarget`). */
+export interface LockTargetView extends FireTargetShape {
   vx: number;
   vy: number;
-  /** Lock signature (u). */
-  signature: number;
   /** Already hostile to the locking player (skips the failsafe ring). */
   hostile: boolean;
-  /** Hit shape for the turret range gate (`MountRangeTarget`): a ship's kind,
-   *  heading and shield, else a circle `radius`. Absent ⇒ its centre. */
-  kindId?: string | null;
-  angle?: number;
-  shieldUp?: boolean;
-  radius?: number;
+}
+
+/** A blank `LockTargetView` (scratch; allocate once, fill per call). */
+export function newLockTargetView(): LockTargetView {
+  return { x: 0, y: 0, vx: 0, vy: 0, angle: 0, ship: false, kindId: null, shieldUp: false, signature: 1, hostile: false };
 }
 
 export interface LockShooterView {
@@ -54,8 +52,9 @@ export interface LockSubsystemDeps {
   shipOf(playerId: string): { kind: ShipKind; activated: ReadonlyArray<WeaponMount> } | null;
   /** Best auto target for a group (hostile — or, with `anyTarget` (the testMode
    *  `anyTarget` trigger), any lockable non-player target — in reach and
-   *  `bears(x, y)`: inside the group's arc), or null. */
-  autoPick(playerId: string, reach: number, sx: number, sy: number, bears: (x: number, y: number) => boolean, anyTarget: boolean): string | null;
+   *  `bears(t)`: a mount of the group has it inside its arc AND within the
+   *  mount's own reach of its hit shape), or null. */
+  autoPick(playerId: string, reach: number, sx: number, sy: number, bears: (t: FireTargetShape) => boolean, anyTarget: boolean): string | null;
   /** A failsafe finished: the player has committed a hostile act on `key`. */
   commitHostileAct(playerId: string, key: string): void;
   /** "Locks keep it hostile" (owner decision 2026-11-10): a lock that is
@@ -164,22 +163,37 @@ const LOCK_DT = 0.1; // seconds per lock step (every 6 server ticks)
 
 export class LockSubsystem {
   private readonly players = new Map<string, PlayerLocks>();
-  private readonly target: LockTargetView = { x: 0, y: 0, vx: 0, vy: 0, signature: 1, hostile: false };
+  private readonly target: LockTargetView = newLockTargetView();
   private readonly shooter: LockShooterView = { x: 0, y: 0, vx: 0, vy: 0, angle: 0 };
   /** The group `bears` is testing (set before each autoPick; no closure per call). */
   private bearGroup: GroupState | null = null;
-  private readonly bears = (x: number, y: number): boolean => {
+  /**
+   * AUTO pick: some mount of the group has the target inside its ARC and
+   * reaches its hit shape from where the mount sits (`mountReachesTarget`,
+   * the range half of the shared fire gate `mountFiresOn`, the same function
+   * the client's `fcGroupBears` calls, #15). The angular half is the arc, not
+   * the barrel: a turret trains onto what AUTO picks, then the fire gate
+   * checks its barrel.
+   */
+  private readonly bears = (t: FireTargetShape): boolean => {
     const g = this.bearGroup;
     if (!g) return true;
-    let rel = Math.atan2(-(x - this.shooter.x), y - this.shooter.y) - this.shooter.angle;
+    const s = this.shooter;
+    let rel = Math.atan2(-(t.x - s.x), t.y - s.y) - s.angle;
     rel -= Math.round(rel / (2 * Math.PI)) * 2 * Math.PI;
+    const cosA = Math.cos(s.angle);
+    const sinA = Math.sin(s.angle);
     for (let i = 0; i < g.arcs.length; i += 2) {
       let lo = g.arcs[i]!, hi = g.arcs[i + 1]!;
       // Normalise the arc around rel so wrap-around arcs (e.g. the rear) work.
       const mid = (lo + hi) / 2;
       const shift = Math.round((rel - mid) / (2 * Math.PI)) * 2 * Math.PI;
       lo += shift; hi += shift;
-      if (rel >= lo && rel <= hi) return true;
+      if (rel < lo || rel > hi) continue;
+      const m = g.mounts[i >> 1]!;
+      const ox = s.x + (m.localX * cosA - m.localY * sinA);
+      const oy = s.y + (m.localX * sinA + m.localY * cosA);
+      if (mountReachesTarget(ox, oy, mountWeaponReach(m), t)) return true;
     }
     return false;
   };
@@ -458,10 +472,10 @@ export class LockSubsystem {
       this.pickX[keys.length] = this.target.x;
       this.pickY[keys.length] = this.target.y;
       const sh = this.pickShapes[keys.length]!;
-      sh.kindId = this.target.kindId ?? null;
-      sh.angle = this.target.angle ?? 0;
-      sh.shieldUp = this.target.shieldUp === true;
-      sh.radius = this.target.radius ?? 0;
+      sh.kindId = this.target.ship ? this.target.kindId : null;
+      sh.angle = this.target.angle;
+      sh.shieldUp = this.target.shieldUp;
+      sh.radius = this.target.ship ? 0 : this.target.signature;
       keys.push(e.target);
     }
     if (keys.length === 0) return null;
@@ -491,11 +505,20 @@ export class LockSubsystem {
     }
   }
 
-  /** `this.target` is inside the group's FIRE range (any mount reaches its
-   *  hit shape, × `slack`); `this.shooter` must be current. */
+  /** `this.target` is inside the group's FIRE range: some mount reaches its
+   *  hit shape within its reach × `slack`, by the player fire gate's own
+   *  range test (`mountReachesTarget`). `this.shooter` must be current. */
   private inFireRange(g: GroupState, slack: number): boolean {
-    const t = this.target;
-    return mountsReachTarget(g.mounts, this.shooter.x, this.shooter.y, this.shooter.angle, t.x, t.y, t, slack);
+    const s = this.shooter;
+    const cosA = Math.cos(s.angle);
+    const sinA = Math.sin(s.angle);
+    for (let i = 0; i < g.mounts.length; i++) {
+      const m = g.mounts[i]!;
+      const ox = s.x + (m.localX * cosA - m.localY * sinA);
+      const oy = s.y + (m.localX * sinA + m.localY * cosA);
+      if (mountReachesTarget(ox, oy, mountWeaponReach(m) * slack, this.target)) return true;
+    }
+    return false;
   }
 
   private stepGroup(playerId: string, p: PlayerLocks, g: GroupState): void {
