@@ -107,8 +107,17 @@ describe('HostileDroneBehaviour — leader-led flocking (non-combat herding)', (
     m.setMoveTarget(0, 50_000);
     const r = flyFor(m, viewWith({}), 600);
     expect(r.boosted).toBe(false);
-    expect(r.end).toBeGreaterThan(CALM * 0.9);
-    expect(r.end).toBeLessThan(CALM * 1.1);
+    // Bang-bang throttle (virtualPilot: thrust while wanted − actual > a/2, a =
+    // one tick of thrust) holds a sawtooth, sampled at an arbitrary tick: the
+    // speed after a step lies in [(CALM − a/2)·k, (CALM + a/2)·k], k = 1/(1 +
+    // d·dt) the per-tick damping. From the live kind: at arcade damping one
+    // tick of thrust is ~14% of CALM, so a fixed ±10% band no longer fits.
+    const h = makePilotHandling(KIND, massOf(KIND, NPC_MASS_FALLBACK));
+    const k = 1 / (1 + h.linearDamping / 60);
+    expect(r.end).toBeGreaterThanOrEqual((CALM - h.thrustAccel / 2) * k - 1e-6);
+    expect(r.end).toBeLessThanOrEqual((CALM + h.thrustAccel / 2) * k + 1e-6);
+    // Still clearly un-throttled: the leader's 0.55 throttle sits far below.
+    expect(r.end).toBeGreaterThan(CALM * 0.55 + h.thrustAccel);
   });
 
   it('a leader HELD at its own pose (course = own position) does not thrust (it waits)', () => {

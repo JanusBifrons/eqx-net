@@ -109,10 +109,13 @@ describe('drainContacts', () => {
     const world = await PhysicsWorld.create();
     const eventQueue = new RAPIER.EventQueue(true);
     // b sits off a's path by most of the combined collider radius (~90 u), so a clips its edge:
-    // the contact normal is mostly sideways to a's motion.
-    world.spawnShip('a', -150, 0);
+    // the contact normal is mostly sideways to a's motion. a starts close (~18 u
+    // short of touching): since the arcade handling tune (owner 2026-11-13,
+    // "make it more like micro machines") a coasting fighter's damping stops
+    // it within ~80 u, so the old 150 u run-up never reached b.
+    world.spawnShip('a', -70, 0);
     world.spawnShip('b', 0, 80);
-    world.setShipState('a', { x: -150, y: 0, angle: 0, vx: 300, vy: 0 });
+    world.setShipState('a', { x: -70, y: 0, angle: 0, vx: 300, vy: 0 });
     let contacts: ReturnType<typeof drainContacts> = [];
     for (let i = 0; i < 90 && contacts.length === 0; i++) {
       world.tick(1 / 60, eventQueue);
