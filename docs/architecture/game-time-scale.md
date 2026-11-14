@@ -141,3 +141,9 @@ Rough size: 1–2 weeks, as the shelf estimated. Phases 2 and 4 are most of it.
 - **Subsystems take `now` / `nowMs` deps** (break-ins, holds, directors, economy). Their DEFAULT is `gameNow`; tests inject their own.
 - **Saved timestamps are game time** (drift from wall time while the speed isn't 1×; see the design note §0).
 - Story: [docs/architecture/game-time-scale.md](../architecture/game-time-scale.md).
+
+### From the server Thresholds section
+
+Moved verbatim from the old "Thresholds" section of `src/server/CLAUDE.md`. The rules stay there in short form; current values are in [server-thresholds](server-thresholds.md). Dates, plan names and "was" notes below are history.
+
+- **Phase 6 — LoadShedder**: lives at `src/server/orchestration/LoadShedder.ts`. Fires when `rate ≤ TIDI_FLOOR + 0.01` (0.71) AND `busiestMs > OVER_BUDGET_MS` (14), where `busiestMs = Math.max(serverTotalMs, workerTickMs)`. Selects farthest-from-closest-player drones (kind=1 only — asteroids are immune); **only drones outside EVERY connected player's view are candidates** (`SectorRoom.droneInAnyView`: each client's swarm interest window; a client with no slot, e.g. spectating, sees everything), so if all are in view nothing is shed and the 0.7× slowdown carries the load (soak 2026-11-14: ~200–325 ships vanished mid-fight; lock `tests/integration/sectorRoom/loadShedOutOfView.test.ts`), with a summary log (shed / skipped-in-view) at most once per 10 s per room; batch = `Math.min(8, Math.ceil(droneCount * 0.10))` per tick. Despawns quietly via `evictSwarmEntity(rec, { broadcast: false, emitDestroyed: false })` — no `'destroy'` broadcast, no `ENTITY_DESTROYED`, so the kill-feed and explosion SFX (when Phase 4 ships them) don't fire on player-invisible cleanup. Emits the new `ENTITY_SHED` bus variant for persistence/telemetry.
