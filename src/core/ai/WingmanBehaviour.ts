@@ -25,7 +25,7 @@
  *    - `retreat`: fly to the retreat point (default: the guard post) without
  *      engaging, then defend there (the mode becomes `defend`).
  *  - ORDER: one-off, on top of the mode. `move` (arrive at a point), `stop`
- *    (hold here = defend at the spot the ship brakes to), `attack` (pursue to
+ *    (brake in place, then defend the spot it halts on), `attack` (pursue to
  *    a stand-off).
  *  - When an order completes the mode RESUMES FROM WHERE THE SHIP IS NOW:
  *    defend / hunt take the current spot as the post; patrol flies to the
@@ -78,6 +78,7 @@ import {
 } from './tactics/morale.js';
 import { roleProfile, roleSensorRange } from './tactics/roleProfiles.js';
 import {
+  brakeBand,
   headingOf,
   intentToControlBits,
   makeControlIntent,
@@ -188,7 +189,8 @@ export class WingmanBehaviour implements IWingmanBrain {
   private postValid = false;
   /** Defend: flying back to the post after being pushed out. */
   private returning = false;
-  /** Stop order: coasting onto the post just set (reads as 'guarding'). */
+  /** Stop order: braking in place; the halt spot becomes the post (reads as
+   *  'guarding'). */
   private settling = false;
 
   // Patrol.
@@ -512,7 +514,12 @@ export class WingmanBehaviour implements IWingmanBrain {
             }
             break;
           }
-          // Hold position: defend the spot the ship brakes to.
+          // Hold position: brake where it is, then defend the spot it halts
+          // on. Until then the post is the predicted braking point (what the
+          // UI shows), but the ship does NOT steer for it: steering onto an
+          // extrapolated point turned a sideways bump into a drift, and two
+          // ships stopped hull to hull drove apart for seconds (RTS stop
+          // drift, 2026-11-14). It only brakes; the halt spot is the post.
           const sp = Math.hypot(self.vx, self.vy);
           const d = stoppingDistance(sp, this.stats);
           const k = sp > 1e-6 ? d / sp : 0;
@@ -522,8 +529,6 @@ export class WingmanBehaviour implements IWingmanBrain {
           this.routeLen = 0;
           this._escortId = null;
           this.setGuardPost(self.x + self.vx * k, self.y + self.vy * k);
-          // It coasts onto that spot: holding, not returning.
-          this.returning = true;
           this.settling = true;
           break;
         }
@@ -581,19 +586,26 @@ export class WingmanBehaviour implements IWingmanBrain {
   }
 
   private tickDefend(self: WingmanPose): void {
+    if (this.settling) {
+      // Stop order: brake in place (intent stays zero); the spot it halts
+      // on becomes the post.
+      this._activity = 'guarding';
+      if (Math.hypot(self.vx, self.vy) <= brakeBand(this.stats)) this.setGuardPost(self.x, self.y);
+      return;
+    }
     const dx = this.postX - self.x, dy = this.postY - self.y;
     if (dx * dx + dy * dy > this.guardRadius * this.guardRadius) this.returning = true;
     if (this.returning) {
-      if (this.steerTo(self, this.postX, this.postY, !this.settling)) {
+      if (this.steerTo(self, this.postX, this.postY, true)) {
         this.returning = false;
-        this.settling = false;
         this._activity = 'guarding';
       } else {
-        this._activity = this.settling ? 'guarding' : 'moving';
+        this._activity = 'moving';
       }
       return;
     }
-    // Inside the guard radius: hold still (intent stays zero ⇒ brake).
+    // Inside the guard radius: hold still (intent stays zero ⇒ brake): a bump
+    // from a neighbour that leaves it inside the radius never flies it back.
     this._activity = 'guarding';
   }
 

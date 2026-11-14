@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { intentToControlBits, makeControlIntent, headingOf, wrapPi } from './intentToControlBits.js';
+import {
+  brakeBand,
+  CONTROL_HOLD_S,
+  intentToControlBits,
+  makeControlIntent,
+  headingOf,
+  wrapPi,
+} from './intentToControlBits.js';
 import { makeWingmanControls, reverseAccelFor, type WingmanShipStats } from './types.js';
 
 const STATS: WingmanShipStats = {
@@ -85,6 +92,17 @@ describe('intentToControlBits', () => {
     expect(run(-Math.sin(0.2) * 100, Math.cos(0.2) * 100, pose(0, 0, 0.3), cap).turnLeft).toBe(false);
     // Not yet turning ⇒ push.
     expect(run(-Math.sin(0.2) * 100, Math.cos(0.2) * 100, pose(0, 0, 0), cap).turnLeft).toBe(true);
+  });
+
+  it('a brake in place pushes down to what one held key removes, not 2 % of max speed', () => {
+    // Fighter-like stats: the old band (2 % of 600) left 10 u/s to crawl on.
+    const s: WingmanShipStats = { ...STATS, maxSpeed: 600, reverseAccel: 45 };
+    expect(brakeBand(s)).toBeCloseTo(45 * CONTROL_HOLD_S * 0.5);
+    expect(run(0, 0, pose(0, 10), s).reverse, '10 u/s forward: still braking').toBe(true);
+    expect(run(0, 0, pose(0, -10), s).thrust, '10 u/s backward: still braking').toBe(true);
+    const c = run(0, 0, pose(0, brakeBand(s) * 0.9), s);
+    expect(c.reverse || c.thrust, 'inside the band: no push (no chatter)').toBe(false);
+    expect(c.turnLeft || c.turnRight, 'never turns to brake').toBe(false);
   });
 
   it('reverseAccelFor matches applyShipInput (impulse·reverseFactor per 1/60 s tick over mass)', () => {

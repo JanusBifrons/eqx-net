@@ -21,7 +21,11 @@ zone-blind, allocation-free brain:
 - **Mode** (`defend`, `patrol`, `escort`, `hunt`, `retreat`): what it does with
   no order.
 - **Order** (`move`, `stop`, `attack`): a one-off on top of the mode; when it
-  completes the mode resumes from where the ship is now.
+  completes the mode resumes from where the ship is now. `stop` brakes in
+  place (no steering) to below `brakeBand` and holds where it halts; a `move`
+  of several ships to one point gives each its own spot in a hex cluster
+  `flockSeparation` apart (`FleetCommandSubsystem.spreadMove`), so they never
+  pile onto one point and shove (RTS stop drift, 2026-11-14).
 - **Stance** (`aggressive`, `defensive`, `holdFire`): read by the server's fire
   target pick; in the brain it only stops a hold-fire hunter from chasing.
 - **Formation role** (squads): hold a `formation.ts` slot round the leader.

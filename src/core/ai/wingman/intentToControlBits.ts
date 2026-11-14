@@ -9,7 +9,8 @@
  *
  * Control law:
  *  - Desired speed ~0 ⇒ brake without turning: reverse while moving forward,
- *    thrust while moving backward (lateral grip bleeds sideways drift).
+ *    thrust while moving backward, down to {@link brakeBand} (lateral grip
+ *    bleeds sideways drift).
  *  - Otherwise turn toward the desired heading (a deadband of half a tick's
  *    turn on snap-turn hulls; the helm's coast angle on torque-turned hulls),
  *    thrust while roughly facing it and below the desired speed, reverse
@@ -43,6 +44,23 @@ export const CONTROL_HEADING_DEADBAND = 0.02;
 export const CONTROL_SPEED_BAND = 0.02;
 /** Below this fraction of max speed a desired velocity means "stop". */
 export const CONTROL_STOP_FRAC = 0.01;
+/**
+ * Longest time one control decision may be held (s): the fleet re-plans every
+ * `FLEET_REPLAN_EVERY_TICKS` (6) ticks and the worker holds the last INPUT in
+ * between. A brake in place pushes until the forward speed is inside half of
+ * what one held key removes, so a held key can't overshoot into chatter, yet
+ * nothing is left to crawl on. (The old 2 %-of-max-speed band left a 2×
+ * fighter coasting at ~10 u/s for seconds after Stop: RTS stop drift,
+ * 2026-11-14.)
+ */
+export const CONTROL_HOLD_S = 0.1;
+/** Smallest brake band (u/s). */
+export const CONTROL_BRAKE_BAND_MIN = 0.5;
+
+/** The forward-speed band a brake in place leaves alone (u/s). */
+export function brakeBand(stats: WingmanShipStats): number {
+  return Math.max(CONTROL_BRAKE_BAND_MIN, stats.reverseAccel * CONTROL_HOLD_S * 0.5);
+}
 
 const TICK_S = 1 / 60;
 
@@ -72,9 +90,11 @@ export function intentToControlBits(
   const want = Math.sqrt(intent.dvx * intent.dvx + intent.dvy * intent.dvy);
 
   if (want < stats.maxSpeed * CONTROL_STOP_FRAC) {
-    // Brake in place: no turning, push against the forward motion.
-    if (vFwd > band) out.reverse = true;
-    else if (vFwd < -band) out.thrust = true;
+    // Brake in place: no turning, push against the forward motion down to
+    // what one held key can remove (lateral grip bleeds sideways drift).
+    const bb = brakeBand(stats);
+    if (vFwd > bb) out.reverse = true;
+    else if (vFwd < -bb) out.thrust = true;
     return out;
   }
 

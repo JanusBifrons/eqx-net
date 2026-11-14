@@ -197,6 +197,12 @@ interface FleetEntry {
   /** Last entity that damaged this ship (RTS slice 5), or null. */
   attackerId: string | null;
   attackedTick: number;
+  /** Gap this hull keeps to its neighbours when several ships are sent to
+   *  one point (`shipTuning(kind).flockSeparation`, #18). */
+  readonly spacing: number;
+  /** This ship's own move order (a group move gives each ship its own
+   *  point round the target); reused, so a command allocates nothing. */
+  readonly moveOrder: { kind: 'move'; x: number; y: number };
 }
 
 /**
@@ -249,6 +255,13 @@ export class FleetCommandSubsystem {
   private tickingId = '';
   private readonly modeScratch: FleetModeData = {};
   private readonly accepted: string[] = [];
+  /** `applyOrder` scratch: the ships that take the order (null once placed). */
+  private readonly movers: (FleetEntry | null)[] = [];
+  private readonly spreadOffX = new Float64Array(FLEET_MAX_IDS_PER_COMMAND);
+  private readonly spreadOffY = new Float64Array(FLEET_MAX_IDS_PER_COMMAND);
+  private readonly spreadSlotX = new Float64Array(FLEET_MAX_IDS_PER_COMMAND);
+  private readonly spreadSlotY = new Float64Array(FLEET_MAX_IDS_PER_COMMAND);
+  private readonly spreadUsed = new Uint8Array(FLEET_MAX_IDS_PER_COMMAND);
   private readonly statusOut: FleetShipStatus[] = [];
   private readonly statusPool: FleetShipStatus[] = [];
 
@@ -319,6 +332,8 @@ export class FleetCommandSubsystem {
       stamp: 0,
       attackerId: null,
       attackedTick: 0,
+      spacing: shipTuning(ship.kind).flockSeparation,
+      moveOrder: { kind: 'move', x: 0, y: 0 },
     };
     this.nextPhase = (this.nextPhase + 1) % this.replanEvery;
     this.entries.push(entry);
@@ -367,18 +382,87 @@ export class FleetCommandSubsystem {
    * takes the order and the members keep formation (their own orders are
    * dropped); a pilot-led squad ignores it (the pilot is flying). A subset of
    * a squad: just those ships, which rejoin their slots when it is done.
+   *
+   * A MOVE that sends several ships (loose ships and whole squads' leaders)
+   * to one point gives each its own spot round it: a hex cluster `spacing`
+   * apart (the largest mover's `flockSeparation`, #18), each ship taking the
+   * free spot nearest where it sits in the group, so paths don't cross. Sent
+   * to the very same point they arrived hull to hull and shoved each other
+   * (RTS stop drift, 2026-11-14).
    */
   applyOrder(callerId: string, shipIds: readonly string[], order: WingmanOrder): readonly string[] {
     const n = this.collect(callerId, shipIds);
     this.classifySquads(n);
+    const movers = this.movers;
+    movers.length = 0;
     for (let i = 0; i < n; i++) {
       const e = this.byId.get(this.accepted[i]!)!;
       const sq = e.squadId !== null ? this.squads.get(e.squadId)! : null;
-      if (sq === null || !sq.cmdWhole) { e.brain.issueOrder(order); continue; }
-      if (e.id === this.squadLeader(sq)) e.brain.issueOrder(order);
-      else e.brain.clearOrder();
+      if (sq !== null && sq.cmdWhole && e.id !== this.squadLeader(sq)) { e.brain.clearOrder(); continue; }
+      movers.push(e);
     }
+    if (order.kind === 'move' && movers.length > 1) this.spreadMove(order.x, order.y);
+    else for (let i = 0; i < movers.length; i++) movers[i]!.brain.issueOrder(order);
+    movers.length = 0;
     return this.accepted;
+  }
+
+  /** Give each of `this.movers` its own move point round (tx, ty). */
+  private spreadMove(tx: number, ty: number): void {
+    const movers = this.movers;
+    const n = movers.length;
+    const p = this.pose;
+    const ox = this.spreadOffX, oy = this.spreadOffY;
+    let spacing = 0, cx = 0, cy = 0;
+    for (let i = 0; i < n; i++) {
+      const e = movers[i]!;
+      if (e.spacing > spacing) spacing = e.spacing;
+      if (this.hooks.readPose(e.id, p)) { ox[i] = p.x; oy[i] = p.y; } else { ox[i] = tx; oy[i] = ty; }
+      cx += ox[i]!; cy += oy[i]!;
+    }
+    cx /= n; cy /= n;
+    for (let i = 0; i < n; i++) { ox[i] = ox[i]! - cx; oy[i] = oy[i]! - cy; }
+    // The first n spots of a hex cluster: the point, then rings of 6r.
+    const sx = this.spreadSlotX, sy = this.spreadSlotY, used = this.spreadUsed;
+    let m = 0;
+    for (let r = 0; m < n; r++) {
+      if (r === 0) { sx[0] = tx; sy[0] = ty; used[0] = 0; m = 1; continue; }
+      for (let side = 0; side < 6 && m < n; side++) {
+        const a0 = (side * Math.PI) / 3, a1 = ((side + 1) * Math.PI) / 3;
+        const x0 = Math.cos(a0) * r * spacing, y0 = Math.sin(a0) * r * spacing;
+        const x1 = Math.cos(a1) * r * spacing, y1 = Math.sin(a1) * r * spacing;
+        for (let j = 0; j < r && m < n; j++) {
+          sx[m] = tx + x0 + ((x1 - x0) * j) / r;
+          sy[m] = ty + y0 + ((y1 - y0) * j) / r;
+          used[m] = 0;
+          m++;
+        }
+      }
+    }
+    // Outermost ships pick first, each the free spot nearest its place in
+    // the group (target + its offset from the group's centre).
+    for (let k = 0; k < n; k++) {
+      let pick = -1, far = -1;
+      for (let i = 0; i < n; i++) {
+        if (movers[i] === null) continue;
+        const d = ox[i]! * ox[i]! + oy[i]! * oy[i]!;
+        if (d > far) { far = d; pick = i; }
+      }
+      const e = movers[pick]!;
+      const wx = tx + ox[pick]!, wy = ty + oy[pick]!;
+      let best = -1, bestD = Infinity;
+      for (let s = 0; s < n; s++) {
+        if (used[s] === 1) continue;
+        const dx = sx[s]! - wx, dy = sy[s]! - wy;
+        const d = dx * dx + dy * dy;
+        if (d < bestD) { bestD = d; best = s; }
+      }
+      used[best] = 1;
+      e.moveOrder.x = sx[best]!;
+      e.moveOrder.y = sy[best]!;
+      e.brain.issueOrder(e.moveOrder);
+      movers[pick] = null;
+    }
   }
 
   /**

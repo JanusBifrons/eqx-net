@@ -61,6 +61,35 @@ describe('FleetCommandSubsystem', () => {
     expect(b.guardPostY).toBe(-50);
   });
 
+  it('a move of several ships to one point gives each its own spot round it (RTS stop drift)', () => {
+    const { sys, add } = harness();
+    // A column north-south, west of the target.
+    add('n', 'alice', 0, 300);
+    add('m', 'alice', 0, 0);
+    add('s', 'alice', 0, -300);
+    add('w', 'alice', -300, 0);
+    sys.applyOrder('alice', ['n', 'm', 's', 'w'], { kind: 'move', x: 5000, y: 0 });
+    const spacing = shipTuning(FIGHTER.kind).flockSeparation;
+    const pts = ['n', 'm', 's', 'w'].map((id) => {
+      const o = sys.brainOf(id)!.order!;
+      expect(o.kind).toBe('move');
+      return o as { x: number; y: number };
+    });
+    for (let i = 0; i < pts.length; i++) {
+      // Round the point: the cluster's first ring.
+      expect(Math.hypot(pts[i]!.x - 5000, pts[i]!.y)).toBeLessThanOrEqual(spacing + 1e-6);
+      for (let j = i + 1; j < pts.length; j++) {
+        expect(Math.hypot(pts[i]!.x - pts[j]!.x, pts[i]!.y - pts[j]!.y), 'spots a spacing apart')
+          .toBeGreaterThanOrEqual(spacing - 1e-6);
+      }
+    }
+    // Each keeps its side of the group: the north ship takes a northern spot.
+    expect(pts[0]!.y).toBeGreaterThan(pts[2]!.y);
+    // One ship goes to the very point.
+    sys.applyOrder('alice', ['m'], { kind: 'move', x: 100, y: 200 });
+    expect(sys.brainOf('m')!.order).toEqual({ kind: 'move', x: 100, y: 200 });
+  });
+
   it('commands apply only to the caller\'s own attached ships; foreign / unknown ids are dropped', () => {
     const { sys, add } = harness();
     add('a1', 'alice');

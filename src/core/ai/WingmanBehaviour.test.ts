@@ -139,11 +139,20 @@ describe('WingmanBehaviour — stop order', () => {
     const postY = b.guardPostY!;
     expect(postY).toBeGreaterThan(before.y); // ahead along the motion, not behind
 
-    // It brakes to a halt and stays inside its guard radius of the post.
-    runUntil(id, b, 60 * 15, () => false);
+    // It brakes in place (never turns to steer for the predicted point:
+    // RTS stop drift 2026-11-14) to a full halt, and the halt spot becomes
+    // the post.
+    let turned = false;
+    for (let t = 0; t < 60 * 15; t++) {
+      const c = b.tick(poseOf(id), view);
+      turned ||= c.turnLeft || c.turnRight;
+      world.applyInput(id, c);
+      world.tick(1 / 60);
+    }
+    expect(turned, 'a stop never turns the ship').toBe(false);
     const p = poseOf(id);
-    expect(Math.hypot(p.vx, p.vy)).toBeLessThan(stats.maxSpeed * 0.05);
-    expect(Math.hypot(p.x - b.guardPostX!, p.y - postY)).toBeLessThan(GUARD);
+    expect(Math.hypot(p.vx, p.vy)).toBeLessThan(stats.maxSpeed * 0.01);
+    expect(Math.hypot(p.x - b.guardPostX!, p.y - b.guardPostY!), 'the post is where it halted').toBeLessThan(ARRIVE);
     expect(b.activity).toBe('guarding');
   });
 });

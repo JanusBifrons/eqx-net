@@ -46,9 +46,12 @@ its target, the ship it escorts, or its patrol loop.
 
 ## Giving orders
 
-- **Right-click empty space:** the selection flies there and holds.
+- **Right-click empty space:** the selection flies there and holds. Several
+  ships sent to one point each take their own spot in a tight cluster round
+  it, keeping their side of the group, so they don't pile onto each other.
 - **Right-click an enemy:** the selection attacks it.
-- **H** (or the **Stop** button): stop where you are and hold that spot.
+- **H** (or the **Stop** button): each ship brakes at once, as hard as its
+  engines allow, and holds the spot where it comes to rest.
 
 On a phone, with ships selected, a tap gives the order. The **Move / Attack**
 toggle on the fleet strip says which: Move sends them to the tapped point,
@@ -117,5 +120,6 @@ calls it back at once.
 
 ## Known limits
 
-- Ships that stop close together can take a few seconds to settle apart.
+- A ship flying fast takes a few seconds to brake to a stop (it has only its
+  own engines, like a pilot).
 - Fleet orders are for ships in the sector you are in.
