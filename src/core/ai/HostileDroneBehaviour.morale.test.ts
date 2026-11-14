@@ -58,11 +58,13 @@ function setup(entries: Entry[], forced: MoraleOutcome) {
 }
 
 describe('HostileDroneBehaviour — morale wiring (slice 6b)', () => {
-  it('a hull-25 trigger rolls; a forced FallBack runs FALL_BACK, locked for MORALE_LOCK_TICKS', () => {
+  it('a hull-25 trigger rolls; a forced FallBack runs FALL_BACK, locked for MORALE_LOCK_TICKS on its way', () => {
+    // Friends well out of reach of a ship that never moves (the test pins
+    // `self`), so it is still on its way when the lock runs out.
     const friends: Entry[] = [
-      { id: 'f1', x: -300, y: -200, side: 'drones' },
-      { id: 'f2', x: -400, y: 0, side: 'drones' },
-      { id: 'f3', x: -500, y: 200, side: 'drones' },
+      { id: 'f1', x: -1300, y: -200, side: 'drones' },
+      { id: 'f2', x: -1400, y: 0, side: 'drones' },
+      { id: 'f3', x: -1500, y: 200, side: 'drones' },
     ];
     const { b, seen, view } = setup(friends, MORALE_OUTCOME.FallBack);
     const hp = 0.2 * K.maxHealth;
@@ -81,8 +83,42 @@ describe('HostileDroneBehaviour — morale wiring (slice 6b)', () => {
     const start = t;
     for (; t < start + MORALE_LOCK_TICKS - 30; t++) b.tick(self(hp), view(t));
     expect(b.getManoeuvre()).toBe(MANOEUVRE_FALL_BACK);
-    // After the lock, the picker chooses again.
+    // Still on its way after the lock: it keeps going, until the cap
+    // (3 × the lock), then the picker chooses again.
     for (; t < start + MORALE_LOCK_TICKS + 60; t++) b.tick(self(hp), view(t));
+    expect(b.getManoeuvre()).toBe(MANOEUVRE_FALL_BACK);
+    for (; t < start + 3 * MORALE_LOCK_TICKS + 60; t++) b.tick(self(hp), view(t));
+    expect(b.getManoeuvre()).not.toBe(MANOEUVRE_FALL_BACK);
+  });
+
+  it('FallBack regroups, then re-engages: among its friends it returns to combat inside the lock', () => {
+    // Filmed 2026-11-14 (take 1): a ship that had fallen back sat beside an
+    // enemy at ~15 u/s for 5 s, held in FALL_BACK by the lock. Falling back
+    // means regroup, then fight on from among them.
+    const friends: Entry[] = [
+      { id: 'f1', x: -150, y: -100, side: 'drones' },
+      { id: 'f2', x: -200, y: 0, side: 'drones' },
+      { id: 'f3', x: -250, y: 100, side: 'drones' },
+    ];
+    const { b, view } = setup(friends, MORALE_OUTCOME.FallBack);
+    const hp = 0.2 * K.maxHealth;
+    let t = 1;
+    for (; t <= 60 && b.getManoeuvre() !== MANOEUVRE_FALL_BACK; t++) b.tick(self(hp), view(t));
+    expect(b.getManoeuvre()).toBe(MANOEUVRE_FALL_BACK);
+    const start = t;
+    for (; t < start + 30; t++) b.tick(self(hp), view(t));
+    expect(b.getManoeuvre(), 'among its friends: back to normal combat manoeuvres').not.toBe(MANOEUVRE_FALL_BACK);
+    expect(t - start).toBeLessThan(MORALE_LOCK_TICKS);
+  });
+
+  it('FallBack with no friends to reach fights on', () => {
+    const { b, view } = setup([], MORALE_OUTCOME.FallBack);
+    const hp = 0.2 * K.maxHealth;
+    let t = 1, fellBack = false;
+    for (; t <= 60; t++) { b.tick(self(hp), view(t)); if (b.getManoeuvre() === MANOEUVRE_FALL_BACK) { fellBack = true; break; } }
+    expect(fellBack).toBe(true);
+    for (let k = 0; k < 30; k++, t++) b.tick(self(hp), view(t));
+    expect(b.getLastMoraleOutcome()).toBe(MORALE_OUTCOME.FallBack);
     expect(b.getManoeuvre()).not.toBe(MANOEUVRE_FALL_BACK);
   });
 

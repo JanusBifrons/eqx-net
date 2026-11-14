@@ -188,23 +188,40 @@ describe('FallBackManoeuvre', () => {
     expect(m.arrived).toBe(false);
   });
 
-  it('settles at the anchor and fights from there (AUTO facing, slowing)', () => {
-    const c = ctxAt(0, 0, 0, 500, { hasAnchor: true, anchorX: -0.2 * R, anchorY: 0 });
+  it('arrives among its friends still moving, and is done: it regroups, then re-engages', () => {
+    // Filmed 2026-11-14 (take 1): a FallBack slowed with the distance to its
+    // friends and sat at ~15 u/s 165–221 u from an enemy for 5 s. Falling back
+    // means regroup, then fight on from among them: it never parks.
     const m = new FallBackManoeuvre();
     m.begin();
+    for (const frac of [2, 1.2, 0.6, 0.2, 0.02]) {
+      const c = ctxAt(0, 0, 0, 500, { hasAnchor: true, anchorX: -frac * R, anchorY: 0 });
+      run(m, c);
+      expect(goal.speed, `cruising at ${frac} × fire range from its friends`).toBeGreaterThanOrEqual(CRUISE);
+    }
+    const c = ctxAt(0, 0, 0, 500, { hasAnchor: true, anchorX: -0.2 * R, anchorY: 0 });
     run(m, c);
     expect(m.arrived).toBe(true);
     expect(goal.facing).toBe(FACE_AUTO);
-    expect(goal.speed).toBeLessThan(CRUISE * 0.5);
     expect(goal.boost).toBe(false);
+    expect(m.isDone(c), 'among friends: hand back to combat').toBe(true);
   });
 
-  it('with nobody to fall back on, opens the range from the threat', () => {
+  it('is not done on the way to its friends', () => {
+    const c = ctxAt(0, 0, 0, 500, { hasAnchor: true, anchorX: -3 * R, anchorY: 0 });
+    const m = new FallBackManoeuvre();
+    m.begin();
+    run(m, c);
+    expect(m.isDone(c)).toBe(false);
+  });
+
+  it('with nobody to fall back on, it is done (fights on), opening the range meanwhile', () => {
     const c = ctxAt(0, 0, 0, 500, { hasAnchor: false, sensorEnemies: 2, threatX: 0, threatY: 600 });
     const m = new FallBackManoeuvre();
     m.begin();
     const h = run(m, c);
     expect(h.dirY).toBeLessThan(-0.9);
+    expect(m.isDone(c)).toBe(true);
   });
 });
 

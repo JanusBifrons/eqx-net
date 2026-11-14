@@ -8,7 +8,10 @@
  *  (b) A fighter at 20 % hull with three friends near, its die forced to
  *      FallBack, heads for its friends (the gap to their centroid shrinks).
  *  (c) The same fighter alone against three enemies, its die forced to Flee,
- *      runs from them and warps out (the room's NPC warp, `BOT_WARP`).
+ *      runs from them and warps out (the room's NPC warp, `BOT_WARP`): once
+ *      its spool ends it leaves the sector the way any departing NPC does
+ *      (`warp_out` where it stood, then gone from the room). The 3v3 take of
+ *      2026-11-14 had a fled drone jump ~12.7 km and park in the room.
  *
  * The roll is forced through the brain's `setMoraleRoll` test seam; the
  * trigger is real (hull at 20 % crosses the 25 % threshold).
@@ -50,11 +53,11 @@ async function boot(poses: Array<{ kind: string; x: number; y: number; angle: nu
     defaultSpawnY: 9000,
   });
   // A PENDING observer creates the room; the AI only targets ACTIVE hulls.
-  await harness.connectAs(randomUUID());
+  const client = await harness.connectAs(randomUUID());
   const room = harness.getServerRoom() as unknown as Room;
   // Registry order = pose order.
   const ids = [...room._internals.swarmRegistry.all()].filter((r) => r.kind === 1).map((r) => r.id);
-  return { harness, room, ids };
+  return { harness, room, ids, client };
 }
 
 function brain(room: Room, id: string): HostileDroneBehaviour {
@@ -165,20 +168,47 @@ describe('SectorRoom integration — Kite and the morale die (AI slice 6b)', () 
     const d0 = centroidGap();
     let fellBack = false;
     let dMin = d0;
+    // Regroup, then re-engage (filmed 2026-11-14, take 1: a fallen-back ship
+    // slowed with the gap to its friends and sat at ~15 u/s beside an enemy
+    // for 5 s). Once among its friends it must keep moving.
+    const R = mb.getFireRange();
+    const cruise = mb.getCruiseSpeed();
+    let arrived = false, after = 0, slow = 0, parkedNearEnemy = 0;
+    let prev = room._internals.swarmPose(me)!;
+    let prevTick = room.serverTick;
     const t0 = Date.now();
-    while (Date.now() - t0 < 10_000) {
+    // 16 s: the trip in plus several seconds among them.
+    while (Date.now() - t0 < 16_000) {
       await harness.advance(SAMPLE_MS);
       if (mb.getManoeuvre() === MANOEUVRE_FALL_BACK) fellBack = true;
-      dMin = Math.min(dMin, centroidGap());
+      const gap = centroidGap();
+      dMin = Math.min(dMin, gap);
+      const p = room._internals.swarmPose(me)!;
+      const dt = (room.serverTick - prevTick) / 60;
+      if (fellBack && gap <= R) arrived = true;
+      if (arrived && dt > 0) {
+        const speed = Math.hypot(p.x - prev.x, p.y - prev.y) / dt;
+        const e = room._internals.swarmPose(enemy)!;
+        after++;
+        if (speed < 0.4 * cruise) {
+          slow++;
+          if (Math.hypot(p.x - e.x, p.y - e.y) < 300) parkedNearEnemy++;
+        }
+      }
+      prev = p;
+      prevTick = room.serverTick;
     }
     const d1 = centroidGap();
-    console.log(`[fallback] d0=${d0.toFixed(0)} dMin=${dMin.toFixed(0)} d1=${d1.toFixed(0)} outcome=${mb.getLastMoraleOutcome()} manoeuvre=${mb.getManoeuvre()}`);
+    console.log(`[fallback] d0=${d0.toFixed(0)} dMin=${dMin.toFixed(0)} d1=${d1.toFixed(0)} outcome=${mb.getLastMoraleOutcome()} manoeuvre=${mb.getManoeuvre()} afterArrive=${after} slow(<40% cruise)=${slow} parkedNearEnemy=${parkedNearEnemy}`);
     expect(mb.getLastMoraleOutcome()).toBe(MORALE_OUTCOME.FallBack);
     expect(fellBack, 'ran FALL_BACK').toBe(true);
     expect(dMin, 'closer to its friends').toBeLessThan(0.7 * d0);
+    expect(after, 'reached its friends with time left to sample').toBeGreaterThan(40);
+    expect(slow / after, 'among its friends it keeps moving').toBeLessThan(0.1);
+    expect(mb.getManoeuvre(), 'back to combat manoeuvres among its friends').not.toBe(MANOEUVRE_FALL_BACK);
   });
 
-  it('(c) the same fighter alone vs three enemies, forced Flee, runs and warps out', { timeout: 60_000 }, async () => {
+  it('(c) the same fighter alone vs three enemies, forced Flee, runs, warps out and leaves the sector', { timeout: 60_000 }, async () => {
     const s = await boot([
       { kind: 'fighter', x: 0, y: 0, angle: 0 },
       { kind: 'patrol-fighter', x: -300, y: 900, angle: Math.PI },
@@ -199,28 +229,41 @@ describe('SectorRoom integration — Kite and the morale die (AI slice 6b)', () 
       room.aiController.markHostile(e, me, room.serverTick);
     }
 
+    // The room's departure effect: a `warp_out` for this ship, where it stood.
+    const warpOuts: Array<{ playerId: string; x: number; y: number }> = [];
+    s.client.onMessage('warp_out', (m: { playerId: string; x: number; y: number }) => { warpOuts.push(m); });
     const p0 = room._internals.swarmPose(me)!;
-    let fled = false, warpPhaseSeen = 0, warpAtMs = -1, minYWhileFleeing = 0;
+    let fled = false, warpPhaseSeen = 0, warpAtMs = -1, goneAtMs = -1, minYWhileFleeing = 0;
+    let last = p0;
     const t0 = Date.now();
     while (Date.now() - t0 < 16_000) {
       await harness.advance(SAMPLE_MS);
       const p = room._internals.swarmPose(me);
-      if (!p) break;
+      if (!p) { goneAtMs = Date.now() - t0; break; }
+      last = p;
       if (mb.getManoeuvre() === MANOEUVRE_FLEE) { fled = true; minYWhileFleeing = Math.min(minYWhileFleeing, p.y - p0.y); }
       const ph = room.botWarpPhase(me);
       if (ph !== 0) { warpPhaseSeen = Math.max(warpPhaseSeen, ph); if (warpAtMs < 0) warpAtMs = Date.now() - t0; }
-      if (warpPhaseSeen >= 2 && ph === 0) break;
     }
-    const p1 = room._internals.swarmPose(me)!;
-    const moved = Math.hypot(p1.x - p0.x, p1.y - p0.y);
-    console.log(`[flee] fled=${fled} minDy=${minYWhileFleeing.toFixed(0)} warpAt=${warpAtMs}ms phase=${warpPhaseSeen} moved=${moved.toFixed(0)} warpOuts=${mb.getWarpOutCount()} sensor=${mb.getSensorRange().toFixed(0)}`);
+    // Let the broadcast reach the client.
+    await harness.advance(200);
+    const out = warpOuts.find((m) => m.playerId === me);
+    const inRegistry = [...room._internals.swarmRegistry.all()].some((r) => r.id === me);
+    console.log(`[flee] fled=${fled} minDy=${minYWhileFleeing.toFixed(0)} warpAt=${warpAtMs}ms gone=${goneAtMs}ms phase=${warpPhaseSeen} warpOuts=${mb.getWarpOutCount()} sensor=${mb.getSensorRange().toFixed(0)} broadcast=${out !== undefined}`);
     expect(mb.getLastMoraleOutcome()).toBe(MORALE_OUTCOME.Flee);
     expect(fled, 'ran FLEE').toBe(true);
     expect(minYWhileFleeing, 'ran away from the enemies (they sit north)').toBeLessThan(-150);
     expect(mb.getWarpOutCount(), 'asked to warp out once').toBe(1);
     expect(warpAtMs, 'the room started its warp').toBeGreaterThanOrEqual(0);
     expect(warpAtMs, 'within ~8 s of the fight').toBeLessThan(9000);
-    expect(warpPhaseSeen, 'it ran (left the fight)').toBeGreaterThanOrEqual(2);
-    expect(moved, 'far from where it fled').toBeGreaterThan(2 * mb.getSensorRange());
+    expect(warpPhaseSeen, 'it spooled').toBeGreaterThanOrEqual(1);
+    // Left the sector once the spool ended: gone from the room, not parked.
+    expect(goneAtMs, 'left the room').toBeGreaterThan(warpAtMs);
+    expect(inRegistry, 'no longer a ship in this room').toBe(false);
+    expect(room.aiController.getBehaviour(me), 'its brain went with it').toBeNull();
+    expect(out, 'the room broadcast its warp_out').toBeDefined();
+    // Where it stood (its last sample, at most a sample's flight away), not
+    // at the in-sector drop 4 x sensor range off.
+    expect(Math.hypot(out!.x - last.x, out!.y - last.y), 'the warp_out is where it stood').toBeLessThan(0.25 * mb.getSensorRange());
   });
 });

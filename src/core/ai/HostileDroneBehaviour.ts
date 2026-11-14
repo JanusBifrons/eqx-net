@@ -248,8 +248,9 @@ const COUNT_RANGE_MUL = 1.5;
  *  heading (well clear of the fight it ran from; #18: sensor range follows
  *  the ship's fire range). */
 const WARP_OUT_SENSOR_MUL = 4;
-/** A FallBack runs at least `MORALE_LOCK_TICKS`, and on until it reaches its
- *  friends, but never longer than this (15 s). */
+/** A FallBack on its way runs at least `MORALE_LOCK_TICKS`, and on until it
+ *  reaches its friends, but never longer than this (15 s). Once among them
+ *  (or with none to reach) it re-engages at once. */
 const FALLBACK_MAX_TICKS = 3 * MORALE_LOCK_TICKS;
 
 /** The morale die (test seam: `setMoraleRoll`). */
@@ -1415,9 +1416,13 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       }
       if (p.current === MANOEUVRE_FLEE) return;
       if (p.current === MANOEUVRE_FALL_BACK) {
-        // Held through the lock, and on until it reaches its friends (capped).
-        if (tick < this._moraleLockUntil || (!this._fallBack.arrived && tick < this._fallBackCapUntil)) return;
-        // The lock ran out: choose afresh.
+        // Regroup, then re-engage (owner 2026-11-14): held until it reaches
+        // its friends (capped; the lock is its floor), and handed back to
+        // the normal combat manoeuvres the moment it is among them or has
+        // nobody to reach (`done`), lock or not: a ship held in FallBack at
+        // its anchor parked beside an enemy.
+        if (!done && (tick < this._moraleLockUntil || tick < this._fallBackCapUntil)) return;
+        // Regrouped, or the cap ran out: choose afresh.
         this.switchManoeuvre(p.decide(c, this.role, true), tick);
         return;
       }

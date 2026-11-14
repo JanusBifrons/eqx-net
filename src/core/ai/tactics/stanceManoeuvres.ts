@@ -286,14 +286,15 @@ const FALLBACK_BOOST = 1.5;
 /**
  * Head for friends: the nearest friendly capital, else the centroid of the
  * same-side ships within sensor range (the brain refreshes `anchor*` at
- * decision time). On the way the nose follows the course; once within
- * `FALLBACK_ARRIVE` × fire range of the anchor it settles there (arrive ramp)
- * and fights from among its friends (nose on the lead in range). With no
- * friend in sensors it opens the range from the threat instead. On the way
- * (or opening the range) with a pursuer on its tail it runs evasively
- * ({@link EvasiveRun}: weave, break when hit, full speed, boost from the
- * reserve). Ends when the morale lock runs out (the brain's call), never by
- * itself.
+ * decision time). On the way the nose follows the course at cruise; once
+ * within `FALLBACK_ARRIVE` × fire range of the anchor it has regrouped and is
+ * done: the brain returns it to the normal combat manoeuvres, so it fights
+ * from among its friends and keeps moving (owner decision 2026-11-14:
+ * "regroup, then re-engage"; it never parks). With no friend in sensors it
+ * is done at once (nobody to reach: it fights on); until the brain's next
+ * decision it opens the range from the threat. On the way with a pursuer on
+ * its tail it runs evasively ({@link EvasiveRun}: weave, break when hit, full
+ * speed, boost from the reserve).
  */
 export class FallBackManoeuvre implements IManoeuvre {
   readonly id = MANOEUVRE_FALL_BACK;
@@ -336,14 +337,20 @@ export class FallBackManoeuvre implements IManoeuvre {
     const pursued = !this.arrived && this.evade.steer(ctx, ex, ey);
     if (pursued) addInterestToward(maps, this.evade.outX, this.evade.outY, 1, GOAL_SHAPE);
     else addInterestToward(maps, ex, ey, 1, GOAL_SHAPE);
-    let speed = pursued ? ctx.maxSpeed : ctx.cruiseSpeed * (d / arrive);
+    // Cruise all the way in (no arrive ramp): it hands back to combat on
+    // arrival, so it never slows to a stop among its friends (filmed
+    // 2026-11-14: the old ramp parked a ship beside an enemy for 5 s).
+    let speed = pursued ? ctx.maxSpeed : ctx.cruiseSpeed;
     if (speed > ctx.maxSpeed) speed = ctx.maxSpeed;
     out.speed = speed;
     out.facing = this.arrived ? FACE_AUTO : FACE_MOVE;
     out.boost = pursued || d > FALLBACK_BOOST * arrive;
     out.spendReserve = pursued;
   }
-  isDone(): boolean { return false; }
+  /** Regrouped (at the anchor), or nobody to regroup with: the brain hands
+   *  back to the normal combat manoeuvres, so the ship fights on from among
+   *  its friends and keeps moving. */
+  isDone(ctx: TacticalContext): boolean { return this.arrived || !ctx.hasAnchor; }
 }
 
 // ── Flee ────────────────────────────────────────────────────────────────
