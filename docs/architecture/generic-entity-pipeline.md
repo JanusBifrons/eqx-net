@@ -297,3 +297,71 @@ Current functions:
 - `decideLingeringSpriteAction({ cached, currentKind, fallbackKind })` — Phase 6b lingering hulls. Falls back to `fallbackKind` when `currentKind` is undefined and there's no cache hit (don't lock in the wrong silhouette but also don't go invisible).
 
 Tests: `src/client/render/spriteUpdateDecisions.test.ts` (12 cases incl. fast-check properties).
+
+## Server implementation notes
+
+> Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.
+
+### Generic Entity Pipeline — OOP damage dispatch + a new pose-core kind (2026-06-04)
+
+`DamageRouter.apply` routes through real Entity LEAVES: `EntityResolver.resolve(targetId)`
+returns the live leaf it names (`ShipEntity` / `DroneEntity` /
+`StructureEntity` in [src/server/entity/leaves/](../../src/server/entity/leaves/)), then ONE
+monomorphic `DamageRouter.applyInteraction(leaf, …)` reads the leaf's COMPOSED
+`{ health, perHit, death }` data (`applyLayered → broadcast → perHit → death`).
+Each leaf owns its identity + pose and composes its damage strategy + sync/render
+descriptors — a new damageable type is **a leaf + a registry row**, ZERO new
+dispatch branch here. Byte-identical to the former if-tree / strategy-table
+(locked by `DamageRouter.dispatch.test.ts`, the golden-master — HC#1: branch
+order + per-branch side-effects are load-bearing). The ordered shape-based
+selection (lingering→active→swarm; an asteroid, kind 0, is **non-damageable**
+→ the resolver returns `null` = immune; wrecks RETIRED in P6.3/C3) lives in
+[EntityResolver.ts](../../src/server/entity/EntityResolver.ts).
+
+**HC#5 (monomorphism guard).** `applyInteraction` is ONE concrete function
+reading the leaf's composed DATA — it must NEVER become a per-class virtual
+`leaf.receiveInteraction()` across the N leaf classes (that megamorphic-deopts in
+V8 under ramming/projectile load). The leaves are objects for identity/sync/render
+(where polymorphism is cheap + clarifying); the per-hit hot work stays one
+monomorphic call site. Lock: the `DO NOT replace this with receiveInteraction`
+guard comment + `benchmarks/damageDispatch.bench.ts` (mixed-kind ≈ single-kind
+per `apply` — no cliff). Adding a damageable type does **not** add a branch here.
+
+A new **pose-core** entity type (e.g. `SWARM_KIND_STRUCTURE = 2`) is a
+swarm-registry record — it rides `BinarySwarmBroadcast` (writes `rec.kind`
+as-is, no encoder change), the interest grid (reuses the single per-(client,tick)
+`interestScratch`, no new `query9`), and the `DamageRouter` 'swarm' strategy for
+free. The only damage-specific line is seeding `swarmHealth` on spawn (absence =
+immune, like asteroids). `SwarmSpawner.spawnStructure` mirrors `spawnAsteroid`
+(`spawnOne` is already kind-generic). Test trigger: the testMode `structurePoses`
+room option (mirrors `dronePoses`) → `structure-test` E2E room. New visible type
+⇒ the integration-test mandate above applies (`structureEntity.test.ts`). Full
+story: [docs/architecture/generic-entity-pipeline.md](../../docs/architecture/generic-entity-pipeline.md).
+
+**EntitySyncRouter (GEP B4) — the per-tick send orchestration seam.** Both
+entity-sync sends in `SectorRoom.update()` now route through ONE
+[EntitySyncRouter](../../src/server/rooms/EntitySyncRouter.ts) `route(phaseTime)` call instead of
+calling the two broadcasters directly. The router owns the **ordering decision**
+— pose-core binary FIRST (`SwarmBroadcaster.broadcast()` builds the
+per-(client,tick) `interestScratch`), then json-slice
+(`SnapshotBroadcaster.broadcast(sectorIdle)` reuses it, no second `query9` —
+**HC#4, now enforced by the router, not the caller**) — and evaluates sector-idle
+**between** the two sends (verbatim: `swarm.broadcast` may apply backpressure
+before idle reads `clients.length`, so the order is preserved, not reordered).
+The proven broadcasters keep their **byte-level encoding UNCHANGED** (the safe
+shape — making the router own per-entity iteration would move wire bytes for zero
+gain; STOP+flag + netgate if ever attempted). Its constructor runs a **boot-time
+`SyncProfile.transport` governance check** (`assertTransportGovernance`) that
+validates every `EntityKindRegistry` kind's transport is well-formed and that the
+pose-core bytes match the wire constants — this is what finally makes
+`SyncProfile.transport` load-bearing (boot-time only, never in the `route()` hot
+path). Hot path is allocation-free (#14): the idle closure is built once at
+construction, `phaseTime` is passed by reference. Lock: `EntitySyncRouter.test.ts`
+(ordering + idle-threading + governance); the full-snapshot-path byte-identity is
+the netgate + the existing integration suite.
+
+## History
+
+> Updated 2026-06-04 (GEP B2): the data-driven `strategies[kind]` table is now
+> the **OOP entity pipeline**. The damage SHAPE is real leaf objects, not a
+> side table.

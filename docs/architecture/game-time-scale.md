@@ -146,3 +146,17 @@ Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each r
   - A NEW effect must take its time from `fxNow()` (or the `now` it is handed). `src/client/render/**` and `src/client/effects/**` lint-ban `performance.now` / `Date.now` outside a real-time allowlist in `eslint.config.js`.
   - Real time stays for pose interpolation against wall-stamped arrivals, the camera and UI (warp curtain, radar, lock marks, health-bar fades, selection) and cost measurement. Inline `-- real time: <why>` lines in PixiRenderer.
   - Lock: `FxExplosions.timeScale.test.ts` (an unmodified effect driven by a 0.5×/2× clock lives 2× / 0.5× as long in wall time).
+
+## Server implementation notes
+
+> Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.
+
+- **Game speed is per sector.** Each `SectorRoom` owns `this.gameClock` (`createSectorClock()`): inside the room, read `this.gameClock.now()` and schedule with `this.gameClock.after` / `.every`, and hand room-owned subsystems `now: () => this.gameClock.now()` (never the process clock: it would not follow the sector's speed). The room tick loop and its physics world run 60 × speed ticks per wall second (`SET_TIME_SCALE` to the worker on every change).
+- **The process clock** (`time/gameTime.ts`) is for cross-sector world time (directors, economy, convoys, wallets, holds). Outside a room, gameplay reads `gameNow()` and schedules with `gameSetTimeout` / `gameSetInterval` / `gameClearTimer` (unref'd), never `Date.now()` / `setTimeout` / `setInterval`. At 1× `gameNow()` IS `Date.now()`.
+- **The rule is a lint error** in `src/server` and `src/core` outside the real-time allowlist in `eslint.config.js`. Real time covers persistence, networking, auth/identity, push, routes, logs/audit, perf measurement, the room tick scheduler and boot.
+  - A new real-time FILE goes on that list.
+  - A one-off real-time line in a gameplay file gets `// eslint-disable-next-line no-restricted-properties -- real time: <why>`.
+  - Never use real time just to dodge the rule. A timer that should follow the game speed but runs on wall time desyncs the moment the speed isn't 1×.
+- **Subsystems take `now` / `nowMs` deps** (break-ins, holds, directors, economy). Their DEFAULT is `gameNow`; tests inject their own.
+- **Saved timestamps are game time** (drift from wall time while the speed isn't 1×; see the design note §0).
+- Story: [docs/architecture/game-time-scale.md](../architecture/game-time-scale.md).

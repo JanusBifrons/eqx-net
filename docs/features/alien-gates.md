@@ -51,3 +51,15 @@ The `alien-gate-test` room seeds one gate at the origin through the `testAlienGa
 Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each rule and points here.
 
 - **v4 A — alien gates.** The inspector shows a gate's destination and next jump from shared pure code (`components/alienGateInfo.ts`: nearest ideal site + the timetable; approximate, browser clock), never a pairing offer. `DisabledIndicator` (top-centre) reads the Zustand `disabledUntil`, written by `ColyseusClient.applyLocalDisabled` from the own-ship `disabledMs` only when the disable starts, ends or is re-applied. While disabled, `tickPhysics` strips local input through the shared `gateDisabledInput` (both the per-tick and the heartbeat paths) and stops manual and auto fire, so prediction matches the server (#15). `resetPredictionState` clears it.
+
+## Server implementation notes
+
+> Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.
+
+- **What they are.** `alien_gate` is a teleporter kind (`isTeleporterKind` includes it; `isAlienGateKind` picks it out). It is unbuildable (`UNBUILDABLE_STRUCTURE_KINDS`: no blueprint, no pack recipe, no build menu, and `place_structure` refuses it), owned by `ALIEN_GATE_OWNER` (`npc:ancients:gates`), and never joins a grid (`maxConnections: 0`).
+- **Seeding.** `seedAlienGates` runs for galaxy rooms (`alienGates` room option, set by `resolveSectorConfig`) AFTER the snapshot restore and AFTER the NPC bases. Each gate takes the free spot nearest its ideal site (`alienGateCandidates`). Seeding gates before the bases pushed 5 bases out of their sectors; keep the order.
+- **Pairing.** A gate stores `alienNeighbour`. `TeleporterSubsystem.alienTimetable` resolves the twin through the broker on first use (`findAlienTwin`: the gate in that room whose `alienNeighbour` is here). Never pair gates by a pre-computed uid: a gate may sit off its ideal spot.
+- **The subsystem.** `required()` is 0 and `isCharged()` true (free), `scaleFor` runs the cycle at `ALIEN_GATE_CYCLE_SCALE`, the pulse skips them (no pad hold), and only the end in the lower sector key fires the timetable. `teleportCycleScale` also shortens the minute (the test trigger).
+- **Invulnerable + disable.** `applyDamage` returns early for a gate and calls `AlienGateGuard.onGateAttacked`; `handleFire` / `handleAiFire` call `onFired` (2500 u zone) and drop a disabled shooter's fire. The input handler strips movement bits through the SHARED `gateDisabledInput` (#15), and `postIntent` zeroes a disabled NPC's AI intent by slot. `evictSwarmEntity` must `forget` the ship (slots are reused). The own-ship snapshot carries `disabledMs` (#16).
+- **Steady state** with no gates is one `gateCount` check per fire/damage call.
+- Locks: `AlienGateGuard.test.ts`, `tests/unit/disableParity.test.ts`, `tests/integration/sectorRoom/alienGates.test.ts`, `galaxyBases.test.ts` (gates fit around the bases). Story: [docs/features/alien-gates.md](../features/alien-gates.md).

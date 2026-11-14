@@ -41,3 +41,15 @@ Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each r
 ### Helm move marker
 
 - The capital pilot's helm course point reaches the renderer as `RenderMirror.helmCourse` (`{x, y, seq}` or null), written by `ColyseusClient.syncHelmMark` via the pure `helm/helmCourseMark.ts` (own capital + active order + not spectating). Never put it in Zustand (#2). `render/helm/HelmCourseMarker.ts` draws it screen-space (fixed pixel size), popping on each `seq` change. E2E reads `__eqxArtStats().helmMarker`. Story: `docs/features/capital-ships.md`.
+
+## Server implementation notes
+
+> Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.
+
+### Flagship fleets (wrap-up W2a, 2026-11-08)
+
+- **`FlagshipDirector`** (`livingworld/`) is ticked on the drone director's `onTick`. It keeps `FLEET_COUNT` capital fleets: an elite-marked flagship plus escorts with `flagship-` ids, which `LoadShedder` never sheds.
+- **Moving.** Fleets move pocket to pocket with `SectorRoom.warpBot`, the NPC warp: `World.botWarp` → `BOT_WARP` → `drones[].warp`. They cross systems by gate.
+- **Escort stations come from hull radii** (`escortRing`), never a flock distance: fighter-scale flocking rammed escorts into a battleship's hull.
+- **`warpBot` lands at `landingPoint`.** A drop inside a belt rock killed an escort, so the bot lands at the nearest clear spot, like a pilot.
+- **The map's truth is `SectorLiveState.capital`.** Persisted as `allegiance_director_state` row `flagships`; kill switch `EQX_DISABLE_FLAGSHIPS`.
