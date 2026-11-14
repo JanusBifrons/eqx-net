@@ -101,6 +101,44 @@ target, the timer, the straight extend.
 - `tactics/manoeuvres.test.ts`: the miss floor, the grazing line, a close-in
   pass ending, the still-memory helpers.
 
+## Trigger discipline: fire only when the shot will hit
+
+Owner decision 2026-11-14: pilot skill, not a special power. Shots leave down
+the drawn barrel, and a player's fixed guns fire within 0.2 rad
+(`FC_MOUNT_FIRE_TOLERANCE`). A nose up to 0.2 rad off the lead point misses a
+fighter-sized target at range about 40 % of the time, so an AI pilot with
+fixed guns waits until the nose is inside the cone the target's hull covers:
+
+- **The cone** is `hullFireCone(hitRadius + bolt radius, distance to the lead
+  point)` = atan(r / d), capped at the 0.2 rad window. `hitRadius` comes from
+  `shipAimRadius(kind, shieldUp)` (`combat/shipHitShape.ts`: the shield bubble
+  while a non-capital's shield is up, else the kind's hull radius; #18). The
+  server fills it on `AiPlayerView` / `AiSwarmView`; a view without it is aimed
+  at as the default kind's bubble; a structure gets the plain window.
+- **Easing on.** While the nose is held on the lead in fire range, the pilot
+  sets `SnapTurnState.aimCone`; inside `easedSnapTurn`'s dead-band an error
+  wider than the cone gets a one-tick tap (no minimum hold, no tap back the
+  other way within the no-reverse window). The coarse turn discipline is
+  unchanged; a nose on the move course, a nudge or a dodge sets no cone.
+- **Per barrel.** The shot carries the cone (`AiIntent.fire.cone`), and
+  `AiFireResolver.bearingMask` narrows each barrel's window to it, so a turret
+  fires only the barrels whose line falls inside the hull's cone, never wider
+  than the mount's own window.
+
+Measured, `dogfight-3v3`, 3 × 40 s each (hits = hits on any of the six ships
+/ AI bolts fired; TTK = first shield or hull loss to death):
+
+| | hit % | shots/s | damage/s | kills | median TTK |
+|---|---|---|---|---|---|
+| Before | 53.5 / 58.1 / 57.4 | 6.8–7.6 | 44–52 | 3 / 2 / 3 | 27–32 s |
+| After | 91.7 / 92.2 / 87.9 | 5.6–5.7 | 59–63 | 3 / 4 / 3 | 23–27 s |
+
+The kill time from first hit stays well above the 5–12 s aim even at ~90 %
+accuracy (damage/s rose ~25 %, but the six ships together land only ~60
+damage a second); the cause is not yet measured. Hull and damage are not
+retuned for it. Locks: `ai/HostileDroneBehaviour.fireGate.test.ts`,
+`tests/unit/aiTurretFacesShot.test.ts`.
+
 ## Reference: the combat AI in detail
 
 Moved here from the zone CLAUDE.md files (rules only there). Each entry keeps its locks.

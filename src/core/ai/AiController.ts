@@ -28,6 +28,9 @@ export interface AiFireRequest {
   targetId: string;
   /** Server tick at which the AI declared the shot. */
   tick: number;
+  /** The cone (rad) the target's hull covers from the shooter (pilot skill):
+   *  a barrel fires only if its line falls inside it. Absent ⇒ no extra limit. */
+  cone?: number;
 }
 
 export interface AiIntentSink {
@@ -332,6 +335,7 @@ export class AiController {
         dirX: intent.fire.dirX,
         dirY: intent.fire.dirY,
         targetId: intent.fire.targetId,
+        cone: intent.fire.cone,
         tick,
       });
     }

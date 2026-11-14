@@ -7,6 +7,7 @@ import {
 import { getWeapon, type WeaponMode } from '../combat/WeaponCatalogue.js';
 import { hasTurretFireControl, mountWeaponReach } from '../combat/mountReach.js';
 import { FC_MOUNT_FIRE_TOLERANCE } from '../combat/fireControlBearing.js';
+import { shipBubbleRadius } from '../combat/shipHitShape.js';
 import { getShipKind, type ShipKind } from '../../shared-types/shipKinds.js';
 import {
   isOnSightHostile,
@@ -120,6 +121,23 @@ const DRONE_AIM_TOLERANCE_CLOSE = 0.45; // ~26°
 /** Distance threshold (relative to fire range) below which the wide
  *  point-blank arc kicks in. */
 const POINT_BLANK_RATIO = 0.4;
+
+/** A target view with no hit radius (tests, older callers) is aimed at as the
+ *  default kind's shield bubble (the shared hit shape, #18). */
+const DEFAULT_AIM_RADIUS = shipBubbleRadius(null);
+
+/**
+ * Fixed-gun trigger discipline (owner 2026-11-14: fire only when the shot will
+ * hit; pilot skill, not a special power). The cone (rad) the target's hull
+ * covers seen from `dist`: atan(hitRadius / dist), never wider than the
+ * player's fixed-gun window `FC_MOUNT_FIRE_TOLERANCE`. `hitRadius` is the
+ * target's hit circle plus the shot's own radius; Infinity ⇒ the window.
+ */
+export function hullFireCone(hitRadius: number, dist: number): number {
+  if (!(dist > 0)) return FC_MOUNT_FIRE_TOLERANCE;
+  const c = Math.atan(hitRadius / dist);
+  return c < FC_MOUNT_FIRE_TOLERANCE ? c : FC_MOUNT_FIRE_TOLERANCE;
+}
 /** Distance threshold (relative to fire range) above which the drone
  *  gets a thrust boost to close engagement faster. Tuned so the boost
  *  fires only when the drone is meaningfully out of combat range. */
@@ -393,6 +411,9 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     claims: number;
     /** A ship (pilot hull or swarm combatant), not a structure. */
     ship: boolean;
+    /** The hit circle a fixed gun aims at (the shared hit shape); Infinity
+     *  for a structure (the player window applies). */
+    hitRadius: number;
     /** Per-candidate hostility (allegiances P0) — ALWAYS set before the pick,
      *  so `pickTarget` reads it instead of the callback. For a drones-only view
      *  it equals `hostileTo.has(id)` ⇒ byte-identical to pre-P0. */
@@ -449,6 +470,9 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    *  need no lead). 2026-06-03 — replaces the single hardcoded
    *  LEAD_AIM_MUZZLE_SPEED, which 2×-over-led the 1600 u/s bolt. */
   private readonly leadMuzzleSpeed: number;
+  /** The shot's own radius (a bolt sweeps a circle; 0 for a beam): widens the
+   *  hull cone a fixed gun fires inside. */
+  private readonly shotRadius: number;
   /** Sensor range (world units): NEW body-target picks are capped here
    *  (`roleSensorRange(kind.aiRole, fireRange)`, AI overhaul slice 3). A held
    *  target is kept beyond it, and a known (ledger) hostile beyond it is still
@@ -479,7 +503,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   };
   /** Reused warp-out request (attached on the one tick it is asked). */
   private readonly _warpScratch = { x: 0, y: 0 };
-  private readonly _fireScratch: { dirX: number; dirY: number; targetId: string } = { dirX: 0, dirY: 0, targetId: '' };
+  private readonly _fireScratch: { dirX: number; dirY: number; targetId: string; cone: number } = { dirX: 0, dirY: 0, targetId: '', cone: 0 };
   /** The kind's handling as the virtual pilot sees it (body mass as spawned). */
   private readonly handling: PilotHandling;
   /** Virtual-pilot state (reaction latch), owned per drone. */
@@ -622,6 +646,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     // Lead-aim muzzle speed: real projectile speed for bolts/missiles,
     // ~instant for hitscan (no lead). Drives the intercept in tickCombat.
     this.leadMuzzleSpeed = firstWeapon.mode === 'hitscan' ? 1e6 : firstWeapon.speed;
+    this.shotRadius = firstWeapon.mode === 'hitscan' ? 0 : firstWeapon.radius;
     if (firstWeapon.mode === 'hitscan') {
       // Beam: very close range — bore in to ~90 % of the beam's reach.
       this.fireRange = firstWeapon.range * 0.9;
@@ -780,6 +805,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
 
   tick(self: AiEntity, view: AiWorldView): AiIntent {
     this._aimValid = false;
+    this._pilot.turn.aimCone = 0;
     // Boost energy regenerates every tick, as a pilot's pool does.
     this.energy = regenEnergyStep(this.energy, this.energyMax, this.energyRegen);
     // Spread targets: drop my claim; the combat pick below re-claims, so while
@@ -840,7 +866,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     for (const p of view.players) {
       let c = cand[n];
       if (!c) {
-        c = { id: '', x: 0, y: 0, vx: 0, vy: 0, angle: NaN, priority: 0, ship: true, hostile: false, claims: 0 };
+        c = { id: '', x: 0, y: 0, vx: 0, vy: 0, angle: NaN, priority: 0, ship: true, hostile: false, claims: 0, hitRadius: 0 };
         cand[n] = c;
       }
       c.id = p.id;
@@ -853,6 +879,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       c.maxHealth = p.maxHealth;
       c.priority = 0;
       c.ship = true;
+      c.hitRadius = p.hitRadius ?? DEFAULT_AIM_RADIUS;
       let h = this.hostileTo.has(p.id) || (p.ownerId !== undefined && this.hostileTo.has(p.ownerId));
       if (!h && this.onSightPlayers && p.truce !== true) {
         const dx = p.x - self.x;
@@ -868,7 +895,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       for (const s of structs) {
         let c = cand[n];
         if (!c) {
-          c = { id: '', x: 0, y: 0, vx: 0, vy: 0, angle: NaN, priority: 0, ship: true, hostile: false, claims: 0 };
+          c = { id: '', x: 0, y: 0, vx: 0, vy: 0, angle: NaN, priority: 0, ship: true, hostile: false, claims: 0, hitRadius: 0 };
           cand[n] = c;
         }
         c.id = s.id;
@@ -881,6 +908,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
         c.maxHealth = s.maxHealth;
         c.priority = s.priority;
         c.ship = false;
+        c.hitRadius = Infinity; // a footprint box, not a hull: the player window
         c.hostile = this.hostileTo.has(s.id);
         if (c.hostile) anyHostile = true;
         n++;
@@ -902,7 +930,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
         if (!h) continue;
         let c = cand[n];
         if (!c) {
-          c = { id: '', x: 0, y: 0, vx: 0, vy: 0, angle: NaN, priority: 0, ship: true, hostile: false, claims: 0 };
+          c = { id: '', x: 0, y: 0, vx: 0, vy: 0, angle: NaN, priority: 0, ship: true, hostile: false, claims: 0, hitRadius: 0 };
           cand[n] = c;
         }
         c.id = s.id;
@@ -915,6 +943,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
         c.maxHealth = s.maxHealth;
         c.priority = 0;
         c.ship = true;
+        c.hitRadius = s.hitRadius ?? DEFAULT_AIM_RADIUS;
         c.hostile = true;
         anyHostile = true;
         n++;
@@ -1054,6 +1083,14 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     // Bearing toward the lead-aim point, not the target's current pose.
     const desiredAngle = facingOf(aimDx, aimDy);
     const bearingError = wrapAngle(desiredAngle - self.angle);
+    // Fixed guns: the cone the target's hull covers at the lead point (plus the
+    // bolt's own radius), capped at the player's window. In range, the pilot
+    // eases the nose into it with one-tick taps (`aimCone`) and fires only
+    // inside it (below), so a shot is pulled only when it will hit.
+    // Turret kinds send the same cone with the shot: the resolver narrows each
+    // barrel's window to it.
+    const hullCone = hullFireCone(((target as { hitRadius?: number }).hitRadius ?? DEFAULT_AIM_RADIUS) + this.shotRadius, Math.hypot(aimDx, aimDy));
+    if (this.maxTurretHalfArc <= 0 && dist <= this.fireRange) this._pilot.turn.aimCone = hullCone;
     this._aimValid = true;
     this._aimX = aimX;
     this._aimY = aimY;
@@ -1121,17 +1158,18 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     // mount's half-arc to the body-aim tolerance, so a drone fires when
     // a turret can reach the target even when the body itself is off.
     //
-    // Fixed guns (no turning mount) fire only when the nose bears, by the
-    // pilot's rule (`FC_MOUNT_FIRE_TOLERANCE`, a player's fixed guns get the
-    // same window): the shot leaves down the drawn barrel, so the wider cone
-    // fired bolts visibly off the gun (owner 2026-11-14). A turret kind keeps
-    // the wide request; the resolver fires only the barrels that bear.
+    // Fixed guns (no turning mount) fire only when the nose is inside the
+    // cone the target's hull covers (`hullCone`, never wider than the
+    // player's `FC_MOUNT_FIRE_TOLERANCE` window): the shot leaves down the
+    // drawn barrel (owner 2026-11-14), and a nose up to 0.2 rad off the lead
+    // missed a fighter at range ~40 % of the time. A turret kind keeps the
+    // wide request; the resolver fires only the barrels that bear.
     const baseTolerance = dist < this.fireRange * POINT_BLANK_RATIO
       ? DRONE_AIM_TOLERANCE_CLOSE
       : DRONE_AIM_TOLERANCE;
     const aimTolerance = this.maxTurretHalfArc > 0
       ? baseTolerance + this.maxTurretHalfArc
-      : FC_MOUNT_FIRE_TOLERANCE;
+      : hullCone;
 
     const aimed = Math.abs(bearingError) <= aimTolerance;
     const inRange = dist <= this.fireRange;
@@ -1155,6 +1193,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
         f.dirY = Math.cos(self.angle);
       }
       f.targetId = target.id;
+      f.cone = hullCone;
       intent.fire = f;
     }
     return intent;
@@ -1188,6 +1227,10 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     inRange: boolean,
     goal: ManoeuvreGoal,
   ): AiIntent {
+    // Fine aim only while the nose is held on the lead (set again below): a
+    // nose on the move course, a nudge or a dodge has nothing to line up.
+    const aimCone = this._pilot.turn.aimCone;
+    this._pilot.turn.aimCone = 0;
     // The running manoeuvre has already written its interest into the maps.
     const m = this._ctxMaps;
     const goalSpeed = goal.speed;
@@ -1285,6 +1328,8 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       // circling to the six, FallBack, Flee) can already side-step: left as is.
       const off = wrapAngle(moveAngle - leadAngle);
       facing = leadAngle + (off > NUDGE_MAX_OFF ? NUDGE_MAX_OFF : off < -NUDGE_MAX_OFF ? -NUDGE_MAX_OFF : off);
+    } else if (!this._faceMove) {
+      this._pilot.turn.aimCone = aimCone;
     }
     // Afterburner: whenever the manoeuvre wants it, above the reserve; a
     // Break, or a ship running from a tailer (`spendReserve`), may spend the

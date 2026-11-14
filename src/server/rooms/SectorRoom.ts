@@ -395,7 +395,7 @@ import { ShellEventHub, type ShellViewer } from './ShellEventHub.js';
 import { type ShellSalvo } from '../../shared-types/messages/shellEvents.js';
 import { tuningFor, GLOBAL_SHIP_TUNING } from '../../shared-types/shipScale/lookup.js';
 import { isCapitalKindId } from '../../core/combat/capitalHits.js';
-import { shipRayHit, shipSweepHit } from '../../core/combat/shipHitShape.js';
+import { shipAimRadius, shipRayHit, shipSweepHit } from '../../core/combat/shipHitShape.js';
 import { CapitalWreckSubsystem } from './CapitalWreckSubsystem.js';
 import { wreckRayHit } from '../../core/destruction/wreckHits.js';
 import { isWreckPiece } from '../net/SwarmEntityRegistry.js';
@@ -4779,7 +4779,7 @@ export class SectorRoom extends Room<SectorState> {
       out.push({
         id: shipInstanceId, ownerId: ship.playerId,
         x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy, angle: pose.angle,
-        health: ship.health, maxHealth: ship.maxHealth,
+        health: ship.health, maxHealth: ship.maxHealth, hitRadius: shipAimRadius(ship.kind, ship.shield > 0),
       });
     }
   };
@@ -4788,7 +4788,7 @@ export class SectorRoom extends Room<SectorState> {
    *  once grown, #14). Targeting only. */
   private readonly _swarmViewPool: Array<{
     id: string; x: number; y: number; vx: number; vy: number; angle: number;
-    allegiance: string; health?: number; maxHealth?: number; radius: number;
+    allegiance: string; health?: number; maxHealth?: number; radius: number; hitRadius: number;
   }> = [];
   private readonly aiSwarmScratch: AiSwarmView[] = [];
 
@@ -4839,7 +4839,7 @@ export class SectorRoom extends Room<SectorState> {
       const b = slotBase(rec.slot);
       let v = pool[n];
       if (!v) {
-        v = { id: '', x: 0, y: 0, vx: 0, vy: 0, angle: 0, allegiance: 'drones', radius: 0 };
+        v = { id: '', x: 0, y: 0, vx: 0, vy: 0, angle: 0, allegiance: 'drones', radius: 0, hitRadius: 0 };
         pool[n] = v;
       }
       v.id = rec.id;
@@ -4852,6 +4852,7 @@ export class SectorRoom extends Room<SectorState> {
       v.health = this.swarmHealth.get(rec.id);
       v.maxHealth = getShipKind(rec.shipKind).maxHealth;
       v.radius = rec.radius;
+      v.hitRadius = shipAimRadius(rec.shipKind, rec.shieldDown !== true);
       out.push(v);
       n++;
     }
@@ -4867,7 +4868,7 @@ export class SectorRoom extends Room<SectorState> {
    * broadcast tail with this method, eliminating the duplication. For 5c+
    * preview the duplication is contained to this single method.
    */
-  private handleAiFire(shooterId: string, dirX: number, dirY: number, tick: number, targetId: string): void {
+  private handleAiFire(shooterId: string, dirX: number, dirY: number, tick: number, targetId: string, cone?: number): void {
     if (this.gateGuard.gateCount > 0) {
       const now = this.gameClock.now();
       if (this.gateGuard.isDisabled(shooterId, now)) return;
@@ -4878,7 +4879,7 @@ export class SectorRoom extends Room<SectorState> {
         if (this.gateGuard.isDisabled(shooterId, now)) return;
       }
     }
-    this.aiFireResolver.resolve(shooterId, dirX, dirY, tick, targetId);
+    this.aiFireResolver.resolve(shooterId, dirX, dirY, tick, targetId, cone);
   }
 
   private spawnServerProjectile(ownerId: string, x: number, y: number, vx: number, vy: number, damage: number, radius: number, maxTicks: number, weaponId: WeaponId): void {
@@ -11526,7 +11527,7 @@ export class SectorRoom extends Room<SectorState> {
       visitLingeringTargets: this._visitLingeringTargets,
       swarmEntitySnapshot: (id) => this.swarmEntitySnapshot(id),
       resolveEntityInto: (id, out) => this.swarmEntityPoseInto(id, out),
-      handleAiFire: (shooterId, dirX, dirY, tick, targetId) => this.handleAiFire(shooterId, dirX, dirY, tick, targetId),
+      handleAiFire: (shooterId, dirX, dirY, tick, targetId, cone) => this.handleAiFire(shooterId, dirX, dirY, tick, targetId, cone),
       handleAiWarpOut: this._handleAiWarpOut,
       phaseTime,
     });

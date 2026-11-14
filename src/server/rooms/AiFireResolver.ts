@@ -143,7 +143,7 @@ export class AiFireResolver implements WeaponFireSink {
    * broadcast with its own ray geometry; aggregate hit goes to the
    * damage sink (`applyDamage`).
    */
-  resolve(shooterId: string, dirX: number, dirY: number, tick: number, targetId: string): void {
+  resolve(shooterId: string, dirX: number, dirY: number, tick: number, targetId: string, cone = Infinity): void {
     const d = this.deps;
 
     const len = Math.hypot(dirX, dirY);
@@ -176,8 +176,10 @@ export class AiFireResolver implements WeaponFireSink {
     // rule, `mountFireTolerance`). Every shot leaves down its drawn barrel, so
     // a gun that doesn't bear would fire visibly off its target (owner
     // 2026-11-14: "turrets aren't turning to shoot the direction they do").
-    // None bears ⇒ hold, spending no cooldown (a turret still slewing).
-    const bearMask = this.bearingMask(shooterId, hullAngle, slotMounts, dirNdx, dirNdy);
+    // None bears ⇒ hold, spending no cooldown (a turret still slewing). The AI
+    // pilot's `cone` (the angle the target's hull covers, pilot skill) narrows
+    // each barrel's window further: it fires only when the shot will hit.
+    const bearMask = this.bearingMask(shooterId, hullAngle, slotMounts, dirNdx, dirNdy, cone);
     if (bearMask === 0) return;
 
     // Slot-level cooldown gate (mirrors PlayerFireResolver). The slot fires
@@ -216,9 +218,10 @@ export class AiFireResolver implements WeaponFireSink {
 
   /** Bit i set ⇔ slot mount i's barrel (hull + base + slewed angle) bears on
    *  the aim direction within its weapon's window (`mountFireTolerance`, the
-   *  pilot's rule, #19). Mounts past bit 30 always count as bearing. */
+   *  pilot's rule, #19), narrowed to `cone` (the target hull's angular size).
+   *  Mounts past bit 30 always count as bearing. */
   private bearingMask(
-    shooterId: string, hullAngle: number, slotMounts: ReadonlyArray<WeaponMount>, dirX: number, dirY: number,
+    shooterId: string, hullAngle: number, slotMounts: ReadonlyArray<WeaponMount>, dirX: number, dirY: number, cone: number,
   ): number {
     const angles = this.deps.droneMountAngles.get(shooterId);
     let mask = 0;
@@ -226,7 +229,8 @@ export class AiFireResolver implements WeaponFireSink {
       if (i > 30) { mask |= 1 << 30; continue; }
       const m = slotMounts[i]!;
       const a = hullAngle + m.baseAngle + (angles?.[i] ?? 0);
-      if (barrelBearsOn(0, 0, a, dirX, dirY, mountFireTolerance(m.weaponId, mountWeaponReach(m)))) mask |= 1 << i;
+      const tol = mountFireTolerance(m.weaponId, mountWeaponReach(m));
+      if (barrelBearsOn(0, 0, a, dirX, dirY, cone < tol ? cone : tol)) mask |= 1 << i;
     }
     return mask;
   }

@@ -121,10 +121,15 @@ export interface SnapTurnState {
    *  bounds the minimum hold, so a heading that jitters a few steps tick to
    *  tick cannot set up a hunt. */
   smooth: number;
+  /** Fine aim (rad, 0 = off): set by a pilot lining up fixed guns, the cone
+   *  the target's hull covers. Inside the dead-band, an error wider than this
+   *  gets a one-tick tap (no minimum hold), so the nose settles on the lead
+   *  instead of resting up to a dead-band off it. */
+  aimCone: number;
 }
 
 export function makeSnapTurnState(): SnapTurnState {
-  return { dir: 0, held: 0, idle: 0, lastDir: 0, smooth: 0 };
+  return { dir: 0, held: 0, idle: 0, lastDir: 0, smooth: 0, aimCone: 0 };
 }
 
 /**
@@ -172,7 +177,24 @@ export function easedSnapTurn(st: SnapTurnState, err: number, step: number, minD
   }
   st.idle++;
   const absErr = sm < 0 ? -sm : sm;
-  if (absErr <= band) return 0;
+  if (absErr <= band) {
+    // Fine aim: a one-tick tap toward the lead while the nose is outside the
+    // aim cone and the tap leaves it nearer (at least half a step to go). Reads
+    // the raw error: a snap turn stops dead on release, so nothing hunts.
+    const cone = st.aimCone;
+    if (cone > 0) {
+      const raw = err < 0 ? -err : err;
+      if (raw > cone && raw >= 0.5 * step) {
+        // No tap back the other way within the no-reverse window (no hunting).
+        const tap = err > 0 ? 1 : -1;
+        if (tap !== st.lastDir && st.lastDir !== 0 && st.idle <= ease.noReverseTicks) return 0;
+        st.lastDir = tap;
+        st.idle = 0;
+        return tap;
+      }
+    }
+    return 0;
+  }
   const want = sm > 0 ? 1 : -1;
   if (want !== st.lastDir && st.lastDir !== 0 && st.idle <= ease.noReverseTicks) return 0;
   st.dir = want;

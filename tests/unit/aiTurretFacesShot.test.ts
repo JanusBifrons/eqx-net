@@ -76,6 +76,22 @@ describe('AI fire leaves down the drawn barrel', () => {
     expect(lastFire.has('d'), 'cooldown spent on a held shot').toBe(false);
   });
 
+  it('a barrel fires only inside the cone the target hull covers (the AI pilot\'s cone)', () => {
+    const outside = resolverFor('robot-square', 0);
+    const aim = fwd(0.1); // inside the 0.2 rad window, outside a 0.05 rad hull cone
+    outside.resolver.resolve('d', aim.x, aim.y, 1000, 't', 0.05);
+    expect(outside.shots).toHaveLength(0);
+    expect(outside.lastFire.has('d'), 'cooldown spent on a held shot').toBe(false);
+    const inside = resolverFor('robot-square', 0);
+    inside.resolver.resolve('d', aim.x, aim.y, 1000, 't', 0.15);
+    expect(inside.shots).toHaveLength(1);
+    // A cone wider than the window never widens it.
+    const wide = resolverFor('robot-square', 0);
+    const off = fwd(FC_MOUNT_FIRE_TOLERANCE * 1.2);
+    wide.resolver.resolve('d', off.x, off.y, 1000, 't', 1);
+    expect(wide.shots).toHaveLength(0);
+  });
+
   it('turrets still at rest do not fire at a target off the nose (they must train first)', () => {
     const kind = getShipKind('interceptor');
     const { resolver, beams } = resolverFor('interceptor', 0, new Float32Array(kind.mounts.length));

@@ -27,6 +27,9 @@ export interface AiPlayerView {
    *  (drones are snapshot-interpolated, no client brain). */
   readonly health?: number;
   readonly maxHealth?: number;
+  /** The hit circle a fixed gun aims at (`shipAimRadius`: the shared hit
+   *  shape by kind and shield state). Absent ⇒ the default kind's bubble. */
+  readonly hitRadius?: number;
   /** Living World P1a-2 — set for a displaced LINGERING hull (whose `id` is its
    *  shipInstanceId): the owning player's id, so a drone hostile to that player
    *  (its `hostileTo` holds playerIds) treats the parked hull as hostile too. */
@@ -73,6 +76,9 @@ export interface AiSwarmView {
   readonly allegiance: string;
   readonly health?: number;
   readonly maxHealth?: number;
+  /** The hit circle a fixed gun aims at (`shipAimRadius`: the shared hit
+   *  shape by kind and shield state). Absent ⇒ the default kind's bubble. */
+  readonly hitRadius?: number;
 }
 
 /**
@@ -248,7 +254,7 @@ export interface AiIntent {
   input?: AiInputBits;
   /** `targetId`: the entity the shot is aimed at (the fire gate checks the
    *  shooter holds a lock on it when it is a pilot). */
-  fire?: { dirX: number; dirY: number; targetId: string };
+  fire?: { dirX: number; dirY: number; targetId: string; cone?: number };
   /** Morale `Flee` (AI slice 6b): the ship asks to warp out to (x, y), far
    *  along its escape heading. Server-only: `AiController` queues it and the
    *  room sends the bot on an NPC warp (`BOT_WARP`), the same spool → run →

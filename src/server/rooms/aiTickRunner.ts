@@ -24,6 +24,7 @@ import type { AiPlayerView, AiStructureView, AiSwarmView, AiEntity, AiEntityPose
 import type { PoseRecord } from './SabPoseMirror.js';
 import type { AiNeighbourGrid } from './AiNeighbourGrid.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
+import { shipAimRadius } from '../../core/combat/shipHitShape.js';
 
 export interface AiFireRequest {
   shooterId: string;
@@ -36,7 +37,7 @@ export interface AiTickCtx {
   aiController: AiController;
   serverTick: number;
   playerToSlot: Map<string, number>;
-  getActiveShip: (playerId: string) => { alive: boolean; isActive: boolean; health: number; maxHealth: number; travelling?: boolean; kind?: string } | undefined;
+  getActiveShip: (playerId: string) => { alive: boolean; isActive: boolean; health: number; maxHealth: number; travelling?: boolean; kind?: string; shield?: number } | undefined;
   /** AI steering 2a — the per-tick neighbour grid, rebuilt here before the
    *  controller ticks and handed to every behaviour as `view.neighbours`.
    *  Absent ⇒ no index (byte-identical). */
@@ -73,7 +74,7 @@ export interface AiTickCtx {
    *  owned buffer (server-only; no client brain). Feeds a follower its leader's
    *  + neighbours' live poses each tick. */
   resolveEntityInto: (id: string, out: AiEntityPoseOut) => boolean;
-  handleAiFire: (shooterId: string, dirX: number, dirY: number, tick: number, targetId: string) => void;
+  handleAiFire: (shooterId: string, dirX: number, dirY: number, tick: number, targetId: string, cone?: number) => void;
   /** Morale flee (AI slice 6b): send this bot on an NPC warp to (x, y).
    *  Must be a long-lived function (no per-tick closure). Absent ⇒ ignored. */
   handleAiWarpOut?: (entityId: string, x: number, y: number) => void;
@@ -101,7 +102,7 @@ export function runAiTick(ctx: AiTickCtx): void {
     if (!pose) continue;
     ctx.aiPlayerScratch.push({
       id: pid, x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy, angle: pose.angle,
-      health: ship.health, maxHealth: ship.maxHealth,
+      health: ship.health, maxHealth: ship.maxHealth, hitRadius: shipAimRadius(ship.kind, (ship.shield ?? 0) > 0),
       // P2 — robot truce (robot rep ≥ ROBOT_TRUCE_AT): no on-sight engagement.
       truce: ctx.hasTruce?.(pid) === true,
     });
@@ -144,7 +145,7 @@ export function runAiTick(ctx: AiTickCtx): void {
   ctx.phaseTime('aiTick');
 
   const fires = ctx.aiController.drainFireRequests();
-  for (const f of fires) ctx.handleAiFire(f.shooterId, f.dirX, f.dirY, f.tick, f.targetId);
+  for (const f of fires) ctx.handleAiFire(f.shooterId, f.dirX, f.dirY, f.tick, f.targetId, f.cone);
   if (ctx.handleAiWarpOut) ctx.aiController.drainWarpOuts(ctx.handleAiWarpOut);
   ctx.phaseTime('aiFire');
 }
