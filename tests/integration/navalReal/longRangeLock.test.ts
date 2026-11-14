@@ -146,7 +146,6 @@ describe.runIf(NAVAL_RANGE === 'real')('real naval ranges — a player battleshi
       return lockSeconds({
         refSize: mainGeo.refSize, tracking: mainGeo.tracking, absRange: mainGeo.absRange, reach: mainGeo.reach,
         sensor, pilotSpeed: 1, signature, dx: x - p.x, dy: y - p.y, dvx: -p.vx, dvy: -p.vy,
-        neverImpossible: true, // the player path (LockSubsystem)
       }, LOCK_TUNING);
     };
 
@@ -163,7 +162,7 @@ describe.runIf(NAVAL_RANGE === 'real')('real naval ranges — a player battleshi
     //     ACCEPTS the line claim (the lock entry appears: lockLineHolds +
     //     resolveTarget passed, no interest cut-off) and the 16" locks them
     //     SLOWLY, never impossibly (owner 2026-11-10: "10 minutes or an hour
-    //     … working as intended"; the player path passes `neverImpossible`).
+    //     … working as intended"; one ship rule for every pilot, owner 2026-11-13).
     //     `instantLock` completes it; the rule's time is past `maxSeconds`.
     for (const [label, rec, x, sig] of [
       ['structure', st, -4_000, st.radius],

@@ -28,12 +28,6 @@ export interface LockInputs {
   /** Heavy mount (M/L/XL, `WEAPON_LOCK_PROFILE[size].absRange`): the range
    *  term reads absolute distance, not the share of reach. Absent = false. */
   absRange?: boolean;
-  /** PLAYER heavy gun (only with `absRange`): a lock past `maxSeconds` is
-   *  slow, never impossible; it keeps its finite, uncapped time (owner,
-   *  2026-11-10: a 16" on a fighter "10 minutes or an hour ... working as
-   *  intended"). Only the player `LockSubsystem` sets it: NPC main guns rely
-   *  on Infinity to skip small craft. Absent = false. */
-  neverImpossible?: boolean;
 }
 
 /** The heavy-mount range term: 1 + (range ÷ absRangeScale)^absRangeExp. */
@@ -58,8 +52,13 @@ export function angularRate(dx: number, dy: number, dvx: number, dvy: number): n
  * impossible, and is not capped (owner, 2026-11-10: "It should take ages to
  * lock, that's by design").
  *
- * A PLAYER heavy gun (`i.absRange && i.neverImpossible`) skips the
- * `maxSeconds` gate: a small or fast target only makes its lock slower.
+ * A SHIP's heavy gun (`i.absRange` under ship tuning, i.e. not
+ * `t.clampAtMax`) skips the `maxSeconds` gate: a small or fast target only
+ * makes its lock slower (owner 2026-11-10: a 16" on a fighter "10 minutes or
+ * an hour ... working as intended"). Who flies the ship plays no part: player
+ * and NPC ships take this one path (owner 2026-11-13: "It's the same ship and
+ * the same gun, so it gets the same lock"). Fixed batteries (`clampAtMax`,
+ * structures) keep their own rule: the size/speed part caps at `maxSeconds`.
  */
 export function lockSeconds(i: LockInputs, t: LockTuning): number {
   const range = Math.sqrt(i.dx * i.dx + i.dy * i.dy);
@@ -73,7 +72,7 @@ export function lockSeconds(i: LockInputs, t: LockTuning): number {
   const speed = Math.max(1e-6, i.sensor * i.pilotSpeed);
   let secs = (t.baseSeconds * sizeTerm * trackTerm * rangeTerm) / speed;
   if (!Number.isFinite(secs)) return Infinity;
-  if (secs > t.maxSeconds && !(i.absRange && i.neverImpossible)) {
+  if (secs > t.maxSeconds && !(i.absRange && !t.clampAtMax)) {
     if (!t.clampAtMax) return Infinity;
     secs = t.maxSeconds;
   }
@@ -91,9 +90,10 @@ export function lockInReach(i: LockInputs, t: LockTuning): boolean {
  * NON-player lock takes longer than `capS` seconds; 0 completes it on the
  * first lock step. Lock-to-fire stays universal: a lock is still acquired,
  * only faster. A target out of reach stays unlockable (Infinity); one in
- * reach that the rules call too slow to lock at all (past `maxSeconds`, e.g.
- * a 16" gun on a fighter) locks in `capS` too, so a shot can start with every
- * gun locked. `capS` undefined = the rules unchanged.
+ * reach that the rules call too slow to lock at all (past `maxSeconds` on a
+ * sub-capital gun) or very slow (a 16" gun on a fighter) locks in `capS` too,
+ * so a shot can start with every gun locked. `capS` undefined = the rules
+ * unchanged.
  */
 export function capLockSeconds(secs: number, i: LockInputs, t: LockTuning, capS: number | undefined): number {
   if (capS === undefined) return secs;
