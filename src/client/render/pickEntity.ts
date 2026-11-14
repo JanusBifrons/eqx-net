@@ -39,6 +39,7 @@
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import { getStructureKind, isStructureKindId } from '../../shared-types/structureKinds.js';
 import { getShipKind } from '@shared-types/shipKinds';
+import { isShipIAmFlying } from './shipOwnership.js';
 
 /** Selectable entity classes. `drone`/`asteroid`/`lingering` read from
  *  the mirror directly (no server stats channel); `ship`/`structure` use
@@ -70,11 +71,9 @@ export function pickEntityAt(
   // Compare by centre distance among entities whose hit-disc contains the tap.
   let bestDistSq = Infinity;
 
-  const localId = mirror.localPlayerId;
-
   // ── Player ships (playerId-keyed). Exclude the own active ship. ──
   for (const [id, ship] of mirror.ships) {
-    if (id === localId) continue; // own ship — never selectable
+    if (isShipIAmFlying(mirror, id)) continue; // own ship — never selectable
     const radius = shipRadius(ship.kind);
     const dx = ship.x - worldX;
     const dy = ship.y - worldY;

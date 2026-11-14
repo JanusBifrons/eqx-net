@@ -54,7 +54,24 @@ export interface ShipRenderState {
    *  from the catalogue — never on the wire). Absent ⇒ no activated mounts.
    *  Non-spatial discrete data — purity-clean (Invariant #2). */
   activatedMounts?: Array<{ slotId: string; weaponId: string }>;
+  /** RTS Part A S0 — the wire's `isActive` (a session/pilot is driving the
+   *  hull), mirrored as-is. `false` on a parked (lingering) hull and on the
+   *  local welcome ship during the pending-join handshake; absent ⇒ not yet
+   *  written (treated as active). Read only through the named predicates in
+   *  `src/client/render/shipOwnership.ts` (#17), never ad hoc. */
+  isActive?: boolean;
+  /** The playerId that owns this hull. Active entries in `mirror.ships` are
+   *  keyed by it; parked hulls in `lingeringShips` (shipInstanceId-keyed)
+   *  always carry it. Read through `shipOwner` / `isOwnedByMe`. */
+  ownerPlayerId?: string;
 }
+
+/** A parked hull's entry in `RenderMirror.lingeringShips`: a ship entry whose
+ *  owner is always known (`ownerPlayerId` is the ship entry's own field, made
+ *  required here), plus the wingman flame flags. */
+export type LingeringShipRenderState = ShipRenderState
+  & Required<Pick<ShipRenderState, 'ownerPlayerId'>>
+  & { thrusting?: boolean; boosting?: boolean };
 
 /**
  * One swarm-channel render entry. Replaces the Phase 1–4 `ObstacleRenderState`:
@@ -472,7 +489,7 @@ export interface RenderMirror {
    *  `thrusting` (RTS slice 4c): the hull's wingman holds thrust, from the
    *  snapshot's `lastInput` (absent ⇒ off); the renderer draws its flame.
    *  `boosting` (slice 4b): the same for the boost bit (boost exhaust). */
-  lingeringShips?: Map<string, ShipRenderState & { ownerPlayerId: string; thrusting?: boolean; boosting?: boolean }>;
+  lingeringShips?: Map<string, LingeringShipRenderState>;
   /**
    * Swarm entities (asteroids + drones) shipped via the binary swarm channel.
    * Keyed by the server's dense u16 entityId. Sleeping entries remain in the

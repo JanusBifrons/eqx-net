@@ -11,6 +11,7 @@ import BuildIcon from '@mui/icons-material/Build';
 import { useUIStore } from '../state/store';
 import { selectionStats } from '../net/selectionStats';
 import { toSelectWire } from '../net/selectionClient';
+import { isOwnedByMe } from '../render/shipOwnership';
 import { getGameClient } from '../net/clientSingleton';
 import { sendStructureAction, sendUpgradeStructure, sendRefineSalvage, sendRepairShip, sendSetGateAccess, sendSetRecipe, sendBlueprintSlot } from '../structures/structureActionsClient';
 import { BP_RUNS_ORIGINAL, decodeGood, effectiveRecipe, isProcessorKind, nextRecipe, prodStatusLine, type ProdState } from '@shared-types/production';
@@ -716,7 +717,7 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
     // WS-A2 — a lingering hull the LOCAL player owns is reclaimable via the
     // in-world Pilot action. The selection id IS the shipInstanceId (the
     // lingeringShips map key), which is exactly what `pilot_ship` needs.
-    if (l.ownerPlayerId === client.mirror.localPlayerId) data.pilotShipId = id;
+    if (isOwnedByMe(client.mirror, id, l)) data.pilotShipId = id;
     return data;
   }
   return null;

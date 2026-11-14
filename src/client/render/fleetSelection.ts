@@ -12,6 +12,7 @@
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import { getShipKind } from '@shared-types/shipKinds';
 import { TAP_SLOP } from './pickEntity.js';
+import { isOwnedByMe, isShipIAmFlying, shipOwner } from './shipOwnership.js';
 
 export interface FleetShip {
   id: string;
@@ -34,11 +35,11 @@ function shipRadius(kind: string | undefined): number {
 export function collectFleetShips(mirror: RenderMirror): FleetShip[] {
   const out: FleetShip[] = [];
   for (const [id, s] of mirror.ships) {
-    out.push({ id, x: s.x, y: s.y, ownerPlayerId: id, radius: shipRadius(s.kind) });
+    out.push({ id, x: s.x, y: s.y, ownerPlayerId: shipOwner(id, s), radius: shipRadius(s.kind) });
   }
   if (mirror.lingeringShips) {
     for (const [id, l] of mirror.lingeringShips) {
-      out.push({ id, x: l.x, y: l.y, ownerPlayerId: l.ownerPlayerId, radius: shipRadius(l.kind) });
+      out.push({ id, x: l.x, y: l.y, ownerPlayerId: shipOwner(id, l), radius: shipRadius(l.kind) });
     }
   }
   return out;
@@ -182,9 +183,7 @@ export function sameSelection(a: ReadonlySet<string>, b: ReadonlySet<string>): b
 
 /** Whether `id` is still an own ship in the mirror (used to prune). */
 export function isOwnShipPresent(id: string, mirror: RenderMirror): boolean {
-  const local = mirror.localPlayerId;
-  if (local === null) return false;
-  if (id === local) return mirror.ships.has(id);
+  if (isShipIAmFlying(mirror, id)) return true;
   const l = mirror.lingeringShips?.get(id);
-  return l !== undefined && l.ownerPlayerId === local;
+  return l !== undefined && isOwnedByMe(mirror, id, l);
 }

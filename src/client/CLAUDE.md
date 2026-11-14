@@ -283,6 +283,12 @@ See [docs/architecture/weapon-mounts.md](../../docs/architecture/weapon-mounts.m
 
 - The capital pilot's helm course point reaches the renderer as `RenderMirror.helmCourse` (`{x, y, seq}` or null), written by `ColyseusClient.syncHelmMark` via the pure `helm/helmCourseMark.ts` (own capital + active order + not spectating). Never put it in Zustand (#2). `render/helm/HelmCourseMarker.ts` draws it screen-space (fixed pixel size), popping on each `seq` change. E2E reads `__eqxArtStats().helmMarker`. Story: `docs/features/capital-ships.md`.
 
+## One ship list groundwork (RTS Part A S0)
+
+- **Which key a wire ship lives under** is `net/shipMirrorKey.ts`, the ONE rule both `snapshotShipRouter` and `syncMirror` use: active ⇒ playerId; the own welcome ship while pending-join ⇒ playerId; any other inactive hull ⇒ shipInstanceId; own ACTIVE entry while spectating ⇒ null (not drawn). With no welcome ship id (shipless spectator join, a rebind whose hull is gone) no own hull is ever claimed by playerId. Lock: `shipMirrorKey.test.ts`.
+- **"The ship I'm flying" / "owned by me"** are `render/shipOwnership.ts` (`isShipIAmFlying`, `isOwnedByMe`, `shipOwner`), pure and mirror-only (worker-safe). Never compare `id === localPlayerId` or `ownerPlayerId === localPlayerId` inline again. Ship entries carry the wire's `isActive` and `ownerPlayerId` (`ShipRenderState`); liveness itself is the shared `src/core/entity/shipLiveness.ts` (#15, #17).
+- **Remote ship bodies** are spawned only by `ColyseusClient.ensureRemoteShipBody` and dropped only by `dropRemoteShip(key, 'gone' | 'outOfWorld')`, which also clears every per-ship prediction map (offsets, last inputs, lookahead counter, prediction guard, arrival snap). Add any new per-remote-ship map to `dropRemoteShip`.
+
 ## RTS command view — fleet selection (slice 13a)
 
 - Command view is `pilotMode === 'spectator'` for now (`setSpectator` → `CommandPointerRouter.setEnabled`). While on (and no galaxy overlay / placement), BOTH pointer paths go through the pure router (`render/input/commandPointerRouter.ts`); its `camera` actions run `PixiRenderer.cameraPointer` with the camera's `wasTap` IGNORED. Tap on an own ship selects it (shift toggles); any other tap falls through to the inspect select; left-drag (touch: hold, then drag) draws a box; mouse right-click gives an order (attack a non-own, non-asteroid entity under the cursor, else move). Pointers are captured per gesture in command view (both paths) and the native context menu is suppressed (`decideContextMenuPlacement` 4th arg).

@@ -21,6 +21,12 @@ import type { RenderMirror } from '@core/contracts/IRenderer';
 import type { SnapshotMessage } from '@shared-types/messages';
 import type { PhysicsWorld } from '@core/physics/World';
 import type { LingeringPredBodyManager } from './LingeringPredBodyManager.js';
+import { shipMirrorKey, type ShipMirrorKeyLocal } from './shipMirrorKey.js';
+
+/** Reused every snapshot (#14). */
+const _keyLocalScratch: ShipMirrorKeyLocal = {
+  localPlayerId: null, localShipInstanceId: null, localSpectating: false,
+};
 
 export interface ShipRouterCtx {
   mirror: RenderMirror;
@@ -64,84 +70,81 @@ export function routeSnapshotShipStates(snap: SnapshotMessage, ctx: ShipRouterCt
   // instead of `new Set<string>()` per snapshot.
   const lingeringSeen = lingeringSeenScratch;
   lingeringSeen.clear();
-  const localPlayerId = mirror.localPlayerId;
-  const localShipInstanceId = mirror.localShipInstanceId ?? null;
+  const keyLocal = _keyLocalScratch;
+  keyLocal.localPlayerId = mirror.localPlayerId;
+  keyLocal.localShipInstanceId = mirror.localShipInstanceId ?? null;
+  keyLocal.localSpectating = ctx.localSpectating === true;
   // 2026-05-25 heap-growth gate step 4: `for…in` instead of
   // `Object.entries` — saves the per-snapshot [key,value] tuple array.
   for (const shipInstanceId in snap.states) {
     const entry = snap.states[shipInstanceId]!;
-    // Own-ship identification keys on shipInstanceId, NOT playerId: a
-    // displaced player owns BOTH a lingering hull and a fresh active ship
-    // under one playerId. Only the welcome ship (matching localShipInstanceId)
-    // keeps the pending-join active exemption; the player's DISPLACED hulls
-    // route to lingeringShips like any other parked hull — so the OWNER SEES
-    // their pool in-world (2026-06-03 "I can't see the lingering ships") and
-    // they never clobber the active ship at statesByPlayerId[playerId] (the
-    // 2026-06-03 "pinned in my old interceptor" bug was the playerId-only
-    // exemption letting a displaced hull win that key).
-    const isOwnPlayer = localPlayerId !== null && entry.playerId === localPlayerId;
-    const isOwnActiveShip =
-      isOwnPlayer && localShipInstanceId !== null && shipInstanceId === localShipInstanceId;
-    // Not while spectating: then the own inactive hull is the ship you PARKED
-    // (Spectate), not a pending join, and it must be listed as parked.
-    if (entry.isActive === false && isOwnActiveShip && ctx.localSpectating !== true) {
-      // Own joining ship MUST stay in `mirror.ships` even while pending-join
-      // (isActive=false on server). Without this the bootstrap chain stalls
-      // on rendererFirstFrameRendered.
+    // The ONE ship-key rule (`shipMirrorKey`, shared with syncMirror): an
+    // active ship, or the own WELCOME ship while pending-join, keys by
+    // playerId; every other inactive hull — the player's DISPLACED hulls and
+    // the one they parked by Spectate included — keys by shipInstanceId and
+    // routes to lingeringShips, so the owner sees their pool in-world
+    // (2026-06-03 "I can't see the lingering ships") and a displaced hull
+    // never clobbers the active ship at statesByPlayerId[playerId] (the
+    // 2026-06-03 "pinned in my old interceptor" bug). A null key (own ACTIVE
+    // entry while spectating) still feeds the reconciler under the playerId:
+    // this slice is pose input, not the drawn mirror.
+    const key = shipMirrorKey(shipInstanceId, entry.playerId, entry.isActive !== false, keyLocal);
+    if (key === null || key === entry.playerId) {
+      // Includes the own joining ship (isActive=false on the server): it MUST
+      // stay in `mirror.ships`, or the bootstrap chain stalls on
+      // rendererFirstFrameRendered.
       statesByPlayerId[entry.playerId] = entry;
       continue;
     }
-    if (entry.isActive === false) {
-      // Route to the lingering map. We update pose every snapshot;
-      // identity fields come from the schema diff and are preserved.
-      // Probe 8 (mobile-perf-investigation, 2026-05-24) — pool the
-      // lingering entry in place. Same rationale as Probe 7's ship
-      // pooling: kind / displayName preserved by NOT touching them.
-      let lingerEntry = mirror.lingeringShips.get(shipInstanceId);
-      if (!lingerEntry) {
-        lingerEntry = {
-          x: entry.x, y: entry.y, vx: entry.vx, vy: entry.vy,
-          angle: entry.angle,
-          ownerPlayerId: entry.playerId,
-          // R2.32 — carry the shield state so the parked hull renders its aura.
-          shieldDown: entry.shieldDown,
-          // Phase 4 WS-B1 — carry the public level so the parked hull shows its
-          // badge (absent ⇒ level 1, no badge).
-          level: entry.level,
-          // Phase 4 WS-B3 — carry the public activated mounts so the parked hull
-          // renders its extra turrets (absent ⇒ none). Copied (slim list, only
-          // on a discrete change in practice — the wire omits it when empty).
-          activatedMounts: entry.mounts
-            ? entry.mounts.map((m) => ({ slotId: m.slotId, weaponId: m.weaponId }))
-            : undefined,
-        };
-        mirror.lingeringShips.set(shipInstanceId, lingerEntry);
-      } else {
-        lingerEntry.x = entry.x;
-        lingerEntry.y = entry.y;
-        lingerEntry.vx = entry.vx;
-        lingerEntry.vy = entry.vy;
-        lingerEntry.angle = entry.angle;
-        lingerEntry.ownerPlayerId = entry.playerId;
-        lingerEntry.shieldDown = entry.shieldDown;
-        lingerEntry.level = entry.level;
-        lingerEntry.activatedMounts = entry.mounts
+    // Route to the lingering map. We update pose every snapshot;
+    // identity fields come from the schema diff and are preserved.
+    // Probe 8 (mobile-perf-investigation, 2026-05-24) — pool the
+    // lingering entry in place. Same rationale as Probe 7's ship
+    // pooling: kind / displayName preserved by NOT touching them.
+    let lingerEntry = mirror.lingeringShips.get(shipInstanceId);
+    if (!lingerEntry) {
+      lingerEntry = {
+        x: entry.x, y: entry.y, vx: entry.vx, vy: entry.vy,
+        angle: entry.angle,
+        ownerPlayerId: entry.playerId,
+        isActive: false,
+        // R2.32 — carry the shield state so the parked hull renders its aura.
+        shieldDown: entry.shieldDown,
+        // Phase 4 WS-B1 — carry the public level so the parked hull shows its
+        // badge (absent ⇒ level 1, no badge).
+        level: entry.level,
+        // Phase 4 WS-B3 — carry the public activated mounts so the parked hull
+        // renders its extra turrets (absent ⇒ none). Copied (slim list, only
+        // on a discrete change in practice — the wire omits it when empty).
+        activatedMounts: entry.mounts
           ? entry.mounts.map((m) => ({ slotId: m.slotId, weaponId: m.weaponId }))
-          : undefined;
-      }
-      // RTS slice 4c — the wingman's angvel + input bits: the predWorld body
-      // turns/thrusts between snapshots and the renderer draws its flame.
-      lingerEntry.thrusting = lingerBodies.noteSnapshot(shipInstanceId, entry.angvel, entry.lastInput);
-      lingerEntry.boosting = lingerBodies.boostOf(shipInstanceId);
-      lingeringSeen.add(shipInstanceId);
-      // Phase 6b — spawn / refresh the predWorld body so the local
-      // player can collide with the parked hull. The helper handles the
-      // race between this site (pose) and syncMirror (kind) — see its
-      // doc comment.
-      tryEnsureLingerPredBody(shipInstanceId);
-      continue;
+          : undefined,
+      };
+      mirror.lingeringShips.set(shipInstanceId, lingerEntry);
+    } else {
+      lingerEntry.x = entry.x;
+      lingerEntry.y = entry.y;
+      lingerEntry.vx = entry.vx;
+      lingerEntry.vy = entry.vy;
+      lingerEntry.angle = entry.angle;
+      lingerEntry.ownerPlayerId = entry.playerId;
+      lingerEntry.isActive = false;
+      lingerEntry.shieldDown = entry.shieldDown;
+      lingerEntry.level = entry.level;
+      lingerEntry.activatedMounts = entry.mounts
+        ? entry.mounts.map((m) => ({ slotId: m.slotId, weaponId: m.weaponId }))
+        : undefined;
     }
-    statesByPlayerId[entry.playerId] = entry;
+    // RTS slice 4c — the wingman's angvel + input bits: the predWorld body
+    // turns/thrusts between snapshots and the renderer draws its flame.
+    lingerEntry.thrusting = lingerBodies.noteSnapshot(shipInstanceId, entry.angvel, entry.lastInput);
+    lingerEntry.boosting = lingerBodies.boostOf(shipInstanceId);
+    lingeringSeen.add(shipInstanceId);
+    // Phase 6b — spawn / refresh the predWorld body so the local
+    // player can collide with the parked hull. The helper handles the
+    // race between this site (pose) and syncMirror (kind) — see its
+    // doc comment.
+    tryEnsureLingerPredBody(shipInstanceId);
   }
   // Remove lingering hulls that didn't appear in this snapshot (evicted
   // by the 15-min timer, or destroyed) — plus despawn their predWorld

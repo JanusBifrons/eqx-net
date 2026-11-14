@@ -259,7 +259,7 @@ import {
 } from '../../shared-types/messages/webrtcSignalingMessages.js';
 import { SwarmBroadcaster } from './SwarmBroadcaster.js';
 import { EntitySyncRouter } from './EntitySyncRouter.js';
-import { isEngageablePilotHull, isPilotedActive } from './shipLiveness.js';
+import { isEngageablePilotHull, isPilotedActive } from '../../core/entity/shipLiveness.js';
 import { MalformedMessageTracker } from './MalformedMessageTracker.js';
 import { guarded } from './guardedLoop.js';
 import { SectorPersistence } from './SectorPersistence.js';
