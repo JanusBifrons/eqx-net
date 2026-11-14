@@ -40,13 +40,32 @@
  *  - STANCE: stored for the firing slice; the only movement effect is that a
  *    `holdFire` hunter does not chase (it defends).
  *  - FIRING: none. This brain only moves; `targetId` is what it is chasing.
+ *  - FORMATION (RTS slice 15b, squads): a ROLE on top of the mode, set by the
+ *    fleet subsystem with `setFormationSlot(leaderId, slot, shape)`. With no
+ *    order (and no morale retreat) a formation member flies to its slot
+ *    (`formationSlotOffset` round the leader, in the leader's travel frame)
+ *    and matches the leader's velocity, the escort station-keeping; activity
+ *    'formingUp' off station, 'guarding' on it. If the subsystem hands it the
+ *    leader's target (`setLeaderTarget`) and the stance is not `holdFire`, it
+ *    engages that target instead, then returns to the slot. A one-off order
+ *    still wins; when it completes the member REJOINS its slot (not its own
+ *    mode). A `stop` order brakes to a halt, then rejoins. Leader lost ⇒
+ *    defend where it was lost until it resolves again. `clearFormation()`
+ *    resumes the mode from where the ship is.
  *
  * Pure, zone-blind, allocation-free per tick (#14): scratch lives on fields.
  * Size-dependent distances (arrive / guard radius) come from the caller, which
  * reads them from `shipTuning(kind)` (#18).
  */
 import type { AiRole } from '../../shared-types/shipKinds/types.js';
-import { formationSlotOffset, formationSlotWorldPose, makeSlotOffset, type WorldPoint } from './formation.js';
+import {
+  formationSlotOffset,
+  formationSlotWorldPose,
+  makeSlotOffset,
+  type FormationShape,
+  type SlotOffset,
+  type WorldPoint,
+} from './formation.js';
 import {
   MORALE_LOCK_TICKS,
   MORALE_OUTCOME,
@@ -154,6 +173,8 @@ export class WingmanBehaviour implements IWingmanBrain {
   private readonly moraleSeedId: number;
   private readonly patrolPassRadius: number;
   private readonly escortTolerance: number;
+  /** Escort / formation spacing (u). */
+  private readonly spacing: number;
 
   private _mode: WingmanMode;
   private _stance: WingmanStance;
@@ -187,6 +208,19 @@ export class WingmanBehaviour implements IWingmanBrain {
   private readonly escortSlot = makeSlotOffset();
   private readonly stationPt: WorldPoint = { x: 0, y: 0 };
 
+  // Formation (squad member role; null leader ⇒ not in formation).
+  private _formationLeaderId: string | null = null;
+  private _formationSlotIndex = 0;
+  private _formationShape: FormationShape = 'wedge';
+  private readonly formationSlot = makeSlotOffset();
+  private formationHeading = 0;
+  private formationHeadingValid = false;
+  private formationLost = false;
+  private formationOnStation = false;
+  private formationTolerance = 0;
+  /** The squad leader's current target (set by the subsystem), or null. */
+  private _leaderTargetId: string | null = null;
+
   // Hunt.
   private huntEngaged = false;
 
@@ -215,7 +249,7 @@ export class WingmanBehaviour implements IWingmanBrain {
 
   private readonly intent = makeControlIntent();
   private readonly controls = makeWingmanControls();
-  private readonly targetPose: WingmanPoseOut = { x: 0, y: 0, vx: 0, vy: 0 };
+  private readonly targetPose: WingmanPoseOut = { x: 0, y: 0, vx: 0, vy: 0, angle: Number.NaN };
   /** `targetPose` holds the last resolved target (a morale threat fallback). */
   private targetPoseValid = false;
 
@@ -233,6 +267,7 @@ export class WingmanBehaviour implements IWingmanBrain {
     this.moraleSeedId = config.moraleSeedId ?? 0;
     this.patrolPassRadius = config.patrolPassRadius ?? Math.max(config.arriveRadius * 2, config.guardRadius * 0.25);
     const spacing = config.escortSpacing ?? config.guardRadius * 0.5;
+    this.spacing = spacing;
     // Wedge slot 1: one rank astern, to starboard.
     formationSlotOffset('wedge', 1, 2, spacing, this.escortSlot);
     this.escortTolerance = Math.max(config.arriveRadius * 2, spacing * 0.5);
@@ -258,6 +293,13 @@ export class WingmanBehaviour implements IWingmanBrain {
   get escortId(): string | null { return this._escortId; }
   /** Hunt search radius (u). */
   get huntSensorRange(): number { return this.sensorRange; }
+  /** Formation: the leader this ship keeps station on, or null. */
+  get formationLeaderId(): string | null { return this._formationLeaderId; }
+  /** Formation: this ship's slot index (1.. ; 0 = the leader's anchor). */
+  get formationSlotIndex(): number { return this._formationSlotIndex; }
+  get formationShape(): FormationShape { return this._formationShape; }
+  /** Escort / formation spacing this hull wants (u, size-dependent). */
+  get stationSpacing(): number { return this.spacing; }
   /**
    * The latest morale roll while it matters (for the UI): during the morale
    * retreat it caused, or for `MORALE_LOCK_TICKS` after the roll. Null when
@@ -340,6 +382,51 @@ export class WingmanBehaviour implements IWingmanBrain {
 
   setStance(stance: WingmanStance): void { this._stance = stance; }
 
+  /**
+   * Formation role (squads): keep station in slot `slotIndex` (1..) of a
+   * `shape` formation round `leaderId`, `spacing` apart (default: this hull's
+   * own escort spacing; the subsystem passes the squad's largest so mixed
+   * sizes don't collide). Re-setting the same leader keeps the travel heading
+   * (only the slot moves). Does not touch the mode or a current order.
+   */
+  setFormationSlot(
+    leaderId: string,
+    slotIndex: number,
+    shape: FormationShape = 'wedge',
+    count: number = slotIndex + 1,
+    spacing: number = this.spacing,
+  ): void {
+    if (leaderId !== this._formationLeaderId) {
+      this.formationHeadingValid = false;
+      this.formationLost = false;
+      this.formationOnStation = false;
+      this._leaderTargetId = null;
+    }
+    this._formationLeaderId = leaderId;
+    this._formationSlotIndex = slotIndex;
+    this._formationShape = shape;
+    formationSlotOffset(shape, slotIndex, count, spacing, this.formationSlot);
+    this.formationTolerance = Math.max(this.arriveRadius * 2, spacing * 0.5);
+  }
+
+  /** Leave the formation: the mode resumes from where the ship is. */
+  clearFormation(): void {
+    if (this._formationLeaderId === null) return;
+    this._formationLeaderId = null;
+    this._leaderTargetId = null;
+    this.formationOnStation = false;
+    this.formationLost = false;
+    if (this._order === null) this._targetId = null;
+    this.postValid = false;
+    this.returning = false;
+    this.routeSeek = true;
+    this.huntEngaged = false;
+  }
+
+  /** Formation: what the squad leader is engaging (null = nothing). Members
+   *  follow it unless their stance is `holdFire`. */
+  setLeaderTarget(targetId: string | null): void { this._leaderTargetId = targetId; }
+
   setGuardPost(x: number, y: number): void {
     this.postX = x; this.postY = y; this.postValid = true;
     this.returning = false; this.settling = false;
@@ -411,6 +498,16 @@ export class WingmanBehaviour implements IWingmanBrain {
           }
           break;
         case 'stop': {
+          if (this._formationLeaderId !== null) {
+            // Formation member: brake to a halt, then rejoin the slot.
+            if (Math.hypot(self.vx, self.vy) <= this.stats.maxSpeed * WINGMAN_ARRIVE_SPEED_FRAC) {
+              this.completeOrder(self);
+            } else {
+              this._activity = 'guarding';
+              handled = true;
+            }
+            break;
+          }
           // Hold position: defend the spot the ship brakes to.
           const sp = Math.hypot(self.vx, self.vy);
           const d = stoppingDistance(sp, this.stats);
@@ -433,7 +530,12 @@ export class WingmanBehaviour implements IWingmanBrain {
       }
     }
 
-    if (!handled) this.runMode(self, view);
+    // Off doing an order: back from it, the member forms up afresh.
+    if (handled) this.formationOnStation = false;
+    else {
+      if (this._formationLeaderId !== null) this.tickFormation(self, view);
+      else this.runMode(self, view);
+    }
     return intentToControlBits(it, self, this.stats, this.controls);
   }
 
@@ -540,14 +642,60 @@ export class WingmanBehaviour implements IWingmanBrain {
       this.escortHeading = headingOf(tp.x - self.x, tp.y - self.y);
       this.escortHeadingValid = true;
     }
-    const st = formationSlotWorldPose(tp.x, tp.y, this.escortHeading, this.escortSlot, this.stationPt);
+    const dist = this.keepStation(self, tp, this.escortHeading, this.escortSlot);
+    if (dist <= this.escortTolerance) this.onStation = true;
+    else if (dist > this.escortTolerance * 2) this.onStation = false;
+    this._activity = this.onStation ? 'guarding' : 'formingUp';
+  }
+
+  /** Fly to `slot` round `tp` (heading `heading`) and match its velocity.
+   *  Returns the distance to the slot. Shared by escort and formation. */
+  private keepStation(self: WingmanPose, tp: WingmanPoseOut, heading: number, slot: SlotOffset): number {
+    const st = formationSlotWorldPose(tp.x, tp.y, heading, slot, this.stationPt);
     const dist = Math.hypot(st.x - self.x, st.y - self.y);
     this.steerTo(self, st.x, st.y, true);
     this.intent.dvx += tp.vx;
     this.intent.dvy += tp.vy;
-    if (dist <= this.escortTolerance) this.onStation = true;
-    else if (dist > this.escortTolerance * 2) this.onStation = false;
-    this._activity = this.onStation ? 'guarding' : 'formingUp';
+    return dist;
+  }
+
+  /** Formation member: engage the leader's target (stance permitting), else
+   *  hold the slot round the leader in its travel frame, velocity-matched. */
+  private tickFormation(self: WingmanPose, view: WingmanWorldView): void {
+    const tp = this.targetPose;
+    const lt = this._leaderTargetId;
+    if (lt !== null && this._stance !== 'holdFire' && view.resolvePoseInto !== undefined && view.resolvePoseInto(lt, tp)) {
+      this.engage(self, lt, tp);
+      return;
+    }
+    this._targetId = null;
+    tp.angle = Number.NaN;
+    const id = this._formationLeaderId!;
+    if (view.resolvePoseInto === undefined || !view.resolvePoseInto(id, tp)) {
+      // Lost the leader: defend the spot where it was lost.
+      if (!this.formationLost) {
+        this.formationLost = true;
+        this.formationOnStation = false;
+        this.setGuardPost(self.x, self.y);
+      }
+      this.tickDefend(self);
+      return;
+    }
+    this.formationLost = false;
+    const sp = Math.hypot(tp.vx, tp.vy);
+    if (sp > this.stats.maxSpeed * WINGMAN_ESCORT_HEADING_SPEED_FRAC) {
+      this.formationHeading = headingOf(tp.vx, tp.vy);
+      this.formationHeadingValid = true;
+    } else if (!this.formationHeadingValid) {
+      // Parked leader: its nose (every member agrees on it); unknown ⇒ our side.
+      const a = tp.angle;
+      this.formationHeading = a !== undefined && Number.isFinite(a) ? a : headingOf(tp.x - self.x, tp.y - self.y);
+      this.formationHeadingValid = true;
+    }
+    const dist = this.keepStation(self, tp, this.formationHeading, this.formationSlot);
+    if (dist <= this.formationTolerance) this.formationOnStation = true;
+    else if (dist > this.formationTolerance * 2) this.formationOnStation = false;
+    this._activity = this.formationOnStation ? 'guarding' : 'formingUp';
   }
 
   /** Hunt: chase the hostile the view offers within sensor range; none (or a

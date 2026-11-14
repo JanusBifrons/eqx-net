@@ -73,6 +73,10 @@ export interface WingmanPoseOut {
   y: number;
   vx: number;
   vy: number;
+  /** The entity's nose angle, when the resolver knows it (formation flying
+   *  uses it to orient the slots round a parked leader). Optional: a
+   *  resolver that leaves it alone is fine. */
+  angle?: number;
 }
 
 /** Patrol routes hold this many waypoints (fewer ⇒ defend; extra are dropped). */
