@@ -48,6 +48,9 @@ import {
   MANOEUVRE_TAIL,
 } from '../../../src/core/ai/tactics/manoeuvre.js';
 import { MORALE_OUTCOME } from '../../../src/core/ai/tactics/morale.js';
+import { getShipKind } from '../../../src/shared-types/shipKinds.js';
+import { makePilotHandling } from '../../../src/core/ai/virtualPilot.js';
+import { shipBodyMass } from '../../../src/shared-types/shipScale/tuning.js';
 
 const SAMPLE_MS = 50;
 const FIGHT_MS = 20_000;
@@ -258,7 +261,7 @@ describe('SectorRoom integration — on-sight allegiance dogfight (drones vs rob
     // the other's velocity flew a circle opposite each other (a Lufbery
     // circle) and never reached a six.
     const PAIRS = 6;
-    const poses: Array<{ kind: string; x: number; y: number; angle: number; hullExposed: boolean }> = [];
+    const poses: Array<{ kind: string; x: number; y: number; angle: number; vx?: number; vy?: number; hullExposed: boolean }> = [];
     for (let k = 0; k < PAIRS; k++) {
       const cx = -25_000 + k * 10_000;
       const cy = 10_000;
@@ -341,13 +344,19 @@ describe('SectorRoom integration — on-sight allegiance dogfight (drones vs rob
     // takes while tailed and free to break (not already breaking, not in the
     // Break cooldown) must be a Break.
     const PAIRS = 6;
+    const robot = getShipKind('robot-square');
+    const ROBOT_TAIL_SPEED = 0.6 * makePilotHandling(robot, shipBodyMass(robot)).cruiseSpeed;
     const poses: Array<{ kind: string; x: number; y: number; angle: number; hullExposed: boolean }> = [];
     for (let k = 0; k < PAIRS; k++) {
       const cx = -25_000 + k * 10_000;
       const cy = 10_000;
       const a = (k * Math.PI) / 3;
       poses.push({ kind: 'fighter', x: cx, y: cy, angle: a, hullExposed: false });
-      poses.push({ kind: 'robot-square', x: cx + 300 * Math.sin(a), y: cy - 300 * Math.cos(a), angle: a, hullExposed: false });
+      // The robot is already flying at the fighter's six (0.6 x its cruise):
+      // a ship at rest is parked and never tails. Staged at rest, a light
+      // hull at one mass per kind turned on the still robot before it moved,
+      // and some pairs never had a tail to break from.
+      poses.push({ kind: 'robot-square', x: cx + 300 * Math.sin(a), y: cy - 300 * Math.cos(a), angle: a, vx: -Math.sin(a) * ROBOT_TAIL_SPEED, vy: Math.cos(a) * ROBOT_TAIL_SPEED, hullExposed: false });
     }
     harness = await bootSectorTestServer({
       sectorKey: null,
