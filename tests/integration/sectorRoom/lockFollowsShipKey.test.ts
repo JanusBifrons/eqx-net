@@ -9,7 +9,7 @@
  * (they live in the pilot's `locks` vs the AI pilots' `wingmanLocks`), and AI
  * pilots' locks on its pilot through the take-controls handshake.
  *
- * Fix: the one "ship key moved" seam (`SectorRoom.moveShipLocks` →
+ * Fix: the one "ship key moved" seam (`SectorRoom.shipKeyMoved` →
  * `LockSubsystem.shipKeyMoved`) at the server's re-key sites
  * (`displaceActiveHullToLingering`, `reclaimLingeringHull`).
  *

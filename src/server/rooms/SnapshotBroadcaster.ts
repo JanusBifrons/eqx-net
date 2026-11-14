@@ -858,7 +858,13 @@ export class SnapshotBroadcaster {
         const includeLastInput = shouldIncludeLastInput(ship.lastInput);
         // A lingering hull's turrets are its own (an AI-flown hull's are keyed
         // by shipInstanceId, RTS slice 5), never its owner's active ship's.
-        const angles = d.playerMountAngles.get(ship.isActive ? ship.playerId : ship.shipInstanceId);
+        // A hull its owner just took back (isActive=false through the join
+        // handshake, out of `lingeringSlots`) is keyed by its pilot already:
+        // reading it by shipInstanceId snapped its turrets home for the
+        // handshake (seamless hand-over, `SectorRoom.shipKeyMoved`).
+        const angles = d.playerMountAngles.get(
+          d.lingeringSlots.has(ship.shipInstanceId) ? ship.shipInstanceId : ship.playerId,
+        );
         let mountAnglesArr: number[] | undefined;
         if (angles && angles.length > 0) {
           let anyNonZero = false;

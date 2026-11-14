@@ -570,6 +570,22 @@ export class FleetCommandSubsystem {
     return best;
   }
 
+  /**
+   * A ship's key moved (its owner took or let go of its controls: playerId
+   * <-> shipInstanceId). Every reference the fleet holds to it by that key
+   * follows it: attack orders, chases and squad-leader targets
+   * (`WingmanBehaviour.shipKeyMoved`) and the last attacker for retaliation.
+   * Called only from the room's one "ship key moved" seam. Rare, never per tick.
+   */
+  shipKeyMoved(from: string, to: string): void {
+    const list = this.entries;
+    for (let i = 0; i < list.length; i++) {
+      const e = list[i]!;
+      e.brain.shipKeyMoved(from, to);
+      if (e.attackerId === from) e.attackerId = to;
+    }
+  }
+
   /** Dense iteration over the AI-flown ships (`i < size`): id, owner, brain. */
   idAt(i: number): string { return this.entries[i]!.id; }
   ownerAt(i: number): string { return this.entries[i]!.ownerId; }

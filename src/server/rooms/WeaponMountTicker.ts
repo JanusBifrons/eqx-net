@@ -582,6 +582,23 @@ export class WeaponMountTicker {
     }
   }
 
+  /**
+   * A hull's key moved (its owner took or let go of its controls: playerId
+   * <-> shipInstanceId): its turret angles and sticky target go with it, so
+   * the turrets carry on from where they point (seamless hand-over). Called
+   * only from the room's one "ship key moved" seam.
+   */
+  shipKeyMoved(from: string, to: string): void {
+    const angles = this.playerMountAngles.get(from);
+    this.playerMountAngles.delete(from);
+    if (angles !== undefined) this.playerMountAngles.set(to, angles);
+    else this.playerMountAngles.delete(to);
+    if (this.playerSlotTargets.has(from)) {
+      this.playerSlotTargets.set(to, this.playerSlotTargets.get(from)!);
+      this.playerSlotTargets.delete(from);
+    }
+  }
+
   /** Cleanup hook: drop all per-player state on leave/transit/death. */
   clearPlayer(playerId: string): void {
     this.playerMountAngles.delete(playerId);

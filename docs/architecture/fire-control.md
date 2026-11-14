@@ -151,7 +151,11 @@ SHIP's current role: when the owner takes the controls the hull becomes their
 active ship (`p:<playerId>`), and the reverse when they park it. It is the same
 ship, so its locks follow it through ONE "ship key moved" op at the server's
 re-key sites (`displaceActiveHullToLingering`, `reclaimLingeringHull` →
-`SectorRoom.moveShipLocks` → `LockSubsystem.shipKeyMoved`): every lock held on
+`SectorRoom.shipKeyMoved` → `LockSubsystem.shipKeyMoved`; the same op also
+moves fleet attack orders / chases / retaliation targets naming the ship,
+`FleetCommandSubsystem.shipKeyMoved`, and its turret angles,
+`WeaponMountTicker.shipKeyMoved`, so AI pilots keep attacking it and its
+turrets never snap home): every lock held on
 it in both player lock machines is re-keyed `p:<from>` → `p:<to>` (stage and
 progress kept), and the ship's own groups move between the pilot's `locks` and
 the AI pilots' `wingmanLocks` (an AI pilot flies them in MAN; a pilot gets the

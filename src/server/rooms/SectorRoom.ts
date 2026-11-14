@@ -4635,20 +4635,29 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   /**
-   * A player ship's lock key moved (`p:<playerId>` ↔ `p:<shipInstanceId>`):
-   * its owner took or let go of its controls. The ONE seam for it, called
-   * where the server re-keys the hull (`displaceActiveHullToLingering`,
-   * `reclaimLingeringHull`): every lock on the ship, in both player lock
-   * machines, follows it, and so do its own locks (`fromLocks` → `toLocks`,
-   * null = nobody flies it: they drop). See `LockSubsystem.shipKeyMoved`.
+   * A player ship's key moved (playerId ↔ shipInstanceId; lock key
+   * `p:<playerId>` ↔ `p:<shipInstanceId>`): its owner took or let go of its
+   * controls. The ONE seam for it, called where the server re-keys the hull
+   * (`displaceActiveHullToLingering`, `reclaimLingeringHull`). Everything that
+   * names the ship by that key follows it:
+   *  - every lock on the ship, in both player lock machines, and its own locks
+   *    (`fromLocks` → `toLocks`, null = nobody flies it: they drop). See
+   *    `LockSubsystem.shipKeyMoved`;
+   *  - fleet references: attack orders, chases, retaliation targets
+   *    (`FleetCommandSubsystem.shipKeyMoved`);
+   *  - its turret angles and sticky target (`WeaponMountTicker.shipKeyMoved`),
+   *    so the turrets never snap home on a hand-over.
+   * Never add a second re-key path: extend this one.
    */
-  private moveShipLocks(from: string, to: string, fromLocks: LockSubsystem, toLocks: LockSubsystem | null): void {
+  private shipKeyMoved(from: string, to: string, fromLocks: LockSubsystem, toLocks: LockSubsystem | null): void {
     fromLocks.shipKeyMoved(from, to, toLocks);
     // Locks held on the ship in the sibling machine, when it isn't `toLocks`.
     const sibling = fromLocks === this.locks ? this.wingmanLocks : this.locks;
     if (toLocks !== sibling) sibling.shipKeyMoved(from, to, sibling);
     // AI pilots' cached target → lock key (`wingmanLockKey`) may name the old key.
     this.wingmanFireKeys.clear();
+    this.fleet.shipKeyMoved(from, to);
+    this.mountTicker.shipKeyMoved(from, to);
   }
 
   /** RTS slice 5: whose hostility a lock reads — a wingman hull's OWNER, else the pilot. */
@@ -10295,7 +10304,7 @@ export class SectorRoom extends Room<SectorState> {
     this.postToWorker({ type: 'REKEY_SHIP', oldId: playerId, newId: `linger-${shipInstanceId}` });
     this.attachWingman(shipInstanceId);
     // Same ship, new key: its locks (held on it and its own) follow it to the AI pilot.
-    this.moveShipLocks(playerId, shipInstanceId, this.locks, this.fleet.isAttached(shipInstanceId) ? this.wingmanLocks : null);
+    this.shipKeyMoved(playerId, shipInstanceId, this.locks, this.fleet.isAttached(shipInstanceId) ? this.wingmanLocks : null);
     serverLogEvent('pilot_swap_displaced', { playerId, shipInstanceId, sectorKey: this.sectorKey });
   }
 
@@ -10357,7 +10366,7 @@ export class SectorRoom extends Room<SectorState> {
     };
     // Same ship, new key: its locks (held on it and its own) follow it from the
     // AI pilot to the owner, BEFORE `detachWingman` forgets the AI pilot's.
-    this.moveShipLocks(shipId, playerId, this.wingmanLocks, this.locks);
+    this.shipKeyMoved(shipId, playerId, this.wingmanLocks, this.locks);
     // AI pilots' locks on this pilot name the pilot, not a ship: they hold on
     // only if the pilot stays with the ship they were on.
     if (engagedBefore !== shipId) this.npcLocks.forget(playerId);

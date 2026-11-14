@@ -460,6 +460,20 @@ export class WingmanBehaviour implements IWingmanBrain {
     this.huntEngaged = false;
   }
 
+  /**
+   * A ship this brain names changed key (its owner took or let go of its
+   * controls: playerId <-> shipInstanceId). An attack order, the chase and the
+   * squad leader's target on it follow it: same ship. Escort ids are always
+   * shipInstanceIds (the room maps a flown ship to its hull id), so they never
+   * move. Rare (a hand-over), never per tick.
+   */
+  shipKeyMoved(from: string, to: string): void {
+    const o = this._order;
+    if (o !== null && o.kind === 'attack' && o.targetId === from) this._order = { kind: 'attack', targetId: to };
+    if (this._targetId === from) this._targetId = to;
+    if (this._leaderTargetId === from) this._leaderTargetId = to;
+  }
+
   /** Drop the current order and resume the mode from where the ship is. */
   clearOrder(): void {
     this._order = null;

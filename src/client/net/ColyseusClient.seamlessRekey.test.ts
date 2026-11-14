@@ -153,3 +153,47 @@ describe('seamless take controls — the mirror entry MOVES (RTS Part A)', () =>
     expect(c.mirror.pendingShipRekeys).toEqual([BSID, B, B, BSID]);
   });
 });
+
+/**
+ * Turret angles across a hand-over. The entry moves, so its `mountAngles` go
+ * with it; the server moves its angles in the same "ship key moved" seam
+ * (`SectorRoom.shipKeyMoved`), so the next snapshot under the new key carries
+ * the same angles and the turrets never snap home. Server half:
+ * tests/integration/sectorRoom/handOverKeepsFleetState.test.ts.
+ */
+describe('seamless take controls — turret angles carry over (RTS Part A)', () => {
+  beforeEach(() => useUIStore.setState({ pilotMode: 'pilot' }));
+
+  it('another pilot takes their parked hull and lets go: the turret angles are the same throughout', async () => {
+    const c = await client();
+    const B = 'p-b', BSID = 'ship-b';
+    const ANG = [0.4, -0.3];
+    c.mirror.ships.set(BSID, { x: 0, y: 0, vx: 0, vy: 0, angle: 0, kind: 'interceptor', isActive: false, ownerPlayerId: B });
+    c.handleSnapshot(snap(10, { [BSID]: { x: 200, y: 300, vx: 0, vy: 0, angle: 1, angvel: 0, playerId: B, isActive: false, mountAngles: ANG } }));
+    expect(c.mirror.ships.get(BSID)!.mountAngles).toEqual(ANG);
+
+    // Take controls: re-keyed by the snapshot, which (server seam) carries the same angles.
+    c.handleSnapshot(snap(13, { [BSID]: { x: 205, y: 300, vx: 0, vy: 0, angle: 1, angvel: 0, playerId: B, isActive: true, mountAngles: ANG } }));
+    expect(c.mirror.ships.get(B)!.mountAngles, 'after taking the controls').toEqual(ANG);
+    c.handleSnapshot(snap(16, { [BSID]: { x: 210, y: 300, vx: 0, vy: 0, angle: 1, angvel: 0, playerId: B, isActive: true, mountAngles: ANG } }));
+    expect(c.mirror.ships.get(B)!.mountAngles).toEqual(ANG);
+
+    // Let go (schema first): the entry moves with its angles before any snapshot.
+    c.syncMirror({ ships: new Map([[BSID, { playerId: B, isActive: false, alive: true, kind: 'interceptor' }]]) });
+    expect(c.mirror.ships.get(BSID)!.mountAngles, 'carried by the re-key itself').toEqual(ANG);
+    c.handleSnapshot(snap(19, { [BSID]: { x: 215, y: 300, vx: 0, vy: 0, angle: 1, angvel: 0, playerId: B, isActive: false, mountAngles: ANG } }));
+    expect(c.mirror.ships.get(BSID)!.mountAngles).toEqual(ANG);
+  });
+
+  it('Command: the own ship\'s turret angles go with it to the AI pilot', async () => {
+    const c = await client();
+    c.mirror.localShipInstanceId = SID;
+    c.room = { send: () => {} };
+    c.mirror.ships.set(ME, { x: 0, y: 0, vx: 0, vy: 0, angle: 0, kind: 'interceptor', mountAngles: [0.25, -0.15] });
+    c.tryInitPredWorld(ME);
+    useUIStore.setState({ pilotMode: 'spectator' });
+    c.sendCommand();
+    expect(c.mirror.ships.get(SID)!.mountAngles).toEqual([0.25, -0.15]);
+    useUIStore.setState({ pilotMode: 'pilot' });
+  });
+});
