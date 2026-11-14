@@ -159,20 +159,8 @@ Moved from `src/core/CLAUDE.md` (2026-11-14); kept for the record.
 - **Saved timestamps are game time** (drift from wall time while the speed isn't 1×; see the design note §0).
 - Story: [docs/architecture/game-time-scale.md](../architecture/game-time-scale.md).
 
-## SimulationClock reference
+### From the server Thresholds section
 
-Moved from `src/core/CLAUDE.md`.
+Moved verbatim from the old "Thresholds" section of `src/server/CLAUDE.md`. The rules stay there in short form; current values are in [server-thresholds](server-thresholds.md). Dates, plan names and "was" notes below are history.
 
-- Lives at `src/core/clock/SimulationClock.ts`. Pure: no I/O, takes only an optional `Bus` for `TIDI_RATE_CHANGED` emits.
-- `rate ∈ [0.7, 1.0]`. The server constructs and owns the clock; `src/core` never instantiates it (DI invariant #5).
-- Bus emits `TIDI_RATE_CHANGED` only when the rate moves at least `RAMP_PER_TICK` since the last emit, so the bus isn't spammed with sub-epsilon noise.
-- Phase 6 bus variants: `TIDI_RATE_CHANGED` (rate ramp), `ENTITY_SHED` (LoadShedder evicted a far drone — distinct from `ENTITY_DESTROYED` so persistence/telemetry can distinguish "killed in combat" from "evicted for budget").
-
-## History
-
-Moved from `src/core/CLAUDE.md` (2026-11-14); kept for the record.
-
-### SimulationClock (Phase 6 — TiDi)
-
-- **Superseded (time scale, 2026-11-12):** the rate no longer slows the physics worker alone. It feeds `LoadSpeedController`, which sets the sector's game speed; the worker then runs 60 × speed fixed ticks per wall second on its per-world schedule (`SET_TIME_SCALE`). `CLOCK_RATE` carries only the testMode `testTimeScale`. Original mechanism, kept for the record:
-- The worker reads the rate from the SAB header (`CLOCK_RATE_IDX`) at the start of each tick and scales the **accumulator input** — `physics.tick(FIXED_DT * rate)` — NOT Rapier's per-step dt. Scaling Rapier's dt would change collision behaviour; scaling the accumulator keeps every step deterministic and just makes some wall-clock ticks step zero times.
+- **Phase 6 — LoadShedder**: lives at `src/server/orchestration/LoadShedder.ts`. Fires when `rate ≤ TIDI_FLOOR + 0.01` (0.71) AND `busiestMs > OVER_BUDGET_MS` (14), where `busiestMs = Math.max(serverTotalMs, workerTickMs)`. Selects farthest-from-closest-player drones (kind=1 only — asteroids are immune); **only drones outside EVERY connected player's view are candidates** (`SectorRoom.droneInAnyView`: each client's swarm interest window; a client with no slot, e.g. spectating, sees everything), so if all are in view nothing is shed and the 0.7× slowdown carries the load (soak 2026-11-14: ~200–325 ships vanished mid-fight; lock `tests/integration/sectorRoom/loadShedOutOfView.test.ts`), with a summary log (shed / skipped-in-view) at most once per 10 s per room; batch = `Math.min(8, Math.ceil(droneCount * 0.10))` per tick. Despawns quietly via `evictSwarmEntity(rec, { broadcast: false, emitDestroyed: false })` — no `'destroy'` broadcast, no `ENTITY_DESTROYED`, so the kill-feed and explosion SFX (when Phase 4 ships them) don't fire on player-invisible cleanup. Emits the new `ENTITY_SHED` bus variant for persistence/telemetry.
