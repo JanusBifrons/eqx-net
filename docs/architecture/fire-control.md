@@ -257,6 +257,35 @@ of reach is refused like one off bearing: no cooldown, no energy. **AUTO pick**
 ARC as the angular half (a turret trains onto what AUTO picks; the fire gate
 then checks its barrel); the client has no AUTO pick of its own.
 
+### Heavy guns prefer what they can hurt (owner 2026-11-14)
+
+Whenever guns choose their own target, ONE rule ranks the candidates:
+`mountPriority(size, class)` in `core/combat/mountTargeting.ts`, distance
+breaking ties. Heavy guns (M/L/XL) take capitals AND structures first
+(`STRUCTURE_TARGET_CLASS = 'structure'`, one source), then light capitals,
+gunships, fighters last: they fall back to a fighter only when nothing bigger
+is in reach. S guns prefer gunships, light capitals and structures; AA small
+craft. The same for players and AI:
+
+- **NPC capital turrets** (`WeaponMountTicker.tickCapitalMounts`): a turret
+  holding a target still re-searches on its `RETARGET_TICKS` beat and switches
+  only to a STRICTLY preferred class, so equal-class targets stay sticky.
+- **Structure turrets** (`StructureMountTicker`): unchanged call, new class.
+- **Player AUTO** (`SectorRoom` `autoPick`): the group's heaviest gun size
+  (`groupGeometry().size`) ranks classes, then the nearest; the class (cached
+  per kind, `targetClassOfKind`) is rejected before any pose or shape work.
+- **Turret share-out of a group's locks** (`pickTurretLock`, server
+  `LockSubsystem.aimKeyFor` and client `fcMountAimKey`): each turret takes its
+  preferred class among the locks it can engage; the turret-index spread
+  decides only among equal-priority locks. The class comes from the lock's
+  hit shape (`kindId`), which both sides already fill the same way.
+
+Drones (`pickTarget`, `priorityBias`) carry light guns and keep their own
+nearest-with-bias pick. Locks: `turretLockPick.test.ts`,
+`tests/unit/turretLockPickParity.test.ts` (server vs client, mixed classes),
+`tests/integration/sectorRoom/heavyGunsPreferBig.test.ts`,
+`tests/integration/navalReal/coastalDuelHeavyGuns.test.ts`.
+
 NPC / structure turret fire is the section above. Lock reach: none since
 2026-11-14 (locks work at any distance; see "Locks work at any distance").
 Locks:
@@ -404,3 +433,4 @@ Moved verbatim from the old "Thresholds" section of `src/server/CLAUDE.md`. The 
 ## History
 
 - **2026-11-14, locks at any distance.** Owner decision: players, NPC ships and structures lock at any distance; distance only makes a lock slower; only firing is range-limited (per-turret fire range to the hull, the sibling fire-range changes). Lead calls in the same change: NPC hostility is refreshed by a lock only inside that NPC's fire range (before: "out of reach ⇒ lock drops ⇒ forgets 30 s later"; now "out of fire range ⇒ no refresh ⇒ forgets 30 s later"); AUTO groups release their own pick once it leaves fire range and re-pick, manual locks persist; AUTO's pick stays limited to what it could fire at. The wire `c` flag and the HUD now say CAN'T TRACK instead of OUT OF RANGE. See "Locks work at any distance" above.
+- **2026-11-14, heavy guns prefer big targets.** Owner decision: when guns choose their own target, heavy guns take capitals and structures in fire range first and fighters only as a fallback; AA and light guns keep small fast targets. Extended the one rule (`mountPriority`) to player AUTO (was nearest-first), the turret share-out of a group's locks (was turret-index round-robin) and structures (were ranked as light capitals, behind true capitals). The `coastal-duel` showcase bug (every battleship turret, 16" included, sat on the pilot's fighter by the battery) was a sticky-target bug: at the turrets' first search after `test_aggro` the battery was not yet in the hostile-structure set (it joins ~5 s later), so the fighter was the only candidate, and a turret holding a target never searched again while that target stayed engageable. Now a holding turret re-searches on its beat for a strictly preferred class. See "Heavy guns prefer what they can hurt" above.

@@ -82,7 +82,7 @@ import type { AiPlayerView, AiStructureView, AiSwarmView, AiEntity, AiEntityPose
 import { assignPlayerId } from '../identity/PlayerIdentity.js';
 import type { WelcomeMessage } from '../../shared-types/messages.js';
 import { DEFAULT_SHIP_KIND, getShipKind, allegianceOfKind, isPlayableShipKindId, isShipKindId, type ShipKind, type ShipKindId, type WeaponMount } from '../../shared-types/shipKinds.js';
-import { targetClass } from '../../core/combat/mountTargeting.js';
+import { mountPriority, targetClass, targetClassOfKind, STRUCTURE_TARGET_CLASS } from '../../core/combat/mountTargeting.js';
 import { decodeAim } from '../../core/combat/manualAim.js';
 import type { TurretTargetView } from '../structures/StructureMountTicker.js';
 import { isFriendly, isOnSightHostile } from '../../shared-types/allegiances.js';
@@ -4421,25 +4421,34 @@ export class SectorRoom extends Room<SectorState> {
         }
         return { kind, activated: c.mounts };
       },
-      autoPick: (pid, reach, sx, sy, bears, anyTarget) => {
-        // Nearest NPC ship already hostile to this pilot, within reach and arc.
-        // testMode `anyTarget`: any NPC ship or a structure
-        // that isn't the pilot's own.
+      autoPick: (pid, reach, sx, sy, bears, anyTarget, size) => {
+        // NPC ship already hostile to this pilot, within reach and arc: the
+        // class the group's heaviest gun prefers first (`mountPriority`:
+        // heavy guns capitals and structures, AA small craft; owner
+        // 2026-11-14), then the nearest. testMode `anyTarget`: any NPC ship
+        // or a structure that isn't the pilot's own.
         let best = -1;
-        let bestD = reach * reach;
+        let bestPri = Infinity;
+        let bestD = Infinity;
         for (const rec of this.swarmRegistry.all()) {
           if (rec.kind === 1) {
             if (!anyTarget && !this.npcHostileTo(rec.id, pid)) continue;
           } else if (rec.kind === 2 && anyTarget) {
             if (this.structureRegistry.get(rec.id)?.owner === pid) continue;
           } else continue;
+          // Class first (cached per kind): reject before any pose or shape work.
+          const pri = mountPriority(size, rec.kind === 1 ? targetClassOfKind(rec.shipKind) : STRUCTURE_TARGET_CLASS);
+          if (pri > bestPri) continue;
           if (!this.swarmEntityPoseInto(rec.id, this._lockPose)) continue;
           const dx = this._lockPose.x - sx;
           const dy = this._lockPose.y - sy;
           const d = dx * dx + dy * dy;
-          if (d >= bestD) continue;
+          if (pri === bestPri && d >= bestD) continue;
           this.fillSwarmFireShape(rec, this._lockPose, this._autoPickShape);
-          if (bears(this._autoPickShape)) { bestD = d; best = rec.entityId; }
+          // Reach is to the hull (`bears` → `mountInReach`); this only widens
+          // the centre bound by the target's own size.
+          if (!mayBeInReach(dx, dy, reach, this._autoPickShape)) continue;
+          if (bears(this._autoPickShape)) { bestPri = pri; bestD = d; best = rec.entityId; }
         }
         return best < 0 ? null : `s:${best}`;
       },

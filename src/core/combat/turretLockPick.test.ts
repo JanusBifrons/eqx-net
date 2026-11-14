@@ -52,4 +52,31 @@ describe('pickTurretLock', () => {
     const side = [{ radius: 0 }, { kindId: 'battleship', angle: Math.PI / 2, shieldUp: false }];
     expect(pickTurretLock(FWD, 0, 0, 0, REACH, 1, 2, tx, ty, side)).toBe(0);
   });
+
+  describe('gun size prefers the class it can hurt (owner 2026-11-14, mountPriority)', () => {
+    // Locks: a fighter ahead, a heavy cruiser to starboard, a structure to port.
+    const tx = [0, 1500, -1500];
+    const ty = [2000, 0, 0];
+    const shapes = [
+      { kindId: 'fighter', angle: 0, shieldUp: false, radius: 0 },
+      { kindId: 'heavy-cruiser', angle: 0, shieldUp: false, radius: 0 },
+      { kindId: null, angle: 0, shieldUp: false, radius: 60 },
+    ];
+    it('heavy turrets share the capital and the structure, never the fighter', () => {
+      const xl = { ...FWD, size: 'XL' as const };
+      const picks = [0, 1, 2, 3, 4].map((o) => pickTurretLock(xl, 0, 0, 0, REACH, o, 3, tx, ty, shapes));
+      expect(picks).not.toContain(0);
+      // The turret-index spread holds among the equal-priority locks.
+      expect(new Set(picks)).toEqual(new Set([1, 2]));
+    });
+    it('AA turrets all take the fighter', () => {
+      const aa = { ...FWD, size: 'AA' as const };
+      for (let o = 0; o < 5; o++) expect(pickTurretLock(aa, 0, 0, 0, REACH, o, 3, tx, ty, shapes)).toBe(0);
+    });
+    it('fallback: with only the fighter in reach, a heavy turret takes it', () => {
+      const xl = { ...FWD, size: 'XL' as const };
+      const far = [0, 50_000, -50_000];
+      for (let o = 0; o < 5; o++) expect(pickTurretLock(xl, 0, 0, 0, REACH, o, 3, far, [2000, 0, 0], shapes)).toBe(0);
+    });
+  });
 });

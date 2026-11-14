@@ -53,8 +53,13 @@ export interface LockSubsystemDeps {
   /** Best auto target for a group (hostile — or, with `anyTarget` (the testMode
    *  `anyTarget` trigger), any lockable non-player target — in reach and
    *  `bears(t)`: a mount of the group has it inside its arc AND within the
-   *  mount's own reach of its hit shape), or null. */
-  autoPick(playerId: string, reach: number, sx: number, sy: number, bears: (t: FireTargetShape) => boolean, anyTarget: boolean): string | null;
+   *  mount's own reach of its hit shape), or null. Among those, the class
+   *  the group's heaviest gun `size` prefers (`mountPriority`), then the
+   *  nearest (owner 2026-11-14: heavy guns take what they can hurt). */
+  autoPick(
+    playerId: string, reach: number, sx: number, sy: number, bears: (t: FireTargetShape) => boolean, anyTarget: boolean,
+    size: WeaponMount['size'],
+  ): string | null;
   /** A failsafe finished: the player has committed a hostile act on `key`. */
   commitHostileAct(playerId: string, key: string): void;
   /** "Locks keep it hostile" (owner decision 2026-11-10): a lock that is
@@ -82,6 +87,8 @@ interface GroupState {
   /** Heavy group (M/L/XL): lock time reads absolute distance. */
   absRange: boolean;
   reach: number;
+  /** The group's heaviest gun (AUTO picks the class it prefers); undefined = ordinary guns. */
+  size: WeaponMount['size'];
   /** Where the group's barrels can point, relative to the hull heading:
    *  [lo0, hi0, lo1, hi1, …] (fixed guns get a small window). */
   arcs: number[];
@@ -111,7 +118,9 @@ interface PlayerLocks {
 const SIZE_RANK: Record<MountSize | 'none', number> = { none: 0, AA: 1, S: 2, M: 3, L: 4, XL: 5 };
 
 /** Build a group's lock geometry from its mounts (largest size wins). */
-export function groupGeometry(mounts: ReadonlyArray<WeaponMount>): { refSize: number; tracking: number; reach: number; absRange: boolean } {
+export function groupGeometry(mounts: ReadonlyArray<WeaponMount>): {
+  refSize: number; tracking: number; reach: number; absRange: boolean; size: WeaponMount['size'];
+} {
   let size: MountSize | 'none' = 'none';
   let reach = 0;
   for (const m of mounts) {
@@ -121,7 +130,7 @@ export function groupGeometry(mounts: ReadonlyArray<WeaponMount>): { refSize: nu
     if (r > reach) reach = r;
   }
   const p = WEAPON_LOCK_PROFILE[size];
-  return { refSize: p.refSize, tracking: p.tracking, reach, absRange: p.absRange };
+  return { refSize: p.refSize, tracking: p.tracking, reach, absRange: p.absRange, size: size === 'none' ? undefined : size };
 }
 
 /** Half-width (rad) a fixed gun counts as bearing on a target. */
@@ -265,6 +274,7 @@ export class LockSubsystem {
         tracking: geo.tracking,
         absRange: geo.absRange,
         reach: geo.reach,
+        size: geo.size,
         arcs: groupArcs(mounts),
         mountIds: new Set(mounts.map((m) => m.id)),
         mounts,
@@ -539,7 +549,7 @@ export class LockSubsystem {
     // Auto groups acquire their own target when idle.
     if (g.locks.length === 0 && g.mode === 'auto') {
       this.bearGroup = g;
-      const key = this.deps.autoPick(playerId, g.reach, this.shooter.x, this.shooter.y, this.bears, p.anyTarget);
+      const key = this.deps.autoPick(playerId, g.reach, this.shooter.x, this.shooter.y, this.bears, p.anyTarget, g.size);
       this.bearGroup = null;
       if (key !== null && this.deps.resolveTarget(playerId, key, this.target)) {
         const auto = newLock(key, true);
