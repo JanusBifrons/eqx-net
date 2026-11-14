@@ -16,7 +16,7 @@
  * "Multi-mount fire path" section).
  */
 
-import { hasTurretFireControl, mountWeaponReach } from '../../core/combat/mountReach.js';
+import { hasTurretFireControl, mountInReach, mountWeaponReach } from '../../core/combat/mountReach.js';
 import { barrelBearsOn, mountFireTolerance } from '../../core/combat/fireControlBearing.js';
 import { DEFAULT_SHIP_KIND, getShipKind, type ShipKind, type WeaponMount } from '../../shared-types/shipKinds.js';
 import {
@@ -45,7 +45,24 @@ export interface SwarmRecLookup {
   get(id: string): { entityId: number; shipKind?: string | null } | null | undefined;
 }
 
+/** A fire target's centre and hit shape, for the per-mount range gate. */
+export interface AiFireTargetShape {
+  x: number;
+  y: number;
+  kindId?: string | null;
+  angle?: number;
+  shieldUp?: boolean;
+  radius?: number;
+}
+
 export interface AiFireResolverDeps {
+  /** Fire range (owner decision 2026-11-14): fill `out` with `targetId`'s
+   *  live centre and hit shape (a ship's kind, heading and shield, else a
+   *  circle radius); false when unknown. A mount fires only when the target's
+   *  hull is within its own weapon reach of it (`mountInReach`). Must not
+   *  touch the `swarmEntitySnapshot` scratch. Absent / unknown ⇒ no range
+   *  gate (unit harnesses, a shot with no target). */
+  targetShape?: (targetId: string, out: AiFireTargetShape) => boolean;
   /** Fire control: refuse a shot at `targetId` when it is a pilot this NPC
    *  holds no completed lock on. Absent ⇒ never blocked. */
   fireBlocked?: (shooterId: string, targetId: string) => boolean;
@@ -177,7 +194,11 @@ export class AiFireResolver implements WeaponFireSink {
     // a gun that doesn't bear would fire visibly off its target (owner
     // 2026-11-14: "turrets aren't turning to shoot the direction they do").
     // None bears ⇒ hold, spending no cooldown (a turret still slewing).
-    const bearMask = this.bearingMask(shooterId, hullAngle, slotMounts, dirNdx, dirNdy);
+    // Range: a mount fires only when the target's hull is within its own
+    // weapon reach of it, measured from the mount (owner 2026-11-14; a lock
+    // alone is no licence to fire from any distance).
+    const shape = targetId !== '' && d.targetShape?.(targetId, this._targetShape) === true ? this._targetShape : null;
+    const bearMask = this.bearingMask(shooterId, selfX, selfY, hullAngle, slotMounts, dirNdx, dirNdy, shape);
     if (bearMask === 0) return;
 
     // Slot-level cooldown gate (mirrors PlayerFireResolver). The slot fires
@@ -214,19 +235,32 @@ export class AiFireResolver implements WeaponFireSink {
     this.fireNow(shooterId, -1, bearMask);
   }
 
+  /** Reused target shape for the range gate (#14). */
+  private readonly _targetShape: AiFireTargetShape = { x: 0, y: 0, kindId: null, angle: 0, shieldUp: false, radius: 0 };
+
   /** Bit i set ⇔ slot mount i's barrel (hull + base + slewed angle) bears on
    *  the aim direction within its weapon's window (`mountFireTolerance`, the
-   *  pilot's rule, #19). Mounts past bit 30 always count as bearing. */
+   *  pilot's rule, #19) AND, with a known `target`, the target's hull is
+   *  within the mount's own weapon reach of its world origin (`mountInReach`).
+   *  Mounts past bit 30 always count as bearing. */
   private bearingMask(
-    shooterId: string, hullAngle: number, slotMounts: ReadonlyArray<WeaponMount>, dirX: number, dirY: number,
+    shooterId: string, sx: number, sy: number, hullAngle: number, slotMounts: ReadonlyArray<WeaponMount>,
+    dirX: number, dirY: number, target: AiFireTargetShape | null,
   ): number {
     const angles = this.deps.droneMountAngles.get(shooterId);
+    const cosA = Math.cos(hullAngle), sinA = Math.sin(hullAngle);
     let mask = 0;
     for (let i = 0; i < slotMounts.length; i++) {
       if (i > 30) { mask |= 1 << 30; continue; }
       const m = slotMounts[i]!;
+      const reach = mountWeaponReach(m);
+      if (target !== null) {
+        const mx = sx + (m.localX * cosA - m.localY * sinA);
+        const my = sy + (m.localX * sinA + m.localY * cosA);
+        if (!mountInReach(target.x - mx, target.y - my, reach, target)) continue;
+      }
       const a = hullAngle + m.baseAngle + (angles?.[i] ?? 0);
-      if (barrelBearsOn(0, 0, a, dirX, dirY, mountFireTolerance(m.weaponId, mountWeaponReach(m)))) mask |= 1 << i;
+      if (barrelBearsOn(0, 0, a, dirX, dirY, mountFireTolerance(m.weaponId, reach))) mask |= 1 << i;
     }
     return mask;
   }

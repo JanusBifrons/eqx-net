@@ -7,18 +7,25 @@
  * none engageable it parks on the first lock. One lock (every non-capital
  * group) is always index 0, so those groups aim exactly as before.
  *
+ * Reach is the shared turret range gate (`mountInReach`): from the mount to
+ * the nearest point of the target's hit shape (`shapes[i]`), the same rule
+ * `mountCanEngage` applies to NPC and structure turrets.
+ *
  * Used by the server's turret aim + fire gate (`LockSubsystem.aimKeyFor`) and
  * the client's predicted aim + ghost gate (`ColyseusClient.fcMountAimKey`), so
  * both sides pick the same target (invariants #12, #15). Pure,
  * allocation-free.
  */
 import { inMountArc, type FireControlMount } from './mountFireControl.js';
+import { mountInReach, type MountRangeTarget } from './mountReach.js';
 
 /** Half-width (rad) a fixed gun (arcMin === arcMax) counts as covering. */
 const FIXED_GUN_HALF_ARC = 0.3;
 
-function canEngage(m: FireControlMount, frameAngle: number, dx: number, dy: number, reach: number): boolean {
-  if (dx * dx + dy * dy > reach * reach) return false;
+function canEngage(
+  m: FireControlMount, frameAngle: number, dx: number, dy: number, reach: number, shape: MountRangeTarget | undefined,
+): boolean {
+  if (!mountInReach(dx, dy, reach, shape)) return false;
   if (m.arcMax - m.arcMin < 1e-6) {
     let rel = Math.atan2(-dx, dy) - frameAngle - m.baseAngle - m.arcMin;
     rel -= Math.round(rel / (2 * Math.PI)) * 2 * Math.PI;
@@ -30,7 +37,8 @@ function canEngage(m: FireControlMount, frameAngle: number, dx: number, dy: numb
 /**
  * Index (0..n-1) of the lock turret `ordinal` aims at. `mx`/`my` is the
  * mount's world origin, `frameAngle` the hull heading, `tx`/`ty` the world
- * positions of the group's `n` LOCKED targets in lock order.
+ * positions of the group's `n` LOCKED targets in lock order, `shapes` their
+ * hit shapes (absent = measured to the centre).
  */
 export function pickTurretLock(
   m: FireControlMount,
@@ -42,12 +50,13 @@ export function pickTurretLock(
   n: number,
   tx: ArrayLike<number>,
   ty: ArrayLike<number>,
+  shapes?: ArrayLike<MountRangeTarget>,
 ): number {
   if (n <= 1) return 0;
   const start = ordinal % n;
   for (let k = 0; k < n; k++) {
     const i = (start + k) % n;
-    if (canEngage(m, frameAngle, tx[i]! - mx, ty[i]! - my, reach)) return i;
+    if (canEngage(m, frameAngle, tx[i]! - mx, ty[i]! - my, reach, shapes?.[i])) return i;
   }
   return 0;
 }

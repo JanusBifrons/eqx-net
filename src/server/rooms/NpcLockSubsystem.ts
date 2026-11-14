@@ -26,15 +26,16 @@ import { LOCK_TUNING, sensorFor, signatureFor } from '../../shared-types/combat/
 import { capLockSeconds, lockSeconds, type LockInputs } from '../../core/combat/lockTime.js';
 import type { ShipKind } from '../../shared-types/shipKinds/types.js';
 import { groupGeometry } from './LockSubsystem.js';
-import { hasTurretFireControl, mountsReachTarget, type FireRangeTarget } from '../../core/combat/mountReach.js';
+import { hasTurretFireControl, mayBeInReach, mountsReachTarget, type MountRangeTarget } from '../../core/combat/mountReach.js';
 import type { WeaponMount } from '../../shared-types/shipKinds/types.js';
 
 /** Wire row: who is locking the pilot. `t` = `s:<entityId>`, `s` 1 acquiring / 2 locked, `p` 0..100. */
 export interface WireLockedBy { t: string; s: 1 | 2; p: number }
 
 /** `angle`: hull heading (ship-angle convention), for the fire-range test
- *  (mount positions, hull polygon); absent = 0. */
-export interface NpcPose { x: number; y: number; vx: number; vy: number; angle?: number }
+ *  (mount positions, hull polygon); absent = 0. `shieldUp`: a pilot hull's
+ *  shield (its fire-range hit shape); absent = up. */
+export interface NpcPose { x: number; y: number; vx: number; vy: number; angle?: number; shieldUp?: boolean }
 
 export interface NpcLockDeps {
   /** Pilots to protect (every tracked player). */
@@ -87,7 +88,7 @@ export class NpcLockSubsystem {
   private readonly pilot: NpcPose = { x: 0, y: 0, vx: 0, vy: 0, angle: 0 };
   private readonly npc: NpcPose = { x: 0, y: 0, vx: 0, vy: 0, angle: 0 };
   /** The pilot as a fire-range target (refreshed per pilot; #14). */
-  private readonly pilotTarget: FireRangeTarget = { x: 0, y: 0, angle: 0, kindId: null, radius: 0 };
+  private readonly pilotTarget: { -readonly [K in keyof MountRangeTarget]: MountRangeTarget[K] } = { kindId: null, angle: 0, shieldUp: true, radius: 0 };
   private readonly inputs: LockInputs = {
     refSize: 1, tracking: 1, reach: 1, sensor: 1, pilotSpeed: 1, signature: 1, dx: 0, dy: 0, dvx: 0, dvy: 0,
   };
@@ -176,8 +177,8 @@ export class NpcLockSubsystem {
       this.curPilotId = pilotId;
       this.curSignature = signatureFor(kind);
       const pt = this.pilotTarget;
-      pt.x = this.pilot.x; pt.y = this.pilot.y; pt.angle = this.pilot.angle ?? 0;
-      pt.kindId = kind.id; pt.radius = this.curSignature;
+      pt.angle = this.pilot.angle ?? 0; pt.shieldUp = this.pilot.shieldUp !== false;
+      pt.kindId = kind.id; pt.radius = 0;
       this.curInstant = this.deps.instantLock?.(pilotId) === true;
       this.curCap = this.deps.lockTimeCapS?.();
       this.deps.forEachHostileNpc(pilotId, this.visit);
@@ -214,23 +215,36 @@ export class NpcLockSubsystem {
     inp.dy = this.pilot.y - this.npc.y;
     inp.dvx = this.pilot.vx - this.npc.vx;
     inp.dvy = this.pilot.vy - this.npc.vy;
-    // The fastest of the NPC's lock profiles (a drone has one).
-    // No reach gate: locks work at any distance (owner 2026-11-14).
+    // No reach gate: locks work at any distance (owner 2026-11-14). WHICH
+    // profile builds the lock still follows reach, because a capital holds
+    // ONE lock per pilot that every turret fires on: the fastest profile
+    // whose guns may reach the pilot (a drone has one); with none in reach,
+    // the longest-reach profile (the gun that reaches them first). Without
+    // this a capital's AA (whose reach-share range term saturates past its
+    // reach) would lock a far fighter in seconds and license the 16".
     let secs = Infinity;
-    let armed = false;
+    let farSecs = Infinity;
+    let farReach = 0;
+    let anyInReach = false;
     for (let i = 0; i < gs.length; i++) {
       const g = gs[i]!;
       if (g.reach <= 0) continue;
-      armed = true;
       inp.refSize = g.refSize;
       inp.tracking = g.tracking;
       inp.absRange = g.absRange;
       inp.reach = g.reach;
       inp.sensor = g.sensor;
       const s = capLockSeconds(lockSeconds(inp, LOCK_TUNING), inp, this.curCap);
-      if (s < secs) secs = s;
+      if (mayBeInReach(inp.dx, inp.dy, g.reach * LOCK_TUNING.reachSlack, this.pilotTarget)) {
+        anyInReach = true;
+        if (s < secs) secs = s;
+      } else if (g.reach > farReach) {
+        farReach = g.reach;
+        farSecs = s;
+      }
     }
-    if (this.curInstant && armed) secs = 0;
+    if (!anyInReach) secs = farSecs;
+    if (this.curInstant && (anyInReach || farReach > 0)) secs = 0;
     let e = st.entries.get(npcId);
     if (!Number.isFinite(secs)) {
       // Can't track (or no gun): not locking this step (grace applies).
@@ -253,7 +267,7 @@ export class NpcLockSubsystem {
     // distance, so without this gate a far lock would keep it hostile
     // forever. Outside fire range the refresh stops and the 30 s decay runs.
     const refresh = this.deps.refreshHostility;
-    if (refresh && mountsReachTarget(kind.mounts ?? NO_MOUNTS, this.npc.x, this.npc.y, this.npc.angle ?? 0, this.pilotTarget)) {
+    if (refresh && mountsReachTarget(kind.mounts ?? NO_MOUNTS, this.npc.x, this.npc.y, this.npc.angle ?? 0, this.pilot.x, this.pilot.y, this.pilotTarget)) {
       refresh(npcId, this.curPilotId);
     }
   };

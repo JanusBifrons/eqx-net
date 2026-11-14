@@ -14,7 +14,7 @@ import { lockSeconds, type LockInputs } from '../../core/combat/lockTime.js';
 import { newLock, stepLock, LOCK_STAGE_CODE, LOCK_TRACK, type LockEntry } from '../../core/combat/lockState.js';
 import { lockLineHolds } from '../../core/combat/lockLine.js';
 import { pickTurretLock } from '../../core/combat/turretLockPick.js';
-import { mountWeaponReach, mountsReachTarget, type FireRangeTarget } from '../../core/combat/mountReach.js';
+import { mountWeaponReach, mountsReachTarget, type MountRangeTarget } from '../../core/combat/mountReach.js';
 import { getWeapon, weaponAutoFireRange } from '../../core/combat/WeaponCatalogue.js';
 import type { ShipKind, WeaponMount, WeaponSlot } from '../../shared-types/shipKinds/types.js';
 
@@ -28,11 +28,12 @@ export interface LockTargetView {
   signature: number;
   /** Already hostile to the locking player (skips the failsafe ring). */
   hostile: boolean;
-  /** Ship kind (its hit shape for the AUTO fire-range release); absent or
-   *  null = a circle of `signature` (structures). */
+  /** Hit shape for the turret range gate (`MountRangeTarget`): a ship's kind,
+   *  heading and shield, else a circle `radius`. Absent ⇒ its centre. */
   kindId?: string | null;
-  /** Hull heading (ship-angle convention); absent = 0. */
   angle?: number;
+  shieldUp?: boolean;
+  radius?: number;
 }
 
 export interface LockShooterView {
@@ -436,6 +437,9 @@ export class LockSubsystem {
   private readonly pickX = new Float64Array(8);
   private readonly pickY = new Float64Array(8);
   private readonly pickKeys: string[] = [];
+  /** Per-lock hit shapes for `pickTurretLock`'s hull range gate (reused, #14). */
+  private readonly pickShapes: { -readonly [K in keyof MountRangeTarget]: MountRangeTarget[K] }[] =
+    Array.from({ length: 8 }, () => ({ kindId: null, angle: 0, shieldUp: false, radius: 0 }));
 
   /**
    * Several locks: which one this turret takes (shared `pickTurretLock`, the
@@ -453,6 +457,11 @@ export class LockSubsystem {
       if (!this.deps.resolveTarget(playerId, e.target, this.target)) continue;
       this.pickX[keys.length] = this.target.x;
       this.pickY[keys.length] = this.target.y;
+      const sh = this.pickShapes[keys.length]!;
+      sh.kindId = this.target.kindId ?? null;
+      sh.angle = this.target.angle ?? 0;
+      sh.shieldUp = this.target.shieldUp === true;
+      sh.radius = this.target.radius ?? 0;
       keys.push(e.target);
     }
     if (keys.length === 0) return null;
@@ -462,7 +471,7 @@ export class LockSubsystem {
     const sinA = Math.sin(s.angle);
     const mx = s.x + (m.localX * cosA - m.localY * sinA);
     const my = s.y + (m.localX * sinA + m.localY * cosA);
-    const i = pickTurretLock(m, s.angle, mx, my, mountWeaponReach(m), ordinal, keys.length, this.pickX, this.pickY);
+    const i = pickTurretLock(m, s.angle, mx, my, mountWeaponReach(m), ordinal, keys.length, this.pickX, this.pickY, this.pickShapes);
     return keys[i]!;
   }
 
@@ -482,18 +491,11 @@ export class LockSubsystem {
     }
   }
 
-  /** Fire-range target scratch (#14). */
-  private readonly fireTarget: FireRangeTarget = { x: 0, y: 0, angle: 0, kindId: null, radius: 0 };
-
   /** `this.target` is inside the group's FIRE range (any mount reaches its
-   *  hull, × `slack`); `this.shooter` must be current. */
+   *  hit shape, × `slack`); `this.shooter` must be current. */
   private inFireRange(g: GroupState, slack: number): boolean {
-    const t = this.fireTarget;
-    t.x = this.target.x; t.y = this.target.y;
-    t.angle = this.target.angle ?? 0;
-    t.kindId = this.target.kindId ?? null;
-    t.radius = this.target.signature;
-    return mountsReachTarget(g.mounts, this.shooter.x, this.shooter.y, this.shooter.angle, t, slack);
+    const t = this.target;
+    return mountsReachTarget(g.mounts, this.shooter.x, this.shooter.y, this.shooter.angle, t.x, t.y, t, slack);
   }
 
   private stepGroup(playerId: string, p: PlayerLocks, g: GroupState): void {

@@ -213,6 +213,30 @@ is EXCLUDED from `SectorPersistence` (transient debris). Wire: `SWARM_KIND_SCRAP
 (invariant #8). Locks: `ScrapSpawner.test.ts` + `scrapOnDeath.test.ts`
 (integration). See [docs/architecture/composite-ships-and-scrap.md](../../docs/architecture/composite-ships-and-scrap.md).
 
+## Core reference
+
+Moved from `src/core/CLAUDE.md` (section "Composite ships + scrap geometry").
+
+- `ShipShape` is a discriminated union (`polygon | composite`). The
+  `shipHullOutline(kind)` seam (`geometry/shipHullOutline.ts`) returns the
+  composite `hull` or the polygon `points` — **every collision/physics reader
+  goes through it**, so polygon kinds are byte-identical. The
+  "silhouette == collider" invariant is RELAXED for composites: the collider is
+  the authored gross `hull`; the visual `parts[]` are detail (per-part live
+  collision is intentionally NOT modelled). `shipShapeScale` / `shipPrimaryColor`
+  are the sibling accessors.
+- `geometry/shipScrapGroups.ts` precomputes ONCE at module load (like
+  `shipHullDecomp`) one scrap GROUP per composite component — a silhouette
+  (`canScrap:true`) + its detail parts (role-prefix), each recentred on the
+  component centroid, with a convex-hull collider. Polygon kinds → empty. The
+  death→scrap path (server) and `buildScrapGfx` (client) both read it.
+- `physics/collisionGroups.ts` `SCRAP_COLLISION_GROUPS` (membership bit 1 /
+  filter ~bit 1) makes scrap NOT collide with other scrap but collide with
+  everything else. Threaded through `World.spawnObstacle`'s optional
+  `collisionGroups` param (→ worker `SPAWN_OBSTACLE`). `swarm/scrapConstants.ts`
+  holds the tuning (burst/damping/HP/MAX_LIVE_SCRAP). Full story:
+  [docs/architecture/composite-ships-and-scrap.md](../../docs/architecture/composite-ships-and-scrap.md).
+
 ## History
 
 > **C3 (done) removed the wreck ENTITY end-to-end** — `WreckState` + `state.wrecks`, `SnapshotMessage.wrecks`, `WreckLifecycleCoordinator`, the `EntityResolver` wreck branch + `WreckEntity` leaf + the wreck `EntityKindTag`, the client `mirror.wrecks` render/select/pick/hover paths, and `wreck-render-probe.spec.ts` are all gone. No `WreckState` exists; the abandon/death paths above are the only hull-removal flows, and both produce scrap. (Removing `SnapshotMessage.wrecks` is a JSON-field removal, NOT a `SWARM_WIRE_VERSION` bump — the binary swarm wire is untouched.)

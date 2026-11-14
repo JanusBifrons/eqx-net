@@ -40,4 +40,16 @@ describe('pickTurretLock', () => {
     // Lock 1 sits 90° off the nose; the gun keeps lock 0 (dead ahead).
     expect(pickTurretLock(fixed, 0, 0, 0, REACH, 1, 2, [0, 1000], [2000, 0])).toBe(0);
   });
+
+  it('reach is measured to the target hull (shared mountInReach), not its centre', () => {
+    // Lock 1: a battleship bow-on, centre reach + 2,000 u ahead, bow well inside reach.
+    const tx = [0, 0];
+    const ty = [-2000, REACH + 2000];
+    const hull = [{ radius: 0 }, { kindId: 'battleship', angle: Math.PI, shieldUp: false }];
+    expect(pickTurretLock(FWD, 0, 0, 0, REACH, 1, 2, tx, ty)).toBe(0); // centre: out of reach, parks
+    expect(pickTurretLock(FWD, 0, 0, 0, REACH, 1, 2, tx, ty, hull)).toBe(1);
+    // Broadside on at the same centre: the hull is out of reach too.
+    const side = [{ radius: 0 }, { kindId: 'battleship', angle: Math.PI / 2, shieldUp: false }];
+    expect(pickTurretLock(FWD, 0, 0, 0, REACH, 1, 2, tx, ty, side)).toBe(0);
+  });
 });

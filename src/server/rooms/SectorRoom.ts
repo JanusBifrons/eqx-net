@@ -241,7 +241,7 @@ import { PhysicsWorkerProxy, type WorkerCmd } from './PhysicsWorkerProxy.js';
 import { ProjectilePipeline } from './ProjectilePipeline.js';
 import { MissileSimulation } from './MissileSimulation.js';
 import { ShieldHullRouter } from './ShieldHullRouter.js';
-import { AiFireResolver } from './AiFireResolver.js';
+import { AiFireResolver, type AiFireTargetShape } from './AiFireResolver.js';
 import { PlayerFireResolver } from './PlayerFireResolver.js';
 import { DamageRouter } from './DamageRouter.js';
 import { RespawnHandler } from './RespawnHandler.js';
@@ -396,10 +396,7 @@ import { type ShellSalvo } from '../../shared-types/messages/shellEvents.js';
 import { tuningFor, GLOBAL_SHIP_TUNING } from '../../shared-types/shipScale/lookup.js';
 import { isCapitalKindId } from '../../core/combat/capitalHits.js';
 import { shipRayHit, shipSweepHit } from '../../core/combat/shipHitShape.js';
-import { mountsReachTarget, type FireRangeTarget } from '../../core/combat/mountReach.js';
-
-/** Empty mount list for a kind with none (fire-range test; #14). */
-const NO_FIRE_MOUNTS: ReadonlyArray<WeaponMount> = [];
+import { mayBeInReach, maxShipRangeBound, mountsReachTarget, type MountRangeTarget } from '../../core/combat/mountReach.js';
 import { CapitalWreckSubsystem } from './CapitalWreckSubsystem.js';
 import { wreckRayHit } from '../../core/destruction/wreckHits.js';
 import { isWreckPiece } from '../net/SwarmEntityRegistry.js';
@@ -434,6 +431,8 @@ interface ShipCargoTarget {
   npc?: SwarmEntityRecord;
 }
 /** C3 — how much you can unload into an NPC ship's hold. */
+/** Empty mount list for a kind with none (fire-range test; #14). */
+const NO_FIRE_MOUNTS: ReadonlyArray<WeaponMount> = [];
 const NPC_HOLD_CAPACITY = 1000;
 /** T2 — an NPC ammo turret's assumed munitions use (it fires only when attacked). */
 const NPC_TURRET_MUNITIONS_PER_MIN = 0.2;
@@ -2051,6 +2050,7 @@ export class SectorRoom extends Room<SectorState> {
       lineOfFireBlocked: (id, targetId, fx, fy, dx, dy) => this.droneLineBlocked(id, targetId, fx, fy, dx, dy),
       lastFireClientTick: this.lastFireClientTick,
       swarmEntitySnapshot: (id) => this.swarmEntitySnapshot(id),
+      targetShape: (id, out) => this.aiFireTargetShape(id, out),
       swarmRegistry: this.swarmRegistry,
       resolveSlotMounts: (kind, slotId) => this.resolveSlotMounts(kind, slotId),
       mountWorldOrigin: (x, y, ang, m) => this.mountWorldOrigin(x, y, ang, m),
@@ -4360,7 +4360,7 @@ export class SectorRoom extends Room<SectorState> {
         const h = this.engageablePilotHull(pid);
         if (!h) return null;
         const p = h.pose;
-        out.x = p.x; out.y = p.y; out.vx = p.vx; out.vy = p.vy; out.angle = p.angle;
+        out.x = p.x; out.y = p.y; out.vx = p.vx; out.vy = p.vy; out.angle = p.angle; out.shieldUp = h.ship.shield > 0;
         return getShipKind(h.ship.kind);
       },
       forEachHostileNpc: (pid, visit) => {
@@ -4461,15 +4461,8 @@ export class SectorRoom extends Room<SectorState> {
       }
       if (!this.swarmEntityPoseInto(rec.id, this._lockPose)) return false;
       out.x = this._lockPose.x; out.y = this._lockPose.y; out.vx = this._lockPose.vx; out.vy = this._lockPose.vy;
-      out.angle = this._lockPose.angle;
-      if (rec.kind === 1) {
-        const k = getShipKind(rec.shipKind ?? null);
-        out.signature = k.radius;
-        out.kindId = k.id;
-      } else {
-        out.signature = rec.radius;
-        out.kindId = null; // a structure: a circle for the fire-range test
-      }
+      out.signature = rec.kind === 1 ? getShipKind(rec.shipKind ?? null).radius : rec.radius;
+      this.writeSwarmRangeShape(out, rec);
       return true;
     }
     if (key.startsWith('p:')) {
@@ -4478,10 +4471,9 @@ export class SectorRoom extends Room<SectorState> {
       const ship = this.getActiveShip(other);
       const p = this.shipPoseCache.get(other);
       if (!ship || !ship.alive || !p) return false;
-      out.x = p.x; out.y = p.y; out.vx = p.vx; out.vy = p.vy; out.angle = p.angle;
-      const k = getShipKind(ship.kind);
-      out.signature = k.radius;
-      out.kindId = k.id;
+      out.x = p.x; out.y = p.y; out.vx = p.vx; out.vy = p.vy;
+      out.signature = getShipKind(ship.kind).radius;
+      out.kindId = ship.kind; out.angle = p.angle; out.shieldUp = ship.shield > 0; out.radius = 0;
       out.hostile = false; // PvP always runs the failsafe first
       return true;
     }
@@ -4527,7 +4519,9 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   /** Fire-range target scratch for `pilotInNpcFireRange` (#14). */
-  private readonly _fireRangeTarget: FireRangeTarget = { x: 0, y: 0, angle: 0, kindId: null, radius: 0 };
+  private readonly _fireRangeTarget: { -readonly [K in keyof MountRangeTarget]: MountRangeTarget[K] } = {
+    kindId: null, angle: 0, shieldUp: true, radius: 0,
+  };
 
   /** The pilot's engageable hull is inside NPC `npcId`'s FIRE range (any of
    *  its mounts reaches the hull, shared `mountsReachTarget`). */
@@ -4535,11 +4529,10 @@ export class SectorRoom extends Room<SectorState> {
     const h = this.engageablePilotHull(pid);
     const rec = this.swarmRegistry.get(npcId);
     if (!h || !rec || !this.swarmEntityPoseInto(npcId, this._lockPose)) return false;
-    const pk = getShipKind(h.ship.kind);
     const t = this._fireRangeTarget;
-    t.x = h.pose.x; t.y = h.pose.y; t.angle = h.pose.angle; t.kindId = pk.id; t.radius = pk.radius;
+    t.kindId = h.ship.kind; t.angle = h.pose.angle; t.shieldUp = h.ship.shield > 0; t.radius = 0;
     const nk = getShipKind(rec.shipKind ?? null);
-    return mountsReachTarget(nk.mounts ?? NO_FIRE_MOUNTS, this._lockPose.x, this._lockPose.y, this._lockPose.angle, t);
+    return mountsReachTarget(nk.mounts ?? NO_FIRE_MOUNTS, this._lockPose.x, this._lockPose.y, this._lockPose.angle, h.pose.x, h.pose.y, t);
   }
 
   /**
@@ -4608,13 +4601,13 @@ export class SectorRoom extends Room<SectorState> {
    *  hull under the PILOT's id (so the capital's per-pilot NPC lock and the
    *  drone's `hostileTo` both key it). Bound once (#14). */
   private readonly _visitParkedPilotHulls = (
-    visit: (pid: string, x: number, y: number, vx: number, vy: number, kindId: string) => void,
+    visit: (pid: string, x: number, y: number, vx: number, vy: number, kindId: string, angle: number, shieldUp: boolean) => void,
   ): void => {
     if (this.spectateParkedHull.size === 0) return;
     for (const pid of this.spectateParkedHull.keys()) {
       if (this.getActiveShip(pid) !== undefined) continue; // covered by the ACTIVE pass
       const h = this.engageablePilotHull(pid);
-      if (h) visit(pid, h.pose.x, h.pose.y, h.pose.vx, h.pose.vy, h.ship.kind);
+      if (h) visit(pid, h.pose.x, h.pose.y, h.pose.vx, h.pose.vy, h.ship.kind, h.pose.angle, h.ship.shield > 0);
     }
   };
 
@@ -6412,7 +6405,20 @@ export class SectorRoom extends Room<SectorState> {
     const kind = getShipKind(rec.shipKind);
     v.cls = targetClass(kind);
     v.signature = rec.kind === 1 ? kind.radius : rec.radius;
+    this.writeSwarmRangeShape(v, rec);
     return v;
+  }
+
+  /** A swarm entity's hit shape for the turrets' hull range gate
+   *  (`mountInReach`): a ship by kind, heading and shield, else its radius. */
+  private writeSwarmRangeShape(
+    v: { -readonly [K in keyof MountRangeTarget]: MountRangeTarget[K] }, rec: SwarmEntityRecord,
+  ): void {
+    const ship = rec.kind === 1 && rec.shipKind != null;
+    v.kindId = ship ? rec.shipKind : null;
+    v.angle = ship ? this.sabF32[slotBase(rec.slot) + SLOT_ANGLE_OFF]! : 0;
+    v.shieldUp = ship && !rec.shieldDown;
+    v.radius = ship ? 0 : rec.radius;
   }
 
   private writePilotTurretView(n: number, playerId: string): TurretTargetView | null {
@@ -6426,6 +6432,7 @@ export class SectorRoom extends Room<SectorState> {
     const kind = getShipKind(h.ship.kind);
     v.cls = targetClass(kind);
     v.signature = kind.radius;
+    v.kindId = h.ship.kind; v.angle = pose.angle; v.shieldUp = h.ship.shield > 0; v.radius = 0;
     return v;
   }
 
@@ -6441,27 +6448,32 @@ export class SectorRoom extends Room<SectorState> {
   private collectTurretTargets(x: number, y: number, range: number, owner: string, out: TurretTargetView[]): number {
     const idx = this.turretIdxScratch;
     let n = 0;
+    // Fire range is measured from each mount to the target's hull (owner
+    // 2026-11-14): gather every ship whose hull MAY come within `range`
+    // (grid query widened by the largest ship bound, then each candidate by
+    // its own bound, `mountRangeBound`); the mounts' `mountCanEngage` decides.
+    const wide = range + maxShipRangeBound();
     if (isNpcOwner(owner)) {
       if (!this.npcTargetGridFresh) this.buildNpcTargetGrid();
       this.npcTurretOwner = owner;
-      const k = this.npcTargetGrid.within(x, y, range, idx);
+      const k = this.npcTargetGrid.within(x, y, wide, idx);
       for (let j = 0; j < k; j++) {
         const i = idx[j]!;
         if (!this._npcTargetAccept(i)) continue;
         const rec = this.npcTargetRecs[i];
         const v = rec ? this.writeSwarmTurretView(n, rec) : this.writePilotTurretView(n, this.npcTargetParty[i]!);
-        if (v) out[n++] = v;
+        if (v && mayBeInReach(v.x - x, v.y - y, range, v)) out[n++] = v;
       }
       return n;
     }
     this.ensureTurretTargetGrid();
-    const k = this.turretTargetGrid.within(x, y, range, idx);
+    const k = this.turretTargetGrid.within(x, y, wide, idx);
     for (let j = 0; j < k; j++) {
-      out[n] = this.writeSwarmTurretView(n, this.turretTargetRecs[idx[j]!]!);
-      n++;
+      const v = this.writeSwarmTurretView(n, this.turretTargetRecs[idx[j]!]!);
+      if (mayBeInReach(v.x - x, v.y - y, range, v)) out[n++] = v;
     }
     if (this.hostileActs.size() > 0 || policyActsOnStanding(ROOM_POLICY(parseOwner(owner).faction))) {
-      const r2 = range * range;
+      const r2 = wide * wide;
       for (const [pid] of this.playerToSlot) {
         if (pid === owner) continue;
         const ship = this.getActiveShip(pid);
@@ -6470,7 +6482,7 @@ export class SectorRoom extends Room<SectorState> {
         if (!pose || (pose.x - x) ** 2 + (pose.y - y) ** 2 > r2) continue;
         if (relationOf(pid, owner, this.relationCtx) !== 'hostile') continue;
         const v = this.writePilotTurretView(n, pid);
-        if (v) out[n++] = v;
+        if (v && mayBeInReach(v.x - x, v.y - y, range, v)) out[n++] = v;
       }
       // #17 ENGAGEABLE pilot hulls: the spectate-parked LINGERING ones too.
       for (const pid of this.spectateParkedHull.keys()) {
@@ -6480,7 +6492,7 @@ export class SectorRoom extends Room<SectorState> {
         if ((h.pose.x - x) ** 2 + (h.pose.y - y) ** 2 > r2) continue;
         if (relationOf(pid, owner, this.relationCtx) !== 'hostile') continue;
         const v = this.writePilotTurretView(n, pid);
-        if (v) out[n++] = v;
+        if (v && mayBeInReach(v.x - x, v.y - y, range, v)) out[n++] = v;
       }
     }
     return n;
@@ -8247,6 +8259,24 @@ export class SectorRoom extends Room<SectorState> {
     // slots via AiFireResolver AND capital turret barrels via the mount ticker
     // both come through here; the behaviour counts at most once per tick).
     this.aiController.noteBlocked(shooterId, this.serverTick, gate.lastBlockerX, gate.lastBlockerY);
+    return true;
+  }
+
+  /** A drone shot's target: live centre and hit shape for the per-mount range
+   *  gate (`AiFireResolver.targetShape`). Reads the SAB directly, never the
+   *  `swarmEntitySnapshot` scratch. */
+  private aiFireTargetShape(targetId: string, out: AiFireTargetShape): boolean {
+    const rec = this.swarmRegistry.get(targetId);
+    if (rec != null) {
+      const b = slotBase(rec.slot);
+      out.x = this.sabF32[b + SLOT_X_OFF]!; out.y = this.sabF32[b + SLOT_Y_OFF]!;
+      this.writeSwarmRangeShape(out, rec);
+      return true;
+    }
+    const h = this.engageablePilotHull(targetId);
+    if (!h) return false;
+    out.x = h.pose.x; out.y = h.pose.y;
+    out.kindId = h.ship.kind; out.angle = h.pose.angle; out.shieldUp = h.ship.shield > 0; out.radius = 0;
     return true;
   }
 

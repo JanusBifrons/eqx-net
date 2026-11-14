@@ -50,6 +50,7 @@ It runs on the 100 ms turret tick using real elapsed time. The **server is the o
 - **Region hearts mount the super-guns**: the 80 cm siege gun (one per region) and the 40.6 cm battery, funded on top of the base's wealth. The heart's garrison gets them, or the stronghold or citadel that holds the heart alone (`galaxyBases.withSuperGuns`).
 - **Bastions seat the biggest guns first** in the outward slot (standing off past the hub so smaller guns fit above and below), and arc-limited guns face out from the base. Unfenced bases face theirs away from the Capital.
 - Every galaxy sector's bases still find a site (`galaxyBases.test.ts`).
+- **In code:** the mix comes from `defenceMix` on its own random stream (`DEFENCE_STREAM`). `profile.superGuns` are bought first. Arc-limited guns (`ARC_LIMITED`) get a `rot` facing out. `TURRET_KINDS` (exported) is every gun kind; tests count guns with it, never a name regex. A naval gun on a structure is sized by `structureNavalTurret` and fires from `structureMountMuzzle` (#15).
 
 ## Tests
 
