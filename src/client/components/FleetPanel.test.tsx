@@ -46,7 +46,7 @@ beforeEach(() => {
   resetFleetStatus();
   resetFleetCommands();
   setCompact(false);
-  useUIStore.setState({ phase: 'game', pilotMode: 'spectator', fleetSelection: [], fleetOrderMode: 'move', placementKind: null });
+  useUIStore.setState({ phase: 'game', pilotMode: 'spectator', fleetSelection: [], fleetOrderMode: 'move', placementKind: null, fleetPick: null });
   setGameClient({
     getRoom: () => null,
     mirror: {
@@ -203,8 +203,8 @@ describe('FleetStrip (compact)', () => {
     const mode = screen.getByTestId('fleet-strip-mode') as HTMLSelectElement;
     expect(mode.value).toBe('');
     expect(mode).toHaveTextContent('Mixed');
-    fireEvent.change(mode, { target: { value: 'retreat' } });
-    expect(cmds.setMode).toHaveBeenCalledWith(['a', 'b'], 'retreat');
+    fireEvent.change(mode, { target: { value: 'defend' } });
+    expect(cmds.setMode).toHaveBeenCalledWith(['a', 'b'], 'defend');
     const stance = screen.getByTestId('fleet-strip-stance') as HTMLSelectElement;
     expect(stance.value).toBe('defensive');
     fireEvent.change(stance, { target: { value: 'holdFire' } });
@@ -224,5 +224,80 @@ describe('FleetStrip (compact)', () => {
     // Clicking the pressed one keeps it (exclusive group never goes empty).
     fireEvent.click(screen.getByTestId('fleet-order-attack'));
     expect(useUIStore.getState().fleetOrderMode).toBe('attack');
+  });
+
+  it('patrol / escort / retreat in the select start a map pick instead of sending (slice 14b)', () => {
+    setCompact(true);
+    const cmds = mockCommands();
+    useUIStore.setState({ fleetSelection: ['a', 'b'] });
+    render(<FleetStrip commands={cmds} />);
+    fireEvent.change(screen.getByTestId('fleet-strip-mode'), { target: { value: 'escort' } });
+    expect(cmds.setMode).not.toHaveBeenCalled();
+    expect(useUIStore.getState().fleetPick?.kind).toBe('escort');
+    expect(screen.getByTestId('fleet-pick-hint').textContent).toMatch(/your other ships to escort/);
+    expect(screen.queryByTestId('fleet-strip-mode')).toBeNull();
+    fireEvent.click(screen.getByTestId('fleet-pick-cancel'));
+    expect(useUIStore.getState().fleetPick).toBeNull();
+    expect(screen.getByTestId('fleet-strip-mode')).toBeInTheDocument();
+  });
+});
+
+describe('fleet map picks (slice 14b)', () => {
+  it('Patrol enters a route pick; Done is disabled under 2 points; Done bumps doneSeq', () => {
+    const cmds = mockCommands();
+    useUIStore.setState({ fleetSelection: ['a', 'b'] });
+    render(<FleetPanel commands={cmds} />);
+    fireEvent.click(screen.getByTestId('fleet-mode-patrol'));
+    expect(cmds.setMode).not.toHaveBeenCalled();
+    expect(useUIStore.getState().fleetPick).toEqual({ kind: 'patrol', points: 0, doneSeq: 0 });
+    expect(screen.getByTestId('fleet-pick-hint')).toHaveTextContent('Click points for the patrol route, then Done');
+    expect(screen.queryByTestId('fleet-mode-hunt'), 'mode buttons give way to the pick bar').toBeNull();
+    const done = screen.getByTestId('fleet-pick-done');
+    expect(done).toBeDisabled();
+    act(() => useUIStore.getState().setFleetPickPoints(1));
+    expect(screen.getByTestId('fleet-pick-done')).toBeDisabled();
+    act(() => useUIStore.getState().setFleetPickPoints(2));
+    expect(screen.getByTestId('fleet-pick-done')).toBeEnabled();
+    fireEvent.click(screen.getByTestId('fleet-pick-done'));
+    expect(useUIStore.getState().fleetPick?.doneSeq).toBe(1);
+    expect(cmds.setMode, 'the renderer sends the route, not the panel').not.toHaveBeenCalled();
+  });
+
+  it('Cancel leaves the pick and brings the mode buttons back', () => {
+    useUIStore.setState({ fleetSelection: ['a'] });
+    render(<FleetPanel commands={mockCommands()} />);
+    fireEvent.click(screen.getByTestId('fleet-mode-escort'));
+    expect(screen.getByTestId('fleet-pick')).toHaveAttribute('data-fleet-pick', 'escort');
+    expect(screen.queryByTestId('fleet-pick-done')).toBeNull();
+    fireEvent.click(screen.getByTestId('fleet-pick-cancel'));
+    expect(useUIStore.getState().fleetPick).toBeNull();
+    expect(screen.getByTestId('fleet-mode-escort')).toBeInTheDocument();
+  });
+
+  it('Retreat: "Back to post" sends retreat with no point and ends the pick', () => {
+    const cmds = mockCommands();
+    useUIStore.setState({ fleetSelection: ['a', 'b'] });
+    render(<FleetPanel commands={cmds} />);
+    fireEvent.click(screen.getByTestId('fleet-mode-retreat'));
+    expect(screen.getByTestId('fleet-pick-hint')).toHaveTextContent('Click where to retreat to');
+    fireEvent.click(screen.getByTestId('fleet-pick-post'));
+    expect(cmds.setMode).toHaveBeenCalledWith(['a', 'b'], 'retreat');
+    expect(useUIStore.getState().fleetPick).toBeNull();
+  });
+
+  it('Defend and Hunt still send at once', () => {
+    const cmds = mockCommands();
+    useUIStore.setState({ fleetSelection: ['a'] });
+    render(<FleetPanel commands={cmds} />);
+    fireEvent.click(screen.getByTestId('fleet-mode-defend'));
+    expect(cmds.setMode).toHaveBeenCalledWith(['a'], 'defend');
+    expect(useUIStore.getState().fleetPick).toBeNull();
+  });
+
+  it('an emptied selection ends the pick', () => {
+    useUIStore.setState({ fleetSelection: ['a'] });
+    useUIStore.getState().setFleetPick('patrol');
+    useUIStore.getState().setFleetSelection([]);
+    expect(useUIStore.getState().fleetPick).toBeNull();
   });
 });

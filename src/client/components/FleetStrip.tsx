@@ -6,6 +6,8 @@ import { useIsCompact } from '../layout/useIsCompact.js';
 import { MODE_LABELS, STANCE_LABELS } from '../fleet/fleetView.js';
 import type { FleetCommands } from '../fleet/fleetCommands.js';
 import { resolveFleetCommands, useFleetSelectionView } from '../fleet/useFleetSelectionView.js';
+import { modeNeedsPick } from '../fleet/fleetPickView.js';
+import { FleetPickBar } from './FleetPickBar.js';
 
 /**
  * RTS command layer slice 14 — the COMPACT (phone, `useIsCompact`) fleet
@@ -62,10 +64,15 @@ export function FleetStrip({ commands }: Props): JSX.Element | null {
   const setOrderMode = useUIStore((s) => s.setFleetOrderMode);
   const { ids } = view;
 
+  const picking = useUIStore((s) => s.fleetPick !== null);
+  const setPick = useUIStore((s) => s.setFleetPick);
+  // Patrol / escort / retreat need a target on the map first (slice 14b).
   const onMode = useCallback((e: ChangeEvent<HTMLSelectElement>) => {
     const v = e.target.value as WingmanMode | '';
-    if (v !== NONE) resolveFleetCommands(commands).setMode(ids, v);
-  }, [commands, ids]);
+    if (v === NONE) return;
+    if (modeNeedsPick(v)) setPick(v);
+    else resolveFleetCommands(commands).setMode(ids, v);
+  }, [commands, ids, setPick]);
   const onStance = useCallback((e: ChangeEvent<HTMLSelectElement>) => {
     const v = e.target.value as WingmanStance | '';
     if (v !== NONE) resolveFleetCommands(commands).setStance(ids, v);
@@ -83,6 +90,7 @@ export function FleetStrip({ commands }: Props): JSX.Element | null {
   return (
     <Box sx={STRIP_SX} data-testid="fleet-strip" data-fleet-count={n} data-hud-exclusion="">
       <Box component="span" sx={COUNT_SX}>{n === 1 ? '1 ship' : `${n} ships`}</Box>
+      {picking ? <FleetPickBar ids={ids} {...(commands !== undefined ? { commands } : {})} /> : (<>
       <select aria-label="Mode" data-testid="fleet-strip-mode" style={SELECT_STYLE} value={modeValue} onChange={onMode}>
         <option value={NONE} disabled>{view.mode === 'mixed' ? 'Mixed' : 'Mode'}</option>
         {WINGMAN_MODES.map((m) => <option key={m} value={m}>{MODE_LABELS[m]}</option>)}
@@ -96,6 +104,7 @@ export function FleetStrip({ commands }: Props): JSX.Element | null {
         <ToggleButton value="move" sx={TOGGLE_SX} data-testid="fleet-order-move">Move</ToggleButton>
         <ToggleButton value="attack" sx={TOGGLE_SX} data-testid="fleet-order-attack">Attack</ToggleButton>
       </ToggleButtonGroup>
+      </>)}
     </Box>
   );
 }

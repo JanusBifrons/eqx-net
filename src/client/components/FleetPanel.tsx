@@ -4,6 +4,9 @@ import { WINGMAN_MODES, WINGMAN_STANCES, type WingmanMode, type WingmanStance } 
 import { MODE_LABELS, STANCE_LABELS } from '../fleet/fleetView.js';
 import type { FleetCommands } from '../fleet/fleetCommands.js';
 import { useIsCompact } from '../layout/useIsCompact.js';
+import { useUIStore } from '../state/store.js';
+import { modeNeedsPick } from '../fleet/fleetPickView.js';
+import { FleetPickBar } from './FleetPickBar.js';
 import { resolveFleetCommands, useFleetSelectionView, type FleetShipView } from '../fleet/useFleetSelectionView.js';
 
 /**
@@ -62,7 +65,13 @@ export function FleetPanel({ commands }: Props): JSX.Element | null {
   const compact = useIsCompact();
   const { ids } = view;
 
-  const onMode = useCallback((m: WingmanMode) => resolveFleetCommands(commands).setMode(ids, m), [commands, ids]);
+  const picking = useUIStore((s) => s.fleetPick !== null);
+  const setPick = useUIStore((s) => s.setFleetPick);
+  // Patrol / escort / retreat need a target on the map first (slice 14b).
+  const onMode = useCallback((m: WingmanMode) => {
+    if (modeNeedsPick(m)) setPick(m);
+    else resolveFleetCommands(commands).setMode(ids, m);
+  }, [commands, ids, setPick]);
   const onStance = useCallback((s: WingmanStance) => resolveFleetCommands(commands).setStance(ids, s), [commands, ids]);
   const onStop = useCallback(() => resolveFleetCommands(commands).stop(ids), [commands, ids]);
   const onForm = useCallback(() => resolveFleetCommands(commands).formSquad(ids), [commands, ids]);
@@ -83,6 +92,7 @@ export function FleetPanel({ commands }: Props): JSX.Element | null {
     <Box sx={PANEL_SX} data-testid="fleet-panel" data-fleet-count={n} data-hud-exclusion="">
       <Box sx={HEADER_SX}>{n === 1 ? '1 ship selected' : `${n} ships selected`}</Box>
 
+      {picking ? <FleetPickBar ids={ids} {...(commands !== undefined ? { commands } : {})} /> : (<>
       <Box sx={ROW_SX}>
         <Box component="span" sx={LABEL_SX}>Mode</Box>
         {WINGMAN_MODES.map((m) => (
@@ -111,6 +121,7 @@ export function FleetPanel({ commands }: Props): JSX.Element | null {
           Take controls
         </Button>
       </Box>
+      </>)}
 
       <Box sx={LIST_SX} data-testid="fleet-ship-list">
         {shown.map((s) => <ShipRow key={s.id} ship={s} />)}

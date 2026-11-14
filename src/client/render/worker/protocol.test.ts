@@ -180,6 +180,9 @@ describe('renderer-worker protocol', () => {
       { name: 'RESET_EFFECTS_HANDOFF', msg: { type: 'RESET_EFFECTS_HANDOFF' } },
       { name: 'SET_SPECTATOR on', msg: { type: 'SET_SPECTATOR', active: true } },
       { name: 'SET_FLEET_ORDER_MODE attack', msg: { type: 'SET_FLEET_ORDER_MODE', mode: 'attack' } },
+      { name: 'SET_FLEET_PICK patrol', msg: { type: 'SET_FLEET_PICK', kind: 'patrol' } },
+      { name: 'SET_FLEET_PICK cancel', msg: { type: 'SET_FLEET_PICK', kind: null } },
+      { name: 'COMMIT_FLEET_PICK', msg: { type: 'COMMIT_FLEET_PICK' } },
       {
         name: 'SET_FLEET_OVERLAY_MODEL',
         msg: {
@@ -255,6 +258,9 @@ describe('renderer-worker protocol', () => {
             orderX: 10,
             orderY: -20,
             orderTargetId: 'swarm-5',
+            fleetPickPoints: 3,
+            fleetPickSeq: 4,
+            fleetPickResult: { kind: 'patrol', route: [[0, 0], [100, -50], [30, 80]] },
           },
         },
       },
@@ -292,6 +298,9 @@ describe('renderer-worker protocol', () => {
         expect(back.feedback.fleetSelIds).toEqual(['p1', 'hull-9']);
         expect(back.feedback.orderKind).toBe('attack');
         expect(back.feedback.orderTargetId).toBe('swarm-5');
+        expect(back.feedback.fleetPickPoints).toBe(3);
+        expect(back.feedback.fleetPickSeq).toBe(4);
+        expect(back.feedback.fleetPickResult).toEqual({ kind: 'patrol', route: [[0, 0], [100, -50], [30, 80]] });
       }
       if (back.type === 'FRAME_MARKERS') {
         // Primitive struct — every field must survive the clone intact

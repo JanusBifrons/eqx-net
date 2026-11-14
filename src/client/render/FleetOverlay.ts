@@ -2,6 +2,7 @@ import { Container, Graphics } from 'pixi.js';
 import type { FleetOverlayShip, RenderMirror } from '@core/contracts/IRenderer';
 import { getShipKind } from '@shared-types/shipKinds';
 import type { BoxRect, HoldArmed } from './input/commandPointerRouter.js';
+import type { FleetPickState } from './input/fleetPick.js';
 
 /**
  * Command-view fleet overlay (RTS stream slice 13a).
@@ -71,7 +72,41 @@ export interface OrderFlash {
   t0: number;
 }
 
-export type ProjectFn = (pixiWorldX: number, pixiWorldY: number, out: { x: number; y: number }) => void;
+/** Patrol pick preview (slice 14b). */
+const PICK_COLOR = 0x7dd3ff;
+const PICK_DOT_PX = 4;
+const PICK_DIGIT_W = 5;
+const PICK_DIGIT_H = 8;
+
+/** Seven-segment masks for 0..9 (bit 0 = a top, b top-right, c bottom-right,
+ *  d bottom, e bottom-left, f top-left, g middle). */
+const SEGMENTS = [0x3f, 0x06, 0x5b, 0x4f, 0x66, 0x6d, 0x7d, 0x07, 0x7f, 0x6f] as const;
+
+/** Queue the line segments of digit `d` with its top-left at (x, y). */
+function drawDigit(g: Graphics, d: number, x: number, y: number): void {
+  const m = SEGMENTS[d]!;
+  const w = PICK_DIGIT_W;
+  const h = PICK_DIGIT_H / 2;
+  if (m & 0x01) g.moveTo(x, y).lineTo(x + w, y);
+  if (m & 0x02) g.moveTo(x + w, y).lineTo(x + w, y + h);
+  if (m & 0x04) g.moveTo(x + w, y + h).lineTo(x + w, y + 2 * h);
+  if (m & 0x08) g.moveTo(x, y + 2 * h).lineTo(x + w, y + 2 * h);
+  if (m & 0x10) g.moveTo(x, y + h).lineTo(x, y + 2 * h);
+  if (m & 0x20) g.moveTo(x, y).lineTo(x, y + h);
+  if (m & 0x40) g.moveTo(x, y + h).lineTo(x + w, y + h);
+}
+
+/** Queue a 1–2 digit number (alloc-free). */
+function drawNumber(g: Graphics, n: number, x: number, y: number): void {
+  if (n >= 10) {
+    drawDigit(g, Math.floor(n / 10) % 10, x, y);
+    drawDigit(g, n % 10, x + PICK_DIGIT_W + 3, y);
+  } else {
+    drawDigit(g, n, x, y);
+  }
+}
+
+export type ProjectFn =(pixiWorldX: number, pixiWorldY: number, out: { x: number; y: number }) => void;
 
 export class FleetOverlay {
   private readonly gfx: Graphics;
@@ -85,6 +120,8 @@ export class FleetOverlay {
   lastHoldCue = false;
   /** Order segments drawn in the last update (test/diag hook). */
   lastOrderSegments = 0;
+  /** Patrol pick points drawn in the last update (test/diag hook). */
+  lastPickPoints = 0;
 
   constructor(parent: Container) {
     this.gfx = new Graphics();
@@ -104,12 +141,16 @@ export class FleetOverlay {
     hold: HoldArmed | null = null,
     /** Own ships' squads + orders by id (slice 15a), or null. */
     orders: ReadonlyMap<string, FleetOverlayShip> | null = null,
+    /** A patrol route being picked (slice 14b), or null. */
+    pick: FleetPickState | null = null,
   ): void {
     const g = this.gfx;
     const flashAge = flash.t0 < 0 ? Infinity : nowMs - flash.t0;
     const flashLive = flashAge >= 0 && flashAge < ORDER_FLASH_MS;
     this.lastHoldCue = hold !== null;
-    if (selected.size === 0 && box === null && !flashLive && hold === null) {
+    const routeCount = pick !== null && pick.kind === 'patrol' ? pick.count : 0;
+    this.lastPickPoints = routeCount;
+    if (selected.size === 0 && box === null && !flashLive && hold === null && routeCount === 0) {
       if (g.visible) {
         g.clear();
         g.visible = false;
@@ -173,6 +214,36 @@ export class FleetOverlay {
       g.circle(hold.x, hold.y, HOLD_RING_R0 + HOLD_RING_GROW * t);
       g.stroke({ width: 2, color: HOLD_COLOR, alpha: 0.9 - 0.4 * t });
     }
+
+    if (routeCount > 0) this.drawPickRoute(g, pick!.route, routeCount, project);
+  }
+
+  /**
+   * The patrol route being picked (slice 14b): a closed loop through the
+   * points, a dot at each and its number beside it, drawn as line digits so
+   * it stays on this one Graphics (no Text objects).
+   */
+  private drawPickRoute(g: Graphics, route: ArrayLike<number>, count: number, project: ProjectFn): void {
+    const p = this._scratch;
+    if (count > 1) {
+      project(route[(count - 1) * 2]!, -route[(count - 1) * 2 + 1]!, p);
+      g.moveTo(p.x, p.y);
+      for (let i = 0; i < count; i++) {
+        project(route[i * 2]!, -route[i * 2 + 1]!, p);
+        g.lineTo(p.x, p.y);
+      }
+      g.stroke({ width: 1.5, color: PICK_COLOR, alpha: 0.8 });
+    }
+    for (let i = 0; i < count; i++) {
+      project(route[i * 2]!, -route[i * 2 + 1]!, p);
+      g.circle(p.x, p.y, PICK_DOT_PX);
+    }
+    g.fill({ color: PICK_COLOR, alpha: 0.95 });
+    for (let i = 0; i < count; i++) {
+      project(route[i * 2]!, -route[i * 2 + 1]!, p);
+      drawNumber(g, i + 1, p.x + PICK_DOT_PX + 3, p.y - PICK_DIGIT_H - 2);
+    }
+    g.stroke({ width: 1.5, color: PICK_COLOR, alpha: 0.95 });
   }
 
   private drawOrders(

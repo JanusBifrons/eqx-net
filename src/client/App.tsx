@@ -36,6 +36,7 @@ import { Keyboard } from './input/Keyboard';
 import { SpectatorPanInput } from './input/SpectatorPanInput';
 import { sendFleetOrder } from './ships/shipActionsClient';
 import { installFleetCommandSenders } from './fleet/installFleetCommandSenders';
+import { canFinishFleetPick } from './fleet/fleetPickView';
 import { TouchInput, isTouchDevice } from './input/TouchInput';
 import { useUIStore, useGameReady, useIsLoadingActive } from './state/store';
 import { useAuthStore } from './auth/authStore';
@@ -267,6 +268,17 @@ function GameSurface({
   useEffect(() => {
     rendererRef.current?.setFleetOrderMode(fleetOrderMode);
   }, [fleetOrderMode]);
+
+  // RTS slice 14b — a mode waiting for a target on the map. The renderer
+  // keeps the picked points; Done (button / Enter) asks it to send the route.
+  const fleetPickKind = useUIStore((s) => s.fleetPick?.kind ?? null);
+  useEffect(() => {
+    rendererRef.current?.setFleetPick(fleetPickKind);
+  }, [fleetPickKind]);
+  const fleetPickDoneSeq = useUIStore((s) => s.fleetPick?.doneSeq ?? 0);
+  useEffect(() => {
+    if (fleetPickDoneSeq > 0) rendererRef.current?.commitFleetPick();
+  }, [fleetPickDoneSeq]);
 
   // Radar (plan sparkling-wondering-rose) — clear the off-screen radar only
   // while IN_TRANSIT / ARRIVED (the mirror still holds the OLD sector). It stays
@@ -509,6 +521,7 @@ function GameSurface({
     // RTS touch tap-order mode: seed the new renderer (the effect below
     // pushes later changes).
     renderer.setFleetOrderMode(useUIStore.getState().fleetOrderMode);
+    renderer.setFleetPick(useUIStore.getState().fleetPick?.kind ?? null);
     // Perf scenes (`?perfprobe=1` only): frame times, long tasks, bytes.
     if (perfProbeEnabled(window.location.search)) {
       installPerfProbe(renderer, useWorker);
@@ -639,6 +652,15 @@ function GameSurface({
       // Zustand). No-op when not placing.
       if (e.key === 'Escape' && useUIStore.getState().placementKind) {
         useUIStore.getState().setPlacementKind(null);
+      }
+      // RTS slice 14b — Escape cancels a fleet map pick; Enter is Done for a
+      // patrol route with enough points. Not from a text field.
+      const pick = useUIStore.getState().fleetPick;
+      const inField = e.target instanceof HTMLElement
+        && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable);
+      if (pick !== null && !inField) {
+        if (e.key === 'Escape') useUIStore.getState().setFleetPick(null);
+        else if (e.key === 'Enter' && canFinishFleetPick(pick)) useUIStore.getState().requestFleetPickDone();
       }
       // Phase V — R rotates the placement ghost a quarter turn (structures are
       // rectangles; storage runs in rows). Main-thread, both render paths.

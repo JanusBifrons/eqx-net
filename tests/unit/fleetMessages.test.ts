@@ -51,11 +51,13 @@ describe('fleet command schemas', () => {
     expect(SetModeSchema.safeParse({ type: 'set_mode', shipIds: ['a'], mode: 'patrol', route }).success).toBe(true);
     expect(SetModeSchema.safeParse({ type: 'set_mode', shipIds: ['a'], mode: 'defend', guardRadius: 500 }).success).toBe(true);
     expect(SetModeSchema.safeParse({ type: 'set_mode', shipIds: ['a'], mode: 'escort', escortId: 'e' }).success).toBe(true);
+    expect(SetModeSchema.safeParse({ type: 'set_mode', shipIds: ['a'], mode: 'retreat', x: 120, y: -40 }).success).toBe(true);
     const bad = [
       { type: 'set_mode', shipIds: ['a'], mode: 'berserk' },
       { type: 'set_mode', shipIds: ['a'], mode: 'patrol', route: [...route, [0, 0]] },
       { type: 'set_mode', shipIds: ['a'], mode: 'patrol', route: [[NaN, 0]] },
       { type: 'set_mode', shipIds: ['a'], mode: 'defend', guardRadius: 0 },
+      { type: 'set_mode', shipIds: ['a'], mode: 'retreat', x: NaN, y: 0 },
       { type: 'set_mode', shipIds: ['a'], mode: 'defend', guardRadius: Infinity },
       { type: 'set_mode', shipIds: ids(65), mode: 'defend' },
     ];

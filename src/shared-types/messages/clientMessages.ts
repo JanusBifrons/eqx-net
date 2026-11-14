@@ -397,6 +397,9 @@ export const SetModeSchema = z
     route: z.array(z.tuple([FiniteSchema, FiniteSchema])).max(16).optional(),
     guardRadius: FiniteSchema.positive().optional(),
     escortId: z.string().min(1).max(64).optional(),
+    /** Retreat point, game space (send both or neither; none = back to the post). */
+    x: FiniteSchema.optional(),
+    y: FiniteSchema.optional(),
   })
   .strict();
 

@@ -125,6 +125,16 @@ describe('SectorRoom integration — fleet command messages + fleet_status (RTS 
     expect(patrolRow.mode).toBe('patrol');
     expect(patrolRow.route).toEqual([[800, 0], [800, 600], [200, 600]]);
 
+    // Retreat to a picked point (slice 14b): the handler passes x/y through.
+    a.send('set_mode', { type: 'set_mode', shipIds: [shipId], mode: 'retreat', x: 300, y: -450 });
+    await harness.advance(100);
+    expect(internals.fleet.statusFor(pidA)[0]?.mode).toBe('retreat');
+    const rb = internals.fleet.brainOf(shipId) as unknown as { retreatX: number; retreatY: number; retreatPointSet: boolean };
+    expect(rb.retreatPointSet, 'the retreat point reached the brain').toBe(true);
+    expect([rb.retreatX, rb.retreatY]).toEqual([300, -450]);
+    a.send('set_mode', { type: 'set_mode', shipIds: [shipId], mode: 'patrol', route: [[800, 0], [800, 600], [200, 600]] });
+    await harness.advance(100);
+
     // Stance + squad round-trip through the handlers.
     a.send('set_stance', { type: 'set_stance', shipIds: [shipId], stance: 'holdFire' });
     await harness.advance(100);

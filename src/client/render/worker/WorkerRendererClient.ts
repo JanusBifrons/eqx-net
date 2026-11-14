@@ -21,6 +21,7 @@ import { ART_OFF, type ArtOptions } from '../art/artMode.js';
 import { readFxKillSwitches } from '../fxKillSwitches.js';
 import type {
   FleetOverlayModel,
+  FleetPickKindWire,
   IRenderer,
   RenderMirror,
   RendererFeedback,
@@ -91,6 +92,9 @@ function emptyFeedback(): RendererFeedback {
     orderX: 0,
     orderY: 0,
     orderTargetId: null,
+    fleetPickPoints: 0,
+    fleetPickSeq: 0,
+    fleetPickResult: null,
     placementPreviewConnectionCount: 0,
     selectedPickId: null,
     selectedPickKind: null,
@@ -543,6 +547,16 @@ export class WorkerRendererClient implements IRenderer {
     this.post({ type: 'SET_FLEET_OVERLAY_MODEL', model });
   }
 
+  /** See `IRenderer.setFleetPick`. Posts to the worker's renderer. */
+  setFleetPick(kind: FleetPickKindWire | null): void {
+    this.post({ type: 'SET_FLEET_PICK', kind });
+  }
+
+  /** See `IRenderer.commitFleetPick`. Posts to the worker's renderer. */
+  commitFleetPick(): void {
+    this.post({ type: 'COMMIT_FLEET_PICK' });
+  }
+
   /** See `IRenderer.setRadarPrefs`. */
   setRadarPrefs(prefs: RadarPrefs): void {
     this.post({ type: 'SET_RADAR_PREFS', prefs });
@@ -753,6 +767,11 @@ export class WorkerRendererClient implements IRenderer {
         this.feedback.orderX = msg.feedback.orderX;
         this.feedback.orderY = msg.feedback.orderY;
         this.feedback.orderTargetId = msg.feedback.orderTargetId;
+        this.feedback.fleetPickPoints = msg.feedback.fleetPickPoints;
+        if (msg.feedback.fleetPickSeq !== this.feedback.fleetPickSeq) {
+          this.feedback.fleetPickSeq = msg.feedback.fleetPickSeq;
+          this.feedback.fleetPickResult = msg.feedback.fleetPickResult;
+        }
         this.feedback.placementPreviewConnectionCount =
           msg.feedback.placementPreviewConnectionCount;
         this.feedback.selectedPickId = msg.feedback.selectedPickId;

@@ -37,8 +37,9 @@ import { sendSelectEntity, sendDeselectEntity } from '../net/selectionClient.js'
 import { resetSelectionStats } from '../net/selectionStats.js';
 import { sendFleetOrder } from '../ships/shipActionsClient.js';
 import { pushFleetOverlayModelIfChanged } from '../fleet/fleetOverlayModel.js';
+import { fleetCommands } from '../fleet/fleetCommands.js';
 import type { ColyseusGameClient } from '../net/ColyseusClient.js';
-import type { IRenderer } from '@core/contracts/IRenderer';
+import type { FleetPickResultWire, IRenderer } from '@core/contracts/IRenderer';
 import { placeInspector, type InspectorAnchor } from './inspectorPlacement.js';
 import { isInspectorHeld } from './inspectorHold.js';
 
@@ -61,6 +62,22 @@ let _lastHelmCourseSeq = 0;
  *  an order is only recorded for now (no network send until a later slice). */
 let _lastFleetSelSeq = 0;
 let _lastOrderSeq = 0;
+/** RTS slice 14b — last drained `fleetPickPoints` / `fleetPickSeq`. */
+let _lastPickPoints = 0;
+let _lastPickSeq = 0;
+
+/** Send a finished map pick as `set_mode` for the selection (slice 14b).
+ *  One small object per pick; nothing is sent with an empty selection. */
+function sendFleetPickResult(result: FleetPickResultWire, ids: readonly string[]): void {
+  if (ids.length > 0) {
+    const c = fleetCommands();
+    if (result.kind === 'patrol') c.setMode(ids, 'patrol', { route: result.route });
+    else if (result.kind === 'escort') c.setMode(ids, 'escort', { escortId: result.escortId });
+    else if (result.x !== undefined && result.y !== undefined) c.setMode(ids, 'retreat', { x: result.x, y: result.y });
+    else c.setMode(ids, 'retreat');
+  }
+  logEvent('fleet_mode_pick', { kind: result.kind, ships: ids.length });
+}
 
 /** WS-10 (R2.5) — last drained `feedback.placementConfirmSeq`. The renderer bumps
  *  the seq on a DESKTOP mouse left-click during placement; when it changes we
@@ -382,6 +399,20 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
         targetId: selFb.orderTargetId,
         ships: selFb.fleetSelIds.length,
       });
+    }
+    // Fleet map pick (slice 14b): mirror the picked-point count (discrete),
+    // and send a finished pick once per seq as set_mode for the selection.
+    if (selFb.fleetPickPoints !== _lastPickPoints) {
+      _lastPickPoints = selFb.fleetPickPoints;
+      useUIStore.getState().setFleetPickPoints(_lastPickPoints);
+    }
+    if (selFb.fleetPickSeq !== _lastPickSeq) {
+      _lastPickSeq = selFb.fleetPickSeq;
+      const result = selFb.fleetPickResult;
+      if (result !== null) {
+        sendFleetPickResult(result, selFb.fleetSelIds);
+        useUIStore.getState().setFleetPick(null);
+      }
     }
     const selId = selFb.selectedPickId;
     if (selId !== _lastPublishedSelectedId) {

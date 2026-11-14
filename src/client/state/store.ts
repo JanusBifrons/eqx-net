@@ -157,6 +157,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
   selectedEntityKind: null,
   fleetSelection: [],
   fleetOrderMode: 'move',
+  fleetPick: null,
   helmAvailable: false,
   helmActive: false,
   helmSpeed: 3,
@@ -275,8 +276,16 @@ export const useUIStore = create<UIStore>((set, get) => ({
   setContactsOpen: (open) => set({ contactsOpen: open }),
   setWarpHeldTo: (label) => set({ warpHeldTo: label }),
   setSelectedEntity: (id, kind) => set({ selectedEntityId: id, selectedEntityKind: kind }),
-  setFleetSelection: (ids) => set({ fleetSelection: [...ids] }),
+  // No ships left to command ⇒ nothing to pick a target for (slice 14b).
+  setFleetSelection: (ids) => set(ids.length === 0 ? { fleetSelection: [], fleetPick: null } : { fleetSelection: [...ids] }),
   setFleetOrderMode: (mode) => set({ fleetOrderMode: mode }),
+  setFleetPick: (kind) => set({ fleetPick: kind === null ? null : { kind, points: 0, doneSeq: 0 } }),
+  setFleetPickPoints: (points) => set((s) => (
+    s.fleetPick === null || s.fleetPick.points === points ? {} : { fleetPick: { ...s.fleetPick, points } }
+  )),
+  requestFleetPickDone: () => set((s) => (
+    s.fleetPick === null ? {} : { fleetPick: { ...s.fleetPick, doneSeq: s.fleetPick.doneSeq + 1 } }
+  )),
   setEnergyMax: (max) => set({ energyMax: max }),
   setHelmState: (available, active, speed) => set({ helmAvailable: available, helmActive: active, helmSpeed: speed }),
   setCargo: (cargo, capacity) => set({ cargo, cargoCapacity: capacity }),

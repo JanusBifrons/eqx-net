@@ -12,6 +12,8 @@ const storeState = vi.hoisted(() => ({
   phase: 'game',
   setSelectedEntity: vi.fn(),
   setFleetSelection: vi.fn(),
+  setFleetPick: vi.fn(),
+  setFleetPickPoints: vi.fn(),
 }));
 
 vi.mock('../state/store.js', () => ({
@@ -27,13 +29,15 @@ vi.mock('../ships/shipActionsClient.js', () => ({ sendFleetOrder: vi.fn() }));
 import { createGameRafLoop } from './gameRafLoop.js';
 import { sendFleetOrder } from '../ships/shipActionsClient.js';
 import type { ColyseusGameClient } from '../net/ColyseusClient.js';
-import type { IRenderer } from '@core/contracts/IRenderer';
+import type { FleetPickResultWire, IRenderer } from '@core/contracts/IRenderer';
+import { setFleetCommands } from '../fleet/fleetCommands.js';
 
 const fb = {
   firstFrameRendered: false, artReady: true, mountCounts: new Map(), haloArrowCount: 0,
   selectedPickId: null, selectedPickKind: null, helmCourseSeq: 0, helmCourseX: 0, helmCourseY: 0,
   fleetSelSeq: 0, fleetSelIds: [] as string[], orderSeq: 0, orderKind: 'move' as 'move' | 'attack',
   orderX: 0, orderY: 0, orderTargetId: null as string | null,
+  fleetPickPoints: 0, fleetPickSeq: 0, fleetPickResult: null as FleetPickResultWire | null,
 };
 
 function buildLoop(): (now: number) => void {
@@ -82,5 +86,50 @@ describe('gameRafLoop — fleet orders are sent (slice 6c)', () => {
     Object.assign(fb, { fleetSelIds: [], orderSeq: 1, orderKind: 'move' });
     loop(16.67);
     expect(sendFleetOrder).not.toHaveBeenCalled();
+  });
+});
+
+describe('gameRafLoop — fleet map picks are sent as set_mode (slice 14b)', () => {
+  const setMode = vi.fn();
+  beforeEach(() => {
+    setMode.mockClear();
+    storeState.setFleetPick.mockClear();
+    storeState.setFleetPickPoints.mockClear();
+    setFleetCommands({ setMode });
+    Object.assign(fb, { fleetPickPoints: 0, fleetPickResult: null });
+  });
+
+  it('sends a patrol route once per seq, then ends the pick', () => {
+    const loop = buildLoop();
+    loop(16.67); // settle on the current seq
+    const route: [number, number][] = [[0, 0], [100, 0], [100, 50]];
+    Object.assign(fb, { fleetSelIds: ['a', 'b'], fleetPickSeq: fb.fleetPickSeq + 1, fleetPickResult: { kind: 'patrol', route } });
+    loop(40);
+    loop(60);
+    expect(setMode).toHaveBeenCalledTimes(1);
+    expect(setMode).toHaveBeenCalledWith(['a', 'b'], 'patrol', { route });
+    expect(storeState.setFleetPick).toHaveBeenCalledWith(null);
+  });
+
+  it('sends escort with the picked ship and retreat with the point', () => {
+    const loop = buildLoop();
+    loop(16.67);
+    Object.assign(fb, { fleetSelIds: ['a'], fleetPickSeq: fb.fleetPickSeq + 1, fleetPickResult: { kind: 'escort', escortId: 'hull-9' } });
+    loop(40);
+    expect(setMode).toHaveBeenLastCalledWith(['a'], 'escort', { escortId: 'hull-9' });
+    Object.assign(fb, { fleetPickSeq: fb.fleetPickSeq + 1, fleetPickResult: { kind: 'retreat', x: 5, y: -7 } });
+    loop(60);
+    expect(setMode).toHaveBeenLastCalledWith(['a'], 'retreat', { x: 5, y: -7 });
+  });
+
+  it('mirrors the picked-point count into the store on change only', () => {
+    const loop = buildLoop();
+    loop(16.67);
+    storeState.setFleetPickPoints.mockClear();
+    fb.fleetPickPoints = 3;
+    loop(40);
+    loop(60);
+    expect(storeState.setFleetPickPoints).toHaveBeenCalledTimes(1);
+    expect(storeState.setFleetPickPoints).toHaveBeenCalledWith(3);
   });
 });

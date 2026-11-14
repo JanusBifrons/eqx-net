@@ -8,10 +8,11 @@
  * parked hull = shipInstanceId).
  */
 import type { WingmanMode, WingmanStance } from '@core/ai/wingman/types';
-import { sendPilotShip } from '../ships/shipActionsClient.js';
+import { sendPilotShip, type SetModeParams } from '../ships/shipActionsClient.js';
 
 export interface FleetCommands {
-  setMode(ids: readonly string[], mode: WingmanMode): void;
+  /** `data`: patrol `route`, escort `escortId`, retreat point `x`/`y` (slice 14b). */
+  setMode(ids: readonly string[], mode: WingmanMode, data?: SetModeParams): void;
   setStance(ids: readonly string[], stance: WingmanStance): void;
   stop(ids: readonly string[]): void;
   formSquad(ids: readonly string[]): void;

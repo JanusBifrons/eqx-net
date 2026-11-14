@@ -4,7 +4,7 @@
  * no class instances). Locked by `protocol.test.ts`.
  */
 
-import type { FleetOverlayModel, RenderMirror, WarpCenter } from '@core/contracts/IRenderer';
+import type { FleetOverlayModel, FleetPickKindWire, RenderMirror, WarpCenter } from '@core/contracts/IRenderer';
 import type { EffectQuality } from '@core/contracts/IEffects';
 import type { CameraCue } from '@core/contracts/cameraScript';
 import type { WarpParams } from './warpParams.js';
@@ -222,6 +222,18 @@ export interface SetFleetOverlayModelMsg {
   model: FleetOverlayModel;
 }
 
+/** RTS slice 14b — start (or cancel, null) a map pick for a fleet mode.
+ *  See `IRenderer.setFleetPick`. */
+export interface SetFleetPickMsg {
+  type: 'SET_FLEET_PICK';
+  kind: FleetPickKindWire | null;
+}
+
+/** RTS slice 14b — Done for a patrol pick. See `IRenderer.commitFleetPick`. */
+export interface CommitFleetPickMsg {
+  type: 'COMMIT_FLEET_PICK';
+}
+
 /** Off-screen indicator radar (plan sparkling-wondering-rose) — the active
  *  preferences. Posted on change only (the live settings modal coalesces to
  *  ≤ one post per animation frame). */
@@ -404,6 +416,8 @@ export type MainToWorkerMsg =
   | SetSpectatorMsg
   | SetFleetOrderModeMsg
   | SetFleetOverlayModelMsg
+  | SetFleetPickMsg
+  | CommitFleetPickMsg
   | SetRadarPrefsMsg
   | SetRadarInsetsMsg
   | SetRadarSuppressedMsg

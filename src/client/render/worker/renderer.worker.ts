@@ -138,6 +138,9 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
             orderX: fb.orderX,
             orderY: fb.orderY,
             orderTargetId: fb.orderTargetId,
+            fleetPickPoints: fb.fleetPickPoints,
+            fleetPickSeq: fb.fleetPickSeq,
+            fleetPickResult: fb.fleetPickResult,
             placementPreviewConnectionCount: fb.placementPreviewConnectionCount,
             selectedPickId: fb.selectedPickId,
             selectedPickKind: fb.selectedPickKind,
@@ -238,6 +241,18 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
       case 'SET_FLEET_OVERLAY_MODEL': {
         if (!renderer) return;
         renderer.setFleetOverlayModel(msg.model);
+        break;
+      }
+
+      case 'SET_FLEET_PICK': {
+        if (!renderer) return;
+        renderer.setFleetPick(msg.kind);
+        break;
+      }
+
+      case 'COMMIT_FLEET_PICK': {
+        if (!renderer) return;
+        renderer.commitFleetPick();
         break;
       }
 

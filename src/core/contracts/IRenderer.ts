@@ -900,6 +900,16 @@ export interface RendererFeedback {
   orderY: number;
   orderTargetId: string | null;
   /**
+   * RTS slice 14b: "pick on the map" for patrol / escort / retreat.
+   * `fleetPickPoints` is the number of patrol waypoints picked so far (the
+   * points stay in the renderer). `fleetPickSeq` bumps when a pick finishes;
+   * `fleetPickResult` is then replaced (never mutated), and the main thread
+   * sends it once as `set_mode` for the selection.
+   */
+  fleetPickPoints: number;
+  fleetPickSeq: number;
+  fleetPickResult: FleetPickResultWire | null;
+  /**
    * Structure placement connection-range preview (structures follow-up Item C).
    * The number of existing structures the placement ghost WOULD connect to if
    * placed at its current position — computed by the `ConnectorRenderer` preview
@@ -1091,6 +1101,16 @@ export interface IRenderer {
    */
   setFleetOverlayModel(model: FleetOverlayModel): void;
   /**
+   * RTS slice 14b: start picking a mode's target on the map (patrol route,
+   * ship to escort, retreat point), or cancel with null. While picking, a
+   * map tap goes to the pick instead of the selection (worker
+   * `SET_FLEET_PICK`). Points are dropped on every call.
+   */
+  setFleetPick(kind: FleetPickKindWire | null): void;
+  /** RTS slice 14b: Done for a patrol pick (worker `COMMIT_FLEET_PICK`).
+   *  Publishes the route via feedback when it has enough points. */
+  commitFleetPick(): void;
+  /**
    * The sector being shown changed (null on the galaxy map). Picks the new
    * backdrop's nebula (plan iridescent-seeking-rainbow v3, B2). On the worker
    * path the worker already hears it through `SET_CURRENT_SECTOR`.
@@ -1199,6 +1219,15 @@ export interface FleetOverlayShip {
   /** Patrol route waypoints, game space (a closed loop). */
   route?: [number, number][];
 }
+
+/** RTS slice 14b: what a map pick is for. */
+export type FleetPickKindWire = 'patrol' | 'escort' | 'retreat';
+
+/** RTS slice 14b: a finished map pick (game space). Plain data. */
+export type FleetPickResultWire =
+  | { kind: 'patrol'; route: [number, number][] }
+  | { kind: 'escort'; escortId: string }
+  | { kind: 'retreat'; x?: number; y?: number };
 
 /** See `IRenderer.setFleetOverlayModel`. */
 export interface FleetOverlayModel {

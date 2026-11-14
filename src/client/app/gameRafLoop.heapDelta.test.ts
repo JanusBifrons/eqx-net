@@ -130,6 +130,9 @@ function makeDeps(): GameRafLoopDeps {
         orderX: 0,
         orderY: 0,
         orderTargetId: null,
+        fleetPickPoints: 0,
+        fleetPickSeq: 0,
+        fleetPickResult: null,
       };
       return {
         update: () => {},

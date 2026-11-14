@@ -4062,11 +4062,14 @@ export class SectorRoom extends Room<SectorState> {
       const pid = this.sessionToPlayer.get(client.sessionId);
       if (pid === undefined) return;
       const md = this.fleetModeScratch;
-      md.x = undefined; md.y = undefined;
+      // x/y: the retreat point (a lone x or y is ignored: no point).
+      const hasPoint = p.data.x !== undefined && p.data.y !== undefined;
+      md.x = hasPoint ? p.data.x : undefined;
+      md.y = hasPoint ? p.data.y : undefined;
       md.route = p.data.route;
       md.escortId = p.data.escortId;
       this.fleet.setMode(pid, p.data.shipIds, p.data.mode, md);
-      md.route = undefined; md.escortId = undefined;
+      md.route = undefined; md.escortId = undefined; md.x = undefined; md.y = undefined;
     });
     this.onMessage('set_stance', (client: Client, raw: unknown) => {
       if (!this.fleetMsgAllowed(client.sessionId)) return;

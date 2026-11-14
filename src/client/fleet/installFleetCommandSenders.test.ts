@@ -34,6 +34,11 @@ describe('installFleetCommandSenders', () => {
     c.setMode(ids, 'defend');
     expect(senders.sendSetMode).toHaveBeenCalledWith(['me', 'hull-1'], 'defend');
 
+    c.setMode(ids, 'patrol', { route: [[0, 0], [10, 5]] });
+    expect(senders.sendSetMode).toHaveBeenLastCalledWith(['me', 'hull-1'], 'patrol', { route: [[0, 0], [10, 5]] });
+    c.setMode(ids, 'retreat', { x: 4, y: -2 });
+    expect(senders.sendSetMode).toHaveBeenLastCalledWith(['me', 'hull-1'], 'retreat', { x: 4, y: -2 });
+
     c.setStance(ids, 'holdFire');
     expect(senders.sendSetStance).toHaveBeenCalledWith(['me', 'hull-1'], 'holdFire');
 

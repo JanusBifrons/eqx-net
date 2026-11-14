@@ -1,6 +1,6 @@
 import { Application, Graphics, Container, type Texture } from 'pixi.js';
 import { Camera } from './worker/Camera';
-import type { FleetOverlayModel, FleetOverlayShip, IRenderer, RenderMirror, RendererFeedback } from '@core/contracts/IRenderer';
+import type { FleetOverlayModel, FleetOverlayShip, FleetPickKindWire, IRenderer, RenderMirror, RendererFeedback } from '@core/contracts/IRenderer';
 import { GameClock } from '@core/clock/GameClock';
 import { GalaxyMapLayer } from './galaxy/GalaxyMapLayer';
 import { type WarpParams, type WarpCenter, type FrameMarkers } from './worker/protocol';
@@ -32,6 +32,7 @@ import { HoverBracket } from './HoverBracket';
 import { pickEntityAt, type PickedEntityKind } from './pickEntity';
 import { CommandPointerRouter, type BoxRect, type HoldArmed, type RouterAction, type RouterPointerEvent } from './input/commandPointerRouter.js';
 import { decideTapAction, type FleetOrderMode } from './input/tapAction.js';
+import { createFleetPickState, decidePickTap, pickAddPoint, pickFinishPatrol, pickStart, type FleetPickResult } from './input/fleetPick.js';
 import { applySelection, boxSelectOwn, collectFleetShips, isOwnShipPresent, pickOwnShipAt, sameSelection, tapSelectOwn } from './fleetSelection.js';
 import { FleetOverlay, type OrderFlash } from './FleetOverlay.js';
 import { decideLingeringSpriteAction, decideExplosionPosition, type SpriteDecision } from './spriteUpdateDecisions';
@@ -226,6 +227,9 @@ export class PixiRenderer implements IRenderer {
   private readonly _orderFlash: OrderFlash = { x: 0, y: 0, attack: false, t0: -1 };
   /** Touch tap-order mode (slice 12), pushed from the strip's Zustand toggle. */
   private _fleetOrderMode: FleetOrderMode = 'move';
+  /** "Pick on the map" for patrol / escort / retreat (slice 14b). While a
+   *  kind is set, map taps go here and never change the selection. */
+  private readonly _fleetPick = createFleetPickState();
   /** Own ships' squads + orders by id (slice 15a), replaced on each
    *  `setFleetOverlayModel` (main-thread fleet status version change). */
   private _fleetModel: Map<string, FleetOverlayShip> = new Map();
@@ -557,6 +561,9 @@ export class PixiRenderer implements IRenderer {
     orderX: 0,
     orderY: 0,
     orderTargetId: null,
+    fleetPickPoints: 0,
+    fleetPickSeq: 0,
+    fleetPickResult: null,
     placementPreviewConnectionCount: 0,
     selectedPickId: null,
     selectedPickKind: null,
@@ -1291,6 +1298,10 @@ export class PixiRenderer implements IRenderer {
   }
 
   private applyRouterAction(a: RouterAction): void {
+    if (this._fleetPick.kind !== null && a.kind !== 'camera') {
+      this.applyPickRouterAction(a);
+      return;
+    }
     switch (a.kind) {
       case 'camera':
         this.cameraPointer(a.ev.type, a.ev.pointerId, a.ev.x, a.ev.y, a.ev.timeMs);
@@ -1315,6 +1326,67 @@ export class PixiRenderer implements IRenderer {
         this.commandOrder(a.x, a.y);
         return;
     }
+  }
+
+  /**
+   * Router actions while a fleet pick is on (slice 14b): a tap (or a box
+   * gesture's end, which a finger easily makes) is a pick, never a selection;
+   * a mouse right-click is Done for a patrol and a pick otherwise. Boxes are
+   * not drawn.
+   */
+  private applyPickRouterAction(a: RouterAction): void {
+    switch (a.kind) {
+      case 'tapSelect':
+      case 'order':
+        if (a.kind === 'order' && this._fleetPick.kind === 'patrol') {
+          this.commitFleetPick();
+          return;
+        }
+        this.pickTap(a.x, a.y);
+        return;
+      case 'boxStart':
+      case 'boxUpdate':
+      case 'boxCancel':
+      case 'boxEnd':
+        this._fleetBoxActive = false;
+        return;
+      case 'camera':
+        return;
+    }
+  }
+
+  /** A map tap during a fleet pick (`decidePickTap`). */
+  private pickTap(screenX: number, screenY: number): void {
+    const m = this._lastMirror;
+    if (m === null) return;
+    const w = this.camera.screenToWorld(screenX, screenY);
+    const gx = w.x;
+    const gy = -w.y;
+    const pick = this._fleetPick;
+    const own = pick.kind === 'escort' ? pickOwnShipAt(gx, gy, collectFleetShips(m), m.localPlayerId) : null;
+    switch (decidePickTap(pick.kind, own, own !== null && this._fleetSel.has(own), pick.count)) {
+      case 'addPoint':
+        pickAddPoint(pick, gx, gy);
+        this.feedback.fleetPickPoints = pick.count;
+        return;
+      case 'retreatHere':
+        this.publishPickResult({ kind: 'retreat', x: gx, y: gy });
+        return;
+      case 'escortShip':
+        this.publishPickResult({ kind: 'escort', escortId: own! });
+        return;
+      case 'ignore':
+        return;
+    }
+  }
+
+  /** End the pick and hand its result to the main thread (sent once per seq). */
+  private publishPickResult(result: FleetPickResult): void {
+    pickStart(this._fleetPick, null);
+    const fb = this.feedback;
+    fb.fleetPickPoints = 0;
+    fb.fleetPickResult = result;
+    fb.fleetPickSeq++;
   }
 
   /** Box (screen px) → own ships whose centre is inside it (game space). */
@@ -1442,6 +1514,7 @@ export class PixiRenderer implements IRenderer {
       // eslint-disable-next-line no-restricted-properties -- real time: pointer stamps are Date.now() (both paths)
       this._cmdRouter.holdArmedAt(Date.now(), this._holdArmed),
       this._fleetModel,
+      this._fleetPick,
     );
   }
 
@@ -3418,6 +3491,19 @@ export class PixiRenderer implements IRenderer {
     this._fleetOrderMode = mode;
   }
 
+  /** See `IRenderer.setFleetPick`. */
+  setFleetPick(kind: FleetPickKindWire | null): void {
+    pickStart(this._fleetPick, kind);
+    this.feedback.fleetPickPoints = 0;
+    if (kind !== null) this._fleetBoxActive = false;
+  }
+
+  /** See `IRenderer.commitFleetPick`. A no-op until the route is long enough. */
+  commitFleetPick(): void {
+    const result = pickFinishPatrol(this._fleetPick);
+    if (result !== null) this.publishPickResult(result);
+  }
+
   /** See `IRenderer.setFleetOverlayModel`. Allocates on a status change only. */
   setFleetOverlayModel(model: FleetOverlayModel): void {
     const next = new Map<string, FleetOverlayShip>();
@@ -3432,6 +3518,7 @@ export class PixiRenderer implements IRenderer {
     const cancel = this._cmdRouter.setEnabled(active);
     for (let i = 0; i < cancel.length; i++) this.applyRouterAction(cancel[i]!);
     if (!active && this._fleetSel.size > 0) this.setFleetSelection(new Set());
+    if (!active) this.setFleetPick(null);
     // The radar is camera-relative while spectating. Pushed here (not read
     // from the store) so it works on the worker path too.
     this.halo.setSpectator(active);

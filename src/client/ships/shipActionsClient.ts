@@ -61,6 +61,9 @@ export interface SetModeParams {
   route?: [number, number][];
   guardRadius?: number;
   escortId?: string;
+  /** Retreat point, game space (sent only when both are set). */
+  x?: number;
+  y?: number;
 }
 
 /** Set the standing wingman mode for the given ships. */
@@ -72,6 +75,7 @@ export function sendSetMode(shipIds: string[], mode: WingmanMode, params: SetMod
     ...(params.route !== undefined ? { route: params.route } : {}),
     ...(params.guardRadius !== undefined ? { guardRadius: params.guardRadius } : {}),
     ...(params.escortId !== undefined ? { escortId: params.escortId } : {}),
+    ...(params.x !== undefined && params.y !== undefined ? { x: params.x, y: params.y } : {}),
   });
 }
 

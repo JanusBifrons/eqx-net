@@ -16,7 +16,10 @@ import {
 
 export function installFleetCommandSenders(): void {
   setFleetCommands({
-    setMode: (ids, mode) => { sendSetMode([...ids], mode); },
+    setMode: (ids, mode, data) => {
+      if (data === undefined) sendSetMode([...ids], mode);
+      else sendSetMode([...ids], mode, data);
+    },
     setStance: (ids, stance) => { sendSetStance([...ids], stance); },
     stop: (ids) => { sendFleetOrder([...ids], { kind: 'stop' }); },
     formSquad: (ids) => { sendFormSquad([...ids]); },
