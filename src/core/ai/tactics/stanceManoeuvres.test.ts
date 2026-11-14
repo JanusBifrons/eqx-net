@@ -3,7 +3,8 @@
  * interest each writes, its speed, facing mode and boost), plus the utility
  * scores that pick Orbit for turreted roles and Kite for missile boats.
  */
-import { describe, it, expect } from 'vitest';
+import { beforeEach, describe, it, expect } from 'vitest';
+import { Rng } from '../../random/rng.js';
 import {
   clearContextMaps,
   createContextMaps,
@@ -31,7 +32,10 @@ import {
   FallBackManoeuvre,
   FLEE_CLEAR_TICKS,
   FLEE_MAX_TICKS,
+  EVADE_BREAK_ANGLE,
+  EVADE_BREAK_HITS,
   FleeManoeuvre,
+  isPursued,
   KiteManoeuvre,
   OrbitManoeuvre,
   orbitOffAngle,
@@ -276,5 +280,135 @@ describe('utility: Orbit / Kite by role', () => {
 
   it('a structure target is still held', () => {
     expect(best(ctxAt(0, 0, 0, 0.8 * R, { targetIsShip: false, turretHalfArc: Math.PI / 2 }), 'gunship')).toBe(MANOEUVRE_HOLD);
+  });
+});
+
+describe('evasive running (Flee / FallBack with a pursuer on the tail)', () => {
+  /** One seeded stream across a run's ticks, as the brain's context keeps. */
+  let stream = new Rng(42);
+  beforeEach(() => { stream = new Rng(42); });
+  /** Me at the origin running south (nose (0,-1)), a pursuer `gap` north of
+   *  me chasing (its velocity toward me), the threat centroid on it. */
+  function chased(tick: number, gap = 300, extra: Partial<TacticalContext> = {}): TacticalContext {
+    const c = ctxAt(0, 0, 0, gap, {
+      angle: Math.PI, vx: 0, vy: -400, tvx: 0, tvy: -450,
+      sensorEnemies: 1, threatX: 0, threatY: gap, tick, ...extra,
+    });
+    c.targetAspectCos = 1; // flying straight at me
+    (c as { rng: Rng }).rng = stream;
+    return c;
+  }
+
+  it('isPursued: a chaser in my rear cone within reach, not one ahead, far, or parked', () => {
+    expect(isPursued(chased(0))).toBe(true);
+    expect(isPursued(chased(0, 2 * R))).toBe(false);
+    const ahead = chased(0, 300, { angle: 0 });
+    expect(isPursued(ahead)).toBe(false);
+    const parked = chased(0, 300, { tvx: 0, tvy: 0 });
+    expect(isPursued(parked)).toBe(false);
+  });
+
+  it('Flee weaves off the escape line (both sides, irregular legs) and burns the reserve', () => {
+    const m = new FleeManoeuvre();
+    m.begin(chased(0));
+    let minOff = 0, maxOff = 0, switches = 0, prevSide = 0;
+    const legs: number[] = [];
+    let legStart = 0;
+    for (let t = 0; t < 600; t++) {
+      const c = chased(t);
+      const h = run(m, c);
+      // Heading angle off straight south, signed.
+      const off = Math.atan2(h.dirX, -h.dirY);
+      minOff = Math.min(minOff, off); maxOff = Math.max(maxOff, off);
+      const side = Math.sign(m.evade.offset);
+      if (prevSide !== 0 && side !== prevSide) { switches++; legs.push(t - legStart); legStart = t; }
+      prevSide = side;
+      expect(goal.boost).toBe(true);
+      expect(goal.spendReserve).toBe(true);
+      expect(goal.speed).toBe(MAX);
+      // Still running away: never more than ~52° off the escape line.
+      expect(-h.dirY).toBeGreaterThan(0.55);
+    }
+    expect(maxOff - minOff, 'weave spread (rad)').toBeGreaterThan(0.8);
+    expect(minOff).toBeLessThan(-0.4);
+    expect(maxOff).toBeGreaterThan(0.4);
+    expect(switches, 'many legs in 10 s').toBeGreaterThan(8);
+    expect(new Set(legs).size, 'irregular leg lengths').toBeGreaterThan(3);
+    // The escape line (warp-out heading) stays straight away.
+    expect(m.dirY).toBeCloseTo(-1, 5);
+  });
+
+  it('hit hard from behind, breaks across the line briefly, then resumes the weave', () => {
+    const m = new FleeManoeuvre();
+    m.begin(chased(0));
+    run(m, chased(0));
+    expect(m.evade.breaking).toBe(false);
+    const hit = chased(1, 300, { recentHits: EVADE_BREAK_HITS + 1 });
+    const h = run(m, hit);
+    expect(m.evade.breaking).toBe(true);
+    expect(Math.abs(m.evade.offset)).toBeCloseTo(EVADE_BREAK_ANGLE, 5);
+    expect(Math.abs(h.dirX), 'across the pursuer line').toBeGreaterThan(0.9);
+    let t = 2;
+    while (m.evade.breaking && t < 200) run(m, chased(t++, 300, { recentHits: EVADE_BREAK_HITS + 1 }));
+    expect(t, 'the break is brief (< 1 s)').toBeLessThan(62);
+    // Cooldown: still being hit, it weaves rather than breaking again at once.
+    run(m, chased(t, 300, { recentHits: EVADE_BREAK_HITS + 1 }));
+    expect(m.evade.breaking).toBe(false);
+    expect(Math.abs(m.evade.offset)).toBeLessThan(1);
+  });
+
+  it('not pursued, Flee runs straight and keeps the combat reserve', () => {
+    const m = new FleeManoeuvre();
+    const c = ctxAt(0, 0, 0, 500, { sensorEnemies: 3, threatX: 0, threatY: 500 });
+    m.begin(c);
+    const h = run(m, c);
+    expect(h.dirY).toBeLessThan(-0.99);
+    expect(goal.spendReserve).toBe(false);
+    expect(m.evade.pursued).toBe(false);
+  });
+
+  it('warp-out still fires while weaving', () => {
+    const m = new FleeManoeuvre();
+    m.begin(chased(0));
+    for (let t = 0; t < FLEE_MAX_TICKS; t++) run(m, chased(t));
+    expect(m.wantsWarpOut(FLEE_MAX_TICKS)).toBe(true);
+  });
+
+  it('FallBack weaves toward its friends while pursued, and fights normally once there', () => {
+    const m = new FallBackManoeuvre();
+    m.begin(chased(0));
+    let minOff = 0, maxOff = 0;
+    for (let t = 0; t < 300; t++) {
+      const c = chased(t, 300, { hasAnchor: true, anchorX: 0, anchorY: -5 * R });
+      const h = run(m, c);
+      const off = Math.atan2(h.dirX, -h.dirY);
+      minOff = Math.min(minOff, off); maxOff = Math.max(maxOff, off);
+      expect(goal.boost).toBe(true);
+      expect(goal.spendReserve).toBe(true);
+      expect(-h.dirY).toBeGreaterThan(0.55);
+    }
+    expect(maxOff - minOff).toBeGreaterThan(0.8);
+    // At the anchor: no weave, AUTO facing.
+    const c = chased(400, 300, { hasAnchor: true, anchorX: 0, anchorY: -0.2 * R });
+    run(m, c);
+    expect(m.arrived).toBe(true);
+    expect(goal.spendReserve).toBe(false);
+    expect(goal.facing).toBe(FACE_AUTO);
+  });
+
+  it('is deterministic per seed', () => {
+    const offs = (seed: number): number[] => {
+      stream = new Rng(seed);
+      const m = new FleeManoeuvre();
+      const out: number[] = [];
+      m.begin(chased(0));
+      for (let t = 0; t < 200; t++) {
+        run(m, chased(t));
+        out.push(m.evade.offset);
+      }
+      return out;
+    };
+    expect(offs(7)).toEqual(offs(7));
+    expect(offs(7)).not.toEqual(offs(8));
   });
 });

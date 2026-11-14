@@ -44,10 +44,14 @@ export interface ManoeuvreGoal {
   facing: FacingMode;
   /** The manoeuvre allows boost (the pilot and the energy pool still decide). */
   boost: boolean;
+  /** Boost may dip into the energy reserve (a ship running from a tailer
+   *  burns everything it has). The brain clears it before each `writeGoal`,
+   *  so only a manoeuvre that sets it gets it. */
+  spendReserve: boolean;
 }
 
 export function makeManoeuvreGoal(): ManoeuvreGoal {
-  return { speed: 0, facing: FACE_AUTO, boost: false };
+  return { speed: 0, facing: FACE_AUTO, boost: false, spendReserve: false };
 }
 
 /**

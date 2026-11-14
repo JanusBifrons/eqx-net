@@ -143,6 +143,11 @@ const GUARD_PILOT_PARAMS: Readonly<PilotParams> = { ...DEFAULT_PILOT_PARAMS, thr
  *  soon as the wanted speed along the nose beats the actual by 15 % of the
  *  kind's top speed. Whether a manoeuvre wants it is its own call. */
 const COMBAT_PILOT_PARAMS: Readonly<PilotParams> = { ...DEFAULT_PILOT_PARAMS, boostConeCos: 0.8, boostSpeedGap: 0.15 };
+/** A ship running from a pursuer (`ManoeuvreGoal.spendReserve`) boosts with
+ *  its nose anywhere within 90° of its course: a weave keeps the nose turning,
+ *  and under the combat cone it would hardly ever light the afterburner while
+ *  running for its life. The boost still pushes along the nose (mostly away). */
+const RUN_PILOT_PARAMS: Readonly<PilotParams> = { ...COMBAT_PILOT_PARAMS, boostConeCos: 0 };
 /** Combat boost keeps this share of the energy pool in reserve; only a Break
  *  (getting out from under fire) may burn below it. */
 const BOOST_RESERVE_FRAC = 0.25;
@@ -987,6 +992,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       this.fillTactical(self, view.tick, target, dist, ux, uy, aimX, aimY, desiredAngle, bearingError, along, boostOk);
       this.runDecision(self, view, nb);
       clearContextMaps(this._ctxMaps);
+      this._goal.spendReserve = false;
       this._manoeuvres[this._picker.current]!.writeGoal(this._tac, this._ctxMaps, this._goal);
       intent = this.flyCombatContext(self, nb, view.aims, ux, uy, desiredAngle, dist <= this.fireRange, this._goal);
       if (this._picker.current === MANOEUVRE_FLEE && this._flee.wantsWarpOut(view.tick)) {
@@ -1161,10 +1167,12 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       facing = leadAngle + (off > NUDGE_MAX_OFF ? NUDGE_MAX_OFF : off < -NUDGE_MAX_OFF ? -NUDGE_MAX_OFF : off);
     }
     // Afterburner: whenever the manoeuvre wants it, above the reserve; a
-    // Break may spend the reserve.
+    // Break, or a ship running from a tailer (`spendReserve`), may spend the
+    // reserve (the pool itself still runs dry).
     const boost = goal.boost
-      && (this.energy >= BOOST_RESERVE_FRAC * this.energyMax || this._picker.current === MANOEUVRE_BREAK);
-    return this.fly(self, facing, wvx, wvy, boost, COMBAT_PILOT_PARAMS);
+      && (this.energy >= BOOST_RESERVE_FRAC * this.energyMax || this._picker.current === MANOEUVRE_BREAK
+        || goal.spendReserve);
+    return this.fly(self, facing, wvx, wvy, boost, goal.spendReserve ? RUN_PILOT_PARAMS : COMBAT_PILOT_PARAMS);
   }
 
   /**

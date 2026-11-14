@@ -23,13 +23,145 @@ import {
   MANOEUVRE_KITE,
   MANOEUVRE_ORBIT,
   rngUnit,
+  targetParked,
   type IManoeuvre,
   type ManoeuvreGoal,
   type TacticalContext,
 } from './manoeuvre.js';
 import { GOAL_SHAPE } from './manoeuvres.js';
+import { TAILED_ASPECT_COS, TAILED_COS } from './utility.js';
 
 const TICKS_PER_S = 60;
+
+// ── Evasive running (shared by FallBack and Flee) ───────────────────────
+/** "Pursued": the target sits in my rear cone (as for Break's "tailed") and
+ *  within this × fire range. Wider than Break's 1.1: a runner starts weaving
+ *  before the pursuer is in its best range, not once it is. */
+export const EVADE_PURSUED_RANGE = 1.5;
+/** A weave leg turns the course this far off the escape line (rad, seeded
+ *  per leg: ~26°–40°). cos(40°) ≈ 0.77, so the run still gains ground. */
+export const EVADE_JINK_MIN = 0.45;
+export const EVADE_JINK_MAX = 0.7;
+/** A weave leg lasts a seeded 0.4–0.9 s (irregular, so a pursuer can't time
+ *  its lead to the rhythm). */
+const EVADE_LEG_MIN_TICKS = 30;
+const EVADE_LEG_MAX_TICKS = 54;
+/** While pursued the weave is laid about a SLOW copy of the escape line
+ *  (share of the gap closed per tick, ~1.5 s time constant). With the pursuer
+ *  dead astern, "away from it" is roughly my own heading, so a weave about the
+ *  live line chases itself round to one side. */
+const EVADE_BASE_GAIN = 1 / 90;
+/** Hit from behind this hard (decaying recent-hit count) ⇒ a brief break. */
+export const EVADE_BREAK_HITS = 2;
+/** The break: this far off the escape line (rad, ~80°: across the
+ *  pursuer's line of fire) for a seeded 0.5–0.8 s, then back to running. */
+export const EVADE_BREAK_ANGLE = 1.4;
+const EVADE_BREAK_MIN_TICKS = 30;
+const EVADE_BREAK_MAX_TICKS = 48;
+/** No new break within this long of the last one's start (2 s). */
+const EVADE_BREAK_COOLDOWN_TICKS = 120;
+
+/** Is the target on my tail (rear cone, within reach, not flying away from
+ *  me, not parked)? Same shape as `isTailed` (utility.ts), wider reach. */
+export function isPursued(ctx: TacticalContext): boolean {
+  return ctx.targetIsShip && ctx.threatBearingCos < TAILED_COS
+    && ctx.dist < EVADE_PURSUED_RANGE * ctx.fireRange
+    && ctx.targetAspectCos > TAILED_ASPECT_COS && !targetParked(ctx);
+}
+
+function randRange(ctx: TacticalContext, lo: number, hi: number): number {
+  return lo + (hi - lo) * rngUnit(ctx);
+}
+
+/**
+ * A ship running from a pursuer still evades (hostile review of the 3v3
+ * dogfight clip, 2026-11-14: a fleeing fighter flew dead straight for ~4 s
+ * with a hostile on its tail until it blew up). While pursued it weaves:
+ * alternating legs a seeded 26°–40° either side of its escape line, each a
+ * seeded 0.4–0.9 s; hit hard from behind, it breaks ~80° off the line for
+ * a moment (cooldown 2 s) and then resumes the weave. Not pursued, it flies
+ * the escape line straight. Plain fields, no allocation (#14); draws only
+ * from the ship's seeded stream.
+ */
+export class EvasiveRun {
+  /** +1 = this leg turns left of the escape line. */
+  side = 1;
+  /** Current offset off the escape line (rad, signed), test-visible. */
+  offset = 0;
+  /** Running from a pursuer this tick (test-visible). */
+  pursued = false;
+  /** In a break (test-visible). */
+  breaking = false;
+  private legEnd = -1;
+  private breakEnd = -1;
+  private nextBreak = -1;
+  private angle = 0;
+  private hasBase = false;
+  private baseX = 0;
+  private baseY = 1;
+  /** Course out (unit), filled by {@link steer}. */
+  outX = 0;
+  outY = 1;
+  /** Start a run; the first leg's side is seeded (left without a context). */
+  reset(ctx?: TacticalContext): void {
+    this.side = ctx === undefined || rngUnit(ctx) < 0.5 ? 1 : -1;
+    this.legEnd = -1;
+    this.breakEnd = -1;
+    this.nextBreak = -1;
+    this.offset = 0;
+    this.pursued = false;
+    this.breaking = false;
+    this.hasBase = false;
+  }
+  /** Turn the escape line (`ex`, `ey`, unit) into this tick's course
+   *  (`outX`, `outY`). Returns whether the ship is pursued. */
+  steer(ctx: TacticalContext, ex: number, ey: number): boolean {
+    const t = ctx.tick;
+    this.pursued = isPursued(ctx);
+    if (!this.pursued) {
+      this.offset = 0;
+      this.breaking = false;
+      this.hasBase = false;
+      this.outX = ex; this.outY = ey;
+      return false;
+    }
+    if (!this.hasBase) {
+      this.hasBase = true;
+      this.baseX = ex; this.baseY = ey;
+    } else {
+      let bx = this.baseX + EVADE_BASE_GAIN * (ex - this.baseX);
+      let by = this.baseY + EVADE_BASE_GAIN * (ey - this.baseY);
+      const bl = Math.hypot(bx, by);
+      if (bl > 1e-6) { bx /= bl; by /= bl; this.baseX = bx; this.baseY = by; }
+    }
+    if (this.breaking && t >= this.breakEnd) {
+      this.breaking = false;
+      this.legEnd = -1; // a fresh weave leg straight away
+    }
+    if (!this.breaking && ctx.recentHits >= EVADE_BREAK_HITS && t >= this.nextBreak) {
+      // Break across the pursuer's line, to the side the last leg leaned.
+      this.breaking = true;
+      this.breakEnd = t + Math.round(randRange(ctx, EVADE_BREAK_MIN_TICKS, EVADE_BREAK_MAX_TICKS));
+      this.nextBreak = t + EVADE_BREAK_COOLDOWN_TICKS;
+    }
+    if (this.breaking) {
+      this.offset = EVADE_BREAK_ANGLE * this.side;
+    } else {
+      if (t >= this.legEnd) {
+        this.side = -this.side;
+        this.angle = randRange(ctx, EVADE_JINK_MIN, EVADE_JINK_MAX);
+        this.legEnd = t + Math.round(randRange(ctx, EVADE_LEG_MIN_TICKS, EVADE_LEG_MAX_TICKS));
+      }
+      this.offset = this.angle * this.side;
+    }
+    // Rotate the (slow) escape line by `offset` (positive turns left).
+    const c = Math.cos(this.offset);
+    const s = Math.sin(this.offset);
+    this.outX = this.baseX * c - this.baseY * s;
+    this.outY = this.baseX * s + this.baseY * c;
+    return true;
+  }
+}
 
 // ── Orbit ───────────────────────────────────────────────────────────────
 /** The orbit's largest angle off the target bearing (rad): pure tangent. */
@@ -157,21 +289,38 @@ const FALLBACK_BOOST = 1.5;
  * decision time). On the way the nose follows the course; once within
  * `FALLBACK_ARRIVE` × fire range of the anchor it settles there (arrive ramp)
  * and fights from among its friends (nose on the lead in range). With no
- * friend in sensors it opens the range from the threat instead. Ends when the
- * morale lock runs out (the brain's call), never by itself.
+ * friend in sensors it opens the range from the threat instead. On the way
+ * (or opening the range) with a pursuer on its tail it runs evasively
+ * ({@link EvasiveRun}: weave, break when hit, full speed, boost from the
+ * reserve). Ends when the morale lock runs out (the brain's call), never by
+ * itself.
  */
 export class FallBackManoeuvre implements IManoeuvre {
   readonly id = MANOEUVRE_FALL_BACK;
   /** At the anchor (test-visible). */
   arrived = false;
-  begin(): void { this.arrived = false; }
+  /** The evasive run on the way (test-visible). */
+  readonly evade = new EvasiveRun();
+  begin(ctx?: TacticalContext): void {
+    this.arrived = false;
+    this.evade.reset(ctx);
+  }
   writeGoal(ctx: TacticalContext, maps: ContextMaps, out: ManoeuvreGoal): void {
     if (!ctx.hasAnchor) {
-      // Nobody to fall back on: open the range from the threat at cruise.
-      awayFromThreat(ctx, maps);
-      out.speed = ctx.cruiseSpeed;
+      // Nobody to fall back on: open the range from the threat at cruise
+      // (full speed, weaving, when pursued).
+      let ax = ctx.x - ctx.threatX;
+      let ay = ctx.y - ctx.threatY;
+      if (ctx.sensorEnemies === 0 || ax * ax + ay * ay < 1e-6) { ax = -ctx.ux; ay = -ctx.uy; }
+      const l = Math.hypot(ax, ay);
+      const ex = l > 1e-6 ? ax / l : 0;
+      const ey = l > 1e-6 ? ay / l : 1;
+      const pursued = this.evade.steer(ctx, ex, ey);
+      addInterestToward(maps, this.evade.outX, this.evade.outY, 1, GOAL_SHAPE);
+      out.speed = pursued ? ctx.maxSpeed : ctx.cruiseSpeed;
       out.facing = FACE_MOVE;
-      out.boost = false;
+      out.boost = pursued;
+      out.spendReserve = pursued;
       this.arrived = false;
       return;
     }
@@ -180,13 +329,19 @@ export class FallBackManoeuvre implements IManoeuvre {
     const d = Math.hypot(dx, dy);
     const arrive = FALLBACK_ARRIVE * ctx.fireRange;
     this.arrived = d <= arrive;
-    if (d > 1e-6) addInterestToward(maps, dx, dy, 1, GOAL_SHAPE);
-    else addInterestToward(maps, -ctx.ux, -ctx.uy, 1, GOAL_SHAPE);
-    let speed = ctx.cruiseSpeed * (d / arrive);
+    let ex = -ctx.ux;
+    let ey = -ctx.uy;
+    if (d > 1e-6) { ex = dx / d; ey = dy / d; }
+    // Settled among friends it fights; on the way it runs from a pursuer.
+    const pursued = !this.arrived && this.evade.steer(ctx, ex, ey);
+    if (pursued) addInterestToward(maps, this.evade.outX, this.evade.outY, 1, GOAL_SHAPE);
+    else addInterestToward(maps, ex, ey, 1, GOAL_SHAPE);
+    let speed = pursued ? ctx.maxSpeed : ctx.cruiseSpeed * (d / arrive);
     if (speed > ctx.maxSpeed) speed = ctx.maxSpeed;
     out.speed = speed;
     out.facing = this.arrived ? FACE_AUTO : FACE_MOVE;
-    out.boost = d > FALLBACK_BOOST * arrive;
+    out.boost = pursued || d > FALLBACK_BOOST * arrive;
+    out.spendReserve = pursued;
   }
   isDone(): boolean { return false; }
 }
@@ -198,21 +353,16 @@ export const FLEE_CLEAR_TICKS = 2 * TICKS_PER_S;
  *  a faster pursuer; the spool is then the risk it takes). */
 export const FLEE_MAX_TICKS = 6 * TICKS_PER_S;
 
-/** Interest straight away from the threat centroid (or the target line). */
-function awayFromThreat(ctx: TacticalContext, maps: ContextMaps): void {
-  let ax = ctx.x - ctx.threatX;
-  let ay = ctx.y - ctx.threatY;
-  if (ctx.sensorEnemies === 0 || ax * ax + ay * ay < 1e-6) { ax = -ctx.ux; ay = -ctx.uy; }
-  addInterestToward(maps, ax, ay, 1, GOAL_SHAPE);
-}
-
 /**
- * Run: straight away from the threat-weighted centroid of the enemies in
- * sensor range, full speed with boost, nose along the move. Once no enemy has
- * been within sensor range for `FLEE_CLEAR_TICKS` (or after `FLEE_MAX_TICKS`
- * regardless), {@link wantsWarpOut} turns true and the brain asks the server
- * to warp it out along its escape heading. Never done by itself: a ship that
- * chose to flee keeps fleeing.
+ * Run: away from the threat-weighted centroid of the enemies in sensor range,
+ * full speed with boost, nose along the move. With a pursuer on its tail it
+ * runs evasively ({@link EvasiveRun}): it weaves off the escape line, breaks
+ * briefly when hit from behind, and may burn the boost reserve; the escape
+ * line itself (`dirX`, `dirY`, the warp-out direction) stays straight away.
+ * Once no enemy has been within sensor range for `FLEE_CLEAR_TICKS` (or after
+ * `FLEE_MAX_TICKS` regardless), {@link wantsWarpOut} turns true and the brain
+ * asks the server to warp it out along its escape heading. Never done by
+ * itself: a ship that chose to flee keeps fleeing.
  */
 export class FleeManoeuvre implements IManoeuvre {
   readonly id = MANOEUVRE_FLEE;
@@ -221,9 +371,12 @@ export class FleeManoeuvre implements IManoeuvre {
   /** Escape heading (unit), test-visible and the warp-out direction. */
   dirX = 0;
   dirY = 1;
+  /** The evasive run (test-visible). */
+  readonly evade = new EvasiveRun();
   begin(ctx: TacticalContext): void {
     this.start = ctx.tick;
     this.clearSince = -1;
+    this.evade.reset(ctx);
   }
   writeGoal(ctx: TacticalContext, maps: ContextMaps, out: ManoeuvreGoal): void {
     let ax = ctx.x - ctx.threatX;
@@ -231,7 +384,8 @@ export class FleeManoeuvre implements IManoeuvre {
     if (ctx.sensorEnemies === 0 || ax * ax + ay * ay < 1e-6) { ax = -ctx.ux; ay = -ctx.uy; }
     const l = Math.hypot(ax, ay);
     if (l > 1e-6) { this.dirX = ax / l; this.dirY = ay / l; }
-    addInterestToward(maps, this.dirX, this.dirY, 1, GOAL_SHAPE);
+    const pursued = this.evade.steer(ctx, this.dirX, this.dirY);
+    addInterestToward(maps, this.evade.outX, this.evade.outY, 1, GOAL_SHAPE);
     if (ctx.sensorEnemies === 0) {
       if (this.clearSince < 0) this.clearSince = ctx.tick;
     } else {
@@ -240,6 +394,7 @@ export class FleeManoeuvre implements IManoeuvre {
     out.speed = ctx.maxSpeed;
     out.facing = FACE_MOVE;
     out.boost = true;
+    out.spendReserve = pursued;
   }
   isDone(): boolean { return false; }
   /** Clear for long enough, or fled for long enough: time to jump. */
