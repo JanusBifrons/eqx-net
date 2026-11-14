@@ -1,10 +1,15 @@
 import { combatDistanceScale } from '../../shared-types/shipScale/tuning.js';
-import { NAVAL_GUN_BALLISTICS as NAVAL, NAVAL_SIEGE_SPLASH, projectileEngageReach } from '../../shared-types/combat/navalGuns.js';
+import {
+  NAVAL_GUN_BALLISTICS as NAVAL, NAVAL_SIEGE_SPLASH, projectileEngageReach,
+  RAILGUN_BALLISTICS, RAILGUN_BOLT_WIDTH, RAILGUN_RADIUS,
+} from '../../shared-types/combat/navalGuns.js';
 export type WeaponMode = 'hitscan' | 'projectile' | 'missile';
 export type WeaponId = 'hitscan' | 'laser' | 'heat-seeker' | 'pulse-orb' | 'charge-laser' | 'autocannon'
   | 'naval_s' | 'naval_m' | 'naval_l' | 'naval_xl'
   // Coastal defences (plan coastal-defences): land guns bigger than any ship's.
-  | 'naval_xxl' | 'naval_siege';
+  | 'naval_xxl' | 'naval_siege'
+  // Capital railgun (plan beam-slices §7): a charged, very fast shell.
+  | 'railgun';
 
 interface WeaponDefBase {
   id: WeaponId;
@@ -349,6 +354,24 @@ const NAVAL_SIEGE_DEF: ProjectileWeaponDef = {
 };
 
 /**
+ * The capital RAILGUN (plan beam-slices §7, owner decisions 2026-11-14): a
+ * main-battery turret for AI pilots. It charges ~6 s (a glow on the gun only,
+ * no aim line), fires the moment the charge is done if the turret bears
+ * (else holds it and fires when it bears again), then reloads for a long
+ * time. The slug is a naval EVENT shell (`NAVAL_SHELL_WEAPON_IDS`): very fast
+ * and flat (`RAILGUN_BALLISTICS`), small, heavy. A hit that doesn't kill
+ * stops it; a kill erases a channel as wide as the drawn bolt along its line
+ * (`killCut`) and the slug carries on at full damage (`ProjectilePipeline`
+ * pass-through). Absolute like the naval guns (never `profiled`).
+ */
+const RAILGUN_DEF: ProjectileWeaponDef = {
+  id: 'railgun', displayName: 'Railgun', mode: 'projectile',
+  damage: 2400, cooldownTicks: 2400, ...RAILGUN_BALLISTICS, radius: RAILGUN_RADIUS, energyCost: 1,
+  chargeTicks: 360, chargeRelease: 'when-bearing', chargeTelegraph: 'mount-glow',
+  killCut: { kind: 'channel', width: RAILGUN_BOLT_WIDTH },
+};
+
+/**
  * Weapon distances under the ship scale's combat profile (shipScale/config):
  * reach (hitscan range, projectile / missile flight time) and splash. Profile
  * A, or scale 1, returns the definition unchanged. Pure.
@@ -386,9 +409,10 @@ export const WEAPONS: ReadonlyMap<WeaponId, WeaponDef> = new Map<WeaponId, Weapo
   ['naval_xl', NAVAL_XL_DEF],
   ['naval_xxl', NAVAL_XXL_DEF],
   ['naval_siege', NAVAL_SIEGE_DEF],
+  ['railgun', RAILGUN_DEF],
 ]);
 
-export const WEAPON_IDS: readonly WeaponId[] = ['hitscan', 'laser', 'heat-seeker', 'pulse-orb', 'charge-laser', 'autocannon', 'naval_s', 'naval_m', 'naval_l', 'naval_xl', 'naval_xxl', 'naval_siege'] as const;
+export const WEAPON_IDS: readonly WeaponId[] = ['hitscan', 'laser', 'heat-seeker', 'pulse-orb', 'charge-laser', 'autocannon', 'naval_s', 'naval_m', 'naval_l', 'naval_xl', 'naval_xxl', 'naval_siege', 'railgun'] as const;
 
 export const DEFAULT_WEAPON: WeaponId = 'hitscan';
 

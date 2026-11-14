@@ -11,7 +11,9 @@
  *    ramping up from the charge's start to full, no aim line.
  * Times are game time: the ramp runs on the renderer's `fxNow` (#20) from a
  * start latched off the server tick, so a late joiner sees the true progress
- * (#16). Allocation-free per frame (#14).
+ * (#16). Each mount ramps from its OWN start (`chargeOffsets`, ticks after
+ * the earliest), so a battleship's main turrets that began charging apart
+ * glow apart. Allocation-free per frame (#14).
  */
 import { Container, Graphics } from 'pixi.js';
 import { getShipKind } from '../../../shared-types/shipKinds.js';
@@ -127,11 +129,12 @@ export function buildChargeTelegraph(kindId: string | undefined, radius: number)
  * Draw this frame's charge state. `mask` / `startTick` from the mirror,
  * `nowTick` the entity's latest server tick (to latch the start on the game
  * clock), `fxNowMs` the renderer's game-time clock, `mountAngles` the drawn
- * arc-local mount angles (the glow turns with its gun).
+ * arc-local mount angles (the glow turns with its gun), `offsets` each
+ * charging mount's start after `startTick` (one per set bit; absent = 0).
  */
 export function updateChargeTelegraph(
   t: ChargeTelegraph, mask: number, startTick: number | undefined, nowTick: number, fxNowMs: number,
-  mountAngles: ArrayLike<number> | undefined,
+  mountAngles: ArrayLike<number> | undefined, offsets?: ArrayLike<number>,
 ): void {
   if (mask === 0) {
     if (t.root.visible) t.root.visible = false;
@@ -151,13 +154,17 @@ export function updateChargeTelegraph(
     if (on) t.ring.alpha = 0.45 + 0.4 * Math.sin(fxNowMs / 70);
   }
   const glows = t.glows;
+  let bit = 0; // index of mount i among the set bits (the offsets' order)
   for (let i = 0; i < glows.length; i++) {
+    const on = i < 31 && (mask & (1 << i)) !== 0;
+    const k = bit;
+    if (on) bit++;
     const g = glows[i];
     if (g === null || g === undefined) continue;
-    const on = i < 31 && (mask & (1 << i)) !== 0;
     g.visible = on;
     if (!on) continue;
-    const level = chargeGlowLevel(elapsed, t.chargeMs[i]!);
+    const off = offsets !== undefined && k < offsets.length ? offsets[k]! * TICK_MS : 0;
+    const level = chargeGlowLevel(elapsed - off, t.chargeMs[i]!);
     const flicker = level >= 1 ? 0.85 + 0.15 * Math.sin(fxNowMs / 45) : 1;
     g.alpha = (0.15 + 0.85 * level) * flicker;
     g.scale.set(0.5 + 0.5 * level);

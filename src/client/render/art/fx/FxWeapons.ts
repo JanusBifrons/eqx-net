@@ -15,6 +15,8 @@
 import { Container, Sprite, TilingSprite, type Texture } from 'pixi.js';
 import type { BeamView } from '../../BeamSpritePool.js';
 import type { ArtHandle, ArtService } from '../ArtService.js';
+import { NAVAL_SHELL_WEAPON_IDS } from '@core/combat/shellFlight';
+import { RAILGUN_BOLT_WIDTH, RAILGUN_RADIUS } from '../../../../shared-types/combat/navalGuns.js';
 
 const tex = (h: ArtHandle): Texture | null => (h.state === 'ready' && h.fx ? h.fx.tex : null);
 
@@ -101,7 +103,7 @@ export class FxBeams {
 }
 
 /** How a projectile looks. */
-export type FxProjStyle = 'bolt' | 'tracer' | 'shell';
+export type FxProjStyle = 'bolt' | 'tracer' | 'shell' | 'slug';
 
 interface ProjView { head: Sprite; core: Sprite; trail: Sprite[]; gen: number }
 
@@ -110,6 +112,16 @@ const TRACER = { len: 38, width: 4, trail: 0, tint: 0xffe6a0 };
 /** Capital naval shells, per unit of the gun's shell radius (a 16" shell,
  *  radius 6, draws ~240 u long) so they read at capital zoom. */
 const SHELL = { len: 40, width: 4, trail: 3, tint: 0xffb347 };
+/** The railgun slug (plan beam-slices §7): a long, white-hot streak, per unit
+ *  of its shell radius like a shell. Its drawn width is the bolt width, the
+ *  width of the channel a kill cuts (`RAILGUN_BOLT_WIDTH`); ~1 km long. */
+const SLUG = { len: 200, width: RAILGUN_BOLT_WIDTH / RAILGUN_RADIUS, trail: 3, tint: 0xd8ecff };
+
+/** A shell-like style's streak width per unit of size (the min-screen-size
+ *  floor measures it). */
+export function fxShellWidth(style: FxProjStyle): number {
+  return style === 'slug' ? SLUG.width : SHELL.width;
+}
 
 export class FxProjectiles {
   readonly container = new Container();
@@ -144,8 +156,9 @@ export class FxProjectiles {
       this.live.set(id, v);
     }
     v.gen = this.gen;
-    const base = style === 'bolt' ? BOLT : style === 'shell' ? SHELL : TRACER;
-    const shell = style === 'shell';
+    const base = style === 'bolt' ? BOLT : style === 'shell' ? SHELL : style === 'slug' ? SLUG : TRACER;
+    // A slug is drawn as a shell: a streak trailing from its front end.
+    const shell = style === 'shell' || style === 'slug';
     const k0 = shell ? size : 1;
     const ax = shell ? 1 : 0.5; // shells: anchor on the streak's front end
     const maxLen = shell ? flown : Infinity;
@@ -167,7 +180,7 @@ export class FxProjectiles {
     v.core.scale.set((spLen * 0.6) / w, (spWid * 0.33 + 0.8) / h); v.core.alpha = alpha;
     for (let k = 0; k < v.trail.length; k++) {
       const tr = v.trail[k]!;
-      const back = (k + 1) * 12 * k0;
+      const back = (k + 1) * (style === 'slug' ? 60 : 12) * k0;
       tr.visible = k < base.trail && back < maxLen;
       if (!tr.visible) continue;
       tr.anchor.x = ax;
@@ -204,6 +217,7 @@ export class FxProjectiles {
 export function fxProjectileStyle(weaponId: string | undefined, isBeam: boolean): FxProjStyle | null {
   if (isBeam) return null;
   if (weaponId === 'pulse-orb') return null;
-  if (weaponId !== undefined && weaponId.startsWith('naval_')) return 'shell';
+  if (weaponId === 'railgun') return 'slug';
+  if (weaponId !== undefined && NAVAL_SHELL_WEAPON_IDS.has(weaponId)) return 'shell';
   return weaponId === 'laser' ? 'bolt' : 'tracer';
 }

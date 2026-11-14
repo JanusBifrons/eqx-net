@@ -160,6 +160,10 @@ export interface WeaponMountTickerDeps {
    *  structure takes longer than this many seconds while in reach (0 = the
    *  first tick). Absent / undefined = the lock rules unchanged. */
   lockTimeCapS?: () => number | undefined;
+  /** testMode `chargeTicksCap` (room / join option): no capital-turret
+   *  charge lasts longer than this many ticks (0 = the shot goes on the next
+   *  tick it may). Undefined = each weapon's own `chargeTicks`. */
+  chargeTicksCap?: () => number | undefined;
 }
 
 
@@ -206,6 +210,32 @@ export class MountCharges {
       if (s !== NOT_CHARGING && (t === NOT_CHARGING || s < t)) t = s;
     }
     return t;
+  }
+
+  /**
+   * Each charging mount's start as ticks after `base` (the earliest start,
+   * `startTick`), one per set bit of `mask`, lowest bit first, into `out`
+   * (length set). Returns false (and leaves `out` empty) when every
+   * charging mount began on `base`: the snapshot then omits the offsets.
+   * Clamped to u16. Alloc-free.
+   */
+  offsetsInto(droneId: string, base: number, out: number[]): boolean {
+    out.length = 0;
+    const a = this.starts.get(droneId);
+    if (a === undefined) return false;
+    let any = false;
+    let k = 0;
+    for (let i = 0; i < a.length && i < 31; i++) {
+      const s = a[i]!;
+      if (s === NOT_CHARGING) continue;
+      let off = s - base;
+      if (off < 0) off = 0;
+      else if (off > 65_535) off = 65_535;
+      if (off !== 0) any = true;
+      out[k++] = off;
+    }
+    if (!any) out.length = 0;
+    return any;
   }
 
   /** The ship left the world (death, eviction, shed): drop its charges. */
@@ -661,7 +691,7 @@ export class WeaponMountTicker {
       const chargeT = w.chargeTicks ?? 0;
       const chargeStarts = chargeT > 0 ? this.charges.startsFor(droneId, n) : null;
       const charging = chargeStarts !== null && chargeStarts[i]! !== NOT_CHARGING;
-      if (charging && tick - chargeStarts[i]! < chargeT) continue;
+      if (charging && tick - chargeStarts[i]! < this.chargeTicksOf(chargeT)) continue;
       if (!engageable) continue; // held through a brief loss: aim, don't fire
       if (!charging && tick - reload[i]! < w.cooldownTicks) continue;
       // On target = the shot would pass within TURRET_FIRE_MISS of the aim
@@ -702,11 +732,18 @@ export class WeaponMountTicker {
     if (starts === undefined || starts[i]! === NOT_CHARGING) return false;
     const w = getWeapon(mount.weaponId);
     if (w.chargeRelease === 'when-bearing') return false;
-    if (tick - starts[i]! < (w.chargeTicks ?? 0)) return true;
+    if (tick - starts[i]! < this.chargeTicksOf(w.chargeTicks ?? 0)) return true;
     starts[i] = NOT_CHARGING;
     reload[i] = tick;
     this.deps.fireDroneMount!(droneId, i);
     return true;
+  }
+
+  /** A capital turret's charge length: the weapon's, under the testMode
+   *  `chargeTicksCap` when set. */
+  private chargeTicksOf(chargeTicks: number): number {
+    const cap = this.deps.chargeTicksCap?.();
+    return cap !== undefined && cap < chargeTicks ? cap : chargeTicks;
   }
 
   /** Cleanup hook: drop all per-player state on leave/transit/death. */

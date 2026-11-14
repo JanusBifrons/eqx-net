@@ -508,6 +508,13 @@ const ENV_TIME_SCALE: number | null = (() => {
 const LockTimeCapSchema = z.number().finite().min(0).max(600);
 
 /**
+ * testMode `chargeTicksCap` (room option, join option, URL `?chargeTicksCap=`):
+ * the longest any capital-turret charge may take, in ticks (the railgun's ~6 s
+ * wind-up without the wait). 0 = it fires on the next tick it may.
+ */
+const ChargeTicksCapSchema = z.number().int().min(0).max(36_000);
+
+/**
  * Game speed override for a sector (time scale stream): testMode room option,
  * join option and URL `?timeScale=`, or `EQX_TIME_SCALE` outside production.
  * The automatic load controller (Phase 5) may still slow a sector below it.
@@ -600,6 +607,9 @@ const JoinOptionsSchema = z
      *  (room option, or the room-creating client's join option) and on any
      *  join that passes it. testMode-gated. */
     lockTimeCapS: LockTimeCapSchema.optional(),
+    /** Test-only bespoke trigger (charge-up): the longest any capital-turret
+     *  charge in this room may take, in ticks. Room-wide; testMode-gated. */
+    chargeTicksCap: ChargeTicksCapSchema.optional(),
     /** Test/recording trigger (time scale): set this sector's game speed
      *  (0.25–4). Room-wide. testMode-gated. */
     timeScale: TimeScaleSchema.optional(),
@@ -990,6 +1000,9 @@ export class SectorRoom extends Room<SectorState> {
   /** Bespoke test/recording trigger (testMode `lockTimeCapS`): the longest
    *  any NON-player lock may take, in seconds. Undefined = off. */
   private testLockTimeCapS: number | undefined = undefined;
+  /** Bespoke test/recording trigger (testMode `chargeTicksCap`): the longest
+   *  a capital-turret charge may take, in ticks. Undefined = off. */
+  private testChargeTicksCap: number | undefined = undefined;
   /** Round 3 D test switch (testMode `pilotCapitals`). */
   private testPilotCapitals = false;
   /** Capital destruction S2a (`capitalWrecks` room option / EQX_CAPITAL_WRECKS):
@@ -1862,6 +1875,9 @@ export class SectorRoom extends Room<SectorState> {
       /** Bespoke test/recording trigger: no NON-player lock takes longer than
        *  this (s); 0 = the first step. zod-checked; testMode-only. */
       lockTimeCapS?: unknown;
+      /** Bespoke test trigger: no capital-turret charge takes longer than this
+       *  (ticks). zod-checked; testMode-only. */
+      chargeTicksCap?: unknown;
       /** Game speed for this sector (0.25–4). zod-checked; testMode-only. */
       timeScale?: unknown;
       /** testMode: run the automatic slowdown here too (on by default only in
@@ -2034,6 +2050,7 @@ export class SectorRoom extends Room<SectorState> {
       // Capital turrets engage hostile structures too (the AI's per-tick set).
       hostileStructures: () => this.hostileStructureCircles,
       lockTimeCapS: () => this.testLockTimeCapS,
+      chargeTicksCap: () => this.testChargeTicksCap,
       onClearPlayer: (pid) => this.locks.clearLocks(pid),
       aimTargetFor: (pid, mountId, out) => this.lockAimTarget(pid, mountId, out),
       visitParkedPilotHulls: this._visitParkedPilotHulls,
@@ -2250,7 +2267,7 @@ export class SectorRoom extends Room<SectorState> {
       // Shells as events (shell-events.md; the only way since slice 4): naval
       // shells travel as shell_salvo / shell_end, never in projectiles[].
       onShellSpawn: (id, rec) => this.shellHub?.onSpawn(id, rec),
-      onShellEnd: (id, tick, x, y, r) => this.shellHub?.onEnd(id, tick, x, y, r),
+      onShellEnd: (id, tick, x, y, r, continues) => this.shellHub?.onEnd(id, tick, x, y, r, continues),
       onShellExpire: (id) => this.shellHub?.onExpire(id),
     });
     this.shellHub = this.createShellHub();
@@ -3129,6 +3146,11 @@ export class SectorRoom extends Room<SectorState> {
       const cap = LockTimeCapSchema.safeParse(roomOpts.lockTimeCapS);
       if (cap.success) this.setLockTimeCap(cap.data);
       else logger.warn({ value: roomOpts.lockTimeCapS }, 'lockTimeCapS: invalid room option, ignored');
+    }
+    if (this.testMode && roomOpts.chargeTicksCap !== undefined) {
+      const cap = ChargeTicksCapSchema.safeParse(roomOpts.chargeTicksCap);
+      if (cap.success) this.testChargeTicksCap = cap.data;
+      else logger.warn({ value: roomOpts.chargeTicksCap }, 'chargeTicksCap: invalid room option, ignored');
     }
     this.autoSlowdown = !this.testMode || roomOpts.autoTimeScale === true;
     if (this.testMode && roomOpts.timeScale !== undefined) {
@@ -9342,6 +9364,10 @@ export class SectorRoom extends Room<SectorState> {
     // `lockTimeCapS` on a join caps every NON-player lock in this room.
     if ((this.testMode || ALLOW_DEV_OVERRIDES) && parsed.success && parsed.data.lockTimeCapS !== undefined) {
       this.setLockTimeCap(parsed.data.lockTimeCapS);
+    }
+    // `chargeTicksCap` on a join caps every capital-turret charge in this room.
+    if ((this.testMode || ALLOW_DEV_OVERRIDES) && parsed.success && parsed.data.chargeTicksCap !== undefined) {
+      this.testChargeTicksCap = parsed.data.chargeTicksCap;
     }
     // `timeScale` on a join sets this sector's game speed (test/recording).
     if ((this.testMode || ALLOW_DEV_OVERRIDES) && parsed.success && parsed.data.timeScale !== undefined) {

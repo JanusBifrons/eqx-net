@@ -103,4 +103,27 @@ describe('SnapshotBroadcaster — a charging AI ship carries drones[].chargingMa
     const second = nextSnap(b, snaps);
     expect((second.drones ?? []).some((d) => (d.chargingMask ?? 0) !== 0 || d.chargeStartTick !== undefined)).toBe(false);
   });
+
+  it('per-mount starts: mounts that began apart carry chargeOffsets (one per set bit); together, none', () => {
+    const drones: Drone[] = [{ id: 'rail-bb', kind: 1, entityId: 41, shipKind: 'battleship' }];
+    const charges = new MountCharges();
+    const starts = charges.startsFor('rail-bb', 6);
+    starts[0] = 200;
+    starts[2] = 140;
+    starts[5] = 170;
+    const { b, snaps } = setup(drones, charges);
+    b.interestScratch.set(SID, new Set([41]));
+    const d = (nextSnap(b, snaps).drones ?? []).find((x) => x.id === 41)!;
+    expect(d.chargingMask).toBe((1 << 0) | (1 << 2) | (1 << 5));
+    expect(d.chargeStartTick).toBe(140);
+    // Lowest bit first: mount 0 (+60), mount 2 (+0), mount 5 (+30).
+    expect(d.chargeOffsets).toEqual([60, 0, 30]);
+
+    // All on the same tick: the default, so no offsets on the wire.
+    starts[0] = 140;
+    starts[5] = 140;
+    const same = (nextSnap(b, snaps).drones ?? []).find((x) => x.id === 41)!;
+    expect(same.chargeStartTick).toBe(140);
+    expect(same.chargeOffsets).toBeUndefined();
+  });
 });

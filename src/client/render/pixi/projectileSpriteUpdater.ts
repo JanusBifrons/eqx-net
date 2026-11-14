@@ -15,7 +15,8 @@
  */
 
 import type { Container, Graphics } from 'pixi.js';
-import { fxProjectileStyle, type FxProjectiles } from '../art/fx/FxWeapons.js';
+import { fxProjectileStyle, fxShellWidth, type FxProjectiles } from '../art/fx/FxWeapons.js';
+import { NAVAL_SHELL_WEAPON_IDS } from '@core/combat/shellFlight';
 import { getWeapon, isWeaponId, type WeaponId } from '@core/combat/WeaponCatalogue';
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import {
@@ -26,9 +27,8 @@ import {
 } from './spriteBuilders.js';
 import { minScreenSizeMul, SHELL_MIN_SCREEN_PX } from '../incoming/incomingFire.js';
 
-/** FxProjectiles SHELL width per unit of shell size, and the classic dot's
- *  diameter (`buildProjectileGfx`): what the min-size floor measures. */
-const FX_SHELL_WIDTH = 4;
+/** The classic dot's diameter (`buildProjectileGfx`): what the min-size
+ *  floor measures (FxProjectiles shells: `fxShellWidth`). */
 const CLASSIC_DOT_DIAMETER = 8;
 
 /** A shell's drawn size is its gun's shell radius (FxProjectiles SHELL). */
@@ -80,13 +80,13 @@ export function updateProjectileSprites(
     ps.x = proj.x;
     ps.y = -proj.y;
     ps.alpha = proj.alpha ?? 1;
-    const naval = !proj.beam && proj.weaponId !== undefined && proj.weaponId.startsWith('naval_');
+    const naval = !proj.beam && proj.weaponId !== undefined && NAVAL_SHELL_WEAPON_IDS.has(proj.weaponId);
     const camScale = ctx.cameraScale ?? 1;
     const style = fx ? fxProjectileStyle(proj.weaponId, !!proj.beam) : null;
     ps.visible = style === null;
     if (style) {
-      let size = style === 'shell' && isWeaponId(proj.weaponId) ? shellSize(proj.weaponId) : 1;
-      if (naval) size *= minScreenSizeMul(FX_SHELL_WIDTH * size, camScale, SHELL_MIN_SCREEN_PX);
+      let size = (style === 'shell' || style === 'slug') && isWeaponId(proj.weaponId) ? shellSize(proj.weaponId) : 1;
+      if (naval) size *= minScreenSizeMul(fxShellWidth(style) * size, camScale, SHELL_MIN_SCREEN_PX);
       fx!.draw(projId, style, proj.x, proj.y, proj.vx, proj.vy, proj.alpha ?? 1, size, proj.flown);
     } else if (naval) {
       ps.scale.set(minScreenSizeMul(CLASSIC_DOT_DIAMETER, camScale, SHELL_MIN_SCREEN_PX));

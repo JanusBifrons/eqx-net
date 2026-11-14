@@ -18,6 +18,15 @@
  * Earliest-entry wins. On hit: emit damage, drop the projectile.
  * On miss + alive: commit integration. On lifetime expiry: drop.
  *
+ * PASS-THROUGH (the capital railgun, plan beam-slices §7): a shell whose
+ * weapon has a channel `killCut` is NOT dropped when its hit KILLS the
+ * target (`applyDamage` returns true). It carries on along the same step at
+ * full damage, never hitting the same target twice (a pooled per-shell list),
+ * and ends at the first target that survives a hit, or at the end of its
+ * flight. It flies through capital wreck pieces (kind 4): "the slug ignores
+ * debris" (owner, 2026-11-14). Each pass-through hit is reported to
+ * `onShellEnd` with `continues` set.
+ *
  * A shell whose weapon has a `splash` (the 80 cm siege gun, plan
  * coastal-defences) also bursts where it HITS: everything else within the
  * blast takes `shellBlastDamage`, and `onBlast` shows it. A shell that hits
@@ -68,7 +77,16 @@ export interface ProjectileRecord {
   /** The worker tick this (non-event) projectile last stepped at; unset until
    *  its first step (treated as `birthTick - 1`). See `MAX_CATCH_UP_TICKS`. */
   lastTick?: number;
+  /** Pass-through shell (its weapon's `killCut` is a channel): a kill doesn't
+   *  stop it, and it ignores wreck pieces. Set at spawn. */
+  pass?: true;
+  /** A pass-through shell's victims so far (pooled; never hit twice). */
+  hits?: string[];
 }
+
+/** Most kills one pass-through shell may make in a single step (a guard; a
+ *  step is ~100 u, so a real line never reaches it). */
+export const MAX_PASS_HITS_PER_STEP = 16;
 
 /**
  * A projectile moves by the WORKER ticks that passed since its last step, not
@@ -142,7 +160,9 @@ export interface ProjectilePipelineDeps {
   /** Damage sink — invoked on a confirmed hit. (dirX, dirY) is the shot's
    *  direction of travel (any length) on a direct hit: a capital wreck piece
    *  it lands on is knocked along it (overkill knock-back). `weaponId` is the
-   *  projectile's weapon (direct hits and splash alike). */
+   *  projectile's weapon (direct hits and splash alike). Returns true iff the
+   *  hit destroyed the target (`SectorRoom.applyDamage`); a pass-through shell
+   *  carries on only then. A sink returning nothing never passes through. */
   applyDamage: (
     targetId: string,
     shooterId: string,
@@ -152,7 +172,7 @@ export interface ProjectilePipelineDeps {
     dirX?: number,
     dirY?: number,
     weaponId?: WeaponId,
-  ) => void;
+  ) => boolean | void;
   /** Shield-fence plan — if this tick's step crosses an ACTIVE shield wall,
    *  absorb the projectile (apply the wall's grid-power damage) and return true
    *  so it's dropped. Absent ⇒ no walls (byte-identical). Alloc-free. */
@@ -172,13 +192,21 @@ export interface ProjectilePipelineDeps {
    *  and the hooks below report its life. */
   /** An event shell was spawned (after quantising). */
   onShellSpawn?: (projId: string, rec: ProjectileRecord) => void;
-  /** An event shell hit something (or a shield wall: radius 0) at `tick`. */
-  onShellEnd?: (projId: string, tick: number, x: number, y: number, blastRadius: number) => void;
+  /** An event shell hit something (or a shield wall: radius 0) at `tick`.
+   *  `continues`: a pass-through kill; the shell flies on (still live). */
+  onShellEnd?: (projId: string, tick: number, x: number, y: number, blastRadius: number, continues?: boolean) => void;
   /** An event shell reached the end of its flight: a silent miss. */
   onShellExpire?: (projId: string) => void;
 }
 
 export const DT_SEC = 1 / 60;
+
+/** Does a shell of this weapon pass through what it kills? (Its `killCut` is
+ *  a channel: the capital railgun, plan beam-slices §7.) */
+export function passesThrough(weaponId: WeaponId): boolean {
+  const cut = getWeapon(weaponId).killCut;
+  return cut !== undefined && cut.kind === 'channel';
+}
 
 const spawnQ: ShellSpawnMut = { x: 0, y: 0, vx: 0, vy: 0 };
 const poseQ: ShellPoseMut = { x: 0, y: 0 };
@@ -194,6 +222,13 @@ export class ProjectilePipeline {
    *  may have spawned / evicted entities). */
   private bpStale = true;
   private bpVersion = -1;
+  /** Pooled victim lists for pass-through shells (#14). */
+  private readonly hitListPool: string[][] = [];
+  /** The current step's best hit (`findHit`), reused per shell (#14). */
+  private bestTargetId: string | null = null;
+  private bestHitX = 0;
+  private bestHitY = 0;
+  private checks = 0;
 
   constructor(private readonly deps: ProjectilePipelineDeps) {}
 
@@ -240,15 +275,18 @@ export class ProjectilePipeline {
         damage, radius, maxTicks, weaponId,
         ox: spawnQ.x, oy: spawnQ.y,
       };
+      if (passesThrough(weaponId)) rec.pass = true;
       this.liveProjectiles.set(projId, rec);
       d.onShellSpawn?.(projId, rec);
       return;
     }
-    this.liveProjectiles.set(projId, {
+    const rec: ProjectileRecord = {
       x, y, vx, vy, ownerId,
       birthTick: d.serverTick(),
       damage, radius, maxTicks, weaponId,
-    });
+    };
+    if (passesThrough(weaponId)) rec.pass = true;
+    this.liveProjectiles.set(projId, rec);
   }
 
   /**
@@ -264,7 +302,7 @@ export class ProjectilePipeline {
     const useBp = d.broadphase !== false;
     // Swarm entities moved since last tick: rebin before the first shell.
     this.bpStale = true;
-    let checks = 0;
+    this.checks = 0;
     for (const [projId, proj] of this.liveProjectiles) {
       let stepX: number;
       let stepY: number;
@@ -288,106 +326,39 @@ export class ProjectilePipeline {
         stepY = proj.vy * DT_SEC * n;
       }
 
-      let bestEntry = Infinity;
-      let bestTargetId: string | null = null;
-      let bestHitX = proj.x;
-      let bestHitY = proj.y;
-
-      // 1. Player ships (shield-vs-hull via the injected playerSweep).
-      for (const [targetId] of d.playerToSlot) {
-        if (targetId === proj.ownerId) continue;
-        const targetShip = d.getActiveShip(targetId);
-        if (!targetShip || !targetShip.alive) continue;
-        const targetPose = d.shipPoseCache.get(targetId);
-        if (!targetPose) continue;
-        checks++;
-        const sweep = d.playerSweep(
-          targetShip, proj.x, proj.y, stepX, stepY, proj.radius,
-          targetPose.x, targetPose.y, targetPose.angle,
-        );
-        if (sweep && sweep.entry < bestEntry) {
-          bestEntry = sweep.entry;
-          bestTargetId = targetId;
-          bestHitX = sweep.hitX;
-          bestHitY = sweep.hitY;
-        }
-      }
-
-      // 2. Swarm (drones + asteroids + structures — sphere). The broadphase
-      // hands back only entities near this step, in registry order, so the
-      // first-contact winner (and its tie-break) is the full scan's.
-      if (useBp) {
-        const reg = d.swarmRegistry;
-        if (this.bpStale || (reg.version ?? this.bpVersion) !== this.bpVersion) this.rebuildBroadphase();
-        const bp = this.bp;
-        bp.query(proj.x, proj.y, stepX, stepY, proj.radius);
-        for (let k = 0; k < bp.outCount; k++) {
-          const i = bp.out[k]!;
-          const rec = bp.recs[i]!;
-          if (!this.canHitSwarm(proj, rec)) continue;
-          checks++;
-          const sweep = this.sweepSwarm(proj, rec, stepX, stepY, bp.x[i]!, bp.y[i]!, bp.angle[i]!);
-          if (sweep && sweep.entry < bestEntry) {
-            bestEntry = sweep.entry;
-            bestTargetId = rec.id;
-            bestHitX = sweep.hitX;
-            bestHitY = sweep.hitY;
-          }
-        }
-      } else {
-        for (const rec of d.swarmRegistry.all()) {
-          if (!this.canHitSwarm(proj, rec)) continue;
-          checks++;
-          const b = slotBase(rec.slot);
-          const sweep = this.sweepSwarm(proj, rec, stepX, stepY,
-            d.sabF32[b + SLOT_X_OFF]!, d.sabF32[b + SLOT_Y_OFF]!, d.sabF32[b + SLOT_ANGLE_OFF]!);
-          if (sweep && sweep.entry < bestEntry) {
-            bestEntry = sweep.entry;
-            bestTargetId = rec.id;
-            bestHitX = sweep.hitX;
-            bestHitY = sweep.hitY;
-          }
-        }
-      }
-
-      // 3. Lingering hulls (sphere; targetId = shipInstanceId).
-      for (const [shipInstanceId, slot] of d.lingeringSlots) {
-        if (shipInstanceId === proj.ownerId) continue;
-        const b = slotBase(slot);
-        const cx = d.sabF32[b + SLOT_X_OFF]!;
-        const cy = d.sabF32[b + SLOT_Y_OFF]!;
-        checks++;
-        // A parked hull is the same ship it was when flown: its own size
-        // (#18), not a fighter-sized circle (a parked capital let shells
-        // within the aim tolerance of its centre fly straight through).
-        const lship = d.lingeringShip?.(shipInstanceId);
-        const sweep = lship !== undefined
-          ? d.playerSweep(lship, proj.x, proj.y, stepX, stepY, proj.radius, cx, cy, d.sabF32[b + SLOT_ANGLE_OFF]!)
-          : projectileSweepCircle(proj.x, proj.y, stepX, stepY, proj.radius, cx, cy, GLOBAL_SHIP_TUNING.hitRadius);
-        if (sweep && sweep.entry < bestEntry) {
-          bestEntry = sweep.entry;
-          bestTargetId = shipInstanceId;
-          bestHitX = sweep.hitX;
-          bestHitY = sweep.hitY;
-        }
-      }
-
-      if (bestTargetId !== null) {
-        d.applyDamage(bestTargetId, proj.ownerId, proj.damage, bestHitX, bestHitY, proj.vx, proj.vy, proj.weaponId);
-        const blastR = this.blast(proj, bestHitX, bestHitY, bestTargetId);
-        this.liveProjectiles.delete(projId);
-        if (event) d.onShellEnd?.(projId, serverTick, bestHitX, bestHitY, blastR);
+      // The step's targets, earliest first. A pass-through shell that KILLS
+      // its target looks again along the rest of the same step (its victims
+      // excluded); anything else ends at its first hit.
+      let ended = false;
+      for (let pass = 0; pass < MAX_PASS_HITS_PER_STEP; pass++) {
+        this.findHit(proj, stepX, stepY, useBp);
+        const targetId = this.bestTargetId;
+        if (targetId === null) break;
+        const hitX = this.bestHitX;
+        const hitY = this.bestHitY;
+        const killed = d.applyDamage(targetId, proj.ownerId, proj.damage, hitX, hitY, proj.vx, proj.vy, proj.weaponId) === true;
+        const blastR = this.blast(proj, hitX, hitY, targetId);
         // A kill may evict / spawn swarm entities (scrap, loot). The registry
         // version catches that; a source without one is rebuilt to be safe.
         if (d.swarmRegistry.version === undefined) this.bpStale = true;
-        continue;
+        if (proj.pass === true && killed) {
+          // Pass-through: full damage on, this victim never hit again.
+          (proj.hits ??= this.hitListPool.pop() ?? []).push(targetId);
+          if (event) d.onShellEnd?.(projId, serverTick, hitX, hitY, blastR, true);
+          continue;
+        }
+        this.drop(projId, proj);
+        if (event) d.onShellEnd?.(projId, serverTick, hitX, hitY, blastR);
+        ended = true;
+        break;
       }
+      if (ended) continue;
 
       // Shield-fence plan: no target this tick — an ACTIVE wall the step crosses
       // absorbs the bolt (target ordering is handled across ticks: a closer
       // target is hit on an earlier step before the projectile reaches the wall).
       if (d.wallBlocksProjectile?.(proj.x, proj.y, stepX, stepY, proj.damage)) {
-        this.liveProjectiles.delete(projId);
+        this.drop(projId, proj);
         // The wall stopped it somewhere on this step; the shell's pose at the
         // step start is the nearest known point (a hit with no blast).
         if (event) d.onShellEnd?.(projId, serverTick, proj.x, proj.y, 0);
@@ -400,11 +371,130 @@ export class ProjectilePipeline {
       if (serverTick - proj.birthTick >= proj.maxTicks) {
         // A miss just ends: shells explode only on what they hit (no burst,
         // no splash at the end of the flight).
-        this.liveProjectiles.delete(projId);
+        this.drop(projId, proj);
         if (event) d.onShellExpire?.(projId);
       }
     }
-    this.narrowChecks = checks;
+    this.narrowChecks = this.checks;
+  }
+
+  /** Remove a projectile, returning a pass-through victim list to the pool. */
+  private drop(projId: string, proj: ProjectileRecord): void {
+    this.liveProjectiles.delete(projId);
+    const hits = proj.hits;
+    if (hits !== undefined) {
+      hits.length = 0;
+      this.hitListPool.push(hits);
+      proj.hits = undefined;
+    }
+  }
+
+  /** Has pass-through shell `proj` already hit `id`? */
+  private static passed(proj: ProjectileRecord, id: string): boolean {
+    const hits = proj.hits;
+    if (hits === undefined) return false;
+    for (let i = 0; i < hits.length; i++) if (hits[i] === id) return true;
+    return false;
+  }
+
+  /**
+   * The earliest target `proj`'s step (stepX, stepY) meets, into
+   * `bestTargetId` / `bestHitX` / `bestHitY` (null = none), in three
+   * passes: player ships, swarm entities, lingering hulls. Counts narrow
+   * checks into `checks`. Alloc-free.
+   */
+  private findHit(proj: ProjectileRecord, stepX: number, stepY: number, useBp: boolean): void {
+    const d = this.deps;
+    let bestEntry = Infinity;
+    let bestTargetId: string | null = null;
+    let bestHitX = proj.x;
+    let bestHitY = proj.y;
+    let checks = this.checks;
+
+    // 1. Player ships (shield-vs-hull via the injected playerSweep).
+    for (const [targetId] of d.playerToSlot) {
+      if (targetId === proj.ownerId) continue;
+      if (ProjectilePipeline.passed(proj, targetId)) continue;
+      const targetShip = d.getActiveShip(targetId);
+      if (!targetShip || !targetShip.alive) continue;
+      const targetPose = d.shipPoseCache.get(targetId);
+      if (!targetPose) continue;
+      checks++;
+      const sweep = d.playerSweep(
+        targetShip, proj.x, proj.y, stepX, stepY, proj.radius,
+        targetPose.x, targetPose.y, targetPose.angle,
+      );
+      if (sweep && sweep.entry < bestEntry) {
+        bestEntry = sweep.entry;
+        bestTargetId = targetId;
+        bestHitX = sweep.hitX;
+        bestHitY = sweep.hitY;
+      }
+    }
+
+    // 2. Swarm (drones + asteroids + structures — sphere). The broadphase
+    // hands back only entities near this step, in registry order, so the
+    // first-contact winner (and its tie-break) is the full scan's.
+    if (useBp) {
+      const reg = d.swarmRegistry;
+      if (this.bpStale || (reg.version ?? this.bpVersion) !== this.bpVersion) this.rebuildBroadphase();
+      const bp = this.bp;
+      bp.query(proj.x, proj.y, stepX, stepY, proj.radius);
+      for (let k = 0; k < bp.outCount; k++) {
+        const i = bp.out[k]!;
+        const rec = bp.recs[i]!;
+        if (!this.canHitSwarm(proj, rec)) continue;
+        checks++;
+        const sweep = this.sweepSwarm(proj, rec, stepX, stepY, bp.x[i]!, bp.y[i]!, bp.angle[i]!);
+        if (sweep && sweep.entry < bestEntry) {
+          bestEntry = sweep.entry;
+          bestTargetId = rec.id;
+          bestHitX = sweep.hitX;
+          bestHitY = sweep.hitY;
+        }
+      }
+    } else {
+      for (const rec of d.swarmRegistry.all()) {
+        if (!this.canHitSwarm(proj, rec)) continue;
+        checks++;
+        const b = slotBase(rec.slot);
+        const sweep = this.sweepSwarm(proj, rec, stepX, stepY,
+          d.sabF32[b + SLOT_X_OFF]!, d.sabF32[b + SLOT_Y_OFF]!, d.sabF32[b + SLOT_ANGLE_OFF]!);
+        if (sweep && sweep.entry < bestEntry) {
+          bestEntry = sweep.entry;
+          bestTargetId = rec.id;
+          bestHitX = sweep.hitX;
+          bestHitY = sweep.hitY;
+        }
+      }
+    }
+
+    // 3. Lingering hulls (sphere; targetId = shipInstanceId).
+    for (const [shipInstanceId, slot] of d.lingeringSlots) {
+      if (shipInstanceId === proj.ownerId) continue;
+      if (ProjectilePipeline.passed(proj, shipInstanceId)) continue;
+      const b = slotBase(slot);
+      const cx = d.sabF32[b + SLOT_X_OFF]!;
+      const cy = d.sabF32[b + SLOT_Y_OFF]!;
+      checks++;
+      // A parked hull is the same ship it was when flown: its own size
+      // (#18), not a fighter-sized circle (a parked capital let shells
+      // within the aim tolerance of its centre fly straight through).
+      const lship = d.lingeringShip?.(shipInstanceId);
+      const sweep = lship !== undefined
+        ? d.playerSweep(lship, proj.x, proj.y, stepX, stepY, proj.radius, cx, cy, d.sabF32[b + SLOT_ANGLE_OFF]!)
+        : projectileSweepCircle(proj.x, proj.y, stepX, stepY, proj.radius, cx, cy, GLOBAL_SHIP_TUNING.hitRadius);
+      if (sweep && sweep.entry < bestEntry) {
+        bestEntry = sweep.entry;
+        bestTargetId = shipInstanceId;
+        bestHitX = sweep.hitX;
+        bestHitY = sweep.hitY;
+      }
+    }
+    this.bestTargetId = bestTargetId;
+    this.bestHitX = bestHitX;
+    this.bestHitY = bestHitY;
+    this.checks = checks;
   }
 
   /** The swarm skip rule (never the shooter itself), shared by both scans. */
@@ -414,6 +504,8 @@ export class ProjectilePipeline {
     // the lingering-hull owner skip below. Sibling structures in the line of
     // fire are still hit (realistic — place defence turrets at the perimeter).
     if (rec.id === proj.ownerId) return false;
+    // A pass-through slug ignores debris (wreck pieces) and its own victims.
+    if (proj.pass === true && (rec.kind === 4 || ProjectilePipeline.passed(proj, rec.id))) return false;
     // Friendly fire (owner decision 2026-11-10): no allegiance filter. A
     // bolt hits the first thing in its path, its own side included.
     return true;

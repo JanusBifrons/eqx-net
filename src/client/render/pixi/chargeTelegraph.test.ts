@@ -88,4 +88,31 @@ describe('mount-glow telegraph', () => {
     updateChargeTelegraph(t, 1 << s, 0, 0, 0, angles);
     expect(t.glows[s]!.rotation).toBeCloseTo(-(mounts[s]!.baseAngle + 0.5));
   });
+
+describe('per-mount charge starts (railgun battleship)', () => {
+  it('two railgun turrets that began charging apart glow apart (chargeOffsets)', () => {
+    const mounts = getShipKind('battleship').mounts;
+    const xl = getWeapon('naval_xl') as Mutable;
+    const saved = { chargeTicks: xl.chargeTicks, chargeTelegraph: xl.chargeTelegraph };
+    xl.chargeTicks = 360; xl.chargeTelegraph = 'mount-glow';
+    try {
+      const a = mounts.findIndex((m) => m.weaponId === 'naval_xl');
+      const bIdx = mounts.findIndex((m, i) => m.weaponId === 'naval_xl' && i > a);
+      expect(bIdx).toBeGreaterThan(a);
+      const t = buildChargeTelegraph('battleship', 200)!;
+      const mask = (1 << a) | (1 << bIdx);
+      // Mount a began at 1000, mount b 180 ticks later; now = 1180.
+      updateChargeTelegraph(t, mask, 1000, 1180, 50_000, undefined, [0, 180]);
+      const ga = t.glows[a]!;
+      const gb = t.glows[bIdx]!;
+      expect(ga.alpha).toBeCloseTo(0.15 + 0.85 * 0.5, 2); // half charged
+      expect(gb.alpha).toBeCloseTo(0.15, 2); // just started
+      // Without offsets both would ramp from the earliest start (in step).
+      updateChargeTelegraph(t, mask, 1000, 1180, 50_000, undefined);
+      expect(gb.alpha).toBeCloseTo(ga.alpha, 5);
+    } finally {
+      xl.chargeTicks = saved.chargeTicks; xl.chargeTelegraph = saved.chargeTelegraph;
+    }
+  });
+});
 });
