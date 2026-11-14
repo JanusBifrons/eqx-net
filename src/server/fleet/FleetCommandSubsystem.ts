@@ -288,6 +288,8 @@ export class FleetCommandSubsystem {
 
   get isDisabled(): boolean { return this.disabled; }
   get size(): number { return this.entries.length; }
+  /** Running total of brain re-plans (perf-scene work counter, #14: a number). */
+  replansTotal = 0;
   isAttached(shipId: string): boolean { return this.byId.has(shipId); }
 
   /** Read-only peek at a ship's brain (tests / diagnostics). */
@@ -808,6 +810,7 @@ export class FleetCommandSubsystem {
           e.brain.setLeaderTarget(lead !== undefined ? lead.brain.targetId : null);
         }
         this.tickingId = e.id;
+        this.replansTotal++;
         const out = e.brain.tick(this.pose, this.view);
         c.thrust = out.thrust;
         c.reverse = out.reverse;

@@ -29,6 +29,15 @@ describe('SceneWorkCounters', () => {
     expect(v.workerElu).toBe(0.25);
   });
 
+  it('wingmen: brains summed per tick, running totals counted from the first counted tick', () => {
+    const w = new SceneWorkCounters();
+    w.wingmen(40, 1000, 1000, 1000); // inactive: ignored
+    w.active = true;
+    for (let i = 1; i <= 4; i++) { w.endTick(1, 1); w.wingmen(40, 100 + 7 * i, 200 + 80 * i, 300 + i); }
+    const v = w.view(null);
+    expect(v).toMatchObject({ wingmenPerTick: 40, wingmanReplansPerTick: 5.25, wingmanHostileQueriesPerTick: 60, wingmanHostileScansPerTick: 0.75 });
+  });
+
   it('an empty window reads zeros, never NaN', () => {
     const v = new SceneWorkCounters().view(null);
     expect(v.ticks).toBe(0);

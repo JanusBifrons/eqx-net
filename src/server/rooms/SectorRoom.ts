@@ -9939,6 +9939,10 @@ export class SectorRoom extends Room<SectorState> {
   private readonly _ownerHostiles = new Map<string, { tick: number; n: number; ids: string[]; xs: Float64Array; ys: Float64Array }>();
   private _ownerHostileFill: { tick: number; n: number; ids: string[]; xs: Float64Array; ys: Float64Array } | null = null;
   private _ownerHostileOwner = '';
+  /** Perf-scene work counters (running totals, numbers only #14): owner-hostile
+   *  lookups and the swarm scans they triggered (one per owner per tick). */
+  private ownerHostileQueriesTotal = 0;
+  private ownerHostileScansTotal = 0;
   private readonly _ownerHostilePose: AiEntityPoseOut = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
   /** Bound visitor for the owner-hostile scan (no closure per scan, #14). */
   private readonly _visitOwnerHostile = (rec: SwarmEntityRecord): void => {
@@ -9976,7 +9980,9 @@ export class SectorRoom extends Room<SectorState> {
       c = { tick: -1, n: 0, ids: [], xs: new Float64Array(16), ys: new Float64Array(16) }; // once per owner
       this._ownerHostiles.set(owner, c);
     }
+    this.ownerHostileQueriesTotal++;
     if (c.tick !== this.serverTick) {
+      this.ownerHostileScansTotal++;
       c.tick = this.serverTick;
       c.n = 0;
       this._ownerHostileFill = c;
@@ -11420,6 +11426,27 @@ export class SectorRoom extends Room<SectorState> {
           this.broadcast('bot_aggro', { type: 'bot_aggro', botEntityId: `swarm-${rec.entityId}`, targetPlayerId: playerId, tick });
         }
       },
+      // RTS fleet perf: a parked hull owned by the first pilot, built through
+      // the same reconstruction path a restart uses (roster row + lingering
+      // slot + wingman brain), then given its mode / stance through the
+      // owner-checked fleet API. Under EQX_DISABLE_WINGMEN it just sits parked.
+      ownedHull: (kind, x, y, opts) => {
+        let owner: string | null = null;
+        for (const pid of this.playerToSlot.keys()) { owner = pid; break; }
+        if (owner === null) return false;
+        const health = opts.health ?? getShipKind(kind).maxHealth;
+        let shipId: string;
+        try {
+          shipId = getPlayerShipStore().create({ playerId: owner, userId: null, kind, sectorKey: this.sectorKey ?? 'perf', x, y, health }).shipId;
+        } catch { return false; }
+        this.restoreLingeringHullsFromSnapshot([{
+          shipInstanceId: shipId, playerId: owner, kind, x, y, vx: 0, vy: 0, angle: 0, angvel: 0, health, shieldDown: false,
+        }]);
+        if (!this.lingeringSlots.has(shipId)) return false;
+        this.fleet.setStance(owner, [shipId], opts.stance);
+        this.fleet.setMode(owner, [shipId], opts.mode);
+        return true;
+      },
     });
   }
 
@@ -12240,6 +12267,7 @@ export class SectorRoom extends Room<SectorState> {
         this.sceneWork.endTick(this.sabU32[COUNT_IDX] ?? 0, this.aiController.size());
         if (this.lineOfFireGate) this.sceneWork.lineOfFire(this.lineOfFireGate.checks, this.lineOfFireGate.narrow);
         this.sceneWork.aiNeighbours(this.aiNeighbourGrid.queriesTotal);
+        this.sceneWork.wingmen(this.fleet.size, this.fleet.replansTotal, this.ownerHostileQueriesTotal, this.ownerHostileScansTotal);
       }
       this.sceneWork.active = running;
     }

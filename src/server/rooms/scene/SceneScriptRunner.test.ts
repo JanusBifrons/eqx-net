@@ -73,6 +73,26 @@ describe('SceneScriptRunner', () => {
     expect(SceneScriptSchema.safeParse([{ atMs: 0, action: 'end', extra: 1 }]).success).toBe(false);
   });
 
+  it('fleet: hands each owned hull to the hook with its mode, stance and health; no hook ⇒ refused', () => {
+    const fleet = SceneScriptSchema.parse([
+      { atMs: 0, action: 'fleet', tag: 'wing', kind: 'fighter', count: 3, x: 100, y: 0, spread: 200, mode: 'hunt', stance: 'aggressive', health: 5000 },
+    ]);
+    const got: Array<{ x: number; mode: string; stance: string; health: number | null }> = [];
+    const h = harness();
+    const r = new SceneScriptRunner(fleet, { ...h.hooks, ownedHull: (_k, x, _y, o) => { got.push({ x, mode: o.mode, stance: o.stance, health: o.health }); return got.length !== 2; } });
+    r.start(0); r.tick(0);
+    expect(got).toHaveLength(3);
+    expect(got[0]).toMatchObject({ mode: 'hunt', stance: 'aggressive', health: 5000 });
+    for (const g of got) expect(Math.abs(g.x - 100)).toBeLessThanOrEqual(200);
+    expect(r.getStatus()).toMatchObject({ spawned: 2, refused: 1 });
+    expect(h.spawned).toHaveLength(0);
+
+    const bare = new SceneScriptRunner(fleet, harness().hooks);
+    bare.start(0); bare.tick(0);
+    expect(bare.getStatus()).toMatchObject({ spawned: 0, refused: 3 });
+    expect(SceneScriptSchema.safeParse([{ atMs: 0, action: 'fleet', tag: 'w', kind: 'fighter', count: 1, x: 0, y: 0, mode: 'escort' }]).success).toBe(false);
+  });
+
   it('scenePoint spreads a single ship to the centre', () => {
     const p = { x: 9, y: 9 };
     scenePoint(0, 1, 500, p);

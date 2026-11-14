@@ -14,6 +14,9 @@
  *    teleport-raid case). `hostile` marks them hostile to every pilot.
  *    Mixed allegiances (drones vs robots) fight each other on sight, so a
  *    fleet fight needs no extra order.
+ *  - `fleet`: `count` PARKED hulls owned by the first pilot (roster rows +
+ *    lingering hulls), each flown by its wingman brain in `mode` / `stance`
+ *    (the RTS fleet scene). Refused without a pilot.
  *  - `end`: the scene is over (the measurement window closes).
  */
 import type { ShipKindId } from '../../../shared-types/shipKinds.js';
@@ -25,6 +28,16 @@ export interface SceneHooks {
   spawn(id: string, kind: ShipKindId, x: number, y: number, warpIn: boolean): boolean;
   /** Mark a ship hostile to every pilot present. */
   markHostileToAll(id: string): void;
+  /** `fleet` step: one PARKED hull owned by the first pilot, AI-flown by its
+   *  wingman brain. False = refused (no pilot, roster full, no slot). */
+  ownedHull?(kind: ShipKindId, x: number, y: number, opts: SceneFleetOpts): boolean;
+}
+
+export interface SceneFleetOpts {
+  mode: 'defend' | 'hunt';
+  stance: 'aggressive' | 'defensive' | 'holdFire';
+  /** Hit points (null = the kind's max). */
+  health: number | null;
 }
 
 export interface SceneStatus {
@@ -85,6 +98,15 @@ export class SceneScriptRunner {
   private play(step: SceneStep): void {
     if (step.action === 'end') { this.status.ended = true; return; }
     const spread = step.spread ?? 0;
+    if (step.action === 'fleet') {
+      const opts: SceneFleetOpts = { mode: step.mode ?? 'defend', stance: step.stance ?? 'defensive', health: step.health ?? null };
+      for (let i = 0; i < step.count; i++) {
+        scenePoint(i, step.count, spread, this.pt);
+        const ok = this.hooks.ownedHull?.(step.kind as ShipKindId, step.x + this.pt.x, step.y + this.pt.y, opts) ?? false;
+        if (ok) this.status.spawned++; else this.status.refused++;
+      }
+      return;
+    }
     for (let i = 0; i < step.count; i++) {
       scenePoint(i, step.count, spread, this.pt);
       const id = `scene-${step.tag}-${i}`;

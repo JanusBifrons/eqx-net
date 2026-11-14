@@ -61,6 +61,13 @@ export interface SceneWorkView {
   /** Print-only (AI steering 2a, not yet calibrated): `AiNeighbourGrid`
    *  queries per tick. 0 until a behaviour queries the grid. */
   aiNeighbourQueriesPerTick: number;
+  /** Print-only (RTS fleet perf): AI-flown hulls with a brain, brain re-plans,
+   *  owner-hostile lookups and the swarm scans they ran (one per owner per
+   *  tick, cached), per tick. */
+  wingmenPerTick: number;
+  wingmanReplansPerTick: number;
+  wingmanHostileQueriesPerTick: number;
+  wingmanHostileScansPerTick: number;
 }
 
 type ThreadCpu = () => { user: number; system: number };
@@ -99,6 +106,26 @@ export class SceneWorkCounters {
     if (!this.active) return;
     if (this.nbBase < 0) this.nbBase = queriesTotal;
     this.nbQueries = queriesTotal - this.nbBase;
+  }
+
+  /** RTS wingmen: attached brains summed per tick, plus running totals at the
+   *  first counted tick and the latest (re-plans, hostile lookups, scans). */
+  private wingmenSum = 0;
+  private wmReplansBase = -1;
+  private wmQueriesBase = 0;
+  private wmScansBase = 0;
+  private wmReplans = 0;
+  private wmQueries = 0;
+  private wmScans = 0;
+
+  /** Called each counted tick (after `endTick`) with the fleet's size and running totals (#14). */
+  wingmen(attached: number, replansTotal: number, queriesTotal: number, scansTotal: number): void {
+    if (!this.active) return;
+    this.wingmenSum += attached;
+    if (this.wmReplansBase < 0) { this.wmReplansBase = replansTotal; this.wmQueriesBase = queriesTotal; this.wmScansBase = scansTotal; }
+    this.wmReplans = replansTotal - this.wmReplansBase;
+    this.wmQueries = queriesTotal - this.wmQueriesBase;
+    this.wmScans = scansTotal - this.wmScansBase;
   }
 
   // CPU batches (print-only).
@@ -159,6 +186,10 @@ export class SceneWorkCounters {
       lineOfFireChecksPerTick: r(this.lofChecks / t),
       lineOfFireNarrowPerTick: r(this.lofNarrow / t),
       aiNeighbourQueriesPerTick: r(this.nbQueries / t),
+      wingmenPerTick: r(this.wingmenSum / t),
+      wingmanReplansPerTick: r(this.wmReplans / t),
+      wingmanHostileQueriesPerTick: r(this.wmQueries / t),
+      wingmanHostileScansPerTick: r(this.wmScans / t),
     };
   }
 }
