@@ -72,3 +72,12 @@ Measured on the same machine in the same session (2026-11-08):
 - **Server:** `EQX_SOLAR_SECTORS=0`.
 - **Page:** `?solar=0`. The renderer worker gets `;solar=0` in its name so it agrees with the page.
 - **A single test room:** the room option `solarSectors: false`. This sets the room's own rules (warp drop points, the placement clamp); process-wide placement (arrivals, convoys) follows the env switch.
+
+## Server implementation notes
+
+> Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.
+
+### Solar-system sectors are on by default (wrap-up W1c, 2026-11-08)
+
+- `SECTOR_PLAYABLE_HALF_EXTENT` is ±200,000 u unless `EQX_SOLAR_SECTORS=0`. Arrivals, convoys, elites and events place themselves by POCKET (`sectorSites`, `pocketCentre`, the gate-pocket rims), never by "the edge of the playable area".
+- A sector with no pockets (a test room whose key isn't a galaxy sector) falls back to the classic edge, `HOME_POCKET_HALF_EXTENT`. Never fall back to `SECTOR_PLAYABLE_HALF_EXTENT`: in solar mode that is 190 km away (test-room trade haulers never docked).
