@@ -56,7 +56,7 @@ export const COUNT_BUDGETS: Record<string, CountBudget> = {
     work: { bodiesPerTick: 197, aiAgentsPerTick: 28, swarmRecordsPerTick: 34, swarmBytesPerTick: 1139, entitiesPerSnapshot: 1 },
   },
   // 2026-11-09, laptop, two runs: 17.1 / 16.9 KB/s (swarm 29: the fleet + two robot waves).
-  'capital-fleet': { rxKBps: 22, minSwarm: 20, measured: '16.9–17.1 KB/s, 2026-11-09' },
+  'capital-fleet': { rxKBps: 28, minSwarm: 20, measured: '16.9–17.1 KB/s, 2026-11-09. Re-measured laptop 2026-11-14: feat/ai-fight-feel 6 runs 21.4–22.2 KB/s (swarm 29 all runs); per-channel, origin/main 3 runs = branch 3 runs (snapshot 13.06–13.08, swarm pose 6.99–7.62, collision events 1.03–1.27 KB/s) and main before #566 (34c2b7e8) 2 runs the same (snapshot 13.06, swarm 7.37–8.26), so the rise is on main, older than arcade handling, landed after 2026-11-09. Same ship count; battleship at rest (v=0, no creep); destroyers/gunships really move (8–35 u/s), no 2026-11-09 channel split exists to pin the grown channel' },
   // 2026-11-09, laptop, two runs: 11.6 / 11.6 KB/s (one battleship firing on the pilot).
   'capital-duel': { rxKBps: 15, minSwarm: 1, measured: '11.6 KB/s, 2026-11-09' },
   // 2026-11-08: the 80-ship sustained fight seen from the zoom-out floor (asteroids on).
