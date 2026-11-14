@@ -61,6 +61,7 @@ import { SwarmEntityRegistry, type SwarmEntityRecord } from '../net/SwarmEntityR
 import { LoadShedder } from '../orchestration/LoadShedder.js';
 import { SpatialGrid } from '../interest/SpatialGrid.js';
 import { BinarySwarmBroadcast } from '../net/BinarySwarmBroadcast.js';
+import { CollisionBroadcastGate } from '../net/CollisionBroadcastGate.js';
 import {
   createIdleTracker,
   type LastInputCache,
@@ -846,6 +847,9 @@ export class SectorRoom extends Room<SectorState> {
    *  postMessage facade). Extracted to PhysicsWorkerProxy.ts (commit 20
    *  of v3 refactor plan). */
   private physicsWorkerProxy!: PhysicsWorkerProxy;
+  /** Which contacts go out as `collision_resolved` (lasting contacts are
+   *  re-sent only every 150 ms; see CollisionBroadcastGate). */
+  private readonly collisionGate = new CollisionBroadcastGate();
   /** /dev/memory: this room's physics worker heap. */
   workerHeapStats(gc = false): Promise<{ usedBytes: number; totalBytes: number; workerIndex: number } | null> {
     return this.physicsWorkerProxy ? this.physicsWorkerProxy.heapStats(gc) : Promise.resolve(null);
@@ -8300,6 +8304,7 @@ export class SectorRoom extends Room<SectorState> {
       },
       onContactBatch: (tick, contacts) => {
         if (this.sceneWork.active) this.sceneWork.contacts += contacts.length;
+        this.collisionGate.sweep(tick);
         // Stage 2 of the network-feel roadmap: each contact above the
         // worker's CONTACT_FORCE_FLOOR is broadcast to all clients in
         // the room as `collision_resolved`. AOI filter is deferred —
@@ -8335,27 +8340,33 @@ export class SectorRoom extends Room<SectorState> {
             impulse: p.force,
             tick,
           });
-          // eA/eB name each side as the client knows it, so it can draw a
-          // shield contact on a raised shield (user report 2026-11-07).
-          const msg: CollisionResolvedMessage = {
-            type: 'collision_resolved',
-            aId: p.aId,
-            bId: p.bId,
-            vA: p.vA,
-            vB: p.vB,
-            impulse: p.force,
-            tick,
-          };
-          const eA = this.clientEntityCode(p.aId), eB = this.clientEntityCode(p.bId);
-          if (eA !== undefined) msg.eA = eA;
-          if (eB !== undefined) msg.eB = eB;
-          this.broadcast('collision_resolved', msg);
-          serverLogEvent('collision_resolved', {
-            aId: p.aId,
-            bId: p.bId,
-            impulse: parseFloat(p.force.toFixed(3)),
-            tick,
-          });
+          // Lasting contacts (ships pressed together) arrive every tick;
+          // the client keeps at most a few a second, so only a pair's first
+          // contact, an impact, or one every 150 ms goes out (the ram
+          // damage below still sees every tick). See CollisionBroadcastGate.
+          if (this.collisionGate.shouldSend(p.aId, p.bId, p.normalSpeed, tick)) {
+            // eA/eB name each side as the client knows it, so it can draw a
+            // shield contact on a raised shield (user report 2026-11-07).
+            const msg: CollisionResolvedMessage = {
+              type: 'collision_resolved',
+              aId: p.aId,
+              bId: p.bId,
+              vA: p.vA,
+              vB: p.vB,
+              impulse: p.force,
+              tick,
+            };
+            const eA = this.clientEntityCode(p.aId), eB = this.clientEntityCode(p.bId);
+            if (eA !== undefined) msg.eA = eA;
+            if (eB !== undefined) msg.eB = eB;
+            this.broadcast('collision_resolved', msg);
+            serverLogEvent('collision_resolved', {
+              aId: p.aId,
+              bId: p.bId,
+              impulse: parseFloat(p.force.toFixed(3)),
+              tick,
+            });
+          }
           // Ramming damage (impact-based model, 2026-11-13; see Ramming.ts).
           // Each side takes its OWN damage (normal-impact energy shared by
           // weight: equal ships equally, the lighter more); the OTHER id is the "shooter" (kill-feed + hostility
