@@ -77,7 +77,7 @@ import {
   type MoraleOutcome,
   type MoraleWeights,
 } from './tactics/morale.js';
-import { decisionDue, LOD_PILOT_RANGE_MUL, ManoeuvrePicker } from './tactics/utility.js';
+import { decisionDue, isTailed, LOD_PILOT_RANGE_MUL, ManoeuvrePicker } from './tactics/utility.js';
 import { fnv1a32 } from '../random/rng.js';
 import {
   addDangerFromPoint,
@@ -160,11 +160,14 @@ const COMBAT_PILOT_PARAMS: Readonly<PilotParams> = {
 const RUN_PILOT_PARAMS: Readonly<PilotParams> = { ...COMBAT_PILOT_PARAMS, boostConeCos: 0 };
 /** `ManoeuvreGoal.throttleNow`: running, with no throttle hold. */
 const RUN_NOW_PILOT_PARAMS: Readonly<PilotParams> = { ...RUN_PILOT_PARAMS, throttleHoldTicks: 0 };
-/** Combat boost keeps this share of the energy pool in reserve; only a Break
- *  (getting out from under fire) or a run (`spendReserve`) may burn below
- *  it. 0.10 (owner 2026-11-14, was 0.25): NPCs use the afterburner more in a
- *  fight, with the same pool as a player (no AI-only regen). */
-const BOOST_RESERVE_FRAC = 0.1;
+/** The AI pilot's choice of when to press boost, like a player holding some
+ *  back: in combat it keeps this share of the ship's pool in hand, and only a
+ *  Break (getting out from under fire) or a run (`spendReserve`) burns below
+ *  it. Not a ship or energy rule. 0.25 (2026-11-14): at 0.10 the pilot often
+ *  couldn't afford a full Break; with every ship's pool doubled
+ *  (`ENERGY_POOL_MUL`) a quarter of the pool is a Break's worth and still
+ *  leaves the pilot more boost to open a fight with than before. */
+const BOOST_RESERVE_FRAC = 0.25;
 /** Forget a hostile player after this many ticks of no fresh damage from
  *  them. 1800 ticks @ 60 Hz = 30 s. Mirrors the player's own intuition that
  *  if they've been clean for half a minute, the drone has lost interest. */
@@ -240,7 +243,7 @@ const FACE_MOVE_MIN_SPEED = 0.25;
 /**
  * Hull avoidance (ramming is a real weapon since #558, so an accidental ram
  * hurts both ships). Any ship whose closest approach on the current
- * velocities passes inside (both radii + `AVOID_MARGIN_RADII` × mine), sooner
+ * velocities passes inside (both shield bubbles + `AVOID_MARGIN_RADII` × my radius), sooner
  * than the time I need to turn the nose sideways at my turn rate and slide
  * clear with my thrust (× `AVOID_SAFETY`, + `AVOID_LATENCY_S`), makes me
  * dodge: nose to the side away from it, thrust and boost. All from the
@@ -479,6 +482,9 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   private readonly _nbIdx = new Int32Array(COMBAT_NEIGHBOUR_K);
   /** `shipTuning(kind).combatSeparation`, cached. */
   private readonly combatSeparation: number;
+  /** `shipTuning(kind).shieldPad`, cached: ships collide as their shield
+   *  bubbles (hull radius + pad), so hull avoidance clears the bubbles. */
+  private readonly shieldPad: number;
   /** Pilot hulls count as same-side neighbours only for a side friendly to players. */
   private readonly friendlyToPilots: boolean;
   /** Facing latch: true while the nose follows the move heading, not the lead. */
@@ -494,6 +500,10 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   private _avLastTick = 0;
   /** Ticks flown with the afterburner lit (test-visible). */
   private _boostTicks = 0;
+  /** Decisions taken while tailed (`isTailed`), and Breaks begun (test-visible). */
+  private _tailedDecisions = 0;
+  private _breaksBegun = 0;
+  private _breakRefused = 0;
   /** Test-visible: did the last combat tick resolve through context steering? */
   private _ctxUsed = false;
 
@@ -561,6 +571,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     this.onSightPlayers = isOnSightHostile(this.allegiance, PLAYERS_SIDE);
     this.friendlyToPilots = isFriendly(this.allegiance, PLAYERS_SIDE);
     this.combatSeparation = shipTuning(this.kind).combatSeparation;
+    this.shieldPad = shipTuning(this.kind).shieldPad;
     this.role = roleProfile(this.kind.aiRole);
     // The body's mass is SwarmSpawner's: the kind's own, else NPC_MASS_FALLBACK.
     this.handling = makePilotHandling(this.kind, massOf(this.kind, NPC_MASS_FALLBACK));
@@ -705,6 +716,13 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   getManoeuvre(): ManoeuvreId { return this._picker.current; }
   /** Test-visible: re-scores made so far (the `aiDecisionsPerTick` source). */
   getDecisionCount(): number { return this._picker.decisions; }
+  /** Test-visible: decisions taken while tailed (the Break trigger held). */
+  getTailedDecisionCount(): number { return this._tailedDecisions; }
+  /** Test-visible: Breaks begun so far. */
+  getBreakCount(): number { return this._breaksBegun; }
+  /** Test-visible: decisions taken while tailed with a Break on offer that
+   *  picked something else (a role whose Break weight loses to its fight). */
+  getBreakRefusedCount(): number { return this._breakRefused; }
   /** Test-visible: the last decision's scores, indexed by `MANOEUVRE_*`. */
   lastManoeuvreScores(): Readonly<Float32Array> { return this._picker.scores; }
 
@@ -1358,7 +1376,14 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       const mx = px + wx * t;
       const my = py + wy * t;
       const miss = Math.hypot(mx, my);
-      const clear = r + nb.radiusAt(i) + AVOID_MARGIN_RADII * r;
+      // Shields up, ships collide as their bubbles (hull radius + shield
+      // pad, cede4a25), so clear both bubbles: the neighbour's pad is taken
+      // as mine (the grid carries only its hull radius; a pad follows the
+      // size class). On hull radii alone a passing pair aimed ~60 u apart at
+      // the 2x default, inside the ~80 u the bubbles touch at: two fighters
+      // boosting through a head-on pass grazed in 3 of 8 duels (dogfight
+      // x8, 2026-11-14, once the doubled pool kept both boosting 6 s in).
+      const clear = r + nb.radiusAt(i) + 2 * this.shieldPad + AVOID_MARGIN_RADII * r;
       if (miss >= clear) continue;
       // Away from where it passes (−m, square to w), as a side of w: +1 its
       // left (−wy, wx), −1 its right; dead head-on, the right. A latched
@@ -1454,6 +1479,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       this.countSides(self, nb);
       this.scanSensors(self, nb);
       if (view.stats !== undefined) view.stats.decisions++;
+      if (isTailed(c)) this._tailedDecisions++;
       // Morale: a trigger (hull 50 / 25 %, burst, capital lost, outnumbered)
       // rolls the die; FallBack / Flee then run locked. A fleeing ship keeps
       // fleeing.
@@ -1486,6 +1512,8 @@ export class HostileDroneBehaviour implements IAiBehaviour {
         return;
       }
       const want = p.decide(c, this.role, done);
+      // Tailed with a Break on offer (not cooling down) yet another pick won.
+      if (want !== MANOEUVRE_BREAK && p.scores[MANOEUVRE_BREAK]! > 0 && isTailed(c)) this._breakRefused++;
       if (done) {
         this.switchManoeuvre(want, tick);
       } else if (want !== p.current) {
@@ -1501,6 +1529,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   }
 
   private switchManoeuvre(id: ManoeuvreId, tick: number): void {
+    if (id === MANOEUVRE_BREAK && this._picker.current !== MANOEUVRE_BREAK) this._breaksBegun++;
     this._picker.switchTo(id, tick);
     this._manoeuvres[id]!.begin(this._tac);
     this._avSide = 0;

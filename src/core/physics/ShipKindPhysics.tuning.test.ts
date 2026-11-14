@@ -83,8 +83,9 @@ describe.runIf(AT_AUTHORED_SHIP_SCALE)('ship-kind tuning lock (2026-05-18 slow-d
     // T3: the gunship's two mounts moved to the nose / tail (positions only).
     // 23 → 24 on Fire Control (#367): real weapon groups per kind (gunship fore/aft,
     // frigate missiles + PD, crossguard port/stbd, capitals main/sec/AA), on top
-    // of the capital hull-style bump (#366) that took main to 23.
-    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(24);
+    // of the capital hull-style bump (#366) that took main to 23. 24 → 25:
+    // energy pool ×2 for every kind (ENERGY_POOL_MUL, owner 2026-11-14).
+    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(25);
   });
 
   for (const kindKey of Object.keys(EXPECTED) as (keyof typeof EXPECTED)[]) {

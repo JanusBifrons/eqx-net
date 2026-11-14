@@ -23,6 +23,7 @@ import { stepKinematic, turnOf, type KinematicBody } from './pilotTestKit.js';
 import type { AiEntity, AiSwarmView, AiWorldView, IAiNeighbourQuery } from '../contracts/IAiBehaviour.js';
 import { MANOEUVRE_ATTACK_RUN } from './tactics/manoeuvre.js';
 import { MORALE_OUTCOME } from './tactics/morale.js';
+import { shipTuning } from '../../shared-types/shipScale/tuning.js';
 
 const ORB = getShipKind('robot-circle');
 const HEAVY = getShipKind('heavy');
@@ -148,5 +149,26 @@ describe('HostileDroneBehaviour — an attack run started nose to nose opens the
     brain._tac.tick = 102 + 61;
     expect(brain.hullAvoid(self, nb)).toBe(true);
     expect(brain._avX).toBeGreaterThan(0.9);
+  });
+
+  it('hull avoidance clears the shield bubbles, not just the hulls (2026-11-14)', () => {
+    // Shields up, ships collide as their bubbles (hull radius + shield pad).
+    // Two fighters passing head-on with their hulls a hull radius clear but
+    // their bubbles overlapping must still dodge: on hull radii alone two
+    // fighters boosting through a pass grazed in 3 of 8 room duels.
+    const F = getShipKind('fighter');
+    const pad = shipTuning(F).shieldPad;
+    const hullClear = F.radius + F.radius + F.radius;
+    const bubbles = 2 * (F.radius + pad);
+    expect(bubbles).toBeGreaterThan(hullClear);
+    const miss = (hullClear + bubbles) / 2;
+    const b = new HostileDroneBehaviour(F);
+    const brain = b as unknown as Brain;
+    const self: AiEntity = { id: 'a', x: 0, y: 0, vx: 0, vy: 170, angle: 0, angvel: 0 };
+    const other: KinematicBody = { x: miss, y: 500, vx: 0, vy: -170, angle: Math.PI, angvel: 0 };
+    brain._tac.tick = 100;
+    expect(brain.hullAvoid(self, oneShip(other, 'b', F.radius, 'robots'))).toBe(true);
+    // Passing on my right: dodge left.
+    expect(brain._avX).toBeLessThan(-0.9);
   });
 });

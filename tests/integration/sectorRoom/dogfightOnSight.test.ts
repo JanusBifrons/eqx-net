@@ -15,7 +15,9 @@
  * This boots the filmed room shape (a `sceneScript` room: drone `fighter`s vs
  * `robot-square`s 1500 u apart, nothing marked hostile, the only pilot far
  * away) and over ~20 s of fight requires the dogfight signatures:
- *  (a) Tail, AttackRun and Break are each flown, and Hold is < 60 % of
+ *  (a) Tail and AttackRun are each flown, a tailed ship breaks (the Break
+ *      itself is gated in a scene with a robot set on each fighter's six:
+ *      in a free fight being tailed is luck), and Hold is < 60 % of
  *      combat ship-samples;
  *  (b) the ships turn: mean |angular velocity| while in combat > 0.35 rad/s
  *      (before the fix: 0.21–0.28; nose-on trades and straight jousts). In
@@ -41,7 +43,6 @@ import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import type { HostileDroneBehaviour } from '../../../src/core/ai/HostileDroneBehaviour.js';
 import {
   MANOEUVRE_ATTACK_RUN,
-  MANOEUVRE_BREAK,
   MANOEUVRE_COUNT,
   MANOEUVRE_HOLD,
   MANOEUVRE_TAIL,
@@ -50,6 +51,8 @@ import { MORALE_OUTCOME } from '../../../src/core/ai/tactics/morale.js';
 
 const SAMPLE_MS = 50;
 const FIGHT_MS = 20_000;
+/** The tailed-fighter Break scene: long enough for each fighter to notice, break and come round. */
+const BREAK_SCENE_MS = 6_000;
 /** A robot that turns slower than a drone `fighter` (0.8 vs 1.0 rad/s at the 2× default; it cruises a little faster), for the tail test. A `robot-square` turns 1.1 rad/s: nothing slower-turning can keep its nose off it, so its six is not holdable. */
 const ROBOT_SLOW = 'robot-hexagon';
 
@@ -73,6 +76,9 @@ interface FightStats {
   /** Share of combat ship-samples with the afterburner lit since the last sample. */
   boostFrac: number;
   minDist: number;
+  /** Decisions taken while tailed, and Breaks begun (all ships). */
+  tailedDecisions: number;
+  breaksBegun: number;
 }
 
 function wrap(a: number): number {
@@ -117,9 +123,10 @@ async function fight(harness: SectorTestHarness, perSide: number, label: string)
   // Boost duty (print-only): afterburner ticks / ship ticks, first 3 s and after.
   const boostAt = (): number => { let n = 0; for (const b of brains.values()) n += b.getBoostTicks(); return n; };
   const boost0 = boostAt();
-  let boost3 = -1, ms3 = 0;
+  let boost3 = -1, ms3 = 0, boost10 = -1, ms10 = 0;
   while (Date.now() - start < FIGHT_MS) {
     if (boost3 < 0 && Date.now() - start >= 3000) { boost3 = boostAt(); ms3 = Date.now() - start; }
+    if (boost10 < 0 && Date.now() - start >= 10_000) { boost10 = boostAt(); ms10 = Date.now() - start; }
     await harness.advance(SAMPLE_MS);
     const now = Date.now();
     const dt = (now - prevT) / 1000;
@@ -171,9 +178,13 @@ async function fight(harness: SectorTestHarness, perSide: number, label: string)
     }
   }
   const msAll = Date.now() - start;
+  let tailedDecisions = 0, breaksBegun = 0;
+  for (const b of brains.values()) { tailedDecisions += b.getTailedDecisionCount(); breaksBegun += b.getBreakCount(); }
   const shipTicks = (ms: number): number => Math.max(1, ids.length * ms * 0.06);
   const dutyEarly = (boost3 - boost0) / shipTicks(ms3);
   const dutyLate = (boostAt() - boost3) / shipTicks(msAll - ms3);
+  const duty10 = (boost10 - boost0) / shipTicks(ms10);
+  const duty10Late = (boostAt() - boost10) / shipTicks(msAll - ms10);
   const stats: FightStats = {
     combatSamples,
     hist,
@@ -184,8 +195,10 @@ async function fight(harness: SectorTestHarness, perSide: number, label: string)
     totalBehindS: totalBehind,
     boostFrac: boosting / Math.max(1, combatSamples),
     minDist,
+    tailedDecisions,
+    breaksBegun,
   };
-  console.log(`[dogfight-on-sight ${label}] R=${[...brains.values()][0]!.getFireRange().toFixed(0)} cruise=${[...brains.values()].map((b) => b.getCruiseSpeed().toFixed(0)).join("/")} samples=${combatSamples} hist(hold,tail,run,break)=${hist.join(',')} holdFrac=${stats.holdFrac.toFixed(2)} meanAngvel=${stats.meanAngvel.toFixed(2)} toeFrac=${stats.toeFrac.toFixed(2)} onTail(longest/total)=${stats.longestBehindS.toFixed(2)}/${stats.totalBehindS.toFixed(2)}s boostFrac=${stats.boostFrac.toFixed(2)} boostDuty(0-3s/3s+)=${dutyEarly.toFixed(2)}/${dutyLate.toFixed(2)} minDist=${minDist.toFixed(0)}`);
+  console.log(`[dogfight-on-sight ${label}] R=${[...brains.values()][0]!.getFireRange().toFixed(0)} cruise=${[...brains.values()].map((b) => b.getCruiseSpeed().toFixed(0)).join("/")} samples=${combatSamples} hist(hold,tail,run,break)=${hist.join(',')} holdFrac=${stats.holdFrac.toFixed(2)} meanAngvel=${stats.meanAngvel.toFixed(2)} toeFrac=${stats.toeFrac.toFixed(2)} onTail(longest/total)=${stats.longestBehindS.toFixed(2)}/${stats.totalBehindS.toFixed(2)}s boostFrac=${stats.boostFrac.toFixed(2)} boostDuty(0-3s/3s+)=${dutyEarly.toFixed(2)}/${dutyLate.toFixed(2)} boostDuty(0-10s/10s+)=${duty10.toFixed(2)}/${duty10Late.toFixed(2)} minDist=${minDist.toFixed(0)} tailedDecisions=${tailedDecisions} breaksBegun=${breaksBegun}`);
   return stats;
 }
 
@@ -212,7 +225,10 @@ function expectDogfight(s: FightStats, gateTurn = true): void {
   expect(s.combatSamples).toBeGreaterThan(200);
   expect(s.hist[MANOEUVRE_TAIL], 'Tail flown').toBeGreaterThan(0);
   expect(s.hist[MANOEUVRE_ATTACK_RUN], 'AttackRun flown').toBeGreaterThan(0);
-  expect(s.hist[MANOEUVRE_BREAK], 'Break flown').toBeGreaterThan(0);
+  // Break: a ship that is tailed breaks. Whether anyone gets tailed in a 20 s
+  // free fight is luck (one 3v3 run in ~8 has no tailed decision at all), so
+  // the scene with a robot set on each fighter's six gates the Break itself.
+  if (s.tailedDecisions > 0) expect(s.breaksBegun, 'a tailed ship breaks').toBeGreaterThan(0);
   expect(s.holdFrac, 'Hold < 60 % of combat').toBeLessThan(0.6);
   if (gateTurn) expect(s.meanAngvel, 'ships turn (mean |angvel|, rad/s)').toBeGreaterThan(0.35);
   expect(s.toeFrac, 'not toe to toe').toBeLessThan(0.2);
@@ -312,6 +328,71 @@ describe('SectorRoom integration — on-sight allegiance dogfight (drones vs rob
     console.log(`[dogfight-on-sight tail x${PAIRS}] R=${R.toFixed(0)} samples=${samples} onTailFrac=${frac.toFixed(3)} perPair=${onTail.map((x) => (x / Math.max(1, samples)).toFixed(2)).join(',')} fighter hist(hold,tail,run,break)=${hist.join(',')}`);
     expect(samples).toBeGreaterThan(100);
     expect(frac, 'fighters hold the robots\' six (share of samples, 6 pairs pooled)').toBeGreaterThanOrEqual(0.1);
+  });
+
+  it('a fighter with a robot on its six breaks', { timeout: 60_000 }, async () => {
+    // The deterministic Break scene. In the 3v3 a fighter is tailed only a
+    // few times a run (13–18 tailed decisions over 6 ships and 20 s, all
+    // drone fighters: the robot role's Break weight is 0.2, so robots fight
+    // back instead) and one run in ~8 has none, so "Break flown" there was
+    // luck. Here six independent pairs, far apart: a `robot-square` 300 u
+    // behind each drone `fighter`, both noses the same way, hostile. Every
+    // fighter must begin a Break within the window, and every decision it
+    // takes while tailed and free to break (not already breaking, not in the
+    // Break cooldown) must be a Break.
+    const PAIRS = 6;
+    const poses: Array<{ kind: string; x: number; y: number; angle: number; hullExposed: boolean }> = [];
+    for (let k = 0; k < PAIRS; k++) {
+      const cx = -25_000 + k * 10_000;
+      const cy = 10_000;
+      const a = (k * Math.PI) / 3;
+      poses.push({ kind: 'fighter', x: cx, y: cy, angle: a, hullExposed: false });
+      poses.push({ kind: 'robot-square', x: cx + 300 * Math.sin(a), y: cy - 300 * Math.cos(a), angle: a, hullExposed: false });
+    }
+    harness = await bootSectorTestServer({
+      sectorKey: null,
+      droneCount: 0,
+      testMode: true,
+      asteroidConfig: [],
+      dronePoses: poses,
+      defaultSpawnX: 0,
+      defaultSpawnY: -20_000,
+    });
+    await harness.connectAs(randomUUID());
+    const room = harness.getServerRoom() as unknown as Room & {
+      aiController: { markHostile(id: string, other: string, tick: number): void };
+      serverTick: number;
+    };
+    const recs = [...room._internals.swarmRegistry.all()].filter((x) => x.kind === 1);
+    expect(recs.length).toBe(2 * PAIRS);
+    const fighters: string[] = [];
+    const robots: string[] = [];
+    for (const rec of recs) (rec.shipKind === 'fighter' ? fighters : robots).push(rec.id);
+    for (const id of [...fighters, ...robots]) room._internals.swarmHealth.set(id, 1e9);
+    for (const f of fighters) {
+      const pf = room._internals.swarmPose(f)!;
+      let r = robots[0]!;
+      let bestD = Infinity;
+      for (const id of robots) {
+        const p = room._internals.swarmPose(id)!;
+        const d = Math.hypot(p.x - pf.x, p.y - pf.y);
+        if (d < bestD) { bestD = d; r = id; }
+      }
+      room.aiController.markHostile(f, r, room.serverTick);
+      room.aiController.markHostile(r, f, room.serverTick);
+    }
+    const brains = fighters.map((id) => room.aiController.getBehaviour(id) as HostileDroneBehaviour);
+    for (const b of brains) b.setMoraleRoll(() => MORALE_OUTCOME.FightOn);
+    const start = Date.now();
+    while (Date.now() - start < BREAK_SCENE_MS) await harness.advance(SAMPLE_MS);
+    const breaks = brains.map((b) => b.getBreakCount());
+    const tailed = brains.map((b) => b.getTailedDecisionCount());
+    const refused = brains.map((b) => b.getBreakRefusedCount());
+    console.log(`[dogfight-on-sight tailed x${PAIRS}] breaks=${breaks.join(',')} tailedDecisions=${tailed.join(',')} refused=${refused.join(',')}`);
+    for (let k = 0; k < PAIRS; k++) {
+      expect(breaks[k], `fighter ${k} breaks with a robot on its six`).toBeGreaterThan(0);
+      expect(refused[k], `fighter ${k} never turns down a Break while tailed`).toBe(0);
+    }
   });
 
   it('3v3 drone fighters vs robots (the filmed scene) dogfight', { timeout: 90_000 }, async () => {

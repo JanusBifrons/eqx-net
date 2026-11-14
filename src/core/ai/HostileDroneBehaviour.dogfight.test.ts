@@ -43,7 +43,10 @@ function sw(o: KinematicBody, id: string, allegiance: string): AiSwarmView {
 
 /** One attack run by A: the closest it came to B, and how far the gap
  *  opened again after that closest point (the extend) before the run ended. */
-interface RunPass { minD: number; openedTo: number }
+/** One attack run: closest approach, widest gap after it, and whether the run
+ *  ended inside the window (a run cut off by the window end has not finished
+ *  its extend). */
+interface RunPass { minD: number; openedTo: number; finished: boolean }
 
 interface Duel { passes: number; toeFrac: number; shotsA: number; shotsB: number; runs: number; trace: string; runPasses: RunPass[] }
 
@@ -75,9 +78,9 @@ function duel(ticks: number, players: AiPlayerView[] = [], neighbours = false): 
     if (m !== lastA) { trace += `${t}:${m} `; if (m === MANOEUVRE_ATTACK_RUN) runs++; lastA = m; }
     const d = Math.hypot(A.x - B.x, A.y - B.y);
     if (m === MANOEUVRE_ATTACK_RUN) {
-      if (!cur) { cur = { minD: d, openedTo: d }; runPasses.push(cur); }
+      if (!cur) { cur = { minD: d, openedTo: d, finished: false }; runPasses.push(cur); }
       if (d < cur.minD) { cur.minD = d; cur.openedTo = d; } else if (d > cur.openedTo) cur.openedTo = d;
-    } else cur = null;
+    } else if (cur) { cur.finished = true; cur = null; }
     if (d < 0.7 * R && Math.hypot(A.vx, A.vy) < 0.25 * bA.getCruiseSpeed() && Math.hypot(B.vx, B.vy) < 0.25 * bB.getCruiseSpeed()) toe++;
     // A merge: inside 0.15 R, out past 0.25 R, in again (a turning fight
     // re-merges inside gun range; only a joust opens past R, 2026-11-13).
@@ -111,14 +114,19 @@ describe('HostileDroneBehaviour — dogfight decision layer (slice 4)', () => {
     const r = duel(30 * 60, [], true);
     const R = new HostileDroneBehaviour(KA).getFireRange();
     const clearance = KA.radius + KB.radius + KA.radius;
+    // Every close pass clears the hull; every FINISHED run then opens the
+    // range (a run still going at the window end may be mid-extend: on
+    // 2026-11-14 the third run passed late and read 319 u at 30 s, 639 u by
+    // 36 s).
     const close = r.runPasses.filter((p) => p.minD < 0.5 * R);
     const msg = `${r.trace} runs=${JSON.stringify(r.runPasses.map((p) => [Math.round(p.minD), Math.round(p.openedTo)]))} clearance=${clearance}`;
     console.log(msg);
     expect(close.length, msg).toBeGreaterThanOrEqual(1);
     for (const p of close) {
       expect(p.minD, msg).toBeGreaterThanOrEqual(clearance);
-      expect(p.openedTo, msg).toBeGreaterThan(0.4 * R);
+      if (p.finished) expect(p.openedTo, msg).toBeGreaterThan(0.4 * R);
     }
+    expect(close.filter((p) => p.finished).length, msg).toBeGreaterThanOrEqual(1);
   });
 
   it('is deterministic (same seeds, same fight)', () => {

@@ -94,6 +94,28 @@ const TAIL_AIM_COS = Math.cos(AIM_CONE);
  * else along the move: a ship thrusts only along its nose, so a nose held on
  * the target cannot fly round to its six (2026-11-13).
  */
+/** Turning back toward the target while still flying away from it, a ship
+ *  swings round in an arc (course square to its velocity, on the target's
+ *  side) whenever it flies away faster than `SWING_MIN_SPEED` × cruise: a
+ *  ship thrusts only along its nose, so a course straight back at the target
+ *  points the thrust against the velocity and turns it in place by braking
+ *  (strafeParked: ~30 % of cruise for ~3 s every pass; filmed take 5: a robot
+ *  orb braked 122 → 14 u/s). Used by an attack run's dive and by Tail, which
+ *  the picker often chooses right after a run's extend (attackRunTurnBack,
+ *  2026-11-14: Tail aimed straight back from 1.14 × cruise and the next dive
+ *  bottomed out at 0.43). Writes the unit course into `SWING` and returns
+ *  true when the arc applies. */
+const SWING_MIN_SPEED = 0.25;
+const SWING = { x: 0, y: 0 };
+function swingRound(ctx: TacticalContext): boolean {
+  const v = Math.hypot(ctx.vx, ctx.vy);
+  if (!ctx.targetIsShip || v <= SWING_MIN_SPEED * ctx.cruiseSpeed || ctx.vx * ctx.ux + ctx.vy * ctx.uy >= 0) return false;
+  const s = ctx.vx * ctx.uy - ctx.vy * ctx.ux >= 0 ? 1 : -1;
+  SWING.x = (-ctx.vy / v) * s;
+  SWING.y = (ctx.vx / v) * s;
+  return true;
+}
+
 export class TailManoeuvre implements IManoeuvre {
   readonly id = MANOEUVRE_TAIL;
   /** Last goal's wanted velocity (test-visible). */
@@ -179,6 +201,18 @@ export class TailManoeuvre implements IManoeuvre {
       wvx *= ctx.maxSpeed / speed;
       wvy *= ctx.maxSpeed / speed;
       speed = ctx.maxSpeed;
+    }
+    // Still flying away from the target (out of a run's extend) with the
+    // station back the other way: swing round at speed, nose on the arc.
+    if (wvx * ctx.vx + wvy * ctx.vy < 0 && swingRound(ctx)) {
+      if (speed < ctx.cruiseSpeed) speed = ctx.cruiseSpeed;
+      this.wantVx = SWING.x * speed;
+      this.wantVy = SWING.y * speed;
+      addInterestToward(maps, SWING.x, SWING.y, 1, GOAL_SHAPE);
+      out.speed = speed;
+      out.facing = FACE_MOVE;
+      out.boost = ctx.dist > TAIL_BOOST_RANGE * R || (ctx.closing < 0 && d > TAIL_ARRIVE * R);
+      return;
     }
     this.wantVx = wvx;
     this.wantVy = wvy;
@@ -301,10 +335,6 @@ export const STRAFE_EXTEND_OVERSHOOTS = 1;
 /** Strafing a parked or slow target: the dive aims this share of the overshoot
  *  beside it (see `runMiss`). */
 export const STRAFE_MISS_OVERSHOOTS = 0.25;
-/** A dive's swing-round arcs (course square to the velocity) while the ship
- *  still flies away from the target faster than this × cruise (any target
- *  ship, slow or not). */
-const STRAFE_SWING_MIN_SPEED = 0.25;
 
 /**
  * Boom-and-zoom: dive at full speed (boosting) at the lead, guns on it;
@@ -401,13 +431,7 @@ export class AttackRunManoeuvre implements IManoeuvre {
       // accelerates all the time in combat"): gated on a slow target only,
       // a robot orb on a pilot at 47–187 u/s braked 122 → 14 u/s to turn
       // back (filmed take 5, 2026-11-14; attackRunTurnBack).
-      const v = Math.hypot(ctx.vx, ctx.vy);
-      if (ctx.targetIsShip && v > STRAFE_SWING_MIN_SPEED * ctx.cruiseSpeed
-        && ctx.vx * ctx.ux + ctx.vy * ctx.uy < 0) {
-        const s = ctx.vx * ctx.uy - ctx.vy * ctx.ux >= 0 ? 1 : -1;
-        gx = (-ctx.vy / v) * s;
-        gy = (ctx.vx / v) * s;
-      }
+      if (swingRound(ctx)) { gx = SWING.x; gy = SWING.y; }
       addInterestToward(maps, gx, gy, 1, GOAL_SHAPE);
       out.speed = ctx.maxSpeed;
       // Nose along the course to the miss point, not on the lead: a ship

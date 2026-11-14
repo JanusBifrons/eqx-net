@@ -149,6 +149,21 @@ describe('TailManoeuvre', () => {
       }
     }
   });
+  it('a Tail picked while still flying away from the target (out of a run extend) swings round at speed, nose on the arc (2026-11-14)', () => {
+    // attackRunTurnBack: after an extend the picker chose Tail, whose station
+    // lay straight back; the nose came round onto it and the thrust braked
+    // the ship from 1.14 to 0.65 × cruise before the next dive began.
+    // Target 700 u off (+y) flying on at 90 u/s; I fly away (-y) at 1.1 × cruise.
+    const t = new TailManoeuvre();
+    t.begin();
+    const d = run(t, ctxAt(0, 0, 0, 700, { vx: 5, vy: -1.1 * CRUISE, tvx: 0, tvy: 90 }));
+    expect(Math.abs(d.dirY)).toBeLessThan(0.2); // square to the velocity, not back at the target
+    expect(goal.facing).toBe(FACE_MOVE);
+    expect(goal.speed).toBeGreaterThanOrEqual(CRUISE);
+    // Once the velocity has come round (no longer flying away): the station.
+    const d2 = run(t, ctxAt(0, 0, 0, 700, { vx: 1.1 * CRUISE, vy: 5, tvx: 0, tvy: 90 }));
+    expect(d2.dirY).toBeGreaterThan(0.5);
+  });
 });
 
 /** A target flying away along +y at 130 u/s (over the slow line, 0.5 ×
