@@ -178,9 +178,11 @@ export const SHIP_KINDS = Object.freeze({
 // 24 → 25 (2026-11-13): arcade (Micro Machines) handling + toughness layer
 // (`shipScale/arcadeHandling.ts`) changes every non-capital gameplay kind's
 // damping, thrust, turn rate, hull, shield and regen.
-// 25 → 26 (2026-11-14): energy pool ×2 for every kind (`ENERGY_POOL_MUL`,
+// 25 → 26 (2026-11-14): fighter, scout, heavy, robot-square, robot-circle and
+// robot-hexagon nose guns become small-arc turrets (`noseTurretMount`).
+// 26 → 27 (2026-11-14): energy pool ×2 for every kind (`ENERGY_POOL_MUL`,
 // shipScale/defineShipKind.ts).
-export const SHIP_KIND_CATALOGUE_VERSION = 26;
+export const SHIP_KIND_CATALOGUE_VERSION = 27;
 
 // The shield bubble pad is `shipTuning(kind).shieldPad` (shipScale/tuning.ts),
 // and the bubble radius is `shieldBubbleRadius(kind)`. The fixed

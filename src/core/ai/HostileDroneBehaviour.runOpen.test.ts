@@ -95,8 +95,6 @@ function scene(heavyDeg: number, heavySpeed: number, orbSpeed: number, heavyBrai
   return { turnFlips, maxCloseSlowTicks: maxRun };
 }
 
-const heavyBrainRow = (row: string): boolean => row.startsWith('brain');
-
 describe('HostileDroneBehaviour — an attack run started nose to nose opens the range first', () => {
   it('the filmed state (Orb ~10 u/s, heavy at 30 u/s, any heading): no > 1 s nose to nose, no turn-key flapping', () => {
     const rows: string[] = [];
@@ -112,14 +110,16 @@ describe('HostileDroneBehaviour — an attack run started nose to nose opens the
       const flips = Number(/flips=(\d+)/.exec(row)![1]);
       const closeTicks = Number(/close=(\d+)/.exec(row)![1]);
       expect(closeTicks, msg).toBeLessThanOrEqual(60);
-      // Flapping was 196–237 flips in 6 s. What is left is the run's own
-      // phase changes (open away, then dive back), each a deliberate turn
-      // ≥ 10 ticks after the last press, at > 13 hull radii. At one mass per
-      // kind both hulls accelerate twice as hard as the doubled AI mass this
-      // bar was set on (≤ 3 then, measured again with thrust halved), so the
-      // heavy flown by its brain jinks harder and the Orb cycles open → dive
-      // up to twice more in the 6 s: 5 at most (measured 2–5).
-      expect(flips, msg).toBeLessThanOrEqual(heavyBrainRow(row) ? 5 : 3);
+      // Flapping was 196–237 flips in 6 s. What is left is a settling tap:
+      // a 2–3 tick press back after a 5-tick turn onto the dive or the
+      // pull-off, at least 6 ticks after the release (`SNAP_TURN_EASE`),
+      // 150–470 u off and closing fast (the close-and-slow count above stays
+      // as it was). At one mass per kind the Orb gains speed twice as fast
+      // as at the doubled AI mass this bar was set on, so its velocity swings
+      // round with the nose and the course it steers to moves with it: with
+      // thrust halved (the old mass) the same 16 scenes measure 1 flip each,
+      // at the live mass 1–5. So 5, not 3.
+      expect(flips, msg).toBeLessThanOrEqual(5);
     }
   });
 

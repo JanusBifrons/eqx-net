@@ -9,7 +9,12 @@
  * NPC path did not, so an NPC battleship's 16" could NEVER lock a fighter
  * (Infinity) while a player battleship's 16" locked it slowly.
  */
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
+
+// Pinned to legacy naval ranges (the default is real): the lock times below
+// are the legacy reach's. Set before any import builds the catalogue.
+vi.hoisted(() => vi.stubEnv('EQX_NAVAL_RANGE', 'legacy'));
+afterAll(() => vi.unstubAllEnvs());
 import { lockSeconds, type LockInputs } from '../../src/core/combat/lockTime';
 import { LOCK_TUNING, sensorFor, signatureFor } from '../../src/shared-types/combat/lockProfile';
 import { getShipKind } from '../../src/shared-types/shipKinds';

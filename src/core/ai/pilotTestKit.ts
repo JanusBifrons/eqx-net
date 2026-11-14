@@ -35,7 +35,7 @@ export interface KinematicBody { x: number; y: number; vx: number; vy: number; a
 
 /**
  * One 1/60 s step of `applyShipInput` + Rapier damping/integration for a body
- * of `kind` with an NPC's spawn mass. Approximate (no collisions, explicit
+ * of `kind` at its one body mass (`shipBodyMass`). Approximate (no collisions, explicit
  * Euler), close enough to check where a brain flies.
  */
 export function stepKinematic(b: KinematicBody, kind: ShipKind, intent: AiIntent): void {

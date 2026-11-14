@@ -5,6 +5,11 @@
  * change is a no-op there. Sub-capital weapons still follow the profile.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+// Pinned to legacy naval ranges (the default is real): the "shipped" numbers
+// below are the legacy ones (real: navalRangeSwitch.test.ts). Hoisted so the
+// static imports build the legacy catalogue; `catalogueAt` re-pins it.
+vi.hoisted(() => vi.stubEnv('EQX_NAVAL_RANGE', 'legacy'));
 import type { WeaponDef, WeaponId } from '../../src/core/combat/WeaponCatalogue.js';
 import { getWeapon, scaleWeaponDef, weaponAutoFireRange } from '../../src/core/combat/WeaponCatalogue.js';
 import { AT_AUTHORED_SHIP_SCALE } from '../../src/shared-types/shipScale/config.js';
@@ -26,6 +31,7 @@ const PRE_CHANGE_1X: Record<string, { speed: number; maxTicks: number; splash?: 
 async function catalogueAt(scale: string, tuning: 'A' | 'B'): Promise<typeof import('../../src/core/combat/WeaponCatalogue.js')> {
   vi.stubEnv('EQX_SHIP_SCALE', scale);
   vi.stubEnv('EQX_SHIP_TUNING', tuning);
+  vi.stubEnv('EQX_NAVAL_RANGE', 'legacy');
   vi.resetModules();
   return import('../../src/core/combat/WeaponCatalogue.js');
 }

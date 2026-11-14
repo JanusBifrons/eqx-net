@@ -4,7 +4,12 @@
  * path and the ship path agree, its barrels are a ship gun of the same calibre,
  * and the super-guns out-range the battleship's 16".
  */
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
+
+// Pinned to legacy naval ranges (the default is real): the shipped reach
+// numbers below are the legacy ones (real reaches: navalRangeSwitch.test.ts).
+vi.hoisted(() => vi.stubEnv('EQX_NAVAL_RANGE', 'legacy'));
+afterAll(() => vi.unstubAllEnvs());
 import { COASTAL_DEFENCE_KINDS, getStructureKind } from '../../src/shared-types/structureKinds.js';
 import { getWeapon, weaponAutoFireRange } from '../../src/core/combat/WeaponCatalogue.js';
 import { navalTurret, structureMountMuzzle, structureNavalTurret } from '../../src/core/combat/muzzle.js';

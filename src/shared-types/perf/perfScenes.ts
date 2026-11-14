@@ -155,8 +155,8 @@ export const PERF_SCENES: readonly PerfScene[] = [
     // battleships, hostile, open fire on a capital pilot 15 km off (NPC
     // capital turrets engage pilots and structures, never other NPCs, and a
     // main gun never locks a fighter, hence the battleship pilot). Locks are
-    // capped at 2 s so the guns open inside the window. Run it with
-    // EQX_NAVAL_RANGE=real (+ the client's navalRange=real). Slice 3 measured
+    // capped at 2 s so the guns open inside the window. Runs at real naval
+    // ranges (the default since 2026-11-14). Slice 3 measured
     // events off vs on with it (rx 254 -> 67 KB/s); since slice 4 there is no
     // switch, so it now tracks the naval-shell wire cost base vs head.
     id: 'naval-broadside',

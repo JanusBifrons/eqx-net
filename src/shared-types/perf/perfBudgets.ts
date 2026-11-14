@@ -55,8 +55,14 @@ export const COUNT_BUDGETS: Record<string, CountBudget> = {
     measured: 'rx 67.8 KB/s laptop 2026-11-06. Work, desktop 4 runs 2026-11-08: bodies 157.1–157.2, ai 22.2–22.4, swarm recs 26.2–26.7, bytes 894–911, ents/snap 0; CI (ubuntu, PR #356): 157.2 / 22.3 / 26.5 / 906 / 0, rx 67.8',
     work: { bodiesPerTick: 197, aiAgentsPerTick: 28, swarmRecordsPerTick: 34, swarmBytesPerTick: 1139, entitiesPerSnapshot: 1 },
   },
-  // 2026-11-09, laptop, two runs: 17.1 / 16.9 KB/s (swarm 29: the fleet + two robot waves).
-  'capital-fleet': { rxKBps: 22, minSwarm: 20, measured: '16.9–17.1 KB/s, 2026-11-09' },
+  // 2026-11-09: 16.9–17.1 KB/s. It rose to ~21 by 2026-11-12 (fire-control
+  // `groups` on the own ship, far-drone slices, wreck / time-scale / turret-
+  // angle keys) and then fell when undefined-valued keys left the wire
+  // (`setOrDrop`, 2026-11-14 trim). Budget = max of the 8 runs + 25 %.
+  'capital-fleet': {
+    rxKBps: 17.8, minSwarm: 20,
+    measured: 'laptop 8 runs 2026-11-14 after the snapshot trim: 13.2–14.2 KB/s, swarm 29 (split ~ swarm 8.0, snapshot JSON 5.5, collision_resolved 1.0). Snapshot JSON was 9.8 KB/s on 2026-11-09 and 13.1 on main before the trim: + own-ship lock groups 0.6 (real, sent every snapshot), far-drone slices 0.5 (real hostile/hp), and ~2 KB/s of empty keys (structureMountAngles, wreck deltas, timeScale, shellKey, lockedBy), which the trim removed with the ~5 KB/s of older empty keys. Earlier: 16.9–17.1 KB/s, 2026-11-09',
+  },
   // 2026-11-09, laptop, two runs: 11.6 / 11.6 KB/s (one battleship firing on the pilot).
   'capital-duel': { rxKBps: 15, minSwarm: 1, measured: '11.6 KB/s, 2026-11-09' },
   // 2026-11-08: the 80-ship sustained fight seen from the zoom-out floor (asteroids on).

@@ -12,10 +12,13 @@ import { FC_MOUNT_FIRE_TOLERANCE } from '../combat/fireControlBearing.js';
 import { shipBubbleRadius } from '../combat/shipHitShape.js';
 import { easedSnapTurn, makeSnapTurnState } from './virtualPilot.js';
 
-const R = shipBubbleRadius('fighter');
+// A fixed-gun kind: fighters carry small-arc nose turrets, which fire on the
+// wider turret window, not the hull cone.
+const FIXED_GUN_KIND = 'patrol-fighter';
+const R = shipBubbleRadius(FIXED_GUN_KIND);
 
 function firesAt(bearing: number, dist: number, hitRadius: number | undefined): boolean {
-  const brain = new HostileDroneBehaviour('fighter');
+  const brain = new HostileDroneBehaviour(FIXED_GUN_KIND);
   brain.markHostile('p', 0);
   const p = { id: 'p', x: -Math.sin(bearing) * dist, y: Math.cos(bearing) * dist, vx: 0, vy: 0, hitRadius };
   const intent = brain.tick({ id: 'd', x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 }, { players: [p], tick: 100, dtSec: 1 / 60 });

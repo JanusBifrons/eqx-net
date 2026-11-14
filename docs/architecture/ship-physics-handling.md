@@ -109,6 +109,34 @@ Not chosen: raising `lengthUnit` (fixes only the cap, and raises every body's sl
 
 Locks: [World.capitalContact.test.ts](../../src/core/physics/World.capitalContact.test.ts) (overlaps clear in 2 s shields up and down, bow-to-bow under thrust, Rapier globals unchanged, a fighter ram's exact pre-fix trajectory) and [capitalsCollideSolidly.test.ts](../../tests/integration/sectorRoom/capitalsCollideSolidly.test.ts) (real room: pilot vs NPC, parked hull, NPC vs NPC, cruiser thrusting into a battleship).
 
+## Physics rules reference
+
+The rules are in [src/core/CLAUDE.md](../../src/core/CLAUDE.md#physics-rules); this section explains them.
+
+**Sleep callbacks** drive `ENTITY_SLEPT` / `ENTITY_WOKE` (Phase 5); suppressing or re-entering them breaks that handshake.
+
+**Drone damping.** `World.spawnObstacle(..., linearDamping = 0)` takes a per-spawn damping. `SwarmSpawner.spawnOne` passes `shipKind.linearDamping` for DRONES (kind 1), exactly like `spawnShip`, and `0` for ASTEROIDS (kind 0) and STRUCTURES (kind 2); it is threaded through `SPAWN_OBSTACLE` (worker.ts cmd + `PhysicsWorkerProxy.WorkerCmd`).
+- **Why:** drones move via the AI path, which used to bypass the player's max-speed clamp and grip. With damping 0 a drone that overshot its target coasted away at constant velocity FOREVER (the standoff brake goes to thrust 0 once `closingSpeed` flips negative, and nothing dissipated the residual speed): the "flies past / floats / never approaches" bug. The damping VALUE is the kind's own catalogue field, not a guessed constant. Candidate value pending on-device feel sign-off (the owner bundled it knowingly).
+- **The client predWorld drone body is spawned with damping 0** by `droneClientLeaf`. It is anchored to the latest server state each snapshot and stepped on the prediction timeline (the remote-entity paradigm, root invariant #12); with no client AI thrust a damped body would slow down where the real drone keeps flying, so it coasts at the server's velocity between anchors. Only the authoritative server body is AI-driven. 🔴 netgate (drone motion → snapshot).
+- Locks: `World.test.ts` (a body with damping sheds coasting velocity; damping 0 coasts), `SwarmSpawner.test.ts` (drone → kind damping, asteroid → 0).
+
+**Structures are locked on spawn.** `SwarmSpawner.spawnOne` flags kind-2 spawns `staticBody`, threaded through `SPAWN_OBSTACLE`, so the worker calls `physics.lockBody(obstacleId)` after spawn. This mirrors the client predWorld, which does `spawnObstacle` + `lockBody` for structures (`structureClientLeaf`).
+- **Why:** an unlocked authoritative structure body took velocity from a ram (or the mass-differential impulse) and the damping-0 body coasted away forever: "I hit a pylon and it started MOVING".
+- A locked body still blocks dynamic bodies (the ship bounces off it) and keeps its dynamic MASS, so the ram-damage model is unchanged; it just can't be translated. Drones and asteroids stay dynamic (drones fly; asteroids are bump-able, R2.33). 🔴 netgate (body lifecycle on the snapshot path).
+- Locks: `SwarmSpawner.test.ts` (kind 2 → `staticBody:true`, drone/asteroid falsy), `World.test.ts` (a locked obstacle holds position when rammed, an unlocked one is shoved), `structure-ram-blocked.spec.ts` (rendered structure drift ≈ 0 under a ram).
+
+**Soft CCD.** `spawnShip` and `spawnObstacle` set `setSoftCcdPrediction(SOFT_CCD_PREDICTION = 48)`. Ship movement has no ray-projection; without it a body whose centre crossed a thin wall's midline within one step was ejected out the far side.
+- Do **not** switch to full `setCcdEnabled(true)`: it suppresses the static-overlap contact events the triangle-collider rule depends on, and under-resolves interpenetration (`hullCollisionNoTouch` positive control goes red).
+- Lock: `World.ccd.test.ts` (fails with prediction 0). Same code path on the server worker and the client predWorld. See docs/LESSONS.md 2026-10-31.
+
+**Arcade handling layer** (`shared-types/shipScale/arcadeHandling.ts`, runs inside `defineShipKind` after the size scale): per handling class (light / medium / heavy by authored hull) it multiplies `linearDamping` AND `thrustImpulse` + `ai.thrust` by the same factor (Rapier terminal = a / (d·dt), so cruise is unchanged and the rise time drops ~18×), `maxAngvel` ×4.2, and hull / shield / regen ×1.6–1.75. Capitals, engineering rigs and no-afterburner kinds are exempt. `ShipHandling.arcade.test.ts` measures every kind and locks per-class bands. See [Arcade (Micro Machines) tuning](#arcade-micro-machines-tuning-2026-11-13).
+
+**Stiff contact resolution.** `PhysicsWorld.create` sets `world.integrationParameters.numSolverIterations = 16` (default 4) and calls `switchToSmallStepsPgsSolver()` before returning.
+- **Why:** Rapier 2D defaults (`contact_erp = 0.2`, `numSolverIterations = 4`) let a ship's continuous-thrust impulse press a ball collider 50–160 u into a polygon edge (capture `2026-05-28T15-13-11Z-vqm6y1`, "I flew half-way into the drone"). The stiffer params drive steady-state penetration to < 5 u median / < 30 u peak.
+- Lock: [`tests/e2e/ramming-probe-armpit.spec.ts`](../../tests/e2e/ramming-probe-armpit.spec.ts) flies a fighter into an L-shape engineering chassis at full thrust and asserts body-local penetration into the L's arms. It only covers the ramming scenario: other surfaces (drone-drone contact, projectile-ship hit) still tolerate the looser defaults but feel WORSE under continuous force ("the ship goes inside the drone"), so measure the probe before any revert.
+
+**History.** Drone damping: WS-11 / R2.25 (2026-06-12). Structures locked: P3.10 (2026-06-13); before it, structures were "ballistic" like asteroids. The client drone anchor: 2026-11-08. Soft CCD: plan soft-leaping-truffle PR-C (2026-10-31). Arcade layer: owner 2026-11-13 ("make it more like micro machines and make fights a bit longer"). Capital overlap pass: 2026-11-12. Stiff solver: 2026-05-28.
+
 ## Verification
 
 - **Unit**: [src/core/physics/ShipKindPhysics.test.ts](../../src/core/physics/ShipKindPhysics.test.ts) drives a real `PhysicsWorld` per kind and asserts the archetype ordering: top speed `heavy > fighter > scout`, yaw rate `scout > fighter > heavy`. The top-speed test runs 25 simulated seconds so Heavy's slow time-constant (5 s) has fully converged before the assertion.

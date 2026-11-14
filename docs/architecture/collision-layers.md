@@ -175,6 +175,8 @@ damageTo(self) = min(RAM_DAMAGE_MAX,
 - **Constants** (`Ramming.ts`): floor 50 u/s; `RAM_DAMAGE_PER_ENERGY` 1.25e-4
   (a full-speed fighter head-on at the 2× default scale ⇒ ~166 to each, 55 % of
   a fighter's 300 shield + hull); `RAM_DAMAGE_MAX` 400 per side per hit.
+  The arcade toughness layer (2026-11-13) scaled both ram constants ×1.75: a
+  full-speed fighter head-on now deals ~291 to each (~55 % of its 525 pool).
 - **Pipeline unchanged.** Damage goes through `applyDamage` (shield first, then
   hull; the collider swaps on the shield 0-cross) and is rounded before the emit
   guard (P3.3). A shield-popping hit drops its overflow, as for any weapon, so a

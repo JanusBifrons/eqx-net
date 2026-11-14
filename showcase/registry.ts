@@ -168,6 +168,8 @@ export const SHOWCASE_EXEMPT: Record<string, string> = {
   'mobile-perf-probe-0-results': 'Investigation record.',
   'memory-allocation-paradigm': 'Engineering discipline — end-card adjacent.',
   'reconciler-replay-scaling': 'Prediction internals — represented by the end card.',
+  'ai-pilots': 'AI flight internals (how NPC ships turn decisions into control keys); the fleet-melee shot shows them flying.',
+  'physics-worker': 'Server physics internals (how the worker applies inputs); no visible surface of its own.',
   'prediction-and-correction': 'Prediction internals — represented by the end card (netcode shot is pending).',
   'remote-prediction': 'Prediction internals — represented by the end card.',
   'collision-events': 'Physics internals — visible inside combat/scrap shots.',
@@ -184,7 +186,7 @@ export const SHOWCASE_EXEMPT: Record<string, string> = {
 
 /** Docs whose feature exists but cannot be staged on main yet — with what unblocks it. */
 export const SHOWCASE_PENDING: Record<string, string> = {
-  'real-scale-ranges': 'Off by default (EQX_NAVAL_RANGE=real); filmed with the coastal-duel shot once the camera can show a 30 km shot (follow-up slice).',
+  'real-scale-ranges': 'On by default since 2026-11-14 (EQX_NAVAL_RANGE=legacy opts out); filmed with the coastal-duel shot once the camera can show a 30 km shot (follow-up slice).',
   'contacts-overview':
     'The list earns its place on a capital at real-scale range (16" at 30 km); film it beside the real-scale-ranges shot once that 30 km camera lands, opening the list and locking a far fighter from it.',
   'ship-scale': 'R&D: the 1×/2×A/2×B comparison clips are filmed by running existing shots at EQX_SHIP_SCALE; a dedicated shot lands with the rollout.',

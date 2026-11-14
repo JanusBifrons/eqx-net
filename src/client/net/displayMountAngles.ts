@@ -8,7 +8,11 @@
  * angle carried forward at the turret's turning rate (measured from the last
  * two snapshots, capped at two snapshot intervals), followed at a bounded
  * rate so nothing jumps. A first sight or a jump beyond DISPLAY_SNAP_RAD
- * snaps. Pure, in place, alloc-free once sized (#14).
+ * snaps. The drawn angle never leaves the mount's arc: carried forward into a
+ * stop it would swing past it and spring back (take 7, 2026-11-14: the
+ * gunship's forward gun, held at its stop by the server, twitched up to 10°
+ * past it). Same bounds as the server's slew (`rotateMountToward`, #15).
+ * Pure, in place, alloc-free once sized (#14).
  *
  * A new snapshot is detected by array identity: the snapshot apply stores a
  * fresh copy per snapshot (`applyDroneMountAngles`).
@@ -33,9 +37,22 @@ export interface DisplayMountEntry {
   _dmInterval?: number;
 }
 
+/** What the follower reads of a mount: its traverse and, when it turns, its arc. */
+export interface DisplayMount {
+  rotationSpeed: number;
+  arcMin?: number;
+  arcMax?: number;
+}
+
+/** A drawn angle kept inside the mount's arc (a mount with no arc: as is). */
+function inArc(angle: number, m: DisplayMount | undefined): number {
+  if (m === undefined || m.arcMin === undefined || m.arcMax === undefined || !(m.arcMax > m.arcMin)) return angle;
+  return angle < m.arcMin ? m.arcMin : angle > m.arcMax ? m.arcMax : angle;
+}
+
 export function slewDisplayMountAngles(
   entry: DisplayMountEntry,
-  mounts: ReadonlyArray<{ rotationSpeed: number }> | undefined,
+  mounts: ReadonlyArray<DisplayMount> | undefined,
   dtSec: number,
 ): void {
   const target = entry.mountAngles;
@@ -78,7 +95,7 @@ export function slewDisplayMountAngles(
   // one interval of turning (a 16" turret: 0.2 degrees), followed out smoothly.
   const ahead = Math.min(entry._dmSince ?? 0, 2 * (entry._dmInterval ?? DEFAULT_INTERVAL_S));
   for (let i = 0; i < n; i++) {
-    const est = base[i]! + rate[i]! * ahead;
+    const est = inArc(base[i]! + rate[i]! * ahead, mounts?.[i]);
     const diff = wrapPi(est - d[i]!);
     const speed = (mounts?.[i]?.rotationSpeed ?? 0) * DISPLAY_SLEW_CATCHUP;
     if (!(speed > 0) || Math.abs(diff) > DISPLAY_SNAP_RAD) { d[i] = est; continue; }
