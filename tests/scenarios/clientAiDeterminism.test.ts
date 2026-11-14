@@ -27,6 +27,8 @@ interface RecordedIntent {
   fx: number;
   fy: number;
   torque: number;
+  /** Pilot layer: the control keys posted for the slot (drones fly by keys). */
+  input?: number;
 }
 
 class CapturingSink implements AiIntentSink {
@@ -34,6 +36,10 @@ class CapturingSink implements AiIntentSink {
   postIntent(slot: number, fx: number, fy: number, torque: number): void {
     this.intents.push({ slot, fx, fy, torque });
   }
+  postInput(slot: number, bits: number): void {
+    this.intents.push({ slot, fx: 0, fy: 0, torque: 0, input: bits });
+  }
+  flushInputs(): void { /* recorded per post */ }
 }
 
 /** Drive a controller through `nTicks` ticks. Returns recorded intents. */
@@ -81,9 +87,11 @@ describe('client AI determinism — two controllers must produce identical outpu
     const a = runController({ nTicks: 60, startTick: 1000, drones, player });
     const b = runController({ nTicks: 60, startTick: 1000, drones, player });
 
+    expect(a.length).toBeGreaterThan(0);
     expect(a).toHaveLength(b.length);
     for (let i = 0; i < a.length; i++) {
       expect(a[i]!.slot).toBe(b[i]!.slot);
+      expect(a[i]!.input).toBe(b[i]!.input);
       expect(a[i]!.fx).toBe(b[i]!.fx); // exact float equality
       expect(a[i]!.fy).toBe(b[i]!.fy);
       expect(a[i]!.torque).toBe(b[i]!.torque);
@@ -109,6 +117,7 @@ describe('client AI determinism — two controllers must produce identical outpu
     const a = runController({ nTicks: 30, startTick: 5000, drones, player });
     const b = runController({ nTicks: 30, startTick: 5000, drones, player });
 
+    expect(a.length).toBeGreaterThan(0);
     expect(a).toHaveLength(b.length);
     for (let i = 0; i < a.length; i++) {
       expect(a[i]).toEqual(b[i]); // deep equality on every recorded intent
@@ -132,9 +141,11 @@ describe('client AI determinism — two controllers must produce identical outpu
     const a = runController({ nTicks: 30, startTick: 0, drones, player });
     const b = runController({ nTicks: 30, startTick: 99_999, drones, player });
 
+    expect(a.length).toBeGreaterThan(0);
     expect(a).toHaveLength(b.length);
     for (let i = 0; i < a.length; i++) {
-      // Movement intent (fx, fy, torque) is purely geometric — no tick dep.
+      // Movement intent (keys) is purely geometric — no tick dep.
+      expect(a[i]!.input).toBe(b[i]!.input);
       expect(a[i]!.fx).toBe(b[i]!.fx);
       expect(a[i]!.fy).toBe(b[i]!.fy);
       expect(a[i]!.torque).toBe(b[i]!.torque);

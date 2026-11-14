@@ -2,6 +2,10 @@ import { describe, it, expect } from 'vitest';
 import { AiFireResolver, type AiFireResolverDeps } from './AiFireResolver.js';
 import type { WeaponFireContext } from '../../core/combat/weapons/Weapon.js';
 import type { ShipState } from './schema/SectorState.js';
+import type { LaserFiredEvent } from '../../shared-types/messages.js';
+import { mountWorldOrigin } from './mountGeometry.js';
+import { rayHitsSphere } from '../../core/combat/Weapons.js';
+import { getShipKind } from '../../shared-types/shipKinds.js';
 
 /**
  * Locks the NPC beam's target selection in `AiFireResolver.hitscan`: the
@@ -115,5 +119,66 @@ describe('AiFireResolver.hitscan — first thing in the path', () => {
     const { resolver, rec } = makeResolver({ playerHits: new Map([['p1', 40]]) });
     resolver.hitscan(ray(), 500, 5);
     expect(rec.damage).toEqual([{ targetId: 'p1', shooterId: '', damage: 5 }]);
+  });
+});
+
+/**
+ * Beam overshoot (hostile review of filmed NPC fights, 2026-11-13): an NPC
+ * interceptor's wing turrets were drawn ON the pilot, but the beam ran
+ * straight past the ship to the edge of the screen. The client draws a
+ * remote beam along the shooter's visible barrel (`PixiRenderer`: body
+ * angle + mount.baseAngle + slewed mount angle) for the server's distance.
+ * The server fired along the AI's AIM vector PLUS the slewed mount angle, so
+ * a turret already turned onto the target fired at twice the body's bearing
+ * error: a real server miss (full-range distance) drawn down the barrel,
+ * straight through the target. The ray must leave along the barrel the
+ * client draws (#15: the same angle on both sides of the wire).
+ */
+describe('AiFireResolver — a turret beam leaves along its visible barrel', () => {
+  it('a wing turret slewed onto the pilot hits it, and the wire ray runs down the barrel', () => {
+    const shooterId = 'drone-1';
+    const bodyAngle = 0;
+    // The pilot sits 0.35 rad off the nose, 200 u out (inside the ±30° wing arc).
+    const bearing = 0.35;
+    const tx = -Math.sin(bearing) * 200;
+    const ty = Math.cos(bearing) * 200;
+    const beams: LaserFiredEvent[] = [];
+    const damage: string[] = [];
+    const deps: AiFireResolverDeps = {
+      lastFireClientTick: new Map(),
+      swarmEntitySnapshot: (id) => (id === shooterId ? { id, x: 0, y: 0, vx: 0, vy: 0, angle: bodyAngle, angvel: 0 } : null),
+      swarmRegistry: { get: (id) => (id === shooterId ? { entityId: 1, shipKind: 'interceptor' } : null) },
+      resolveSlotMounts: (kind) => kind.mounts ?? [],
+      mountWorldOrigin,
+      // Both wing turrets have slewed onto the pilot (ship-relative angles).
+      droneMountAngles: new Map([[shooterId, new Float32Array([bearing, bearing])]]),
+      playerToSlot: new Map([['p1', 0]]),
+      getActiveShip: () => ({ alive: true } as unknown as ShipState),
+      shipPoseCache: new Map([['p1', { x: tx, y: ty, angle: 0 }]]),
+      playerHitscanDist: (_s, fx, fy, dx, dy, md, cx, cy) => rayHitsSphere(fx, fy, dx, dy, md, cx, cy, 30), // a fighter-sized shield bubble
+      applyDamage: (targetId) => damage.push(targetId),
+      broadcast: (_t, msg) => beams.push({ ...msg }),
+      spawnServerProjectile: () => {},
+      spawnServerMissile: () => null,
+    };
+    const resolver = new AiFireResolver(deps);
+    // The AI fires along its exact aim vector at the pilot.
+    resolver.resolve(shooterId, tx, ty, 1000, 'p1');
+
+    expect(beams).toHaveLength(2);
+    const kind = getShipKind('interceptor');
+    for (const b of beams) {
+      expect(b.hit).toBe(true);
+      expect(b.targetId).toBe('p1');
+      // The wire ray's direction is the barrel the client draws.
+      const mIdx = kind.mounts!.findIndex((m) => m.id === b.mountId);
+      const drawn = bodyAngle + kind.mounts![mIdx]!.baseAngle + bearing;
+      const len = Math.hypot(b.toX - b.fromX, b.toY - b.fromY);
+      expect((b.toX - b.fromX) / len).toBeCloseTo(-Math.sin(drawn), 5);
+      expect((b.toY - b.fromY) / len).toBeCloseTo(Math.cos(drawn), 5);
+      // Ends at the pilot's shield, not at the weapon's max range.
+      expect(len).toBeLessThan(200);
+    }
+    expect(damage).toEqual(['p1', 'p1']);
   });
 });

@@ -370,14 +370,16 @@ player-flown (active or parked), breaks it into wreck bodies on the server.
     ω × r, momentum + J), `wreckHits.test.ts` (the gate).
 - **Entity class.** A wreck piece is swarm kind 4 (`SWARM_KIND_WRECK`,
   server-only for now), predicate `isWreckPiece`. No health: `EntityResolver`
-  treats it as immune, so a shot stops on it and does nothing. Loops that
+  treats it as immune, so a shot stops on it and does no damage (it knocks
+  the piece instead, see "Overkill knock-back"). Loops that
   cover it: the projectile pipeline (bolts and shells), player beams, NPC and
   turret beams (`nonPlayerRayHit`, `LineOfFireGate`), missile flight, spawn
   clearance, the interest grid. Loops that skip it: the binary swarm encoder,
   sector persistence, missile locks, blast damage, every drone/AI loop (kind
   filters). Not on the lag-comp ring (its entity budget is the drones').
-- **Blocking shots.** `core/destruction/wreckHits.ts`: the bounding circle,
-  then the piece's convex parts (`wreckRayHit`, `wreckSweepHit`).
+- **Blocking shots.** `core/destruction/wreckHits.ts`: the bounding circle
+  (`segmentNearCircle`), then the piece's convex parts (`wreckRayHit`,
+  `wreckSweepHit`). A shot that lands knocks the piece (above).
 - **Budget.** `MAX_LIVE_WRECK_PIECES` (768) per room; the oldest piece goes
   first. Owner: wrecks stay for ever; this only guards the slot pool until
   S2c persists them. S2b keeps it.

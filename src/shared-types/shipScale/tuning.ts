@@ -197,6 +197,11 @@ export function massOf(kind: { mass?: number; massScale?: number }, fallback: nu
   return (kind.mass ?? fallback) * (kind.massScale ?? 1);
 }
 
+/** An NPC (swarm drone) body's mass when its kind authors none. One source for
+ *  the spawner (`SwarmSpawner.DRONE_DEFAULT_MASS`) and the AI pilot, which needs
+ *  the body's mass to know how hard a tick of thrust pushes it. */
+export const NPC_MASS_FALLBACK = 2;
+
 /** A ship body's rotational inertia: the disc formula the physics world
  *  sets (`World.spawnShip`, density-0 colliders), shared with the capital
  *  solver so torque turning hits its targets (invariant 15). */

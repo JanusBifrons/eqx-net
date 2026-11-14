@@ -167,6 +167,18 @@ Long uncommitted sessions are a recovery hazard. If Vite HMR cycles go wrong, th
 2. **Disk clutter.** Scratch goes in the session scratchpad, not `diag/_*`. When a stage ends, delete the scratch it created (probe scripts, `_commit-*.txt`, `_pr-body-*.md` once the PR exists, screenshots already reviewed). Remove a `.claude/worktrees/<x>` worktree once its branch is merged and the tree is clean (keep `netgate-baseline`/`netgate-head`: they're reused). Old `showcase-out/<arm>` runs go once their clips are published. Never delete committed evidence (`diag/captures/` that a doc cites) or a dirty worktree without asking.
 3. **Claude's notes (auto-memory).** Keep `MEMORY.md` under its 24 KB load limit: one line per note, ~150 chars. When a plan finishes, collapse its status note to one line (or delete it if the repo/PR history already says it), and delete notes a later one supersedes. Rules that must hold on both machines go here, not in a memory.
 
+## NEVER build a parallel system (2026-11-14, standing user directive)
+
+Owner: "NEVER build a parallel system." When a feature needs something the game already does (AI pilots and tactics, ship drawing, an entity type, a fire path, a UI surface), EXTEND that system with the hooks the feature needs. Never write a sibling version next to it, however much easier or "safer for its tests" that looks.
+
+**Why:** the RTS command work (2026-11-14) wrote a new `WingmanBehaviour` AI for player-owned ships beside the NPC AI, and drew them through the parked-hull path. The copy lacked the NPC dogfight work (the fleet lost every fight) and the ships looked different (see-through, frozen turrets, no shield bump flash). The owner had asked to be questioned before planning; the plan's "don't adapt the existing brain, write a new one" call was never put to them.
+
+**Every plan gets a hostile review for parallel systems, then the owner is ASKED:**
+1. Before a plan is presented or any building starts, a separate hostile reviewer agent checks it. Give it the plan and the codebase, not your conclusion. It must name, for each new module / class / behaviour / renderer / message the plan adds, the existing system that already does that job (search the code for it), and say whether the plan extends it or duplicates it.
+2. Any duplicate is a blocker: rewrite the plan to extend the existing system.
+3. If a sibling really seems necessary, it goes to the owner as an AskUserQuestion in plain words ("the game already has X; I want to build a second Y because Z — OK?") BEFORE any code. Never decide it yourself, and never bury it in a plan file.
+4. Subagent briefs must say the same: "extend existing systems; if you think a new parallel one is needed, stop and report instead".
+
 ## End every message with a status line (2026-11-01, standing user directive)
 
 The last line of every message is one of:

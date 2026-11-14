@@ -277,7 +277,16 @@ export class AiFireResolver implements WeaponFireSink {
       const mount = slotMounts[mIdx]!;
       const mountWorld = d.mountWorldOrigin(self.x, self.y, self.angle, mount);
       const currentMountAngle = droneAngles?.[mIdx] ?? 0;
-      const mountFireAngle = fireAngle + mount.baseAngle + currentMountAngle;
+      // A TURNING mount fires down its barrel: hull angle + base + slewed
+      // angle, the same angle the client draws the barrel and the beam at
+      // (PixiRenderer remote beams, #15). Its slewed angle is ship-relative
+      // and already turned onto the target, so adding it to the AI's aim
+      // vector (as before 2026-11-14) fired at twice the hull's bearing error:
+      // a real miss drawn down a barrel that points at the target, i.e. a beam
+      // running straight through its target to max range. A fixed mount keeps
+      // the exact aim vector (the 2026-06-03 accuracy fix; its angle is 0).
+      const turning = droneAngles !== undefined && mount.rotationSpeed > 0 && mount.arcMax > mount.arcMin;
+      const mountFireAngle = (turning ? self.angle : fireAngle) + mount.baseAngle + currentMountAngle;
       const ndx = -Math.sin(mountFireAngle);
       const ndy = Math.cos(mountFireAngle);
       // Barrel tip for a turning turret; chin guns keep the drone clearance.

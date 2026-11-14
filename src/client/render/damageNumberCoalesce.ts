@@ -13,10 +13,11 @@ export const MERGE_RADIUS_PX = 36;
 
 /**
  * Index of the live entry (first `count` of `entries`) nearest to (x, y)
- * and within `radius` (same units as the coords), or -1 for none.
+ * and within `radius` (same units as the coords), or -1 for none. Closed
+ * entries (a dead target's number) are skipped.
  */
 export function findCoalesceIndex(
-  entries: ArrayLike<{ curX: number; curY: number }>,
+  entries: ArrayLike<{ curX: number; curY: number; closed?: boolean }>,
   count: number,
   x: number,
   y: number,
@@ -26,6 +27,8 @@ export function findCoalesceIndex(
   let bestD2 = radius * radius;
   for (let i = 0; i < count; i++) {
     const e = entries[i]!;
+    // A closed number (its target died) never takes another hit.
+    if (e.closed === true) continue;
     const dx = e.curX - x;
     const dy = e.curY - y;
     const d2 = dx * dx + dy * dy;

@@ -101,7 +101,8 @@ describe('NpcLockSubsystem — a capital locks pilots its turrets can engage', (
       c: { x: -3000, y: 0, kind: 'battleship' },
     });
     for (let i = 0; i < 200 && !(s.isLocked('bs', 'f') && s.isLocked('bs', 'c')); i++) s.step();
-    // Its 16" profile alone can never lock a fighter (size term > maxSeconds):
+    // Its 16" profile alone locks a fighter only slowly (~38 s at 5 km; owner
+    // 2026-11-13: same rule as a player battleship), so within 20 s
     // the AA mounts' profile must count.
     expect(s.isLocked('bs', 'f')).toBe(true);
     expect(s.isLocked('bs', 'c')).toBe(true);
@@ -121,7 +122,7 @@ describe('testMode lockTimeCapS caps NPC locks (drones and capitals on pilots)',
       lockTimeCapS: () => cap,
     });
   };
-  it('cap 0: a 16" lock the rules call impossible completes on the first step', () => {
+  it('cap 0: a slow 16" lock (~38 s, owner 2026-11-13: slow, never impossible) completes on the first step', () => {
     const none = rig(undefined);
     for (let i = 0; i < 200; i++) none.step();
     expect(none.isLocked('bs', 'f')).toBe(false);
@@ -154,7 +155,7 @@ describe('NpcLockSubsystem — testMode instantLock completes NPC locks on that 
       instantLock: () => instant,
     });
   };
-  it('a 16" lock on a fighter never completes normally, but does at once under instantLock', () => {
+  it('a 16" lock on a fighter takes ~38 s normally, but completes at once under instantLock', () => {
     const normal = rig(false);
     for (let i = 0; i < 200; i++) normal.step();
     expect(normal.isLocked('bs', 'f')).toBe(false);
