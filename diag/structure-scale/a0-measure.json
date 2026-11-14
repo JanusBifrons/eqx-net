@@ -1,25 +1,25 @@
 {
-  "measuredAt": "2026-11-14T18:24:16.310Z",
+  "measuredAt": "2026-11-01T12:45:27.955Z",
   "results": [
     {
       "n": 30,
       "structures": 54,
-      "fencePylons": 20,
+      "fencePylons": 24,
       "turrets": 0,
       "drones": 300,
-      "joinStateBytes": 1755,
-      "patchIdleBytesPerSec": 658,
-      "patchCombatBytesPerSec": 110,
+      "joinStateBytes": 1775,
+      "patchIdleBytesPerSec": 73,
+      "patchCombatBytesPerSec": 108,
       "targetsBytesPerSnapshot": 0,
       "targetsKBPerSecPerClient": 0,
       "binaryFullRefreshBytesPerSecPerClient": 367,
       "pulseMs": {
-        "median": 0.286,
-        "max": 0.579
+        "median": 0.431,
+        "max": 0.932
       },
       "turretTickMs": {
-        "median": 0.199,
-        "max": 0.308
+        "median": 0.222,
+        "max": 0.435
       },
       "turretTickParts": {
         "tickTurrets": {
@@ -27,159 +27,159 @@
           "max": 0.049
         },
         "tickMiners": {
-          "median": 0.003,
-          "max": 0.021
+          "median": 0.001,
+          "max": 0.014
         },
         "shieldWallsUpdate": {
-          "median": 0.015,
-          "max": 0.04
+          "median": 0.019,
+          "max": 0.039
         },
         "sliceRebuild": {
-          "median": 0.116,
-          "max": 0.256
+          "median": 0.098,
+          "max": 0.222
         }
       },
-      "turretTickMsPerSec": 1.99,
+      "turretTickMsPerSec": 2.22,
       "sliceRebuildMs": {
-        "median": 0.116,
-        "max": 0.256
+        "median": 0.098,
+        "max": 0.222
       },
-      "sliceRebuildMsPerSec": 1.28
+      "sliceRebuildMsPerSec": 1.08
     },
     {
       "n": 100,
       "structures": 132,
-      "fencePylons": 28,
+      "fencePylons": 32,
       "turrets": 10,
       "drones": 300,
-      "joinStateBytes": 4381,
-      "patchIdleBytesPerSec": 2293,
-      "patchCombatBytesPerSec": 511,
+      "joinStateBytes": 4401,
+      "patchIdleBytesPerSec": 176,
+      "patchCombatBytesPerSec": 206,
       "targetsBytesPerSnapshot": 0,
       "targetsKBPerSecPerClient": 0,
       "binaryFullRefreshBytesPerSecPerClient": 898,
       "pulseMs": {
-        "median": 0.414,
-        "max": 0.6
+        "median": 0.911,
+        "max": 2.254
       },
       "turretTickMs": {
-        "median": 0.291,
-        "max": 0.608
+        "median": 0.709,
+        "max": 1.794
       },
       "turretTickParts": {
         "tickTurrets": {
-          "median": 0.035,
-          "max": 0.084
+          "median": 0.064,
+          "max": 0.67
         },
         "tickMiners": {
-          "median": 0.004,
-          "max": 0.006
+          "median": 0.002,
+          "max": 0.003
         },
         "shieldWallsUpdate": {
-          "median": 0.022,
-          "max": 0.362
+          "median": 0.026,
+          "max": 0.07
         },
         "sliceRebuild": {
-          "median": 0.166,
-          "max": 0.312
+          "median": 0.247,
+          "max": 0.809
         }
       },
-      "turretTickMsPerSec": 2.91,
+      "turretTickMsPerSec": 7.09,
       "sliceRebuildMs": {
-        "median": 0.166,
-        "max": 0.312
+        "median": 0.247,
+        "max": 0.809
       },
-      "sliceRebuildMsPerSec": 1.83
+      "sliceRebuildMsPerSec": 2.72
     },
     {
       "n": 400,
       "structures": 456,
-      "fencePylons": 52,
+      "fencePylons": 56,
       "turrets": 39,
       "drones": 300,
-      "joinStateBytes": 16995,
-      "patchIdleBytesPerSec": 9049,
-      "patchCombatBytesPerSec": 2658,
+      "joinStateBytes": 17015,
+      "patchIdleBytesPerSec": 1408,
+      "patchCombatBytesPerSec": 4102,
       "targetsBytesPerSnapshot": 0,
       "targetsKBPerSecPerClient": 0,
       "binaryFullRefreshBytesPerSecPerClient": 3101,
       "pulseMs": {
-        "median": 1.43,
-        "max": 2.269
+        "median": 1.322,
+        "max": 3.584
       },
       "turretTickMs": {
-        "median": 0.694,
-        "max": 5.676
+        "median": 0.907,
+        "max": 3.131
       },
       "turretTickParts": {
         "tickTurrets": {
-          "median": 0.166,
-          "max": 0.236
+          "median": 0.103,
+          "max": 0.191
         },
         "tickMiners": {
-          "median": 0.025,
-          "max": 0.033
+          "median": 0.004,
+          "max": 0.005
         },
         "shieldWallsUpdate": {
-          "median": 0.058,
-          "max": 0.093
+          "median": 0.049,
+          "max": 0.064
         },
         "sliceRebuild": {
-          "median": 0.503,
-          "max": 1.103
+          "median": 0.751,
+          "max": 1.182
         }
       },
-      "turretTickMsPerSec": 6.94,
+      "turretTickMsPerSec": 9.07,
       "sliceRebuildMs": {
-        "median": 0.503,
-        "max": 1.103
+        "median": 0.751,
+        "max": 1.182
       },
-      "sliceRebuildMsPerSec": 5.53
+      "sliceRebuildMsPerSec": 8.26
     },
     {
       "n": 600,
       "structures": 664,
-      "fencePylons": 60,
+      "fencePylons": 64,
       "turrets": 58,
       "drones": 300,
-      "joinStateBytes": 25157,
-      "patchIdleBytesPerSec": 5070,
-      "patchCombatBytesPerSec": 3836,
+      "joinStateBytes": 25177,
+      "patchIdleBytesPerSec": 2313,
+      "patchCombatBytesPerSec": 6068,
       "targetsBytesPerSnapshot": 0,
       "targetsKBPerSecPerClient": 0,
       "binaryFullRefreshBytesPerSecPerClient": 4515,
       "pulseMs": {
-        "median": 1.633,
-        "max": 4.176
+        "median": 1.805,
+        "max": 3.559
       },
       "turretTickMs": {
-        "median": 1.803,
-        "max": 7.222
+        "median": 1.331,
+        "max": 4.959
       },
       "turretTickParts": {
         "tickTurrets": {
-          "median": 0.121,
-          "max": 3.83
+          "median": 0.172,
+          "max": 0.393
         },
         "tickMiners": {
-          "median": 0.022,
-          "max": 0.117
+          "median": 0.012,
+          "max": 0.015
         },
         "shieldWallsUpdate": {
-          "median": 0.041,
-          "max": 0.114
+          "median": 0.083,
+          "max": 0.203
         },
         "sliceRebuild": {
-          "median": 0.722,
-          "max": 1.461
+          "median": 2.205,
+          "max": 4.414
         }
       },
-      "turretTickMsPerSec": 18.03,
+      "turretTickMsPerSec": 13.31,
       "sliceRebuildMs": {
-        "median": 0.722,
-        "max": 1.461
+        "median": 2.205,
+        "max": 4.414
       },
-      "sliceRebuildMsPerSec": 7.94
+      "sliceRebuildMsPerSec": 24.26
     }
   ]
 }

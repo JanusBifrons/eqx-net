@@ -5,8 +5,8 @@
   "rocks": 300,
   "swarmTotal": 500,
   "inInterest": 0,
-  "ticks": 195,
-  "tickMedianMs": 1.132,
-  "tickP95Ms": 1.921,
-  "bytesPerSec": 116940
+  "ticks": 180,
+  "tickMedianMs": 1.262,
+  "tickP95Ms": 3.262,
+  "bytesPerSec": 140503
 }
