@@ -28,7 +28,7 @@
 
 import { npcFactionDef } from '../../../shared-types/factions.js';
 import { isSpriteInView } from '../spriteUpdateDecisions.js';
-import type { Container, Graphics } from 'pixi.js';
+import type { Container, Graphics, RenderLayer } from 'pixi.js';
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import { getShipKind, type WeaponMount } from '../../../shared-types/shipKinds';
 import { getStructureKind } from '../../../shared-types/structureKinds';
@@ -140,6 +140,12 @@ export interface SwarmSpriteCtx {
   /** Dying capitals held on screen until their wreck pieces are drawn; told
    *  of every piece drawn this frame. Absent ⇒ no hold. */
   dyingHulls?: DyingHullHold;
+  /** The camera scale (CSS px per world u) this frame: wreck pieces go to
+   *  their far-zoom LOD where ships become icons. Absent: full art (tests). */
+  cameraScale?: number;
+  /** Where far-zoom wreck specks draw (one batch for all of them). Absent:
+   *  in place, inside each piece. */
+  wreckFarLayer?: RenderLayer;
 }
 
 /** Module-scope scratch for a structure's per-mount arc-local angles passed
@@ -383,6 +389,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     sprite.rotation = -lerped.angle;
     if (entry.kind === 1 || entry.kind === 3) updateArtShipLight(ctx.art, sprite); // ships + tumbling scrap
     else if (entry.kind === 4 && sprite instanceof WreckPieceSprite) {
+      if (ctx.cameraScale !== undefined) sprite.setFarZoom(ctx.cameraScale, ctx.wreckFarLayer ?? null); // far-zoom LOD (before update)
       sprite.update(fxNow, ctx.art.sunAz); // S3 light frame + cut-edge glow (game clock)
       // A held dying hull hands over to its pieces the frame ALL of them are
       // drawn; until then the hold hides the ones that have arrived (so it is

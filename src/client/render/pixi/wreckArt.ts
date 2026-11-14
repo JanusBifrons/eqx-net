@@ -43,13 +43,14 @@
  * `glowSeconds` (none at the minimal effects tier). A piece that has stopped
  * glowing does nothing per frame while its pose and the sun hold.
  */
-import { BufferImageSource, Container, Geometry, Mesh, MeshGeometry, Texture } from 'pixi.js';
+import { BufferImageSource, Container, Geometry, Mesh, MeshGeometry, Sprite, Texture, type RenderLayer } from 'pixi.js';
 import { WRECK_CRACK_MS } from '../../../shared-types/wreckTiming.js';
 import { LitShipMesh } from '../art/litShipShader.js';
 import { litPass } from '../art/litPass.js';
 import type { ShipArt } from '../art/ArtService.js';
 import { sunFrameBlend, type SunBlend } from '../art/machinedShipLight.js';
-import { buildWreckPieceGfx } from './spriteBuilders.js';
+import { buildWreckPieceGfx, wreckPieceColors } from './spriteBuilders.js';
+import { isIconOnly } from './FarZoomIcons.js';
 import { getShipKind, isShipKindId } from '../../../shared-types/shipKinds.js';
 import { shipShapeScale } from '../../../core/geometry/shipHullOutline.js';
 import type { WreckPieceGeometry } from '../../../core/destruction/wreckPieces.js';
@@ -1004,6 +1005,24 @@ const _glow: WreckGlow = { color: 0, alpha: 0 };
 const _blend: SunBlend = { j0: 0, j1: 0, t: 0 };
 
 /**
+ * Far-zoom LOD for wreck pieces: true when a piece of a ship of `shipRadius`
+ * (world u) draws cheap at `scale` (CSS px per world u). The ships' own rule
+ * (`FarZoomIcons.isIconOnly`: same thresholds and hysteresis) on the PARENT
+ * hull's diameter, so a wreck goes cheap at exactly the zoom its ship would
+ * have been an icon, and all its pieces switch together. Pure.
+ */
+export function wreckPieceFarLod(shipRadius: number, scale: number, wasFarLod: boolean): boolean {
+  return isIconOnly(2 * shipRadius * scale, wasFarLod);
+}
+
+/** Two 0xRRGGBB colours multiplied per channel (a tint on a tint). Pure. */
+function mulColor(a: number, b: number): number {
+  return ((((a >> 16) & 255) * ((b >> 16) & 255) / 255) << 16)
+    | ((((a >> 8) & 255) * ((b >> 8) & 255) / 255) << 8)
+    | (((a & 255) * (b & 255)) / 255);
+}
+
+/**
  * One wreck piece: the parent's art on one Mesh per tile (or, before the art
  * is ready / in the classic look, today's plain polygon), plus one glow
  * stroke on its cut edges while they are hot. Positioned and rotated by the
@@ -1057,6 +1076,14 @@ export class WreckPieceSprite extends Container {
   private ripplesDone = false;
   /** Light-frame swaps and glow buffer uploads so far (tests/diagnostics). */
   private writes = 0;
+  /** Far-zoom LOD (`setFarZoom`): the lit tiles stop rendering and a flat
+   *  polygon in the hull's colour stands in (built on first need). */
+  private farLod = false;
+  private farGfx: Container | null = null;
+  /** The parent hull's radius (world u): the LOD switches on its size. */
+  private readonly shipRadius: number;
+  private readonly piece: WreckPieceGeometry;
+  private readonly parentKind: string;
 
   constructor(
     piece: WreckPieceGeometry, parentKind: string, readonly art: ShipArt | null, readonly info: WreckInfo,
@@ -1064,6 +1091,9 @@ export class WreckPieceSprite extends Container {
     readonly pieceIndex = 0,
   ) {
     super();
+    this.piece = piece;
+    this.parentKind = parentKind;
+    this.shipRadius = getShipKind(parentKind).radius;
     const settings = litPass.settings;
     if (art !== null && art.lit !== undefined && settings !== null) {
       // GPU-lit art (the player's default look): the frames are data pages
@@ -1339,6 +1369,60 @@ export class WreckPieceSprite extends Container {
       sink(this.x + r.lx * c - r.ly * sn, -this.y + r.lx * sn + r.ly * c, r.r);
     }
     if (pending === 0) this.ripplesDone = true;
+  }
+
+  /**
+   * Far-zoom LOD, per frame with the camera scale (CSS px per world u). At
+   * the zoom where the parent ship would be an icon (`wreckPieceFarLod`), a
+   * GPU-lit piece stops drawing its lit tiles (each its own draw call: a
+   * custom shader) and shows a flat speck instead: one white-texture Sprite
+   * over the piece's bounding box, tinted the hull's piece colour (burnt for
+   * a capital). With a `layer`, the speck and any cooling glow are drawn
+   * there (one `RenderLayer` for every piece), so all specks make one batch
+   * instead of one run per gap between the lit ships and rocks they sit
+   * among in the ship container. The piece is then a few px across: the box
+   * reads as the same speck. A cut edge still cooling keeps its glow over
+   * it until it fades. Baked and plain pieces already batch and are left
+   * alone. Alloc-free except the speck, built once on first need. Writes
+   * only on a change.
+   */
+  setFarZoom(scale: number, layer: RenderLayer | null = null): void {
+    if (this.litMeshes === 0) return;
+    const lod = wreckPieceFarLod(this.shipRadius, scale, this.farLod);
+    if (lod === this.farLod) return;
+    this.farLod = lod;
+    if (lod && this.farGfx === null) {
+      const o = this.piece.outline;
+      let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+      for (let i = 0; i < o.length; i++) {
+        const v = o[i]!;
+        if (v.x < x0) x0 = v.x; if (v.x > x1) x1 = v.x;
+        if (v.y < y0) y0 = v.y; if (v.y > y1) y1 = v.y;
+      }
+      const g = new Sprite(Texture.WHITE);
+      g.anchor.set(0.5);
+      g.position.set((x0 + x1) / 2, -(y0 + y1) / 2); // pixiY = -gameY
+      g.width = Math.max(1e-3, x1 - x0);
+      g.height = Math.max(1e-3, y1 - y0);
+      const fill = wreckPieceColors(this.parentKind).fill;
+      g.tint = this.info.fx.burntArt ? mulColor(fill, burntTint(this.piece, this.info)) : mulColor(fill, this.artTint);
+      this.addChildAt(g, 0); // under the glow
+      this.farGfx = g;
+    }
+    if (this.farGfx !== null) this.farGfx.renderable = lod;
+    for (let i = 0; i < this.artParts.length; i++) this.artParts[i]!.renderable = !lod;
+    if (layer !== null) {
+      // Speck first, then the glow: the glow stays on top inside the layer.
+      // A destroyed glow leaves the layer by itself (Pixi detaches on remove).
+      const f = this.farGfx!, g = this.glow;
+      if (lod) { layer.attach(f); if (g !== null) layer.attach(g); }
+      else { if (f.parentRenderLayer === layer) layer.detach(f); if (g !== null && g.parentRenderLayer === layer) layer.detach(g); }
+    }
+  }
+
+  /** Drawn as the far-zoom stand-in now (tests/diagnostics). */
+  get farZoom(): boolean {
+    return this.farLod;
   }
 
   /** Per frame, after the pose is set: light frame + glow. Alloc-free. A
