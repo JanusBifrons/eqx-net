@@ -32,6 +32,7 @@ import { coastalCatalogue, coastalAa, coastalDuel, coastalSuperGuns, garrisonDef
 import { waveAttack } from './shots/waveAttack.js';
 import { levelUp } from './shots/levelUp.js';
 import { spectator } from './shots/spectator.js';
+import { rtsCommand } from './shots/rtsCommand.js';
 import { warp } from './shots/warp.js';
 import { scale } from './shots/scale.js';
 import { mobile } from './shots/mobile.js';
@@ -110,6 +111,7 @@ export const SHOTS: readonly Shot[] = [
   waveAttack,
   levelUp,
   spectator,
+  rtsCommand,
   radar,
   warp,
   scale,
@@ -191,6 +193,4 @@ export const SHOWCASE_PENDING: Record<string, string> = {
     'Blueprints drop at random from elites/events and install at a signed-in base; needs a staged loot→install room for the P5 showcase.',
   'research-lab':
     'Lab jobs run for minutes on the 1 Hz grid pulse; needs a staged base with blueprints + a fast-pulse room before it can be filmed.',
-  'rts-command': 'RTS branch awaiting owner sign-off film',
-  'fleet-command': 'RTS branch awaiting owner sign-off film',
 };
