@@ -83,3 +83,9 @@ energy each tick it's held (and is gated when the pool runs dry).
   hostile-flag), `HostileDroneBehaviour.test.ts` (focus-fire + dwell),
   `AutoFireToggleButton.test.tsx`, `snapshotRemoteSync.healthFrac.test.ts`;
   E2E `auto-fire.spec.ts` + `boost-facing.spec.ts` (room: `auto-fire-test`).
+
+## Client rules in detail
+
+Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each rule and points here.
+
+- **Boost is facing-direction, not movement-gated.** Boost is no longer a throttle multiplier requiring `thrust`; `applyShipInput` applies an independent forward impulse along the ship facing whenever boost is held. The client MUST energy-gate the boost bit before `predWorld.applyInput` AND the send (per-tick + sentinel paths) — mirroring the server's strip — or an exhausted pool diverges prediction from authority. `mirror.boostingShips` + the predEnergy drain track the GATED value. Lock: `applyShipInput.boost.test.ts` + `tests/e2e/boost-facing.spec.ts`.

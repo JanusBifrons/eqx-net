@@ -46,6 +46,12 @@ A disabled ship's **engines and weapons go offline for 10 seconds**. Its hull is
 
 The `alien-gate-test` room seeds one gate at the origin through the `testAlienGate` room option, with the pilot spawning inside its zone. The timetable runs on the teleporter test speed-up (`teleportCycleScale` shortens the minute too).
 
+## Client rules in detail
+
+Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each rule and points here.
+
+- **v4 A — alien gates.** The inspector shows a gate's destination and next jump from shared pure code (`components/alienGateInfo.ts`: nearest ideal site + the timetable; approximate, browser clock), never a pairing offer. `DisabledIndicator` (top-centre) reads the Zustand `disabledUntil`, written by `ColyseusClient.applyLocalDisabled` from the own-ship `disabledMs` only when the disable starts, ends or is re-applied. While disabled, `tickPhysics` strips local input through the shared `gateDisabledInput` (both the per-tick and the heartbeat paths) and stops manual and auto fire, so prediction matches the server (#15). `resetPredictionState` clears it.
+
 ## Server implementation notes
 
 > Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.
