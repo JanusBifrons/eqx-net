@@ -54,6 +54,12 @@ let _lastPublishedSelectedId: string | null = null;
  *  `feedback.helmCourseSeq`; a change is a new course tap. */
 let _lastHelmCourseSeq = 0;
 
+/** RTS command view (slice 13a) — last drained `feedback.fleetSelSeq` /
+ *  `orderSeq`. A fleet-selection change is mirrored into Zustand (ids only);
+ *  an order is only recorded for now (no network send until a later slice). */
+let _lastFleetSelSeq = 0;
+let _lastOrderSeq = 0;
+
 /** WS-10 (R2.5) — last drained `feedback.placementConfirmSeq`. The renderer bumps
  *  the seq on a DESKTOP mouse left-click during placement; when it changes we
  *  commit the placement at the chosen point + clear `placementKind`. A monotonic
@@ -345,6 +351,20 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
       _lastHelmCourseSeq = selFb.helmCourseSeq;
       gameClient.setHelmCourse(selFb.helmCourseX, selFb.helmCourseY);
     }
+    if (selFb.fleetSelSeq !== _lastFleetSelSeq) {
+      _lastFleetSelSeq = selFb.fleetSelSeq;
+      useUIStore.getState().setFleetSelection(selFb.fleetSelIds);
+    }
+    if (selFb.orderSeq !== _lastOrderSeq) {
+      _lastOrderSeq = selFb.orderSeq;
+      // No server send yet (later slice): record the order for diagnostics.
+      logEvent('fleet_order', {
+        seq: selFb.orderSeq,
+        kind: selFb.orderKind,
+        targetId: selFb.orderTargetId,
+        ships: selFb.fleetSelIds.length,
+      });
+    }
     const selId = selFb.selectedPickId;
     if (selId !== _lastPublishedSelectedId) {
       _lastPublishedSelectedId = selId;
@@ -436,6 +456,11 @@ function writeE2EDataset(
   const uiState = useUIStore.getState();
   // Phase 4 WS-A1 — spectator/construction mode flag for the spectator E2E.
   el.dataset['pilotMode'] = uiState.pilotMode;
+  // RTS command view (slice 13a): the renderer's fleet selection + last order.
+  el.dataset['fleetSel'] = feedback.fleetSelIds.join(',');
+  el.dataset['fleetSelCount'] = String(feedback.fleetSelIds.length);
+  el.dataset['fleetOrderSeq'] = String(feedback.orderSeq);
+  el.dataset['fleetOrderKind'] = feedback.orderKind;
   el.dataset['hullPct'] = String(uiState.hullPct);
   el.dataset['shieldPct'] = String(uiState.shieldPct);
   el.dataset['sectorAlert'] = uiState.sectorAlert ?? '';

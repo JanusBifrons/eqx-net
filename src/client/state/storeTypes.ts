@@ -267,6 +267,9 @@ export interface UIStore {
    *  `entity_stats` channel; `drone` reads health from the render mirror
    *  directly. Null when nothing is selected. */
   selectedEntityKind: 'ship' | 'drone' | 'structure' | 'asteroid' | 'lingering' | null;
+  /** RTS command view (slice 13a): ids of the own ships selected in command
+   *  view (renderer-owned, mirrored on change only). Ids only, no positions (#2). */
+  fleetSelection: readonly string[];
   /** Helm orders (capital-ship R&D round 3 D), discrete UI state only: whether
    *  the ship you fly takes helm orders, whether a course is set, and the speed
    *  setting (0 stop, 1 one third, 2 two thirds, 3 full). The course point
@@ -516,6 +519,8 @@ export interface UIStore {
     id: string | null,
     kind: 'ship' | 'drone' | 'structure' | 'asteroid' | 'lingering' | null,
   ) => void;
+  /** Mirror the renderer's command-view fleet selection (ids only). */
+  setFleetSelection: (ids: readonly string[]) => void;
   setEnergyMax: (max: number) => void;
   setHelmState: (available: boolean, active: boolean, speed: 0 | 1 | 2 | 3) => void;
   setCargo: (cargo: CargoView | null, capacity: number) => void;

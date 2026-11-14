@@ -655,6 +655,7 @@ function GameSurface({
         s.placementKind !== null,
         lastPointerType,
         galaxyMapOpen,
+        s.pilotMode === 'spectator', // RTS command view: right-click orders
       );
       if (outcome.preventDefault) e.preventDefault();
       if (outcome.cancel) useUIStore.getState().setPlacementKind(null);

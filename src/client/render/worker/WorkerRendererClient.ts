@@ -83,6 +83,13 @@ function emptyFeedback(): RendererFeedback {
     helmCourseSeq: 0,
     helmCourseX: 0,
     helmCourseY: 0,
+    fleetSelSeq: 0,
+    fleetSelIds: [],
+    orderSeq: 0,
+    orderKind: 'move',
+    orderX: 0,
+    orderY: 0,
+    orderTargetId: null,
     placementPreviewConnectionCount: 0,
     selectedPickId: null,
     selectedPickKind: null,
@@ -109,6 +116,8 @@ export class WorkerRendererClient implements IRenderer {
    *  the RenderMirror) so the main-thread pointer listeners can capture the
    *  pointer during a placement drag (playtest 2026-06-10 Issue 9). */
   private _placementActive = false;
+  /** Mirrors `setSpectator` (command view): pointers are captured per gesture. */
+  private _commandView = false;
   private readonly feedback: RendererFeedback = emptyFeedback();
   private onOverlayTap: OverlayTapHandler | null = null;
   private onGalaxyHover: GalaxyHoverHandler | null = null;
@@ -244,7 +253,9 @@ export class WorkerRendererClient implements IRenderer {
       // that leaves the canvas keeps delivering move/up here — otherwise the
       // ghost stalls (playtest 2026-06-10 Issue 9). Placement-active is mirrored
       // from the RenderMirror in `update()` (the worker owns the ghost).
-      if (this._placementActive) setCanvasPointerCapture(canvas, e.type, e.pointerId);
+      // RTS command view (slice 13a): capture too, so a drag-select box keeps
+      // updating when the pointer leaves the canvas.
+      if (this._placementActive || this._commandView) setCanvasPointerCapture(canvas, e.type, e.pointerId);
       this.postPointerEvent(serialisePointerEvent(e));
     };
     const onWheel = (e: WheelEvent): void => {
@@ -517,6 +528,7 @@ export class WorkerRendererClient implements IRenderer {
   setSector(_sectorKey: string | null): void { /* covered by SET_CURRENT_SECTOR */ }
 
   setSpectator(active: boolean): void {
+    this._commandView = active;
     this.post({ type: 'SET_SPECTATOR', active });
   }
 
@@ -721,6 +733,15 @@ export class WorkerRendererClient implements IRenderer {
         this.feedback.helmCourseSeq = msg.feedback.helmCourseSeq;
         this.feedback.helmCourseX = msg.feedback.helmCourseX;
         this.feedback.helmCourseY = msg.feedback.helmCourseY;
+        if (msg.feedback.fleetSelSeq !== this.feedback.fleetSelSeq) {
+          this.feedback.fleetSelSeq = msg.feedback.fleetSelSeq;
+          this.feedback.fleetSelIds = msg.feedback.fleetSelIds;
+        }
+        this.feedback.orderSeq = msg.feedback.orderSeq;
+        this.feedback.orderKind = msg.feedback.orderKind;
+        this.feedback.orderX = msg.feedback.orderX;
+        this.feedback.orderY = msg.feedback.orderY;
+        this.feedback.orderTargetId = msg.feedback.orderTargetId;
         this.feedback.placementPreviewConnectionCount =
           msg.feedback.placementPreviewConnectionCount;
         this.feedback.selectedPickId = msg.feedback.selectedPickId;

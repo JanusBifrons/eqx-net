@@ -879,6 +879,25 @@ export interface RendererFeedback {
   helmCourseX: number;
   helmCourseY: number;
   /**
+   * RTS command view (slice 13a). The renderer owns the own-ship fleet
+   * selection; `fleetSelSeq` bumps whenever it changes and `fleetSelIds` is
+   * then replaced (a fresh array per change, never mutated in place), so the
+   * main thread edge-detects on the seq. Ids follow the pick convention
+   * (active ship = playerId, lingering hull = shipInstanceId).
+   */
+  fleetSelSeq: number;
+  fleetSelIds: readonly string[];
+  /**
+   * RTS command view (slice 13a): the latest order given with a right-click
+   * (mouse) in command view. `orderSeq` bumps per order; `orderX/Y` is the
+   * GAME-space point; `orderTargetId` is set for an attack order, else null.
+   */
+  orderSeq: number;
+  orderKind: 'move' | 'attack';
+  orderX: number;
+  orderY: number;
+  orderTargetId: string | null;
+  /**
    * Structure placement connection-range preview (structures follow-up Item C).
    * The number of existing structures the placement ghost WOULD connect to if
    * placed at its current position — computed by the `ConnectorRenderer` preview

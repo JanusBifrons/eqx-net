@@ -123,6 +123,13 @@ function makeDeps(): GameRafLoopDeps {
         helmCourseSeq: 0,
         helmCourseX: 0,
         helmCourseY: 0,
+        fleetSelSeq: 0,
+        fleetSelIds: [],
+        orderSeq: 0,
+        orderKind: 'move',
+        orderX: 0,
+        orderY: 0,
+        orderTargetId: null,
       };
       return {
         update: () => {},

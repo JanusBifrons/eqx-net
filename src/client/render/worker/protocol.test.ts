@@ -233,6 +233,13 @@ describe('renderer-worker protocol', () => {
             selectedPickKind: 'structure',
             hoveredPickId: 'swarm-7',
             miningBeamCount: 1,
+            fleetSelSeq: 3,
+            fleetSelIds: ['p1', 'hull-9'],
+            orderSeq: 2,
+            orderKind: 'attack',
+            orderX: 10,
+            orderY: -20,
+            orderTargetId: 'swarm-5',
           },
         },
       },
@@ -267,6 +274,9 @@ describe('renderer-worker protocol', () => {
         expect(back.feedback.selectedPickId).toBe('swarm-42');
         expect(back.feedback.selectedPickKind).toBe('structure');
         expect(back.feedback.miningBeamCount).toBe(1);
+        expect(back.feedback.fleetSelIds).toEqual(['p1', 'hull-9']);
+        expect(back.feedback.orderKind).toBe('attack');
+        expect(back.feedback.orderTargetId).toBe('swarm-5');
       }
       if (back.type === 'FRAME_MARKERS') {
         // Primitive struct — every field must survive the clone intact

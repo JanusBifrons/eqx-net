@@ -30,6 +30,9 @@ import { SelectionBracket } from './SelectionBracket';
 import { AimFeedbackRenderer } from './AimFeedbackRenderer';
 import { HoverBracket } from './HoverBracket';
 import { pickEntityAt, type PickedEntityKind } from './pickEntity';
+import { CommandPointerRouter, type BoxRect, type RouterAction, type RouterPointerEvent } from './input/commandPointerRouter.js';
+import { applySelection, boxSelectOwn, collectFleetShips, isOwnShipPresent, pickOwnShipAt, sameSelection } from './fleetSelection.js';
+import { FleetOverlay, type OrderFlash } from './FleetOverlay.js';
 import { decideLingeringSpriteAction, decideExplosionPosition, type SpriteDecision } from './spriteUpdateDecisions';
 import { shouldLatchFirstFrame } from './firstFrameLatch.js';
 import { EffectsService, effectsDisabledByUrl } from '../effects/EffectsService';
@@ -208,6 +211,22 @@ export class PixiRenderer implements IRenderer {
    *  `update()` does NOT re-issue the local-ship follow, so the camera holds
    *  wherever the player panned it (and there may be no local ship at all). */
   private _spectator = false;
+  /**
+   * RTS command view (slice 13a). Enabled while spectating (command mode);
+   * decides what a pointer gesture means (camera / box / tap-select / order).
+   */
+  private readonly _cmdRouter = new CommandPointerRouter(false);
+  /** Own-ship fleet selection (ids per the pick convention). Replaced (never
+   *  mutated) on a gesture; pruned in place in `update()` when a ship leaves. */
+  private _fleetSel: Set<string> = new Set();
+  /** Drag box in screen px while a box gesture is live (reused object). */
+  private readonly _fleetBoxRect: BoxRect = { x0: 0, y0: 0, x1: 0, y1: 0 };
+  private _fleetBoxActive = false;
+  private readonly _orderFlash: OrderFlash = { x: 0, y: 0, attack: false, t0: -1 };
+  private fleetOverlay: FleetOverlay | null = null;
+  private readonly _fleetProject = (wx: number, wy: number, out: { x: number; y: number }): void => {
+    this.camera.toScreenInto(wx, wy, out);
+  };
   /**
    * Click-to-inspect selection (structures follow-up Item B2). The renderer
    * OWNS the selected entity — set on a gameplay tap that resolves to an
@@ -522,6 +541,13 @@ export class PixiRenderer implements IRenderer {
     helmCourseSeq: 0,
     helmCourseX: 0,
     helmCourseY: 0,
+    fleetSelSeq: 0,
+    fleetSelIds: [],
+    orderSeq: 0,
+    orderKind: 'move',
+    orderX: 0,
+    orderY: 0,
+    orderTargetId: null,
     placementPreviewConnectionCount: 0,
     selectedPickId: null,
     selectedPickKind: null,
@@ -1046,6 +1072,8 @@ export class PixiRenderer implements IRenderer {
     // Incoming-fire markers sit under the radar's edge icons.
     this.incomingFire.init(this.camera);
     this.helmMarker.init(this.camera);
+    // RTS command view: selection rings / drag box / order flash, screen space.
+    this.fleetOverlay = new FleetOverlay(this.app.stage);
     this.halo.init(this.camera);
     this.halo.setIncoming(this.incomingFire);
     // Damage numbers attach to the world (pan with camera, anchored at
@@ -1160,7 +1188,7 @@ export class PixiRenderer implements IRenderer {
    * Worker-context entry point for synthesised pointer events forwarded
    * from the main thread. The Camera consumes via its state machine.
    */
-  forwardPointerEvent(e: { type: string; pointerId: number; offsetX: number; offsetY: number; stamp: number; button?: number; pointerType?: string }): void {
+  forwardPointerEvent(e: { type: string; pointerId: number; offsetX: number; offsetY: number; stamp: number; button?: number; buttons?: number; shiftKey?: boolean; pointerType?: string }): void {
     // Galaxy selector (spawn/warp picker) owns pointer input for free
     // pan/zoom; a tap is resolved to a sector inside the layer. Otherwise
     // the world camera consumes it (gameplay pan/zoom + tap).
@@ -1180,39 +1208,192 @@ export class PixiRenderer implements IRenderer {
       this.routePlacementPointer(e.type, e.offsetX, e.offsetY, e.button ?? -1, e.pointerType ?? 'mouse');
       return;
     }
-    switch (e.type) {
+    // RTS command view (slice 13a): the router decides camera / box / select /
+    // order. Its `camera` actions run the camera below with taps ignored.
+    if (this.commandRoutingActive()) {
+      this.routeCommandPointer(e.type, e.pointerId, e.offsetX, e.offsetY, e.stamp,
+        e.button ?? 0, e.buttons ?? 0, e.shiftKey === true, e.pointerType ?? 'mouse');
+      return;
+    }
+    const wasTap = this.cameraPointer(e.type, e.pointerId, e.offsetX, e.offsetY, e.stamp);
+    if (wasTap) {
+      // Confirmed tap (single pointer, short duration, small distance):
+      // route to the registered tap-handler. The worker uses this to
+      // hit-test the GalaxyMapLayer (since Pixi's event subsystem
+      // isn't initialised without a DOM event source).
+      if (this.onTap) this.onTap(e.offsetX, e.offsetY);
+      // Click-to-inspect (Item B2): a gameplay tap selects an entity, gated
+      // off galaxy + placement so it never cross-fires with warp/picker/build.
+      if (!this.galaxyTapSuppressed() && !this._placementActive) {
+        this.handleGameplayTap(e.offsetX, e.offsetY);
+      }
+    }
+  }
+
+  /**
+   * The camera half of pointer handling (both render paths). Returns the
+   * camera's `wasTap` on pointerup; callers decide whether a tap means anything
+   * (command view ignores it: the router owns taps there).
+   */
+  private cameraPointer(type: string, pointerId: number, x: number, y: number, stamp: number): boolean {
+    switch (type) {
       case 'pointerdown':
-        this.camera.onPointerDown(e.pointerId, e.offsetX, e.offsetY, e.stamp);
-        break;
+        this.camera.onPointerDown(pointerId, x, y, stamp);
+        return false;
       case 'pointermove':
-        this.camera.onPointerMove(e.pointerId, e.offsetX, e.offsetY);
+        this.camera.onPointerMove(pointerId, x, y);
         // WS-10 (R2.4) — desktop hover outline. Renderer-local; gated like
         // selection so it never fires over the galaxy layer / during placement.
         if (!this.galaxyTapSuppressed() && !this._placementActive) {
-          this.handleGameplayHover(e.offsetX, e.offsetY);
+          this.handleGameplayHover(x, y);
         }
-        break;
-      case 'pointerup': {
-        const result = this.camera.onPointerUp(e.pointerId, e.offsetX, e.offsetY, e.stamp);
-        // Confirmed tap (single pointer, short duration, small distance):
-        // route to the registered tap-handler. The worker uses this to
-        // hit-test the GalaxyMapLayer (since Pixi's event subsystem
-        // isn't initialised without a DOM event source).
-        if (result.wasTap && this.onTap) {
-          this.onTap(e.offsetX, e.offsetY);
-        }
-        // Click-to-inspect (Item B2): a gameplay tap selects an entity, gated
-        // off galaxy + placement so it never cross-fires with warp/picker/build.
-        if (result.wasTap && !this.galaxyTapSuppressed() && !this._placementActive) {
-          this.handleGameplayTap(e.offsetX, e.offsetY);
-        }
-        break;
-      }
+        return false;
+      case 'pointerup':
+        return this.camera.onPointerUp(pointerId, x, y, stamp).wasTap;
       case 'pointercancel':
       case 'pointerleave':
-        this.camera.onPointerCancel(e.pointerId);
-        break;
+        this.camera.onPointerCancel(pointerId);
+        return false;
     }
+    return false;
+  }
+
+  /** Command view routes pointers through the router (never over the galaxy
+   *  overlay, whose taps stay warp taps; placement is routed before this). */
+  private commandRoutingActive(): boolean {
+    return this._cmdRouter.enabled && !this.galaxyTapSuppressed() && !this._placementActive;
+  }
+
+  private routeCommandPointer(
+    type: string, pointerId: number, x: number, y: number, stamp: number,
+    button: number, buttons: number, shiftKey: boolean, pointerType: string,
+  ): void {
+    if (type === 'pointerleave') {
+      // Not a router event: a leave after a lift is noise, and a live gesture
+      // keeps going (the DOM path captures the pointer in command view).
+      return;
+    }
+    if (type !== 'pointerdown' && type !== 'pointermove' && type !== 'pointerup' && type !== 'pointercancel') return;
+    // Allocated per input event (not a frame-loop path): the router keeps the
+    // down event of a gesture by reference.
+    const ev: RouterPointerEvent = { type, pointerId, button, buttons, x, y, shiftKey, pointerType, timeMs: stamp };
+    const actions = this._cmdRouter.handle(ev);
+    for (let i = 0; i < actions.length; i++) this.applyRouterAction(actions[i]!);
+  }
+
+  private applyRouterAction(a: RouterAction): void {
+    switch (a.kind) {
+      case 'camera':
+        this.cameraPointer(a.ev.type, a.ev.pointerId, a.ev.x, a.ev.y, a.ev.timeMs);
+        return;
+      case 'boxStart':
+      case 'boxUpdate':
+        this._fleetBoxRect.x0 = a.x0; this._fleetBoxRect.y0 = a.y0;
+        this._fleetBoxRect.x1 = a.x1; this._fleetBoxRect.y1 = a.y1;
+        this._fleetBoxActive = true;
+        return;
+      case 'boxCancel':
+        this._fleetBoxActive = false;
+        return;
+      case 'boxEnd':
+        this._fleetBoxActive = false;
+        this.commandBoxSelect(a.x0, a.y0, a.x1, a.y1, a.additive);
+        return;
+      case 'tapSelect':
+        this.commandTap(a.x, a.y, a.additive);
+        return;
+      case 'order':
+        this.commandOrder(a.x, a.y);
+        return;
+    }
+  }
+
+  /** Box (screen px) → own ships whose centre is inside it (game space). */
+  private commandBoxSelect(x0: number, y0: number, x1: number, y1: number, additive: boolean): void {
+    const m = this._lastMirror;
+    if (m === null) return;
+    const a = this.camera.screenToWorld(x0, y0);
+    const b = this.camera.screenToWorld(x1, y1);
+    const hits = boxSelectOwn(a.x, -a.y, b.x, -b.y, collectFleetShips(m), m.localPlayerId);
+    this.setFleetSelection(applySelection(this._fleetSel, hits, additive));
+  }
+
+  /** Command-view tap: an own ship selects it; anything else falls through to
+   *  today's inspect select (and a plain tap clears the fleet selection). */
+  private commandTap(screenX: number, screenY: number, additive: boolean): void {
+    const m = this._lastMirror;
+    if (m === null) return;
+    const w = this.camera.screenToWorld(screenX, screenY);
+    const own = pickOwnShipAt(w.x, -w.y, collectFleetShips(m), m.localPlayerId);
+    if (own !== null) {
+      this.setFleetSelection(applySelection(this._fleetSel, [own], additive));
+      return;
+    }
+    if (!additive && this._fleetSel.size > 0) this.setFleetSelection(new Set());
+    this.handleGameplayTap(screenX, screenY);
+  }
+
+  /** Command-view right-click: attack a non-own entity under the cursor, else
+   *  move to the point. Needs a selection. Published via feedback (no send yet). */
+  private commandOrder(screenX: number, screenY: number): void {
+    const m = this._lastMirror;
+    if (m === null || this._fleetSel.size === 0) return;
+    const w = this.camera.screenToWorld(screenX, screenY);
+    const gx = w.x;
+    const gy = -w.y;
+    const hit = pickEntityAt(gx, gy, m);
+    const attack = hit !== null && hit.kind !== 'asteroid' && !this._fleetSel.has(hit.id) && !isOwnShipPresent(hit.id, m);
+    const fb = this.feedback;
+    fb.orderKind = attack ? 'attack' : 'move';
+    fb.orderTargetId = attack ? hit.id : null;
+    fb.orderX = gx;
+    fb.orderY = gy;
+    fb.orderSeq++;
+    this._orderFlash.x = gx;
+    this._orderFlash.y = gy;
+    this._orderFlash.attack = attack;
+    // eslint-disable-next-line no-restricted-properties -- real time: the order flash is UI
+    this._orderFlash.t0 = performance.now();
+  }
+
+  /** Replace the fleet selection and publish it (only when it changed). */
+  private setFleetSelection(next: Set<string>): void {
+    if (sameSelection(this._fleetSel, next)) return;
+    this._fleetSel = next;
+    this.publishFleetSelection();
+  }
+
+  /**
+   * Per frame: drop selected ids that are no longer own ships in the mirror
+   * (in place, no allocation unless one went), then redraw the overlay.
+   */
+  private updateFleetSelection(mirror: RenderMirror): void {
+    if (this._fleetSel.size > 0) {
+      let pruned = false;
+      for (const id of this._fleetSel) {
+        if (!isOwnShipPresent(id, mirror)) {
+          this._fleetSel.delete(id);
+          pruned = true;
+        }
+      }
+      if (pruned) this.publishFleetSelection();
+    }
+    this.fleetOverlay?.update(
+      mirror,
+      this._fleetSel,
+      this._fleetBoxActive ? this._fleetBoxRect : null,
+      this._orderFlash,
+      // eslint-disable-next-line no-restricted-properties -- real time: the selection overlay is UI
+      performance.now(),
+      this._fleetProject,
+      this.camera.scale.x,
+    );
+  }
+
+  private publishFleetSelection(): void {
+    // Allocates on a selection change only (a gesture or a ship leaving).
+    this.feedback.fleetSelIds = Array.from(this._fleetSel);
+    this.feedback.fleetSelSeq++;
   }
 
   /**
@@ -1290,33 +1471,22 @@ export class PixiRenderer implements IRenderer {
         this.routePlacementPointer(e.type, e.offsetX, e.offsetY, e.button, e.pointerType);
         return;
       }
-      switch (e.type) {
-        case 'pointerdown':
-          this.camera.onPointerDown(e.pointerId, e.offsetX, e.offsetY, stamp);
-          break;
-        case 'pointermove':
-          this.camera.onPointerMove(e.pointerId, e.offsetX, e.offsetY);
-          // WS-10 (R2.4) — desktop hover outline (main-thread render path).
-          if (!this.galaxyTapSuppressed() && !this._placementActive) {
-            this.handleGameplayHover(e.offsetX, e.offsetY);
-          }
-          break;
-        case 'pointerup': {
-          const result = this.camera.onPointerUp(e.pointerId, e.offsetX, e.offsetY, stamp);
-          // Click-to-inspect (Item B2): a confirmed gameplay tap (not a drag)
-          // selects an entity. Gated off the galaxy layer + placement so it
-          // never cross-fires. The galaxy `isPanZoomActive` branch above
-          // already returned for the selector; `galaxyTapSuppressed()` also
-          // covers the in-game overlay (warp taps).
-          if (result.wasTap && !this.galaxyTapSuppressed() && !this._placementActive) {
-            this.handleGameplayTap(e.offsetX, e.offsetY);
-          }
-          break;
-        }
-        case 'pointercancel':
-        case 'pointerleave':
-          this.camera.onPointerCancel(e.pointerId);
-          break;
+      // RTS command view (slice 13a): router owns the gesture. Capture the
+      // pointer so a drag box keeps updating when it leaves the canvas.
+      if (this.commandRoutingActive()) {
+        setCanvasPointerCapture(canvas, e.type, e.pointerId);
+        this.routeCommandPointer(e.type, e.pointerId, e.offsetX, e.offsetY, stamp,
+          e.button, e.buttons, e.shiftKey, e.pointerType);
+        return;
+      }
+      const wasTap = this.cameraPointer(e.type, e.pointerId, e.offsetX, e.offsetY, stamp);
+      // Click-to-inspect (Item B2): a confirmed gameplay tap (not a drag)
+      // selects an entity. Gated off the galaxy layer + placement so it
+      // never cross-fires. The galaxy `isPanZoomActive` branch above
+      // already returned for the selector; `galaxyTapSuppressed()` also
+      // covers the in-game overlay (warp taps).
+      if (wasTap && !this.galaxyTapSuppressed() && !this._placementActive) {
+        this.handleGameplayTap(e.offsetX, e.offsetY);
       }
     };
     const onWheel = (e: WheelEvent): void => {
@@ -2405,6 +2575,7 @@ export class PixiRenderer implements IRenderer {
     this.incomingFire.update(mirror, this.fxNow()); // countdowns are game seconds
     // eslint-disable-next-line no-restricted-properties -- real time: the helm order marker is UI
     this.helmMarker.update(mirror, performance.now());
+    this.updateFleetSelection(mirror);
     this.halo.update(mirror);
 
     // ---------- RendererFeedback (end-of-frame, main-thread readable) ----------
@@ -3160,6 +3331,11 @@ export class PixiRenderer implements IRenderer {
 
   setSpectator(active: boolean): void {
     this._spectator = active;
+    // RTS command view == spectating for now (a later slice renames it).
+    // Leaving it drops any live box and clears the fleet selection.
+    const cancel = this._cmdRouter.setEnabled(active);
+    for (let i = 0; i < cancel.length; i++) this.applyRouterAction(cancel[i]!);
+    if (!active && this._fleetSel.size > 0) this.setFleetSelection(new Set());
     // The radar is camera-relative while spectating. Pushed here (not read
     // from the store) so it works on the worker path too.
     this.halo.setSpectator(active);
@@ -3457,6 +3633,7 @@ export class PixiRenderer implements IRenderer {
     this.halo.destroy();
     this.incomingFire.destroy();
     this.helmMarker.destroy();
+    this.fleetOverlay?.destroy();
     this.backgroundGrid?.destroy();
     this.starfield?.destroy();
     // Warp stage + filters live on app.stage so `app.destroy({ children: true })`
