@@ -6,6 +6,7 @@ How the AI brain in `src/core/ai/` turns decisions into flight. Which sides figh
 
 An NPC brain never emits an impulse or an angvel snap. It picks a FACING and a WANTED VELOCITY, and `ai/virtualPilot.ts` (`pilotInputs`, pure, alloc-free, caller-owned `PilotState`) turns them into the keys a player would press (thrust, reverse, turn left/right, boost) as `AiIntent.input` bits. The worker runs them through `applyShipInput` with the NPC's own kind.
 
+- **Boost shows like a pilot's:** `AiController.boostingSlot` remembers whether this tick's keys held boost; the room (after the disabled gate) puts it on the in-interest snapshot as `drones[].boost` (emit-when-true, #16), the client mirrors it to `SwarmRenderState.boosting`, and the engine exhaust draws the same boost flame a pilot's ship gets (`render/pixi/droneEngineInput.ts`). Thrust still follows speed (no key on the wire). Locks: `AiController.boost.test.ts`, `SnapshotBroadcaster.droneBoost.test.ts`, `snapshotRemoteSync.charging.test.ts`, `droneEngineInput.test.ts`.
 - **Handling comes from the kind:** `makePilotHandling(kind, massOf(kind, NPC_MASS_FALLBACK))`.
   - Snap turns stop on release.
   - Torque (capital) turns stop early on the predicted coast `ω/angularDamping`, and counter-turn when even that overshoots.

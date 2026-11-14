@@ -179,6 +179,8 @@ export interface SnapshotBroadcasterDeps {
   isDroneHostileTo: (droneId: string, playerId: string) => boolean;
   /** P3c — the drone is winding up a charge weapon (the telegraph bit). */
   isDroneCharging?: (droneId: string) => boolean;
+  /** The AI pilot holds the boost key this tick (the boost flame, #16). */
+  isDroneBoosting?: (droneId: string) => boolean;
   /** Living World P1a — the carried hold of a ship instance (a SHARED reference
    *  from the HoldStore, replaced only on a discrete transfer — #14 safe), or
    *  undefined when it carries nothing. Absent dep ⇒ no cargo slice. */
@@ -369,6 +371,8 @@ type MutableDroneEntry = {
   hp?: number;
   hostile?: boolean;
   charging?: boolean;
+  /** The AI pilot holds boost (emit-when-true). */
+  boost?: boolean;
   elite?: string;
   fac?: string;
   /** W2a NPC warp-to: 1 spool, 2 run, 3 just arrived (emit-when-non-zero). */
@@ -638,6 +642,7 @@ export class SnapshotBroadcaster {
     arr: MutableDroneEntry[], i: number,
     id: number, mountAngles: number[] | undefined, shieldDown: boolean,
     hp: number | undefined, hostile: boolean, charging = false, elite?: string, fac?: string, warp: 0 | 1 | 2 | 3 = 0,
+    boost = false,
   ): void {
     const slot = arr[i];
     if (!slot) {
@@ -647,6 +652,7 @@ export class SnapshotBroadcaster {
       if (hp !== undefined) fresh.hp = hp;
       if (hostile) fresh.hostile = true;
       if (charging) fresh.charging = true;
+      if (boost) fresh.boost = true;
       if (elite !== undefined) fresh.elite = elite;
       if (fac !== undefined) fresh.fac = fac;
       if (warp !== 0) fresh.warp = warp;
@@ -655,6 +661,8 @@ export class SnapshotBroadcaster {
     }
     if (charging) slot.charging = true;
     else delete slot.charging;
+    if (boost) slot.boost = true;
+    else delete slot.boost;
     if (elite !== undefined) slot.elite = elite;
     else delete slot.elite;
     if (fac !== undefined) slot.fac = fac;
@@ -1062,10 +1070,13 @@ export class SnapshotBroadcaster {
           const fac = d.droneFactionOf?.(rec.id);
           // W2a — an NPC warp (spool / run / just arrived) drives the client fx (#16).
           const warp = d.droneWarpOf?.(rec.id) ?? 0;
-          if (!droneMountAnglesArr && !rec.shieldDown && hpPct === undefined && !hostile && !charging && elite === undefined && fac === undefined && warp === 0) continue;
+          // Take 12 — the AI pilot's boost key, so its ship shows the same
+          // boost flame a pilot's does (#16; emit-when-true).
+          const boost = d.isDroneBoosting?.(rec.id) === true;
+          if (!droneMountAnglesArr && !rec.shieldDown && hpPct === undefined && !hostile && !charging && elite === undefined && fac === undefined && warp === 0 && !boost) continue;
           SnapshotBroadcaster.writeDroneSlot(
             dronesScratch, dronesCount,
-            eid, droneMountAnglesArr, rec.shieldDown ?? false, hpPct, hostile, charging, elite, fac, warp,
+            eid, droneMountAnglesArr, rec.shieldDown ?? false, hpPct, hostile, charging, elite, fac, warp, boost,
           );
           dronesCount++;
         }

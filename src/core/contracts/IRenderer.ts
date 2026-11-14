@@ -179,6 +179,9 @@ export interface SwarmRenderState {
   /** Living World P3c — this drone is winding up a CHARGE weapon (snapshot
    *  `drones[].charging`). Drives the telegraph glow. Snapshot cadence. */
   charging?: boolean;
+  /** This AI ship's pilot holds the boost key (snapshot `drones[].boost`).
+   *  Drives the same boost flame a pilot's ship gets. Snapshot cadence. */
+  boosting?: boolean;
   /** Living World P4a — a named ELITE's display name (snapshot `drones[].elite`).
    *  Drives the gold label + ring. Snapshot cadence. */
   eliteName?: string;

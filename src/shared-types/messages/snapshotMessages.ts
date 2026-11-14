@@ -47,6 +47,11 @@ export interface WelcomeMessage {
    *  explosion at the kill point instead of the hull-sized death blast
    *  (money-shot review). Absent = no wrecks. */
   capitalWrecks?: true;
+  /** Sub-capital break-up: set when this room breaks dying sub-capitals into
+   *  wreck pieces (`subcapWrecks` / `EQX_SUBCAP_WRECKS`). The client then
+   *  holds the dying hull briefly until its pieces are drawn; the ship's
+   *  normal death explosion still plays. Absent = no sub-cap wrecks. */
+  subcapWrecks?: true;
   /** Sub-capital break-up slice 3 — the FULL set of live wreck descriptors at
    *  join (#16). Snapshots then carry only `wreckAdds` / `wreckRemoves` and a
    *  slow `wreckSync`. Absent = none (or wrecks off). */
@@ -151,6 +156,7 @@ export const WelcomeSchema = z
     shellEvents: z.literal(true).optional(),
     shellsInFlight: z.array(ShellSalvoSchema).max(256).optional(),
     capitalWrecks: z.literal(true).optional(),
+    subcapWrecks: z.literal(true).optional(),
     wrecks: z.array(WreckDescriptorSchema).max(MAX_WELCOME_WRECKS).optional(),
   })
   .strict();
@@ -381,6 +387,10 @@ export interface SnapshotMessage {
      *  robot orb's charge laser): the client draws the telegraph. Emit-when-
      *  true; absence means "not charging" (the wind-up is ~1.2 s). */
     charging?: boolean;
+    /** Take 12 — true while this AI ship's pilot holds the boost key: the
+     *  client draws the same boost flame a pilot's ship gets (#16).
+     *  Emit-when-true; absence means "not boosting". */
+    boost?: boolean;
     /** Living World P4a — a named ELITE's display name (sent every snapshot
      *  while the elite is in interest; absent for ordinary NPCs). */
     elite?: string;
