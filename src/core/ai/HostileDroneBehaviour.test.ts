@@ -7,6 +7,8 @@ import { DriftingAsteroidBehaviour } from './DriftingAsteroidBehaviour.js';
 import type { AiEntity, AiWorldView } from '../contracts/IAiBehaviour.js';
 import { WEAPON_COOLDOWN_TICKS } from '../combat/Weapons.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
+import { getWeapon } from '../combat/WeaponCatalogue.js';
+import { SNAP_TURN_EASE } from './virtualPilot.js';
 import { boostOf, stepKinematic, throttleOf, turnOf } from './pilotTestKit.js';
 
 const droneAt = (x: number, y: number, angle = 0, angvel = 0): AiEntity => ({
@@ -350,11 +352,19 @@ describe('HostileDroneBehaviour — COMBAT pursuit', () => {
     // and (with that error > tolerance) NOT firing this tick.
     const b = new HostileDroneBehaviour();
     b.markHostile('p', 0);
+    // The target's speed comes from the live kind so the lead clears the
+    // pilot's dead-band at every ship scale. A target 200 u dead ahead
+    // crossing at vx, with bolt speed S, gives a lead angle of atan(vx / S).
+    // The eased snap turn (`SNAP_TURN_EASE`) leaves an error under
+    // deadbandSteps turn steps alone; a step is maxAngvel / 60 (0.07 rad at
+    // 2x, 0.14 rad at 1x: band 0.175 / 0.35 rad). Aim for band + 2 steps.
+    const kind = getShipKind(null);
+    const step = kind.maxAngvel / 60;
+    const lead = (SNAP_TURN_EASE.deadbandSteps + 2) * step;
+    const bolt = getWeapon(kind.mounts?.[0]?.weaponId ?? 'hitscan');
+    const boltSpeed = bolt.mode === 'hitscan' ? 1e6 : bolt.speed;
     const moving: AiWorldView = {
-      // vx 400: the lead angle (~0.24 rad) is wider than one snap-turn step at
-      // every ship scale (arcade turn rates make a step ~0.07 rad at 2x and wider
-      // at the authored 1x), so the closest stop is a turn, not holding still.
-      players: [{ id: 'p', x: 0, y: 200, vx: 400, vy: 0 }],
+      players: [{ id: 'p', x: 0, y: 200, vx: boltSpeed * Math.tan(lead), vy: 0 }],
       tick: 100,
       dtSec: 1 / 60,
     };
