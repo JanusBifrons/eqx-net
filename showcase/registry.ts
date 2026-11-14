@@ -173,6 +173,7 @@ export const SHOWCASE_EXEMPT: Record<string, string> = {
   'asteroid-interaction-model': 'Visible incidentally (mining, scale shot).',
   'webrtc-datachannel-snapshot-transport': 'Off under automation; end-card line.',
   'cinematic-camera': 'The tool that films the video.',
+  'renderer-worker': 'Rendering internals (which thread draws the frame); no visible surface of its own.',
   'showcase-pipeline': 'The pipeline itself.',
   'procedural-bases-research': 'Research record.',
   'shell-events': 'Design note, no player-facing change yet; the shells and incoming-fire marker it changes are filmed by the real-scale-ranges shot once built.',
