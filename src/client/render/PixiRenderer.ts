@@ -1954,7 +1954,9 @@ export class PixiRenderer implements IRenderer {
             const entityId = parseInt(shooterId.slice('swarm-'.length), 10);
             if (!Number.isNaN(entityId)) {
               const sw = mirror.swarm?.get(entityId);
-              currentMountAngle = sw?.mountAngles?.[mountIdx] ?? 0;
+              // The angle the turret is DRAWN at (swarmSpriteUpdater), so the
+              // beam leaves down the barrel on screen, not the raw 20 Hz step.
+              currentMountAngle = (sw?.displayMountAngles ?? sw?.mountAngles)?.[mountIdx] ?? 0;
             }
           }
 
