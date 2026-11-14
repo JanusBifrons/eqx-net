@@ -247,6 +247,12 @@ const AVOID_SAFETY = 1.3;
 const AVOID_LATENCY_S = 0.1;
 /** Look this many seconds of closing ahead for a ship to avoid. */
 const AVOID_LOOK_S = 3;
+/** The dodge side (left / right of the closing velocity) is latched for the
+ *  running manoeuvre, and freed once no dodge has been flown for this long
+ *  (ticks, 1 s). Picked afresh each tick, it flipped as the two ships slid
+ *  across each other's closest-approach point: the turn key flapped at full
+ *  rate nose to nose (filmed Robot Orb, 2026-11-14). */
+const AVOID_SIDE_IDLE_TICKS = 60;
 
 // ── Decision layer (AI overhaul slice 4) ────────────────────────────────
 /** Recent-hit counter half-life (ticks): the "under heavy fire" signal. */
@@ -477,6 +483,10 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   private _avY = 0;
   /** Test-visible: ticks spent dodging a hull. */
   private _avoidTicks = 0;
+  /** Latched dodge side: +1 left of the closing velocity, −1 right, 0 free. */
+  private _avSide = 0;
+  /** Tick of the last dodge (frees the latch after `AVOID_SIDE_IDLE_TICKS`). */
+  private _avLastTick = 0;
   /** Ticks flown with the afterburner lit (test-visible). */
   private _boostTicks = 0;
   /** Test-visible: did the last combat tick resolve through context steering? */
@@ -1283,7 +1293,9 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    * turn and slide clear). Writes the dodge direction to `_avX/_avY`: away
    * from where it will pass, or, dead head-on, to my right of the relative
    * velocity, which is the other ship's left of its own, so the two dodge
-   * apart. Allocation-free (#14).
+   * apart. The side is latched for the running manoeuvre (freed after
+   * `AVOID_SIDE_IDLE_TICKS` without a dodge): once committed, the dodge
+   * holds it. Allocation-free (#14).
    */
   private hullAvoid(self: AiEntity, nb: IAiNeighbourQuery): boolean {
     const h = this.handling;
@@ -1298,7 +1310,10 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     const fx = -Math.sin(self.angle);
     const fy = Math.cos(self.angle);
     const minW2 = 0.01 * h.cruiseSpeed * h.cruiseSpeed;
+    const tick = this._tac.tick;
+    if (this._avSide !== 0 && tick - this._avLastTick > AVOID_SIDE_IDLE_TICKS) this._avSide = 0;
     let bestT = Infinity;
+    let bestSide = 0;
     for (let k = 0; k < n; k++) {
       const i = idx[k]!;
       const px = nb.xAt(i) - self.x;
@@ -1314,25 +1329,27 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       const miss = Math.hypot(mx, my);
       const clear = r + nb.radiusAt(i) + AVOID_MARGIN_RADII * r;
       if (miss >= clear) continue;
-      let dx: number;
-      let dy: number;
-      if (miss > 0.05 * clear) {
-        dx = -mx / miss;
-        dy = -my / miss;
-      } else {
-        const wl = Math.sqrt(w2);
-        dx = wy / wl;
-        dy = -wx / wl;
-      }
+      // Away from where it passes (−m, square to w), as a side of w: +1 its
+      // left (−wy, wx), −1 its right; dead head-on, the right. A latched
+      // side wins.
+      let side = this._avSide;
+      if (side === 0) side = miss > 0.05 * clear && wy * mx - wx * my > 0 ? 1 : -1;
+      const wl = Math.sqrt(w2);
+      const dx = (-wy / wl) * side;
+      const dy = (wx / wl) * side;
       const c = fx * dx + fy * dy;
       const turn = Math.acos(c > 1 ? 1 : c < -1 ? -1 : c) / Math.max(h.maxAngvel, 1e-3);
       const need = AVOID_SAFETY * (turn + Math.sqrt((2 * (clear - miss)) / accel)) + AVOID_LATENCY_S;
       if (t > need) continue;
       bestT = t;
+      bestSide = side;
       this._avX = dx;
       this._avY = dy;
     }
-    return bestT < Infinity;
+    if (bestT === Infinity) return false;
+    this._avSide = bestSide;
+    this._avLastTick = tick;
+    return true;
   }
 
   /** Refresh the tactical context for this combat tick (plain writes, #14). */
@@ -1369,7 +1386,10 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     c.threatBearingCos = c.fwdX * ux + c.fwdY * uy;
     // The same bearing from the target's side: its nose vs target → me.
     const ta = (target as { angle?: number }).angle;
-    c.targetBowCos = ta === undefined || Number.isNaN(ta) ? 1 : Math.sin(ta) * ux - Math.cos(ta) * uy;
+    const known = ta !== undefined && !Number.isNaN(ta);
+    c.targetBowCos = known ? Math.sin(ta) * ux - Math.cos(ta) * uy : 1;
+    c.tFwdX = known ? -Math.sin(ta) : 0;
+    c.tFwdY = known ? Math.cos(ta) : 0;
     const hp = self.health;
     c.hullFrac = hp === undefined ? 1 : Math.max(0, Math.min(1, hp / this.kind.maxHealth));
     c.holdAlong = along;
@@ -1448,6 +1468,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   private switchManoeuvre(id: ManoeuvreId, tick: number): void {
     this._picker.switchTo(id, tick);
     this._manoeuvres[id]!.begin(this._tac);
+    this._avSide = 0;
     this._pendingId = -1;
   }
 

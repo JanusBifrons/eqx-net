@@ -238,6 +238,8 @@ const RUN_DIVE = 0;
 const RUN_PASS = 1;
 const RUN_EXTEND = 2;
 const RUN_DONE = 3;
+/** Started inside its pass distance: open the range first (see the class). */
+const RUN_OPEN = 4;
 /** Lateral relative speed (× cruise) that picks the miss side by itself. */
 const RUN_LATERAL_EPS = 0.1;
 /** Miss side with no lateral motion: −1 = to the right of the target line,
@@ -264,6 +266,28 @@ const RUN_PASS_MAX_S = 2;
 const RUN_EXTEND_MIN_S = 1.5;
 const RUN_EXTEND_MAX_S = 3;
 const RUN_EXTEND_RANGE = 1.3;
+/** A run that starts inside its pass distance (`runPullDist`) first opens
+ *  the range to this many overshoots (`shipTuning(kind).attackRunOvershoot`,
+ *  #18), and never less than `RUN_OPEN_RANGE` × fire range (past the dive's
+ *  "opening again inside half fire range" pull-off), then turns back for a
+ *  dive. A pass flown from inside it starts from a standstill nose to nose
+ *  (filmed 2026-11-14: a Robot Orb ~100 u off a heavy at 3–95 u/s, turn key
+ *  flipping at full rate for ~2.5 s). */
+export const RUN_OPEN_OVERSHOOTS = 1.5;
+const RUN_OPEN_RANGE = 0.6;
+/** The opening course runs this far off straight away from the target
+ *  (rad, 45°), on the side away from the target's nose: out of its guns. */
+const RUN_OPEN_OFF = Math.PI / 3;
+const RUN_OPEN_COS = Math.cos(RUN_OPEN_OFF);
+const RUN_OPEN_SIN = Math.sin(RUN_OPEN_OFF);
+/** …but only from below this share of my cruise: a ship already flying at
+ *  speed (a chase from behind, a fast merge) has the way on it to fly the
+ *  pass. And a target running from me faster than this share of my cruise
+ *  opens the range itself: the open ends and the dive chases it (turning
+ *  away let a fleeing ship go, fleeEvade). */
+export const RUN_OPEN_MAX_SPEED_FRAC = 0.5;
+/** An open that never gets the range ends the run after this long (s). */
+const RUN_OPEN_MAX_S = 5;
 /** Strafing a parked or slow (`targetSlow`) target (owner decision 2026-11-14: "dive in firing,
  *  pass, swing round and come again, like a fighter on a ground target"):
  *  the extend ends once the gap is this many overshoots
@@ -291,6 +315,13 @@ const STRAFE_SWING_MIN_SPEED = 0.25;
  * along it with boost for a seeded 1.5–3 s (or until the gap is 1.3 × fire
  * range). Done after the extend: the picker chooses again, usually another
  * run from the distance the extend opened.
+ *
+ * A run picked INSIDE its pass distance from below `RUN_OPEN_MAX_SPEED_FRAC`
+ * of cruise (no way on it) first opens the range, as a pilot
+ * would: extend away with boost on a course 45° off straight away, on the
+ * side away from the target's nose (latched at the start), out to
+ * `RUN_OPEN_OVERSHOOTS` overshoots, then dive. Without it the pass was flown
+ * from a standstill ~100 u off the target, nose to nose.
  */
 export class AttackRunManoeuvre implements IManoeuvre {
   readonly id = MANOEUVRE_ATTACK_RUN;
@@ -299,10 +330,32 @@ export class AttackRunManoeuvre implements IManoeuvre {
   private passX = 0;
   private passY = 1;
   private phaseEnd = 0;
+  /** Opening side (left-hand normal of the target line), latched at begin. */
+  private openSide = 1;
   /** Diving at the target, guns on it (the fire-lane nudge may side-step it). */
   get diving(): boolean { return this.phase === RUN_DIVE; }
 
   begin(ctx: TacticalContext): void {
+    const slow = RUN_OPEN_MAX_SPEED_FRAC * ctx.cruiseSpeed;
+    if (ctx.dist < runPullDist(ctx) && ctx.vx * ctx.vx + ctx.vy * ctx.vy < slow * slow) {
+      // Inside the pass distance, slow: open the range first. Off the target's
+      // nose: its nose's lean across the line to me picks the other side;
+      // facing unknown or dead on, the side I already slide to, else the
+      // fixed side.
+      this.phase = RUN_OPEN;
+      const nx = -ctx.uy;
+      const ny = ctx.ux;
+      const nose = ctx.tFwdX * nx + ctx.tFwdY * ny;
+      const lat = nx * (ctx.vx - ctx.tvx) + ny * (ctx.vy - ctx.tvy);
+      this.openSide = nose > RUN_LATERAL_EPS ? -1 : nose < -RUN_LATERAL_EPS ? 1
+        : lat > RUN_LATERAL_EPS * ctx.cruiseSpeed ? 1 : lat < -RUN_LATERAL_EPS * ctx.cruiseSpeed ? -1 : RUN_DEFAULT_SIDE;
+      this.phaseEnd = ctx.tick + RUN_OPEN_MAX_S * TICKS_PER_S;
+      return;
+    }
+    this.startDive(ctx);
+  }
+
+  private startDive(ctx: TacticalContext): void {
     this.phase = RUN_DIVE;
     // Pass on the side we are already sliding toward; with no lateral motion,
     // a fixed rule (everyone passes the same way round), so two ships diving
@@ -317,6 +370,19 @@ export class AttackRunManoeuvre implements IManoeuvre {
 
   writeGoal(ctx: TacticalContext, maps: ContextMaps, out: ManoeuvreGoal): void {
     this.advance(ctx);
+    if (this.phase === RUN_OPEN) {
+      // Away from the target, 45° off toward the latched side (live line).
+      const s = this.openSide;
+      addInterestToward(maps, -ctx.ux * RUN_OPEN_COS - ctx.uy * s * RUN_OPEN_SIN,
+        -ctx.uy * RUN_OPEN_COS + ctx.ux * s * RUN_OPEN_SIN, 1, GOAL_SHAPE);
+      out.speed = ctx.maxSpeed;
+      out.facing = FACE_MOVE;
+      // Burn out of it like a ship running: boost as soon as the nose is
+      // within 90° of the course, reserve included (`spendReserve`).
+      out.boost = true;
+      out.spendReserve = true;
+      return;
+    }
     if (this.phase === RUN_DIVE) {
       const miss = runMiss(ctx) * this.side;
       // Perpendicular to the target line (left-hand normal).
@@ -359,6 +425,12 @@ export class AttackRunManoeuvre implements IManoeuvre {
 
   /** Phase transitions (idempotent within a tick). */
   private advance(ctx: TacticalContext): void {
+    if (this.phase === RUN_OPEN) {
+      if (ctx.tick >= this.phaseEnd) { this.phase = RUN_DONE; return; }
+      if (ctx.dist >= runOpenDist(ctx)
+        || ctx.tvx * ctx.ux + ctx.tvy * ctx.uy > RUN_OPEN_MAX_SPEED_FRAC * ctx.cruiseSpeed) this.startDive(ctx);
+      return;
+    }
     if (this.phase === RUN_DIVE) {
       if (ctx.tick >= this.phaseEnd) { this.phase = RUN_DONE; return; }
       if (ctx.dist < runPullDist(ctx) || (ctx.closing < 0 && ctx.dist < 0.5 * ctx.fireRange)) {
@@ -405,6 +477,13 @@ function runMiss(ctx: TacticalContext): number {
   // documents), never less than the duel miss.
   const s = STRAFE_MISS_OVERSHOOTS * ctx.overshoot;
   return s > m ? s : m;
+}
+
+/** Gap a run started inside its pass distance opens to before it dives. */
+export function runOpenDist(ctx: TacticalContext): number {
+  const a = RUN_OPEN_OVERSHOOTS * ctx.overshoot;
+  const b = RUN_OPEN_RANGE * ctx.fireRange;
+  return a > b ? a : b;
 }
 
 /** Gap at which the dive pulls off: the overshoot, or (faster) the distance
