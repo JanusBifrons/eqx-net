@@ -30,6 +30,8 @@ import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import type { ShellSalvo } from '../../../src/shared-types/messages/shellEvents.js';
 import { getShipKind, type WeaponMount, type ShipKind } from '../../../src/shared-types/shipKinds.js';
 import { getWeapon } from '../../../src/core/combat/WeaponCatalogue.js';
+import { navalGunEngageReach } from '../../../src/shared-types/combat/navalGuns.js';
+import { LOCK_TUNING } from '../../../src/shared-types/combat/lockProfile.js';
 
 /** Just inside the 30 s (1800-tick) hostility window. */
 const AGE_TICKS = 1790;
@@ -116,10 +118,12 @@ describe('SectorRoom integration — an attacking NPC stays hostile', () => {
     await waitUntil(() => tick() - t0 >= 60, 5000, '1 s of ticks');
     expect(hostile(), 'its own held lock keeps it hostile').toBe(true);
 
-    // The pilot flies far out of fire range (well past the 16" reach).
-    const away = (): void => peek.postToWorker({ type: 'SET_POSITION', entityId: pid, x: 0, y: -25_000, angle: 0, vx: 0, vy: 0, angvel: 0 });
+    // The pilot flies far out of fire range (well past the 16" reach, which
+    // follows the naval range mode: ~5.4 km legacy, ~38.7 km real).
+    const awayY = -(navalGunEngageReach('naval_xl') * LOCK_TUNING.reachSlack + 10_000);
+    const away = (): void => peek.postToWorker({ type: 'SET_POSITION', entityId: pid, x: 0, y: awayY, angle: 0, vx: 0, vy: 0, angvel: 0 });
     away();
-    await waitUntil(() => (peek.shipPoseCache.get(pid)?.y ?? 0) < -20_000, 5000, 'pilot moved away');
+    await waitUntil(() => (peek.shipPoseCache.get(pid)?.y ?? 0) < awayY + 5000, 5000, 'pilot moved away');
     // Locks work at any distance (owner 2026-11-14): the NPC still holds its
     // lock out here, but a lock outside its fire range no longer refreshes
     // hostility (lead call): with the last hostile act aged to 29.8 s, ~1 s

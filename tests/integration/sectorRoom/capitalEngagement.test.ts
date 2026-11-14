@@ -3,8 +3,10 @@
  * SectorRoom: a hostile battleship engages a pilot at MAIN-BATTERY range and
  * lands 16" hits.
  *
- * The pilot sits 5,000 u from the battleship's centre, out of reach of every gun
- * except the 16" main battery. Fails on the pre-Phase-3 code three ways: drone
+ * The pilot sits 5,000 u from the battleship's centre. At legacy ranges only the
+ * 16" main battery reaches that far; at real ranges (the default) the 5"
+ * secondaries do too and usually hit first, so the hit test waits for a 16"
+ * hit by its damage. Fails on the pre-Phase-3 code three ways: drone
  * turrets only looked 250 u from the hull's centre (a battleship could never
  * engage anything outside its own hull), capitals carried the fighter bolt and
  * autocannon, and every mount fired along the hull's aim.
@@ -14,6 +16,12 @@
  * lock a fighter-sized hull (no playable hull is big enough). The pilot joins
  * with the testMode `instantLock` trigger, which also completes NPC locks on
  * them in reach, so these tests keep measuring the main battery itself.
+ *
+ * The hit test flies a heavy cruiser: a turret fires once its barrel is within
+ * `TURRET_FIRE_MISS` (60 u) of the aim point, and a fighter's small hit circle
+ * slips that at real-range shell speeds (a 16" takes ~4 s to cross 5 km, not
+ * ~2 s, while the battleship turns under it). A main battery's real target is
+ * a capital anyway.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
@@ -30,9 +38,10 @@ describe('SectorRoom integration — capital main battery (Phase 3)', () => {
       droneCount: 0,
       testMode: true,
       asteroidConfig: [],
+      pilotCapitals: true,
       // The pilot (origin) 40° off the battleship's bow: clear of the hull
       // (guns never fire along their own deck), and only a ~10 s swing at the
-      // real 4°/s traverse. 5" reach can't cover the gap.
+      // real 4°/s traverse.
       dronePoses: [{ kind: 'battleship', x: 5000, y: 0, angle: (50 * Math.PI) / 180 }],
     });
   }, 15_000);
@@ -42,17 +51,20 @@ describe('SectorRoom integration — capital main battery (Phase 3)', () => {
 
   it('fires 16" shells that hit a pilot 5,000 u away', { timeout: 60_000 }, async () => {
     const pid = randomUUID();
-    const cr = await harness.connectActive(pid, { initialHull: 1_000_000, initialShield: 0, startHostile: true, instantLock: true });
+    const cr = await harness.connectActive(pid, {
+      shipKind: 'heavy-cruiser', initialHull: 1_000_000, initialShield: 0, startHostile: true, instantLock: true,
+    });
     const hits: DamageEvent[] = [];
+    // Only the 16" hits count (the 5" secondaries reach 5 km at real ranges).
+    const xlDamage = getWeapon('naval_xl').damage;
     cr.onMessage('damage', (e: DamageEvent) => {
-      if (e.targetId === pid) hits.push(e);
+      if (e.targetId === pid && e.damage === xlDamage) hits.push(e);
     });
 
     const deadline = Date.now() + 40_000;
     while (Date.now() < deadline && hits.length === 0) await new Promise((r) => setTimeout(r, 100));
 
-    expect(hits.length, 'the battleship never hit the pilot at main-battery range').toBeGreaterThan(0);
-    expect(hits[0]!.damage, 'the hit should be a 16" shell').toBe(getWeapon('naval_xl').damage);
+    expect(hits.length, 'no 16" shell hit the pilot 5,000 u away').toBeGreaterThan(0);
   });
 
   it('a triple turret fires a three-shell salvo (one per barrel)', { timeout: 60_000 }, async () => {
