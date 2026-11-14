@@ -19,8 +19,49 @@
  * Locked by `src/client/net/snapshotCoalesce.test.ts`.
  */
 
-import type { SnapshotMessage } from '@shared-types/messages';
+import type { SnapshotMessage, WreckDescriptor } from '@shared-types/messages';
 import { logEvent } from '../debug/ClientLogger.js';
+
+function hasAdd(list: readonly WreckDescriptor[] | undefined, id: number): boolean {
+  if (list === undefined) return false;
+  for (let i = 0; i < list.length; i++) if (list[i]!.wreckId === id) return true;
+  return false;
+}
+
+function hasId(list: readonly number[] | undefined, id: number): boolean {
+  if (list === undefined) return false;
+  for (let i = 0; i < list.length; i++) if (list[i] === id) return true;
+  return false;
+}
+
+/**
+ * Fold a DROPPED snapshot's wreck deltas into the newer one, so applying the
+ * newer one equals applying both in order. The newer snapshot wins for any
+ * wreck it names (its add beats an older remove, its remove an older add);
+ * the older chunk rides on only when the newer has none (a chunk is a slow
+ * repair: losing one only delays convergence). Mutates `newer` (a decoded
+ * snapshot this client owns); pushes onto its arrays, allocating only when
+ * it had none — a dropped snapshot is already the slow path.
+ */
+export function carryWreckDeltas(older: SnapshotMessage, newer: SnapshotMessage): void {
+  const oAdds = older.wreckAdds;
+  if (oAdds !== undefined) {
+    for (let i = 0; i < oAdds.length; i++) {
+      const d = oAdds[i]!;
+      if (hasAdd(newer.wreckAdds, d.wreckId) || hasId(newer.wreckRemoves, d.wreckId)) continue;
+      (newer.wreckAdds ??= []).push(d);
+    }
+  }
+  const oRemoves = older.wreckRemoves;
+  if (oRemoves !== undefined) {
+    for (let i = 0; i < oRemoves.length; i++) {
+      const id = oRemoves[i]!;
+      if (hasAdd(newer.wreckAdds, id) || hasId(newer.wreckRemoves, id)) continue;
+      (newer.wreckRemoves ??= []).push(id);
+    }
+  }
+  if (older.wreckSync !== undefined && newer.wreckSync === undefined) newer.wreckSync = older.wreckSync;
+}
 
 export class SnapshotCoalescer {
   private pending: SnapshotMessage | null = null;
@@ -44,12 +85,11 @@ export class SnapshotCoalescer {
     if (!this.enabled) return;
     if (this.pending !== null) {
       this.droppedSinceLastDrain++;
-      // `wrecks[]` is NOT full-state on every snapshot: it rides only a few
-      // after a change, then 2 Hz (absent = no change). A dropped snapshot's
-      // list rides on with a newer one that has none, or a wreck's pieces
-      // wait seconds for the next copy and miss their break-up (money-shot
-      // review, capital-destruction.md). No allocation: the array moves.
-      if (this.pending.wrecks !== undefined && snap.wrecks === undefined) snap.wrecks = this.pending.wrecks;
+      // Wreck descriptors are DELTAS, not full state (sub-capital break-up
+      // slice 3): absent = no change. A dropped snapshot's adds, removes and
+      // resync chunk ride on with the newer one, or a wreck's pieces wait for
+      // the slow resync and miss their break-up (LESSONS 2026-11-12).
+      carryWreckDeltas(this.pending, snap);
     }
     this.pending = snap;
   }
