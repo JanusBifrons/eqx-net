@@ -217,7 +217,7 @@ describe('virtualPilot — flying to a point', () => {
  */
 describe('virtualPilot — key discipline (no flicking)', () => {
   const fighter = getShipKind('fighter');
-  const h = makePilotHandling(fighter, massOf(fighter, NPC_MASS_FALLBACK));
+  const h = makePilotHandling(fighter, shipBodyMass(fighter));
   const step = h.maxAngvel / 60;
 
   interface Trace { presses: number[]; swapsWithin6: number; tapsInBand: number; maxErr: number }
@@ -294,7 +294,7 @@ describe('virtualPilot — key discipline (no flicking)', () => {
 
 describe('virtualPilot — combat throttle (thrust held by default)', () => {
   const fighter = getShipKind('fighter');
-  const h = makePilotHandling(fighter, massOf(fighter, NPC_MASS_FALLBACK));
+  const h = makePilotHandling(fighter, shipBodyMass(fighter));
   const COMBAT: PilotParams = { ...SYNC, combatThrust: true, throttleHoldTicks: 8 };
 
   it('keeps thrust held when the wanted speed is a little under the actual (speed is managed by turning)', () => {

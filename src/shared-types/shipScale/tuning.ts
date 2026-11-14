@@ -206,10 +206,10 @@ export function massOf(kind: { mass?: number; massScale?: number }, fallback: nu
 
 /** A ship body's mass: the kind's authored mass (1 when it authors none)
  *  times the motion model's multiplier. THE one source for every body of a
- *  ship kind, whoever flies it: the pilot ship (`World.spawnShip`), the NPC
+ *  ship kind, whoever flies it: the pilot ship (`World.spawnShip`), the AI pilot's
  *  drone (`World.spawnObstacle` with its kind, server worker and client
  *  predWorld) and the AI pilot's handling model. Ship stats belong to the
- *  ship, never the pilot (owner 2026-11-13): before this an NPC flew an
+ *  ship, never the pilot (owner 2026-11-13): before this an AI pilot flew an
  *  unauthored kind at mass 2 (server) / 3 (client predWorld) against a
  *  pilot's 1. */
 export function shipBodyMass(kind: ShipKind): number {
