@@ -32,6 +32,7 @@ import type { Container, Graphics } from 'pixi.js';
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import { getShipKind, type WeaponMount } from '../../../shared-types/shipKinds';
 import { getStructureKind } from '../../../shared-types/structureKinds';
+import { destructionProfileOf } from '../../../shared-types/shipScale/destructionProfile';
 import { wrapPi, rotateMountToward } from '../../../core/ai/WeaponMountController';
 import {
   DAMAGE_FLASH_COLOR,
@@ -70,6 +71,17 @@ import type { DyingHullHold } from './dyingHullHold.js';
 
 /** S2b: an empty wreck map for frames whose mirror carries none. */
 const NO_WRECKS: ReadonlyMap<number, unknown> = new Map();
+/** Per parent kind: do its wreck pieces draw the dead bake (`fx.deadArt`)?
+ *  Filled once per kind (the profile lookup allocates its argument). */
+const wreckDeadArt = new Map<string, boolean>();
+function wreckDeadArtFor(kindId: string): boolean {
+  let v = wreckDeadArt.get(kindId);
+  if (v === undefined) {
+    v = destructionProfileOf({ type: 'ship', kindId }).fx.deadArt;
+    wreckDeadArt.set(kindId, v);
+  }
+  return v;
+}
 
 /** Campaign 3.2 — everything (besides the pose-core kind, tracked separately
  *  in `spriteKinds` for #20 back-compat) that a swarm sprite's VISUAL is built
@@ -255,10 +267,14 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
             : entry.kind === 0
               ? rockHandleFor(ctx.art, spriteKey, entityId, entry.radius, entry.asteroidResource, -entry.angle)
               : null;
-    // S3: a wreck piece draws its PARENT kind's own baked art (the handle the
-    // live hull used, so no re-bake). Swap the plain piece once it is ready.
+    // S3: a wreck piece draws its PARENT kind's baked art. A capital's is the
+    // handle the live hull used (no re-bake); a sub-cap's is the parent's DEAD
+    // bake (`fx.deadArt`: no glowing robot core, canopy, engines or running
+    // lights; take 10 review, "keeps the robot's glowing eye"). Swap the plain
+    // piece once it is ready.
+    const wreckParent = entry.kind === 4 ? entry.shipKind ?? wreckDescs!.get(entry.wreckId!)!.parentKind : '';
     const wreckArtHandle = entry.kind === 4 && ctx.art.art
-      ? shipHandleFor(ctx.art, spriteKey, entry.shipKind ?? wreckDescs!.get(entry.wreckId!)!.parentKind, undefined)
+      ? shipHandleFor(ctx.art, spriteKey, wreckParent, undefined, wreckDeadArtFor(wreckParent))
       : null;
     if (
       sprite instanceof WreckPieceSprite && wreckArtHandle !== null &&

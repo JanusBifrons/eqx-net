@@ -174,7 +174,8 @@ describe('SectorRoom integration — sub-capital wrecks (sub-cap break-up slice 
    * ships flying together": at ~0.6 radii/s of parting they were still
    * ~0.3 radii apart 1 s after the break (the old bar). Each ship is now
    * killed while flying (the pieces inherit its velocity) and every pair
-   * must be >= 0.75 radii apart 1 game s later.
+   * must be >= 1.5 radii apart 1 game s later (take 10: 1.36-1.9 at x160, 1.67-2.9
+   * at x240 over runs: the seed follows the death tick).
    */
   for (const kind of ['fighter', 'robot-square', 'robot-circle', 'heavy', 'robot-hexagon', 'missile-frigate'] as const) {
     it(`a ${kind}'s pieces stand clearly apart 1 s after the break, wherever it was hit`, async () => {
@@ -212,7 +213,7 @@ describe('SectorRoom integration — sub-capital wrecks (sub-cap break-up slice 
       }
       console.log(`[subcap-gap] ${kind}: narrowest gap over ${HITS} hit points ${least.toFixed(1)} u = ${(least / r).toFixed(2)} radii after ${elapsed.toFixed(2)} game s`);
       expect(elapsed).toBeLessThan(1.3);
-      expect(least / r, `${kind}: narrowest gap after ~1 s, in hull radii`).toBeGreaterThanOrEqual(0.75);
+      expect(least / r, `${kind}: narrowest gap after ~1 s, in hull radii`).toBeGreaterThanOrEqual(1.5);
     }, 20_000);
   }
 

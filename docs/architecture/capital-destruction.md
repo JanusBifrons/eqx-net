@@ -836,7 +836,7 @@ on the profile, not a branch in the code.
 - **Parting and knock-back** are per unit of hull radius (`shipTuning`), tuned
   for capitals, and invisible at fighter size (a fighter's pieces parted at
   ~0.1 u/s and read as one hull with a crack). The sub-cap profile scales
-  them: `pushScale` 30, `separateScale` 40 (160 since the take 9 review, see "Reads as broken"), `dampingScale` 10. The push runs
+  them: `pushScale` 30, `separateScale` 40 (240 since the take 9 and 10 reviews, see "Reads as broken"), `dampingScale` 10. The push runs
   away from the kill point, so on a hit at one end it moves every piece the
   same way: at ×50 alone it left robot pieces touching ~1 s after the break
   (round-2 review). `separateScale` raises the seam pass's least opening
@@ -1879,6 +1879,47 @@ robot-circle, heavy, robot hexagon, missile frigate killed while flying,
 narrowest gap ≥ 0.75 radii 1 game s later; 0.42–0.47 before);
 `swarmSpriteUpdater.subcapWreck.test.ts` "no live-ship decorations".
 
+**Take 10 follow-up (2026-11-14).** The review of take 10 (with the fix
+above) still saw a robot-square's biggest piece (~70 %) "keep the robot's
+glowing eye", read as a live robot flying with a fighter, and AI 004's
+pieces "only widen ~30 → 45 px over 3 s".
+
+- **The client draws what the server simulates.** Measured from the clip
+  (npc-dogfight 16.8–20.2 s, ~0.69 px per u at that zoom): centre gap 28,
+  44, 53, 65 px at +0.6, +1.2, +2.0, +2.8 s after the death; the server
+  kicks (2.44 r/s for robot-square, damping 0.6/s) predict 35, 49, 62, 69
+  px. Same path, no hold, no old separation: the reviewer's window was the
+  tail, after damping had taken most of the parting. The look was too small,
+  not wrong on the client.
+- **The eye was the live bake.** A wreck piece drew its parent's LIVE art,
+  so a robot's emissive core ring (`forgeShip`'s robot core) stayed on
+  whichever piece held the middle. Profile flag `fx.deadArt` (sub-cap true,
+  capital false): a sub-cap piece draws the parent's dead bake (BakeJob
+  `ship` with `dead`, key `:D`, the forge's `scrap` look: no core,
+  canopy, nozzles or running lights). Same hull, plating, paint and grid, so
+  the piece UVs line up; not darkened. One extra small bake per sub-cap kind
+  that dies. Locks: `src/client/render/art/wreckPieceArt.test.ts` (no
+  emissive texel, same grid), `swarmSpriteUpdater.subcapWreck.test.ts`
+  "draw the dead bake".
+- **Bigger split, faster parting.** `soundMinShare` 0.33 → 0.43 (largest
+  piece ≤ 60 %) and `separateScale` 160 → 240 (every pair parts at ≥ ~3.3
+  radii/s; a robot-square ~88 u/s, ~2.75 radii apart 1 s later, ~6 at
+  rest). The fastest single piece drifts < 8 radii in all.
+
+| Kind | Largest piece (×160 → ×240) | Slowest pair parts at | Server gap at 1 s, killed while flying |
+|---|---|---|---|
+| robot-square | 68 % → 58 % | 58.7 → 87.9 u/s (3.66 r/s) | 1.65 → 2.23–2.25 r |
+| robot-circle | 68 % → 58 % | 73.7 → 110.7 u/s (3.69 r/s) | 1.78–1.88 → 2.75–2.82 r |
+| heavy | 68 % → 57 % | 73.9 → 109.2 u/s (3.41 r/s) | 1.42–1.73 → 1.97–2.88 r |
+| fighter | 66 % → 57 % | 52.8 → 86.3 u/s (3.60 r/s) | 1.74–1.77 → 2.52–2.82 r |
+
+Every sub-cap kind: largest ≤ 58 %, slowest pair ≥ 3.27 r/s. Sleep times
+unchanged (fighter at rest ~5.2 game s, at full speed ~9.2 s). perfSceneCounts:
+fleet-fight 73.2 bodies/tick, 12.8 wreck pieces, 295–302 KB/s (budget 334);
+wide-view 98.6 bodies/tick, 13.4 pieces, 406–410 KB/s (budget 418): piece
+counts unchanged, budgets not re-set. Locks tightened: "read as broken"
+(largest ≤ 60 %, pairs ≥ 3 r/s) and "stand clearly apart" (≥ 1.5 radii).
+
 ## 4. Determinism strategy
 
 Every client must produce the same pieces as the server, bit for bit, from
@@ -1997,7 +2038,7 @@ Moved from `src/core/CLAUDE.md` (2026-11-14); kept for the record.
 - **v5: the shatter stays at the kill point and cuts run across a long hull** (hostile review of a filmed heavy-cruiser death). Seed density falls as 1/d⁴ over a 0.4 % floor; the Voronoi bisectors use a metric stretched 2× along the keel (`bisector`, still convex cells that tile); beyond one falloff radius seeds keep a least keel-wise spacing. Lock: `fractureHull.killFocus.test.ts`.
 - **v6: cracks fan out from the kill point; the far field breaks along a few uneven, tilted cracks** (money-shot review: v5 cut a comb of even square bands and a ladder at the kill point). `crackLines` (its own seeded stream) adds fan cracks through the kill point and far cracks at seeded stations and tilts; the Voronoi seeds stay inside the fan (no far floor); cracks and the primary line are jagged, after `weldTJunctions` pairs T-junction edges. Lock: the v6 describe in `fractureHull.killFocus.test.ts` (far pieces, far tilt, radial cracks) on top of the v5 locks.
 - **v7: the hull breaks only where it was hit, into a few ENORMOUS chunks** (owner review 2026-11-13: v6 sliced the far hull where no shell hit and cut a comb of slivers at the impact; "The last hit's impact sets the split"). No Voronoi seeds, no far cracks: two jagged zone cracks ~a beam either side of the primary and 0–2 fan cracks from the kill point (`LocalLine`, split only their zone half) leave 2–4 chunks at the impact and one big section each side. A very heavy blow (≥ max hull) on a long hull rarely (12 %) adds ONE far crack. Piece count still rises with size and violence, but stays ~3–7. A fan crack only splits a section where every part it leaves is chunky (≥ `FAN_MIN_WIDTH_BEAMS` 0.45 beam wide, ≤ `FAN_MAX_ASPECT` 2.6× longer than that; filmed take 2026-11-13: a long thin triangle along the port edge). Lock: the v7 describe in `fractureHull.killFocus.test.ts` (no thin sliver, no long thin piece of any size, no far cut, 2–5 near pieces, ≤ 2 sections each side).
-- **v8: sub-capital pieces are never nearly the whole hull** (take 9 review 2026-11-14). The `soundMinShare` option (default 0.15); the sub-cap profile sets 0.33. Capital output unchanged. Lock: `wreckPieces.subcapParting.test.ts` "read as broken".
+- **v8: sub-capital pieces are never nearly the whole hull** (take 9 review 2026-11-14). The `soundMinShare` option (default 0.15); the sub-cap profile sets 0.43 (0.33 before take 10). Capital output unchanged. Lock: `wreckPieces.subcapParting.test.ts` "read as broken".
 ## Server implementation notes
 
 > Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.

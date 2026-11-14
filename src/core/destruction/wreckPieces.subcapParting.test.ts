@@ -26,7 +26,7 @@ function opened(v: number, d: number, t: number): number {
 }
 
 describe('sub-cap wreck pieces part visibly (buildWreckPieces kicks)', () => {
-  it('every shared cut opens >= ~1/3 radius in 1 s, and no piece drifts over ~6 radii', () => {
+  it('every shared cut opens >= ~1/3 radius in 1 s, and no piece drifts over ~8 radii', () => {
     expect(SUBCAP_KINDS.length).toBeGreaterThan(5);
     let worst = Infinity;
     let worstWhat = '';
@@ -63,7 +63,7 @@ describe('sub-cap wreck pieces part visibly (buildWreckPieces kicks)', () => {
         }
         for (const q of p) {
           const k = Math.hypot(q.kickVx, q.kickVy);
-          expect(k / d / kind.radius, `${kind.id} seed ${seed}: drift`).toBeLessThan(6);
+          expect(k / d / kind.radius, `${kind.id} seed ${seed}: drift`).toBeLessThan(8);
         }
       }
     }
@@ -109,11 +109,12 @@ describe('sub-cap wreck pieces part visibly (buildWreckPieces kicks)', () => {
  * primary crack only had to leave 15 % on its small side, so the big piece
  * was up to ~85 % of the hull (a whole-looking ship), and the pieces parted
  * at ~0.55-0.6 radii/s: under damping 0.6/s about ONE radius in all, while
- * both carried the dead ship's few hundred u/s. Now no piece is over 70 % of
- * the hull, and every pair of pieces parts at >= 2 radii/s (`shipTuning`'s
- * `wreckSeparate` × the profile's `separateScale`): >= 1.5 radii further
- * apart 1 s after the break and ~3+ by the time they rest, a broken ship
- * whose halves drift off from each other, not a formation.
+ * both carried the dead ship's few hundred u/s. Take 10 (with 70 % and
+ * 2 radii/s) still read as a live robot plus a chip. Now no piece is over
+ * 60 % of the hull, and every pair of pieces parts at >= 3 radii/s
+ * (`shipTuning`'s `wreckSeparate` × the profile's `separateScale`):
+ * >= 2.25 radii further apart 1 s after the break and ~5+ at rest, a broken
+ * ship whose halves drift off from each other, not a formation.
  */
 describe('sub-cap wreck pieces read as broken (take 9 review)', () => {
   function hullArea(kindId: ShipKindId): number {
@@ -127,7 +128,7 @@ describe('sub-cap wreck pieces read as broken (take 9 review)', () => {
   const SEEDS = 60;
 
   for (const id of KINDS) {
-    it(`${id}: 2-3 pieces, none over 70 % of the hull; every pair parts at >= 2 radii/s`, () => {
+    it(`${id}: 2-3 pieces, none over 60 % of the hull; every pair parts at >= 3 radii/s`, () => {
       const kind = getShipKind(id);
       const area = hullArea(id);
       const d = wreckBodyParams(id).linearDamping;
@@ -160,8 +161,8 @@ describe('sub-cap wreck pieces read as broken (take 9 review)', () => {
         }
       }
       console.log(`[subcap-read] ${id}: largest piece ${(biggest * 100).toFixed(0)} % of the hull; slowest pair parts at ${slowest.toFixed(2)} radii/s = ${(slowest * kind.radius).toFixed(1)} u/s (${opened(slowest, d, 1).toFixed(2)} radii in 1 s)`);
-      expect(biggest, `${id}: largest piece, fraction of the hull area`).toBeLessThanOrEqual(0.7);
-      expect(slowest, `${id}: slowest pair of piece centres parting, radii/s`).toBeGreaterThanOrEqual(2);
+      expect(biggest, `${id}: largest piece, fraction of the hull area`).toBeLessThanOrEqual(0.6);
+      expect(slowest, `${id}: slowest pair of piece centres parting, radii/s`).toBeGreaterThanOrEqual(3);
     });
   }
 });

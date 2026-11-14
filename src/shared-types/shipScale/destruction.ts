@@ -96,6 +96,11 @@ export interface DestructionFx {
    *  ship's normal brightness and colour (sub-capitals), and a hit flash goes
    *  on the art only, never the glow. */
   readonly burntArt: boolean;
+  /** The pieces draw the parent's DEAD bake (no glowing robot core, canopy,
+   *  engines or running lights) instead of the live one. Take 10 review
+   *  (2026-11-14): a robot-square's biggest piece kept the robot's glowing
+   *  eye and "reads as a live robot". Not darkening: same paint and light. */
+  readonly deadArt: boolean;
   /** The ship's normal death explosion, scaled (radius / smoke linger), while
    *  the room breaks this profile into wrecks (welcome `subcapWrecks` for a
    *  sub-capital). 1: unchanged. Owner 2026-11-13: "Shrink it", so the
@@ -173,6 +178,7 @@ const CAPITAL: DestructionProfile = {
     dyingHoldMs: 1500,
     deadTint: null,
     burntArt: true,
+    deadArt: false,
     deathBlastScale: 1,
     deathBlastLinger: 1,
   },
@@ -194,10 +200,12 @@ const SUBCAP: DestructionProfile = {
     chunkyPieces: true,
     chunkyMinWidthBeams: 0.36,
     // Take 9 review (2026-11-14): at the default 15 % the big piece was up
-    // to ~85 % of the hull, "the hull stays whole". 1/3 on the small side
-    // keeps the largest piece at <= 70 % after the jag. Lock:
+    // to ~85 % of the hull, "the hull stays whole"; at 1/3 a robot-square's
+    // ~68 % piece with its middle still read as a live robot (take 10).
+    // 0.43 on the small side keeps the largest piece at <= 60 % after the
+    // jag (57-58 % measured). Lock:
     // `wreckPieces.subcapParting.test.ts` "read as broken".
-    soundMinShare: 0.33,
+    soundMinShare: 0.43,
     extraChunkChance: 0.4,
     jag: { depth: 1, roughness: 0.06 },
   },
@@ -217,11 +225,12 @@ const SUBCAP: DestructionProfile = {
   // after the break. Take 9 review (2026-11-14): that still read as a whole
   // hull with a crack, and two pieces carrying the dead ship's few hundred
   // u/s "drift side by side like two live ships" (~1 radius apart in all
-  // under damping 0.6/s). ×160: every cut opens and every pair of centres
-  // parts at >= ~2.2 radii/s (fighter ~53 u/s), ~1.7 radii apart 1 s after
-  // the break and ~3.7 at rest. Locks: `wreckPieces.subcapParting.test.ts`
+  // under damping 0.6/s). ×160 (2.2 radii/s) still read small on the take
+  // 10 film. ×240: every cut opens and every pair of centres parts at
+  // >= ~3.3 radii/s (fighter ~86 u/s), ~2.5+ radii apart 1 s after the
+  // break and ~6 at rest. Locks: `wreckPieces.subcapParting.test.ts`
   // (the kicks) + `subcapWrecks.test.ts` (the real server at 1 s).
-  separateScale: 160,
+  separateScale: 240,
   // Owner on the v5 film (2026-11-13): "they spin too much when destroyed".
   // The pieces carried the dying hull's whole turn (a fighter hard over at
   // 2 rad/s threw them at ~115 °/s); ×0.3 keeps a lazy tumble (≤ ~35 °/s
@@ -264,6 +273,7 @@ const SUBCAP: DestructionProfile = {
     // brightness"): pieces and held hull keep the ship's normal art.
     deadTint: null,
     burntArt: false,
+    deadArt: true,
     deathBlastScale: 0.5,
     deathBlastLinger: 0.5,
   },
@@ -294,6 +304,7 @@ const NONE: DestructionProfile = {
     dyingHoldMs: 0,
     deadTint: null,
     burntArt: false,
+    deadArt: false,
     deathBlastScale: 1,
     deathBlastLinger: 1,
   },
