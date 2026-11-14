@@ -11605,9 +11605,14 @@ export class SectorRoom extends Room<SectorState> {
    */
   private awardKillXp(killerId: string, victimMaxHealth: number): void {
     if (classifyAttacker(killerId) !== 'player') return; // drones/structures don't level
-    const killerShipInstanceId = this.resolveActiveShipKey(killerId);
-    if (killerShipInstanceId === undefined || killerShipInstanceId === '') return;
     const store = getPlayerShipStore();
+    // RTS slice: a wingman (AI-flown lingering hull) fires under its own
+    // shipInstanceId, so the killer id IS the hull's roster key (D8: the ship
+    // that made the kill earns the XP). Otherwise it is a pilot's playerId.
+    const killerShipInstanceId = this.lingeringSlots.has(killerId)
+      ? killerId
+      : this.resolveActiveShipKey(killerId);
+    if (killerShipInstanceId === undefined || killerShipInstanceId === '') return;
     const row = store.get(killerShipInstanceId);
     if (row === null) return; // no roster row (engineering room / not persisted)
 
