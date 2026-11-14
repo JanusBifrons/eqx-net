@@ -119,6 +119,10 @@ Allegiance decides **targeting** only. It never decides what a shot hits.
   **player's turret**, its owner's own structures and the owner's own active
   ship (decision 2026-11-10: a base never shoots its owner; allies' ships are
   not protected). Hostiles, neutrals, rocks and scrap never block: the NPC
+  shoots them. **Wreck pieces** (kind 4) also hold an NPC SHIP's fire (not a
+  structure turret's): every shot would stop on the piece and its knock-back
+  shove it on ahead of the shooter, a dead hull flying beside a live ship
+  (take 11 "ghost ship"; lock `subcapWrecks.test.ts` "holds fire").
   shoots them. **Players are never gated**: a pilot may shoot through allies.
   **Cost:** one `ProjectileBroadphase` grid of the swarm registry per tick,
   built lazily on the first check (none in a tick with no NPC fire), rebuilt

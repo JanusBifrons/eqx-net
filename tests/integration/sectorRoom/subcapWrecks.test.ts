@@ -345,6 +345,45 @@ describe('SectorRoom integration — sub-capital wrecks (sub-cap break-up slice 
     expect(int().wreckCounts().total).toBe(0);
   }, 20_000);
 
+  /**
+   * Take 11 "ghost ship" (fleet-melee, 29-36 s): a dead heavy's orange piece
+   * flew beside a live robot square for seconds, then drifted on alone, and
+   * read as a live ship. The square was firing at a target past the piece;
+   * every shot stopped on the piece and its knock-back shoved it on ahead of
+   * the square at the square's speed (the melee diag: pieces 10-19 s after
+   * the death still at ~100 u/s, 50-100 hits each). An AI pilot holds fire
+   * while a wreck piece is on its line, as it does for an ally, so it never
+   * pours fire into debris.
+   */
+  it('an AI pilot holds fire while a wreck piece is on its line of fire (no debris shoved along like a live ship)', async () => {
+    const int = await boot({ subcapWrecks: true });
+    int().spawnTestDrone('dead', 3000, 0, 'fighter');
+    await harness.advance(100);
+    int().applyDamage('dead', 'shooter-x', 1e7);
+    const pieces = byKind(int(), WRECK_KIND).map((p) => p.id);
+    expect(pieces.length).toBeGreaterThanOrEqual(2);
+    await secondsToSleep(int, pieces, int().serverTick, 30);
+    const p = int().wreckState(pieces[0]!)!;
+    // The shooter 150 u below the piece, its target 150 u above: the piece
+    // sits on the line of fire.
+    int().spawnTestDrone('lof-shooter', p.x, p.y - 150, 'fighter');
+    int().spawnTestDrone('lof-target', p.x, p.y + 150, 'robot-square');
+    await harness.advance(100);
+    const room = harness.getServerRoom() as unknown as { capitalWrecks: { onWreckHit: (id: string, ...rest: unknown[]) => boolean } };
+    const wreckHits: string[] = [];
+    const orig = room.capitalWrecks.onWreckHit.bind(room.capitalWrecks);
+    room.capitalWrecks.onWreckHit = (id: string, ...rest: unknown[]) => { wreckHits.push(id); return orig(id, ...rest); };
+    const checks0 = int().lineOfFireCounts().checks;
+    for (let i = 0; i < 5; i++) {
+      int().aiFire('lof-shooter', 0, 1, 'lof-target');
+      await harness.advance(150);
+    }
+    expect(int().lineOfFireCounts().checks, 'the shots were checked').toBeGreaterThan(checks0);
+    expect(wreckHits, 'held fire: no shot landed on the wreck piece').toEqual([]);
+    const after = int().wreckState(pieces[0]!)!;
+    expect(Math.hypot(after.x - p.x, after.y - p.y), 'the piece was not shoved').toBeLessThan(1);
+  }, 40_000);
+
   it('a havok keeps its scrap (one per component), with the flag on: no wreck pieces', async () => {
     const int = await boot({ subcapWrecks: true });
     int().spawnTestDrone('h', 3000, 0, 'havok');

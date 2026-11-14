@@ -87,7 +87,7 @@ How each subsystem works (and its history) is in the "Server notes" section of t
 - 🔴 Classify by the registry kind, never an id prefix. `fillSwarmTargets` builds the cross-allegiance view once per tick, only with ≥ 2 allegiances present. `isHostileToPlayer` = stance OR ledger. Only a hit on a DRONE escalates the `FactionLedger`.
 - `npcOnly` kinds are refused on join (`isPlayableShipKindId`); `LoadShedder` skips `shedImmune` kinds. Allegiance decides targeting, never what a shot hits.
 - 🔴 Every shot hits the first thing in its path, own side included; the only skips are the shooter and a capital's own deck (`mountLineClear`). A friendly accidental hit damages but never marks hostile or escalates (`isFriendlyFire`).
-- NPCs hold fire while a friendly is on the line, only via `LineOfFireGate` (never a second scan); players are never gated. `friendlyFire.test.ts`, `npcLineOfFire.test.ts`.
+- NPCs hold fire while a friendly (or, for an NPC ship, a wreck piece) is on the line, only via `LineOfFireGate` (never a second scan); players are never gated. `friendlyFire.test.ts`, `npcLineOfFire.test.ts`.
 - Proximity queries in the drone brain go through `AiNeighbourGrid`, never a per-behaviour swarm scan (`AiNeighbourGrid.test.ts`).
 
 **Cargo and storage** ([loot-and-cargo](../../docs/features/loot-and-cargo.md)):

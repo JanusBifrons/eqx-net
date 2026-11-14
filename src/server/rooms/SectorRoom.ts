@@ -8270,6 +8270,10 @@ export class SectorRoom extends Room<SectorState> {
   private lofOwnerIsNpc = false;
   /** Pre-bound predicate for the gate (made once, #14). */
   private readonly lofFriendly = (rec: SwarmEntityRecord): boolean => {
+    // An AI pilot never pours fire into a wreck piece on its line: each shot
+    // would stop on it and its knock-back shove it on ahead of the shooter,
+    // a dead hull flying beside a live ship (take 11 "ghost ship").
+    if (isWreckPiece(rec)) return this.lofShooterKind === 1;
     if (rec.kind === SWARM_KIND_DRONE) {
       if (this.lofShooterKind === 1) return isFriendly(this.lofSide, allegianceOfKind(rec.shipKind));
       return this.lofOwnerIsNpc
