@@ -30,7 +30,7 @@ import {
 } from '../../core/ai/WeaponMountController.js';
 
 import { mountTargetReach, mountWeaponReach, hasTurretFireControl } from '../../core/combat/mountReach.js';
-import { mountLineClear, mountPriority, targetClass, type TargetClass } from '../../core/combat/mountTargeting.js';
+import { mountLineClear, mountPriority, targetClass, STRUCTURE_TARGET_CLASS, type TargetClass } from '../../core/combat/mountTargeting.js';
 import { leadArcBearing, mountCanEngage, onTarget } from '../../core/combat/mountFireControl.js';
 import { getWeapon } from '../../core/combat/WeaponCatalogue.js';
 import { shipShotMuzzle } from '../../core/combat/muzzle.js';
@@ -162,9 +162,6 @@ export interface WeaponMountTickerDeps {
   lockTimeCapS?: () => number | undefined;
 }
 
-/** A structure is a fixed, armoured target: every naval calibre engages it
- *  (secondaries first, mains next, AA last; `mountPriority`). */
-const STRUCTURE_TARGET_CLASS: TargetClass = 'small-capital';
 
 const DT_SEC = 1 / 60;
 /** The on-target rules live with the shared fire control (plan
@@ -531,8 +528,11 @@ export class WeaponMountTicker {
       // STICKY (user, 2026-11-07: "don't constantly retarget"): a turret
       // re-checks only its own target each tick. If that target briefly can't
       // be engaged it keeps aiming at it for TARGET_HOLD_TICKS before letting
-      // go, and it searches for a new one only when it has none, every
-      // RETARGET_TICKS, staggered across mounts. Cheap and steady.
+      // go. It searches every RETARGET_TICKS, staggered across mounts: with
+      // no target for the best (priority, distance); holding one, only for a
+      // STRICTLY preferred class (a battery that turned hostile after the
+      // turret settled on a fighter: coastal-duel, owner 2026-11-14), so a
+      // turret never hops between targets of its preferred class.
       let best = -1;
       let engageable = false;
       const prev = per[i];
@@ -542,23 +542,29 @@ export class WeaponMountTicker {
         if (engageable) lastOk[i] = tick;
         else if (best < 0 || tick - lastOk[i]! > TARGET_HOLD_TICKS) { best = -1; per[i] = null; }
       }
-      if (best < 0 && (tick + i * 7) % RETARGET_TICKS === 0) {
-        // Search: lowest (priority, distance) among targets it can engage.
-        let bestPri = Infinity, bestD2 = Infinity;
+      const held = best;
+      const heldPri = held >= 0 ? mountPriority(mount.size, cls[held]!) : Infinity;
+      if (heldPri > 0 && (tick + i * 7) % RETARGET_TICKS === 0) {
+        // Search: lowest (priority, distance) among targets it can engage;
+        // a held target is beaten only by a better class (bestD2 = -1).
+        let bestPri = heldPri, bestD2 = held >= 0 ? -1 : Infinity;
         for (let j = 0; j < targets.length; j++) {
           const t = targets[j]!;
+          // Class first: the cheap reject before the engage checks.
+          const pri = mountPriority(mount.size, cls[j]!);
+          if (pri > bestPri) continue;
+          const dx = t.x - mx, dy = t.y - my;
+          const d2 = dx * dx + dy * dy;
+          if (pri === bestPri && d2 >= bestD2) continue;
           if (!this.canEngage(kind, mount, t, mx, my, ang, reach, selfVx, selfVy, isHostile)) continue;
           // A structure this gun can't lock from here (out of reach, or past
           // `maxSeconds` for a sub-capital gun, by the shared ship lock rules)
           // is no target for it: lock to fire. A heavy gun locks a small
           // structure slowly, never impossibly (owner 2026-11-13).
           if (sig[j]! >= 0 && !Number.isFinite(this.structureLockSecs(mount, reach, sensor, sig[j]!, t, mx, my, selfVx, selfVy))) continue;
-          const dx = t.x - mx, dy = t.y - my;
-          const d2 = dx * dx + dy * dy;
-          const pri = mountPriority(mount.size, cls[j]!);
-          if (pri < bestPri || (pri === bestPri && d2 < bestD2)) { bestPri = pri; bestD2 = d2; best = j; }
+          bestPri = pri; bestD2 = d2; best = j;
         }
-        if (best >= 0) { engageable = true; lastOk[i] = tick; }
+        if (best >= 0 && best !== held) { engageable = true; lastOk[i] = tick; }
       }
       const lock = locks[i]!;
       if (best < 0) {
