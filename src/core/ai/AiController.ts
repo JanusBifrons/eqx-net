@@ -8,7 +8,9 @@ import type {
   AiWorldView,
   AiInputBits,
   IAiNeighbourQuery,
+  AiTickStats,
 } from '../contracts/IAiBehaviour.js';
+import { AimBoard } from './tactics/fireLanes.js';
 
 /**
  * Per-tick fire request emitted by a behaviour. The controller buffers these
@@ -63,7 +65,19 @@ interface AiRegistration {
  */
 export class AiController {
   private readonly entities = new Map<string, AiRegistration>();
+  /** Work counters behaviours bump through `view.stats` (running totals,
+   *  print-only: the scene counters read `decisions`). */
+  readonly stats: AiTickStats = { decisions: 0 };
+  /** Each brain's current aim point (fire-lane awareness, AI slice 5b): one
+   *  slot per registered entity, handed to brains as `view.aims`. */
+  readonly aims = new AimBoard();
   private readonly fireQueue: AiFireRequest[] = [];
+  /** Morale warp-out requests this tick (AI slice 6b): parallel arrays,
+   *  reused (rare; amortised growth only). */
+  private readonly warpOutIds: string[] = [];
+  private readonly warpOutXs: number[] = [];
+  private readonly warpOutYs: number[] = [];
+  private warpOutCount = 0;
   /**
    * Hostility marked for an entity that is not yet registered, buffered so it
    * is APPLIED when the entity registers. Without this a `markHostile` /
@@ -81,6 +95,7 @@ export class AiController {
 
   register(entityId: string, slot: number, behaviour: IAiBehaviour): void {
     this.entities.set(entityId, { slot, behaviour });
+    this.aims.add(entityId);
     // Apply any hostility that arrived before this entity registered.
     const pending = this.pendingHostile.get(entityId);
     if (pending) {
@@ -91,6 +106,7 @@ export class AiController {
 
   unregister(entityId: string): void {
     this.entities.delete(entityId);
+    this.aims.remove(entityId);
     this.pendingHostile.delete(entityId);
   }
 
@@ -138,6 +154,29 @@ export class AiController {
     if (prev === undefined || atTick > prev) pending.set(shooterId, atTick);
   }
 
+  /** Damage an entity took (morale, AI slice 6b). Server-only; a no-op for an
+   *  unregistered id or a behaviour without the hook. Alloc-free. */
+  noteDamage(entityId: string, amount: number, atTick: number, maxHull?: number): void {
+    this.entities.get(entityId)?.behaviour.noteDamage?.(amount, atTick, maxHull);
+  }
+
+  /** The squad's capital died: a morale trigger for this entity. */
+  noteCapitalLost(entityId: string): void {
+    this.entities.get(entityId)?.behaviour.noteCapitalLost?.();
+  }
+
+  /**
+   * Hand this tick's morale warp-out requests (`AiIntent.warpOut`) to `cb`
+   * and clear them. The caller passes a long-lived bound method (no closure
+   * per tick).
+   */
+  drainWarpOuts(cb: (entityId: string, x: number, y: number) => void): void {
+    const n = this.warpOutCount;
+    if (n === 0) return;
+    this.warpOutCount = 0;
+    for (let i = 0; i < n; i++) cb(this.warpOutIds[i]!, this.warpOutXs[i]!, this.warpOutYs[i]!);
+  }
+
   /**
    * Line-of-fire feedback: tell `entityId`'s brain a friendly body at
    * (blockerX, blockerY) held its shot this tick. No-op for unregistered ids
@@ -170,6 +209,7 @@ export class AiController {
    */
   clear(): void {
     this.entities.clear();
+    this.aims.clear();
     this.pendingHostile.clear();
   }
 
@@ -230,7 +270,7 @@ export class AiController {
     // every behaviour. The 60/sec rate is negligible vs the rest of
     // the engine; leave as-is. See `swarmEntitySnapshot` doc for the
     // full GC-pressure story.
-    const view: AiWorldView = { players, structures, swarms, tick, dtSec, resolveEntityInto, neighbours };
+    const view: AiWorldView = { players, structures, swarms, tick, dtSec, resolveEntityInto, neighbours, stats: this.stats, aims: this.aims };
     this.inputsQueued = 0;
     for (const [id, reg] of this.entities) {
       this.runEntity(id, reg, view, tick, entitySnapshot);
@@ -269,6 +309,13 @@ export class AiController {
       intent.setAngvel !== undefined
     ) {
       this.sink.postIntent(reg.slot, intent.fx, intent.fy, intent.torque, intent.setAngvel);
+    }
+
+    if (intent.warpOut !== undefined) {
+      const k = this.warpOutCount++;
+      this.warpOutIds[k] = id;
+      this.warpOutXs[k] = intent.warpOut.x;
+      this.warpOutYs[k] = intent.warpOut.y;
     }
 
     if (intent.fire) {

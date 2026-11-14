@@ -17,6 +17,10 @@ export interface AiPlayerView {
   readonly y: number;
   readonly vx: number;
   readonly vy: number;
+  /** Facing (rad; forward (-sin, cos)). Optional: absent = unknown. The
+   *  dogfight layer reads it to tell a parked target aimed at the drone from
+   *  one that is not (`TacticalContext.targetBowCos`). Server-populated. */
+  readonly angle?: number;
   /** Current hull health + its max, for health-weighted target selection
    *  (drones focus the wounded). Optional — when absent the picker falls back
    *  to pure nearest. Server-populated; the client never builds drone views
@@ -63,6 +67,8 @@ export interface AiSwarmView {
   readonly y: number;
   readonly vx: number;
   readonly vy: number;
+  /** Facing (rad; forward (-sin, cos)). Optional: absent = unknown. */
+  readonly angle?: number;
   /** The entity's NPC allegiance (derived from its ship kind). */
   readonly allegiance: string;
   readonly health?: number;
@@ -116,6 +122,22 @@ export interface AiWorldView {
    *  engageable pilot hulls, rebuilt once per tick by the server. SERVER-ONLY,
    *  no wire surface (same rationale as `structures`). Absent ⇒ no index. */
   readonly neighbours?: IAiNeighbourQuery;
+  /** The controller's work counters (absent ⇒ nothing counts). */
+  readonly stats?: AiTickStats;
+  /** Per-entity current aim points (fire-lane awareness, AI slice 5b): a
+   *  brain writes its own, reads a wingman's. Owned by `AiController`.
+   *  Absent ⇒ no lane awareness. */
+  readonly aims?: IAiAimBoard;
+}
+
+/** Each brain's current aim point, keyed by entity id (AI slice 5b).
+ *  Alloc-free: `read` fills `readX/readY` and returns false when `id` has
+ *  not aimed lately. */
+export interface IAiAimBoard {
+  write(id: string, x: number, y: number, tick: number): void;
+  read(id: string, tick: number): boolean;
+  readonly readX: number;
+  readonly readY: number;
 }
 
 /**
@@ -142,6 +164,9 @@ export interface IAiNeighbourQuery {
   /** NPC allegiance id, or `'players'` for a pilot hull. */
   sideAt(i: number): string;
   isPilotAt(i: number): boolean;
+  /** A capital-role NPC (`aiRole === 'capital'`): what a damaged ship falls
+   *  back on (AI slice 6b). Always false for a pilot hull. */
+  isCapitalAt(i: number): boolean;
 }
 
 /** Mutable pose buffer for `AiWorldView.resolveEntityInto` (caller-owned, so
@@ -164,6 +189,14 @@ export interface AiEntity {
   readonly vy: number;
   readonly angle: number;
   readonly angvel: number;
+  /** Current hull health (server-filled; absent ⇒ unknown, read as full). */
+  readonly health?: number;
+}
+
+/** Per-room AI work counters a behaviour may bump (print-only, server). */
+export interface AiTickStats {
+  /** Decision-layer re-scores (running total). */
+  decisions: number;
 }
 
 /**
@@ -203,6 +236,11 @@ export interface AiIntent {
   /** `targetId`: the entity the shot is aimed at (the fire gate checks the
    *  shooter holds a lock on it when it is a pilot). */
   fire?: { dirX: number; dirY: number; targetId: string };
+  /** Morale `Flee` (AI slice 6b): the ship asks to warp out to (x, y), far
+   *  along its escape heading. Server-only: `AiController` queues it and the
+   *  room sends the bot on an NPC warp (`BOT_WARP`), the same spool → run →
+   *  drop a pilot's warp uses. Set on one tick only. */
+  warpOut?: { x: number; y: number };
 }
 
 /**
@@ -256,6 +294,13 @@ export interface IAiBehaviour {
    */
   markHostile?(shooterId: string, atTick: number): void;
   purgeHostility?(playerId: string): void;
+  /** Damage this entity took (morale, AI slice 6b). Server-only: the room's
+   *  damage path calls it through `AiController.noteDamage` with the
+   *  entity's own max hull (an elite's is 4× its kind's). Plain-field write,
+   *  alloc-free. */
+  noteDamage?(amount: number, atTick: number, maxHull?: number): void;
+  /** The squad's capital died (a morale trigger, AI slice 6b). */
+  noteCapitalLost?(): void;
   /**
    * Optional read-only query: is the behaviour currently hostile to the
    * given player? Used by render-side surfaces (e.g. the halo radar) that

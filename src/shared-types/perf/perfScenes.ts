@@ -41,6 +41,24 @@ const sustainedFight = (n: number, x: number, y: number, gap: number): SceneStep
 
 export const PERF_SCENES: readonly PerfScene[] = [
   {
+    // Showcase (local, unfiled): a small 3v3 fighter fight to film dogfighting.
+    id: 'dogfight-3v3',
+    title: 'Three drone fighters vs three robots (small dogfight)',
+    room: {
+      droneCount: 0,
+      asteroidConfig: [],
+      sceneScript: [
+        { atMs: 0, action: 'spawn', tag: 'blue', kind: 'fighter', count: 3, x: -750, y: 0, spread: 150 },
+        { atMs: 0, action: 'spawn', tag: 'red', kind: 'robot-square', count: 3, x: 750, y: 0, spread: 150 },
+        { atMs: 60_000, action: 'end' },
+      ],
+    },
+    spawn: { x: 0, y: -2200 },
+    camera: { x: 0, y: 0, zoom: 0.6 },
+    durationMs: 60_000,
+    minSwarm: 0,
+  },
+  {
     id: 'idle',
     title: 'Empty sector, pilot idle: the harness floor',
     room: { droneCount: 0, asteroidConfig: [], sceneScript: [{ atMs: 20_000, action: 'end' }] },

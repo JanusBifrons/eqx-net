@@ -1434,6 +1434,8 @@ export class SectorRoom extends Room<SectorState> {
     lineOfFireCounts: () => { checks: number; candidates: number; narrow: number };
     /** NPC line of fire on/off (the slice-1 friendly fire tests turn it off). */
     setNpcLineOfFire: (on: boolean) => void;
+    /** AI steering 2c: hand brains the neighbour grid (default on). */
+    setAiNeighbours: (on: boolean) => void;
     /** Does NPC `id`'s brain treat `otherId` as hostile (stance or ledger)? */
     npcHostileTo: (id: string, otherId: string) => boolean;
     /** Mine Layers' live mines (integration tests). */
@@ -1511,6 +1513,7 @@ export class SectorRoom extends Room<SectorState> {
         return { checks: g?.checks ?? 0, candidates: g?.candidates ?? 0, narrow: g?.narrow ?? 0 };
       },
       setNpcLineOfFire: (on) => { this.npcLineOfFire = on; },
+      setAiNeighbours: (on) => { this.aiNeighboursOn = on; },
       npcHostileTo: (id, otherId) => this.aiController.isEntityHostileToPlayer(id, otherId),
       mineField: this.mineField,
       rebuildStructuresSlice: () => this.rebuildStructuresSlice(),
@@ -4724,6 +4727,7 @@ export class SectorRoom extends Room<SectorState> {
     s.vy = this.sabF32[b + SLOT_VY_OFF]!;
     s.angle = this.sabF32[b + SLOT_ANGLE_OFF]!;
     s.angvel = this.sabF32[b + SLOT_ANGVEL_OFF]!;
+    s.health = this.swarmHealth.get(id);
     return s;
   }
 
@@ -4774,7 +4778,7 @@ export class SectorRoom extends Room<SectorState> {
       if (!pose) continue;
       out.push({
         id: shipInstanceId, ownerId: ship.playerId,
-        x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy,
+        x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy, angle: pose.angle,
         health: ship.health, maxHealth: ship.maxHealth,
       });
     }
@@ -4783,7 +4787,7 @@ export class SectorRoom extends Room<SectorState> {
   /** Allegiances P0 — pooled per-tick swarm-combatant views (never reallocated
    *  once grown, #14). Targeting only. */
   private readonly _swarmViewPool: Array<{
-    id: string; x: number; y: number; vx: number; vy: number;
+    id: string; x: number; y: number; vx: number; vy: number; angle: number;
     allegiance: string; health?: number; maxHealth?: number; radius: number;
   }> = [];
   private readonly aiSwarmScratch: AiSwarmView[] = [];
@@ -4791,6 +4795,9 @@ export class SectorRoom extends Room<SectorState> {
   /** AI steering 2a — per-tick neighbour index over combat drones + pilot
    *  hulls, rebuilt once per tick in `runAiTick` (alloc-free, #14). */
   private readonly aiNeighbourGrid = new AiNeighbourGrid();
+  /** Tests (`_internals.setAiNeighbours`): off ⇒ brains get no `view.neighbours`
+   *  (no combat separation), the A/B control for slice 2c. */
+  private aiNeighboursOn = true;
   /** Add every kind-1 swarm combatant (all allegiances) with its SAB pose.
    *  Same set `fillSwarmTargets` covers; bound once (#14). */
   private readonly _visitAiNeighbourDrones = (_grid: AiNeighbourGrid): void => {
@@ -4803,7 +4810,7 @@ export class SectorRoom extends Room<SectorState> {
       rec.id,
       this.sabF32[b + SLOT_X_OFF]!, this.sabF32[b + SLOT_Y_OFF]!,
       this.sabF32[b + SLOT_VX_OFF]!, this.sabF32[b + SLOT_VY_OFF]!,
-      rec.radius, allegianceOfKind(rec.shipKind),
+      rec.radius, allegianceOfKind(rec.shipKind), getShipKind(rec.shipKind ?? null).aiRole === 'capital',
     );
   };
 
@@ -4832,7 +4839,7 @@ export class SectorRoom extends Room<SectorState> {
       const b = slotBase(rec.slot);
       let v = pool[n];
       if (!v) {
-        v = { id: '', x: 0, y: 0, vx: 0, vy: 0, allegiance: 'drones', radius: 0 };
+        v = { id: '', x: 0, y: 0, vx: 0, vy: 0, angle: 0, allegiance: 'drones', radius: 0 };
         pool[n] = v;
       }
       v.id = rec.id;
@@ -4840,6 +4847,7 @@ export class SectorRoom extends Room<SectorState> {
       v.y = this.sabF32[b + SLOT_Y_OFF]!;
       v.vx = this.sabF32[b + SLOT_VX_OFF]!;
       v.vy = this.sabF32[b + SLOT_VY_OFF]!;
+      v.angle = this.sabF32[b + SLOT_ANGLE_OFF]!;
       v.allegiance = allegianceOfKind(rec.shipKind);
       v.health = this.swarmHealth.get(rec.id);
       v.maxHealth = getShipKind(rec.shipKind).maxHealth;
@@ -7671,6 +7679,14 @@ export class SectorRoom extends Room<SectorState> {
     if (!this.npcWarps.has(botId)) this.npcWarps.set(botId, { entityId: rec.entityId, lastPhase: 0, arrivedUntil: -1, started: false, idleTicks: 0 });
     return true;
   }
+
+  /** Morale flee (AI slice 6b): a fleeing NPC asked to warp out to (x, y)
+   *  (`AiIntent.warpOut`, drained by `runAiTick`). The same NPC warp as a
+   *  flagship fleet's (`warpBot`): spool, run, drop. Rare; a bound field so
+   *  the per-tick ctx carries no new closure. */
+  private readonly _handleAiWarpOut = (botId: string, x: number, y: number): void => {
+    if (this.warpBot(botId, x, y)) serverLogEvent('npc_morale_warp_out', { botId, sectorKey: this.sectorKey ?? '' });
+  };
 
   /** Drop a bot's warp request (cancels a spool; a run can't be stopped). */
   cancelBotWarp(botId: string): void {
@@ -11487,7 +11503,7 @@ export class SectorRoom extends Room<SectorState> {
       fillStructureTargets: (out) => this.fillStructureTargets(out),
       aiSwarmScratch: this.aiSwarmScratch,
       fillSwarmTargets: (out) => this.fillSwarmTargets(out),
-      aiNeighbourGrid: this.aiNeighbourGrid,
+      aiNeighbourGrid: this.aiNeighboursOn ? this.aiNeighbourGrid : undefined,
       visitAiNeighbourDrones: this._visitAiNeighbourDrones,
       hasTruce: (pid) => this.playerTruce(pid),
       // Living World P1a-2 (decision 7) — offline hulls are fair game.
@@ -11496,6 +11512,7 @@ export class SectorRoom extends Room<SectorState> {
       swarmEntitySnapshot: (id) => this.swarmEntitySnapshot(id),
       resolveEntityInto: (id, out) => this.swarmEntityPoseInto(id, out),
       handleAiFire: (shooterId, dirX, dirY, tick, targetId) => this.handleAiFire(shooterId, dirX, dirY, tick, targetId),
+      handleAiWarpOut: this._handleAiWarpOut,
       phaseTime,
     });
     // Living World P3c — fire every NPC charge weapon whose wind-up elapsed.
@@ -11550,6 +11567,7 @@ export class SectorRoom extends Room<SectorState> {
         this.sceneWork.endTick(this.sabU32[COUNT_IDX] ?? 0, this.aiController.size());
         if (this.lineOfFireGate) this.sceneWork.lineOfFire(this.lineOfFireGate.checks, this.lineOfFireGate.narrow);
         this.sceneWork.aiNeighbours(this.aiNeighbourGrid.queriesTotal);
+        this.sceneWork.aiDecisions(this.aiController.stats.decisions);
       }
       this.sceneWork.active = running;
     }

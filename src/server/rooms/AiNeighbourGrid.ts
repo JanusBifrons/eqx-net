@@ -63,6 +63,8 @@ export class AiNeighbourGrid implements IAiNeighbourQuery {
   private vys = new Float64Array(64);
   private radii = new Float64Array(64);
   private side = new Uint8Array(64);
+  /** 1 = a capital-role NPC (slice 6b: what a damaged ship falls back on). */
+  private capital = new Uint8Array(64);
   private cellX = new Int32Array(64);
   private cellY = new Int32Array(64);
   private next = new Int32Array(64);
@@ -90,13 +92,14 @@ export class AiNeighbourGrid implements IAiNeighbourQuery {
 
   /** Add a pilot hull. */
   addPilot(id: string, x: number, y: number, vx: number, vy: number, radius: number): void {
-    this.add(id, x, y, vx, vy, radius, 0);
+    this.add(id, x, y, vx, vy, radius, 0, false);
   }
 
-  /** Add a combat drone of `allegiance` (an `NpcAllegianceId`). */
-  addDrone(id: string, x: number, y: number, vx: number, vy: number, radius: number, allegiance: string): void {
+  /** Add a combat drone of `allegiance` (an `NpcAllegianceId`); `capital`
+   *  marks a capital-role kind. */
+  addDrone(id: string, x: number, y: number, vx: number, vy: number, radius: number, allegiance: string, capital = false): void {
     const a = NPC_ALLEGIANCE_IDS.indexOf(allegiance as (typeof NPC_ALLEGIANCE_IDS)[number]);
-    this.add(id, x, y, vx, vy, radius, a < 0 ? 1 : a + 1);
+    this.add(id, x, y, vx, vy, radius, a < 0 ? 1 : a + 1, capital);
   }
 
   /** Finish a rebuild: drop id refs past the new count. */
@@ -105,14 +108,14 @@ export class AiNeighbourGrid implements IAiNeighbourQuery {
     for (let i = this.count; i < ids.length && ids[i] !== ''; i++) ids[i] = '';
   }
 
-  private add(id: string, x: number, y: number, vx: number, vy: number, radius: number, side: number): void {
+  private add(id: string, x: number, y: number, vx: number, vy: number, radius: number, side: number, capital: boolean): void {
     // A non-finite pose would poison every query's distances; never expected.
     if (!Number.isFinite(x) || !Number.isFinite(y)) return;
     const i = this.count++;
     if (i >= this.xs.length) this.grow(i + 1);
     this.ids[i] = id;
     this.xs[i] = x; this.ys[i] = y; this.vxs[i] = vx; this.vys[i] = vy;
-    this.radii[i] = radius; this.side[i] = side;
+    this.radii[i] = radius; this.side[i] = side; this.capital[i] = capital ? 1 : 0;
     const cx = Math.floor(x * this.inv), cy = Math.floor(y * this.inv);
     this.cellX[i] = cx; this.cellY[i] = cy;
     const h = bucketOf(cx, cy);
@@ -179,6 +182,7 @@ export class AiNeighbourGrid implements IAiNeighbourQuery {
   radiusAt(i: number): number { return this.radii[i]!; }
   sideAt(i: number): string { return SIDES[this.side[i]!]!; }
   isPilotAt(i: number): boolean { return this.side[i] === 0; }
+  isCapitalAt(i: number): boolean { return this.capital[i] === 1; }
 
   // TODO: alloc-debt — amortised doubling past the entity high-water mark.
   private grow(need: number): void {
@@ -188,6 +192,7 @@ export class AiNeighbourGrid implements IAiNeighbourQuery {
     this.vxs = growF(this.vxs, n); this.vys = growF(this.vys, n);
     this.radii = growF(this.radii, n);
     const s = new Uint8Array(n); s.set(this.side); this.side = s;
+    const c = new Uint8Array(n); c.set(this.capital); this.capital = c;
     this.cellX = growI(this.cellX, n); this.cellY = growI(this.cellY, n);
     this.next = growI(this.next, n);
   }
