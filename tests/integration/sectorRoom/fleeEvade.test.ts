@@ -136,13 +136,7 @@ describe('SectorRoom integration — a fleeing ship evades its tailer', () => {
     expect(maxOff - minOff, 'heading spread off the escape line (rad)').toBeGreaterThan(0.6);
     expect(turnSum, 'total turning during the run (rad)').toBeGreaterThan(1.5);
     // It burns the afterburner, past the combat reserve, while it runs.
-    // Past the reserve: the straight run stops at the 25 % reserve after 178
-    // ticks (pool and cost, not mass). The bar was 195 (~215 measured at the
-    // doubled AI mass, when the pursuer stayed on its tail). At one mass per
-    // kind the runner can open the gap past the pursuit range (1.5 x fire
-    // range; gap max 1387 u, 185 boost ticks) and then has no reason to
-    // spend the reserve, so the gate is the reserve itself.
-    expect(boostTicks, 'boost ticks (straight run: 178)').toBeGreaterThan(178);
+    expect(boostTicks, 'boost ticks (straight run: 178)').toBeGreaterThan(195);
     // It still gets away (net distance gained from where the tailer started).
     expect(progress, 'made progress away').toBeGreaterThan(250);
     // The tailer's hit rate is LOGGED, not gated: at these ranges a bolt
