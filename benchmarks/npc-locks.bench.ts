@@ -33,7 +33,7 @@ function subsystem(drones: number, pilots: number, pilotOffset = 0, npcKind = 'f
   }
   const npc = getShipKind(npcKind);
   const pilotKind = getShipKind('interceptor');
-  let refreshes = 0;
+  const counter = { refreshes: 0 };
   return new NpcLockSubsystem({
     pilots: () => pilotIds,
     pilotPose: (id, out) => {
@@ -49,7 +49,7 @@ function subsystem(drones: number, pilots: number, pilotOffset = 0, npcKind = 'f
       out.x = p.x; out.y = p.y; out.vx = p.vx; out.vy = p.vy; out.angle = 0;
       return npc;
     },
-    refreshHostility: () => { refreshes++; },
+    refreshHostility: () => { counter.refreshes++; },
   });
 }
 
