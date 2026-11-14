@@ -13,7 +13,7 @@ import { canTrack, mountLineClear, mountPriority, targetClass } from '../../src/
 import { HostileDroneBehaviour, BROADSIDE_STANDOFF } from '../../src/core/ai/HostileDroneBehaviour';
 import { getShipKind } from '../../src/shared-types/shipKinds';
 import type { AiWorldView } from '../../src/core/contracts/IAiBehaviour';
-import { throttleOf, turnOf } from '../../src/core/ai/pilotTestKit';
+import { stepKinematic, throttleOf, turnOf } from '../../src/core/ai/pilotTestKit';
 
 const CAPITALS = ['destroyer', 'light-cruiser', 'heavy-cruiser', 'battlecruiser', 'battleship'];
 const SIZES = ['naval_s', 'naval_m', 'naval_l', 'naval_xl'] as const;
@@ -129,6 +129,35 @@ describe('broadside steering', () => {
     // Holds its heading and station at the stand-off: no key held (no turn, no
     // thrust), so it does not steam out of reach.
     expect(intent.input).toBe(0);
+  });
+
+  it('in reach, just off the stand-off: holds still, so the hull comes to rest (no creep)', () => {
+    // perf scene capital-duel (PR #549 CI, 2026-11-14): the pilot 4,000 u off
+    // the beam, the stand-off ~4,032 u (0.8 % off). The brain asked for
+    // 0.78 u/s along the beam — a creep that corrects the range by under
+    // 0.004 u/s — so the pilot kept tapping thrust and the hull never rested:
+    // its pose went out every tick (swarm wire 0.24 → 3.1 KB/s). A captain at
+    // the stand-off holds station, keys off, like a player who holds nothing.
+    const kind = getShipKind('battleship');
+    const standoff = mainReach() * BROADSIDE_STANDOFF;
+    for (const d of [4000, standoff * 0.98, standoff * 1.02]) {
+      const b = new HostileDroneBehaviour('battleship');
+      b.markHostile('p', 100);
+      const body = { ...self };
+      for (let t = 0; t < 600; t++) {
+        const intent = b.tick({ id: 'bs', ...body }, view(d, 0));
+        expect(intent.input, `range ${d.toFixed(0)}, tick ${t}: no key while at the stand-off`).toBe(0);
+        stepKinematic(body, kind, intent);
+      }
+      expect(Math.hypot(body.vx, body.vy)).toBe(0);
+    }
+  });
+
+  it('in reach, well inside the stand-off: still opens the range', () => {
+    const b = new HostileDroneBehaviour('battleship');
+    b.markHostile('p', 100);
+    const intent = b.tick(self, view(mainReach() * BROADSIDE_STANDOFF * 0.5, 0));
+    expect(intent.input).not.toBe(0);
   });
 
   it('in reach, bow-on: turns the beam toward the target', () => {

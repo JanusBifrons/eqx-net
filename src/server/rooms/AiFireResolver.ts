@@ -16,7 +16,8 @@
  * "Multi-mount fire path" section).
  */
 
-import { hasTurretFireControl } from '../../core/combat/mountReach.js';
+import { hasTurretFireControl, mountWeaponReach } from '../../core/combat/mountReach.js';
+import { barrelBearsOn, mountFireTolerance } from '../../core/combat/fireControlBearing.js';
 import { DEFAULT_SHIP_KIND, getShipKind, type ShipKind, type WeaponMount } from '../../shared-types/shipKinds.js';
 import {
   getWeapon,
@@ -82,8 +83,9 @@ export interface AiFireResolverDeps {
   /** Damage sink — invoked on a confirmed hit. */
   applyDamage: (targetId: string, shooterId: string, damage: number) => void;
   /** S2a: the beam's impact point, called just before `applyDamage` (feeds the
-   *  capital wreck hit tracker; the damage event is unchanged). */
-  noteBeamImpact?: (x: number, y: number) => void;
+   *  capital wreck hit tracker and the wreck knock-back along (dx, dy); the
+   *  damage event is unchanged). */
+  noteBeamImpact?: (x: number, y: number, dx: number, dy: number) => void;
   /** Friendly fire (owner decision 2026-11-10) — the first non-player thing
    *  along the beam: every swarm entity (drones of ANY side, structures of ANY
    *  owner, asteroids, scrap) and lingering hulls, skipping only `skipId` (the
@@ -153,6 +155,9 @@ export class AiFireResolver implements WeaponFireSink {
     // direction so it doesn't self-hit on the next-tick ray.
     const self = d.swarmEntitySnapshot(shooterId);
     if (!self) return;
+    // `swarmEntitySnapshot` fills ONE shared scratch: any later lookup (the
+    // line-of-fire gate, a hit test) overwrites it with another ship's pose.
+    const hullAngle = self.angle, selfX = self.x, selfY = self.y;
     const shooterRec = d.swarmRegistry.get(shooterId);
     const droneKindId = shooterRec?.shipKind ?? DEFAULT_SHIP_KIND;
     const droneKind = getShipKind(droneKindId);
@@ -166,7 +171,14 @@ export class AiFireResolver implements WeaponFireSink {
     if (d.fireBlocked?.(shooterId, targetId)) return;
     // Line of fire: an ally (or its own base) in the way ⇒ hold this tick.
     // Before the cooldown, so a held shot fires the moment the line clears.
-    if (d.lineOfFireBlocked?.(shooterId, targetId, self.x, self.y, dirNdx, dirNdy)) return;
+    if (d.lineOfFireBlocked?.(shooterId, targetId, selfX, selfY, dirNdx, dirNdy)) return;
+    // Fire control: a barrel fires only when it bears on the aim (the pilot's
+    // rule, `mountFireTolerance`). Every shot leaves down its drawn barrel, so
+    // a gun that doesn't bear would fire visibly off its target (owner
+    // 2026-11-14: "turrets aren't turning to shoot the direction they do").
+    // None bears ⇒ hold, spending no cooldown (a turret still slewing).
+    const bearMask = this.bearingMask(shooterId, hullAngle, slotMounts, dirNdx, dirNdy);
+    if (bearMask === 0) return;
 
     // Slot-level cooldown gate (mirrors PlayerFireResolver). The slot fires
     // as one trigger; its cooldown is the MAX over its mounts' weapons.
@@ -191,16 +203,32 @@ export class AiFireResolver implements WeaponFireSink {
     if (chargeTicks > 0) {
       let c = this.charges.get(shooterId);
       if (c === undefined) {
-        c = { active: false, readyTick: 0, dirX: 0, dirY: 0 };
+        c = { active: false, readyTick: 0, mask: -1 };
         this.charges.set(shooterId, c);
       }
       c.active = true;
       c.readyTick = tick + chargeTicks;
-      c.dirX = dirNdx;
-      c.dirY = dirNdy;
+      c.mask = bearMask;
       return;
     }
-    this.fireNow(shooterId, dirNdx, dirNdy);
+    this.fireNow(shooterId, -1, bearMask);
+  }
+
+  /** Bit i set ⇔ slot mount i's barrel (hull + base + slewed angle) bears on
+   *  the aim direction within its weapon's window (`mountFireTolerance`, the
+   *  pilot's rule, #19). Mounts past bit 30 always count as bearing. */
+  private bearingMask(
+    shooterId: string, hullAngle: number, slotMounts: ReadonlyArray<WeaponMount>, dirX: number, dirY: number,
+  ): number {
+    const angles = this.deps.droneMountAngles.get(shooterId);
+    let mask = 0;
+    for (let i = 0; i < slotMounts.length; i++) {
+      if (i > 30) { mask |= 1 << 30; continue; }
+      const m = slotMounts[i]!;
+      const a = hullAngle + m.baseAngle + (angles?.[i] ?? 0);
+      if (barrelBearsOn(0, 0, a, dirX, dirY, mountFireTolerance(m.weaponId, mountWeaponReach(m)))) mask |= 1 << i;
+    }
+    return mask;
   }
 
 
@@ -210,20 +238,21 @@ export class AiFireResolver implements WeaponFireSink {
   fireMount(shooterId: string, mountIdx: number): void {
     const self = this.deps.swarmEntitySnapshot(shooterId);
     if (!self) return;
-    this.fireNow(shooterId, -Math.sin(self.angle), Math.cos(self.angle), mountIdx);
+    this.fireNow(shooterId, mountIdx);
   }
   /** Quad AA: the next barrel to fire, per shooter and mount index. */
   private readonly aaBarrel = new Map<string, Uint8Array>();
 
   /** Release every charge whose wind-up has elapsed (call once per server
-   *  tick, after the AI tick). Fires from the shooter's CURRENT pose along the
-   *  LOCKED direction — a dodgeable telegraph. Allocation-free. */
+   *  tick, after the AI tick). Fires the mounts that bore at the trigger pull
+   *  from the shooter's CURRENT pose, down their barrels (where the gun is
+   *  drawn), so a target that dodged the wind-up is missed. Allocation-free. */
   releaseCharges(tick: number): void {
     if (this.charges.size === 0) return;
     for (const [id, c] of this.charges) {
       if (!c.active || tick < c.readyTick) continue;
       c.active = false;
-      this.fireNow(id, c.dirX, c.dirY);
+      this.fireNow(id, -1, c.mask);
     }
   }
 
@@ -239,28 +268,25 @@ export class AiFireResolver implements WeaponFireSink {
   }
 
   /** P3c — per-shooter wind-up records (reused; never per-tick allocated). */
-  private readonly charges = new Map<string, { active: boolean; readyTick: number; dirX: number; dirY: number }>();
+  private readonly charges = new Map<string, { active: boolean; readyTick: number; mask: number }>();
 
-  /** Fire the shooter's active slot now along a unit direction. */
-  private fireNow(shooterId: string, dirNdx: number, dirNdy: number, onlyMount = -1): void {
+  /** Fire the shooter's active slot now, each mount down its own barrel.
+   *  `onlyMount` ≥ 0 fires that mount alone; `mask` picks mounts by bit. */
+  private fireNow(shooterId: string, onlyMount = -1, mask = -1): void {
     const d = this.deps;
     const self = d.swarmEntitySnapshot(shooterId);
     if (!self) return;
+    // Copy the pose out of the shared scratch NOW: a hit test inside the
+    // mount loop looks up other ships through it, and the next barrel then
+    // fired from the target's pose and angle (a twin turret's second beam
+    // left far off its drawn barrel; aiTurretFacesShot integration test).
+    const sx = self.x, sy = self.y, sAngle = self.angle, svx = self.vx, svy = self.vy;
     const shooterRec = d.swarmRegistry.get(shooterId);
     const droneKindId = shooterRec?.shipKind ?? DEFAULT_SHIP_KIND;
     const droneKind = getShipKind(droneKindId);
     const slotMounts = d.resolveSlotMounts(droneKind);
     if (slotMounts.length === 0) return;
 
-    // The fire direction the AI computed is the drone's body intent.
-    // Re-express as an angle so mount.baseAngle can be added per mount.
-    // For drones with rotating mounts, also add the per-mount slewed
-    // angle from droneMountAngles so hits land where the visible barrel
-    // points (and so the broadcast laser_fired carries the same
-    // direction observers see the turret aimed at). Legacy single-mount
-    // drones have no droneMountAngles entry → currentMountAngle = 0,
-    // preserving the pre-4c behaviour bit-for-bit.
-    const fireAngle = Math.atan2(-dirNdx, dirNdy);
     const wireShooterId = shooterRec ? `swarm-${shooterRec.entityId}` : shooterId;
     const droneAngles = d.droneMountAngles.get(shooterId);
     this._shooterId = shooterId;
@@ -273,10 +299,18 @@ export class AiFireResolver implements WeaponFireSink {
     // flyweight calls back the matching sink method below.
     for (let mIdx = 0; mIdx < slotMounts.length; mIdx++) {
       if (onlyMount >= 0 && mIdx !== onlyMount) continue;
+      if (mIdx < 31 && (mask & (1 << mIdx)) === 0) continue;
       const mount = slotMounts[mIdx]!;
-      const mountWorld = d.mountWorldOrigin(self.x, self.y, self.angle, mount);
+      const mountWorld = d.mountWorldOrigin(sx, sy, sAngle, mount);
       const currentMountAngle = droneAngles?.[mIdx] ?? 0;
-      const mountFireAngle = fireAngle + mount.baseAngle + currentMountAngle;
+      // EVERY mount fires down its barrel: hull angle + base + slewed angle
+      // (0 for a fixed gun), the angle the client draws the gun and the beam
+      // at (PixiRenderer remote beams, #15). Adding the slewed angle to the
+      // AI's aim vector fired at twice the hull's bearing error (#572), and a
+      // fixed gun fired along the aim vector, up to 26° off its drawn nose gun
+      // (owner 2026-11-14: "turrets aren't turning to shoot the direction they
+      // do"). Accuracy comes from the bearing gate instead (`bearingMask`).
+      const mountFireAngle = sAngle + mount.baseAngle + currentMountAngle;
       const ndx = -Math.sin(mountFireAngle);
       const ndy = Math.cos(mountFireAngle);
       // Barrel tip for a turning turret; chin guns keep the drone clearance.
@@ -288,8 +322,8 @@ export class AiFireResolver implements WeaponFireSink {
       ctx.fromY = rayFromY;
       ctx.dirX = ndx;
       ctx.dirY = ndy;
-      ctx.shooterVx = self.vx;
-      ctx.shooterVy = self.vy;
+      ctx.shooterVx = svx;
+      ctx.shooterVy = svy;
       ctx.mountId = mount.id;
       // A naval turret fires a full salvo: one shell per barrel, each from
       // its own drawn barrel tip (shared offsets, core/combat/muzzle.ts).
@@ -372,7 +406,7 @@ export class AiFireResolver implements WeaponFireSink {
         ? damage * hitscanFalloffFrac(hitDist, range, rayRange, falloffMinDamageFrac)
         : damage;
       // S2a: the beam's impact point, for the capital wreck hit tracker only.
-      d.noteBeamImpact?.(rayFromX + ndx * hitDist, rayFromY + ndy * hitDist);
+      d.noteBeamImpact?.(rayFromX + ndx * hitDist, rayFromY + ndy * hitDist, ndx, ndy);
       d.applyDamage(hitId, this._shooterId, effDamage);
     }
 

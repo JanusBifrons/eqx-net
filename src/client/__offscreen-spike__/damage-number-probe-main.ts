@@ -55,6 +55,9 @@ interface DamageProbeApi {
   pushDamage: (x: number, y: number, damage: number) => void;
   /** Post the persistent mirror to the renderer (simulating one rAF tick). */
   postFrame: () => void;
+  /** Mark `targetId` destroyed on the next posted frame (the one-frame
+   *  `explodingShips` trigger ColyseusClient.killEntity sets). */
+  explode: (targetId: string) => void;
   /** Read the cached `damageNumberActiveCount` from main-thread feedback. */
   getActiveCount: () => number;
   /** Inspect the persistent mirror's pending-damage queue length —
@@ -87,6 +90,11 @@ async function main(): Promise<void> {
     },
     postFrame: (): void => {
       renderer.update(mirror);
+      // App.tsx clears the one-frame triggers after the renderer update.
+      mirror.explodingShips?.clear();
+    },
+    explode: (targetId: string): void => {
+      mirror.explodingShips?.add(targetId);
     },
     getActiveCount: (): number => renderer.getFeedback().damageNumberActiveCount,
     getPendingQueueLength: (): number => mirror.pendingDamageNumbers?.length ?? 0,

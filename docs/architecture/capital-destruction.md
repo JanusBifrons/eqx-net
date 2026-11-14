@@ -275,7 +275,7 @@ player-flown (active or parked), breaks it into wreck bodies on the server.
     overlaps them. Side effect: momentum moves outward along the chain, so
     the pieces at the ends of the hull drift fastest (~75 u/s for a heavy
     cruiser), and the piece at the kill point is slow; the knock-back from
-    later shells (a follow-up) supplies the violence.
+    later shells (below) supplies the violence.
     Tuning (owner review of a filmed take, 2026-11-13: at 0.0025 the gaps
     were 5–15 px after 8 s at the capital zoom ~0.17 and the hull read as
     "cracked but intact" for 3–4 s; "heavy and weighty, but the break must
@@ -297,20 +297,89 @@ player-flown (active or parked), breaks it into wreck bodies on the server.
     and structures collide with pieces as before. The dying body is
     despawned in the same worker batch (an active player hull's body too,
     its slot kept for respawn).
+  - **Overkill knock-back (owner request 2026-11-13: "The thing which knocks
+    them back should be the impact of subsequent shells, if any overkill
+    happens due to incoming shots after destruction").** A shot that lands
+    on a piece (the rest of the salvo after the kill, or any later fire)
+    shoves it. `SectorRoom.applyDamage` takes the shot's direction beside its
+    hit point and calls `CapitalWreckSubsystem.onWreckHit(id, hitX, hitY,
+    dirX, dirY, damage)`, which posts `WRECK_IMPULSE` (→
+    `World.applyImpulseAtPoint`): impulse J = damage ÷ the parent's max hull
+    × the hull's mass × `shipTuning(kind).wreckKnockSpeed` at the hit point,
+    along the shot, so an off-centre hit also turns the piece. The speed
+    change J ÷ m is capped at `wreckKnockMax` per hit. Both are 0.012 / 0.025
+    × hull radius per second (#18): a blow worth the whole hull's HP would
+    move the whole hull at `wreckKnockSpeed`. Heavy cruiser (2×: 4018 hull,
+    mass 2326, radius 2184): `wreckKnockSpeed` ≈ 26 u/s, cap ≈ 55 u/s; one
+    16" shell (1400) is J ≈ 21,000, so its biggest piece (~640–715 mass)
+    moves ~30–33 u/s and turns ~3°/s on a hit 0.3 radius off centre, a
+    mid-size piece (~80) hits the cap, and a 10-damage bolt moves the big
+    piece ~0.2 u/s (a sliver can still reach the cap: it is tiny).
+    - **During the crack hold the whole wreck takes the hit (owner review
+      2026-11-13).** A battleship salvo lands over ~0.5 s: the first shell
+      breaks the hull and the rest arrive during the `WRECK_CRACK_MS` hold.
+      Shoving only the piece hit made one chunk slide and turn out of line
+      while the others held, so the hull bent like a banana before it split.
+      Now, while `serverTick < deathTick + wreckCrackTicks()`, `onWreckHit`
+      posts `WRECK_RIGID_IMPULSE { entityIds, jx, jy, px, py }` with the
+      wreck's piece ids (built once at death) instead. The worker
+      (`World.applyRigidGroupImpulse`) treats the live pieces as ONE rigid
+      body: it makes their motion exactly rigid from their momentum (centre
+      of mass velocity = Σmv ÷ M, spin = angular momentum about the centre
+      of mass ÷ the group's moment of inertia, each piece's
+      `principalInertia` plus m r²), adds Δv = J ÷ M and Δω = (r × J) ÷ I,
+      and sets every piece to v_com + ω × r_i, spin ω. The pieces keep their
+      relative poses; the hull moves and turns as one. The speed cap is on
+      the whole wreck (`wreckKnockMax` × its mass). The same 16" shell moves
+      a heavy cruiser's wreck ~9 u/s and turns it ~0.6°/s from near one end.
+      At the end of the hold the separating kick (`WRECK_KICK`) ADDS to that
+      motion, turned by how far each piece has turned since the death; the
+      pieces turned together, so the kick stays radial to the hull. After
+      the hold a hit shoves the single piece, as above.
+    - **Paths.** Shells and bolts (`ProjectilePipeline` direct hit, the
+      shell's velocity), player beams (`PlayerFireResolver`, the beam
+      direction), NPC beams (`AiFireResolver` → `noteBeamImpact(x, y, dx,
+      dy)`). Missiles already push through their splash impulse
+      (`MISSILE_IMPULSE`); rams push through the contact. Not yet: structure
+      turret beams (they call `applyDamage` with no hit point) and shell blast
+      splash.
+    - **Clients.** No client path: the piece's new velocity reaches clients
+      on the binary swarm wire, and the predWorld twin (`wreckClientLeaf`) is
+      re-anchored to the authoritative pose and velocity every snapshot (the
+      remote-entity anchor, #12). Between the hit and the next snapshot the
+      twin coasts on its old velocity (≤ ~50 ms, a few units on a body
+      hundreds of units across); the drawn piece is interpolated from the
+      wire, so nothing pops.
+    - **Hit gate fix.** `wreckSweepHit` / `wreckRayHit` used `rayHitsSphere`
+      as the circle gate, which returns null once the origin is inside the
+      circle and past its closest approach to the centre: a shell stepping
+      through a long piece off its centre passed through its far half. The
+      gate is now `segmentNearCircle` (the segment comes within the radius).
+      The same pattern remains in `refineSweepHit` for capital hulls (a
+      follow-up).
   - Locks: `tests/integration/sectorRoom/wreckPiecesSeparate.test.ts` (no
     overlap, neighbours never approach, crack delay holds, slow speed and
     spin, a shoved piece bumps its neighbour), `wreckPieces.test.ts` (every
-    seam opens at both ends), `CapitalWreckSubsystem.test.ts` (crack delay).
+    seam opens at both ends), `CapitalWreckSubsystem.test.ts` (crack delay,
+    knock-back formula and cap), `wreckOverkillKnockback.test.ts` (a real
+    16" shell on a piece after the kill: Δv along the shot ≈ expected, spin
+    the way the off-centre hit turns it), `wreckRigidHold.test.ts` (a real
+    16" shell during the hold: every pair of pieces keeps its relative pose
+    within 1 u / 0.1° and the wreck moves along the shot; with fracture v7's
+    5 pieces, 32 u / 1.16° of bending without the fix, 0.16 u / 0° with it), `World.rigidGroup.test.ts` (one spin, v_com +
+    ω × r, momentum + J), `wreckHits.test.ts` (the gate).
 - **Entity class.** A wreck piece is swarm kind 4 (`SWARM_KIND_WRECK`,
   server-only for now), predicate `isWreckPiece`. No health: `EntityResolver`
-  treats it as immune, so a shot stops on it and does nothing. Loops that
+  treats it as immune, so a shot stops on it and does no damage (it knocks
+  the piece instead, see "Overkill knock-back"). Loops that
   cover it: the projectile pipeline (bolts and shells), player beams, NPC and
   turret beams (`nonPlayerRayHit`, `LineOfFireGate`), missile flight, spawn
   clearance, the interest grid. Loops that skip it: the binary swarm encoder,
   sector persistence, missile locks, blast damage, every drone/AI loop (kind
   filters). Not on the lag-comp ring (its entity budget is the drones').
-- **Blocking shots.** `core/destruction/wreckHits.ts`: the bounding circle,
-  then the piece's convex parts (`wreckRayHit`, `wreckSweepHit`).
+- **Blocking shots.** `core/destruction/wreckHits.ts`: the bounding circle
+  (`segmentNearCircle`), then the piece's convex parts (`wreckRayHit`,
+  `wreckSweepHit`). A shot that lands knocks the piece (above).
 - **Budget.** `MAX_LIVE_WRECK_PIECES` (768) per room; the oldest piece goes
   first. Owner: wrecks stay for ever; this only guards the slot pool until
   S2c persists them. S2b keeps it.
@@ -381,8 +450,19 @@ player-flown (active or parked), breaks it into wreck bodies on the server.
     snapshot per frame, so a `wrecks[]` descriptor on a dropped snapshot was
     lost until the 2 Hz repeat (1.2–3.6 s in the E2E, past the 1.5 s
     break-up window). It now carries a dropped snapshot's list forward
-    (`snapshotCoalesce.test.ts`). The DataChannel path coalesces raw bytes
-    and still has this gap (follow-up).
+    (`snapshotCoalesce.test.ts`). The DataChannel byte coalescer had the same
+    gap; sub-capital slice 3 closed it (see "Wreck descriptors on the wire").
+  - **The hull vanished before its pieces appeared** (take B, 2026-11-13:
+    ~0.5 s of empty space under the kill blast). The renderer swept the hull
+    sprite the frame its entity left the mirror, but a piece is drawn only
+    once its binary pose and its `wrecks[]` descriptor have both arrived (two
+    channels; out-of-interest pieces ride the binary wire every 6 ticks, and
+    a spectator has no interest window). Now a capital that dies in a
+    `capitalWrecks` room (marked from `explodingShips`) is held by
+    `DyingHullHold` (`render/pixi/dyingHullHold.ts`): drawn at its last pose
+    until a piece of its kind is drawn within its hull, then removed in that
+    same frame, or after 1.5 s of game time if the wreck never shows. Active,
+    NPC and parked hulls alike. Lock: `dyingHullHold.test.ts`.
   - Frames for review: a GPU probe films the break-up (CDP screencast,
     frames picked by timestamp at death + 0.3 s, + 2 s, + 5 s).
 - Locks: `wreckPieces.test.ts`, `CapitalWreckSubsystem.test.ts`,
@@ -396,16 +476,51 @@ player-flown (active or parked), breaks it into wreck bodies on the server.
   `shipKind` byte is the parent capital, `componentIndex` the piece index.
   Poses ride the pose channel like scrap: the display-delay interpolation and
   teleport guard for drawing, the remote-entity anchor for the body.
-- **Descriptor.** `SnapshotMessage.wrecks[]`: one `WreckDescriptor` per live
-  wreck (`{ wreckId, parentKind, seed, killX, killY, killBlowDamage,
-  recentDamageRate, snapChance, algoVersion }`; the kill point is hull-local,
-  1× Pixi-up, already on the outline). `CapitalWreckSubsystem` hands out a
-  free u16 `wreckId` per wreck and keeps the list (a shared array rebuilt only
-  when the set changes). `SnapshotBroadcaster` attaches it on every snapshot
-  for `WRECKS_CHANGE_WINDOW` (3) broadcast counters after a change (so every
-  recipient gets a new wreck at once; an empty list then means "none left")
-  and otherwise at the far-drone 2 Hz cadence while any wreck lives. A late
-  joiner rebuilds every wreck within half a second (#16).
+- **Descriptor.** One `WreckDescriptor` per live wreck (`{ wreckId,
+  parentKind, seed, killX, killY, killBlowDamage, recentDamageRate,
+  snapChance, algoVersion, deathTick? }`; the kill point is hull-local, 1×
+  Pixi-up, already on the outline). `CapitalWreckSubsystem` hands out a free
+  u16 `wreckId` per wreck and keeps the list (a shared array rebuilt only when
+  the set changes). S2b sent the whole list on the snapshot; sub-capital
+  slice 3 replaced that with deltas (next section).
+
+**Wreck descriptors on the wire (sub-capital break-up slice 3).** Sub-capitals
+will leave permanent wrecks at ~200 deaths a minute in a big fight. The S2b
+wire resent the whole `wrecks[]` list for 3 broadcasts after ANY change and at
+2 Hz otherwise: at 3 deaths a second that is ~5 full lists a second per
+recipient, growing with every live wreck (measured, msgpack: 3.8 KB/s at 10
+live, 100 KB/s at 300, 334 KB/s at 1,000). Now:
+- **Join.** The welcome carries the full live set (`WelcomeMessage.wrecks`,
+  zod-checked with `WreckDescriptorSchema`).
+- **Deltas.** `WreckWireDeltas` (stepped once per broadcast, diffing the live
+  list only when its version moves) keeps the adds and removes of the last
+  `WRECK_DELTA_WINDOW` (18) broadcast counters, six snapshots per recipient,
+  so one dropped snapshot never loses one. `wreckAdds` carries descriptors (a
+  recycled id carries its new one); `wreckRemoves` carries ids; an id is
+  never in both.
+- **Rolling resync.** On one snapshot per recipient in `WRECK_RESYNC_EVERY`
+  (2 Hz), `wreckSync = { lo, hi, d }`: the live wrecks with `lo <= id < hi`
+  are exactly `d` (at most `WRECK_RESYNC_CHUNK` = 6). The chunks walk the id
+  space and wrap, so a client that missed an add OR a remove converges (#16;
+  22 live wrecks after a forced miss: 1.6 s).
+- **Client.** `WreckGeometryStore.applySnapshot` applies sync, then removes,
+  then adds (deltas are never older than the chunk), idempotently, with
+  alloc-free guards (`isWreckDescriptor`, `isWreckId`, locked to the zod
+  schemas) since the snapshot is the #3 carve-out.
+- **Coalescing.** All three fields are absent-means-no-change.
+  `SnapshotCoalescer` folds a dropped snapshot's deltas into the newer one
+  (`carryWreckDeltas`, the newer wins per id); the DataChannel byte coalescer
+  decodes a superseded frame whose bytes contain the `wreckAdds` /
+  `wreckRemoves` keys instead of discarding it (`carriesWreckDeltas`).
+- **Bytes.** ~4.1–4.2 KB/s per recipient at 3 deaths a second, flat from 10
+  to 1,000 live wrecks.
+- Locks: `SnapshotBroadcaster.wreckDeltas.test.ts`,
+  `tests/unit/wreckWireConvergence.test.ts`, `snapshotCoalesce.test.ts`,
+  `dataChannelTransport.test.ts`, `wreckWire.test.ts`,
+  `tests/integration/sectorRoom/wreckLateJoiner.test.ts`.
+
+**S2b, continued.**
+
 - **Geometry.** `wreckPieceGeometry(inputs)` (`core/destruction/wreckPieces.ts`)
   is the one source of a piece's shape: convex parts, outline, cut flags, mass,
   radius, all body-local. The server's `buildWreckPieces` places its output;
@@ -433,7 +548,8 @@ player-flown (active or parked), breaks it into wreck bodies on the server.
 - Locks: `tests/unit/swarmWireRoundTrip.test.ts` (kind 4 + v4 hard-fail),
   `tests/integration/wire/wreckGeometryParity.test.ts` (server bodies ==
   client rebuild, bit for bit), `tests/integration/sectorRoom/wreckLateJoiner.test.ts`
-  (a late joiner gets `wrecks[]` and rebuilds every piece),
+  (a late joiner gets the welcome's `wrecks` and rebuilds every piece; a new
+  death rides as one add, a gone wreck as a remove),
   `tests/unit/wreckPredWorld.test.ts` (ramming a piece: no corrections),
   `swarmSpriteUpdater.wreck.test.ts` (one plain sprite per piece),
   `World.slivers.test.ts`, `tests/e2e/capital-wreck-render.spec.ts`.
@@ -471,7 +587,8 @@ like the v3 → v4 bump).
 **Descriptor.** The fracture inputs travel as one small record per wreck:
 `{ wreckId, parentKind, seed, killX, killY, maxPieces, algoVersion }`.
 - It rides the slim JSON snapshot as `wrecks[]`, emitted while any piece of
-  the wreck lives. This is invariant #16: a late joiner rebuilds the geometry
+  the wreck lives. (As built since sub-capital slice 3: the welcome carries
+  the full set and snapshots carry adds, removes and a rolling resync.) This is invariant #16: a late joiner rebuilds the geometry
   from the snapshot alone; a death event is only an accelerator.
 - No vertex ever goes on the wire.
 
@@ -510,11 +627,12 @@ pieces stay for ever and the glow ends dark. As built
   review: slice A through the default shader gave flat grey slabs). Before
   the art is ready (or in the classic look) the piece is
   today's plain polygon, swapped once the art arrives.
-- **Glowing cut edges.** One white stroke `Graphics` per piece over its runs
-  of `cutEdges` (the original outline never glows), tinted and faded each
-  frame by `wreckGlowAt`: molten white-orange at death, an ember at
-  `WRECK_GLOW_EMBER_S` (3 s), dark at `WRECK_GLOW_END_S` (6 s), when the stroke
-  is destroyed. The clock is the descriptor's new `deathTick` against the
+- **Glowing cut edges.** One glow per piece over its `cutEdges` (the
+  original outline never glows; since 2026-11-13 a mesh lit by a crack front,
+  see "Cracks spread" below), coloured by `wreckGlowAt`: white-hot for
+  0.12 s, bright orange to ~0.6 s, an ember at `WRECK_GLOW_EMBER_S` (1.8 s),
+  dark at `WRECK_GLOW_END_S` (4.5 s), when the stroke is destroyed (was
+  3 s / 6 s; review 2026-11-13: "saturated orange for ~3 s"). The clock is the descriptor's new `deathTick` against the
   piece's latest server tick, so a late joiner (or a descriptor without one)
   starts cool. Per-wreck state lives in the renderer's `WreckArtState`.
 - **Break-up.** The first piece of a wreck younger than 1.5 s fires
@@ -525,6 +643,18 @@ pieces stay for ever and the glow ends dark. As built
   minimal). The kill point comes from that piece's pose and its known
   centroid in the hull frame. The pool is built on the first break-up and
   leaves the stage when idle.
+- **A smaller kill blast (owner decision 2026-11-13, after filmed reviews).**
+  The spreading cracks and the ripples mostly hid under the kill fireball
+  and smoke. The fireballs shrank to about half the area they cover:
+  `WRECK_BLAST_MAIN` 0.12 → 0.09, `WRECK_BLAST_SUB` 0.065 → 0.045 at
+  `WRECK_BLAST_SUB_OFFSET` 0.09 → 0.06, so `WRECK_BLAST_REACH` is 0.112 of
+  the wreck radius (was 0.165). Their smoke lifts twice as fast
+  (`WRECK_BLAST_LINGER` 0.5, FxExplosions' `linger` argument; ordinary
+  deaths keep 1): visible to ~1.1 s instead of ~2.1 s. The break-up dust
+  stays inside the reach (was flung to ~0.4 of the radius) and lifts in
+  ~1.2 s (was ~3 s). The flash at the hit stays (FxExplosions' 0.3 s glow,
+  `WreckBreakFx`'s core flash now to 0.08). The crack front's pacing and the
+  ripple placement follow `WRECK_BLAST_REACH`, so both moved in with it.
 - **Counts.** A piece is a container, ≤ 6 meshes and one glow stroke
   (`WRECK_DISPLAY_OBJECTS_PER_PIECE_MAX` = 8), the stroke gone once cool.
   Both render paths (worker and main thread) run the same updater.
@@ -533,6 +663,123 @@ pieces stay for ever and the glow ends dark. As built
   `swarmSpriteUpdater.wreckArt.test.ts` (parent textures only, count budget,
   hot vs late-joiner cool, one break-up), `WreckBreakFx.test.ts`, and the S3
   case in `tests/e2e/capital-wreck-render.spec.ts`.
+
+#### Cracks spread, then it breaks (built 2026-11-13)
+
+Owner, on the filmed break-up: "The instant split feels a bit off. Slightly.
+Perhaps some propagating cracks ... and explosions across the hull, small and
+rippling showing internal damage, then it breaks up." The pieces already hold
+together for `WRECK_CRACK_MS` (1200 game ms, `shared-types/wreckTiming.ts`)
+before the server pushes them apart; this is what the client shows in that
+window. Everything runs on the renderer's game clock (`ctx.fxNowMs`), so it
+slows in slow motion and speeds up at 4×.
+
+- **The crack front.** Each crack system (the cut edges of every piece,
+  joined where pieces share a vertex: `CrackDistances`) is entered once, at
+  its outline vertex nearest the kill point (the kill point itself for the
+  primary line and the fan cracks), and the front runs ALONG the cracks from
+  there, through T-junctions. Both sides of a crack therefore light
+  together (per-piece runs lit one side of a zone crack ~0.5 s after the
+  other when a fan crack ended on it). The front's clock (`crackFrontAt` /
+  `crackIgniteMs`) runs over the crack distances that hold a crack only
+  (`crackIntervals`, merged), from the nearest to the farthest in
+  `WRECK_CRACK_FRONT_MS` (0.8 × the window), so it never idles across a
+  stretch of the hull with nothing to light. Each cut segment grows from its
+  near end to its far end; each END ages from the moment the front reached
+  it, so a crack is white-hot at the tip and cools orange to red behind it.
+- **The front is paced to be seen (review of the v7 takes, 2026-11-13).**
+  Fracture v7 puts every crack within a beam or two of the kill point, and
+  the kill blast's fireballs cover the hull out to `WRECK_BLAST_REACH`
+  (0.112 × the wreck radius since the smaller kill blast, was 0.165) for
+  ~1.1 s. Paced evenly over distance, the front
+  spent about half its run under them: the take showed the first crack
+  ~0.8 s after the kill and the rest "spanning the hull in ~0.1 s". The
+  front now crosses the covered stretch (`crackHidden`) in
+  `WRECK_FRONT_HIDDEN_SHARE` (20 %) of its time and spends the rest outside
+  it (0.8 × 0.96 s ≈ 0.77 s visible, was ~0.5 s; the edge-granular test
+  measure reads 0.70–0.75 s on the filmed heavy cruiser and floors at 0.7 of
+  the front's run). The
+  white-hot stage of the glow curve is 0.12 s, so the crack behind the head
+  is already orange and the head reads (it was as white as the head).
+- **First sight, not the death (review 2026-11-13).** The client first draws
+  a wreck 0.1–0.5 s after the death (its descriptor arrives late). Anchored
+  at the death, most of the front had already run and every crack lit at
+  once. A wreck first seen inside its crack window starts the front, the
+  glow's clock and the ripples at first sight (`deathMs` is then first
+  sight); the break-up burst still uses the real age. A late joiner keeps the
+  true age: cool, no front.
+- **One glow mesh, not a stroke.** The glow is one `Mesh` per piece on a
+  128×2 texture holding the glow curve (`wreckGlowTexture`: row 0 core, row 1
+  halo at 0.3 alpha; U = age / 4.5 s). Four quads per cut segment: a halo and a
+  core (per-vertex U: the age at each end) on the piece's OWN side of the
+  edge only, each half the stroke's width and narrowed where a sharp corner
+  would poke it out (`insideWidth`), so the two pieces' halves make the
+  whole stroke while the hull holds and nothing is drawn in the gap once
+  they part; then the white-hot head's halo
+  and core (`GLOW_HEAD_MUL` wider, `GLOW_HEAD_LEN_R` × the wreck radius
+  long) on the stretch behind the tip of a crack still growing. Widths are a
+  share of the wreck radius (`GLOW_CORE_R`, #18), so they read at capital
+  zoom (~0.17). Each frame rewrites only the U coordinates and, until the
+  front has passed every cut, the positions, in place. Still one glow object
+  per piece (budget 8). `frontHeads()` counts the heads drawn.
+- **Ripple blasts.** At first sight of a fresh wreck `wreckRipples` picks up
+  to `wreckRippleCap(tier)` points (7 high, 5 medium, 3 low, none minimal) on
+  the cut edges whose whole ripple fireball lies outside `WRECK_BLAST_REACH`
+  (v7 review: the old "far 65 % of the cracks" rule put every ripple 409–528
+  u out, under a kill blast reaching ~360 u, and fired two 30 ms apart), one
+  per equal stretch of the front's run there, at least
+  `WRECK_RIPPLE_GAP_MS` (110) apart, so they fire in sequence as it passes.
+  Each is a pooled `FxExplosions` burst of
+  radius 0.05–0.07 × the wreck radius (review: 0.022–0.04 were lost; the
+  kill blast is 0.09). With the smaller kill blast they sit closer in along
+  the cracks (5–6 outside it on the filmed heavy cruiser). A late joiner gets none; one whose moment passed
+  before its piece was drawn is dropped. `artStats().wreckRipples` counts
+  them.
+- **No black "char" strip (filmed v3 takes, 2026-11-13).** Each cut edge
+  carried a black scalloped strip: across an opening gap the two read as a
+  near-black band over the stars, and on the bow piece it stuck out past
+  the hull. It was the glow mesh's cooling end: the curve faded to
+  near-black (0x501404 → 0x200804 at up to 0.55 alpha) over a halo 3× the
+  core's width, narrowed per segment end (the scallops); the white-hot head
+  was a quad CENTRED on the crack (half of it in the neighbour or past the
+  outline), and on a concave piece a strip with both ends inside could
+  still cross the outline between them. Now the curve ends in a faint dark
+  grey-brown (0x5a4a40 at 0.25 alpha by 2.2 s, to 0x3a2f2a at 0), the halo
+  fades out by 2.0 s so a cooled edge keeps only the thin core, the head is
+  a one-sided strip like the stroke, and each strip is narrowed until its
+  far side is inside the piece (`stripInside`).
+- **The burnt tint stays close to the art (review 2026-11-13).** The tint is
+  per piece, so a wide near/far spread puts a hard brightness step at every
+  cut. With the old near tint (0x9a8a80) a mid-hull kill turned every middle
+  piece into a dark brown slab beside a normal bow and stern once the blast's
+  light faded ("the middle chunks lose their hull art", measured on the take
+  at 0.69 / 0.66 / 0.65 of the stern's R/G/B, matching the tint ratio). Near
+  is now 0xc4bab2 against 0xd2cac4 far (≥ 0.9 per channel); the scorch is
+  the glow's job.
+- Locks: `swarmSpriteUpdater.wreckArt.test.ts` "cracks spread, then it
+  breaks" (front from the kill point, also when first seen 300 ms late; a
+  head runs while cracks grow; all lit by the split; each cools from its own
+  ignition; ripples on the cuts, 0.05–0.07 × the radius, away from the kill
+  point, under the cap, spread in time, none for a late joiner; the game
+  clock drives both) and "after cooling, no glow draws and every piece keeps
+  the hull art at about the same brightness"; "the filmed v7 break-up" (the
+  heavy cruiser amidships, pieces arriving 300–400 ms late: front over
+  0.8–1 s with ≥ 0.72 s outside the kill blast and a head running, both
+  sides of a crack together, 3+ ripples outside the blast in sequence, glow
+  under 0.6 alpha by 3 s, no glow outside its piece, pieces never fade;
+  "char strip": every point of every glow quad inside its piece at every
+  moment, the cooled scorch grey-brown, faint and halo-free; "the kill
+  blast is small and brief": the real FxExplosions + WreckBreakFx bursts
+  cover ≤ `WRECK_BLAST_REACH` ≤ 0.12 after the first 0.6 s and clear by
+  1.3 s; ≥ 4 ripples outside it, some where the old blast hid them).
+- **The "thin sliver that faded" (v7 take, 2026-11-13) was no piece.** Two
+  bright lines ~40–50 u apart with a dark streaky strip between them, gone
+  by ~4 s: one crack opening at ~31 u/s after the hold, with each piece's
+  glow centred on its edge, so both halos and cores spilled over the gap
+  and read as a strip that "faded" with the glow. v7 never cuts two
+  near-parallel cracks closer than ~0.56 beams (`fractureHull.killFocus.test.ts`
+  "no two cracks run near-parallel"), and every piece keeps its art. Fixed
+  by drawing each piece's glow on its own side only (above).
 
 ### S4: secondary breaks and the catastrophic flash
 
@@ -674,3 +921,54 @@ Every client must produce the same pieces as the server, bit for bit, from
   the impact point (not at a fixed midships).
 - **Catastrophic blasts will hurt nearby ships** ("Yes, but not now/yet"). For
   now the gas-store detonation is visual only; area damage comes later.
+
+## Core rules reference
+
+Moved from `src/core/CLAUDE.md` (section "Capital fracture").
+
+- **`fractureHull({ hull, seed, killPoint, sectionCuts?, maxPieces })`** splits a hull outline into wreck pieces. Each piece has a CCW outline, `cutEdges` flags, convex parts, area and centroid. Server and clients run it from the same inputs (#15), and no geometry goes on the wire.
+- **Deterministic by construction. Keep it that way:**
+  - arithmetic and `Math.sqrt`/`round` only, never sin/cos/atan2/pow;
+  - the mulberry32 `Rng`;
+  - fixed loop order;
+  - vertices quantised to `FRACTURE_QUANTUM` (1/64 u);
+  - from poly-decomp, only `quickDecomp`/`makeCCW`.
+- **Any change to its output bumps `FRACTURE_ALGO_VERSION`.** The golden test fails first.
+- **Concave hulls go through `splitByLine`,** which traces each disjoint part separately. Plain Sutherland–Hodgman bridges them; the U-hull test catches that.
+- **Jagged Voronoi cut edges** are seeded from the edge's own quantised endpoints, so both neighbours share the line. Section cuts stay straight.
+- **Wreck pieces collide with each other, and neighbours always part (owner review 2026-11-13: heavy, no overlap, no hinge).** `WRECK_COLLISION_GROUPS` (0x0004FFFF, server spawn and client twin) lets pieces bump. Their collider is `WreckPieceGeometry.colliderParts` (each part inset by `shipTuning(kind).wreckColliderInset`, so neighbours spawn a hair apart); drawing and weapon hits keep `parts`. `buildWreckPieces` gives each piece a slow kick (push `wreckPushMax/Min`, rim-speed spin) and then the least momentum-conserving pushes that open every shared cut (collinear cut edges, or cut edges that only touch at a T-junction) at `wreckSeparate` or more at both ends, spin included (#18 for all three). Tuned 2026-11-13 so the break is SEEN but heavy: `wreckSeparate` 0.014 × radius/s (~31 u/s heavy cruiser), push 0.010 / 0.004; the narrowest cut is ~31 u open 1 s after the kick, no piece over ~75 u/s (`wreckPiecesSeparate.test.ts`). The separation multiplies along chains of neighbours, so it assumes v7's few chunks. The kick is applied after `WRECK_CRACK_MS` (`shared-types/wreckTiming.ts`, game ticks); until then the pieces move with the dead hull. Never give pieces a velocity field that lets a neighbour close on another along their cut.
+- **S2a: `wreckPieces.ts` / `wreckHits.ts`.** `buildWreckPieces` turns a death (kind, pose, kill point, damage inputs, seed) into rigid-body specs: the fracture on the 1× Pixi-up outline, pieces mapped like `shipShapeToPolygon` (x·s, −y·s, rings reversed to stay CCW), mass ∝ area, v + ω × r plus an outward push. `wreckRayHit` / `wreckSweepHit` are the one weapon-vs-wreck test (circle, then convex parts). The circle gate is `segmentNearCircle`, never `rayHitsSphere` (that returns null once the origin is inside the circle and past the centre, so shells passed through a long piece's far half; lock `wreckHits.test.ts`).
+- **S2b: `wreckPieceGeometry(WreckFractureInputs)` is the one source of a piece's shape** (body-local parts, outline, cut flags, mass, radius). The server's `buildWreckPieces` places its output and the client rebuilds it from the `wrecks[]` descriptor; never compute a piece's shape another way (#15, locked bit for bit by `tests/integration/wire/wreckGeometryParity.test.ts`). `World.spawnObstacle` skips a part Rapier cannot hull (a < 1 u sliver threw inside the worker; `World.slivers.test.ts`).
+- **Sub-capital profile (2026-11-13).** How a ship breaks up is `shipTuning(kind).destruction` / `destructionProfile({ type, kindId })` (`capital` | `subcap` | `none`), and every per-profile number lives in `DESTRUCTION_PROFILES` (`shared-types/shipScale/destruction.ts`), never in a branch. `wreckPieceGeometry` takes its fracture options from it; the sub-cap options (≤ 3 pieces, no fans or far crack, `chunkyPieces`: a sound primary + one extra chunk, gentle jag) must never change a capital's output: new `fractureHull` options default to the old behaviour. Lock: `fractureHull.subcap.test.ts`.
+
+## History
+
+Moved from `src/core/CLAUDE.md` (2026-11-14); kept for the record.
+
+### fractureHull version trail (v2–v7)
+
+- **v2: the last hit decides where it splits.**
+  - A straight primary line runs through `killPoint`, across the keel, with a seeded tilt.
+  - A seeded `snapChance` (default 0.2) snaps the hull cleanly in two along that line.
+  - The piece count comes from `hullRadius`, `killBlowDamage` and `recentDamageRate` plus a seeded draw. Leave all three out to use the fixed-count mode, where the cap is the target.
+  - `fracturePlan(input)` returns these decisions without building any geometry.
+  - All of the plan's draws come from one stream, in a fixed order. Adding a draw changes every fracture, so bump the version.
+- **v3: the kill point is on the hull outline** (owner: "Why isn't the red dot on the border of the ship?"). `projectToOutline(hull, p)` (nearest point on the edges, quantised) runs inside `fractureHull`/`fracturePlan`, so every caller gets an edge point (`fracturePlan(...).killPoint`).
+- **v4: the primary line always runs ACROSS the hull** (owner review: a bow-tip hit split the ship along its keel). A bow or stern tip hit (a line through it would clip < 3 % of the hull) moves the line a seeded 15–35 % of the hull length aft of that tip, so that end breaks off as a real piece. Lock: the ±35°-of-square test over tips and every outline point.
+- **v5: the shatter stays at the kill point and cuts run across a long hull** (hostile review of a filmed heavy-cruiser death). Seed density falls as 1/d⁴ over a 0.4 % floor; the Voronoi bisectors use a metric stretched 2× along the keel (`bisector`, still convex cells that tile); beyond one falloff radius seeds keep a least keel-wise spacing. Lock: `fractureHull.killFocus.test.ts`.
+- **v6: cracks fan out from the kill point; the far field breaks along a few uneven, tilted cracks** (money-shot review: v5 cut a comb of even square bands and a ladder at the kill point). `crackLines` (its own seeded stream) adds fan cracks through the kill point and far cracks at seeded stations and tilts; the Voronoi seeds stay inside the fan (no far floor); cracks and the primary line are jagged, after `weldTJunctions` pairs T-junction edges. Lock: the v6 describe in `fractureHull.killFocus.test.ts` (far pieces, far tilt, radial cracks) on top of the v5 locks.
+- **v7: the hull breaks only where it was hit, into a few ENORMOUS chunks** (owner review 2026-11-13: v6 sliced the far hull where no shell hit and cut a comb of slivers at the impact; "The last hit's impact sets the split"). No Voronoi seeds, no far cracks: two jagged zone cracks ~a beam either side of the primary and 0–2 fan cracks from the kill point (`LocalLine`, split only their zone half) leave 2–4 chunks at the impact and one big section each side. A very heavy blow (≥ max hull) on a long hull rarely (12 %) adds ONE far crack. Piece count still rises with size and violence, but stays ~3–7. A fan crack only splits a section where every part it leaves is chunky (≥ `FAN_MIN_WIDTH_BEAMS` 0.45 beam wide, ≤ `FAN_MAX_ASPECT` 2.6× longer than that; filmed take 2026-11-13: a long thin triangle along the port edge). Lock: the v7 describe in `fractureHull.killFocus.test.ts` (no thin sliver, no long thin piece of any size, no far cut, 2–5 near pieces, ≤ 2 sections each side).
+## Server implementation notes
+
+> Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.
+
+### Capital wrecks (capital destruction S2a + S2b, 2026-11-12)
+
+- **Behind `capitalWrecks`** (room option / `EQX_CAPITAL_WRECKS=1`), off by default. Off ⇒ `SectorRoom.capitalWrecks` is null and nothing changes.
+- **Hit tracking** is `CapitalWreckSubsystem.noteHit`, called from `applyDamage` before the router; pooled entries, no per-hit allocation (#14). Pass a hit point wherever a weapon knows one; the AI beam uses `noteBeamImpact` so its `DamageEvent` stays unchanged.
+- **Death hooks** (all before the dying body is despawned): drone capitals in `spawnScrapFromDrone`, active hulls in the `SHIP_DESTROYED` handler (which also despawns the dead body, slot kept), lingering hulls via the `spawnScrapFromLingeringHull` seam. Abandon is not a death: no wreck.
+- **Wreck pieces are swarm kind 4** (`isWreckPiece`): immune, solid, block every weapon (`core/destruction/wreckHits.ts`). A new weapon or hit path must handle kind 4 (or the shot passes through a wall the server simulates). Persistence still skips them (S2c).
+- **Heavy break-up (owner review 2026-11-13).** Pieces spawn with the dead hull's rigid motion and hold together for `WRECK_CRACK_MS` (`shared-types/wreckTiming.ts`, counted in server ticks so it follows the sector's speed); `CapitalWreckSubsystem.tick()` (every `update()`, alloc-free) then posts each live piece's slow separating kick as `WRECK_KICK`, turned by how far the piece has turned since the death. Pieces collide with each other (inset colliders); the kick guarantees every pair of neighbours parts along its shared cut. Story: capital-destruction.md "Bodies (heavy break-up)".
+- **Overkill knock-back (owner request 2026-11-13).** A shot landing on a piece shoves it: `applyDamage(…, hitX, hitY, dirX, dirY)` → `CapitalWreckSubsystem.onWreckHit` → `WRECK_IMPULSE` at the hit point along the shot (so off-centre hits turn it). J = damage ÷ max hull × hull mass × `shipTuning(kind).wreckKnockSpeed`, speed change capped at `wreckKnockMax` (#18). Wired: `ProjectilePipeline` direct hits (shell velocity), `PlayerFireResolver` beams, NPC beams (`noteBeamImpact(x, y, dx, dy)`). A new weapon path that can hit a wreck should pass its direction too, or the piece won't move. Missiles push via their splash impulse already. No client path (#12: the predWorld twin re-anchors each snapshot). Alloc-free: reused command, scalar args. **During the crack hold** (`serverTick < deathTick + wreckCrackTicks()`, the rest of the salvo) the hit goes to the WHOLE wreck instead: `WRECK_RIGID_IMPULSE` with the wreck's piece ids (`LiveWreck.ids`, built once at death) → `World.applyRigidGroupImpulse` (Δv = J ÷ M, Δω = (r × J) ÷ I, every piece v_com + ω × r_i), so the hull never bends before it splits; cap `wreckKnockMax` × wreck mass. The kick at the end of the hold adds to that motion. Locks: `tests/integration/sectorRoom/wreckOverkillKnockback.test.ts`, `wreckRigidHold.test.ts`.
+- **S2b — on the wire.** Kind 4 rides the binary swarm wire (v5, `wreckId` u16 at +34). Each wreck has one `WreckDescriptor` (fracture inputs) in `CapitalWreckSubsystem.descriptors()`. **Slice 3 (wire at volume):** the full set rides the WELCOME (`wreckWelcomeFields`); snapshots carry only deltas from `WreckWireDeltas` (stepped once per broadcast, diffs only when `version` moves): `wreckAdds` / `wreckRemoves` for `WRECK_DELTA_WINDOW` (18) counters = 6 snapshots per recipient (an id is never in both), plus `wreckSync` (`WRECK_RESYNC_CHUNK` descriptors, "ids in [lo, hi) are exactly these") on one snapshot per recipient in `WRECK_RESYNC_EVERY` (2 Hz), walking the id space so a missed add or remove converges (#16). Bytes stay flat as wrecks accumulate (~4 KB/s per recipient at 3 deaths/s, any live count). Never put the whole list back on the snapshot. Any path that removes a wreck piece must reach `pieceGone` (`evictSwarmEntity` does), or its descriptor outlives it. Never put vertices on the wire: the client rebuilds them with `wreckPieceGeometry` (#15). The 768-piece cap stays until S2c. Locks: `SnapshotBroadcaster.wreckDeltas.test.ts`, `tests/unit/wreckWireConvergence.test.ts`, `wreckLateJoiner.test.ts`.
+- **Test trigger:** testMode `test_kill_capitals` (every capital NPC takes a lethal hit, re-hit through a shield); room `wreck-test`.

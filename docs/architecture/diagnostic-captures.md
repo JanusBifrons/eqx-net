@@ -113,3 +113,22 @@ measurement.
 - `src/client/debug/diagCapture.ts` — POST helper used by `SettingsModal.tsx`.
 - `src/client/debug/ClientLogger.ts` — `window.__eqxLogs` ringbuffer.
 - `src/server/debug/ServerEventLog.ts` — `getRecentEvents()` ringbuffer drained into the capture.
+
+## From a smoke-test report to a failing test
+
+Root invariant #13 requires a failing test before any fix for a bug found in manual play. The workflow:
+
+- Get the user's capture (`diag/captures/<timestamp>-<id>/`) and reconstruct the exact steps from `lifecycle.ndjson` + `combat.ndjson`, so the test mirrors the real flow.
+- Pick the test layer that is minimal for the bug, but **the level where the bug LIVES, not the level that is easiest to write**. If the bug is at a postMessage / structured-clone / worker boundary, the test MUST cross that boundary (Playwright + a probe page is the canonical pattern: `src/client/__offscreen-spike__/damage-number-probe-main.ts` + `tests/e2e/damage-number-lifetime.spec.ts`). If the failing test **passes** the first time you run it, it is in the wrong place: pick a different level.
+- When unsure where the bug lives, write BOTH a unit test (class behaviour) AND an integration test (the boundary). The unit test is fast insurance; the integration test is the regression lock for the actual failure mode.
+- State the reproduction recipe in the test docstring with the capture dir-id and the symptom in the user's own words where possible.
+- Use `harness.events.waitFor(...)` (integration) or `data-testid`-driven Playwright actions (E2E) so the test fails LOUDLY on a specific assertion, not a generic timeout.
+- When a bug report SURVIVES a fix attempt, the second attempt starts by writing its failing test at a DIFFERENT level than the first attempt's tests: same-level test + new theory = the same blind spot.
+
+Integration-test recipe: `tests/integration/sectorRoom/DETERMINISM.md`.
+
+### History
+
+- 2026-05-14 damage-number incident, the canonical "wrong level first" case: a unit test on `DamageNumberManager` passed easily and the bug survived, because it lived at the `WorkerRendererClient ↔ worker` structured-clone boundary.
+- The 2026-07 anti-patterns review found the missile-jitter, beam-falloff and incoming-warp histories all repeated same-level testing across failed fix rounds; that finding added the "different level" rule.
+- Why the rule exists: the user's smoke-testing time is finite; every bug patched without a test resurfaces in a later cycle.

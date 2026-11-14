@@ -33,10 +33,11 @@ You are diagnosing a failing Playwright spec in EQX Peri. The goal is a **determ
    ```
    (Use `--project=smoke` if the spec lives in `SMOKE_SPECS`.)
 
-   **Pre-flight: kill stale dev servers first** (feedback memory: stale servers cause phantom E2E failures). Before the run:
+   **Pre-flight: clear YOUR stale dev servers first** (stale servers cause phantom E2E failures; `docs/architecture/e2e-framework.md` "Running E2E specs"). Before the run:
    ```bash
    netstat -ano | findstr ":2567 :5173" | findstr LISTENING
-   # For each PID returned: Stop-Process -Id <pid> -Force
+   # For each PID: stop it only if its command line shows this session's worktree.
+   # Another session's server is never yours: use EQX_E2E_PORT_OFFSET=N instead.
    ```
 
 3. **Classify the failure.** Look at the error message + the trace (`test-results/<spec-name>-<id>/error-context.md`). Three categories:

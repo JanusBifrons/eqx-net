@@ -47,6 +47,17 @@ describe('summariseOwnLock', () => {
     expect(o.pct).toBe(40);
     expect(o.failsafe).toBe(false);
   });
+  it('agrees with the in-world tag: a building lock beats a draining one (fight-clip review 2026-11-13)', () => {
+    const o = summariseOwnLock(mirror({
+      localGroups: [
+        { id: 'fore', m: 0, l: [{ t: 's:4', s: 1, p: 70, r: 1 }] },
+        { id: 'aft', m: 0, l: [{ t: 's:4', s: 1, p: 20 }] },
+      ],
+    }), ['Fore', 'Aft'])!;
+    expect(o.group).toBe('Aft');
+    expect(o.losing).toBe(false);
+    expect(o.pct).toBe(20);
+  });
   it('null when every lock is complete', () => {
     expect(summariseOwnLock(mirror({ localGroups: [{ id: 'fore', m: 0, l: [{ t: 's:4', s: 2, p: 100 }] }] }), ['Fore'])).toBeNull();
   });

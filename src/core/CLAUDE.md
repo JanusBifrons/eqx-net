@@ -59,11 +59,12 @@ When a new phase needs a new concretion (e.g., persistence), add it as a new con
 
 - `world.step(1/60)` inside a `while (accumulator >= fixedDt)` accumulator loop. No variable-dt stepping, ever.
 - Rapier bodies / colliders are pooled; do not allocate per-tick.
+- **Ship stats belong to the ship kind, never the pilot (owner rule 2026-11-13).** Mass and inertia come only from `shipBodyMass(kind)` / `shipBodyInertia(kind)` (`shared-types/shipScale/tuning.ts`) for every body of a kind; see ship-physics-handling.md.
 - Sleep callbacks are meaningful: Phase 5 uses them to drive `ENTITY_SLEPT` / `ENTITY_WOKE` — do not suppress or re-enter them without thinking about the handshake.
-- **Ship stats belong to the ship kind, never the pilot (owner rule 2026-11-13); one mass/inertia source.** Every body of a ship kind (pilot ship, server drone, client predWorld drone, the AI pilot's handling model) takes its mass and inertia from `shipBodyMass(kind)` / `shipBodyInertia(kind)` (`shared-types/shipScale/tuning.ts`): `spawnShip` uses them, and `spawnObstacle` with a ship kind pins them whatever mass the caller passes. A server drone gets its kind's linear + angular damping at spawn (`setPilotKind`). Only per-instance upgrades (`SET_STAT_MUL`, quality, fitted modules) may make one hull differ from another of its kind. Never add an NPC-only (or player-only) mass, damping, speed or turn constant. Lock: `tests/unit/shipStatsPilotAgnostic.test.ts` (every kind, real spawn paths).
 - **Drone bodies get per-kind `linearDamping`; asteroids/structures stay ballistic (WS-11 / R2.25, 2026-06-12).** `World.spawnObstacle(..., linearDamping = 0)` takes a per-spawn damping. `SwarmSpawner.spawnOne` passes `shipKind.linearDamping` for DRONES (kind 1) — exactly like `spawnShip` (World.ts:152) — and `0` for ASTEROIDS (kind 0) + STRUCTURES (kind 2). Threaded through `SPAWN_OBSTACLE` (worker.ts cmd + `PhysicsWorkerProxy.WorkerCmd`). WHY: drones move via the AI `applyImpulse` path, which BYPASSES the player's `applyShipInput` max-speed clamp + grip; with damping 0 a drone that overshoot its target coasted away at constant velocity FOREVER (the standoff brake at `HostileDroneBehaviour.ts:498` goes to thrust=0 once `closingSpeed` flips negative, and nothing dissipated the residual speed) — the "flies past / floats / never approaches" bug. The damping VALUE is the kind's own catalogue field (not a guessed constant). The CLIENT predWorld drone body is spawned with damping 0 by `droneClientLeaf`: since 2026-11-08 it is anchored to the latest server state each snapshot and stepped on the prediction timeline (the remote-entity paradigm, root invariant #12), and with no client AI thrust a damped body would slow down where the real drone keeps flying, so it coasts at the server's velocity between anchors. Only the authoritative server body is AI-driven. 🔴 netgate (drone motion → snapshot). Locks: `World.test.ts` (a body with damping sheds coasting velocity; damping 0 coasts) + `SwarmSpawner.test.ts` (drone → kind damping, asteroid → 0). **Candidate value pending on-device feel sign-off (the user bundled it knowingly).**
 - **STRUCTURES (kind 2) are LOCKED on spawn — immovable (P3.10, 2026-06-13).** "ballistic" above is now moot for structures: `SwarmSpawner.spawnOne` flags kind-2 spawns `staticBody`, threaded through `SPAWN_OBSTACLE` (worker.ts cmd + `PhysicsWorkerProxy.WorkerCmd`) so the worker calls `physics.lockBody(obstacleId)` after spawn — mirroring the client predWorld, which already did `spawnObstacle` + `lockBody` for structures (`structureClientLeaf`). WHY: the authoritative structure body lived UNLOCKED in the worker, so a ram (or the WS-1 mass-differential impulse) imparted velocity and the damping-0 body coasted away FOREVER — the "I hit a pylon and it started MOVING" bug. A locked body still blocks dynamic bodies (the ship bounces off it; `structure-ram-blocked.spec.ts`) and keeps its dynamic MASS, so the ram-damage model is unchanged — it just can't be translated. Drones + asteroids stay dynamic (drones fly; asteroids are bump-able, R2.33). 🔴 netgate (body lifecycle on the snapshot path). Locks: `SwarmSpawner.test.ts` (kind 2 → `staticBody:true`, drone/asteroid falsy) + `World.test.ts` (a locked obstacle holds position when rammed, an unlocked one is shoved) + `structure-ram-blocked.spec.ts` (rendered structure drift ≈ 0 under a ram).
 - **Soft CCD on every dynamic body (2026-10-31, plan soft-leaping-truffle PR-C).** `spawnShip` and `spawnObstacle` set `setSoftCcdPrediction(SOFT_CCD_PREDICTION = 48)`. Ship movement has no ray-projection; without this a body whose centre crossed a thin wall's midline within one step was ejected out the far side. Do **NOT** switch to full `setCcdEnabled(true)`: it suppresses the static-overlap contact events the triangle-collider rule below depends on, and under-resolves interpenetration (`hullCollisionNoTouch` positive control goes red). Lock: `World.ccd.test.ts` (fails with prediction 0). Same code path on the server worker and the client predWorld. See docs/LESSONS.md 2026-10-31.
+- **Arcade handling layer (owner 2026-11-13: "make it more like micro machines and make fights a bit longer").** `shared-types/shipScale/arcadeHandling.ts` runs inside `defineShipKind` after the size scale: per handling class (light / medium / heavy by authored hull) it multiplies `linearDamping` AND `thrustImpulse` + `ai.thrust` by the same factor (Rapier terminal = a / (d·dt), so cruise is unchanged and the rise time drops ~18×), `maxAngvel` ×4.2, and hull / shield / regen ×1.6–1.75. Capitals, engineering rigs and no-afterburner kinds are exempt. Retune feel in that table, never per record; `ShipHandling.arcade.test.ts` measures every kind and locks per-class bands. See docs/architecture/ship-physics-handling.md.
 - **Capitals collide solidly via a capital-only overlap pass (2026-11-12).** Rapier loses the contact between two multi-thousand-unit hulls at depth and caps push-out at ~10 u/s, so `PhysicsWorld.tick` runs `CapitalOverlapResolver.resolve()` (`physics/capitalOverlap.ts`) after every fixed step: capital pairs whose hulls overlap past `shipTuning.overlapSkin` are pushed apart (≤ `overlapMaxStep` a step) and lose their closing speed. Only capital bodies are registered; do NOT replace it with a global `lengthUnit` change (that raises every body's sleep threshold). Lock: `World.capitalContact.test.ts` (also pins Rapier globals + a fighter ram's exact trajectory). See docs/architecture/ship-physics-handling.md.
 - **Stiff contact resolution (2026-05-28).** `PhysicsWorld.create` sets `world.integrationParameters.numSolverIterations = 16` (default 4) and calls `switchToSmallStepsPgsSolver()` BEFORE returning. Rapier 2D defaults (`contact_erp = 0.2`, `numSolverIterations = 4`) are tuned for general gameplay and let a ship's continuous-thrust impulse press a ball collider 50-160 u into a polygon edge (capture `2026-05-28T15-13-11Z-vqm6y1` — the "I flew half-way into the drone" symptom). The stiffer params drive steady-state penetration to < 5 u median / < 30 u peak. The regression lock is [`tests/e2e/ramming-probe-armpit.spec.ts`](../../tests/e2e/ramming-probe-armpit.spec.ts) — flies a fighter into an L-shape engineering chassis at full thrust and asserts body-local penetration into the L's polygon arms. **Do NOT revert these to Rapier defaults without measuring the ramming probe** — the failing test will catch a regression but only on the ramming scenario; other gameplay surfaces (drone-drone contact, projectile-ship hit) still tolerate the looser defaults but feel WORSE under continuous force, which the user reports as "the ship goes inside the drone."
 
@@ -112,14 +113,10 @@ Test coverage at [physics/inputQueue.test.ts](physics/inputQueue.test.ts) locks 
 - In core, `Date.now` / `performance.now` / `setTimeout` / `setInterval` are a LINT ERROR outside the real-time allowlist in `eslint.config.js` (the clocks, the physics worker's tick loop, prediction RTT). Take an injected `Clock` or a `nowMs` argument instead.
 - Story: [docs/architecture/game-time-scale.md](../../docs/architecture/game-time-scale.md).
 
-## SimulationClock (Phase 6 — TiDi)
+## SimulationClock
 
-- Lives at `src/core/clock/SimulationClock.ts`. Pure: no I/O, takes only an optional `Bus` for `TIDI_RATE_CHANGED` emits.
-- `rate ∈ [0.7, 1.0]`. The server constructs and owns the clock; `src/core` never instantiates it (DI invariant #5).
-- **Superseded (time scale, 2026-11-12):** the rate no longer slows the physics worker alone. It feeds `LoadSpeedController`, which sets the sector's game speed; the worker then runs 60 × speed fixed ticks per wall second on its per-world schedule (`SET_TIME_SCALE`). `CLOCK_RATE` carries only the testMode `testTimeScale`. Original mechanism, kept for the record:
-- The worker reads the rate from the SAB header (`CLOCK_RATE_IDX`) at the start of each tick and scales the **accumulator input** — `physics.tick(FIXED_DT * rate)` — NOT Rapier's per-step dt. Scaling Rapier's dt would change collision behaviour; scaling the accumulator keeps every step deterministic and just makes some wall-clock ticks step zero times.
-- Bus emits `TIDI_RATE_CHANGED` only when the rate moves at least `RAMP_PER_TICK` since the last emit, so the bus isn't spammed with sub-epsilon noise.
-- Phase 6 bus variants: `TIDI_RATE_CHANGED` (rate ramp), `ENTITY_SHED` (LoadShedder evicted a far drone — distinct from `ENTITY_DESTROYED` so persistence/telemetry can distinguish "killed in combat" from "evicted for budget").
+- `clock/SimulationClock.ts`: pure, takes only an optional `Bus`; `rate ∈ [0.7, 1.0]`. The server constructs and owns it; `src/core` never instantiates it (DI invariant #5).
+- **Rate and shedding:** the rate feeds `LoadSpeedController` (sector game speed), never the worker step directly; `ENTITY_SHED` (budget eviction) stays distinct from `ENTITY_DESTROYED` (killed). Detail: [game-time-scale](../../docs/architecture/game-time-scale.md#simulationclock-reference).
 
 ---
 
@@ -133,149 +130,29 @@ The worker posts three discrete message types to the main thread:
 
 - **`READY`** — emitted once at boot after Rapier init completes. The main-thread `SectorRoom` resolves its `start()` promise on this.
 - **`SLEEP_TRANSITION { entityId, sleeping, tick }`** — emitted whenever a body's effective sleep state crosses the `SLEEP_HYSTERESIS_TICKS` boundary (Phase 5). The main thread re-emits as `ENTITY_SLEPT` / `ENTITY_WOKE` on the local Bus.
-- **`CONTACT_BATCH { tick, contacts: Contact[] }`** — emitted per tick when Rapier's `EventQueue` produced contact-force events above `CONTACT_FORCE_FLOOR` (Stage 2 of the network-feel roadmap). Each `Contact` carries `{ aId, bId, vAxPost, vAyPost, vBxPost, vByPost, forceMagnitude, impactSpeed?, normalSpeed?, aMass?, bMass? }`. `impactSpeed` (2026-06-07) is the closing speed at impact — magnitude of the relative velocity from the bodies' PRE-step velocities (the worker keeps a `prevVel` snapshot = last tick's post-step velocities and passes it to `drainContacts`). `normalSpeed` (2026-11-13) is that relative velocity projected on the contact normal (`event.maxForceDirection()`, a→b, clamped ≥ 0): head-on ≈ impactSpeed, a glancing scrape small. `aMass`/`bMass` are the folded Rapier body masses (`World.getBodyMass`). Together they drive the IMPACT-BASED ramming model (owner decision 2026-11-13, "ramming as a weapon"; replaced the 2026-06-12 mass-differential model where equal ships dealt 0 and angle was ignored): `core/combat/Ramming.ts` `aggregateRamming` takes the max `normalSpeed` per pair, `E = ½·μ·(vN − RAM_MIN_IMPACT_SPEED)²` (μ = reduced mass), and `damageTo(self) = min(RAM_DAMAGE_MAX, RAM_DAMAGE_PER_ENERGY · E · mOther/(mSelf+mOther))` — equal ships both hurt equally, the lighter takes more, a slow bump is free (`RamPair.damageA`/`damageB` per side). Full-speed fighter head-on ⇒ ~166 each at the 2× default scale. Post-step velocity is NOT a usable impact measure (a ship that head-on-stops against a static structure has `vPost≈0` yet a hard impact). The main thread re-emits each as `COLLISION_RESOLVED` on the Bus and broadcasts a `collision_resolved` network message. Skipped (no message) when the tick produced no qualifying contacts.
+- **`CONTACT_BATCH { tick, contacts: Contact[] }`** — emitted per tick when Rapier's `EventQueue` produced contact-force events above `CONTACT_FORCE_FLOOR` (Stage 2 of the network-feel roadmap). Each `Contact` carries `{ aId, bId, vAxPost, vAyPost, vBxPost, vByPost, forceMagnitude, impactSpeed?, normalSpeed?, aMass?, bMass? }`. `impactSpeed` (2026-06-07) is the closing speed at impact — magnitude of the relative velocity from the bodies' PRE-step velocities (the worker keeps a `prevVel` snapshot = last tick's post-step velocities and passes it to `drainContacts`). `normalSpeed` (2026-11-13) is that relative velocity projected on the contact normal (`event.maxForceDirection()`, a→b, clamped ≥ 0): head-on ≈ impactSpeed, a glancing scrape small. `aMass`/`bMass` are the folded Rapier body masses (`World.getBodyMass`). Together they drive the IMPACT-BASED ramming model (owner decision 2026-11-13, "ramming as a weapon"; replaced the 2026-06-12 mass-differential model where equal ships dealt 0 and angle was ignored): `core/combat/Ramming.ts` `aggregateRamming` takes the max `normalSpeed` per pair, `E = ½·μ·(vN − RAM_MIN_IMPACT_SPEED)²` (μ = reduced mass), and `damageTo(self) = min(RAM_DAMAGE_MAX, RAM_DAMAGE_PER_ENERGY · E · mOther/(mSelf+mOther))` — equal ships both hurt equally, the lighter takes more, a slow bump is free (`RamPair.damageA`/`damageB` per side). Full-speed fighter head-on ⇒ ~291 each (~55 % of its 525 pool) at the 2× default scale; both ram constants were scaled ×1.75 with the 2026-11-13 arcade toughness layer. Post-step velocity is NOT a usable impact measure (a ship that head-on-stops against a static structure has `vPost≈0` yet a hard impact). The main thread re-emits each as `COLLISION_RESOLVED` on the Bus and broadcasts a `collision_resolved` network message. Skipped (no message) when the tick produced no qualifying contacts.
 
 Adding a fourth variant: extend the worker's `parentPort!.postMessage` site, the SectorRoom message handler's discriminator (`msg.type`), and update this list. The main→worker direction has its own discriminated union (`WorkerCommand`); the reverse direction is informally typed because the message handler does explicit type narrowing on receive.
 
-**Main → Worker commands (current set):** `SPAWN`, `DESPAWN`, `INPUT`, `SPAWN_OBSTACLE` (a drone's optional `shipKindId` = its catalogue index, stored as the body's `pilotKind`), `AI_INTENT`, `AI_INPUTS { count, slots: Uint16Array, bits: Uint8Array }` (pilot layer: every AI slot flown by control keys this tick in ONE message, packed `AiInputBits` from `contracts/IAiBehaviour.ts`; each runs `World.applyAiInput` → `applyShipInput`, the same seam as a pilot's `INPUT`, and the first call gives the body its kind's damping; a `BOT_WARP` that owns the body drops it like an `AI_INTENT`. `AiController` routes an intent with `input` set into the sink's `postInput` / `flushInputs` batch, `AiInputBatch`), `CLOCK_RATE`, `SET_POSITION`, `REKEY_SHIP`, `SET_HULL_EXPOSED`, `SET_STAT_MUL`, `MISSILE_IMPULSE`, `WRECK_KICK { entityId, dvx, dvy, dw }` (a capital wreck piece's separating kick after the crack delay: adds velocity and spin via `World.addVelocity`, whatever the mass), `SPAWN_WALL`, `SET_WALL_ACTIVE`, `REMOVE_WALL`, `SET_PAD_FIELD`, `REMOVE_PAD_FIELD` (v4 T2: a teleporter pad's closing push, `PhysicsWorld.setPadField`, applied before every fixed step from the shared `padPushDir`; the client predWorld runs the same from the room-state phase), `BOT_WARP { slot, x?, y? }` (W2a NPC warp-to: holds a bot's warp target, run through `World.botWarp`, the same `stepWarp` machine as a pilot; while it owns the body the slot's AI intent is dropped), and in pooled mode the dev-only `GC` (collect now, for `/dev/memory?gc=1`; a no-op without `--expose-gc`). (`SPAWN_BASE` / `SET_BASE_DEAD` were removed with the Tier A base geometry in phase E.) `SET_HULL_EXPOSED { id, exposed, kindId, tick }` (shield/hull refactor) swaps a body between its cheap circle collider and its exact hull-polygon compound on the shield 0-cross; `kindId` is carried in the command (server-authoritative — no worker-side kind map). `SET_STAT_MUL { id, topSpeed?, turnRate? }` (Equinox Phase 4 WS-B2) sets a ship instance's per-instance PHYSICS stat multipliers on its worker body so `applyShipInput` scales movement by the upgraded factors; both undefined ⇒ reset. The client predWorld runs the SAME `World.setStatMultipliers` directly, so prediction stays in lockstep (risk #1). `SPAWN_WALL { id, ax, ay, bx, by, thickness }` / `SET_WALL_ACTIVE { id, active }` / `REMOVE_WALL { id }` (shield-fence plan) manage a **shield-wall span** — a STATIC cuboid between two pylon poses that blocks ships; `SET_WALL_ACTIVE` toggles its collider (`setEnabled`) on stun / power loss without churning the body. The wall is NOT a swarm entity (no SAB slot) — it's a derived collider; the same `PhysicsWorld.spawnWall` runs in the client predWorld so local-player blocking is predicted. The authoritative list is the `WorkerCommand` union + the header docstring in [physics/worker.ts](physics/worker.ts); keep all three (worker union, `SectorRoom.WorkerCmd`, this note) in sync.
+**Main → Worker commands (current set):** `SPAWN`, `DESPAWN`, `INPUT`, `SPAWN_OBSTACLE` (a drone's optional `shipKindId` = its catalogue index, stored as the body's `pilotKind`), `AI_INTENT`, `AI_INPUTS { count, slots: Uint16Array, bits: Uint8Array }` (pilot layer: every AI slot flown by control keys this tick in ONE message, packed `AiInputBits` from `contracts/IAiBehaviour.ts`; each runs `World.applyAiInput` → `applyShipInput`, the same seam as a pilot's `INPUT`, and the first call gives the body its kind's damping; a `BOT_WARP` that owns the body drops it like an `AI_INTENT`. `AiController` routes an intent with `input` set into the sink's `postInput` / `flushInputs` batch, `AiInputBatch`), `CLOCK_RATE`, `SET_POSITION`, `REKEY_SHIP`, `SET_HULL_EXPOSED`, `SET_STAT_MUL`, `MISSILE_IMPULSE`, `WRECK_KICK { entityId, dvx, dvy, dw }` (a capital wreck piece's separating kick after the crack delay: adds velocity and spin via `World.addVelocity`, whatever the mass), `WRECK_IMPULSE { entityId, jx, jy, px, py }` (an overkill hit's impulse on a wreck piece at world point (px, py) via `World.applyImpulseAtPoint`, so an off-centre hit also turns it), `WRECK_RIGID_IMPULSE { entityIds, jx, jy, px, py }` (the same hit during the crack hold, on the whole wreck as one rigid body via `World.applyRigidGroupImpulse`; gone ids skipped), `SPAWN_WALL`, `SET_WALL_ACTIVE`, `REMOVE_WALL`, `SET_PAD_FIELD`, `REMOVE_PAD_FIELD` (v4 T2: a teleporter pad's closing push, `PhysicsWorld.setPadField`, applied before every fixed step from the shared `padPushDir`; the client predWorld runs the same from the room-state phase), `BOT_WARP { slot, x?, y? }` (W2a NPC warp-to: holds a bot's warp target, run through `World.botWarp`, the same `stepWarp` machine as a pilot; while it owns the body the slot's AI intent is dropped), and in pooled mode the dev-only `GC` (collect now, for `/dev/memory?gc=1`; a no-op without `--expose-gc`). (`SPAWN_BASE` / `SET_BASE_DEAD` were removed with the Tier A base geometry in phase E.) `SET_HULL_EXPOSED { id, exposed, kindId, tick }` (shield/hull refactor) swaps a body between its cheap circle collider and its exact hull-polygon compound on the shield 0-cross; `kindId` is carried in the command (server-authoritative — no worker-side kind map). `SET_STAT_MUL { id, topSpeed?, turnRate? }` (Equinox Phase 4 WS-B2) sets a ship instance's per-instance PHYSICS stat multipliers on its worker body so `applyShipInput` scales movement by the upgraded factors; both undefined ⇒ reset. The client predWorld runs the SAME `World.setStatMultipliers` directly, so prediction stays in lockstep (risk #1). `SPAWN_WALL { id, ax, ay, bx, by, thickness }` / `SET_WALL_ACTIVE { id, active }` / `REMOVE_WALL { id }` (shield-fence plan) manage a **shield-wall span** — a STATIC cuboid between two pylon poses that blocks ships; `SET_WALL_ACTIVE` toggles its collider (`setEnabled`) on stun / power loss without churning the body. The wall is NOT a swarm entity (no SAB slot) — it's a derived collider; the same `PhysicsWorld.spawnWall` runs in the client predWorld so local-player blocking is predicted. The authoritative list is the `WorkerCommand` union + the header docstring in [physics/worker.ts](physics/worker.ts); keep all three (worker union, `SectorRoom.WorkerCmd`, this note) in sync.
 
 ## WeaponMountController contract (Phase 4, 2026-05-11)
 
 Pure module at [src/core/ai/WeaponMountController.ts](ai/WeaponMountController.ts) — zero zone awareness, zero I/O, zero allocation in the hot path. Same inputs ⇒ same outputs on server and client (the foundation of mount-angle lockstep).
 
-**Exports:**
+- **Lockstep picks:** server and client iterate `targets` in the same order (ties go to the first); `prevTargetId` lives on the caller; hostility is an `(id) => boolean` or a per-target `hostile` flag giving the same answer on both sides. Detail: [weapon-mounts](../../docs/architecture/weapon-mounts.md#core-contract-reference).
+- **Extend, don't branch:** a smarter pick policy extends `MountTargetView` / `PickTargetOptions`, never the call sites; absent options stay byte-identical (lock `WeaponMountController.test.ts`).
+- **Same player-aim options both sides:** client `tickLocalMountAim` and server `WeaponMountTicker.tickPlayer` pass identical options (`PLAYER_AIM_HEALTH_WEIGHT` / `PLAYER_AIM_SWITCH_MARGIN`, Invariant #12). Never add a second mount-angle correction path ([weapon-mounts](../../docs/architecture/weapon-mounts.md#lockstep--correction-paths)).
 
-- `pickTarget(shipX, shipY, targets, prevTargetId, isHostile, options?)` — sticky target picking. Iterates `targets`; nearest hostile within `options.maxDistance` wins UNLESS the previous target is within `STICKY_HYSTERESIS_FACTOR * d(nearest)`. Returns `MountTargetView | null`.
-- `rotateMountToward(currentMountAngle, desiredBearing, mount, dtSec)` — clamp the target into `[arcMin, arcMax]`, then slew toward it by at most `rotationSpeed * dtSec` per call. Returns the new mount angle, ship-relative, arc-local (`0` = barrel at rest).
-- `wrapPi`, `clampToArc` — primitives exposed for tests / future composition.
+## AI lockstep — Input Symmetry Rule
 
-**Lockstep determinism rules:**
+- **Input symmetry:** every field a shared client/server brain (`IAiBehaviour`) reads flows on the same channel at the same cadence on both sides; a new behaviour-visible field needs a wire-format bump. Drones are snapshot-interpolated (no client drone brain; `AiController.tick` is server-only), so this governs any future shared brain and the `damage`/`bot_aggro` → `markHostile` mirror. Detail: [ai-lockstep](../../docs/architecture/ai-lockstep.md#input-symmetry-reference), [drone-snapshot-interpolation](../../docs/architecture/drone-snapshot-interpolation.md).
+- **One correction path per state surface:** a new correction path for state that already has one must remove or gate the old one. Lock: [`tests/e2e/feel-test-lockstep.spec.ts`](../../tests/e2e/feel-test-lockstep.spec.ts).
+- **Hunters reuse `markHostile`; do NOT add an AI-only behaviour path:** a Living World hunter is a drone made hostile through the existing `markHostile` / `bot_aggro` channel. Never add a `proactive` (or any new) `HostileDroneBehaviour` branch, nor a per-drone behaviour flag on the swarm wire. Detail: [living-world](../../docs/architecture/living-world.md).
 
-1. **Tie-break by iteration order.** When two hostiles are exactly equidistant, the one appearing first in `targets` wins (`<` comparison rejects ties). Server and client MUST iterate `targets` in the same order. The upstream AI controller is responsible.
-2. **Per-instance state owned by the caller.** `prevTargetId` lives on the caller (drone behaviour, player slot). Not in the controller. Reset purely by `markHostile`/`purgeHostility`/time-decay — both sides fire these symmetrically.
-3. **Hostility filter is `(id) => boolean`.** Drone callers pass `id => hostileTo.has(id)`. Player turret callers pass `id => id.startsWith('swarm-')` (any drone hostile to the player). Same filter semantics on both sides; never read from a per-side data source that diverges.
+## Rapier `castRay` API
 
-**Sticky hysteresis factor** (`STICKY_HYSTERESIS_FACTOR = 1.1`) — keep the previous target while it's within 10 % distance of the nearest alternative. Below this, swarm-density edges cause flapping; above, the player feels the turret "miss obvious closer targets". 1.1 is the empirical sweet spot from drone-AI sticky-targeting smoke tests.
-
-If you find yourself adding a "smarter" target-pick policy (lead-aim, predicted closing rate, threat tier), do it BY EXTENDING `MountTargetView` and `PickTargetOptions` — not by reaching into the call sites. The pure-module contract is what makes lockstep auditable.
-
-**Smarter selection (Part C, weapon-autofire-boost-mechanics).** `pickTarget` was extended (per the rule above — fields, not call-site branches) with: `healthWeight` (score `= d²·(1 + w·health/maxHealth)`, biasing toward low-HP targets — "finish the wounded"), `switchMargin` (commitment in score space — resists target-flapping; default `stickyHysteresisFactor²` ⇒ byte-identical to the old squared-distance hysteresis), `dwellTicks`/`ticksSincePrevTarget` (hard switch-DELAY, server-AI only — deterministic server tick), and a per-target `hostile?` field that, when defined, OVERRIDES the `isHostile(id)` callback. **The `hostile` flag is the single-viewer alloc-free path** (the client's local player carries hostility on each `LocalAimTarget`); the per-viewer callback stays for the server (hostility is per-player). Both yield the same boolean for the same (target, viewer), so client/server picks stay in lockstep. **Absent options ⇒ behaviour is byte-identical to pre-Part-C** (locked by `WeaponMountController.test.ts`). Shared player-aim tuning lives in `PLAYER_AIM_HEALTH_WEIGHT` / `PLAYER_AIM_SWITCH_MARGIN` (exported) — the client `tickLocalMountAim` and the server `WeaponMountTicker.tickPlayer` MUST pass identical options (mount-angle lockstep, Invariant #12). The drone-AI body target (`HostileDroneBehaviour`) uses `healthWeight` + a real `dwellTicks` (server-only). Player health-weighting needs drone HP on the client — synced via the slim `SnapshotMessage.drones[].hp` percent (Part C3).
-
-**`AiController` pending-hostility buffer (Part C).** `markHostile` for a not-yet-registered entity is now BUFFERED and applied on `register` (cleared by `unregister`/`purgeHostility`/`clear`). Fixes the `startHostile`-at-join / aggro-before-interest race where client hostility was silently dropped (the `bot_aggro` arrived before the client's first swarm packet registered the drone). Server-side it's inert (drones register at spawn before any `markHostile`), so the live loop is byte-identical.
-
-See [docs/architecture/weapon-mounts.md](../../docs/architecture/weapon-mounts.md) for the full call-graph and the "do not add a second correction path" rule, and [docs/features/auto-fire-and-boost.md](../../docs/features/auto-fire-and-boost.md) for the player-facing behaviour.
-
-## AI lockstep — Input Symmetry Rule (chapter 2, 2026-05-09)
-
-> **⚠️ SUPERSEDED FOR DRONES (2026-05-18, drone-snapshot-interpolation
-> pivot).** The client no longer runs `AiController`/`HostileDroneBehaviour`
-> for drones at all — drones are pure snapshot-interpolated from the
-> binary wire (see [docs/architecture/drone-snapshot-interpolation.md](../../docs/architecture/drone-snapshot-interpolation.md)).
-> The Input-Symmetry Rule below is therefore **moot for drones** (there is
-> no client drone brain whose inputs could diverge) but remains the
-> governing principle for any *future* shared client/server brain and for
-> the `damage`/`bot_aggro` → `markHostile` server→client mirror (the
-> surviving hostility ledger). **The "Corollary — replay re-sim is
-> relevance-CULLED (Option A)" section below is fully RETIRED**: the
-> replay re-sim, `droneRelevance.ts`, `DRONE_RESIM_BUDGET`,
-> `AiController.tickOnly`, and the `replaySeed` drone anchor were all
-> deleted. `AiController.tick` is now server-authoritative-only. Player
-> prediction is unaffected by all of this.
-
-`src/core/ai/HostileDroneBehaviour.tick(self, view)` is pure: same arguments produce the same `(fx, fy, torque)` impulse on both sides. The same instance of this code runs on the server (under `AiController` in `SectorRoom`) and on the client (under the same `AiController` in `ColyseusClient`). The brain is shared; for client-side prediction to match server reality, **the brain's sensory inputs must match too**.
-
-**The rule**: any field consumed by `IAiBehaviour` MUST flow on the same channel and at the same cadence on both sides. Adding a behaviour-visible field requires a wire-format bump, not "we'll wire it up later." The 2026-05-09 chapter-2 work shipped wire-format v3 specifically to add `angvel` after discovering the AI's `1.5·ω` damping term was reading SAB-authoritative ω on the server and unsynced predWorld ω on the client — drone bearing diverged every tick because of one missing field.
-
-**Concrete inputs the AI reads, with where each must come from on each side:**
-
-| field | server | client |
-|---|---|---|
-| `self.x, y, vx, vy, angle` | SAB at `SLOT_*_OFF` | predWorld via `setShipState` from snapshot's `drones[]` slice |
-| `self.angvel` | SAB at `SLOT_ANGVEL_OFF` | **wire-format v3 carries it; `setShipState` propagates** |
-| `view.players[].x, y, vx, vy` | `shipPoseCache` from SAB at `serverTick` | predWorld; remote ships are reset to `snap.states[remoteId]` pre-replay |
-| `view.tick` | `serverTick` | `inputTick` (different reference frame; only used for fire cooldown) |
-| `view.dtSec` | 1/60 | 1/60 |
-| `kind` (per-drone tuning from catalogue) | catalogue lookup at register | catalogue lookup at register, with `entry.shipKind` from packet |
-
-**The diagnostic signature when this rule is violated**: per-event metrics like `swarm_snap_diagnostics.snapDistance` get *worse* after a fix that "should help structurally," not better. That's the diagnostic for two-correction-paths-fighting (chapter 2 capture `2026-05-09T17-25-27-695Z-82ncsd` is the canonical example).
-
-**One correction path per state surface**: don't run a second reset path on top of an existing one. Phase C added the snapshot drone anchor; the load-bearing follow-up (commit `d1e7ecf`) was to GATE the binary-packet `setShipState` path for in-snapshot drones so the two paths don't fight. See [docs/architecture/ai-lockstep.md](../../docs/architecture/ai-lockstep.md) for the full walkthrough.
-
-The regression lock for this is [`tests/e2e/feel-test-lockstep.spec.ts`](../../tests/e2e/feel-test-lockstep.spec.ts) — its p50 thresholds will fail the moment a dual-correction-path bug reappears.
-
-### Corollary — Living World "hunters" reuse `markHostile`, never a new behaviour (2026-05-16)
-
-A Living World hunter bot is **just a drone made hostile to a player it
-wasn't shot by** — it runs the *unchanged* `HostileDroneBehaviour`
-`COMBAT` branch. The `LivingWorldDirector` drives the *existing*
-`markHostile`/`purgeHostility` channel (server) and the server broadcasts
-one discrete `bot_aggro` the client feeds into its own
-`_aiController.markHostile` — the exact server→client twin of the proven
-`damage`→`markHostile` mirror. **Do NOT add a `proactive` (or any new)
-`HostileDroneBehaviour` branch, and do NOT add a per-drone behaviour flag
-to the binary swarm wire.** Reason: the client constructs + ticks its own
-`HostileDroneBehaviour` for in-interest drones, so a server-only
-behaviour difference is exactly the dual-path divergence the Input
-Symmetry Rule above forbids — whereas `markHostile` already fires
-symmetrically on both sides, so hunting needs zero new lockstep surface
-and zero `SWARM_WIRE_VERSION` bump. This was a deliberate design fork
-(the rejected alternative — a `proactive` branch + a `drones[]`-slice
-flag — is recorded in [docs/architecture/living-world.md](../../docs/architecture/living-world.md)).
-
-### Corollary — replay re-sim is relevance-CULLED, and that is prediction-only (Option A, 2026-05-17)
-
-Tick-accurate N-drone client lockstep is **intrinsically O(ticksAhead × N)**
-— the per-replay-tick re-sim *is* the Phase C mechanism, not an accident
-(48 ms at N=500/ticksAhead=48 → the 116–266 ms sector-change stall, diag
-`a3f5na`). The fix ([`prediction/droneRelevance.ts`](prediction/droneRelevance.ts)
-+ [`AiController.tickOnly`](ai/AiController.ts)) brain-re-sims only the NEAR
-set (hostile / within `HITSCAN_RANGE×2` / recently large-corrected); the FAR
-majority is **dead-reckoned, NOT frozen** — `replaySeed` re-anchors it and
-the unfrozen replay `world.tick()` integrates it ballistically. Replay
-*brain* cost → O(k × ticksAhead), k ≪ N. (Freezing FAR was tried and
-reverted: it regressed the quiet-host canary `swarmSnapP50` 11→20; dead-reckon
-→ 1.6, *better* than `main`. `Reconciler.ts`/`World.ts` stay identical to
-`main` — no `freeze` param. See `docs/architecture/reconciler-replay-scaling.md`
-§9.)
-
-Two rules this must not break:
-
-1. **Culling is CLIENT-PREDICTION-ONLY. The server's `AiController.tick`
-   still ticks every drone authoritatively — `tickOnly` is a client-replay
-   path only.** Never cull the server's authoritative tick to "match": that
-   would change authority, not just prediction, and is exactly the
-   server-only-divergence the Input Symmetry Rule forbids. Authority stays
-   whole; only the client's *prediction fidelity* is spent selectively.
-2. **The relevance predicate must read the same server-authoritative anchor
-   the re-sim will read** (the snapshot `drones[]` pose / `replaySeed`), NOT
-   a free-evolving predWorld pose — otherwise NEAR/FAR membership itself
-   diverges from what the server would compute, reintroducing a
-   per-side-divergent input. `partitionDronesByRelevance` takes the anchor
-   pose for this reason; keep it that way.
-
-`tickOnly` iterates the NEAR set, NEVER a predicate over the full registry
-(a predicate-over-`tick` keeps the O(ticksAhead × N) scan even when it culls
-the brain work — measured + rejected, `docs/LESSONS.md` 2026-05-17). This is
-NOT a second correction path: the SAME `AiController` path advances NEAR
-drones, only scoped.
-
-**The cull is radius AND budget (2026-05-17, diag m6rq2t).** Radius alone
-gives zero relief when the player is *inside* the bot pack (NEAR≈ALL) — the
-progressive in-fight reconcile-cost spiral. `partitionDronesByRelevance`
-also enforces a hard per-snapshot `DRONE_RESIM_BUDGET` (default 12): keep
-only the K most-relevant (hostile → closest → id), demote the overflow to
-FAR/dead-reckon, so per-snapshot brain cost is O(replayWindow × K), K
-bounded regardless of pack size. Default-ON (unbounded in-pack re-sim *is*
-the bug); byte-identical when NEAR ≤ K (steady-state + canary untouched).
-Do NOT remove the budget to "re-sim more for accuracy" — that
-reintroduces the spiral the 500-target cannot afford. Full story:
-[docs/architecture/reconciler-replay-scaling.md](../../docs/architecture/reconciler-replay-scaling.md).
-
-## Rapier `castRay` API (Phase 4 — do not look these up again)
-
-- `world.castRay(ray, maxDist, solid, filter, filterMask, filterGroups, filterExcludeRigidBody)` — the exclude parameter takes a `RigidBody` object (from `bodies.get(id)`), not a handle number.
-- `hit.collider` is already a `Collider` object; do NOT wrap it in `world.getCollider()` (that takes a number).
-- `hit.timeOfImpact` — there is no `hit.toi` property.
+- Before calling `world.castRay`, read [collision-layers § Rapier castRay API](../../docs/architecture/collision-layers.md#rapier-castray-api) (exclude takes a `RigidBody`; `hit.collider` is a `Collider`; `hit.timeOfImpact`, not `toi`).
 - **Query pipeline lag**: `castRay` queries the Rapier broadphase/narrowphase, which is only updated inside `world.step()`. Bodies spawned after the last `step()` are invisible to `castRay`. In unit tests, call `world.tick(1/60)` in `beforeEach` after spawning bodies, before any hitscan calls.
 
 ---
@@ -284,8 +161,8 @@ reintroduces the spiral the 500-target cannot afford. Full story:
 
 - **Allegiance-aware AI (plan peppy-jumping-pinwheel P0).** `AiWorldView.swarms` (optional, server-only) lists other-allegiance kind-1 combatants; `HostileDroneBehaviour` reads its own allegiance from its kind and engages per the shared stance table in `src/shared-types/allegiances.ts` (robots: players + drones + traders on sight; drones: robots on sight, players only via waves/`markHostile`). Candidates carry an explicit `hostile` flag. On-sight engagement never flips the persistent `COMBAT` state. Absent `swarms` + a non-on-sight allegiance ⇒ the pre-P0 fast path, byte-identical. See [docs/architecture/allegiances.md](../../docs/architecture/allegiances.md).
 - Pure simulation: physics, AI behaviour trees, combat math, reconciliation.
-- **NPCs fly with a player's controls only — the virtual pilot (owner rule 2026-11-13, plan composed-harbor §0).** An NPC brain never emits an impulse or an angvel snap: it picks a FACING and a WANTED VELOCITY, and `ai/virtualPilot.ts` (`pilotInputs`, pure, alloc-free, caller-owned `PilotState`) turns them into the keys a player would press — thrust, reverse, turn left/right, boost — as `AiIntent.input` bits, which the worker runs through `applyShipInput` with the NPC's own kind. Handling comes from the kind (`makePilotHandling(kind, shipBodyMass(kind))`): snap turns stop on release; torque (capital) turns stop early on the predicted coast `ω/angularDamping` and counter-turn when even that overshoots; throttle is bang-bang on the velocity error along the nose (reverse brakes); `brakingSpeed(h, dist)` is the arrive ramp. `leadTicks: 1` predicts the pose one tick on (the server brain reads the last worker step). Boost is energy-gated per NPC with the shared `Energy.ts` helpers (`BOOST_TICK_COST`, the kind's `energyMax` / `energyRegenRate`; server-only state). `HostileDroneBehaviour` flies every mode this way (combat, broadside, guard, patrol, move-to, flock); its decisions (targets, ranges, fire gate) are unchanged. Out of combat it chooses `CALM_CRUISE_FRAC` (0.45) of its cruise speed (the pace the retired `ai.thrust` gave); in combat it has full handling + boost. Difficulty knobs are the pilot's reaction latch / aim, never weaker engines. Do NOT add an AI-only actuation path. Locks: `ai/virtualPilot.test.ts` (real Rapier body, fighter + capital, with and without a tick of lag), the `HostileDroneBehaviour*.test.ts` suites (keys via `ai/pilotTestKit.ts`).
-- **Capital broadside AI and guard posts (owner decision 2026-11-11).** A broadside capital (`hasTurretFireControl`) with NO guard post circles its target at `fireRange × BROADSIDE_STANDOFF`. With a post (`setGuardPost(x, y, radius)`, server-only, radius ≥ `shipTuning(kind).guardRadiusMin` per #18) it fights FROM the post instead (`tickGuardBroadside`): a velocity controller holds it at rest inside `GUARD_HOLD_FRAC` of the radius and draws it back beyond that, beam to the target while inside `GUARD_RETURN_FRAC`; it never leaves the radius for range or to chase. All ratios of the kind's own `maxSpeed` / radius, plain-field state (alloc-free, #14). Lock: `ai/HostileDroneBehaviour.guard.test.ts`.
+- **NPCs fly with a player's controls only — the virtual pilot (owner rule 2026-11-13, plan composed-harbor §0).** An NPC brain never emits an impulse or an angvel snap: it picks a FACING and a WANTED VELOCITY, and `ai/virtualPilot.ts` (`pilotInputs`, pure, alloc-free, caller-owned `PilotState`) turns them into the keys a player would press — thrust, reverse, turn left/right, boost — as `AiIntent.input` bits, which the worker runs through `applyShipInput` with the NPC's own kind. Handling comes from the kind (`makePilotHandling(kind, massOf(kind, NPC_MASS_FALLBACK))`): snap turns stop on release; torque (capital) turns stop early on the predicted coast `ω/angularDamping` and counter-turn when even that overshoots; throttle is bang-bang on the velocity error along the nose (reverse brakes); `brakingSpeed(h, dist)` is the arrive ramp. `leadTicks: 1` predicts the pose one tick on (the server brain reads the last worker step). Boost is energy-gated per NPC with the shared `Energy.ts` helpers (`BOOST_TICK_COST`, the kind's `energyMax` / `energyRegenRate`; server-only state). `HostileDroneBehaviour` flies every mode this way (combat, broadside, guard, patrol, move-to, flock); its decisions (targets, ranges, fire gate) are unchanged. Out of combat it chooses `CALM_CRUISE_FRAC` (0.45) of its cruise speed (the pace the retired `ai.thrust` gave); in combat it has full handling + boost. Difficulty knobs are the pilot's reaction latch / aim, never weaker engines. Do NOT add an AI-only actuation path. Locks: `ai/virtualPilot.test.ts` (real Rapier body, fighter + capital, with and without a tick of lag), the `HostileDroneBehaviour*.test.ts` suites (keys via `ai/pilotTestKit.ts`).
+- **Capital broadside AI and guard posts (owner decision 2026-11-11).** A broadside capital (`hasTurretFireControl`) with NO guard post circles its target at `fireRange × BROADSIDE_STANDOFF`; within `BROADSIDE_RANGE_DEADBAND` (5 %) of that range it is AT its stand-off and holds the beam with no key held, so the hull rests and its pose stops going out (a sub-1 u/s creep there cost the capital-duel perf scene 3 KB/s of swarm wire, PR #549; lock: `tests/unit/capitalCombat.test.ts`). With a post (`setGuardPost(x, y, radius)`, server-only, radius ≥ `shipTuning(kind).guardRadiusMin` per #18) it fights FROM the post instead (`tickGuardBroadside`): a velocity controller holds it at rest inside `GUARD_HOLD_FRAC` of the radius and draws it back beyond that, beam to the target while inside `GUARD_RETURN_FRAC`; it never leaves the radius for range or to chase. All ratios of the kind's own `maxSpeed` / radius, plain-field state (alloc-free, #14). Lock: `ai/HostileDroneBehaviour.guard.test.ts`.
 - **Ship AI roles + sensor-capped target pick (AI overhaul slice 3, 2026-11-13).** Every ship kind carries `aiRole` (`scout|interceptor|fighter|gunship|missileBoat|capital|robot|civilian`, a catalogue data field, not on the wire). `ai/tactics/roleProfiles.ts` is the frozen per-role table (sensor range, range band, aggression, reaction, aim error, manoeuvre and morale weights) the decision layer reads; ranges are multiples of the ship's fire range, never absolutes (#18). `HostileDroneBehaviour` caps NEW body-target picks at `roleSensorRange(role, fireRange)` (floored at `ON_SIGHT_ENGAGE_RANGE`) via `pickTarget`'s `maxDistance`; the held target stays eligible at any range (`prevMaxDistance: Infinity`), and when nothing is in sensors it falls back to the uncapped pick so a director-ordered / retaliation contact (`markHostile`) across the sector is still hunted. Pick options are class-field scratch (alloc-free). `ai.turnKp`/`ai.maxTorque` were removed (nothing read them). Lock: `ai/HostileDroneBehaviour.sensor.test.ts`, `ai/tactics/roleProfiles.test.ts`.
 - AI steering + flocking + formation primitives (`src/core/ai/steering.ts`, `src/core/ai/flocking.ts`, `src/core/ai/formation.ts`): pure `arrive`/`seek` (heading + a thrust scale that ramps to 0 within a slow radius so per-kind damping brakes the body to a stop); **flocking/boids** (`flocking.ts`, 2026-06-18) — `addCohesion` (toward the leader, with an ARRIVAL ramp so the pull fades to 0 within `FLOCK_FOLLOW_DISTANCE` = "slow down once close")/`addAlignment`/`addSeparation` accumulate into a caller-owned `FlockAccumulator`, `resolveFlock` → unit dir + thrust scale (capped at 1 = calm cruise, NO boost), all alloc-free, the FEEL constants (`FLOCK_*`) exported; and wedge/line/column slot geometry (`formation.ts`, leader-frame rotation, ship-angle convention `(-sin θ, cos θ)` — now UNUSED, kept for a future rigid-formation mode). Scalar in / caller-owned out (alloc-free). The non-combat roaming squads use `flocking.ts` via `HostileDroneBehaviour.tickFlock` (leader-led herd at cruise; the leader THROTTLES/WAITS so followers tighten — no boost; squads spawn CLUSTERED so the herd is tight from birth); see `src/server/CLAUDE.md` "In-sector squad herding — leader + FLOCKING".
   - **Context steering (`src/core/ai/contextSteering.ts`, 2026-11-13, not yet wired into a behaviour).** Fray's technique (Game AI Pro 2 ch.18): each agent owns `interest` + `danger` `Float32Array(CONTEXT_SLOTS = 16)` maps (`createContextMaps()`, ONCE per behaviour); writers max-accumulate into them (`addInterestToward`, `addInterestOrbit`, `addDangerFromPoint`, `addDangerFromSegment` for ally fire lanes); `resolveContext(m, out)` masks slots above min danger + `CONTEXT_DANGER_EPSILON`, takes the best interest slot with parabolic sub-slot refinement (masked neighbours count as 0, so it only leans toward safe slots) and returns heading + `speedScale` (0 when every slot is fully dangerous). Use it instead of summing weighted boids vectors for combat movement: weighted sums cancel (an obstacle dead ahead of the goal ⇒ zero vector) and jitter. Slot `i` = ship angle `i·2π/16`, forward `(-sin θ, cos θ)`; `angleForDir` = `atan2(-dx, dy)`. A new concern = a new writer. Alloc-free (#14); callers pass size-dependent radii and lane widths from `shipTuning` (#18). Lock: `contextSteering.test.ts`; bench `benchmarks/ai-context-steering.bench.ts`.
@@ -319,90 +196,20 @@ reintroduces the spiral the 500-target cannot afford. Full story:
   the shared `HostileDroneBehaviour` brain, the client must NEVER run
   its damage/regen functions (predicting the 0-cross flaps the collider
   every RTT). It lives in core only for testability; a banner says so.
-- `src/core/geometry/shipHullDecomp.ts` decomposes each ship polygon
-  into convex parts via `poly-decomp` (Bayazit's algorithm; MIT, ~3 KB,
-  deterministic). Replaced the in-house ear-clipper (`triangulate.ts`)
-  on 2026-05-28. Each part is convex by construction so `rayHitsConvex-
-  Polygon` consumers (hitscan / projectile sweep) loop them directly.
-  Per-kind parts precomputed once at module load — never per-tick.
-- **`World.setHullExposed` emits `RAPIER.ColliderDesc.triangle` (NOT
-  `convexHull`)** colliders, fan-triangulating each convex part from
-  vertex 0. Why: in Rapier 2D, `convexHull` and `cuboid` shapes DO NOT
-  fire `CONTACT_FORCE_EVENTS` for two interpenetrating bodies at zero
-  closing velocity (positional-correction impulse ≠ contact force, even
-  with threshold 0). Only `triangle` shapes emit events for static
-  overlap. Stationary-ship collision telemetry and the
-  `hull-collision-test` regression spec depend on this. The per-shape
-  contact-event comparison is locked in
-  `src/core/physics/hullCollisionNoTouch.test.ts` DIAGNOSTIC. If a
-  future PR replaces triangles with `convexHull`, the diagnostic + the
-  E2E positive-control will fail loudly.
-- `World.setHullExposed`: ALL ship/drone colliders are density 0; mass
-  is a pinned `setAdditionalMassProperties`. `recomputeMassProperties-
-  FromColliders()` IS called after every collider change and is
-  REQUIRED + safe (it folds in the additional props; "FromColliders" is
-  a misnomer — see rapier2d-compat rigid_body.d.ts:377/395). The new
-  geometry lags one `world.step()` for queries — never `updateScene-
-  Queries()` (diverges from client predWorld).
-- **A ship's WEAPON hit shape is `combat/shipHitShape.ts`, by kind and shield
-  state, never by pilot (owner's rule 2026-11-13):** bubble while the shield is
-  up, hull once down, a capital's hull either way; splash measures to the kind's
-  radius. Every server weapon path and the client beam-end / hit prediction call
-  it (#15); never hit-test a ship on `rec.radius` or a tuning `hitRadius`.
-  Lock: `tests/integration/sectorRoom/shipHitShapeParity.test.ts`.
-- Full internals + the feel-test-lockstep env-noise caveat:
-  [docs/architecture/collision-layers.md](../../docs/architecture/collision-layers.md).
+- **Hull colliders are Rapier `triangle`s, never `convexHull`/`cuboid`:** only triangles fire contact-force events on static overlap. Lock: `src/core/physics/hullCollisionNoTouch.test.ts` (DIAGNOSTIC) + the `hull-collision-test` spec. Hull parts come from `geometry/shipHullDecomp.ts`, precomputed at module load, never per tick.
+- **Collider swaps:** ship/drone colliders are density 0 with pinned `setAdditionalMassProperties`; call `recomputeMassPropertiesFromColliders()` after every collider change; never `updateSceneQueries()` (diverges from client predWorld).
+- **A ship's weapon hit shape is `combat/shipHitShape.ts`, by kind and shield state, never by pilot;** every server weapon path and the client hit prediction call it; never hit-test on `rec.radius` or a tuning `hitRadius`. Lock: `tests/integration/sectorRoom/shipHitShapeParity.test.ts`. Detail: [collision-layers](../../docs/architecture/collision-layers.md#core-rules-reference).
 
-## Composite ships + scrap geometry (2026-06-13)
+## Composite ships + scrap geometry
 
-- `ShipShape` is a discriminated union (`polygon | composite`). The
-  `shipHullOutline(kind)` seam (`geometry/shipHullOutline.ts`) returns the
-  composite `hull` or the polygon `points` — **every collision/physics reader
-  goes through it**, so polygon kinds are byte-identical. The
-  "silhouette == collider" invariant is RELAXED for composites: the collider is
-  the authored gross `hull`; the visual `parts[]` are detail (per-part live
-  collision is intentionally NOT modelled). `shipShapeScale` / `shipPrimaryColor`
-  are the sibling accessors.
-- `geometry/shipScrapGroups.ts` precomputes ONCE at module load (like
-  `shipHullDecomp`) one scrap GROUP per composite component — a silhouette
-  (`canScrap:true`) + its detail parts (role-prefix), each recentred on the
-  component centroid, with a convex-hull collider. Polygon kinds → empty. The
-  death→scrap path (server) and `buildScrapGfx` (client) both read it.
-- `physics/collisionGroups.ts` `SCRAP_COLLISION_GROUPS` (membership bit 1 /
-  filter ~bit 1) makes scrap NOT collide with other scrap but collide with
-  everything else. Threaded through `World.spawnObstacle`'s optional
-  `collisionGroups` param (→ worker `SPAWN_OBSTACLE`). `swarm/scrapConstants.ts`
-  holds the tuning (burst/damping/HP/MAX_LIVE_SCRAP). Full story:
-  [docs/architecture/composite-ships-and-scrap.md](../../docs/architecture/composite-ships-and-scrap.md).
+- **Every collision/physics reader of a ship outline goes through `shipHullOutline(kind)`** (`geometry/shipHullOutline.ts`); a composite's collider is its authored `hull`, its `parts[]` are visual only.
+- Scrap groups come only from `geometry/shipScrapGroups.ts` (server death path and client `buildScrapGfx` both read it); scrap uses `SCRAP_COLLISION_GROUPS`; tuning lives in `swarm/scrapConstants.ts`. Detail: [composite-ships-and-scrap](../../docs/architecture/composite-ships-and-scrap.md#core-reference).
 
-## Capital fracture (`src/core/destruction/fractureHull.ts`, capital destruction S1, 2026-11-12)
+## Capital fracture (`src/core/destruction/fractureHull.ts`)
 
-- **`fractureHull({ hull, seed, killPoint, sectionCuts?, maxPieces })`** splits a hull outline into wreck pieces. Each piece has a CCW outline, `cutEdges` flags, convex parts, area and centroid. Server and clients run it from the same inputs (#15), and no geometry goes on the wire.
-- **Deterministic by construction. Keep it that way:**
-  - arithmetic and `Math.sqrt`/`round` only, never sin/cos/atan2/pow;
-  - the mulberry32 `Rng`;
-  - fixed loop order;
-  - vertices quantised to `FRACTURE_QUANTUM` (1/64 u);
-  - from poly-decomp, only `quickDecomp`/`makeCCW`.
-- **Any change to its output bumps `FRACTURE_ALGO_VERSION`.** The golden test fails first.
-- **Concave hulls go through `splitByLine`,** which traces each disjoint part separately. Plain Sutherland–Hodgman bridges them; the U-hull test catches that.
-- **Jagged Voronoi cut edges** are seeded from the edge's own quantised endpoints, so both neighbours share the line. Section cuts stay straight.
-- **v2: the last hit decides where it splits.**
-  - A straight primary line runs through `killPoint`, across the keel, with a seeded tilt.
-  - A seeded `snapChance` (default 0.2) snaps the hull cleanly in two along that line.
-  - The piece count comes from `hullRadius`, `killBlowDamage` and `recentDamageRate` plus a seeded draw. Leave all three out to use the fixed-count mode, where the cap is the target.
-  - `fracturePlan(input)` returns these decisions without building any geometry.
-  - All of the plan's draws come from one stream, in a fixed order. Adding a draw changes every fracture, so bump the version.
-- **v3: the kill point is on the hull outline** (owner: "Why isn't the red dot on the border of the ship?"). `projectToOutline(hull, p)` (nearest point on the edges, quantised) runs inside `fractureHull`/`fracturePlan`, so every caller gets an edge point (`fracturePlan(...).killPoint`).
-- **v4: the primary line always runs ACROSS the hull** (owner review: a bow-tip hit split the ship along its keel). A bow or stern tip hit (a line through it would clip < 3 % of the hull) moves the line a seeded 15–35 % of the hull length aft of that tip, so that end breaks off as a real piece. Lock: the ±35°-of-square test over tips and every outline point.
-- **v5: the shatter stays at the kill point and cuts run across a long hull** (hostile review of a filmed heavy-cruiser death). Seed density falls as 1/d⁴ over a 0.4 % floor; the Voronoi bisectors use a metric stretched 2× along the keel (`bisector`, still convex cells that tile); beyond one falloff radius seeds keep a least keel-wise spacing. Lock: `fractureHull.killFocus.test.ts`.
-- **v6: cracks fan out from the kill point; the far field breaks along a few uneven, tilted cracks** (money-shot review: v5 cut a comb of even square bands and a ladder at the kill point). `crackLines` (its own seeded stream) adds fan cracks through the kill point and far cracks at seeded stations and tilts; the Voronoi seeds stay inside the fan (no far floor); cracks and the primary line are jagged, after `weldTJunctions` pairs T-junction edges. Lock: the v6 describe in `fractureHull.killFocus.test.ts` (far pieces, far tilt, radial cracks) on top of the v5 locks.
-- **v7: the hull breaks only where it was hit, into a few ENORMOUS chunks** (owner review 2026-11-13: v6 sliced the far hull where no shell hit and cut a comb of slivers at the impact; "The last hit's impact sets the split"). No Voronoi seeds, no far cracks: two jagged zone cracks ~a beam either side of the primary and 0–2 fan cracks from the kill point (`LocalLine`, split only their zone half) leave 2–4 chunks at the impact and one big section each side. A very heavy blow (≥ max hull) on a long hull rarely (12 %) adds ONE far crack. Piece count still rises with size and violence, but stays ~3–7. A fan crack only splits a section where every part it leaves is chunky (≥ `FAN_MIN_WIDTH_BEAMS` 0.45 beam wide, ≤ `FAN_MAX_ASPECT` 2.6× longer than that; filmed take 2026-11-13: a long thin triangle along the port edge). Lock: the v7 describe in `fractureHull.killFocus.test.ts` (no thin sliver, no long thin piece of any size, no far cut, 2–5 near pieces, ≤ 2 sections each side).
-- **Wreck pieces collide with each other, and neighbours always part (owner review 2026-11-13: heavy, no overlap, no hinge).** `WRECK_COLLISION_GROUPS` (0x0004FFFF, server spawn and client twin) lets pieces bump. Their collider is `WreckPieceGeometry.colliderParts` (each part inset by `shipTuning(kind).wreckColliderInset`, so neighbours spawn a hair apart); drawing and weapon hits keep `parts`. `buildWreckPieces` gives each piece a slow kick (push `wreckPushMax/Min`, rim-speed spin) and then the least momentum-conserving pushes that open every shared cut (collinear cut edges, or cut edges that only touch at a T-junction) at `wreckSeparate` or more at both ends, spin included (#18 for all three). Tuned 2026-11-13 so the break is SEEN but heavy: `wreckSeparate` 0.014 × radius/s (~31 u/s heavy cruiser), push 0.010 / 0.004; the narrowest cut is ~31 u open 1 s after the kick, no piece over ~75 u/s (`wreckPiecesSeparate.test.ts`). The separation multiplies along chains of neighbours, so it assumes v7's few chunks. The kick is applied after `WRECK_CRACK_MS` (`shared-types/wreckTiming.ts`, game ticks); until then the pieces move with the dead hull. Never give pieces a velocity field that lets a neighbour close on another along their cut.
-- **S2a: `wreckPieces.ts` / `wreckHits.ts`.** `buildWreckPieces` turns a death (kind, pose, kill point, damage inputs, seed) into rigid-body specs: the fracture on the 1× Pixi-up outline, pieces mapped like `shipShapeToPolygon` (x·s, −y·s, rings reversed to stay CCW), mass ∝ area, v + ω × r plus an outward push. `wreckRayHit` / `wreckSweepHit` are the one weapon-vs-wreck test (circle, then convex parts).
-- **S2b: `wreckPieceGeometry(WreckFractureInputs)` is the one source of a piece's shape** (body-local parts, outline, cut flags, mass, radius). The server's `buildWreckPieces` places its output and the client rebuilds it from the `wrecks[]` descriptor; never compute a piece's shape another way (#15, locked bit for bit by `tests/integration/wire/wreckGeometryParity.test.ts`). `World.spawnObstacle` skips a part Rapier cannot hull (a < 1 u sliver threw inside the worker; `World.slivers.test.ts`).
-- **Sub-capital profile (2026-11-13).** How a ship breaks up is `shipTuning(kind).destruction` / `destructionProfile({ type, kindId })` (`capital` | `subcap` | `none`), and every per-profile number lives in `DESTRUCTION_PROFILES` (`shared-types/shipScale/destruction.ts`), never in a branch. `wreckPieceGeometry` takes its fracture options from it; the sub-cap options (≤ 3 pieces, no fans or far crack, `chunkyPieces`: a sound primary + one extra chunk, gentle jag) must never change a capital's output: new `fractureHull` options default to the old behaviour. Lock: `fractureHull.subcap.test.ts`.
-- Story: [docs/architecture/capital-destruction.md](../../docs/architecture/capital-destruction.md).
+- **Deterministic, run on both sides from the same inputs (#15), no geometry on the wire:** arithmetic and `Math.sqrt`/`round` only (never sin/cos/atan2/pow), the mulberry32 `Rng`, fixed loop order, `FRACTURE_QUANTUM` vertices, only `quickDecomp`/`makeCCW` from poly-decomp. Any output change (including a new seeded draw) bumps `FRACTURE_ALGO_VERSION`; concave hulls go through `splitByLine`.
+- **One source each:** `wreckPieceGeometry` is a piece's only shape (lock `tests/integration/wire/wreckGeometryParity.test.ts`); `wreckRayHit`/`wreckSweepHit` are the only weapon-vs-wreck test, gated by `segmentNearCircle`, never `rayHitsSphere` (`wreckHits.test.ts`).
+- **Wrecks:** never give pieces a velocity field that closes a cut (`wreckPiecesSeparate.test.ts`). Per-profile numbers live in `DESTRUCTION_PROFILES`, never a branch; new `fractureHull` options default to old behaviour (`fractureHull.subcap.test.ts`). Detail: [capital-destruction](../../docs/architecture/capital-destruction.md#core-rules-reference).
 
 ## Alien gates and the disabled input gate (plan soft-leaping-truffle v4, A)
 

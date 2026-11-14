@@ -25,7 +25,8 @@
  */
 import { buildWreckPieces, MAX_LIVE_WRECK_PIECES, WRECK_ANGULAR_DAMPING, WRECK_LINEAR_DAMPING, WRECK_RECENT_DAMAGE_TICKS, type WreckDeathPose } from '../../core/destruction/wreckPieces.js';
 import { fnv1a32, fnvMixU32 } from '../../core/random/rng.js';
-import type { ShipKindId } from '../../shared-types/shipKinds.js';
+import { getShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
+import { shipTuning } from '../../shared-types/shipScale/tuning.js';
 import type { Vec2 } from '../../core/swarm/asteroidShape.js';
 import { FRACTURE_ALGO_VERSION } from '../../core/destruction/fractureHull.js';
 import type { WreckDescriptor } from '../../shared-types/messages/snapshotMessages.js';
@@ -60,6 +61,13 @@ interface LiveWreck {
   desc: WreckDescriptor;
   /** Pieces of this wreck still alive. */
   pieces: number;
+  /** Every piece id spawned for it (built once at death; the worker skips
+   *  the ones already gone). */
+  ids: string[];
+  /** Total mass of the spawned pieces. */
+  mass: number;
+  /** Server tick the crack hold ends (the separating kicks are due). */
+  holdUntil: number;
 }
 
 export interface CapitalWreckDeps {
@@ -79,6 +87,24 @@ export interface CapitalWreckDeps {
   pieceAngle: (id: string) => number | null;
   /** Add this velocity (world u/s) and spin (rad/s) to a live piece's body. */
   kickPiece: (id: string, dvx: number, dvy: number, dw: number) => void;
+  /** Apply impulse (jx, jy) at world point (px, py) to a live piece's body
+   *  (overkill knock-back). Optional: absent ⇒ hits never shove pieces. */
+  impulsePiece?: (id: string, jx: number, jy: number, px: number, py: number) => void;
+  /** Apply impulse (jx, jy) at world point (px, py) to the WHOLE wreck as one
+   *  rigid body (every piece in `ids`; gone ones are skipped), so the pieces
+   *  keep their relative poses: a hit during the crack hold. Optional: absent
+   *  ⇒ hold hits shove single pieces like later ones. */
+  impulseWreck?: (ids: readonly string[], jx: number, jy: number, px: number, py: number) => void;
+}
+
+/** How hard a hit knocks one piece (fixed at spawn; read per hit, #14). */
+interface PieceKnock {
+  /** The piece's mass (its body's mass). */
+  mass: number;
+  /** Impulse per point of damage: hull mass × `wreckKnockSpeed` ÷ max hull. */
+  impulsePerDamage: number;
+  /** The most one hit may change its speed (`wreckKnockMax`, u/s). */
+  maxDv: number;
 }
 
 /** A piece's separating kick, held until the wreck's crack delay ends. */
@@ -105,6 +131,8 @@ export class CapitalWreckSubsystem {
    *  live wreck, rebuilt only when the set changes). */
   private readonly wrecks = new Map<number, LiveWreck>();
   private readonly pieceWreck = new Map<string, number>();
+  /** Per live piece: how a hit knocks it (overkill knock-back). */
+  private readonly knock = new Map<string, PieceKnock>();
   private readonly slice: WreckDescriptor[] = [];
   private nextWreckId = 1;
   /** Bumped whenever the set of live wrecks changes. */
@@ -185,7 +213,15 @@ export class CapitalWreckSubsystem {
     const n = this.deaths++;
     const wreckId = this.allocWreckId();
     const crackTicks = wreckCrackTicks();
+    // Overkill knock-back (#18): a blow worth the whole hull's HP would move
+    // the whole hull at `wreckKnockSpeed`.
+    const tuning = shipTuning(getShipKind(kindId));
+    let hullMass = 0;
+    for (const p of pieces) hullMass += p.mass;
+    const impulsePerDamage = (hullMass * tuning.wreckKnockSpeed) / hull;
     let spawned = 0;
+    let spawnedMass = 0;
+    const spawnedIds: string[] = [];
     for (const p of pieces) {
       const id = `wreck-${n}-${p.index}`;
       const ok = this.d.spawnPiece({
@@ -196,6 +232,9 @@ export class CapitalWreckSubsystem {
       });
       if (!ok) continue;
       spawned++;
+      spawnedMass += p.mass;
+      spawnedIds.push(id);
+      this.knock.set(id, { mass: p.mass, impulsePerDamage, maxDv: tuning.wreckKnockMax });
       // The hull holds together for the crack delay, then parts (game ticks).
       this.kicks.push({ id, dueTick: tick + crackTicks, vx: p.kickVx, vy: p.kickVy, w: p.kickAngvel, angle0: pose.angle });
       this.live.push(id);
@@ -210,6 +249,9 @@ export class CapitalWreckSubsystem {
           deathTick: tick,
         },
         pieces: spawned,
+        ids: spawnedIds,
+        mass: spawnedMass,
+        holdUntil: tick + crackTicks,
       });
       this.setChanged();
     }
@@ -244,6 +286,45 @@ export class CapitalWreckSubsystem {
     k.length = w;
   }
 
+  /**
+   * Overkill knock-back (owner request 2026-11-13): a weapon hit `damage` on
+   * wreck piece `id` at world point (hitX, hitY), travelling along (dirX,
+   * dirY). Posts an impulse J = damage × hull mass × `wreckKnockSpeed` ÷ max
+   * hull at the hit point, along the shot, so an off-centre hit also turns
+   * the piece; the speed change J ÷ m is capped at `wreckKnockMax`. Returns
+   * false (and does nothing) when `id` is not a live wreck piece or the
+   * direction is degenerate. Scalars only, alloc-free (#14): it runs in the
+   * projectile and beam hit paths.
+   *
+   * During the crack hold (the rest of a salvo landing right after the kill,
+   * owner review 2026-11-13: the hull bent like a banana) the same impulse
+   * goes to the WHOLE wreck as one rigid body (`impulseWreck`): Δv = J ÷ the
+   * wreck's mass, Δω = (r × J) ÷ its moment of inertia, every piece set to
+   * v_com + ω × r_i, so the hull reads as one cracked body until it splits.
+   * The speed cap is then on the whole wreck (`wreckKnockMax` × its mass).
+   */
+  onWreckHit(id: string, hitX: number, hitY: number, dirX: number, dirY: number, damage: number): boolean {
+    const k = this.knock.get(id);
+    if (k === undefined || this.d.impulsePiece === undefined || !(damage > 0)) return false;
+    const len = Math.hypot(dirX, dirY);
+    if (!(len > 1e-9) || !Number.isFinite(hitX) || !Number.isFinite(hitY)) return false;
+    let j = damage * k.impulsePerDamage;
+    const wreckId = this.pieceWreck.get(id);
+    const w = wreckId !== undefined ? this.wrecks.get(wreckId) : undefined;
+    if (w !== undefined && this.d.impulseWreck !== undefined && this.d.serverTick() < w.holdUntil) {
+      const jMax = k.maxDv * w.mass;
+      if (j > jMax) j = jMax;
+      const s = j / len;
+      this.d.impulseWreck(w.ids, dirX * s, dirY * s, hitX, hitY);
+      return true;
+    }
+    const jMax = k.maxDv * k.mass;
+    if (j > jMax) j = jMax;
+    const s = j / len;
+    this.d.impulsePiece(id, dirX * s, dirY * s, hitX, hitY);
+    return true;
+  }
+
   /** Pieces still holding together (waiting for their kick). */
   pendingKicks(): number {
     return this.kicks.length;
@@ -266,6 +347,7 @@ export class CapitalWreckSubsystem {
 
   /** A wreck piece left the world (cap, or any other removal). */
   pieceGone(id: string): void {
+    this.knock.delete(id);
     const wreckId = this.pieceWreck.get(id);
     if (wreckId === undefined) return;
     this.pieceWreck.delete(id);
