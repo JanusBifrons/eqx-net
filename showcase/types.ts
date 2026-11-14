@@ -41,7 +41,9 @@ export type Section = 'opener' | 'mechanics' | 'tech';
  *  `phone-landscape` = a touch phone held sideways (844×390 CSS px, 2× DPR). */
 export type ShotViewport = 'desktop' | 'phone' | 'phone-landscape';
 
-export type CaptionLayout = 'lower-third' | 'side' | 'top' | 'none';
+/** `corner`: a small box at the top right, under the game's top-right buttons,
+ *  for a take whose action and bottom HUD fill the lower half. */
+export type CaptionLayout = 'lower-third' | 'side' | 'top' | 'corner' | 'none';
 
 export interface ShotTarget {
   /** Engineering/showcase room name (`?room=`). */
