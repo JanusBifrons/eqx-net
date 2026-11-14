@@ -18,6 +18,9 @@ export interface CountBudget {
   work?: WorkBudget;
   /** Where the number came from. */
   measured: string;
+  /** The re-measure when the break-up (capital + sub-cap wrecks) was switched
+   *  on by default (owner, 2026-11-14), for the budgets it moved. */
+  measuredBreakUp?: string;
 }
 
 /** Ceilings on the server's per-tick work (`ScenePerfView.work`).
@@ -46,8 +49,12 @@ export const COUNT_BUDGETS: Record<string, CountBudget> = {
   // check itself is ~3.5 per tick here (print-only `lineOfFire*`).
   'fleet-fight': {
     rxKBps: 334, minSwarm: 30,
-    measured: 'rx 216–218 KB/s laptop 2026-11-06. Work, desktop 4 runs 2026-11-08: bodies 38.4–39.9, ai 37.1–38.1, swarm recs 33.4–35.8, bytes 1141–1226, ents/snap 61.9–68.5; CI (ubuntu, PR #356): 38.6 / 37.5 / 35.8 / 1224 / 66.2, rx 211.9. With NPC line of fire, laptop 3 runs 2026-11-10: bodies 49.6–50.2, ai 48.0–48.7, swarm recs 48.3–48.9, bytes 1649–1670, ents/snap 45.7–47.0, rx 256–267 (check off, same session: 38.6 / 36.8 / 37.5 / 1281 / 46.0, rx 199). Re-measured laptop 2026-11-14, feat/ai-fight-feel 4 runs: bodies 67.4–67.7, ai 65.9–66.6, swarm recs 63.2–63.8, bytes 2282–2303, ents/snap 36.3–36.8, rx 209–213; origin/main same session 2 runs: 57.7–57.9 / 56.3–56.6 / 55.7–55.8 / 2013–2017. Raised because fights last longer by the owner’s spread-targets decision (2026-11-14: each AI pilot prefers an unengaged enemy, so more ships stay alive in the window); per-ship cost unchanged: bytes/record 36.1 both, bodies/record 1.06 vs 1.03, ai/record 1.04 vs 1.01; contacts 4–5 vs 47–50 per tick and line-of-fire checks 1.2 vs 5.3 fell',
-    work: { bodiesPerTick: 85, aiAgentsPerTick: 84, swarmRecordsPerTick: 80, swarmBytesPerTick: 2879, entitiesPerSnapshot: 86 },
+    measured: 'rx 216–218 KB/s laptop 2026-11-06. Work, desktop 4 runs 2026-11-08: bodies 38.4–39.9, ai 37.1–38.1, swarm recs 33.4–35.8, bytes 1141–1226, ents/snap 61.9–68.5; CI (ubuntu, PR #356): 38.6 / 37.5 / 35.8 / 1224 / 66.2, rx 211.9. With NPC line of fire, laptop 3 runs 2026-11-10: bodies 49.6–50.2, ai 48.0–48.7, swarm recs 48.3–48.9, bytes 1649–1670, ents/snap 45.7–47.0, rx 256–267 (check off, same session: 38.6 / 36.8 / 37.5 / 1281 / 46.0, rx 199). Fight-feel alone, re-measured laptop 2026-11-14, feat/ai-fight-feel 4 runs: bodies 67.4–67.7, ai 65.9–66.6, swarm recs 63.2–63.8, bytes 2282–2303, ents/snap 36.3–36.8, rx 209–213; origin/main same session 2 runs: 57.7–57.9 / 56.3–56.6 / 55.7–55.8 / 2013–2017. Raised because fights last longer by the owner’s spread-targets decision (2026-11-14: each AI pilot prefers an unengaged enemy, so more ships stay alive in the window); per-ship cost unchanged: bytes/record 36.1 both, bodies/record 1.06 vs 1.03, ai/record 1.04 vs 1.01; contacts 4–5 vs 47–50 per tick and line-of-fire checks 1.2 vs 5.3 fell',
+    // 2026-11-14: owner switched the break-up on (capital + sub-cap wrecks,
+    // "land it switched on"). Every kill now leaves 2-3 pieces that are bodies
+    // and swarm records; in this 12 s window they are all fresh and drifting.
+    measuredBreakUp: 'Break-up ON, desktop 2026-11-14, perf/subcap-final, 4 runs on / 2 off (EQX_*_WRECKS=0): bodies on 74.9–77.3 vs off 58.3–58.4, of which wreck pieces 14.7–17.0 (wreckPiecesPerTick); bodies minus pieces 59.4–61.4, ai 59.3–59.8 vs 56.3–56.4 (+3 ships alive: debris stops shots, so fewer die in the window); swarm recs 73.5–75.5 vs 56.9–57.0; bytes 2653–2724 vs 2056–2059 (36.1 B a record both arms: per-entity cost flat); ents/snap 36.6–38.2 vs 40.2–40.3; rx 283–287 vs 248 KB/s (under 334). Soak (capital-destruction.md): smooth to ~1,600 pieces over 10 min, client never dropped. Budget = on max + 25 %.',
+    work: { bodiesPerTick: 97, aiAgentsPerTick: 75, swarmRecordsPerTick: 95, swarmBytesPerTick: 3405, entitiesPerSnapshot: 86 },
   },
   // 2026-11-06, laptop, two runs: 67.8 / 67.8 KB/s (174 entities: citadel + raid).
   'teleport-raid': {
@@ -72,8 +79,10 @@ export const COUNT_BUDGETS: Record<string, CountBudget> = {
   // 2026-11-08: the 80-ship sustained fight seen from the zoom-out floor (asteroids on).
   'wide-view': {
     rxKBps: 418, minSwarm: 50,
-    measured: 'desktop 3 runs 2026-11-08: rx 308–334 KB/s, swarm 104–118. Work: bodies 73.6–77.9, ai 69.5–73.8, swarm recs 69.8–73.7, bytes 2380–2513, ents/snap 80.3–93.4; CI (ubuntu, PR #356): 73.1 / 68.6 / 69.3 / 2363 / 91.7, rx 327.7, swarm 101. Re-measured laptop 2026-11-14, feat/ai-fight-feel 5 runs: bodies 89.9–93.5, ai 85.8–89.1, swarm recs 85.8–89.5, bytes 3098–3230, ents/snap 47.5–48.8, rx 280–282, end swarm 162–163; origin/main same session 2 runs: 82.7–83.3 / 78.9–79.2 / 78.8–79.4 / 2846–2867, rx 329–332, end swarm 136–137. Raised because fights last longer by the owner’s spread-targets decision (2026-11-14: each AI pilot prefers an unengaged enemy, so more ships stay alive); per-ship cost unchanged: bytes/record 36.1 both, bodies/record 1.04–1.05 both, ai/record 1.00 both',
-    work: { bodiesPerTick: 117, aiAgentsPerTick: 112, swarmRecordsPerTick: 112, swarmBytesPerTick: 4038, entitiesPerSnapshot: 117 },
+    measured: 'desktop 3 runs 2026-11-08: rx 308–334 KB/s, swarm 104–118. Work: bodies 73.6–77.9, ai 69.5–73.8, swarm recs 69.8–73.7, bytes 2380–2513, ents/snap 80.3–93.4; CI (ubuntu, PR #356): 73.1 / 68.6 / 69.3 / 2363 / 91.7, rx 327.7, swarm 101. Fight-feel alone, re-measured laptop 2026-11-14, feat/ai-fight-feel 5 runs: bodies 89.9–93.5, ai 85.8–89.1, swarm recs 85.8–89.5, bytes 3098–3230, ents/snap 47.5–48.8, rx 280–282, end swarm 162–163; origin/main same session 2 runs: 82.7–83.3 / 78.9–79.2 / 78.8–79.4 / 2846–2867, rx 329–332, end swarm 136–137. Raised because fights last longer by the owner’s spread-targets decision (2026-11-14: each AI pilot prefers an unengaged enemy, so more ships stay alive); per-ship cost unchanged: bytes/record 36.1 both, bodies/record 1.04–1.05 both, ai/record 1.00 both',
+    // 2026-11-14: break-up switched on (see fleet-fight).
+    measuredBreakUp: 'Break-up ON, desktop 2026-11-14, perf/subcap-final, 4 runs on / 2 off: bodies on 98.1–99.1 vs off 81.6–81.9, of which wreck pieces 13.3–14.8; bodies minus pieces 84.3–84.8, ai 81.9–82.8 vs 78.8–79.2 (+3 ships alive); swarm recs 97.5–98.6 vs 81.1–81.3; bytes 3518–3556 vs 2926–2935 (36.1 B a record both arms); ents/snap 51.6–52.4 vs 55.1–55.4; rx 377–381 vs 343–346 KB/s (under 418). Budget = on max + 25 %.',
+    work: { bodiesPerTick: 124, aiAgentsPerTick: 93, swarmRecordsPerTick: 124, swarmBytesPerTick: 4445, entitiesPerSnapshot: 117 },
   },
 };
 

@@ -87,7 +87,7 @@ How each subsystem works (and its history) is in the "Server notes" section of t
 - 🔴 Classify by the registry kind, never an id prefix. `fillSwarmTargets` builds the cross-allegiance view once per tick, only with ≥ 2 allegiances present. `isHostileToPlayer` = stance OR ledger. Only a hit on a DRONE escalates the `FactionLedger`.
 - `npcOnly` kinds are refused on join (`isPlayableShipKindId`); `LoadShedder` skips `shedImmune` kinds. Allegiance decides targeting, never what a shot hits.
 - 🔴 Every shot hits the first thing in its path, own side included; the only skips are the shooter, a capital's own deck (`mountLineClear`) and, for any shot but a pilot's, a loot pod (`isLootPod`). A friendly accidental hit damages but never marks hostile or escalates (`isFriendlyFire`).
-- NPCs hold fire while a friendly is on the line, only via `LineOfFireGate` (never a second scan); players are never gated. `friendlyFire.test.ts`, `npcLineOfFire.test.ts`.
+- AI pilots hold fire while a friendly (or, for an AI-flown ship, a wreck piece) is on the line, only via `LineOfFireGate` (never a second scan); players are never gated. `friendlyFire.test.ts`, `npcLineOfFire.test.ts`.
 - Proximity queries in the drone brain go through `AiNeighbourGrid`, never a per-behaviour swarm scan (`AiNeighbourGrid.test.ts`).
 
 **Cargo and storage** ([loot-and-cargo](../../docs/features/loot-and-cargo.md)):
@@ -274,7 +274,7 @@ How each subsystem works (and its history) is in the "Server notes" section of t
 
 ## Capital wrecks
 
-- **Behind `capitalWrecks` / `EQX_CAPITAL_WRECKS=1`, off by default.** Hit tracking is pooled (#14). Test trigger: `test_kill_capitals`, room `wreck-test`.
+- **Break-up ON by default** (`capitalWrecks` / `subcapWrecks`, owner 2026-11-14): a room opts out with `false`, env `EQX_*_WRECKS=0` forces it off (`wreckSwitchOn`); one death effect per ship (a breaking kind never sheds scrap). Hit tracking is pooled (#14). Test trigger: `test_kill_capitals`, room `wreck-test`.
 - **Wreck pieces (kind 4) block every weapon:** a new weapon or hit path must handle kind 4 and pass its shot direction (knock-back). Locks: `wreckOverkillKnockback.test.ts`, `wreckRigidHold.test.ts`.
 - **Snapshots carry wreck deltas only:** never the whole list, never vertices; every piece removal reaches `pieceGone`. Locks: `SnapshotBroadcaster.wreckDeltas.test.ts`, `wreckWireConvergence.test.ts`, `wreckLateJoiner.test.ts`.
 - Detail: [capital-destruction.md](../../docs/architecture/capital-destruction.md#server-implementation-notes).

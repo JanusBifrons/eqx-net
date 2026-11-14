@@ -59,4 +59,15 @@ describe('wreck wire schemas (slice 3)', () => {
     expect(WelcomeSchema.safeParse(welcome).success).toBe(true);
     expect(WelcomeSchema.safeParse({ ...welcome, wrecks: [{ ...good, wreckId: 0 }] }).success).toBe(false);
   });
+
+  it('the welcome accepts the sub-cap break-up switch (read before the server sends it)', () => {
+    // The welcome schema is strict: a client that does not know a key the
+    // server sends drops the WHOLE welcome and never joins. The reader must
+    // land before the server switches `subcapWrecks` on (PR #584), or every
+    // client one release behind is stuck on "Ships: 0" (the netgate's
+    // baseline arm caught exactly that).
+    const welcome = { type: 'welcome', playerId: 'p', serverTick: 1, sectorKey: null, shipInstanceId: '', capitalWrecks: true, subcapWrecks: true };
+    expect(WelcomeSchema.safeParse(welcome).success).toBe(true);
+    expect(WelcomeSchema.safeParse({ ...welcome, subcapWrecks: false }).success).toBe(false);
+  });
 });
