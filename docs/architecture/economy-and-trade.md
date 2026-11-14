@@ -140,3 +140,16 @@ Every NPC convoy now has a **carrier** as well as an owner (`core/economy/freigh
 - **Raids.** The hauler flies for both factions. `ConvoyDirector` records them when it launches the convoy (`registerConvoyHauler`, `economy/convoyCarriers.ts`) and forgets them when the convoy ends. A pilot who hits a convoy hauler loses standing with the owner AND the carrier (`SectorRoom.noteStandingHit`, the same once-per-window hit as any other).
 
 Locks: `src/core/economy/freight.test.ts` (who carries, cut range), `ConvoyDirector.test.ts` (a contracted carrier is recorded and paid its cut; the Traders carry their own for free), `tests/integration/sectorRoom/factionStanding.test.ts` (raiding a contracted convoy costs standing with both).
+
+## Server implementation notes
+
+> Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.
+
+- **`ConvoyDirector` (`economy/`)** is process-global (built in `index.ts` from the galaxy rooms only) on a 1 s unref'd loop; never the 60 Hz tick. Planning is the pure `core/economy/convoys.ts`.
+- **Room surface:** `npcBaseTrade()` (stock, rates, footprint box per NPC base), `clearPointNear`, plus the existing `tradeTransfer` / `spawnLivingWorldBot` / `setBotMoveTarget`.
+- **Every value move** is ONE `tradeTransfer` (take into the hauler's hold at pickup, release into the importer at delivery). Convoy haulers use `CONVOY_HAULER_ID_PREFIX` (`hauler-convoy-`), so a kill spills the hold.
+- **Haulers dock OUTSIDE a base's footprint** (fences block ships; gates open only for player ships) and enter and leave at the edge on the base's own side.
+- **Not persisted.** Crash leftovers (`hauler-convoy-*` holds) are discarded on `start()`. Kill switch `EQX_DISABLE_CONVOYS`; diagnostics `GET /dev/convoys`.
+- **Regional prices (T3).** The planning pass also publishes per-region price factors (`economy/regionalPrices.ts`).
+  - Every trade quote goes through `TradeDirector.quote(kind, good, rep, sectorKey)`, so the board, the accept and the re-quote agree. Never quote around it.
+  - The offers route takes `?sector=`.
