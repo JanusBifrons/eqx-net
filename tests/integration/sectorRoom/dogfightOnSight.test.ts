@@ -209,22 +209,32 @@ describe('SectorRoom integration — on-sight allegiance dogfight (drones vs rob
   });
 
   it('a turnier fighter set on a robot\'s six holds the tail', { timeout: 90_000 }, async () => {
-    // A drone `fighter` 300 u behind a `robot-hexagon` (turns 0.8 rad/s to the
-    // fighter's 1.0), both noses +y, hostile. The robot breaks and turns; the
-    // fighter must stay on its six (within ±45° of the robot's tail, inside
-    // 1.2 × fire range) for ≥ 4 s of the 20 s. Before the fix: 0.95 s (PR #565
-    // logged 0–3.5 s per run in the group fights): two ships each chasing a
-    // station 0.6 × fire range behind the other's velocity flew a circle
-    // opposite each other (a Lufbery circle) and never reached a six.
+    // Six independent pairs, far apart (beyond any sensor range): a drone
+    // `fighter` 300 u behind a `robot-hexagon` (turns 0.8 rad/s to the
+    // fighter's 1.0), both noses the same way, hostile. The robot breaks and
+    // turns; the fighter must stay on its six (within ±45° of the robot's
+    // tail, inside 1.2 × fire range). Counted in samples and pooled over the
+    // six pairs, so one unlucky pair or a slow host does not decide it (one
+    // pair over 20 s ran 3.5–8.4 s on a tail with the fix, 0.95 s without).
+    // Before the fix two ships each chasing a station 0.6 × fire range behind
+    // the other's velocity flew a circle opposite each other (a Lufbery
+    // circle) and never reached a six.
+    const PAIRS = 6;
+    const poses: Array<{ kind: string; x: number; y: number; angle: number; hullExposed: boolean }> = [];
+    for (let k = 0; k < PAIRS; k++) {
+      const cx = -25_000 + k * 10_000;
+      const cy = 10_000;
+      const a = (k * Math.PI) / 3;
+      // Nose direction (−sin a, cos a); the fighter sits 300 u behind it.
+      poses.push({ kind: 'fighter', x: cx + 300 * Math.sin(a), y: cy - 300 * Math.cos(a), angle: a, hullExposed: false });
+      poses.push({ kind: ROBOT_SLOW, x: cx, y: cy, angle: a, hullExposed: false });
+    }
     harness = await bootSectorTestServer({
       sectorKey: null,
       droneCount: 0,
       testMode: true,
       asteroidConfig: [],
-      dronePoses: [
-        { kind: 'fighter', x: 0, y: -300, angle: 0, hullExposed: false },
-        { kind: ROBOT_SLOW, x: 0, y: 0, angle: 0, hullExposed: false },
-      ],
+      dronePoses: poses,
       defaultSpawnX: 0,
       defaultSpawnY: -20_000,
     });
@@ -234,40 +244,52 @@ describe('SectorRoom integration — on-sight allegiance dogfight (drones vs rob
       serverTick: number;
     };
     const recs = [...room._internals.swarmRegistry.all()].filter((x) => x.kind === 1);
-    const f = recs.find((x) => x.shipKind === 'fighter')!.id;
-    const r = recs.find((x) => x.shipKind === ROBOT_SLOW)!.id;
-    room._internals.swarmHealth.set(f, 1e9);
-    room._internals.swarmHealth.set(r, 1e9);
-    room.aiController.markHostile(f, r, room.serverTick);
-    room.aiController.markHostile(r, f, room.serverTick);
-    const brainF = room.aiController.getBehaviour(f) as HostileDroneBehaviour;
-    const R = brainF.getFireRange();
-    let onTail = 0;
-    let longest = 0;
-    let run = 0;
-    let prevT = Date.now();
-    const start = prevT;
+    expect(recs.length).toBe(2 * PAIRS);
+    const pairs: Array<{ f: string; r: string }> = [];
+    for (let k = 0; k < PAIRS; k++) pairs.push({ f: '', r: '' });
+    for (const rec of recs) {
+      const p = room._internals.swarmPose(rec.id)!;
+      let best = 0;
+      let bestD = Infinity;
+      for (let i = 0; i < poses.length; i++) {
+        if (poses[i]!.kind !== rec.shipKind) continue;
+        const d = Math.hypot(poses[i]!.x - p.x, poses[i]!.y - p.y);
+        if (d < bestD) { bestD = d; best = i; }
+      }
+      if (rec.shipKind === 'fighter') pairs[best >> 1]!.f = rec.id; else pairs[best >> 1]!.r = rec.id;
+    }
+    for (const { f, r } of pairs) {
+      expect(f && r).toBeTruthy();
+      room._internals.swarmHealth.set(f, 1e9);
+      room._internals.swarmHealth.set(r, 1e9);
+      room.aiController.markHostile(f, r, room.serverTick);
+      room.aiController.markHostile(r, f, room.serverTick);
+    }
+    const R = (room.aiController.getBehaviour(pairs[0]!.f) as HostileDroneBehaviour).getFireRange();
+    const onTail = new Array<number>(PAIRS).fill(0);
     const hist = new Array<number>(MANOEUVRE_COUNT).fill(0);
+    let samples = 0;
+    const start = Date.now();
     while (Date.now() - start < FIGHT_MS) {
       await harness.advance(SAMPLE_MS);
-      const now = Date.now();
-      const dt = (now - prevT) / 1000;
-      prevT = now;
-      const pf = room._internals.swarmPose(f);
-      const pr = room._internals.swarmPose(r);
-      if (!pf || !pr) break;
-      hist[brainF.getManoeuvre()]!++;
-      const d = Math.hypot(pf.x - pr.x, pf.y - pr.y);
-      // cos(robot's tail axis, robot → fighter) ≥ cos 45°.
-      const tailX = Math.sin(pr.angle);
-      const tailY = -Math.cos(pr.angle);
-      const behind = d > 1 && d < 1.2 * R && (tailX * (pf.x - pr.x) + tailY * (pf.y - pr.y)) / d >= Math.SQRT1_2;
-      run = behind ? run + dt : 0;
-      if (run > longest) longest = run;
-      if (behind) onTail += dt;
+      samples++;
+      for (let k = 0; k < PAIRS; k++) {
+        const { f, r } = pairs[k]!;
+        const pf = room._internals.swarmPose(f);
+        const pr = room._internals.swarmPose(r);
+        if (!pf || !pr) continue;
+        hist[(room.aiController.getBehaviour(f) as HostileDroneBehaviour).getManoeuvre()]!++;
+        const d = Math.hypot(pf.x - pr.x, pf.y - pr.y);
+        // cos(robot's tail axis, robot → fighter) ≥ cos 45°.
+        const tailX = Math.sin(pr.angle);
+        const tailY = -Math.cos(pr.angle);
+        if (d > 1 && d < 1.2 * R && (tailX * (pf.x - pr.x) + tailY * (pf.y - pr.y)) / d >= Math.SQRT1_2) onTail[k]!++;
+      }
     }
-    console.log(`[dogfight-on-sight tail] R=${R.toFixed(0)} cruise=${brainF.getCruiseSpeed().toFixed(0)}/${(room.aiController.getBehaviour(r) as HostileDroneBehaviour).getCruiseSpeed().toFixed(0)} onTail=${onTail.toFixed(2)}s longest=${longest.toFixed(2)}s fighter hist(hold,tail,run,break)=${hist.join(',')}`);
-    expect(onTail, 'the fighter holds the robot\'s six (s of 20)').toBeGreaterThanOrEqual(4);
+    const frac = onTail.reduce((s, x) => s + x, 0) / Math.max(1, PAIRS * samples);
+    console.log(`[dogfight-on-sight tail x${PAIRS}] R=${R.toFixed(0)} samples=${samples} onTailFrac=${frac.toFixed(3)} perPair=${onTail.map((x) => (x / Math.max(1, samples)).toFixed(2)).join(',')} fighter hist(hold,tail,run,break)=${hist.join(',')}`);
+    expect(samples).toBeGreaterThan(100);
+    expect(frac, 'fighters hold the robots\' six (share of samples, 6 pairs pooled)').toBeGreaterThanOrEqual(0.1);
   });
 
   it('3v3 drone fighters vs robots (the filmed scene) dogfight', { timeout: 90_000 }, async () => {

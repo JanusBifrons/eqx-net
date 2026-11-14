@@ -280,6 +280,10 @@ describe('SectorRoom integration — NPC dogfight (AI slice 4)', () => {
     for (let k = 0; k < PAIRS; k++) expect(toeFrac[k], `duel ${k} not toe to toe`).toBeLessThan(0.2);
     const totalRunRams = runRams.reduce((s, x) => s + x, 0);
     expect(totalRunRams, 'attack runs pass beside the target (rams in 8 duels × 20 s)').toBeLessThanOrEqual(1);
+    // Every ram between the duellists, whatever they were flying: 16 before
+    // the fix (1-3 in every duel; attack runs 3), 0 after (2026-11-14).
+    const totalRams = rams.reduce((s, x) => s + x, 0);
+    expect(totalRams, 'duellists do not fly into each other (rams in 8 duels × 20 s)').toBeLessThanOrEqual(2);
   });
 
   it('a ship with a hostile on its tail breaks within 1 s', { timeout: 60_000 }, async () => {

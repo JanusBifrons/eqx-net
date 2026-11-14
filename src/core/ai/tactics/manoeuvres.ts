@@ -61,7 +61,12 @@ const TAIL_ARRIVE = 0.5;
 const TAIL_BOOST_RANGE = 1.5;
 /** cos of the target's aspect above which it is coming at me (60°). */
 const TAIL_HEADON_COS = 0.5;
-/** Cap on the sideways stretch of a head-on station (× the run's miss). */
+/** A head-on station is aimed this many own hull radii beside the target.
+ *  Its own number, not the attack run's miss: a wider offset here swings the
+ *  chaser wide of the merge and it never reaches the six (2026-11-14: at 3.5
+ *  radii the pooled tail share fell to the unfixed 0.05). */
+const TAIL_HEADON_MISS_RADII = 2.5;
+/** Cap on the sideways stretch of a head-on station (× that miss). */
 const TAIL_HEADON_MAX_STRETCH = 4;
 /** Share of the reverse-limited speed the tail closes at (braking margin). */
 const TAIL_BRAKE_SAFETY = 0.8;
@@ -125,7 +130,7 @@ export class TailManoeuvre implements IManoeuvre {
     // the line passes a run's miss beside the target (the same fixed side as
     // an attack run, so a head-on pair passes apart) and merge at speed.
     if (ctx.targetAspectCos > TAIL_HEADON_COS && ctx.dist > 1e-6) {
-      const k = runMiss(ctx) * Math.min(TAIL_HEADON_MAX_STRETCH, d0 / ctx.dist) * RUN_DEFAULT_SIDE;
+      const k = TAIL_HEADON_MISS_RADII * ctx.radius * Math.min(TAIL_HEADON_MAX_STRETCH, d0 / ctx.dist) * RUN_DEFAULT_SIDE;
       px += -ctx.uy * k;
       py += ctx.ux * k;
     }
@@ -223,8 +228,10 @@ const RUN_LATERAL_EPS = 0.1;
  *  for everyone, so a head-on pair passes apart. */
 const RUN_DEFAULT_SIDE = -1;
 /** The dive aims this many own hull radii beside the target: two hulls and
- *  a hull of air (half an equal pair's summed hull clearance each, so a
- *  head-on pair, each passing its own way, crosses ~2× apart). */
+ *  a hull of air. The target moves while the pass is flown, so in a bare
+ *  duel the miss lands near a graze; hull avoidance (HostileDroneBehaviour)
+ *  opens the rest. A wider aim (3.5–4 radii, 2026-11-14) flew straighter
+ *  passes and failed the on-sight 1v1 "ships turn" gate. */
 const RUN_MISS_RADII = 2.5;
 /** The pull-off begins once the closing speed would cover the gap in the time
  *  it takes to turn the nose this far (rad) plus the miss clearance: a fast
@@ -233,7 +240,7 @@ const RUN_PULL_TURN = Math.PI / 4;
 /** Give up a dive that has not reached the target in this long (s). */
 const RUN_DIVE_MAX_S = 5;
 /** …or this many times the time to cover the starting gap at cruise. */
-const RUN_DIVE_TIME_MUL = 1.5;
+const RUN_DIVE_TIME_MUL = 1.1;
 /** A pass that never gets the overshoot clear ends after this long (s). */
 const RUN_PASS_MAX_S = 2;
 /** Seeded extend time range (s); the extend ends early once the gap is

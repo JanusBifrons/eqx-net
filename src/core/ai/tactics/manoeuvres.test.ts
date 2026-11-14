@@ -144,11 +144,11 @@ describe('AttackRunManoeuvre (boom-and-zoom)', () => {
     const c4 = ctxAt(0, 1.4 * R, 0, 0, { tick: 280 });
     expect(m.isDone(c4)).toBe(true);
   });
-  it('gives up a dive that never arrives (1.5 × the time to cover the gap at cruise, at least 5 s)', () => {
+  it('gives up a dive that never arrives (1.1 × the time to cover the gap at cruise, at least 5 s)', () => {
     const m = new AttackRunManoeuvre();
     const c = ctxAt(0, -1500, 0, 0, { tick: 0 });
     m.begin(c);
-    const limit = Math.round(((1.5 * 1500) / CRUISE) * 60);
+    const limit = Math.round(((1.1 * 1500) / CRUISE) * 60);
     expect(m.isDone(ctxAt(0, -1400, 0, 0, { tick: limit - 1 }))).toBe(false);
     expect(m.isDone(ctxAt(0, -1400, 0, 0, { tick: limit + 1 }))).toBe(true);
     const near = new AttackRunManoeuvre();
