@@ -8807,7 +8807,7 @@ export class SectorRoom extends Room<SectorState> {
       ? parsed.data.shipId
       : '';
     if (this.sectorKey !== null && requestedShipId !== '') {
-      const rec = getPlayerShipStore().get(requestedShipId);
+      let rec = getPlayerShipStore().get(requestedShipId);
       if (rec !== null && rec.playerId === playerId && rec.lastSectorKey === this.sectorKey) {
         // EVICT-THEN-RESTORE (playtest 2026-06-10 Issue 6 — "respawn as an
         // existing ship → locked/broken"). If the requested hull is STILL
@@ -8822,11 +8822,15 @@ export class SectorRoom extends Room<SectorState> {
         // surviving timer later DELETES the now-active ship. Reachable from any
         // "resume a ship that lingered in the target sector". `evictOwnerlessShip`
         // despawns `linger-<id>`, cancels the timer, frees the slot, deletes the
-        // stale schema entry, and markStored's the pose — which the `rec` we read
-        // above already mirrors, so the restore lands at the same place.
+        // stale schema entry, and markStored's the hull's LIVE pose. That write
+        // REPLACES the roster record (`put` stores a new object), so re-read the
+        // row: the `rec` fetched above still holds the pose from when the hull
+        // was parked, and a hull bumped or pushed since then came back at its
+        // old spot (2026-11-13, exposed by the arcade-handling retune).
         if (this.lingeringSlots.has(requestedShipId) || this.ownerlessShips.has(requestedShipId)) {
           serverLogEvent('respawn_evict_lingering', { playerId, shipInstanceId: requestedShipId });
           this.evictOwnerlessShip(requestedShipId);
+          rec = getPlayerShipStore().get(requestedShipId) ?? rec;
         }
         spawnX = rec.lastX;
         spawnY = rec.lastY;
