@@ -18,7 +18,7 @@ import {
   type IManoeuvre,
   type TacticalContext,
 } from './manoeuvre.js';
-import { AttackRunManoeuvre, BreakManoeuvre, HoldManoeuvre, TAIL_BEHIND, TailManoeuvre } from './manoeuvres.js';
+import { AttackRunManoeuvre, BreakManoeuvre, HoldManoeuvre, TAIL_BEHIND, TailManoeuvre, runPullDist } from './manoeuvres.js';
 
 const R = 800;
 const CRUISE = 150;
@@ -113,7 +113,7 @@ describe('TailManoeuvre', () => {
 });
 
 describe('AttackRunManoeuvre (boom-and-zoom)', () => {
-  it('dives at the lead with boost, passes beside the target, overshoots, extends, then is done', () => {
+  it('dives beside the lead with boost, passes beside the target, overshoots, extends, then is done', () => {
     const m = new AttackRunManoeuvre();
     const c = ctxAt(0, -1500, 0, 0, { tick: 100 });
     m.begin(c);
@@ -121,12 +121,14 @@ describe('AttackRunManoeuvre (boom-and-zoom)', () => {
     expect(d.dirY).toBeGreaterThan(0.99);
     expect(goal.speed).toBe(MAX);
     expect(goal.boost).toBe(true);
-    expect(goal.facing).toBe(FACE_AIM_LEAD);
+    // Nose along the course to the miss point (a nose on the lead flies the
+    // dive into the target: a ship thrusts only along its nose).
+    expect(goal.facing).toBe(FACE_MOVE);
     expect(m.isDone(c)).toBe(false);
 
-    // Inside the overshoot: pull off for a point half an overshoot to the
+    // Inside the overshoot: pull off for a point 2.5 hull radii (here half an overshoot) to the
     // right of the target line (fixed side with no lateral motion).
-    const c2 = ctxAt(0, -OVER + 10, 0, 0, { tick: 200, vx: 0, vy: 300 });
+    const c2 = ctxAt(0, -OVER + 10, 0, 0, { tick: 200, vx: 0, vy: 300, radius: 80 });
     const p = run(m, c2);
     expect(goal.facing).toBe(FACE_MOVE);
     expect(p.dirX).toBeGreaterThan(0.3); // right of a +y line is +x
@@ -142,11 +144,26 @@ describe('AttackRunManoeuvre (boom-and-zoom)', () => {
     const c4 = ctxAt(0, 1.4 * R, 0, 0, { tick: 280 });
     expect(m.isDone(c4)).toBe(true);
   });
-  it('gives up a dive that never arrives', () => {
+  it('gives up a dive that never arrives (1.5 × the time to cover the gap at cruise, at least 5 s)', () => {
     const m = new AttackRunManoeuvre();
     const c = ctxAt(0, -1500, 0, 0, { tick: 0 });
     m.begin(c);
-    expect(m.isDone(ctxAt(0, -1400, 0, 0, { tick: 5 * 60 + 1 }))).toBe(true);
+    const limit = Math.round(((1.5 * 1500) / CRUISE) * 60);
+    expect(m.isDone(ctxAt(0, -1400, 0, 0, { tick: limit - 1 }))).toBe(false);
+    expect(m.isDone(ctxAt(0, -1400, 0, 0, { tick: limit + 1 }))).toBe(true);
+    const near = new AttackRunManoeuvre();
+    near.begin(ctxAt(0, -300, 0, 0, { tick: 0 }));
+    expect(near.isDone(ctxAt(0, -1400, 0, 0, { tick: 5 * 60 + 1 }))).toBe(true);
+  });
+  it('pulls off earlier the faster it closes and the slower it turns (the kind handling)', () => {
+    const base = ctxAt(0, -1500, 0, 0, { vy: 200, maxAngvel: 1, radius: 24 });
+    const fast = ctxAt(0, -1500, 0, 0, { vy: 800, maxAngvel: 1, radius: 24 });
+    const agile = ctxAt(0, -1500, 0, 0, { vy: 800, maxAngvel: 3, radius: 24 });
+    // Never later than the overshoot.
+    expect(runPullDist(base)).toBe(OVER);
+    // 800 u/s × (π/4 rad / 1 rad/s) + 2.5 radii ≈ 688 u.
+    expect(runPullDist(fast)).toBeCloseTo(800 * (Math.PI / 4) + 60, 3);
+    expect(runPullDist(agile)).toBeLessThan(runPullDist(fast));
   });
   it('a head-on pair offsets apart, not into each other', () => {
     const a = new AttackRunManoeuvre();

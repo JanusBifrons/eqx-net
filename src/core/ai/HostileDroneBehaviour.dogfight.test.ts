@@ -61,7 +61,10 @@ function duel(ticks: number, players: AiPlayerView[] = []): Duel {
 
 describe('HostileDroneBehaviour — dogfight decision layer (slice 4)', () => {
   it('two fighters make an attack run, pass and turn back into the fight; never toe to toe', () => {
-    const r = duel(20 * 60);
+    // 30 s: the dive now passes BESIDE the target (2026-11-13: a dive with
+    // the nose on the lead flew into it, and those rams counted as merges),
+    // so each merge is a real run → pass → extend → come back cycle.
+    const r = duel(30 * 60);
     expect(r.passes, r.trace).toBeGreaterThanOrEqual(2);
     // After the first pass the close fight is a turning fight (Tail), not a
     // second joust (2026-11-13 on-sight fix: repeated head-on runs were the

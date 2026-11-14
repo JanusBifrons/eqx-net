@@ -78,6 +78,13 @@ export interface TacticalContext {
   fireRange: number;
   cruiseSpeed: number;
   maxSpeed: number;
+  /** The kind's handling (the ship's own numbers, never the pilot's): turn cap
+   *  (rad/s), thrust and reverse acceleration (u/s², without boost), and
+   *  the hull radius (#18), so ranges follow speed, agility and size. */
+  maxAngvel: number;
+  accel: number;
+  brakeAccel: number;
+  radius: number;
   /** `shipTuning(kind).attackRunOvershoot` (#18). */
   overshoot: number;
   // Condition.
@@ -104,6 +111,7 @@ export function makeTacticalContext(): TacticalContext {
     dist: 0, ux: 0, uy: 0, aimX: 0, aimY: 0, leadAngle: 0, offBoresight: 0,
     closing: 0, targetAspectCos: 0, threatBearingCos: 0,
     fireRange: 1, cruiseSpeed: 1, maxSpeed: 1, overshoot: 1,
+    maxAngvel: 1, accel: 1, brakeAccel: 1, radius: 1,
     hullFrac: 1, recentHits: 0, allies: 0, enemies: 0,
     holdAlong: 0, holdBoost: false,
     rng: new Rng(1),

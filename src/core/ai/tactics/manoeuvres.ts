@@ -50,12 +50,21 @@ export class HoldManoeuvre implements IManoeuvre {
 // ── Tail ────────────────────────────────────────────────────────────────
 /** Station behind the target's velocity, as a share of fire range. */
 export const TAIL_BEHIND = 0.6;
+/** Station behind the target once inside `TAIL_CLOSE_FROM` × fire range. */
+export const TAIL_BEHIND_CLOSE = 0.1;
+const TAIL_CLOSE_FROM = 0.5;
 /** Pursuit lead on the station point is capped at this (s). */
 const TAIL_LEAD_MAX_S = 2;
 /** Inside this share of fire range from the station the closing speed ramps down. */
 const TAIL_ARRIVE = 0.5;
 /** Boost while farther than this × fire range. */
 const TAIL_BOOST_RANGE = 1.5;
+/** cos of the target's aspect above which it is coming at me (60°). */
+const TAIL_HEADON_COS = 0.5;
+/** Cap on the sideways stretch of a head-on station (× the run's miss). */
+const TAIL_HEADON_MAX_STRETCH = 4;
+/** Share of the reverse-limited speed the tail closes at (braking margin). */
+const TAIL_BRAKE_SAFETY = 0.8;
 /** Least speed while off the station, × cruise (a tail never hovers). */
 const TAIL_MIN_SPEED = 0.8;
 /** The target counts as moving above this share of our cruise speed. */
@@ -95,16 +104,42 @@ export class TailManoeuvre implements IManoeuvre {
       bx = -ctx.ux;
       by = -ctx.uy;
     }
-    let px = ctx.tx + bx * TAIL_BEHIND * R;
-    let py = ctx.ty + by * TAIL_BEHIND * R;
+    // The station tightens in from TAIL_BEHIND to TAIL_BEHIND_CLOSE as the
+    // gap closes from fire range to half of it: a far station behind a
+    // turning target swings round a circle wider than the target's own turn,
+    // so two ships each chasing the other's distant six fly a circle opposite
+    // each other forever (a Lufbery circle; 2026-11-13 on-sight tail test).
+    let f = (ctx.dist - TAIL_CLOSE_FROM * R) / ((1 - TAIL_CLOSE_FROM) * R);
+    f = f < 0 ? 0 : f > 1 ? 1 : f;
+    const behind = (TAIL_BEHIND_CLOSE + (TAIL_BEHIND - TAIL_BEHIND_CLOSE) * f) * R;
+    let px = ctx.tx + bx * behind;
+    let py = ctx.ty + by * behind;
     const d0 = Math.hypot(px - ctx.x, py - ctx.y);
-    const lead = Math.min(TAIL_LEAD_MAX_S, d0 / Math.max(ctx.cruiseSpeed, 1));
+    // Lead pursuit to close (aim the station ahead by the time to get there);
+    // lag pursuit once in gun range (the station itself, behind the target's
+    // velocity): a led station inside the turn pulls the chaser across the
+    // target's path and past it.
+    const lead = ctx.dist <= R ? 0 : Math.min(TAIL_LEAD_MAX_S, d0 / Math.max(ctx.cruiseSpeed, 1));
+    // Target coming at me: its six is on the far side of it, so the straight
+    // line to the station runs through its hull. Aim the station sideways so
+    // the line passes a run's miss beside the target (the same fixed side as
+    // an attack run, so a head-on pair passes apart) and merge at speed.
+    if (ctx.targetAspectCos > TAIL_HEADON_COS && ctx.dist > 1e-6) {
+      const k = runMiss(ctx) * Math.min(TAIL_HEADON_MAX_STRETCH, d0 / ctx.dist) * RUN_DEFAULT_SIDE;
+      px += -ctx.uy * k;
+      py += ctx.ux * k;
+    }
     px += ctx.tvx * lead;
     py += ctx.tvy * lead;
     const dx = px - ctx.x;
     const dy = py - ctx.y;
     const d = Math.hypot(dx, dy);
-    const approach = ctx.maxSpeed * Math.min(1, d / (TAIL_ARRIVE * R));
+    // Close no faster than the ship can shed by the station with its own
+    // reverse (the kind's handling), so it settles on the six at the
+    // target's speed instead of overshooting it.
+    const brake = TAIL_BRAKE_SAFETY * Math.sqrt(2 * ctx.brakeAccel * d);
+    let approach = ctx.maxSpeed * Math.min(1, d / (TAIL_ARRIVE * R));
+    if (approach > brake) approach = brake;
     let wvx = ctx.tvx;
     let wvy = ctx.tvy;
     if (d > 1e-6) {
@@ -182,15 +217,23 @@ const RUN_DIVE = 0;
 const RUN_PASS = 1;
 const RUN_EXTEND = 2;
 const RUN_DONE = 3;
-/** The dive aims this share of the overshoot to one side of the lead point. */
-const RUN_MISS_FRAC = 0.5;
 /** Lateral relative speed (× cruise) that picks the miss side by itself. */
 const RUN_LATERAL_EPS = 0.1;
 /** Miss side with no lateral motion: −1 = to the right of the target line,
  *  for everyone, so a head-on pair passes apart. */
 const RUN_DEFAULT_SIDE = -1;
+/** The dive aims this many own hull radii beside the target: two hulls and
+ *  a hull of air (half an equal pair's summed hull clearance each, so a
+ *  head-on pair, each passing its own way, crosses ~2× apart). */
+const RUN_MISS_RADII = 2.5;
+/** The pull-off begins once the closing speed would cover the gap in the time
+ *  it takes to turn the nose this far (rad) plus the miss clearance: a fast
+ *  dive pulls off early, a slow one late. */
+const RUN_PULL_TURN = Math.PI / 4;
 /** Give up a dive that has not reached the target in this long (s). */
 const RUN_DIVE_MAX_S = 5;
+/** …or this many times the time to cover the starting gap at cruise. */
+const RUN_DIVE_TIME_MUL = 1.5;
 /** A pass that never gets the overshoot clear ends after this long (s). */
 const RUN_PASS_MAX_S = 2;
 /** Seeded extend time range (s); the extend ends early once the gap is
@@ -225,19 +268,27 @@ export class AttackRunManoeuvre implements IManoeuvre {
     // at each other offset apart instead of into each other.
     const lat = -ctx.uy * (ctx.vx - ctx.tvx) + ctx.ux * (ctx.vy - ctx.tvy);
     this.side = lat > RUN_LATERAL_EPS * ctx.cruiseSpeed ? 1 : lat < -RUN_LATERAL_EPS * ctx.cruiseSpeed ? -1 : RUN_DEFAULT_SIDE;
-    this.phaseEnd = ctx.tick + RUN_DIVE_MAX_S * TICKS_PER_S;
+    // A dive that starts far out gets the time to get there at cruise (with
+    // margin): a fixed 5 s timed a 1500 u dive out before the pass.
+    const reach = (RUN_DIVE_TIME_MUL * ctx.dist) / Math.max(ctx.cruiseSpeed, 1);
+    this.phaseEnd = ctx.tick + Math.round((reach > RUN_DIVE_MAX_S ? reach : RUN_DIVE_MAX_S) * TICKS_PER_S);
   }
 
   writeGoal(ctx: TacticalContext, maps: ContextMaps, out: ManoeuvreGoal): void {
     this.advance(ctx);
     if (this.phase === RUN_DIVE) {
-      const miss = ctx.overshoot * RUN_MISS_FRAC * this.side;
+      const miss = runMiss(ctx) * this.side;
       // Perpendicular to the target line (left-hand normal).
       const gx = ctx.aimX - ctx.uy * miss - ctx.x;
       const gy = ctx.aimY + ctx.ux * miss - ctx.y;
       addInterestToward(maps, gx, gy, 1, GOAL_SHAPE);
       out.speed = ctx.maxSpeed;
-      out.facing = ctx.offBoresight < AIM_CONE ? FACE_AIM_LEAD : FACE_MOVE;
+      // Nose along the course to the miss point, not on the lead: a ship
+      // thrusts only along its nose, so a nose held on the lead flies the
+      // dive into the target (a ram, now a real weapon). The course runs a
+      // few degrees off the lead, so the guns still bear for most of the
+      // dive (the fire gate is a cone; the shot goes along the exact lead).
+      out.facing = FACE_MOVE;
       out.boost = true;
       return;
     }
@@ -257,9 +308,9 @@ export class AttackRunManoeuvre implements IManoeuvre {
   private advance(ctx: TacticalContext): void {
     if (this.phase === RUN_DIVE) {
       if (ctx.tick >= this.phaseEnd) { this.phase = RUN_DONE; return; }
-      if (ctx.dist < ctx.overshoot || (ctx.closing < 0 && ctx.dist < 0.5 * ctx.fireRange)) {
+      if (ctx.dist < runPullDist(ctx) || (ctx.closing < 0 && ctx.dist < 0.5 * ctx.fireRange)) {
         // Lock the pass heading: toward the miss point beside the target.
-        const miss = ctx.overshoot * RUN_MISS_FRAC * this.side;
+        const miss = runMiss(ctx) * this.side;
         const gx = ctx.tx - ctx.uy * miss - ctx.x;
         const gy = ctx.ty + ctx.ux * miss - ctx.y;
         const gl = Math.hypot(gx, gy);
@@ -283,6 +334,21 @@ export class AttackRunManoeuvre implements IManoeuvre {
       this.phase = RUN_DONE;
     }
   }
+}
+
+/** How far beside the target the run passes: a size, not a range (#18). */
+function runMiss(ctx: TacticalContext): number {
+  return RUN_MISS_RADII * ctx.radius;
+}
+
+/** Gap at which the dive pulls off: the overshoot, or (faster) the distance
+ *  the closing speed covers while the nose turns `RUN_PULL_TURN` at the
+ *  kind's turn rate, plus the miss clearance. Follows the kind's handling,
+ *  so a retuned ship keeps passing beside its target. */
+export function runPullDist(ctx: TacticalContext): number {
+  const closing = ctx.closing > 0 ? ctx.closing : 0;
+  const d = closing * (RUN_PULL_TURN / Math.max(ctx.maxAngvel, 1e-3)) + runMiss(ctx);
+  return d > ctx.overshoot ? d : ctx.overshoot;
 }
 
 // ── Break ───────────────────────────────────────────────────────────────
