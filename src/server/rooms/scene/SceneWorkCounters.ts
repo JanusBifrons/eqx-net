@@ -61,6 +61,9 @@ export interface SceneWorkView {
   /** Print-only (AI steering 2a, not yet calibrated): `AiNeighbourGrid`
    *  queries per tick. 0 until a behaviour queries the grid. */
   aiNeighbourQueriesPerTick: number;
+  /** Print-only (AI decision layer, slice 4, not yet calibrated): utility
+   *  re-scores per tick (5 Hz per fighting NPC, 2 Hz with no pilot near). */
+  aiDecisionsPerTick: number;
 }
 
 type ThreadCpu = () => { user: number; system: number };
@@ -99,6 +102,17 @@ export class SceneWorkCounters {
     if (!this.active) return;
     if (this.nbBase < 0) this.nbBase = queriesTotal;
     this.nbQueries = queriesTotal - this.nbBase;
+  }
+
+  /** AI decision running total at the first counted tick, and the latest. */
+  private decBase = -1;
+  private decisions = 0;
+
+  /** Called each counted tick with the controller's decision total (#14). */
+  aiDecisions(total: number): void {
+    if (!this.active) return;
+    if (this.decBase < 0) this.decBase = total;
+    this.decisions = total - this.decBase;
   }
 
   // CPU batches (print-only).
@@ -159,6 +173,7 @@ export class SceneWorkCounters {
       lineOfFireChecksPerTick: r(this.lofChecks / t),
       lineOfFireNarrowPerTick: r(this.lofNarrow / t),
       aiNeighbourQueriesPerTick: r(this.nbQueries / t),
+      aiDecisionsPerTick: r(this.decisions / t),
     };
   }
 }

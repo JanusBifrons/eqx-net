@@ -8,7 +8,9 @@ import type {
   AiWorldView,
   AiInputBits,
   IAiNeighbourQuery,
+  AiTickStats,
 } from '../contracts/IAiBehaviour.js';
+import { AimBoard } from './tactics/fireLanes.js';
 
 /**
  * Per-tick fire request emitted by a behaviour. The controller buffers these
@@ -63,6 +65,12 @@ interface AiRegistration {
  */
 export class AiController {
   private readonly entities = new Map<string, AiRegistration>();
+  /** Work counters behaviours bump through `view.stats` (running totals,
+   *  print-only: the scene counters read `decisions`). */
+  readonly stats: AiTickStats = { decisions: 0 };
+  /** Each brain's current aim point (fire-lane awareness, AI slice 5b): one
+   *  slot per registered entity, handed to brains as `view.aims`. */
+  readonly aims = new AimBoard();
   private readonly fireQueue: AiFireRequest[] = [];
   /**
    * Hostility marked for an entity that is not yet registered, buffered so it
@@ -81,6 +89,7 @@ export class AiController {
 
   register(entityId: string, slot: number, behaviour: IAiBehaviour): void {
     this.entities.set(entityId, { slot, behaviour });
+    this.aims.add(entityId);
     // Apply any hostility that arrived before this entity registered.
     const pending = this.pendingHostile.get(entityId);
     if (pending) {
@@ -91,6 +100,7 @@ export class AiController {
 
   unregister(entityId: string): void {
     this.entities.delete(entityId);
+    this.aims.remove(entityId);
     this.pendingHostile.delete(entityId);
   }
 
@@ -170,6 +180,7 @@ export class AiController {
    */
   clear(): void {
     this.entities.clear();
+    this.aims.clear();
     this.pendingHostile.clear();
   }
 
@@ -230,7 +241,7 @@ export class AiController {
     // every behaviour. The 60/sec rate is negligible vs the rest of
     // the engine; leave as-is. See `swarmEntitySnapshot` doc for the
     // full GC-pressure story.
-    const view: AiWorldView = { players, structures, swarms, tick, dtSec, resolveEntityInto, neighbours };
+    const view: AiWorldView = { players, structures, swarms, tick, dtSec, resolveEntityInto, neighbours, stats: this.stats, aims: this.aims };
     this.inputsQueued = 0;
     for (const [id, reg] of this.entities) {
       this.runEntity(id, reg, view, tick, entitySnapshot);
