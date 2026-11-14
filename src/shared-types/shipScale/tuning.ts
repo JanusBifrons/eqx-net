@@ -23,6 +23,7 @@ import type { ShipKind, WeaponMount } from '../shipKinds/types.js';
 import { SHIP_SCALE, SHIP_TUNING, type ShipTuningProfile } from './config.js';
 import { NAVAL_RANGE, type NavalRangeMode } from '../combat/navalRange.js';
 import { REAL_NAVAL_GUNS, navalGunEngageReach, type NavalGunId } from '../combat/navalGuns.js';
+import { destructionProfileIdForKind, type DestructionProfileId } from './destruction.js';
 
 export type SizeClass = 'fighter' | 'frigate' | 'cruiser' | 'capital';
 export const SIZE_CLASSES: readonly SizeClass[] = ['fighter', 'frigate', 'cruiser', 'capital'];
@@ -238,6 +239,9 @@ export interface ShipTuning {
    *  inertia and weight" (the 2026-11-12 money-shot push was ~10× this). */
   wreckPushMax: number;
   wreckPushMin: number;
+  /** How this kind breaks up when it dies (`destruction.ts`): `capital`,
+   *  `subcap` or `none`. The numbers are `DESTRUCTION_PROFILES[id]`. */
+  destruction: DestructionProfileId;
   /** Capital wreck break-up: the least speed (u/s) at which two neighbouring
    *  pieces part along their shared cut, at every point of it (spin
    *  included), so no seam hinges or slides shut (owner review 2026-11-13).
@@ -326,6 +330,7 @@ export function shipTuning(kind: ShipKind): ShipTuning {
     guardRadiusMin: ct.clearHull ? Math.max(BASE.guardRadiusMin * sp, kind.radius * 2) : BASE.guardRadiusMin * sp,
     wreckPushMax: WRECK_PUSH_MAX_PER_RADIUS * kind.radius,
     wreckPushMin: WRECK_PUSH_MIN_PER_RADIUS * kind.radius,
+    destruction: destructionProfileIdForKind(kind),
     wreckSeparate: WRECK_SEPARATE_PER_RADIUS * kind.radius,
     wreckColliderInset: WRECK_COLLIDER_INSET_PER_RADIUS * kind.radius,
     wreckKnockSpeed: WRECK_KNOCK_PER_RADIUS * kind.radius,

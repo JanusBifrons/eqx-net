@@ -139,6 +139,11 @@ const PRIMARY_MIN_SIDE = 0.03;
  *  length along the keel) aft of the tip: MIN + seeded × SPAN. */
 const TIP_SECTION_MIN = 0.15;
 const TIP_SECTION_SPAN = 0.2;
+/** Sub-capital sound primary (`chunkyPieces`): each of the two pieces holds
+ *  at least this share of the hull, else the line moves toward the centroid
+ *  by these fractions of the way (0 = through the kill point). */
+const SOUND_MIN_SHARE = 0.15;
+const SOUND_SHIFTS: readonly number[] = [0, 0.25, 0.5, 0.75, 1];
 
 const EDGE_HULL = 0;
 const EDGE_VORONOI = 1;
@@ -184,6 +189,37 @@ export interface FractureInput {
   /** Chance (0..1) of a clean snap in two along the primary line instead of
    *  a shatter. Default `FRACTURE_SNAP_CHANCE`. */
   readonly snapChance?: number;
+  /** v7 fan cracks from the kill point (default true). The sub-capital
+   *  destruction profile turns them off: a small hull breaks along the
+   *  primary crack and at most one zone crack. */
+  readonly fanCracks?: boolean;
+  /** The rare v7 far crack (default true; off for sub-capitals). */
+  readonly farCrack?: boolean;
+  /** Every piece must pass the v7 chunky guard (`FAN_MIN_WIDTH_BEAMS` wide,
+   *  at most `FAN_MAX_ASPECT` long for its width), or the optional cracks are
+   *  dropped one by one, like an over-cap result (default false; on for
+   *  sub-capitals). The primary crack is kept, but a small concave hull
+   *  needs it SOUND: where the line through the kill point would cut more
+   *  than two pieces (a fighter's wingtips) or leave one under
+   *  `SOUND_MIN_SHARE` of the hull, it moves toward the hull's centroid
+   *  (`SOUND_SHIFTS`), and failing that runs square across the keel through
+   *  the centroid. `fracturePlan` reports the unmoved line. The beam-scaled
+   *  zone cracks (a capital's impact zone is a beam wide; a fighter is
+   *  barely longer than its beam) are replaced by at most ONE extra crack
+   *  (`extraChunkChance`) across the longer side, sized to that side. */
+  readonly chunkyPieces?: boolean;
+  /** With `chunkyPieces`: the chance of the one extra crack at violence 0;
+   *  it rises by half of the rest at full violence. Default 0. */
+  readonly extraChunkChance?: number;
+  /** With `chunkyPieces`: the least piece width, in beams (default
+   *  `FAN_MIN_WIDTH_BEAMS`, 0.45). The aspect guard is v7's `FAN_MAX_ASPECT`. */
+  readonly chunkyMinWidthBeams?: number;
+  /** Jagged cut edges: most midpoint-subdivision levels per edge and the
+   *  displacement per level as a fraction of the sub-segment (defaults
+   *  `JAG_MAX_DEPTH` 4, `JAG_ROUGHNESS` 0.22). Sub-capitals use a shorter,
+   *  gentler jag, so a piece stays a handful of convex parts and a crack
+   *  across a small hull doesn't swing a piece's share of the area. */
+  readonly jag?: { readonly depth: number; readonly roughness: number };
 }
 
 /** The seeded decisions taken before any geometry (exposed for S2 and tests). */
@@ -229,15 +265,36 @@ export function fractureHull(input: FractureInput): FracturePiece[] {
   const hullArea = ringArea(hull);
   const scale = Math.sqrt(hullArea);
   const cuts = plan.snap ? [] : (input.sectionCuts ?? []);
-  const primary = plan.primary ? primaryCut(plan.primary) : null;
   const kill = projectRing(hull, input.killPoint.x, input.killPoint.y);
   const keel = keelAxis(hull);
+  const chunkyOnly = input.chunkyPieces === true;
+  const minArea = Math.max(4 * FRACTURE_QUANTUM * FRACTURE_QUANTUM, hullArea * 1e-6);
+  const beam = hullBeam(hull, keel);
+  const chunkyWidth = input.chunkyMinWidthBeams ?? FAN_MIN_WIDTH_BEAMS;
+  const jagDepth = input.jag?.depth ?? JAG_MAX_DEPTH;
+  const jagRoughness = input.jag?.roughness ?? JAG_ROUGHNESS;
+  const primary = plan.primary
+    ? chunkyOnly
+      ? soundPrimary(hull, plan.primary, keel, hullArea, minArea, beam, chunkyWidth)
+      : primaryCut(plan.primary)
+    : null;
 
   // v7 cracks: zone cracks either side of the primary, a fan into the zone
   // and (rarely) one far crack. A clean snap has none.
-  const cracks = plan.snap || plan.primary === null
+  const drawn = plan.snap || plan.primary === null
     ? { zone: [] as FractureLine[], fan: [] as LocalLine[], far: [] as FractureLine[] }
     : crackLines(hull, input.seed >>> 0, kill, plan.primary, keel, plan.targetPieces, input.killBlowDamage);
+  // Profile options (sub-capitals): drop whole crack families after the
+  // draws, so the seeded stream is the same whatever is used.
+  const cracks = {
+    zone: !chunkyOnly
+      ? drawn.zone
+      : plan.snap || primary === null
+        ? []
+        : extraCrack(hull, input.seed >>> 0, primary, keel, input.extraChunkChance ?? 0, input.killBlowDamage, input.recentDamageRate),
+    fan: input.fanCracks === false ? [] : drawn.fan,
+    far: input.farCrack === false ? [] : drawn.far,
+  };
 
   // Retry without fan cracks (one by one), then the far crack, the section
   // cuts, the zone cracks (one by one) and the primary line, until the cap
@@ -247,17 +304,16 @@ export function fractureHull(input: FractureInput): FracturePiece[] {
   let useFar = cracks.far.length > 0;
   let nZone = cracks.zone.length;
   let nFan = cracks.fan.length;
-  const minArea = Math.max(4 * FRACTURE_QUANTUM * FRACTURE_QUANTUM, hullArea * 1e-6);
   for (;;) {
     const lines: FractureLine[] = [];
     if (usePrimary) lines.push(primary!);
     for (let i = 0; i < nZone; i++) lines.push(cracks.zone[i]!);
     if (useFar) for (const f of cracks.far) lines.push(f);
     if (useCuts) for (const c of cuts) lines.push(sectionLine(c));
-    const rings = splitIntoPieces(hull, lines, cracks.fan, nFan, hullBeam(hull, keel));
+    const rings = splitIntoPieces(hull, lines, cracks.fan, nFan, beam);
     const quantised = quantiseRings(rings, minArea);
-    if (quantised.length <= cap) {
-      const jagged = jagCutEdges(weldTJunctions(quantised), input.seed >>> 0, scale);
+    const onlyPrimary = nFan === 0 && !useFar && !useCuts && nZone === 0;    if (quantised.length <= cap && (!chunkyOnly || onlyPrimary || allChunky(quantised, beam, chunkyWidth))) {
+      const jagged = jagCutEdges(weldTJunctions(quantised), input.seed >>> 0, scale, jagDepth, jagRoughness);
       return jagged.map(toPiece);
     }
     if (nFan > 0) nFan--;
@@ -460,6 +516,95 @@ function primaryCut(p: NonNullable<FracturePlan['primary']>): FractureLine {
   const nx = -p.dir.y;
   const ny = p.dir.x;
   return { nx, ny, c: nx * p.point.x + ny * p.point.y, kind: EDGE_PRIMARY };
+}
+
+/**
+ * Sub-capital primary crack (`chunkyPieces`): the plan's line, kept only when
+ * it splits the hull into exactly two pieces of at least `SOUND_MIN_SHARE`
+ * each. A line across a small concave hull clips wingtips and tail fins off
+ * as slivers (or cuts four pieces, which the cap then drops whole), so the
+ * line moves toward the centroid in `SOUND_SHIFTS` steps, same direction;
+ * the last resort is square across the keel through the centroid.
+ */
+function soundPrimary(
+  hull: P[], p: NonNullable<FracturePlan['primary']>, keel: Vec2, hullArea: number, minArea: number,
+  beam: number, minWidthBeams: number,
+): FractureLine {
+  const base = primaryCut(p);
+  const cen = ringCentroid(hull);
+  const sound = (l: FractureLine, strict: boolean): boolean => {
+    const parts = quantiseRings(splitBoth([hull], l), minArea);
+    if (parts.length !== 2) return false;
+    for (const r of parts) {
+      if (ringArea(r) < SOUND_MIN_SHARE * hullArea) return false;
+      if (strict && !isChunky(r, beam, minWidthBeams)) return false;
+    }
+    return true;
+  };
+  // First pass: both pieces chunky too; second: area only (a hull whose
+  // halves can't both be chunky, e.g. a long thin one).
+  for (let pass = 0; pass < 2; pass++) {
+    for (const f of SOUND_SHIFTS) {
+      const x = p.point.x + (cen.x - p.point.x) * f;
+      const y = p.point.y + (cen.y - p.point.y) * f;
+      const l: FractureLine = { nx: base.nx, ny: base.ny, c: base.nx * x + base.ny * y, kind: EDGE_PRIMARY };
+      if (sound(l, pass === 0)) return l;
+    }
+    if (pass === 0) {
+      // A swept delta wing: every cut across the keel leaves a wide thin
+      // tail strip. Try the diagonals, then down the keel, through the
+      // centroid (a fighter is not a capital: v4's "never along the keel"
+      // was about a 5 km hull).
+      const ax = -keel.y;
+      const ay = keel.x;
+      const dirs = [ax + keel.x, ay + keel.y, ax - keel.x, ay - keel.y, keel.x, keel.y];
+      for (let i = 0; i < dirs.length; i += 2) {
+        const nx = -dirs[i + 1]!;
+        const ny = dirs[i]!;
+        const l: FractureLine = { nx, ny, c: nx * cen.x + ny * cen.y, kind: EDGE_PRIMARY };
+        if (sound(l, true)) return l;
+      }
+    }
+  }
+  const sq = crackLine(cen.x, cen.y, 0, keel);
+  return { nx: sq.nx, ny: sq.ny, c: sq.c, kind: EDGE_PRIMARY };
+}
+
+/**
+ * Sub-capital extra chunk (`chunkyPieces`): with a seeded chance (rising
+ * with violence) one crack across the keel on the LONGER side of the primary
+ * crack, a seeded 35–65 % of the way to that end, tilted within `ZONE_TILT`.
+ * Its own seeded stream; the chunky guard drops it where it would leave a
+ * thin piece (so a stubby fighter mostly just snaps in two).
+ */
+function extraCrack(
+  hull: P[], seed: number, primary: FractureLine, keel: Vec2, chance: number,
+  killBlowDamage: number | undefined, recentDamageRate: number | undefined,
+): FractureLine[] {
+  const rng = new Rng(fnvMixU32(seed ^ 0x5bca9, 0x9));
+  const dWant = rng.u32() / 4294967296;
+  const dStation = rng.u32() / 4294967296;
+  const dTilt = rng.u32() / 4294967296;
+  const violence = 0.5 * damageResponse(killBlowDamage) + 0.5 * damageResponse(recentDamageRate);
+  if (dWant >= chance + (1 - chance) * 0.5 * violence) return [];
+  const cen = ringCentroid(hull);
+  // The primary's station along the keel: where it crosses the keel line
+  // through the centroid (the line is roughly across the keel).
+  const kn = primary.nx * keel.x + primary.ny * keel.y;
+  if (kn === 0) return [];
+  const alC = cen.x * keel.x + cen.y * keel.y;
+  const alP = alC + (primary.c - (primary.nx * cen.x + primary.ny * cen.y)) / kn;
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const p of hull) {
+    const a = p.x * keel.x + p.y * keel.y;
+    if (a < lo) lo = a;
+    if (a > hi) hi = a;
+  }
+  const st = hi - alP >= alP - lo ? alP + (0.35 + 0.3 * dStation) * (hi - alP) : alP - (0.35 + 0.3 * dStation) * (alP - lo);
+  const acC = cen.y * keel.x - cen.x * keel.y;
+  const at = { x: keel.x * st - keel.y * acC, y: keel.y * st + keel.x * acC };
+  return [crackLine(at.x, at.y, (2 * dTilt - 1) * ZONE_TILT, keel)];
 }
 
 function crackLine(px: number, py: number, t: number, keel: Vec2): FractureLine {
@@ -705,7 +850,7 @@ function hullBeam(hull: P[], keel: Vec2): number {
  *  its convex hull's edges) is at least FAN_MIN_WIDTH_BEAMS of the beam and
  *  its length along that edge is at most FAN_MAX_ASPECT × the width.
  *  Arithmetic and sqrt only, fixed order (deterministic). */
-function isChunky(ring: ReadonlyArray<{ x: number; y: number }>, beam: number): boolean {
+function isChunky(ring: ReadonlyArray<{ x: number; y: number }>, beam: number, minWidthBeams = FAN_MIN_WIDTH_BEAMS): boolean {
   const ch = convexHullOf(ring);
   if (ch.length < 3) return false;
   let bestW = Infinity;
@@ -732,7 +877,12 @@ function isChunky(ring: ReadonlyArray<{ x: number; y: number }>, beam: number): 
       bestL = hi - lo;
     }
   }
-  return bestW >= FAN_MIN_WIDTH_BEAMS * beam && bestL <= FAN_MAX_ASPECT * bestW;
+  return bestW >= minWidthBeams * beam && bestL <= FAN_MAX_ASPECT * bestW;
+}
+
+function allChunky(rings: ReadonlyArray<ReadonlyArray<{ x: number; y: number }>>, beam: number, minWidthBeams: number): boolean {
+  for (const r of rings) if (!isChunky(r, beam, minWidthBeams)) return false;
+  return true;
 }
 
 /** Convex hull (Andrew's monotone chain), CCW, collinear points dropped. */
@@ -904,13 +1054,13 @@ function edgeKey(ax: number, ay: number, bx: number, by: number): string {
 }
 
 /** Jag polyline interior points from canonical a → b (a lexicographically first). */
-function jagPoints(a: Vec2, b: Vec2, seed: number, segLen: number): Vec2[] {
+function jagPoints(a: Vec2, b: Vec2, seed: number, segLen: number, maxDepth: number, roughness: number): Vec2[] {
   const dx = b.x - a.x;
   const dy = b.y - a.y;
   const len = Math.sqrt(dx * dx + dy * dy);
   let depth = 0;
   let seg = len;
-  while (seg > segLen * 2 && depth < JAG_MAX_DEPTH) {
+  while (seg > segLen * 2 && depth < maxDepth) {
     seg /= 2;
     depth++;
   }
@@ -924,7 +1074,7 @@ function jagPoints(a: Vec2, b: Vec2, seed: number, segLen: number): Vec2[] {
   const rng = new Rng(h);
   for (let lvl = 1; lvl <= depth; lvl++) {
     const step = N >> lvl;
-    const amp = (JAG_ROUGHNESS * len) / (1 << lvl);
+    const amp = (roughness * len) / (1 << lvl);
     for (let i = step; i < N; i += 2 * step) {
       const r = rng.u32() / 4294967296;
       off[i] = (off[i - step]! + off[i + step]!) / 2 + (r * 2 - 1) * amp;
@@ -991,7 +1141,7 @@ function weldTJunctions(rings: P[][]): P[][] {
   return out;
 }
 
-function jagCutEdges(rings: P[][], seed: number, scale: number): P[][] {
+function jagCutEdges(rings: P[][], seed: number, scale: number, maxDepth: number, roughness: number): P[][] {
   // Count each Voronoi cut edge; only edges shared by exactly two pieces are
   // jagged, so both neighbours always draw the same line.
   const count = new Map<string, number>();
@@ -1019,7 +1169,7 @@ function jagCutEdges(rings: P[][], seed: number, scale: number): P[][] {
       const forward = a.x < b.x || (a.x === b.x && a.y < b.y);
       let pts = cache.get(key);
       if (!pts) {
-        pts = forward ? jagPoints(a, b, seed, segLen) : jagPoints(b, a, seed, segLen);
+        pts = forward ? jagPoints(a, b, seed, segLen, maxDepth, roughness) : jagPoints(b, a, seed, segLen, maxDepth, roughness);
         cache.set(key, pts);
       }
       if (pts.length === 0) continue;

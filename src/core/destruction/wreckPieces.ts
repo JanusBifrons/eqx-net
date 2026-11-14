@@ -22,7 +22,8 @@
  *
  * Runs once per death (not hot-loop code); allocates freely.
  */
-import { fractureHull, projectToOutline, FRACTURE_MAX_PIECES, FRACTURE_SNAP_CHANCE } from './fractureHull.js';
+import { fractureHull, projectToOutline, FRACTURE_SNAP_CHANCE } from './fractureHull.js';
+import { DESTRUCTION_PROFILES } from '../../shared-types/shipScale/destruction.js';
 import { Rng, fnvMixU32 } from '../random/rng.js';
 import { shipHullOutline, shipShapeScale } from '../geometry/shipHullOutline.js';
 import { getShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
@@ -209,16 +210,27 @@ function violence(kb: number, rate: number): number {
  */
 export function wreckPieceGeometry(input: WreckFractureInputs): WreckPieceGeometry[] {
   const kind = getShipKind(input.kindId);
+  // The kind's destruction profile picks the fracture options (a capital's
+  // are the fracture defaults: byte-identical); `none` leaves no pieces.
+  const opts = DESTRUCTION_PROFILES[shipTuning(kind).destruction].fracture;
+  if (opts === null) return [];
   const hull = shipHullOutline(kind);
   const s = shipShapeScale(kind);
   const fractured = fractureHull({
     hull,
     seed: input.seed >>> 0,
     killPoint: { x: input.killX, y: input.killY },
-    maxPieces: FRACTURE_MAX_PIECES,
+    maxPieces: opts.maxPieces,
     killBlowDamage: input.killBlowDamage,
     recentDamageRate: input.recentDamageRate,
+    // The descriptor's snap chance (what the server used) wins.
     snapChance: input.snapChance,
+    fanCracks: opts.fanCracks,
+    farCrack: opts.farCrack,
+    chunkyPieces: opts.chunkyPieces,
+    chunkyMinWidthBeams: opts.chunkyMinWidthBeams,
+    extraChunkChance: opts.extraChunkChance,
+    jag: opts.jag,
   });
   const hullAreaWorld = ringArea(hull) * s * s;
   const density = hullAreaWorld > 0 ? massOf(kind, 1) / hullAreaWorld : 0;
@@ -423,7 +435,7 @@ export function buildWreckPieces(input: WreckBuildInput): WreckBuild {
     killY: killLocal.y,
     killBlowDamage: input.killBlowDamage,
     recentDamageRate: input.recentDamageRate,
-    snapChance: FRACTURE_SNAP_CHANCE,
+    snapChance: DESTRUCTION_PROFILES[shipTuning(kind).destruction].fracture?.snapChance ?? FRACTURE_SNAP_CHANCE,
   };
   const geom = wreckPieceGeometry(fracture);
 

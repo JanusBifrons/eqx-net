@@ -39,7 +39,8 @@ export const CARGO_POD: ShipKind = defineShipKind({
   shieldMax: 1,
   shieldRegenDelayTicks: 600,
   shieldRegenRate: 0.01,
-  ai: { thrust: 0.1, turnKp: 1, maxTorque: 0.1 },
+  ai: { thrust: 0.1 },
+  aiRole: 'civilian',
   shape: {
     kind: 'composite',
     scale: 1,

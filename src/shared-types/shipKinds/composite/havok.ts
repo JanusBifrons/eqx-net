@@ -340,7 +340,8 @@ export const HAVOK: ShipKind = defineShipKind({
   shieldRegenRate: 150 / 120,
   energyMax: 150,
   energyRegenRate: 0.25,
-  ai: { thrust: 0.9, turnKp: 6.0, maxTorque: 3.0 },
+  ai: { thrust: 0.9 },
+  aiRole: 'fighter',
   // Keep out of the random ambient spawn pool for now; still player-selectable.
   engineeringOnly: true,
   shape: {
