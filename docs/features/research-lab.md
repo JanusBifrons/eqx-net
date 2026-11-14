@@ -71,3 +71,13 @@ it, or gamble three blueprints into one better one.
   real room and the real messages.
 - `src/client/components/ResearchLabPanel.test.tsx`: names only, fees shown,
   combine selection, job progress and Cancel, held verdicts.
+
+## Server implementation notes
+
+> Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.
+
+### From the server Thresholds section
+
+Moved verbatim from the old "Thresholds" section of `src/server/CLAUDE.md`. The rules stay there in short form; current values are in [server-thresholds](../architecture/server-thresholds.md). Dates, plan names and "was" notes below are history.
+
+- **Research Lab (economy v2 W3)**: `structures/ResearchLabSubsystem.ts` (room) + `economy/LabBoard.ts` (global, the `lab_jobs` economy-state row). **Rules:** (1) a running job HOLDS its blueprints (they leave storage at start) — the storage change, the job record and the wallet fee commit as ONE group (`StorageService.commitChanged`); never move a lab's blueprints any other way; (2) jobs advance only on powered, built pulses and finish into the lab's network storage (no storage ⇒ the finished job waits); (3) a lab leaving the world spills its job's blueprints as a pod (`onRemoved`, in the same eviction seam as storage spills); (4) the rules (fees, times, combine roll seeded from the input uids — no reroll by cancel+retry) live ONLY in `shared-types/research.ts`; (5) the panel is rebuilt from `lab_state` replies only (#16). Lock: `tests/integration/sectorRoom/researchLab.test.ts`. Story: [docs/features/research-lab.md](research-lab.md).

@@ -36,3 +36,12 @@ Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each r
 - Nothing fades: the old sector is flown out of (the room swap waits for it), the new one is flown into. Never add a fade or a cut to hide loading; stretch the trip instead.
 - A new jump of the local ship during a trip must add to `mirror.travelJumpX/Y` so the sky carries across it.
 - Story: [docs/architecture/travel-state.md](travel-state.md).
+## Server implementation notes
+
+> Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.
+
+### From the server Thresholds section
+
+Moved verbatim from the old "Thresholds" section of `src/server/CLAUDE.md`. The rules stay there in short form; current values are in [server-thresholds](server-thresholds.md). Dates, plan names and "was" notes below are history.
+
+- **Phase 5 — in-game roster switching via transit (2026-05-13)**: `EngageTransitSchema` gains an optional `shipId: z.string().min(1)` field. When present, `TransitOrchestrator.beginTransit(playerId, target, arrival?, shipId?)` validates ownership via `playerShipStore.get(shipId).playerId === playerId` BEFORE spinning up the state machine — foreign / unknown ids reject with `destination_unavailable` (single load-bearing check that prevents ship-hijack via the wire). On commit the `shipId` is threaded through `reserveSeatFor` options to the destination room's `onJoin`, where the existing Phase 3 shipId-bind path (`JoinOptionsSchema.shipId`) hydrates the named roster row instead of the source ship's Limbo entry. The orchestrator's 4th constructor arg is the `PlayerShipStore`; omitting it makes any shipId-carrying request reject as unknown (safe-by-default). Absent `shipId` ⇒ legacy path (the source ship continues into the destination, exactly as Phase 8 sub-phase B). The CLIENT'S in-game spawn-from-roster does NOT use this path — it dispatches a `pendingShipSwap` Zustand intent that App.tsx executes as a direct leave-current-room + join-new-room cycle (loading spinner via 'connecting' phase). The transit-orchestrator shipId path is kept as a future seam (server-side validated; not invoked by current UI).
