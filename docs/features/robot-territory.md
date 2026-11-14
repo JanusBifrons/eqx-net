@@ -155,3 +155,13 @@ With no loot pod, hauler or player storage to go after, a harvester **mines the 
 | Search range | 3000 u from the harvester |
 
 Tests: `robotTerritory.test.ts` ("mines a rock, from its finite ore", "never burns ore into a full hold"), `asteroidResources.test.ts` (the shared yield).
+
+## Server implementation notes
+
+> Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.
+
+### From the server Thresholds section
+
+Moved verbatim from the old "Thresholds" section of `src/server/CLAUDE.md`. The rules stay there in short form; current values are in [server-thresholds](../architecture/server-thresholds.md). Dates, plan names and "was" notes below are history.
+
+- **Robot territory + nexus (plan peppy-jumping-pinwheel P3a)**: `RobotTerritory` (`livingworld/`) owns the single robot nexus (`rbot-nexus`, kind `robot-nexus`, shedImmune, stationary, pulse-orb weapon, rich loot) and per-sector control (`core/territory/sectorControl.ts`: pressure −100..100, claim 60 / release 20, 1.5/s). **Rules:** (1) it hooks into the ROBOT director only — `respawnAnchor` is the robots-only exception to entry-only ingress (reinforcements spawn AT a living nexus); never give the drone director an anchor; (2) robot-held owners reach `/galaxy/snapshot` through the DRONE director's `sectorOwner` hook (still the only snapshot provider); (3) director hooks attach after construction via `setHooks` (merge). Not persisted (fresh nexus + zero pressure on boot). Showcase room `nexus-showcase`. **P3c:** (4) a harvester raid is ONE `StorageService.tradeTransfer({take:{…, intoOwner: null}})` group per step (stolen cargo is ownerless, so a killed raider spills it); the owner warning is a throttled `trade_notice` (`raided`) + a `storage_raided` audit event; (5) a CHARGE weapon (`chargeTicks`) is gated in `AiFireResolver.resolve` — the trigger arms a reusable per-shooter record and `releaseCharges(tick)` (called after `runAiTick`) fires the mounts that bore at the pull, down their barrels from the current pose; `evictSwarmEntity` must `forget` the shooter. The `drones[].charging` bit (emit-when-true) is the #16 carrier for the telegraph. **W6:** (6) a harvester MINES only through `SectorRoom.mineAsteroid`: the Miner's finite pool (`drawAsteroidResources`) and the shared yield (`asteroidYield`), sized to the hold's free weight, one hold commit; never give an extractor its own ore maths. Locks: `sectorControl.test.ts`, `tests/integration/sectorRoom/robotTerritory.test.ts`. 🔴 netgate (the nexus on the swarm wire + respawn path). Story: [docs/features/robot-territory.md](robot-territory.md).
