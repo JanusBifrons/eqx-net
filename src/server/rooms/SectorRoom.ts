@@ -7651,7 +7651,7 @@ export class SectorRoom extends Room<SectorState> {
       // leaves too): the room's NPC departure, not a drop in this room.
       if (w.leave && phase === 2) {
         this.npcWarps.delete(id);
-        if (this.despawnLivingWorldBot(id) !== null) serverLogEvent('npc_morale_departed', { botId: id, sectorKey: this.sectorKey ?? '' });
+        if (this.livingWorldBotHooks.despawnBot(id, 'fled') !== null) serverLogEvent('npc_morale_departed', { botId: id, sectorKey: this.sectorKey ?? '' });
         continue;
       }
       if (w.lastPhase === 2 && phase === 0) w.arrivedUntil = this.serverTick + ARRIVED_TICKS;

@@ -21,7 +21,7 @@
 import { sectorSites, warpDropPoint, type SectorSite } from '../../core/galaxy/sectorSites.js';
 import { sectorController } from '../../core/galaxy/control.js';
 import { getNeighbours, getSector } from '../../core/galaxy/galaxy.js';
-import type { Bus } from '../../core/events/Bus.js';
+import type { Bus, BusEventPayloads } from '../../core/events/Bus.js';
 import type { ShipKindId } from '../../shared-types/shipKinds.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { CAPITAL_STYLE_VARIANTS } from '../../shared-types/shipKinds/capitals/index.js';
@@ -160,7 +160,11 @@ export class FlagshipDirector {
   private readonly now: () => number;
   private readonly respawnMs: number;
   private readonly dwellMs: number;
-  private readonly subs: Array<{ bus: Bus; fn: (e: { type: 'ENTITY_DESTROYED'; entityId: string }) => void }> = [];
+  private readonly subs: Array<{
+    bus: Bus;
+    fn: (e: { type: 'ENTITY_DESTROYED'; entityId: string }) => void;
+    onDeparted: (e: BusEventPayloads['BOT_DESPAWNED']) => void;
+  }> = [];
   private generation = 0;
   private nextPersistAtMs = 0;
 
@@ -188,14 +192,24 @@ export class FlagshipDirector {
       const fn = (e: { type: 'ENTITY_DESTROYED'; entityId: string }): void => {
         if (e.entityId.startsWith(FLAGSHIP_BOT_ID_PREFIX)) this.onShipDestroyed(e.entityId);
       };
+      // A fleet ship that fled (its own morale warp-out) is gone for good:
+      // it leaves the fleet like a loss (2026-11-14). A 'transit' despawn is
+      // this director's own move.
+      const onDeparted = (e: BusEventPayloads['BOT_DESPAWNED']): void => {
+        if (e.reason === 'fled' && e.botId.startsWith(FLAGSHIP_BOT_ID_PREFIX)) this.onShipDestroyed(e.botId, true);
+      };
       bus.on('ENTITY_DESTROYED', fn);
-      this.subs.push({ bus, fn });
+      bus.on('BOT_DESPAWNED', onDeparted);
+      this.subs.push({ bus, fn, onDeparted });
     }
     this.tick(this.now());
   }
 
   stop(): void {
-    for (const s of this.subs) s.bus.off('ENTITY_DESTROYED', s.fn);
+    for (const s of this.subs) {
+      s.bus.off('ENTITY_DESTROYED', s.fn);
+      s.bus.off('BOT_DESPAWNED', s.onDeparted);
+    }
     this.subs.length = 0;
   }
 
@@ -465,7 +479,8 @@ export class FlagshipDirector {
 
   // ── losses ────────────────────────────────────────────────────────────
 
-  private onShipDestroyed(id: string): void {
+  /** A fleet ship is gone: killed, or (`fled`) warped out on its own morale. */
+  private onShipDestroyed(id: string, fled = false): void {
     for (const f of this.fleets) {
       if (!f.alive) continue;
       if (f.leadId === id) {
@@ -478,8 +493,8 @@ export class FlagshipDirector {
         f.escorts = [];
         f.alive = false;
         f.respawnAtMs = this.now() + this.respawnMs;
-        serverLogEvent('flagship_destroyed', { name: f.name, sectorKey: f.sectorKey });
-        this.announce({ type: 'world_notice', kind: 'elite_killed', message: `The ${f.name} has been destroyed!` });
+        serverLogEvent(fled ? 'flagship_fled' : 'flagship_destroyed', { name: f.name, sectorKey: f.sectorKey });
+        if (!fled) this.announce({ type: 'world_notice', kind: 'elite_killed', message: `The ${f.name} has been destroyed!` });
         f.sectorKey = null;
         return;
       }
