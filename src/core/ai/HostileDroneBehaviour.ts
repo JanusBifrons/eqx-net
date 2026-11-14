@@ -6,6 +6,7 @@ import {
 } from '../contracts/IAiBehaviour.js';
 import { getWeapon, type WeaponMode } from '../combat/WeaponCatalogue.js';
 import { hasTurretFireControl, mountWeaponReach } from '../combat/mountReach.js';
+import { FC_MOUNT_FIRE_TOLERANCE } from '../combat/fireControlBearing.js';
 import { getShipKind, type ShipKind } from '../../shared-types/shipKinds.js';
 import {
   isOnSightHostile,
@@ -448,6 +449,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   }
 
   tick(self: AiEntity, view: AiWorldView): AiIntent {
+    this._aimValid = false;
     // Boost energy regenerates every tick, as a pilot's pool does.
     this.energy = regenEnergyStep(this.energy, this.energyMax, this.energyRegen);
     // 1) Time-decay: drop hostiles whose last hit aged past FORGET_TICKS.
@@ -677,6 +679,9 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     // Bearing toward the lead-aim point, not the target's current pose.
     const desiredAngle = facingOf(aimDx, aimDy);
     const bearingError = wrapAngle(desiredAngle - self.angle);
+    this._aimValid = true;
+    this._aimX = aimX;
+    this._aimY = aimY;
 
     // Weapon-aware stand-off (weapons/energy/AI overhaul §4): beam bores to
     // ~50 % of its short reach, bolt holds the mid-range dogfight, missile
@@ -719,10 +724,18 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     // Phase 4c (2026-05-11): kinds with rotating mounts add the widest
     // mount's half-arc to the body-aim tolerance, so a drone fires when
     // a turret can reach the target even when the body itself is off.
+    //
+    // Fixed guns (no turning mount) fire only when the nose bears, by the
+    // pilot's rule (`FC_MOUNT_FIRE_TOLERANCE`, a player's fixed guns get the
+    // same window): the shot leaves down the drawn barrel, so the wider cone
+    // fired bolts visibly off the gun (owner 2026-11-14). A turret kind keeps
+    // the wide request; the resolver fires only the barrels that bear.
     const baseTolerance = dist < this.fireRange * POINT_BLANK_RATIO
       ? DRONE_AIM_TOLERANCE_CLOSE
       : DRONE_AIM_TOLERANCE;
-    const aimTolerance = baseTolerance + this.maxTurretHalfArc;
+    const aimTolerance = this.maxTurretHalfArc > 0
+      ? baseTolerance + this.maxTurretHalfArc
+      : FC_MOUNT_FIRE_TOLERANCE;
 
     const aimed = Math.abs(bearingError) <= aimTolerance;
     const inRange = dist <= this.fireRange;
@@ -1002,6 +1015,25 @@ export class HostileDroneBehaviour implements IAiBehaviour {
 
   /** Test-visible: the NPC's boost energy pool. */
   getEnergy(): number { return this.energy; }
+
+  // ── Turret aim point (owner 2026-11-14: "The turrets also aren't turning
+  // to shoot the direction they do") ─────────────────────────────────────
+  // Where this pilot's guns want to point THIS tick: the lead point of its
+  // combat target, whatever that is (a pilot, another ship, a structure).
+  // The server's WeaponMountTicker slews turning mounts onto it, so a turret
+  // ship's barrels follow the fight it is in, not only hostile pilots.
+  // Cleared at the top of every tick; set only by combat. Plain fields (#14).
+  private _aimValid = false;
+  private _aimX = 0;
+  private _aimY = 0;
+
+  /** The lead point this tick's combat aims at (false = not in combat). */
+  aimPoint(out: { x: number; y: number }): boolean {
+    if (!this._aimValid) return false;
+    out.x = this._aimX;
+    out.y = this._aimY;
+    return true;
+  }
 
   // ── Line-of-fire feedback (friendly fire; plan composed-harbor §4) ──────
   // The room's LineOfFireGate held this NPC's shot because a friendly body
