@@ -32,7 +32,7 @@ import {
 } from './flocking.js';
 import type { AiEntityPoseOut } from '../contracts/IAiBehaviour.js';
 import { shipBodyMass, shipTuning } from '../../shared-types/shipScale/tuning.js';
-import { AI_INPUT_BOOST } from '../contracts/IAiBehaviour.js';
+import { AI_INPUT_BOOST, AI_INPUT_TURN_LEFT, AI_INPUT_TURN_RIGHT } from '../contracts/IAiBehaviour.js';
 import { BOOST_TICK_COST, canAfford, regenEnergyStep, spendEnergy } from '../combat/Energy.js';
 import {
   brakingSpeed,
@@ -46,7 +46,7 @@ import {
   type PilotParams,
   type PilotState,
 } from './virtualPilot.js';
-import { roleProfile, roleSensorRange, type RoleProfile } from './tactics/roleProfiles.js';
+import { missileArmedProfile, roleProfile, roleSensorRange, type RoleProfile } from './tactics/roleProfiles.js';
 import { TARGET_CLAIM_WEIGHT } from './tactics/targetClaims.js';
 import {
   FACE_AIM_LEAD,
@@ -180,6 +180,13 @@ const GUARD_PILOT_PARAMS: Readonly<PilotParams> = { ...DEFAULT_PILOT_PARAMS, thr
  *  wants clearly less speed than it has, and each throttle choice stands for
  *  `COMBAT_THROTTLE_HOLD_TICKS` (no on/off chatter). */
 const COMBAT_THROTTLE_HOLD_TICKS = 8;
+/** The target's speed as the slow-target call (`targetSlow`) sees it,
+ *  smoothed over ~0.75 s (first-order, per combat tick). A Robot Orb dips from ~120 to
+ *  10–50 u/s for a moment in every tight turn; read raw, each dip flipped
+ *  a tailing fighter to a strafing run and back (take 6: Tail / AttackRun /
+ *  Break 0.63 switches a second against an Orb, 0.17–0.32 against a Cube). */
+const TARGET_SPEED_TAU_TICKS = 45;
+const TARGET_SPEED_GAIN = 1 / TARGET_SPEED_TAU_TICKS;
 const COMBAT_PILOT_PARAMS: Readonly<PilotParams> = {
   ...DEFAULT_PILOT_PARAMS, boostConeCos: 0.8, boostSpeedGap: 0.15,
   combatThrust: true, throttleHoldTicks: COMBAT_THROTTLE_HOLD_TICKS,
@@ -549,6 +556,9 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    *  above it): it counts toward the parked memory only after
    *  `TARGET_STILL_MIN_S`. */
   private _tParkedSince = -1;
+  /** Turn-key reversals (test-visible) and the last turn key held (1 L, −1 R). */
+  private _turnReversals = 0;
+  private _lastTurnKey = 0;
   /** Decisions taken while tailed (`isTailed`), and Breaks begun (test-visible). */
   private _tailedDecisions = 0;
   private _breaksBegun = 0;
@@ -558,7 +568,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
 
   // ── Decision layer (slice 4): manoeuvres + utility picker ─────────────
   /** The role's tactics profile (`kind.aiRole`). */
-  private readonly role: RoleProfile;
+  private role: RoleProfile;
   /** Reused tactical context + goal (#14). */
   private readonly _tac: TacticalContext = makeTacticalContext();
   private readonly _goal: ManoeuvreGoal = makeManoeuvreGoal();
@@ -608,6 +618,10 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   /** A switch waiting out the role's reaction time (-1 = none). */
   private _pendingId = -1;
   private _pendingAt = 0;
+  /** The body target's speed smoothed over ~`TARGET_SPEED_TAU_TICKS` (reset
+   *  on a new target): the slow-target call reads it (`targetSlow`). */
+  private _tSpeedAvg = 0;
+  private _tSpeedId: string | null = null;
   /** Recent-hit counter (decays with `HIT_HALF_LIFE_TICKS`), from `markHostile`. */
   private _hitsVal = 0;
   private _hitsTick = 0;
@@ -678,6 +692,9 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       this.stopDistFactor = BROADSIDE_STANDOFF;
       this.backoffInsideFactor = 0;
     }
+    // A ship whose guns are missiles holds its distance whatever its role:
+    // Kite is its best manoeuvre (`missileArmedProfile`).
+    if (this.weaponMode === 'missile' && !this.broadside) this.role = missileArmedProfile(this.kind.aiRole);
     this.sensorRange = roleSensorRange(this.kind.aiRole, this.fireRange);
     const tac = this._tac;
     tac.fireRange = this.fireRange;
@@ -1517,6 +1534,14 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     c.fwdX = -Math.sin(self.angle);
     c.fwdY = Math.cos(self.angle);
     c.tx = target.x; c.ty = target.y; c.tvx = target.vx; c.tvy = target.vy;
+    const tsNow = Math.hypot(target.vx, target.vy);
+    if (target.id !== this._tSpeedId) {
+      this._tSpeedId = target.id;
+      this._tSpeedAvg = tsNow;
+    } else {
+      this._tSpeedAvg += (tsNow - this._tSpeedAvg) * TARGET_SPEED_GAIN;
+    }
+    c.targetSpeed = this._tSpeedAvg;
     c.targetIsShip = (target as { ship?: boolean }).ship !== false;
     c.dist = dist; c.ux = ux; c.uy = uy;
     c.aimX = aimX; c.aimY = aimY;
@@ -1524,7 +1549,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     c.offBoresight = bearingError < 0 ? -bearingError : bearingError;
     // d(dist)/dt = (v_target − v_self)·u; closing is its negative.
     c.closing = -((target.vx - self.vx) * ux + (target.vy - self.vy) * uy);
-    const ts = Math.hypot(target.vx, target.vy);
+    const ts = tsNow;
     // Still-memory: a nudge does not make a parked / slow target a moving one.
     if (target.id !== this._stillTargetId) {
       this._stillTargetId = target.id;
@@ -1618,7 +1643,10 @@ export class HostileDroneBehaviour implements IAiBehaviour {
         this.switchManoeuvre(p.decide(c, this.role, true), tick);
         return;
       }
-      const want = p.decide(c, this.role, done);
+      // A running Kite is already getting out from under its attacker: a
+      // Break across the line would hand the gap back (take 6: the Heavy
+      // flipped Kite / Break every 1-2 s).
+      const want = p.decide(c, this.role, done, !(p.current === MANOEUVRE_KITE && this._kite.running));
       // Tailed with a Break on offer (not cooling down) yet another pick won.
       if (want !== MANOEUVRE_BREAK && p.scores[MANOEUVRE_BREAK]! > 0 && isTailed(c)) this._breakRefused++;
       if (done) {
@@ -2002,6 +2030,12 @@ export class HostileDroneBehaviour implements IAiBehaviour {
         this._boostTicks++;
       } else bits &= ~AI_INPUT_BOOST;
     }
+    // Turn-key reversals (left then right or back, releases between ignored).
+    const turn = (bits & AI_INPUT_TURN_LEFT) !== 0 ? 1 : (bits & AI_INPUT_TURN_RIGHT) !== 0 ? -1 : 0;
+    if (turn !== 0) {
+      if (this._lastTurnKey !== 0 && turn !== this._lastTurnKey) this._turnReversals++;
+      this._lastTurnKey = turn;
+    }
     const out = this._intentScratch;
     out.fx = 0;
     out.fy = 0;
@@ -2049,6 +2083,8 @@ export class HostileDroneBehaviour implements IAiBehaviour {
 
   /** The pool as a 0..1 fraction of the kind's `energyMax` (for tactics). */
   getEnergyFrac(): number { return this.energyMax > 0 ? this.energy / this.energyMax : 0; }
+  /** Test-visible: turn-key reversals flown (left then right, or back). */
+  getTurnReversals(): number { return this._turnReversals; }
 
   // ── Line-of-fire feedback (friendly fire; plan composed-harbor §4) ──────
   // The room's LineOfFireGate held this NPC's shot because a friendly body

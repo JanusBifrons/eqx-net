@@ -228,29 +228,57 @@ export class OrbitManoeuvre implements IManoeuvre {
 }
 
 // ── Kite ────────────────────────────────────────────────────────────────
-/** Deep inside the band (below this × bandMin) the kite turns and runs
- *  (nose along the move, boost) instead of backing off nose on: a fighter
- *  closing faster than a frigate can reverse would otherwise sit on it. */
+/** Deep inside the band (below this × bandMin) the kite runs whatever the
+ *  target is doing: it is too close to back off nose on. */
 const KITE_RUN_FRAC = 0.7;
-/** Stop running once back out past this × bandMin. */
-const KITE_RUN_EXIT = 1;
+/** A run from an attacker lasts until the gap is back out past this ×
+ *  bandMax: a margin past the band's outer edge, so the turn back to face
+ *  does not hand the gap straight back to a chaser (no run / face flip-flop
+ *  at the edge). A run only because the target sat too close (drifting in
+ *  slower than I can reverse) ends back at bandMin, as before. */
+export const KITE_RUN_EXIT = 1.15;
+
+/** My reverse top speed: cruise × reverse / thrust acceleration (the kind's
+ *  own numbers, #18). A Heavy backs off at ~0.4 × cruise, a frigate ~0.3 ×. */
+export function kiteReverseSpeed(ctx: TacticalContext): number {
+  return ctx.accel > 0 ? (ctx.cruiseSpeed * ctx.brakeAccel) / ctx.accel : 0;
+}
+
+/** Attacked: the target comes at me (its own speed toward me) faster than I
+ *  can back off nose on, and it is inside the band's outer edge. */
+export function kiteAttacked(ctx: TacticalContext): boolean {
+  if (!ctx.targetIsShip || ctx.dist >= ctx.bandMax) return false;
+  const approach = -(ctx.tvx * ctx.ux + ctx.tvy * ctx.uy);
+  return approach > kiteReverseSpeed(ctx);
+}
 
 /**
- * Hold the role band (missile boats; replaces the impulse era's
- * `backoffInsideFactor` path in the decision layer). The wanted speed along
- * the target line is the target's own along it plus a correction toward the
- * band's middle (± cruise at the band's edges), so a closing target is met by
- * reversing with the nose (and the launchers) still on it. Caught deep inside
- * the band, it turns and runs with boost until it is back at the band, then
- * turns to face again.
+ * Hold the role band (missile boats, and any ship whose guns are missiles).
+ * The wanted speed along the target line is the target's own along it plus a
+ * correction toward the band's middle (± cruise at the band's edges), so a
+ * target that drifts in is met by backing off with the nose (and the
+ * launchers) still on it.
+ *
+ * Attacked (owner 2026-11-14, take 6: "it should be fleeing in one direction
+ * at full speed, to maintain distance"): when the target comes at me faster
+ * than my reverse can back off ({@link kiteAttacked}), or it is deep inside
+ * the band, the kite turns away and runs straight from it at full throttle
+ * with boost, and keeps running until the gap is back past the band
+ * ({@link KITE_RUN_EXIT} × bandMax); then it turns to face and shoot again.
+ * Backing off nose on at reverse speed (a Heavy ~63 u/s against a robot
+ * closing at ~200) let the gap fall from ~580 to ~200 u in 2 s; the filmed
+ * Heavy "stays there or slowly moves in circles".
  */
 export class KiteManoeuvre implements IManoeuvre {
   readonly id = MANOEUVRE_KITE;
   /** Running away (nose along the move) rather than backing off. */
   running = false;
+  /** This run is from an attacker ({@link kiteAttacked}): it ends past
+   *  {@link KITE_RUN_EXIT} × bandMax, not at bandMin. */
+  fromAttack = false;
   /** Last wanted speed along the target line (+ closing), test-visible. */
   along = 0;
-  begin(): void { this.running = false; }
+  begin(): void { this.running = false; this.fromAttack = false; }
   writeGoal(ctx: TacticalContext, maps: ContextMaps, out: ManoeuvreGoal): void {
     const mid = 0.5 * (ctx.bandMin + ctx.bandMax);
     const half = Math.max(1, 0.5 * (ctx.bandMax - ctx.bandMin));
@@ -261,10 +289,14 @@ export class KiteManoeuvre implements IManoeuvre {
     let along = tAlong + k * ctx.cruiseSpeed;
     if (along > ctx.maxSpeed) along = ctx.maxSpeed;
     else if (along < -ctx.maxSpeed) along = -ctx.maxSpeed;
+    const attacked = kiteAttacked(ctx);
     if (this.running) {
-      if (ctx.dist > KITE_RUN_EXIT * ctx.bandMin) this.running = false;
-    } else if (ctx.targetIsShip && ctx.dist < KITE_RUN_FRAC * ctx.bandMin && ctx.closing > 0) {
+      if (attacked) this.fromAttack = true;
+      const exit = this.fromAttack ? KITE_RUN_EXIT * ctx.bandMax : ctx.bandMin;
+      if (!ctx.targetIsShip || ctx.dist > exit) this.running = false;
+    } else if (attacked || (ctx.targetIsShip && ctx.dist < KITE_RUN_FRAC * ctx.bandMin && ctx.closing > 0)) {
       this.running = true;
+      this.fromAttack = attacked;
     }
     if (this.running) along = -ctx.maxSpeed;
     this.along = along;
@@ -273,6 +305,10 @@ export class KiteManoeuvre implements IManoeuvre {
     out.speed = along < 0 ? -along : along;
     out.facing = this.running ? FACE_MOVE : FACE_AIM_LEAD;
     out.boost = this.running || ctx.dist > ctx.bandMax * 1.5;
+    // A run is a run: full throttle the moment it starts (no throttle hold
+    // left over from backing off) and boost with the nose anywhere within
+    // 90° of the course while it comes round.
+    out.throttleNow = this.running;
   }
   isDone(): boolean { return false; }
 }

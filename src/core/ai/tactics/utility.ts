@@ -245,7 +245,7 @@ export class ManoeuvrePicker {
 
   /** Score and return the manoeuvre the ship wants now. With `currentDone`
    *  the running one may be chosen again (a fresh run). */
-  decide(ctx: TacticalContext, role: RoleProfile, currentDone: boolean): ManoeuvreId {
+  decide(ctx: TacticalContext, role: RoleProfile, currentDone: boolean, breakAllowed = true): ManoeuvreId {
     this.decisions++;
     const s = this.scores;
     scoreManoeuvres(ctx, role, s);
@@ -253,6 +253,7 @@ export class ManoeuvrePicker {
     const cur = this.current;
     // Cooling down from a Break (or one just finished): no new Break yet.
     if (cur === MANOEUVRE_BREAK ? currentDone : ctx.tick - this.lastBreakEnd < BREAK_COOLDOWN_TICKS) s[MANOEUVRE_BREAK] = 0;
+    if (!breakAllowed) s[MANOEUVRE_BREAK] = 0;
     if (!currentDone) s[cur] = s[cur]! * (1 + STICKINESS);
     let best: ManoeuvreId = MANOEUVRE_HOLD;
     let bestScore = s[MANOEUVRE_HOLD]!;
