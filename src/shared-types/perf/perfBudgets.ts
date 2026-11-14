@@ -58,7 +58,14 @@ export const COUNT_BUDGETS: Record<string, CountBudget> = {
   // 2026-11-09, laptop, two runs: 17.1 / 16.9 KB/s (swarm 29: the fleet + two robot waves).
   'capital-fleet': { rxKBps: 22, minSwarm: 20, measured: '16.9–17.1 KB/s, 2026-11-09' },
   // 2026-11-09, laptop, two runs: 11.6 / 11.6 KB/s (one battleship firing on the pilot).
-  'capital-duel': { rxKBps: 15, minSwarm: 1, measured: '11.6 KB/s, 2026-11-09' },
+  // 2026-11-14, real naval ranges (the default): 18.5 KB/s, 4 runs. The cost is
+  // the scene, not the shells: at legacy the battleship already sits at its
+  // stand-off (0.75 × 5.4 km ≈ 4 km), parked, its pose on the 1 Hz refresh
+  // (swarm 0.06 KB/s); at real its stand-off is ~29 km, so it steams off,
+  // turning, and its in-interest pose rides the binary wire every tick (swarm
+  // 3.1 KB/s), and the JSON snapshot grows 721 -> 771 B (14.1 -> 15.1 KB/s)
+  // with the live fight. Shell events are 0.14 KB/s of it (salvo + end).
+  'capital-duel': { rxKBps: 24, minSwarm: 1, measured: '11.6 KB/s legacy, 2026-11-09; real ranges 2026-11-14: laptop 4 runs 18.5 KB/s (snapshot 15.1, swarm 3.1, shell events 0.14)' },
   // 2026-11-08: the 80-ship sustained fight seen from the zoom-out floor (asteroids on).
   'wide-view': {
     rxKBps: 418, minSwarm: 50,
