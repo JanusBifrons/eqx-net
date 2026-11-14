@@ -12,6 +12,9 @@
 import { defineShipKind } from '../shipScale/defineShipKind.js';
 import {
   LEGACY_FORWARD_MOUNT,
+  NOSE_TURRET_SLEW_HEAVY,
+  NOSE_TURRET_SLEW_LIGHT,
+  noseTurretMount,
   LEGACY_PRIMARY_SLOT,
   type ShipKind,
 } from './types.js';
@@ -53,7 +56,7 @@ export const ROBOT_SQUARE: ShipKind = defineShipKind({
       [-10, 10],
     ],
   },
-  mounts: [{ ...LEGACY_FORWARD_MOUNT, weaponId: 'laser' }],
+  mounts: [noseTurretMount('laser', NOSE_TURRET_SLEW_LIGHT)],
   slots: [LEGACY_PRIMARY_SLOT],
 });
 
@@ -96,7 +99,7 @@ export const ROBOT_CIRCLE: ShipKind = defineShipKind({
   aiRole: 'robot',
   shape: { kind: 'polygon', color: ROBOT_COLOR_T2, scale: 1, points: ngon(12, 13) },
   // P3c — the orb's beam now CHARGES (a visible wind-up before a heavy shot).
-  mounts: [{ ...LEGACY_FORWARD_MOUNT, weaponId: 'charge-laser' }],
+  mounts: [noseTurretMount('charge-laser', NOSE_TURRET_SLEW_LIGHT)],
   slots: [LEGACY_PRIMARY_SLOT],
 });
 
@@ -213,6 +216,6 @@ export const ROBOT_HEXAGON: ShipKind = defineShipKind({
   ai: { thrust: 0.7 },
   aiRole: 'robot',
   shape: { kind: 'polygon', color: ROBOT_COLOR_T3, scale: 1, points: ngon(6, 20, Math.PI / 6) },
-  mounts: [{ ...LEGACY_FORWARD_MOUNT, weaponId: 'heat-seeker' }],
+  mounts: [noseTurretMount('heat-seeker', NOSE_TURRET_SLEW_HEAVY)],
   slots: [LEGACY_PRIMARY_SLOT],
 });

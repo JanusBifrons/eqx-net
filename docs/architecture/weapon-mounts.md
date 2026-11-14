@@ -30,6 +30,21 @@ Schema validation (`.superRefine` block) enforces: mounts + slots present-or-bot
 
 Catalogue order is wire-format-stable (drone kinds encode as a `u8` index into `SHIP_KINDS_LIST`). Today the order is locked at `[fighter, scout, heavy, interceptor, gunship]`.
 
+### Nose turrets (2026-11-14)
+
+The fighter, scout, heavy, robot-square, robot-circle and robot-hexagon were drawn with a round turret cap but had a FIXED forward gun. Owner decision: "make them real turrets", then "don't retune anything except giving them a small arc". They now use `noseTurretMount(weaponId, slew)` (`shipKinds/types.ts`): the legacy forward mount (same spot, same weapon, same chin-gun art and muzzle) with one shared arc and the slew of an existing turret kind. A ship of a kind is the same for every pilot, players included.
+
+| Kind | Arc | Slew | Slew borrowed from |
+|---|---|---|---|
+| fighter, scout, robot-square, robot-circle | ±20° (`NOSE_TURRET_HALF_ARC = π/9`) | 4 rad/s (`NOSE_TURRET_SLEW_LIGHT`) | interceptor wings, fighter latent wings |
+| heavy, robot-hexagon | ±20° | 3 rad/s (`NOSE_TURRET_SLEW_HEAVY`) | gunship turrets |
+
+- **Why ±20°:** small, one value for every kind, and just wider than the ±0.3 rad a fixed gun counted as covering for locks (`turretLockPick` `FIXED_GUN_HALF_ARC`, `LockSubsystem` `FIXED_BEAR`), so a target a fixed gun could lock never falls outside the turret's arc.
+- **Slew split:** fighter-sized hulls (radius ≤ 15) take the interceptor's 4 rad/s, heavier hulls the gunship's 3 rad/s. No new tuning number.
+- **Art and muzzle:** `isChinMount` is positional (forward mount at the hull centre), so these mounts keep the chin-gun pivot and the `muzzleClearance` shot point; the drawn gun rotates about its own pivot via `applyMountAngles`. The shot leaves at `muzzleClearance` along the slewed angle from the hull centre, so at the full 20° the shot origin sits about `(clearance − barrel) × 2 sin 10°` (≈ 3 u for a 1× fighter) to the side of the drawn tip.
+- **What follows automatically (no code change):** the player's group aims through `fcTickMountAngles` / `WeaponMountTicker.tickPlayer` and fires each barrel when it bears (`mountBearsOn`); locks use the mount arc (`inMountArc`, `groupArcs`); the AI pilot's fire request widens by the half-arc (`maxTurretHalfArc`, below) and `AiFireResolver` fires only barrels that bear; `WeaponMountTicker.tickDrone` now slews these kinds' turrets (it skipped all-fixed drones).
+- **Still fixed:** patrol-fighter, trader-hauler, robot-harvester, robot-nexus, el, havok.
+
 ### Dynamic weapon mounts — latent slots (Phase 4 WS-B3, plan: effervescent-umbrella)
 
 `ShipKindSchema` gained a third optional field:
@@ -173,7 +188,8 @@ aimTolerance = baseTolerance + maxTurretHalfArc
 
 - Interceptor wings ± π/6 → 14° + 30° = 44° tolerance.
 - Gunship rear ± π/2 → 14° + 90° = **104°** tolerance (drone fires even at near-rear targets — the rear turret can reach).
-- Legacy single-mount kinds (zero arc) → 14°, unchanged.
+- Nose-turret kinds (± π/9, see "Nose turrets") → 14° + 20° = 34° (26° + 20° point-blank).
+- Fixed single-mount kinds (zero arc) fire only when the nose bears (`FC_MOUNT_FIRE_TOLERANCE`).
 
 The fire DIRECTION the body AI provides (`(fwdX, fwdY)`) is still body-forward; per-mount adjustment is added downstream in `handleAiFire` via `+ mount.baseAngle + currentMountAngle`.
 
