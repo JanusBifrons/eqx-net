@@ -30,11 +30,14 @@
  * behaviour. A future per-ship-kind override could move it onto `ShipKind.ai`
  * if a use case emerges, but for now one number is enough.
  */
+import { mayBeInReach, type MountRangeTarget } from '../combat/mountReach.js';
 
 /** A potential target the controller can pick. Pure-data shape so the caller
  *  can adapt drones, players, or any other entity type into this view without
- *  the module needing to import their concrete records. */
-export interface MountTargetView {
+ *  the module needing to import their concrete records. The optional hit
+ *  shape (`MountRangeTarget`: kind, heading, shield, radius) feeds the
+ *  turrets' hull range gate; absent ⇒ measured to the centre. */
+export interface MountTargetView extends MountRangeTarget {
   readonly id: string;
   readonly x: number;
   readonly y: number;
@@ -108,6 +111,11 @@ export interface PickTargetOptions {
    *  (e.g. hitscan vs longer-range projectile). Omit (or pass `Infinity`)
    *  to disable the range gate. */
   maxDistance?: number;
+  /** Measure `maxDistance` to the target's hit shape instead of its centre:
+   *  each candidate's gate widens by its `mountRangeBound` (cheap; the
+   *  turret's own hull range gate then decides). For turret picks, so a hull
+   *  in reach whose centre isn't is still a candidate. Default false. */
+  reachToHull?: boolean;
   /** Range (world units) within which the CURRENTLY HELD target (`prevTargetId`)
    *  stays eligible. Defaults to `maxDistance` (legacy: a held target past it
    *  is dropped). A larger value caps only NEW picks: the body AI passes
@@ -180,6 +188,7 @@ export function pickTarget(
 ): MountTargetView | null {
   const factor = options?.stickyHysteresisFactor ?? STICKY_HYSTERESIS_FACTOR;
   const maxDistance = options?.maxDistance ?? Infinity;
+  const reachToHull = options?.reachToHull === true && maxDistance !== Infinity;
   const healthWeight = options?.healthWeight ?? 0;
   // Commitment margin in score space. Default = factor² so that, with
   // healthWeight 0 (score === d²), this reduces EXACTLY to the legacy
@@ -210,7 +219,8 @@ export function pickTarget(
     // (or null, slewing mounts back to forward).
     // The held target may stay eligible further out (`prevMaxDistance`); it
     // then competes only as `prev`, never as a fresh `best`.
-    const inRange = d2 <= maxD2;
+    let inRange = d2 <= maxD2;
+    if (!inRange && reachToHull) inRange = mayBeInReach(dx, dy, maxDistance, t);
     if (!inRange && !(prevTargetId !== null && t.id === prevTargetId && d2 <= prevMaxD2)) continue;
     // Score = distance² biased toward low health (lower score = preferred).
     // healthWeight 0 (or missing health) ⇒ score === d² ⇒ pure nearest.

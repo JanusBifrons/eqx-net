@@ -133,7 +133,9 @@ export interface WeaponMountTickerDeps {
    *  (LINGERING, no active hull) under the PILOT's id, so drone turrets and
    *  capital turrets keep engaging it (their `hostileTo` and NPC locks are
    *  keyed by pilot). Absent ⇒ ACTIVE hulls only (unit harnesses). */
-  visitParkedPilotHulls?: (visit: (pid: string, x: number, y: number, vx: number, vy: number, kindId: string) => void) => void;
+  visitParkedPilotHulls?: (
+    visit: (pid: string, x: number, y: number, vx: number, vy: number, kindId: string, angle: number, shieldUp: boolean) => void,
+  ) => void;
   /** Fire ONE mount of a capital drone along its barrel (the resolver reads
    *  the slewed angle). Called only when that mount is on target, in reach
    *  and reloaded. */
@@ -202,9 +204,12 @@ export class WeaponMountTicker {
   private targetCount = 0;
   /** Append one spectate-parked pilot hull to this tick's candidates. Bound
    *  once (#14). */
-  private readonly addParkedTarget = (pid: string, x: number, y: number, vx: number, vy: number, kindId: string): void => {
+  private readonly addParkedTarget = (
+    pid: string, x: number, y: number, vx: number, vy: number, kindId: string, angle: number, shieldUp: boolean,
+  ): void => {
     const n = this.targetCount;
     WeaponMountTicker.writeTargetSlot(this.droneMountTargetsScratch, n, pid, x, y, vx, vy);
+    WeaponMountTicker.writeTargetShape(this.droneMountTargetsScratch[n]!, kindId, angle, shieldUp, 0);
     this.droneTargetKinds[n] = kindId;
     this.targetCount = n + 1;
   };
@@ -271,6 +276,19 @@ export class WeaponMountTicker {
     // doesn't leak a stale value into a target that now has none.
     slot.health = health;
     slot.maxHealth = maxHealth;
+  }
+
+  /** Write a view's hit shape for the turrets' hull range gate
+   *  (`mountInReach`): a ship's kind, heading and shield, or a circle
+   *  `radius` (kindId null). Same local readonly cast as `writeTargetSlot`. */
+  private static writeTargetShape(
+    v: MountTargetView, kindId: string | null, angle: number, shieldUp: boolean, radius: number,
+  ): void {
+    const slot = v as { -readonly [K in keyof MountTargetView]: MountTargetView[K] };
+    slot.kindId = kindId;
+    slot.angle = angle;
+    slot.shieldUp = shieldUp;
+    slot.radius = radius;
   }
 
   constructor(private readonly deps: WeaponMountTickerDeps) {}
@@ -352,6 +370,7 @@ export class WeaponMountTicker {
       const pose = d.shipPoseCache.get(pid);
       if (!pose) continue;
       WeaponMountTicker.writeTargetSlot(targets, count, pid, pose.x, pose.y, pose.vx, pose.vy);
+      WeaponMountTicker.writeTargetShape(targets[count]!, ship.kind, pose.angle, ship.shield > 0, 0);
       this.droneTargetKinds[count] = ship.kind;
       count++;
     }
@@ -428,6 +447,7 @@ export class WeaponMountTicker {
       const prevTargetId = this.droneSlotTargets.get(rec.id) ?? null;
       const target = pickTarget(droneX, droneY, targets, prevTargetId, isHostile, {
         maxDistance: mountTargetReach(kind, mounts),
+        reachToHull: true,
       });
       this.droneSlotTargets.set(rec.id, target?.id ?? null);
 
@@ -466,8 +486,9 @@ export class WeaponMountTicker {
   ): boolean {
     if (!isHostile(t.id)) return false;
     const dx = t.x - mx, dy = t.y - my;
-    // Reach, arc and tracking: the shared fire control (structures use it too).
-    if (!mountCanEngage(mount, ang, dx, dy, reach, t.vx - selfVx, t.vy - selfVy)) return false;
+    // Reach (mount to the target's hull), arc and tracking: the shared fire
+    // control (structures use it too).
+    if (!mountCanEngage(mount, ang, dx, dy, reach, t.vx - selfVx, t.vy - selfVy, t)) return false;
     return mountLineClear(kind, mount, wrapPi(Math.atan2(-dx, dy) - ang));
   }
 
@@ -622,6 +643,7 @@ export class WeaponMountTicker {
       for (let k = 0; k < structs.length; k++, n++) {
         const s = structs[k]!;
         WeaponMountTicker.writeTargetSlot(this.capStructViews, k, s.id, s.x, s.y, 0, 0);
+        WeaponMountTicker.writeTargetShape(this.capStructViews[k]!, null, 0, false, s.radius);
         out[n] = this.capStructViews[k]!;
         this.capTargetCls[n] = STRUCTURE_TARGET_CLASS;
         this.capTargetSig[n] = s.radius;

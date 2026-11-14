@@ -136,6 +136,45 @@ band. Both are allocation-free. Locks: `tests/unit/shipHullDistance.test.ts`
 (beam vs bow, inside = 0, bubble, agreement with the capital ray hit, the far
 reject never reading the polygon) and `shipHullDistance.heapDelta.test.ts`.
 
+### NPC and structure turrets: range per mount, to the hull
+
+Wired for every NPC and structure gun (the player gate is a separate change).
+The ONE turret range gate is `mountInReach(dx, dy, reach, target)` in
+`src/core/combat/mountReach.ts`: (dx, dy) is the target's centre from the
+MOUNT's world origin, `reach` that mount's own `mountWeaponReach`, and `target`
+a `MountRangeTarget` (a ship's `kindId` + `angle` + `shieldUp` ⇒
+`shipWithinHullReach`; anything else a circle of `radius`; absent ⇒ the
+centre). Callers:
+
+- `mountCanEngage` (capital turrets in `WeaponMountTicker.tickCapitalMounts`,
+  structure turrets in `StructureMountTicker`) takes the target view as its
+  last argument. `MountTargetView` and `TurretTargetView` carry the shape
+  (`kindId`, `angle`, `shieldUp`, `radius`); the room fills it for pilots
+  (`ship.shield > 0`), swarm ships (`!rec.shieldDown`) and structures
+  (`rec.radius`, the radius the lock code already uses).
+- `AiFireResolver` (drones' slot fire): a mount fires only when the target's
+  hull is within its reach (`bearingMask`, with the room's `targetShape` dep).
+  A lock no longer licenses a shot from any distance; out of reach the shot
+  is held and no cooldown is spent.
+- `pickTurretLock` (the player lock share-out, server and client) uses the same
+  `mountInReach`, with per-lock shapes from `resolveLockTarget` /
+  `fcTargetShape` (#15).
+
+Candidate searches widen by the target's bound so a hull in reach whose centre
+isn't is still a candidate: `mayBeInReach(dx, dy, reach, t)` (centre within
+reach + `mountRangeBound(t)`). The room's structure-turret gather queries its
+grid at `reach + maxShipRangeBound()` and keeps only `mayBeInReach` candidates;
+the non-capital drone slew pick passes `reachToHull: true` to `pickTarget`.
+Cost (laptop, 2026-11-14): `turretGather.count.test.ts` real 60 hostiles /
+40 km 127 → 134 candidates per tick (budget 160). Locks:
+`tests/unit/npcTurretHullRange.test.ts` (battleship AA vs a battleship
+alongside, a drone holding fire beyond reach with a lock, a coastal barbette vs
+a bow-on battleship), `turretLockPick.test.ts`.
+
+Not yet hull-based: NPC lock reach and lock time (`NpcLockSubsystem`,
+`structureLockSecs`) and the drone brain's own `fireRange` decision still
+measure centre to centre.
+
 ## Server
 
 | Piece | File | Role |

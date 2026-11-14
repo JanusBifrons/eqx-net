@@ -14,7 +14,7 @@ import { lockSeconds, type LockInputs } from '../../core/combat/lockTime.js';
 import { newLock, stepLock, LOCK_STAGE_CODE, LOCK_TRACK, type LockEntry } from '../../core/combat/lockState.js';
 import { lockLineHolds } from '../../core/combat/lockLine.js';
 import { pickTurretLock } from '../../core/combat/turretLockPick.js';
-import { mountWeaponReach } from '../../core/combat/mountReach.js';
+import { mountWeaponReach, type MountRangeTarget } from '../../core/combat/mountReach.js';
 import { getWeapon, weaponAutoFireRange } from '../../core/combat/WeaponCatalogue.js';
 import type { ShipKind, WeaponMount, WeaponSlot } from '../../shared-types/shipKinds/types.js';
 
@@ -28,6 +28,12 @@ export interface LockTargetView {
   signature: number;
   /** Already hostile to the locking player (skips the failsafe ring). */
   hostile: boolean;
+  /** Hit shape for the turret range gate (`MountRangeTarget`): a ship's kind,
+   *  heading and shield, else a circle `radius`. Absent ⇒ its centre. */
+  kindId?: string | null;
+  angle?: number;
+  shieldUp?: boolean;
+  radius?: number;
 }
 
 export interface LockShooterView {
@@ -430,6 +436,9 @@ export class LockSubsystem {
   private readonly pickX = new Float64Array(8);
   private readonly pickY = new Float64Array(8);
   private readonly pickKeys: string[] = [];
+  /** Per-lock hit shapes for `pickTurretLock`'s hull range gate (reused, #14). */
+  private readonly pickShapes: { -readonly [K in keyof MountRangeTarget]: MountRangeTarget[K] }[] =
+    Array.from({ length: 8 }, () => ({ kindId: null, angle: 0, shieldUp: false, radius: 0 }));
 
   /**
    * Several locks: which one this turret takes (shared `pickTurretLock`, the
@@ -447,6 +456,11 @@ export class LockSubsystem {
       if (!this.deps.resolveTarget(playerId, e.target, this.target)) continue;
       this.pickX[keys.length] = this.target.x;
       this.pickY[keys.length] = this.target.y;
+      const sh = this.pickShapes[keys.length]!;
+      sh.kindId = this.target.kindId ?? null;
+      sh.angle = this.target.angle ?? 0;
+      sh.shieldUp = this.target.shieldUp === true;
+      sh.radius = this.target.radius ?? 0;
       keys.push(e.target);
     }
     if (keys.length === 0) return null;
@@ -456,7 +470,7 @@ export class LockSubsystem {
     const sinA = Math.sin(s.angle);
     const mx = s.x + (m.localX * cosA - m.localY * sinA);
     const my = s.y + (m.localX * sinA + m.localY * cosA);
-    const i = pickTurretLock(m, s.angle, mx, my, mountWeaponReach(m), ordinal, keys.length, this.pickX, this.pickY);
+    const i = pickTurretLock(m, s.angle, mx, my, mountWeaponReach(m), ordinal, keys.length, this.pickX, this.pickY, this.pickShapes);
     return keys[i]!;
   }
 
