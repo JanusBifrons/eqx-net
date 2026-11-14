@@ -232,3 +232,9 @@ the markers to confirm, not a license to lighten the chain blind.
 - `docs/architecture/snapshot-cadence.md` — the idle-suppression the
   join-grace overrides.
 - `docs/HANDOFF-warp-spool-perf-followup.md` — the open perf work.
+
+## Client rules in detail
+
+Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each rule and points here.
+
+- **Warp burst fires on arrival ONLY — single-flash policy (2026-05-16, Phase G3).** Exactly one warp flash per inter-sector transit: the arrival reveal (`triggerWarpIn`). `setWarpMode(false)` (spool exit) fades the filter chain out but does NOT burst, and `setWarpMode(true)` (spool start) ramps amplitude (no pulse). Both `fireBurst()` call-sites defer to the pure `warpEventFiresBurst(event)` policy (exported from `PixiRenderer.ts` beside `shouldDetachWarpVisual`, locked by `PixiRenderer.warpBurst.test.ts`). Why: post-Phase-G the load curtain is always raised at `transit_ready` (before SPOOLING→IN_TRANSIT), so a spool-exit burst is permanently occluded yet bleeds through the ~200 ms curtain-rise — a leaky reordered double-flash (on-device 2026-05-16). The earlier theoretical "keep the climax, mask it" was falsified on-device; do not re-introduce a warp-out / spool-start burst. See `docs/LESSONS.md` 2026-05-16 Phase-G3 entry.
