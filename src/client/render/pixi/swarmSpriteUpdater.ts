@@ -48,11 +48,10 @@ import {
   buildBuildEtaText,
   formatResources,
   formatBuildEta,
-  buildChargeTelegraphGfx,
   buildEliteRingGfx,
 } from './spriteBuilders.js';
+import { buildChargeTelegraph, updateChargeTelegraph, type ChargeTelegraph } from './chargeTelegraph.js';
 import type { Text } from 'pixi.js';
-import { getWeapon } from '../../../core/combat/WeaponCatalogue';
 import { minerRangeForKind } from '../minerRangeRing.js';
 import type { MountVisualManager } from '../MountVisualManager';
 import {
@@ -177,8 +176,8 @@ const SERVER_AIM_CATCH_UP = 1.5;
  *  this render-loop hot path (invariant #14). */
 const EMPTY_MOUNTS: readonly WeaponMount[] = [];
 
-/** P3c — drone sprite → its charge telegraph child (weak: dies with the sprite). */
-const chargeTelegraphs = new WeakMap<Container, Graphics>();
+/** Drone sprite → its charge telegraph (weak: dies with the sprite). */
+const chargeTelegraphs = new WeakMap<Container, ChargeTelegraph>();
 /** P4a — a named elite's gold ring, created lazily the first frame the sprite
  *  is known to be an elite (once per sprite, #14), then shown/hidden. */
 const eliteRings = new WeakMap<Container, Graphics>();
@@ -196,16 +195,6 @@ export function scrapHeatTint(ageMs: number): number | undefined {
   return (0xff << 16) | (g << 8) | b;
 }
 
-/** The longest charge weapon range a kind carries (0 ⇒ no charge weapon). */
-export function chargeRangeForKind(shipKind: string | undefined): number {
-  if (!shipKind) return 0;
-  let r = 0;
-  for (const m of getShipKind(shipKind).mounts ?? EMPTY_MOUNTS) {
-    const w = getWeapon(m.weaponId);
-    if (w.mode === 'hitscan' && (w.chargeTicks ?? 0) > 0 && w.range > r) r = w.range;
-  }
-  return r;
-}
 
 
 /** Classic-look rocks: ice and crystal-veined ones read apart from plain rock
@@ -310,13 +299,11 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         sprite = sk
           ? buildArtShipSprite(artHandle, () => buildShipGfxFromShape(shapeForKind(sk)))
           : buildDroneGfx(entry.radius);
-        // P3c — a kind with a CHARGE weapon gets a (hidden) wind-up telegraph,
-        // built once here and toggled per frame from `entry.charging`.
-        const chargeRange = chargeRangeForKind(entry.shipKind);
-        if (chargeRange > 0) {
-          const tele = buildChargeTelegraphGfx(entry.radius, chargeRange);
-          tele.visible = false;
-          sprite.addChild(tele);
+        // A kind with a CHARGE weapon gets its (hidden) charge telegraph,
+        // built once here and driven per frame from `entry.chargingMask`.
+        const tele = buildChargeTelegraph(entry.shipKind, entry.radius);
+        if (tele !== null) {
+          sprite.addChild(tele.root);
           chargeTelegraphs.set(sprite, tele);
         }
       } else if (entry.kind === 2) {
@@ -420,12 +407,13 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
       }
     }
     if (entry.kind === 1) {
-      // P3c — charge-weapon wind-up telegraph (pulses while charging).
+      // The charge telegraph (game clock, #20): the robot's ring + line, or a
+      // glow on each charging gun. Kept above the guns while it shows.
       const tele = chargeTelegraphs.get(sprite);
       if (tele !== undefined) {
-        const on = entry.charging === true;
-        tele.visible = on;
-        if (on) tele.alpha = 0.45 + 0.4 * Math.sin(now / 70);
+        const mask = entry.chargingMask ?? 0;
+        if (mask !== 0 && sprite.children[sprite.children.length - 1] !== tele.root) sprite.addChild(tele.root);
+        updateChargeTelegraph(tele, mask, entry.chargeStartTick, entry.lastUpdateTick, fxNow, entry.displayMountAngles ?? entry.mountAngles);
       }
       // P4a — a named elite wears a slowly-pulsing gold ring.
       let ring = eliteRings.get(sprite);

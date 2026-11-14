@@ -44,7 +44,7 @@ export interface TurretPlace {
 
 function familyOf(m: WeaponMount): TurretFamily {
   const w = getWeapon(m.weaponId as WeaponId);
-  return familyFor(m.weaponId, w.mode, w.mode === 'hitscan' && (w.chargeTicks ?? 0) > 0);
+  return familyFor(m.weaponId, w.mode, (w.chargeTicks ?? 0) > 0);
 }
 
 /** Turret places for a ship kind's catalogue mounts. */

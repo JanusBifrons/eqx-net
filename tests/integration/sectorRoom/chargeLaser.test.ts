@@ -1,10 +1,10 @@
 /**
  * Living World P3c (plan peppy-jumping-pinwheel) — the robot orb's CHARGE LASER
  * through a real SectorRoom: the AI trigger starts a wind-up, clients see
- * `drones[].charging` in the snapshot, and the beam lands only after the
+ * `drones[].chargingMask` in the snapshot, and the beam lands only after the
  * charge elapses (it is a dodgeable telegraph, not an instant hit).
  *
- * Fails on the pre-P3c code: the orb's beam was instant (no `charging` bit is
+ * Fails on the pre-P3c code: the orb's beam was instant (no charging bit is
  * ever sent, and damage arrives with no wind-up).
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -28,13 +28,13 @@ describe('SectorRoom integration — robot charge laser (P3c)', () => {
     if (harness) await harness.cleanup();
   }, 10_000);
 
-  it('telegraphs (drones[].charging) before the beam lands', { timeout: 40_000 }, async () => {
+  it('telegraphs (drones[].chargingMask) before the beam lands', { timeout: 40_000 }, async () => {
     const pid = randomUUID();
     const cr = await harness.connectActive(pid, { initialHull: 99999 });
     let chargingAt: number | null = null;
     let hitAt: number | null = null;
     cr.onMessage('snapshot', (snap: SnapshotMessage) => {
-      if (chargingAt === null && snap.drones?.some((d) => d.charging === true)) chargingAt = Date.now();
+      if (chargingAt === null && snap.drones?.some((d) => (d.chargingMask ?? 0) !== 0)) chargingAt = Date.now();
     });
     cr.onMessage('damage', (e: DamageEvent) => {
       if (hitAt === null && e.targetId === pid) hitAt = Date.now();

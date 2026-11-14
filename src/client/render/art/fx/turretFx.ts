@@ -79,10 +79,13 @@ export function nearestMuzzle(x: number, y: number, xs: ArrayLike<number>, ys: A
   return best;
 }
 
-/** The family a weapon draws as. */
+/** The family a weapon draws as. A charge weapon (`chargeTicks`) of any
+ *  mode but missile draws as 'charge' (the robot's beam, a charging shell
+ *  gun). */
 export function familyFor(weaponId: string, mode: string, charge: boolean): TurretFamily {
   if (mode === 'missile') return 'missile';
-  if (mode === 'hitscan') return charge ? 'charge' : 'beam';
+  if (charge) return 'charge';
+  if (mode === 'hitscan') return 'beam';
   return weaponId === 'pulse-orb' ? 'charge' : 'bolt';
 }
 
