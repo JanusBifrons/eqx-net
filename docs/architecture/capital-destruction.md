@@ -381,8 +381,8 @@ player-flown (active or parked), breaks it into wreck bodies on the server.
     snapshot per frame, so a `wrecks[]` descriptor on a dropped snapshot was
     lost until the 2 Hz repeat (1.2–3.6 s in the E2E, past the 1.5 s
     break-up window). It now carries a dropped snapshot's list forward
-    (`snapshotCoalesce.test.ts`). The DataChannel path coalesces raw bytes
-    and still has this gap (follow-up).
+    (`snapshotCoalesce.test.ts`). The DataChannel byte coalescer had the same
+    gap; sub-capital slice 3 closed it (see "Wreck descriptors on the wire").
   - Frames for review: a GPU probe films the break-up (CDP screencast,
     frames picked by timestamp at death + 0.3 s, + 2 s, + 5 s).
 - Locks: `wreckPieces.test.ts`, `CapitalWreckSubsystem.test.ts`,
@@ -396,16 +396,51 @@ player-flown (active or parked), breaks it into wreck bodies on the server.
   `shipKind` byte is the parent capital, `componentIndex` the piece index.
   Poses ride the pose channel like scrap: the display-delay interpolation and
   teleport guard for drawing, the remote-entity anchor for the body.
-- **Descriptor.** `SnapshotMessage.wrecks[]`: one `WreckDescriptor` per live
-  wreck (`{ wreckId, parentKind, seed, killX, killY, killBlowDamage,
-  recentDamageRate, snapChance, algoVersion }`; the kill point is hull-local,
-  1× Pixi-up, already on the outline). `CapitalWreckSubsystem` hands out a
-  free u16 `wreckId` per wreck and keeps the list (a shared array rebuilt only
-  when the set changes). `SnapshotBroadcaster` attaches it on every snapshot
-  for `WRECKS_CHANGE_WINDOW` (3) broadcast counters after a change (so every
-  recipient gets a new wreck at once; an empty list then means "none left")
-  and otherwise at the far-drone 2 Hz cadence while any wreck lives. A late
-  joiner rebuilds every wreck within half a second (#16).
+- **Descriptor.** One `WreckDescriptor` per live wreck (`{ wreckId,
+  parentKind, seed, killX, killY, killBlowDamage, recentDamageRate,
+  snapChance, algoVersion, deathTick? }`; the kill point is hull-local, 1×
+  Pixi-up, already on the outline). `CapitalWreckSubsystem` hands out a free
+  u16 `wreckId` per wreck and keeps the list (a shared array rebuilt only when
+  the set changes). S2b sent the whole list on the snapshot; sub-capital
+  slice 3 replaced that with deltas (next section).
+
+**Wreck descriptors on the wire (sub-capital break-up slice 3).** Sub-capitals
+will leave permanent wrecks at ~200 deaths a minute in a big fight. The S2b
+wire resent the whole `wrecks[]` list for 3 broadcasts after ANY change and at
+2 Hz otherwise: at 3 deaths a second that is ~5 full lists a second per
+recipient, growing with every live wreck (measured, msgpack: 3.8 KB/s at 10
+live, 100 KB/s at 300, 334 KB/s at 1,000). Now:
+- **Join.** The welcome carries the full live set (`WelcomeMessage.wrecks`,
+  zod-checked with `WreckDescriptorSchema`).
+- **Deltas.** `WreckWireDeltas` (stepped once per broadcast, diffing the live
+  list only when its version moves) keeps the adds and removes of the last
+  `WRECK_DELTA_WINDOW` (18) broadcast counters, six snapshots per recipient,
+  so one dropped snapshot never loses one. `wreckAdds` carries descriptors (a
+  recycled id carries its new one); `wreckRemoves` carries ids; an id is
+  never in both.
+- **Rolling resync.** On one snapshot per recipient in `WRECK_RESYNC_EVERY`
+  (2 Hz), `wreckSync = { lo, hi, d }`: the live wrecks with `lo <= id < hi`
+  are exactly `d` (at most `WRECK_RESYNC_CHUNK` = 6). The chunks walk the id
+  space and wrap, so a client that missed an add OR a remove converges (#16;
+  22 live wrecks after a forced miss: 1.6 s).
+- **Client.** `WreckGeometryStore.applySnapshot` applies sync, then removes,
+  then adds (deltas are never older than the chunk), idempotently, with
+  alloc-free guards (`isWreckDescriptor`, `isWreckId`, locked to the zod
+  schemas) since the snapshot is the #3 carve-out.
+- **Coalescing.** All three fields are absent-means-no-change.
+  `SnapshotCoalescer` folds a dropped snapshot's deltas into the newer one
+  (`carryWreckDeltas`, the newer wins per id); the DataChannel byte coalescer
+  decodes a superseded frame whose bytes contain the `wreckAdds` /
+  `wreckRemoves` keys instead of discarding it (`carriesWreckDeltas`).
+- **Bytes.** ~4.1–4.2 KB/s per recipient at 3 deaths a second, flat from 10
+  to 1,000 live wrecks.
+- Locks: `SnapshotBroadcaster.wreckDeltas.test.ts`,
+  `tests/unit/wreckWireConvergence.test.ts`, `snapshotCoalesce.test.ts`,
+  `dataChannelTransport.test.ts`, `wreckWire.test.ts`,
+  `tests/integration/sectorRoom/wreckLateJoiner.test.ts`.
+
+**S2b, continued.**
+
 - **Geometry.** `wreckPieceGeometry(inputs)` (`core/destruction/wreckPieces.ts`)
   is the one source of a piece's shape: convex parts, outline, cut flags, mass,
   radius, all body-local. The server's `buildWreckPieces` places its output;
@@ -433,7 +468,8 @@ player-flown (active or parked), breaks it into wreck bodies on the server.
 - Locks: `tests/unit/swarmWireRoundTrip.test.ts` (kind 4 + v4 hard-fail),
   `tests/integration/wire/wreckGeometryParity.test.ts` (server bodies ==
   client rebuild, bit for bit), `tests/integration/sectorRoom/wreckLateJoiner.test.ts`
-  (a late joiner gets `wrecks[]` and rebuilds every piece),
+  (a late joiner gets the welcome's `wrecks` and rebuilds every piece; a new
+  death rides as one add, a gone wreck as a remove),
   `tests/unit/wreckPredWorld.test.ts` (ramming a piece: no corrections),
   `swarmSpriteUpdater.wreck.test.ts` (one plain sprite per piece),
   `World.slivers.test.ts`, `tests/e2e/capital-wreck-render.spec.ts`.
@@ -471,7 +507,8 @@ like the v3 → v4 bump).
 **Descriptor.** The fracture inputs travel as one small record per wreck:
 `{ wreckId, parentKind, seed, killX, killY, maxPieces, algoVersion }`.
 - It rides the slim JSON snapshot as `wrecks[]`, emitted while any piece of
-  the wreck lives. This is invariant #16: a late joiner rebuilds the geometry
+  the wreck lives. (As built since sub-capital slice 3: the welcome carries
+  the full set and snapshots carry adds, removes and a rolling resync.) This is invariant #16: a late joiner rebuilds the geometry
   from the snapshot alone; a death event is only an accelerator.
 - No vertex ever goes on the wire.
 
