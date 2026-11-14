@@ -25,6 +25,7 @@ import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import { getShipKind, type ShipKindId } from '../../../src/shared-types/shipKinds.js';
 import { shipScrapGroups } from '../../../src/core/geometry/shipScrapGroups.js';
 import { shipShapeToPolygon } from '../../../src/core/geometry/shipHullDecomp.js';
+import { fnv1a32, fnvMixU32 } from '../../../src/core/random/rng.js';
 
 const WRECK_KIND = 4;
 const SCRAP_KIND = 3;
@@ -201,6 +202,44 @@ describe('SectorRoom integration — sub-capital wrecks (sub-cap break-up slice 
       expect(least / r, `${kind}: narrowest gap after ~1 s, in hull radii`).toBeGreaterThanOrEqual(0.25);
     }, 20_000);
   }
+
+  /**
+   * Found 2026-11-14: the test above failed on some death ticks only (its
+   * fracture seed follows the server tick; tick 66 failed every time). The
+   * pieces were spawned BEFORE the dying hull's DESPAWN was posted, and the
+   * physics worker handles each command as its own message and may step
+   * between two of them: the heavy piece sat inside the old hull for a step
+   * and the push-out stopped it dead (−15 → +0.4 u/s across the cut,
+   * COLLISION_RESOLVED g0 ↔ wreck-0-0), so the cut opened at ~12 u/s
+   * instead of ~27 and the pieces were 0.18 radii apart 1 s later. The dying
+   * body is now despawned before the first piece spawns
+   * (`CapitalWreckSubsystem.onDeath` `despawnDyingBody`).
+   */
+  it('wreck pieces never touch their own dying hull (missile frigate, the tick-66 seed)', async () => {
+    const int = await boot({ subcapWrecks: true });
+    const kind = 'missile-frigate';
+    expect(int().spawnTestDrone('g0', 3000, 0, kind)).toBe(true);
+    await harness.advance(100);
+    const hullHits: string[] = [];
+    const room = harness.getServerRoom() as unknown as { bus: { on: (t: string, fn: (e: { aId: string; bId: string }) => void) => void } };
+    room.bus.on('COLLISION_RESOLVED', (e) => { if (e.aId === 'g0' || e.bId === 'g0') hullHits.push(`${e.aId}↔${e.bId}`); });
+    const at = int().wreckState('g0')!;
+    const v = shipShapeToPolygon(getShipKind(kind))[0]!;
+    const c = Math.cos(at.angle), s = Math.sin(at.angle);
+    // The seed the room drew for `g0` dying on server tick 66.
+    int().setWreckSeed(fnvMixU32(fnv1a32('g0'), 66));
+    int().applyDamage('g0', 'shooter-x', 1e7, at.x + v.x * c - v.y * s, at.y + v.x * s + v.y * c);
+    int().setWreckSeed(null);
+    const ids = byKind(int(), WRECK_KIND).map((p) => p.id);
+    expect(ids.length).toBe(2);
+    const deathTick = int().serverTick;
+    while (int().serverTick - deathTick < 60) await harness.advance(20);
+    const gap = pieceGap(piecePolys(int(), ids[0]!), piecePolys(int(), ids[1]!));
+    const r = getShipKind(kind).radius;
+    console.log(`[subcap-hull-race] ${kind}: gap ${gap.toFixed(1)} u = ${(gap / r).toFixed(2)} radii after ${((int().serverTick - deathTick) / 60).toFixed(2)} game s; hull contacts ${hullHits.length}`);
+    expect(hullHits, 'a piece touched the dead hull').toEqual([]);
+    expect(gap / r, 'narrowest gap after ~1 s, in hull radii').toBeGreaterThanOrEqual(0.25);
+  }, 20_000);
 
   // A ship killed at speed and turning: the pieces inherit its motion and
   // must drift to a stop under the profile's damping, then sleep.

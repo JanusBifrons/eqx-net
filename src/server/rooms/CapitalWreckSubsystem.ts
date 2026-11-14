@@ -229,11 +229,16 @@ export class CapitalWreckSubsystem {
 
   /**
    * A capital died at `pose`: break it into wreck bodies. Returns the number
-   * of pieces spawned (0 for a non-capital). Call BEFORE the dying body is
-   * despawned (the worker processes the spawns and the despawn in order,
-   * before its next step, so the pieces never overlap the old hull).
+   * of pieces spawned (0 for a non-capital). Call while the dying body is
+   * still live (its pose is read off the SAB). `despawnDyingBody` posts the
+   * dying body's DESPAWN; it is called once, BEFORE the first piece spawn,
+   * and only when there are pieces. The worker handles each command as its
+   * own message and can step between two of them, so a despawn posted after
+   * the spawns left the pieces inside the old hull for a step, and the
+   * push-out shoved them (2026-11-14: a sub-cap piece stopped dead and its
+   * cut barely opened; `subcapWrecks.test.ts` "loot pod").
    */
-  onDeath(targetId: string, kindId: ShipKindId, pose: WreckDeathPose, maxHull: number): number {
+  onDeath(targetId: string, kindId: ShipKindId, pose: WreckDeathPose, maxHull: number, despawnDyingBody?: () => void): number {
     // Two lethal hits in one tick can report the same death twice
     // (the 2026-06-19 double SHIP_DESTROYED): break the hull once.
     const tick = this.d.serverTick();
@@ -249,6 +254,7 @@ export class CapitalWreckSubsystem {
     this.forget(targetId);
     const seed = this.forcedSeed ?? fnvMixU32(fnv1a32(targetId), this.d.serverTick() >>> 0);
     const { pieces, fracture } = buildWreckPieces({ kindId, pose, killWorld, attackerWorld, seed, killBlowDamage, recentDamageRate });
+    if (pieces.length > 0) despawnDyingBody?.();
     const n = this.deaths++;
     const wreckId = this.allocWreckId();
     // Overkill knock-back (#18): a blow worth the whole hull's HP would move

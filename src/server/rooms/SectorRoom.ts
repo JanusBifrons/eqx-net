@@ -2131,7 +2131,9 @@ export class SectorRoom extends Room<SectorState> {
         // S2a — a parked capital breaks into wreck bodies too (its
         // linger-<id> body is despawned by the death policy right after).
         const ship = this.state.ships.get(shipInstanceId);
-        this.spawnCapitalWreck(shipInstanceId, kind, pose, ship?.maxHealth ?? getShipKind(kind).maxHealth);
+        // The parked body (linger-<id>) goes before the pieces spawn.
+        this.spawnCapitalWreck(shipInstanceId, kind, pose, ship?.maxHealth ?? getShipKind(kind).maxHealth,
+          this.lingeringSlots.get(shipInstanceId), `linger-${shipInstanceId}`);
         this.spawnHullScrap(kind, pose, shipInstanceId);
       },
       // A1 — a lingering hull died in combat: the SHIP_DESTROYED handler can't
@@ -4254,12 +4256,13 @@ export class SectorRoom extends Room<SectorState> {
         const slot = this.playerToSlot.get(evt.targetId);
         if (slot !== undefined) {
           const b = slotBase(slot);
-          const n = this.spawnCapitalWreck(evt.targetId, activeHull.kind, {
+          this.spawnCapitalWreck(evt.targetId, activeHull.kind, {
             x: this.sabF32[b + SLOT_X_OFF]!, y: this.sabF32[b + SLOT_Y_OFF]!,
             vx: this.sabF32[b + SLOT_VX_OFF]!, vy: this.sabF32[b + SLOT_VY_OFF]!,
             angle: this.sabF32[b + SLOT_ANGLE_OFF]!, angvel: this.sabF32[b + SLOT_ANGVEL_OFF]!,
-          }, activeHull.maxHealth > 0 ? activeHull.maxHealth : getShipKind(activeHull.kind).maxHealth);
-          if (n > 0) this.postToWorker({ type: 'DESPAWN', slot, playerId: evt.targetId });
+          }, activeHull.maxHealth > 0 ? activeHull.maxHealth : getShipKind(activeHull.kind).maxHealth,
+          // The body goes BEFORE the pieces spawn (only when there are pieces).
+          slot, evt.targetId);
         }
       }
 
@@ -5210,16 +5213,24 @@ export class SectorRoom extends Room<SectorState> {
 
   /** S2a: a dying capital (any liveness class) breaks into wreck bodies.
    *  `targetId` is the id its hits were tracked under. Returns pieces spawned;
-   *  0 when the flag is off or the kind isn't a capital. Call before the
-   *  dying body is despawned. */
+   *  0 when the flag is off or the kind isn't a capital. Call while the
+   *  dying body is live; `bodySlot` / `bodyId` name its worker body, which
+   *  is despawned BEFORE the pieces spawn (the worker may step between two
+   *  commands, so a later despawn left the pieces overlapping the hull for
+   *  a step; `CapitalWreckSubsystem.onDeath`). The caller's own despawn
+   *  after this is then a no-op for the body. */
   private spawnCapitalWreck(
     targetId: string, kindId: string,
     pose: { x: number; y: number; vx: number; vy: number; angle: number; angvel?: number },
     maxHull: number,
+    bodySlot?: number, bodyId?: string,
   ): number {
     if (this.capitalWrecks === null || !this.wreckKindAllowed(kindId)) return 0;
+    const despawn = bodySlot !== undefined && bodyId !== undefined
+      ? () => this.postToWorker({ type: 'DESPAWN', slot: bodySlot, playerId: bodyId })
+      : undefined;
     return this.capitalWrecks.onDeath(targetId, kindId as ShipKindId,
-      { x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy, angle: pose.angle, angvel: pose.angvel ?? 0 }, maxHull);
+      { x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy, angle: pose.angle, angvel: pose.angvel ?? 0 }, maxHull, despawn);
   }
 
   /** Iterates positions of currently-alive players, for the LoadShedder.
@@ -5262,7 +5273,7 @@ export class SectorRoom extends Room<SectorState> {
         x: this.sabF32[wb + SLOT_X_OFF]!, y: this.sabF32[wb + SLOT_Y_OFF]!,
         vx: this.sabF32[wb + SLOT_VX_OFF]!, vy: this.sabF32[wb + SLOT_VY_OFF]!,
         angle: this.sabF32[wb + SLOT_ANGLE_OFF]!, angvel: this.sabF32[wb + SLOT_ANGVEL_OFF]!,
-      }, droneMaxHealthOf(rec) ?? 1);
+      }, droneMaxHealthOf(rec) ?? 1, rec.slot, rec.id);
     }
     const kind = getShipKind(rec.shipKind);
     if (shipScrapGroups(kind.id).length === 0) return; // polygon kind ⇒ no scrap
