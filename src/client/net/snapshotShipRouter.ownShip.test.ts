@@ -38,7 +38,7 @@ function makeCtx(localPlayerId: string, localShipInstanceId: string): ShipRouter
   return {
     mirror,
     predWorld: null,
-    lingerBodies: { despawn: () => {}, noteSnapshot: () => false } as unknown as ShipRouterCtx['lingerBodies'],
+    lingerBodies: { despawn: () => {}, noteSnapshot: () => false, boostOf: () => false } as unknown as ShipRouterCtx['lingerBodies'],
     tryEnsureLingerPredBody: () => {},
     lingeringSeenScratch: new Set<string>(),
     lingeringToEvictScratch: [],

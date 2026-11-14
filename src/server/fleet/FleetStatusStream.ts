@@ -38,6 +38,10 @@ export interface FleetStatusStreamDeps {
   /** Hull 0..100 of `shipId`, or null when unknown. */
   hullPct(shipId: string): number | null;
   send(sessionId: string, msg: FleetStatusMessage): void;
+  /** The id the OWNER's client knows a target / escort ship by (slice 4b: the
+   *  fleet names the ship the owner flies by shipInstanceId, the client by
+   *  playerId). Absent ⇒ ids go out as-is. */
+  wireShipId?(ownerId: string, id: string): string;
 }
 
 export class FleetStatusStream {
@@ -75,11 +79,15 @@ export class FleetStatusStream {
     this.lastEmpty.delete(sessionId);
     // TODO: alloc-debt — 2 Hz UI timer, bounded by the owner's fleet.
     const s: FleetStatusTuple[] = [];
-    for (let i = 0; i < rows.length; i++) s.push(this.encode(rows[i]!));
+    for (let i = 0; i < rows.length; i++) s.push(this.encode(rows[i]!, playerId));
     this.deps.send(sessionId, { type: 'fleet_status', s });
   }
 
-  private encode(r: FleetShipStatus): FleetStatusTuple {
+  private wire(ownerId: string, id: string | null): string | null {
+    return id === null || this.deps.wireShipId === undefined ? id : this.deps.wireShipId(ownerId, id);
+  }
+
+  private encode(r: FleetShipStatus, ownerId: string): FleetStatusTuple {
     const brain = this.deps.fleet.brainOf(r.id);
     const hull = this.deps.hullPct(r.id);
     const order = r.order;
@@ -94,14 +102,14 @@ export class FleetStatusStream {
       FLEET_STATUS_MODES.indexOf(r.mode),
       FLEET_STATUS_STANCES.indexOf(r.stance),
       FLEET_STATUS_ACTIVITIES.indexOf(r.activity),
-      r.targetId,
+      this.wire(ownerId, r.targetId),
       hull === null ? 0 : Math.max(0, Math.min(100, Math.round(hull))),
       morale === null ? -1 : morale,
       r.squadId,
       order === null ? -1 : FLEET_STATUS_ORDERS.indexOf(order.kind),
       order !== null && order.kind === 'move' ? order.x : null,
       order !== null && order.kind === 'move' ? order.y : null,
-      brain?.escortId ?? null,
+      this.wire(ownerId, brain?.escortId ?? null),
       route,
     ];
   }

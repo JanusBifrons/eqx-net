@@ -180,6 +180,8 @@ import { usesAmmo } from '../../shared-types/ammo.js';
 
 /** P2d — one unit of munitions (a turret's magazine reload). */
 const ONE_MUNITION = Object.freeze({ munitions: 1 });
+/** RTS slice 4b — `fleet.detach` options when the owner takes a member's helm. */
+const KEEP_SQUAD = Object.freeze({ keepSquad: true });
 /** Welcome extras for a room that breaks capitals into wrecks (shared, frozen). */
 const WRECK_WELCOME: WreckWelcomeFields = Object.freeze({ capitalWrecks: true as const });
 const NO_WELCOME_FIELDS: WreckWelcomeFields = Object.freeze({});
@@ -400,7 +402,7 @@ import {
 } from '../../core/combat/Weapons.js';
 // getWeapon/isWeaponId/HitscanWeaponDef/ProjectileWeaponDef now used inside PlayerFireResolver.ts
 import type { WeaponId, MissileWeaponDef } from '../../core/combat/WeaponCatalogue.js';
-import { regenEnergyStep, spendEnergy, BOOST_TICK_COST } from '../../core/combat/Energy.js';
+import { regenEnergyStep, spendEnergy, canAfford, BOOST_TICK_COST } from '../../core/combat/Energy.js';
 import { massOf, shellViewHalfExtent } from '../../shared-types/shipScale/tuning.js';
 import { ShellEventHub, type ShellViewer } from './ShellEventHub.js';
 import { type ShellSalvo } from '../../shared-types/messages/shellEvents.js';
@@ -914,16 +916,17 @@ export class SectorRoom extends Room<SectorState> {
     ownerOf: (id) => (this.lingeringSlots.has(id) ? (this.state.ships.get(id)?.playerId ?? null) : null),
     readPose: (id, out) => this.readLingeringPose(id, out),
     postInput: (id, c, tick) => this.postWingmanInput(id, c, tick),
-    // TODO slice 4b energy: lingering hulls have no energy regen/drain yet
-    // (`tickEnergy` only handles piloted active hulls), so wingmen never boost.
-    canBoost: () => false,
+    // RTS slice 4b: the pilot's boost gate (InputHandler) on the HULL's own
+    // pool; `tickEnergy` drains `boostingWingmen` like `boostingPlayers`.
+    canBoost: (id) => canAfford(this.state.ships.get(id)?.energy ?? 0, BOOST_TICK_COST),
     // Attack / escort targets: NPCs and other swarm entities, an own LINGERING
-    // hull (escort a wingman) or a pilot's ACTIVE ship keyed by playerId
-    // (escort the ship the owner flies). Live SAB poses (#14: one scratch).
+    // hull (escort a wingman), a pilot's ACTIVE ship keyed by playerId (attack
+    // orders) or by shipInstanceId (the ship the owner flies: `pilotShipOf`,
+    // a pilot-led squad's leader, escort). Live SAB poses (#14: one scratch).
     resolvePoseInto: (id, out) => {
       const p = this.wingmanTargetPose;
       if (!this.entityPoseInto(id, p)) return false;
-      out.x = p.x; out.y = p.y; out.vx = p.vx; out.vy = p.vy;
+      out.x = p.x; out.y = p.y; out.vx = p.vx; out.vy = p.vy; out.angle = p.angle;
       return true;
     },
     // RTS slice 5 — hunt target choice: the nearest contact hostile to the
@@ -938,12 +941,13 @@ export class SectorRoom extends Room<SectorState> {
       out.x = p.x; out.y = p.y; out.vx = p.vx; out.vy = p.vy;
       return id;
     },
-    // The ship the caller flies, by the id the brain resolves above: the
-    // playerId (the client's fleet selection names the active ship the same
-    // way). Null while spectating.
+    // The ship the caller flies, in the fleet's id space (its shipInstanceId,
+    // so a squad member the owner pilots is recognised and leads; slice 4b).
+    // The client names its active ship by playerId: `set_mode` maps an escort
+    // of it here, the status stream maps it back. Null while spectating.
     pilotShipOf: (playerId) => {
       const ship = this.getActiveShip(playerId);
-      return ship?.alive && this.playerToSlot.has(playerId) ? playerId : null;
+      return ship?.alive && this.playerToSlot.has(playerId) ? ship.shipInstanceId : null;
     },
   });
   /** Reused `set_mode` parameters (#14; the brain copies the route). */
@@ -1276,6 +1280,11 @@ export class SectorRoom extends Room<SectorState> {
    *  a ship is accelerating. No longer a strict superset of `boostingPlayers`
    *  (boost without thrust is now valid). */
   private readonly thrustingPlayers = new Set<string>();
+  /** RTS slice 4b — AI-flown lingering hulls holding boost, keyed by
+   *  shipInstanceId (never playerId: a pilot and their parked hulls share
+   *  one). Set by `postWingmanInput` (the energy-gated bit), cleared on
+   *  detach; `tickEnergy` drains one boost tick each. */
+  private readonly boostingWingmen = new Set<string>();
   /** Last client input tick the physics worker confirmed it applied, read from SAB.
    *  Owned by SnapshotBroadcaster (extracted); aliased here for the
    *  worker-read site + the room's onJoin/onLeave callers. */
@@ -2957,6 +2966,8 @@ export class SectorRoom extends Room<SectorState> {
         const client = this.clients.find((c) => c.sessionId === sessionId);
         try { client?.send('fleet_status', msg); } catch { /* closing */ }
       },
+      // The ship the owner flies goes back out under their playerId (4b).
+      wireShipId: (ownerId, id) => (this.playerToActiveShipInstance.get(ownerId) === id ? ownerId : id),
     });
     // eslint-disable-next-line no-restricted-globals -- real time: a UI refresh rate for the inspector and fleet panel, not game time
     this.selectionStatsTimer = setInterval(guarded('selection-stats-tick', () => {
@@ -4088,7 +4099,10 @@ export class SectorRoom extends Room<SectorState> {
       md.x = hasPoint ? p.data.x : undefined;
       md.y = hasPoint ? p.data.y : undefined;
       md.route = p.data.route;
-      md.escortId = p.data.escortId;
+      // The client names its own active ship by playerId; the fleet knows it
+      // by shipInstanceId (`pilotShipOf`, slice 4b).
+      const esc = p.data.escortId;
+      md.escortId = esc === pid ? (this.playerToActiveShipInstance.get(pid) ?? esc) : esc;
       this.fleet.setMode(pid, p.data.shipIds, p.data.mode, md);
       md.route = undefined; md.escortId = undefined; md.x = undefined; md.y = undefined;
     });
@@ -4315,6 +4329,8 @@ export class SectorRoom extends Room<SectorState> {
       const activeHull = this.getActiveShip(evt.targetId);
       const destroyedShip = activeHull ?? this.state.ships.get(evt.targetId);
       const victimPlayerId = activeHull ? evt.targetId : destroyedShip?.playerId;
+      // RTS slice 4b: a squad member its owner was flying leaves its squad.
+      if (activeHull) this.fleet.forgetSquadMember(activeHull.shipInstanceId);
 
       const killerUser = this.playerToUser.get(evt.shooterId) ?? null;
       const victimUser = victimPlayerId !== undefined
@@ -5224,6 +5240,13 @@ export class SectorRoom extends Room<SectorState> {
       const kind = getShipKind(ship.kind);
       const energyMax = effectiveShipEnergyMax(kind.energyMax ?? 100, ship.statAlloc);
       ship.energy = regenEnergyStep(ship.energy, energyMax, kind.energyRegenRate ?? 0.25);
+    }
+    // RTS slice 4b: a wingman holding boost pays per tick like a pilot (the
+    // fleet re-checks `canBoost` every tick, so this can't drive it below 0).
+    // Covers LINGERING hulls with a brain only (#17: detach clears the set).
+    for (const id of this.boostingWingmen) {
+      const ship = this.state.ships.get(id);
+      if (ship?.alive) ship.energy = spendEnergy(ship.energy, BOOST_TICK_COST);
     }
   }
 
@@ -9745,9 +9768,10 @@ export class SectorRoom extends Room<SectorState> {
    *  REKEY back). Posts neutral controls last, so a wingman INPUT still queued
    *  in the worker can't become the reclaimed hull's held input (the worker
    *  holds the last input until the pilot's first arrives). Idempotent. */
-  private detachWingman(shipInstanceId: string): void {
+  private detachWingman(shipInstanceId: string, keepSquad = false): void {
+    this.boostingWingmen.delete(shipInstanceId);
     if (!this.fleet.isAttached(shipInstanceId)) return;
-    this.fleet.detach(shipInstanceId);
+    this.fleet.detach(shipInstanceId, keepSquad ? KEEP_SQUAD : undefined);
     // RTS slice 5: drop the hull's wingman fire state (locks, turret angles,
     // cooldown ledger, target cache). A reclaimed hull fires as its pilot.
     this.wingmanLocks.forget(shipInstanceId);
@@ -9806,6 +9830,8 @@ export class SectorRoom extends Room<SectorState> {
     cmd.turnRight = c.turnRight;
     cmd.boost = c.boost;
     cmd.reverse = c.reverse;
+    if (c.boost) this.boostingWingmen.add(shipInstanceId);
+    else this.boostingWingmen.delete(shipInstanceId);
     this.postToWorker(cmd);
   }
 
@@ -9902,6 +9928,9 @@ export class SectorRoom extends Room<SectorState> {
    *  active ship (by playerId) or a swarm entity (registry or wire id). */
   private entityPoseInto(id: string, out: FleetPose): boolean {
     if (this.readLingeringPose(id, out) || this.readActiveShipPose(id, out)) return true;
+    // A pilot's ACTIVE ship by its shipInstanceId (slice 4b: `pilotShipOf`).
+    const owner = this.state.ships.get(id)?.playerId;
+    if (owner !== undefined && this.playerToActiveShipInstance.get(owner) === id && this.readActiveShipPose(owner, out)) return true;
     const rec = this.swarmRecByAnyId(id);
     return rec !== null && this.swarmEntityPoseInto(rec.id, out);
   }
@@ -10128,7 +10157,9 @@ export class SectorRoom extends Room<SectorState> {
       angle:  this.sabF32[b + SLOT_ANGLE_OFF]!,
       angvel: this.sabF32[b + SLOT_ANGVEL_OFF]!,
     };
-    this.detachWingman(shipId);
+    // The owner takes the helm: a squad member stays in its squad, which forms
+    // up on it (pilot-led) and gets it back as AI leader on release (4b).
+    this.detachWingman(shipId, true);
     this.lingeringSlots.delete(shipId);
     this.lingeringPoseCache.delete(shipId);
     const ownerlessTimer = this.ownerlessShips.get(shipId);
@@ -10225,6 +10256,8 @@ export class SectorRoom extends Room<SectorState> {
     // Living World P1a — an abandoned hull's hold spills where it sat (P1a-2
     // turns this into a salvageable hulk).
     this.spillOrLoseShipHold(shipInstanceId, playerId, pose, 'abandoned');
+    // RTS slice 4b: a squad member its owner was flying leaves its squad.
+    this.fleet.forgetSquadMember(shipInstanceId);
 
     // Free the slot + DESPAWN the playerId body (no wreck rekey).
     this.freeSlots.push(slot);

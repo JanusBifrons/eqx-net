@@ -470,8 +470,9 @@ export interface RenderMirror {
    *  Pose fields populated from `SnapshotMessage.states[*]` entries whose
    *  `isActive === false`; identity (kind, displayName) carried alongside.
    *  `thrusting` (RTS slice 4c): the hull's wingman holds thrust, from the
-   *  snapshot's `lastInput` (absent ⇒ off); the renderer draws its flame. */
-  lingeringShips?: Map<string, ShipRenderState & { ownerPlayerId: string; thrusting?: boolean }>;
+   *  snapshot's `lastInput` (absent ⇒ off); the renderer draws its flame.
+   *  `boosting` (slice 4b): the same for the boost bit (boost exhaust). */
+  lingeringShips?: Map<string, ShipRenderState & { ownerPlayerId: string; thrusting?: boolean; boosting?: boolean }>;
   /**
    * Swarm entities (asteroids + drones) shipped via the binary swarm channel.
    * Keyed by the server's dense u16 entityId. Sleeping entries remain in the

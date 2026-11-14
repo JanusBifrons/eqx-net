@@ -132,6 +132,7 @@ export function routeSnapshotShipStates(snap: SnapshotMessage, ctx: ShipRouterCt
       // RTS slice 4c — the wingman's angvel + input bits: the predWorld body
       // turns/thrusts between snapshots and the renderer draws its flame.
       lingerEntry.thrusting = lingerBodies.noteSnapshot(shipInstanceId, entry.angvel, entry.lastInput);
+      lingerEntry.boosting = lingerBodies.boostOf(shipInstanceId);
       lingeringSeen.add(shipInstanceId);
       // Phase 6b — spawn / refresh the predWorld body so the local
       // player can collide with the parked hull. The helper handles the

@@ -3029,16 +3029,18 @@ export class PixiRenderer implements IRenderer {
     }
     // RTS slice 4c — lingering hulls flown by a wingman: their sprites live
     // in `lingeringSprites` (art key `linger-<id>`), the thrust bit rides the
-    // lingering mirror entry (snapshot `lastInput`). No boost yet (wingmen
-    // don't boost, slice 4b).
+    // lingering mirror entry (snapshot `lastInput`), and so does the boost
+    // bit (slice 4b: wingmen boost on long legs, energy-gated server-side).
     if (mirror.lingeringShips) {
       for (const [id, entry] of this.lingeringSprites) {
         const sp = entry.sprite;
         if (!sp.visible) continue;
         const h = this._artCtx.handles.get(entry.artKey);
         if (!h || h.job.type !== 'ship' || !h.ship) continue;
-        const thrust: -1 | 0 | 1 = mirror.lingeringShips.get(id)?.thrusting === true ? 1 : 0;
-        this.drawFxEngineFor(fx, entry.artKey, sp, h, thrust, 0, dt, now);
+        const le = mirror.lingeringShips.get(id);
+        const thrust: -1 | 0 | 1 = le?.thrusting === true ? 1 : 0;
+        const boost: -1 | 0 | 1 = le?.boosting === true ? 1 : 0;
+        this.drawFxEngineFor(fx, entry.artKey, sp, h, thrust, boost, dt, now);
       }
     }
     fx.endFrame();

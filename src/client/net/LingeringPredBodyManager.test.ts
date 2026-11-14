@@ -126,6 +126,17 @@ describe('LingeringPredBodyManager — wingman-flown hull renders smoothly (RTS 
     expect(mgr.noteSnapshot(ID, 0, undefined)).toBe(false);
   });
 
+  it('the boost bit (slice 4b) is read back for the exhaust, absent bits keep it', () => {
+    const mgr = new LingeringPredBodyManager();
+    expect(mgr.boostOf(ID), 'unknown hull ⇒ no boost').toBe(false);
+    mgr.noteSnapshot(ID, 0, { ...TURN, boost: true });
+    expect(mgr.boostOf(ID)).toBe(true);
+    mgr.noteSnapshot(ID, 0, undefined);
+    expect(mgr.boostOf(ID), 'dedupe keeps the last bits').toBe(true);
+    mgr.noteSnapshot(ID, 0, { ...TURN, boost: false });
+    expect(mgr.boostOf(ID)).toBe(false);
+  });
+
   it('forward prediction is bounded per snapshot (lookahead cap)', async () => {
     const world = await PhysicsWorld.create();
     const mgr = new LingeringPredBodyManager();

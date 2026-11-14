@@ -124,6 +124,12 @@ export class LingeringPredBodyManager {
     return m.input.thrust;
   }
 
+  /** The hull's current boost bit (the wingman holds boost, slice 4b; the
+   *  server strips it when the pool can't afford a tick). False if unknown. */
+  boostOf(shipInstanceId: string): boolean {
+    return this.motion.get(shipInstanceId)?.input.boost === true;
+  }
+
   /**
    * Spawn / update the predWorld body for a lingering hull, given that
    * both `kind` and pose have been populated in the mirror. No-op when
