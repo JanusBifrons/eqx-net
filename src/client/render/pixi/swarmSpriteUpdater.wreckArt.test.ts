@@ -8,7 +8,7 @@
  * wreck (dust, shards, flash); a late joiner sees it already cool.
  */
 import { describe, it, expect, vi } from 'vitest';
-import { Container, GlProgram, Mesh, Rectangle, Texture, TextureSource } from 'pixi.js';
+import { Container, GlProgram, Mesh, Rectangle, RenderLayer, Sprite as PixiSprite, Texture, TextureSource } from 'pixi.js';
 import { LitShipMesh } from '../art/litShipShader.js';
 import { litPass } from '../art/litPass.js';
 import { LOOK_NIGHT } from '../art/lightingSettings.js';
@@ -19,7 +19,7 @@ import {
   WreckArtState, WreckPieceSprite, WRECK_DISPLAY_OBJECTS_PER_PIECE_MAX, WRECK_RIPPLE_MAX, WRECK_BLAST_MAIN,
   WRECK_RIPPLE_R_MIN, WRECK_RIPPLE_R_MAX, WRECK_CRACK_FRONT_MS, WRECK_GLOW_END_S, wreckGlowTexture,
   WRECK_BLAST_REACH, WRECK_RIPPLE_GAP_MS, wreckGlowAt, type WreckGlow,
-  WRECK_BLAST_LINGER, wreckBlasts, type WreckBlast,
+  WRECK_BLAST_LINGER, wreckBlasts, type WreckBlast, wreckPieceFarLod,
 } from './wreckArt.js';
 import { FxExplosions } from '../art/fx/FxExplosions.js';
 import { WreckBreakFx } from '../../effects/perEffect/WreckBreakFx.js';
@@ -297,6 +297,76 @@ describe('updateSwarmSprites — capital wreck art (S3)', () => {
       expect(litPass.count - before, 'every lit piece mesh is registered with the light pass').toBe(lit);
       for (const s of ctx.sprites.values()) s.destroy({ children: true });
       expect(litPass.count, 'destroyed pieces leave the light pass').toBe(before);
+    } finally {
+      litPass.settings = prev;
+    }
+  });
+
+  it('far-zoom LOD: the decision is the ships\' icon rule on the PARENT hull, with its hysteresis', () => {
+    const R = getShipKind('battleship').radius;
+    // Ships become icons below 8 px across; the piece of a hull that size does too.
+    expect(wreckPieceFarLod(R, 7.9 / (2 * R), false)).toBe(true);
+    expect(wreckPieceFarLod(R, 8.1 / (2 * R), false)).toBe(false);
+    // Hysteresis: back to full art only above 8 × 1.25 px.
+    expect(wreckPieceFarLod(R, 9 / (2 * R), true)).toBe(true);
+    expect(wreckPieceFarLod(R, 10.1 / (2 * R), true)).toBe(false);
+    // A small hull reaches it at a much nearer zoom than a capital.
+    const r = getShipKind('fighter').radius;
+    expect(wreckPieceFarLod(r, 0.15, false)).toBe(2 * r * 0.15 < 8);
+  });
+
+  it('GPU-lit pieces at wide zoom draw a batched flat speck instead of the lit tiles, and come back', () => {
+    // Perf (#584 follow-up): each lit tile is its own draw call; at the zoom
+    // where ships are icons the pieces must not be (wide-view draw calls).
+    const page = new TextureSource({ width: 2048, height: 2048 });
+    const frames: Texture[] = [];
+    for (let t = 0; t < TILES; t++) frames.push(new Texture({ source: page, frame: new Rectangle(0, t * TILE_H, W, Math.min(TILE_H, H - t * TILE_H)) }));
+    const art: ShipArt = { frames, w: W, h: H, tiles: TILES, tileH: TILE_H, density: 0.2, nozzles: [], navLights: [], lit: { w: W, h: H, ppu: 0.2, maxH: 30, emisMax: 1 } };
+    const prev = litPass.settings;
+    litPass.settings = LOOK_NIGHT;
+    try {
+      const { svc } = stubArt(art);
+      const ctx = makeCtx(svc, []);
+      const layer = new RenderLayer();
+      ctx.wreckFarLayer = layer;
+      const R = getShipKind('battleship').radius;
+      const d = desc(DEATH_TICK);
+      const pieces = (): WreckPieceSprite[] => [...ctx.sprites.values()] as WreckPieceSprite[];
+      const drawnLit = (s: WreckPieceSprite): number => s.children.filter((c) => c instanceof LitShipMesh && c.renderable).length;
+      const stand = (s: WreckPieceSprite): Container[] => s.children.filter((c) => c instanceof PixiSprite && c.renderable);
+
+      // Normal zoom: lit art, no stand-in.
+      ctx.cameraScale = 40 / (2 * R);
+      updateSwarmSprites(mirrorFor(d, DEATH_TICK + 3), ctx);
+      for (const s of pieces()) {
+        expect(s.farZoom).toBe(false);
+        expect(drawnLit(s)).toBeGreaterThan(0);
+        expect(stand(s).length).toBe(0);
+      }
+
+      // Wide zoom (the hull would be a 5 px icon): no lit tile draws, one flat speck does,
+      // drawn in the shared far layer (one batch for every speck) with any cooling glow.
+      ctx.cameraScale = 5 / (2 * R);
+      updateSwarmSprites(mirrorFor(d, DEATH_TICK + 4), ctx);
+      for (const s of pieces()) {
+        expect(s.farZoom).toBe(true);
+        expect(drawnLit(s)).toBe(0);
+        expect(stand(s).length).toBe(1);
+        // The stand-in sits under the glow (a cooling cut edge stays on top).
+        expect(s.getChildIndex(stand(s)[0]!)).toBe(0);
+        expect(stand(s)[0]!.parentRenderLayer).toBe(layer);
+      }
+
+      // Back in: the lit art returns and the stand-in hides (no rebuild).
+      ctx.cameraScale = 40 / (2 * R);
+      updateSwarmSprites(mirrorFor(d, DEATH_TICK + 5), ctx);
+      for (const s of pieces()) {
+        expect(s.farZoom).toBe(false);
+        expect(drawnLit(s)).toBeGreaterThan(0);
+        expect(stand(s).length).toBe(0);
+      }
+      expect(layer.renderLayerChildren.length, "specks leave the far layer").toBe(0);
+      for (const s of ctx.sprites.values()) s.destroy({ children: true });
     } finally {
       litPass.settings = prev;
     }

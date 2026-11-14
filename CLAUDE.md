@@ -215,6 +215,7 @@ Several Claude sessions run on this machine at once. So:
 - Claude runs it, not the user, before a PR that touches rendering, the server tick, the snapshot path or combat at scale; the verdict table goes in the PR body.
 - Counts gate; timings compare only against the same-session base arm. Percentiles and hitch counts, never mean FPS.
 - INVALID is never "fast"; INCONCLUSIVE is never a pass; at least 4 reps per arm. Trust a metric only after its main-vs-main and injected-burn self-test.
+- Per-entity art with its own draw call (GPU-lit meshes) drops to a batched stand-in at the zoom where ships become far-zoom icons (wreck pieces: `wreckPieceFarLod`); never widen a draw-call budget instead.
 - Another session on the machine: use `EQX_SHOWCASE_PORT_OFFSET`, `--ignore-ports` only for listeners you know are idle. Phone-class checks use `--device phone-proxy`; never ask the user to run phone tests.
 
 ## Test-harness philosophy — bespoke gameplay triggers, never bump timeouts

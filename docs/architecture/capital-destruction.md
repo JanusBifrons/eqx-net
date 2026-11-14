@@ -1987,6 +1987,44 @@ line; a railgun kill erases a straight channel as wide as the bolt.
   `tests/integration/wire/wreckGeometryParity.test.ts` (cut descriptors
   rebuild bit for bit); `wreckWire.test.ts`.
 
+#### Far-zoom LOD for wreck pieces (2026-11-14)
+
+With the break-up on, wide-view/high (GPU-lit) draw calls rose from 29–30 to
+69–84 p95 against a budget of 32. At wide zoom ships drop to batched
+far-zoom icons (`FarZoomIcons`), but each GPU-lit piece still drew one
+`LitShipMesh` per hull tile, each its own draw call (custom shader), which
+also broke the batch around its glow mesh.
+
+- **When.** `wreckPieceFarLod(shipRadius, scale, was)` (`wreckArt.ts`) is the
+  ships' own rule, `isIconOnly` on the PARENT hull's diameter
+  (`2 · radius · zoom` < 8 px, back above 10 px). A wreck goes cheap at
+  exactly the zoom its ship would have been an icon, and all its pieces
+  switch together.
+- **What.** `WreckPieceSprite.setFarZoom` (called by the swarm updater with
+  the camera scale, before `update`) stops rendering the lit tiles
+  (`renderable = false`, so the light pass skips them too) and shows one
+  white-texture `Sprite` over the piece's bounding box, tinted the hull's
+  piece colour (burnt for a capital). The speck, and its glow while a cut
+  edge is still cooling, are attached to one `RenderLayer` (the renderer's
+  `_wreckFarLayer`, between the ship container and the ship icons), so all
+  specks draw as one batch. Left in place they sat between lit ships and
+  rocks in the ship container and each gap opened a new batch: 30–36 draw
+  calls p95 instead of 26–29. The piece is 1–4 px there, so the box reads as
+  the same speck the lit piece was: no pop.
+- **Scope.** GPU-lit pieces only: baked and plain pieces already batch.
+  Capital wrecks (big hulls) keep their lit art at every gameplay zoom
+  where the hull is above 8 px.
+- **Cost.** The speck is built once, on first need; switching back and forth
+  writes two flags per art part, only on a change. No per-frame allocation.
+  `__eqxArtStats().wreckFarLod` counts pieces drawn as specks.
+- **Measured** (`pnpm perf:counts`, desktop, SwiftShader 960×540, same
+  session): see the PR; wide-view/high back within its 32 budget.
+  fleet-fight/high is unchanged by this (zoom 0.45, ships are not icons
+  there) and was over its 230 budget before the break-up.
+- Lock: `swarmSpriteUpdater.wreckArt.test.ts` (the decision and its
+  hysteresis; lit pieces at wide zoom draw no lit tile and one speck in the
+  far layer, and come back at normal zoom with the layer empty).
+
 ## 4. Determinism strategy
 
 Every client must produce the same pieces as the server, bit for bit, from
