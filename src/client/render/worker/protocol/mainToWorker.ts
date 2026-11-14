@@ -4,7 +4,7 @@
  * no class instances). Locked by `protocol.test.ts`.
  */
 
-import type { RenderMirror, WarpCenter } from '@core/contracts/IRenderer';
+import type { FleetOverlayModel, RenderMirror, WarpCenter } from '@core/contracts/IRenderer';
 import type { EffectQuality } from '@core/contracts/IEffects';
 import type { CameraCue } from '@core/contracts/cameraScript';
 import type { WarpParams } from './warpParams.js';
@@ -214,6 +214,14 @@ export interface SetFleetOrderModeMsg {
   mode: 'move' | 'attack';
 }
 
+/** RTS slice 15a — own ships' squads + orders for selection expansion and
+ *  order lines. See `IRenderer.setFleetOverlayModel`. Posted when the main
+ *  thread's fleet status version moves. */
+export interface SetFleetOverlayModelMsg {
+  type: 'SET_FLEET_OVERLAY_MODEL';
+  model: FleetOverlayModel;
+}
+
 /** Off-screen indicator radar (plan sparkling-wondering-rose) — the active
  *  preferences. Posted on change only (the live settings modal coalesces to
  *  ≤ one post per animation frame). */
@@ -395,6 +403,7 @@ export type MainToWorkerMsg =
   | SetLoadCurtainMsg
   | SetSpectatorMsg
   | SetFleetOrderModeMsg
+  | SetFleetOverlayModelMsg
   | SetRadarPrefsMsg
   | SetRadarInsetsMsg
   | SetRadarSuppressedMsg

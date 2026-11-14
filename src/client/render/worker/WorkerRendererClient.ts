@@ -20,6 +20,7 @@
 import { ART_OFF, type ArtOptions } from '../art/artMode.js';
 import { readFxKillSwitches } from '../fxKillSwitches.js';
 import type {
+  FleetOverlayModel,
   IRenderer,
   RenderMirror,
   RendererFeedback,
@@ -535,6 +536,11 @@ export class WorkerRendererClient implements IRenderer {
   /** See `IRenderer.setFleetOrderMode`. Posts to the worker's renderer. */
   setFleetOrderMode(mode: 'move' | 'attack'): void {
     this.post({ type: 'SET_FLEET_ORDER_MODE', mode });
+  }
+
+  /** See `IRenderer.setFleetOverlayModel`. Posts to the worker's renderer. */
+  setFleetOverlayModel(model: FleetOverlayModel): void {
+    this.post({ type: 'SET_FLEET_OVERLAY_MODEL', model });
   }
 
   /** See `IRenderer.setRadarPrefs`. */

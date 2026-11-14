@@ -235,6 +235,12 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
         break;
       }
 
+      case 'SET_FLEET_OVERLAY_MODEL': {
+        if (!renderer) return;
+        renderer.setFleetOverlayModel(msg.model);
+        break;
+      }
+
       case 'SET_RADAR_PREFS': {
         if (!renderer) return;
         renderer.setRadarPrefs(msg.prefs);

@@ -1,6 +1,6 @@
 import { Application, Graphics, Container, type Texture } from 'pixi.js';
 import { Camera } from './worker/Camera';
-import type { IRenderer, RenderMirror, RendererFeedback } from '@core/contracts/IRenderer';
+import type { FleetOverlayModel, FleetOverlayShip, IRenderer, RenderMirror, RendererFeedback } from '@core/contracts/IRenderer';
 import { GameClock } from '@core/clock/GameClock';
 import { GalaxyMapLayer } from './galaxy/GalaxyMapLayer';
 import { type WarpParams, type WarpCenter, type FrameMarkers } from './worker/protocol';
@@ -32,7 +32,7 @@ import { HoverBracket } from './HoverBracket';
 import { pickEntityAt, type PickedEntityKind } from './pickEntity';
 import { CommandPointerRouter, type BoxRect, type HoldArmed, type RouterAction, type RouterPointerEvent } from './input/commandPointerRouter.js';
 import { decideTapAction, type FleetOrderMode } from './input/tapAction.js';
-import { applySelection, boxSelectOwn, collectFleetShips, isOwnShipPresent, pickOwnShipAt, sameSelection } from './fleetSelection.js';
+import { applySelection, boxSelectOwn, collectFleetShips, isOwnShipPresent, pickOwnShipAt, sameSelection, tapSelectOwn } from './fleetSelection.js';
 import { FleetOverlay, type OrderFlash } from './FleetOverlay.js';
 import { decideLingeringSpriteAction, decideExplosionPosition, type SpriteDecision } from './spriteUpdateDecisions';
 import { shouldLatchFirstFrame } from './firstFrameLatch.js';
@@ -226,6 +226,10 @@ export class PixiRenderer implements IRenderer {
   private readonly _orderFlash: OrderFlash = { x: 0, y: 0, attack: false, t0: -1 };
   /** Touch tap-order mode (slice 12), pushed from the strip's Zustand toggle. */
   private _fleetOrderMode: FleetOrderMode = 'move';
+  /** Own ships' squads + orders by id (slice 15a), replaced on each
+   *  `setFleetOverlayModel` (main-thread fleet status version change). */
+  private _fleetModel: Map<string, FleetOverlayShip> = new Map();
+  private readonly _squadOf = (id: string): string | null | undefined => this._fleetModel.get(id)?.squadId;
   /** Hold-to-box cue scratch (reused per frame). */
   private readonly _holdArmed: HoldArmed = { x: 0, y: 0, armedMs: 0 };
   private fleetOverlay: FleetOverlay | null = null;
@@ -1319,7 +1323,7 @@ export class PixiRenderer implements IRenderer {
     if (m === null) return;
     const a = this.camera.screenToWorld(x0, y0);
     const b = this.camera.screenToWorld(x1, y1);
-    const hits = boxSelectOwn(a.x, -a.y, b.x, -b.y, collectFleetShips(m), m.localPlayerId);
+    const hits = boxSelectOwn(a.x, -a.y, b.x, -b.y, collectFleetShips(m), m.localPlayerId, this._squadOf);
     this.setFleetSelection(applySelection(this._fleetSel, hits, additive));
   }
 
@@ -1332,7 +1336,8 @@ export class PixiRenderer implements IRenderer {
     const w = this.camera.screenToWorld(screenX, screenY);
     const gx = w.x;
     const gy = -w.y;
-    const own = pickOwnShipAt(gx, gy, collectFleetShips(m), m.localPlayerId);
+    const fleet = collectFleetShips(m);
+    const own = pickOwnShipAt(gx, gy, fleet, m.localPlayerId);
     const touchOrder = own === null && pointerType !== 'mouse' && this._fleetSel.size > 0;
     // Pick only when an order needs to know what is under the finger.
     const hit = touchOrder ? pickEntityAt(gx, gy, m) : null;
@@ -1348,7 +1353,8 @@ export class PixiRenderer implements IRenderer {
     });
     switch (action) {
       case 'select':
-        this.setFleetSelection(applySelection(this._fleetSel, [own!], additive));
+        // Slice 15a: whole squad; a tap on an exactly-selected squad narrows.
+        this.setFleetSelection(tapSelectOwn(this._fleetSel, own!, additive, fleet, m.localPlayerId, this._squadOf));
         return;
       case 'orderMove':
         this.publishOrder(gx, gy, null);
@@ -1435,6 +1441,7 @@ export class PixiRenderer implements IRenderer {
       this.camera.scale.x,
       // eslint-disable-next-line no-restricted-properties -- real time: pointer stamps are Date.now() (both paths)
       this._cmdRouter.holdArmedAt(Date.now(), this._holdArmed),
+      this._fleetModel,
     );
   }
 
@@ -3380,6 +3387,13 @@ export class PixiRenderer implements IRenderer {
   /** See `IRenderer.setFleetOrderMode`. */
   setFleetOrderMode(mode: 'move' | 'attack'): void {
     this._fleetOrderMode = mode;
+  }
+
+  /** See `IRenderer.setFleetOverlayModel`. Allocates on a status change only. */
+  setFleetOverlayModel(model: FleetOverlayModel): void {
+    const next = new Map<string, FleetOverlayShip>();
+    for (const s of model.ships) next.set(s.id, s);
+    this._fleetModel = next;
   }
 
   setSpectator(active: boolean): void {

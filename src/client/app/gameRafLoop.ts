@@ -36,6 +36,7 @@ import { commitChosenPlacement } from '../structures/structurePlacementClient.js
 import { sendSelectEntity, sendDeselectEntity } from '../net/selectionClient.js';
 import { resetSelectionStats } from '../net/selectionStats.js';
 import { sendFleetOrder } from '../ships/shipActionsClient.js';
+import { pushFleetOverlayModelIfChanged } from '../fleet/fleetOverlayModel.js';
 import type { ColyseusGameClient } from '../net/ColyseusClient.js';
 import type { IRenderer } from '@core/contracts/IRenderer';
 import { placeInspector, type InspectorAnchor } from './inspectorPlacement.js';
@@ -135,6 +136,11 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
   let frameCounter = 0;
   let workerUpdateCounter = 0;
   let firstFramePixiLogged = false;
+
+  // RTS slice 15a: last fleet-status version pushed to THIS renderer. Starts
+  // at 0 (= no rows ever applied, nothing to push); a later loop for a fresh
+  // renderer re-pushes the current model on its first frame.
+  let lastFleetOverlayVersion = 0;
 
   const loop = (now: number): void => {
     if (isDisposed()) return;
@@ -356,6 +362,8 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
       _lastFleetSelSeq = selFb.fleetSelSeq;
       useUIStore.getState().setFleetSelection(selFb.fleetSelIds);
     }
+    // Squads + order markers for the renderer (posted only on a version move).
+    lastFleetOverlayVersion = pushFleetOverlayModelIfChanged(renderer, lastFleetOverlayVersion);
     if (selFb.orderSeq !== _lastOrderSeq) {
       _lastOrderSeq = selFb.orderSeq;
       // Send the order for the current selection (one small object per

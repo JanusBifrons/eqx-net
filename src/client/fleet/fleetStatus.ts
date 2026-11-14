@@ -29,6 +29,13 @@ export interface FleetStatusRow {
   squadId?: string;
   /** Direct order in progress, when any. */
   orderKind?: FleetOrderKind;
+  /** Move-order destination, game space (slice 15a; with `orderKind: 'move'`). */
+  orderX?: number;
+  orderY?: number;
+  /** Patrol route waypoints, game space, a closed loop (slice 15a; patrol mode). */
+  route?: readonly (readonly [number, number])[];
+  /** The ship being escorted (slice 15a; escort mode). */
+  escortId?: string;
 }
 
 /** A status row as delivered by the stream: the row plus its ship id. */
@@ -66,6 +73,10 @@ export function applyFleetStatus(updates: readonly FleetStatusUpdate[], opts?: {
       ...(u.morale !== undefined ? { morale: u.morale } : {}),
       ...(u.squadId !== undefined ? { squadId: u.squadId } : {}),
       ...(u.orderKind !== undefined ? { orderKind: u.orderKind } : {}),
+      ...(u.orderX !== undefined ? { orderX: u.orderX } : {}),
+      ...(u.orderY !== undefined ? { orderY: u.orderY } : {}),
+      ...(u.route !== undefined ? { route: u.route } : {}),
+      ...(u.escortId !== undefined ? { escortId: u.escortId } : {}),
     });
     changed = true;
   }
@@ -81,8 +92,24 @@ function sameRow(a: FleetStatusRow, b: FleetStatusRow): boolean {
     a.hullPct === b.hullPct &&
     a.morale === b.morale &&
     a.squadId === b.squadId &&
-    a.orderKind === b.orderKind
+    a.orderKind === b.orderKind &&
+    a.orderX === b.orderX &&
+    a.orderY === b.orderY &&
+    a.escortId === b.escortId &&
+    sameRoute(a.route, b.route)
   );
+}
+
+function sameRoute(
+  a: FleetStatusRow['route'],
+  b: FleetStatusRow['route'],
+): boolean {
+  if (a === b) return true;
+  if (a === undefined || b === undefined || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i]![0] !== b[i]![0] || a[i]![1] !== b[i]![1]) return false;
+  }
+  return true;
 }
 
 export function getFleetStatus(id: string): FleetStatusRow | undefined {
@@ -91,6 +118,11 @@ export function getFleetStatus(id: string): FleetStatusRow | undefined {
 
 export function getFleetStatusVersion(): number {
   return version;
+}
+
+/** Visit every row (no allocation). */
+export function forEachFleetStatus(visit: (id: string, row: FleetStatusRow) => void): void {
+  for (const [id, row] of rows) visit(id, row);
 }
 
 /** Drop every row (room change / tests). */

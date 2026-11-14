@@ -1081,6 +1081,14 @@ export interface IRenderer {
    */
   setFleetOrderMode(mode: 'move' | 'attack'): void;
   /**
+   * RTS command view (slice 15a): squads + order markers of the local
+   * player's own ships, built on the main thread from `fleet/fleetStatus.ts`
+   * and pushed only when its version moves (worker `SET_FLEET_OVERLAY_MODEL`).
+   * The renderer expands selections to whole squads and draws order lines
+   * for the SELECTED ships from it. Plain data, structured-cloneable.
+   */
+  setFleetOverlayModel(model: FleetOverlayModel): void;
+  /**
    * The sector being shown changed (null on the galaxy map). Picks the new
    * backdrop's nebula (plan iridescent-seeking-rainbow v3, B2). On the worker
    * path the worker already hears it through `SET_CURRENT_SECTOR`.
@@ -1173,3 +1181,24 @@ export type WarpCenter =
   | { kind: 'entity'; entityId: string }
   | { kind: 'world'; worldX: number; worldY: number }
   | { kind: 'screen'; screenX: number; screenY: number };
+
+/** One own ship's squad + order, as the renderer needs it (RTS slice 15a). */
+export interface FleetOverlayShip {
+  id: string;
+  squadId: string | null;
+  orderKind: 'move' | 'attack' | 'stop' | null;
+  /** Move destination, game space. */
+  destX?: number;
+  destY?: number;
+  /** Attack target (pick-id convention: playerId / shipInstanceId / `swarm-<n>`). */
+  targetId?: string;
+  /** Ship being escorted (same id convention). */
+  escortId?: string;
+  /** Patrol route waypoints, game space (a closed loop). */
+  route?: [number, number][];
+}
+
+/** See `IRenderer.setFleetOverlayModel`. */
+export interface FleetOverlayModel {
+  ships: FleetOverlayShip[];
+}

@@ -44,14 +44,76 @@ export function collectFleetShips(mirror: RenderMirror): FleetShip[] {
   return out;
 }
 
-/** Ids of own ships whose centre lies inside the box (corners in any order). */
+/** The squad an own ship belongs to (slice 15a), or null/undefined when none. */
+export type SquadOf = (id: string) => string | null | undefined;
+
+/**
+ * `hits` plus every own ship (in `ships`) that shares a squad with any hit.
+ * Hits keep their order; squad mates follow in `ships` order; no duplicates.
+ * Without `squadOf`, or when no hit is in a squad, returns `hits` itself.
+ */
+export function expandToSquads(
+  hits: readonly string[],
+  ships: Iterable<FleetShip>,
+  localPlayerId: string | null,
+  squadOf?: SquadOf,
+): readonly string[] {
+  if (squadOf === undefined || localPlayerId === null || hits.length === 0) return hits;
+  let squads: Set<string> | null = null;
+  for (const id of hits) {
+    const sq = squadOf(id);
+    if (sq !== null && sq !== undefined) (squads ??= new Set()).add(sq);
+  }
+  if (squads === null) return hits;
+  const out = hits.slice();
+  const seen = new Set(hits);
+  for (const s of ships) {
+    if (s.ownerPlayerId !== localPlayerId || seen.has(s.id)) continue;
+    const sq = squadOf(s.id);
+    if (sq !== null && sq !== undefined && squads.has(sq)) {
+      out.push(s.id);
+      seen.add(s.id);
+    }
+  }
+  return out;
+}
+
+/**
+ * A tap on own ship `hit` (slice 15a owner rules):
+ *  - plain tap selects the hit's WHOLE squad; tapping a member of a squad
+ *    that is already EXACTLY the selection narrows it to just that ship;
+ *  - shift on a ship not selected adds its whole squad; shift on a selected
+ *    ship removes just that ship (the 13a toggle, so a squad can be trimmed).
+ * A ship in no squad behaves as before (`applySelection`). Returns a new Set.
+ */
+export function tapSelectOwn(
+  current: ReadonlySet<string>,
+  hit: string,
+  additive: boolean,
+  ships: Iterable<FleetShip>,
+  localPlayerId: string | null,
+  squadOf?: SquadOf,
+): Set<string> {
+  const group = expandToSquads([hit], ships, localPlayerId, squadOf);
+  if (additive) {
+    if (current.has(hit)) return applySelection(current, [hit], true);
+    return applySelection(current, group, true);
+  }
+  if (group.length > 1 && current.size === group.length && group.every((id) => current.has(id))) {
+    return new Set([hit]);
+  }
+  return new Set(group);
+}
+
+/**
+ * Ids of own ships whose centre lies inside the box (corners in any order),
+ * expanded to the whole squad of every ship it touches when `squadOf` is given.
+ */
 export function boxSelectOwn(
   x0: number, y0: number, x1: number, y1: number,
   ships: Iterable<FleetShip>,
   localPlayerId: string | null,
-  // Squads come later: a hit will expand to its whole squad via this hook.
-  // TODO(rts): expandToSquads(ids, squadOf) once squads exist.
-  _squadOf?: (id: string) => string | undefined,
+  squadOf?: SquadOf,
 ): string[] {
   if (localPlayerId === null) return [];
   const minX = Math.min(x0, x1);
@@ -63,7 +125,7 @@ export function boxSelectOwn(
     if (s.ownerPlayerId !== localPlayerId) continue;
     if (s.x >= minX && s.x <= maxX && s.y >= minY && s.y <= maxY) hits.push(s.id);
   }
-  return hits;
+  return expandToSquads(hits, ships, localPlayerId, squadOf) as string[];
 }
 
 /** The nearest own ship under a tap (radius + TAP_SLOP), or null. */
