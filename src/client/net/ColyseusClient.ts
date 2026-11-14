@@ -549,7 +549,7 @@ export class ColyseusGameClient {
     this.lingerBodies.ensure(shipInstanceId, this.predWorld, this.mirror);
   }
   /** Per-remote-ship render lerp offsets — applied in updateMirror() to smooth server corrections.
-   *  Stage 1: each entry holds two critically-damped spring states (one per axis)
+   *  Stage 1: each entry holds critically-damped spring states for x, y and angle
    *  decaying toward zero. Half-life per drift magnitude matches Reconciler. */
   private readonly _remoteShipOffsets = new Map<string, RemoteShipOffset>();
 
