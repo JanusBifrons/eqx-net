@@ -1146,6 +1146,10 @@ export class PixiRenderer implements IRenderer {
       // deltaMS keeps the Camera's zoom-ease framerate-independent
       // (60 / 90 / 120 Hz devices ease at the same wall-clock rate).
       this.camera.tick(this.app.ticker.deltaMS);
+      // Screen-space overlays project through THIS frame's camera (after its
+      // tick), the transform the world renders with below.
+      this.drawFleetOverlay();
+      if (this._ringProbeOn) this.captureFleetRingProbe();
       // Machined art: pack finished bakes every frame — including on the
       // galaxy map / warp screen, where `update()` doesn't run, so the
       // warm-up lands before the player joins.
@@ -1533,7 +1537,8 @@ export class PixiRenderer implements IRenderer {
 
   /**
    * Per frame: drop selected ids that are no longer own ships in the mirror
-   * (in place, no allocation unless one went), then redraw the overlay.
+   * (in place, no allocation unless one went). The overlay itself is drawn
+   * in the ticker (`drawFleetOverlay`), after this frame's camera tick.
    */
   private updateFleetSelection(mirror: RenderMirror): void {
     if (this._fleetSel.size > 0) {
@@ -1546,7 +1551,22 @@ export class PixiRenderer implements IRenderer {
       }
       if (pruned) this.publishFleetSelection();
     }
-    this.fleetOverlay?.update(
+  }
+
+  /**
+   * Redraw the command-view overlay (rings, box, order lines, flash, hold cue,
+   * pick route). Runs in the Pixi ticker AFTER `camera.tick`, right before the
+   * frame renders, so the overlay projects through the SAME camera transform
+   * the world is drawn with this frame. It used to run inside `update()`,
+   * i.e. with the camera as it stood BEFORE this frame's tick: during a pan or
+   * a glide every ring sat a frame of camera motion (~20 px) off its ship and
+   * the ships "snapped into" the rings when the camera stopped (RTS review
+   * 2026-11-14; lock `tests/e2e/fleet-overlay-camera.spec.ts`).
+   */
+  private drawFleetOverlay(): void {
+    const mirror = this._lastMirror;
+    if (mirror === null || this.fleetOverlay === null) return;
+    this.fleetOverlay.update(
       mirror,
       this._fleetSel,
       this._fleetBoxActive ? this._fleetBoxRect : null,
@@ -3735,6 +3755,36 @@ export class PixiRenderer implements IRenderer {
    */
   worldToScreenGame(x: number, y: number): { x: number; y: number } {
     return this.camera.toScreen(x, -y);
+  }
+
+  /** Test-only ring probe state (RTS review 2026-11-14). Off until first read. */
+  private _ringProbeOn = false;
+  private readonly _ringProbe = { id: '', ringX: NaN, ringY: NaN, shipX: NaN, shipY: NaN, frames: 0 };
+  private readonly _ringProbePt = { x: 0, y: 0 };
+
+  /** Ticker, after the camera tick (the transform this frame renders with):
+   *  the first selection ring as drawn vs its ship sprite's screen point. */
+  private captureFleetRingProbe(): void {
+    const o = this.fleetOverlay;
+    const id = o?.lastRingId ?? null;
+    if (o === null || id === null) return;
+    const sp = this.sprites.get(id) ?? this.lingeringSprites.get(id)?.sprite;
+    if (sp === undefined) return;
+    const g = sp.parent ? sp.parent.toGlobal(sp.position, this._ringProbePt) : null;
+    if (g === null) return;
+    const p = this._ringProbe;
+    p.id = id; p.ringX = o.lastRing.x; p.ringY = o.lastRing.y; p.shipX = g.x; p.shipY = g.y; p.frames++;
+  }
+
+  /**
+   * Test-only (RTS review 2026-11-14): turns the per-frame ring probe on and
+   * returns the latest capture: the first selection ring's drawn centre and its
+   * ship's screen point, both as the frame renders. Read by the
+   * `__eqxFleetRingProbe` DEV hook (`?worker=0`). Not used by gameplay.
+   */
+  fleetRingProbe(): { id: string; ringX: number; ringY: number; shipX: number; shipY: number; frames: number } {
+    this._ringProbeOn = true;
+    return { ...this._ringProbe };
   }
 
   /**

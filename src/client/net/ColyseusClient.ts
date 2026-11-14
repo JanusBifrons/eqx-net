@@ -1727,6 +1727,17 @@ export class ColyseusGameClient {
         this._pendingPilotSwapShipId = null;
         this._pilotSwapGlidePending = true;
         useUIStore.getState().setPilotMode('pilot');
+        // The server reclaims the hull through the join handshake (pending
+        // until `client_ready` → `warp_in` → arrival). `sendClientReady` is
+        // latched once per room join, so answer the swap's handshake here:
+        // without it the flown hull stayed "joining" until the 30 s watchdog
+        // (no own-ship slices, hidden from others; RTS review 2026-11-14,
+        // lock `tests/e2e/rts-take-controls.spec.ts`). Only once the room's
+        // own handshake is done: before that the RAF loop sends it.
+        if (useUIStore.getState().clientReadySent && this.room) {
+          this.room.send('client_ready', { type: 'client_ready' });
+          logEvent('client_ready_sent', { msSinceWelcome: 0, pilotSwap: true });
+        }
         logEvent('pilot_swap_welcomed', { shipInstanceId: msg.shipInstanceId });
       }
 

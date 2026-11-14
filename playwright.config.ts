@@ -153,6 +153,8 @@ const FEATURE_SPECS: string[] = [
   '**/build-hotbar-fits-viewport.spec.ts',
   // RTS command layer: box-select, orders, stance, squads, patrol pick, Fly.
   '**/fleet-command.spec.ts',
+  '**/rts-take-controls.spec.ts',
+  '**/fleet-overlay-camera.spec.ts',
   '**/cinematic-camera.spec.ts',
   '**/respawn-cascade-input-routing.spec.ts',
   '**/drawer-galaxy.spec.ts',

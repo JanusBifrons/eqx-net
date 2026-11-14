@@ -270,11 +270,12 @@ import { SceneWorkCounters } from './scene/SceneWorkCounters.js';
 import type { EventLoopUtilization } from 'node:perf_hooks';
 import { FrameTimeRing } from '../../core/perf/FrameTimeRing.js';
 import { OwnerlessShipEvictor } from './OwnerlessShipEvictor.js';
-import { FleetCommandSubsystem, type FleetPose, type FleetModeData } from '../fleet/FleetCommandSubsystem.js';
+import { FleetCommandSubsystem, FLEET_REPLAN_EVERY_TICKS, type FleetPose, type FleetModeData } from '../fleet/FleetCommandSubsystem.js';
 import { pickWingmanFireTarget, WINGMAN_RETALIATE_TICKS, type WingmanFireCandidates } from '../fleet/wingmanFireTarget.js';
 import { mountWeaponReach } from '../../core/combat/mountReach.js';
 import { shipTuning } from '../../shared-types/shipScale/tuning.js';
 import { FleetStatusStream } from '../fleet/FleetStatusStream.js';
+import { FleetStatusSoon } from '../fleet/FleetStatusSoon.js';
 import type { WingmanControls } from '../../core/ai/wingman/types.js';
 import { LeaveHandler } from './LeaveHandler.js';
 import { mirrorSabPoses } from './SabPoseMirror.js';
@@ -1289,6 +1290,14 @@ export class SectorRoom extends Room<SectorState> {
   }
   /** RTS slice 7 — the owner-only `fleet_status` stream (on the selection-stats timer). */
   private fleetStatus!: FleetStatusStream;
+  /** RTS review 2026-11-14 — an accepted fleet command sends its owner's
+   *  status right after the ships re-plan, not on the next timer fire. */
+  private readonly fleetStatusSoon = new FleetStatusSoon(FLEET_REPLAN_EVERY_TICKS + 1);
+  /** Bound sender for `fleetStatusSoon.flush` (no per-tick closure, #14). */
+  private readonly sendFleetStatusNow = (sessionId: string): void => {
+    const pid = this.sessionToPlayer.get(sessionId);
+    if (pid !== undefined) this.fleetStatus.sendTo(sessionId, pid);
+  };
   /** PlayerIds currently holding boost (energy-affordable), regardless of
    *  thrust. Surfaced on every snapshot so all clients can render an exhaust
    *  trail for that ship; also drives the per-tick boost energy drain. */
@@ -4122,6 +4131,7 @@ export class SectorRoom extends Room<SectorState> {
       if (d.kind === 'move') this.fleet.applyOrder(pid, d.shipIds, { kind: 'move', x: d.x!, y: d.y! });
       else if (d.kind === 'attack') this.fleet.applyOrder(pid, d.shipIds, { kind: 'attack', targetId: d.targetId! });
       else this.fleet.applyOrder(pid, d.shipIds, FLEET_STOP_ORDER);
+      this.fleetStatusSoon.request(client.sessionId, this.serverTick);
     });
     this.onMessage('set_mode', (client: Client, raw: unknown) => {
       if (!this.fleetMsgAllowed(client.sessionId)) return;
@@ -4141,27 +4151,34 @@ export class SectorRoom extends Room<SectorState> {
       md.escortId = esc === pid ? (this.playerToActiveShipInstance.get(pid) ?? esc) : esc;
       this.fleet.setMode(pid, p.data.shipIds, p.data.mode, md);
       md.route = undefined; md.escortId = undefined; md.x = undefined; md.y = undefined;
+      this.fleetStatusSoon.request(client.sessionId, this.serverTick);
     });
     this.onMessage('set_stance', (client: Client, raw: unknown) => {
       if (!this.fleetMsgAllowed(client.sessionId)) return;
       const p = SetStanceSchema.safeParse(raw);
       if (!p.success) { this.malformed.record(client.sessionId, 'set_stance'); return; }
       const pid = this.sessionToPlayer.get(client.sessionId);
-      if (pid !== undefined) this.fleet.setStance(pid, p.data.shipIds, p.data.stance);
+      if (pid === undefined) return;
+      this.fleet.setStance(pid, p.data.shipIds, p.data.stance);
+      this.fleetStatusSoon.request(client.sessionId, this.serverTick);
     });
     this.onMessage('form_squad', (client: Client, raw: unknown) => {
       if (!this.fleetMsgAllowed(client.sessionId)) return;
       const p = FormSquadSchema.safeParse(raw);
       if (!p.success) { this.malformed.record(client.sessionId, 'form_squad'); return; }
       const pid = this.sessionToPlayer.get(client.sessionId);
-      if (pid !== undefined) this.fleet.formSquad(pid, p.data.shipIds);
+      if (pid === undefined) return;
+      this.fleet.formSquad(pid, p.data.shipIds);
+      this.fleetStatusSoon.request(client.sessionId, this.serverTick);
     });
     this.onMessage('disband_squad', (client: Client, raw: unknown) => {
       if (!this.fleetMsgAllowed(client.sessionId)) return;
       const p = DisbandSquadSchema.safeParse(raw);
       if (!p.success) { this.malformed.record(client.sessionId, 'disband_squad'); return; }
       const pid = this.sessionToPlayer.get(client.sessionId);
-      if (pid !== undefined) this.fleet.disbandSquad(pid, p.data.squadId);
+      if (pid === undefined) return;
+      this.fleet.disbandSquad(pid, p.data.squadId);
+      this.fleetStatusSoon.request(client.sessionId, this.serverTick);
     });
 
     // ── Phase 4 WS-B2 — ship stat upgrades (free allocation + respec) ──────
@@ -9704,6 +9721,7 @@ export class SectorRoom extends Room<SectorState> {
     // disconnect AND inter-sector transit, both of which fire onLeave).
     this.selectionStats?.clearSession(client.sessionId);
     this.fleetStatus?.clearSession(client.sessionId);
+    this.fleetStatusSoon.clear(client.sessionId);
     this.fleetMsgCountThisTick.delete(client.sessionId);
 
     // Campaign 1.3 — forget this connection's malformed-packet counter.
@@ -12226,6 +12244,7 @@ export class SectorRoom extends Room<SectorState> {
     // control bits as the hulls' INPUT, beside the NPC AI's intents so both
     // reach the worker before its next step.
     this.fleet.tick(this.serverTick);
+    this.fleetStatusSoon.flush(this.serverTick, this.sendFleetStatusNow);
     // Living World P3c — fire every NPC charge weapon whose wind-up elapsed.
     this.aiFireResolver.releaseCharges(this.serverTick);
 

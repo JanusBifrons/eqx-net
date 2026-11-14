@@ -68,7 +68,7 @@ export class FleetStatusStream {
     this.lastEmpty.delete(sessionId);
   }
 
-  private sendTo(sessionId: string, playerId: string): void {
+  sendTo(sessionId: string, playerId: string): void {
     const rows = this.deps.fleet.statusFor(playerId);
     if (rows.length === 0) {
       if (this.lastEmpty.has(sessionId)) return;

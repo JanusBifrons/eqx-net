@@ -621,6 +621,13 @@ function GameSurface({
           };
           return r?.worldToScreenGame ? r.worldToScreenGame(x, y) : { x: NaN, y: NaN };
         };
+      // RTS review 2026-11-14 — the selection ring vs its ship, as rendered:
+      // turns on the renderer's per-frame capture and returns the last one.
+      // Main-thread renderer only (`?worker=0`).
+      (window as unknown as { __eqxFleetRingProbe?: () => unknown }).__eqxFleetRingProbe = () => {
+        const r = rendererRef.current as unknown as { fleetRingProbe?: () => unknown };
+        return r?.fleetRingProbe ? r.fleetRingProbe() : null;
+      };
       // Cinematic camera + HUD control for the showcase capture pipeline
       // (docs/architecture/showcase-pipeline.md). Calls the renderer DIRECTLY —
       // shot keyframes carry x/y and must never touch Zustand (invariant #2).

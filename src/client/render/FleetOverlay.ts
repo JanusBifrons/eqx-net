@@ -114,6 +114,9 @@ export class FleetOverlay {
   private readonly _from = { x: 0, y: 0 };
   private readonly _game = { x: 0, y: 0 };
   private _segments = 0;
+  /** First ring drawn in the last update: its ship id and screen centre (test/diag hook). */
+  lastRingId: string | null = null;
+  readonly lastRing = { x: NaN, y: NaN };
   /** Rings drawn in the last update (test/diag hook). */
   lastRingCount = 0;
   /** The hold-to-box cue was drawn in the last update (test/diag hook). */
@@ -156,6 +159,7 @@ export class FleetOverlay {
         g.visible = false;
       }
       this.lastRingCount = 0;
+      this.lastRingId = null;
       this.lastOrderSegments = 0;
       return;
     }
@@ -178,9 +182,11 @@ export class FleetOverlay {
       project(x, -y, s);
       const r = Math.max(MIN_RING_PX, ((getShipKind(kind)?.radius ?? SHIP_FALLBACK_RADIUS) + RING_PAD) * zoom);
       g.circle(s.x, s.y, r);
+      if (rings === 0) { this.lastRingId = id; this.lastRing.x = s.x; this.lastRing.y = s.y; }
       rings++;
     }
     if (rings > 0) g.stroke({ width: 1.5, color: RING_COLOR, alpha: 0.9 });
+    else this.lastRingId = null;
     this.lastRingCount = rings;
 
     this._segments = 0;
