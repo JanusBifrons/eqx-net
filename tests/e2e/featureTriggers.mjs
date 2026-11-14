@@ -74,6 +74,11 @@ export const FEATURE_TRIGGERS = [
     specs: ['fleet-command', 'spectator-mode', 'rts-take-controls', 'fleet-overlay-camera', 'entity-inspect'],
   },
   {
+    area: 'render worker input',
+    paths: ['src/client/render/worker/renderer.worker.ts', 'src/client/render/worker/WorkerRendererClient.ts'],
+    specs: ['rts-warp-worker-errors'],
+  },
+  {
     area: 'beams',
     paths: ['src/client/render/BeamSpritePool', 'src/client/combat/'],
     specs: ['laser-smoothness', 'laser-falloff-probe'],

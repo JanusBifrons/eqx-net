@@ -37,6 +37,15 @@ function post(msg: WorkerToMainMsg): void {
 
 let renderer: PixiRenderer | null = null;
 let galaxyLayer: GalaxyMapLayer | null = null;
+/**
+ * True once `renderer.init` has resolved (READY posted). `renderer` is set
+ * BEFORE the async init so config messages that follow BOOT (HUD overlays,
+ * Command view, …) land on it, but the main thread forwards canvas input from
+ * the moment it posts BOOT: a pointer or wheel event that arrives mid-init
+ * has no Camera to move and is dropped (RTS smoke 2026-11-14: "Cannot read
+ * properties of undefined (reading 'onPointerMove')" on every sector load).
+ */
+let rendererReady = false;
 
 /**
  * F1 (warp-spool perf — `docs/HANDOFF-warp-spool-perf-followup.md`).
@@ -97,6 +106,7 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
             post({ type: 'OVERLAY_TAPPED', sectorKey });
           }
         });
+        rendererReady = true;
         post({ type: 'READY' });
         break;
       }
@@ -163,13 +173,13 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
       }
 
       case 'POINTER_EVENT': {
-        if (!renderer) return;
+        if (!renderer || !rendererReady) return;
         renderer.forwardPointerEvent(msg.native);
         break;
       }
 
       case 'WHEEL_EVENT': {
-        if (!renderer) return;
+        if (!renderer || !rendererReady) return;
         renderer.forwardWheelEvent(msg.native.deltaY, msg.native.offsetX, msg.native.offsetY);
         break;
       }
@@ -361,6 +371,7 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
           }
           renderer = null;
         }
+        rendererReady = false;
         self.close();
         break;
       }

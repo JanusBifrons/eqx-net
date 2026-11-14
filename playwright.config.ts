@@ -157,6 +157,7 @@ const FEATURE_SPECS: string[] = [
   '**/fleet-command.spec.ts',
   '**/rts-take-controls.spec.ts',
   '**/rts-reselect.spec.ts',
+  '**/rts-warp-worker-errors.spec.ts',
   '**/fleet-overlay-camera.spec.ts',
   '**/cinematic-camera.spec.ts',
   '**/respawn-cascade-input-routing.spec.ts',
