@@ -79,7 +79,8 @@ The tables live in `src/shared-types/combat/navalGuns.ts` (`REAL_NAVAL_GUNS`, de
   | 200 | real | 401 | 182 | 0.19 / 0.27 ms |
 
   The real-range time is almost flat in the hostile count: it is the grid's cell walk (a 38.7 km query sweeps ~150 × 150 cells of 512 u), not the candidates. 200 hostiles packed within 5 km (every gun reaching all of them, 832 candidates a tick) cost only 0.045 ms. One citadel stays well under 0.3 ms a tick, so no change. A sector with several heavy-gun bases scales linearly with their big guns; revisit (a coarser grid level for long queries) only if a perf scene shows it. Count gate: `benchmarks/turretGather.count.test.ts` (one gather per defence structure; real, 60 hostiles ≤ 160 candidates a tick). Timing: `benchmarks/turret-gather.bench.ts`.
-- **Hard-coded test layouts.** `coastal-duel` and `capitalEngagement` place ships at legacy ranges; they still pass under `real` (closer is in range), but the showcase framing assumes legacy.
+- **Hard-coded test layouts.** `coastal-duel` and `capitalEngagement` place ships at legacy ranges, and the showcase framing assumes legacy.
+- **The integration suite runs at `legacy`** (`vitest.integration.config.ts` pins it; real-range tests run in `pnpm test:naval-real`). At `real` five of its tests fail on layouts and budgets sized for legacy: `capitalEngagement` (the 5" now reaches 5 km and hits first), `coastalDuel` (no battleship turret trains on the battery), `npcStaysHostileWhileAttacking` (the pilot can't leave a 38 km reach), `shellEvents` (no 16" hit inside the window) and `perfSceneCounts` capital-duel (18.5 KB/s over its 15 KB/s budget). Follow-up: re-stage them for `real` (and recalibrate that budget locally and on CI), then drop the pin.
 
 ## Tests
 
