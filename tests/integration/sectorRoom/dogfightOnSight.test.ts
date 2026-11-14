@@ -18,7 +18,12 @@
  *  (a) Tail, AttackRun and Break are each flown, and Hold is < 60 % of
  *      combat ship-samples;
  *  (b) the ships turn: mean |angular velocity| while in combat > 0.35 rad/s
- *      (before the fix: 0.21–0.28; nose-on trades and straight jousts);
+ *      (before the fix: 0.21–0.28; nose-on trades and straight jousts). In
+ *      the 3v3 only; the 1v1 LOGS it. One duel turns 0.25–0.51 by seed and a
+ *      room ticks in real time, so even 12 pooled duels moved ±0.05 run to
+ *      run (2026-11-14: the pre-easing build read 0.260–0.328, the current
+ *      one 0.313–0.429; no bar separated them). The 1v1 turning gate is the
+ *      deterministic `src/core/ai/HostileDroneBehaviour.dogfightTurn.test.ts`;
  *  (c) toe-to-toe (ship and its target both inside 0.7 × fire range and both
  *      slower than 0.25 × cruise) < 20 % of combat ship-samples;
  *  (d) time on a tail (inside fire range, in the target's rear 120° cone, own
@@ -193,13 +198,14 @@ async function bootScene(perSide: number): Promise<SectorTestHarness> {
   return harness;
 }
 
-function expectDogfight(s: FightStats): void {
+/** `gateTurn` false: the turn rate is logged, not asserted (see (b)). */
+function expectDogfight(s: FightStats, gateTurn = true): void {
   expect(s.combatSamples).toBeGreaterThan(200);
   expect(s.hist[MANOEUVRE_TAIL], 'Tail flown').toBeGreaterThan(0);
   expect(s.hist[MANOEUVRE_ATTACK_RUN], 'AttackRun flown').toBeGreaterThan(0);
   expect(s.hist[MANOEUVRE_BREAK], 'Break flown').toBeGreaterThan(0);
   expect(s.holdFrac, 'Hold < 60 % of combat').toBeLessThan(0.6);
-  expect(s.meanAngvel, 'ships turn (mean |angvel|, rad/s)').toBeGreaterThan(0.35);
+  if (gateTurn) expect(s.meanAngvel, 'ships turn (mean |angvel|, rad/s)').toBeGreaterThan(0.35);
   expect(s.toeFrac, 'not toe to toe').toBeLessThan(0.2);
   expect(s.boostFrac, 'the afterburner is used in the fight').toBeGreaterThan(0.15);
 }
@@ -210,7 +216,9 @@ describe('SectorRoom integration — on-sight allegiance dogfight (drones vs rob
 
   it('1v1 drone fighter vs robot, engaging on sight, dogfights', { timeout: 90_000 }, async () => {
     harness = await bootScene(1);
-    expectDogfight(await fight(harness, 1, '1v1'));
+    // Turn rate logged only: the deterministic gate is
+    // HostileDroneBehaviour.dogfightTurn.test.ts (see (b) in the header).
+    expectDogfight(await fight(harness, 1, '1v1'), false);
   });
 
   it('a turnier fighter set on a robot\'s six holds the tail', { timeout: 90_000 }, async () => {
