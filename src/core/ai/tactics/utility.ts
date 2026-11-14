@@ -121,6 +121,29 @@ export function scoreManoeuvres(ctx: TacticalContext, role: RoleProfile, out: Fl
   out[MANOEUVRE_HOLD] = HOLD_STANDOFF_SHARE * standoff * (1 - role.aggression) + PACK_HOLD * surplus;
   const pack = 1 / (1 + PACK_DAMP * surplus);
 
+  if (targetParked(ctx)) {
+    // A parked ship gets strafing runs (owner decision 2026-11-14: "Dive in
+    // firing, pass, swing round and come again, like a fighter on a ground
+    // target. Always moving."): no Tail and no Hold (both settle near a
+    // stopped target: the filmed Robot Orb hovered nose-on at ~380 u for
+    // 20 s), the run at its full from-distance score, so each run's extend
+    // leads straight into the next. Orbit (turrets bear while circling, at
+    // cruise) and Kite keep their scores. No Break either: a parked gun
+    // hitting me from behind is what the run's extend flies out from under
+    // (boosting away); a heavy-fire Break cut every extend short and left the
+    // fighter circling at ~250 u (strafeParked, 2026-11-14).
+    out[MANOEUVRE_HOLD] = 0;
+    out[MANOEUVRE_TAIL] = 0;
+    out[MANOEUVRE_ATTACK_RUN] = w.attackRun * (0.8 + 0.4 * role.aggression)
+      * (1 + persistentBlockBias(ctx.recentBlocks));
+    out[MANOEUVRE_BREAK] = 0;
+    out[MANOEUVRE_ORBIT] = w.orbit * orbitArc(ctx);
+    out[MANOEUVRE_KITE] = w.kite;
+    out[MANOEUVRE_FALL_BACK] = 0;
+    out[MANOEUVRE_FLEE] = 0;
+    return;
+  }
+
   // Tail: best close in behind the target; a poor way to close from far off
   // and poor while the target sits behind me.
   const behind = ctx.targetAspectCos < 0 ? -ctx.targetAspectCos : 0;
@@ -146,14 +169,18 @@ export function scoreManoeuvres(ctx: TacticalContext, role: RoleProfile, out: Fl
   out[MANOEUVRE_BREAK] = brk;
 
   // Orbit (gunships, robots): turret arcs let them circle with guns bearing.
-  let arc = ctx.turretHalfArc / ORBIT_FULL_ARC;
-  arc = arc < ORBIT_FIXED_GUN_SHARE ? ORBIT_FIXED_GUN_SHARE : arc > 1 ? 1 : arc;
-  out[MANOEUVRE_ORBIT] = w.orbit * arc;
+  out[MANOEUVRE_ORBIT] = w.orbit * orbitArc(ctx);
   // Kite (missile boats): hold the band, nose on.
   out[MANOEUVRE_KITE] = w.kite;
   // Morale outcomes are never scored: only the die starts them.
   out[MANOEUVRE_FALL_BACK] = 0;
   out[MANOEUVRE_FLEE] = 0;
+}
+
+/** Orbit's share for the turret arc: clamp(half-arc / 45°, 0.25, 1). */
+function orbitArc(ctx: TacticalContext): number {
+  const arc = ctx.turretHalfArc / ORBIT_FULL_ARC;
+  return arc < ORBIT_FIXED_GUN_SHARE ? ORBIT_FIXED_GUN_SHARE : arc > 1 ? 1 : arc;
 }
 
 export class ManoeuvrePicker {

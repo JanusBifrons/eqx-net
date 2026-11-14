@@ -18,7 +18,6 @@ import {
   MANOEUVRE_HOLD,
   MANOEUVRE_TAIL,
   rngUnit,
-  targetAimsAtMe,
   targetParked,
   type IManoeuvre,
   type ManoeuvreGoal,
@@ -74,12 +73,6 @@ const TAIL_HEADON_MAX_STRETCH = 4;
 const TAIL_BRAKE_SAFETY = 0.8;
 /** Least speed while off the station, × cruise (a tail never hovers). */
 const TAIL_MIN_SPEED = 0.8;
-/** Parked target looking elsewhere: closer than this share of the circle
- *  distance (`TAIL_BEHIND` × fire range) the ship flies the circle course
- *  outward first, and puts its nose on the target only once back past the
- *  EXIT share (hysteresis), as a pilot opens out after a collision. */
-export const TAIL_EXTEND_ENTER = 0.6;
-export const TAIL_EXTEND_EXIT = 0.9;
 /** In fire range the nose stays on the lead while the wanted course is
  *  within this cos of the target line (60°). */
 const TAIL_AIM_COS = Math.cos(AIM_CONE);
@@ -98,9 +91,7 @@ export class TailManoeuvre implements IManoeuvre {
   /** Last goal's wanted velocity (test-visible). */
   wantVx = 0;
   wantVy = 0;
-  /** Opening out from a parked target before turning the guns on it. */
-  extending = false;
-  begin(): void { this.extending = false; }
+  begin(): void { /* stateless */ }
   writeGoal(ctx: TacticalContext, maps: ContextMaps, out: ManoeuvreGoal): void {
     const R = ctx.fireRange;
     if (ctx.targetIsShip && targetParked(ctx)) {
@@ -199,24 +190,16 @@ export class TailManoeuvre implements IManoeuvre {
   isDone(): boolean { return false; }
 
   /**
-   * A parked ship (`targetParked`) has no six: circle it at `TAIL_BEHIND ×
-   * fireRange` at the floor speed, round the side the nose already points to,
-   * steering in or out by the range error. Sending the ship to a station
-   * straight back out on its own side (the old rule) made a close pair turn in
-   * place nose to nose, stopped, for seconds (toe to toe; on-sight integration
-   * 2026-11-13). Facing in fire range (owner decision 2026-11-14):
-   *  - the target's bow is OFF me (`targetAimsAtMe` false): nose on the lead
-   *    and shoot. A parked ship looking elsewhere is the easiest shot there
-   *    is; a nose flying the circle never fired at it (npcFireLanes: fighters
-   *    on a parked pilot circled it nose-out). Thrust and reverse along the
-   *    nose hold the range; the circle's tangent is only carried momentum.
-   *    Well inside the circle distance (`TAIL_EXTEND_ENTER`) it first flies
-   *    the circle course outward: turning in place to aim at a ship it just
-   *    collided with left both stopped nose-off for seconds (dogfight 1v1
-   *    toe to toe on 5 / 18 runs, 2026-11-14).
-   *  - its bow is ON me: keep circling (nose on the lead only while the course
-   *    runs within 60° of it), so two stopped ships facing each other never
-   *    settle into a nose-to-nose stand-off (dogfight 1v1: no Break, one pass).
+   * A parked ship (`targetParked`) has no six. The picker does not choose
+   * Tail on one (it flies strafing runs, owner decision 2026-11-14), so this
+   * only covers the moments a running Tail sees its target stop: circle it at
+   * `TAIL_BEHIND × fireRange` at the floor speed, round the side the nose
+   * already points to, steering in or out by the range error, nose on the
+   * lead only while the course runs within 60° of it. Always moving: a nose
+   * held on a parked target (the rule this replaced) hovered nose-on at
+   * ~380 u, creeping, for 20 s (the filmed Robot Orb), and a station straight
+   * back out on its own side turned a close pair in place nose to nose
+   * (on-sight integration 2026-11-13).
    */
   private circle(ctx: TacticalContext, maps: ContextMaps, out: ManoeuvreGoal): void {
     const R = ctx.fireRange;
@@ -232,18 +215,8 @@ export class TailManoeuvre implements IManoeuvre {
     this.wantVy = ctx.tvy + dy * speed;
     addInterestToward(maps, this.wantVx, this.wantVy, 1, GOAL_SHAPE);
     out.speed = Math.hypot(this.wantVx, this.wantVy);
-    const ring = TAIL_BEHIND * R;
-    if (this.extending) {
-      if (ctx.dist > TAIL_EXTEND_EXIT * ring) this.extending = false;
-    } else if (ctx.dist < TAIL_EXTEND_ENTER * ring) {
-      this.extending = true;
-    }
-    if (ctx.dist > R) out.facing = FACE_MOVE;
-    else if (!targetAimsAtMe(ctx)) out.facing = this.extending ? FACE_MOVE : FACE_AIM_LEAD;
-    else {
-      out.facing = (this.wantVx * ctx.ux + this.wantVy * ctx.uy) / out.speed > TAIL_AIM_COS
-        ? FACE_AIM_LEAD : FACE_MOVE;
-    }
+    out.facing = ctx.dist <= R && (this.wantVx * ctx.ux + this.wantVy * ctx.uy) / out.speed > TAIL_AIM_COS
+      ? FACE_AIM_LEAD : FACE_MOVE;
     out.boost = false;
   }
 }
@@ -279,6 +252,22 @@ const RUN_PASS_MAX_S = 2;
 const RUN_EXTEND_MIN_S = 1.5;
 const RUN_EXTEND_MAX_S = 3;
 const RUN_EXTEND_RANGE = 1.3;
+/** Strafing a parked target (owner decision 2026-11-14: "dive in firing,
+ *  pass, swing round and come again, like a fighter on a ground target"):
+ *  the extend ends once the gap is this many overshoots
+ *  (`shipTuning(kind).attackRunOvershoot`, #18), not on the seeded timer
+ *  (which still caps it, at twice its longest). One overshoot: the pass has
+ *  already carried the ship that far, and the next run's swing-round arc
+ *  takes it out to ~1.4 overshoots before the dive. A fighter at the default
+ *  2x scale turns ~0.9 rad/s at ~150 u/s, so every overshoot added here
+ *  adds ~6 s to a cycle (1.5 → one pass per ~14 s, strafeParked). */
+export const STRAFE_EXTEND_OVERSHOOTS = 1;
+/** Strafing a parked target: the dive aims this share of the overshoot
+ *  beside it (see `runMiss`). */
+export const STRAFE_MISS_OVERSHOOTS = 0.25;
+/** The strafing swing-round arcs (course square to the velocity) while the
+ *  ship still flies away from the target faster than this × cruise. */
+const STRAFE_SWING_MIN_SPEED = 0.25;
 
 /**
  * Boom-and-zoom: dive at full speed (boosting) at the lead, guns on it;
@@ -319,8 +308,20 @@ export class AttackRunManoeuvre implements IManoeuvre {
     if (this.phase === RUN_DIVE) {
       const miss = runMiss(ctx) * this.side;
       // Perpendicular to the target line (left-hand normal).
-      const gx = ctx.aimX - ctx.uy * miss - ctx.x;
-      const gy = ctx.aimY + ctx.ux * miss - ctx.y;
+      let gx = ctx.aimX - ctx.uy * miss - ctx.x;
+      let gy = ctx.aimY + ctx.ux * miss - ctx.y;
+      // Strafing a parked target, still flying away from it after the
+      // extend: swing round in an arc, course square to the velocity on the
+      // target's side, so thrust curves the velocity instead of cancelling
+      // it. Aiming straight back at the target turned the ship in place:
+      // the speed fell to ~30 % of cruise for ~3 s every pass (strafeParked).
+      const v = Math.hypot(ctx.vx, ctx.vy);
+      if (ctx.targetIsShip && targetParked(ctx) && v > STRAFE_SWING_MIN_SPEED * ctx.cruiseSpeed
+        && ctx.vx * ctx.ux + ctx.vy * ctx.uy < 0) {
+        const s = ctx.vx * ctx.uy - ctx.vy * ctx.ux >= 0 ? 1 : -1;
+        gx = (-ctx.vy / v) * s;
+        gy = (ctx.vx / v) * s;
+      }
       addInterestToward(maps, gx, gy, 1, GOAL_SHAPE);
       out.speed = ctx.maxSpeed;
       // Nose along the course to the miss point, not on the lead: a ship
@@ -370,15 +371,28 @@ export class AttackRunManoeuvre implements IManoeuvre {
       }
       return;
     }
-    if (this.phase === RUN_EXTEND && (ctx.tick >= this.phaseEnd || ctx.dist > RUN_EXTEND_RANGE * ctx.fireRange)) {
-      this.phase = RUN_DONE;
+    if (this.phase === RUN_EXTEND) {
+      if (ctx.targetIsShip && targetParked(ctx)) {
+        if (ctx.dist > STRAFE_EXTEND_OVERSHOOTS * ctx.overshoot
+          || ctx.tick >= this.phaseEnd + RUN_EXTEND_MAX_S * TICKS_PER_S) this.phase = RUN_DONE;
+      } else if (ctx.tick >= this.phaseEnd || ctx.dist > RUN_EXTEND_RANGE * ctx.fireRange) {
+        this.phase = RUN_DONE;
+      }
     }
   }
 }
 
 /** How far beside the target the run passes: a size, not a range (#18). */
 function runMiss(ctx: TacticalContext): number {
-  return RUN_MISS_RADII * ctx.radius;
+  const m = RUN_MISS_RADII * ctx.radius;
+  if (!(ctx.targetIsShip && targetParked(ctx))) return m;
+  // A parked target does not move off the line while the pass is flown, so
+  // the 2.5-radii aim (tuned on moving duels) lands exactly there: two shield
+  // bubbles touch (strafeParked: a ram on the first pass). Strafe a quarter
+  // overshoot aside (`shipTuning.attackRunOvershoot` / 4, as the tuning
+  // documents), never less than the duel miss.
+  const s = STRAFE_MISS_OVERSHOOTS * ctx.overshoot;
+  return s > m ? s : m;
 }
 
 /** Gap at which the dive pulls off: the overshoot, or (faster) the distance

@@ -172,10 +172,6 @@ export function targetParked(ctx: TacticalContext): boolean {
  *  side. */
 export const GUNS_BEAR_COS = 0.5;
 
-/** Is the target's bow on me (am I inside its forward arc)? */
-export function targetAimsAtMe(ctx: TacticalContext): boolean {
-  return ctx.targetBowCos >= GUNS_BEAR_COS;
-}
 
 /** Uniform float in [0, 1) from the context's stream. */
 export function rngUnit(ctx: TacticalContext): number {

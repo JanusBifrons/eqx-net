@@ -23,9 +23,9 @@ import {
   BreakManoeuvre,
   HoldManoeuvre,
   runPullDist,
+  STRAFE_EXTEND_OVERSHOOTS,
+  STRAFE_MISS_OVERSHOOTS,
   TAIL_BEHIND,
-  TAIL_EXTEND_ENTER,
-  TAIL_EXTEND_EXIT,
   TailManoeuvre,
 } from './manoeuvres.js';
 
@@ -113,58 +113,34 @@ describe('TailManoeuvre', () => {
     run(new TailManoeuvre(), c2);
     expect(goal.facing).toBe(FACE_MOVE);
   });
-  it('a parked target looking elsewhere: guns on it in range, not the circle nose-out', () => {
-    // A parked pilot has no six; circling it with the nose along the course
-    // never fired at it (npcFireLanes, 2026-11-14). Its bow is off me (I sit
-    // behind it): nose on the lead in range.
-    const t = new TailManoeuvre();
-    run(t, ctxAt(0, 0, 0, TAIL_BEHIND * R, { vx: 10, vy: 0, targetBowCos: -1 }));
-    expect(goal.facing).toBe(FACE_AIM_LEAD);
-    run(t, ctxAt(0, 0, 0, 0.95 * R, { vx: 10, vy: 0, targetBowCos: 0.4 }));
-    expect(goal.facing).toBe(FACE_AIM_LEAD);
-    // Out of range it still flies its course in.
-    run(t, ctxAt(0, 0, 0, 1.2 * R, { vx: 10, vy: 0, targetBowCos: -1 }));
-    expect(goal.facing).toBe(FACE_MOVE);
-  });
-  it('too close to a parked target looking elsewhere: opens out first, then turns the guns on it', () => {
-    // After a collision both ships sit nearly stopped and nose-off; turning in
-    // place to aim kept them toe to toe for seconds (dogfight 1v1, 2026-11-14).
-    const ring = TAIL_BEHIND * R;
-    const t = new TailManoeuvre();
-    t.begin();
-    const d = run(t, ctxAt(0, 0, 0, 0.3 * ring, { vx: 10, vy: 0, targetBowCos: -1 }));
-    expect(goal.facing).toBe(FACE_MOVE);
-    expect(d.dirY).toBeLessThan(0); // the course opens the range (target is +y)
-    expect(goal.speed).toBeCloseTo(0.8 * CRUISE, 5);
-    // Still opening between ENTER and EXIT (hysteresis)…
-    run(t, ctxAt(0, 0, 0, 0.5 * (TAIL_EXTEND_ENTER + TAIL_EXTEND_EXIT) * ring, { vx: 10, vy: 0, targetBowCos: -1 }));
-    expect(goal.facing).toBe(FACE_MOVE);
-    // …guns on once past EXIT, and they stay on back inside it.
-    run(t, ctxAt(0, 0, 0, 1.05 * TAIL_EXTEND_EXIT * ring, { vx: 10, vy: 0, targetBowCos: -1 }));
-    expect(goal.facing).toBe(FACE_AIM_LEAD);
-    run(t, ctxAt(0, 0, 0, 0.5 * (TAIL_EXTEND_ENTER + TAIL_EXTEND_EXIT) * ring, { vx: 10, vy: 0, targetBowCos: -1 }));
-    expect(goal.facing).toBe(FACE_AIM_LEAD);
-  });
-  it('a parked target aimed at me: keeps circling (no nose-to-nose stand-off)', () => {
-    // Two stopped ships facing each other must not both sit still and trade
-    // fire (the toe to toe #565 removed; dogfight 1v1 lost every Break and
-    // all but one pass with it, 2026-11-14). Bow on me: fly the circle.
-    const t = new TailManoeuvre();
-    const d = run(t, ctxAt(0, 0, 0, TAIL_BEHIND * R, { vx: 10, vy: 0, targetBowCos: 1 }));
-    expect(goal.facing).toBe(FACE_MOVE);
-    expect(Math.abs(d.dirY)).toBeLessThan(0.3);
-    // Just inside its arc (~60°) counts; unknown facing (default) counts too.
-    run(t, ctxAt(0, 0, 0, TAIL_BEHIND * R, { vx: 10, vy: 0, targetBowCos: 0.55 }));
-    expect(goal.facing).toBe(FACE_MOVE);
-    run(t, ctxAt(0, 0, 0, TAIL_BEHIND * R, { vx: 10, vy: 0 }));
-    expect(goal.facing).toBe(FACE_MOVE);
+  it('a Tail whose target stops circles it at fighting speed: no nose-on hold (owner 2026-11-14)', () => {
+    // The replaced rule held the nose on a parked target looking elsewhere:
+    // the filmed Robot Orb hovered nose-on at ~380 u, creeping, for 20 s.
+    // Whatever the target faces, a Tail on a parked ship keeps flying the
+    // circle at 0.8 × cruise, nose along the course while it runs across the
+    // target line.
+    for (const targetBowCos of [-1, 0.4, 1]) {
+      for (const dist of [0.2 * TAIL_BEHIND * R, TAIL_BEHIND * R, 0.95 * R]) {
+        const t = new TailManoeuvre();
+        t.begin();
+        const d = run(t, ctxAt(0, 0, 0, dist, { vx: 10, vy: 0, targetBowCos }));
+        expect(goal.speed).toBeCloseTo(0.8 * CRUISE, 5);
+        // The course runs round the target, not at it (the nose follows it
+        // unless it runs within 60° of the target line).
+        expect(d.dirY).toBeLessThan(0.75);
+      }
+    }
   });
 });
+
+/** A target flying away along +y at 30 u/s (over the parked line, 0.1 ×
+ *  cruise): the duel run, not a strafe. */
+const MOVING = { tvx: 0, tvy: 30 };
 
 describe('AttackRunManoeuvre (boom-and-zoom)', () => {
   it('dives beside the lead with boost, passes beside the target, overshoots, extends, then is done', () => {
     const m = new AttackRunManoeuvre();
-    const c = ctxAt(0, -1500, 0, 0, { tick: 100 });
+    const c = ctxAt(0, -1500, 0, 0, { tick: 100, ...MOVING });
     m.begin(c);
     const d = run(m, c);
     expect(d.dirY).toBeGreaterThan(0.99);
@@ -177,20 +153,20 @@ describe('AttackRunManoeuvre (boom-and-zoom)', () => {
 
     // Inside the overshoot: pull off for a point 2.5 hull radii (here half an overshoot) to the
     // right of the target line (fixed side with no lateral motion).
-    const c2 = ctxAt(0, -OVER + 10, 0, 0, { tick: 200, vx: 0, vy: 300, radius: 80 });
+    const c2 = ctxAt(0, -OVER + 10, 0, 0, { tick: 200, vx: 0, vy: 300, radius: 80, ...MOVING });
     const p = run(m, c2);
     expect(goal.facing).toBe(FACE_MOVE);
     expect(p.dirX).toBeGreaterThan(0.3); // right of a +y line is +x
     expect(p.dirY).toBeGreaterThan(0);
 
     // Carried on past the target by more than the overshoot: extend (boost).
-    const c3 = ctxAt(OVER * 0.5, OVER * 1.3, 0, 0, { tick: 260 });
+    const c3 = ctxAt(OVER * 0.5, OVER * 1.3, 0, 0, { tick: 260, ...MOVING });
     run(m, c3);
     expect(goal.boost).toBe(true);
     expect(m.isDone(c3)).toBe(false);
 
     // The gap opens past 1.3 × fire range: done.
-    const c4 = ctxAt(0, 1.4 * R, 0, 0, { tick: 280 });
+    const c4 = ctxAt(0, 1.4 * R, 0, 0, { tick: 280, ...MOVING });
     expect(m.isDone(c4)).toBe(true);
   });
   it('gives up a dive that never arrives (1.1 × the time to cover the gap at cruise, at least 5 s)', () => {
@@ -206,8 +182,8 @@ describe('AttackRunManoeuvre (boom-and-zoom)', () => {
   });
   it('pulls off earlier the faster it closes and the slower it turns (the kind handling)', () => {
     const base = ctxAt(0, -1500, 0, 0, { vy: 200, maxAngvel: 1, radius: 24 });
-    const fast = ctxAt(0, -1500, 0, 0, { vy: 800, maxAngvel: 1, radius: 24 });
-    const agile = ctxAt(0, -1500, 0, 0, { vy: 800, maxAngvel: 3, radius: 24 });
+    const fast = ctxAt(0, -1500, 0, 0, { vy: 830, maxAngvel: 1, radius: 24, ...MOVING });
+    const agile = ctxAt(0, -1500, 0, 0, { vy: 830, maxAngvel: 3, radius: 24, ...MOVING });
     // Never later than the overshoot.
     expect(runPullDist(base)).toBe(OVER);
     // 800 u/s × (π/4 rad / 1 rad/s) + 2.5 radii ≈ 688 u.
@@ -226,6 +202,63 @@ describe('AttackRunManoeuvre (boom-and-zoom)', () => {
     const pb = run(b, ctxAt(150, 0, -150, 0, { tick: 1 }));
     expect(Math.sign(pa.dirY)).not.toBe(0);
     expect(Math.sign(pa.dirY)).toBe(-Math.sign(pb.dirY));
+  });
+});
+
+describe('AttackRunManoeuvre on a parked ship: strafing runs (owner 2026-11-14)', () => {
+  // "Dive in firing, pass, swing round and come again, like a fighter on a
+  // ground target. Always moving."
+  it('passes a quarter overshoot beside it, never closer than the duel miss', () => {
+    // Pull-off point (inside the overshoot), fixed side (+x of a +y line).
+    const m = new AttackRunManoeuvre();
+    m.begin(ctxAt(0, -1500, 0, 0, { tick: 0, radius: 10 }));
+    run(m, ctxAt(0, -OVER + 10, 0, 0, { tick: 1, vy: 300, radius: 10 }));
+    // The locked pass heading points at the miss point beside the target.
+    const want = STRAFE_MISS_OVERSHOOTS * OVER;
+    const p = run(m, ctxAt(0, -OVER + 10, 0, 0, { tick: 2, vy: 300, radius: 10 }));
+    expect(p.dirX / p.dirY).toBeCloseTo(want / (OVER - 10), 1);
+    // The duel miss (2.5 radii) wins when it is wider.
+    const big = new AttackRunManoeuvre();
+    big.begin(ctxAt(0, -1500, 0, 0, { tick: 0, radius: 80 }));
+    const q = run(big, ctxAt(0, -OVER + 10, 0, 0, { tick: 1, vy: 300, radius: 80 }));
+    expect(q.dirX / q.dirY).toBeCloseTo((2.5 * 80) / (OVER - 10), 1);
+  });
+  it('extends to the swing-round distance (overshoots, from shipTuning), not the seeded timer, then is done', () => {
+    const m = new AttackRunManoeuvre();
+    m.begin(ctxAt(0, -1500, 0, 0, { tick: 0 }));
+    run(m, ctxAt(0, -OVER + 10, 0, 0, { tick: 1, vy: 300 }));
+    // Carried an overshoot and a half past the target: the extend starts…
+    const past = ctxAt(0, 1.5 * OVER, 0, 0, { tick: 2, vy: 300 });
+    expect(m.isDone(past)).toBe(false);
+    // …and, already past STRAFE_EXTEND_OVERSHOOTS × overshoot, ends on the
+    // next tick (a duel extend runs at least 1.5 s or to 1.3 × fire range).
+    expect(STRAFE_EXTEND_OVERSHOOTS * OVER).toBeLessThan(1.5 * OVER);
+    past.tick = 3;
+    expect(m.isDone(past)).toBe(true);
+    const duel = new AttackRunManoeuvre();
+    duel.begin(ctxAt(0, -1500, 0, 0, { tick: 0, ...MOVING }));
+    run(duel, ctxAt(0, -OVER + 10, 0, 0, { tick: 1, vy: 300, ...MOVING }));
+    expect(duel.isDone(ctxAt(0, 1.5 * OVER, 0, 0, { tick: 2, vy: 300, ...MOVING }))).toBe(false);
+    expect(duel.isDone(ctxAt(0, 1.5 * OVER, 0, 0, { tick: 3, vy: 300, ...MOVING }))).toBe(false);
+  });
+  it('a new run that starts flying away swings round in an arc (course square to the velocity), then dives', () => {
+    // Just after an extend: 500 u past the target (target at the origin,
+    // ship at +y), still flying away (+y) at cruise.
+    const m = new AttackRunManoeuvre();
+    const c = ctxAt(0, 500, 0, 0, { tick: 0, vx: 0, vy: CRUISE });
+    m.begin(c);
+    const d = run(m, c);
+    expect(Math.abs(d.dirY)).toBeLessThan(0.2); // square to the velocity, not back at the target
+    expect(goal.speed).toBe(MAX);
+    expect(goal.facing).toBe(FACE_MOVE);
+    // Velocity turned across the target line: the dive (toward it).
+    const d2 = run(m, ctxAt(0, 500, 0, 0, { tick: 1, vx: CRUISE, vy: -10 }));
+    expect(d2.dirY).toBeLessThan(-0.9);
+    // A moving target gets the plain dive at once (no arc).
+    const n = new AttackRunManoeuvre();
+    const c3 = ctxAt(0, 500, 0, 0, { tick: 0, vx: 0, vy: CRUISE, tvx: 0, tvy: -30 });
+    n.begin(c3);
+    expect(run(n, c3).dirY).toBeLessThan(-0.9);
   });
 });
 
