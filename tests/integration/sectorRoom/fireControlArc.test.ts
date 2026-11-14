@@ -37,6 +37,10 @@ describe('SectorRoom integration — fire control respects mount arcs', () => {
   beforeEach(async () => {
     harness = await bootSectorTestServer({
       sectorKey: 'sol-prime', droneCount: 0, testMode: true,
+      // A still target: these tests are about fire control, not the AI. A live
+      // AI heavy opens with a strafing pass (#611, no toe-to-toe) and leaves
+      // the gun's arc before the lock completes.
+      peacefulDrones: true,
       dronePoses: [{ kind: 'heavy', x: 0, y: 260, angle: Math.PI }],
     });
   }, 15_000);

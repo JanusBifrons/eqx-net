@@ -38,7 +38,9 @@ describe('SectorRoom integration — AI pilot weapons spend the ship energy pool
     const room = harness.getServerRoom()!;
     const internals = room._internals;
     expect(internals.spawnTestDrone('en-shooter', 0, 0, 'fighter')).toBe(true);
-    expect(internals.spawnTestDrone('en-target', 0, 2000, 'heavy')).toBe(true);
+    // Inside the fighter's reach: since the per-mount range gate (ba1a26e3) a
+    // mount fires only when the target's hull is within its weapon reach.
+    expect(internals.spawnTestDrone('en-target', 0, 300, 'heavy')).toBe(true);
     await harness.advance(100);
 
     const r = room as unknown as {
