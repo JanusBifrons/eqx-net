@@ -147,3 +147,29 @@ describe('gameRafLoop — double tap on an own ship takes its controls (RTS slic
     expect(takeControls).toHaveBeenCalledWith('hull-3');
   });
 });
+
+describe('gameRafLoop — a double-tap take goes straight to Fly (no panel flash)', () => {
+  it("does not mirror the first tap's narrowed selection while the take is pending", () => {
+    // Hostile clip review: the double tap's first tap narrowed the squad to the
+    // tapped ship, and the fleet panel rendered "1 ship selected" for a frame
+    // before the welcome flipped to Fly.
+    setFleetCommands({ takeControls: vi.fn() });
+    const s = storeState as typeof storeState & { pilotMode?: string };
+    s.pilotMode = 'spectator';
+    const loop = buildLoop();
+    loop(16.67);
+    storeState.setSelection.mockClear();
+    Object.assign(fb, {
+      fleetSelSeq: fb.fleetSelSeq + 1, fleetSelIds: ['hull-3'],
+      takeControlsSeq: fb.takeControlsSeq + 1, takeControlsId: 'hull-3',
+    });
+    loop(40);
+    loop(60);
+    expect(storeState.setSelection).not.toHaveBeenCalled();
+    // The welcome flips to Fly (panel hidden): the held change lands behind it.
+    s.pilotMode = 'pilot';
+    loop(80);
+    expect(storeState.setSelection).toHaveBeenCalledWith(['hull-3'], null, null);
+    delete s.pilotMode;
+  });
+});

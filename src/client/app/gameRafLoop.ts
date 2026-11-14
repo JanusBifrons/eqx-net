@@ -65,6 +65,11 @@ let _lastFleetSelSeq = 0;
 let _lastOrderSeq = 0;
 /** RTS slice 10 — last drained `feedback.takeControlsSeq` (double tap). */
 let _lastTakeControlsSeq = 0;
+/** Selection mirror held until this loop time after a double-tap take (ms),
+ *  so the fleet panel never shows the pair's first-tap narrowing on the way
+ *  to Fly. Bounded: a swap the server never answers releases it. */
+let _takeControlsHoldUntil = -Infinity;
+const TAKE_CONTROLS_SELECTION_HOLD_MS = 1500;
 /** RTS slice 14b — last drained `fleetPickPoints` / `fleetPickSeq`. */
 let _lastPickPoints = 0;
 let _lastPickSeq = 0;
@@ -382,9 +387,27 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
     // focus (`selectedPickId/Kind`, the entity whose details panel shows) are
     // ONE renderer-owned selection, mirrored into the ONE store shape in one
     // write whenever either part moves (on change only).
+    // RTS slice 10: double tap / click on an own parked ship = take its
+    // controls (once per seq; the same sender as the panel's Take controls).
+    // Drained BEFORE the selection mirror: the pair's first tap may have
+    // narrowed the selection, and the fleet panel must not re-render it
+    // ("1 ship selected") on the way to Fly. While the take is pending in
+    // command view the store keeps its selection; the welcome flips to pilot
+    // (panel hidden) and the held change lands behind it. Bounded so a swap
+    // the server never answers cannot freeze the mirror.
+    if (selFb.takeControlsSeq !== _lastTakeControlsSeq) {
+      _lastTakeControlsSeq = selFb.takeControlsSeq;
+      const takeId = selFb.takeControlsId;
+      if (takeId !== null) {
+        fleetCommands().takeControls(takeId);
+        _takeControlsHoldUntil = now + TAKE_CONTROLS_SELECTION_HOLD_MS;
+        logEvent('fleet_take_controls', { via: 'double_tap' });
+      }
+    }
+    const holdSelection = now < _takeControlsHoldUntil && useUIStore.getState().pilotMode === 'spectator';
     const selId = selFb.selectedPickId;
-    const focusMoved = selId !== _lastPublishedSelectedId;
-    if (selFb.fleetSelSeq !== _lastFleetSelSeq || focusMoved) {
+    const focusMoved = !holdSelection && selId !== _lastPublishedSelectedId;
+    if (!holdSelection && (selFb.fleetSelSeq !== _lastFleetSelSeq || focusMoved)) {
       _lastFleetSelSeq = selFb.fleetSelSeq;
       useUIStore.getState().setSelection(selFb.fleetSelIds, selId, selFb.selectedPickKind);
     }
@@ -408,16 +431,6 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
         targetId: selFb.orderTargetId,
         ships: selFb.fleetSelIds.length,
       });
-    }
-    // RTS slice 10: double tap / click on an own parked ship = take its
-    // controls (once per seq; the same sender as the panel's Take controls).
-    if (selFb.takeControlsSeq !== _lastTakeControlsSeq) {
-      _lastTakeControlsSeq = selFb.takeControlsSeq;
-      const takeId = selFb.takeControlsId;
-      if (takeId !== null) {
-        fleetCommands().takeControls(takeId);
-        logEvent('fleet_take_controls', { via: 'double_tap' });
-      }
     }
     // Fleet map pick (slice 14b): mirror the picked-point count (discrete),
     // and send a finished pick once per seq as set_mode for the selection.
