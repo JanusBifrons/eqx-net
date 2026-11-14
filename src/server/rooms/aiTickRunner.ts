@@ -22,6 +22,8 @@
 import type { AiController } from '../../core/ai/AiController.js';
 import type { AiPlayerView, AiStructureView, AiSwarmView, AiEntity, AiEntityPoseOut } from '../../core/contracts/IAiBehaviour.js';
 import type { PoseRecord } from './SabPoseMirror.js';
+import type { AiNeighbourGrid } from './AiNeighbourGrid.js';
+import { getShipKind } from '../../shared-types/shipKinds.js';
 
 export interface AiFireRequest {
   shooterId: string;
@@ -34,7 +36,13 @@ export interface AiTickCtx {
   aiController: AiController;
   serverTick: number;
   playerToSlot: Map<string, number>;
-  getActiveShip: (playerId: string) => { alive: boolean; isActive: boolean; health: number; maxHealth: number; travelling?: boolean } | undefined;
+  getActiveShip: (playerId: string) => { alive: boolean; isActive: boolean; health: number; maxHealth: number; travelling?: boolean; kind?: string } | undefined;
+  /** AI steering 2a — the per-tick neighbour grid, rebuilt here before the
+   *  controller ticks and handed to every behaviour as `view.neighbours`.
+   *  Absent ⇒ no index (byte-identical). */
+  aiNeighbourGrid?: AiNeighbourGrid;
+  /** Add this tick's kind-1 combat drones (every allegiance) to the grid. */
+  visitAiNeighbourDrones?: (grid: AiNeighbourGrid) => void;
   shipPoseCache: Map<string, PoseRecord>;
   aiPlayerScratch: AiPlayerView[];
   /** Wave-system Phase 2 — reused per-tick buffer for the faction-filtered
@@ -74,6 +82,8 @@ export interface AiTickCtx {
 export function runAiTick(ctx: AiTickCtx): void {
   if (ctx.aiController.size() === 0) return;
   ctx.aiPlayerScratch.length = 0;
+  const grid = ctx.aiNeighbourGrid;
+  grid?.begin();
   for (const [pid] of ctx.playerToSlot) {
     const ship = ctx.getActiveShip(pid);
     if (!ship?.alive) continue;
@@ -92,10 +102,24 @@ export function runAiTick(ctx: AiTickCtx): void {
       // P2 — robot truce (robot rep ≥ ROBOT_TRUCE_AT): no on-sight engagement.
       truce: ctx.hasTruce?.(pid) === true,
     });
+    // Same liveness set as the AI target view (#17: `isAiTargetableHull`).
+    grid?.addPilot(pid, pose.x, pose.y, pose.vx, pose.vy, getShipKind(ship.kind ?? null).radius);
   }
+  const activePilots = ctx.aiPlayerScratch.length;
   // Displaced lingering hulls (keyed by shipInstanceId, owner on `ownerId`) are
   // also fair game (decision 7). Visitor fills the scratch directly.
   ctx.visitLingeringTargets?.(ctx.aiPlayerScratch);
+  if (grid) {
+    // Lingering hulls carry no kind on the view: the default kind's radius
+    // stands in (TODO: thread the hull kind when a slice reads radiusAt).
+    const lingerR = getShipKind(null).radius;
+    for (let i = activePilots; i < ctx.aiPlayerScratch.length; i++) {
+      const p = ctx.aiPlayerScratch[i]!;
+      grid.addPilot(p.id, p.x, p.y, p.vx, p.vy, lingerR);
+    }
+    ctx.visitAiNeighbourDrones?.(grid);
+    grid.end();
+  }
   // Build the faction-filtered structure target list ONCE per tick (shared by
   // every drone via the AiWorldView — never per-drone, #14). Empty/absent ⇒
   // drones target players only.
@@ -112,7 +136,7 @@ export function runAiTick(ctx: AiTickCtx): void {
   }
   ctx.aiController.tick(
     ctx.serverTick, 1 / 60, ctx.aiPlayerScratch, ctx.swarmEntitySnapshot, structures,
-    ctx.resolveEntityInto, swarms,
+    ctx.resolveEntityInto, swarms, grid,
   );
   ctx.phaseTime('aiTick');
 

@@ -30,7 +30,7 @@
  * Architecture section of src/server/CLAUDE.md).
  */
 
-import { refineSweepHit } from '../../core/combat/capitalHits.js';
+import { shipSplashRadius, shipSweepHit } from '../../core/combat/shipHitShape.js';
 import { wreckSweepHit } from '../../core/destruction/wreckHits.js';
 import { ProjectileBroadphase } from './ProjectileBroadphase.js';
 import { projectileSweepCircle, projectileSweepBox } from '../../core/combat/Weapons.js';
@@ -100,6 +100,8 @@ export interface ShipPose {
 export interface SwarmCandidate {
   id: string; slot: number; radius: number; kind?: number; shipKind?: string;
   halfW?: number; halfH?: number; boxes?: Float32Array;
+  /** A ship's shield is down: hit on its hull, not its bubble. */
+  shieldDown?: boolean;
   /** Capital wreck pieces (kind 4): convex parts, body-local. */
   wreckParts?: ReadonlyArray<ReadonlyArray<{ x: number; y: number }>>;
 }
@@ -420,9 +422,11 @@ export class ProjectilePipeline {
     if (rec.kind === 4) return wreckSweepHit(rec.wreckParts, rec.radius, proj.x, proj.y, stepX, stepY, proj.radius, cx, cy, angle);
     return rec.halfW !== undefined && rec.halfH !== undefined
       ? projectileSweepBox(proj.x, proj.y, stepX, stepY, proj.radius, cx, cy, rec.halfW, rec.halfH, rec.boxes)
-      : rec.kind === 1
-        // A capital's circle is half its hull's length: refine to the hull (#15).
-        ? refineSweepHit(rec.shipKind, projectileSweepCircle(proj.x, proj.y, stepX, stepY, proj.radius, cx, cy, rec.radius), proj.x, proj.y, stepX, stepY, cx, cy, angle)
+      : rec.kind === 1 && rec.shipKind
+        // A ship: the same shape as if a player flew it (`shipHitShape.ts`,
+        // owner's rule 2026-11-13): bubble while its shield is up, hull once
+        // it is down, a capital's hull either way.
+        ? shipSweepHit(rec.shipKind, !rec.shieldDown, proj.x, proj.y, stepX, stepY, proj.radius, cx, cy, angle)
         : projectileSweepCircle(proj.x, proj.y, stepX, stepY, proj.radius, cx, cy, rec.radius);
   }
 
@@ -450,17 +454,22 @@ export class ProjectilePipeline {
       const ship = d.getActiveShip(pid);
       if (!ship || !ship.alive) continue;
       const pose = d.shipPoseCache.get(pid);
-      if (pose) hurt(pid, pose.x, pose.y, GLOBAL_SHIP_TUNING.hitRadius);
+      // Every ship's edge is its own size (#18), player or NPC alike.
+      if (pose) hurt(pid, pose.x, pose.y, shipSplashRadius(ship.kind));
     }
     for (const rec of d.swarmRegistry.all()) {
       if (rec.kind !== 1 && rec.kind !== 2) continue; // ships and structures; rocks shrug it off
       const b = slotBase(rec.slot);
-      const r = rec.halfW !== undefined && rec.halfH !== undefined ? Math.min(rec.halfW, rec.halfH) : rec.radius;
+      const r = rec.halfW !== undefined && rec.halfH !== undefined
+        ? Math.min(rec.halfW, rec.halfH)
+        : rec.kind === 1 && rec.shipKind ? shipSplashRadius(rec.shipKind) : rec.radius;
       hurt(rec.id, d.sabF32[b + SLOT_X_OFF]!, d.sabF32[b + SLOT_Y_OFF]!, r);
     }
     for (const [shipInstanceId, slot] of d.lingeringSlots) {
       const b = slotBase(slot);
-      hurt(shipInstanceId, d.sabF32[b + SLOT_X_OFF]!, d.sabF32[b + SLOT_Y_OFF]!, GLOBAL_SHIP_TUNING.hitRadius);
+      const lship = d.lingeringShip?.(shipInstanceId);
+      hurt(shipInstanceId, d.sabF32[b + SLOT_X_OFF]!, d.sabF32[b + SLOT_Y_OFF]!,
+        lship !== undefined ? shipSplashRadius(lship.kind) : GLOBAL_SHIP_TUNING.hitRadius);
     }
     d.onBlast?.(x, y, R);
     return R;

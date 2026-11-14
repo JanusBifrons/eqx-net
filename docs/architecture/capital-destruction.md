@@ -234,26 +234,73 @@ player-flown (active or parked), breaks it into wreck bodies on the server.
   `recentDamageRate` = damage over the last ~3 s (a 6-bucket ring,
   `WRECK_RECENT_DAMAGE_TICKS`) ÷ max hull. Entries are pooled per capital: no
   per-hit allocation.
-- **Bodies.** `buildWreckPieces` (`core/destruction/wreckPieces.ts`): one
-  dynamic body per piece from its convex parts, at its centroid, mass ∝ area
-  at the ship's density, velocity v + ω × r plus an outward push away from
-  the kill point, spin ω plus a seeded kick that falls off like the push
-  (`WRECK_SPIN_NEAR` 0.45 rad/s ≈ 26°/s at the kill point →
-  `WRECK_SPIN_FAR` 0.08 far away, 0.55–1× of it, either way round), damping
-  0.06 linear / 0.05 angular (the field opens for seconds, then a fast piece
-  comes to rest within a few km). The push is fastest at the kill point and
-  falls off with distance:
-  `wreckPushMin + (wreckPushMax − wreckPushMin)·r²/(r² + d²)`,
-  r = `WRECK_PUSH_FALLOFF_FRAC` (0.3) × hull radius, times 0.75–1.25 by how
-  violent the death was. `wreckPushMax/Min` come from `shipTuning(kind)`
-  (#18: 0.17 / 0.08 × hull radius per second since the money-shot review,
-  so a 2× heavy cruiser's pieces leave at ~370 / ~175 u/s; #521 had
-  0.055 / 0.014). Collision groups `WRECK_COLLISION_GROUPS`
-  (server spawn and the client twin): ships, rocks, scrap and structures
-  collide with pieces, but pieces never collide with other wreck pieces.
-  The pieces tile the hull exactly, so they spawn with no overlap; the dying body
-  is despawned in the same worker batch (an active player hull's body too,
-  its slot kept for respawn).
+- **Bodies (heavy break-up, owner review 2026-11-13).** `buildWreckPieces`
+  (`core/destruction/wreckPieces.ts`): one dynamic body per piece from its
+  convex parts, at its centroid, mass ∝ area at the ship's density (Rapier
+  derives each piece's inertia from its parts at that density), damping
+  0.06 linear / 0.05 angular.
+  - **Crack delay.** A piece spawns with the dead hull's rigid motion
+    (v + ω × r, spin ω), so the hull holds its shape for `WRECK_CRACK_MS`
+    (1200 game ms, `shared-types/wreckTiming.ts`; `wreckCrackTicks()` = 72
+    server ticks). Then `CapitalWreckSubsystem.tick()` gives each piece its
+    kick (`WRECK_KICK` worker command → `World.addVelocity`), turned by how
+    far the piece has turned since the death. Game ticks, so it follows the
+    sector's speed (#20). A client effect (the crack-and-ripple before the
+    split) times itself from the descriptor's `deathTick + wreckCrackTicks()`.
+  - **The kick.** A slow push away from the kill point,
+    `wreckPushMin + (wreckPushMax − wreckPushMin)·r²/(r² + d²)`,
+    r = `WRECK_PUSH_FALLOFF_FRAC` (0.3) × hull radius, × 0.75–1.25 by how
+    violent the death was; `wreckPushMax/Min` = 0.010 / 0.004 × hull radius
+    per second (`shipTuning`, #18; ~22 / ~9 u/s for a 2× heavy cruiser; the
+    2026-11-12 money-shot push was 0.17 / 0.08, the first heavy tune
+    0.012 / 0.004). A slow seeded spin given as a RIM speed
+    (`WRECK_SPIN_RIM_NEAR/FAR` 0.13 / 0.05 × `wreckSeparate`, 0.55–1× of it,
+    either way round, divided by the piece's radius, at least
+    `WRECK_SPIN_MIN_RADIUS_FRAC` 0.06 × hull radius), so a big piece turns
+    slower than a small one (≤ ~3°/s; measured < 1°/s on a heavy cruiser).
+  - **Neighbours always part.** The push is fastest at the kill point, so a
+    piece nearer it chased the slower neighbour beyond it along the same
+    line, and the spins turned long pieces into each other: pieces slid over
+    each other and two stern pieces folded into a "V" (owner review
+    2026-11-13). Every shared cut between two pieces (`findSeams`: cut edges
+    on one line, plus cut edges that only touch, as at the T-junction where
+    a fan crack ends on a zone crack, whose two sides are jagged
+    differently) must open at `shipTuning(kind).wreckSeparate` (0.014 ×
+    hull radius per second, ~31 u/s for a 2× heavy cruiser) or more at BOTH
+    ends of the shared stretch, spin included, and the two centres must part
+    at half that. Where they don't, an equal and opposite push (momentum
+    kept) along the cut's normal / the centre line makes up the difference
+    (Gauss–Seidel, at most 400 passes, aiming 10 % past the target). The cut
+    line separates the two pieces, so parting along its normal never
+    overlaps them. Side effect: momentum moves outward along the chain, so
+    the pieces at the ends of the hull drift fastest (~75 u/s for a heavy
+    cruiser), and the piece at the kill point is slow; the knock-back from
+    later shells (a follow-up) supplies the violence.
+    Tuning (owner review of a filmed take, 2026-11-13: at 0.0025 the gaps
+    were 5–15 px after 8 s at the capital zoom ~0.17 and the hull read as
+    "cracked but intact" for 3–4 s; "heavy and weighty, but the break must
+    be SEEN"): measured on a heavy cruiser killed by a shell, the narrowest
+    cut is ~31 u open 1 s after the kick (≥ 5 px at 0.17) and ~170–215 u
+    8 s after, with no piece over ~75 u/s. The separation speed is
+    multiplied along a chain of neighbours, so it is tuned for v7's 3–7
+    chunks: v6's ~30-piece shatter flung its small pieces at ~250 u/s at
+    this speed. Lock: `tests/integration/sectorRoom/wreckPiecesSeparate.test.ts`
+    (gap ≥ 0.012 × radius 1 s after the kick and ≥ 0.065 × radius 8 s
+    after, speed < 0.037 × radius).
+  - **Pieces collide with each other** (`WRECK_COLLISION_GROUPS` =
+    0x0004FFFF, server spawn and client twin): heavy chunks bump instead of
+    passing through. The physics collider is `colliderParts`, each drawn
+    part shrunk by `shipTuning(kind).wreckColliderInset` (0.0005 × hull
+    radius, ~1 u) toward its centre, so neighbours sharing a cut edge spawn a
+    hair apart; drawing and weapon hits keep the full `parts`. Both sides
+    read `colliderParts` from `wreckPieceGeometry` (#15). Ships, rocks, scrap
+    and structures collide with pieces as before. The dying body is
+    despawned in the same worker batch (an active player hull's body too,
+    its slot kept for respawn).
+  - Locks: `tests/integration/sectorRoom/wreckPiecesSeparate.test.ts` (no
+    overlap, neighbours never approach, crack delay holds, slow speed and
+    spin, a shoved piece bumps its neighbour), `wreckPieces.test.ts` (every
+    seam opens at both ends), `CapitalWreckSubsystem.test.ts` (crack delay).
 - **Entity class.** A wreck piece is swarm kind 4 (`SWARM_KIND_WRECK`,
   server-only for now), predicate `isWreckPiece`. No health: `EntityResolver`
   treats it as immune, so a shot stops on it and does nothing. Loops that
@@ -540,6 +587,48 @@ pieces stay for ever and the glow ends dark. As built
 - **Salvage.** Ties into the scrap economy.
 - **Lifetime.** A per-sector cap instead of today's global `MAX_LIVE_SCRAP`
   FIFO.
+
+### Sub-capital profile (sub-capital break-up, slice 1, 2026-11-13)
+
+The owner wants every other ship to break up too, but quietly: "use the same
+systems, just make it use less effects, the glow simpler, only a few parts".
+Capitals stay "a rare and very large spectacle". So there is one wreck
+system with three **destruction profiles**, and every difference is a field
+on the profile, not a branch in the code.
+
+- **`destructionProfile(entity)`** (`src/shared-types/shipScale/destructionProfile.ts`)
+  returns `capital` (authored `sizeClass: 'capital'`), `none` (engineering
+  kinds and the cargo pod, which keep their scrap) or `subcap` (every other
+  ship, fighters included). Ships read it through `shipTuning(kind).destruction`
+  (#18). It takes an entity (`{ type: 'ship' | 'structure', kindId }`), so a
+  structure kind can get a profile later; structures are `none` for now.
+- **`DESTRUCTION_PROFILES`** (`destruction.ts`) is plain data: the fracture
+  options, the crack hold, push and damping scales, whether pieces collide,
+  and the FX flags (break burst, kill blasts, crack front, ripples, whether
+  the wreck replaces the death blast, glow style and seconds). The capital
+  entry holds the capital stack's values, and its fracture options are the
+  fracture defaults. Today only the fracture reads the profile
+  (`wreckPieceGeometry`); slice 2 (server) and slice 4 (client look) swap
+  their constants for these fields.
+- **The sub-capital fracture** (same `fractureHull`, v7, with options): at
+  most 3 pieces, no fan or far cracks, and `chunkyPieces`. The primary crack
+  must be sound: it splits the hull into exactly two pieces of at least 15 %
+  each, both chunky. A line across a small concave hull (a fighter's notched
+  tail, a delta's swept wings) would clip wingtips off as slivers, so it moves
+  toward the centroid, then tries the diagonals and the keel through the
+  centroid. The beam-wide zone cracks are replaced by at most one extra crack
+  on the longer side, sized to that side (chance 0.4, more for a violent
+  death). Every piece passes v7's chunky guard at 0.3 beam (a fighter is
+  barely longer than its beam, so 0.45 would never allow a third piece), and
+  the jag is shorter and gentler (depth 2, roughness 0.12), so a piece is a
+  handful of convex parts.
+- **Result** over 1,200 deaths per kind (seeds × bearings × violence): 2
+  pieces mostly; 3 in about 20–33 % on fighters, gunships, frigates and the
+  hauler, and rarely on the round robots; the interceptor always 2. No piece
+  under ~10 % of the hull or under ~0.3 of its least width; at most 6 convex
+  parts. Lock: `src/core/destruction/fractureHull.subcap.test.ts`.
+- **Capitals are byte-identical:** every new option defaults to the old
+  behaviour, the goldens are unchanged and `FRACTURE_ALGO_VERSION` stays 7.
 
 ## 4. Determinism strategy
 

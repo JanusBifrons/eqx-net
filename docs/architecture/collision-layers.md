@@ -107,6 +107,36 @@ NPC capitals (`capitalHits.ts`, the pad not modelled), shield up or down;
 the client's beam-end snap (`ColyseusClient.shieldEdgeDist`) does the
 same (#15). Lock: `tests/integration/sectorRoom/capitalShieldHugsHull.test.ts`.
 
+## One hit shape per ship KIND, whoever flies it (2026-11-13)
+
+Owner's rule: "Ships turning, acceleration, weapons, everything is related to
+the ship, regardless of pilot." Every weapon path that can hit a ship goes
+through `src/core/combat/shipHitShape.ts`, keyed by the ship's kind and
+whether its shield is up, never by who flies it:
+
+| shield | non-capital | capital |
+|---|---|---|
+| up | bubble: `kind.radius + shipTuning(kind).shieldPad` (= `shieldBubbleRadius`) | hull outline |
+| down | hull polygon (gated by `shipHitBound`) | hull outline |
+
+Callers: `SectorRoom.playerHitscanDist` / `playerProjectileSweep` (players and
+parked hulls), `SectorRoom.swarmRayHit` (NPC beams, structure beams, the NPC
+line-of-fire gate), `PlayerFireResolver` (player beams on drones),
+`ProjectilePipeline.sweepSwarm` (bolts and shells on drones),
+`MissileSimulation` (players, parked hulls, drones), and on the client
+`DisplayPoseHitscan` + `ColyseusClient.shieldEdgeDist` (#15). The projectile
+broadphase bins a ship by `shipHitBound(kind)` (contains bubble and hull).
+Shell splash measures each ship's edge at `shipSplashRadius(kind)` (its own
+radius, #18), player, parked or NPC alike.
+
+Before this, a drone was hit on `rec.radius` (= `kind.radius`) with no pad and
+no hull refinement for non-capitals; a player fighter was 20 u (the 2× pad)
+larger in every direction while its shield was up. Splash measured player ships
+as a 12 u fighter (`GLOBAL_SHIP_TUNING.hitRadius`, 24 u at 2×), so a player
+battleship (radius 2,876 u) took no splash where an NPC battleship took it;
+missiles hit a player on the same fighter `hitRadius` circle. Lock:
+`tests/integration/sectorRoom/shipHitShapeParity.test.ts`.
+
 ## Ramming aggregation (load-bearing)
 
 A shield-down hull is N triangle colliders, so one physical ram emits up
@@ -118,41 +148,46 @@ hard ram could fall under the force floor split across triangles.
 Asteroids deal but don't take (the no-health no-op falls out of
 `applyDamage`).
 
-### Damage curve — asymmetric mass-differential (WS-1 / R2.31, 2026-06-12)
+### Damage curve — impact-based, ramming as a weapon (2026-11-13)
 
-The original curve was symmetric and **linear on closing speed** (`(speed −
-floor) × k`), so two equal ships brushing at speed both lost a chunk and ram
-damage felt "too high." The model is now the player-requested shape: a ram
-only hurts when there is **both** a huge closing speed **and** a large mass
-gap, and the damage is **asymmetric**.
+Replaced the 2026-06-12 mass-differential curve (WS-1 / R2.31), under which
+two equal ships dealt nothing at any speed and the angle of the hit was
+ignored. Owner: "You're telling me speed and angle of attack have no bearing?
+Wtf?!", then chose an impact-based model in which ramming is a real attack.
 
 ```
-damageTo(self) = RAM_DAMAGE_MAX
-               × ramSpeedFactor(closingSpeed)              // reverse-square, 0..1
-               × ramMassDifferentialFactor(mSelf, mOther)  // asymmetric, 0..1
+vN             = closing speed along the contact normal (Contact.normalSpeed)
+mu             = mA·mB / (mA + mB)                        (reduced mass)
+E              = ½ · mu · max(0, vN − RAM_MIN_IMPACT_SPEED)²
+damageTo(self) = min(RAM_DAMAGE_MAX,
+                     RAM_DAMAGE_PER_ENERGY · E · mOther / (mSelf + mOther))
 ```
 
-- **`ramSpeedFactor`** — `0` at/below `RAM_MIN_IMPACT_SPEED` (50 u/s; a slow
-  drift / docking tap is free), then `((speed − floor)/(RAM_SPEED_FULL −
-  floor))²` saturating at `1` at `RAM_SPEED_FULL` (700). Quadratic ⇒ moderate
-  speeds deal a *small fraction* of the cap. The input is the **relative**
-  closing speed (`Contact.impactSpeed`), not absolute — two ships flying fast
-  *together* that touch deal nothing.
-- **`ramMassDifferentialFactor`** — `(mOther − mSelf)/(mOther + mSelf)` clamped
-  to `[0, 1]`. `0` for equal masses (two equal ships at any speed = nothing),
-  → `1` as the other body gets much heavier. It clamps to `0` for the *heavier*
-  body, so it is asymmetric: a fighter flying into a capital is crushed while
-  the capital is untouched. Per-side results ride `RamPair.damageA`/`damageB`
-  and are applied independently in `SectorRoom.onContactBatch`.
+- **Angle matters.** `normalSpeed` is the pre-step relative velocity projected
+  on Rapier's `maxForceDirection()` (the manifold normal, from body a to body
+  b), the max over the pair's sub-contacts. Head-on ⇒ the whole closing speed;
+  a scrape ⇒ |v|·sin(grazing angle).
+- **Both ships are hurt, the lighter more.** The split is by weight: equal
+  ships take equal damage, a fighter into a capital takes nearly all of it.
+- **Physics note.** Two equal ships head-on at v each take what one would take
+  hitting an immovable wall at v, so a fighter into a PARKED capital takes
+  about a head-on's share; an oncoming capital adds its speed and crushes it.
+- **Constants** (`Ramming.ts`): floor 50 u/s; `RAM_DAMAGE_PER_ENERGY` 1.25e-4
+  (a full-speed fighter head-on at the 2× default scale ⇒ ~166 to each, 55 % of
+  a fighter's 300 shield + hull); `RAM_DAMAGE_MAX` 400 per side per hit.
+- **Pipeline unchanged.** Damage goes through `applyDamage` (shield first, then
+  hull; the collider swaps on the shield 0-cross) and is rounded before the emit
+  guard (P3.3). A shield-popping hit drops its overflow, as for any weapon, so a
+  full-speed head-on takes exactly the fighter's shield in play.
 
-Masses are the **folded Rapier body masses** (`World.getBodyMass`, read
-alloc-free in `drainContacts` and threaded via `Contact.aMass`/`bMass`) — the
-correct source for ships, drones, structures, and asteroids alike (a `kind.mass`
-catalogue read is undefined for non-ship bodies). Regression locks:
-`src/core/combat/Ramming.test.ts` (curve goldens, hand-derived) +
-`tests/integration/sectorRoom/ramming.test.ts` (equal-mass fighters take 0; a
-light fighter into a heavy crossguard is crushed while the crossguard is
-untouched). 🔴 netgate (contact→damage live-loop).
+Masses are the **folded Rapier body masses** (`World.getBodyMass`, threaded via
+`Contact.aMass`/`bMass`); an absent mass deals nothing. Locks:
+`src/core/combat/Ramming.test.ts` (shape: angle monotone, equal split,
+lighter takes more, floor, ceiling, aggregation),
+`src/core/physics/contactDrain.test.ts` (normal speed, head-on vs glancing) and
+`tests/integration/sectorRoom/ramming.test.ts` (head-on fighters both lose a big
+chunk; a glancing clip is small; fighter into crossguard). 🔴 netgate
+(contact→damage live-loop).
 
 ## Body-lifecycle exposed-state
 

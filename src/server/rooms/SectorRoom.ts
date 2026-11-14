@@ -87,7 +87,6 @@ import { isFriendly, isOnSightHostile } from '../../shared-types/allegiances.js'
 import { applyKillXp, xpForKill } from '../../core/leveling/shipXp.js';
 import { deriveStatMultipliers, isAllocValid, pointBudget, spentPoints, effectiveShipMaxHealth, effectiveShipShieldMax, effectiveShipEnergyMax, type StatAlloc as CoreStatAlloc } from '../../core/leveling/shipStats.js';
 // applyLayeredDamage + regenStep + ShieldHullState now used inside ShieldHullRouter.ts.
-import { shipCollisionParts } from '../../core/geometry/shipHullDecomp.js';
 import { shipScrapGroups } from '../../core/geometry/shipScrapGroups.js';
 import { SWARM_KIND_DRONE, SWARM_KIND_STRUCTURE, SWARM_KIND_SCRAP } from '../../shared-types/swarmWireFormat.js';
 import { auditEvent } from '../audit/GameplayAuditLog.js';
@@ -277,6 +276,7 @@ import {
   findAbandonedShips,
 } from './sectorIdleEvaluator.js';
 import { runAiTick } from './aiTickRunner.js';
+import { AiNeighbourGrid } from './AiNeighbourGrid.js';
 import { makeInputHandler } from './InputHandler.js';
 import {
   TICK_IDX,
@@ -376,9 +376,6 @@ import {
   rayHitsSphere,
   rayHitsConvexPolygon,
   rayHitsBox,
-  projectileSweepCircle,
-  rayHitsShipPolygon,
-  sweptSegmentHitsShipPolygon,
   // WEAPON_COOLDOWN_TICKS now used inside PlayerFireResolver + AiFireResolver
   // Player-hull HIT-tests derive a per-kind bounding-circle from
   // `getShipKind(ship.kind).radius + SHIELD_RADIUS_PAD` (2026-05-27) so they
@@ -391,11 +388,12 @@ import {
 // getWeapon/isWeaponId/HitscanWeaponDef/ProjectileWeaponDef now used inside PlayerFireResolver.ts
 import type { WeaponId, MissileWeaponDef } from '../../core/combat/WeaponCatalogue.js';
 import { regenEnergyStep, spendEnergy, BOOST_TICK_COST } from '../../core/combat/Energy.js';
-import { massOf, shipTuning, shellViewHalfExtent } from '../../shared-types/shipScale/tuning.js';
+import { massOf, shellViewHalfExtent } from '../../shared-types/shipScale/tuning.js';
 import { ShellEventHub, type ShellViewer } from './ShellEventHub.js';
 import { type ShellSalvo } from '../../shared-types/messages/shellEvents.js';
 import { tuningFor, GLOBAL_SHIP_TUNING } from '../../shared-types/shipScale/lookup.js';
-import { refineRayHit, isCapitalKindId } from '../../core/combat/capitalHits.js';
+import { isCapitalKindId } from '../../core/combat/capitalHits.js';
+import { shipRayHit, shipSweepHit } from '../../core/combat/shipHitShape.js';
 import { CapitalWreckSubsystem } from './CapitalWreckSubsystem.js';
 import { wreckRayHit } from '../../core/destruction/wreckHits.js';
 import { isWreckPiece } from '../net/SwarmEntityRegistry.js';
@@ -2195,6 +2193,7 @@ export class SectorRoom extends Room<SectorState> {
       shipPoseCache: this.shipPoseCache,
       lingeringSlots: this.lingeringSlots,
       lingeringPoseCache: this.lingeringPoseCache,
+      lingeringShip: (sid) => this.state.ships.get(sid),
       swarmRegistry: this.swarmRegistry,
       applyDamage: (targetId, shooterId, damage, hitX, hitY) =>
         this.applyDamage(targetId, shooterId, damage, hitX, hitY),
@@ -4759,6 +4758,25 @@ export class SectorRoom extends Room<SectorState> {
   }> = [];
   private readonly aiSwarmScratch: AiSwarmView[] = [];
 
+  /** AI steering 2a — per-tick neighbour index over combat drones + pilot
+   *  hulls, rebuilt once per tick in `runAiTick` (alloc-free, #14). */
+  private readonly aiNeighbourGrid = new AiNeighbourGrid();
+  /** Add every kind-1 swarm combatant (all allegiances) with its SAB pose.
+   *  Same set `fillSwarmTargets` covers; bound once (#14). */
+  private readonly _visitAiNeighbourDrones = (_grid: AiNeighbourGrid): void => {
+    this.swarmRegistry.forEachRecord(this._addAiNeighbourDrone);
+  };
+  private readonly _addAiNeighbourDrone = (rec: SwarmEntityRecord): void => {
+    if (rec.kind !== SWARM_KIND_DRONE) return;
+    const b = slotBase(rec.slot);
+    this.aiNeighbourGrid.addDrone(
+      rec.id,
+      this.sabF32[b + SLOT_X_OFF]!, this.sabF32[b + SLOT_Y_OFF]!,
+      this.sabF32[b + SLOT_VX_OFF]!, this.sabF32[b + SLOT_VY_OFF]!,
+      rec.radius, allegianceOfKind(rec.shipKind),
+    );
+  };
+
   /**
    * Allegiances P0 — rebuild this tick's swarm-combatant set (kind-1 entities),
    * ONCE per tick (#14). Only populated when ≥ 2 allegiances are present in the
@@ -5076,6 +5094,11 @@ export class SectorRoom extends Room<SectorState> {
         if (rec) this.evictSwarmEntity(rec, { broadcast: false, emitDestroyed: false });
       },
       isLive: (id) => this.swarmRegistry.has(id),
+      pieceAngle: (id) => {
+        const rec = this.swarmRegistry.get(id);
+        return rec ? this.sabF32[slotBase(rec.slot) + SLOT_ANGLE_OFF]! : null;
+      },
+      kickPiece: (id, dvx, dvy, dw) => this.postToWorker({ type: 'WRECK_KICK', entityId: id, dvx, dvy, dw }),
     });
   }
 
@@ -7978,20 +8001,11 @@ export class SectorRoom extends Room<SectorState> {
     fx: number, fy: number, dx: number, dy: number, maxDist: number,
     cx: number, cy: number, angle: number,
   ): number | null {
-    // Per-kind bounding circle = hull radius + SHIELD_RADIUS_PAD. Three
-    // sites share this constant (physics ball collider, this hit-test,
-    // visible ShieldAura ring) so the player's "where the shield is"
-    // intuition matches every gate. Pre-2026-05-27 used a hardcoded
-    // SHIP_COLLISION_RADIUS=12 that only matched fighter — heavy at
-    // radius 16 had ~4 u of visible hull where lasers passed through.
-    const rk = getShipKind(ship.kind);
-    const r = rk.radius + shipTuning(rk).shieldPad;
-    const circle = rayHitsSphere(fx, fy, dx, dy, maxDist, cx, cy, r);
-    // A capital's shield follows its hull (`shipShieldColliderDesc`), so its
-    // circle (half the hull's LENGTH) is only the cheap pre-test, as for an NPC
-    // capital (`refineRayHit`, #15): refine to the hull whatever the shield.
-    if (circle === null || (ship.shield > 0 && !isCapitalKindId(ship.kind))) return circle;
-    return rayHitsShipPolygon(fx, fy, dx, dy, maxDist, cx, cy, angle, shipCollisionParts(ship.kind));
+    // The ship's own hit shape, whoever flies it (`shipHitShape.ts`, owner's
+    // rule 2026-11-13): the shield bubble (radius + shieldPad, the drawn aura)
+    // while its shield is up, the hull once it is down, a capital's hull either
+    // way. NPC beams and bolts on drones go through the same helper.
+    return shipRayHit(ship.kind, ship.shield > 0, fx, fy, dx, dy, maxDist, cx, cy, angle);
   }
 
   /** Reused result of `nonPlayerRayHit` (#14). */
@@ -8014,7 +8028,11 @@ export class SectorRoom extends Room<SectorState> {
     for (const [shipInstanceId] of this.lingeringSlots) {
       const p = this.lingeringPoseCache.get(shipInstanceId);
       if (!p) continue;
-      const d = rayHitsSphere(fx, fy, dx, dy, best, p.x, p.y, GLOBAL_SHIP_TUNING.hitRadius);
+      // A parked hull is the same ship it was when flown (#18), not a fighter.
+      const ls = this.state.ships.get(shipInstanceId);
+      const d = ls !== undefined
+        ? this.playerHitscanDist(ls, fx, fy, dx, dy, best, p.x, p.y, p.angle)
+        : rayHitsSphere(fx, fy, dx, dy, best, p.x, p.y, GLOBAL_SHIP_TUNING.hitRadius);
       if (d !== null && d < best) { best = d; bestId = shipInstanceId; bestEid = -1; }
     }
     for (const rec of this.swarmRegistry.all()) {
@@ -8044,8 +8062,9 @@ export class SectorRoom extends Room<SectorState> {
     if (rec.kind === 0 && rec.vertices) return rayHitsConvexPolygon(fx, fy, dx, dy, maxDist, cx, cy, ca, rec.vertices);
     if (isWreckPiece(rec)) return wreckRayHit(rec.wreckParts, rec.radius, fx, fy, dx, dy, maxDist, cx, cy, ca);
     if (rec.halfW !== undefined && rec.halfH !== undefined) return rayHitsBox(fx, fy, dx, dy, maxDist, cx, cy, rec.halfW, rec.halfH, rec.boxes);
-    const d = rayHitsSphere(fx, fy, dx, dy, maxDist, cx, cy, rec.radius);
-    return rec.kind === 1 ? refineRayHit(rec.shipKind, d, fx, fy, dx, dy, maxDist, cx, cy, ca) : d;
+    // A ship: the same shape as if a player flew it (`shipHitShape.ts`).
+    if (rec.kind === 1 && rec.shipKind) return shipRayHit(rec.shipKind, !rec.shieldDown, fx, fy, dx, dy, maxDist, cx, cy, ca);
+    return rayHitsSphere(fx, fy, dx, dy, maxDist, cx, cy, rec.radius);
   }
 
   // ─── NPC line of fire (friendly fire slice 2) ────────────────────────────
@@ -8108,7 +8127,13 @@ export class SectorRoom extends Room<SectorState> {
     if (rec == null || rec.kind !== SWARM_KIND_DRONE) return false;
     this.lofShooterKind = 1;
     this.lofSide = allegianceOfKind(rec.shipKind);
-    return this.lofGate().blocked(fx, fy, dx, dy, maxDist, shooterId, targetId, this.lofFriendly);
+    const gate = this.lofGate();
+    if (!gate.blocked(fx, fy, dx, dy, maxDist, shooterId, targetId, this.lofFriendly)) return false;
+    // Line-of-fire feedback: tell the brain which ally held its shot (drone
+    // slots via AiFireResolver AND capital turret barrels via the mount ticker
+    // both come through here; the behaviour counts at most once per tick).
+    this.aiController.noteBlocked(shooterId, this.serverTick, gate.lastBlockerX, gate.lastBlockerY);
+    return true;
   }
 
   /** A drone's slot shot: the distance is to its target's live pose. */
@@ -8235,13 +8260,10 @@ export class SectorRoom extends Room<SectorState> {
     fromX: number, fromY: number, stepX: number, stepY: number, projRadius: number,
     cx: number, cy: number, angle: number,
   ): { entry: number; hitX: number; hitY: number } | null {
-    const rk = getShipKind(ship.kind);
-    const r = rk.radius + shipTuning(rk).shieldPad;
-    const circle = projectileSweepCircle(fromX, fromY, stepX, stepY, projRadius, cx, cy, r);
-    // Capitals: the hull, shield up or down (see playerHitscanDist). Before
-    // 2026-11-12 a broadside shell burst ~2,000 u off a pilot's heavy cruiser.
-    if (circle === null || (ship.shield > 0 && !isCapitalKindId(ship.kind))) return circle;
-    return sweptSegmentHitsShipPolygon(fromX, fromY, stepX, stepY, cx, cy, angle, shipCollisionParts(ship.kind));
+    // Same shape as `playerHitscanDist` (`shipHitShape.ts`). Capitals: the
+    // hull, shield up or down (a broadside shell once burst ~2,000 u off a
+    // pilot's heavy cruiser, 2026-11-12).
+    return shipSweepHit(ship.kind, ship.shield > 0, fromX, fromY, stepX, stepY, projRadius, cx, cy, angle);
   }
 
   private advanceProjectiles(): void {
@@ -8334,10 +8356,9 @@ export class SectorRoom extends Room<SectorState> {
             impulse: parseFloat(p.force.toFixed(3)),
             tick,
           });
-          // Ramming damage (Phase 4; WS-1/R2.31 mass-differential model).
-          // ASYMMETRIC: each side takes its OWN damage (the lighter body in a
-          // high-speed collision is crushed, the heavier takes ~0, equal masses
-          // take nothing); the OTHER id is the "shooter" (kill-feed + hostility
+          // Ramming damage (impact-based model, 2026-11-13; see Ramming.ts).
+          // Each side takes its OWN damage (normal-impact energy shared by
+          // weight: equal ships equally, the lighter more); the OTHER id is the "shooter" (kill-feed + hostility
           // attribution). applyDamage already no-ops on asteroids (immune - no
           // swarmHealth entry), so "asteroids deal but do not take" still holds.
           // Applied once per pair per tick.
@@ -8357,6 +8378,7 @@ export class SectorRoom extends Room<SectorState> {
               bId: p.bId,
               force: parseFloat(p.force.toFixed(1)),
               impactSpeed: parseFloat(p.impactSpeed.toFixed(1)),
+              normalSpeed: parseFloat(p.normalSpeed.toFixed(1)),
               damageA,
               damageB,
               tick,
@@ -11376,6 +11398,8 @@ export class SectorRoom extends Room<SectorState> {
       fillStructureTargets: (out) => this.fillStructureTargets(out),
       aiSwarmScratch: this.aiSwarmScratch,
       fillSwarmTargets: (out) => this.fillSwarmTargets(out),
+      aiNeighbourGrid: this.aiNeighbourGrid,
+      visitAiNeighbourDrones: this._visitAiNeighbourDrones,
       hasTruce: (pid) => this.playerTruce(pid),
       // Living World P1a-2 (decision 7) — offline hulls are fair game.
       isPlayerConnected: this._isPlayerConnected,
@@ -11407,6 +11431,9 @@ export class SectorRoom extends Room<SectorState> {
     // Shells as events: this tick's salvos (players, drones, turrets since the
     // last update) and hits, plus the 1 Hz re-test.
     this.shellHub?.flush();
+    // Capital wrecks: pieces whose crack delay is over get their slow
+    // separating kick (no-op with no wreck holding together).
+    this.capitalWrecks?.tick();
 
     // Tick-budget telemetry. Cumulative phase totals across the last ~60 ticks
     // are emitted as one server event per second. The first capture told us
@@ -11433,6 +11460,7 @@ export class SectorRoom extends Room<SectorState> {
         this.markSceneSim(this.sceneSimEnd);
         this.sceneWork.endTick(this.sabU32[COUNT_IDX] ?? 0, this.aiController.size());
         if (this.lineOfFireGate) this.sceneWork.lineOfFire(this.lineOfFireGate.checks, this.lineOfFireGate.narrow);
+        this.sceneWork.aiNeighbours(this.aiNeighbourGrid.queriesTotal);
       }
       this.sceneWork.active = running;
     }

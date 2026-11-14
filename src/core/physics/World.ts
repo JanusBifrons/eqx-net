@@ -801,6 +801,22 @@ export class PhysicsWorld {
     if (torque !== 0) body.applyTorqueImpulse(torque, true);
   }
 
+  /** Add a velocity change (u/s) and spin change (rad/s) to a body, whatever
+   *  its mass (a capital wreck piece's separating kick). Wakes it. Unknown
+   *  id ⇒ no-op. */
+  addVelocity(id: string, dvx: number, dvy: number, dw: number): void {
+    const rec = this.bodies.get(id);
+    if (!rec) return;
+    const body = rec.body;
+    const v = body.linvel();
+    this._kickVel.x = v.x + dvx;
+    this._kickVel.y = v.y + dvy;
+    body.setLinvel(this._kickVel, true);
+    body.setAngvel(body.angvel() + dw, true);
+  }
+
+  private readonly _kickVel = { x: 0, y: 0 };
+
   /** True when Rapier reports the body as sleeping (motion below its threshold). */
   isSleeping(id: string): boolean {
     const rec = this.bodies.get(id);

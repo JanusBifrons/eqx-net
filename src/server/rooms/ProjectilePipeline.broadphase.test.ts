@@ -167,7 +167,10 @@ describe('ProjectilePipeline broadphase — narrow-phase COUNT gate', () => {
     const rnd = (): number => { s = (Math.imul(s, 1103515245) + 12345) >>> 0; return s / 2 ** 32; };
     const ents: EntSpec[] = [];
     for (let i = 0; i < 1000; i++) {
-      ents.push({ kind: (i % 3) as 0 | 1 | 2, shipKind: i % 50 === 0 ? 'battleship' : 'fighter',
+      ents.push({ kind: (i % 3) as 0 | 1 | 2, // Ships are hit on their KIND's shape (`shipHitShape.ts`), so each big
+      // entity's kind matches its 1,500 u radius (a destroyer's bound is
+      // ~1,240 u; a battleship's is ~2,900 u, twice this scene's circle).
+      shipKind: i % 50 === 0 ? 'destroyer' : 'fighter',
         x: (rnd() - 0.5) * 40_000, y: (rnd() - 0.5) * 40_000, angle: 0,
         radius: i % 50 === 0 ? 1500 : 20 + rnd() * 40,
         box: i % 3 === 2 ? { hw: 60, hh: 40, parts: false } : null });

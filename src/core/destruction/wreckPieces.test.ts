@@ -5,11 +5,14 @@
  * from the kill point, and the kill point used is on the hull outline.
  */
 import { describe, expect, it } from 'vitest';
-import { buildWreckPieces, hullLocalKillPoint, WRECK_SPIN_FAR, WRECK_SPIN_NEAR, type WreckBuildInput } from './wreckPieces.js';
+import {
+  buildWreckPieces, hullLocalKillPoint, wreckPieceGeometry,
+  WRECK_SPIN_MIN_RADIUS_FRAC, WRECK_SPIN_RIM_FAR, WRECK_SPIN_RIM_NEAR, type WreckBuildInput,
+} from './wreckPieces.js';
 import { shipShapeToPolygon } from '../geometry/shipHullDecomp.js';
 import { shipHullOutline } from '../geometry/shipHullOutline.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
-import { massOf } from '../../shared-types/shipScale/tuning.js';
+import { massOf, shipTuning } from '../../shared-types/shipScale/tuning.js';
 import { FRACTURE_QUANTUM } from './fractureHull.js';
 
 type V = { x: number; y: number };
@@ -107,24 +110,102 @@ describe('buildWreckPieces', () => {
     for (const p of pieces) expect(p.mass / p.area).toBeCloseTo(d0, 9);
   });
 
-  it('velocity = the hull velocity at the piece (v + ω × r) plus an outward push from the kill point', () => {
-    const killWorld = { x: pose.x + 200, y: pose.y + 100 };
-    const b = buildWreckPieces(input({ killWorld }));
+  it('spawn velocity is the hull rigid motion (v + ω × r, ω): the hull holds together until the crack delay', () => {
+    const b = buildWreckPieces(input({ killWorld: { x: pose.x + 200, y: pose.y + 100 } }));
     for (const p of b.pieces) {
       const rx = p.x - pose.x;
       const ry = p.y - pose.y;
-      const ex = p.vx - (pose.vx - pose.angvel * ry);
-      const ey = p.vy - (pose.vy + pose.angvel * rx);
-      const ox = p.x - b.killWorldOnHull.x;
-      const oy = p.y - b.killWorldOnHull.y;
-      const ol = Math.hypot(ox, oy);
-      // The extra velocity points straight away from the kill point.
-      expect((ex * ox + ey * oy) / ol).toBeGreaterThan(0);
-      expect(Math.abs(ex * oy - ey * ox) / ol).toBeLessThan(1e-6);
-      // The seeded spin kick: at most WRECK_SPIN_NEAR (fastest at the kill point).
-      expect(Math.abs(p.angvel - pose.angvel)).toBeLessThanOrEqual(WRECK_SPIN_NEAR + 1e-9);
-      expect(Math.abs(p.angvel - pose.angvel)).toBeGreaterThanOrEqual(0.55 * WRECK_SPIN_FAR - 1e-9);
+      expect(p.vx).toBeCloseTo(pose.vx - pose.angvel * ry, 9);
+      expect(p.vy).toBeCloseTo(pose.vy + pose.angvel * rx, 9);
+      expect(p.angvel).toBe(pose.angvel);
       expect(p.angle).toBe(pose.angle);
+    }
+  });
+
+  it('the kick is slow and heavy: away from the kill point on the whole, size-scaled push and slow spin', () => {
+    for (const kindId of ['battleship', 'heavy-cruiser'] as const) {
+      const kind = getShipKind(kindId);
+      const t = shipTuning(kind);
+      const b = buildWreckPieces(input({ kindId, killWorld: { x: pose.x + 200, y: pose.y + 100 } }));
+      let outward = 0;
+      for (const p of b.pieces) {
+        const ox = p.x - b.killWorldOnHull.x;
+        const oy = p.y - b.killWorldOnHull.y;
+        if ((p.kickVx * ox + p.kickVy * oy) > 0) outward++;
+        // Bounded: the push plus the seam-parting corrections stay slow.
+        expect(Math.hypot(p.kickVx, p.kickVy)).toBeLessThan(2 * (t.wreckPushMax * 1.25) + 4 * t.wreckSeparate);
+        // Rim speed at most WRECK_SPIN_RIM_NEAR × wreckSeparate.
+        const r = Math.max(p.radius, WRECK_SPIN_MIN_RADIUS_FRAC * kind.radius);
+        expect(Math.abs(p.kickAngvel) * r).toBeLessThanOrEqual(WRECK_SPIN_RIM_NEAR * t.wreckSeparate + 1e-9);
+        expect(Math.abs(p.kickAngvel) * r).toBeGreaterThanOrEqual(0.55 * WRECK_SPIN_RIM_FAR * t.wreckSeparate - 1e-9);
+      }
+      expect(outward / b.pieces.length).toBeGreaterThan(0.8);
+    }
+  });
+
+  it('every pair of neighbours parts along its shared cut at both ends (no slide-over, no hinge)', () => {
+    for (const seed of [1, 7, 77, 123, 999]) {
+      for (const kindId of ['battleship', 'heavy-cruiser'] as const) {
+        const t = shipTuning(getShipKind(kindId));
+        const { pieces, fracture } = buildWreckPieces(input({ kindId, seed, killBlowDamage: 1.5, recentDamageRate: 1.5 }));
+        const geom = wreckPieceGeometry(fracture);
+        const c = Math.cos(pose.angle);
+        const s = Math.sin(pose.angle);
+        let seams = 0;
+        for (let i = 0; i < geom.length; i++) {
+          for (let j = i + 1; j < geom.length; j++) {
+            const gi = geom[i]!, gj = geom[j]!;
+            for (let a = 0; a < gi.outline.length; a++) {
+              if (!gi.cutEdges[a]) continue;
+              const p0 = { x: gi.outline[a]!.x + gi.cx, y: gi.outline[a]!.y + gi.cy };
+              const p1n = gi.outline[(a + 1) % gi.outline.length]!;
+              const p1 = { x: p1n.x + gi.cx, y: p1n.y + gi.cy };
+              const len = Math.hypot(p1.x - p0.x, p1.y - p0.y);
+              if (len < 1) continue;
+              const nx = (p1.y - p0.y) / len, ny = -(p1.x - p0.x) / len;
+              const ux = (p1.x - p0.x) / len, uy = (p1.y - p0.y) / len;
+              // Cut edges of j on this edge's line: the shared stretch.
+              for (let bI = 0; bI < gj.outline.length; bI++) {
+                if (!gj.cutEdges[bI]) continue;
+                const q0 = gj.outline[bI]!, q1 = gj.outline[(bI + 1) % gj.outline.length]!;
+                const ax = q0.x + gj.cx - p0.x, ay = q0.y + gj.cy - p0.y;
+                const bx = q1.x + gj.cx - p0.x, by = q1.y + gj.cy - p0.y;
+                if (Math.abs(ax * nx + ay * ny) > 0.05 || Math.abs(bx * nx + by * ny) > 0.05) continue;
+                const s0 = Math.max(0, Math.min(ax * ux + ay * uy, bx * ux + by * uy));
+                const s1 = Math.min(len, Math.max(ax * ux + ay * uy, bx * ux + by * uy));
+                if (s1 - s0 < 1) continue;
+                seams++;
+                const pi = pieces[i]!, pj = pieces[j]!;
+                // Ship-frame kick of each piece (undo the world turn).
+                const kv = (p: typeof pi): V => ({ x: p.kickVx * c + p.kickVy * s, y: -p.kickVx * s + p.kickVy * c });
+                const vi = kv(pi), vj = kv(pj);
+                for (const sAt of [s0, s1]) {
+                  const p = { x: p0.x + ux * sAt, y: p0.y + uy * sAt };
+                  const rvx = (vj.x - pj.kickAngvel * (p.y - gj.cy)) - (vi.x - pi.kickAngvel * (p.y - gi.cy));
+                  const rvy = (vj.y + pj.kickAngvel * (p.x - gj.cx)) - (vi.y + pi.kickAngvel * (p.x - gi.cx));
+                  // Opens at wreckSeparate or more at each end of the shared stretch.
+                  expect(rvx * nx + rvy * ny, `${kindId} seed ${seed} pieces ${i}/${j}`).toBeGreaterThan(0.99 * t.wreckSeparate);
+                }
+              }
+            }
+          }
+        }
+        expect(seams).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('collider parts are the drawn parts shrunk by wreckColliderInset', () => {
+    const kind = getShipKind('heavy-cruiser');
+    const inset = shipTuning(kind).wreckColliderInset;
+    const { pieces } = buildWreckPieces(input({ kindId: 'heavy-cruiser' }));
+    for (const p of pieces) {
+      expect(p.colliderParts.length).toBe(p.parts.length);
+      for (let k = 0; k < p.parts.length; k++) {
+        const a = p.parts[k]!, b = p.colliderParts[k]!;
+        expect(b.length).toBe(a.length);
+        for (let v = 0; v < a.length; v++) expect(Math.hypot(a[v]!.x - b[v]!.x, a[v]!.y - b[v]!.y)).toBeLessThanOrEqual(inset + 1e-9);
+      }
     }
   });
 
