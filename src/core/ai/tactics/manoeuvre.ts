@@ -141,6 +141,9 @@ export interface TacticalContext {
    *  target line (+ closing) and whether it may boost. */
   holdAlong: number;
   holdBoost: boolean;
+  /** The target's speed as `targetSlow` reads it: the brain's smoothed
+   *  value (u/s), or −1 to use the raw velocity (tests, scratch). */
+  targetSpeed: number;
   /** Per-ship seeded stream (mulberry32, reseeded from the entity id). */
   readonly rng: Rng;
 }
@@ -157,7 +160,7 @@ export function makeTacticalContext(): TacticalContext {
     hullFrac: 1, recentHits: 0, recentBlocks: 0, allies: 0, enemies: 0,
     bandMin: 0, bandMax: 1, turretHalfArc: 0, sensorRange: 1,
     sensorEnemies: 0, threatX: 0, threatY: 0, hasAnchor: false, anchorX: 0, anchorY: 0,
-    holdAlong: 0, holdBoost: false,
+    holdAlong: 0, holdBoost: false, targetSpeed: -1,
     rng: new Rng(1),
   };
 }
@@ -172,6 +175,16 @@ export const PARKED_SPEED_FRAC = 0.1;
 export function targetParked(ctx: TacticalContext): boolean {
   const v = PARKED_SPEED_FRAC * ctx.cruiseSpeed;
   return ctx.tvx * ctx.tvx + ctx.tvy * ctx.tvy <= v * v;
+}
+
+/** Squared target speed for the slow-target call: the smoothed
+ *  `ctx.targetSpeed` when the brain set one, else the raw velocity. A parked
+ *  call stays on the raw velocity: "parked" also gates being tailed
+ *  (`isTailed`), and a robot pulling onto my six from rest must count at
+ *  once (dogfightOnSight Break scene). */
+function targetSpeedSq(ctx: TacticalContext): number {
+  const s = ctx.targetSpeed;
+  return s >= 0 ? s * s : ctx.tvx * ctx.tvx + ctx.tvy * ctx.tvy;
 }
 
 /** A target moving slower than this share of MY cruise speed is slow: I
@@ -190,7 +203,7 @@ export const SLOW_SPEED_FRAC = 0.5;
  *  target is slow. */
 export function targetSlow(ctx: TacticalContext): boolean {
   const v = SLOW_SPEED_FRAC * ctx.cruiseSpeed;
-  return ctx.tvx * ctx.tvx + ctx.tvy * ctx.tvy < v * v;
+  return targetSpeedSq(ctx) < v * v || targetParked(ctx);
 }
 
 /** A ship's guns bear on what sits within this cos of its bow (~60°): the

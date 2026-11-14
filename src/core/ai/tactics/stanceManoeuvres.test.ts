@@ -37,6 +37,9 @@ import {
   FleeManoeuvre,
   isPursued,
   KiteManoeuvre,
+  KITE_RUN_EXIT,
+  kiteAttacked,
+  kiteReverseSpeed,
   OrbitManoeuvre,
   orbitOffAngle,
 } from './stanceManoeuvres.js';
@@ -149,14 +152,67 @@ describe('KiteManoeuvre', () => {
     expect(m.along).toBeCloseTo(50, 3);
   });
 
-  it('reverses to meet a target that closes on it', () => {
-    // Target flying straight at us at 200 u/s from the band's middle.
-    const c = ctxAt(0, 0, 0, 0.75 * R, { tvy: -200 });
+  it('backs off nose on from a target closing slower than it can reverse', () => {
+    // Reverse top speed = cruise × brake / thrust accel = 0.5 × 150 = 75 u/s;
+    // the target drifts in at 60 u/s from the band's middle.
+    const c = ctxAt(0, 0, 0, 0.75 * R, { tvy: -60, accel: 2, brakeAccel: 1 });
+    expect(kiteReverseSpeed(c)).toBeCloseTo(0.5 * CRUISE, 6);
+    expect(kiteAttacked(c)).toBe(false);
     const m = new KiteManoeuvre();
     m.begin();
     run(m, c);
-    expect(m.along).toBeCloseTo(-200, 3);
+    expect(m.running).toBe(false);
+    expect(m.along).toBeCloseTo(-60, 3);
     expect(goal.facing).toBe(FACE_AIM_LEAD);
+  });
+
+  it('attacked (closing faster than it can reverse, inside the band edge): turns away and runs at full speed in one direction', () => {
+    // Owner, take 6: "It should be fleeing in one direction at full speed (to
+    // maintain distance)". A Heavy backing off at ~63 u/s let a robot closing
+    // at 200 u/s cut the gap from ~580 to ~200 u.
+    const c = ctxAt(0, 0, 0, 0.75 * R, { tvy: -200, accel: 2, brakeAccel: 1 });
+    expect(kiteAttacked(c)).toBe(true);
+    const m = new KiteManoeuvre();
+    m.begin();
+    const h = run(m, c);
+    expect(m.running).toBe(true);
+    expect(goal.facing).toBe(FACE_MOVE);
+    expect(goal.speed).toBe(MAX);
+    expect(goal.boost).toBe(true);
+    expect(goal.throttleNow).toBe(true);
+    expect(h.dirY).toBeLessThan(-0.9); // straight away from the attacker
+    // Still running at the band's middle and edge, even with the attacker now
+    // holding off (no turn back to face until the gap is clearly open).
+    run(m, ctxAt(0, 0, 0, 0.9 * R, { accel: 2, brakeAccel: 1 }));
+    expect(m.running).toBe(true);
+    run(m, ctxAt(0, 0, 0, 0.99 * KITE_RUN_EXIT * 0.9 * R, { accel: 2, brakeAccel: 1 }));
+    expect(m.running).toBe(true);
+    // Past KITE_RUN_EXIT × bandMax: turn to face and shoot.
+    run(m, ctxAt(0, 0, 0, 1.01 * KITE_RUN_EXIT * 0.9 * R, { accel: 2, brakeAccel: 1 }));
+    expect(m.running).toBe(false);
+    expect(goal.facing).toBe(FACE_AIM_LEAD);
+    expect(goal.throttleNow).toBe(false);
+  });
+
+  it('too close but not attacked (drifting in slower than it can reverse): runs only back out to bandMin', () => {
+    const m = new KiteManoeuvre();
+    m.begin();
+    run(m, ctxAt(0, 0, 0, 0.3 * R, { tvy: -20 }));
+    expect(m.running).toBe(true);
+    expect(m.fromAttack).toBe(false);
+    run(m, ctxAt(0, 0, 0, 0.55 * R));
+    expect(m.running).toBe(true);
+    run(m, ctxAt(0, 0, 0, 0.65 * R));
+    expect(m.running).toBe(false);
+  });
+
+  it('a target closing fast but beyond the band edge is not an attack yet', () => {
+    const c = ctxAt(0, 0, 0, 1.05 * R, { tvy: -300, accel: 2, brakeAccel: 1 });
+    expect(kiteAttacked(c)).toBe(false);
+    const m = new KiteManoeuvre();
+    m.begin();
+    run(m, c);
+    expect(m.running).toBe(false);
   });
 
   it('caught deep inside the band by a closing target, turns and runs with boost', () => {
@@ -169,8 +225,10 @@ describe('KiteManoeuvre', () => {
     expect(goal.boost).toBe(true);
     expect(goal.speed).toBe(MAX);
     expect(h.dirY).toBeLessThan(-0.9);
-    // Back at the band: face again.
+    // Back inside the band it keeps running; past KITE_RUN_EXIT × bandMax it faces again.
     run(m, ctxAt(0, 0, 0, 0.65 * R));
+    expect(m.running).toBe(true);
+    run(m, ctxAt(0, 0, 0, 1.1 * KITE_RUN_EXIT * 0.9 * R));
     expect(m.running).toBe(false);
     expect(goal.facing).toBe(FACE_AIM_LEAD);
   });
