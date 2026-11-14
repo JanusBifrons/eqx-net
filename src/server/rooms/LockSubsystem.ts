@@ -14,14 +14,14 @@ import { lockSeconds, type LockInputs } from '../../core/combat/lockTime.js';
 import { newLock, stepLock, LOCK_STAGE_CODE, LOCK_TRACK, type LockEntry } from '../../core/combat/lockState.js';
 import { lockLineHolds } from '../../core/combat/lockLine.js';
 import { pickTurretLock } from '../../core/combat/turretLockPick.js';
-import { mountWeaponReach } from '../../core/combat/mountReach.js';
-import { mountReachesTarget, type FireTargetShape } from '../../core/combat/fireControlBearing.js';
+import { mountInReach, mountWeaponReach, type MountRangeTarget } from '../../core/combat/mountReach.js';
+import type { FireTargetShape } from '../../core/combat/fireControlBearing.js';
 import { getWeapon, weaponAutoFireRange } from '../../core/combat/WeaponCatalogue.js';
 import type { ShipKind, WeaponMount, WeaponSlot } from '../../shared-types/shipKinds/types.js';
 
 /** A lockable target, resolved each lock step. Its `FireTargetShape` half
- *  (pose, heading, hit shape; `signature` = lock signature, u) is what the
- *  fire gate measures range against (`mountReachesTarget`). */
+ *  (pose, heading, hit shape; `radius` = lock signature, u) is what the
+ *  fire gate measures range against (`mountInReach`). */
 export interface LockTargetView extends FireTargetShape {
   vx: number;
   vy: number;
@@ -31,7 +31,7 @@ export interface LockTargetView extends FireTargetShape {
 
 /** A blank `LockTargetView` (scratch; allocate once, fill per call). */
 export function newLockTargetView(): LockTargetView {
-  return { x: 0, y: 0, vx: 0, vy: 0, angle: 0, ship: false, kindId: null, shieldUp: false, signature: 1, hostile: false };
+  return { x: 0, y: 0, vx: 0, vy: 0, angle: 0, ship: false, kindId: null, shieldUp: false, radius: 1, hostile: false };
 }
 
 export interface LockShooterView {
@@ -53,8 +53,13 @@ export interface LockSubsystemDeps {
   /** Best auto target for a group (hostile — or, with `anyTarget` (the testMode
    *  `anyTarget` trigger), any lockable non-player target — in reach and
    *  `bears(t)`: a mount of the group has it inside its arc AND within the
-   *  mount's own reach of its hit shape), or null. */
-  autoPick(playerId: string, reach: number, sx: number, sy: number, bears: (t: FireTargetShape) => boolean, anyTarget: boolean): string | null;
+   *  mount's own reach of its hit shape), or null. Among those, the class
+   *  the group's heaviest gun `size` prefers (`mountPriority`), then the
+   *  nearest (owner 2026-11-14: heavy guns take what they can hurt). */
+  autoPick(
+    playerId: string, reach: number, sx: number, sy: number, bears: (t: FireTargetShape) => boolean, anyTarget: boolean,
+    size: WeaponMount['size'],
+  ): string | null;
   /** A failsafe finished: the player has committed a hostile act on `key`. */
   commitHostileAct(playerId: string, key: string): void;
   /** "Locks keep it hostile" (owner decision 2026-11-10): a lock that is
@@ -68,7 +73,8 @@ export type GroupMode = 'auto' | 'manual';
 
 /** Wire shape of one group in the own-ship snapshot (`states[].groups`).
  *  `r: 1` = released (draining back to 0); absent otherwise. */
-/** `r`: released (draining). `c`: can't lock right now (out of reach / untrackable); the HUD shows OUT OF RANGE. */
+/** `r`: released (draining). `c`: can't lock right now (untrackable: too small
+ *  or fast for the group's guns; locks work at any distance); the HUD shows CAN'T TRACK. */
 export interface WireLock { t: string; s: number; p: number; r?: 1; c?: 1 }
 export interface WireGroup { id: string; m: 0 | 1; l: WireLock[] }
 
@@ -81,6 +87,8 @@ interface GroupState {
   /** Heavy group (M/L/XL): lock time reads absolute distance. */
   absRange: boolean;
   reach: number;
+  /** The group's heaviest gun (AUTO picks the class it prefers); undefined = ordinary guns. */
+  size: WeaponMount['size'];
   /** Where the group's barrels can point, relative to the hull heading:
    *  [lo0, hi0, lo1, hi1, …] (fixed guns get a small window). */
   arcs: number[];
@@ -110,7 +118,9 @@ interface PlayerLocks {
 const SIZE_RANK: Record<MountSize | 'none', number> = { none: 0, AA: 1, S: 2, M: 3, L: 4, XL: 5 };
 
 /** Build a group's lock geometry from its mounts (largest size wins). */
-export function groupGeometry(mounts: ReadonlyArray<WeaponMount>): { refSize: number; tracking: number; reach: number; absRange: boolean } {
+export function groupGeometry(mounts: ReadonlyArray<WeaponMount>): {
+  refSize: number; tracking: number; reach: number; absRange: boolean; size: WeaponMount['size'];
+} {
   let size: MountSize | 'none' = 'none';
   let reach = 0;
   for (const m of mounts) {
@@ -120,7 +130,7 @@ export function groupGeometry(mounts: ReadonlyArray<WeaponMount>): { refSize: nu
     if (r > reach) reach = r;
   }
   const p = WEAPON_LOCK_PROFILE[size];
-  return { refSize: p.refSize, tracking: p.tracking, reach, absRange: p.absRange };
+  return { refSize: p.refSize, tracking: p.tracking, reach, absRange: p.absRange, size: size === 'none' ? undefined : size };
 }
 
 /** Half-width (rad) a fixed gun counts as bearing on a target. */
@@ -168,7 +178,7 @@ export class LockSubsystem {
   private bearGroup: GroupState | null = null;
   /**
    * AUTO pick: some mount of the group has the target inside its ARC and
-   * reaches its hit shape from where the mount sits (`mountReachesTarget`,
+   * reaches its hit shape from where the mount sits (`mountInReach`,
    * the range half of the shared fire gate `mountFiresOn`, the same function
    * the client's `fcGroupBears` calls, #15). The angular half is the arc, not
    * the barrel: a turret trains onto what AUTO picks, then the fire gate
@@ -192,7 +202,7 @@ export class LockSubsystem {
       const m = g.mounts[i >> 1]!;
       const ox = s.x + (m.localX * cosA - m.localY * sinA);
       const oy = s.y + (m.localX * sinA + m.localY * cosA);
-      if (mountReachesTarget(ox, oy, mountWeaponReach(m), t)) return true;
+      if (mountInReach(t.x - ox, t.y - oy, mountWeaponReach(m), t)) return true;
     }
     return false;
   };
@@ -264,6 +274,7 @@ export class LockSubsystem {
         tracking: geo.tracking,
         absRange: geo.absRange,
         reach: geo.reach,
+        size: geo.size,
         arcs: groupArcs(mounts),
         mountIds: new Set(mounts.map((m) => m.id)),
         mounts,
@@ -339,7 +350,7 @@ export class LockSubsystem {
     if (bearing === undefined || !Number.isFinite(bearing)) return false;
     if (!this.deps.shooterPose(playerId, this.shooter)) return false;
     if (!this.deps.resolveTarget(playerId, key, this.target)) return false;
-    return lockLineHolds(this.target.x - this.shooter.x, this.target.y - this.shooter.y, bearing, this.target.signature, g.reach);
+    return lockLineHolds(this.target.x - this.shooter.x, this.target.y - this.shooter.y, bearing, this.target.radius, g.reach);
   }
 
   /**
@@ -450,6 +461,9 @@ export class LockSubsystem {
   private readonly pickX = new Float64Array(8);
   private readonly pickY = new Float64Array(8);
   private readonly pickKeys: string[] = [];
+  /** Per-lock hit shapes for `pickTurretLock`'s hull range gate (reused, #14). */
+  private readonly pickShapes: { -readonly [K in keyof MountRangeTarget]: MountRangeTarget[K] }[] =
+    Array.from({ length: 8 }, () => ({ kindId: null, angle: 0, shieldUp: false, radius: 0 }));
 
   /**
    * Several locks: which one this turret takes (shared `pickTurretLock`, the
@@ -467,6 +481,11 @@ export class LockSubsystem {
       if (!this.deps.resolveTarget(playerId, e.target, this.target)) continue;
       this.pickX[keys.length] = this.target.x;
       this.pickY[keys.length] = this.target.y;
+      const sh = this.pickShapes[keys.length]!;
+      sh.kindId = this.target.ship ? this.target.kindId : null;
+      sh.angle = this.target.angle;
+      sh.shieldUp = this.target.shieldUp;
+      sh.radius = this.target.ship ? 0 : this.target.radius;
       keys.push(e.target);
     }
     if (keys.length === 0) return null;
@@ -476,7 +495,7 @@ export class LockSubsystem {
     const sinA = Math.sin(s.angle);
     const mx = s.x + (m.localX * cosA - m.localY * sinA);
     const my = s.y + (m.localX * sinA + m.localY * cosA);
-    const i = pickTurretLock(m, s.angle, mx, my, mountWeaponReach(m), ordinal, keys.length, this.pickX, this.pickY);
+    const i = pickTurretLock(m, s.angle, mx, my, mountWeaponReach(m), ordinal, keys.length, this.pickX, this.pickY, this.pickShapes);
     return keys[i]!;
   }
 
@@ -496,11 +515,41 @@ export class LockSubsystem {
     }
   }
 
+  /** `this.target` is inside the group's FIRE range: some mount reaches its
+   *  hit shape within its reach × `slack`, by the player fire gate's own
+   *  range test (`mountInReach`). `this.shooter` must be current. */
+  private inFireRange(g: GroupState, slack: number): boolean {
+    const s = this.shooter;
+    const cosA = Math.cos(s.angle);
+    const sinA = Math.sin(s.angle);
+    for (let i = 0; i < g.mounts.length; i++) {
+      const m = g.mounts[i]!;
+      const ox = s.x + (m.localX * cosA - m.localY * sinA);
+      const oy = s.y + (m.localX * sinA + m.localY * cosA);
+      if (mountInReach(this.target.x - ox, this.target.y - oy, mountWeaponReach(m) * slack, this.target)) return true;
+    }
+    return false;
+  }
+
   private stepGroup(playerId: string, p: PlayerLocks, g: GroupState): void {
+    // Locks work at any distance (owner 2026-11-14). An AUTO group's own pick
+    // is released once its target leaves the group's FIRE range (reach ×
+    // `reachSlack`, the hysteresis over the in-reach pick), so AUTO re-picks
+    // instead of sitting on a target it can't shoot. A lock the pilot asked
+    // for (manual, or a lock line) persists at any distance.
+    if (g.mode === 'auto') {
+      for (let i = g.locks.length - 1; i >= 0; i--) {
+        const e = g.locks[i]!;
+        if (!e.auto) continue;
+        if (this.deps.resolveTarget(playerId, e.target, this.target) && this.inFireRange(g, LOCK_TUNING.reachSlack)) continue;
+        g.locks.splice(i, 1);
+        this.syncWireShape(g);
+      }
+    }
     // Auto groups acquire their own target when idle.
     if (g.locks.length === 0 && g.mode === 'auto') {
       this.bearGroup = g;
-      const key = this.deps.autoPick(playerId, g.reach, this.shooter.x, this.shooter.y, this.bears, p.anyTarget);
+      const key = this.deps.autoPick(playerId, g.reach, this.shooter.x, this.shooter.y, this.bears, p.anyTarget, g.size);
       this.bearGroup = null;
       if (key !== null && this.deps.resolveTarget(playerId, key, this.target)) {
         const auto = newLock(key, true);
@@ -521,7 +570,7 @@ export class LockSubsystem {
         inp.reach = g.reach;
         inp.sensor = p.sensor;
         inp.pilotSpeed = 1;
-        inp.signature = this.target.signature;
+        inp.signature = this.target.radius;
         inp.dx = this.target.x - this.shooter.x;
         inp.dy = this.target.y - this.shooter.y;
         inp.dvx = this.target.vx - this.shooter.vx;

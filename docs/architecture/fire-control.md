@@ -26,10 +26,55 @@ it (same `lockSeconds` rules: the mount size's profile, the hull's sensor, the
 structure's radius as signature). Structure turrets lock their targets too
 (PR 1d slice 3, `StructureMountTicker`).
 
+**Locks work at any distance** (owner decision 2026-11-14). Players, NPC
+ships and structures (coastal guns, defence turrets) can lock at any distance.
+Distance only makes a lock SLOWER (the range terms of `lockSeconds` stay), never
+impossible, and a lock never drops for being far. Only FIRING is range-limited:
+each turret's own reach to the target's true hull (`mountInReach`, the per-mount
+gates in the fire paths). So:
+- `lockSeconds` / `capLockSeconds` have no reach gate; Infinity now means only
+  "can't track" (too small or fast for the gun, past `maxSeconds`) or no gun. A
+  small gun's reach-share term saturates at its reach (`min(1, range/reach)`),
+  so past reach it locks as at the edge of reach and its "can't track" test
+  reads size and crossing speed only. Heavy guns keep the uncapped
+  absolute-distance term.
+- The lock line (`lockLineScore`, client pick AND server `lock_track` check,
+  #15) has no length cap; the reach only scales its near-first tie-break.
+- The wire `c` flag means "can't track"; the HUD button reads CAN'T TRACK (was
+  OUT OF RANGE). The contacts list's reach mark is the group's FIRE reach (no
+  lock slack), not a lock limit.
+- **AUTO releases out of fire range (lead call).** `LockSubsystem.stepGroup`
+  drops an AUTO group's OWN pick once no mount of the group reaches the target's
+  hull within reach × `LOCK_TUNING.reachSlack` (`LockSubsystem.inFireRange`:
+  the player fire gate's own range half `mountReachesTarget` per mount; the
+  slack is hysteresis over the in-reach `autoPick`), and
+  the group re-picks. Without it AUTO would sit forever on a target it can't
+  shoot (it only re-picks with no locks). A lock the pilot asked for (manual,
+  or the lock line) persists at any distance. AUTO's pick itself stays limited
+  to targets it could fire at (`autoPick`: reach + `bears`).
+- **Hostility needs fire range (lead call).** A lock alone no longer keeps an
+  NPC hostile: a player's lock (`SectorRoom.refreshLockHostility`) and the
+  NPC's own lock (`NpcLockSubsystem`) re-stamp hostility only while the pilot
+  is inside that NPC's FIRE range (`mountsReachTarget` over the NPC's mounts to
+  the pilot's hull). Out of its fire range nothing refreshes and the NPC
+  forgets the pilot 30 s later, even with a lock held. Hits are unchanged.
+- **A capital's one lock per pilot** is built by the fastest profile whose guns
+  may reach the pilot (`mayBeInReach`, reach × slack); with none in reach, by
+  its LONGEST-reach profile (the gun that reaches them first). Otherwise its AA,
+  whose reach-share term saturates, would lock a fighter 60 km out in seconds
+  and license the 16" the moment it closed.
+- Locks: `lockTime.test.ts`, `lockTime.cap.test.ts`, `lockLine.test.ts`,
+  `mountReach.fireRange.test.ts`, `LockSubsystem.test.ts` ("far past every
+  weapon's reach", "does not drop", "AUTO releases"), `NpcLockSubsystem.test.ts`
+  ("locks at any distance", "outside it the lock holds but the refresh stops"),
+  `capitalLockGate.test.ts`, `ColyseusClient.longRangeLock.test.ts`,
+  `TargetAction.test.tsx`, `contactRows.test.ts`.
+
 **Locks keep it hostile** (owner decision 2026-11-10). Being targeted is a
 hostile act. An NPC ship stays hostile to a pilot while any of that pilot's
 weapon groups is LOCKING (acquiring) or LOCKED on it, and for the usual 30 s
-(`FORGET_TICKS`) after the lock drops: every lock step, `LockSubsystem` calls
+(`FORGET_TICKS`) after the lock drops (since 2026-11-14: after the pilot leaves
+the NPC's fire range, see "Locks work at any distance"): every lock step, `LockSubsystem` calls
 `refreshHostility` for each live lock past its failsafe on a hostile target, and
 the room re-stamps the NPC's ledger entry (`SectorRoom.refreshLockHostility` →
 `aiController.markHostile`). Before this, an NPC forgot the pilot 30 s after the
@@ -46,8 +91,8 @@ dropped its lock between salvos and stopped firing.
   rides the snapshot `drones[].hostile` bit, so radar colours follow.
 - **AUTO keeps it going:** an AUTO group re-picks the nearest hostile NPC, so a
   pilot who stays in reach with AUTO groups keeps that NPC hostile. Since
-  2026-11-12 the NPC's own lock does too (below), so only leaving its reach
-  lets it forget, 30 s later.
+  2026-11-12 the NPC's own lock does too (below), so only leaving its FIRE
+  range lets it forget, 30 s later.
 - Lock: `LockSubsystem.test.ts` "locks keep it hostile",
   `tests/integration/sectorRoom/lockKeepsHostile.test.ts`.
 
@@ -61,7 +106,7 @@ pilot forgot them 30 s after the cue, partway through its 30 s 16" reload: one
 volley, then its turrets went home.
 - **Its own lock:** every NPC lock step (`NpcLockSubsystem`, drones and NPC
   capitals alike, robots too since they share it), an NPC that is LOCKING or
-  LOCKED on a pilot in reach calls the `refreshHostility` dep →
+  LOCKED on a pilot inside its fire range calls the `refreshHostility` dep →
   `SectorRoom.refreshNpcAttackHostility` → `aiController.markHostile`.
 - **Its own hits:** `SectorRoom.applyDamage` calls the same method when the
   target is a pilot (`playerToSlot`) and the damage is > 0, with the shooter as
@@ -71,10 +116,11 @@ volley, then its turrets went home.
   truce = true)`), so on-sight stance (robots) never becomes ledger hostility
   and a truce still ends it. No `bot_aggro`, no faction escalation (#16: the
   `drones[].hostile` bit carries it).
-- **No feedback loop:** an NPC is only visited by the lock step while the pilot
-  is in reach and trackable; out of reach its lock drops after the 1.5 s grace
-  and it forgets the pilot 30 s later. A dead or departed pilot has no pose, so
-  every lock on them clears at once.
+- **No feedback loop:** the NPC's lock refreshes hostility only while the pilot
+  is inside its fire range; out of fire range its lock may hold (locks work at
+  any distance) but it forgets the pilot 30 s later, and once it is no longer
+  hostile it isn't visited and the lock drops after the 1.5 s grace. A dead or
+  departed pilot has no pose, so every lock on them clears at once.
 - Structures and structure turrets keep their own rules (hostile acts).
 - Locks: `NpcLockSubsystem.test.ts` "its own lock keeps the NPC hostile",
   `tests/integration/sectorRoom/npcStaysHostileWhileAttacking.test.ts` (second
@@ -86,14 +132,19 @@ volley, then its turrets went home.
   holds the target only when it lies on that line by the shared rule
   `lockLineScore` / `lockLineHolds` (`core/combat/lockLine.ts`, the same function
   the client picks with; the server uses the sticky cone to absorb display delay
-  and quantisation). A claim off the line, past reach × 1.1, or without `b`
-  counts as "on nothing".
+  and quantisation). A claim off the line or without `b` counts as "on
+  nothing" (no length cap since 2026-11-14: locks work at any distance).
 - `lock_request`, `lock_track`, `lock_cancel` and `set_group_mode` share a cap of
   `MAX_LOCK_MSGS_PER_TICK` (3) per session per tick; the excess is dropped.
 
 **Cost.** NPC lock step is O(pilots × hostile NPCs) at 10 Hz:
 `benchmarks/npc-locks.bench.ts` measures ~0.015 ms for 56 drones × 4 pilots and
-~0.037 ms for 56 × 10 (laptop, 2026-11-09).
+~0.037 ms for 56 × 10 (laptop, 2026-11-09). Locks at any distance (2026-11-14)
+complete every hostile pair and add a fire-range test per pair for the
+hostility refresh (`mountsReachTarget`, the pilot's shape resolved once per
+pilot, a circle fast path for a shield-up hull); interleaved A/B on a loaded
+laptop, mean per step: 56 × 10 in reach 0.057 → 0.084 ms, 56 × 10 20 km out
+0.047 → 0.087 ms, 8 battleships × 10 pilots 0.024 → 0.029 ms. Budget 0.1 ms.
 
 **Test triggers.** testMode join option `instantLock: true` (URL `?instantLock=1`):
 every lock completes on the next step (a failsafe still commits its hostile
@@ -103,13 +154,12 @@ in reach + arc (never players); usually paired with `instantLock`. Integration: 
 `_internals.forceLock`. E2E: `tests/e2e/helpers` `lockOn`.
 testMode room option `lockTimeCapS: N` (or the room-creating client's join
 option / URL `?lockTimeCapS=N`, `TestClientOpts.lockTimeCapS`): no NON-player
-lock in the room takes longer than N seconds while the target is in reach
+lock in the room takes longer than N seconds, at any distance
 (0 = the first lock step): NPC drones and capitals on pilots
 (`NpcLockSubsystem`), capital turrets on structures (`WeaponMountTicker`) and
 structure / coastal turrets (`StructureMountTicker`). A lock the rules call
-impossible (past `maxSeconds`, sub-capital guns) or very slow but in reach
-locks in N too; out of reach stays
-unlockable. The math is `capLockSeconds` (`core/combat/lockTime.ts`). For tests
+impossible (past `maxSeconds`, sub-capital guns) or very slow locks in N too;
+only a shooter with no gun stays unable to lock. The math is `capLockSeconds` (`core/combat/lockTime.ts`). For tests
 and recordings that need the big guns locked without the long (by design)
 wait. Player locks keep `instantLock`: an N-second player cap would make the
 client's predicted lock ring (`lockSeconds`, #15) disagree with the server.
@@ -136,6 +186,53 @@ band. Both are allocation-free. Locks: `tests/unit/shipHullDistance.test.ts`
 (beam vs bow, inside = 0, bubble, agreement with the capital ray hit, the far
 reject never reading the polygon) and `shipHullDistance.heapDelta.test.ts`.
 
+### NPC and structure turrets: range per mount, to the hull
+
+Wired for every NPC and structure gun (the player gate: next section).
+The ONE turret range gate is `mountInReach(dx, dy, reach, target)` in
+`src/core/combat/mountReach.ts`: (dx, dy) is the target's centre from the
+MOUNT's world origin, `reach` that mount's own `mountWeaponReach`, and `target`
+a `MountRangeTarget` (a ship's `kindId` + `angle` + `shieldUp` ⇒
+`shipWithinHullReach`; anything else a circle of `radius`; absent ⇒ the
+centre). Callers:
+
+- `mountCanEngage` (capital turrets in `WeaponMountTicker.tickCapitalMounts`,
+  structure turrets in `StructureMountTicker`) takes the target view as its
+  last argument. `MountTargetView` and `TurretTargetView` carry the shape
+  (`kindId`, `angle`, `shieldUp`, `radius`); the room fills it for pilots
+  (`ship.shield > 0`), swarm ships (`!rec.shieldDown`) and structures
+  (`rec.radius`, the radius the lock code already uses).
+- `AiFireResolver` (drones' slot fire): a mount fires only when the target's
+  hull is within its reach (`bearingMask`, with the room's `targetShape` dep).
+  A lock no longer licenses a shot from any distance; out of reach the shot
+  is held and no cooldown is spent.
+- `pickTurretLock` (the player lock share-out, server and client) uses the same
+  `mountInReach`, with per-lock shapes from `resolveLockTarget` /
+  `fcTargetShape` (#15).
+
+Candidate searches widen by the target's bound so a hull in reach whose centre
+isn't is still a candidate: `mayBeInReach(dx, dy, reach, t)` (centre within
+reach + `mountRangeBound(t)`). The room's structure-turret gather queries its
+grid at `reach + maxShipRangeBound()` and keeps only `mayBeInReach` candidates;
+the non-capital drone slew pick passes `reachToHull: true` to `pickTarget`.
+Cost (laptop, 2026-11-14): `turretGather.count.test.ts` real 60 hostiles /
+40 km 127 → 134 candidates per tick (budget 160). Locks:
+`tests/unit/npcTurretHullRange.test.ts` (battleship AA vs a battleship
+alongside, a drone holding fire beyond reach with a lock, a coastal barbette vs
+a bow-on battleship), `turretLockPick.test.ts`.
+
+The drone brain (`HostileDroneBehaviour.tickCombat` / `tickBroadside`) also
+ranges to the hull: its "in range", stop, back-off, point-blank and broadside
+stand-off distances compare `fireRange × factor` with the hull distance
+(centre − `shipHitBound` when that is already past `fireRange`, else
+`shipHullDistance`), from the `kindId`/`angle`/`shieldUp` the room puts on
+`AiPlayerView` / `AiSwarmView`. Lock: `HostileDroneBehaviour.hullRange.test.ts`.
+
+Not yet hull-based: lock time (`lockSeconds`, centre distance; locks have no
+reach gate at all since 2026-11-14).
+
+### Player fire gate: range per mount, to the hull
+
 **Wired into the PLAYER fire gate.** `core/combat/fireControlBearing.ts` holds
 the whole per-mount gate, `mountFiresOn(weaponId, reach, ox, oy, angle, t)` =
 `mountReachesTarget` (range) AND `mountBearsOn` (bearing). The range half
@@ -160,10 +257,38 @@ of reach is refused like one off bearing: no cooldown, no energy. **AUTO pick**
 ARC as the angular half (a turret trains onto what AUTO picks; the fire gate
 then checks its barrel); the client has no AUTO pick of its own.
 
-Not changed here: lock reach (`lockSeconds`, still centre to centre × 1.1, so a
-target whose centre is past the group's reach still drops its lock after the
-1.5 s grace) and NPC / structure turret fire (`AiFireResolver`,
-`WeaponMountTicker` NPC paths, `StructureMountTicker`). Locks:
+### Heavy guns prefer what they can hurt (owner 2026-11-14)
+
+Whenever guns choose their own target, ONE rule ranks the candidates:
+`mountPriority(size, class)` in `core/combat/mountTargeting.ts`, distance
+breaking ties. Heavy guns (M/L/XL) take capitals AND structures first
+(`STRUCTURE_TARGET_CLASS = 'structure'`, one source), then light capitals,
+gunships, fighters last: they fall back to a fighter only when nothing bigger
+is in reach. S guns prefer gunships, light capitals and structures; AA small
+craft. The same for players and AI:
+
+- **NPC capital turrets** (`WeaponMountTicker.tickCapitalMounts`): a turret
+  holding a target still re-searches on its `RETARGET_TICKS` beat and switches
+  only to a STRICTLY preferred class, so equal-class targets stay sticky.
+- **Structure turrets** (`StructureMountTicker`): unchanged call, new class.
+- **Player AUTO** (`SectorRoom` `autoPick`): the group's heaviest gun size
+  (`groupGeometry().size`) ranks classes, then the nearest; the class (cached
+  per kind, `targetClassOfKind`) is rejected before any pose or shape work.
+- **Turret share-out of a group's locks** (`pickTurretLock`, server
+  `LockSubsystem.aimKeyFor` and client `fcMountAimKey`): each turret takes its
+  preferred class among the locks it can engage; the turret-index spread
+  decides only among equal-priority locks. The class comes from the lock's
+  hit shape (`kindId`), which both sides already fill the same way.
+
+Drones (`pickTarget`, `priorityBias`) carry light guns and keep their own
+nearest-with-bias pick. Locks: `turretLockPick.test.ts`,
+`tests/unit/turretLockPickParity.test.ts` (server vs client, mixed classes),
+`tests/integration/sectorRoom/heavyGunsPreferBig.test.ts`,
+`tests/integration/navalReal/coastalDuelHeavyGuns.test.ts`.
+
+NPC / structure turret fire is the section above. Lock reach: none since
+2026-11-14 (locks work at any distance; see "Locks work at any distance").
+Locks:
 `tests/integration/sectorRoom/playerTurretFireRange.test.ts` (AA fires at a
 battleship alongside, centres 1.7 km apart; a drone out of every AA mount's
 reach is refused with no energy spent), `src/client/net/ColyseusClient.fireRange.test.ts`
@@ -175,13 +300,13 @@ parity), `tests/unit/fireControlBearingParity.test.ts` (both sides call
 
 | Piece | File | Role |
 |---|---|---|
-| Lock time | `core/combat/lockTime.ts` | Pure `lockSeconds(inputs, tuning)`; Infinity = can't lock now. secs = base × size × tracking × range ÷ (sensor × pilot). Range: small guns (none/AA/S) use the share of their reach (`1 + 0.6 × range/reach`); heavy M/L/XL guns (`WEAPON_LOCK_PROFILE[size].absRange`) use ABSOLUTE distance, `1 + (range / 7000)^1.5` (owner 2026-11-10: "speed, size and distance"; "it should take ages to lock"). The `maxSeconds` (8 s) "can't lock" test reads the reach-share time only, so distance makes a heavy lock slower, never impossible: a 16" on a battleship takes ~2.5 s at 4k u, ~10 s at 20k, ~17 s at 30k. Structures (`clampAtMax`) cap the size/speed part at 8 s, then a heavy gun still stretches it for distance. A SHIP's heavy gun (`absRange` under ship tuning, i.e. not `clampAtMax`) skips the 8 s test entirely: a small or fast target locks slowly, never impossibly (owner 2026-11-10: "10 minutes or an hour … working as intended"). This holds for EVERY ship, player or NPC (`LockSubsystem`, `NpcLockSubsystem`, `WeaponMountTicker` capital turret on a structure): one rule, no per-pilot flag (owner 2026-11-13: "It's the same ship and the same gun, so it gets the same lock"; the old player-only `neverImpossible` flag is gone). Lock: `tests/unit/npcLockParity.test.ts` |
+| Lock time | `core/combat/lockTime.ts` | Pure `lockSeconds(inputs, tuning)`; Infinity = can't lock now (can't track, or no gun; no reach gate since 2026-11-14, see "Locks work at any distance"). secs = base × size × tracking × range ÷ (sensor × pilot). Range: small guns (none/AA/S) use the share of their reach (`1 + 0.6 × range/reach`); heavy M/L/XL guns (`WEAPON_LOCK_PROFILE[size].absRange`) use ABSOLUTE distance, `1 + (range / 7000)^1.5` (owner 2026-11-10: "speed, size and distance"; "it should take ages to lock"). The `maxSeconds` (8 s) "can't lock" test reads the reach-share time only, so distance makes a heavy lock slower, never impossible: a 16" on a battleship takes ~2.5 s at 4k u, ~10 s at 20k, ~17 s at 30k. Structures (`clampAtMax`) cap the size/speed part at 8 s, then a heavy gun still stretches it for distance. A SHIP's heavy gun (`absRange` under ship tuning, i.e. not `clampAtMax`) skips the 8 s test entirely: a small or fast target locks slowly, never impossibly (owner 2026-11-10: "10 minutes or an hour … working as intended"). This holds for EVERY ship, player or NPC (`LockSubsystem`, `NpcLockSubsystem`, `WeaponMountTicker` capital turret on a structure): one rule, no per-pilot flag (owner 2026-11-13: "It's the same ship and the same gun, so it gets the same lock"; the old player-only `neverImpossible` flag is gone). Lock: `tests/unit/npcLockParity.test.ts` |
 | Lock state | `core/combat/lockState.ts` | `LockEntry` + `stepLock`: failsafe → acquiring → locked; `track` = commit / held / released (released drains at `decayMul`× and drops at 0) |
+| NPC locks | `server/rooms/NpcLockSubsystem.ts` | Every NPC hostile to a tracked pilot builds a lock on them by the same rules; `fireBlocked(npcId, targetId)` refuses a drone shot at a pilot target it has not completed a lock on (the target id rides `intent.fire.targetId`; non-pilot targets are not gated); `WeaponMountTicker.tickCapitalMounts` asks the same question per capital turret with that turret's own target. A capital's lock time is the fastest over its per-mount-size profiles that may reach the pilot, else its longest-reach profile; locks at any distance; testMode `instantLock` on a pilot completes NPC locks on them at any distance |
 | Player locks | `server/rooms/LockSubsystem.ts` | Per pilot, per group: queue (capacity 1 sub-capital, 3 capital), AUTO pick (a mount's arc + that mount's range to the target's hit shape), `requestLock` (commit), `trackLock` (held line), `cancelLock`, `setMode`; stepped every 6 ticks |
-| NPC locks | `server/rooms/NpcLockSubsystem.ts` | Every NPC hostile to a tracked pilot builds a lock on them by the same rules; `fireBlocked(npcId, targetId)` refuses a drone shot at a pilot target it has not completed a lock on (the target id rides `intent.fire.targetId`; non-pilot targets are not gated); `WeaponMountTicker.tickCapitalMounts` asks the same question per capital turret with that turret's own target. A capital's lock time is the fastest over its per-mount-size profiles; testMode `instantLock` on a pilot completes NPC locks on them in reach |
 | Player fire gate | `PlayerFireResolver` deps `fireAllowed` + `mountBearsOnLock` | A group fires only with a LOCKED target, and only mounts that pass the shared `mountFiresOn`: the target's hit shape within the mount's own reach, measured from the mount, and the barrel bearing on it (`mountBearsOn`); otherwise refused without spending cooldown or energy |
 | Turret aim | `WeaponMountTicker.tickPlayer` → `LockSubsystem.aimKeyFor` | Each mount slews toward its group's locked (else acquiring) target; no target ⇒ home. With several locks (capitals) the turrets share them out via the shared `pickTurretLock` (`core/combat/turretLockPick.ts`): turret *i* of the group prefers lock *i mod n*, else the next lock round the list it can engage (reach + arc), else the first. The client's predicted aim and ghost gate (`fcMountAimKey`) call the same function (#15) |
-| Naval reach switch | `shared-types/combat/navalRange.ts` + `navalGuns.ts` | `real` (the default since 2026-11-14) gives every `naval_*` gun its real range as its engage reach (16" 38,700 u, Lindemann 56,000 u) and flight real ÷ 3. Lock reach (`reach × reachSlack`) and the absolute-distance lock time follow; a 16" lock at 30 km takes ~17 s. `EQX_NAVAL_RANGE=legacy` (client `?navalRange=legacy`) opts back into the old reaches; both sides read it, the welcome always carries it (#15). See [real-scale-ranges.md](real-scale-ranges.md) |
+| Naval reach switch | `shared-types/combat/navalRange.ts` + `navalGuns.ts` | `real` (the default since 2026-11-14) gives every `naval_*` gun its real range as its engage reach (16" 38,700 u, Lindemann 56,000 u) and flight real ÷ 3. The absolute-distance lock time follows; a 16" lock at 30 km takes ~17 s. `EQX_NAVAL_RANGE=legacy` (client `?navalRange=legacy`) opts back into the old reaches; both sides read it, the welcome always carries it (#15). See [real-scale-ranges.md](real-scale-ranges.md) |
 | Capital fire cadence | `PlayerFireResolver` (per-mount ledger) + `ColyseusClient.fcFireMounts` | Capitals (`hasTurretFireControl`) fire each turret on its OWN weapon reload as soon as it bears on its own target; the group fire carries only the reloaded, bearing mounts and pays that share of the group energy cost. A multi-barrel turret is one mount, so its barrels still fire together. Other ships keep the one group cooldown |
 
 **Messages** (strict zod, `clientMessages.ts`): `lock_request {groupId, target}`
@@ -235,7 +360,7 @@ Target keys: `s:<entityId>` (swarm) or `p:<playerId>`.
 - Contacts overview (`ContactsOverview`, O key / CONTACTS tab, left edge): an
   EVE-style list of lockable contacts with distance, reach and lock state;
   a tap sends `lock_request` for the active group, a tap on its own lock
-  sends `lock_cancel`. Reach is `fcGroupReach` × `reachSlack`. See
+  sends `lock_cancel`. Reach is the group's fire reach `fcGroupReach` (locks work at any distance). See
   [contacts-overview.md](../features/contacts-overview.md).
 
 ## Tests
@@ -288,14 +413,14 @@ Full story: [docs/architecture/fire-control.md](fire-control.md). There is ONE H
 - **Ship heavy guns lock small targets slowly, never impossibly, whoever flies the ship** (owner 2026-11-10: "10 minutes or an hour … working as intended"; owner 2026-11-13: "Same rule as players — an NPC's heavy gun locks a small fast ship slowly, but always gets there in the end. It's the same ship and the same gun, so it gets the same lock."): `lockSeconds` skips the `maxSeconds` gate for any heavy (M/L/XL, `absRange`) gun under ship tuning (`LOCK_TUNING`, no `clampAtMax`), so it keeps the finite size × tracking × absolute-distance time (no `c: 1` can't-lock flag, no drop). Player (`LockSubsystem`) and NPC (`NpcLockSubsystem`, `WeaponMountTicker` capital turret on a structure) take that ONE path; there is no per-pilot flag (the player-only `neverImpossible` is gone). Never add one back: a pilot difference is a bug. Sub-capital guns keep the `maxSeconds` rule; structures keep `clampAtMax` (fixed batteries are not ships, own tuning). Locks: `tests/unit/npcLockParity.test.ts` (NPC battleship 16" locks a fighter in the player time, then fires), `lockTime.test.ts`, `fireControlLocks.test.ts` "player heavy gun on a small target".
 - **`lock_track` is verified**, not trusted: it carries the line bearing `b`; `LockSubsystem.trackLock` holds the target only when the shared `lockLineHolds` (`core/combat/lockLine.ts`, sticky cone, the client's own pick rule) accepts it. A failing claim (or no `b`) counts as "on nothing" and releases the held lock. Lock: `LockSubsystem.test.ts` "lock_track is verified".
 - **Snapshot slices (#16):** own active pilot only, shared refs mutated in place: `states[].groups` (`LockSubsystem.wireFor`) and `states[].lockedBy` (`NpcLockSubsystem.wireFor`). Every pilot now gets them.
-- **Test triggers:** testMode join options `instantLock` (every lock completes next step) and `anyTarget` (AUTO also picks non-hostile NPCs and non-own structures), `groupMode: 'manual'` (every group starts in MAN; `LockSubsystem.enable`) and `_internals.forceLock(pid, key, groupId?)` (integration `harness.lockTarget`). Use them; never add a test-only fire bypass. NON-player locks have the room option `lockTimeCapS` (testMode, zod-checked in `onCreate`, also a join option): `NpcLockSubsystem`, `WeaponMountTicker` (capital turret on a structure) and `StructureMountTicker` pass every lock time through `capLockSeconds`, so none takes longer than N s in reach (0 = the first step). Lock: `tests/integration/sectorRoom/lockTimeCap.test.ts`.
+- **Test triggers:** testMode join options `instantLock` (every lock completes next step) and `anyTarget` (AUTO also picks non-hostile NPCs and non-own structures), `groupMode: 'manual'` (every group starts in MAN; `LockSubsystem.enable`) and `_internals.forceLock(pid, key, groupId?)` (integration `harness.lockTarget`). Use them; never add a test-only fire bypass. NON-player locks have the room option `lockTimeCapS` (testMode, zod-checked in `onCreate`, also a join option): `NpcLockSubsystem`, `WeaponMountTicker` (capital turret on a structure) and `StructureMountTicker` pass every lock time through `capLockSeconds`, so none takes longer than N s at any distance (0 = the first step). Lock: `tests/integration/sectorRoom/lockTimeCap.test.ts`.
 - **Locks keep it hostile** (owner 2026-11-10): every lock step, a live (acquiring or locked, not draining) player lock on an NPC ship already hostile to that pilot re-stamps its hostility (`refreshHostility` dep → `SectorRoom.refreshLockHostility` → `aiController.markHostile`), so the 30 s `FORGET_TICKS` decay runs from when the lock drops. Individual hostility only: no `FactionLedger` escalation, no `bot_aggro` (the snapshot `drones[].hostile` bit carries it, #16). A lock on a non-hostile NPC still runs the failsafe first and commits as a hostile act. Lock: `tests/integration/sectorRoom/lockKeepsHostile.test.ts`.
-- **An attacking NPC stays hostile** (owner 2026-11-12): the NPC's OWN lock (every `NpcLockSubsystem` step while locking or locked in reach; drones, capitals, robots) and its OWN hits on a pilot (`applyDamage`, pilot target, damage > 0) re-stamp its hostility via `SectorRoom.refreshNpcAttackHostility`, so decay runs 30 s from the latest of the pilot's hit/lock and the NPC's hit/lock. Refresh only: it needs the pilot already in the NPC's ledger (`isEntityHostileToPlayer(…, truce = true)`), so stance hostility never becomes a grudge. Out of reach the NPC isn't visited, its lock drops, and it forgets 30 s later. Lock: `tests/integration/sectorRoom/npcStaysHostileWhileAttacking.test.ts`, `NpcLockSubsystem.test.ts`.
+- **An attacking NPC stays hostile** (owner 2026-11-12): the NPC's OWN lock (every `NpcLockSubsystem` step while locking or locked with the pilot inside its fire range; drones, capitals, robots) and its OWN hits on a pilot (`applyDamage`, pilot target, damage > 0) re-stamp its hostility via `SectorRoom.refreshNpcAttackHostility`, so decay runs 30 s from the latest of the pilot's hit/lock and the NPC's hit/lock. Refresh only: it needs the pilot already in the NPC's ledger (`isEntityHostileToPlayer(…, truce = true)`), so stance hostility never becomes a grudge. Out of its fire range the refresh stops (its lock may hold: locks work at any distance) and it forgets 30 s later. Lock: `tests/integration/sectorRoom/npcStaysHostileWhileAttacking.test.ts`, `NpcLockSubsystem.test.ts`.
 - **Structure turrets lock too** (PR 1d slice 3): see "Defence fire control" below.
 - **NPC drones fire only with a completed lock on their target** (PR 1d slice 1): `HostileDroneBehaviour` puts its AI target on `intent.fire.targetId`, threaded `AiFireRequest` → `handleAiFire` → `AiFireResolver.resolve` → `NpcLockSubsystem.fireBlocked(npcId, targetId)`. A pilot target needs that drone's completed lock (acquiring is not enough; a lock on another pilot doesn't count); non-pilot targets (NPCs, structures, displaced hulls) are not gated. Lock: `NpcLockSubsystem.test.ts`.
 - **An AI pilot's shot leaves down its drawn barrel, and only a barrel that bears fires** (owner 2026-11-14, fight clips: "The turrets also aren't turning to shoot the direction they do"). `AiFireResolver.fireNow` fires EVERY mount at hull + `baseAngle` + its slewed `droneMountAngles` angle (0 for a fixed nose gun), the angle the client draws the gun and the remote beam at; `resolve` first builds a bearing mask (`barrelBearsOn` with `mountFireTolerance`, the player rule #19) and holds, spending no cooldown, when no barrel bears (a turret still training). A charge weapon fires the mounts that bore at the trigger pull, down their barrels at release. `HostileDroneBehaviour` pulls a fixed gun's trigger only inside `FC_MOUNT_FIRE_TOLERANCE` (turret kinds keep the wide cone + arc request) and exposes `aimPoint(out)`, its combat lead point this tick; `WeaponMountTicker.tickDrone` trains a non-capital drone's turrets on that point first (any target: a pilot, another faction's ship, a structure), falling back to the hostile-pilot pick. Before, turrets trained only on hostile pilots, so in ship-vs-ship fights they sat at rest while the pilot fired. **`swarmEntitySnapshot` fills ONE shared scratch**: copy the fields you need before any other lookup (a hit test inside the mount loop overwrote the shooter's pose, so a twin turret's second beam left from the target's pose). Locks: `tests/unit/aiTurretFacesShot.test.ts`, `tests/integration/sectorRoom/aiTurretFacesShot.test.ts`, client `tests/unit/aiTurretDrawnFollowsSnapshot.test.ts`.
 - **Spectating doesn't dodge a fight** (owner 2026-11-12): the `spectate` handler records the parked hull in `spectateParkedHull` (cleared on reclaim, a new active hull, or leave). `engageablePilotHull(pid)` (predicate `isEngageablePilotHull`, `shipLiveness.ts`) resolves it for the NPC lock step (`pilotPose`), the drone/capital turret candidates (`visitParkedPilotHulls`), and the structure-turret pilot scans, all under the PILOT's id, so locks, `hostileTo` and `fireBlocked` keep working. A projectile sweeps a lingering hull with the same per-kind shape as an active ship (`ProjectilePipeline` `lingeringShip`), not the fighter `hitRadius`. A pilot CAPITAL (active or parked) is hit on its hull outline even with its shield up, like an NPC capital: its circle is half the hull's length, so shells used to burst ~2,000 u off a heavy cruiser's beam (lock `capitalShieldHugsHull.test.ts`). The parked hull itself stays passive: no active hull ⇒ `LockSubsystem.step` skips the pilot and fire messages have no shooter. Lock: `tests/integration/sectorRoom/spectateStillTargeted.test.ts`.
-- **NPC capital turrets fire only with a completed lock on their own target** (PR 1d slice 2): `WeaponMountTicker.tickCapitalMounts` calls the `fireBlocked(droneId, mountTargetId)` dep (→ `NpcLockSubsystem.fireBlocked`) last, before spending the reload; a blocked turret keeps aiming. A capital holds one lock per pilot (entries are per pilot × NPC), and its lock time is the FASTEST over one profile per mount size (`geos`), so AA locks a fighter fast while a 16" gun alone locks it slowly (~38 s at 5 km, the same as a player battleship). testMode `instantLock` on a pilot also completes every NPC lock on them while in reach (`NpcLockDeps.instantLock` → `LockSubsystem.isInstant`); capital integration tests use it. Lock: `tests/unit/capitalLockGate.test.ts`.
+- **NPC capital turrets fire only with a completed lock on their own target** (PR 1d slice 2): `WeaponMountTicker.tickCapitalMounts` calls the `fireBlocked(droneId, mountTargetId)` dep (→ `NpcLockSubsystem.fireBlocked`) last, before spending the reload; a blocked turret keeps aiming. A capital holds one lock per pilot (entries are per pilot × NPC), and its lock time is the FASTEST over one profile per mount size (`geos`) that may reach the pilot (none in reach: the longest-reach profile), so AA locks a fighter fast while a 16" gun alone locks it slowly (~38 s at 5 km, the same as a player battleship). testMode `instantLock` on a pilot also completes every NPC lock on them at any distance (`NpcLockDeps.instantLock` → `LockSubsystem.isInstant`); capital integration tests use it. Lock: `tests/unit/capitalLockGate.test.ts`.
 - **NPC capital turrets engage hostile STRUCTURES too** (2026-11-10): the candidates are the pilots plus the room's per-tick hostile-structure set (`hostileStructures` dep → `hostileStructureCircles`, built by `fillStructureTargets`), still filtered by the drone's `hostileTo`. A structure target is gated by the TURRET's own lock (`droneMountLocks`, `stepLock` per tick with that mount size's `WEAPON_LOCK_PROFILE`, its gun's reach, the hull's `sensorFor`, the structure's radius as signature; uncapped: a heavy gun locks a small structure slowly, a sub-capital gun past `maxSeconds` skips it in its search). Before this a capital could not fire at a structure at all (it never fires as a hull). Locks: `capitalLockGate.test.ts`, `tests/integration/sectorRoom/coastalDuel.test.ts`.
 - **An AI pilot holds the trigger like a player:** `HostileDroneBehaviour` requests a shot every tick it is aimed and in range; `AiFireResolver.resolve` owns the reload (checked first, so a held trigger stops cheaply) and holds without spending it while the lock, line of fire or barrel bearing refuse. The brain used to keep its own cooldown, spent on the request: a turret still training when the request came stayed silent a whole reload (robot orb, 150 ticks), and an attack run on a pilot at ~90 u/s landed 0 hits in 30 s (`attackRunTurnBack.test.ts`).
 - **Not yet gated:** a drone shot at a non-pilot target (an NPC or structure) that strays into a pilot.
@@ -313,3 +438,8 @@ Owner rule 2026-11-13: "Ships turning, acceleration, weapons, everything is rela
 Moved verbatim from the old "Thresholds" section of `src/server/CLAUDE.md`. The rules stay there in short form; current values are in [server-thresholds](server-thresholds.md). Dates, plan names and "was" notes below are history.
 
 - **Fire control — NPC lock step**: O(pilots × hostile NPCs) every 6 ticks now that every pilot is tracked; ~0.015 ms at 56 drones × 4 pilots, ~0.037 ms at 56 × 10 (`benchmarks/npc-locks.bench.ts`, laptop 2026-11-09). The room's `forEachHostileNpc` scans the whole swarm per pilot; budget 0.1 ms per step.
+
+## History
+
+- **2026-11-14, locks at any distance.** Owner decision: players, NPC ships and structures lock at any distance; distance only makes a lock slower; only firing is range-limited (per-turret fire range to the hull, the sibling fire-range changes). Lead calls in the same change: NPC hostility is refreshed by a lock only inside that NPC's fire range (before: "out of reach ⇒ lock drops ⇒ forgets 30 s later"; now "out of fire range ⇒ no refresh ⇒ forgets 30 s later"); AUTO groups release their own pick once it leaves fire range and re-pick, manual locks persist; AUTO's pick stays limited to what it could fire at. The wire `c` flag and the HUD now say CAN'T TRACK instead of OUT OF RANGE. See "Locks work at any distance" above.
+- **2026-11-14, heavy guns prefer big targets.** Owner decision: when guns choose their own target, heavy guns take capitals and structures in fire range first and fighters only as a fallback; AA and light guns keep small fast targets. Extended the one rule (`mountPriority`) to player AUTO (was nearest-first), the turret share-out of a group's locks (was turret-index round-robin) and structures (were ranked as light capitals, behind true capitals). The `coastal-duel` showcase bug (every battleship turret, 16" included, sat on the pilot's fighter by the battery) was a sticky-target bug: at the turrets' first search after `test_aggro` the battery was not yet in the hostile-structure set (it joins ~5 s later), so the fighter was the only candidate, and a turret holding a target never searched again while that target stayed engageable. Now a holding turret re-searches on its beat for a strictly preferred class. See "Heavy guns prefer what they can hurt" above.

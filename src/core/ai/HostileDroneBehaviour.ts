@@ -7,7 +7,7 @@ import {
 import { getWeapon, type WeaponMode } from '../combat/WeaponCatalogue.js';
 import { hasTurretFireControl, mountWeaponReach } from '../combat/mountReach.js';
 import { FC_MOUNT_FIRE_TOLERANCE } from '../combat/fireControlBearing.js';
-import { shipBubbleRadius } from '../combat/shipHitShape.js';
+import { shipAimRadius, shipBubbleRadius, shipHitBound, shipHullDistance } from '../combat/shipHitShape.js';
 import { getShipKind, type ShipKind } from '../../shared-types/shipKinds.js';
 import {
   isOnSightHostile,
@@ -412,17 +412,20 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     y: number;
     vx: number;
     vy: number;
-    /** Facing (rad), NaN when unknown (structures, views without it). */
-    angle: number;
+    /** Facing (rad); undefined when unknown (structures, views without it). */
+    angle?: number;
     health?: number;
     maxHealth?: number;
+    kindId?: string | null;
+    shieldUp?: boolean;
     priority: number;
     /** Spread targets: brains of my side already on it (0 without `view.claims`). */
     claims: number;
     /** A ship (pilot hull or swarm combatant), not a structure. */
     ship: boolean;
-    /** The hit circle a fixed gun aims at (the shared hit shape); Infinity
-     *  for a structure (the player window applies). */
+    /** The hit circle a fixed gun aims at (`shipAimRadius` of the view's
+     *  hull shape; the default kind's bubble without one); Infinity for a
+     *  structure (the player window applies). */
     hitRadius: number;
     /** Per-candidate hostility (allegiances P0) — ALWAYS set before the pick,
      *  so `pickTarget` reads it instead of the callback. For a drones-only view
@@ -897,7 +900,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     for (const p of view.players) {
       let c = cand[n];
       if (!c) {
-        c = { id: '', x: 0, y: 0, vx: 0, vy: 0, angle: NaN, priority: 0, ship: true, hostile: false, claims: 0, hitRadius: 0 };
+        c = { id: '', x: 0, y: 0, vx: 0, vy: 0, angle: undefined, priority: 0, ship: true, hostile: false, claims: 0, hitRadius: 0 };
         cand[n] = c;
       }
       c.id = p.id;
@@ -905,12 +908,14 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       c.y = p.y;
       c.vx = p.vx;
       c.vy = p.vy;
-      c.angle = p.angle ?? NaN;
+      c.angle = p.angle;
       c.health = p.health;
       c.maxHealth = p.maxHealth;
+      c.kindId = p.kindId;
+      c.shieldUp = p.shieldUp;
       c.priority = 0;
       c.ship = true;
-      c.hitRadius = p.hitRadius ?? DEFAULT_AIM_RADIUS;
+      c.hitRadius = p.kindId != null ? shipAimRadius(p.kindId, p.shieldUp === true) : DEFAULT_AIM_RADIUS;
       let h = this.hostileTo.has(p.id) || (p.ownerId !== undefined && this.hostileTo.has(p.ownerId));
       if (!h && this.onSightPlayers && p.truce !== true) {
         const dx = p.x - self.x;
@@ -926,7 +931,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       for (const s of structs) {
         let c = cand[n];
         if (!c) {
-          c = { id: '', x: 0, y: 0, vx: 0, vy: 0, angle: NaN, priority: 0, ship: true, hostile: false, claims: 0, hitRadius: 0 };
+          c = { id: '', x: 0, y: 0, vx: 0, vy: 0, angle: undefined, priority: 0, ship: true, hostile: false, claims: 0, hitRadius: 0 };
           cand[n] = c;
         }
         c.id = s.id;
@@ -934,9 +939,11 @@ export class HostileDroneBehaviour implements IAiBehaviour {
         c.y = s.y;
         c.vx = 0;
         c.vy = 0;
-        c.angle = NaN;
+        c.angle = undefined;
         c.health = s.health;
         c.maxHealth = s.maxHealth;
+        c.kindId = undefined;
+        c.shieldUp = undefined;
         c.priority = s.priority;
         c.ship = false;
         c.hitRadius = Infinity; // a footprint box, not a hull: the player window
@@ -961,7 +968,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
         if (!h) continue;
         let c = cand[n];
         if (!c) {
-          c = { id: '', x: 0, y: 0, vx: 0, vy: 0, angle: NaN, priority: 0, ship: true, hostile: false, claims: 0, hitRadius: 0 };
+          c = { id: '', x: 0, y: 0, vx: 0, vy: 0, angle: undefined, priority: 0, ship: true, hostile: false, claims: 0, hitRadius: 0 };
           cand[n] = c;
         }
         c.id = s.id;
@@ -969,12 +976,14 @@ export class HostileDroneBehaviour implements IAiBehaviour {
         c.y = s.y;
         c.vx = s.vx;
         c.vy = s.vy;
-        c.angle = s.angle ?? NaN;
+        c.angle = s.angle;
         c.health = s.health;
         c.maxHealth = s.maxHealth;
+        c.kindId = s.kindId;
+        c.shieldUp = s.shieldUp;
         c.priority = 0;
         c.ship = true;
-        c.hitRadius = s.hitRadius ?? DEFAULT_AIM_RADIUS;
+        c.hitRadius = s.kindId != null ? shipAimRadius(s.kindId, s.shieldUp === true) : DEFAULT_AIM_RADIUS;
         c.hostile = true;
         anyHostile = true;
         n++;
@@ -1104,7 +1113,18 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     const rawDy = target.y - self.y;
     const dist = Math.hypot(rawDx, rawDy);
     if (dist < 1e-3) return this.fly(self, self.angle, target.vx, target.vy, false);
-    if (this.broadside) return this.tickBroadside(self, target, rawDx, rawDy, dist);
+    // Range to the target's HULL (the shape the fire gate measures to), so a
+    // capital is engaged once a gun reaches its side, not its centre. Cheap
+    // first: past bound + fireRange the centre distance minus the bound is
+    // already out of range; only near range is the polygon measured.
+    let rangeDist = dist;
+    if (target.kindId != null) {
+      const far = dist - shipHitBound(target.kindId);
+      rangeDist = far > this.fireRange
+        ? far
+        : shipHullDistance(target.kindId, target.shieldUp === true, self.x, self.y, target.x, target.y, target.angle ?? 0);
+    }
+    if (this.broadside) return this.tickBroadside(self, target, rawDx, rawDy, dist, rangeDist);
 
     // Lead-aim: first-order intercept in the SHOOTER's frame. The bolt
     // inherits the shooter's velocity at spawn (self.v + dir·speed), so the
@@ -1118,7 +1138,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     const aimDy = aimY - self.y;
     // Fire-lane awareness (slice 5b): publish where this gun points while it
     // can shoot, so wingmen keep out of the lane.
-    if (dist <= this.fireRange) view.aims?.write(self.id, aimX, aimY, view.tick);
+    if (rangeDist <= this.fireRange) view.aims?.write(self.id, aimX, aimY, view.tick);
 
     // Bearing toward the lead-aim point, not the target's current pose.
     const desiredAngle = facingOf(aimDx, aimDy);
@@ -1130,7 +1150,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     // Turret kinds send the same cone with the shot: the resolver narrows each
     // barrel's window to it.
     const hullCone = hullFireCone(((target as { hitRadius?: number }).hitRadius ?? DEFAULT_AIM_RADIUS) + this.shotRadius, Math.hypot(aimDx, aimDy));
-    if (this.maxTurretHalfArc <= 0 && dist <= this.fireRange) this._pilot.turn.aimCone = hullCone;
+    if (this.maxTurretHalfArc <= 0 && rangeDist <= this.fireRange) this._pilot.turn.aimCone = hullCone;
     this._aimValid = true;
     this._aimX = aimX;
     this._aimY = aimY;
@@ -1148,18 +1168,18 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     const targetAlong = target.vx * ux + target.vy * uy;
     let closing: number;
     let boostOk = false;
-    if (this.backoffInsideFactor > 0 && dist < this.fireRange * this.backoffInsideFactor) {
+    if (this.backoffInsideFactor > 0 && rangeDist < this.fireRange * this.backoffInsideFactor) {
       // Missile kite — too close for artillery: open the gap.
       closing = -h.cruiseSpeed;
-    } else if (dist > this.fireRange * ENGAGE_DISTANCE_RATIO) {
+    } else if (rangeDist > this.fireRange * ENGAGE_DISTANCE_RATIO) {
       // Far engagement — close at full speed, boosting while it can.
-      closing = Math.min(h.maxSpeed, brakingSpeed(h, dist - STOP_DIST));
+      closing = Math.min(h.maxSpeed, brakingSpeed(h, rangeDist - STOP_DIST));
       boostOk = true;
-    } else if (dist > STOP_DIST) {
+    } else if (rangeDist > STOP_DIST) {
       // Approach window: never faster than it can brake from by STOP_DIST
       // (the "flies past way too quickly… never approaches" fix, now by the
       // pilot's own reverse instead of an AI-only brake impulse).
-      closing = Math.min(h.cruiseSpeed, brakingSpeed(h, dist - STOP_DIST));
+      closing = Math.min(h.cruiseSpeed, brakingSpeed(h, rangeDist - STOP_DIST));
     } else {
       // Inside the stop distance — hold the range (brake any closing speed).
       closing = 0;
@@ -1183,7 +1203,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       this._goal.spendReserve = false;
       this._goal.throttleNow = false;
       this._manoeuvres[this._picker.current]!.writeGoal(this._tac, this._ctxMaps, this._goal);
-      intent = this.flyCombatContext(self, nb, view.aims, ux, uy, desiredAngle, dist <= this.fireRange, this._goal);
+      intent = this.flyCombatContext(self, nb, view.aims, ux, uy, desiredAngle, rangeDist <= this.fireRange, this._goal);
       if (this._picker.current === MANOEUVRE_FLEE && this._flee.wantsWarpOut(view.tick)) {
         this.requestWarpOut(self, intent);
         return intent;
@@ -1204,7 +1224,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     // drawn barrel (owner 2026-11-14), and a nose up to 0.2 rad off the lead
     // missed a fighter at range ~40 % of the time. A turret kind keeps the
     // wide request; the resolver fires only the barrels that bear.
-    const baseTolerance = dist < this.fireRange * POINT_BLANK_RATIO
+    const baseTolerance = rangeDist < this.fireRange * POINT_BLANK_RATIO
       ? DRONE_AIM_TOLERANCE_CLOSE
       : DRONE_AIM_TOLERANCE;
     const aimTolerance = this.maxTurretHalfArc > 0
@@ -1212,7 +1232,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       : hullCone;
 
     const aimed = Math.abs(bearingError) <= aimTolerance;
-    const inRange = dist <= this.fireRange;
+    const inRange = rangeDist <= this.fireRange;
     // The trigger is HELD while aimed and in range, as a pilot holds fire: the
     // resolver owns the cooldown, the lock, the line of fire, the barrel
     // bearing and the energy, and fires the moment they all allow. A brain-side
@@ -1817,13 +1837,13 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    * to start and stop). Never fires: the turrets do, under WeaponMountTicker
    * fire control. Allocation-free.
    */
-  private tickBroadside(self: AiEntity, target: MountTargetView, dx: number, dy: number, dist: number): AiIntent {
+  private tickBroadside(self: AiEntity, target: MountTargetView, dx: number, dy: number, dist: number, rangeDist: number): AiIntent {
     if (this.guardOn) return this.tickGuardBroadside(self, dx, dy);
     const bearing = facingOf(dx, dy);
     const cruise = this.handling.cruiseSpeed;
-    if (dist > this.fireRange) {
+    if (rangeDist > this.fireRange) {
       const s = cruise / dist;
-      return this.fly(self, bearing, dx * s, dy * s, dist > this.fireRange * ENGAGE_DISTANCE_RATIO);
+      return this.fly(self, bearing, dx * s, dy * s, rangeDist > this.fireRange * ENGAGE_DISTANCE_RATIO);
     }
     const port = wrapAngle(bearing + Math.PI / 2);
     const stbd = wrapAngle(bearing - Math.PI / 2);
@@ -1831,7 +1851,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     const standoff = this.fireRange * BROADSIDE_STANDOFF;
     // + when too far (turn in toward the target), − when too close; 0 inside
     // the dead-band (at the stand-off: hold the beam, keys off).
-    const raw = Math.max(-1, Math.min(1, (dist - standoff) / standoff));
+    const raw = Math.max(-1, Math.min(1, (rangeDist - standoff) / standoff));
     const over = Math.max(0, Math.abs(raw) - BROADSIDE_RANGE_DEADBAND) / (1 - BROADSIDE_RANGE_DEADBAND);
     const err = raw < 0 ? -over : over;
     const bias = err * BROADSIDE_RANGE_STEER;

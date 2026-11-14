@@ -27,9 +27,6 @@ export interface AiPlayerView {
    *  (drones are snapshot-interpolated, no client brain). */
   readonly health?: number;
   readonly maxHealth?: number;
-  /** The hit circle a fixed gun aims at (`shipAimRadius`: the shared hit
-   *  shape by kind and shield state). Absent ⇒ the default kind's bubble. */
-  readonly hitRadius?: number;
   /** Living World P1a-2 — set for a displaced LINGERING hull (whose `id` is its
    *  shipInstanceId): the owning player's id, so a drone hostile to that player
    *  (its `hostileTo` holds playerIds) treats the parked hull as hostile too. */
@@ -38,6 +35,12 @@ export interface AiPlayerView {
    *  (robot reputation ≥ ROBOT_TRUCE_AT): robots no longer engage them on sight.
    *  Retaliation (`hostileTo`) still applies. Server-populated only. */
   truce?: boolean;
+  /** Hull shape (kind, shield; heading is `angle`) so the brain ranges to
+   *  the HULL, as the fire gate does, and sizes a fixed gun's trigger cone by
+   *  it (`shipAimRadius`). Absent ⇒ ranged from the centre, aimed at the
+   *  default kind's bubble. */
+  readonly kindId?: string | null;
+  readonly shieldUp?: boolean;
 }
 
 /**
@@ -76,9 +79,9 @@ export interface AiSwarmView {
   readonly allegiance: string;
   readonly health?: number;
   readonly maxHealth?: number;
-  /** The hit circle a fixed gun aims at (`shipAimRadius`: the shared hit
-   *  shape by kind and shield state). Absent ⇒ the default kind's bubble. */
-  readonly hitRadius?: number;
+  /** Hull shape, as on `AiPlayerView`. */
+  readonly kindId?: string | null;
+  readonly shieldUp?: boolean;
 }
 
 /**

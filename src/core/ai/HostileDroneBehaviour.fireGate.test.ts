@@ -20,10 +20,12 @@ const R = shipBubbleRadius(FIXED_GUN_KIND);
 // the 2x default, 560 u at the authored 1x).
 const D = 0.7 * new HostileDroneBehaviour(FIXED_GUN_KIND).getFireRange();
 
-function firesAt(bearing: number, dist: number, hitRadius: number | undefined): boolean {
+// The target's hull shape rides the view (kind + shield); the brain sizes the
+// cone by `shipAimRadius` of it (a shielded fighter: its bubble, R).
+function firesAt(bearing: number, dist: number, kindId: string = FIXED_GUN_KIND): boolean {
   const brain = new HostileDroneBehaviour(FIXED_GUN_KIND);
   brain.markHostile('p', 0);
-  const p = { id: 'p', x: -Math.sin(bearing) * dist, y: Math.cos(bearing) * dist, vx: 0, vy: 0, hitRadius };
+  const p = { id: 'p', x: -Math.sin(bearing) * dist, y: Math.cos(bearing) * dist, vx: 0, vy: 0, kindId, shieldUp: true };
   const intent = brain.tick({ id: 'd', x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 }, { players: [p], tick: 100, dtSec: 1 / 60 });
   return intent.fire !== undefined;
 }
@@ -39,20 +41,20 @@ describe('fixed-gun fire gate: the hull cone', () => {
   it('fires with the nose inside the hull cone at range', () => {
     const cone = Math.atan(R / D);
     expect(cone).toBeLessThan(FC_MOUNT_FIRE_TOLERANCE);
-    expect(firesAt(cone * 0.5, D, R)).toBe(true);
+    expect(firesAt(cone * 0.5, D)).toBe(true);
   });
 
   it('holds fire outside the hull cone, even inside the 0.2 rad player window', () => {
     const cone = Math.atan((R + 3) / D);
     const between = (cone + FC_MOUNT_FIRE_TOLERANCE) / 2;
     expect(between).toBeLessThan(FC_MOUNT_FIRE_TOLERANCE);
-    expect(firesAt(between, D, R)).toBe(false);
+    expect(firesAt(between, D)).toBe(false);
   });
 
   it('never fires wider than 0.2 rad, however close or big the target', () => {
-    expect(firesAt(FC_MOUNT_FIRE_TOLERANCE * 0.9, 40, R)).toBe(true);
-    expect(firesAt(FC_MOUNT_FIRE_TOLERANCE * 1.2, 40, R)).toBe(false);
-    expect(firesAt(FC_MOUNT_FIRE_TOLERANCE * 1.2, 300, 10_000)).toBe(false);
+    expect(firesAt(FC_MOUNT_FIRE_TOLERANCE * 0.9, 40)).toBe(true);
+    expect(firesAt(FC_MOUNT_FIRE_TOLERANCE * 1.2, 40)).toBe(false);
+    expect(firesAt(FC_MOUNT_FIRE_TOLERANCE * 1.2, 300, 'battleship')).toBe(false);
   });
 
   it('eases onto the lead: a small error inside the dead-band gets a one-tick tap only when aiming', () => {

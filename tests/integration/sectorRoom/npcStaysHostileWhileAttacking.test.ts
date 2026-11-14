@@ -109,7 +109,7 @@ describe('SectorRoom integration — an attacking NPC stays hostile', () => {
     expect(hostile()).toBe(true);
   });
 
-  it('the pilot leaves reach: the NPC lock drops, hostility ends 30 s later and the turrets go home', { timeout: 60_000 }, async () => {
+  it('the pilot leaves fire range: hostility ends 30 s later despite the lock, the lock drops and the turrets go home', { timeout: 60_000 }, async () => {
     const { pid, peek, npc, tick, hostile } = await setup(true);
     await waitUntil(() => peek.npcLocks.isLocked(npc.id, pid), 30_000, 'battleship locks the pilot');
     // In reach and locked: its own lock keeps it hostile past 30 s of no pilot action.
@@ -118,18 +118,23 @@ describe('SectorRoom integration — an attacking NPC stays hostile', () => {
     await waitUntil(() => tick() - t0 >= 60, 5000, '1 s of ticks');
     expect(hostile(), 'its own held lock keeps it hostile').toBe(true);
 
-    // The pilot flies far out of reach (well past the 16" lock reach, which
-    // follows the naval range mode: ~5.9 km legacy, ~42.6 km real).
+    // The pilot flies far out of fire range (well past the 16" reach, which
+    // follows the naval range mode: ~5.4 km legacy, ~38.7 km real).
     const awayY = -(navalGunEngageReach('naval_xl') * LOCK_TUNING.reachSlack + 10_000);
     const away = (): void => peek.postToWorker({ type: 'SET_POSITION', entityId: pid, x: 0, y: awayY, angle: 0, vx: 0, vy: 0, angvel: 0 });
     away();
     await waitUntil(() => (peek.shipPoseCache.get(pid)?.y ?? 0) < awayY + 5000, 5000, 'pilot moved away');
-    await waitUntil(() => peek.npcLocks.wireFor(pid) === undefined, 10_000, 'NPC lock drops');
-    // No more refresh: with the last hostile act aged to 29.8 s, ~1 s later it forgets.
+    // Locks work at any distance (owner 2026-11-14): the NPC still holds its
+    // lock out here, but a lock outside its fire range no longer refreshes
+    // hostility (lead call): with the last hostile act aged to 29.8 s, ~1 s
+    // later it forgets.
+    expect(peek.npcLocks.isLocked(npc.id, pid), 'the lock holds at any distance').toBe(true);
     peek.aiController.markHostile(npc.id, pid, tick() - AGE_TICKS);
     const t1 = tick();
     await waitUntil(() => tick() - t1 >= 60, 5000, '1 s of ticks');
-    expect(hostile(), 'forgotten once 30 s have passed since its lock dropped').toBe(false);
+    expect(hostile(), 'forgotten once 30 s have passed outside its fire range').toBe(false);
+    // No longer hostile, it stops locking the pilot.
+    await waitUntil(() => peek.npcLocks.wireFor(pid) === undefined, 10_000, 'NPC lock drops once it forgets');
 
     // Turrets go home: every 16" turret's angle is at home or moving toward it.
     const mounts = peek.resolveSlotMounts(getShipKind('battleship'));

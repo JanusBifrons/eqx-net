@@ -24,7 +24,6 @@ import type { AiPlayerView, AiStructureView, AiSwarmView, AiEntity, AiEntityPose
 import type { PoseRecord } from './SabPoseMirror.js';
 import type { AiNeighbourGrid } from './AiNeighbourGrid.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
-import { shipAimRadius } from '../../core/combat/shipHitShape.js';
 
 export interface AiFireRequest {
   shooterId: string;
@@ -101,8 +100,9 @@ export function runAiTick(ctx: AiTickCtx): void {
     const pose = ctx.shipPoseCache.get(pid);
     if (!pose) continue;
     ctx.aiPlayerScratch.push({
-      id: pid, x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy, angle: pose.angle,
-      health: ship.health, maxHealth: ship.maxHealth, hitRadius: shipAimRadius(ship.kind, (ship.shield ?? 0) > 0),
+      id: pid, x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy,
+      health: ship.health, maxHealth: ship.maxHealth,
+      kindId: ship.kind ?? null, angle: pose.angle, shieldUp: (ship.shield ?? 0) > 0,
       // P2 — robot truce (robot rep ≥ ROBOT_TRUCE_AT): no on-sight engagement.
       truce: ctx.hasTruce?.(pid) === true,
     });

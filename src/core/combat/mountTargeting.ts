@@ -22,7 +22,11 @@ import { getShipKind } from '../../shared-types/shipKinds.js';
 import { shipHullOutline } from '../geometry/shipHullOutline.js';
 import { shipMountMuzzle } from './muzzle.js';
 
-export type TargetClass = 'small' | 'subcapital' | 'small-capital' | 'capital';
+/** `structure`: a fixed, armoured target (a defence gun, a base). */
+export type TargetClass = 'small' | 'subcapital' | 'small-capital' | 'capital' | 'structure';
+
+/** The class of every structure as a target (one source for every picker). */
+export const STRUCTURE_TARGET_CLASS: TargetClass = 'structure';
 
 /** A sub-capital is this many fighter radii across or more. */
 const SUBCAPITAL_RADII = 4;
@@ -46,13 +50,29 @@ export function targetClass(kind: Pick<ShipKind, 'sizeClass' | 'radius'>): Targe
   return kind.radius >= fighterRadius * SUBCAPITAL_RADII ? 'subcapital' : 'small';
 }
 
+const classByKind = new Map<string, TargetClass>();
+/** Target class by ship kind id, cached per kind (hot loops never re-derive
+ *  it, #14); null / undefined (a structure, anything not a ship) =
+ *  `STRUCTURE_TARGET_CLASS`. */
+export function targetClassOfKind(kindId: string | null | undefined): TargetClass {
+  if (kindId == null) return STRUCTURE_TARGET_CLASS;
+  let c = classByKind.get(kindId);
+  if (c === undefined) { c = targetClass(getShipKind(kindId)); classByKind.set(kindId, c); }
+  return c;
+}
+
 /** Preference of a mount of this size for a target class: 0 = first
- *  choice. Lower wins; distance breaks ties. Every class is allowed. */
+ *  choice. Lower wins; distance breaks ties. Every class is allowed.
+ *  Heavy guns (M/L/XL) put capitals AND structures first (what they can
+ *  hurt); S guns take gunships, light capitals and structures; AA small craft.
+ *  One rule for every picker that chooses its own target: NPC capital and
+ *  structure turrets, a player's AUTO groups, a group's turret share-out
+ *  (owner 2026-11-14). */
 export function mountPriority(size: WeaponMount['size'], cls: TargetClass): number {
   switch (size) {
     case 'AA': return cls === 'small' ? 0 : cls === 'subcapital' ? 1 : 2;
-    case 'S': return cls === 'subcapital' || cls === 'small-capital' ? 0 : cls === 'capital' ? 1 : 2;
-    case 'M': case 'L': case 'XL': return cls === 'capital' ? 0 : cls === 'small-capital' ? 1 : cls === 'subcapital' ? 2 : 3;
+    case 'S': return cls === 'subcapital' || cls === 'small-capital' || cls === 'structure' ? 0 : cls === 'capital' ? 1 : 2;
+    case 'M': case 'L': case 'XL': return cls === 'capital' || cls === 'structure' ? 0 : cls === 'small-capital' ? 1 : cls === 'subcapital' ? 2 : 3;
     default: return 0; // ordinary (non-naval) mounts: anything hostile, nearest first
   }
 }

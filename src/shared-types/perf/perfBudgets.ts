@@ -58,10 +58,14 @@ export const COUNT_BUDGETS: Record<string, CountBudget> = {
   // 2026-11-09: 16.9–17.1 KB/s. It rose to ~21 by 2026-11-12 (fire-control
   // `groups` on the own ship, far-drone slices, wreck / time-scale / turret-
   // angle keys) and then fell when undefined-valued keys left the wire
-  // (`setOrDrop`, 2026-11-14 trim). Budget = max of the 8 runs + 25 %.
+  // (`setOrDrop`, 2026-11-14 trim). Then locks at any distance (owner,
+  // 2026-11-14): the 20 on-sight-hostile robots 9 km out now lock the pilot,
+  // and the own-ship `lockedBy` slice (#16: the pilot's only view of it)
+  // carries ~20 rows. Inherent to the rule, not a leak. Budget = max of the
+  // runs (local 7, CI 1) + 25 %.
   'capital-fleet': {
-    rxKBps: 17.8, minSwarm: 20,
-    measured: 'laptop 8 runs 2026-11-14 after the snapshot trim: 13.2–14.2 KB/s, swarm 29 (split ~ swarm 8.0, snapshot JSON 5.5, collision_resolved 1.0). Snapshot JSON was 9.8 KB/s on 2026-11-09 and 13.1 on main before the trim: + own-ship lock groups 0.6 (real, sent every snapshot), far-drone slices 0.5 (real hostile/hp), and ~2 KB/s of empty keys (structureMountAngles, wreck deltas, timeScale, shellKey, lockedBy), which the trim removed with the ~5 KB/s of older empty keys. Earlier: 16.9–17.1 KB/s, 2026-11-09',
+    rxKBps: 23, minSwarm: 20,
+    measured: 'locks at any distance, 2026-11-14: laptop 7 runs 17.6–18.3 KB/s, CI (PR #603) 18.1; probe: lockedBy ~20 rows (10 locked, 10 acquiring) ≈ +4 KB/s, the whole rise. Before: laptop 8 runs 2026-11-14 after the snapshot trim: 13.2–14.2 KB/s, swarm 29 (split ~ swarm 8.0, snapshot JSON 5.5, collision_resolved 1.0). Snapshot JSON was 9.8 KB/s on 2026-11-09 and 13.1 on main before the trim: + own-ship lock groups 0.6 (real, sent every snapshot), far-drone slices 0.5 (real hostile/hp), and ~2 KB/s of empty keys (structureMountAngles, wreck deltas, timeScale, shellKey, lockedBy), which the trim removed with the ~5 KB/s of older empty keys. Earlier: 16.9–17.1 KB/s, 2026-11-09',
   },
   // 2026-11-09, laptop, two runs: 11.6 / 11.6 KB/s (one battleship firing on the pilot).
   'capital-duel': { rxKBps: 15, minSwarm: 1, measured: '11.6 KB/s, 2026-11-09' },
