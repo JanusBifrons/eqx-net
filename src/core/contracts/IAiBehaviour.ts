@@ -141,6 +141,12 @@ export interface AiWorldView {
    *  brain claims its body target, the others read the count. Owned by
    *  `AiController`. Absent ⇒ no spreading (every target scores unclaimed). */
   readonly claims?: IAiTargetClaims;
+  /** True while this entity's weapon is winding up a charge (the resolver
+   *  owns the charge; `AiFireResolver.isCharging`). A charge shot leaves down
+   *  the barrel when the wind-up ends, so the pilot holds its line on the
+   *  target until then. SERVER-ONLY, no wire surface (the snapshot's
+   *  `drones[].charging` is the client's copy). Absent ⇒ never charging. */
+  isCharging?(entityId: string): boolean;
 }
 
 /** Body-target claims per NPC side (spread targets). One claim per brain;

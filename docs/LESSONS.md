@@ -3088,3 +3088,8 @@ Owner: "make it more like micro machines and make fights a bit longer. Also don'
 
 - **Finding (PR #584, netgate red 3×):** switching the sub-cap break-up on made the server send `subcapWrecks: true` in `welcome`. `WelcomeSchema` is `.strict()`, so the netgate's baseline arm (origin/main client against the HEAD server) dropped the whole welcome (`welcome_malformed_dropped`) and never showed a ship: `waitForFunction` timed out on "Ships > 0", with no console error.
 - **Rule:** an additive key on a strict server→client message lands reader-first: the schema change ships to `main` on its own, then the server starts sending it. The netgate baseline arm enforces this one-release skew.
+
+## 2026-11-14 — A charge weapon needs the pilot to hold its line
+
+- **Finding (#611):** a locked-direction charge (robot charge laser) fires down the barrel when the wind-up ends. The new dogfighting AI kept flying its strafing pass during the 1.2 s wind-up, slid ~400 u and missed a parked pilot 6 times out of 6. The charge path and the manoeuvre layer were each right on their own.
+- **Rule:** while `view.isCharging` the combat brain holds its line on the target. Any new manoeuvre must respect it; a behaviour change to the AI's movement re-runs `chargeLaser.test.ts`.

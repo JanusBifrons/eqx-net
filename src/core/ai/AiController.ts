@@ -101,6 +101,10 @@ export class AiController {
    */
   private readonly pendingHostile = new Map<string, Map<string, number>>();
 
+  /** Charge wind-up query handed to brains as `view.isCharging` (the server
+   *  sets it to its fire resolver's). Absent ⇒ no brain is ever charging. */
+  isCharging: ((entityId: string) => boolean) | undefined = undefined;
+
   constructor(private readonly sink: AiIntentSink) {}
 
   register(entityId: string, slot: number, behaviour: IAiBehaviour): void {
@@ -291,7 +295,7 @@ export class AiController {
     // every behaviour. The 60/sec rate is negligible vs the rest of
     // the engine; leave as-is. See `swarmEntitySnapshot` doc for the
     // full GC-pressure story.
-    const view: AiWorldView = { players, structures, swarms, tick, dtSec, resolveEntityInto, neighbours, stats: this.stats, aims: this.aims, claims: this.claims };
+    const view: AiWorldView = { players, structures, swarms, tick, dtSec, resolveEntityInto, neighbours, stats: this.stats, aims: this.aims, claims: this.claims, isCharging: this.isCharging };
     this.inputsQueued = 0;
     for (const [id, reg] of this.entities) {
       this.runEntity(id, reg, view, tick, entitySnapshot);

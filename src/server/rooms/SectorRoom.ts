@@ -2124,6 +2124,8 @@ export class SectorRoom extends Room<SectorState> {
       spawnServerMissile: (ownerId, x, y, dx, dy, def) =>
         this.spawnServerMissile(ownerId, x, y, dx, dy, def),
     });
+    // A brain holds its line while its charge winds up (view.isCharging).
+    this.aiController.isCharging = (id) => this.aiFireResolver.isCharging(id);
 
     // Two-layer shield/hull damage + regen routing. Owns the swarm-side
     // shield state + the three layered-damage methods. Composes the pure

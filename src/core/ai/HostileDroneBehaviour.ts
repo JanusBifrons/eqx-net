@@ -1190,7 +1190,15 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     const nb = view.neighbours;
     this._ctxUsed = false;
     let intent: AiIntent;
-    if (nb === undefined) {
+    if (view.isCharging?.(self.id) === true) {
+      // A charge is winding up: the shot leaves down the barrel when it ends,
+      // so hold the line (nose on the lead, matching the target's velocity)
+      // instead of flying the manoeuvre. A strafing pass carried the ship
+      // ~400 u sideways in the 1.2 s wind-up and the shot missed even a
+      // parked pilot (chargeLaser.test.ts). The target can still dodge.
+      this._faceMove = false;
+      intent = this.fly(self, desiredAngle, target.vx, target.vy, false);
+    } else if (nb === undefined) {
       // No neighbour index: the pre-2c stand-off path exactly (A/B control).
       this._faceMove = false;
       intent = this.fly(self, desiredAngle, ux * along, uy * along, boostOk);
