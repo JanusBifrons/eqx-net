@@ -17,32 +17,19 @@ Never import any of these from inside `src/core/`:
 - Filesystem: `node:fs`, `fs`
 - Anything under `src/server/**` or `src/client/**`
 
-The allowed runtime libs are: `@dimforge/rapier2d-compat`, `eventemitter3`, `zod` (types), plus the TS stdlib.
+Allowed runtime libs: `@dimforge/rapier2d-compat`, `eventemitter3`, `zod` (types), plus the TS stdlib.
 
-The canary at [\_\_fixtures\_\_/leak.ts.disabled](__fixtures__/leak.ts.disabled) exists to prove the rule is live. If you ever find yourself weakening the forbidden list in `eslint.config.js`, stop — you are breaking the "no web leaks" guarantee that the whole architecture depends on.
+Never weaken the forbidden list in `eslint.config.js`: it is the "no web leaks" guarantee the whole architecture depends on. The canary [\_\_fixtures\_\_/leak.ts.disabled](__fixtures__/leak.ts.disabled) proves the rule is live.
 
 ---
 
 ## Dependency Inversion — The Contracts Catalogue
 
-`src/core` never instantiates a renderer, audio sink, network sink, or persistence handle. Instead, it declares interfaces in `src/core/contracts/` and accepts implementations via constructor injection.
+`src/core` never instantiates a renderer, audio, network or persistence concretion: it declares interfaces in `src/core/contracts/` and takes implementations by constructor injection. A new concretion is a new contract here, never a reach into the server or client zones.
 
-### Current contracts (grows as phases land)
-
-- `IRenderer` — the draw surface. Phase 1 introduces this.
-- `IAudio` — the sound surface. Phase 4/6 hydrate this.
-- `INetworkSink` — the outbound network surface. Phase 1 introduces this.
-- `IPersistenceSink` — the persistence surface. Phase 7 introduces this. Op union is closed-set; CRITICAL/VOLATILE lanes; concretion in `src/server/db/`.
-
-### Galaxy graph (Phase 8)
-
-The persistent galaxy lives at [galaxy/galaxy.ts](galaxy/galaxy.ts) — a pure module exporting `GALAXY_SECTORS` (Living Galaxy P1: a ~21-sector galaxy — a home **core** region plus 3 **frontier regions** _Verdant Reach / Crimson Expanse / Azure Deep_, each reachable from the core through a single **chokepoint** gateway; replaced the 7-sector sunflower). Each `GalaxySector` carries a `region` (== faction id; **cosmetic/static v1**, capable of real ownership later) and a static `features` list (map glyphs: `asteroid|nebula|minerals|blackhole|station`). `GALAXY_FACTIONS` is the id→`displayName` registry; `ENTRY_SECTOR_KEYS` is the **baked** drone-warp-in edge set (was max-hex-distance-derived — wrong for a multi-region shape; `getEntrySectors()`/`isEntrySector()` now read the baked set, signatures UNCHANGED so `population.ts` + the director are untouched). **The `GALAXY_SECTORS` / `GALAXY_FACTIONS` / `ENTRY_SECTOR_KEYS` literals are GENERATED** by [scripts/generate-galaxy.ts](../../scripts/generate-galaxy.ts) (`pnpm tsx scripts/generate-galaxy.ts > src/core/galaxy/galaxy.ts`), which validates every invariant at bake time — do NOT hand-edit them (edit the spec in the generator + re-run); the types + helper functions are hand-maintained. Both the server (room registration in `index.ts`, neighbour validation) and the client (galaxy map) consume this. Pure: no I/O, no imports outside the TS stdlib. The unit test [galaxy/galaxy.test.ts](galaxy/galaxy.test.ts) enforces the structural invariants (edge symmetry, no dangling neighbours, connected graph, **each faction graph-contiguous** — load-bearing for the P4 contiguous-territory hover-shrink — **exactly one chokepoint edge per frontier region**, ≥1 entry sector per region, never the core, all 7 legacy keys preserved as persistence identities). See [docs/architecture/galaxy-graph.md](../../docs/architecture/galaxy-graph.md) and [docs/architecture/living-galaxy.md](../../docs/architecture/living-galaxy.md).
-
-When a new phase needs a new concretion (e.g., persistence), add it as a new contract here — never by reaching from core into the server or client zones.
-
-### Generic Entity Pipeline contracts (2026-06-04)
-
-`src/core/entity/` + the `IDamageable` / `INetworkSynced` / `IRenderContributor` contracts make a new world-object type "a leaf + a descriptor". The append-only `EntityKindRegistry` ([entity/EntityKindRegistry.ts](entity/EntityKindRegistry.ts)) maps each `EntityKindTag` → its sync + render + damageable descriptors; `IDamageable` declares the zone-pure damage surface (`HealthBinding` — a stateless per-kind accessor over the live store, NEVER a value copy, + the reused `Interaction`/`InteractionResultMut`). The kind-specific orchestration (broadcast/bus/worker side-effects) is a SERVER concern: the leaf classes in `src/server/entity/leaves/` (`ShipEntity` / `DroneEntity` / `StructureEntity`) implement `Entity` and COMPOSE these contracts as data; `DamageRouter` routes a hit via `EntityResolver` → the leaf → one monomorphic `applyInteraction` (HC#5 — never a per-class virtual `receiveInteraction`). Core stays blind to the wire. `Entity` is a SEPARATE type from `AiEntity` (`IAiBehaviour.ts`) — don't conflate. Kinds + pose-core bytes are append-only (mirrors invariant #11). Full story: [docs/architecture/generic-entity-pipeline.md](../../docs/architecture/generic-entity-pipeline.md).
+- **Contracts:** `IRenderer`, `IAudio`, `INetworkSink`, `IPersistenceSink` (closed-set op union; detail: [persistence-and-migrations](../../docs/architecture/persistence-and-migrations.md)).
+- **Galaxy graph:** [galaxy/galaxy.ts](galaxy/galaxy.ts) is pure. Its `GALAXY_SECTORS` / `GALAXY_FACTIONS` / `ENTRY_SECTOR_KEYS` literals are GENERATED by `scripts/generate-galaxy.ts`: never hand-edit them; `galaxy/galaxy.test.ts` locks the invariants. Detail: [galaxy-graph](../../docs/architecture/galaxy-graph.md#regenerating-the-galaxy).
+- **Entity pipeline:** a new world-object type is a leaf + a descriptor in the append-only `EntityKindRegistry`; `HealthBinding` never copies values; one monomorphic `applyInteraction`, never a per-class `receiveInteraction`; `Entity` is not `AiEntity`. Detail: [generic-entity-pipeline](../../docs/architecture/generic-entity-pipeline.md#zone-split).
 
 ---
 
@@ -51,7 +38,7 @@ When a new phase needs a new concretion (e.g., persistence), add it as a new con
 - The bus lives at `src/core/events/Bus.ts` as a strongly-typed `eventemitter3` facade.
 - All event variants live in a single discriminated union. Adding one = adding a variant.
 - **Discrete events only.** Never add `POSITION_UPDATED`, `VELOCITY_CHANGED`, `TICK_ADVANCED`, or anything per-frame. Continuous data flows via polling, not emits.
-- If you are tempted to emit in a tight loop, stop — use direct state mutation / SAB writes.
+- Never emit in a tight loop: use direct state mutation / SAB writes.
 
 ---
 
@@ -69,48 +56,27 @@ When a new phase needs a new concretion (e.g., persistence), add it as a new con
 
 ---
 
-## Structure footprints (phase V, plan soft-leaping-truffle v2)
+## Structure footprints, gates and the scale lattice
 
-- **Every structure kind has a rectangular `footprint`** (catalogue v9). `radius` is its bounding circle, used for broad checks only.
-- **Collision, placement overlap, grid edge distance, line of sight and weapon hits all use the footprint box.** That means `structureHullPoints`, `structureHalfExtents(kind, rotDeg)` (a quarter turn swaps w/h), `GridNode.halfW/halfH`, `rayHitsBox` and `projectileSweepBox`.
-- **Never test a structure against its `radius` for a gameplay rule:** a long Solar's bounding circle covers empty space beside it.
-- **Kindless fixtures:** a structure with no subtype (`structurePoses`) is a radius-sized square.
-
-## Gates (`src/core/structures/gateGeometry.ts` + `gateLogic.ts`, plan soft-leaping-truffle v2)
-
-- **One geometry source for both sides (#15).** Collider parts (posts, airlock walls), spans, fence anchors and approach zones all come from `gateGeometry.ts`. Never hand-place a gate post or span anywhere else.
-- **A gate's body is several convex parts** (`World.spawnObstacle(..., parts)`), so the gap is open; weapon hits use the matching world-axis boxes.
-- **The open/close logic is server-only** (`gateLogic.ts`; the client reads the open bits from room state). An airlock is ONE `phase` field, so "never both ends open" holds by construction; keep it that way.
-- **The lattice fence has a gate per side** (rot 0 top/bottom, 90 left/right), still checked against the real rules by `structureLattice.test.ts`.
-
-## Structure scale lattice (`src/core/structures/structureLattice.ts`, plan soft-leaping-truffle v2)
-
-`buildStructureLattice({n, seed, fence})` is a rule-valid N-structure base (Capital, connector spine + rows, 2–3 leaves per connector, optional closed pylon fence, Solars added until powered), used to MEASURE the structure system at base scale and as the seed of the base generator. Every placement + link passes the real `placementRejection` / `canConnect` (locked by `structureLattice.test.ts`). Budgets it measures against: `src/shared-types/structureBudgets.ts`; ledger: [docs/architecture/structure-network-scale.md](../../docs/architecture/structure-network-scale.md). **Any generated base must pass the same real rules — never bypass `canConnect`.**
+- **Footprints:** every gameplay rule (collision, placement, grid edge distance, line of sight, weapon hits) tests the `footprint` box (`structureHalfExtents`, `rayHitsBox`, ...); `radius` is for broad checks only, never a gameplay rule. Detail: [structure-network-scale](../../docs/architecture/structure-network-scale.md#phase-v-structures-redesigned-far-larger).
+- **Gates (#15):** gate parts, spans, anchors and approach zones come only from `structures/gateGeometry.ts`; never hand-place a post or span. Open/close is server-only (`gateLogic.ts`); an airlock stays ONE `phase` field so both ends can never be open. Detail: [structures-and-power-grid](../../docs/architecture/structures-and-power-grid.md#gates).
+- **Generated bases pass the real rules:** `structures/structureLattice.ts` and the base generator never bypass `placementRejection` / `canConnect` (`structureLattice.test.ts`, `growBase.test.ts`). Budgets: `src/shared-types/structureBudgets.ts`.
 
 ## Physics Worker — Input Queue Contract
 
-Per-slot input handling lives in [physics/inputQueue.ts](physics/inputQueue.ts) and is invoked once per slot per physics step from [physics/worker.ts](physics/worker.ts). The contract has four equally-load-bearing rules:
+[physics/inputQueue.ts](physics/inputQueue.ts) runs once per slot per step from `physics/worker.ts`. Four rules, all locked by `physics/inputQueue.test.ts`; read [physics-worker](../../docs/architecture/physics-worker.md#input-queue-contract) before changing any:
 
-1. **Tick-gated dequeue. Queue non-empty AND `head.tick ≤ currentTick` → dequeue head, apply, ack = its tick.** The gate is the structural alignment: the client locally applies input I_X at clientTick X to produce state s_(X+1); the server must apply I_X at simTick X to produce its own s_(X+1) so reconciliation converges. Pre-2026-05-09 the queue drained greedily without the gate, and a client predicting forward (claimedTick > simTick at receive time) saw its inputs applied early — every snapshot reported `ackedTick > serverTick` and drift accumulated at ~10 u per snapshot. Stale claims are still honoured — better late than dropped — but a claim for a tick already simulated never gets its own step (rule #4), so the ack never regresses and never stalls.
-2. **Queue non-empty BUT `head.tick > currentTick` → hold (treat as queue-empty).** The future-claim input stays queued until sim tick catches up. The slot continues on the held input via rule #3.
-3. **Queue empty (or gated above) + held input present → re-apply held AND advance ack by 1.** The ack synthesises an "implicit re-send" matching what the throttled client (`INPUT_HEARTBEAT_MS` in `ColyseusClient.tickPhysics()`) would have sent at that tick under the old send-every-tick model.
-
-Rule #3 is what newcomers will be tempted to "fix" by leaving the ack pinned to the last received message — don't. The original code did exactly that, with the comment `// Don't update appliedTicks — ackedTick stays at last-dequeued tick.`. It worked because the client used to send every tick, so the held branch never fired in practice. Once client-side input throttling landed (network-discipline P4), the held branch fires for ~94 % of ticks while a key is held, and a stale `ackedTick` causes the client's reconciler to **double-apply** every input the worker has just silently re-held — see [docs/LESSONS.md](../../docs/LESSONS.md) (2026-05-06).
-
-4. **One sim step = one acked tick (2026-11-07).** An input whose tick the worker already simulated (it arrived late, after the held input stood in for it) is NOT applied as another step: its content becomes the held input, and the step acks the next tick. The old `max(claim, prior)` rule applied the late input as a second step while the ack stayed put, so the snapshot pose sat one tick ahead of its `ackedTick`. Every late arrival then showed as a prediction correction of exactly one tick of motion, flipping back later: the showcase "jitter" (0 corrections per take after the fix, 9-61 before). Lock: `inputQueue.test.ts` "one sim step, one acked tick".
-
-Rule #1's gate is the 2026-05-09 fix. Without it, reconcile vs replay diverges by exactly one input application worth of velocity (~10 u of position) on every snapshot whose `ackedTick` exceeds `serverTick`. If you find yourself wanting to "drain greedily for lower latency," remember: the application latency cost (~RTT/2 ticks of held input on the server) is exactly what client-side prediction is buffering against, so the round-trip cost is zero — but skipping the gate breaks reconciliation alignment, which is much worse than a few ticks of authoritative-side latency.
-
-Test coverage at [physics/inputQueue.test.ts](physics/inputQueue.test.ts) locks all four rules in. If the held-ack-advance rule is reverted, the "advances ack across many held ticks" assertion fails. If the tick gate is removed, the "holds dequeue when head.tick > currentTick" and "steady state: ack tracks currentTick" assertions fail.
+1. **Tick-gated dequeue:** apply the head only when `head.tick ≤ currentTick`, ack = its tick. Never drain greedily.
+2. **Future claim (`head.tick > currentTick`) → hold**, as if the queue were empty.
+3. **Queue empty or gated + held input → re-apply the held input AND advance the ack by 1.** Never pin the ack to the last received message.
+4. **One sim step = one acked tick:** a late input (its tick already simulated) becomes the held input; it never gets a step of its own.
 
 ---
 
-## GameClock: game time is the default (time scale stream)
+## GameClock: game time is the default
 
-- `clock/GameClock.ts` is THE time source for gameplay and presentation: continuous game time at 0.25–4× (`MIN_TIME_SCALE` / `MAX_TIME_SCALE`), with `after` / `every` timers that are re-armed on a speed change. It implements `Clock`, so anything that takes a `Clock` can run on game time.
-- Pure: the wall source and the timer host are injected; `src/core` never builds one (each zone owns its own, e.g. `server/time/gameTime.ts`).
-- In core, `Date.now` / `performance.now` / `setTimeout` / `setInterval` are a LINT ERROR outside the real-time allowlist in `eslint.config.js` (the clocks, the physics worker's tick loop, prediction RTT). Take an injected `Clock` or a `nowMs` argument instead.
-- Story: [docs/architecture/game-time-scale.md](../../docs/architecture/game-time-scale.md).
+- Gameplay and presentation read `clock/GameClock.ts` (0.25–4×, `after` / `every` timers re-armed on a speed change). Core never builds one: take an injected `Clock` or a `nowMs` argument.
+- `Date.now` / `performance.now` / `setTimeout` / `setInterval` in core are a LINT ERROR outside the real-time allowlist in `eslint.config.js`. Detail: [game-time-scale](../../docs/architecture/game-time-scale.md).
 
 ## SimulationClock
 
@@ -119,7 +85,7 @@ Test coverage at [physics/inputQueue.test.ts](physics/inputQueue.test.ts) locks 
 
 ---
 
-## Physics Worker — one worker, many worlds (2026-11-07)
+## Physics Worker — one worker, many worlds
 
 `worker.ts` builds each sector world with `createWorld(sab, post)`: its Rapier world, input queues, sleep state and SAB writer all live in that closure. Single-world mode (`workerData.sab`, untagged messages) is what tests that spawn a bare worker use; pooled mode (`workerData.pooled`) takes `ADD_WORLD { worldId, sab }` / `REMOVE_WORLD { worldId }`, routes every other command by its `worldId`, tags every reply with it, posts `POOL_READY` at start and `READY { worldId }` per world, and steps every hosted world once per tick. Never put per-sector state at module scope in the worker: several sectors share it now. Server side: `src/server/rooms/PhysicsWorkerPool.ts`.
 
@@ -210,39 +176,26 @@ Pure module at [src/core/ai/WeaponMountController.ts](ai/WeaponMountController.t
 - **One source each:** `wreckPieceGeometry` is a piece's only shape (lock `tests/integration/wire/wreckGeometryParity.test.ts`); `wreckRayHit`/`wreckSweepHit` are the only weapon-vs-wreck test, gated by `segmentNearCircle`, never `rayHitsSphere` (`wreckHits.test.ts`).
 - **Wrecks:** never give pieces a velocity field that closes a cut (`wreckPiecesSeparate.test.ts`). Per-profile numbers live in `DESTRUCTION_PROFILES`, never a branch; new `fractureHull` options default to old behaviour (`fractureHull.subcap.test.ts`). Detail: [capital-destruction](../../docs/architecture/capital-destruction.md#core-rules-reference).
 
-## Alien gates and the disabled input gate (plan soft-leaping-truffle v4, A)
+## Alien gates and the disabled input gate
 
-- `galaxy/alienGates.ts` is the one source for where the Ancients' gates go (`alienGateSites`, `alienGateCandidates`) and who owns them (`ALIEN_GATE_OWNER`). Server seeding and the client inspector both read it.
-- `combat/disable.ts` `gateDisabledInput` is the disabled-input contract for BOTH sides (#15): the server input handler and the client's `tickPhysics` call it. Don't copy its logic; `tests/unit/disableParity.test.ts` fails if either side stops calling it.
+- `galaxy/alienGates.ts` is the one source for gate sites and their owner (`alienGateSites`, `alienGateCandidates`, `ALIEN_GATE_OWNER`).
+- `combat/disable.ts` `gateDisabledInput` is the disabled-input contract for BOTH sides (#15). Never copy its logic; `tests/unit/disableParity.test.ts` fails if either side stops calling it. Detail: [alien-gates](../../docs/features/alien-gates.md).
 
-## Relations: one answer to "who is hostile to whom" (plan soft-leaping-truffle v3, B1)
+## Relations: one answer to "who is hostile to whom"
 
-- **Ask `relationOf(actor, owner, ctx)`** (`src/shared-types/relations.ts`) whenever a system decides whether a ship or player is welcome near something it doesn't own: gates, turrets, cargo, break-ins, NPC docks. Don't compare owner strings or allegiances inline; that is how two systems end up disagreeing.
-- **Owners are strings:** a player id, `npc:<faction>`, or `npc:<faction>:<baseId>` (`npcOwner`, `parseOwner`). Since v4 F1 any registered NPC faction is valid (region powers, `ancients`, F2's minor factions); an unknown one parses as a plain id.
-- **Factions and standing (v4 F1).** Every player is a faction of one (faction id = player id). Standing is directional, −100..100 in 0.1 steps (`clampStanding`). A faction's `FactionPolicy` (`shared-types/factions.ts`) is the ONLY thing that turns standing into behaviour; `relationOf` applies the owner's policy after the stance table and never softens a hostile base. The default policies reproduce the pre-faction rules; a parity test locks that. Story: [docs/architecture/factions.md](../../docs/architecture/factions.md).
-- **Hostile acts go into `HostileActLedger`** (`src/core/relations/`). They are directional, per owner, and cool down after `HOSTILE_ACT_COOLDOWN_MS`.
-- **Keep one `RelationContext` per room** and update `nowMs` in place; the query allocates nothing.
-- Full story: [docs/architecture/relations.md](../../docs/architecture/relations.md).
+- **Ask `relationOf(actor, owner, ctx)`** (`src/shared-types/relations.ts`) whenever a system decides whether a ship is welcome near something it doesn't own; never compare owners or allegiances inline.
+- Owners are built/read by `npcOwner` / `parseOwner`; only `FactionPolicy` turns standing into behaviour; hostile acts go into `HostileActLedger`.
+- **Keep one `RelationContext` per room** and update `nowMs` in place; the query allocates nothing. Detail: [relations](../../docs/architecture/relations.md), [factions](../../docs/architecture/factions.md).
 
-## Production chain data (plan soft-leaping-truffle v3, P1)
+## Production chain data
 
-- **Goods, recipes and asteroid kinds live in `src/shared-types/`:** `goods.ts` (with a `stage` per good), `recipes.ts` and `asteroidResources.ts`. The level 3+ upgrade goods bill is `structureUpgradeGoods` in `leveling/structureLevel.ts`.
-- **`recipes.test.ts` is the authority over balance.** Every recipe returns 1.2–1.6× its input value at `BASE_PRICES`, value per weight rises by stage, and no good is an orphan. Change a price or a recipe and that test must still pass; don't loosen it.
-- **`GOOD_IDS`, `RECIPE_IDS` and `ASTEROID_RESOURCE_IDS` are append-only** (persisted or on the wire).
-- Story: [docs/architecture/production-chains.md](../../docs/architecture/production-chains.md).
+- **Goods, recipes and asteroid kinds live in `src/shared-types/`**. `recipes.test.ts` is the authority over balance: a price or recipe change must still pass it; never loosen it.
+- **`GOOD_IDS`, `RECIPE_IDS` and `ASTEROID_RESOURCE_IDS` are append-only** (persisted or on the wire). Detail: [production-chains](../../docs/architecture/production-chains.md#rules-locked-by-srcshared-typesrecipestestts).
 
-## Base generator (plan soft-leaping-truffle v3, D1)
+## Base generator (`src/core/bases/`)
 
-- **`src/core/bases/`** turns a galaxy sector into an NPC base:
-  - `contextForSector` → `baseProfileFor` (tier, role, wealth, level cap, fence);
-  - then `growBase` (placements, edges, recipes, levels).
-- **Every placement and edge is checked with the real rules AS the base is built** (`placementRejection`, `canConnect`); a slot that fails is skipped. Never bypass them; `growBase.test.ts` re-checks independently.
-- **Deterministic per seed.** NPC bases regenerate from their seed, so bump `BASE_GROWTH_VERSION` on any output change.
-- **Fenced bases put their turrets on bastions OUTSIDE the fence** (a fence blocks its owner's own fire). `Builder.tryPlace` refuses any box on an existing link line, so a later placement can never break an earlier link's line of sight.
-- **Coastal defences (v10):** the defence mix comes from `defenceMix` on its OWN random stream (`DEFENCE_STREAM`), so adding a gun never shifts the role or level rolls. `TURRET_KINDS` (exported) is every gun kind — tests count guns with it, never a name regex. Bastions seat the biggest guns first in the outward slot; arc-limited guns (`ARC_LIMITED`) get a `rot` facing out. `profile.superGuns` are bought first (region hearts). Story: [docs/features/coastal-defences.md](../../docs/features/coastal-defences.md).
-- **Turret fire control is shared** (`combat/mountFireControl.ts`): engage (reach + arc + `canTrack`), lead and on-target rules for capital mounts AND defence structures. A naval gun on a structure is sized by `structureNavalTurret` and fires from `structureMountMuzzle` (#15).
-- **Owners are factions (v4 F2).** `galaxyBasePlan` gives each base an `ownerFaction` via `chooseBaseOwner`: the controlling power in its heartland (`galaxy/control.ts` `sectorController`), else a weighted mix of the region's minor factions, its power and the Traders. The owner pick uses its own seeded stream, so layouts never move when the owner rules change.
-- **Transit hubs (v4 H):** the `transit` role is never rolled (weight 0, so every existing roll is unchanged); hubs and their teleporter links come from `transitNetwork.ts`, a galaxy-wide pass over the per-sector plans. `transitNetwork.test.ts` checks both ends of every link grow its teleporter.
-- **Military bases (v4 M):** the `military` role is never rolled either; `militarySites` places a heart garrison (unless base 0 is big) and an edge militia outpost per region. Garrisons are fenced, turret-heavy, dockless, and get a bastion row per six guns (`growOnce`, military only). `military.test.ts` locks it.
-- **Roles include `colony` (D3, habitat stations):** habitation modules that consume provisions and consumer goods. Never an outpost. Player-facing text says "habitat station", never "city".
-- Story: [docs/architecture/production-chains.md](../../docs/architecture/production-chains.md).
+- **Deterministic per seed:** bump `BASE_GROWTH_VERSION` on any output change. A new random choice uses its OWN seeded stream so existing rolls never shift.
+- **Fenced bases put their turrets on bastions OUTSIDE the fence**; `Builder.tryPlace` refuses any box on a link line.
+- **Count guns with `TURRET_KINDS`,** never a name regex. Capital mounts and defence structures share `combat/mountFireControl.ts`; structure naval guns use `structureNavalTurret` / `structureMountMuzzle` (#15).
+- Player-facing text says "habitat station", never "city".
+- Detail: [production-chains](../../docs/architecture/production-chains.md#base-roles-and-the-growth-generator-d1), [coastal-defences](../../docs/features/coastal-defences.md#in-the-bases).

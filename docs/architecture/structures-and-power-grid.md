@@ -332,7 +332,8 @@ and a bump would reset saved structures).
 **Geometry** lives in one zone-pure module, `src/core/structures/gateGeometry.ts`,
 read by both sides (#15):
 - **Collider parts:** a gate's physics body is its posts (and an airlock's side
-  walls) as separate convex parts (`gateColliderPolygons`), on the server worker
+  walls) as separate convex parts (`gateColliderPolygons`, passed to
+  `World.spawnObstacle(..., parts)`), on the server worker
   and the client prediction world, so the gap between them is open. Weapon hits
   test the same parts (`SwarmEntityRecord.boxes`, `rayHitsBox(..., boxes)`).
 - **Spans:** the shield across a gap (`gateSpans`; gate: one, airlock: A at

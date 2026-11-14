@@ -6,11 +6,11 @@ This page records what the structure system costs at that scale, and the budget 
 
 ## How it is measured (A0)
 
-**The lattice.** [`buildStructureLattice`](../../src/core/structures/structureLattice.ts) builds a valid base of N structures:
+**The lattice.** [`buildStructureLattice({n, seed, fence})`](../../src/core/structures/structureLattice.ts) builds a valid base of N structures. It measures the structure system at base scale and is the seed of the base generator:
 - a Capital at the centre;
 - a grid of Connector hubs (a vertical spine plus row chains);
 - 2–3 leaves per connector (a Solar / Battery / Cargo Bay / Turret mix, with Solars added until the base is powered);
-- a closed Shield Pylon fence, tapped into the row ends.
+- a closed Shield Pylon fence, tapped into the row ends, with a gate per side (rot 0 top and bottom, 90 left and right), still checked against the real rules.
 
 `structureLattice.test.ts` checks every placement and every link against the real `placementRejection` and `canConnect`, and checks that everything reaches the Capital.
 
@@ -109,7 +109,7 @@ Measured at the citadel (456 structures incl. a fenced lattice) on the dev box.
 | Shield Pylon | 72 × 72 |
 | Connector | 64 × 64 |
 
-`radius` is now the footprint's bounding circle, used for broad checks only.
+`radius` is now the footprint's bounding circle, used for broad checks only: a long Solar's bounding circle covers empty space beside it. A kindless fixture structure (no subtype, from `structurePoses`) is a radius-sized square.
 
 **One box drives every rule, on both sides.**
 - **Collider:** `structureHullPoints`, the footprint rectangle.

@@ -28,7 +28,7 @@ Both the actor and the owner are owner strings:
 
 - `npcOwner(allegiance, baseId?)` builds these strings.
 - `parseOwner` reads them, with a cache so hot loops allocate nothing.
-- An unknown allegiance (`npc:pirates:x`) is read as a plain id, never as an NPC side.
+- Any registered NPC faction is a valid NPC side (region powers, `ancients`, the minor factions). An unknown one (`npc:pirates:x`) is read as a plain id, never as an NPC side.
 - Persistence and uid hashing treat owners as opaque strings, so NPC owners need no migration.
 
 ## The answer
@@ -45,6 +45,7 @@ Both the actor and the owner are owner strings:
 - **Hostility is treated as mutual.** Robots attack players on sight, so a robot is `hostile` to a player's gate as well as the reverse.
 - **Hostile acts are directional.** If A breaks into B's cargo, A is hostile to B; B is not hostile to A.
 - **Hostile acts are per owner.** Raiding one trader base doesn't make every trader base hostile.
+- **Hostile acts cool down** after `HOSTILE_ACT_COOLDOWN_MS` (`HostileActLedger`, `src/core/relations/`).
 
 ## Inputs (injected)
 

@@ -145,7 +145,12 @@ reshape the galaxy:
    per frontier region, ≥1 entry per region, legacy keys preserved) and **fails
    loudly** if the spec is malformed — so a coordinate slip never reaches prod.
 3. Run `pnpm vitest run src/core/galaxy/galaxy.test.ts` (the invariants are
-   re-locked independently of the generator).
+   re-locked independently of the generator: edge symmetry, no dangling
+   neighbours, a connected graph, each faction graph-contiguous (load-bearing
+   for the hover-shrink), exactly one chokepoint edge per frontier region, at
+   least one entry sector per region and never the core, all 7 legacy keys
+   preserved as persistence identities). `galaxy.ts` stays pure: no I/O, no
+   imports outside the TS stdlib.
 4. **If the change alters the shape of persisted sector state**, bump
    `CURRENT_SCHEMA_VERSION` in
    [src/server/rooms/SectorSnapshot.ts](../../src/server/rooms/SectorSnapshot.ts).
