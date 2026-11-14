@@ -9,6 +9,7 @@ import { randomUUID } from 'node:crypto';
 import type { Room as ClientRoom } from 'colyseus.js';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import type { SectorState } from '../../../src/server/rooms/schema/SectorState.js';
+import { LOCKED_BY_WIRE_ROWS } from '../../../src/shared-types/combat/lockProfile.js';
 
 interface LockedBy { t: string; s: number; p: number }
 interface DamageMsg { targetId?: string }
@@ -58,5 +59,41 @@ describe('SectorRoom integration — NPCs lock pilots', () => {
     // Any hit before the lock completed would mean an unlocked shot.
     if (firstHitAt) expect(firstHitAt).toBeGreaterThanOrEqual(lockedAt - 120);
     await waitUntil(() => firstHitAt > 0, 8_000, 'drone fires once locked');
+  }, 30_000);
+});
+
+// Owner 2026-11-14: the own-ship slice carries only the nearest lockers
+// (completed first) plus `lockedByN`, the total, so its cost stays flat
+// however many hostiles lock on.
+describe('SectorRoom integration — lockedBy rows are capped, the total rides lockedByN', () => {
+  let harness: SectorTestHarness;
+  // 20 hostile fighters on a ring of growing radius around the pilot.
+  const POSES = Array.from({ length: 20 }, (_, i) => {
+    const a = (i / 20) * Math.PI * 2;
+    const r = 400 + i * 60;
+    return { kind: 'fighter', x: Math.cos(a) * r, y: Math.sin(a) * r, angle: a + Math.PI };
+  });
+  beforeEach(async () => {
+    harness = await bootSectorTestServer({ sectorKey: 'sol-prime', droneCount: 0, testMode: true, dronePoses: POSES });
+  }, 15_000);
+  afterEach(async () => { if (harness) await harness.cleanup(); }, 10_000);
+
+  it(`20 hostile lockers ⇒ exactly ${LOCKED_BY_WIRE_ROWS} rows and lockedByN = 20`, async () => {
+    const pid = randomUUID();
+    const room = (await harness.connectActive(pid, {
+      shipKind: 'interceptor', spawnX: 0, spawnY: 0, startHostile: true, initialHull: 1_000_000,
+    })) as ClientRoom<SectorState>;
+    let rows: LockedBy[] | undefined;
+    let total: number | undefined;
+    room.onMessage('snapshot', (snap: { states?: Record<string, { playerId?: string; lockedBy?: LockedBy[]; lockedByN?: number }> }) => {
+      for (const st of Object.values(snap.states ?? {})) {
+        if (st.playerId !== pid) continue;
+        rows = st.lockedBy;
+        total = st.lockedByN;
+      }
+    });
+    await waitUntil(() => total === 20, 12_000, 'all 20 drones lock on');
+    expect(rows).toHaveLength(LOCKED_BY_WIRE_ROWS);
+    for (const r of rows!) expect(r.t).toMatch(/^s:\d+$/);
   }, 30_000);
 });

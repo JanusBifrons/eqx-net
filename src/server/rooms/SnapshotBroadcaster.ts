@@ -195,6 +195,8 @@ export interface SnapshotBroadcasterDeps {
   lockGroupsOf?: (playerId: string) => Array<{ id: string; m: 0 | 1; l: Array<{ t: string; s: number; p: number; r?: 1 }> }> | undefined;
   /** Fire control — NPCs locking the pilot (shared ref, #16). */
   lockedByOf?: (playerId: string) => Array<{ t: string; s: 1 | 2; p: number }> | undefined;
+  /** Every NPC locking the pilot (`lockedByOf` carries only the top rows). */
+  lockedByTotalOf?: (playerId: string) => number;
   /** Phase 4 warp travel — the player's ship dropped out of a warp in the last
    *  moment (others draw the arrival). Absent ⇒ never. */
   warpArrived?: (playerId: string) => boolean;
@@ -338,6 +340,7 @@ type MutableStateEntry = {
   depositing?: number;
   groups?: Array<{ id: string; m: 0 | 1; l: Array<{ t: string; s: number; p: number; r?: 1; c?: 1 }> }>;
   lockedBy?: Array<{ t: string; s: 1 | 2; p: number }>;
+  lockedByN?: number;
   fitted?: string[];
   wallet?: number;
   poseEpoch?: number;
@@ -953,7 +956,12 @@ export class SnapshotBroadcaster {
         setOrDrop(entry, 'depositing', ownActive ? this.deps.depositProgressOf?.(ship.shipInstanceId) : undefined);
         // Fire control (#16): the own pilot's groups + locks (shared ref).
         setOrDrop(entry, 'groups', ownActive ? this.deps.lockGroupsOf?.(ship.playerId) : undefined);
-        setOrDrop(entry, 'lockedBy', ownActive ? this.deps.lockedByOf?.(ship.playerId) : undefined);
+        const lockedBy = ownActive ? this.deps.lockedByOf?.(ship.playerId) : undefined;
+        setOrDrop(entry, 'lockedBy', lockedBy);
+        // The total of every locker, only when the rows are capped (absent ⇒
+        // the rows are everyone; #16 the banner's count).
+        const lockedByN = lockedBy !== undefined ? (this.deps.lockedByTotalOf?.(ship.playerId) ?? 0) : 0;
+        setOrDrop(entry, 'lockedByN', lockedBy !== undefined && lockedByN > lockedBy.length ? lockedByN : undefined);
         // P5 (#16) — the own ACTIVE hull's fitted blueprints, emit-when-non-empty
         // (shared reference; the encoder never mutates it).
         const fitted = ownActive ? this.deps.fittedOf?.(ship.shipInstanceId) : undefined;
