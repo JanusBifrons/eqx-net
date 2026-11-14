@@ -60,6 +60,10 @@ import {
   MANOEUVRE_FLEE,
   MANOEUVRE_HOLD,
   PARKED_SPEED_FRAC,
+  SLOW_SPEED_FRAC,
+  hullClearance,
+  TARGET_STILL_MEMORY_S,
+  TARGET_STILL_MIN_S,
   type IManoeuvre,
   type ManoeuvreGoal,
   type ManoeuvreId,
@@ -251,13 +255,12 @@ const FACE_MOVE_MIN_SPEED = 0.25;
 /**
  * Hull avoidance (ramming is a real weapon since #558, so an accidental ram
  * hurts both ships). Any ship whose closest approach on the current
- * velocities passes inside (both shield bubbles + `AVOID_MARGIN_RADII` × my radius), sooner
+ * velocities passes inside `hullClearance` (both shield bubbles + a radius), sooner
  * than the time I need to turn the nose sideways at my turn rate and slide
  * clear with my thrust (× `AVOID_SAFETY`, + `AVOID_LATENCY_S`), makes me
  * dodge: nose to the side away from it, thrust and boost. All from the
  * kind's own handling and size, so it follows a retuned ship.
  */
-const AVOID_MARGIN_RADII = 1;
 const AVOID_SAFETY = 1.3;
 const AVOID_LATENCY_S = 0.1;
 /** Look this many seconds of closing ahead for a ship to avoid. */
@@ -268,6 +271,8 @@ const AVOID_LOOK_S = 3;
  *  across each other's closest-approach point: the turn key flapped at full
  *  rate nose to nose (filmed Robot Orb, 2026-11-14). */
 const AVOID_SIDE_IDLE_TICKS = 60;
+/** Simulation ticks per second (fixed 60 Hz step). */
+const TICKS_PER_S_SIM = 60;
 
 // ── Decision layer (AI overhaul slice 4) ────────────────────────────────
 /** Recent-hit counter half-life (ticks): the "under heavy fire" signal. */
@@ -508,6 +513,15 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   private _avLastTick = 0;
   /** Ticks flown with the afterburner lit (test-visible). */
   private _boostTicks = 0;
+  /** The target the still-memory is about, and the last ticks it was under
+   *  the parked / slow bar (`TARGET_STILL_MEMORY_S`). */
+  private _stillTargetId: string | null = null;
+  private _tParkedTick = -1_000_000;
+  private _tSlowTick = -1_000_000;
+  /** Start of the target's current stretch under the parked bar (-1 while
+   *  above it): it counts toward the parked memory only after
+   *  `TARGET_STILL_MIN_S`. */
+  private _tParkedSince = -1;
   /** Decisions taken while tailed (`isTailed`), and Breaks begun (test-visible). */
   private _tailedDecisions = 0;
   private _breaksBegun = 0;
@@ -646,6 +660,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     tac.accel = this.handling.thrustAccel * 60;
     tac.brakeAccel = this.handling.reverseAccel * 60;
     tac.radius = this.kind.radius;
+    tac.shieldPad = this.shieldPad;
     this._pickOpts = {
       healthWeight: DRONE_TARGET_HEALTH_WEIGHT,
       dwellTicks: DRONE_TARGET_DWELL_TICKS,
@@ -1391,7 +1406,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       // the 2x default, inside the ~80 u the bubbles touch at: two fighters
       // boosting through a head-on pass grazed in 3 of 8 duels (dogfight
       // x8, 2026-11-14, once the doubled pool kept both boosting 6 s in).
-      const clear = r + nb.radiusAt(i) + 2 * this.shieldPad + AVOID_MARGIN_RADII * r;
+      const clear = hullClearance(r, nb.radiusAt(i), this.shieldPad);
       if (miss >= clear) continue;
       // Away from where it passes (−m, square to w), as a side of w: +1 its
       // left (−wy, wx), −1 its right; dead head-on, the right. A latched
@@ -1446,6 +1461,25 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     // d(dist)/dt = (v_target − v_self)·u; closing is its negative.
     c.closing = -((target.vx - self.vx) * ux + (target.vy - self.vy) * uy);
     const ts = Math.hypot(target.vx, target.vy);
+    // Still-memory: a nudge does not make a parked / slow target a moving one.
+    if (target.id !== this._stillTargetId) {
+      this._stillTargetId = target.id;
+      this._tParkedTick = -1_000_000;
+      this._tSlowTick = -1_000_000;
+      this._tParkedSince = -1;
+    }
+    const cruise = this.handling.cruiseSpeed;
+    const minStill = TARGET_STILL_MIN_S * TICKS_PER_S_SIM;
+    if (ts <= PARKED_SPEED_FRAC * cruise) {
+      if (this._tParkedSince < 0) this._tParkedSince = tick;
+      if (tick - this._tParkedSince >= minStill) this._tParkedTick = tick;
+    } else {
+      this._tParkedSince = -1;
+    }
+    if (ts < SLOW_SPEED_FRAC * cruise) this._tSlowTick = tick;
+    const mem = TARGET_STILL_MEMORY_S * TICKS_PER_S_SIM;
+    c.tParkedHeld = tick - this._tParkedTick <= mem;
+    c.tSlowHeld = tick - this._tSlowTick <= mem;
     c.targetAspectCos = ts > PARKED_SPEED_FRAC * this.handling.cruiseSpeed ? -(target.vx * ux + target.vy * uy) / ts : 0;
     c.threatBearingCos = c.fwdX * ux + c.fwdY * uy;
     // The same bearing from the target's side: its nose vs target → me.

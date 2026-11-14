@@ -106,6 +106,9 @@ export interface TacticalContext {
   accel: number;
   brakeAccel: number;
   radius: number;
+  /** `shipTuning(kind).shieldPad`: ships collide as their shield bubbles
+   *  (hull radius + pad), see `hullClearance` (#18). */
+  shieldPad: number;
   /** `shipTuning(kind).attackRunOvershoot` (#18). */
   overshoot: number;
   // Condition.
@@ -141,6 +144,11 @@ export interface TacticalContext {
    *  target line (+ closing) and whether it may boost. */
   holdAlong: number;
   holdBoost: boolean;
+  /** The target was under the parked / slow bar within the last
+   *  `TARGET_STILL_MEMORY_S` (the brain's memory of it, reset when the target
+   *  changes): `targetParked` / `targetSlow` count it still while true. */
+  tParkedHeld: boolean;
+  tSlowHeld: boolean;
   /** Per-ship seeded stream (mulberry32, reseeded from the entity id). */
   readonly rng: Rng;
 }
@@ -153,11 +161,12 @@ export function makeTacticalContext(): TacticalContext {
     dist: 0, ux: 0, uy: 0, aimX: 0, aimY: 0, leadAngle: 0, offBoresight: 0,
     closing: 0, targetAspectCos: 0, threatBearingCos: 0, targetBowCos: 1, tFwdX: 0, tFwdY: 0,
     fireRange: 1, cruiseSpeed: 1, maxSpeed: 1, overshoot: 1,
-    maxAngvel: 1, accel: 1, brakeAccel: 1, radius: 1,
+    maxAngvel: 1, accel: 1, brakeAccel: 1, radius: 1, shieldPad: 0,
     hullFrac: 1, recentHits: 0, recentBlocks: 0, allies: 0, enemies: 0,
     bandMin: 0, bandMax: 1, turretHalfArc: 0, sensorRange: 1,
     sensorEnemies: 0, threatX: 0, threatY: 0, hasAnchor: false, anchorX: 0, anchorY: 0,
     holdAlong: 0, holdBoost: false,
+    tParkedHeld: false, tSlowHeld: false,
     rng: new Rng(1),
   };
 }
@@ -168,8 +177,29 @@ export function makeTacticalContext(): TacticalContext {
  *  it within seconds of linear damping). */
 export const PARKED_SPEED_FRAC = 0.1;
 
-/** Is the target parked (below `PARKED_SPEED_FRAC` × my cruise)? */
+/** A parked or slow target counts as one until it has stayed above the bar
+ *  this long (s): a nudge is not a getaway. Judged on the instant, a pilot
+ *  who sat still and lurched 40–150 u toward a robot for ~0.5 s each time it
+ *  drew off (the filmed fleet-melee script, take 6, 2026-11-14) read as a
+ *  moving ship on every lurch: the Robot Orb broke off its extend (Break: the
+ *  pilot came at it from behind), tailed it, braked beside it as it stopped,
+ *  and crawled into the next run ~130 u off it; it never extended past ~5 ship
+ *  lengths. The brain fills `tParkedHeld` / `tSlowHeld`. */
+export const TARGET_STILL_MEMORY_S = 1;
+
+/** …and a parked one only once it has sat under the parked bar this long (s):
+ *  "parked" also means "cannot be tailing me" (`isTailed`, the Break gate),
+ *  so a ship that has just started from rest is a threat the moment it
+ *  moves. (The slow memory only changes how it is fought: no Tail.) Remembered from the instant, a robot set on a fighter's six from
+ *  rest read as parked for its first second, and the fighter turned to strafe
+ *  it instead of breaking (dogfightOnSight, 2026-11-14). The filmed pilot sat
+ *  still ~0.7–2 s between lurches. */
+export const TARGET_STILL_MIN_S = 0.5;
+
+/** Is the target parked (below `PARKED_SPEED_FRAC` × my cruise, now or within
+ *  `TARGET_STILL_MEMORY_S`)? */
 export function targetParked(ctx: TacticalContext): boolean {
+  if (ctx.tParkedHeld) return true;
   const v = PARKED_SPEED_FRAC * ctx.cruiseSpeed;
   return ctx.tvx * ctx.tvx + ctx.tvy * ctx.tvy <= v * v;
 }
@@ -186,11 +216,28 @@ export function targetParked(ctx: TacticalContext): boolean {
  *  close station and the face-off rule keep that out of formation. */
 export const SLOW_SPEED_FRAC = 0.5;
 
-/** Is the target slow (below `SLOW_SPEED_FRAC` × my cruise)? Every parked
- *  target is slow. */
+/** Is the target slow (below `SLOW_SPEED_FRAC` × my cruise, now or within
+ *  `TARGET_STILL_MEMORY_S`)? Every parked target is slow. */
 export function targetSlow(ctx: TacticalContext): boolean {
+  return ctx.tSlowHeld || ctx.tParkedHeld || targetSlowNow(ctx);
+}
+
+/** Is the target slow right now (no memory)? */
+export function targetSlowNow(ctx: TacticalContext): boolean {
   const v = SLOW_SPEED_FRAC * ctx.cruiseSpeed;
   return ctx.tvx * ctx.tvx + ctx.tvy * ctx.tvy < v * v;
+}
+
+/** Hull avoidance's clearance margin, in own hull radii. */
+export const HULL_CLEAR_MARGIN_RADII = 1;
+
+/** How far apart two ships' centres must pass for hull avoidance to leave
+ *  them be: both shield bubbles (hull radii + 2 × my pad: the other's pad is
+ *  taken as mine, a pad follows the size class) plus
+ *  `HULL_CLEAR_MARGIN_RADII` × my radius. The one rule the dodge
+ *  (`HostileDroneBehaviour`) and the strafing miss (`runMiss`) share. */
+export function hullClearance(radius: number, otherRadius: number, shieldPad: number): number {
+  return radius + otherRadius + 2 * shieldPad + HULL_CLEAR_MARGIN_RADII * radius;
 }
 
 /** A ship's guns bear on what sits within this cos of its bow (~60°): the

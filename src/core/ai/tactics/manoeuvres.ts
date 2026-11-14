@@ -13,6 +13,7 @@ import {
   FACE_AIM_LEAD,
   FACE_AUTO,
   FACE_MOVE,
+  hullClearance,
   MANOEUVRE_ATTACK_RUN,
   MANOEUVRE_BREAK,
   MANOEUVRE_HOLD,
@@ -295,6 +296,9 @@ const RUN_DIVE_MAX_S = 5;
 const RUN_DIVE_TIME_MUL = 1.1;
 /** A pass that never gets the overshoot clear ends after this long (s). */
 const RUN_PASS_MAX_S = 2;
+/** Strafing, a pass that never gets abeam of the target ends after this many
+ *  `RUN_PASS_MAX_S`. */
+const RUN_STRAFE_PASS_CAP = 3;
 /** Seeded extend time range (s); the extend ends early once the gap is
  *  `RUN_EXTEND_RANGE` × fire range (room to turn and come back). */
 const RUN_EXTEND_MIN_S = 1.5;
@@ -335,6 +339,21 @@ export const STRAFE_EXTEND_OVERSHOOTS = 1;
 /** Strafing a parked or slow target: the dive aims this share of the overshoot
  *  beside it (see `runMiss`). */
 export const STRAFE_MISS_OVERSHOOTS = 0.25;
+/** …and never closer than this × `hullClearance` against a ship my size:
+ *  a pass aimed inside the clearance is a collision course to hull avoidance,
+ *  which dodges square to the closing velocity, round the target. Since the
+ *  clearance counts shield bubbles (2026-11-14) the quarter overshoot (110 u)
+ *  sat inside it for a Robot Orb (130 u) and a Robot Cube (112 u): each pass
+ *  turned into a dodge that scraped round the target's bubble at 30–80 u/s for
+ *  ~1 s (strafeParkedRobots). The margin keeps a flown pass, which wanders a
+ *  little off its aim, clear of the dodge. */
+export const STRAFE_MISS_CLEAR_MUL = 1.25;
+/** A strafing pass re-aims once the target has moved so that the locked line
+ *  passes inside this share of the miss (slack for the flown line's wobble). */
+const STRAFE_RELOCK_FRAC = 0.9;
+/** A strafing extend's course runs at least this cos away from the target
+ *  (60° off straight away): it opens the range at half its speed or more. */
+const STRAFE_EXTEND_OUT = 0.5;
 
 /**
  * Boom-and-zoom: dive at full speed (boosting) at the lead, guns on it;
@@ -431,9 +450,21 @@ export class AttackRunManoeuvre implements IManoeuvre {
       // accelerates all the time in combat"): gated on a slow target only,
       // a robot orb on a pilot at 47–187 u/s braked 122 → 14 u/s to turn
       // back (filmed take 5, 2026-11-14; attackRunTurnBack).
-      if (swingRound(ctx)) { gx = SWING.x; gy = SWING.y; }
+      const swinging = swingRound(ctx);
+      if (swinging) { gx = SWING.x; gy = SWING.y; }
       addInterestToward(maps, gx, gy, 1, GOAL_SHAPE);
       out.speed = ctx.maxSpeed;
+      // Strafing: dive in firing. The pass locks at its pull distance (an
+      // overshoot out at least), so until then the nose may sit on the lead:
+      // the strafing miss (≥ 1.25 × the hull clearance, ~160 u for a robot)
+      // puts the course to it ~13–22° off the lead, outside the ~14° fire
+      // cone, and a dive flown along the course hardly fired (strafeParkedRobots:
+      // 1–11 hits in 30 s against 26–31 with the old 110 u miss).
+      if (!swinging && ctx.targetIsShip && targetSlow(ctx)) {
+        out.facing = FACE_AIM_LEAD;
+        out.boost = true;
+        return;
+      }
       // Nose along the course to the miss point, not on the lead: a ship
       // thrusts only along its nose, so a nose held on the lead flies the
       // dive into the target (a ram, now a real weapon). The course runs a
@@ -443,11 +474,57 @@ export class AttackRunManoeuvre implements IManoeuvre {
       out.boost = true;
       return;
     }
-    addInterestToward(maps, this.passX, this.passY, 1, GOAL_SHAPE);
+    let cx = this.passX;
+    let cy = this.passY;
+    if (this.phase === RUN_EXTEND && ctx.targetIsShip && targetSlow(ctx)) {
+      // A strafing extend flies away from the target: the locked course, but
+      // never less than `STRAFE_EXTEND_OUT` of it straight away (kept on its
+      // sideways side). Flown straight, a target that moved in front of it
+      // (a pilot nudging after it) turned it into a ram course: a Robot Cube
+      // pressed the pilot's bubble at matched speed for 3 s, where hull
+      // avoidance (relative speed ~0) never saw it; and a course square to
+      // the line out of a close pass opened the range at a crawl.
+      const a = cx * ctx.ux + cy * ctx.uy;
+      if (a > -STRAFE_EXTEND_OUT) {
+        let lx = cx - a * ctx.ux;
+        let ly = cy - a * ctx.uy;
+        let ll = Math.hypot(lx, ly);
+        if (ll < 1e-6) { lx = -ctx.uy * this.side; ly = ctx.ux * this.side; ll = 1; }
+        const k = Math.sqrt(1 - STRAFE_EXTEND_OUT * STRAFE_EXTEND_OUT) / ll;
+        cx = lx * k - ctx.ux * STRAFE_EXTEND_OUT;
+        cy = ly * k - ctx.uy * STRAFE_EXTEND_OUT;
+      }
+    }
+    addInterestToward(maps, cx, cy, 1, GOAL_SHAPE);
     out.speed = ctx.maxSpeed;
     out.facing = FACE_MOVE;
     // Zoom through the pass and away on the extend.
     out.boost = true;
+  }
+
+  /** Lock the pass heading: toward the miss point beside the target. */
+  private lockPass(ctx: TacticalContext): void {
+    if (ctx.targetIsShip && targetSlow(ctx)) {
+      // Strafing: the line that grazes a circle of the miss radius round the
+      // target (passes exactly the miss beside it), or square to the line to
+      // it when already inside that radius. A heading at the point beside the
+      // target, re-aimed close in, points inward and flies round the target.
+      // Round where the target will be `STRAFE_LEAD_S` on (a still one: where
+      // it is; one nudging at me: the line clears where it is going).
+      strafeLead(ctx);
+      const miss = runMiss(ctx);
+      const sinA = LEAD.d > miss ? miss / LEAD.d : 1;
+      const cosA = Math.sqrt(1 - sinA * sinA);
+      this.passX = LEAD.ux * cosA - LEAD.uy * sinA * this.side;
+      this.passY = LEAD.uy * cosA + LEAD.ux * sinA * this.side;
+      return;
+    }
+    const miss = runMiss(ctx) * this.side;
+    const gx = ctx.tx - ctx.uy * miss - ctx.x;
+    const gy = ctx.ty + ctx.ux * miss - ctx.y;
+    const gl = Math.hypot(gx, gy);
+    if (gl > 1e-6) { this.passX = gx / gl; this.passY = gy / gl; }
+    else { this.passX = ctx.ux; this.passY = ctx.uy; }
   }
 
   isDone(ctx: TacticalContext): boolean {
@@ -466,21 +543,43 @@ export class AttackRunManoeuvre implements IManoeuvre {
     if (this.phase === RUN_DIVE) {
       if (ctx.tick >= this.phaseEnd) { this.phase = RUN_DONE; return; }
       if (ctx.dist < runPullDist(ctx) || (ctx.closing < 0 && ctx.dist < 0.5 * ctx.fireRange)) {
-        // Lock the pass heading: toward the miss point beside the target.
-        const miss = runMiss(ctx) * this.side;
-        const gx = ctx.tx - ctx.uy * miss - ctx.x;
-        const gy = ctx.ty + ctx.ux * miss - ctx.y;
-        const gl = Math.hypot(gx, gy);
-        if (gl > 1e-6) { this.passX = gx / gl; this.passY = gy / gl; }
-        else { this.passX = ctx.ux; this.passY = ctx.uy; }
+        this.lockPass(ctx);
         this.phase = RUN_PASS;
         this.phaseEnd = ctx.tick + RUN_PASS_MAX_S * TICKS_PER_S;
       }
       return;
     }
     if (this.phase === RUN_PASS) {
+      const strafe = ctx.targetIsShip && targetSlow(ctx);
+      let closeIn = false;
+      if (strafe) {
+        // Strafing: the target moved into the locked line (still ahead, the
+        // line now passing inside `STRAFE_RELOCK_FRAC` × the miss): aim
+        // afresh beside it, same side. The pass is locked from up to an overshoot
+        // out, so a target that shifts a few lengths meanwhile (a pilot
+        // nudging toward the ship) sat on it.
+        // Already inside the miss with it still ahead: no room to pass beside
+        // it, so the pass is over and the extend flies out (re-aimed square
+        // to the line, the course kept the ship circling at the miss radius).
+        const miss = runMiss(ctx);
+        if (ctx.ux * this.passX + ctx.uy * this.passY > 0 && ctx.dist < miss) closeIn = true;
+        else {
+          strafeLead(ctx);
+          const ahead = LEAD.ux * this.passX + LEAD.uy * this.passY;
+          const lat = LEAD.ux * this.passY - LEAD.uy * this.passX;
+          if (ahead > 0 && LEAD.d * (lat < 0 ? -lat : lat) < STRAFE_RELOCK_FRAC * miss) this.lockPass(ctx);
+        }
+      }
       const beyond = (ctx.x - ctx.tx) * this.passX + (ctx.y - ctx.ty) * this.passY;
-      if (beyond > ctx.overshoot || ctx.tick >= this.phaseEnd) {
+      // Strafing, the pass runs on its timer only once abeam of the target
+      // (capped at `RUN_STRAFE_PASS_CAP` timers): it is locked from up to an
+      // overshoot out, and a robot at cruise (~130 u/s, its boost pool spent)
+      // covers ~260 u in the timer, so the extend began short of the target.
+      const timeUp = strafe
+        ? (beyond > 0 && ctx.tick >= this.phaseEnd)
+          || ctx.tick >= this.phaseEnd + (RUN_STRAFE_PASS_CAP - 1) * RUN_PASS_MAX_S * TICKS_PER_S
+        : ctx.tick >= this.phaseEnd;
+      if (beyond > ctx.overshoot || timeUp || closeIn) {
         this.phase = RUN_EXTEND;
         const s = RUN_EXTEND_MIN_S + (RUN_EXTEND_MAX_S - RUN_EXTEND_MIN_S) * rngUnit(ctx);
         this.phaseEnd = ctx.tick + Math.round(s * TICKS_PER_S);
@@ -498,6 +597,20 @@ export class AttackRunManoeuvre implements IManoeuvre {
   }
 }
 
+/** Strafing: the pass clears where the target will be this long on (s). A
+ *  pilot nudging at the robot (the filmed shot's script, ~200 u/s for ~0.5 s)
+ *  otherwise moved into each pass after it was aimed. */
+const STRAFE_LEAD_S = 0.5;
+const LEAD = { ux: 0, uy: 1, d: 0 };
+/** Fill `LEAD` with the unit line and distance to the target `STRAFE_LEAD_S` on. */
+function strafeLead(ctx: TacticalContext): void {
+  const dx = ctx.tx + ctx.tvx * STRAFE_LEAD_S - ctx.x;
+  const dy = ctx.ty + ctx.tvy * STRAFE_LEAD_S - ctx.y;
+  const d = Math.hypot(dx, dy);
+  if (d < 1e-6) { LEAD.ux = ctx.ux; LEAD.uy = ctx.uy; LEAD.d = 0; return; }
+  LEAD.ux = dx / d; LEAD.uy = dy / d; LEAD.d = d;
+}
+
 /** How far beside the target the run passes: a size, not a range (#18). */
 function runMiss(ctx: TacticalContext): number {
   const m = RUN_MISS_RADII * ctx.radius;
@@ -506,8 +619,11 @@ function runMiss(ctx: TacticalContext): number {
   // the 2.5-radii aim (tuned on moving duels) lands exactly there: two shield
   // bubbles touch (strafeParked: a ram on the first pass). Strafe a quarter
   // overshoot aside (`shipTuning.attackRunOvershoot` / 4, as the tuning
-  // documents), never less than the duel miss.
-  const s = STRAFE_MISS_OVERSHOOTS * ctx.overshoot;
+  // documents), never inside the hull-avoidance clearance
+  // (`STRAFE_MISS_CLEAR_MUL`) nor the duel miss.
+  let s = STRAFE_MISS_OVERSHOOTS * ctx.overshoot;
+  const c = STRAFE_MISS_CLEAR_MUL * hullClearance(ctx.radius, ctx.radius, ctx.shieldPad);
+  if (c > s) s = c;
   return s > m ? s : m;
 }
 

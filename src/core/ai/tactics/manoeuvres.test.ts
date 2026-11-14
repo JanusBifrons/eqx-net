@@ -13,8 +13,11 @@ import {
   FACE_AIM_LEAD,
   FACE_AUTO,
   FACE_MOVE,
+  hullClearance,
   makeManoeuvreGoal,
   makeTacticalContext,
+  targetParked,
+  targetSlow,
   type IManoeuvre,
   type TacticalContext,
 } from './manoeuvre.js';
@@ -25,6 +28,7 @@ import {
   runOpenDist,
   runPullDist,
   STRAFE_EXTEND_OVERSHOOTS,
+  STRAFE_MISS_CLEAR_MUL,
   STRAFE_MISS_OVERSHOOTS,
   TAIL_BEHIND,
   TAIL_BEHIND_CLOSE,
@@ -311,20 +315,27 @@ describe('AttackRunManoeuvre started inside its pass distance: open the range fi
 describe('AttackRunManoeuvre on a parked ship: strafing runs (owner 2026-11-14)', () => {
   // "Dive in firing, pass, swing round and come again, like a fighter on a
   // ground target. Always moving."
-  it('passes a quarter overshoot beside it, never closer than the duel miss', () => {
+  // The locked strafing pass heading grazes a circle of the miss radius round
+  // the target: tan(heading off the line) = miss / sqrt(d² − miss²).
+  const grazeTan = (miss: number, d: number): number => miss / Math.sqrt(d * d - miss * miss);
+  it('passes a quarter overshoot beside it, never inside 1.25 × the hull-avoidance clearance', () => {
     // Pull-off point (inside the overshoot), fixed side (+x of a +y line).
     const m = new AttackRunManoeuvre();
     m.begin(ctxAt(0, -1500, 0, 0, { tick: 0, radius: 10 }));
     run(m, ctxAt(0, -OVER + 10, 0, 0, { tick: 1, vy: 300, radius: 10 }));
-    // The locked pass heading points at the miss point beside the target.
     const want = STRAFE_MISS_OVERSHOOTS * OVER;
     const p = run(m, ctxAt(0, -OVER + 10, 0, 0, { tick: 2, vy: 300, radius: 10 }));
-    expect(p.dirX / p.dirY).toBeCloseTo(want / (OVER - 10), 1);
-    // The duel miss (2.5 radii) wins when it is wider.
-    const big = new AttackRunManoeuvre();
-    big.begin(ctxAt(0, -1500, 0, 0, { tick: 0, radius: 80 }));
-    const q = run(big, ctxAt(0, -OVER + 10, 0, 0, { tick: 1, vy: 300, radius: 80 }));
-    expect(q.dirX / q.dirY).toBeCloseTo((2.5 * 80) / (OVER - 10), 1);
+    expect(p.dirX / p.dirY).toBeCloseTo(grazeTan(want, OVER - 10), 1);
+    // A big hull (or its shield bubbles): the clearance floor wins. Was "the
+    // duel miss (2.5 radii) wins": the clearance (both bubbles + a radius,
+    // × 1.25) is always wider than 2.5 radii, so it replaced that floor.
+    for (const [radius, shieldPad] of [[80, 0], [30, 20]] as const) {
+      const big = new AttackRunManoeuvre();
+      big.begin(ctxAt(0, -1500, 0, 0, { tick: 0, radius, shieldPad }));
+      const q = run(big, ctxAt(0, -OVER + 10, 0, 0, { tick: 1, vy: 300, radius, shieldPad }));
+      const miss = Math.max(want, STRAFE_MISS_CLEAR_MUL * hullClearance(radius, radius, shieldPad));
+      expect(q.dirX / q.dirY).toBeCloseTo(grazeTan(miss, OVER - 10), 1);
+    }
   });
   it('extends to the swing-round distance (overshoots, from shipTuning), not the seeded timer, then is done', () => {
     const m = new AttackRunManoeuvre();
@@ -343,6 +354,31 @@ describe('AttackRunManoeuvre on a parked ship: strafing runs (owner 2026-11-14)'
     run(duel, ctxAt(0, -OVER + 10, 0, 0, { tick: 1, vy: 300, ...MOVING }));
     expect(duel.isDone(ctxAt(0, 1.5 * OVER, 0, 0, { tick: 2, vy: 300, ...MOVING }))).toBe(false);
     expect(duel.isDone(ctxAt(0, 1.5 * OVER, 0, 0, { tick: 3, vy: 300, ...MOVING }))).toBe(false);
+  });
+  it('a pass that finds the target still ahead inside the miss is over; the extend opens the range at half its speed or more', () => {
+    // A pilot nudged into the pass line (filmed fleet-melee take 6): the
+    // locked line now runs at it from inside the miss.
+    const m = new AttackRunManoeuvre();
+    m.begin(ctxAt(0, -1500, 0, 0, { tick: 0 }));
+    run(m, ctxAt(0, -OVER + 10, 0, 0, { tick: 1, vy: 300 }));
+    const close = ctxAt(0, -60, 0, 0, { tick: 2, vy: 300 });
+    expect(m.isDone(close)).toBe(false);
+    expect(m.diving).toBe(false);
+    // Course at least 60° off straight at it (u = +y here): dirY ≤ −0.5.
+    const d = run(m, ctxAt(0, -60, 0, 0, { tick: 3, vy: 300 }));
+    expect(d.dirY).toBeLessThan(-0.4);
+  });
+  it('a nudge is not a getaway: a target recently parked / slow stays so (the brain still-memory)', () => {
+    const c = ctxAt(0, -1000, 0, 0, { tvy: CRUISE });
+    expect(targetParked(c)).toBe(false);
+    expect(targetSlow(c)).toBe(false);
+    c.tSlowHeld = true;
+    expect(targetSlow(c)).toBe(true);
+    expect(targetParked(c)).toBe(false);
+    c.tSlowHeld = false;
+    c.tParkedHeld = true;
+    expect(targetParked(c)).toBe(true);
+    expect(targetSlow(c)).toBe(true);
   });
   it('a new run that starts flying away swings round in an arc (course square to the velocity), then dives', () => {
     // Just after an extend: 500 u past the target (target at the origin,

@@ -26,6 +26,7 @@ import {
   MANOEUVRE_TAIL,
   targetParked,
   targetSlow,
+  targetSlowNow,
   type ManoeuvreId,
   type TacticalContext,
 } from './manoeuvre.js';
@@ -131,7 +132,11 @@ export function scoreManoeuvres(ctx: TacticalContext, role: RoleProfile, out: Fl
   const pack = 1 / (1 + PACK_DAMP * surplus);
 
   const parked = targetParked(ctx);
-  if (parked || targetSlow(ctx)) {
+  // A ship only remembered as slow that is on my tail at speed now is fought
+  // as the moving ship it is (a tailer that started at half my cruise was
+  // strafed instead of broken from for a second: dogfight "breaks within
+  // 1 s", 2026-11-14). A remembered-parked one never tails me (isTailed).
+  if (parked || (targetSlow(ctx) && (targetSlowNow(ctx) || !tailed))) {
     // A parked or slow ship gets strafing runs (owner decision 2026-11-14: "Dive in
     // firing, pass, swing round and come again, like a fighter on a ground
     // target. Always moving."): no Tail and no Hold (both settle near a
