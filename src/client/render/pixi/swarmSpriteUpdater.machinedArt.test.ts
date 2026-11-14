@@ -13,7 +13,8 @@ import { DAMAGE_FLASH_COLOR } from './spriteBuilders.js';
 import { MachinedShipSprite } from '../art/MachinedShipSprite.js';
 import type { ArtHandle, ArtService, ShipArt, StructArt } from '../art/ArtService.js';
 import { MachinedFlatSprite } from '../art/MachinedFlatSprite.js';
-import { npcFactionDef, type FactionId } from '../../../shared-types/factions.js';
+import { npcFactionDef, teamColorOf, teamSigilOf, type FactionId } from '../../../shared-types/factions.js';
+import { allegianceOfKind } from '../../../shared-types/shipKinds';
 import type { RenderMirror, SwarmRenderState, PoseRingEntry } from '../../../core/contracts/IRenderer.js';
 import { POSE_RING_DEPTH } from '../../../core/contracts/IRenderer.js';
 
@@ -166,5 +167,37 @@ describe('updateSwarmSprites — Machined art', () => {
     updateSwarmSprites(mirror, ctx);
     expect(ctx.sprites.get('swarm-3')).toBeInstanceOf(Graphics);
     expect(ctx.art.handles.size).toBe(0);
+  });
+});
+
+describe('updateSwarmSprites — ship livery (?livery=)', () => {
+  function liveryCalls(livery: 'a' | undefined, entries: Array<[number, SwarmRenderState]>): Array<unknown[]> {
+    const { svc } = stubArt();
+    const calls: Array<unknown[]> = [];
+    const orig = svc.ship;
+    (svc as { ship: unknown }).ship = (...args: unknown[]) => { calls.push(args); return (orig as (...a: unknown[]) => ArtHandle)(...args); };
+    const ctx = makeCtx(svc);
+    if (livery) ctx.art.livery = livery;
+    updateSwarmSprites({ swarm: new Map(entries) } as unknown as RenderMirror, ctx);
+    return calls;
+  }
+
+  it('a patrol wears its faction colour, a drone its allegiance colour, a cargo pod none', () => {
+    const sol = 'core' as FactionId;
+    const calls = liveryCalls('a', [[5, drone('patrol-fighter', sol)], [6, drone('fighter')], [7, drone('cargo-pod')]]);
+    const byId = new Map(calls.map((c) => [c[0], c]));
+    expect(byId.get('patrol-fighter')![1]).toBeUndefined();
+    expect(byId.get('patrol-fighter')![4]).toEqual({ treatment: 'a', team: teamColorOf(sol), sigil: teamSigilOf(sol) });
+    expect(byId.get('fighter')![4]).toEqual({ treatment: 'a', team: teamColorOf(allegianceOfKind('fighter')), sigil: teamSigilOf(allegianceOfKind('fighter')) });
+    expect(byId.get('cargo-pod')![4]).toBeUndefined();
+  });
+
+  it('with the livery unset, requests are exactly as before', () => {
+    const sol = 'core' as FactionId;
+    const calls = liveryCalls(undefined, [[5, drone('patrol-fighter', sol)], [6, drone('fighter')]]);
+    expect(calls).toEqual([
+      ['patrol-fighter', npcFactionDef(sol)!.color, true, false, undefined],
+      ['fighter', undefined, true, false, undefined],
+    ]);
   });
 });

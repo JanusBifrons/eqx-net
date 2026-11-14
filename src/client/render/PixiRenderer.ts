@@ -59,7 +59,7 @@ import { FxFences, FxShields } from './art/fx/FxShields.js';
 import { DEFAULT_SHIP_KIND } from '../../shared-types/shipKinds.js';
 import { shieldBubbleRadiusForEntity } from './pixi/shieldBubbleRadius.js';
 import { ART_OFF, type ArtOptions } from './art/artMode.js';
-import { buildArtShipSprite, isMachinedSprite, shipArtSwap, shipHandleFor, updateArtShipLight, type ShipArtCtx } from './art/shipArtSprites.js';
+import { buildArtShipSprite, isMachinedSprite, ownerLivery, shipArtSwap, shipHandleFor, updateArtShipLight, type ShipArtCtx } from './art/shipArtSprites.js';
 import { BeamSpritePool, type BeamView } from './BeamSpritePool';
 import {
   CameraDirector,
@@ -2950,7 +2950,10 @@ export class PixiRenderer implements IRenderer {
       // Machined art: a parked hull swaps to its Machined sprite once ready.
       const artKey = `linger-${shipInstanceId}`; // TODO: alloc-debt (one key string per lingering hull per frame)
       const kind = 'kind' in decision ? decision.kind : (entry?.kind ?? 'fighter');
-      const lingerHandle = shipHandleFor(this._artCtx, artKey, kind, undefined);
+      const lingerLv = this._artCtx.livery !== undefined ? ownerLivery(ship.ownerPlayerId) : undefined;
+      const lingerHandle = lingerLv
+        ? shipHandleFor(this._artCtx, artKey, kind, undefined, lingerLv.team, lingerLv.sigil)
+        : shipHandleFor(this._artCtx, artKey, kind, undefined);
       let action: SpriteDecision['action'] = decision.action;
       if (entry && action === 'reposition' && shipArtSwap(this._artCtx, entry.sprite, lingerHandle) !== 'keep') action = 'rebuild';
       if (action === 'rebuild') {

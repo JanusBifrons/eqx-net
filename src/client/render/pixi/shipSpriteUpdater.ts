@@ -33,7 +33,7 @@ import {
   shapeForKind,
 } from './spriteBuilders.js';
 import type { MountVisualManager } from '../MountVisualManager';
-import { buildArtShipSprite, shipArtSwap, shipHandleFor, updateArtShipLight, type ShipArtCtx } from '../art/shipArtSprites.js';
+import { buildArtShipSprite, ownerLivery, shipArtSwap, shipHandleFor, updateArtShipLight, type ShipArtCtx } from '../art/shipArtSprites.js';
 
 export interface ShipSpriteCtx {
   shipContainer: Container;
@@ -62,7 +62,11 @@ export function updateShipSprites(mirror: RenderMirror, ctx: ShipSpriteCtx): voi
     let sprite = ctx.sprites.get(playerId);
     // Machined art: build (or swap to) the Machined sprite once its art is
     // ready; until then, today's vector look.
-    const handle = shipHandleFor(ctx.art, playerId, ship.kind ?? 'fighter', undefined);
+    // Livery: the mirror key is the player id = the player's faction id.
+    const lv = ctx.art.livery !== undefined ? ownerLivery(playerId) : undefined;
+    const handle = lv
+      ? shipHandleFor(ctx.art, playerId, ship.kind ?? 'fighter', undefined, lv.team, lv.sigil)
+      : shipHandleFor(ctx.art, playerId, ship.kind ?? 'fighter', undefined);
     if (sprite && shipArtSwap(ctx.art, sprite, handle) !== 'keep') {
       ctx.mountVisuals.removeShip(playerId); // its barrel cluster is a child
       ctx.shipContainer.removeChild(sprite);

@@ -56,8 +56,9 @@ import { minerRangeForKind } from '../minerRangeRing.js';
 import type { MountVisualManager } from '../MountVisualManager';
 import {
   buildArtShipSprite, isMachinedSprite, rockHandleFor, scrapHandleFor, shipArtSwap, shipHandleFor, structHandleFor,
-  updateArtShipLight, type ShipArtCtx,
+  updateArtShipLight, ownerLivery, SCRAP_TEAM, type ShipArtCtx,
 } from '../art/shipArtSprites.js';
+import { allegianceOfKind } from '../../../shared-types/shipKinds';
 import { MachinedShipSprite } from '../art/MachinedShipSprite.js';
 import {
   interpolateSwarmPose,
@@ -197,6 +198,28 @@ function classicRockTint(resource: string | undefined): number | undefined {
   return resource === 'ice' ? 0xa8dcff : resource === 'crystal' ? 0xd2a8ff : undefined;
 }
 
+/** A live swarm ship's art. Classic look: a patrol bakes its faction paint.
+ *  Livery (`actx.livery`): the owner (faction, else the kind's allegiance)
+ *  supplies team + sigil instead; cargo pods keep their tier colours. */
+function shipArtHandleForEntity(actx: ShipArtCtx, key: string, kind: string, faction: string | undefined): ReturnType<typeof shipHandleFor> {
+  if (actx.livery !== undefined && kind !== 'cargo-pod') {
+    const lv = ownerLivery(faction ?? allegianceOfKind(kind));
+    return shipHandleFor(actx, key, kind, undefined, lv.team, lv.sigil);
+  }
+  return shipHandleFor(actx, key, kind, faction !== undefined ? npcFactionDef(faction)?.color : undefined);
+}
+
+/** A wreck piece's parent art. Under a livery: the owner's livery when the
+ *  entry names one, else neutral grey scrap (never a bright fresh bake). */
+function wreckArtHandleFor(actx: ShipArtCtx, key: string, kind: string, faction: string | undefined): ReturnType<typeof shipHandleFor> {
+  if (actx.livery === undefined) return shipHandleFor(actx, key, kind, undefined);
+  if (faction !== undefined) {
+    const lv = ownerLivery(faction);
+    return shipHandleFor(actx, key, kind, undefined, lv.team, lv.sigil);
+  }
+  return shipHandleFor(actx, key, kind, undefined, SCRAP_TEAM);
+}
+
 export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): void {
   if (!mirror.swarm) return;
   const now = performance.now();
@@ -247,7 +270,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     const artHandle = !ctx.art.art
       ? null
       : entry.kind === 1 && entry.shipKind
-        ? shipHandleFor(ctx.art, spriteKey, entry.shipKind, entry.faction !== undefined ? npcFactionDef(entry.faction)?.color : undefined)
+        ? shipArtHandleForEntity(ctx.art, spriteKey, entry.shipKind, entry.faction)
         : entry.kind === 2 && entry.shipKind
           ? structHandleFor(ctx.art, spriteKey, entry.shipKind, -entry.angle)
           : entry.kind === 3 && entry.shipKind
@@ -258,7 +281,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     // S3: a wreck piece draws its PARENT kind's own baked art (the handle the
     // live hull used, so no re-bake). Swap the plain piece once it is ready.
     const wreckArtHandle = entry.kind === 4 && ctx.art.art
-      ? shipHandleFor(ctx.art, spriteKey, entry.shipKind ?? wreckDescs!.get(entry.wreckId!)!.parentKind, undefined)
+      ? wreckArtHandleFor(ctx.art, spriteKey, entry.shipKind ?? wreckDescs!.get(entry.wreckId!)!.parentKind, entry.faction)
       : null;
     if (
       sprite instanceof WreckPieceSprite && wreckArtHandle !== null &&

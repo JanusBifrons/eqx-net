@@ -7,6 +7,7 @@
  * what it was built from changes (rare), so the per-frame check is a map
  * lookup and a few compares (invariant #14).
  */
+import { teamColorOf, teamSigilOf } from '../../../shared-types/factions.js';
 import type { Container } from 'pixi.js';
 import { decideArtSwap, type ArtSwap } from '../spriteUpdateDecisions.js';
 import type { ArtHandle, ArtService } from './ArtService.js';
@@ -119,3 +120,15 @@ export function isMachinedSprite(sprite: Container): boolean {
 export function updateArtShipLight(actx: ShipArtCtx, sprite: Container): void {
   if (sprite instanceof MachinedShipSprite) sprite.updateLight(actx.sunAz);
 }
+
+/** A faction's livery (team colour + sigil seed), cached per owner id so the
+ *  frame loop never re-hashes; the entry is allocated once on first sight. */
+export interface OwnerLivery { team: number; sigil: number }
+const ownerLiveries = new Map<string, OwnerLivery>();
+export function ownerLivery(owner: string): OwnerLivery {
+  let l = ownerLiveries.get(owner);
+  if (!l) { l = { team: teamColorOf(owner), sigil: teamSigilOf(owner) }; ownerLiveries.set(owner, l); }
+  return l;
+}
+/** Wreckage whose owner is unknown wears neutral grey scrap under a livery. */
+export const SCRAP_TEAM = 0x8a93a1;
