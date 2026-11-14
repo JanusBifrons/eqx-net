@@ -252,6 +252,11 @@ describe('SectorRoom integration — sub-capital wrecks (sub-cap break-up slice 
       const at0 = int().wreckState('v')!;
       int().postToWorker({ type: 'SET_POSITION', entityId: 'v', x: at0.x, y: at0.y, angle: 0.3, vx: k.maxSpeed, vy: 0, angvel: 2 });
       await harness.advance(60);
+      // Arcade handling (2026-11-13) damps a coasting hull to cruise in
+      // ~0.26 s, so put it back at full speed just before the kill.
+      const at1 = int().wreckState('v')!;
+      int().postToWorker({ type: 'SET_POSITION', entityId: 'v', x: at1.x, y: at1.y, angle: at1.angle, vx: k.maxSpeed, vy: 0, angvel: 2 });
+      await harness.advance(20);
       const at = int().wreckState('v')!;
       const hit = hullPoint(kind, at.x, at.y, at.angle);
       int().applyDamage('v', 'shooter-x', 1e7, hit.x, hit.y);

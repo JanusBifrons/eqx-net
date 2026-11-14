@@ -24,6 +24,7 @@ import { SHIP_SCALE, SHIP_TUNING, type ShipTuningProfile } from './config.js';
 import { NAVAL_RANGE, type NavalRangeMode } from '../combat/navalRange.js';
 import { REAL_NAVAL_GUNS, navalGunEngageReach, type NavalGunId } from '../combat/navalGuns.js';
 import { DESTRUCTION_PROFILES, destructionProfileIdForKind, type DestructionProfileId } from './destruction.js';
+import { ARCADE_HANDLING, handlingClassOf } from './arcadeHandling.js';
 
 export type SizeClass = 'fighter' | 'frigate' | 'cruiser' | 'capital';
 export const SIZE_CLASSES: readonly SizeClass[] = ['fighter', 'frigate', 'cruiser', 'capital'];
@@ -342,8 +343,11 @@ export function shipTuning(kind: ShipKind): ShipTuning {
     wreckSeparate: WRECK_SEPARATE_PER_RADIUS * kind.radius,
     wreckColliderInset: WRECK_COLLIDER_INSET_PER_RADIUS * kind.radius,
     // Scaled by the destruction profile (capital ×1: unchanged; a sub-cap's
-    // debris is visibly shoved by small arms, `destruction.ts`).
-    wreckKnockSpeed: WRECK_KNOCK_PER_RADIUS * kind.radius * knockProfile.knockScale,
+    // debris is visibly shoved by small arms, `destruction.ts`). The knock
+    // reads damage ÷ max hull, so it also carries the arcade layer's `tough`
+    // (×1.6–1.75 hull, capitals ×1): a tougher hull makes the fight longer,
+    // not its debris heavier (the knock the owner approved, pre-arcade).
+    wreckKnockSpeed: WRECK_KNOCK_PER_RADIUS * kind.radius * knockProfile.knockScale * ARCADE_HANDLING[handlingClassOf(kind)].tough,
     wreckKnockMax: WRECK_KNOCK_MAX_PER_RADIUS * kind.radius * knockProfile.knockMaxScale,
     destruction,
     // Pixel density by the UNSCALED hull (so a 2× fighter stays as sharp per
