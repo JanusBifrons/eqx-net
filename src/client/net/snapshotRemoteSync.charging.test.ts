@@ -29,6 +29,19 @@ describe('applyDroneMountAngles — P3c charge telegraph', () => {
     expect(m.swarm!.get(1)!.charging).toBe(false);
   });
 
+  it('take 12 — an AI ship holding boost is marked boosting, and clears when it lets go', () => {
+    const m = mirrorWith([1, 2]);
+    applyDroneMountAngles(snap([{ id: 1, boost: true }, { id: 2, hostile: true }]), m);
+    expect(m.swarm!.get(1)!.boosting).toBe(true);
+    expect(m.swarm!.get(2)!.boosting).toBeFalsy();
+    // Let go: the server omits it (nothing else to report), so the bit clears.
+    applyDroneMountAngles(snap([{ id: 2, hostile: true }]), m);
+    expect(m.swarm!.get(1)!.boosting).toBe(false);
+    applyDroneMountAngles(snap([{ id: 1, boost: true }]), m);
+    applyDroneMountAngles(snap(undefined), m);
+    expect(m.swarm!.get(1)!.boosting).toBe(false);
+  });
+
   it('W2a — carries an NPC warp phase, and clears it when the bot stops warping', () => {
     const m = mirrorWith([1, 2]);
     applyDroneMountAngles(snap([{ id: 1, warp: 1 }, { id: 2, hostile: true }]), m);
