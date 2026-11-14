@@ -142,5 +142,24 @@ export class NavalHitHold {
     this.release(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, sink);
   }
 
+  /** Release every hit held for `targetId` now: the target was destroyed,
+   *  and its explosion is not held, so a later release would put the number
+   *  over the wreck after the blast (fight-clip review 2026-11-13). */
+  flushTarget(targetId: string, sink: HeldDamageSink): void {
+    let i = 0;
+    while (i < this.count) {
+      const h = this.held[i]!;
+      if (h.evt.targetId === targetId) {
+        sink.applyHeldDamage(h);
+        const last = this.count - 1;
+        this.held[i] = this.held[last]!;
+        this.held[last] = h;
+        this.count = last;
+        continue;
+      }
+      i++;
+    }
+  }
+
   clear(): void { this.count = 0; }
 }
