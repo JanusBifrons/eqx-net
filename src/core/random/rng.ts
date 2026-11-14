@@ -42,6 +42,16 @@ export class Rng {
     this.s = seed >>> 0;
   }
 
+  /**
+   * Restart the stream from `seed` (same sequence as `new Rng(seed)`), so a
+   * hot-path caller can keep ONE module-scope instance instead of allocating
+   * per draw (#14).
+   */
+  reseed(seed: number): this {
+    this.s = seed >>> 0;
+    return this;
+  }
+
   /** Next uniformly distributed unsigned 32-bit integer (mulberry32). */
   u32(): number {
     this.s = (this.s + 0x6d2b79f5) >>> 0;
