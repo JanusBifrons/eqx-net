@@ -984,6 +984,14 @@ export class SectorRoom extends Room<SectorState> {
    *  path has no hitX/hitY on its damage call); cleared by applyDamage. */
   private pendingImpactX: number | undefined = undefined;
   private pendingImpactY: number | undefined = undefined;
+  /** The AI beam's direction for the same call (wreck knock-back). */
+  private pendingDirX: number | undefined = undefined;
+  private pendingDirY: number | undefined = undefined;
+  /** Reused `WRECK_IMPULSE` command (overkill knock-back, #14). */
+  private readonly _wreckImpulseCmd = { type: 'WRECK_IMPULSE' as const, entityId: '', jx: 0, jy: 0, px: 0, py: 0 };
+  /** Reused `WRECK_RIGID_IMPULSE` command (a hit during the crack hold, #14). */
+  private readonly _wreckRigidImpulseCmd: { type: 'WRECK_RIGID_IMPULSE'; entityIds: readonly string[]; jx: number; jy: number; px: number; py: number } =
+    { type: 'WRECK_RIGID_IMPULSE', entityIds: [], jx: 0, jy: 0, px: 0, py: 0 };
   /** C1 — pilots who moved cargo by hand. Auto-deposit stays off for them
    *  until they fly out of deposit range of their storage, so a withdrawal
    *  from your own storage isn't banked straight back 2 s later. */
@@ -2022,8 +2030,8 @@ export class SectorRoom extends Room<SectorState> {
         this.spawnServerProjectile(ownerId, x, y, vx, vy, dmg, r, mt, wId),
       spawnServerMissile: (ownerId, x, y, dx, dy, def) =>
         this.spawnServerMissile(ownerId, x, y, dx, dy, def),
-      applyDamage: (targetId, shooterId, damage, hitX, hitY) =>
-        this.applyDamage(targetId, shooterId, damage, hitX, hitY),
+      applyDamage: (targetId, shooterId, damage, hitX, hitY, dirX, dirY) =>
+        this.applyDamage(targetId, shooterId, damage, hitX, hitY, dirX, dirY),
       blockBeamAtWall: (fx, fy, dx, dy, maxDist, damage) =>
         this.blockShotAtWall(fx, fy, dx, dy, maxDist, damage),
       broadcast: (type, msg) => this.broadcast(type, msg),
@@ -2053,7 +2061,7 @@ export class SectorRoom extends Room<SectorState> {
         this.playerHitscanDist(s, fx, fy, dx, dy, md, cx, cy, ang),
       applyDamage: (targetId, shooterId, damage) =>
         this.applyDamage(targetId, shooterId, damage),
-      noteBeamImpact: (x, y) => this.noteBeamImpact(x, y),
+      noteBeamImpact: (x, y, dx, dy) => this.noteBeamImpact(x, y, dx, dy),
       // Friendly fire (owner decision 2026-11-10): the beam meets whatever is
       // in its path, its own side and neutral structures included.
       nonPlayerRayHit: (fx, fy, dx, dy, maxDist, skipId) =>
@@ -2187,8 +2195,8 @@ export class SectorRoom extends Room<SectorState> {
       swarmRegistry: this.swarmRegistry,
       lingeringSlots: this.lingeringSlots,
       lingeringShip: (sid) => this.state.ships.get(sid),
-      applyDamage: (targetId, shooterId, damage, hitX, hitY) =>
-        this.applyDamage(targetId, shooterId, damage, hitX, hitY),
+      applyDamage: (targetId, shooterId, damage, hitX, hitY, dirX, dirY) =>
+        this.applyDamage(targetId, shooterId, damage, hitX, hitY, dirX, dirY),
       wallBlocksProjectile: (x, y, sx, sy, damage) => {
         if (!this.shieldWalls.blockProjectile(x, y, sx, sy, damage, this.gameClock.now())) return false;
         this.broadcastWallHit('bolt');
@@ -5006,12 +5014,27 @@ export class SectorRoom extends Room<SectorState> {
     }
   }
 
-  private applyDamage(targetId: string, shooterId: string, damage: number, hitX?: number, hitY?: number): void {
+  private applyDamage(
+    targetId: string, shooterId: string, damage: number, hitX?: number, hitY?: number, dirX?: number, dirY?: number,
+  ): void {
     // S2a: a beam impact noted for THIS call only (never leaks to a later one).
     const impactX = hitX ?? this.pendingImpactX;
     const impactY = hitY ?? this.pendingImpactY;
+    const shotDx = dirX ?? this.pendingDirX;
+    const shotDy = dirY ?? this.pendingDirY;
     this.pendingImpactX = undefined;
     this.pendingImpactY = undefined;
+    this.pendingDirX = undefined;
+    this.pendingDirY = undefined;
+    // Overkill knock-back (owner request 2026-11-13): a shot landing on a
+    // capital wreck piece (immune, so the router below does nothing) shoves
+    // it along the shot from the hit point. Only hits that know their point
+    // AND direction (shells, player and NPC beams); missiles push through
+    // their own splash impulse, rams through the contact itself.
+    if (this.capitalWrecks !== null && damage > 0 && impactX !== undefined && impactY !== undefined
+      && shotDx !== undefined && shotDy !== undefined) {
+      this.capitalWrecks.onWreckHit(targetId, impactX, impactY, shotDx, shotDy, damage);
+    }
     // Phase 4 warp travel: a ship on its run is out of the world (an NPC's too, W2a).
     if (this.warpTravel.isTravelling(targetId)) return;
     if (this.npcWarps.size > 0 && this.botWarpPhase(targetId) === 2) return;
@@ -5094,10 +5117,12 @@ export class SectorRoom extends Room<SectorState> {
 
   /** The AI beam's impact point, for the wreck hit tracker only (the damage
    *  event keeps its legacy pose fallback, so the wire is unchanged). */
-  private noteBeamImpact(x: number, y: number): void {
+  private noteBeamImpact(x: number, y: number, dx: number, dy: number): void {
     if (this.capitalWrecks === null) return;
     this.pendingImpactX = x;
     this.pendingImpactY = y;
+    this.pendingDirX = dx;
+    this.pendingDirY = dy;
   }
 
   /** Capital destruction S2a: build the wreck subsystem (flag on only). */
@@ -5129,6 +5154,18 @@ export class SectorRoom extends Room<SectorState> {
         return rec ? this.sabF32[slotBase(rec.slot) + SLOT_ANGLE_OFF]! : null;
       },
       kickPiece: (id, dvx, dvy, dw) => this.postToWorker({ type: 'WRECK_KICK', entityId: id, dvx, dvy, dw }),
+      // A reused command (#14): postMessage clones it synchronously.
+      impulsePiece: (id, jx, jy, px, py) => {
+        const c = this._wreckImpulseCmd;
+        c.entityId = id; c.jx = jx; c.jy = jy; c.px = px; c.py = py;
+        this.postToWorker(c);
+      },
+      // During the crack hold: the whole wreck as one rigid body (#14 as above).
+      impulseWreck: (ids, jx, jy, px, py) => {
+        const c = this._wreckRigidImpulseCmd;
+        c.entityIds = ids; c.jx = jx; c.jy = jy; c.px = px; c.py = py;
+        this.postToWorker(c);
+      },
     });
   }
 
