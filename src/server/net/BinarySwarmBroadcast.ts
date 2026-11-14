@@ -13,7 +13,7 @@
  */
 import {
   SLOT_X_OFF, SLOT_Y_OFF, SLOT_VX_OFF, SLOT_VY_OFF, SLOT_ANGLE_OFF, SLOT_ANGVEL_OFF, SLOT_FLAGS_OFF,
-  FLAG_SLEEPING, slotBase, MAX_ENTITIES,
+  FLAG_SLEEPING, slotBase, MAX_ENTITIES, SEQLOCK_IDX, TICK_IDX,
 } from '../../shared-types/sabLayout.js';
 import {
   SWARM_HEADER_BYTES, SWARM_RECORD_BYTES,
@@ -95,6 +95,9 @@ export class BinarySwarmBroadcast {
     sabU32: Uint32Array,
     serverTick: number,
     inInterest?: Set<number>,
+    /** The physics tick the SAB poses stand for (`sabPoseTick`), written as
+     *  the packet's tick: the client stamps samples by it. Absent ⇒ `serverTick`. */
+    poseTick?: number,
   ): Uint8Array | null {
     if (registry.size() === 0) return null;
 
@@ -214,10 +217,29 @@ export class BinarySwarmBroadcast {
     this.view.setUint8(0, SWARM_WIRE_VERSION);
     this.view.setUint8(1, isFullSnapshot ? SWARM_FLAG_FULL : 0);
     this.view.setUint16(2, count, true);
-    this.view.setUint32(4, serverTick >>> 0, true);
+    this.view.setUint32(4, (poseTick ?? serverTick) >>> 0, true);
 
     return this.bufU8.subarray(0, writeOffset);
   }
+}
+
+/**
+ * The physics tick the SAB poses currently stand for. The room and the
+ * physics worker run separate 60 Hz loops; the room's `serverTick` is read at
+ * the top of its update, and the worker may publish the next step before the
+ * encoder reads the poses (the fleet-melee residual pop: 8.7 % of packets
+ * repeated a tick, 8.4 % skipped one, and the repeats carried the NEXT step's
+ * poses). Read right before encoding, waiting out a write in progress (the
+ * seqlock is odd only for the worker's short publish).
+ */
+export function sabPoseTick(sabU32: Uint32Array, fallback: number): number {
+  for (let i = 0; i < 10_000; i++) {
+    const seq = Atomics.load(sabU32, SEQLOCK_IDX);
+    if ((seq & 1) !== 0) continue;
+    const tick = Atomics.load(sabU32, TICK_IDX);
+    if (Atomics.load(sabU32, SEQLOCK_IDX) === seq) return tick > 0 ? tick : fallback;
+  }
+  return fallback;
 }
 
 export type SwarmEncoder = BinarySwarmBroadcast;

@@ -116,8 +116,60 @@ export function setSwarmDisplayDelayMs(ms: number): void {
 
 /** The sector's game speed, from the snapshot keyframe (ColyseusClient). */
 export function setSwarmDisplaySpeed(speed: number): void {
-  _displaySpeed = Number.isFinite(speed) && speed > 0 ? speed : 1;
+  const next = Number.isFinite(speed) && speed > 0 ? speed : 1;
+  if (next !== _displaySpeed && _tickClockSeeded) {
+    // Keep the newest stamp where it is; later ticks space at the new rate.
+    _tickClockOffsetMs = _tickClockLastStampMs - _tickClockLastTick * (SERVER_TICK_MS / next);
+  }
+  _displaySpeed = next;
   setSwarmDisplayDelayMs(_lastDelayInputMs);
+}
+
+/** One server tick in game ms (the room steps at 60 Hz game time). */
+const SERVER_TICK_MS = 1000 / 60;
+/** An arrival this far (ms) off the tick clock is a new timeline (sector
+ *  change, reconnect, a long stall), not jitter: re-seed. */
+export const TICK_CLOCK_RESYNC_MS = 1000;
+/** Per-packet pull of the tick clock toward a LATER arrival, so a one-off
+ *  early packet doesn't hold every stamp early for good. Earlier arrivals
+ *  take over at once (the clock tracks the least-delayed path). */
+export const TICK_CLOCK_DRIFT_UP = 0.01;
+let _tickClockSeeded = false;
+let _tickClockOffsetMs = 0;
+let _tickClockLastTick = 0;
+let _tickClockLastStampMs = 0;
+
+/**
+ * The time a binary swarm packet of server tick `tick` is stamped with in the
+ * pose ring (fleet-melee follow jitter, owner take 10). Stamping the raw
+ * arrival time made the interpolated path jitter: packets drain once per RAF,
+ * so two ticks decoded in one frame got the SAME stamp and the next frame got
+ * none, and the lerp then ran at 0×, then 2× speed (a followed drone stepped
+ * 0–5 u per frame at a steady ~2.8 u cruise). Ticks are evenly spaced in
+ * server time, so stamps come from the tick on a clock fitted to arrivals:
+ * `tick × tickMs + offset`, where `offset` follows the least-delayed arrival
+ * (drifting up slowly) and never stamps a packet later than it arrived.
+ */
+export function swarmArrivalStampMs(tick: number, nowMs: number): number {
+  const tickWallMs = SERVER_TICK_MS / _displaySpeed;
+  const cand = nowMs - tick * tickWallMs;
+  if (!_tickClockSeeded || Math.abs(cand - _tickClockOffsetMs) > TICK_CLOCK_RESYNC_MS) {
+    _tickClockSeeded = true;
+    _tickClockOffsetMs = cand;
+  } else if (cand < _tickClockOffsetMs) {
+    _tickClockOffsetMs = cand;
+  } else {
+    _tickClockOffsetMs += (cand - _tickClockOffsetMs) * TICK_CLOCK_DRIFT_UP;
+  }
+  const stamp = Math.min(nowMs, tick * tickWallMs + _tickClockOffsetMs);
+  _tickClockLastTick = tick;
+  _tickClockLastStampMs = stamp;
+  return stamp;
+}
+
+/** Forget the tick clock (tests; a new room re-seeds on its own). */
+export function resetSwarmTickClock(): void {
+  _tickClockSeeded = false;
 }
 
 export function getSwarmDisplayDelayMs(): number {
