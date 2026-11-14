@@ -165,6 +165,7 @@ export const SHOWCASE_EXEMPT: Record<string, string> = {
   'mobile-perf-probe-0-results': 'Investigation record.',
   'memory-allocation-paradigm': 'Engineering discipline — end-card adjacent.',
   'reconciler-replay-scaling': 'Prediction internals — represented by the end card.',
+  'ai-pilots': 'AI flight internals (how NPC ships turn decisions into control keys); the fleet-melee shot shows them flying.',
   'physics-worker': 'Server physics internals (how the worker applies inputs); no visible surface of its own.',
   'prediction-and-correction': 'Prediction internals — represented by the end card (netcode shot is pending).',
   'remote-prediction': 'Prediction internals — represented by the end card.',

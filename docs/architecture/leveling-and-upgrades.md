@@ -37,7 +37,9 @@ numbers. Three functions:
 
 Tunables (`XP_PER_KILL_DIVISOR`, `XP_CURVE_BASE`, `LEVEL_CAP`) are exported
 balance knobs — adjust them on-device; the architecture doesn't change when they
-move. Locked by `shipXp.test.ts`.
+move. Locked by `shipXp.test.ts`. The server is the only authority that runs it
+(`SectorRoom.awardKillXp`); it lives in core for testability and a future client
+preview. The same holds for `structureLevel.ts` (read by `StructureGridSubsystem`).
 
 ## Attribution — keyed by the KILLER ship instance
 
