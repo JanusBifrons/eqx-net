@@ -65,6 +65,9 @@ export interface SceneWorkView {
   /** Print-only (AI steering 2a, not yet calibrated): `AiNeighbourGrid`
    *  queries per tick. 0 until a behaviour queries the grid. */
   aiNeighbourQueriesPerTick: number;
+  /** Print-only: live wreck pieces per tick (capital + sub-cap break-up),
+   *  so a count gate can tell how much of `bodiesPerTick` is debris. */
+  wreckPiecesPerTick: number;
 }
 
 type ThreadCpu = () => { user: number; system: number };
@@ -83,6 +86,8 @@ export class SceneWorkCounters {
   /** Wreck descriptors attached to sent snapshots (all recipients;
    *  sub-cap break-up slice 5: the descriptor wire cost as debris piles up). */
   wreckDescriptors = 0;
+  /** Live wreck pieces, summed over counted ticks (`wreckPiecesTick`). */
+  wreckPieces = 0;
   /** Line-of-fire running totals at the first counted tick, and the latest. */
   private lofBase = -1;
   private lofNarrowBase = 0;
@@ -95,6 +100,11 @@ export class SceneWorkCounters {
     if (this.lofBase < 0) { this.lofBase = checksTotal; this.lofNarrowBase = narrowTotal; }
     this.lofChecks = checksTotal - this.lofBase;
     this.lofNarrow = narrowTotal - this.lofNarrowBase;
+  }
+
+  /** Called each counted tick with the live wreck-piece count (#14). */
+  wreckPiecesTick(live: number): void {
+    if (this.active) this.wreckPieces += live;
   }
 
   /** AI neighbour-grid running total at the first counted tick, and the latest. */
@@ -168,6 +178,7 @@ export class SceneWorkCounters {
       lineOfFireChecksPerTick: r(this.lofChecks / t),
       lineOfFireNarrowPerTick: r(this.lofNarrow / t),
       aiNeighbourQueriesPerTick: r(this.nbQueries / t),
+      wreckPiecesPerTick: r(this.wreckPieces / t),
     };
   }
 }
