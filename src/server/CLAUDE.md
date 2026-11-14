@@ -313,6 +313,15 @@ Update this section when a threshold is set.
 - **Patrols (M2).** `PatrolSubsystem` (`bases/`, room-owned, 1 Hz on the structure pulse): `patrol-fighter`s (Traders allegiance, so never hostile on sight) fly the base's corners outside its fence and are marked hostile (`markBotHostileToFaction`, quiet refresh once already hostile) to any pilot near the base whose `relationOf` to the owner is hostile. `drones[].fac` is emitted for every patrol in interest (it is in the slice's "anything to report" check). Ids start `patrol-` (in `isDirectorBotId`).
 - Story: [docs/features/military-bases.md](../../docs/features/military-bases.md).
 
+## Fleet command / wingmen (RTS command layer, slice 3; not yet wired into SectorRoom)
+
+- `fleet/FleetCommandSubsystem.ts` holds one `WingmanBehaviour` per AI-flown owned ship (the lingering hulls, slice 4) over injected hooks (`ownerOf`, `readPose`, `postInput`, optional `canBoost` / `resolvePoseInto`).
+- **Commands are owner-checked PER ID through `ownerOf`**; foreign / unknown ids drop silently; at most `FLEET_MAX_IDS_PER_COMMAND` (64) ids are read; squads are 2–24 ships (data only for now).
+- **Re-plan at ~10 Hz** (`FLEET_REPLAN_EVERY_TICKS` = 6, staggered by attach order); between re-plans the worker holds the last INPUT (input-queue rule #3). Output is PLAYER control bits through the pilot's INPUT command, never an AI intent.
+- **Boost goes through the pilot's energy gate** (`canBoost`), re-checked every tick while held.
+- Size-dependent radii from `shipTuning` (`guardRadiusMin`, `wingmanArrive`, #18); stats via `wingmanConfigFor(kind, statAlloc)`.
+- Kill switch `EQX_DISABLE_WINGMEN=1` (attach is a no-op). Lock: `FleetCommandSubsystem.test.ts`.
+
 ## Fire control: lock-to-fire is universal (root invariant #19)
 
 - **Every player is tracked** by `LockSubsystem` from `onJoin` (`locks.enable`) and forgotten on leave (`LeaveHandler.forgetLocks` → `locks.forget` + `npcLocks.forget`). `hasLocked()` is false for an untracked player. Never reintroduce a pass-through (`isEnabled`-style "legacy rules").
