@@ -173,11 +173,24 @@ export class AiFireResolver implements WeaponFireSink {
     if (hasTurretFireControl(droneKind)) return;
     const slotMounts = d.resolveSlotMounts(droneKind);
     if (slotMounts.length === 0) return;
+    // Slot-level cooldown gate (mirrors PlayerFireResolver). The slot fires
+    // as one trigger; its cooldown is the MAX over its mounts' weapons.
+    // Single-slot drones reuse the per-shooter scalar `lastFireClientTick`.
+    // First: the AI pilot HOLDS the trigger while aimed (a request every
+    // tick), so a reloading gun stops here before the lock and line scans.
+    let slotCooldown = 0;
+    for (let i = 0; i < slotMounts.length; i++) {
+      const c = getWeapon(slotMounts[i]!.weaponId).cooldownTicks;
+      if (c > slotCooldown) slotCooldown = c;
+    }
+    const lastFireCt = d.lastFireClientTick.get(shooterId) ?? NEVER_FIRED;
+    if (tick - lastFireCt < slotCooldown) return;
     // Fire control: a pilot target needs a COMPLETED lock by this drone ⇒
     // no shot (the cooldown is not spent).
     if (d.fireBlocked?.(shooterId, targetId)) return;
-    // Line of fire: an ally (or its own base) in the way ⇒ hold this tick.
-    // Before the cooldown, so a held shot fires the moment the line clears.
+    // Line of fire: an ally (or its own base) in the way ⇒ hold this tick
+    // without spending the cooldown, so a held shot fires the moment the line
+    // clears.
     if (d.lineOfFireBlocked?.(shooterId, targetId, selfX, selfY, dirNdx, dirNdy)) return;
     // Fire control: a barrel fires only when it bears on the aim (the pilot's
     // rule, `mountFireTolerance`). Every shot leaves down its drawn barrel, so
@@ -189,16 +202,6 @@ export class AiFireResolver implements WeaponFireSink {
     const bearMask = this.bearingMask(shooterId, hullAngle, slotMounts, dirNdx, dirNdy, cone);
     if (bearMask === 0) return;
 
-    // Slot-level cooldown gate (mirrors PlayerFireResolver). The slot fires
-    // as one trigger; its cooldown is the MAX over its mounts' weapons.
-    // Single-slot drones reuse the per-shooter scalar `lastFireClientTick`.
-    let slotCooldown = 0;
-    for (let i = 0; i < slotMounts.length; i++) {
-      const c = getWeapon(slotMounts[i]!.weaponId).cooldownTicks;
-      if (c > slotCooldown) slotCooldown = c;
-    }
-    const lastFireCt = d.lastFireClientTick.get(shooterId) ?? NEVER_FIRED;
-    if (tick - lastFireCt < slotCooldown) return;
     // Energy gate, the player's rule (PlayerFireResolver): the slot trigger
     // costs `resolveSlotEnergyCost` once; a short pool refuses the shot
     // WITHOUT spending the cooldown, so it fires the moment it can pay.

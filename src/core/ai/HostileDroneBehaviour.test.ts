@@ -6,7 +6,6 @@ import { HostileDroneBehaviour, hullFireCone } from './HostileDroneBehaviour.js'
 import { shipBubbleRadius } from '../combat/shipHitShape.js';
 import { DriftingAsteroidBehaviour } from './DriftingAsteroidBehaviour.js';
 import type { AiEntity, AiWorldView } from '../contracts/IAiBehaviour.js';
-import { WEAPON_COOLDOWN_TICKS } from '../combat/Weapons.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { getWeapon } from '../combat/WeaponCatalogue.js';
 import { SNAP_TURN_EASE } from './virtualPilot.js';
@@ -329,20 +328,16 @@ describe('HostileDroneBehaviour — COMBAT pursuit', () => {
     expect(intent.fire).toBeUndefined();
   });
 
-  it('respects cooldown (no fire on second call within WEAPON_COOLDOWN_TICKS)', () => {
+  it('holds the trigger while aimed: a request every tick (the resolver owns the cooldown)', () => {
+    // A pilot holds fire; AiFireResolver fires when reloaded, locked and
+    // bearing. A brain-side cooldown spent on a shot the resolver held left
+    // the gun silent for a whole reload (attackRunTurnBack: 0 hits).
     const b = new HostileDroneBehaviour();
     b.markHostile('p', 0);
-    const aimed = viewWith([{ id: 'p', x: 0, y: 100 }], 100);
-    const first = b.tick(droneAt(0, 0, 0, 0), aimed);
+    const first = b.tick(droneAt(0, 0, 0, 0), viewWith([{ id: 'p', x: 0, y: 100 }], 100));
     expect(first.fire).toBeDefined();
-
-    const tooSoon = viewWith([{ id: 'p', x: 0, y: 100 }], 100 + WEAPON_COOLDOWN_TICKS - 1);
-    const second = b.tick(droneAt(0, 0, 0, 0), tooSoon);
-    expect(second.fire).toBeUndefined();
-
-    const offCooldown = viewWith([{ id: 'p', x: 0, y: 100 }], 100 + WEAPON_COOLDOWN_TICKS);
-    const third = b.tick(droneAt(0, 0, 0, 0), offCooldown);
-    expect(third.fire).toBeDefined();
+    const next = b.tick(droneAt(0, 0, 0, 0), viewWith([{ id: 'p', x: 0, y: 100 }], 101));
+    expect(next.fire).toBeDefined();
   });
 
   it('lead-aims a moving target (off-axis aim error when target has lateral velocity)', () => {

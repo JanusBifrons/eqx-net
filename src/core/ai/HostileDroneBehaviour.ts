@@ -348,7 +348,6 @@ interface MoraleInputsScratch {
 export type DroneState = 'IDLE' | 'COMBAT';
 
 export class HostileDroneBehaviour implements IAiBehaviour {
-  private lastFireTick = -1_000_000;
   private readonly kind: ShipKind;
 
   /** Roaming-formation (Phase 5): the in-sector point the director wants this
@@ -394,7 +393,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   /** Previously-picked target id, used by `pickTarget` to apply sticky
    *  hysteresis (Phase 4a). Pre-refactor the drone re-picked nearest hostile
    *  every tick, which oscillated between two near-equidistant players. Per-
-   *  instance so it's lockstep-safe in the same way `lastFireTick` is —
+   *  instance so it's lockstep-safe in the same way `lastHitByPlayer` is —
    *  reset purely by `markHostile`/`purgeHostility`/time-decay, both of
    *  which fire symmetrically on server and client. */
   private prevTargetId: string | null = null;
@@ -463,10 +462,6 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   /** Distance (world units) at/under which the drone fires. Beam → very
    *  close (~225); bolt → medium (~560); missile → long (~1400). */
   private readonly fireRange: number;
-  /** Cooldown of the bound weapon in ticks (beam/bolt 10, missile 90).
-   *  Replaces the global WEAPON_COOLDOWN_TICKS so missile drones don't
-   *  spam at the hitscan rate. */
-  private readonly fireCooldownTicks: number;
   /** STOP_DIST = fireRange × this. Beam bores in (0.5); bolt dogfights
    *  (0.6); missile kites far (0.9). */
   private readonly stopDistFactor: number;
@@ -669,7 +664,6 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     // Weapon-aware engagement profile (weapons/energy/AI overhaul §4).
     const firstWeapon = getWeapon(this.kind.mounts?.[0]?.weaponId ?? 'hitscan');
     this.weaponMode = firstWeapon.mode;
-    this.fireCooldownTicks = firstWeapon.cooldownTicks;
     // Lead-aim muzzle speed: real projectile speed for bolts/missiles,
     // ~instant for hitscan (no lead). Drives the intercept in tickCombat.
     this.leadMuzzleSpeed = firstWeapon.mode === 'hitscan' ? 1e6 : firstWeapon.speed;
@@ -850,7 +844,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     view.claims?.claim(self.id, this.allegiance, null);
     // 1) Time-decay: drop hostiles whose last hit aged past FORGET_TICKS.
     //    `view.tick` is `serverTick` on the server and `inputTick` on the
-    //    client; same tolerance as the existing `lastFireTick` cooldown.
+    //    client.
     if (this.hostileTo.size > 0) {
       for (const [pid, lastHit] of this.lastHitByPlayer) {
         if (view.tick - lastHit > FORGET_TICKS) {
@@ -1219,10 +1213,13 @@ export class HostileDroneBehaviour implements IAiBehaviour {
 
     const aimed = Math.abs(bearingError) <= aimTolerance;
     const inRange = dist <= this.fireRange;
-    const offCooldown = view.tick - this.lastFireTick >= this.fireCooldownTicks;
-    const willFire = aimed && inRange && offCooldown;
+    // The trigger is HELD while aimed and in range, as a pilot holds fire: the
+    // resolver owns the cooldown, the lock, the line of fire, the barrel
+    // bearing and the energy, and fires the moment they all allow. A brain-side
+    // cooldown spent here on a shot the resolver then held (a turret not yet
+    // bearing) left the gun silent for a whole cooldown (0 hits a pass).
+    const willFire = aimed && inRange;
     if (willFire) {
-      this.lastFireTick = view.tick;
       const f = this._fireScratch;
       // Fire along the EXACT lead vector, NOT the body-forward axis. The
       // body only turns toward the lead at a rate-limited angvel and is
