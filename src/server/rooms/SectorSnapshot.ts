@@ -14,7 +14,7 @@
 // v4 (Phase 5 2026-06-14): SCRAP persists too.
 // v5 (Phase 5 2026-06-14): LINGERING HULLS persist too — a disconnected /
 // displaced ship reappears in its sector "where you left it" after a restart
-// (visible to others, reclaimable by the owner). The 10-ship roster cap stays;
+// (visible to others, reclaimable by the owner). Rosters are unlimited (200 anti-abuse guard);
 // ships persist once spawned until abandoned (→ scrap). Bumping discards every
 // older snapshot and reseeds all sectors.
 // v6 (Phase 4 leveling/XP, WS-0): structures[] gain a `level` (default 1) — the

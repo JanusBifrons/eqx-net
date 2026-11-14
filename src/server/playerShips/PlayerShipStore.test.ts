@@ -3,7 +3,7 @@ import {
   PlayerShipStore,
   PlayerShipRecord,
   RosterFullError,
-  ROSTER_CAP,
+  ROSTER_SOFT_GUARD,
   applyKindVersionDrift,
 } from './PlayerShipStore.js';
 import { SHIP_KIND_CATALOGUE_VERSION, getShipKind } from '../../shared-types/shipKinds.js';
@@ -86,8 +86,15 @@ describe('PlayerShipStore', () => {
       expect(op.isActive).toBe(false);
     });
 
-    it('rejects creation past ROSTER_CAP', () => {
-      for (let i = 0; i < ROSTER_CAP; i++) {
+    it('allows more than the old 10-ship cap', () => {
+      for (let i = 0; i < 25; i++) {
+        store.create({ playerId: 'p1', userId: null, kind: 'fighter', sectorKey: 'sol-prime', x: 0, y: 0, health: 100 });
+      }
+      expect(store.count('p1')).toBe(25);
+    });
+
+    it('rejects creation past ROSTER_SOFT_GUARD', () => {
+      for (let i = 0; i < ROSTER_SOFT_GUARD; i++) {
         store.create({
           playerId: 'p1',
           userId: null,
@@ -96,7 +103,7 @@ describe('PlayerShipStore', () => {
           x: 0, y: 0, health: 100,
         });
       }
-      expect(store.count('p1')).toBe(ROSTER_CAP);
+      expect(store.count('p1')).toBe(ROSTER_SOFT_GUARD);
       expect(() => store.create({
         playerId: 'p1',
         userId: null,
@@ -106,11 +113,11 @@ describe('PlayerShipStore', () => {
       })).toThrow(RosterFullError);
     });
 
-    it('different players have independent caps', () => {
-      for (let i = 0; i < ROSTER_CAP; i++) {
+    it('different players have independent guards', () => {
+      for (let i = 0; i < ROSTER_SOFT_GUARD; i++) {
         store.create({ playerId: 'p1', userId: null, kind: 'fighter', sectorKey: 'a', x: 0, y: 0, health: 100 });
       }
-      // p2 still has 0/10 — should succeed.
+      // p2 still has 0 ships — should succeed.
       const rec = store.create({ playerId: 'p2', userId: null, kind: 'fighter', sectorKey: 'a', x: 0, y: 0, health: 100 });
       expect(rec).toBeDefined();
       expect(store.count('p2')).toBe(1);
@@ -147,16 +154,16 @@ describe('PlayerShipStore', () => {
       expect(sink.ops).toHaveLength(0);
     });
 
-    it('frees a roster slot, allowing a fresh spawn at cap', () => {
+    it('frees a roster slot, allowing a fresh spawn at the guard', () => {
       const ships: PlayerShipRecord[] = [];
-      for (let i = 0; i < ROSTER_CAP; i++) {
+      for (let i = 0; i < ROSTER_SOFT_GUARD; i++) {
         ships.push(store.create({ playerId: 'p1', userId: null, kind: 'fighter', sectorKey: 's', x: 0, y: 0, health: 100 }));
       }
       expect(() => store.create({ playerId: 'p1', userId: null, kind: 'fighter', sectorKey: 's', x: 0, y: 0, health: 100 })).toThrow(RosterFullError);
       store.delete(ships[0]!.shipId);
       const fresh = store.create({ playerId: 'p1', userId: null, kind: 'fighter', sectorKey: 's', x: 0, y: 0, health: 100 });
       expect(fresh).toBeDefined();
-      expect(store.count('p1')).toBe(ROSTER_CAP);
+      expect(store.count('p1')).toBe(ROSTER_SOFT_GUARD);
     });
   });
 

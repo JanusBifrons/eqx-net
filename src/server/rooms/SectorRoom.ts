@@ -231,7 +231,7 @@ import type { SnapshotMessage, TimeScaleKeyframe } from '../../shared-types/mess
 // Mount/slot geometry helpers moved to ./mountGeometry.ts.
 import { resolveSlotMounts, mountWorldOrigin } from './mountGeometry.js';
 import { isLatentSlot, resolveInstanceMounts, resolveInstanceFireMounts } from '../../shared-types/shipKinds/slots.js';
-import { ROSTER_CAP, type ActivatedMount } from '../playerShips/PlayerShipStore.js';
+import { ROSTER_SOFT_GUARD, type ActivatedMount } from '../playerShips/PlayerShipStore.js';
 import { WeaponMountTicker } from './WeaponMountTicker.js';
 import { LockSubsystem, type LockTargetView } from './LockSubsystem.js';
 import { NpcLockSubsystem } from './NpcLockSubsystem.js';
@@ -8904,7 +8904,7 @@ export class SectorRoom extends Room<SectorState> {
     // ship and stamp its UUID onto the schema. Engineering rooms skip
     // persistence and leave shipInstanceId empty. When the client supplied
     // a valid `shipId`, that row is the one we bind; when `isNewShip`
-    // is set, we force a fresh row (subject to 10-cap); otherwise we
+    // is set, we force a fresh row (subject to ROSTER_SOFT_GUARD); otherwise we
     // pick the most-recently-updated row (or create a fresh one).
     const forceFreshCreate = parsed.success && parsed.data.isNewShip === true;
     ship.shipInstanceId = this.bindRosterEntry(playerId, userId ?? resumedUserId, chosenKind, {
@@ -9701,7 +9701,7 @@ export class SectorRoom extends Room<SectorState> {
   /**
    * Mirror an eviction into the roster — the ship transitions from
    * `is_active=true` to `is_active=false` with frozen pose. The row
-   * stays in the table (forever, modulo the 10-cap) so the player can
+   * stays in the table (forever, modulo abandon) so the player can
    * pick it on a future visit.
    */
   private markRosterStored(
@@ -10032,7 +10032,7 @@ export class SectorRoom extends Room<SectorState> {
     const from = this.storage.network(s).find((r) => r.hold !== undefined && packedCount(r.hold, product) > 0);
     if (from === undefined) return [false, `There is no packed ${name} in this base.`];
     const store = getPlayerShipStore();
-    if (store.listByPlayer(playerId).length >= ROSTER_CAP) return [false, `Your roster is full (${ROSTER_CAP} ships). Abandon one first.`];
+    if (store.listByPlayer(playerId).length >= ROSTER_SOFT_GUARD) return [false, `Your roster is full (${ROSTER_SOFT_GUARD} ships). Abandon one first.`];
     const item = takePacked(from.hold!, product)!;
     this.storage.commitChanged([from], []);
     try {
