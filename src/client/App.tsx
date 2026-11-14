@@ -35,6 +35,7 @@ import { loadStoredPlayerId } from './identity/token';
 import { Keyboard } from './input/Keyboard';
 import { SpectatorPanInput } from './input/SpectatorPanInput';
 import { sendFleetOrder } from './ships/shipActionsClient';
+import { installFleetCommandSenders } from './fleet/installFleetCommandSenders';
 import { TouchInput, isTouchDevice } from './input/TouchInput';
 import { useUIStore, useGameReady, useIsLoadingActive } from './state/store';
 import { useAuthStore } from './auth/authStore';
@@ -259,6 +260,13 @@ function GameSurface({
   useEffect(() => {
     rendererRef.current?.setSpectator(spectating);
   }, [spectating]);
+
+  // RTS command view (slice 12) — the fleet strip's touch tap-order toggle.
+  // A discrete choice; the renderer decides per tap what it orders.
+  const fleetOrderMode = useUIStore((s) => s.fleetOrderMode);
+  useEffect(() => {
+    rendererRef.current?.setFleetOrderMode(fleetOrderMode);
+  }, [fleetOrderMode]);
 
   // Radar (plan sparkling-wondering-rose) — clear the off-screen radar only
   // while IN_TRANSIT / ARRIVED (the mirror still holds the OLD sector). It stays
@@ -498,6 +506,9 @@ function GameSurface({
     // HUD mode (`?hud=` / `?cinematic=1`) → the world lock marks + edge radar.
     // `__eqxCinema.setHud` re-pushes it mid-take.
     applyHudOverlays(renderer, hudModeFromSearch(window.location.search), window.location.search);
+    // RTS touch tap-order mode: seed the new renderer (the effect below
+    // pushes later changes).
+    renderer.setFleetOrderMode(useUIStore.getState().fleetOrderMode);
     // Perf scenes (`?perfprobe=1` only): frame times, long tasks, bytes.
     if (perfProbeEnabled(window.location.search)) {
       installPerfProbe(renderer, useWorker);
@@ -528,6 +539,8 @@ function GameSurface({
     // tab's 5 s arrival-snapshot poll) can reach `mirror` without prop
     // drilling. See `src/client/net/clientSingleton.ts`.
     setGameClient(gameClient);
+    // RTS fleet panel: plug the panel's command seam into the network senders.
+    installFleetCommandSenders();
     // Expose for the dev-only diagnostic capture (SettingsModal "Capture" button
     // reads `__eqxClient.stats`). DEV-only assignment guarded by Vite's tree-shaking.
     if (import.meta.env.DEV) {

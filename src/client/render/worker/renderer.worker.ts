@@ -229,6 +229,12 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
         break;
       }
 
+      case 'SET_FLEET_ORDER_MODE': {
+        if (!renderer) return;
+        renderer.setFleetOrderMode(msg.mode);
+        break;
+      }
+
       case 'SET_RADAR_PREFS': {
         if (!renderer) return;
         renderer.setRadarPrefs(msg.prefs);

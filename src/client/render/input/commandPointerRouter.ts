@@ -41,6 +41,15 @@ export interface RouterPointerEvent {
   timeMs: number;
 }
 
+/** See {@link CommandPointerRouter.holdArmedAt}. */
+export interface HoldArmed {
+  /** Screen px of the held pointer's down point. */
+  x: number;
+  y: number;
+  /** Ms since the hold armed (0 at the threshold). */
+  armedMs: number;
+}
+
 export interface BoxRect { x0: number; y0: number; x1: number; y1: number }
 
 export type RouterAction =
@@ -49,7 +58,7 @@ export type RouterAction =
   | ({ kind: 'boxUpdate' } & BoxRect)
   | ({ kind: 'boxEnd'; additive: boolean } & BoxRect)
   | { kind: 'boxCancel' }
-  | { kind: 'tapSelect'; x: number; y: number; additive: boolean }
+  | { kind: 'tapSelect'; x: number; y: number; additive: boolean; pointerType: string }
   | { kind: 'order'; x: number; y: number };
 
 type Mode =
@@ -87,6 +96,24 @@ export class CommandPointerRouter {
     if (this.mode === 'box') out.push({ kind: 'boxCancel' });
     this._enabled = enabled;
     this.reset();
+    return out;
+  }
+
+  /**
+   * Hold-to-box cue: while a touch/pen pointer has been held still for at
+   * least HOLD_THRESHOLD_MS (so its next move draws a box), returns its down
+   * point (screen px) and how long it has been armed; null otherwise. Polled
+   * once per renderer frame; writes into `out` (no allocation).
+   */
+  holdArmedAt(nowMs: number, out: HoldArmed): HoldArmed | null {
+    if (!this._enabled || this.mode !== 'pending') return null;
+    const g = this.g;
+    if (g === null || g.isMouse || g.movedPastTap) return null;
+    const held = nowMs - g.downEv.timeMs;
+    if (held < HOLD_THRESHOLD_MS) return null;
+    out.x = g.downEv.x;
+    out.y = g.downEv.y;
+    out.armedMs = held - HOLD_THRESHOLD_MS;
     return out;
   }
 
@@ -193,7 +220,7 @@ export class CommandPointerRouter {
           const cls = classifyTap(d.x, d.y, ev.x, ev.y, d.timeMs, ev.timeMs, {
             tapThresholdPx: TAP_THRESHOLD_PX, tapThresholdMs: TAP_THRESHOLD_MS,
           });
-          if (cls.isTap) out.push({ kind: 'tapSelect', x: ev.x, y: ev.y, additive });
+          if (cls.isTap) out.push({ kind: 'tapSelect', x: ev.x, y: ev.y, additive, pointerType: d.pointerType });
         }
       }
     }

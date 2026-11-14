@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { RenderMirror } from '@core/contracts/IRenderer';
-import { FleetOverlay, ORDER_FLASH_MS, type OrderFlash } from './FleetOverlay.js';
+import { FleetOverlay, HOLD_RING_MS, ORDER_FLASH_MS, type OrderFlash } from './FleetOverlay.js';
 
 vi.mock('pixi.js', () => {
   class FakeGraphics {
@@ -84,5 +84,23 @@ describe('FleetOverlay', () => {
     ov.update(m, sel, null, noFlash(), 1000, identity, 1);
     ov.update(m, sel, null, noFlash(), 1016, identity, 1);
     expect(gfxOf(ov).clear).toHaveBeenCalledTimes(2);
+  });
+
+  it('draws the hold-to-box cue as an expanding ring at the finger, with nothing else on', () => {
+    ov.update(m, new Set(), null, noFlash(), 1000, identity, 1, { x: 70, y: 80, armedMs: 0 });
+    const g = gfxOf(ov);
+    expect(g.visible).toBe(true);
+    expect(ov.lastHoldCue).toBe(true);
+    const r0 = g.circle.mock.calls[0]![2] as number;
+    expect(g.circle.mock.calls[0]!.slice(0, 2)).toEqual([70, 80]);
+    ov.update(m, new Set(), null, noFlash(), 1100, identity, 1, { x: 70, y: 80, armedMs: HOLD_RING_MS });
+    const r1 = g.circle.mock.calls[1]![2] as number;
+    expect(r1).toBeGreaterThan(r0);
+    // capped once fully grown
+    ov.update(m, new Set(), null, noFlash(), 1200, identity, 1, { x: 70, y: 80, armedMs: HOLD_RING_MS * 5 });
+    expect(g.circle.mock.calls[2]![2]).toBe(r1);
+    ov.update(m, new Set(), null, noFlash(), 1300, identity, 1, null);
+    expect(g.visible).toBe(false);
+    expect(ov.lastHoldCue).toBe(false);
   });
 });

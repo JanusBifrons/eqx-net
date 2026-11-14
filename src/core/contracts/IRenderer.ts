@@ -1074,6 +1074,13 @@ export interface IRenderer {
    */
   setSpectator(active: boolean): void;
   /**
+   * RTS command view (slice 12): what a TOUCH tap with a fleet selection
+   * orders — 'move' to the tap point, or 'attack' the entity under it. The
+   * fleet strip's discrete toggle, pushed on change (worker
+   * `SET_FLEET_ORDER_MODE`). Mouse orders stay on right-click.
+   */
+  setFleetOrderMode(mode: 'move' | 'attack'): void;
+  /**
    * The sector being shown changed (null on the galaxy map). Picks the new
    * backdrop's nebula (plan iridescent-seeking-rainbow v3, B2). On the worker
    * path the worker already hears it through `SET_CURRENT_SECTOR`.

@@ -30,7 +30,8 @@ import { SelectionBracket } from './SelectionBracket';
 import { AimFeedbackRenderer } from './AimFeedbackRenderer';
 import { HoverBracket } from './HoverBracket';
 import { pickEntityAt, type PickedEntityKind } from './pickEntity';
-import { CommandPointerRouter, type BoxRect, type RouterAction, type RouterPointerEvent } from './input/commandPointerRouter.js';
+import { CommandPointerRouter, type BoxRect, type HoldArmed, type RouterAction, type RouterPointerEvent } from './input/commandPointerRouter.js';
+import { decideTapAction, type FleetOrderMode } from './input/tapAction.js';
 import { applySelection, boxSelectOwn, collectFleetShips, isOwnShipPresent, pickOwnShipAt, sameSelection } from './fleetSelection.js';
 import { FleetOverlay, type OrderFlash } from './FleetOverlay.js';
 import { decideLingeringSpriteAction, decideExplosionPosition, type SpriteDecision } from './spriteUpdateDecisions';
@@ -223,6 +224,10 @@ export class PixiRenderer implements IRenderer {
   private readonly _fleetBoxRect: BoxRect = { x0: 0, y0: 0, x1: 0, y1: 0 };
   private _fleetBoxActive = false;
   private readonly _orderFlash: OrderFlash = { x: 0, y: 0, attack: false, t0: -1 };
+  /** Touch tap-order mode (slice 12), pushed from the strip's Zustand toggle. */
+  private _fleetOrderMode: FleetOrderMode = 'move';
+  /** Hold-to-box cue scratch (reused per frame). */
+  private readonly _holdArmed: HoldArmed = { x: 0, y: 0, armedMs: 0 };
   private fleetOverlay: FleetOverlay | null = null;
   private readonly _fleetProject = (wx: number, wy: number, out: { x: number; y: number }): void => {
     this.camera.toScreenInto(wx, wy, out);
@@ -1300,7 +1305,7 @@ export class PixiRenderer implements IRenderer {
         this.commandBoxSelect(a.x0, a.y0, a.x1, a.y1, a.additive);
         return;
       case 'tapSelect':
-        this.commandTap(a.x, a.y, a.additive);
+        this.commandTap(a.x, a.y, a.additive, a.pointerType);
         return;
       case 'order':
         this.commandOrder(a.x, a.y);
@@ -1318,23 +1323,58 @@ export class PixiRenderer implements IRenderer {
     this.setFleetSelection(applySelection(this._fleetSel, hits, additive));
   }
 
-  /** Command-view tap: an own ship selects it; anything else falls through to
-   *  today's inspect select (and a plain tap clears the fleet selection). */
-  private commandTap(screenX: number, screenY: number, additive: boolean): void {
+  /** Command-view tap (`decideTapAction`): an own ship selects it; a touch/pen
+   *  tap with a selection gives an order per `_fleetOrderMode`; otherwise it
+   *  falls through to the inspect select (a plain tap clears the selection). */
+  private commandTap(screenX: number, screenY: number, additive: boolean, pointerType: string): void {
     const m = this._lastMirror;
     if (m === null) return;
     const w = this.camera.screenToWorld(screenX, screenY);
-    const own = pickOwnShipAt(w.x, -w.y, collectFleetShips(m), m.localPlayerId);
-    if (own !== null) {
-      this.setFleetSelection(applySelection(this._fleetSel, [own], additive));
-      return;
+    const gx = w.x;
+    const gy = -w.y;
+    const own = pickOwnShipAt(gx, gy, collectFleetShips(m), m.localPlayerId);
+    const touchOrder = own === null && pointerType !== 'mouse' && this._fleetSel.size > 0;
+    // Pick only when an order needs to know what is under the finger.
+    const hit = touchOrder ? pickEntityAt(gx, gy, m) : null;
+    const attackable = hit !== null && this.isAttackable(hit.id, hit.kind, m);
+    const action = decideTapAction({
+      pointerType,
+      hitOwn: own !== null,
+      hitEntity: hit !== null,
+      hitAttackable: attackable,
+      hasSelection: this._fleetSel.size > 0,
+      orderMode: this._fleetOrderMode,
+      additive,
+    });
+    switch (action) {
+      case 'select':
+        this.setFleetSelection(applySelection(this._fleetSel, [own!], additive));
+        return;
+      case 'orderMove':
+        this.publishOrder(gx, gy, null);
+        return;
+      case 'orderAttack':
+        this.publishOrder(gx, gy, hit!.id);
+        return;
+      case 'none':
+        return;
+      case 'deselect':
+        this.setFleetSelection(new Set());
+        this.handleGameplayTap(screenX, screenY);
+        return;
+      case 'inspect':
+        this.handleGameplayTap(screenX, screenY);
+        return;
     }
-    if (!additive && this._fleetSel.size > 0) this.setFleetSelection(new Set());
-    this.handleGameplayTap(screenX, screenY);
+  }
+
+  /** Not own, not an asteroid: something the fleet can be told to attack. */
+  private isAttackable(id: string, kind: string, m: RenderMirror): boolean {
+    return kind !== 'asteroid' && !this._fleetSel.has(id) && !isOwnShipPresent(id, m);
   }
 
   /** Command-view right-click: attack a non-own entity under the cursor, else
-   *  move to the point. Needs a selection. Published via feedback (no send yet). */
+   *  move to the point. Needs a selection. */
   private commandOrder(screenX: number, screenY: number): void {
     const m = this._lastMirror;
     if (m === null || this._fleetSel.size === 0) return;
@@ -1342,10 +1382,16 @@ export class PixiRenderer implements IRenderer {
     const gx = w.x;
     const gy = -w.y;
     const hit = pickEntityAt(gx, gy, m);
-    const attack = hit !== null && hit.kind !== 'asteroid' && !this._fleetSel.has(hit.id) && !isOwnShipPresent(hit.id, m);
+    this.publishOrder(gx, gy, hit !== null && this.isAttackable(hit.id, hit.kind, m) ? hit.id : null);
+  }
+
+  /** Publish an order via feedback (`gameRafLoop` sends it once per seq):
+   *  attack `targetId`, or move to (gx, gy) game space when null. */
+  private publishOrder(gx: number, gy: number, targetId: string | null): void {
+    const attack = targetId !== null;
     const fb = this.feedback;
     fb.orderKind = attack ? 'attack' : 'move';
-    fb.orderTargetId = attack ? hit.id : null;
+    fb.orderTargetId = targetId;
     fb.orderX = gx;
     fb.orderY = gy;
     fb.orderSeq++;
@@ -1387,6 +1433,8 @@ export class PixiRenderer implements IRenderer {
       performance.now(),
       this._fleetProject,
       this.camera.scale.x,
+      // eslint-disable-next-line no-restricted-properties -- real time: pointer stamps are Date.now() (both paths)
+      this._cmdRouter.holdArmedAt(Date.now(), this._holdArmed),
     );
   }
 
@@ -3327,6 +3375,11 @@ export class PixiRenderer implements IRenderer {
     const b = this._backdrop;
     return { classicStars: this.starfield?.isVisible() === true, motes: b?.moteCounts() ?? null, deep: b?.deepSpace() ?? 0, on: b?.sky.visible === true, nebula: b?.nebulaKey() ?? null, landmarks: b?.visibleLandmarks ?? 0, sky: b?.skySignature ?? '', density: b?.density ?? 0,
       speed: b?.speed.sf ?? 0, speedZoom: this.camera.speedZoom(), speedLevel: b?.speedLevel ?? 'off' };
+  }
+
+  /** See `IRenderer.setFleetOrderMode`. */
+  setFleetOrderMode(mode: 'move' | 'attack'): void {
+    this._fleetOrderMode = mode;
   }
 
   setSpectator(active: boolean): void {

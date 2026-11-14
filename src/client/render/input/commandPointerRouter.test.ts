@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   CommandPointerRouter,
   HOLD_THRESHOLD_MS,
+  type HoldArmed,
   type RouterPointerEvent,
 } from './commandPointerRouter.js';
 
@@ -25,7 +26,7 @@ describe('CommandPointerRouter — mouse', () => {
     expect(r.handle(ev('pointerdown', 10, 10, 0))).toEqual([]);
     expect(r.handle(ev('pointermove', 12, 11, 20))).toEqual([]);
     expect(r.handle(ev('pointerup', 12, 11, 50))).toEqual([
-      { kind: 'tapSelect', x: 12, y: 11, additive: false },
+      { kind: 'tapSelect', x: 12, y: 11, additive: false, pointerType: 'mouse' },
     ]);
   });
 
@@ -39,7 +40,7 @@ describe('CommandPointerRouter — mouse', () => {
     const r = new CommandPointerRouter();
     r.handle(ev('pointerdown', 10, 10, 0, { shiftKey: true }));
     expect(r.handle(ev('pointerup', 10, 10, 50, { shiftKey: true }))).toEqual([
-      { kind: 'tapSelect', x: 10, y: 10, additive: true },
+      { kind: 'tapSelect', x: 10, y: 10, additive: true, pointerType: 'mouse' },
     ]);
   });
 
@@ -116,7 +117,7 @@ describe('CommandPointerRouter — touch', () => {
     const r = new CommandPointerRouter();
     expect(r.handle(t('pointerdown', 10, 10, 0))).toEqual([]);
     expect(r.handle(t('pointerup', 11, 10, 100))).toEqual([
-      { kind: 'tapSelect', x: 11, y: 10, additive: false },
+      { kind: 'tapSelect', x: 11, y: 10, additive: false, pointerType: 'touch' },
     ]);
   });
 
@@ -205,5 +206,63 @@ describe('CommandPointerRouter — enabled flag', () => {
     expect(r.setEnabled(true)).toEqual([]);
     r.handle(ev('pointerdown', 0, 0, 100));
     expect(kinds(r.handle(ev('pointerup', 0, 0, 120)))).toEqual(['tapSelect']);
+  });
+});
+
+describe('CommandPointerRouter — tapSelect pointerType', () => {
+  it('a pen tap carries pointerType pen', () => {
+    const r = new CommandPointerRouter();
+    r.handle(ev('pointerdown', 4, 4, 0, { pointerType: 'pen' }));
+    const out = r.handle(ev('pointerup', 4, 4, 60, { pointerType: 'pen' }));
+    expect(out).toEqual([{ kind: 'tapSelect', x: 4, y: 4, additive: false, pointerType: 'pen' }]);
+  });
+});
+
+describe('CommandPointerRouter — holdArmedAt (hold-to-box cue)', () => {
+  const t = (type: RouterPointerEvent['type'], x: number, y: number, ms: number, id = 1) =>
+    ev(type, x, y, ms, { pointerType: 'touch', pointerId: id });
+  const out = (): HoldArmed => ({ x: 0, y: 0, armedMs: 0 });
+
+  it('null when idle', () => {
+    expect(new CommandPointerRouter().holdArmedAt(1000, out())).toBeNull();
+  });
+
+  it('null before the hold threshold, armed at and after it', () => {
+    const r = new CommandPointerRouter();
+    r.handle(t('pointerdown', 30, 40, 100));
+    expect(r.holdArmedAt(100 + HOLD_THRESHOLD_MS - 1, out())).toBeNull();
+    expect(r.holdArmedAt(100 + HOLD_THRESHOLD_MS, out())).toEqual({ x: 30, y: 40, armedMs: 0 });
+    const o = out();
+    expect(r.holdArmedAt(100 + HOLD_THRESHOLD_MS + 120, o)).toBe(o);
+    expect(o).toEqual({ x: 30, y: 40, armedMs: 120 });
+  });
+
+  it('a small jitter under the tap threshold keeps it armed', () => {
+    const r = new CommandPointerRouter();
+    r.handle(t('pointerdown', 30, 40, 0));
+    r.handle(t('pointermove', 32, 41, 200));
+    expect(r.holdArmedAt(HOLD_THRESHOLD_MS + 10, out())).not.toBeNull();
+  });
+
+  it('null once the box started, after lift, after a pan, for mouse, and when disabled', () => {
+    const r = new CommandPointerRouter();
+    r.handle(t('pointerdown', 0, 0, 0));
+    r.handle(t('pointermove', 30, 30, HOLD_THRESHOLD_MS + 10)); // box
+    expect(r.holdArmedAt(HOLD_THRESHOLD_MS + 20, out())).toBeNull();
+    r.handle(t('pointerup', 30, 30, HOLD_THRESHOLD_MS + 30));
+    expect(r.holdArmedAt(HOLD_THRESHOLD_MS + 40, out())).toBeNull();
+
+    const pan = new CommandPointerRouter();
+    pan.handle(t('pointerdown', 0, 0, 0));
+    pan.handle(t('pointermove', 30, 0, 50)); // early move = camera
+    expect(pan.holdArmedAt(HOLD_THRESHOLD_MS + 100, out())).toBeNull();
+
+    const mouse = new CommandPointerRouter();
+    mouse.handle(ev('pointerdown', 0, 0, 0));
+    expect(mouse.holdArmedAt(HOLD_THRESHOLD_MS + 100, out())).toBeNull();
+
+    const off = new CommandPointerRouter(false);
+    off.handle(t('pointerdown', 0, 0, 0));
+    expect(off.holdArmedAt(HOLD_THRESHOLD_MS + 100, out())).toBeNull();
   });
 });

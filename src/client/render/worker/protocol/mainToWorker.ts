@@ -207,6 +207,13 @@ export interface SetSpectatorMsg {
   active: boolean;
 }
 
+/** RTS slice 12 — the fleet strip's touch tap-order mode. See
+ *  `IRenderer.setFleetOrderMode`. Posted on change only. */
+export interface SetFleetOrderModeMsg {
+  type: 'SET_FLEET_ORDER_MODE';
+  mode: 'move' | 'attack';
+}
+
 /** Off-screen indicator radar (plan sparkling-wondering-rose) — the active
  *  preferences. Posted on change only (the live settings modal coalesces to
  *  ≤ one post per animation frame). */
@@ -387,6 +394,7 @@ export type MainToWorkerMsg =
   | TriggerWarpInMsg
   | SetLoadCurtainMsg
   | SetSpectatorMsg
+  | SetFleetOrderModeMsg
   | SetRadarPrefsMsg
   | SetRadarInsetsMsg
   | SetRadarSuppressedMsg
