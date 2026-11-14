@@ -119,3 +119,65 @@ components.
   up (which sections, their mass and HP; `SCRAP_DEFAULT_MASS` 1 and `SCRAP_HP`
   30 are fighter-sized) is an open owner decision (found 2026-11-12). Its death
   blast does follow the hull (`blastRadiusFor`).
+
+## Core reference
+
+Moved from `src/core/CLAUDE.md` (section "Composite ships + scrap geometry").
+
+- `ShipShape` is a discriminated union (`polygon | composite`). The
+  `shipHullOutline(kind)` seam (`geometry/shipHullOutline.ts`) returns the
+  composite `hull` or the polygon `points` — **every collision/physics reader
+  goes through it**, so polygon kinds are byte-identical. The
+  "silhouette == collider" invariant is RELAXED for composites: the collider is
+  the authored gross `hull`; the visual `parts[]` are detail (per-part live
+  collision is intentionally NOT modelled). `shipShapeScale` / `shipPrimaryColor`
+  are the sibling accessors.
+- `geometry/shipScrapGroups.ts` precomputes ONCE at module load (like
+  `shipHullDecomp`) one scrap GROUP per composite component — a silhouette
+  (`canScrap:true`) + its detail parts (role-prefix), each recentred on the
+  component centroid, with a convex-hull collider. Polygon kinds → empty. The
+  death→scrap path (server) and `buildScrapGfx` (client) both read it.
+- `physics/collisionGroups.ts` `SCRAP_COLLISION_GROUPS` (membership bit 1 /
+  filter ~bit 1) makes scrap NOT collide with other scrap but collide with
+  everything else. Threaded through `World.spawnObstacle`'s optional
+  `collisionGroups` param (→ worker `SPAWN_OBSTACLE`). `swarm/scrapConstants.ts`
+  holds the tuning (burst/damping/HP/MAX_LIVE_SCRAP). Full story:
+  [docs/architecture/composite-ships-and-scrap.md](../../docs/architecture/composite-ships-and-scrap.md).
+## Server implementation notes
+
+> Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.
+
+### Abandon → scrap; wrecks RETIRED (Equinox P6.3 / C2+C3, 2026-06-15 — supersedes "abandon → wreck")
+
+**Scrap replaces wrecks.** An abandoned hull no longer becomes a damageable `WreckState` entity — it shatters into drifting scrap and leaves the world (the user's "wrecks shouldn't exist any more; it just turns into scrap"). `findAbandonedShips` ([rooms/sectorIdleEvaluator.ts](../../src/server/rooms/sectorIdleEvaluator.ts)) still returns BOTH active and lingering abandoned ships (roster-row deleted while alive) with a `lingering` flag; the `update()` poll now routes active → `SectorRoom.abandonShipToScrap(playerId)` and lingering → `SectorRoom.abandonLingeringHullToScrap(shipInstanceId)`. Both spawn scrap at the death pose via the shared `spawnHullScrap` (composite kinds shatter, polygon kinds just vanish), then DESPAWN the body + free the slot (no wreck rekey) + tear down bookkeeping; the active path also ejects the owning session (`ship_abandoned` + `client.leave`). The lingering path is **shipInstanceId-keyed** (the owner may be piloting a DIFFERENT active hull) and **never touches any playerId-keyed map** — it mirrors the lingering-hull DEATH policy (`createLingeringHullEntity`), so combat-death and abandon end identically. Locks: [abandonToScrap.test.ts](../../tests/integration/sectorRoom/abandonToScrap.test.ts) + [abandonLingeringToScrap.test.ts](../../tests/integration/sectorRoom/abandonLingeringToScrap.test.ts). The galaxy-only linger/abandon/pool flows are E2E-driven through the isolated `galaxy-test` room + the `lingerMs` trigger (see the root CLAUDE.md bespoke-triggers table).
+
+### Scrap-on-death (2026-06-13)
+
+A composite ship breaks into one **scrap** swarm entity (kind 3) per component
+on death — both players AND drones. `ScrapSpawner` (`spawn/ScrapSpawner.ts`,
+hand-rolled-mock testable) owns the decision: per `shipScrapGroups(kind)`
+component it spawns at the component's world pose (catalogue Pixi-up → world
+math-up via `x*scale,-y*scale`, rotate by ship angle, translate — matching
+`shipShapeToPolygon`), inheriting ship velocity + a radial `SCRAP_BURST_SPEED`
+drift, at the ship's angle. Death hooks (ALL spawn BEFORE the slot is freed so
+the dying pose is live): drone via `swarmDamageStrategy.createSwarmDeath`'s
+optional `spawnScrapFromDrone` `LeafDeps` seam; ACTIVE player hull via the
+`SHIP_DESTROYED` handler in `SectorRoom` (pose from `shipPoseCache`/SAB); and
+**LINGERING hull (Equinox P6.3) via the `spawnScrapFromLingeringHull` `LeafDeps`
+seam** called inside `createLingeringHullEntity`'s death policy (pose read from
+`lingeringPoseCache` before that policy tears it down — the `SHIP_DESTROYED`
+path can't serve a lingering hull: its slot/pose are gone by emit time AND
+`getActiveShip(shipInstanceId)` is undefined; lock `lingeringScrapOnDeath.test.ts`).
+Polygon kinds yield nothing. **Scrap is DAMAGEABLE**: seeded `SCRAP_HP` + `swarmShield 0`,
+and `EntityResolver` routes kind 3 to the drone leaf (hits hull → destroyed) —
+GUARDED so a dying scrap piece does NOT recursively shatter
+(`SectorRoom.spawnScrapFromDrone` returns early for kind 3). No time-decay; a
+global FIFO cap (`MAX_LIVE_SCRAP`, `notifyRemoved` on eviction) bounds it. Scrap
+is EXCLUDED from `SectorPersistence` (transient debris). Wire: `SWARM_KIND_SCRAP`
++ a `componentIndex` byte bumped `SWARM_WIRE_VERSION 3 → 4` → **netgate applies**
+(invariant #8). Locks: `ScrapSpawner.test.ts` + `scrapOnDeath.test.ts`
+(integration). See [docs/architecture/composite-ships-and-scrap.md](../../docs/architecture/composite-ships-and-scrap.md).
+
+## History
+
+> **C3 (done) removed the wreck ENTITY end-to-end** — `WreckState` + `state.wrecks`, `SnapshotMessage.wrecks`, `WreckLifecycleCoordinator`, the `EntityResolver` wreck branch + `WreckEntity` leaf + the wreck `EntityKindTag`, the client `mirror.wrecks` render/select/pick/hover paths, and `wreck-render-probe.spec.ts` are all gone. No `WreckState` exists; the abandon/death paths above are the only hull-removal flows, and both produce scrap. (Removing `SnapshotMessage.wrecks` is a JSON-field removal, NOT a `SWARM_WIRE_VERSION` bump — the binary swarm wire is untouched.)

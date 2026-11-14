@@ -33,3 +33,15 @@ Flying a capital, tap empty space and the helm sets a course there (`core/helm/h
 - Only the pilot sees it, only for their own capital under an active order: the order lives in `ColyseusClient`, and `helm/helmCourseMark.ts` decides visibility. The point rides `RenderMirror.helmCourse` to the renderer (spatial, so never Zustand, #2), so both render paths draw it.
 - `render/helm/HelmCourseMarker.ts` draws it in screen space, so it keeps one pixel size at any zoom (capitals zoom far out). Painted once; per frame only position, scale and alpha change (#14). Hidden during a trip.
 - Locks: `helmCourseMark.test.ts`, `HelmCourseMarker.test.ts`, `tests/e2e/capital-helm.spec.ts` (shown after a tap, gone after W, read via `__eqxArtStats().helmMarker`).
+
+## Server implementation notes
+
+> Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.
+
+### Flagship fleets (wrap-up W2a, 2026-11-08)
+
+- **`FlagshipDirector`** (`livingworld/`) is ticked on the drone director's `onTick`. It keeps `FLEET_COUNT` capital fleets: an elite-marked flagship plus escorts with `flagship-` ids, which `LoadShedder` never sheds.
+- **Moving.** Fleets move pocket to pocket with `SectorRoom.warpBot`, the NPC warp: `World.botWarp` → `BOT_WARP` → `drones[].warp`. They cross systems by gate.
+- **Escort stations come from hull radii** (`escortRing`), never a flock distance: fighter-scale flocking rammed escorts into a battleship's hull.
+- **`warpBot` lands at `landingPoint`.** A drop inside a belt rock killed an escort, so the bot lands at the nearest clear spot, like a pilot.
+- **The map's truth is `SectorLiveState.capital`.** Persisted as `allegiance_director_state` row `flagships`; kill switch `EQX_DISABLE_FLAGSHIPS`.
