@@ -3181,7 +3181,8 @@ export class ColyseusGameClient {
       : -1;
     this._lastSnapshotRecvAtMs = recvAtMs;
     const serverSendPerfNow = (snap as { serverSendPerfNow?: number }).serverSendPerfNow;
-    const wsBufferedAmountBytes = (snap as { wsBufferedAmountBytes?: number }).wsBufferedAmountBytes;
+    // Emit-when-non-zero on the server (2026-11-14 trim): absent means 0.
+    const wsBufferedAmountBytes = (snap as { wsBufferedAmountBytes?: number }).wsBufferedAmountBytes ?? 0;
     logEvent('snapshot_received', {
       serverTick: snap.serverTick,
       via,
