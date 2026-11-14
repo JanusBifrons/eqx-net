@@ -42,6 +42,14 @@ import { fnv1a32 } from '../../core/random/rng.js';
 import { deriveStatMultipliers, type StatAlloc } from '../../core/leveling/shipStats.js';
 import type { ShipKind } from '../../shared-types/shipKinds/types.js';
 import { massOf, shipTuning } from '../../shared-types/shipScale/tuning.js';
+import {
+  parseSavedMode,
+  parseSavedSquad,
+  parseSavedStance,
+  type FleetSavedModeData,
+  type FleetSavedShip,
+  type FleetSavedSquad,
+} from './fleetPersistence.js';
 
 /** Most ship ids read from one command (the rest are ignored). */
 export const FLEET_MAX_IDS_PER_COMMAND = 64;
@@ -535,6 +543,153 @@ export class FleetCommandSubsystem {
     return sq.memberIds;
   }
 
+  // ---- Persistence (RTS slice 9; off the tick: the 60 s sector save) --------
+
+  /**
+   * The standing job of the AI-flown `shipId` (mode + its data, stance, squad),
+   * or null when it is not attached. Direct orders are never exported.
+   */
+  exportShip(shipId: string): FleetSavedShip | null {
+    const e = this.byId.get(shipId);
+    if (e === undefined) return null;
+    const b = e.brain;
+    const out: FleetSavedShip = { mode: b.mode, stance: b.stance };
+    const md = savedModeDataOf(b);
+    if (md !== null) out.modeData = md;
+    const sqId = this.memberSquad.get(shipId);
+    if (sqId !== undefined) out.squadId = sqId;
+    return out;
+  }
+
+  /** Every squad, members in slot order (pilot-flown members included). */
+  exportSquads(): FleetSavedSquad[] {
+    const out: FleetSavedSquad[] = [];
+    for (const sq of this.squadList) {
+      const s: FleetSavedSquad = {
+        id: sq.id,
+        ownerId: sq.ownerId,
+        leaderId: sq.leaderId,
+        memberIds: sq.memberIds.slice(),
+        shape: sq.shape,
+      };
+      if (sq.mode !== null) {
+        s.mode = sq.mode;
+        const md = copyModeData(sq.modeData);
+        if (md !== null) s.modeData = md;
+      }
+      out.push(s);
+    }
+    return out;
+  }
+
+  /** Everything `exportShip` / `exportSquads` would write (tests, diagnostics). */
+  exportState(): { ships: Array<FleetSavedShip & { id: string }>; squads: FleetSavedSquad[] } {
+    const ships: Array<FleetSavedShip & { id: string }> = [];
+    for (const e of this.entries) ships.push({ id: e.id, ...this.exportShip(e.id)! });
+    return { ships, squads: this.exportSquads() };
+  }
+
+  /**
+   * Re-apply a saved standing job to the attached `shipId` (hydrate). Each part
+   * is validated on its own and dropped when invalid: the mode (with its data)
+   * and the stance. The checks of a live `set_mode` hold: the ship must still
+   * belong to its owner (`ownerOf`), and an escort target must be a ship that
+   * owner owns and not the ship itself, else it defends where it is. Returns
+   * true when anything was applied.
+   */
+  restoreShip(shipId: string, saved: { mode?: unknown; modeData?: unknown; stance?: unknown }): boolean {
+    const e = this.byId.get(shipId);
+    if (e === undefined || this.hooks.ownerOf(shipId) !== e.ownerId) return false;
+    let applied = false;
+    const m = parseSavedMode(saved);
+    if (m !== null) {
+      e.brain.setMode(m.mode, this.validatedModeData(e.ownerId, m.mode, m.modeData, shipId));
+      applied = true;
+    }
+    const st = parseSavedStance(saved.stance);
+    if (st !== null) {
+      e.brain.setStance(st);
+      applied = true;
+    }
+    return applied;
+  }
+
+  /**
+   * Re-form saved squads (hydrate, after every hull is attached and its ship
+   * restored). Each squad keeps only members that are attached, owned by the
+   * squad's owner (`ownerOf`) and not already in a squad; fewer than
+   * {@link FLEET_SQUAD_MIN} left ⇒ the squad is dropped. The leader is the
+   * saved one when it survived, else the first member. The squad mode is
+   * re-validated like `setMode` (an escort target must be the owner's and not
+   * a member). Returns the number of squads formed.
+   */
+  restoreSquads(saved: readonly unknown[]): number {
+    let formed = 0;
+    for (const raw of saved) {
+      const s = parseSavedSquad(raw);
+      if (s === null) continue;
+      const members: string[] = [];
+      for (const id of s.memberIds) {
+        if (members.length >= FLEET_SQUAD_MAX) break;
+        if (members.includes(id) || !this.byId.has(id) || this.memberSquad.has(id)) continue;
+        if (this.hooks.ownerOf(id) !== s.ownerId) continue;
+        members.push(id);
+      }
+      if (members.length < FLEET_SQUAD_MIN) continue;
+      let squadId = s.id;
+      if (this.squads.has(squadId)) squadId = `sq-${this.nextSquad++}`;
+      const num = /^sq-(\d+)$/.exec(squadId);
+      if (num !== null) this.nextSquad = Math.max(this.nextSquad, Number(num[1]) + 1);
+      let mode: WingmanMode | null = null;
+      let modeData: FleetModeData = {};
+      if (s.mode !== undefined) {
+        mode = s.mode;
+        modeData = this.validatedModeData(s.ownerId, s.mode, s.modeData, null) ?? {};
+        if (modeData.escortId !== undefined && members.includes(modeData.escortId)) {
+          modeData = { ...modeData, escortId: undefined };
+        }
+      }
+      const sq: SquadState = {
+        id: squadId,
+        ownerId: s.ownerId,
+        leaderId: members.includes(s.leaderId) ? s.leaderId : members[0]!,
+        memberIds: members,
+        shape: s.shape,
+        mode,
+        modeData,
+        appliedLeader: null,
+        dirty: true,
+        index: this.squadList.length,
+        cmdStamp: 0,
+        cmdWhole: false,
+      };
+      this.squads.set(squadId, sq);
+      this.squadList.push(sq);
+      for (const id of members) {
+        this.byId.get(id)!.squadId = squadId;
+        this.memberSquad.set(id, squadId);
+      }
+      formed++;
+    }
+    return formed;
+  }
+
+  /** Saved mode data made safe to apply: an escort target must be owned by
+   *  `ownerId` and never `selfId`, else it is dropped (escort ⇒ defend here). */
+  private validatedModeData(
+    ownerId: string, mode: WingmanMode, md: FleetSavedModeData | undefined, selfId: string | null,
+  ): FleetModeData | undefined {
+    if (md === undefined) return undefined;
+    const escortOk = mode === 'escort' && md.escortId !== undefined && md.escortId !== selfId
+      && this.hooks.ownerOf(md.escortId) === ownerId;
+    return {
+      ...(md.x !== undefined ? { x: md.x } : {}),
+      ...(md.y !== undefined ? { y: md.y } : {}),
+      ...(md.route !== undefined ? { route: md.route } : {}),
+      ...(escortOk ? { escortId: md.escortId } : {}),
+    };
+  }
+
   // ---- Per-tick ------------------------------------------------------------
 
   /**
@@ -752,3 +907,32 @@ export class FleetCommandSubsystem {
 }
 
 const EMPTY: readonly string[] = [];
+
+/** The data of the brain's current mode, or null when it has none. */
+function savedModeDataOf(b: WingmanBehaviour): FleetSavedModeData | null {
+  switch (b.mode) {
+    case 'patrol': {
+      const n = b.patrolRouteLength;
+      if (n < 2) return null;
+      const route: Array<[number, number]> = [];
+      for (let i = 0; i < n; i++) route.push([b.patrolRouteX(i), b.patrolRouteY(i)]);
+      return { route };
+    }
+    case 'escort':
+      return b.escortId !== null ? { escortId: b.escortId } : null;
+    case 'retreat':
+      return b.retreatPointX !== null ? { x: b.retreatPointX, y: b.retreatPointY! } : null;
+    case 'defend':
+    case 'hunt':
+      return b.guardPostX !== null ? { x: b.guardPostX, y: b.guardPostY! } : null;
+  }
+}
+
+/** A JSON-safe copy of squad mode data, or null when empty. */
+function copyModeData(md: FleetModeData): FleetSavedModeData | null {
+  const out: FleetSavedModeData = {};
+  if (md.x !== undefined && md.y !== undefined) { out.x = md.x; out.y = md.y; }
+  if (md.route !== undefined) out.route = md.route.map((p) => [p[0], p[1]] as [number, number]);
+  if (md.escortId !== undefined) out.escortId = md.escortId;
+  return Object.keys(out).length > 0 ? out : null;
+}

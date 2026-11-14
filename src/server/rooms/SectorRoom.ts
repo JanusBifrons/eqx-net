@@ -2518,6 +2518,9 @@ export class SectorRoom extends Room<SectorState> {
       restoreScrap: (rows) => this.restoreScrapFromSnapshot(rows),
       lingeringHulls: () => this.lingeringHullsForSnapshot(),
       restoreLingeringHulls: (rows) => this.restoreLingeringHullsFromSnapshot(rows),
+      // RTS slice 9 — wingman squads (hydrate runs this after the hulls).
+      fleetSquads: () => this.fleet.exportSquads(),
+      restoreFleetSquads: (rows) => { this.fleet.restoreSquads(rows); },
       saveRow: (key, payload) => saveSnapshot(key, payload),
       loadRow: (key) =>
         db
@@ -6193,7 +6196,10 @@ export class SectorRoom extends Room<SectorState> {
       if (ship === undefined || !ship.alive) continue;
       const pose = this.lingeringPoseCache.get(shipInstanceId);
       if (pose === undefined) continue;
+      // RTS slice 9 — the wingman's standing job rides with the hull.
+      const job = this.fleet.exportShip(shipInstanceId);
       yield {
+        ...(job ?? {}),
         shipInstanceId,
         playerId: ship.playerId,
         kind: ship.kind,
@@ -6292,6 +6298,16 @@ export class SectorRoom extends Room<SectorState> {
         playerId: r.playerId,
         sectorKey: this.sectorKey,
       });
+    }
+    // RTS slice 9 — re-apply each brain's saved standing job once EVERY hull
+    // of the batch is attached (an escort target may be a later row). The
+    // subsystem re-validates ownership + escort targets; squads follow in
+    // `restoreFleetSquads`. Rows without the fields (older snapshots, a
+    // teleporter's cross-sector hand-over) keep the default brain.
+    for (const r of rows) {
+      if (r.mode === undefined && r.stance === undefined) continue;
+      if (!this.fleet.isAttached(r.shipInstanceId)) continue;
+      this.fleet.restoreShip(r.shipInstanceId, r);
     }
   }
 

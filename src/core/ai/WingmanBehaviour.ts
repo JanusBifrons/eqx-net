@@ -291,6 +291,10 @@ export class WingmanBehaviour implements IWingmanBrain {
   patrolRouteY(i: number): number { return this.routeY[i]!; }
   /** Escort: the ship being escorted, or null. */
   get escortId(): string | null { return this._escortId; }
+  /** Retreat: the point being retreated to, or null while none is set (the
+   *  first retreat tick defaults it to the guard post). */
+  get retreatPointX(): number | null { return this.retreatPointSet ? this.retreatX : null; }
+  get retreatPointY(): number | null { return this.retreatPointSet ? this.retreatY : null; }
   /** Hunt search radius (u). */
   get huntSensorRange(): number { return this.sensorRange; }
   /** Formation: the leader this ship keeps station on, or null. */
