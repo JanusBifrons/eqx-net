@@ -29,15 +29,17 @@ interface Hull { id: string; x: number; y: number; sx: number; sy: number }
 async function ownHulls(page: Page): Promise<Hull[]> {
   return page.evaluate(() => {
     const g = globalThis as {
-      __eqxClient?: { mirror: { localPlayerId: string | null; lingeringShips?: Map<string, { ownerPlayerId?: string; x: number; y: number }> } };
+      __eqxClient?: { mirror: { localPlayerId: string | null; ships: Map<string, { isActive?: boolean; ownerPlayerId?: string; x: number; y: number }> } };
       __eqxWorldToScreen?: (x: number, y: number) => { x: number; y: number };
     };
     const m = g.__eqxClient?.mirror;
     const canvas = document.querySelector('[data-testid="game-surface"]')?.getBoundingClientRect();
     const out: Array<{ id: string; x: number; y: number; sx: number; sy: number }> = [];
     if (!m || !g.__eqxWorldToScreen) return out;
-    for (const [id, e] of m.lingeringShips ?? []) {
-      if (e.ownerPlayerId !== m.localPlayerId) continue;
+    // AI-flown own ships are ordinary ships in the mirror, not active (the
+    // one the pilot flies is the active one).
+    for (const [id, e] of m.ships) {
+      if (e.isActive !== false || e.ownerPlayerId !== m.localPlayerId) continue;
       const s = g.__eqxWorldToScreen(e.x, e.y);
       out.push({ id, x: e.x, y: e.y, sx: s.x + (canvas?.x ?? 0), sy: s.y + (canvas?.y ?? 0) });
     }
@@ -95,7 +97,7 @@ async function clickButton(ctx: ShotContext, m: Mouse, testId: string): Promise<
  * toward it while its centre drifts out of the middle of the screen. Runs
  * until `stop.done`; releases every key it holds.
  */
-async function panToFleet(ctx: ShotContext, stop: { done: boolean }, target: 'fleet' | 'flown' = 'fleet'): Promise<void> {
+async function panToFleet(ctx: ShotContext, stop: { done: boolean }, target: 'fleet' | 'fight' = 'fleet'): Promise<void> {
   const { width, height } = ctx.viewport;
   const held = new Set<string>();
   const set = async (key: string, on: boolean): Promise<void> => {
@@ -105,12 +107,12 @@ async function panToFleet(ctx: ShotContext, stop: { done: boolean }, target: 'fl
   try {
     while (!stop.done) {
       let cx: number | null = null, cy: number | null = null;
-      if (target === 'fleet') {
-        const hs = await ownHulls(ctx.page);
-        if (hs.length > 0) {
-          cx = hs.reduce((a, h) => a + h.sx, 0) / hs.length;
-          cy = hs.reduce((a, h) => a + h.sy, 0) / hs.length;
-        }
+      // 'fight': the middle of the fleet and the robots it is fighting.
+      const pts: Array<{ sx: number; sy: number }> = [...(await ownHulls(ctx.page))];
+      if (target === 'fight') pts.push(...(await robots(ctx.page)));
+      if (pts.length > 0) {
+        cx = pts.reduce((a, h) => a + h.sx, 0) / pts.length;
+        cy = pts.reduce((a, h) => a + h.sy, 0) / pts.length;
       }
       if (cx !== null && cy !== null) {
         const dx = (cx - width / 2) / width, dy = (cy - height / 2) / height;
@@ -157,9 +159,45 @@ async function robots(page: Page): Promise<Array<{ x: number; y: number; sx: num
 
 /** Left-drag a box around every own parked hull. */
 async function boxSelectAll(ctx: ShotContext, m: Mouse): Promise<void> {
+  // First bring the whole fleet onto the open canvas (clear of the top HUD and
+  // the bottom panel), as a player pans/zooms before dragging a box.
+  const { width: W, height: H } = ctx.viewport;
+  const pad = 60;
+  const area = { x0: W * 0.08, x1: W * 0.92, y0: H * 0.18, y1: H * 0.7 };
+  const deadline = Date.now() + 5000;
+  const held = new Set<string>();
+  const set = async (key: string, on: boolean): Promise<void> => {
+    if (on && !held.has(key)) { held.add(key); await ctx.page.keyboard.down(key); }
+    if (!on && held.has(key)) { held.delete(key); await ctx.page.keyboard.up(key); }
+  };
+  try {
+    while (Date.now() < deadline) {
+      const cur = await ownHulls(ctx.page);
+      if (cur.length === 0) break;
+      const bx0 = Math.min(...cur.map((h) => h.sx)) - pad, bx1 = Math.max(...cur.map((h) => h.sx)) + pad;
+      const by0 = Math.min(...cur.map((h) => h.sy)) - pad, by1 = Math.max(...cur.map((h) => h.sy)) + pad;
+      if (bx1 - bx0 > area.x1 - area.x0 || by1 - by0 > area.y1 - area.y0) {
+        for (const k of [...held]) await set(k, false);
+        await wheel(ctx, m, 1);
+        await ctx.sleep(300);
+        continue;
+      }
+      const fits = bx0 >= area.x0 && bx1 <= area.x1 && by0 >= area.y0 && by1 <= area.y1;
+      if (fits) break;
+      const cx = (bx0 + bx1) / 2, cy = (by0 + by1) / 2;
+      const ax = (area.x0 + area.x1) / 2, ay = (area.y0 + area.y1) / 2;
+      await set('d', cx > ax + 60);
+      await set('a', cx < ax - 60);
+      await set('s', cy > ay + 60);
+      await set('w', cy < ay - 60);
+      await ctx.sleep(60);
+    }
+  } finally {
+    for (const k of [...held]) await ctx.page.keyboard.up(k);
+  }
+  await ctx.sleep(150);
   const hs = await ownHulls(ctx.page);
   if (hs.length === 0) return;
-  const pad = 60;
   const x0 = Math.min(...hs.map((h) => h.sx)) - pad, y0 = Math.min(...hs.map((h) => h.sy)) - pad;
   const x1 = Math.max(...hs.map((h) => h.sx)) + pad, y1 = Math.max(...hs.map((h) => h.sy)) + pad;
   await m.glideTo(x0, y0, { ms: 600 });
@@ -280,8 +318,22 @@ export const rtsCommand: Shot = {
     await rightClick(ctx, m, Math.min(W * 0.85, Math.max(W * 0.15, rx)), Math.min(H * 0.6, Math.max(H * 0.3, ry)));
     mark(`right-click toward the robots (robots on page ${rs.map((r) => `${r.sx.toFixed(0)},${r.sy.toFixed(0)}`).join(' ')})`);
     follow = { done: false };
-    panning = panToFleet(ctx, follow);
+    panning = panToFleet(ctx, follow, 'fight');
     await m.glideTo(W * 0.82, H * 0.2, { ms: 600 });
+    let zoomOuts = 0;
+    /** Zoom out a notch (a few at most) when the fight spreads past the screen. */
+    const keepFightInView = async (): Promise<void> => {
+      if (zoomOuts >= 4) return;
+      const pts: Array<{ sx: number; sy: number }> = [...(await ownHulls(page)), ...(await robots(page))];
+      if (pts.length < 2) return;
+      const w = Math.max(...pts.map((p) => p.sx)) - Math.min(...pts.map((p) => p.sx));
+      const h = Math.max(...pts.map((p) => p.sy)) - Math.min(...pts.map((p) => p.sy));
+      if (w > W * 0.8 || h > H * 0.5) {
+        zoomOuts++;
+        await wheel(ctx, m, 1);
+        await m.glideTo(W * 0.82, H * 0.2, { ms: 300 });
+      }
+    };
     // The fight plays out: end ~4 s after it is decided, or at the cap.
     const engaged = await waitUntil(ctx, async () => /Chasing|Attacking/.test(await rows(page)), 15_000);
     mark(`engaged=${engaged}; rows: ${await rows(page)}`);
@@ -296,6 +348,7 @@ export const rtsCommand: Shot = {
         if (quietSince === 0) quietSince = Date.now();
         else if (Date.now() - quietSince > 4000) break;
       } else quietSince = 0;
+      await keepFightInView();
       await ctx.sleep(500);
     }
     mark(`fight over; robots left ${(await robots(page)).length}; own hulls ${(await ownHulls(page)).length}`);
