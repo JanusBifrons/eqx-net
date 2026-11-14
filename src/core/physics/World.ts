@@ -8,7 +8,7 @@ import {
   type ShipKindId,
 } from '../../shared-types/shipKinds.js';
 import { configureShipCollider, shipShieldColliderDesc } from './colliderConfig.js';
-import { applyShipInput, type ShipInputMultipliers } from './applyShipInput.js';
+import { applyShipInput, type ShipInputArgs, type ShipInputMultipliers } from './applyShipInput.js';
 import { newWarpState, stepWarp, WARP_ALIGN_GAIN, WARP_EXIT_SPEED, WARP_SPEED, WARP_SPOOL_TICKS, type WarpPhase, type WarpState } from './warpDrive.js';
 /** NPC warp-to: a bot engages only once within this of facing its target (rad). */
 const BOT_WARP_ALIGN_RAD = 0.06;
@@ -86,6 +86,13 @@ interface ShipBody {
   statMul?: ShipInputMultipliers;
   /** In-sector warp-to state; created on the first warp request. */
   warp?: WarpState;
+  /** Pilot layer: the ShipKind an AI slot flies with when driven by input
+   *  bits (`applyAiInput`). Set at drone spawn (`SPAWN_OBSTACLE.shipKindId`).
+   *  Kept apart from `kind` (an obstacle's placeholder default kind, which
+   *  other paths such as the bot warp align still read). */
+  pilotKind?: ShipKind;
+  /** True once `applyAiInput` has given the body its kind's damping. */
+  piloted?: boolean;
 }
 
 export class PhysicsWorld {
@@ -783,6 +790,38 @@ export class PhysicsWorld {
     rec.statMul = mul;
   }
 
+  /** Pilot layer: record the ShipKind an AI slot flies with (`applyAiInput`).
+   *  Unknown id ⇒ no-op. */
+  setPilotKind(id: string, kind: ShipKind): void {
+    const rec = this.bodies.get(id);
+    if (!rec) return;
+    rec.pilotKind = kind;
+  }
+
+  /**
+   * Pilot layer: drive an AI body with player controls, through the SAME
+   * `applyShipInput` a pilot's keys use (thrust, lateral grip, maxSpeed clamp,
+   * capital torque turning, per-instance stat multipliers). Flies as
+   * `pilotKind` (falls back to the record's `kind`).
+   *
+   * The first call gives the body its kind's linear + angular damping, as
+   * `spawnShip` does: a drone body spawns with angular damping 0 (the impulse
+   * path set its spin every tick), and a snap-turn that is released would
+   * otherwise spin forever. Bodies never driven by input keep their spawn
+   * damping, so the impulse path is unchanged. Unknown id ⇒ no-op.
+   */
+  applyAiInput(id: string, input: ShipInputArgs): void {
+    const rec = this.bodies.get(id);
+    if (!rec) return;
+    const kind = rec.pilotKind ?? rec.kind;
+    if (rec.piloted !== true) {
+      rec.piloted = true;
+      rec.body.setLinearDamping(kind.linearDamping);
+      rec.body.setAngularDamping(kind.angularDamping);
+    }
+    applyShipInput(rec.body, kind, input, rec.statMul);
+  }
+
   /**
    * Apply a single-step linear and angular impulse, used by AI behaviours and
    * (via the `AI_INTENT` worker command) by drone steering. Wakes the body if
@@ -816,6 +855,78 @@ export class PhysicsWorld {
   }
 
   private readonly _kickVel = { x: 0, y: 0 };
+
+  /** Apply a linear impulse (jx, jy) at world point (px, py), so an
+   *  off-centre blow also turns the body (a capital wreck piece knocked by an
+   *  overkill shell). Wakes it. Unknown id ⇒ no-op. Alloc-free. */
+  applyImpulseAtPoint(id: string, jx: number, jy: number, px: number, py: number): void {
+    const rec = this.bodies.get(id);
+    if (!rec) return;
+    this._impJ.x = jx;
+    this._impJ.y = jy;
+    this._impP.x = px;
+    this._impP.y = py;
+    rec.body.applyImpulseAtPoint(this._impJ, this._impP, true);
+  }
+
+  private readonly _impJ = { x: 0, y: 0 };
+  private readonly _impP = { x: 0, y: 0 };
+
+  /**
+   * Apply a linear impulse (jx, jy) at world point (px, py) to a GROUP of
+   * bodies as if they were one rigid body (a capital wreck still inside its
+   * crack hold, hit by the rest of a salvo). The group's motion is first made
+   * exactly rigid from its momentum (centre-of-mass velocity from the linear
+   * momentum, spin from the angular momentum about the centre of mass over
+   * the group's moment of inertia, parallel-axis theorem), then
+   *   Δv = J ÷ M,  Δω = (r × J) ÷ I,
+   * and every body gets v_com + ω × r_i and spin ω, so the pieces keep their
+   * relative poses. Unknown ids are skipped (pieces already gone). Wakes the
+   * bodies. Alloc-free apart from Rapier's own vector getters.
+   */
+  applyRigidGroupImpulse(ids: readonly string[], jx: number, jy: number, px: number, py: number): void {
+    let m = 0, cx = 0, cy = 0, momX = 0, momY = 0;
+    for (let i = 0; i < ids.length; i++) {
+      const rec = this.bodies.get(ids[i]!);
+      if (!rec) continue;
+      const b = rec.body;
+      const mi = b.mass();
+      const c = b.worldCom();
+      const v = b.linvel();
+      m += mi; cx += c.x * mi; cy += c.y * mi; momX += v.x * mi; momY += v.y * mi;
+    }
+    if (!(m > 0)) return;
+    cx /= m; cy /= m;
+    let vx = momX / m, vy = momY / m;
+    // Angular momentum and inertia about the group's centre of mass.
+    let l = 0, inertia = 0;
+    for (let i = 0; i < ids.length; i++) {
+      const rec = this.bodies.get(ids[i]!);
+      if (!rec) continue;
+      const b = rec.body;
+      const mi = b.mass();
+      const c = b.worldCom();
+      const v = b.linvel();
+      const rx = c.x - cx, ry = c.y - cy;
+      const ii = b.principalInertia();
+      inertia += ii + mi * (rx * rx + ry * ry);
+      l += ii * b.angvel() + mi * (rx * (v.y - vy) - ry * (v.x - vx));
+    }
+    let w = inertia > 0 ? l / inertia : 0;
+    vx += jx / m;
+    vy += jy / m;
+    if (inertia > 0) w += ((px - cx) * jy - (py - cy) * jx) / inertia;
+    for (let i = 0; i < ids.length; i++) {
+      const rec = this.bodies.get(ids[i]!);
+      if (!rec) continue;
+      const b = rec.body;
+      const c = b.worldCom();
+      this._kickVel.x = vx - w * (c.y - cy);
+      this._kickVel.y = vy + w * (c.x - cx);
+      b.setLinvel(this._kickVel, true);
+      b.setAngvel(w, true);
+    }
+  }
 
   /** True when Rapier reports the body as sleeping (motion below its threshold). */
   isSleeping(id: string): boolean {

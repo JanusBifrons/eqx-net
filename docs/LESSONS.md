@@ -2986,6 +2986,13 @@ Owner: "They absolutely should collide by design." In a clip a heavy cruiser und
 - **Effects at the kill point hide under the kill blast.** A crack front paced evenly over distance and ripples placed "on the far part of the cracks" were still under the fireball on v7's short cracks. Pace and place presentation against the blast's covered radius, and draw glow only on the piece's own side of a cut (centred glow fills an opening gap and reads as a dark strip).
 - **Never gate a polygon hit test on `rayHitsSphere`.** It returns null once the segment starts inside the circle and past its closest point; stepping shells then passed through the far half of capital hulls (three server paths, two client paths) and wreck pieces. Gate on `segmentNearCircle`.
 
+## 2026-11-13 — Fire control: a per-pilot flag on a ship rule split the same gun into two lock times
+Commit: fix/npc-lock-parity
+
+The 2026-11-10 "heavy guns lock small targets slowly, never impossibly" rule was implemented as an opt-in input flag (`LockInputs.neverImpossible`) set only by the player `LockSubsystem`. NPC lock paths (`NpcLockSubsystem`, the capital turret's structure lock in `WeaponMountTicker`) never set it, so a battleship's 16" locked a still fighter 5 km out in ~38 s for a player and never (Infinity) for an NPC. The owner's rule is "Ships turning, acceleration, weapons, everything is related to the ship, regardless of pilot"; asked about locks: "Same rule as players — an NPC's heavy gun locks a small fast ship slowly, but always gets there in the end. It's the same ship and the same gun, so it gets the same lock."
+
+Fix: the flag is gone. `lockSeconds` keys the rule on what the shooter IS, not who flies it: a heavy (`absRange`) gun under ship tuning skips the `maxSeconds` gate; fixed batteries keep their own rule through their own tuning (`clampAtMax`). Lesson: when a rule belongs to a ship, gun or structure kind, express it in the kind's data or tuning, never as a flag one caller remembers to pass; a second caller silently gets the old behaviour. Lock: `tests/unit/npcLockParity.test.ts` (same kind + gun + target ⇒ same lock time, and the NPC capital then fires).
+
 ## 2026-11-13 — Ram damage keyed on mass difference ignored speed and angle
 
 - **What happened.** The 2026-06-12 fix for "ram damage too high" made damage proportional to `(mOther − mSelf)/(mOther + mSelf)` times a speed factor on |relative velocity|. Two equal ships then dealt 0 at any speed, and a glancing scrape counted the same as a head-on hit. The owner: "You're telling me speed and angle of attack have no bearing? Wtf?!"
@@ -3007,3 +3014,9 @@ Owner: "They absolutely should collide by design." In a clip a heavy cruiser und
 - **Fix.** A turning mount fires down its barrel (hull angle + base + slewed angle), the angle the client draws. A fixed mount keeps the exact aim vector (the 2026-06-03 accuracy fix). Lock: `AiFireResolver.test.ts` "a turret beam leaves along its visible barrel" (wire ray direction == drawn barrel, #15).
 - **Lesson.** When a drawn beam disagrees with its target, check that the server's ray and the drawn ray are the SAME ray before touching the beam-end maths. Adding a relative angle to an absolute direction is a frame mix-up that no hit-shape fix can hide.
 - **Still open.** A FIXED mount's beam is drawn along the hull's nose while the server fires along the aim vector (within the AI's aim cone), so a hit can end beside the target rather than on it.
+
+## 2026-11-13 — Same keys, different ship: an NPC body is twice a player's mass
+
+- **Finding (virtual pilot, slice 1b):** NPCs now press a player's keys through the same `applyShipInput`, yet a drone of a kind still accelerates at half the player's rate and tops out at half its thrust-only speed. `SwarmSpawner` spawns a drone with `massOf(kind, 2)` (`DRONE_DEFAULT_MASS`), a player ship with `massOf(kind, 1)`, and `thrustImpulse` is an impulse, so Δv = J/m. Boost reaches `maxSpeed` either way.
+- **Rule:** anything that reasons about how an NPC body responds (the pilot's braking, arrive ramps, tests) must use the spawned mass, `NPC_MASS_FALLBACK` from `shipScale/tuning.ts` (now the spawner's source too), never `thrustImpulse` alone. Whether NPC bodies should match the player's mass is an owner balance call (it also changes ramming), not a pilot fix.
+- **Also:** the old impulse brain needed `HostileDroneBehaviour` to know nothing about inertia. A capital flown by keys turns by torque, so the pilot must stop the turn early on the coast `ω / angularDamping` (Rapier's damping sums to exactly that), or it swings past the heading by ~4° and hunts.
