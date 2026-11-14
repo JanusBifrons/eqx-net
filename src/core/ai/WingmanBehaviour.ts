@@ -1,6 +1,6 @@
 /**
- * Wingman brain (RTS command layer, slice 2): the AI pilot that flies a ship
- * its owner is not flying.
+ * Wingman brain (RTS command layer, slices 2 + 8): the AI pilot that flies a
+ * ship its owner is not flying.
  *
  * Why not `IAiBehaviour`: that contract returns an `AiIntent` of raw impulses
  * and torque applied straight to the body (the drone path, which bypasses the
@@ -11,22 +11,55 @@
  * {@link IWingmanBrain} interface.
  *
  * Model:
- *  - MODE: standing behaviour. Slice 2 implements `defend` (hold a guard post,
- *    return when pushed outside the guard radius). `patrol` / `hunt` /
- *    `escort` / `retreat` are TODO and fall back to defend.
+ *  - MODE: standing behaviour.
+ *    - `defend`: hold a guard post, return when pushed outside the guard radius.
+ *    - `patrol`: fly a route of 2–16 waypoints as a closed loop (last → first).
+ *      A missing / one-point route ⇒ defend (at that point).
+ *    - `escort`: keep station behind-and-starboard of another ship (the
+ *      `formation.ts` wedge slot 1 in its travel frame), matching its
+ *      velocity. Unresolvable ⇒ defend where it was lost; it resumes the
+ *      escort if the ship can be resolved again.
+ *    - `hunt`: chase the contact `view.nearestHostile` returns within sensor
+ *      range (`roleSensorRange(aiRole, fireRange)`); none ⇒ defend the post
+ *      (the spot the last chase ended). A `holdFire` stance never chases.
+ *    - `retreat`: fly to the retreat point (default: the guard post) without
+ *      engaging, then defend there (the mode becomes `defend`).
  *  - ORDER: one-off, on top of the mode. `move` (arrive at a point), `stop`
  *    (hold here = defend at the spot the ship brakes to), `attack` (pursue to
- *    a stand-off; no firing yet).
- *  - When an order completes the mode RESUMES FROM WHERE THE SHIP IS NOW: for
- *    defend the guard post becomes the current position (later: patrol flies
- *    to its nearest waypoint).
- *  - STANCE: stored for the firing slice; does not affect movement yet.
+ *    a stand-off).
+ *  - When an order completes the mode RESUMES FROM WHERE THE SHIP IS NOW:
+ *    defend / hunt take the current spot as the post; patrol flies to the
+ *    waypoint nearest the ship and loops on from there; escort re-forms on
+ *    its ship; retreat carries on to its point.
+ *  - MORALE: `reportDamage` feeds a `MoraleTracker`; a fired trigger rolls the
+ *    seeded morale die (`rollMorale`, role weights). FallBack / Flee break off
+ *    any order and fly AWAY from the threat (2× / 5× the guard radius; no
+ *    known threat ⇒ back to the post), activity `retreating`; on arrival the
+ *    mode resumes from there. Deterministic: same ship seed + damage ⇒ same
+ *    roll. A new order or mode from the owner cancels a morale retreat.
+ *  - STANCE: stored for the firing slice; the only movement effect is that a
+ *    `holdFire` hunter does not chase (it defends).
+ *  - FIRING: none. This brain only moves; `targetId` is what it is chasing.
  *
  * Pure, zone-blind, allocation-free per tick (#14): scratch lives on fields.
  * Size-dependent distances (arrive / guard radius) come from the caller, which
  * reads them from `shipTuning(kind)` (#18).
  */
+import type { AiRole } from '../../shared-types/shipKinds/types.js';
+import { formationSlotOffset, formationSlotWorldPose, makeSlotOffset, type WorldPoint } from './formation.js';
 import {
+  MORALE_LOCK_TICKS,
+  MORALE_OUTCOME,
+  MoraleTracker,
+  moraleSeed,
+  rollMorale,
+  type MoraleInputs,
+  type MoraleOutcome,
+  type MoraleWeights,
+} from './tactics/morale.js';
+import { roleProfile, roleSensorRange } from './tactics/roleProfiles.js';
+import {
+  headingOf,
   intentToControlBits,
   makeControlIntent,
 } from './wingman/intentToControlBits.js';
@@ -34,6 +67,7 @@ import type {
   WingmanActivity,
   WingmanControls,
   WingmanMode,
+  WingmanModeData,
   WingmanOrder,
   WingmanPose,
   WingmanPoseOut,
@@ -41,7 +75,7 @@ import type {
   WingmanStance,
   WingmanWorldView,
 } from './wingman/types.js';
-import { makeWingmanControls } from './wingman/types.js';
+import { makeWingmanControls, WINGMAN_ROUTE_MAX, WINGMAN_ROUTE_MIN } from './wingman/types.js';
 
 /** The brain contract the server's fleet subsystem drives once per tick. */
 export interface IWingmanBrain {
@@ -59,10 +93,26 @@ export interface WingmanConfig {
   readonly guardRadius: number;
   /** Boost on legs longer than this (u). Default 3 × guardRadius. */
   readonly boostDistance?: number;
-  /** Attack: hold this far from the target (u). Default guardRadius / 2. */
+  /** Attack / hunt: hold this far from the target (u). Default guardRadius / 2. */
   readonly attackStandoff?: number;
   readonly mode?: WingmanMode;
   readonly stance?: WingmanStance;
+  /** The hull's tactical role (sensor range, morale weights). Default 'fighter'. */
+  readonly aiRole?: AiRole;
+  /** The ship's fire range (u), for the role sensor range. Default 0 ⇒ the
+   *  `ON_SIGHT_ENGAGE_RANGE` floor. */
+  readonly fireRange?: number;
+  /** Hunt search radius (u). Default `roleSensorRange(aiRole, fireRange)`. */
+  readonly sensorRange?: number;
+  /** Morale die weights. Default `roleProfile(aiRole).moraleWeights`. */
+  readonly moraleWeights?: MoraleWeights;
+  /** Numeric ship id that seeds the morale roll (e.g. `fnv1a32(shipId)`). Default 0. */
+  readonly moraleSeedId?: number;
+  /** Escort: wedge spacing to the escorted ship (u). Default guardRadius / 2. */
+  readonly escortSpacing?: number;
+  /** Patrol: a waypoint counts as passed inside this (u). Default
+   *  max(2 × arriveRadius, guardRadius / 4). */
+  readonly patrolPassRadius?: number;
 }
 
 /** Plan braking at this fraction of the reverse deceleration (margin for the
@@ -70,6 +120,13 @@ export interface WingmanConfig {
 export const WINGMAN_BRAKE_MARGIN = 0.8;
 /** An order to a point is done once slower than this fraction of max speed. */
 export const WINGMAN_ARRIVE_SPEED_FRAC = 0.03;
+/** Morale FallBack: break off this many guard radii away from the threat. */
+export const WINGMAN_FALLBACK_DIST_MUL = 2;
+/** Morale Flee: run this many guard radii away from the threat. */
+export const WINGMAN_FLEE_DIST_MUL = 5;
+/** Escort: the escorted ship's heading follows its velocity above this
+ *  fraction of OUR max speed (below it, the last heading is kept). */
+export const WINGMAN_ESCORT_HEADING_SPEED_FRAC = 0.05;
 
 /**
  * Distance a ship at speed `v` covers while braking with reverse held:
@@ -84,12 +141,19 @@ export function stoppingDistance(v: number, stats: WingmanShipStats): number {
   return v / k - (a / (k * k)) * Math.log(1 + (k * v) / a);
 }
 
+type MutableMoraleInputs = { -readonly [K in keyof MoraleInputs]: MoraleInputs[K] };
+
 export class WingmanBehaviour implements IWingmanBrain {
   private readonly stats: WingmanShipStats;
   private readonly arriveRadius: number;
   private guardRadius: number;
   private readonly boostDistance: number;
   private readonly attackStandoff: number;
+  private readonly sensorRange: number;
+  private readonly moraleWeights: MoraleWeights;
+  private readonly moraleSeedId: number;
+  private readonly patrolPassRadius: number;
+  private readonly escortTolerance: number;
 
   private _mode: WingmanMode;
   private _stance: WingmanStance;
@@ -106,9 +170,54 @@ export class WingmanBehaviour implements IWingmanBrain {
   /** Stop order: coasting onto the post just set (reads as 'guarding'). */
   private settling = false;
 
+  // Patrol.
+  private readonly routeX = new Float64Array(WINGMAN_ROUTE_MAX);
+  private readonly routeY = new Float64Array(WINGMAN_ROUTE_MAX);
+  private routeLen = 0;
+  private routeIdx = 0;
+  /** True ⇒ the next patrol tick heads for the waypoint nearest the ship. */
+  private routeSeek = true;
+
+  // Escort.
+  private _escortId: string | null = null;
+  private escortHeading = 0;
+  private escortHeadingValid = false;
+  private escortLost = false;
+  private onStation = false;
+  private readonly escortSlot = makeSlotOffset();
+  private readonly stationPt: WorldPoint = { x: 0, y: 0 };
+
+  // Hunt.
+  private huntEngaged = false;
+
+  // Retreat mode.
+  private retreatX = 0;
+  private retreatY = 0;
+  private retreatPointSet = false;
+
+  // Morale.
+  private readonly morale = new MoraleTracker();
+  private readonly moraleInputs: MutableMoraleInputs = {
+    hullFrac: 1, recentDamageRate: 0, alliesNear: 0, enemiesNear: 0, ownSize: 0, enemySize: 0,
+    isCapitalNearbyFriendly: false,
+  };
+  private moraleDirty = false;
+  private hullFrac = 1;
+  private threatX = 0;
+  private threatY = 0;
+  private threatValid = false;
+  private moraleRetreating = false;
+  private moraleRetreatX = 0;
+  private moraleRetreatY = 0;
+  private _moraleOutcome: MoraleOutcome | null = null;
+  private moraleRollTick = 0;
+  private lastTick = 0;
+
   private readonly intent = makeControlIntent();
   private readonly controls = makeWingmanControls();
   private readonly targetPose: WingmanPoseOut = { x: 0, y: 0, vx: 0, vy: 0 };
+  /** `targetPose` holds the last resolved target (a morale threat fallback). */
+  private targetPoseValid = false;
 
   constructor(config: WingmanConfig) {
     this.stats = config.stats;
@@ -118,6 +227,15 @@ export class WingmanBehaviour implements IWingmanBrain {
     this.attackStandoff = config.attackStandoff ?? config.guardRadius * 0.5;
     this._mode = config.mode ?? 'defend';
     this._stance = config.stance ?? 'defensive';
+    const role = config.aiRole ?? 'fighter';
+    this.sensorRange = config.sensorRange ?? roleSensorRange(role, config.fireRange ?? 0);
+    this.moraleWeights = config.moraleWeights ?? roleProfile(role).moraleWeights;
+    this.moraleSeedId = config.moraleSeedId ?? 0;
+    this.patrolPassRadius = config.patrolPassRadius ?? Math.max(config.arriveRadius * 2, config.guardRadius * 0.25);
+    const spacing = config.escortSpacing ?? config.guardRadius * 0.5;
+    // Wedge slot 1: one rank astern, to starboard.
+    formationSlotOffset('wedge', 1, 2, spacing, this.escortSlot);
+    this.escortTolerance = Math.max(config.arriveRadius * 2, spacing * 0.5);
   }
 
   // ---- Read-outs (status streaming) ---------------------------------------
@@ -129,15 +247,92 @@ export class WingmanBehaviour implements IWingmanBrain {
   /** Current guard post, or null until the first tick sets it. */
   get guardPostX(): number | null { return this.postValid ? this.postX : null; }
   get guardPostY(): number | null { return this.postValid ? this.postY : null; }
+  /** Patrol: index of the waypoint being flown to. */
+  get patrolWaypointIndex(): number { return this.routeIdx; }
+  /** Patrol: number of waypoints (0 when not patrolling a route). */
+  get patrolRouteLength(): number { return this.routeLen; }
+  /** Escort: the ship being escorted, or null. */
+  get escortId(): string | null { return this._escortId; }
+  /** Hunt search radius (u). */
+  get huntSensorRange(): number { return this.sensorRange; }
+  /**
+   * The latest morale roll while it matters (for the UI): during the morale
+   * retreat it caused, or for `MORALE_LOCK_TICKS` after the roll. Null when
+   * no roll is current.
+   */
+  get moraleOutcome(): MoraleOutcome | null {
+    if (this._moraleOutcome === null) return null;
+    if (this.moraleRetreating || this.lastTick - this.moraleRollTick < MORALE_LOCK_TICKS) return this._moraleOutcome;
+    return null;
+  }
+  /** True while running from a FallBack / Flee morale roll. */
+  get isMoraleRetreating(): boolean { return this.moraleRetreating; }
 
   // ---- Commands (discrete, event-driven) ----------------------------------
-  /** Change the standing mode. With a post, defend there; without, resume from
-   *  the current position. Does not cancel a direct order. */
-  setMode(mode: WingmanMode, postX?: number, postY?: number): void {
+  /**
+   * Change the standing mode. Does not cancel a direct order; cancels a morale
+   * retreat (the owner's word wins).
+   *  - `setMode(mode, x, y)` / `setMode(mode, { x, y })`: defend / hunt post,
+   *    or the retreat point.
+   *  - `setMode('patrol', { route })`: 2–16 waypoints (extra dropped); fewer
+   *    ⇒ `defend` at the single waypoint, else at `x, y`, else here.
+   *  - `setMode('escort', { escortId })`: no id ⇒ `defend` here.
+   *  - `setMode('retreat')` with no point: retreat to the current post.
+   * Without a post, defend / hunt resume from the current position.
+   */
+  setMode(mode: WingmanMode, data?: number | WingmanModeData, postY?: number): void {
+    let px: number | undefined;
+    let py: number | undefined;
+    let md: WingmanModeData | undefined;
+    if (typeof data === 'number') { px = data; py = postY; } else if (data !== undefined) { md = data; px = data.x; py = data.y; }
+    const hasPoint = px !== undefined && py !== undefined;
+
     this._mode = mode;
-    if (postX !== undefined && postY !== undefined) this.setGuardPost(postX, postY);
-    else this.postValid = false;
     this.returning = false;
+    this.settling = false;
+    this.moraleRetreating = false;
+    this.huntEngaged = false;
+    if (this._order === null || this._order.kind !== 'attack') this._targetId = null;
+    this._escortId = null;
+    this.escortLost = false;
+    this.escortHeadingValid = false;
+    this.onStation = false;
+    this.routeLen = 0;
+    this.retreatPointSet = false;
+
+    switch (mode) {
+      case 'patrol': {
+        const r = md?.route;
+        const n = r !== undefined ? Math.min(r.length, WINGMAN_ROUTE_MAX) : 0;
+        if (n >= WINGMAN_ROUTE_MIN) {
+          for (let i = 0; i < n; i++) { this.routeX[i] = r![i]![0]; this.routeY[i] = r![i]![1]; }
+          this.routeLen = n;
+          this.routeIdx = 0;
+          this.routeSeek = true;
+          this.postValid = false;
+          return;
+        }
+        this._mode = 'defend';
+        if (n === 1) this.setGuardPost(r![0]![0], r![0]![1]);
+        else if (hasPoint) this.setGuardPost(px!, py!);
+        else this.postValid = false;
+        return;
+      }
+      case 'escort':
+        if (md?.escortId !== undefined && md.escortId !== '') this._escortId = md.escortId;
+        else this._mode = 'defend';
+        this.postValid = false;
+        return;
+      case 'retreat':
+        // Default retreat point = the current post (resolved on the first tick).
+        if (hasPoint) { this.retreatX = px!; this.retreatY = py!; this.retreatPointSet = true; }
+        return;
+      case 'defend':
+      case 'hunt':
+        if (hasPoint) this.setGuardPost(px!, py!);
+        else this.postValid = false;
+        return;
+    }
   }
 
   setStance(stance: WingmanStance): void { this._stance = stance; }
@@ -149,10 +344,13 @@ export class WingmanBehaviour implements IWingmanBrain {
 
   setGuardRadius(r: number): void { this.guardRadius = r; }
 
-  /** Replace any current order. Takes effect on the next tick. */
+  /** Replace any current order (cancels a morale retreat). Takes effect on
+   *  the next tick. */
   issueOrder(order: WingmanOrder): void {
     this._order = order;
     this._targetId = order.kind === 'attack' ? order.targetId : null;
+    this.moraleRetreating = false;
+    this.huntEngaged = false;
   }
 
   /** Drop the current order and resume the mode from where the ship is. */
@@ -161,13 +359,41 @@ export class WingmanBehaviour implements IWingmanBrain {
     this._targetId = null;
     this.postValid = false;
     this.returning = false;
+    this.routeSeek = true;
+  }
+
+  /**
+   * The ship took `amount` damage (max hull `maxHull`, hull now `hullFrac`
+   * 0..1), optionally from a threat at (threatX, threatY). Feeds the morale
+   * tracker; the next tick checks the triggers and may roll the morale die.
+   * Event-driven (call on each damage event), allocation-free.
+   */
+  reportDamage(amount: number, maxHull: number, hullFrac: number, threatX?: number, threatY?: number): void {
+    this.morale.noteDamage(this.lastTick, amount, maxHull);
+    this.hullFrac = hullFrac < 0 ? 0 : hullFrac > 1 ? 1 : hullFrac;
+    this.moraleDirty = true;
+    if (threatX !== undefined && threatY !== undefined) {
+      this.threatX = threatX; this.threatY = threatY; this.threatValid = true;
+    }
   }
 
   // ---- Per-tick -------------------------------------------------------------
   tick(self: WingmanPose, view: WingmanWorldView): WingmanControls {
+    this.lastTick = view.tick;
     if (!this.postValid) this.setGuardPost(self.x, self.y);
     const it = this.intent;
     it.dvx = 0; it.dvy = 0; it.boost = false;
+
+    if (this.moraleDirty) this.checkMorale(self, view.tick);
+    if (this.moraleRetreating) {
+      if (!this.steerTo(self, this.moraleRetreatX, this.moraleRetreatY, true)) {
+        this._activity = 'retreating';
+        return intentToControlBits(it, self, this.stats, this.controls);
+      }
+      // Got clear: resume the mode from here.
+      this.moraleRetreating = false;
+      this.resumeFrom(self);
+    }
 
     const order = this._order;
     let handled = false;
@@ -189,6 +415,8 @@ export class WingmanBehaviour implements IWingmanBrain {
           this._order = null;
           this._targetId = null;
           this._mode = 'defend';
+          this.routeLen = 0;
+          this._escortId = null;
           this.setGuardPost(self.x + self.vx * k, self.y + self.vy * k);
           // It coasts onto that spot: holding, not returning.
           this.returning = true;
@@ -202,7 +430,7 @@ export class WingmanBehaviour implements IWingmanBrain {
       }
     }
 
-    if (!handled) this.runMode(self);
+    if (!handled) this.runMode(self, view);
     return intentToControlBits(it, self, this.stats, this.controls);
   }
 
@@ -213,22 +441,32 @@ export class WingmanBehaviour implements IWingmanBrain {
     this.resumeFrom(self);
   }
 
-  /** The resume rule. Defend (and, until their slices land, every other mode):
-   *  the guard post becomes where the ship is now.
-   *  TODO(rts patrol): patrol flies to its nearest waypoint instead. */
+  /** The resume rule (owner): carry on from where the ship is NOW. Defend /
+   *  hunt: the post becomes this spot. Patrol: head for the nearest waypoint.
+   *  Escort re-forms on its ship; retreat keeps its point. */
   private resumeFrom(self: WingmanPose): void {
     this.setGuardPost(self.x, self.y);
+    this.routeSeek = true;
+    this.huntEngaged = false;
   }
 
-  private runMode(self: WingmanPose): void {
-    // TODO(rts slice): patrol / hunt / escort / retreat. Fall back to defend.
+  private runMode(self: WingmanPose, view: WingmanWorldView): void {
     switch (this._mode) {
       case 'defend':
-      case 'patrol':
-      case 'hunt':
-      case 'escort':
-      case 'retreat':
         this.tickDefend(self);
+        break;
+      case 'patrol':
+        if (this.routeLen >= WINGMAN_ROUTE_MIN) this.tickPatrol(self);
+        else this.tickDefend(self);
+        break;
+      case 'escort':
+        this.tickEscort(self, view);
+        break;
+      case 'hunt':
+        this.tickHunt(self, view);
+        break;
+      case 'retreat':
+        this.tickRetreat(self);
         break;
     }
   }
@@ -248,6 +486,136 @@ export class WingmanBehaviour implements IWingmanBrain {
     }
     // Inside the guard radius: hold still (intent stays zero ⇒ brake).
     this._activity = 'guarding';
+  }
+
+  /** Patrol: fly the route as a closed loop, passing (not stopping at) each
+   *  waypoint. After a resume, start from the waypoint nearest the ship. */
+  private tickPatrol(self: WingmanPose): void {
+    const n = this.routeLen;
+    if (this.routeSeek) {
+      let best = 0, bestD = Infinity;
+      for (let i = 0; i < n; i++) {
+        const dx = this.routeX[i]! - self.x, dy = this.routeY[i]! - self.y;
+        const d = dx * dx + dy * dy;
+        if (d < bestD) { bestD = d; best = i; }
+      }
+      this.routeIdx = best;
+      this.routeSeek = false;
+    }
+    let tx = this.routeX[this.routeIdx]!, ty = this.routeY[this.routeIdx]!;
+    const dx = tx - self.x, dy = ty - self.y;
+    if (dx * dx + dy * dy <= this.patrolPassRadius * this.patrolPassRadius) {
+      this.routeIdx = (this.routeIdx + 1) % n;
+      tx = this.routeX[this.routeIdx]!; ty = this.routeY[this.routeIdx]!;
+    }
+    this.steerTo(self, tx, ty, true);
+    this._activity = 'patrolling';
+  }
+
+  /** Escort: hold the wedge slot behind-starboard of the escorted ship in its
+   *  travel frame, matching its velocity. */
+  private tickEscort(self: WingmanPose, view: WingmanWorldView): void {
+    const id = this._escortId;
+    const tp = this.targetPose;
+    if (id === null || view.resolvePoseInto === undefined || !view.resolvePoseInto(id, tp)) {
+      // Lost it: defend the spot where it was lost (until it can be resolved).
+      if (!this.escortLost) {
+        this.escortLost = true;
+        this.onStation = false;
+        this.setGuardPost(self.x, self.y);
+      }
+      this.tickDefend(self);
+      return;
+    }
+    this.escortLost = false;
+    const sp = Math.hypot(tp.vx, tp.vy);
+    if (sp > this.stats.maxSpeed * WINGMAN_ESCORT_HEADING_SPEED_FRAC) {
+      this.escortHeading = headingOf(tp.vx, tp.vy);
+      this.escortHeadingValid = true;
+    } else if (!this.escortHeadingValid) {
+      // Parked escortee: take "behind" to be our side of it (no crossing over).
+      this.escortHeading = headingOf(tp.x - self.x, tp.y - self.y);
+      this.escortHeadingValid = true;
+    }
+    const st = formationSlotWorldPose(tp.x, tp.y, this.escortHeading, this.escortSlot, this.stationPt);
+    const dist = Math.hypot(st.x - self.x, st.y - self.y);
+    this.steerTo(self, st.x, st.y, true);
+    this.intent.dvx += tp.vx;
+    this.intent.dvy += tp.vy;
+    if (dist <= this.escortTolerance) this.onStation = true;
+    else if (dist > this.escortTolerance * 2) this.onStation = false;
+    this._activity = this.onStation ? 'guarding' : 'formingUp';
+  }
+
+  /** Hunt: chase the hostile the view offers within sensor range; none (or a
+   *  holdFire stance) ⇒ defend the post, which is where the last chase ended. */
+  private tickHunt(self: WingmanPose, view: WingmanWorldView): void {
+    let id: string | null = null;
+    if (this._stance !== 'holdFire' && view.nearestHostile !== undefined) {
+      id = view.nearestHostile(self.x, self.y, this.sensorRange, this.targetPose);
+    }
+    if (id === null) {
+      if (this.huntEngaged) {
+        this.huntEngaged = false;
+        this._targetId = null;
+        this.setGuardPost(self.x, self.y);
+      }
+      this.tickDefend(self);
+      return;
+    }
+    this.huntEngaged = true;
+    this.engage(self, id, this.targetPose);
+  }
+
+  /** Retreat mode: fly to the point without engaging, then defend there. */
+  private tickRetreat(self: WingmanPose): void {
+    if (!this.retreatPointSet) {
+      this.retreatX = this.postX; this.retreatY = this.postY; this.retreatPointSet = true;
+    }
+    if (this.steerTo(self, this.retreatX, this.retreatY, true)) {
+      this._mode = 'defend';
+      this.retreatPointSet = false;
+      this.setGuardPost(self.x, self.y);
+      this._activity = 'guarding';
+      return;
+    }
+    this._activity = 'retreating';
+  }
+
+  /** Check the morale triggers; a fired one rolls the die. */
+  private checkMorale(self: WingmanPose, tick: number): void {
+    this.moraleDirty = false;
+    const trig = this.morale.update(tick, this.hullFrac, 0, 0);
+    if (trig === -1) return;
+    const inp = this.moraleInputs;
+    inp.hullFrac = this.hullFrac;
+    inp.recentDamageRate = this.morale.windowDamageFrac(tick);
+    const outcome = rollMorale(inp, this.moraleWeights, moraleSeed(this.moraleSeedId, this.morale.triggerCount));
+    this._moraleOutcome = outcome;
+    this.moraleRollTick = tick;
+    if (outcome === MORALE_OUTCOME.FightOn) return;
+    const dist = this.guardRadius * (outcome === MORALE_OUTCOME.Flee ? WINGMAN_FLEE_DIST_MUL : WINGMAN_FALLBACK_DIST_MUL);
+    let ax = 0, ay = 0, known = false;
+    if (this.threatValid) { ax = self.x - this.threatX; ay = self.y - this.threatY; known = true; }
+    else if (this._targetId !== null && this.targetPoseValid) {
+      ax = self.x - this.targetPose.x; ay = self.y - this.targetPose.y; known = true;
+    }
+    const d = Math.sqrt(ax * ax + ay * ay);
+    if (known && d > 1e-6) {
+      this.moraleRetreatX = self.x + (ax / d) * dist;
+      this.moraleRetreatY = self.y + (ay / d) * dist;
+    } else {
+      // No known threat direction: fall back to the post.
+      this.moraleRetreatX = this.postX;
+      this.moraleRetreatY = this.postY;
+    }
+    this.threatValid = false;
+    // Break off: drop the order (and any chase), run.
+    this._order = null;
+    this._targetId = null;
+    this.huntEngaged = false;
+    this.moraleRetreating = true;
+    this._activity = 'retreating';
   }
 
   /**
@@ -272,12 +640,21 @@ export class WingmanBehaviour implements IWingmanBrain {
     return false;
   }
 
-  /** Attack order movement: close to the stand-off and match the target's
-   *  velocity. No firing in this slice. False ⇒ the target is gone. */
+  /** Attack order movement. False ⇒ the target is gone. */
   private pursue(self: WingmanPose, view: WingmanWorldView, targetId: string): boolean {
     const tp = this.targetPose;
-    if (view.resolvePoseInto === undefined || !view.resolvePoseInto(targetId, tp)) return false;
+    if (view.resolvePoseInto === undefined || !view.resolvePoseInto(targetId, tp)) {
+      this.targetPoseValid = false;
+      return false;
+    }
+    this.engage(self, targetId, tp);
+    return true;
+  }
+
+  /** Close to the stand-off on `tp` and match its velocity (no firing). */
+  private engage(self: WingmanPose, targetId: string, tp: WingmanPoseOut): void {
     this._targetId = targetId;
+    this.targetPoseValid = true;
     const dx = tp.x - self.x, dy = tp.y - self.y;
     const dist = Math.sqrt(dx * dx + dy * dy);
     const standoff = this.attackStandoff;
@@ -289,6 +666,5 @@ export class WingmanBehaviour implements IWingmanBrain {
     this.intent.dvx += tp.vx;
     this.intent.dvy += tp.vy;
     this._activity = dist > standoff * 1.5 ? 'chasing' : 'attacking';
-    return true;
   }
 }

@@ -35,7 +35,9 @@ import {
   type WingmanShipStats,
   type WingmanStance,
   type WingmanActivity,
+  type WingmanWorldView,
 } from '../../core/ai/wingman/types.js';
+import { fnv1a32 } from '../../core/random/rng.js';
 import { deriveStatMultipliers, type StatAlloc } from '../../core/leveling/shipStats.js';
 import type { ShipKind } from '../../shared-types/shipKinds/types.js';
 import { massOf, shipTuning } from '../../shared-types/shipScale/tuning.js';
@@ -77,9 +79,24 @@ export interface FleetCommandHooks {
    *  BOOST_TICK_COST)`). Absent ⇒ boost always allowed. Re-checked every tick
    *  while a ship holds boost, so a drained pool stops it between re-plans. */
   canBoost?(shipId: string): boolean;
-  /** Attack orders: resolve another entity's live pose. Absent ⇒ an attack
-   *  order completes at once. */
+  /** Attack orders / escort: resolve another entity's live pose. Absent ⇒ an
+   *  attack order completes at once and an escort defends where it is. */
   resolvePoseInto?(id: string, out: WingmanPoseOut): boolean;
+  /** Hunt mode: the contact hostile to `shipId`'s owner that the ship should
+   *  chase, within `maxRange` of (x, y): write its pose into `out`, return its
+   *  id, or null. Target choice lives here (the targeting slice). Absent ⇒
+   *  hunt defends. */
+  nearestHostile?(shipId: string, x: number, y: number, maxRange: number, out: WingmanPoseOut): string | null;
+  /** The ship `playerId` is flying right now (escort may follow it), or null. */
+  pilotShipOf?(playerId: string): string | null;
+}
+
+/** `set_mode` parameters (the wire message's optional fields). */
+export interface FleetModeData {
+  x?: number;
+  y?: number;
+  route?: readonly (readonly [number, number])[];
+  escortId?: string;
 }
 
 export interface FleetCommandOptions {
@@ -93,6 +110,9 @@ export interface FleetCommandOptions {
 export interface FleetShipInputs {
   kind: ShipKind;
   statAlloc?: StatAlloc;
+  /** The ship's fire range (u) for the role sensor range (hunt). Absent ⇒
+   *  the `ON_SIGHT_ENGAGE_RANGE` floor. */
+  fireRange?: number;
 }
 
 /** One ship's line in the status stream. */
@@ -134,7 +154,7 @@ interface FleetEntry {
  * the turn), mass from the catalogue exactly as `World.spawnShip` sets it, and
  * the size-dependent radii from `shipTuning` (#18).
  */
-export function wingmanConfigFor(kind: ShipKind, statAlloc?: StatAlloc): WingmanConfig {
+export function wingmanConfigFor(kind: ShipKind, statAlloc?: StatAlloc, fireRange?: number): WingmanConfig {
   const mul = deriveStatMultipliers(statAlloc);
   const mass = massOf(kind, 1);
   const stats: WingmanShipStats = {
@@ -146,7 +166,13 @@ export function wingmanConfigFor(kind: ShipKind, statAlloc?: StatAlloc): Wingman
     reverseAccel: reverseAccelFor(kind, mass, mul.topSpeed),
   };
   const t = shipTuning(kind);
-  return { stats, arriveRadius: t.wingmanArrive, guardRadius: t.guardRadiusMin };
+  return {
+    stats,
+    arriveRadius: t.wingmanArrive,
+    guardRadius: t.guardRadiusMin,
+    aiRole: kind.aiRole,
+    ...(fireRange !== undefined ? { fireRange } : {}),
+  };
 }
 
 export class FleetCommandSubsystem {
@@ -160,7 +186,10 @@ export class FleetCommandSubsystem {
   private stampGen = 0;
 
   private readonly pose: FleetPose = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
-  private readonly view: { tick: number; resolvePoseInto?: (id: string, out: WingmanPoseOut) => boolean };
+  private readonly view: WingmanWorldView & { tick: number };
+  /** The ship whose brain is ticking (the view's hunt query is per ship). */
+  private tickingId = '';
+  private readonly modeScratch: FleetModeData = {};
   private readonly accepted: string[] = [];
   private readonly statusOut: FleetShipStatus[] = [];
   private readonly statusPool: FleetShipStatus[] = [];
@@ -170,6 +199,9 @@ export class FleetCommandSubsystem {
     this.disabled = opts.disabled ?? isWingmenDisabled();
     this.view = { tick: 0 };
     if (hooks.resolvePoseInto) this.view.resolvePoseInto = (id, out) => hooks.resolvePoseInto!(id, out);
+    if (hooks.nearestHostile) {
+      this.view.nearestHostile = (x, y, r, out) => hooks.nearestHostile!(this.tickingId, x, y, r, out);
+    }
   }
 
   get isDisabled(): boolean { return this.disabled; }
@@ -191,7 +223,12 @@ export class FleetCommandSubsystem {
   attach(shipId: string, ownerId: string, ship: FleetShipInputs, initialPose: { x: number; y: number }): void {
     if (this.disabled) return;
     if (this.byId.has(shipId)) this.detach(shipId);
-    const brain = new WingmanBehaviour({ ...wingmanConfigFor(ship.kind, ship.statAlloc), mode: 'defend', stance: 'defensive' });
+    const brain = new WingmanBehaviour({
+      ...wingmanConfigFor(ship.kind, ship.statAlloc, ship.fireRange),
+      mode: 'defend',
+      stance: 'defensive',
+      moraleSeedId: fnv1a32(shipId),
+    });
     brain.setGuardPost(initialPose.x, initialPose.y);
     const entry: FleetEntry = {
       id: shipId,
@@ -230,20 +267,45 @@ export class FleetCommandSubsystem {
     return this.accepted;
   }
 
-  /** Set the standing mode. With `data`, a defend post at that point. */
+  /**
+   * Set the standing mode. `data`: `x`/`y` = the defend / hunt post or the
+   * retreat point; `route` = patrol waypoints; `escortId` = the ship to
+   * escort. An escort target must be one of the caller's own ships or the
+   * ship the caller is flying (`pilotShipOf`), and never the ship itself;
+   * otherwise the id is dropped and that ship defends where it is.
+   */
   setMode(
     callerId: string,
     shipIds: readonly string[],
     mode: WingmanMode,
-    data?: { x: number; y: number },
+    data?: FleetModeData,
   ): readonly string[] {
     const n = this.collect(callerId, shipIds);
+    const escortId = mode === 'escort' && data?.escortId !== undefined ? data.escortId : undefined;
+    const escortOk = escortId !== undefined && (
+      this.hooks.ownerOf(escortId) === callerId
+      || (this.hooks.pilotShipOf !== undefined && this.hooks.pilotShipOf(callerId) === escortId)
+    );
+    const md = this.modeScratch;
+    md.x = data?.x;
+    md.y = data?.y;
+    md.route = data?.route;
     for (let i = 0; i < n; i++) {
-      const b = this.byId.get(this.accepted[i]!)!.brain;
-      if (data) b.setMode(mode, data.x, data.y);
-      else b.setMode(mode);
+      const id = this.accepted[i]!;
+      md.escortId = escortOk && escortId !== id ? escortId : undefined;
+      this.byId.get(id)!.brain.setMode(mode, md);
     }
+    md.route = undefined;
     return this.accepted;
+  }
+
+  /**
+   * The AI-flown `shipId` took damage (the room's damage path calls this).
+   * Feeds its morale; a FallBack / Flee roll makes it break off and retreat
+   * away from (threatX, threatY). Unknown ids are ignored.
+   */
+  noteDamage(shipId: string, amount: number, maxHull: number, hullFrac: number, threatX?: number, threatY?: number): void {
+    this.byId.get(shipId)?.brain.reportDamage(amount, maxHull, hullFrac, threatX, threatY);
   }
 
   setStance(callerId: string, shipIds: readonly string[], stance: WingmanStance): readonly string[] {
@@ -304,6 +366,7 @@ export class FleetCommandSubsystem {
       const c = e.controls;
       if ((r + e.phase) % N === 0) {
         if (!hooks.readPose(e.id, this.pose)) continue;
+        this.tickingId = e.id;
         const out = e.brain.tick(this.pose, this.view);
         c.thrust = out.thrust;
         c.reverse = out.reverse;

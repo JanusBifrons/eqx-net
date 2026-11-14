@@ -12,7 +12,7 @@
  * should mirror these unions.
  */
 
-/** Standing behaviour. Slice 2 implements `defend`; the rest fall back to it. */
+/** Standing behaviour (all five flown since RTS slice 8). */
 export type WingmanMode = 'patrol' | 'defend' | 'hunt' | 'escort' | 'retreat';
 
 export const WINGMAN_MODES: readonly WingmanMode[] = ['patrol', 'defend', 'hunt', 'escort', 'retreat'];
@@ -75,15 +75,42 @@ export interface WingmanPoseOut {
   vy: number;
 }
 
+/** Patrol routes hold this many waypoints (fewer ⇒ defend; extra are dropped). */
+export const WINGMAN_ROUTE_MIN = 2;
+export const WINGMAN_ROUTE_MAX = 16;
+
 /**
- * What the brain may read about the world. Kept deliberately narrow; later
- * slices add contacts (hunt / auto-target) and the escorted ship.
+ * Parameters for a {@link WingmanMode} (mirrors the `set_mode` wire message):
+ *  - `x` / `y`: the defend / hunt post, the retreat point, or (patrol) the
+ *    spot a missing / one-point route defends.
+ *  - `route`: patrol waypoints as `[x, y]` ({@link WINGMAN_ROUTE_MIN}–{@link WINGMAN_ROUTE_MAX}).
+ *  - `escortId`: the ship escort keeps station on.
+ */
+export interface WingmanModeData {
+  readonly x?: number;
+  readonly y?: number;
+  readonly route?: readonly (readonly [number, number])[];
+  readonly escortId?: string;
+}
+
+/**
+ * What the brain may read about the world. Kept deliberately narrow.
  */
 export interface WingmanWorldView {
   readonly tick: number;
   /** Write entity `id`'s live pose into `out`; false if it is gone. Absent ⇒
-   *  nothing can be resolved (an attack order then completes at once). */
+   *  nothing can be resolved (an attack order then completes at once; an
+   *  escort defends where it is). */
   resolvePoseInto?(id: string, out: WingmanPoseOut): boolean;
+  /**
+   * Hunt mode: the contact hostile to this ship's owner the wingman should
+   * chase, within `maxRange` of (selfX, selfY): write its pose into `outPose`
+   * and return its id, or null when there is none. Absent ⇒ hunt finds
+   * nothing (defends its post). Target CHOICE lives here, behind the view, so
+   * the targeting slice can change the rule (nearest, stickiness, priority,
+   * relations) without touching the brain.
+   */
+  nearestHostile?(selfX: number, selfY: number, maxRange: number, outPose: WingmanPoseOut): string | null;
 }
 
 /**

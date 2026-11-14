@@ -186,12 +186,12 @@ describe('WingmanBehaviour — defend', () => {
     expect(Math.hypot(p.vx, p.vy)).toBeLessThan(stats.maxSpeed * 0.05);
   });
 
-  it('modes not yet built (patrol/hunt/escort/retreat) fall back to defend from where it is', () => {
+  it('patrol with no route defends from where it is (see WingmanBehaviour.modes.test.ts)', () => {
     const { id, stats } = spawnFighter(700_000, 0);
     const b = brain(stats);
     b.setMode('patrol');
     step(id, b);
-    expect(b.mode).toBe('patrol');
+    expect(b.mode).toBe('defend');
     expect(b.activity).toBe('guarding');
     expect(b.guardPostX).toBeCloseTo(700_000);
   });

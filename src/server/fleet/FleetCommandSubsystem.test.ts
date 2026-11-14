@@ -257,3 +257,105 @@ describe('FleetCommandSubsystem', () => {
     expect(shipTuning(bb).wingmanArrive).toBeGreaterThanOrEqual(bb.radius * 1.5);
   });
 });
+
+describe('FleetCommandSubsystem — modes (RTS slice 8)', () => {
+  function modesHarness(extra: Partial<FleetCommandHooks> = {}) {
+    const owners = new Map<string, string>();
+    const poses = new Map<string, FleetPose>();
+    const hooks: FleetCommandHooks = {
+      ownerOf: (id) => owners.get(id) ?? null,
+      readPose: (id, out) => {
+        const p = poses.get(id);
+        if (!p) return false;
+        Object.assign(out, p);
+        return true;
+      },
+      postInput: () => {},
+      ...extra,
+    };
+    const sys = new FleetCommandSubsystem(hooks, { disabled: false, replanEvery: 1 });
+    const add = (id: string, owner: string, x = 0, y = 0): void => {
+      owners.set(id, owner);
+      poses.set(id, { x, y, vx: 0, vy: 0, angle: 0, angvel: 0 });
+      sys.attach(id, owner, FIGHTER, { x, y });
+    };
+    return { sys, owners, poses, add };
+  }
+
+  it('setMode passes a patrol route through; a one-point route defends that point', () => {
+    const { sys, add } = modesHarness();
+    add('a1', 'alice');
+    add('a2', 'alice');
+    sys.setMode('alice', ['a1'], 'patrol', { route: [[0, 1000], [1000, 1000], [1000, 0]] });
+    expect(sys.brainOf('a1')!.mode).toBe('patrol');
+    expect(sys.brainOf('a1')!.patrolRouteLength).toBe(3);
+    sys.tick(0);
+    expect(sys.statusFor('alice').find((s) => s.id === 'a1')!.activity).toBe('patrolling');
+
+    sys.setMode('alice', ['a2'], 'patrol', { route: [[40, 50]] });
+    expect(sys.brainOf('a2')!.mode).toBe('defend');
+    expect(sys.brainOf('a2')!.guardPostX).toBe(40);
+  });
+
+  it('escort accepts an own ship or the caller\'s piloted ship; foreign ids and itself are dropped', () => {
+    const { sys, add, owners } = modesHarness({ pilotShipOf: (pid) => (pid === 'alice' ? 'alice-flagship' : null) });
+    add('a1', 'alice');
+    add('a2', 'alice');
+    add('b1', 'bob');
+    owners.set('bobs-ship', 'bob');
+
+    sys.setMode('alice', ['a1'], 'escort', { escortId: 'a2' });
+    expect(sys.brainOf('a1')!.mode).toBe('escort');
+    expect(sys.brainOf('a1')!.escortId).toBe('a2');
+
+    sys.setMode('alice', ['a1'], 'escort', { escortId: 'alice-flagship' });
+    expect(sys.brainOf('a1')!.escortId).toBe('alice-flagship');
+
+    sys.setMode('alice', ['a1'], 'escort', { escortId: 'bobs-ship' });
+    expect(sys.brainOf('a1')!.mode).toBe('defend');
+    expect(sys.brainOf('a1')!.escortId).toBeNull();
+
+    // A group escort of a1: a1 itself is not told to escort itself.
+    sys.setMode('alice', ['a1', 'a2'], 'escort', { escortId: 'a1' });
+    expect(sys.brainOf('a1')!.mode).toBe('defend');
+    expect(sys.brainOf('a2')!.escortId).toBe('a1');
+  });
+
+  it('hunt asks the nearestHostile hook with the ticking ship\'s id and its sensor range', () => {
+    const calls: { id: string; r: number }[] = [];
+    const { sys, add } = modesHarness({
+      nearestHostile: (id, _x, _y, r, out) => {
+        calls.push({ id, r });
+        out.x = 500; out.y = 0; out.vx = 0; out.vy = 0;
+        return 'swarm-9';
+      },
+    });
+    add('a1', 'alice');
+    add('a2', 'alice');
+    sys.setMode('alice', ['a1'], 'hunt');
+    sys.tick(0);
+    expect(calls.map((c) => c.id)).toEqual(['a1']);
+    expect(calls[0]!.r).toBe(sys.brainOf('a1')!.huntSensorRange);
+    expect(sys.statusFor('alice').find((s) => s.id === 'a1')!.targetId).toBe('swarm-9');
+  });
+
+  it('retreat takes a point; noteDamage reaches the brain\'s morale (seeded per ship id)', () => {
+    const { sys, add } = modesHarness();
+    add('a1', 'alice', 0, 0);
+    sys.setMode('alice', ['a1'], 'retreat', { x: 3000, y: 0 });
+    sys.tick(0);
+    expect(sys.statusFor('alice')[0]!.activity).toBe('retreating');
+
+    sys.noteDamage('a1', 90, 100, 0.1, 100, 0);
+    sys.noteDamage('ghost', 90, 100, 0.1); // unknown: ignored
+    sys.tick(1);
+    expect(sys.brainOf('a1')!.moraleOutcome).not.toBeNull();
+  });
+
+  it('wingmanConfigFor carries the hull\'s aiRole and fire range', () => {
+    const kind = getShipKind('fighter');
+    const cfg = wingmanConfigFor(kind, undefined, 900);
+    expect(cfg.aiRole).toBe(kind.aiRole);
+    expect(cfg.fireRange).toBe(900);
+  });
+});
