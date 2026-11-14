@@ -237,6 +237,10 @@ const PATROL_RADIUS = 1800;
  *  CHOOSE to cruise slower, at the pace the retired `ai.thrust` (≈0.45× the
  *  player thrust) used to give, so roaming squads keep their readable pace. */
 const CALM_CRUISE_FRAC = 0.45;
+/** Ticks a ship that asked to warp out keeps running (the 3 s spool plus
+ *  slack; the room removes it when the run starts). Without a room warp it
+ *  then holds at the drop point. */
+const LEAVING_RUN_TICKS = 300;
 /** Patrol speed as a share of the calm cruise, so the orbit stays slow and
  *  readable and the inward bias wins when a drone spirals back. */
 const PATROL_SPEED_FRAC = 0.5;
@@ -608,6 +612,9 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   private _capitalNear = false;
   /** Warp-outs requested (test-visible). */
   private _warpOuts = 0;
+  /** After asking to warp out: keep running until this tick (the room's
+   *  spool, with slack), then hold at the drop point. -1 = not leaving. */
+  private _leavingUntil = -1;
   private readonly _picker = new ManoeuvrePicker();
   /** Seeded from the entity id on the first combat tick. */
   private _seeded = false;
@@ -831,6 +838,13 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     this._pilot.turn.aimCone = 0;
     // Boost energy regenerates every tick, as a pilot's pool does.
     this.energy = regenEnergyStep(this.energy, this.energyMax, this.energyRegen);
+    // Asked to warp out: run on along the escape line while the room spools
+    // the warp, as a pilot's ship flies on through its spool (take 7: it
+    // eased to the calm cruise and looked parked, then vanished).
+    if (this._leavingUntil >= 0) {
+      if (view.tick <= this._leavingUntil) return this.tickLeaving(self);
+      this._leavingUntil = -1;
+    }
     // Spread targets: drop my claim; the combat pick below re-claims, so while
     // I pick, `view.claims` counts only the OTHER brains of my side.
     view.claims?.claim(self.id, this.allegiance, null);
@@ -1032,6 +1046,15 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     const intent = this.fly(self, Math.atan2(-f.dirX, f.dirY), f.dirX * v, f.dirY * v, boostOk, RUN_PILOT_PARAMS);
     if (f.wantsWarpOut(tick)) this.requestWarpOut(self, intent);
     return intent;
+  }
+
+  /** Warping out: full speed along the escape line, boosting while the
+   *  reserve allows (the spool's drive keeps the nose on the warp heading). */
+  private tickLeaving(self: AiEntity): AiIntent {
+    const f = this._flee;
+    const v = this.handling.maxSpeed;
+    const boostOk = this.energy >= BOOST_RESERVE_FRAC * this.energyMax;
+    return this.fly(self, Math.atan2(-f.dirX, f.dirY), f.dirX * v, f.dirY * v, boostOk, RUN_PILOT_PARAMS);
   }
 
   // ── Patrol ──────────────────────────────────────────────────────────
@@ -1746,6 +1769,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     this._moraleLockUntil = -1;
     this.switchManoeuvre(MANOEUVRE_HOLD, this._tac.tick);
     this.setMoveTarget(w.x, w.y);
+    this._leavingUntil = this._tac.tick + LEAVING_RUN_TICKS;
   }
 
   /** Any pilot hull within `LOD_PILOT_RANGE_MUL` × sensor range? */

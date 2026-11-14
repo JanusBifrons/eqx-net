@@ -648,10 +648,16 @@ export class PhysicsWorld {
    * spool; a run can't be cancelled).
    *
    * Returns true while the warp owns the body this tick (spooling, running or
-   * dropping): the caller skips the AI's impulse. While spooling the ship
-   * holds still and turns to face its target.
+   * dropping): the caller skips the AI's impulse. While spooling the drive
+   * turns the ship to face its target. A ship flown by control keys (the
+   * pilot layer: `keys` is this tick's AI input, or `null` on a tick
+   * without one) spools the way a pilot's ship does (`applyInput`): its
+   * thrust, boost and reverse still work, its turn keys are ignored, so a
+   * fleeing ship keeps flying along its escape line instead of stopping dead
+   * (take 7, 2026-11-14). A ship that is not (`keys` undefined: the impulse
+   * path, a flagship fleet's capital) holds still while it spools.
    */
-  botWarp(id: string, target: { x: number; y: number } | null): boolean {
+  botWarp(id: string, target: { x: number; y: number } | null, keys?: ShipInputArgs | null): boolean {
     const rec = this.bodies.get(id);
     if (!rec) return false;
     if (target === null && rec.warp === undefined) return false;
@@ -696,6 +702,16 @@ export class PhysicsWorld {
       return true;
     }
     if (w.phase === 'spool') {
+      if (keys !== undefined && rec.piloted === true) {
+        // Flown by keys: spool like a pilot (thrust works, the drive turns).
+        if (keys !== null) {
+          const s = this._spoolInput;
+          s.thrust = keys.thrust; s.boost = keys.boost; s.reverse = keys.reverse;
+          applyShipInput(body, rec.pilotKind ?? rec.kind, s, rec.statMul);
+        }
+        this.alignToWarp(rec, w, BOT_WARP_MIN_TURN);
+        return true;
+      }
       // Hold position and face the target (a capital turns slowly: its own
       // turn rate caps the align, so a long spool is part of the look).
       const v = body.linvel(); // TODO: alloc-debt (Rapier returns a fresh vector)

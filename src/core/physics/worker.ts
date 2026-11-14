@@ -206,7 +206,8 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
    *  message arrived left steps with no keys (no thrust, a snap turn spinning
    *  on): AI pilot handling then depended on the room's tick rate (2026-11-13,
    *  `physicsWorkerAiInputHeld.test.ts`). Cleared by DESPAWN, by AI_INTENT
-   *  (the slot left the pilot path) and while a bot warp owns the body.
+   *  (the slot left the pilot path); while a bot warp owns the body the warp
+   *  flies them (`aiWarpOwned`).
    *  `aiInputList` holds the slots with held keys; cleared slots (-1) are
    *  compacted out on the next step. */
   const aiInputHeld = new Int16Array(MAX_ENTITIES).fill(-1);
@@ -215,6 +216,9 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
    *  the next step must not be listed, and so applied, twice). */
   const aiInputListed = new Uint8Array(MAX_ENTITIES);
   let aiInputListLen = 0;
+  /** 1 on a step a bot warp owns the slot's body and flew it with the held
+   *  keys: the key loop skips the slot that step (not applied twice). */
+  const aiWarpOwned = new Uint8Array(MAX_ENTITIES);
   /** Reused key record for decoding AI_INPUTS (no per-step allocation, #14). */
   const aiKeys = { thrust: false, reverse: false, turnLeft: false, turnRight: false, boost: false };
   /** NPC warp-to: slot → held target (`on` false = request dropped, kept
@@ -478,10 +482,19 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
     // that wants player-equivalent snap-turn just sets the target angvel
     // and leaves `torque = 0`. (Setting both is allowed but redundant.)
     // NPC warp-to first: while a warp owns a bot's body its intent is dropped.
+    // A ship flown by control keys hands its keys to the spool, which flies
+    // it like a pilot's (thrust works, the drive turns it): `null` on a tick
+    // with no new keys.
     for (const [slot, r] of botWarps) {
       const id = slotToPlayer.get(slot);
       if (id === undefined) { botWarps.delete(slot); continue; }
-      if (physics.botWarp(id, r.on ? r : null)) { aiIntents.delete(slot); aiInputHeld[slot] = -1; continue; }
+      // The held keys (`aiInputHeld`) fly the spool; the warp applies them,
+      // so the key loop below skips the slot this step (`aiWarpOwned`) but
+      // keeps holding its keys between worker messages.
+      const bits = aiInputHeld[slot]!;
+      let keys: typeof aiKeys | null = null;
+      if (bits >= 0) { decodeAiInputBits(bits, aiKeys); keys = aiKeys; }
+      if (physics.botWarp(id, r.on ? r : null, keys)) { aiIntents.delete(slot); if (bits >= 0) aiWarpOwned[slot] = 1; continue; }
       // Idle: arrived (or cancelled). Clear the latch and forget the slot.
       if (!r.on || physics.warpArrived(id)) { physics.botWarp(id, null); botWarps.delete(slot); }
     }
@@ -495,15 +508,16 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
     // Pilot layer: AI slots flown by control keys, through the SAME
     // applyShipInput as a pilot (grip, maxSpeed clamp, capital torque turn).
     // Held keys apply on EVERY step (see `aiInputHeld`). A slot cleared by a
-    // despawn, an AI_INTENT or a bot warp above (-1), or with no body, is
+    // despawn or an AI_INTENT (-1), or with no body, is
     // compacted out of the list in place (no allocation, #14).
     let keep = 0;
     for (let i = 0; i < aiInputListLen; i++) {
       const slot = aiInputList[i]!;
       const bits = aiInputHeld[slot]!;
       const id = bits < 0 ? undefined : slotToPlayer.get(slot);
-      if (id === undefined) { aiInputHeld[slot] = -1; aiInputListed[slot] = 0; continue; }
+      if (id === undefined) { aiInputHeld[slot] = -1; aiInputListed[slot] = 0; aiWarpOwned[slot] = 0; continue; }
       aiInputList[keep++] = slot;
+      if (aiWarpOwned[slot] === 1) { aiWarpOwned[slot] = 0; continue; }
       decodeAiInputBits(bits, aiKeys);
       physics.applyAiInput(id, aiKeys);
     }

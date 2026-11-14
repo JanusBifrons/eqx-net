@@ -150,8 +150,10 @@ export class LivingWorldBotHooks {
   }
 
   /** `reason` rides `BOT_DESPAWNED`: `fled` (a morale warp-out) tells the
-   *  owning director the bot is gone for good. */
-  despawnBot(botId: string, reason: 'transit' | 'fled' = 'transit'): BotCarry | null {
+   *  owning director the bot is gone for good. `(atX, atY)` places the
+   *  `warp_out` where the departure began (a ship that fled leaves from its
+   *  run, a little way past where its run started); absent, its live pose. */
+  despawnBot(botId: string, reason: 'transit' | 'fled' = 'transit', atX?: number, atY?: number): BotCarry | null {
     const d = this.deps;
     const rec = d.swarmRegistry.get(botId);
     if (!rec) return null;
@@ -170,7 +172,7 @@ export class LivingWorldBotHooks {
       angle: d.sabF32[b + SLOT_ANGLE_OFF]!,
       angvel: d.sabF32[b + SLOT_ANGVEL_OFF]!,
     };
-    d.broadcastWarpOut({ type: 'warp_out', playerId: botId, x, y });
+    d.broadcastWarpOut({ type: 'warp_out', playerId: botId, x: atX ?? x, y: atY ?? y });
     d.evictSwarmEntity(rec, { broadcast: false, emitDestroyed: false });
     d.bus.emit('BOT_DESPAWNED', {
       type: 'BOT_DESPAWNED',

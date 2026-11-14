@@ -11,7 +11,10 @@
  *      runs from them and warps out (the room's NPC warp, `BOT_WARP`): once
  *      its spool ends it leaves the sector the way any departing NPC does
  *      (`warp_out` where it stood, then gone from the room). The 3v3 take of
- *      2026-11-14 had a fled drone jump ~12.7 km and park in the room.
+ *      2026-11-14 had a fled drone jump ~12.7 km and park in the room. It
+ *      keeps flying while it spools (as a pilot's ship does) and the client
+ *      sees its run start (`drones[].warp` 2) before it leaves, which is what
+ *      draws the departure: take 7 had it sit still, then just vanish.
  *  (d) In the dogfight-3v3 perf scene, a drone forced to Flee whose enemies
  *      are then gone (no hostile target left) warps out ~2 s later and
  *      leaves. The 3v3 take 5 of 2026-11-14 had one drift in the room instead.
@@ -33,7 +36,7 @@ const SAMPLE_MS = 50;
 
 interface Room {
   _internals: {
-    swarmRegistry: { all(): Iterable<{ id: string; kind: number; shipKind?: string }> };
+    swarmRegistry: { all(): Iterable<{ id: string; kind: number; shipKind?: string; entityId: number }> };
     swarmPose: (id: string) => { x: number; y: number; angle: number } | null;
     swarmHealth: Map<string, number>;
   };
@@ -235,25 +238,39 @@ describe('SectorRoom integration — Kite and the morale die (AI slice 6b)', () 
 
     // The room's departure effect: a `warp_out` for this ship, where it stood.
     const warpOuts: Array<{ playerId: string; x: number; y: number }> = [];
-    s.client.onMessage('warp_out', (m: { playerId: string; x: number; y: number }) => { warpOuts.push(m); });
+    // What the client is shown of the ship's warp, in arrival order: the run
+    // (`drones[].warp` 2) must reach it before the ship leaves.
+    const eid = [...room._internals.swarmRegistry.all()].find((r) => r.id === me)!.entityId;
+    const seen: string[] = [];
+    s.client.onMessage('warp_out', (m: { playerId: string; x: number; y: number }) => { warpOuts.push(m); if (m.playerId === me) seen.push('out'); });
+    s.client.onMessage('snapshot', (m: { drones?: Array<{ id: number; warp?: number }> }) => {
+      const w = m.drones?.find((d) => d.id === eid)?.warp;
+      if (w !== undefined && seen[seen.length - 1] !== `warp${w}`) seen.push(`warp${w}`);
+    });
     const p0 = room._internals.swarmPose(me)!;
     let fled = false, warpPhaseSeen = 0, warpAtMs = -1, goneAtMs = -1, minYWhileFleeing = 0;
     let last = p0;
+    // The spool's samples: its speed late in the spool (the room reports the
+    // phase a tick late, so the last sample may hold the run's first tick).
+    const spool: Array<{ x: number; y: number }> = [];
     const t0 = Date.now();
     while (Date.now() - t0 < 16_000) {
       await harness.advance(SAMPLE_MS);
       const p = room._internals.swarmPose(me);
       if (!p) { goneAtMs = Date.now() - t0; break; }
-      last = p;
       if (mb.getManoeuvre() === MANOEUVRE_FLEE) { fled = true; minYWhileFleeing = Math.min(minYWhileFleeing, p.y - p0.y); }
       const ph = room.botWarpPhase(me);
       if (ph !== 0) { warpPhaseSeen = Math.max(warpPhaseSeen, ph); if (warpAtMs < 0) warpAtMs = Date.now() - t0; }
+      if (ph === 1) spool.push(p);
+      if (ph !== 2) last = p; // on the run it is out of the world
     }
     // Let the broadcast reach the client.
     await harness.advance(200);
     const out = warpOuts.find((m) => m.playerId === me);
     const inRegistry = [...room._internals.swarmRegistry.all()].some((r) => r.id === me);
-    console.log(`[flee] fled=${fled} minDy=${minYWhileFleeing.toFixed(0)} warpAt=${warpAtMs}ms gone=${goneAtMs}ms phase=${warpPhaseSeen} warpOuts=${mb.getWarpOutCount()} sensor=${mb.getSensorRange().toFixed(0)} broadcast=${out !== undefined}`);
+    const sa = spool[spool.length - 6], sb = spool[spool.length - 2];
+    const spoolEndSpeed = sa && sb ? Math.hypot(sb.x - sa.x, sb.y - sa.y) / (4 * SAMPLE_MS / 1000) : 0;
+    console.log(`[flee] seen=${seen.join(',')} spoolEndSpeed=${spoolEndSpeed.toFixed(0)} fled=${fled} minDy=${minYWhileFleeing.toFixed(0)} warpAt=${warpAtMs}ms gone=${goneAtMs}ms phase=${warpPhaseSeen} warpOuts=${mb.getWarpOutCount()} sensor=${mb.getSensorRange().toFixed(0)} broadcast=${out !== undefined}`);
     expect(mb.getLastMoraleOutcome()).toBe(MORALE_OUTCOME.Flee);
     expect(fled, 'ran FLEE').toBe(true);
     expect(minYWhileFleeing, 'ran away from the enemies (they sit north)').toBeLessThan(-150);
@@ -261,6 +278,15 @@ describe('SectorRoom integration — Kite and the morale die (AI slice 6b)', () 
     expect(warpAtMs, 'the room started its warp').toBeGreaterThanOrEqual(0);
     expect(warpAtMs, 'within ~8 s of the fight').toBeLessThan(9000);
     expect(warpPhaseSeen, 'it spooled').toBeGreaterThanOrEqual(1);
+    // It flew on through the spool, as a pilot's ship does (take 7: it sat
+    // still, its speed bled to 0 within the first second).
+    expect(spoolEndSpeed, 'still flying (u/s) late in the spool').toBeGreaterThan(100);
+    expect(spoolEndSpeed, 'at ship speed, not warp speed').toBeLessThan(2000);
+    // The client saw the spool, then the run (which draws the departure),
+    // and only then the ship leaving.
+    expect(seen.indexOf('warp1'), 'the client saw the spool').toBeGreaterThanOrEqual(0);
+    expect(seen.indexOf('warp2'), 'the client saw the run start').toBeGreaterThan(seen.indexOf('warp1'));
+    expect(seen.indexOf('out'), 'and then the warp_out').toBeGreaterThan(seen.indexOf('warp2'));
     // Left the sector once the spool ended: gone from the room, not parked.
     expect(goneAtMs, 'left the room').toBeGreaterThan(warpAtMs);
     expect(inRegistry, 'no longer a ship in this room').toBe(false);
