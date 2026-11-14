@@ -2092,6 +2092,7 @@ export class SectorRoom extends Room<SectorState> {
       resolveSlotMounts: (kind, slotId) => this.resolveSlotMounts(kind, slotId),
       mountWorldOrigin: (x, y, ang, m) => this.mountWorldOrigin(x, y, ang, m),
       droneMountAngles: this.mountTicker.droneMountAngles,
+      mountCharges: this.mountTicker.charges,
       playerToSlot: this.playerToSlot,
       getActiveShip: (pid) => this.getActiveShip(pid),
       shipPoseCache: this.shipPoseCache,
@@ -2338,7 +2339,7 @@ export class SectorRoom extends Room<SectorState> {
       // Campaign 2.1 — the per-recipient `drones[].hostile` bit reads the
       // same hostility ledger the AI tick + liveCounts use (one truth).
       isDroneHostileTo: (droneId, playerId) => this.npcHostileTo(droneId, playerId),
-      isDroneCharging: (droneId) => this.aiFireResolver.isCharging(droneId),
+      droneCharges: this.mountTicker.charges,
       // The AI pilot's boost key this tick, after the same disabled gate its
       // keys pass on the way to the worker (a disabled ship holds no keys).
       isDroneBoosting: (droneId) => {

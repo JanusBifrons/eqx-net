@@ -229,7 +229,7 @@ export function anchorRemoteSwarmBodies(
  * Out-of-interest drones never appear here, so their mountAngles stays
  * undefined (renderer falls back to baseAngle) — unchanged.
  */
-/** Entity ids marked `charging` by the previous snapshot (reused — #14). */
+/** Entity ids charging per the previous snapshot (reused — #14). */
 const chargingIds = new Set<number>();
 /** Entity ids named as elites by the previous snapshot (reused — #14). */
 const eliteIds = new Set<number>();
@@ -253,7 +253,7 @@ export function applyDroneMountAngles(
   if (chargingIds.size > 0) {
     for (const id of chargingIds) {
       const sw = mirror.swarm?.get(id);
-      if (sw) sw.charging = false;
+      if (sw) { sw.chargingMask = 0; sw.chargeStartTick = undefined; }
     }
     chargingIds.clear();
   }
@@ -287,8 +287,9 @@ export function applyDroneMountAngles(
     if (d.hostile === true && onHostile) onHostile(d.id);
     const sw = mirror.swarm?.get(d.id);
     if (!sw) continue;
-    if (d.charging === true) {
-      sw.charging = true;
+    if (d.chargingMask !== undefined && d.chargingMask !== 0) {
+      sw.chargingMask = d.chargingMask;
+      sw.chargeStartTick = d.chargeStartTick;
       chargingIds.add(d.id);
     }
     if (d.boost === true) {
