@@ -11,7 +11,8 @@
  *
  * Lockable = what the lock line considers (`ColyseusClient._lgVisitSwarm` /
  * `_lgVisitShip`): NPC ships (drones and capitals, swarm kind 1), structures
- * that aren't yours (swarm kind 2) and other pilots' ships.
+ * that aren't yours (swarm kind 2) and other players' ships, whether a pilot or
+ * an AI pilot flies them (never one of your own).
  */
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import { getShipKind } from '@shared-types/shipKinds';
@@ -19,7 +20,7 @@ import { getStructureKind } from '@shared-types/structureKinds';
 import { LOCK_TUNING } from '@shared-types/combat/lockProfile';
 import type { EntityKind } from '../render/entityVisuals';
 import { acquiringPct } from '../hud/lockPct';
-import { isParkedHull } from '../render/shipOwnership';
+import { isOwnedByMe } from '../render/shipOwnership';
 
 /** A weapon group's lock reach basis (the server's `groupGeometry().reach`). */
 export interface GroupReach {
@@ -37,7 +38,7 @@ export interface ContactLock {
 }
 
 export interface ContactRow {
-  /** Lock key (`s:<entityId>` / `p:<playerId>`). Never shown. */
+  /** Lock key (`s:<entityId>` / `p:<ship mirror key>`). Never shown. */
   key: string;
   /** Icon + colour family (`render/entityVisuals.ts`). */
   icon: EntityKind;
@@ -141,14 +142,12 @@ export function buildContactRows(
       add(`s:${id}`, 'structure', name, e.x, e.y, st?.turretTargetPlayerId === localId);
     }
   });
-  mirror.ships.forEach((s, pid) => {
-    if (pid === localId) return;
-    // Pilots' ACTIVE ships only (#17): a parked / AI-flown hull has no `p:`
-    // lock key the server resolves yet. TODO(RTS Part A): lockable AI-flown
-    // ships (owner: lockable like any ship) in a later two-sided slice.
-    if (isParkedHull(mirror, pid, s)) return;
+  mirror.ships.forEach((s, key) => {
+    // Every other player's ship, pilot- or AI-flown (the mirror key is the
+    // lock key the server resolves); never the ship you fly or your fleet.
+    if (isOwnedByMe(mirror, key, s)) return;
     const name = s.displayName ?? (s.kind ? getShipKind(s.kind).displayName : 'Pilot');
-    add(`p:${pid}`, 'ship', name, s.x, s.y, false);
+    add(`p:${key}`, 'ship', name, s.x, s.y, false);
   });
   return rows;
 }

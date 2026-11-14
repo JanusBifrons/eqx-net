@@ -135,7 +135,24 @@ before the test switches the group it wants to AUTO or locks it.
 (commit), `lock_track {groupId, target | null, b?}` (the held line and its
 bearing; sent only when its target changes), `lock_cancel {groupId, target?}`,
 `set_group_mode`.
-Target keys: `s:<entityId>` (swarm) or `p:<playerId>`.
+Target keys: `s:<entityId>` (swarm) or `p:<id>`, a player's ship: an ACTIVE
+ship by its pilot's playerId, or a parked hull flown by an AI pilot by its
+shipInstanceId (owner: "lock it like any player's ship"). The `p:` id is the
+ship's key in the client's one ship list, so the lock line, contacts,
+`lockSelected`, `TargetAction` and every mark resolve it through
+`mirror.ships.get` with no second lookup. `SectorRoom.resolveLockTarget` is the
+one resolver for both (hull: `lingeringSlots` + `isLingeringHull`, pose from
+`lingeringPoseCache`); the rules are the same (another player's ship runs the
+failsafe and commits a hostile act; your own ship, active or parked, never
+resolves, so neither you nor your AI pilots can lock your own fleet; AUTO never
+picks a player ship). A wingman's attack order or retaliation on another
+player's hull locks it the same way (`wingmanLockKey`). The key names the
+SHIP's current role: when the owner takes the controls the hull becomes their
+active ship (`p:<playerId>`) and a lock on `p:<shipInstanceId>` drops, and the
+reverse when they park it. NPC locks on a parked hull stay keyed by the pilot
+(`engageablePilotHull`, Spectate-parked hull only) and `lockedBy` still rides
+the own ACTIVE ship only, so no threat ring is drawn round a parked hull.
+Lock: `tests/integration/sectorRoom/lockAiFlownHull.test.ts`.
 
 **Snapshot (#16), own active pilot only, shared refs mutated in place:**
 - `states[].groups`: `[{id, m: 0 auto | 1 manual, l: [{t, s: 0 failsafe | 1 acquiring | 2 locked, p: 0..100, r?: 1 released}]}]`

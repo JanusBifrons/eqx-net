@@ -56,6 +56,25 @@ describe('buildContactRows', () => {
     }
   });
 
+  it('another player\'s AI-flown ship is a contact keyed by its shipInstanceId; your own fleet never is', () => {
+    const THEIRS = 'aaaaaaaa-0000-4000-8000-0000000000aa';
+    const MINE = 'bbbbbbbb-0000-4000-8000-0000000000bb';
+    const rows = buildContactRows(mirror({
+      ships: new Map<string, unknown>([
+        ['me', { x: 0, y: 0, kind: 'fighter' }],
+        [THEIRS, { x: 0, y: 400, kind: 'fighter', isActive: false, ownerPlayerId: PLAYER_ID, displayName: 'Ripley' }],
+        [MINE, { x: 0, y: 300, kind: 'fighter', isActive: false, ownerPlayerId: 'me' }],
+      ]),
+    }), 'guns', REACHES);
+    const keys = rows.map((r) => r.key);
+    expect(keys).toContain('p:' + THEIRS);
+    expect(keys).not.toContain('p:' + MINE);
+    expect(keys).not.toContain('p:me');
+    const row = rows.find((r) => r.key === 'p:' + THEIRS)!;
+    expect(row.icon).toBe('ship');
+    expect(row.inActiveReach).toBe(true);
+  });
+
   it('icons follow the visual language: hostile / neutral NPC, ship, structure', () => {
     const byKey = new Map(buildContactRows(mirror(), 'guns', REACHES).map((r) => [r.key, r]));
     expect(byKey.get('s:7')!.icon).toBe('hostile');

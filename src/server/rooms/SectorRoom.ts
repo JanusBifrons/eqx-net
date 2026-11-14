@@ -4722,7 +4722,8 @@ export class SectorRoom extends Room<SectorState> {
     });
   }
 
-  /** Resolve a lock key (`s:<entityId>` | `p:<playerId>`) to a damageable target. */
+  /** Resolve a lock key (`s:<entityId>` | `p:<playerId>` | `p:<parked hull's
+   *  shipInstanceId>`) to a damageable target. */
   private resolveLockTarget(pid: string, key: string, out: LockTargetView): boolean {
     if (key.startsWith('s:')) {
       const rec = this.swarmRegistry.getByEntityId(Number(key.slice(2)));
@@ -4742,10 +4743,20 @@ export class SectorRoom extends Room<SectorState> {
       return true;
     }
     if (key.startsWith('p:')) {
+      // A player's ship: an ACTIVE ship by its pilot's playerId, or a parked
+      // (AI-flown) hull by its shipInstanceId (RTS Part A, owner: "lock it like
+      // any player's ship"; the key the client's one ship list uses for it).
+      // Same rules for both: never your own ship, PvP runs the failsafe first.
       const other = key.slice(2);
       if (other === pid) return false;
-      const ship = this.getActiveShip(other);
-      const p = this.shipPoseCache.get(other);
+      let ship = this.getActiveShip(other);
+      let p = ship !== undefined ? this.shipPoseCache.get(other) : undefined;
+      if (ship === undefined) {
+        // Liveness (#17): LINGERING hulls only (`lingeringSlots` + `isLingeringHull`).
+        ship = this.lingeringSlots.has(other) ? this.state.ships.get(other) : undefined;
+        if (ship === undefined || !isLingeringHull(ship) || ship.playerId === pid) return false;
+        p = this.lingeringPoseCache.get(other);
+      }
       if (!ship || !ship.alive || !p) return false;
       out.x = p.x; out.y = p.y; out.vx = p.vx; out.vy = p.vy;
       out.signature = getShipKind(ship.kind).radius;
@@ -10071,9 +10082,11 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   /** Lock key for a wingman target id: `s:<entityId>` (NPC ship / structure)
-   *  or `p:<playerId>` (a pilot's active ship, only ever an explicit order or
-   *  a retaliation). Cached per wingman: a string is built only when the
-   *  target changes. Null ⇒ not lockable (asteroid, scrap, a parked hull). */
+   *  or `p:<id>` (another player's ship: a pilot's active ship by playerId or
+   *  an AI-flown hull by shipInstanceId; only ever an explicit order or a
+   *  retaliation). Cached per wingman: a string is built only when the target
+   *  changes. Null ⇒ not lockable (asteroid, scrap). `resolveLockTarget`
+   *  still refuses the owner's own ships. */
   private wingmanLockKey(sid: string, targetId: string): string | null {
     const cached = this.wingmanFireKeys.get(sid);
     if (cached !== undefined && cached.id === targetId) return cached.key;
@@ -10081,7 +10094,7 @@ export class SectorRoom extends Room<SectorState> {
     const rec = this.swarmRecByAnyId(targetId);
     if (rec !== null) {
       if (rec.kind === SWARM_KIND_DRONE || rec.kind === 2) key = `s:${rec.entityId}`;
-    } else if (this.getActiveShip(targetId)?.alive) {
+    } else if (this.getActiveShip(targetId)?.alive || this.lingeringSlots.has(targetId)) {
       key = `p:${targetId}`;
     }
     if (key === null) return null;

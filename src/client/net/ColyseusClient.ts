@@ -5975,7 +5975,7 @@ export class ColyseusGameClient {
   private _lgHeld: string | null = null;
   private _lgBest: string | null = null;
   private _lgBestScore = Infinity;
-  /** Lock keys (`s:<entityId>` / `p:<playerId>`), built once per id. */
+  /** Lock keys (`s:<entityId>` / `p:<ship mirror key>`), built once per id. */
   private readonly _swarmLockKeys = new Map<number, string>();
   private readonly _shipLockKeys = new Map<string, string>();
 
@@ -5990,7 +5990,7 @@ export class ColyseusGameClient {
     return k;
   }
 
-  /** `p:<playerId>`, cached. */
+  /** `p:<mirror key>` (playerId, or a parked hull's shipInstanceId), cached. */
   private shipLockKey(playerId: string): string {
     let k = this._shipLockKeys.get(playerId);
     if (k === undefined) {
@@ -6016,15 +6016,13 @@ export class ColyseusGameClient {
     this.lgConsider(this.swarmLockKey(entityId), e.x, e.y, e.radius ?? 20);
   };
 
-  /** Other pilots' ships on the lock line. Bound once. */
-  private readonly _lgVisitShip = (s: ShipRenderState, pid: string): void => {
-    if (pid === this._lgLocalId) return;
-    // Covers other pilots' ACTIVE ships only (#17). A parked / AI-flown hull
-    // has no `p:<id>` lock key the server can resolve yet. TODO(RTS Part A):
-    // locking AI-flown ships (owner: lockable like any ship) comes in a later
-    // two-sided slice; until then they stay off the lock line, as before S3.
-    if (isParkedHull(this.mirror, pid, s)) return;
-    this.lgConsider(this.shipLockKey(pid), s.x, s.y, getShipKind(s.kind ?? null).radius);
+  /** Other players' ships on the lock line, flown by a pilot or an AI pilot
+   *  (every class in the one ship list; the key is the mirror key, which the
+   *  server's `resolveLockTarget` resolves for both, #15). Never a ship the
+   *  local player owns (the ship they fly or their own fleet). Bound once. */
+  private readonly _lgVisitShip = (s: ShipRenderState, key: string): void => {
+    if (isOwnedByMe(this.mirror, key, s)) return;
+    this.lgConsider(this.shipLockKey(key), s.x, s.y, getShipKind(s.kind ?? null).radius);
   };
 
   /**
@@ -6080,10 +6078,10 @@ export class ColyseusGameClient {
     let key: string | null = null;
     if (id.startsWith('swarm-')) key = `s:${id.slice(6)}`;
     else {
-      // Other pilots' active ships only: a parked hull has no server-side
-      // lock key yet (TODO(RTS Part A): lockable AI-flown ships, two-sided).
+      // Another player's ship, pilot- or AI-flown (the mirror key is the lock
+      // key); never one of your own.
       const ship = this.mirror.ships.get(id);
-      if (ship !== undefined && id !== this.mirror.localPlayerId && !isParkedHull(this.mirror, id, ship)) key = `p:${id}`;
+      if (ship !== undefined && !isOwnedByMe(this.mirror, id, ship)) key = `p:${id}`;
     }
     if (key === null) return false;
     this.requestLock(active, key);

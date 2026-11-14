@@ -377,7 +377,15 @@ export class HaloRadar {
         if (this.consider(key, sh.x, sh.y, r, refX, refY, W, H, s, maxRange, hyst, frameId)) {
           const dist = Math.hypot(sh.x - refX, sh.y - refY);
           if (dist < closest) closest = dist;
-          writeCandidate(raw, n++, key, sh.x, sh.y, 'lingering', cats.lingering.color, dist, r, LOCK_TINT_NONE);
+          // Another player's AI-flown ship is lockable like any player's
+          // ship (`p:<shipInstanceId>`): tint it by your locks on it too.
+          let tint = LOCK_TINT_NONE;
+          if (anyLocks) {
+            let lk = this.shipLockKeys.get(id);
+            if (lk === undefined) { lk = `p:${id}`; this.shipLockKeys.set(id, lk); }
+            tint = radarLockTint(lk, lockGroups, lockedBy);
+          }
+          writeCandidate(raw, n++, key, sh.x, sh.y, 'lingering', cats.lingering.color, dist, r, tint);
         }
       }
     }

@@ -134,7 +134,8 @@ export const TestKillCapitalsSchema = z
   .strict();
 
 /** Fire control (exp/fire-control): a lock target key — `s:<entityId>` for a
- *  swarm entity (drone, robot, structure…), `p:<playerId>` for an active ship. */
+ *  swarm entity (drone, robot, structure…), `p:<playerId>` for an active ship,
+ *  `p:<shipInstanceId>` for a parked (AI-flown) player hull. */
 export const LockTargetKeySchema = z.string().regex(/^(s:\d{1,10}|p:[A-Za-z0-9_-]{1,64})$/);
 
 /** Client → server: start locking `target` with weapon group `groupId`. */
