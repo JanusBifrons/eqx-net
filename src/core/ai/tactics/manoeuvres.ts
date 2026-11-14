@@ -60,14 +60,18 @@ const TAIL_BOOST_RANGE = 1.5;
 const TAIL_MIN_SPEED = 0.8;
 /** The target counts as moving above this share of our cruise speed. */
 const MOVING_FRAC = 0.1;
-
+/** In fire range the nose stays on the lead while the wanted course is
+ *  within this cos of the target line (60°). */
+const TAIL_AIM_COS = Math.cos(AIM_CONE);
 /**
  * Pursuit intercept to a point `TAIL_BEHIND × fireRange` behind the target's
  * velocity (its six), led by the time to get there; the wanted velocity is the
  * target's own plus a closing speed that eases off near the station, so the
  * ship settles on the tail instead of overrunning it. A slow target (or a
  * structure) has no six: the station is on our side of it. Nose on the lead
- * in fire range, else along the move.
+ * in fire range while the course runs within 60° of it (on or near the six),
+ * else along the move: a ship thrusts only along its nose, so a nose held on
+ * the target cannot fly round to its six (2026-11-13).
  */
 export class TailManoeuvre implements IManoeuvre {
   readonly id = MANOEUVRE_TAIL;
@@ -78,6 +82,10 @@ export class TailManoeuvre implements IManoeuvre {
   writeGoal(ctx: TacticalContext, maps: ContextMaps, out: ManoeuvreGoal): void {
     const R = ctx.fireRange;
     const tSpeed = Math.hypot(ctx.tvx, ctx.tvy);
+    if (ctx.targetIsShip && tSpeed <= MOVING_FRAC * ctx.cruiseSpeed) {
+      this.circle(ctx, maps, out);
+      return;
+    }
     let bx: number;
     let by: number;
     if (ctx.targetIsShip && tSpeed > MOVING_FRAC * ctx.cruiseSpeed) {
@@ -130,10 +138,43 @@ export class TailManoeuvre implements IManoeuvre {
     // reverse along it still close the station): a fighter facing away in
     // range halves its fire (fleet-fight perf scene, 2026-11-13). Out of
     // range it flies the course.
-    out.facing = ctx.dist <= R ? FACE_AIM_LEAD : FACE_MOVE;
-    out.boost = ctx.dist > TAIL_BOOST_RANGE * R;
+    // A ship only thrusts along its nose, so the nose can stay on the lead
+    // only while the course runs within AIM_CONE of it (on or near the six).
+    // Off it (head-on, crossing, a parked target being circled), it flies the
+    // course round to the six and the nose comes back on as it gets there.
+    out.facing = ctx.dist <= R && speed > 1e-6
+      && (wvx * ctx.ux + wvy * ctx.uy) / speed > TAIL_AIM_COS ? FACE_AIM_LEAD : FACE_MOVE;
+    // Afterburner to catch up: far off, or the target is pulling away and
+    // we are short of the station.
+    out.boost = ctx.dist > TAIL_BOOST_RANGE * R || (ctx.closing < 0 && d > TAIL_ARRIVE * R);
   }
   isDone(): boolean { return false; }
+
+  /**
+   * A (nearly) stopped ship has no six: circle it at `TAIL_BEHIND × fireRange`
+   * at the floor speed, round the side the nose already points to, steering in
+   * or out by the range error. Sending the ship to a station straight back
+   * out on its own side (the old rule) made a close pair turn in place nose to
+   * nose, stopped, for seconds (toe to toe; on-sight integration 2026-11-13).
+   */
+  private circle(ctx: TacticalContext, maps: ContextMaps, out: ManoeuvreGoal): void {
+    const R = ctx.fireRange;
+    const side = ctx.ux * ctx.fwdY - ctx.uy * ctx.fwdX >= 0 ? 1 : -1;
+    let e = (ctx.dist - TAIL_BEHIND * R) / (TAIL_ARRIVE * R);
+    e = e < -1 ? -1 : e > 1 ? 1 : e;
+    let dx = -ctx.uy * side + ctx.ux * e;
+    let dy = ctx.ux * side + ctx.uy * e;
+    const l = Math.hypot(dx, dy);
+    dx /= l; dy /= l;
+    const speed = TAIL_MIN_SPEED * ctx.cruiseSpeed;
+    this.wantVx = ctx.tvx + dx * speed;
+    this.wantVy = ctx.tvy + dy * speed;
+    addInterestToward(maps, this.wantVx, this.wantVy, 1, GOAL_SHAPE);
+    out.speed = Math.hypot(this.wantVx, this.wantVy);
+    out.facing = ctx.dist <= R && (this.wantVx * ctx.ux + this.wantVy * ctx.uy) / out.speed > TAIL_AIM_COS
+      ? FACE_AIM_LEAD : FACE_MOVE;
+    out.boost = false;
+  }
 }
 
 // ── Attack run ──────────────────────────────────────────────────────────
@@ -203,7 +244,8 @@ export class AttackRunManoeuvre implements IManoeuvre {
     addInterestToward(maps, this.passX, this.passY, 1, GOAL_SHAPE);
     out.speed = ctx.maxSpeed;
     out.facing = FACE_MOVE;
-    out.boost = this.phase === RUN_EXTEND;
+    // Zoom through the pass and away on the extend.
+    out.boost = true;
   }
 
   isDone(ctx: TacticalContext): boolean {

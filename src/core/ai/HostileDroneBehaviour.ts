@@ -48,6 +48,7 @@ import { roleProfile, roleSensorRange, type RoleProfile } from './tactics/rolePr
 import {
   FACE_AIM_LEAD,
   FACE_MOVE,
+  MANOEUVRE_BREAK,
   makeManoeuvreGoal,
   makeTacticalContext,
   MANOEUVRE_FALL_BACK,
@@ -116,6 +117,15 @@ const GUARD_RETURN_SPEED = 0.5;
 /** Station-keeping pilot: a capital's thrust is the only brake it has on a
  *  course across its axis, so it may thrust with any nose (no thrust cone). */
 const GUARD_PILOT_PARAMS: Readonly<PilotParams> = { ...DEFAULT_PILOT_PARAMS, thrustConeCos: -1 };
+/** Combat flying (dogfight manoeuvres): the afterburner is used hard, as a
+ *  player uses it (owner 2026-11-13: "don't forget the afterburner to gain
+ *  speed fast"): with the nose within ~37° of the course (not 18°), and as
+ *  soon as the wanted speed along the nose beats the actual by 15 % of the
+ *  kind's top speed. Whether a manoeuvre wants it is its own call. */
+const COMBAT_PILOT_PARAMS: Readonly<PilotParams> = { ...DEFAULT_PILOT_PARAMS, boostConeCos: 0.8, boostSpeedGap: 0.15 };
+/** Combat boost keeps this share of the energy pool in reserve; only a Break
+ *  (getting out from under fire) may burn below it. */
+const BOOST_RESERVE_FRAC = 0.25;
 /** Forget a hostile player after this many ticks of no fresh damage from
  *  them. 1800 ticks @ 60 Hz = 30 s. Mirrors the player's own intuition that
  *  if they've been clean for half a minute, the drone has lost interest. */
@@ -407,6 +417,8 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   private readonly friendlyToPilots: boolean;
   /** Facing latch: true while the nose follows the move heading, not the lead. */
   private _faceMove = false;
+  /** Ticks flown with the afterburner lit (test-visible). */
+  private _boostTicks = 0;
   /** Test-visible: did the last combat tick resolve through context steering? */
   private _ctxUsed = false;
 
@@ -1061,7 +1073,11 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       this._faceMove = moving && !inRange && (along > 0 || off > thresh);
     }
     const facing = this._faceMove ? moveAngle : leadAngle;
-    return this.fly(self, facing, wvx, wvy, goal.boost);
+    // Afterburner: whenever the manoeuvre wants it, above the reserve; a
+    // Break may spend the reserve.
+    const boost = goal.boost
+      && (this.energy >= BOOST_RESERVE_FRAC * this.energyMax || this._picker.current === MANOEUVRE_BREAK);
+    return this.fly(self, facing, wvx, wvy, boost, COMBAT_PILOT_PARAMS);
   }
 
   /** Refresh the tactical context for this combat tick (plain writes, #14). */
@@ -1521,8 +1537,10 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     );
     // A latched decision may still hold boost the pool can no longer pay for.
     if ((bits & AI_INPUT_BOOST) !== 0) {
-      if (canAfford(this.energy, BOOST_TICK_COST)) this.energy = spendEnergy(this.energy, BOOST_TICK_COST);
-      else bits &= ~AI_INPUT_BOOST;
+      if (canAfford(this.energy, BOOST_TICK_COST)) {
+        this.energy = spendEnergy(this.energy, BOOST_TICK_COST);
+        this._boostTicks++;
+      } else bits &= ~AI_INPUT_BOOST;
     }
     const out = this._intentScratch;
     out.fx = 0;
@@ -1537,6 +1555,9 @@ export class HostileDroneBehaviour implements IAiBehaviour {
 
   /** Test-visible: the NPC's boost energy pool. */
   getEnergy(): number { return this.energy; }
+
+  /** Test-visible: ticks flown with the afterburner lit. */
+  getBoostTicks(): number { return this._boostTicks; }
 
   // ── Line-of-fire feedback (friendly fire; plan composed-harbor §4) ──────
   // The room's LineOfFireGate held this NPC's shot because a friendly body

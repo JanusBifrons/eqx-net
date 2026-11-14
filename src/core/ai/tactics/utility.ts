@@ -56,21 +56,31 @@ export const TAILED_ASPECT_COS = -0.2;
  *  it fights. */
 export const HEAVY_HITS = 4;
 export const HEAVY_FIRE_BOW_COS = 0.5;
-/** Hold's share of the role's stand-off weights (orbit / kite). Orbit and
- *  Kite score their full weight (slice 6b), so a stand-off role prefers them
- *  and Hold stays the fallback a pack piles into. */
+/** Hold's share of the role's stand-off weights (orbit / kite), scaled by
+ *  (1 − aggression): a reckless role does not park. Orbit and Kite score their
+ *  full weight (slice 6b), so a stand-off role prefers them and Hold stays the
+ *  fallback a pack piles into. Before 2026-11-13 the robot role (orbit 0.8)
+ *  held 100 % of every group fight it was in: the filmed robots that "barely
+ *  move, keep facing the drones". */
 const HOLD_STANDOFF_SHARE = 0.5;
 /** Orbit is a turret manoeuvre: its weight × clamp(turret half-arc / this,
  *  ORBIT_FIXED_GUN_SHARE, 1). A fixed-forward gun can't bear while it turns
  *  the nose off the target, so it barely orbits. */
 const ORBIT_FULL_ARC = Math.PI / 4;
 const ORBIT_FIXED_GUN_SHARE = 0.25;
-/** Wingmen near me (same side within 1.5 × fire range) damp the solo
- *  manoeuvres by 1 / (1 + this × allies) and add this share each to Hold:
- *  a pair dogfights, a pack surrounds its target and keeps its spacing
- *  (six ships diving through one point would stack up). */
+/** Wingmen near me (same side within 1.5 × fire range) beyond the number of
+ *  other ships there damp the solo manoeuvres by 1 / (1 + this × surplus) and
+ *  add this share each to Hold: a pack on one target surrounds it and keeps
+ *  its spacing (six ships diving through one point would stack up), while an
+ *  even group fight (3v3 on sight) breaks into duels. Counting every wingman
+ *  parked any group fight in Hold (2026-11-13). */
 const PACK_DAMP = 0.5;
 const PACK_HOLD = 0.05;
+/** Tail's share for the target merely being close (≤ fire range), whatever
+ *  its aspect: after a pass the close fight is a turning fight. With only the
+ *  "behind" term, a run ended where the target had turned back, so the next
+ *  pick was another head-on run (the filmed straight-line jousts). */
+const TAIL_NEAR = 0.4;
 
 /** True when the brain should re-score on `tick` (slot-staggered cadence). */
 export function decisionDue(tick: number, slot: number, lod: boolean): boolean {
@@ -101,14 +111,15 @@ export function scoreManoeuvres(ctx: TacticalContext, role: RoleProfile, out: Fl
   }
   const dN = ctx.dist / ctx.fireRange;
   const tailed = isTailed(ctx);
-  out[MANOEUVRE_HOLD] = HOLD_STANDOFF_SHARE * standoff + PACK_HOLD * ctx.allies;
-  const pack = 1 / (1 + PACK_DAMP * ctx.allies);
+  const surplus = ctx.allies > ctx.enemies ? ctx.allies - ctx.enemies : 0;
+  out[MANOEUVRE_HOLD] = HOLD_STANDOFF_SHARE * standoff * (1 - role.aggression) + PACK_HOLD * surplus;
+  const pack = 1 / (1 + PACK_DAMP * surplus);
 
   // Tail: best close in behind the target; a poor way to close from far off
   // and poor while the target sits behind me.
   const behind = ctx.targetAspectCos < 0 ? -ctx.targetAspectCos : 0;
   const near = dN <= 1 ? 1 : dN >= 2 ? 0 : 2 - dN;
-  let tail = w.tail * (0.3 + 0.7 * behind * near);
+  let tail = w.tail * (0.3 + TAIL_NEAR * near + (0.7 - TAIL_NEAR) * behind * near);
   if (tailed) tail *= 0.5;
   out[MANOEUVRE_TAIL] = tail * pack;
 

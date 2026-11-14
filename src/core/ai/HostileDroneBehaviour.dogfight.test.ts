@@ -52,16 +52,21 @@ function duel(ticks: number, players: AiPlayerView[] = []): Duel {
     if (m !== lastA) { trace += `${t}:${m} `; if (m === MANOEUVRE_ATTACK_RUN) runs++; lastA = m; }
     const d = Math.hypot(A.x - B.x, A.y - B.y);
     if (d < 0.7 * R && Math.hypot(A.vx, A.vy) < 0.25 * bA.getCruiseSpeed() && Math.hypot(B.vx, B.vy) < 0.25 * bB.getCruiseSpeed()) toe++;
-    if (armed && d < 0.5 * R) { passes++; armed = false; } else if (!armed && d > R) armed = true;
+    // A merge: inside 0.15 R, out past 0.25 R, in again (a turning fight
+    // re-merges inside gun range; only a joust opens past R, 2026-11-13).
+    if (armed && d < 0.15 * R) { passes++; armed = false; } else if (!armed && d > 0.25 * R) armed = true;
   }
   return { passes, toeFrac: toe / ticks, shotsA, shotsB, runs, trace };
 }
 
 describe('HostileDroneBehaviour — dogfight decision layer (slice 4)', () => {
-  it('two fighters make attack runs, pass, extend and come back; never toe to toe', () => {
+  it('two fighters make an attack run, pass and turn back into the fight; never toe to toe', () => {
     const r = duel(20 * 60);
     expect(r.passes, r.trace).toBeGreaterThanOrEqual(2);
-    expect(r.runs, r.trace).toBeGreaterThanOrEqual(2);
+    // After the first pass the close fight is a turning fight (Tail), not a
+    // second joust (2026-11-13 on-sight fix: repeated head-on runs were the
+    // filmed "dead straight lines, trade head-on").
+    expect(r.runs, r.trace).toBeGreaterThanOrEqual(1);
     expect(r.toeFrac).toBeLessThan(0.05);
     expect(r.shotsA).toBeGreaterThan(0);
     expect(r.shotsB).toBeGreaterThan(0);

@@ -94,15 +94,17 @@ describe('TailManoeuvre', () => {
     // Tangent to the target line (moving across it, not toward / away).
     expect(Math.abs(d.dirY)).toBeLessThan(0.3);
   });
-  it('keeps the nose on the lead in fire range, flies the course out of it', () => {
-    // Target dead ahead in range, flying away along the same line.
+  it('keeps the nose on the lead on the six, flies the course to get there', () => {
+    // Target dead ahead in range, flying away along the same line: on its six.
     const c = ctxAt(0, 0, 0, 500, { tvx: 0, tvy: 140 });
     run(new TailManoeuvre(), c);
     expect(goal.facing).toBe(FACE_AIM_LEAD);
-    // Circling a slow target in range: the nose still stays on it.
+    // Circling a slow target in range: a ship thrusts only along its nose, so
+    // a nose held on the target cannot fly the circle (the filmed robots that
+    // "barely move, keep facing the drones"). It flies the course.
     const c1 = ctxAt(0, 0, 0, TAIL_BEHIND * R, { vx: 10, vy: 0 });
     run(new TailManoeuvre(), c1);
-    expect(goal.facing).toBe(FACE_AIM_LEAD);
+    expect(goal.facing).toBe(FACE_MOVE);
     // Out of range: the course.
     const c2 = ctxAt(0, 0, 0, 1.2 * R, { tvx: 140, tvy: 0 });
     run(new TailManoeuvre(), c2);
