@@ -263,6 +263,14 @@ export class WarpFx {
     }
   }
 
+  /** The ship died this frame: it did not warp out, so when it leaves the
+   *  mirror mid-spool no departure is drawn (take 12: a fighter killed while
+   *  spooling left burning warp trails over its wreck). Call before endFrame. */
+  died(id: string): void {
+    const v = this.ships.get(id);
+    if (v) v.phase = 0;
+  }
+
   endFrame(): void {
     for (const [id, v] of this.ships) {
       if (v.gen === this.gen) continue;

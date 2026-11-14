@@ -2313,6 +2313,12 @@ export class SectorRoom extends Room<SectorState> {
       // same hostility ledger the AI tick + liveCounts use (one truth).
       isDroneHostileTo: (droneId, playerId) => this.npcHostileTo(droneId, playerId),
       isDroneCharging: (droneId) => this.aiFireResolver.isCharging(droneId),
+      // The AI pilot's boost key this tick, after the same disabled gate its
+      // keys pass on the way to the worker (a disabled ship holds no keys).
+      isDroneBoosting: (droneId) => {
+        const slot = this.aiController.boostingSlot(droneId);
+        return slot >= 0 && !this.gateGuard.isSlotDisabled(slot, this.gameClock.now());
+      },
       // Living World P1a (#16) — own-ship cargo slice source.
       shipHoldOf: (shipInstanceId) => this.loot.shipHold(shipInstanceId),
       // P5 — the own ship's fitted blueprints (cache read only — alloc-free).
