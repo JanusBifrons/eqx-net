@@ -3026,7 +3026,15 @@ Owner: "make it more like micro machines and make fights a bit longer. Also don'
 - **Cause.** Server, not renderer. `AiFireResolver.fireNow` fired a mount at the AI's AIM vector plus the mount's slewed angle. A turret's slewed angle is ship-relative and already turned onto the target, so the shot went out at twice the hull's bearing error: a real server miss (full-range distance on the wire). The client draws a remote beam down the visible barrel (hull + base + slewed angle) for the server's distance, so the miss was drawn through the target.
 - **Fix.** A turning mount fires down its barrel (hull angle + base + slewed angle), the angle the client draws. A fixed mount keeps the exact aim vector (the 2026-06-03 accuracy fix). Lock: `AiFireResolver.test.ts` "a turret beam leaves along its visible barrel" (wire ray direction == drawn barrel, #15).
 - **Lesson.** When a drawn beam disagrees with its target, check that the server's ray and the drawn ray are the SAME ray before touching the beam-end maths. Adding a relative angle to an absolute direction is a frame mix-up that no hit-shape fix can hide.
-- **Still open.** A FIXED mount's beam is drawn along the hull's nose while the server fires along the aim vector (within the AI's aim cone), so a hit can end beside the target rather than on it.
+- **Closed 2026-11-14 (next entry).** A FIXED mount's beam is drawn along the hull's nose while the server fires along the aim vector (within the AI's aim cone), so a hit can end beside the target rather than on it.
+
+## 2026-11-14 — Turrets that never turned, and a shooter pose borrowed by its own hit test
+
+- **Symptom (owner, fight clips npc-dogfight / fleet-melee):** "The turrets also aren't turning to shoot the direction they do."
+- **Cause 1:** `WeaponMountTicker.tickDrone` trained a non-capital drone's turrets only on hostile PILOTS. In a drones-vs-robots fight there were none, so the interceptor and gunship turrets sat at rest, while the AI fired whenever its hull was inside its cone PLUS the turret arc (up to 104° for a gunship), and since #572 the shot leaves down the resting barrel.
+- **Cause 2:** a fixed nose gun (fighter, scout, heavy, every robot) fired along the AI's exact lead vector anywhere in a 14°-26° cone, while the nose gun is drawn straight ahead.
+- **Cause 3 (found by the room-level test):** `SectorRoom.swarmEntitySnapshot` returns ONE shared scratch. `AiFireResolver.fireNow` kept the reference across the mount loop, and the first barrel's hit test looked other ships up through it, so the second wing fired from the TARGET's pose and angle. Unit tests with a fake snapshot could never see it.
+- **Rule:** an AI shot leaves down its drawn barrel (hull + base + slewed angle) and only a barrel that bears fires (`mountFireTolerance`, the pilot's rule); the brain's `aimPoint` drives its turrets. Copy a pooled snapshot's fields before any other lookup.
 
 ## 2026-11-13 — Same keys, different ship: an NPC body is twice a player's mass
 
