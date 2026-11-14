@@ -118,15 +118,68 @@ testMode join option `groupMode: 'manual'` (URL `?groupMode=manual`,
 AUTO (which `anyTarget` widens to any target) never kills a fragile target
 before the test switches the group it wants to AUTO or locks it.
 
+### Range to the hull, not the centre (player fire gate)
+
+Owner decision 2026-11-14: fire range is measured from each turret (its mount's
+world position) to the nearest point of the target's true hit shape, not
+centre to centre (a battleship's AA, reach ~1,428 u, could not reach another
+battleship with hulls touching). `shipHullDistance(kindId, shieldUp, px, py,
+cx, cy, angle)` in `src/core/combat/shipHitShape.ts` gives that distance (0
+inside), against the same shape the hits use: a capital's hull polygon
+(`shipCollisionParts`, the one `capitalHits` / `shipRayHit` refine against), a
+non-capital's shield bubble with its shield up, its hull polygon with it down.
+The polygon maths is `pointToShipPolygonDistance` in `Weapons.ts`, beside
+`rayHitsShipPolygon`. Fire gates call `shipWithinHullReach(..., reach)`: it
+first rejects on the cheap bounding circle (`centreDist > shipHitBound + reach`
+⇒ out, the polygon is never touched) and measures the hull only inside that
+band. Both are allocation-free. Locks: `tests/unit/shipHullDistance.test.ts`
+(beam vs bow, inside = 0, bubble, agreement with the capital ray hit, the far
+reject never reading the polygon) and `shipHullDistance.heapDelta.test.ts`.
+
+**Wired into the PLAYER fire gate.** `core/combat/fireControlBearing.ts` holds
+the whole per-mount gate, `mountFiresOn(weaponId, reach, ox, oy, angle, t)` =
+`mountReachesTarget` (range) AND `mountBearsOn` (bearing). The range half
+measures from the mount's world origin to the target's hit shape against that
+mount's own `mountWeaponReach` (`weaponIdReach(weaponId)` when only the id is
+at hand): a ship (any pilot) via `shipWithinHullReach`, anything else
+(structures) as centre distance − its lock `signature` (its radius). The target
+is a `FireTargetShape` (pose, heading, `ship`, `kindId`, `shieldUp`,
+`signature`), filled on both sides by the one `fillFireTargetShape`: the server
+in `SectorRoom.resolveLockTarget` (swarm record `shipKind` / `!shieldDown` /
+`radius`; a pilot's `ShipState.kind` / `shield > 0`), the client in
+`ColyseusClient.fcTargetPose` (swarm wire `shipKind` / `shieldDown` / `radius`;
+the ship mirror's `kind` / `shieldDown`). `LockTargetView` extends it.
+
+Who calls it: the server's `SectorRoom.mountBearsOnLock` (→ `PlayerFireResolver`
+per mount), and the client's `fcGroupBears` (non-capital groups), `fcFireMounts`
+(capital per-turret salvo) and `fcMountBears` (ghost gate). The client's old
+centre-to-centre `reach × 1.1` checks are gone; the server had no range check
+at all (fire range came only from the lock's centre-measured reach). A mount out
+of reach is refused like one off bearing: no cooldown, no energy. **AUTO pick**
+(`LockSubsystem.bears`) uses the same range half per mount, with the mount's
+ARC as the angular half (a turret trains onto what AUTO picks; the fire gate
+then checks its barrel); the client has no AUTO pick of its own.
+
+Not changed here: lock reach (`lockSeconds`, still centre to centre × 1.1, so a
+target whose centre is past the group's reach still drops its lock after the
+1.5 s grace) and NPC / structure turret fire (`AiFireResolver`,
+`WeaponMountTicker` NPC paths, `StructureMountTicker`). Locks:
+`tests/integration/sectorRoom/playerTurretFireRange.test.ts` (AA fires at a
+battleship alongside, centres 1.7 km apart; a drone out of every AA mount's
+reach is refused with no energy spent), `src/client/net/ColyseusClient.fireRange.test.ts`
+(client salvo = the shared gate's set for the server's target view; shape-fill
+parity), `tests/unit/fireControlBearingParity.test.ts` (both sides call
+`mountFiresOn` + `fillFireTargetShape`, never a bare `mountBearsOn`).
+
 ## Server
 
 | Piece | File | Role |
 |---|---|---|
 | Lock time | `core/combat/lockTime.ts` | Pure `lockSeconds(inputs, tuning)`; Infinity = can't lock now. secs = base × size × tracking × range ÷ (sensor × pilot). Range: small guns (none/AA/S) use the share of their reach (`1 + 0.6 × range/reach`); heavy M/L/XL guns (`WEAPON_LOCK_PROFILE[size].absRange`) use ABSOLUTE distance, `1 + (range / 7000)^1.5` (owner 2026-11-10: "speed, size and distance"; "it should take ages to lock"). The `maxSeconds` (8 s) "can't lock" test reads the reach-share time only, so distance makes a heavy lock slower, never impossible: a 16" on a battleship takes ~2.5 s at 4k u, ~10 s at 20k, ~17 s at 30k. Structures (`clampAtMax`) cap the size/speed part at 8 s, then a heavy gun still stretches it for distance. A SHIP's heavy gun (`absRange` under ship tuning, i.e. not `clampAtMax`) skips the 8 s test entirely: a small or fast target locks slowly, never impossibly (owner 2026-11-10: "10 minutes or an hour … working as intended"). This holds for EVERY ship, player or NPC (`LockSubsystem`, `NpcLockSubsystem`, `WeaponMountTicker` capital turret on a structure): one rule, no per-pilot flag (owner 2026-11-13: "It's the same ship and the same gun, so it gets the same lock"; the old player-only `neverImpossible` flag is gone). Lock: `tests/unit/npcLockParity.test.ts` |
 | Lock state | `core/combat/lockState.ts` | `LockEntry` + `stepLock`: failsafe → acquiring → locked; `track` = commit / held / released (released drains at `decayMul`× and drops at 0) |
-| Player locks | `server/rooms/LockSubsystem.ts` | Per pilot, per group: queue (capacity 1 sub-capital, 3 capital), AUTO pick (arc-filtered), `requestLock` (commit), `trackLock` (held line), `cancelLock`, `setMode`; stepped every 6 ticks |
+| Player locks | `server/rooms/LockSubsystem.ts` | Per pilot, per group: queue (capacity 1 sub-capital, 3 capital), AUTO pick (a mount's arc + that mount's range to the target's hit shape), `requestLock` (commit), `trackLock` (held line), `cancelLock`, `setMode`; stepped every 6 ticks |
 | NPC locks | `server/rooms/NpcLockSubsystem.ts` | Every NPC hostile to a tracked pilot builds a lock on them by the same rules; `fireBlocked(npcId, targetId)` refuses a drone shot at a pilot target it has not completed a lock on (the target id rides `intent.fire.targetId`; non-pilot targets are not gated); `WeaponMountTicker.tickCapitalMounts` asks the same question per capital turret with that turret's own target. A capital's lock time is the fastest over its per-mount-size profiles; testMode `instantLock` on a pilot completes NPC locks on them in reach |
-| Player fire gate | `PlayerFireResolver` deps `fireAllowed` + `mountBearsOnLock` | A group fires only with a LOCKED target, and only mounts whose barrel is within `FC_MOUNT_FIRE_TOLERANCE` (0.2 rad) of it; otherwise refused without spending cooldown or energy |
+| Player fire gate | `PlayerFireResolver` deps `fireAllowed` + `mountBearsOnLock` | A group fires only with a LOCKED target, and only mounts that pass the shared `mountFiresOn`: the target's hit shape within the mount's own reach, measured from the mount, and the barrel bearing on it (`mountBearsOn`); otherwise refused without spending cooldown or energy |
 | Turret aim | `WeaponMountTicker.tickPlayer` → `LockSubsystem.aimKeyFor` | Each mount slews toward its group's locked (else acquiring) target; no target ⇒ home. With several locks (capitals) the turrets share them out via the shared `pickTurretLock` (`core/combat/turretLockPick.ts`): turret *i* of the group prefers lock *i mod n*, else the next lock round the list it can engage (reach + arc), else the first. The client's predicted aim and ghost gate (`fcMountAimKey`) call the same function (#15) |
 | Naval reach switch | `shared-types/combat/navalRange.ts` + `navalGuns.ts` | `real` (the default since 2026-11-14) gives every `naval_*` gun its real range as its engage reach (16" 38,700 u, Lindemann 56,000 u) and flight real ÷ 3. Lock reach (`reach × reachSlack`) and the absolute-distance lock time follow; a 16" lock at 30 km takes ~17 s. `EQX_NAVAL_RANGE=legacy` (client `?navalRange=legacy`) opts back into the old reaches; both sides read it, the welcome always carries it (#15). See [real-scale-ranges.md](real-scale-ranges.md) |
 | Capital fire cadence | `PlayerFireResolver` (per-mount ledger) + `ColyseusClient.fcFireMounts` | Capitals (`hasTurretFireControl`) fire each turret on its OWN weapon reload as soon as it bears on its own target; the group fire carries only the reloaded, bearing mounts and pays that share of the group energy cost. A multi-barrel turret is one mount, so its barrels still fire together. Other ships keep the one group cooldown |
@@ -230,7 +283,7 @@ Full story: [docs/architecture/fire-control.md](fire-control.md). There is ONE H
 ### Fire control: lock-to-fire is universal (root invariant #19)
 
 - **Every player is tracked** by `LockSubsystem` from `onJoin` (`locks.enable`) and forgotten on leave (`LeaveHandler.forgetLocks` → `locks.forget` + `npcLocks.forget`). `hasLocked()` is false for an untracked player. Never reintroduce a pass-through (`isEnabled`-style "legacy rules").
-- **The fire gate** (`PlayerFireResolver` deps `fireAllowed` + `mountBearsOnLock`): a group fires only with a LOCKED target, and only the mounts whose barrel bears on it per the shared `mountBearsOn(weaponId, …)` (`core/combat/fireControlBearing.ts`; the client's ghost pass calls the same, #15): naval shell guns must put the shot within `TURRET_FIRE_MISS` (60 u) of the target, the rule every NPC capital and coastal gun uses, and other guns keep `FC_MOUNT_FIRE_TOLERANCE` (0.2 rad). A flat 0.2 rad let a player's 16" turret fire while still training, ~6 km wide at 30 km (owner 2026-11-12, "missing by miles"; lock `playerNavalFireTolerance.test.ts`). (Separate turrets fire independently when each is on target and share the group's target; a multi-barrel turret fires all its barrels together); none bearing ⇒ `hit_ack { rejected }` with no cooldown or energy spent.
+- **The fire gate** (`PlayerFireResolver` deps `fireAllowed` + `mountBearsOnLock`): a group fires only with a LOCKED target, and only the mounts that reach its hit shape from where they sit (own weapon reach, `mountReachesTarget`; see "Range to the hull") and whose barrel bears on it per the shared `mountBearsOn(weaponId, …)` (both: `mountFiresOn`) (`core/combat/fireControlBearing.ts`; the client's ghost pass calls the same, #15): naval shell guns must put the shot within `TURRET_FIRE_MISS` (60 u) of the target, the rule every NPC capital and coastal gun uses, and other guns keep `FC_MOUNT_FIRE_TOLERANCE` (0.2 rad). A flat 0.2 rad let a player's 16" turret fire while still training, ~6 km wide at 30 km (owner 2026-11-12, "missing by miles"; lock `playerNavalFireTolerance.test.ts`). (Separate turrets fire independently when each is on target and share the group's target; a multi-barrel turret fires all its barrels together); none bearing ⇒ `hit_ack { rejected }` with no cooldown or energy spent.
 - **Turret aim:** `WeaponMountTicker.tickPlayer` aims each mount at its group's lock (locked, else acquiring) and homes it otherwise. A capital group with several locks shares them out per turret (`LockSubsystem.aimKeyFor` → shared `pickTurretLock`, same call as the client's `fcMountAimKey`, #15), and `mountBearsOnLock` tests each mount against ITS pick. Capital turrets fire on their own reload (`PlayerFireResolver` per-mount ledger, partial salvo pays its share of the energy); other ships keep the group cooldown. There is no player auto-target or manual-aim mount path.
 - **Ship heavy guns lock small targets slowly, never impossibly, whoever flies the ship** (owner 2026-11-10: "10 minutes or an hour … working as intended"; owner 2026-11-13: "Same rule as players — an NPC's heavy gun locks a small fast ship slowly, but always gets there in the end. It's the same ship and the same gun, so it gets the same lock."): `lockSeconds` skips the `maxSeconds` gate for any heavy (M/L/XL, `absRange`) gun under ship tuning (`LOCK_TUNING`, no `clampAtMax`), so it keeps the finite size × tracking × absolute-distance time (no `c: 1` can't-lock flag, no drop). Player (`LockSubsystem`) and NPC (`NpcLockSubsystem`, `WeaponMountTicker` capital turret on a structure) take that ONE path; there is no per-pilot flag (the player-only `neverImpossible` is gone). Never add one back: a pilot difference is a bug. Sub-capital guns keep the `maxSeconds` rule; structures keep `clampAtMax` (fixed batteries are not ships, own tuning). Locks: `tests/unit/npcLockParity.test.ts` (NPC battleship 16" locks a fighter in the player time, then fires), `lockTime.test.ts`, `fireControlLocks.test.ts` "player heavy gun on a small target".
 - **`lock_track` is verified**, not trusted: it carries the line bearing `b`; `LockSubsystem.trackLock` holds the target only when the shared `lockLineHolds` (`core/combat/lockLine.ts`, sticky cone, the client's own pick rule) accepts it. A failing claim (or no `b`) counts as "on nothing" and releases the held lock. Lock: `LockSubsystem.test.ts` "lock_track is verified".

@@ -349,3 +349,50 @@ export function sweptSegmentHitsShipPolygon(
   const t = d > 0 ? d : 0;
   return { entry: t, hitX: fromX + dirX * t, hitY: fromY + dirY * t };
 }
+
+/**
+ * Distance from the world point (px, py) to the nearest point of a ship hull
+ * made of CCW convex parts (`shipCollisionParts`, the same parts
+ * `rayHitsShipPolygon` tests) at pose (cx, cy, angle); 0 inside the hull. The
+ * hull is the union of the parts, so the distance is the minimum over them.
+ * Same local frame as `rayHitsConvexPolygon`. Allocation-free.
+ */
+export function pointToShipPolygonDistance(
+  px: number, py: number,
+  cx: number, cy: number, angle: number,
+  parts: ReadonlyArray<ReadonlyArray<Vec2>>,
+): number {
+  const cosA = Math.cos(-angle);
+  const sinA = Math.sin(-angle);
+  const lx = (px - cx) * cosA - (py - cy) * sinA;
+  const ly = (px - cx) * sinA + (py - cy) * cosA;
+  let best2 = Infinity;
+  for (let p = 0; p < parts.length; p++) {
+    const poly = parts[p]!;
+    const n = poly.length;
+    if (n < 3) continue;
+    let inside = true;
+    let part2 = Infinity;
+    for (let i = 0; i < n; i++) {
+      const a = poly[i]!;
+      const b = poly[i + 1 < n ? i + 1 : 0]!;
+      const ex = b.x - a.x;
+      const ey = b.y - a.y;
+      const wx = lx - a.x;
+      const wy = ly - a.y;
+      // Outward normal of a CCW edge is (ey, -ex): positive ⇒ outside it.
+      if (wx * ey - wy * ex > 0) inside = false;
+      const l2 = ex * ex + ey * ey;
+      let t = l2 > 0 ? (wx * ex + wy * ey) / l2 : 0;
+      if (t < 0) t = 0;
+      else if (t > 1) t = 1;
+      const dx = wx - ex * t;
+      const dy = wy - ey * t;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < part2) part2 = d2;
+    }
+    if (inside) return 0;
+    if (part2 < best2) best2 = part2;
+  }
+  return Math.sqrt(best2); // no parts ⇒ Infinity (never "in reach")
+}
