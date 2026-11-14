@@ -37,7 +37,12 @@ describe('physics at solar-system distances', () => {
     const travelled = Math.hypot(near[near.length - 1]!.x, near[near.length - 1]!.y);
     expect(travelled).toBeGreaterThan(500); // it really flew
     // Within a few float32 steps at 200,000 u (1/64 u each) after 10 s.
-    expect(worst).toBeLessThan(0.5);
+    // Since the arcade handling tune (owner 2026-11-13: "make it more like
+    // micro machines") the fighter reaches cruise and boost at once and covers
+    // ~3× the ground in these 10 s, so the float32 rounding has more steps of
+    // larger motion to accumulate over: ~1.1 u measured. Still a few float32
+    // steps per thousand units flown.
+    expect(worst).toBeLessThan(2);
     expect(worstAngle).toBeLessThan(1e-3);
   });
 

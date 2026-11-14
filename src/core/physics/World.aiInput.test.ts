@@ -65,8 +65,14 @@ describe('World.applyAiInput — AI flies with player controls', () => {
     expect(Math.hypot(s.vx, s.vy)).toBeGreaterThan(fighter.maxSpeed * 0.5);
 
     // Turning hard at speed: the nose swings at maxAngvel and grip bleeds the
-    // sideways velocity, so speed stays (mostly) along the nose.
-    for (let i = 0; i < 20; i++) step(w, true, false, true, false, false);
+    // sideways velocity, so speed stays (mostly) along the nose. The swing is
+    // a fixed ~19° (1/3 rad: the original 20 ticks at the pre-arcade 1 rad/s),
+    // so the tick count follows the live maxAngvel (5 ticks at 4.2 rad/s). A
+    // fixed 20 ticks at 4.2 rad/s swings the nose ~80° in a third of a second,
+    // past where any grip of 0.025/tick could keep up: that is the intended
+    // arcade slide (ShipHandling.arcade.test.ts `slide`), not a grip failure.
+    const swingTicks = Math.ceil((1 / 3) / (fighter.maxAngvel / 60));
+    for (let i = 0; i < swingTicks; i++) step(w, true, false, true, false, false);
     const t = w.getShipState('npc')!;
     expect(Math.abs(t.angvel ?? 0)).toBeCloseTo(fighter.maxAngvel, 3);
     const fx = -Math.sin(t.angle), fy = Math.cos(t.angle);

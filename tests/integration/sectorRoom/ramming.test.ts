@@ -36,6 +36,12 @@ const CROSSGUARD = getShipKind('crossguard');
 const FIGHTER_POOL = FIGHTER.shieldMax + FIGHTER.maxHealth;
 /** Full speed (the kind's max-speed clamp, which boost does not raise). */
 const FULL = FIGHTER.maxSpeed;
+/** Ships are posed just short of contact: since the arcade handling tune
+ *  (owner 2026-11-13: "make it more like micro machines") a coasting fighter
+ *  sheds its speed within ~150 u, so a long run-up no longer arrives at speed.
+ *  A few ticks of flight are still needed: the impact speed is read from the
+ *  previous tick's velocity, which is 0 on the tick a ship is posed. */
+const NEAR = 25;
 
 describe('SectorRoom integration — ramming damage (impact-based model)', () => {
   let harness: SectorTestHarness;
@@ -72,8 +78,9 @@ describe('SectorRoom integration — ramming damage (impact-based model)', () =>
     const { a, b, room } = await twoPilots('fighter', 'fighter');
     const state = room.state as SectorState;
     const internal = room._internals;
-    internal.postToWorker({ type: 'SET_POSITION', entityId: a, x: 0, y: -150, angle: 0, vx: 0, vy: FULL, angvel: 0 });
-    internal.postToWorker({ type: 'SET_POSITION', entityId: b, x: dx, y: 150, angle: 0, vx: 0, vy: -FULL, angvel: 0 });
+    const y0 = shieldBubbleRadius(FIGHTER) + NEAR;
+    internal.postToWorker({ type: 'SET_POSITION', entityId: a, x: 0, y: -y0, angle: 0, vx: 0, vy: FULL, angvel: 0 });
+    internal.postToWorker({ type: 'SET_POSITION', entityId: b, x: dx, y: y0, angle: 0, vx: 0, vy: -FULL, angvel: 0 });
     await harness.events.waitFor({
       tag: 'collision_resolved',
       where: (d) => (d['aId'] === a && d['bId'] === b) || (d['aId'] === b && d['bId'] === a),
@@ -105,7 +112,7 @@ describe('SectorRoom integration — ramming damage (impact-based model)', () =>
     const state = room.state as SectorState;
     const internal = room._internals;
     internal.postToWorker({ type: 'SET_POSITION', entityId: heavy, x: 0, y: 0, angle: 0, vx: 0, vy: 0, angvel: 0 });
-    internal.postToWorker({ type: 'SET_POSITION', entityId: light, x: 0, y: -400, angle: 0, vx: 0, vy: FULL, angvel: 0 });
+    internal.postToWorker({ type: 'SET_POSITION', entityId: light, x: 0, y: -(shieldBubbleRadius(FIGHTER) + shieldBubbleRadius(CROSSGUARD) + 2 * NEAR), angle: 0, vx: 0, vy: FULL, angvel: 0 });
     await harness.events.waitFor({
       tag: 'ram_damage',
       where: (d) => (d['aId'] === light && d['bId'] === heavy) || (d['aId'] === heavy && d['bId'] === light),
@@ -128,7 +135,8 @@ describe('SectorRoom integration — ramming damage (impact-based model)', () =>
     const pair = (d: Record<string, unknown>): boolean =>
       (d['aId'] === light && d['bId'] === heavy) || (d['aId'] === heavy && d['bId'] === light);
     internal.postToWorker({ type: 'SET_POSITION', entityId: heavy, x: 0, y: 0, angle: 0, vx: 0, vy: 0, angvel: 0 });
-    internal.postToWorker({ type: 'SET_POSITION', entityId: light, x: 0, y: -300, angle: 0, vx: 0, vy: 70, angvel: 0 });
+    const yDrift = shieldBubbleRadius(FIGHTER) + shieldBubbleRadius(CROSSGUARD) + 5;
+    internal.postToWorker({ type: 'SET_POSITION', entityId: light, x: 0, y: -yDrift, angle: 0, vx: 0, vy: 70, angvel: 0 });
     await harness.events.waitFor({ tag: 'collision_resolved', where: pair }, { timeoutMs: 4000 });
     await harness.advance(80);
     expect(harness.events.count({ tag: 'ram_damage', where: pair }), 'a sub-0.5 collision must NOT emit ram_damage').toBe(0);

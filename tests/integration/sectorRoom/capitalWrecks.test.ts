@@ -188,7 +188,9 @@ describe('SectorRoom integration — capital wrecks (S2a)', () => {
     // wreck's surface on that line (this piece or a neighbour in front of it).
     const far = big.radius + 2000;
     const enter = internal.rayHit(st.x - far, st.y, 1, 0, 2 * far, 'nobody')!;
-    const x0 = st.x - far + enter.dist - 250;
+    // 100 u short: a coasting fighter sheds its speed within ~150 u since the
+    // arcade handling tune (owner 2026-11-13: "make it more like micro machines").
+    const x0 = st.x - far + enter.dist - 100;
     internal.spawnTestDrone('rammer', x0, st.y, 'fighter');
     await harness.advance(50);
     internal.postToWorker({ type: 'SET_POSITION', entityId: 'rammer', x: x0, y: st.y, angle: 0, vx: 600, vy: 0, angvel: 0 });

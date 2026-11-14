@@ -25,12 +25,16 @@ import { AT_AUTHORED_SHIP_SCALE } from '../../../src/shared-types/shipScale/conf
  * trips the bound immediately.
  */
 
+// maxHealth: the 2026-05-18 +50 % hull, then the arcade toughness layer
+// (owner 2026-11-13: "make it more like micro machines and make fights a bit
+// longer"): light ×1.6 (scout, interceptor), medium/heavy ×1.75. Cruise is
+// unchanged by that layer (thrust scales with damping).
 const EXPECTED = {
-  scout: { cruise: 361, maxHealth: 90 },
-  fighter: { cruise: 401, maxHealth: 150 },
-  heavy: { cruise: 451, maxHealth: 270 },
-  interceptor: { cruise: 376, maxHealth: 120 },
-  gunship: { cruise: 421, maxHealth: 210 },
+  scout: { cruise: 361, maxHealth: 144 },
+  fighter: { cruise: 401, maxHealth: 263 },
+  heavy: { cruise: 451, maxHealth: 473 },
+  interceptor: { cruise: 376, maxHealth: 192 },
+  gunship: { cruise: 421, maxHealth: 368 },
 } as const;
 
 async function measureCruise(kindKey: keyof typeof EXPECTED): Promise<number> {
@@ -84,7 +88,9 @@ describe.runIf(AT_AUTHORED_SHIP_SCALE)('ship-kind tuning lock (2026-05-18 slow-d
     // 23 → 24 on Fire Control (#367): real weapon groups per kind (gunship fore/aft,
     // frigate missiles + PD, crossguard port/stbd, capitals main/sec/AA), on top
     // of the capital hull-style bump (#366) that took main to 23.
-    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(24);
+    // 24 → 25 on 2026-11-13: arcade (Micro Machines) handling + toughness layer
+    // (owner: "make it more like micro machines and make fights a bit longer").
+    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(25);
   });
 
   for (const kindKey of Object.keys(EXPECTED) as (keyof typeof EXPECTED)[]) {
@@ -98,7 +104,7 @@ describe.runIf(AT_AUTHORED_SHIP_SCALE)('ship-kind tuning lock (2026-05-18 slow-d
       expect(measured).toBeLessThan(exp.cruise * 1.3);
     });
 
-    it(`${kindKey}: hull +50% with shield mirror and time-preserving regen`, () => {
+    it(`${kindKey}: hull (+50 % then arcade toughness) with shield mirror and time-preserving regen`, () => {
       const k = SHIP_KINDS[kindKey];
       expect(k.maxHealth).toBe(exp.maxHealth);
       // Shield mirrors hull (catalogue contract) ...

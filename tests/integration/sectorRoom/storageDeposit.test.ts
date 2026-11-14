@@ -65,6 +65,10 @@ describe('SectorRoom integration — base storage (P1a-2)', () => {
 
     // 1) Hold position → after the 2 s dwell the whole hold is banked.
     harness.sendThrust(cr);
+    // ...then let go: sendThrust HOLDS thrust, and since the arcade handling
+    // tune (owner 2026-11-13: "make it more like micro machines") a held
+    // thrust carries the ship past DEPOSIT_RANGE inside the 2 s dwell.
+    cr.send('input', { type: 'input', tick: 1, thrust: false, turnLeft: false, turnRight: false });
     const banked = await until(() => getHoldStore().get(shipId) === undefined, 10_000);
     expect(banked, 'holding position by your own Capital must deposit the hold').toBe(true);
     expect(cap.minerals).toBe(bankBefore + 40);

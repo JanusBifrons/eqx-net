@@ -24,7 +24,10 @@ import type { Contact } from '../physics/contactDrain.js';
  *  ~601 u/s top speed and 150 shield + 150 hull. */
 const FIGHTER_MASS = 8;
 const FIGHTER_TOP_SPEED = 601;
-const FIGHTER_POOL = 300;
+// 2026-11-13 arcade toughness (owner: "make fights a bit longer"): a 2×
+// fighter is shield 263 + hull 263; ramming scaled with it, so the ~55 %
+// calibration below still holds.
+const FIGHTER_POOL = 525;
 const DESTROYER_MASS = 400;
 
 function mk(
