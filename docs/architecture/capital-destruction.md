@@ -275,7 +275,7 @@ player-flown (active or parked), breaks it into wreck bodies on the server.
     overlaps them. Side effect: momentum moves outward along the chain, so
     the pieces at the ends of the hull drift fastest (~75 u/s for a heavy
     cruiser), and the piece at the kill point is slow; the knock-back from
-    later shells (a follow-up) supplies the violence.
+    later shells (below) supplies the violence.
     Tuning (owner review of a filmed take, 2026-11-13: at 0.0025 the gaps
     were 5–15 px after 8 s at the capital zoom ~0.17 and the hull read as
     "cracked but intact" for 3–4 s; "heavy and weighty, but the break must
@@ -297,20 +297,89 @@ player-flown (active or parked), breaks it into wreck bodies on the server.
     and structures collide with pieces as before. The dying body is
     despawned in the same worker batch (an active player hull's body too,
     its slot kept for respawn).
+  - **Overkill knock-back (owner request 2026-11-13: "The thing which knocks
+    them back should be the impact of subsequent shells, if any overkill
+    happens due to incoming shots after destruction").** A shot that lands
+    on a piece (the rest of the salvo after the kill, or any later fire)
+    shoves it. `SectorRoom.applyDamage` takes the shot's direction beside its
+    hit point and calls `CapitalWreckSubsystem.onWreckHit(id, hitX, hitY,
+    dirX, dirY, damage)`, which posts `WRECK_IMPULSE` (→
+    `World.applyImpulseAtPoint`): impulse J = damage ÷ the parent's max hull
+    × the hull's mass × `shipTuning(kind).wreckKnockSpeed` at the hit point,
+    along the shot, so an off-centre hit also turns the piece. The speed
+    change J ÷ m is capped at `wreckKnockMax` per hit. Both are 0.012 / 0.025
+    × hull radius per second (#18): a blow worth the whole hull's HP would
+    move the whole hull at `wreckKnockSpeed`. Heavy cruiser (2×: 4018 hull,
+    mass 2326, radius 2184): `wreckKnockSpeed` ≈ 26 u/s, cap ≈ 55 u/s; one
+    16" shell (1400) is J ≈ 21,000, so its biggest piece (~640–715 mass)
+    moves ~30–33 u/s and turns ~3°/s on a hit 0.3 radius off centre, a
+    mid-size piece (~80) hits the cap, and a 10-damage bolt moves the big
+    piece ~0.2 u/s (a sliver can still reach the cap: it is tiny).
+    - **During the crack hold the whole wreck takes the hit (owner review
+      2026-11-13).** A battleship salvo lands over ~0.5 s: the first shell
+      breaks the hull and the rest arrive during the `WRECK_CRACK_MS` hold.
+      Shoving only the piece hit made one chunk slide and turn out of line
+      while the others held, so the hull bent like a banana before it split.
+      Now, while `serverTick < deathTick + wreckCrackTicks()`, `onWreckHit`
+      posts `WRECK_RIGID_IMPULSE { entityIds, jx, jy, px, py }` with the
+      wreck's piece ids (built once at death) instead. The worker
+      (`World.applyRigidGroupImpulse`) treats the live pieces as ONE rigid
+      body: it makes their motion exactly rigid from their momentum (centre
+      of mass velocity = Σmv ÷ M, spin = angular momentum about the centre
+      of mass ÷ the group's moment of inertia, each piece's
+      `principalInertia` plus m r²), adds Δv = J ÷ M and Δω = (r × J) ÷ I,
+      and sets every piece to v_com + ω × r_i, spin ω. The pieces keep their
+      relative poses; the hull moves and turns as one. The speed cap is on
+      the whole wreck (`wreckKnockMax` × its mass). The same 16" shell moves
+      a heavy cruiser's wreck ~9 u/s and turns it ~0.6°/s from near one end.
+      At the end of the hold the separating kick (`WRECK_KICK`) ADDS to that
+      motion, turned by how far each piece has turned since the death; the
+      pieces turned together, so the kick stays radial to the hull. After
+      the hold a hit shoves the single piece, as above.
+    - **Paths.** Shells and bolts (`ProjectilePipeline` direct hit, the
+      shell's velocity), player beams (`PlayerFireResolver`, the beam
+      direction), NPC beams (`AiFireResolver` → `noteBeamImpact(x, y, dx,
+      dy)`). Missiles already push through their splash impulse
+      (`MISSILE_IMPULSE`); rams push through the contact. Not yet: structure
+      turret beams (they call `applyDamage` with no hit point) and shell blast
+      splash.
+    - **Clients.** No client path: the piece's new velocity reaches clients
+      on the binary swarm wire, and the predWorld twin (`wreckClientLeaf`) is
+      re-anchored to the authoritative pose and velocity every snapshot (the
+      remote-entity anchor, #12). Between the hit and the next snapshot the
+      twin coasts on its old velocity (≤ ~50 ms, a few units on a body
+      hundreds of units across); the drawn piece is interpolated from the
+      wire, so nothing pops.
+    - **Hit gate fix.** `wreckSweepHit` / `wreckRayHit` used `rayHitsSphere`
+      as the circle gate, which returns null once the origin is inside the
+      circle and past its closest approach to the centre: a shell stepping
+      through a long piece off its centre passed through its far half. The
+      gate is now `segmentNearCircle` (the segment comes within the radius).
+      The same pattern remains in `refineSweepHit` for capital hulls (a
+      follow-up).
   - Locks: `tests/integration/sectorRoom/wreckPiecesSeparate.test.ts` (no
     overlap, neighbours never approach, crack delay holds, slow speed and
     spin, a shoved piece bumps its neighbour), `wreckPieces.test.ts` (every
-    seam opens at both ends), `CapitalWreckSubsystem.test.ts` (crack delay).
+    seam opens at both ends), `CapitalWreckSubsystem.test.ts` (crack delay,
+    knock-back formula and cap), `wreckOverkillKnockback.test.ts` (a real
+    16" shell on a piece after the kill: Δv along the shot ≈ expected, spin
+    the way the off-centre hit turns it), `wreckRigidHold.test.ts` (a real
+    16" shell during the hold: every pair of pieces keeps its relative pose
+    within 1 u / 0.1° and the wreck moves along the shot; with fracture v7's
+    5 pieces, 32 u / 1.16° of bending without the fix, 0.16 u / 0° with it), `World.rigidGroup.test.ts` (one spin, v_com +
+    ω × r, momentum + J), `wreckHits.test.ts` (the gate).
 - **Entity class.** A wreck piece is swarm kind 4 (`SWARM_KIND_WRECK`,
   server-only for now), predicate `isWreckPiece`. No health: `EntityResolver`
-  treats it as immune, so a shot stops on it and does nothing. Loops that
+  treats it as immune, so a shot stops on it and does no damage (it knocks
+  the piece instead, see "Overkill knock-back"). Loops that
   cover it: the projectile pipeline (bolts and shells), player beams, NPC and
   turret beams (`nonPlayerRayHit`, `LineOfFireGate`), missile flight, spawn
   clearance, the interest grid. Loops that skip it: the binary swarm encoder,
   sector persistence, missile locks, blast damage, every drone/AI loop (kind
   filters). Not on the lag-comp ring (its entity budget is the drones').
-- **Blocking shots.** `core/destruction/wreckHits.ts`: the bounding circle,
-  then the piece's convex parts (`wreckRayHit`, `wreckSweepHit`).
+- **Blocking shots.** `core/destruction/wreckHits.ts`: the bounding circle
+  (`segmentNearCircle`), then the piece's convex parts (`wreckRayHit`,
+  `wreckSweepHit`). A shot that lands knocks the piece (above).
 - **Budget.** `MAX_LIVE_WRECK_PIECES` (768) per room; the oldest piece goes
   first. Owner: wrecks stay for ever; this only guards the slot pool until
   S2c persists them. S2b keeps it.

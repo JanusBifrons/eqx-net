@@ -259,6 +259,16 @@ export interface ShipTuning {
    *  share a cut edge start a hair apart instead of touching. ~1 u for a 2×
    *  heavy cruiser. */
   wreckColliderInset: number;
+  /** Capital wreck overkill knock-back (owner request 2026-11-13: later
+   *  shells knock the pieces about). A hit of `damage` on a piece gives it an
+   *  impulse J = (damage ÷ maxHull) × hull mass × this (u/s) at the hit point
+   *  along the shot: a blow worth the whole hull's HP would move the whole
+   *  hull at this speed. Heavy cruiser (2×) ~26 u/s, so one 16" shell
+   *  (1400 dmg) moves its biggest piece (~30 % of the hull) ~30 u/s. */
+  wreckKnockSpeed: number;
+  /** The most one hit may change a wreck piece's speed (u/s), so small arms
+   *  on a sliver never fling it. Heavy cruiser (2×) ~55 u/s. */
+  wreckKnockMax: number;
   /** Art bake pixels per world unit, and the texture side cap. */
   bakePpu: number;
   bakeMaxSide: number;
@@ -290,6 +300,10 @@ const WRECK_PUSH_MIN_PER_RADIUS = 0.004;
 const WRECK_SEPARATE_PER_RADIUS = 0.014;
 /** Wreck collider inset, per unit of hull radius (`wreckColliderInset`). */
 const WRECK_COLLIDER_INSET_PER_RADIUS = 0.0005;
+/** Wreck overkill knock speed / per-hit speed ceiling, per unit of hull
+ *  radius per second (`wreckKnockSpeed` / `wreckKnockMax`). */
+const WRECK_KNOCK_PER_RADIUS = 0.012;
+const WRECK_KNOCK_MAX_PER_RADIUS = 0.025;
 
 /** The size-dependent numbers for a (scaled) kind. */
 export function shipTuning(kind: ShipKind): ShipTuning {
@@ -324,6 +338,8 @@ export function shipTuning(kind: ShipKind): ShipTuning {
     destruction: destructionProfileIdForKind(kind),
     wreckSeparate: WRECK_SEPARATE_PER_RADIUS * kind.radius,
     wreckColliderInset: WRECK_COLLIDER_INSET_PER_RADIUS * kind.radius,
+    wreckKnockSpeed: WRECK_KNOCK_PER_RADIUS * kind.radius,
+    wreckKnockMax: WRECK_KNOCK_MAX_PER_RADIUS * kind.radius,
     // Pixel density by the UNSCALED hull (so a 2× fighter stays as sharp per
     // world unit as today's), within the class's side budget.
     bakePpu: unscaledR >= BASE.ppuBigRadius ? BASE.ppuBig : BASE.ppuSmall,
