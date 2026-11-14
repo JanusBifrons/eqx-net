@@ -228,6 +228,9 @@ export class PlayerFireResolver implements WeaponFireSink {
   private readonly aaBarrel = new Map<string, Uint8Array>();
   private _shooterId = '';
   private _effTick = 0;
+  /** The pilot's client for this fire's `hit_ack`; null for a wingman shot. */
+  private _ackClient: Client | null = null;
+  private _ackShotId = '';
   // Review must-fix #1 — the shooter's per-instance outgoing-DAMAGE multiplier
   // (`mul.damage`, derived from ship.statAlloc), set once per resolve() and
   // applied to every barrel's damage in the sink methods. ONLY player ships
@@ -267,6 +270,56 @@ export class PlayerFireResolver implements WeaponFireSink {
     // against the oldest ring pose instead of being hard-rejected.
     const serverTick = d.serverTick();
     const effTick = clampFireTick(tick, serverTick, LAG_COMP_WINDOW);
+    this._ackClient = client;
+    this._ackShotId = clientShotId;
+    this.fireCore(shooterId, ship, slotId, tick, effTick, serverTick, dirAngle, weapon);
+    this._ackClient = null;
+  }
+
+  /**
+   * RTS slice 5 — a WINGMAN pulls the trigger of weapon group `slotId` on the
+   * AI-flown (lingering) hull `shipInstanceId`, now. The SAME pipeline as a
+   * pilot's `fire` message (lock gate, mount bearing, cooldown, energy, damage
+   * upgrade, per-mount broadcast), minus the wire parts: no parse, no lag-comp
+   * rewind (the claim tick IS the server tick), no `hit_ack`. Owner rule: a
+   * wingman has exactly the powers a pilot in that ship has. Returns true when
+   * at least one mount fired.
+   */
+  fireHull(shipInstanceId: string, ship: ShipState, slotId: string | undefined): boolean {
+    if (!ship.alive) return false;
+    const t = this.deps.serverTick();
+    this._ackClient = null;
+    return this.fireCore(shipInstanceId, ship, slotId, t, t, t, 0, 'hull');
+  }
+
+  /** The shooter's live pose: an active pilot (playerId key) or a lingering hull. */
+  private livePose(shooterId: string): ShipPhysicsState | undefined {
+    return this.deps.shipPoseCache.get(shooterId) ?? this.deps.lingeringPoseCache.get(shooterId);
+  }
+
+  /** `hit_ack` to the pilot's client; a wingman shot (no client) sends none. */
+  private sendAck(hit: boolean, rejected: boolean): void {
+    const client = this._ackClient;
+    if (client === null) return;
+    const ack: HitAckMessage = rejected
+      ? { type: 'hit_ack', clientShotId: this._ackShotId, hit: false, rejected: true }
+      : hit
+        ? { type: 'hit_ack', clientShotId: this._ackShotId, hit: true, targetId: this._bestHitWireId, damage: this._bestHitDamage }
+        : { type: 'hit_ack', clientShotId: this._ackShotId, hit: false };
+    client.send('hit_ack', ack);
+  }
+
+  private fireCore(
+    shooterId: string,
+    ship: ShipState,
+    slotId: string | undefined,
+    tick: number,
+    effTick: number,
+    serverTick: number,
+    dirAngle: number,
+    weapon: string,
+  ): boolean {
+    const d = this.deps;
 
     // Resolve the active slot's mounts up-front. Weapons/energy/AI overhaul
     // (2026-06-01 §1): the server fires each mount's BOUND weapon
@@ -276,7 +329,7 @@ export class PlayerFireResolver implements WeaponFireSink {
     // WS-B3 — the FIRING set is the active slot's mounts PLUS every activated
     // latent mount; un-upgraded ⇒ exactly the active slot (byte-identical).
     const slotMounts = d.resolveInstanceFireMounts(ship, slotId);
-    if (slotMounts.length === 0) return;
+    if (slotMounts.length === 0) return false;
 
     // Slot-level cooldown gate. The slot fires as ONE synchronised trigger,
     // so the whole trigger is rejected unless the slot is off cooldown — the
@@ -293,16 +346,15 @@ export class PlayerFireResolver implements WeaponFireSink {
     }
     if (d.fireAllowed && !d.fireAllowed(shooterId, slotId)) {
       // No lock for this group: refuse without spending its cooldown.
-      const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: false, rejected: true };
-      client.send('hit_ack', ack);
-      return;
+      this.sendAck(false, true);
+      return false;
     }
     // Fire control: only mounts aimed at their lock fire. None ⇒ refuse, and
     // spend neither cooldown nor energy (the turret is still slewing, or the
     // target is outside every mount's arc).
     let bearMask = -1;
     if (d.fireAllowed && d.mountBearsOnLock) {
-      const pose = d.shipPoseCache.get(shooterId);
+      const pose = this.livePose(shooterId);
       const angles = d.playerMountAngles.get(shooterId);
       const inst = d.resolveInstanceMounts(ship);
       bearMask = 0;
@@ -317,9 +369,8 @@ export class PlayerFireResolver implements WeaponFireSink {
         }
       }
       if (bearMask === 0) {
-        const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: false, rejected: true };
-        client.send('hit_ack', ack);
-        return;
+        this.sendAck(false, true);
+        return false;
       }
     }
     // Capital turrets fire independently (PR 1d slice 4): each mount on its
@@ -352,9 +403,8 @@ export class PlayerFireResolver implements WeaponFireSink {
         else fired++;
       }
       if (bearing === 0 || fired === 0) {
-        const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: false, rejected: true };
-        client.send('hit_ack', ack);
-        return;
+        this.sendAck(false, true);
+        return false;
       }
       // A partial salvo pays its share of the group's energy cost.
       slotEnergyCost = (slotEnergyCost * fired) / Math.min(slotMounts.length, 31);
@@ -363,9 +413,8 @@ export class PlayerFireResolver implements WeaponFireSink {
         ? (groupTicks.get(groupKey) ?? NEVER_FIRED)
         : (d.lastFireClientTick.get(shooterId) ?? NEVER_FIRED);
       if (tick - lastFireCt < slotCooldown) {
-        const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: false, rejected: true };
-        client.send('hit_ack', ack);
-        return;
+        this.sendAck(false, true);
+        return false;
       }
     }
 
@@ -374,9 +423,8 @@ export class PlayerFireResolver implements WeaponFireSink {
     // so a depleted ship keeps trying and fires the instant it can afford —
     // when the pool is short. Drain atomically on a successful gate.
     if (!canAfford(ship.energy, slotEnergyCost)) {
-      const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: false, rejected: true };
-      client.send('hit_ack', ack);
-      return;
+      this.sendAck(false, true);
+      return false;
     }
     if (!groupTicks) {
       groupTicks = new Map(); // once per shooter, not per fire
@@ -397,10 +445,10 @@ export class PlayerFireResolver implements WeaponFireSink {
 
     // Lag-comp rewind → fallback → angle anchor.
     const rewoundShooter = d.snapshotRing.getPoseAt(shooterId, effTick);
-    const fallbackShooter = d.shipPoseCache.get(shooterId);
+    const fallbackShooter = this.livePose(shooterId);
     const sx = rewoundShooter?.x ?? fallbackShooter?.x;
     const sy = rewoundShooter?.y ?? fallbackShooter?.y;
-    if (sx === undefined || sy === undefined) return;
+    if (sx === undefined || sy === undefined) return false;
     const shooterVx = rewoundShooter?.vx ?? fallbackShooter?.vx ?? 0;
     const shooterVy = rewoundShooter?.vy ?? fallbackShooter?.vy ?? 0;
     const shipAngleAtFireTick = rewoundShooter?.angle ?? fallbackShooter?.angle ?? dirAngle;
@@ -508,13 +556,8 @@ export class PlayerFireResolver implements WeaponFireSink {
     }
 
     // Aggregate hit_ack (from the sink's best-hit accumulator).
-    if (this._bestHitId) {
-      const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: true, targetId: this._bestHitWireId, damage: this._bestHitDamage };
-      client.send('hit_ack', ack);
-    } else {
-      const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: false };
-      client.send('hit_ack', ack);
-    }
+    this.sendAck(this._bestHitId !== null, false);
+    return true;
   }
 
   // ─── WeaponFireSink — the per-mode server bodies, dispatched by the weapon
@@ -557,6 +600,7 @@ export class PlayerFireResolver implements WeaponFireSink {
 
     // 2. Lingering hulls (live pose; no ring rewind).
     for (const [shipInstanceId] of d.lingeringSlots) {
+      if (shipInstanceId === shooterId) continue; // a wingman never hits its own hull
       const lingeringPose = d.lingeringPoseCache.get(shipInstanceId);
       if (!lingeringPose) continue;
       // A parked hull is the same ship it was when flown: its own size (#18),

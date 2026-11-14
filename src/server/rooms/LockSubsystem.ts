@@ -463,6 +463,15 @@ export class LockSubsystem {
     return keys[i]!;
   }
 
+  /** Build the tracked id's groups now (they are otherwise built lazily by the
+   *  first lock request) and return them, or undefined when it has none.
+   *  RTS slice 5: a wingman reads its group ids before asking for locks. */
+  ensureGroups(playerId: string): WireGroup[] | undefined {
+    const p = this.players.get(playerId);
+    if (!p || !this.sync(playerId, p)) return undefined;
+    return p.wire.length > 0 ? p.wire : undefined;
+  }
+
   /** Own-ship snapshot slice (shared ref, mutated in place), or undefined when empty. */
   wireFor(playerId: string): WireGroup[] | undefined {
     const p = this.players.get(playerId);

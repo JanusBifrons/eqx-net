@@ -268,6 +268,9 @@ import type { EventLoopUtilization } from 'node:perf_hooks';
 import { FrameTimeRing } from '../../core/perf/FrameTimeRing.js';
 import { OwnerlessShipEvictor } from './OwnerlessShipEvictor.js';
 import { FleetCommandSubsystem, type FleetPose, type FleetModeData } from '../fleet/FleetCommandSubsystem.js';
+import { pickWingmanFireTarget, WINGMAN_RETALIATE_TICKS, type WingmanFireCandidates } from '../fleet/wingmanFireTarget.js';
+import { mountWeaponReach } from '../../core/combat/mountReach.js';
+import { shipTuning } from '../../shared-types/shipScale/tuning.js';
 import { FleetStatusStream } from '../fleet/FleetStatusStream.js';
 import type { WingmanControls } from '../../core/ai/wingman/types.js';
 import { LeaveHandler } from './LeaveHandler.js';
@@ -919,9 +922,21 @@ export class SectorRoom extends Room<SectorState> {
     // (escort the ship the owner flies). Live SAB poses (#14: one scratch).
     resolvePoseInto: (id, out) => {
       const p = this.wingmanTargetPose;
-      if (!this.readLingeringPose(id, p) && !this.readActiveShipPose(id, p) && !this.swarmEntityPoseInto(id, p)) return false;
+      if (!this.entityPoseInto(id, p)) return false;
       out.x = p.x; out.y = p.y; out.vx = p.vx; out.vy = p.vy;
       return true;
+    },
+    // RTS slice 5 — hunt target choice: the nearest contact hostile to the
+    // ship's OWNER (NPC ships by their hostility to the owner, structures by
+    // `relationOf`); never a player (an explicit attack order names one).
+    nearestHostile: (shipId, x, y, range, out) => {
+      const owner = this.fleet.ownerOfAttached(shipId);
+      if (owner === null) return null;
+      const id = this.nearestOwnerHostile(owner, x, y, range);
+      if (id === null || !this.swarmEntityPoseInto(id, this.wingmanTargetPose)) return null;
+      const p = this.wingmanTargetPose;
+      out.x = p.x; out.y = p.y; out.vx = p.vx; out.vy = p.vy;
+      return id;
     },
     // The ship the caller flies, by the id the brain resolves above: the
     // playerId (the client's fleet selection names the active ship the same
@@ -930,8 +945,6 @@ export class SectorRoom extends Room<SectorState> {
       const ship = this.getActiveShip(playerId);
       return ship?.alive && this.playerToSlot.has(playerId) ? playerId : null;
     },
-    // TODO firing slice: `nearestHostile` (hunt target choice) and the
-    // damage-path `fleet.noteDamage(...)` call (morale) land with targeting.
   });
   /** Reused `set_mode` parameters (#14; the brain copies the route). */
   private readonly fleetModeScratch: FleetModeData = {};
@@ -1202,6 +1215,10 @@ export class SectorRoom extends Room<SectorState> {
   private mountTicker!: WeaponMountTicker;
   /** Fire control (exp/fire-control): per-player, per-weapon-group target locks. */
   private locks!: LockSubsystem;
+  /** RTS slice 5: the same lock machine for AI-flown (lingering) hulls, keyed
+   *  by shipInstanceId. Separate so NPC pilot locks (`locks.enabledPlayers`)
+   *  never iterate a wingman; hostility reads go through the hull's OWNER. */
+  private wingmanLocks!: LockSubsystem;
   /** Fire control: NPCs lock fire-control pilots before firing at them. */
   private npcLocks!: NpcLockSubsystem;
   /** Alias accessors so the rest of SectorRoom keeps the old field-style
@@ -2020,6 +2037,7 @@ export class SectorRoom extends Room<SectorState> {
     // droneMountAngles + the sticky targets + the pooled scratches.
     // Extracted from SectorRoom (commit 21 of v3 refactor plan).
     this.locks = this.buildLockSubsystem();
+    this.wingmanLocks = this.buildWingmanLockSubsystem();
     this.npcLocks = this.buildNpcLockSubsystem();
 
     this.mountTicker = new WeaponMountTicker({
@@ -2083,7 +2101,8 @@ export class SectorRoom extends Room<SectorState> {
       serverLogEvent,
       logger,
       malformed: this.malformed,
-      fireAllowed: (pid, slotId) => this.locks.hasLocked(pid, slotId),
+      // RTS slice 5: a wingman's hull (shipInstanceId) gates on its own locks.
+      fireAllowed: (pid, slotId) => this.locksFor(pid).hasLocked(pid, slotId),
       mountBearsOnLock: (pid, mountId, ox, oy, angle, weaponId) => this.mountBearsOnLock(pid, mountId, ox, oy, angle, weaponId),
     });
 
@@ -2153,6 +2172,8 @@ export class SectorRoom extends Room<SectorState> {
       onDroneDamaged: (droneId, sourceId, atTick) =>
         this.escalateFactionOnDroneHit(droneId, sourceId, atTick),
       isFriendlyFire: (victimId, sourceId) => this.isFriendlyFire(victimId, sourceId),
+      // RTS slice 5: a wingman's hit counts against its OWNER (hostility mirror).
+      hostileActorOf: (sourceId) => this.hostileActorOf(sourceId),
       // Scrap-on-death (Phase 2b-ii) — a composite-kind drone breaks into scrap
       // the instant before it's evicted on death. Deferred-eval closure (the
       // ScrapSpawner is constructed later in the ctor, before any death fires).
@@ -4526,6 +4547,63 @@ export class SectorRoom extends Room<SectorState> {
     }
   }
 
+  /** RTS slice 5: the lock machine an id fires through (a wingman hull's
+   *  shipInstanceId → `wingmanLocks`, a pilot's playerId → `locks`). */
+  private locksFor(id: string): LockSubsystem {
+    return this.fleet.size > 0 && this.fleet.isAttached(id) ? this.wingmanLocks : this.locks;
+  }
+
+  /** RTS slice 5: whose hostility a lock reads — a wingman hull's OWNER, else the pilot. */
+  private lockOwner(id: string): string {
+    if (this.fleet.size === 0) return id;
+    return this.fleet.ownerOfAttached(id) ?? id;
+  }
+
+  /**
+   * RTS slice 5 — the PLAYER lock machine for AI-flown hulls (same class, same
+   * lock maths: owner rule "same locks as a pilot in that ship"). Keyed by the
+   * hull's shipInstanceId; targets resolve and hostility reads/commits go
+   * through the hull's OWNER, so a wingman's lock on a neutral runs the
+   * failsafe and then commits as the owner's hostile act. Groups start in MAN:
+   * the wingman's stance picks the target (`tickWingmanTargets`), never AUTO.
+   */
+  private buildWingmanLockSubsystem(): LockSubsystem {
+    return new LockSubsystem({
+      resolveTarget: (sid, key, out) => {
+        const owner = this.fleet.ownerOfAttached(sid);
+        return owner !== null && this.resolveLockTarget(owner, key, out);
+      },
+      shooterPose: (sid, out) => {
+        const p = this.lingeringPoseCache.get(sid);
+        const ship = this.state.ships.get(sid);
+        if (!p || !ship || !ship.alive || !this.lingeringSlots.has(sid)) return false;
+        out.x = p.x; out.y = p.y; out.vx = p.vx; out.vy = p.vy; out.angle = p.angle;
+        return true;
+      },
+      shipOf: (sid) => {
+        const ship = this.lingeringSlots.has(sid) ? this.state.ships.get(sid) : undefined;
+        if (!ship) return null;
+        const kind = getShipKind(ship.kind);
+        let c = this._lockActivated.get(sid);
+        if (!c || c.ref !== ship.mounts) {
+          const all = this.resolveInstanceMounts(ship);
+          c = { ref: ship.mounts, mounts: all.slice((kind.mounts ?? []).length) };
+          this._lockActivated.set(sid, c);
+        }
+        return { kind, activated: c.mounts };
+      },
+      autoPick: () => null,
+      commitHostileAct: (sid, key) => {
+        const owner = this.fleet.ownerOfAttached(sid);
+        if (owner !== null) this.commitLockHostileAct(owner, key);
+      },
+      refreshHostility: (sid, key) => {
+        const owner = this.fleet.ownerOfAttached(sid);
+        if (owner !== null) this.refreshLockHostility(owner, key);
+      },
+    });
+  }
+
   private buildLockSubsystem(): LockSubsystem {
     return new LockSubsystem({
       resolveTarget: (pid, key, out) => this.resolveLockTarget(pid, key, out),
@@ -4653,8 +4731,8 @@ export class SectorRoom extends Room<SectorState> {
 
   /** Turret aim: the pose of the mount's group lock target (false = none). */
   private lockAimTarget(pid: string, mountId: string, out: { x: number; y: number; vx: number; vy: number }): boolean {
-    const key = this.locks.aimKeyFor(pid, mountId);
-    if (key === null || !this.resolveLockTarget(pid, key, this._lockTarget)) return false;
+    const key = this.locksFor(pid).aimKeyFor(pid, mountId);
+    if (key === null || !this.resolveLockTarget(this.lockOwner(pid), key, this._lockTarget)) return false;
     out.x = this._lockTarget.x; out.y = this._lockTarget.y; out.vx = this._lockTarget.vx; out.vy = this._lockTarget.vy;
     return true;
   }
@@ -5137,6 +5215,16 @@ export class SectorRoom extends Room<SectorState> {
       if (!ship) continue;
       ship.energy = spendEnergy(ship.energy, BOOST_TICK_COST);
     }
+    // RTS slice 5: an AI-flown LINGERING hull fires from its energy pool like
+    // a pilot (PlayerFireResolver), so it regenerates like one too (#17:
+    // LINGERING hulls with a wingman brain only; a brainless parked hull idles).
+    for (let i = 0; i < this.fleet.size; i++) {
+      const ship = this.state.ships.get(this.fleet.idAt(i));
+      if (!ship?.alive) continue;
+      const kind = getShipKind(ship.kind);
+      const energyMax = effectiveShipEnergyMax(kind.energyMax ?? 100, ship.statAlloc);
+      ship.energy = regenEnergyStep(ship.energy, energyMax, kind.energyRegenRate ?? 0.25);
+    }
   }
 
   private applyDamage(targetId: string, shooterId: string, damage: number, hitX?: number, hitY?: number): void {
@@ -5153,8 +5241,10 @@ export class SectorRoom extends Room<SectorState> {
       if (damage > 0) this.gateGuard.onGateAttacked(targetId, shooterId, this.gameClock.now());
       return;
     }
-    if (damage > 0) this.noteEconomicHit(targetId, shooterId);
-    if (damage > 0) this.noteStandingHit(targetId, shooterId);
+    // RTS slice 5: a wingman's hit is its OWNER's act for standing / economy.
+    const hitActor = damage > 0 && this.fleet.size > 0 ? this.hostileActorOf(shooterId) : shooterId;
+    if (damage > 0) this.noteEconomicHit(targetId, hitActor);
+    if (damage > 0) this.noteStandingHit(targetId, hitActor);
     // An NPC's own hit on a pilot keeps it hostile (owner 2026-11-12).
     if (damage > 0 && this.playerToSlot.has(targetId)) this.refreshNpcAttackHostility(shooterId, targetId);
     // C2 — a hit ends the target's break-in (one Map lookup when none).
@@ -5171,8 +5261,8 @@ export class SectorRoom extends Room<SectorState> {
       if (s !== undefined && isNpcOwner(s.owner)) {
         // B2 — a player (or a player's turret) hitting an NPC base makes that
         // player hostile to the base: its turrets engage, its gates close.
-        const actor = this.playerToSlot.has(shooterId)
-          ? shooterId
+        const actor = hitActor !== shooterId || this.playerToSlot.has(shooterId)
+          ? hitActor
           : this.structureRegistry.get(shooterId)?.owner;
         if (actor !== undefined && !isNpcOwner(actor)) this.hostileActs.record(actor, s.owner, this.gameClock.now());
       }
@@ -5223,6 +5313,10 @@ export class SectorRoom extends Room<SectorState> {
       this.capitalWrecks.noteHit(targetId, shooterId, damage, impactX, impactY);
     }
     this.damageRouter.apply(targetId, shooterId, damage, hitX, hitY);
+    // RTS slice 5: an AI-flown hull's morale + "who hit me" (Defensive stance).
+    if (damage > 0 && this.fleet.size > 0 && this.fleet.isAttached(targetId)) {
+      this.noteWingmanDamage(targetId, shooterId, damage);
+    }
   }
 
   /** The AI beam's impact point, for the wreck hit tracker only (the damage
@@ -9631,6 +9725,13 @@ export class SectorRoom extends Room<SectorState> {
       { kind: getShipKind(ship.kind), statAlloc: ship.statAlloc },
       { x: this.sabF32[b + SLOT_X_OFF]!, y: this.sabF32[b + SLOT_Y_OFF]! },
     );
+    // RTS slice 5: the hull locks and fires through the player pipeline. Its
+    // groups start in MAN (the stance picks targets); the owner's testMode
+    // `instantLock` carries over. Fresh locks on every (re)attach.
+    if (this.fleet.isAttached(shipInstanceId)) {
+      this.wingmanLocks.forget(shipInstanceId);
+      this.wingmanLocks.enable(shipInstanceId, this.locks.isInstant(ship.playerId), 'manual');
+    }
     // Fresh neutral controls: the brain's first re-plan is up to 5 ticks away.
     const cmd = this.wingmanInputCmd;
     cmd.slot = slot;
@@ -9647,6 +9748,13 @@ export class SectorRoom extends Room<SectorState> {
   private detachWingman(shipInstanceId: string): void {
     if (!this.fleet.isAttached(shipInstanceId)) return;
     this.fleet.detach(shipInstanceId);
+    // RTS slice 5: drop the hull's wingman fire state (locks, turret angles,
+    // cooldown ledger, target cache). A reclaimed hull fires as its pilot.
+    this.wingmanLocks.forget(shipInstanceId);
+    this.mountTicker.playerMountAngles.delete(shipInstanceId);
+    this.lastFireClientTick.delete(shipInstanceId);
+    this._lockActivated.delete(shipInstanceId);
+    this.wingmanFireKeys.delete(shipInstanceId);
     const slot = this.lingeringSlots.get(shipInstanceId);
     if (slot === undefined) return;
     const cmd = this.wingmanInputCmd;
@@ -9699,6 +9807,225 @@ export class SectorRoom extends Room<SectorState> {
     cmd.boost = c.boost;
     cmd.reverse = c.reverse;
     this.postToWorker(cmd);
+  }
+
+  // ── RTS slice 5 — wingmen fight ────────────────────────────────────────────
+  //
+  // Fire path: the PLAYER pipeline (`wingmanLocks` → `WeaponMountTicker.tickHull`
+  // → `PlayerFireResolver.fireHull`), never `AiFireResolver`: a parked hull is
+  // a player's ship, so it locks, aims, spends energy and scales damage exactly
+  // as its pilot would (owner rule), and the player side keeps its one resolver.
+
+  /** Per wingman: the target it is locking and that target's lock key. */
+  private readonly wingmanFireKeys = new Map<string, { id: string; key: string }>();
+  /** Reused stance candidates (#14). */
+  private readonly _wingmanCand: WingmanFireCandidates = {
+    orderTargetId: null, brainTargetId: null, recentAttackerId: null,
+    guardHostileId: null, reachHostileId: null, retreating: false,
+  };
+  /** Per owner: this tick's hostile contacts (one swarm scan per owner per tick). */
+  private readonly _ownerHostiles = new Map<string, { tick: number; n: number; ids: string[]; xs: Float64Array; ys: Float64Array }>();
+  private _ownerHostileFill: { tick: number; n: number; ids: string[]; xs: Float64Array; ys: Float64Array } | null = null;
+  private _ownerHostileOwner = '';
+  private readonly _ownerHostilePose: AiEntityPoseOut = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
+  /** Bound visitor for the owner-hostile scan (no closure per scan, #14). */
+  private readonly _visitOwnerHostile = (rec: SwarmEntityRecord): void => {
+    const owner = this._ownerHostileOwner;
+    if (rec.kind === SWARM_KIND_DRONE) {
+      if (!this.npcHostileTo(rec.id, owner)) return;
+      if (this.npcWarps.size > 0 && this.botWarpPhase(rec.id) === 2) return;
+    } else if (rec.kind === 2) {
+      const s = this.structureRegistry.get(rec.id);
+      if (s === undefined || !s.isConstructed || s.owner === owner) return;
+      if (relationOf(owner, s.owner, this.relationCtx) !== 'hostile') return;
+    } else return;
+    if (!this.swarmEntityPoseInto(rec.id, this._ownerHostilePose)) return;
+    const c = this._ownerHostileFill!;
+    if (c.n >= c.xs.length) {
+      const nx = new Float64Array(c.xs.length * 2); nx.set(c.xs); c.xs = nx; // high-water growth only
+      const ny = new Float64Array(c.ys.length * 2); ny.set(c.ys); c.ys = ny;
+    }
+    c.ids[c.n] = rec.id;
+    c.xs[c.n] = this._ownerHostilePose.x;
+    c.ys[c.n] = this._ownerHostilePose.y;
+    c.n++;
+  };
+
+  /**
+   * The nearest contact hostile to player `owner` within `range` of (x, y):
+   * NPC ships hostile to them (`npcHostileTo`: their ledger, robot stance,
+   * truce) and built structures `relationOf` calls hostile. Never a player.
+   * One swarm scan per owner per tick, reused by every wingman of that owner.
+   */
+  private nearestOwnerHostile(owner: string, x: number, y: number, range: number): string | null {
+    let c = this._ownerHostiles.get(owner);
+    if (c === undefined) {
+      if (this._ownerHostiles.size >= 64) this._ownerHostiles.clear();
+      c = { tick: -1, n: 0, ids: [], xs: new Float64Array(16), ys: new Float64Array(16) }; // once per owner
+      this._ownerHostiles.set(owner, c);
+    }
+    if (c.tick !== this.serverTick) {
+      c.tick = this.serverTick;
+      c.n = 0;
+      this._ownerHostileFill = c;
+      this._ownerHostileOwner = owner;
+      this.swarmRegistry.forEachRecord(this._visitOwnerHostile);
+      this._ownerHostileFill = null;
+    }
+    let best: string | null = null;
+    let bestD = range * range;
+    for (let i = 0; i < c.n; i++) {
+      const dx = c.xs[i]! - x;
+      const dy = c.ys[i]! - y;
+      const d = dx * dx + dy * dy;
+      if (d <= bestD) { bestD = d; best = c.ids[i]!; }
+    }
+    return best;
+  }
+
+  /** A swarm record by registry id or wire id (`swarm-<entityId>`, what the
+   *  client's attack order names). Alloc-free digit parse. */
+  private swarmRecByAnyId(id: string): SwarmEntityRecord | null {
+    const rec = this.swarmRegistry.get(id);
+    if (rec) return rec;
+    if (!id.startsWith('swarm-') || id.length <= 6) return null;
+    let n = 0;
+    for (let i = 6; i < id.length; i++) {
+      const c = id.charCodeAt(i) - 48;
+      if (c < 0 || c > 9) return null;
+      n = n * 10 + c;
+    }
+    return this.swarmRegistry.getByEntityId(n);
+  }
+
+  /** Live pose of any entity a wingman may name: a lingering hull, a pilot's
+   *  active ship (by playerId) or a swarm entity (registry or wire id). */
+  private entityPoseInto(id: string, out: FleetPose): boolean {
+    if (this.readLingeringPose(id, out) || this.readActiveShipPose(id, out)) return true;
+    const rec = this.swarmRecByAnyId(id);
+    return rec !== null && this.swarmEntityPoseInto(rec.id, out);
+  }
+
+  /** RTS slice 5: whose hostility a hit counts for — the owning player of a
+   *  hull (keyed by shipInstanceId: a wingman's shot), else the source. */
+  private hostileActorOf(sourceId: string): string {
+    return this.state.ships.get(sourceId)?.playerId ?? sourceId;
+  }
+
+  /** Lock key for a wingman target id: `s:<entityId>` (NPC ship / structure)
+   *  or `p:<playerId>` (a pilot's active ship, only ever an explicit order or
+   *  a retaliation). Cached per wingman: a string is built only when the
+   *  target changes. Null ⇒ not lockable (asteroid, scrap, a parked hull). */
+  private wingmanLockKey(sid: string, targetId: string): string | null {
+    const cached = this.wingmanFireKeys.get(sid);
+    if (cached !== undefined && cached.id === targetId) return cached.key;
+    let key: string | null = null;
+    const rec = this.swarmRecByAnyId(targetId);
+    if (rec !== null) {
+      if (rec.kind === SWARM_KIND_DRONE || rec.kind === 2) key = `s:${rec.entityId}`;
+    } else if (this.getActiveShip(targetId)?.alive) {
+      key = `p:${targetId}`;
+    }
+    if (key === null) return null;
+    if (cached !== undefined) { cached.id = targetId; cached.key = key; } else this.wingmanFireKeys.set(sid, { id: targetId, key });
+    return key;
+  }
+
+  /** The longest reach among a hull's mounts (u). Alloc-free. */
+  private hullWeaponReach(ship: ShipState): number {
+    const mounts = this.resolveInstanceMounts(ship);
+    let r = 0;
+    for (let i = 0; i < mounts.length; i++) {
+      const m = mountWeaponReach(mounts[i]!);
+      if (m > r) r = m;
+    }
+    return r;
+  }
+
+  /**
+   * Every ~10 Hz (the lock step cadence): each wingman picks what to shoot by
+   * its stance (`pickWingmanFireTarget`) and points every weapon group's lock
+   * at it (MAN groups: `requestLock`; a new target drops the old locks). No
+   * target ⇒ every lock is cancelled. The lock still takes the time a pilot's
+   * would (fights aren't instant), and a neutral target runs the failsafe.
+   */
+  private tickWingmanTargets(): void {
+    const fleet = this.fleet;
+    const cand = this._wingmanCand;
+    for (let i = 0; i < fleet.size; i++) {
+      const sid = fleet.idAt(i);
+      const owner = fleet.ownerAt(i);
+      const brain = fleet.brainAt(i);
+      const ship = this.state.ships.get(sid);
+      const pose = this.lingeringPoseCache.get(sid);
+      if (!ship?.alive || !pose) continue;
+      let target: string | null = null;
+      if (brain.stance !== 'holdFire') {
+        const order = brain.order;
+        cand.orderTargetId = order !== null && order.kind === 'attack' ? order.targetId : null;
+        cand.brainTargetId = brain.targetId;
+        cand.recentAttackerId = fleet.recentAttackerOf(sid, this.serverTick, WINGMAN_RETALIATE_TICKS);
+        const kind = getShipKind(ship.kind);
+        cand.guardHostileId = this.nearestOwnerHostile(owner, pose.x, pose.y, shipTuning(kind).guardRadiusMin);
+        cand.reachHostileId = this.nearestOwnerHostile(owner, pose.x, pose.y, this.hullWeaponReach(ship));
+        cand.retreating = brain.mode === 'retreat' || brain.isMoraleRetreating;
+        target = pickWingmanFireTarget(brain.stance, cand);
+      }
+      const key = target === null ? null : this.wingmanLockKey(sid, target);
+      const groups = this.wingmanLocks.wireFor(sid);
+      if (key === null) {
+        if (groups !== undefined) for (let g = 0; g < groups.length; g++) {
+          if (groups[g]!.l.length > 0) this.wingmanLocks.cancelLock(sid, groups[g]!.id);
+        }
+        continue;
+      }
+      const gs = groups ?? this.wingmanLocks.ensureGroups(sid);
+      if (gs === undefined) continue;
+      for (let g = 0; g < gs.length; g++) {
+        const grp = gs[g]!;
+        if (grp.l.length === 1 && grp.l[0]!.t === key) continue;
+        if (grp.l.length > 0) this.wingmanLocks.cancelLock(sid, grp.id);
+        this.wingmanLocks.requestLock(sid, grp.id, key);
+      }
+    }
+  }
+
+  /**
+   * Every tick: each wingman's turrets slew to their group locks (the pilot's
+   * `tickPlayer` rule), and every group holding a LOCKED target pulls the
+   * trigger through the player resolver (lock gate, bearing, cooldown and
+   * energy are its own). Liveness: LINGERING hulls with a brain only (#17).
+   */
+  private tickWingmanFire(): void {
+    const fleet = this.fleet;
+    for (let i = 0; i < fleet.size; i++) {
+      const sid = fleet.idAt(i);
+      const ship = this.state.ships.get(sid);
+      const pose = this.lingeringPoseCache.get(sid);
+      if (!ship?.alive || !pose) continue;
+      this.mountTicker.tickHull(sid, ship, pose);
+      const groups = this.wingmanLocks.wireFor(sid);
+      if (groups === undefined) continue;
+      for (let g = 0; g < groups.length; g++) {
+        const grp = groups[g]!;
+        if (grp.l.length === 0 || !this.wingmanLocks.hasLocked(sid, grp.id)) continue;
+        this.playerFireResolver.fireHull(sid, ship, grp.id);
+      }
+    }
+  }
+
+  /** RTS slice 5: a hit on an AI-flown hull feeds its morale (with the
+   *  attacker's position as the threat) and its "recently hit by" record. */
+  private noteWingmanDamage(targetId: string, shooterId: string, damage: number): void {
+    const ship = this.state.ships.get(targetId);
+    if (!ship || !ship.alive) return;
+    const maxHull = ship.maxHealth > 0 ? ship.maxHealth : 1;
+    const p = this.wingmanTargetPose;
+    const known = shooterId !== '' && this.entityPoseInto(shooterId, p);
+    this.fleet.noteDamage(
+      targetId, damage, maxHull, Math.max(0, ship.health) / maxHull,
+      known ? p.x : undefined, known ? p.y : undefined, shooterId, this.serverTick,
+    );
   }
 
   /** STOP PILOTING (the `spectate` and `command` messages): park the caller's
@@ -11685,6 +12012,11 @@ export class SectorRoom extends Room<SectorState> {
       this.autoDepositTick();
       // Fire control: advance every pilot's target locks (~10 Hz).
       this.locks.step();
+      // RTS slice 5: wingmen pick their stance target, then their locks advance.
+      if (this.fleet.size > 0) {
+        this.tickWingmanTargets();
+        this.wingmanLocks.step();
+      }
       this.npcLocks.step();
     }
     if (this.broadcastCounter % 60 === 0) this.loot.sweep();
@@ -11726,6 +12058,8 @@ export class SectorRoom extends Room<SectorState> {
     // so remote observers receive each ship's authoritative mount angles
     // through the snapshot extension below.
     this.tickPlayerMounts();
+    // RTS slice 5: wingman turrets aim + fire through the player pipeline.
+    if (this.fleet.size > 0) this.tickWingmanFire();
     phaseTime('playerMounts');
 
     // Phase 4c (2026-05-11) — server-authoritative turret rotation for

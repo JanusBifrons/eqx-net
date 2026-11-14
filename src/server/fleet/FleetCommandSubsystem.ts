@@ -186,6 +186,9 @@ interface FleetEntry {
   readonly controls: WingmanControls;
   /** Command de-dup stamp. */
   stamp: number;
+  /** Last entity that damaged this ship (RTS slice 5), or null. */
+  attackerId: string | null;
+  attackedTick: number;
 }
 
 /**
@@ -306,6 +309,8 @@ export class FleetCommandSubsystem {
       index: this.entries.length,
       controls: makeWingmanControls(),
       stamp: 0,
+      attackerId: null,
+      attackedTick: 0,
     };
     this.nextPhase = (this.nextPhase + 1) % this.replanEvery;
     this.entries.push(entry);
@@ -428,9 +433,49 @@ export class FleetCommandSubsystem {
    * Feeds its morale; a FallBack / Flee roll makes it break off and retreat
    * away from (threatX, threatY). Unknown ids are ignored.
    */
-  noteDamage(shipId: string, amount: number, maxHull: number, hullFrac: number, threatX?: number, threatY?: number): void {
-    this.byId.get(shipId)?.brain.reportDamage(amount, maxHull, hullFrac, threatX, threatY);
+  noteDamage(
+    shipId: string, amount: number, maxHull: number, hullFrac: number,
+    threatX?: number, threatY?: number, attackerId?: string, tick?: number,
+  ): void {
+    const e = this.byId.get(shipId);
+    if (e === undefined) return;
+    e.brain.reportDamage(amount, maxHull, hullFrac, threatX, threatY);
+    // RTS slice 5: remember who hit it, for the Defensive stance's "fire back".
+    if (attackerId !== undefined && attackerId !== '' && tick !== undefined) {
+      e.attackerId = attackerId;
+      e.attackedTick = tick;
+    }
   }
+
+  /**
+   * RTS slice 5 — the last ship that damaged `shipId` or a member of its
+   * squad within `windowTicks` of `tick` (its own attacker first, then the
+   * most recent squadmate's), or null. Alloc-free.
+   */
+  recentAttackerOf(shipId: string, tick: number, windowTicks: number): string | null {
+    const e = this.byId.get(shipId);
+    if (e === undefined) return null;
+    if (e.attackerId !== null && tick - e.attackedTick <= windowTicks) return e.attackerId;
+    if (e.squadId === null) return null;
+    const sq = this.squads.get(e.squadId);
+    if (!sq) return null;
+    let best: string | null = null;
+    let bestTick = -Infinity;
+    for (let i = 0; i < sq.memberIds.length; i++) {
+      const m = this.byId.get(sq.memberIds[i]!);
+      if (m === undefined || m === e || m.attackerId === null) continue;
+      if (tick - m.attackedTick > windowTicks || m.attackedTick <= bestTick) continue;
+      best = m.attackerId;
+      bestTick = m.attackedTick;
+    }
+    return best;
+  }
+
+  /** Dense iteration over the AI-flown ships (`i < size`): id, owner, brain. */
+  idAt(i: number): string { return this.entries[i]!.id; }
+  ownerAt(i: number): string { return this.entries[i]!.ownerId; }
+  brainAt(i: number): WingmanBehaviour { return this.entries[i]!.brain; }
+  ownerOfAttached(shipId: string): string | null { return this.byId.get(shipId)?.ownerId ?? null; }
 
   /** Stance per ship (a whole squad: every member, so they engage per stance
    *  when the leader engages). */

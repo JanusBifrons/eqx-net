@@ -166,6 +166,10 @@ export interface LeafDeps {
    *  NOT mark the victim hostile or escalate a faction, so one stray shot never
    *  starts a civil war. Optional ⇒ every hit marks (test fixtures). */
   isFriendlyFire?: (victimId: string, sourceId: string) => boolean;
+  /** RTS slice 5 — who a hit makes the victim hostile to: the OWNER's
+   *  playerId for a shot from an AI-flown (lingering) hull, else the source
+   *  itself. Optional ⇒ the source (test fixtures). */
+  hostileActorOf?: (sourceId: string) => string;
   /** Scrap-on-death (Phase 2b-ii) — called for a DRONE (kind 1) the instant
    *  before it's evicted on a hull 0-cross, so a COMPOSITE-kind drone (e.g.
    *  havok) breaks into floating scrap pieces. The room reads the dying drone's

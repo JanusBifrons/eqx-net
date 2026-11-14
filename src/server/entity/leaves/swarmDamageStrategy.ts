@@ -58,13 +58,16 @@ export function createSwarmPerHit(deps: LeafDeps): PerHitEffect {
       // Friendly fire (owner decision 2026-11-10): an accidental hit from the
       // drone's own side still lands, but never marks it hostile or escalates
       // a faction — packs must not civil-war after one stray shot.
-      if (sourceId && rec.kind === 1 && deps.isFriendlyFire?.(rec.id, sourceId) !== true) {
-        deps.aiController.markHostile(rec.id, sourceId, atTick);
+      // RTS slice 5: a wingman's hit makes the drone hostile to its OWNER (the
+      // hostility ledger is per player), so the NPC fights back properly.
+      const actor = sourceId ? (deps.hostileActorOf?.(sourceId) ?? sourceId) : sourceId;
+      if (actor && rec.kind === 1 && deps.isFriendlyFire?.(rec.id, actor) !== true) {
+        deps.aiController.markHostile(rec.id, actor, atTick);
         // Wave-system reactive escalation (req #5): if the shooter belongs to a
         // faction (player / owned structure), the room flips that faction
         // hostile + marks this drone hostile to the whole faction. Gated to
         // drones here; a drone-on-drone hit resolves to no faction in the room.
-        deps.onDroneDamaged?.(rec.id, sourceId, atTick);
+        deps.onDroneDamaged?.(rec.id, actor, atTick);
       }
     },
   };

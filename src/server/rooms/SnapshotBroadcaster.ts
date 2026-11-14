@@ -860,7 +860,9 @@ export class SnapshotBroadcaster {
         // hulls share one playerId, and a shared key made each look
         // "changed" on every snapshot (RTS slice 4c).
         const includeLastInput = shouldIncludeLastInput(lastInputCache, ship.shipInstanceId, ship.lastInput);
-        const angles = d.playerMountAngles.get(ship.playerId);
+        // A lingering hull's turrets are its own (an AI-flown hull's are keyed
+        // by shipInstanceId, RTS slice 5), never its owner's active ship's.
+        const angles = d.playerMountAngles.get(ship.isActive ? ship.playerId : ship.shipInstanceId);
         let mountAnglesArr: number[] | undefined;
         if (angles && angles.length > 0) {
           let anyNonZero = false;
