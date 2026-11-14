@@ -181,13 +181,16 @@ export interface PlayerFireResolverDeps {
     dirX: number, dirY: number,
     def: MissileWeaponDef,
   ) => number | null;
-  /** Damage sink — invoked on a confirmed hit. */
+  /** Damage sink — invoked on a confirmed hit. (dirX, dirY) is the beam's
+   *  direction: a capital wreck piece it hits is knocked along it. */
   applyDamage: (
     targetId: string,
     shooterId: string,
     damage: number,
     hitX?: number,
     hitY?: number,
+    dirX?: number,
+    dirY?: number,
   ) => void;
   /** Shield-fence plan — if an ACTIVE shield wall lies along the beam within
    *  `maxDist`, absorb the shot (apply the wall's grid-power damage model) and
@@ -631,7 +634,7 @@ export class PlayerFireResolver implements WeaponFireSink {
       const effDamage = falloffMinDamageFrac !== undefined
         ? upgraded * hitscanFalloffFrac(mountHitDist, range, rayRange, falloffMinDamageFrac)
         : upgraded;
-      d.applyDamage(mountHitId, shooterId, effDamage, hitX, hitY);
+      d.applyDamage(mountHitId, shooterId, effDamage, hitX, hitY, ndx, ndy);
       if (mountHitDist < this._bestHitDist) {
         this._bestHitDist = mountHitDist;
         this._bestHitId = mountHitId;

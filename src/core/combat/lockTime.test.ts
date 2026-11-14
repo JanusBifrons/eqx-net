@@ -131,39 +131,37 @@ describe('lockSeconds: absolute distance for heavy (M/L/XL) mounts', () => {
       .toBeCloseTo(lockSeconds(fighterGun, LOCK_TUNING), 12);
   });
 
-  it('distance never makes a heavy lock impossible; size/speed still can', () => {
+  it('distance never makes a heavy lock impossible; reach still does', () => {
     // A 16" at 35 km on a battleship: ~22 s, not Infinity.
     expect(Number.isFinite(lockSeconds(heavy(35_000, battleship.radius, REAL_REACH), LOCK_TUNING))).toBe(true);
     // Out of reach stays Infinity.
     expect(lockSeconds(heavy(50_000, battleship.radius, REAL_REACH), LOCK_TUNING)).toBe(Infinity);
-    // A fast crossing fighter is still beyond the 16" (the gate is unchanged).
-    const fighter = getShipKind('fighter');
-    expect(lockSeconds({ ...heavy(1500, fighter.radius, REAL_REACH), dvy: 400 }, LOCK_TUNING)).toBe(Infinity);
   });
 
   // Owner, 2026-11-10: a 16" on a fighter "takes 10 minutes or an hour ...
-  // working as intended". The PLAYER fire-control path (`neverImpossible`)
-  // gets that finite, uncapped time; NPC main guns (no opt-in) still skip.
-  it('player heavy gun (neverImpossible): a small target locks slowly, never impossibly', () => {
+  // working as intended". Owner, 2026-11-13: "Same rule as players — an NPC's
+  // heavy gun locks a small fast ship slowly, but always gets there in the
+  // end. It's the same ship and the same gun, so it gets the same lock." So
+  // there is ONE ship rule, no per-pilot opt-in: before this the NPC path
+  // (without the old `neverImpossible` flag) got Infinity here.
+  it('ship heavy gun: a small fast target locks slowly, never impossibly, whoever flies it', () => {
     const fighter = getShipKind('fighter');
     const near = { ...heavy(1500, fighter.radius, REAL_REACH), dvy: 400 };
-    const player = lockSeconds({ ...near, neverImpossible: true }, LOCK_TUNING);
-    expect(Number.isFinite(player)).toBe(true);
-    expect(player).toBeGreaterThan(LOCK_TUNING.maxSeconds * 10);
+    const secs = lockSeconds(near, LOCK_TUNING);
+    expect(Number.isFinite(secs)).toBe(true);
+    expect(secs).toBeGreaterThan(LOCK_TUNING.maxSeconds * 10);
     // A still fighter 30 km out: finite, and past the old cap.
-    const far = lockSeconds({ ...heavy(30_000, fighter.radius, REAL_REACH), neverImpossible: true }, LOCK_TUNING);
+    const far = lockSeconds(heavy(30_000, fighter.radius, REAL_REACH), LOCK_TUNING);
     expect(Number.isFinite(far)).toBe(true);
     expect(far).toBeGreaterThan(LOCK_TUNING.maxSeconds);
-    // The NPC path (no opt-in) is unchanged: Infinity, so NPC main guns skip it.
-    expect(lockSeconds(near, LOCK_TUNING)).toBe(Infinity);
-    // Out of reach is still impossible for the player.
-    expect(lockSeconds({ ...heavy(50_000, fighter.radius, REAL_REACH), neverImpossible: true }, LOCK_TUNING)).toBe(Infinity);
-    // A sub-capital (non-absRange) gun keeps the maxSeconds rule even with the opt-in.
+    // Out of reach is still impossible.
+    expect(lockSeconds(heavy(50_000, fighter.radius, REAL_REACH), LOCK_TUNING)).toBe(Infinity);
+    // A sub-capital (non-absRange) gun keeps the maxSeconds rule.
     const s = WEAPON_LOCK_PROFILE.S;
-    const sMount = { ...near, refSize: s.refSize, tracking: 0.01, reach: 2295, absRange: s.absRange, neverImpossible: true };
+    const sMount = { ...near, refSize: s.refSize, tracking: 0.01, reach: 2295, absRange: s.absRange };
     expect(lockSeconds(sMount, LOCK_TUNING)).toBe(Infinity);
     // testMode cap still caps it.
-    expect(capLockSeconds(player, near, LOCK_TUNING, 2)).toBe(2);
+    expect(capLockSeconds(secs, near, LOCK_TUNING, 2)).toBe(2);
   });
 
   it('testMode lockTimeCapS still caps a long heavy lock', () => {

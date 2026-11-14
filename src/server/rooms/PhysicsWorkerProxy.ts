@@ -37,8 +37,11 @@ export type WorkerCmd =
   | { type: 'DESPAWN';        slot: number; playerId: string }
   | { type: 'REKEY_SHIP';     oldId: string; newId: string }
   | { type: 'INPUT';          slot: number; inputTick: number; thrust: boolean; turnLeft: boolean; turnRight: boolean; boost: boolean; reverse: boolean; warpX?: number; warpY?: number }
-  | { type: 'SPAWN_OBSTACLE'; slot: number; obstacleId: string; x: number; y: number; vx: number; vy: number; radius: number; mass: number; vertices?: ReadonlyArray<Vec2>; linearDamping?: number; staticBody?: boolean; collisionGroups?: number; angle?: number; parts?: ReadonlyArray<ReadonlyArray<Vec2>>; shieldKindId?: string; angvel?: number; angularDamping?: number }
+  | { type: 'SPAWN_OBSTACLE'; slot: number; obstacleId: string; x: number; y: number; vx: number; vy: number; radius: number; mass: number; vertices?: ReadonlyArray<Vec2>; linearDamping?: number; staticBody?: boolean; collisionGroups?: number; angle?: number; parts?: ReadonlyArray<ReadonlyArray<Vec2>>; shieldKindId?: string; angvel?: number; angularDamping?: number; shipKindId?: number }
   | { type: 'AI_INTENT';      slot: number; fx: number; fy: number; torque: number; setAngvel?: number }
+  /** Pilot layer: every AI slot flown by control keys this tick, in ONE
+   *  message. `slots[i]` gets packed `AiInputBits` `bits[i]` for i < `count`. */
+  | { type: 'AI_INPUTS';      count: number; slots: Uint16Array; bits: Uint8Array }
   | { type: 'CLOCK_RATE';     rate: number }
   | { type: 'SET_TIME_SCALE'; scale: number }
   | { type: 'SET_POSITION';   entityId: string; x: number; y: number; angle: number; vx: number; vy: number; angvel: number }
@@ -60,6 +63,12 @@ export type WorkerCmd =
    *  despawned entities. See docs/architecture/missile-simulation.md. */
   | { type: 'MISSILE_IMPULSE'; entityId: string; fx: number; fy: number }
   | { type: 'WRECK_KICK'; entityId: string; dvx: number; dvy: number; dw: number }
+  /** A capital wreck piece's overkill knock-back: impulse (jx, jy) at world
+   *  point (px, py) via `World.applyImpulseAtPoint`. */
+  | { type: 'WRECK_IMPULSE'; entityId: string; jx: number; jy: number; px: number; py: number }
+  /** A capital wreck inside its crack hold: the hit's impulse on the whole
+   *  wreck as one rigid body via `World.applyRigidGroupImpulse`. */
+  | { type: 'WRECK_RIGID_IMPULSE'; entityIds: readonly string[]; jx: number; jy: number; px: number; py: number }
   /** Shield-fence plan — manage a shield-wall span (a static cuboid between two
    *  pylon poses that blocks ships). `SET_WALL_ACTIVE` toggles its collider on
    *  stun / power loss without churning the body. See PhysicsWorld.spawnWall. */

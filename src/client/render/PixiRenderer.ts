@@ -7,13 +7,15 @@ import { type WarpParams, type WarpCenter, type FrameMarkers } from './worker/pr
 import { WarpFilterChain } from './pixi/WarpFilterChain.js';
 import { shouldFireRemoteWarpVisual, remoteWarpEventFires } from './pixi/warpHelpers.js';
 import { fillHitTargetSets } from './pixi/hitTargetSets.js';
-import { updateShipSprites, type ShipSpriteCtx } from './pixi/shipSpriteUpdater.js';
+import { updateShipSprites, shipSpriteKinds, type ShipSpriteCtx } from './pixi/shipSpriteUpdater.js';
 import { entityPoseFromSprite, type EntityPose } from './pixi/entityPoseFromSprite.js';
 import { decidePlacementPointer, shouldCentreGhostOnActivate } from './placementPointerDecision.js';
 import { engineProfileForKind } from './pixi/engineGeometry.js';
 import { updateSwarmSprites, type SwarmSpriteCtx } from './pixi/swarmSpriteUpdater.js';
+import { DyingHullHold, noteDyingHulls } from './pixi/dyingHullHold.js';
+import { sweepUnseenSprites } from './pixi/spriteSweep.js';
 import { WreckGeometryStore } from '../net/wreckGeometryStore.js';
-import { WreckArtState, WreckPieceSprite, hullDeathBlastReplaced, wreckBlasts, type WreckBlast } from './pixi/wreckArt.js';
+import { WreckArtState, WreckPieceSprite, hullDeathBlastReplaced, wreckBlasts, wreckRippleCap, WRECK_BLAST_LINGER, type WreckBlast } from './pixi/wreckArt.js';
 import { ConnectorRenderer } from './pixi/ConnectorRenderer.js';
 import { updateProjectileSprites, type ProjectileSpriteCtx } from './pixi/projectileSpriteUpdater.js';
 import { updateMissileSprites, type MissileSpriteCtx } from './pixi/missileSpriteUpdater.js';
@@ -415,6 +417,26 @@ export class PixiRenderer implements IRenderer {
    *  Pre-fix: 5 containers + N{x,y} entries per frame = real allocator
    *  pressure under combat (see capture lnnkkh, 2026-05-25). */
   private readonly _updateSeenScratch = new Set<string>();
+  /** Dying capitals drawn at their last pose until their wreck pieces are
+   *  (capital-breakup take B, 2026-11-13: the hull vanished ~0.5 s first). */
+  private readonly _dyingHulls = new DyingHullHold();
+  /** Sprite key → the ship kind it was built for (active, swarm, parked).
+   *  Bound once (no per-frame closure, #14). */
+  private readonly _spriteShipKind = (id: string): string | null | undefined => {
+    const sp = this.sprites.get(id);
+    if (sp !== undefined) return shipSpriteKinds.get(sp) ?? this._swarmSpriteSigs.get(id)?.shipKind;
+    return this.lingeringSprites.get(id)?.kind;
+  };
+  /** The sweep's per-id cleanup; `held` keeps the turret cluster on the
+   *  still-drawn sprite. Bound once (#14). */
+  private readonly _forgetSprite = (id: string, held: boolean): void => {
+    if (held) this.mountVisuals.detachShip(id);
+    else this.mountVisuals.removeShip(id);
+    this._structureMountSlew.delete(id); // P3.8 — drop slew state with the sprite
+    this._swarmSpriteKinds.delete(id); // #20 — drop kind tracker with the sprite
+    this._swarmSpriteSigs.delete(id); // campaign 3.2 — drop build signature with the sprite
+    this._artCtx.handles.delete(id); // Machined art — drop the handle with the sprite
+  };
   /** P3.8 — per-structure slewed mount (barrel/drill) arc-local angles, keyed by
    *  `swarm-<entityId>`. Persists across frames so the structure barrel SLEWS
    *  toward its target (rotateMountToward) instead of SNAPPING in one frame (the
@@ -466,6 +488,7 @@ export class PixiRenderer implements IRenderer {
   private _wreckBreaks = 0;
   /** Break-up fireballs drawn (test hook via `artStats`), and their scratch. */
   private _wreckBlastsSpawned = 0;
+  private _wreckRipplesSpawned = 0;
   /** Capital death blasts left to the wreck break-up (test hook). */
   private _hullBlastsReplaced = 0;
   private readonly _wreckBlastScratch: WreckBlast[] = [];
@@ -931,10 +954,16 @@ export class PixiRenderer implements IRenderer {
           const now = this.fxNow();
           for (let i = 0; i < n; i++) {
             const b = this._wreckBlastScratch[i]!;
-            if (fx.spawn(b.x, b.y, b.r, now)) this._wreckBlastsSpawned++;
+            if (fx.spawn(b.x, b.y, b.r, now, WRECK_BLAST_LINGER)) this._wreckBlastsSpawned++;
           }
         }
-      }),
+      }, (x, y, r) => {
+        // Cracks spread, then it breaks (owner 2026-11-13): small blasts
+        // ripple along the cracks while the hull holds together. Pooled
+        // FxExplosions bursts; how many per wreck follows the effects tier.
+        if (this._fxExplosions?.spawn(x, y, r, this.fxNow())) this._wreckRipplesSpawned++;
+      }, () => wreckRippleCap(this.effects?.getQuality() ?? 'medium')),
+      dyingHulls: this._dyingHulls,
     };
     this._projectileUpdaterCtx = {
       shipContainer: this.shipContainer,
@@ -1671,6 +1700,9 @@ export class PixiRenderer implements IRenderer {
     // defaulted to (0,0) when a lingering hull was destroyed — the
     // user's "explosion appeared at zero zero" bug. Helper is in
     // `spriteUpdateDecisions.ts` and is unit-tested there.
+    // A capital dying into a wreck stays drawn until its pieces are (marked
+    // here while its sprite is still mapped; the sweeps below hand it over).
+    noteDyingHulls(mirror.explodingShips, mirror.capitalWrecks, this._spriteShipKind, this._dyingHulls, this.fxNow());
     if (mirror.explodingShips) {
       // Wrap the lingering-sprite cache to expose just the {x, y}
       // pose the helper expects. The cache value also carries `kind`
@@ -1794,21 +1826,11 @@ export class PixiRenderer implements IRenderer {
     this.noteTurretShots(mirror);
     this.feedLitScene(mirror);
 
-    for (const [id, sprite] of this.sprites) {
-      if (!seen.has(id)) {
-        this.shipContainer.removeChild(sprite);
-        // Boost flame and mount-visual cluster are children — destroy({
-        // children: true }) frees them too, but we still drop the map
-        // entries so a respawn rebuilds cleanly.
-        this.mountVisuals.removeShip(id);
-        sprite.destroy({ children: true });
-        this.sprites.delete(id);
-        this._structureMountSlew.delete(id); // P3.8 — drop slew state with the sprite
-        this._swarmSpriteKinds.delete(id); // #20 — drop kind tracker with the sprite
-        this._swarmSpriteSigs.delete(id); // campaign 3.2 — drop build signature with the sprite
-        this._artCtx.handles.delete(id); // Machined art — drop the handle with the sprite
-      }
-    }
+    // Sprites whose entity left the mirror this frame. Boost flame and
+    // mount-visual cluster are children — destroy({ children: true }) frees
+    // them too, but the map entries go so a respawn rebuilds cleanly. A
+    // capital that died leaving a wreck is held (drawn) until its pieces are.
+    sweepUnseenSprites(this.sprites, seen, this._forgetSprite, this._dyingHulls, this.fxNow());
 
     // Projectile + ghost-projectile sprites — see pixi/projectileSpriteUpdater.ts.
     // Ctx pooled to `this._projectileUpdaterCtx`.
@@ -2405,6 +2427,10 @@ export class PixiRenderer implements IRenderer {
     this.labels?.update(mirror);
 
     this.updateLingeringShips(mirror);
+    // Dying capitals: hand over to wreck pieces drawn this frame, or give up
+    // at the deadline; the rest keep their light frame at the last pose.
+    this._dyingHulls.settle(this.fxNow());
+    for (let i = 0; i < this._dyingHulls.heldCountNow(); i++) updateArtShipLight(this._artCtx, this._dyingHulls.heldSprite(i));
 
     // Halo arrows for off-screen POIs. Runs after moveCenter so the visibility
     // test uses this frame's viewport bounds, not last frame's. Incoming fire
@@ -2894,6 +2920,11 @@ export class PixiRenderer implements IRenderer {
     if (!mirror.lingeringShips || mirror.lingeringShips.size === 0) {
       if (this.lingeringSprites.size > 0) {
         for (const [id, entry] of this.lingeringSprites) {
+          // A parked capital that died into a wreck stays drawn until its pieces are.
+          if (this._dyingHulls.tryHold(id, entry.sprite, this.fxNow())) {
+            this.mountVisuals.detachShip(id);
+            continue;
+          }
           this.mountVisuals.removeShip(id); // R2.32 — free the weapon-barrel cluster
           entry.sprite.destroy();
         }
@@ -2948,8 +2979,13 @@ export class PixiRenderer implements IRenderer {
     }
     for (const [id, entry] of this.lingeringSprites) {
       if (entry.stamp !== frameId) {
-        this.mountVisuals.removeShip(id); // R2.32 — free the weapon-barrel cluster
-        entry.sprite.destroy();
+        // A parked capital that died into a wreck stays drawn until its
+        // pieces are (the capital-breakup take's cruiser was one).
+        if (this._dyingHulls.tryHold(id, entry.sprite, this.fxNow())) this.mountVisuals.detachShip(id);
+        else {
+          this.mountVisuals.removeShip(id); // R2.32 — free the weapon-barrel cluster
+          entry.sprite.destroy();
+        }
         this.lingeringSprites.delete(id);
         this._artCtx.handles.delete(`linger-${id}`);
       }
@@ -3375,7 +3411,7 @@ export class PixiRenderer implements IRenderer {
 
   /** Machined art status: the service's counts plus how many ship sprites
    *  are drawing Machined vs today's look right now. */
-  artStats(): { mode: 'classic' | 'machined'; machinedSprites: number; classicShipSprites: number; backdrop: ReturnType<PixiRenderer['backdropStats']>; fxProjectiles: number; fxBeam: boolean; fxExplosions: number; fxShields: number; fxFences: number; fxFenceHits: number; fxFenceContacts: number; fxEngines: number; engineParticles: number; turrets: number; turretShots: number; lodDots: number; effectQuality: string; fxRibbons: number; localEngine: ReturnType<FxEngines['debugView']>; warpBursts: number; warpSpooling: number; spoolFxDrawn: number; ownArt: string | null; helmMarker: boolean; wreckPieces: number; wreckTextured: number; wreckGlowing: number; wreckBreaks: number; wreckEngines: number; wreckLit: number; wreckRawMaps: number; wreckBlasts: number; hullBlastsReplaced: number; litMeshes: number } & Partial<ReturnType<NonNullable<ShipArtCtx['art']>['stats']>> {
+  artStats(): { mode: 'classic' | 'machined'; machinedSprites: number; classicShipSprites: number; backdrop: ReturnType<PixiRenderer['backdropStats']>; fxProjectiles: number; fxBeam: boolean; fxExplosions: number; fxShields: number; fxFences: number; fxFenceHits: number; fxFenceContacts: number; fxEngines: number; engineParticles: number; turrets: number; turretShots: number; lodDots: number; effectQuality: string; fxRibbons: number; localEngine: ReturnType<FxEngines['debugView']>; warpBursts: number; warpSpooling: number; spoolFxDrawn: number; ownArt: string | null; helmMarker: boolean; wreckPieces: number; wreckTextured: number; wreckGlowing: number; wreckBreaks: number; wreckEngines: number; wreckLit: number; wreckRawMaps: number; wreckBlasts: number; wreckRipples: number; hullBlastsReplaced: number; litMeshes: number } & Partial<ReturnType<NonNullable<ShipArtCtx['art']>['stats']>> {
     let machined = 0, classic = 0;
     for (const [id, sp] of this.sprites) {
       if (isMachinedSprite(sp)) machined++;
@@ -3407,7 +3443,7 @@ export class PixiRenderer implements IRenderer {
     }
     const wreckBreaks = this._wreckBreaks;
     const art = this._artCtx.art;
-    return { wreckPieces, wreckTextured, wreckGlowing, wreckBreaks, wreckEngines, wreckLit, wreckRawMaps, wreckBlasts: this._wreckBlastsSpawned, hullBlastsReplaced: this._hullBlastsReplaced, litMeshes: litPass.settings ? litPass.count : -1, mode: art ? 'machined' : 'classic', machinedSprites: machined, classicShipSprites: classic, backdrop: this.backdropStats(), fxProjectiles: this._fxProjectiles?.liveCount() ?? 0, fxBeam: this._fxLiveBeams?.container.visible === true, fxExplosions: this._fxExplosions?.activeCount() ?? 0, fxShields: this._fxShieldsOn ? this._fxShields!.count() : -1, fxFences: this._fxFences?.count() ?? 0, fxFenceHits: this._fxFences?.hitCount ?? 0, fxFenceContacts: this._fxFences?.contactCount() ?? 0, fxEngines: this._fxEngines?.drawn() ?? -1, engineParticles: this.effects ? this.effects.debugCopyEngineParticleWorld(this._engineDbgScratch) : 0, turrets: this.mountVisuals.machinedGunCount(), turretShots: this.mountVisuals.turretShotCount(), lodDots: this._farIcons.iconCount, effectQuality: this.effects?.getQuality() ?? 'none', fxRibbons: this._fxEngines?.ribbons() ?? -1, warpBursts: this._warpFx.burstCount(), warpSpooling: this._warpFx.spoolCount(), spoolFxDrawn: this._spoolFx.spooling, helmMarker: this.helmMarker.isVisible(), ownArt: this._lastMirror?.localPlayerId ? (this._artCtx.handles.get(this._lastMirror.localPlayerId)?.state ?? 'none') : null, localEngine: this._lastMirror?.localPlayerId ? (this._fxEngines?.debugView(this._lastMirror.localPlayerId) ?? null) : null, ...(art ? art.stats() : {}) };
+    return { wreckPieces, wreckTextured, wreckGlowing, wreckBreaks, wreckEngines, wreckLit, wreckRawMaps, wreckBlasts: this._wreckBlastsSpawned, wreckRipples: this._wreckRipplesSpawned, hullBlastsReplaced: this._hullBlastsReplaced, litMeshes: litPass.settings ? litPass.count : -1, mode: art ? 'machined' : 'classic', machinedSprites: machined, classicShipSprites: classic, backdrop: this.backdropStats(), fxProjectiles: this._fxProjectiles?.liveCount() ?? 0, fxBeam: this._fxLiveBeams?.container.visible === true, fxExplosions: this._fxExplosions?.activeCount() ?? 0, fxShields: this._fxShieldsOn ? this._fxShields!.count() : -1, fxFences: this._fxFences?.count() ?? 0, fxFenceHits: this._fxFences?.hitCount ?? 0, fxFenceContacts: this._fxFences?.contactCount() ?? 0, fxEngines: this._fxEngines?.drawn() ?? -1, engineParticles: this.effects ? this.effects.debugCopyEngineParticleWorld(this._engineDbgScratch) : 0, turrets: this.mountVisuals.machinedGunCount(), turretShots: this.mountVisuals.turretShotCount(), lodDots: this._farIcons.iconCount, effectQuality: this.effects?.getQuality() ?? 'none', fxRibbons: this._fxEngines?.ribbons() ?? -1, warpBursts: this._warpFx.burstCount(), warpSpooling: this._warpFx.spoolCount(), spoolFxDrawn: this._spoolFx.spooling, helmMarker: this.helmMarker.isVisible(), ownArt: this._lastMirror?.localPlayerId ? (this._artCtx.handles.get(this._lastMirror.localPlayerId)?.state ?? 'none') : null, localEngine: this._lastMirror?.localPlayerId ? (this._fxEngines?.debugView(this._lastMirror.localPlayerId) ?? null) : null, ...(art ? art.stats() : {}) };
   }
 
   dispose(): void {

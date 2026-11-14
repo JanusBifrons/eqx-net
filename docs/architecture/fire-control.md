@@ -14,8 +14,13 @@ player auto-target in `WeaponMountTicker.tickPlayer` is gone). The `fireControl`
 join option and the `?ui=` HUD switch were removed. NPC capitals' turrets each
 fire only with the capital's completed lock on their OWN target (PR 1d slice 2):
 a capital holds one lock per pilot, built with whichever of its gun sizes locks
-that pilot fastest, so its AA can engage a fighter while its 16" guns (which can
-never lock a fighter-sized hull) wait for a capital. A capital turret whose
+that pilot fastest, so its AA engages a fighter quickly. An NPC ship's locks use
+exactly the rule and numbers a player ship of the same kind with the same gun
+gets on the same target (owner decision 2026-11-13: "Same rule as players — an
+NPC's heavy gun locks a small fast ship slowly, but always gets there in the
+end. It's the same ship and the same gun, so it gets the same lock."): a
+battleship whose 16" guns alone reach a still fighter 5 km out locks it in
+~38 s, where before it never could. A capital turret whose
 target is a hostile STRUCTURE fires only with its own completed turret lock on
 it (same `lockSeconds` rules: the mount size's profile, the hull's sensor, the
 structure's radius as signature). Structure turrets lock their targets too
@@ -102,7 +107,8 @@ lock in the room takes longer than N seconds while the target is in reach
 (0 = the first lock step): NPC drones and capitals on pilots
 (`NpcLockSubsystem`), capital turrets on structures (`WeaponMountTicker`) and
 structure / coastal turrets (`StructureMountTicker`). A lock the rules call
-impossible (past `maxSeconds`) but in reach locks in N too; out of reach stays
+impossible (past `maxSeconds`, sub-capital guns) or very slow but in reach
+locks in N too; out of reach stays
 unlockable. The math is `capLockSeconds` (`core/combat/lockTime.ts`). For tests
 and recordings that need the big guns locked without the long (by design)
 wait. Player locks keep `instantLock`: an N-second player cap would make the
@@ -116,7 +122,7 @@ before the test switches the group it wants to AUTO or locks it.
 
 | Piece | File | Role |
 |---|---|---|
-| Lock time | `core/combat/lockTime.ts` | Pure `lockSeconds(inputs, tuning)`; Infinity = can't lock now. secs = base × size × tracking × range ÷ (sensor × pilot). Range: small guns (none/AA/S) use the share of their reach (`1 + 0.6 × range/reach`); heavy M/L/XL guns (`WEAPON_LOCK_PROFILE[size].absRange`) use ABSOLUTE distance, `1 + (range / 7000)^1.5` (owner 2026-11-10: "speed, size and distance"; "it should take ages to lock"). The `maxSeconds` (8 s) "can't lock" test reads the reach-share time only, so distance makes a heavy lock slower, never impossible: a 16" on a battleship takes ~2.5 s at 4k u, ~10 s at 20k, ~17 s at 30k. Structures (`clampAtMax`) cap the size/speed part at 8 s, then a heavy gun still stretches it for distance. A PLAYER heavy gun (`neverImpossible`, set only by `LockSubsystem`) skips the 8 s test entirely: a small or fast target locks slowly, never impossibly (owner 2026-11-10: "10 minutes or an hour … working as intended"); NPC main guns still get Infinity and leave small craft to their AA |
+| Lock time | `core/combat/lockTime.ts` | Pure `lockSeconds(inputs, tuning)`; Infinity = can't lock now. secs = base × size × tracking × range ÷ (sensor × pilot). Range: small guns (none/AA/S) use the share of their reach (`1 + 0.6 × range/reach`); heavy M/L/XL guns (`WEAPON_LOCK_PROFILE[size].absRange`) use ABSOLUTE distance, `1 + (range / 7000)^1.5` (owner 2026-11-10: "speed, size and distance"; "it should take ages to lock"). The `maxSeconds` (8 s) "can't lock" test reads the reach-share time only, so distance makes a heavy lock slower, never impossible: a 16" on a battleship takes ~2.5 s at 4k u, ~10 s at 20k, ~17 s at 30k. Structures (`clampAtMax`) cap the size/speed part at 8 s, then a heavy gun still stretches it for distance. A SHIP's heavy gun (`absRange` under ship tuning, i.e. not `clampAtMax`) skips the 8 s test entirely: a small or fast target locks slowly, never impossibly (owner 2026-11-10: "10 minutes or an hour … working as intended"). This holds for EVERY ship, player or NPC (`LockSubsystem`, `NpcLockSubsystem`, `WeaponMountTicker` capital turret on a structure): one rule, no per-pilot flag (owner 2026-11-13: "It's the same ship and the same gun, so it gets the same lock"; the old player-only `neverImpossible` flag is gone). Lock: `tests/unit/npcLockParity.test.ts` |
 | Lock state | `core/combat/lockState.ts` | `LockEntry` + `stepLock`: failsafe → acquiring → locked; `track` = commit / held / released (released drains at `decayMul`× and drops at 0) |
 | Player locks | `server/rooms/LockSubsystem.ts` | Per pilot, per group: queue (capacity 1 sub-capital, 3 capital), AUTO pick (arc-filtered), `requestLock` (commit), `trackLock` (held line), `cancelLock`, `setMode`; stepped every 6 ticks |
 | NPC locks | `server/rooms/NpcLockSubsystem.ts` | Every NPC hostile to a tracked pilot builds a lock on them by the same rules; `fireBlocked(npcId, targetId)` refuses a drone shot at a pilot target it has not completed a lock on (the target id rides `intent.fire.targetId`; non-pilot targets are not gated); `WeaponMountTicker.tickCapitalMounts` asks the same question per capital turret with that turret's own target. A capital's lock time is the fastest over its per-mount-size profiles; testMode `instantLock` on a pilot completes NPC locks on them in reach |
@@ -145,7 +151,11 @@ Target keys: `s:<entityId>` (swarm) or `p:<playerId>`.
   gate via `fcGroupBears`), `fcTickMountAngles` (THE client mount-angle path,
   #12). The `groups` / `lockedBy` slices are always applied.
 - `AimFeedbackRenderer.drawFireControl`: your locks (closing ring, ticks,
-  LOCKING / FAILSAFE / LOSING LOCK tag, dashed link; brackets + firing line when
+  LOCKING / FAILSAFE / LOSING LOCK tag, dashed link, drawn ONCE per target:
+  when several groups build a lock on the same ship only the one ranked by
+  `acquiringRank` (building beats draining, then furthest along) is drawn, the
+  same pick as the banner's own row (fight-clip review 2026-11-13: two stacked
+  tags); brackets + firing line when
   locked) and NPC locks on you (arcs, carets, diamonds). While anything is
   locking or has locked you, the whole threat ring is also drawn faintly
   (thin, low-alpha red) under the arcs, so a lone arc reads as a pointer on a
