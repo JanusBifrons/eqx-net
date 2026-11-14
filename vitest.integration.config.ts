@@ -34,15 +34,14 @@ import path from 'node:path';
  * `src/server/routes/diagRouter.test.ts`). So integration tests live in
  * their own config invoked via `pnpm test:integration`.
  *
- * Naval ranges: the game defaults to `real` (owner decision 2026-11-14), but
- * this suite's layouts and timings were written at `legacy` ranges and the
- * catalogue is built once for the whole (unisolated) worker, so it runs
- * pinned to `legacy`. The real-range tests run in `pnpm test:naval-real`
- * (vitest.naval-real.config.ts, which re-pins `real` after importing this).
- * See docs/architecture/real-scale-ranges.md "The switch".
+ * Naval ranges: the suite runs at the game's default (`real`, owner decision
+ * 2026-11-14); nothing here pins the mode. The catalogue is built once for
+ * the whole (unisolated) worker, so a test can't pin a mode per file: a test
+ * that is ABOUT one mode needs its own config. `tests/integration/navalReal/`
+ * (pinned `real` explicitly, so it stays put if the default ever moves) runs
+ * in `pnpm test:naval-real` (vitest.naval-real.config.ts) and is excluded
+ * here so it doesn't run twice. See docs/architecture/real-scale-ranges.md.
  */
-process.env['EQX_NAVAL_RANGE'] ??= 'legacy';
-
 export default defineConfig({
   resolve: {
     alias: {
@@ -62,7 +61,6 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
-    env: { EQX_NAVAL_RANGE: process.env['EQX_NAVAL_RANGE'] },
     globals: false,
     // CI-only flake shield: a real Colyseus server + WS transport per test
     // means runner-load transients (socket hang up / ECONNRESET) can fail a
@@ -73,7 +71,7 @@ export default defineConfig({
     include: [
       'tests/integration/**/*.test.ts',
     ],
-    exclude: ['**/node_modules/**', 'dist/**', '**/.claude/**'],
+    exclude: ['**/node_modules/**', 'dist/**', '**/.claude/**', 'tests/integration/navalReal/**'],
     pool: 'threads',
     poolOptions: {
       threads: {
