@@ -127,4 +127,41 @@ describe('SectorRoom integration — world events (P4b)', () => {
     expect(ev.activeEvent()).toBeNull();
     expect(eventMobs('greenfall')).toHaveLength(0);
   });
+
+  /**
+   * A morale Flee (2026-11-14): event mobs that warp out of the sector are
+   * gone for the event's progress. A fled mothership escapes: the event
+   * fades (no kill, no "destroyed" notice).
+   */
+  it('incursion raiders that flee count as gone: the event ends', { timeout: 40_000 }, async () => {
+    ({ h, ev } = await boot());
+    const room = h.getRoom('greenfall') as unknown as {
+      _handleAiWarpOut: (id: string, x: number, y: number) => void;
+      getBotPose: (id: string) => { x: number; y: number } | null;
+    };
+    expect(ev.startEvent('incursion', 'greenfall')).toBe(true);
+    const mobs = eventMobs('greenfall');
+    for (const id of mobs) { const p = room.getBotPose(id)!; room._handleAiWarpOut(id, p.x + 3000, p.y); }
+    await h.waitUntil(() => eventMobs('greenfall').length === 0, 10_000, 'the raiders leave');
+    expect(ev.activeEvent(), 'the incursion is over').toBeNull();
+  });
+
+  it('a mothership that flees escapes: the event fades and the escorts leave', { timeout: 40_000 }, async () => {
+    ({ h, ev } = await boot());
+    const room = h.getRoom('greenfall') as unknown as {
+      _handleAiWarpOut: (id: string, x: number, y: number) => void;
+      getBotPose: (id: string) => { x: number; y: number } | null;
+    };
+    const pilot = await h.connectActive(randomUUID(), 'greenfall', { initialHull: 99999 });
+    const notices: WorldNotice[] = [];
+    pilot.onMessage('world_notice', (n: WorldNotice) => notices.push(n));
+    expect(ev.startEvent('mothership', 'greenfall')).toBe(true);
+    const boss = eventMobs('greenfall').find((id) => id.endsWith('-boss'))!;
+    const p = room.getBotPose(boss)!;
+    room._handleAiWarpOut(boss, p.x + 3000, p.y);
+    await h.waitUntil(() => ev.activeEvent() === null, 10_000, 'the event ends');
+    expect(eventMobs('greenfall')).toHaveLength(0);
+    await h.waitUntil(() => notices.some((n) => n.kind === 'event_ended'), 3000, 'end notice');
+    expect(notices.some((n) => n.message.includes('destroyed')), 'not reported destroyed').toBe(false);
+  });
 });

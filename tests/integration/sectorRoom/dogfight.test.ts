@@ -302,16 +302,18 @@ describe('SectorRoom integration — NPC dogfight (AI slice 4)', () => {
       { kind: KIND_B, x: 0, y: 0, angle: 0 },
     ]);
     harness = s.harness;
-    const { brainB } = s;
-    const t0 = Date.now();
-    let brokeAt = -1;
-    while (Date.now() - t0 < 3000) {
+    const { brainB, room } = s;
+    // Measured in game ticks, never wall time (root CLAUDE.md: gate on
+    // counts or ticks; a busy host stretched the wall-clock read to 1099 ms).
+    const tick0 = room.serverTick;
+    let brokeAtTicks = -1;
+    while (room.serverTick - tick0 < 180) {
       await harness.advance(20);
-      if (brainB.getManoeuvre() === MANOEUVRE_BREAK) { brokeAt = Date.now() - t0; break; }
+      if (brainB.getManoeuvre() === MANOEUVRE_BREAK) { brokeAtTicks = room.serverTick - tick0; break; }
     }
-    console.log(`[dogfight] tailed ship broke at ${brokeAt} ms (manoeuvre now ${brainB.getManoeuvre()})`);
-    expect(brokeAt, 'B breaks').toBeGreaterThanOrEqual(0);
-    expect(brokeAt, 'within 1 s').toBeLessThan(1000);
+    console.log(`[dogfight] tailed ship broke after ${brokeAtTicks} ticks (manoeuvre now ${brainB.getManoeuvre()})`);
+    expect(brokeAtTicks, 'B breaks').toBeGreaterThanOrEqual(0);
+    expect(brokeAtTicks, 'within 1 s (60 ticks at 1×)').toBeLessThan(60);
     // The tailer is not breaking: it has the advantage.
     expect(s.brainA.getManoeuvre()).not.toBe(MANOEUVRE_BREAK);
   });

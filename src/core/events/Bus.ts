@@ -31,14 +31,16 @@ export interface BusEventPayloads {
     x: number;
     y: number;
   };
-  /** Living World — a director-owned bot left a sector via the quiet
-   *  inter-sector handoff. NOT a combat kill (that flows through
-   *  `ENTITY_DESTROYED`) nor a load-shed (`ENTITY_SHED`). */
+  /** Living World — a bot left a sector by warp. NOT a combat kill (that
+   *  flows through `ENTITY_DESTROYED`) nor a load-shed (`ENTITY_SHED`).
+   *  `transit`: a director moved it (its own hop / teleport; it knows).
+   *  `fled`: the bot's own morale warp-out (2026-11-14). It is gone for
+   *  good, so the director that owns it frees its record like a loss. */
   BOT_DESPAWNED: {
     type: 'BOT_DESPAWNED';
     botId: string;
     sectorKey: string | null;
-    reason: 'transit';
+    reason: 'transit' | 'fled';
   };
   /** Living World — a bot began an inter-sector warp (spool start). The
    *  spool/commit lifecycle itself rides the existing

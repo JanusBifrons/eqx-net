@@ -23,7 +23,7 @@
  */
 import { sectorSpace, SOLAR_SECTORS } from '../../shared-types/sectorBounds.js';
 import { nearestSite, sectorSites } from '../../core/galaxy/sectorSites.js';
-import type { Bus } from '../../core/events/Bus.js';
+import type { Bus, BusEventPayloads } from '../../core/events/Bus.js';
 import { serverLogEvent } from '../debug/ServerEventLog.js';
 import { canonicalPlayerId } from '../identity/AccountPlayerRegistry.js';
 import { guarded } from '../rooms/guardedLoop.js';
@@ -440,6 +440,7 @@ export class LivingWorldDirector {
     bus: Bus;
     onDestroyed: (e: { type: 'ENTITY_DESTROYED'; entityId: string }) => void;
     onShed: (e: { type: 'ENTITY_SHED'; entityId: string }) => void;
+    onDeparted: (e: BusEventPayloads['BOT_DESPAWNED']) => void;
   }> = [];
 
   constructor(
@@ -557,9 +558,18 @@ export class LivingWorldDirector {
         // shed-recovery gate holds it until the load actually clears.
         this.pool.scheduleRespawn(rec, 0);
       };
+      // A bot that fled (its own morale warp-out) left the sector for good:
+      // free its record like a loss, so the pool refills (2026-11-14). A
+      // 'transit' despawn is the director's own move and is not a loss.
+      const onDeparted = (e: BusEventPayloads['BOT_DESPAWNED']): void => {
+        if (e.reason !== 'fled') return;
+        const rec = this.pool.get(e.botId);
+        if (rec) this.pool.scheduleRespawn(rec, this.opts.respawnDelayMs);
+      };
       bus.on('ENTITY_DESTROYED', onDestroyed);
       bus.on('ENTITY_SHED', onShed);
-      this.subs.push({ bus, onDestroyed, onShed });
+      bus.on('BOT_DESPAWNED', onDeparted);
+      this.subs.push({ bus, onDestroyed, onShed, onDeparted });
     }
     // Error boundary (campaign 1.1): a throw escaping tick() was an uncaught
     // exception on the single-process host. Log-and-continue instead.
@@ -605,6 +615,7 @@ export class LivingWorldDirector {
     for (const s of this.subs) {
       s.bus.off('ENTITY_DESTROYED', s.onDestroyed);
       s.bus.off('ENTITY_SHED', s.onShed);
+      s.bus.off('BOT_DESPAWNED', s.onDeparted);
     }
     this.subs.length = 0;
     this.pool.disposeControllers();

@@ -146,6 +146,39 @@ describe('FlagshipDirector', () => {
     expect([...room.bots.keys()].some((id) => id.endsWith('-lead') && id !== leadId)).toBe(true);
   });
 
+  it('an escort that flees and warps out (morale) leaves the fleet', () => {
+    const room = fakeRoom();
+    const { d } = director(new Map([[A, room]]));
+    d.start();
+    const escortId = [...room.bots.keys()].find((id) => !id.endsWith('-lead'))!;
+    room.bots.delete(escortId);
+    room.bus.emit('BOT_DESPAWNED', { type: 'BOT_DESPAWNED', botId: escortId, sectorKey: A, reason: 'fled' });
+    expect(d.fleetsView()[0]?.escorts).toBe(FLEET_ESCORT_KINDS.length - 1);
+  });
+
+  it('a flagship that flees breaks the fleet like a loss, then a new one arrives later', () => {
+    const room = fakeRoom();
+    const { d, clock, now } = director(new Map([[A, room]]));
+    d.start();
+    const leadId = [...room.bots.keys()].find((id) => id.endsWith('-lead'))!;
+    room.bots.delete(leadId);
+    room.bus.emit('BOT_DESPAWNED', { type: 'BOT_DESPAWNED', botId: leadId, sectorKey: A, reason: 'fled' });
+    expect(d.fleetsView()).toHaveLength(0);
+    expect(room.bots.size).toBe(0);
+    clock.advance(6000);
+    d.tick(now());
+    expect(d.fleetsView()).toHaveLength(1);
+  });
+
+  it('a transit despawn is not a loss', () => {
+    const room = fakeRoom();
+    const { d } = director(new Map([[A, room]]));
+    d.start();
+    const escortId = [...room.bots.keys()].find((id) => !id.endsWith('-lead'))!;
+    room.bus.emit('BOT_DESPAWNED', { type: 'BOT_DESPAWNED', botId: escortId, sectorKey: A, reason: 'transit' });
+    expect(d.fleetsView()[0]?.escorts).toBe(FLEET_ESCORT_KINDS.length);
+  });
+
   it('resumes a persisted fleet where it was (same name, class and pocket)', () => {
     const room = fakeRoom();
     const first = director(new Map([[A, room]]));

@@ -149,7 +149,9 @@ export class LivingWorldBotHooks {
     return true;
   }
 
-  despawnBot(botId: string): BotCarry | null {
+  /** `reason` rides `BOT_DESPAWNED`: `fled` (a morale warp-out) tells the
+   *  owning director the bot is gone for good. */
+  despawnBot(botId: string, reason: 'transit' | 'fled' = 'transit'): BotCarry | null {
     const d = this.deps;
     const rec = d.swarmRegistry.get(botId);
     if (!rec) return null;
@@ -174,7 +176,7 @@ export class LivingWorldBotHooks {
       type: 'BOT_DESPAWNED',
       botId,
       sectorKey: d.sectorKey(),
-      reason: 'transit',
+      reason,
     });
     return carry;
   }
