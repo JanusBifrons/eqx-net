@@ -145,7 +145,11 @@ Target keys: `s:<entityId>` (swarm) or `p:<playerId>`.
   gate via `fcGroupBears`), `fcTickMountAngles` (THE client mount-angle path,
   #12). The `groups` / `lockedBy` slices are always applied.
 - `AimFeedbackRenderer.drawFireControl`: your locks (closing ring, ticks,
-  LOCKING / FAILSAFE / LOSING LOCK tag, dashed link; brackets + firing line when
+  LOCKING / FAILSAFE / LOSING LOCK tag, dashed link, drawn ONCE per target:
+  when several groups build a lock on the same ship only the one ranked by
+  `acquiringRank` (building beats draining, then furthest along) is drawn, the
+  same pick as the banner's own row (fight-clip review 2026-11-13: two stacked
+  tags); brackets + firing line when
   locked) and NPC locks on you (arcs, carets, diamonds). While anything is
   locking or has locked you, the whole threat ring is also drawn faintly
   (thin, low-alpha red) under the arcs, so a lone arc reads as a pointer on a
