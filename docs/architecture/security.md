@@ -56,3 +56,18 @@ See `.env.example` for the full list. Security-relevant:
   production-mode build for a controlled load test (S6). Never in real prod.
 - `EQX_ALLOW_DEV_OVERRIDES=1` — E2E-only bypass of testMode JoinOption gating;
   the server warns loudly if it is set in production. Never in real prod.
+
+## Server implementation notes
+
+> Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.
+
+### From the server Thresholds section
+
+Moved verbatim from the old "Thresholds" section of `src/server/CLAUDE.md`. The rules stay there in short form; current values are in [server-thresholds](server-thresholds.md). Dates, plan names and "was" notes below are history.
+
+- **Security (plan squishy-canyon, Workstream A)** — see [docs/architecture/security.md](security.md):
+  - **CORS policy** (S1): `ALLOWED_ORIGINS` (comma-separated) = explicit allowlist; unset ⇒ non-prod reflects ANY origin (dev/LAN/netgate), prod is closed. `src/server/net/httpCors.ts` (`resolveCorsPolicy`).
+  - **Auth rate limits** (S2): login+register **10/min/IP** (combined), `/auth/google*` + `/auth/exchange` **30/min/IP**; 429 + `Retry-After`. `/healthz` + `/diag` not limited. `src/server/net/HttpRateLimit.ts`.
+  - **Inbound string-id bound** (S5): all inbound wire ids `.min(1).max(64)`. testMode seed arrays bounded ≤ **64** entries at onCreate (`MAX_SEED_ENTRIES`, `src/server/rooms/roomSeedBounds.ts`).
+  - **Test-room gating** (S6): non-galaxy rooms register only when `NODE_ENV !== 'production'` OR `EQX_ENABLE_TEST_ROOMS=1` (`src/server/rooms/testRoomGating.ts`). `EQX_ALLOW_DEV_OVERRIDES=1` in production logs a boot warning.
+  - **Fail-closed JWT** (S9): production throws at boot on a missing/placeholder `JWT_SECRET`.

@@ -201,6 +201,28 @@ Target keys: `s:<entityId>` (swarm) or `p:<playerId>`.
 
 Open work: [docs/handoff/fire-control-to-be-continued.md](../handoff/fire-control-to-be-continued.md).
 
+## Client rules in detail
+
+Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each rule and points here.
+
+### Active slot selection + energy (weapons/energy/AI overhaul, 2026-06-01)
+
+The per-weapon picker is GONE. Each ship fires its **catalogue-bound loadout** (scout/fighter/heavy/gunship → bolts, interceptor → beams, missile-frigate → missiles); the server ignores any claimed `weapon` field (Step 3). The pilot now selects the active **weapon slot**, not the weapon type.
+
+- `activeSlotId: string` is in Zustand (discrete UI selection — purity-clean). Slot selection lives in the **weapon-slot action of [SpeedDialMenu](../../src/client/components/SpeedDialMenu.tsx)** (`data-testid="slot-selector"`, `data-slot-id` = the hot slot) — it cycles to the next of the local ship's `slots`; today every gameplay ship has one slot so the cycle is a no-op affordance, forward-compatible with multi-slot kinds. (Pre-2026-06 this was a standalone `SlotSelector.tsx` `ToggleButtonGroup`; the speed-dial refactor consolidated it.) `Keyboard.ts` no longer binds 1/2/Q. `setActiveSlotId` clears `lastFireMs` so a slot swap resets the cooldown gate.
+- `ColyseusClient.tickPhysics()` derives the firing weapon from the active slot's first mount (`localShipMounts()` → `resolveSlotMounts(kind, activeSlotId)`), computes the slot cooldown as the **max** over the slot's mounts, and clears `liveBeam` when the slot's weapon isn't hitscan. `sendFire()` spawns each ghost with its mount's bound `weaponId` and sends `{ weapon: slotWeapon, slotId: activeSlotId }`.
+- **Energy** is the local player's PREDICTED resource (`ColyseusClient.predEnergy`): regen + boost drain in `tickPhysics`, fire drain (once per slot trigger) in `sendFire`, hard-reconciled from `snap.states[localId].energy` each snapshot. Read per-frame by the GameHud status capsule's energy fill (`useEnergyFill`, top-center) via `getGameClient().getPredictedEnergy()` + a direct-DOM `scaleX` write — NEVER a per-frame Zustand write (Invariant #2). `energyMax` (the constant-per-kind denominator) is the one Zustand read, set on spawn. Local ghost fire/boost is gated on `canAfford(predEnergy, slotCost)` so prediction matches the server's gating. `data-energy-pct` is the E2E hook. Energy math is the shared pure `src/core/combat/Energy.ts`. Regression: [tests/e2e/energy-bar.spec.ts](../../tests/e2e/energy-bar.spec.ts) + reworked [tests/e2e/weapon-switching.spec.ts](../../tests/e2e/weapon-switching.spec.ts).
+
+### Fire control (universal) + AUTO group mode + facing boost
+
+Full story: [docs/architecture/fire-control.md](fire-control.md). There is ONE HUD ([hud/GameHud.tsx](../../src/client/hud/GameHud.tsx)); the `?ui=` variants, the legacy HUD panels, the auto-fire toggle and manual aim are gone.
+
+- **Every weapon group fires only at a LOCKED target** (the server refuses any player shot without a completed lock). `ColyseusClient.fcFireTick` is the only client fire path: **AUTO** groups pick + lock hostile targets in reach/arc and fire on their own; **MAN** groups fire while their weapon-strip chip is held or Space on the active group. There is no auto-fire toggle and no free fire.
+- **The own-ship `groups` / `lockedBy` snapshot slices are always applied** (`applyFcGroups` → Zustand `fcGroups` on change + `mirror.localGroups` / `localLockedBy`, #16).
+- **Lock line (`updateLockGuide` / `guideLock`):** the pick uses the SHARED `lockLineScore` (`@core/combat/lockLine`), and `lock_track` carries `b` = `encodeAim(bearing)`; the server verifies the claim with the same rule (`lockLineHolds`, #15) and ignores a target without `b`. Sends only when group/key change. The pick is alloc-free per candidate (cached `s:`/`p:` keys, bound visitors). Lock: `ColyseusClient.lockGuide.test.ts`.
+- **`fcTickMountAngles` is THE client mount-angle path** (via `tickLocalMountAim`, #12): each mount slews to its group's lock (locked, else acquiring) from the MIRROR pose, or back to base. The client sends no `aim` input any more. Lock: `ColyseusClient.liveBeamMountAimPose.test.ts`.
+- **Input:** desktop `installMouseLock` (hold LMB = lock line, RMB = boost via `aimInput`, keys 1–9 group / Shift+1–9 AUTO⇄MAN / T lock selected / X clear); touch `installFcKeys` + the GameHud move stick and lock-line stick. `?instantLock=1` (testMode) makes locks complete instantly and `?anyTarget=1` (testMode) lets AUTO pick neutral NPCs/structures, for tests.
+
 ## Server implementation notes
 
 > Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.
@@ -223,3 +245,9 @@ Open work: [docs/handoff/fire-control-to-be-continued.md](../handoff/fire-contro
 - **NPC capital turrets fire only with a completed lock on their own target** (PR 1d slice 2): `WeaponMountTicker.tickCapitalMounts` calls the `fireBlocked(droneId, mountTargetId)` dep (→ `NpcLockSubsystem.fireBlocked`) last, before spending the reload; a blocked turret keeps aiming. A capital holds one lock per pilot (entries are per pilot × NPC), and its lock time is the FASTEST over one profile per mount size (`geos`), so AA locks a fighter fast while a 16" gun alone locks it slowly (~38 s at 5 km, the same as a player battleship). testMode `instantLock` on a pilot also completes every NPC lock on them while in reach (`NpcLockDeps.instantLock` → `LockSubsystem.isInstant`); capital integration tests use it. Lock: `tests/unit/capitalLockGate.test.ts`.
 - **NPC capital turrets engage hostile STRUCTURES too** (2026-11-10): the candidates are the pilots plus the room's per-tick hostile-structure set (`hostileStructures` dep → `hostileStructureCircles`, built by `fillStructureTargets`), still filtered by the drone's `hostileTo`. A structure target is gated by the TURRET's own lock (`droneMountLocks`, `stepLock` per tick with that mount size's `WEAPON_LOCK_PROFILE`, its gun's reach, the hull's `sensorFor`, the structure's radius as signature; uncapped: a heavy gun locks a small structure slowly, a sub-capital gun past `maxSeconds` skips it in its search). Before this a capital could not fire at a structure at all (it never fires as a hull). Locks: `capitalLockGate.test.ts`, `tests/integration/sectorRoom/coastalDuel.test.ts`.
 - **Not yet gated:** a drone shot at a non-pilot target (an NPC or structure) that strays into a pilot.
+
+### From the server Thresholds section
+
+Moved verbatim from the old "Thresholds" section of `src/server/CLAUDE.md`. The rules stay there in short form; current values are in [server-thresholds](server-thresholds.md). Dates, plan names and "was" notes below are history.
+
+- **Fire control — NPC lock step**: O(pilots × hostile NPCs) every 6 ticks now that every pilot is tracked; ~0.015 ms at 56 drones × 4 pilots, ~0.037 ms at 56 × 10 (`benchmarks/npc-locks.bench.ts`, laptop 2026-11-09). The room's `forEachHostileNpc` scans the whole swarm per pilot; budget 0.1 ms per step.

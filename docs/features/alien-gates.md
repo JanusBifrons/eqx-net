@@ -14,7 +14,7 @@ Plan `soft-leaping-truffle` v4, phase A. Every sector has a ring of ancient gate
 
 ## Where they sit
 
-Each sector's gates are worked out by pure shared code (`src/core/galaxy/alienGates.ts`):
+Each sector's gates are worked out by pure shared code (`src/core/galaxy/alienGates.ts`: `alienGateSites`, `alienGateCandidates`, and the owner `ALIEN_GATE_OWNER`). Server seeding and the client inspector both read it:
 
 - **The ideal site** is 4100 units from the centre, along the galaxy-map bearing to the neighbour. Its twin sits on the matching edge of the neighbour, facing back.
 - **The gates are placed after the sector's NPC bases**, so a big base never loses its site to a gate. Each gate takes the free spot nearest its ideal site (`alienGateCandidates`, a 250-unit grid searched nearest-first). Asteroids under a gate are cleared quietly.
@@ -45,6 +45,12 @@ A disabled ship's **engines and weapons go offline for 10 seconds**. Its hull is
 | E2E | `tests/e2e/alien-gate.spec.ts` (`alien-gate-test` room): the owner reads "The Ancients", no pairing offer, firing in the zone shows the disabled chip |
 
 The `alien-gate-test` room seeds one gate at the origin through the `testAlienGate` room option, with the pilot spawning inside its zone. The timetable runs on the teleporter test speed-up (`teleportCycleScale` shortens the minute too).
+
+## Client rules in detail
+
+Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each rule and points here.
+
+- **v4 A — alien gates.** The inspector shows a gate's destination and next jump from shared pure code (`components/alienGateInfo.ts`: nearest ideal site + the timetable; approximate, browser clock), never a pairing offer. `DisabledIndicator` (top-centre) reads the Zustand `disabledUntil`, written by `ColyseusClient.applyLocalDisabled` from the own-ship `disabledMs` only when the disable starts, ends or is re-applied. While disabled, `tickPhysics` strips local input through the shared `gateDisabledInput` (both the per-tick and the heartbeat paths) and stops manual and auto fire, so prediction matches the server (#15). `resetPredictionState` clears it.
 
 ## Server implementation notes
 

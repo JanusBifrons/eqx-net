@@ -175,6 +175,8 @@ damageTo(self) = min(RAM_DAMAGE_MAX,
 - **Constants** (`Ramming.ts`): floor 50 u/s; `RAM_DAMAGE_PER_ENERGY` 1.25e-4
   (a full-speed fighter head-on at the 2× default scale ⇒ ~166 to each, 55 % of
   a fighter's 300 shield + hull); `RAM_DAMAGE_MAX` 400 per side per hit.
+  The arcade toughness layer (2026-11-13) scaled both ram constants ×1.75: a
+  full-speed fighter head-on now deals ~291 to each (~55 % of its 525 pool).
 - **Pipeline unchanged.** Damage goes through `applyDamage` (shield first, then
   hull; the collider swaps on the shield 0-cross) and is rounded before the emit
   guard (P3.3). A shield-popping hit drops its overflow, as for any weapon, so a
@@ -228,6 +230,13 @@ user brief ("small but obvious for now, expand later"). Hooks exist
 (`SHIELD_BROKEN`/`SHIELD_RESTORED` bus events, `shield_broken`/
 `shield_restored` diagnostics, `entry.shieldDown` on the render mirror).
 
+## Client rules in detail
+
+Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each rule and points here.
+
+- **Collision and obstacle changes require E2E test coverage.** Any change to how obstacles or remote ships are synced, reset, or lerped in `ColyseusClient.ts` must be accompanied by an E2E test in `tests/e2e/` that would fail if the change were reverted (the old `robustness.spec.ts` moved to `tests/perf/` on 2026-11-06: its tight correction-rate numbers are host-load measurements, and the netgate gates that signal). Use `data-obstacle-positions` and `data-ship-positions` on the game surface element to observe entity positions from Playwright. The `test-with-logs` fixture provides `getPredStats`, `getEqxLogs`, and `clearEqxLogs` helpers.
+
+- **Every collidable entity must be in predWorld.** This is a load-bearing rule we have re-discovered repeatedly (Phase 6b lingering hulls, scrap — see `docs/LESSONS.md`). The render mirror (`mirror.ships`, `mirror.lingeringShips`, `mirror.swarm`, future maps) is what the **renderer** reads. The render mirror is NOT what the prediction physics reads. **Any time you add a new entity type that the local player can collide with or shoot, you MUST register a body in predWorld** — mirroring the existing lingering-hull + scrap patterns. The local hitscan ray-test runs against predWorld, not the render mirror; without a body, the player flies through AND shoots through. Pattern: (1) namespace the body id with a prefix (`linger-`, `swarm-`, ...), (2) lazily `predWorld.spawnShip(bodyId, x, y, kind)` once `kind` is known, (3) `setShipState` every snapshot tick to keep the authoritative pose tracked, (4) `despawnShip` when the entity disappears from `mirror.X`, (5) track spawned bodies in a `predXIds: Set<string>` for room-teardown cleanup. Server-side counterpart: the new entity needs to be iterated in BOTH `advanceProjectiles` AND `handleFire`'s hitscan loop, AND `applyDamage` must route the new targetId form. Remote ships are spawned via `world.spawnShip()` in `syncMirror()` and reset to `snap.states[remoteId]` before `reconciler.reconcile()` in `handleSnapshot()` — identical to the obstacle pattern. Rendering reads from predWorld + lerp offsets in `updateMirror()`. Do NOT render remote ships from `remoteHistory` (the 100 ms display-delay buffer); that pattern causes collisions to be delayed by ~RTT/2 and corrections to accumulate across hits.
 ## Rapier castRay API
 
 Read before calling `world.castRay` (moved from `src/core/CLAUDE.md`; do not look these up again).

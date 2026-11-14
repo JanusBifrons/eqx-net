@@ -22,3 +22,26 @@ The trip IS the loading screen; the player shouldn't notice it (the user: "like 
 - **In:** after `TRAVEL_MIN_S` (minus the approach) and once the destination is loaded, the ship is placed on approach out along its heading (`mirror.travelJumpX/Y`; the renderer shifts the sky by it so the stars carry on), brakes from warp to a glide, then glides onto its arrival point (`travelApproach`), so what's near the arrival point is flown past at a visible speed. Landing opens `joinMinimumElapsed` → `client_ready` → the ship arrives for everyone (`warp: 3`).
 - **Feel knobs** (`ColyseusClient`): `TRAVEL_OUT_S` 3, `TRAVEL_MIN_S` 25 (the user: "20–30 s, it needs to feel significant"), `TRAVEL_BRAKE_S` 2.5, `TRAVEL_GLIDE_V` 2500, `TRAVEL_GLIDE_D` 4000.
 - **Known gap:** newly baked art re-uploads its whole atlas page, a GPU stall (0.25–0.6 s on integrated graphics) wherever a batch of new art lands. Fix in progress: upload new art in small pieces.
+
+## Client rules in detail
+
+Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each rule and points here.
+
+- [components/HyperspaceOverlay.tsx](../../src/client/components/HyperspaceOverlay.tsx) is unchanged: left-edge vertical spool bar with rocket icon, ms-precision countdown, bottom-up green fill, and red abort button during SPOOLING; warp-streak background during IN_TRANSIT. Reads from Zustand; transit messages travel over the existing Colyseus room socket via `transitClient.engageTransit(room, key, arrival?)` / `cancelTransit(room)`. The spool duration is mirrored into Zustand as `transitSpoolMs: number | null` (set by `ColyseusClient`'s `transit_state` SPOOLING handler, cleared on DOCKED/ARRIVED) so the overlay can render an ms-precision countdown without re-deriving timing.
+
+### Sector-to-sector trips are the loading screen (Phase 4 travel state)
+
+- A transit never raises the curtain or `WarpScreen`: the store's `travelling` covers the trip, and `computeShowLoadingScreen` / `useWarpOrchestration` keep them down (HUD stays up). Only the first join uses the curtain.
+- The trip is `ColyseusClient.stepTravel` (out → cruise → approach). It writes the local ship's mirror entry LAST in `updateMirror`, overriding prediction while it lasts.
+- Nothing fades: the old sector is flown out of (the room swap waits for it), the new one is flown into. Never add a fade or a cut to hide loading; stretch the trip instead.
+- A new jump of the local ship during a trip must add to `mirror.travelJumpX/Y` so the sky carries across it.
+- Story: [docs/architecture/travel-state.md](travel-state.md).
+## Server implementation notes
+
+> Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.
+
+### From the server Thresholds section
+
+Moved verbatim from the old "Thresholds" section of `src/server/CLAUDE.md`. The rules stay there in short form; current values are in [server-thresholds](server-thresholds.md). Dates, plan names and "was" notes below are history.
+
+- **Phase 5 — in-game roster switching via transit (2026-05-13)**: `EngageTransitSchema` gains an optional `shipId: z.string().min(1)` field. When present, `TransitOrchestrator.beginTransit(playerId, target, arrival?, shipId?)` validates ownership via `playerShipStore.get(shipId).playerId === playerId` BEFORE spinning up the state machine — foreign / unknown ids reject with `destination_unavailable` (single load-bearing check that prevents ship-hijack via the wire). On commit the `shipId` is threaded through `reserveSeatFor` options to the destination room's `onJoin`, where the existing Phase 3 shipId-bind path (`JoinOptionsSchema.shipId`) hydrates the named roster row instead of the source ship's Limbo entry. The orchestrator's 4th constructor arg is the `PlayerShipStore`; omitting it makes any shipId-carrying request reject as unknown (safe-by-default). Absent `shipId` ⇒ legacy path (the source ship continues into the destination, exactly as Phase 8 sub-phase B). The CLIENT'S in-game spawn-from-roster does NOT use this path — it dispatches a `pendingShipSwap` Zustand intent that App.tsx executes as a direct leave-current-room + join-new-room cycle (loading spinner via 'connecting' phase). The transit-orchestrator shipId path is kept as a future seam (server-side validated; not invoked by current UI).
