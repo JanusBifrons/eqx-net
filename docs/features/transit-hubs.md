@@ -14,7 +14,7 @@ The network is worked out once, deterministically, by pure shared code (`src/cor
 - **Both ends of a link grow a teleporter** tagged with the link's id (`GrownPlacement.link`). The far ends are ordinary bases (a heart's citadel, a trade outpost); their teleporter is added on top of their normal build.
 - **The two find each other at run time** by that id, through the teleport broker (`findLinkTwin`). Nothing is paired by position.
 
-A hub makes room in its sector by dropping extra bases if the sector would go over its NPC structure budget. Existing bases don't move: a base's role and layout are rolled exactly as before, and only its link teleporters are new (`BASE_GROWTH_VERSION` 8).
+A hub makes room in its sector by dropping extra bases if the sector would go over its NPC structure budget. Existing bases don't move: the `transit` role is never rolled (weight 0), so a base's role and layout are rolled exactly as before, and only its link teleporters are new (`BASE_GROWTH_VERSION` 8).
 
 ## Riding one
 
