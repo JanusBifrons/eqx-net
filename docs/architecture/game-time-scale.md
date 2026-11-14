@@ -145,3 +145,16 @@ Moved from `src/core/CLAUDE.md` (2026-11-14); kept for the record.
 
 - **Superseded (time scale, 2026-11-12):** the rate no longer slows the physics worker alone. It feeds `LoadSpeedController`, which sets the sector's game speed; the worker then runs 60 × speed fixed ticks per wall second on its per-world schedule (`SET_TIME_SCALE`). `CLOCK_RATE` carries only the testMode `testTimeScale`. Original mechanism, kept for the record:
 - The worker reads the rate from the SAB header (`CLOCK_RATE_IDX`) at the start of each tick and scales the **accumulator input** — `physics.tick(FIXED_DT * rate)` — NOT Rapier's per-step dt. Scaling Rapier's dt would change collision behaviour; scaling the accumulator keeps every step deterministic and just makes some wall-clock ticks step zero times.
+## Server implementation notes
+
+> Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.
+
+- **Game speed is per sector.** Each `SectorRoom` owns `this.gameClock` (`createSectorClock()`): inside the room, read `this.gameClock.now()` and schedule with `this.gameClock.after` / `.every`, and hand room-owned subsystems `now: () => this.gameClock.now()` (never the process clock: it would not follow the sector's speed). The room tick loop and its physics world run 60 × speed ticks per wall second (`SET_TIME_SCALE` to the worker on every change).
+- **The process clock** (`time/gameTime.ts`) is for cross-sector world time (directors, economy, convoys, wallets, holds). Outside a room, gameplay reads `gameNow()` and schedules with `gameSetTimeout` / `gameSetInterval` / `gameClearTimer` (unref'd), never `Date.now()` / `setTimeout` / `setInterval`. At 1× `gameNow()` IS `Date.now()`.
+- **The rule is a lint error** in `src/server` and `src/core` outside the real-time allowlist in `eslint.config.js`. Real time covers persistence, networking, auth/identity, push, routes, logs/audit, perf measurement, the room tick scheduler and boot.
+  - A new real-time FILE goes on that list.
+  - A one-off real-time line in a gameplay file gets `// eslint-disable-next-line no-restricted-properties -- real time: <why>`.
+  - Never use real time just to dodge the rule. A timer that should follow the game speed but runs on wall time desyncs the moment the speed isn't 1×.
+- **Subsystems take `now` / `nowMs` deps** (break-ins, holds, directors, economy). Their DEFAULT is `gameNow`; tests inject their own.
+- **Saved timestamps are game time** (drift from wall time while the speed isn't 1×; see the design note §0).
+- Story: [docs/architecture/game-time-scale.md](../architecture/game-time-scale.md).
