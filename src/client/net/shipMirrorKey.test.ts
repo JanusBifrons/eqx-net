@@ -26,7 +26,7 @@ const ROWS: Row[] = [
   { name: 'welcome ship pending join (inactive) stays the ship I fly', sid: 'S-welcome', playerId: ME, isActive: false, local: local(), expected: ME },
   { name: 'displaced own hull is a parked hull', sid: 'S-old', playerId: ME, isActive: false, local: local(), expected: 'S-old' },
   { name: 'spectating: the own hull I parked is a parked hull', sid: 'S-welcome', playerId: ME, isActive: false, local: local({ localSpectating: true }), expected: 'S-welcome' },
-  { name: 'spectate race: own ACTIVE entry while spectating is not drawn', sid: 'S-welcome', playerId: ME, isActive: true, local: local({ localSpectating: true }), expected: null },
+  { name: 'spectate race: own ACTIVE entry while spectating is drawn as the hull it is becoming (its shipInstanceId, never the playerId)', sid: 'S-welcome', playerId: ME, isActive: true, local: local({ localSpectating: true }), expected: 'S-welcome' },
   { name: 'remote active ship', sid: 'S-q', playerId: 'Q', isActive: true, local: local(), expected: 'Q' },
   { name: 'remote active ship while I spectate', sid: 'S-q', playerId: 'Q', isActive: true, local: local({ localSpectating: true }), expected: 'Q' },
   { name: 'remote parked hull', sid: 'S-q', playerId: 'Q', isActive: false, local: local(), expected: 'S-q' },

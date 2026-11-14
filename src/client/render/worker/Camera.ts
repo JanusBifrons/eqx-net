@@ -547,8 +547,14 @@ export class Camera {
       this.glideElapsedMs += dtMs;
       const t = Math.min(1, this.glideElapsedMs / this.glideDurMs);
       const e = 1 - Math.pow(1 - t, 3); // ease-out cubic
-      const cx = this.glideFromX + (this.glideToX - this.glideFromX) * e;
-      const cy = this.glideFromY + (this.glideToY - this.glideFromY) * e;
+      // Glide to the LIVE follow target when there is one (the ship you just
+      // took keeps flying during the glide): a fixed end point left the camera
+      // that far behind, and the follow snapped it on at the end (a jump the
+      // size of the ship's travel over the glide; RTS Part A seamless hand-over).
+      const toX = this.followTarget !== null ? this.followTarget.x : this.glideToX;
+      const toY = this.followTarget !== null ? this.followTarget.y : this.glideToY;
+      const cx = this.glideFromX + (toX - this.glideFromX) * e;
+      const cy = this.glideFromY + (toY - this.glideFromY) * e;
       this.target.x = this.screenW / 2 - cx * this.target.scale.x;
       this.target.y = this.screenH / 2 - cy * this.target.scale.y;
       if (t >= 1) this.gliding = false;

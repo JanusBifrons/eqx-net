@@ -64,6 +64,11 @@ export interface ShipRenderState {
    *  keyed by it; parked (AI-flown) hulls, keyed by shipInstanceId in the same
    *  map since RTS Part A S3, always carry it. Read through `shipOwner` / `isOwnedByMe`. */
   ownerPlayerId?: string;
+  /** The wire's shipInstanceId of the hull this entry draws (the snapshot /
+   *  schema key). A parked hull is keyed by it; an active ship (keyed by its
+   *  pilot's playerId) carries it so a re-key (taking or letting go of the
+   *  controls) finds the entry it moves (`net/shipRekey.ts`). */
+  shipInstanceId?: string;
 }
 
 /**
@@ -658,6 +663,15 @@ export interface RenderMirror {
   damagedShips?: Set<string>;
   /** Ships that just exploded (single-frame trigger). */
   explodingShips?: Set<string>;
+  /** Ship re-keys since the last rendered frame, as flat pairs
+   *  `[from0, to0, from1, to1, ...]` (one-frame trigger, cleared by
+   *  `consumeOneFrameTriggers`). A ship moves between its pilot's playerId and
+   *  its shipInstanceId when someone takes or lets go of its controls (RTS
+   *  Part A). The renderer moves its per-ship state (sprite, art, turrets,
+   *  health bar, label, engine and shield effects, selection) to the new key
+   *  instead of rebuilding it, so the hand-over doesn't flicker. Written only
+   *  by `ColyseusClient.rekeyShip`. */
+  pendingShipRekeys?: string[];
   /** Phase 4 (Leveling & XP, WS-B1) — one-shot level-up triggers to play this
    *  frame. Populated by `ColyseusClient`'s `ship_level_up` handler (pooled —
    *  the array's slot instances persist; `.length` truncates the logical view,

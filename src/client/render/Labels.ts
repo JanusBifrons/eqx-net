@@ -1,6 +1,7 @@
 import { Container, Text, TextStyle } from 'pixi.js';
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import { isParkedHull } from './shipOwnership.js';
+import { moveKey } from './shipRekey.js';
 
 /**
  * Per-entity text label manager. One small text label appears above every
@@ -110,6 +111,14 @@ export class LabelManager {
     this.container = new Container();
     // Labels render on top of everything else in this container hierarchy.
     parent.addChild(this.container);
+  }
+
+  /** RTS Part A seamless hand-over: the ship's key changed; its label (and
+   *  glyph atlas) moves with it. A stale label under `to` is destroyed. */
+  rekey(from: string, to: string): void {
+    // Rare (a hand-over), never per frame: the two key strings are fine.
+    const stale = moveKey(this.labels, `p:${from}`, `p:${to}`);
+    stale?.text.destroy({ texture: true, textureSource: true });
   }
 
   update(mirror: RenderMirror): void {

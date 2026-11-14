@@ -78,7 +78,9 @@ describe('Spectate: the own hull is never re-predicted from a pose-less patch', 
       states: { [SHIP]: { x: 4010, y: 5, vx: 0, vy: 0, angle: 0, angvel: 0, playerId: PID, isActive: false } },
     });
     expect(c.mirror.ships.has(PID), 'never drawn as the ship I fly').toBe(false);
-    expect(c.mirror.ships.get(SHIP)?.x, 'drawn at its snapshot pose, not (0,0)').toBeCloseTo(4010, 1);
+    // Seamless hand-over (RTS Part A): the entry moved over from the flown
+    // ship at its drawn pose (4000) and eases to the body; never (0,0).
+    expect(c.mirror.ships.get(SHIP)!.x, 'drawn where the ship is, not (0,0)').toBeGreaterThan(3990);
     expect(c.predWorld!.hasShip(SHIP), 'its remote body, bare shipInstanceId key').toBe(true);
     expect(c.predWorld!.hasShip(PID)).toBe(false);
     expect(c.predWorld!.getShipState(SHIP)!.x).toBeCloseTo(4010, 1);

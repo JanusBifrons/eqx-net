@@ -94,6 +94,7 @@ import { setCanvasPointerCapture } from './pointerCapture.js';
 import { FrameTimeRing } from '@core/perf/FrameTimeRing';
 import { localCameraKey } from './camera/localCameraKey';
 import { isParkedHull } from './shipOwnership.js';
+import { forEachShipRekey, moveKey, moveSetKey, probeIdentity } from './shipRekey.js';
 import type { RenderPerfReading, PerfProbeOp, RenderCountReading } from '@core/contracts/IRenderer';
 
 // Most colour + builder constants moved to pixi/spriteBuilders.ts;
@@ -467,6 +468,50 @@ export class PixiRenderer implements IRenderer {
     this._swarmSpriteSigs.delete(id); // campaign 3.2 — drop build signature with the sprite
     this._artCtx.handles.delete(id); // Machined art — drop the handle with the sprite
   };
+  /** Bound once (#14): the per-pair step of `applyShipRekeys`. */
+  private readonly _rekeyShip = (from: string, to: string): void => {
+    this.rekeyShip(from, to);
+  };
+
+  /**
+   * RTS Part A seamless hand-over: a ship's mirror key changed (someone took
+   * or let go of its controls; `ColyseusClient.rekeyShip` queued the pair on
+   * `mirror.pendingShipRekeys`, which crosses the worker boundary with the
+   * mirror). Every per-ship piece of renderer state MOVES to the new key, so
+   * `updateShipSprites` finds the ship's sprite already built and the sweep
+   * never destroys it: same sprite and art handle, same turret cluster (guns,
+   * recoil, angles), health bar, label, exhaust, shield view, selection.
+   * A stale sprite under `to` is torn down first, exactly as the sweep would.
+   * Legacy effects (engine particles, shield ring) re-register by id on their
+   * own each frame; their visuals don't depend on the key's history.
+   */
+  private rekeyShip(from: string, to: string): void {
+    if (from === to) return;
+    const sprite = this.sprites.get(from);
+    if (sprite === undefined) return;
+    const stale = this.sprites.get(to);
+    if (stale !== undefined) {
+      this.sprites.delete(to);
+      stale.parent?.removeChild(stale);
+      this._forgetSprite(to, false);
+      stale.destroy({ children: true });
+    }
+    moveKey(this.sprites, from, to);
+    moveKey(this._artCtx.handles, from, to);
+    this.mountVisuals.rekeyShip(from, to);
+    this.healthBars?.rekey(from, to);
+    this.labels?.rekey(from, to);
+    this._farIcons.forgetShip(from, sprite);
+    this._fxEngines?.rekey(from, to);
+    this._fxShields?.rekey(from, to);
+    if (this._selectedId === from) this._selectedId = to;
+    if (this._hoveredId === from) this._hoveredId = to;
+    if (moveSetKey(this._fleetSel, from, to)) this.publishFleetSelection();
+    this._shipRekeysApplied++;
+  }
+
+  /** Re-keys this renderer has applied (diagnostic / E2E). */
+  private _shipRekeysApplied = 0;
   /** P3.8 — per-structure slewed mount (barrel/drill) arc-local angles, keyed by
    *  `swarm-<entityId>`. Persists across frames so the structure barrel SLEWS
    *  toward its target (rotateMountToward) instead of SNAPPING in one frame (the
@@ -2015,6 +2060,9 @@ export class PixiRenderer implements IRenderer {
     this.mountVisuals.setLocalAim(mirror.localPlayerId, mirror.localAimMountIds);
     this.applyHullZoom(mirror);
     this.mountVisuals.setFrame(this.fxNow(), this.effects?.getQuality() ?? 'medium');
+    // Seamless hand-over (RTS Part A): move re-keyed ships' state BEFORE the
+    // sprite pass, so it finds each sprite under its new key (no rebuild).
+    forEachShipRekey(mirror.pendingShipRekeys, this._rekeyShip);
     updateShipSprites(mirror, this._shipUpdaterCtx);
 
     // Explosion sprites spawned this frame for destroyed ships.
@@ -3627,6 +3675,26 @@ export class PixiRenderer implements IRenderer {
    * ship's screen point, both as the frame renders. Read by the
    * `__eqxFleetRingProbe` DEV hook (`?worker=0`). Not used by gameplay.
    */
+  /**
+   * Test-only (RTS Part A seamless hand-over): the identity of the ship drawn
+   * under `key`: its sprite's and turret cluster's Pixi `uid`, its art handle's
+   * probe id, and how many re-keys this renderer has applied. A spec reads it
+   * before and after taking a ship's controls: the same numbers under the new
+   * key mean nothing was rebuilt. Read by the `__eqxShipVisualProbe` DEV hook
+   * (`?worker=0`). Not used by gameplay.
+   */
+  shipVisualProbe(key: string): { sprite: number | null; cluster: number | null; artHandle: number | null; rekeys: number } {
+    const sp = this.sprites.get(key);
+    const cl = this.mountVisuals.clusterOf(key);
+    const h = this._artCtx.handles.get(key);
+    return {
+      sprite: sp?.uid ?? null,
+      cluster: cl?.uid ?? null,
+      artHandle: h === undefined ? null : probeIdentity(h),
+      rekeys: this._shipRekeysApplied,
+    };
+  }
+
   fleetRingProbe(): { id: string; ringX: number; ringY: number; shipX: number; shipY: number; frames: number } {
     this._ringProbeOn = true;
     return { ...this._ringProbe };

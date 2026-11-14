@@ -628,6 +628,13 @@ function GameSurface({
         const r = rendererRef.current as unknown as { fleetRingProbe?: () => unknown };
         return r?.fleetRingProbe ? r.fleetRingProbe() : null;
       };
+      // RTS Part A seamless hand-over — the identity of the ship drawn under a
+      // mirror key (sprite / turret cluster uid, art handle id), so a spec can
+      // assert taking the controls rebuilt nothing. Main-thread renderer only.
+      (window as unknown as { __eqxShipVisualProbe?: (key: string) => unknown }).__eqxShipVisualProbe = (key) => {
+        const r = rendererRef.current as unknown as { shipVisualProbe?: (key: string) => unknown };
+        return r?.shipVisualProbe ? r.shipVisualProbe(key) : null;
+      };
       // Cinematic camera + HUD control for the showcase capture pipeline
       // (docs/architecture/showcase-pipeline.md). Calls the renderer DIRECTLY —
       // shot keyframes carry x/y and must never touch Zustand (invariant #2).

@@ -160,6 +160,18 @@ export class FarZoomIcons {
     return rel === 'self' ? FAR_ICON_SELF_COLOUR : this.colours[rel];
   }
 
+  /** RTS Part A seamless hand-over: a ship changed key. Its icon is dropped
+   *  and its (moved, still drawn) sprite made renderable again, so a hull no
+   *  longer drawn as an icon (parked hulls have none) is never left hidden;
+   *  the next update re-applies the icon under the new key if it needs one. */
+  forgetShip(from: string, sprite: Container | undefined): void {
+    const rec = this.ships.get(from);
+    if (rec === undefined) return;
+    rec.icon.destroy();
+    this.ships.delete(from);
+    if (sprite !== undefined) sprite.renderable = true;
+  }
+
   /** Call after the ship + swarm sprites are posed this frame. */
   update(mirror: RenderMirror, sprites: Map<string, Container>, scale: number): void {
     const g = ++this.gen;

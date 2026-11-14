@@ -414,6 +414,46 @@ describe('Camera — one-shot glide (Phase 4 WS-A2 smooth ship-switch)', () => {
     expect(cam.center.x).toBeCloseTo(1000, 3);
   });
 
+  it('a glide onto a MOVING ship ends on it: no jump when follow takes over (RTS Part A seamless take controls)', () => {
+    // Take controls: the camera glides from where you were looking to the
+    // ship you took, which keeps flying (here 400 u/s along x). The renderer
+    // re-issues follow with the ship's pose every frame. A glide to the FIXED
+    // pose at take-over time ended 420 ms × 400 u/s ≈ 168 u behind the ship,
+    // and follow then snapped the view on in one frame.
+    const target = makeTarget();
+    const cam = new Camera(target, { followLerpFactor: 1 });
+    cam.setScreenSize(800, 600);
+    cam.moveCenter(0, 0);
+    let shipX = 1000;
+    cam.follow({ x: shipX, y: 0 });
+    cam.glideTo(shipX, 0, 420);
+    let prev = cam.center.x;
+    let maxStep = 0;
+    for (let i = 0; i < 40; i++) {
+      shipX += 400 * (16 / 1000);
+      cam.follow({ x: shipX, y: 0 });
+      cam.tick(16);
+      const c = cam.center.x;
+      if (i > 0) maxStep = Math.max(maxStep, Math.abs(c - prev));
+      prev = c;
+    }
+    expect(cam.isGliding()).toBe(false);
+    expect(cam.center.x).toBeCloseTo(shipX, 3);
+    // The hand-over from glide to follow is one ordinary frame of ship motion,
+    // never a catch-up jump (6.4 u per frame at 400 u/s; the glide's own
+    // biggest step, early on, is ~1000 × (1 − (1 − 16/420)³) ≈ 110 u).
+    let stepAtEnd = 0;
+    for (let i = 0; i < 3; i++) {
+      shipX += 400 * (16 / 1000);
+      cam.follow({ x: shipX, y: 0 });
+      const before = cam.center.x;
+      cam.tick(16);
+      stepAtEnd = Math.max(stepAtEnd, Math.abs(cam.center.x - before));
+    }
+    expect(stepAtEnd).toBeLessThan(7);
+    expect(maxStep).toBeLessThan(150);
+  });
+
   it('cancelGlide stops the ease and hands the camera back to follow/pan', () => {
     const target = makeTarget();
     const cam = new Camera(target, { followLerpFactor: 1 });

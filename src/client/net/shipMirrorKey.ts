@@ -13,16 +13,18 @@
  *  - `shipInstanceId`  — a parked hull (`mirror.ships`, same list since S3): any inactive
  *                        ship that is not the pending welcome ship, including
  *                        the local player's displaced hulls and the hull they
- *                        parked by Spectate / Command.
- *  - `null`            — the spectate race: the local player is spectating but
- *                        the wire still lists their ship ACTIVE (the server's
- *                        `isActive=false` lands a tick or more after
- *                        `sendSpectate` dropped the local body). The mirror
- *                        must draw nothing for it: a pose-less schema entry
- *                        would respawn a phantom local ship at (0,0). The
- *                        snapshot router still hands that state to the
- *                        reconciler under the playerId (its pose slice is not
- *                        the mirror), exactly as before.
+ *                        parked by Spectate / Command. ALSO the spectate race:
+ *                        the local player let go of the controls but the wire
+ *                        still lists their ship ACTIVE (the server's
+ *                        `isActive=false` lands a tick or more after the send).
+ *                        `ColyseusClient.dropLocalShipForCommand` has already
+ *                        moved the drawn entry to the shipInstanceId (seamless
+ *                        hand-over, RTS Part A), so the ship keeps being drawn
+ *                        as the hull it is becoming; it is never keyed by the
+ *                        playerId (a pose-less schema entry there respawned a
+ *                        phantom local ship at (0,0), 2026-11-12).
+ *  - `null`            — never returned since the seamless hand-over (kept in
+ *                        the type for callers' guards).
  *
  * Null `localShipInstanceId` (decided 2026-11-14, S0): the welcome carried no
  * ship id. That happens only when the server has NO ship for us — the
@@ -56,8 +58,9 @@ export function shipMirrorKey(
 ): string | null {
   const own = local.localPlayerId !== null && playerId === local.localPlayerId;
   if (isActive) {
-    // Spectate race: we fly nothing, so our own ACTIVE entry is not drawn.
-    if (own && local.localSpectating) return null;
+    // Spectate race: we fly nothing, so our own ACTIVE entry is the hull we
+    // just parked: drawn under its shipInstanceId, never the playerId.
+    if (own && local.localSpectating) return shipInstanceId;
     return playerId;
   }
   // Inactive: only the pending welcome ship keeps its playerId key.

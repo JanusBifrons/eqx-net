@@ -20,6 +20,7 @@ import type { RenderMirror } from '@core/contracts/IRenderer';
 import type { SnapshotMessage } from '@shared-types/messages';
 import { shipMirrorKey, type ShipMirrorKeyLocal } from './shipMirrorKey.js';
 import { isParkedHull } from '../render/shipOwnership.js';
+import { findRekeySource } from './shipRekey.js';
 
 /** Reused every snapshot (#14). */
 const _keyLocalScratch: ShipMirrorKeyLocal = {
@@ -37,6 +38,10 @@ export interface ShipRouterCtx {
   hullEvictScratch: string[];
   /** The ONE remote-ship drop path (mirror entry, body, prediction maps). */
   dropShip: (key: string) => void;
+  /** The ONE ship re-key (`ColyseusClient.rekeyShip`): moves a ship drawn
+   *  under its other key (its controls taken or let go) to its key now,
+   *  keeping its entry, body and renderer state. Optional (tests). */
+  rekeyShip?: (from: string, to: string) => void;
 }
 
 /**
@@ -67,8 +72,20 @@ export function routeSnapshotShipStates(snap: SnapshotMessage, ctx: ShipRouterCt
     // key (own ACTIVE entry while spectating) still feeds the reconciler
     // under the playerId: this slice is pose input, not the drawn mirror.
     const key = shipMirrorKey(shipInstanceId, entry.playerId, entry.isActive !== false, keyLocal);
+    // Seamless hand-over (RTS Part A): a ship already drawn under its other
+    // key (someone took or let go of its controls) MOVES to this key, so the
+    // hull eviction below never drops it and the renderer rebuilds nothing.
+    if (key !== null && ctx.rekeyShip !== undefined) {
+      const from = findRekeySource(mirror.ships, shipInstanceId, key);
+      if (from !== null) ctx.rekeyShip(from, key);
+    }
     if (key === null || key === entry.playerId) {
       statesByKey[entry.playerId] = entry;
+      const drawn = key === null ? undefined : mirror.ships.get(key);
+      if (drawn !== undefined) {
+        drawn.shipInstanceId = shipInstanceId;
+        drawn.isActive = entry.isActive !== false;
+      }
       continue;
     }
     // A parked hull: same map, its own key. Pooled entry (Probe 8): pose is
@@ -82,11 +99,13 @@ export function routeSnapshotShipStates(snap: SnapshotMessage, ctx: ShipRouterCt
         x: entry.x, y: entry.y, vx: entry.vx, vy: entry.vy, angle: entry.angle,
         ownerPlayerId: entry.playerId,
         isActive: false,
+        shipInstanceId,
       };
       mirror.ships.set(shipInstanceId, hull);
     } else {
       hull.ownerPlayerId = entry.playerId;
       hull.isActive = false;
+      hull.shipInstanceId = shipInstanceId;
     }
   }
   // Drop parked hulls that didn't appear in this snapshot. Collect then drop

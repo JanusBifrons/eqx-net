@@ -179,6 +179,41 @@ velocity and forward-predicted with the wingman's last input bits
 (`LingeringPredBodyManager`), and its exhaust and boost flame come from those
 bits.
 
+### Taking and letting go of the controls without a flicker
+
+A ship's mirror key changes when someone takes its controls (its
+shipInstanceId becomes the pilot's playerId) or lets go of them (back again).
+The renderer keys every per-ship object by mirror key, so a dropped-and-recreated
+entry used to rebuild the ship: a new sprite, art handle and turret cluster, a
+fresh health bar, a shield "break" under the old key, reset engine ribbons.
+
+Now a key change is one operation, `ColyseusClient.rekeyShip(from, to)`:
+
+- the SAME entry object moves (pose, kind, turret angles, level, shield state);
+- remote to remote: the body is respawned under the new key at its own state,
+  with its render offset, inputs, lookahead and history;
+- remote to local (take controls, at the welcome): the remote body goes first,
+  then `tryInitPredWorld` spawns the local body at the entry's drawn pose;
+- local to remote (Command / Spectate): the local body becomes a remote body at
+  its own predicted state; `shipMirrorKey` keys the still-ACTIVE wire entry by
+  shipInstanceId until the server parks it, so nothing evicts it;
+- the pair is queued on `mirror.pendingShipRekeys` (a one-frame trigger cleared
+  by `consumeOneFrameTriggers`, so it crosses the worker boundary with the
+  mirror), and `PixiRenderer.rekeyShip` moves the sprite, art handle, turret
+  cluster, health bar, label, exhaust (FxEngines), shield view (FxShields) and
+  selection before the sprite pass. Far-zoom icons and the legacy particle /
+  ring effects re-register by id on their own.
+
+Another pilot's swap is found by the snapshot router and `syncMirror` through
+`net/shipRekey.ts` `findRekeySource` (entries carry `shipInstanceId`). The
+server keeps a reclaimed hull in every other player's snapshots while it joins
+(`PendingJoinRecord.inWorld`); before, it vanished for the handshake and came
+back as a new ship. The take-controls camera glide ends on the live follow
+target, so follow takes over without a jump.
+
+Still rebuilt: the radar icon (its category changes anyway). A reconnect onto a
+lingering hull (`onJoin` rebind) still hides the hull from others while it joins.
+
 ## 5. Tests
 
 - Brain: `WingmanBehaviour*.test.ts`, `intentToControlBits.test.ts`.

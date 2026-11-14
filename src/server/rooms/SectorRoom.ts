@@ -759,6 +759,12 @@ interface PendingJoinRecord {
    *  the player arrives with no active hull. Only set on a galaxy-room fresh
    *  spawn whose join carried `spectator: true`. */
   spectator?: boolean;
+  /** RTS Part A seamless take controls — the hull was ALREADY in the world
+   *  (a parked hull reclaimed by `pilot_ship`). Others keep receiving it
+   *  through the handshake (as the parked hull it still is) instead of it
+   *  vanishing and coming back active: their clients move it to its pilot's
+   *  key without a flicker. A fresh spawn stays hidden until it arrives. */
+  inWorld?: boolean;
 }
 
 /** Stage 5 — motion epsilon. A ship is considered "moving" if its speed
@@ -2427,7 +2433,12 @@ export class SectorRoom extends Room<SectorState> {
       lockGroupsOf: (pid) => this.locks.wireFor(pid),
       lockedByOf: (pid) => this.npcLocks.wireFor(pid),
       warpArrived: (playerId) => this.warpTravel.arrivedRecently(playerId, this.serverTick),
-      isJoining: (playerId) => this.pendingJoin.has(playerId),
+      // A reclaimed parked hull (`inWorld`) stays visible to others while it
+      // joins (RTS Part A seamless take controls).
+      isJoining: (playerId) => {
+        const rec = this.pendingJoin.get(playerId);
+        return rec !== undefined && rec.inWorld !== true;
+      },
       transitSpooling: (playerId) => this.transitOrchestrator?.isInFlight(playerId) === true,
       playerMountAngles: this.mountTicker.playerMountAngles,
       droneMountAngles: this.mountTicker.droneMountAngles,
@@ -10380,6 +10391,7 @@ export class SectorRoom extends Room<SectorState> {
       spawnX: livePose.x,
       spawnY: livePose.y,
       sessionId: client.sessionId,
+      inWorld: true,
     });
     this.forceBroadcastUntilTick = tick + JOIN_BROADCAST_GRACE_TICKS;
     this.bus.emit('SHIP_SPAWNED', { type: 'SHIP_SPAWNED' as const, playerId, x: livePose.x, y: livePose.y });

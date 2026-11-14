@@ -82,6 +82,8 @@ import {
 } from './remotePredictionGuard';
 import { shipMirrorKey, type ShipMirrorKeyLocal } from './shipMirrorKey.js';
 import { isOwnedByMe, isParkedHull } from '../render/shipOwnership.js';
+import { findRekeySource } from './shipRekey.js';
+import { moveKey, moveSetKey } from '../render/shipRekey.js';
 import {
   createWelford,
   type WelfordState,
@@ -457,6 +459,7 @@ export class ColyseusGameClient {
     pendingMissileExplosions: [],
     pendingEffectTriggers: [],
     pendingLevelUps: [],
+    pendingShipRekeys: [],
   };
 
   /**
@@ -698,6 +701,19 @@ export class ColyseusGameClient {
    *  lingering hull (syncMirror skips the own ship while spectating). */
   private dropLocalShipForCommand(): void {
     const localId = this.mirror.localPlayerId;
+    // Seamless hand-over (RTS Part A): the ship we let go of keeps being drawn
+    // as the parked hull it becomes. Its entry, body and renderer state MOVE
+    // to its shipInstanceId (`rekeyShip`); the router keys our still-ACTIVE
+    // wire entry there too until the server parks it (`shipMirrorKey`).
+    const sid = this.mirror.localShipInstanceId ?? null;
+    const own = localId !== null ? this.mirror.ships.get(localId) : undefined;
+    if (localId !== null && own !== undefined && sid !== null && sid !== localId) {
+      own.isActive = false;
+      own.ownerPlayerId = localId;
+      own.shipInstanceId = sid;
+      this.rekeyShip(localId, sid);
+      return;
+    }
     if (localId && this.predWorld?.hasShip(localId)) {
       this.predWorld.despawnShip(localId);
       this.reconciler = null;
@@ -1005,6 +1021,10 @@ export class ColyseusGameClient {
   private readonly _boundDropRemoteShip = (key: string): void => {
     this.dropRemoteShip(key);
   };
+  /** Pre-bound re-key path for the router ctx (bound once, #14). */
+  private readonly _boundRekeyShip = (from: string, to: string): void => {
+    this.rekeyShip(from, to);
+  };
   /** 2026-05-26 heap-growth gate step 12 — pooled ctx for
    *  `routeSnapshotShipStates`. `localSpectating` is the only volatile
    *  field, set before each call. */
@@ -1013,6 +1033,7 @@ export class ColyseusGameClient {
     hullSeenScratch: this._hullSeenScratch,
     hullEvictScratch: this._hullEvictScratch,
     dropShip: this._boundDropRemoteShip,
+    rekeyShip: this._boundRekeyShip,
   };
   /** 2026-05-26 heap-growth gate step 12 — pooled ctx for
    *  `preResetRemoteShips`. Same pattern as above; `predWorld` is the
@@ -2925,11 +2946,12 @@ export class ColyseusGameClient {
    * never a same-player OLD hull the player just displaced (seeding the local
    * body at the stale hull's pose was the 2026-06-03 displace bug). Only with
    * NO instance id (engineering rooms) does it fall back to the first parked
-   * hull we own. The hull key is dropped through `dropRemoteShip` before the
-   * playerId entry is seeded, so exactly one mirror entry and (after
-   * `tryInitPredWorld`) one body remain. Renderer state (sprite, art, turret
-   * cluster) is rebuilt under the new key for now; carrying it over is the
-   * next slice. Lock: `ColyseusClient.pilotSwap.test.ts`.
+   * hull we own. The move is `rekeyShip` (the ONE re-key): the hull's remote
+   * body goes BEFORE `tryInitPredWorld` spawns the local one (never two
+   * overlapping bodies), and the SAME entry object moves to the playerId, so
+   * the local body spawns at the hull's drawn pose and the renderer keeps the
+   * ship's sprite, art, turrets and effects (seamless hand-over). Lock:
+   * `ColyseusClient.pilotSwap.test.ts`, `tests/e2e/rts-take-controls.spec.ts`.
    */
   private rekeyOwnShipFromHull(playerId: string, welcomeShipInstanceId: string): void {
     let hullKey: string | null = null;
@@ -2943,13 +2965,7 @@ export class ColyseusGameClient {
     }
     if (hullKey === null || hullKey === playerId) return;
     const hull = this.mirror.ships.get(hullKey)!;
-    this.dropRemoteShip(hullKey);
-    const mirrorEntry: ShipRenderState = {
-      x: hull.x, y: hull.y, vx: hull.vx, vy: hull.vy, angle: hull.angle,
-    };
-    if (hull.kind !== undefined) mirrorEntry.kind = hull.kind;
-    if (hull.displayName !== undefined) mirrorEntry.displayName = hull.displayName;
-    this.mirror.ships.set(playerId, mirrorEntry);
+    this.rekeyShip(hullKey, playerId);
     logEvent('rescued_own_ship_from_lingering', {
       shipInstanceId: hullKey,
       playerId,
@@ -2972,6 +2988,62 @@ export class ColyseusGameClient {
   }
 
   /**
+   * THE one ship re-key (RTS Part A, seamless take controls). A ship's mirror
+   * key changes when someone takes its controls (shipInstanceId -> pilot's
+   * playerId) or lets go of them (playerId -> shipInstanceId): the welcome
+   * (`rekeyOwnShipFromHull`), Command / Spectate (`dropLocalShipForCommand`),
+   * and another player's swap seen by the router / `syncMirror`
+   * (`findRekeySource`). The SAME entry object moves (pose, kind, turrets,
+   * level, shield state kept), with its body and per-ship prediction state:
+   *  - remote -> remote: the body is respawned under the new key at its own
+   *    state, offsets / inputs / lookahead / history move with it;
+   *  - remote -> local: the remote body goes (`tryInitPredWorld` then spawns
+   *    the local body at the entry's drawn pose);
+   *  - local -> remote: the local body becomes a remote body at its state (a
+   *    real pose, never the schema's: B2) and the reconciler goes.
+   * The pair is queued on `mirror.pendingShipRekeys`, so the renderer moves its
+   * per-ship state too instead of rebuilding the ship. A stale entry already
+   * under `to` is dropped first. Rare (a hand-over), never per frame.
+   */
+  private rekeyShip(from: string, to: string): void {
+    if (from === to) return;
+    const entry = this.mirror.ships.get(from);
+    if (entry === undefined) return;
+    const localId = this.mirror.localPlayerId;
+    const pw = this.predWorld;
+    if (this.mirror.ships.has(to)) {
+      if (to === localId) this.mirror.ships.delete(to);
+      else this.dropRemoteShip(to);
+    }
+    let body: ShipPhysicsState | null = null;
+    if (from === localId) {
+      if (pw?.hasShip(from)) {
+        body = pw.getShipState(from);
+        pw.despawnShip(from);
+        this.reconciler = null;
+      }
+    } else {
+      if (this.predRemoteShipIds.has(from)) body = pw?.getShipState(from) ?? null;
+      if (to !== localId) {
+        moveKey(this._remoteShipOffsets, from, to);
+        moveKey(this._remoteLastInputs, from, to);
+        moveKey(this._remoteForwardTicks, from, to);
+        moveKey(this.remoteHistory, from, to);
+        moveSetKey(this._arrivalSnapped, from, to);
+      }
+      this.dropRemoteShip(from, 'outOfWorld');
+    }
+    this.mirror.ships.delete(from);
+    this.mirror.ships.set(to, entry);
+    if (to !== localId && body !== null && entry.kind !== undefined && localId !== null) {
+      this.ensureRemoteShipBody(to, body, entry.kind);
+    }
+    moveKey(this._damageFlashFrames, from, to);
+    this.mirror.pendingShipRekeys?.push(from, to);
+    logEvent('ship_rekeyed', { from, to });
+  }
+
+  /**
    * THE one way a remote ship's predWorld body is spawned (RTS Part A S0;
    * replaced the syncMirror, tryInitPredWorld-retro and warp-arrival copies).
    * Spawns at `pose` and tracks it in `predRemoteShipIds`; a no-op returning
@@ -2980,14 +3052,15 @@ export class ColyseusGameClient {
    *
    * ONE spawn rule (RTS Part A blocker B2): a remote body (another pilot's
    * ship OR a parked / AI-flown hull) spawns ONLY from a real SNAPSHOT pose.
-   * The parameter is the snapshot's own ship-state type, so the schema diff
-   * (which carries no pose: its x/y are 0) cannot be passed; the callers are
-   * the per-snapshot `spawnRemoteShipBodies` and the warp-arrival snap. A
-   * body spawned at the schema's (0,0) parked an invisible, shootable ghost
-   * at the world origin (the 2026-06-03 "laser stops short at (0,0)" bug).
-   * Lock: `ColyseusClient.lingeringJitter.test.ts`.
+   * The callers are the per-snapshot `spawnRemoteShipBodies`, the
+   * warp-arrival snap, and `rekeyShip`, which carries a body's OWN state
+   * across a re-key (a predicted body is a real pose too). Never the schema
+   * diff (which carries no pose: its x/y are 0): a body spawned at (0,0)
+   * parked an invisible, shootable ghost at the world origin (the 2026-06-03
+   * "laser stops short at (0,0)" bug). Lock:
+   * `ColyseusClient.lingeringJitter.test.ts`.
    */
-  private ensureRemoteShipBody(key: string, pose: SnapshotMessage['states'][string], kind: string): boolean {
+  private ensureRemoteShipBody(key: string, pose: ShipPhysicsState, kind: string): boolean {
     const pw = this.predWorld;
     if (!pw || pw.hasShip(key)) return false;
     pw.spawnShip(key, pose.x, pose.y, kind);
@@ -4136,17 +4209,25 @@ export class ColyseusGameClient {
         // eviction sweep), so the departed sweep below skips hull keys.
         const kind = typeof sh['kind'] === 'string' ? (sh['kind'] as string) : undefined;
         const displayName = typeof sh['displayName'] === 'string' ? (sh['displayName'] as string) : undefined;
+        // Seamless hand-over (RTS Part A): the ship drawn under its pilot's
+        // playerId until now (its controls were let go) MOVES here.
+        if (!this.mirror.ships.has(shipInstanceId)) {
+          const from = findRekeySource(this.mirror.ships, shipInstanceId, shipInstanceId);
+          if (from !== null) this.rekeyShip(from, shipInstanceId);
+        }
         let lEntry = this.mirror.ships.get(shipInstanceId);
         if (!lEntry) {
           lEntry = {
             x: 0, y: 0, vx: 0, vy: 0, angle: 0,
             ownerPlayerId: playerId,
             isActive: false,
+            shipInstanceId,
           };
           this.mirror.ships.set(shipInstanceId, lEntry);
         } else {
           lEntry.ownerPlayerId = playerId;
           lEntry.isActive = false;
+          lEntry.shipInstanceId = shipInstanceId;
         }
         if (kind !== undefined) lEntry.kind = kind;
         if (displayName !== undefined) lEntry.displayName = displayName;
@@ -4217,6 +4298,12 @@ export class ColyseusGameClient {
         // built). Lock: ColyseusClient.remoteMirrorPreserve.test.ts. The
         // schema carries no pose (its x/y are 0), so an existing entry's pose
         // is left alone: it is the snapshot's / the body's.
+        // Seamless hand-over (RTS Part A): another pilot took the controls of
+        // a hull drawn under its shipInstanceId; it MOVES to their playerId.
+        if (!this.mirror.ships.has(playerId)) {
+          const from = findRekeySource(this.mirror.ships, shipInstanceId, playerId);
+          if (from !== null) this.rekeyShip(from, playerId);
+        }
         const prevEntry = this.mirror.ships.get(playerId);
         if (prevEntry) {
           if (kind !== undefined) prevEntry.kind = kind;
@@ -4236,6 +4323,7 @@ export class ColyseusGameClient {
       if (drawn) {
         drawn.ownerPlayerId = playerId;
         drawn.isActive = isActive;
+        drawn.shipInstanceId = shipInstanceId;
       }
     }
 
