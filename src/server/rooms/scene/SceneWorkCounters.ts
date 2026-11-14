@@ -62,6 +62,9 @@ export interface SceneWorkView {
    *  synthetic gate is `LINE_OF_FIRE_BUDGET` (LineOfFireGate.test.ts). */
   lineOfFireChecksPerTick: number;
   lineOfFireNarrowPerTick: number;
+  /** Print-only (AI steering 2a, not yet calibrated): `AiNeighbourGrid`
+   *  queries per tick. 0 until a behaviour queries the grid. */
+  aiNeighbourQueriesPerTick: number;
 }
 
 type ThreadCpu = () => { user: number; system: number };
@@ -92,6 +95,17 @@ export class SceneWorkCounters {
     if (this.lofBase < 0) { this.lofBase = checksTotal; this.lofNarrowBase = narrowTotal; }
     this.lofChecks = checksTotal - this.lofBase;
     this.lofNarrow = narrowTotal - this.lofNarrowBase;
+  }
+
+  /** AI neighbour-grid running total at the first counted tick, and the latest. */
+  private nbBase = -1;
+  private nbQueries = 0;
+
+  /** Called each counted tick with the grid's running query total (#14). */
+  aiNeighbours(queriesTotal: number): void {
+    if (!this.active) return;
+    if (this.nbBase < 0) this.nbBase = queriesTotal;
+    this.nbQueries = queriesTotal - this.nbBase;
   }
 
   // CPU batches (print-only).
@@ -153,6 +167,7 @@ export class SceneWorkCounters {
       workerElu: workerElu === null ? null : r(workerElu, 3),
       lineOfFireChecksPerTick: r(this.lofChecks / t),
       lineOfFireNarrowPerTick: r(this.lofNarrow / t),
+      aiNeighbourQueriesPerTick: r(this.nbQueries / t),
     };
   }
 }

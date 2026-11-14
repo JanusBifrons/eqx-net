@@ -69,7 +69,7 @@ export type {
 } from './messages/clientMessages.js';
 
 // Authoritative state (server → client)
-export type { WelcomeMessage, SnapshotMessage, SessionReplacedMessage, WreckDescriptor, TimeScaleKeyframe } from './messages/snapshotMessages.js';
+export type { WelcomeMessage, SnapshotMessage, SessionReplacedMessage, WreckDescriptor, WreckSync, TimeScaleKeyframe } from './messages/snapshotMessages.js';
 export { SESSION_REPLACED_CLOSE_CODE } from './messages/snapshotMessages.js';
 // Campaign 6.1 — defensive ingest schema for `welcome` (client-side safeParse;
 // the 20 Hz `snapshot` is the documented invariant-#3 carve-out — see the

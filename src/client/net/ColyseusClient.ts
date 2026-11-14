@@ -1,4 +1,4 @@
-import { refineRayHit } from '@core/combat/capitalHits';
+import { shipRayHit } from '@core/combat/shipHitShape';
 import { decodeStructureState, emptyStructureRow } from './structureStateDecode.js';
 import { SWARM_KIND_STRUCTURE } from '../../shared-types/swarmWireFormat.js';
 import {
@@ -149,9 +149,8 @@ import { installLongtaskObserver } from '../debug/longtaskObserver';
 import { installPageLifecycleObserver } from '../debug/pageLifecycleObserver';
 import { recordServerGcPause, startHealthStatsPublisher } from '../debug/healthStats';
 import { GhostManager } from '../combat/GhostProjectile';
-import { HITSCAN_RANGE, rayHitsSphere } from '@core/combat/Weapons';
+import { HITSCAN_RANGE } from '@core/combat/Weapons';
 import { shipShotMuzzle } from '@core/combat/muzzle';
-import { shipTuning } from '@shared-types/shipScale/tuning';
 import { tuningFor } from '@shared-types/shipScale/lookup';
 
 // A group fires only when a barrel bears on its lock: the shared rule (#15).
@@ -296,6 +295,8 @@ function _pa5(n: number): number { return parseFloat(n.toFixed(5)); }
 
 /** Shared empty `lockedBy` (no allocation per snapshot). */
 const NO_LOCKED_BY: ReadonlyArray<{ t: string; s: number; p: number }> = [];
+/** A welcome from a wreck room with no live wreck (slice 3). */
+const NO_WRECK_LIST: readonly import('@shared-types/messages/snapshotMessages').WreckDescriptor[] = [];
 
 const SWARM_ID_PREFIX = 'swarm-';
 
@@ -1597,6 +1598,12 @@ export class ColyseusGameClient {
       this.mirror.capitalWrecks = msg.capitalWrecks === true;
       // Sub-cap wrecks on: a dying sub-cap's hull is held until its pieces draw.
       this.mirror.subcapWrecks = msg.subcapWrecks === true;
+      // Sub-capital break-up slice 3: the welcome carries the FULL live wreck
+      // set (#16); snapshots then carry only adds, removes and a slow resync.
+      if (msg.capitalWrecks === true || msg.subcapWrecks === true) {
+        this._wrecks.apply(msg.wrecks ?? NO_WRECK_LIST);
+        this.mirror.wrecks = this._wrecks.descriptors;
+      }
       this._shellStore.clear();
       this._navalHitHold.flush(this._heldDamageSink);
       if (this._shellEvents) {
@@ -3294,13 +3301,11 @@ export class ColyseusGameClient {
     // construction). Pose lives in `mirror.swarm` (kind=2); joined by entityId.
     this.syncStructures(snap.structureTargets, snap.structureMountAngles);
 
-    // Capital destruction S2b: the wreck descriptors (the full live list when
-    // present; absent = not this snapshot). Pieces whose wreck is known get
-    // their predWorld body in syncSwarmIntoPredWorld and a sprite.
-    if (snap.wrecks !== undefined) {
-      this._wrecks.apply(snap.wrecks);
-      this.mirror.wrecks = this._wrecks.descriptors;
-    }
+    // Capital destruction S2b / sub-capital break-up slice 3: the wreck
+    // descriptor deltas (adds, removes, resync chunk; the full set came with
+    // the welcome). Pieces whose wreck is known get their predWorld body in
+    // syncSwarmIntoPredWorld and a sprite.
+    if (this._wrecks.applySnapshot(snap)) this.mirror.wrecks = this._wrecks.descriptors;
 
     // Server-authoritative boost + thrust sets — exhaust-trail renderer.
     applyBoostingThrustingSets(snap, this.mirror);
@@ -5759,22 +5764,17 @@ export class ColyseusGameClient {
     if (hitId.startsWith('swarm-')) {
       const sw = this.mirror.swarm?.get(Number(hitId.slice(6)));
       // Drones only (kind===1); asteroids (kind===0) have no shield.
-      if (sw && sw.kind === 1 && sw.shieldDown !== true) {
-        const c = rayHitsSphere(fromX, fromY, fwdX, fwdY, maxRange, sw.x, sw.y, sw.radius + tuningFor(sw.shipKind).shieldPad);
-        // Capitals: the hull, as the server resolves it (#15).
-        const d = refineRayHit(sw.shipKind, c, fromX, fromY, fwdX, fwdY, maxRange, sw.x, sw.y, sw.angle);
+      if (sw && sw.kind === 1 && sw.shieldDown !== true && sw.shipKind) {
+        // The shared ship hit shape, as the server resolves it (#15).
+        const d = shipRayHit(sw.shipKind, true, fromX, fromY, fwdX, fwdY, maxRange, sw.x, sw.y, sw.angle);
         if (d !== null) return d;
       }
       return hit.dist;
     }
     const ship = this.mirror.ships.get(hitId);
     if (ship && ship.shieldDown !== true) {
-      const sk = getShipKind(ship.kind ?? null);
-      const r = sk.radius + shipTuning(sk).shieldPad;
-      const c = rayHitsSphere(fromX, fromY, fwdX, fwdY, maxRange, ship.x, ship.y, r);
-      // A capital pilot's shield follows its hull, as the server resolves it
-      // (`SectorRoom.playerHitscanDist`, #15).
-      const d = refineRayHit(ship.kind ?? null, c, fromX, fromY, fwdX, fwdY, maxRange, ship.x, ship.y, ship.angle);
+      // The same shape as a drone of that kind (`SectorRoom.playerHitscanDist`, #15).
+      const d = shipRayHit(ship.kind ?? null, true, fromX, fromY, fwdX, fwdY, maxRange, ship.x, ship.y, ship.angle);
       if (d !== null) return d;
     }
     return hit.dist;

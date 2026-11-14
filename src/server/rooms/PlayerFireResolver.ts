@@ -25,7 +25,7 @@
  * the server, and the seams document themselves.
  */
 
-import { refineRayHit } from '../../core/combat/capitalHits.js';
+import { shipRayHit } from '../../core/combat/shipHitShape.js';
 import { wreckRayHit } from '../../core/destruction/wreckHits.js';
 import type { Client } from 'colyseus';
 import type { Logger } from 'pino';
@@ -86,8 +86,10 @@ export interface SwarmHitTarget {
   boxes?: Float32Array;
   /** Capital wreck pieces (kind 4): convex parts, body-local. */
   wreckParts?: ReadonlyArray<ReadonlyArray<Vec2>>;
-  /** Drone ship kind (capitals refine hits to the hull). */
+  /** Drone ship kind (its hit shape, `shipHitShape.ts`). */
   shipKind?: string;
+  /** A drone's shield is down: hit on its hull, not its bubble. */
+  shieldDown?: boolean;
 }
 
 export interface SwarmHitSource {
@@ -590,10 +592,12 @@ export class PlayerFireResolver implements WeaponFireSink {
       } else if (rec.halfW !== undefined && rec.halfH !== undefined) {
         // Structures (phase V): the footprint box, not the bounding circle.
         dist = rayHitsBox(rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, rec.halfW, rec.halfH, rec.boxes);
+      } else if (rec.kind === 1 && rec.shipKind) {
+        // A ship: the same shape as if a player flew it (`shipHitShape.ts`,
+        // owner's rule 2026-11-13; the room's `playerHitscanDist` twin).
+        dist = shipRayHit(rec.shipKind, !rec.shieldDown, rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, ca);
       } else {
         dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, rec.radius);
-        // A capital's circle is half its hull's length: refine to the hull (#15).
-        if (rec.kind === 1) dist = refineRayHit(rec.shipKind, dist, rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, ca);
       }
       if (dist !== null && dist < mountHitDist) {
         mountHitDist = dist;

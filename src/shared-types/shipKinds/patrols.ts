@@ -37,7 +37,8 @@ export const PATROL_FIGHTER: ShipKind = defineShipKind({
   shieldRegenRate: 180 / 120,
   energyMax: 150,
   energyRegenRate: 0.25,
-  ai: { thrust: 0.9, turnKp: 6.0, maxTorque: 3.0 },
+  ai: { thrust: 0.9 },
+  aiRole: 'fighter',
   shape: {
     kind: 'polygon',
     // A neutral steel; clients tint it with its owner faction's colour.

@@ -30,11 +30,9 @@
 import type { PhysicsWorld } from '@core/physics/World';
 import type { SwarmRenderState } from '@core/contracts/IRenderer';
 import type { Vec2 } from '@core/swarm/asteroidShape';
-import { rayHitsSphere, rayHitsConvexPolygon, rayHitsShipPolygon } from '@core/combat/Weapons';
-import { refineRayHit } from '@core/combat/capitalHits';
-import { shipCollisionParts } from '@core/geometry/shipHullDecomp';
+import { rayHitsSphere, rayHitsConvexPolygon } from '@core/combat/Weapons';
+import { shipRayHit } from '@core/combat/shipHitShape';
 import { scrapColliderFor } from '@core/geometry/scrapCollider';
-import { tuningFor } from '@shared-types/shipScale/lookup';
 import { SWARM_KIND_DRONE, SWARM_KIND_SCRAP, SWARM_KIND_WRECK } from '@shared-types/swarmWireFormat';
 import { wreckRayHit } from '@core/destruction/wreckHits';
 import type { WreckGeometrySource } from '../net/entity/IClientEntityLeaf.js';
@@ -69,15 +67,11 @@ export function rayHitsDrawnSwarmEntity(
   wrecks?: WreckGeometrySource,
 ): number | null {
   if (e.kind === SWARM_KIND_DRONE) {
-    if (e.shieldDown !== true) {
-      const c = rayHitsSphere(fromX, fromY, dirX, dirY, maxDist, e.x, e.y, e.radius + tuningFor(e.shipKind).shieldPad);
-      return refineRayHit(e.shipKind, c, fromX, fromY, dirX, dirY, maxDist, e.x, e.y, e.angle);
-    }
-    // Broad phase on a generous circle, then the hull parts.
-    if (rayHitsSphere(fromX, fromY, dirX, dirY, maxDist, e.x, e.y, e.radius * 2) === null) return null;
-    const parts = shipCollisionParts(e.shipKind);
-    if (parts.length === 0) return rayHitsSphere(fromX, fromY, dirX, dirY, maxDist, e.x, e.y, e.radius);
-    return rayHitsShipPolygon(fromX, fromY, dirX, dirY, maxDist, e.x, e.y, e.angle, parts);
+    // The SAME hit shape the server uses for this ship, player or NPC
+    // (`shipHitShape.ts`, #15): bubble while the shield is up, hull once it
+    // is down, a capital's hull either way.
+    if (e.shipKind) return shipRayHit(e.shipKind, e.shieldDown !== true, fromX, fromY, dirX, dirY, maxDist, e.x, e.y, e.angle);
+    return rayHitsSphere(fromX, fromY, dirX, dirY, maxDist, e.x, e.y, e.radius);
   }
   if (e.kind === SWARM_KIND_SCRAP) {
     const c = rayHitsSphere(fromX, fromY, dirX, dirY, maxDist, e.x, e.y, e.radius);

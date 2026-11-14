@@ -54,6 +54,7 @@ import {
 import { checkBackpressure } from '../net/Backpressure.js';
 import { droneMaxHealthOf } from './droneKindHelpers.js';
 import type { SnapshotMessage, WreckDescriptor } from '../../shared-types/messages.js';
+import { WreckWireDeltas } from './WreckWireDeltas.js';
 import type { ShipPhysicsState } from '../../core/physics/World.js';
 import type { ShipState } from './schema/SectorState.js';
 import type { ProjectileRecord } from './ProjectilePipeline.js';
@@ -233,17 +234,15 @@ export interface SnapshotBroadcasterDeps {
    *  per-recipient `shellKey` keyframe and forgets a leaving viewer. */
   shellEvents?: () => ShellKeyframeSource | null;
   /** Capital destruction S2b: one descriptor per live wreck (a shared array,
-   *  rebuilt only on change), or null when the room has no wreck subsystem. */
+   *  rebuilt only on change), or null when the room has no wreck subsystem.
+   *  Slice 3: snapshots carry only its deltas (`WreckWireDeltas`); the full
+   *  list rides the welcome. */
   getWrecks?: () => readonly WreckDescriptor[] | null;
   /** Bumped whenever the live wreck set changes. */
   wrecksVersion?: () => number;
   /** The sector's speed keyframe, or undefined at 1× (time scale stream). */
   timeScale?: () => SnapshotMessage['timeScale'];
 }
-
-/** After the wreck set changes, `wrecks[]` rides this many broadcast
- *  counters, so every recipient (one broadcast per 3 counters) gets it at once. */
-export const WRECKS_CHANGE_WINDOW = 3;
 
 /** The part of `ShellEventHub` the broadcaster uses. */
 export interface ShellKeyframeSource {
@@ -384,7 +383,9 @@ type MutableSnapshotMessage = {
   structureTargets?: SnapshotMessage['structureTargets'];
   structureMountAngles?: SnapshotMessage['structureMountAngles'];
   shellKey?: SnapshotMessage['shellKey'];
-  wrecks?: SnapshotMessage['wrecks'];
+  wreckAdds?: SnapshotMessage['wreckAdds'];
+  wreckRemoves?: SnapshotMessage['wreckRemoves'];
+  wreckSync?: SnapshotMessage['wreckSync'];
   timeScale?: SnapshotMessage['timeScale'];
 };
 
@@ -485,9 +486,9 @@ export class SnapshotBroadcaster {
   private _farInterest: Set<number> | undefined = undefined;
   private _farPlayerId = '';
   private _farCount = 0;
-  /** S2b: the wreck-set version last seen, and the counter it changed at. */
-  private _wrecksVersionSeen = -1;
-  private _wrecksChangedAt = -Infinity;
+  /** Sub-capital break-up slice 3: wreck descriptor deltas + rolling resync
+   *  (shared by every recipient, reused arrays). */
+  private readonly _wreckWire = new WreckWireDeltas();
   /** Bound once: the far drone tier's per-record visitor (alloc-free, #14). */
   private readonly _visitFarDrone = (rec: SwarmDroneRec & { entityId: number }): void => {
     if (rec.kind !== 1) return;
@@ -808,6 +809,15 @@ export class SnapshotBroadcaster {
     const thrustingIds = this._thrustingIdsScratch;
     for (const id of d.thrustingPlayers) if (this._aliveIdsScratch.has(id)) thrustingIds.push(id);
 
+    // Sub-capital break-up slice 3: advance the wreck deltas once per
+    // broadcast (diffs only when the live set's version moved).
+    const liveWrecks = d.getWrecks?.() ?? null;
+    let wreckWire: WreckWireDeltas | null = null;
+    if (liveWrecks !== null) {
+      wreckWire = this._wreckWire;
+      wreckWire.step(this.broadcastCounter, liveWrecks, d.wrecksVersion?.() ?? 0);
+    }
+
     // 3×3 cell window radius for projectile interest.
     const interestRadius = CELL_SIZE * 1.5;
     let anySnapshotSent = false;
@@ -1107,23 +1117,18 @@ export class SnapshotBroadcaster {
       } else {
         snap.shellKey = undefined;
       }
-      // Capital destruction S2b: the wreck descriptors (#16 — a late joiner
-      // rebuilds every wreck from them). On every snapshot for
-      // WRECKS_CHANGE_WINDOW counters after the set changes (an empty list
-      // then means "none left"), else at the far-drone 2 Hz cadence while any
-      // wreck lives. Shared array, attached by reference (#14).
-      const wrecks = this.deps.getWrecks?.() ?? null;
-      if (wrecks !== null) {
-        const v = this.deps.wrecksVersion?.() ?? 0;
-        if (v !== this._wrecksVersionSeen) {
-          this._wrecksVersionSeen = v;
-          this._wrecksChangedAt = this.broadcastCounter;
-        }
-        const changed = this.broadcastCounter - this._wrecksChangedAt < WRECKS_CHANGE_WINDOW;
-        const slow = wrecks.length > 0 && this.broadcastCounter % (3 * FAR_DRONE_SLICE_EVERY) < 3;
-        snap.wrecks = changed || slow ? (wrecks as WreckDescriptor[]) : undefined;
+      // Wreck descriptors as deltas (sub-capital break-up slice 3): the
+      // window's adds and removes, plus the resync chunk on this recipient's
+      // one snapshot in WRECK_RESYNC_EVERY. The full set rode the welcome
+      // (#16). Shared arrays, attached by reference (#14).
+      if (wreckWire !== null) {
+        snap.wreckAdds = wreckWire.adds.length > 0 ? wreckWire.adds : undefined;
+        snap.wreckRemoves = wreckWire.removes.length > 0 ? wreckWire.removes : undefined;
+        snap.wreckSync = wreckWire.syncDue(this.broadcastCounter) ? wreckWire.sync : undefined;
       } else {
-        snap.wrecks = undefined;
+        snap.wreckAdds = undefined;
+        snap.wreckRemoves = undefined;
+        snap.wreckSync = undefined;
       }
       snap.timeScale = this.deps.timeScale?.();
       // plan: imperative-taco-r2 — stamp server-send time so the client
@@ -1162,7 +1167,8 @@ export class SnapshotBroadcaster {
       if (work !== undefined && work.active) {
         work.snapshots++;
         work.snapshotEntities += projectilesCount + missilesCount + dronesCount + asteroidsCount;
-        work.wreckDescriptors += snap.wrecks?.length ?? 0;
+        // Slice 3 wire: descriptors ride as deltas plus a rolling resync chunk.
+        work.wreckDescriptors += (snap.wreckAdds?.length ?? 0) + (snap.wreckSync?.d.length ?? 0);
       }
     }
 
