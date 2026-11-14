@@ -1603,7 +1603,11 @@ export class SectorRoom extends Room<SectorState> {
         return { x: this.sabF32[b + SLOT_X_OFF]!, y: this.sabF32[b + SLOT_Y_OFF]! };
       },
       evict: (rec) => this.evictSwarmEntity(rec, { broadcast: false, emitDestroyed: false }),
+      isInView: (rec) => this.droneInAnyView(rec),
       bus: this.bus,
+      now: () => this.gameClock.now(),
+      // At most once per 10 s per room (LoadShedder throttles).
+      log: (line, msg) => logger.info({ sectorKey: this.sectorKey, roomId: this.roomId, shed: line.shed, skippedInView: line.skippedInView }, msg),
     });
 
     // Fill slot pool (push in reverse so slot 0 is popped first).
@@ -5132,6 +5136,25 @@ export class SectorRoom extends Room<SectorState> {
     if (this.capitalWrecks === null || !isCapitalKindId(kindId)) return 0;
     return this.capitalWrecks.onDeath(targetId, kindId as ShipKindId,
       { x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy, angle: pose.angle, angvel: pose.angvel ?? 0 }, maxHull);
+  }
+
+  /** LoadShedder: can ANY connected player see this drone? The same view the
+   *  swarm broadcast uses: each client's interest window (`interestScratch`,
+   *  built by `SwarmBroadcaster` this tick or the last). A client with no
+   *  slot (spectating after parking a hull, between hulls, still joining) is
+   *  sent the whole swarm at full fidelity, so it sees everything; so does a
+   *  client whose window isn't built yet. Shedding only what nobody sees keeps
+   *  it invisible (soak 2026-11-14). Alloc-free (#14). */
+  private droneInAnyView(rec: SwarmEntityRecord): boolean {
+    const clients = this.clients;
+    for (let i = 0; i < clients.length; i++) {
+      const sid = clients[i]!.sessionId;
+      const pid = this.sessionToPlayer.get(sid);
+      if (pid === undefined || !this.playerToSlot.has(pid)) return true;
+      const view = this.interestScratch.get(sid);
+      if (view === undefined || view.has(rec.entityId)) return true;
+    }
+    return false;
   }
 
   /** Iterates positions of currently-alive players, for the LoadShedder.
