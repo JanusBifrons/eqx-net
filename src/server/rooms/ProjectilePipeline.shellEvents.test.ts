@@ -14,6 +14,7 @@ import { describe, expect, it } from 'vitest';
 import { ProjectilePipeline, type ProjectileRecord } from './ProjectilePipeline.js';
 import { SLOT_X_OFF, SLOT_Y_OFF, slotBase } from '../../shared-types/sabLayout.js';
 import { quantiseShellSpawn, shellPathEndTick, shellPoseAt } from '../../core/combat/shellFlight.js';
+import { shipBubbleRadius } from '../../core/combat/shipHitShape.js';
 import { getWeapon } from '../../core/combat/WeaponCatalogue.js';
 
 interface Ent { id: string; slot: number; x: number; y: number }
@@ -90,9 +91,11 @@ describe('ProjectilePipeline — event shells (shell-events slice 1)', () => {
     expect(ends[0]!.r).toBe(0);
     expect(ends[0]!.x).toBe(hits[0]!.x);
     expect(ends[0]!.y).toBe(hits[0]!.y);
-    // Contact at 300 − 12 − 4 = 284 u. The advance at tick 500 + k sweeps
-    // steps k → k + 1 (31.67 u each), so step 8 → 9 reaches it: tick 508.
-    expect(ends[0]!.tick).toBe(508);
+    // The fighter-kind target is hit on its shield bubble (`shipHitShape.ts`,
+    // the same as a player fighter), so contact is at 300 − bubble − 4 u. The
+    // advance at tick 500 + k sweeps steps k → k + 1 (31.67 u each).
+    const contact = 300 - shipBubbleRadius('fighter') - 4;
+    expect(ends[0]!.tick).toBe(500 + Math.ceil(contact / (1900 / 60)) - 1);
 
     const siege = harness([{ id: 'target', slot: 1, x: 300, y: 0 }]);
     siege.pipe.spawn('gun', 0, 0, 1900, 0, 100, 4, 400, 'naval_siege');
