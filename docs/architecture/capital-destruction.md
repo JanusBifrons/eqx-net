@@ -1770,6 +1770,43 @@ min) with the server log kept, where the speed stays at 0.7 for minutes, not
 seconds. Watch the shedder in that take: whole fleets disappearing is worse
 for players than slow motion.
 
+### Switched on (2026-11-14)
+
+**Owner decision:** "land it switched on". The capital and sub-capital
+break-up are ON in every room by default.
+
+- **Switch.** `wreckSwitchOn` (`src/server/rooms/wreckSwitch.ts`): the env
+  `EQX_CAPITAL_WRECKS` / `EQX_SUBCAP_WRECKS` wins (`0` off everywhere, `1`
+  on); otherwise a room opts out with `capitalWrecks: false` /
+  `subcapWrecks: false`. The welcome flags follow the room, so a client
+  draws the break-up wherever the server breaks ships.
+- **One death effect per ship.** A kind that breaks up never also sheds
+  scrap: the composite kinds (havok, the cargo pod) have profile `none` and
+  keep their per-component scrap. Lock: `tests/unit/oneDeathEffectPerShip.test.ts`.
+- **Arcade handling (#566) and the knock.** Arcade raised sub-cap hulls
+  ×1.6–1.75, and the overkill knock reads damage ÷ max hull, so a small-arms
+  hit shoved a fighter piece 8.4 u/s instead of the approved 10–25.
+  `wreckKnockSpeed` now carries the kind's arcade `tough` factor (capitals
+  ×1): a tougher hull makes the fight longer, not its debris heavier.
+- **Count gates** (`perfSceneCounts.test.ts`, first 12 s, desktop, this
+  branch; 4 runs on, 2 with both env switches `0`):
+
+  | Count | fleet-fight on / off | wide-view on / off |
+  |---|---|---|
+  | bodies per tick | 74.9–77.3 / 58.3–58.4 | 98.1–99.1 / 81.6–81.9 |
+  | of which wreck pieces | 14.7–17.0 / 0 | 13.3–14.8 / 0 |
+  | AI agents per tick | 59.3–59.8 / 56.3–56.4 | 81.9–82.8 / 78.8–79.2 |
+  | swarm records per tick | 73.5–75.5 / 56.9–57.0 | 97.5–98.6 / 81.1–81.3 |
+  | swarm bytes per tick | 2,653–2,724 / 2,056–2,059 | 3,518–3,556 / 2,926–2,935 |
+  | bytes per record | 36.1 / 36.1 | 36.1 / 36.1 |
+  | rx KB/s (budget) | 283–287 / 248 (334) | 377–381 / 343–346 (418) |
+
+  The rise is the pieces (every kill in the window leaves 2–3 fresh, still
+  drifting bodies) plus ~3 ships still alive because the debris stops shots.
+  The per-entity cost is flat. The budgets were re-set to the on max + 25 %
+  (`perfBudgets.ts`, `measuredBreakUp`). The 10-minute soak above stays
+  smooth to ~1,600 pieces and never drops the client.
+
 ## 4. Determinism strategy
 
 Every client must produce the same pieces as the server, bit for bit, from
