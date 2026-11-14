@@ -2,13 +2,16 @@
  * Physics worker — runs Rapier at 60 Hz in a dedicated worker_threads thread.
  *
  * Communication contract with the main thread (SectorRoom):
- *   Main → Worker  postMessage commands: SPAWN | DESPAWN | INPUT | SPAWN_OBSTACLE | AI_INTENT | CLOCK_RATE | SET_POSITION | REKEY_SHIP | SET_HULL_EXPOSED
+ *   Main → Worker  postMessage commands: SPAWN | DESPAWN | INPUT | SPAWN_OBSTACLE | AI_INTENT | AI_INPUTS | CLOCK_RATE | SET_POSITION | REKEY_SHIP | SET_HULL_EXPOSED
  *   Worker → Main  postMessage events:   READY | SLEEP_TRANSITION
  *   Shared memory  SharedArrayBuffer (see sabLayout.ts) — written here under seqlock,
  *                  read by main thread between writes.
  *
  * Phase 5 additions:
  *   - AI_INTENT applies an impulse + torque to a swarm body, identical to player INPUT.
+ *   - AI_INPUTS (pilot layer) batches every AI slot flown by control keys this
+ *     tick; each runs through `World.applyAiInput` → `applyShipInput`, the
+ *     same function as a pilot's INPUT.
  *   - Sleep is polled per occupied slot each step, with 12-tick hysteresis to
  *     suppress flap on slow-drift entities. On idle→sleep transitions the
  *     worker sets FLAG_SLEEPING in the slot AND posts a SLEEP_TRANSITION
@@ -24,7 +27,8 @@
 import { parentPort, workerData } from 'node:worker_threads';
 import RAPIER from '@dimforge/rapier2d-compat';
 import { PhysicsWorld } from './World.js';
-import { getShipKind } from '../../shared-types/shipKinds.js';
+import { getShipKind, shipKindFromIndex } from '../../shared-types/shipKinds.js';
+import { decodeAiInputBits } from '../contracts/IAiBehaviour.js';
 import { tickInputQueue, type QueuedInput } from './inputQueue.js';
 import { drainContacts } from './contactDrain.js';
 import { advanceSchedule, tickPeriodMs, type CatchUpResult } from './catchUp.js';
@@ -55,6 +59,7 @@ import {
   INPUT_FLAGS_MASK,
   FLAG_WARP_SPOOL,
   FLAG_WARP_CRUISE,
+  MAX_ENTITIES,
   slotBase,
 } from '../../shared-types/sabLayout.js';
 
@@ -73,8 +78,13 @@ const CONTACT_FORCE_FLOOR = 200;
 interface SpawnCmd         { type: 'SPAWN';          slot: number; playerId: string; x: number; y: number; kindId?: string }
 interface DespawnCmd       { type: 'DESPAWN';        slot: number; playerId: string }
 interface InputCmd         { type: 'INPUT';          slot: number; inputTick: number; thrust: boolean; turnLeft: boolean; turnRight: boolean; boost: boolean; reverse: boolean; warpX?: number; warpY?: number }
-interface SpawnObstacleCmd { type: 'SPAWN_OBSTACLE'; slot: number; obstacleId: string; x: number; y: number; vx: number; vy: number; radius: number; mass: number; vertices?: ReadonlyArray<Vec2>; linearDamping?: number; staticBody?: boolean; collisionGroups?: number; angle?: number; parts?: ReadonlyArray<ReadonlyArray<Vec2>>; shieldKindId?: string; angvel?: number; angularDamping?: number }
+interface SpawnObstacleCmd { type: 'SPAWN_OBSTACLE'; slot: number; obstacleId: string; x: number; y: number; vx: number; vy: number; radius: number; mass: number; vertices?: ReadonlyArray<Vec2>; linearDamping?: number; staticBody?: boolean; collisionGroups?: number; angle?: number; parts?: ReadonlyArray<ReadonlyArray<Vec2>>; shieldKindId?: string; angvel?: number; angularDamping?: number; shipKindId?: number }
 interface AiIntentCmd      { type: 'AI_INTENT';      slot: number; fx: number; fy: number; torque: number; setAngvel?: number }
+/** Pilot layer: every AI slot driven by control keys this tick, in ONE message
+ *  (replaces a post per drone). `slots[i]` flies with keys `bits[i]` (packed
+ *  `AiInputBits`, see contracts/IAiBehaviour.ts) for i < `count`; entries past
+ *  `count` are stale capacity and ignored. */
+interface AiInputsCmd      { type: 'AI_INPUTS';      count: number; slots: Uint16Array; bits: Uint8Array }
 interface ClockRateCmd     { type: 'CLOCK_RATE';     rate: number }
 /** Authoritatively reposition a body in the physics world. Used by the
  *  Phase-1 drone position-clamp backstop in `SectorRoom`: when a drone
@@ -120,7 +130,7 @@ interface RemoveWallCmd     { type: 'REMOVE_WALL';     id: string }
 /** v4 T2 — a teleporter pad's closing-iris push (PhysicsWorld.setPadField). */
 interface SetPadFieldCmd    { type: 'SET_PAD_FIELD';   id: string; cx: number; cy: number; half: number; active: boolean }
 interface RemovePadFieldCmd { type: 'REMOVE_PAD_FIELD'; id: string }
-type WorkerCommand = SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiIntentCmd | ClockRateCmd | SetPositionCmd | WarpRetargetCmd | RekeyShipCmd | SetHullExposedCmd | SetStatMulCmd | MissileImpulseCmd | WreckKickCmd | SpawnWallCmd | SetWallActiveCmd | RemoveWallCmd | SetPadFieldCmd | RemovePadFieldCmd | BotWarpCmd | SetTimeScaleCmd;
+type WorkerCommand = SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiIntentCmd | AiInputsCmd | ClockRateCmd | SetPositionCmd | WarpRetargetCmd | RekeyShipCmd | SetHullExposedCmd | SetStatMulCmd | MissileImpulseCmd | WreckKickCmd | SpawnWallCmd | SetWallActiveCmd | RemoveWallCmd | SetPadFieldCmd | RemovePadFieldCmd | BotWarpCmd | SetTimeScaleCmd;
 
 /** Pool commands (main → pooled worker): host / free one sector's world. */
 interface AddWorldCmd    { type: 'ADD_WORLD'; worldId: number; sab: SharedArrayBuffer }
@@ -179,6 +189,15 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
   const lastAckTick = new Map<number, number>();
   /** Pending AI intents per slot, applied once on the next physics step then cleared. */
   const aiIntents = new Map<number, { fx: number; fy: number; torque: number; setAngvel?: number }>();
+  /** Pilot layer: pending AI control keys per slot (-1 = none), applied once
+   *  on the next physics step then cleared. Latest AI_INPUTS wins per slot.
+   *  `aiInputList` holds the slots with a pending entry (a slot cleared by a
+   *  despawn or bot warp stays listed with -1 and is skipped). */
+  const aiInputPending = new Int16Array(MAX_ENTITIES).fill(-1);
+  const aiInputList = new Uint16Array(MAX_ENTITIES);
+  let aiInputListLen = 0;
+  /** Reused key record for decoding AI_INPUTS (no per-step allocation, #14). */
+  const aiKeys = { thrust: false, reverse: false, turnLeft: false, turnRight: false, boost: false };
   /** NPC warp-to: slot → held target (`on` false = request dropped, kept
    *  until the warp is idle so a run in progress finishes). */
   const botWarps = new Map<number, { x: number; y: number; on: boolean }>();
@@ -209,6 +228,7 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
         lastApplied.delete(cmd.slot);
         lastAckTick.delete(cmd.slot);
         aiIntents.delete(cmd.slot);
+        aiInputPending[cmd.slot] = -1;
         botWarps.delete(cmd.slot);
         sleepCount.delete(cmd.slot);
         sleepState.delete(cmd.slot);
@@ -269,6 +289,9 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
         // authoritative body lived UNLOCKED, so a hit drifted it forever (no
         // friction). Drones + asteroids stay dynamic.
         if (cmd.staticBody) physics.lockBody(cmd.obstacleId);
+        // Pilot layer: a drone's ShipKind (catalogue index), flown by
+        // AI_INPUTS through applyShipInput. Absent for asteroids / structures.
+        if (cmd.shipKindId !== undefined) physics.setPilotKind(cmd.obstacleId, getShipKind(shipKindFromIndex(cmd.shipKindId)));
         playerToSlot.set(cmd.obstacleId, cmd.slot);
         slotToPlayer.set(cmd.slot, cmd.obstacleId);
         break;
@@ -287,6 +310,19 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
           torque: cmd.torque,
           setAngvel: cmd.setAngvel,
         });
+        break;
+      }
+      case 'AI_INPUTS': {
+        const n = Math.min(cmd.count, cmd.slots.length, cmd.bits.length);
+        for (let i = 0; i < n; i++) {
+          const slot = cmd.slots[i]!;
+          if (slot >= MAX_ENTITIES) continue;
+          if (aiInputPending[slot] === -1) {
+            if (aiInputListLen >= MAX_ENTITIES) continue; // despawn churn overflow: drop
+            aiInputList[aiInputListLen++] = slot;
+          }
+          aiInputPending[slot] = cmd.bits[i]!;
+        }
         break;
       }
       case 'SET_TIME_SCALE': {
@@ -414,7 +450,7 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
     for (const [slot, r] of botWarps) {
       const id = slotToPlayer.get(slot);
       if (id === undefined) { botWarps.delete(slot); continue; }
-      if (physics.botWarp(id, r.on ? r : null)) { aiIntents.delete(slot); continue; }
+      if (physics.botWarp(id, r.on ? r : null)) { aiIntents.delete(slot); aiInputPending[slot] = -1; continue; }
       // Idle: arrived (or cancelled). Clear the latch and forget the slot.
       if (!r.on || physics.warpArrived(id)) { physics.botWarp(id, null); botWarps.delete(slot); }
     }
@@ -425,6 +461,20 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
       physics.applyImpulse(id, intent.fx, intent.fy, intent.torque);
     }
     aiIntents.clear();
+    // Pilot layer: AI slots flown by control keys, through the SAME
+    // applyShipInput as a pilot (grip, maxSpeed clamp, capital torque turn).
+    // A slot whose intent a bot warp dropped above has pending -1: skipped.
+    for (let i = 0; i < aiInputListLen; i++) {
+      const slot = aiInputList[i]!;
+      const bits = aiInputPending[slot]!;
+      aiInputPending[slot] = -1;
+      if (bits < 0) continue;
+      const id = slotToPlayer.get(slot);
+      if (id === undefined) continue;
+      decodeAiInputBits(bits, aiKeys);
+      physics.applyAiInput(id, aiKeys);
+    }
+    aiInputListLen = 0;
 
     // Always step by the nominal fixed dt regardless of actual elapsed time.
     // Using actual elapsed time causes the accumulator to occasionally produce
