@@ -167,6 +167,25 @@ export function targetParked(ctx: TacticalContext): boolean {
   return ctx.tvx * ctx.tvx + ctx.tvy * ctx.tvy <= v * v;
 }
 
+/** A target moving slower than this share of MY cruise speed is slow: I
+ *  outrun it by twice its speed or more, so the strafing run's dive, pass and
+ *  swing-round come round fast enough, and the picker flies them as on a
+ *  parked target (owner 2026-11-13/14: no toe-to-toe slugging). A ship's own
+ *  number (its cruise), never a fixed u/s. Not higher: at 0.75 a fighter
+ *  (sustained ~141–160 u/s) strafing a pilot at 90 u/s closed from behind at
+ *  35–60 u/s and managed one pass in 30 s, and a robot (cruise 121) slowing
+ *  in a turn turned the on-sight duel into straight runs (mean turn rate
+ *  0.25 rad/s against the 0.35 bar). Faster targets are tailed; the Tail's
+ *  close station and the face-off rule keep that out of formation. */
+export const SLOW_SPEED_FRAC = 0.5;
+
+/** Is the target slow (below `SLOW_SPEED_FRAC` × my cruise)? Every parked
+ *  target is slow. */
+export function targetSlow(ctx: TacticalContext): boolean {
+  const v = SLOW_SPEED_FRAC * ctx.cruiseSpeed;
+  return ctx.tvx * ctx.tvx + ctx.tvy * ctx.tvy < v * v;
+}
+
 /** A ship's guns bear on what sits within this cos of its bow (~60°): the
  *  heavy-fire Break rule's arc (`HEAVY_FIRE_BOW_COS`), applied from either
  *  side. */

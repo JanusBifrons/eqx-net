@@ -25,6 +25,7 @@ import {
   GUNS_BEAR_COS,
   MANOEUVRE_TAIL,
   targetParked,
+  targetSlow,
   type ManoeuvreId,
   type TacticalContext,
 } from './manoeuvre.js';
@@ -87,6 +88,14 @@ const PACK_HOLD = 0.05;
  *  "behind" term, a run ended where the target had turned back, so the next
  *  pick was another head-on run (the filmed straight-line jousts). */
 const TAIL_NEAR = 0.4;
+/** Face-off: inside this × fire range with each ship's guns bearing on the
+ *  other (both noses within `GUNS_BEAR_COS` of the line). Two ships each in
+ *  Tail on the other end up here, closing head-on or flying side by side
+ *  trading fire (filmed 3v3, 2026-11-14: a drone and a robot at 258 → 130 u,
+ *  both at half cruise, for 2 s). Neither is on a six, so neither Tail can
+ *  get there: hand off to a pass instead (no Tail, the run at full). Read
+ *  from what a pilot sees (where the other ship points), never its mind. */
+const FACE_OFF_RANGE = 0.5;
 
 /** True when the brain should re-score on `tick` (slot-staggered cadence). */
 export function decisionDue(tick: number, slot: number, lod: boolean): boolean {
@@ -121,8 +130,9 @@ export function scoreManoeuvres(ctx: TacticalContext, role: RoleProfile, out: Fl
   out[MANOEUVRE_HOLD] = HOLD_STANDOFF_SHARE * standoff * (1 - role.aggression) + PACK_HOLD * surplus;
   const pack = 1 / (1 + PACK_DAMP * surplus);
 
-  if (targetParked(ctx)) {
-    // A parked ship gets strafing runs (owner decision 2026-11-14: "Dive in
+  const parked = targetParked(ctx);
+  if (parked || targetSlow(ctx)) {
+    // A parked or slow ship gets strafing runs (owner decision 2026-11-14: "Dive in
     // firing, pass, swing round and come again, like a fighter on a ground
     // target. Always moving."): no Tail and no Hold (both settle near a
     // stopped target: the filmed Robot Orb hovered nose-on at ~380 u for
@@ -132,11 +142,28 @@ export function scoreManoeuvres(ctx: TacticalContext, role: RoleProfile, out: Fl
     // hitting me from behind is what the run's extend flies out from under
     // (boosting away); a heavy-fire Break cut every extend short and left the
     // fighter circling at ~250 u (strafeParked, 2026-11-14).
+    // A slow ship (under SLOW_SPEED_FRAC × my cruise) gets the same passes:
+    // I outrun it by 2x or more, so a run comes round fast; a Tail would sit
+    // on its six at its speed (2026-11-14). It can still chase me, so Break
+    // keeps its normal rules against it (only a parked ship never tails me).
     out[MANOEUVRE_HOLD] = 0;
     out[MANOEUVRE_TAIL] = 0;
     out[MANOEUVRE_ATTACK_RUN] = w.attackRun * (0.8 + 0.4 * role.aggression)
       * (1 + persistentBlockBias(ctx.recentBlocks));
-    out[MANOEUVRE_BREAK] = 0;
+    out[MANOEUVRE_BREAK] = parked ? 0 : breakScore(ctx, w.break, tailed);
+    out[MANOEUVRE_ORBIT] = w.orbit * orbitArc(ctx);
+    out[MANOEUVRE_KITE] = w.kite;
+    out[MANOEUVRE_FALL_BACK] = 0;
+    out[MANOEUVRE_FLEE] = 0;
+    return;
+  }
+
+  if (dN < FACE_OFF_RANGE && ctx.threatBearingCos > GUNS_BEAR_COS && ctx.targetBowCos > GUNS_BEAR_COS) {
+    // Face-off (FACE_OFF_RANGE): pass, extend, re-engage.
+    out[MANOEUVRE_TAIL] = 0;
+    out[MANOEUVRE_ATTACK_RUN] = w.attackRun * (0.8 + 0.4 * role.aggression)
+      * (1 + persistentBlockBias(ctx.recentBlocks)) * pack;
+    out[MANOEUVRE_BREAK] = breakScore(ctx, w.break, tailed);
     out[MANOEUVRE_ORBIT] = w.orbit * orbitArc(ctx);
     out[MANOEUVRE_KITE] = w.kite;
     out[MANOEUVRE_FALL_BACK] = 0;
@@ -162,11 +189,7 @@ export function scoreManoeuvres(ctx: TacticalContext, role: RoleProfile, out: Fl
   run *= 1 + persistentBlockBias(ctx.recentBlocks);
   out[MANOEUVRE_ATTACK_RUN] = run * pack;
 
-  let brk = 0;
-  if (tailed) brk = 1.6 * w.break;
-  // Heavy fire from a ship I can't shoot back at (off my bow).
-  else if (ctx.recentHits >= HEAVY_HITS && ctx.threatBearingCos < HEAVY_FIRE_BOW_COS) brk = 1.2 * w.break;
-  out[MANOEUVRE_BREAK] = brk;
+  out[MANOEUVRE_BREAK] = breakScore(ctx, w.break, tailed);
 
   // Orbit (gunships, robots): turret arcs let them circle with guns bearing.
   out[MANOEUVRE_ORBIT] = w.orbit * orbitArc(ctx);
@@ -175,6 +198,13 @@ export function scoreManoeuvres(ctx: TacticalContext, role: RoleProfile, out: Fl
   // Morale outcomes are never scored: only the die starts them.
   out[MANOEUVRE_FALL_BACK] = 0;
   out[MANOEUVRE_FLEE] = 0;
+}
+
+/** Break: tailed, or heavy fire from a ship I can't shoot back at (off my bow). */
+function breakScore(ctx: TacticalContext, weight: number, tailed: boolean): number {
+  if (tailed) return 1.6 * weight;
+  if (ctx.recentHits >= HEAVY_HITS && ctx.threatBearingCos < HEAVY_FIRE_BOW_COS) return 1.2 * weight;
+  return 0;
 }
 
 /** Orbit's share for the turret arc: clamp(half-arc / 45°, 0.25, 1). */

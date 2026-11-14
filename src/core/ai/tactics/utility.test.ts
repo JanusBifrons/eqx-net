@@ -16,6 +16,7 @@ import {
   MANOEUVRE_TAIL,
   makeTacticalContext,
   PARKED_SPEED_FRAC,
+  SLOW_SPEED_FRAC,
   type TacticalContext,
 } from './manoeuvre.js';
 import {
@@ -108,6 +109,35 @@ describe('scoreManoeuvres', () => {
     expect([MANOEUVRE_ORBIT, MANOEUVRE_ATTACK_RUN]).toContain(argmax(s));
     expect(s[MANOEUVRE_TAIL]).toBe(0);
     expect(s[MANOEUVRE_HOLD]).toBe(0);
+  });
+  it('a slow ship (under SLOW_SPEED_FRAC × my cruise) gets strafing passes, not a tail (2026-11-14)', () => {
+    // Close behind a slow target: a run, no Tail, no Hold (as on a parked one).
+    const slow = { tvx: 0, tvy: 0.6 * SLOW_SPEED_FRAC * 150 };
+    for (const dN of [0.1, 0.3, 0.6, 1, 2]) {
+      scoreManoeuvres(ctx(dN, -1, 1, { ...slow, targetBowCos: -1 }), FIGHTER, s);
+      expect(argmax(s)).toBe(MANOEUVRE_ATTACK_RUN);
+      expect(s[MANOEUVRE_TAIL]).toBe(0);
+      expect(s[MANOEUVRE_HOLD]).toBe(0);
+    }
+    // It can still chase me: tailed by a slow ship still breaks.
+    scoreManoeuvres(ctx(0.4, 0.5, -0.9, slow), FIGHTER, s);
+    expect(argmax(s)).toBe(MANOEUVRE_BREAK);
+    // Just over the line: the duel scoring (a close six is a Tail).
+    scoreManoeuvres(ctx(0.3, -1, 1, { tvx: 0, tvy: 1.05 * SLOW_SPEED_FRAC * 150, targetBowCos: -1 }), FIGHTER, s);
+    expect(argmax(s)).toBe(MANOEUVRE_TAIL);
+  });
+  it('a face-off (close, both ships\' guns on each other: a mutual tail) hands off to a pass', () => {
+    // Two ships each in Tail on the other end up nose to nose (head-on or
+    // side by side), neither on a six: filmed 3v3, 258 → 130 u at half cruise.
+    scoreManoeuvres(ctx(0.3, 0, 1, { targetBowCos: 1 }), FIGHTER, s);
+    expect(argmax(s)).toBe(MANOEUVRE_ATTACK_RUN);
+    expect(s[MANOEUVRE_TAIL]).toBe(0);
+    // On its six (its nose points away): Tail.
+    scoreManoeuvres(ctx(0.3, -1, 1, { targetBowCos: -1 }), FIGHTER, s);
+    expect(argmax(s)).toBe(MANOEUVRE_TAIL);
+    // Its guns on me but mine off it (I am turning away): no face-off.
+    scoreManoeuvres(ctx(0.3, 0, 0, { targetBowCos: 1 }), FIGHTER, s);
+    expect(s[MANOEUVRE_TAIL]).toBeGreaterThan(0);
   });
   it('heavy fire from off the bow breaks; from dead ahead it fights back', () => {
     scoreManoeuvres(ctx(0.5, 0, 0, { recentHits: 6 }), FIGHTER, s);

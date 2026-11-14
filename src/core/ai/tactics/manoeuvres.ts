@@ -19,6 +19,7 @@ import {
   MANOEUVRE_TAIL,
   rngUnit,
   targetParked,
+  targetSlow,
   type IManoeuvre,
   type ManoeuvreGoal,
   type TacticalContext,
@@ -51,8 +52,15 @@ export class HoldManoeuvre implements IManoeuvre {
 // ── Tail ────────────────────────────────────────────────────────────────
 /** Station behind the target's velocity, as a share of fire range. */
 export const TAIL_BEHIND = 0.6;
-/** Station behind the target once inside `TAIL_CLOSE_FROM` × fire range. */
-export const TAIL_BEHIND_CLOSE = 0.1;
+/** Station behind the target once inside `TAIL_CLOSE_FROM` × fire range,
+ *  and never closer than `TAIL_CLOSE_MIN_RADII` own hull radii (#18). The
+ *  station is reached at the target's speed, so it is where a Tail flies in
+ *  formation: at 0.1 × fire range (~3 radii) a fighter sat at 92–94 u behind
+ *  a pilot cruising at 93 u/s, trading fire at point blank (filmed melee,
+ *  2026-11-14). Still well inside the 0.6 far station, so it keeps the
+ *  Lufbery fix (below). */
+export const TAIL_BEHIND_CLOSE = 0.3;
+export const TAIL_CLOSE_MIN_RADII = 6;
 const TAIL_CLOSE_FROM = 0.5;
 /** Pursuit lead on the station point is capped at this (s). */
 const TAIL_LEAD_MAX_S = 2;
@@ -115,7 +123,11 @@ export class TailManoeuvre implements IManoeuvre {
     // each other forever (a Lufbery circle; 2026-11-13 on-sight tail test).
     let f = (ctx.dist - TAIL_CLOSE_FROM * R) / ((1 - TAIL_CLOSE_FROM) * R);
     f = f < 0 ? 0 : f > 1 ? 1 : f;
-    const behind = (TAIL_BEHIND_CLOSE + (TAIL_BEHIND - TAIL_BEHIND_CLOSE) * f) * R;
+    let near = TAIL_BEHIND_CLOSE * R;
+    if (near < TAIL_CLOSE_MIN_RADII * ctx.radius) near = TAIL_CLOSE_MIN_RADII * ctx.radius;
+    let far = TAIL_BEHIND * R;
+    if (far < near) far = near;
+    const behind = near + (far - near) * f;
     let px = ctx.tx + bx * behind;
     let py = ctx.ty + by * behind;
     const d0 = Math.hypot(px - ctx.x, py - ctx.y);
@@ -252,7 +264,7 @@ const RUN_PASS_MAX_S = 2;
 const RUN_EXTEND_MIN_S = 1.5;
 const RUN_EXTEND_MAX_S = 3;
 const RUN_EXTEND_RANGE = 1.3;
-/** Strafing a parked target (owner decision 2026-11-14: "dive in firing,
+/** Strafing a parked or slow (`targetSlow`) target (owner decision 2026-11-14: "dive in firing,
  *  pass, swing round and come again, like a fighter on a ground target"):
  *  the extend ends once the gap is this many overshoots
  *  (`shipTuning(kind).attackRunOvershoot`, #18), not on the seeded timer
@@ -262,7 +274,7 @@ const RUN_EXTEND_RANGE = 1.3;
  *  2x scale turns ~0.9 rad/s at ~150 u/s, so every overshoot added here
  *  adds ~6 s to a cycle (1.5 → one pass per ~14 s, strafeParked). */
 export const STRAFE_EXTEND_OVERSHOOTS = 1;
-/** Strafing a parked target: the dive aims this share of the overshoot
+/** Strafing a parked or slow target: the dive aims this share of the overshoot
  *  beside it (see `runMiss`). */
 export const STRAFE_MISS_OVERSHOOTS = 0.25;
 /** The strafing swing-round arcs (course square to the velocity) while the
@@ -310,13 +322,13 @@ export class AttackRunManoeuvre implements IManoeuvre {
       // Perpendicular to the target line (left-hand normal).
       let gx = ctx.aimX - ctx.uy * miss - ctx.x;
       let gy = ctx.aimY + ctx.ux * miss - ctx.y;
-      // Strafing a parked target, still flying away from it after the
+      // Strafing a parked or slow target, still flying away from it after the
       // extend: swing round in an arc, course square to the velocity on the
       // target's side, so thrust curves the velocity instead of cancelling
       // it. Aiming straight back at the target turned the ship in place:
       // the speed fell to ~30 % of cruise for ~3 s every pass (strafeParked).
       const v = Math.hypot(ctx.vx, ctx.vy);
-      if (ctx.targetIsShip && targetParked(ctx) && v > STRAFE_SWING_MIN_SPEED * ctx.cruiseSpeed
+      if (ctx.targetIsShip && targetSlow(ctx) && v > STRAFE_SWING_MIN_SPEED * ctx.cruiseSpeed
         && ctx.vx * ctx.ux + ctx.vy * ctx.uy < 0) {
         const s = ctx.vx * ctx.uy - ctx.vy * ctx.ux >= 0 ? 1 : -1;
         gx = (-ctx.vy / v) * s;
@@ -372,7 +384,7 @@ export class AttackRunManoeuvre implements IManoeuvre {
       return;
     }
     if (this.phase === RUN_EXTEND) {
-      if (ctx.targetIsShip && targetParked(ctx)) {
+      if (ctx.targetIsShip && targetSlow(ctx)) {
         if (ctx.dist > STRAFE_EXTEND_OVERSHOOTS * ctx.overshoot
           || ctx.tick >= this.phaseEnd + RUN_EXTEND_MAX_S * TICKS_PER_S) this.phase = RUN_DONE;
       } else if (ctx.tick >= this.phaseEnd || ctx.dist > RUN_EXTEND_RANGE * ctx.fireRange) {
@@ -385,8 +397,8 @@ export class AttackRunManoeuvre implements IManoeuvre {
 /** How far beside the target the run passes: a size, not a range (#18). */
 function runMiss(ctx: TacticalContext): number {
   const m = RUN_MISS_RADII * ctx.radius;
-  if (!(ctx.targetIsShip && targetParked(ctx))) return m;
-  // A parked target does not move off the line while the pass is flown, so
+  if (!(ctx.targetIsShip && targetSlow(ctx))) return m;
+  // A parked or slow target barely moves off the line while the pass is flown, so
   // the 2.5-radii aim (tuned on moving duels) lands exactly there: two shield
   // bubbles touch (strafeParked: a ram on the first pass). Strafe a quarter
   // overshoot aside (`shipTuning.attackRunOvershoot` / 4, as the tuning
@@ -436,3 +448,4 @@ export class BreakManoeuvre implements IManoeuvre {
   }
   isDone(ctx: TacticalContext): boolean { return ctx.tick >= this.until; }
 }
+

@@ -26,6 +26,8 @@ import {
   STRAFE_EXTEND_OVERSHOOTS,
   STRAFE_MISS_OVERSHOOTS,
   TAIL_BEHIND,
+  TAIL_BEHIND_CLOSE,
+  TAIL_CLOSE_MIN_RADII,
   TailManoeuvre,
 } from './manoeuvres.js';
 
@@ -94,6 +96,21 @@ describe('TailManoeuvre', () => {
     expect(goal.boost).toBe(true); // far: > 1.5 R
     expect(goal.facing).toBe(FACE_MOVE); // out of range
   });
+  it('the close station is never formation range: max(0.3 × fire range, 6 own radii) behind', () => {
+    // Before: 0.1 × fire range (~3 radii), reached at matched speed: a fighter
+    // sat at 92–94 u behind a pilot at 93 u/s (filmed melee, 2026-11-14).
+    for (const radius of [10, 60]) {
+      const station = Math.max(TAIL_BEHIND_CLOSE * R, TAIL_CLOSE_MIN_RADII * radius);
+      // Matched speed on the target's six: closer than the station drops
+      // back, farther closes, on it holds the target's speed.
+      for (const [gap, sign] of [[0.6 * station, -1], [station, 0], [1.4 * station, 1]] as const) {
+        const t = new TailManoeuvre();
+        run(t, ctxAt(0, -gap, 0, 0, { tvx: 0, tvy: 130, vx: 0, vy: 130, radius, angle: 0 }));
+        if (sign === 0) expect(Math.abs(t.wantVy - 130)).toBeLessThan(1);
+        else expect(Math.sign(t.wantVy - 130)).toBe(sign);
+      }
+    }
+  });
   it('never hovers: at a slow target it circles at a fighting speed', () => {
     // Stationary target 0.6 R north: we sit on its station.
     const c = ctxAt(0, 0, 0, TAIL_BEHIND * R, { vx: 10, vy: 0 });
@@ -133,9 +150,9 @@ describe('TailManoeuvre', () => {
   });
 });
 
-/** A target flying away along +y at 30 u/s (over the parked line, 0.1 ×
+/** A target flying away along +y at 130 u/s (over the slow line, 0.5 ×
  *  cruise): the duel run, not a strafe. */
-const MOVING = { tvx: 0, tvy: 30 };
+const MOVING = { tvx: 0, tvy: 130 };
 
 describe('AttackRunManoeuvre (boom-and-zoom)', () => {
   it('dives beside the lead with boost, passes beside the target, overshoots, extends, then is done', () => {
@@ -182,8 +199,8 @@ describe('AttackRunManoeuvre (boom-and-zoom)', () => {
   });
   it('pulls off earlier the faster it closes and the slower it turns (the kind handling)', () => {
     const base = ctxAt(0, -1500, 0, 0, { vy: 200, maxAngvel: 1, radius: 24 });
-    const fast = ctxAt(0, -1500, 0, 0, { vy: 830, maxAngvel: 1, radius: 24, ...MOVING });
-    const agile = ctxAt(0, -1500, 0, 0, { vy: 830, maxAngvel: 3, radius: 24, ...MOVING });
+    const fast = ctxAt(0, -1500, 0, 0, { vy: 930, maxAngvel: 1, radius: 24, ...MOVING });
+    const agile = ctxAt(0, -1500, 0, 0, { vy: 930, maxAngvel: 3, radius: 24, ...MOVING });
     // Never later than the overshoot.
     expect(runPullDist(base)).toBe(OVER);
     // 800 u/s × (π/4 rad / 1 rad/s) + 2.5 radii ≈ 688 u.
@@ -254,9 +271,9 @@ describe('AttackRunManoeuvre on a parked ship: strafing runs (owner 2026-11-14)'
     // Velocity turned across the target line: the dive (toward it).
     const d2 = run(m, ctxAt(0, 500, 0, 0, { tick: 1, vx: CRUISE, vy: -10 }));
     expect(d2.dirY).toBeLessThan(-0.9);
-    // A moving target gets the plain dive at once (no arc).
+    // A target at fighting speed gets the plain dive at once (no arc).
     const n = new AttackRunManoeuvre();
-    const c3 = ctxAt(0, 500, 0, 0, { tick: 0, vx: 0, vy: CRUISE, tvx: 0, tvy: -30 });
+    const c3 = ctxAt(0, 500, 0, 0, { tick: 0, vx: 0, vy: CRUISE, tvx: 0, tvy: -130 });
     n.begin(c3);
     expect(run(n, c3).dirY).toBeLessThan(-0.9);
   });
