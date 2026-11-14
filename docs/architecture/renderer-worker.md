@@ -34,6 +34,8 @@ Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each r
 
 - **Fallback for browsers without OffscreenCanvas** (Safari < 17): `WorkerRendererClient` constructor branches on `supportsOffscreenRenderer()` and returns `PixiRenderer` (still alive in [render/PixiRenderer.ts](../../src/client/render/PixiRenderer.ts)) on `false`. Production code never assumes worker rendering is available.
 
+Why: Zustand triggers React re-renders on subscription changes. Putting per-frame spatial data in Zustand would cause 60 Hz React re-renders, which is a performance catastrophe. Spatial state lives in a plain-object render mirror that Pixi polls directly — no React involvement.
+
 ## History
 
 Moved from `src/client/CLAUDE.md`: why the rule is what it is, with the measurements behind it.

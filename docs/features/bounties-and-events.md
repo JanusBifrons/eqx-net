@@ -205,3 +205,13 @@ leave quietly and drop nothing.
 - `BountyBoard.test.ts`: uid parsing, cost, and the board row by name.
 - `BountyAction.test.tsx`: chips send from your own storage, or explain when
   you have none.
+
+## Client rules in detail
+
+Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each rule and points here.
+
+### Contracts tab (Living World P4c, plan peppy-jumping-pinwheel)
+
+- `layout/Drawer/tabs/ContractsTab.tsx` rebuilds ONLY from `GET /galaxy/contracts` (#16), polled only while `drawerTab === 'contracts' && isDrawerOpen`. It lives under `/galaxy` on purpose, so no new Vite proxy path is needed (see the `/trade` collision rule above).
+- World notices (`world_notice`: elites, events, bounties) reuse the trade toast stack with the gold `world` tone, which is not tappable. They are accelerators; the truth is the snapshot (`drones[].elite`) and the galaxy snapshot (`SectorLiveState.elite` / `.event`).
+- Lock: `ContractsTab.test.tsx`.

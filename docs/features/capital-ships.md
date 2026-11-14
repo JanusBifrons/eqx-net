@@ -33,3 +33,11 @@ Flying a capital, tap empty space and the helm sets a course there (`core/helm/h
 - Only the pilot sees it, only for their own capital under an active order: the order lives in `ColyseusClient`, and `helm/helmCourseMark.ts` decides visibility. The point rides `RenderMirror.helmCourse` to the renderer (spatial, so never Zustand, #2), so both render paths draw it.
 - `render/helm/HelmCourseMarker.ts` draws it in screen space, so it keeps one pixel size at any zoom (capitals zoom far out). Painted once; per frame only position, scale and alpha change (#14). Hidden during a trip.
 - Locks: `helmCourseMark.test.ts`, `HelmCourseMarker.test.ts`, `tests/e2e/capital-helm.spec.ts` (shown after a tap, gone after W, read via `__eqxArtStats().helmMarker`).
+
+## Client rules in detail
+
+Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each rule and points here.
+
+### Helm move marker
+
+- The capital pilot's helm course point reaches the renderer as `RenderMirror.helmCourse` (`{x, y, seq}` or null), written by `ColyseusClient.syncHelmMark` via the pure `helm/helmCourseMark.ts` (own capital + active order + not spectating). Never put it in Zustand (#2). `render/helm/HelmCourseMarker.ts` draws it screen-space (fixed pixel size), popping on each `seq` change. E2E reads `__eqxArtStats().helmMarker`. Story: `docs/features/capital-ships.md`.

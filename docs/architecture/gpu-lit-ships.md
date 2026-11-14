@@ -105,3 +105,13 @@ Plan `prancy-squishing-donut`, R2 (branch `rnd/gpu-lit-ingame`). Open: R3 batche
 - ~~A thin dark rod sticks out behind each 5-inch turret, opposite its barrels.~~ Fixed: the rod was in the HULL bake, not the turret. The hull's vent-slit greeble (sized for a fighter) is one texel thick and ~110 u long on a capital, and on the battleship it ran out of the quad 40 mm AA tubs at `aa-s2`/`aa-p2` (the small turrets), so it read as a rod behind the gun in both the baked and GPU-lit art. Slits now skip any turret ring (`forgeShip`); lock: `render/art/hullVents.test.ts`.
 - ~~Far shell streaks run nearly vertical while the barrels that fired them point south-east.~~ Not a bug (checked 2026-11-10): the faint white near-vertical streaks are the backdrop's speed dust (`Backdrop.layoutMotes`), stretched along the camera's motion while the fighter flies north. Shells are orange, and in a re-take every shell's streak matched its velocity and frame-to-frame motion (locked by `FxWeapons.test.ts`).
 - Framing: the follow camera keeps the hull near the left edge, and the caption covers the stern.
+
+## Client rules in detail
+
+Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each rule and points here.
+
+### GPU-lit art (default for players; Settings → Graphics → Lighting)
+
+- Lit maps pack into **data** atlas pages (no premultiplication) that share the ordinary atlas's page budget; never put them on a canvas page.
+- Every lit mesh registers with `litPass`; effect lights go into `litPass.scene` during `update()`, or are pinned to the sprite that draws the effect (`attachLight`). The pass lights everything once in the ticker before render. Keep it alloc-free.
+- Players get a live level by default (desktop High, phones Medium/Low); automated browsers get Baked unless `?shiplight=` asks. The Baked level must stay byte-identical to the old baked look. Story: [docs/architecture/gpu-lit-ships.md](gpu-lit-ships.md).

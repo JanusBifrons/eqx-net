@@ -22,3 +22,17 @@ The trip IS the loading screen; the player shouldn't notice it (the user: "like 
 - **In:** after `TRAVEL_MIN_S` (minus the approach) and once the destination is loaded, the ship is placed on approach out along its heading (`mirror.travelJumpX/Y`; the renderer shifts the sky by it so the stars carry on), brakes from warp to a glide, then glides onto its arrival point (`travelApproach`), so what's near the arrival point is flown past at a visible speed. Landing opens `joinMinimumElapsed` → `client_ready` → the ship arrives for everyone (`warp: 3`).
 - **Feel knobs** (`ColyseusClient`): `TRAVEL_OUT_S` 3, `TRAVEL_MIN_S` 25 (the user: "20–30 s, it needs to feel significant"), `TRAVEL_BRAKE_S` 2.5, `TRAVEL_GLIDE_V` 2500, `TRAVEL_GLIDE_D` 4000.
 - **Known gap:** newly baked art re-uploads its whole atlas page, a GPU stall (0.25–0.6 s on integrated graphics) wherever a batch of new art lands. Fix in progress: upload new art in small pieces.
+
+## Client rules in detail
+
+Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each rule and points here.
+
+- [components/HyperspaceOverlay.tsx](../../src/client/components/HyperspaceOverlay.tsx) is unchanged: left-edge vertical spool bar with rocket icon, ms-precision countdown, bottom-up green fill, and red abort button during SPOOLING; warp-streak background during IN_TRANSIT. Reads from Zustand; transit messages travel over the existing Colyseus room socket via `transitClient.engageTransit(room, key, arrival?)` / `cancelTransit(room)`. The spool duration is mirrored into Zustand as `transitSpoolMs: number | null` (set by `ColyseusClient`'s `transit_state` SPOOLING handler, cleared on DOCKED/ARRIVED) so the overlay can render an ms-precision countdown without re-deriving timing.
+
+### Sector-to-sector trips are the loading screen (Phase 4 travel state)
+
+- A transit never raises the curtain or `WarpScreen`: the store's `travelling` covers the trip, and `computeShowLoadingScreen` / `useWarpOrchestration` keep them down (HUD stays up). Only the first join uses the curtain.
+- The trip is `ColyseusClient.stepTravel` (out → cruise → approach). It writes the local ship's mirror entry LAST in `updateMirror`, overriding prediction while it lasts.
+- Nothing fades: the old sector is flown out of (the room swap waits for it), the new one is flown into. Never add a fade or a cut to hide loading; stretch the trip instead.
+- A new jump of the local ship during a trip must add to `mirror.travelJumpX/Y` so the sky carries across it.
+- Story: [docs/architecture/travel-state.md](travel-state.md).

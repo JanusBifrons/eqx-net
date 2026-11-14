@@ -125,3 +125,17 @@ It is separate from base storage, so production never draws from it.
 There is no cross-sector browser test yet: the pilot's hop is the existing warp flow (`transit_ready`), checked here at the integration level.
 
 The `teleport-test` room seeds a powered Capital with a paired teleporter on each side, owned by a fixed id the test joins as. It uses `teleportCycleScale` and a fast grid pulse.
+
+## Client rules in detail
+
+Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each rule and points here.
+
+### Teleporter panel and inspector placement (plan soft-leaping-truffle v4, T1)
+
+- **`components/TeleporterPanel.tsx`** mounts in the inspector for your own built teleporter. It reads the room-state row decoded into `StructureRenderState.teleport` from the mirror at 4 Hz (no Zustand). It lists pairing candidates by kind and distance, never ids. Senders live in `structureActionsClient.ts`.
+- **T2 — on-pad prediction.**
+  - **Walls:** `visitDerivedWalls` emits each teleporter's iris spans (blocking only while SEALED, keys from `-2e9`), so prediction and drawing follow the server walls.
+  - **Push:** `syncPadFields` sets each pad's closing push in predWorld from the room-state phase.
+  - **Re-seed:** an own-ship `poseEpoch` change makes `handleSnapshot` re-seed the local body at the snapshot pose with a fresh `Reconciler`, and that snapshot skips the reconcile (a snap, not a slide). `_localPoseEpoch` resets to -1 on sector handoff.
+  - **Warning:** `TeleportWarning` (top-centre) is derived from room state + the mirror, never a message.
+- **T4 — tolls and pairing prompts.** `TeleportPrompts` (top-centre, `order={2}`, right under the energy bar so nothing above it changes height) shows a toll (`teleport_toll` → Zustand `tollPrompt`, Pay / Don't pay / Always / Never) and pair requests (`teleport_pair_request` → `pairRequests`, Accept / Decline). They are offers, not state. The owner's toll select lives in `TeleporterPanel`; `ForeignTeleporterPanel` asks another owner to pair. Every sender has a case in `teleportClientWireParity.test.ts`.

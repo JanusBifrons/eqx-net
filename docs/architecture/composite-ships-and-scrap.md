@@ -119,3 +119,38 @@ components.
   up (which sections, their mass and HP; `SCRAP_DEFAULT_MASS` 1 and `SCRAP_HP`
   30 are fighter-sized) is an open owner decision (found 2026-11-12). Its death
   blast does follow the hull (`blastRadiusFor`).
+
+## Client rules in detail
+
+Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each rule and points here.
+
+### Composite ship + scrap render (2026-06-13)
+
+- **Composite ships**: `buildCompositeShipGfx` (`render/pixi/spriteBuilders.ts`)
+  bakes a `ShipShape` `composite`'s `parts[]` into ONE `Graphics` (one sprite /
+  one draw); `buildShipGfxFromShape` delegates to it. Pixi-up local space (the
+  sprite transform handles the world Y-flip). `shipShapeSvg.tsx` renders the
+  picker silhouette the same way.
+- **Scrap (pose-core kind 3)** is a new client leaf
+  (`net/entity/leaves/scrapClientLeaf.ts`) routed by `ClientEntityFactory`
+  (`case SWARM_KIND_SCRAP`). It is a convexHull predWorld collider
+  built from the parent kind's component collider
+  (`shipScrapGroups(entry.shipKind)[entry.componentIndex].collider`, mapped
+  `x*scale,-y*scale` — IDENTICAL to the server `ScrapSpawner`), in
+  `SCRAP_COLLISION_GROUPS`. **It is DRONE-like, NOT asteroid-like (Phase-5
+  desync fix, 2026-06-14):** spawned **UNLOCKED** at the server's
+  `SCRAP_DEFAULT_MASS`. Its body follows the remote-entity anchor like a drone
+  (latest server state each snapshot, stepped on the predicted timeline — see
+  the one-paradigm rule above), so the local player's predicted shove matches
+  the server's dynamic mass-1 scrap; its sprite joins the `=== 1` drawn-pose
+  path in `updateMirror` + `swarmSpriteUpdater` (`resolveEntityDisplayPose`,
+  not a second render-now `interpolateSwarmPose`). **Locking it (the old asteroid-like behaviour)
+  made it an infinite-mass wall the player bounced off in prediction while the
+  server let them shove it — every snapshot reconciled that divergence as the
+  user's "huge spike in corrections".** `buildScrapGfx(parentKind, componentIndex)`
+  renders the component's recentred sub-shapes from the catalogue, keeping the
+  part colours so a dead ship visibly comes apart. `swarmSpriteUpdater` has a
+  kind-3 create branch. Scrap geometry is NEVER on the wire — looked up by
+  `(parentShipKind, componentIndex)`. Lock: `scrapClientLeaf.test.ts` (a ship
+  driven into a scrap fragment must shove it, not bounce). See
+  [docs/architecture/composite-ships-and-scrap.md](composite-ships-and-scrap.md).

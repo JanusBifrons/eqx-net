@@ -190,3 +190,27 @@ In-game React overlays are positioned via **named slot anchors**, never hand-pla
 - **Phase machine lives in Zustand** (`phase: 'meta' | 'auth' | 'galaxy-map' | 'connecting' | 'game' | 'local'`). Drawer tabs use `useUIStore(s => s.setPhase)` to drive navigation (Settings `Return to menu`, Profile Logout). **Living Galaxy P5 (2026-06-15): the initial phase is `galaxy-map`** — the live galaxy map IS the landing screen on load. **Spawning is auth-gated ON THE PICK** (`GameSurface.handleSelectorPick`): a logged-out pilot browses the map freely, but picking a sector stashes it in Zustand `pendingPickSector` and routes to `auth`; on return the remounted GameSurface's idle-mount effect re-opens the picker for the stashed sector. `?room=…` / `?galaxy=…` URL escape hatches still skip straight to `game` (App's `autoJoin` overrides the initial phase). `meta` is **retired from the default path** (kept reachable via Return-to-menu / Logout); the `MetaLandingScreen`'s server-health banner + live player count are FOLDED into `GalaxyPickerChrome` (`galaxy-landing-info`). Regression lock: [tests/e2e/galaxy-landing-flow.spec.ts](../../tests/e2e/galaxy-landing-flow.spec.ts).
 
 - Regression lock: [tests/e2e/layout-slots.spec.ts](../../tests/e2e/layout-slots.spec.ts) covers HUD vs AppBar clearance, HUD vs joystick non-overlap, portrait-keeps-joystick-interactive, mobile AppBar hidden, vertical tab order (galaxy first), debug-tab content gating, MAP-button removal, meta-landing visibility, Return-to-menu flow, Logout confirm (drawer `ProfileTab`; the avatar-menu logout path is locked separately by [tests/e2e/avatar-menu-logout.spec.ts](../../tests/e2e/avatar-menu-logout.spec.ts)).
+
+- **No raw ids in player-facing UI (2026-06-14 — load-bearing).** NEVER render a playerId / shipId / entityId / ownerPlayerId as visible text. There are no anonymous players — every owner resolves to a DB user — so show a HUMAN label: a display name ("you" for the local player, the owner's server-resolved name, or "Unknown" for an owner that doesn't map to a DB user, which is an ORPHAN the server logs via `structure_owner_unresolved`). When no name is available, show a kind/role, never an id. Ids live ONLY in hidden `data-*` attrs (E2E) + logs. (Internal sprite/map/body keys — `swarm-${id}`, `linger-${id}`, `p:${playerId}` — are fine; they're never shown. Drone NPC callsigns `AI <hex>` are a deliberate designation, not a player-identity id.) Fixed instances: structure-owner inspector line, lingering-hull inspector (kind only), ship name-label fallback (`Pilot`, never `Pilot <id>`), ConnectionDiagnostics ID row (removed).
+
+### Sizing default: start tiny, grow on request
+
+When you build any new UI element — modal, panel, card, button, chip — **default to as small as humanly possible**. Especially on mobile. We will iterate it bigger when the user reports it's hard to hit or read; the reverse direction (shipping huge and shrinking back down) wastes review cycles and feels worse.
+
+Concretely:
+- Card silhouettes / icons: start ~24–36 px. Don't reach for 64 px without a reason.
+- Body text in HUD / overlays / cards: 9–11 px. Captions 8–9 px. Reserve 12+ px for primary CTAs.
+- Dialog `maxWidth`: prefer `xs`; only step up to `sm` if content genuinely needs it.
+- Padding inside cards / dialogs: `p: 0.5`–`0.75` (4–6 px). Avoid MUI defaults (which are 16–24 px).
+- Touch targets that absolutely must be 44 px (iOS HIG) — only fight for that on PRIMARY confirm actions, not every chip.
+- Buttons: `size="small"` by default, with `fontSize: 11`.
+
+
+- **The inspector is `<Portal>`'d to `document.body`.** Its `zIndex: 1400` was trapped by an ancestor stacking context under the body-level HUD anchors, so the `top-left` anchor ate clicks on its buttons (LESSONS 2026-11-02). Any panel outside the Slot system that must beat the HUD needs a Portal. `gameRafLoop` still finds it by testid.
+- **The world-anchored inspector is placed by `app/inspectorPlacement.ts` `placeInspector`:** the WHOLE panel stays on screen, below the header, with the bottom kept when it is too tall.
+  - A target off-screen used to push half the panel out of view (its buttons unclickable). Found by `teleporter.spec.ts`; the header case by `break-in.spec.ts`.
+  - Never clamp only the anchor.
+
+## History
+
+The bias: it's easier to hear "this is too small, bump it 10 %" than to undo the visual heaviness of a default-sized MUI component cluster. The 2026-05-12 ship-picker rebuild is the canonical example — `maxWidth="sm"` + full kind descriptions + 64 px silhouettes + 22 px stat chips read as "absolutely huge" in playtest; the rebuild dropped to `xs`, 36 px silhouettes, a one-line stat readout, and 11 px buttons.
