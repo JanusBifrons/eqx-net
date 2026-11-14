@@ -62,8 +62,8 @@ export const COUNT_BUDGETS: Record<string, CountBudget> = {
   // 2026-11-08: the 80-ship sustained fight seen from the zoom-out floor (asteroids on).
   'wide-view': {
     rxKBps: 418, minSwarm: 50,
-    measured: 'desktop 3 runs 2026-11-08: rx 308–334 KB/s, swarm 104–118. Work: bodies 73.6–77.9, ai 69.5–73.8, swarm recs 69.8–73.7, bytes 2380–2513, ents/snap 80.3–93.4; CI (ubuntu, PR #356): 73.1 / 68.6 / 69.3 / 2363 / 91.7, rx 327.7, swarm 101',
-    work: { bodiesPerTick: 98, aiAgentsPerTick: 93, swarmRecordsPerTick: 93, swarmBytesPerTick: 3142, entitiesPerSnapshot: 117 },
+    measured: 'desktop 3 runs 2026-11-08: rx 308–334 KB/s, swarm 104–118. Work: bodies 73.6–77.9, ai 69.5–73.8, swarm recs 69.8–73.7, bytes 2380–2513, ents/snap 80.3–93.4; CI (ubuntu, PR #356): 73.1 / 68.6 / 69.3 / 2363 / 91.7, rx 327.7, swarm 101. Re-measured laptop 2026-11-14, feat/ai-fight-feel 5 runs: bodies 89.9–93.5, ai 85.8–89.1, swarm recs 85.8–89.5, bytes 3098–3230, ents/snap 47.5–48.8, rx 280–282, end swarm 162–163; origin/main same session 2 runs: 82.7–83.3 / 78.9–79.2 / 78.8–79.4 / 2846–2867, rx 329–332, end swarm 136–137. Raised because fights last longer by the owner’s spread-targets decision (2026-11-14: each AI pilot prefers an unengaged enemy, so more ships stay alive); per-ship cost unchanged: bytes/record 36.1 both, bodies/record 1.04–1.05 both, ai/record 1.00 both',
+    work: { bodiesPerTick: 117, aiAgentsPerTick: 112, swarmRecordsPerTick: 112, swarmBytesPerTick: 4038, entitiesPerSnapshot: 117 },
   },
 };
 
