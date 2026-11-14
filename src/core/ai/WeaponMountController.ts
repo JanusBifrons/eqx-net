@@ -61,6 +61,11 @@ export interface MountTargetView {
    *  STRUCTURES over player ships at comparable distance (req #2 "structures
    *  primarily"). `0` / undefined ⇒ no bias, byte-identical to pre-Phase-2. */
   readonly priority?: number;
+  /** Spread targets (2026-11-14): how many OTHER brains of the picker's side
+   *  already hold this target. With `PickTargetOptions.claimWeight > 0` the
+   *  score is multiplied by `1 + claimWeight × claims`, so a free target is
+   *  preferred. Undefined / 0 ⇒ no change. */
+  readonly claims?: number;
 }
 
 /** A single mount's static configuration — the subset of `WeaponMount` the
@@ -148,6 +153,9 @@ export interface PickTargetOptions {
    *  `priority` 0/undefined the divisor is 1 ⇒ byte-identical to pre-Phase-2.
    *  Server-only today (drone COMBAT pick); the player-turret callers omit it. */
   priorityBias?: number;
+  /** Spread targets (2026-11-14): penalty per ally already on a candidate
+   *  (`target.claims`). `0` (default) ⇒ byte-identical. Server drone AI only. */
+  claimWeight?: number;
 }
 
 /**
@@ -188,6 +196,7 @@ export function pickTarget(
   const dwellTicks = options?.dwellTicks ?? 0;
   const ticksSincePrev = options?.ticksSincePrevTarget ?? Infinity;
   const priorityBias = options?.priorityBias ?? 0;
+  const claimWeight = options?.claimWeight ?? 0;
   // Pre-square the gate so the hot loop stays sqrt-free.
   const maxD2 = maxDistance === Infinity ? Infinity : maxDistance * maxDistance;
   const prevMaxDistance = options?.prevMaxDistance ?? maxDistance;
@@ -226,6 +235,10 @@ export function pickTarget(
     // or priority 0/undefined ⇒ divisor 1 ⇒ no change (byte-identical default).
     if (priorityBias > 0 && t.priority !== undefined && t.priority > 0) {
       score /= 1 + priorityBias * t.priority;
+    }
+    // Spread targets: allies already on it make it a worse pick.
+    if (claimWeight > 0 && t.claims !== undefined && t.claims > 0) {
+      score *= 1 + claimWeight * t.claims;
     }
     if (inRange && score < bestScore) {
       bestScore = score;

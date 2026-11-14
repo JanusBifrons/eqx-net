@@ -11,6 +11,7 @@ import type {
   AiTickStats,
 } from '../contracts/IAiBehaviour.js';
 import { AimBoard } from './tactics/fireLanes.js';
+import { TargetClaimBoard } from './tactics/targetClaims.js';
 
 /**
  * Per-tick fire request emitted by a behaviour. The controller buffers these
@@ -71,6 +72,9 @@ export class AiController {
   /** Each brain's current aim point (fire-lane awareness, AI slice 5b): one
    *  slot per registered entity, handed to brains as `view.aims`. */
   readonly aims = new AimBoard();
+  /** Each brain's body target per side (spread targets, 2026-11-14), handed
+   *  to brains as `view.claims`. */
+  readonly claims = new TargetClaimBoard();
   private readonly fireQueue: AiFireRequest[] = [];
   /** Morale warp-out requests this tick (AI slice 6b): parallel arrays,
    *  reused (rare; amortised growth only). */
@@ -107,6 +111,8 @@ export class AiController {
   unregister(entityId: string): void {
     this.entities.delete(entityId);
     this.aims.remove(entityId);
+    this.claims.remove(entityId);
+    this.claims.forgetTarget(entityId);
     this.pendingHostile.delete(entityId);
   }
 
@@ -199,6 +205,7 @@ export class AiController {
     }
     // Also drop any buffered (pre-register) hostility for this player.
     for (const pending of this.pendingHostile.values()) pending.delete(playerId);
+    this.claims.forgetTarget(playerId);
   }
 
   /**
@@ -210,6 +217,7 @@ export class AiController {
   clear(): void {
     this.entities.clear();
     this.aims.clear();
+    this.claims.clear();
     this.pendingHostile.clear();
   }
 
@@ -270,7 +278,7 @@ export class AiController {
     // every behaviour. The 60/sec rate is negligible vs the rest of
     // the engine; leave as-is. See `swarmEntitySnapshot` doc for the
     // full GC-pressure story.
-    const view: AiWorldView = { players, structures, swarms, tick, dtSec, resolveEntityInto, neighbours, stats: this.stats, aims: this.aims };
+    const view: AiWorldView = { players, structures, swarms, tick, dtSec, resolveEntityInto, neighbours, stats: this.stats, aims: this.aims, claims: this.claims };
     this.inputsQueued = 0;
     for (const [id, reg] of this.entities) {
       this.runEntity(id, reg, view, tick, entitySnapshot);

@@ -45,6 +45,7 @@ import {
   type PilotState,
 } from './virtualPilot.js';
 import { roleProfile, roleSensorRange, type RoleProfile } from './tactics/roleProfiles.js';
+import { TARGET_CLAIM_WEIGHT } from './tactics/targetClaims.js';
 import {
   FACE_AIM_LEAD,
   FACE_MOVE,
@@ -351,6 +352,8 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     health?: number;
     maxHealth?: number;
     priority: number;
+    /** Spread targets: brains of my side already on it (0 without `view.claims`). */
+    claims: number;
     /** A ship (pilot hull or swarm combatant), not a structure. */
     ship: boolean;
     /** Per-candidate hostility (allegiances P0) — ALWAYS set before the pick,
@@ -605,6 +608,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       dwellTicks: DRONE_TARGET_DWELL_TICKS,
       ticksSincePrevTarget: 0,
       priorityBias: STRUCTURE_PRIORITY_BIAS,
+      claimWeight: TARGET_CLAIM_WEIGHT,
       maxDistance: this.sensorRange,
       prevMaxDistance: Infinity,
     };
@@ -613,6 +617,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       dwellTicks: DRONE_TARGET_DWELL_TICKS,
       ticksSincePrevTarget: 0,
       priorityBias: STRUCTURE_PRIORITY_BIAS,
+      claimWeight: TARGET_CLAIM_WEIGHT,
     };
   }
 
@@ -710,6 +715,9 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   tick(self: AiEntity, view: AiWorldView): AiIntent {
     // Boost energy regenerates every tick, as a pilot's pool does.
     this.energy = regenEnergyStep(this.energy, this.energyMax, this.energyRegen);
+    // Spread targets: drop my claim; the combat pick below re-claims, so while
+    // I pick, `view.claims` counts only the OTHER brains of my side.
+    view.claims?.claim(self.id, this.allegiance, null);
     // 1) Time-decay: drop hostiles whose last hit aged past FORGET_TICKS.
     //    `view.tick` is `serverTick` on the server and `inputTick` on the
     //    client; same tolerance as the existing `lastFireTick` cooldown.
@@ -764,7 +772,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     for (const p of view.players) {
       let c = cand[n];
       if (!c) {
-        c = { id: '', x: 0, y: 0, vx: 0, vy: 0, angle: NaN, priority: 0, ship: true, hostile: false };
+        c = { id: '', x: 0, y: 0, vx: 0, vy: 0, angle: NaN, priority: 0, ship: true, hostile: false, claims: 0 };
         cand[n] = c;
       }
       c.id = p.id;
@@ -792,7 +800,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       for (const s of structs) {
         let c = cand[n];
         if (!c) {
-          c = { id: '', x: 0, y: 0, vx: 0, vy: 0, angle: NaN, priority: 0, ship: true, hostile: false };
+          c = { id: '', x: 0, y: 0, vx: 0, vy: 0, angle: NaN, priority: 0, ship: true, hostile: false, claims: 0 };
           cand[n] = c;
         }
         c.id = s.id;
@@ -826,7 +834,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
         if (!h) continue;
         let c = cand[n];
         if (!c) {
-          c = { id: '', x: 0, y: 0, vx: 0, vy: 0, angle: NaN, priority: 0, ship: true, hostile: false };
+          c = { id: '', x: 0, y: 0, vx: 0, vy: 0, angle: NaN, priority: 0, ship: true, hostile: false, claims: 0 };
           cand[n] = c;
         }
         c.id = s.id;
@@ -845,6 +853,14 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       }
     }
     if (cand.length !== n) cand.length = n;
+    // Spread targets (owner 2026-11-14): how many of my side already hold each
+    // hostile candidate; the pick scores a held one worse, so a free enemy wins
+    // and the surplus doubles up only when we outnumber them.
+    const claims = view.claims;
+    for (let i = 0; i < n; i++) {
+      const c = cand[i]!;
+      c.claims = claims !== undefined && c.hostile ? claims.count(this.allegiance, c.id) : 0;
+    }
 
     // An IDLE entity with nothing on-sight-hostile in range keeps patrolling /
     // flocking (it never entered COMBAT; no state change).
@@ -869,6 +885,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     const newId = target?.id ?? null;
     if (newId !== this.prevTargetId) this.prevTargetSinceTick = view.tick;
     this.prevTargetId = newId;
+    view.claims?.claim(self.id, this.allegiance, newId);
     if (target === null) return this.tickPatrol(self);
 
     return this.tickCombat(self, view, target);
