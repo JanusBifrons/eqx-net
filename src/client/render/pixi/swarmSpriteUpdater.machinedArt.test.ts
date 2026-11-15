@@ -13,6 +13,8 @@ import { DAMAGE_FLASH_COLOR } from './spriteBuilders.js';
 import { MachinedShipSprite } from '../art/MachinedShipSprite.js';
 import type { ArtHandle, ArtService, ShipArt, StructArt } from '../art/ArtService.js';
 import { MachinedFlatSprite } from '../art/MachinedFlatSprite.js';
+import { bakeKey } from '../art/bake.js';
+import type { Livery, LiveryTreatment } from '../art/fields.js';
 import { npcFactionDef, teamColorOf, teamEdgeOf, teamSigilOf, type FactionId } from '../../../shared-types/factions.js';
 import { allegianceOfKind } from '../../../shared-types/shipKinds';
 import type { RenderMirror, SwarmRenderState, PoseRingEntry } from '../../../core/contracts/IRenderer.js';
@@ -171,7 +173,7 @@ describe('updateSwarmSprites — Machined art', () => {
 });
 
 describe('updateSwarmSprites — ship livery (?livery=)', () => {
-  function liveryCalls(livery: 'a' | undefined, entries: Array<[number, SwarmRenderState]>): Array<unknown[]> {
+  function liveryCalls(livery: LiveryTreatment | undefined, entries: Array<[number, SwarmRenderState]>): Array<unknown[]> {
     const { svc } = stubArt();
     const calls: Array<unknown[]> = [];
     const orig = svc.ship;
@@ -199,5 +201,20 @@ describe('updateSwarmSprites — ship livery (?livery=)', () => {
       ['patrol-fighter', npcFactionDef(sol)!.color, true, false, undefined],
       ['fighter', undefined, true, false, undefined],
     ]);
+  });
+
+  /** Review (robots--b8 take): robots showed no dog-tooth in game. Path check:
+   *  a robot swarm entry (no `fac`: only patrols carry one, as in the
+   *  robots-showcase room) resolves to the 'robots' faction's own edge, and it
+   *  survives the bake worker's structured clone and keys the bake. */
+  it("b8: a robot swarm entry's bake job carries the robots' edge 'tooth' across the worker boundary", () => {
+    const robots = ['robot-hexagon', 'robot-circle', 'robot-square', 'robot-nexus'];
+    const calls = liveryCalls('b8', robots.map((k, i) => [20 + i, drone(k)] as [number, SwarmRenderState]));
+    expect(calls.map((c) => c[0])).toEqual(robots);
+    for (const c of calls) {
+      const job = structuredClone({ type: 'ship' as const, id: c[0] as string, paint: c[1] as number | undefined, rings: c[3] as boolean, livery: c[4] as Livery });
+      expect(job.livery, String(c[0])).toEqual({ treatment: 'b8', team: teamColorOf('robots'), sigil: teamSigilOf('robots'), edge: 'tooth' });
+      expect(bakeKey(job), String(c[0])).toContain(':tooth');
+    }
   });
 });

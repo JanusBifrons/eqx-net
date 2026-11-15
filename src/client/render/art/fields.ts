@@ -235,17 +235,24 @@ const B4_EDGE: Readonly<Record<'straight' | LiveryEdge, (ax: number) => number>>
   tongue: (ax) => 0.12 * (1 - ax * ax), // the centreline reaches further
   tooth: (ax) => { const u = ax * 2; return 0.045 * (1 - Math.abs(2 * (u - Math.floor(u)) - 1)); }, // dog-tooth: 2 broad teeth a side
 };
+/** The deepest each robot edge shape reaches (hull-length fraction). */
+const ROBOT_EDGE_MAX4: Readonly<Record<'straight' | LiveryEdge, number>> = { straight: 0, swept: 0.18, tongue: 0.15, tooth: 0.12 };
 /** A robot's section edges, bolder than `B4_EDGE` (a review at combat zoom,
- *  ~75 px across, could not read the capital-scale shapes on a robot): tooth
- *  is 4 deep teeth across the face (2 a side, 13 % of the hull length deep;
- *  a row-relative tooth reads shallower on a tapering face),
- *  swept a clearly pointed chevron, tongue a clearly rounded tongue. Same
- *  units and rules as `B4_EDGE` (|x|, never negative). */
+ *  ~75 px across, could not read the capital-scale shapes on a robot):
+ *  swept a clearly pointed chevron, tongue a clearly rounded tongue (both in
+ *  `B4_EDGE`'s units: |x| over the row's half-width, never negative), and
+ *  tooth 4 SQUARE teeth across the face (2 a side, `ROBOT_EDGE_MAX4.tooth` of
+ *  the hull length deep). Tooth takes |x| over the section edge's OWN
+ *  half-width (one per section), not the row's: triangular teeth in
+ *  row-relative x on a tapering face (the hexagon's) ran their flanks along
+ *  the hull's sloped sides, and a review at combat zoom saw one straight
+ *  diagonal. The centre stays clear for the nose turret; the outer tooth
+ *  keeps a gap to the side. */
 const ROBOT_EDGE4: Readonly<Record<'straight' | LiveryEdge, (ax: number) => number>> = {
   straight: () => 0,
   swept: (ax) => 0.18 * ax,
   tongue: (ax) => 0.15 * Math.sqrt(Math.max(0, 1 - ax * ax)),
-  tooth: (ax) => { const u = ax * 2; return 0.13 * (1 - Math.abs(2 * (u - Math.floor(u)) - 1)); },
+  tooth: (ax) => ((ax >= 0.3 && ax < 0.52) || (ax >= 0.68 && ax < 0.9) ? ROBOT_EDGE_MAX4.tooth : 0),
 };
 /** A turret's paint keep-out radius as a multiple of max(ring, cap)
  *  (`turretCoverOf`); capital b4 sections widen it (`forgeShip`). */
@@ -498,10 +505,13 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
   const axOf = (wx: number, ty: number): number => Math.min(1, Math.abs(wx) / Math.max(1e-3, halfRow[ty] ?? 0));
   const CAP_BOW4 = 0.2, CAP_STERN4 = 0.085, EDGE_JIT4 = 0.018, TAIL_T4 = 0.66, TAIL_NEED4 = 0.05, TAIL_FULL4 = 0.085, B4_VALUE = 0.78;
   const TAIL_GROW4 = [1, 1.25, 1.5, 1.8, 2.2] as const;
-  /** Robot b4 sections: share of the hull length at each end (the deepest
-   *  shape stays clear of 0.5, so bow and stern never meet) and its texel
-   *  floor (the smallest cube must still show the edge shape). */
-  const ROBOT_SEC4 = 0.24, ROBOT_MIN_TEX4 = 3.5;
+  /** Robot b4 sections: share of the hull length at each end, at most
+   *  ROBOT_SEC4 and pulled in so the edge shape's deepest point stops
+   *  ROBOT_CLEAR4 short of the core (a review saw cubes all violet: the teeth
+   *  reached 37 % in from each end, and the grey between them hid behind the
+   *  core ring); never under ROBOT_SEC_MIN4 nor ROBOT_MIN_TEX4 texels (the
+   *  smallest cube must still show the edge shape). */
+  const ROBOT_SEC4 = 0.24, ROBOT_SEC_MIN4 = 0.1, ROBOT_CLEAR4 = 0.06, ROBOT_MIN_TEX4 = 3.5;
   /** Dog-tooth's capital bow tip read thinnest at line-up zoom (its teeth hide
    *  under the forward turrets' keep-out): at the bow only, a fuller base and
    *  teeth twice as deep, so the outer teeth clear the barbettes. */
@@ -528,7 +538,19 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
     return (wy - yMin) / len < CAP_BOW4 + jit4(wx, wy) + bowOff4(axOf(wx, ty));
   };
   const robot4 = b4 && arch === 'robot';
-  const robotSec4 = Math.max(ROBOT_SEC4, ROBOT_MIN_TEX4 / Math.max(1e-3, len * g.ppu));
+  /** The robot core's radius (its ring is stamped later), centred on the origin. */
+  const robotCoreR = Math.max(1, maxDu * 0.35);
+  const robotCoreTb = Math.min((-robotCoreR - yMin) / len, 1 - (robotCoreR - yMin) / len);
+  const robotSec4 = Math.max(
+    ROBOT_SEC_MIN4, ROBOT_MIN_TEX4 / Math.max(1e-3, len * g.ppu),
+    Math.min(ROBOT_SEC4, robotCoreTb - ROBOT_CLEAR4 - ROBOT_EDGE_MAX4[b4Key ?? 'straight']),
+  );
+  /** Half-width of the hull at a robot section's edge row (tooth's |x| unit). */
+  const robotHwAt = (tb: number): number => {
+    const hw = halfRow[Math.floor(g.oy + (yMin + tb * len) * g.ppu)] ?? 0;
+    return hw > 1e-3 ? hw : Math.max(1e-3, maxHalf);
+  };
+  const robotHwF = robot4 ? robotHwAt(robotSec4) : 1, robotHwR = robot4 ? robotHwAt(1 - robotSec4) : 1;
   const roleOf = (i: number): string | undefined => (parts[layer[i]!] as { role?: string } | undefined)?.role;
   const edgeSeed = hashStr(seedKey + ':b4edge');
   let tailFlash = false, tailSpots = false;
@@ -609,8 +631,9 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
     if (b4 && arch === 'robot') {
       // Bow and stern sections in the faction's edge shape (no corner tips),
       // crisp and painted under the turret too (see ROBOT_EDGE4).
-      const off = robotEdgeOf(axOf(wx, ty));
-      return tb < robotSec4 + off || tb > 1 - robotSec4 - off ? teamHex : -1;
+      const front = tb < 0.5;
+      const off = robotEdgeOf(b4Key === 'tooth' ? Math.abs(wx) / (front ? robotHwF : robotHwR) : axOf(wx, ty));
+      return (front ? tb < robotSec4 + off : tb > 1 - robotSec4 - off) ? teamHex : -1;
     }
     if (b4) {
       if (underTurret(wx, wy)) return -1;

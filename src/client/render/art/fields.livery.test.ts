@@ -9,7 +9,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { forgeShip, lin, liveryGrey, liveryPaint, MAT, paintLivery, shipExtent, shipParts, type Fields, type Livery } from './fields.js';
-import { turretCoverOf } from './bake.js';
+import { shipPpu, turretCoverOf } from './bake.js';
 import { MAT_COUNT, matTables } from './shade.js';
 import { getShipKind, SHIP_KINDS_LIST } from '../../../shared-types/shipKinds.js';
 import { AT_AUTHORED_SHIP_SCALE } from '../../../shared-types/shipScale/config.js';
@@ -1015,6 +1015,60 @@ describe('b4 family: every hull painted', () => {
     for (const [t, edge] of [['b7'], ['b8', 'tooth']] as const) {
       const { edge: e, span } = frontEdge(forge(id, t, edge));
       expect(teethOf(e, 0.08 * span), `${id} ${t}`).toBeGreaterThanOrEqual(3);
+    }
+  });
+
+  /** Review (robots--b8 take, robot hexagon ~65 px across): the dog-tooth
+   *  read as a STRAIGHT diagonal with at most one notch, though the count
+   *  above passed. Cause: the teeth were triangles in row-relative x (|x| /
+   *  the row's half-width), so on a tapering face their flanks ran parallel
+   *  to the hull's own sloped sides and at combat zoom merged with them into
+   *  one diagonal. Teeth are now SQUARE: each flank a step of >= 8 % of the
+   *  hull length within 2 columns (vertical on the hull, never along its
+   *  outline). Checked at the game's own bake density (`shipPpu`). */
+  const GAME_ROBOTS = ['robot-hexagon', 'robot-circle', 'robot-square', 'robot-nexus'] as const;
+  const forgeGame = (id: string, edge: Livery['edge']): Fields =>
+    forgeShip(id, { ppu: shipPpu(id), rings: shipTurrets(id).map((t) => ({ x: t.px, y: t.py, r: t.ring })), livery: { treatment: 'b8', team: 0xc070ff, sigil: 0x1234, ...(edge ? { edge } : {}) }, turretCover: turretCoverOf(id) });
+  it.each(GAME_ROBOTS)("%s: b8 'tooth' at the game's bake ppu: >= 3 square teeth, each >= 10%% of the hull and >= 3 texels deep", (id) => {
+    const f = forgeGame(id, 'tooth');
+    const { edge: e, span } = frontEdge(f);
+    const deep = Math.max(3, 0.1 * span);
+    expect(teethOf(e, deep), id).toBeGreaterThanOrEqual(3);
+    // Square flanks: a jump of >= 8 % of the hull length within 2 columns.
+    let steps = 0;
+    for (let x = 0; x < e.length; x++) {
+      if (e[x]! < 0) continue;
+      for (let k = 1; k <= 2 && x + k < e.length; k++) {
+        if (e[x + k]! < 0) break;
+        if (Math.abs(e[x + k]! - e[x]!) >= Math.max(3, 0.08 * span)) { steps++; x += k; break; }
+      }
+    }
+    expect(steps, `${id} square flanks`).toBeGreaterThanOrEqual(6);
+  });
+
+  /** Review (robots--b8 take): cube robots read almost all violet, no grey
+   *  middle band: the teeth reached 37 % in from each end, so the only grey
+   *  left was hidden behind the team-coloured core ring. A band of rows that
+   *  are grey hull (<= 10 % paint or core: its glowing ring and dark lens) must show
+   *  for >= 15 % of the hull length. */
+  it.each(GAME_ROBOTS)('%s: a grey middle band (>= 15%% of the hull length) between the sections, clear of the core', (id) => {
+    for (const edge of ['tooth', 'swept', 'tongue'] as const) {
+      const f = forgeGame(id, edge);
+      const { w } = f.g;
+      let y0 = Infinity, y1 = -Infinity;
+      for (let i = 0; i < f.cov.length; i++) if (f.cov[i]! > 0.5) { const ty = Math.floor(i / w); y0 = Math.min(y0, ty); y1 = Math.max(y1, ty); }
+      let grey = 0;
+      for (let y = y0; y <= y1; y++) {
+        let hull = 0, team = 0;
+        for (let x = 0; x < w; x++) {
+          const i = y * w + x;
+          if (f.cov[i]! <= 0.5) continue;
+          hull++;
+          if (f.mat[i] === MAT.LIVERY || f.mat[i] === MAT.LIGHT || f.mat[i] === MAT.GLASS) team++;
+        }
+        if (hull > 0 && team <= 0.1 * hull) grey++;
+      }
+      expect(grey / (y1 - y0 + 1), `${id} ${edge}`).toBeGreaterThanOrEqual(0.15);
     }
   });
 
