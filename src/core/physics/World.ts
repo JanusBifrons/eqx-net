@@ -1052,10 +1052,7 @@ export class PhysicsWorld {
   /** FIXED terrain (cut-field rocks): never simulated or solved, unlike a `lockBody` body; same call on the server worker and predWorld (#15). */
   fixBody(id: string): void { this.bodies.get(id)?.body.setBodyType(RAPIER.RigidBodyType.Fixed, true); }
   /** Wake a fixed body into a dynamic one (a rammed rock), keeping its colliders and mass. */
-  unfixBody(id: string): void {
-    const b = this.bodies.get(id)?.body;
-    if (b?.isFixed()) { b.setBodyType(RAPIER.RigidBodyType.Dynamic, true); b.wakeUp(); }
-  }
+  unfixBody(id: string): void { const b = this.bodies.get(id)?.body; if (b?.isFixed()) { b.setBodyType(RAPIER.RigidBodyType.Dynamic, true); b.wakeUp(); } }
 
   lockBody(id: string): void {
     const rec = this.bodies.get(id);
