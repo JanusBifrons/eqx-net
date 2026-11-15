@@ -2351,6 +2351,15 @@ line; a railgun kill erases a straight channel as wide as the bolt.
     `DestroyEventSchema`, strict). An effect hint only (#16): a vaporised
     ship has no wreck descriptor, so a late joiner sees the same nothing.
     The client effect is a separate PR.
+  - **Vaporised salvage (owner 2026-11-15).** A vaporised ship leaves ONE
+    loot pod, as any kill does, with its hull's salvage ×
+    `VAPORISE_SALVAGE_MUL` = 1.5 ("the beam rendered the whole ship
+    down"); only the hull roll's salvage scales, never cargo. Every ship,
+    whoever flies it: a player-flown ship now drops its kind's hull loot
+    too. The pod spawns beside the hull, off the killer's line, so the
+    heavy beam's follow-through passes it. Detail:
+    [loot-and-cargo](../features/loot-and-cargo.md#hull-salvage-every-ship-and-vaporised-ships-owner-2026-11-15);
+    lock `vaporiseSalvage.test.ts`.
   - **Composite kinds** (havok, the cargo pod: profile `none`, scrap groups)
     never reach the wreck path: a cut kill breaks them into their component
     scrap as before, with no `vaporised`. Follow-up.

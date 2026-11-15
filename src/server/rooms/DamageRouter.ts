@@ -120,6 +120,7 @@ export interface DamageRouterDeps {
     ship: { shipInstanceId: string; playerId: string; kind: string },
     pose: ShipPhysicsState | undefined,
     sourceId: string,
+    vaporised?: boolean,
   ) => void;
   /** Event bus — emits PLAYER_DAMAGED + SHIP_DESTROYED. */
   bus: Bus;
