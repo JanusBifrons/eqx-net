@@ -18,6 +18,7 @@ import { glideToward } from '@shared-types/timeScale';
 import { SPOOL_DURATION_MS } from '@core/transit/TransitStateMachine';
 import type { SnapshotMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage, TransitStateMessage, WarpInEvent, WarpOutEvent, ShieldEventMessage, BotAggroEvent, GcPauseEventMessage, GridPulseEvent } from '@shared-types/messages';
 import { parseWelcome } from './parseWelcome';
+import { parseDestroy } from './parseDestroy';
 import { TRANSFER_PULSE_MS as GRID_PULSE_WINDOW_MS } from '@core/structures/structureGridConstants';
 import { PhysicsWorld, type ShipPhysicsState } from '@core/physics/World';
 import { decideStatAllocReanchor } from './localStatAlloc';
@@ -471,6 +472,7 @@ export class ColyseusGameClient {
     localPlayerId: null,
     damagedShips: new Set(),
     explodingShips: new Set(),
+    vaporisedShips: new Set(),
     liveBeams: new Map(),
     remoteLasers: new Map(),
     boostingShips: new Set(),
@@ -1954,8 +1956,11 @@ export class ColyseusGameClient {
       recordServerGcPause(evt.durationMs);
       logEvent('gc_pause', { durationMs: evt.durationMs, kind: evt.kind });
     });
-    room.onMessage('destroy', (evt: DestroyEvent) => {
-      this.handleDestroy(evt);
+    // Defensive zod parse (invariant #3): malformed dropped with a sampled
+    // warning; `vaporised` (fracture v11) rides into handleDestroy.
+    room.onMessage('destroy', (raw: unknown) => {
+      const evt = parseDestroy(raw);
+      if (evt !== null) this.handleDestroy(evt);
     });
 
     // Phase 4 WS-B1 — a ship instance levelled up (public, D13). Defensive zod
@@ -2608,6 +2613,7 @@ export class ColyseusGameClient {
       this.mirror.projectiles?.clear();
       this.mirror.damagedShips?.clear();
       this.mirror.explodingShips?.clear();
+      this.mirror.vaporisedShips?.clear();
       this.mirror.boostingShips?.clear();
       this.mirror.thrustingShips?.clear();
       this.mirror.remoteLasers?.clear();
@@ -2966,6 +2972,9 @@ export class ColyseusGameClient {
   }
 
   private handleDestroy(evt: DestroyEvent): void {
+    // A cut kill that left no wreck piece (fracture v11): the renderer plays
+    // the vaporise blast and holds no dying hull. Same key as explodingShips.
+    if (evt.vaporised === true) this.mirror.vaporisedShips?.add(evt.targetId);
     if (evt.targetId.startsWith('swarm-')) {
       this.killSwarmEntity(evt.targetId);
       return;

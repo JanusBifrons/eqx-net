@@ -65,6 +65,7 @@ import { HEAVY_BEAM_COLOR } from '../beamStyles.js';
 import { drawnSpan, insideWidth, lastChamferRatio, onDrawnHull, pointInRing, stripInside, writeStrip, type InsideTest } from './wreckGlowStrip.js';
 import type { WreckDescriptor } from '../../../shared-types/messages/snapshotMessages.js';
 import { destructionProfileOf } from '../../../shared-types/shipScale/destructionProfile.js';
+import { DESTRUCTION_PROFILES } from '../../../shared-types/shipScale/destruction.js';
 import type { DestructionFx, DestructionProfileId, WreckGlowStyle } from '../../../shared-types/shipScale/destruction.js';
 
 /** Container + meshes (≤ 6 tiles) + one glow mesh (the crack strokes). */
@@ -1048,8 +1049,9 @@ export function wreckBlasts(x: number, y: number, radius: number, seed: number, 
  * (`fx.hullDeathBlastReplaced`): a sub-capital's wreck never replaces the
  * ship's normal death explosion (sub-capital break-up, slice 4).
  */
-export function hullDeathBlastReplaced(capitalWrecks: boolean | undefined, dyingIsCapital: boolean, dyingKind?: string | null): boolean {
-  if (capitalWrecks !== true || !dyingIsCapital) return false;
+export function hullDeathBlastReplaced(capitalWrecks: boolean | undefined, dyingIsCapital: boolean, dyingKind?: string | null, vaporised = false): boolean {
+  // Vaporised (fracture v11): no wreck, so no break-up to replace it.
+  if (vaporised || capitalWrecks !== true || !dyingIsCapital) return false;
   return dyingKind == null || destructionProfileOf({ type: 'ship', kindId: dyingKind }).fx.hullDeathBlastReplaced;
 }
 
@@ -1059,15 +1061,45 @@ export function hullDeathBlastReplaced(capitalWrecks: boolean | undefined, dying
  * breaks that profile into wrecks: a sub-capital with welcome `subcapWrecks`
  * (owner 2026-11-13, "Shrink it": ~half size, shorter smoke, so the break-up
  * and the fight stay readable and capitals feel bigger). Everything else,
- * and every death with the flag off, is 1 / 1 (unchanged). Alloc-free.
+ * and every death with the flag off, is 1 / 1 (unchanged).
+ *
+ * A `vaporised` death (fracture v11: a cut kill burned the whole hull away)
+ * picks the vaporise variant instead (`vaporise`, the profile's
+ * `fx.vaporiseBlastScale` / `vaporiseSeconds` / `vaporiseTint`): the server
+ * only says so in a room that breaks the kind, so no flag gate. An unknown
+ * kind takes the sub-cap look. Alloc-free.
  */
+export interface DeathBlast {
+  /** Radius multiplier on `blastRadiusFor(diameter)`. */
+  scale: number;
+  /** Smoke linger (normal blast only). */
+  linger: number;
+  /** Play the vaporise variant (`FxExplosions.spawnVaporise`). */
+  vaporise: boolean;
+  /** Vaporise only: the flash / glow / ash tint and the burst's length (s). */
+  tint: number;
+  seconds: number;
+}
+
 export function deathBlastFor(
   subcapWrecks: boolean | undefined, capitalWrecks: boolean | undefined, kind: string | null | undefined,
-  out: { scale: number; linger: number },
-): { scale: number; linger: number } {
+  out: DeathBlast, vaporised = false,
+): DeathBlast {
   out.scale = 1;
   out.linger = 1;
-  if (typeof kind !== 'string' || !isShipKindId(kind)) return out;
+  out.vaporise = false;
+  out.tint = 0;
+  out.seconds = 0;
+  const known = typeof kind === 'string' && isShipKindId(kind);
+  if (vaporised) {
+    const fx = known ? destructionProfileOf({ type: 'ship', kindId: kind }).fx : DESTRUCTION_PROFILES.subcap.fx;
+    out.vaporise = true;
+    out.scale = fx.vaporiseBlastScale;
+    out.tint = fx.vaporiseTint;
+    out.seconds = fx.vaporiseSeconds;
+    return out;
+  }
+  if (!known) return out;
   const p = destructionProfileOf({ type: 'ship', kindId: kind });
   const on = p.id === 'subcap' ? subcapWrecks === true : p.id === 'capital' ? capitalWrecks === true : false;
   if (!on) return out;

@@ -46,7 +46,9 @@ export type ParticleBurstKind =
   | 'wreck-break'
   /** Weapon cuts: a railgun channel's glowing ash and sparks, a LINE from
    *  the burst point (the slug's entry) to `lineToX, lineToY` (where it
-   *  left the hull), sized by `radius`. Same pool as `wreck-break`. */
+   *  left the hull), sized by `radius`. Same pool as `wreck-break`.
+   *  With no `lineToX`: a vaporised hull's ash, a point puff at the burst
+   *  point sized by the hull's `radius`, in `tint` (fracture v11). */
   | 'wreck-ash';
 
 /** Continuous emitter kinds, keyed by entity id. */

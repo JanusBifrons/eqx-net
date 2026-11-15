@@ -15,7 +15,7 @@ import { updateSwarmSprites, type SwarmSpriteCtx } from './pixi/swarmSpriteUpdat
 import { DyingHullHold, noteDyingHulls } from './pixi/dyingHullHold.js';
 import { sweepUnseenSprites } from './pixi/spriteSweep.js';
 import { WreckGeometryStore } from '../net/wreckGeometryStore.js';
-import { WreckArtState, WreckPieceSprite, deathBlastFor, hullDeathBlastReplaced, wreckBlasts, wreckRippleCap, WRECK_BLAST_LINGER, type WreckBlast } from './pixi/wreckArt.js';
+import { WreckArtState, WreckPieceSprite, deathBlastFor, hullDeathBlastReplaced, type DeathBlast, wreckBlasts, wreckRippleCap, WRECK_BLAST_LINGER, type WreckBlast } from './pixi/wreckArt.js';
 import { ConnectorRenderer } from './pixi/ConnectorRenderer.js';
 import { updateProjectileSprites, type ProjectileSpriteCtx } from './pixi/projectileSpriteUpdater.js';
 import { updateMissileSprites, type MissileSpriteCtx } from './pixi/missileSpriteUpdater.js';
@@ -507,7 +507,9 @@ export class PixiRenderer implements IRenderer {
   private _hullBlastsReplaced = 0;
   private readonly _wreckBlastScratch: WreckBlast[] = [];
   /** `deathBlastFor` out (reused, #14). */
-  private readonly _deathBlastScratch = { scale: 1, linger: 1 };
+  private readonly _deathBlastScratch: DeathBlast = { scale: 1, linger: 1, vaporise: false, tint: 0, seconds: 0 };
+  /** A vaporise ash puff's burst opts (reused, #14). */
+  private readonly _vaporAshOpts = { radius: 0, tint: 0 };
   private _projectileUpdaterCtx!: ProjectileSpriteCtx;
   /** Off-screen ring/edge indicator. Constructed in the constructor body
    *  (NOT a field initializer) so it sees the assigned `_isTouch` — field
@@ -1731,7 +1733,7 @@ export class PixiRenderer implements IRenderer {
     // `spriteUpdateDecisions.ts` and is unit-tested there.
     // A capital dying into a wreck stays drawn until its pieces are (marked
     // here while its sprite is still mapped; the sweeps below hand it over).
-    noteDyingHulls(mirror.explodingShips, mirror.capitalWrecks, this._spriteShipKind, this._dyingHulls, this.fxNow(), mirror.subcapWrecks);
+    noteDyingHulls(mirror.explodingShips, mirror.capitalWrecks, this._spriteShipKind, this._dyingHulls, this.fxNow(), mirror.subcapWrecks, mirror.vaporisedShips);
     if (mirror.explodingShips) {
       // Wrap the lingering-sprite cache to expose just the {x, y}
       // pose the helper expects. The cache value also carries `kind`
@@ -1774,18 +1776,30 @@ export class PixiRenderer implements IRenderer {
         // New explosions (B4): sized from the dying sprite; replaces the
         // particle burst + shock filter when its textures are ready.
         const dying = this.sprites.get(targetId);
+        // Burned away by a cut kill (fracture v11): no wreck follows.
+        const vaporised = mirror.vaporisedShips?.has(targetId) === true;
         // Capital wrecks on: a dying capital explodes where it broke (the wreck
         // break-up at its kill point), not as a hull-sized blast over the whole
         // hull (money-shot review).
-        if (hullDeathBlastReplaced(mirror.capitalWrecks, dying instanceof MachinedShipSprite && dying.capital, this._spriteShipKind(targetId))) {
+        if (hullDeathBlastReplaced(mirror.capitalWrecks, dying instanceof MachinedShipSprite && dying.capital, this._spriteShipKind(targetId), vaporised)) {
           this._hullBlastsReplaced++;
           continue;
         }
         const diameter = dying ? Math.max(dying.width, dying.height) : 40;
         // A sub-cap breaking into wreck pieces (welcome `subcapWrecks`) gets a
         // smaller blast with shorter smoke (profile fx.deathBlastScale/Linger).
-        const db = deathBlastFor(mirror.subcapWrecks, mirror.capitalWrecks, this._spriteShipKind(targetId), this._deathBlastScratch);
-        if (this._fxExplosions?.spawn(pose.x, -pose.y, blastRadiusFor(diameter) * db.scale, this.fxNow(), db.linger)) {
+        const db = deathBlastFor(mirror.subcapWrecks, mirror.capitalWrecks, this._spriteShipKind(targetId), this._deathBlastScratch, vaporised);
+        if (db.vaporise) {
+          // The vaporise variant: a weapon-tinted flash, a short glow and a
+          // puff of glowing ash over the hull; no fireball, smoke or wreck.
+          const r = blastRadiusFor(diameter) * db.scale;
+          this._vaporAshOpts.radius = diameter / 2;
+          this._vaporAshOpts.tint = db.tint;
+          this.effects?.spawnBurst('wreck-ash', pose.x, -pose.y, this._vaporAshOpts);
+          if (this._fxExplosions?.spawnVaporise(pose.x, -pose.y, r, this.fxNow(), db.tint, db.seconds)) continue;
+          // Art not ready: fall through to today's fallback below.
+        }
+        if (!db.vaporise && this._fxExplosions?.spawn(pose.x, -pose.y, blastRadiusFor(diameter) * db.scale, this.fxNow(), db.linger)) {
           // drawn by FxExplosions
         } else if (this.effects) {
           this.effects.spawnBurst('destruction', pose.x, -pose.y);

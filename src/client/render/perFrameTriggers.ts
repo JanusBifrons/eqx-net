@@ -46,6 +46,8 @@
  *  same consume-after-render rule. */
 export interface OneFrameTriggerSurface {
   explodingShips?: Set<string>;
+  /** The vaporised subset of `explodingShips` (fracture v11), cleared with it. */
+  vaporisedShips?: Set<string>;
   /** Effects subsystem one-shot queue. Structural type (any array-shaped
    *  field); the concrete element shape is `RenderMirror.pendingEffectTriggers`
    *  in `src/core/contracts/IRenderer.ts` but this helper doesn't need to
@@ -79,6 +81,7 @@ export function consumeOneFrameTriggers(
 ): void {
   if (!didRender) return;
   mirror.explodingShips?.clear();
+  mirror.vaporisedShips?.clear();
   // pendingEffectTriggers — visual-effects subsystem one-shot queue. SAME
   // skip-frame gate discipline as explodingShips: clearing on a skip frame
   // silently drops every queued trigger (impact sparks, destruction bursts).

@@ -26,10 +26,16 @@ const SUBS = 3;
 const BURST_LIFE_S = 3.4;
 const MAX_BURSTS = 24;
 
+/** A normal burst's flash and ring colours (a vaporise burst tints them). */
+const FLASH_TINT = 0xfff2d8;
+const RING_TINT = 0xffd6a8;
+
 interface Burst {
   active: boolean; x: number; y: number; r: number; t0: number; seed: number;
   /** Smoke linger (1 = every ordinary death; < 1 lifts sooner). */
   linger: number;
+  /** Vaporise variant (`spawnVaporise`): its tint, else -1, and length (s). */
+  vapTint: number; vapS: number;
   flash: Sprite; fire: Sprite; subs: Sprite[]; ring: Sprite; embers: Sprite[]; smoke: Sprite[];
 }
 
@@ -83,7 +89,33 @@ export class FxExplosions {
    *  capital's kill blast passes less so the cracks under it show: owner
    *  decision 2026-11-13, "smaller kill blast"). */
   spawn(x: number, y: number, r: number, nowMs: number, linger = 1): boolean {
-    if (!this.ready()) return false;
+    const b = this.take(x, y, r, nowMs);
+    if (b === null) return false;
+    b.linger = linger;
+    b.vapTint = -1;
+    b.flash.tint = FLASH_TINT; b.ring.tint = RING_TINT;
+    return true;
+  }
+
+  /**
+   * The vaporise variant (fracture v11: a heavy-beam / railgun kill burned
+   * the whole hull away, nothing left to explode or smoke): a flash in the
+   * weapon's `tint` that swells into a short glow, a tinted shock ring and
+   * glowing motes thrown out, all gone in `seconds`. No fireball, no smoke.
+   * Same pool and tiers as `spawn`. False if not ready.
+   */
+  spawnVaporise(x: number, y: number, r: number, nowMs: number, tint: number, seconds: number): boolean {
+    const b = this.take(x, y, r, nowMs);
+    if (b === null) return false;
+    b.linger = 1;
+    b.vapTint = tint; b.vapS = Math.max(0.2, seconds);
+    b.flash.tint = tint; b.ring.tint = tint;
+    for (const e of b.embers) e.tint = tint;
+    return true;
+  }
+
+  private take(x: number, y: number, r: number, nowMs: number): Burst | null {
+    if (!this.ready()) return null;
     this.onSpawn?.(x, -y, r);
     let b: Burst | undefined;
     for (const c of this.bursts) if (!c.active) { b = c; break; }
@@ -91,9 +123,38 @@ export class FxExplosions {
       if (this.bursts.length < MAX_BURSTS) { b = this.make(); this.bursts.push(b); }
       else { b = this.bursts[0]!; for (const c of this.bursts) if (c.t0 < b.t0) b = c; }
     }
+    // A reused burst may still show the last one's sprites.
+    this.hide(b);
     b.active = true; b.x = x; b.y = -y; b.r = r; b.t0 = nowMs / 1000; b.seed = (this.seq++ * 2.399) % 6.283;
-    b.linger = linger;
-    return true;
+    return b;
+  }
+
+  /** One frame of a vaporise burst (alloc-free). */
+  private tickVaporise(b: Burst, age: number, embersN: number): void {
+    const R = b.r, S = b.vapS, u = age / S;
+    const grow = 1 - (1 - u) * (1 - u);
+    // The flash swells into the glow of the burning hull, then fades.
+    b.flash.visible = true;
+    b.flash.position.set(b.x, b.y);
+    b.flash.scale.set((R * (1.6 + 1.6 * grow)) / b.flash.texture.width);
+    b.flash.alpha = envelope(age, 0.02, S) * 0.95;
+    b.ring.visible = u < 0.7;
+    if (b.ring.visible) {
+      b.ring.position.set(b.x, b.y);
+      b.ring.scale.set((R * (0.3 + 1.5 * grow)) / (b.ring.texture.width / 2));
+      b.ring.alpha = 0.7 * (1 - u / 0.7);
+    }
+    for (let j = 0; j < EMBERS; j++) {
+      const e = b.embers[j]!;
+      e.visible = j < embersN && u < 1;
+      if (!e.visible) continue;
+      const ed = b.seed * 7 + j * 2.399;
+      const spd = (0.6 + ((j * 0.618) % 1)) * R * 2;
+      const d = (spd * (1 - Math.exp(-age * 4))) / 4;
+      e.position.set(b.x + Math.cos(ed) * d, b.y + Math.sin(ed) * d); e.rotation = ed;
+      e.scale.set((4 + spd * Math.exp(-age * 4) * 0.04) / e.texture.width, 3 / e.texture.height);
+      e.alpha = 1 - u;
+    }
   }
 
   /** Advance every live burst. */
@@ -109,6 +170,11 @@ export class FxExplosions {
       const age = t - b.t0;
       const R = b.r;
       const L = b.linger;
+      if (b.vapTint >= 0) {
+        if (age >= b.vapS || age < 0) { this.hide(b); b.active = false; continue; }
+        this.tickVaporise(b, age, embersN);
+        continue;
+      }
       // A shorter linger ends the burst sooner, but never before its fire
       // and embers have played.
       const end = L === 1 ? BURST_LIFE_S : Math.max(BURST_LIFE_S * L, 1.5 * fireballLife(R));
@@ -194,11 +260,11 @@ export class FxExplosions {
     const subs: Sprite[] = [];
     for (let j = 0; j < SUBS; j++) subs.push(mk(fireT, this.fireLayer));
     const fire = mk(fireT, this.fireLayer);
-    const ringS = mk(ring, this.fireLayer, 0xffd6a8);
+    const ringS = mk(ring, this.fireLayer, RING_TINT);
     const embers: Sprite[] = [];
     for (let j = 0; j < EMBERS; j++) embers.push(mk(spark, this.fireLayer, 0xffffff, 1));
-    const flash = mk(glow, this.fireLayer, 0xfff2d8);
-    return { active: false, x: 0, y: 0, r: 0, t0: 0, seed: 0, linger: 1, flash, fire, subs, ring: ringS, embers, smoke: smokeSprites };
+    const flash = mk(glow, this.fireLayer, FLASH_TINT);
+    return { active: false, x: 0, y: 0, r: 0, t0: 0, seed: 0, linger: 1, vapTint: -1, vapS: 0, flash, fire, subs, ring: ringS, embers, smoke: smokeSprites };
   }
 }
 
