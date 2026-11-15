@@ -100,9 +100,11 @@ describe('SectorRoom integration — owned ships flown by the AI pilot brain (RT
     const ship = state.ships.get(sid)!;
     const regen = getShipKind(ship.kind).energyRegenRate ?? 0.25;
     ship.energy = 0;
-    const t0 = room._internals.serverTick;
+    // Count ROOM updates: the brain regens once per room update, while
+    // serverTick is the physics worker's step count (drifts under load).
+    const t0 = room._internals.roomUpdates;
     await harness.advance(1000);
-    const ticks = room._internals.serverTick - t0;
+    const ticks = room._internals.roomUpdates - t0;
     expect(ticks).toBeGreaterThan(30);
     // The hull holds still (no boost, no target): only regen moves the pool.
     // Once a tick ⇒ ticks × regen (±1 tick of phase); twice would be ~2×.

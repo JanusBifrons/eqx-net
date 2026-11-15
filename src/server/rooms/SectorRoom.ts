@@ -1567,6 +1567,9 @@ export class SectorRoom extends Room<SectorState> {
 
   get _internals(): {
     serverTick: number;
+    /** Room update() calls so far (the AI-pilot cadence; serverTick is the
+     *  physics worker's step count and can drift a step or two from it). */
+    roomUpdates: number;
     /** Ticks the physics worker's catch-up cap dropped (a starved host). */
     droppedTicks: number;
     /** The shield-wall beam block the player/AI fire resolvers call. */
@@ -1703,6 +1706,7 @@ export class SectorRoom extends Room<SectorState> {
     return {
       loot: this.loot,
       serverTick: this.serverTick,
+      roomUpdates: this.roomUpdateCount,
       droppedTicks: this.sabU32[WORKER_DROPPED_TICKS_IDX] ?? 0,
       sessionToPlayer: this.sessionToPlayer,
       ownerlessShips: this.ownerlessShips,
@@ -12956,7 +12960,11 @@ export class SectorRoom extends Room<SectorState> {
 
   // ── Simulation loop (main thread — reads SAB, updates Colyseus schema) ──
 
+  /** Test counter (`_internals.roomUpdates`). */
+  private roomUpdateCount = 0;
+
   private update(): void {
+    this.roomUpdateCount++;
     this.inputCountThisTick.clear();
     this.lockMsgCountThisTick.clear();
     this.fleetMsgCountThisTick.clear();
