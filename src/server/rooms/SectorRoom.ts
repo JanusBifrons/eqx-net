@@ -256,6 +256,7 @@ import { AiFireResolver, type AiFireTargetShape } from './AiFireResolver.js';
 import { PlayerFireResolver } from './PlayerFireResolver.js';
 import { DamageRouter } from './DamageRouter.js';
 import { RespawnHandler } from './RespawnHandler.js';
+import { TestMessageHandlers } from './TestMessageHandlers.js';
 import { SwarmEvictor } from './SwarmEvictor.js';
 import { RosterPersistence } from './RosterPersistence.js';
 import { SnapshotBroadcaster } from './SnapshotBroadcaster.js';
@@ -358,10 +359,6 @@ import { setSession } from '../transit/sessionRegistry.js';
 import {
   EngageTransitSchema,
   CancelTransitSchema,
-  TestAggroSchema,
-  TestReloadTurretsSchema,
-  TestKillCapitalsSchema,
-  TestFleetWarpSchema,
   ClientReadyMessageSchema,
   PlaceStructureSchema,
   RemoveStructureSchema,
@@ -406,7 +403,6 @@ import { shipBodyMass, shipTuning, shellViewHalfExtent } from '../../shared-type
 import { ShellEventHub, type ShellViewer } from './ShellEventHub.js';
 import { type ShellSalvo } from '../../shared-types/messages/shellEvents.js';
 import { tuningFor, GLOBAL_SHIP_TUNING } from '../../shared-types/shipScale/lookup.js';
-import { isCapitalKindId } from '../../core/combat/capitalHits.js';
 import { shipRayHit, shipSweepHit } from '../../core/combat/shipHitShape.js';
 import { mayBeInReach, maxShipRangeBound, mountsReachTarget, type MountRangeTarget } from '../../core/combat/mountReach.js';
 import { CapitalWreckSubsystem } from './CapitalWreckSubsystem.js';
@@ -3287,67 +3283,24 @@ export class SectorRoom extends Room<SectorState> {
       );
     });
 
-    this.onMessage('test_aggro', (client: Client, raw: unknown) => {
-      if (!(this.testMode || ALLOW_DEV_OVERRIDES)) return;
-      const playerId = this.sessionToPlayer.get(client.sessionId);
-      if (!playerId) return;
-      if (!TestAggroSchema.safeParse(raw).success) {
-        this.malformed.record(client.sessionId, 'test_aggro');
-        return;
-      }
-      this.markAllDronesHostileTo(playerId);
+    // Test-only cues (testMode / EQX_ALLOW_DEV_OVERRIDES): TestMessageHandlers.ts.
+    const testHandlers = new TestMessageHandlers({
+      testMode: this.testMode,
+      allowDevOverrides: ALLOW_DEV_OVERRIDES,
+      sabF32: this.sabF32,
+      sessionToPlayer: this.sessionToPlayer,
+      swarmRegistry: this.swarmRegistry,
+      malformed: this.malformed,
+      markAllDronesHostileTo: (pid) => this.markAllDronesHostileTo(pid),
+      reloadAllTurrets: () => this.structureGrid.reloadAllTurrets(),
+      applyDamage: (id, shooter, dmg, x, y) => { this.applyDamage(id, shooter, dmg, x, y); },
+      warpBot: (id, x, y) => { this.warpBot(id, x, y); },
+      setBotMoveTarget: (id, x, y) => this.setBotMoveTarget(id, x, y),
     });
-
-    // Coastal defences — testMode only: reload every structure gun now.
-    this.onMessage('test_reload_turrets', (client: Client, raw: unknown) => {
-      if (!(this.testMode || ALLOW_DEV_OVERRIDES)) return;
-      if (!TestReloadTurretsSchema.safeParse(raw).success) {
-        this.malformed.record(client.sessionId, 'test_reload_turrets');
-        return;
-      }
-      this.structureGrid.reloadAllTurrets();
-    });
-
-    // Capital destruction S2b — testMode only: every capital NPC takes a lethal
-    // hit now (at its own pose; the kill point lands on the hull edge), so an
-    // E2E sees its wreck without a long gun duel.
-    this.onMessage('test_kill_capitals', (client: Client, raw: unknown) => {
-      if (!(this.testMode || ALLOW_DEV_OVERRIDES)) return;
-      if (!TestKillCapitalsSchema.safeParse(raw).success) {
-        this.malformed.record(client.sessionId, 'test_kill_capitals');
-        return;
-      }
-      for (const rec of [...this.swarmRegistry.all()]) { // TODO: alloc-debt (test cue only)
-        if (rec.kind !== SWARM_KIND_DRONE || !isCapitalKindId(rec.shipKind)) continue;
-        const b = slotBase(rec.slot);
-        const x = this.sabF32[b + SLOT_X_OFF]!, y = this.sabF32[b + SLOT_Y_OFF]!;
-        // A shield takes the first hit whole: hit again until the hull goes.
-        for (let i = 0; i < 4 && this.swarmRegistry.get(rec.id) === rec; i++) this.applyDamage(rec.id, 'test-kill', 1e9, x, y);
-      }
-    });
-
-    // W2c showcase: warp the room's ships to (x, y), keeping the formation
-    // (offsets from the biggest ship, the flagship).
-    this.onMessage('test_fleet_warp', (client: Client, raw: unknown) => {
-      if (!(this.testMode || ALLOW_DEV_OVERRIDES)) return;
-      const parsed = TestFleetWarpSchema.safeParse(raw);
-      if (!parsed.success) {
-        this.malformed.record(client.sessionId, 'test_fleet_warp');
-        return;
-      }
-      let lead: { id: string; slot: number; radius: number } | null = null;
-      for (const rec of this.swarmRegistry.all()) if (rec.kind === 1 && (lead === null || rec.radius > lead.radius)) lead = rec;
-      if (lead === null) return;
-      const lb = slotBase(lead.slot);
-      const lx = this.sabF32[lb + SLOT_X_OFF]!, ly = this.sabF32[lb + SLOT_Y_OFF]!;
-      for (const rec of [...this.swarmRegistry.all()]) { // TODO: alloc-debt (test cue only)
-        if (rec.kind !== 1) continue;
-        const b = slotBase(rec.slot);
-        const tx = parsed.data.x + this.sabF32[b + SLOT_X_OFF]! - lx, ty = parsed.data.y + this.sabF32[b + SLOT_Y_OFF]! - ly;
-        this.warpBot(rec.id, tx, ty);
-        this.setBotMoveTarget(rec.id, tx, ty); // hold there after the drop
-      }
-    });
+    this.onMessage('test_aggro', (client: Client, raw: unknown) => testHandlers.aggro(client, raw));
+    this.onMessage('test_reload_turrets', (client: Client, raw: unknown) => testHandlers.reloadTurrets(client, raw));
+    this.onMessage('test_kill_capitals', (client: Client, raw: unknown) => testHandlers.killCapitals(client, raw));
+    this.onMessage('test_fleet_warp', (client: Client, raw: unknown) => testHandlers.fleetWarp(client, raw));
 
     this.onMessage('cancel_transit', (client: Client, raw: unknown) => {
       const playerId = this.sessionToPlayer.get(client.sessionId);

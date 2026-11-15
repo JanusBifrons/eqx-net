@@ -35,6 +35,8 @@ import {
   GLOW_TINT_CRACK,
   GLOW_TINT_SLICE,
   GLOW_TINT_CHANNEL,
+  GLOW_TINT_SPLINTER,
+  SPLINTER_GLOW_WIDTH_MUL,
   WRECK_GLOW_TINTS,
   WRECK_GLOW_TEX_ROWS,
   type WreckGlow,
@@ -42,7 +44,11 @@ import {
   type WreckTexLayout,
 } from './wreckArt.js';
 import { rebuildWreckPieces } from '../../net/wreckGeometryStore.js';
-import { FRACTURE_ALGO_VERSION, EDGE_CUT, EDGE_HULL } from '../../../core/destruction/fractureHull.js';
+import { FRACTURE_ALGO_VERSION, EDGE_CUT, EDGE_HULL, projectToOutline } from '../../../core/destruction/fractureHull.js';
+import { shipHullOutline } from '../../../core/geometry/shipHullOutline.js';
+import { getShipKind } from '../../../shared-types/shipKinds.js';
+import { HEAVY_BEAM_WIDTH } from '../../../core/combat/WeaponCatalogue.js';
+import { RAILGUN_BOLT_WIDTH } from '../../../shared-types/combat/navalGuns.js';
 import { HEAVY_BEAM_COLOR } from '../beamStyles.js';
 import { Mesh } from 'pixi.js';
 import type { WreckDescriptor } from '../../../shared-types/messages/snapshotMessages.js';
@@ -303,13 +309,14 @@ describe('a kill cut glows in the weapon\'s colour (weapon cuts, look)', () => {
   const rgb = (c: number): [number, number, number] => [(c >> 16) & 255, (c >> 8) & 255, c & 255];
   const near = (a: number, b: number, tol: number): boolean => rgb(a).every((v, i) => Math.abs(v - rgb(b)[i]!) <= tol);
 
-  it('glowTintOf: only an EDGE_CUT edge of a cut kill is tinted, by the cut kind', () => {
+  it('glowTintOf: an EDGE_CUT edge of a cut kill is tinted by the cut kind, its other cracks are splinters', () => {
     expect(glowTintOf(EDGE_CUT, 'slice')).toBe(GLOW_TINT_SLICE);
     expect(glowTintOf(EDGE_CUT, 'channel')).toBe(GLOW_TINT_CHANNEL);
     expect(glowTintOf(EDGE_CUT, undefined)).toBe(GLOW_TINT_CRACK);
     for (const k of [EDGE_HULL, 1, 2, 3, 4]) {
-      expect(glowTintOf(k, 'slice')).toBe(GLOW_TINT_CRACK);
-      expect(glowTintOf(k, 'channel')).toBe(GLOW_TINT_CRACK);
+      expect(glowTintOf(k, 'slice')).toBe(GLOW_TINT_SPLINTER);
+      expect(glowTintOf(k, 'channel')).toBe(GLOW_TINT_SPLINTER);
+      expect(glowTintOf(k, undefined)).toBe(GLOW_TINT_CRACK);
     }
   });
 
@@ -396,7 +403,7 @@ describe('a kill cut glows in the weapon\'s colour (weapon cuts, look)', () => {
     }
   });
 
-  it('a slice kill\'s piece: EDGE_CUT edges glow violet, its other cuts keep the molten curve (one glow mesh)', () => {
+  it('a slice kill\'s piece: EDGE_CUT edges glow violet, its other cuts are subdued splinters (one glow mesh)', () => {
     for (const cutKind of ['slice', 'channel'] as const) {
       const d: WreckDescriptor = { ...DESC, wreckId: 40, killX: 300, killY: 0, deathTick: 100, cutKind, cutAng: 32768, cutW: 120 };
       const pieces = rebuildWreckPieces(d)!;
@@ -421,8 +428,8 @@ describe('a kill cut glows in the weapon\'s colour (weapon cuts, look)', () => {
           } else {
             others++;
             maxCrack = Math.max(maxCrack, sprite.edgeCoreWidth(i));
-            expect(sprite.edgeTint(i)).toBe(GLOW_TINT_CRACK);
-            expect(sprite.edgeColor(i)).toBe(wreckGlowAt(0.3, g()).color);
+            expect(sprite.edgeTint(i)).toBe(GLOW_TINT_SPLINTER);
+            expect(sprite.edgeColor(i)).toBe(wreckGlowAt(0.3, g(), GLOW_TINT_SPLINTER).color);
           }
         }
         sprite.destroy({ children: true });
@@ -431,8 +438,8 @@ describe('a kill cut glows in the weapon\'s colour (weapon cuts, look)', () => {
       expect(others, `${cutKind}: some splinter cracks too`).toBeGreaterThan(0);
       // The kill cut's strip is the widest line on the wreck, baked into the
       // same mesh: its core reaches CUT_GLOW_WIDTH_MUL × a crack's (unless the
-      // piece is too thin there), never narrower.
-      expect(maxCut, `${cutKind}: widest cut core`).toBeGreaterThan(maxCrack * (CUT_GLOW_WIDTH_MUL - 0.5));
+      // piece is too thin there), and a splinter's is half a crack's.
+      expect(maxCut, `${cutKind}: widest cut core`).toBeGreaterThan((maxCrack / SPLINTER_GLOW_WIDTH_MUL) * (CUT_GLOW_WIDTH_MUL - 0.5));
       expect(maxCrack).toBeGreaterThan(0);
     }
   });
@@ -442,7 +449,7 @@ describe('a kill cut glows in the weapon\'s colour (weapon cuts, look)', () => {
     expect(tex.source.height).toBe(WRECK_GLOW_TEX_ROWS);
     expect(WRECK_GLOW_TEX_ROWS).toBe(2 * WRECK_GLOW_TINTS);
     expect(glowV(GLOW_TINT_CRACK, false)).toBeCloseTo(0.5 / WRECK_GLOW_TEX_ROWS);
-    expect(glowV(GLOW_TINT_CHANNEL, true)).toBeCloseTo((WRECK_GLOW_TEX_ROWS - 0.5) / WRECK_GLOW_TEX_ROWS);
+    expect(glowV(GLOW_TINT_SPLINTER, true)).toBeCloseTo((WRECK_GLOW_TEX_ROWS - 0.5) / WRECK_GLOW_TEX_ROWS);
   });
 });
 
@@ -477,5 +484,208 @@ describe('a channel kill sheds ash along the channel (weapon cuts, look)', () =>
   it('channelFarEnd is null without EDGE_CUT edges', () => {
     const plain = rebuildWreckPieces({ ...DESC, wreckId: 53 })!;
     expect(channelFarEnd(plain, 0, 0)).toBeNull();
+  });
+});
+
+// Owner decision 2026-11-15, after two hostile reviews of the heavy-beam and
+// railgun kill takes on a heavy cruiser: KEEP the v10 splinter cracks (on
+// film they form an X across the hull) but tone their glow down so the cut
+// reads first. The reviews found (1) the splinters' orange rims wider,
+// brighter and longer-lived than the cut, (2) the cut glow drawn as four
+// violet "bevels" (wedge-ended slabs) on the hull's outer edges instead of a
+// glowing edge along the whole cut, (3) the cut dark ~2.3 s after the kill
+// with no visible violet ember (intended: full colour ~1.5 s, a clearly
+// visible ember, dark at ~4.5 s).
+describe('a cut kill reads first: subdued splinters, the whole cut lit, a visible ember (owner 2026-11-15)', () => {
+  const hc = shipHullOutline(getShipKind('heavy-cruiser'));
+  let minY = Infinity, maxY = -Infinity;
+  for (const [, y] of hc) { minY = Math.min(minY, y); maxY = Math.max(maxY, y); }
+  const kill = projectToOutline(hc, { x: 1e4, y: (minY + maxY) / 2 });
+  const SEEDS = [3, 7, 12, 21, 33];
+  const CUTS = [['slice', HEAVY_BEAM_WIDTH], ['channel', RAILGUN_BOLT_WIDTH]] as const;
+  const filmed = (seed: number, cutKind: 'slice' | 'channel' | undefined, cutW: number | undefined): WreckDescriptor => ({
+    wreckId: 70 + seed, parentKind: 'heavy-cruiser', seed, killX: kill.x, killY: kill.y,
+    killBlowDamage: 1.39, recentDamageRate: 2.4, snapChance: 0, algoVersion: FRACTURE_ALGO_VERSION, deathTick: 100,
+    ...(cutKind === undefined ? {} : { cutKind, cutAng: 32768, cutW }),
+  });
+  /** Every piece's sprite, first drawn at the death (game ms 1000). */
+  function sprites(d: WreckDescriptor): Array<{ p: WreckPieceGeometry; s: WreckPieceSprite }> {
+    const pieces = rebuildWreckPieces(d)!;
+    const art = new WreckArtState(null, () => {});
+    return pieces.map((p, pi) => {
+      const info = art.infoFor(d, pieces, pi, { x: 0, y: 0, angle: 0 }, 100, 1000);
+      return { p, s: new WreckPieceSprite(p, d.parentKind, null, info, pi) };
+    });
+  }
+  const g = (): WreckGlow => ({ color: 0, alpha: 0 });
+  const rgb = (c: number): [number, number, number] => [(c >> 16) & 255, (c >> 8) & 255, c & 255];
+  /** How bright the glow shows on screen: alpha × its brightest channel. */
+  const shown = (w: WreckGlow): number => (w.alpha * Math.max(...rgb(w.color))) / 255;
+
+  it('splinter cracks of a cut kill glow <= 0.5x as bright as the cut, <= 0.25x its core width, and go dark first', () => {
+    for (const [cutKind, cutW] of CUTS) {
+      for (const seed of SEEDS.slice(0, 3)) {
+        const all = sprites(filmed(seed, cutKind, cutW));
+        let maxCutCore = 0, maxSplinterCore = 0, splinters = 0;
+        for (const ms of [0, 300, 800, 1500, 2000, 2600, 3200, 4000]) {
+          let cutA = 0, splA = 0;
+          for (const { p, s } of all) {
+            s.update(1000 + ms, 0);
+            for (let i = 0; i < p.cutEdges.length; i++) {
+              if (!p.cutEdges[i]) continue;
+              if (p.cutEdges[i] === EDGE_CUT) {
+                cutA = Math.max(cutA, s.edgeHeat(i));
+                if (ms === 0) maxCutCore = Math.max(maxCutCore, s.edgeCoreWidth(i));
+              } else {
+                splA = Math.max(splA, s.edgeHeat(i));
+                if (ms === 0) { maxSplinterCore = Math.max(maxSplinterCore, s.edgeCoreWidth(i)); splinters++; }
+              }
+            }
+          }
+          const age = ms / 1000;
+          expect(cutA, `${cutKind} s${seed} ${age} s: the cut glows`).toBeGreaterThan(0);
+          expect(splA, `${cutKind} s${seed} ${age} s: splinter alpha <= 0.5 x the cut's`).toBeLessThanOrEqual(0.5 * cutA + 1e-9);
+          if (age >= 3) expect(splA, `${cutKind} s${seed} ${age} s: splinters dark first`).toBe(0);
+        }
+        expect(splinters, `${cutKind} s${seed}: some splinters`).toBeGreaterThan(0);
+        expect(maxSplinterCore, `${cutKind} s${seed}: splinter core <= 0.25 x the cut's`).toBeLessThanOrEqual(0.25 * maxCutCore + 1e-6);
+        expect(maxSplinterCore).toBeGreaterThan(0);
+        for (const { s } of all) s.destroy({ children: true });
+      }
+    }
+  });
+
+  it('a wreck with no cut keeps its cracks as they were (crack curve, 1x wide)', () => {
+    for (const { p, s } of sprites(filmed(3, undefined, undefined))) {
+      s.update(1000 + WRECK_CRACK_FRONT_MS + 300, 0);
+      for (let i = 0; i < p.cutEdges.length; i++) {
+        if (p.cutEdges[i]) expect(s.edgeTint(i)).toBe(GLOW_TINT_CRACK);
+      }
+      s.destroy({ children: true });
+    }
+  });
+
+  /** Quad corner `n` (0..3) of glow block `block`. */
+  const corner = (pos: Float32Array, block: number, n: number): [number, number] => [pos[block * 8 + n * 2]!, pos[block * 8 + n * 2 + 1]!];
+  /** How far the glow reaches into the piece (world u) at fraction `f`
+   *  along outline edge `i`: the widest of its halo and core quads. */
+  function litReach(s: WreckPieceSprite, p: WreckPieceGeometry, i: number, f: number, coreOnly = false): number {
+    const pos = s.glowPositions()!, S = s.glowSegments();
+    let k = 0;
+    for (let j = 0; j < i; j++) if (p.cutEdges[j]) k++;
+    let best = 0;
+    for (const block of coreOnly ? [S + k] : [k, S + k]) {
+      const c = (n: number): [number, number] => corner(pos, block, n);
+      const [x3, y3] = c(3), [x2, y2] = c(2);
+      const ex = x2 - x3, ey = y2 - y3, el = Math.hypot(ex, ey);
+      if (!(el > 1e-9)) continue;
+      // Inward normal: toward the quad's outer corners.
+      let nx = -ey / el, ny = ex / el;
+      const [x0, y0] = c(0), [x1, y1] = c(1);
+      if ((x0 + x1 - x2 - x3) * nx + (y0 + y1 - y2 - y3) * ny < 0) { nx = -nx; ny = -ny; }
+      // The point `f` along outline edge i (body-local math-up → Pixi-down;
+      // the quad runs from the crack's near end, either way round).
+      const o = p.outline, a = o[i]!, b = o[(i + 1) % o.length]!;
+      const px = a.x + (b.x - a.x) * f, py = -(a.y + (b.y - a.y) * f);
+      // The ray from the edge point along the normal: where it leaves the
+      // quad (through 3→0, 0→1 or 1→2).
+      for (const [a, b] of [[3, 0], [0, 1], [1, 2]] as const) {
+        const [ax, ay] = c(a), [bx, by] = c(b);
+        const sx = bx - ax, sy = by - ay, den = nx * sy - ny * sx;
+        if (Math.abs(den) < 1e-12) continue;
+        const t = ((ax - px) * sy - (ay - py) * sx) / den;
+        const u = ((ax - px) * ny - (ay - py) * nx) / den;
+        if (u >= -1e-6 && u <= 1 + 1e-6 && t > best) best = t;
+      }
+    }
+    return best;
+  }
+  /** The piece's own thickness (world u) inward from fraction `f` along edge `i`. */
+  function thickness(p: WreckPieceGeometry, i: number, f: number): number {
+    const o = p.outline, n = o.length, a = o[i]!, b = o[(i + 1) % n]!;
+    const el = Math.hypot(b.x - a.x, b.y - a.y);
+    const nx = -(b.y - a.y) / el, ny = (b.x - a.x) / el; // CCW: the inside is on the left
+    const px = a.x + (b.x - a.x) * f, py = a.y + (b.y - a.y) * f;
+    let best = Infinity;
+    for (let j = 0; j < n; j++) {
+      if (j === i) continue;
+      const c = o[j]!, e = o[(j + 1) % n]!;
+      const sx = e.x - c.x, sy = e.y - c.y, den = nx * sy - ny * sx;
+      if (Math.abs(den) < 1e-12) continue;
+      const t = ((c.x - px) * sy - (c.y - py) * sx) / den;
+      const u = ((c.x - px) * ny - (c.y - py) * nx) / den;
+      if (u >= 0 && u <= 1 && t > 1e-6 && t < best) best = t;
+    }
+    return best;
+  }
+
+  it('every EDGE_CUT edge glows along >= 90 % of its length (no wedge-ended "bevels", no sliver)', () => {
+    for (const [cutKind, cutW] of CUTS) {
+      for (const seed of SEEDS) {
+        const all = sprites(filmed(seed, cutKind, cutW));
+        let edges = 0, nominal = 0;
+        for (const { p, s } of all) {
+          s.update(1000 + 300, 0);
+          for (let i = 0; i < p.cutEdges.length; i++) if (p.cutEdges[i] === EDGE_CUT) nominal = Math.max(nominal, s.edgeCoreWidth(i));
+        }
+        expect(nominal).toBeGreaterThan(0);
+        for (const { p, s } of all) {
+          for (let i = 0; i < p.cutEdges.length; i++) {
+            if (p.cutEdges[i] !== EDGE_CUT) continue;
+            edges++;
+            // Lit: the core at least a fifth of the cut core's full width,
+            // or half of what the piece itself is thick there (a wedge).
+            const N = 100;
+            let lit = 0;
+            for (let m = 0; m <= N; m++) {
+              const f = m / N;
+              if (litReach(s, p, i, f, true) >= Math.min(0.2 * nominal, 0.5 * thickness(p, i, f)) - 1e-6) lit++;
+            }
+            expect(lit / (N + 1), `${cutKind} s${seed} edge ${i}: lit share of its length`).toBeGreaterThanOrEqual(0.9);
+          }
+        }
+        expect(edges).toBeGreaterThan(0);
+        for (const { s } of all) s.destroy({ children: true });
+      }
+    }
+  });
+
+  it('the cut holds full colour ~1.5 s, then a clearly visible ember at 3 s (violet / orange), dark at 4.5 s', () => {
+    for (const tint of [GLOW_TINT_SLICE, GLOW_TINT_CHANNEL]) {
+      expect(shown(wreckGlowAt(1.4, g(), tint)), `tint ${tint} 1.4 s`).toBeGreaterThan(0.9);
+      // The ember stage: still clearly showing through ~3 s.
+      for (const s of [2.3, 2.6, 3.0]) {
+        expect(shown(wreckGlowAt(s, g(), tint)), `tint ${tint} ${s} s: visible`).toBeGreaterThanOrEqual(0.45);
+      }
+      expect(shown(wreckGlowAt(3.4, g(), tint)), `tint ${tint} 3.4 s`).toBeGreaterThanOrEqual(0.25);
+      const [r, gg, b] = rgb(wreckGlowAt(3.0, g(), tint).color);
+      if (tint === GLOW_TINT_SLICE) {
+        expect(b, 'slice ember: violet (blue well over green)').toBeGreaterThan(gg + 0x40);
+        expect(r, 'slice ember: violet (red over green)').toBeGreaterThan(gg + 0x20);
+      } else {
+        expect(r, 'channel ember: orange-red').toBeGreaterThanOrEqual(0xc0);
+        expect(r - gg, 'channel ember: orange, not yellow-white').toBeGreaterThanOrEqual(0x40);
+        expect(gg, 'channel ember: warm').toBeGreaterThan(b);
+      }
+      // Dark by ~4.5 s (fading through a dim scorch from ~4 s).
+      expect(shown(wreckGlowAt(4.3, g(), tint)), `tint ${tint} 4.3 s: nearly dark`).toBeLessThan(0.12);
+      expect(wreckGlowAt(WRECK_GLOW_END_S, g(), tint).alpha).toBe(0);
+    }
+  });
+
+  it('on the sprite: the cut is still clearly lit 3 s after the kill and dark by 4.5 s', () => {
+    for (const [cutKind, cutW] of CUTS) {
+      const all = sprites(filmed(3, cutKind, cutW));
+      for (const [ms, lo, hi] of [[3000, 0.6, 1], [4500, 0, 0]] as const) {
+        let a = 0;
+        for (const { p, s } of all) {
+          s.update(1000 + ms, 0);
+          for (let i = 0; i < p.cutEdges.length; i++) if (p.cutEdges[i] === EDGE_CUT) a = Math.max(a, s.edgeHeat(i));
+        }
+        expect(a, `${cutKind} ${ms} ms`).toBeGreaterThanOrEqual(lo);
+        expect(a, `${cutKind} ${ms} ms`).toBeLessThanOrEqual(hi);
+      }
+      for (const { s } of all) s.destroy({ children: true });
+    }
   });
 });
