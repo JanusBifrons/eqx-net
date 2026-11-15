@@ -38,20 +38,19 @@ async function keepWorkingPiece(ctx: ShotContext): Promise<boolean> {
       work.y = cur.y;
       return true;
     }
-    // Is wreck `id` the worked wreck or cut from it (its parent chain)?
-    const family = (id: number | undefined): boolean => {
-      for (let k = id, n = 0; k !== undefined && n < 32; n++) {
-        if (work !== undefined && k === work.wreckId) return true;
-        k = m.wrecks?.get(k)?.parentWreck;
-      }
-      return false;
-    };
     const ox = work?.x ?? me.x;
     const oy = work?.y ?? me.y;
     let best: number | null = null, bestD = Infinity, bestFam = false;
     for (const [eid, e] of m.swarm) {
       if (e.kind !== 4) continue;
-      const fam = family(e.wreckId);
+      // Is this piece's wreck the worked wreck or cut from it (its parent
+      // chain)? Inline, not a named helper: tsx wraps named functions in a
+      // `__name` call the page doesn't define (docs/LESSONS.md, probe gotchas).
+      let fam = false;
+      for (let k = e.wreckId, n = 0; k !== undefined && n < 32; n++) {
+        if (work !== undefined && k === work.wreckId) { fam = true; break; }
+        k = m.wrecks?.get(k)?.parentWreck;
+      }
       const d = Math.hypot(e.x - ox, e.y - oy);
       if ((fam && !bestFam) || (fam === bestFam && d < bestD)) { bestD = d; best = eid; bestFam = fam; }
     }
