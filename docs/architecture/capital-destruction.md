@@ -860,6 +860,49 @@ no `resplit`, gives no children.
 - **Catastrophic case.** A big white flash, plus a blast that damages nearby
   ships. It waits on the owner's answer about how rare it is (§6).
 
+#### Re-split on the wire: the descriptor chain (salvage stream PR 4, 2026-11-15)
+
+A child wreck is an ordinary `WreckDescriptor` with a NEW `wreckId` that
+names its parent: `parentWreck` (the parent's wreckId, u16) and
+`parentPiece` (the piece that broke, the parent's `componentIndex`, u8). The
+descriptor is ONE step of the chain: `killX`/`killY` are the breaking hit and
+`cutKind`/`cutAng`/`cutW` its kill cut, in the hull's 1× Pixi-up frame as
+for a root. `parentKind` and `algoVersion` repeat the root's; `seed` is the
+child's own fracture seed, `wreckChildSeed(parent.seed, parentPiece)`, so
+every link is checkable. `killBlowDamage`, `recentDamageRate` and
+`snapChance` are not child inputs (the kind's `resplit` profile sets the
+fracture); the server sends 0.
+
+- **Both or neither.** `parentWreck` and `parentPiece` are present together
+  (a child) or absent (a root), and a wreck is never its own parent: the zod
+  `WreckDescriptorSchema` refine and the alloc-free `isWreckDescriptor`
+  enforce the same rule (`wreckWire.test.ts`).
+- **Pieces as today.** A child wreck's pieces ride the binary swarm wire with
+  its own `wreckId` and their index as `componentIndex`; no record field
+  changes, so `SWARM_WIRE_VERSION` stays 5. The descriptor rides the existing
+  welcome / `wreckAdds` / `wreckSync` paths by reference (`WreckWireDeltas`
+  diffs whole descriptors), so the new fields go through unchanged.
+- **Client resolve.** `WreckGeometryStore` walks parent descriptors to the
+  root, builds the `WreckChildChain` and calls the shared
+  `wreckChildGeometry` (`resolveChildWreckPieces`, pure). A link that
+  disagrees with its parent (kind, version, seed) or a chain deeper than
+  `MAX_WRECK_CHAIN_DEPTH` (16, a cycle guard) resolves to nothing.
+- **Out of order is normal.** A child can land before its parent (an add
+  before the resync chunk holding the parent, the renderer seeing the mirror
+  in id order). The store keeps it DEFERRED: its pieces read null (no body,
+  no sprite) and it retries on the first lookup after the wreck set changes.
+  A resolved child re-checks its ancestors only after the set changes, and
+  rebuilds when one was replaced (a recycled id). Nothing is fractured per
+  lookup in the steady state.
+- **Contract (server, salvage PR 5):** every ancestor descriptor stays on the
+  wire while any descendant lives (a refcount on the parent wreck), even when
+  the parent has no live pieces of its own. An ancestor that leaves first
+  leaves its descendants unresolved until it is back.
+- **Locks:** `tests/integration/wire/wreckGeometryParity.test.ts` "wreck
+  child chains" (server `wreckChildGeometry` == the client's resolve, bit for
+  bit, depth 1 and 2, child before parent, parent removed and recycled,
+  renderer path, `WreckWireDeltas` pass-through, malformed links).
+
 ### Later: wrecks as terrain and salvage
 
 - **Terrain.** Long-lived wreck pieces: heavy, slow, cover that blocks ships
@@ -2374,7 +2417,8 @@ Every client must produce the same pieces as the server, bit for bit, from
   the wreck, including the former owner.
 - **Wreck pieces don't break further** ("No for now"). Shooting a piece never
   re-fractures it. *Lifted 2026-11-15 (salvage stream): the core child
-  fracture exists (§S4 "Re-split"); the server wiring follows.*
+  fracture and its wire contract exist (§S4 "Re-split", "Re-split on the
+  wire"); server spawning follows.*
 - **Smaller ships break up this way too** ("Yes"). Fighters, frigates and
   cruisers fracture dynamically like capitals, replacing today's hand-made
   scrap. This is a later slice, after the capital path works.
