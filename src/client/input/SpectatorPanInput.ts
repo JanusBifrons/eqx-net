@@ -6,7 +6,8 @@
  * dedicated reader that tracks the WASD/arrow keys only while ENABLED (the App
  * enables it exactly when spectating + desktop) and emits a camera-pan VELOCITY
  * on each held-key change — never per frame. The renderer integrates the
- * velocity in `Camera.tick`, so a held key produces continuous panning with a
+ * velocity in `Camera.tick` (eased in on press, gliding to a stop on release —
+ * `PAN_EASE_MS`), so a held key produces continuous panning with a
  * handful of messages, not one per frame (no worker-IPC churn).
  *
  * Velocity is SCREEN px/sec, matching the drag-pan's `target += delta` sign
