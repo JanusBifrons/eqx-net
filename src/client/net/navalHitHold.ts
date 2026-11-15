@@ -142,6 +142,13 @@ export class NavalHitHold {
     this.release(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, sink);
   }
 
+  /** Is a hit on `targetId` still held for its drawn shell? (A death that
+   *  comes with one waits for it: `ColyseusClient` deferred kills.) */
+  holdsTarget(targetId: string): boolean {
+    for (let i = 0; i < this.count; i++) if (this.held[i]!.evt.targetId === targetId) return true;
+    return false;
+  }
+
   /** Release every hit held for `targetId` now: the target was destroyed,
    *  and its explosion is not held, so a later release would put the number
    *  over the wreck after the blast (fight-clip review 2026-11-13). */
