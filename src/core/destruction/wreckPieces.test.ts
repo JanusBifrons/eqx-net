@@ -10,10 +10,12 @@ import {
   WRECK_SPIN_MIN_RADIUS_FRAC, WRECK_SPIN_RIM_FAR, WRECK_SPIN_RIM_NEAR, type WreckBuildInput,
 } from './wreckPieces.js';
 import { shipShapeToPolygon } from '../geometry/shipHullDecomp.js';
-import { shipHullOutline } from '../geometry/shipHullOutline.js';
+import { shipHullOutline, shipShapeScale } from '../geometry/shipHullOutline.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { massOf, shipTuning } from '../../shared-types/shipScale/tuning.js';
-import { cutDirFromAngle, CUT_ANGLE_STEPS, FRACTURE_QUANTUM } from './fractureHull.js';
+import { cutDirFromAngle, CUT_ANGLE_STEPS, EDGE_CUT, FRACTURE_QUANTUM } from './fractureHull.js';
+
+const shipScaleOf = (k: Parameters<typeof getShipKind>[0]): number => shipShapeScale(getShipKind(k));
 
 type V = { x: number; y: number };
 
@@ -286,5 +288,67 @@ describe('kill-cut direction (fracture v9)', () => {
     for (const p of sliced) a0 += p.area;
     for (const p of channel) a1 += p.area;
     expect(a1).toBeLessThan(a0);
+  });
+});
+
+describe('railgun channel banks part (fracture v9)', () => {
+  // Filmed 2026-11-15 (rail-channel showcase, heavy-cruiser:channel): the two
+  // banks of the channel are not a shared cut (parallel, a bolt's width
+  // apart), so the seam pass never parted them and the kill push closed the
+  // channel at ~20–45 u/s while the jagged cracks opened: no visible gap
+  // along the slug's line.
+  it('the pieces either side of the channel open it at wreckSeparate or more at both ends', () => {
+    const W = 16; // RAILGUN_BOLT_WIDTH, world units
+    for (const kindId of ['heavy-cruiser', 'battleship', 'destroyer'] as const) {
+      const kind = getShipKind(kindId);
+      const t = shipTuning(kind);
+      const sc = shipScaleOf(kindId);
+      for (const seed of [1, 2, 3, 4, 5, 6, 77]) {
+        const flat = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
+        const cutAng = hullLocalCutAngle(flat, { x: 1, y: 0 });
+        const { pieces, fracture } = buildWreckPieces({
+          kindId, pose: flat, killWorld: { x: -500, y: 30 }, attackerWorld: null, seed,
+          killBlowDamage: 0.3, recentDamageRate: 0.3, cutKind: 'channel', cutAng, cutW: W / sc,
+        });
+        const geom = wreckPieceGeometry(fracture);
+        let banks = 0;
+        for (let i = 0; i < geom.length; i++) {
+          for (let j = 0; j < geom.length; j++) {
+            if (i === j) continue;
+            const gi = geom[i]!, gj = geom[j]!;
+            for (let a = 0; a < gi.outline.length; a++) {
+              if (gi.cutEdges[a] !== EDGE_CUT) continue;
+              const p0 = { x: gi.outline[a]!.x + gi.cx, y: gi.outline[a]!.y + gi.cy };
+              const p1n = gi.outline[(a + 1) % gi.outline.length]!;
+              const p1 = { x: p1n.x + gi.cx, y: p1n.y + gi.cy };
+              const len = Math.hypot(p1.x - p0.x, p1.y - p0.y);
+              if (len < 1) continue;
+              const ux = (p1.x - p0.x) / len, uy = (p1.y - p0.y) / len;
+              const nx = uy, ny = -ux;
+              for (let b = 0; b < gj.outline.length; b++) {
+                if (gj.cutEdges[b] !== EDGE_CUT) continue;
+                const q0 = gj.outline[b]!, q1 = gj.outline[(b + 1) % gj.outline.length]!;
+                const ax = q0.x + gj.cx - p0.x, ay = q0.y + gj.cy - p0.y;
+                const bx = q1.x + gj.cx - p0.x, by = q1.y + gj.cy - p0.y;
+                // The facing bank: j's edge on the line a channel width across.
+                if (Math.abs(ax * nx + ay * ny - W) > 0.1 || Math.abs(bx * nx + by * ny - W) > 0.1) continue;
+                const s0 = Math.max(0, Math.min(ax * ux + ay * uy, bx * ux + by * uy));
+                const s1 = Math.min(len, Math.max(ax * ux + ay * uy, bx * ux + by * uy));
+                if (s1 - s0 < 1) continue;
+                banks++;
+                const pi = pieces[i]!, pj = pieces[j]!;
+                for (const sAt of [s0, s1]) {
+                  const p = { x: p0.x + ux * sAt, y: p0.y + uy * sAt };
+                  const rvx = (pj.kickVx - pj.kickAngvel * (p.y - gj.cy)) - (pi.kickVx - pi.kickAngvel * (p.y - gi.cy));
+                  const rvy = (pj.kickVy + pj.kickAngvel * (p.x - gj.cx)) - (pi.kickVy + pi.kickAngvel * (p.x - gi.cx));
+                  expect(rvx * nx + rvy * ny, `${kindId} seed ${seed} banks ${i}/${j}`).toBeGreaterThan(0.99 * t.wreckSeparate);
+                }
+              }
+            }
+          }
+        }
+        expect(banks, `${kindId} seed ${seed}: the channel has two banks`).toBeGreaterThan(0);
+      }
+    }
   });
 });
