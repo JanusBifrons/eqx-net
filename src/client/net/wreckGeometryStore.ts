@@ -56,12 +56,28 @@ function sameInputs(a: WreckDescriptor, b: WreckDescriptor): boolean {
     && a.killBlowDamage === b.killBlowDamage && a.recentDamageRate === b.recentDamageRate
     && a.snapChance === b.snapChance && a.algoVersion === b.algoVersion
     && a.cutKind === b.cutKind && a.cutAng === b.cutAng && a.cutW === b.cutW
+    && sameExtraCuts(a.extraCuts, b.extraCuts)
     && a.parentWreck === b.parentWreck && a.parentPiece === b.parentPiece;
+}
+
+/** Fracture v12: the same further cut lines, in the same order. */
+function sameExtraCuts(a: WreckDescriptor['extraCuts'], b: WreckDescriptor['extraCuts']): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const p = a[i]!;
+    const q = b[i]!;
+    if (p.x !== q.x || p.y !== q.y || p.ang !== q.ang || p.w !== q.w) return false;
+  }
+  return true;
 }
 
 /** The step a child descriptor names (its break of its parent's piece). */
 function stepOf(d: WreckDescriptor): WreckChildStep {
-  return { pieceIndex: d.parentPiece!, killX: d.killX, killY: d.killY, cutKind: d.cutKind, cutAng: d.cutAng, cutW: d.cutW };
+  return {
+    pieceIndex: d.parentPiece!, killX: d.killX, killY: d.killY, cutKind: d.cutKind, cutAng: d.cutAng, cutW: d.cutW,
+    extraCuts: d.extraCuts,
+  };
 }
 
 /**
@@ -93,7 +109,7 @@ export function resolveChildWreckPieces(
     root: {
       kindId: cur.parentKind as ShipKindId, seed: cur.seed, killX: cur.killX, killY: cur.killY,
       killBlowDamage: cur.killBlowDamage, recentDamageRate: cur.recentDamageRate, snapChance: cur.snapChance,
-      cutKind: cur.cutKind, cutAng: cur.cutAng, cutW: cur.cutW,
+      cutKind: cur.cutKind, cutAng: cur.cutAng, cutW: cur.cutW, extraCuts: cur.extraCuts,
     },
     steps,
   });
@@ -118,6 +134,8 @@ export function rebuildWreckPieces(d: WreckDescriptor): WreckPieceGeometry[] {
     cutKind: d.cutKind,
     cutAng: d.cutAng,
     cutW: d.cutW,
+    // v12 multi-cut: the other beams' lines, as-is too.
+    extraCuts: d.extraCuts,
   });
 }
 

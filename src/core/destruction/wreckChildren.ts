@@ -23,7 +23,8 @@ import { fnvMixU32 } from '../random/rng.js';
 import { DESTRUCTION_PROFILES, type DestructionResplit } from '../../shared-types/shipScale/destruction.js';
 import { getShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
 import { shipTuning } from '../../shared-types/shipScale/tuning.js';
-import { fracturePiecesToGeometry, wreckFractureCut, wreckRootFracture } from './wreckPieceFrame.js';
+import { fracturePiecesToGeometry, wreckFractureCut, wreckFractureExtraCuts, wreckRootFracture } from './wreckPieceFrame.js';
+import type { WreckExtraCut } from '../../shared-types/messages/wreckDescriptor.js';
 import type { WreckFractureInputs, WreckPieceGeometry } from './wreckPieces.js';
 
 /** One break of one piece. */
@@ -40,6 +41,9 @@ export interface WreckChildStep {
   cutKind?: 'slice' | 'channel';
   cutAng?: number;
   cutW?: number;
+  /** v12 multi-cut: the other cutting beams that burned this piece (the
+   *  child descriptor's `extraCuts`; only with a cut). */
+  extraCuts?: ReadonlyArray<WreckExtraCut>;
 }
 
 /** A root wreck and the breaks that led to one generation of children. */
@@ -88,7 +92,10 @@ export function wreckChainFracture(chain: WreckChildChain): FracturePiece[] {
       soundMinShare: o.soundMinShare,
       extraChunkChance: o.extraChunkChance,
       jag: o.jag,
+      // Absent on every re-split profile today (children unchanged).
+      cutBurnMinShare: o.cutBurnMinShare,
       cut: wreckFractureCut(step),
+      extraCuts: wreckFractureExtraCuts(step),
     });
     pieces = children.map((c) => inheritEdgeKinds(c, parent));
   }

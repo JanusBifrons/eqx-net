@@ -9,8 +9,9 @@
  * piece's own outline. Runs once per wreck (or split) per side; allocates
  * freely.
  */
-import { fractureHull, cutDirFromAngle, EDGE_HULL, type FractureEdgeKind, type FractureKillCut, type FracturePiece } from './fractureHull.js';
+import { fractureHull, cutDirFromAngle, EDGE_HULL, type FractureEdgeKind, type FractureExtraCut, type FractureKillCut, type FracturePiece } from './fractureHull.js';
 import { DESTRUCTION_PROFILES } from '../../shared-types/shipScale/destruction.js';
+import type { WreckExtraCut } from '../../shared-types/messages/wreckDescriptor.js';
 import { shipHullOutline, shipShapeScale } from '../geometry/shipHullOutline.js';
 import { getShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
 import { shipBodyMass, shipTuning } from '../../shared-types/shipScale/tuning.js';
@@ -40,6 +41,9 @@ export interface WreckFractureInputs {
   /** A channel's width in the hull's 1× frame (world width ÷
    *  `shipShapeScale`). */
   cutW?: number;
+  /** v12 multi-cut: the other cutting beams' lines (the descriptor's
+   *  `extraCuts` as they are; only with a cut). */
+  extraCuts?: ReadonlyArray<WreckExtraCut>;
 }
 
 /** One piece's shape in its own body frame (math-up, centred on its
@@ -78,6 +82,17 @@ export function wreckFractureCut(input: { cutKind?: 'slice' | 'channel'; cutAng?
   return { kind: input.cutKind, dirX: d.x, dirY: d.y, width: input.cutW ?? 0 };
 }
 
+/** The fracture's v12 `extraCuts` from a descriptor's `extraCuts` (undefined
+ *  without a main cut or with none). Both sides decode each angle with the
+ *  shared trig-free `cutDirFromAngle`. */
+export function wreckFractureExtraCuts(input: { cutKind?: 'slice' | 'channel'; cutAng?: number; extraCuts?: ReadonlyArray<WreckExtraCut> }): FractureExtraCut[] | undefined {
+  if (input.cutKind === undefined || input.cutAng === undefined || input.extraCuts === undefined || input.extraCuts.length === 0) return undefined;
+  return input.extraCuts.map((c) => {
+    const d = cutDirFromAngle(c.ang);
+    return { x: c.x, y: c.y, dirX: d.x, dirY: d.y, width: c.w ?? 0 };
+  });
+}
+
 /** The raw fracture of a wreck (hull 1× Pixi-up frame). The kind's
  *  destruction profile picks the options (a capital's are the fracture
  *  defaults); `none` leaves no pieces. */
@@ -101,7 +116,9 @@ export function wreckRootFracture(input: WreckFractureInputs): FracturePiece[] {
     soundMinShare: opts.soundMinShare,
     extraChunkChance: opts.extraChunkChance,
     jag: opts.jag,
+    cutBurnMinShare: opts.cutBurnMinShare,
     cut: wreckFractureCut(input),
+    extraCuts: wreckFractureExtraCuts(input),
   });
 }
 

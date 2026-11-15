@@ -2486,6 +2486,74 @@ line; a railgun kill erases a straight channel as wide as the bolt.
   ~(11, 9, 19)), and the glow strips stay on the drawn hull (lock: "no glow
   strip lies outside its piece"). How fast the wedges part is the server's
   spawn kick (core fracture), not a render effect.
+- **Burn-away and vaporised (fracture v11, 2026-11-15).** Owner: when a cut
+  weapon (heavy-beam slice or railgun channel) kills a ship, "any piece too
+  small" burns away instead of drifting as wreckage; if no piece survives,
+  the whole ship is vaporised. Same rule for every ship, whoever flies it.
+  - **The share.** `DestructionFractureOptions.cutBurnMinShare` (the
+    fracture's `FractureInput.cutBurnMinShare`), a share of the hull's area
+    (scale-free, #18). On a cut kill it replaces `CHANNEL_SLIVER_SHARE` in
+    the strip's sliver erase, a secondary crack that would leave a piece
+    under it is dropped by the retry (like an over-cap crack: only the cut
+    burns mass), and a last pass after the jag erases any piece still under
+    it, so every piece returned holds at least the share. Absent (the
+    capital profile, the re-split profiles) the fracture is v10's; a
+    fracture without a cut ignores it.
+  - **Numbers.** Sub-capital 0.2 (a fifth of the hull, under the re-split's
+    quarter salvage floor, so what survives a cut is a real chunk). Real
+    ships (hull 1× units, `shipShapeScale` 2 for these sub-caps, so the
+    60 u heavy beam is 30 wide and the 16 u slug 8):
+    | ship / shot | v10 pieces (share of hull) | v11 |
+    |---|---|---|
+    | fighter (20 × 26), heavy beam, any line | none (the beam is wider than the ship) | vaporised |
+    | gunship (20 × 28), heavy beam, any line | none | vaporised |
+    | missile frigate (32 × 44), heavy beam across | 0.07 + 0.15 | vaporised |
+    | missile frigate, heavy beam at 45° | 0.10 | vaporised |
+    | missile frigate, heavy beam along the keel | none | vaporised |
+    | missile frigate, railgun across | 0.32 + 0.46 (0.26 + 0.52 at a quarter) | unchanged |
+    | gunship, railgun along, 4 u off the keel | 0.12 + 0.44 | 0.44 |
+    | fighter, railgun along the keel | 0.18 + 0.18 | vaporised |
+    | heavy cruiser (454 × 4385, scale 1), heavy beam across | 2–5 pieces, 0.35–0.59 hulks + 0.01–0.03 splinter chips | unchanged (capital: 5 % strip erase only) |
+    The capital keeps no burn share: a heavy cruiser cut leaves its huge
+    hulks whatever the share, and its splinter chips are the look the
+    owner approved (v10).
+  - **Server.** `buildWreckPieces` returning no piece on a cut kill is a
+    vaporised ship: `CapitalWreckSubsystem.onDeath` returns
+    `{ pieces: 0, vaporised: true }` (`WreckDeathOutcome`), spawns no
+    descriptor and still despawns the dying body (`despawnDyingBody`, which
+    before v11 ran only when there were pieces: a fighter killed by the
+    60 u heavy beam already had none, and an active hull's corpse body
+    stayed in the world). Each death path asks for the wreck BEFORE its
+    `destroy` broadcast so the event can carry it: a drone through
+    `spawnScrapFromDrone` → `evictSwarmEntity({ vaporised })`, a lingering
+    hull through `spawnScrapFromLingeringHull` (moved ahead of its
+    broadcast), an active hull through the new `spawnWreckFromActiveHull`
+    leaf dep (the wreck spawn moved out of the `SHIP_DESTROYED` handler into
+    the death policy, `SectorRoom.spawnActiveHullWreck`).
+  - **Wire.** `DestroyEvent.vaporised?: true` (emit-when-true;
+    `DestroyEventSchema`, strict). An effect hint only (#16): a vaporised
+    ship has no wreck descriptor, so a late joiner sees the same nothing.
+    The client effect is a separate PR.
+  - **Vaporised salvage (owner 2026-11-15).** A vaporised ship leaves ONE
+    loot pod, as any kill does, with its hull's salvage ×
+    `VAPORISE_SALVAGE_MUL` = 1.5 ("the beam rendered the whole ship
+    down"); only the hull roll's salvage scales, never cargo. Every ship,
+    whoever flies it: a player-flown ship now drops its kind's hull loot
+    too. The pod spawns beside the hull, off the killer's line, so the
+    heavy beam's follow-through passes it. Detail:
+    [loot-and-cargo](../features/loot-and-cargo.md#hull-salvage-every-ship-and-vaporised-ships-owner-2026-11-15);
+    lock `vaporiseSalvage.test.ts`.
+  - **Composite kinds** (havok, the cargo pod: profile `none`, scrap groups)
+    never reach the wreck path: a cut kill breaks them into their component
+    scrap as before, with no `vaporised`. Follow-up.
+  - Locks: `fractureHull.cutBurn.test.ts` (the threshold edge for a channel,
+    a wide slice and a line slice; all-burn; the option inert without a cut;
+    the real ships above; every sub-cap cut piece ≥ the share);
+    `CapitalWreckSubsystem.test.ts` "burns every piece away";
+    `tests/integration/sectorRoom/cutVaporise.test.ts` (fighter, gunship,
+    missile frigate across: `destroy` with `vaporised`, no wreck; heavy
+    cruiser: its hulks; a player-flown fighter too);
+    `wreckGeometryParity` "v11 burn-away"; `messages.test.ts`.
 - **Not yet:** channel ash on a sub-capital (its profile has no break-up
   burst, so only its glow tints). The beam fits that mount the heavy beam:
   [capital-ships](../features/capital-ships.md#weapon-fits-plan-section-9).
@@ -2498,6 +2566,76 @@ line; a railgun kill erases a straight channel as wide as the bolt.
   `wreckPieces.test.ts` "kill-cut direction";
   `tests/integration/wire/wreckGeometryParity.test.ts` (cut descriptors
   rebuild bit for bit); `wreckWire.test.ts`.
+
+#### Multi-cut: one cut per beam (fracture v12, 2026-11-15)
+
+Owner: three main turrets burn a wreck piece at slightly different points
+and angles, but when its integrity ran out it split along only ONE beam's
+line, so two beams looked like they did nothing. Decision, "one cut per
+beam": each cutting beam burns its own line, and when the piece gives way
+it breaks along EVERY line that burned it. Then (owner, same day): the same
+rule for a live ship's kill split, and for several capitals firing together.
+
+- **Burn lines** (`core/destruction/burnLines.ts`, `BurnLines`): the ONE
+  tracker for both breaks. The server keeps one per tracked hull (the hit
+  entry in `CapitalWreckSubsystem.noteHit`) and one per wreck piece (its
+  per-piece entry beside the integrity, `onWreckHit`). Only weapons with a
+  `killCut` burn lines (heavy beam, railgun, mining laser); any shooter's
+  (two ships firing together both count). A line is the hit point and the
+  shot's direction in the hull's 1× Pixi-up frame, mapped with the target's
+  pose AT THE HIT (`hullPoseInto` / `piecePoseInto`), so it stays put while
+  the target moves and turns; its width is the weapon's cut width.
+- **Slots, no mount id:** `BURN_LINE_SLOTS` 4 typed slots, no allocation
+  per hit (#14). A shooter's next hit on (nearly) the same line overwrites
+  its slot (a sweeping beam keeps one slot); a new line takes a free or
+  stale slot, else the oldest. Lines older than `BURN_LINE_WINDOW_TICKS`
+  (60 ticks, ~1 s of game time) are gone.
+- **Merge:** two lines are one (`sameBurnLine`) when under ~5° apart
+  (`BURN_LINE_MERGE_COS`) AND the gap between their strips is under
+  `BURN_LINE_MERGE_GAP_PER_RADIUS` (0.08) × the cut thing's radius (the
+  hull's, or the piece's own; #18). So near-parallel beams never leave a
+  sliver between them. A lance firing bow-on lines its three turrets up
+  along the keel: their beams run down one line, one cut. Broadside, they
+  converge from ~10° apart: three cuts.
+- **The break:** the killing (or breaking) shot is the main cut as before
+  (`cutKind` / `cutAng` / `cutW`); `BurnLines.extraCuts` returns every other
+  live line that is not a near-duplicate of it or of a line already taken,
+  newest first, at most `FRACTURE_MAX_EXTRA_CUTS` 3. `fractureHull`'s
+  `extraCuts` then splits every part each line crosses (a wide one erases
+  its strip through the channel code, `cutStrip`, with the same sliver
+  erase), after the main cut's strip and before the cracks; like the main
+  cut they are never dropped for the piece cap. The burn-away share (v11)
+  applies to what is left after ALL of them, so several beams can still
+  vaporise a small ship. Without `extraCuts` the output is v11's.
+- **Re-split children under the floor are salvage pods:** on a multi-cut
+  re-split (the step has `extraCuts`), a child under the kind's
+  `resplit.minAreaFrac` of the hull turns into a salvage pod (the worn-out
+  tiny-piece path, `wreckSalvageQty` of its mass) instead of a body; all
+  children pods: the parent just leaves. The FIFO check uses the real child
+  count (several cuts can give more than one fracture's cap). A kill split
+  keeps its pieces as they are (the burn-away share handles a sub-cap).
+- **Wire (#15, #16):** the descriptor's optional `extraCuts` (at most
+  `MAX_WRECK_EXTRA_CUTS` 3 of `{ x, y, ang, w? }`, hull 1× frame, `ang` a u16
+  decoded by the shared trig-free `cutDirFromAngle`; only with a `cutKind`),
+  on a root (kill split) and on a child step (re-split). The client's
+  `WreckGeometryStore` feeds them into the same fracture, so a late joiner
+  rebuilds the same pieces from the snapshot alone. `FRACTURE_ALGO_VERSION`
+  12: an older client drops such a wreck instead of guessing.
+- **Glow:** every extra line's edges are `EDGE_CUT`, so the existing cut
+  glow draws one glow per cut edge; the look and timing are unchanged.
+- Locks: `fractureHull.multiCut.test.ts` (three lines on a box give every
+  cell, `EDGE_CUT` edges, the wide strip, burn-away after all cuts, v11
+  byte-identical without them, the cap; a re-split chain; `BurnLines`:
+  per-beam slots, two shooters, the window, the merge, the bound);
+  `src/server/rooms/wreckMultiCut.test.ts` (two ships' kill split; old,
+  gun and own lines add nothing; three beams on a piece: two further lines,
+  the children, pods under the floor);
+  `tests/integration/wire/wreckGeometryParity.test.ts` "v12" (the real
+  subsystem vs the real store, kill split and re-split, a late joiner,
+  malformed lines refused both ways);
+  `tests/integration/sectorRoom/wreckMultiCut.test.ts` (a broadside lance
+  main battery cracks a battleship piece along its turrets' lines, every
+  child rebuilt by the client store).
 
 #### Sub-cap cut kills (beam take 7 review, 2026-11-15)
 
@@ -2716,6 +2854,8 @@ Moved from `src/core/CLAUDE.md` (2026-11-14); kept for the record.
 - **v7: the hull breaks only where it was hit, into a few ENORMOUS chunks** (owner review 2026-11-13: v6 sliced the far hull where no shell hit and cut a comb of slivers at the impact; "The last hit's impact sets the split"). No Voronoi seeds, no far cracks: two jagged zone cracks ~a beam either side of the primary and 0–2 fan cracks from the kill point (`LocalLine`, split only their zone half) leave 2–4 chunks at the impact and one big section each side. A very heavy blow (≥ max hull) on a long hull rarely (12 %) adds ONE far crack. Piece count still rises with size and violence, but stays ~3–7. A fan crack only splits a section where every part it leaves is chunky (≥ `FAN_MIN_WIDTH_BEAMS` 0.45 beam wide, ≤ `FAN_MAX_ASPECT` 2.6× longer than that; filmed take 2026-11-13: a long thin triangle along the port edge). Lock: the v7 describe in `fractureHull.killFocus.test.ts` (no thin sliver, no long thin piece of any size, no far cut, 2–5 near pieces, ≤ 2 sections each side).
 - **v8: sub-capital pieces are never nearly the whole hull** (take 9 review 2026-11-14). The `soundMinShare` option (default 0.15); the sub-cap profile sets 0.43 (0.33 before take 10). Capital output unchanged. Lock: `wreckPieces.subcapParting.test.ts` "read as broken".
 - **v10: a wide heavy-beam slice** (2026-11-15). A slice with a width erases a strip that wide like a channel; the heavy beam's is `HEAVY_BEAM_WIDTH` 60 u, its drawn core the same.
+- **v11: a cut kill burns away pieces too small** (2026-11-15). The optional `cutBurnMinShare` (sub-capital profile 0.2): on a heavy-beam slice or railgun channel kill every piece under that share of the hull burns away, a crack that would leave one is dropped; none left = vaporised (`DestroyEvent.vaporised`). Capital and un-cut output unchanged. Lock: `fractureHull.cutBurn.test.ts`; detail: "Kill cuts", "Burn-away".
+- **v12: one cut per beam** (2026-11-15). The optional `extraCuts`: the other cutting beams that burned the hull or piece in the last ~1 s each cut their own straight `EDGE_CUT` line (a wide one its strip), never dropped for the cap; the burn-away share applies after all of them. Without them the output is v11's (same golden hashes). Lock: `fractureHull.multiCut.test.ts`; detail: "Multi-cut".
 - **v10: splinters off a capital cut kill** (2026-11-15). The secondary cracks of a capital slice or channel kill branch off the cut at 40–58° and jag harder, instead of running parallel to it (film review: one shot read as three cuts). Count still from the violence table. Output without a cut unchanged. Lock: `fractureHull.cutSplinters.test.ts`, "golden: v9 kill cuts" (capital side-shot hashes).
 - **v9: kill cuts** (2026-11-14). The optional `cut`: a heavy-beam `slice` is a dead-straight primary along the shot through the kill point (`EDGE_CUT`, never jagged; slid toward the centroid only off a sliver); a railgun `channel` erases a strip as wide as the bolt. Output without a cut unchanged (same golden hashes). Locks: "golden: v9 kill cuts", the "fracture v9" describe in `fractureHull.killFocus.test.ts`.
 ## Server implementation notes

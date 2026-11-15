@@ -598,7 +598,7 @@ describe('fractureHull', () => {
       subcap: run(fighter, {
         maxPieces: sub.maxPieces, snapChance: sub.snapChance, fanCracks: sub.fanCracks, farCrack: sub.farCrack,
         chunkyPieces: sub.chunkyPieces, chunkyMinWidthBeams: sub.chunkyMinWidthBeams, soundMinShare: sub.soundMinShare,
-        extraChunkChance: sub.extraChunkChance, jag: sub.jag,
+        extraChunkChance: sub.extraChunkChance, jag: sub.jag, cutBurnMinShare: sub.cutBurnMinShare,
       }, 1.5),
     }).toEqual(GOLDEN_CUT);
   });
@@ -697,7 +697,9 @@ describe('fractureHull', () => {
 // the output is unchanged (same hashes), so only the version and the two
 // capital side-shot cut hashes moved (the bow-shot cuts here are 2-piece,
 // unchanged).
-const GOLDEN = { version: 10, pieces: 4, hash: 1220196282 };
+// v12: the optional `extraCuts` (multi-cut); without them every hash here is
+// unchanged, so only the version moved.
+const GOLDEN = { version: 12, pieces: 4, hash: 1220196282 };
 /** Kill cuts (v9; capital side shots v10): a battleship and a fighter (sub-capital profile), each
  *  sliced and channelled by a side shot and a bow shot. */
 const GOLDEN_CUT = {
