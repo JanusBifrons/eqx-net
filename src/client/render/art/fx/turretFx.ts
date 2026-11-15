@@ -8,8 +8,11 @@
  * nose convention) from its anchor at the muzzle. Pure and DOM-free.
  */
 import type { Img } from './fxTextures.js';
+import type { EffectQuality } from '@core/contracts/IEffects';
 
-export type TurretFamily = 'bolt' | 'beam' | 'missile' | 'charge';
+/** How a turret draws. 'rail' is the railgun: a ringed breech and one
+ *  split-rail barrel (`railGeom`), not a powder gunhouse. */
+export type TurretFamily = 'bolt' | 'beam' | 'missile' | 'charge' | 'rail';
 
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
 
@@ -79,11 +82,12 @@ export function nearestMuzzle(x: number, y: number, xs: ArrayLike<number>, ys: A
   return best;
 }
 
-/** The family a weapon draws as. A charge weapon (`chargeTicks`) of any
- *  mode but missile draws as 'charge' (the robot's beam, a charging shell
- *  gun). */
+/** The family a weapon draws as. The railgun draws as 'rail'; any other
+ *  charge weapon (`chargeTicks`) of any mode but missile draws as 'charge'
+ *  (the robot's beam, a charging shell gun). */
 export function familyFor(weaponId: string, mode: string, charge: boolean): TurretFamily {
   if (mode === 'missile') return 'missile';
+  if (weaponId === 'railgun') return 'rail';
   if (charge) return 'charge';
   if (mode === 'hitscan') return 'beam';
   return weaponId === 'pulse-orb' ? 'charge' : 'bolt';
@@ -96,7 +100,7 @@ export const RAILGUN_MUZZLE_HEFT = 1.8;
 
 /** How heavy a gun's muzzle reaction is: `RAILGUN_MUZZLE_HEFT` for the
  *  railgun, 1 for every other gun. A gun with heft > 1 kicks and flashes
- *  even though it draws as the 'charge' family. */
+ *  (the 'rail' family; a 'charge' gun does neither). */
 export function muzzleHeft(weaponId: string): number {
   return weaponId === 'railgun' ? RAILGUN_MUZZLE_HEFT : 1;
 }
@@ -175,3 +179,117 @@ export function muzzleSmokePuff(t: number, k: number, barrelWid: number, out: Sm
   return out;
 }
 
+
+// ------------------------------------------------------------ the railgun
+
+/** Split-rail turret geometry (Pixi-up local, forward = −y, pivot at 0),
+ *  from the mount's shared naval geometry (`navalTurret`, #18). The rails
+ *  end at the shared muzzle (houseL / 2 + len, #15); the breech is a disc
+ *  smaller than a gunhouse, so the barrel shows longer than a naval one. */
+export interface RailGeom {
+  /** Breech disc radius. */
+  breechR: number;
+  /** Width of each rail, and of the open slot between them. */
+  railW: number;
+  slotW: number;
+  /** |x| of a rail's outer face. */
+  railOuter: number;
+  /** y where the rails (and the slot) leave the breech; the muzzle's y. */
+  railY0: number;
+  muzzleY: number;
+  /** Flared shoulder plates: half-width at the breech, and the y where they
+   *  taper into the rails' outer faces. */
+  shoulderW: number;
+  shoulderY1: number;
+}
+
+/** Side vents along each rail, as fractions of the rail from breech (0) to
+ *  muzzle (1). The bake cuts them and the vent gas leaves them. */
+export const RAIL_VENTS: readonly number[] = [0.3, 0.44, 0.58, 0.72];
+
+export function railGeom(houseW: number, houseL: number, len: number, wid: number): RailGeom {
+  const breechR = houseW * 0.4;
+  const railW = wid * 1.15;
+  const slotW = wid * 0.95;
+  const muzzleY = -(houseL / 2 + len);
+  const railY0 = -breechR * 0.3;
+  return {
+    breechR, railW, slotW, railOuter: slotW / 2 + railW, railY0, muzzleY,
+    shoulderW: houseW * 0.46,
+    shoulderY1: railY0 + (muzzleY - railY0) * 0.34,
+  };
+}
+
+/** The charge in the slot at `level` 0..1 of the charge (`chargeGlowLevel`):
+ *  light fills the slot from the breech (`fill` 0) to the muzzle (`fill` 1)
+ *  and brightens as it nears full. Writes `out`. Pure. */
+export interface RailSlotCharge { fill: number; bright: number }
+export function railSlotCharge(level: number, out: RailSlotCharge): RailSlotCharge {
+  const l = clamp01(level);
+  out.fill = l;
+  out.bright = 0.25 + 0.75 * l * l;
+  return out;
+}
+
+/** How long the rails glow and vent after a shot. */
+export const RAIL_VENT_LIFE_S = 2;
+
+/** Rail heat, 0..1, `t` s after a shot: white-hot at once, cooling over
+ *  `RAIL_VENT_LIFE_S`. 0 before the shot / after. */
+export function railHeatAt(t: number): number {
+  if (t < 0 || t >= RAIL_VENT_LIFE_S) return 0;
+  const u = 1 - t / RAIL_VENT_LIFE_S;
+  return u * u;
+}
+
+/** Vent puffs drawn per railgun per effects tier: both sides of every vent
+ *  at high, one side at medium, none on the low tiers (firing reactions are
+ *  off there). Each is one pre-made sprite (no allocation). */
+export function railVentPuffs(quality: EffectQuality): number {
+  return quality === 'high' ? RAIL_VENTS.length * 2 : quality === 'medium' ? RAIL_VENTS.length : 0;
+}
+
+/** Vent puff `k` (vent `RAIL_VENTS[k >> 1]`, side +1 for even k, −1 odd)
+ *  `t` s after a shot: gas blown sideways out of the rail's vent, swelling
+ *  and fading, spark-hot (`hot` 1 → 0) for its first moment. Each vent
+ *  fires a beat after the one behind it (the heat runs up the rails). Sizes
+ *  follow the rail (#18). Writes `out`; alpha 0 = not drawn. */
+export interface RailPuff { x: number; y: number; size: number; alpha: number; hot: number }
+export function railVentPuff(t: number, k: number, g: RailGeom, out: RailPuff): RailPuff {
+  const vent = RAIL_VENTS[(k >> 1) % RAIL_VENTS.length]!;
+  const side = k % 2 === 0 ? 1 : -1;
+  const life = RAIL_VENT_LIFE_S * 0.85;
+  const s = t - vent * 0.12;
+  if (s < 0 || s >= life) { out.alpha = 0; out.size = 0; out.x = 0; out.y = 0; out.hot = 0; return out; }
+  const p = s / life;
+  const ease = 1 - (1 - Math.min(1, s / 0.3)) ** 3;
+  const w = g.railW;
+  out.x = side * (g.railOuter + w * (0.6 + 3.2 * ease + 1.5 * p));
+  out.y = g.railY0 + (g.muzzleY - g.railY0) * vent + w * 1.2 * p;
+  out.size = w * (1.6 + 5 * p);
+  out.alpha = 0.7 * (1 - p) ** 1.3;
+  out.hot = s < 0.25 ? 1 - s / 0.25 : 0;
+  return out;
+}
+
+// ------------------------------------------------------- the slug's wake
+
+/** How long a railgun slug's ion wake lingers where it passed. */
+export const SLUG_WAKE_LIFE_S = 1.6;
+/** The wake's violet-blue. */
+export const SLUG_WAKE_TINT = 0x9a86ff;
+
+/** Wake pieces per slug per effects tier (each a pooled sprite). */
+export function slugWakeSegments(quality: EffectQuality): number {
+  return quality === 'high' ? 10 : quality === 'medium' ? 6 : quality === 'low' ? 3 : 0;
+}
+
+/** A wake piece `age` s after the slug passed it: its alpha (0 = gone) and
+ *  its width as a multiple of the fresh wake's (it spreads as it fades). */
+export function slugWakeAlpha(age: number): number {
+  if (age < 0 || age >= SLUG_WAKE_LIFE_S) return 0;
+  return 0.85 * (1 - age / SLUG_WAKE_LIFE_S) ** 1.5;
+}
+export function slugWakeWidth(age: number): number {
+  return 1 + 3 * Math.min(1, Math.max(0, age) / SLUG_WAKE_LIFE_S);
+}

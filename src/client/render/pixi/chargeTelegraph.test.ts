@@ -116,3 +116,37 @@ describe('per-mount charge starts (railgun battleship)', () => {
   });
 });
 });
+
+describe('rail-slot telegraph (the railgun)', () => {
+  it("a 'mount-glow' weapon on a 'rail' gun fills the slot; other guns keep the mount glow", () => {
+    expect(chargeTelegraphStyle(getWeapon('railgun'), 'rail')).toBe('rail-slot');
+    expect(chargeTelegraphStyle(getWeapon('railgun'))).toBe('mount-glow');
+    expect(chargeTelegraphStyle(getWeapon('charge-laser'), 'rail')).toBe('ring-line');
+  });
+
+  it('battleship-rail: the slot fill grows from the breech to the muzzle with the charge', () => {
+    const mounts = getShipKind('battleship-rail').mounts;
+    const i = mounts.findIndex((m) => m.weaponId === 'railgun');
+    expect(i).toBeGreaterThanOrEqual(0);
+    const t = buildChargeTelegraph('battleship-rail', 200)!;
+    expect(t.ring).toBeNull();
+    const rail = t.rails[i]!;
+    expect(rail, 'a railgun mount gets the slot fill').not.toBeNull();
+    const chargeTicks = getWeapon('railgun').chargeTicks!;
+    const at = (frac: number): { fill: number; headY: number; alpha: number } => {
+      t.startTick = -1;
+      updateChargeTelegraph(t, 1 << i, 1000, 1000 + Math.round(chargeTicks * frac), 90_000, undefined);
+      return { fill: rail.fill.scale.y, headY: rail.head.y, alpha: t.glows[i]!.alpha };
+    };
+    const q = at(0.25), h = at(0.5), f = at(1);
+    expect(q.fill).toBeCloseTo(0.25, 2);
+    expect(h.fill).toBeGreaterThan(q.fill);
+    expect(f.fill).toBeCloseTo(1, 5);
+    // Pixi-up: the muzzle is at -y, so the head moves to more negative y.
+    expect(h.headY).toBeLessThan(q.headY);
+    expect(f.headY).toBeCloseTo(rail.y0 - rail.len, 3);
+    expect(h.alpha).toBeGreaterThan(q.alpha);
+    // The glow stays the gun's own size (no 'mount-glow' scale ramp).
+    expect(t.glows[i]!.scale.x).toBe(1);
+  });
+});
