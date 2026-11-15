@@ -5749,9 +5749,6 @@ export class ColyseusGameClient {
     const cosA = Math.cos(ship.angle);
     const sinA = Math.sin(ship.angle);
     const mountAngles = ship.mountAngles;
-    // The fire-control pass (a group override set): per-mount capitals draw
-    // only bearing turrets. The test fire trigger (no override) draws all.
-    const bearingOnly = this._fcPerMount && this._fireSlotOverride !== null;
     for (let i = 0; i < mounts.length; i++) {
       const mount = mounts[i]!;
       const mountWorldX = ship.x + (mount.localX * cosA - mount.localY * sinA);
@@ -5759,13 +5756,6 @@ export class ColyseusGameClient {
       const angleIdx = this.instanceMountIndex(ship.kind, ship.activatedMounts, mount.id);
       const currentMountAngle = angleIdx >= 0 ? (mountAngles?.[angleIdx] ?? 0) : 0;
       const mountAngle = ship.angle + mount.baseAngle + currentMountAngle;
-      // Capitals fire turret by turret (`fcFireMounts`): a turret that does
-      // not bear on its lock (still training, or at its arc limit) fires
-      // nothing on the server either (#15, #19), so it draws no beam.
-      if (bearingOnly && !this.fcMountBears(mount.id, mount.weaponId, mountWorldX, mountWorldY, mountAngle)) {
-        liveBeams.delete(mount.id);
-        continue;
-      }
       const fwdX = -Math.sin(mountAngle);
       const fwdY = Math.cos(mountAngle);
       const muzzleD = this.localMuzzle(mount);
