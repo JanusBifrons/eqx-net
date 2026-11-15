@@ -235,7 +235,7 @@ target, so follow takes over without a jump.
 Still rebuilt: the radar icon (its category changes anyway). A reconnect onto a
 lingering hull (`onJoin` rebind) still hides the hull from others while it joins.
 
-## 4b. Fleet warp (in progress: slices S1–S3 built)
+## 4b. Fleet warp
 
 In Command view, "Warp here" warps the SELECTED ships together and the
 commander's view follows them (plan `rts-fleet-warp`). It is a branch of the
@@ -306,7 +306,30 @@ in-sector and never touches another room.
   roster `lastSectorKey` is another sector (the hand-off re-homed it).
 - **No destination capacity check** (owner: time dilation handles a crowd).
   The physics slot pool is a separate limit: see below.
-- **Not yet:** the client view switch (S7).
+- **Visuals (S4).** While a group spools, each parked hull's snapshot entry
+  carries `warp: 1` (the existing `transitSpooling` dep, keyed by
+  shipInstanceId); just after the hand-off the destination sends `warp: 3`
+  from the room's `WarpTravelTracker` (`markArrived` in
+  `receiveHandedOffHull`). `PixiRenderer.drawWarpFx` feeds such a hull to the
+  existing `WarpFx` (gate `render/warpFxGate.ts`): spool glow, departure and
+  arrival flash.
+- **The view follows (S7/S8).** `transit_ready` carries the moved `shipIds`
+  for a spectator seat. The existing handler takes the same room change with
+  one `if` (`net/fleetWarpFollow.ts` `isCommanderFleetFollow`): the local
+  ship's trip (`beginTravel`, travel-out wait) is skipped and the load curtain
+  covers the switch; `joinAsSpectator` seeds pose and interest at
+  `spawnX/spawnY`. Once the ships are in the new mirror,
+  `consumePendingFleetArrival` hands `gameRafLoop` their ids and centroid:
+  `IRenderer.selectFleetShips` (the one selection) and a camera glide.
+- **UI.** In Command view the drawer's Warp here sends `shipIds` = the
+  selection (`app/fleetWarp.ts`); with nothing selected it is disabled and
+  says "Select ships to warp". Fly mode is unchanged (the flown ship warps).
+- **E2E.** `tests/e2e/rts-fleet-warp.spec.ts`: box-select two parked hulls,
+  Map → Warp here, spool bar, land in the neighbour in Command view with both
+  ships selected; abort keeps them; the empty-selection gate. It runs in real
+  galaxy sectors no other spec joins (a warp needs a graph neighbour and the
+  far room) and speeds the source sector with the `timeScale` join option
+  (honoured there because the E2E server sets `EQX_ALLOW_DEV_OVERRIDES=1`).
 
 ### The physics slot pool (a hard limit today)
 
@@ -347,7 +370,8 @@ physics worker.
   hold fire, squad, patrol pick, Stop, Fly). It projects hulls to the screen
   with the DEV hook `__eqxWorldToScreen` (main-thread renderer, `?worker=0`).
   `tests/e2e/spectator-mode.spec.ts` covers the command-view join and the
-  middle-drag camera pan.
+  middle-drag camera pan. `tests/e2e/rts-fleet-warp.spec.ts` covers fleet
+  warp (§4b).
 
 ## 6. Not done yet
 
