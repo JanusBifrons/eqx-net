@@ -97,6 +97,11 @@ How it works: [prediction-and-correction](../../docs/architecture/prediction-and
 - **Ghost mirror cleanup:** `GhostManager.update(out)` deletes from `out` every ghost it removes (the only path that clears ghosts from `mirror.projectiles`). Ghosts never declare destruction server-side.
 - **Sector handoff resets prediction state:** all prediction-window state, the `Reconciler` and the local predWorld body re-initialise in `resetPredictionState()`, and join readiness re-arms via `rearmJoinReadiness()`; new prediction-feeding state is reset there or commented why it is safe to inherit.
 
+## RTS command view
+
+- **One ship list:** an AI-flown hull is an ordinary `mirror.ships` entry under its shipInstanceId (`net/shipMirrorKey.ts`); a key change is ONE op, `ColyseusClient.rekeyShip` (moves the entry and body, never rebuilds). "Flying" / "owned by me" come only from `render/shipOwnership.ts`, never `id === localPlayerId`.
+- **One selection,** owned by the renderer; `FleetOverlay` is one `Graphics`, drawn in the Pixi ticker after `camera.tick`. Fleet warp sends that selection as `engage_transit.shipIds`. Detail: [fleet-command](../../docs/architecture/fleet-command.md) §4, §4b, §7.
+
 ## Snapshot transport
 
 How it works: [webrtc-datachannel-snapshot-transport](../../docs/architecture/webrtc-datachannel-snapshot-transport.md).

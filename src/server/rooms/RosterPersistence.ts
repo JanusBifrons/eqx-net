@@ -50,7 +50,7 @@ export class RosterPersistence {
      *  always create a fresh roster entry. Used by the galaxy-map
      *  sector-click → kind-picker flow so clicking a sector spawns a
      *  *new* ship rather than silently resuming the player's last
-     *  ride. Subject to 10-cap; on RosterFullError the ship still
+     *  ride. Subject to ROSTER_SOFT_GUARD; on RosterFullError the ship still
      *  spawns but without a roster row (logged warning). */
     forceFreshCreate: boolean = false,
   ): string {
@@ -114,7 +114,7 @@ export class RosterPersistence {
 
   /** Mirror an eviction — `is_active=true` → `is_active=false` with
    *  frozen pose. The row stays in the table (forever, modulo the
-   *  10-cap) so the player can pick it on a future visit. */
+   *  ROSTER_SOFT_GUARD) so the player can pick it on a future visit. */
   markStored(shipInstanceId: string, pose: RosterPose): void {
     const d = this.deps;
     const sectorKey = d.sectorKey();

@@ -104,3 +104,46 @@ describe('speedFxSampleInto', () => {
     expect(s).toEqual({ x: 1, y: 2, t: 9999, fromPose: false });
   });
 });
+
+/**
+ * Command view (owner smoke test, 2026-11-14: "the commander view has issues
+ * with zoom and pan, it weirdly stutters ... like it thinks I've still got a
+ * ship travelling fast"). Nothing is followed there; the speed used to be the
+ * camera centre's own motion, so a WASD pan (here 1500 u/s, far above the
+ * fighter-class top speed) zoomed the view out and streaked the dust.
+ */
+describe('speed effects in command view (free camera)', () => {
+  function panReplay(freeCamera: boolean): number[] {
+    const b = new Backdrop(art, () => 'high');
+    b.setSector('emerald-span');
+    const cam = { center: { x: 0, y: 0 }, scale: { x: 0.5 }, screenWidth: 1280, screenHeight: 720 };
+    const sample = newSpeedFxSample();
+    const zooms: number[] = [];
+    // Uneven renderer clock (15-31 ms frames), the centre panning at 1500 u/s.
+    let t = 1000;
+    for (let i = 0; i < 120; i++) {
+      const dt = i % 3 === 0 ? 31 : 15;
+      t += dt;
+      cam.center.x += 1.5 * dt;
+      speedFxSampleInto(sample, null, t, cam.center, t, freeCamera);
+      b.update(cam, t, FULL_SPEED, sample);
+      zooms.push(b.speedZoom());
+    }
+    return zooms;
+  }
+
+  it('a camera pan is not flight: no speed zoom', () => {
+    expect(Math.min(...panReplay(true))).toBe(1);
+  });
+
+  it('(contrast) measuring the camera centre zooms out on a pan', () => {
+    expect(Math.min(...panReplay(false))).toBeLessThan(0.9);
+  });
+
+  it('holds the last sample position on the renderer clock', () => {
+    const s = newSpeedFxSample();
+    speedFxSampleInto(s, { x: 5, y: -6 }, 1234, { x: 1, y: 2 }, 9999);
+    speedFxSampleInto(s, null, 1300, { x: 70, y: 80 }, 10_050, true);
+    expect(s).toEqual({ x: 5, y: -6, t: 10_050, fromPose: false });
+  });
+});

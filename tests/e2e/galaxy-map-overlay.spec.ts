@@ -26,7 +26,7 @@ const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 // `?galaxy=sol-prime` autoJoins the Sol Prime sector room so the spawn-select
 // flow is bypassed. Sol Prime is the centre node, so all six other sectors
 // are neighbours — useful for covering the "selectable" tier visually.
-const BOOT_URL = `${BASE_URL}/?galaxy=sol-prime`;
+const BOOT_URL = `${BASE_URL}/?galaxy=sol-prime&startMode=fly`;
 
 async function bootGame(page: import('@playwright/test').Page): Promise<void> {
   // First navigation under Playwright's CI mode hits a cold Vite dev server

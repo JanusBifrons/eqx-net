@@ -183,6 +183,18 @@ The runner can slow the head arm on purpose: `--inject-server-burn N` busy-waits
 - **Re-run with the three-way verdict (desktop, RTX 5070 Ti, 2026-11-08):** `--reps 3` with the same burns rounds up to 4 reps and goes RED (server tick p95 2.15 → 8.08 ms, frame p95 16.8 → 33.4 ms, hitches 0 → 323 a minute, each p = 0.03). The same ledger's first 3 reps per arm re-judged give INCONCLUSIVE on every gated metric (min p 0.10). Ledger: `perf/ledger/inject-2026-11-08.json`.
 - **A finding:** a sustained 60-ship fight (180 ships over the window) pushes the laptop server's p99 tick to about 40 ms with load shedding off, against a 16.7 ms budget. In real play, time dilation and shedding absorb it.
 
+## The RTS fleet scene (`rts-fleet`, 2026-11-14)
+
+The scene script's `fleet` step gives the first pilot N PARKED hulls (a roster row each, rebuilt through the lingering-hull restore path), each flown by its wingman brain in a mode and stance. `rts-fleet` is 40 fighters on hunt / aggressive against 20 hostile drones reinforced every 8 s; the hulls' hit points are huge so the fleet stays 40 strong. Measure the cost of the brains with the kill switch on the base arm:
+
+```
+pnpm perf:scenes --scenes rts-fleet --reps 4 --base HEAD --base-env "EQX_DISABLE_WINGMEN=1"
+```
+
+`/dev/perf` `work` prints (never gates) `wingmenPerTick`, `wingmanReplansPerTick`, `wingmanHostileQueriesPerTick` and `wingmanHostileScansPerTick`.
+
+**First reading (desktop, RTX 5070 Ti, 4 reps, wingmen off → on):** server tick p95 0.76 → 1.15 ms (GREEN, ≈ 10 µs per wingman), p99 1.08 → 1.37 ms, worker tick p95 0.46 → 0.68 ms, contacts per tick 6.7 → 27 (hulls under way bump each other and the drones); client frame p95 unchanged at 16.7 ms; rx 379 → 479 KB/s (RED, +26 %, ≈ 2.5 KB/s per wingman: the moving hulls' poses, their shots and the wrecks they make) and display objects 4,637 → 5,243 (RED, +13 %). Re-plans 6.5 a tick (40 / 6), one owner-hostile swarm scan a tick (the per-owner cache), 19 lookups a tick. The RED rows are the price of a live fight, not a defect. Client draw calls (`perf:counts`, one run): 149 p95 baked, 240 high. Ledger: `perf/ledger/2026-11-14T13-01-30-309Z-2b116a41-desktop.json`.
+
 ## Adding a scene
 
 Add one entry to `PERF_SCENES` with:

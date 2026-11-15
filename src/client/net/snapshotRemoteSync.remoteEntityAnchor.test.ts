@@ -163,7 +163,7 @@ describe('remote-entity anchor (preResetRemoteShips)', () => {
     expect(a.getShipState('remote')).toEqual(b.getShipState('remote'));
     expect(a.getShipState('remote')!.x).toBeCloseTo(40, 4);
     expect(ctxA.remoteLastInputs.get('remote')).toEqual(ctxB.remoteLastInputs.get('remote'));
-    expect(ctxA.preResetRemotePosScratch.get('remote')).toEqual({ x: 400, y: 400 });
+    expect(ctxA.preResetRemotePosScratch.get('remote')).toEqual({ x: 400, y: 400, angle: 0 });
     // The local ship is never touched by the anchor.
     expect(a.getShipState('me')!.x).toBeCloseTo(0, 4);
     // Then the replay steps everything alike: the drone moves on from its

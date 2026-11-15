@@ -85,7 +85,8 @@ export function useShipSwapDispatcher(
     // Update room overrides before the phase flip so when GameSurface
     // remounts it sees the new values immediately.
     setRoomNameOverride(`galaxy-${sectorKey}`);
-    setJoinOptionsOverride({ shipId });
+    // RTS slice 10: "pilot this ship" from the galaxy map lands at the controls.
+    setJoinOptionsOverride({ shipId, startMode: 'fly' });
     // Clear the current-sector chrome so the brief galaxy-map glimpse
     // (if any) and post-arrival HUD start from the new sector identity.
     setCurrentSectorKey(null);

@@ -47,7 +47,7 @@ const SEED: readonly EntityKindDescriptor[] = [
     tag: 'lingering-hull',
     damageable: true,
     sync: { transport: 'json-slice', interpolated: false, jsonSliceTag: 'states' },
-    render: { bucket: 'lingeringShips', preservedFields: ['kind', 'displayName'], interpolated: false },
+    render: { bucket: 'ships', preservedFields: ['kind', 'displayName'], interpolated: false },
   },
   {
     tag: 'drone',

@@ -4,28 +4,29 @@ import { getShipKind } from '@shared-types/shipKinds';
 import { interpolateSwarmPose, type InterpolatedPose } from '../net/swarmInterpolation';
 
 /**
- * Click-to-inspect selection bracket (structures follow-up Item B4).
+ * THE selection marker (structures follow-up Item B4; RTS Part A: one
+ * selection concept).
  *
- * Draws a 4-corner bracket around the SINGLE currently-selected entity. Mirrors
- * the `HealthBarManager` discipline (invariant #14):
- *   - ONE pooled `Graphics` for the whole component (single selection → one
- *     bracket), parented to the world container, positioned via its transform
- *     each frame (cheap matrix update).
- *   - Dirty-flag redraw: the corner geometry is rebuilt ONLY when the bracket
- *     SIZE changes (the entity radius). Position is a per-frame transform write,
- *     not a geometry rebuild.
- *   - Module-scope scratch for the interpolated asteroid/drone pose (no
- *     per-frame allocation).
+ * Draws the same 4-corner bracket around EVERY selected entity: each selected
+ * ship (the command-view ship selection) plus the focus (the entity whose
+ * details panel shows; with ships selected it is one of them). There is no
+ * second marker style: `FleetOverlay` draws only order lines, the drag box,
+ * pick previews and the hold cue.
  *
- * Pose resolution mirrors the `HealthBarManager` lookup convention so the id
- * the renderer owns (`_selectedId`) resolves the same live pose every frame:
- *   - ship  → `mirror.ships.get(id)`
- *   - drone / structure → `mirror.swarm.get(Number(id.slice('swarm-'.length)))`
- *   - lingering → `mirror.lingeringShips.get(id)`
+ * Screen space: ONE `Graphics` on the stage (one draw call however many ships
+ * are selected; the fleet-fight scene sits near the draw-call budget), cleared
+ * and redrawn by {@link draw} in the Pixi ticker AFTER the frame's camera tick,
+ * so the brackets project through the transform the world renders with (a
+ * world-follower drawn before the tick lags a frame of camera motion; lock
+ * `tests/e2e/fleet-overlay-camera.spec.ts`). A bracket is the entity radius
+ * plus a pad at the current zoom, never smaller than {@link MIN_HALF_PX}, so it
+ * reads at far command-view zoom too; at zoom 1 it is the pre-Part-A look.
  *
- * `update(mirror, id)` returns `true` when the entity was resolved (bracket
- * drawn), `false` when `id` is null OR the entity is gone — the caller clears
- * its selection on `false` so the panel + server stats channel tear down.
+ * Pose resolution follows the `HealthBarManager` id convention:
+ *   - ship (pilot-flown or AI-flown hull) → `mirror.ships.get(id)`
+ *   - drone / structure / asteroid → `mirror.swarm.get(n)` for `swarm-<n>`
+ * Alloc-free (#14): the swarm id is parsed by hand, the pose read goes into
+ * reused scratch.
  */
 const BRACKET_COLOR = 0x66ddff;
 const BRACKET_THICKNESS = 2;
@@ -33,27 +34,65 @@ const BRACKET_THICKNESS = 2;
 const CORNER_FRAC = 0.32;
 /** Pad past the entity radius so the bracket sits just OUTSIDE the silhouette. */
 const RADIUS_PAD = 8;
-/** Min half-size so a tiny drone still gets a visible bracket. */
+/** Min half-size: in WORLD units for the focus anchor, in px for the drawn bracket. */
 const MIN_HALF = 14;
+export const MIN_HALF_PX = MIN_HALF;
 /** Fallback collision radius when a ship kind can't be resolved. */
 const SHIP_FALLBACK_RADIUS = 20;
 
-// Module-scope scratch reused by the asteroid/drone interpolation read. The
-// bracket never selects an asteroid (kind 0), but a drone/structure resolved by
-// swarm id may need the interpolated pose for the (rare) asteroid path; we keep
-// one scratch to stay alloc-free regardless.
 const _poseScratch: InterpolatedPose = { x: 0, y: 0, angle: 0 };
+
+interface Target { x: number; y: number; r: number }
+
+/** Game-space pose + radius of a selectable entity into `out`; false when gone. */
+export function resolveSelectable(mirror: RenderMirror, id: string, out: Target): boolean {
+  const ship = mirror.ships.get(id);
+  if (ship !== undefined) {
+    out.x = ship.x;
+    out.y = ship.y;
+    out.r = getShipKind(ship.kind)?.radius ?? SHIP_FALLBACK_RADIUS;
+    return true;
+  }
+  if (mirror.swarm === undefined || id.length <= 6 || !id.startsWith('swarm-')) return false;
+  let n = 0;
+  for (let i = 6; i < id.length; i++) {
+    const c = id.charCodeAt(i) - 48;
+    if (c < 0 || c > 9) return false;
+    n = n * 10 + c;
+  }
+  const sw = mirror.swarm.get(n);
+  if (sw === undefined) return false;
+  // Drones (kind 1) + structures (kind 2) render from `entry.x/y` (resolved
+  // once per frame in updateMirror); asteroids use the interpolation path.
+  if (sw.kind === 1 || sw.kind === 2) {
+    out.x = sw.x;
+    out.y = sw.y;
+  } else {
+    const lerped = interpolateSwarmPose(sw, performance.now(), _poseScratch);
+    out.x = lerped.x;
+    out.y = lerped.y;
+  }
+  out.r = sw.radius;
+  return true;
+}
+
+export type BracketProjectFn = (pixiWorldX: number, pixiWorldY: number, out: { x: number; y: number }) => void;
 
 export class SelectionBracket {
   private readonly gfx: Graphics;
-  /** Last-drawn half-size — the dirty-flag sentinel. -1 forces a first rebuild. */
-  private drawnHalf = -1;
-  /** WS-9 (R2.30) — the Pixi-WORLD point just ABOVE the selected entity (the
-   *  bracket top), or null when nothing is resolved. The renderer projects this
-   *  to screen each frame so the world-anchored stats box floats over the
-   *  entity. Pixi-world coords (x = gameX, y = -(gameY + half)). */
+  private readonly _t: Target = { x: 0, y: 0, r: 0 };
+  private readonly _s = { x: 0, y: 0 };
+  /** WS-9 (R2.30) — the Pixi-WORLD point just ABOVE the focus (its bracket
+   *  top), or null when there is no focus. The renderer projects this to
+   *  screen each frame so the world-anchored stats box floats over it.
+   *  Pixi-world coords (x = gameX, y = -(gameY + half)). */
   lastWorldX: number | null = null;
   lastWorldY: number | null = null;
+  /** Brackets drawn in the last {@link draw} (test/diag hook). */
+  lastMarkerCount = 0;
+  /** First bracket drawn in the last {@link draw}: its id and screen centre (test/diag hook). */
+  lastMarkerId: string | null = null;
+  readonly lastMarker = { x: NaN, y: NaN };
 
   constructor(parent: Container) {
     this.gfx = new Graphics();
@@ -62,101 +101,78 @@ export class SelectionBracket {
   }
 
   /**
-   * Position + (lazily) redraw the bracket for the selected entity.
-   * Returns true if the entity was resolved this frame.
+   * Per frame (in `update()`): resolve the focus. Returns true when it is
+   * present; the caller clears the focus on false so the panel and the server
+   * stats stream tear down. Sets the details-panel anchor.
    */
-  update(mirror: RenderMirror, selectedId: string | null): boolean {
-    if (selectedId === null) {
-      this.gfx.visible = false;
+  resolveFocus(mirror: RenderMirror, focusId: string | null): boolean {
+    if (focusId === null || !resolveSelectable(mirror, focusId, this._t)) {
       this.lastWorldX = null;
       this.lastWorldY = null;
       return false;
     }
-
-    let ex: number | undefined;
-    let ey: number | undefined;
-    let radius = SHIP_FALLBACK_RADIUS;
-
-    const ship = mirror.ships.get(selectedId);
-    if (ship) {
-      ex = ship.x;
-      ey = ship.y;
-      radius = shipRadius(ship.kind);
-    } else if (selectedId.startsWith('swarm-') && mirror.swarm) {
-      const swarmId = parseInt(selectedId.slice('swarm-'.length), 10);
-      if (!Number.isNaN(swarmId)) {
-        const sw = mirror.swarm.get(swarmId);
-        if (sw) {
-          // Drones (kind 1) + structures (kind 2) render from `entry.x/y`
-          // directly (one-pose-per-frame rule — already resolved in
-          // updateMirror); only asteroids use the interpolation path. Selection
-          // never targets asteroids, but mirror HealthBars' branch for safety.
-          if (sw.kind === 1 || sw.kind === 2) {
-            ex = sw.x;
-            ey = sw.y;
-          } else {
-            const lerped = interpolateSwarmPose(sw, performance.now(), _poseScratch);
-            ex = lerped.x;
-            ey = lerped.y;
-          }
-          radius = sw.radius;
-        }
-      }
-    } else if (mirror.lingeringShips?.has(selectedId)) {
-      // WS-9 (R2.23/R2.30) — a selected lingering hull resolves from its own map.
-      const l = mirror.lingeringShips.get(selectedId)!;
-      ex = l.x;
-      ey = l.y;
-      radius = shipRadius(l.kind);
-    }
-
-    if (ex === undefined || ey === undefined) {
-      this.gfx.visible = false;
-      this.lastWorldX = null;
-      this.lastWorldY = null;
-      return false;
-    }
-
-    const half = Math.max(MIN_HALF, radius + RADIUS_PAD);
-    // Position every frame (cheap transform). pixiY = -gameY (world container).
-    this.gfx.x = ex;
-    this.gfx.y = -ey;
-    this.gfx.visible = true;
-    // WS-9 (R2.30) — expose the Pixi-world point just ABOVE the bracket so the
-    // renderer can screen-project it for the world-anchored stats box.
-    this.lastWorldX = ex;
-    this.lastWorldY = -(ey + half);
-
-    // Rebuild corner geometry only when the size changed (dirty flag).
-    if (half !== this.drawnHalf) {
-      this.redraw(half);
-      this.drawnHalf = half;
-    }
+    const half = Math.max(MIN_HALF, this._t.r + RADIUS_PAD);
+    this.lastWorldX = this._t.x;
+    this.lastWorldY = -(this._t.y + half);
     return true;
   }
 
-  /** Draw the 4 corner brackets in LOCAL coords (origin at entity centre). */
-  private redraw(half: number): void {
+  /**
+   * In the ticker after the camera tick: one bracket per selected ship, plus
+   * the focus when it is not one of them. Hidden when there is nothing.
+   */
+  draw(
+    mirror: RenderMirror,
+    ships: ReadonlySet<string>,
+    focusId: string | null,
+    project: BracketProjectFn,
+    zoom: number,
+  ): void {
     const g = this.gfx;
-    const arm = half * CORNER_FRAC;
+    const extraFocus = focusId !== null && !ships.has(focusId);
+    if (ships.size === 0 && !extraFocus) {
+      if (g.visible) {
+        g.clear();
+        g.visible = false;
+      }
+      this.lastMarkerCount = 0;
+      this.lastMarkerId = null;
+      return;
+    }
     g.clear();
-    // Top-left.
-    g.moveTo(-half, -half + arm).lineTo(-half, -half).lineTo(-half + arm, -half);
-    // Top-right.
-    g.moveTo(half - arm, -half).lineTo(half, -half).lineTo(half, -half + arm);
-    // Bottom-right.
-    g.moveTo(half, half - arm).lineTo(half, half).lineTo(half - arm, half);
-    // Bottom-left.
-    g.moveTo(-half + arm, half).lineTo(-half, half).lineTo(-half, half - arm);
-    g.stroke({ width: BRACKET_THICKNESS, color: BRACKET_COLOR, alpha: 0.95 });
+    let n = 0;
+    for (const id of ships) if (this.bracket(mirror, id, project, zoom, n)) n++;
+    if (extraFocus && this.bracket(mirror, focusId, project, zoom, n)) n++;
+    if (n > 0) g.stroke({ width: BRACKET_THICKNESS, color: BRACKET_COLOR, alpha: 0.95 });
+    else this.lastMarkerId = null;
+    g.visible = n > 0;
+    this.lastMarkerCount = n;
+  }
+
+  /** Queue the 4 corners for `id` (screen px); false when it can't be resolved. */
+  private bracket(mirror: RenderMirror, id: string, project: BracketProjectFn, zoom: number, index: number): boolean {
+    const t = this._t;
+    if (!resolveSelectable(mirror, id, t)) return false;
+    const s = this._s;
+    project(t.x, -t.y, s);
+    const half = Math.max(MIN_HALF_PX, (t.r + RADIUS_PAD) * zoom);
+    const arm = half * CORNER_FRAC;
+    const x = s.x;
+    const y = s.y;
+    const g = this.gfx;
+    g.moveTo(x - half, y - half + arm).lineTo(x - half, y - half).lineTo(x - half + arm, y - half);
+    g.moveTo(x + half - arm, y - half).lineTo(x + half, y - half).lineTo(x + half, y - half + arm);
+    g.moveTo(x + half, y + half - arm).lineTo(x + half, y + half).lineTo(x + half - arm, y + half);
+    g.moveTo(x - half + arm, y + half).lineTo(x - half, y + half).lineTo(x - half, y + half - arm);
+    if (index === 0) {
+      this.lastMarkerId = id;
+      this.lastMarker.x = x;
+      this.lastMarker.y = y;
+    }
+    return true;
   }
 
   destroy(): void {
     this.gfx.destroy();
   }
-}
-
-function shipRadius(kind: string | undefined): number {
-  const k = getShipKind(kind);
-  return k?.radius ?? SHIP_FALLBACK_RADIUS;
 }

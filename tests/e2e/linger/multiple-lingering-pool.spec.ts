@@ -5,7 +5,7 @@
  * sub-system of the maximum limit of ships)." Owner A repeatedly spawns a
  * fresh ship, displacing each previous hull into a lingering one. A 2nd
  * observer B must see ALL of A's lingering hulls coexisting, and A's virtual
- * pool grows one row per ship (bounded by ROSTER_CAP=10, never the count of
+ * pool grows one row per ship (bounded only by the 200-ship ROSTER_SOFT_GUARD, never the count of
  * lingering hulls — lingering itself is unbounded below MAX_ENTITIES).
  */
 import { test, expect } from '@playwright/test';
@@ -20,7 +20,7 @@ import { DEFAULT_BASE_URL } from '../helpers/ports';
 
 const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 /** Lingering hulls to accumulate (kept small for slot/wall-clock headroom;
- *  the limit is ROSTER_CAP=10, not this — each swap is a full page-reload
+ *  the limit is ROSTER_SOFT_GUARD=200, not this — each swap is a full page-reload
  *  join ≈ 10-15 s, so this is deliberately minimal). The assertion proves
  *  N coexisting lingering hulls + roster N+1 ≤ cap; the count is incidental. */
 const SWAPS = 2;
@@ -71,7 +71,7 @@ test.describe('linger: multiple lingering hulls accumulate up to the pool @featu
       .toBe(SWAPS);
 
     // A's virtual pool = SWAPS lingering + 1 active (one roster row per ship),
-    // and never exceeds the per-player ROSTER_CAP of 10.
+    // and never exceeds the per-player ROSTER_SOFT_GUARD (200).
     const roster = (await a.page.evaluate(async (pid) => {
       const res = await fetch(`/dev/player-ships?playerId=${encodeURIComponent(pid)}`);
       return res.ok ? await res.json() : { ships: [] };

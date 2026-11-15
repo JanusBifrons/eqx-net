@@ -4,6 +4,7 @@ import { StructureKindIdSchema } from '../structureKinds.js';
 import { GATE_ACCESS_IDS } from '../gateAccess.js';
 import { MountWeaponIdSchema } from '../shipKinds/types.js';
 import { SelectEntitySchema, DeselectEntitySchema } from './selectionMessages.js';
+import { FLEET_ROUTE_MAX, FLEET_STATUS_MODES, FLEET_STATUS_STANCES } from './fleetStatusMessages.js';
 
 export const InputMessageSchema = z
   .object({
@@ -102,8 +103,16 @@ export const EngageTransitSchema = z
      *  ship's pose hydrates into the destination room. Min-length 1 so an
      *  empty string can't sneak past validation as "absent". */
     shipId: z.string().min(1).max(64).optional(),
+    /** RTS fleet warp — the SELECTED ships (Command view) warp together and
+     *  the sender's seat follows them. 1..64 roster shipInstanceIds, each 1–64
+     *  chars; owner-checked per id server-side (foreign / unknown drop; none
+     *  valid ⇒ DOCKED `no_ships`). Mutually exclusive with `shipId`. */
+    shipIds: z.array(z.string().min(1).max(64)).min(1).max(64).optional(),
   })
-  .strict();
+  .strict()
+  .refine((m) => m.shipId === undefined || m.shipIds === undefined, {
+    message: 'shipId and shipIds are mutually exclusive',
+  });
 
 /** testMode only (showcase / tests): turn every drone in the room hostile to
  *  the sender NOW, the same as joining with `startHostile`. Lets a shot start
@@ -134,7 +143,8 @@ export const TestKillCapitalsSchema = z
   .strict();
 
 /** Fire control (exp/fire-control): a lock target key — `s:<entityId>` for a
- *  swarm entity (drone, robot, structure…), `p:<playerId>` for an active ship. */
+ *  swarm entity (drone, robot, structure…), `p:<playerId>` for an active ship,
+ *  `p:<shipInstanceId>` for a parked (AI-flown) player hull. */
 export const LockTargetKeySchema = z.string().regex(/^(s:\d{1,10}|p:[A-Za-z0-9_-]{1,64})$/);
 
 /** Client → server: start locking `target` with weapon group `groupId`. */
@@ -353,9 +363,9 @@ export const PilotShipSchema = z
  *  the player toggles Spectate while flying an active hull, and the server
  *  DISPLACES that hull into a lingering hull (via `displaceActiveHullToLingering`)
  *  so the just-left ship is parked in-world AND re-appears in the player's own
- *  `lingeringShips` — which is what the in-world Pilot dropdown lists. Without
+ *  the client's parked hulls — which is what the in-world Pilot dropdown lists. Without
  *  this, Spectate was a pure client flip, the active hull stayed `isActive=true`
- *  (never in `lingeringShips`), and the Pilot dropdown was always empty ("no
+ *  (never a parked hull), and the Pilot dropdown was always empty ("no
  *  ships to pilot… I just spawned one"). No-op server-side when the player has no
  *  active hull (death-spectator / join-as-spectator). Strict, no payload. */
 export const SpectateSchema = z
@@ -363,6 +373,97 @@ export const SpectateSchema = z
     type: z.literal('spectate'),
   })
   .strict();
+
+/* ── RTS command layer (slice 6a) ─────────────────────────────────────────
+ * Fleet command wire schemas, built on the fleet vocabulary tables
+ * (`fleetStatusMessages.ts`: `FLEET_STATUS_MODES` / `FLEET_STATUS_STANCES` /
+ * `FleetOrder`). Owner-gating of `shipIds` is server-side. */
+
+/** A `FleetMode`. Append-only. */
+export const FleetModeSchema = z.enum(FLEET_STATUS_MODES);
+/** A `FleetStance`. Append-only. */
+export const FleetStanceSchema = z.enum(FLEET_STATUS_STANCES);
+
+const FleetShipIdSchema = z.string().min(1).max(64);
+const FleetShipIdsSchema = z.array(FleetShipIdSchema).min(1).max(64);
+const FiniteSchema = z.number().finite();
+
+/** Client → server: a one-off order (`FleetOrder`) for the given owned ships.
+ *  `move` needs finite `x`,`y`; `attack` needs `targetId`. Strict. */
+export const FleetOrderSchema = z
+  .object({
+    type: z.literal('fleet_order'),
+    shipIds: FleetShipIdsSchema,
+    kind: z.enum(['move', 'attack', 'stop']),
+    x: FiniteSchema.optional(),
+    y: FiniteSchema.optional(),
+    targetId: z.string().min(1).max(64).optional(),
+  })
+  .strict()
+  .refine((m) => m.kind !== 'move' || (m.x !== undefined && m.y !== undefined), {
+    message: 'move requires x and y',
+  })
+  .refine((m) => m.kind !== 'attack' || m.targetId !== undefined, {
+    message: 'attack requires targetId',
+  });
+
+/** Client → server: set the standing mode for the given ships.
+ *  `route` (patrol waypoints, max 16), `guardRadius` (defend) and `escortId`
+ *  (escort) are optional mode parameters. Strict. */
+export const SetModeSchema = z
+  .object({
+    type: z.literal('set_mode'),
+    shipIds: FleetShipIdsSchema,
+    mode: FleetModeSchema,
+    route: z.array(z.tuple([FiniteSchema, FiniteSchema])).max(FLEET_ROUTE_MAX).optional(),
+    guardRadius: FiniteSchema.positive().optional(),
+    escortId: z.string().min(1).max(64).optional(),
+    /** Retreat point, game space (send both or neither; none = back to the post). */
+    x: FiniteSchema.optional(),
+    y: FiniteSchema.optional(),
+  })
+  .strict();
+
+/** Client → server: set the fire stance for the given ships. Strict. */
+export const SetStanceSchema = z
+  .object({
+    type: z.literal('set_stance'),
+    shipIds: FleetShipIdsSchema,
+    stance: FleetStanceSchema,
+  })
+  .strict();
+
+/** Client → server: group 2..24 owned ships into a squad. Strict. */
+export const FormSquadSchema = z
+  .object({
+    type: z.literal('form_squad'),
+    shipIds: z.array(FleetShipIdSchema).min(2).max(24),
+  })
+  .strict();
+
+/** Client → server: break up a squad. Strict. */
+export const DisbandSquadSchema = z
+  .object({
+    type: z.literal('disband_squad'),
+    squadId: z.string().min(1).max(64),
+  })
+  .strict();
+
+/** Client → server: enter command (RTS) view. Future replacement for
+ *  `spectate`. Strict, no payload. */
+export const CommandSchema = z
+  .object({
+    type: z.literal('command'),
+  })
+  .strict();
+
+/** RTS command layer (slice 10) — the `startMode` JOIN option: how the player
+ *  lands in the sector. `command` = command view (free camera over the fleet,
+ *  the hull parked and AI-flown at the arrival flip); `fly` = at the controls.
+ *  The server treats an absent value as `fly`; the client sends `command` by
+ *  default for normal galaxy play (`client/app/startMode.ts`). */
+export const StartModeSchema = z.enum(['command', 'fly']);
+export type StartMode = z.infer<typeof StartModeSchema>;
 
 /** Stat-pool ids spendable by the upgrade modal (Phase 4 WS-B2). Mirrors
  *  `STAT_IDS` in `src/core/leveling/shipStats.ts` — kept as a local zod enum so
@@ -456,6 +557,12 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
   RepairShipSchema,
   PilotShipSchema,
   SpectateSchema,
+  FleetOrderSchema,
+  SetModeSchema,
+  SetStanceSchema,
+  FormSquadSchema,
+  DisbandSquadSchema,
+  CommandSchema,
   ApplyShipUpgradeSchema,
   RespecShipSchema,
   ActivateMountSchema,
@@ -477,6 +584,12 @@ export type SetGateAccessMessage = z.infer<typeof SetGateAccessSchema>;
 export type SetRecipeMessage = z.infer<typeof SetRecipeSchema>;
 export type PilotShipMessage = z.infer<typeof PilotShipSchema>;
 export type SpectateMessage = z.infer<typeof SpectateSchema>;
+export type FleetOrderMessage = z.infer<typeof FleetOrderSchema>;
+export type SetModeMessage = z.infer<typeof SetModeSchema>;
+export type SetStanceMessage = z.infer<typeof SetStanceSchema>;
+export type FormSquadMessage = z.infer<typeof FormSquadSchema>;
+export type DisbandSquadMessage = z.infer<typeof DisbandSquadSchema>;
+export type CommandMessage = z.infer<typeof CommandSchema>;
 export type StatId = z.infer<typeof StatIdSchema>;
 export type WireStatAlloc = z.infer<typeof StatAllocSchema>;
 export type ApplyShipUpgradeMessage = z.infer<typeof ApplyShipUpgradeSchema>;

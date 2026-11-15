@@ -22,6 +22,14 @@ export const ANGLE_NOISE_THRESHOLD = 0.001;
 export const REMOTE_SPRING_POS_END = 0.05; // matches LERP_THRESHOLD
 export const REMOTE_SPRING_VEL_END_MS = 0.05; // 50 u/s
 
+/** Half-life of a remote ship's ANGLE offset spring (every remote ship and
+ *  parked hull). A little longer than the position one: a 20 Hz rotation
+ *  residual reads as a twitch, not a slide. */
+export const REMOTE_ANGLE_OFFSET_HALF_LIFE_MS = 40;
+/** The angle spring ends once its rate is below this (rad/s) and its offset
+ *  below `ANGLE_NOISE_THRESHOLD`. */
+export const REMOTE_ANGLE_SPRING_VEL_END = 0.05;
+
 /** Stage 3 — maximum forward-prediction ticks per remote, per snapshot.
  *  At 60 Hz that's ~133 ms of speculative integration. A long network
  *  stall can leave `inputTick - serverTick` arbitrarily large, but we

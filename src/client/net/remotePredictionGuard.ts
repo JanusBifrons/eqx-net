@@ -86,6 +86,15 @@ export function recordRemoteCorrection(
   }
 }
 
+/** Forget a remote whose body was dropped (`ColyseusClient.dropRemoteShip`),
+ *  so the maps don't grow with every ship ever seen and a ship that comes
+ *  back starts from the default (enabled). */
+export function forgetRemote(guard: RemotePredictionGuard, remoteId: string): void {
+  guard.overStreak.delete(remoteId);
+  guard.underStreak.delete(remoteId);
+  guard.enabled.delete(remoteId);
+}
+
 /** Should the caller forward-predict this remote? Default true (new
  *  remotes are predicted optimistically). */
 export function shouldForwardPredict(

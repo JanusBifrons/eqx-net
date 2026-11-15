@@ -403,34 +403,46 @@ export class WeaponMountTicker {
   tickPlayer(): void {
     const d = this.deps;
     if (d.playerToSlot.size === 0) return;
-    const t = this._fcTarget;
     for (const [playerId] of d.playerToSlot) {
       const ship = d.getActiveShip(playerId);
       if (!ship?.alive) continue;
       const pose = d.shipPoseCache.get(playerId);
       if (!pose) continue;
-      // WS-B3 — the angle index space is the FULL per-instance list
-      // `[...kind.mounts, ...activated]`.
-      const mounts = d.resolveInstanceMounts(ship);
-      if (mounts.length === 0) continue;
-      let angles = this.playerMountAngles.get(playerId);
-      if (!angles || angles.length !== mounts.length) {
-        angles = new Float32Array(mounts.length);
-        this.playerMountAngles.set(playerId, angles);
+      this.tickHull(playerId, ship, pose);
+    }
+  }
+
+  /**
+   * Slew one hull's mounts toward their group locks (the body of
+   * `tickPlayer`). `id` keys both `playerMountAngles` and the
+   * `aimTargetFor` dep: a pilot's playerId, or (RTS slice 5) an AI-flown
+   * lingering hull's shipInstanceId, so a wingman's turrets aim exactly as a
+   * pilot's do. Alloc-free once the angle array exists.
+   */
+  tickHull(id: string, ship: ShipState, pose: { x: number; y: number; angle: number }): void {
+    const d = this.deps;
+    const t = this._fcTarget;
+    // WS-B3 — the angle index space is the FULL per-instance list
+    // `[...kind.mounts, ...activated]`.
+    const mounts = d.resolveInstanceMounts(ship);
+    if (mounts.length === 0) return;
+    let angles = this.playerMountAngles.get(id);
+    if (!angles || angles.length !== mounts.length) {
+      angles = new Float32Array(mounts.length);
+      this.playerMountAngles.set(id, angles);
+    }
+    const cosA = Math.cos(pose.angle);
+    const sinA = Math.sin(pose.angle);
+    for (let i = 0; i < mounts.length; i++) {
+      const mount = mounts[i]!;
+      if (!d.aimTargetFor || !d.aimTargetFor(id, mount.id, t)) {
+        angles[i] = rotateMountToward(angles[i]!, 0, mount, DT_SEC);
+        continue;
       }
-      const cosA = Math.cos(pose.angle);
-      const sinA = Math.sin(pose.angle);
-      for (let i = 0; i < mounts.length; i++) {
-        const mount = mounts[i]!;
-        if (!d.aimTargetFor || !d.aimTargetFor(playerId, mount.id, t)) {
-          angles[i] = rotateMountToward(angles[i]!, 0, mount, DT_SEC);
-          continue;
-        }
-        const mx = pose.x + (mount.localX * cosA - mount.localY * sinA);
-        const my = pose.y + (mount.localX * sinA + mount.localY * cosA);
-        const bearing = Math.atan2(-(t.x - mx), t.y - my);
-        angles[i] = rotateMountToward(angles[i]!, wrapPi(bearing - pose.angle - mount.baseAngle), mount, DT_SEC);
-      }
+      const mx = pose.x + (mount.localX * cosA - mount.localY * sinA);
+      const my = pose.y + (mount.localX * sinA + mount.localY * cosA);
+      const bearing = Math.atan2(-(t.x - mx), t.y - my);
+      angles[i] = rotateMountToward(angles[i]!, wrapPi(bearing - pose.angle - mount.baseAngle), mount, DT_SEC);
     }
   }
 
@@ -763,6 +775,23 @@ export class WeaponMountTicker {
         per[i] = null;
         if (lock.target !== '') resetLock(lock, '');
       }
+    }
+  }
+
+  /**
+   * A hull's key moved (its owner took or let go of its controls: playerId
+   * <-> shipInstanceId): its turret angles and sticky target go with it, so
+   * the turrets carry on from where they point (seamless hand-over). Called
+   * only from the room's one "ship key moved" seam.
+   */
+  shipKeyMoved(from: string, to: string): void {
+    const angles = this.playerMountAngles.get(from);
+    this.playerMountAngles.delete(from);
+    if (angles !== undefined) this.playerMountAngles.set(to, angles);
+    else this.playerMountAngles.delete(to);
+    if (this.playerSlotTargets.has(from)) {
+      this.playerSlotTargets.set(to, this.playerSlotTargets.get(from)!);
+      this.playerSlotTargets.delete(from);
     }
   }
 

@@ -92,6 +92,8 @@ export async function launchTestClient(browser: Browser, opts: TestClientOpts) {
     spawnX: String(opts.spawnX),
     spawnY: String(opts.spawnY),
     testId: opts.testId ?? randomUUID(),
+    // RTS slice 10: specs start at the controls (galaxy play defaults to command view).
+    startMode: 'fly',
   });
   if (opts.initialHull !== undefined) params.set('initialHull', String(opts.initialHull));
   if (opts.initialXp !== undefined) params.set('initialXp', String(opts.initialXp));
@@ -145,6 +147,10 @@ export interface GalaxyTestClientOpts {
   instantLock?: boolean;
   /** See `TestClientOpts.waitForInPlay` — default `true`. */
   waitForInPlay?: boolean;
+  /** RTS slice 10 — `?startMode=`; default `fly` (galaxy play itself defaults to command view). */
+  startMode?: 'fly' | 'command';
+  /** Extra URL params (e.g. `{ art: 'machined', fx: 'new' }`), set last. */
+  extraParams?: Record<string, string>;
 }
 
 /**
@@ -169,6 +175,7 @@ export async function launchGalaxyTestClient(browser: Browser, opts: GalaxyTestC
     room: 'galaxy-test',
     worker: '0',
     testId: opts.testId,
+    startMode: 'fly',
   });
   if (opts.shipKind !== undefined) params.set('shipKind', opts.shipKind);
   if (opts.spawnX !== undefined) params.set('spawnX', String(opts.spawnX));
@@ -177,6 +184,8 @@ export async function launchGalaxyTestClient(browser: Browser, opts: GalaxyTestC
   if (opts.newShip) params.set('newShip', '1');
   if (opts.zoom !== undefined) params.set('zoom', String(opts.zoom));
   if (opts.instantLock) params.set('instantLock', '1');
+  if (opts.startMode !== undefined) params.set('startMode', opts.startMode);
+  for (const [k, v] of Object.entries(opts.extraParams ?? {})) params.set(k, v);
   await page.goto(`${BASE_URL}?${params}`);
   // Galaxy rooms lazy-create + boot a physics worker on first join, so allow
   // a longer ready window than the engineering-room helper.

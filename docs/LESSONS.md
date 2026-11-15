@@ -3094,6 +3094,16 @@ Owner: "make it more like micro machines and make fights a bit longer. Also don'
 - **Finding (#611):** a locked-direction charge (robot charge laser) fires down the barrel when the wind-up ends. The new dogfighting AI kept flying its strafing pass during the 1.2 s wind-up, slid ~400 u and missed a parked pilot 6 times out of 6. The charge path and the manoeuvre layer were each right on their own.
 - **Rule:** while `view.isCharging` the combat brain holds its line on the target. Any new manoeuvre must respect it; a behaviour change to the AI's movement re-runs `chargeLaser.test.ts`.
 
+## 2026-11-14 — A per-test room that persists shares one save with every other test
+
+- **Finding (contacts-overview e2e, "2 `p:` rows, expected 1"):** `galaxy-test` is isolated per test by `filterBy(['testId'])` but keeps a real `sectorKey`, so every instance wrote and read the ONE `galaxy-test` sector snapshot. A new test's room restored the parked hulls (`lingeringHulls[]`) earlier tests left behind (their roster rows never expire), and a stranger's ship showed up in the list. It failed only on a machine whose `eqx.db` already held such a row, so it "passed on the other branch". Not a duplicate ship and not the re-key slice.
+- **Rule:** a test room that is isolated per test and has a `sectorKey` sets `persistSector: false` (now `galaxy-test`, `galaxy-wave-test`, the trade test room). Need restore across restarts in a test? Use a dedicated room and clear its row first.
+
+## 2026-11-14 — The render worker gets input before it can use it
+
+- **Finding (RTS smoke, "Cannot read properties of undefined (reading 'onPointerMove')" x7 on every sector load, worker path only):** `WorkerRendererClient.init` posts BOOT and installs the canvas pointer/wheel listeners at once. The worker sets `renderer` before `await renderer.init(...)` (so the config messages that follow BOOT land on it), so a mouse move during init reached `forwardPointerEvent` before the Camera existed. Pre-existing on `main`; Command view just made it common (the player's hand is on the mouse while the sector loads).
+- **Rule:** in `renderer.worker.ts`, input messages (POINTER_EVENT, WHEEL_EVENT) are dropped until READY (`rendererReady`). A new worker message that touches something `init` builds needs the same gate. Lock: `tests/e2e/rts-warp-worker-errors.spec.ts` (worker path, mouse moving through a Command-view join).
+
 ## 2026-11-15 — "Black gaps" in a wreck were the sky: measure a dark finding before fixing it
 
 - **Finding:** a hostile review of the rail-channel take said the channel and cracks between wreck pieces were painted near-black, darker than space. It looked like the old "dark scrap" class (a shadow or underlay under the pieces).

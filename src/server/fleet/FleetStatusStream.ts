@@ -1,0 +1,123 @@
+/**
+ * RTS command layer, slice 7 — the owner-only `fleet_status` stream.
+ *
+ * Runs on the room's ~5 Hz selection-stats timer and sends every OTHER fire
+ * (~2 Hz). Each connected client gets the FULL status of the AI-flown ships
+ * its player owns (`FleetCommandSubsystem.statusFor`) plus the move-order
+ * destination, the patrol route, the escort target and shield %, as compact
+ * tuples (`shared-types/messages/fleetStatusMessages`). Hull % is not sent
+ * (every client reads room-state `ShipState.health`); morale is not reported.
+ *
+ * Why a per-owner message, not a snapshot field (root invariant #16): the
+ * snapshot is shared by everyone in interest, while a ship's mode, orders
+ * and route are private to its owner. Each send is the whole owned list
+ * (client applies it with `replace: true`) on a fixed cadence, so a late
+ * joiner or a reconnect converges within one period. The only skipped sends
+ * are repeat EMPTY ones (an owner with no AI-flown ships gets one empty list, then
+ * nothing until that changes).
+ *
+ * Off the physics tick (a UI timer), so the per-send tuple allocation is
+ * tolerated: it is bounded by the owner's fleet and runs at 2 Hz.
+ */
+import type { FleetCommandSubsystem, FleetShipStatus } from './FleetCommandSubsystem.js';
+import {
+  FLEET_STATUS_ACTIVITIES,
+  FLEET_STATUS_MODES,
+  FLEET_STATUS_ORDERS,
+  FLEET_STATUS_STANCES,
+  type FleetStatusMessage,
+  type FleetStatusTuple,
+} from '../../shared-types/messages/fleetStatusMessages.js';
+
+/** Send on every Nth timer fire (5 Hz timer ⇒ ~2.5 Hz). */
+export const FLEET_STATUS_EVERY_N_FIRES = 2;
+
+export interface FleetStatusStreamDeps {
+  fleet: Pick<FleetCommandSubsystem, 'statusFor' | 'ordersOf'>;
+  /** Connected clients: call `cb(sessionId, playerId)` once per session. */
+  forEachSession(cb: (sessionId: string, playerId: string) => void): void;
+  /** Shield 0..100 of `shipId`, or null when unknown (then not sent). Shield
+   *  stays on this stream: no per-ship shield carrier exists for parked hulls. */
+  shieldPct?(shipId: string): number | null;
+  send(sessionId: string, msg: FleetStatusMessage): void;
+  /** The id the OWNER's client knows a target / escort ship by (slice 4b: the
+   *  fleet names the ship the owner flies by shipInstanceId, the client by
+   *  playerId). Absent ⇒ ids go out as-is. */
+  wireShipId?(ownerId: string, id: string): string;
+}
+
+export class FleetStatusStream {
+  private fires = 0;
+  /** Sessions whose last send was an empty list. */
+  private readonly lastEmpty = new Set<string>();
+
+  constructor(private readonly deps: FleetStatusStreamDeps) {}
+
+  /** The timer fire. Sends on every {@link FLEET_STATUS_EVERY_N_FIRES}th call. */
+  tick(): void {
+    this.fires++;
+    if (this.fires % FLEET_STATUS_EVERY_N_FIRES !== 0) return;
+    this.sendAll();
+  }
+
+  /** Send now to every session (tests; also the cadence body). */
+  sendAll(): void {
+    this.deps.forEachSession((sessionId, playerId) => this.sendTo(sessionId, playerId));
+  }
+
+  /** Forget a session (leave / transit). */
+  clearSession(sessionId: string): void {
+    this.lastEmpty.delete(sessionId);
+  }
+
+  sendTo(sessionId: string, playerId: string): void {
+    const rows = this.deps.fleet.statusFor(playerId);
+    if (rows.length === 0) {
+      if (this.lastEmpty.has(sessionId)) return;
+      this.lastEmpty.add(sessionId);
+      this.deps.send(sessionId, { type: 'fleet_status', s: [] });
+      return;
+    }
+    this.lastEmpty.delete(sessionId);
+    // TODO: alloc-debt — 2 Hz UI timer, bounded by the owner's fleet.
+    const s: FleetStatusTuple[] = [];
+    for (let i = 0; i < rows.length; i++) s.push(this.encode(rows[i]!, playerId));
+    this.deps.send(sessionId, { type: 'fleet_status', s });
+  }
+
+  private wire(ownerId: string, id: string | null): string | null {
+    return id === null || this.deps.wireShipId === undefined ? id : this.deps.wireShipId(ownerId, id);
+  }
+
+  private encode(r: FleetShipStatus, ownerId: string): FleetStatusTuple {
+    const orders = this.deps.fleet.ordersOf(r.id);
+    const order = r.order;
+    let route: number[] | null = null;
+    if (orders !== null && orders.mode === 'patrol' && orders.routeLen > 0) {
+      route = [];
+      for (let i = 0; i < orders.routeLen * 2; i++) route.push(orders.route[i]!);
+    }
+    const shield = this.deps.shieldPct?.(r.id) ?? null;
+    const t: FleetStatusTuple = [
+      r.id,
+      FLEET_STATUS_MODES.indexOf(r.mode),
+      FLEET_STATUS_STANCES.indexOf(r.stance),
+      FLEET_STATUS_ACTIVITIES.indexOf(r.activity),
+      this.wire(ownerId, r.targetId),
+      // Slots 5 (hull) and 6 (morale) are RETIRED (RTS Part A): hull comes
+      // from room-state ShipState.health on every client, morale is not
+      // reported. The slots stay (append-only tuple) and are never filled.
+      null,
+      -1,
+      r.squadId,
+      order === null ? -1 : FLEET_STATUS_ORDERS.indexOf(order.kind),
+      order !== null && order.kind === 'move' ? order.x : null,
+      order !== null && order.kind === 'move' ? order.y : null,
+      this.wire(ownerId, orders?.escortId ?? null),
+      route,
+    ];
+    // Appended (index 13): the panel shows shield next to hull.
+    if (shield !== null) t.push(Math.max(0, Math.min(100, Math.round(shield))));
+    return t;
+  }
+}
