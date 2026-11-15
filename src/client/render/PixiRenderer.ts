@@ -16,8 +16,8 @@ import { DyingHullHold, noteDyingHulls } from './pixi/dyingHullHold.js';
 import { sweepUnseenSprites } from './pixi/spriteSweep.js';
 import { WreckGeometryStore } from '../net/wreckGeometryStore.js';
 import { WreckArtState, WreckPieceSprite, wreckBlasts, wreckRippleCap, WRECK_BLAST_LINGER, type WreckBlast } from './pixi/wreckArt.js';
-import { deathBlastFor, hullDeathBlastReplaced, type DeathBlast } from './pixi/deathBlast.js';
-import { spawnVaporiseBlast } from './pixi/vaporiseBlast.js';
+import { deathBlastFor, dyingHullDiameter, hullDeathBlastReplaced, type DeathBlast } from './pixi/deathBlast.js';
+import { spawnVaporiseBlast, stackVaporiseOverBeams } from './pixi/vaporiseBlast.js';
 import { ConnectorRenderer } from './pixi/ConnectorRenderer.js';
 import { updateProjectileSprites, type ProjectileSpriteCtx } from './pixi/projectileSpriteUpdater.js';
 import { updateMissileSprites, type MissileSpriteCtx } from './pixi/missileSpriteUpdater.js';
@@ -1104,6 +1104,7 @@ export class PixiRenderer implements IRenderer {
       });
     }
 
+    stackVaporiseOverBeams(this.shipContainer, this._fxExplosions); // the vaporise flash reads over the beams
     // Incoming-fire markers sit under the radar's edge icons.
     this.incomingFire.init(this.camera);
     this.helmMarker.init(this.camera);
@@ -1786,7 +1787,7 @@ export class PixiRenderer implements IRenderer {
           this._hullBlastsReplaced++;
           continue;
         }
-        const diameter = dying ? Math.max(dying.width, dying.height) : 40;
+        const diameter = dyingHullDiameter(dying, this.lingeringSprites.get(targetId)?.sprite); // a parked hull: its own size
         // A sub-cap breaking into wreck pieces (welcome `subcapWrecks`) gets a
         // smaller blast with shorter smoke (profile fx.deathBlastScale/Linger).
         const db = deathBlastFor(mirror.subcapWrecks, mirror.capitalWrecks, this._spriteShipKind(targetId), this._deathBlastScratch, vaporised);

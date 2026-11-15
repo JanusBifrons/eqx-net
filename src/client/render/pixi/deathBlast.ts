@@ -3,6 +3,7 @@
  * whether the wreck break-up replaces it, and its size / smoke / vaporise
  * variant (fracture v11). Split out of `wreckArt.ts` (god-file budget).
  */
+import type { Container } from 'pixi.js';
 import { isShipKindId } from '../../../shared-types/shipKinds.js';
 import { destructionProfileOf } from '../../../shared-types/shipScale/destructionProfile.js';
 import { DESTRUCTION_PROFILES } from '../../../shared-types/shipScale/destruction.js';
@@ -37,6 +38,17 @@ export function hullDeathBlastReplaced(capitalWrecks: boolean | undefined, dying
  * only says so in a room that breaks the kind, so no flag gate. An unknown
  * kind takes the sub-cap look. Alloc-free.
  */
+/**
+ * The dying hull's drawn size (world units): its active sprite, else its
+ * parked (lingering) hull's sprite, else 40. A pilot spectating from a parked
+ * hull dies there, keyed in the lingering map only; sizing it 40 u made its
+ * blast a fighter's (beam-vaporise-subcap v10: an invisible vaporise flash).
+ */
+export function dyingHullDiameter(active: Container | undefined, lingering: Container | undefined): number {
+  const hull = active ?? lingering;
+  return hull ? Math.max(hull.width, hull.height) : 40;
+}
+
 export interface DeathBlast {
   /** Radius multiplier on `blastRadiusFor(diameter)`. */
   scale: number;
