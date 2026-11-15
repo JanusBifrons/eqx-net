@@ -61,7 +61,7 @@ import { FxFences, FxShields } from './art/fx/FxShields.js';
 import { DEFAULT_SHIP_KIND } from '../../shared-types/shipKinds.js';
 import { shieldBubbleRadiusForEntity } from './pixi/shieldBubbleRadius.js';
 import { ART_OFF, type ArtOptions } from './art/artMode.js';
-import { buildArtShipSprite, isMachinedSprite, shipArtSwap, shipHandleFor, updateArtShipLight, type ShipArtCtx } from './art/shipArtSprites.js';
+import { buildArtShipSprite, isMachinedSprite, ownerLivery, shipArtSwap, shipHandleFor, updateArtShipLight, type ShipArtCtx } from './art/shipArtSprites.js';
 import { BeamSpritePool, type BeamView, type BeamSpriteStyle } from './BeamSpritePool';
 import {
   CameraDirector,
@@ -73,7 +73,7 @@ import {
 import { newSpeedFxSample, speedFxSampleInto } from './camera/speedFxSample';
 import { GroupBoundsScanner } from './camera/groupBounds';
 import type { CameraCue, CameraGroup } from '@core/contracts/cameraScript';
-import { REMOTE_BEAM_STYLE, MINING_BEAM_STYLE, remoteBeamStyleForMount, remoteBeamLine, remoteBeamSolidLen, addBeamLights, beamLightBudget, BeamHitMemory, type RemoteBeamLine } from './beamStyles';
+import { REMOTE_BEAM_STYLE, LIVE_BEAM_STYLE, liveBeamLook, MINING_BEAM_STYLE, remoteBeamStyleForMount, remoteBeamLine, remoteBeamSolidLen, addBeamLights, beamLightBudget, BeamHitMemory, type RemoteBeamLine } from './beamStyles';
 import { MountVisualManager } from './MountVisualManager';
 import { BackgroundGrid } from './BackgroundGrid';
 import { StarfieldBackground } from './StarfieldBackground';
@@ -106,7 +106,6 @@ const BACKGROUND_COLOR = 0x05070f;
 // 0.5 — close to the OLD max zoom-out (0.4), raised slightly — so you spawn
 // seeing more of the sector. `?zoom=` still overrides for on-device A/B.
 const DEFAULT_GAMEPLAY_ZOOM = 0.5;
-const LASER_CORE_COLOR = 0xffffff;
 
 // Per-frame Pixi stroke-style scratches. The renderer redraws beams
 // every RAF (60–90 Hz) via clear() + moveTo + lineTo + stroke(...). Pre-
@@ -380,6 +379,7 @@ export class PixiRenderer implements IRenderer {
     toX: number;
     toY: number;
     solidLen?: number;
+    style?: BeamSpriteStyle | null;
   }> = [];
   private _liveBeamCacheCount = 0;
   /** Same dirty-flag cache for remote shooters' beams (per-shooter +
@@ -823,10 +823,11 @@ export class PixiRenderer implements IRenderer {
       litPass.settings = this._artOpts.lighting ?? null;
       // Machined turrets ride the new effects (rings in the bakes, baked guns).
       this._artCtx.turrets = this._artOpts.fx === true;
+      if (this._artOpts.livery) this._artCtx.livery = this._artOpts.livery;
       this.mountVisuals.setArt(this._artCtx);
       // Warm-up: bake the likely art now (this runs on the galaxy map /
       // warp screen), behind anything that appears on screen meanwhile.
-      art.warmUp(warmUpJobs(this._artOpts.fx === true));
+      art.warmUp(warmUpJobs(this._artOpts.fx === true, this._artOpts.livery));
       // New backdrop (B2): behind the world, with dust in front of it. Until
       // its star tiles are baked, today's starfield keeps drawing.
       if (this._artOpts.fx === true) {
@@ -1047,9 +1048,9 @@ export class PixiRenderer implements IRenderer {
       // `liveBeamGfx` / `remoteBeamGfx` so LaserGlow can attach a
       // GlowFilter to it at construct time. Empty pools render as
       // nothing — no visual change before first beam.
-      this._liveBeamPool = new BeamSpritePool({ tint: LASER_CORE_COLOR, width: 2, alpha: 1, taper: true });
+      this._liveBeamPool = new BeamSpritePool(LIVE_BEAM_STYLE);
       this.liveBeamGfx = this._liveBeamPool.container;
-      this.shipContainer.addChild(this.liveBeamGfx);
+      this.shipContainer.addChild(this.liveBeamGfx, this._liveBeamPool.styledContainer); // heavy beams: unfiltered sibling
       this._remoteBeamPool = new BeamSpritePool(REMOTE_BEAM_STYLE);
       this.remoteBeamGfx = this._remoteBeamPool.container;
       this.shipContainer.addChild(this.remoteBeamGfx, this._remoteBeamPool.styledContainer); // heavy beams: unfiltered sibling
@@ -2141,8 +2142,9 @@ export class PixiRenderer implements IRenderer {
         slot.toX = toX;
         slot.toY = toY;
         // P1a — the full-strength solid length (== aim guide / optimal range when
-        // not clipped); beyond it the pool fades the beam to nothing.
-        slot.solidLen = beam.solidDist;
+        // not clipped; beyond it the pool fades the beam to nothing) and the
+        // per-beam style of the mount's weapon.
+        liveBeamLook(mount, beam.dist, beam.solidDist, beam.hitId !== undefined, slot);
         if (this._fxShieldsOn && beam.hitId) this._fxShields!.beam(beam.hitId, 500 + slotIdx, toX, toY, this._fxShieldPose);
         // The local beam stops on a fence's prediction collider.
         if (beam.hitId?.startsWith('predwall-')) this._fxFences?.beam(500 + slotIdx, toX, toY);
@@ -2151,9 +2153,9 @@ export class PixiRenderer implements IRenderer {
       this._liveBeamCacheCount = slotIdx;
 
       // Sprite-pool driven render (matches remoteBeam path) — always re-set.
-      this._liveBeamPool.setBeams(this._liveBeamCache, slotIdx);
+      this._liveBeamPool.setBeams(this._liveBeamCache, slotIdx, this.world.scale.x);
       this.liveBeamGfx!.visible = true;
-      this._fxLiveBeams?.setBeams(this._liveBeamCache, slotIdx, this.fxNow());
+      this._fxLiveBeams?.setBeams(this._liveBeamCache, slotIdx, this.fxNow(), undefined, this.world.scale.x);
       // E2E observable: publish the ACTUAL drawn beam origin (the sprite
       // transform), not a recompute — this is what catches the detach bug.
       this.feedback.liveBeamRenderedFromX = this._liveBeamPool.renderedFromX;
@@ -2996,7 +2998,10 @@ export class PixiRenderer implements IRenderer {
       // Machined art: a parked hull swaps to its Machined sprite once ready.
       const artKey = `linger-${shipInstanceId}`; // TODO: alloc-debt (one key string per lingering hull per frame)
       const kind = 'kind' in decision ? decision.kind : (entry?.kind ?? 'fighter');
-      const lingerHandle = shipHandleFor(this._artCtx, artKey, kind, undefined);
+      const lingerLv = this._artCtx.livery !== undefined ? ownerLivery(ship.ownerPlayerId) : undefined;
+      const lingerHandle = lingerLv
+        ? shipHandleFor(this._artCtx, artKey, kind, undefined, false, lingerLv.team, lingerLv.sigil, lingerLv.edge)
+        : shipHandleFor(this._artCtx, artKey, kind, undefined);
       let action: SpriteDecision['action'] = decision.action;
       if (entry && action === 'reposition' && shipArtSwap(this._artCtx, entry.sprite, lingerHandle) !== 'keep') action = 'rebuild';
       if (action === 'rebuild') {

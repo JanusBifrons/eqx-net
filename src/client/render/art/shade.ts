@@ -45,6 +45,7 @@ const MATP: Record<number, MatParams> = {
   [MAT.LIGHT]: { gloss: 10, spec: 0.05 },
   [MAT.WINDOW]: { gloss: 60, spec: 0.6 },
   [MAT.ROCK]: { gloss: 6, spec: 0.03 },
+  [MAT.LIVERY]: { gloss: 22, spec: 0.2 }, // enamel
 };
 
 /** Per-field-set cache of derived maps (normals, cavity). */
