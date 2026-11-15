@@ -2,7 +2,7 @@
 
 <!-- showcase-exempt: Stage 0 harness only; the terrain-stress shot lands in slice 0d -->
 
-Status: **Stage 0 (stress harness) in progress; slice 1a (shape seed) done.** Plan approved by the owner on 2026-11-15; the plan file is `tender-humming-whisper.md` in the plans folder.
+Status: **plan v2 (the cut field) approved 2026-11-15; slices 0a, 1a and A1 done.** The plan file is `tender-humming-whisper.md` in the plans folder.
 
 ## Why
 
@@ -14,6 +14,27 @@ The game has no macro terrain. A sector holds a few small rock layouts, nebulae 
 - **One route-finder** for AI pilots and the player autopilot.
 
 Look and feel, and performance, are the guiding stars. Measurements set the limits, never numbers invented in advance.
+
+## The cut field (plan v2)
+
+After look tests with the owner (2026-11-15), a field is no longer thousands of placed rocks: evenly scattered rocks "read like a pattern". A field is **one giant convex shape cut up like a cake** (a fracture), in `src/core/terrain/fieldLayout.ts` (`slicedField`):
+
+1. **Lanes first.** One or two straight strips run end to end. Their walls are the first cuts, and the strip is removed, so lanes have clean walls.
+2. **Recursive cuts.** Each piece is cut across its longest dimension, at a seeded point 35–65 % along it, with a little angle jitter. That avoids slivers.
+3. **Where cutting stops.** A piece stops when it is rock-sized (4–20 fighter lengths, seeded), or rarely at 1–2 battleship lengths (the rare big rocks).
+4. **Streets.** Each piece shrinks toward its centre, leaving streets about two fighter widths wide at the core. Streets widen toward the rim, where pieces also drop out, giving a slow thinning from core to edge.
+5. **The core.** The middle is a hole.
+6. **Shape.** Edges are roughened by midpoint displacement, then one smooth two-scale warp bends every outline. Neighbours bend together, so streets curve.
+
+**Look and size.** The field is about 300 km across, which is never fully on screen at any zoom. The full field is 113,881 rocks; cutting it all in one go takes about 8 s.
+
+**Determinism and laziness.**
+- Every cut is seeded by the piece's path in the cut tree. A child's path mixes the parent's path with the depth and the side (`childPath`), so paths never collide.
+- Any region can be cut on its own: pieces outside a view box stop early. The box is padded by the warp amplitude (`cutFieldPad`), so a rock whose final outline reaches into the view is never dropped.
+- The code is arithmetic only (no sin/cos/atan2/pow/hypot or `**`), with `FIELD_LAYOUT_VERSION`, so every browser cuts the server's rocks. Saved rock records are keyed by that version.
+- Locks: `fieldLayout.test.ts` (same seed gives same rocks; unique paths; a sub-area cut equals the same rocks in a full cut, none missing) and `tests/unit/fieldLayoutArithmeticOnly.test.ts`.
+
+Next (plan v2 stages A2–F): chunks and rock keys, owner shape tuning, cross-browser parity, chunk meshes with the procedural rock shader, then wake/deep sleep, the wire and the terrain store.
 
 ## The core idea
 
@@ -72,3 +93,4 @@ A rock must keep its outline when it leaves the world and comes back (deep sleep
 
 - 2026-11-15: plan approved; slice 0a adds the terrain stress scenes and the `swarmAtRest` bulk-seed option. The first desktop timing run was invalid throughout (other sessions kept the host at 30–100 % CPU); timings wait for a quiet host.
 - 2026-11-15: slice 1a, rock shapes seeded by the stable id, swarm wire v6.
+- 2026-11-15: look tests with the owner replaced placed rocks with the cut field (plan v2); slice A1 lands the generator.
