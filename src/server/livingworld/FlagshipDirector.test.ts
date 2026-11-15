@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { EventEmitter } from 'eventemitter3';
-import { escortRing, FlagshipDirector, FLEET_ESCORT_KINDS, fleetCapitalKind, styledKind } from './FlagshipDirector.js';
+import { escortRing, FlagshipDirector, FLEET_ESCORT_KINDS, fleetCapitalKind, classOf, styledKind } from './FlagshipDirector.js';
 import type { ShipKindId } from '../../shared-types/shipKinds.js';
 import type { LivingWorldRoom } from './LivingWorldRoom.js';
 import { sectorSites } from '../../core/galaxy/sectorSites.js';
@@ -180,7 +180,18 @@ describe('styledKind (W2b: a hull style per ship)', () => {
     expect(styledKind('battleship', 'flagship-3-lead')).toBe(styledKind('battleship', 'flagship-3-lead'));
     const seen = new Set<string>();
     for (let i = 0; i < 30; i++) seen.add(styledKind('battleship', `flagship-${i}-lead`));
-    expect([...seen].sort()).toEqual(['battleship', 'battleship-b', 'battleship-c']);
+    expect([...seen].sort()).toEqual(['battleship', 'battleship-b', 'battleship-c', 'battleship-rail']);
     expect(styledKind('gunship', 'flagship-1-e3')).toBe('gunship');
+  });
+});
+
+describe('classOf (a capital variant keeps its class)', () => {
+  it('strips style and fit suffixes, and only those', () => {
+    expect(classOf('battleship')).toBe('battleship');
+    expect(classOf('battleship-c')).toBe('battleship');
+    expect(classOf('light-cruiser-b')).toBe('light-cruiser');
+    // Plan section 9: a fit variant's class is its base class.
+    expect(classOf('battleship-rail')).toBe('battleship');
+    expect(classOf('heavy-cruiser')).toBe('heavy-cruiser');
   });
 });

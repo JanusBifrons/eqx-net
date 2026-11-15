@@ -1982,6 +1982,15 @@ line; a railgun kill erases a straight channel as wide as the bolt.
   ([shell-events](shell-events.md#railgun-pass-through-2026-11-14)). Lock:
   `tests/integration/sectorRoom/railgun.test.ts` (two capitals on one line:
   both cut with a channel of the bolt's width, the third stops the slug).
+- **The heavy beam** (plan step 8, 2026-11-15) is the one catalogue weapon
+  with `killCut: { kind: 'slice' }` (`HEAVY_BEAM_DEF`). It is a plain hitscan
+  record fired through the one beam path (`fireNow` → hitscan sink →
+  `laser_fired`), so its kill reaches the wreck through the same
+  `applyDamage` weapon argument. Fighter and sub-cap beams (`hitscan`,
+  `charge-laser`) have no `killCut` and break up normally. Lock:
+  `capitalWrecks.test.ts` "a heavy_beam kill slices the wreck; a fighter beam
+  or a bolt kill does not"; `WeaponCatalogue.test.ts` (only `heavy_beam`
+  slices).
 - **Instant split (no hold).** Owner: a cut kill splits at once. In
   `onDeath` a fracture with a `cutKind` skips the profile's crack hold
   (`holdMs`): the separating kick rides the spawn velocity (as a sub-cap's
@@ -1994,7 +2003,7 @@ line; a railgun kill erases a straight channel as wide as the bolt.
   keeps the hull drawn until every piece is drawable (it ends that frame),
   not a split delay. Locks: `CapitalWreckSubsystem.test.ts` and
   `wreckArt.test.ts` "a cut kill splits at once".
-- **Not yet:** the heavy beam's `slice`; the cut glow colours and channel ash.
+- **Not yet:** the cut glow colours and channel ash.
 - Locks: `fractureHull.test.ts` "golden: v9 kill cuts" (battleship and
   fighter, side and bow, slice and channel); `fractureHull.killFocus.test.ts`
   "fracture v9" (the slice's cut is collinear with the shot through the kill

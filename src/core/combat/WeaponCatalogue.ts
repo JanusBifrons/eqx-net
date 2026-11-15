@@ -9,7 +9,9 @@ export type WeaponId = 'hitscan' | 'laser' | 'heat-seeker' | 'pulse-orb' | 'char
   // Coastal defences (plan coastal-defences): land guns bigger than any ship's.
   | 'naval_xxl' | 'naval_siege'
   // Capital railgun (plan beam-slices §7): a charged, very fast shell.
-  | 'railgun';
+  | 'railgun'
+  // Capital heavy beam (plan beam-slices §8): a sustained burn that slices.
+  | 'heavy_beam';
 
 interface WeaponDefBase {
   id: WeaponId;
@@ -372,6 +374,35 @@ const RAILGUN_DEF: ProjectileWeaponDef = {
 };
 
 /**
+ * The capital HEAVY BEAM (plan beam-slices §8, owner decisions 2026-11-14): a
+ * sustained burn for the main or secondary battery of a capital design. It is
+ * an ordinary hitscan weapon fired through the one beam path (`fireNow` →
+ * the hitscan sink → `laser_fired`); "continuous" is just its 6 Hz cadence
+ * (`cooldownTicks` 10, the floor set by the compositor-stall note on
+ * `HITSCAN_DEF`). The only weapon whose beam kill slices the hull
+ * (`killCut: slice`); fighter and sub-cap beams break up normally. Absolute
+ * like the naval guns (never `profiled`). Its drawn thickness is a client
+ * look (`beamStyles`), not a catalogue field.
+ *
+ * Numbers (capital pool: `energyMax` 600, `energyRegenRate` 2 / tick = 120/s,
+ * `warshipDesign.ts`):
+ *  - energy 45 per shot × 6 Hz = 270/s drain, net 270 − 120 = 150/s ⇒ a full
+ *    pool burns 600 / 150 = 4 s, then regen paces it at 120 / 45 ≈ 2.7 shots/s.
+ *  - damage 260 × 6 Hz = 1,560/s ⇒ one 4 s burn (24 shots) = 6,240: a heavy
+ *    cruiser through full shields (4,018 hull + 2,009 shield = 6,027); a
+ *    battlecruiser (≈ 10,900) takes about two burns, a battleship (≈ 17,000)
+ *    three.
+ *  - range 20,000 u: past the 5" secondary battery (≈ 16.6 km), short of the
+ *    8" (≈ 25.5 km) and well short of the 12"/16" main guns (≈ 35 / 38.7 km),
+ *    so big guns outrange it and a beam ship has to close.
+ */
+const HEAVY_BEAM_DEF: HitscanWeaponDef = {
+  id: 'heavy_beam', displayName: 'Heavy beam', mode: 'hitscan',
+  damage: 260, cooldownTicks: 10, range: 20_000, energyCost: 45,
+  killCut: { kind: 'slice' },
+};
+
+/**
  * Weapon distances under the ship scale's combat profile (shipScale/config):
  * reach (hitscan range, projectile / missile flight time) and splash. Profile
  * A, or scale 1, returns the definition unchanged. Pure.
@@ -410,9 +441,10 @@ export const WEAPONS: ReadonlyMap<WeaponId, WeaponDef> = new Map<WeaponId, Weapo
   ['naval_xxl', NAVAL_XXL_DEF],
   ['naval_siege', NAVAL_SIEGE_DEF],
   ['railgun', RAILGUN_DEF],
+  ['heavy_beam', HEAVY_BEAM_DEF],
 ]);
 
-export const WEAPON_IDS: readonly WeaponId[] = ['hitscan', 'laser', 'heat-seeker', 'pulse-orb', 'charge-laser', 'autocannon', 'naval_s', 'naval_m', 'naval_l', 'naval_xl', 'naval_xxl', 'naval_siege', 'railgun'] as const;
+export const WEAPON_IDS: readonly WeaponId[] = ['hitscan', 'laser', 'heat-seeker', 'pulse-orb', 'charge-laser', 'autocannon', 'naval_s', 'naval_m', 'naval_l', 'naval_xl', 'naval_xxl', 'naval_siege', 'railgun', 'heavy_beam'] as const;
 
 export const DEFAULT_WEAPON: WeaponId = 'hitscan';
 

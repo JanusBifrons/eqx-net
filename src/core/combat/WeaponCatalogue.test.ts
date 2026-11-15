@@ -10,6 +10,7 @@ import {
   WEAPON_IDS,
   DEFAULT_WEAPON,
 } from './WeaponCatalogue.js';
+import { getShipKind } from '../../shared-types/shipKinds.js';
 
 describe('WeaponCatalogue', () => {
   it.runIf(AT_AUTHORED_SHIP_SCALE)('getWeapon returns the hitscan (beam) definition', () => {
@@ -197,5 +198,36 @@ describe('WeaponCatalogue — TTK targets (lock the math, not the literals)', ()
     const missilesInFlight = salvosInFlight * 2; // 2 mounts per salvo
     expect(missilesInFlight).toBeGreaterThanOrEqual(6);
     expect(missilesInFlight).toBeLessThanOrEqual(10);
+  });
+});
+
+describe('WeaponCatalogue — capital heavy beam (plan beam-slices §8)', () => {
+  it('is a hitscan beam with a slice kill cut, appended last, cadence at the 10-tick floor or slower', () => {
+    const w = getWeapon('heavy_beam');
+    expect(w.id).toBe('heavy_beam');
+    expect(w.mode).toBe('hitscan');
+    expect(w.killCut).toEqual({ kind: 'slice' });
+    // The compositor-stall floor (HITSCAN_DEF note): no beam fires faster.
+    expect(w.cooldownTicks).toBeGreaterThanOrEqual(10);
+    expect(WEAPON_IDS[WEAPON_IDS.length - 1]).toBe('heavy_beam');
+  });
+
+  it('fighter and sub-cap beams do not slice: only the heavy beam has a slice cut', () => {
+    const slicers = [...WEAPONS.values()].filter((d) => d.killCut?.kind === 'slice').map((d) => d.id);
+    expect(slicers).toEqual(['heavy_beam']);
+    expect(getWeapon('hitscan').killCut).toBeUndefined();
+    expect(getWeapon('charge-laser').killCut).toBeUndefined();
+  });
+
+  it('a full capital energy pool gives a burn of a few seconds, and one burn kills a heavy cruiser through its shields', () => {
+    const w = getWeapon('heavy_beam');
+    const cap = getShipKind('heavy-cruiser');
+    const shotsPerSec = 60 / w.cooldownTicks;
+    const netDrainPerSec = w.energyCost * shotsPerSec - (cap.energyRegenRate ?? 0) * 60;
+    expect(netDrainPerSec).toBeGreaterThan(0);
+    const burnS = (cap.energyMax ?? 0) / netDrainPerSec;
+    expect(burnS).toBeGreaterThanOrEqual(2);
+    expect(burnS).toBeLessThanOrEqual(6);
+    expect(w.damage * shotsPerSec * burnS).toBeGreaterThanOrEqual(cap.maxHealth + (cap.shieldMax ?? 0));
   });
 });
