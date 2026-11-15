@@ -20,7 +20,7 @@ type Beat = { laser: number | null; tractor: number | null; dx: number; dy: numb
  *   the last worked spot; with no piece left, the rock (kind 0) nearest the
  *   barge on the other side from the last one.
  * - Tractors: keep the held pod while it is there; else the ore pod (kind 3)
- *   nearest the barge; with no pod, the piece the lasers work (drawn in).
+ *   nearest the barge; never the piece the lasers work.
  * Only what is in frame is picked.
  * A non-null id means "lock this with that group" (the shot does it through
  * the HUD chip + the info box's LOCK, the real path).
@@ -48,7 +48,7 @@ async function beat(ctx: ShotContext): Promise<Beat> {
       let best: number | null = null, bestD = Infinity;
       if (at) {
         for (const [eid, e] of m.swarm) {
-          if (e.kind !== 4 || Math.abs(e.x - me.x) > a.fw || Math.abs(e.y - me.y) > a.fh) continue;
+          if (e.kind !== 4 || eid === w.__eqxMineTractor || Math.abs(e.x - me.x) > a.fw || Math.abs(e.y - me.y) > a.fh) continue;
           const d = Math.hypot(e.x - at.x, e.y - at.y);
           if (d < bestD) { bestD = d; best = eid; }
         }
@@ -76,7 +76,7 @@ async function beat(ctx: ShotContext): Promise<Beat> {
       }
     }
     // Tractors: an ore pod in frame (the nearest the barge) while there is
-    // one; else the rock piece the lasers work, so it is drawn in close.
+    // one; never what the lasers work.
     let tractor: number | null = null;
     let tWant: number | undefined;
     let podD = Infinity;
@@ -87,10 +87,6 @@ async function beat(ctx: ShotContext): Promise<Beat> {
     }
     const tCur = w.__eqxMineTractor !== undefined ? m.swarm.get(w.__eqxMineTractor) : undefined;
     if (tCur !== undefined && tCur.kind === 3) tWant = w.__eqxMineTractor;
-    if (tWant === undefined) {
-      const wk = w.__eqxMineLaser !== undefined ? m.swarm.get(w.__eqxMineLaser) : undefined;
-      if (wk !== undefined && wk.kind === 4) tWant = w.__eqxMineLaser;
-    }
     if (tWant !== undefined && tWant !== w.__eqxMineTractor) { w.__eqxMineTractor = tWant; tractor = tWant; }
     const at = w.__eqxMineAt ?? { x: me.x, y: me.y };
     return { laser, tractor, dx: at.x - me.x, dy: at.y - me.y };
