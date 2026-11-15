@@ -208,7 +208,7 @@ export interface LiveryShade { hullDl: number; hullS: number; teamS: number; tea
 export const LIVERY_SHADES: Readonly<Record<'b2' | 'b3' | 'b4', LiveryShade>> = {
   b2: { hullDl: -0.12, hullS: 0.04, teamS: 1.15, teamD: 1.0, capS: 0.72, capD: 0.74 },
   b3: { hullDl: -0.2, hullS: 0.03, teamS: 1.3, teamD: 1.0, capS: 0.62, capD: 0.6 },
-  b4: { hullDl: -0.2, hullS: 0.03, teamS: 1.3, teamD: 1.0, capS: 0.72, capD: 0.74 },
+  b4: { hullDl: -0.2, hullS: 0.03, teamS: 1.3, teamD: 1.0, capS: 0.6, capD: 0.74 },
 };
 /** The shade experiment a livery uses, or undefined (plain treatment). */
 export function liveryShade(l: Livery | undefined): LiveryShade | undefined {
@@ -419,14 +419,18 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
   // hull which are more distinct... important it's weathered"; small ships
   // must keep visible colour when turrets are fitted).
   //  - Capitals: solid painted sections across hull AND deck at the bow
-  //    (bow fraction < CAP_BOW4) and stern (> 1 - CAP_STERN4), plus a
-  //    recognition stripe behind the bow section; broken, weathered edges
-  //    (weatherLivery 'patch'). Superstructure stays grey. No edge outline.
+  //    (bow fraction < CAP_BOW4) and stern (> 1 - CAP_STERN4), broken
+  //    mirror-symmetric edges, weathered (weatherLivery 'patch'), and TINTED:
+  //    each texel takes the hull's own tone there (band, panel, metal) at
+  //    B4_VALUE of it, so the paint shades like the hull. Superstructure
+  //    stays grey. No edge outline, no stripe (it showed between the guns).
   //  - Sub-caps: B's spots, but none under a turret's reach (it only showed
   //    as a lopsided sliver); a hull whose visible spots are under
-  //    TAIL_NEED4 of its area gets tail flashes on its rear corners.
+  //    TAIL_NEED4 of its area wears worn tail flashes on its rear corners
+  //    INSTEAD of those spots.
   const b4 = livery?.treatment === 'b4';
-  const CAP_BOW4 = 0.11, CAP_STERN4 = 0.085, STRIPE4_T0 = 0.15, STRIPE4_T1 = 0.168, EDGE_JIT4 = 0.018, TAIL_T4 = 0.66, TAIL_NEED4 = 0.05;
+  const CAP_BOW4 = 0.2, CAP_STERN4 = 0.085, EDGE_JIT4 = 0.018, TAIL_T4 = 0.66, TAIL_NEED4 = 0.05, B4_VALUE = 0.85;
+  const paintLum = (() => { const p = lin(f.paint); return Math.max(1e-4, 0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2]); })();
   const cover = b4 ? opts.turretCover ?? [] : [];
   const underTurret = (wx: number, wy: number): boolean => {
     for (const c of cover) { const dx = wx - c.x, dy = wy - c.y; if (dx * dx + dy * dy < c.reach * c.reach) return true; }
@@ -479,12 +483,15 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
       if (role !== undefined && role !== 'hull' && role !== 'deck') return -1;
       const jit = EDGE_JIT4 * (valueNoise((Math.abs(wx) / len) * 40, (wy / len) * 40, edgeSeed) - 0.5) * 2; // mirror-symmetric
       if (tb < CAP_BOW4 + jit || tb > 1 - CAP_STERN4 + jit) return teamHex;
-      if (tb > STRIPE4_T0 + jit * 0.5 && tb < STRIPE4_T1 + jit * 0.5) return teamHex;
       return -1;
     }
     if (b4 && arch !== 'robot') {
       if (underTurret(wx, wy)) return -1;
-      if (tailFlash && tb > TAIL_T4 && du < tailW) return teamHex;
+      // A broken, worn edge on the flash (mirror-symmetric).
+      if (tailFlash && tb > TAIL_T4 && du < tailW * (0.75 + 0.5 * valueNoise(Math.abs(wx) * 0.9, wy * 0.9, edgeSeed))) return teamHex;
+      // A hull that needs flashes shows them alone: what is left of its
+      // turret-hidden spots would only peek out as slivers.
+      if (tailFlash) return -1;
     }
     if (sizeCls === 'capital') {
       if (!onHullLayer(i)) return -1;
@@ -551,7 +558,9 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
         mat = MAT.TRIM;
         h -= Math.min(0.3, Hmax * 0.05);
       } else if (livHex >= 0) {
-        paintEnamel(f, i, livHex, pv * (0.95 + 0.08 * nz));
+        // 'b4': tinted, so the paint carries the hull's tone here.
+        const tone = b4 ? B4_VALUE * Math.min(1.15, Math.max(0.6, (0.2126 * surf[0]! + 0.7152 * surf[1]! + 0.0722 * surf[2]!) / paintLum)) : 1;
+        paintEnamel(f, i, livHex, pv * (0.95 + 0.08 * nz) * tone);
         mat = MAT.LIVERY;
       } else {
         setAlbedo(f, i, surf, pv * (0.95 + 0.08 * nz));
@@ -849,10 +858,11 @@ function weatherLivery(f: Fields, dist: Float32Array, seed: number, heavy: boole
       // 'b4': grime streaks along the hull, and chips as irregular patches
       // of primer (the hull grey, a shade darker; matte, so no sparkle).
       const streak = valueNoise(tx * 0.06, ty * 0.012, seed + 2);
-      const dk = 0.86 + 0.14 * streak;
+      const dk = 0.7 + 0.3 * Math.pow(streak, 1.5);
       for (let c = 0; c < 3; c++) f.albedo[i * 3 + c] = f.albedo[i * 3 + c]! * dk;
-      const p = valueNoise(tx * 0.09, ty * 0.09, seed + 3) + 0.5 * valueNoise(tx * 0.3, ty * 0.3, seed + 4);
-      if (p > 1.08) {
+      // Chips at two sizes (~11 and ~4 texels), sparse.
+      const big = valueNoise(tx * 0.09, ty * 0.09, seed + 3), small = valueNoise(tx * 0.25, ty * 0.25, seed + 4);
+      if (big > 0.84 || (small > 0.9 && big > 0.55)) {
         f.mat[i] = MAT.PAINT;
         f.key[i] = f.paint;
         setAlbedo(f, i, grey, 0.8 + 0.1 * n1);
