@@ -11,11 +11,15 @@
  */
 import type { BeamSpriteStyle } from './BeamSpritePool.js';
 import type { BeamCrossSection } from './beamCrossSection.js';
-import { HEAVY_BEAM_WIDTH } from '../../core/combat/WeaponCatalogue.js';
+import { HEAVY_BEAM_WIDTH, MINING_LASER_WIDTH } from '../../core/combat/WeaponCatalogue.js';
 
 /** Remote players' / drones' / turrets' combat hitscan beam — thin warm amber.
  *  `taper` (P3.13) — combat beams fade toward the tip of their range. */
 export const REMOTE_BEAM_STYLE: BeamSpriteStyle = { tint: 0xffaa44, width: 2, alpha: 1, taper: true };
+
+/** The pilot's own hitscan beams (`mirror.liveBeams`): a white core that
+ *  `LaserGlow` haloes cyan, tapering to the tip of its range. */
+export const LIVE_BEAM_STYLE: BeamSpriteStyle = { tint: 0xffffff, width: 2, alpha: 1, taper: true };
 
 /** The Miner's mining (drill) beam — deliberately DISTINCT from the combat
  *  beam: a fatter, warmer amber at lower alpha so a player reads "mining laser",
@@ -126,6 +130,19 @@ export const HEAVY_BEAM_STYLE: BeamSpriteStyle = {
   crossSection: HEAVY_BEAM_CROSS_SECTION, lineLight: HEAVY_BEAM_LINE_LIGHT,
 };
 
+/** Fewest screen px the mining laser's core is drawn wide (`minScreenPx`):
+ *  thinner than the heavy beam's 12, still visible at capital zoom. */
+export const MINING_LASER_MIN_SCREEN_PX = 5;
+
+/** The mining laser (`mining_laser` mounts; plan partitioned-chasing-lark
+ *  PR 7): the Miner's drill-beam colours (`MINING_BEAM_STYLE`, so a player
+ *  reads "mining", not "attack") at capital scale: core `MINING_LASER_WIDTH`
+ *  wide, the strip its slice erases. Solid to the hit point (no taper), drawn
+ *  by the same remote pool as every other beam (a per-beam style). */
+export const MINING_LASER_STYLE: BeamSpriteStyle = {
+  ...MINING_BEAM_STYLE, width: MINING_LASER_WIDTH, taper: false, minScreenPx: MINING_LASER_MIN_SCREEN_PX,
+};
+
 /** A heavy beam that MISSES fades over this last share of its drawn length
  *  (to its max range); one that hits is solid to the hit point. */
 export const HEAVY_BEAM_MISS_FADE_FRAC = 0.15;
@@ -140,19 +157,54 @@ export function remoteBeamSolidLen(style: BeamSpriteStyle | null, len: number, h
   return hit ? len : len * (1 - HEAVY_BEAM_MISS_FADE_FRAC);
 }
 
+/** What a pilot's own beam slot draws with (`BeamView.style` / `solidLen`). */
+export interface LiveBeamLook { style?: BeamSpriteStyle | null; solidLen?: number }
+
+/**
+ * The look of the pilot's OWN beam from `mount` (PixiRenderer's live-beam
+ * loop, `mirror.liveBeams`), into `out` (no allocation, #14): `len` the drawn
+ * length, `solidDist` the client ray's solid length, `hit` whether it stopped
+ * on something.
+ *
+ * A styled mount (the heavy beam, the mining laser) draws with the SAME style
+ * and solid length as when another ship fires it (`remoteBeamStyleForMount`,
+ * `remoteBeamSolidLen`): the pool's unfiltered `styledContainer`, its
+ * `minScreenPx` floor. Anything else keeps the live style and the ray's
+ * solid length. (The pilot's heavy beam once drew with the fighter look: a
+ * 2 u core under the cyan `LaserGlow`, a fraction of a px at capital zoom,
+ * so it rasterised as a faint cyan dotted line.)
+ */
+export function liveBeamLook(
+  mount: { readonly weaponId: string } | null | undefined,
+  len: number, solidDist: number | undefined, hit: boolean, out: LiveBeamLook,
+): LiveBeamLook {
+  const style = remoteBeamStyleForMount(mount);
+  out.style = style;
+  out.solidLen = remoteBeamSolidLen(style, len, hit) ?? solidDist;
+  return out;
+}
+
 /** True when `mount` carries the capital heavy beam. */
 export function isHeavyBeamMount(mount: { readonly weaponId: string } | null | undefined): boolean {
   return mount?.weaponId === 'heavy_beam';
 }
 
+/** True when `mount` fires a sustained capital beam at the 10-tick cadence
+ *  (the heavy beam, the mining laser): it holds `HEAVY_BEAM_TTL_MS` so it
+ *  reads as one burn, not a strobe (`remoteBeamTtlMs`). */
+export function isSustainedBeamMount(mount: { readonly weaponId: string } | null | undefined): boolean {
+  return remoteBeamStyleForMount(mount) !== null;
+}
+
 /** The remote-pool style a beam from `mount` draws with: the heavy style for a
- *  `heavy_beam` mount, else `null` (the pool's own fighter style). The client
- *  resolves `mount` from the shooter's kind and `laser_fired.mountId`, so no
- *  wire change. */
+ *  `heavy_beam` mount, the mining-laser style for a `mining_laser` mount, else
+ *  `null` (the pool's own fighter style). The client resolves `mount` from the
+ *  shooter's kind and `laser_fired.mountId`, so no wire change. */
 export function remoteBeamStyleForMount(
   mount: { readonly weaponId: string } | null | undefined,
 ): BeamSpriteStyle | null {
-  return isHeavyBeamMount(mount) ? HEAVY_BEAM_STYLE : null;
+  if (isHeavyBeamMount(mount)) return HEAVY_BEAM_STYLE;
+  return mount?.weaponId === 'mining_laser' ? MINING_LASER_STYLE : null;
 }
 
 /** The mount `mountId` on a ship kind's catalogue `mounts` (alloc-free loop;
@@ -287,6 +339,7 @@ export function addBeamLights(
   b: {
     fromX: number; fromY: number; toX: number; toY: number;
     style?: { tint: number; glowScale?: number; lineLight?: BeamLineLight } | null;
+    passX?: number; passY?: number;
   },
   maxLights: number = HEAVY_BEAM_MAX_LIGHTS,
 ): void {
@@ -297,7 +350,10 @@ export function addBeamLights(
     // The hit spot, then line lights at fixed distances from the muzzle (the
     // first ON it: the shooter's own hull glows), within the budget and each
     // at least its reach short of the hit. Independent of the beam's length.
-    sink.addLight(b.toX, -b.toY, ll.hitZ, ll.color, ll.hitIntensity, ll.hitReach);
+    // A no-hit pulse burning through what its mount just hit (the kill
+    // follow-through) keeps the spot where it crosses it (`BeamHitMemory`).
+    const pass = b.passX !== undefined && b.passY !== undefined && Number.isFinite(b.passX) && Number.isFinite(b.passY);
+    sink.addLight(pass ? b.passX! : b.toX, -(pass ? b.passY! : b.toY), ll.hitZ, ll.color, ll.hitIntensity, ll.hitReach);
     const ux = len > 0 ? (b.toX - b.fromX) / len : 0;
     const uy = len > 0 ? (b.toY - b.fromY) / len : 0;
     for (let j = 0; j < maxLights - 1; j++) {
@@ -310,4 +366,61 @@ export function addBeamLights(
   const c = b.style ? b.style.tint : 0xff6a9a;
   sink.addLight(b.toX, -b.toY, 6, c, 2.2, 120 * k);
   sink.addLight((b.fromX + b.toX) / 2, -(b.fromY + b.toY) / 2, 6, c, 0.8, len * 0.6 + 30 * k);
+}
+
+/** How far (world u) a no-hit pulse's line may pass from its mount's last hit
+ *  and still light it: the shooter and the wreck drift a little over the
+ *  0.75 s follow-through; a turret that swung off misses it by far more. */
+export const BEAM_PASS_LIGHT_TOLERANCE = 250;
+
+interface BeamHitRecord { x: number; y: number; has: boolean; gen: number }
+
+/**
+ * Each remote beam mount's last hit point, so a no-hit pulse that still burns
+ * through it keeps its hit spot there (`BeamView.passX/Y`, `addBeamLights`).
+ * After a heavy-beam kill the server fires full-length pulses that pass the
+ * wreck (`laser.hit` false, end at max range): with no hit spot and the line
+ * lights only near the muzzle, the wreck went dark the frame after the kill
+ * while the beam burned on through it. The spot sits where the current line
+ * crosses the last hit, and only while the beam has burned every frame since
+ * that hit: the frame the beam stops, so does the light. `track` each drawn
+ * beam every frame, then `endFrame` once. Allocates a record only the first
+ * time a (shooter, mount) is seen (#14); `endFrame` prunes stale ones.
+ */
+export class BeamHitMemory {
+  private readonly byShooter = new Map<string, Map<string, BeamHitRecord>>();
+  private gen = 1;
+
+  track(
+    shooterId: string, mountId: string, hit: boolean,
+    v: { fromX: number; fromY: number; toX: number; toY: number; passX?: number; passY?: number },
+  ): void {
+    let perShooter = this.byShooter.get(shooterId);
+    if (!perShooter) { perShooter = new Map(); this.byShooter.set(shooterId, perShooter); }
+    let r = perShooter.get(mountId);
+    if (!r) { r = { x: 0, y: 0, has: false, gen: 0 }; perShooter.set(mountId, r); }
+    v.passX = NaN; v.passY = NaN;
+    if (hit) {
+      r.x = v.toX; r.y = v.toY; r.has = true;
+    } else if (r.has && r.gen === this.gen - 1) {
+      const dx = v.toX - v.fromX, dy = v.toY - v.fromY;
+      const len = Math.hypot(dx, dy);
+      const t = len > 0 ? ((r.x - v.fromX) * dx + (r.y - v.fromY) * dy) / len : -1;
+      const off = len > 0 ? Math.abs((r.x - v.fromX) * dy - (r.y - v.fromY) * dx) / len : Infinity;
+      if (t > 0 && t < len && off <= BEAM_PASS_LIGHT_TOLERANCE) {
+        v.passX = v.fromX + (dx / len) * t; v.passY = v.fromY + (dy / len) * t;
+      } else r.has = false;
+    } else r.has = false;
+    r.gen = this.gen;
+  }
+
+  /** Close the frame: a mount not tracked this frame has stopped burning. */
+  endFrame(): void {
+    this.gen++;
+    if ((this.gen & 255) !== 0) return;
+    for (const [shooterId, perShooter] of this.byShooter) {
+      for (const [mountId, r] of perShooter) if (r.gen < this.gen - 1) perShooter.delete(mountId);
+      if (perShooter.size === 0) this.byShooter.delete(shooterId);
+    }
+  }
 }

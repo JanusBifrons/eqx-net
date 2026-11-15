@@ -99,8 +99,15 @@ import type { ShipKind, ShipKindId } from './shipKinds/types.js';
  * heavy-chassis ramming-probe logging.
  */
 export const GAMEPLAY_SHIP_KINDS_LIST: readonly ShipKind[] = Object.freeze(
-  SHIP_KINDS_LIST.filter((k) => !k.engineeringOnly && !k.npcOnly),
+  SHIP_KINDS_LIST.filter((k) => inRandomSpawnPool(k)),
 );
+
+/** May the random ambient pickers spawn this kind? Not engineering-only, not
+ *  NPC-only, and not opted out with `randomSpawn: false` (an owned-only kind,
+ *  e.g. a future mining barge, that players can still pilot). */
+export function inRandomSpawnPool(k: ShipKind): boolean {
+  return !k.engineeringOnly && !k.npcOnly && k.randomSpawn !== false;
+}
 
 /**
  * Kinds a PLAYER may pilot — the full catalogue minus `npcOnly` kinds (robots,
@@ -185,6 +192,9 @@ export const SHIP_KINDS = Object.freeze({
 // robot-hexagon nose guns become small-arc turrets (`noseTurretMount`).
 // 26 → 27 (2026-11-14): energy pool ×2 for every kind (`ENERGY_POOL_MUL`,
 // shipScale/defineShipKind.ts).
+// Not bumped for `cargoCapacity` / `collectsLoot` / `randomSpawn` (salvage PR 13):
+// the harvester's cargoCapacity 400 equals its old collector capacity and it is
+// npcOnly (never a stored player ship), so no stored stat changes.
 export const SHIP_KIND_CATALOGUE_VERSION = 27;
 
 // The shield bubble pad is `shipTuning(kind).shieldPad` (shipScale/tuning.ts),
@@ -228,7 +238,12 @@ export function isPlayableShipKindId(id: string): id is ShipKindId {
   return isShipKindId(id) && !getShipKind(id).npcOnly;
 }
 
-/** The allegiance a swarm entity of this kind fights for (default `'drones'`). */
+/** The allegiance a swarm entity of this kind fights for (default `'drones'`).
+ *  Owner rule: ship kinds are never faction-bound — a ship's side comes from
+ *  its OWNER. This kind default only labels ownerless ambient spawns (the
+ *  random drone pools and the robot roster); an owned kind such as a future
+ *  mining barge opts out of those pools (`randomSpawn: false`) and takes its
+ *  side from its owner record, never from here. */
 export function allegianceOfKind(id: string | null | undefined): NpcAllegianceId {
   return getShipKind(id).allegiance ?? 'drones';
 }

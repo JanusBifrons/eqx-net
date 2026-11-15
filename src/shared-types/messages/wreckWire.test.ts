@@ -43,6 +43,16 @@ const samples: Array<[string, unknown]> = [
   ['fractional cut angle', { ...good, cutKind: 'slice', cutAng: 2.5 }],
   ['negative channel width', { ...good, cutKind: 'channel', cutAng: 1, cutW: -1 }],
   ['NaN channel width', { ...good, cutKind: 'channel', cutAng: 1, cutW: Number.NaN }],
+  // Salvage child wreck link (optional; the reader lands before the server sends it).
+  ['child', { ...good, parentWreck: 3, parentPiece: 0 }],
+  ['child piece 255', { ...good, parentWreck: 65535, parentPiece: 255 }],
+  ['parent without piece', { ...good, parentWreck: 3 }],
+  ['piece without parent', { ...good, parentPiece: 2 }],
+  ['own parent', { ...good, parentWreck: 12, parentPiece: 0 }],
+  ['parent id 0', { ...good, parentWreck: 0, parentPiece: 0 }],
+  ['parent past u16', { ...good, parentWreck: WRECK_ID_END, parentPiece: 0 }],
+  ['piece past u8', { ...good, parentWreck: 3, parentPiece: 256 }],
+  ['fractional piece', { ...good, parentWreck: 3, parentPiece: 0.5 }],
   ['null', null],
 ];
 
@@ -66,6 +76,11 @@ describe('wreck wire schemas (slice 3)', () => {
     const welcome = { type: 'welcome', playerId: 'p', serverTick: 1, sectorKey: null, shipInstanceId: '', capitalWrecks: true, wrecks: [good] };
     expect(WelcomeSchema.safeParse(welcome).success).toBe(true);
     expect(WelcomeSchema.safeParse({ ...welcome, wrecks: [{ ...good, wreckId: 0 }] }).success).toBe(false);
+    // A child descriptor survives the strict welcome and a JSON round trip unchanged.
+    const child: WreckDescriptor = { ...good, wreckId: 13, parentWreck: 12, parentPiece: 4, cutKind: 'slice', cutAng: 9 };
+    const parsed = WelcomeSchema.safeParse(JSON.parse(JSON.stringify({ ...welcome, wrecks: [good, child] })));
+    expect(parsed.success).toBe(true);
+    expect(parsed.data?.wrecks?.[1]).toStrictEqual(child);
   });
 
   it('the welcome accepts the sub-cap break-up switch (read before the server sends it)', () => {

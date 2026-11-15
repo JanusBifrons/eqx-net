@@ -1,4 +1,5 @@
 import type { Shot } from '../types.js';
+import { artSettled } from './capitals.js';
 
 /** M4 — the six player hulls, dollied along the line-up. */
 export const shipGallery: Shot = {
@@ -13,6 +14,11 @@ export const shipGallery: Shot = {
   target: { room: 'showcase-ship-gallery', params: { shipKind: 'fighter' } },
   hud: 'none',
   durationMs: 11_000,
+  async startWhen(ctx) {
+    await artSettled(ctx);
+    // A dolly needs a free camera: watch as a spectator (record as is).
+    await ctx.spectate();
+  },
   camera: [
     {
       atMs: 0,
