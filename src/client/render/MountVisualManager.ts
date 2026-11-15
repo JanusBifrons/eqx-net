@@ -313,6 +313,17 @@ export class MountVisualManager {
     this.shotsMatched++;
   }
 
+  /** Each listed mount's last drawn shot on this ship (the flash), in fx ms
+   *  (−Infinity: no such gun). The charge telegraph holds a full charge
+   *  until its gun's shot shows (chargeTelegraph.ts). Alloc-free. */
+  lastShotsMs(shipId: string, mountIds: ReadonlyArray<string>, out: number[]): void {
+    const cluster = this.clusters.get(shipId);
+    for (let i = 0; i < mountIds.length; i++) {
+      const g = cluster?.perMount.get(mountIds[i]!)?.gun;
+      out[i] = g ? g.lastShot * 1000 : -Infinity;
+    }
+  }
+
   private _lastShotMountId: string | null = null;
   private _lastShotBarrel = -1;
   /** Test hook: the AA barrel the last matched shot came from (-1 = none). */
