@@ -48,7 +48,9 @@ describe the wingman brain flying, read this section instead.
   `npcHostileTo`). Lock: `ownedShipsHunt.test.ts`, `wingmanFights.test.ts`
   "aggressive + hunt", `wingmanKillXp.test.ts`. The `rtsFleetScene` kill
   check stays skipped (first kill ~tick 1035 vs its 450-tick window; lock
-  restarts on target switches are part of it).
+  restarts on target switches are part of it). `wingmanFightsRobots` "five
+  hunting" now kills all three cubes every run (32–49 s) but stays skipped:
+  squadmate hits 4–5 a run over the full fight, limit 3 (line-of-fire work).
 - **Self pose:** `swarmEntitySnapshot` falls back to `lingeringPoseCache`
   (`lingeringHullSnapshot`, same shared scratch), so `runEntity` ticks a hull.
 - **Keys:** the AI input sink's ONE hull branch (`postInput(slot, bits,
