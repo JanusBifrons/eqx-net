@@ -6663,7 +6663,7 @@ export class ColyseusGameClient {
     // P5 — fitted blueprints (store only on change; compared without allocating).
     if (!sameIds(s.fittedBlueprints, fitted)) s.setFittedBlueprints(fitted === undefined ? [] : fitted.slice());
     const capacity = Math.floor(
-      cargoCapacityForMaxHealth(getShipKind(this.mirror.ships.get(localId)?.kind ?? null).maxHealth)
+      cargoCapacityForMaxHealth(getShipKind(this.mirror.ships.get(localId)?.kind ?? null))
         * fittedCargoMul(fitted ?? EMPTY_IDS),
     );
     if (!cargoChanged(s.cargo, cargo) && s.cargoCapacity === capacity) return;
