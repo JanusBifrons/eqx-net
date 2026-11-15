@@ -12,6 +12,14 @@
  *
  *   high 70 dust + 40 shards · medium 40 + 24 · low 18 + 10 · minimal 8 + 4
  *
+ * **A weapon's kill cut** (`opts.cutKill`: a slice or channel kill) keeps the
+ * break-up but tones its shards down so the cut reads first (hostile film
+ * review 2026-11-15, heavy-beam take 8: "dozens of flat, saturated orange
+ * triangles, 8–15 px, scattered widely … confetti"): `CUT_SHARD_SHARE` of
+ * the tier's shards, `CUT_SHARD_SIZE` × as big, `CUT_SHARD_SPEED` × as fast,
+ * mostly dull hull-grey metal chips cooling dark, and one in
+ * `CUT_HOT_EVERY` a hot chip that stays near the cut and dies sooner.
+ *
  * **Channel ash** (weapon cuts: a railgun `channel` kill, `spawnChannelAsh`).
  * A LINE emitter on the same pool: glowing ash along the channel the slug
  * punched through the hull, shed from its white-hot walls (white-hot, then
@@ -97,6 +105,16 @@ const DUST_LIFE_S = 1.0;
 const DUST_LIFE_VAR_S = 0.7;
 const SHARD_HOT = 0xffc070;
 const SHARD_COLD = 0x3a2a22;
+/** A cut kill's shards: share of the tier's count, size and speed. */
+export const CUT_SHARD_SHARE = 0.3;
+const CUT_SHARD_SIZE = 0.5;
+const CUT_SHARD_SPEED = 0.45;
+/** One cut-kill chip in this many is hot; it flies slower (stays near the
+ *  cut) and lives shorter. The rest are hull metal: grey, cooling dark. */
+const CUT_HOT_EVERY = 4;
+const CUT_HOT_SPEED = 0.4;
+const CHIP_LIGHT = 0x8a8682;
+const CHIP_DARK = 0x34302e;
 
 interface Particle {
   gfx: Graphics;
@@ -105,6 +123,8 @@ interface Particle {
   life: number; life0: number;
   /** Ash colours: white-hot, then ember (channel ash; a vaporise puff tints them). */
   hot: number; ember: number;
+  /** A shard's colour as it cools: from `c0` to `c1`. */
+  c0: number; c1: number;
   /** 0 dust, 1 shard, 2 flash, 3 ash. */
   kind: number;
 }
@@ -149,7 +169,7 @@ export class WreckBreakFx {
       }
       g.visible = false;
       this.layer.addChild(g);
-      return { gfx: g, x: 0, y: 0, vx: 0, vy: 0, spin: 0, size: 1, grow: 0, life: 0, life0: 1, kind, hot: ASH_HOT, ember: ASH_EMBER };
+      return { gfx: g, x: 0, y: 0, vx: 0, vy: 0, spin: 0, size: 1, grow: 0, life: 0, life0: 1, c0: SHARD_HOT, c1: SHARD_COLD, kind, hot: ASH_HOT, ember: ASH_EMBER };
     };
     for (let i = 0; i < MAX_DUST; i++) this.pool.push(mk(0));
     for (let i = 0; i < MAX_SHARDS; i++) this.pool.push(mk(1));
@@ -188,12 +208,20 @@ export class WreckBreakFx {
         this.arm(p, px + Math.cos(a) * j, py + Math.sin(a) * j, Math.cos(a) * sp, Math.sin(a) * sp, 0,
           R * (0.006 + this.rnd() * 0.012), R * DUST_GROW, DUST_LIFE_S + this.rnd() * DUST_LIFE_VAR_S);
       }
-      for (let i = 0; i < dial.shards; i++) {
+      const cut = opts?.cutKill === true;
+      const shards = cut ? Math.max(1, Math.round(dial.shards * CUT_SHARD_SHARE)) : dial.shards;
+      for (let i = 0; i < shards; i++) {
         const p = this.take(1);
         if (p === null) break;
-        const a = this.rnd() * Math.PI * 2, sp = R * (0.25 + this.rnd() * 0.9);
-        this.arm(p, px, py, Math.cos(a) * sp, Math.sin(a) * sp, (this.rnd() - 0.5) * 12,
-          R * (0.008 + this.rnd() * 0.018), 0, 1.4 + this.rnd() * 1.6);
+        const hot = !cut || i % CUT_HOT_EVERY === 0;
+        const a = this.rnd() * Math.PI * 2;
+        const sp = R * (0.25 + this.rnd() * 0.9) * (cut ? CUT_SHARD_SPEED * (hot ? CUT_HOT_SPEED : 1) : 1);
+        const size = R * (0.008 + this.rnd() * 0.018) * (cut ? CUT_SHARD_SIZE : 1);
+        const life = cut && hot ? 0.6 + this.rnd() * 0.6 : 1.4 + this.rnd() * 1.6;
+        this.arm(p, px, py, Math.cos(a) * sp, Math.sin(a) * sp, (this.rnd() - 0.5) * 12, size, 0, life);
+        p.c0 = hot ? SHARD_HOT : CHIP_LIGHT;
+        p.c1 = hot ? SHARD_COLD : CHIP_DARK;
+        p.gfx.tint = p.c0;
         p.gfx.rotation = a;
       }
     }
@@ -239,6 +267,7 @@ export class WreckBreakFx {
       const sp = R * (SPARK_SPEED_MIN + this.rnd() * SPARK_SPEED_VAR);
       this.arm(p, pbx, pby, dx * sp, dy * sp, (this.rnd() - 0.5) * 16,
         R * (0.004 + this.rnd() * 0.006), 0, 0.5 + this.rnd() * 0.7);
+      p.c0 = SHARD_HOT; p.c1 = SHARD_COLD;
       p.gfx.rotation = Math.atan2(dy, dx) + Math.PI / 2;
     }
   }
@@ -316,7 +345,7 @@ export class WreckBreakFx {
         g.alpha = u < 0.6 ? 1 : (1 - u) / 0.4;
       } else {
         g.rotation += p.spin * dtSec;
-        g.tint = lerpColor(SHARD_HOT, SHARD_COLD, Math.min(1, u * 1.5));
+        g.tint = lerpColor(p.c0, p.c1, Math.min(1, u * 1.5));
         g.alpha = u < 0.7 ? 1 : (1 - u) / 0.3;
       }
     }

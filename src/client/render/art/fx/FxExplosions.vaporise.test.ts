@@ -38,7 +38,7 @@ describe('FxExplosions.spawnVaporise', () => {
     const fx = new FxExplosions(fakeArt(), () => 'high');
     fx.spawnVaporise(0, 0, 40, 1000, TINT, 0.7);
     fx.tick(1020);
-    const glow = (fx.fireLayer.children as Sprite[]).find((s) => s.visible && s.tint === TINT)!;
+    const glow = (fx.overLayer.children as Sprite[]).find((s) => s.visible && s.tint === TINT)!;
     const early = glow.scale.x;
     fx.tick(1300);
     expect(glow.scale.x).toBeGreaterThan(early);
@@ -62,5 +62,55 @@ describe('FxExplosions.spawnVaporise', () => {
       return fx.fireLayer.children.filter((c) => c.visible).length;
     };
     expect(count('low')).toBeLessThan(count('high'));
+  });
+});
+
+/**
+ * Filmed (beam-vaporise-subcap v10, hostile review "Is the violet vaporise
+ * flash visible? NO"): the flash drew in `fireLayer`, UNDER the heavy beam's
+ * containers, at R x 1.6 wide on the glow texture (its visible core is ~a
+ * third of its half-width), so a ~28 u blast showed a ~10 u dot under a 60 u
+ * beam; the ring started at 0.3 R and only read ~130 ms later. The vaporise
+ * flash, glow and ring now draw in `overLayer` (stacked above the beams),
+ * full strength on the first frame.
+ */
+describe('FxExplosions.spawnVaporise reads on the kill frame', () => {
+  const vapSprites = (fx: FxExplosions): Sprite[] => (fx.overLayer.children as Sprite[]).filter((s) => s.visible);
+
+  it('the flash is in the over-the-beams layer, bright and wide on the first frame', () => {
+    const fx = new FxExplosions(fakeArt(), () => 'high');
+    const r = 77;
+    fx.spawnVaporise(0, 0, r, 1000, TINT, 0.7);
+    fx.tick(1000);
+    const lit = vapSprites(fx);
+    expect(lit.length, 'flash / glow / ring drawn above the beams').toBeGreaterThanOrEqual(2);
+    const widest = Math.max(...lit.map((s) => s.width / 2));
+    expect(widest, 'flash half-width (glow texture: visible core ~1/3 of it)').toBeGreaterThanOrEqual(r * 2);
+    expect(Math.max(...lit.map((s) => s.alpha)), 'full strength at once').toBeGreaterThanOrEqual(0.85);
+  });
+
+  it('the ring shows on the first frame, already hull-sized', () => {
+    const fx = new FxExplosions(fakeArt(), () => 'high');
+    fx.spawnVaporise(0, 0, 60, 1000, TINT, 0.7);
+    fx.tick(1016);
+    const ring = vapSprites(fx).filter((s) => s.alpha >= 0.6);
+    expect(ring.length).toBeGreaterThan(0);
+  });
+
+  it('a normal blast draws nothing above the beams', () => {
+    const fx = new FxExplosions(fakeArt(), () => 'high');
+    fx.spawn(0, 0, 60, 1000);
+    fx.tick(1016);
+    expect(vapSprites(fx).length).toBe(0);
+  });
+
+  it('the whole vaporise is gone in its seconds, over layer included', () => {
+    const fx = new FxExplosions(fakeArt(), () => 'high');
+    fx.spawnVaporise(0, 0, 60, 1000, TINT, 0.7);
+    fx.tick(1300);
+    expect(vapSprites(fx).length).toBeGreaterThan(0);
+    fx.tick(1700);
+    expect(vapSprites(fx).length).toBe(0);
+    expect(fx.activeCount()).toBe(0);
   });
 });

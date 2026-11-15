@@ -7,6 +7,8 @@
  * what it was built from changes (rare), so the per-frame check is a map
  * lookup and a few compares (invariant #14).
  */
+import { npcFactionDef, teamColorOf, teamEdgeOf, teamSigilOf, type LiveryEdge } from '../../../shared-types/factions.js';
+import { allegianceOfKind } from '../../../shared-types/shipKinds.js';
 import type { Container } from 'pixi.js';
 import { decideArtSwap, type ArtSwap } from '../spriteUpdateDecisions.js';
 import type { ArtHandle, ArtService } from './ArtService.js';
@@ -25,16 +27,29 @@ export interface ShipArtCtx {
   sunAz: number;
   /** Machined turrets (new effects): ringed hull / deck bakes and baked guns. */
   turrets?: boolean;
+  /** Ship livery treatment (`?livery=`, look R&D); absent = today's paint. */
+  livery?: import('./fields.js').LiveryTreatment;
 }
 
 /** The handle a ship should use now (re-acquired only on a kind/paint change).
- *  `dead`: a wreck piece's bake (no live lights; see `BakeJob`). */
-export function shipHandleFor(actx: ShipArtCtx, key: string, kindId: string, paint: number | undefined, dead = false): ArtHandle | null {
+ *  `dead`: a wreck piece's bake (no live lights; see `BakeJob`).
+ *  `team`/`sigil`/`edge` (owner colours): with `actx.livery` set and a team
+ *  given, the hull is liveried (sigil defaults to the team colour). The change check
+ *  compares scalars only; the Livery object is built only on re-acquire. */
+export function shipHandleFor(
+  actx: ShipArtCtx, key: string, kindId: string, paint: number | undefined, dead = false, team?: number, sigil?: number, edge?: LiveryEdge,
+): ArtHandle | null {
   if (!actx.art) return null;
   let h = actx.handles.get(key);
   const rings = actx.turrets === true && hasTurrets(kindId, false);
-  if (!h || h.stale === true || h.job.type !== 'ship' || h.job.id !== kindId || h.job.paint !== paint || (h.job.rings === true) !== rings || (h.job.dead === true) !== dead) {
-    h = actx.art.ship(kindId, paint, true, rings, dead);
+  const treat = team !== undefined ? actx.livery : undefined;
+  const sig = sigil ?? team ?? 0;
+  const lv = h?.job.type === 'ship' ? h.job.livery : undefined;
+  const liveryChanged = treat === undefined
+    ? lv !== undefined
+    : lv === undefined || lv.treatment !== treat || lv.team !== team || lv.sigil !== sig || lv.edge !== edge;
+  if (!h || h.stale === true || h.job.type !== 'ship' || h.job.id !== kindId || h.job.paint !== paint || (h.job.rings === true) !== rings || (h.job.dead === true) !== dead || liveryChanged) {
+    h = actx.art.ship(kindId, paint, true, rings, dead, treat !== undefined && team !== undefined ? { treatment: treat, team, sigil: sig, ...(edge !== undefined ? { edge } : {}) } : undefined);
     actx.handles.set(key, h);
   }
   return h;
@@ -106,4 +121,39 @@ export function isMachinedSprite(sprite: Container): boolean {
 /** Per-frame: slide a Machined ship's light to match its rotation. */
 export function updateArtShipLight(actx: ShipArtCtx, sprite: Container): void {
   if (sprite instanceof MachinedShipSprite) sprite.updateLight(actx.sunAz);
+}
+
+/** A faction's livery (team colour, sigil seed, section-edge shape), cached
+ *  per owner id so the frame loop never re-hashes; the entry is allocated
+ *  once on first sight. */
+export interface OwnerLivery { team: number; sigil: number; edge: LiveryEdge }
+const ownerLiveries = new Map<string, OwnerLivery>();
+export function ownerLivery(owner: string): OwnerLivery {
+  let l = ownerLiveries.get(owner);
+  if (!l) { l = { team: teamColorOf(owner), sigil: teamSigilOf(owner), edge: teamEdgeOf(owner) }; ownerLiveries.set(owner, l); }
+  return l;
+}
+/** Wreckage whose owner is unknown wears neutral grey scrap under a livery. */
+export const SCRAP_TEAM = 0x8a93a1;
+
+/** A live swarm ship's art. Classic look: a patrol bakes its faction paint.
+ *  Livery (`actx.livery`): the owner (faction, else the kind's allegiance)
+ *  supplies team + sigil instead; cargo pods keep their tier colours. */
+export function shipArtHandleForEntity(actx: ShipArtCtx, key: string, kind: string, faction: string | undefined): ReturnType<typeof shipHandleFor> {
+  if (actx.livery !== undefined && kind !== 'cargo-pod') {
+    const lv = ownerLivery(faction ?? allegianceOfKind(kind));
+    return shipHandleFor(actx, key, kind, undefined, false, lv.team, lv.sigil, lv.edge);
+  }
+  return shipHandleFor(actx, key, kind, faction !== undefined ? npcFactionDef(faction)?.color : undefined);
+}
+
+/** A wreck piece's parent art. Under a livery: the owner's livery when the
+ *  entry names one, else neutral grey scrap (never a bright fresh bake). */
+export function wreckArtHandleFor(actx: ShipArtCtx, key: string, kind: string, faction: string | undefined, dead: boolean): ReturnType<typeof shipHandleFor> {
+  if (actx.livery === undefined) return shipHandleFor(actx, key, kind, undefined, dead);
+  if (faction !== undefined) {
+    const lv = ownerLivery(faction);
+    return shipHandleFor(actx, key, kind, undefined, dead, lv.team, lv.sigil, lv.edge);
+  }
+  return shipHandleFor(actx, key, kind, undefined, dead, SCRAP_TEAM);
 }

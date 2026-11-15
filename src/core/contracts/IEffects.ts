@@ -70,6 +70,9 @@ export interface ParticleBurstOpts {
   /** The far end of a line burst (`wreck-ash`), world units (Y up). */
   lineToX?: number;
   lineToY?: number;
+  /** `wreck-break` of a weapon's kill cut (slice or channel): the shards
+   *  are a few small metal chips, not a hot burst, so the cut reads first. */
+  cutKill?: boolean;
 }
 
 /**

@@ -15,7 +15,7 @@
  */
 import { Container, MeshRope, Point, Sprite, type Texture } from 'pixi.js';
 import type { ArtHandle, ArtService } from '../ArtService.js';
-import { emberTint, envelope, flipFrame, TrailRing } from './fxMath.js';
+import { emberTint, envelope, flipFrame, lerpRgb, TrailRing } from './fxMath.js';
 
 const tex = (h: ArtHandle): Texture | null => (h.state === 'ready' && h.fx ? h.fx.tex : null);
 
@@ -29,6 +29,9 @@ const MAX_BURSTS = 24;
 /** A normal burst's flash and ring colours (a vaporise burst tints them). */
 const FLASH_TINT = 0xfff2d8;
 const RING_TINT = 0xffd6a8;
+/** Vaporise: the white-hot flash's life (s) and the ring's share of the burst. */
+const VAP_CORE_S = 0.3;
+const VAP_RING_U = 0.65;
 
 interface Burst {
   active: boolean; x: number; y: number; r: number; t0: number; seed: number;
@@ -36,6 +39,8 @@ interface Burst {
   linger: number;
   /** Vaporise variant (`spawnVaporise`): its tint, else -1, and length (s). */
   vapTint: number; vapS: number;
+  /** Vaporise only, in `overLayer`: white-hot core, tinted glow, ring. */
+  vapCore: Sprite; vapGlow: Sprite; vapRing: Sprite;
   flash: Sprite; fire: Sprite; subs: Sprite[]; ring: Sprite; embers: Sprite[]; smoke: Sprite[];
 }
 
@@ -57,6 +62,10 @@ export class FxExplosions {
   readonly fireLayer = new Container();
   /** Normal-blend smoke (under the fire). */
   readonly smokeLayer = new Container();
+  /** Additive vaporise flash, glow and ring, stacked ABOVE the beams (the
+   *  heavy beam that burned the hull is still on it at the kill; under it the
+   *  flash never showed: beam-vaporise-subcap v10 review). */
+  readonly overLayer = new Container();
   private readonly bursts: Burst[] = [];
   private readonly fire: ArtHandle;
   private readonly glow: ArtHandle;
@@ -69,6 +78,8 @@ export class FxExplosions {
     this.fireLayer.blendMode = 'add';
     this.fireLayer.eventMode = 'none';
     this.smokeLayer.eventMode = 'none';
+    this.overLayer.blendMode = 'add';
+    this.overLayer.eventMode = 'none';
     this.fire = art.fx('fireball', undefined, undefined, false);
     this.glow = art.fx('glow', undefined, undefined, false);
     this.ring = art.fx('ring', undefined, undefined, false);
@@ -99,17 +110,19 @@ export class FxExplosions {
 
   /**
    * The vaporise variant (fracture v11: a heavy-beam / railgun kill burned
-   * the whole hull away, nothing left to explode or smoke): a flash in the
-   * weapon's `tint` that swells into a short glow, a tinted shock ring and
-   * glowing motes thrown out, all gone in `seconds`. No fireball, no smoke.
-   * Same pool and tiers as `spawn`. False if not ready.
+   * the whole hull away, nothing left to explode or smoke): on the kill frame
+   * a white-hot flash in the weapon's `tint` (gone in ~0.3 s), a tinted glow
+   * that swells and fades, a shock ring already hull-sized, all in
+   * `overLayer` (above the beams), and glowing motes thrown out; all gone in
+   * `seconds`. No fireball, no smoke. Same pool and tiers as `spawn`.
+   * False if not ready.
    */
   spawnVaporise(x: number, y: number, r: number, nowMs: number, tint: number, seconds: number): boolean {
     const b = this.take(x, y, r, nowMs);
     if (b === null) return false;
     b.linger = 1;
     b.vapTint = tint; b.vapS = Math.max(0.2, seconds);
-    b.flash.tint = tint; b.ring.tint = tint;
+    b.vapCore.tint = lerpRgb(tint, 0xffffff, 0.6); b.vapGlow.tint = tint; b.vapRing.tint = lerpRgb(tint, 0xffffff, 0.3);
     for (const e of b.embers) e.tint = tint;
     return true;
   }
@@ -129,20 +142,32 @@ export class FxExplosions {
     return b;
   }
 
-  /** One frame of a vaporise burst (alloc-free). */
+  /** One frame of a vaporise burst (alloc-free). Sizes are on the glow
+   *  texture, whose visible core is ~a third of the sprite's half-width. */
   private tickVaporise(b: Burst, age: number, embersN: number): void {
     const R = b.r, S = b.vapS, u = age / S;
     const grow = 1 - (1 - u) * (1 - u);
-    // The flash swells into the glow of the burning hull, then fades.
-    b.flash.visible = true;
-    b.flash.position.set(b.x, b.y);
-    b.flash.scale.set((R * (1.6 + 1.6 * grow)) / b.flash.texture.width);
-    b.flash.alpha = envelope(age, 0.02, S) * 0.95;
-    b.ring.visible = u < 0.7;
-    if (b.ring.visible) {
-      b.ring.position.set(b.x, b.y);
-      b.ring.scale.set((R * (0.3 + 1.5 * grow)) / (b.ring.texture.width / 2));
-      b.ring.alpha = 0.7 * (1 - u / 0.7);
+    // White-hot flash: full on the kill frame, gone in VAP_CORE_S.
+    const core = b.vapCore;
+    core.visible = age < VAP_CORE_S;
+    if (core.visible) {
+      core.position.set(b.x, b.y);
+      core.scale.set((R * (3.2 + 0.8 * (age / VAP_CORE_S))) / core.texture.width);
+      core.alpha = envelope(age, 0, VAP_CORE_S);
+    }
+    // The glow of the burning hull: swells, then fades over the burst.
+    const glow = b.vapGlow;
+    glow.visible = true;
+    glow.position.set(b.x, b.y);
+    glow.scale.set((R * (4.4 + 2.6 * grow)) / glow.texture.width);
+    glow.alpha = 0.9 * envelope(age, 0, S);
+    // Shock ring: hull-sized at once, out to ~2.6 R.
+    const ring = b.vapRing;
+    ring.visible = u < VAP_RING_U;
+    if (ring.visible) {
+      ring.position.set(b.x, b.y);
+      ring.scale.set((R * (0.9 + 1.7 * grow)) / (ring.texture.width / 2));
+      ring.alpha = 0.95 * (1 - u / VAP_RING_U);
     }
     for (let j = 0; j < EMBERS; j++) {
       const e = b.embers[j]!;
@@ -241,10 +266,12 @@ export class FxExplosions {
   destroy(): void {
     this.fireLayer.destroy({ children: true });
     this.smokeLayer.destroy({ children: true });
+    this.overLayer.destroy({ children: true });
   }
 
   private hide(b: Burst): void {
     b.flash.visible = false; b.fire.visible = false; b.ring.visible = false;
+    b.vapCore.visible = false; b.vapGlow.visible = false; b.vapRing.visible = false;
     for (const s of b.subs) s.visible = false;
     for (const s of b.embers) s.visible = false;
     for (const s of b.smoke) s.visible = false;
@@ -264,7 +291,8 @@ export class FxExplosions {
     const embers: Sprite[] = [];
     for (let j = 0; j < EMBERS; j++) embers.push(mk(spark, this.fireLayer, 0xffffff, 1));
     const flash = mk(glow, this.fireLayer, FLASH_TINT);
-    return { active: false, x: 0, y: 0, r: 0, t0: 0, seed: 0, linger: 1, vapTint: -1, vapS: 0, flash, fire, subs, ring: ringS, embers, smoke: smokeSprites };
+    const vapGlow = mk(glow, this.overLayer), vapRing = mk(ring, this.overLayer), vapCore = mk(glow, this.overLayer);
+    return { active: false, x: 0, y: 0, r: 0, t0: 0, seed: 0, linger: 1, vapTint: -1, vapS: 0, vapCore, vapGlow, vapRing, flash, fire, subs, ring: ringS, embers, smoke: smokeSprites };
   }
 }
 

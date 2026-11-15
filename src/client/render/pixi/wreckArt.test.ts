@@ -18,7 +18,6 @@ import {
   WRECK_GLOW_EMBER_S,
   WRECK_GLOW_END_S,
   wreckBlasts,
-  hullDeathBlastReplaced,
   crackFrontAt,
   crackIgniteMs,
   WreckArtState,
@@ -45,6 +44,7 @@ import {
   type WreckBlast,
   type WreckTexLayout,
 } from './wreckArt.js';
+import { hullDeathBlastReplaced } from './deathBlast.js';
 import { rebuildWreckPieces } from '../../net/wreckGeometryStore.js';
 import { FRACTURE_ALGO_VERSION, EDGE_CUT, EDGE_HULL, projectToOutline } from '../../../core/destruction/fractureHull.js';
 import { shipHullOutline } from '../../../core/geometry/shipHullOutline.js';
@@ -355,7 +355,7 @@ describe('a kill cut glows in the weapon\'s colour (weapon cuts, look)', () => {
   // metal passes through an ember: the beam's violet for ~1.5 s, then a warm
   // orange-red ember (as the channel cools) to scorch, dark by 4.5 s.
   it('a slice edge cools from violet through a warm orange-red ember to dark', () => {
-    for (const s of [2.5, 2.8, 3.0, 3.3, 3.5]) {
+    for (const s of [2.0, 2.4, 2.8, 3.0]) {
       const w = wreckGlowAt(s, g(), GLOW_TINT_SLICE);
       const [r, gg, b] = rgb(w.color);
       expect(w.alpha, `${s} s still showing`).toBeGreaterThan(0.5);
@@ -365,6 +365,42 @@ describe('a kill cut glows in the weapon\'s colour (weapon cuts, look)', () => {
     }
     expect(wreckGlowAt(WRECK_GLOW_END_S, g(), GLOW_TINT_SLICE).alpha).toBe(0);
     expect(wreckGlowAt(4.45, g(), GLOW_TINT_SLICE).alpha).toBeLessThan(0.05);
+  });
+
+  // Hostile film review 2026-11-15 (beam take 8): the slice went violet →
+  // red/coral (~1 s after the hold) → orange, backwards for cooling metal.
+  // Hot metal cools orange → red → dark: after the violet hold the slice is
+  // an orange ember first, then deep red, scorch, dark; no rose step. The
+  // channel likewise: white → yellow/orange → red → dark.
+  const greenShare = (c: number): number => { const [r, gg] = rgb(c); return r > 0 ? gg / r : 0; };
+  it('after the hold a cut cools orange -> deep red -> dark, never red before orange (hot-metal order)', () => {
+    for (const tint of [GLOW_TINT_SLICE, GLOW_TINT_CHANNEL]) {
+      // From the end of the hold's colour shift to the deep red, the hue only
+      // reddens (green's share of red never rises) and blue never beats
+      // green: no rose/coral step. (Past the red it fades to a dim brown
+      // scorch, then dark.)
+      const from = tint === GLOW_TINT_SLICE ? 1.8 : 2.0;
+      let prev = Infinity;
+      for (let s = from; s <= 3.4 + 1e-9; s += 0.05) {
+        const c = wreckGlowAt(s, g(), tint).color;
+        const [, gg, b] = rgb(c);
+        expect(greenShare(c), `tint ${tint} ${s.toFixed(2)} s: only reddens (0x${c.toString(16)})`).toBeLessThanOrEqual(prev + 1e-9);
+        prev = greenShare(c);
+        expect(b, `tint ${tint} ${s.toFixed(2)} s: no rose (blue over green, 0x${c.toString(16)})`).toBeLessThanOrEqual(gg);
+      }
+      // Orange first (just after the hold) ...
+      const early = wreckGlowAt(tint === GLOW_TINT_SLICE ? 1.9 : 2.6, g(), tint).color;
+      expect(greenShare(early), `tint ${tint}: an orange ember first (0x${early.toString(16)})`).toBeGreaterThanOrEqual(0.42);
+      // ... then deep red.
+      const late = wreckGlowAt(3.4, g(), tint);
+      expect(greenShare(late.color), `tint ${tint}: deep red by 3.4 s (0x${late.color.toString(16)})`).toBeLessThanOrEqual(0.25);
+      expect(late.alpha, `tint ${tint}: the red still shows`).toBeGreaterThan(0.35);
+    }
+    // The slice leaves the violet quickly (a long violet → orange blend reads
+    // as a pink step): orange by 1.8 s.
+    const [r, gg, b] = rgb(wreckGlowAt(1.8, g(), GLOW_TINT_SLICE).color);
+    expect(gg, 'slice at 1.8 s: orange, not pink').toBeGreaterThan(b);
+    expect(r).toBeGreaterThanOrEqual(0xf0);
   });
 
   it('a channel edge stays white-hot for ~1.5 s, then cools like struck metal to dark', () => {
@@ -395,7 +431,7 @@ describe('a kill cut glows in the weapon\'s colour (weapon cuts, look)', () => {
   it('splinter cracks keep their look: the default tint is the crack curve, and cracks are 1× wide', () => {
     for (const s of [0, 0.3, 1, 2.5]) expect(wreckGlowAt(s, g(), GLOW_TINT_CRACK)).toEqual(wreckGlowAt(s, g()));
     expect(glowWidthMul(GLOW_TINT_CRACK)).toBe(1);
-    expect(glowWidthMul(GLOW_TINT_SLICE)).toBe(CUT_GLOW_WIDTH_MUL);
+    expect(glowWidthMul(GLOW_TINT_SLICE)).toBeGreaterThanOrEqual(CUT_GLOW_WIDTH_MUL);
     expect(glowWidthMul(GLOW_TINT_CHANNEL)).toBe(CUT_GLOW_WIDTH_MUL);
     expect(CUT_GLOW_WIDTH_MUL).toBeGreaterThanOrEqual(2);
   });
@@ -447,9 +483,36 @@ describe('a kill cut glows in the weapon\'s colour (weapon cuts, look)', () => {
       // The kill cut's strip is the widest line on the wreck, baked into the
       // same mesh: its core reaches CUT_GLOW_WIDTH_MUL × a crack's (unless the
       // piece is too thin there), and a splinter's is half a crack's.
-      expect(maxCut, `${cutKind}: widest cut core`).toBeGreaterThan((maxCrack / SPLINTER_GLOW_WIDTH_MUL) * (CUT_GLOW_WIDTH_MUL - 0.5));
+      expect(maxCut, `${cutKind}: widest cut core`).toBeGreaterThan((maxCrack / SPLINTER_GLOW_WIDTH_MUL) * (glowWidthMul(cutKind === 'slice' ? GLOW_TINT_SLICE : GLOW_TINT_CHANNEL) - 0.5));
       expect(maxCrack).toBeGreaterThan(0);
     }
+  });
+
+  // Hostile film review 2026-11-15 (beam take 8): the slice's hot edge was
+  // thin (~6–7 px) and pale lavender, not white-hot at the very edge. It
+  // reads as molten metal: a hot white-violet rim for the first ~0.5 s, and
+  // a wider band than the channel's.
+  it('a slice\'s edge row is white-violet hot for ~0.5 s, then the violet rim', () => {
+    const tex = wreckGlowTexture(), src = tex.source;
+    const data = src.resource as Uint8Array, W = src.width;
+    const at = (ageS: number): [number, number, number] => {
+      const i = Math.round((ageS / WRECK_GLOW_END_S) * (W - 1));
+      const o = ((GLOW_TINT_SLICE * GLOW_ROWS_PER_TINT + GLOW_ROW.EDGE) * W + i) * 4;
+      return [data[o]!, data[o + 1]!, data[o + 2]!];
+    };
+    for (const s of [0.1, 0.3, 0.45]) {
+      const [r, gg, b] = at(s);
+      expect(Math.min(r, gg, b), `${s} s: white-hot at the edge (${r},${gg},${b})`).toBeGreaterThanOrEqual(0xd0);
+      expect(b, `${s} s: still violet-white (blue on top)`).toBeGreaterThan(gg);
+    }
+    // Past ~0.8 s the rim is the beam's violet again (only a pale blend).
+    const [, g1, b1] = at(1.0);
+    expect(b1 - g1, '1.0 s: violet rim').toBeGreaterThanOrEqual(0x40);
+  });
+
+  it('a slice\'s glow band is wider than the channel\'s (molten metal, not a hairline)', () => {
+    expect(glowWidthMul(GLOW_TINT_SLICE)).toBeGreaterThanOrEqual(2.8);
+    expect(glowWidthMul(GLOW_TINT_SLICE)).toBeGreaterThan(glowWidthMul(GLOW_TINT_CHANNEL));
   });
 
   it('the glow texture bakes one block of rows per tint (a gradient across a kill cut\'s strip)', () => {
@@ -491,6 +554,22 @@ describe('a channel kill sheds ash along the channel (weapon cuts, look)', () =>
     expect(Math.hypot(line.bx - line.ax, line.by - line.ay)).toBeGreaterThan(0.2 * hullR);
     expect(breakOf({ ...base, wreckId: 51, cutKind: 'slice' })[0]!.ch, 'a slice has no ash line').toBeNull();
     expect(breakOf({ ...DESC, wreckId: 52, deathTick: 100 })[0]!.ch, 'no cut, no ash').toBeNull();
+  });
+
+  // Hostile film review 2026-11-15 (beam take 8): on a cut kill the break-up
+  // shards read as confetti; the renderer tones them down for a cut kill,
+  // so the break-up sink must say whether the kill was a cut.
+  it('the break-up sink is told whether the kill was a weapon cut (slice or channel)', () => {
+    const cutOf = (d: WreckDescriptor): boolean | undefined => {
+      let seen: boolean | undefined;
+      const art = new WreckArtState((_x, _y, _r, _s, _seed, _fx, _ch, cut) => { seen = cut; }, () => {});
+      art.infoFor(d, rebuildWreckPieces(d)!, 0, { x: 0, y: 0, angle: 0 }, 101, 1000);
+      return seen;
+    };
+    const base = { ...DESC, killX: 300, killY: 0, deathTick: 100, cutAng: 32768, cutW: 120 };
+    expect(cutOf({ ...base, wreckId: 54, cutKind: 'slice' })).toBe(true);
+    expect(cutOf({ ...base, wreckId: 55, cutKind: 'channel' })).toBe(true);
+    expect(cutOf({ ...DESC, wreckId: 56, deathTick: 100 })).toBe(false);
   });
 
   it('channelFarEnd is null without EDGE_CUT edges', () => {
@@ -810,10 +889,14 @@ describe('a cut kill reads first: subdued splinters, the whole cut lit, a visibl
                     expect(Math.min(r0!, g0!, b0!), `${tag}: white-hot at the edge`).toBeGreaterThanOrEqual(0xd8);
                     expect(r1! - b1!, `${tag}: yellow-orange deeper in`).toBeGreaterThanOrEqual(0x50);
                   } else {
-                    for (const [r, g, b] of [[r0!, g0!, b0!], [r1!, g1!, b1!]]) {
-                      expect(b! - g!, `${tag}: violet`).toBeGreaterThanOrEqual(0x30);
-                      expect(r! - g!, `${tag}: violet`).toBeGreaterThanOrEqual(0x10);
-                    }
+                    // The edge is a hot white-violet for the first ~0.5 s
+                    // (beam take 8 review: "pale lavender, not white-hot"):
+                    // whiter, still violet; deeper in, the beam's violet.
+                    expect(Math.min(r0!, g0!, b0!), `${tag}: white-hot at the edge`).toBeGreaterThanOrEqual(0xc8);
+                    expect(b0! - g0!, `${tag}: white-violet at the edge`).toBeGreaterThanOrEqual(0x20);
+                    expect(r0! - g0!, `${tag}: white-violet at the edge`).toBeGreaterThanOrEqual(0x10);
+                    expect(b1! - g1!, `${tag}: violet deeper in`).toBeGreaterThanOrEqual(0x30);
+                    expect(r1! - g1!, `${tag}: violet deeper in`).toBeGreaterThanOrEqual(0x10);
                   }
                 }
                 checked++;
@@ -875,7 +958,7 @@ describe('a cut kill reads first: subdued splinters, the whole cut lit, a visibl
               const tag = `${cutKind} s${seed} (${(x + p.cx).toFixed(0)}, ${(y + p.cy).toFixed(0)})`;
               expect(onArt(x + p.cx, y + p.cy, eps), `${tag}: on the drawn hull`).toBe(true);
               if (inRing(o, x, y) || outlineDist(x, y, false) <= eps) continue;
-              expect(outlineDist(x, y, true), `${tag}: outside the piece only as a bleed off a cut edge`).toBeLessThanOrEqual(bleed);
+              expect(outlineDist(x, y, true), `${tag}: outside the piece only as a bleed off a cut edge`).toBeLessThanOrEqual(bleed + 1e-3); // float32 positions
               const hx = x + p.cx, hy = y + p.cy;
               expect(onArt(hx, hy, eps), `${tag}: the bleed never past the drawn hull`).toBe(true);
             }
