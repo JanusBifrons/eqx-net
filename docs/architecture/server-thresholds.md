@@ -131,6 +131,7 @@ value is superseded, move its row to [History](#history). Values were checked ag
 | Loot pods per sector | 64 (merge, never evict value; merge radius 60) | `MAX_LIVE_LOOT_PER_SECTOR`, `LOOT_MERGE_RADIUS`, `src/server/cargo/LootSubsystem.ts` | Live pods | `LootSubsystem.test.ts` |
 | Loot pod TTL | 15 min | `LOOT_POD_TTL_MS`, `src/server/cargo/LootSubsystem.ts` | Pod lifetime | `LootSubsystem.test.ts` |
 | Loot pickup radius | 80 u at 1× (scales with ship size, #18) | `LOOT_PICKUP_RADIUS` (`shipTuning.lootPickup`), `src/server/cargo/LootSubsystem.ts` | Pickup reach; collect every 6 ticks, sweep ~1 Hz | `LootSubsystem.test.ts` |
+| Tractor hold-zone pickup | 1.2 × the tractor's `hold` (300 u today) from the beam's muzzle | `TRACTOR_PICKUP_HOLD_MUL`, `src/server/rooms/ForceFieldSubsystem.ts` | A pod held in the collector's own tractor beam is picked up as if flown over | `tractorPickup.test.ts`, `ForceFieldSubsystem.test.ts` |
 | Derelict TTL | 1 h | `DERELICT_TTL_MS`, `src/server/cargo/LootSubsystem.ts` | Abandoned-hull pods | `LootSubsystem.test.ts` |
 | Storage capacity | Capital 5000, Cargo Bay 2000 (others per kind) | `StructureKind.holdCapacity`, `src/shared-types/structureKinds.ts` | Base storage | `StorageService.test.ts` |
 | Auto-deposit | within 400 u for 120 ticks | `DEPOSIT_RANGE`, `DEPOSIT_DWELL_TICKS`, `src/server/cargo/StorageService.ts` | When cargo deposits itself | `tests/integration/sectorRoom/storageDeposit.test.ts` |
