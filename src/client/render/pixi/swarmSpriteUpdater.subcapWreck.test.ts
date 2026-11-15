@@ -32,9 +32,6 @@ import type { RenderMirror, SwarmRenderState, PoseRingEntry } from '../../../cor
 import { POSE_RING_DEPTH } from '../../../core/contracts/IRenderer.js';
 import { EDGE_CUT, FRACTURE_ALGO_VERSION } from '../../../core/destruction/fractureHull.js';
 import { buildWreckPieces, hullLocalCutAngle } from '../../../core/destruction/wreckPieces.js';
-import { shipShapeScale } from '../../../core/geometry/shipHullOutline.js';
-import { getShipKind } from '../../../shared-types/shipKinds.js';
-import { HEAVY_BEAM_WIDTH } from '../../../core/combat/WeaponCatalogue.js';
 import type { WreckDescriptor } from '../../../shared-types/messages/snapshotMessages.js';
 
 const SUB = DESTRUCTION_PROFILES.subcap.fx;
@@ -624,15 +621,15 @@ describe('sub-capital wreck pieces draw the dead bake, never the live one (take 
  *  it). A kill cut on a sub-cap glows like a capital's: the weapon's colour
  *  held ~1.5 s, then an ember, dark by ~4.5 s (`fx.cutGlowStyle`). */
 describe('a sub-cap cut kill glows like a capital cut (beam take 7 review)', () => {
-  /** A heavy-beam slice kill of a missile frigate along its length (the
-   *  filmed case: two long pieces either side of the 60 u strip). */
+  /** A slice kill of a missile frigate along its length: two long halves.
+   *  Thin (zero-width) slice: a 60 u heavy-beam strip burns this hull away (fracture v11). */
   function sliceDesc(): WreckDescriptor {
     const kindId = 'missile-frigate' as const;
     const pose = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
     const dir = { x: 1, y: 0 };
     const b = buildWreckPieces({
       kindId, pose, killWorld: { x: -200, y: 0 }, attackerWorld: null, seed: 7, killBlowDamage: 0.3, recentDamageRate: 0.5,
-      cutKind: 'slice', cutAng: hullLocalCutAngle(pose, dir), cutW: HEAVY_BEAM_WIDTH / shipShapeScale(getShipKind(kindId)),
+      cutKind: 'slice', cutAng: hullLocalCutAngle(pose, dir), cutW: 0,
     });
     const f = b.fracture;
     return {
