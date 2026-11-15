@@ -268,10 +268,12 @@ describe('weaponTargetFactor (per-target damage factors)', () => {
   const plain = getWeapon('laser');
   const miner: WeaponDef = { ...plain, targetFactor: { shield: 0, hull: 0.05 } };
 
-  it('defaults every class to 1 for a weapon without factors', () => {
+  it('defaults every damage class to 1 and rock to 0 (guns do not mine) for a weapon without factors', () => {
     for (const cls of ['shield', 'hull', 'structure', 'wreck'] as const) {
       expect(weaponTargetFactor(plain, cls)).toBe(1);
     }
+    expect(weaponTargetFactor(plain, 'rock')).toBe(0);
+    expect(weaponTargetFactor(miner, 'rock')).toBe(0);
   });
 
   it('reads a set factor and defaults the absent keys to 1', () => {
@@ -307,11 +309,12 @@ describe('WeaponCatalogue — mining laser (plan partitioned-chasing-lark PR 7)'
     expect(isWeaponId('mining_laser')).toBe(true);
   });
 
-  it('nothing on a shield, 5 % on a live hull or a structure, full on a wreck', () => {
+  it('nothing on a shield, 5 % on a live hull or a structure, full on a wreck; mines rock', () => {
     expect(weaponTargetFactor(w, 'shield')).toBe(0);
     expect(weaponTargetFactor(w, 'hull')).toBe(0.05);
     expect(weaponTargetFactor(w, 'structure')).toBe(0.05);
     expect(weaponTargetFactor(w, 'wreck')).toBe(1);
+    expect(weaponTargetFactor(w, 'rock')).toBe(1);
     const out = { shield: -1, hull: -1 };
     expect(weaponLayerMul(w, false, out)).toEqual({ shield: 0, hull: 0.05 });
     expect(weaponLayerMul(w, true, out)).toEqual({ shield: 0.05, hull: 0.05 });
