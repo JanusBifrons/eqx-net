@@ -5738,9 +5738,12 @@ export class ColyseusGameClient {
 
     // Drop entries for mounts no longer present (e.g. ship-kind changed
     // mid-life — currently impossible but cheap to guard).
+    // A capital group fires each turret only while it bears (`fcFireMounts`):
+    // a turret aimed away draws no beam (it once drew one to max range).
+    const bearingOnly = this._fcPerMount && this._fireSlotOverride !== null;
     const mountIds = this._liveBeamMountIdsScratch;
     mountIds.clear();
-    for (const m of mounts) mountIds.add(m.id);
+    for (const m of mounts) if (!bearingOnly || this._fcBearing.has(m.id)) mountIds.add(m.id);
     for (const id of liveBeams.keys()) if (!mountIds.has(id)) liveBeams.delete(id);
 
     const cosA = Math.cos(ship.angle);
@@ -5748,6 +5751,7 @@ export class ColyseusGameClient {
     const mountAngles = ship.mountAngles;
     for (let i = 0; i < mounts.length; i++) {
       const mount = mounts[i]!;
+      if (!mountIds.has(mount.id)) continue;
       const mountWorldX = ship.x + (mount.localX * cosA - mount.localY * sinA);
       const mountWorldY = ship.y + (mount.localX * sinA + mount.localY * cosA);
       const angleIdx = this.instanceMountIndex(ship.kind, ship.activatedMounts, mount.id);
@@ -5895,6 +5899,9 @@ export class ColyseusGameClient {
   private readonly _fcMountLastTick = new Map<string, number>();
   /** Mounts in the salvo being sent (capitals; empty = every bearing mount). */
   private readonly _fcSalvo = new Set<string>();
+  /** Mounts that bore on their target this fire tick (capitals): the only
+   *  ones `updateLiveBeam` draws a beam from. */
+  private readonly _fcBearing = new Set<string>();
   private readonly _fcPickX = new Float64Array(8);
   private readonly _fcPickY = new Float64Array(8);
   /** Per-lock hit shapes for `pickTurretLock`'s hull range gate (reused, #14). */
@@ -6322,6 +6329,7 @@ export class ColyseusGameClient {
     this.fcSyncKind(this.mirror.ships.get(localId)?.kind ?? null);
     const activeGroup = useUIStore.getState().activeGroupId;
     const nowMs = this.clock.now();
+    this._fcBearing.clear();
     let beamGroup: string | null = null;
     for (const g of this._fcGroups) {
       let lockedKey: string | null = null;
@@ -6403,6 +6411,7 @@ export class ColyseusGameClient {
       // In the mount's own reach of the target's hull AND on bearing (#15).
       if (!mountFiresOn(m.weaponId, def.reach, ox, oy, st.angle + m.baseAngle + (angles?.[i] ?? 0), this._fcPose)) continue;
       bears = true;
+      this._fcBearing.add(m.id);
       const cd = getWeapon(m.weaponId).cooldownTicks;
       const lastMs = this._fcMountLastMs.get(m.id);
       if (lastMs !== undefined && nowMs - lastMs < (cd * 1000) / 60) continue;
