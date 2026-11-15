@@ -470,6 +470,7 @@ export function targetUrl(baseUrl: string, target: ShotTarget, testId: string, _
   if (process.env['EQX_SHIP_TUNING']) p.set('shipTuning', process.env['EQX_SHIP_TUNING']);
   if (process.env['EQX_SHIP_KIND_SCALE']) p.set('shipKindScale', process.env['EQX_SHIP_KIND_SCALE']);
   if (process.env['EQX_CAPITAL_STYLE']) p.set('capStyle', process.env['EQX_CAPITAL_STYLE']);
+  if (process.env['EQX_BARGE_LOOK']) p.set('bargeLook', process.env['EQX_BARGE_LOOK']);
   if (process.env['EQX_CAPITAL_MAP']) p.set('capMap', process.env['EQX_CAPITAL_MAP']);
   // Extra URL params for every shot in a run (e.g. `art=machined&fx=new`, so
   // comparison arms all film the same look).

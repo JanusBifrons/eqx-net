@@ -50,6 +50,7 @@ import { alienGate, garrisonPatrol, teleporterRide, transitHub } from './shots/v
 import { tradeDeal, tradeRaid } from './shots/trade.js';
 import { cockpitBounty, cockpitHaul, cockpitRobots, cockpitStronghold } from './shots/cockpit.js';
 import { fireControlShots } from './shots/fireControl.js';
+import { bargeLook, bargeEngines } from './shots/bargeLook.js';
 
 /** Every shot, in reel order. Catalogue = all of them; reel = `reel: true`. */
 export const SHOTS: readonly Shot[] = [
@@ -62,6 +63,8 @@ export const SHOTS: readonly Shot[] = [
   joinSector,
   shipGallery,
   capitalLineup,
+  bargeLook,
+  bargeEngines,
   capitalBroadside,
   capitalBreakup,
   capitalFleetWarp,

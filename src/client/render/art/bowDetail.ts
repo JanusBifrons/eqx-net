@@ -123,7 +123,12 @@ export function planBowFeatures(kindId: string, parts: readonly BowPart[]): BowP
   for (const [x, y] of hull) { stemY = Math.min(stemY, y); maxHalf = Math.max(maxHalf, Math.abs(x)); }
   const b = maxHalf * 2;
   const keepOuts = turretKeepOuts(kindId);
-  const fore = shipTurrets(kindId).filter((t) => t.mount.id.startsWith('main-') && t.py < 0).sort((p, q) => p.py - q.py);
+  const turrets = shipTurrets(kindId);
+  let fore = turrets.filter((t) => t.mount.id.startsWith('main-') && t.py < 0).sort((p, q) => p.py - q.py);
+  // A capital with no forward main battery (the mining barge) bounds its bow
+  // by its forward-most mount of any id, so its bow is not left bare. Every
+  // warship has a forward `main-*` turret, so this never changes them.
+  if (fore.length === 0) fore = turrets.filter((t) => t.py < 0).sort((p, q) => p.py - q.py).slice(0, 1);
   const empty: BowPlan = { features: [], stemY, bowEndY: stemY, beam: b, keepOuts };
   if (fore.length === 0 || getShipKind(kindId).sizeClass !== 'capital') return empty;
   const margin = b * 0.02;
@@ -283,7 +288,9 @@ export function planBowFeatures(kindId: string, parts: readonly BowPart[]): BowP
     if (ok) features.push(body, bar);
     return ok;
   };
-  if (tiers.length > 0) {
+  // A fire-control director is a warship fitting: not on a hull bounded by
+  // the fallback mount (no main battery to direct).
+  if (tiers.length > 0 && fore[0]!.mount.id.startsWith('main-')) {
     const placed = director(keepB.y + keepB.r + margin, tiers[0]!.front - margin);
     const step = tiers.find((t) => t.front > tiers[0]!.front + b * 0.01);
     if (!placed && step) director(Math.max(tiers[0]!.front + margin * 0.5, keepB.y + keepB.r + margin), step.front - margin * 0.5, tiers[0]!.p.pts);

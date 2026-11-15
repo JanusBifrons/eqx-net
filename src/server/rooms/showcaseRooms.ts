@@ -21,7 +21,7 @@ import { linkId } from '../../core/bases/transitNetwork.js';
 import { HEART_SUPER_GUNS, heartSuperGunFunds } from '../../core/bases/galaxyBases.js';
 import { getStructureKind, type StructureKindId } from '../../shared-types/structureKinds.js';
 
-import { getShipKind } from '../../shared-types/shipKinds.js';
+import { getShipKind, isShipKindId } from '../../shared-types/shipKinds.js';
 
 export const SHOWCASE_PILOT_ID = '5ca5e000-0000-4000-8000-000000000001';
 
@@ -532,6 +532,32 @@ export const SHOWCASE_HUB_OPTS = {
   maxClients: 4,
 };
 
+
+/**
+ * Mining-barge look options (plan partitioned-chasing-lark, PR 14): the look
+ * picked by `EQX_BARGE_LOOK` (A|B|C, server) and `?bargeLook=` (page) parked
+ * nose up, a battleship off its starboard side and a few sub-caps off its port
+ * side, for scale. Without the switch the barge pose is left out.
+ */
+function bargeLookPoses(): Array<{ kind: string; x: number; y: number; angle: number }> {
+  const poses: Array<{ kind: string; x: number; y: number; angle: number }> = [{ kind: 'battleship', x: 2000, y: 0, angle: 0 }];
+  if (isShipKindId('barge-look')) poses.push({ kind: 'barge-look', x: 0, y: 0, angle: 0 });
+  const subs = ['fighter', 'heavy', 'gunship', 'interceptor', 'missile-frigate'];
+  subs.forEach((kind, i) => poses.push({ kind, x: -1150 - (i % 2) * 160, y: -900 + i * 260, angle: 0 }));
+  return poses;
+}
+export const SHOWCASE_BARGE_LOOK_OPTS = {
+  testMode: true,
+  asteroidConfig: [],
+  peacefulDrones: true,
+  dronePoses: bargeLookPoses(),
+  defaultSpawnX: -1400,
+  defaultSpawnY: -4600,
+  maxClients: 4,
+  /** Join `?shipKind=barge-look` to fly the look (the engines close-up). */
+  pilotCapitals: true,
+};
+
 /** Room name → options, registered in `index.ts`. */
 export const SHOWCASE_ROOMS = {
   'showcase-ship-gallery': SHOWCASE_SHIP_GALLERY_OPTS,
@@ -553,4 +579,5 @@ export const SHOWCASE_ROOMS = {
   'showcase-coastal-aa': SHOWCASE_COASTAL_AA_OPTS,
   'showcase-coastal-duel': SHOWCASE_COASTAL_DUEL_OPTS,
   'showcase-fleet-warp': SHOWCASE_FLEET_WARP_OPTS,
+  'showcase-barge-look': SHOWCASE_BARGE_LOOK_OPTS,
 } as const;

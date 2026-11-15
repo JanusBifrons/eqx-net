@@ -35,6 +35,7 @@ import {
   DESTROYER, LIGHT_CRUISER, HEAVY_CRUISER, BATTLECRUISER, BATTLESHIP,
   DESTROYER_B, DESTROYER_C, LIGHT_CRUISER_B, LIGHT_CRUISER_C, HEAVY_CRUISER_B, HEAVY_CRUISER_C,
   BATTLECRUISER_B, BATTLECRUISER_C, BATTLESHIP_B, BATTLESHIP_C, BATTLESHIP_RAIL, HEAVY_CRUISER_BEAM, BATTLECRUISER_LANCE,
+  BARGE_LOOK_KIND,
 } from './capitals/index.js';
 
 /**
@@ -84,4 +85,7 @@ export const SHIP_KINDS_LIST: readonly ShipKind[] = Object.freeze([
   // Plan section 9 (capital fits): the rail battleship, the beam cruiser, the
   // lance battlecruiser. APPEND ONLY.
   BATTLESHIP_RAIL, HEAVY_CRUISER_BEAM, BATTLECRUISER_LANCE,
+  // Mining-barge look R&D (plan partitioned-chasing-lark PR 14): ONLY when the
+  // dev switch ?bargeLook= / EQX_BARGE_LOOK is set; unset, nothing is appended.
+  ...(BARGE_LOOK_KIND ? [BARGE_LOOK_KIND] : []),
 ]);
