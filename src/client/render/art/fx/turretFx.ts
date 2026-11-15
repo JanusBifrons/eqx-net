@@ -108,6 +108,12 @@ export function muzzleHeft(weaponId: string): number {
 /** The railgun's muzzle flash tint: white-blue and blue-dominant (the white
  *  flash flipbook times this), never the near-white of a hot powder flash. */
 export const RAIL_FLASH_TINT = 0x8cb4ff;
+/** The railgun flash's length, in gun widths per heft: a BURST at the
+ *  muzzle, as long as it is wide (`7`), not the powder guns' 22-width jet
+ *  down the line of fire. At 1.8× heft that jet was ~1.4 km of light for
+ *  ~0.4 s, and the slug and its tail flew inside it: muzzle to slug read as
+ *  one line (rail take 7). */
+export const RAIL_FLASH_LENGTH = 7;
 /** The light the railgun's flash casts on its hull: a deeper blue, so the
  *  lit deck reads blue rather than washed white. */
 export const RAIL_FLASH_LIGHT = 0x6e9cff;
@@ -298,9 +304,11 @@ export const SLUG_HEAD_MIN_ASPECT = 5;
  *  lengthens the head at far zoom, lengthens the tail with it. */
 export const SLUG_WAKE_TAIL = 5;
 /** Fresh out of the barrel the tail grows at this fraction of the slug's
- *  speed, so its back end leaves the muzzle too: a tail pinned to the muzzle
- *  is a line out of the barrel, which reads as a laser. */
-export const SLUG_WAKE_GROW = 0.5;
+ *  speed, so its back end flies off with the slug at 0.8 of its speed: a
+ *  tail pinned to the muzzle is a line out of the barrel, which reads as a
+ *  laser, and at 0.5 its back end stayed inside the muzzle flash for ~10
+ *  frames, so muzzle, flash and tail read as one line (rail take 7). */
+export const SLUG_WAKE_GROW = 0.2;
 
 /** The slug head's drawn length (u) at `speed` (u/s), `width` (u) wide. */
 export function slugHeadLength(speed: number, width: number): number {

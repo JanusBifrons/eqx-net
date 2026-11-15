@@ -2190,18 +2190,24 @@ line; a railgun kill erases a straight channel as wide as the bolt.
   same age, ending dark at the same `WRECK_GLOW_END_S` (4.5 s):
   - **Slice:** the beam's pale core at the instant, then `HEAVY_BEAM_COLOR`
     violet at full alpha to `CUT_GLOW_HOLD_S` (1.5 s; a crack is at alpha
-    ~0.65 and red by then), then burnt metal: a rose blush (0xe0507a at
-    2.0 s, alpha 0.97), an orange ember (0xff6418 at 2.5 s, alpha 0.92)
-    cooling to orange-red (0xd83c10 at 3.5 s, alpha 0.75), a brown scorch
-    (0x5a362c at 4.0 s, alpha 0.3), dark at 4.5 s. It used to cool through a
-    violet ember (0xa050e8 → 0x8834c8 → a violet-grey scorch); hostile film
-    review 2026-11-15 (beam take 6): ~3.5 s after the kill the lips were
-    still saturated violet, cooling straight to dark with no ember. The
-    violet is the beam's light; once it is gone the metal glows as hot metal
-    does, like the channel.
+    ~0.65 and red by then), then burnt metal in hot-metal order, orange →
+    red → dark: an orange ember at once (0xff8a28 at 1.75 s, alpha 0.98),
+    orange-red (0xf2581a at 2.6 s, alpha 0.92), deep red (0xb01e0c at 3.4 s,
+    alpha 0.72), a brown scorch (0x50322a at 4.0 s, alpha 0.3), dark at
+    4.5 s. It used to cool through a violet ember (0xa050e8 → 0x8834c8 → a
+    violet-grey scorch); hostile film review 2026-11-15 (beam take 6): ~3.5 s
+    after the kill the lips were still saturated violet, cooling straight to
+    dark with no ember. The violet is the beam's light; once it is gone the
+    metal glows as hot metal does, like the channel. Then (beam take 8) it
+    went violet → a rose/coral step (0xe0507a at 2.0 s) → orange, backwards
+    for cooling metal; the violet → orange blend is now a quarter second (a
+    long one reads as a pink step).
   - **Channel:** white-hot at full alpha to 1.5 s, then it cools like struck
-    metal: yellow-white (2.0 s), an orange ember (0xff7a28, alpha 0.8 at
-    2.8 s), a dull red-brown scorch (3.8 s, alpha 0.3), dark at 4.5 s.
+    metal: yellow-white (2.0 s), an orange ember (0xff7a28, alpha 0.82 at
+    2.7 s), deep red (0xb0280e, alpha 0.55 at 3.4 s; was a dull red-brown
+    that never read red), a brown scorch (4.0 s, alpha 0.25), dark at 4.5 s.
+  - Both: past the hold the hue only reddens until the deep red (green's
+    share of red never rises, blue never above green).
   - **The ember is a stage of its own** (second film review 2026-11-15: the
     old ember, 0x7428a8 at 2.3 s falling to a 0.32-alpha grey-violet at
     3 s, read as dark ~2.3 s after the kill with no violet ember seen; it was
@@ -2209,7 +2215,10 @@ line; a railgun kill erases a straight channel as wide as the bolt.
     and its texture U is linear in age). On screen (alpha × brightest
     channel) the cut shows ≥ 0.45 at 2.3–3.0 s and ≥ 0.25 at 3.4 s, < 0.12
     at 4.3 s.
-  - **Width:** a kill cut's core is `CUT_GLOW_WIDTH_MUL` (2.5) × a crack's;
+  - **Width:** a channel's core is `CUT_GLOW_WIDTH_MUL` (2.5) × a crack's, a
+    slice's `SLICE_GLOW_WIDTH_MUL` (2.8; beam take 8: its hot edge was a thin
+    ~6–7 px pale line; 3 × pushed a few short cut edges past the soft-fade
+    and lit-length locks);
     its halo reaches `CUT_HALO_CORE_MUL` (1.6) × its own core (a crack's: 3 ×;
     at 3 × the 2.5 × core it was a flat slab ~150 u deep on a heavy cruiser,
     filmed as four violet "bevels"), is brighter (0.45 × the core alpha, a
@@ -2245,7 +2254,11 @@ line; a railgun kill erases a straight channel as wide as the bolt.
     halo's quad: a kill cut is no-hold, so it never has a head). While hot
     the colour shifts across it (`CUT_DEEP_C`, `CUT_DEEP_SHIFT` 0.65): the
     channel white-hot at the edge, yellow-orange deeper in; the slice a pale
-    violet rim (`SLICE_RIM_WHITE` 0.3 toward white), deeper violet in. The
+    violet rim (`SLICE_RIM_WHITE` 0.3 toward white), deeper violet in. For
+    the first `SLICE_RIM_HOT_S` (0.5 s) the slice's edge row is
+    `SLICE_RIM_HOT` (0.7) toward white, a hot white-violet, easing back to
+    the 0.3 rim by 0.8 s (beam take 8: "pale lavender rather than white-hot
+    at the very edge"). The
     shift is gone 0.5 s after the hold, so the ember is one hot-metal
     colour. The curve (`wreckGlowAt`) and its timing are unchanged. A
     crack's or splinter's strips keep flat rows: they look as before.
@@ -2303,6 +2316,27 @@ line; a railgun kill erases a straight channel as wide as the bolt.
   with particles off; it plays only where the break-up plays (a capital
   profile's `breakBurst`, a fresh wreck). Lock: `WreckBreakFx.test.ts`
   "channel ash"; `wreckArt.test.ts` "a channel kill sheds ash".
+- **Break-up shards on a cut kill.** The break-up sink is told whether the
+  kill was a weapon cut (any `cutKind`), and the renderer passes
+  `cutKill` on the `wreck-break` burst. `WreckBreakFx` keeps the flash and
+  dust but its shards become metal chips: `CUT_SHARD_SHARE` (0.3) of the
+  tier's count, half the size, 0.45 × the speed, hull-grey (0x8a8682)
+  cooling dark; one in `CUT_HOT_EVERY` (4) is a hot shard that flies at
+  0.4 × that speed (stays near the cut) and lives 0.6–1.2 s. A kill without
+  a cut keeps its burst (hostile review 2026-11-15, beam take 8: "dozens of
+  flat, saturated orange triangles, 8–15 px, scattered widely … confetti"
+  over the cut). Lock: `WreckBreakFx.test.ts` "a cut kill tones the shards
+  down"; `wreckArt.test.ts` "the break-up sink is told whether the kill was
+  a weapon cut".
+- **The dark X on a slice kill is the splinter gaps.** The same review saw "a
+  dark X-shaped smear" spill off the hull (beam take 8, 20.3–22.3 s). It is
+  not drawn: the v10 splinter X splits a heavy cruiser's cut zone into wedge
+  pieces (~250 × 450 u each) that part from the long bow and stern pieces,
+  and the open cracks show the sky behind. Sampled on the frames, the X is
+  the colour of the open sky beside the hull (RGB ~(9, 8, 13) against
+  ~(11, 9, 19)), and the glow strips stay on the drawn hull (lock: "no glow
+  strip lies outside its piece"). How fast the wedges part is the server's
+  spawn kick (core fracture), not a render effect.
 - **Burn-away and vaporised (fracture v11, 2026-11-15).** Owner: when a cut
   weapon (heavy-beam slice or railgun channel) kills a ship, "any piece too
   small" burns away instead of drifting as wreckage; if no piece survives,

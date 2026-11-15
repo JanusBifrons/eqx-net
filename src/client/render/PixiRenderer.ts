@@ -18,6 +18,7 @@ import { WreckGeometryStore } from '../net/wreckGeometryStore.js';
 import { WreckArtState, WreckPieceSprite, wreckBlasts, wreckRippleCap, WRECK_BLAST_LINGER, type WreckBlast } from './pixi/wreckArt.js';
 import { deathBlastFor, dyingHullDiameter, hullDeathBlastReplaced, type DeathBlast } from './pixi/deathBlast.js';
 import { spawnVaporiseBlast, stackVaporiseOverBeams } from './pixi/vaporiseBlast.js';
+import { LegacyExplosionSprites } from './pixi/legacyExplosionSprites.js';
 import { ConnectorRenderer } from './pixi/ConnectorRenderer.js';
 import { updateProjectileSprites, type ProjectileSpriteCtx } from './pixi/projectileSpriteUpdater.js';
 import { updateMissileSprites, type MissileSpriteCtx } from './pixi/missileSpriteUpdater.js';
@@ -75,7 +76,7 @@ import {
 import { newSpeedFxSample, speedFxSampleInto } from './camera/speedFxSample';
 import { GroupBoundsScanner } from './camera/groupBounds';
 import type { CameraCue, CameraGroup } from '@core/contracts/cameraScript';
-import { REMOTE_BEAM_STYLE, MINING_BEAM_STYLE, remoteBeamStyleForMount, remoteBeamLine, remoteBeamSolidLen, addBeamLights, beamLightBudget, BeamHitMemory, type RemoteBeamLine } from './beamStyles';
+import { REMOTE_BEAM_STYLE, LIVE_BEAM_STYLE, liveBeamLook, MINING_BEAM_STYLE, remoteBeamStyleForMount, remoteBeamLine, remoteBeamSolidLen, addBeamLights, beamLightBudget, BeamHitMemory, type RemoteBeamLine } from './beamStyles';
 import { MountVisualManager } from './MountVisualManager';
 import { BackgroundGrid } from './BackgroundGrid';
 import { StarfieldBackground } from './StarfieldBackground';
@@ -87,7 +88,6 @@ import {
   shapeForKind,
   buildGhostGfx,
   applyMountOffset,
-  buildExplosionGfx,
   buildStructureGfx,
 } from './pixi/spriteBuilders.js';
 import { getStructureKind } from '@shared-types/structureKinds';
@@ -108,7 +108,6 @@ const BACKGROUND_COLOR = 0x05070f;
 // 0.5 — close to the OLD max zoom-out (0.4), raised slightly — so you spawn
 // seeing more of the sector. `?zoom=` still overrides for on-device A/B.
 const DEFAULT_GAMEPLAY_ZOOM = 0.5;
-const LASER_CORE_COLOR = 0xffffff;
 
 // Per-frame Pixi stroke-style scratches. The renderer redraws beams
 // every RAF (60–90 Hz) via clear() + moveTo + lineTo + stroke(...). Pre-
@@ -335,7 +334,7 @@ export class PixiRenderer implements IRenderer {
   /** Reused per-frame seen-set for the missile sprite updater. */
   private readonly _updateMissileSeenScratch = new Set<number>();
   private _missileUpdaterCtx!: MissileSpriteCtx;
-  private explosionSprites: Array<{ gfx: Graphics; framesLeft: number }> = [];
+  private readonly explosionSprites = new LegacyExplosionSprites();
   // Post-2026-06-01: beams now rendered via sprite pools (no Graphics
   // clear/redraw cycle). The `liveBeamGfx` / `remoteBeamGfx` accessor
   // fields are kept as Container types — same surface LaserGlow uses
@@ -382,6 +381,7 @@ export class PixiRenderer implements IRenderer {
     toX: number;
     toY: number;
     solidLen?: number;
+    style?: BeamSpriteStyle | null;
   }> = [];
   private _liveBeamCacheCount = 0;
   /** Same dirty-flag cache for remote shooters' beams (per-shooter +
@@ -963,7 +963,7 @@ export class PixiRenderer implements IRenderer {
       wrecks: new WreckGeometryStore(),
       // S3: each wreck's death clock; a fresh wreck's break-up (dust, shards,
       // flash at the kill point) goes through the effects system, tier-capped.
-      wreckArt: new WreckArtState((x, y, radius, snap, seed, wfx, channel) => {
+      wreckArt: new WreckArtState((x, y, radius, snap, seed, wfx, channel, cut) => {
         // Money-shot review: a short small core flash + dust + shards
         // (WreckBreakFx) and fireballs at the kill point, sized by the hull
         // (FxExplosions, the same blasts every death uses), never a disc
@@ -972,7 +972,9 @@ export class PixiRenderer implements IRenderer {
         // sub-capital never reaches here: its ship's own death blast plays).
         if (wfx.breakBurst) {
           this._wreckBreaks++;
-          this.effects?.spawnBurst('wreck-break', x, y, { radius, ...(snap ? { flashScale: 1.6 } : {}) });
+          // A weapon's kill cut: the shards are toned down (WreckBreakFx) so
+          // the cut reads first (beam take 8 review: "confetti").
+          this.effects?.spawnBurst('wreck-break', x, y, { radius, ...(snap ? { flashScale: 1.6 } : {}), ...(cut ? { cutKill: true } : {}) });
           // A railgun channel kill: glowing ash and sparks along the channel
           // (a line emitter on the same break-up pool, tier-capped there).
           if (channel !== null) {
@@ -1050,9 +1052,9 @@ export class PixiRenderer implements IRenderer {
       // `liveBeamGfx` / `remoteBeamGfx` so LaserGlow can attach a
       // GlowFilter to it at construct time. Empty pools render as
       // nothing — no visual change before first beam.
-      this._liveBeamPool = new BeamSpritePool({ tint: LASER_CORE_COLOR, width: 2, alpha: 1, taper: true });
+      this._liveBeamPool = new BeamSpritePool(LIVE_BEAM_STYLE);
       this.liveBeamGfx = this._liveBeamPool.container;
-      this.shipContainer.addChild(this.liveBeamGfx);
+      this.shipContainer.addChild(this.liveBeamGfx, this._liveBeamPool.styledContainer); // heavy beams: unfiltered sibling
       this._remoteBeamPool = new BeamSpritePool(REMOTE_BEAM_STYLE);
       this.remoteBeamGfx = this._remoteBeamPool.container;
       this.shipContainer.addChild(this.remoteBeamGfx, this._remoteBeamPool.styledContainer); // heavy beams: unfiltered sibling
@@ -1800,11 +1802,7 @@ export class PixiRenderer implements IRenderer {
           this.effects.spawnBurst('destruction', pose.x, -pose.y);
           this.effects.triggerOneShotFilter('destruction-shock', pose.x, -pose.y);
         } else {
-          const expl = buildExplosionGfx();
-          expl.x = pose.x;
-          expl.y = pose.y;
-          this.shipContainer.addChild(expl);
-          this.explosionSprites.push({ gfx: expl, framesLeft: 30 });
+          this.explosionSprites.spawn(this.shipContainer, pose.x, pose.y);
         }
       }
     }
@@ -1812,17 +1810,7 @@ export class PixiRenderer implements IRenderer {
     // Advance and remove expired explosion sprites (only the legacy
     // fallback path uses this; the EffectsService manages its own
     // particles + shock filters in its tick).
-    for (let i = this.explosionSprites.length - 1; i >= 0; i--) {
-      const e = this.explosionSprites[i]!;
-      e.framesLeft--;
-      e.gfx.alpha = e.framesLeft / 30;
-      e.gfx.scale.set(1 + (1 - e.framesLeft / 30) * 1.5);
-      if (e.framesLeft <= 0) {
-        this.shipContainer.removeChild(e.gfx);
-        e.gfx.destroy();
-        this.explosionSprites.splice(i, 1);
-      }
-    }
+    this.explosionSprites.tick(this.shipContainer);
 
     // Structures plan, Phase 3 — grid connector web (behind sprites). Joins
     // mirror.structures → mirror.swarm positions; no-op when no structures.
@@ -2150,8 +2138,9 @@ export class PixiRenderer implements IRenderer {
         slot.toX = toX;
         slot.toY = toY;
         // P1a — the full-strength solid length (== aim guide / optimal range when
-        // not clipped); beyond it the pool fades the beam to nothing.
-        slot.solidLen = beam.solidDist;
+        // not clipped; beyond it the pool fades the beam to nothing) and the
+        // per-beam style of the mount's weapon.
+        liveBeamLook(mount, beam.dist, beam.solidDist, beam.hitId !== undefined, slot);
         if (this._fxShieldsOn && beam.hitId) this._fxShields!.beam(beam.hitId, 500 + slotIdx, toX, toY, this._fxShieldPose);
         // The local beam stops on a fence's prediction collider.
         if (beam.hitId?.startsWith('predwall-')) this._fxFences?.beam(500 + slotIdx, toX, toY);
@@ -2160,9 +2149,9 @@ export class PixiRenderer implements IRenderer {
       this._liveBeamCacheCount = slotIdx;
 
       // Sprite-pool driven render (matches remoteBeam path) — always re-set.
-      this._liveBeamPool.setBeams(this._liveBeamCache, slotIdx);
+      this._liveBeamPool.setBeams(this._liveBeamCache, slotIdx, this.world.scale.x);
       this.liveBeamGfx!.visible = true;
-      this._fxLiveBeams?.setBeams(this._liveBeamCache, slotIdx, this.fxNow());
+      this._fxLiveBeams?.setBeams(this._liveBeamCache, slotIdx, this.fxNow(), undefined, this.world.scale.x);
       // E2E observable: publish the ACTUAL drawn beam origin (the sprite
       // transform), not a recompute — this is what catches the detach bug.
       this.feedback.liveBeamRenderedFromX = this._liveBeamPool.renderedFromX;
