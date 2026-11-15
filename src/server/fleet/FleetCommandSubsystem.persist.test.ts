@@ -1,5 +1,5 @@
 /**
- * Lock for RTS slice 9 — wingman state across a server restart:
+ * Lock for RTS slice 9 — fleet orders across a server restart:
  * `exportShip` / `exportSquads` / `exportState` and the hydrate side
  * `restoreShip` / `restoreSquads`. Standing mode (+ data), stance and squad
  * membership survive a JSON round trip into a FRESH subsystem; direct orders
@@ -23,7 +23,6 @@ function harness() {
       Object.assign(out, p);
       return true;
     },
-    postInput: () => {},
   };
   const sys = new FleetCommandSubsystem(hooks, { disabled: false });
   const add = (id: string, owner: string, x = 0, y = 0): void => {
@@ -69,32 +68,32 @@ describe('FleetCommandSubsystem persistence (slice 9)', () => {
     expect(ships.find((s) => s.id === 's1')).toMatchObject({ squadId: sq.squadId });
     expect(JSON.stringify(ships)).not.toContain('5000'); // no order
 
-    // A fresh boot: the hulls come back with default brains.
+    // A fresh boot: the hulls come back with default orders.
     const b = harness();
     for (const id of ['p1', 'g1', 'e1', 'r1', 'h1', 's1', 's2']) b.add(id, 'alice');
     for (const s of ships) b.sys.restoreShip(s.id, s);
     expect(b.sys.restoreSquads(squads)).toBe(1);
 
-    const p1 = b.sys.brainOf('p1')!;
+    const p1 = b.sys.ordersOf('p1')!;
     expect(p1.mode).toBe('patrol');
     expect(p1.stance).toBe('aggressive');
-    expect(p1.patrolRouteLength).toBe(3);
-    expect([p1.patrolRouteX(1), p1.patrolRouteY(1)]).toEqual([100, 400]);
-    const g1 = b.sys.brainOf('g1')!;
+    expect(p1.routeLen).toBe(3);
+    expect([p1.route[2], p1.route[3]]).toEqual([100, 400]);
+    const g1 = b.sys.ordersOf('g1')!;
     expect([g1.mode, g1.guardPostX, g1.guardPostY]).toEqual(['defend', 300, -40]);
-    const e1 = b.sys.brainOf('e1')!;
+    const e1 = b.sys.ordersOf('e1')!;
     expect([e1.mode, e1.escortId, e1.stance]).toEqual(['escort', 'g1', 'holdFire']);
-    const r1 = b.sys.brainOf('r1')!;
+    const r1 = b.sys.ordersOf('r1')!;
     expect([r1.mode, r1.retreatPointX, r1.retreatPointY]).toEqual(['retreat', -900, 900]);
-    const h1 = b.sys.brainOf('h1')!;
+    const h1 = b.sys.ordersOf('h1')!;
     expect([h1.mode, h1.guardPostX, h1.order]).toEqual(['hunt', 1, null]);
 
     const restored = b.sys.squad(sq.squadId)!;
     expect(restored).toMatchObject({ ownerId: 'alice', leaderId: 's1', memberIds: ['s1', 's2'], mode: 'defend' });
     // Squads fly as a loose pack (RTS Part B slice 10): no formation shape is saved.
     expect(JSON.stringify(squads)).not.toContain('shape');
-    b.sys.tick(0); // roles: the leader flies the squad mode, the member follows it
-    expect(b.sys.brainOf('s1')!.guardPostX).toBe(77);
+    b.sys.refreshSquads(); // roles: the leader flies the squad mode, the member follows it
+    expect(b.sys.ordersOf('s1')!.guardPostX).toBe(77);
     expect(b.sys.squadFollowOf('s2')).toBe('s1');
     // A squad formed after the restore never reuses a restored id.
     b.add('t1', 'alice');
@@ -106,10 +105,10 @@ describe('FleetCommandSubsystem persistence (slice 9)', () => {
     const { sys, add } = harness();
     add('x1', 'alice', 5, 6);
     expect(sys.restoreShip('x1', { mode: 'teleport', stance: 'aggressive' })).toBe(true);
-    expect(sys.brainOf('x1')!.mode).toBe('defend'); // bad mode dropped
-    expect(sys.brainOf('x1')!.stance).toBe('aggressive'); // good stance kept
+    expect(sys.ordersOf('x1')!.mode).toBe('defend'); // bad mode dropped
+    expect(sys.ordersOf('x1')!.stance).toBe('aggressive'); // good stance kept
     expect(sys.restoreShip('x1', { mode: 'patrol', modeData: { route: [[1, 'a']] }, stance: 'brave' })).toBe(false);
-    expect(sys.brainOf('x1')!.mode).toBe('defend');
+    expect(sys.ordersOf('x1')!.mode).toBe('defend');
     expect(sys.restoreShip('ghost', { mode: 'hunt' })).toBe(false); // not attached
 
     add('y1', 'alice');
@@ -155,10 +154,10 @@ describe('FleetCommandSubsystem persistence (slice 9)', () => {
 
     add('a3', 'alice');
     sys.restoreShip('a3', { mode: 'escort', modeData: { escortId: 'b1' } });
-    expect(sys.brainOf('a3')!.mode).toBe('defend');
-    expect(sys.brainOf('a3')!.escortId).toBeNull();
+    expect(sys.ordersOf('a3')!.mode).toBe('defend');
+    expect(sys.ordersOf('a3')!.escortId).toBeNull();
     sys.restoreShip('a3', { mode: 'escort', modeData: { escortId: 'a3' } }); // never itself
-    expect(sys.brainOf('a3')!.mode).toBe('defend');
+    expect(sys.ordersOf('a3')!.mode).toBe('defend');
     // A hull whose owner changed since the save is not restored.
     owners.set('a3', 'carol');
     expect(sys.restoreShip('a3', { stance: 'holdFire' })).toBe(false);

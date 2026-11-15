@@ -264,8 +264,8 @@ export interface ShipTuning {
   /** Smallest guard radius round an NPC's guard post (`HostileDroneBehaviour.setGuardPost`):
    *  a post smaller than this would leave a big hull no room to turn. */
   guardRadiusMin: number;
-  /** Wingman (RTS command layer): an order to a point is done inside this
-   *  radius (`WingmanBehaviour` `arriveRadius`); a big hull can't park on a dot. */
+  /** Owned ships (RTS command layer): a Move order is done inside this
+   *  radius (the AI pilot brain's travel arrival); a big hull can't park on a dot. */
   wingmanArrive: number;
   /** Capital wreck break-up (capital-destruction.md): the outward push of a
    *  piece at the kill point and far from it (u/s). Proportional to the hull

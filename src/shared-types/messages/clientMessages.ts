@@ -4,6 +4,7 @@ import { StructureKindIdSchema } from '../structureKinds.js';
 import { GATE_ACCESS_IDS } from '../gateAccess.js';
 import { MountWeaponIdSchema } from '../shipKinds/types.js';
 import { SelectEntitySchema, DeselectEntitySchema } from './selectionMessages.js';
+import { FLEET_ROUTE_MAX, FLEET_STATUS_MODES, FLEET_STATUS_STANCES } from './fleetStatusMessages.js';
 
 export const InputMessageSchema = z
   .object({
@@ -362,21 +363,20 @@ export const SpectateSchema = z
   .strict();
 
 /* ── RTS command layer (slice 6a) ─────────────────────────────────────────
- * Fleet command wire schemas. Mirror `src/core/ai/wingman/types.ts`
- * (`WINGMAN_MODES` / `WINGMAN_STANCES` / `WingmanOrder`) — kept as local zod
- * enums so `src/shared-types/` stays self-contained (parity asserted in
- * `tests/unit/fleetMessages.test.ts`). Owner-gating of `shipIds` is server-side. */
+ * Fleet command wire schemas, built on the fleet vocabulary tables
+ * (`fleetStatusMessages.ts`: `FLEET_STATUS_MODES` / `FLEET_STATUS_STANCES` /
+ * `FleetOrder`). Owner-gating of `shipIds` is server-side. */
 
-/** Mirrors `WINGMAN_MODES`. Append-only. */
-export const WingmanModeSchema = z.enum(['patrol', 'defend', 'hunt', 'escort', 'retreat']);
-/** Mirrors `WINGMAN_STANCES`. Append-only. */
-export const WingmanStanceSchema = z.enum(['aggressive', 'defensive', 'holdFire']);
+/** A `FleetMode`. Append-only. */
+export const FleetModeSchema = z.enum(FLEET_STATUS_MODES);
+/** A `FleetStance`. Append-only. */
+export const FleetStanceSchema = z.enum(FLEET_STATUS_STANCES);
 
 const FleetShipIdSchema = z.string().min(1).max(64);
 const FleetShipIdsSchema = z.array(FleetShipIdSchema).min(1).max(64);
 const FiniteSchema = z.number().finite();
 
-/** Client → server: a one-off order (`WingmanOrder`) for the given owned ships.
+/** Client → server: a one-off order (`FleetOrder`) for the given owned ships.
  *  `move` needs finite `x`,`y`; `attack` needs `targetId`. Strict. */
 export const FleetOrderSchema = z
   .object({
@@ -395,15 +395,15 @@ export const FleetOrderSchema = z
     message: 'attack requires targetId',
   });
 
-/** Client → server: set the standing wingman mode for the given ships.
+/** Client → server: set the standing mode for the given ships.
  *  `route` (patrol waypoints, max 16), `guardRadius` (defend) and `escortId`
  *  (escort) are optional mode parameters. Strict. */
 export const SetModeSchema = z
   .object({
     type: z.literal('set_mode'),
     shipIds: FleetShipIdsSchema,
-    mode: WingmanModeSchema,
-    route: z.array(z.tuple([FiniteSchema, FiniteSchema])).max(16).optional(),
+    mode: FleetModeSchema,
+    route: z.array(z.tuple([FiniteSchema, FiniteSchema])).max(FLEET_ROUTE_MAX).optional(),
     guardRadius: FiniteSchema.positive().optional(),
     escortId: z.string().min(1).max(64).optional(),
     /** Retreat point, game space (send both or neither; none = back to the post). */
@@ -417,7 +417,7 @@ export const SetStanceSchema = z
   .object({
     type: z.literal('set_stance'),
     shipIds: FleetShipIdsSchema,
-    stance: WingmanStanceSchema,
+    stance: FleetStanceSchema,
   })
   .strict();
 

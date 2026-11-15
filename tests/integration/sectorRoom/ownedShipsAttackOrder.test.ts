@@ -42,7 +42,7 @@ describe('SectorRoom integration — the Attack order (RTS Part B slice 8)', () 
     client.send('spectate', { type: 'spectate' });
     await harness.advance(300);
     expect(internals.fleet.isAttached(sid)).toBe(true);
-    expect(internals.fleet.brainOf(sid)!.stance, 'Defensive is the default').toBe('defensive');
+    expect(internals.fleet.ordersOf(sid)!.stance, 'Defensive is the default').toBe('defensive');
     const post = { ...internals.lingeringPoseCache.get(sid)! };
 
     // A neutral drone outside the guard radius, straight ahead.
@@ -65,15 +65,15 @@ describe('SectorRoom integration — the Attack order (RTS Part B slice 8)', () 
     }
     expect(hit, 'the ordered ship damaged the neutral drone').toBe(true);
     expect(internals.aiBrainOf(sid)?.getTargetId?.()).toBe('d');
-    const o = internals.fleet.brainOf(sid)!.order;
+    const o = internals.fleet.ordersOf(sid)!.order;
     expect(o?.kind).toBe('attack');
 
     // Finish it (trigger: one big hit from the ship through the room's damage
     // choke point, the death path any kill runs); the order completes.
     for (let i = 0; i < 10 && internals.swarmHealth.has('d'); i++) internals.applyDamage('d', sid, 1_000_000);
-    for (let i = 0; i < 20 && internals.fleet.brainOf(sid)!.order !== null; i++) await harness.advance(100);
-    expect(internals.fleet.brainOf(sid)!.order, 'the order completed when its target died').toBeNull();
-    expect(internals.fleet.brainOf(sid)!.mode, 'the ship is back on its mode').toBe('defend');
+    for (let i = 0; i < 20 && internals.fleet.ordersOf(sid)!.order !== null; i++) await harness.advance(100);
+    expect(internals.fleet.ordersOf(sid)!.order, 'the order completed when its target died').toBeNull();
+    expect(internals.fleet.ordersOf(sid)!.mode, 'the ship is back on its mode').toBe('defend');
     expect(internals.aiBrainOf(sid)?.getOrderedTarget?.() ?? null).toBeNull();
 
     let back = Infinity;

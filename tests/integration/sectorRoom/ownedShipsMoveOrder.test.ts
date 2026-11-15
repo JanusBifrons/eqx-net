@@ -85,7 +85,7 @@ describe('SectorRoom integration — the Move order travels and shoots on the wa
       // course points at the destination, not at the cube behind it.
       if (dist > 600 && sp > 50) worstCourse = Math.min(worstCourse, (p!.vx * dx + p!.vy * dy) / (sp * dist));
       trace.push(`${(i * 0.25).toFixed(2)}s @ ${p!.x.toFixed(0)},${p!.y.toFixed(0)} v ${sp.toFixed(0)} tgt ${brain.getTargetId?.() ?? '-'} ${row.activity} order ${row.order?.kind ?? '-'}`);
-      done = internals.fleet.brainOf(sid)!.order === null;
+      done = internals.fleet.ordersOf(sid)!.order === null;
     }
     const msg = trace.join('\n');
     expect(targeted, `the ship saw the robot (its locks follow it):\n${msg}`).toBe(true);

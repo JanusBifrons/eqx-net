@@ -1,13 +1,12 @@
 /**
- * Fleet command subsystem (RTS command layer, slice 3).
+ * Fleet command subsystem (RTS command layer): the owner-checked facade over
+ * the ships a player owns but is not flying (the room's LINGERING hulls).
  *
- * Every ship a player owns is flown by a wingman brain unless the owner is
- * flying it. This subsystem holds one `WingmanBehaviour` per such ship (the
- * room's LINGERING hulls, wired in slice 4), takes the owner's commands
- * (orders / modes / stances / squads) and, on the room tick, re-plans each
- * brain at ~10 Hz and posts the resulting PLAYER CONTROL BITS through the same
- * physics-worker INPUT path a pilot's keys use (owner rule: AI ships fly with
- * player controls only).
+ * The shared AI pilot brain (`HostileDroneBehaviour`, registered by the room)
+ * flies each hull. This subsystem only keeps each ship's ORDERS as plain data
+ * (`FleetShipOrders`: mode, stance, order, post, route, escort target) and its
+ * squad, takes the owner's commands (orders / modes / stances / squads) and
+ * tells the room through the hooks, which hands each change to the brain.
  *
  * Decision logic over injected hooks, the `SelectionStatsSubsystem` /
  * `TransitOrchestrator` shape: no live room needed to test it.
@@ -16,32 +15,17 @@
  * unknown id is silently dropped (never an error to the client), and at most
  * `FLEET_MAX_IDS_PER_COMMAND` ids are read per command.
  *
- * Hot path (`tick`) is allocation-free (#14): entries live in a dense array,
- * pose / view scratch are fields, each brain's last controls are copied into a
- * per-entry object it keeps. Command handlers (`onMessage`, #14) reuse one
+ * Allocation-free per tick (#14): entries live in a dense array and the squad
+ * refresh is event-driven. Command handlers (`onMessage`, #14) reuse one
  * accepted-ids scratch array; the returned array is valid until the next call.
  *
  * Kill switch: `EQX_DISABLE_WINGMEN=1` (read at construction) makes `attach`
  * a no-op, so no ship is ever AI-flown.
  */
-import { WingmanBehaviour, type WingmanConfig } from '../../core/ai/WingmanBehaviour.js';
-import {
-  makeWingmanControls,
-  reverseAccelFor,
-  type WingmanControls,
-  type WingmanMode,
-  type WingmanOrder,
-  type WingmanPoseOut,
-  type WingmanShipStats,
-  type WingmanStance,
-  type WingmanActivity,
-  type WingmanWorldView,
-} from '../../core/ai/wingman/types.js';
-import { fnv1a32 } from '../../core/random/rng.js';
 import { deriveStatMultipliers, effectiveShipEnergyMax, type StatAlloc } from '../../core/leveling/shipStats.js';
-import { getWeapon } from '../../core/combat/WeaponCatalogue.js';
 import type { ShipKind } from '../../shared-types/shipKinds/types.js';
-import { massOf, shipTuning } from '../../shared-types/shipScale/tuning.js';
+import { shipTuning } from '../../shared-types/shipScale/tuning.js';
+import type { FleetActivity, FleetMode, FleetOrder, FleetStance } from '../../shared-types/messages/fleetStatusMessages.js';
 import {
   parseSavedMode,
   parseSavedSquad,
@@ -50,14 +34,24 @@ import {
   type FleetSavedShip,
   type FleetSavedSquad,
 } from './fleetPersistence.js';
+import {
+  clearFleetOrder,
+  fleetOrderKeyMoved,
+  fleetOrderTarget,
+  makeFleetShipOrders,
+  savedModeDataOf,
+  setFleetMode,
+  type FleetModeData,
+  type FleetShipOrders,
+} from './fleetShipOrders.js';
+
+export type { FleetModeData, FleetShipOrders } from './fleetShipOrders.js';
 
 /** Most ship ids read from one command (the rest are ignored). */
 export const FLEET_MAX_IDS_PER_COMMAND = 64;
 /** Squad size limits. */
 export const FLEET_SQUAD_MIN = 2;
 export const FLEET_SQUAD_MAX = 24;
-/** Re-plan each brain every Nth server tick (60 Hz / 6 = 10 Hz). */
-export const FLEET_REPLAN_EVERY_TICKS = 6;
 
 /** `EQX_DISABLE_WINGMEN=1|true` turns the whole wingman layer off. */
 export function isWingmenDisabled(env: Record<string, string | undefined> = process.env): boolean {
@@ -79,81 +73,49 @@ export interface FleetCommandHooks {
   /** The ship's owning playerId, or null if unknown / gone. The authority for
    *  every command's ownership check. */
   ownerOf(shipId: string): string | null;
-  /** Write the ship's live pose into `out`; false if it is gone (skip). */
+  /** Write the ship's live pose into `out`; false if it is gone (a group
+   *  move then spreads it from the target point). */
   readPose(shipId: string, out: FleetPose): boolean;
-  /** Post the controls as the ship's INPUT for `tick`. `controls` is the
-   *  entry's own object: read it now, do not keep it. */
-  postInput(shipId: string, controls: Readonly<WingmanControls>, tick: number): void;
-  /** The energy gate that strips a pilot's boost bit (`canAfford(energy,
-   *  BOOST_TICK_COST)`). Absent ⇒ boost always allowed. Re-checked every tick
-   *  while a ship holds boost, so a drained pool stops it between re-plans. */
-  canBoost?(shipId: string): boolean;
-  /** Attack orders / escort / squad leaders: resolve another entity's live
-   *  pose (writing `out.angle` when known). AI-flown (attached) ships never
-   *  reach this hook: the subsystem resolves them through `readPose`. Absent
-   *  ⇒ an attack order completes at once and an escort defends where it is. */
-  resolvePoseInto?(id: string, out: WingmanPoseOut): boolean;
-  /** Hunt mode: the contact hostile to `shipId`'s owner that the ship should
-   *  chase, within `maxRange` of (x, y): write its pose into `out`, return its
-   *  id, or null. Target choice lives here (the targeting slice). Absent ⇒
-   *  hunt defends. */
-  nearestHostile?(shipId: string, x: number, y: number, maxRange: number, out: WingmanPoseOut): string | null;
   /** The ship `playerId` is flying right now, or null. Escort may follow it,
    *  and when it is a member of one of their squads that squad is PILOT-LED:
-   *  the members form up on it (resolved through `resolvePoseInto`, so the
-   *  room must resolve the pilot's active ship by this id). */
+   *  the members form up on it. */
   pilotShipOf?(playerId: string): string | null;
-  /** An order was handed to `shipId`'s brain (after any group-move spread:
-   *  `order` is that ship's own). The room forwards it to the AI pilot brain
-   *  that flies the hull (RTS Part B). Absent ⇒ ignored. */
-  orderIssued?(shipId: string, order: Readonly<WingmanOrder>): void;
-  /** `shipId`'s brain took a new standing mode (`set_mode`; read it back
-   *  through `brainOf`, which has resolved the post). The room forwards a
-   *  Defend to the AI pilot brain as its guard post (RTS Part B slice 5),
-   *  a Hunt as hunt (slice 6). Absent ⇒ ignored. */
+  /** An order was given to `shipId` (after any group-move spread: `order` is
+   *  that ship's own). The room forwards it to the AI pilot brain that flies
+   *  the hull (RTS Part B). Absent ⇒ ignored. */
+  orderIssued?(shipId: string, order: Readonly<FleetOrder>): void;
+  /** `shipId` took a new standing mode or squad role (read it back through
+   *  `ordersOf`, which has resolved the post). The room forwards it to the AI
+   *  pilot brain (`applyHullMode`). Absent ⇒ ignored. */
   modeSet?(shipId: string): void;
-  /** `shipId`'s brain took a new stance (`set_stance` or a restore; read it
-   *  back through `brainOf`). The room forwards the attitude to the AI pilot
+  /** `shipId` took a new stance (`set_stance` or a restore; read it back
+   *  through `ordersOf`). The room forwards the attitude to the AI pilot
    *  brain (RTS Part B slice 6). Absent ⇒ ignored. */
   stanceSet?(shipId: string): void;
   /** What `shipId` is doing, from the AI pilot brain that flies it (RTS
    *  Part B slice 9: travelling, fighting, guarding, searching), for the
-   *  status stream. Null / absent ⇒ the wingman store's own activity. */
-  activityOf?(shipId: string): WingmanActivity | null;
-}
-
-/** `set_mode` parameters (the wire message's optional fields). */
-export interface FleetModeData {
-  x?: number;
-  y?: number;
-  route?: readonly (readonly [number, number])[];
-  escortId?: string;
+   *  status stream. Null / absent ⇒ 'idle'. */
+  activityOf?(shipId: string): FleetActivity | null;
 }
 
 export interface FleetCommandOptions {
-  /** Re-plan cadence in server ticks (default {@link FLEET_REPLAN_EVERY_TICKS}). */
-  replanEvery?: number;
   /** Override the env kill switch (tests). */
   disabled?: boolean;
 }
 
-/** What the brain needs from the ship: its (scaled) kind and its upgrades. */
+/** What the fleet needs from the ship: its kind (sizes, #18). */
 export interface FleetShipInputs {
   kind: ShipKind;
-  statAlloc?: StatAlloc;
-  /** The ship's fire range (u) for the role sensor range (hunt). Absent ⇒
-   *  the `ON_SIGHT_ENGAGE_RANGE` floor. */
-  fireRange?: number;
 }
 
 /** One ship's line in the status stream. */
 export interface FleetShipStatus {
   id: string;
-  mode: WingmanMode;
-  stance: WingmanStance;
-  activity: WingmanActivity;
+  mode: FleetMode;
+  stance: FleetStance;
+  activity: FleetActivity;
   targetId: string | null;
-  order: WingmanOrder | null;
+  order: FleetOrder | null;
   squadId: string | null;
   /** The squad's leader (AI- or pilot-flown), or null when not in a squad. */
   squadLeaderId: string | null;
@@ -169,12 +131,12 @@ export interface FleetSquad {
   /** The squad-wide standing mode (the last one given to the whole squad),
    *  or null: the leader keeps whatever it was doing. Re-applied to a new
    *  AI leader (leader died, pilot released the controls). */
-  readonly mode: WingmanMode | null;
+  readonly mode: FleetMode | null;
 }
 
 /** Internal squad record (dense list + command scratch). */
 interface SquadState extends FleetSquad {
-  mode: WingmanMode | null;
+  mode: FleetMode | null;
   /** Owned copy of the squad-wide mode data (route array by reference). */
   readonly modeData: FleetModeData;
   /** Leader the members were last told to follow (null = none yet). */
@@ -197,16 +159,13 @@ const ROLE_MEMBER = 2;
 interface FleetEntry {
   readonly id: string;
   ownerId: string;
-  readonly brain: WingmanBehaviour;
+  /** The owner's word for this ship (data; the AI pilot brain flies it). */
+  readonly orders: FleetShipOrders;
   squadId: string | null;
-  /** Squad role last applied to the brain (ROLE_*). */
+  /** Squad role last applied (ROLE_*). */
   role: number;
-  /** Re-plan phase: the brain re-plans when (tick + phase) % N === 0. */
-  readonly phase: number;
   /** Index in the dense `entries` array (kept on swap-remove). */
   index: number;
-  /** Last posted controls (held between re-plans). */
-  readonly controls: WingmanControls;
   /** Command de-dup stamp. */
   stamp: number;
   /** Gap this hull keeps to its neighbours when several ships are sent to
@@ -237,36 +196,11 @@ export function pilotKindFor(kind: ShipKind, statAlloc?: StatAlloc): ShipKind {
   };
 }
 
-/**
- * The wingman config for a kind + upgrade allocation: the same multipliers
- * `applyShipInput` applies (topSpeed scales thrust and the speed cap, turnRate
- * the turn), mass from the catalogue exactly as `World.spawnShip` sets it, and
- * the size-dependent radii from `shipTuning` (#18).
- */
-export function wingmanConfigFor(kind: ShipKind, statAlloc?: StatAlloc, fireRange?: number): WingmanConfig {
-  const mul = deriveStatMultipliers(statAlloc);
-  const mass = massOf(kind, 1);
-  const flown = pilotKindFor(kind, statAlloc);
-  const stats: WingmanShipStats = {
-    maxSpeed: flown.maxSpeed,
-    linearDamping: kind.linearDamping,
-    maxAngvel: flown.maxAngvel,
-    angularDamping: kind.angularDamping,
-    ...(flown.turnTorque !== undefined ? { turnTorque: flown.turnTorque } : {}),
-    reverseAccel: reverseAccelFor(kind, mass, mul.topSpeed),
-  };
+/** Patrol: a waypoint counts as passed inside this (u): two arrive radii, or
+ *  a quarter of the guard radius on a big hull (#18). */
+export function patrolPassRadiusFor(kind: ShipKind): number {
   const t = shipTuning(kind);
-  // Lead the target like a pilot does: the primary gun's shot speed (a beam
-  // needs no lead). The same data an NPC of this kind leads with.
-  const primary = getWeapon(kind.mounts?.[0]?.weaponId ?? 'hitscan');
-  return {
-    stats,
-    arriveRadius: t.wingmanArrive,
-    guardRadius: t.guardRadiusMin,
-    aiRole: kind.aiRole,
-    ...(primary.mode !== 'hitscan' ? { muzzleSpeed: primary.speed } : {}),
-    ...(fireRange !== undefined ? { fireRange } : {}),
-  };
+  return Math.max(t.wingmanArrive * 2, t.guardRadiusMin * 0.25);
 }
 
 export class FleetCommandSubsystem {
@@ -278,18 +212,11 @@ export class FleetCommandSubsystem {
   /** Squad of every member id, attached or not (a member the owner is flying
    *  stays in its squad while detached). */
   private readonly memberSquad = new Map<string, string>();
-  private readonly replanEvery: number;
   private readonly disabled: boolean;
-  private nextPhase = 0;
   private nextSquad = 1;
   private stampGen = 0;
 
   private readonly pose: FleetPose = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
-  /** Scratch for the view resolving an attached ship's pose (a squad leader). */
-  private readonly resolvePose: FleetPose = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
-  private readonly view: WingmanWorldView & { tick: number };
-  /** The ship whose brain is ticking (the view's hunt query is per ship). */
-  private tickingId = '';
   private readonly modeScratch: FleetModeData = {};
   private readonly accepted: string[] = [];
   /** `applyOrder` scratch: the ships that take the order (null once placed). */
@@ -303,34 +230,17 @@ export class FleetCommandSubsystem {
   private readonly statusPool: FleetShipStatus[] = [];
 
   constructor(private readonly hooks: FleetCommandHooks, opts: FleetCommandOptions = {}) {
-    this.replanEvery = Math.max(1, Math.floor(opts.replanEvery ?? FLEET_REPLAN_EVERY_TICKS));
     this.disabled = opts.disabled ?? isWingmenDisabled();
-    this.view = { tick: 0 };
-    // Attached (AI-flown) ships resolve through `readPose` (a squad leader /
-    // escorted wingman is a lingering hull, not a swarm entity); anything else
-    // through the room's `resolvePoseInto`.
-    this.view.resolvePoseInto = (id, out) => {
-      if (this.byId.has(id)) {
-        const p = this.resolvePose;
-        if (!hooks.readPose(id, p)) return false;
-        out.x = p.x; out.y = p.y; out.vx = p.vx; out.vy = p.vy; out.angle = p.angle;
-        return true;
-      }
-      return hooks.resolvePoseInto !== undefined && hooks.resolvePoseInto(id, out);
-    };
-    if (hooks.nearestHostile) {
-      this.view.nearestHostile = (x, y, r, out) => hooks.nearestHostile!(this.tickingId, x, y, r, out);
-    }
   }
 
   get isDisabled(): boolean { return this.disabled; }
   get size(): number { return this.entries.length; }
-  /** Running total of brain re-plans (perf-scene work counter, #14: a number). */
-  replansTotal = 0;
   isAttached(shipId: string): boolean { return this.byId.has(shipId); }
 
-  /** Read-only peek at a ship's brain (tests / diagnostics). */
-  brainOf(shipId: string): WingmanBehaviour | null { return this.byId.get(shipId)?.brain ?? null; }
+  /** The AI-flown ship's orders, or null when it is not attached. The room
+   *  reads them and completes orders through the `fleetShipOrders` helpers;
+   *  owner commands go through the owner-checked methods below. */
+  ordersOf(shipId: string): FleetShipOrders | null { return this.byId.get(shipId)?.orders ?? null; }
 
   squad(squadId: string): Readonly<FleetSquad> | null { return this.squads.get(squadId) ?? null; }
 
@@ -343,36 +253,27 @@ export class FleetCommandSubsystem {
   // ---- Lifecycle (low-frequency: hull parked / reclaimed) -----------------
 
   /**
-   * Hand `shipId` to a wingman: Defend at `initialPose`, Defensive stance.
-   * Re-attaching an attached ship replaces its brain. No-op under the kill
-   * switch. A squad member (e.g. released by its pilot) rejoins its squad:
-   * the next tick gives it the squad mode (as leader) or its place in the pack.
+   * Hand `shipId` to an AI pilot: fresh orders, Defend at `initialPose`,
+   * Defensive stance. Re-attaching an attached ship replaces its orders.
+   * No-op under the kill switch. A squad member (e.g. released by its pilot)
+   * rejoins its squad: the next refresh gives it the squad mode (as leader)
+   * or its place in the pack.
    */
   attach(shipId: string, ownerId: string, ship: FleetShipInputs, initialPose: { x: number; y: number }): void {
     if (this.disabled) return;
     if (this.byId.has(shipId)) this.detach(shipId, { keepSquad: true });
-    const brain = new WingmanBehaviour({
-      ...wingmanConfigFor(ship.kind, ship.statAlloc, ship.fireRange),
-      mode: 'defend',
-      stance: 'defensive',
-      moraleSeedId: fnv1a32(shipId),
-    });
-    brain.setGuardPost(initialPose.x, initialPose.y);
     const sqId = this.memberSquad.get(shipId) ?? null;
     const entry: FleetEntry = {
       id: shipId,
       ownerId,
-      brain,
+      orders: makeFleetShipOrders(patrolPassRadiusFor(ship.kind), initialPose.x, initialPose.y),
       squadId: sqId,
       role: ROLE_NONE,
-      phase: this.nextPhase,
       index: this.entries.length,
-      controls: makeWingmanControls(),
       stamp: 0,
       spacing: shipTuning(ship.kind).flockSeparation,
       moveOrder: { kind: 'move', x: 0, y: 0 },
     };
-    this.nextPhase = (this.nextPhase + 1) % this.replanEvery;
     this.entries.push(entry);
     this.byId.set(shipId, entry);
     if (sqId !== null) this.squads.get(sqId)!.dirty = true;
@@ -427,7 +328,7 @@ export class FleetCommandSubsystem {
    * to the very same point they arrived hull to hull and shoved each other
    * (RTS stop drift, 2026-11-14).
    */
-  applyOrder(callerId: string, shipIds: readonly string[], order: WingmanOrder): readonly string[] {
+  applyOrder(callerId: string, shipIds: readonly string[], order: FleetOrder): readonly string[] {
     const n = this.collect(callerId, shipIds);
     this.classifySquads(n);
     const movers = this.movers;
@@ -435,12 +336,12 @@ export class FleetCommandSubsystem {
     for (let i = 0; i < n; i++) {
       const e = this.byId.get(this.accepted[i]!)!;
       const sq = e.squadId !== null ? this.squads.get(e.squadId)! : null;
-      if (sq !== null && sq.cmdWhole && e.id !== this.squadLeader(sq)) { e.brain.clearOrder(); continue; }
+      if (sq !== null && sq.cmdWhole && e.id !== this.squadLeader(sq)) { clearFleetOrder(e.orders); continue; }
       movers.push(e);
     }
     if (order.kind === 'move' && movers.length > 1) this.spreadMove(order.x, order.y);
     else for (let i = 0; i < movers.length; i++) {
-      movers[i]!.brain.issueOrder(order);
+      movers[i]!.orders.order = order;
       this.hooks.orderIssued?.(movers[i]!.id, order);
     }
     movers.length = 0;
@@ -500,7 +401,7 @@ export class FleetCommandSubsystem {
       used[best] = 1;
       e.moveOrder.x = sx[best]!;
       e.moveOrder.y = sy[best]!;
-      e.brain.issueOrder(e.moveOrder);
+      e.orders.order = e.moveOrder;
       this.hooks.orderIssued?.(e.id, e.moveOrder);
       movers[pick] = null;
     }
@@ -521,7 +422,7 @@ export class FleetCommandSubsystem {
   setMode(
     callerId: string,
     shipIds: readonly string[],
-    mode: WingmanMode,
+    mode: FleetMode,
     data?: FleetModeData,
   ): readonly string[] {
     const n = this.collect(callerId, shipIds);
@@ -554,14 +455,14 @@ export class FleetCommandSubsystem {
             sq.dirty = true;
           }
           if (id === this.squadLeader(sq)) {
-            e.brain.setMode(mode, sq.modeData);
+            setFleetMode(e.orders, mode, sq.modeData);
             this.hooks.modeSet?.(id);
           }
           continue;
         }
         this.removeFromSquad(id);
       }
-      e.brain.setMode(mode, md);
+      setFleetMode(e.orders, mode, md);
       this.hooks.modeSet?.(id);
     }
     md.route = undefined;
@@ -570,32 +471,28 @@ export class FleetCommandSubsystem {
 
   /**
    * A ship's key moved (its owner took or let go of its controls: playerId
-   * <-> shipInstanceId). Every reference the fleet holds to it by that key
-   * follows it: attack orders, chases and squad-leader targets
-   * (`WingmanBehaviour.shipKeyMoved`).
+   * <-> shipInstanceId). The attack orders that name it follow it
+   * (`fleetOrderKeyMoved`; escort ids are shipInstanceIds and never move).
    * Called only from the room's one "ship key moved" seam. Rare, never per tick.
    */
   shipKeyMoved(from: string, to: string): void {
     const list = this.entries;
-    for (let i = 0; i < list.length; i++) {
-      const e = list[i]!;
-      e.brain.shipKeyMoved(from, to);
-    }
+    for (let i = 0; i < list.length; i++) fleetOrderKeyMoved(list[i]!.orders, from, to);
   }
 
-  /** Dense iteration over the AI-flown ships (`i < size`): id, owner, brain. */
+  /** Dense iteration over the AI-flown ships (`i < size`): id, owner, orders. */
   idAt(i: number): string { return this.entries[i]!.id; }
   ownerAt(i: number): string { return this.entries[i]!.ownerId; }
-  brainAt(i: number): WingmanBehaviour { return this.entries[i]!.brain; }
+  ordersAt(i: number): FleetShipOrders { return this.entries[i]!.orders; }
   ownerOfAttached(shipId: string): string | null { return this.byId.get(shipId)?.ownerId ?? null; }
 
   /** Stance per ship (a whole squad: every member, so they engage per stance
    *  when the leader engages). */
-  setStance(callerId: string, shipIds: readonly string[], stance: WingmanStance): readonly string[] {
+  setStance(callerId: string, shipIds: readonly string[], stance: FleetStance): readonly string[] {
     const n = this.collect(callerId, shipIds);
     for (let i = 0; i < n; i++) {
       const id = this.accepted[i]!;
-      this.byId.get(id)!.brain.setStance(stance);
+      this.byId.get(id)!.orders.stance = stance;
       this.hooks.stanceSet?.(id);
     }
     return this.accepted;
@@ -656,9 +553,9 @@ export class FleetCommandSubsystem {
   exportShip(shipId: string): FleetSavedShip | null {
     const e = this.byId.get(shipId);
     if (e === undefined) return null;
-    const b = e.brain;
-    const out: FleetSavedShip = { mode: b.mode, stance: b.stance };
-    const md = savedModeDataOf(b);
+    const o = e.orders;
+    const out: FleetSavedShip = { mode: o.mode, stance: o.stance };
+    const md = savedModeDataOf(o);
     if (md !== null) out.modeData = md;
     const sqId = this.memberSquad.get(shipId);
     if (sqId !== undefined) out.squadId = sqId;
@@ -706,13 +603,13 @@ export class FleetCommandSubsystem {
     let applied = false;
     const m = parseSavedMode(saved);
     if (m !== null) {
-      e.brain.setMode(m.mode, this.validatedModeData(e.ownerId, m.mode, m.modeData, shipId));
+      setFleetMode(e.orders, m.mode, this.validatedModeData(e.ownerId, m.mode, m.modeData, shipId));
       this.hooks.modeSet?.(shipId);
       applied = true;
     }
     const st = parseSavedStance(saved.stance);
     if (st !== null) {
-      e.brain.setStance(st);
+      e.orders.stance = st;
       this.hooks.stanceSet?.(shipId);
       applied = true;
     }
@@ -745,7 +642,7 @@ export class FleetCommandSubsystem {
       if (this.squads.has(squadId)) squadId = `sq-${this.nextSquad++}`;
       const num = /^sq-(\d+)$/.exec(squadId);
       if (num !== null) this.nextSquad = Math.max(this.nextSquad, Number(num[1]) + 1);
-      let mode: WingmanMode | null = null;
+      let mode: FleetMode | null = null;
       let modeData: FleetModeData = {};
       if (s.mode !== undefined) {
         mode = s.mode;
@@ -781,7 +678,7 @@ export class FleetCommandSubsystem {
   /** Saved mode data made safe to apply: an escort target must be owned by
    *  `ownerId` and never `selfId`, else it is dropped (escort ⇒ defend here). */
   private validatedModeData(
-    ownerId: string, mode: WingmanMode, md: FleetSavedModeData | undefined, selfId: string | null,
+    ownerId: string, mode: FleetMode, md: FleetSavedModeData | undefined, selfId: string | null,
   ): FleetModeData | undefined {
     if (md === undefined) return undefined;
     const escortOk = mode === 'escort' && md.escortId !== undefined && md.escortId !== selfId
@@ -797,47 +694,9 @@ export class FleetCommandSubsystem {
   // ---- Per-tick ------------------------------------------------------------
 
   /**
-   * Room tick. First each squad's leader is resolved (a member the owner is
-   * flying leads; a change re-applies the roles). Then each brain re-plans
-   * every `replanEvery` ticks, staggered by its attach phase, and posts its
-   * controls; between re-plans the worker holds the last input (input-queue
-   * rule #3). A held boost is re-checked against the energy gate every tick
-   * and re-posted without it once unaffordable.
-   */
-  tick(serverTick: number): void {
-    this.refreshSquads();
-    const list = this.entries;
-    if (list.length === 0) return;
-    const hooks = this.hooks;
-    const N = this.replanEvery;
-    const r = ((serverTick % N) + N) % N;
-    this.view.tick = serverTick;
-    for (let i = 0; i < list.length; i++) {
-      const e = list[i]!;
-      const c = e.controls;
-      if ((r + e.phase) % N === 0) {
-        if (!hooks.readPose(e.id, this.pose)) continue;
-        this.tickingId = e.id;
-        this.replansTotal++;
-        const out = e.brain.tick(this.pose, this.view);
-        c.thrust = out.thrust;
-        c.reverse = out.reverse;
-        c.turnLeft = out.turnLeft;
-        c.turnRight = out.turnRight;
-        c.boost = out.boost && (hooks.canBoost === undefined || hooks.canBoost(e.id));
-        hooks.postInput(e.id, c, serverTick);
-      } else if (c.boost && hooks.canBoost !== undefined && !hooks.canBoost(e.id)) {
-        c.boost = false;
-        hooks.postInput(e.id, c, serverTick);
-      }
-    }
-  }
-
-  /**
-   * Resolve each squad's leader (a member the owner is flying leads) and
-   * re-apply the roles when it or the membership changed. The bookkeeping
-   * half of {@link tick}; the room calls it alone since RTS Part B (the AI
-   * pilot brain flies the hulls, so the brain half no longer runs).
+   * Room tick: resolve each squad's leader (a member the owner is flying
+   * leads) and re-apply the roles when it or the membership changed. The AI
+   * pilot brain flies the hulls; this is bookkeeping only.
    */
   refreshSquads(): void {
     const sqs = this.squadList;
@@ -868,13 +727,13 @@ export class FleetCommandSubsystem {
         };
         this.statusPool.push(s);
       }
-      const b = e.brain;
+      const o = e.orders;
       s.id = e.id;
-      s.mode = b.mode;
-      s.stance = b.stance;
-      s.activity = this.hooks.activityOf?.(e.id) ?? b.activity;
-      s.targetId = b.targetId;
-      s.order = b.order;
+      s.mode = o.mode;
+      s.stance = o.stance;
+      s.activity = this.hooks.activityOf?.(e.id) ?? 'idle';
+      s.targetId = fleetOrderTarget(o);
+      s.order = o.order;
       s.squadId = e.squadId;
       s.squadLeaderId = e.squadId !== null ? (this.squads.get(e.squadId)?.leaderId ?? null) : null;
       out.push(s);
@@ -949,8 +808,8 @@ export class FleetCommandSubsystem {
       if (id === leader) {
         if (m.role !== ROLE_LEADER) {
           const wasMember = m.role === ROLE_MEMBER;
-          if (sq.mode !== null) m.brain.setMode(sq.mode, sq.modeData);
-          else if (wasMember) m.brain.setMode('defend');
+          if (sq.mode !== null) setFleetMode(m.orders, sq.mode, sq.modeData);
+          else if (wasMember) setFleetMode(m.orders, 'defend');
           m.role = ROLE_LEADER;
         }
       } else m.role = ROLE_MEMBER;
@@ -983,7 +842,7 @@ export class FleetCommandSubsystem {
       if (sq !== undefined && sq.mode === 'escort') return sq.modeData.escortId ?? null;
       if (e.role === ROLE_MEMBER) return null;
     }
-    return e.brain.mode === 'escort' ? e.brain.escortId : null;
+    return e.orders.mode === 'escort' ? e.orders.escortId : null;
   }
 
   /** Remove `shipId` from its squad (attached or not). The squad dissolves
@@ -1038,26 +897,6 @@ export class FleetCommandSubsystem {
 }
 
 const EMPTY: readonly string[] = [];
-
-/** The data of the brain's current mode, or null when it has none. */
-function savedModeDataOf(b: WingmanBehaviour): FleetSavedModeData | null {
-  switch (b.mode) {
-    case 'patrol': {
-      const n = b.patrolRouteLength;
-      if (n < 2) return null;
-      const route: Array<[number, number]> = [];
-      for (let i = 0; i < n; i++) route.push([b.patrolRouteX(i), b.patrolRouteY(i)]);
-      return { route };
-    }
-    case 'escort':
-      return b.escortId !== null ? { escortId: b.escortId } : null;
-    case 'retreat':
-      return b.retreatPointX !== null ? { x: b.retreatPointX, y: b.retreatPointY! } : null;
-    case 'defend':
-    case 'hunt':
-      return b.guardPostX !== null ? { x: b.guardPostX, y: b.guardPostY! } : null;
-  }
-}
 
 /** A JSON-safe copy of squad mode data, or null when empty. */
 function copyModeData(md: FleetModeData): FleetSavedModeData | null {

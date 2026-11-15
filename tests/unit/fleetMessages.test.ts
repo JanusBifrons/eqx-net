@@ -1,6 +1,6 @@
 /**
  * RTS command layer slice 6a — fleet command wire schemas.
- * Accept/reject cases + parity with the core wingman vocabulary (#15).
+ * Accept/reject cases + the schemas accept exactly the fleet vocabulary (#15).
  */
 import { describe, it, expect } from 'vitest';
 import {
@@ -11,17 +11,17 @@ import {
   FormSquadSchema,
   SetModeSchema,
   SetStanceSchema,
-  WingmanModeSchema,
-  WingmanStanceSchema,
+  FleetModeSchema,
+  FleetStanceSchema,
 } from '../../src/shared-types/messages.js';
-import { WINGMAN_MODES, WINGMAN_STANCES } from '../../src/core/ai/wingman/types.js';
+import { FLEET_STATUS_MODES, FLEET_STATUS_STANCES } from '../../src/shared-types/messages/fleetStatusMessages.js';
 
 const ids = (n: number): string[] => Array.from({ length: n }, (_, i) => `s${i}`);
 
 describe('fleet command schemas', () => {
-  it('mode/stance enums mirror the core wingman vocabulary', () => {
-    expect([...WingmanModeSchema.options]).toEqual([...WINGMAN_MODES]);
-    expect([...WingmanStanceSchema.options]).toEqual([...WINGMAN_STANCES]);
+  it('mode/stance schemas accept exactly the fleet vocabulary', () => {
+    expect([...FleetModeSchema.options]).toEqual([...FLEET_STATUS_MODES]);
+    expect([...FleetStanceSchema.options]).toEqual([...FLEET_STATUS_STANCES]);
   });
 
   it('fleet_order: accepts move/attack/stop', () => {

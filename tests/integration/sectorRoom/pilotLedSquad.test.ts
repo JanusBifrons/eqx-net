@@ -27,6 +27,8 @@ import {
   decodeFleetStatusRow,
   type FleetStatusRowWire,
 } from '../../../src/shared-types/messages/fleetStatusMessages.js';
+import { getShipKind } from '../../../src/shared-types/shipKinds.js';
+import { shipTuning } from '../../../src/shared-types/shipScale/tuning.js';
 
 interface Pose { x: number; y: number; vx: number; vy: number; angle: number; angvel: number }
 
@@ -104,7 +106,8 @@ describe('SectorRoom integration — pilot-led squads (RTS slice 4b)', () => {
     }
     // Release the throttle (the worker holds the last input): A coasts on.
     client.send('input', { type: 'input', tick: 0, thrust: false, turnLeft: false, turnRight: false });
-    const spacing = fleet.brainOf(B)!.stationSpacing;
+    // The escort station spacing a fighter keeps (half its guard radius, #18).
+    const spacing = shipTuning(getShipKind('fighter')).guardRadiusMin * 0.5;
     expect(startGap, 'members start far from their slots').toBeGreaterThan(spacing * 4);
     // On station a wedge slot-1/2 member sits rank·spacing·√2 from the leader.
     const onStation = spacing * Math.SQRT2 + spacing * 0.5;
@@ -158,7 +161,7 @@ describe('SectorRoom integration — pilot-led squads (RTS slice 4b)', () => {
     // The client names its own active ship by playerId (its fleet selection).
     client.send('set_mode', { type: 'set_mode', shipIds: [parked], mode: 'escort', escortId: pid });
     await harness.advance(300);
-    const brain = fleet.brainOf(parked)!;
+    const brain = fleet.ordersOf(parked)!;
     expect(brain.mode).toBe('escort');
     expect(brain.escortId, 'escorts the flown ship by its shipInstanceId').toBe(flown);
     // The status stream hands it back under the id the client knows.

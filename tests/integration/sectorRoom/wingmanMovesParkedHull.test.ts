@@ -17,7 +17,7 @@ import { randomUUID } from 'node:crypto';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import type { SectorState } from '../../../src/server/rooms/schema/SectorState.js';
 import type { SnapshotMessage } from '../../../src/shared-types/messages.js';
-import { wingmanConfigFor } from '../../../src/server/fleet/FleetCommandSubsystem.js';
+import { shipTuning } from '../../../src/shared-types/shipScale/tuning.js';
 import { getShipKind } from '../../../src/shared-types/shipKinds.js';
 
 describe('SectorRoom integration — a wingman flies the parked hull (RTS slice 4)', () => {
@@ -75,8 +75,8 @@ describe('SectorRoom integration — a wingman flies the parked hull (RTS slice 
     // Another player's order for this hull is dropped (owner-checked per id).
     expect(internals.fleet.applyOrder(randomUUID(), [shipId], { kind: 'stop' })).toEqual([]);
 
-    const { arriveRadius } = wingmanConfigFor(getShipKind('fighter'));
-    const brain = internals.fleet.brainOf(shipId)!;
+    const arriveRadius = shipTuning(getShipKind('fighter')).wingmanArrive;
+    const brain = internals.fleet.ordersOf(shipId)!;
     let arrived = false;
     for (let i = 0; i < 80 && !arrived; i++) {
       await harness.advance(250);

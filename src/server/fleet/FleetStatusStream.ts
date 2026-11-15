@@ -9,11 +9,11 @@
  * (every client reads room-state `ShipState.health`); morale is not reported.
  *
  * Why a per-owner message, not a snapshot field (root invariant #16): the
- * snapshot is shared by everyone in interest, while a wingman's mode, orders
+ * snapshot is shared by everyone in interest, while a ship's mode, orders
  * and route are private to its owner. Each send is the whole owned list
  * (client applies it with `replace: true`) on a fixed cadence, so a late
  * joiner or a reconnect converges within one period. The only skipped sends
- * are repeat EMPTY ones (an owner with no wingmen gets one empty list, then
+ * are repeat EMPTY ones (an owner with no AI-flown ships gets one empty list, then
  * nothing until that changes).
  *
  * Off the physics tick (a UI timer), so the per-send tuple allocation is
@@ -33,7 +33,7 @@ import {
 export const FLEET_STATUS_EVERY_N_FIRES = 2;
 
 export interface FleetStatusStreamDeps {
-  fleet: Pick<FleetCommandSubsystem, 'statusFor' | 'brainOf'>;
+  fleet: Pick<FleetCommandSubsystem, 'statusFor' | 'ordersOf'>;
   /** Connected clients: call `cb(sessionId, playerId)` once per session. */
   forEachSession(cb: (sessionId: string, playerId: string) => void): void;
   /** Shield 0..100 of `shipId`, or null when unknown (then not sent). Shield
@@ -90,12 +90,12 @@ export class FleetStatusStream {
   }
 
   private encode(r: FleetShipStatus, ownerId: string): FleetStatusTuple {
-    const brain = this.deps.fleet.brainOf(r.id);
+    const orders = this.deps.fleet.ordersOf(r.id);
     const order = r.order;
     let route: number[] | null = null;
-    if (brain !== null && brain.mode === 'patrol' && brain.patrolRouteLength > 0) {
+    if (orders !== null && orders.mode === 'patrol' && orders.routeLen > 0) {
       route = [];
-      for (let i = 0; i < brain.patrolRouteLength; i++) route.push(brain.patrolRouteX(i), brain.patrolRouteY(i));
+      for (let i = 0; i < orders.routeLen * 2; i++) route.push(orders.route[i]!);
     }
     const shield = this.deps.shieldPct?.(r.id) ?? null;
     const t: FleetStatusTuple = [
@@ -113,7 +113,7 @@ export class FleetStatusStream {
       order === null ? -1 : FLEET_STATUS_ORDERS.indexOf(order.kind),
       order !== null && order.kind === 'move' ? order.x : null,
       order !== null && order.kind === 'move' ? order.y : null,
-      this.wire(ownerId, brain?.escortId ?? null),
+      this.wire(ownerId, orders?.escortId ?? null),
       route,
     ];
     // Appended (index 13): the panel shows shield next to hull.

@@ -122,7 +122,7 @@ describe('SectorRoom integration — teleporters across sectors (v4 T3)', () => 
     // Owner rule (same as a fleet warp): its stance carries; it guards where
     // it lands (B's patrol route stayed in B). Roster re-homed to A.
     expect(ia.lingeringSlots.has(flownId)).toBe(true);
-    const brain = ia.fleet.brainOf(flownId)!;
+    const brain = ia.fleet.ordersOf(flownId)!;
     expect(brain.stance).toBe('holdFire');
     expect(brain.mode).toBe('defend');
     for (const id of [parkedId, flownId]) expect(getPlayerShipStore().get(id)?.lastSectorKey).toBe(A);

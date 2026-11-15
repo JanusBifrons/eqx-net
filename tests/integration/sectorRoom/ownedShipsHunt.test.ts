@@ -74,7 +74,7 @@ describe('SectorRoom integration — Hunt and attitudes for owned ships (RTS Par
     expect(room._internals.spawnTestDrone('foe', 0, 900, 'fighter')).toBe(true);
     client.send('test_aggro', { type: 'test_aggro' });
     await harness!.advance(300);
-    expect(room._internals.fleet.brainOf(sid)!.stance).toBe('defensive');
+    expect(room._internals.fleet.ordersOf(sid)!.stance).toBe('defensive');
     // The default guard radius is the fighter's; put the drone inside it so
     // only the attitude decides.
     const r = brain.getGuardRadius();

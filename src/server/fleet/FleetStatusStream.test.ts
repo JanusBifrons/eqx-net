@@ -1,20 +1,27 @@
 import { describe, it, expect } from 'vitest';
 import { FleetStatusStream, FLEET_STATUS_EVERY_N_FIRES } from './FleetStatusStream.js';
 import type { FleetShipStatus } from './FleetCommandSubsystem.js';
-import type { WingmanBehaviour } from '../../core/ai/WingmanBehaviour.js';
+import { makeFleetShipOrders, setFleetMode, type FleetModeData, type FleetShipOrders } from './fleetShipOrders.js';
 import { FleetStatusMessageSchema, decodeFleetStatusRow, type FleetStatusMessage } from '../../shared-types/messages/fleetStatusMessages.js';
 
 function status(id: string, over: Partial<FleetShipStatus> = {}): FleetShipStatus {
   return { id, mode: 'defend', stance: 'defensive', activity: 'guarding', targetId: null, order: null, squadId: null, ...over };
 }
 
-function harness(owned: Record<string, FleetShipStatus[]>, brains: Record<string, Partial<WingmanBehaviour>> = {}) {
+/** A ship's orders record: Defend at the origin unless a mode is given. */
+function shipOrders(mode?: FleetShipOrders['mode'], data?: FleetModeData): FleetShipOrders {
+  const o = makeFleetShipOrders(100, 0, 0);
+  if (mode !== undefined) setFleetMode(o, mode, data);
+  return o;
+}
+
+function harness(owned: Record<string, FleetShipStatus[]>, orders: Record<string, FleetShipOrders> = {}) {
   const sent: { sessionId: string; msg: FleetStatusMessage }[] = [];
   const sessions: [string, string][] = Object.keys(owned).map((pid) => [`sess-${pid}`, pid]);
   const stream = new FleetStatusStream({
     fleet: {
       statusFor: (pid: string) => owned[pid] ?? [],
-      brainOf: (id: string) => (brains[id] as WingmanBehaviour | undefined) ?? null,
+      ordersOf: (id: string) => orders[id] ?? null,
     },
     forEachSession: (cb) => { for (const [s, p] of sessions) cb(s, p); },
     send: (sessionId, msg) => sent.push({ sessionId, msg }),
@@ -36,8 +43,8 @@ describe('FleetStatusStream', () => {
       a: [status('h1', { order: { kind: 'move', x: 10, y: -5 }, squadId: 'sq-1' })],
       b: [status('h2', { mode: 'escort', activity: 'formingUp' })],
     }, {
-      h1: { mode: 'defend', patrolRouteLength: 0, moraleOutcome: 1, escortId: null } as Partial<WingmanBehaviour>,
-      h2: { mode: 'escort', patrolRouteLength: 0, moraleOutcome: null, escortId: 'a' } as Partial<WingmanBehaviour>,
+      h1: shipOrders(),
+      h2: shipOrders('escort', { escortId: 'a' }),
     });
     stream.sendAll();
     const forA = sent.find((s) => s.sessionId === 'sess-a')!.msg;
@@ -48,8 +55,8 @@ describe('FleetStatusStream', () => {
       id: 'h1', mode: 'defend', stance: 'defensive', activity: 'guarding', targetId: null,
       squadId: 'sq-1', orderKind: 'move', orderX: 10, orderY: -5,
     }]);
-    // Hull and morale are retired (RTS Part A): never filled, even with a
-    // morale roll on the brain. Hull reaches clients as room-state health.
+    // Hull and morale are retired (RTS Part A): never filled. Hull reaches
+    // clients as room-state health.
     expect(forA.s[0]![5]).toBeNull();
     expect(forA.s[0]![6]).toBe(-1);
     const rb = forB.s.map(decodeFleetStatusRow);
@@ -60,7 +67,7 @@ describe('FleetStatusStream', () => {
   it('appends the shield % (index 13) when the room reports it', () => {
     const sent: { sessionId: string; msg: FleetStatusMessage }[] = [];
     const stream = new FleetStatusStream({
-      fleet: { statusFor: () => [status('h1')], brainOf: () => null },
+      fleet: { statusFor: () => [status('h1')], ordersOf: () => null },
       forEachSession: (cb) => cb('s', 'a'),
       shieldPct: () => 39.6,
       send: (sessionId, msg) => sent.push({ sessionId, msg }),
@@ -75,10 +82,7 @@ describe('FleetStatusStream', () => {
   it('carries the patrol route', () => {
     const route: [number, number][] = [[0, 0], [5, 6], [7, 8]];
     const { stream, sent } = harness({ a: [status('h1', { mode: 'patrol', activity: 'patrolling' })] }, {
-      h1: {
-        mode: 'patrol', patrolRouteLength: 3, moraleOutcome: null, escortId: null,
-        patrolRouteX: (i: number) => route[i]![0], patrolRouteY: (i: number) => route[i]![1],
-      } as Partial<WingmanBehaviour>,
+      h1: shipOrders('patrol', { route }),
     });
     stream.sendAll();
     expect(decodeFleetStatusRow(sent[0]!.msg.s[0]!).route).toEqual(route);

@@ -8,7 +8,7 @@
  */
 import { getGameClient } from '../net/clientSingleton.js';
 import type { FleetCommandMessage } from '../net/ColyseusClient.js';
-import type { WingmanMode, WingmanOrder, WingmanStance } from '@core/ai/wingman/types';
+import type { FleetMode, FleetOrder, FleetStance } from '@shared-types/messages/fleetStatusMessages';
 
 /**
  * Pilot the OWNED in-sector ship with shipInstanceId `shipId` — a same-sector
@@ -47,7 +47,7 @@ function dispatchFleet(msg: FleetCommandMessage): boolean {
 }
 
 /** One-off order: `move` to (x, y), `attack` targetId, or `stop`. */
-export function sendFleetOrder(shipIds: string[], order: WingmanOrder): boolean {
+export function sendFleetOrder(shipIds: string[], order: FleetOrder): boolean {
   if (order.kind === 'move') {
     return dispatchFleet({ type: 'fleet_order', shipIds, kind: 'move', x: order.x, y: order.y });
   }
@@ -68,7 +68,7 @@ export interface SetModeParams {
 }
 
 /** Set the standing wingman mode for the given ships. */
-export function sendSetMode(shipIds: string[], mode: WingmanMode, params: SetModeParams = {}): boolean {
+export function sendSetMode(shipIds: string[], mode: FleetMode, params: SetModeParams = {}): boolean {
   return dispatchFleet({
     type: 'set_mode',
     shipIds,
@@ -81,7 +81,7 @@ export function sendSetMode(shipIds: string[], mode: WingmanMode, params: SetMod
 }
 
 /** Set the fire stance for the given ships. */
-export function sendSetStance(shipIds: string[], stance: WingmanStance): boolean {
+export function sendSetStance(shipIds: string[], stance: FleetStance): boolean {
   return dispatchFleet({ type: 'set_stance', shipIds, stance });
 }
 

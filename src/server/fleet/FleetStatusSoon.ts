@@ -3,15 +3,22 @@
  * command instead of waiting for the ~2.5 Hz stream timer (the panel read
  * "Guarding" for up to ~1 s after a move order).
  *
- * A command only sets the brains' orders; their ACTIVITY changes on their next
- * re-plan (staggered over `FLEET_REPLAN_EVERY_TICKS`). So a request is due
- * `delayTicks` later (one re-plan period + 1), when every addressed ship has
- * re-planned and the status tells the truth (#16). One pending send per
- * session (the earliest), so a burst of commands still sends once.
+ * A command only sets the ships' orders; their ACTIVITY changes once the AI
+ * pilot brain flying each has taken them up. So a request is due
+ * `delayTicks` later ({@link FLEET_STATUS_SOON_TICKS} in the room), when every
+ * addressed ship has re-planned and the status tells the truth (#16). One
+ * pending send per session (the earliest), so a burst of commands still sends
+ * once.
  *
  * `flush` runs every room tick: alloc-free (a reused Map, a bound visitor,
  * #14) and a single size check while nothing is pending.
  */
+
+/** Room delay (server ticks) from a fleet command to the owner's status send:
+ *  ~0.12 s, so the AI pilot brains (ticked every frame) and the ~10 Hz order
+ *  step have taken the new orders up. */
+export const FLEET_STATUS_SOON_TICKS = 7;
+
 export class FleetStatusSoon {
   /** sessionId → server tick the send is due at. */
   private readonly due = new Map<string, number>();

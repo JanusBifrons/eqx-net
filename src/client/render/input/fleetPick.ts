@@ -13,12 +13,12 @@
  * pure, no Pixi); only the kind and the point COUNT reach Zustand. The state
  * object is reused: no allocation per tap except the result on finish.
  */
-import { WINGMAN_ROUTE_MAX, WINGMAN_ROUTE_MIN } from '@core/ai/wingman/types';
+import { FLEET_ROUTE_MAX, FLEET_ROUTE_MIN } from '@shared-types/messages/fleetStatusMessages';
 
 export type FleetPickKind = 'patrol' | 'escort' | 'retreat';
 
-export const FLEET_PICK_ROUTE_MIN = WINGMAN_ROUTE_MIN;
-export const FLEET_PICK_ROUTE_MAX = WINGMAN_ROUTE_MAX;
+export const FLEET_PICK_ROUTE_MIN = FLEET_ROUTE_MIN;
+export const FLEET_PICK_ROUTE_MAX = FLEET_ROUTE_MAX;
 
 export interface FleetPickState {
   kind: FleetPickKind | null;

@@ -107,18 +107,18 @@ describe('SectorRoom integration — wingman state survives a restart (RTS slice
       logger: noopLogger,
     } as ConstructorParameters<typeof SectorPersistence>[0]).hydrate();
 
-    const p = fleet.brainOf(patroller.shipId)!;
+    const p = fleet.ordersOf(patroller.shipId)!;
     expect(p, 'the patroller is AI-flown again').toBeTruthy();
     expect(p.mode).toBe('patrol');
     expect(p.stance).toBe('aggressive');
-    expect(p.patrolRouteLength).toBe(3);
-    expect([p.patrolRouteX(2), p.patrolRouteY(2)]).toEqual([-300, 600]);
+    expect(p.routeLen).toBe(3);
+    expect([p.route[4], p.route[5]]).toEqual([-300, 600]);
 
     const sq = fleet.squadOf(wing.shipId)!;
     expect(sq).not.toBeNull();
     expect(sq).toMatchObject({ ownerId: OWNER, leaderId: lead.shipId });
     expect([...sq.memberIds].sort()).toEqual([lead.shipId, wing.shipId].sort());
-    expect(fleet.brainOf(lead.shipId)!.order, 'direct orders are not persisted').toBeNull();
+    expect(fleet.ordersOf(lead.shipId)!.order, 'direct orders are not persisted').toBeNull();
 
     // The restored squad flies: the member's AI pilot packs on the leader.
     await h.advance(200);

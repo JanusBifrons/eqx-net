@@ -144,7 +144,7 @@ describe('SectorRoom integration — wingmen fight (RTS slice 5)', () => {
     const start = internals.swarmHealth.get('pest')!;
     // Default stance is Defensive; the drone is neutral and outside the
     // guard radius test only matters for hostiles, so nothing fires yet.
-    expect(internals.fleet.brainOf(sid)!.stance).toBe('defensive');
+    expect(internals.fleet.ordersOf(sid)!.stance).toBe('defensive');
     await harness.advance(1500);
     expect(lost(internals, 'pest', start), 'defensive does not start a fight').toBe(0);
 

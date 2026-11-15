@@ -11,14 +11,14 @@
  * (`selection.ids`) live in Zustand (#2). No positions here either.
  */
 import { useEffect, useState } from 'react';
-import type { WingmanActivity, WingmanMode, WingmanStance } from '@core/ai/wingman/types';
+import type { FleetActivity, FleetMode, FleetStance } from '@shared-types/messages/fleetStatusMessages';
 
 export type FleetOrderKind = 'move' | 'attack' | 'stop';
 
 export interface FleetStatusRow {
-  mode: WingmanMode;
-  stance: WingmanStance;
-  activity: WingmanActivity;
+  mode: FleetMode;
+  stance: FleetStance;
+  activity: FleetActivity;
   /** The entity the ship is chasing / attacking / escorting, else null. */
   targetId: string | null;
   /** Shield, 0..100, when the server reports it. Shield stays here for now:

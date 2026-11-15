@@ -124,11 +124,11 @@ describe('SectorRoom integration — RTS fleet warp moves the selected hulls (S3
     // Brains: stance + squad carried; every one guards where it landed.
     const fb = ib.fleet;
     for (const id of ids) {
-      const brain = fb.brainOf(id);
+      const brain = fb.ordersOf(id);
       expect(brain, `${id} has an AI pilot in B`).toBeDefined();
       expect(brain!.stance).toBe('aggressive');
     }
-    const leadBrain = fb.brainOf(lead!)!;
+    const leadBrain = fb.ordersOf(lead!)!;
     expect(leadBrain.mode, 'the patrol route stayed in A').toBe('defend');
     expect(leadBrain.guardPostX).toBeCloseTo(pose(lead!).x, 0);
     const squads = fb.exportSquads();

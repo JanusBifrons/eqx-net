@@ -41,7 +41,7 @@ describe('SectorRoom integration — an owned ship flies its patrol route (RTS P
     // The first waypoint is the one nearest the hull (the resume rule).
     const route: [number, number][] = [[0, 1500], [1500, 1500], [1500, 0]];
     expect(internals.fleet.setMode(pid, [sid], 'patrol', { route })).toEqual([sid]);
-    const w = internals.fleet.brainOf(sid)!;
+    const w = internals.fleet.ordersOf(sid)!;
     const brain = internals.aiBrainOf(sid)!;
 
     const visits: number[] = [];
@@ -51,7 +51,7 @@ describe('SectorRoom integration — an owned ship flies its patrol route (RTS P
       await harness.advance(250);
       const p = internals.lingeringPoseCache.get(sid);
       expect(p, 'the ship is alive and flown').toBeDefined();
-      const idx = w.patrolWaypointIndex;
+      const idx = w.routeIdx;
       if (visits.length === 0 || visits[visits.length - 1] !== idx) visits.push(idx);
       const row = internals.fleet.statusFor(pid)[0]!;
       if (row.activity === 'patrolling') patrolling = true;

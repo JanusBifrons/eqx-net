@@ -1,6 +1,6 @@
 import { memo, useCallback } from 'react';
 import { Box, Button, ToggleButton } from '@mui/material';
-import { WINGMAN_MODES, WINGMAN_STANCES, type WingmanMode, type WingmanStance } from '@core/ai/wingman/types';
+import { FLEET_STATUS_MODES, FLEET_STATUS_STANCES, type FleetMode, type FleetStance } from '@shared-types/messages/fleetStatusMessages';
 import { MODE_LABELS, STANCE_LABELS, describeShieldHull } from '../fleet/fleetView.js';
 import type { FleetCommands } from '../fleet/fleetCommands.js';
 import { useIsCompact } from '../layout/useIsCompact.js';
@@ -68,11 +68,11 @@ export function FleetPanel({ commands }: Props): JSX.Element | null {
   const picking = useUIStore((s) => s.fleetPick !== null);
   const setPick = useUIStore((s) => s.setFleetPick);
   // Patrol / escort / retreat need a target on the map first (slice 14b).
-  const onMode = useCallback((m: WingmanMode) => {
+  const onMode = useCallback((m: FleetMode) => {
     if (modeNeedsPick(m)) setPick(m);
     else resolveFleetCommands(commands).setMode(ids, m);
   }, [commands, ids, setPick]);
-  const onStance = useCallback((s: WingmanStance) => resolveFleetCommands(commands).setStance(ids, s), [commands, ids]);
+  const onStance = useCallback((s: FleetStance) => resolveFleetCommands(commands).setStance(ids, s), [commands, ids]);
   const onStop = useCallback(() => resolveFleetCommands(commands).stop(ids), [commands, ids]);
   const onForm = useCallback(() => resolveFleetCommands(commands).formSquad(ids), [commands, ids]);
   const squad = view.squadId;
@@ -95,7 +95,7 @@ export function FleetPanel({ commands }: Props): JSX.Element | null {
       {picking ? <FleetPickBar ids={ids} {...(commands !== undefined ? { commands } : {})} /> : (<>
       <Box sx={ROW_SX}>
         <Box component="span" sx={LABEL_SX}>Mode</Box>
-        {WINGMAN_MODES.map((m) => (
+        {FLEET_STATUS_MODES.map((m) => (
           <ChoiceButton key={m} value={m} label={MODE_LABELS[m]} testId={`fleet-mode-${m}`} selected={view.mode === m} onPick={onMode} />
         ))}
         {view.mode === 'mixed' && <Box component="span" sx={MIXED_SX} data-testid="fleet-mode-mixed">mixed</Box>}
@@ -103,7 +103,7 @@ export function FleetPanel({ commands }: Props): JSX.Element | null {
 
       <Box sx={ROW_SX}>
         <Box component="span" sx={LABEL_SX}>Stance</Box>
-        {WINGMAN_STANCES.map((s) => (
+        {FLEET_STATUS_STANCES.map((s) => (
           <ChoiceButton key={s} value={s} label={STANCE_LABELS[s]} testId={`fleet-stance-${s}`} selected={view.stance === s} onPick={onStance} />
         ))}
         {view.stance === 'mixed' && <Box component="span" sx={MIXED_SX} data-testid="fleet-stance-mixed">mixed</Box>}

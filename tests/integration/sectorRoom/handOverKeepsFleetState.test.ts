@@ -67,7 +67,7 @@ describe('SectorRoom integration — a ship changing hands keeps its fleet state
     return -1;
   };
   const orderTarget = (hull: string): string | null => {
-    const o = room()._internals.fleet.brainOf(hull)?.order ?? null;
+    const o = room()._internals.fleet.ordersOf(hull)?.order ?? null;
     return o !== null && o.kind === 'attack' ? o.targetId : null;
   };
 
@@ -97,7 +97,7 @@ describe('SectorRoom integration — a ship changing hands keeps its fleet state
     room()._internals.fleet.setStance(bPid, [bHull], 'holdFire');
     await harness.advance(600);
     expect(orderTarget(aHull), 'the attack order follows the ship to its AI pilot').toBe(bHull);
-    expect(fleet.brainOf(aHull)!.targetId).toBe(bHull);
+    expect(fleet.statusFor(aPid).find((r) => r.id === aHull)!.targetId, 'the status names it too').toBe(bHull);
     expect(lockStage(aHull, `p:${bHull}`), 'A\'s ship still holds its lock on it').toBe(LOCKED);
 
     // B takes the controls back: the ship is named by B's playerId again.

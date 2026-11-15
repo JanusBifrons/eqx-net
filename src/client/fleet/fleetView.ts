@@ -4,11 +4,11 @@
  * and names for ships and targets read from the render mirror (no ids shown).
  */
 import type { RenderMirror } from '@core/contracts/IRenderer';
-import type { WingmanMode, WingmanStance } from '@core/ai/wingman/types';
+import type { FleetMode, FleetStance } from '@shared-types/messages/fleetStatusMessages';
 import { getShipKind } from '@shared-types/shipKinds';
 import type { FleetStatusRow } from './fleetStatus.js';
 
-export const MODE_LABELS: Record<WingmanMode, string> = {
+export const MODE_LABELS: Record<FleetMode, string> = {
   patrol: 'Patrol',
   defend: 'Defend',
   hunt: 'Hunt',
@@ -16,7 +16,7 @@ export const MODE_LABELS: Record<WingmanMode, string> = {
   retreat: 'Retreat',
 };
 
-export const STANCE_LABELS: Record<WingmanStance, string> = {
+export const STANCE_LABELS: Record<FleetStance, string> = {
   aggressive: 'Aggressive',
   defensive: 'Defensive',
   holdFire: 'Hold fire',

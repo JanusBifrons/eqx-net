@@ -11,8 +11,8 @@
  * 3. Energy regenerates ONCE per tick: the brain owns the hull pool's regen;
  *    the room's pilot energy loop no longer also regenerates parked hulls.
  *
- * Failing first: before this slice the hulls were flown by `WingmanBehaviour`
- * and never registered with the AI controller.
+ * Failing first: before this slice the hulls were flown by the old wingman
+ * brain (deleted in slice 12) and never registered with the AI controller.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';

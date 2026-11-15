@@ -15,8 +15,8 @@ import { z } from 'zod';
  *
  * Compact wire: `s` is an array of fixed-order tuples (see `FleetStatusTuple`).
  * Enums go as indices into the tables below; append-only, never reorder.
- * The tables mirror `core/ai/wingman/types.ts` (shared-types stays
- * self-contained; parity locked in `fleetStatusMessages.test.ts`).
+ * The tables ARE the fleet command vocabulary: the server's fleet store, the
+ * `set_mode` / `set_stance` schemas and the client UI all read them.
  */
 export const FLEET_STATUS_MODES = ['patrol', 'defend', 'hunt', 'escort', 'retreat'] as const;
 export const FLEET_STATUS_STANCES = ['aggressive', 'defensive', 'holdFire'] as const;
@@ -29,10 +29,24 @@ export const FLEET_STATUS_ORDERS = ['move', 'attack', 'stop'] as const;
  *  older sender parses (fightOn / fallBack / flee). */
 const RETIRED_MORALE_COUNT = 3;
 
-type FleetStatusMode = (typeof FLEET_STATUS_MODES)[number];
-type FleetStatusStance = (typeof FLEET_STATUS_STANCES)[number];
-type FleetStatusActivity = (typeof FLEET_STATUS_ACTIVITIES)[number];
+/** A ship's standing job (what it does with no order in hand). */
+export type FleetMode = (typeof FLEET_STATUS_MODES)[number];
+/** When the ship may open fire. */
+export type FleetStance = (typeof FLEET_STATUS_STANCES)[number];
+/** What the ship is doing right now (the status panel's line). */
+export type FleetActivity = (typeof FLEET_STATUS_ACTIVITIES)[number];
 type FleetStatusOrder = (typeof FLEET_STATUS_ORDERS)[number];
+
+/** A one-off order layered on top of the mode: done once, then the mode
+ *  resumes from where the ship is. */
+export type FleetOrder =
+  | { readonly kind: 'move'; readonly x: number; readonly y: number }
+  | { readonly kind: 'attack'; readonly targetId: string }
+  | { readonly kind: 'stop' };
+
+/** Patrol routes hold this many waypoints (fewer ⇒ defend; extra are dropped). */
+export const FLEET_ROUTE_MIN = 2;
+export const FLEET_ROUTE_MAX = 16;
 
 const idx = (n: number) => z.number().int().min(0).max(n - 1);
 const optIdx = (n: number) => z.number().int().min(-1).max(n - 1);
@@ -85,9 +99,9 @@ export type FleetStatusMessage = z.infer<typeof FleetStatusMessageSchema>;
 /** Decoded row (the client's `FleetStatusUpdate` shape, minus nothing). */
 export interface FleetStatusRowWire {
   id: string;
-  mode: FleetStatusMode;
-  stance: FleetStatusStance;
-  activity: FleetStatusActivity;
+  mode: FleetMode;
+  stance: FleetStance;
+  activity: FleetActivity;
   targetId: string | null;
   /** Shield 0..100 (absent from an older sender). */
   shieldPct?: number;

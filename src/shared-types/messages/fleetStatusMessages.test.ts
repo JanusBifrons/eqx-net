@@ -8,7 +8,6 @@ import {
   encodeFleetStatusRow,
   type FleetStatusRowWire,
 } from './fleetStatusMessages.js';
-import { WINGMAN_MODES, WINGMAN_STANCES, type WingmanActivity } from '../../core/ai/wingman/types.js';
 
 describe('fleet_status wire format', () => {
   it('round-trips a full row through encode → schema → decode', () => {
@@ -60,11 +59,12 @@ describe('fleet_status wire format', () => {
     expect(FleetStatusMessageSchema.safeParse({ type: 'fleet_status', s: [], x: 1 }).success).toBe(false);
   });
 
-  it('enum tables match the core wingman types (#15)', () => {
-    expect([...FLEET_STATUS_MODES]).toEqual([...WINGMAN_MODES]);
-    expect([...FLEET_STATUS_STANCES]).toEqual([...WINGMAN_STANCES]);
-    // Compile-time: every table entry is a WingmanActivity.
-    const acts: readonly WingmanActivity[] = FLEET_STATUS_ACTIVITIES;
-    expect(acts.length).toBe(9); // + searching (RTS Part B slice 9)
+  it('enum tables are wire indices: order locked (append-only)', () => {
+    expect([...FLEET_STATUS_MODES]).toEqual(['patrol', 'defend', 'hunt', 'escort', 'retreat']);
+    expect([...FLEET_STATUS_STANCES]).toEqual(['aggressive', 'defensive', 'holdFire']);
+    expect(FLEET_STATUS_ACTIVITIES.slice(0, 8)).toEqual(
+      ['idle', 'moving', 'patrolling', 'chasing', 'attacking', 'retreating', 'formingUp', 'guarding'],
+    );
+    expect(FLEET_STATUS_ACTIVITIES.length).toBe(9); // + searching (RTS Part B slice 9)
   });
 });

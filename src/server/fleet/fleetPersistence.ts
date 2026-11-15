@@ -1,5 +1,5 @@
 /**
- * RTS slice 9 — what a wingman keeps across a server restart, and the
+ * RTS slice 9 — what an AI-flown ship keeps across a server restart, and the
  * hydrate-side validators for it.
  *
  * Persisted (in the sector snapshot, beside each lingering hull): the standing
@@ -10,13 +10,13 @@
  * order is a one-off the owner gave at a moment that has passed.
  *
  * Every field is OPTIONAL in the snapshot (additive, no schema-version bump):
- * a snapshot written before slice 9 hydrates with default brains. Hydrate
+ * a snapshot written before slice 9 hydrates with default orders. Hydrate
  * re-validates every entry here (zod) and drops what fails; the subsystem
  * then re-checks ownership and escort targets like a live `set_mode`.
  */
 import { z } from 'zod';
-import { WingmanModeSchema, WingmanStanceSchema } from '../../shared-types/messages/clientMessages.js';
-import { WINGMAN_ROUTE_MAX, type WingmanMode, type WingmanStance } from '../../core/ai/wingman/types.js';
+import { FleetModeSchema, FleetStanceSchema } from '../../shared-types/messages/clientMessages.js';
+import { FLEET_ROUTE_MAX, type FleetMode, type FleetStance } from '../../shared-types/messages/fleetStatusMessages.js';
 
 /** Saved mode parameters (the `set_mode` fields that describe a standing job). */
 export interface FleetSavedModeData {
@@ -28,9 +28,9 @@ export interface FleetSavedModeData {
 
 /** One AI-flown ship's standing job. */
 export interface FleetSavedShip {
-  mode?: WingmanMode;
+  mode?: FleetMode;
   modeData?: FleetSavedModeData;
-  stance?: WingmanStance;
+  stance?: FleetStance;
   /** The squad it belonged to (informational: `squads[]` is the authority). */
   squadId?: string;
 }
@@ -42,7 +42,7 @@ export interface FleetSavedSquad {
   leaderId: string;
   memberIds: string[];
   /** The squad-wide standing mode, when one was given. */
-  mode?: WingmanMode;
+  mode?: FleetMode;
   modeData?: FleetSavedModeData;
 }
 
@@ -52,7 +52,7 @@ const Id = z.string().min(1).max(64);
 const ModeDataSchema = z.object({
   x: Finite.optional(),
   y: Finite.optional(),
-  route: z.array(z.tuple([Finite, Finite])).max(WINGMAN_ROUTE_MAX).optional(),
+  route: z.array(z.tuple([Finite, Finite])).max(FLEET_ROUTE_MAX).optional(),
   escortId: Id.optional(),
 });
 
@@ -62,13 +62,13 @@ const SquadSchema = z.object({
   leaderId: Id,
   memberIds: z.array(Id).max(64),
   // An old save's formation `shape` (wedge / line / column) is stripped.
-  mode: WingmanModeSchema.optional(),
+  mode: FleetModeSchema.optional(),
   modeData: ModeDataSchema.optional(),
 });
 
 /** The mode part of a saved ship, or null when absent / invalid. */
-export function parseSavedMode(raw: { mode?: unknown; modeData?: unknown }): { mode: WingmanMode; modeData?: FleetSavedModeData } | null {
-  const m = WingmanModeSchema.safeParse(raw.mode);
+export function parseSavedMode(raw: { mode?: unknown; modeData?: unknown }): { mode: FleetMode; modeData?: FleetSavedModeData } | null {
+  const m = FleetModeSchema.safeParse(raw.mode);
   if (!m.success) return null;
   if (raw.modeData === undefined) return { mode: m.data };
   const d = ModeDataSchema.safeParse(raw.modeData);
@@ -77,8 +77,8 @@ export function parseSavedMode(raw: { mode?: unknown; modeData?: unknown }): { m
 }
 
 /** The saved stance, or null when absent / invalid. */
-export function parseSavedStance(raw: unknown): WingmanStance | null {
-  const s = WingmanStanceSchema.safeParse(raw);
+export function parseSavedStance(raw: unknown): FleetStance | null {
+  const s = FleetStanceSchema.safeParse(raw);
   return s.success ? s.data : null;
 }
 

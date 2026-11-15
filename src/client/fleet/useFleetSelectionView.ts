@@ -5,7 +5,7 @@
  * selection or the status version changes.
  */
 import { useEffect, useMemo, useState } from 'react';
-import type { WingmanMode, WingmanStance } from '@core/ai/wingman/types';
+import type { FleetMode, FleetStance } from '@shared-types/messages/fleetStatusMessages';
 import { useUIStore } from '../state/store.js';
 import { getGameClient } from '../net/clientSingleton.js';
 import { shipHullPct } from '../net/shipSchemaHealth.js';
@@ -27,8 +27,8 @@ export interface FleetSelectionView {
   active: boolean;
   ids: readonly string[];
   ships: readonly FleetShipView[];
-  mode: WingmanMode | 'mixed' | null;
-  stance: WingmanStance | 'mixed' | null;
+  mode: FleetMode | 'mixed' | null;
+  stance: FleetStance | 'mixed' | null;
   /** The squad every selected ship is in, 'mixed' when they differ, else null. */
   squadId: string | 'mixed' | null;
 }

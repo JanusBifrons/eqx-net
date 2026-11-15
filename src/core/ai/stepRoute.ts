@@ -5,7 +5,7 @@
  * looping last → first.
  *
  * Shared by the garrison patrols (`PatrolSubsystem`) and an owned ship's fleet
- * Patrol mode (the route the fleet store keeps on `WingmanBehaviour`). Pure,
+ * Patrol mode (the route its fleet orders keep, `server/fleet/fleetShipOrders`). Pure,
  * allocation-free.
  *
  * @returns the waypoint index to fly to now (`leg`, or the next one).

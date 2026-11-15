@@ -56,7 +56,7 @@ describe('SectorRoom integration — wingmen vs robot cubes (RTS take)', () => {
     const state = room.state as SectorState;
     const internals = room._internals;
     const ids = [...state.ships.values()]
-      .filter((s) => s.playerId === pid && internals.fleet.brainOf(s.shipInstanceId) !== null)
+      .filter((s) => s.playerId === pid && internals.fleet.ordersOf(s.shipInstanceId) !== null)
       .map((s) => s.shipInstanceId);
     expect(ids.length).toBeGreaterThanOrEqual(5);
     const robots = [...internals.swarmRegistry.all()].filter((r) => r.shipKind.startsWith('robot-')).map((r) => r.id);

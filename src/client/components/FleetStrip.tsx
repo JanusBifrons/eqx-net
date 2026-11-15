@@ -1,6 +1,6 @@
 import { useCallback, type ChangeEvent } from 'react';
 import { Box, Button, ToggleButton, ToggleButtonGroup } from '@mui/material';
-import { WINGMAN_MODES, WINGMAN_STANCES, type WingmanMode, type WingmanStance } from '@core/ai/wingman/types';
+import { FLEET_STATUS_MODES, FLEET_STATUS_STANCES, type FleetMode, type FleetStance } from '@shared-types/messages/fleetStatusMessages';
 import { useUIStore } from '../state/store.js';
 import { useIsCompact } from '../layout/useIsCompact.js';
 import { MODE_LABELS, STANCE_LABELS } from '../fleet/fleetView.js';
@@ -68,13 +68,13 @@ export function FleetStrip({ commands }: Props): JSX.Element | null {
   const setPick = useUIStore((s) => s.setFleetPick);
   // Patrol / escort / retreat need a target on the map first (slice 14b).
   const onMode = useCallback((e: ChangeEvent<HTMLSelectElement>) => {
-    const v = e.target.value as WingmanMode | '';
+    const v = e.target.value as FleetMode | '';
     if (v === NONE) return;
     if (modeNeedsPick(v)) setPick(v);
     else resolveFleetCommands(commands).setMode(ids, v);
   }, [commands, ids, setPick]);
   const onStance = useCallback((e: ChangeEvent<HTMLSelectElement>) => {
-    const v = e.target.value as WingmanStance | '';
+    const v = e.target.value as FleetStance | '';
     if (v !== NONE) resolveFleetCommands(commands).setStance(ids, v);
   }, [commands, ids]);
   const onStop = useCallback(() => resolveFleetCommands(commands).stop(ids), [commands, ids]);
@@ -93,11 +93,11 @@ export function FleetStrip({ commands }: Props): JSX.Element | null {
       {picking ? <FleetPickBar ids={ids} {...(commands !== undefined ? { commands } : {})} /> : (<>
       <select aria-label="Mode" data-testid="fleet-strip-mode" style={SELECT_STYLE} value={modeValue} onChange={onMode}>
         <option value={NONE} disabled>{view.mode === 'mixed' ? 'Mixed' : 'Mode'}</option>
-        {WINGMAN_MODES.map((m) => <option key={m} value={m}>{MODE_LABELS[m]}</option>)}
+        {FLEET_STATUS_MODES.map((m) => <option key={m} value={m}>{MODE_LABELS[m]}</option>)}
       </select>
       <select aria-label="Stance" data-testid="fleet-strip-stance" style={SELECT_STYLE} value={stanceValue} onChange={onStance}>
         <option value={NONE} disabled>{view.stance === 'mixed' ? 'Mixed' : 'Stance'}</option>
-        {WINGMAN_STANCES.map((s) => <option key={s} value={s}>{STANCE_LABELS[s]}</option>)}
+        {FLEET_STATUS_STANCES.map((s) => <option key={s} value={s}>{STANCE_LABELS[s]}</option>)}
       </select>
       <Button size="small" variant="outlined" color="warning" sx={BTN_SX} data-testid="fleet-stop" onClick={onStop}>Stop</Button>
       <ToggleButtonGroup size="small" exclusive value={orderMode} onChange={onOrder} aria-label="Tap order">

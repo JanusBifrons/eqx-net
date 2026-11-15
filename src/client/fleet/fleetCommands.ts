@@ -7,13 +7,13 @@
  * Ids are own-ship ids as in `selection.ids` (active ship = playerId,
  * parked hull = shipInstanceId).
  */
-import type { WingmanMode, WingmanStance } from '@core/ai/wingman/types';
+import type { FleetMode, FleetStance } from '@shared-types/messages/fleetStatusMessages';
 import { sendPilotShip, type SetModeParams } from '../ships/shipActionsClient.js';
 
 export interface FleetCommands {
   /** `data`: patrol `route`, escort `escortId`, retreat point `x`/`y` (slice 14b). */
-  setMode(ids: readonly string[], mode: WingmanMode, data?: SetModeParams): void;
-  setStance(ids: readonly string[], stance: WingmanStance): void;
+  setMode(ids: readonly string[], mode: FleetMode, data?: SetModeParams): void;
+  setStance(ids: readonly string[], stance: FleetStance): void;
   stop(ids: readonly string[]): void;
   formSquad(ids: readonly string[]): void;
   disbandSquad(squadId: string): void;

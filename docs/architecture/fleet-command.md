@@ -12,10 +12,15 @@ only"); §7 keeps their full pre-diet text.
 Part B replaces the wingman brain with the shared AI pilot brain, slice by
 slice (plan `rts-one-ai-one-ship.md`, "Part B v2"). As of slice 2 an owned
 hull is FLOWN by `HostileDroneBehaviour` (players side, [ai-pilots](ai-pilots.md)
-"Player-owned ships"); `WingmanBehaviour` still exists, never ticked, only as
-the store of mode / stance / order / squad state for the commands, the
-status stream and persistence (deleted in slice 12). Where §1–§2 below
-describe the wingman brain flying, read this section instead.
+"Player-owned ships"). Since slice 12 the old wingman brain
+(`WingmanBehaviour`, its control-bit adapter and its 10 Hz re-plan loop) is
+deleted: `FleetCommandSubsystem` is an owner-checked facade that keeps each
+ship's orders as plain data (`fleet/fleetShipOrders.ts` `FleetShipOrders`:
+mode, stance, order, guard post, retreat point, escort target, patrol
+route) plus its squad, and the room hands every change to the AI pilot
+brain. The fleet vocabulary (`FleetMode`, `FleetStance`, `FleetOrder`,
+`FleetActivity`, `FLEET_ROUTE_MIN` / `MAX`) lives in
+`shared-types/messages/fleetStatusMessages.ts`, beside the wire tables.
 
 - **Attach / detach** (`SectorRoom.attachWingman` / `detachWingman`, under
   the same `EQX_DISABLE_WINGMEN` kill switch): the room registers the hull in
@@ -24,8 +29,8 @@ describe the wingman brain flying, read this section instead.
   and the `{ hull: true }` registration flag, and unregisters it at every
   exit. `pilotKindFor` (`FleetCommandSubsystem.ts`) folds the ship's
   upgrades into the kind exactly as `applyShipInput` applies them (thrust,
-  speed cap, turn) plus `effectiveShipEnergyMax`; `wingmanConfigFor` reads
-  the same numbers from it.
+  speed cap, turn) plus `effectiveShipEnergyMax`; it is the one scaling
+  path.
 - **Holds where it was parked:** attach sets the brain's move target and
   guard post at the hull's spot (`holdHullAt`); an idle brain with neither
   orbits the world origin (`tickPatrol`).
@@ -177,12 +182,12 @@ describe the wingman brain flying, read this section instead.
     `wingmanMovesParkedHull.test.ts`, `fleetCommandMessages.test.ts`,
     `wingmanBoost.test.ts`, `wingmanFlameIds.test.ts`,
     `fleetStatusAfterCommand.test.ts`, `HostileDroneBehaviour.travel.test.ts`.
-- **Patrol (slice 11):** the route is the wingman store's (ONE route list,
-  the one `set_mode` stores and the status streams). `applyHullMode` and the
-  ~10 Hz `tickWingmanTargets` call `stepHullPatrol`: `WingmanBehaviour.stepPatrol`
+- **Patrol (slice 11):** the route is the ship's fleet orders' (ONE route
+  list, the one `set_mode` stores and the status streams). `applyHullMode`
+  and the ~10 Hz `tickWingmanTargets` call `stepHullPatrol`: `stepFleetPatrol`
   steps the route with `core/ai/stepRoute.ts` `stepRoute` (the SAME stepper
   `PatrolSubsystem` flies the garrison patrols with), passing a waypoint
-  inside the store's `patrolPassRadius` (2 × `wingmanArrive`, so always
+  inside the orders' `passRadius` (`patrolPassRadiusFor`: 2 × `wingmanArrive`, so always
   before the travel's own arrival) and looping last → first; a (re)set mode,
   a finished order or a left formation starts from the waypoint nearest the
   hull. Each new waypoint, or a brain no longer on its leg, gets
@@ -229,9 +234,20 @@ describe the wingman brain flying, read this section instead.
 - **Cost:** a hull brain decides every tick (60 Hz) like any AI pilot; the
   wingman re-planned at 10 Hz. The `rts-fleet` scene's
   `wingmanReplansPerTick` now counts hull brain decisions.
+- **The old brain deleted (slice 12):** `WingmanBehaviour.ts`,
+  `wingman/intentToControlBits.ts`, `wingman/types.ts`, `reverseAccelFor`,
+  `wingmanConfigFor`, morale `reportDamage`, `FleetCommandSubsystem.tick`
+  (the 10 Hz re-plan and its boost gate) and the `postInput` / `canBoost` /
+  `resolvePoseInto` / `nearestHostile` hooks. The room calls only
+  `fleet.refreshSquads()` per tick. Order completion edits the record
+  through the `fleetShipOrders` helpers (`clearFleetOrder`, `defendAt`,
+  `stepFleetPatrol`); read access is `fleet.ordersOf(id)` / `ordersAt(i)`.
+  The status line's activity is the AI pilot brain's (`activityOf`, else
+  `idle`); its target is the attack order's. The owner's status is sent
+  `FLEET_STATUS_SOON_TICKS` (7) after a command.
 - Lock: `tests/integration/sectorRoom/ownedShipsAiPilot.test.ts`.
 
-## 1. A parked ship is a lingering hull with a wingman brain
+## 1. A parked ship is a lingering hull with an AI pilot
 
 There is no new entity type. A ship you are not flying is the existing
 **LINGERING** hull (the third liveness class of root invariant #17, beside
@@ -240,53 +256,46 @@ join, a snapshot restore or a cross-sector hand-off leaves in `lingeringSlots`.
 Lingering hulls already collide, take damage, persist and render for everyone;
 the RTS layer only gives each one a pilot.
 
-That pilot is `WingmanBehaviour` (`src/core/ai/WingmanBehaviour.ts`), a pure,
-zone-blind, allocation-free brain:
+That pilot is the shared AI pilot brain (`HostileDroneBehaviour`, players
+side, §0). What the owner tells the ship is its fleet ORDERS
+(`fleet/fleetShipOrders.ts`), plain data the room hands to that brain:
 
 - **Mode** (`defend`, `patrol`, `escort`, `hunt`, `retreat`): what it does with
   no order.
 - **Order** (`move`, `stop`, `attack`): a one-off on top of the mode; when it
-  completes the mode resumes from where the ship is now. `stop` brakes in
-  place (no steering) to below `brakeBand` and holds where it halts; a `move`
+  completes the mode resumes from where the ship is now. `stop` brakes to a
+  halt and guards the spot; a `move`
   of several ships to one point gives each its own spot in a hex cluster
   `flockSeparation` apart (`FleetCommandSubsystem.spreadMove`), so they never
   pile onto one point and shove (RTS stop drift, 2026-11-14).
-- **Stance** (`aggressive`, `defensive`, `holdFire`): read by the server's fire
-  target pick; in the brain it only stops a hold-fire hunter from chasing.
+- **Stance** (`aggressive`, `defensive`, `holdFire`): the brain's attitude
+  (`applyHullStance`).
 - **Squad role**: fly as a loose pack on the leader (§0 slice 10).
-- **Morale:** `reportDamage` → `MoraleTracker` → a seeded die (`rollMorale`);
-  fall back or flee, then resume.
 
 ### The owner rule: player controls only
 
-The brain outputs **player control bits** (`WingmanControls`: thrust, reverse,
-turn, boost), never an impulse or an AI intent. `wingman/intentToControlBits.ts`
-is the one adapter from desired velocity to keys. So a wingman-flown fighter has
-exactly the speed, turn rate and energy of the same fighter flown by hand
-(upgrades included): it flies through `applyShipInput`, the seam every pilot
-uses. Boost goes through the hull's own energy gate (`canBoost`), re-checked
-every tick while held.
+The AI pilot brain outputs **player keys** (`virtualPilot`), never an impulse,
+so an AI-flown fighter has exactly the speed, turn rate and energy of the same
+fighter flown by hand (upgrades included, `pilotKindFor`): it flies through
+`applyShipInput`, the seam every pilot uses, and pays boost and weapons from
+the hull's own pool.
 
 ## 2. FleetCommandSubsystem (server)
 
-`src/server/fleet/FleetCommandSubsystem.ts` holds one brain per AI-flown owned
-ship, keyed by `shipInstanceId`, over injected hooks (`ownerOf`, `readPose`,
-`postInput`, `canBoost`, `resolvePoseInto`, `pilotShipOf`, `nearestHostile`).
-It never touches the room directly, which keeps it unit-testable against a real
-`PhysicsWorld`.
+`src/server/fleet/FleetCommandSubsystem.ts` keeps the orders of every AI-flown
+owned ship, keyed by `shipInstanceId`, over injected hooks (`ownerOf`,
+`readPose`, `pilotShipOf`, and the room's `orderIssued` / `modeSet` /
+`stanceSet` / `activityOf`). It never touches the room directly, which keeps
+it unit-testable with hand-rolled hooks.
 
 - **Attach / detach at every lingering entry and exit.** `SectorRoom` calls
   `attachWingman(id)` next to every `lingeringSlots.set` and `detachWingman(id)`
-  next to every `.delete`. Detach posts neutral controls so a queued wingman
+  next to every `.delete`. Detach posts neutral controls so a queued AI pilot
   input can't become the reclaimed hull's held input.
 - **Owner-checked per id.** Every command names ship ids; each is checked
   through `ownerOf`, and foreign or unknown ids drop silently. A selection that
   includes the caller's own ACTIVE ship (named by playerId) drops that id: the
   pilot flies it.
-- **Re-plan at ~10 Hz** (`FLEET_REPLAN_EVERY_TICKS` = 6, staggered by attach
-  order). Between re-plans the physics worker holds the last INPUT (input queue
-  rule #3 in `src/core/CLAUDE.md`), exactly as for a human whose keys are held.
-  The wingman's INPUT goes to the hull's slot at `inputTick = serverTick`.
 - **Squads** are 2–24 ships. A command that covers every AI-flown member is
   squad-wide (an order goes to the leader, a mode becomes the squad's mode); a
   subset command peels those ships off. If the owner flies a member, that ship
@@ -582,7 +591,7 @@ physics worker.
 
 ## 5. Tests
 
-- Brain: `WingmanBehaviour*.test.ts`, `intentToControlBits.test.ts`.
+- Brain: the AI pilot brain's own (`HostileDroneBehaviour.*.test.ts`, [ai-pilots](ai-pilots.md)).
 - Subsystem: `FleetCommandSubsystem*.test.ts`, `FleetStatusStream.test.ts`.
 - Room: `tests/integration/sectorRoom/` `ownedShipsAiPilot` (Part B), `fleetCommandMessages`,
   `wingmanMovesParkedHull`, `wingmanFights`, `wingmanBoost`, `pilotLedSquad`,
@@ -615,7 +624,9 @@ physics worker.
 
 The zone CLAUDE.md files keep the RTS rules in a few short lines (the 2026-11-14
 CLAUDE.md diet: rules only there, detail in a guide). This is the full text
-they carried before the AI-pilot stack merge, kept as written.
+they carried before the AI-pilot stack merge, kept as written (history: the
+wingman brain, its re-plan loop and boost gate were deleted in Part B
+slice 12, §0).
 
 ### Core: the wingman brain (`src/core/CLAUDE.md`)
 

@@ -22,8 +22,7 @@ import { randomUUID } from 'node:crypto';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import type { SectorState } from '../../../src/server/rooms/schema/SectorState.js';
 import { getShipKind } from '../../../src/shared-types/shipKinds.js';
-import { shipTuning } from '../../../src/shared-types/shipScale/tuning.js';
-import { wingmanConfigFor } from '../../../src/server/fleet/FleetCommandSubsystem.js';
+import { massOf, shipTuning } from '../../../src/shared-types/shipScale/tuning.js';
 
 interface Pose { x: number; y: number; vx: number; vy: number; angle: number; angvel: number }
 
@@ -99,8 +98,8 @@ describe('SectorRoom integration — wingmen ordered together stop and settle (R
     const kind = getShipKind('fighter');
     const still = kind.maxSpeed * STOPPED_SPEED_FRAC;
     // The physical brake from v0 on the reverse key: dv/dt = −(a + k·v).
-    const { stats } = wingmanConfigFor(kind);
-    const k = stats.linearDamping, a = stats.reverseAccel;
+    // The hull's reverse deceleration, as `applyShipInput` gives it per tick.
+    const k = kind.linearDamping, a = (kind.thrustImpulse * kind.reverseFactor * 60) / massOf(kind, 1);
     const tBrake = k > 0 ? Math.log(1 + (k * v0) / a) / k : v0 / a;
     // Prompt: stopped within a second of what the brakes allow ...
     const tSettle = tBrake + 1;
@@ -144,11 +143,11 @@ describe('SectorRoom integration — wingmen ordered together stop and settle (R
     let done = false;
     for (let i = 0; i < 160 && !done; i++) {
       await harness.advance(250);
-      done = ids.every((id) => fleet.brainOf(id)!.order === null);
+      done = ids.every((id) => fleet.ordersOf(id)!.order === null);
     }
     const where = (): string => ids.map((id) => {
       const p = at(id);
-      return `${JSON.stringify(fleet.brainOf(id)!.order)} @ ${p.x.toFixed(0)},${p.y.toFixed(0)} v ${Math.hypot(p.vx, p.vy).toFixed(1)}`;
+      return `${JSON.stringify(fleet.ordersOf(id)!.order)} @ ${p.x.toFixed(0)},${p.y.toFixed(0)} v ${Math.hypot(p.vx, p.vy).toFixed(1)}`;
     }).join('; ');
     expect(done, `every move order completes (${where()})`).toBe(true);
 

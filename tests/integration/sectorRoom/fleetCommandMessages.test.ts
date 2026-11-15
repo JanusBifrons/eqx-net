@@ -72,13 +72,13 @@ describe('SectorRoom integration — fleet command messages + fleet_status (RTS 
     // B tries to move A's hull: ignored.
     b.send('fleet_order', { type: 'fleet_order', shipIds: [shipId], kind: 'move', x: -900, y: 0 });
     await harness.advance(100);
-    expect(internals.fleet.brainOf(shipId)!.order, 'a foreign order is dropped').toBeNull();
+    expect(internals.fleet.ordersOf(shipId)!.order, 'a foreign order is dropped').toBeNull();
 
     // A orders its hull 800 u east (and lists its own playerId, the "active
     // ship" id a selection may carry: silently dropped, it is not attached).
     a.send('fleet_order', { type: 'fleet_order', shipIds: [pidA, shipId], kind: 'move', x: 800, y: 0 });
     await harness.advance(100);
-    const order = internals.fleet.brainOf(shipId)!.order;
+    const order = internals.fleet.ordersOf(shipId)!.order;
     expect(order?.kind, 'the owner order is accepted').toBe('move');
 
     // Status: A gets its ship with the move destination; B gets an empty list.
@@ -111,7 +111,7 @@ describe('SectorRoom integration — fleet command messages + fleet_status (RTS 
     let arrived = false;
     for (let i = 0; i < 80 && !arrived; i++) {
       await harness.advance(250);
-      arrived = internals.fleet.brainOf(shipId)!.order === null;
+      arrived = internals.fleet.ordersOf(shipId)!.order === null;
     }
     expect(arrived, 'the move order completes').toBe(true);
     const at = last as { x: number; y: number } | null;
@@ -132,9 +132,8 @@ describe('SectorRoom integration — fleet command messages + fleet_status (RTS 
     a.send('set_mode', { type: 'set_mode', shipIds: [shipId], mode: 'retreat', x: 300, y: -450 });
     await harness.advance(100);
     expect(internals.fleet.statusFor(pidA)[0]?.mode).toBe('retreat');
-    const rb = internals.fleet.brainOf(shipId) as unknown as { retreatX: number; retreatY: number; retreatPointSet: boolean };
-    expect(rb.retreatPointSet, 'the retreat point reached the brain').toBe(true);
-    expect([rb.retreatX, rb.retreatY]).toEqual([300, -450]);
+    const rb = internals.fleet.ordersOf(shipId)!;
+    expect([rb.retreatPointX, rb.retreatPointY], 'the retreat point reached its orders').toEqual([300, -450]);
     a.send('set_mode', { type: 'set_mode', shipIds: [shipId], mode: 'patrol', route: [[800, 0], [800, 600], [200, 600]] });
     await harness.advance(100);
 

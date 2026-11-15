@@ -4,7 +4,7 @@
  * "Guarding" until the next ~2.5 Hz `fleet_status`.
  *
  * Fix: an accepted fleet command asks for that owner's status right after the
- * addressed ships' next re-plan (`FLEET_REPLAN_EVERY_TICKS`), so the status
+ * addressed ships' AI pilots take it up (`FLEET_STATUS_SOON_TICKS`), so the status
  * carries their NEW activity (truth stays server-side, #16), instead of
  * waiting for the timer.
  *
