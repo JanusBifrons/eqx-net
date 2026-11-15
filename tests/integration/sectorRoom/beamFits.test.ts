@@ -90,4 +90,34 @@ describe('SectorRoom integration — capital beam fits (plan section 9)', () => 
     while (Date.now() < deadline && beams.length === 0) await new Promise((r) => setTimeout(r, 50));
     expect(beams.length, 'a heavy_beam main turret hit the pilot').toBeGreaterThan(0);
   });
+
+  // No fire gate holds the forward pair back: hull line, lock and line of fire
+  // all pass, and the capital turret path spends no ship energy. On film the
+  // forward turrets stay quiet only because they are still training (16"-class
+  // traverse 0.087 rad/s ≈ 5°/s; the AI helm swings the target ~20° abaft the
+  // beam, so they need ~108° to the aft turret's ~88°), and the aft beam kills
+  // the target in its ~3.5 s head start. traverseTicksCap: 0 takes the
+  // training out, so this proves every bearing turret is free to fire.
+  it('every lance main turret that bears from a broadside fires, the forward pair too', { timeout: 15_000 }, async () => {
+    const kind = getShipKind('battlecruiser-lance');
+    const mains = kind.mounts.filter((m) => m.weaponId === 'heavy_beam').map((m) => m.id);
+    expect(mains).toEqual(['main-1', 'main-2', 'main-3']);
+    harness = await bootSectorTestServer({
+      sectorKey: null, droneCount: 0, testMode: true, asteroidConfig: [], pilotCapitals: true, lockTimeCapS: 0, traverseTicksCap: 0,
+      // Heading π, the pilot square off the starboard beam abreast the ship's
+      // middle: all three main turrets (arc ±135°) bear on it.
+      dronePoses: [{ kind: 'battlecruiser-lance', x: 5000, y: 0, angle: Math.PI }],
+    });
+    const pid = randomUUID();
+    const cr = await harness.connectActive(pid, {
+      shipKind: 'heavy-cruiser', initialHull: 1_000_000_000, initialShield: 0, startHostile: true, instantLock: true,
+    });
+    const fired = new Map<string, number>();
+    cr.onMessage('laser_fired', (m: LaserFired) => {
+      if (m.mountId && mains.includes(m.mountId)) fired.set(m.mountId, (fired.get(m.mountId) ?? 0) + 1);
+    });
+    const deadline = Date.now() + 8_000;
+    while (Date.now() < deadline && !mains.every((id) => (fired.get(id) ?? 0) >= 3)) await new Promise((r) => setTimeout(r, 50));
+    for (const id of mains) expect(fired.get(id) ?? 0, `${id} fired its heavy beam (repeatedly)`).toBeGreaterThanOrEqual(3);
+  });
 });
