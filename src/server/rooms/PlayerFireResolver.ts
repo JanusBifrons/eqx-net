@@ -137,6 +137,8 @@ export interface PlayerFireResolverDeps {
     shipInstanceId: string, fx: number, fy: number, dx: number, dy: number,
     weaponId: WeaponId, svx: number, svy: number,
   ) => boolean;
+  /** Tractor fire: renew `mount`'s lease on its group lock (as the AI's). */
+  fireTractor?: (playerId: string, mount: WeaponMount) => void;
   /** Lag-comp pose ring. */
   snapshotRing: SnapshotRingReader;
   /** Per-tick cached player poses (fallback when ring misses). */
@@ -250,6 +252,7 @@ export class PlayerFireResolver implements WeaponFireSink {
   /** The weapon of the barrel now resolving (set per mount before
    *  `resolveFire`), so a beam hit tells applyDamage what landed it. */
   private _weaponId: WeaponId | undefined = undefined;
+  private _mount: WeaponMount | null = null; // the mount now resolving
   // Review must-fix #1 — the shooter's per-instance outgoing-DAMAGE multiplier
   // (`mul.damage`, derived from ship.statAlloc), set once per resolve() and
   // applied to every barrel's damage in the sink methods. ONLY player ships
@@ -519,6 +522,7 @@ export class PlayerFireResolver implements WeaponFireSink {
       // Each barrel fires its own catalogue weapon (data-driven loadout).
       const weaponId: WeaponId = mount.weaponId;
       this._weaponId = weaponId;
+      this._mount = mount;
       const mountWorld = d.mountWorldOrigin(sx, sy, shipAngleAtFireTick, mount);
       // Find this firing mount's slot in the full instance angle array by id.
       let angleIdx = mIdx;
@@ -761,5 +765,10 @@ export class PlayerFireResolver implements WeaponFireSink {
   spawnMissile(ctx: WeaponFireContext, def: MissileWeaponDef): void {
     const scaled = this._damageMul === 1 ? def : { ...def, damage: def.damage * this._damageMul };
     this.deps.spawnServerMissile(this._shooterId, ctx.fromX, ctx.fromY, ctx.dirX, ctx.dirY, scaled);
+  }
+
+  /** Tractor: renew the mount's lease (no ray, no damage, no hit). */
+  tractor(): void {
+    if (this._mount !== null) this.deps.fireTractor?.(this._shooterId, this._mount);
   }
 }

@@ -142,7 +142,7 @@ export interface WeaponMountTickerDeps {
    *  pool can't pay): the reload is then not spent. 'killed' = it fired and
    *  destroyed what it hit (starts the weapon's `followThroughTicks`).
    *  `passDebris`: the shot passes wreck pieces and scrap (the follow-through). */
-  fireDroneMount?: (droneId: string, mountIdx: number, passDebris?: boolean) => boolean | 'killed' | void;
+  fireDroneMount?: (droneId: string, mountIdx: number, passDebris?: boolean, targetId?: string) => boolean | 'killed' | void;
   /** Fire control (PR 1d slice 2): true ⇒ the capital holds no COMPLETED
    *  lock on this mount's target (a pilot), so the mount aims but holds fire
    *  (reload not spent). Absent ⇒ never blocked (unit harnesses). */
@@ -755,7 +755,7 @@ export class WeaponMountTicker {
       if (chargeStarts !== null && !charging) { chargeStarts[i] = tick; continue; }
       // Energy refused (a player capital's rule): keep the reload (and a
       // completed charge), retry next tick.
-      const fired = d.fireDroneMount!(droneId, i);
+      const fired = d.fireDroneMount!(droneId, i, false, t.id);
       if (fired === false) continue;
       if (chargeStarts !== null) chargeStarts[i] = NOT_CHARGING;
       reload[i] = tick;
