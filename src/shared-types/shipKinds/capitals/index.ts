@@ -7,7 +7,8 @@
 import { defineCapitalShipKind } from '../../shipScale/defineShipKind.js';
 import type { ShipKind } from '../types.js';
 import { CAPITAL_MAP, CAPITAL_STYLE } from './capitalConfig.js';
-import { warshipDesign } from './warshipDesign.js';
+import type { CapitalStyle } from './capitalConfig.js';
+import { NAVAL_FIT, warshipDesign, type CapitalFit } from './warshipDesign.js';
 
 const build = (id: Parameters<typeof warshipDesign>[0]): ShipKind =>
   defineCapitalShipKind(warshipDesign(id, CAPITAL_STYLE, CAPITAL_MAP).record);
@@ -25,9 +26,22 @@ export const BATTLESHIP: ShipKind = build('battleship');
  * turrets, art, wrecks and the wire all work through the ordinary kind path.
  * The flagship director picks a style per ship. The base kinds keep the R&D
  * switch's style (default A).
+ *
+ * Fit variants (plan section 9): the same path with a weapon `fit` instead of
+ * (or as well as) a hull style. A fitted kind's id ends in the fit's suffix
+ * (`-rail`: railgun main battery) after any style suffix; a fitted kind on the
+ * base hull (`style` omitted) takes the R&D switch's style like the base kind.
  */
-const variant = (id: Parameters<typeof warshipDesign>[0], style: 'B' | 'C'): ShipKind =>
-  defineCapitalShipKind({ ...warshipDesign(id, style, CAPITAL_MAP).record, id: `${id}-${style.toLowerCase()}` });
+const variant = (
+  id: Parameters<typeof warshipDesign>[0], style: Exclude<CapitalStyle, 'A'> | null,
+  fit: CapitalFit = NAVAL_FIT,
+): ShipKind => {
+  const styleSuffix = style ? `-${style.toLowerCase()}` : '';
+  const fitSuffix = fit.main === 'railgun' ? '-rail' : '';
+  return defineCapitalShipKind({
+    ...warshipDesign(id, style ?? CAPITAL_STYLE, CAPITAL_MAP, fit).record, id: `${id}${styleSuffix}${fitSuffix}`,
+  });
+};
 
 export const DESTROYER_B: ShipKind = variant('destroyer', 'B');
 export const DESTROYER_C: ShipKind = variant('destroyer', 'C');
@@ -40,11 +54,17 @@ export const BATTLECRUISER_C: ShipKind = variant('battlecruiser', 'C');
 export const BATTLESHIP_B: ShipKind = variant('battleship', 'B');
 export const BATTLESHIP_C: ShipKind = variant('battleship', 'C');
 
-/** A capital class's kinds in style order A, B, C (base kind first). */
+/** Plan section 9: the rail battleship, a battleship whose main battery is railguns. */
+export const BATTLESHIP_RAIL: ShipKind = variant('battleship', null, { main: 'railgun', secondary: 'naval' });
+
+/**
+ * A capital class's kinds: its hull styles in order A, B, C (base kind first),
+ * then its fitted variants. The flagship director picks one per ship, evenly.
+ */
 export const CAPITAL_STYLE_VARIANTS: Readonly<Record<string, readonly string[]>> = {
   destroyer: ['destroyer', 'destroyer-b', 'destroyer-c'],
   'light-cruiser': ['light-cruiser', 'light-cruiser-b', 'light-cruiser-c'],
   'heavy-cruiser': ['heavy-cruiser', 'heavy-cruiser-b', 'heavy-cruiser-c'],
   battlecruiser: ['battlecruiser', 'battlecruiser-b', 'battlecruiser-c'],
-  battleship: ['battleship', 'battleship-b', 'battleship-c'],
+  battleship: ['battleship', 'battleship-b', 'battleship-c', 'battleship-rail'],
 };
