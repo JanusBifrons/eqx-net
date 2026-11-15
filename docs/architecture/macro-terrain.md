@@ -2,7 +2,7 @@
 
 <!-- showcase-exempt: Stage 0 harness only; the terrain-stress shot lands in slice 0d -->
 
-Status: **plan v2 (the cut field) approved 2026-11-15; slices 0a, 1a and A1 done.** The plan file is `tender-humming-whisper.md` in the plans folder.
+Status: **plan v2 (the cut field) approved 2026-11-15; slices 0a, 1a, A1 and A2 done.** The plan file is `tender-humming-whisper.md` in the plans folder.
 
 ## Why
 
@@ -34,7 +34,22 @@ After look tests with the owner (2026-11-15), a field is no longer thousands of 
 - The code is arithmetic only (no sin/cos/atan2/pow/hypot or `**`), with `FIELD_LAYOUT_VERSION`, so every browser cuts the server's rocks. Saved rock records are keyed by that version.
 - Locks: `fieldLayout.test.ts` (same seed gives same rocks; unique paths; a sub-area cut equals the same rocks in a full cut, none missing) and `tests/unit/fieldLayoutArithmeticOnly.test.ts`.
 
-Next (plan v2 stages A2–F): chunks and rock keys, owner shape tuning, cross-browser parity, chunk meshes with the procedural rock shader, then wake/deep sleep, the wire and the terrain store.
+### Chunks and rock keys (A2)
+
+The field is split into a fixed grid of square chunks (`CHUNK_SIZE` = 4096 u, about 4 km).
+
+- **Membership.** A rock belongs to the chunk holding its **pre-warp centre**, half-open, so every rock has exactly one chunk.
+- **The key.** A rock's key is `(chunk x, chunk y, index)`, packed into one u32 (8 + 8 + 16 bits; `rockKey`, `unpackRockKey`). The index is the rock's rank by cut path within its chunk, so a rock has the same name whether one chunk or the whole field is cut, in any order.
+- **Cutting one chunk.** `rocksInChunk(field, cx, cy)` cuts one chunk at full detail. It is generation-time code: the client runs it off the frame and the server on wake.
+- **Measured on the full field** (seed `look`): 114,628 rocks in 3,924 chunks; a median of 21 rocks per chunk, p99 90, max 99.
+- **Rule.** Changing `CHUNK_SIZE` renames every rock, so it bumps `FIELD_LAYOUT_VERSION`.
+- **Locks** (`fieldLayout.test.ts`):
+  - every rock of a full cut lands in exactly one chunk, and chunk cuts equal the full cut;
+  - keys are unique and unpack to their chunk and index;
+  - cutting a neighbour first changes nothing;
+  - negative chunk coordinates pack correctly.
+
+Next (plan v2 stages A3–F): owner shape tuning, cross-browser parity, chunk meshes with the procedural rock shader, then wake/deep sleep, the wire and the terrain store.
 
 ## The core idea
 
@@ -93,4 +108,4 @@ A rock must keep its outline when it leaves the world and comes back (deep sleep
 
 - 2026-11-15: plan approved; slice 0a adds the terrain stress scenes and the `swarmAtRest` bulk-seed option. The first desktop timing run was invalid throughout (other sessions kept the host at 30–100 % CPU); timings wait for a quiet host.
 - 2026-11-15: slice 1a, rock shapes seeded by the stable id, swarm wire v6.
-- 2026-11-15: look tests with the owner replaced placed rocks with the cut field (plan v2); slice A1 lands the generator.
+- 2026-11-15: look tests with the owner replaced placed rocks with the cut field (plan v2); slice A1 lands the generator, A2 the chunks and rock keys.

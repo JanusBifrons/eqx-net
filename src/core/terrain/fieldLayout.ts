@@ -272,3 +272,70 @@ export function slicedField(o: SlicedOpts): SlicedRock[] {
   }
   return out;
 }
+
+// ---------------------------------------------------------------- chunks ---
+/*
+ * Chunks and rock keys (macro terrain plan v2, A2). The field is split into a
+ * fixed grid of square chunks. A rock belongs to the chunk holding its
+ * pre-warp centre, and its key is (chunk x, chunk y, index): the index is the
+ * rock's rank by cut path within its chunk, so it is the same whether one
+ * chunk or the whole field is cut, and whatever else was cut before.
+ */
+
+/** Chunk side in world units (~4 km). Part of the layout: changing it renames
+ *  every rock, so bump FIELD_LAYOUT_VERSION with it. */
+export const CHUNK_SIZE = 4096;
+/** Chunk coordinates fit a signed byte: ±128 chunks = ±524 km, past any sector. */
+const CHUNK_COORD_BIAS = 128;
+/** Index within a chunk fits 16 bits. */
+export const MAX_ROCKS_PER_CHUNK = 0xffff;
+
+export interface ChunkRock extends SlicedRock {
+  /** Index within the chunk (rank by cut path). */
+  index: number;
+  /** Packed rock key: chunk x, chunk y, index (see `rockKey`). */
+  key: number;
+}
+
+/** The chunk a world point falls in. */
+export function chunkOf(x: number, y: number): { cx: number; cy: number } {
+  return { cx: Math.floor(x / CHUNK_SIZE), cy: Math.floor(y / CHUNK_SIZE) };
+}
+
+/** Pack (chunk x, chunk y, index) into one u32: 8 + 8 + 16 bits. */
+export function rockKey(cx: number, cy: number, index: number): number {
+  return ((((cx + CHUNK_COORD_BIAS) & 0xff) << 24) | (((cy + CHUNK_COORD_BIAS) & 0xff) << 16) | (index & 0xffff)) >>> 0;
+}
+
+/** Unpack a rock key. */
+export function unpackRockKey(key: number): { cx: number; cy: number; index: number } {
+  return { cx: ((key >>> 24) & 0xff) - CHUNK_COORD_BIAS, cy: ((key >>> 16) & 0xff) - CHUNK_COORD_BIAS, index: key & 0xffff };
+}
+
+export interface ChunkOpts {
+  seed: string;
+  battleshipLength: number;
+  fighterLength: number;
+  /** Field radius override (tests); default `SLICED.radius`. */
+  radius?: number;
+}
+
+/**
+ * The rocks of one chunk, at full detail, each with its canonical index and
+ * key. Generation-time code (never per frame): the client runs it off the
+ * frame, the server on wake.
+ */
+export function rocksInChunk(o: ChunkOpts, cx: number, cy: number): ChunkRock[] {
+  const x0 = cx * CHUNK_SIZE, y0 = cy * CHUNK_SIZE;
+  const cut = slicedField({
+    seed: o.seed, battleshipLength: o.battleshipLength, fighterLength: o.fighterLength,
+    view: { x0, y0, x1: x0 + CHUNK_SIZE, y1: y0 + CHUNK_SIZE },
+    ...(o.radius !== undefined ? { radius: o.radius } : {}),
+  });
+  // Members: pre-warp centre inside this chunk (half-open, so each rock has
+  // exactly one chunk). Neighbours' rocks that reach in belong to them.
+  const mine = cut.filter((r) => r.cx >= x0 && r.cx < x0 + CHUNK_SIZE && r.cy >= y0 && r.cy < y0 + CHUNK_SIZE);
+  mine.sort((a, b) => (a.path >>> 0) - (b.path >>> 0));
+  if (mine.length > MAX_ROCKS_PER_CHUNK) throw new Error(`chunk ${cx},${cy} holds ${mine.length} rocks (max ${MAX_ROCKS_PER_CHUNK})`);
+  return mine.map((r, index) => ({ ...r, index, key: rockKey(cx, cy, index) }));
+}
