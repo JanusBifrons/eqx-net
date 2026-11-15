@@ -262,11 +262,36 @@ Now (`ColyseusClient.deferKillForShell` / `releaseDeferredKills`):
   dead; the event only sets WHEN it is drawn dying. A death with no held hit
   (a beam, a hit already drawn) dies on arrival as before. An id recycled
   meanwhile (another kind in the entry) is not killed.
-- Scope: swarm ships (AI pilots, capitals). A player-flown ship still dies on
-  the event (its death drives the spectator flip).
+- Scope: swarm ships (AI pilots, capitals) and pilot hulls: a parked
+  (lingering) hull and another pilot's ship (`deferShipKillForShell`, keyed
+  by wire id). While held, the snapshot routing keeps them though the server
+  no longer lists them (`routeSnapshotShipStates` `keepLingering`,
+  `syncMirror`'s departed sweep); the release kills the hull and evicts the
+  parked entry and its predWorld body in that frame. The LOCAL pilot's own
+  active ship still dies on the event (its death drives the spectator flip).
+- **The hit tick is where the drawn shell reaches the hit** (rail take 7):
+  a `shell_end` reports the tick S of the server step that swept the shell
+  from its pose at S to S + 1, so at display tick S the drawn shell is still
+  up to one step short (a railgun slug: ~107 u). `shellHitTick`
+  (`core/combat/shellFlight.ts`) projects the hit point on the shell's line:
+  the fractional tick in [S, S + 1] at which the closed-form pose is AT it.
+  The burst, the pass-through burst (`ShellSalvoStore.applyEnd`), the held
+  hit (`ShellSalvoStore.hitTick` → `navalHitHold.onShellEnd`) and so the
+  deferred kill all wait for it. The server's side of the convention is
+  locked in `ProjectilePipeline.shellEvents.test.ts` (#15).
+- Rail take 7 (built with the above for swarm ships): the heavy cruiser the
+  slug passed through still split ~6 frames before the drawn slug reached
+  it. It was the spectating pilot's PARKED hull, not a swarm ship: its
+  `destroy` went to `killEntity` at once and the next snapshot evicted it.
+  `continues: 1` was not the cause (its tuple matches the held hit like a
+  final one).
 - Locks: `ColyseusClient.shellKillTiming.test.ts` (failed first: the hull was
   gone and the explosion queued on the destroy), `swarmSpriteUpdater.wreck.test.ts`
-  "wreck pieces wait for a held death".
+  "wreck pieces wait for a held death", `ColyseusClient.passThroughKill.test.ts`
+  (the take's real victim and message order, snapshots through the real
+  routing; failed first: the hull died on the destroy with the drawn slug
+  650 u short), `ColyseusClient.damageAfterDeath.test.ts` (the number comes
+  with the deferred explosion).
 
 ## Client rules in detail
 

@@ -982,6 +982,11 @@ export class ColyseusGameClient {
    *  `[...this.mirror.lingeringShips.keys()]` (a per-snapshot array
    *  allocation). Cleared via `length = 0` at the eviction site. */
   private readonly _lingeringToEvictScratch: string[] = [];
+  /** Pilot hulls (parked, or another pilot's) whose death is held for the
+   *  drawn shell, keyed by wire id (`deferShipKillForShell`); the snapshot
+   *  routing keeps them meanwhile. Records share `_deferredKillFree`.
+   *  Declared before the router ctx below, which reads it. */
+  private readonly _deferredShipKills = new Map<string, DeferredKill>();
   /** Phase 4 (plan: quirky-rabbit) — class-field Set scratches replacing
    *  the per-call `new Set<string>()` literals at the syncMirror /
    *  updateLiveBeam sites. Each is cleared at the top of its consumer;
@@ -1024,6 +1029,7 @@ export class ColyseusGameClient {
     tryEnsureLingerPredBody: this._boundTryEnsureLingerPredBody,
     lingeringSeenScratch: this._lingeringSeenScratch,
     lingeringToEvictScratch: this._lingeringToEvictScratch,
+    keepLingering: this._deferredShipKills,
   };
   /** 2026-05-26 heap-growth gate step 12 — pooled ctx for
    *  `preResetRemoteShips`. Same pattern as above; `predWorld` is the
@@ -1395,6 +1401,8 @@ export class ColyseusGameClient {
     // Deaths held for their drawn shell belong to the old sector too.
     for (const k of this._deferredKills.values()) this._deferredKillFree.push(k);
     this._deferredKills.clear();
+    for (const k of this._deferredShipKills.values()) this._deferredKillFree.push(k);
+    this._deferredShipKills.clear();
     this.mirror.wreckRevealFromTick = undefined;
     // Fire control: NPC locks belong to the old sector.
     this.mirror.localLockedBy = NO_LOCKED_BY;
@@ -1624,7 +1632,7 @@ export class ColyseusGameClient {
       }
       this._shellStore.clear();
       this._navalHitHold.flush(this._heldDamageSink);
-      if (this._deferredKills.size > 0) this.releaseDeferredKills();
+      if (this._deferredKills.size > 0 || this._deferredShipKills.size > 0) this.releaseDeferredKills();
       if (this._shellEvents) {
         this.mirror.shellSalvos = this._shellStore.map;
         for (const s of msg.shellsInFlight ?? []) this._shellStore.applySalvo(s);
@@ -2857,7 +2865,9 @@ export class ColyseusGameClient {
     this._shellStore.applyEnd(msg, this.mirror.pendingShellEnds ??= []);
     if (this._navalHitHold.size === 0) return;
     const now = this.gameClock.now();
-    for (const e of msg.e) this._navalHitHold.onShellEnd(e[1], e[2], e[3], now);
+    // Held hits wait for the drawn shell to REACH the hit, a fraction of a
+    // step after the reported tick (`ShellSalvoStore.hitTick`), like its burst.
+    for (const e of msg.e) this._navalHitHold.onShellEnd(this._shellStore.hitTick(e[0], e[1], e[2], e[3]), e[2], e[3], now);
   }
 
   /** One frame of event shells at `displayTick`: draw, burst, and release
@@ -2869,7 +2879,7 @@ export class ColyseusGameClient {
     if (this._navalHitHold.size > 0) {
       this._navalHitHold.release(displayTick, this.gameClock.now(), this._heldDamageSink);
     }
-    if (this._deferredKills.size > 0) this.releaseDeferredKills();
+    if (this._deferredKills.size > 0 || this._deferredShipKills.size > 0) this.releaseDeferredKills();
   }
 
   /**
@@ -2885,6 +2895,7 @@ export class ColyseusGameClient {
    */
   private deferKillForShell(wireId: string): boolean {
     if (!this._shellEvents || this._navalHitHold.size === 0 || !this._navalHitHold.holdsTarget(wireId)) return false;
+    if (!wireId.startsWith('swarm-')) return this.deferShipKillForShell(wireId);
     const entityId = parseInt(wireId.slice('swarm-'.length), 10);
     const entry = Number.isNaN(entityId) ? undefined : this.mirror.swarm?.get(entityId);
     if (entry === undefined) return false;
@@ -2895,12 +2906,41 @@ export class ColyseusGameClient {
     }
     k.wireId = wireId; k.kind = entry.kind; k.shipKind = entry.shipKind;
     k.deadline = this.gameClock.now() + MAX_HOLD_MS;
-    // The kill happened at or before the newest tick heard of; the slack
-    // covers a binary refresh (DataChannel) that ran ahead of this event.
+    this.holdDeferredWrecks();
+    return true;
+  }
+
+  /**
+   * The same deferral for a pilot's hull: a parked (lingering) hull, keyed by
+   * shipInstanceId, or another pilot's active ship. Rail take 7: the heavy
+   * cruiser the slug passed through was the spectating pilot's PARKED hull;
+   * its destroy went to `killEntity` at once and the next snapshot (which no
+   * longer lists it) evicted it, ~6 frames before the drawn slug got there.
+   * While deferred, the snapshot routing keeps it (`routeSnapshotShipStates`
+   * `keepLingering`, `syncMirror`'s departed sweep). The local pilot's own
+   * active ship still dies on the event (its death drives the spectator flip).
+   */
+  private deferShipKillForShell(wireId: string): boolean {
+    if (wireId === this.mirror.localPlayerId) return false;
+    if (this.mirror.lingeringShips?.has(wireId) !== true && !this.mirror.ships.has(wireId)) return false;
+    let k = this._deferredShipKills.get(wireId);
+    if (k === undefined) {
+      k = this._deferredKillFree.pop() ?? { wireId: '', kind: 0, shipKind: undefined, deadline: 0 };
+      this._deferredShipKills.set(wireId, k);
+    }
+    k.wireId = wireId; k.kind = 0; k.shipKind = undefined;
+    k.deadline = this.gameClock.now() + MAX_HOLD_MS;
+    this.holdDeferredWrecks();
+    return true;
+  }
+
+  /** A held death's new wreck pieces wait (`mirror.wreckRevealFromTick`):
+   *  the kill happened at or before the newest tick heard of; the slack
+   *  covers a binary refresh (DataChannel) that ran ahead of this event. */
+  private holdDeferredWrecks(): void {
     const from = this.clockAnchorServerTick - DEFERRED_KILL_TICK_SLACK;
     const cur = this.mirror.wreckRevealFromTick;
     this.mirror.wreckRevealFromTick = cur === undefined ? from : Math.min(cur, from);
-    return true;
   }
 
   /** Kill each deferred ship whose held hit has been released (its drawn
@@ -2916,7 +2956,16 @@ export class ColyseusGameClient {
       if (e !== undefined && (e.kind !== k.kind || e.shipKind !== k.shipKind)) continue;
       this.killSwarmEntity(k.wireId);
     }
-    if (this._deferredKills.size === 0) this.mirror.wreckRevealFromTick = undefined;
+    for (const [id, k] of this._deferredShipKills) {
+      if (now < k.deadline && this._navalHitHold.holdsTarget(id)) continue;
+      this._deferredShipKills.delete(id);
+      this._deferredKillFree.push(k);
+      this.killEntity(id);
+      // A parked hull: gone with its explosion (the snapshot routing kept it
+      // while its death was held, so nothing else evicts it this frame).
+      if (this.mirror.lingeringShips?.delete(id) === true && this.predWorld) this.lingerBodies.despawn(id, this.predWorld);
+    }
+    if (this._deferredKills.size === 0 && this._deferredShipKills.size === 0) this.mirror.wreckRevealFromTick = undefined;
   }
 
   /** The FX half of a damage event with positive damage: hull flash,
@@ -3039,6 +3088,7 @@ export class ColyseusGameClient {
       this.killSwarmEntity(evt.targetId);
       return;
     }
+    if (this.deferKillForShell(evt.targetId)) return;
     this.killEntity(evt.targetId);
   }
 
@@ -4288,9 +4338,10 @@ export class ColyseusGameClient {
       }
     }
 
-    // Remove departed ships.
+    // Remove departed ships (not one whose death is held for its drawn
+    // shell: `deferShipKillForShell` kills it when the shell reaches it).
     for (const key of this.mirror.ships.keys()) {
-      if (!seen.has(key)) {
+      if (!seen.has(key) && !this._deferredShipKills.has(key)) {
         this.mirror.ships.delete(key);
         this.remoteHistory.delete(key);
         if (this.predRemoteShipIds.has(key)) {

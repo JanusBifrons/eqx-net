@@ -34,6 +34,10 @@ export interface ShipRouterCtx {
   /** Persistent scratch — reused across calls to avoid per-snapshot allocs. */
   lingeringSeenScratch: Set<string>;
   lingeringToEvictScratch: string[];
+  /** Lingering hulls a snapshot must not evict though it no longer lists
+   *  them: a death held for its drawn shell (`ColyseusClient`
+   *  `deferShipKillForShell`, bounded by the hold). Optional. */
+  keepLingering?: { has(id: string): boolean };
 }
 
 /**
@@ -57,7 +61,7 @@ export interface ShipRouterCtx {
  */
 export function routeSnapshotShipStates(snap: SnapshotMessage, ctx: ShipRouterCtx): void {
   const { mirror, predWorld, lingerBodies, tryEnsureLingerPredBody,
-    lingeringSeenScratch, lingeringToEvictScratch } = ctx;
+    lingeringSeenScratch, lingeringToEvictScratch, keepLingering } = ctx;
   const statesByPlayerId: SnapshotMessage['states'] = {};
   if (!mirror.lingeringShips) mirror.lingeringShips = new Map();
   // 2026-05-25 heap-growth gate step 1: reuse persistent Set scratch
@@ -148,7 +152,7 @@ export function routeSnapshotShipStates(snap: SnapshotMessage, ctx: ShipRouterCt
   const toEvict = lingeringToEvictScratch;
   toEvict.length = 0;
   for (const id of mirror.lingeringShips.keys()) {
-    if (!lingeringSeen.has(id)) toEvict.push(id);
+    if (!lingeringSeen.has(id) && keepLingering?.has(id) !== true) toEvict.push(id);
   }
   for (const id of toEvict) {
     mirror.lingeringShips.delete(id);
