@@ -273,8 +273,15 @@ export const ShipKindSchema = z
     /** Thrusters (ship scale infrastructure — motion model): how many main
      *  engines and their nozzle radius at 1× (world units). Thrust comes from
      *  total nozzle area, so more or bigger engines push a heavy hull harder.
-     *  Absent ⇒ one nozzle of the default size for its radius. */
-    thrusters: z.object({ count: z.number().int().min(1), size: z.number().positive() }).strict().optional(),
+     *  Absent ⇒ one nozzle of the default size for its radius.
+     *  Art only (the forge and engine FX; physics reads count and size):
+     *  `bell` draws round bell nozzles (rim, dark throat, hot core) instead of
+     *  the default block nozzle; `plume` is the full-thrust flame length as a
+     *  fraction of the hull length (absent ⇒ the forge's default for its class). */
+    thrusters: z.object({
+      count: z.number().int().min(1), size: z.number().positive(),
+      bell: z.boolean().optional(), plume: z.number().positive().max(1).optional(),
+    }).strict().optional(),
     /** Per-kind scale on top of the global ship scale (tuning one hull). */
     sizeScale: z.number().positive().optional(),
     /** Set by the catalogue: the total factor this kind was scaled by. Never

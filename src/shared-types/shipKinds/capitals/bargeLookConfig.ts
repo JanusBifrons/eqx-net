@@ -14,7 +14,8 @@
  * the real kind). The kind itself is built in `capitals/index.ts`; this file
  * stays import-free at runtime (the ship-scale config reads the worker suffix).
  */
-import type { BargeLook } from './bargeDesign.js';
+/** A barge look option (`bargeDesign.ts`). */
+export type BargeLook = 'A' | 'B' | 'C';
 
 interface Sources {
   env?: Record<string, string | undefined>;

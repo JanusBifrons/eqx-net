@@ -21,7 +21,9 @@ async function load(look: 'A' | 'B' | 'C') {
   const fields = await import('./fields.js');
   const bake = await import('./bake.js');
   const bow = await import('./bowDetail.js');
-  return { ...kinds, ...fields, ...bake, ...bow };
+  const layout = await import('./turretLayout.js');
+  const dish = await import('./tractorDish.js');
+  return { ...kinds, ...fields, ...bake, ...bow, ...layout, ...dish };
 }
 
 describe.each(['A', 'B', 'C'] as const)('barge look %s in the forge', (look) => {
@@ -42,10 +44,42 @@ describe.each(['A', 'B', 'C'] as const)('barge look %s in the forge', (look) => 
     // One nozzle per thruster, all on the stern (Pixi-up: stern is +y).
     expect(f.nozzles).toHaveLength(kind.thrusters!.count);
     for (const n of f.nozzles) expect(n.y).toBeGreaterThan(kind.radius * 0.8);
+    // The authored plume: the full-thrust flame (8.4 nozzle radii × len,
+    // engineFx flameShape) is that fraction of the hull length.
+    for (const n of f.nozzles) expect(8.4 * n.r * n.len!).toBeCloseTo(kind.thrusters!.plume! * 2 * kind.radius, 3);
+    // Bell nozzles: a hot core at each bell's centre, a dark throat around it.
+    const at = (x: number, y: number): number => Math.round(y * f.g.ppu + f.g.oy) * f.g.w + Math.round(x * f.g.ppu + f.g.ox);
+    for (const n of f.nozzles) {
+      const c = at(n.x, n.y - n.r * 0.6), throat = at(n.x + n.r * 0.65, n.y - n.r * 0.6);
+      expect(f.emis[c * 3]!).toBeGreaterThan(0.5);
+      expect(f.emis[throat * 3]!).toBe(0);
+      expect(f.albedo[throat * 3]!).toBeLessThan(f.albedo[c * 3]! + 0.2);
+    }
   }, 60_000);
 
-  // The jaw (C) carries its cutters right at the stem: no bow to fit out.
-  it.skipIf(look === 'C')('gets bow fittings ahead of its forward-most mount', async () => {
+  it('draws mining lasers as lens emitters and tractors as dishes, in 3+ sizes', async () => {
+    const m = await load(look);
+    const places = m.shipTurrets('barge-look');
+    for (const p of places) {
+      expect(p.naval).toBeUndefined();
+      if (p.mount.id.startsWith('tractor-')) {
+        expect(p.family).toBe('tractor');
+        expect(p.len).toBe(0);
+      } else {
+        expect(p.family).toBe('beam');
+        expect(p.len).toBeCloseTo(p.muzzle, 6); // the drawn lens tip is the shared muzzle
+      }
+    }
+    expect(new Set(places.map((p) => Math.round(p.cap))).size).toBeGreaterThanOrEqual(3);
+    // A dish bake: a glassy emitter at the centre, no barrel ahead of it.
+    const dish = m.forgeTractorDish({ family: 'tractor', paint: 0x56606b, len: 0.1, wid: 10, cap: 50, ppu: 2 });
+    const mid = Math.round(dish.g.oy) * dish.g.w + Math.round(dish.g.ox);
+    expect(dish.mat[mid]).toBe(m.MAT.GLASS);
+    expect(dish.g.h / dish.g.ppu).toBeLessThan(110);
+  });
+
+  // B (prong-tip lasers) and C (the jaw) carry mounts right at the stem: no bow to fit out.
+  it.skipIf(look !== 'A')('gets bow fittings ahead of its forward-most mount', async () => {
     const m = await load(look);
     const kind = m.getShipKind('barge-look');
     const plan = m.planBowFeatures('barge-look', m.shipParts(kind));

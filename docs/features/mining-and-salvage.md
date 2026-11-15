@@ -16,17 +16,22 @@ No ship carries it yet: the mining barge that does is a later step.
 
 ## The mining barge: look options
 
-The barge is a container ship for salvage: about 1.3 times a battleship's length (7,480 u), twice its beam, a deck of container stacks, mining lasers and tractors of every size (S to XL) down both sides so it can strip-mine a field, and oversized engines on the stern. It has no side of its own: whoever owns it decides that.
+The barge is a container ship for salvage: about 1.3 times a battleship's length (7,480 u), twice its beam, a deck of container stacks, a few big mining lasers at the bow corners and rows of small tractor dishes down both sides so it can strip-mine a field, and a stern engine module wider than the hull (1.4 beams) with three or four round bell nozzles, each about a quarter of the beam across, whose plume at full thrust is 30 % of the hull's length. It has no side of its own: whoever owns it decides that.
 
 Three hull looks are on the table for the owner to pick (`bargeDesign` in `shared-types/shipKinds/capitals/bargeDesign.ts`, built from the warship generator's parts):
 
-- **A, container ship:** blunt bow, one long container deck, bridge aft, six big nozzles.
-- **B, twin hull:** two pontoons round a central open hold of containers, laser rows on both outer edges, tractors on the hold rims, eight nozzles.
-- **C, ore carrier:** a forward mining "jaw" of big lasers with a tractor at the back of the mouth, hatch covers over the hold, four huge nozzles.
+- **A, container ship:** blunt bow, one long container deck, bridge aft, four bells.
+- **B, twin hull:** two pontoons with blunt bows round a mouth (tractor dishes on its inner faces, a laser and an intake slot at its back) and a central hold of containers, four bells. The least cargo of the three.
+- **C, ore carrier:** a forward mining "jaw" of big lasers with a tractor at the back of the mouth, hatch covers over the hold, three bells.
+
+How they are drawn, all through the ordinary ship art:
+- **Paint:** the warships' steel, so the barge sits in the same light as the fleet. Fitted parts (cargo, deckhouse, stern gear) carry part roles the forge paints as their own (`OWN_PAINT_ROLES` in `client/render/art/fields.ts`), so the hull's bare-metal bands and panel seams never cut across them.
+- **Engines:** `thrusters.bell` draws round bells (rim, dark throat, hot core) instead of block nozzles; `thrusters.plume` sets the full-thrust flame length as a fraction of the hull length, read by the forge into the engine FX.
+- **Mounts:** a mining laser on a capital mount draws as a round emitter with a lens barrel, and a tractor as a dish, sized by its mount class (`turretLayout.ts`), not as a naval gunhouse.
 
 Tractor beams do not exist yet, so tractor mounts (`tractor-*`) carry the mining laser as a placeholder until the tractor arrives.
 
-To see one in the game, start the server with `EQX_BARGE_LOOK=A` (or B, C) and open the page with `?room=showcase-barge-look&bargeLook=A`: the barge parks beside a battleship and a few small ships. The switch is for this look review only. Unset, the catalogue is unchanged. Set, the look is added at the very end of the catalogue as kind `barge-look`, and it never spawns at random. Set it on both the server and the page. When the owner picks a look, it is added as a real ship kind and the switch goes away.
+To see one in the game, start the server with `EQX_BARGE_LOOK=A` (or B, C) and open the page with `?room=showcase-barge-look&bargeLook=A`: the barge parks beside a battleship and a few small ships. Room `showcase-barge-thrust` has one barge under way at full thrust. Showcase shots `barge-look`, `barge-stern` and `barge-thrust` film them. The switch is for this look review only. Unset, the catalogue is unchanged. Set, the look is added at the very end of the catalogue as kind `barge-look`, and it never spawns at random. Set it on both the server and the page. When the owner picks a look, it is added as a real ship kind and the switch goes away.
 
 ## Coming next
 

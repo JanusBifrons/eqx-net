@@ -558,6 +558,18 @@ export const SHOWCASE_BARGE_LOOK_OPTS = {
   pilotCapitals: true,
 };
 
+/** The barge look under way (an NPC on a scripted straight line at about
+ *  60 % of its top speed, so its engines run at full thrust), for the stern
+ *  close-up; the pilot (a fighter) watches from off its beam. */
+export const SHOWCASE_BARGE_THRUST_OPTS = {
+  ...SHOWCASE_BARGE_LOOK_OPTS,
+  dronePoses: isShipKindId('barge-look')
+    ? [{ kind: 'barge-look', x: 0, y: 0, angle: 0, vy: 60, path: { toX: 0, toY: 400_000, speed: 70, loop: false } }]
+    : [],
+  defaultSpawnX: -6000,
+  defaultSpawnY: 0,
+};
+
 /** Room name → options, registered in `index.ts`. */
 export const SHOWCASE_ROOMS = {
   'showcase-ship-gallery': SHOWCASE_SHIP_GALLERY_OPTS,
@@ -580,4 +592,5 @@ export const SHOWCASE_ROOMS = {
   'showcase-coastal-duel': SHOWCASE_COASTAL_DUEL_OPTS,
   'showcase-fleet-warp': SHOWCASE_FLEET_WARP_OPTS,
   'showcase-barge-look': SHOWCASE_BARGE_LOOK_OPTS,
+  'showcase-barge-thrust': SHOWCASE_BARGE_THRUST_OPTS,
 } as const;

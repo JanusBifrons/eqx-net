@@ -34,19 +34,30 @@ describe.each(BARGE_LOOKS)('barge look %s', (look) => {
     expect(d.length / bsLength).toBeGreaterThan(1.25);
     expect(d.length / bsLength).toBeLessThan(1.35);
     expect(d.beam / bsBeam).toBeGreaterThan(1.9);
-    expect(d.holdArea).toBeGreaterThan(0.18 * d.length * d.beam);
+    expect(d.holdArea).toBeGreaterThan(0.15 * d.length * d.beam);
     expect(kind.cargoCapacity).toBeGreaterThan(0);
-    // The collider spans the drawn beam.
+    // The collider spans the widest part, the stern engine module, and the
+    // radius circumscribes it.
     const hull = (kind.shape as { hull: Array<[number, number]> }).hull;
-    expect(2 * Math.max(...hull.map(([x]) => Math.abs(x)))).toBeCloseTo(d.beam, 0);
+    expect(2 * Math.max(...hull.map(([x]) => Math.abs(x)))).toBeCloseTo(d.engineWidth, 0);
+    for (const [x, y] of hull) expect(Math.hypot(x, y)).toBeLessThanOrEqual(kind.radius + 1e-6);
   });
 
   it('is lined with mining lasers and tractors of varying sizes, down both sides', () => {
     const m = kind.mounts ?? [];
     expect(m.every((x) => [String('mining_laser'), TRACTOR_PLACEHOLDER_WEAPON].includes(x.weaponId))).toBe(true);
-    const sizes = new Set(m.map((x) => x.size));
-    for (const s of ['S', 'M', 'L', 'XL']) expect(sizes.has(s as 'S')).toBe(true);
-    expect(m.some((x) => x.id.startsWith('tractor-'))).toBe(true);
+    // Three or more visible size classes; a few big lasers (XL) at the bow
+    // angled forward; tractors are the small dishes.
+    expect(new Set(m.map((x) => x.size)).size).toBeGreaterThanOrEqual(3);
+    const xl = m.filter((x) => x.size === 'XL' && x.id.startsWith('laser-'));
+    expect(xl.length).toBeGreaterThanOrEqual(2);
+    for (const x of xl) {
+      expect(x.localY).toBeGreaterThan(d.length * 0.25);
+      expect(Math.abs(x.baseAngle)).toBeLessThan(0.5);
+    }
+    const tr = m.filter((x) => x.id.startsWith('tractor-'));
+    expect(tr.length).toBeGreaterThanOrEqual(6);
+    expect(tr.filter((x) => x.size === 'S').length).toBeGreaterThanOrEqual(4);
     expect(m.filter((x) => x.localX > 0).length).toBe(m.filter((x) => x.localX < 0).length);
     expect(new Set(m.map((x) => x.id)).size).toBe(m.length);
     expect(d.lasers.S + d.lasers.M + d.lasers.L + d.lasers.XL + d.tractors.S + d.tractors.M + d.tractors.L + d.tractors.XL).toBe(m.length);
@@ -55,9 +66,19 @@ describe.each(BARGE_LOOKS)('barge look %s', (look) => {
     expect(grouped.sort()).toEqual(m.map((x) => x.id).sort());
   });
 
-  it('has gigantic stern engines (nozzles ≥ 3× a battleship\'s)', () => {
-    expect(kind.thrusters!.size).toBeGreaterThan(3 * battleship.thrusters!.size);
-    expect(kind.thrusters!.count).toBeGreaterThanOrEqual(4);
+  it('has gigantic stern engines: a module 1.3–1.5 beams wide, 3–4 quarter-beam bells, a long plume', () => {
+    expect(d.engineWidth / d.beam).toBeGreaterThanOrEqual(1.3);
+    expect(d.engineWidth / d.beam).toBeLessThanOrEqual(1.5);
+    const t = kind.thrusters!;
+    expect(t.count).toBeGreaterThanOrEqual(3);
+    expect(t.count).toBeLessThanOrEqual(4);
+    expect(t.size / d.beam).toBeGreaterThanOrEqual(0.24);
+    expect(t.size).toBeGreaterThan(6 * battleship.thrusters!.size);
+    expect(t.bell).toBe(true);
+    expect(t.plume).toBeGreaterThanOrEqual(0.25);
+    // The module protrudes past the hull: the stern is the module's aft face.
+    const hull = (kind.shape as { hull: Array<[number, number]> }).hull;
+    expect(Math.max(...hull.map(([, y]) => y))).toBeCloseTo(d.length / 2, 0);
   });
 });
 

@@ -194,7 +194,7 @@ export function scaleShipKind(kind: ShipKind, factor: number): ShipKind {
     linearDamping: kind.linearDamping * ((m.thrust / m.mass) / m.speed),
     ai: { ...kind.ai, thrust: kind.ai.thrust * m.thrust },
     // Already scaled: a re-scale must not count the authored engines twice.
-    ...(kind.thrusters ? { thrusters: { count: kind.thrusters.count, size: kind.thrusters.size * factor } } : {}),
+    ...(kind.thrusters ? { thrusters: { ...kind.thrusters, size: kind.thrusters.size * factor } } : {}),
     appliedScale: (kind.appliedScale ?? 1) * factor,
   };
 }

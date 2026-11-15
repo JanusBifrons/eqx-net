@@ -123,7 +123,7 @@ describe.runIf(AT_AUTHORED_SHIP_SCALE)('FORGE_VERSION lock', () => {
     for (const j of [{ type: 'ship' as const, id: 'fighter' }, { type: 'ship' as const, id: 'havok' }, { type: 'struct' as const, id: 'turret', seed: 1 }]) {
       for (const f of runBake(j, DEFAULT_RIG).frames) for (let i = 0; i < f.data.length; i++) { h ^= f.data[i]!; h = Math.imul(h, 16777619); }
     }
-    expect({ version: FORGE_VERSION, hash: (h >>> 0).toString(16) }).toEqual({ version: 'r2.5', hash: '49b83b2b' });
+    expect({ version: FORGE_VERSION, hash: (h >>> 0).toString(16) }).toEqual({ version: 'r2.6', hash: '49b83b2b' });
   });
 });
 
@@ -157,7 +157,7 @@ describe('A4 recipes: scrap and asteroids keep their collider shapes', () => {
   });
 
   it('an asteroid matches the seeded outline the server uses, and bakes the same each time', async () => {
-    const { forgeRock } = await import('../../src/client/render/art/fields');
+    const { forgeRock } = await import('../../src/client/render/art/rockForge');
     const { generateAsteroidVertices } = await import('../../src/core/swarm/asteroidShape');
     for (const [id, r] of [[7, 40], [123, 90]] as const) {
       const f = forgeRock(id, r, undefined, { ppu: 1.5 });
