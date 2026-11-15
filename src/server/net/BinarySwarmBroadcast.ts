@@ -197,8 +197,13 @@ export class BinarySwarmBroadcast {
       // v4: componentIndex — which scrap group of the parent ship-kind this
       // piece is. Meaningful ONLY for kind=scrap; 0 for every other record.
       this.view.setUint8(writeOffset + SWARM_REC_COMPONENT_INDEX_OFF, rec.componentIndex ?? 0);
-      // v5: the wreck a wreck piece belongs to (capital destruction S2b); 0 otherwise.
-      this.view.setUint16(writeOffset + SWARM_REC_WRECK_ID_OFF, rec.kind === SWARM_KIND_WRECK ? (rec.wreckId ?? 0) : 0, true);
+      // v5: the wreck a wreck piece belongs to (capital destruction S2b);
+      // v6: an asteroid's shape seed (macro terrain 1a); 0 otherwise.
+      this.view.setUint16(
+        writeOffset + SWARM_REC_WRECK_ID_OFF,
+        rec.kind === SWARM_KIND_WRECK ? (rec.wreckId ?? 0) : rec.kind === 0 ? (rec.shapeSeed ?? 0) : 0,
+        true,
+      );
       writeOffset += SWARM_RECORD_BYTES;
 
       // Update bookkeeping so future deltas are computed against this pose.

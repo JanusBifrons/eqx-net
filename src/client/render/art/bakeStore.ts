@@ -11,7 +11,7 @@ import { isLitKey, type Baked } from './bake.js';
 import type { LightRig } from './shade.js';
 
 /** Bump whenever forge output changes, or old art would be served. */
-export const FORGE_VERSION = 'r2.5'; // r2.5: capital bow fittings (bowDetail.ts)
+export const FORGE_VERSION = 'r2.6'; // r2.6: rock outlines seeded by the rock's stable id, arithmetic only (macro terrain 1a); r2.5: capital bow fittings (bowDetail.ts)
 
 const DB = 'eqx-art-lab';
 const STORE = 'bakes';

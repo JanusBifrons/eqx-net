@@ -161,6 +161,9 @@ export interface SwarmRenderState {
   wreckId?: number;
   /** P2c — an asteroid's resource ('ice' | 'crystal'; absent ⇒ rock). */
   asteroidResource?: string;
+  /** Asteroid (`kind === 0`, wire v6): its u16 shape seed, the one input
+   *  (with `radius`) of its outline on both sides. Absent for other kinds. */
+  shapeSeed?: number;
   /** Phase: shield — true while this drone's shield is down (hull
    *  exposed). Decoded from swarm recordFlags bit 1 and kept consistent
    *  for in-interest drones by the snapshot drones[] loop. */

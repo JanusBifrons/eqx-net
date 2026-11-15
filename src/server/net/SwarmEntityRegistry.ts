@@ -76,6 +76,9 @@ export interface SwarmEntityRecord {
   /** Wreck pieces (kind 4): the wreck this piece belongs to (u16, the key of
    *  its `wrecks[]` snapshot descriptor). Encoded at `SWARM_REC_WRECK_ID_OFF`. */
   wreckId?: number;
+  /** Asteroids (kind 0): the u16 shape seed (`asteroidShapeSeed(id)`), from
+   *  the stable `id`, never `entityId`. Encoded at `SWARM_REC_SHAPE_SEED_OFF`. */
+  shapeSeed?: number;
   /** Wreck pieces (kind 4): the convex parts, body-local math-up, CCW. Weapon
    *  hits refine the bounding circle to these (the same parts the physics
    *  body is built from). */
