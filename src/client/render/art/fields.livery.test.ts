@@ -9,6 +9,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { forgeShip, lin, liveryGrey, liveryPaint, MAT, paintLivery, shipExtent, shipParts, type Fields, type Livery } from './fields.js';
+import { turretCoverOf } from './bake.js';
 import { MAT_COUNT, matTables } from './shade.js';
 import { getShipKind, SHIP_KINDS_LIST } from '../../../shared-types/shipKinds.js';
 import { AT_AUTHORED_SHIP_SCALE } from '../../../shared-types/shipScale/config.js';
@@ -713,5 +714,70 @@ describe("livery shade experiments 'b2' / 'b3'", () => {
   it('running lights keep the bright team colour', () => {
     const f = forgeShip('battleship', { ppu: ppuFor('battleship'), livery: lv('b2') });
     expect(f.navLights.some((l) => l.color === liveryPaint(TEAM))).toBe(true);
+  });
+});
+
+/** Treatment 'b4' (owner, 2026-11-15): capital painted sections across hull
+ *  and deck at bow and stern; sub-caps keep paint off turret bases and gain
+ *  tail flashes when too little colour would show. */
+describe("livery treatment 'b4' (painted sections, turret-proof spots)", () => {
+  const lv: Livery = { treatment: 'b4', team: 0xff4444, sigil: 0x1234 };
+  const forge = (id: string): Fields => forgeShip(id, { ppu: ppuFor(id), livery: lv, turretCover: turretCoverOf(id) });
+  /** Bow fraction (0 = nose) per texel row. */
+  const tbOf = (f: Fields): ((i: number) => number) => {
+    let y0 = Infinity, y1 = -Infinity;
+    for (let i = 0; i < f.cov.length; i++) if (f.cov[i]! > 0.5) { const ty = Math.floor(i / f.g.w); y0 = Math.min(y0, ty); y1 = Math.max(y1, ty); }
+    return (i) => (Math.floor(i / f.g.w) - y0) / (y1 - y0);
+  };
+  const isPaint = (f: Fields, i: number): boolean => f.mat[i] === MAT.LIVERY;
+
+  it('a battleship carries painted sections at bow and stern, on the deck as well, and none amidships', () => {
+    const id = 'battleship';
+    const f = forge(id);
+    const tb = tbOf(f);
+    const deck = shipParts(getShipKind(id)).findIndex((p) => p.role === 'deck');
+    expect(deck).toBeGreaterThan(-1);
+    let bow = 0, bowN = 0, stern = 0, sternN = 0, mid = 0, midN = 0;
+    for (let i = 0; i < f.cov.length; i++) {
+      if (f.cov[i]! <= 0.5) continue;
+      const t = tb(i);
+      if (t < 0.06) { bowN++; if (isPaint(f, i)) bow++; }
+      else if (t > 0.925 && t < 0.955) { sternN++; if (isPaint(f, i)) stern++; } // ahead of the nozzle housing
+      else if (t > 0.35 && t < 0.65) { midN++; if (isPaint(f, i)) mid++; }
+    }
+    expect(bow / bowN).toBeGreaterThan(0.3);
+    expect(stern / sternN).toBeGreaterThan(0.25);
+    expect(mid / midN).toBeLessThan(0.03); // only the sigil
+  });
+
+  it.each(['heavy', 'gunship', 'missile-frigate', 'fighter', 'interceptor'])('%s: no paint on a turret base', (id) => {
+    const f = forge(id);
+    const { g } = f;
+    for (const c of turretCoverOf(id)) {
+      for (let i = 0; i < f.cov.length; i++) {
+        const wx = (i % g.w + 0.5 - g.ox) / g.ppu, wy = (Math.floor(i / g.w) + 0.5 - g.oy) / g.ppu;
+        if (Math.hypot(wx - c.x, wy - c.y) < c.reach * 0.9 && f.mat[i] === MAT.LIVERY) throw new Error(`${id}: paint under a turret base at ${wx.toFixed(1)},${wy.toFixed(1)}`);
+      }
+    }
+  });
+
+  it.each(['heavy', 'gunship', 'missile-frigate'])('%s: shows team colour (tail flashes) although its nose is under a turret', (id) => {
+    const f = forge(id);
+    const tb = tbOf(f);
+    let tail = 0, hull = 0;
+    for (let i = 0; i < f.cov.length; i++) {
+      if (f.cov[i]! <= 0.5) continue;
+      hull++;
+      if (isPaint(f, i) && tb(i) > 0.6) tail++;
+    }
+    expect(tail / hull).toBeGreaterThan(0.03);
+  });
+
+  it.each(['battleship', 'heavy', 'gunship', 'fighter'])('%s: paint is mirror-symmetric', (id) => {
+    const f = forge(id);
+    const { w, h } = f.g;
+    let mis = 0;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if ((f.mat[y * w + x] === MAT.LIVERY) !== (f.mat[y * w + (w - 1 - x)] === MAT.LIVERY)) mis++;
+    expect(mis).toBe(0);
   });
 });

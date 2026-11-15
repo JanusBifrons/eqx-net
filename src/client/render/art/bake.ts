@@ -96,6 +96,13 @@ export function bakeKey(j: BakeJob): string {
 }
 
 /** A liveried ship's key suffix (absent livery adds nothing). */
+/** A kind's turret bases (pivot + 1.25 x the larger of ring and cap): what a
+ *  fitted turret hides for good, for a livery that keeps paint off it. The
+ *  barrel is a thin, moving line, so its sweep is not counted. */
+export function turretCoverOf(id: string): Array<{ x: number; y: number; reach: number }> {
+  return shipTurrets(id).map((t) => ({ x: t.px, y: t.py, reach: 1.25 * Math.max(t.ring, t.cap) }));
+}
+
 function liveryTag(l: Livery): string { return `:L${l.treatment}${l.team.toString(16)}:${l.sigil.toString(16)}`; }
 
 /** A lit job's key (prefixed `L` by bakeKey): no sun, and no turn for
@@ -216,7 +223,7 @@ export function runBake(j: BakeJob, rig: LightRig): Baked {
   if (j.type === 'ship' || j.type === 'scrap') {
     const rings = j.type === 'ship' && j.rings ? shipTurrets(j.id).map((t) => ({ x: t.px, y: t.py, r: t.ring })) : undefined;
     const f = j.type === 'ship'
-      ? forgeShip(j.id, { ppu: shipPpu(j.id), paint: j.paint, rings, ...(j.livery ? { livery: j.livery } : {}) })
+      ? forgeShip(j.id, { ppu: shipPpu(j.id), paint: j.paint, rings, ...(j.livery ? { livery: j.livery, turretCover: turretCoverOf(j.id) } : {}) })
       : forgeScrap(j.id, j.component, { ppu: scrapPpu(j.id) });
     if (j.lit) return litBaked(f, j.type === 'ship' && isCapitalKind(j.id) ? TILE_MAX_SIDE : Infinity);
     const frames: Frame[] = [];
