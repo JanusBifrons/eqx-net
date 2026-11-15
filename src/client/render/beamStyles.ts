@@ -133,3 +133,74 @@ export function remoteBeamFireAngle(
   // Game-space forward is (-sin a, cos a).
   return Math.atan2(-dx, dy);
 }
+
+/** A drawn remote beam line (game space), filled by `remoteBeamLine`. */
+export interface RemoteBeamLine { fromX: number; fromY: number; toX: number; toY: number }
+
+/**
+ * The line a remote beam is drawn along this frame (game space), into `out`
+ * (no allocation, #14). `pivotX/Y` is the mount's live pivot on the shooter's
+ * drawn hull, `muzzleD` the barrel length, `range` the wire beam's length and
+ * `wireToX/Y` its end point (`laser_fired.to`: where the server's ray stopped).
+ *
+ * `holdLine` false (fighter beams): the beam leaves down the live barrel
+ * (`remoteBeamFireAngle`) for `range`. Their 250 ms life overlaps a 167 ms
+ * cooldown, so a fresh pulse redraws the line every shot; a nose gun's beam
+ * that stayed put while the fighter turned would leave its nose.
+ *
+ * `holdLine` true (a styled beam: the capital heavy beam): a pulse stays on
+ * the line it was fired along for its whole `HEAVY_BEAM_TTL_MS` life. Its
+ * origin follows the muzzle (the ship moves under it), but it aims at the
+ * wire end point and stops THERE: never the live mount angle. A heavy pulse
+ * outlives a cooldown by ~280 ms, so drawing it down the live barrel swung
+ * the last pulse with the turret after the kill follow-through (filmed: ~1.9°
+ * off the cut in 0.33 s, then sweeping past the wreck) and, while the turret
+ * was still swinging onto a target, ran the beam through the intact hull to
+ * its full range.
+ */
+export function remoteBeamLine(
+  holdLine: boolean, poseAngle: number, baseAngle: number, mountAngle: number | undefined,
+  pivotX: number, pivotY: number, muzzleD: number, range: number,
+  wireToX: number, wireToY: number, out: RemoteBeamLine,
+): RemoteBeamLine {
+  const a = remoteBeamFireAngle(poseAngle, baseAngle, holdLine ? undefined : mountAngle, pivotX, pivotY, wireToX, wireToY);
+  const fx = -Math.sin(a), fy = Math.cos(a);
+  out.fromX = pivotX + fx * muzzleD;
+  out.fromY = pivotY + fy * muzzleD;
+  if (holdLine) {
+    // The end point is the server's: a hit stays on the hit. An end point
+    // inside the barrel (point blank) draws nothing rather than backwards.
+    const behind = (wireToX - pivotX) * fx + (wireToY - pivotY) * fy <= muzzleD;
+    out.toX = behind ? out.fromX : wireToX;
+    out.toY = behind ? out.fromY : wireToY;
+  } else {
+    out.toX = out.fromX + fx * range;
+    out.toY = out.fromY + fy * range;
+  }
+  return out;
+}
+
+/** Where `addBeamLights` puts its lights (`LitScene.addLight`'s shape). */
+export interface BeamLightSink {
+  addLight(x: number, y: number, z: number, color: number, intensity: number, reach: number): void;
+}
+
+/**
+ * A beam lights where it hits and along its length (the GPU-lit art). The
+ * beam is in GAME space and the lit scene in PIXI space (y down: pixiY =
+ * -gameY, like every other light the renderer feeds it). Without the flip the
+ * lights sat at the beam's Y mirror: a heavy beam burning a cruiser 280 u
+ * below the sector's x axis lit a spot 560 u up its hull (a hard rose wash on
+ * the wreck piece there that vanished with the beam) and never the piece it
+ * hit. A styled (heavy) beam lights in its own colour, `glowScale` wider.
+ */
+export function addBeamLights(
+  sink: BeamLightSink,
+  b: { fromX: number; fromY: number; toX: number; toY: number; style?: { tint: number; glowScale?: number } | null },
+): void {
+  const len = Math.hypot(b.toX - b.fromX, b.toY - b.fromY);
+  const c = b.style ? b.style.tint : 0xff6a9a;
+  const k = b.style?.glowScale ?? 1;
+  sink.addLight(b.toX, -b.toY, 6, c, 2.2, 120 * k);
+  sink.addLight((b.fromX + b.toX) / 2, -(b.fromY + b.toY) / 2, 6, c, 0.8, len * 0.6 + 30 * k);
+}
