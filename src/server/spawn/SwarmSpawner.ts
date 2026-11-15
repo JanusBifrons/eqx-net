@@ -26,6 +26,14 @@ export interface AsteroidSpec {
   mass?: number;
   /** P2c — what a Miner gets from it (absent ⇒ rock). Asteroids only. */
   resource?: AsteroidResourceId;
+  /** Cut-field rock: its outline (relative to x, y), instead of the seeded
+   *  `generateAsteroidVertices` shape. Asteroids only. */
+  vertices?: ReadonlyArray<Vec2>;
+  /** Too massive to move: a locked body, like a structure. Asteroids only. */
+  fixed?: boolean;
+  /** Cut-field rock: every client cuts it from the field seed, so it stays off
+   *  the swarm wire and out of the sector save (macro terrain plan v2). */
+  fieldRock?: boolean;
 }
 
 export interface DroneSpec {
@@ -386,7 +394,8 @@ export class SwarmSpawner {
       // Shape from the STABLE id (macro terrain 1a): wire ids are reused, so
       // seeding by `entityId` would reshape a rock that leaves and returns.
       rec.shapeSeed = asteroidShapeSeed(a.id);
-      vertices = generateAsteroidVertices(rec.shapeSeed, a.radius);
+      vertices = a.vertices ?? generateAsteroidVertices(rec.shapeSeed, a.radius);
+      if (a.fieldRock) rec.fieldRock = true;
       rec.vertices = vertices;
       mass ??= ASTEROID_DEFAULT_MASS;
       // WS-4 / R2.27 — seed the finite mineable resource pool from the
@@ -422,7 +431,7 @@ export class SwarmSpawner {
     // ram impulses (the "I hit a pylon and it MOVED" bug). Drones (1) + asteroids
     // (0) + scrap (3) stay dynamic — drones fly, asteroids are bump-able (R2.33),
     // scrap drifts.
-    const staticBody = kind === 2;
+    const staticBody = kind === 2 || (kind === 0 && a.fixed === true);
     // SCRAP (kind 3) carries a collision-group mask so scrap doesn't collide with
     // other scrap but does collide with everything else. Every other kind passes
     // undefined ⇒ Rapier's default groups (collide with all).

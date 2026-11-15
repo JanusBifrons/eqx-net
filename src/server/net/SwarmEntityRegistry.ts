@@ -85,6 +85,9 @@ export interface SwarmEntityRecord {
   /** Asteroids (kind 0): the u16 shape seed (`asteroidShapeSeed(id)`), from
    *  the stable `id`, never `entityId`. Encoded at `SWARM_REC_SHAPE_SEED_OFF`. */
   shapeSeed?: number;
+  /** Cut-field rock (macro terrain plan v2): every client cuts it from the
+   *  field seed, so the swarm wire and the sector save skip it. */
+  fieldRock?: boolean;
   /** Wreck pieces (kind 4): the convex parts, body-local math-up, CCW. Weapon
    *  hits refine the bounding circle to these (the same parts the physics
    *  body is built from). */

@@ -75,7 +75,7 @@ export interface SectorPersistenceDeps {
   sectorKey: () => string | null;
   sabF32: Float32Array;
   swarmRegistry: {
-    all(): Iterable<{ id: string; slot: number; kind: number }>;
+    all(): Iterable<{ id: string; slot: number; kind: number; fieldRock?: boolean }>;
     has(entityId: string): boolean;
   };
   /** Per-entity hull pool — drones/structures are killable; asteroids absent. */
@@ -165,6 +165,8 @@ export class SectorPersistence {
       if (rec.kind === 2) continue;
       // Capital wreck pieces (S2a): persisted as a descriptor in S2b, not here.
       if (rec.kind === 4) continue;
+      // Cut-field rocks are cut from the field seed; untouched ones need no save.
+      if (rec.fieldRock === true) continue;
       // Asteroids (kind 0): pose + health. Position isn't restored (deterministic
       // from the seed) but is recorded for diagnostics.
       const health = d.swarmHealth.get(rec.id) ?? 0;

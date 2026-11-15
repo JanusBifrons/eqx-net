@@ -110,6 +110,8 @@ export class BinarySwarmBroadcast {
     let writeOffset = SWARM_HEADER_BYTES;
 
     for (const rec of registry.all()) {
+      // Cut-field rocks: every client cuts them from the field seed itself.
+      if (rec.fieldRock === true) continue;
       const base = slotBase(rec.slot);
       const x = sabF32[base + SLOT_X_OFF]!;
       const y = sabF32[base + SLOT_Y_OFF]!;
