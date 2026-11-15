@@ -5017,11 +5017,8 @@ export class SectorRoom extends Room<SectorState> {
     targetId: string, shooterId: string, damage: number, hitX?: number, hitY?: number, dirX?: number, dirY?: number,
     weaponId?: WeaponId,
   ): boolean {
-    // Overkill knock-back (owner request 2026-11-13): a shot landing on a
-    // capital wreck piece (immune, so the router below does nothing) shoves
-    // it along the shot from the hit point. Only hits that know their point
-    // AND direction (shells, player and NPC beams); missiles push through
-    // their own splash impulse, rams through the contact itself.
+    // A hit on a wreck piece knocks and wears it, one on a rock wears it (rock cut). Only hits
+    // that know their point AND direction; missiles push by splash, rams by contact.
     if (this.capitalWrecks !== null && damage > 0 && hitX !== undefined && hitY !== undefined
       && dirX !== undefined && dirY !== undefined) {
       this.capitalWrecks.onWreckHit(targetId, hitX, hitY, dirX, dirY, damage, weaponId, shooterId);
@@ -5174,7 +5171,12 @@ export class SectorRoom extends Room<SectorState> {
         if (slot !== undefined) slotPoseInto(this.sabF32, slot, out);
         return slot !== undefined;
       },
-      dropSalvage: (qty, x, y, vx, vy) => { this.loot.drop({ goods: { salvage: qty }, blueprints: [] }, x, y, vx, vy, { cause: 'salvage' }); },
+      // Rock cut: a rock's piece pods its ore through OreDraw's one cut hook.
+      dropSalvage: (qty, x, y, vx, vy, ore) => { this.loot.drop({ goods: ore ? this.oreDraw.cutYield(ore.rockId, x, y, qty, ore.resource) : { salvage: qty }, blueprints: [] }, x, y, vx, vy, { cause: 'salvage' }); },
+      rockOf: (id) => {
+        const r = this.swarmRegistry.get(id);
+        return r?.kind === 0 && r.shapeSeed !== undefined ? { shape: r.shapeSeed, radius: r.radius, resource: r.asteroidResource ?? 'rock', resources: r.resources } : null;
+      },
     });
   }
 
@@ -5194,7 +5196,7 @@ export class SectorRoom extends Room<SectorState> {
     switch (shipTuning(getShipKind(kindId)).destruction) {
       case 'capital': return this.capitalWrecksOn;
       case 'subcap': return this.subcapWrecksOn && shipScrapGroups(kindId).length === 0;
-      case 'none': return false;
+      case 'none': case 'rock': return false;
     }
   }
 

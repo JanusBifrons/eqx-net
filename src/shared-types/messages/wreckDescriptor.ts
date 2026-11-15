@@ -29,6 +29,30 @@ export interface WreckExtraCut {
   w?: number;
 }
 
+/** Rock cut: the longest stable rock id a descriptor's `rock` carries. */
+export const MAX_WRECK_ROCK_ID_LEN = 64;
+/** The descriptor's `parentKind` of a rock's wreck (`ROCK_WRECK_PARENT_KIND`). */
+export const WRECK_ROCK_PARENT_KIND = 'asteroid';
+
+/** Rock cut (mining-and-salvage.md "Mining asteroids"): the rock a root
+ *  wreck was cut from. Its outline is `generateAsteroidVertices(shape, r)`
+ *  (the one it collided and drew with), the fracture's input on both sides
+ *  (#15); `id` its stable id (ore, a later tint). Also
+ *  `WreckFractureInputs.rock`. */
+export interface WreckRockRef {
+  id: string;
+  shape: number;
+  r: number;
+}
+
+export const WreckRockRefSchema = z
+  .object({
+    id: z.string().min(1).max(MAX_WRECK_ROCK_ID_LEN),
+    shape: z.number().int().min(0).max(0xffff),
+    r: z.number().finite().positive(),
+  })
+  .strict();
+
 export const WreckExtraCutSchema = z
   .object({
     x: z.number().finite(),
@@ -60,12 +84,15 @@ export const WreckDescriptorSchema = z
     parentWreck: z.number().int().min(1).max(WRECK_ID_END - 1).optional(),
     parentPiece: z.number().int().min(0).max(MAX_WRECK_PIECE_INDEX).optional(),
     owner: z.string().min(1).max(MAX_WRECK_OWNER_LEN).optional(),
+    rock: WreckRockRefSchema.optional(),
   })
   .strict()
   // A child names its parent wreck AND piece, or neither (a root); never
   // itself. Further cuts ride only with a main cut.
   .refine((d) => (d.parentWreck === undefined) === (d.parentPiece === undefined) && d.parentWreck !== d.wreckId
-    && (d.extraCuts === undefined || d.cutKind !== undefined));
+    && (d.extraCuts === undefined || d.cutKind !== undefined)
+    // A rock rides only on a ROOT rock wreck (children resolve to it).
+    && (d.rock === undefined || (d.parentWreck === undefined && d.parentKind === WRECK_ROCK_PARENT_KIND)));
 
 /** The snapshot's wreck fields (#3). The snapshot as a whole is the
  *  documented high-cadence carve-out (not zod-parsed on ingest); the client
@@ -100,6 +127,17 @@ function isExtraCuts(v: unknown): boolean {
   return true;
 }
 
+/** Alloc-free twin of `WreckRockRefSchema`. */
+function isRockRef(v: unknown): boolean {
+  if (typeof v !== 'object' || v === null) return false;
+  const r = v as Record<string, unknown>;
+  const id = r['id'];
+  const shape = r['shape'];
+  return typeof id === 'string' && id.length > 0 && id.length <= MAX_WRECK_ROCK_ID_LEN
+    && typeof shape === 'number' && Number.isInteger(shape) && shape >= 0 && shape <= 0xffff
+    && finite(r['r']) && (r['r'] as number) > 0;
+}
+
 /** Alloc-free twin of `WreckRemovesSchema`'s element check. */
 export function isWreckId(v: unknown): v is number {
   return typeof v === 'number' && Number.isInteger(v) && v >= 1 && v < WRECK_ID_END;
@@ -123,6 +161,7 @@ export function isWreckDescriptor(v: unknown): v is WreckDescriptor {
     && (d['cutW'] === undefined || (finite(d['cutW']) && (d['cutW'] as number) >= 0))
     && (d['extraCuts'] === undefined || (d['cutKind'] !== undefined && isExtraCuts(d['extraCuts'])))
     && (d['owner'] === undefined || (typeof d['owner'] === 'string' && d['owner'].length > 0 && d['owner'].length <= MAX_WRECK_OWNER_LEN))
+    && (d['rock'] === undefined || (isRockRef(d['rock']) && d['parentWreck'] === undefined && d['parentKind'] === WRECK_ROCK_PARENT_KIND))
     && (d['parentWreck'] === undefined
       ? d['parentPiece'] === undefined
       : isWreckId(d['parentWreck']) && d['parentWreck'] !== d['wreckId']
@@ -191,6 +230,11 @@ export interface WreckDescriptor {
    *  patrol's faction; absent = the kind's allegiance. Not a fracture input:
    *  the client's wreck pieces reuse the bake the live hull wore. */
   owner?: string;
+  /** Rock cut: a ROOT wreck cut from a rock (`parentKind` is then
+   *  `WRECK_ROCK_PARENT_KIND`, not a ship kind): the rock's stable id, shape
+   *  seed and radius, whose outline the fracture cuts. A rock's child wrecks
+   *  repeat `parentKind` and resolve to this root. Absent = a ship's wreck. */
+  rock?: WreckRockRef;
 }
 
 /** A rolling-resync chunk of the live wreck set (`SnapshotMessage.wreckSync`). */

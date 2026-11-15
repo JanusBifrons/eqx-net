@@ -50,6 +50,8 @@ import type { BurnLines } from '../../core/destruction/burnLines.js';
 import { WreckResplitter, type WreckPiecePose } from './wreckResplit.js';
 import type { CapitalWreckDeps, LiveWreck, PieceKnock } from './capitalWreckTypes.js';
 import { burnHullHit, burnPieceHit, deathExtraCuts } from './wreckBurnHits.js';
+import { RockCutter } from './rockCut.js';
+import { shipWreckSource } from '../../core/destruction/wreckSource.js';
 export type { WreckPiecePose };
 export type { CapitalWreckDeps, LiveWreck, PieceKnock, WreckPieceSpawn } from './capitalWreckTypes.js';
 
@@ -142,16 +144,20 @@ export class CapitalWreckSubsystem {
 
   /** Worn-out pieces split or turn to salvage (§S4, wreckResplit.ts). */
   private readonly resplit: WreckResplitter;
+  /** Rock cut: mined-out rocks break into wreck pieces (rockCut.ts). */
+  readonly rockCut: RockCutter;
 
   constructor(private readonly d: CapitalWreckDeps) {
-    this.resplit = new WreckResplitter(d, {
-      fifo: (capital) => (capital ? this.live : this.liveSubcap),
-      cap: (capital) => (capital ? MAX_LIVE_WRECK_PIECES : (this.subcapCapOverride ?? MAX_LIVE_SUBCAP_WRECK_PIECES)),
-      newWreck: () => [this.allocWreckId(), this.deaths++],
-      addPiece: (id, wreckId, entry, fifo) => { this.knock.set(id, entry); fifo.push(id); this.pieceWreck.set(id, wreckId); },
-      addWreck: (w, parent) => { this.wrecks.set(w.desc.wreckId, w); parent.children++; this.setChanged(); },
-      dropPiece: (id, fifo) => this.dropPiece(id, fifo),
-    });
+    const host = {
+      fifo: (capital: boolean) => (capital ? this.live : this.liveSubcap),
+      cap: (capital: boolean) => (capital ? MAX_LIVE_WRECK_PIECES : (this.subcapCapOverride ?? MAX_LIVE_SUBCAP_WRECK_PIECES)),
+      newWreck: (): [number, number] => [this.allocWreckId(), this.deaths++],
+      addPiece: (id: string, wreckId: number, entry: PieceKnock, fifo: string[]) => { this.knock.set(id, entry); fifo.push(id); this.pieceWreck.set(id, wreckId); },
+      addWreck: (w: LiveWreck, parent: LiveWreck | null) => { this.wrecks.set(w.desc.wreckId, w); if (parent !== null) parent.children++; this.setChanged(); },
+      dropPiece: (id: string, fifo: string[]) => this.dropPiece(id, fifo),
+    };
+    this.resplit = new WreckResplitter(d, host);
+    this.rockCut = new RockCutter(d, host, () => this.forcedSeed);
   }
 
   /** Record a hit on `targetId` (called for every damaging hit). Cheap for
@@ -215,6 +221,7 @@ export class CapitalWreckSubsystem {
 
   /** Forget a target that left without dying (evicted, despawned). */
   forget(targetId: string): void {
+    this.rockCut.forget(targetId);
     const e = this.entries.get(targetId);
     if (e === undefined) return;
     this.entries.delete(targetId);
@@ -345,6 +352,7 @@ export class CapitalWreckSubsystem {
         chain: { root: fracture, steps: [] },
         parent: 0,
         children: 0,
+        src: shipWreckSource(kindId),
       });
       this.setChanged();
     }
@@ -410,18 +418,21 @@ export class CapitalWreckSubsystem {
     id: string, hitX: number, hitY: number, dirX: number, dirY: number, damage: number, weaponId?: WeaponId, shooterId = '',
   ): boolean {
     const k = this.knock.get(id);
-    if (k === undefined || this.d.impulsePiece === undefined || !(damage > 0)) return false;
+    // Rock cut: a hit on a rock (not a piece) wears it (rockCut.ts).
+    if (k === undefined) return this.rockCut.onRockHit(id, hitX, hitY, dirX, dirY, damage, weaponId, shooterId);
+    if (this.d.impulsePiece === undefined || !(damage > 0)) return false;
     const len = Math.hypot(dirX, dirY);
     if (!(len > 1e-9) || !Number.isFinite(hitX) || !Number.isFinite(hitY)) return false;
     let j = damage * k.impulsePerDamage;
     const wreckId = this.pieceWreck.get(id);
     const w = wreckId !== undefined ? this.wrecks.get(wreckId) : undefined;
     // Fracture v12 multi-cut: a cutting beam burns its line into the piece.
-    if (w !== undefined) burnPieceHit(k, this.d, id, w.chain.root.kindId, shooterId, hitX, hitY, dirX, dirY, weaponId);
+    if (w !== undefined) burnPieceHit(k, this.d, id, w.src.scale, shooterId, hitX, hitY, dirX, dirY, weaponId);
     // Re-split (§S4): the hit wears the piece's hidden integrity; worn out
     // (and past the crack hold) it splits or turns to salvage instead of
     // being shoved.
-    if (k.integrity > 0) k.integrity -= damage * wreckWearFactor(weaponId);
+    // A rock's pieces wear by the weapon's 'rock' factor (the mining laser).
+    if (k.integrity > 0) k.integrity -= damage * wreckWearFactor(weaponId, w !== undefined && w.src.rock !== null);
     if (k.integrity <= 0 && w !== undefined && wreckId !== undefined && this.d.serverTick() >= w.holdUntil
       && this.resplit.wornOut(id, k, wreckId, w, hitX, hitY, dirX, dirY, weaponId)) return true;
     // A beam carries no momentum: the shot stops on the piece, no shove.
@@ -520,7 +531,7 @@ export class CapitalWreckSubsystem {
 
   /** Test seam: a live piece's hidden integrity (undefined: not a piece). */
   pieceIntegrity(id: string): number | undefined {
-    return this.knock.get(id)?.integrity;
+    return this.knock.get(id)?.integrity ?? this.rockCut.integrity(id);
   }
 
   /** The snapshot slice: one descriptor per live wreck (shared array, rebuilt

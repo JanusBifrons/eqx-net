@@ -73,9 +73,9 @@ export {
   simpleGlowAt, wreckGlowAt, type WreckGlow,
 } from './wreckGlowCurves.js';
 import { drawnSpan, insideWidth, lastChamferRatio, onDrawnHull, pointInRing, stripInside, writeStrip, type InsideTest } from './wreckGlowStrip.js';
-import type { WreckDescriptor } from '../../../shared-types/messages/snapshotMessages.js';
+import { WRECK_ROCK_PARENT_KIND, type WreckDescriptor } from '../../../shared-types/messages/wreckDescriptor.js';
 import { destructionProfileOf } from '../../../shared-types/shipScale/destructionProfile.js';
-import type { DestructionFx, DestructionProfileId, WreckGlowStyle } from '../../../shared-types/shipScale/destruction.js';
+import { DESTRUCTION_PROFILES, type DestructionFx, type DestructionProfileId, type WreckGlowStyle } from '../../../shared-types/shipScale/destruction.js';
 
 /** Container + meshes (≤ 6 tiles) + one glow mesh (the crack strokes). */
 export const WRECK_DISPLAY_OBJECTS_PER_PIECE_MAX = 8;
@@ -542,9 +542,9 @@ export interface WreckInfo {
   noHold: boolean;
 }
 
-/** A wreck's profile, by its parent kind. */
+/** A wreck's profile, by its parent kind (a rock's wreck: the rock profile, never a ship lookup). */
 function profileFor(desc: WreckDescriptor): { id: DestructionProfileId; fx: DestructionFx } {
-  return destructionProfileOf({ type: 'ship', kindId: desc.parentKind });
+  return desc.parentKind === WRECK_ROCK_PARENT_KIND ? DESTRUCTION_PROFILES.rock : destructionProfileOf({ type: 'ship', kindId: desc.parentKind });
 }
 
 /** One small blast on a crack: its piece, the point body-local (math-up),
@@ -954,7 +954,7 @@ export class WreckArtState {
       && prev.desc.killX === desc.killX && prev.desc.killY === desc.killY) return prev;
     const prof = profileFor(desc);
     const fx = prof.fx;
-    const s = shipShapeScale(getShipKind(desc.parentKind));
+    const s = desc.parentKind === WRECK_ROCK_PARENT_KIND ? 1 : shipShapeScale(getShipKind(desc.parentKind)); // rock pieces: scale 1
     let hullR = 0;
     for (const p of pieces) hullR = Math.max(hullR, Math.hypot(p.cx, p.cy) + p.radius);
     const ageMs = desc.deathTick !== undefined ? Math.max(0, serverTick - desc.deathTick) * TICK_MS : Infinity;
@@ -1149,15 +1149,16 @@ export class WreckPieceSprite extends Container {
 
   constructor(
     piece: WreckPieceGeometry, parentKind: string, readonly art: ShipArt | null, readonly info: WreckInfo,
-    /** This piece's index in its wreck (its ripples). */
-    readonly pieceIndex = 0,
+    /** This piece's index in its wreck (its ripples); a rock piece's art (`buildRockPieceArt`, no ship lookups). */
+    readonly pieceIndex = 0, rockArt: Container | null = null,
   ) {
     super();
     this.piece = piece;
     this.parentKind = parentKind;
-    this.shipRadius = getShipKind(parentKind).radius;
+    this.shipRadius = rockArt !== null ? 0 : getShipKind(parentKind).radius;
     const settings = litPass.settings;
-    if (art !== null && art.lit !== undefined && settings !== null) {
+    if (rockArt !== null) this.artParts.push(this.addChild(rockArt));
+    else if (art !== null && art.lit !== undefined && settings !== null) {
       // GPU-lit art (the player's default look): the frames are data pages
       // of UNLIT maps (albedo, normals, emission). Only the lit shader turns
       // them into a lit hull, so each tile piece is a LitShipMesh carrying

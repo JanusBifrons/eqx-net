@@ -66,6 +66,7 @@ import {
 import { resolveEntityDisplayPose } from '../../net/swarmDisplayPose';
 import type { WreckGeometryStore } from '../../net/wreckGeometryStore';
 import { WreckPieceSprite, coolWreckInfo, type WreckArtState } from './wreckArt.js';
+import { buildRockPieceArt, isRockWreck } from './rockPieceArt.js';
 import type { DyingHullHold } from './dyingHullHold.js';
 
 /** S2b: an empty wreck map for frames whose mirror carries none. */
@@ -195,8 +196,6 @@ export function scrapHeatTint(ageMs: number): number | undefined {
   return (0xff << 16) | (g << 8) | b;
 }
 
-
-
 /** Classic-look rocks: ice and crystal-veined ones read apart from plain rock
  *  (a Machined rock bakes its resource colour instead). W3: this used to be
  *  set once at build, and the reset below wiped it every frame. */
@@ -276,8 +275,9 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     // piece once it is ready. Under a livery the owner is the descriptor's
     // (the live hull's livery), so the capital's bake is the one it wore.
     const wreckDesc = entry.kind === 4 ? wreckDescs!.get(entry.wreckId!)! : undefined;
-    const wreckParent = wreckDesc !== undefined ? entry.shipKind ?? wreckDesc.parentKind : '';
-    const wreckArtHandle = wreckDesc !== undefined && ctx.art.art
+    const wreckRock = isRockWreck(wreckDesc); // rock cut: no ship kind (its wire shipKind byte is junk), no ship art
+    const wreckParent = wreckDesc !== undefined ? (wreckRock ? wreckDesc.parentKind : entry.shipKind ?? wreckDesc.parentKind) : '';
+    const wreckArtHandle = wreckDesc !== undefined && ctx.art.art && !wreckRock
       ? wreckArtHandleFor(ctx.art, spriteKey, wreckParent, wreckDesc.owner ?? entry.faction, wreckDeadArtFor(wreckParent))
       : null;
     if (
@@ -362,7 +362,9 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
           ? ctx.wreckArt.infoFor(desc, pieces, index, pose, entry.lastUpdateTick, fxNow)
           : coolWreckInfo(desc);
         const shipArt = wreckArtHandle !== null && wreckArtHandle.state === 'ready' ? wreckArtHandle.ship : null;
-        sprite = new WreckPieceSprite(g, entry.shipKind ?? desc.parentKind, shipArt, info, index);
+        const rock = wreckRock ? ctx.wrecks!.rockOf(entry.wreckId!) : undefined;
+        if (wreckRock && rock === undefined) continue; // rock piece without its rock: not drawn
+        sprite = new WreckPieceSprite(g, wreckParent, shipArt, info, index, rock !== undefined ? buildRockPieceArt(g, rock) : null);
       } else {
         const rockRadius = entry.radius;
         sprite = buildArtShipSprite(artHandle, () => buildAsteroidGfx(entry.shapeSeed ?? 0, rockRadius));
@@ -412,7 +414,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
       if (ctx.dyingHulls !== undefined) {
         const desc = wreckDescs!.get(entry.wreckId!)!;
         const total = ctx.wrecks!.geometryFor(desc)?.length ?? 0;
-        ctx.dyingHulls.notePiece(entry.shipKind ?? desc.parentKind, entry.wreckId!, total, sprite);
+        ctx.dyingHulls.notePiece(wreckParent, entry.wreckId!, total, sprite);
       }
     }
     if (entry.kind === 1) {

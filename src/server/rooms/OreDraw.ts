@@ -16,8 +16,8 @@
  */
 import { getWeapon, weaponTargetFactor, type WeaponId } from '../../core/combat/WeaponCatalogue.js';
 import { cloneHold, emptyHold, holdWeight } from '../../core/cargo/hold.js';
-import { GOOD_IDS } from '../../shared-types/goods.js';
-import { asteroidYield, asteroidYieldWeightPerUnit } from '../../shared-types/asteroidResources.js';
+import { GOOD_IDS, type GoodId } from '../../shared-types/goods.js';
+import { asteroidYield, asteroidYieldWeightPerUnit, type AsteroidResourceId } from '../../shared-types/asteroidResources.js';
 import { getHoldStore } from '../db/PersistenceWorker.js';
 import type { SwarmEntityRecord } from '../net/SwarmEntityRegistry.js';
 
@@ -91,6 +91,18 @@ export class OreDraw {
     return holdWeight(hold) - before;
   }
 
+  /** Rock cut: the ONE ore hook of a cut rock (rockCut.ts). A piece of rock
+   *  `rockId` (its stable id; the rock itself is gone) became an ore pod
+   *  centred at world (x, y) carrying `units` of its ore: the goods it holds,
+   *  split by the rock's yield (`asteroidYield`, as every draw is). The
+   *  rock's pool was shared out to its pieces by area when it broke, so this
+   *  draws nothing more from the registry. The point is the hook's key for
+   *  a later per-point ore tint (macro terrain). */
+  cutYield(rockId: string, x: number, y: number, units: number, resource: AsteroidResourceId): Partial<Record<GoodId, number>> {
+    void rockId; void x; void y;
+    return units > 0 ? asteroidYield(resource, Math.floor(units)) : {};
+  }
+
   /** A weapon hit landed on `targetId` (from `SectorRoom.applyDamage`). On a
    *  rock it owes the shooter ore; anything else costs one Map lookup.
    *  Allocates only on a shooter's first rock hit (#14). */
@@ -113,10 +125,8 @@ export class OreDraw {
       for (const [entityId, units] of byRock) {
         const whole = Math.floor(units);
         if (whole > 0) this.mine(h.uid, h.ownerId, entityId, whole, h.capacity);
-        // Rock splitting hooks in here once macro terrain (#645) lands: a rock
-        // the beam has worn down breaks up through the wreck split code
-        // (plan partitioned-chasing-lark, "Asteroids"). Not yet: rocks only
-        // lose ore.
+        // A rock the beam wore out breaks through the wreck split code
+        // (rockCut.ts); its pieces' ore leaves through `cutYield`.
       }
       byRock.clear();
     }
