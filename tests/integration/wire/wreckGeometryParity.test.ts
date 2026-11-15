@@ -12,10 +12,15 @@
  */
 import { describe, expect, it } from 'vitest';
 import { CapitalWreckSubsystem, type WreckPieceSpawn } from '../../../src/server/rooms/CapitalWreckSubsystem.js';
-import { WreckGeometryStore } from '../../../src/client/net/wreckGeometryStore.js';
-import { FRACTURE_ALGO_VERSION } from '../../../src/core/destruction/fractureHull.js';
-import { isWreckDescriptor, WreckDescriptorSchema, type WreckDescriptor } from '../../../src/shared-types/messages/snapshotMessages.js';
+import { WreckGeometryStore, resolveChildWreckPieces } from '../../../src/client/net/wreckGeometryStore.js';
+import { FRACTURE_ALGO_VERSION, projectToOutline, type FracturePiece } from '../../../src/core/destruction/fractureHull.js';
+import { isWreckDescriptor, WreckDescriptorSchema, type WreckDescriptor, type WreckSync } from '../../../src/shared-types/messages/snapshotMessages.js';
 import { wreckPieceGeometry, type WreckFractureInputs } from '../../../src/core/destruction/wreckPieces.js';
+import { wreckChainFracture, wreckChildGeometry, wreckChildSeed, type WreckChildStep } from '../../../src/core/destruction/wreckChildren.js';
+import { wreckRootFracture } from '../../../src/core/destruction/wreckPieceFrame.js';
+import { shipHullOutline } from '../../../src/core/geometry/shipHullOutline.js';
+import { getShipKind } from '../../../src/shared-types/shipKinds.js';
+import { WreckWireDeltas } from '../../../src/server/rooms/WreckWireDeltas.js';
 
 function serverWreck(kind: string, seed: number, hit: { x: number; y: number }, damage: number) {
   const spawned: WreckPieceSpawn[] = [];
@@ -156,5 +161,177 @@ describe('wreck geometry with a kill cut: server inputs == client rebuild (v9)',
       expect(WreckDescriptorSchema.safeParse(d).success, JSON.stringify(bad)).toBe(false);
       expect(isWreckDescriptor(d), JSON.stringify(bad)).toBe(false);
     }
+  });
+});
+
+/**
+ * Salvage stream (capital-destruction.md §S4 "Re-split"): a CHILD wreck rides
+ * the wire as one descriptor per break, naming its parent wreck and piece.
+ * The server builds a child from the chain's inputs with the shared
+ * `wreckChildGeometry`; the client store resolves the same chain by walking
+ * parent descriptors. The two must agree bit for bit at depth 2, whatever
+ * order the descriptors arrive in (#15, #16).
+ */
+describe('wreck child chains: server chain geometry == client resolve (salvage)', () => {
+  /** A deterministic hit on a raw piece: the midpoint of its longest edge. */
+  function hitOn(p: FracturePiece): { x: number; y: number } {
+    let best = -1;
+    let at = { x: p.outline[0]!.x, y: p.outline[0]!.y };
+    for (let i = 0; i < p.outline.length; i++) {
+      const a = p.outline[i]!;
+      const b = p.outline[(i + 1) % p.outline.length]!;
+      const l = Math.hypot(b.x - a.x, b.y - a.y);
+      if (l > best) { best = l; at = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }; }
+    }
+    return at;
+  }
+
+  /** The server side: root inputs, two breaks, and the descriptors it sends. */
+  function serverChain(kindId: 'heavy-cruiser' | 'battleship' | 'fighter', seed: number) {
+    const k = projectToOutline(shipHullOutline(getShipKind(kindId)), { x: 0.3e5, y: 1e5 });
+    const root: WreckFractureInputs = { kindId, seed, killX: k.x, killY: k.y, killBlowDamage: 0.6, recentDamageRate: 0.4, snapChance: 0.2 };
+    const h0 = hitOn(wreckRootFracture(root)[0]!);
+    const step0: WreckChildStep = { pieceIndex: 0, killX: h0.x, killY: h0.y };
+    const gen1 = wreckChainFracture({ root, steps: [step0] });
+    const p1 = gen1.length - 1;
+    const h1 = hitOn(gen1[p1]!);
+    const step1: WreckChildStep = { pieceIndex: p1, killX: h1.x, killY: h1.y, cutKind: 'channel', cutAng: 9000, cutW: 4.5 };
+    const serverGen1 = wreckChildGeometry({ root, steps: [step0] });
+    const serverGen2 = wreckChildGeometry({ root, steps: [step0, step1] });
+    const rootDesc: WreckDescriptor = {
+      wreckId: 10, parentKind: kindId, seed, killX: root.killX, killY: root.killY, killBlowDamage: 0.6,
+      recentDamageRate: 0.4, snapChance: 0.2, algoVersion: FRACTURE_ALGO_VERSION,
+    };
+    const child = (wreckId: number, parent: WreckDescriptor, s: WreckChildStep): WreckDescriptor => ({
+      wreckId, parentWreck: parent.wreckId, parentPiece: s.pieceIndex, parentKind: kindId,
+      seed: wreckChildSeed(parent.seed, s.pieceIndex), killX: s.killX, killY: s.killY,
+      killBlowDamage: 0, recentDamageRate: 0, snapChance: 0, algoVersion: FRACTURE_ALGO_VERSION,
+      cutKind: s.cutKind, cutAng: s.cutAng, cutW: s.cutW,
+    });
+    const c1 = child(11, rootDesc, step0);
+    const c2 = child(12, c1, step1);
+    // The wire: a serialise round trip, as the welcome / snapshot would.
+    const wire = JSON.parse(JSON.stringify([rootDesc, c1, c2])) as WreckDescriptor[];
+    return { serverGen1, serverGen2, wire };
+  }
+
+  function expectSame(store: WreckGeometryStore, wreckId: number, server: ReturnType<typeof wreckChildGeometry>): void {
+    expect(server.length).toBeGreaterThanOrEqual(1); // a break may leave a single piece
+    for (let i = 0; i < server.length; i++) {
+      const g = store.piece(wreckId, i);
+      expect(g, `wreck ${wreckId} piece ${i}`).not.toBeNull();
+      expect(g!.parts).toStrictEqual(server[i]!.parts);
+      expect(g!.colliderParts).toStrictEqual(server[i]!.colliderParts);
+      expect(Object.is(g!.mass, server[i]!.mass)).toBe(true);
+      expect(Object.is(g!.radius, server[i]!.radius)).toBe(true);
+    }
+    expect(store.piece(wreckId, server.length)).toBeNull();
+  }
+
+  for (const [kind, seed] of [['heavy-cruiser', 4242], ['battleship', 7], ['fighter', 99]] as const) {
+    it(`${kind}: every descriptor passes both checks; depth-1 and depth-2 children match bit for bit`, () => {
+      const { serverGen1, serverGen2, wire } = serverChain(kind, seed);
+      for (const d of wire) {
+        expect(WreckDescriptorSchema.safeParse(d).success).toBe(true);
+        expect(isWreckDescriptor(d)).toBe(true);
+      }
+      const store = new WreckGeometryStore();
+      store.apply(wire);
+      expectSame(store, 11, serverGen1);
+      expectSame(store, 12, serverGen2);
+    });
+  }
+
+  it('out of order: the child arrives before its parents, resolves once they land', () => {
+    const { serverGen2, serverGen1, wire } = serverChain('heavy-cruiser', 4242);
+    const [root, c1, c2] = wire as [WreckDescriptor, WreckDescriptor, WreckDescriptor];
+    const store = new WreckGeometryStore();
+    store.add([c2]); // grandchild first (a snapshot add before its parents)
+    expect(store.has(12)).toBe(true);
+    expect(store.piece(12, 0)).toBeNull(); // deferred, not dropped
+    store.add([c1]);
+    expect(store.piece(12, 0)).toBeNull(); // root still missing
+    expect(store.piece(11, 0)).toBeNull();
+    store.resync({ lo: 1, hi: 11, d: [root] });
+    expectSame(store, 12, serverGen2);
+    expectSame(store, 11, serverGen1);
+    expect(store.rejected).toBe(0);
+  });
+
+  it('a parent that leaves unresolves its descendants; a recycled parent id rebuilds them', () => {
+    const { serverGen2, wire } = serverChain('heavy-cruiser', 4242);
+    const [root, c1, c2] = wire as [WreckDescriptor, WreckDescriptor, WreckDescriptor];
+    const store = new WreckGeometryStore();
+    store.apply([root, c1, c2]);
+    expectSame(store, 12, serverGen2);
+    store.remove([11]);
+    expect(store.piece(12, 0)).toBeNull();
+    store.add([c1]);
+    expectSame(store, 12, serverGen2);
+    // A different wreck under the root's id: the chain no longer links up
+    // (the child's seed is not derived from it), so the child is unresolved.
+    store.add([{ ...root, seed: root.seed + 1 }]);
+    expect(store.piece(12, 0)).toBeNull();
+    store.add([root]);
+    expectSame(store, 12, serverGen2);
+  });
+
+  it('the renderer path (geometryFor) resolves a child whose parents it saw, in any order', () => {
+    const { serverGen2, wire } = serverChain('battleship', 7);
+    const [root, c1, c2] = wire as [WreckDescriptor, WreckDescriptor, WreckDescriptor];
+    const store = new WreckGeometryStore();
+    expect(store.geometryFor(c2)).toBeNull();
+    store.geometryFor(c1);
+    store.geometryFor(root);
+    const g = store.geometryFor(c2);
+    expect(g).not.toBeNull();
+    expect(g!.map((p) => p.parts)).toStrictEqual(serverGen2.map((p) => p.parts));
+  });
+
+  it('the pure resolver agrees with the server chain; a broken link resolves to null', () => {
+    const { serverGen2, wire } = serverChain('fighter', 99);
+    const byId = new Map(wire.map((d) => [d.wreckId, d] as const));
+    const c2 = byId.get(12)!;
+    expect(resolveChildWreckPieces(c2, (id) => byId.get(id))).toStrictEqual(serverGen2);
+    expect(resolveChildWreckPieces({ ...c2, seed: (c2.seed ^ 1) >>> 0 }, (id) => byId.get(id))).toBeNull();
+    expect(resolveChildWreckPieces({ ...c2, parentKind: 'battleship' }, (id) => byId.get(id))).toBeNull();
+    // A parent cycle on a malformed wire stops at the depth guard.
+    const loopA: WreckDescriptor = { ...c2, wreckId: 20, parentWreck: 21 };
+    const loopB: WreckDescriptor = { ...c2, wreckId: 21, parentWreck: 20 };
+    const loops = new Map([[20, loopA], [21, loopB]]);
+    expect(resolveChildWreckPieces(loopA, (id) => loops.get(id))).toBeNull();
+  });
+
+  it('WreckWireDeltas carries the parent link unchanged in adds and the resync chunk', () => {
+    const { wire } = serverChain('heavy-cruiser', 4242);
+    const deltas = new WreckWireDeltas();
+    deltas.step(0, wire, 1);
+    const out = JSON.parse(JSON.stringify({ adds: deltas.adds, sync: deltas.sync })) as { adds: WreckDescriptor[]; sync: WreckSync };
+    expect(out.adds).toStrictEqual(wire);
+    expect(out.sync.d).toStrictEqual(wire);
+  });
+
+  it('malformed parent links are refused by the schema and the hot-path check alike', () => {
+    const base: WreckDescriptor = {
+      wreckId: 9, parentKind: 'battleship', seed: 7, killX: 600, killY: -200, killBlowDamage: 0,
+      recentDamageRate: 0, snapChance: 0, algoVersion: FRACTURE_ALGO_VERSION,
+    };
+    for (const bad of [
+      { parentWreck: 3 }, // piece missing
+      { parentPiece: 0 }, // wreck missing
+      { parentWreck: 9, parentPiece: 0 }, // its own parent
+      { parentWreck: 0, parentPiece: 0 },
+      { parentWreck: 0x10000, parentPiece: 0 },
+      { parentWreck: 3, parentPiece: 256 },
+      { parentWreck: 3, parentPiece: -1 },
+      { parentWreck: 3, parentPiece: 1.5 },
+    ]) {
+      const d = { ...base, ...bad };
+      expect(WreckDescriptorSchema.safeParse(d).success, JSON.stringify(bad)).toBe(false);
+      expect(isWreckDescriptor(d), JSON.stringify(bad)).toBe(false);
+    }
+    const ok = { ...base, parentWreck: 3, parentPiece: 255 };
+    expect(WreckDescriptorSchema.safeParse(ok).success).toBe(true);
+    expect(isWreckDescriptor(ok)).toBe(true);
   });
 });

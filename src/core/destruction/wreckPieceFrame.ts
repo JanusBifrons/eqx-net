@@ -15,7 +15,60 @@ import { shipHullOutline, shipShapeScale } from '../geometry/shipHullOutline.js'
 import { getShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
 import { shipBodyMass, shipTuning } from '../../shared-types/shipScale/tuning.js';
 import type { Vec2 } from '../swarm/asteroidShape.js';
-import type { WreckFractureInputs, WreckPieceGeometry } from './wreckPieces.js';
+
+/**
+ * The fracture inputs of one wreck: everything `wreckPieceGeometry` needs.
+ * This is exactly what the S2b `wrecks[]` snapshot descriptor carries, so a
+ * client rebuilds the same pieces the server spawned (no vertex on the wire).
+ */
+export interface WreckFractureInputs {
+  kindId: ShipKindId;
+  seed: number;
+  /** Kill point in the hull's 1× Pixi-up frame, already on the outline. */
+  killX: number;
+  killY: number;
+  killBlowDamage: number;
+  recentDamageRate: number;
+  snapChance: number;
+  /** v9 kill cut (the killing weapon's `killCut`; absent = the normal
+   *  break-up). The descriptor carries these three fields as they are, so
+   *  both sides feed the fracture the same numbers. */
+  cutKind?: 'slice' | 'channel';
+  /** The cut line's direction as a u16 angle in the hull's 1× Pixi-up frame
+   *  (`hullLocalCutAngle`; decoded by the shared `cutDirFromAngle`). */
+  cutAng?: number;
+  /** A channel's width in the hull's 1× frame (world width ÷
+   *  `shipShapeScale`). */
+  cutW?: number;
+}
+
+/** One piece's shape in its own body frame (math-up, centred on its
+ *  centroid). Shared by the server body, the client predWorld twin and the
+ *  client drawing (#15). */
+export interface WreckPieceGeometry {
+  index: number;
+  /** Centroid in the ship's scaled math-up frame (before the ship's turn). */
+  cx: number;
+  cy: number;
+  /** Convex parts, body-local math-up, CCW (drawing and weapon hits). */
+  parts: Vec2[][];
+  /** The physics collider (server body and client twin alike): each part
+   *  shrunk by `shipTuning(kind).wreckColliderInset` toward its centre, so
+   *  neighbours sharing a cut edge spawn a hair apart (pieces collide with
+   *  each other). */
+  colliderParts: Vec2[][];
+  /** The piece outline, body-local math-up, CCW. */
+  outline: Vec2[];
+  /** `cutEdges[i]`: the fracture `EDGE_*` kind of outline[i] → outline[i+1]
+   *  (`EDGE_HULL` = 0 for the hull's own outline, else a new cut that glows
+   *  in S3; `EDGE_CUT` is a weapon's kill cut). */
+  cutEdges: FractureEdgeKind[];
+  /** World-unit area (scaled). */
+  area: number;
+  mass: number;
+  /** Farthest part vertex from the centre (bounding circle). */
+  radius: number;
+}
 
 /** The fracture's `cut` from a descriptor's three cut fields (undefined
  *  without a cut). */
