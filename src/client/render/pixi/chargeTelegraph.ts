@@ -21,7 +21,9 @@
  * Discharge into the shot: the mask comes off the NEWEST snapshot, so it
  * clears the tick the server fires, but the slug and its muzzle flash are
  * drawn on the display timeline (`DISPLAY_DELAY_MS` behind). A gun whose
- * charge ended FULL therefore holds its glow full (flaring) until that gun's
+ * charge ended full (within `CHARGE_DONE_SLACK_MS` of it: the drawn ramp
+ * lags the server's ticks by a fraction of a frame, so a charge that fires on
+ * time is drawn at 0.9999, never 1) therefore holds its glow full (flaring) until that gun's
  * shot shows (`shotMs`, MountVisualManager's last-shot time) or, with no
  * shot seen, `CHARGE_HOLD_MAX_MS` (snapshots alone converge, #16).
  */
@@ -45,6 +47,10 @@ const RAIL_CORE = 0xeef6ff;
  *  display delay (the flash comes that much after the clear) plus a
  *  snapshot interval and some jitter. */
 export const CHARGE_HOLD_MAX_MS = DISPLAY_DELAY_MS + 100;
+/** A cleared charge this close to full (ms of ramp left) was a shot, not a
+ *  charge cut short: the drawn ramp trails the server's ticks by up to a
+ *  frame, and the mask can come off a snapshot interval (~50 ms) late. */
+export const CHARGE_DONE_SLACK_MS = 100;
 
 export type ChargeTelegraphStyle = 'ring-line' | 'mount-glow' | 'rail-slot';
 
@@ -294,8 +300,8 @@ export function updateChargeTelegraph(
 }
 
 /**
- * This frame's holds: a glow mount whose bit cleared after a FULL charge
- * starts one; a hold ends when that gun's shot shows (a shot after its
+ * This frame's holds: a glow mount whose bit cleared after a full charge
+ * (within `CHARGE_DONE_SLACK_MS`) starts one; a hold ends when that gun's shot shows (a shot after its
  * charge's midpoint) or after `CHARGE_HOLD_MAX_MS`. A charging mount is
  * never held. Returns (and stores) the held mask.
  */
@@ -309,7 +315,7 @@ function updateHolds(t: ChargeTelegraph, mask: number, fxNowMs: number, shotMs: 
     const bit = 1 << i;
     if (glows[i] === null) continue;
     if ((cleared & bit) !== 0) {
-      if (t.levels[i]! >= 1) { held |= bit; t.heldSinceMs[i] = fxNowMs; }
+      if ((1 - t.levels[i]!) * t.chargeMs[i]! <= CHARGE_DONE_SLACK_MS) { held |= bit; t.heldSinceMs[i] = fxNowMs; }
       t.levels[i] = 0;
     }
     if ((held & bit) === 0) continue;
