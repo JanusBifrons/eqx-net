@@ -57,6 +57,9 @@ export interface WelcomeMessage {
    *  join (#16). Snapshots then carry only `wreckAdds` / `wreckRemoves` and a
    *  slow `wreckSync`. Absent = none (or wrecks off). */
   wrecks?: WreckDescriptor[];
+  /** Macro terrain v2 (room flag `cutField`): the field seed; the client cuts
+   *  the same rocks from it. Absent = no cut field. */
+  cutField?: { seed: string };
 }
 
 /** PR 3a (account-bound identity) — sent to a session immediately before the
@@ -110,6 +113,9 @@ export const WelcomeSchema = z
     capitalWrecks: z.literal(true).optional(),
     subcapWrecks: z.literal(true).optional(),
     wrecks: z.array(WreckDescriptorSchema).max(MAX_WELCOME_WRECKS).optional(),
+    /** Macro terrain v2 (room flag `cutField`): the field seed. The client
+     *  cuts the same rocks from it; none of them ride the wire. */
+    cutField: z.object({ seed: z.string().min(1).max(64) }).strict().optional(),
   })
   .strict();
 

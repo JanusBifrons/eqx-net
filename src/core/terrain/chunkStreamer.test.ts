@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { CutFieldStreamer, MAX_CHUNKS_PER_STEP } from './CutFieldStreamer.js';
-import { CHUNK_SIZE } from '../../core/terrain/fieldLayout.js';
+import { CutFieldStreamer, MAX_CHUNKS_PER_STEP } from './chunkStreamer.js';
+import { CHUNK_SIZE } from './fieldLayout.js';
 
 // A 20 km field keeps the cuts cheap; the rules are the same at 300 km.
 const FIELD = { seed: 'test', battleshipLength: 5752, fighterLength: 48, radius: 20_000 };

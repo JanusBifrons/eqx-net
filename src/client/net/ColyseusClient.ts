@@ -94,6 +94,7 @@ import { recoverInputTickFromStarvation, skipStalledBacklog, stallResumeAction }
 import { LingeringPredBodyManager } from './LingeringPredBodyManager.js';
 import { SnapshotCoalescer } from './SnapshotCoalescer.js';
 import { ClientEntityFactory } from './entity/ClientEntityFactory.js';
+import { CutFieldClient } from './CutFieldClient.js';
 import { WreckGeometryStore } from './wreckGeometryStore.js';
 import { SWARM_KIND_WRECK } from '@shared-types/swarmWireFormat';
 import type { ClientSpawnCtx } from './entity/IClientEntityLeaf.js';
@@ -545,6 +546,21 @@ export class ColyseusGameClient {
   /** Capital destruction S2b: wreck geometry rebuilt from the snapshot's
    *  `wrecks[]` descriptors. Its `descriptors` map IS `mirror.wrecks`. */
   private readonly _wrecks = new WreckGeometryStore();
+  /** Macro terrain v2 (room flag `cutField`): the cut field's chunks near the
+   *  local ship, cut from the welcome's seed (none ride the wire). */
+  private readonly _cutField = new CutFieldClient({
+    gameClock: { now: () => this.gameClock.now() },
+    predWorld: () => this.predWorld,
+    localPose: () => {
+      const localId = this.mirror.localPlayerId;
+      return localId ? this.mirror.ships.get(localId) ?? null : null;
+    },
+    draw: {
+      setFieldChunk: (cx, cy, outlines) => {
+        (this.mirror.pendingFieldChunks ??= []).push({ cx, cy, outlines });
+      },
+    },
+  });
   /** Reused construction context — one instance mutated in place per entity, so
    *  swarm spawn allocates nothing (invariant #14). `predWorld` / `entry` are
    *  filled per use; `aiController` is the (constant) hostility ledger. */
@@ -1381,6 +1397,8 @@ export class ColyseusGameClient {
   private resetPredictionState(): void {
     // S2b: wrecks belong to the old sector (clears mirror.wrecks too).
     this._wrecks.clear();
+    // The cut field belongs to the old sector; the next welcome re-arms it.
+    this._cutField.stop();
     // Fire control: NPC locks belong to the old sector.
     this.mirror.localLockedBy = NO_LOCKED_BY;
     // A new sector / ship: seed the energy pool again from the new ship.
@@ -1601,6 +1619,8 @@ export class ColyseusGameClient {
       this.mirror.capitalWrecks = msg.capitalWrecks === true;
       // Sub-cap wrecks on: a dying sub-cap's hull is held until its pieces draw.
       this.mirror.subcapWrecks = msg.subcapWrecks === true;
+      // Cut field on: cut the same rocks as the server from its seed (#16).
+      this._cutField.setSeed(msg.cutField?.seed ?? null);
       // Sub-capital break-up slice 3: the welcome carries the FULL live wreck
       // set (#16); snapshots then carry only adds, removes and a slow resync.
       if (msg.capitalWrecks === true || msg.subcapWrecks === true) {
@@ -7013,6 +7033,7 @@ export class ColyseusGameClient {
   }
 
   dispose(): void {
+    this._cutField.stop();
     // Game time scale: the next session starts at 1× until its snapshots say otherwise.
     useUIStore.getState().setTimeScale(1);
     this.disposed = true;

@@ -598,6 +598,11 @@ export interface RenderMirror {
    *  fires `triggerWarpIn` at each `(x, y)` — same one-shot flash +
    *  burst ripple for both directions. Cleared + drained each frame. */
   pendingWarpEvents?: Array<{ x: number; y: number }>;
+  /** Macro terrain v2 (room flag `cutField`): cut-field chunks loaded or
+   *  dropped since the last frame. `outlines` is [n, x0, y0, …, n, …] in game
+   *  space; null drops the chunk. Drained each frame, like `pendingWarpEvents`;
+   *  only a chunk load or unload adds an entry, never a frame. */
+  pendingFieldChunks?: Array<{ cx: number; cy: number; outlines: Float32Array | null }>;
   /** Missile detonations to play this frame. The renderer drains the
    *  array, spawns explosion VFX at each `(x, y)`, sizes the sprite to
    *  `splashRadius`, and triggers a camera shake with magnitude inverse

@@ -260,7 +260,7 @@ import { EntitySyncRouter } from './EntitySyncRouter.js';
 import { isEngageablePilotHull, isPilotedActive } from './shipLiveness.js';
 import { MalformedMessageTracker } from './MalformedMessageTracker.js';
 import { guarded } from './guardedLoop.js';
-import { CutFieldStreamer, STEP_EVERY_MS as CUT_FIELD_STEP_MS } from './CutFieldStreamer.js';
+import { CutFieldStreamer, cutFieldOpts, fieldRockBody, STEP_EVERY_MS as CUT_FIELD_STEP_MS } from '../../core/terrain/chunkStreamer.js';
 import { SectorPersistence } from './SectorPersistence.js';
 import { LivingWorldBotHooks } from './LivingWorldBotHooks.js';
 import { SceneScriptRunner, SceneScriptSchema, type SceneStatus } from './scene/SceneScriptRunner.js';
@@ -1119,6 +1119,8 @@ export class SectorRoom extends Room<SectorState> {
   /** Macro terrain v2 (flag `cutField`): chunks of a cut field near ships. */
   private cutField: CutFieldStreamer | undefined;
   private cutFieldTimer: GameTimer | undefined;
+  /** The welcome's cut-field seed (#16: a joiner cuts the same rocks). */
+  private cutFieldWelcome: { cutField?: { seed: string } } = {};
   /** Faster turret aim/fire timer (Phase 5; unref'd). */
   private structureTurretTimer: GameTimer | undefined;
   /** Click-to-inspect live-stats channel (structures follow-up Item B5) +
@@ -5331,8 +5333,8 @@ export class SectorRoom extends Room<SectorState> {
    * room tick, #14). Field rocks stay off the swarm wire and the save.
    */
   private startCutField(seed: string): void {
-    const field = { seed, battleshipLength: getShipKind('battleship').radius * 2, fighterLength: getShipKind('fighter').radius * 2 };
-    this.cutField = new CutFieldStreamer(field, {
+    this.cutFieldWelcome = { cutField: { seed } };
+    this.cutField = new CutFieldStreamer(cutFieldOpts(seed), {
       visitShips: (cb) => {
         for (const [, slot] of this.playerToSlot) {
           const b = slotBase(slot);
@@ -5345,13 +5347,9 @@ export class SectorRoom extends Room<SectorState> {
         }
       },
       spawnRock: (id, rock) => {
-        // Centre the outline on its centroid: the body sits there.
-        let mx = 0, my = 0;
-        for (const v of rock.verts) { mx += v.x; my += v.y; }
-        mx /= rock.verts.length; my /= rock.verts.length;
-        let r = 0;
-        const verts = rock.verts.map((v) => { const dx = v.x - mx, dy = v.y - my; r = Math.max(r, Math.sqrt(dx * dx + dy * dy)); return { x: dx, y: dy }; });
-        return this.swarmSpawner.spawnAsteroid({ id, x: mx, y: my, vx: 0, vy: 0, radius: r, vertices: verts, fixed: true, fieldRock: true });
+        // The same body the client builds (#15): centred on the outline.
+        const b = fieldRockBody(rock);
+        return this.swarmSpawner.spawnAsteroid({ id, x: b.x, y: b.y, vx: 0, vy: 0, radius: b.radius, vertices: b.verts, fixed: true, fieldRock: true });
       },
       removeRock: (id) => {
         const rec = this.swarmRegistry.get(id);
@@ -8899,7 +8897,7 @@ export class SectorRoom extends Room<SectorState> {
           sectorKey: this.sectorKey,
           shipInstanceId: existingShip?.shipInstanceId ?? '',
         };
-        client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields() }));
+        client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields(), ...this.cutFieldWelcome }));
 
         setSession(client.sessionId, {
           roomId: this.roomId,
@@ -9405,7 +9403,7 @@ export class SectorRoom extends Room<SectorState> {
       sectorKey: this.sectorKey,
       shipInstanceId: ship.shipInstanceId,
     };
-    client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields() }));
+    client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields(), ...this.cutFieldWelcome }));
 
     // Prefer the auth-validated userId from this connect; fall back to the
     // Limbo-resumed value when this connect was anonymous (covers the
@@ -9527,7 +9525,7 @@ export class SectorRoom extends Room<SectorState> {
       shipInstanceId: '',
       spectator: true,
     };
-    client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields() }));
+    client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields(), ...this.cutFieldWelcome }));
 
     setSession(client.sessionId, {
       roomId: this.roomId,
@@ -9842,7 +9840,7 @@ export class SectorRoom extends Room<SectorState> {
       sectorKey: this.sectorKey,
       shipInstanceId: shipId,
     };
-    client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields() }));
+    client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields(), ...this.cutFieldWelcome }));
     this.pendingJoin.set(playerId, {
       joinTick: tick,
       watchdogTick: tick + CLIENT_READY_TIMEOUT_TICKS,

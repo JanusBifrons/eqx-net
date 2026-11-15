@@ -76,6 +76,7 @@ import type { CameraCue, CameraGroup } from '@core/contracts/cameraScript';
 import { REMOTE_BEAM_STYLE, MINING_BEAM_STYLE, remoteBeamStyleForMount, remoteBeamLine, remoteBeamSolidLen, addBeamLights, beamLightBudget, BeamHitMemory, type RemoteBeamLine } from './beamStyles';
 import { MountVisualManager } from './MountVisualManager';
 import { BackgroundGrid } from './BackgroundGrid';
+import { CutFieldLayer } from './field/CutFieldLayer';
 import { StarfieldBackground } from './StarfieldBackground';
 import { logEvent, isDiagEnabled } from '../debug/ClientLogger';
 import { getShipKind } from '../../shared-types/shipKinds';
@@ -282,6 +283,8 @@ export class PixiRenderer implements IRenderer {
   private readonly _farIcons = new FarZoomIcons();
   /** Far-zoom wreck-piece specks, one batch (wreckArt.ts `setFarZoom`). */
   private readonly _wreckFarLayer = new RenderLayer();
+  /** Macro terrain v2 (room flag `cutField`): loaded cut-field chunks. */
+  private readonly _cutField = new CutFieldLayer();
   /** Machined art (plan iridescent-seeking-rainbow): shared by the ship,
    *  swarm and lingering updaters. `art` is set in `init` when `?art=machined`
    *  (or the default) asks for it; null ⇒ today's vector look everywhere. */
@@ -906,6 +909,8 @@ export class PixiRenderer implements IRenderer {
       this.backgroundGrid.attach(this.camera);
     }
 
+    // Cut-field rocks sit under everything that moves.
+    this.camera.addChild(this._cutField.container);
     this.shipContainer = new Container();
     this.camera.addChild(this.shipContainer);
     // Far-zoom wreck specks (wreckArt.ts `setFarZoom`): drawn together as one
@@ -2465,6 +2470,12 @@ export class PixiRenderer implements IRenderer {
     // the multi-pass filter chain every frame → frame rate collapses
     // (the late-onset spiral pattern in captures `af742v` / `ecat41`).
     this.drainRemoteWarp(mirror);
+    // Cut-field chunks loaded or dropped since the last frame (rare).
+    const fieldChunks = mirror.pendingFieldChunks;
+    if (fieldChunks && fieldChunks.length > 0) {
+      for (const c of fieldChunks) this._cutField.setChunk(c.cx, c.cy, c.outlines);
+      fieldChunks.length = 0;
+    }
 
     // Phase 1 — name labels above remote ships and drones (skip self).
     this.labels?.update(mirror);

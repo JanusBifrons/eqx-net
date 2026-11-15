@@ -1,8 +1,9 @@
 /**
  * Macro terrain v2, cut-field slice 1 (behind the `cutField` room option):
  * a pilot inside a cut field gets the chunks around it loaded as fixed rock
- * colliders, marked as field rocks so the swarm wire and the save skip them.
- * Counts only.
+ * colliders, marked as field rocks so the swarm wire and the save skip them,
+ * and the welcome carries the seed the client cuts the same rocks from
+ * (slice 2, #16). Counts only.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
@@ -22,7 +23,11 @@ describe('SectorRoom integration — cut-field streaming', () => {
   it('loads the chunks around a pilot as field rocks', { timeout: 60_000 }, async () => {
     // A point in the field's middle band, between the core hole and the rim.
     harness = await bootSectorTestServer({ sectorKey: null, cutField: { seed: 'look' }, asteroidConfig: [], defaultSpawnX: 60_000, defaultSpawnY: 0 });
-    await harness.connectActive(randomUUID());
+    const playerId = randomUUID();
+    const client = await harness.connectAs(playerId);
+    let welcomeSeed: string | undefined | null = null;
+    client.onMessage('welcome', (m: { cutField?: { seed: string } }) => { welcomeSeed = m.cutField?.seed; });
+    client.send('client_ready', { type: 'client_ready' });
     const room = harness.getServerRoom() as unknown as Room;
     const deadline = Date.now() + 20_000;
     while (Date.now() < deadline && (room._internals.cutField?.stats.chunksLoaded ?? 0) < 25) await harness.advance(500);
@@ -32,5 +37,6 @@ describe('SectorRoom integration — cut-field streaming', () => {
     for (const rec of room._internals.swarmRegistry.all()) if (rec.fieldRock) { field++; expect(rec.kind).toBe(0); }
     expect(field).toBe(stats.rocksLoaded);
     expect(field).toBeGreaterThan(50);
+    expect(welcomeSeed).toBe('look');
   });
 });

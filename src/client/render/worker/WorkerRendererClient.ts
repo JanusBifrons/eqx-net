@@ -414,6 +414,7 @@ export class WorkerRendererClient implements IRenderer {
     if (mirror.pendingDamageNumberCancels) mirror.pendingDamageNumberCancels.length = 0;
     if (mirror.pendingHealthBarHits) mirror.pendingHealthBarHits.length = 0;
     if (mirror.pendingWarpEvents) mirror.pendingWarpEvents.length = 0;
+    if (mirror.pendingFieldChunks) mirror.pendingFieldChunks.length = 0;
   }
 
   /** Post one MIRROR_UPDATE: the mirror minus `swarm`, plus the swarm delta. */
