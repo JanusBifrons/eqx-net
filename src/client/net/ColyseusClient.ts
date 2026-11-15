@@ -182,8 +182,8 @@ import type { TouchInput } from '../input/TouchInput';
 import { joystickToInput, IDLE_INPUT_STATE, type JoystickInputState } from '../input/joystickToInput';
 import { aimInput } from '../input/AimInput';
 import { encodeAim } from '@core/combat/manualAim';
-import { lockLineScore } from '@core/combat/lockLine';
 import { isContactLockKind, isTerrainLockKind } from '@core/combat/lockState';
+import { LockLinePick } from './lockLinePick';
 import { decodeSwarmPacket } from './BinarySwarmDecoder';
 import {
   interpolateSwarmPose,
@@ -5964,39 +5964,17 @@ export class ColyseusGameClient {
     m.localLockGuide = bearing;
     m.localAimReach = reach;
     this._lgLocalId = localId;
-    this._lgX = ship.x;
-    this._lgY = ship.y;
-    this._lgDirX = -Math.sin(bearing);
-    this._lgDirY = Math.cos(bearing);
-    this._lgReach = reach;
-    // Sticky: the target the line already holds keeps it inside a wider cone.
-    this._lgHeld = m.localLockCandidate ?? null;
-    this._lgBest = null;
-    this._lgBestScore = Infinity;
-    this._lgTerrainBest = null;
-    this._lgTerrainScore = Infinity;
+    this._lgPick.begin(ship.x, ship.y, bearing, reach, m.localLockCandidate ?? null);
     m.swarm?.forEach(this._lgVisitSwarm);
     m.ships.forEach(this._lgVisitShip);
-    // Terrain is the LOWEST priority: it wins only with no contact on the line.
-    const best = this._lgBest ?? this._lgTerrainBest;
+    const best = this._lgPick.result(); // terrain only with no contact on the line
     m.localLockCandidate = best;
     return best;
   }
 
   /** Lock-line pick scratch (one pick at a time; reused, #14). */
   private _lgLocalId: string | null = null;
-  private _lgX = 0;
-  private _lgY = 0;
-  private _lgDirX = 0;
-  private _lgDirY = 1;
-  private _lgReach = 0;
-  private _lgHeld: string | null = null;
-  private _lgBest: string | null = null;
-  private _lgBestScore = Infinity;
-  /** Best neutral-terrain candidate (asteroid, scrap / loot pod, wreck piece),
-   *  used only when no contact is on the line. */
-  private _lgTerrainBest: string | null = null;
-  private _lgTerrainScore = Infinity;
+  private readonly _lgPick = new LockLinePick();
   /** Lock keys (`s:<entityId>` / `p:<playerId>`), built once per id. */
   private readonly _swarmLockKeys = new Map<number, string>();
   private readonly _shipLockKeys = new Map<string, string>();
@@ -6023,36 +6001,20 @@ export class ColyseusGameClient {
     return k;
   }
 
-  private lgConsider(key: string, x: number, y: number, radius: number): void {
-    const score = lockLineScore(x - this._lgX, y - this._lgY, this._lgDirX, this._lgDirY, radius, this._lgReach, key === this._lgHeld);
-    if (score < this._lgBestScore) {
-      this._lgBestScore = score;
-      this._lgBest = key;
-    }
-  }
-
   /** Drones + structures (not your own) on the lock line; neutral terrain
    *  (shared `isTerrainLockKind`, the server's `resolveLockTarget` rule, #15)
    *  in its own lowest-priority tier. Bound once. */
   private readonly _lgVisitSwarm = (e: SwarmRenderState, entityId: number): void => {
-    if (isTerrainLockKind(e.kind)) {
-      const key = this.swarmLockKey(entityId);
-      const score = lockLineScore(e.x - this._lgX, e.y - this._lgY, this._lgDirX, this._lgDirY, e.radius ?? 20, this._lgReach, key === this._lgHeld);
-      if (score < this._lgTerrainScore) {
-        this._lgTerrainScore = score;
-        this._lgTerrainBest = key;
-      }
-      return;
-    }
-    if (!isContactLockKind(e.kind)) return;
+    const terrain = isTerrainLockKind(e.kind);
+    if (!terrain && !isContactLockKind(e.kind)) return;
     if (e.kind === 2 && this.mirror.structures?.get(entityId)?.owner === this._lgLocalId) return;
-    this.lgConsider(this.swarmLockKey(entityId), e.x, e.y, e.radius ?? 20);
+    this._lgPick.consider(this.swarmLockKey(entityId), e.x, e.y, e.radius ?? 20, terrain);
   };
 
   /** Other pilots' ships on the lock line. Bound once. */
   private readonly _lgVisitShip = (s: ShipRenderState, pid: string): void => {
     if (pid === this._lgLocalId) return;
-    this.lgConsider(this.shipLockKey(pid), s.x, s.y, getShipKind(s.kind ?? null).radius);
+    this._lgPick.consider(this.shipLockKey(pid), s.x, s.y, getShipKind(s.kind ?? null).radius, false);
   };
 
   /**

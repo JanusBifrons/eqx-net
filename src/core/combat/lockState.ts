@@ -34,6 +34,19 @@ export function isTerrainLockKind(kind: number): boolean {
   return kind === SWARM_KIND_ASTEROID || kind === SWARM_KIND_SCRAP || kind === SWARM_KIND_WRECK;
 }
 
+/**
+ * Lock eligibility of a swarm kind for a resolved target (the server's
+ * `resolveLockTarget`): fills `out.terrain`; neutral terrain is lockable for
+ * mining lasers / tractors but never hostile and never a hostile act, so it
+ * also clears `out.hostile`. A contact's hostility is left to the caller.
+ * False = not lockable.
+ */
+export function swarmLockEligible(kind: number, out: { terrain: boolean; hostile: boolean }): boolean {
+  out.terrain = isTerrainLockKind(kind);
+  if (out.terrain) out.hostile = false;
+  return out.terrain || isContactLockKind(kind);
+}
+
 export type LockStage = 'failsafe' | 'acquiring' | 'locked';
 
 /** Wire byte for each stage (snapshot `states[].groups`). */

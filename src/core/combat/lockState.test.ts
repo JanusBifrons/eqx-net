@@ -4,7 +4,7 @@
  * (`ColyseusClient.updateLockGuide`) and missile seekers share (#15).
  */
 import { describe, it, expect } from 'vitest';
-import { isContactLockKind, isTerrainLockKind, newLock } from './lockState.js';
+import { isContactLockKind, isTerrainLockKind, newLock, swarmLockEligible } from './lockState.js';
 import {
   SWARM_KIND_ASTEROID, SWARM_KIND_DRONE, SWARM_KIND_SCRAP, SWARM_KIND_STRUCTURE, SWARM_KIND_WRECK,
 } from '../../shared-types/swarmWireFormat.js';
@@ -15,6 +15,16 @@ describe('swarm lock eligibility', () => {
     expect([SWARM_KIND_ASTEROID, SWARM_KIND_SCRAP, SWARM_KIND_WRECK].every(isTerrainLockKind)).toBe(true);
     for (let k = 0; k < 8; k++) expect(isContactLockKind(k) && isTerrainLockKind(k), `kind ${k} in both tiers`).toBe(false);
     expect(isContactLockKind(5) || isTerrainLockKind(5)).toBe(false); // an unknown kind is not lockable
+  });
+
+  it('swarmLockEligible marks terrain neutral and leaves a contact\'s hostility to the caller', () => {
+    const out = { terrain: true, hostile: true };
+    expect(swarmLockEligible(SWARM_KIND_ASTEROID, out)).toBe(true);
+    expect(out).toEqual({ terrain: true, hostile: false });
+    out.hostile = true;
+    expect(swarmLockEligible(SWARM_KIND_DRONE, out)).toBe(true);
+    expect(out).toEqual({ terrain: false, hostile: true });
+    expect(swarmLockEligible(5, out)).toBe(false);
   });
 
   it('a lock started as non-failsafe (hostile or terrain) skips the failsafe ring', () => {
