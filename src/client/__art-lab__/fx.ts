@@ -209,7 +209,7 @@ async function main(): Promise<void> {
   const rocks: RockV[] = [];
   for (const r of scene.rocks) {
     const v: RockV = { x: r.x, y: r.y, glints: [], gxy: new Float32Array(4), ph: r.id * 0.37 };
-    const b = runBake({ type: 'rock', id: 'rock', entityId: r.id, radius: r.r, resource: r.resource, rot: 0 }, rig);
+    const b = runBake({ type: 'rock', id: 'rock', shapeSeed: r.id, radius: r.r, resource: r.resource, rot: 0 }, rig);
     const s = new Sprite(frameTexture(b.frames[0]!)); s.anchor.set(0.5); s.scale.set(1 / b.density); s.position.set(r.x, r.y);
     rockL.addChild(s);
     if (T && r.resource) {

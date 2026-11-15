@@ -267,7 +267,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
           : entry.kind === 3 && entry.shipKind
             ? scrapHandleFor(ctx.art, spriteKey, entry.shipKind, entry.componentIndex ?? 0)
             : entry.kind === 0
-              ? rockHandleFor(ctx.art, spriteKey, entityId, entry.radius, entry.asteroidResource, -entry.angle)
+              ? rockHandleFor(ctx.art, spriteKey, entry.shapeSeed ?? 0, entry.radius, entry.asteroidResource, -entry.angle)
               : null;
     // S3: a wreck piece draws its PARENT kind's baked art. A capital's is the
     // handle the live hull used (no re-bake); a sub-cap's is the parent's DEAD
@@ -365,7 +365,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         sprite = new WreckPieceSprite(g, entry.shipKind ?? desc.parentKind, shipArt, info, index);
       } else {
         const rockRadius = entry.radius;
-        sprite = buildArtShipSprite(artHandle, () => buildAsteroidGfx(entityId, rockRadius));
+        sprite = buildArtShipSprite(artHandle, () => buildAsteroidGfx(entry.shapeSeed ?? 0, rockRadius));
         // P2c — ice and crystal-veined rocks read apart from plain rock (the
         // Machined rock bakes its resource colour instead).
         // (Applied in the per-frame tint block below, the one tint site.)

@@ -81,12 +81,12 @@ export function scrapHandleFor(actx: ShipArtCtx, key: string, parentKind: string
 /** An asteroid's handle. Its turn is taken once, when first seen: a slowly
  *  turning rock keeps that lighting rather than re-baking as it turns. */
 export function rockHandleFor(
-  actx: ShipArtCtx, key: string, entityId: number, radius: number, resource: string | undefined, rot: number,
+  actx: ShipArtCtx, key: string, shapeSeed: number, radius: number, resource: string | undefined, rot: number,
 ): ArtHandle | null {
   if (!actx.art) return null;
   let h = actx.handles.get(key);
-  if (!h || h.stale === true || h.job.type !== 'rock' || h.job.entityId !== entityId || h.job.radius !== radius || h.job.resource !== resource) {
-    h = actx.art.rock(entityId, radius, resource, rot);
+  if (!h || h.stale === true || h.job.type !== 'rock' || h.job.shapeSeed !== shapeSeed || h.job.radius !== radius || h.job.resource !== resource) {
+    h = actx.art.rock(shapeSeed, radius, resource, rot);
     actx.handles.set(key, h);
   }
   return h;

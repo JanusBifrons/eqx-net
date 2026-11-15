@@ -78,7 +78,7 @@ export type BakeJob =
   /** One component of a destroyed ship; tumbles, so baked like a ship. */
   | ({ type: 'scrap'; id: string; component: number } & LitFlag)
   /** An asteroid, by its seeded outline; static, so one frame at its turn. */
-  | ({ type: 'rock'; id: string; entityId: number; radius: number; resource?: string; rot?: number } & LitFlag)
+  | ({ type: 'rock'; id: string; shapeSeed: number; radius: number; resource?: string; rot?: number } & LitFlag)
   /** An effect or backdrop texture (art/fx/fxTextures.ts, plan iridescent-seeking-rainbow v3). */
   | { type: 'fx'; id: string; variant?: string; seed?: number };
 
@@ -93,7 +93,7 @@ export function bakeKey(j: BakeJob): string {
   if (j.type === 'turret') return `g:${j.id}:${j.paint}:${j.len.toFixed(2)}:${j.wid.toFixed(2)}:${j.cap.toFixed(2)}:${j.ppu}${j.naval ? `:n${j.naval.barrels}:${j.naval.houseW.toFixed(2)}:${j.naval.houseL.toFixed(2)}${j.naval.part ? `:${j.naval.part}` : ''}` : ''}`;
   if (j.type === 'scrap') return `s:${j.id}:${j.component}${SCALE_TAG}`;
   if (j.type === 'fx') return `x:${FX_VERSION}:${j.id}:${j.variant ?? ''}:${j.seed ?? ''}`;
-  if (j.type === 'rock') return `r:${j.entityId}:${j.radius}:${j.resource ?? ''}:${quarterTurnsFine(j.rot ?? 0)}`;
+  if (j.type === 'rock') return `r:${j.shapeSeed}:${j.radius}:${j.resource ?? ''}:${quarterTurnsFine(j.rot ?? 0)}`;
   const q = quarterTurns(j.rot ?? 0);
   return `m:${j.id}:${j.seed}:${j.accent ?? ''}${q ? `:r${q}` : ''}${j.rings ? ':R' : ''}`;
 }
@@ -112,7 +112,7 @@ function liveryTag(l: Livery): string { return `:L${l.treatment}${l.team.toStrin
  *  structures and rocks (the mesh turns; the maps don't change). */
 function litKeyBody(j: Exclude<BakeJob, { type: 'fx' }>): string {
   if (j.type === 'struct') return `m:${j.id}:${j.seed}:${j.accent ?? ''}${j.rings ? ':R' : ''}`;
-  if (j.type === 'rock') return `r:${j.entityId}:${j.radius}:${j.resource ?? ''}`;
+  if (j.type === 'rock') return `r:${j.shapeSeed}:${j.radius}:${j.resource ?? ''}`;
   return bakeKey({ ...j, lit: false });
 }
 
@@ -211,7 +211,7 @@ export function runBake(j: BakeJob, rig: LightRig): Baked {
   }
   if (j.type === 'rock') {
     const ppu = Math.min(1.5, ROCK_MAX_SIDE / (j.radius * 2.6 + 4));
-    const f = forgeRock(j.entityId, j.radius, j.resource, { ppu });
+    const f = forgeRock(j.shapeSeed, j.radius, j.resource, { ppu });
     if (j.lit) return litBaked(f, Infinity);
     const turn = quarterTurnsFine(j.rot ?? 0) * (Math.PI / 8);
     return { frames: [litFrame(f, rig, rig.sunAz - turn), albedoHalf(f)], w: f.g.w, h: f.g.h, density: f.g.ppu, nozzles: [], navLights: [] };

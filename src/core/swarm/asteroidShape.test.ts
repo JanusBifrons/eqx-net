@@ -5,6 +5,7 @@ import {
   polygonArea,
   verticesToFloat32,
   asteroidResources,
+  asteroidShapeSeed,
   ASTEROID_RESOURCES_PER_AREA,
   type Vec2,
 } from './asteroidShape.js';
@@ -172,5 +173,16 @@ describe('asteroidResources (WS-4 Phase 1 / R2.27 — finite mineable pool)', ()
   it('is 0 for a degenerate (zero-area) polygon', () => {
     expect(asteroidResources([])).toBe(0);
     expect(asteroidResources([{ x: 0, y: 0 }, { x: 1, y: 0 }])).toBe(0);
+  });
+});
+
+describe('asteroid shape seed (macro terrain 1a)', () => {
+  it('comes from the stable id alone, so a rock keeps its outline whatever wire id it gets', () => {
+    const seed = asteroidShapeSeed('belt-0-3');
+    expect(seed).toBe(asteroidShapeSeed('belt-0-3'));
+    expect(seed).toBeGreaterThanOrEqual(0);
+    expect(seed).toBeLessThanOrEqual(0xffff); // fits the wire's u16
+    expect(asteroidShapeSeed('belt-0-4')).not.toBe(seed);
+    expect(generateAsteroidVertices(seed, 40)).toEqual(generateAsteroidVertices(asteroidShapeSeed('belt-0-3'), 40));
   });
 });
