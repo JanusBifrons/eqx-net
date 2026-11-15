@@ -195,7 +195,9 @@ describe('AiFireResolver — energy gate', () => {
     const spends: number[] = [];
     let spawned = 0;
     const lastFire = new Map<string, number>();
+    const passDebris: Array<boolean | undefined> = [];
     const deps: AiFireResolverDeps = {
+      nonPlayerRayHit: (_fx, _fy, _dx, _dy, _max, _skip, pass) => { passDebris.push(pass); return null; },
       trySpendEnergy: (_id, cost) => {
         spends.push(cost);
         if (pool.e + 1e-6 < cost) return false;
@@ -217,7 +219,7 @@ describe('AiFireResolver — energy gate', () => {
       spawnServerProjectile: () => { spawned++; },
       spawnServerMissile: () => { spawned++; return 1; },
     };
-    return { resolver: new AiFireResolver(deps), spends, lastFire, kind, spawned: () => spawned };
+    return { resolver: new AiFireResolver(deps), spends, lastFire, kind, spawned: () => spawned, passDebris };
   }
 
   it('a fighter trigger spends the slot cost; an empty pool refuses without spending the cooldown', () => {
@@ -243,5 +245,15 @@ describe('AiFireResolver — energy gate', () => {
     expect(spends[0]).toBeCloseTo(share, 9);
     pool.e = 0;
     expect(resolver.fireMount('n', 0)).toBe(false);
+  });
+
+  it('a kill follow-through beam asks the room to pass debris; a normal shot does not', () => {
+    const { resolver, kind, passDebris } = energyResolver('battlecruiser-lance', { e: 1e9 });
+    const i = kind.mounts.findIndex((m) => m.weaponId === 'heavy_beam');
+    expect(i).toBeGreaterThanOrEqual(0);
+    resolver.fireMount('n', i);
+    resolver.fireMount('n', i, true);
+    resolver.fireMount('n', i);
+    expect(passDebris).toEqual([false, true, false]);
   });
 });

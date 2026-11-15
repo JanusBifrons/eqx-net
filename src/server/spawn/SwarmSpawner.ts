@@ -119,7 +119,7 @@ export class SwarmSpawner {
    * Slot exhaustion is logged by the caller — `seed()` returns the truncated
    * count without throwing so a too-large `swarmCount` degrades gracefully.
    */
-  seed(count: number, ratio = 0.8, radius = 18_000): number {
+  seed(count: number, ratio = 0.8, radius = 18_000, atRest = false): number {
     if (count <= 0) return 0;
     let spawned = 0;
     // Sunflower-spiral spread across a disc bounded by `radius`. Gives a
@@ -131,7 +131,9 @@ export class SwarmSpawner {
     // far outside any reasonable interest window — so the player at origin
     // never saw a drone. Interleaving keeps the kind ratio while putting
     // drones at every distance band.
-    const dronesPerCycle = Math.max(1, Math.round((1 - ratio) * 10));
+    // `ratio: 1` means rocks only (the terrain stress scenes); any other
+    // ratio keeps at least one drone per cycle, as before.
+    const dronesPerCycle = ratio >= 1 ? 0 : Math.max(1, Math.round((1 - ratio) * 10));
     const droneStride = 10; // 10 entities per cycle; `dronesPerCycle` of them are drones
     const PHI = Math.PI * (3 - Math.sqrt(5)); // golden angle
     for (let i = 0; i < count; i++) {
@@ -150,16 +152,19 @@ export class SwarmSpawner {
           id: `swarm-asteroid-${i}`,
           x, y,
           // Tiny drift so the wire isn't entirely static at low speeds.
-          vx: Math.cos(angle * 1.7) * 0.5,
-          vy: Math.sin(angle * 1.7) * 0.5,
+          // `atRest` (terrain stress scenes): no drift, so the rocks settle
+          // and sleep as a real field does.
+          vx: atRest ? 0 : Math.cos(angle * 1.7) * 0.5,
+          vy: atRest ? 0 : Math.sin(angle * 1.7) * 0.5,
           radius: asteroidRadius,
           // Stress-test rooms keep the original light asteroid mass (1) for
           // bandwidth-budget continuity. Galaxy rooms and hand-rolled rosters
           // get ASTEROID_DEFAULT_MASS via the spawner default. The bulk-seed
           // mass-feel doesn't matter — there's no gameplay collision testing
           // in `swarm-soak` / `swarm-tidi`; they exist purely as broadcast /
-          // load benchmarks.
-          mass: 1,
+          // load benchmarks. `atRest` rocks take the real asteroid mass
+          // (the spawner default) so the terrain scenes measure a real field.
+          ...(atRest ? {} : { mass: 1 }),
         });
       if (!ok) break;
       spawned++;

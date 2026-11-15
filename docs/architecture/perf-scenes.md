@@ -194,6 +194,8 @@ Add one entry to `PERF_SCENES` with:
 
 The room `perf-<id>` is registered automatically.
 
+A scene marked `soak: true` runs only when named with `--scenes`: the long debris soaks, and the terrain stress scenes (`rock-field-1k`, `rock-field-4500`, `rock-field-fight`), which only terrain PRs need. The terrain scenes build their rock field with the bulk seed (`swarmCount`, `swarmRatio: 1` = rocks only, `swarmAtRest` = still rocks at the real asteroid mass, so they settle and sleep). What they measure and why: [macro-terrain](macro-terrain.md).
+
 ## Who runs it, and when
 
 - **Claude runs it, not the user.** It is part of Claude's own verification before a PR that touches rendering, the server tick, the snapshot path or combat at scale. The verdict table goes in the PR body.

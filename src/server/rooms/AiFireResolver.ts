@@ -112,7 +112,8 @@ export interface AiFireResolverDeps {
   ) => number | null;
   /** Damage sink — invoked on a confirmed hit. (hitX, hitY) is the beam's
    *  impact point, (dirX, dirY) its direction (capital wreck hit tracker and
-   *  knock-back), `weaponId` the firing weapon. */
+   *  knock-back), `weaponId` the firing weapon. Returns true iff THIS call
+   *  destroyed the target (the room's choke point does; mocks may not). */
   applyDamage: (
     targetId: string,
     shooterId: string,
@@ -122,16 +123,18 @@ export interface AiFireResolverDeps {
     dirX?: number,
     dirY?: number,
     weaponId?: WeaponId,
-  ) => void;
+  ) => boolean | void;
   /** Friendly fire (owner decision 2026-11-10) — the first non-player thing
    *  along the beam: every swarm entity (drones of ANY side, structures of ANY
    *  owner, asteroids, scrap) and lingering hulls, skipping only `skipId` (the
    *  shooter). Returns a reused scratch (read it before the next call) or null.
    *  Absent ⇒ the beam tests players only (unit harnesses). Replaced the
    *  hostile-structure + other-allegiance passes, which let a beam pass through
-   *  its own side. */
+   *  its own side. `passDebris`: wreck pieces and scrap don't stop the ray
+   *  (a heavy beam's kill follow-through, `fireMount`). */
   nonPlayerRayHit?: (
     fromX: number, fromY: number, dirX: number, dirY: number, maxDist: number, skipId: string,
+    passDebris?: boolean,
   ) => { id: string; wireId: string; dist: number } | null;
   /** Shield-fence plan — if an ACTIVE shield wall lies along the beam within
    *  `maxDist`, absorb the shot (apply the wall's grid-power damage model) and
@@ -175,6 +178,11 @@ export class AiFireResolver implements WeaponFireSink {
    *  `resolveFire`), so a beam hit tells applyDamage what landed it. */
   private _weaponId: WeaponId | undefined = undefined;
   private _wireShooterId = '';
+  /** Set by the hitscan sink when a beam of the shot now resolving destroyed
+   *  what it hit (`fireMount` reports it: the heavy beam's follow-through). */
+  private _shotKilled = false;
+  /** The shot now resolving passes debris (set by `fireMount`). */
+  private _passDebris = false;
 
   /**
    * Resolve an AI fire claim. Cooldown-rejected → silent no-op.
@@ -300,8 +308,12 @@ export class AiFireResolver implements WeaponFireSink {
    *  capital's turret does (PlayerFireResolver per-mount path: a partial
    *  salvo pays its share), i.e. slot cost / mounts per mount. Returns false
    *  when refused (no pose, or the pool can't pay) so the caller keeps the
-   *  reload. */
-  fireMount(shooterId: string, mountIdx: number): boolean {
+   *  reload; 'killed' when it fired and one of its beams destroyed what it hit
+   *  (the caller's follow-through, `WeaponDefBase.followThroughTicks`); else
+   *  true. `passDebris`: the beam passes wreck pieces and scrap (no hit, no
+   *  knock-back) and runs on to a ship, structure, rock or its full range
+   *  (the kill follow-through: "cut right through"). */
+  fireMount(shooterId: string, mountIdx: number, passDebris = false): boolean | 'killed' {
     const d = this.deps;
     const self = d.swarmEntitySnapshot(shooterId);
     if (!self) return false;
@@ -310,8 +322,11 @@ export class AiFireResolver implements WeaponFireSink {
       const n = Math.min(d.resolveSlotMounts(kind).length, 31);
       if (n > 0 && !d.trySpendEnergy(shooterId, resolveSlotEnergyCost(kind) / n)) return false;
     }
+    this._shotKilled = false;
+    this._passDebris = passDebris;
     this.fireNow(shooterId, mountIdx);
-    return true;
+    this._passDebris = false;
+    return this._shotKilled ? 'killed' : true;
   }
   /** Quad AA: the next barrel to fire, per shooter and mount index. */
   private readonly aaBarrel = new Map<string, Uint8Array>();
@@ -466,7 +481,7 @@ export class AiFireResolver implements WeaponFireSink {
     // Friendly fire (owner decision 2026-11-10): everything else in the path,
     // whatever its side — drones, structures, rocks, scrap, parked hulls.
     // Closest-of-both wins, so an ally in front of the target takes the beam.
-    const other = d.nonPlayerRayHit?.(rayFromX, rayFromY, ndx, ndy, Math.min(rayRange, hitDist), this._shooterId) ?? null;
+    const other = d.nonPlayerRayHit?.(rayFromX, rayFromY, ndx, ndy, Math.min(rayRange, hitDist), this._shooterId, this._passDebris) ?? null;
     if (other !== null && other.dist < hitDist) {
       hitDist = other.dist;
       hitId = other.id;
@@ -486,7 +501,9 @@ export class AiFireResolver implements WeaponFireSink {
         : damage;
       // The impact point and direction ride the damage call itself (wreck hit
       // tracker, knock-back; the damage event reports the true impact point).
-      d.applyDamage(hitId, this._shooterId, effDamage, rayFromX + ndx * hitDist, rayFromY + ndy * hitDist, ndx, ndy, this._weaponId);
+      if (d.applyDamage(hitId, this._shooterId, effDamage, rayFromX + ndx * hitDist, rayFromY + ndy * hitDist, ndx, ndy, this._weaponId) === true) {
+        this._shotKilled = true;
+      }
     }
 
     const blocked = wallDist !== null;

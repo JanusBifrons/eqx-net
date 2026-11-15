@@ -23,7 +23,7 @@
  * Runs once per death (not hot-loop code); allocates freely.
  */
 import {
-  fractureHull, projectToOutline, cutDirFromAngle, CUT_ANGLE_STEPS, FRACTURE_SNAP_CHANCE, EDGE_HULL,
+  fractureHull, projectToOutline, cutDirFromAngle, CUT_ANGLE_STEPS, FRACTURE_SNAP_CHANCE, EDGE_HULL, EDGE_CUT,
   type FractureEdgeKind, type FractureKillCut,
 } from './fractureHull.js';
 import { DESTRUCTION_PROFILES } from '../../shared-types/shipScale/destruction.js';
@@ -402,8 +402,11 @@ const SEAM_TOUCH_EPS = 0.5;
 
 /** Every shared cut between pieces (cut edges of two pieces that lie on one
  *  line and overlap). The cut line separates the two pieces, so parting
- *  along its normal never overlaps them. */
-export function findSeams(geom: ReadonlyArray<WreckPieceGeometry>): Seam[] {
+ *  along its normal never overlaps them. A railgun channel's two banks
+ *  (`EDGE_CUT` edges facing each other `channelGap` apart: the channel's
+ *  width in the ship's scaled frame) are a seam too; without it the kill
+ *  push closed the channel while the cracks opened. */
+export function findSeams(geom: ReadonlyArray<WreckPieceGeometry>, channelGap = 0): Seam[] {
   const seams: Seam[] = [];
   for (let i = 0; i < geom.length; i++) {
     const gi = geom[i]!;
@@ -428,7 +431,11 @@ export function findSeams(geom: ReadonlyArray<WreckPieceGeometry>): Seam[] {
           const t = gj.outline[(eb + 1) % nj]!;
           const rx = r.x + gj.cx - px, ry = r.y + gj.cy - py;
           const tx = t.x + gj.cx - px, ty = t.y + gj.cy - py;
-          if (Math.abs(rx * nx + ry * ny) > SEAM_LINE_EPS || Math.abs(tx * nx + ty * ny) > SEAM_LINE_EPS) continue;
+          // On this edge's line, or (a channel's facing bank) on the line
+          // `channelGap` out along its outward normal.
+          const off = channelGap > 0 && gi.cutEdges[ea] === EDGE_CUT && gj.cutEdges[eb] === EDGE_CUT
+            && Math.abs(rx * nx + ry * ny - channelGap) <= SEAM_LINE_EPS ? channelGap : 0;
+          if (Math.abs(rx * nx + ry * ny - off) > SEAM_LINE_EPS || Math.abs(tx * nx + ty * ny - off) > SEAM_LINE_EPS) continue;
           const s0 = Math.max(0, Math.min(rx * ux + ry * uy, tx * ux + ty * uy));
           const s1 = Math.min(len, Math.max(rx * ux + ry * uy, tx * ux + ty * uy));
           if (s1 - s0 < SEAM_MIN_LEN) continue;
@@ -605,7 +612,9 @@ export function buildWreckPieces(input: WreckBuildInput): WreckBuild {
   // open wide enough to read at fleet zoom). The spin above keeps the raw
   // `wreckSeparate`.
   const sep = tuning.wreckSeparate * DESTRUCTION_PROFILES[tuning.destruction].separateScale;
-  const seams = findSeams(geom);
+  // A channel's (or a wide slice's) two banks part like a shared cut (its
+  // width, scaled frame).
+  const seams = findSeams(geom, fracture.cutKind !== undefined ? (fracture.cutW ?? 0) * s : 0);
   for (let it = 0; it < SEPARATE_ITERATIONS; it++) {
     let worst = 0;
     for (const sm of seams) {
