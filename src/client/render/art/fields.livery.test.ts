@@ -793,3 +793,50 @@ describe("livery treatment 'b4' (painted sections, turret-proof spots)", () => {
     expect(mis).toBe(0);
   });
 });
+
+/** Shaped section edges 'b5' (chevron) / 'b6' (tongue) / 'b7' (dog-tooth)
+ *  (owner, 2026-11-15: "the straight lines look bad"). */
+describe("livery 'b5' / 'b6' / 'b7' (shaped section edges)", () => {
+  const forge = (id: string, t: Livery['treatment'], ppu = ppuFor(id)): Fields =>
+    forgeShip(id, { ppu, livery: { treatment: t, team: 0xff4444, sigil: 0x1234 }, turretCover: turretCoverOf(id) });
+  it.each(['b5', 'b6', 'b7'] as const)("'%s': the section edges are shaped (paint differs from b4's straight edges)", (t) => {
+    for (const [id, min] of [['battleship', 0.01], ['gunship', 0.003]] as const) {
+      const a = forge(id, 'b4'), b = forge(id, t);
+      let diff = 0, hull = 0;
+      for (let i = 0; i < a.cov.length; i++) {
+        if (a.cov[i]! <= 0.5) continue;
+        hull++;
+        if ((a.mat[i] === MAT.LIVERY) !== (b.mat[i] === MAT.LIVERY)) diff++;
+      }
+      expect(diff / hull).toBeGreaterThan(min);
+    }
+  });
+
+  it.each(['b5', 'b6', 'b7'] as const)("'%s': paint is mirror-symmetric (battleship, gunship)", (t) => {
+    for (const id of ['battleship', 'gunship']) {
+      const f = forge(id, t);
+      const { w, h } = f.g;
+      let mis = 0;
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if ((f.mat[y * w + x] === MAT.LIVERY) !== (f.mat[y * w + (w - 1 - x)] === MAT.LIVERY)) mis++;
+      expect(mis).toBe(0);
+    }
+  });
+
+  it.each(['b5', 'b6', 'b7'] as const)("'%s': every capital keeps two deck sigils; the gunship keeps its tail flashes", (t) => {
+    for (const id of ['destroyer', 'light-cruiser', 'heavy-cruiser', 'battlecruiser', 'battleship']) {
+      const f = forgeShip(id, { ppu: ppuFor(id) * 6, livery: { treatment: t, team: 0xff4444, sigil: 0x1a2b3c }, rings: shipTurrets(id).map((q) => ({ x: q.px, y: q.py, r: q.ring })), turretCover: turretCoverOf(id) });
+      expect((f.sigils ?? []).map((m) => m.kind)).toEqual(['sigil', 'sigil']);
+    }
+    const g = forge('gunship', t);
+    let tail = 0, hull = 0;
+    const { w } = g.g;
+    let y0 = Infinity, y1 = -Infinity;
+    for (let i = 0; i < g.cov.length; i++) if (g.cov[i]! > 0.5) { const ty = Math.floor(i / w); y0 = Math.min(y0, ty); y1 = Math.max(y1, ty); }
+    for (let i = 0; i < g.cov.length; i++) {
+      if (g.cov[i]! <= 0.5) continue;
+      hull++;
+      if (g.mat[i] === MAT.LIVERY && (Math.floor(i / w) - y0) / (y1 - y0) > 0.55) tail++;
+    }
+    expect(tail / hull).toBeGreaterThan(0.03);
+  });
+});
