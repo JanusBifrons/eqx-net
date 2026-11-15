@@ -727,6 +727,9 @@ export interface RenderMirror {
   /** Fire control: how many NPCs lock the local pilot in all (`lockedByN`);
    *  0 ⇒ the `localLockedBy` rows are everyone. The rows are only the nearest. */
   localLockedByTotal?: number;
+  /** How many of those hold a completed lock (`lockedByL`); 0 ⇒ the locked
+   *  `localLockedBy` rows are all of them. */
+  localLockedByLocked?: number;
   /** When false, the renderer hides the orange server-ghost diamond. Default true. */
   showServerGhost?: boolean;
   /**
