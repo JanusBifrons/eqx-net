@@ -94,7 +94,6 @@ const ALLOWLIST = {
   'src/core/bases/growBase.ts': { cap: 740, target: 600, reason: RATCHET_ONLY },
   'src/core/contracts/IRenderer.ts': { cap: 1171, target: 600, reason: RATCHET_ONLY },
   'src/core/destruction/fractureHull.ts': { cap: 1756, target: 600, reason: RATCHET_ONLY },
-  'src/core/destruction/wreckPieces.ts': { cap: 690, target: 600, reason: RATCHET_ONLY },
   'src/core/physics/World.ts': { cap: 1287, target: 600, reason: RATCHET_ONLY },
   'src/core/physics/worker.ts': { cap: 792, target: 600, reason: RATCHET_ONLY },
   'src/server/cargo/StorageService.ts': { cap: 901, target: 600, reason: RATCHET_ONLY },
