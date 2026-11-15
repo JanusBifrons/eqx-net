@@ -397,7 +397,7 @@ import {
   SHIP_MAX_HEALTH,
 } from '../../core/combat/Weapons.js';
 // getWeapon/isWeaponId/HitscanWeaponDef/ProjectileWeaponDef now used inside PlayerFireResolver.ts
-import type { WeaponId, MissileWeaponDef } from '../../core/combat/WeaponCatalogue.js';
+import { getWeapon, weaponLayerMul, type WeaponId, type MissileWeaponDef } from '../../core/combat/WeaponCatalogue.js';
 import { regenEnergyStep, spendEnergy, BOOST_TICK_COST } from '../../core/combat/Energy.js';
 import { shipBodyMass, shipTuning, shellViewHalfExtent } from '../../shared-types/shipScale/tuning.js';
 import { ShellEventHub, type ShellViewer } from './ShellEventHub.js';
@@ -1030,6 +1030,8 @@ export class SectorRoom extends Room<SectorState> {
   private capitalWrecks: CapitalWreckSubsystem | null = null;
   private capitalWrecksOn = false;
   private subcapWrecksOn = false;
+  /** Reused per-hit weapon layer multiplier (`applyDamage`, #14). */
+  private readonly _layerMul = { shield: 1, hull: 1 };
   /** Reused `WRECK_IMPULSE` command (overkill knock-back, #14). */
   private readonly _wreckImpulseCmd = { type: 'WRECK_IMPULSE' as const, entityId: '', jx: 0, jy: 0, px: 0, py: 0 };
   /** Reused `WRECK_RIGID_IMPULSE` command (a hit during the crack hold, #14). */
@@ -5175,6 +5177,10 @@ export class SectorRoom extends Room<SectorState> {
       if (damage > 0) this.gateGuard.onGateAttacked(targetId, shooterId, this.gameClock.now());
       return false;
     }
+    // The weapon's per-target factors, resolved once for this target's class
+    // (weapon-mounts.md "Per-target damage factors"); undefined ⇒ ×1.
+    const layerMul = weaponId === undefined ? undefined
+      : weaponLayerMul(getWeapon(weaponId), this.structureRegistry.get(targetId) !== undefined, this._layerMul);
     if (damage > 0) this.noteEconomicHit(targetId, shooterId);
     if (damage > 0) this.noteStandingHit(targetId, shooterId);
     // An NPC's own hit on a pilot keeps it hostile (owner 2026-11-12).
@@ -5234,7 +5240,8 @@ export class SectorRoom extends Room<SectorState> {
         }
         // R2.18 — a Shield Pylon is undamageable while its wall is up: route the
         // hit into an active wall and skip the pylon damage entirely.
-        if (s.kind === 'shield_pylon' && this.shieldWalls.absorbForPylon(targetId, damage, this.gameClock.now())) {
+        if (s.kind === 'shield_pylon'
+          && this.shieldWalls.absorbForPylon(targetId, damage * (layerMul?.hull ?? 1), this.gameClock.now())) {
           return false;
         }
       }
@@ -5244,7 +5251,7 @@ export class SectorRoom extends Room<SectorState> {
     if (this.capitalWrecks !== null && damage > 0) {
       this.capitalWrecks.noteHit(targetId, shooterId, damage, hitX, hitY, dirX, dirY, weaponId);
     }
-    return this.damageRouter.apply(targetId, shooterId, damage, hitX, hitY);
+    return this.damageRouter.apply(targetId, shooterId, damage, hitX, hitY, layerMul);
   }
 
   /** Capital destruction S2a: build the wreck subsystem (flag on only). */

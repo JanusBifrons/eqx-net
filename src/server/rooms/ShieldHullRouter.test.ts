@@ -51,3 +51,18 @@ describe('ShieldHullRouter — swarm shield regen gating', () => {
     expect(router.swarmShield.get('swarm-1')!).toBeGreaterThan(0); // drone regen intact
   });
 });
+
+describe('ShieldHullRouter — per-layer multiplier on a shieldless structure', () => {
+  it('the hull layer takes damage x factor; a 0 factor leaves it untouched', () => {
+    const { router, setTick } = makeRouter({ 'struct-1': { kind: 2, shipKind: 'shield_pylon' } });
+    const rec = { id: 'struct-1', entityId: 1, kind: 2, shipKind: 'shield_pylon' } as const;
+    router.swarmHealth.set('struct-1', 800);
+    router.swarmShieldLastDmg.set('struct-1', 3);
+    setTick(50);
+    router.damageSwarmLayered(rec as never, 100, { shield: 0, hull: 0 });
+    expect(router.swarmHealth.get('struct-1')).toBe(800);
+    expect(router.swarmShieldLastDmg.get('struct-1')).toBe(3);
+    router.damageSwarmLayered(rec as never, 100, { shield: 0.25, hull: 0.25 });
+    expect(router.swarmHealth.get('struct-1')).toBe(775);
+  });
+});

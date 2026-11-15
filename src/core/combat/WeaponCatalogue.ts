@@ -54,6 +54,44 @@ interface WeaponDefBase {
    *  (`WeaponMountTicker.tickCapitalMounts`). Absent ⇒ none: the mount looks
    *  for its next target at once. */
   followThroughTicks?: number;
+  /** Per-target damage factors (docs/architecture/weapon-mounts.md
+   *  "Per-target damage factors"): a hit's damage is multiplied by the factor
+   *  for what it lands on, once, at `SectorRoom.applyDamage`. Read only
+   *  through `weaponTargetFactor`. Absent (or an absent key) ⇒ 1. */
+  targetFactor?: WeaponTargetFactor;
+}
+
+/** What a hit lands on, for `weaponTargetFactor`: a raised shield, an exposed
+ *  (or shieldless) ship hull, a structure, or a capital wreck piece. */
+export type WeaponTargetClass = 'shield' | 'hull' | 'structure' | 'wreck';
+
+/** `WeaponDefBase.targetFactor`: a damage multiplier per target class. */
+export type WeaponTargetFactor = { readonly [K in WeaponTargetClass]?: number };
+
+/** The damage multiplier `def` applies against `cls`. Pure, allocation-free.
+ *  Every class defaults to 1 for now. The 'wreck' default becomes 0.1 when
+ *  wreck integrity lands (plan partitioned-chasing-lark, PR 5); until then 1
+ *  keeps every hit byte-identical. */
+export function weaponTargetFactor(def: WeaponDef, cls: WeaponTargetClass): number {
+  return def.targetFactor?.[cls] ?? 1;
+}
+
+/** Resolve `def`'s factors for one hit into the per-layer multiplier the
+ *  shield/hull router takes (`out`, reused scratch, #14): a structure takes its
+ *  'structure' factor on every layer, anything else 'shield' on a raised
+ *  shield and 'hull' below it. Returns `undefined` when the weapon has no
+ *  factors, so a factor-less hit stays byte-identical. */
+export function weaponLayerMul(
+  def: WeaponDef, isStructure: boolean, out: { shield: number; hull: number },
+): { shield: number; hull: number } | undefined {
+  if (def.targetFactor === undefined) return undefined;
+  if (isStructure) {
+    out.shield = out.hull = weaponTargetFactor(def, 'structure');
+  } else {
+    out.shield = weaponTargetFactor(def, 'shield');
+    out.hull = weaponTargetFactor(def, 'hull');
+  }
+  return out;
 }
 
 export interface HitscanWeaponDef extends WeaponDefBase {

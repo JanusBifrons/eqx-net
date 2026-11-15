@@ -72,16 +72,31 @@ export interface RegenResult {
   regenerated: boolean;
 }
 
+/** Per-layer damage multiplier (a weapon's `targetFactor`, resolved for the
+ *  target by `SectorRoom.applyDamage`): the shield layer takes
+ *  `damage × shield`, the hull `damage × hull`. A static or reused object
+ *  (#14). Absent ⇒ 1 for both, byte-identical. */
+export interface LayerMul {
+  readonly shield: number;
+  readonly hull: number;
+}
+
 /**
  * Apply one damage event. Mutates `state` in place and returns what
- * happened. `damage <= 0` is a no-op that does NOT reset the regen timer
- * (a 0-damage "hit" must not deny a ship its regen).
+ * happened. The hit lands on the shield while it is up, else on the hull;
+ * `layerMul` scales it by that layer's factor first. An effective damage
+ * `<= 0` is a no-op that does NOT reset the regen timer (a 0-damage "hit"
+ * must not deny a ship its regen).
  */
 export function applyLayeredDamage(
   state: ShieldHullState,
-  damage: number,
+  rawDamage: number,
   nowTick: number,
+  layerMul?: LayerMul,
 ): DamageResult {
+  const damage = layerMul === undefined
+    ? rawDamage
+    : rawDamage * (state.shield > 0 ? layerMul.shield : layerMul.hull);
   if (!(damage > 0)) {
     return {
       hitLayer: state.shield > 0 ? 'shield' : 'hull',
