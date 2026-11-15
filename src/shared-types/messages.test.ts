@@ -17,6 +17,7 @@ import {
   FireMessageSchema,
   HitAckSchema,
   DamageEventSchema,
+  DestroyEventSchema,
   ShipLevelUpEventSchema,
   ShipUpgradeAppliedEventSchema,
   ApplyShipUpgradeSchema,
@@ -788,5 +789,21 @@ describe('ShipRosterSchema (campaign 6.1)', () => {
     void ifaceToSchema;
     const parsed: ShipRosterMessage = ShipRosterSchema.parse(valid);
     expect(parsed.ships).toHaveLength(1);
+  });
+});
+
+describe('DestroyEventSchema (fracture v11: vaporised)', () => {
+  const valid = { type: 'destroy' as const, targetId: 'swarm-12', shooterId: 'p1' };
+
+  it('accepts a plain destroy and one marked vaporised', () => {
+    expect(DestroyEventSchema.safeParse(valid).success).toBe(true);
+    expect(DestroyEventSchema.safeParse({ ...valid, shooterId: '' }).success).toBe(true);
+    expect(DestroyEventSchema.safeParse({ ...valid, vaporised: true }).success).toBe(true);
+  });
+
+  it('rejects vaporised: false (emit-when-true), unknown fields and an empty target', () => {
+    expect(DestroyEventSchema.safeParse({ ...valid, vaporised: false }).success).toBe(false);
+    expect(DestroyEventSchema.safeParse({ ...valid, extra: 1 }).success).toBe(false);
+    expect(DestroyEventSchema.safeParse({ ...valid, targetId: '' }).success).toBe(false);
   });
 });

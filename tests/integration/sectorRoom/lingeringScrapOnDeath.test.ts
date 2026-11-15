@@ -47,7 +47,9 @@ describe('SectorRoom integration — lingering-hull scrap-on-death (Equinox P6.3
   }, 10_000);
 
   function scrapRecs(internal: SectorRoom['_internals']) {
-    return [...internal.swarmRegistry.all()].filter((r) => r.kind === SWARM_KIND_SCRAP);
+    // Scrap pieces only: a loot pod is a scrap-kind record too (the dead hull's
+    // hull-salvage pod, loot-and-cargo.md "Hull salvage").
+    return [...internal.swarmRegistry.all()].filter((r) => r.kind === SWARM_KIND_SCRAP && r.shipKind !== 'cargo-pod');
   }
 
   it('a destroyed COMPOSITE lingering hull breaks into one scrap piece per component', async () => {

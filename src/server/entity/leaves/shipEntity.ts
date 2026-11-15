@@ -107,7 +107,13 @@ export function createActiveShipEntity(
     onDestroyed(target, targetId, _wireTargetId, sourceId) {
       const ship = target as ShipState;
       ship.alive = false;
-      deps.broadcastDestroy({ type: 'destroy', targetId, shooterId: sourceId });
+      // The wreck (or, for a cut kill that burned every piece away, nothing:
+      // fracture v11) is decided BEFORE the broadcast, so the event can say
+      // the ship was vaporised. The slot and pose are still live here.
+      const vaporised = deps.spawnWreckFromActiveHull?.(targetId) === true;
+      deps.broadcastDestroy(vaporised
+        ? { type: 'destroy', targetId, shooterId: sourceId, vaporised: true }
+        : { type: 'destroy', targetId, shooterId: sourceId });
       deps.bus.emit('SHIP_DESTROYED', { type: 'SHIP_DESTROYED', targetId, shooterId: sourceId });
       deps.logger.info({ targetId, shooterId: sourceId }, 'ship destroyed');
     },
@@ -137,21 +143,25 @@ export function createLingeringHullEntity(
     onDestroyed(target, targetId, _wireTargetId, sourceId) {
       const ship = target as ShipState;
       ship.alive = false;
-      deps.broadcastDestroy({ type: 'destroy', targetId, shooterId: sourceId });
       // P6.3 (Equinox Phase 6) — a COMPOSITE lingering hull breaks into floating
       // scrap like an active ship/drone. Read the dying pose from
       // `lingeringPoseCache` BEFORE the teardown below deletes it; the room hook
       // guards polygon kinds (no scrap groups) + calls ScrapSpawner.spawnFromDeath.
+      // It also breaks the hull into wreck pieces, BEFORE the broadcast, so the
+      // event can say a cut kill vaporised it (fracture v11).
       const scrapPose = deps.lingeringPoseCache.get(targetId);
-      if (scrapPose !== undefined) {
-        deps.spawnScrapFromLingeringHull?.(ship.kind as ShipKindId, scrapPose, targetId);
-      }
+      const vaporised = scrapPose !== undefined
+        && deps.spawnScrapFromLingeringHull?.(ship.kind as ShipKindId, scrapPose, targetId) === true;
+      deps.broadcastDestroy(vaporised
+        ? { type: 'destroy', targetId, shooterId: sourceId, vaporised: true }
+        : { type: 'destroy', targetId, shooterId: sourceId });
       // A1 — roster wipe / XP / hold spill BEFORE the teardown below removes
       // the ship from `shipsMap` (the SHIP_DESTROYED handler can't see it after).
       deps.onLingeringHullDeath?.(
         { shipInstanceId: ship.shipInstanceId || targetId, playerId: ship.playerId, kind: ship.kind },
         scrapPose,
         sourceId,
+        vaporised,
       );
       const slot = deps.lingeringSlots.get(targetId);
       if (slot !== undefined) {

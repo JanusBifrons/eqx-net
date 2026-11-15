@@ -12,11 +12,13 @@ Part 2 (P1a-2) adds base storage, auto-deposit, derelicts and credit sinks.
 
 ## What the player sees
 
-- **Every kill drops loot.** A destroyed NPC ship leaves a small glowing
-  diamond, a *loot pod*, just beside where it died (off to the side of the
-  shot that killed it, so the rest of the volley doesn't blow it up).
-  AI-vs-AI kills drop loot too, so a
-  battlefield you stumble onto is worth picking over.
+- **Every kill drops loot.** A destroyed ship, whoever flew it, leaves a
+  small glowing diamond, a *loot pod*, just beside where it died (off to the
+  side of the shot that killed it, so the rest of the volley doesn't blow it
+  up). AI-vs-AI kills drop loot too, so a
+  battlefield you stumble onto is worth picking over. A ship burned away
+  whole by a heavy beam or a railgun (vaporised) leaves half as much salvage
+  again: the beam rendered the whole ship down.
 - **Fly over a pod to collect it.** No button: touching a pod with free cargo
   space moves its contents into your ship's hold. A popup confirms what you
   got ("+7 Salvage · +30 cr").
@@ -26,7 +28,8 @@ Part 2 (P1a-2) adds base storage, auto-deposit, derelicts and credit sinks.
   picks up credits and blueprints (they weigh nothing); the rest stays in the
   pod.
 - **Hardcore.** If your ship dies, everything it carries spills as a bright
-  magenta pod where it died, free for anyone to grab. The dead ship keeps
+  magenta pod beside where it died, with the salvage its hull is worth (the
+  same as an AI pilot's ship of that kind), free for anyone to grab. The dead ship keeps
   nothing. Abandoning a ship spills its hold too (P1a-2 turns that into a
   salvageable hulk).
 - **Pods don't last.** A pod expires after 15 minutes, and a pod can be shot
@@ -94,6 +97,53 @@ accelerator. A lost message loses a popup, never value.
 
 Fixing the lingering seam exposed a pre-existing bug (hostile-review A1): a
 killed lingering hull never deleted its roster row. See `docs/LESSONS.md`.
+
+## Hull salvage: every ship, and vaporised ships (owner 2026-11-15)
+
+**Every ship drops its hull loot, whoever flies it.** Owner: "Why would the
+player be special?" A ship's hull loot is its kind's loot table (`rollLoot`,
+an elite's `rollEliteLoot`), rolled from a seed by the one helper
+`rollHullLoot` (`src/server/cargo/hullLoot.ts`):
+
+- **AI-flown:** rolled ONCE per spawn into its hold (`npcHold`, seed
+  `<id>:<entityId>`), so a break-in that took some leaves less to drop.
+- **Player-flown:** rolled as it dies (seed: its `shipInstanceId`) and
+  dropped in the SAME pod as its carried hold (`spillOrLoseShipHold`'s
+  `death` argument → `LootSubsystem.spillShipHold`'s `extra`, one atomic
+  group). A player ship with nothing aboard still drops its hull loot, as an
+  ordinary pod; with cargo the pod is the bright spill tier as before. An
+  abandoned hull drops no hull loot (it is a derelict, not a kill). The
+  kill bounty is still for AI-flown kills only (economy-wallet.md).
+
+**Vaporised ships leave more salvage.** A ship a cut weapon burns away whole
+(heavy-beam slice or railgun channel, `destroy.vaporised`, fracture v11)
+still leaves ONE pod, with its hull's salvage × `VAPORISE_SALVAGE_MUL` = 1.5
+(`shared-types/lootTables.ts`, rounded: `vaporiseSalvageBonus`), "because the
+beam rendered the whole ship down". Only the hull roll's `salvage` scales:
+carried cargo, alloy, cores, blueprints and packed items don't. For an AI
+ship the bonus is on the hull salvage still aboard (`min(rolled, aboard)`), so
+cargo salvage a harvester scooped is never multiplied. Each death path knows
+the outcome before it drops: a drone through `evictSwarmEntity({ vaporised })`
+→ `dropKillLoot`, a lingering hull through `onLingeringHullDeath(…,
+vaporised)`, an active hull through `spawnActiveHullWreck` noting
+`vaporisedActiveDeath` for the `SHIP_DESTROYED` handler.
+
+**Placement.** Every kill pod (AI or player) spawns beside the dead hull, to
+the side of the killer's line (`killPodSpot`: 1.2 hull radii plus the pod's
+radius, side seeded from the ship), so the rest of a salvo and a heavy beam's
+kill follow-through (`followThroughTicks`, which runs on down that line) pass
+it. AI and turret shots never hit a loot pod anyway (`isLootPod`); only a
+pilot's own shot can.
+
+Example, a fighter (default table, `maxHealth / 50` scale): a normal kill
+rolling 14 salvage drops 14; vaporised, 21.
+
+Locks: `tests/integration/sectorRoom/vaporiseSalvage.test.ts` (an AI fighter
+vaporised by the heavy beam: one pod, 1.5× its hull salvage, a normal kill
+1×; a player fighter killed normally: hull loot + hold in one pod; vaporised:
+1.5× + hold; an AI beam cruiser's vaporising kill: the pod sits off the kill
+line and survives the follow-through), `lootLoop.test.ts` (the hardcore spill
+counts the hull roll).
 
 ## Part 2 (P1a-2): base storage, auto-deposit, derelicts, credit sinks
 

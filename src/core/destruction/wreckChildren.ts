@@ -88,6 +88,8 @@ export function wreckChainFracture(chain: WreckChildChain): FracturePiece[] {
       soundMinShare: o.soundMinShare,
       extraChunkChance: o.extraChunkChance,
       jag: o.jag,
+      // Absent on every re-split profile today (children unchanged).
+      cutBurnMinShare: o.cutBurnMinShare,
       cut: wreckFractureCut(step),
     });
     pieces = children.map((c) => inheritEdgeKinds(c, parent));

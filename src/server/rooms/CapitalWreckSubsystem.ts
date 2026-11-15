@@ -85,6 +85,17 @@ interface HitEntry {
   stamp: Int32Array;
 }
 
+/** What `onDeath` did with a dying ship. `vaporised`: a cut weapon's kill
+ *  (heavy-beam slice, railgun channel) burned every piece away (fracture
+ *  v11, the profile's `cutBurnMinShare`): no wreck, the body is gone, and
+ *  the room marks its `destroy` event `vaporised`. */
+export interface WreckDeathOutcome {
+  readonly pieces: number;
+  readonly vaporised: boolean;
+}
+const NO_WRECK: WreckDeathOutcome = { pieces: 0, vaporised: false };
+const VAPORISED: WreckDeathOutcome = { pieces: 0, vaporised: true };
+
 export interface WreckPieceSpawn {
   id: string;
   x: number; y: number; vx: number; vy: number; angle: number; angvel: number;
@@ -302,20 +313,22 @@ export class CapitalWreckSubsystem {
 
   /**
    * A capital died at `pose`: break it into wreck bodies. Returns the number
-   * of pieces spawned (0 for a non-capital). Call while the dying body is
+   * of pieces spawned (0 for a non-capital) and whether a cut kill
+   * vaporised it (`WreckDeathOutcome`). Call while the dying body is
    * still live (its pose is read off the SAB). `despawnDyingBody` posts the
    * dying body's DESPAWN; it is called once, BEFORE the first piece spawn,
-   * and only when there are pieces. The worker handles each command as its
+   * and only when there are pieces or the ship was vaporised (no piece to
+   * hand over to, but the dead body must still go). The worker handles each command as its
    * own message and can step between two of them, so a despawn posted after
    * the spawns left the pieces inside the old hull for a step, and the
    * push-out shoved them (2026-11-14: a sub-cap piece stopped dead and its
    * cut barely opened; `subcapWrecks.test.ts` "loot pod").
    */
-  onDeath(targetId: string, kindId: ShipKindId, pose: WreckDeathPose, maxHull: number, despawnDyingBody?: () => void): number {
+  onDeath(targetId: string, kindId: ShipKindId, pose: WreckDeathPose, maxHull: number, despawnDyingBody?: () => void): WreckDeathOutcome {
     // Two lethal hits in one tick can report the same death twice
     // (the 2026-06-19 double SHIP_DESTROYED): break the hull once.
     const tick = this.d.serverTick();
-    if (this.lastDeathTick.get(targetId) === tick) return 0;
+    if (this.lastDeathTick.get(targetId) === tick) return NO_WRECK;
     if (this.lastDeathTick.size > 256) this.lastDeathTick.clear();
     this.lastDeathTick.set(targetId, tick);
     const e = this.entries.get(targetId);
@@ -344,7 +357,11 @@ export class CapitalWreckSubsystem {
     const { pieces, fracture } = buildWreckPieces({
       kindId, pose, killWorld, attackerWorld, seed, killBlowDamage, recentDamageRate, cutKind, cutAng, cutW,
     });
-    if (pieces.length > 0) despawnDyingBody?.();
+    // Fracture v11: a cut kill that left no piece (each burned away) is a
+    // vaporised ship. Its body goes too: nothing is left to hand over to.
+    const vaporised = pieces.length === 0 && fracture.cutKind !== undefined;
+    if (pieces.length > 0 || vaporised) despawnDyingBody?.();
+    if (vaporised) return VAPORISED;
     const n = this.deaths++;
     const wreckId = this.allocWreckId();
     // Overkill knock-back (#18): a blow worth the whole hull's HP would move
@@ -416,7 +433,7 @@ export class CapitalWreckSubsystem {
       this.setChanged();
     }
     this.enforceCap(fifo, profile.id === 'capital' ? MAX_LIVE_WRECK_PIECES : MAX_LIVE_SUBCAP_WRECK_PIECES);
-    return spawned;
+    return { pieces: spawned, vaporised: false };
   }
 
   /**

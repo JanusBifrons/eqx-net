@@ -148,7 +148,7 @@ export interface LeafDeps {
   /** Quiet despawn of a swarm entity on death. */
   evictSwarmEntity: (
     rec: SwarmLeafTarget,
-    opts: { broadcast: boolean; emitDestroyed: boolean; shooterId?: string },
+    opts: { broadcast: boolean; emitDestroyed: boolean; shooterId?: string; vaporised?: boolean },
   ) => void;
   /** Hostility ledger — a swarm hit flips COMBAT + adds the shooter. */
   aiController: HostilityLedger;
@@ -174,7 +174,7 @@ export interface LeafDeps {
    *  pose from the SAB via `rec.slot` and calls `ScrapSpawner.spawnFromDeath`.
    *  A polygon kind (fighter/scout/…) yields zero scrap. Optional ⇒ no scrap
    *  (e.g. test fixtures / engineering rooms without a ScrapSpawner). */
-  spawnScrapFromDrone?: (rec: SwarmLeafTarget) => void;
+  spawnScrapFromDrone?: (rec: SwarmLeafTarget) => boolean | void;
   /** Scrap-on-death for a LINGERING hull (Equinox P6.3 — "lingering ships don't
    *  explode into scrap; only active ships do"). Called the instant BEFORE the
    *  lingering hull's slot + `lingeringPoseCache` entry are torn down (so the
@@ -185,17 +185,24 @@ export interface LeafDeps {
    *  by the time `SHIP_DESTROYED` fires (the death policy below tears them down
    *  first), and `getActiveShip(shipInstanceId)` returns undefined. Optional ⇒
    *  no scrap (test fixtures / engineering rooms without a ScrapSpawner). */
-  spawnScrapFromLingeringHull?: (kind: ShipKindId, pose: ShipPhysicsState, shipInstanceId: string) => void;
+  spawnScrapFromLingeringHull?: (kind: ShipKindId, pose: ShipPhysicsState, shipInstanceId: string) => boolean | void;
+  /** Wreck-on-death for an ACTIVE hull: called by its death policy BEFORE
+   *  the `destroy` broadcast (the hull's slot and pose are still live), so
+   *  the event can say whether a cut kill vaporised it (fracture v11).
+   *  Returns true when vaporised. Optional (no wrecks in test fixtures). */
+  spawnWreckFromActiveHull?: (playerId: string) => boolean;
   /** Hostile-review A1 (plan peppy-jumping-pinwheel P1a-1) — a LINGERING hull is
    *  about to be torn down after combat death. Called BEFORE the teardown (the
    *  ship is still in `shipsMap`, its pose still in `lingeringPoseCache`), so the
    *  room can do what the `SHIP_DESTROYED` handler cannot for a lingering hull
    *  (the handler's lookup misses once the ship leaves `shipsMap`): delete the
    *  roster row (D9), award kill XP, clear the ownerless marker, and spill the
-   *  ship's hold. `pose` is undefined if the pose cache had no entry. */
+   *  ship's hold with its hull salvage (`vaporised`: a cut kill burned it
+   *  away, fracture v11). `pose` is undefined if the pose cache had no entry. */
   onLingeringHullDeath?: (
     ship: { shipInstanceId: string; playerId: string; kind: string },
     pose: ShipPhysicsState | undefined,
     sourceId: string,
+    vaporised?: boolean,
   ) => void;
 }
