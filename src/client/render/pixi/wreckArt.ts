@@ -196,13 +196,13 @@ export const WRECK_GLOW_TINTS = 4;
  *  as bright as a crack of the same age. Keyframes per tint (index 0, the
  *  crack, uses `GLOW_T/C/A`).
  *  - Slice: the beam's pale core at the instant of the cut, the beam's
- *    violet held ~1.5 s, then burnt metal: through a rose blush to an
- *    orange ember, an orange-red ember to ~3.5 s, a brown scorch, dark
- *    (hostile review 2026-11-15, beam take 6: a violet ember cooling straight
- *    to dark read as saturated violet lips ~3.5 s after the kill, with no
- *    ember; metal cut by any weapon glows hot-metal colours as it cools).
+ *    violet held ~1.5 s, then burnt metal cooling as hot metal does: an
+ *    orange ember at once (by 1.75 s: a long violet → orange blend reads as
+ *    a pink step), deep red by ~3.4 s, a brown scorch, dark (hostile reviews
+ *    2026-11-15: beam take 6, a violet ember cooling straight to dark; beam
+ *    take 8, a rose/coral step BEFORE the orange, backwards for metal).
  *  - Channel: white-hot held, then it cools like struck metal (yellow-white,
- *    orange-red ember, scorch, dark).
+ *    orange ember, deep red, scorch, dark).
  *  The ember is a stage of its own, clearly showing to ~3.4 s (second film
  *  review 2026-11-15: the old ember, a dark 0x7428a8 at 2.3 s falling to a
  *  0.32-alpha grey-violet at 3 s, read as dark ~2.3 s after the kill, with
@@ -216,26 +216,31 @@ export const SPLINTER_GLOW_WIDTH_MUL = 0.5;
 export const SPLINTER_GLOW_END_S = 2.6;
 const CUT_T: readonly (readonly number[])[] = [
   GLOW_T,
-  [0, 0.12, CUT_GLOW_HOLD_S, 2.0, 2.5, 3.5, 4.0, WRECK_GLOW_END_S],
-  [0, 0.12, CUT_GLOW_HOLD_S, 2.0, 2.8, 3.8, WRECK_GLOW_END_S],
+  [0, 0.12, CUT_GLOW_HOLD_S, 1.75, 2.6, 3.4, 4.0, WRECK_GLOW_END_S],
+  [0, 0.12, CUT_GLOW_HOLD_S, 2.0, 2.7, 3.4, 4.0, WRECK_GLOW_END_S],
   [0, 0.08, 0.35, 1.0, 1.6, 2.1, SPLINTER_GLOW_END_S],
 ];
 const CUT_C: readonly (readonly number[])[] = [
   GLOW_C,
-  [SLICE_PALE, HEAVY_BEAM_COLOR, HEAVY_BEAM_COLOR, 0xe0507a, 0xff6418, 0xd83c10, 0x5a362c, 0x3a2f2a],
-  [0xffffff, 0xf4f2ff, 0xf4f2ff, 0xffd890, 0xff7a28, 0x8a4028, 0x3a2f2a],
+  [SLICE_PALE, HEAVY_BEAM_COLOR, HEAVY_BEAM_COLOR, 0xff8a28, 0xf2581a, 0xb01e0c, 0x50322a, 0x3a2f2a],
+  [0xffffff, 0xf4f2ff, 0xf4f2ff, 0xffd890, 0xff7a28, 0xb0280e, 0x50322a, 0x3a2f2a],
   GLOW_C,
 ];
 const CUT_A: readonly (readonly number[])[] = [
   GLOW_A,
-  [1, 1, 1, 0.97, 0.92, 0.75, 0.3, 0],
-  [1, 1, 1, 0.95, 0.8, 0.3, 0],
+  [1, 1, 1, 0.98, 0.92, 0.72, 0.3, 0],
+  [1, 1, 1, 0.95, 0.82, 0.55, 0.25, 0],
   GLOW_A.map((a) => a * SPLINTER_GLOW_ALPHA),
 ];
 /** A tinted cut's glow core is this many times a crack's width: the cut
  *  reads as the widest, brightest line on the wreck. Baked into the glow
  *  mesh at build (one mesh per piece still). */
 export const CUT_GLOW_WIDTH_MUL = 2.5;
+/** The slice's core is wider still (hostile film review 2026-11-15, beam
+ *  take 8: its hot edge was a thin ~6–7 px pale line, not molten metal). The
+ *  channel keeps `CUT_GLOW_WIDTH_MUL` (its walls already read as slabs when
+ *  wider). Still held to the drawn hull and the piece (`insideWidth`). */
+export const SLICE_GLOW_WIDTH_MUL = 2.8;
 /** A tinted cut's soft halo reaches this many times ITS core (a crack's:
  *  `GLOW_HALO_MUL`, 3). At 3 × the 2.5 × core it was a flat slab ~150 u
  *  deep on a heavy cruiser, filmed as four violet "bevels" instead of a
@@ -267,10 +272,11 @@ export function isKillCutTint(tint: number): boolean {
 }
 
 /** The core strip width multiplier for a glow tint (1 for a crack, 0.5 for
- *  a splinter, 2.5 for a kill cut). Pure. */
+ *  a splinter, 2.5 for a channel, 2.8 for a slice). Pure. */
 export function glowWidthMul(tint: number): number {
   if (tint === GLOW_TINT_SPLINTER) return SPLINTER_GLOW_WIDTH_MUL;
-  return isKillCutTint(tint) ? CUT_GLOW_WIDTH_MUL : 1;
+  if (tint === GLOW_TINT_SLICE) return SLICE_GLOW_WIDTH_MUL;
+  return tint === GLOW_TINT_CHANNEL ? CUT_GLOW_WIDTH_MUL : 1;
 }
 
 /** The halo strip's reach as a multiple of the tint's core. Pure. */
@@ -345,12 +351,18 @@ const U_HOT = 0.5 / GLOW_TEX_W;
  *  at the edge, yellow-orange deeper in; the slice: a pale violet rim,
  *  deeper violet in) while hot, by `CUT_DEEP_SHIFT`, gone 0.5 s after the
  *  hold: the ember is one hot-metal colour. The slice's rim is `SLICE_RIM_WHITE`
- *  toward white. The bleed into the gap starts at `CUT_BLEED_A` × the
+ *  toward white; for the first `SLICE_RIM_HOT_S` it is `SLICE_RIM_HOT` toward
+ *  white (molten: a hot white-violet edge; review 2026-11-15, beam take 8:
+ *  "pale lavender rather than white-hot at the very edge"), easing back by
+ *  `SLICE_RIM_HOT_S + SLICE_RIM_EASE_S`. The bleed into the gap starts at `CUT_BLEED_A` × the
  *  halo's alpha share. */
 const CUT_DEEP_A = 0.05;
 const CUT_DEEP_C: readonly number[] = [0, 0x7a2ae0, 0xff8a20];
 const CUT_DEEP_SHIFT = 0.65;
 const SLICE_RIM_WHITE = 0.3;
+const SLICE_RIM_HOT = 0.7;
+const SLICE_RIM_HOT_S = 0.5;
+const SLICE_RIM_EASE_S = 0.3;
 const CUT_BLEED_A = 1.2;
 /** The bleed's reach into the gap, × the cut's core width. */
 const CUT_BLEED_CORE_MUL = 0.35;
@@ -380,7 +392,10 @@ export function wreckGlowTexture(): Texture {
         // The hot shift holds with the weapon's colour, gone 0.5 s after.
         const heat = Math.max(0, Math.min(1, (CUT_GLOW_HOLD_S + 0.5 - ageS) / 0.5));
         deep = lerpColor(g.color, CUT_DEEP_C[tint]!, CUT_DEEP_SHIFT * heat);
-        if (tint === GLOW_TINT_SLICE) edge = lerpColor(g.color, 0xffffff, SLICE_RIM_WHITE * heat);
+        if (tint === GLOW_TINT_SLICE) {
+          const molten = Math.max(0, Math.min(1, (SLICE_RIM_HOT_S + SLICE_RIM_EASE_S - ageS) / SLICE_RIM_EASE_S));
+          edge = lerpColor(g.color, 0xffffff, SLICE_RIM_WHITE * heat + (SLICE_RIM_HOT - SLICE_RIM_WHITE) * molten);
+        }
         deepA = g.alpha * CUT_DEEP_A;
       }
       put(tint, GLOW_ROW.BLEED_OUT, i, edge, 0);
@@ -1082,10 +1097,12 @@ export interface WreckChannelLine { ax: number; ay: number; bx: number; by: numb
 
 /** Break-up sink: kill point (game space), wreck radius, clean snap, seed,
  *  the wreck's effects (the sink plays only the parts `fx` asks for:
- *  `breakBurst`, `killBlasts`) and, for a `channel` kill, the channel line
- *  (its glowing ash; null otherwise; a reused scratch, read it at once). */
+ *  `breakBurst`, `killBlasts`), for a `channel` kill the channel line
+ *  (its glowing ash; null otherwise; a reused scratch, read it at once), and
+ *  whether the kill was a weapon cut (any `cutKind`: the break-up's shards
+ *  are toned down so the cut reads first). */
 export type WreckBreakSink = (
-  x: number, y: number, radius: number, snap: boolean, seed: number, fx: DestructionFx, channel: WreckChannelLine | null,
+  x: number, y: number, radius: number, snap: boolean, seed: number, fx: DestructionFx, channel: WreckChannelLine | null, cut: boolean,
 ) => void;
 
 const _channel: WreckChannelLine = { ax: 0, ay: 0, bx: 0, by: 0 };
@@ -1204,7 +1221,7 @@ export class WreckArtState {
         _channel.bx = pose.x + fx2 * c - fy2 * sn; _channel.by = pose.y + fx2 * sn + fy2 * c;
         channel = _channel;
       }
-      this.onBreak(kx, ky, hullR, info.snap, desc.seed, fx, channel);
+      this.onBreak(kx, ky, hullR, info.snap, desc.seed, fx, channel, desc.cutKind !== undefined);
     }
     return info;
   }
