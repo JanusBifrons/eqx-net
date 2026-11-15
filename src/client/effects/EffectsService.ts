@@ -171,6 +171,8 @@ export class EffectsService implements IEffects {
       this.impactSparks.spawnBurst(worldX, worldY, opts);
     } else if (kind === 'wreck-break') {
       this.wreckBreak.spawnBurst(worldX, worldY, opts);
+    } else if (kind === 'wreck-ash') {
+      this.wreckBreak.spawnChannelAsh(worldX, worldY, opts?.lineToX ?? worldX, opts?.lineToY ?? worldY, opts?.radius ?? 200);
     }
     // 'warp-arrive' — wired in M8 / M11.
     this.refreshCounters();

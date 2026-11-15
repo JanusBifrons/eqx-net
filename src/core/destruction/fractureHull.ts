@@ -154,7 +154,10 @@ const TIP_SECTION_SPAN = 0.2;
 const SOUND_MIN_SHARE = 0.15;
 const SOUND_SHIFTS: readonly number[] = [0, 0.25, 0.5, 0.75, 1];
 
-const EDGE_HULL = 0;
+/** Edge kinds: what made each outline edge (`FracturePiece.cutEdges`).
+ *  `EDGE_HULL` (0) is the original hull outline; every other kind is a new
+ *  cut, so a kind's truthiness reads as "is a cut". */
+export const EDGE_HULL = 0;
 const EDGE_VORONOI = 1;
 const EDGE_SECTION = 2;
 const EDGE_PRIMARY = 3;
@@ -162,7 +165,9 @@ const EDGE_PRIMARY = 3;
 const EDGE_CRACK = 4;
 /** v9: a weapon's kill cut (`FractureInput.cut`): the slice line or a
  *  channel wall. Dead straight, like a section cut. */
-const EDGE_CUT = 5;
+export const EDGE_CUT = 5;
+/** One of the `EDGE_*` kinds above. */
+export type FractureEdgeKind = number;
 /** v9: a slice that would leave a piece under the profile minimum slides
  *  toward the hull's centroid in this many equal steps (the line keeps the
  *  shot's direction). */
@@ -312,9 +317,10 @@ export interface FracturePlan {
 export interface FracturePiece {
   /** CCW outline (positive shoelace area), quantised, in the hull's frame. */
   readonly outline: Vec2[];
-  /** `cutEdges[i]` is true when edge outline[i] → outline[i+1] is a new cut
-   *  (glows molten in S3); false when it is part of the original hull. */
-  readonly cutEdges: boolean[];
+  /** `cutEdges[i]` is the `EDGE_*` kind of edge outline[i] → outline[i+1]:
+   *  `EDGE_HULL` (0, falsy) for the original hull, else a new cut that glows
+   *  molten in S3 (`EDGE_CUT`: a weapon's kill cut, tinted by the weapon). */
+  readonly cutEdges: FractureEdgeKind[];
   /** Convex CCW parts tiling the outline (one Rapier collider each). */
   readonly convexParts: Vec2[][];
   readonly area: number;
@@ -1366,7 +1372,7 @@ function jagCutEdges(rings: P[][], seed: number, scale: number, maxDepth: number
 
 function toPiece(r: P[]): FracturePiece {
   const outline = r.map((p) => ({ x: p.x, y: p.y }));
-  const cutEdges = r.map((p) => p.k !== EDGE_HULL);
+  const cutEdges = r.map((p) => p.k);
   let a2 = 0;
   let cx = 0;
   let cy = 0;

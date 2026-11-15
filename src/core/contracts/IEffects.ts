@@ -43,7 +43,11 @@ export type ParticleBurstKind =
   | 'warp-arrive'
   /** Capital destruction S3: a capital breaking into wreck pieces (dust,
    *  shards and a white flash at the kill point, sized by `radius`). */
-  | 'wreck-break';
+  | 'wreck-break'
+  /** Weapon cuts: a railgun channel's glowing ash and sparks, a LINE from
+   *  the burst point (the slug's entry) to `lineToX, lineToY` (where it
+   *  left the hull), sized by `radius`. Same pool as `wreck-break`. */
+  | 'wreck-ash';
 
 /** Continuous emitter kinds, keyed by entity id. */
 export type ContinuousEffectKind = 'thrust' | 'boost' | 'shield';
@@ -61,6 +65,9 @@ export interface ParticleBurstOpts {
   radius?: number;
   /** Flash size multiplier (`wreck-break`: > 1 for a clean snap). */
   flashScale?: number;
+  /** The far end of a line burst (`wreck-ash`), world units (Y up). */
+  lineToX?: number;
+  lineToY?: number;
 }
 
 /**

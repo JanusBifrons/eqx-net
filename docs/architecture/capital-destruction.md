@@ -1923,9 +1923,9 @@ counts unchanged, budgets not re-set. Locks tightened: "read as broken"
 
 ### Kill cuts: beam slices and railgun channels (fracture v9, 2026-11-14)
 
-Plan "beam slices, railgun channels, capital heavy beams", steps 2–3 (the
-fracture and the wire; the server's death wiring, the instant hold and the
-glow come later). Owner: a heavy-beam kill slices the ship along the beam's
+Plan "beam slices, railgun channels, capital heavy beams", steps 2–4 (the
+fracture, the wire, the server's death wiring, the instant split and the
+look of a cut kill). Owner: a heavy-beam kill slices the ship along the beam's
 line; a railgun kill erases a straight channel as wide as the bolt.
 
 - **Weapon record.** `WeaponDefBase.killCut?: { kind: 'slice' } | { kind:
@@ -2003,8 +2003,38 @@ line; a railgun kill erases a straight channel as wide as the bolt.
   keeps the hull drawn until every piece is drawable (it ends that frame),
   not a split delay. Locks: `CapitalWreckSubsystem.test.ts` and
   `wreckArt.test.ts` "a cut kill splits at once".
-- **Not yet:** the cut glow colours and channel ash. The beam fits that
-  mount the heavy beam: [capital-ships](../features/capital-ships.md#weapon-fits-plan-section-9).
+- **Cut glow colours (plan step 4, 2026-11-15).** `FracturePiece.cutEdges`
+  (and `WreckPieceGeometry.cutEdges`) carry each edge's `EDGE_*` kind, not a
+  boolean: `EDGE_HULL` (0) is falsy, so every "is it a cut" reader is
+  unchanged and the goldens did not move (no version bump). `glowTintOf(kind,
+  cutKind)` gives an `EDGE_CUT` edge of a slice kill `GLOW_TINT_SLICE` (the
+  heavy beam's `HEAVY_BEAM_COLOR` violet, from its pale core at the instant of
+  the cut) and of a channel kill `GLOW_TINT_CHANNEL` (white-hot); every other
+  edge keeps the crack curve. `wreckGlowAt` / `simpleGlowAt` take the tint: it
+  holds while the crack would be molten orange (0.6 s; simple glow 30 % of its
+  life), then blends into the base curve, reaching it at the ember (1.8 s;
+  simple: 70 %), so a cut cools through the same ember and scorch, and alpha
+  never changes with the tint. Still ONE glow mesh per piece: the glow
+  textures bake a row block per tint (`WRECK_GLOW_TEX_ROWS` = core + halo per
+  tint; the simple texture one row per tint) and a segment's tint is its V
+  (`glowV` / `simpleGlowV`), set once at build. Locks: `wreckArt.test.ts` "a
+  kill cut glows in the weapon's colour"; `fractureHull.test.ts` "cutEdges
+  carries the edge kind".
+- **Channel ash (plan step 4).** A fresh wreck with `cutKind: 'channel'`
+  passes the channel line to the break-up sink (`WreckBreakSink`'s
+  `channel`: from the kill point, the slug's entry, to `channelFarEnd`, the
+  `EDGE_CUT` vertex farthest from it, where the slug left the hull; null for
+  a slice or an un-cut kill). The renderer sends it as a `wreck-ash` burst to
+  the same `WreckBreakFx` pool, whose `spawnChannelAsh` is a line emitter:
+  glowing ash anywhere along the channel drifting off its walls (white-hot,
+  ember, grey) and a few sparks flung on along the slug's path out of the
+  far end. Tier counts `WRECK_ASH_DIAL` (high 48 + 16 … minimal 4 + 0), none
+  with particles off; it plays only where the break-up plays (a capital
+  profile's `breakBurst`, a fresh wreck). Lock: `WreckBreakFx.test.ts`
+  "channel ash"; `wreckArt.test.ts` "a channel kill sheds ash".
+- **Not yet:** channel ash on a sub-capital (its profile has no break-up
+  burst, so only its glow tints). The beam fits that mount the heavy beam:
+  [capital-ships](../features/capital-ships.md#weapon-fits-plan-section-9).
 - Locks: `fractureHull.test.ts` "golden: v9 kill cuts" (battleship and
   fighter, side and bow, slice and channel); `fractureHull.killFocus.test.ts`
   "fracture v9" (the slice's cut is collinear with the shot through the kill
