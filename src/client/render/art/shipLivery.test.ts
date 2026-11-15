@@ -25,9 +25,9 @@ describe('bakeKey with livery', () => {
 function ctx(livery?: Livery['treatment']): { actx: ShipArtCtx; calls: (Livery | undefined)[] } {
   const calls: (Livery | undefined)[] = [];
   const art = {
-    ship: (id: string, paint?: number, _u?: boolean, rings?: boolean, _dead?: boolean, lv?: Livery): ArtHandle => {
+    ship: (id: string, paint?: number, _u?: boolean, rings?: boolean, dead?: boolean, lv?: Livery): ArtHandle => {
       calls.push(lv);
-      const job: BakeJob = { type: 'ship', id, paint, ...(rings ? { rings } : {}), ...(lv ? { livery: lv } : {}) };
+      const job: BakeJob = { type: 'ship', id, paint, ...(rings ? { rings } : {}), ...(dead ? { dead } : {}), ...(lv ? { livery: lv } : {}) };
       return { key: bakeKey(job), job, rig: undefined as never, state: 'pending', ship: null, struct: null };
     },
   } as unknown as ArtService;
@@ -59,6 +59,18 @@ describe('shipHandleFor livery', () => {
     shipHandleFor(on.actx, 'k', 'fighter', undefined);
     shipHandleFor(on.actx, 'k', 'fighter', undefined, false, L.team);
     expect(on.calls).toEqual([undefined, { treatment: 'b', team: L.team, sigil: L.team }]);
+  });
+});
+
+describe('wreck pieces under a livery', () => {
+  it('a dead bake keeps the owner livery and keys apart from the live hull', () => {
+    const { actx, calls } = ctx('b8');
+    const live = shipHandleFor(actx, 'live', 'fighter', undefined, false, L.team, L.sigil, 'swept')!;
+    const dead = shipHandleFor(actx, 'wreck', 'fighter', undefined, true, L.team, L.sigil, 'swept')!;
+    expect(shipHandleFor(actx, 'wreck', 'fighter', undefined, true, L.team, L.sigil, 'swept')).toBe(dead);
+    expect(calls).toHaveLength(2);
+    expect(dead.job).toMatchObject({ dead: true, livery: { treatment: 'b8', team: L.team, edge: 'swept' } });
+    expect(dead.key).not.toBe(live.key);
   });
 });
 
