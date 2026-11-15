@@ -12,7 +12,9 @@
  * unchanged (`wreckPiecesSeparate.test.ts`).
  */
 import { describe, expect, it } from 'vitest';
-import { buildWreckPieces, findSeams, wreckBodyParams, wreckPieceGeometry } from './wreckPieces.js';
+import { buildWreckPieces, findSeams, hullLocalCutAngle, wreckBodyParams, wreckPieceGeometry } from './wreckPieces.js';
+import { HEAVY_BEAM_WIDTH } from '../combat/WeaponCatalogue.js';
+import { shipShapeScale } from '../geometry/shipHullOutline.js';
 import { shipShapeToPolygon } from '../geometry/shipHullDecomp.js';
 import { shipScrapGroups } from '../geometry/shipScrapGroups.js';
 import { SHIP_KINDS_LIST, getShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
@@ -165,4 +167,56 @@ describe('sub-cap wreck pieces read as broken (take 9 review)', () => {
       expect(slowest, `${id}: slowest pair of piece centres parting, radii/s`).toBeGreaterThanOrEqual(3);
     });
   }
+});
+
+/** Hostile film review 2026-11-15 (heavy-beam slice of a missile frigate,
+ *  take 7): the halves flew apart at ~2.5 ship lengths a second, then stopped
+ *  dead ~3 s later (spacing constant from then on): an explosion, then
+ *  frozen. The cut kill took the un-cut break-up's kick (`separateScale` 240,
+ *  ~177 u/s apart) and damping (0.6/s, at rest in ~3 s). A clean slice parts
+ *  gently and the halves keep drifting: the profile's `cut*` numbers. */
+describe('a sub-cap slice kill parts gently and keeps drifting (beam take 7)', () => {
+  const kindId = 'missile-frigate' as const;
+  const kind = getShipKind(kindId);
+  const R = kind.radius;
+  function slice(seed: number) {
+    const pose = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
+    return buildWreckPieces({
+      kindId, pose, killWorld: { x: -500, y: 0 }, attackerWorld: null, seed, killBlowDamage: 0.3, recentDamageRate: 0.5,
+      cutKind: 'slice', cutAng: hullLocalCutAngle(pose, { x: 1, y: 0 }), cutW: HEAVY_BEAM_WIDTH / shipShapeScale(kind),
+    });
+  }
+
+  it('the two halves part at 0.3-1 radius/s, not ~3.7', () => {
+    for (let seed = 1; seed <= 6; seed++) {
+      const b = slice(seed);
+      expect(b.pieces.length, `seed ${seed}`).toBe(2);
+      const [p, q] = b.pieces as [typeof b.pieces[0], typeof b.pieces[0]];
+      const rel = Math.hypot(p.kickVx - q.kickVx, p.kickVy - q.kickVy);
+      expect(rel / R, `seed ${seed}: parting speed (radii/s)`).toBeLessThanOrEqual(1);
+      expect(rel / R, `seed ${seed}: still visibly parting`).toBeGreaterThanOrEqual(0.3);
+    }
+  });
+
+  it('the halves still drift 6 s after the kill (gentle damping), and keep opening', () => {
+    const body = wreckBodyParams(kindId, true);
+    for (let seed = 1; seed <= 6; seed++) {
+      const b = slice(seed);
+      const [p, q] = b.pieces as [typeof b.pieces[0], typeof b.pieces[0]];
+      for (const piece of [p, q]) {
+        const v = Math.hypot(piece.kickVx, piece.kickVy);
+        expect(v * Math.exp(-body.linearDamping * 6), `seed ${seed}: still above the settle speed at 6 s`).toBeGreaterThan(body.settleSpeed);
+      }
+      const rel = Math.hypot(p.kickVx - q.kickVx, p.kickVy - q.kickVy);
+      // The gap still widens by >= 1/2 radius between 3 s and 8 s after the kill.
+      const grow = opened(rel, body.linearDamping, 8) - opened(rel, body.linearDamping, 3);
+      expect(grow / R, `seed ${seed}: gap growth 3-8 s (radii)`).toBeGreaterThanOrEqual(0.5);
+    }
+  });
+
+  it('an un-cut sub-cap break-up keeps its own kick and damping', () => {
+    expect(wreckBodyParams(kindId)).toEqual(wreckBodyParams(kindId, false));
+    expect(wreckBodyParams(kindId).linearDamping).toBeCloseTo(0.6, 9);
+    expect(wreckBodyParams('battleship', true)).toEqual(wreckBodyParams('battleship'));
+  });
 });

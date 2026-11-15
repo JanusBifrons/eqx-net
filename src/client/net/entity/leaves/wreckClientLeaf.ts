@@ -33,8 +33,10 @@ export class WreckClientLeaf extends ClientEntityLeafBase {
     if (g === null) return; // no geometry yet: the caller retries next sync
     // The parent kind's profile picks the groups and damping, the same
     // `wreckBodyParams` the server body uses (#15): a sub-capital's pieces
-    // don't collide with each other and settle faster.
-    const body = wreckBodyParams(getShipKind(e.shipKind ?? null).id);
+    // don't collide with each other and settle faster; a cut kill's pieces
+    // take the profile's cut damping, as the server's do.
+    const cut = e.wreckId !== undefined && ctx.wrecks?.cutKill?.(e.wreckId) === true;
+    const body = wreckBodyParams(getShipKind(e.shipKind ?? null).id, cut);
     ctx.predWorld.spawnObstacle(ctx.key, e.x, e.y, g.radius, g.mass, undefined, body.linearDamping, body.collisionGroups, g.colliderParts);
     ctx.predWorld.setAngularDamping(ctx.key, body.angularDamping);
     // The same settle-to-sleep rule as the server body (#15).

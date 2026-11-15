@@ -80,6 +80,13 @@ export interface DestructionFx {
   readonly glowStyle: WreckGlowStyle;
   /** How long the cut-edge glow lasts (s). */
   readonly glowSeconds: number;
+  /** The glow of a weapon's cut kill (the wreck's descriptor has a
+   *  `cutKind`): `full` gives its kill cut the weapon's colour held ~1.5 s,
+   *  an ember, dark at 4.5 s (`wreckGlowAt`'s cut curves, width from the
+   *  hull, #18), its other cracks subdued splinters. Beam take 7 review
+   *  (2026-11-15): on the 1 s simple glow a sub-cap's violet cut was gone
+   *  ~0.1 s after the beam stopped. */
+  readonly cutGlowStyle: WreckGlowStyle;
   /** The longest the client holds the dying hull on screen while it waits
    *  for its wreck pieces to be drawable (game ms; `dyingHullHold.ts`). The
    *  hold ends the frame every piece is drawn, so this is only the deadline
@@ -128,6 +135,13 @@ export interface DestructionProfile {
   readonly spinScale: number;
   /** Multiplier on the wreck pieces' linear and angular damping. */
   readonly dampingScale: number;
+  /** A weapon's cut kill (a heavy-beam slice, a railgun channel): its own
+   *  seam scale and damping in place of `separateScale` / `dampingScale`
+   *  (`buildWreckPieces`, `wreckBodyParams(kind, true)`, both sides #15). A
+   *  clean cut parts gently and the pieces drift on, where the un-cut
+   *  break-up throws them apart and settles fast. */
+  readonly cutSeparateScale: number;
+  readonly cutDampingScale: number;
   /** Multipliers on the overkill knock-back (`shipTuning(kind)
    *  .wreckKnockSpeed` / `.wreckKnockMax`, applied there so every reader
    *  gets the profile's value). */
@@ -160,6 +174,8 @@ const CAPITAL: DestructionProfile = {
   separateScale: 1,
   spinScale: 1,
   dampingScale: 1,
+  cutSeparateScale: 1,
+  cutDampingScale: 1,
   knockScale: 1,
   knockMaxScale: 1,
   // Heavy chunks are knocked by every hit and drift on (owner, 2026-11-13).
@@ -175,6 +191,7 @@ const CAPITAL: DestructionProfile = {
     hullDeathBlastReplaced: true,
     glowStyle: 'full',
     glowSeconds: 4.5,
+    cutGlowStyle: 'full',
     dyingHoldMs: 1500,
     deadTint: null,
     burntArt: true,
@@ -237,6 +254,15 @@ const SUBCAP: DestructionProfile = {
   // from a 2 rad/s turn). Lock: `wreckPieces.subcapParting.test.ts`.
   spinScale: 0.3,
   dampingScale: 10,
+  // A weapon's cut kill (beam take 7 review, 2026-11-15): with the ×240 kick
+  // and ×10 damping a heavy-beam slice threw a frigate's halves apart at
+  // ~177 u/s (3.7 radii/s) and they were at rest ~3 s later: an explosion,
+  // then frozen. A clean slice parts at ~0.6 radius/s (frigate ~30 u/s) and
+  // drifts on under 0.09/s damping (still above the 6 u/s settle speed 6 s
+  // later, the gap still widening ~2 radii from 3 s to 8 s). Lock:
+  // `wreckPieces.subcapParting.test.ts` "parts gently and keeps drifting".
+  cutSeparateScale: 40,
+  cutDampingScale: 1.5,
   // Shots on debris shove it a little (owner, slice 2 report): a small-arms
   // hit moves half a fighter wreck ~10-25 u/s, a naval shell at most ~18
   // u/s (fighter), then the damping slows it. The capital rule ("a blow
@@ -264,6 +290,8 @@ const SUBCAP: DestructionProfile = {
     hullDeathBlastReplaced: false,
     glowStyle: 'simple',
     glowSeconds: 1,
+    // A cut kill glows like a capital's (violet ~1.5 s, ember, dark 4.5 s).
+    cutGlowStyle: 'full',
     // Brief: no crack hold, so a sub-cap's pieces are drawable at once. The
     // held hull sits under its death explosion; 600 ms of it read as "dead
     // ship sits there, then pops" (round-2 review), so the pieces take over
@@ -287,6 +315,8 @@ const NONE: DestructionProfile = {
   separateScale: 1,
   spinScale: 1,
   dampingScale: 1,
+  cutSeparateScale: 1,
+  cutDampingScale: 1,
   knockScale: 1,
   knockMaxScale: 1,
   knockWakeScale: 0,
@@ -301,6 +331,7 @@ const NONE: DestructionProfile = {
     hullDeathBlastReplaced: false,
     glowStyle: 'none',
     glowSeconds: 0,
+    cutGlowStyle: 'none',
     dyingHoldMs: 0,
     deadTint: null,
     burntArt: false,

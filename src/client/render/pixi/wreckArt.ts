@@ -1123,19 +1123,24 @@ export class WreckArtState {
     // glow's clock) at first sight, so the whole spread is always seen. Late
     // joiners keep their true age (cool, no front). A wreck with no front
     // (sub-capital) does the same within its short glow.
-    const freshMs = fx.crackFront ? WRECK_CRACK_MS : fx.glowSeconds * 1000;
+    // A weapon's cut kill glows in its own style (`fx.cutGlowStyle`: a
+    // sub-cap's slice burns violet like a capital's, beam take 7 review).
+    const style = desc.cutKind !== undefined ? fx.cutGlowStyle : fx.glowStyle;
+    const freshMs = fx.crackFront ? WRECK_CRACK_MS : (style === 'full' ? WRECK_GLOW_END_S : fx.glowSeconds) * 1000;
     const crackAgeMs = ageMs < freshMs ? 0 : ageMs;
     // A simple glow is an extra; the minimal effects tier drops it. A
     // capital's full glow is the break-up itself and always draws.
-    const glow: WreckGlowStyle = fx.glowStyle === 'simple' && this.quality() === 'minimal' ? 'none' : fx.glowStyle;
+    const glow: WreckGlowStyle = style === 'simple' && this.quality() === 'minimal' ? 'none' : style;
     const info: WreckInfo = {
       deathMs: nowMs - crackAgeMs, hullR, killX: desc.killX * s, killY: -desc.killY * s, snap: pieces.length <= 2, desc,
       crackMin: Infinity, crackReach: 0, crackIv: NO_IV, crackCover: 0, crackHidden: 0,
       ripples: NO_RIPPLES, rippleFired: NO_FIRED, onRipple: this.onRipple,
       profile: prof.id, fx, glow, noHold: desc.cutKind !== undefined,
     };
-    if (fx.crackFront) {
-      info.crackD = new CrackDistances(pieces, info.killX, info.killY);
+    // The full glow lights each cut by its crack distance, so it needs the
+    // span even with no front (a sub-cap cut kill: `noHold` lights it all at once).
+    if (fx.crackFront || glow === 'full') {
+      if (fx.crackFront) info.crackD = new CrackDistances(pieces, info.killX, info.killY);
       for (const p of pieces) forEachCut(p, info, (_ax, _ay, _bx, _by, da, db) => {
         info.crackMin = Math.min(info.crackMin, da, db);
         info.crackReach = Math.max(info.crackReach, da, db);
@@ -1325,6 +1330,11 @@ export class WreckPieceSprite extends Container {
         mesh.geometry = litPieceGeometry(m, tex, piece);
         mesh.position.set(-piece.cx, piece.cy);
         mesh.capitalHull = true;
+        // Wreck-piece art (the dead bake) casts no self shadow: the shader
+        // marches the PARENT's whole height map, so a piece sat in the
+        // shadow of hull the break removed (beam take 7 review: one half of
+        // a sliced frigate black, the other lit).
+        if (info.fx.deadArt) mesh.selfShadow = false;
         mesh.tint = tint;
         this.addChild(mesh);
         litPass.register(mesh);
