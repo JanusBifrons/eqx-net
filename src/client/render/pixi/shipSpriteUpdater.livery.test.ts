@@ -39,10 +39,10 @@ describe('updateShipSprites — livery', () => {
     const calls = run('b');
     expect(calls).toHaveLength(1);
     expect(calls[0]![1]).toBeUndefined();
-    expect(calls[0]![4]).toEqual({ treatment: 'b', team: teamColorOf('player-abc'), sigil: teamSigilOf('player-abc'), edge: teamEdgeOf('player-abc') });
+    expect(calls[0]![5]).toEqual({ treatment: 'b', team: teamColorOf('player-abc'), sigil: teamSigilOf('player-abc'), edge: teamEdgeOf('player-abc') });
   });
 
   it('with the livery unset, the request is exactly as before', () => {
-    expect(run(undefined)).toEqual([['fighter', undefined, true, false, undefined]]);
+    expect(run(undefined)).toEqual([['fighter', undefined, true, false, false, undefined]]);
   });
 });

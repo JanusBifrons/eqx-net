@@ -189,17 +189,17 @@ describe('updateSwarmSprites — ship livery (?livery=)', () => {
     const calls = liveryCalls('a', [[5, drone('patrol-fighter', sol)], [6, drone('fighter')], [7, drone('cargo-pod')]]);
     const byId = new Map(calls.map((c) => [c[0], c]));
     expect(byId.get('patrol-fighter')![1]).toBeUndefined();
-    expect(byId.get('patrol-fighter')![4]).toEqual({ treatment: 'a', team: teamColorOf(sol), sigil: teamSigilOf(sol), edge: teamEdgeOf(sol) });
-    expect(byId.get('fighter')![4]).toEqual({ treatment: 'a', team: teamColorOf(allegianceOfKind('fighter')), sigil: teamSigilOf(allegianceOfKind('fighter')), edge: teamEdgeOf(allegianceOfKind('fighter')) });
-    expect(byId.get('cargo-pod')![4]).toBeUndefined();
+    expect(byId.get('patrol-fighter')![5]).toEqual({ treatment: 'a', team: teamColorOf(sol), sigil: teamSigilOf(sol), edge: teamEdgeOf(sol) });
+    expect(byId.get('fighter')![5]).toEqual({ treatment: 'a', team: teamColorOf(allegianceOfKind('fighter')), sigil: teamSigilOf(allegianceOfKind('fighter')), edge: teamEdgeOf(allegianceOfKind('fighter')) });
+    expect(byId.get('cargo-pod')![5]).toBeUndefined();
   });
 
   it('with the livery unset, requests are exactly as before', () => {
     const sol = 'core' as FactionId;
     const calls = liveryCalls(undefined, [[5, drone('patrol-fighter', sol)], [6, drone('fighter')]]);
     expect(calls).toEqual([
-      ['patrol-fighter', npcFactionDef(sol)!.color, true, false, undefined],
-      ['fighter', undefined, true, false, undefined],
+      ['patrol-fighter', npcFactionDef(sol)!.color, true, false, false, undefined],
+      ['fighter', undefined, true, false, false, undefined],
     ]);
   });
 
@@ -212,7 +212,7 @@ describe('updateSwarmSprites — ship livery (?livery=)', () => {
     const calls = liveryCalls('b8', robots.map((k, i) => [20 + i, drone(k)] as [number, SwarmRenderState]));
     expect(calls.map((c) => c[0])).toEqual(robots);
     for (const c of calls) {
-      const job = structuredClone({ type: 'ship' as const, id: c[0] as string, paint: c[1] as number | undefined, rings: c[3] as boolean, livery: c[4] as Livery });
+      const job = structuredClone({ type: 'ship' as const, id: c[0] as string, paint: c[1] as number | undefined, rings: c[3] as boolean, livery: c[5] as Livery });
       expect(job.livery, String(c[0])).toEqual({ treatment: 'b8', team: teamColorOf('robots'), sigil: teamSigilOf('robots'), edge: 'tooth' });
       expect(bakeKey(job), String(c[0])).toContain(':tooth');
     }

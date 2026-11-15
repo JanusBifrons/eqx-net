@@ -25,7 +25,7 @@ describe('bakeKey with livery', () => {
 function ctx(livery?: Livery['treatment']): { actx: ShipArtCtx; calls: (Livery | undefined)[] } {
   const calls: (Livery | undefined)[] = [];
   const art = {
-    ship: (id: string, paint?: number, _u?: boolean, rings?: boolean, lv?: Livery): ArtHandle => {
+    ship: (id: string, paint?: number, _u?: boolean, rings?: boolean, _dead?: boolean, lv?: Livery): ArtHandle => {
       calls.push(lv);
       const job: BakeJob = { type: 'ship', id, paint, ...(rings ? { rings } : {}), ...(lv ? { livery: lv } : {}) };
       return { key: bakeKey(job), job, rig: undefined as never, state: 'pending', ship: null, struct: null };
