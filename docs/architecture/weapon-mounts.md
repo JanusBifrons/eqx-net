@@ -253,6 +253,8 @@ Some AI weapons charge before they fire: the robot orb's charge laser and the ca
 
 **Test trigger `chargeTicksCap`** (testMode room / join option, URL `?chargeTicksCap=N`, harness `chargeTicksCap`): no capital-turret charge lasts longer than N ticks (`WeaponMountTicker.chargeTicksOf`), so a test can line ships up on a rail line and fire without the 6 s wait. The client telegraph still ramps over the weapon's own charge.
 
+**Test trigger `traverseTicksCap`** (testMode room / join option, URL `?traverseTicksCap=N`, harness `traverseTicksCap`): no capital turret takes longer than N ticks to train a full turn, 0 = snap (`WeaponMountTicker.traverseDt`), so a test needn't wait out a 16" turret's ~4°/s traverse. Capital turrets only.
+
 Locks: `tests/unit/capitalMountCharge.test.ts` (charge then fire, hold off bearing, locked-direction, death cancels), `tests/integration/sectorRoom/capitalMountCharge.test.ts` (snapshot mask + start, fires after the charge, death cancels), `tests/integration/sectorRoom/chargeLaser.test.ts` (robot), `SnapshotBroadcaster.droneCharge.test.ts` (incl. per-mount offsets), `snapshotRemoteSync.charging.test.ts`, `chargeTelegraph.test.ts` (incl. per-mount ramps), `tests/integration/sectorRoom/railgun.test.ts` (`chargeTicksCap`).
 
 ## Engineering room — `mount-test`

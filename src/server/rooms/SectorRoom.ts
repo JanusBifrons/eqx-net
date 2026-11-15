@@ -515,6 +515,13 @@ const LockTimeCapSchema = z.number().finite().min(0).max(600);
 const ChargeTicksCapSchema = z.number().int().min(0).max(36_000);
 
 /**
+ * testMode `traverseTicksCap` (room option, join option, URL `?traverseTicksCap=`):
+ * the longest any capital turret may take to train across a full turn, in
+ * ticks (a 16" trains at ~4 deg/s, so ~15 s onto a target abeam). 0 = snap.
+ */
+const TraverseTicksCapSchema = z.number().int().min(0).max(36_000);
+
+/**
  * Game speed override for a sector (time scale stream): testMode room option,
  * join option and URL `?timeScale=`, or `EQX_TIME_SCALE` outside production.
  * The automatic load controller (Phase 5) may still slow a sector below it.
@@ -610,6 +617,9 @@ const JoinOptionsSchema = z
     /** Test-only bespoke trigger (charge-up): the longest any capital-turret
      *  charge in this room may take, in ticks. Room-wide; testMode-gated. */
     chargeTicksCap: ChargeTicksCapSchema.optional(),
+    /** Test-only bespoke trigger (turret traverse): the longest any capital
+     *  turret takes to train a full turn, in ticks. Room-wide; testMode-gated. */
+    traverseTicksCap: TraverseTicksCapSchema.optional(),
     /** Test/recording trigger (time scale): set this sector's game speed
      *  (0.25–4). Room-wide. testMode-gated. */
     timeScale: TimeScaleSchema.optional(),
@@ -1003,6 +1013,9 @@ export class SectorRoom extends Room<SectorState> {
   /** Bespoke test/recording trigger (testMode `chargeTicksCap`): the longest
    *  a capital-turret charge may take, in ticks. Undefined = off. */
   private testChargeTicksCap: number | undefined = undefined;
+  /** Bespoke test/recording trigger (testMode `traverseTicksCap`): the longest
+   *  a capital turret takes to train a full turn, in ticks. Undefined = off. */
+  private testTraverseTicksCap: number | undefined = undefined;
   /** Round 3 D test switch (testMode `pilotCapitals`). */
   private testPilotCapitals = false;
   /** Capital destruction S2a (`capitalWrecks` room option / EQX_CAPITAL_WRECKS):
@@ -1878,6 +1891,9 @@ export class SectorRoom extends Room<SectorState> {
       /** Bespoke test trigger: no capital-turret charge takes longer than this
        *  (ticks). zod-checked; testMode-only. */
       chargeTicksCap?: unknown;
+      /** Bespoke test trigger: no capital turret takes longer than this to
+       *  train a full turn (ticks). zod-checked; testMode-only. */
+      traverseTicksCap?: unknown;
       /** Game speed for this sector (0.25–4). zod-checked; testMode-only. */
       timeScale?: unknown;
       /** testMode: run the automatic slowdown here too (on by default only in
@@ -2051,6 +2067,7 @@ export class SectorRoom extends Room<SectorState> {
       hostileStructures: () => this.hostileStructureCircles,
       lockTimeCapS: () => this.testLockTimeCapS,
       chargeTicksCap: () => this.testChargeTicksCap,
+      traverseTicksCap: () => this.testTraverseTicksCap,
       onClearPlayer: (pid) => this.locks.clearLocks(pid),
       aimTargetFor: (pid, mountId, out) => this.lockAimTarget(pid, mountId, out),
       visitParkedPilotHulls: this._visitParkedPilotHulls,
@@ -3152,6 +3169,11 @@ export class SectorRoom extends Room<SectorState> {
       const cap = ChargeTicksCapSchema.safeParse(roomOpts.chargeTicksCap);
       if (cap.success) this.testChargeTicksCap = cap.data;
       else logger.warn({ value: roomOpts.chargeTicksCap }, 'chargeTicksCap: invalid room option, ignored');
+    }
+    if (this.testMode && roomOpts.traverseTicksCap !== undefined) {
+      const cap = TraverseTicksCapSchema.safeParse(roomOpts.traverseTicksCap);
+      if (cap.success) this.testTraverseTicksCap = cap.data;
+      else logger.warn({ value: roomOpts.traverseTicksCap }, 'traverseTicksCap: invalid room option, ignored');
     }
     this.autoSlowdown = !this.testMode || roomOpts.autoTimeScale === true;
     if (this.testMode && roomOpts.timeScale !== undefined) {
@@ -9369,6 +9391,10 @@ export class SectorRoom extends Room<SectorState> {
     // `chargeTicksCap` on a join caps every capital-turret charge in this room.
     if ((this.testMode || ALLOW_DEV_OVERRIDES) && parsed.success && parsed.data.chargeTicksCap !== undefined) {
       this.testChargeTicksCap = parsed.data.chargeTicksCap;
+    }
+    // `traverseTicksCap` on a join caps every capital turret's training in this room.
+    if ((this.testMode || ALLOW_DEV_OVERRIDES) && parsed.success && parsed.data.traverseTicksCap !== undefined) {
+      this.testTraverseTicksCap = parsed.data.traverseTicksCap;
     }
     // `timeScale` on a join sets this sector's game speed (test/recording).
     if ((this.testMode || ALLOW_DEV_OVERRIDES) && parsed.success && parsed.data.timeScale !== undefined) {
