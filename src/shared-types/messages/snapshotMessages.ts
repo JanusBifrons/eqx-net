@@ -72,6 +72,9 @@ export const SESSION_REPLACED_CLOSE_CODE = 4002;
 
 /** Wreck ids are u16, never 0; a resync range's `hi` may be one past the end. */
 export const WRECK_ID_END = 0x10000;
+/** Highest piece index a wreck may have: pieces ride the binary wire's u8
+ *  `componentIndex` (swarm wire v4), so a child's `parentPiece` fits one too. */
+export const MAX_WRECK_PIECE_INDEX = 0xff;
 /** Most descriptors a welcome may carry (every u16 wreck id). */
 const MAX_WELCOME_WRECKS = WRECK_ID_END - 1;
 
@@ -93,8 +96,12 @@ export const WreckDescriptorSchema = z
     cutKind: z.enum(['slice', 'channel']).optional(),
     cutAng: z.number().int().min(0).max(0xffff).optional(),
     cutW: z.number().finite().min(0).optional(),
+    parentWreck: z.number().int().min(1).max(WRECK_ID_END - 1).optional(),
+    parentPiece: z.number().int().min(0).max(MAX_WRECK_PIECE_INDEX).optional(),
   })
-  .strict();
+  .strict()
+  // A child names its parent wreck AND piece, or neither (a root); never itself.
+  .refine((d) => (d.parentWreck === undefined) === (d.parentPiece === undefined) && d.parentWreck !== d.wreckId);
 
 /** The snapshot's wreck fields (#3). The snapshot as a whole is the
  *  documented high-cadence carve-out (not zod-parsed on ingest); the client
@@ -134,7 +141,12 @@ export function isWreckDescriptor(v: unknown): v is WreckDescriptor {
     && (d['deathTick'] === undefined || (typeof d['deathTick'] === 'number' && Number.isInteger(d['deathTick'])))
     && (d['cutKind'] === undefined || d['cutKind'] === 'slice' || d['cutKind'] === 'channel')
     && (d['cutAng'] === undefined || (typeof d['cutAng'] === 'number' && Number.isInteger(d['cutAng']) && d['cutAng'] >= 0 && d['cutAng'] <= 0xffff))
-    && (d['cutW'] === undefined || (finite(d['cutW']) && (d['cutW'] as number) >= 0));
+    && (d['cutW'] === undefined || (finite(d['cutW']) && (d['cutW'] as number) >= 0))
+    && (d['parentWreck'] === undefined
+      ? d['parentPiece'] === undefined
+      : isWreckId(d['parentWreck']) && d['parentWreck'] !== d['wreckId']
+        && typeof d['parentPiece'] === 'number' && Number.isInteger(d['parentPiece'])
+        && d['parentPiece'] >= 0 && d['parentPiece'] <= MAX_WRECK_PIECE_INDEX);
 }
 
 /** Campaign 6.1 (anti-patterns review C-core 3) — defensive ingest schema for
@@ -564,6 +576,21 @@ export interface WreckDescriptor {
   /** The cut's strip width (a channel, or a wide slice) in the hull's 1×
    *  frame; absent = a zero-width slice. */
   cutW?: number;
+  /** Salvage stream: a CHILD wreck, one piece of `parentWreck` broken again
+   *  (capital-destruction.md §S4 "Re-split"). A child descriptor is ONE step
+   *  of a `WreckChildChain`: `parentPiece` is the piece that broke,
+   *  `killX`/`killY` the breaking hit and `cut*` its kill cut (hull 1×
+   *  Pixi-up frame, as for a root). `parentKind` and `algoVersion` repeat
+   *  the root's; `seed` is the child's own fracture seed,
+   *  `wreckChildSeed(parent.seed, parentPiece)`; `killBlowDamage`,
+   *  `recentDamageRate` and `snapChance` are not inputs of a child (the
+   *  kind's `resplit` profile sets its fracture). The client resolves the
+   *  chain by walking parents to the root, so every ancestor stays on the
+   *  wire while a descendant lives. Absent (with `parentPiece`) = a root. */
+  parentWreck?: number;
+  /** The parent's piece that broke (its `componentIndex`, u8). Present
+   *  exactly when `parentWreck` is. */
+  parentPiece?: number;
 }
 
 /** A rolling-resync chunk of the live wreck set (`SnapshotMessage.wreckSync`). */
