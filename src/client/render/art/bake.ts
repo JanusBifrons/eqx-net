@@ -5,7 +5,7 @@
  * in the bake workers (`bake.worker.ts`). A bake is a list of RGBA frames plus
  * the few facts the runtime needs (size, density, light and nozzle spots).
  */
-import { forgeRock, forgeScrap, forgeShip, forgeStructure, forgeTurretGun, shipExtent, type Fields, type GunFamily, type Livery } from './fields.js';
+import { forgeRock, forgeScrap, forgeShip, forgeStructure, forgeTurretGun, shipExtent, TURRET_COVER_REACH, type Fields, type GunFamily, type Livery } from './fields.js';
 import { shipTurrets, structureTurrets } from './turretLayout.js';
 import { bakeFxImg, FX_VERSION, isFxId } from './fx/fxTextures.js';
 import { litFrame, type Frame, type LightRig } from './shade.js';
@@ -99,11 +99,11 @@ export function bakeKey(j: BakeJob): string {
  *  fitted turret hides for good, for a livery that keeps paint off it. The
  *  barrel is a thin, moving line, so its sweep is not counted. */
 export function turretCoverOf(id: string): Array<{ x: number; y: number; reach: number }> {
-  return shipTurrets(id).map((t) => ({ x: t.px, y: t.py, reach: 1.4 * Math.max(t.ring, t.cap) }));
+  return shipTurrets(id).map((t) => ({ x: t.px, y: t.py, reach: TURRET_COVER_REACH * Math.max(t.ring, t.cap) }));
 }
 
 /** A liveried ship's key suffix (absent livery adds nothing). */
-function liveryTag(l: Livery): string { return `:L${l.treatment}${l.team.toString(16)}:${l.sigil.toString(16)}`; }
+function liveryTag(l: Livery): string { return `:L${l.treatment}${l.team.toString(16)}:${l.sigil.toString(16)}${l.edge ? `:${l.edge}` : ''}`; }
 
 /** A lit job's key (prefixed `L` by bakeKey): no sun, and no turn for
  *  structures and rocks (the mesh turns; the maps don't change). */

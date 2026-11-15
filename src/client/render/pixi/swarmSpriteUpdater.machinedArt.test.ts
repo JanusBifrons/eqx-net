@@ -13,7 +13,7 @@ import { DAMAGE_FLASH_COLOR } from './spriteBuilders.js';
 import { MachinedShipSprite } from '../art/MachinedShipSprite.js';
 import type { ArtHandle, ArtService, ShipArt, StructArt } from '../art/ArtService.js';
 import { MachinedFlatSprite } from '../art/MachinedFlatSprite.js';
-import { npcFactionDef, teamColorOf, teamSigilOf, type FactionId } from '../../../shared-types/factions.js';
+import { npcFactionDef, teamColorOf, teamEdgeOf, teamSigilOf, type FactionId } from '../../../shared-types/factions.js';
 import { allegianceOfKind } from '../../../shared-types/shipKinds';
 import type { RenderMirror, SwarmRenderState, PoseRingEntry } from '../../../core/contracts/IRenderer.js';
 import { POSE_RING_DEPTH } from '../../../core/contracts/IRenderer.js';
@@ -187,8 +187,8 @@ describe('updateSwarmSprites — ship livery (?livery=)', () => {
     const calls = liveryCalls('a', [[5, drone('patrol-fighter', sol)], [6, drone('fighter')], [7, drone('cargo-pod')]]);
     const byId = new Map(calls.map((c) => [c[0], c]));
     expect(byId.get('patrol-fighter')![1]).toBeUndefined();
-    expect(byId.get('patrol-fighter')![4]).toEqual({ treatment: 'a', team: teamColorOf(sol), sigil: teamSigilOf(sol) });
-    expect(byId.get('fighter')![4]).toEqual({ treatment: 'a', team: teamColorOf(allegianceOfKind('fighter')), sigil: teamSigilOf(allegianceOfKind('fighter')) });
+    expect(byId.get('patrol-fighter')![4]).toEqual({ treatment: 'a', team: teamColorOf(sol), sigil: teamSigilOf(sol), edge: teamEdgeOf(sol) });
+    expect(byId.get('fighter')![4]).toEqual({ treatment: 'a', team: teamColorOf(allegianceOfKind('fighter')), sigil: teamSigilOf(allegianceOfKind('fighter')), edge: teamEdgeOf(allegianceOfKind('fighter')) });
     expect(byId.get('cargo-pod')![4]).toBeUndefined();
   });
 

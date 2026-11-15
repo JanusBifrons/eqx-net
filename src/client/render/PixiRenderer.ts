@@ -2952,7 +2952,7 @@ export class PixiRenderer implements IRenderer {
       const kind = 'kind' in decision ? decision.kind : (entry?.kind ?? 'fighter');
       const lingerLv = this._artCtx.livery !== undefined ? ownerLivery(ship.ownerPlayerId) : undefined;
       const lingerHandle = lingerLv
-        ? shipHandleFor(this._artCtx, artKey, kind, undefined, lingerLv.team, lingerLv.sigil)
+        ? shipHandleFor(this._artCtx, artKey, kind, undefined, lingerLv.team, lingerLv.sigil, lingerLv.edge)
         : shipHandleFor(this._artCtx, artKey, kind, undefined);
       let action: SpriteDecision['action'] = decision.action;
       if (entry && action === 'reposition' && shipArtSwap(this._artCtx, entry.sprite, lingerHandle) !== 'keep') action = 'rebuild';

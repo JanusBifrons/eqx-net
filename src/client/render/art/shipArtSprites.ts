@@ -7,7 +7,7 @@
  * what it was built from changes (rare), so the per-frame check is a map
  * lookup and a few compares (invariant #14).
  */
-import { teamColorOf, teamSigilOf } from '../../../shared-types/factions.js';
+import { teamColorOf, teamEdgeOf, teamSigilOf, type LiveryEdge } from '../../../shared-types/factions.js';
 import type { Container } from 'pixi.js';
 import { decideArtSwap, type ArtSwap } from '../spriteUpdateDecisions.js';
 import type { ArtHandle, ArtService } from './ArtService.js';
@@ -31,11 +31,11 @@ export interface ShipArtCtx {
 }
 
 /** The handle a ship should use now (re-acquired only on a kind/paint change). */
-/** `team`/`sigil` (owner colours): with `actx.livery` set and a team given,
- *  the hull is liveried (sigil defaults to the team colour). The change check
+/** `team`/`sigil`/`edge` (owner colours): with `actx.livery` set and a team
+ *  given, the hull is liveried (sigil defaults to the team colour). The change check
  *  compares scalars only; the Livery object is built only on re-acquire. */
 export function shipHandleFor(
-  actx: ShipArtCtx, key: string, kindId: string, paint: number | undefined, team?: number, sigil?: number,
+  actx: ShipArtCtx, key: string, kindId: string, paint: number | undefined, team?: number, sigil?: number, edge?: LiveryEdge,
 ): ArtHandle | null {
   if (!actx.art) return null;
   let h = actx.handles.get(key);
@@ -45,9 +45,9 @@ export function shipHandleFor(
   const lv = h?.job.type === 'ship' ? h.job.livery : undefined;
   const liveryChanged = treat === undefined
     ? lv !== undefined
-    : lv === undefined || lv.treatment !== treat || lv.team !== team || lv.sigil !== sig;
+    : lv === undefined || lv.treatment !== treat || lv.team !== team || lv.sigil !== sig || lv.edge !== edge;
   if (!h || h.stale === true || h.job.type !== 'ship' || h.job.id !== kindId || h.job.paint !== paint || (h.job.rings === true) !== rings || liveryChanged) {
-    h = actx.art.ship(kindId, paint, true, rings, treat !== undefined && team !== undefined ? { treatment: treat, team, sigil: sig } : undefined);
+    h = actx.art.ship(kindId, paint, true, rings, treat !== undefined && team !== undefined ? { treatment: treat, team, sigil: sig, ...(edge !== undefined ? { edge } : {}) } : undefined);
     actx.handles.set(key, h);
   }
   return h;
@@ -121,13 +121,14 @@ export function updateArtShipLight(actx: ShipArtCtx, sprite: Container): void {
   if (sprite instanceof MachinedShipSprite) sprite.updateLight(actx.sunAz);
 }
 
-/** A faction's livery (team colour + sigil seed), cached per owner id so the
- *  frame loop never re-hashes; the entry is allocated once on first sight. */
-export interface OwnerLivery { team: number; sigil: number }
+/** A faction's livery (team colour, sigil seed, section-edge shape), cached
+ *  per owner id so the frame loop never re-hashes; the entry is allocated
+ *  once on first sight. */
+export interface OwnerLivery { team: number; sigil: number; edge: LiveryEdge }
 const ownerLiveries = new Map<string, OwnerLivery>();
 export function ownerLivery(owner: string): OwnerLivery {
   let l = ownerLiveries.get(owner);
-  if (!l) { l = { team: teamColorOf(owner), sigil: teamSigilOf(owner) }; ownerLiveries.set(owner, l); }
+  if (!l) { l = { team: teamColorOf(owner), sigil: teamSigilOf(owner), edge: teamEdgeOf(owner) }; ownerLiveries.set(owner, l); }
   return l;
 }
 /** Wreckage whose owner is unknown wears neutral grey scrap under a livery. */

@@ -8,7 +8,7 @@ import { Container } from 'pixi.js';
 import { updateShipSprites, type ShipSpriteCtx } from './shipSpriteUpdater.js';
 import { MountVisualManager } from '../MountVisualManager.js';
 import type { ArtHandle, ArtService } from '../art/ArtService.js';
-import { teamColorOf, teamSigilOf } from '../../../shared-types/factions.js';
+import { teamColorOf, teamEdgeOf, teamSigilOf } from '../../../shared-types/factions.js';
 import type { RenderMirror } from '../../../core/contracts/IRenderer.js';
 
 function run(livery: 'b' | undefined): Array<unknown[]> {
@@ -39,7 +39,7 @@ describe('updateShipSprites — livery', () => {
     const calls = run('b');
     expect(calls).toHaveLength(1);
     expect(calls[0]![1]).toBeUndefined();
-    expect(calls[0]![4]).toEqual({ treatment: 'b', team: teamColorOf('player-abc'), sigil: teamSigilOf('player-abc') });
+    expect(calls[0]![4]).toEqual({ treatment: 'b', team: teamColorOf('player-abc'), sigil: teamSigilOf('player-abc'), edge: teamEdgeOf('player-abc') });
   });
 
   it('with the livery unset, the request is exactly as before', () => {

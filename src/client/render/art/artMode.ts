@@ -55,9 +55,9 @@ export function resolveArtMode(search: string, isAutomation: boolean, saved: Art
   return explicit ?? saved ?? (isAutomation ? 'classic' : 'machined');
 }
 
-/** `?livery=a|b|c|b2..b7|off` ('off' = none), else undefined. */
+/** `?livery=a|b|c|b2..b8|off` ('off' = none), else undefined. */
 export function readLivery(search: string): LiveryTreatment | undefined {
-  const m = /[?&]livery=(a|b2|b3|b4|b5|b6|b7|b|c|off)\b/.exec(search);
+  const m = /[?&]livery=(a|b2|b3|b4|b5|b6|b7|b8|b|c|off)\b/.exec(search);
   return m && m[1] !== 'off' ? (m[1] as LiveryTreatment) : undefined;
 }
 

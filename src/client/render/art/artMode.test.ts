@@ -16,7 +16,8 @@ describe('readLivery', () => {
     expect(readLivery('?livery=off')).toBeUndefined();
     expect(readLivery('')).toBeUndefined();
     expect(readLivery('?livery=d')).toBeUndefined();
-    expect(readLivery('?livery=b8')).toBeUndefined();
+    expect(readLivery('?livery=b8')).toBe('b8');
+    expect(readLivery('?livery=b9')).toBeUndefined();
   });
   it('a livery forces Machined art unless ?art= says otherwise', () => {
     expect(resolveArtMode('?livery=a', true, null)).toBe('machined');

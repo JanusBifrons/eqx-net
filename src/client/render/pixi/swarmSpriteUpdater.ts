@@ -204,7 +204,7 @@ function classicRockTint(resource: string | undefined): number | undefined {
 function shipArtHandleForEntity(actx: ShipArtCtx, key: string, kind: string, faction: string | undefined): ReturnType<typeof shipHandleFor> {
   if (actx.livery !== undefined && kind !== 'cargo-pod') {
     const lv = ownerLivery(faction ?? allegianceOfKind(kind));
-    return shipHandleFor(actx, key, kind, undefined, lv.team, lv.sigil);
+    return shipHandleFor(actx, key, kind, undefined, lv.team, lv.sigil, lv.edge);
   }
   return shipHandleFor(actx, key, kind, faction !== undefined ? npcFactionDef(faction)?.color : undefined);
 }
@@ -215,7 +215,7 @@ function wreckArtHandleFor(actx: ShipArtCtx, key: string, kind: string, faction:
   if (actx.livery === undefined) return shipHandleFor(actx, key, kind, undefined);
   if (faction !== undefined) {
     const lv = ownerLivery(faction);
-    return shipHandleFor(actx, key, kind, undefined, lv.team, lv.sigil);
+    return shipHandleFor(actx, key, kind, undefined, lv.team, lv.sigil, lv.edge);
   }
   return shipHandleFor(actx, key, kind, undefined, SCRAP_TEAM);
 }

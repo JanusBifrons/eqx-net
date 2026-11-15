@@ -18,6 +18,7 @@ import { generateAsteroidVertices } from '../../../core/swarm/asteroidShape.js';
 import { NAVAL_BARREL_SPAN } from '../../../core/combat/muzzle.js';
 import { planBowFeatures, type BowFeature } from './bowDetail.js';
 import { sizeClassOf } from '../../../shared-types/shipScale/tuning.js';
+import type { LiveryEdge } from '../../../shared-types/factions.js';
 import { largestClearCircle, sigilChevron, sigilCoverage, sigilDesign } from './sigil.js';
 
 export const MAT = {
@@ -37,8 +38,11 @@ export const MAT = {
 /** Which spot treatment a livery uses. 'b2' / 'b3': treatment 'b''s spots
  *  with a shade experiment (`LIVERY_SHADES`). 'b4': B3's sub-cap shade and
  *  B2's capital paint on a new layout (`forgeShip`, "Treatment 'b4'").
- *  'b5' / 'b6' / 'b7': B4 with a shaped section edge (`B4_EDGE`). */
-export type LiveryTreatment = 'a' | 'b' | 'c' | 'b2' | 'b3' | 'b4' | 'b5' | 'b6' | 'b7';
+ *  'b5' / 'b6' / 'b7': B4 with a forced section-edge shape (`B4_EDGE`:
+ *  swept, tongue, dog-tooth). 'b8': B4 with the owner faction's own edge
+ *  (`Livery.edge`, `teamEdgeOf`). */
+export type LiveryTreatment = 'a' | 'b' | 'c' | 'b2' | 'b3' | 'b4' | 'b5' | 'b6' | 'b7' | 'b8';
+export type { LiveryEdge };
 /** A ship livery: grey hull, the owner's colours only in chosen spots. */
 export interface Livery {
   treatment: LiveryTreatment;
@@ -47,6 +51,8 @@ export interface Livery {
   /** Sigil seed (per faction): picks the emblem `sigilDesign` draws in
    *  treatment 'c' (in the team colour). */
   sigil: number;
+  /** The faction's section-edge shape (treatment 'b8'; 'tongue' if absent). */
+  edge?: LiveryEdge;
 }
 
 export interface Fields {
@@ -206,29 +212,47 @@ export function liveryGrey(hex: number, shiftL = 0, maxS = 1): number {
  * bare metal (`weatherLivery`). Running lights stay the bright team colour.
  */
 export interface LiveryShade { hullDl: number; hullS: number; teamS: number; teamD: number; capS: number; capD: number }
-export const LIVERY_SHADES: Readonly<Record<'b2' | 'b3' | 'b4' | 'b5' | 'b6' | 'b7', LiveryShade>> = {
+type ShadeTreatment = 'b2' | 'b3' | 'b4' | 'b5' | 'b6' | 'b7' | 'b8';
+export const LIVERY_SHADES: Readonly<Record<ShadeTreatment, LiveryShade>> = {
   b2: { hullDl: -0.12, hullS: 0.04, teamS: 1.15, teamD: 1.0, capS: 0.72, capD: 0.74 },
   b3: { hullDl: -0.2, hullS: 0.03, teamS: 1.3, teamD: 1.0, capS: 0.62, capD: 0.6 },
   b4: { hullDl: -0.2, hullS: 0.03, teamS: 1.0, teamD: 0.88, capS: 0.5, capD: 0.74 },
   b5: { hullDl: -0.2, hullS: 0.03, teamS: 1.0, teamD: 0.88, capS: 0.5, capD: 0.74 },
   b6: { hullDl: -0.2, hullS: 0.03, teamS: 1.0, teamD: 0.88, capS: 0.5, capD: 0.74 },
   b7: { hullDl: -0.2, hullS: 0.03, teamS: 1.0, teamD: 0.88, capS: 0.5, capD: 0.74 },
+  b8: { hullDl: -0.2, hullS: 0.03, teamS: 1.0, teamD: 0.88, capS: 0.5, capD: 0.74 },
 };
 /** Painted-section edge shapes (owner, 2026-11-15: "the straight lines look
  *  bad, a more interesting shape than a straight line"). Offset of the edge,
  *  in bow-fraction units, against `ax` = |x| / the row's half-width (0 on
  *  the centreline, 1 at the side): positive moves a bow edge aft and a stern
- *  edge forward. Mirror-symmetric by construction (|x|). */
-const B4_EDGE: Readonly<Record<'b4' | 'b5' | 'b6' | 'b7', (ax: number) => number>> = {
-  b4: () => 0, // straight
-  b5: (ax) => 0.18 * ax - 0.09, // swept chevron: the sides reach further
-  b6: (ax) => 0.12 * (1 - ax * ax) - 0.06, // tongue: the centreline reaches further
-  b7: (ax) => { const u = ax * 2.5; return 0.055 * (2 * Math.abs(2 * (u - Math.floor(u)) - 1) - 1); }, // dog-tooth
+ *  edge forward. Mirror-symmetric by construction (|x|). Never negative: a
+ *  shape only ADDS paint to b4's straight section (a review saw shapes that
+ *  cut into it read as streaks and flames). */
+const B4_EDGE: Readonly<Record<'straight' | LiveryEdge, (ax: number) => number>> = {
+  straight: () => 0, // b4
+  swept: (ax) => 0.14 * ax, // chevron on a solid base: the sides reach further
+  tongue: (ax) => 0.12 * (1 - ax * ax), // the centreline reaches further
+  tooth: (ax) => { const u = ax * 2; return 0.045 * (1 - Math.abs(2 * (u - Math.floor(u)) - 1)); }, // dog-tooth: 2 broad teeth a side
 };
+/** A turret's paint keep-out radius as a multiple of max(ring, cap)
+ *  (`turretCoverOf`); capital b4 sections widen it (`forgeShip`). */
+export const TURRET_COVER_REACH = 1.4;
+/** The b4-family treatments and the section edge each wears. */
+function b4EdgeOf(l: Livery | undefined): (typeof B4_EDGE)[keyof typeof B4_EDGE] | undefined {
+  switch (l?.treatment) {
+    case 'b4': return B4_EDGE.straight;
+    case 'b5': return B4_EDGE.swept;
+    case 'b6': return B4_EDGE.tongue;
+    case 'b7': return B4_EDGE.tooth;
+    case 'b8': return B4_EDGE[l.edge ?? 'tongue'];
+    default: return undefined;
+  }
+}
 /** The shade experiment a livery uses, or undefined (plain treatment). */
 export function liveryShade(l: Livery | undefined): LiveryShade | undefined {
   const t = l?.treatment;
-  return t === 'b2' || t === 'b3' || t === 'b4' || t === 'b5' || t === 'b6' || t === 'b7' ? LIVERY_SHADES[t] : undefined;
+  return t !== undefined && t in LIVERY_SHADES ? LIVERY_SHADES[t as ShadeTreatment] : undefined;
 }
 /** A liveried hull's grey for this kind (a shade experiment darkens sub-caps). */
 export function liveryHullGrey(hex: number, l: Livery | undefined, kindId: string): number {
@@ -444,17 +468,29 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
   //    as a lopsided sliver); a hull whose visible spots are under
   //    TAIL_NEED4 of its area wears worn tail flashes on its rear corners
   //    INSTEAD of those spots.
-  const lt = livery?.treatment;
-  const b4 = lt === 'b4' || lt === 'b5' || lt === 'b6' || lt === 'b7';
-  const edgeOf = b4 ? B4_EDGE[lt as 'b4' | 'b5' | 'b6' | 'b7'] : B4_EDGE.b4;
+  const b4Edge = b4EdgeOf(livery);
+  const b4 = b4Edge !== undefined;
+  const edgeOf = b4Edge ?? B4_EDGE.straight;
   /** |x| over this row's half-width (0 = centreline, 1 = side). */
   const axOf = (wx: number, ty: number): number => Math.min(1, Math.abs(wx) / Math.max(1e-3, halfRow[ty] ?? 0));
   const CAP_BOW4 = 0.2, CAP_STERN4 = 0.085, EDGE_JIT4 = 0.018, TAIL_T4 = 0.66, TAIL_NEED4 = 0.05, B4_VALUE = 0.78;
   const paintLum = (() => { const p = lin(f.paint); return Math.max(1e-4, 0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2]); })();
   const cover = b4 ? opts.turretCover ?? [] : [];
-  const underTurret = (wx: number, wy: number): boolean => {
-    for (const c of cover) { const dx = wx - c.x, dy = wy - c.y; if (dx * dx + dy * dy < c.reach * c.reach) return true; }
+  /** Inside a turret's paint keep-out, its reach times `k`. */
+  const underTurret = (wx: number, wy: number, k = 1): boolean => {
+    for (const c of cover) { const dx = wx - c.x, dy = wy - c.y, r = c.reach * k; if (dx * dx + dy * dy < r * r) return true; }
     return false;
+  };
+  /** Capital section paint keeps a wider grey margin round each turret base
+   *  (a review could not see one at `turretCoverOf`'s reach). */
+  const CAP_KEEPOUT4 = 1.7 / TURRET_COVER_REACH;
+  /** Capital b4: the section edge's broken jitter (mirror-symmetric). */
+  const jit4 = (wx: number, wy: number): number => EDGE_JIT4 * (valueNoise((Math.abs(wx) / len) * 40, (wy / len) * 40, edgeSeed) - 0.5) * 2;
+  /** Capital b4: inside the painted BOW section (its edge as the paint draws it). */
+  const inBow4 = (i: number): boolean => {
+    const ty = Math.floor(i / g.w);
+    const wx = (i % g.w + 0.5 - g.ox) / g.ppu, wy = (ty + 0.5 - g.oy) / g.ppu;
+    return (wy - yMin) / len < CAP_BOW4 + jit4(wx, wy) + edgeOf(axOf(wx, ty));
   };
   const roleOf = (i: number): string | undefined => (parts[layer[i]!] as { role?: string } | undefined)?.role;
   const edgeSeed = hashStr(seedKey + ':b4edge');
@@ -504,8 +540,8 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
       // A grey barbette ring round each turret base. (Deck sigils keep B's
       // places: the owner wants two on every capital, and deck markings under
       // the guns are what real warships carry.)
-      if (underTurret(wx, wy)) return -1;
-      const jit = EDGE_JIT4 * (valueNoise((Math.abs(wx) / len) * 40, (wy / len) * 40, edgeSeed) - 0.5) * 2; // mirror-symmetric
+      if (underTurret(wx, wy, CAP_KEEPOUT4)) return -1;
+      const jit = jit4(wx, wy);
       const off = edgeOf(axOf(wx, ty));
       if (tb < CAP_BOW4 + jit + off || tb > 1 - CAP_STERN4 + jit - 0.6 * off) return teamHex;
       return -1;
@@ -810,7 +846,10 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
   }
   // Flaking band: 0.4 % of the hull length on a capital (in texels, so it is
   // the same on the hull at any bake resolution), 1.3 texels on a small ship.
-  if (shade) weatherLivery(f, dist, hashStr(seedKey + ':wear'), sizeCls === 'capital', b4, sizeCls === 'capital' ? Math.max(1, len * 0.004 * g.ppu) : 1.3);
+  if (shade) {
+    weatherLivery(f, dist, hashStr(seedKey + ':wear'), sizeCls === 'capital', b4, sizeCls === 'capital' ? Math.max(1, len * 0.004 * g.ppu) : 1.3,
+      b4 && sizeCls === 'capital' ? inBow4 : null);
+  }
 
   // Nav lights at the widest points: port (x<0) red, starboard green.
   if (opts.scrap) return f; // dead: no running lights
@@ -863,8 +902,18 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
  * capitals, chips of bare metal (~3-texel noise, more near the hull edge).
  * Sub-caps get a light mottle only, so their team colour stays strong.
  */
-function weatherLivery(f: Fields, dist: Float32Array, seed: number, heavy: boolean, patch = false, flakeTex = 2.5): void {
+function weatherLivery(
+  f: Fields, dist: Float32Array, seed: number, heavy: boolean, patch = false, flakeTex = 2.5, inBow: ((i: number) => boolean) | null = null,
+): void {
   const g = f.g, n = g.w * g.h;
+  // 'patch': deck sigils / chevrons stay clean team paint (a review saw them
+  // washed out by the chalk, grime and flaking).
+  const marks = patch ? f.sigils ?? [] : [];
+  const inMark = (i: number): boolean => {
+    const x = (i % g.w + 0.5 - g.ox) / g.ppu, y = ((i / g.w | 0) + 0.5 - g.oy) / g.ppu;
+    for (const m of marks) if ((x - m.x) * (x - m.x) + (y - m.y) * (y - m.y) <= m.r * m.r) return true;
+    return false;
+  };
   const grey = lin(f.paint), metal = lin(PALETTE.metal);
   const s = heavy ? 1 : 0.35;
   // 'patch': texels to the nearest place the paint meets grey HULL (its
@@ -879,6 +928,7 @@ function weatherLivery(f: Fields, dist: Float32Array, seed: number, heavy: boole
   }
   for (let i = 0; i < n; i++) {
     if (f.mat[i] !== MAT.LIVERY) continue;
+    if (marks.length > 0 && inMark(i)) continue;
     const ty = (i / g.w) | 0;
     // 'b4' (patch) weathers mirror-symmetric, like every other livery mark.
     const tx = patch ? Math.abs(i % g.w + 0.5 - g.ox) : i % g.w;
@@ -900,15 +950,18 @@ function weatherLivery(f: Fields, dist: Float32Array, seed: number, heavy: boole
       // flaking where it meets the grey (its own edge or the hull's), thin
       // fore-aft scratches to bare metal, chalky sun-faded patches, and
       // heavier grime.
+      // A capital's bow section wears half the chalk, flaking and scratches,
+      // so it still reads red at line-up zoom (the stern keeps them).
+      const bow = inBow !== null && inBow(i);
       const w = 1, zf = heavy ? 1 : 4, z0 = heavy ? 0.6 : 0.5;
       const streak = valueNoise(tx * 0.15 * Math.min(2, zf), ty * 0.01 * zf, seed + 2);
       const dk = 1 - w * 0.5 * (1 - Math.pow(streak, 1.4));
-      const chalk = Math.max(0, valueNoise(tx * 0.012 * zf, ty * 0.012 * zf, seed + 6) - 0.45) * 0.7; // 0 .. ~0.38
+      const chalk = Math.max(0, valueNoise(tx * 0.012 * zf, ty * 0.012 * zf, seed + 6) - 0.45) * (bow ? 0.35 : 0.7); // 0 .. ~0.38
       for (let c = 0; c < 3; c++) {
         const a = f.albedo[i * 3 + c]! * dk;
         f.albedo[i * 3 + c] = a + (grey[c]! * 1.2 - a) * chalk;
       }
-      const E = flakeTex; // flaking band, texels
+      const E = bow ? flakeTex * 0.5 : flakeTex; // flaking band, texels
       const de = dPaint![i]!;
       if (de < E && valueNoise(tx * 0.35 * Math.min(2, zf), ty * 0.35 * Math.min(2, zf), seed + 7) > 0.32 + 0.55 * (de / E)) {
         f.mat[i] = MAT.PAINT;
@@ -917,7 +970,7 @@ function weatherLivery(f: Fields, dist: Float32Array, seed: number, heavy: boole
         continue;
       }
       // Scratches on capitals only: at a small ship's texel scale they are speckle.
-      if (heavy && valueNoise(tx * 0.9, ty * 0.045, seed + 8) > 0.88) {
+      if (heavy && valueNoise(tx * 0.9, ty * 0.045, seed + 8) > 0.88 && (!bow || valueNoise(tx * 0.9, ty * 0.045, seed + 10) > 0.5)) {
         f.mat[i] = MAT.METAL;
         f.key[i] = PALETTE.metal;
         setAlbedo(f, i, metal, 0.72);
@@ -925,7 +978,7 @@ function weatherLivery(f: Fields, dist: Float32Array, seed: number, heavy: boole
       }
       const zone = valueNoise(tx * 0.025 * zf, ty * 0.025 * zf, seed + 5);
       const fleck = valueNoise(tx * 0.3 * Math.min(2, zf), ty * 0.3 * Math.min(2, zf), seed + 4);
-      if (zone > z0 && fleck > 0.74 - (zone - z0) * 0.9) {
+      if (zone > z0 && fleck > 0.74 - (zone - z0) * 0.9 && (!heavy || valueNoise(tx * 0.3, ty * 0.3, seed + 9) > CHIP_THIN)) {
         f.mat[i] = MAT.PAINT;
         f.key[i] = f.paint;
         setAlbedo(f, i, grey, 0.5 + 0.12 * n1);
@@ -941,6 +994,11 @@ function weatherLivery(f: Fields, dist: Float32Array, seed: number, heavy: boole
     }
   }
 }
+
+/** Capital b4 weathering: a dark-primer chip survives only where a second
+ *  fleck-scale noise clears this (about 30 % fewer chips than sub-caps' rule;
+ *  a review found the capital mottling too dense). */
+const CHIP_THIN = 0.38;
 
 /** Smallest clear circle (radius, texels) that takes an emblem; below it a
  *  hull gets the dorsal chevron. */

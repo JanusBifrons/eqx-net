@@ -1,7 +1,8 @@
 /** Per-ship livery plumbing: bake keys and shipHandleFor's re-acquire check. */
 import { describe, it, expect } from 'vitest';
 import { bakeKey, type BakeJob } from './bake.js';
-import { shipHandleFor, type ShipArtCtx } from './shipArtSprites.js';
+import { ownerLivery, shipHandleFor, type ShipArtCtx } from './shipArtSprites.js';
+import { teamEdgeOf } from '../../../shared-types/factions.js';
 import type { ArtHandle, ArtService } from './ArtService.js';
 import type { Livery } from './fields.js';
 
@@ -14,7 +15,8 @@ describe('bakeKey with livery', () => {
   });
   it('differs per treatment, team and sigil (lit too)', () => {
     const k = (l: Livery, lit = false): string => bakeKey({ type: 'ship', id: 'fighter', livery: l, lit });
-    const keys = [k(L), k({ ...L, treatment: 'b' }), k({ ...L, team: 0xff0000 }), k({ ...L, sigil: 0x00ff00 }), bakeKey({ type: 'ship', id: 'fighter' })];
+    const keys = [k(L), k({ ...L, treatment: 'b' }), k({ ...L, team: 0xff0000 }), k({ ...L, sigil: 0x00ff00 }), bakeKey({ type: 'ship', id: 'fighter' }),
+      k({ ...L, treatment: 'b8' }), k({ ...L, treatment: 'b8', edge: 'swept' }), k({ ...L, treatment: 'b8', edge: 'tooth' })];
     expect(new Set(keys).size).toBe(keys.length);
     expect(k(L, true)).not.toBe(bakeKey({ type: 'ship', id: 'fighter', lit: true }));
   });
@@ -57,5 +59,21 @@ describe('shipHandleFor livery', () => {
     shipHandleFor(on.actx, 'k', 'fighter', undefined);
     shipHandleFor(on.actx, 'k', 'fighter', undefined, L.team);
     expect(on.calls).toEqual([undefined, { treatment: 'b', team: L.team, sigil: L.team }]);
+  });
+});
+
+describe('livery edge plumbing (b8)', () => {
+  it('ownerLivery carries the faction edge, and reuses one cached object per owner', () => {
+    const a = ownerLivery('robots');
+    expect(a.edge).toBe(teamEdgeOf('robots'));
+    expect(ownerLivery('robots')).toBe(a);
+  });
+  it('shipHandleFor passes the edge into the Livery and re-acquires only when it changes', () => {
+    const { actx, calls } = ctx('b8');
+    const h1 = shipHandleFor(actx, 'k', 'fighter', undefined, L.team, L.sigil, 'swept');
+    expect(shipHandleFor(actx, 'k', 'fighter', undefined, L.team, L.sigil, 'swept')).toBe(h1);
+    shipHandleFor(actx, 'k', 'fighter', undefined, L.team, L.sigil, 'tooth');
+    shipHandleFor(actx, 'k', 'fighter', undefined, L.team, L.sigil, 'tooth');
+    expect(calls).toEqual([{ treatment: 'b8', team: L.team, sigil: L.sigil, edge: 'swept' }, { treatment: 'b8', team: L.team, sigil: L.sigil, edge: 'tooth' }]);
   });
 });

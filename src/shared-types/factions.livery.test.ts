@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FIXED_FACTIONS, PLAYER_LIVERY, teamColorOf, teamSigilOf } from './factions.js';
+import { FIXED_FACTIONS, LIVERY_EDGES, MINOR_FACTIONS, PLAYER_LIVERY, REGION_POWER_IDS, teamColorOf, teamEdgeOf, teamSigilOf } from './factions.js';
 
 function hueOf(c: number): number {
   const r = ((c >> 16) & 255) / 255, g = ((c >> 8) & 255) / 255, b = (c & 255) / 255;
@@ -38,5 +38,30 @@ describe('ship livery', () => {
     }
     expect(new Set(ids.map(teamColorOf)).size).toBeGreaterThan(6);
     expect(teamSigilOf('drones')).toBe(teamSigilOf('drones'));
+  });
+});
+
+describe('teamEdgeOf (per-faction section edge, livery b8)', () => {
+  it('every NPC faction has its own set edge, and teamEdgeOf returns it', () => {
+    for (const f of [...FIXED_FACTIONS, ...MINOR_FACTIONS]) {
+      expect(LIVERY_EDGES, f.id).toContain(f.liveryEdge);
+      expect(teamEdgeOf(f.id)).toBe(f.liveryEdge);
+    }
+  });
+  it('rivals differ: drones vs robots, drones vs the red Crimson Expanse, the three cool-coloured powers', () => {
+    expect(teamEdgeOf('drones')).not.toBe(teamEdgeOf('robots'));
+    expect(teamEdgeOf('drones')).not.toBe(teamEdgeOf('crimson-expanse'));
+    expect(new Set(['core', 'verdant-reach', 'azure-deep'].map(teamEdgeOf)).size).toBe(3);
+  });
+  it("a region's minor factions wear all three edges", () => {
+    for (const r of REGION_POWER_IDS) expect(new Set(MINOR_FACTIONS.filter((f) => f.region === r).map((f) => f.liveryEdge)).size).toBe(3);
+  });
+  it('players hash deterministically over all three edges', () => {
+    const ids = Array.from({ length: 60 }, (_, i) => `player-${i}`);
+    for (const id of ids) {
+      expect(LIVERY_EDGES).toContain(teamEdgeOf(id));
+      expect(teamEdgeOf(id)).toBe(teamEdgeOf(id));
+    }
+    expect(new Set(ids.map(teamEdgeOf)).size).toBe(3);
   });
 });
