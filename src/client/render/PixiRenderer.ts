@@ -961,7 +961,7 @@ export class PixiRenderer implements IRenderer {
       wrecks: new WreckGeometryStore(),
       // S3: each wreck's death clock; a fresh wreck's break-up (dust, shards,
       // flash at the kill point) goes through the effects system, tier-capped.
-      wreckArt: new WreckArtState((x, y, radius, snap, seed, wfx, channel) => {
+      wreckArt: new WreckArtState((x, y, radius, snap, seed, wfx, channel, cut) => {
         // Money-shot review: a short small core flash + dust + shards
         // (WreckBreakFx) and fireballs at the kill point, sized by the hull
         // (FxExplosions, the same blasts every death uses), never a disc
@@ -970,7 +970,9 @@ export class PixiRenderer implements IRenderer {
         // sub-capital never reaches here: its ship's own death blast plays).
         if (wfx.breakBurst) {
           this._wreckBreaks++;
-          this.effects?.spawnBurst('wreck-break', x, y, { radius, ...(snap ? { flashScale: 1.6 } : {}) });
+          // A weapon's kill cut: the shards are toned down (WreckBreakFx) so
+          // the cut reads first (beam take 8 review: "confetti").
+          this.effects?.spawnBurst('wreck-break', x, y, { radius, ...(snap ? { flashScale: 1.6 } : {}), ...(cut ? { cutKill: true } : {}) });
           // A railgun channel kill: glowing ash and sparks along the channel
           // (a line emitter on the same break-up pool, tier-capped there).
           if (channel !== null) {
