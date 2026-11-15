@@ -11,7 +11,9 @@ export type WeaponId = 'hitscan' | 'laser' | 'heat-seeker' | 'pulse-orb' | 'char
   // Capital railgun (plan beam-slices §7): a charged, very fast shell.
   | 'railgun'
   // Capital heavy beam (plan beam-slices §8): a sustained burn that slices.
-  | 'heavy_beam';
+  | 'heavy_beam'
+  // Mining laser (plan partitioned-chasing-lark PR 7): a salvage beam.
+  | 'mining_laser';
 
 interface WeaponDefBase {
   id: WeaponId;
@@ -464,6 +466,27 @@ const HEAVY_BEAM_DEF: HitscanWeaponDef = {
   followThroughTicks: 45,
 };
 
+/** The mining laser's slice width (world u): a quarter of the heavy beam's. */
+export const MINING_LASER_WIDTH = HEAVY_BEAM_WIDTH / 4;
+
+/**
+ * The MINING LASER (plan partitioned-chasing-lark PR 7): a salvage beam (no
+ * ship carries it yet), an ordinary hitscan beam like the heavy beam. Its
+ * factors make it a tool: nothing on a raised shield, 5 % on a live hull or a
+ * structure, full on a wreck piece (wear lands with PR 5); a hit its factor
+ * zeroes is no hostile act (`SectorRoom.applyDamage`). Its narrow slice cuts
+ * along the beam. 120 × 6 Hz = 720/s on a wreck, 36/s on a bare hull; energy
+ * 12/shot = 72/s, under a capital's 120/s regen, so it holds on (the heavy
+ * beam costs 45). Range 12,000 u, short of the heavy beam's 20,000; absolute
+ * (never `profiled`), scaled per mount by `mountWeaponReach`.
+ */
+const MINING_LASER_DEF: HitscanWeaponDef = {
+  id: 'mining_laser', displayName: 'Mining laser', mode: 'hitscan',
+  damage: 120, cooldownTicks: 10, range: 12_000, energyCost: 12,
+  killCut: { kind: 'slice', width: MINING_LASER_WIDTH },
+  targetFactor: { shield: 0, hull: 0.05, structure: 0.05, wreck: 1 },
+};
+
 /**
  * Weapon distances under the ship scale's combat profile (shipScale/config):
  * reach (hitscan range, projectile / missile flight time) and splash. Profile
@@ -504,9 +527,10 @@ export const WEAPONS: ReadonlyMap<WeaponId, WeaponDef> = new Map<WeaponId, Weapo
   ['naval_siege', NAVAL_SIEGE_DEF],
   ['railgun', RAILGUN_DEF],
   ['heavy_beam', HEAVY_BEAM_DEF],
+  ['mining_laser', MINING_LASER_DEF],
 ]);
 
-export const WEAPON_IDS: readonly WeaponId[] = ['hitscan', 'laser', 'heat-seeker', 'pulse-orb', 'charge-laser', 'autocannon', 'naval_s', 'naval_m', 'naval_l', 'naval_xl', 'naval_xxl', 'naval_siege', 'railgun', 'heavy_beam'] as const;
+export const WEAPON_IDS: readonly WeaponId[] = ['hitscan', 'laser', 'heat-seeker', 'pulse-orb', 'charge-laser', 'autocannon', 'naval_s', 'naval_m', 'naval_l', 'naval_xl', 'naval_xxl', 'naval_siege', 'railgun', 'heavy_beam', 'mining_laser'] as const;
 
 export const DEFAULT_WEAPON: WeaponId = 'hitscan';
 

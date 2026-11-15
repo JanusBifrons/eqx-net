@@ -70,6 +70,32 @@ gates in the fire paths). So:
   `capitalLockGate.test.ts`, `ColyseusClient.longRangeLock.test.ts`,
   `TargetAction.test.tsx`, `contactRows.test.ts`.
 
+**Neutral terrain locks** (plan partitioned-chasing-lark, PR 2). Mining lasers
+and tractors lock what they work on (#19), so terrain is lockable: asteroids
+(swarm kind 0), scrap / loot pods (kind 3) and wreck pieces (kind 4). One shared
+predicate decides it on every side (#15): `isTerrainLockKind` /
+`isContactLockKind` in `core/combat/lockState.ts`.
+- **Neutral, always.** `SectorRoom.resolveLockTarget` marks the target
+  `terrain` (`LockTargetView.terrain`): the lock starts in `acquiring` (no
+  failsafe ring), never commits a hostile act (`LockSubsystem` skips
+  `commitHostileAct`, and `commitLockHostileAct` ignores terrain keys), never
+  refreshes hostility, sends no `bot_aggro` and alerts nobody.
+- **Lowest priority on the client.** The lock line (`updateLockGuide`) scores
+  terrain with the same `lockLineScore` but in its own tier: terrain wins only
+  when no NPC ship, structure or pilot is on the line, and a contact crossing
+  the line takes it from a held terrain lock.
+- **Never self-picked.** AUTO (`autoPick`) picks only NPC ships (and, with
+  testMode `anyTarget`, structures); missile seekers skip terrain
+  (`MissileSimulation.lockOnTarget`); NPC fire control locks only pilots
+  through `isEngageablePilotHull` (`NpcLockSubsystem`), so none of them ever
+  targets terrain.
+- **No damage-model change.** A weapon firing at a locked rock or wreck hits it
+  as any shot along that line already did.
+- Lock: `lockState.test.ts`, `LockSubsystem.test.ts` "neutral terrain locks",
+  `ColyseusClient.lockGuide.test.ts` (terrain tier),
+  `MissileSimulation.tracking.test.ts` "terrain is never a seeker lock",
+  `tests/integration/sectorRoom/terrainLocks.test.ts`.
+
 **Locks keep it hostile** (owner decision 2026-11-10). Being targeted is a
 hostile act. An NPC ship stays hostile to a pilot while any of that pilot's
 weapon groups is LOCKING (acquiring) or LOCKED on it, and for the usual 30 s

@@ -10,6 +10,7 @@ import {
   WEAPON_IDS,
   DEFAULT_WEAPON,
   HEAVY_BEAM_WIDTH,
+  MINING_LASER_WIDTH,
   weaponTargetFactor,
   WRECK_DEFAULT_TARGET_FACTOR,
   weaponLayerMul,
@@ -208,14 +209,14 @@ describe('WeaponCatalogue — TTK targets (lock the math, not the literals)', ()
 });
 
 describe('WeaponCatalogue — capital heavy beam (plan beam-slices §8)', () => {
-  it('is a hitscan beam with a slice kill cut, appended last, cadence at the 10-tick floor or slower', () => {
+  it('is a hitscan beam with a slice kill cut, cadence at the 10-tick floor or slower', () => {
     const w = getWeapon('heavy_beam');
     expect(w.id).toBe('heavy_beam');
     expect(w.mode).toBe('hitscan');
     expect(w.killCut).toEqual({ kind: 'slice', width: HEAVY_BEAM_WIDTH });
     // The compositor-stall floor (HITSCAN_DEF note): no beam fires faster.
     expect(w.cooldownTicks).toBeGreaterThanOrEqual(10);
-    expect(WEAPON_IDS[WEAPON_IDS.length - 1]).toBe('heavy_beam');
+    expect(WEAPON_IDS).toContain('heavy_beam');
   });
 
   it('follows through a kill for 0.5-1 s of game time; no other weapon does', () => {
@@ -230,9 +231,9 @@ describe('WeaponCatalogue — capital heavy beam (plan beam-slices §8)', () => 
     expect(others).toEqual(['heavy_beam']);
   });
 
-  it('fighter and sub-cap beams do not slice: only the heavy beam has a slice cut', () => {
+  it('fighter and sub-cap beams do not slice: only the capital heavy beam and mining laser do', () => {
     const slicers = [...WEAPONS.values()].filter((d) => d.killCut?.kind === 'slice').map((d) => d.id);
-    expect(slicers).toEqual(['heavy_beam']);
+    expect(slicers).toEqual(['heavy_beam', 'mining_laser']);
     expect(getWeapon('hitscan').killCut).toBeUndefined();
     expect(getWeapon('charge-laser').killCut).toBeUndefined();
   });
@@ -284,8 +285,9 @@ describe('weaponTargetFactor (per-target damage factors)', () => {
     expect(weaponTargetFactor(miner, 'wreck')).toBe(WRECK_DEFAULT_TARGET_FACTOR);
   });
 
-  it('no catalogue weapon carries factors yet (every hit byte-identical)', () => {
-    for (const id of WEAPON_IDS) expect(getWeapon(id).targetFactor).toBeUndefined();
+  it('only the mining laser carries factors (every other hit byte-identical)', () => {
+    const withFactors = WEAPON_IDS.filter((id) => getWeapon(id).targetFactor !== undefined);
+    expect(withFactors).toEqual(['mining_laser']);
   });
 
   it('weaponLayerMul: undefined without factors; shield/hull for ships; structure on both layers', () => {
@@ -295,5 +297,46 @@ describe('weaponTargetFactor (per-target damage factors)', () => {
     const base: WeaponDef = { ...plain, targetFactor: { shield: 0, structure: 0.25 } };
     expect(weaponLayerMul(base, true, out)).toEqual({ shield: 0.25, hull: 0.25 });
     expect(weaponLayerMul(base, true, out)).toBe(out); // reused scratch, no allocation
+  });
+});
+
+describe('WeaponCatalogue — mining laser (plan partitioned-chasing-lark PR 7)', () => {
+  const w = getWeapon('mining_laser');
+
+  it('is a hitscan beam appended last, at the 10-tick beam floor or slower', () => {
+    expect(w.id).toBe('mining_laser');
+    expect(w.mode).toBe('hitscan');
+    expect(w.cooldownTicks).toBeGreaterThanOrEqual(10);
+    expect(WEAPON_IDS[WEAPON_IDS.length - 1]).toBe('mining_laser');
+    expect(isWeaponId('mining_laser')).toBe(true);
+  });
+
+  it('nothing on a shield, 5 % on a live hull or a structure, full on a wreck', () => {
+    expect(weaponTargetFactor(w, 'shield')).toBe(0);
+    expect(weaponTargetFactor(w, 'hull')).toBe(0.05);
+    expect(weaponTargetFactor(w, 'structure')).toBe(0.05);
+    expect(weaponTargetFactor(w, 'wreck')).toBe(1);
+    const out = { shield: -1, hull: -1 };
+    expect(weaponLayerMul(w, false, out)).toEqual({ shield: 0, hull: 0.05 });
+    expect(weaponLayerMul(w, true, out)).toEqual({ shield: 0.05, hull: 0.05 });
+  });
+
+  it('slices along its beam, narrower than the heavy beam', () => {
+    expect(w.killCut).toEqual({ kind: 'slice', width: MINING_LASER_WIDTH });
+    expect(MINING_LASER_WIDTH).toBeGreaterThan(0);
+    expect(MINING_LASER_WIDTH).toBeLessThan(HEAVY_BEAM_WIDTH);
+    expect(w.followThroughTicks).toBeUndefined();
+  });
+
+  it('a utility beam: cheaper than the heavy beam, and a capital pool can hold it on (net energy gain)', () => {
+    const heavy = getWeapon('heavy_beam');
+    expect(w.energyCost).toBeGreaterThan(0);
+    expect(w.energyCost).toBeLessThan(heavy.energyCost);
+    const cap = getShipKind('heavy-cruiser');
+    const drainPerTick = w.energyCost / w.cooldownTicks;
+    expect(drainPerTick).toBeLessThan(cap.energyRegenRate ?? 0);
+    if (w.mode !== 'hitscan' || heavy.mode !== 'hitscan') throw new Error('expected hitscan');
+    expect(w.range).toBeGreaterThan(0);
+    expect(w.range).toBeLessThanOrEqual(heavy.range);
   });
 });

@@ -29,6 +29,7 @@
 import { parentPort, workerData } from 'node:worker_threads';
 import RAPIER from '@dimforge/rapier2d-compat';
 import { PhysicsWorld } from './World.js';
+import type { ForceField } from './forceFields.js';
 import { getShipKind, shipKindFromIndex } from '../../shared-types/shipKinds.js';
 import { decodeAiInputBits } from '../contracts/IAiBehaviour.js';
 import { tickInputQueue, type QueuedInput } from './inputQueue.js';
@@ -138,10 +139,10 @@ interface WreckRigidImpulseCmd { type: 'WRECK_RIGID_IMPULSE'; entityIds: readonl
 interface SpawnWallCmd      { type: 'SPAWN_WALL';      id: string; ax: number; ay: number; bx: number; by: number; thickness: number }
 interface SetWallActiveCmd  { type: 'SET_WALL_ACTIVE'; id: string; active: boolean }
 interface RemoveWallCmd     { type: 'REMOVE_WALL';     id: string }
-/** v4 T2 — a teleporter pad's closing-iris push (PhysicsWorld.setPadField). */
-interface SetPadFieldCmd    { type: 'SET_PAD_FIELD';   id: string; cx: number; cy: number; half: number; active: boolean }
-interface RemovePadFieldCmd { type: 'REMOVE_PAD_FIELD'; id: string }
-type WorkerCommand = SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiIntentCmd | AiInputsCmd | ClockRateCmd | SetPositionCmd | WarpRetargetCmd | RekeyShipCmd | SetHullExposedCmd | SetStatMulCmd | MissileImpulseCmd | WreckKickCmd | WreckImpulseCmd | WreckRigidImpulseCmd | SpawnWallCmd | SetWallActiveCmd | RemoveWallCmd | SetPadFieldCmd | RemovePadFieldCmd | BotWarpCmd | SetTimeScaleCmd;
+/** Force fields (teleporter pad push today; PhysicsWorld.setForceField, forceFields.ts). */
+interface SetForceFieldCmd    { type: 'SET_FORCE_FIELD';    id: string; field: ForceField }
+interface RemoveForceFieldCmd { type: 'REMOVE_FORCE_FIELD'; id: string }
+type WorkerCommand = SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiIntentCmd | AiInputsCmd | ClockRateCmd | SetPositionCmd | WarpRetargetCmd | RekeyShipCmd | SetHullExposedCmd | SetStatMulCmd | MissileImpulseCmd | WreckKickCmd | WreckImpulseCmd | WreckRigidImpulseCmd | SpawnWallCmd | SetWallActiveCmd | RemoveWallCmd | SetForceFieldCmd | RemoveForceFieldCmd | BotWarpCmd | SetTimeScaleCmd;
 
 /** Pool commands (main → pooled worker): host / free one sector's world. */
 interface AddWorldCmd    { type: 'ADD_WORLD'; worldId: number; sab: SharedArrayBuffer }
@@ -441,12 +442,12 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
         physics.removeWall(cmd.id);
         break;
       }
-      case 'SET_PAD_FIELD': {
-        physics.setPadField(cmd.id, cmd.cx, cmd.cy, cmd.half, cmd.active);
+      case 'SET_FORCE_FIELD': {
+        physics.setForceField(cmd.id, cmd.field);
         break;
       }
-      case 'REMOVE_PAD_FIELD': {
-        physics.removePadField(cmd.id);
+      case 'REMOVE_FORCE_FIELD': {
+        physics.removeForceField(cmd.id);
         break;
       }
     }

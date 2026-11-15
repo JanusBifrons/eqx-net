@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import {
   HEAVY_BEAM_COLOR, HEAVY_BEAM_STYLE, MINING_BEAM_STYLE, REMOTE_BEAM_FADE_MS, REMOTE_BEAM_STYLE,
-  findMount, remoteBeamStyleForMount, remoteBeamTtlMs, remoteBeamSolidLen, HEAVY_BEAM_MISS_FADE_FRAC,
+  findMount, remoteBeamStyleForMount, MINING_LASER_STYLE, isSustainedBeamMount, isHeavyBeamMount, remoteBeamTtlMs, remoteBeamSolidLen, HEAVY_BEAM_MISS_FADE_FRAC,
 } from './beamStyles.js';
-import { HEAVY_BEAM_WIDTH, getWeapon } from '../../core/combat/WeaponCatalogue.js';
+import { HEAVY_BEAM_WIDTH, MINING_LASER_WIDTH, getWeapon } from '../../core/combat/WeaponCatalogue.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 
 /**
@@ -98,5 +98,27 @@ describe('beam styles — capital heavy beam (plan beam-slices §8)', () => {
     // Fighter TTLs are unchanged.
     expect(remoteBeamTtlMs(true, false)).toBe(250);
     expect(remoteBeamTtlMs(false, false)).toBe(400);
+  });
+});
+
+describe('beam styles — mining laser (plan partitioned-chasing-lark PR 7)', () => {
+  const mounts = [{ id: 'mine-0', weaponId: 'mining_laser' }, { id: 'main-0', weaponId: 'heavy_beam' }] as const;
+
+  it('a mining_laser mount draws in the Miner beam colours at its cut width, solid to the hit', () => {
+    const s = remoteBeamStyleForMount(findMount(mounts, 'mine-0'));
+    expect(s).toBe(MINING_LASER_STYLE);
+    expect(s!.tint).toBe(MINING_BEAM_STYLE.tint);
+    expect(s!.alpha).toBe(MINING_BEAM_STYLE.alpha);
+    expect(s!.width).toBe(MINING_LASER_WIDTH);
+    expect(getWeapon('mining_laser').killCut).toEqual({ kind: 'slice', width: s!.width });
+    expect(s!.taper).toBe(false);
+    expect(remoteBeamSolidLen(s, 100, true)).toBe(100);
+  });
+
+  it('holds like the heavy beam (no strobe at the 10-tick cadence); fighter beams do not', () => {
+    expect(isSustainedBeamMount(findMount(mounts, 'mine-0'))).toBe(true);
+    expect(isSustainedBeamMount(findMount(mounts, 'main-0'))).toBe(true);
+    expect(isSustainedBeamMount({ weaponId: 'hitscan' })).toBe(false);
+    expect(isHeavyBeamMount(findMount(mounts, 'mine-0'))).toBe(false);
   });
 });
