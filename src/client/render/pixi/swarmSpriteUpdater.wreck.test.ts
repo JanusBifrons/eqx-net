@@ -113,3 +113,34 @@ describe('updateSwarmSprites — capital wreck pieces (S2b)', () => {
     expect(lum(stroke)).toBeLessThan(lum(fill));
   });
 });
+
+// Rail take 6 review: a ship killed by an event shell stays drawn alive until
+// the drawn shell reaches it (ColyseusClient deferred kills); its wreck's
+// pieces, which arrive at once, must not show beside the live hull meanwhile.
+describe('updateSwarmSprites — wreck pieces wait for a held death (wreckRevealFromTick)', () => {
+  it('a wreck that died on/after the held tick gets no sprite until the hold ends; older wrecks are untouched', () => {
+    const fresh: WreckDescriptor = { ...DESC, deathTick: 1010 };
+    const older: WreckDescriptor = { ...DESC, wreckId: 4, deathTick: 500 };
+    const geom = rebuildWreckPieces(fresh);
+    const swarm = new Map<number, SwarmRenderState>();
+    geom.forEach((g, i) => swarm.set(100 + i, piece(i, g.cx, g.cy, g.radius)));
+    const old = piece(0, 5000, 0, geom[0]!.radius);
+    (old as { wreckId: number }).wreckId = older.wreckId;
+    swarm.set(200, old);
+    const mirror = {
+      swarm, wrecks: new Map([[fresh.wreckId, fresh], [older.wreckId, older]]), wreckRevealFromTick: 980,
+    } as unknown as RenderMirror;
+    const ctx = makeCtx();
+    updateSwarmSprites(mirror, ctx);
+    for (let i = 0; i < geom.length; i++) expect(ctx.sprites.has(`swarm-${100 + i}`), `piece ${i} held back`).toBe(false);
+    expect(ctx.sprites.has('swarm-200'), 'an older wreck still draws').toBe(true);
+    // The hold ends (the drawn shell reached the hull): the pieces draw.
+    mirror.wreckRevealFromTick = undefined;
+    updateSwarmSprites(mirror, ctx);
+    for (let i = 0; i < geom.length; i++) expect(ctx.sprites.has(`swarm-${100 + i}`)).toBe(true);
+    // A piece already drawn is never hidden by a later hold.
+    mirror.wreckRevealFromTick = 900;
+    updateSwarmSprites(mirror, ctx);
+    for (let i = 0; i < geom.length; i++) expect(ctx.sprites.has(`swarm-${100 + i}`)).toBe(true);
+  });
+});
