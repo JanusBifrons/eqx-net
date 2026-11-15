@@ -4905,10 +4905,15 @@ export class ColyseusGameClient {
       this.ghostManager.update(this.gameFrameMs(), this.mirror.projectiles);
       // Shells as events (slice 2b): draw salvo shells at the display tick
       // (server tick estimate minus the remote-entity display delay), and
-      // burst them when the display reaches their hit.
+      // burst them when the display reaches their hit. At the FRAME's own
+      // time (the RAF stamp), like the local ship: `gameClock.now()` read here
+      // has run on by this frame's snapshot work, which lands on alternate
+      // frames, so a railgun slug stepped ~1/3 then ~5/3 of a frame's travel
+      // (rail take 6 review; ColyseusClient.shellFrameTime.test.ts).
       if (this._shellEvents) {
         const displayTick = this.clockAnchorServerTick
-          + (this.gameClock.now() - this.clockAnchorPerfNow) / SHELL_TICK_MS - SHELL_DISPLAY_DELAY_MS / SHELL_TICK_MS;
+          + (this.gameClock.at(frameNowMs ?? this.clock.now()) - this.clockAnchorPerfNow) / SHELL_TICK_MS
+          - SHELL_DISPLAY_DELAY_MS / SHELL_TICK_MS;
         this.placeShells(displayTick);
       }
 
