@@ -346,6 +346,9 @@ export class LitShipMesh extends Mesh<Geometry, Shader> {
   lightOwnerId = -1;
   /** Part of a capital (a hull tile or a gun on one): other capitals don't shade it. */
   capitalHull = false;
+  /** Self-shadow from the height map (off for a wreck piece's dead bake:
+   *  the hull that would cast it is broken off). */
+  selfShadow = true;
   /** How much of its own engines' light a hull takes (they point away from it). */
   static OWN_LIGHT = 0.15;
   /** Texels per screen pixel (litPass sets it each frame; 1 until then). */
@@ -421,7 +424,7 @@ export class LitShipMesh extends Mesh<Geometry, Shader> {
     const rise = (Math.tan(elev) / this.tile.ppu) * stepT / len;
     const maxSteps = Math.min(s.selfShadowSteps, LIT_MAX_SHADOW_STEPS, Math.ceil((40 * len * fine) / (0.75 * stepT)), Math.ceil(this.tile.maxH / Math.max(1e-4, rise)) + 2);
     const sh = this.u['uShadow']!;
-    sh[0] = s.selfShadowSteps > 0 ? maxSteps : 0; sh[1] = stepT; sh[2] = rise;
+    sh[0] = s.selfShadowSteps > 0 && this.selfShadow ? maxSteps : 0; sh[1] = stepT; sh[2] = rise;
     const look = this.u['uShadowLook']!;
     // Capital shadows use the real sun angle (the length × is a self-shadow look).
     look[0] = s.shadow.strength; look[1] = s.shadow.edge; look[2] = Math.tan(elev);

@@ -13,7 +13,7 @@ import { wreckCrackTicks } from '../../shared-types/wreckTiming.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { shipTuning } from '../../shared-types/shipScale/tuning.js';
 
-function make(kinds: Record<string, string> = { cap: 'battleship' }, withRigid = false) {
+function make(kinds: Record<string, string> = { cap: 'battleship' }, withRigid = false, owners: Record<string, string> = {}) {
   const rigid: Array<{ ids: readonly string[]; jx: number; jy: number; px: number; py: number }> = [];
   let tick = 1000;
   const spawned: WreckPieceSpawn[] = [];
@@ -25,6 +25,7 @@ function make(kinds: Record<string, string> = { cap: 'battleship' }, withRigid =
   const sys = new CapitalWreckSubsystem({
     serverTick: () => tick,
     wreckKindOf: (id) => (kinds[id] as 'battleship' | undefined) ?? null,
+    ownerOf: (id) => owners[id],
     positionOf: (id) => (id === 'attacker' ? { x: 5000, y: 0 } : null),
     spawnPiece: (s) => { spawned.push(s); live.add(s.id); return true; },
     removePiece: (id) => { live.delete(id); removed.push(id); },
@@ -118,6 +119,18 @@ describe('CapitalWreckSubsystem', () => {
         expect(spawned.map((s) => [s.x, s.y])).toEqual(want.map((p) => [p.x, p.y]));
       });
     }
+  });
+
+  // Filmed 2026-11-15: a pilot's capital broke into flat grey pieces under
+  // the default livery; the client had no owner for the wreck, so it asked
+  // for a new (neutral) bake instead of the one the live hull wore.
+  it("the descriptor names the hull's owner (the livery its pieces wear); none when unknown", () => {
+    const { sys } = make({ cap: 'battleship', npc: 'battleship' }, false, { cap: 'player-7' });
+    sys.onDeath('cap', 'battleship', pose, 10_000);
+    sys.onDeath('npc', 'battleship', { ...pose, x: 90_000 }, 10_000);
+    const [a, b] = sys.descriptors();
+    expect(a!.owner).toBe('player-7');
+    expect('owner' in b!).toBe(false);
   });
 
   it('without a killCut weapon (or with no shot direction) the descriptor carries no cut', () => {

@@ -214,6 +214,9 @@ describe('SectorRoom integration — capital wrecks (S2a)', () => {
     expect(internal.applyDamage(victim, 'shooter-x', 1e9)).toBe(false);
     expect(internal.applyDamage(victim, 'shooter-x', 1e9)).toBe(true);
     expect(wrecks(internal).length).toBeGreaterThanOrEqual(2);
+    // The wreck names its pilot: the client's pieces wear the livery bake the
+    // live hull wore (owner = playerId), never a new one.
+    expect(internal.wreckDescriptors().find((d) => d.parentKind === 'battleship')?.owner).toBe(victim);
     expect(internal.applyDamage(victim, 'shooter-x', 1e9)).toBe(false);
   }, 25_000);
 
