@@ -187,6 +187,15 @@ describe('SectorRoom integration — heavy-beam follow-through after a kill', ()
 
     const killShot = shots.filter((s) => s.mountId === killMount && s.tick === killTick).pop()!;
     const window = shots.filter((s) => s.mountId === killMount && s.tick > killTick && s.tick < killTick + follow);
+    // The punch-through coincides with the death (owner, on film: the ship
+    // died ~9 frames before the beam ran full length, because the killing
+    // pulse ended at the hull and the first follow-through waited a reload):
+    // a full-length beam down the kill line within 2 ticks of the kill.
+    const punch = window[0];
+    expect(punch, 'a follow-through beam fired').toBeDefined();
+    expect(punch!.tick - killTick, 'the first full-length beam follows the kill within 2 ticks').toBeLessThanOrEqual(2);
+    expect(punch!.len, 'the punch-through beam runs its full length').toBeGreaterThan(beam.range - 1);
+    expect(Math.abs(wrapPi(punch!.dir - killShot.dir)), 'the punch-through beam is on the kill line').toBeLessThan(0.002);
     // It keeps firing at its normal cadence through the window ...
     expect(window.length, 'the killing turret kept firing through the follow-through')
       .toBeGreaterThanOrEqual(Math.floor((follow - 1) / beam.cooldownTicks) - 1);
