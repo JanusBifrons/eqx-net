@@ -33,7 +33,7 @@ import type { Vec2 } from '@core/swarm/asteroidShape';
 import { rayHitsSphere, rayHitsConvexPolygon } from '@core/combat/Weapons';
 import { shipRayHit } from '@core/combat/shipHitShape';
 import { scrapColliderFor } from '@core/geometry/scrapCollider';
-import { SWARM_KIND_DRONE, SWARM_KIND_SCRAP, SWARM_KIND_WRECK } from '@shared-types/swarmWireFormat';
+import { SWARM_KIND_DRONE, SWARM_KIND_SCRAP, SWARM_KIND_WRECK, isLootPod } from '@shared-types/swarmWireFormat';
 import { wreckRayHit } from '@core/destruction/wreckHits';
 import type { WreckGeometrySource } from '../net/entity/IClientEntityLeaf.js';
 import type { ShipKindId } from '@shared-types/shipKinds';
@@ -74,6 +74,8 @@ export function rayHitsDrawnSwarmEntity(
     return rayHitsSphere(fromX, fromY, dirX, dirY, maxDist, e.x, e.y, e.radius);
   }
   if (e.kind === SWARM_KIND_SCRAP) {
+    // Nobody's shot lands on a loot pod (the server's `isLootPod` skip, #15).
+    if (isLootPod(e)) return null;
     const c = rayHitsSphere(fromX, fromY, dirX, dirY, maxDist, e.x, e.y, e.radius);
     if (c === null || !e.shipKind) return c;
     const v = scrapVertices(e.shipKind, e.componentIndex ?? 0);

@@ -10,11 +10,17 @@
  * and structures only), but every shot through the wreck landed on it.
  *
  * Fix: AI pilot bolts and beams (and structure turret beams) pass through
- * loot pods. A player's own shot is unchanged.
+ * loot pods. A pilot's own shots follow the same rule (barge-mining stills
+ * 2026-11-15: the barge's own mining lasers destroyed 34 of its 100 ore pods
+ * on their way to the rock, so none ever reached the hold).
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
+import type { Room as ClientRoom } from 'colyseus.js';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
+import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
+import type { SectorState } from '../../../src/server/rooms/schema/SectorState.js';
+import { getPlayerShipStore } from '../../../src/server/db/PersistenceWorker.js';
 
 type Hit = { target: string; shooter: string };
 
@@ -73,5 +79,42 @@ describe('SectorRoom integration — AI pilot shots pass through loot pods', () 
     expect(mine.length, 'the beam hit something').toBeGreaterThan(0);
     expect(mine.every((h) => h.target === 'lp-target'), 'the beam passed the pod: ' + JSON.stringify(mine)).toBe(true);
     expect(podAlive, 'the pod is untouched').toBe(true);
+  });
+});
+
+describe('SectorRoom integration: a pilot\'s own beam passes through loot pods', () => {
+  let harness: SectorTestHarness;
+  afterEach(async () => { if (harness) await harness.cleanup(); }, 10_000);
+
+  it('a pilot\'s mining laser passes the ore pod and lands on the rock behind it', { timeout: 40_000 }, async () => {
+    harness = await bootSectorTestServer({ sectorKey: 'sol-prime', droneCount: 0, testMode: true, asteroidConfig: [] });
+    const pid = randomUUID();
+    const cr = (await harness.connectActive(pid, { shipKind: 'fighter', spawnX: 0, spawnY: 0, instantLock: true })) as ClientRoom<SectorState>;
+    const room = harness.getServerRoom() as unknown as SectorRoom;
+    let shipId = '';
+    for (const [id, s] of room.state.ships) if (s.playerId === pid && s.isActive) shipId = id;
+    const internals = room._internals;
+    expect(internals.spawnTestAsteroid('rock-1', 0, 400, 60)).toBe(true);
+    const mounts = [{ slotId: 'latent-wing-l', weaponId: 'mining_laser' as const }];
+    getPlayerShipStore().setProgress(shipId, { mounts });
+    room.state.ships.get(shipId)!.mounts = mounts;
+    harness.lockTarget(pid, 'rock-1');
+    await harness.advance(100);
+    const podId = internals.loot.drop({ goods: { minerals: 5 }, blueprints: [] }, 0, 200, 0, 0);
+    expect(podId, 'the pod spawned').toBeTruthy();
+    const pod = internals.swarmRegistry.get(podId!)!;
+    expect(pod.shipKind).toBe('cargo-pod');
+    const hits = recordHits(room);
+    let tick = 100;
+    const end = Date.now() + 4_000;
+    while (Date.now() < end && !hits.some((h) => h.shooter === pid)) {
+      cr.send('fire', { type: 'fire', tick, clientShotId: `f${tick}`, weapon: 'hitscan', dirAngle: 0, slotId: 'primary' });
+      tick += 10;
+      await harness.advance(100);
+    }
+    const mine = hits.filter((h) => h.shooter === pid);
+    expect(mine.length, 'the beam hit something').toBeGreaterThan(0);
+    expect(mine.some((h) => h.target === podId || h.target === `swarm-${pod.entityId}`), 'the beam passed the pod: ' + JSON.stringify(mine)).toBe(false);
+    expect(internals.swarmRegistry.get(podId!), 'the pod is untouched').not.toBeNull();
   });
 });

@@ -88,7 +88,6 @@ describe('ProjectilePipeline — loot pods', () => {
       playerSweep: () => null,
       swarmRegistry: { all: () => recs.map((r) => ({ id: r.id, slot: r.slot, radius: 12, kind: r.kind, shipKind: r.shipKind })) },
       lingeringSlots: new Map(),
-      shotHitsLootPods: (owner) => owner === 'player-1',
       applyDamage: (target, shooter) => { hits.push({ target, shooter }); },
     });
     return { pipe, hits };
@@ -101,10 +100,10 @@ describe('ProjectilePipeline — loot pods', () => {
     expect(hits).toEqual([{ target: 'r-enemy', shooter: 'd-shooter' }]);
   });
 
-  it('a pilot\'s own bolt still lands on the loot pod', () => {
+  it('a pilot\'s own bolt passes the loot pod too (nobody fights loot)', () => {
     const { pipe, hits } = podPipeline();
     pipe.spawn('player-1', 20, 0, 1200, 0, 10, 4, 120, 'laser');
     fly(pipe, 30);
-    expect(hits).toEqual([{ target: 'pod-1', shooter: 'player-1' }]);
+    expect(hits).toEqual([{ target: 'r-enemy', shooter: 'player-1' }]);
   });
 });

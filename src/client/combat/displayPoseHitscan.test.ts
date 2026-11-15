@@ -82,6 +82,14 @@ describe('DisplayPoseHitscan', () => {
     w.dispose();
   });
 
+  // Nobody's shot lands on a loot pod (server `isLootPod` skip, #15): the drawn beam passes it.
+  it('a loot pod never stops the drawn beam; other scrap does', () => {
+    const pod = { ...drone(0, 100, false), kind: 3, radius: 9, shipKind: 'cargo-pod' } as SwarmRenderState;
+    expect(rayHitsDrawnSwarmEntity(pod, 0, 0, 0, 1, 400)).toBeNull();
+    const scrap = { ...pod, shipKind: undefined } as SwarmRenderState;
+    expect(rayHitsDrawnSwarmEntity(scrap, 0, 0, 0, 1, 400)).not.toBeNull();
+  });
+
   // 2026-11-13: the circle gate was `rayHitsSphere`, null once the ray starts
   // inside the circle past the centre, so a beam fired from beside a capital
   // (its circle is half the hull's length) across the far half missed. Same

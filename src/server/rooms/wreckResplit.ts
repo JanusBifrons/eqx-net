@@ -27,6 +27,8 @@ import type { CapitalWreckDeps, LiveWreck, PieceKnock } from './capitalWreckType
 import type { WreckPieceGeometry } from '../../core/destruction/wreckPieceFrame.js';
 import { wreckSourceOf, type WreckSource } from '../../core/destruction/wreckSource.js';
 import { WEAPONS, type WeaponId } from '../../core/combat/WeaponCatalogue.js';
+import { asteroidYieldWeightPerUnit } from '../../shared-types/asteroidResources.js';
+import { SALVAGE_POD_MAX_WEIGHT } from '../../shared-types/worldEvents.js';
 
 /** A live piece's pose and motion (world). */
 export interface WreckPiecePose {
@@ -293,15 +295,18 @@ export function spawnWreckPieces(
 
 /** A worn-out piece (or a sliver) too small to split leaves a pod: a ship
  *  wreck's carries salvage (`wreckSalvageQty`), a rock's its share of the
- *  rock's ore (area × `ore.perArea`, at least 1), drawn through `OreDraw`
- *  by the room's `dropSalvage`. No hook: nothing drops. */
+ *  rock's ore (area × `ore.perArea`, at least 1) up to a pod's size
+ *  (`SALVAGE_POD_MAX_WEIGHT` of that ore; the rest of the share is never
+ *  mined, so cutting never makes ore), drawn through `OreDraw` by the room's
+ *  `dropSalvage`. No hook: nothing drops. */
 export function dropPieceSalvage(
   d: CapitalWreckDeps, src: WreckSource, ore: LiveWreck['ore'],
   area: number, mass: number, x: number, y: number, vx: number, vy: number,
 ): void {
   if (d.dropSalvage === undefined) return;
   if (ore !== undefined) {
-    d.dropSalvage(Math.max(1, Math.round(area * ore.perArea)), x, y, vx, vy, ore);
+    const podMax = Math.max(1, Math.floor(SALVAGE_POD_MAX_WEIGHT / asteroidYieldWeightPerUnit(ore.resource)));
+    d.dropSalvage(Math.min(podMax, Math.max(1, Math.round(area * ore.perArea))), x, y, vx, vy, ore);
     return;
   }
   d.dropSalvage(wreckSalvageQty(src, mass), x, y, vx, vy);

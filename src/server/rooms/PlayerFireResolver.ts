@@ -27,6 +27,7 @@
 
 import { shipRayHit } from '../../core/combat/shipHitShape.js';
 import { wreckRayHit } from '../../core/destruction/wreckHits.js';
+import { isLootPod } from '../net/SwarmEntityRegistry.js';
 import type { Client } from 'colyseus';
 import type { Logger } from 'pino';
 import {
@@ -662,6 +663,8 @@ export class PlayerFireResolver implements WeaponFireSink {
 
     // 3. Swarm (drones + asteroids).
     for (const rec of d.swarmRegistry.all()) {
+      // Nobody fights a loot pod, a pilot included (`isLootPod`).
+      if (isLootPod(rec)) continue;
       const rewound = d.snapshotRing.getPoseAt(rec.id, effTick);
       const b = slotBase(rec.slot);
       const cx = rewound?.x ?? d.sabF32[b + SLOT_X_OFF]!;
