@@ -33,7 +33,8 @@ export interface ArtOptions {
    *  guns, scrap (and per settings structures and rocks) lit live from maps
    *  instead of baked sun frames. Absent = today's baked art. */
   lighting?: LightingSettings;
-  /** Ship livery treatment (`?livery=a|b|c`, look R&D). Absent = today's paint. */
+  /** Ship livery treatment: `DEFAULT_LIVERY` unless `?livery=off` (none) or
+   *  another treatment (look R&D). Absent = the pre-livery paint. Machined only. */
   livery?: LiveryTreatment;
 }
 
@@ -50,15 +51,28 @@ export function resolveArtMode(search: string, isAutomation: boolean, saved: Art
   const explicit = readArtMode(search);
   const sl = readShipLight(search);
   if (explicit === null && sl !== null && sl !== 'baked') return 'machined';
-  // A livery is drawn on Machined art only: asking for one implies Machined.
-  if (explicit === null && readLivery(search) !== undefined) return 'machined';
+  // A livery is drawn on Machined art only: naming one in the URL implies
+  // Machined. The default livery does not: classic-art players stay classic.
+  const liv = readLiveryParam(search);
+  if (explicit === null && liv !== null && liv !== 'off') return 'machined';
   return explicit ?? saved ?? (isAutomation ? 'classic' : 'machined');
 }
 
-/** `?livery=a|b|c|b2..b8|off` ('off' = none), else undefined. */
-export function readLivery(search: string): LiveryTreatment | undefined {
+/** The ship livery every Machined-art player sees (`?livery=off` = none). */
+export const DEFAULT_LIVERY: LiveryTreatment = 'b8';
+
+/** The raw `?livery=a|b|c|b2..b8|off` value, or null when absent or unknown. */
+function readLiveryParam(search: string): LiveryTreatment | 'off' | null {
   const m = /[?&]livery=(a|b2|b3|b4|b5|b6|b7|b8|b|c|off)\b/.exec(search);
-  return m && m[1] !== 'off' ? (m[1] as LiveryTreatment) : undefined;
+  return m ? (m[1] as LiveryTreatment | 'off') : null;
+}
+
+/** The livery to draw: `?livery=off` = none (the pre-livery paint), another
+ *  value = that treatment (look R&D), absent or unknown = `DEFAULT_LIVERY`. */
+export function readLivery(search: string): LiveryTreatment | undefined {
+  const p = readLiveryParam(search);
+  if (p === 'off') return undefined;
+  return p ?? DEFAULT_LIVERY;
 }
 
 /** `?shiplight=gpu|high|medium|low|baked` (gpu = high), or null. */

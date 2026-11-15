@@ -65,7 +65,8 @@ export function selectRenderer(): { renderer: IRenderer; useWorker: boolean; isT
     automation: navigator.webdriver === true,
   });
   if (lighting) art.lighting = lighting;
-  const livery = readLivery(search);
+  // Ship livery: on by default (`?livery=off` = none); Machined art only.
+  const livery = art.mode === 'machined' ? readLivery(search) : undefined;
   if (livery) art.livery = livery;
   const renderer: IRenderer = useWorker ? new WorkerRendererClient(isTouch, art) : new PixiRenderer(isTouch, art);
   // Click-to-inspect (Item B) — DEV/E2E deterministic selection hook. Only the
