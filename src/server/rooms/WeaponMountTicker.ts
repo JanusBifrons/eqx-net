@@ -140,8 +140,9 @@ export interface WeaponMountTickerDeps {
    *  the slewed angle). Called only when that mount is on target, in reach
    *  and reloaded. Returns false when the shot was refused (the ship's energy
    *  pool can't pay): the reload is then not spent. 'killed' = it fired and
-   *  destroyed what it hit (starts the weapon's `followThroughTicks`). */
-  fireDroneMount?: (droneId: string, mountIdx: number) => boolean | 'killed' | void;
+   *  destroyed what it hit (starts the weapon's `followThroughTicks`).
+   *  `passDebris`: the shot passes wreck pieces and scrap (the follow-through). */
+  fireDroneMount?: (droneId: string, mountIdx: number, passDebris?: boolean) => boolean | 'killed' | void;
   /** Fire control (PR 1d slice 2): true ⇒ the capital holds no COMPLETED
    *  lock on this mount's target (a pilot), so the mount aims but holds fire
    *  (reload not spent). Absent ⇒ never blocked (unit harnesses). */
@@ -769,13 +770,14 @@ export class WeaponMountTicker {
    * trains toward that bearing less the hull and base angles through the one
    * rotation primitive (#12), so its arc and traverse rate bind as always (a
    * hull turning faster than the turret can follow drags the beam only by
-   * the difference). It fires at its weapon's cadence with no target: the shot hits whatever is
-   * on the line (wreck pieces, a ship behind) or runs to its range. No lock
+   * the difference). It fires at its weapon's cadence with no target: the shot
+   * passes debris (wreck pieces, scrap: no hit, no knock-back) and hits the
+   * first ship, structure or rock on the line, else runs its full range, so
+   * the beam shows full length through the cut. No lock
    * or bearing gate (#19: those license acquiring a target, and this shot
    * aims at none, like a completed 'locked-direction' charge); the hull's own
    * deck (`mountLineClear`) and a FRIENDLY on the line of fire still hold it,
-   * a wreck piece does not (the beam burns on through its victim's cut; a
-   * piece on the line takes the hit and knock-back like any beam hit).
+   * a wreck piece does not.
    */
   private followThrough(
     droneId: string, kind: ShipKind, mount: WeaponMount, i: number, angles: Float32Array, reload: Int32Array,
@@ -792,7 +794,7 @@ export class WeaponMountTicker {
       const muzzle = shipShotMuzzle(kind, mount, true);
       if (d.lineOfFireBlocked(droneId, '', mx + ndx * muzzle, my + ndy * muzzle, ndx, ndy, reach - muzzle, true)) return;
     }
-    if (d.fireDroneMount!(droneId, i) === false) return;
+    if (d.fireDroneMount!(droneId, i, true) === false) return;
     reload[i] = tick;
   }
 
