@@ -95,6 +95,10 @@ describe('SectorRoom integration — fire-control AUTO groups', () => {
   beforeEach(async () => {
     harness = await bootSectorTestServer({
       sectorKey: 'sol-prime', droneCount: 0, testMode: true,
+      // A still target: these tests are about fire control, not the AI. A live
+      // AI fighter opens with a strafing pass (#611, no toe-to-toe) and leaves
+      // the gun's arc before the lock completes.
+      peacefulDrones: true,
       dronePoses: [{ kind: 'fighter', x: 0, y: 150, angle: 0, hullExposed: true }],
     });
   }, 15_000);

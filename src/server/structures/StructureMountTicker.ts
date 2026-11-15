@@ -60,6 +60,12 @@ export interface TurretTargetView {
   cls: TargetClass;
   /** Lock signature (u): the target's hull radius (`signatureFor`). */
   signature: number;
+  /** Hit shape for the hull range gate (`MountRangeTarget`): a ship's kind,
+   *  heading and shield, else a circle `radius`. Absent ⇒ its centre. */
+  kindId?: string | null;
+  angle?: number;
+  shieldUp?: boolean;
+  radius?: number;
 }
 
 /** A mount keeps aiming at a target it briefly can't engage for this long. */
@@ -75,8 +81,9 @@ const STRUCTURE_LOCK_TUNING = { ...LOCK_TUNING, clampAtMax: true };
 
 /** What the ticker asks its owner to do. */
 export interface StructureMountSink {
-  /** Fill `out` with hostile targets within `range` of (x, y) for `owner`;
-   *  return how many. */
+  /** Fill `out` with hostile targets whose hit shape may come within `range`
+   *  of (x, y) for `owner` (centre within `range` + the target's
+   *  `mountRangeBound`; the mounts' hull gate decides); return how many. */
   targets(x: number, y: number, range: number, owner: string, out: TurretTargetView[]): number;
   /** Fire mount `mountIdx` along unit (ndx, ndy) at `target` (already on
    *  target and reloaded). Returns false when it could not fire (no
@@ -197,7 +204,7 @@ export class StructureMountTicker {
         for (let j = 0; j < count; j++) if (cands[j]!.id === prev) { best = j; break; }
         if (best >= 0) {
           const t = cands[best]!;
-          engageable = mountCanEngage(mount, frame, t.x - mx, t.y - my, reach, t.vx, t.vy);
+          engageable = mountCanEngage(mount, frame, t.x - mx, t.y - my, reach, t.vx, t.vy, t);
         }
         if (engageable) st.lastOkMs[i] = nowMs;
         else if (best < 0 || nowMs - st.lastOkMs[i]! > TARGET_HOLD_MS) { best = -1; st.targetIds[i] = null; }
@@ -208,7 +215,7 @@ export class StructureMountTicker {
         for (let j = 0; j < count; j++) {
           const t = cands[j]!;
           const dx = t.x - mx, dy = t.y - my;
-          if (!mountCanEngage(mount, frame, dx, dy, reach, t.vx, t.vy)) continue;
+          if (!mountCanEngage(mount, frame, dx, dy, reach, t.vx, t.vy, t)) continue;
           const d2 = dx * dx + dy * dy;
           const pri = mountPriority(mount.size, t.cls);
           if (pri < bestPri || (pri === bestPri && d2 < bestD2)) { bestPri = pri; bestD2 = d2; best = j; }
@@ -271,7 +278,7 @@ export class StructureMountTicker {
     // Heavy guns then stretch it for absolute distance (uncapped, see
     // `lockSeconds`). Out of reach stays unlockable (Infinity). testMode
     // `lockTimeCapS` still caps the result.
-    const secs = capLockSeconds(lockSeconds(inp, STRUCTURE_LOCK_TUNING), inp, LOCK_TUNING, this.lockTimeCapS);
+    const secs = capLockSeconds(lockSeconds(inp, STRUCTURE_LOCK_TUNING), inp, this.lockTimeCapS);
     const ev = stepLock(e, dtSec, secs, secs * LOCK_TUNING.failsafeMul, LOCK_TUNING.lostGraceSeconds, LOCK_TUNING.decayMul);
     // Unlockable past the grace: start over on the same target (it stays the
     // mount's target; targeting is the arc/tracking rules', not the lock's).

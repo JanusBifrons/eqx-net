@@ -27,7 +27,7 @@ export function TargetAction({ isOwn }: { isOwn: boolean }): JSX.Element | null 
   const group = groups[idx]!;
   const key = selected === null ? null : selected.startsWith('swarm-') ? `s:${selected.slice(6)}` : `p:${selected}`;
   const lock = key === null ? undefined : group.locks.find((l) => l.target === key);
-  // 'blocked': the server can't progress the lock (out of reach / untrackable).
+  // 'blocked': the server can't progress the lock (untrackable: too small or fast for the guns; locks work at any distance).
   // Without this the button just snapped back to LOCK after the grace (1v3 clip).
   const state = lock === undefined ? 'lock' : lock.stage === 2 ? 'unlock' : lock.blocked ? 'blocked' : 'cancel';
   const onClick = (): void => {
@@ -59,7 +59,7 @@ export function TargetAction({ isOwn }: { isOwn: boolean }): JSX.Element | null 
         cursor: 'pointer',
       }}
     >
-      {state === 'lock' ? `LOCK · ${group.name.toUpperCase()}` : state === 'cancel' ? 'CANCEL LOCK' : state === 'blocked' ? 'OUT OF RANGE' : `UNLOCK · ${group.name.toUpperCase()}`}
+      {state === 'lock' ? `LOCK · ${group.name.toUpperCase()}` : state === 'cancel' ? 'CANCEL LOCK' : state === 'blocked' ? "CAN'T TRACK" : `UNLOCK · ${group.name.toUpperCase()}`}
     </Box>
   );
 }

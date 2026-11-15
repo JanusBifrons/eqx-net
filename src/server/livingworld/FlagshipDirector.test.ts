@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { EventEmitter } from 'eventemitter3';
-import { escortRing, FlagshipDirector, FLEET_ESCORT_KINDS, fleetCapitalKind, styledKind } from './FlagshipDirector.js';
+import { escortRing, FlagshipDirector, FLEET_ESCORT_KINDS, fleetCapitalKind, classOf, styledKind } from './FlagshipDirector.js';
 import type { ShipKindId } from '../../shared-types/shipKinds.js';
 import type { LivingWorldRoom } from './LivingWorldRoom.js';
 import { sectorSites } from '../../core/galaxy/sectorSites.js';
@@ -146,6 +146,39 @@ describe('FlagshipDirector', () => {
     expect([...room.bots.keys()].some((id) => id.endsWith('-lead') && id !== leadId)).toBe(true);
   });
 
+  it('an escort that flees and warps out (morale) leaves the fleet', () => {
+    const room = fakeRoom();
+    const { d } = director(new Map([[A, room]]));
+    d.start();
+    const escortId = [...room.bots.keys()].find((id) => !id.endsWith('-lead'))!;
+    room.bots.delete(escortId);
+    room.bus.emit('BOT_DESPAWNED', { type: 'BOT_DESPAWNED', botId: escortId, sectorKey: A, reason: 'fled' });
+    expect(d.fleetsView()[0]?.escorts).toBe(FLEET_ESCORT_KINDS.length - 1);
+  });
+
+  it('a flagship that flees breaks the fleet like a loss, then a new one arrives later', () => {
+    const room = fakeRoom();
+    const { d, clock, now } = director(new Map([[A, room]]));
+    d.start();
+    const leadId = [...room.bots.keys()].find((id) => id.endsWith('-lead'))!;
+    room.bots.delete(leadId);
+    room.bus.emit('BOT_DESPAWNED', { type: 'BOT_DESPAWNED', botId: leadId, sectorKey: A, reason: 'fled' });
+    expect(d.fleetsView()).toHaveLength(0);
+    expect(room.bots.size).toBe(0);
+    clock.advance(6000);
+    d.tick(now());
+    expect(d.fleetsView()).toHaveLength(1);
+  });
+
+  it('a transit despawn is not a loss', () => {
+    const room = fakeRoom();
+    const { d } = director(new Map([[A, room]]));
+    d.start();
+    const escortId = [...room.bots.keys()].find((id) => !id.endsWith('-lead'))!;
+    room.bus.emit('BOT_DESPAWNED', { type: 'BOT_DESPAWNED', botId: escortId, sectorKey: A, reason: 'transit' });
+    expect(d.fleetsView()[0]?.escorts).toBe(FLEET_ESCORT_KINDS.length);
+  });
+
   it('resumes a persisted fleet where it was (same name, class and pocket)', () => {
     const room = fakeRoom();
     const first = director(new Map([[A, room]]));
@@ -180,7 +213,18 @@ describe('styledKind (W2b: a hull style per ship)', () => {
     expect(styledKind('battleship', 'flagship-3-lead')).toBe(styledKind('battleship', 'flagship-3-lead'));
     const seen = new Set<string>();
     for (let i = 0; i < 30; i++) seen.add(styledKind('battleship', `flagship-${i}-lead`));
-    expect([...seen].sort()).toEqual(['battleship', 'battleship-b', 'battleship-c']);
+    expect([...seen].sort()).toEqual(['battleship', 'battleship-b', 'battleship-c', 'battleship-rail']);
     expect(styledKind('gunship', 'flagship-1-e3')).toBe('gunship');
+  });
+});
+
+describe('classOf (a capital variant keeps its class)', () => {
+  it('strips style and fit suffixes, and only those', () => {
+    expect(classOf('battleship')).toBe('battleship');
+    expect(classOf('battleship-c')).toBe('battleship');
+    expect(classOf('light-cruiser-b')).toBe('light-cruiser');
+    // Plan section 9: a fit variant's class is its base class.
+    expect(classOf('battleship-rail')).toBe('battleship');
+    expect(classOf('heavy-cruiser')).toBe('heavy-cruiser');
   });
 });

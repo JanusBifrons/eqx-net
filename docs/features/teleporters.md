@@ -125,3 +125,49 @@ It is separate from base storage, so production never draws from it.
 There is no cross-sector browser test yet: the pilot's hop is the existing warp flow (`transit_ready`), checked here at the integration level.
 
 The `teleport-test` room seeds a powered Capital with a paired teleporter on each side, owned by a fixed id the test joins as. It uses `teleportCycleScale` and a fast grid pulse.
+
+## Client rules in detail
+
+Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each rule and points here.
+
+### Teleporter panel and inspector placement (plan soft-leaping-truffle v4, T1)
+
+- **`components/TeleporterPanel.tsx`** mounts in the inspector for your own built teleporter. It reads the room-state row decoded into `StructureRenderState.teleport` from the mirror at 4 Hz (no Zustand). It lists pairing candidates by kind and distance, never ids. Senders live in `structureActionsClient.ts`.
+- **T2 — on-pad prediction.**
+  - **Walls:** `visitDerivedWalls` emits each teleporter's iris spans (blocking only while SEALED, keys from `-2e9`), so prediction and drawing follow the server walls.
+  - **Push:** `syncPadFields` sets each pad's closing push in predWorld from the room-state phase.
+  - **Re-seed:** an own-ship `poseEpoch` change makes `handleSnapshot` re-seed the local body at the snapshot pose with a fresh `Reconciler`, and that snapshot skips the reconcile (a snap, not a slide). `_localPoseEpoch` resets to -1 on sector handoff.
+  - **Warning:** `TeleportWarning` (top-centre) is derived from room state + the mirror, never a message.
+- **T4 — tolls and pairing prompts.** `TeleportPrompts` (top-centre, `order={2}`, right under the energy bar so nothing above it changes height) shows a toll (`teleport_toll` → Zustand `tollPrompt`, Pay / Don't pay / Always / Never) and pair requests (`teleport_pair_request` → `pairRequests`, Accept / Decline). They are offers, not state. The owner's toll select lives in `TeleporterPanel`; `ForeignTeleporterPanel` asks another owner to pair. Every sender has a case in `teleportClientWireParity.test.ts`.
+
+## Server implementation notes
+
+> Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.
+
+- **`TeleporterSubsystem` (`structures/`)** owns capacitors, pairing, firing rules and the jump cycle:
+  - `update` runs at 10 Hz (`structureTurretTick`);
+  - `pulse` runs at 1 Hz, after production: arrivals unload, then "keep loaded".
+- **Charge:** the battery pass hands surplus left after batteries to `chargeCapacitors` (a `StructureGridHooks` hook). It never discharges batteries.
+- **The cycle:** both pads of a pair run ONE cycle, driven by the initiator, which spends its charge at the swap.
+- **The pad hold** is its own hold row (`tppad:<uid>`, holder type 'fitted'), never base storage. Move it only through `StorageService.padLoad` / `padUnload` / `padSwap` / `takePadForSpill`, each ONE group.
+- **Room state:** `tp*` / `padWeight` fields are assigned on change (A2). `tpPhaseMs` rides along only when the phase changes.
+- **Persisted:** partner, rules and charge go in the sector snapshot `teleport` block (rules re-validated on restore).
+- **Pairing (T1):** same sector, same owner.
+- **T2 — the doors and the ride:**
+  - **Phase effects:** `applyPhaseEffects` turns the pad field on while CLOSING (`SET_PAD_FIELD`) and the iris walls solid while SEALED (`tpiris-<id>-<i>`, spawned once, inactive).
+  - **The swap:** `SectorRoom.swapPadShips` collects riders by liveness class (#17: ACTIVE alive players, LINGERING hulls, swarm kinds 1 and 3), then moves them all (SAB + `SET_POSITION` + pose caches).
+  - **Riders' clients:** an active rider's `ShipState.poseEpoch` bumps and rides the own-ship snapshot entry (#16), and the broadcast grace is extended.
+  - **Spawn clearance** treats a pad as its posts (`pushSolidBoxes`).
+- **T3 — across sectors.**
+  - **Links:** a partner is a `PartnerLink` (local, or remote via `TeleportBroker.find`). The initiator drives both rooms' phases (`setPhase` on the far subsystem). Charge counts hops (`hopsToSector`; test rooms outside the galaxy graph count 1).
+  - **The swap:** `swapAcross` trades the pad holds (`padSwapAcross`, one group), then collects BOTH pads' riders before dispatching either:
+    - pilots go via `TransitOrchestrator.teleportOut` (instant, any sector);
+    - parked hulls, a disconnected pilot's included, are displaced if needed and sent through `handOffHullsTo` (the ONE cross-sector hull hand-off, shared with the fleet warp: far-room `canReceiveHull` checked first, job exported, `removeLingeringHullQuietly`, `markStored` to the new sector, far `receiveLingeringHull`, `sector_change` audit, squads via `receiveFleetSquads`); they arrive guarding where they land, stance and squad kept;
+    - NPC bots go via `TeleportBroker.moveBot` → `LivingWorldDirector.teleportBot` (registered for both directors in `index.ts`). Never move a director bot any other way, or the director's sector record goes stale.
+  - **Rooms register** with the broker on create and unregister on dispose.
+- **T4 — tolls and consent pairing.**
+  - **Toll:** `rec.tpToll` (`set_teleport_toll`, owner-gated, persisted in the `teleport` block, room state `tpToll` + the `TP_RULE_TOLL_HOSTILE` bit).
+  - **When it is asked and settled:** the subsystem's `onArmed` hook → `offerToll` (prompts riders on that pad, skipping friends and allies; a remembered Always/Never answers at once); `answerToll` pays at once; the swap calls `onTollSettle` for both ends → `settleToll` costs non-payers standing or records a hostile act. A late answer is ignored and logged.
+  - **Payment** goes wallet → wallet for a player owner, or into the owner faction's treasury (`EconomyStore.creditTreasury`, persisted). Remembered answers are `EconomyStore.tollPref`.
+  - **Pairing with another owner:** `teleport_pair_request` → `TeleportBroker.addRequest` + a prompt to the owner (`sendToPlayer` reaches them in any room) → `teleport_pair_answer`; only the owner of the asked teleporter can accept. `pair(…, consented=true)` skips the same-owner check.
+- Lock: `tests/integration/sectorRoom/teleporter.test.ts`. Story: [docs/features/teleporters.md](../features/teleporters.md).

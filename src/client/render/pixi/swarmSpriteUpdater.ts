@@ -28,10 +28,11 @@
 
 import { npcFactionDef } from '../../../shared-types/factions.js';
 import { isSpriteInView } from '../spriteUpdateDecisions.js';
-import type { Container, Graphics } from 'pixi.js';
+import type { Container, Graphics, RenderLayer } from 'pixi.js';
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import { getShipKind, type WeaponMount } from '../../../shared-types/shipKinds';
 import { getStructureKind } from '../../../shared-types/structureKinds';
+import { destructionProfileOf } from '../../../shared-types/shipScale/destructionProfile';
 import { wrapPi, rotateMountToward } from '../../../core/ai/WeaponMountController';
 import {
   DAMAGE_FLASH_COLOR,
@@ -47,11 +48,10 @@ import {
   buildBuildEtaText,
   formatResources,
   formatBuildEta,
-  buildChargeTelegraphGfx,
   buildEliteRingGfx,
 } from './spriteBuilders.js';
+import { buildChargeTelegraph, updateChargeTelegraph, type ChargeTelegraph } from './chargeTelegraph.js';
 import type { Text } from 'pixi.js';
-import { getWeapon } from '../../../core/combat/WeaponCatalogue';
 import { minerRangeForKind } from '../minerRangeRing.js';
 import type { MountVisualManager } from '../MountVisualManager';
 import {
@@ -70,6 +70,17 @@ import type { DyingHullHold } from './dyingHullHold.js';
 
 /** S2b: an empty wreck map for frames whose mirror carries none. */
 const NO_WRECKS: ReadonlyMap<number, unknown> = new Map();
+/** Per parent kind: do its wreck pieces draw the dead bake (`fx.deadArt`)?
+ *  Filled once per kind (the profile lookup allocates its argument). */
+const wreckDeadArt = new Map<string, boolean>();
+function wreckDeadArtFor(kindId: string): boolean {
+  let v = wreckDeadArt.get(kindId);
+  if (v === undefined) {
+    v = destructionProfileOf({ type: 'ship', kindId }).fx.deadArt;
+    wreckDeadArt.set(kindId, v);
+  }
+  return v;
+}
 
 /** Campaign 3.2 — everything (besides the pose-core kind, tracked separately
  *  in `spriteKinds` for #20 back-compat) that a swarm sprite's VISUAL is built
@@ -140,6 +151,12 @@ export interface SwarmSpriteCtx {
   /** Dying capitals held on screen until their wreck pieces are drawn; told
    *  of every piece drawn this frame. Absent ⇒ no hold. */
   dyingHulls?: DyingHullHold;
+  /** The camera scale (CSS px per world u) this frame: wreck pieces go to
+   *  their far-zoom LOD where ships become icons. Absent: full art (tests). */
+  cameraScale?: number;
+  /** Where far-zoom wreck specks draw (one batch for all of them). Absent:
+   *  in place, inside each piece. */
+  wreckFarLayer?: RenderLayer;
 }
 
 /** Module-scope scratch for a structure's per-mount arc-local angles passed
@@ -159,8 +176,8 @@ const SERVER_AIM_CATCH_UP = 1.5;
  *  this render-loop hot path (invariant #14). */
 const EMPTY_MOUNTS: readonly WeaponMount[] = [];
 
-/** P3c — drone sprite → its charge telegraph child (weak: dies with the sprite). */
-const chargeTelegraphs = new WeakMap<Container, Graphics>();
+/** Drone sprite → its charge telegraph (weak: dies with the sprite). */
+const chargeTelegraphs = new WeakMap<Container, ChargeTelegraph>();
 /** P4a — a named elite's gold ring, created lazily the first frame the sprite
  *  is known to be an elite (once per sprite, #14), then shown/hidden. */
 const eliteRings = new WeakMap<Container, Graphics>();
@@ -178,16 +195,6 @@ export function scrapHeatTint(ageMs: number): number | undefined {
   return (0xff << 16) | (g << 8) | b;
 }
 
-/** The longest charge weapon range a kind carries (0 ⇒ no charge weapon). */
-export function chargeRangeForKind(shipKind: string | undefined): number {
-  if (!shipKind) return 0;
-  let r = 0;
-  for (const m of getShipKind(shipKind).mounts ?? EMPTY_MOUNTS) {
-    const w = getWeapon(m.weaponId);
-    if (w.mode === 'hitscan' && (w.chargeTicks ?? 0) > 0 && w.range > r) r = w.range;
-  }
-  return r;
-}
 
 
 /** Classic-look rocks: ice and crystal-veined ones read apart from plain rock
@@ -255,10 +262,14 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
             : entry.kind === 0
               ? rockHandleFor(ctx.art, spriteKey, entityId, entry.radius, entry.asteroidResource, -entry.angle)
               : null;
-    // S3: a wreck piece draws its PARENT kind's own baked art (the handle the
-    // live hull used, so no re-bake). Swap the plain piece once it is ready.
+    // S3: a wreck piece draws its PARENT kind's baked art. A capital's is the
+    // handle the live hull used (no re-bake); a sub-cap's is the parent's DEAD
+    // bake (`fx.deadArt`: no glowing robot core, canopy, engines or running
+    // lights; take 10 review, "keeps the robot's glowing eye"). Swap the plain
+    // piece once it is ready.
+    const wreckParent = entry.kind === 4 ? entry.shipKind ?? wreckDescs!.get(entry.wreckId!)!.parentKind : '';
     const wreckArtHandle = entry.kind === 4 && ctx.art.art
-      ? shipHandleFor(ctx.art, spriteKey, entry.shipKind ?? wreckDescs!.get(entry.wreckId!)!.parentKind, undefined)
+      ? shipHandleFor(ctx.art, spriteKey, wreckParent, undefined, wreckDeadArtFor(wreckParent))
       : null;
     if (
       sprite instanceof WreckPieceSprite && wreckArtHandle !== null &&
@@ -288,13 +299,11 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         sprite = sk
           ? buildArtShipSprite(artHandle, () => buildShipGfxFromShape(shapeForKind(sk)))
           : buildDroneGfx(entry.radius);
-        // P3c — a kind with a CHARGE weapon gets a (hidden) wind-up telegraph,
-        // built once here and toggled per frame from `entry.charging`.
-        const chargeRange = chargeRangeForKind(entry.shipKind);
-        if (chargeRange > 0) {
-          const tele = buildChargeTelegraphGfx(entry.radius, chargeRange);
-          tele.visible = false;
-          sprite.addChild(tele);
+        // A kind with a CHARGE weapon gets its (hidden) charge telegraph,
+        // built once here and driven per frame from `entry.chargingMask`.
+        const tele = buildChargeTelegraph(entry.shipKind, entry.radius);
+        if (tele !== null) {
+          sprite.addChild(tele.root);
           chargeTelegraphs.set(sprite, tele);
         }
       } else if (entry.kind === 2) {
@@ -383,11 +392,14 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     sprite.rotation = -lerped.angle;
     if (entry.kind === 1 || entry.kind === 3) updateArtShipLight(ctx.art, sprite); // ships + tumbling scrap
     else if (entry.kind === 4 && sprite instanceof WreckPieceSprite) {
+      if (ctx.cameraScale !== undefined) sprite.setFarZoom(ctx.cameraScale, ctx.wreckFarLayer ?? null); // far-zoom LOD (before update)
       sprite.update(fxNow, ctx.art.sunAz); // S3 light frame + cut-edge glow (game clock)
       // A held dying hull hands over to its pieces the frame ALL of them are
       // drawn; until then the hold hides the ones that have arrived (so it is
-      // shown again here every frame).
-      sprite.visible = true;
+      // shown again here every frame). Sub-capital debris (permanent, ~100×
+      // as many) is not drawn off screen; a capital wreck keeps today's
+      // behaviour (every piece drawn).
+      sprite.visible = sprite.info.profile === 'capital' || isSpriteInView(sprite.x, sprite.y, entry.radius, ctx.viewBounds);
       if (ctx.dyingHulls !== undefined) {
         const desc = wreckDescs!.get(entry.wreckId!)!;
         const total = ctx.wrecks!.geometryFor(desc)?.length ?? 0;
@@ -395,12 +407,13 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
       }
     }
     if (entry.kind === 1) {
-      // P3c — charge-weapon wind-up telegraph (pulses while charging).
+      // The charge telegraph (game clock, #20): the robot's ring + line, or a
+      // glow on each charging gun. Kept above the guns while it shows.
       const tele = chargeTelegraphs.get(sprite);
       if (tele !== undefined) {
-        const on = entry.charging === true;
-        tele.visible = on;
-        if (on) tele.alpha = 0.45 + 0.4 * Math.sin(now / 70);
+        const mask = entry.chargingMask ?? 0;
+        if (mask !== 0 && sprite.children[sprite.children.length - 1] !== tele.root) sprite.addChild(tele.root);
+        updateChargeTelegraph(tele, mask, entry.chargeStartTick, entry.lastUpdateTick, fxNow, entry.displayMountAngles ?? entry.mountAngles, entry.chargeOffsets);
       }
       // P4a — a named elite wears a slowly-pulsing gold ring.
       let ring = eliteRings.get(sprite);
@@ -505,12 +518,15 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     // A capital never washes its whole hull red: a fighter's bolt on a 5,000 u
     // battleship read as the battleship itself flashing (review 2026-11-07).
     const capital = entry.kind === 1 && entry.shipKind !== undefined && getShipKind(entry.shipKind).sizeClass === 'capital';
-    if (
-      !capital && (
-        mirror.damagedShips?.has(spriteKey) ||
-        ctx.localHitTargets.has(spriteKey) ||
-        ctx.remoteHitTargets.has(spriteKey))
-    ) {
+    const flashing = !capital && (
+      mirror.damagedShips?.has(spriteKey) ||
+      ctx.localHitTargets.has(spriteKey) ||
+      ctx.remoteHitTargets.has(spriteKey));
+    if (sprite instanceof WreckPieceSprite && sprite.artFlash) {
+      // Sub-cap debris: the flash goes on the dead art only (never brighter
+      // than dead, and the warm glow keeps its own colour; round-2 review).
+      sprite.setHitTint(flashing ? DAMAGE_FLASH_COLOR : 0xffffff);
+    } else if (flashing) {
       sprite.tint = DAMAGE_FLASH_COLOR;
     } else {
       // v4 M2 — a patrol ship wears its faction's colour (set here, the one
@@ -523,7 +539,10 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
           : entry.kind === 3
             ? scrapHeatTint(now - (scrapBorn.get(sprite) ?? -Infinity))
             : undefined;
-      sprite.tint = fc ?? 0xffffff;
+      const tint = fc ?? 0xffffff;
+      // A wreck piece's tint is white unless hit: write it only on a change,
+      // so settled debris does no per-frame tint work (sub-cap slice 4).
+      if (entry.kind !== 4 || sprite.tint !== tint) sprite.tint = tint;
     }
     // Structures plan, Phase 3 — blueprints (not yet built) render dimmed
     // ("scaffolding"); the fill-bar (ConnectorRenderer) shows build progress.

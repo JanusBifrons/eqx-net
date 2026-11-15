@@ -5,7 +5,7 @@
  * structures (`server/structures/StructureMountTicker`). One set of rules, so
  * a 16" gun on a battleship and a 16" coastal barbette behave the same:
  *
- *  - ENGAGE: the target is within the gun's reach, inside the mount's arc
+ *  - ENGAGE: the target's hull is within the gun's reach of the mount, inside the mount's arc
  *    (a casemate's embrasure, a deck turret's training limits) and slow
  *    enough across its sights to track (`canTrack`).
  *  - LEAD: aim at the first-order intercept for the gun's shell speed, on
@@ -18,6 +18,7 @@
  */
 import { wrapPi } from '../ai/WeaponMountController.js';
 import { canTrack } from './mountTargeting.js';
+import { mountInReach, type MountRangeTarget } from './mountReach.js';
 
 /** A turret fires once its barrel is within this of the lead bearing (rad)
  *  AND would pass within TURRET_FIRE_MISS (world units) of the aim point. */
@@ -45,12 +46,15 @@ export function inMountArc(m: FireControlMount, frameAngle: number, dx: number, 
 }
 
 /** Can the mount engage a target at offset (dx, dy) moving at (rvx, rvy)
- *  relative to it: in reach, in arc and trackable? Hostility and line of fire
- *  are the caller's (they depend on what the shooter is). */
+ *  relative to it: in reach (measured to the nearest point of the target's
+ *  hit shape `target`, `mountInReach`; absent = its centre), in arc and
+ *  trackable? Hostility and line of fire are the caller's (they depend on
+ *  what the shooter is). */
 export function mountCanEngage(
   m: FireControlMount, frameAngle: number, dx: number, dy: number, reach: number, rvx: number, rvy: number,
+  target?: MountRangeTarget | null,
 ): boolean {
-  if (dx * dx + dy * dy > reach * reach) return false;
+  if (!mountInReach(dx, dy, reach, target)) return false;
   if (!inMountArc(m, frameAngle, dx, dy)) return false;
   return canTrack(m.rotationSpeed, dx, dy, rvx, rvy);
 }

@@ -46,6 +46,13 @@ export interface BeamView {
    * is solid (the legacy single-sprite gradient look for remote beams).
    */
   solidLen?: number;
+  /**
+   * Per-beam style override (the capital heavy beam, plan beam-slices §8): its
+   * tint / width / alpha replace the pool's for this beam only, so heavy and
+   * fighter beams share ONE pool and container (same textures, so still one
+   * batch). Absent/null: the pool's style. The texture stays the pool's.
+   */
+  style?: BeamSpriteStyle | null;
 }
 
 export interface BeamSpriteStyle {
@@ -61,6 +68,9 @@ export interface BeamSpriteStyle {
    *  range; the tip fades to nothing). Absent/false ⇒ the flat white texture
    *  (the mining DRILL beam stays a solid connection). */
   taper?: boolean;
+  /** `?fx=new` glow overlay (`FxBeams`) halo / flow / flare size multiplier
+   *  for a beam drawn with this style. Absent: 1 (the fighter look). */
+  glowScale?: number;
 }
 
 /**
@@ -193,12 +203,13 @@ export class BeamSpritePool {
         // end and its Y-center is on the beam's line. scale.x stretches
         // along the beam direction; scale.y becomes the stroke width.
         sprite.anchor.set(0, 0.5);
-        sprite.tint = this._style.tint;
-        sprite.alpha = this._style.alpha;
         this._pool[i] = sprite;
         this.container.addChild(sprite);
       }
       sprite.visible = true;
+      const st = b.style ?? this._style;
+      sprite.tint = st.tint;
+      sprite.alpha = st.alpha;
       // World-space line: from (b.fromX, b.fromY) to (b.toX, b.toY).
       // Pixi screen Y is flipped vs game-space Y per the project's
       // pixiY = -gameY convention (see src/client/CLAUDE.md), so we
@@ -227,24 +238,24 @@ export class BeamSpritePool {
         // the "fade" stretched ~19 200 u and the beam looked solid to infinity /
         // ran off the screen (the "renders infinitely" bug; headless tests use
         // the 1×1 WHITE fallback so they never saw it). textures are 1 px tall.
-        sprite.scale.set(Math.max(solidLen, 0.0001) / this._solidTexture.width, this._style.width);
+        sprite.scale.set(Math.max(solidLen, 0.0001) / this._solidTexture.width, st.width);
         const tailLen = len - solidLen;
         let fade = this._fadePool[i];
         if (tailLen > 0.01) {
           if (!fade) {
             fade = new Sprite(this._fadeTexture!);
             fade.anchor.set(0, 0.5);
-            fade.tint = this._style.tint;
-            fade.alpha = this._style.alpha;
             this._fadePool[i] = fade;
             this.container.addChild(fade);
           }
           fade.visible = true;
+          fade.tint = st.tint;
+          fade.alpha = st.alpha;
           fade.x = b.fromX + Math.cos(rot) * solidLen;
           fade.y = -b.fromY + Math.sin(rot) * solidLen;
           fade.rotation = rot;
           // ÷ texture width (256 for the real gradient) — see the solid-core note.
-          fade.scale.set(tailLen / this._fadeTexture!.width, this._style.width);
+          fade.scale.set(tailLen / this._fadeTexture!.width, st.width);
         } else if (fade) {
           fade.visible = false;
         }
@@ -254,7 +265,7 @@ export class BeamSpritePool {
         // ÷ texture width (256 for the taper gradient) — see the solid-core note;
         // without it remote/enemy beams rendered 256× too long too.
         sprite.texture = this._texture;
-        sprite.scale.set(len / this._texture.width, this._style.width);
+        sprite.scale.set(len / this._texture.width, st.width);
         const fade = this._fadePool[i];
         if (fade) fade.visible = false;
       }

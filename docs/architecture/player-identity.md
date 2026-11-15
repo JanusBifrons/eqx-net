@@ -98,3 +98,35 @@ call-site changes. Logout clears the account key.
   query/body parameter. They should take the auth token and derive the playerId
   server-side.
 - Takeover is per-server-process (all rooms are in one process today).
+
+## Client rules in detail
+
+Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each rule and points here.
+
+### Durable Identity
+
+- `playerId` is persisted in `localStorage` as `eqxPlayerId`. Read at bootstrap, sent in the `identify` handshake.
+- **PR 3a (2026-10-31): while logged in, the playerId is the ACCOUNT's** (`eqxAccountPlayerId`, from auth responses' `user.playerId` + the room `welcome`). `loadStoredPlayerId()` returns it while a token is stored, else the anonymous `eqxPlayerId`; logout clears it. Always go through `identity/token.ts` — never read `eqxPlayerId` directly. The server ignores the claim for a logged-in join anyway. See [docs/architecture/player-identity.md](player-identity.md).
+- Never reuse Colyseus `sessionId` as a durable identifier — it rotates on every reconnect. `playerId` is what lets Phase 8 Limbo reconciliation work.
+
+## Server implementation notes
+
+> Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.
+
+`playerId` (owner of ships / structures / hulls / wave targets) belongs to the **account**, not the browser. Rules (full story: [docs/architecture/player-identity.md](../architecture/player-identity.md)):
+
+- **Logged-in join** → `getAccountPlayerRegistry().resolveForUser(userId, claimedId)` — the account's canonical id; the client's claim is ignored once bound (first join adopts the browser's id). **Never** trust a client-claimed `playerId` for a logged-in session.
+- **Anonymous join** may not claim an account-bound id (canonical or alias) → fresh id.
+- **Transit arrival** carries no auth token → the source `TransitOrchestrator` issues a single-use `issueTransitIdentity(transitToken, playerId)`; the destination honours the id only via `consumeTransitIdentity`. Any NEW server-side seat reservation for a player must do the same.
+- **Second session, same account** → takeover via `PlayerSessionRegistry` (`session_replaced` + close 4002, awaits the old `onLeave`, bounded 3 s). Anonymous duplicates still get a fresh id.
+- **Test-fixture accounts** (`provider='e2e'`, the shared `/auth/dev/test-token` login) are EXEMPT and keep per-browser ids — otherwise every parallel E2E / netgate client would be the same player. Tests of binding use `/auth/register` or a directly signed token.
+- **Persisted playerIds** loaded from JSON snapshots (structure `owner`, lingering `playerId`, director `targetFactionId`) go through `canonicalPlayerId()`; the boot `mergeAccountPlayerIds` re-keys roster rows. Adding a new place that persists a playerId? Map it through `canonicalPlayerId()` on load.
+- Locks: `accountBoundPlayerId.test.ts` (integration), `account-bound-identity.spec.ts` (E2E), `identity/accountIdentity.test.ts`.
+
+## History
+
+- Account binding of `playerId` landed in PR 3a (2026-10-31); its server rules section in `src/server/CLAUDE.md` was headed "Player identity is ACCOUNT-bound (PR 3a, 2026-10-31)".
+
+### Phase 6a foundation (2026-05-13)
+
+`SnapshotMessage.states` is now keyed by `shipInstanceId` on the wire (was `playerId` pre-6a) and each entry carries `playerId` + `isActive` so the client can recover owner identity + skip lingering hulls. **The mirror, predWorld, and reconciler remain playerId-keyed internally** — `ColyseusClient.handleSnapshot` translates the wire format to a playerId-keyed local view at the top of the function (C-ii strategy). Render / HUD / radar code is unchanged. `isActive === false` entries (Phase 6b lingering hulls — not yet emitted by the server) are filtered out at the translation boundary so they're invisible to existing snapshot-apply logic until 6b chooses to surface them. The server's `state.ships` MapSchema also stays keyed by playerId in 6a; only `SnapshotMessage` and the future Phase 6b schema-rekey use shipInstanceId as the key.

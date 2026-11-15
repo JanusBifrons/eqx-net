@@ -28,7 +28,7 @@ Three rules make the numbers trustworthy:
 | Piece | Where |
 |---|---|
 | Scene timeline (spawn N ships at t, warp-in, hostility, end) | `src/server/rooms/scene/SceneScriptRunner.ts`, room option `sceneScript` |
-| Scene catalogue (one entry = one `perf-<id>` room + camera + window) | `src/server/rooms/scene/perfScenes.ts` |
+| Scene catalogue (one entry = one `perf-<id>` room + camera + window) | `src/shared-types/perf/perfScenes.ts` |
 | Server numbers: tick and worker-step percentiles while the scene runs, entity counts | `GET /dev/perf` (`scenePerfRegistry.ts`) |
 | Client numbers: main-thread frame interval, renderer cost (worker or main), long tasks, display objects, heap | `?perfprobe=1` → `window.__eqxPerf` (`src/client/debug/perf/perfProbe.ts`) |
 | Network bytes | the runner, from DevTools network events (no app code; works on a phone too) |
@@ -205,3 +205,16 @@ Add one entry to `PERF_SCENES` with:
 - the minimum live entities for a valid run.
 
 The room `perf-<id>` is registered automatically.
+
+## Who runs it, and when
+
+- **Claude runs it, not the user.** It is part of Claude's own verification before a PR that touches rendering, the server tick, the snapshot path or combat at scale. The verdict table goes in the PR body.
+- **Phone-class checks need no phone.** `--device phone-proxy [--cpu-rate 2]` runs the same A/B on this machine with a throttled CPU and a phone screen. Its absolute numbers are far slower than a real phone; trust only base-vs-head. Don't ask the user to run phone tests or set up adb.
+- **Another session on this machine?** Run with `EQX_SHOWCASE_PORT_OFFSET=300` (perf and showcase) so neither kills the other's servers, and only pass `--ignore-ports` for listeners you know are idle. Showcase takes record the same host-load samples in `manifest.json` (`hostLoad`).
+- **Look and feature R&D** is measured on the game itself behind a flag: `pnpm perf:scenes --base <sha> --head-params <flag>` (see `showcase-pipeline.md` "Filming and review rules").
+
+## History
+
+- **Phone proxy (2026-11-08).** Added because the user could not run phone tests themselves ("I can't do that").
+- **Three verdicts and the 4-rep minimum (2026-11-08).** Before INCONCLUSIVE existed, 3-rep A/Bs (the GPU-lighting runs of #344–#346) were reported GREEN although a 3-rep exact Mann-Whitney can never reach p < 0.05.
+- **Busy-host refusal (2026-11-08).** Reps started rejecting a loaded host (free RAM, CPU, foreign listeners) after parallel sessions skewed results.

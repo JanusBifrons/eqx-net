@@ -6,11 +6,11 @@ This page records what the structure system costs at that scale, and the budget 
 
 ## How it is measured (A0)
 
-**The lattice.** [`buildStructureLattice`](../../src/core/structures/structureLattice.ts) builds a valid base of N structures:
+**The lattice.** [`buildStructureLattice({n, seed, fence})`](../../src/core/structures/structureLattice.ts) builds a valid base of N structures. It measures the structure system at base scale and is the seed of the base generator:
 - a Capital at the centre;
 - a grid of Connector hubs (a vertical spine plus row chains);
 - 2–3 leaves per connector (a Solar / Battery / Cargo Bay / Turret mix, with Solars added until the base is powered);
-- a closed Shield Pylon fence, tapped into the row ends.
+- a closed Shield Pylon fence, tapped into the row ends, with a gate per side (rot 0 top and bottom, 90 left and right), still checked against the real rules.
 
 `structureLattice.test.ts` checks every placement and every link against the real `placementRejection` and `canConnect`, and checks that everything reaches the Capital.
 
@@ -109,7 +109,7 @@ Measured at the citadel (456 structures incl. a fenced lattice) on the dev box.
 | Shield Pylon | 72 × 72 |
 | Connector | 64 × 64 |
 
-`radius` is now the footprint's bounding circle, used for broad checks only.
+`radius` is now the footprint's bounding circle, used for broad checks only: a long Solar's bounding circle covers empty space beside it. A kindless fixture structure (no subtype, from `structurePoses`) is a radius-sized square.
 
 **One box drives every rule, on both sides.**
 - **Collider:** `structureHullPoints`, the footprint rectangle.
@@ -186,3 +186,10 @@ Measured at the citadel (456 structures incl. a fenced lattice) on the dev box.
 - A shield-wall index was planned for A1 but is not needed at these numbers.
 
 **Measurement note.** These A1 numbers were taken while another session ran a game server and a Playwright recording on the same machine (CPU ~64 %). The medians are noisy, so the locks are deterministic op counts and same-run A/B benches, not absolute times.
+
+## History
+
+> Moved from `src/server/CLAUDE.md`.
+
+- **Measured cost today (A0, citadel ≈ 448 structures):** the `structures[]` snapshot slice is ~79 B/row sent to EVERY client in EVERY 20 Hz snapshot → 35 KB/snapshot, ~689 KB/s per client (a 46-structure outpost already adds 69 KB/s, more than the whole per-client baseline). The turret tick is O(turrets × all swarm entities): 5 ms median / 12.6 ms max per 10 Hz call. A route recompute after any topology change costs ~0.94 ms PER ROUTE. Budgets: `src/shared-types/structureBudgets.ts`; ledger + fixes (A1/A2): [docs/architecture/structure-network-scale.md](../architecture/structure-network-scale.md). **Don't add structure-heavy content (NPC bases) before A1/A2 land.**
+- **A1 (turret targeting + routes):** turret targets come from `findNearestTurretTarget`, a per-turret-tick `NearestPointGrid` of turret-targetable drones (rebuilt lazily on first query; any `evictSwarmEntity` marks it stale; same winner as the old scan, including ties). `Grid.route` reads a per-source BFS tree, cached until the next topology change. After A1 the dominant turret-tick cost is the 10 Hz `rebuildStructuresSlice` (allocation-heavy; GC spikes), which A2 removes.

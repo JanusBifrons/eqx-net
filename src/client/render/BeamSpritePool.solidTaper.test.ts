@@ -111,3 +111,21 @@ describe('BeamSpritePool — solid core + falloff taper (P1a)', () => {
     expect(pool.solidLenAt(0)).toBeCloseTo(300, 1);
   });
 });
+
+describe('BeamSpritePool — per-beam style override (capital heavy beam, plan beam-slices §8)', () => {
+  it('a beam with a style draws in its tint and width; the next beam keeps the pool style; one container', () => {
+    const pool = new BeamSpritePool(TAPER_STYLE);
+    const heavy = { tint: 0xb46cff, width: 10, alpha: 1, taper: true };
+    pool.setBeams([{ ...horizontalBeam(375), style: heavy }, horizontalBeam(375)], 2);
+    const [a, b] = pool.container.children as unknown as Array<{ tint: number; scale: { y: number } }>;
+    expect(a!.tint).toBe(0xb46cff);
+    expect(a!.scale.y).toBe(10);
+    expect(b!.tint).toBe(TAPER_STYLE.tint);
+    expect(b!.scale.y).toBe(TAPER_STYLE.width);
+    // Re-using the slot for a plain beam restores the pool style.
+    pool.setBeams([horizontalBeam(375)], 1);
+    expect(a!.tint).toBe(TAPER_STYLE.tint);
+    expect(a!.scale.y).toBe(TAPER_STYLE.width);
+    expect(pool.container.children.length).toBe(2);
+  });
+});

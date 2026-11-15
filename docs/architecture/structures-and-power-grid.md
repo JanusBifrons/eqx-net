@@ -106,13 +106,16 @@ so it unit-tests like `TransitOrchestrator`):
 
 ## The power grid (Phase 3 — shipped)
 
-**Zone-pure core** (`src/core/structures/`):
+**Zone-pure core** (`src/core/structures/`; it works over an abstract `GridNode`
+view, never the server `StructureRegistry`):
 - `Connection.ts` — an undirected intra-sector link (`getOtherNode`, flash
   window, `connectionLength`).
 - `Grid.ts` — `canConnect` (the hub model: hub-required / per-kind
   `maxConnections` cap / edge-to-edge `CONNECTION_MAX_RANGE` / no-self/dup /
   line-of-sight), BFS connected components (**built-only — the dead-end rule:
-  you can't relay THROUGH an unbuilt node**), power aggregation (`powered`
+  you can't relay THROUGH an unbuilt node; an unbuilt node is still a transfer
+  destination, and this is load-bearing for the construction flow's outward
+  expansion**), power aggregation (`powered`
   requires a Capital in the component AND net ≥ 0), and A* routing + a route
   cache dropped on every rebuild.
 - `structureGridConstants.ts` — `CONNECTION_MAX_RANGE`, `TRANSFER_PULSE_MS`,
@@ -332,7 +335,8 @@ and a bump would reset saved structures).
 **Geometry** lives in one zone-pure module, `src/core/structures/gateGeometry.ts`,
 read by both sides (#15):
 - **Collider parts:** a gate's physics body is its posts (and an airlock's side
-  walls) as separate convex parts (`gateColliderPolygons`), on the server worker
+  walls) as separate convex parts (`gateColliderPolygons`, passed to
+  `World.spawnObstacle(..., parts)`), on the server worker
   and the client prediction world, so the gap between them is open. Weapon hits
   test the same parts (`SwarmEntityRecord.boxes`, `rayHitsBox(..., boxes)`).
 - **Spans:** the shield across a gap (`gateSpans`; gate: one, airlock: A at
@@ -470,3 +474,193 @@ connect/disconnect UI, persistence of placed structures.
   seeds a powered grid that mines + fires.
 - `tests/e2e/structure-scenario.spec.ts` — grid power / mining bank climb / turret
   kills drone reach the client (via the pre-built scenario room).
+
+## Client rules in detail
+
+Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each rule and points here.
+
+- **Structure building (structures plan, Phase 2; category tier WS-13/R2.6)** lives off the same dial. The **"Build ▸"** action (`speed-dial-build`) drills a 3-level nav — **Build ▸ category ▸ kind** — via the local `view` discriminated union in [`buildCategories.tsx`](../../src/client/components/buildCategories.tsx) (categories `build-cat-<id>` = Core/Economy/Defence, kinds `build-<id>`; MUI SpeedDial doesn't nest, so each level is a local `view` swap). A dedicated **`speed-dial-back`** action pops one level; the FAB icon reflects the drilled category at the kinds level; every action carries an **always-visible label** (`tooltipOpen` — the touch affordance, since hover-only tooltips were invisible on phones; this puts the action into MUI's static-tooltip branch where direct props spread onto the label span, so **all `data-testid`/`aria-pressed`/handlers route through `FabProps`** to stay on the Fab button — the `fab()` helper). **Picking a kind KEEPS the dial open** — only a deliberate FAB toggle / Escape closes it (resetting to root); `onClose` IGNORES `blur`/`mouseLeave` and `onOpen` IGNORES `mouseEnter`/`focus` (a hover-open made the following FAB click toggle the dial SHUT; `speed-dial.spec.ts` "hovering the FAB first"), so clicking the canvas to position the ghost or tapping Confirm doesn't dismiss the menu — so several structures place in a row without re-navigating. Picking sets the Zustand `placementKind` (discrete UI selection — purity-clean, it's a kind id) and raises [`StructurePlacementBanner`](../../src/client/components/StructurePlacementBanner.tsx). The category taxonomy is **client-only** (no wire/catalogue field, no version bump, no netgate); `buildCategories.test.ts` fails closed if a new structure kind is appended uncategorised. Lock: `tests/e2e/speed-dial.spec.ts` (re-added to the FEATURE tier). **Confirm** sends `place_structure` via [`structures/structurePlacementClient.ts`](../../src/client/structures/structurePlacementClient.ts) `placeStructureAhead(kind)` — drop a fixed clearance AHEAD of the local ship's mirror pose (pure `computePlacementPose` is unit-locked). **Cancel** clears `placementKind`. **World ghost + world-anchored confirm (smoke handoff 2026-06-06, Issue 5 — the follow-up is now BUILT).** While `placementKind` is set, `ColyseusClient.updateMirror` writes the ahead-of-ship preview pose into **`RenderMirror.pendingPlacementPreview`** (spatial → render mirror, NOT Zustand, invariant #2; only the discrete `placementKind` id stays in Zustand) via the same `computePlacementPose` (no preview/commit drift; pure `computePlacementPreview` is unit-locked). `PixiRenderer.update` draws a translucent `buildStructureGfx` silhouette at that pose (world space, `pixiY=-gameY`, rebuilt on kind change) AND projects it via `camera.toScreen(x,-y)` into **`RendererFeedback.placementScreenX/Y`** (the main-thread `Camera` is the worker `Camera` class, so `toScreen` already exists — no new getter). `gameRafLoop` publishes `data-placement-screen-x/y` and moves the (now `position:fixed`, `z 1450`) `StructurePlacementBanner` to that on-screen point via a direct-DOM write (no per-frame React re-render). The banner is **rendered OUTSIDE the Slot system** — the old `bottom-center`/`Z.hud` (10) slot sat UNDER the `Z.mobileControls` (15) thumb cluster on a phone, so Confirm was un-tappable (the user's "it's under the UI"). Both render paths carry it: `pendingPlacementPreview` rides the structured-cloned `RenderMirror`; `placementScreenX/Y` rides the worker FEEDBACK message. Structures render per-subtype in the swarm bucket: [`render/pixi/swarmSpriteUpdater.ts`](../../src/client/render/pixi/swarmSpriteUpdater.ts) branches `kind===2` to `buildStructureGfx(entry.shipKind, radius)` — a regular polygon tinted from the catalogue `color`, sided per subtype (the structure subtype rides the shared `shipKind` byte; see the wire note in the root + the catalogue at `src/shared-types/structureKinds.ts`). **`buildStructureGfx` draws `structureRenderVerts` — the `pixiY=-gameY` flip of the game-space collider hull `structureHullPoints` — NOT the raw points (R2.13/WS-7).** A regular polygon is Y-flip-invariant ONLY for an EVEN side-count, so the ODD-sided structures (turret 3, miner 5, shield_pylon 7) rendered MIRRORED vs their colliders when drawn raw — the "collision box is right but the turret appears upside down" bug. Every entity obeys `pixiY=-gameY`; structures used to be the exception. Lock: `spriteBuilders.test.ts` (`structureRenderVerts` is the collider hull's Y-flip; the turret/miner apex flips sign). **Tap/drag-to-position (2026-06-07 — the deferred follow-up the placement comment promised).** The blueprint no longer drops only ahead-of-ship: while placement is active, canvas pointer events POSITION the ghost instead of panning. The RENDERER owns the follow because it holds the `Camera` (`screenToWorld`) and sees pointer events on BOTH paths — `PixiRenderer.routePlacementPointer` (called from `installCanvasEventListeners` main-thread AND `forwardPointerEvent` worker) sets `_placementChosenX/Y` (game-space): `_placementFollowing` starts true so the ghost tracks the pointer (desktop hover / mobile drag), pointer-up parks it. The ghost draws at the chosen point (falls back to the ahead-of-ship preview before the player interacts) and publishes **`RendererFeedback.placementChosenWorldX/Y`** (+ `placementStuck`); `gameRafLoop` writes `data-placement-world-x/y` and the banner's **Confirm sends `placeStructureAt(kind, x, y)`** at that point (`placeStructureAhead` is now a thin wrapper that computes the ahead pose then calls `placeStructureAt`). The banner stays visible the whole time (Confirm + Cancel both available, positioned over the ghost). **Do NOT move the pointer→world conversion to the main thread** — it needs the renderer's camera, which is worker-side on the desktop default path; the feedback channel is the boundary-legal way back. Lock: `structure-placement-ghost.spec.ts` (C) "ghost FOLLOWS the tap". Locks: `tests/e2e/structure-build-placement.spec.ts` (UI→wire→mirror), `tests/e2e/structure-placement-ghost.spec.ts` (ghost projection + mobile-viewport confirm hit-test + tap-to-position follow), `src/client/structures/structurePlacementClient.test.ts` (geometry + `computePlacementPreview`). **WS-10 (R2.5) — desktop one-click place + cancel.** On DESKTOP the ghost follows the pointer on HOVER and a LEFT-CLICK commits at the cursor immediately: `routePlacementPointer` bumps a monotonic `RendererFeedback.placementConfirmSeq` on a mouse left-up (`pointerType==='mouse'`, `button===0`), which `gameRafLoop` edge-detects → `commitChosenPlacement(kind)` (the SINGLE commit path shared with the touch Confirm banner — same `structure_place_confirm` log + send + pending-ghost) → clears `placementKind`. TOUCH is unchanged (a touch up only parks → Confirm banner). **Cancel** is right-click (window `contextmenu`, `preventDefault` while placing) OR Escape (window keydown) → `setPlacementKind(null)`, both main-thread in `App.tsx` — the canvas DOM events live on the main thread on BOTH render paths, so no worker round-trip. **P6.2 (Equinox Phase 6) — a touch long-press must NOT cancel.** Android Chrome fires `contextmenu` on a touch LONG-PRESS too, so the unconditional cancel meant holding a finger during placement cancelled it (+ the OS long-press haptic — "vibrates then doesn't place"). `App.tsx` now tracks the last `pointerdown`'s `pointerType` (window capture listener) and routes through the pure `decideContextMenuPlacement(hasPlacementKind, lastPointerType)` (`structures/contextMenuPlacement.ts`): `preventDefault` whenever placing (suppress the native menu on both), but CANCEL only when `lastPointerType==='mouse'`. Per-gesture, not `isTouchDevice()` — a mouse on a hybrid touchscreen still right-click-cancels. Paired with `index.html` `user-select:none` / `-webkit-user-select:none` (suppress the long-press text-selection + its haptic). Locks: `contextMenuPlacement.test.ts` + `structure-placement-ghost.spec.ts` (M) "a long-press contextmenu does NOT cancel placement". Locks: `structure-placement-ghost.spec.ts` (hover-follow / left-click-places / right-click + Escape cancel) + `structurePlacementClient.test.ts` `commitChosenPlacement`. **P6.1 (Equinox Phase 6) — TOUCH ghost seeds at screen-centre.** On a touch device the ahead-of-ship preview lands the ghost off-screen / hidden under the bottom-right speed-dial until the first tap (the "appears hidden under the speeddial, then jumps" report). The renderer now seeds `_placementChosenX/Y` from `camera.center` on placement-start AND parks it (`_placementFollowing=false`) so the blueprint is visible at screen-centre + the Confirm banner is ready immediately; a tap/drag then repositions it (or the player just Confirms at centre). DESKTOP is gated out (`PixiRenderer` ctor `isTouch`, threaded from `selectRenderer` main-thread + the worker `BOOT` msg — `isTouchDevice()` is unreliable in a worker) so hover-follow + ahead-of-ship is unchanged. Pure decision `shouldCentreGhostOnActivate(isTouch, hasChosenPoint, isPending)` in `placementPointerDecision.ts` (unit-locked). Lock: `structure-placement-ghost.spec.ts` (L) "TOUCH: picking a kind centres the ghost on select" — `data-placement-stuck==='1'` on select with no tap + ghost projected near the viewport centre.
+
+- **Grid render (structures plan, Phase 3).** `ColyseusClient.syncStructures` mirrors the `SnapshotMessage.structures[]` slice into `mirror.structures` (entityId-keyed → joins the swarm mirror for pose) + dispatches the discrete `gridNetPower` to Zustand on change; the `grid_pulse` handler records `mirror.gridFlashes` (numeric pair key `min*65536+max` — NO per-frame string-key alloc, #14). [`render/pixi/ConnectorRenderer.ts`](../../src/client/render/pixi/ConnectorRenderer.ts) draws the web (one `Graphics`, each edge once from the lower entityId; idle muted-blue vs flowing alpha/width pulse + glow — pure params in [`connectorVisual.ts`](../../src/client/render/pixi/connectorVisual.ts)) + the scaffolding/deconstruct fill-bars, wired BEHIND sprites in `PixiRenderer.update`; `swarmSpriteUpdater` dims unbuilt blueprints (`alpha 0.45`). Endpoint positions are re-read from the resolved `mirror.swarm` `entry.x/y` (structures are static — never re-interpolate). `GridPowerReadout` (top-left HUD chip) shows `gridNetPower`. **Placement preview (Item C + WS-5 R2.17):** while `mirror.pendingPlacementPreview` is set, `ConnectorRenderer.drawPlacementPreview` runs the SAME obstacle-aware `canConnect` the server's `autoConnectStructure` uses and classes each hub `ok`/`blocked`/`overflow`/`skip`. It sorts the `ok` hubs by edge-distance (in-place insertion sort over reused scratch — #14, the preview runs every frame during build mode) and caps the GREEN (counted) lines at `PLACEMENT_MAX_CONNECTIONS = 6`, drawing the rest as RED **overflow** (the would-connect-but-over-cap lines — pure params in `connectorVisual.ts` `previewLineVisualParams('overflow', …)`). Test hooks: `placementPreviewConnectionCount` (green ≤ 6, threaded to `RendererFeedback` → `data-placement-preview-conn-count`) + `placementPreviewOverflowCount` (renderer-field only, NOT a feedback field — avoids growing the per-frame worker payload). Locks: `connectorVisual.test.ts`, `ConnectorRenderer.placementPreview.test.ts`, `tests/e2e/structure-grid-web.spec.ts`. **WS-10 (R2.3) — connection-range ring.** `drawPlacementPreview` also draws a faint cyan ring around the ghost at `min(kind.connectionRange, CONNECTION_MAX_RANGE) + ghostRadius` (pure `rangeCircleVisualParams`; radius test hook `lastRangeCircleRadius`), so the player sees the reach before committing (the Capital's 300 u reads tighter than a leaf's 600 u). **WS-10 (R2.4) — hover outline.** A desktop pointer-move resolves the entity under the cursor via the SAME `pickEntityAt` the tap uses (`PixiRenderer.handleGameplayHover`, gated `!galaxyTapSuppressed() && !_placementActive`), drawn by a lighter sibling [`HoverBracket`](../../src/client/render/HoverBracket.ts) (renderer-owned `_hoveredId`, NEVER Zustand — move cadence, #2; published `data-hover-pick-id`; suppressed on the already-selected entity). DEV hook `__eqxHoverAtWorld` (peer of `__eqxSelectAtWorld`). Locks: `HoverBracket.test.ts` + `tests/e2e/hover-outline.spec.ts`. **Phase-4 C4 — collapse the candidate web on commit.** `drawPlacementPreview` early-returns when `preview.pending === true` (the dim post-Confirm ghost, Issue-7 bridge), so ALL candidate green/red/overflow lines + the range ring vanish the instant the player clicks to place ("remove all but the green"); the real green edge then re-appears via the normal placed-structure `connTo` web once the server echoes it (no connection-model change). Lock: the pending-collapse case in `ConnectorRenderer.placementPreview.test.ts`. **Phase-4 C4/C5 — `EntityStatsPanel` inspector readouts** (the per-structure floating panel): a CONNECTOR-only `CONN N / 6` count (`connTo.length` / `getStructureKind('connector').maxConnections`, gated on the swarm subtype byte — NOT shown for other kinds), and a PER-BUILDING power line `PWR +X/-Y` = the kind's own `powerOutput − powerConsumption` (`data-self-power`) — NOT the grid aggregate every component member shares (`GridPowerReadout` now prefixes `GRID ⚡` for the whole-grid total). All client-resident catalogue lookups → instant, no wire/netgate. Locks: `EntityStatsPanel.test.tsx` + `GridPowerReadout.test.tsx`. **Owner readout + cross-owner line filter (2026-06-14).** The `structures[]` slice now carries `owner` (the placing player's id) → `StructureRenderState.owner`. The inspector shows an `OWNER` line (`data-testid="entity-stats-owner"` / `data-structure-owner`): **"you"** for the local player's base (`owner === mirror.localPlayerId`), else the owner's server-resolved **display name** (`structures[].ownerName`, resolved online via the session + offline via the persistent roster's `playerId→userId→user`). There are no anonymous players — an owner that doesn't map to a DB user is an ORPHANED structure (server-logged via `structure_owner_unresolved`) and shows **"Unknown"**, NEVER a raw playerId. Other players' structures are a core part of the game, not a bug, so they're LABELLED, not hidden. AND `ConnectorRenderer.drawPlacementPreview` SKIPS any structure whose `owner ≠ mirror.localPlayerId` — no green would-connect line, no red overflow, no line of any kind to another player's base (the grid is per-owner server-side, so you genuinely can't connect to it). The LIVE grid web needs no client filter — the server's `connTo` adjacency is already same-owner-only (`autoConnectStructure` skips cross-owner). Slim JSON slice field, no `SWARM_WIRE_VERSION` bump. Locks: the owner cases in `EntityStatsPanel.test.tsx` + the cross-owner skip in `ConnectorRenderer.placementPreview.test.ts` + the owner-overlay E2E in `tests/e2e/structure-scenario.spec.ts`.
+
+### Structure footprints + rotation (plan soft-leaping-truffle v2, phase V)
+
+- **Drawing.** `buildStructureGfx` draws the architectural draw plan (`render/pixi/structureVisuals.ts`, the same plan as the design sheet) at the catalogue footprint. The sprite's rotation carries the structure's quarter turn. Lock: `spriteBuilders.test.ts` checks that every kind's plan stays inside its collider box.
+- **Placement rotation.** It is module state in `structures/structurePlacementClient.ts` (`cyclePlacementRotation`, the R key, main-thread in `App.tsx`), NOT Zustand: `rotation` is a lint-blocked spatial key and this is a discrete selection the renderer reads through the preview's `angle`. It rides `place_structure.rot`.
+- **Client rules use the box too.** The grid view (`mirrorToGridNode`: `halfW/halfH` from the swarm angle) and picking (`pickEntity.ts`) use the footprint box, matching the server.
+
+### Structures at base scale — client cost rules (plan soft-leaping-truffle v2, A3)
+
+- **The connector web has two layers.** `ConnectorRenderer.staticGfx` (behind) holds everything steady: idle edges, turret range rings, up-wall rails, open-gate guides. It rebuilds only when `staticSignature` changes or the zoom moves > 3 %. `gfx` (front) is cleared every frame and holds only what animates. New steady visuals go on the static layer; anything driven by `nowMs` goes on `gfx`, and anything the static layer draws must feed `staticSignature`.
+- **The prediction world streams structures and walls by distance** (`structures/predStructureStreaming.ts`, `PREDWORLD_STRUCTURE_RADIUS`). Don't add every structure to predWorld: each server correction replays the whole world (a citadel made that ~6× dearer). No local ship ⇒ no streaming (everything kept).
+- **Structure sprites off screen are hidden** (`isSpriteInView` with the camera rect).
+
+### Shield walls are DERIVED, not read per pylon (gates, plan soft-leaping-truffle v2)
+
+- `structures/derivedWalls.ts` `visitDerivedWalls` is the ONE place the client works out shield walls: fence walls between any two connected built emitters (pylons + gates, anchored on the nearest gate post) and each gate's spans, blocking per `wallActive` and the `gateOpen` bits.
+- Both `ConnectorRenderer` (draws) and `ColyseusClient.syncPredWalls` (prediction colliders: spawned once, toggled as they block, swept by generation stamp) use it. Don't read `shieldWallTo` for walls again: it only names a pylon's FIRST wall.
+- Gate sprites draw posts and walls only (`omitSpans`); spans are drawn live. The inspector shows **OPENS FOR** and owners cycle it (`sendSetGateAccess`).
+
+### Structure state from ROOM STATE (plan soft-leaping-truffle v2, A2)
+
+- **Where structures come from.** `mirror.structures` is filled from Colyseus room state (`room.state.structures`, join payload + delta patches) by `ColyseusClient.syncStructures`. It decodes each row IN PLACE via `net/structureStateDecode.ts` `decodeStructureState`, applying `STRUCTURE_DEFAULTS` for unset fields and resolving the owner through the interned owner tables.
+- **What the snapshot carries:** only `structureTargets` (turret / mining targets). There is no per-snapshot structures slice anymore.
+- **Shape unchanged.** The mirror row shape is the same, so the renderer, inspector and E2E hooks are untouched.
+- **Lifetime.** The binary full refresh NO LONGER deletes structures (`BinarySwarmDecoder` skips kind 2). The room-state row owns their lifetime: when a row goes, `syncStructures` drops both the mirror row and the swarm pose entry.
+- **Locks:** `tests/integration/wire/structureStateWire.test.ts` (#15) and `BinarySwarmDecoder.test.ts`.
+
+## Server implementation notes
+
+> Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.
+
+**Player-driven structure placement (structures plan, Phase 2).** Beyond the
+testMode `structurePoses` seed, players place structures over the wire:
+`place_structure` / `remove_structure` (zod `.strict()`,
+`src/shared-types/messages/clientMessages.ts`) → `SectorRoom` handlers (resolve
+owner via `sessionToPlayer`) → [StructurePlacementSubsystem](../../src/server/structures/StructurePlacementSubsystem.ts)
+(decision logic over injected hooks — spawn / health-seed / despawn / clamp / id —
+unit-tested like `TransitOrchestrator`) + [StructureRegistry](../../src/server/structures/StructureRegistry.ts)
+(ownership + construction state). Placement model: every structure lands a
+**blueprint** at `SCAFFOLDING_HP_FRACTION` (10 %) HP, `isConstructed:false`,
+non-operational; the **Capital** is the exception (`constructionCost===0` ⇒
+pre-built, full HP, the mineral bank). Placement does NOT pre-charge minerals —
+the cost is drained DURING construction by the Phase-3 grid pulse, so a blueprint
+can be placed with an empty bank and waits. The structure subtype rides the
+**shared `shipKind` byte** (kind=2 path; `SwarmSpawner.spawnStructure` sets
+`rec.shipKind`) — no stride/`SWARM_WIRE_VERSION` bump. `remove` is owner-gated.
+**Phase-4 C2 — placement is OBSTACLE-aware.** `place()` rejected overlap against
+PLACED STRUCTURES only, so a Capital dropped on a rock LANDED ("places on an
+asteroid"). It now routes BOTH the structure AND the asteroid check through the
+shared pure [`canPlaceStructureAt`/`placementRejection`](../../src/core/structures/placementRules.ts)
+(sum-of-radii circle, the same `getObstacles` → `gatherStructureObstacles` hook
+the auto-connect LOS already used). Low-frequency message path — no wire change,
+NO netgate. The client ghost can call the SAME predicate for a red-invalid tint
+(deferred). Locks: `placementRules.test.ts` (pure), `StructurePlacementSubsystem.test.ts`
+(obstacle reject), `tests/integration/sectorRoom/structurePlacementValidation.test.ts`
+(the real `getObstacles` wiring, capital-on-asteroid rejected end-to-end).
+`SectorRoom._internals` exposes `structureRegistry` + the swarm record `shipKind`
+for the integration test.
+
+**Power grid (structures plan, Phase 3).** `StructureRegistry` carries the
+connection adjacency (+ `topologyDirty` + per-structure `minerals`; `remove()`
+severs). `structureGridView.autoConnectStructure` runs on every place, per-owner.
+**WS-5 R2.17 — it MULTI-connects:** it links the placed structure to EVERY
+in-range legal hub (not just the nearest) in deterministic `(edgeDistance, id)`
+order, until the structure's own `maxConnections` OR the global
+`PLACEMENT_MAX_CONNECTIONS = 6` cap is hit (re-checking `canConnect` each
+iteration against the live adjacency, so a hub filling mid-loop is respected). A
+leaf (cap 1) therefore still grabs only the nearest hub — only wide hubs
+(Connector, cap 6) fan out. It returns the NEAREST connected id (back-compatible
+single-id return). Legality is WS-5 R2.10's `canConnect`: capital-only-connectors
+(the Capital links ONLY to a Connector — keyed on `GridNode.isConnector`, NOT
+pylons) + per-kind `connectionRange` (the Capital's is `CAPITAL_CONNECTION_RANGE
+= 300`; `canConnect` takes the `min` of the two endpoints' ranges). The same
+`autoConnectStructure` drives the 1 Hz reconnect sweep (`StructureGridSubsystem`
+retries stranded leaves) and the `structure-scenario-test` seed. The client
+PLACEMENT PREVIEW mirrors this: `ConnectorRenderer.drawPlacementPreview` caps the
+GREEN would-connect lines at `PLACEMENT_MAX_CONNECTIONS` and draws the rest as
+RED **overflow** (`placementPreviewConnectionCount` = green ≤ 6,
+`placementPreviewOverflowCount` = the over-cap remainder). **Multi-connect grows
+the `structures[].connTo` JSON slice length → netgate (invariant #8) applies to
+R2.17.** `StructureGridSubsystem.pulse()` is the **1 Hz
+heartbeat** — directly callable so integration tests drive it deterministically
+(no wall-clock wait), `unref`'d + OFF the 60 Hz tick: rebuild-if-dirty →
+construction flow (drain a routable Capital; complete ⇒ build + reset HP + dirty;
+dry ⇒ pause) → repair → deconstruction → flashes. `SectorRoom` owns the timer,
+rebuilds the `structures[]` slice (entityId-keyed; same array ref per recipient,
+absent when none), broadcasts `grid_pulse`, severs on structure death via
+`evictSwarmEntity`. `_internals.pulseStructureGrid` + `getStructuresSlice` are
+the test seams. **Netgate (invariant #8): the `structures[]` slice + `grid_pulse`
+touch the snapshot/broadcast path, so `pnpm e2e:netgate` is required for grid
+changes.** **Phase-4 C3 — the slice carries `hpPct` (0-100 INTEGER percent, the
+`drones[].hp` convention) for EVERY structure**, sourced in `rebuildStructuresSlice`
+from `swarmHealth` ÷ `getStructureKind(kind).maxHealth`. The client decodes it to
+`StructureRenderState.hpPct` (0..1) so the inspector renders the hull bar on the
+FIRST polled frame after selection — killing the "hull pops in" round-trip lag
+(the `entity_stats` packet now only refines it). 🔴 netgate (slice byte change;
+PASS confirmed). Lock: `entity-inspect.spec.ts` first-frame no-spinner assertion. Phase 4 adds the mining + transfer pulse steps (`findNearestAsteroid`
+hook; power-gated extraction → local buffer → haul to Capital). Phase 5 adds
+`tickTurrets` on a faster `TURRET_TICK_MS` timer — built+powered turrets target
+the nearest drone (`findNearestDrone`) and fire (`applyDamage` + `laser_fired`);
+a **bespoke fire path**, NOT `AiFireResolver` (which targets players). **WS-8
+(R2.15) generalised `tickTurrets`** from the hard-coded `'turret'` kind to a
+data-driven predicate (a structure with a `weaponRange` + a weaponised mount —
+auto-includes the new `laser_bolt_turret`/`missile_turret`, EXCLUDES the Miner)
+and dispatches on the bound weapon's `mode`: `hitscan` → the continuous beam
+(unchanged); `projectile` → a dodgeable bolt via `spawnServerProjectile`;
+`missile` → a homing missile via `spawnServerMissile`. The new kinds use the
+SHOT model — one shot per the KIND's `fireRateMs` (NOT the weapon's rapid player
+cooldown, which would firehose) — damage landing on impact via the
+projectile/missile sim (rendered off `projectiles[]`/`missiles[]`). Two guards:
+the projectile swarm-pass skips the firing owner (`rec.id === proj.ownerId`) so
+a bolt can't detonate on its own turret; and `isMissileTargetHostile` gives a
+`pstruct-` owner a **drones-only** (swarm kind 1) homing predicate — without it
+a structure missile falls through to the player-shooter branch and targets other
+players + friendly structures. Missile SPLASH is unchanged (CAN hit the owner's
+base — realistic, by user choice). 🔴 netgate (new projectile/missile
+spawn+broadcast). The testMode **scenario trigger** (`prebuiltStructures`/`scenarioDrones`/
+`scenarioAsteroids` → `seedStructureScenario`, the `structure-scenario-test`
+room) seeds a pre-built powered grid for E2E (the place-ahead UI overlaps stacked
+placements; this seeds the end state). **Batteries (batteries plan)** add a full
+stored-power buffer: `processBatteryPower()` runs each pulse (before the
+power-gated steps) — a component SURPLUS charges its batteries (`storedPower` on
+`StructureRecord`, capped at the catalogue `powerStorageCapacity`); a DEFICIT
+discharges them to keep the component `powered` IF their combined charge covers
+the per-pulse shortfall, else it browns out. The subsystem's `powerSummaryFor`
+is now **battery-backed** (raw `netPower`, but `powered` stays true while charge
+covers a deficit) — the turret/miner gates AND the `structures[]` snapshot slice
+read it. The slice carries `storedPower`/`storedPowerMax` for batteries
+(inspector CHRG readout); no `SWARM_WIRE_VERSION` bump (JSON slice). The pure
+`Grid` stays instantaneous (its golden tests hold); the battery layer is
+server-side, over `Grid.forEachComponent`/`componentMembers`. See [docs/architecture/structures-and-power-grid.md](../../docs/architecture/structures-and-power-grid.md).
+
+**Shield fence (shield-fence plan).** `shield_pylon` is a HUB; two built+connected
+same-owner pylons project a blocking **shield wall** in their span. The wall is a
+DERIVED collider (geometry from the two pylon poses via the pure
+`core/structures/ShieldWall.ts`), NOT a swarm/wire entity. `ShieldWallManager`
+(`src/server/structures/`) forms/teardowns walls + drives the collider (worker
+`SPAWN_WALL`/`SET_WALL_ACTIVE`/`REMOVE_WALL`; **wall bodies live in `PhysicsWorld`'s
+`wallBodies` map, NOT `this.bodies`**, or the per-tick `getAllShipStates` SAB-write
+hits a slot-less body). Damage = grid SURPLUS soaks → component BATTERIES drain →
+overwhelm both = STUN (collider disabled). Ships block free (static body); weapons
+absorb main-thread (`blockBeamAtWall` in the fire resolvers, `wallBlocksProjectile`
+in `ProjectilePipeline` → `ShieldWallManager.blockShot`/`blockProjectile`). Two
+JSON `structures[]` fields (`shieldWallTo`/`wallActive`) drive the client span +
+predWorld collider (`syncPredWalls`). AI targets pylons (`structurePriority`).
+**R2.18 (WS-6) — a pylon is UNDAMAGEABLE while ANY of its walls is up.** The
+single damage choke point `SectorRoom.applyDamage` guards: if the target is a
+`shield_pylon` and `ShieldWallManager.absorbForPylon` finds an ACTIVE wall, the
+hit is routed into that wall (via the SAME `onWallHit` grid-power model
+span-crossing shots use → surplus soak → battery drain → stun) and the pylon
+takes 0 (no damage event). Covers EVERY source — beams/turrets/projectiles AND
+ramming all funnel through `applyDamage`. `absorbForPylon` iterates ALL walls on
+the pylon and absorbs at the first ACTIVE one (NOT `wallStateFor`, which returns
+only the first wall's state — a 3-wall pylon must stay protected if any single
+wall is up). So a pylon-with-active-wall takes TWO lethal hits to kill: the
+first stuns the wall, the second (now wall-down) lands. Wall stun timing is
+wall-clock (`Date.now`), matching every other `shieldWalls` call site.
+**Root-cause fix shipped alongside:** the swarm shield-regen pass borrowed a
+fighter shield for damaged structures + posted `SET_HULL_EXPOSED` (collider
+corruption); now gated on `rec.kind === 1`. See [docs/architecture/structures-and-power-grid.md](../../docs/architecture/structures-and-power-grid.md) + [docs/features/shield-fence.md](../../docs/features/shield-fence.md).
+
+### Structure network at base scale
+
+- **Generated structures use the real rules.** `StructurePlacementSubsystem.place(…, { skipAutoConnect: true })` + `structureGridView.connectExplicit` (re-checks `canConnect` against the live adjacency) let a generated base supply its INTENDED graph — greedy auto-connect would e.g. link gate pylons and close a gate. Players never pass `skipAutoConnect`.
+- **Phase V (large footprints):**
+  - **Structure rotation.** `place_structure` carries an optional `rot`, which the server snaps to 0/90/180/270. It is stored on `StructureRecord.rot` and the cached `halfW/halfH`, persisted in the sector snapshot, and becomes the body angle at spawn.
+  - **Weapon paths.** They use the swarm record's `halfW/halfH` box for kind 2.
+  - **Test and scenario layouts** live in ONE place: `rooms/scenarioLayouts.ts` (`SCENARIO`, `STRUCTURE_SCENARIO_PREBUILT`), shared by `index.ts`, `showcaseRooms.ts` and the integration tests. Footprints are 3–6× the old radii, so a hand-placed layout must be re-derived against the real boxes, not guessed.
+- **Gates:**
+  - `GateController` (`structures/GateController.ts`) steps every built gate on the 10 Hz structure tick, BEFORE `ShieldWallManager.update`. Only ACTIVE player ships open gates (#17).
+  - `ShieldWallManager` forms walls between ANY two connected emitters (`isShieldEmitterKind`: pylons + gates) plus each gate's spans; `wallsUpFor(id)` is the per-emitter WALL_ACTIVE flag.
+  - Room state `gateOpen` / `gateAccess`; `set_gate_access` is owner-gated. Test room `gate-test` (open gate + owner-only gate).
+- **A2 (structure state → ROOM STATE):** structure grid state is `SectorState.structures` (MapSchema keyed by the decimal entityId; `StructureState` in `schema/SectorState.ts`), synced by `SectorRoom.rebuildStructuresSlice` (name kept; same 1 Hz pulse / 10 Hz turret tick / placement call sites). **Rules:**
+  - **Assign only on change, and only away from the default.** Fields have NO initialisers: Colyseus schema v3 encodes every ASSIGNED field on join, and initialisers count as assignments. Unset means `STRUCTURE_DEFAULTS` (`shared-types/structureStateWire.ts`); compare `(st.f ?? DEFAULT) !== value` before writing.
+  - **Owners are interned** (`structureOwners` / `structureOwnerNames` + `ownerIdx`).
+  - **The snapshot carries only `structureTargets`** (flat triples).
+  - **Binary channel:** a sleeping out-of-interest structure rides only every `STRUCTURE_OUT_OF_INTEREST_FULL_EVERY` (5th) full refresh. Room state owns structure lifetime on the client.
+  - **Test view:** `_internals.getStructuresSlice()` is the pre-A2 row shape rebuilt from room state.
+
+## History
+
+- **Structure rotation reaches the physics body.** `SwarmSpawner` forwards the spawn angle for structures (kind 2) as well as scrap, and primes the SAB angle. (It used to forward it for scrap only, so rotated structures collided and drew at 0° — locked by `structureRotation.test.ts`.)

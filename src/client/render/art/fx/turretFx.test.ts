@@ -40,6 +40,9 @@ describe('firing reactions', () => {
     expect(familyFor('laser', 'projectile', false)).toBe('bolt');
     expect(familyFor('hitscan', 'hitscan', false)).toBe('beam');
     expect(familyFor('charge-laser', 'hitscan', true)).toBe('charge');
+    // A charging shell gun (the railgun) draws as a charge gun too.
+    expect(familyFor('naval_l', 'projectile', true)).toBe('charge');
+    expect(familyFor('heat-seeker', 'missile', true)).toBe('missile');
     expect(familyFor('heat-seeker', 'missile', false)).toBe('missile');
   });
 });

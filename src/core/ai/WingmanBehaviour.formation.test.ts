@@ -159,7 +159,11 @@ describe('WingmanBehaviour — formation role', () => {
     expect(b.order).toBeNull();
     expect(b.mode).toBe('defend');
     stepAll(m, leader, view);
-    expect(b.activity).toBe('formingUp');
+    // Back in its formation role at once: forming up, or already guarding when
+    // the brake left it inside the slot (one mass source, #611: a fighter
+    // brakes harder than this test was first tuned for).
+    expect(b.formationLeaderId).toBe('lead');
+    expect(['formingUp', 'guarding']).toContain(b.activity);
     for (t = 0; t < 60 * 30 && b.activity !== 'guarding'; t++) stepAll(m, leader, view);
     for (t = 0; t < 120; t++) stepAll(m, leader, view);
     expect(b.activity).toBe('guarding');

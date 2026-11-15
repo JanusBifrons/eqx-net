@@ -14,7 +14,12 @@
  * through a kinematic model of `applyShipInput` (thrust / reverse along the
  * hull axis, the capital's torque turn, damping, grip, speed clamp).
  */
-import { describe, it, expect } from 'vitest';
+import { afterAll, describe, it, expect, vi } from 'vitest';
+
+// Pinned to legacy naval ranges (the default is real): the runs below are
+// sized to the legacy stand-off. Set before any import builds the catalogue.
+vi.hoisted(() => vi.stubEnv('EQX_NAVAL_RANGE', 'legacy'));
+afterAll(() => vi.unstubAllEnvs());
 import { HostileDroneBehaviour, BROADSIDE_STANDOFF } from './HostileDroneBehaviour.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { shipTuning } from '../../shared-types/shipScale/tuning.js';

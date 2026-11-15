@@ -63,3 +63,18 @@ Access to the singleton client is via `src/client/net/clientSingleton.ts` (`getG
 - "Set as home" button next to the Home pill — committing `setHomePos(currentX, currentY)` and persisting.
 - Per-sector bounds: widen `clampToSectorBounds(x, y, sectorKey?)` and pull overrides from `GalaxySector`.
 - A `transit_state` cancel reason for "invalid_arrival" if the policy ever moves from silent-clamp to hard-reject.
+
+## Client rules in detail
+
+Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each rule and points here.
+
+- **Configurable arrival picker (2026-05-10)** lives in [layout/Drawer/tabs/GalaxyTab.tsx](../../src/client/layout/Drawer/tabs/GalaxyTab.tsx). 3-mode `ToggleButtonGroup` (`xy` / `same` / `home`) below the "Show galaxy map" button; mode + values persisted via `settingsStorage.ts`. `App.tsx` `handleEngageTransit` reads the mode from Zustand (non-subscribing `useUIStore.getState()`), builds an optional `arrival: { x, y }` (clamped on blur in the picker), and passes it to `engageTransit`. The default `'same'` mode sends `undefined` — wire-compatible with the legacy behaviour, so PC users (no UI flip) are unaffected. The "Same" mode also displays a 5-second snapshot of the local ship's x/y read from the render mirror via `getGameClient()` (sanctioned low-cadence mirror read path; see [net/clientSingleton.ts](../../src/client/net/clientSingleton.ts)). **Do not** extend `getGameClient()` use to per-frame data — Zustand purity #2 still rules. See [docs/features/configurable-arrival.md](configurable-arrival.md).
+## Server implementation notes
+
+> Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.
+
+### From the server Thresholds section
+
+Moved verbatim from the old "Thresholds" section of `src/server/CLAUDE.md`. The rules stay there in short form; current values are in [server-thresholds](../architecture/server-thresholds.md). Dates, plan names and "was" notes below are history.
+
+- **Configurable arrival (2026-05-10)**: `EngageTransitSchema` carries an optional, strict `arrival: { x: finite, y: finite }` (`src/shared-types/messages.ts`). When present, `TransitOrchestrator.beginTransit(playerId, target, arrival?)` stashes it on the in-flight record; `commitTransit` writes the LimboPayload's `x/y` from `clampToSectorBounds(arrival.x, arrival.y)` instead of the SAB pose. Velocity, angle, and angvel are **always** SAB — only the landing point is overridable. Bounds: `SECTOR_PLAYABLE_HALF_EXTENT = 5000` in `src/shared-types/sectorBounds.ts`, shared with the client. Server clamp is defense-in-depth; the client also clamps on input blur. Absent `arrival` ⇒ legacy SAB-pose path (regression-locked in `TransitOrchestrator.test.ts`). See [docs/features/configurable-arrival.md](configurable-arrival.md).

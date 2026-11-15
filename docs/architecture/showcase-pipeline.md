@@ -36,8 +36,9 @@ Output (gitignored) lands in `showcase-out/`:
    profile, then cut back into reel order.
 3. **Browser.** Headless Chromium on the **real GPU** (`--use-angle=d3d11`).
    SwiftShader renders the warp/shockwave filters black, so the recorder logs
-   the GPU name. Every URL carries `worker=0&diag=0&cleanworld=1` (no debug
-   world overlays: spatial grid, turret aim guides, NPC callsigns), and the take aborts if
+   the GPU name. Every URL carries `worker=0&diag=0`, the full HUD
+   (`FILM_HUD`) and the player's look (`PLAYER_LOOK`), with no `cleanworld`
+   (see "Filming and review rules"), and the take aborts if
    diag is on or `window.__eqxCinema` is missing at that ref.
 4. **Enter, prepare, wait, record.**
    - Wait until in-game (store join flags), then 1.2 s more for the arrival flash.
@@ -118,9 +119,10 @@ with no frame gap over 100 ms. Each shot gets **up to 3 takes**; the smoothest
 is kept and only it is encoded. A clip that never passes is flagged in the
 manifest. (The first gate, ≥ 20 fps, let visibly choppy clips through.)
 
-**Debug overlays never reach footage**: the recorder always adds
-`cleanworld=1` (no spatial grid, turret aim guides, NPC callsigns or
-server-position ghost) and `noselfdmg=1` on invulnerable takes.
+**Clips film what a player sees**: the recorder no longer adds
+`cleanworld=1`, so world overlays a player has on (the grid, aim guides,
+callsigns) are filmed too ("Show everything", 2026-11-10; `showcase/recorder.ts`
+`FILM_HUD`).
 
 ## Adding a shot (the repeatable part)
 
@@ -139,7 +141,10 @@ server-position ghost) and `noselfdmg=1` on invulnerable takes.
 3. Run `pnpm showcase --shot <id>` and check the contact sheet.
 4. `tests/unit/showcaseCoverage.test.ts` fails CI if any `docs/features` or
    `docs/architecture` page is neither filmed (`shot.docs`), nor in
-   `SHOWCASE_EXEMPT`, nor in `SHOWCASE_PENDING`, each with a reason. It also
+   `SHOWCASE_EXEMPT`, nor in `SHOWCASE_PENDING`, nor exempt in the doc itself
+   (a `<!-- showcase-exempt: <reason> -->` line in its first 20 lines), each
+   with a reason. Prefer the in-doc line for a page that will never be filmed
+   (internals): it keeps a docs PR markdown-only, so CI skips the suites. It also
    fails if a shot names a room or sector the server doesn't define. **A new
    feature doc therefore forces a decision about the video.**
 
@@ -203,6 +208,27 @@ subject (feed-forward cancels spring lag), `frame` for groups, `path` for
 dollies and `orbit` for establishing shots. Keep the framed area within about
 ±3000 u of the piloted ship, because the client only receives its interest
 window.
+
+## Filming and review rules
+
+Root `CLAUDE.md` keeps the short form of these; this is the full text.
+
+**Record the game as it is; never stage it for the video (standing user directive).** Clips are for the owner to judge the look and feel. User: "Don't hide shit for a good demo, that's the antithesis of what I want you to do. Record as is and then let me be the judge. Genuine bugs, stutter, lag, stuff not firing, bad graphics, all fine to fix on sight. But don't be like 'this just doesn't make a good video but is working as intended so I'll change it for the video'." So:
+- Never hide game UI or effects, re-stage a shot, move a scene, or change behaviour only to make a clip look better.
+- The camera follows the pilot's ship as in play; a pan or free camera only in spectator mode (`ctx.spectate()`; `ctx.cinema.play` throws otherwise), and no test cue changes play during the take (setup before it is fine).
+- Fix genuine bugs found while filming or reviewing (with the failing test first, invariant #13).
+- A hostile reviewer's "works, but makes a poor video" findings go to the owner as notes, not into changes.
+- Clips film the full HUD with no `cleanworld` (user, 2026-11-10: "Show everything"). `targetUrl` forces `FILM_HUD = 'full'` and ignores a shot's `hud`; lock `showcase/targetUrl.test.ts`.
+
+**Shots film the player's look, not the test look.** The capture browser is automated, and automation defaults to classic art and baked lighting (`artMode.ts`). `targetUrl` therefore adds `PLAYER_LOOK` (`art=machined&fx=new&shiplight=high`, a desktop player's default) to every shot; a shot's params or `EQX_SHOWCASE_PARAMS` override it. Lock: `showcase/targetUrl.test.ts` compares it with the game's own desktop default.
+
+**A hostile reviewer checks every clip before the user sees it (standing user directive).** The take QA gates measure frame pacing, not whether the clip shows what it should. Before handing a clip to the user, give a hostile reviewer agent full-resolution frames around every key moment (10 fps crops, not a contact sheet) plus the clip's goal in one sentence, and ask it to find anything that looks wrong: an effect not lined up with its ship, a ship jumping or appearing in the wrong place, something pointing the wrong way, old effects that should be gone. Send every reviewed clip to the user straight away: one that passes the review is presented as finished; one that fails is shared as WIP, labelled so, with the review's caveats ("share first with a caveat so I get a feeling"; "present it as finished, otherwise share as a WIP"); then fix what it found and re-film. The user's words: "this is easy to identify surely? It just doesn't look right".
+
+**Smoothness gets its own check: 10 fps frames can't show it.** For every camera move or fast motion in a clip, compare each frame with the next at the full 60 fps (ffmpeg `psnr` with a `stats_file`, as in LESSONS 2026-11-12): runs of near-identical frames (PSNR > ~55 dB) while the scene should be moving, or one frame that jumps much further than its neighbours, are a stall or a lurch. Before blaming the recorder, check the game without recording (`?perfprobe=1`, `__eqxPerf`) and, for a camera move, the per-frame camera scale or position. Then report it or fix it like any other finding.
+
+**Look and feature R&D happens in the game, behind a flag, on a branch (standing user directive).** Not in a parallel renderer. Film it with `EQX_SHOWCASE_PARAMS=<flag>` on existing shots and measure it with `pnpm perf:scenes --base <sha> --head-params <flag>`. Example: GPU-lit art (`?shiplight=gpu`, [gpu-lit-ships.md](gpu-lit-ships.md)).
+
+**Before EVERY recording**, clean up first (root `CLAUDE.md` "Clean up at every stage") and check free RAM; use `EQX_SHOWCASE_PORT_OFFSET` when another session is recording.
 
 ## Known limits
 
@@ -307,3 +333,12 @@ in the audit's conversion list.)
   are found by `data-testid` at run time, with a logged warning and a
   thumb-position fallback when one is missing. (The `?ui=a|b|c` variant takes,
   the auto-fire toggle and manual aim are retired; lock-to-fire is universal.)
+
+## History
+
+- **Frame-rate QA counts DIFFERENT frames, at the encode (2026-11-10).** QA said "60 fps" while clips showed ~25 different frames a second: ffmpeg's concat demuxer read each JPEG at a 25 fps time base (fix: `option framerate 60` per entry, `CONCAT_FRAMERATE`). Takes now gate `uniqueFps` (captured, byte-identical repeats count once) and `encodedUniqueFps` (ffprobe of the concat list) at the same ≥ 55 as `deliveredFps`; all are in `manifest.json`. Lock: `showcase/cadence.test.ts`. See `docs/LESSONS.md` 2026-11-10.
+- **Player look (2026-11-10).** User: the clips "didn't have the full graphics and shadows turned on", which led to `PLAYER_LOOK`.
+- **Record as is (2026-11-10)** and **full HUD, no `cleanworld`** (2026-11-10, "Show everything"): the recorder used to add `cleanworld=1` to hide debug world overlays.
+- **Hostile review (2026-11-07)**; share-first-as-WIP added 2026-11-12.
+- **Smoothness check (2026-11-12, the long-guns zoom "chugs like crazy").** The reviewer passed a clip whose camera lurched and stopped six times a second on every wheel notch, and the take QA said 60 different frames a second because the HUD text kept changing while the world stood still.
+- **R&D in the game (2026-11-08).** The art lab lacked turrets, the game's effects, shields, fences and sky, so its clips misled ("I just don't think doing all of this work on some weird parallel system makes sense. It should be in the game, just use flags and switches and ultimately git branches to isolate").

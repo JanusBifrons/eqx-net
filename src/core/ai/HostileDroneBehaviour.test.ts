@@ -2,11 +2,13 @@ import { describe, it, expect } from 'vitest';
 // Some cases lock AUTHORED 1× numbers (ranges, distances inside today's
 // standoff); they run at 1× via `pnpm test:authored-scale` (ship-scale.md).
 import { AT_AUTHORED_SHIP_SCALE } from '../../shared-types/shipScale/config.js';
-import { HostileDroneBehaviour } from './HostileDroneBehaviour.js';
+import { HostileDroneBehaviour, hullFireCone } from './HostileDroneBehaviour.js';
+import { shipBubbleRadius } from '../combat/shipHitShape.js';
 import { DriftingAsteroidBehaviour } from './DriftingAsteroidBehaviour.js';
 import type { AiEntity, AiWorldView } from '../contracts/IAiBehaviour.js';
-import { WEAPON_COOLDOWN_TICKS } from '../combat/Weapons.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
+import { getWeapon } from '../combat/WeaponCatalogue.js';
+import { SNAP_TURN_EASE } from './virtualPilot.js';
 import { boostOf, stepKinematic, throttleOf, turnOf } from './pilotTestKit.js';
 
 const droneAt = (x: number, y: number, angle = 0, angvel = 0): AiEntity => ({
@@ -326,20 +328,16 @@ describe('HostileDroneBehaviour — COMBAT pursuit', () => {
     expect(intent.fire).toBeUndefined();
   });
 
-  it('respects cooldown (no fire on second call within WEAPON_COOLDOWN_TICKS)', () => {
+  it('holds the trigger while aimed: a request every tick (the resolver owns the cooldown)', () => {
+    // A pilot holds fire; AiFireResolver fires when reloaded, locked and
+    // bearing. A brain-side cooldown spent on a shot the resolver held left
+    // the gun silent for a whole reload (attackRunTurnBack: 0 hits).
     const b = new HostileDroneBehaviour();
     b.markHostile('p', 0);
-    const aimed = viewWith([{ id: 'p', x: 0, y: 100 }], 100);
-    const first = b.tick(droneAt(0, 0, 0, 0), aimed);
+    const first = b.tick(droneAt(0, 0, 0, 0), viewWith([{ id: 'p', x: 0, y: 100 }], 100));
     expect(first.fire).toBeDefined();
-
-    const tooSoon = viewWith([{ id: 'p', x: 0, y: 100 }], 100 + WEAPON_COOLDOWN_TICKS - 1);
-    const second = b.tick(droneAt(0, 0, 0, 0), tooSoon);
-    expect(second.fire).toBeUndefined();
-
-    const offCooldown = viewWith([{ id: 'p', x: 0, y: 100 }], 100 + WEAPON_COOLDOWN_TICKS);
-    const third = b.tick(droneAt(0, 0, 0, 0), offCooldown);
-    expect(third.fire).toBeDefined();
+    const next = b.tick(droneAt(0, 0, 0, 0), viewWith([{ id: 'p', x: 0, y: 100 }], 101));
+    expect(next.fire).toBeDefined();
   });
 
   it('lead-aims a moving target (off-axis aim error when target has lateral velocity)', () => {
@@ -350,13 +348,27 @@ describe('HostileDroneBehaviour — COMBAT pursuit', () => {
     // and (with that error > tolerance) NOT firing this tick.
     const b = new HostileDroneBehaviour();
     b.markHostile('p', 0);
+    // The target's speed comes from the live kind so the lead clears the
+    // pilot's dead-band at every ship scale. A target 200 u dead ahead
+    // crossing at vx, with bolt speed S, gives a lead angle of atan(vx / S).
+    // The eased snap turn (`SNAP_TURN_EASE`) leaves an error under
+    // deadbandSteps turn steps alone; a step is maxAngvel / 60 (0.07 rad at
+    // 2x, 0.14 rad at 1x: band 0.175 / 0.35 rad). Aim for band + 2 steps.
+    const kind = getShipKind(null);
+    const step = kind.maxAngvel / 60;
+    const lead = (SNAP_TURN_EASE.deadbandSteps + 2) * step;
+    const bolt = getWeapon(kind.mounts?.[0]?.weaponId ?? 'hitscan');
+    const boltSpeed = bolt.mode === 'hitscan' ? 1e6 : bolt.speed;
     const moving: AiWorldView = {
-      players: [{ id: 'p', x: 0, y: 200, vx: 100, vy: 0 }],
+      players: [{ id: 'p', x: 0, y: 200, vx: boltSpeed * Math.tan(lead), vy: 0 }],
       tick: 100,
       dtSec: 1 / 60,
     };
-    const intent = b.tick(droneAt(0, 0, 0, 0), moving);
-    expect(turnOf(intent)).toBe(-1); // leads to the right (+x)
+    // The pilot reads a smoothed error (no taps on a jittering heading), so
+    // a small lead offset may take a tick or two to start the turn.
+    let turn = 0;
+    for (let i = 0; i < 4 && turn === 0; i++) turn = turnOf(b.tick(droneAt(0, 0, 0, 0), { ...moving, tick: 100 + i }));
+    expect(turn).toBe(-1); // leads to the right (+x)
   });
 
   it('FIRES along the lead vector (intercept point), not straight at the target', () => {
@@ -368,17 +380,27 @@ describe('HostileDroneBehaviour — COMBAT pursuit', () => {
     // intercept point.
     const b = new HostileDroneBehaviour(); // fighter (bolt), muzzle 1600
     b.markHostile('p', 0);
-    // Drone at origin facing +y; target dead ahead at (0,200) moving +x.
+    // Drone at origin facing +y; target dead ahead at (0,200) crossing +x.
     // Intercept is to the RIGHT, so fire.dirX must be positive (it would
     // be exactly 0 — straight up the body-forward axis — pre-fix).
+    // A fixed gun fires only with the nose inside the cone the target's hull
+    // covers (`hullFireCone`), so the crossing speed comes from the live kind:
+    // a lead of 3/4 of that cone (sin θ = vx / bolt speed). A fixed vx 200
+    // put the lead outside the cone at the authored 1x scale (narrower hulls),
+    // where the pilot rightly held fire.
+    const kind = getShipKind(null);
+    const bolt = getWeapon(kind.mounts?.[0]?.weaponId ?? 'hitscan');
+    const boltSpeed = bolt.mode === 'hitscan' ? 1e6 : bolt.speed;
+    const shotRadius = bolt.mode === 'hitscan' ? 0 : bolt.radius;
+    const lead = 0.75 * hullFireCone(shipBubbleRadius(null) + shotRadius, 200);
     const movingRight: AiWorldView = {
-      players: [{ id: 'p', x: 0, y: 200, vx: 200, vy: 0 }],
+      players: [{ id: 'p', x: 0, y: 200, vx: boltSpeed * Math.sin(lead), vy: 0 }],
       tick: 100,
       dtSec: 1 / 60,
     };
     const intent = b.tick(droneAt(0, 0, 0, 0), movingRight);
     expect(intent.fire).toBeDefined();
-    expect(intent.fire!.dirX).toBeGreaterThan(0.05); // leads +x, not (0,1)
+    expect(intent.fire!.dirX).toBeGreaterThan(0.5 * Math.sin(lead)); // leads +x, not (0,1)
     expect(Math.hypot(intent.fire!.dirX, intent.fire!.dirY)).toBeCloseTo(1, 5);
 
     // Stationary target → no lead → fires straight at it (dirX ≈ 0).
@@ -412,15 +434,15 @@ describe('HostileDroneBehaviour — COMBAT pursuit', () => {
     expect(b1.getEnergy()).toBeLessThan(b2.getEnergy());
   });
 
-  it('uses the wider point-blank fire arc when the target is very close', () => {
-    // Point-blank threshold is 0.4 × DRONE_FIRE_RANGE. After the
-    // weapons/energy/AI overhaul (2026-06-01) the beam range dropped to 250
-    // ⇒ DRONE_FIRE_RANGE = 150 ⇒ point-blank threshold = 60. At normal
-    // distance and a 0.3 rad bearing error the drone would be off-cone
-    // (tolerance 0.25); at point-blank (tolerance 0.45) it fires.
-    // Drone at (0,0,0): forward = +y. Player at distance 40 (< 60) along an
-    // angle ~0.3 off the nose.
-    const b = new HostileDroneBehaviour();
+  it('uses the wider point-blank fire arc when the target is very close (turret kinds)', () => {
+    // Point-blank threshold is 0.4 × DRONE_FIRE_RANGE. At normal distance and
+    // a 0.3 rad bearing error the cone is 0.25 + the turret half-arc; at
+    // point-blank 0.45 + it. A FIXED gun no longer gets either cone: it fires
+    // only inside the pilot's bearing window (aiTurretFacesShot.test.ts),
+    // because its shot leaves down the drawn nose gun (owner 2026-11-14).
+    // Drone at (0,0,0): forward = +y. Player at distance 40 along an angle
+    // ~0.3 off the nose; the interceptor's wings (±30°) can reach it.
+    const b = new HostileDroneBehaviour('interceptor');
     b.markHostile('p', 0);
     const angle = 0.3; // bearing error
     const dist = 40;

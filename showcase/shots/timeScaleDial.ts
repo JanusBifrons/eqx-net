@@ -293,7 +293,8 @@ async function holdLogging(ctx: ShotContext, tag: string, ms: number, everyMs: n
  * soon as the killing salvo is in the air. The shells, the blast at the kill
  * point, the pieces' push and spin and the cooling glow on the cut edges should
  * all run four times slower; anything still on the wall clock shows up as NOT
- * slowing. Then back to 1× while the pieces drift. Needs EQX_CAPITAL_WRECKS=1.
+ * slowing. Then back to 1× while the pieces drift. Capital wrecks are on by
+ * default (2026-11-14).
  */
 export const capitalBreakupSlowmo: Shot = {
   ...capitalBreakup,
@@ -330,7 +331,7 @@ export const capitalBreakupSlowmo: Shot = {
  * cruiser breaks up at 1×, then the dial goes to 4× while the pieces drift.
  * The drift, spin and glow cooling should run four times faster, with no
  * jitter, teleporting or lost pieces at the faster tick rate. Then back to 1×.
- * Needs EQX_CAPITAL_WRECKS=1.
+ * Capital wrecks are on by default (2026-11-14).
  */
 export const capitalBreakupFast: Shot = {
   ...capitalBreakup,

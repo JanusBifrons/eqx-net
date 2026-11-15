@@ -6,14 +6,14 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
-  buildWreckPieces, hullLocalKillPoint, wreckPieceGeometry,
+  buildWreckPieces, hullLocalCutAngle, hullLocalKillPoint, wreckPieceGeometry,
   WRECK_SPIN_MIN_RADIUS_FRAC, WRECK_SPIN_RIM_FAR, WRECK_SPIN_RIM_NEAR, type WreckBuildInput,
 } from './wreckPieces.js';
 import { shipShapeToPolygon } from '../geometry/shipHullDecomp.js';
 import { shipHullOutline } from '../geometry/shipHullOutline.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
-import { massOf, shipTuning } from '../../shared-types/shipScale/tuning.js';
-import { FRACTURE_QUANTUM } from './fractureHull.js';
+import { shipBodyMass, shipTuning } from '../../shared-types/shipScale/tuning.js';
+import { cutDirFromAngle, CUT_ANGLE_STEPS, FRACTURE_QUANTUM } from './fractureHull.js';
 
 type V = { x: number; y: number };
 
@@ -105,7 +105,7 @@ describe('buildWreckPieces', () => {
     const kind = getShipKind('battleship');
     let m = 0;
     for (const p of pieces) m += p.mass;
-    expect(Math.abs(m - massOf(kind, 1)) / massOf(kind, 1)).toBeLessThan(0.01);
+    expect(Math.abs(m - shipBodyMass(kind)) / shipBodyMass(kind)).toBeLessThan(0.01);
     const d0 = pieces[0]!.mass / pieces[0]!.area;
     for (const p of pieces) expect(p.mass / p.area).toBeCloseTo(d0, 9);
   });
@@ -234,5 +234,57 @@ describe('buildWreckPieces', () => {
 
   it('is deterministic', () => {
     expect(buildWreckPieces(input())).toEqual(buildWreckPieces(input()));
+  });
+});
+
+describe('kill-cut direction (fracture v9)', () => {
+  it('cutDirFromAngle is a unit vector at the angle, arithmetic only (matches cos/sin)', () => {
+    for (let a = 0; a < CUT_ANGLE_STEPS; a += 97) {
+      const d = cutDirFromAngle(a);
+      const t = (a / CUT_ANGLE_STEPS) * 2 * Math.PI;
+      expect(Math.abs(d.x - Math.cos(t)), `angle ${a}`).toBeLessThan(1e-12);
+      expect(Math.abs(d.y - Math.sin(t)), `angle ${a}`).toBeLessThan(1e-12);
+    }
+    for (const a of [0, 8192, 16384, 32768, 49152, 65535]) {
+      const d = cutDirFromAngle(a);
+      expect(Math.abs(Math.hypot(d.x, d.y) - 1)).toBeLessThan(1e-12);
+    }
+    // Wraps: a turn is 65536 steps.
+    expect(cutDirFromAngle(CUT_ANGLE_STEPS + 5)).toEqual(cutDirFromAngle(5));
+    expect(cutDirFromAngle(-1)).toEqual(cutDirFromAngle(CUT_ANGLE_STEPS - 1));
+  });
+
+  it('hullLocalCutAngle: a world shot direction lands in the hull frame the outline uses', () => {
+    for (const angle of [0, 0.7, -2.1, 3]) {
+      const pose = { x: 100, y: -50, vx: 0, vy: 0, angle, angvel: 0 };
+      for (const w of [{ x: 1, y: 0 }, { x: -0.3, y: 2 }, { x: 0.5, y: -0.5 }]) {
+        const a = hullLocalCutAngle(pose, w);
+        expect(Number.isInteger(a) && a >= 0 && a < CUT_ANGLE_STEPS).toBe(true);
+        // Back to the world the way `buildWreckPieces` places the hull:
+        // Pixi-up 1× → math-up (flip y) → turn by the ship's angle.
+        const u = cutDirFromAngle(a);
+        const mx = u.x;
+        const my = -u.y;
+        const wx = mx * Math.cos(angle) - my * Math.sin(angle);
+        const wy = mx * Math.sin(angle) + my * Math.cos(angle);
+        const l = Math.hypot(w.x, w.y);
+        expect(Math.abs(wx - w.x / l)).toBeLessThan(2e-4);
+        expect(Math.abs(wy - w.y / l)).toBeLessThan(2e-4);
+      }
+    }
+  });
+
+  it('wreckPieceGeometry passes the cut to the fracture (absent = the normal break-up)', () => {
+    const base = { kindId: 'battleship' as const, seed: 77, killX: 700, killY: 100, killBlowDamage: 0.6, recentDamageRate: 0.4, snapChance: 0 };
+    const plain = wreckPieceGeometry(base);
+    expect(wreckPieceGeometry({ ...base, cutKind: undefined, cutAng: undefined, cutW: undefined })).toEqual(plain);
+    const sliced = wreckPieceGeometry({ ...base, cutKind: 'slice', cutAng: 32768 });
+    expect(sliced).not.toEqual(plain);
+    const channel = wreckPieceGeometry({ ...base, cutKind: 'channel', cutAng: 32768, cutW: 80 });
+    let a0 = 0;
+    let a1 = 0;
+    for (const p of sliced) a0 += p.area;
+    for (const p of channel) a1 += p.area;
+    expect(a1).toBeLessThan(a0);
   });
 });

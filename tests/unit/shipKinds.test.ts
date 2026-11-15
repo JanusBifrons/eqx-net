@@ -16,6 +16,11 @@ import {
   shipKindToIndex,
 } from '../../src/shared-types/shipKinds.js';
 import { WEAPON_IDS } from '../../src/core/combat/WeaponCatalogue.js';
+import {
+  NOSE_TURRET_HALF_ARC,
+  NOSE_TURRET_SLEW_HEAVY,
+  NOSE_TURRET_SLEW_LIGHT,
+} from '../../src/shared-types/shipKinds/types.js';
 
 describe('shipKinds catalogue', () => {
   it('has at least three kinds with stable ids', () => {
@@ -172,13 +177,23 @@ describe('weapon mounts + slots (Phase 1, 2026-05-11)', () => {
     }
   });
 
-  it('legacy kinds (fighter/scout/heavy) carry the canonical forward mount + primary slot, now firing bolts', () => {
-    // Weapons/energy/AI overhaul (2026-06-01 §2): scout/fighter/heavy keep
-    // the single forward mount geometry but fire the `laser` (bolt) — an
-    // inline clone of LEGACY_FORWARD_MOUNT with the weapon swapped (the
-    // frozen const itself stays `hitscan` for engineering kinds/tests).
-    for (const id of ['fighter', 'scout', 'heavy'] as const) {
-      const kind = SHIP_KINDS[id];
+  it('nose-gun kinds carry a small-arc nose turret at the legacy forward spot + primary slot', () => {
+    // Owner 2026-11-14 ("make them real turrets", then "don't retune anything
+    // except giving them a small arc"): the forward mount keeps its spot,
+    // weapon and chin-gun art, and gains one shared ±20° arc plus the slew of
+    // the existing turret kinds (interceptor 4 rad/s for fighter-sized hulls,
+    // gunship 3 rad/s for heavier ones).
+    const expected = {
+      fighter: ['laser', NOSE_TURRET_SLEW_LIGHT],
+      scout: ['laser', NOSE_TURRET_SLEW_LIGHT],
+      heavy: ['laser', NOSE_TURRET_SLEW_HEAVY],
+      'robot-square': ['laser', NOSE_TURRET_SLEW_LIGHT],
+      'robot-circle': ['charge-laser', NOSE_TURRET_SLEW_LIGHT],
+      'robot-hexagon': ['heat-seeker', NOSE_TURRET_SLEW_HEAVY],
+    } as const;
+    expect(NOSE_TURRET_HALF_ARC).toBeCloseTo(Math.PI / 9, 12);
+    for (const [id, [weaponId, slew]] of Object.entries(expected)) {
+      const kind = SHIP_KINDS[id as keyof typeof expected];
       expect(kind.mounts).toHaveLength(1);
       const mount = kind.mounts![0]!;
       expect(mount).toMatchObject({
@@ -186,10 +201,10 @@ describe('weapon mounts + slots (Phase 1, 2026-05-11)', () => {
         localX: 0,
         localY: 0,
         baseAngle: 0,
-        arcMin: 0,
-        arcMax: 0,
-        rotationSpeed: 0,
-        weaponId: 'laser',
+        arcMin: -NOSE_TURRET_HALF_ARC,
+        arcMax: NOSE_TURRET_HALF_ARC,
+        rotationSpeed: slew,
+        weaponId,
       });
       expect(kind.slots).toHaveLength(1);
       const slot = kind.slots![0]!;
@@ -437,8 +452,8 @@ describe('havok composite kind — catalogue registration (composite-ships Phase
     expect(SHIP_KINDS_LIST[8]!.id).toBe('havok'); // index 8 is wire-stable; robots append after (allegiances P0)
   });
 
-  it('SHIP_KIND_CATALOGUE_VERSION is bumped to 24 (fire-control weapon groups + frigate PD turret; 23 = capital AA mounts + realistic reloads; 22 = capital naval guns, turret rates + spacing; 21 = capital flat transom; 20 = turrets T3: gunship mounts moved to nose / tail; 19 = P3c orb charge-laser mount; 18 = P3b robot-harvester)', () => {
-    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(24);
+  it('SHIP_KIND_CATALOGUE_VERSION is bumped to 27 (energy pool x2; 26 = nose guns become small-arc turrets, owner 2026-11-14; 25 = arcade handling + toughness layer, owner 2026-11-13: "make it more like micro machines and make fights a bit longer"; 24 = fire-control weapon groups + frigate PD turret; 23 = capital AA mounts + realistic reloads; 22 = capital naval guns, turret rates + spacing; 21 = capital flat transom; 20 = turrets T3: gunship mounts moved to nose / tail; 19 = P3c orb charge-laser mount; 18 = P3b robot-harvester)', () => {
+    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(27);
   });
 
   it('HAVOK is registered in SHIP_KINDS and parses its own schema', () => {

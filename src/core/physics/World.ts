@@ -18,7 +18,7 @@ const BOT_WARP_MIN_TURN = Math.PI / 20;
 import { castHitscan } from './hitscanRay.js';
 import { wallGeometry } from '../structures/ShieldWall.js';
 import { PAD_PUSH_ACCEL, padPushDir } from '../../shared-types/teleport.js';
-import { massOf, shipAngularInertia } from '../../shared-types/shipScale/tuning.js';
+import { shipBodyInertia, shipBodyMass } from '../../shared-types/shipScale/tuning.js';
 import { CapitalOverlapResolver, newCapitalEntry } from './capitalOverlap.js';
 
 const FIXED_DT = 1 / 60;
@@ -43,6 +43,11 @@ export { BOOST_MULTIPLIER } from '../../shared-types/shipKinds.js';
  * re-measurement (World.ccd.test.ts).
  */
 export const SOFT_CCD_PREDICTION = 48;
+
+/** Fixed steps a settle body (`setSleepSettle`) must stay under its
+ *  thresholds before it is put to sleep: half a second (Rapier's own timer
+ *  is 2 s, at a 0.4 u/s threshold). */
+export const WRECK_SETTLE_STEPS = 30;
 
 export interface ShipPhysicsState {
   x: number;
@@ -166,6 +171,7 @@ export class PhysicsWorld {
       this.applyPadFields();
       this.world.step(eventQueue);
       this.capitals.resolve();
+      if (this.settle.size > 0) this.settleStep();
       this.accumulator -= FIXED_DT;
     }
   }
@@ -229,14 +235,10 @@ export class PhysicsWorld {
     // `kind.radius` — they're a kind-feel knob, not a function of the
     // current collider geometry (the pad doesn't change ship handling).
     this.world.createCollider(shipShieldColliderDesc(kind), body);
-    // Per-kind mass with a `default 1` back-compat path: every legacy
-    // kind sat at mass 1 historically (the pinned value below), so
-    // omitting `kind.mass` keeps every existing physics test byte-
-    // identical. Inertia stays the disc formula `0.5 * m * r²` so a
-    // heavier kind also rotates proportionally more sluggishly under
-    // torque — same physical reality as a denser uniform disc.
-    const m = massOf(kind, 1);
-    body.setAdditionalMassProperties(m, { x: 0, y: 0 }, shipAngularInertia(m, kind.radius), true);
+    // The kind's one mass + inertia source (`shipBodyMass` /
+    // `shipBodyInertia`), shared with every NPC body of the kind: ship
+    // stats belong to the ship, never the pilot (owner 2026-11-13).
+    body.setAdditionalMassProperties(shipBodyMass(kind), { x: 0, y: 0 }, shipBodyInertia(kind), true);
     body.recomputeMassPropertiesFromColliders();
     const rec: ShipBody = { body, kind, exposed: false };
     this.bodies.set(id, rec);
@@ -366,7 +368,14 @@ export class PhysicsWorld {
     // default groups (collide with all), so every existing caller is unchanged.
     if (collisionGroups !== undefined) collider.setCollisionGroups(collisionGroups);
     this.world.createCollider(collider, body);
-    if (isBall) {
+    if (isBall && shieldKind) {
+      // An NPC ship: the SAME mass + inertia as a pilot ship of its kind
+      // (`spawnShip`), whatever mass the caller passed. Ship stats belong to
+      // the ship, never the pilot (owner 2026-11-13); server worker and
+      // client predWorld both land here (#15).
+      body.setAdditionalMassProperties(shipBodyMass(shieldKind), { x: 0, y: 0 }, shipBodyInertia(shieldKind), true);
+      body.recomputeMassPropertiesFromColliders();
+    } else if (isBall) {
       // Pin mass to the disc-equivalent (mass param, I = 0.5 m r^2),
       // identical to what the legacy density ball produced. See spawnShip.
       body.setAdditionalMassProperties(mass, { x: 0, y: 0 }, 0.5 * mass * radius * radius, true);
@@ -402,6 +411,7 @@ export class PhysicsWorld {
     if (!rec) return;
     this.handleToId.delete(rec.body.handle);
     this.capitals.remove(rec.body);
+    this.settle.delete(id);
     this.world.removeRigidBody(rec.body);
     this.bodies.delete(id);
   }
@@ -645,10 +655,16 @@ export class PhysicsWorld {
    * spool; a run can't be cancelled).
    *
    * Returns true while the warp owns the body this tick (spooling, running or
-   * dropping): the caller skips the AI's impulse. While spooling the ship
-   * holds still and turns to face its target.
+   * dropping): the caller skips the AI's impulse. While spooling the drive
+   * turns the ship to face its target. A ship flown by control keys (the
+   * pilot layer: `keys` is this tick's AI input, or `null` on a tick
+   * without one) spools the way a pilot's ship does (`applyInput`): its
+   * thrust, boost and reverse still work, its turn keys are ignored, so a
+   * fleeing ship keeps flying along its escape line instead of stopping dead
+   * (take 7, 2026-11-14). A ship that is not (`keys` undefined: the impulse
+   * path, a flagship fleet's capital) holds still while it spools.
    */
-  botWarp(id: string, target: { x: number; y: number } | null): boolean {
+  botWarp(id: string, target: { x: number; y: number } | null, keys?: ShipInputArgs | null): boolean {
     const rec = this.bodies.get(id);
     if (!rec) return false;
     if (target === null && rec.warp === undefined) return false;
@@ -693,6 +709,16 @@ export class PhysicsWorld {
       return true;
     }
     if (w.phase === 'spool') {
+      if (keys !== undefined && rec.piloted === true) {
+        // Flown by keys: spool like a pilot (thrust works, the drive turns).
+        if (keys !== null) {
+          const s = this._spoolInput;
+          s.thrust = keys.thrust; s.boost = keys.boost; s.reverse = keys.reverse;
+          applyShipInput(body, rec.pilotKind ?? rec.kind, s, rec.statMul);
+        }
+        this.alignToWarp(rec, w, BOT_WARP_MIN_TURN);
+        return true;
+      }
       // Hold position and face the target (a capital turns slowly: its own
       // turn rate caps the align, so a long spool is part of the look).
       const v = body.linvel(); // TODO: alloc-debt (Rapier returns a fresh vector)
@@ -790,12 +816,19 @@ export class PhysicsWorld {
     rec.statMul = mul;
   }
 
-  /** Pilot layer: record the ShipKind an AI slot flies with (`applyAiInput`).
-   *  Unknown id ⇒ no-op. */
+  /** Pilot layer: record the ShipKind an AI slot flies with (`applyAiInput`)
+   *  and give the body that kind's linear + angular damping NOW, as
+   *  `spawnShip` does, so an NPC ship's body matches a pilot's of the same
+   *  kind from its first tick (ship stats belong to the ship, owner
+   *  2026-11-13). Server worker only: the client predWorld drone body keeps
+   *  damping 0 (it coasts between server anchors). Unknown id ⇒ no-op. */
   setPilotKind(id: string, kind: ShipKind): void {
     const rec = this.bodies.get(id);
     if (!rec) return;
     rec.pilotKind = kind;
+    rec.piloted = true;
+    rec.body.setLinearDamping(kind.linearDamping);
+    rec.body.setAngularDamping(kind.angularDamping);
   }
 
   /**
@@ -804,11 +837,9 @@ export class PhysicsWorld {
    * capital torque turning, per-instance stat multipliers). Flies as
    * `pilotKind` (falls back to the record's `kind`).
    *
-   * The first call gives the body its kind's linear + angular damping, as
-   * `spawnShip` does: a drone body spawns with angular damping 0 (the impulse
-   * path set its spin every tick), and a snap-turn that is released would
-   * otherwise spin forever. Bodies never driven by input keep their spawn
-   * damping, so the impulse path is unchanged. Unknown id ⇒ no-op.
+   * A drone already has its kind's damping from `setPilotKind` at spawn; a
+   * body flown without one gets the kind's damping on the first call (a
+   * released snap-turn would otherwise spin forever). Unknown id ⇒ no-op.
    */
   applyAiInput(id: string, input: ShipInputArgs): void {
     const rec = this.bodies.get(id);
@@ -856,11 +887,170 @@ export class PhysicsWorld {
 
   private readonly _kickVel = { x: 0, y: 0 };
 
+  /** Apply a linear impulse (jx, jy) at world point (px, py), so an
+   *  off-centre blow also turns the body (a capital wreck piece knocked by an
+   *  overkill shell). Wakes it. Unknown id ⇒ no-op. Alloc-free. */
+  applyImpulseAtPoint(id: string, jx: number, jy: number, px: number, py: number): void {
+    const rec = this.bodies.get(id);
+    if (!rec) return;
+    this._impJ.x = jx;
+    this._impJ.y = jy;
+    this._impP.x = px;
+    this._impP.y = py;
+    rec.body.applyImpulseAtPoint(this._impJ, this._impP, true);
+  }
+
+  private readonly _impJ = { x: 0, y: 0 };
+  private readonly _impP = { x: 0, y: 0 };
+
+  /**
+   * Apply a linear impulse (jx, jy) at world point (px, py) to a GROUP of
+   * bodies as if they were one rigid body (a capital wreck still inside its
+   * crack hold, hit by the rest of a salvo). The group's motion is first made
+   * exactly rigid from its momentum (centre-of-mass velocity from the linear
+   * momentum, spin from the angular momentum about the centre of mass over
+   * the group's moment of inertia, parallel-axis theorem), then
+   *   Δv = J ÷ M,  Δω = (r × J) ÷ I,
+   * and every body gets v_com + ω × r_i and spin ω, so the pieces keep their
+   * relative poses. Unknown ids are skipped (pieces already gone). Wakes the
+   * bodies. Alloc-free apart from Rapier's own vector getters.
+   */
+  applyRigidGroupImpulse(ids: readonly string[], jx: number, jy: number, px: number, py: number): void {
+    let m = 0, cx = 0, cy = 0, momX = 0, momY = 0;
+    for (let i = 0; i < ids.length; i++) {
+      const rec = this.bodies.get(ids[i]!);
+      if (!rec) continue;
+      const b = rec.body;
+      const mi = b.mass();
+      const c = b.worldCom();
+      const v = b.linvel();
+      m += mi; cx += c.x * mi; cy += c.y * mi; momX += v.x * mi; momY += v.y * mi;
+    }
+    if (!(m > 0)) return;
+    cx /= m; cy /= m;
+    let vx = momX / m, vy = momY / m;
+    // Angular momentum and inertia about the group's centre of mass.
+    let l = 0, inertia = 0;
+    for (let i = 0; i < ids.length; i++) {
+      const rec = this.bodies.get(ids[i]!);
+      if (!rec) continue;
+      const b = rec.body;
+      const mi = b.mass();
+      const c = b.worldCom();
+      const v = b.linvel();
+      const rx = c.x - cx, ry = c.y - cy;
+      const ii = b.principalInertia();
+      inertia += ii + mi * (rx * rx + ry * ry);
+      l += ii * b.angvel() + mi * (rx * (v.y - vy) - ry * (v.x - vx));
+    }
+    let w = inertia > 0 ? l / inertia : 0;
+    vx += jx / m;
+    vy += jy / m;
+    if (inertia > 0) w += ((px - cx) * jy - (py - cy) * jx) / inertia;
+    for (let i = 0; i < ids.length; i++) {
+      const rec = this.bodies.get(ids[i]!);
+      if (!rec) continue;
+      const b = rec.body;
+      const c = b.worldCom();
+      this._kickVel.x = vx - w * (c.y - cy);
+      this._kickVel.y = vy + w * (c.x - cx);
+      b.setLinvel(this._kickVel, true);
+      b.setAngvel(w, true);
+    }
+  }
+
+  /**
+   * `setShipState` for a body the authority reports ASLEEP: pose and velocity
+   * are written WITHOUT waking it, then it is put to sleep. A sleeping body
+   * costs the step almost nothing, and Rapier still wakes it the moment an
+   * awake body (the local ship) touches it, so collision is unchanged.
+   */
+  setShipStateAsleep(id: string, state: ShipPhysicsState): void {
+    const rec = this.bodies.get(id);
+    if (!rec) return;
+    const body = rec.body;
+    const t = this._setShipStateTranslationScratch;
+    t.x = state.x; t.y = state.y;
+    body.setTranslation(t, false);
+    const v = this._setShipStateLinvelScratch;
+    v.x = state.vx; v.y = state.vy;
+    body.setLinvel(v, false);
+    body.setRotation(state.angle, false);
+    if (state.angvel !== undefined) body.setAngvel(state.angvel, false);
+    body.sleep();
+  }
+
   /** True when Rapier reports the body as sleeping (motion below its threshold). */
   isSleeping(id: string): boolean {
     const rec = this.bodies.get(id);
     if (!rec) return false;
     return rec.body.isSleeping();
+  }
+
+  /**
+   * Settle-to-sleep (wreck sleep fix, 2026-11-13): once body `id` has moved
+   * slower than `speed` (u/s) and spun slower than `spin` (rad/s) for
+   * `WRECK_SETTLE_STEPS` fixed steps in a row, it is put to sleep, instead of
+   * drifting on down to Rapier's global 0.4 u/s threshold (which must stay:
+   * a `lengthUnit` change would move every body's). Rapier's JS API has no
+   * per-body sleep thresholds, so this is the per-body one. A sleeping body
+   * still wakes on a contact or impulse like any other. Deterministic (pure
+   * function of the body's state per step), so the server worker and the
+   * client predWorld twin run the same rule from `wreckBodyParams` (#15).
+   * `speed <= 0` removes it. Unknown id ⇒ no-op.
+   */
+  setSleepSettle(id: string, speed: number, spin: number): void {
+    const rec = this.bodies.get(id);
+    if (!rec) return;
+    if (!(speed > 0)) { this.settle.delete(id); return; }
+    const s = this.settle.get(id);
+    if (s) { s.speed2 = speed * speed; s.spin = spin; s.count = 0; return; }
+    this.settle.set(id, { body: rec.body, speed2: speed * speed, spin, count: 0 });
+  }
+
+  private readonly settle = new Map<string, { body: RAPIER.RigidBody; speed2: number; spin: number; count: number }>();
+
+  /** One settle pass after a fixed step (alloc-free apart from Rapier's own
+   *  `linvel()` getter, as in `getAllShipStates`). */
+  private settleStep(): void {
+    for (const s of this.settle.values()) {
+      const b = s.body;
+      if (b.isSleeping()) { s.count = 0; continue; }
+      const v = b.linvel();
+      if (v.x * v.x + v.y * v.y < s.speed2 && Math.abs(b.angvel()) < s.spin) {
+        if (++s.count >= WRECK_SETTLE_STEPS) { b.sleep(); s.count = 0; }
+      } else {
+        s.count = 0;
+      }
+    }
+  }
+
+  /** Dev-only (the worker's wake census, `EQX_WAKE_CENSUS`): the entity id
+   *  and speed of the fastest body `id` has a live contact point with, or
+   *  null when it touches nothing. Not on any hot path. */
+  fastestContact(id: string): { otherId: string; speed: number } | null {
+    const rec = this.bodies.get(id);
+    if (!rec) return null;
+    const np = this.world.narrowPhase;
+    let best: { otherId: string; speed: number } | null = null;
+    const numCol = rec.body.numColliders();
+    for (let ci = 0; ci < numCol; ci++) {
+      const col = rec.body.collider(ci);
+      if (!col) continue;
+      np.contactPairsWith(col.handle, (otherHandle) => {
+        let live = false;
+        np.contactPair(col.handle, otherHandle, (manifold) => { if (manifold.numContacts() > 0) live = true; });
+        if (!live) return;
+        const parent = this.world.getCollider(otherHandle)?.parent();
+        if (!parent) return;
+        const otherId = this.handleToId.get(parent.handle);
+        if (otherId === undefined) return;
+        const v = parent.linvel();
+        const speed = Math.hypot(v.x, v.y);
+        if (best === null || speed > best.speed) best = { otherId, speed };
+      });
+    }
+    return best;
   }
 
   /** Force-wake a body. Safe no-op if already awake or unknown. */
@@ -964,9 +1154,14 @@ export class PhysicsWorld {
     return rec.body.mass();
   }
 
-  getAllShipStates(): Map<string, ShipPhysicsState> {
+  getAllShipStates(skip?: ReadonlySet<string>): Map<string, ShipPhysicsState> {
     const result = new Map<string, ShipPhysicsState>();
     for (const [id, rec] of this.bodies) {
+      // Sub-cap break-up slice 2: the worker passes the bodies that have been
+      // asleep (and flagged so in the SAB) since before this tick; their SAB
+      // record is already their resting pose, so they cost no Rapier read and
+      // no allocation here (permanent debris that has settled is near free).
+      if (skip !== undefined && skip.has(id)) continue;
       const t = rec.body.translation();
       const v = rec.body.linvel();
       result.set(id, { x: t.x, y: t.y, angle: rec.body.rotation(), vx: v.x, vy: v.y, angvel: rec.body.angvel() });

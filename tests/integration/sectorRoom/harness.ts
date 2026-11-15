@@ -187,6 +187,8 @@ export async function bootSectorTestServer(opts: {
   breakInMs?: number;
   /** Bespoke test trigger: no NON-player lock takes longer than this (s); 0 = the first step. */
   lockTimeCapS?: number;
+  /** Bespoke test trigger: no capital-turret charge takes longer than this (ticks). */
+  chargeTicksCap?: number;
   /** Time scale trigger: this sector's game speed (0.25–4). */
   timeScale?: number;
   /** The `test-sector-fast` physics speed-up (room option `testTimeScale`). */
@@ -206,6 +208,7 @@ export async function bootSectorTestServer(opts: {
   pilotCapitals?: boolean;
   /** Capital destruction S2a: a dying capital breaks into wreck bodies. */
   capitalWrecks?: boolean;
+  subcapWrecks?: boolean;
   /** P2c — sector features for the room (asteroid mix, nebula). */
   sectorFeatures?: string[];
   /** Room-level default spawn point (forwarded to `defaultSpawnX/Y`). */
@@ -279,6 +282,7 @@ export async function bootSectorTestServer(opts: {
     pocketPads: opts.pocketPads,
     breakInMs: opts.breakInMs,
     lockTimeCapS: opts.lockTimeCapS,
+    chargeTicksCap: opts.chargeTicksCap,
     timeScale: opts.timeScale,
     testTimeScale: opts.testTimeScale,
     autoTimeScale: opts.autoTimeScale,
@@ -290,6 +294,7 @@ export async function bootSectorTestServer(opts: {
     peacefulDrones: opts.peacefulDrones,
     pilotCapitals: opts.pilotCapitals,
     capitalWrecks: opts.capitalWrecks,
+    subcapWrecks: opts.subcapWrecks,
     tradeEnabled: opts.tradeEnabled,
     enforceHullGate: opts.enforceHullGate,
     seedStorageHold: opts.seedStorageHold,

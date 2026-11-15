@@ -14,7 +14,7 @@ import { z } from 'zod';
 
 /** The naval guns whose shells travel as events. */
 export const NavalWeaponIdSchema = z.enum([
-  'naval_s', 'naval_m', 'naval_l', 'naval_xl', 'naval_xxl', 'naval_siege',
+  'naval_s', 'naval_m', 'naval_l', 'naval_xl', 'naval_xxl', 'naval_siege', 'railgun',
 ]);
 export type NavalWeaponId = z.infer<typeof NavalWeaponIdSchema>;
 
@@ -47,17 +47,23 @@ export const ShellSalvoSchema = z.object({
 }).strict();
 export type ShellSalvo = z.infer<typeof ShellSalvoSchema>;
 
-/** One ended shell: `[id, hitTick, x, y, blastRadius]` (radius 0 = none). */
+/** One shell hit: `[id, hitTick, x, y, blastRadius, continues?]` (radius 0 =
+ *  none). `continues: 1` marks a pass-through kill (the capital railgun,
+ *  plan beam-slices §7): the shell hit and killed something there but flies
+ *  on, still live; the client bursts it at that point and keeps drawing it.
+ *  Absent = the shell ended there. */
 export const ShellEndTupleSchema = z.tuple([
   ShellIdSchema,
   z.number().int(),
   z.number(), z.number(),
   z.number().nonnegative(),
+  z.literal(1).optional(),
 ]);
 export type ShellEndTuple = z.infer<typeof ShellEndTupleSchema>;
 
 /** Hits only (a miss sends nothing), batched per tick. A shell stopped by a
- *  shield fence is a hit with radius 0 at the wall. */
+ *  shield fence is a hit with radius 0 at the wall. A pass-through hit comes
+ *  before the same shell's final end in one message. */
 export const ShellEndSchema = z.object({
   type: z.literal('shell_end'),
   e: z.array(ShellEndTupleSchema).min(1).max(256),

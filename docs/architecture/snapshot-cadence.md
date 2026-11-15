@@ -110,3 +110,15 @@ This broke the reconciler's lerp (built around a steady ~50 ms cadence). Diagnos
 **Lesson**: any future "two cadences for different priorities" design MUST land with the recipient-side cadence E2E test. Unit tests on individual predicates are insufficient.
 
 See `docs/LESSONS.md` 2026-05-08 entry for the full mechanism.
+
+## Server implementation notes
+
+> Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.
+
+### From the server Thresholds section
+
+Moved verbatim from the old "Thresholds" section of `src/server/CLAUDE.md`. The rules stay there in short form; current values are in [server-thresholds](server-thresholds.md). Dates, plan names and "was" notes below are history.
+
+- **Phase 3 — snapshot broadcast rate**: pre-Stage-5: 20 Hz global. Stage 5 initial (REVERTED): tried 30 Hz close-tier + 20 Hz far-tier with per-client phase offsets, but the union of two cadences produced irregular 17/17/33/33 ms intervals at the recipient — see hotfix #4 in `docs/LESSONS.md`. Stage 5 post-hotfix #4: single 20 Hz cadence (`shouldBroadcastFar` only) with per-client phase offset hashed from playerId so recipients almost never peak on the same tick (smooths server CPU). Idle sectors (no motion-above-epsilon AND no projectiles in flight for `IDLE_THRESHOLD_TICKS = 60` consecutive ticks) suppress broadcasts entirely. `lastInput` rides a ship's entry on EVERY snapshot while any control bit is held and is absent exactly when the controls are idle (absent = idle; `shouldIncludeLastInput`, stateless; RTS Part A S1 replaced the per-recipient "omit when unchanged" cache, which made every remote ship stop forward-predicting a held key after one snapshot, and whose only client-side fix, keep-previous-on-absent, would stick a control on whenever the coalescer dropped the snapshot carrying the release). Two-sided lock: `tests/integration/sectorRoom/remoteInputBits.test.ts`. Scheduling tick is `broadcastCounter` (main-thread, once-per-`update()`), NOT `serverTick` (SAB-read; advances unevenly under main/worker drift). See `docs/architecture/snapshot-cadence.md`. Tier classification helpers in `snapshotScheduler.ts` (`classifyShipTier`, `createTierState`) are unit-tested but unused in production after hotfix #4 — preserved for a future single-cadence-with-tier-inclusion design (Stage 5b).
+
+- **Phase 5d — wire format**: encoder is per-client, called from `SectorRoom.update()` inside the existing per-client backpressure loop. `BinarySwarmBroadcast.encode(registry, sab, sab, tick, inInterest?)` — when `inInterest` is undefined the encoder behaves like Phase 5c (broadcast-all), so unit tests that pre-date 5d still pass unmodified.

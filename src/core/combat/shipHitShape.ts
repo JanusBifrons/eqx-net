@@ -27,6 +27,7 @@ import { getShipKind } from '../../shared-types/shipKinds.js';
 import { shipTuning } from '../../shared-types/shipScale/tuning.js';
 import { shipCollisionParts } from '../geometry/shipHullDecomp.js';
 import {
+  pointToShipPolygonDistance,
   projectileSweepCircle,
   rayHitsShipPolygon,
   rayHitsSphere,
@@ -61,6 +62,15 @@ export function shipHitBound(kindId: string | null | undefined): number {
   return b;
 }
 
+/** The circle an aimer lines a fixed gun up on: the shield bubble while a
+ *  non-capital's shield is up, else the kind's own hull radius (the polygon's
+ *  size, #18). Used for the AI pilot's trigger cone, never for a hit test. */
+export function shipAimRadius(kindId: string | null | undefined, shieldUp: boolean): number {
+  const k = getShipKind(kindId ?? null);
+  if (shieldUp && !isCapitalKindId(k.id)) return k.radius + shipTuning(k).shieldPad;
+  return k.radius;
+}
+
 /** The radius a blast measures a ship's edge by: its kind's own size (#18). */
 export function shipSplashRadius(kindId: string | null | undefined): number {
   return getShipKind(kindId ?? null).radius;
@@ -92,4 +102,41 @@ export function shipSweepHit(
   }
   if (!segmentNearCircle(fromX, fromY, stepX, stepY, cx, cy, shipHitBound(id) + projRadius)) return null;
   return sweptSegmentHitsShipPolygon(fromX, fromY, stepX, stepY, cx, cy, angle, shipCollisionParts(id));
+}
+
+/**
+ * Distance from the world point (px, py) (a turret's muzzle) to the nearest
+ * point of the ship's hit shape at (cx, cy, angle); 0 when the point is
+ * inside. The same shape the hits use: a non-capital with its shield up is
+ * its bubble circle, everything else the hull polygon. Exact; for a range
+ * gate use `shipWithinHullReach`, which skips the polygon when the bounding
+ * circle already settles it.
+ */
+export function shipHullDistance(
+  kindId: string | null | undefined, shieldUp: boolean,
+  px: number, py: number, cx: number, cy: number, angle: number,
+): number {
+  const id = getShipKind(kindId ?? null).id;
+  if (shieldUp && !isCapitalKindId(id)) {
+    const d = Math.hypot(px - cx, py - cy) - shipBubbleRadius(id);
+    return d > 0 ? d : 0;
+  }
+  return pointToShipPolygonDistance(px, py, cx, cy, angle, shipCollisionParts(id));
+}
+
+/**
+ * True when the ship's hit shape comes within `reach` of (px, py). Cheap
+ * first: past `shipHitBound` + reach from the centre it is out without
+ * touching the polygon (the bound contains every vertex, so the hull can be
+ * no closer than centre distance − bound).
+ */
+export function shipWithinHullReach(
+  kindId: string | null | undefined, shieldUp: boolean,
+  px: number, py: number, cx: number, cy: number, angle: number, reach: number,
+): boolean {
+  const dx = px - cx;
+  const dy = py - cy;
+  const gate = shipHitBound(kindId) + reach;
+  if (dx * dx + dy * dy > gate * gate) return false;
+  return shipHullDistance(kindId, shieldUp, px, py, cx, cy, angle) <= reach;
 }

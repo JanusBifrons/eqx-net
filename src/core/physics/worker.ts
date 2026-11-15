@@ -11,7 +11,9 @@
  *   - AI_INTENT applies an impulse + torque to a swarm body, identical to player INPUT.
  *   - AI_INPUTS (pilot layer) batches every AI slot flown by control keys this
  *     tick; each runs through `World.applyAiInput` → `applyShipInput`, the
- *     same function as a pilot's INPUT.
+ *     same function as a pilot's INPUT. The keys are HELD (re-applied every
+ *     step) until the next AI_INPUTS for the slot, like a pilot's held input,
+ *     so an AI pilot flies as hard whatever the room loop's cadence.
  *   - Sleep is polled per occupied slot each step, with 12-tick hysteresis to
  *     suppress flap on slow-drift entities. On idle→sleep transitions the
  *     worker sets FLAG_SLEEPING in the slot AND posts a SLEEP_TRANSITION
@@ -32,6 +34,7 @@ import { decodeAiInputBits } from '../contracts/IAiBehaviour.js';
 import { tickInputQueue, type QueuedInput } from './inputQueue.js';
 import { drainContacts } from './contactDrain.js';
 import { advanceSchedule, tickPeriodMs, type CatchUpResult } from './catchUp.js';
+import { WakeCensus, WAKE_CENSUS_EVERY_TICKS } from './wakeCensus.js';
 import type { Vec2 } from '../swarm/asteroidShape.js';
 import {
   SEQLOCK_IDX,
@@ -78,7 +81,7 @@ const CONTACT_FORCE_FLOOR = 200;
 interface SpawnCmd         { type: 'SPAWN';          slot: number; playerId: string; x: number; y: number; kindId?: string }
 interface DespawnCmd       { type: 'DESPAWN';        slot: number; playerId: string }
 interface InputCmd         { type: 'INPUT';          slot: number; inputTick: number; thrust: boolean; turnLeft: boolean; turnRight: boolean; boost: boolean; reverse: boolean; warpX?: number; warpY?: number }
-interface SpawnObstacleCmd { type: 'SPAWN_OBSTACLE'; slot: number; obstacleId: string; x: number; y: number; vx: number; vy: number; radius: number; mass: number; vertices?: ReadonlyArray<Vec2>; linearDamping?: number; staticBody?: boolean; collisionGroups?: number; angle?: number; parts?: ReadonlyArray<ReadonlyArray<Vec2>>; shieldKindId?: string; angvel?: number; angularDamping?: number; shipKindId?: number }
+interface SpawnObstacleCmd { type: 'SPAWN_OBSTACLE'; slot: number; obstacleId: string; x: number; y: number; vx: number; vy: number; radius: number; mass: number; vertices?: ReadonlyArray<Vec2>; linearDamping?: number; staticBody?: boolean; collisionGroups?: number; angle?: number; parts?: ReadonlyArray<ReadonlyArray<Vec2>>; shieldKindId?: string; angvel?: number; angularDamping?: number; settleSpeed?: number; settleSpin?: number; shipKindId?: number }
 interface AiIntentCmd      { type: 'AI_INTENT';      slot: number; fx: number; fy: number; torque: number; setAngvel?: number }
 /** Pilot layer: every AI slot driven by control keys this tick, in ONE message
  *  (replaces a post per drone). `slots[i]` flies with keys `bits[i]` (packed
@@ -121,6 +124,14 @@ interface MissileImpulseCmd { type: 'MISSILE_IMPULSE'; entityId: string; fx: num
 /** Capital wreck: add a velocity (u/s) and spin (rad/s) to a piece's body (its
  *  separating kick once the crack delay is over). Silent no-op when gone. */
 interface WreckKickCmd { type: 'WRECK_KICK'; entityId: string; dvx: number; dvy: number; dw: number }
+/** Capital wreck: an overkill hit's impulse (jx, jy) at world point (px, py)
+ *  on a piece, so an off-centre hit also turns it. Silent no-op when gone. */
+interface WreckImpulseCmd { type: 'WRECK_IMPULSE'; entityId: string; jx: number; jy: number; px: number; py: number }
+/** Capital wreck still inside its crack hold: an overkill hit's impulse
+ *  (jx, jy) at world point (px, py) on the WHOLE wreck as one rigid body
+ *  (every piece in `entityIds`), so the pieces keep their relative poses
+ *  (`World.applyRigidGroupImpulse`). Gone ids are skipped. */
+interface WreckRigidImpulseCmd { type: 'WRECK_RIGID_IMPULSE'; entityIds: readonly string[]; jx: number; jy: number; px: number; py: number }
 /** Shield-fence plan — spawn / toggle / remove a shield-wall span. A static
  *  cuboid between two pylon poses that blocks ships; toggled on stun / power
  *  loss without churning the body. See PhysicsWorld.spawnWall. */
@@ -130,7 +141,7 @@ interface RemoveWallCmd     { type: 'REMOVE_WALL';     id: string }
 /** v4 T2 — a teleporter pad's closing-iris push (PhysicsWorld.setPadField). */
 interface SetPadFieldCmd    { type: 'SET_PAD_FIELD';   id: string; cx: number; cy: number; half: number; active: boolean }
 interface RemovePadFieldCmd { type: 'REMOVE_PAD_FIELD'; id: string }
-type WorkerCommand = SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiIntentCmd | AiInputsCmd | ClockRateCmd | SetPositionCmd | WarpRetargetCmd | RekeyShipCmd | SetHullExposedCmd | SetStatMulCmd | MissileImpulseCmd | WreckKickCmd | SpawnWallCmd | SetWallActiveCmd | RemoveWallCmd | SetPadFieldCmd | RemovePadFieldCmd | BotWarpCmd | SetTimeScaleCmd;
+type WorkerCommand = SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiIntentCmd | AiInputsCmd | ClockRateCmd | SetPositionCmd | WarpRetargetCmd | RekeyShipCmd | SetHullExposedCmd | SetStatMulCmd | MissileImpulseCmd | WreckKickCmd | WreckImpulseCmd | WreckRigidImpulseCmd | SpawnWallCmd | SetWallActiveCmd | RemoveWallCmd | SetPadFieldCmd | RemovePadFieldCmd | BotWarpCmd | SetTimeScaleCmd;
 
 /** Pool commands (main → pooled worker): host / free one sector's world. */
 interface AddWorldCmd    { type: 'ADD_WORLD'; worldId: number; sab: SharedArrayBuffer }
@@ -189,13 +200,26 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
   const lastAckTick = new Map<number, number>();
   /** Pending AI intents per slot, applied once on the next physics step then cleared. */
   const aiIntents = new Map<number, { fx: number; fy: number; torque: number; setAngvel?: number }>();
-  /** Pilot layer: pending AI control keys per slot (-1 = none), applied once
-   *  on the next physics step then cleared. Latest AI_INPUTS wins per slot.
-   *  `aiInputList` holds the slots with a pending entry (a slot cleared by a
-   *  despawn or bot warp stays listed with -1 and is skipped). */
-  const aiInputPending = new Int16Array(MAX_ENTITIES).fill(-1);
+  /** Pilot layer: HELD AI control keys per slot (-1 = none). Latest AI_INPUTS
+   *  wins per slot and is re-applied on EVERY physics step until the next one,
+   *  exactly as a pilot's held INPUT (input-queue rule #3). The room loop and
+   *  this worker are not lock-stepped, so applying keys only on the step a
+   *  message arrived left steps with no keys (no thrust, a snap turn spinning
+   *  on): AI pilot handling then depended on the room's tick rate (2026-11-13,
+   *  `physicsWorkerAiInputHeld.test.ts`). Cleared by DESPAWN, by AI_INTENT
+   *  (the slot left the pilot path); while a bot warp owns the body the warp
+   *  flies them (`aiWarpOwned`).
+   *  `aiInputList` holds the slots with held keys; cleared slots (-1) are
+   *  compacted out on the next step. */
+  const aiInputHeld = new Int16Array(MAX_ENTITIES).fill(-1);
   const aiInputList = new Uint16Array(MAX_ENTITIES);
+  /** 1 while a slot is in `aiInputList` (a slot cleared and re-keyed before
+   *  the next step must not be listed, and so applied, twice). */
+  const aiInputListed = new Uint8Array(MAX_ENTITIES);
   let aiInputListLen = 0;
+  /** 1 on a step a bot warp owns the slot's body and flew it with the held
+   *  keys: the key loop skips the slot that step (not applied twice). */
+  const aiWarpOwned = new Uint8Array(MAX_ENTITIES);
   /** Reused key record for decoding AI_INPUTS (no per-step allocation, #14). */
   const aiKeys = { thrust: false, reverse: false, turnLeft: false, turnRight: false, boost: false };
   /** NPC warp-to: slot → held target (`on` false = request dropped, kept
@@ -210,6 +234,13 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
    *  contact's impact (closing) speed. Repopulated from `allStates` at the tail
    *  of every tick; value objects are reused (no per-tick allocation, #14). */
   const prevVel = new Map<string, { vx: number; vy: number }>();
+  /** Bodies asleep since before this tick and already flagged so in the SAB
+   *  (sub-capital break-up slice 2: settled permanent debris). Rebuilt each
+   *  tick in the sleep poll; `getAllShipStates` skips them, so a resting
+   *  body costs one `isSleeping` call a tick and nothing else. */
+  const quietIds = new Set<string>();
+  /** Dev-only wreck wake census (`EQX_WAKE_CENSUS=1`; see wakeCensus.ts). */
+  const wakeCensus = process.env['EQX_WAKE_CENSUS'] === '1' ? new WakeCensus() : null;
   let tick = 0;
 
   const handle = (cmd: WorkerCommand): void => {
@@ -222,13 +253,14 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
       }
       case 'DESPAWN': {
         physics.despawnShip(cmd.playerId);
+        wakeCensus?.forget(cmd.playerId);
         playerToSlot.delete(cmd.playerId);
         slotToPlayer.delete(cmd.slot);
         inputQueues.delete(cmd.slot);
         lastApplied.delete(cmd.slot);
         lastAckTick.delete(cmd.slot);
         aiIntents.delete(cmd.slot);
-        aiInputPending[cmd.slot] = -1;
+        aiInputHeld[cmd.slot] = -1;
         botWarps.delete(cmd.slot);
         sleepCount.delete(cmd.slot);
         sleepState.delete(cmd.slot);
@@ -283,6 +315,8 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
         }
         // Capital wreck pieces (S2a) spin down and settle into terrain.
         if (cmd.angularDamping !== undefined) physics.setAngularDamping(cmd.obstacleId, cmd.angularDamping);
+        // Sub-cap wreck pieces settle to sleep (`World.setSleepSettle`).
+        if (cmd.settleSpeed !== undefined) physics.setSleepSettle(cmd.obstacleId, cmd.settleSpeed, cmd.settleSpin ?? 0);
         // P3.10 (P0) — STRUCTURES (kind 2) lock their body so a ram can't impart
         // velocity. Mirrors the client predWorld (`structureClientLeaf` does
         // `spawnObstacle` + `lockBody`); the server worker is where the
@@ -310,6 +344,8 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
           torque: cmd.torque,
           setAngvel: cmd.setAngvel,
         });
+        // The slot is flown by impulses now: stop holding its keys.
+        if (cmd.slot < MAX_ENTITIES) aiInputHeld[cmd.slot] = -1;
         break;
       }
       case 'AI_INPUTS': {
@@ -317,11 +353,13 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
         for (let i = 0; i < n; i++) {
           const slot = cmd.slots[i]!;
           if (slot >= MAX_ENTITIES) continue;
-          if (aiInputPending[slot] === -1) {
-            if (aiInputListLen >= MAX_ENTITIES) continue; // despawn churn overflow: drop
+          if (aiInputListed[slot] === 0) {
+            // Each slot is listed at most once, so the list never outgrows
+            // MAX_ENTITIES; cleared slots leave it on the next step.
+            aiInputListed[slot] = 1;
             aiInputList[aiInputListLen++] = slot;
           }
-          aiInputPending[slot] = cmd.bits[i]!;
+          aiInputHeld[slot] = cmd.bits[i]!;
         }
         break;
       }
@@ -373,10 +411,22 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
         // `applyImpulse` silently skips unknown ids — safe for the race
         // where a drone died between detonate and apply.
         physics.applyImpulse(cmd.entityId, cmd.fx, cmd.fy, 0);
+        wakeCensus?.noteImpulse(cmd.entityId, 'missile');
         break;
       }
       case 'WRECK_KICK': {
         physics.addVelocity(cmd.entityId, cmd.dvx, cmd.dvy, cmd.dw);
+        wakeCensus?.noteImpulse(cmd.entityId, 'kick');
+        break;
+      }
+      case 'WRECK_IMPULSE': {
+        physics.applyImpulseAtPoint(cmd.entityId, cmd.jx, cmd.jy, cmd.px, cmd.py);
+        wakeCensus?.noteImpulse(cmd.entityId, 'knock');
+        break;
+      }
+      case 'WRECK_RIGID_IMPULSE': {
+        physics.applyRigidGroupImpulse(cmd.entityIds, cmd.jx, cmd.jy, cmd.px, cmd.py);
+        if (wakeCensus) for (const id of cmd.entityIds) wakeCensus.noteImpulse(id, 'knock');
         break;
       }
       case 'SPAWN_WALL': {
@@ -447,10 +497,19 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
     // that wants player-equivalent snap-turn just sets the target angvel
     // and leaves `torque = 0`. (Setting both is allowed but redundant.)
     // NPC warp-to first: while a warp owns a bot's body its intent is dropped.
+    // A ship flown by control keys hands its keys to the spool, which flies
+    // it like a pilot's (thrust works, the drive turns it): `null` on a tick
+    // with no new keys.
     for (const [slot, r] of botWarps) {
       const id = slotToPlayer.get(slot);
       if (id === undefined) { botWarps.delete(slot); continue; }
-      if (physics.botWarp(id, r.on ? r : null)) { aiIntents.delete(slot); aiInputPending[slot] = -1; continue; }
+      // The held keys (`aiInputHeld`) fly the spool; the warp applies them,
+      // so the key loop below skips the slot this step (`aiWarpOwned`) but
+      // keeps holding its keys between worker messages.
+      const bits = aiInputHeld[slot]!;
+      let keys: typeof aiKeys | null = null;
+      if (bits >= 0) { decodeAiInputBits(bits, aiKeys); keys = aiKeys; }
+      if (physics.botWarp(id, r.on ? r : null, keys)) { aiIntents.delete(slot); if (bits >= 0) aiWarpOwned[slot] = 1; continue; }
       // Idle: arrived (or cancelled). Clear the latch and forget the slot.
       if (!r.on || physics.warpArrived(id)) { physics.botWarp(id, null); botWarps.delete(slot); }
     }
@@ -463,18 +522,21 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
     aiIntents.clear();
     // Pilot layer: AI slots flown by control keys, through the SAME
     // applyShipInput as a pilot (grip, maxSpeed clamp, capital torque turn).
-    // A slot whose intent a bot warp dropped above has pending -1: skipped.
+    // Held keys apply on EVERY step (see `aiInputHeld`). A slot cleared by a
+    // despawn or an AI_INTENT (-1), or with no body, is
+    // compacted out of the list in place (no allocation, #14).
+    let keep = 0;
     for (let i = 0; i < aiInputListLen; i++) {
       const slot = aiInputList[i]!;
-      const bits = aiInputPending[slot]!;
-      aiInputPending[slot] = -1;
-      if (bits < 0) continue;
-      const id = slotToPlayer.get(slot);
-      if (id === undefined) continue;
+      const bits = aiInputHeld[slot]!;
+      const id = bits < 0 ? undefined : slotToPlayer.get(slot);
+      if (id === undefined) { aiInputHeld[slot] = -1; aiInputListed[slot] = 0; aiWarpOwned[slot] = 0; continue; }
+      aiInputList[keep++] = slot;
+      if (aiWarpOwned[slot] === 1) { aiWarpOwned[slot] = 0; continue; }
       decodeAiInputBits(bits, aiKeys);
       physics.applyAiInput(id, aiKeys);
     }
-    aiInputListLen = 0;
+    aiInputListLen = keep;
 
     // Always step by the nominal fixed dt regardless of actual elapsed time.
     // Using actual elapsed time causes the accumulator to occasionally produce
@@ -493,6 +555,7 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
     // Compute sleep transitions before SAB write so the flag word is current.
     // SLEEP_TRANSITION messages buffer here; flushed after the seqlock window.
     transitionCount = 0;
+    quietIds.clear();
     for (const [slot, id] of slotToPlayer) {
       const sleeping = physics.isSleeping(id);
       const prev = sleepCount.get(slot) ?? 0;
@@ -501,6 +564,11 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
 
       const effectiveSleeping = next >= SLEEP_HYSTERESIS_TICKS;
       const lastReported = sleepState.get(slot) ?? false;
+      if (wakeCensus && id.startsWith('wreck-')) wakeCensus.poll(physics, id, tick, prev > 0, lastReported, sleeping);
+      // Still asleep, already flagged FLAG_SLEEPING in the SAB on an earlier
+      // tick, and no pilot input on the slot (a player's ack must advance
+      // every tick): its SAB record is current, skip the read and write below.
+      if (effectiveSleeping && lastReported && !appliedTicks.has(slot)) quietIds.add(id);
       if (effectiveSleeping !== lastReported) {
         sleepState.set(slot, effectiveSleeping);
         let rec = transitionScratch[transitionCount];
@@ -514,10 +582,15 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
       }
     }
 
+    if (wakeCensus) {
+      wakeCensus.endTick();
+      if (tick % WAKE_CENSUS_EVERY_TICKS === 0) post({ type: 'WAKE_CENSUS', census: wakeCensus.sample(physics, slotToPlayer.values(), tick) });
+    }
+
     // Write all entity states to SAB under seqlock.
     Atomics.add(u32, SEQLOCK_IDX, 1); // lock — value becomes odd
 
-    const allStates = physics.getAllShipStates();
+    const allStates = physics.getAllShipStates(quietIds);
     for (const [playerId, s] of allStates) {
       const slot = playerToSlot.get(playerId);
       if (slot === undefined) continue;
@@ -598,9 +671,11 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
     }
     // Prune despawned entities so prevVel stays bounded. Only scans when stale
     // entries exist — in steady state the sizes match and this is a no-op.
-    if (prevVel.size > allStates.size) {
+    // A quiet (still-asleep) body keeps its entry (velocity 0 from when it
+    // fell asleep), so waking costs no allocation.
+    if (prevVel.size > allStates.size + quietIds.size) {
       for (const id of prevVel.keys()) {
-        if (!allStates.has(id)) prevVel.delete(id);
+        if (!allStates.has(id) && !quietIds.has(id)) prevVel.delete(id);
       }
     }
 

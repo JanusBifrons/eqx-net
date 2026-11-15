@@ -5,9 +5,9 @@
  * built unscaled, so their guns are too.
  *
  * Two tables, picked by the naval range switch (`navalRange.ts`,
- * `EQX_NAVAL_RANGE` / `?navalRange=`): `legacy` (default) is what the shipped
- * game (2× B, reach ×1.5) always used; `real` is the real maximum range in the
- * game's km with time of flight real ÷ 3 (slice 14).
+ * `EQX_NAVAL_RANGE` / `?navalRange=`): `real` (default since 2026-11-14) is
+ * the real maximum range in the game's km with time of flight real ÷ 3 (slice
+ * 14); `legacy` (opt-in) is what the game (2× B, reach ×1.5) used before.
  *
  * Lives in shared-types (pure, leaf zone) so both the weapon catalogue
  * (`core/combat/WeaponCatalogue.ts`) and the coastal-defence structure records
@@ -31,8 +31,8 @@ export interface NavalGunBallistics {
   readonly maxTicks: number;
 }
 
-/** LEGACY shell speed and flight time per naval gun (`EQX_NAVAL_RANGE` unset
- *  or `legacy`): the shipped 2× B numbers, absolute. */
+/** LEGACY shell speed and flight time per naval gun (`EQX_NAVAL_RANGE=legacy`):
+ *  the pre-2026-11-14 shipped 2× B numbers, absolute. */
 export const LEGACY_NAVAL_GUN_BALLISTICS = {
   naval_s: { speed: 1800, maxTicks: 90 },
   naval_m: { speed: 2000, maxTicks: 125 },
@@ -98,6 +98,30 @@ export function navalGunBallisticsFor(mode: NavalRangeMode): Readonly<Record<Nav
 /** Shell speed and flight time per naval gun for THIS process's
  *  `NAVAL_RANGE`, absolute (never profile-scaled). */
 export const NAVAL_GUN_BALLISTICS: Readonly<Record<NavalGunId, NavalGunBallistics>> = navalGunBallisticsFor(NAVAL_RANGE);
+
+/**
+ * The capital RAILGUN (plan beam-slices §7): not a real gun, so it has no row
+ * in the tables above. Its slug flies `RAILGUN_SPEED_MUL` × the 16" shell's
+ * speed in the same range mode and reaches at least as far (its flight is the
+ * 16" flight ÷ the multiplier, rounded up): very fast and flat.
+ * Real mode: 6,450 u/s × 424 t (engage reach ≈ 38.7 km).
+ */
+export const RAILGUN_SPEED_MUL = 5;
+
+/** The railgun's ballistics for a naval range mode. */
+export function railgunBallisticsFor(mode: NavalRangeMode): NavalGunBallistics {
+  const xl = navalGunBallisticsFor(mode).naval_xl;
+  return { speed: xl.speed * RAILGUN_SPEED_MUL, maxTicks: Math.ceil(xl.maxTicks / RAILGUN_SPEED_MUL) };
+}
+
+/** The railgun's ballistics for THIS process's `NAVAL_RANGE`, absolute. */
+export const RAILGUN_BALLISTICS: NavalGunBallistics = railgunBallisticsFor(NAVAL_RANGE);
+
+/** The railgun slug's collision radius and its drawn bolt width (world u).
+ *  Its `killCut` channel is exactly the drawn width, at least twice the
+ *  radius, so the slug clears both halves it cuts. */
+export const RAILGUN_RADIUS = 5;
+export const RAILGUN_BOLT_WIDTH = 16;
 
 /** Schwerer Gustav's blast, absolute (the shipped 2× B value). The same in
  *  both range modes: it is a blast radius, not a range (how far a 7 t shell

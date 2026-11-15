@@ -17,15 +17,14 @@
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import { getShipKind } from '@shared-types/shipKinds';
 import { getStructureKind } from '@shared-types/structureKinds';
-import { LOCK_TUNING } from '@shared-types/combat/lockProfile';
 import type { EntityKind } from '../render/entityVisuals';
 import { acquiringPct } from '../hud/lockPct';
 import { isOwnedByMe } from '../render/shipOwnership';
 
-/** A weapon group's lock reach basis (the server's `groupGeometry().reach`). */
+/** A weapon group's fire reach (the server's `groupGeometry().reach`). */
 export interface GroupReach {
   id: string;
-  /** Weapon reach in u; the lock reaches `reach × LOCK_TUNING.reachSlack`. */
+  /** Weapon (fire) reach in u. Locks work at any distance; this marks only what the group can shoot. */
   reach: number;
 }
 
@@ -47,9 +46,9 @@ export interface ContactRow {
   dist: number;
   /** Hostile to you (NPC aggro, a turret aiming at you, or locking you). */
   hostile: boolean;
-  /** Inside the ACTIVE group's lock reach. */
+  /** Inside the ACTIVE group's fire reach (centre distance). */
   inActiveReach: boolean;
-  /** Inside any group's lock reach. */
+  /** Inside any group's fire reach. */
   inAnyReach: boolean;
   /** The active group's lock on it, else the first other group's; null = none. */
   lock: ContactLock | null;
@@ -88,11 +87,10 @@ export function buildContactRows(
   const localId = mirror.localPlayerId;
   const me = localId ? mirror.ships.get(localId) : undefined;
   if (!localId || !me) return [];
-  const slack = LOCK_TUNING.reachSlack;
   let activeReach = 0;
   let anyReach = 0;
   for (const g of reaches) {
-    const r = g.reach * slack;
+    const r = g.reach;
     if (g.id === activeGroupId) activeReach = r;
     if (r > anyReach) anyReach = r;
   }

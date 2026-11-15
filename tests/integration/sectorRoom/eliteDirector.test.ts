@@ -144,4 +144,38 @@ describe('SectorRoom integration — named elites (P4a)', () => {
     expect(room._internals.swarmRegistry.get(second)).toBeFalsy();
     expect(getWallet().balance(guest)).toBeGreaterThanOrEqual(ELITE_BOUNTY_CREDITS);
   });
+
+  /**
+   * A morale Flee (2026-11-14): the elite warps out of the sector by itself.
+   * It is gone, so its slot frees and a replacement comes after the delay,
+   * but nobody killed it: no bounty, no "destroyed" notice.
+   */
+  it('an elite that flees and warps out frees its slot, pays no bounty, and is replaced', { timeout: 40_000 }, async () => {
+    h = await bootLivingWorldTestServer({ sectors: ['greenfall', 'emerald-span'], botCount: 0, seed: 6 });
+    const clock = { now: 1_000_000 };
+    const rooms = new Map<string, LivingWorldRoom>([
+      ['greenfall', h.getRoom('greenfall') as unknown as LivingWorldRoom],
+      ['emerald-span', h.getRoom('emerald-span') as unknown as LivingWorldRoom],
+    ]);
+    const room = h.getRoom('greenfall') as unknown as {
+      _handleAiWarpOut: (id: string, x: number, y: number) => void;
+      getBotPose: (id: string) => { x: number; y: number } | null;
+    };
+    const notices: WorldNotice[] = [];
+    const pilot = await h.connectActive(randomUUID(), 'greenfall', { initialHull: 99999 });
+    pilot.onMessage('world_notice', (n: WorldNotice) => notices.push(n));
+    elites = new EliteDirector(rooms, { maxElites: 1, firstSector: 'greenfall', kind: 'gunship', respawnMs: 500, nowMs: () => clock.now, rng: () => 0.1 });
+    elites.start();
+    const [e] = elites.elites();
+    const podsBefore = getHoldStore().inSector('greenfall', 'pod').length;
+    const p = room.getBotPose(e!.id)!;
+    room._handleAiWarpOut(e!.id, p.x + 3000, p.y);
+    await h.waitUntil(() => room.getBotPose(e!.id) === null, 8000, 'the elite leaves the sector');
+    expect(elites.elites(), 'its slot is free').toHaveLength(0);
+    expect(notices.some((n) => n.kind === 'elite_killed'), 'no kill notice').toBe(false);
+    expect(getHoldStore().inSector('greenfall', 'pod').length, 'no kill haul dropped').toBe(podsBefore);
+    clock.now += 1000;
+    elites.tick(clock.now);
+    expect(elites.elites(), 'a replacement after the delay').toHaveLength(1);
+  });
 });

@@ -21,7 +21,7 @@
 import { sectorSites, warpDropPoint, type SectorSite } from '../../core/galaxy/sectorSites.js';
 import { sectorController } from '../../core/galaxy/control.js';
 import { getNeighbours, getSector } from '../../core/galaxy/galaxy.js';
-import type { Bus } from '../../core/events/Bus.js';
+import type { Bus, BusEventPayloads } from '../../core/events/Bus.js';
 import type { ShipKindId } from '../../shared-types/shipKinds.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { CAPITAL_STYLE_VARIANTS } from '../../shared-types/shipKinds/capitals/index.js';
@@ -75,7 +75,9 @@ export function fleetCapitalKind(sectorKey: string, rng: Rng): ShipKindId {
 /**
  * W2b — a capital's hull style (A, B or C), seeded from the ship's own id so
  * a fleet's ships differ and the same ship keeps its style. Non-capital kinds
- * pass through. Pure (tests).
+ * pass through. Pure (tests). A class's fitted variants (plan section 9: the
+ * rail battleship) share the same even pick, so a battleship is rail-fitted
+ * one time in four.
  */
 export function styledKind(kind: ShipKindId, shipId: string): ShipKindId {
   const styles = CAPITAL_STYLE_VARIANTS[kind];
@@ -85,9 +87,10 @@ export function styledKind(kind: ShipKindId, shipId: string): ShipKindId {
   return styles[(h >>> 0) % styles.length] as ShipKindId;
 }
 
-/** The class of a capital kind (a style variant's base). */
-function classOf(kind: ShipKindId): string {
-  return kind.replace(/-[bc]$/, '');
+/** The class of a capital kind: a style or fit variant's base (`battleship-c`,
+ *  `battleship-rail` → `battleship`). Pure (tests). */
+export function classOf(kind: ShipKindId): string {
+  return kind.replace(/(?:-[bc])?(?:-rail)?$/, '');
 }
 
 const CLASS_PREFIX: Partial<Record<string, string>> = {
@@ -160,7 +163,11 @@ export class FlagshipDirector {
   private readonly now: () => number;
   private readonly respawnMs: number;
   private readonly dwellMs: number;
-  private readonly subs: Array<{ bus: Bus; fn: (e: { type: 'ENTITY_DESTROYED'; entityId: string }) => void }> = [];
+  private readonly subs: Array<{
+    bus: Bus;
+    fn: (e: { type: 'ENTITY_DESTROYED'; entityId: string }) => void;
+    onDeparted: (e: BusEventPayloads['BOT_DESPAWNED']) => void;
+  }> = [];
   private generation = 0;
   private nextPersistAtMs = 0;
 
@@ -188,14 +195,24 @@ export class FlagshipDirector {
       const fn = (e: { type: 'ENTITY_DESTROYED'; entityId: string }): void => {
         if (e.entityId.startsWith(FLAGSHIP_BOT_ID_PREFIX)) this.onShipDestroyed(e.entityId);
       };
+      // A fleet ship that fled (its own morale warp-out) is gone for good:
+      // it leaves the fleet like a loss (2026-11-14). A 'transit' despawn is
+      // this director's own move.
+      const onDeparted = (e: BusEventPayloads['BOT_DESPAWNED']): void => {
+        if (e.reason === 'fled' && e.botId.startsWith(FLAGSHIP_BOT_ID_PREFIX)) this.onShipDestroyed(e.botId, true);
+      };
       bus.on('ENTITY_DESTROYED', fn);
-      this.subs.push({ bus, fn });
+      bus.on('BOT_DESPAWNED', onDeparted);
+      this.subs.push({ bus, fn, onDeparted });
     }
     this.tick(this.now());
   }
 
   stop(): void {
-    for (const s of this.subs) s.bus.off('ENTITY_DESTROYED', s.fn);
+    for (const s of this.subs) {
+      s.bus.off('ENTITY_DESTROYED', s.fn);
+      s.bus.off('BOT_DESPAWNED', s.onDeparted);
+    }
     this.subs.length = 0;
   }
 
@@ -465,18 +482,22 @@ export class FlagshipDirector {
 
   // ── losses ────────────────────────────────────────────────────────────
 
-  private onShipDestroyed(id: string): void {
+  /** A fleet ship is gone: killed, or (`fled`) warped out on its own morale. */
+  private onShipDestroyed(id: string, fled = false): void {
     for (const f of this.fleets) {
       if (!f.alive) continue;
       if (f.leadId === id) {
         // The flagship is down: the escorts break off and jump out.
+        // TODO(AI slice 6b): once escorts stay in the world here, call
+        // `aiController.noteCapitalLost(escortId)` instead so each escort
+        // rolls its morale die (fight on / fall back / flee and warp out).
         const room = f.sectorKey !== null ? this.rooms.get(f.sectorKey) : undefined;
         for (const e of f.escorts) room?.despawnLivingWorldBot(e.id);
         f.escorts = [];
         f.alive = false;
         f.respawnAtMs = this.now() + this.respawnMs;
-        serverLogEvent('flagship_destroyed', { name: f.name, sectorKey: f.sectorKey });
-        this.announce({ type: 'world_notice', kind: 'elite_killed', message: `The ${f.name} has been destroyed!` });
+        serverLogEvent(fled ? 'flagship_fled' : 'flagship_destroyed', { name: f.name, sectorKey: f.sectorKey });
+        if (!fled) this.announce({ type: 'world_notice', kind: 'elite_killed', message: `The ${f.name} has been destroyed!` });
         f.sectorKey = null;
         return;
       }

@@ -59,6 +59,15 @@ rendering / damage come for free.
    once; the dispatch/sync/render seams read the descriptor instead of branching
    on id-string shape.
 
+## Zone split
+
+`src/core/entity/` + the `IDamageable` / `INetworkSynced` / `IRenderContributor` contracts make a new world-object type "a leaf + a descriptor".
+
+- **Core (zone-pure).** The append-only `EntityKindRegistry` ([src/core/entity/EntityKindRegistry.ts](../../src/core/entity/EntityKindRegistry.ts)) maps each `EntityKindTag` to its sync, render and damageable descriptors. `IDamageable` declares the damage surface: `HealthBinding`, a stateless per-kind accessor over the live store (never a value copy), plus the reused `Interaction` / `InteractionResultMut`. Core stays blind to the wire.
+- **Server.** The kind-specific orchestration (broadcast, bus and worker side-effects) is a server concern. The leaf classes in `src/server/entity/leaves/` (`ShipEntity` / `DroneEntity` / `StructureEntity`) implement `Entity` and compose these contracts as data. `DamageRouter` routes a hit via `EntityResolver` to the leaf and one monomorphic `applyInteraction` (HC#5: never a per-class virtual `receiveInteraction`).
+- **Two different types.** `Entity` is a separate type from `AiEntity` (`IAiBehaviour.ts`); don't conflate them.
+- **Append-only.** Kinds and pose-core bytes are append-only (mirrors invariant #11).
+
 ## What each phase delivered
 
 | Phase | Deliverable | Key files |
@@ -277,3 +286,91 @@ is free either way.
 **Rule of thumb:** *cosmetic/static variety lives in a catalogue (data);
 behavioural variety lives in a leaf hook (small code); a new client routing shape
 earns a new kind byte.*
+
+## Client rules in detail
+
+Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each rule and points here.
+
+- **Binary-swarm (pose-core) entities construct through the client `EntityFactory` (Generic Entity Pipeline B4, 2026-06-04).** `ColyseusClient.syncSwarmIntoPredWorld` no longer branches `kind===0 ? asteroid : else-is-drone` (that mis-registered any future kind as a `HostileDroneBehaviour` — HC#2), nor reads the old `swarmKindProfile` data table (DELETED). It calls [`net/entity/ClientEntityFactory.ts`](../../src/client/net/entity/ClientEntityFactory.ts) `leafFor(kind)` → a per-kind client leaf ([`net/entity/leaves/`](../../src/client/net/entity/leaves/): asteroid/drone/structure), the **OOP peer of the server leaves** in `src/server/entity/leaves/`. An **unrecognised kind returns `null` and is SKIPPED** (never the drone path — HC#2). Each leaf reads the SIDE-NEUTRAL facts from the shared core `EntityKindRegistry` (`staticBody = !descriptor.sync.interpolated`) and holds only the client-specific construction (collider shape, catalogue mass, AI-ledger registration, shield-collider swap). Adding a pose-core kind = a registry row + a leaf + a factory `case` (+ a sprite arm). A static structure (kind 2) is asteroid-like client-side but damageable server-side. The wire (`swarmWireFormat.ts`) gains only a new `kind` byte value — no stride/`SWARM_WIRE_VERSION` bump.
+  - **Cache ownership stays in `ColyseusClient`, NOT the factory (load-bearing).** `predSwarmKeys` / `_movingSwarmKeys` / `_swarmBodyKeyCache` / `_aiRegisteredIds` are read across `syncSwarmIntoPredWorld` (spawn + teardown sweep), the per-snapshot remote-entity anchor (`anchorRemoteSwarmBodies` reads `_swarmBodyKeyCache`), the local beam ray (`DisplayPoseHitscan` reads `_movingSwarmKeys` + `_swarmBodyKeyCache`), and `resetPredictionState`/`dispose` (clear-by-name on sector handoff). The factory takes a REUSED `_clientSpawnCtx` (one class-field instance mutated per entity — zero per-entity alloc, invariant #14); a leaf that registers AI sets `ctx.registeredAiId` and the client folds it into `_aiRegisteredIds`. **Do NOT move these caches into the factory** — the anchor and the beam ray read them directly, and the sector-handoff teardown contract clears them by name. Teardown of the AI-ledger entry stays caller-owned via `_aiRegisteredIds` (the kind is unavailable at sweep time; that set is the precise drone marker). Full story: [docs/architecture/generic-entity-pipeline.md](../../docs/architecture/generic-entity-pipeline.md).
+
+### Phase A3 — Renderer decision logic extraction (2026-05-13)
+
+Per-entity sprite-update decisions (create / rebuild / reposition / skip) live in `src/client/render/spriteUpdateDecisions.ts` as pure functions, NOT inlined inside `PixiRenderer.ts`. The Pixi calls (Graphics instantiation, `addChild`, `tint`, `alpha`, `destroy`) stay in the renderer; only the branching lives in the pure module.
+
+**Why**: the Phase 6b "lingering hull permanently invisible" bug was a too-aggressive `if (!ship.kind) continue;` skip in the renderer that left the sprite uncreated forever when the schema diff with `kind` arrived late. A unit test on a pure decision helper would have failed loudly: "no cache + unknown kind should `create` with the fallback kind, not `skip`." The extraction makes that contract explicit and testable.
+
+**The rule**: when you add a new entity-update method on the renderer (`updateXxx` taking `RenderMirror`), the per-entity decision logic MUST live in `spriteUpdateDecisions.ts` with unit tests covering every branch + a property-based test (fast-check, already installed). Don't inline new decision branches in `PixiRenderer.ts`.
+
+Current functions:
+- `decideLingeringSpriteAction({ cached, currentKind, fallbackKind })` — Phase 6b lingering hulls. Falls back to `fallbackKind` when `currentKind` is undefined and there's no cache hit (don't lock in the wrong silhouette but also don't go invisible).
+
+Tests: `src/client/render/spriteUpdateDecisions.test.ts` (12 cases incl. fast-check properties).
+
+## Server implementation notes
+
+> Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.
+
+### Generic Entity Pipeline — OOP damage dispatch + a new pose-core kind (2026-06-04)
+
+`DamageRouter.apply` routes through real Entity LEAVES: `EntityResolver.resolve(targetId)`
+returns the live leaf it names (`ShipEntity` / `DroneEntity` /
+`StructureEntity` in [src/server/entity/leaves/](../../src/server/entity/leaves/)), then ONE
+monomorphic `DamageRouter.applyInteraction(leaf, …)` reads the leaf's COMPOSED
+`{ health, perHit, death }` data (`applyLayered → broadcast → perHit → death`).
+Each leaf owns its identity + pose and composes its damage strategy + sync/render
+descriptors — a new damageable type is **a leaf + a registry row**, ZERO new
+dispatch branch here. Byte-identical to the former if-tree / strategy-table
+(locked by `DamageRouter.dispatch.test.ts`, the golden-master — HC#1: branch
+order + per-branch side-effects are load-bearing). The ordered shape-based
+selection (lingering→active→swarm; an asteroid, kind 0, is **non-damageable**
+→ the resolver returns `null` = immune; wrecks RETIRED in P6.3/C3) lives in
+[EntityResolver.ts](../../src/server/entity/EntityResolver.ts).
+
+**HC#5 (monomorphism guard).** `applyInteraction` is ONE concrete function
+reading the leaf's composed DATA — it must NEVER become a per-class virtual
+`leaf.receiveInteraction()` across the N leaf classes (that megamorphic-deopts in
+V8 under ramming/projectile load). The leaves are objects for identity/sync/render
+(where polymorphism is cheap + clarifying); the per-hit hot work stays one
+monomorphic call site. Lock: the `DO NOT replace this with receiveInteraction`
+guard comment + `benchmarks/damageDispatch.bench.ts` (mixed-kind ≈ single-kind
+per `apply` — no cliff). Adding a damageable type does **not** add a branch here.
+
+A new **pose-core** entity type (e.g. `SWARM_KIND_STRUCTURE = 2`) is a
+swarm-registry record — it rides `BinarySwarmBroadcast` (writes `rec.kind`
+as-is, no encoder change), the interest grid (reuses the single per-(client,tick)
+`interestScratch`, no new `query9`), and the `DamageRouter` 'swarm' strategy for
+free. The only damage-specific line is seeding `swarmHealth` on spawn (absence =
+immune, like asteroids). `SwarmSpawner.spawnStructure` mirrors `spawnAsteroid`
+(`spawnOne` is already kind-generic). Test trigger: the testMode `structurePoses`
+room option (mirrors `dronePoses`) → `structure-test` E2E room. New visible type
+⇒ the integration-test mandate above applies (`structureEntity.test.ts`). Full
+story: [docs/architecture/generic-entity-pipeline.md](../../docs/architecture/generic-entity-pipeline.md).
+
+**EntitySyncRouter (GEP B4) — the per-tick send orchestration seam.** Both
+entity-sync sends in `SectorRoom.update()` now route through ONE
+[EntitySyncRouter](../../src/server/rooms/EntitySyncRouter.ts) `route(phaseTime)` call instead of
+calling the two broadcasters directly. The router owns the **ordering decision**
+— pose-core binary FIRST (`SwarmBroadcaster.broadcast()` builds the
+per-(client,tick) `interestScratch`), then json-slice
+(`SnapshotBroadcaster.broadcast(sectorIdle)` reuses it, no second `query9` —
+**HC#4, now enforced by the router, not the caller**) — and evaluates sector-idle
+**between** the two sends (verbatim: `swarm.broadcast` may apply backpressure
+before idle reads `clients.length`, so the order is preserved, not reordered).
+The proven broadcasters keep their **byte-level encoding UNCHANGED** (the safe
+shape — making the router own per-entity iteration would move wire bytes for zero
+gain; STOP+flag + netgate if ever attempted). Its constructor runs a **boot-time
+`SyncProfile.transport` governance check** (`assertTransportGovernance`) that
+validates every `EntityKindRegistry` kind's transport is well-formed and that the
+pose-core bytes match the wire constants — this is what finally makes
+`SyncProfile.transport` load-bearing (boot-time only, never in the `route()` hot
+path). Hot path is allocation-free (#14): the idle closure is built once at
+construction, `phaseTime` is passed by reference. Lock: `EntitySyncRouter.test.ts`
+(ordering + idle-threading + governance); the full-snapshot-path byte-identity is
+the netgate + the existing integration suite.
+
+## History
+
+> Updated 2026-06-04 (GEP B2): the data-driven `strategies[kind]` table is now
+> the **OOP entity pipeline**. The damage SHAPE is real leaf objects, not a
+> side table.

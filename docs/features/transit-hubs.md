@@ -14,7 +14,7 @@ The network is worked out once, deterministically, by pure shared code (`src/cor
 - **Both ends of a link grow a teleporter** tagged with the link's id (`GrownPlacement.link`). The far ends are ordinary bases (a heart's citadel, a trade outpost); their teleporter is added on top of their normal build.
 - **The two find each other at run time** by that id, through the teleport broker (`findLinkTwin`). Nothing is paired by position.
 
-A hub makes room in its sector by dropping extra bases if the sector would go over its NPC structure budget. Existing bases don't move: a base's role and layout are rolled exactly as before, and only its link teleporters are new (`BASE_GROWTH_VERSION` 8).
+A hub makes room in its sector by dropping extra bases if the sector would go over its NPC structure budget. Existing bases don't move: the `transit` role is never rolled (weight 0), so a base's role and layout are rolled exactly as before, and only its link teleporters are new (`BASE_GROWTH_VERSION` 8).
 
 ## Riding one
 
@@ -43,3 +43,14 @@ The drone and robot directors still route by plain galaxy hops: their waves and 
 | Routes (pure) | `transitNetwork.test.ts` H2 case: riding the links is never longer than flying, shortens some routes, a link is half a hop |
 | Convoys | `src/server/economy/ConvoyDirector.test.ts` H2 case: transit lasts route hops × `hopMs` |
 | Integration | `tests/integration/sectorRoom/transitHubs.test.ts` (the two real rooms at a hub link's ends, real NPC bases): the ends pair by link id, fire when a ship boards, charge the toll, and carry a paying pilot to the far sector |
+
+## Server implementation notes
+
+> Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.
+
+- **The network is pure core** (`core/bases/transitNetwork.ts`, `transitNetwork()`): one `transit` hub per region at a chokepoint, linked to its heart's base, up to two trade bases and (frontier hubs) the core hub. `galaxyBasePlan` adds the hub base and each base's `profile.links`; `growBase` adds one teleporter per link, tagged `GrownPlacement.link`.
+- **Seeding.** `NpcBaseSubsystem.seed` sets `rec.npcLink`, the "when a ship boards" rule and `NPC_LINK_TOLL`. The ends pair at run time in `TeleporterSubsystem.update` through `findLinkTwin` (the teleporter in the other end's room with the same `npcLink`), like the alien gates. Never pair them by position.
+- **No pairing requests** to an NPC-owned teleporter (`teleport_pair_request` refuses them).
+- **v4 C — freight contracting.** `ConvoyDirector.launch` picks the carrier (`chooseCarrier`, `core/economy/freight.ts`), records owner + carrier in `economy/convoyCarriers.ts` (forgotten on every convoy end), and pays a contracted carrier's treasury its cut on delivery. `noteStandingHit` charges a raider standing with both. See docs/architecture/economy-and-trade.md.
+- **H2 — convoys ride the links.** `ConvoyDirector` routes by `transitRouteHops` (a link is `LINK_HOP_COST` = half a hop) for planning and transit time; the `routeHops` option injects another. Transit stays abstract (haulers don't physically ride a pad). The drone/robot directors still use plain `hopDistance`.
+- Lock: `tests/integration/sectorRoom/transitHubs.test.ts`. Story: [docs/features/transit-hubs.md](../features/transit-hubs.md).

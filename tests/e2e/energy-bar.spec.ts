@@ -21,6 +21,15 @@ import { randomUUID } from 'node:crypto';
 import { launchTestClient } from './helpers/gameScenario';
 import { lockOn, toManual } from './helpers/fireControl';
 import { DEFAULT_BASE_URL } from './helpers/ports';
+import { ENERGY_POOL_MUL } from '../../src/shared-types/shipScale/defineShipKind';
+
+/** The drain the test was written for: ~27 energy (15 % of the interceptor's
+ *  original 180 pool, ~4.5 s at the beam's net -6/s). The pool is now
+ *  `ENERGY_POOL_MUL` x as deep, so the same drain is that much smaller a share. */
+const DRAIN_PCT = 15 / ENERGY_POOL_MUL;
+/** ...and the recovery it waits for (~18 energy, 10 % of the old pool):
+ *  unscaled, drained + 10 % was above 100 % and could never be met. */
+const RECOVER_PCT = 10 / ENERGY_POOL_MUL;
 
 const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 
@@ -100,8 +109,8 @@ test('sustained fire drains the pool, then it recovers when firing stops', async
     // the start value as the arg: `waitForFunction(fn, { timeout })` treats the object
     // as the ARGUMENT, so the 8 s deadline never applied.
     await page.waitForFunction(
-      (b: number) => parseInt(document.querySelector('[data-testid="hud-energy"]')?.getAttribute('data-energy-pct') ?? '100', 10) < b - 15,
-      before,
+      ({ b, drainPct }: { b: number; drainPct: number }) => parseInt(document.querySelector('[data-testid="hud-energy"]')?.getAttribute('data-energy-pct') ?? '100', 10) < b - drainPct,
+      { b: before, drainPct: DRAIN_PCT },
       { timeout: 8000 },
     );
     await page.keyboard.up('Space');
@@ -110,8 +119,8 @@ test('sustained fire drains the pool, then it recovers when firing stops', async
 
     // Stop firing → steady regen brings it back up.
     await page.waitForFunction(
-      (low: number) => parseInt(document.querySelector('[data-testid="hud-energy"]')?.getAttribute('data-energy-pct') ?? '0', 10) > low + 10,
-      drained,
+      ({ low, recoverPct }: { low: number; recoverPct: number }) => parseInt(document.querySelector('[data-testid="hud-energy"]')?.getAttribute('data-energy-pct') ?? '0', 10) > low + recoverPct,
+      { low: drained, recoverPct: RECOVER_PCT },
       { timeout: 8000 },
     );
     expect(await energyPct(page)).toBeGreaterThan(drained);

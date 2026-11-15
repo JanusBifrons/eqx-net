@@ -133,6 +133,12 @@ interface DamageNumberEntry {
   curY: number;
   riseY: number;
   /**
+   * The target died (`markDead`): the number finishes its float but takes
+   * no more damage, neither late hits on its own id nor hits on something
+   * else at the same spot (the coalesce skips it).
+   */
+  closed: boolean;
+  /**
    * Per-tag predicted contributions, lazily allocated only when at
    * least one tagged add() happens against this bucket. Auth-only
    * buckets (the dominant case) never allocate this map. Lets
@@ -245,6 +251,11 @@ export class DamageNumberManager {
   spawn(targetId: string, x: number, y: number, damage: number, tag?: string, heal = false): void {
     if (damage <= 0) return;
     let entry = this.byTarget.get(targetId);
+    // A dead target's number is closed: a late hit on it (in flight when it
+    // exploded) must not climb it or keep it alive (fight-clip review
+    // 2026-11-13). Hits from before the death were flushed by the client
+    // in the explosion's frame, so nothing real is lost here.
+    if (entry?.closed) return;
     if (!entry) {
       // One number per screen spot: a hit near a live number (another
       // target in a packed melee / splash) folds into it rather than
@@ -300,6 +311,7 @@ export class DamageNumberManager {
       curX: x,
       curY: -y,
       riseY: 0,
+      closed: false,
     };
     this.applyDisplay(fresh);
     if (tag !== undefined) {
@@ -308,6 +320,16 @@ export class DamageNumberManager {
     }
     this.byTarget.set(targetId, fresh);
     this.live[this.liveCount++] = fresh;
+  }
+
+  /**
+   * The target died (its explosion frame): close its number, if it has one.
+   * Call AFTER the frame's spawns are drained, so the killing blow (and any
+   * queued hits the client flushed at the kill) still land in it.
+   */
+  markDead(targetId: string): void {
+    const entry = this.byTarget.get(targetId);
+    if (entry) entry.closed = true;
   }
 
   /**

@@ -205,3 +205,22 @@ leave quietly and drop nothing.
 - `BountyBoard.test.ts`: uid parsing, cost, and the board row by name.
 - `BountyAction.test.tsx`: chips send from your own storage, or explain when
   you have none.
+
+## Client rules in detail
+
+Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each rule and points here.
+
+### Contracts tab (Living World P4c, plan peppy-jumping-pinwheel)
+
+- `layout/Drawer/tabs/ContractsTab.tsx` rebuilds ONLY from `GET /galaxy/contracts` (#16), polled only while `drawerTab === 'contracts' && isDrawerOpen`. It lives under `/galaxy` on purpose, so no new Vite proxy path is needed (see the `/trade` collision rule above).
+- World notices (`world_notice`: elites, events, bounties) reuse the trade toast stack with the gold `world` tone, which is not tappable. They are accelerators; the truth is the snapshot (`drones[].elite`) and the galaxy snapshot (`SectorLiveState.elite` / `.event`).
+- Lock: `ContractsTab.test.tsx`.
+## Server implementation notes
+
+> Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.
+
+### From the server Thresholds section
+
+Moved verbatim from the old "Thresholds" section of `src/server/CLAUDE.md`. The rules stay there in short form; current values are in [server-thresholds](../architecture/server-thresholds.md). Dates, plan names and "was" notes below are history.
+
+- **Named elites (plan peppy-jumping-pinwheel P4a)**: `EliteDirector` (`livingworld/`, ticked by the drone director's `onTick`) keeps 2 named elites alive (`elite-` ids, existing heavy kinds). **Rules:** (1) an elite is a TAG on the swarm record (`rec.elite = { name, maxHealth }`, set by `SectorRoom.markElite`) — never a new ship kind; (2) every per-entity max-hull read goes through `droneMaxHealthOf(rec)` so the 4× hull is consistent across shield/hull, snapshot hp%, turret weighting and XP; (3) elites are never load-shed (a quiet shed emits no `ENTITY_DESTROYED` → the slot would leak); (4) client truth is `drones[].elite` (name, emit-while-elite) + `SectorLiveState.elite` (the director's `sectorElite` hook) — `world_notice` toasts are accelerators. Lock: `tests/integration/sectorRoom/eliteDirector.test.ts`. 🔴 netgate (snapshot slice). **P4b world events**: `EventDirector` (same `onTick`) runs one event at a time (incursion / mothership / salvage) with `event-` NPC ids — never load-shed (rule 3 applies), rewards via `dropEventLoot`, truth = `SectorLiveState.event` (`sectorEvent` hook); `POST /dev/world-event/start` is the test trigger. Lock: `tests/integration/sectorRoom/worldEvents.test.ts`. **P4c bounties** (economy v2 W1): world bounties ride `rec.elite.bounty` and are paid to the killer's WALLET in the kill path; player bounties live in `BountyBoard` (`economy/`, singleton) as one persisted `economy_state` record — placement = a wallet debit (amount + burned fee) and payout = a wallet credit, each in ONE group with the record. No sign-in gate (guests are full players). Lock: `tests/integration/sectorRoom/playerBounty.test.ts`.

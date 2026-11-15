@@ -45,6 +45,10 @@ export interface SceneWorkView {
   snapshotsPerTick: number;
   /** Entities (drones + projectiles + missiles + asteroids) per JSON snapshot sent. */
   entitiesPerSnapshot: number;
+  /** Running totals (print-only): wreck descriptors attached to sent
+   *  snapshots and snapshots sent, so a sampler can diff two reads. */
+  wreckDescriptorsSent: number;
+  snapshotsSent: number;
   /** Print-only: process CPU ms per tick (null until one batch completed). */
   cpuMsPerTick: number | null;
   /** Print-only: main-thread CPU ms inside update(), sampled (null when the runtime can't tell). */
@@ -68,6 +72,12 @@ export interface SceneWorkView {
   wingmanReplansPerTick: number;
   wingmanHostileQueriesPerTick: number;
   wingmanHostileScansPerTick: number;
+  /** Print-only (AI decision layer, slice 4, not yet calibrated): utility
+   *  re-scores per tick (5 Hz per fighting NPC, 2 Hz with no pilot near). */
+  aiDecisionsPerTick: number;
+  /** Print-only: live wreck pieces per tick (capital + sub-cap break-up),
+   *  so a count gate can tell how much of `bodiesPerTick` is debris. */
+  wreckPiecesPerTick: number;
 }
 
 type ThreadCpu = () => { user: number; system: number };
@@ -83,6 +93,11 @@ export class SceneWorkCounters {
   swarmBytes = 0;
   snapshots = 0;
   snapshotEntities = 0;
+  /** Wreck descriptors attached to sent snapshots (all recipients;
+   *  sub-cap break-up slice 5: the descriptor wire cost as debris piles up). */
+  wreckDescriptors = 0;
+  /** Live wreck pieces, summed over counted ticks (`wreckPiecesTick`). */
+  wreckPieces = 0;
   /** Line-of-fire running totals at the first counted tick, and the latest. */
   private lofBase = -1;
   private lofNarrowBase = 0;
@@ -95,6 +110,11 @@ export class SceneWorkCounters {
     if (this.lofBase < 0) { this.lofBase = checksTotal; this.lofNarrowBase = narrowTotal; }
     this.lofChecks = checksTotal - this.lofBase;
     this.lofNarrow = narrowTotal - this.lofNarrowBase;
+  }
+
+  /** Called each counted tick with the live wreck-piece count (#14). */
+  wreckPiecesTick(live: number): void {
+    if (this.active) this.wreckPieces += live;
   }
 
   /** AI neighbour-grid running total at the first counted tick, and the latest. */
@@ -126,6 +146,17 @@ export class SceneWorkCounters {
     this.wmReplans = replansTotal - this.wmReplansBase;
     this.wmQueries = queriesTotal - this.wmQueriesBase;
     this.wmScans = scansTotal - this.wmScansBase;
+  }
+
+  /** AI decision running total at the first counted tick, and the latest. */
+  private decBase = -1;
+  private decisions = 0;
+
+  /** Called each counted tick with the controller's decision total (#14). */
+  aiDecisions(total: number): void {
+    if (!this.active) return;
+    if (this.decBase < 0) this.decBase = total;
+    this.decisions = total - this.decBase;
   }
 
   // CPU batches (print-only).
@@ -179,6 +210,8 @@ export class SceneWorkCounters {
       swarmBytesPerTick: r(this.swarmBytes / t, 0),
       snapshotsPerTick: r(this.snapshots / t, 3),
       entitiesPerSnapshot: r(this.snapshotEntities / Math.max(1, this.snapshots)),
+      wreckDescriptorsSent: this.wreckDescriptors,
+      snapshotsSent: this.snapshots,
       cpuMsPerTick: c > 0 ? r(this.cpuUs / 1000 / c, 3) : null,
       updateCpuMsPerTick: this.updateSamples > 0 ? r(this.updateUs / 1000 / this.updateSamples, 3) : null,
       wallMsPerTick: c > 0 ? r(this.wallMs / c, 3) : null,
@@ -190,6 +223,8 @@ export class SceneWorkCounters {
       wingmanReplansPerTick: r(this.wmReplans / t),
       wingmanHostileQueriesPerTick: r(this.wmQueries / t),
       wingmanHostileScansPerTick: r(this.wmScans / t),
+      aiDecisionsPerTick: r(this.decisions / t),
+      wreckPiecesPerTick: r(this.wreckPieces / t),
     };
   }
 }

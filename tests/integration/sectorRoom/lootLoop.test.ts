@@ -19,6 +19,7 @@ import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import type { SectorState } from '../../../src/server/rooms/schema/SectorState.js';
 import type { SnapshotMessage } from '../../../src/shared-types/messages/snapshotMessages.js';
 import { getHoldStore, getPlayerShipStore, getWallet } from '../../../src/server/db/PersistenceWorker.js';
+import { POD_TIER_SPILL } from '../../../src/shared-types/shipKinds/cargoPod.js';
 
 function room(id: string): SectorRoom {
   return matchMaker.getLocalRoomById(id) as unknown as SectorRoom;
@@ -103,6 +104,66 @@ describe('SectorRoom integration — loot loop (P1a-1)', () => {
     expect(spilled).toBe(3);
     // Economy v2 — credits are virtual: dying can never lose them.
     expect(getWallet().balance(pid)).toBe(120);
+  });
+
+  it('NPC drops use the ordinary loot tier; only a dead PLAYER spills the bright spill tier (owner 2026-11-13)', { timeout: 40_000 }, async () => {
+    // Owner: "make them normal loot colour". NPC pods in the spill tier
+    // (bright magenta) read as live ships among the dark wreckage. The tier
+    // rides the wire as the pod's componentIndex; the client only maps it to
+    // a colour, so the server's choice is the whole contract.
+    const pid = randomUUID();
+    const cr = await harness.connectActive(pid, {
+      spawnX: 500, spawnY: 500,
+      initialCargo: { goods: { alloy: 3 }, blueprints: [] },
+    });
+    const r = room(cr.roomId);
+    const internal = r._internals;
+    const state = r.state as SectorState;
+
+    expect(internal.spawnTestDrone('npc-drop', -2500, -2500)).toBe(true);
+    for (let i = 0; i < 10 && internal.swarmRegistry.get('npc-drop'); i++) {
+      internal.applyDamage('npc-drop', 'someone', 9999);
+    }
+    const npcPods = [...internal.loot.podIds()];
+    expect(npcPods).toHaveLength(1);
+    expect(internal.swarmRegistry.get(npcPods[0]!)?.componentIndex, 'an NPC drop is a normal loot pod')
+      .not.toBe(POD_TIER_SPILL);
+
+    let shipId = '';
+    for (const [, s] of state.ships) if (s.playerId === pid && s.isActive) shipId = s.shipInstanceId;
+    for (let i = 0; i < 10 && state.ships.get(shipId)?.alive !== false; i++) {
+      internal.applyDamage(pid, 'killer', 99999);
+    }
+    const playerPods = [...internal.loot.podIds()].filter((id) => id !== npcPods[0]);
+    expect(playerPods).toHaveLength(1);
+    expect(internal.swarmRegistry.get(playerPods[0]!)?.componentIndex, 'a dead player spills the spill tier')
+      .toBe(POD_TIER_SPILL);
+  });
+
+  it('an NPC kill drops its pod BESIDE the wreck, clear of the hull and out of the line of fire (owner v5 film 2026-11-13)', { timeout: 40_000 }, async () => {
+    // Review of the v5 sub-cap film: the pod spawned at the dying hull's
+    // centre, so the rest of the salvo hit it at once (a second explosion and
+    // a climbing damage number ~1 s after each death) and it hid the break-up.
+    const pid = randomUUID();
+    const cr = await harness.connectActive(pid, { spawnX: 500, spawnY: 500 });
+    const internal = room(cr.roomId)._internals;
+
+    // A killer due south of the victim: its line of fire runs along +y.
+    expect(internal.spawnTestDrone('beside-victim', -2500, 2500)).toBe(true);
+    expect(internal.spawnTestDrone('beside-killer', -2500, 1700)).toBe(true);
+    const hullR = internal.swarmRegistry.get('beside-victim')!.radius;
+    expect(hullR).toBeGreaterThan(0);
+    for (let i = 0; i < 10 && internal.swarmRegistry.get('beside-victim'); i++) {
+      internal.applyDamage('beside-victim', 'beside-killer', 9999);
+    }
+    const pods = [...internal.loot.podIds()];
+    expect(pods).toHaveLength(1);
+    const pod = getHoldStore().get(pods[0]!)!;
+    const dx = pod.x! - -2500;
+    const dy = pod.y! - 2500;
+    expect(Math.hypot(dx, dy), 'the pod spawns outside the hull radius').toBeGreaterThanOrEqual(hullR);
+    // Off the shot line (killer → victim is +y): mostly sideways.
+    expect(Math.abs(dx), 'the pod sits to the side of the line of fire').toBeGreaterThanOrEqual(hullR);
   });
 
   it('P1a-2: abandoning a ship carrying cargo leaves a salvageable DERELICT', { timeout: 40_000 }, async () => {

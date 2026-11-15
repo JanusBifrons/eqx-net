@@ -5,11 +5,11 @@ import { getShipKind } from '../../shared-types/shipKinds.js';
 import { FLOCK_FOLLOW_DISTANCE } from './flocking.js';
 import { boostOf, stepKinematic, throttleOf, turnOf } from './pilotTestKit.js';
 import { makePilotHandling } from './virtualPilot.js';
-import { massOf, NPC_MASS_FALLBACK } from '../../shared-types/shipScale/tuning.js';
+import { shipBodyMass } from '../../shared-types/shipScale/tuning.js';
 
 const KIND = getShipKind('fighter');
 /** The fighter's thrust cruise speed as an NPC body (virtual pilot handling). */
-const CRUISE = makePilotHandling(KIND, massOf(KIND, NPC_MASS_FALLBACK)).cruiseSpeed;
+const CRUISE = makePilotHandling(KIND, shipBodyMass(KIND)).cruiseSpeed;
 /** Non-combat travel flies at this share of cruise (CALM_CRUISE_FRAC). */
 const CALM = CRUISE * 0.45;
 
@@ -87,7 +87,7 @@ describe('HostileDroneBehaviour — leader-led flocking (non-combat herding)', (
       expect(r.boosted).toBe(false);
       expect(r.top).toBeGreaterThan(0);
       // Bang-bang throttle may overshoot the wanted speed by about one tick of thrust.
-      expect(r.top).toBeLessThanOrEqual(CALM + KIND.thrustImpulse / massOf(KIND, NPC_MASS_FALLBACK) + 1e-6);
+      expect(r.top).toBeLessThanOrEqual(CALM + KIND.thrustImpulse / shipBodyMass(KIND) + 1e-6);
     }
   });
 
@@ -107,8 +107,17 @@ describe('HostileDroneBehaviour — leader-led flocking (non-combat herding)', (
     m.setMoveTarget(0, 50_000);
     const r = flyFor(m, viewWith({}), 600);
     expect(r.boosted).toBe(false);
-    expect(r.end).toBeGreaterThan(CALM * 0.9);
-    expect(r.end).toBeLessThan(CALM * 1.1);
+    // Bang-bang throttle (virtualPilot: thrust while wanted − actual > a/2, a =
+    // one tick of thrust) holds a sawtooth, sampled at an arbitrary tick: the
+    // speed after a step lies in [(CALM − a/2)·k, (CALM + a/2)·k], k = 1/(1 +
+    // d·dt) the per-tick damping. From the live kind: at arcade damping one
+    // tick of thrust is ~14% of CALM, so a fixed ±10% band no longer fits.
+    const h = makePilotHandling(KIND, shipBodyMass(KIND));
+    const k = 1 / (1 + h.linearDamping / 60);
+    expect(r.end).toBeGreaterThanOrEqual((CALM - h.thrustAccel / 2) * k - 1e-6);
+    expect(r.end).toBeLessThanOrEqual((CALM + h.thrustAccel / 2) * k + 1e-6);
+    // Still clearly un-throttled: the leader's 0.55 throttle sits far below.
+    expect(r.end).toBeGreaterThan(CALM * 0.55 + h.thrustAccel);
   });
 
   it('a leader HELD at its own pose (course = own position) does not thrust (it waits)', () => {

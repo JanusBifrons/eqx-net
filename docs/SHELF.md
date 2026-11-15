@@ -4,6 +4,32 @@ Design work deliberately parked, to revisit. Each entry says what we found,
 why it waits, and what doing it properly involves. Remove an entry in the PR
 that picks it up.
 
+## Cargo holds that drop as cargo among the scrap (parked 2026-11-13)
+
+**Owner (2026-11-13),** reviewing the sub-capital break-up (plan
+`subcapital-breakup.md`, [capital-destruction.md](architecture/capital-destruction.md)):
+"The cargo holds ideally would drop as an identifiable item which looks like
+cargo and live amongst the scrap. But this is scope creep I think."
+
+- **Where it stands:** a dead NPC's hold drops as a loot pod (a scrap-kind
+  swarm entity, `parentShipKind 'cargo-pod'`) beside its wreck pieces. Since
+  2026-11-13 an NPC pod is the ordinary loot colour of its contents; only a
+  dead player's cargo keeps the bright magenta spill tier (in big fights the
+  magenta pods read as live ships among the dark wreckage).
+- **Why it waits:** the break-up is about how ships die; a new loot item is
+  its own feature.
+- **What doing it properly involves:**
+  - **A cargo-container visual** that reads as cargo among the debris (crate
+    or container art in the wreck's palette, sized to the hull it came out
+    of), not a diamond pod.
+  - **Its pickup:** fly-over collection as today, or something that suits a
+    container (a tractor or a short dwell), and what the HUD says.
+  - **Whether it lives as a wreck-like body:** a wreck piece (swarm kind 4,
+    collides, drifts with the debris, rebuilt client-side from the wreck
+    descriptor) or stays a pod (kind 3, its own hold row, persisted, TTL). A
+    wreck-like body needs the hold to move with it and a rule for who can
+    take it.
+
 ## How violently a capital breaks: a weighted roll (parked 2026-11-13)
 
 **Owner (2026-11-13), after the v3 break-up films** (both normal-speed takes of
@@ -87,11 +113,17 @@ tick, keeps aiming and keeps its lock. Players are never gated. A player's
 turret holds on its owner's own ship and structures. Cost is gated as a COUNT
 (`LINE_OF_FIRE_BUDGET`). See docs/architecture/allegiances.md "Line of fire".
 
-**Still to do: formations.** NPCs now hold rather than shoot through an ally,
-but a pack that flies in a clump still spends fire time holding. Escorts and
-flocks need spacing that keeps them out of each other's lines of fire
-(flocking separation radii, capital escort stations off the broadsides), and a
-held drone could side-step to clear its line.
+**Done (slice 5b, 2026-11-13): side-step when blocked, keep out of wingmen's
+lanes.** A drone the gate keeps holding side-steps off the line (away from the
+ally in the way), and drones keep out of their wingmen's lines of fire
+(`src/core/ai/tactics/fireLanes.ts`). In a 4-drone column on one pilot over
+20 s: held shots 214 → 0, and with the gate off, friendly hits 214 → 2
+(`tests/integration/sectorRoom/npcFireLanes.test.ts`).
+
+**Still to do: formations.** Out of combat, escorts and flocks still need
+spacing that keeps them out of each other's lines of fire (flocking separation
+radii, capital escort stations off the broadsides). Capital turrets report
+blocks but have no movement answer yet.
 
 ## Radar settings saved per account, and a radar settings window (dropped 2026-11-08)
 

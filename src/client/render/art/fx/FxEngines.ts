@@ -5,8 +5,9 @@
  * (ships fly 450–950 u/s; the dots were shot astern at 200 u/s).
  *
  * Every ship gets it: players, remote players and NPC drones. Players pass
- * their real thrust / boost input; drones have none on the wire, so their
- * engine level follows their speed against the kind's top speed. Speed is
+ * their real thrust / boost input. An AI ship passes its pilot's real boost
+ * key (snapshot `drones[].boost`); it has no thrust key on the wire, so its
+ * engine level follows its speed against the kind's top speed. Speed is
  * measured from the sprite's own movement between frames (the one resolved
  * pose; never re-interpolated), so it works the same for every ship.
  *

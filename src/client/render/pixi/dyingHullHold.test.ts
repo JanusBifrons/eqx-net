@@ -20,7 +20,8 @@ import { describe, it, expect } from 'vitest';
 import { Container } from 'pixi.js';
 import { updateSwarmSprites, type SwarmSpriteCtx, type SpriteBuildSig } from './swarmSpriteUpdater.js';
 import { sweepUnseenSprites } from './spriteSweep.js';
-import { DyingHullHold, DYING_HULL_HOLD_MS, noteDyingHulls } from './dyingHullHold.js';
+import { DyingHullHold, DYING_HULL_HOLD_MS, dyingHoldMsFor, noteDyingHulls } from './dyingHullHold.js';
+import { DESTRUCTION_PROFILES } from '../../../shared-types/shipScale/destruction.js';
 import { WreckPieceSprite } from './wreckArt.js';
 import { MountVisualManager } from '../MountVisualManager.js';
 import { WreckGeometryStore, rebuildWreckPieces } from '../../net/wreckGeometryStore.js';
@@ -60,7 +61,7 @@ class Harness {
   readonly ctx: SwarmSpriteCtx;
   readonly mirror: RenderMirror;
   readonly swarm = new Map<number, SwarmRenderState>();
-  constructor(capitalWrecks: boolean) {
+  constructor(capitalWrecks: boolean, subcapWrecks = false) {
     this.ctx = {
       shipContainer: this.container, sprites: this.sprites, mountVisuals: new MountVisualManager(),
       swarmPoseScratch: { x: 0, y: 0, angle: 0 }, remoteHitTargets: new Set(), localHitTargets: new Set(),
@@ -68,12 +69,12 @@ class Harness {
       art: { art: null, handles: new Map(), sunAz: 0 }, slewDtSec: 1 / 60, wrecks: new WreckGeometryStore(),
       dyingHulls: this.hold,
     } as SwarmSpriteCtx;
-    this.mirror = { swarm: this.swarm, explodingShips: new Set<string>(), capitalWrecks } as unknown as RenderMirror;
+    this.mirror = { swarm: this.swarm, explodingShips: new Set<string>(), capitalWrecks, subcapWrecks } as unknown as RenderMirror;
   }
   frame(nowMs: number): void {
     this.seen.clear();
     this.ctx.fxNowMs = nowMs;
-    noteDyingHulls(this.mirror.explodingShips, this.mirror.capitalWrecks, (id) => this.sigs.get(id)?.shipKind ?? undefined, this.hold, nowMs);
+    noteDyingHulls(this.mirror.explodingShips, this.mirror.capitalWrecks, (id) => this.sigs.get(id)?.shipKind ?? undefined, this.hold, nowMs, this.mirror.subcapWrecks);
     updateSwarmSprites(this.mirror, this.ctx);
     sweepUnseenSprites(this.sprites, this.seen, (id, held) => { this.sigs.delete(id); if (held) this.ctx.mountVisuals.detachShip(id); else this.ctx.mountVisuals.removeShip(id); }, this.hold, nowMs);
     this.hold.settle(nowMs);
@@ -227,5 +228,91 @@ describe('a dying capital stays drawn until its wreck pieces are', () => {
     leaves.swarm.delete(52); // e.g. warped out of the sector: no destroy event
     leaves.frame(1016);
     expect(leaves.hullsDrawn(), 'no death, no hold').toBe(0);
+  });
+});
+
+describe('a dying sub-capital (subcapWrecks): the same hold, brief', () => {
+  const SUB_DESC: WreckDescriptor = {
+    wreckId: 12, parentKind: 'fighter', seed: 31, killX: 0, killY: -4,
+    killBlowDamage: 2, recentDamageRate: 1, snapChance: 0.2, algoVersion: FRACTURE_ALGO_VERSION,
+  };
+  const FX = 200, FY = 100;
+
+  it('holds the fighter until its pieces draw, then hands over in one frame', () => {
+    const h = new Harness(false, true);
+    h.swarm.set(60, entry(1, 'fighter', FX, FY, 12));
+    let t = 1000;
+    h.frame(t);
+    h.kill(60);
+    h.frame(t += 16);
+    expect(h.hullsDrawn(), 'held: no blank frame').toBe(1);
+    const geom = rebuildWreckPieces(SUB_DESC);
+    geom.forEach((g, i) => h.swarm.set(300 + i, entry(4, 'fighter', FX + g.cx, FY + g.cy, g.radius, { componentIndex: i, wreckId: SUB_DESC.wreckId })));
+    h.mirror.wrecks = new Map([[SUB_DESC.wreckId, SUB_DESC]]);
+    h.frame(t += 16);
+    expect(h.hullsDrawn()).toBe(0);
+    expect(h.piecesDrawn()).toBe(geom.length);
+  });
+
+  it('a lost sub-cap wreck lets go after the profile\'s brief deadline, not the capital\'s', () => {
+    const brief = DESTRUCTION_PROFILES.subcap.fx.dyingHoldMs;
+    expect(brief).toBeLessThan(DYING_HULL_HOLD_MS);
+    const h = new Harness(false, true);
+    h.swarm.set(60, entry(1, 'fighter', FX, FY, 12));
+    let t = 1000;
+    h.frame(t);
+    h.kill(60);
+    h.frame(t += 16);
+    expect(h.hullsDrawn()).toBe(1);
+    h.frame(t += brief);
+    expect(h.hullsDrawn(), 'gone at the sub-cap deadline').toBe(0);
+  });
+
+  /**
+   * Owner 2026-11-13, after the v4 debris film: "The darkened scrap just
+   * doesn't look right, what's the logic? Why would it darken when destroyed?
+   * It should just be broken, same brightness?" A held sub-cap hull is drawn
+   * at the art's normal tint (white multiply) for the whole (brief) hold:
+   * never darkened, and never frozen mid hit-flash (round-2 review: no sweep
+   * updates a held sprite, so a flash it died wearing would stick). A
+   * capital's hold is unchanged.
+   */
+  it('a held sub-cap hull keeps its normal brightness (no dead tint, no frozen flash), and is brief', () => {
+    expect(DESTRUCTION_PROFILES.subcap.fx.deadTint, 'no dead tint').toBeNull();
+    expect(DESTRUCTION_PROFILES.subcap.fx.dyingHoldMs, 'brief: pieces take over fast').toBeLessThanOrEqual(250);
+    for (const flashedAtDeath of [true, false]) {
+      const h = new Harness(false, true);
+      h.swarm.set(60, entry(1, 'fighter', FX, FY, 12));
+      let t = 1000;
+      h.frame(t);
+      // It was being hit as it died: the live sprite wears the flash.
+      if (flashedAtDeath) h.ctx.localHitTargets.add('swarm-60');
+      h.frame(t += 16);
+      h.ctx.localHitTargets.clear();
+      h.kill(60);
+      for (let f = 0; f < 3; f++) {
+        h.frame(t += 16);
+        const held = h.container.children.filter((c) => !(c instanceof WreckPieceSprite) && c.visible && !c.destroyed);
+        expect(held).toHaveLength(1);
+        expect(held[0]!.tint, `normal tint while held (flashed at death: ${flashedAtDeath})`).toBe(0xffffff);
+      }
+    }
+    // A capital's held hull keeps its look (unchanged).
+    const c = new Harness(true);
+    c.swarm.set(50, entry(1, 'battleship', HULL_X, HULL_Y, 300));
+    c.frame(1000);
+    c.kill(50);
+    c.frame(1016);
+    const cap = c.container.children.filter((x) => !(x instanceof WreckPieceSprite) && x.visible && !x.destroyed);
+    expect(cap).toHaveLength(1);
+    expect(cap[0]!.tint).toBe(0xffffff);
+  });
+
+  it('subcapWrecks alone does not hold a capital, and capitalWrecks alone does not hold a fighter', () => {
+    expect(dyingHoldMsFor(false, 'battleship', true)).toBe(0);
+    expect(dyingHoldMsFor(true, 'fighter', false)).toBe(0);
+    expect(dyingHoldMsFor(true, 'battleship', false)).toBe(DYING_HULL_HOLD_MS);
+    expect(dyingHoldMsFor(false, 'fighter', true)).toBe(DESTRUCTION_PROFILES.subcap.fx.dyingHoldMs);
+    expect(dyingHoldMsFor(true, 'cargo-pod', true), 'no wreck profile').toBe(0);
   });
 });

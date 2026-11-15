@@ -15,7 +15,7 @@ Military bases are placed by their own deterministic pass (`militarySites`, `gal
 - **Fenced, every time,** with its gates set to **owner + allies**. Anyone else stays outside.
 - **Turret-heavy.** Its production list is every kind of gun (laser, bolt, autocannon, missile, and the coastal batteries up to the 11" triple turret — [coastal-defences.md](coastal-defences.md)), repeated while its wealth lasts. Garrisons are funded at twice their tier's top wealth.
 - **A heart garrison mounts the region's super-guns**: the 80 cm siege gun and the 40.6 cm Lindemann battery, funded on top.
-- **Guns outside the fence.** A fence stops its owner's own shots, so every gun sits on a bastion outside it. A garrison gets a bastion row for every six guns it buys.
+- **Guns outside the fence.** A fence stops its owner's own shots, so every gun sits on a bastion outside it. A garrison gets a bastion row for every six guns it buys (`growOnce`, military only).
 - **One more mine layer** than a trading base of its size.
 - **No freight dock.** It trades nothing: its cargo bay holds the munitions and fuel it's stocked with.
 
@@ -41,3 +41,11 @@ Every garrison flies a patrol: three `patrol-fighter`s, four for a stronghold. `
 | Patrols (unit) | `src/server/bases/PatrolSubsystem.test.ts`: spawn outside the fence at different corners, fly corner to corner, engage only a hostile pilot in range, respawn after the delay |
 | Patrols (integration) | `tests/integration/sectorRoom/patrols.test.ts`: in a real Sol Prime room the patrol carries `fac` on the snapshot, ignores a neutral pilot, and engages once the pilot attacks the garrison |
 | Client | `snapshotRemoteSync.charging.test.ts`: a patrol ship keeps its faction |
+
+## Server implementation notes
+
+> Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.
+
+- Placed by `galaxyBasePlan` (`militarySites`); seeded like any NPC base. `NpcBaseSubsystem.seed` sets a military base's gates to **owner + allies** (`'allies'`); every other NPC base's stay **open**.
+- **Patrols (M2).** `PatrolSubsystem` (`bases/`, room-owned, 1 Hz on the structure pulse): `patrol-fighter`s (Traders allegiance, so never hostile on sight) fly the base's corners outside its fence and are marked hostile (`markBotHostileToFaction`, quiet refresh once already hostile) to any pilot near the base whose `relationOf` to the owner is hostile. `drones[].fac` is emitted for every patrol in interest (it is in the slice's "anything to report" check). Ids start `patrol-` (in `isDirectorBotId`).
+- Story: [docs/features/military-bases.md](../features/military-bases.md).

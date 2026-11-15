@@ -5,7 +5,8 @@
 
 import { defineShipKind } from '../shipScale/defineShipKind.js';
 import {
-  LEGACY_FORWARD_MOUNT,
+  NOSE_TURRET_SLEW_LIGHT,
+  noseTurretMount,
   LEGACY_PRIMARY_SLOT,
   type ShipKind,
 } from './types.js';
@@ -88,7 +89,7 @@ export const SCOUT: ShipKind = defineShipKind({
   // `laser` (projectile bolt), not the legacy beam. Inline clone of the
   // shared forward mount with the weapon swapped — the frozen
   // LEGACY_FORWARD_MOUNT const stays `hitscan` for engineering kinds/tests.
-  mounts: [{ ...LEGACY_FORWARD_MOUNT, weaponId: 'laser' }],
+  mounts: [noseTurretMount('laser', NOSE_TURRET_SLEW_LIGHT)],
   slots: [LEGACY_PRIMARY_SLOT],
 });
 
@@ -133,7 +134,7 @@ export const FIGHTER: ShipKind = defineShipKind({
     ],
   },
   // Bolts (weapons/energy/AI overhaul §2) — see SCOUT note.
-  mounts: [{ ...LEGACY_FORWARD_MOUNT, weaponId: 'laser' }],
+  mounts: [noseTurretMount('laser', NOSE_TURRET_SLEW_LIGHT)],
   slots: [LEGACY_PRIMARY_SLOT],
   // Dynamic weapon mounts (Phase 4 WS-B3) — two LATENT wing hardpoints,
   // inactive until an `activate_mount` upgrade turns one on (the player picks

@@ -36,11 +36,11 @@
  * effectively underneath the ship body and are not visually intrusive.
  */
 
-import { Container, Graphics, Sprite } from 'pixi.js';
+import { Container, Graphics, Matrix, Sprite } from 'pixi.js';
 import type { ArtHandle } from './art/ArtService.js';
 import { isMachinedSprite, type ShipArtCtx } from './art/shipArtSprites.js';
 import { muzzleReach, shipTurrets, structureTurrets, type TurretPlace } from './art/turretLayout.js';
-import { flashFrameAt, heatAfter, recoilAt, NAVAL_FLASH_LIFE_S, MUZZLE_FLASH_LIFE_S, muzzleLightAt, navalMuzzleLight, type MuzzleLight, MUZZLE_SMOKE_PUFFS, muzzleSmokePuff, type SmokePuff } from './art/fx/turretFx.js';
+import { flashFrameAt, heatAfter, muzzleHeft, recoilAt, NAVAL_FLASH_LIFE_S, MUZZLE_FLASH_LIFE_S, muzzleLightAt, navalMuzzleLight, type MuzzleLight, MUZZLE_SMOKE_PUFFS, muzzleSmokePuff, type SmokePuff } from './art/fx/turretFx.js';
 import { NAVAL_BARREL_SPAN } from '@core/combat/muzzle';
 import { getWeapon, isWeaponId } from '@core/combat/WeaponCatalogue';
 import type { EffectQuality } from '@core/contracts/IEffects';
@@ -84,6 +84,7 @@ import { shipPrimaryColor } from '@core/geometry/shipHullOutline';
 import { aimLineLengthForMount } from './aimLineLength';
 import { moveKey } from './shipRekey.js';
 import { GLOBAL_SHIP_TUNING } from '@shared-types/shipScale/lookup';
+import { HEAVY_BEAM_COLOR, HEAVY_BEAM_STYLE, isHeavyBeamMount } from './beamStyles';
 
 /** Shared frozen empty mount-list. The `?? EMPTY_MOUNTS` fallback for a
  *  mountless kind avoids allocating a fresh `[]` literal every time
@@ -122,6 +123,8 @@ interface MachinedGun {
   beamUntil: number;
   heat: number;
   lastT: number;
+  /** The arc-local mount angle last applied (for `aimProbe`). */
+  aim: number;
 }
 
 interface AaBarrels {
@@ -483,9 +486,12 @@ export class MountVisualManager {
     const dt = Math.max(0, Math.min(0.1, t - gun.lastT));
     gun.lastT = t;
     const fam = gun.place.family;
-    const kicks = fam === 'bolt' || fam === 'missile';
+    // The railgun draws as a charge gun but fires a slug: a heavier kick and
+    // flash than a powder gun's (`muzzleHeft`).
+    const heft = muzzleHeft(gun.place.mount.weaponId);
+    const kicks = fam === 'bolt' || fam === 'missile' || heft > 1;
     const since = t - gun.lastShot;
-    const kick = kicks ? recoilAt(since) * Math.max(gun.place.len, gun.place.wid) * (fam === 'missile' ? 0.06 : 0.2) : 0;
+    const kick = kicks ? recoilAt(since / heft) * Math.max(gun.place.len, gun.place.wid) * (fam === 'missile' ? 0.06 : 0.2) * heft : 0;
     const aa = gun.aa;
     const houseKick = aa ? 0 : kick;
     layers.a.y = houseKick; layers.b.y = houseKick;
@@ -517,7 +523,7 @@ export class MountVisualManager {
       // propellant smoke blown forward along it (children of the pivot, so
       // they follow the barrels' rotation and recoil).
       if (flash) flash.visible = false;
-      this.animateNavalMuzzles(gun, naval, kicks ? since : -1, kick);
+      this.animateNavalMuzzles(gun, naval, kicks ? since : -1, kick, heft);
     } else if (flash) {
       const frames = this.flashFrames();
       const fr = kicks && frames ? flashFrameAt(since, frames.length) : -1;
@@ -539,30 +545,34 @@ export class MountVisualManager {
         tip.alpha = glow;
         tip.x = flashX;
         tip.y = -gun.reach + flashKick;
-        tip.scale.set(((gun.place.wid * (fam === 'bolt' ? 1.6 : 3)) / 64) * (1 + 0.4 * glow));
+        // A heavy-beam projector's tip burns bigger, in the beam's violet.
+        const tipK = isHeavyBeamMount(gun.place.mount) ? (HEAVY_BEAM_STYLE.glowScale ?? 1) * 0.6 : 1;
+        tip.scale.set(((gun.place.wid * (fam === 'bolt' ? 1.6 : 3) * tipK) / 64) * (1 + 0.4 * glow));
       }
     }
   }
 
   /** Per-barrel flash + forward smoke for a naval turret, `since` seconds
    *  after its last salvo (-1 = not firing). Alloc-free (#14). */
-  private animateNavalMuzzles(gun: MachinedGun, naval: { barrels: number; houseW: number }, since: number, kick: number): void {
+  private animateNavalMuzzles(gun: MachinedGun, naval: { barrels: number; houseW: number }, since: number, kick: number, heft = 1): void {
     const w = gun.place.wid;
     const n = naval.barrels;
     const pitch = n > 1 ? (naval.houseW * NAVAL_BARREL_SPAN) / (n - 1) : 0;
     const frames = this.flashFrames();
-    const fr = since >= 0 && frames ? flashFrameAt(since, frames.length, NAVAL_FLASH_LIFE_S) : -1;
+    const life = NAVAL_FLASH_LIFE_S * heft;
+    const fr = since >= 0 && frames ? flashFrameAt(since, frames.length, life) : -1;
     const flashes = gun.barrelFlashes;
     if (flashes) {
       // GPU-lit art: the salvo lights the gun, its neighbours and the deck.
       // Every naval calibre (16" down to the 5" secondaries) lights in
       // proportion to its gun, and the light outlives the flash briefly.
-      const lk = since >= 0 && frames ? muzzleLightAt(since, NAVAL_FLASH_LIFE_S) : 0;
+      const lk = since >= 0 && frames ? muzzleLightAt(since, life) : 0;
       if (lk > 0 && litPass.settings && litPass.settings.pointLights > 0 && flashes.length > 0) {
         const L = navalMuzzleLight(w, this._light);
         const mid = flashes[flashes.length >> 1]!;
         if (fr < 0) { mid.x = ((flashes.length >> 1) - (n - 1) / 2) * pitch; mid.y = -gun.reach + kick; }
-        litPass.attachLight(mid, 0xff9a48, L.intensity * lk, L.reach, L.z);
+        // The railgun's flash burns white-blue, not powder orange.
+        litPass.attachLight(mid, heft > 1 ? 0xcfe4ff : 0xff9a48, L.intensity * lk * heft, L.reach * heft, L.z);
       }
       for (let b = 0; b < flashes.length; b++) {
         const f = flashes[b]!;
@@ -571,7 +581,7 @@ export class MountVisualManager {
         f.texture = frames![fr]!;
         f.x = (b - (n - 1) / 2) * pitch;
         f.y = -gun.reach + kick;
-        f.scale.set((w * 7) / 64, (w * 22) / 64);
+        f.scale.set((w * 7 * heft) / 64, (w * 22 * heft) / 64);
       }
     }
     const smokes = gun.smokes;
@@ -622,7 +632,7 @@ export class MountVisualManager {
       gun.pivot.addChild(f); gun.flash = f;
     }
     if (!gun.tip && glow) {
-      const g = new Sprite(glow); g.anchor.set(0.5); g.blendMode = 'add'; g.tint = gun.place.family === 'bolt' ? 0xff6a2a : tint; g.visible = false;
+      const g = new Sprite(glow); g.anchor.set(0.5); g.blendMode = 'add'; g.tint = gun.place.family === 'bolt' ? 0xff6a2a : isHeavyBeamMount(gun.place.mount) ? HEAVY_BEAM_COLOR : tint; g.visible = false;
       gun.pivot.addChild(g); gun.tip = g;
     }
     const naval = gun.place.naval && gun.place.mount.size !== 'AA' ? gun.place.naval : undefined;
@@ -698,7 +708,7 @@ export class MountVisualManager {
     const travel = w && w.mode !== 'hitscan' ? w.speed * SHOT_FIRST_SEEN_S : 0;
     return {
       place, pivot, handle, layers: null, reach, matchDist: Math.max(SHOT_MATCH_DIST, reach, travel),
-      flash: null, tip: null, barrelFlashes: null, smokes: null, aa, lastShot: -9, beamUntil: -1, heat: 0, lastT: this.nowS,
+      flash: null, tip: null, barrelFlashes: null, smokes: null, aa, lastShot: -9, beamUntil: -1, heat: 0, lastT: this.nowS, aim: 0,
     };
   }
 
@@ -750,6 +760,7 @@ export class MountVisualManager {
           gfx.turret.visible = false;
           this.machinedGuns++;
         }
+        gun.aim = current;
         if (gun.layers && gun.handle.ship) {
           gun.pivot.rotation = spriteRotation;
           // Lit by the gun's own world rotation, like a hull.
@@ -773,6 +784,31 @@ export class MountVisualManager {
         gfx.aimLine.visible = this.aimLinesVisible && shipId === this.localId && this.localAim.includes(mount.id);
       }
     }
+  }
+
+  /**
+   * Test probe (`__eqxArtStats().turretAim`): per drawn Machined gun, the
+   * mount angle last applied (`aim`, arc-local, + = left) and the angle the
+   * drawn gun art stands at relative to its hull (`drawn`, same convention),
+   * read from the art's world transform. Debug only (allocates).
+   */
+  aimProbe(): Array<{ id: string; mount: string; aim: number; drawn: number; shown: boolean }> {
+    const out: Array<{ id: string; mount: string; aim: number; drawn: number; shown: boolean }> = [];
+    const m = new Matrix(), h = new Matrix();
+    for (const [id, cluster] of this.clusters) {
+      for (const [mountId, g] of cluster.perMount) {
+        const gun = g.gun;
+        if (!gun?.layers) continue;
+        gun.layers.a.getGlobalTransform(m, false);
+        cluster.container.getGlobalTransform(h, false);
+        const rel = -(Math.atan2(m.b, m.a) - Math.atan2(h.b, h.a)) - gun.place.mount.baseAngle;
+        const drawn = Math.atan2(Math.sin(rel), Math.cos(rel));
+        let shown = true;
+        for (let p: Container | null = gun.layers.a; p; p = p.parent) if (!p.visible || !p.renderable) { shown = false; break; }
+        out.push({ id, mount: mountId, aim: gun.aim, drawn, shown });
+      }
+    }
+    return out;
   }
 
   /** Tear down every cluster. Call from PixiRenderer.dispose. */

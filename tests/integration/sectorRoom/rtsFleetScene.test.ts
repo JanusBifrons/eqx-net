@@ -30,7 +30,10 @@ describe('perf scene rts-fleet — an AI-flown fleet of parked hulls', () => {
     await harness.connectActive(pid, { initialHull: 1_000_000 });
     const room = harness.getServerRoom() as unknown as SceneRoom;
     const deadline = Date.now() + 30_000;
-    while ((room.scenePerf()?.work.ticks ?? 0) < 360) {
+    // 450 ticks (7.5 s, before the second wave at 8 s): the arcade toughness
+    // layer (on main) gives fighters more hull and shield, so the first kills
+    // land after ~7 s, not inside the old 6 s window.
+    while ((room.scenePerf()?.work.ticks ?? 0) < 450) {
       if (Date.now() > deadline) throw new Error(`scene reached only ${room.scenePerf()?.work.ticks} ticks`);
       await new Promise((r) => setTimeout(r, 20));
     }

@@ -31,6 +31,7 @@ import {
 import { shipKindFromIndex } from '../../shared-types/shipKinds.js';
 import { structureKindFromIndex } from '../../shared-types/structureKinds.js';
 import { asteroidResourceFromIndex } from '../../shared-types/asteroidResources.js';
+import { swarmArrivalStampMs } from './swarmInterpolation.js';
 
 interface MutableMirror {
   swarm?: Map<number, SwarmRenderState>;
@@ -57,12 +58,14 @@ function makeEmptyRing(): PoseRingEntry[] {
  * Defect 2 in the 5c-stabilise plan).
  *
  * `nowMs` is injected so unit tests can pass a deterministic clock; default
- * is `performance.now()`.
+ * is `performance.now()`. `stampByTick` stamps the pose ring with
+ * `swarmArrivalStampMs(tick, nowMs)` instead (the live client).
  */
 export function decodeSwarmPacket(
   input: ArrayBuffer | ArrayBufferView,
   mirror: RenderMirror,
   nowMs: number = performance.now(),
+  stampByTick = false,
 ): void {
   // Build a DataView that reads the live bytes regardless of whether the
   // input is a raw ArrayBuffer, a Uint8Array view, or a SharedArrayBuffer-
@@ -85,6 +88,9 @@ export function decodeSwarmPacket(
   const flags = view.getUint8(1);
   const count = view.getUint16(2, true);
   const tick = view.getUint32(4, true);
+  // The live client stamps ring poses on the server-tick clock, not the raw
+  // drain time (`swarmArrivalStampMs`: per-RAF draining bunched the stamps).
+  if (stampByTick) nowMs = swarmArrivalStampMs(tick, nowMs);
 
   const expectedBytes = SWARM_HEADER_BYTES + count * SWARM_RECORD_BYTES;
   if (byteLength < expectedBytes) return;

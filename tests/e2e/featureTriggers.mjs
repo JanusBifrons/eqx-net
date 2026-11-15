@@ -60,6 +60,7 @@ export const FEATURE_TRIGGERS = [
     // Lock-to-fire (universal 2026-11-09): a group fires only at a completed lock.
     area: 'fire control and combat',
     paths: ['src/server/rooms/LockSubsystem', 'src/server/rooms/NpcLockSubsystem', 'src/server/rooms/PlayerFireResolver',
+      'src/server/rooms/AiFireResolver', 'src/server/rooms/WeaponMountTicker',
       'src/core/combat/lock', 'src/shared-types/combat/lockProfile', 'src/client/hud/WeaponStrip', 'src/client/components/TargetAction',
       'src/client/input/MouseLock', 'tests/e2e/helpers/fireControl', 'src/client/components/ContactsOverview',
       'src/client/components/contactRows'],
@@ -95,6 +96,11 @@ export const FEATURE_TRIGGERS = [
     area: 'off-screen radar',
     paths: ['src/client/render/halo/', 'src/client/render/HaloRadar'],
     specs: ['radar-sandbox', 'ring-indicator-dead-zone', 'ring-indicator-mobile-scaling'],
+  },
+  {
+    area: 'turret angles on the wire and on screen',
+    paths: ['src/server/rooms/SnapshotBroadcaster', 'src/server/rooms/WeaponMountTicker', 'src/client/render/MountVisualManager', 'src/client/net/displayMountAngles'],
+    specs: ['nose-turret-drawn', 'fx-turrets'],
   },
   {
     area: 'teleporters and trade',

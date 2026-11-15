@@ -68,6 +68,11 @@ describe('SectorRoom integration — a wingman boosts on its own energy (RTS sli
     // Let the pool fill (regen runs for wingman hulls since slice 5).
     for (let i = 0; i < 40 && ship.energy < energyMax - 0.01; i++) await harness.advance(250);
     expect(ship.energy).toBeGreaterThan(energyMax * 0.95);
+    // Arcade handling (#611 stack, on main): a fighter reaches cruise in a
+    // fraction of a second, so boost is held only while it accelerates and no
+    // longer empties a full pool on its own. Start the boosted hull nearly dry
+    // so the leg still runs it out and the gate has to drop the boost bit.
+    ship.energy = BOOST_TICK_COST * 6;
 
     // Every boost the room posts must be affordable at that moment; count the
     // posts where the gate dropped a held boost because the pool ran dry.

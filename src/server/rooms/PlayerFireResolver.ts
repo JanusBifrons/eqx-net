@@ -127,7 +127,7 @@ export interface PlayerFireResolverDeps {
   /** Fire control: does this mount's barrel (world origin + world angle) bear on
    *  its group's lock target? A turret parked at its arc limit never does, so it
    *  never fires out of its arc. Absent only in resolver unit harnesses. */
-  mountBearsOnLock?: (playerId: string, mountId: string, ox: number, oy: number, angle: number, weaponId: string) => boolean;
+  mountBearsOnLock?: (playerId: string, mountId: string, ox: number, oy: number, angle: number, weaponId: WeaponId) => boolean;
   /** Lag-comp pose ring. */
   snapshotRing: SnapshotRingReader;
   /** Per-tick cached player poses (fallback when ring misses). */
@@ -181,13 +181,18 @@ export interface PlayerFireResolverDeps {
     dirX: number, dirY: number,
     def: MissileWeaponDef,
   ) => number | null;
-  /** Damage sink — invoked on a confirmed hit. */
+  /** Damage sink — invoked on a confirmed hit. (dirX, dirY) is the beam's
+   *  direction: a capital wreck piece it hits is knocked along it. `weaponId`
+   *  is the firing weapon (kept with the hull's last hit). */
   applyDamage: (
     targetId: string,
     shooterId: string,
     damage: number,
     hitX?: number,
     hitY?: number,
+    dirX?: number,
+    dirY?: number,
+    weaponId?: WeaponId,
   ) => void;
   /** Shield-fence plan — if an ACTIVE shield wall lies along the beam within
    *  `maxDist`, absorb the shot (apply the wall's grid-power damage model) and
@@ -233,6 +238,9 @@ export class PlayerFireResolver implements WeaponFireSink {
   /** True inside `fireHull`: the shooter pose is live, never the ring's. */
   private _hullShot = false;
   private _ackShotId = '';
+  /** The weapon of the barrel now resolving (set per mount before
+   *  `resolveFire`), so a beam hit tells applyDamage what landed it. */
+  private _weaponId: WeaponId | undefined = undefined;
   // Review must-fix #1 — the shooter's per-instance outgoing-DAMAGE multiplier
   // (`mul.damage`, derived from ship.statAlloc), set once per resolve() and
   // applied to every barrel's damage in the sink methods. ONLY player ships
@@ -492,6 +500,7 @@ export class PlayerFireResolver implements WeaponFireSink {
       const mount = slotMounts[mIdx]!;
       // Each barrel fires its own catalogue weapon (data-driven loadout).
       const weaponId: WeaponId = mount.weaponId;
+      this._weaponId = weaponId;
       const mountWorld = d.mountWorldOrigin(sx, sy, shipAngleAtFireTick, mount);
       // Find this firing mount's slot in the full instance angle array by id.
       let angleIdx = mIdx;
@@ -687,7 +696,7 @@ export class PlayerFireResolver implements WeaponFireSink {
       const effDamage = falloffMinDamageFrac !== undefined
         ? upgraded * hitscanFalloffFrac(mountHitDist, range, rayRange, falloffMinDamageFrac)
         : upgraded;
-      d.applyDamage(mountHitId, shooterId, effDamage, hitX, hitY);
+      d.applyDamage(mountHitId, shooterId, effDamage, hitX, hitY, ndx, ndy, this._weaponId);
       if (mountHitDist < this._bestHitDist) {
         this._bestHitDist = mountHitDist;
         this._bestHitId = mountHitId;

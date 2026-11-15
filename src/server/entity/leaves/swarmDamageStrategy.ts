@@ -58,6 +58,10 @@ export function createSwarmPerHit(deps: LeafDeps): PerHitEffect {
       // Friendly fire (owner decision 2026-11-10): an accidental hit from the
       // drone's own side still lands, but never marks it hostile or escalates
       // a faction — packs must not civil-war after one stray shot.
+      // Morale (AI slice 6b): every HULL hit on a drone feeds its damage window,
+      // friendly fire included (a hit hurts whoever fired it). A shield hit
+      // leaves the hull untouched (no spill), so it is not hull damage.
+      if (rec.kind === 1 && out.hitLayer === 'hull') deps.aiController.noteDamage?.(rec.id, amount, atTick, out.hullMax);
       // RTS slice 5: a wingman's hit makes the drone hostile to its OWNER (the
       // hostility ledger is per player), so the NPC fights back properly.
       const actor = sourceId ? (deps.hostileActorOf?.(sourceId) ?? sourceId) : sourceId;

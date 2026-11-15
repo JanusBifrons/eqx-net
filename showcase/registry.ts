@@ -23,6 +23,7 @@ import { missiles } from './shots/missiles.js';
 import { packBattle } from './shots/packBattle.js';
 import { longGuns } from './shots/longGuns.js';
 import { fleetMelee } from './shots/fleetMelee.js';
+import { npcDogfight } from './shots/npcDogfight.js';
 import { timeScaleDial, timeScaleCapitals4x, capitalBreakupSlowmo, capitalBreakupFast } from './shots/timeScaleDial.js';
 import { scrap } from './shots/scrap.js';
 import { buildBase } from './shots/buildBase.js';
@@ -81,6 +82,7 @@ export const SHOTS: readonly Shot[] = [
   missiles,
   packBattle,
   fleetMelee,
+  npcDogfight,
   timeScaleDial,
   timeScaleCapitals4x,
   capitalBreakupSlowmo,
@@ -153,6 +155,7 @@ export const SHOWCASE_EXEMPT: Record<string, string> = {
   'pwa-and-push-notifications': 'Install prompt + push notification — not in-world footage.',
   'web-push': 'Server-side push delivery — not in-world footage.',
   security: 'Infrastructure — no visible surface.',
+  'server-thresholds': 'Reference table of server limits and budgets — no visible surface.',
   'capital-destruction': 'Design note + a pure core module (S1); nothing visible until wreck pieces spawn (S2/S3). Film a capital breaking up then.',
   'perf-scenes': 'Test tooling — the scenes are measured, not filmed (any can be played with the camera on).',
   relations: 'A shared rule (who is hostile to whom) with no visible surface of its own; gates, turrets and cargo show its effects.',
@@ -167,6 +170,8 @@ export const SHOWCASE_EXEMPT: Record<string, string> = {
   'mobile-perf-probe-0-results': 'Investigation record.',
   'memory-allocation-paradigm': 'Engineering discipline — end-card adjacent.',
   'reconciler-replay-scaling': 'Prediction internals — represented by the end card.',
+  'ai-pilots': 'AI flight internals (how NPC ships turn decisions into control keys); the fleet-melee shot shows them flying.',
+  'physics-worker': 'Server physics internals (how the worker applies inputs); no visible surface of its own.',
   'prediction-and-correction': 'Prediction internals — represented by the end card (netcode shot is pending).',
   'remote-prediction': 'Prediction internals — represented by the end card.',
   'collision-events': 'Physics internals — visible inside combat/scrap shots.',
@@ -174,6 +179,7 @@ export const SHOWCASE_EXEMPT: Record<string, string> = {
   'asteroid-interaction-model': 'Visible incidentally (mining, scale shot).',
   'webrtc-datachannel-snapshot-transport': 'Off under automation; end-card line.',
   'cinematic-camera': 'The tool that films the video.',
+  'renderer-worker': 'Rendering internals (which thread draws the frame); no visible surface of its own.',
   'showcase-pipeline': 'The pipeline itself.',
   'procedural-bases-research': 'Research record.',
   'shell-events': 'Design note, no player-facing change yet; the shells and incoming-fire marker it changes are filmed by the real-scale-ranges shot once built.',
@@ -182,7 +188,7 @@ export const SHOWCASE_EXEMPT: Record<string, string> = {
 
 /** Docs whose feature exists but cannot be staged on main yet — with what unblocks it. */
 export const SHOWCASE_PENDING: Record<string, string> = {
-  'real-scale-ranges': 'Off by default (EQX_NAVAL_RANGE=real); filmed with the coastal-duel shot once the camera can show a 30 km shot (follow-up slice).',
+  'real-scale-ranges': 'On by default since 2026-11-14 (EQX_NAVAL_RANGE=legacy opts out); filmed with the coastal-duel shot once the camera can show a 30 km shot (follow-up slice).',
   'contacts-overview':
     'The list earns its place on a capital at real-scale range (16" at 30 km); film it beside the real-scale-ranges shot once that 30 km camera lands, opening the list and locking a far fighter from it.',
   'ship-scale': 'R&D: the 1×/2×A/2×B comparison clips are filmed by running existing shots at EQX_SHIP_SCALE; a dedicated shot lands with the rollout.',

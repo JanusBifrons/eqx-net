@@ -62,6 +62,7 @@ ShellEndSchema = z.object({
     z.number().int(),            // tick of the hit
     z.number(), z.number(),      // hit point
     z.number().nonnegative(),    // blast radius (0 = none; replaces shell_blast for shells)
+    z.literal(1).optional(),     // continues: a pass-through kill (railgun); the shell flies on
   ])).min(1).max(256),
 }).strict();
 ```
@@ -158,6 +159,7 @@ These were settled on the owner's standing rule: record the game as it is and sh
 - **Where:** `ShellEventHub` (`src/server/rooms/ShellEventHub.ts`) routes event shells; `ProjectilePipeline` reports them through `onShellSpawn` / `onShellEnd` / `onShellExpire` when its `shellEvents` dep is on; schemas and the switch are in `src/shared-types/messages/shellEvents.ts`. The room turns it on from `EQX_SHELL_EVENTS=1`, or the testMode room option `shellEvents` (tests and showcases, without flipping the whole process).
 - **The pose follows the worker tick, not the room update (a change from §4).** The room calls `advance()` once per update, but `serverTick` is the physics worker's counter, which can skip or repeat a tick when the two drift. The Euler step moved a shell once per update while its lifetime counted worker ticks, so the server's shell slid off `shellPoseAt`. An event shell now sweeps from its pose to `shellPoseAt(…, serverTick + 1)` each advance: a skipped tick makes the step longer (no tunnelling), a repeated one makes it zero. Bolts and flag-off shells keep the Euler step. Lock: `ProjectilePipeline.shellEvents.test.ts`.
 - **The path ends one step past the fall point.** The last advance runs at `t + n` and sweeps to the pose at `t + n + 1`, so `shellPathEndTick(t, n) = t + n + 1` is the end for the view segment and the miss rule (`src/core/combat/shellFlight.ts`). Slice 2b must end a missed shell there, not at `t + n`.
+- **Shared core helpers** (`src/core/combat/shellFlight.ts`, pure, alloc-free, out objects): `shellPoseAt` (closed form of the Euler step: pose after `tick − fireTick` steps), `shellSegmentInView` (segment vs view square, inclusive, division-free SAT) and the wire quantisers (`quantiseShellSpawn`: x/y to 0.1 u, vx/vy to 0.01 u/s; the server quantises a naval shell at spawn). `NAVAL_SHELL_WEAPON_IDS` is the one naval id list. Locks: `shellFlight.test.ts` (fast-check vs a slab oracle) and `tests/unit/shellFlightParity.test.ts` (every naval gun, both range modes, real pipeline, drift < 0.01 u; `SHELL_TICK_DT_S === DT_SEC`).
 - **Salvo grouping:** consecutive spawns of one owner and one gun in one tick share a salvo id (every caller fires a turret's barrels back to back).
 - **Shield walls:** a wall stop is a `shell_end` with radius 0 at the shell's pose at the START of the step that crossed the wall (`wallBlocksProjectile` doesn't return the crossing point).
 - **Not yet:** `g` (the firer's locked target) is never filled: the hub has the `fireTargetOf` seam, but nothing wires it. Rule 1 (the path crosses your view) already covers a targeted viewer, since the fall point is at the target.
@@ -191,3 +193,45 @@ These were settled on the owner's standing rule: record the game as it is and sh
 - **Client:** `NavalShellBursts` lost its absence guess (`shellEndedOnHit` is deleted): it bursts only the `[x, y, shellRadius]` triples `ShellSalvoStore.place()` queues when the display reaches a `shell_end`. A miss, or a shell leaving view, never bursts.
 - **Measured:** the `naval-broadside` perf scene (slice 3 row): rx per pilot 254 → 67 KB/s, ×0.26, p = 0.03, with no frame or tick regression.
 - **Locks:** `SnapshotBroadcaster.navalShells.test.ts` (no calibre ever in `projectiles[]`), `navalShellBursts.test.ts` (no `shell_end`, no burst; the burst lands on the drawn point), `tests/unit/navalShellMissParity.test.ts` (a miss expires with no `shell_end` and the client draws nothing, every naval gun), and the integration tests `capitalEngagement`, `coastalDefences`, `coastalDuel` and `shellEvents`, which now observe `shell_salvo`.
+
+## Railgun pass-through (2026-11-14)
+
+Plan "beam slices, railgun channels, capital heavy beams", step 7. The capital
+railgun's slug is a naval event shell (`'railgun'` is in
+`NAVAL_SHELL_WEAPON_IDS` and `NavalWeaponIdSchema`), very fast and flat
+(`RAILGUN_BALLISTICS`, `shared-types/combat/navalGuns.ts`: 5× the 16"
+shell's speed, at least its reach). Its weapon has a channel `killCut`, which
+makes it a PASS-THROUGH shell:
+
+- **Server (`ProjectilePipeline`).** `applyDamage` returns whether the hit
+  destroyed the target. When it did and the shell passes through
+  (`passesThrough(weaponId)`: a channel `killCut`), the shell is not dropped:
+  it looks again along the rest of the same step (victims excluded, at most
+  `MAX_PASS_HITS_PER_STEP` per step) at FULL damage, and carries on. It ends at
+  the first target that survives a hit (`shell_end` as usual) or at the end
+  of its flight (silent). A pooled per-shell victim list (`ProjectileRecord.hits`)
+  means it never hits one target twice. It skips capital wreck pieces (kind 4)
+  in `canHitSwarm`: "the slug ignores debris" (owner).
+- **Wire.** No new message: the `shell_end` tuple gets an optional 6th
+  element `continues: 1`. `ShellEventHub.onEnd(…, continues)` queues a pooled
+  pass-through hit and does NOT retire the shell, so re-tests, keyframes and
+  the join payload keep describing the live slug (#16). In a flush the
+  pass-through tuples go before the final ends, so a slug that kills and then
+  stops in one flush arrives in order.
+- **Client.** `ShellSalvoStore.applyEnd` queues a continues tuple as a burst
+  for when the display reaches its tick and leaves the shell unended, so it
+  keeps drawing and `navalHitHold` still holds the next victim's hit (its
+  `onShellEnd` matches by point, so the passed victim's flash is released at
+  that burst, not at the timeout). The burst is sized by `shellBurstSize`
+  (`turretFx.ts`; the railgun's small 5 u slug bursts at
+  `RAILGUN_BURST_MUL` × its radius).
+- **Locks:** `ProjectilePipeline.passThrough.test.ts`, `ShellEventHub.test.ts`
+  "pass-through", `shellSalvoStore.test.ts` "pass-through",
+  `ColyseusClient.navalHitFlash.test.ts` "railgun",
+  `tests/integration/sectorRoom/railgun.test.ts`.
+
+## Client rules in detail
+
+Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each rule and points here.
+
+- **Shells as events (slice 2a):** with the welcome's `shellEvents`, `mirror.shellSalvos` (from `net/shellSalvoStore.ts`) gives each naval shell its salvo, fire tick and origin. The warning then groups by salvo and holds one deadline per salvo, so a countdown never goes up; past it the marker reads "now" (`groupLabel`, shared with `HaloRadar`). Story: `docs/architecture/shell-events.md` "Slice 2a as built". **Slice 2b:** salvo shells are DRAWN from events: `ShellSalvoStore.place()` writes them into `mirror.projectiles` at `shellPoseAt(display tick)` as `event: true` entries, which `syncProjectiles` and the per-frame advance never touch. They burst only when the display reaches their `shell_end` (`mirror.pendingShellEnds`, one-frame queue in `perFrameTriggers`), never because they disappeared (the false edge burst). **Slice 4:** naval shells never ride `projectiles[]` any more, so `NavalShellBursts` is only the `shell_end` burster (the absence guess and `shellEndedOnHit` are deleted). **A naval hit's damage FX wait for that burst (2026-11-13):** `handleDamage` applies state at once but hands the flash / number / health-bar hit / spark to `net/navalHitHold.ts` when the hit point is on a live, unended shell's path; the matching `shell_end` (same point) gives the hit tick and `placeShells` releases it the frame the display reaches it (safety timeouts so a lost `shell_end` never swallows it). Lock: `ColyseusClient.navalHitFlash.test.ts`.

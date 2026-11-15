@@ -6,7 +6,7 @@ import { describe, it, expect } from 'vitest';
 import { SHIP_KINDS_LIST } from '../../../shared-types/shipKinds.js';
 import { AI_ROLES } from '../../../shared-types/shipKinds/types.js';
 import { ON_SIGHT_ENGAGE_RANGE } from '../../../shared-types/allegiances.js';
-import { ROLE_PROFILES, roleProfile, roleSensorRange } from './roleProfiles.js';
+import { missileArmedProfile, ROLE_PROFILES, roleProfile, roleSensorRange } from './roleProfiles.js';
 
 describe('ship aiRole + role profiles', () => {
   it('every catalogue kind has a valid aiRole', () => {
@@ -50,5 +50,24 @@ describe('ship aiRole + role profiles', () => {
     expect(roleSensorRange('fighter', 10)).toBe(ON_SIGHT_ENGAGE_RANGE);
     const big = 10 * ON_SIGHT_ENGAGE_RANGE;
     expect(roleSensorRange('capital', big)).toBe(big * ROLE_PROFILES.capital.sensorRangeMul);
+  });
+});
+describe('missileArmedProfile (a ship whose guns are missiles holds its distance)', () => {
+  it('weights Kite as the role top manoeuvre; band, aggression and morale stay the role own', () => {
+    for (const role of AI_ROLES) {
+      const base = roleProfile(role);
+      const p = missileArmedProfile(role);
+      const w = p.manoeuvreWeights;
+      const top = Math.max(w.tail, w.attackRun, w.break, w.orbit, w.fallBack, w.flee, w.screen);
+      expect(w.kite, role).toBeGreaterThanOrEqual(top);
+      expect(w.kite, role).toBeGreaterThanOrEqual(base.manoeuvreWeights.kite);
+      expect(p.rangeBand, role).toEqual(base.rangeBand);
+      expect(p.aggression, role).toBe(base.aggression);
+      expect(p.moraleWeights, role).toEqual(base.moraleWeights);
+      expect(missileArmedProfile(role), role).toBe(p); // cached
+      expect(Object.isFrozen(p.manoeuvreWeights), role).toBe(true);
+    }
+    expect(missileArmedProfile('missileBoat')).toBe(roleProfile('missileBoat'));
+    expect(missileArmedProfile('robot').moraleWeights.flee).toBe(0);
   });
 });

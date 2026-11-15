@@ -79,11 +79,26 @@ export function nearestMuzzle(x: number, y: number, xs: ArrayLike<number>, ys: A
   return best;
 }
 
-/** The family a weapon draws as. */
+/** The family a weapon draws as. A charge weapon (`chargeTicks`) of any
+ *  mode but missile draws as 'charge' (the robot's beam, a charging shell
+ *  gun). */
 export function familyFor(weaponId: string, mode: string, charge: boolean): TurretFamily {
   if (mode === 'missile') return 'missile';
-  if (mode === 'hitscan') return charge ? 'charge' : 'beam';
+  if (charge) return 'charge';
+  if (mode === 'hitscan') return 'beam';
   return weaponId === 'pulse-orb' ? 'charge' : 'bolt';
+}
+
+/** The railgun's muzzle heft (plan beam-slices §7): its recoil, flash size,
+ *  flash time and flash light are this many times a powder gun's of the same
+ *  barrel. */
+export const RAILGUN_MUZZLE_HEFT = 1.8;
+
+/** How heavy a gun's muzzle reaction is: `RAILGUN_MUZZLE_HEFT` for the
+ *  railgun, 1 for every other gun. A gun with heft > 1 kicks and flashes
+ *  even though it draws as the 'charge' family. */
+export function muzzleHeft(weaponId: string): number {
+  return weaponId === 'railgun' ? RAILGUN_MUZZLE_HEFT : 1;
 }
 
 /** Capital naval guns (review round 2026-11-07, "bigger effects"): a long
@@ -122,6 +137,17 @@ export function navalMuzzleLight(barrelW: number, out: MuzzleLight): MuzzleLight
 /** Impact burst radius for a shell of collision radius `shellRadius`. */
 export function shellImpactRadius(shellRadius: number): number {
   return Math.max(30, shellRadius * 35);
+}
+
+/** The railgun slug's burst is this many times its small radius's: a 5 u
+ *  slug carrying a 16" shell's damage bursts like a heavy shell (plan
+ *  beam-slices §7), not like a 5" one. */
+export const RAILGUN_BURST_MUL = 2.4;
+
+/** The burst size (`shellImpactRadius`'s input) for a shell of gun `w` and
+ *  collision radius `radius`: the radius, scaled up for the railgun. */
+export function shellBurstSize(w: string, radius: number): number {
+  return w === 'railgun' ? radius * RAILGUN_BURST_MUL : radius;
 }
 
 /** Smoke puffs per barrel after a naval shot, and how long they last. */

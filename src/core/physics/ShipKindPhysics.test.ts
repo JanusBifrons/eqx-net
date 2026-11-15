@@ -70,15 +70,23 @@ describe.runIf(AT_AUTHORED_SHIP_SCALE)('ship-kind physics ordering (catalogue ar
       ['h', w3, 'heavy'],
     ] as const) {
       const k = SHIP_KINDS[kindKey];
-      const expected = (k.thrustImpulse * k.boostMultiplier) / (1 - Math.exp(-k.linearDamping / 60));
+      // Closed form a / (d·dt). At the arcade dampings (owner 2026-11-13: "make
+      // it more like micro machines") a 1× scout loses ~13 % of its speed a
+      // tick and the discrete sim lands ~8 % under it (the old e^(−d/60) form
+      // was 14 % off), so the typo guard is 10 %; the absolute literals are
+      // ShipKindPhysics.tuning.test.ts.
+      const expected = (k.thrustImpulse * k.boostMultiplier) / (k.linearDamping / 60);
       const actual = Math.hypot(w.getShipState(id)!.vx, w.getShipState(id)!.vy);
-      expect(Math.abs(actual - expected) / expected).toBeLessThan(0.05);
+      expect(Math.abs(actual - expected) / expected).toBeLessThan(0.1);
     }
     w1.dispose(); w2.dispose(); w3.dispose();
   });
 
   it('turn rate while holding A: scout > fighter > heavy', async () => {
-    const TICKS = 60; // 1 second — long enough to see the difference
+    // 0.2 s: since the arcade handling tune (owner 2026-11-13: "make it more
+    // like micro machines") a scout turns ~12.6 rad/s at 1×, so a full second
+    // would wrap the angle past ±π.
+    const TICKS = 12;
     const w1 = await PhysicsWorld.create();
     const w2 = await PhysicsWorld.create();
     const w3 = await PhysicsWorld.create();
@@ -91,7 +99,7 @@ describe.runIf(AT_AUTHORED_SHIP_SCALE)('ship-kind physics ordering (catalogue ar
     expect(scoutAngle).toBeGreaterThan(fighterAngle);
     expect(fighterAngle).toBeGreaterThan(heavyAngle);
     // Each angle ≈ maxAngvel * time (snap-to-target turn).
-    expect(scoutAngle).toBeCloseTo(SHIP_KINDS.scout.maxAngvel * 1.0, 1);
+    expect(scoutAngle).toBeCloseTo(SHIP_KINDS.scout.maxAngvel * 0.2, 1);
   });
 
   it('default `spawnShip(id, x, y)` reproduces the legacy fighter behaviour', () => {

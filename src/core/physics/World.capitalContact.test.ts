@@ -18,7 +18,7 @@ import { describe, it, expect } from 'vitest';
 import RAPIER from '@dimforge/rapier2d-compat';
 import { PhysicsWorld } from './World.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
-import { massOf } from '../../shared-types/shipScale/tuning.js';
+import { shipBodyMass } from '../../shared-types/shipScale/tuning.js';
 import { shipCollisionParts } from '../geometry/shipHullDecomp.js';
 
 type V = { x: number; y: number };
@@ -59,7 +59,7 @@ function hullPen(pw: PhysicsWorld, a: string, ka: string, b: string, kb: string)
 
 function spawnNpcCapital(pw: PhysicsWorld, id: string, kindId: string, x: number, y: number, angle: number): void {
   const k = getShipKind(kindId);
-  pw.spawnObstacle(id, x, y, k.radius, massOf(k, 1), undefined, k.linearDamping, undefined, undefined, k);
+  pw.spawnObstacle(id, x, y, k.radius, shipBodyMass(k), undefined, k.linearDamping, undefined, undefined, k);
   pw.setShipState(id, { x, y, angle, vx: 0, vy: 0, angvel: 0 });
 }
 
@@ -150,5 +150,8 @@ describe('fighters are unchanged by the capital fix', () => {
   });
 });
 
-/** Recorded on origin/main 4acf52bc (before the capital fix). */
-const FIGHTER_GOLDEN = [-20.1346, 717.9221, -6.0342, 212.2417, 0, -144.1048, 605.6046, -41.3006, 48.4329, 91.3277, 662.3862, 30.1318, 62.6111];
+/** Recorded on origin/main 4acf52bc (before the capital fix); re-recorded
+ *  2026-11-13 for the arcade handling tune (owner: "make it more like micro
+ *  machines"), which changed fighter damping/thrust/turn but not the capital
+ *  pass: the far battleship must still change nothing. */
+const FIGHTER_GOLDEN = [2.1959, 2849.1687, -0, 565.0793, 0, -97.3151, 605.7349, 0, 0, 442.8289, 1423.6107, 93.2275, 200.6718];

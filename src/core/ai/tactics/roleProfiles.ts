@@ -142,6 +142,33 @@ export function roleProfile(role: AiRole): RoleProfile {
   return ROLE_PROFILES[role];
 }
 
+const MISSILE_ARMED_PROFILES = new Map<AiRole, RoleProfile>();
+
+/**
+ * The profile for a ship of `role` whose guns are missiles: the role's own,
+ * with Kite weighted as its best manoeuvre (the role's top weight). A missile
+ * ship holds its distance whatever its role (owner 2026-11-14, take 6: the
+ * Robot Hex, a robot with heat-seekers and a 1400 u reach, dogfought a
+ * fighter at ~150 u for 30 s: "why the missile ship isn't flying away from the
+ * ship attacking it?"). Band, aggression and morale stay the role's (a robot
+ * still never flees). Built once per role and cached: constructor-time only.
+ */
+export function missileArmedProfile(role: AiRole): RoleProfile {
+  const hit = MISSILE_ARMED_PROFILES.get(role);
+  if (hit !== undefined) return hit;
+  const base = ROLE_PROFILES[role];
+  const w = base.manoeuvreWeights;
+  const top = Math.max(w.tail, w.attackRun, w.break, w.orbit, w.kite, w.fallBack, w.flee, w.screen);
+  const p = top <= w.kite ? base : profile({
+    ...base,
+    rangeBand: { ...base.rangeBand },
+    manoeuvreWeights: { ...w, kite: top },
+    moraleWeights: { ...base.moraleWeights },
+  });
+  MISSILE_ARMED_PROFILES.set(role, p);
+  return p;
+}
+
 /** Sensor range (world units) for a ship of `role` whose fire range is
  *  `fireRange`. Floored at `ON_SIGHT_ENGAGE_RANGE` so the cap never drops a
  *  contact the on-sight stance would engage. */

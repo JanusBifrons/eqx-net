@@ -32,6 +32,8 @@ export interface RunMetrics {
   raw: unknown;
   /** Host-load samples around the run (perf runner; showcase/hostLoad.ts `LoadSample`). */
   load?: { before: unknown; after: unknown };
+  /** Over-time samples (`perf:scenes --sample-ms`, a soak's curve). Print-only. */
+  series?: unknown[];
 }
 
 export interface Threshold { rel: number; abs: number }

@@ -232,3 +232,36 @@ the markers to confirm, not a license to lighten the chain blind.
 - `docs/architecture/snapshot-cadence.md` — the idle-suppression the
   join-grace overrides.
 - `docs/HANDOFF-warp-spool-perf-followup.md` — the open perf work.
+
+## Client rules in detail
+
+Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each rule and points here.
+
+- **Warp burst fires on arrival ONLY — single-flash policy (2026-05-16, Phase G3).** Exactly one warp flash per inter-sector transit: the arrival reveal (`triggerWarpIn`). `setWarpMode(false)` (spool exit) fades the filter chain out but does NOT burst, and `setWarpMode(true)` (spool start) ramps amplitude (no pulse). Both `fireBurst()` call-sites defer to the pure `warpEventFiresBurst(event)` policy (exported from `PixiRenderer.ts` beside `shouldDetachWarpVisual`, locked by `PixiRenderer.warpBurst.test.ts`). Why: post-Phase-G the load curtain is always raised at `transit_ready` (before SPOOLING→IN_TRANSIT), so a spool-exit burst is permanently occluded yet bleeds through the ~200 ms curtain-rise — a leaky reordered double-flash (on-device 2026-05-16). The earlier theoretical "keep the climax, mask it" was falsified on-device; do not re-introduce a warp-out / spool-start burst. See `docs/LESSONS.md` 2026-05-16 Phase-G3 entry.
+
+- `DEFAULT_WARP_PARAMS` (in `worker/protocol/warpParams.ts`) toned down: `spoolCount` 4→2 (half the shader passes), `spoolAmplitude` 18→10, `climaxAmplitude` 220→70 (third), `flashAlphaMax` 0.85→0.55. (`bloomStrengthMax` removed in R2.9.) **Phase 3 (#10) "subtler ripple":** `climaxAmplitude` 70→40, `burstAmplitude` 220→140, `flashAlphaMax` 0.55→0.35, and the `climaxDurationMs`/`burstDurationMs` +50% (1100→1650 / 1500→2250) so the same envelope reads as a gentler wave spread over a longer distance. Locked by `warpParams.test.ts`. (On-device sign-off is a follow-up.)
+- `WarpFilterChain.applyQuality(level)` is the budget hook (ONE ownership site for warp filter attach/detach — `IFilterEffects` deliberately does NOT duplicate the surface, per Invariant #12). Dials (post-R2.9, no bloom):
+  - `high`    : full chain (shockwaves + zoom-blur + burst)
+  - `medium`  : same as high (bloom — the former high-only pass — removed)
+  - `low`     : drop zoom-blur (shockwaves + burst only)
+  - `minimal` : detach all filters (matches the 2026-05-21 safe state)
+- **Touch-device default is `medium`** (pinned in M9 alongside the `PerfMonitor` wiring). EffectsBudget can still drop to `low`/`minimal` on EMA pressure.
+- **Load curtain (WS-14/R2.26-curtain):** `setLoadCurtain(active)` drives the dark overlay via the pure `curtainAlphaAt` — the RISE is now INSTANT (opaque before the destination sector renders, so it never flashes through) while the FADE-OUT (arrival reveal) keeps the 380 ms tween.
+- The single-flash arrival-only policy (2026-05-16 Phase G3) is unchanged. The `pendingWarpEvents` drain still calls `renderer.triggerWarpIn`. M3 only changes the FILTERS attached during the active warp envelope; it does NOT change which events fire bursts.
+
+- **A ship killed mid-spool draws no departure.** `WarpFx` reads "a spooling ship left the mirror" as a warp-out to another sector; a death also removes it. `drawWarpFx` calls `WarpFx.died(id)` for every `mirror.explodingShips` id before `endFrame`, so a death never leaves burning warp trails over the wreck (take 12 fleet-melee). Lock: `PixiRenderer.warpDeath.test.ts`.
+
+**Do not re-disable the chain wholesale** if a mobile regression appears post-M3 — first instrument the budget to confirm which tier is active during the regression, and dial `minimal` per-device if needed via the touch-default pin. The 2026-05-21 disable was a hammer; the budget tier dial is the surgical replacement.
+
+## History
+
+**Warp re-enable (M3, 2026-05-27) — supersedes 2026-05-21 disable.** The warp filter chain at `pixi/WarpFilterChain.ts` was disabled on 2026-05-21 ("Render-jitter-fix Phase 1b" — captures confirmed filters were not load-bearing for playability; the disable avoided duty-cycle cost on mobile). M3 re-enables it WITH a budget tier dial. **(WS-14/R2.9, 2026-06-13: the BLOOM/glow pass was removed ENTIRELY — "remove warp glow" — so `bloomStrengthMax`, the `warpBloom` filter, and `qualityIncludesBloom` are gone; the single subtle white arrival flash (`warpFlash`, fired by `triggerWarpIn`) is the only reveal. The tier notes below are historical — there is no bloom to drop now, so `high` == `medium`.)**
+## Server implementation notes
+
+> Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.
+
+### From the server Thresholds section
+
+Moved verbatim from the old "Thresholds" section of `src/server/CLAUDE.md`. The rules stay there in short form; current values are in [server-thresholds](server-thresholds.md). Dates, plan names and "was" notes below are history.
+
+- **Warp/transit join-broadcast grace (2026-05-15)**: `JOIN_BROADCAST_GRACE_TICKS = 300` (5 s @ 60 Hz, [rooms/SectorRoom.ts](../../src/server/rooms/SectorRoom.ts)). On every join / spawn / reconnect-rebind the room sets `forceBroadcastUntilTick = currentTick + JOIN_BROADCAST_GRACE_TICKS`; while `serverTick < forceBroadcastUntilTick` the broadcast gate treats the sector as non-idle **regardless of motion** (`inJoinGrace` short-circuits `isSectorIdle`), so a just-joined stationary client gets the steady snapshot stream it needs to reconcile its prediction. Without it, Stage-5 idle-suppression starved a freshly-spawned stationary ship of snapshots until the player moved — then the first snapshot snapped the stale free-run prediction hundreds of units (the "warp / change-sector → stay still → move → teleport" smoke-test bug, diag 2026-05-15). 5 s deliberately matches the client's `joinMinimumElapsed` warp-curtain floor so the first correction lands *beneath* the curtain. Companion `warp_in` / `warp_out` broadcasts (`TransitOrchestrator` / `SectorRoom` → [src/shared-types/messages.ts](../../src/shared-types/messages.ts)) drive remote-ship warp visuals. Locked by [tests/integration/sectorRoom/joinBroadcastGrace.test.ts](../../tests/integration/sectorRoom/joinBroadcastGrace.test.ts) + [warpBroadcasts.test.ts](../../tests/integration/sectorRoom/warpBroadcasts.test.ts). Full feature story: [docs/architecture/warp-visual.md](warp-visual.md).

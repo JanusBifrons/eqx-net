@@ -10,6 +10,10 @@ EQX Peri ships come in **kinds** — distinct hulls with their own physics, AI t
 | **Scout** | Light, fast, twitchy. Glass cannon. | 1444 u/s | 3.0 rad/s (172°/s) | 60 | 37% retained |
 | **Heavy** | Sluggish accel, brutal top speed, heavy hull | 1802 u/s | 1.4 rad/s (80°/s) | 180 | 67% retained |
 
+**Superseded numbers:** the table above predates the 2× ship scale and the 2026-11-13 arcade handling layer; the measured per-kind numbers live in [ship-physics-handling.md](../architecture/ship-physics-handling.md) "Arcade (Micro Machines) tuning, 2026-11-13".
+
+**Nose turrets (2026-11-14):** the fighter, scout and heavy (and the robot-square, robot-circle and robot-hexagon) carry a nose turret that trains ±20° off the nose (4 rad/s on fighter-sized hulls, 3 rad/s on heavier ones), for every pilot. Detail: [weapon-mounts.md](../architecture/weapon-mounts.md#nose-turrets-2026-11-14).
+
 Numbers derive from the steady-state formula `v_terminal = thrustImpulse · boost / (1 − e^(−damping/60))` at the fixed 60 Hz step. See [docs/architecture/ship-physics-handling.md](../architecture/ship-physics-handling.md) for the full model.
 
 ## Picker UI

@@ -73,7 +73,7 @@ describe('perf scenes — counts stay under budget', () => {
       console.log(`[perf-counts] ${id} work: ${JSON.stringify(work)}`);
       if (!budget.work) return;
       for (const k of Object.keys(budget.work) as Array<keyof WorkBudget>) {
-        expect.soft(work[k], `${id}: ${k} ${work[k]} over the ${budget.work[k]} budget (${budget.measured})`).toBeLessThanOrEqual(budget.work[k]);
+        expect.soft(work[k], `${id}: ${k} ${work[k]} over the ${budget.work[k]} budget (${budget.measuredBreakUp ?? budget.measured})`).toBeLessThanOrEqual(budget.work[k]);
       }
     });
   }

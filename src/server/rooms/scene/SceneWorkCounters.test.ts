@@ -9,11 +9,12 @@ describe('SceneWorkCounters', () => {
       w.swarmRecords += 10; w.swarmBytes += 300; w.contacts += 1;
       if (i % 2 === 0) { w.snapshots++; w.snapshotEntities += 8; }
       w.endTick(40, 30);
+      w.wreckPiecesTick(6);
     }
     const v = w.view(null);
     expect(v).toMatchObject({
       ticks: 4, bodiesPerTick: 40, aiAgentsPerTick: 30, contactsPerTick: 1,
-      swarmRecordsPerTick: 10, swarmBytesPerTick: 300, snapshotsPerTick: 0.5, entitiesPerSnapshot: 8, workerElu: null,
+      swarmRecordsPerTick: 10, swarmBytesPerTick: 300, snapshotsPerTick: 0.5, entitiesPerSnapshot: 8, workerElu: null, wreckPiecesPerTick: 6,
     });
     // No CPU batch completed yet: the print-only CPU numbers say so.
     expect(v.cpuMsPerTick).toBeNull();
@@ -43,5 +44,6 @@ describe('SceneWorkCounters', () => {
     expect(v.ticks).toBe(0);
     expect(v.bodiesPerTick).toBe(0);
     expect(v.entitiesPerSnapshot).toBe(0);
+    expect(v.wreckPiecesPerTick).toBe(0);
   });
 });

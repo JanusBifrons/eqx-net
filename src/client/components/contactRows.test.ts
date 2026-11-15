@@ -5,7 +5,6 @@
  */
 import { describe, expect, it } from 'vitest';
 import type { RenderMirror } from '@core/contracts/IRenderer';
-import { LOCK_TUNING } from '@shared-types/combat/lockProfile';
 import {
   CONTACTS_MAX_ROWS, buildContactRows, contactTapAction, contactsSignature, formatContactKm, sortContacts,
 } from './contactRows';
@@ -83,17 +82,19 @@ describe('buildContactRows', () => {
     expect(byKey.get('s:10')!.icon).toBe('structure');
   });
 
-  it('reach: active group vs any group, with the shared reachSlack', () => {
+  it('reach: the FIRE reach of the active group vs any group (locks work at any distance)', () => {
     const byKey = new Map(buildContactRows(mirror(), 'guns', REACHES).map((r) => [r.key, r]));
-    // 500 u: inside the guns (600 × slack).
+    // 500 u: inside the guns (600).
     expect(byKey.get('s:8')).toMatchObject({ inActiveReach: true, inAnyReach: true });
     // 1000 u: only the missiles reach it.
     expect(byKey.get('s:7')).toMatchObject({ inActiveReach: false, inAnyReach: true });
     // 3000 u and 20 km: nothing.
     expect(byKey.get('p:' + PLAYER_ID)).toMatchObject({ inActiveReach: false, inAnyReach: false });
-    // Just past 600 u but inside 600 × slack still counts.
-    const edge = buildContactRows(mirror({ swarm: new Map([[8, { kind: 1, shipKind: 'heavy', x: 600 * LOCK_TUNING.reachSlack - 1, y: 0 }]]) }), 'guns', REACHES);
-    expect(edge[0]!.inActiveReach).toBe(true);
+    // The mark is the guns' fire reach, not a lock limit: no lock slack.
+    const edge = buildContactRows(mirror({ swarm: new Map([[8, { kind: 1, shipKind: 'heavy', x: 600 * 1.05, y: 0 }]]) }), 'guns', REACHES);
+    expect(edge[0]!.inActiveReach).toBe(false);
+    const inside = buildContactRows(mirror({ swarm: new Map([[8, { kind: 1, shipKind: 'heavy', x: 599, y: 0 }]]) }), 'guns', REACHES);
+    expect(inside[0]!.inActiveReach).toBe(true);
   });
 
   it('lock state: acquiring capped at 99, locked 100, active group first; locking you', () => {

@@ -100,7 +100,14 @@ test("clicking another player's structure shows its OWNER in the inspector (not 
   }
 });
 
-test('the turret destroys the parked drone (swarm count drops)', async ({ browser }) => {
+test('the turret destroys the parked drone (drone gone, wreck pieces left)', async ({ browser }) => {
+  // Counts DRONES (kind 1), not the whole swarm: since the break-up is on by
+  // default (owner 2026-11-14) a destroyed drone leaves 2-3 wreck pieces
+  // (kind 4), so the total swarm count GROWS on a kill.
+  const kindCount = (kind: number): number => {
+    const raw = document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-swarm-detail') ?? '{}';
+    return Object.values(JSON.parse(raw) as Record<string, { kind: number }>).filter((e) => e.kind === kind).length;
+  };
   const { ctx, page } = await joinScenario(browser);
   try {
     // Wait for the full scene to populate (5 structures + 1 asteroid + 1 drone).
@@ -109,14 +116,10 @@ test('the turret destroys the parked drone (swarm count drops)', async ({ browse
       undefined,
       { timeout: 12_000 },
     );
-    const peak = await swarmCount(page);
-    // The turret kills the parked drone → count drops below the peak.
-    await page.waitForFunction(
-      (p) => parseInt((document.querySelector('[data-testid="swarm-count"]')?.textContent ?? '0').replace(/\D/g, '') || '0', 10) < p,
-      peak,
-      { timeout: 15_000 },
-    );
-    expect(await swarmCount(page)).toBeLessThan(peak);
+    await page.waitForFunction(`(${kindCount.toString()})(1) >= 1`, undefined, { timeout: 12_000 });
+    // The turret kills the parked drone: no drone left, and it broke up.
+    await page.waitForFunction(`(${kindCount.toString()})(1) === 0`, undefined, { timeout: 15_000 });
+    await page.waitForFunction(`(${kindCount.toString()})(4) >= 2`, undefined, { timeout: 5_000 });
   } finally {
     await ctx.close();
   }

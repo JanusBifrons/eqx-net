@@ -175,6 +175,8 @@ damageTo(self) = min(RAM_DAMAGE_MAX,
 - **Constants** (`Ramming.ts`): floor 50 u/s; `RAM_DAMAGE_PER_ENERGY` 1.25e-4
   (a full-speed fighter head-on at the 2× default scale ⇒ ~166 to each, 55 % of
   a fighter's 300 shield + hull); `RAM_DAMAGE_MAX` 400 per side per hit.
+  The arcade toughness layer (2026-11-13) scaled both ram constants ×1.75: a
+  full-speed fighter head-on now deals ~291 to each (~55 % of its 525 pool).
 - **Pipeline unchanged.** Damage goes through `applyDamage` (shield first, then
   hull; the collider swaps on the shield 0-cross) and is rounded before the emit
   guard (P3.3). A shield-popping hit drops its overflow, as for any weapon, so a
@@ -227,3 +229,59 @@ Pixi shield-bubble visual + break/restore SFX were scoped out by the
 user brief ("small but obvious for now, expand later"). Hooks exist
 (`SHIELD_BROKEN`/`SHIELD_RESTORED` bus events, `shield_broken`/
 `shield_restored` diagnostics, `entry.shieldDown` on the render mirror).
+
+## Client rules in detail
+
+Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each rule and points here.
+
+- **Collision and obstacle changes require E2E test coverage.** Any change to how obstacles or remote ships are synced, reset, or lerped in `ColyseusClient.ts` must be accompanied by an E2E test in `tests/e2e/` that would fail if the change were reverted (the old `robustness.spec.ts` moved to `tests/perf/` on 2026-11-06: its tight correction-rate numbers are host-load measurements, and the netgate gates that signal). Use `data-obstacle-positions` and `data-ship-positions` on the game surface element to observe entity positions from Playwright. The `test-with-logs` fixture provides `getPredStats`, `getEqxLogs`, and `clearEqxLogs` helpers.
+
+- **Every collidable entity must be in predWorld.** This is a load-bearing rule we have re-discovered repeatedly (Phase 6b lingering hulls, scrap — see `docs/LESSONS.md`). The render mirror (`mirror.ships`, `mirror.swarm`, future maps) is what the **renderer** reads. The render mirror is NOT what the prediction physics reads. **Any time you add a new entity type that the local player can collide with or shoot, you MUST register a body in predWorld** — mirroring the existing remote-ship + scrap patterns. The local hitscan ray-test runs against predWorld, not the render mirror; without a body, the player flies through AND shoots through. Pattern: (1) namespace the body id with a prefix (`swarm-`, ...; parked hulls use their bare shipInstanceId since RTS Part A S3), (2) lazily `predWorld.spawnShip(bodyId, x, y, kind)` once `kind` is known, (3) `setShipState` every snapshot tick to keep the authoritative pose tracked, (4) `despawnShip` when the entity disappears from `mirror.X`, (5) track spawned bodies in a `predXIds: Set<string>` for room-teardown cleanup. Server-side counterpart: the new entity needs to be iterated in BOTH `advanceProjectiles` AND `handleFire`'s hitscan loop, AND `applyDamage` must route the new targetId form. Remote ships (and parked hulls) are spawned via `ensureRemoteShipBody` from the snapshot (`spawnRemoteShipBodies`; never from the pose-less schema, B2) and reset to `snap.states[remoteId]` before `reconciler.reconcile()` in `handleSnapshot()` — identical to the obstacle pattern. Rendering reads from predWorld + lerp offsets in `updateMirror()`. Do NOT render remote ships from `remoteHistory` (the 100 ms display-delay buffer); that pattern causes collisions to be delayed by ~RTT/2 and corrections to accumulate across hits.
+## Rapier castRay API
+
+Read before calling `world.castRay` (moved from `src/core/CLAUDE.md`; do not look these up again).
+
+- `world.castRay(ray, maxDist, solid, filter, filterMask, filterGroups, filterExcludeRigidBody)` — the exclude parameter takes a `RigidBody` object (from `bodies.get(id)`), not a handle number.
+- `hit.collider` is already a `Collider` object; do NOT wrap it in `world.getCollider()` (that takes a number).
+- `hit.timeOfImpact` — there is no `hit.toi` property.
+- **Query pipeline lag**: `castRay` queries the Rapier broadphase/narrowphase, which is only updated inside `world.step()`. Bodies spawned after the last `step()` are invisible to `castRay`. In unit tests, call `world.tick(1/60)` in `beforeEach` after spawning bodies, before any hitscan calls.
+
+## Core rules reference
+
+Moved from `src/core/CLAUDE.md` (section "Shield/Hull collider model").
+
+- `src/core/combat/ShieldHull.ts` is **SERVER-AUTHORITY-ONLY** — unlike
+  the shared `HostileDroneBehaviour` brain, the client must NEVER run
+  its damage/regen functions (predicting the 0-cross flaps the collider
+  every RTT). It lives in core only for testability; a banner says so.
+- `src/core/geometry/shipHullDecomp.ts` decomposes each ship polygon
+  into convex parts via `poly-decomp` (Bayazit's algorithm; MIT, ~3 KB,
+  deterministic). Replaced the in-house ear-clipper (`triangulate.ts`)
+  on 2026-05-28. Each part is convex by construction so `rayHitsConvex-
+  Polygon` consumers (hitscan / projectile sweep) loop them directly.
+  Per-kind parts precomputed once at module load — never per-tick.
+- **`World.setHullExposed` emits `RAPIER.ColliderDesc.triangle` (NOT
+  `convexHull`)** colliders, fan-triangulating each convex part from
+  vertex 0. Why: in Rapier 2D, `convexHull` and `cuboid` shapes DO NOT
+  fire `CONTACT_FORCE_EVENTS` for two interpenetrating bodies at zero
+  closing velocity (positional-correction impulse ≠ contact force, even
+  with threshold 0). Only `triangle` shapes emit events for static
+  overlap. Stationary-ship collision telemetry and the
+  `hull-collision-test` regression spec depend on this. The per-shape
+  contact-event comparison is locked in
+  `src/core/physics/hullCollisionNoTouch.test.ts` DIAGNOSTIC. If a
+  future PR replaces triangles with `convexHull`, the diagnostic + the
+  E2E positive-control will fail loudly.
+- `World.setHullExposed`: ALL ship/drone colliders are density 0; mass
+  is a pinned `setAdditionalMassProperties`. `recomputeMassProperties-
+  FromColliders()` IS called after every collider change and is
+  REQUIRED + safe (it folds in the additional props; "FromColliders" is
+  a misnomer — see rapier2d-compat rigid_body.d.ts:377/395). The new
+  geometry lags one `world.step()` for queries — never `updateScene-
+  Queries()` (diverges from client predWorld).
+- **A ship's WEAPON hit shape is `combat/shipHitShape.ts`, by kind and shield
+  state, never by pilot (owner's rule 2026-11-13):** bubble while the shield is
+  up, hull once down, a capital's hull either way; splash measures to the kind's
+  radius. Every server weapon path and the client beam-end / hit prediction call
+  it (#15); never hit-test a ship on `rec.radius` or a tuning `hitRadius`.
+  Lock: `tests/integration/sectorRoom/shipHitShapeParity.test.ts`.

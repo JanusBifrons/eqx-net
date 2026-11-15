@@ -1,13 +1,17 @@
 /**
- * Fire control: does a barrel bear on its lock target? A mount fires only when
- * its barrel (world origin + world angle, game space, angle 0 = +Y) points
- * within FC_MOUNT_FIRE_TOLERANCE of the target. The server refuses any other
+ * Fire control: may a mount fire at its lock target? Only when the target's
+ * hit shape is within the mount's own reach, measured from the mount
+ * (`mountInReach`, the one per-mount range gate), and its barrel (world origin + world angle, game
+ * space, angle 0 = +Y) points within FC_MOUNT_FIRE_TOLERANCE of the target
+ * (`mountFiresOn` = both). The server refuses any other
  * mount (PlayerFireResolver), and the client draws a predicted bolt only from
  * mounts that pass, so both sides use this one function (invariant #15).
  * Pure and allocation-free.
  */
 import { NAVAL_SHELL_WEAPON_IDS } from './shellFlight.js';
 import { TURRET_FIRE_MISS, TURRET_FIRE_TOLERANCE } from './mountFireControl.js';
+import { mountInReach, type MountRangeTarget } from './mountReach.js';
+import { getShipKind } from '../../shared-types/shipKinds.js';
 
 export const FC_MOUNT_FIRE_TOLERANCE = 0.2;
 
@@ -38,6 +42,88 @@ export function mountBearsOn(
   const dx = tx - ox;
   const dy = ty - oy;
   return barrelBearsOn(ox, oy, angle, tx, ty, mountFireTolerance(weaponId, Math.sqrt(dx * dx + dy * dy)));
+}
+
+/**
+ * What the fire gate needs of a lock target: its pose and its hit shape. Both
+ * sides fill it from data they already hold (#15): a ship (`ship`, any pilot)
+ * by its kind, heading and whether its shield is up; anything else
+ * (structures) by `radius`. `radius` is also the lock signature (a ship: its
+ * kind's radius, which the range gate ignores for a ship's true hull). The
+ * range half is the `MountRangeTarget` every turret shares (`mountInReach`).
+ */
+export interface FireTargetShape extends MountRangeTarget {
+  x: number;
+  y: number;
+  angle: number;
+  ship: boolean;
+  kindId: string | null;
+  shieldUp: boolean;
+  radius: number;
+}
+
+/** A blank `FireTargetShape` (scratch; allocate once, fill per call). */
+export function newFireTargetShape(): FireTargetShape {
+  return { x: 0, y: 0, angle: 0, ship: false, kindId: null, shieldUp: false, radius: 0 };
+}
+
+/**
+ * Fill a range shape (`MountRangeTarget`) for a target heading `angle`. THE
+ * one fill of every fire range gate (#15): the player gate
+ * (`fillFireTargetShape`) and the server's NPC turret, drone and structure
+ * gates (`SectorRoom.writeSwarmRangeShape`, pilot hulls). A ship (any pilot)
+ * is its kind's hit shape (`shipHitShape`, which reads a missing kind as the
+ * default kind) and takes that kind's radius (its lock signature); anything
+ * else is a circle of `radius` (a structure's).
+ */
+export function fillRangeShape(
+  out: { -readonly [K in keyof MountRangeTarget]: MountRangeTarget[K] },
+  angle: number, ship: boolean, kindId: string | null, shieldUp: boolean, radius: number,
+): void {
+  if (ship) {
+    const kind = getShipKind(kindId);
+    out.kindId = kind.id;
+    out.radius = kind.radius;
+  } else {
+    out.kindId = null;
+    out.radius = radius;
+  }
+  out.angle = angle;
+  out.shieldUp = shieldUp;
+}
+
+/**
+ * Fill `out` for a target at (x, y, angle): its centre, ship flag and range
+ * shape (`fillRangeShape`). The server's `SectorRoom.resolveLockTarget` (swarm
+ * record / pilot ship) and the client's `fcTargetPose` (swarm wire / ship
+ * mirror) both use it (#15).
+ */
+export function fillFireTargetShape(
+  out: FireTargetShape, x: number, y: number, angle: number,
+  ship: boolean, kindId: string | null, shieldUp: boolean, radius: number,
+): void {
+  out.x = x;
+  out.y = y;
+  out.ship = ship;
+  fillRangeShape(out, angle, ship, kindId, shieldUp, radius);
+}
+
+/**
+ * THE player fire gate for one mount: the target is within the mount's reach
+ * (`mountInReach` from the mount to the hit shape) AND its barrel bears on it (`mountBearsOn`). The
+ * server's `PlayerFireResolver` (via `SectorRoom.mountBearsOnLock`) and the
+ * client's fire passes (`fcGroupBears`, `fcFireMounts`, the ghost gate) all
+ * call this (#15, #19).
+ */
+export function mountFiresOn(
+  weaponId: string,
+  reach: number,
+  ox: number,
+  oy: number,
+  angle: number,
+  t: FireTargetShape,
+): boolean {
+  return mountInReach(t.x - ox, t.y - oy, reach, t) && mountBearsOn(weaponId, ox, oy, angle, t.x, t.y);
 }
 
 export function barrelBearsOn(

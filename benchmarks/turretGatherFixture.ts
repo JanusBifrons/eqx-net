@@ -23,6 +23,7 @@ import { navalGunBallisticsFor, navalGunEngageReach, type NavalGunId } from '../
 import type { NavalRangeMode } from '../src/shared-types/combat/navalRange.js';
 import { SECTOR_PLAYABLE_HALF_EXTENT } from '../src/shared-types/sectorBounds.js';
 import { StructureMountTicker, type TurretTargetView } from '../src/server/structures/StructureMountTicker.js';
+import { mayBeInReach, maxShipRangeBound } from '../src/core/combat/mountReach.js';
 import type { StructureRecord } from '../src/server/structures/StructureRegistry.js';
 import type { WeaponMount } from '../src/shared-types/shipKinds.js';
 
@@ -95,12 +96,14 @@ export function citadelTurretRig(mode: NavalRangeMode, hostiles: number, radius 
   const r = rng(seed);
   const xs = new Float64Array(hostiles), ys = new Float64Array(hostiles);
   const vxs = new Float64Array(hostiles), vys = new Float64Array(hostiles);
+  const angles = new Float64Array(hostiles); // heading along velocity (no extra rng draw)
   const kinds = new Array<string>(hostiles);
   for (let i = 0; i < hostiles; i++) {
     const a = r() * Math.PI * 2, d = Math.sqrt(r()) * radius;
     xs[i] = Math.cos(a) * d; ys[i] = Math.sin(a) * d;
     vxs[i] = (r() - 0.5) * 120; vys[i] = (r() - 0.5) * 120;
     kinds[i] = HOSTILE_KINDS[i % HOSTILE_KINDS.length]!;
+    angles[i] = Math.atan2(-vxs[i]!, vys[i]!);
   }
 
   // Mirror of SectorRoom's target grid + pooled views (collectTurretTargets).
@@ -110,20 +113,24 @@ export function citadelTurretRig(mode: NavalRangeMode, hostiles: number, radius 
   const counts = { ticks: 0, gathers: 0, candidates: 0, maxPerGather: 0 };
   const ticker = new StructureMountTicker({
     targets: (x, y, range, _owner, out) => {
-      const k = grid.within(x, y, range, idx);
+      // As the room: query widened by the largest ship bound, then each
+      // candidate by its own (`mayBeInReach`); the mounts' hull gate decides.
+      const k = grid.within(x, y, range + maxShipRangeBound(), idx);
+      let n = 0;
       for (let j = 0; j < k; j++) {
         const i = idx[j]!;
-        let v = pool[j];
-        if (!v) { v = { id: '', entityId: -1, x: 0, y: 0, vx: 0, vy: 0, cls: 'small', signature: 1 }; pool[j] = v; }
+        let v = pool[n];
+        if (!v) { v = { id: '', entityId: -1, x: 0, y: 0, vx: 0, vy: 0, cls: 'small', signature: 1 }; pool[n] = v; }
         const sk = getShipKind(kinds[i]);
         v.id = `h${i}`; v.entityId = i; v.x = xs[i]!; v.y = ys[i]!; v.vx = vxs[i]!; v.vy = vys[i]!;
         v.cls = targetClass(sk); v.signature = sk.radius;
-        out[j] = v;
+        v.kindId = sk.id; v.angle = angles[i]!; v.shieldUp = i % 2 === 0; v.radius = 0;
+        if (mayBeInReach(v.x - x, v.y - y, range, v)) out[n++] = v;
       }
       counts.gathers++;
-      counts.candidates += k;
-      if (k > counts.maxPerGather) counts.maxPerGather = k;
-      return k;
+      counts.candidates += n;
+      if (n > counts.maxPerGather) counts.maxPerGather = n;
+      return n;
     },
     fire: () => true,
   });

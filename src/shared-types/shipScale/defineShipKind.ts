@@ -10,8 +10,29 @@
 import { ShipKindSchema, type ShipKind } from '../shipKinds/types.js';
 import { effectiveScale, scaleShipKind } from './tuning.js';
 import { KIND_SCALE_OVERRIDES } from './config.js';
+import { applyArcadeHandling } from './arcadeHandling.js';
 
 const UNSCALED = new Map<string, ShipKind>();
+
+/**
+ * Energy pool multiplier (owner, 2026-11-14): "increasing the total pool of
+ * energy so at the start of fights after a lull there is lots of boosting,
+ * then as a fight drags ships run out of boost. This also gives people joining
+ * late an advantage. Don't boost regen."
+ *
+ * One row for every kind, whoever flies it (the pool belongs to the
+ * ship, capitals included), × `energyMax` only. `energyRegenRate`, `BOOST_TICK_COST` and
+ * weapon `energyCost` are untouched, so a dragging fight settles back to the
+ * same regen-limited sustain while a rested ship opens with twice the
+ * boost / fire reserve (fighter: 3.3 s → 6.7 s of continuous boost from
+ * full). The family files keep the authored 1× pool. Server, client HUD and
+ * client prediction all read the scaled record (invariant #15).
+ */
+export const ENERGY_POOL_MUL = 2;
+
+function withEnergyPool(kind: ShipKind): ShipKind {
+  return kind.energyMax === undefined ? kind : { ...kind, energyMax: kind.energyMax * ENERGY_POOL_MUL };
+}
 
 export function defineShipKind(raw: unknown): ShipKind {
   const parsed = ShipKindSchema.parse(raw);
@@ -25,7 +46,10 @@ export function defineShipKind(raw: unknown): ShipKind {
     ...(o.sizeClass ? { sizeClass: o.sizeClass } : {}),
     ...(o.thrusters ? { thrusters: o.thrusters } : {}),
   };
-  return scaleShipKind(kind, effectiveScale(kind));
+  // Arcade (Micro Machines) handling + toughness layer, per handling class
+  // (owner direction 2026-11-13; `arcadeHandling.ts`), then the energy pool
+  // (every kind, `ENERGY_POOL_MUL`).
+  return withEnergyPool(applyArcadeHandling(scaleShipKind(kind, effectiveScale(kind)), parsed));
 }
 
 /** The authored (1×) kind, before the catalogue scaled it. */
@@ -48,5 +72,5 @@ export function unscaledShipKinds(): ShipKind[] {
 export function defineCapitalShipKind(raw: unknown): ShipKind {
   const parsed = ShipKindSchema.parse(raw);
   UNSCALED.set(parsed.id, parsed);
-  return { ...parsed, appliedScale: 1 };
+  return withEnergyPool(applyArcadeHandling({ ...parsed, appliedScale: 1 }, parsed));
 }

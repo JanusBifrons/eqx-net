@@ -3000,6 +3000,19 @@ Fix: the flag is gone. `lockSeconds` keys the rule on what the shooter IS, not w
 - **Lesson.** A "too high" complaint is a tuning problem; answer it by scaling the constant, not by changing which inputs matter. A model whose inputs drop the physical cause (speed, angle) reads as broken the first time someone rams on purpose. Lock the SHAPE of the dependence (monotone in angle and speed, equal masses equal), not the numbers.
 - **Physics to remember.** Two equal ships head-on at v each take what one takes hitting an immovable wall at v, so "a fighter into a parked capital" is not worse than a fighter head-on; only an oncoming capital is.
 
+## 2026-11-13 — Arcade handling: re-solve thrust from Rapier's damping, and lock feel with a measuring harness
+Commit: feat/arcade-handling (PR TBD)
+
+Owner: "make it more like micro machines and make fights a bit longer. Also don't forget the afterburner to gain speed fast". At the 2× default a fighter took ~11 s to reach 90 % of cruise (τ = 1/d ≈ 4.7 s) and 3.2 s to turn round, so in a fight it never reached its own top speed and filmed fights looked floaty.
+
+- **Raise damping and thrust by the same factor, never thrust alone.** Rapier damps velocity by `1 / (1 + d·dt)` a step, so a per-tick impulse `a` settles at `a / (d·dt)`: thrust × k with damping × k keeps cruise to the unit while the rise time drops by k. Re-solving with the old `1 − e^(−d/60)` formula left cruise 3 % low at the new dampings (the ShipKindPhysics closed-form check also drifts at a 1× scout's damping 8; it is a 10 % typo guard now, the literals live in the tuning lock).
+- **A per-class multiplier layer beats editing records.** `shipScale/arcadeHandling.ts` runs inside `defineShipKind`, so the 1× authored records stay as written, every consumer (player input, prediction, drone `ai.thrust` + `maxAngvel` turn) reads the same numbers (#15), and capitals (solver-authored, locked to WW2 reference turn times) are simply a row of 1s.
+- **Halving lateral grip was wrong once turns got 4× faster:** a held 90° turn at cruise then left 0.6 of cruise sideways. Grip unchanged leaves ~0.55, bled by the high damping within ~0.3 s.
+- **Fast turns wrap angles.** Any test that holds a turn for a second and reads `rotation()` now passes ±π (a 1× scout turns 12.6 rad/s); the harness unwraps per tick.
+- **Tests that coast a ship with no input assumed near-zero damping** (a 150 u run-up to a glancing contact stopped after ~80 u). Pose such probes close, but leave 2–3 ticks of flight: the worker reads impact speed from the PREVIOUS tick's velocity, which is 0 on the tick a ship is posed (a 16 u gap gave a head-on ram of 0).
+- **Ramming scales with the pool.** `RAM_DAMAGE_PER_ENERGY` / `RAM_DAMAGE_MAX` × 1.75 with the fighter pool, so #558's "~55 % of the pool head-on" holds.
+- **Measure, then lock bands.** `ShipHandling.arcade.test.ts` drives every kind through the real `PhysicsWorld` and prints t90, cruise, boost, 180°, brake, slide and TTK (`EQX_HANDLING_REPORT=1`); its per-class bands are the regression lock. Before/after table: docs/architecture/ship-physics-handling.md "Arcade (Micro Machines) tuning, 2026-11-13".
+
 ## 2026-11-13 — The same ship was a smaller target when an NPC flew it
 
 - **Symptom (audit).** A player's ship was hit on its shield bubble (`kind.radius + shieldPad`) while its shield was up, but an NPC drone of the same kind on a bare `kind.radius` circle (no pad), and on that circle even with its shield DOWN (only capitals were refined to the hull). Shell splash measured a player ship and a parked hull as a 12 u fighter (`GLOBAL_SHIP_TUNING.hitRadius`) but a drone as its own radius, so a capital pilot shrugged off splash an NPC capital took; missiles hit a player on the fighter `hitRadius` circle. Owner's rule: "everything is related to the ship, regardless of pilot."
@@ -3007,11 +3020,79 @@ Fix: the flag is gone. `lockSeconds` keys the rule on what the shooter IS, not w
 - **Fix.** ONE helper, `src/core/combat/shipHitShape.ts` (`shipRayHit` / `shipSweepHit` / `shipHitBound` / `shipSplashRadius`), keyed by ship KIND and shield state, used by every server path and by the client (`DisplayPoseHitscan`, `shieldEdgeDist`, #15). The projectile broadphase bins ships by `shipHitBound` (bubble and hull), or a shot at the edge of the bubble was never offered to the narrow phase. Lock: `tests/integration/sectorRoom/shipHitShapeParity.test.ts` fires the same shell, beam and missile at the same kind flown by a player and by an NPC.
 - **Rule.** Any new weapon path that can hit a ship must call `shipHitShape.ts`, never `rec.radius` or a tuning `hitRadius`. A record's `radius` is not its hit shape.
 
+## 2026-11-14 — An NPC beam ran through its target to the edge of the screen
+
+- **Symptom (hostile review of filmed NPC fights).** An NPC interceptor's wing turrets were drawn on the pilot, but its beam ran straight past the ship to max range.
+- **Cause.** Server, not renderer. `AiFireResolver.fireNow` fired a mount at the AI's AIM vector plus the mount's slewed angle. A turret's slewed angle is ship-relative and already turned onto the target, so the shot went out at twice the hull's bearing error: a real server miss (full-range distance on the wire). The client draws a remote beam down the visible barrel (hull + base + slewed angle) for the server's distance, so the miss was drawn through the target.
+- **Fix.** A turning mount fires down its barrel (hull angle + base + slewed angle), the angle the client draws. A fixed mount keeps the exact aim vector (the 2026-06-03 accuracy fix). Lock: `AiFireResolver.test.ts` "a turret beam leaves along its visible barrel" (wire ray direction == drawn barrel, #15).
+- **Lesson.** When a drawn beam disagrees with its target, check that the server's ray and the drawn ray are the SAME ray before touching the beam-end maths. Adding a relative angle to an absolute direction is a frame mix-up that no hit-shape fix can hide.
+- **Closed 2026-11-14 (next entry).** A FIXED mount's beam is drawn along the hull's nose while the server fires along the aim vector (within the AI's aim cone), so a hit can end beside the target rather than on it.
+
+## 2026-11-14 — Turrets that never turned, and a shooter pose borrowed by its own hit test
+
+- **Symptom (owner, fight clips npc-dogfight / fleet-melee):** "The turrets also aren't turning to shoot the direction they do."
+- **Cause 1:** `WeaponMountTicker.tickDrone` trained a non-capital drone's turrets only on hostile PILOTS. In a drones-vs-robots fight there were none, so the interceptor and gunship turrets sat at rest, while the AI fired whenever its hull was inside its cone PLUS the turret arc (up to 104° for a gunship), and since #572 the shot leaves down the resting barrel.
+- **Cause 2:** a fixed nose gun (fighter, scout, heavy, every robot) fired along the AI's exact lead vector anywhere in a 14°-26° cone, while the nose gun is drawn straight ahead.
+- **Cause 3 (found by the room-level test):** `SectorRoom.swarmEntitySnapshot` returns ONE shared scratch. `AiFireResolver.fireNow` kept the reference across the mount loop, and the first barrel's hit test looked other ships up through it, so the second wing fired from the TARGET's pose and angle. Unit tests with a fake snapshot could never see it.
+- **Rule:** an AI shot leaves down its drawn barrel (hull + base + slewed angle) and only a barrel that bears fires (`mountFireTolerance`, the pilot's rule); the brain's `aimPoint` drives its turrets. Copy a pooled snapshot's fields before any other lookup.
+
 ## 2026-11-13 — Same keys, different ship: an NPC body is twice a player's mass
 
 - **Finding (virtual pilot, slice 1b):** NPCs now press a player's keys through the same `applyShipInput`, yet a drone of a kind still accelerates at half the player's rate and tops out at half its thrust-only speed. `SwarmSpawner` spawns a drone with `massOf(kind, 2)` (`DRONE_DEFAULT_MASS`), a player ship with `massOf(kind, 1)`, and `thrustImpulse` is an impulse, so Δv = J/m. Boost reaches `maxSpeed` either way.
 - **Rule:** anything that reasons about how an NPC body responds (the pilot's braking, arrive ramps, tests) must use the spawned mass, `NPC_MASS_FALLBACK` from `shipScale/tuning.ts` (now the spawner's source too), never `thrustImpulse` alone. Whether NPC bodies should match the player's mass is an owner balance call (it also changes ramming), not a pilot fix.
 - **Also:** the old impulse brain needed `HostileDroneBehaviour` to know nothing about inertia. A capital flown by keys turns by torque, so the pilot must stop the turn early on the coast `ω / angularDamping` (Rapier's damping sums to exactly that), or it swings past the heading by ~4° and hunts.
+
+## 2026-11-13 — Ship stats belong to the ship, never the pilot (one mass source)
+
+- **Owner rule:** "Ships turning, acceleration, weapons, everything is related to the ship, regardless of pilot." An NPC-flown ship and a player-flown ship of the same kind must have the same physical and combat stats; only per-instance upgrades (leveling `SET_STAT_MUL`, quality, fitted modules) differ.
+- **Symptom:** a kind with no authored `mass` had THREE masses: 1 as a player ship (`World.spawnShip`, `massOf(kind, 1)`), 2 as a server drone (`SwarmSpawner`, `NPC_MASS_FALLBACK`) and 3 in the client predWorld (`DroneClientLeaf`, `DRONE_FALLBACK_MASS`). At the 2× default that is 8 / 16 / 24: the same fighter accelerated half as hard and turned capitals half as fast when an NPC flew it. A server drone body also had angular damping 0 until its first AI input.
+- **Why the old parity test passed:** `World.aiInput.test.ts` spawned its "drone" with `massOf(kind, 1)` by hand instead of the spawner's mass, so it compared a pilot ship with a pilot-massed obstacle.
+- **Fix:** `shipBodyMass(kind)` / `shipBodyInertia(kind)` (`shipScale/tuning.ts`) are the ONE source. `spawnShip` uses them, and `spawnObstacle` with a ship kind (every drone, server and client) pins them whatever mass the caller passed. `NPC_MASS_FALLBACK`, `DRONE_DEFAULT_MASS`, `DRONE_FALLBACK_MASS` and `DroneSpec.mass/radius` are gone. `World.setPilotKind` (server worker only) gives the drone body its kind's damping at spawn. Lock: `tests/unit/shipStatsPilotAgnostic.test.ts` (every catalogue kind: mass, inertia, damping, motion under the same keys, through the real spawner and the real client leaf).
+- **Rule:** a parity test must build each side through its real spawn path, never by copying a constant into the test.
+
+## 2026-11-13 — AI pilots' guns were free: a ship rule enforced only on the player path
+
+- **Finding:** `PlayerFireResolver` gated every slot trigger on `canAfford(pool, resolveSlotEnergyCost(slot))`, but `AiFireResolver` (and capital `fireMount`) had no energy gate at all, while the virtual pilot (PR #549) had already given each AI pilot's ship a boost pool. An AI-flown fighter could boost to empty and still fire every cooldown; a player of the same kind could not.
+- **Fix:** one pool per AI-flown ship on its brain, spent through `IAiBehaviour.trySpendEnergy` by boost and by both AI fire paths, with the player's refusal rule (no cooldown/reload spent). Capital turrets pay the player capital's per-mount share.
+- **Balance:** at today's numbers no existing suite changed. Most AI-flown weapons regen faster than they fire (fighter laser: cost 2 per 10 ticks, regen 2.5), so energy bites only when boost drains the pool or on missile/charge kinds (robot-hexagon: 60 per 90 ticks vs regen 31.5 ⇒ about 5 opening shots, then regen-paced).
+- **Rule:** a ship rule (handling, energy, cooldown, damage) lives where BOTH pilots go through it. When adding one to the player path, ask what the AI pilot path does.
+
+## 2026-11-13 — AI pilot keys must be held between messages, like a pilot's
+
+- **Finding (filmed npc-dogfight / fleet-melee, "ships barely move"):** the worker applied each AI pilot's `AI_INPUTS` keys on ONE physics step and then dropped them. The room loop (main thread) and the worker (its own 60 Hz timer) are not lock-stepped, so steps with no fresh message ran with no keys: no thrust, no brake, a snap turn left spinning at its last rate. On a real dev server 8 % of steps had no keys on an idle box and 46 % with the room loop slowed to ~32 Hz (`EQX_PERF_BURN_MS=30`), where NPC turn rate fell 0.36 → 0.12 rad/s. A pilot's held input (input queue rule #3) never had this coupling, and the in-process integration harness runs an idle room loop, so it never showed.
+- **Rule:** keys from a brain are HELD by the worker until replaced, cleared only by despawn, a switch to the impulse path or a bot warp. Lock: `src/server/rooms/physicsWorkerAiInputHeld.test.ts` (real bundled worker, keys at 20 Hz must fly like keys every step).
+- **Not the whole story:** the same filmed take's server log showed 92 % of steps keyed at 59.9 Hz, so the slow look of those clips is mostly elsewhere: an AI-flown body at twice a player's mass (#556), a 4.7 s thrust time constant (`1 / linearDamping`), and a fight that ends in ~8 s once hulls are mortal (the integration test makes them endless).
+## 2026-11-14 — "notepack skips undefined" stopped being true: the snapshot paid for every empty key
+
+- **Symptom:** capital-fleet's rx rose from ~17 to ~21 KB/s per pilot over three days with no single big change; the snapshot JSON alone went 9.8 → 13.1 KB/s for one pilot's ship and a few drones.
+- **Cause:** `SnapshotBroadcaster` cleared pooled wire fields with `field = undefined`, written when the encoder was notepack.io, which skipped undefined values. Both encoders now in use (Colyseus 0.16's msgpackr on the WebSocket, the WebRTC `Packr`) write an undefined own property as its key name plus a 3-byte ext. So every "emit-when-non-default" field (#16) still cost 14–25 B a snapshot when empty: ~30 keys, ~8 of the 13 KB/s. Each feature that added an optional field added its key to every snapshot.
+- **Fix:** `setOrDrop(obj, key, v)` deletes the key when `v` is undefined. Snapshot JSON 13.1 → 5.5 KB/s; capital-fleet rx 13.2–14.0 KB/s. Lock: `tests/unit/snapshotAbsentKeys.test.ts` (packs with both production encoders).
+- **Rule:** on a pooled wire object, "absent" means deleted, never `undefined`. A per-field byte breakdown must count key names too: summing `pack(value)` per field hid the keys (the "unexplained" ~1.3 KB/s).
+
+## 2026-11-14 — A pool keyed by size shares one buffer between every entity of that size
+
+- **Finding (nose turrets, showcase take 9):** the snapshot broadcaster pooled `mountAngles` arrays by length. The message is encoded only when sent, so every one-turret ship in a recipient's snapshot pointed at the same array and the wire carried the last ship's angle for all of them. It stayed hidden while almost no drone had exactly one turning mount; once six kinds got nose turrets, every AI pilot's gun was drawn at some other ship's angle. Renderer, art path and display follower were all correct.
+- **Rule:** a pooled buffer that ends up inside an outgoing message is pooled per ENTRY (a cursor reset per message, or keyed by entity), never per size. A test of a broadcaster copies its arrays at send time, as the encoder reads them, with two entities of the same shape.
+
+## 2026-11-14 — Streaming capture: a one-shot fail-stop turns a transient blip into a silent, permanent stop
+
+- **Finding (capture `2026-11-14T17-46-29Z-qrspcq`):** `streamingDiag.ts` disabled streaming for the tab on the FIRST 404 and had no fetch timeout, so one 404 or one never-settling POST while the dev backend restarted stopped the capture for good, with only a console warning. The `_flushedFinal` latch also never re-armed, so only the first tab-hide got a final beacon (fetch streaming itself carried on after a hide, as the capture shows).
+- **Rule:** a client diag/telemetry loop treats every failure as transient: abort hung requests (10 s), and fail-stop only on a sustained signal (5+ consecutive 404s spanning > 30 s). Latches tied to a lifecycle event re-arm on the opposite event. Lock: `streamingDiag.resilience.test.ts`.
+
+## 2026-11-14 — Interpolation samples stamped at drain time jitter as much as the drain does
+
+- **Finding (fleet-melee follow, take 10: "the ship jitters, or is it the camera"):** a per-frame probe showed the camera moving evenly (jerk 0.03 u) while the drawn drone stepped 0–5.3 u per frame at a ~2.8 u cruise. The pose ring stamped each binary packet with the time it was DECODED, and packets decode once per RAF, so two ticks in one frame shared a stamp. The "display delay makes us immune to arrival jitter" claim only holds if the samples carry the time they stand for.
+- **Rule:** stamp an interpolation sample with its source time (server tick on a fitted clock, `swarmArrivalStampMs`), never with when the client happened to process it. When a followed entity "jitters", measure the drawn pose and the camera separately per frame before touching either. The source time must be right too: a packet labelled with a tick read earlier than its poses (room loop vs physics worker loop) pops the drone one step forward (take 11); label it with the SAB tick read right before the encode (`sabPoseTick`).
+
+## 2026-11-14 — A new welcome key must reach clients before the server sends it
+
+- **Finding (PR #584, netgate red 3×):** switching the sub-cap break-up on made the server send `subcapWrecks: true` in `welcome`. `WelcomeSchema` is `.strict()`, so the netgate's baseline arm (origin/main client against the HEAD server) dropped the whole welcome (`welcome_malformed_dropped`) and never showed a ship: `waitForFunction` timed out on "Ships > 0", with no console error.
+- **Rule:** an additive key on a strict server→client message lands reader-first: the schema change ships to `main` on its own, then the server starts sending it. The netgate baseline arm enforces this one-release skew.
+
+## 2026-11-14 — A charge weapon needs the pilot to hold its line
+
+- **Finding (#611):** a locked-direction charge (robot charge laser) fires down the barrel when the wind-up ends. The new dogfighting AI kept flying its strafing pass during the 1.2 s wind-up, slid ~400 u and missed a parked pilot 6 times out of 6. The charge path and the manoeuvre layer were each right on their own.
+- **Rule:** while `view.isCharging` the combat brain holds its line on the target. Any new manoeuvre must respect it; a behaviour change to the AI's movement re-runs `chargeLaser.test.ts`.
 
 ## 2026-11-14 — A per-test room that persists shares one save with every other test
 

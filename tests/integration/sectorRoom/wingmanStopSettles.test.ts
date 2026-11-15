@@ -85,7 +85,10 @@ describe('SectorRoom integration — wingmen ordered together stop and settle (R
     // Both at one far point (a shared waypoint): their paths converge until
     // the hulls touch.
     expect(fleet.applyOrder(pid, ids, { kind: 'move', x: 8000, y: 50 })).toHaveLength(2);
-    await harness.advance(5000);
+    // Arcade handling (on main) reaches cruise in well under a second: 2 s of
+    // flight is enough, and keeps them near each other before the group-move
+    // spots (`spreadMove`) pull them apart.
+    await harness.advance(2000);
     const a0 = at(ids[0]!), b0 = at(ids[1]!);
     const v0 = Math.max(Math.hypot(a0.vx, a0.vy), Math.hypot(b0.vx, b0.vy));
     const gap0 = Math.hypot(a0.x - b0.x, a0.y - b0.y);

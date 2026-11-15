@@ -21,13 +21,22 @@
  *
  * The pilot joins as the shot does (fighter, huge hull) and sends
  * `test_aggro`. No `instantLock`: every gun completes a real lock (#19).
+ *
+ * The pilot waits out of the battleship's reach. Each turret picks its own
+ * target and a hostile pilot in reach comes first, so at real ranges (the
+ * default: the 16" reaches ~38.7 km) a pilot by the battery draws every turret
+ * and the battery is never engaged. Out of reach, the battleship's only
+ * candidates are the battery's structures. The pilot is then too far to be
+ * sent the battleship's salvos, so "it fired" is read from the turret reload
+ * stamps the mount ticker sets on every fire.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { matchMaker } from 'colyseus';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import { SHOWCASE_COASTAL_DUEL_OPTS, SHOWCASE_PILOT_ID } from '../../../src/server/rooms/showcaseRooms.js';
-import type { ShellSalvo } from '../../../src/shared-types/messages/shellEvents.js';
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
+import { navalGunEngageReach } from '../../../src/shared-types/combat/navalGuns.js';
+import { LOCK_TUNING } from '../../../src/shared-types/combat/lockProfile.js';
 
 const BATTERY = ['coastal_casemate_8in', 'coastal_turret_11in', 'coastal_barbette_16in'] as const;
 
@@ -42,6 +51,9 @@ describe('SectorRoom integration — battleship vs coastal battery', () => {
     // In reach of the whole battery (8" casemate at x -1800 is the far one:
     // ~3,500 u) and of the battleship's own 16" guns.
     opts['dronePoses'] = [{ kind: 'battleship', x: -900, y: 2700, angle: Math.PI / 2 }];
+    // The pilot spawns south of the battery, past the battleship's longest
+    // lock reach (follows the naval range mode).
+    opts['defaultSpawnY'] = Math.round(2700 - navalGunEngageReach('naval_xl') * LOCK_TUNING.reachSlack - 5000);
     harness = await bootSectorTestServer(opts);
     const cr = await harness.connectActive(SHOWCASE_PILOT_ID, { shipKind: 'fighter', initialHull: 1_000_000, noselfdmg: 1 });
     const room = matchMaker.getLocalRoomById(cr.roomId) as unknown as SectorRoom;
@@ -55,19 +67,17 @@ describe('SectorRoom integration — battleship vs coastal battery', () => {
     const gunIds = new Set(guns.map((g) => g.id));
     const allIds = new Set([...internal.structureRegistry.all()].map((r) => r.id));
 
-    // The battleship's shells, and whether a turret of it is on a structure.
-    const bsOwner = `swarm-${bs!.entityId}`;
-    let bsShells = 0;
-    // Naval shells travel as events (shell-events.md slice 4).
-    cr.onMessage('shell_salvo', (m: ShellSalvo) => {
-      if (m.o === bsOwner) bsShells += m.sh.length;
-    });
-    const mountTargets = (room as unknown as { mountTicker: { droneMountTargetIds: Map<string, (string | null)[]> } })
-      .mountTicker.droneMountTargetIds;
+    // Whether a battleship turret is on a structure, and whether one fired
+    // (its reload stamp moved off the never-fired sentinel).
+    const ticker = (room as unknown as {
+      mountTicker: { droneMountTargetIds: Map<string, (string | null)[]>; droneMountReload: Map<string, Int32Array> };
+    }).mountTicker;
+    const mountTargets = ticker.droneMountTargetIds;
+    const bsFired = (): boolean => (ticker.droneMountReload.get(bs!.id) ?? []).some((t) => t >= 0);
     let bsOnBattery = false;
 
     cr.send('test_aggro', { type: 'test_aggro' });
-    const done = (): boolean => bsShells > 0 && bsOnBattery && guns.every((g) => g.lastTurretFireMs !== undefined);
+    const done = (): boolean => bsFired() && bsOnBattery && guns.every((g) => g.lastTurretFireMs !== undefined);
     const deadline = Date.now() + 45_000;
     while (Date.now() < deadline && !done()) {
       await new Promise((r) => setTimeout(r, 200));
@@ -76,7 +86,7 @@ describe('SectorRoom integration — battleship vs coastal battery', () => {
 
     for (const g of guns) expect(g.lastTurretFireMs, `the ${g.kind} trained on the battleship and fired`).toBeDefined();
     expect(bsOnBattery, 'a battleship turret trained on a structure of the battery').toBe(true);
-    expect(bsShells, 'the battleship fired at the battery').toBeGreaterThan(0);
+    expect(bsFired(), 'the battleship fired at the battery').toBe(true);
     expect(gunIds.size).toBe(3);
   });
 });
