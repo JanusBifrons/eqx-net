@@ -88,9 +88,10 @@ export function styledKind(kind: ShipKindId, shipId: string): ShipKindId {
 }
 
 /** The class of a capital kind: a style or fit variant's base (`battleship-c`,
- *  `battleship-rail` → `battleship`). Pure (tests). */
+ *  `battleship-rail` → `battleship`; `heavy-cruiser-beam` → `heavy-cruiser`,
+ *  `battlecruiser-lance` → `battlecruiser`). Pure (tests). */
 export function classOf(kind: ShipKindId): string {
-  return kind.replace(/(?:-[bc])?(?:-rail)?$/, '');
+  return kind.replace(/(?:-[bc])?(?:-rail|-lance)?(?:-beam)?$/, '');
 }
 
 const CLASS_PREFIX: Partial<Record<string, string>> = {

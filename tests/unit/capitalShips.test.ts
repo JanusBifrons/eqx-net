@@ -79,8 +79,8 @@ describe('the catalogue capitals', () => {
     const ids = SHIP_KINDS_LIST.map((k) => k.id);
     // The five classes, then (W2b) each class's style B and C hulls, then
     // (plan section 9) the fitted variants.
-    const variants = [...CAPITAL_CLASS_IDS.flatMap((id) => [`${id}-b`, `${id}-c`]), 'battleship-rail'];
-    expect(ids.slice(-16)).toEqual([...CAPITAL_CLASS_IDS, ...variants]);
+    const variants = [...CAPITAL_CLASS_IDS.flatMap((id) => [`${id}-b`, `${id}-c`]), 'battleship-rail', 'heavy-cruiser-beam', 'battlecruiser-lance'];
+    expect(ids.slice(-18)).toEqual([...CAPITAL_CLASS_IDS, ...variants]);
     for (const id of [...CAPITAL_CLASS_IDS, ...variants]) expect(isPlayableShipKindId(id)).toBe(false);
   });
 
@@ -112,6 +112,32 @@ describe('the catalogue capitals', () => {
     for (const [i, m] of rail.mounts.entries()) {
       if (m.id.startsWith('main-')) expect(m.weaponId).toBe('railgun');
       else expect(m.weaponId).toBe(base.mounts[i]!.weaponId);
+    }
+  });
+
+  it('plan section 9: the beam cruiser (heavy beam secondaries) and lance battlecruiser (heavy beam main), one emitter each', () => {
+    for (const [cls, id, beamed, note] of [
+      ['heavy-cruiser', 'heavy-cruiser-beam', 'sec-', 'heavy beam secondaries'],
+      ['battlecruiser', 'battlecruiser-lance', 'main-', 'heavy beam main battery'],
+    ] as const) {
+      const base = getShipKind(cls);
+      const fitted = getShipKind(id);
+      expect(fitted.id).toBe(id);
+      expect(fitted.displayName).toBe(base.displayName);
+      expect(fitted.description).toContain(note);
+      expect(JSON.stringify((fitted.shape as { hull: unknown }).hull)).toBe(JSON.stringify((base.shape as { hull: unknown }).hull));
+      expect(fitted.mounts.map((m) => m.id)).toEqual(base.mounts.map((m) => m.id));
+      expect(fitted.mounts.some((m) => m.id.startsWith(beamed))).toBe(true);
+      for (const [i, m] of fitted.mounts.entries()) {
+        if (m.id.startsWith(beamed)) {
+          expect(m.weaponId).toBe('heavy_beam');
+          // One beam per trigger: the fire path shoots one ray per barrel.
+          expect(m.barrels).toBe(1);
+        } else {
+          expect(m.weaponId).toBe(base.mounts[i]!.weaponId);
+          expect(m.barrels).toBe(base.mounts[i]!.barrels);
+        }
+      }
     }
   });
 

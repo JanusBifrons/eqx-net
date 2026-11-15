@@ -2003,7 +2003,8 @@ line; a railgun kill erases a straight channel as wide as the bolt.
   keeps the hull drawn until every piece is drawable (it ends that frame),
   not a split delay. Locks: `CapitalWreckSubsystem.test.ts` and
   `wreckArt.test.ts` "a cut kill splits at once".
-- **Not yet:** the cut glow colours and channel ash.
+- **Not yet:** the cut glow colours and channel ash. The beam fits that
+  mount the heavy beam: [capital-ships](../features/capital-ships.md#weapon-fits-plan-section-9).
 - Locks: `fractureHull.test.ts` "golden: v9 kill cuts" (battleship and
   fighter, side and bow, slice and channel); `fractureHull.killFocus.test.ts`
   "fracture v9" (the slice's cut is collinear with the shot through the kill
