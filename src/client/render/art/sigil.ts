@@ -17,7 +17,9 @@
  * shape is evaluated on |u|, so the emblem is exactly mirror-symmetric about
  * u = 0 (hulls are), and nothing is drawn outside the unit circle.
  */
-import { rng } from './raster.js';
+import { distanceInside, rng } from './raster.js';
+import { lin, MAT, type Fields, type Livery } from './fieldsCore.js';
+import { liveryPaint, paintEnamel } from './liveryForge.js';
 
 export type SigilRing = 'none' | 'circle' | 'polygon';
 export type SigilSpokes = 'none' | 'bar' | 'point' | 'petal' | 'wings';
@@ -342,4 +344,144 @@ export function largestClearCircle(
     }
   }
   return { x: bx, y: by, r: br };
+}
+
+/** Smallest clear circle (radius, texels) that takes an emblem; below it a
+ *  hull gets the dorsal chevron. */
+const SIGIL_MIN_R = 6;
+/** Emblem radius as a fraction of its clear circle, and its cap as a fraction
+ *  of the hull's half-beam at that row (a capital's deck is huge). */
+const SIGIL_FILL = 0.8, SIGIL_MAX_BEAM = 0.6;
+/** An off-centre circle loses to the centreline's best unless the centreline
+ *  falls below this fraction of it (an emblem belongs on the centreline). */
+const SIGIL_CENTRE_PREF = 0.8;
+/** A sub-cap emblem must span at least this fraction of the hull's half-length,
+ *  or it is a speck at the zoom the hull is seen at: the chevron instead. */
+const SIGIL_MIN_HULL = 0.15;
+/** Chevron fallback: bow-fraction band, half-span as a fraction of the row's
+ *  half-width, the minimum stroke (texels), the share of it that must land on
+ *  clear plating, and how far the band widens when no row in it is clear. */
+const CHEV_T0 = 0.35, CHEV_T1 = 0.55, CHEV_SPAN = 0.7, CHEV_MIN_STROKE = 2, CHEV_CLEAR = 0.97, CHEV_WIDEN = 0.2, CHEV_GAP = 2;
+/** Then smaller chevrons, as fractions of the full one. */
+const CHEV_SHRINK = [0.75, 0.55] as const;
+
+/**
+ * Treatment 'c' (and every capital livery): stamp the faction emblem (`sigil.ts`) in the team colour on
+ * the largest clear flat area of the hull: texels still at their plated
+ * height (no canopy, greeble, vent, bow fitting, nozzle or turret ring) of
+ * paint, bare metal or seam, mirror-symmetric, on capitals the deck layer
+ * only, once fore and once aft of the superstructure. A centred emblem is
+ * preferred; an off-centre one is stamped as a mirrored pair. Flat paint (no
+ * height): coverage >= 0.5 is livery enamel, the antialiased edge a blend.
+ * No clear circle of SIGIL_MIN_R texels (a sub-cap: or an emblem under
+ * SIGIL_MIN_HULL of its half-length): a dorsal chevron instead.
+ */
+export function stampSigils(
+  f: Fields,
+  livery: Livery,
+  hBase: Float32Array,
+  onDeck: ((i: number) => boolean) | null,
+  yMin: number,
+  len: number,
+  teamPaint = liveryPaint(livery.team),
+): void {
+  const g = f.g, n = g.w * g.h;
+  const clear = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
+    const m = f.mat[i];
+    if (f.cov[i]! <= 0.5 || f.height[i] !== hBase[i]) continue;
+    if (m !== MAT.PAINT && m !== MAT.METAL && m !== MAT.TRIM) continue;
+    if (onDeck && !onDeck(i)) continue;
+    clear[i] = 1;
+  }
+  // Mirror-symmetric: a texel is clear only if its mirror image is too.
+  const ok = new Float32Array(n);
+  for (let ty = 0; ty < g.h; ty++) {
+    for (let tx = 0; tx < g.w; tx++) {
+      const i = ty * g.w + tx;
+      ok[i] = clear[i]! && clear[ty * g.w + (g.w - 1 - tx)]! ? 1 : 0;
+    }
+  }
+  const dist = distanceInside(ok, g.w, g.h);
+  const tbOf = (ty: number): number => ((ty + 0.5 - g.oy) / g.ppu - yMin) / len;
+  /** Hull half-width of a texel row (texels from the centreline). */
+  const halfRow = (ty: number): number => {
+    let h = 0;
+    for (let tx = 0; tx < g.w; tx++) if (f.cov[ty * g.w + tx]! > 0.5) h = Math.max(h, Math.abs(tx + 0.5 - g.ox));
+    return h;
+  };
+  const team = lin(teamPaint);
+  const paintAt = (i: number, a: number): void => {
+    if (!ok[i] || a <= 0.02) return;
+    if (a >= 0.5) { paintEnamel(f, i, teamPaint, 1); return; }
+    for (let c = 0; c < 3; c++) f.albedo[i * 3 + c] = f.albedo[i * 3 + c]! * (1 - a) + team[c]! * a;
+  };
+  /** Stamp a mark of radius R (texels) centred at texel coords (cx, cy). */
+  const stamp = (cx: number, cy: number, R: number, cover: (u: number, v: number, px: number) => number): void => {
+    for (let ty = Math.max(0, Math.floor(cy - R)); ty <= Math.min(g.h - 1, Math.ceil(cy + R)); ty++) {
+      for (let tx = Math.max(0, Math.floor(cx - R)); tx <= Math.min(g.w - 1, Math.ceil(cx + R)); tx++) {
+        paintAt(ty * g.w + tx, cover((tx + 0.5 - cx) / R, -(ty + 0.5 - cy) / R, 1 / R));
+      }
+    }
+  };
+  const design = sigilDesign(livery.sigil);
+  const emblem = (u: number, v: number, px: number): number => sigilCoverage(design, u, v, px);
+  const mid = g.w / 2 - 0.5; // the centreline, in texel index
+  const marks: NonNullable<Fields['sigils']> = [];
+  const spots: Array<{ xs: number[]; cy: number; R: number }> = [];
+  for (const [t0, t1] of onDeck ? [[0, 0.45], [0.55, 1]] as const : [[0, 1]] as const) {
+    const inBand = (i: number): boolean => ok[i] !== 0 && tbOf(Math.floor(i / g.w)) >= t0 && tbOf(Math.floor(i / g.w)) < t1;
+    const best = largestClearCircle(dist, inBand, g.w, g.h);
+    const line = largestClearCircle(dist, (i) => inBand(i) && Math.abs((i % g.w) - mid) <= 0.5, g.w, g.h);
+    const centred = line.r >= SIGIL_CENTRE_PREF * best.r;
+    const c = centred ? line : best;
+    if (c.r < SIGIL_MIN_R) continue;
+    const cy = c.y + 0.5;
+    let R = Math.min(SIGIL_FILL * c.r, SIGIL_MAX_BEAM * halfRow(c.y));
+    const xs = centred ? [g.ox] : [c.x + 0.5, g.w - (c.x + 0.5)];
+    if (!centred) R = Math.min(R, Math.abs(c.x + 0.5 - g.ox) - 1); // the pair never touches
+    if (R < SIGIL_MIN_R * SIGIL_FILL || (!onDeck && R < SIGIL_MIN_HULL * (len / 2) * g.ppu)) continue;
+    spots.push({ xs, cy, R });
+  }
+  // A capital's fore and aft emblems are one size (the smaller fits both).
+  const Rall = Math.min(...spots.map((s) => s.R));
+  for (const s of spots) {
+    for (const cx of s.xs) {
+      stamp(cx, s.cy, Rall, emblem);
+      marks.push({ x: (cx - g.ox) / g.ppu, y: (s.cy - g.oy) / g.ppu, r: Rall / g.ppu, kind: 'sigil' });
+    }
+  }
+  if (marks.length === 0 && !onDeck) {
+    // Dorsal chevron on the centreline: the widest row of the band where
+    // nearly all of it lands on clear plating (never across the canopy, its
+    // ring or a fitting); failing that, a wider band; failing that, none.
+    const chevStroke = 0.42; // sigilChevron's stroke, a fraction of its radius
+    const radiusAt = (ty: number, k: number): number => Math.max((k * CHEV_SPAN * halfRow(ty)) / 0.86, CHEV_MIN_STROKE / chevStroke);
+    const clearFrac = (cy: number, R: number): number => {
+      let all = 0, fine = 0;
+      for (let ty = Math.max(0, Math.floor(cy - R)); ty <= Math.min(g.h - 1, Math.ceil(cy + R)); ty++) {
+        for (let tx = Math.max(0, Math.floor(g.ox - R)); tx <= Math.min(g.w - 1, Math.ceil(g.ox + R)); tx++) {
+          if (sigilChevron((tx + 0.5 - g.ox) / R, -(ty + 0.5 - cy) / R, 1 / R) < 0.5) continue;
+          all++;
+          if (dist[ty * g.w + tx]! >= CHEV_GAP) fine++; // clear, a texel off anything else
+        }
+      }
+      return all > 0 ? fine / all : 0;
+    };
+    const tries = [[CHEV_T0, CHEV_T1, 1], [CHEV_T0 - CHEV_WIDEN, CHEV_T1 + CHEV_WIDEN, 1], ...CHEV_SHRINK.map((k) => [CHEV_T0 - CHEV_WIDEN, CHEV_T1 + CHEV_WIDEN, k] as const)] as const;
+    for (const [t0, t1, k] of tries) {
+      let by = -1, bR = 0;
+      for (let ty = 0; ty < g.h; ty++) {
+        const tb = tbOf(ty);
+        if (tb < t0 || tb >= t1) continue;
+        const R = radiusAt(ty, k);
+        if (R > bR && clearFrac(ty + 0.5, R) >= CHEV_CLEAR) { bR = R; by = ty; }
+      }
+      if (by < 0) continue;
+      stamp(g.ox, by + 0.5, bR, sigilChevron);
+      marks.push({ x: 0, y: (by + 0.5 - g.oy) / g.ppu, r: bR / g.ppu, kind: 'chevron' });
+      break;
+    }
+  }
+  if (marks.length > 0) f.sigils = marks;
 }

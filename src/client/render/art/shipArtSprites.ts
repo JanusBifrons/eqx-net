@@ -7,7 +7,8 @@
  * what it was built from changes (rare), so the per-frame check is a map
  * lookup and a few compares (invariant #14).
  */
-import { teamColorOf, teamEdgeOf, teamSigilOf, type LiveryEdge } from '../../../shared-types/factions.js';
+import { npcFactionDef, teamColorOf, teamEdgeOf, teamSigilOf, type LiveryEdge } from '../../../shared-types/factions.js';
+import { allegianceOfKind } from '../../../shared-types/shipKinds.js';
 import type { Container } from 'pixi.js';
 import { decideArtSwap, type ArtSwap } from '../spriteUpdateDecisions.js';
 import type { ArtHandle, ArtService } from './ArtService.js';
@@ -134,3 +135,25 @@ export function ownerLivery(owner: string): OwnerLivery {
 }
 /** Wreckage whose owner is unknown wears neutral grey scrap under a livery. */
 export const SCRAP_TEAM = 0x8a93a1;
+
+/** A live swarm ship's art. Classic look: a patrol bakes its faction paint.
+ *  Livery (`actx.livery`): the owner (faction, else the kind's allegiance)
+ *  supplies team + sigil instead; cargo pods keep their tier colours. */
+export function shipArtHandleForEntity(actx: ShipArtCtx, key: string, kind: string, faction: string | undefined): ReturnType<typeof shipHandleFor> {
+  if (actx.livery !== undefined && kind !== 'cargo-pod') {
+    const lv = ownerLivery(faction ?? allegianceOfKind(kind));
+    return shipHandleFor(actx, key, kind, undefined, false, lv.team, lv.sigil, lv.edge);
+  }
+  return shipHandleFor(actx, key, kind, faction !== undefined ? npcFactionDef(faction)?.color : undefined);
+}
+
+/** A wreck piece's parent art. Under a livery: the owner's livery when the
+ *  entry names one, else neutral grey scrap (never a bright fresh bake). */
+export function wreckArtHandleFor(actx: ShipArtCtx, key: string, kind: string, faction: string | undefined, dead: boolean): ReturnType<typeof shipHandleFor> {
+  if (actx.livery === undefined) return shipHandleFor(actx, key, kind, undefined, dead);
+  if (faction !== undefined) {
+    const lv = ownerLivery(faction);
+    return shipHandleFor(actx, key, kind, undefined, dead, lv.team, lv.sigil, lv.edge);
+  }
+  return shipHandleFor(actx, key, kind, undefined, dead, SCRAP_TEAM);
+}

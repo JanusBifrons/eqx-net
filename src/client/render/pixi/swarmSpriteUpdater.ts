@@ -55,10 +55,9 @@ import type { Text } from 'pixi.js';
 import { minerRangeForKind } from '../minerRangeRing.js';
 import type { MountVisualManager } from '../MountVisualManager';
 import {
-  buildArtShipSprite, isMachinedSprite, rockHandleFor, scrapHandleFor, shipArtSwap, shipHandleFor, structHandleFor,
-  updateArtShipLight, ownerLivery, SCRAP_TEAM, type ShipArtCtx,
+  buildArtShipSprite, isMachinedSprite, rockHandleFor, scrapHandleFor, shipArtSwap, structHandleFor,
+  updateArtShipLight, shipArtHandleForEntity, wreckArtHandleFor, type ShipArtCtx,
 } from '../art/shipArtSprites.js';
-import { allegianceOfKind } from '../../../shared-types/shipKinds';
 import { MachinedShipSprite } from '../art/MachinedShipSprite.js';
 import {
   interpolateSwarmPose,
@@ -203,28 +202,6 @@ export function scrapHeatTint(ageMs: number): number | undefined {
  *  set once at build, and the reset below wiped it every frame. */
 function classicRockTint(resource: string | undefined): number | undefined {
   return resource === 'ice' ? 0xa8dcff : resource === 'crystal' ? 0xd2a8ff : undefined;
-}
-
-/** A live swarm ship's art. Classic look: a patrol bakes its faction paint.
- *  Livery (`actx.livery`): the owner (faction, else the kind's allegiance)
- *  supplies team + sigil instead; cargo pods keep their tier colours. */
-function shipArtHandleForEntity(actx: ShipArtCtx, key: string, kind: string, faction: string | undefined): ReturnType<typeof shipHandleFor> {
-  if (actx.livery !== undefined && kind !== 'cargo-pod') {
-    const lv = ownerLivery(faction ?? allegianceOfKind(kind));
-    return shipHandleFor(actx, key, kind, undefined, false, lv.team, lv.sigil, lv.edge);
-  }
-  return shipHandleFor(actx, key, kind, faction !== undefined ? npcFactionDef(faction)?.color : undefined);
-}
-
-/** A wreck piece's parent art. Under a livery: the owner's livery when the
- *  entry names one, else neutral grey scrap (never a bright fresh bake). */
-function wreckArtHandleFor(actx: ShipArtCtx, key: string, kind: string, faction: string | undefined, dead: boolean): ReturnType<typeof shipHandleFor> {
-  if (actx.livery === undefined) return shipHandleFor(actx, key, kind, undefined, dead);
-  if (faction !== undefined) {
-    const lv = ownerLivery(faction);
-    return shipHandleFor(actx, key, kind, undefined, dead, lv.team, lv.sigil, lv.edge);
-  }
-  return shipHandleFor(actx, key, kind, undefined, dead, SCRAP_TEAM);
 }
 
 export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): void {
