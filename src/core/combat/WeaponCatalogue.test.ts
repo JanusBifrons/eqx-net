@@ -11,6 +11,7 @@ import {
   DEFAULT_WEAPON,
 } from './WeaponCatalogue.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
+import { ENERGY_POOL_MUL } from '../../shared-types/shipScale/defineShipKind.js';
 
 describe('WeaponCatalogue', () => {
   it.runIf(AT_AUTHORED_SHIP_SCALE)('getWeapon returns the hitscan (beam) definition', () => {
@@ -226,8 +227,10 @@ describe('WeaponCatalogue — capital heavy beam (plan beam-slices §8)', () => 
     const netDrainPerSec = w.energyCost * shotsPerSec - (cap.energyRegenRate ?? 0) * 60;
     expect(netDrainPerSec).toBeGreaterThan(0);
     const burnS = (cap.energyMax ?? 0) / netDrainPerSec;
-    expect(burnS).toBeGreaterThanOrEqual(2);
-    expect(burnS).toBeLessThanOrEqual(6);
+    // "A few seconds" was set on the authored pool (2-6 s); every pool is
+    // ENERGY_POOL_MUL x as deep (owner, 2026-11-14), so the burn is that much longer.
+    expect(burnS).toBeGreaterThanOrEqual(2 * ENERGY_POOL_MUL);
+    expect(burnS).toBeLessThanOrEqual(6 * ENERGY_POOL_MUL);
     expect(w.damage * shotsPerSec * burnS).toBeGreaterThanOrEqual(cap.maxHealth + (cap.shieldMax ?? 0));
   });
 });

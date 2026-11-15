@@ -13,7 +13,7 @@ import {
   type AiIntent,
 } from '../contracts/IAiBehaviour.js';
 import type { ShipKind } from '../../shared-types/shipKinds.js';
-import { massOf, NPC_MASS_FALLBACK, shipAngularInertia } from '../../shared-types/shipScale/tuning.js';
+import { shipAngularInertia, shipBodyMass } from '../../shared-types/shipScale/tuning.js';
 
 /** +1 turn left (counter-clockwise, angle grows), -1 right, 0 none. */
 export function turnOf(intent: AiIntent): number {
@@ -35,12 +35,12 @@ export interface KinematicBody { x: number; y: number; vx: number; vy: number; a
 
 /**
  * One 1/60 s step of `applyShipInput` + Rapier damping/integration for a body
- * of `kind` with an NPC's spawn mass. Approximate (no collisions, explicit
+ * of `kind` at its one body mass (`shipBodyMass`). Approximate (no collisions, explicit
  * Euler), close enough to check where a brain flies.
  */
 export function stepKinematic(b: KinematicBody, kind: ShipKind, intent: AiIntent): void {
   const dt = 1 / 60;
-  const mass = massOf(kind, NPC_MASS_FALLBACK);
+  const mass = shipBodyMass(kind);
   const fx = -Math.sin(b.angle), fy = Math.cos(b.angle);
   const thr = throttleOf(intent);
   const throttle = thr > 0 ? 1 : thr < 0 ? -kind.reverseFactor : 0;

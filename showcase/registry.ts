@@ -23,6 +23,7 @@ import { missiles } from './shots/missiles.js';
 import { packBattle } from './shots/packBattle.js';
 import { longGuns } from './shots/longGuns.js';
 import { fleetMelee } from './shots/fleetMelee.js';
+import { npcDogfight } from './shots/npcDogfight.js';
 import { timeScaleDial, timeScaleCapitals4x, capitalBreakupSlowmo, capitalBreakupFast } from './shots/timeScaleDial.js';
 import { scrap } from './shots/scrap.js';
 import { buildBase } from './shots/buildBase.js';
@@ -80,6 +81,7 @@ export const SHOTS: readonly Shot[] = [
   missiles,
   packBattle,
   fleetMelee,
+  npcDogfight,
   timeScaleDial,
   timeScaleCapitals4x,
   capitalBreakupSlowmo,

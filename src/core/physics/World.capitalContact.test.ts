@@ -18,7 +18,7 @@ import { describe, it, expect } from 'vitest';
 import RAPIER from '@dimforge/rapier2d-compat';
 import { PhysicsWorld } from './World.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
-import { massOf } from '../../shared-types/shipScale/tuning.js';
+import { shipBodyMass } from '../../shared-types/shipScale/tuning.js';
 import { shipCollisionParts } from '../geometry/shipHullDecomp.js';
 
 type V = { x: number; y: number };
@@ -59,7 +59,7 @@ function hullPen(pw: PhysicsWorld, a: string, ka: string, b: string, kb: string)
 
 function spawnNpcCapital(pw: PhysicsWorld, id: string, kindId: string, x: number, y: number, angle: number): void {
   const k = getShipKind(kindId);
-  pw.spawnObstacle(id, x, y, k.radius, massOf(k, 1), undefined, k.linearDamping, undefined, undefined, k);
+  pw.spawnObstacle(id, x, y, k.radius, shipBodyMass(k), undefined, k.linearDamping, undefined, undefined, k);
   pw.setShipState(id, { x, y, angle, vx: 0, vy: 0, angvel: 0 });
 }
 

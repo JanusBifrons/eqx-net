@@ -90,7 +90,9 @@ describe.runIf(AT_AUTHORED_SHIP_SCALE)('ship-kind tuning lock (2026-05-18 slow-d
     // of the capital hull-style bump (#366) that took main to 23.
     // 24 → 25 on 2026-11-13: arcade (Micro Machines) handling + toughness layer
     // (owner: "make it more like micro machines and make fights a bit longer").
-    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(26);
+    // 25 → 26 on 2026-11-14: nose guns become small-arc turrets.
+    // 26 → 27 on 2026-11-14: energy pool ×2 for every kind (ENERGY_POOL_MUL).
+    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(27);
   });
 
   for (const kindKey of Object.keys(EXPECTED) as (keyof typeof EXPECTED)[]) {

@@ -18,7 +18,7 @@ const BOT_WARP_MIN_TURN = Math.PI / 20;
 import { castHitscan } from './hitscanRay.js';
 import { wallGeometry } from '../structures/ShieldWall.js';
 import { PAD_PUSH_ACCEL, padPushDir } from '../../shared-types/teleport.js';
-import { massOf, shipAngularInertia } from '../../shared-types/shipScale/tuning.js';
+import { shipBodyInertia, shipBodyMass } from '../../shared-types/shipScale/tuning.js';
 import { CapitalOverlapResolver, newCapitalEntry } from './capitalOverlap.js';
 
 const FIXED_DT = 1 / 60;
@@ -235,14 +235,10 @@ export class PhysicsWorld {
     // `kind.radius` — they're a kind-feel knob, not a function of the
     // current collider geometry (the pad doesn't change ship handling).
     this.world.createCollider(shipShieldColliderDesc(kind), body);
-    // Per-kind mass with a `default 1` back-compat path: every legacy
-    // kind sat at mass 1 historically (the pinned value below), so
-    // omitting `kind.mass` keeps every existing physics test byte-
-    // identical. Inertia stays the disc formula `0.5 * m * r²` so a
-    // heavier kind also rotates proportionally more sluggishly under
-    // torque — same physical reality as a denser uniform disc.
-    const m = massOf(kind, 1);
-    body.setAdditionalMassProperties(m, { x: 0, y: 0 }, shipAngularInertia(m, kind.radius), true);
+    // The kind's one mass + inertia source (`shipBodyMass` /
+    // `shipBodyInertia`), shared with every NPC body of the kind: ship
+    // stats belong to the ship, never the pilot (owner 2026-11-13).
+    body.setAdditionalMassProperties(shipBodyMass(kind), { x: 0, y: 0 }, shipBodyInertia(kind), true);
     body.recomputeMassPropertiesFromColliders();
     const rec: ShipBody = { body, kind, exposed: false };
     this.bodies.set(id, rec);
@@ -372,7 +368,14 @@ export class PhysicsWorld {
     // default groups (collide with all), so every existing caller is unchanged.
     if (collisionGroups !== undefined) collider.setCollisionGroups(collisionGroups);
     this.world.createCollider(collider, body);
-    if (isBall) {
+    if (isBall && shieldKind) {
+      // An NPC ship: the SAME mass + inertia as a pilot ship of its kind
+      // (`spawnShip`), whatever mass the caller passed. Ship stats belong to
+      // the ship, never the pilot (owner 2026-11-13); server worker and
+      // client predWorld both land here (#15).
+      body.setAdditionalMassProperties(shipBodyMass(shieldKind), { x: 0, y: 0 }, shipBodyInertia(shieldKind), true);
+      body.recomputeMassPropertiesFromColliders();
+    } else if (isBall) {
       // Pin mass to the disc-equivalent (mass param, I = 0.5 m r^2),
       // identical to what the legacy density ball produced. See spawnShip.
       body.setAdditionalMassProperties(mass, { x: 0, y: 0 }, 0.5 * mass * radius * radius, true);
@@ -652,10 +655,16 @@ export class PhysicsWorld {
    * spool; a run can't be cancelled).
    *
    * Returns true while the warp owns the body this tick (spooling, running or
-   * dropping): the caller skips the AI's impulse. While spooling the ship
-   * holds still and turns to face its target.
+   * dropping): the caller skips the AI's impulse. While spooling the drive
+   * turns the ship to face its target. A ship flown by control keys (the
+   * pilot layer: `keys` is this tick's AI input, or `null` on a tick
+   * without one) spools the way a pilot's ship does (`applyInput`): its
+   * thrust, boost and reverse still work, its turn keys are ignored, so a
+   * fleeing ship keeps flying along its escape line instead of stopping dead
+   * (take 7, 2026-11-14). A ship that is not (`keys` undefined: the impulse
+   * path, a flagship fleet's capital) holds still while it spools.
    */
-  botWarp(id: string, target: { x: number; y: number } | null): boolean {
+  botWarp(id: string, target: { x: number; y: number } | null, keys?: ShipInputArgs | null): boolean {
     const rec = this.bodies.get(id);
     if (!rec) return false;
     if (target === null && rec.warp === undefined) return false;
@@ -700,6 +709,16 @@ export class PhysicsWorld {
       return true;
     }
     if (w.phase === 'spool') {
+      if (keys !== undefined && rec.piloted === true) {
+        // Flown by keys: spool like a pilot (thrust works, the drive turns).
+        if (keys !== null) {
+          const s = this._spoolInput;
+          s.thrust = keys.thrust; s.boost = keys.boost; s.reverse = keys.reverse;
+          applyShipInput(body, rec.pilotKind ?? rec.kind, s, rec.statMul);
+        }
+        this.alignToWarp(rec, w, BOT_WARP_MIN_TURN);
+        return true;
+      }
       // Hold position and face the target (a capital turns slowly: its own
       // turn rate caps the align, so a long spool is part of the look).
       const v = body.linvel(); // TODO: alloc-debt (Rapier returns a fresh vector)
@@ -797,12 +816,19 @@ export class PhysicsWorld {
     rec.statMul = mul;
   }
 
-  /** Pilot layer: record the ShipKind an AI slot flies with (`applyAiInput`).
-   *  Unknown id ⇒ no-op. */
+  /** Pilot layer: record the ShipKind an AI slot flies with (`applyAiInput`)
+   *  and give the body that kind's linear + angular damping NOW, as
+   *  `spawnShip` does, so an NPC ship's body matches a pilot's of the same
+   *  kind from its first tick (ship stats belong to the ship, owner
+   *  2026-11-13). Server worker only: the client predWorld drone body keeps
+   *  damping 0 (it coasts between server anchors). Unknown id ⇒ no-op. */
   setPilotKind(id: string, kind: ShipKind): void {
     const rec = this.bodies.get(id);
     if (!rec) return;
     rec.pilotKind = kind;
+    rec.piloted = true;
+    rec.body.setLinearDamping(kind.linearDamping);
+    rec.body.setAngularDamping(kind.angularDamping);
   }
 
   /**
@@ -811,11 +837,9 @@ export class PhysicsWorld {
    * capital torque turning, per-instance stat multipliers). Flies as
    * `pilotKind` (falls back to the record's `kind`).
    *
-   * The first call gives the body its kind's linear + angular damping, as
-   * `spawnShip` does: a drone body spawns with angular damping 0 (the impulse
-   * path set its spin every tick), and a snap-turn that is released would
-   * otherwise spin forever. Bodies never driven by input keep their spawn
-   * damping, so the impulse path is unchanged. Unknown id ⇒ no-op.
+   * A drone already has its kind's damping from `setPilotKind` at spawn; a
+   * body flown without one gets the kind's damping on the first call (a
+   * released snap-turn would otherwise spin forever). Unknown id ⇒ no-op.
    */
   applyAiInput(id: string, input: ShipInputArgs): void {
     const rec = this.bodies.get(id);
