@@ -20,7 +20,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { ColyseusGameClient } from './ColyseusClient.js';
 import { MockClock } from '../../core/clock/Clock.js';
 import type { DamageEvent, DestroyEvent } from '../../shared-types/messages.js';
-import type { ShellSalvo } from '../../shared-types/messages/shellEvents.js';
+import type { ShellEnd, ShellSalvo } from '../../shared-types/messages/shellEvents.js';
 import type { ShellSalvoStore } from './shellSalvoStore.js';
 import type { NavalHitHold } from './navalHitHold.js';
 
@@ -32,6 +32,7 @@ interface Internals {
     projectiles?: Map<string, unknown>;
     pendingDamageNumbers?: Array<{ targetId: string; damage: number; tag?: string }>;
     pendingShellEnds?: number[];
+    explodingShips?: Set<string>;
   };
   _shellEvents: boolean;
   _shellStore: ShellSalvoStore;
@@ -39,6 +40,8 @@ interface Internals {
   _scheduledDamageSpawns: Scheduled[];
   handleDamage(evt: DamageEvent, suppressNumber?: boolean): void;
   handleDestroy(evt: DestroyEvent): void;
+  applyShellEnd(msg: ShellEnd): void;
+  placeShells(displayTick: number): void;
 }
 const asInternals = (c: ColyseusGameClient): Internals => c as unknown as Internals;
 
@@ -76,7 +79,10 @@ describe('queued damage numbers land with the explosion, never after it', () => 
     expect(internals._scheduledDamageSpawns.map((s) => s.targetId)).toEqual(['other']);
   });
 
-  it('a held naval hit on the killed target releases at the kill', () => {
+  // Since rail take 7 (ColyseusClient.passThroughKill.test.ts) the kill
+  // itself waits for the drawn shell; the number still comes WITH the
+  // explosion, never after it.
+  it('a held naval hit on the killed target releases with the kill, when the drawn shell reaches it', () => {
     const salvo: ShellSalvo = {
       type: 'shell_salvo', s: 1, o: 'bb-1', w: 'naval_xl', t: 1000, n: 120,
       sh: [['proj-1', 10, 0, 1800, 0]],
@@ -94,8 +100,15 @@ describe('queued damage numbers land with the explosion, never after it', () => 
     expect(internals._navalHitHold.size).toBe(1); // held for the drawn burst
     expect(internals.mirror.pendingDamageNumbers).toHaveLength(0);
 
+    internals.mirror.explodingShips = new Set();
     internals.handleDestroy(destroy('target'));
+    internals.applyShellEnd({ type: 'shell_end', e: [['proj-1', 1003, 100, 0, 0]] });
+    internals.placeShells(1001);
+    expect(internals.mirror.ships.has('target'), 'drawn until the shell gets there').toBe(true);
+    expect(internals.mirror.pendingDamageNumbers).toHaveLength(0);
+    internals.placeShells(1003);
     expect(internals._navalHitHold.size).toBe(0);
+    expect(internals.mirror.explodingShips.has('target')).toBe(true);
     expect(internals.mirror.pendingDamageNumbers!.map((p) => [p.targetId, p.damage])).toEqual([
       ['target', 900],
     ]);

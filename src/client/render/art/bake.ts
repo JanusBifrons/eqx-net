@@ -89,7 +89,7 @@ const SCALE_TAG = SHIP_SCALE === 1 ? '' : `@s${SHIP_SCALE}`;
 /** The cache key a job's result is stored under (shared by main and workers). */
 export function bakeKey(j: BakeJob): string {
   if (j.type !== 'fx' && j.lit) return `L${litKeyBody(j)}`;
-  if (j.type === 'ship') return `m:${j.id}:${j.paint ?? ''}${j.rings ? ':R' : ''}${j.dead ? ':D' : ''}${isCapitalKind(j.id) ? ':T' : ''}${j.livery ? liveryTag(j.livery) : ''}${SCALE_TAG}`;
+  if (j.type === 'ship') return `m:${j.id}:${j.paint ?? ''}${j.rings ? ':R' : ''}${j.dead ? ':D2' : ''}${isCapitalKind(j.id) ? ':T' : ''}${j.livery ? liveryTag(j.livery) : ''}${SCALE_TAG}`;
   if (j.type === 'turret') return `g:${j.id}:${j.paint}:${j.len.toFixed(2)}:${j.wid.toFixed(2)}:${j.cap.toFixed(2)}:${j.ppu}${j.naval ? `:n${j.naval.barrels}:${j.naval.houseW.toFixed(2)}:${j.naval.houseL.toFixed(2)}${j.naval.part ? `:${j.naval.part}` : ''}` : ''}`;
   if (j.type === 'scrap') return `s:${j.id}:${j.component}${SCALE_TAG}`;
   if (j.type === 'fx') return `x:${FX_VERSION}:${j.id}:${j.variant ?? ''}:${j.seed ?? ''}`;
@@ -232,8 +232,11 @@ export function runBake(j: BakeJob, rig: LightRig): Baked {
     const frames: Frame[] = [];
     const tiled = j.type === 'ship' && isCapitalKind(j.id) && f.g.h > TILE_MAX_SIDE;
     const steps = j.type === 'ship' && isCapitalKind(j.id) ? CAPITAL_SUN_STEPS : SUN_STEPS;
+    // A wreck piece's dead bake casts no self shadow (the hull that would
+    // cast it is broken off; beam take 7 review), as on the GPU-lit path.
+    const shadows = !(j.type === 'ship' && j.dead === true);
     for (let k = 0; k < steps; k++) {
-      const lit = litFrame(f, rig, (k / steps) * Math.PI * 2);
+      const lit = litFrame(f, rig, (k / steps) * Math.PI * 2, shadows);
       if (tiled) splitRows(lit, TILE_MAX_SIDE, frames); else frames.push(lit);
     }
     const tiles = tiled ? Math.ceil(f.g.h / TILE_MAX_SIDE) : 1;

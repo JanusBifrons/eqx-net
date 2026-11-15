@@ -134,8 +134,9 @@ params.
 
 ## Not done yet
 
-- **Mount size:** `MOUNT_SIZE_TUNING` (S/M/L/XL) and `mountSizeOf` exist, but
-  nothing in the fire paths reads them yet. That's planned for the capital-ship
+- **Mount size:** `MOUNT_SIZE_TUNING` (AA/S/M/L/XL; `power` is the tractor
+  force multiplier, see physics-worker.md "Force fields") and `mountSizeOf`
+  exist, but nothing in the fire paths reads them yet. That's planned for the capital-ship
   plan, where L/XL batteries first appear.
 - **Gameplay values:** the shipping default is **2× B** (picked 2026-11-05
   from the comparison footage). Per-class tuning for capitals comes with the

@@ -61,13 +61,16 @@ function makeEmptyRing(): PoseRingEntry[] {
  *
  * `nowMs` is injected so unit tests can pass a deterministic clock; default
  * is `performance.now()`. `stampByTick` stamps the pose ring with
- * `swarmArrivalStampMs(tick, nowMs)` instead (the live client).
+ * `swarmArrivalStampMs(tick, nowMs)` instead (the live client). `keep`: ids
+ * a full snapshot must not sweep (a ship whose death is held for its drawn
+ * shell, `DrawnShellTiming.swarmKills`; released within the hold's bound).
  */
 export function decodeSwarmPacket(
   input: ArrayBuffer | ArrayBufferView,
   mirror: RenderMirror,
   nowMs: number = performance.now(),
   stampByTick = false,
+  keep?: { has(id: number): boolean },
 ): void {
   // Build a DataView that reads the live bytes regardless of whether the
   // input is a raw ArrayBuffer, a Uint8Array view, or a SharedArrayBuffer-
@@ -234,7 +237,7 @@ export function decodeSwarmPacket(
     // every Nth full refresh, and its lifetime is owned by the room-state
     // `structures` row (ColyseusClient.syncStructures removes its entry).
     for (const [id, e] of swarm) {
-      if (!seen.has(id) && e.kind !== SWARM_KIND_STRUCTURE) swarm.delete(id);
+      if (!seen.has(id) && e.kind !== SWARM_KIND_STRUCTURE && keep?.has(id) !== true) swarm.delete(id);
     }
   }
 }

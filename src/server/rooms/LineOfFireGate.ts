@@ -23,6 +23,7 @@
  */
 import { ProjectileBroadphase, type BroadphaseShape } from './ProjectileBroadphase.js';
 import { slotBase, SLOT_X_OFF, SLOT_Y_OFF, SLOT_ANGLE_OFF } from '../../shared-types/sabLayout.js';
+import { segmentNearCircle } from '../../core/combat/Weapons.js';
 
 /** The swarm record fields the gate reads. */
 export interface LineOfFireBody extends BroadphaseShape {
@@ -97,6 +98,35 @@ export class LineOfFireGate<R extends LineOfFireBody> {
       }
     }
     return false;
+  }
+
+  /**
+   * The tractor beam's line set (salvage plan PR 11): write into `ids` up to
+   * `cap` swarm bodies (any kind) whose bound comes within `halfWidth` of the
+   * segment (fx, fy) → (tx, ty), skipping `skipA` / `skipB` (emitter,
+   * target), in registry order. Same per-tick grid as `blocked`; the narrow
+   * test is the shared `segmentNearCircle` on the record's radius, never a
+   * Rapier shape query. Returns the count. Allocation-free (#14).
+   */
+  lineBodies(
+    fx: number, fy: number, tx: number, ty: number, halfWidth: number,
+    skipA: string, skipB: string, ids: string[], cap: number,
+  ): number {
+    const d = this.deps;
+    const tick = d.tick();
+    const version = d.registry.version ?? -1;
+    if (tick !== this.builtTick || version !== this.builtVersion || version === -1) this.rebuild(tick, version);
+    const bp = this.bp;
+    const sx = tx - fx, sy = ty - fy;
+    bp.query(fx, fy, sx, sy, halfWidth);
+    let n = 0;
+    for (let k = 0; k < bp.outCount && n < cap; k++) {
+      const i = bp.out[k]!;
+      const rec = bp.recs[i]!;
+      if (rec.id === skipA || rec.id === skipB) continue;
+      if (segmentNearCircle(fx, fy, sx, sy, bp.x[i]!, bp.y[i]!, rec.radius + halfWidth)) ids[n++] = rec.id;
+    }
+    return n;
   }
 
   private rebuild(tick: number, version: number): void {

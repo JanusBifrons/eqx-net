@@ -220,53 +220,46 @@ describe('FxProjectiles: the railgun slug wake', () => {
     expect(shown()).toBe(0);
   });
 
-  // Hostile review 2026-11-15: the wake drew one line from the muzzle to the
-  // slug and still crossed the gap ~1 s after the slug passed (a laser, not
-  // a projectile). It is a tail behind the slug that disperses quickly.
-  it('the wake is a tail: nothing visible more than a head + SLUG_WAKE_TAIL head lengths behind a native-size slug, wherever it is', () => {
+  // The owner's pick (2026-11-15, from five filmed versions): v6's look with
+  // v4's longer trail. The wake runs from the muzzle to the slug and lingers
+  // ~1.6 s where the slug passed, each piece fading and spreading as it goes.
+  it('the wake runs back from the slug toward the muzzle and lingers ~1.6 s of flight behind it', () => {
     let now = 10_000;
     const p = new FxProjectiles(fakeArt(), () => 'high', () => now);
-    // The head (~1.5 frames of travel) plus SLUG_WAKE_TAIL head lengths (~970 u).
-    const N = turretFx.slugHeadLength(6_450, 16) * (1 + turretFx.SLUG_WAKE_TAIL);
-    const check = (hx: number): void => {
-      const vis = p.wakeLayer.children.filter((c) => c.visible) as Sprite[];
-      expect(vis.length).toBeGreaterThan(0);
-      for (const s of vis) {
-        // Heading +x (rotation 0); Texture.WHITE is 1 px, so scale.x = length.
-        expect(s.rotation).toBeCloseTo(0);
-        expect(s.x - s.scale.x / 2, 'back end within N behind the slug').toBeGreaterThanOrEqual(hx - N - 1e-6);
-        expect(s.x + s.scale.x / 2, 'nothing ahead of the slug').toBeLessThanOrEqual(hx + 1e-6);
-      }
-    };
-    p.beginFrame(); p.draw('s', 'slug', 30_000, 0, 6_450, 0, 1, 5, 30_000); p.endFrame();
-    check(30_000);
-    now += 100;
-    p.beginFrame(); p.draw('s', 'slug', 30_645, 0, 6_450, 0, 1, 5, 30_645); p.endFrame();
-    check(30_645);
-    // The slug hits: the frozen tail stays where it was, never stretches back.
-    now += 200;
-    p.beginFrame(); p.endFrame();
-    check(30_645);
-    // Fresh out of the barrel the tail never reaches behind the muzzle.
-    p.beginFrame(); p.draw('m', 'slug', 400, 0, 6_450, 0, 1, 5, 400); p.endFrame();
-    for (const s of p.wakeLayer.children.filter((c) => c.visible) as Sprite[]) {
-      if (Math.abs(s.x - 400) > 1_000) continue; // the other slug's tail
-      expect(s.x - s.scale.x / 2).toBeGreaterThanOrEqual(-1e-6);
+    const SP = 6_450;
+    const vis = (): Sprite[] => p.wakeLayer.children.filter((c) => c.visible && c.alpha > 0.01) as Sprite[];
+    const back = (): number => Math.min(...vis().map((s) => s.x - s.scale.x / 2));
+    // Fresh out of the barrel (3 km flown): the wake reaches the muzzle.
+    p.beginFrame(); p.draw('s', 'slug', 3_000, 0, SP, 0, 1, 5, 3_000); p.endFrame();
+    expect(vis().length).toBe(10);
+    expect(back(), 'reaches back to the muzzle').toBeLessThanOrEqual(300);
+    for (const s of vis()) {
+      expect(s.rotation).toBeCloseTo(0); // heading +x; Texture.WHITE: scale.x = length
+      expect(s.x + s.scale.x / 2, 'nothing ahead of the slug').toBeLessThanOrEqual(3_000 * 1.05);
     }
+    // 30 km down range: the wake still shows ~1.5 s of flight behind it (a
+    // long trail, many kilometres), but nothing older than its life.
+    const p2 = new FxProjectiles(fakeArt(), () => 'high', () => now);
+    p2.beginFrame(); p2.draw('s', 'slug', 30_000, 0, SP, 0, 1, 5, 30_000); p2.endFrame();
+    const v2 = p2.wakeLayer.children.filter((c) => c.visible && c.alpha > 0.01) as Sprite[];
+    const back2 = Math.min(...v2.map((s) => s.x - s.scale.x / 2));
+    expect(30_000 - back2, 'a long trail: over 1 s of flight behind the slug').toBeGreaterThanOrEqual(SP);
+    expect(30_000 - back2, 'no older than its life').toBeLessThanOrEqual(SP * turretFx.SLUG_WAKE_LIFE_S + 30_000 / 10);
   });
 
-  it('wake pieces older than 800 ms are gone; younger ones disperse (fade and widen)', () => {
+  it('after the slug hits, its wake lingers over a second, fading and widening, then is gone', () => {
     let now = 10_000;
     const p = new FxProjectiles(fakeArt(), () => 'high', () => now);
     const vis = (): Sprite[] => p.wakeLayer.children.filter((c) => c.visible) as Sprite[];
-    p.beginFrame(); p.draw('s', 'slug', 30_000, 0, 6_450, 0, 1, 5, 30_000); p.endFrame();
-    const a0 = vis()[0]!.alpha, w0 = vis()[0]!.scale.y;
-    now += 250;
+    p.beginFrame(); p.draw('s', 'slug', 3_000, 0, 6_450, 0, 1, 5, 3_000); p.endFrame();
+    const last = (): Sprite => vis().reduce((a, b) => (b.x > a.x ? b : a));
+    const a0 = last().alpha, w0 = last().scale.y;
+    now += 1_000;
     p.beginFrame(); p.endFrame(); // the slug is gone
-    expect(vis().length, 'still dispersing at 250 ms').toBeGreaterThan(0);
-    expect(vis()[0]!.alpha).toBeLessThan(a0);
-    expect(vis()[0]!.scale.y).toBeGreaterThan(w0);
-    now += 550; // 800 ms since the slug last passed any of it
+    expect(vis().length, 'still lingering at 1 s').toBeGreaterThan(0);
+    expect(last().alpha).toBeLessThan(a0);
+    expect(last().scale.y).toBeGreaterThan(w0);
+    now += 700; // past SLUG_WAKE_LIFE_S since the slug last passed any of it
     p.beginFrame(); p.endFrame();
     expect(vis().length).toBe(0);
     expect(p.wakeCount()).toBe(0);
@@ -282,81 +275,30 @@ describe('FxProjectiles: the railgun slug wake', () => {
   });
 });
 
-// Hostile review of rail take 6 (2026-11-15): the slug read as ONE long even
-// white-lavender needle (~1 km) with no head, and for its first ~0.3 s its
-// back end stayed pinned at the muzzle (a line out of the barrel: a laser).
-// It is a compact very bright head, as long as ~1-2 frames of its travel
-// (motion blur, with a minimum on-screen size), and a short violet tail that
-// starts behind the head and is never anchored to the muzzle.
-describe('FxProjectiles: the railgun slug is a slug, not a needle', () => {
-  type S = { visible: boolean; x: number; scale: { x: number; y: number }; anchor: { x: number }; rotation: number; alpha: number };
-  const SP = 6_450; // u/s, the railgun's real speed
-  const FRAME_U = SP / 60; // one 60 fps frame of travel
-  /** The head and core sprites of the (only) projectile view. */
-  const headOf = (p: FxProjectiles): S => p.container.children[0] as unknown as S;
+// The owner's pick (2026-11-15): v6's slug, a long white-hot streak (~1 km
+// at its native size, 200 × its radius) with trail streaks behind it.
+describe('FxProjectiles: the railgun slug is the long white streak', () => {
+  type S = { visible: boolean; x: number; scale: { x: number; y: number }; anchor: { x: number }; alpha: number };
   /** A sprite's [back, front] along +x (Texture.WHITE is 1 px: scale = length). */
   const span = (s: S): [number, number] => [s.x - s.anchor.x * s.scale.x, s.x + (1 - s.anchor.x) * s.scale.x];
 
-  it('the head is compact: 1-2 frames of travel long, not a kilometre', () => {
+  it('the head is a ~1 km streak ending at the slug, with trail streaks behind it', () => {
     const p = new FxProjectiles(fakeArt(), () => 'high', () => 0);
-    p.beginFrame(); p.draw('s', 'slug', 30_000, 0, SP, 0, 1, 5, 30_000); p.endFrame();
-    const [back, front] = span(headOf(p));
+    p.beginFrame(); p.draw('s', 'slug', 30_000, 0, 6_450, 0, 1, 5, 30_000); p.endFrame();
+    const kids = p.container.children as unknown as S[];
+    const [back, front] = span(kids[0]!);
     expect(front).toBeCloseTo(30_000, 6);
-    const len = front - back;
-    expect(len, 'at least a frame of travel (reads as motion blur)').toBeGreaterThanOrEqual(FRAME_U);
-    expect(len, 'at most two frames of travel').toBeLessThanOrEqual(2 * FRAME_U);
-    // Every drawn projectile sprite (head, core, any trail) stays within the head.
-    for (const c of p.container.children as unknown as S[]) {
-      if (!c.visible || c.alpha <= 0.01) continue;
-      const [b, f] = span(c);
-      if (c.anchor.x === 0.5 && c.scale.x <= 3 * 16 * 1.01) continue; // a round bloom at the tip
-      expect(b, 'nothing white trails behind the head').toBeGreaterThanOrEqual(back - 1e-6);
-      expect(f).toBeLessThanOrEqual(30_000 + 1e-6);
-    }
+    expect(front - back, '200 × its size: ~1 km').toBeCloseTo(1_000, 6);
+    const trails = kids.slice(2).filter((c) => c.visible && c.alpha > 0.01);
+    expect(trails.length, 'three trail streaks').toBe(3);
+    for (const t of trails) expect(span(t)[1]).toBeLessThan(30_000);
   });
 
-  it('the head keeps a minimum on-screen size: never shorter than a few widths', () => {
+  it('just out of the barrel the streak is no longer than the distance flown', () => {
     const p = new FxProjectiles(fakeArt(), () => 'high', () => 0);
-    // Far zoom: the width floor scales the slug ×18 (size 90): the head may
-    // not shrink to a dot or a square.
-    p.beginFrame(); p.draw('s', 'slug', 300_000, 0, SP, 0, 1, 90, 300_000); p.endFrame();
-    const h = headOf(p);
-    expect(h.scale.x).toBeGreaterThanOrEqual(4 * h.scale.y);
-  });
-
-  it('the tail starts behind the head and is never anchored to the muzzle', () => {
-    let now = 10_000;
-    const p = new FxProjectiles(fakeArt(), () => 'high', () => now);
-    // Muzzle at x = 0; the slug at `flown` along +x, frame by frame.
-    for (let f = 1; f <= 20; f++) {
-      const flown = f * FRAME_U;
-      now = 10_000 + (f * 1000) / 60;
-      p.beginFrame(); p.draw('s', 'slug', flown, 0, SP, 0, 1, 5, flown); p.endFrame();
-      const [headBack] = span(headOf(p)); // = flown − head length
-      const vis = (p.wakeLayer.children as unknown as S[]).filter((c) => c.visible && c.alpha > 0.01);
-      let tailBack = Infinity;
-      for (const s of vis) {
-        const [b, fr] = span(s);
-        expect(fr, `frame ${f}: the tail starts behind the head`).toBeLessThanOrEqual(headBack + 1e-6);
-        tailBack = Math.min(tailBack, b);
-      }
-      if (vis.length > 0) {
-        // Its back end leaves the muzzle as the slug flies: never pinned there.
-        expect(tailBack, `frame ${f}: tail back end off the muzzle`).toBeGreaterThanOrEqual(Math.max(1, 0.4 * headBack));
-      }
-    }
-  });
-
-  it('the tail is short: within a few head lengths behind the head', () => {
-    const p = new FxProjectiles(fakeArt(), () => 'high', () => 0);
-    p.beginFrame(); p.draw('s', 'slug', 30_000, 0, SP, 0, 1, 5, 30_000); p.endFrame();
-    const [headBack, front] = span(headOf(p));
-    const hl = front - headBack;
-    const vis = (p.wakeLayer.children as unknown as S[]).filter((c) => c.visible && c.alpha > 0.01);
-    expect(vis.length).toBeGreaterThan(0);
-    for (const s of vis) expect(span(s)[0]).toBeGreaterThanOrEqual(headBack - 8 * hl);
-    // ...and fades toward its back end.
-    const sorted = [...vis].sort((a, b) => b.x - a.x);
-    expect(sorted[0]!.alpha).toBeGreaterThan(sorted[sorted.length - 1]!.alpha);
+    p.beginFrame(); p.draw('s', 'slug', 300, 0, 6_450, 0, 1, 5, 300); p.endFrame();
+    const [back, front] = span(p.container.children[0] as unknown as S);
+    expect(front).toBeCloseTo(300, 6);
+    expect(back).toBeGreaterThanOrEqual(-1e-6);
   });
 });

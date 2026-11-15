@@ -224,9 +224,16 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     // (its geometry comes from it); until then it has no sprite at all.
     if (entry.kind === 4 && (entry.wreckId === undefined || wreckDescs === undefined || !wreckDescs.has(entry.wreckId) || ctx.wrecks === undefined)) continue;
     const spriteKey = `swarm-${entityId}`;
-    ctx.seenScratch.add(spriteKey);
     if (entry.fieldKey !== undefined) ctx.fieldRocks?.noteAwake(entry.fieldKey);
     let sprite = ctx.sprites.get(spriteKey);
+    // A ship killed by an event shell is still drawn alive until the drawn
+    // shell reaches it (ColyseusClient deferred kills): its new wreck's
+    // pieces get no sprite until then (pieces already drawn stay).
+    if (entry.kind === 4 && sprite === undefined && mirror.wreckRevealFromTick !== undefined) {
+      const deathTick = wreckDescs!.get(entry.wreckId!)!.deathTick;
+      if (deathTick !== undefined && deathTick >= mirror.wreckRevealFromTick) continue;
+    }
+    ctx.seenScratch.add(spriteKey);
     // Equinox Phase 3 #20 — a recycled entityId can flip kind (a destroyed
     // structure's slot reused by a new drone). The sprite is cached by entityId;
     // if the kind changed since it was built, the cached visual is the WRONG
@@ -275,10 +282,12 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     // handle the live hull used (no re-bake); a sub-cap's is the parent's DEAD
     // bake (`fx.deadArt`: no glowing robot core, canopy, engines or running
     // lights; take 10 review, "keeps the robot's glowing eye"). Swap the plain
-    // piece once it is ready.
-    const wreckParent = entry.kind === 4 ? entry.shipKind ?? wreckDescs!.get(entry.wreckId!)!.parentKind : '';
-    const wreckArtHandle = entry.kind === 4 && ctx.art.art
-      ? wreckArtHandleFor(ctx.art, spriteKey, wreckParent, entry.faction, wreckDeadArtFor(wreckParent))
+    // piece once it is ready. Under a livery the owner is the descriptor's
+    // (the live hull's livery), so the capital's bake is the one it wore.
+    const wreckDesc = entry.kind === 4 ? wreckDescs!.get(entry.wreckId!)! : undefined;
+    const wreckParent = wreckDesc !== undefined ? entry.shipKind ?? wreckDesc.parentKind : '';
+    const wreckArtHandle = wreckDesc !== undefined && ctx.art.art
+      ? wreckArtHandleFor(ctx.art, spriteKey, wreckParent, wreckDesc.owner ?? entry.faction, wreckDeadArtFor(wreckParent))
       : null;
     if (
       sprite instanceof WreckPieceSprite && wreckArtHandle !== null &&

@@ -514,6 +514,12 @@ export interface RenderMirror {
    *  sub-capital break-up): the dying hull is held briefly until its pieces
    *  are drawn. Its normal death explosion still plays. */
   subcapWrecks?: boolean;
+  /** Set while a ship killed by an event shell is still drawn alive, waiting
+   *  for the drawn shell to reach it (shell-events.md "Kills wait for the
+   *  drawn shell"): wreck pieces of a wreck that died on or after this server
+   *  tick get no sprite yet, so its wreck does not show beside the live hull.
+   *  Pieces already drawn are unaffected. Absent = no hold. */
+  wreckRevealFromTick?: number;
   /** Mine Layer — proximity mines, keyed by mine id (room state `mines`). */
   mines?: Map<string, MineRenderState>;
   /** Structures plan, Phase 3 — connection flash windows from the discrete
