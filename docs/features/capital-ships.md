@@ -75,6 +75,17 @@ Moved verbatim from the old "Thresholds" section of `src/server/CLAUDE.md`. The 
   - **Threshold:** turret tick ≈ 2.4 µs per battleship per tick (`benchmarks/capital-mounts.bench.ts`: 8 battleships × 4 pilots = 0.02 ms); budget 10 µs per capital.
   - 🔴 netgate. Locks: `tests/unit/capitalCombat.test.ts`, `tests/integration/sectorRoom/capitalEngagement.test.ts`.
 
+### Server rules in full (moved from src/server/CLAUDE.md)
+
+The zone `CLAUDE.md` keeps a condensed form of these rules; this is the full wording with its lock tests.
+
+**Capital combat** ([capital-ships](../../docs/features/capital-ships.md), [shell-events](../../docs/architecture/shell-events.md), [real-scale-ranges](../../docs/architecture/real-scale-ranges.md)):
+- 🔴 Capitals never fire as a hull-aimed salvo; each mount leads its own target and fires only when reloaded, in reach and on bearing. Each turret picks its own target (`mountTargeting.ts`); targeting only, shells hit whatever they meet.
+- Turret reach comes from `mountTargetReach` on the server player, drone and client aim paths (#15). A capital given a guard post keeps station inside its radius; a director that spawns a defending capital posts it.
+- Naval shells travel only as `ShellEventHub` events, never in `projectiles[]`; route new viewer rules through the hub. A capital and its shells are WIDE interest entities.
+- `EQX_NAVAL_RANGE` is read once per process; the server stamps it on the welcome (`stampNavalRange`). Far drones' slim slice and the drone `swarm-<id>` wire owner are snapshot-only views.
+- Locks: `tests/unit/capitalCombat.test.ts`, `tests/integration/sectorRoom/capitalEngagement.test.ts`.
+
 ## Weapon fits (plan section 9)
 
 A `fit` axis sits next to the hull style: `warshipDesign(id, style, map, fit)` with `fit = { main, secondary }` (default `NAVAL_FIT`, all naval guns, so the plain kinds are unchanged). A fit changes only the mounts' `weaponId`; the hull, turret stations and groups stay the class's. Fitted kinds are appended to the catalogue like the styles, ids per the scheme below. The first is the **rail battleship** (`battleship-rail`: railguns in every main turret, naval secondaries and AA, base hull style). It sits in `CAPITAL_STYLE_VARIANTS.battleship`, so `styledKind` fields it for one battleship in four, seeded from the ship's id like a style. The railgun's charge (`chargeTicks`, 'when-bearing', 'mount-glow') lives in its weapon def, so a railgun mount needs nothing extra beyond its single barrel (`barrels: 1`, one slug per shot) ([weapon-mounts](../architecture/weapon-mounts.md#charge-up-one-store-one-telegraph)). Beam fits put the capital `heavy_beam` on a battery, one emitter per turret (`barrels: 1`: the AI fire path shoots one ray per barrel and the heavy beam's numbers are per mount). The **beam cruiser** (`heavy-cruiser-beam`: heavy beams on all six secondaries, naval 8" main) and the **lance battlecruiser** (`battlecruiser-lance`: heavy beams in the three main turrets, naval 5" secondaries) follow the rail battleship in the catalogue and in their classes' `CAPITAL_STYLE_VARIANTS`, so each is fielded for one ship in four of its class.

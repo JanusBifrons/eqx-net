@@ -122,3 +122,15 @@ Moved verbatim from the old "Thresholds" section of `src/server/CLAUDE.md`. The 
 - **Phase 3 — snapshot broadcast rate**: pre-Stage-5: 20 Hz global. Stage 5 initial (REVERTED): tried 30 Hz close-tier + 20 Hz far-tier with per-client phase offsets, but the union of two cadences produced irregular 17/17/33/33 ms intervals at the recipient — see hotfix #4 in `docs/LESSONS.md`. Stage 5 post-hotfix #4: single 20 Hz cadence (`shouldBroadcastFar` only) with per-client phase offset hashed from playerId so recipients almost never peak on the same tick (smooths server CPU). Idle sectors (no motion-above-epsilon AND no projectiles in flight for `IDLE_THRESHOLD_TICKS = 60` consecutive ticks) suppress broadcasts entirely. `lastInput` field omitted when bits match the per-recipient cache. Scheduling tick is `broadcastCounter` (main-thread, once-per-`update()`), NOT `serverTick` (SAB-read; advances unevenly under main/worker drift). See `docs/architecture/snapshot-cadence.md`. Tier classification helpers in `snapshotScheduler.ts` (`classifyShipTier`, `createTierState`) are unit-tested but unused in production after hotfix #4 — preserved for a future single-cadence-with-tier-inclusion design (Stage 5b).
 
 - **Phase 5d — wire format**: encoder is per-client, called from `SectorRoom.update()` inside the existing per-client backpressure loop. `BinarySwarmBroadcast.encode(registry, sab, sab, tick, inInterest?)` — when `inInterest` is undefined the encoder behaves like Phase 5c (broadcast-all), so unit tests that pre-date 5d still pass unmodified.
+
+### Server rules in full (moved from src/server/CLAUDE.md)
+
+The zone `CLAUDE.md` keeps a condensed form of these rules; this is the full wording with its lock tests.
+
+**Snapshots and lag compensation** ([snapshot-cadence](../../docs/architecture/snapshot-cadence.md)):
+- One snapshot cadence per recipient (`shouldBroadcastFar`, per-client phase offset); never two cadences (their union gives irregular intervals). Schedule on `broadcastCounter`, never `serverTick`.
+- Idle sectors suppress broadcasts; the join grace forces them after every join, spawn or reconnect (`joinBroadcastGrace.test.ts`). `lastInput` is omitted when unchanged for that recipient.
+- Backpressure drops the oldest queued snapshot, then force-closes. The lag-comp ring is pre-allocated (no per-tick allocation); the swarm encoder runs per client inside the backpressure loop.
+- A fire claim older than `LAG_COMP_WINDOW` is clamped to the window floor (`clampFireTick`), never rejected; the per-shooter cooldown stays the separate anti-rapid-fire guard.
+- The NPC lock step stays inside its budget (`benchmarks/npc-locks.bench.ts`).
+

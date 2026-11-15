@@ -2323,6 +2323,17 @@ Moved from `src/core/CLAUDE.md` (2026-11-14); kept for the record.
 - **Settled bodies are cheap in the worker.** A body asleep since before this tick and already flagged `FLAG_SLEEPING` (and not a pilot-input slot) is in the worker's `quietIds`: `getAllShipStates(quietIds)` skips its Rapier reads and allocation, and its SAB record (the resting pose) is left as is. Anything that moves a body must wake it (every `World` mutation passes `wakeUp = true`); a woken body is written again on the next tick.
 - **Test trigger:** testMode `test_kill_capitals` (every capital NPC takes a lethal hit, re-hit through a shield); room `wreck-test`.
 
+### Server rules in full (moved from src/server/CLAUDE.md)
+
+The zone `CLAUDE.md` keeps a condensed form of these rules; this is the full wording with its lock tests.
+
+#### Capital wrecks
+
+- **Break-up ON by default** (`capitalWrecks` / `subcapWrecks`, owner 2026-11-14): a room opts out with `false`, env `EQX_*_WRECKS=0` forces it off (`wreckSwitchOn`); one death effect per ship (a breaking kind never sheds scrap). Hit tracking is pooled (#14). Test trigger: `test_kill_capitals`, room `wreck-test`.
+- **Wreck pieces (kind 4) block every weapon but the railgun slug and a heavy-beam kill follow-through (`isDebris`):** a new weapon or hit path must handle kind 4 and pass its shot direction (knock-back). Locks: `wreckOverkillKnockback.test.ts`, `wreckRigidHold.test.ts`.
+- **Snapshots carry wreck deltas only:** never the whole list, never vertices; every piece removal reaches `pieceGone`. Locks: `SnapshotBroadcaster.wreckDeltas.test.ts`, `wreckWireConvergence.test.ts`, `wreckLateJoiner.test.ts`.
+- Detail: [capital-destruction.md](../../docs/architecture/capital-destruction.md#server-implementation-notes).
+
 ## Core rules reference
 
 Moved from `src/core/CLAUDE.md` (section "Capital fracture").

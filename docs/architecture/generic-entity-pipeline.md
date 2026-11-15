@@ -369,6 +369,18 @@ construction, `phaseTime` is passed by reference. Lock: `EntitySyncRouter.test.t
 (ordering + idle-threading + governance); the full-snapshot-path byte-identity is
 the netgate + the existing integration suite.
 
+### Server rules in full (moved from src/server/CLAUDE.md)
+
+The zone `CLAUDE.md` keeps a condensed form of these rules; this is the full wording with its lock tests.
+
+#### Generic Entity Pipeline
+
+- **A new damageable type is a leaf + a registry row**, never a new dispatch branch; `EntityResolver` owns the ordered selection. Golden master: `DamageRouter.dispatch.test.ts`.
+- **`applyInteraction` stays ONE monomorphic function**; never a per-class `receiveInteraction()`. Locks: the guard comment + `benchmarks/damageDispatch.bench.ts`.
+- **A new pose-core kind is a swarm-registry record**; seeding `swarmHealth` on spawn is its only damage line (absent = immune). Add its integration test.
+- **Entity-sync sends go through `EntitySyncRouter.route`** (binary pose-core first, then the JSON slice); a byte change to either broadcaster needs the netgate. Lock: `EntitySyncRouter.test.ts`.
+- Detail: [generic-entity-pipeline.md](../../docs/architecture/generic-entity-pipeline.md#server-implementation-notes).
+
 ## History
 
 > Updated 2026-06-04 (GEP B2): the data-driven `strategies[kind]` table is now
