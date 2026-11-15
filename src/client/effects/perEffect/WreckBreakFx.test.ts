@@ -6,7 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import { Container } from 'pixi.js';
 import type { EffectQuality } from '@core/contracts/IEffects';
-import { WreckBreakFx, WRECK_BREAK_DIAL } from './WreckBreakFx';
+import { WreckBreakFx, WRECK_BREAK_DIAL, WRECK_ASH_DIAL } from './WreckBreakFx';
 
 function fx(q: EffectQuality, particlesDisabled = false): { world: Container; f: WreckBreakFx } {
   const world = new Container();
@@ -70,5 +70,60 @@ describe('WreckBreakFx', () => {
     for (let i = 0; i < 10; i++) f.spawnBurst(i * 10, 0, { radius: 1500 });
     expect(layer.children.length).toBe(size);
     expect(f.activeCount()).toBeLessThanOrEqual(size);
+  });
+});
+
+describe('WreckBreakFx channel ash (a railgun channel kill)', () => {
+  const R = 2200;
+  // Game space (Y up): the channel runs from (0, 0) to (1000, 0).
+  const A = { x: 0, y: 0 }, B = { x: 1000, y: 0 };
+
+  it('the tier\'s ash and sparks, from the same pool; none with particles off', () => {
+    for (const q of ['high', 'medium', 'low', 'minimal'] as const) {
+      const { f } = fx(q);
+      f.spawnChannelAsh(A.x, A.y, B.x, B.y, R);
+      expect(f.activeCount(), q).toBe(WRECK_ASH_DIAL[q].ash + WRECK_ASH_DIAL[q].sparks);
+    }
+    expect(WRECK_ASH_DIAL.minimal.ash + WRECK_ASH_DIAL.minimal.sparks)
+      .toBeLessThan(WRECK_ASH_DIAL.high.ash + WRECK_ASH_DIAL.high.sparks);
+    const off = fx('high', true);
+    off.f.spawnChannelAsh(A.x, A.y, B.x, B.y, R);
+    expect(off.f.activeCount()).toBe(0);
+    expect(off.world.children.length, 'no pool, nothing on stage').toBe(0);
+  });
+
+  it('is a LINE emitter: the ash starts spread along the whole channel, on it', () => {
+    const { world, f } = fx('high');
+    f.spawnChannelAsh(A.x, A.y, B.x, B.y, R);
+    const layer = world.children[0] as Container;
+    const xs: number[] = [];
+    for (const c of layer.children) {
+      if (!c.visible) continue;
+      // Pixi space: y = -gameY; the channel lies on y = 0.
+      expect(Math.abs(c.position.y)).toBeLessThan(1e-6);
+      expect(c.position.x).toBeGreaterThanOrEqual(-1e-6);
+      expect(c.position.x).toBeLessThanOrEqual(1000 + 1e-6);
+      xs.push(c.position.x);
+    }
+    // Ash along the line (not a point burst): both halves of the channel.
+    expect(xs.filter((x) => x < 400).length).toBeGreaterThan(5);
+    expect(xs.filter((x) => x > 600).length).toBeGreaterThan(5);
+  });
+
+  it('ash glows white-hot first and cools; sparks fly on out of the far end; then it leaves the stage', () => {
+    const { world, f } = fx('high');
+    f.spawnChannelAsh(A.x, A.y, B.x, B.y, R);
+    const layer = world.children[0] as Container;
+    f.tick(1 / 60);
+    const tints = layer.children.filter((c) => c.visible).map((c) => (c as unknown as { tint: number }).tint);
+    const whiteHot = tints.filter((t) => ((t >> 16) & 255) > 0xf0 && ((t >> 8) & 255) > 0xd0 && (t & 255) > 0xa0);
+    expect(whiteHot.length, 'fresh ash is white-hot').toBeGreaterThan(WRECK_ASH_DIAL.high.ash / 2);
+    for (let i = 0; i < 20; i++) f.tick(1 / 60);
+    // Sparks (beyond the far end) went on in the slug's direction (+x).
+    const beyond = layer.children.filter((c) => c.visible && c.position.x > 1000);
+    expect(beyond.length).toBeGreaterThan(0);
+    for (let i = 0; i < 60 * 4; i++) f.tick(1 / 60);
+    expect(f.activeCount()).toBe(0);
+    expect(world.children.length).toBe(0);
   });
 });

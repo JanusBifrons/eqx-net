@@ -23,7 +23,8 @@
  * Runs once per death (not hot-loop code); allocates freely.
  */
 import {
-  fractureHull, projectToOutline, cutDirFromAngle, CUT_ANGLE_STEPS, FRACTURE_SNAP_CHANCE, type FractureKillCut,
+  fractureHull, projectToOutline, cutDirFromAngle, CUT_ANGLE_STEPS, FRACTURE_SNAP_CHANCE, EDGE_HULL,
+  type FractureEdgeKind, type FractureKillCut,
 } from './fractureHull.js';
 import { DESTRUCTION_PROFILES } from '../../shared-types/shipScale/destruction.js';
 import { Rng, fnvMixU32 } from '../random/rng.js';
@@ -216,8 +217,10 @@ export interface WreckPieceGeometry {
   colliderParts: Vec2[][];
   /** The piece outline, body-local math-up, CCW. */
   outline: Vec2[];
-  /** `cutEdges[i]`: edge outline[i] → outline[i+1] is a new cut (S3 glow). */
-  cutEdges: boolean[];
+  /** `cutEdges[i]`: the fracture `EDGE_*` kind of outline[i] → outline[i+1]
+   *  (`EDGE_HULL` = 0 for the hull's own outline, else a new cut that glows
+   *  in S3; `EDGE_CUT` is a weapon's kill cut). */
+  cutEdges: FractureEdgeKind[];
   /** World-unit area (scaled). */
   area: number;
   mass: number;
@@ -344,12 +347,12 @@ export function wreckPieceGeometry(input: WreckFractureInputs): WreckPieceGeomet
     }
     const n = p.outline.length;
     const outline: Vec2[] = [];
-    const cutEdges: boolean[] = [];
+    const cutEdges: FractureEdgeKind[] = [];
     for (let j = 0; j < n; j++) {
       const v = p.outline[n - 1 - j]!;
       outline.push({ x: v.x * s - cmx, y: -v.y * s - cmy });
       // Reversed walk: new edge j is old edge (n - 2 - j) mod n.
-      cutEdges.push(p.cutEdges[(n - 2 - j + n) % n] ?? false);
+      cutEdges.push(p.cutEdges[(n - 2 - j + n) % n] ?? EDGE_HULL);
     }
     const area = p.area * s * s;
     const colliderParts = parts.map((ring) => insetRing(ring, inset));

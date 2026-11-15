@@ -248,7 +248,7 @@ describe('every sub-cap piece keeps its normal brightness from its first frame (
   it('a piece with no cut edges (no glow at all) keeps its normal brightness from the first frame', () => {
     const d = desc(9, 'robot-square', 31, tick0);
     const g = rebuildWreckPieces(d)![0]!;
-    const noCuts: WreckPieceGeometry = { ...g, cutEdges: g.cutEdges.map(() => false) };
+    const noCuts: WreckPieceGeometry = { ...g, cutEdges: g.cutEdges.map(() => 0) };
     const ctx = makeCtx(null);
     const info = ctx.wreckArt!.infoFor(d, [noCuts], 0, { x: 0, y: 0, angle: 0 }, tick0 + 2, T0);
     const p = new WreckPieceSprite(noCuts, 'robot-square', bakedArt(), info, 0);

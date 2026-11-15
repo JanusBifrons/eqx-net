@@ -73,7 +73,7 @@ import {
 import { newSpeedFxSample, speedFxSampleInto } from './camera/speedFxSample';
 import { GroupBoundsScanner } from './camera/groupBounds';
 import type { CameraCue, CameraGroup } from '@core/contracts/cameraScript';
-import { REMOTE_BEAM_STYLE, MINING_BEAM_STYLE, remoteBeamStyleForMount } from './beamStyles';
+import { REMOTE_BEAM_STYLE, MINING_BEAM_STYLE, remoteBeamStyleForMount, remoteBeamFireAngle } from './beamStyles';
 import { MountVisualManager } from './MountVisualManager';
 import { BackgroundGrid } from './BackgroundGrid';
 import { StarfieldBackground } from './StarfieldBackground';
@@ -953,7 +953,7 @@ export class PixiRenderer implements IRenderer {
       wrecks: new WreckGeometryStore(),
       // S3: each wreck's death clock; a fresh wreck's break-up (dust, shards,
       // flash at the kill point) goes through the effects system, tier-capped.
-      wreckArt: new WreckArtState((x, y, radius, snap, seed, wfx) => {
+      wreckArt: new WreckArtState((x, y, radius, snap, seed, wfx, channel) => {
         // Money-shot review: a short small core flash + dust + shards
         // (WreckBreakFx) and fireballs at the kill point, sized by the hull
         // (FxExplosions, the same blasts every death uses), never a disc
@@ -963,6 +963,11 @@ export class PixiRenderer implements IRenderer {
         if (wfx.breakBurst) {
           this._wreckBreaks++;
           this.effects?.spawnBurst('wreck-break', x, y, { radius, ...(snap ? { flashScale: 1.6 } : {}) });
+          // A railgun channel kill: glowing ash and sparks along the channel
+          // (a line emitter on the same break-up pool, tier-capped there).
+          if (channel !== null) {
+            this.effects?.spawnBurst('wreck-ash', channel.ax, channel.ay, { radius, lineToX: channel.bx, lineToY: channel.by });
+          }
         }
         const fx = wfx.killBlasts ? this._fxExplosions : null;
         if (fx !== null) {
@@ -1965,7 +1970,9 @@ export class PixiRenderer implements IRenderer {
           // mountAngles` (snapshot-anchored, in-interest drones only).
           const mount = shooterKind.mounts?.find((m) => m.id === mountId);
           const mountIdx = shooterKind.mounts?.findIndex((m) => m.id === mountId) ?? -1;
-          let currentMountAngle = 0;
+          // Undefined = this viewer has no angle for the turret (an
+          // out-of-interest drone): the beam then aims at the wire end point.
+          let currentMountAngle: number | undefined = 0;
           if (shooter && mount && mountIdx >= 0) {
             currentMountAngle = shooter.mountAngles?.[mountIdx] ?? 0;
           } else if (swarmShooter && mount && mountIdx >= 0) {
@@ -1978,7 +1985,7 @@ export class PixiRenderer implements IRenderer {
               const sw = mirror.swarm?.get(entityId);
               // The angle the turret is DRAWN at (swarmSpriteUpdater), so the
               // beam leaves down the barrel on screen, not the raw 20 Hz step.
-              currentMountAngle = (sw?.displayMountAngles ?? sw?.mountAngles)?.[mountIdx] ?? 0;
+              currentMountAngle = (sw?.displayMountAngles ?? sw?.mountAngles)?.[mountIdx];
             }
           }
 
@@ -1988,7 +1995,7 @@ export class PixiRenderer implements IRenderer {
           let toY: number;
           if (shooter) {
             const origin = applyMountOffset(shooter.x, shooter.y, shooter.angle, mount);
-            const fireAngle = shooter.angle + (mount?.baseAngle ?? 0) + currentMountAngle;
+            const fireAngle = shooter.angle + (mount?.baseAngle ?? 0) + (currentMountAngle ?? 0);
             const fwdX = -Math.sin(fireAngle);
             const fwdY =  Math.cos(fireAngle);
             // The barrel tip (shared with the server, core/combat/muzzle.ts).
@@ -1999,7 +2006,12 @@ export class PixiRenderer implements IRenderer {
             toY = fromY + fwdY * laser.range;
           } else if (swarmShooter) {
             const origin = applyMountOffset(swarmShooter.x, swarmShooter.y, swarmShooter.angle, mount);
-            const fireAngle = swarmShooter.angle + (mount?.baseAngle ?? 0) + currentMountAngle;
+            // A turning mount with no known angle (out of this viewer's
+            // interest, so no `drones[].mountAngles`) aims at the wire end.
+            const fireAngle = remoteBeamFireAngle(
+              swarmShooter.angle, mount?.baseAngle ?? 0, mount ? currentMountAngle : 0,
+              origin.x, origin.y, laser.toX, laser.toY,
+            );
             const fwdX = -Math.sin(fireAngle);
             const fwdY =  Math.cos(fireAngle);
             // Drone barrel offset is `radius + 2` along the mount's fire
