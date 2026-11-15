@@ -7,18 +7,19 @@
  *    `continues: 1`, and the final hit as a plain one;
  *  - the testMode `chargeTicksCap` trigger lets a charge weapon fire without
  *    waiting out its real wind-up (the per-mount start ticks ride the
- *    snapshot meanwhile).
+ *    snapshot meanwhile);
+ *  - a real `battleship-rail` AI charges its railgun main turrets and fires;
+ *    its slug kills a ship in its line and stops in its target.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import { ShellEndSchema, type ShellEnd } from '../../../src/shared-types/messages/shellEvents.js';
-import { getWeapon, type WeaponDef } from '../../../src/core/combat/WeaponCatalogue.js';
+import { getWeapon } from '../../../src/core/combat/WeaponCatalogue.js';
 import type { SnapshotMessage } from '../../../src/shared-types/messages.js';
 import type { ShellSalvo } from '../../../src/shared-types/messages/shellEvents.js';
 
-type Mutable = { -readonly [K in keyof WeaponDef]?: WeaponDef[K] };
 import { RAILGUN_BOLT_WIDTH } from '../../../src/shared-types/combat/navalGuns.js';
 import { shipShapeScale } from '../../../src/core/geometry/shipHullOutline.js';
 import { getShipKind } from '../../../src/shared-types/shipKinds.js';
@@ -91,37 +92,92 @@ describe('SectorRoom integration — railgun', () => {
     expect(fin[0]![2]).toBeGreaterThan(10_000);
   });
 
-  it('testMode chargeTicksCap: a railgun-length charge fires after the cap, not its real 6 s', { timeout: 60_000 }, async () => {
-    // No ship carries the railgun yet (capital variants come later): give the
-    // battleship's 16" the railgun's charge for this test (in-process room).
-    const xl = getWeapon('naval_xl') as Mutable;
-    const saved = { chargeTicks: xl.chargeTicks, chargeRelease: xl.chargeRelease, chargeTelegraph: xl.chargeTelegraph };
-    xl.chargeTicks = RAIL.chargeTicks; xl.chargeRelease = 'when-bearing'; xl.chargeTelegraph = 'mount-glow';
+  it('a battleship-rail AI charges its main turrets and fires railgun slugs after the chargeTicksCap, not the real 6 s', { timeout: 60_000 }, async () => {
+    // The rail fit puts the railgun on every main mount (capital fit axis, plan §9).
+    const rails = (getShipKind('battleship-rail').mounts ?? []).filter((m) => m.weaponId === 'railgun');
+    expect(rails.length, 'battleship-rail carries railgun main turrets').toBeGreaterThan(0);
     const CAP = 30;
-    try {
-      harness = await bootSectorTestServer({
-        sectorKey: null, droneCount: 0, testMode: true, asteroidConfig: [], pilotCapitals: true,
-        chargeTicksCap: CAP, lockTimeCapS: 0,
-        dronePoses: [{ kind: 'battleship', x: 5000, y: 0, angle: (50 * Math.PI) / 180 }],
-      });
-      const cr = await harness.connectActive(randomUUID(), {
-        shipKind: 'heavy-cruiser', initialHull: 1_000_000_000, initialShield: 0, startHostile: true, instantLock: true,
-      });
-      let firstStart = -1;
-      cr.onMessage('snapshot', (snap: SnapshotMessage) => {
-        for (const d of snap.drones ?? []) if ((d.chargingMask ?? 0) !== 0 && firstStart < 0) firstStart = d.chargeStartTick ?? -1;
-      });
-      const salvos: ShellSalvo[] = [];
-      cr.onMessage('shell_salvo', (m: ShellSalvo) => { if (m.w === 'naval_xl') salvos.push(m); });
-      const deadline = Date.now() + 30_000;
-      while (Date.now() < deadline && salvos.length === 0) await new Promise((r) => setTimeout(r, 50));
-      expect(firstStart, 'a charge was seen').toBeGreaterThanOrEqual(0);
-      expect(salvos.length, 'the charged 16" fired').toBeGreaterThan(0);
-      const waited = salvos[0]!.t - firstStart;
-      expect(waited).toBeGreaterThanOrEqual(CAP);
-      expect(waited, "the cap, not the weapon's own 360-tick charge").toBeLessThan(RAIL.chargeTicks!);
-    } finally {
-      xl.chargeTicks = saved.chargeTicks; xl.chargeRelease = saved.chargeRelease; xl.chargeTelegraph = saved.chargeTelegraph;
+    harness = await bootSectorTestServer({
+      sectorKey: null, droneCount: 0, testMode: true, asteroidConfig: [], pilotCapitals: true,
+      chargeTicksCap: CAP, lockTimeCapS: 0,
+      dronePoses: [{ kind: 'battleship-rail', x: 5000, y: 0, angle: (50 * Math.PI) / 180 }],
+    });
+    const cr = await harness.connectActive(randomUUID(), {
+      shipKind: 'heavy-cruiser', initialHull: 1_000_000_000, initialShield: 0, startHostile: true, instantLock: true,
+    });
+    let firstStart = -1;
+    cr.onMessage('snapshot', (snap: SnapshotMessage) => {
+      for (const d of snap.drones ?? []) if ((d.chargingMask ?? 0) !== 0 && firstStart < 0) firstStart = d.chargeStartTick ?? -1;
+    });
+    const salvos: ShellSalvo[] = [];
+    cr.onMessage('shell_salvo', (m: ShellSalvo) => { if (m.w === 'railgun') salvos.push(m); });
+    const deadline = Date.now() + 30_000;
+    while (Date.now() < deadline && salvos.length === 0) await new Promise((r) => setTimeout(r, 50));
+    expect(firstStart, 'a main-turret charge was seen').toBeGreaterThanOrEqual(0);
+    expect(salvos.length, 'the charged railgun fired').toBeGreaterThan(0);
+    const waited = salvos[0]!.t - firstStart;
+    expect(waited).toBeGreaterThanOrEqual(CAP);
+    expect(waited, "the cap, not the weapon's own 360-tick charge").toBeLessThan(RAIL.chargeTicks!);
+  });
+
+  it("a battleship-rail AI's slug kills a ship in its line, flies on and stops in its target", { timeout: 60_000 }, async () => {
+    harness = await bootSectorTestServer({
+      sectorKey: null, droneCount: 0, testMode: true, asteroidConfig: [], pilotCapitals: true,
+      chargeTicksCap: 30, lockTimeCapS: 0,
+      dronePoses: [{ kind: 'battleship-rail', x: 9000, y: 0, angle: Math.PI }],
+    });
+    const pid = randomUUID();
+    const cr = await harness.connectActive(pid, {
+      shipKind: 'heavy-cruiser', initialHull: 1_000_000_000, initialShield: 0, startHostile: true, instantLock: true,
+      spawnX: 0, spawnY: 0,
+    });
+    const railShells = new Set<string>();
+    cr.onMessage('shell_salvo', (m: ShellSalvo) => { if (m.w === 'railgun') for (const s of m.sh) railShells.add(String(s[0])); });
+    const ends: ShellEnd[] = [];
+    cr.onMessage('shell_end', (m: unknown) => {
+      const r = ShellEndSchema.safeParse(m);
+      expect(r.success, 'shell_end matches its schema').toBe(true);
+      if (r.success) ends.push(r.data);
+    });
+    const internal = (harness.getServerRoom() as unknown as SectorRoom)._internals;
+    let charging = false;
+    cr.onMessage('snapshot', (snap: SnapshotMessage) => {
+      for (const d of snap.drones ?? []) if ((d.chargingMask ?? 0) !== 0) charging = true;
+    });
+    const railTuples = (): ShellEnd['e'] => ends.flatMap((m) => m.e).filter((t) => railShells.has(String(t[0])));
+    const deadline = Date.now() + 30_000;
+    while (Date.now() < deadline && !charging) await harness.advance(25);
+    expect(charging, 'the rail battleship charged its main turrets').toBe(true);
+    // Once the railguns charge, put a picket of neutral (trader) hulls across
+    // the slug's line near the target, each with less hull than one slug.
+    // (NPCs hold fire only for FRIENDLIES on the line, LineOfFireGate, so a
+    // drones-side blocker would rightly keep the battleship silent; traders
+    // wander, hence the late spawn: the capped charge is 30 ticks. A picket
+    // because the turrets' slugs fly parallel, ~100 u apart.)
+    const bb = [...internal.swarmRegistry.all()].find((r) => r.shipKind === 'battleship-rail');
+    const bp = bb ? internal.swarmPose(bb.id) : null;
+    const pp = internal.playerPose(pid);
+    expect(bp && pp, 'both ends of the line').toBeTruthy();
+    const len = Math.hypot(bp!.x - pp!.x, bp!.y - pp!.y);
+    const ux = (bp!.x - pp!.x) / len, uy = (bp!.y - pp!.y) / len;
+    const pickets: string[] = [];
+    for (let i = -3; i <= 3; i++) {
+      const id = `picket-${i + 3}`;
+      const along = len * 0.2;
+      expect(internal.spawnTestDrone(id, pp!.x + ux * along - uy * i * 50, pp!.y + uy * along + ux * i * 50, 'trader-hauler')).toBe(true);
+      internal.swarmHealth.set(id, RAIL.damage - 1);
+      pickets.push(id);
     }
+    while (Date.now() < deadline && !railTuples().some((t) => t[5] === undefined)) await harness.advance(50);
+    expect(railShells.size, 'the rail battleship fired its railguns').toBeGreaterThan(0);
+    expect(pickets.some((id) => !internal.swarmRegistry.get(id)), 'a slug killed a ship in its line').toBe(true);
+    const all = railTuples();
+    const through = all.filter((t) => t[5] === 1);
+    expect(through.length, 'a pass-through kill reached the viewer').toBeGreaterThan(0);
+    // The same slug flew on and ended past the killed ship, at the target.
+    const fin = all.filter((t) => t[5] === undefined && t[0] === through[0]![0]);
+    expect(fin, 'the slug that killed flew on and stopped in its target').toHaveLength(1);
+    const far = (t: ShellEnd['e'][number]): number => Math.hypot(t[2] - bp!.x, t[3] - bp!.y);
+    expect(far(fin[0]!), 'it ended beyond the kill').toBeGreaterThan(far(through[0]!));
   });
 });
