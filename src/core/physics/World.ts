@@ -1233,6 +1233,8 @@ export class PhysicsWorld {
      *  timeline, while the turret aims at the drawn pose, so the caller tests
      *  them at the drawn pose itself. Absent ⇒ every body counts (unchanged). */
     skipId?: (id: string) => boolean,
+    /** A wide beam's half-width (`beamHalfWidth`): it hits by its width. 0 ⇒ the thin ray. */
+    halfWidth = 0,
   ): { hitId: string; dist: number } | null {
     const excludeRec = this.bodies.get(excludeId);
     this._raySkip = skipId ?? null;
@@ -1247,6 +1249,7 @@ export class PhysicsWorld {
       excludeRec?.body,
       this.wallHandleToId,
       skipId ? this._rayPredicate : undefined,
+      halfWidth,
     );
     this._raySkip = null;
     return hit;

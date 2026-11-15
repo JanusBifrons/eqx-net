@@ -102,16 +102,18 @@ function inset(poly: Pt[], d: number): Pt[] | null {
   return out;
 }
 
-/** Smooth seeded value noise in -1..1 (arithmetic only). */
-function vnoise(x: number, y: number, seed: number): number {
+function latticeHash(a: number, b: number, seed: number): number {
+  let k = (Math.imul(a, 374761393) + Math.imul(b, 668265263) + seed) | 0;
+  k = Math.imul(k ^ (k >>> 13), 1274126177);
+  return ((k ^ (k >>> 16)) >>> 0) / 4294967296;
+}
+
+/** Smooth seeded value noise in -1..1 (arithmetic only, allocation-free; the
+ *  ore map's deposit edges use it too, fieldOre.ts). */
+export function vnoise(x: number, y: number, seed: number): number {
   const xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi;
-  const h = (a: number, b: number): number => {
-    let k = (Math.imul(a, 374761393) + Math.imul(b, 668265263) + seed) | 0;
-    k = Math.imul(k ^ (k >>> 13), 1274126177);
-    return ((k ^ (k >>> 16)) >>> 0) / 4294967296;
-  };
   const sx = xf * xf * (3 - 2 * xf), sy = yf * yf * (3 - 2 * yf);
-  const a = h(xi, yi), b = h(xi + 1, yi), c = h(xi, yi + 1), d = h(xi + 1, yi + 1);
+  const a = latticeHash(xi, yi, seed), b = latticeHash(xi + 1, yi, seed), c = latticeHash(xi, yi + 1, seed), d = latticeHash(xi + 1, yi + 1, seed);
   return (a + (b - a) * sx + (c - a) * sy + (a - b - c + d) * sx * sy) * 2 - 1;
 }
 
