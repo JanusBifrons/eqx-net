@@ -10619,11 +10619,15 @@ export class SectorRoom extends Room<SectorState> {
   /** RTS Part B slice 6: the stance's attitude → the AI pilot brain. Aggressive
    *  engages anything hostile it sees (robots and drones hostile to players,
    *  and whatever is hostile to the owner); Defensive only hits back (the
-   *  retaliation ledger). Hold fire is slice 7 (the fire path holds it). */
+   *  retaliation ledger). Hold fire (slice 7) picks no target at all: no
+   *  fire, no chase, the ship flies its job; attackers stay on the ledger,
+   *  so a switch back to Defensive answers a recent one. Leaving hold fire
+   *  restores the attitude of the stance chosen. */
   private applyHullStance(id: string): void {
     const brain = this.aiController.getBehaviour(id);
     const w = this.fleet.brainOf(id);
     if (brain === null || w === null) return;
+    brain.setHoldFire?.(w.stance === 'holdFire');
     if (w.stance === 'aggressive') brain.setEngageOnSight?.(true);
     else if (w.stance === 'defensive') brain.setEngageOnSight?.(false);
   }

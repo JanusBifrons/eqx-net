@@ -6,7 +6,8 @@
  * `PlayerFireResolver.fireHull`), gated by its stance:
  *   - aggressive + hunt: damages a drone hostile to its owner;
  *   - a neutral drone is left alone (hostility is the owner's, never invented);
- *   - holdFire never fires;
+ *   - holdFire never fires, picks no target and never closes on the drone
+ *     (RTS Part B slice 7);
  *   - a wingman's hit makes the drone hostile to the OWNER (the per-player
  *     hostility ledger), not to the hull's shipInstanceId;
  *   - defensive: fires back at whatever just hit it.
@@ -22,6 +23,7 @@ import type { SectorState } from '../../../src/server/rooms/schema/SectorState.j
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import { getShipKind } from '../../../src/shared-types/shipKinds.js';
 import { mountWeaponReach } from '../../../src/core/combat/mountReach.js';
+import { shipTuning } from '../../../src/shared-types/shipScale/tuning.js';
 
 type Internals = SectorRoom['_internals'];
 
@@ -102,7 +104,23 @@ describe('SectorRoom integration — wingmen fight (RTS slice 5)', () => {
     // Now it is hostile, but the wingman holds fire.
     internals.fleet.setStance(pid, [sid], 'holdFire');
     client.send('test_aggro', { type: 'test_aggro' });
-    await harness.advance(3000);
+    // RTS Part B slice 7: hold fire picks no target, so the hull never
+    // chases. The old flake (the drone lost HP under hold fire, a ram while
+    // the hull chased it) needs hull contact. N = `spawnClearance` (240 u for
+    // a fighter at the shipping scale): the gap the game keeps between a new
+    // ship and any other so the two never touch, several hull radii (hit
+    // radius 24 u). The drone wanders on its own, so N is a contact margin,
+    // not a stand-off. Measured: closest 306-319 u over 5 runs.
+    const noCloser = shipTuning(getShipKind('fighter')).spawnClearance;
+    let minD = Infinity;
+    for (let i = 0; i < 60; i++) {
+      await harness.advance(50);
+      expect(internals.aiBrainOf(sid)?.getTargetId?.() ?? null, 'hold fire picked a target').toBeNull();
+      const h = internals.lingeringPoseCache.get(sid);
+      const d = internals.swarmPose('neutral');
+      if (h && d) minD = Math.min(minD, Math.hypot(h.x - d.x, h.y - d.y));
+    }
+    expect(minD, 'the hold-fire hull closed on the drone').toBeGreaterThan(noCloser);
     expect(internals.npcHostileTo('neutral', pid)).toBe(true);
     expect(lost(internals, 'neutral', start), 'holdFire never fires').toBe(0);
     await harness.disconnectClient(client);

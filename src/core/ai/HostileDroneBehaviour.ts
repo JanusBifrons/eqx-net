@@ -502,6 +502,11 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    *  ship fights only what is on its retaliation ledger (`hostileTo`), the
    *  Defensive attitude. Drones and robots keep it on. */
   private engageOnSight = true;
+  /** Hold fire (RTS Part B slice 7, `setHoldFire`): on ⇒ this ship picks no
+   *  target at all (no on-sight, no retaliation, no trigger) and keeps flying
+   *  its job. `markHostile` still records attackers, so a switch back to
+   *  Defensive / Aggressive answers one that hit within `FORGET_TICKS`. */
+  private holdFire = false;
   /** Hunt (RTS Part B slice 6, `setHunt`): no leash, on-sight engagement out
    *  to the sensor range, and with nothing to fight the ship searches the
    *  sector in an expanding square round where the search began
@@ -963,6 +968,15 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     //    players; drones vs robots) — only when the view could contain such a
     //    target. A drones-only sector (`view.swarms` absent, drones not on-sight
     //    to players) takes the pre-P0 fast path, byte-identical.
+    // 2a) Hold fire (RTS Part B slice 7): no target, no chase, no trigger; the
+    //     ship carries on with its job (post / move / search / flock). The
+    //     ledger above keeps recording and decaying, so lifting hold fire
+    //     answers a recent attacker.
+    if (this.holdFire) {
+      this.prevTargetId = null;
+      if (this._picker.current === MANOEUVRE_FLEE) return this.tickFleeClear(self, view.tick);
+      return this.leaderId !== null ? this.tickFlock(self, view) : this.tickPatrol(self);
+    }
     const canEngageOnSight = this.engageOnSight && (this.onSightPlayers || (view.swarms !== undefined && view.swarms.length > 0));
     if (this.state === 'IDLE' && !canEngageOnSight) {
       if (this._picker.current === MANOEUVRE_FLEE) return this.tickFleeClear(self, view.tick);
@@ -2096,6 +2110,19 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   setEngageOnSight(on: boolean): void {
     this.engageOnSight = on;
   }
+
+  /** Hold fire on / off (RTS Part B slice 7): on ⇒ no target pick at all, so
+   *  no fire, no chase and no turning toward an attacker; the ship keeps
+   *  flying its job. Attackers still land on the retaliation ledger
+   *  (`markHostile`), so lifting it under Defensive answers one that hit
+   *  within `FORGET_TICKS`. Independent of `setEngageOnSight`, which keeps
+   *  the attitude to return to. Default off. Server-only. */
+  setHoldFire(on: boolean): void {
+    this.holdFire = on;
+  }
+
+  /** Test-visible: holding fire? */
+  isHoldingFire(): boolean { return this.holdFire; }
 
   /** Hunt on / off (RTS Part B slice 6): on lifts the guard leash and the
    *  move target, widens on-sight engagement to the sensor range, and with

@@ -382,6 +382,10 @@ export interface IAiBehaviour {
    *  retaliation ledger (Defensive); on (the default) ⇒ also what is hostile
    *  on sight (Aggressive). */
   setEngageOnSight?(on: boolean): void;
+  /** RTS hold fire (SERVER-ONLY): on ⇒ pick no target at all (no on-sight,
+   *  no retaliation, no trigger); the ship keeps flying its job. Attackers
+   *  are still recorded, so lifting it answers a recent one. */
+  setHoldFire?(on: boolean): void;
   /** RTS Hunt (SERVER-ONLY): no guard leash; with nothing to fight the ship
    *  searches the sector, then engages what it finds. A guard post ends it. */
   setHunt?(on: boolean): void;

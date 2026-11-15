@@ -42,11 +42,17 @@ describe the wingman brain flying, read this section instead.
   the post; patrol / escort / retreat hold where the hull is until their
   slices. The new `stanceSet` hook (`setStance`, and `restoreShip` with
   `modeSet`) → `applyHullStance`: Aggressive ⇒ `setEngageOnSight(true)`,
-  Defensive (the default) ⇒ off; hold fire is slice 7. Attach applies both,
+  Defensive (the default) ⇒ off; hold fire (slice 7) ⇒ `setHoldFire(true)`:
+  no target, no fire, no chase, the hull flies its job; every other stance
+  sets it false, so leaving hold fire restores that stance's attitude.
+  Retaliation marks keep landing (`ownedHullRetaliates`), so a switch to
+  Defensive answers a recent attacker. Attach applies both,
   so a restored Hunt / Aggressive ship resumes. An Aggressive ship engages
   anything hostile to its owner (`AiController.hostileToPlayer` =
   `npcHostileTo`). Lock: `ownedShipsHunt.test.ts`, `wingmanFights.test.ts`
-  "aggressive + hunt", `wingmanKillXp.test.ts`. The `rtsFleetScene` kill
+  "aggressive + hunt", `wingmanKillXp.test.ts`; hold fire: `wingmanFights.test.ts`
+  "holdFire" (no target pick, never inside `spawnClearance` of the drone).
+  The `rtsFleetScene` kill
   check stays skipped (first kill ~tick 1035 vs its 450-tick window; lock
   restarts on target switches are part of it). `wingmanFightsRobots` "five
   hunting" now kills all three cubes every run (32–49 s) but stays skipped:
@@ -98,7 +104,7 @@ describe the wingman brain flying, read this section instead.
   `wingmanFightsRobots.test.ts` "shield hits alone".
 - **Orders:** the facade's `orderIssued` hook forwards each ship's own order:
   `move` → hold at the point, `stop` → hold where it is (both end a Hunt).
-  Attack, hold fire and squads reach the brain in later slices.
+  Attack and squads reach the brain in later slices.
 - **Cost:** a hull brain decides every tick (60 Hz) like any AI pilot; the
   wingman re-planned at 10 Hz. The `rts-fleet` scene's
   `wingmanReplansPerTick` now counts hull brain decisions.
