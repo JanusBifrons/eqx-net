@@ -142,6 +142,43 @@ export class NavalHitHold {
     this.release(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, sink);
   }
 
+  /** Is `targetId`'s KILLING hit (hull to 0) still held for its drawn shell?
+   *  Only then does its death wait (`ColyseusClient` deferred kills): other
+   *  shells still in flight to it did not kill it (heavy-beam take 8). */
+  holdsKill(targetId: string): boolean {
+    for (let i = 0; i < this.count; i++) {
+      const e = this.held[i]!.evt;
+      if (e.targetId === targetId && e.newHealth <= 0) return true;
+    }
+    return false;
+  }
+
+  /**
+   * A beam (`laser_fired`) hit `targetId` at (x, y): a hit still held there
+   * unmatched was matched by position to a shell it did not come from (the
+   * beam's point lay on a live shell's path). Release it now: a hitscan hit
+   * shows on arrival. Returns whether one was released.
+   */
+  releaseHitAt(targetId: string, x: number, y: number, sink: HeldDamageSink): boolean {
+    let released = false;
+    let i = 0;
+    while (i < this.count) {
+      const h = this.held[i]!;
+      if (h.endTick < 0 && h.evt.targetId === targetId
+        && Math.abs(h.evt.hitX! - x) <= END_MATCH_EPS && Math.abs(h.evt.hitY! - y) <= END_MATCH_EPS) {
+        sink.applyHeldDamage(h);
+        const last = this.count - 1;
+        this.held[i] = this.held[last]!;
+        this.held[last] = h;
+        this.count = last;
+        released = true;
+        continue;
+      }
+      i++;
+    }
+    return released;
+  }
+
   /** Release every hit held for `targetId` now: the target was destroyed,
    *  and its explosion is not held, so a later release would put the number
    *  over the wreck after the blast (fight-clip review 2026-11-13). */

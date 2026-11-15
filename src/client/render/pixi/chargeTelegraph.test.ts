@@ -250,6 +250,33 @@ describe('rail-slot: the breech stays the breech; nothing projectile-like at the
     }
   });
 
+  // Rail take 7 (f252 vs f254): a white dot sat in the breech centre all
+  // through the charge (the bore glow, at the turret's pivot) and was gone
+  // the frame the gun fired: the breech changed look at the shot. The charge
+  // lives in the slot between the rails; nothing of it is drawn over the
+  // breech (behind where the rails start), at any level or while it holds.
+  it('nothing of the charge is drawn over the breech, behind where the rails start', () => {
+    const t = buildChargeTelegraph('battleship-rail', 200)!;
+    const rail = t.rails[i]!;
+    const g = rail.fill.parent!;
+    const check = (what: string): void => {
+      for (const c of g.children) {
+        if (!c.visible || c.alpha <= 0.01) continue;
+        // Pixi-up local: the muzzle is at −y, the breech (pivot) at 0.
+        const back = c.y + c.getLocalBounds().maxY * c.scale.y;
+        expect(back, `${what}: glow over the breech`).toBeLessThanOrEqual(rail.y0 + 1e-6);
+      }
+    };
+    for (const frac of [0.02, 0.1, 0.25, 0.5, 0.8, 1]) {
+      t.startTick = -1;
+      updateChargeTelegraph(t, 1 << i, 1000, 1000 + Math.round(chargeTicks * frac), 90_000, undefined, undefined, shots());
+      check(`charge ${frac}`);
+    }
+    updateChargeTelegraph(t, 0, undefined, 1000 + chargeTicks + 3, 90_000 + TICK_MS, undefined, undefined, shots());
+    expect(t.root.visible).toBe(true);
+    check('discharge hold');
+  });
+
   it('the charge front never reaches past the muzzle, and no bright head sits there at full or while it holds', () => {
     const t = buildChargeTelegraph('battleship-rail', 200)!;
     const rail = t.rails[i]!;

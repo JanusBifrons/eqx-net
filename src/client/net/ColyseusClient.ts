@@ -47,6 +47,7 @@ import { ShellBlastSchema } from '@shared-types/shellBlast';
 import { ShellEndSchema, ShellSalvoSchema, type ShellEnd } from '@shared-types/messages/shellEvents';
 import { ShellSalvoStore } from './shellSalvoStore';
 import { NavalHitHold, type HeldDamage } from './navalHitHold';
+import { DrawnShellTiming } from './drawnShellTiming';
 import { CollisionResolvedMessageSchema, HitAckSchema, DamageEventSchema, MissileFiredEventSchema, MissileDetonatedEventSchema, WallHitEventSchema, EntityStatsSchema, WarpWarningSchema, WarpWarningClearSchema, BaseReadySchema, ShipLevelUpEventSchema, ShipUpgradeAppliedEventSchema, MountActivatedEventSchema } from '@shared-types/messages';
 import { LootCollectedEventSchema, CargoDepositedEventSchema, NoticeEventSchema } from '@shared-types/messages/lootMessages';
 import { formatLootPickup, LOOT_FEED_TTL_MS, cargoChanged } from './lootView';
@@ -976,6 +977,16 @@ export class ColyseusGameClient {
    *  `[...this.mirror.lingeringShips.keys()]` (a per-snapshot array
    *  allocation). Cleared via `length = 0` at the eviction site. */
   private readonly _lingeringToEvictScratch: string[] = [];
+  /** Hits and kills wait for the drawn shell (`drawnShellTiming.ts`).
+   *  Declared before the router ctx below, which reads its `shipKills`. */
+  private readonly _shellTiming = new DrawnShellTiming({
+    mirror: () => this.mirror, store: () => this._shellStore,
+    hold: () => this._navalHitHold, sink: () => this._heldDamageSink,
+    shellEvents: () => this._shellEvents, now: () => this.gameClock.now(),
+    anchorTick: () => this.clockAnchorServerTick,
+    killSwarmEntity: (id) => this.killSwarmEntity(id), killEntity: (id) => this.killEntity(id),
+    despawnLinger: (id) => { if (this.predWorld) this.lingerBodies.despawn(id, this.predWorld); },
+  });
   /** Phase 4 (plan: quirky-rabbit) — class-field Set scratches replacing
    *  the per-call `new Set<string>()` literals at the syncMirror /
    *  updateLiveBeam sites. Each is cleared at the top of its consumer;
@@ -1018,6 +1029,7 @@ export class ColyseusGameClient {
     tryEnsureLingerPredBody: this._boundTryEnsureLingerPredBody,
     lingeringSeenScratch: this._lingeringSeenScratch,
     lingeringToEvictScratch: this._lingeringToEvictScratch,
+    keepLingering: this._shellTiming.shipKills,
   };
   /** 2026-05-26 heap-growth gate step 12 — pooled ctx for
    *  `preResetRemoteShips`. Same pattern as above; `predWorld` is the
@@ -1381,6 +1393,8 @@ export class ColyseusGameClient {
   private resetPredictionState(): void {
     // S2b: wrecks belong to the old sector (clears mirror.wrecks too).
     this._wrecks.clear();
+    // Deaths held for their drawn shell belong to the old sector too.
+    this._shellTiming.reset();
     // Fire control: NPC locks belong to the old sector.
     this.mirror.localLockedBy = NO_LOCKED_BY;
     // A new sector / ship: seed the energy pool again from the new ship.
@@ -1607,14 +1621,7 @@ export class ColyseusGameClient {
         this._wrecks.apply(msg.wrecks ?? NO_WRECK_LIST);
         this.mirror.wrecks = this._wrecks.descriptors;
       }
-      this._shellStore.clear();
-      this._navalHitHold.flush(this._heldDamageSink);
-      if (this._shellEvents) {
-        this.mirror.shellSalvos = this._shellStore.map;
-        for (const s of msg.shellsInFlight ?? []) this._shellStore.applySalvo(s);
-      } else {
-        this.mirror.shellSalvos = undefined;
-      }
+      this._shellTiming.onWelcome(this._shellEvents, msg.shellsInFlight);
       const idChanged = storedPlayerId && msg.playerId !== storedPlayerId;
       logEvent('cc_welcome', {
         playerId: msg.playerId,
@@ -1843,10 +1850,10 @@ export class ColyseusGameClient {
       const decodeStartMs = performance.now();
       if (raw instanceof ArrayBuffer) {
         if (bw) { bw.swarmBytes += raw.byteLength; bw.swarmPackets += 1; }
-        decodeSwarmPacket(raw, this.mirror, performance.now(), true);
+        decodeSwarmPacket(raw, this.mirror, performance.now(), true, this._shellTiming.swarmKills);
       } else if (ArrayBuffer.isView(raw)) {
         if (bw) { bw.swarmBytes += raw.byteLength; bw.swarmPackets += 1; }
-        decodeSwarmPacket(raw, this.mirror, performance.now(), true);
+        decodeSwarmPacket(raw, this.mirror, performance.now(), true, this._shellTiming.swarmKills);
       }
       this.syncSwarmIntoPredWorld();
       const decodeMs = performance.now() - decodeStartMs;
@@ -2047,6 +2054,7 @@ export class ColyseusGameClient {
     });
 
     room.onMessage('laser_fired', (evt: LaserFiredEvent) => {
+      this._shellTiming.onBeamFired(evt);
       // Own shots are already shown as liveBeams — only store remote ones.
       if (evt.shooterId === this.mirror.localPlayerId) return;
       const dx = evt.toX - evt.fromX;
@@ -2834,30 +2842,15 @@ export class ColyseusGameClient {
     // flash coincides with the drawn impact instead of leading it by the
     // display delay + RTT/2 (navalHitHold.ts). State above is never held.
     if (!showFx) return;
-    if (this._shellEvents && this._navalHitHold.maybeHold(
-      evt, suppressNumber, this._shellStore.map, this.gameClock.now(),
-    )) return;
+    if (this._shellTiming.holdHit(evt, suppressNumber)) return;
     this.applyDamageFx(evt, suppressNumber);
   }
 
-  /** A `shell_end`: mark the shells, and match held naval hits to it. */
-  private applyShellEnd(msg: ShellEnd): void {
-    this._shellStore.applyEnd(msg, this.mirror.pendingShellEnds ??= []);
-    if (this._navalHitHold.size === 0) return;
-    const now = this.gameClock.now();
-    for (const e of msg.e) this._navalHitHold.onShellEnd(e[1], e[2], e[3], now);
-  }
+  /** A `shell_end` (`DrawnShellTiming.onShellEnd`). */
+  private applyShellEnd(msg: ShellEnd): void { this._shellTiming.onShellEnd(msg); }
 
-  /** One frame of event shells at `displayTick`: draw, burst, and release
-   *  the held hits whose burst is now drawn (or whose safety ran out). */
-  private placeShells(displayTick: number): void {
-    if (this.mirror.projectiles) {
-      this._shellStore.place(this.mirror.projectiles, displayTick, this.mirror.pendingShellEnds ??= []);
-    }
-    if (this._navalHitHold.size > 0) {
-      this._navalHitHold.release(displayTick, this.gameClock.now(), this._heldDamageSink);
-    }
-  }
+  /** One frame of event shells at `displayTick` (`DrawnShellTiming.place`). */
+  private placeShells(displayTick: number): void { this._shellTiming.place(displayTick); }
 
   /** The FX half of a damage event with positive damage: hull flash,
    *  floating number, health-bar hit, impact spark. */
@@ -2976,9 +2969,11 @@ export class ColyseusGameClient {
     // the vaporise blast and holds no dying hull. Same key as explodingShips.
     if (evt.vaporised === true) this.mirror.vaporisedShips?.add(evt.targetId);
     if (evt.targetId.startsWith('swarm-')) {
+      if (this._shellTiming.deferKill(evt.targetId)) return;
       this.killSwarmEntity(evt.targetId);
       return;
     }
+    if (this._shellTiming.deferKill(evt.targetId)) return;
     this.killEntity(evt.targetId);
   }
 
@@ -4228,9 +4223,9 @@ export class ColyseusGameClient {
       }
     }
 
-    // Remove departed ships.
+    // Remove departed ships (not one whose death is held for its drawn shell).
     for (const key of this.mirror.ships.keys()) {
-      if (!seen.has(key)) {
+      if (!seen.has(key) && !this._shellTiming.shipKills.has(key)) {
         this.mirror.ships.delete(key);
         this.remoteHistory.delete(key);
         if (this.predRemoteShipIds.has(key)) {
@@ -4845,10 +4840,12 @@ export class ColyseusGameClient {
       this.ghostManager.update(this.gameFrameMs(), this.mirror.projectiles);
       // Shells as events (slice 2b): draw salvo shells at the display tick
       // (server tick estimate minus the remote-entity display delay), and
-      // burst them when the display reaches their hit.
+      // burst them when the display reaches their hit. At the FRAME's own
+      // time (RAF stamp), not `gameClock.now()` (shellFrameTime.test.ts).
       if (this._shellEvents) {
         const displayTick = this.clockAnchorServerTick
-          + (this.gameClock.now() - this.clockAnchorPerfNow) / SHELL_TICK_MS - SHELL_DISPLAY_DELAY_MS / SHELL_TICK_MS;
+          + (this.gameClock.at(frameNowMs ?? this.clock.now()) - this.clockAnchorPerfNow) / SHELL_TICK_MS
+          - SHELL_DISPLAY_DELAY_MS / SHELL_TICK_MS;
         this.placeShells(displayTick);
       }
 
