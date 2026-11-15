@@ -1,12 +1,13 @@
 import { Box } from '@mui/material';
-import VisibilityIcon from '@mui/icons-material/Visibility';
-import { useUIStore } from '../state/store';
+import ExploreIcon from '@mui/icons-material/Explore';
+import { selectControlMode, useUIStore } from '../state/store';
 
 /**
- * Phase 5 — an on-screen indicator that the player is in SPECTATOR mode (the
- * user's ask: "we need some visual indicator on the screen"). Shown only while
- * `pilotMode==='spectator'` in-game; the free-roam camera otherwise looks
- * identical to piloting, so without this there's no signal you've detached.
+ * An on-screen sign that the player is in COMMAND view (RTS slice 10; was
+ * "Spectating"): free camera over the fleet, every ship AI-flown. That's where
+ * normal play starts, where letting go of the controls lands, and where a
+ * destroyed ship drops you. Shown only in command view in-game; the free camera
+ * otherwise looks like flying, so without this there's no sign you've let go.
  * Discrete store read (Invariant #2). Tiny + unobtrusive.
  */
 
@@ -35,12 +36,12 @@ const SX = {
 
 export function SpectatorIndicator(): JSX.Element | null {
   const phase = useUIStore((s) => s.phase);
-  const pilotMode = useUIStore((s) => s.pilotMode);
-  if (phase !== 'game' || pilotMode !== 'spectator') return null;
+  const controlMode = useUIStore(selectControlMode);
+  if (phase !== 'game' || controlMode !== 'command') return null;
   return (
     <Box sx={SX} data-testid="spectator-indicator">
-      <VisibilityIcon />
-      Spectating
+      <ExploreIcon />
+      Command view
     </Box>
   );
 }

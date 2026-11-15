@@ -8,7 +8,7 @@
  * `entity_stats` handler mutates THIS singleton in place, and the
  * `EntityStatsPanel` POLLS it (every 150 ms, committing a re-render only on
  * change) for the numbers. Only the discrete
- * `selectedEntityId` lives in Zustand (panel visibility) — invariant #2: the
+ * `selection.focusId` lives in Zustand (panel visibility) — invariant #2: the
  * id is a discrete string, and hp/shield are non-spatial scalars.
  *
  * `id` echoes the selected entity id so the panel can ignore a stats packet

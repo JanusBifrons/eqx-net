@@ -1,6 +1,6 @@
 import { Application, Graphics, Container, RenderLayer, type Texture } from 'pixi.js';
 import { Camera } from './worker/Camera';
-import type { IRenderer, RenderMirror, RendererFeedback } from '@core/contracts/IRenderer';
+import type { FleetOverlayModel, FleetOverlayShip, FleetPickKindWire, IRenderer, RenderMirror, RendererFeedback } from '@core/contracts/IRenderer';
 import { GameClock } from '@core/clock/GameClock';
 import { GalaxyMapLayer } from './galaxy/GalaxyMapLayer';
 import { type WarpParams, type WarpCenter, type FrameMarkers } from './worker/protocol';
@@ -32,7 +32,13 @@ import { SelectionBracket } from './SelectionBracket';
 import { AimFeedbackRenderer } from './AimFeedbackRenderer';
 import { HoverBracket } from './HoverBracket';
 import { pickEntityAt, type PickedEntityKind } from './pickEntity';
-import { decideLingeringSpriteAction, decideExplosionPosition, type SpriteDecision } from './spriteUpdateDecisions';
+import { CommandPointerRouter, type BoxRect, type HoldArmed, type RouterAction, type RouterPointerEvent } from './input/commandPointerRouter.js';
+import { decideTapAction, type FleetOrderMode } from './input/tapAction.js';
+import { DoubleTapTracker } from './input/doubleTap.js';
+import { createFleetPickState, decidePickTap, pickAddPoint, pickFinishPatrol, pickStart, type FleetPickResult } from './input/fleetPick.js';
+import { applySelection, boxSelectOwn, collectFleetShips, focusSurvives, isOwnShipPresent, pickOwnShipAt, sameSelection, tapSelectOwn } from './fleetSelection.js';
+import { FleetOverlay, type OrderFlash } from './FleetOverlay.js';
+import { decideExplosionPosition } from './spriteUpdateDecisions';
 import { shouldLatchFirstFrame } from './firstFrameLatch.js';
 import { EffectsService, effectsDisabledByUrl } from '../effects/EffectsService';
 import { readFxKillSwitches, type FxKillSwitches } from './fxKillSwitches';
@@ -61,7 +67,7 @@ import { FxFences, FxShields } from './art/fx/FxShields.js';
 import { DEFAULT_SHIP_KIND } from '../../shared-types/shipKinds.js';
 import { shieldBubbleRadiusForEntity } from './pixi/shieldBubbleRadius.js';
 import { ART_OFF, type ArtOptions } from './art/artMode.js';
-import { buildArtShipSprite, isMachinedSprite, ownerLivery, shipArtSwap, shipHandleFor, updateArtShipLight, type ShipArtCtx } from './art/shipArtSprites.js';
+import { isMachinedSprite, updateArtShipLight, type ShipArtCtx } from './art/shipArtSprites.js';
 import { BeamSpritePool, type BeamView, type BeamSpriteStyle } from './BeamSpritePool';
 import {
   CameraDirector,
@@ -79,10 +85,7 @@ import { BackgroundGrid } from './BackgroundGrid';
 import { StarfieldBackground } from './StarfieldBackground';
 import { logEvent, isDiagEnabled } from '../debug/ClientLogger';
 import { getShipKind } from '../../shared-types/shipKinds';
-import { shipPrimaryColor } from '@core/geometry/shipHullOutline';
 import {
-  buildShipGfxFromShape,
-  shapeForKind,
   buildGhostGfx,
   applyMountOffset,
   buildExplosionGfx,
@@ -92,6 +95,9 @@ import { getStructureKind } from '@shared-types/structureKinds';
 import { setCanvasPointerCapture } from './pointerCapture.js';
 import { FrameTimeRing } from '@core/perf/FrameTimeRing';
 import { localCameraKey } from './camera/localCameraKey';
+import { isParkedHull } from './shipOwnership.js';
+import { warpFxFeedsShip } from './warpFxGate.js';
+import { forEachShipRekey, moveKey, moveSetKey, probeIdentity } from './shipRekey.js';
 import type { RenderPerfReading, PerfProbeOp, RenderCountReading } from '@core/contracts/IRenderer';
 
 // Most colour + builder constants moved to pixi/spriteBuilders.ts;
@@ -212,6 +218,35 @@ export class PixiRenderer implements IRenderer {
    *  wherever the player panned it (and there may be no local ship at all). */
   private _spectator = false;
   /**
+   * RTS command view (slice 13a). Enabled while spectating (command mode);
+   * decides what a pointer gesture means (camera / box / tap-select / order).
+   */
+  private readonly _cmdRouter = new CommandPointerRouter(false);
+  /** Own-ship fleet selection (ids per the pick convention). Replaced (never
+   *  mutated) on a gesture; pruned in place in `update()` when a ship leaves. */
+  private _selShips: Set<string> = new Set();
+  /** RTS slice 10: double tap / click on an own parked ship = take the controls. */
+  private readonly _doubleTap = new DoubleTapTracker();
+  /** Drag box in screen px while a box gesture is live (reused object). */
+  private readonly _fleetBoxRect: BoxRect = { x0: 0, y0: 0, x1: 0, y1: 0 };
+  private _fleetBoxActive = false;
+  private readonly _orderFlash: OrderFlash = { x: 0, y: 0, attack: false, t0: -1 };
+  /** Touch tap-order mode (slice 12), pushed from the strip's Zustand toggle. */
+  private _fleetOrderMode: FleetOrderMode = 'move';
+  /** "Pick on the map" for patrol / escort / retreat (slice 14b). While a
+   *  kind is set, map taps go here and never change the selection. */
+  private readonly _fleetPick = createFleetPickState();
+  /** Own ships' squads + orders by id (slice 15a), replaced on each
+   *  `setFleetOverlayModel` (main-thread fleet status version change). */
+  private _fleetModel: Map<string, FleetOverlayShip> = new Map();
+  private readonly _squadOf = (id: string): string | null | undefined => this._fleetModel.get(id)?.squadId;
+  /** Hold-to-box cue scratch (reused per frame). */
+  private readonly _holdArmed: HoldArmed = { x: 0, y: 0, armedMs: 0 };
+  private fleetOverlay: FleetOverlay | null = null;
+  private readonly _fleetProject = (wx: number, wy: number, out: { x: number; y: number }): void => {
+    this.camera.toScreenInto(wx, wy, out);
+  };
+  /**
    * Click-to-inspect selection (structures follow-up Item B2). The renderer
    * OWNS the selected entity — set on a gameplay tap that resolves to an
    * entity, toggled off on a re-tap of the SAME entity, cleared on an
@@ -219,8 +254,8 @@ export class PixiRenderer implements IRenderer {
    * (the main thread mirrors it into Zustand for panel visibility). The id form
    * matches the `HealthBarManager`/`SelectionBracket` lookup convention.
    */
-  private _selectedId: string | null = null;
-  private _selectedKind: PickedEntityKind | null = null;
+  private _focusId: string | null = null;
+  private _focusKind: PickedEntityKind | null = null;
   /** WS-10 (R2.4) — the entity the desktop pointer is HOVERING over (set from
    *  pointer-move via `pickEntityAt`). Renderer-local, NEVER Zustand (updates at
    *  move cadence — invariant #2). Drives the lighter `HoverBracket` outline. */
@@ -302,7 +337,6 @@ export class PixiRenderer implements IRenderer {
     const shown = this._artShown;
     shown.clear();
     for (const sp of this.sprites.values()) noteShownArt(sp, shown);
-    for (const e of this.lingeringSprites.values()) noteShownArt(e.sprite, shown);
     art.collect(inUse, shown);
     inUse.clear();
     shown.clear();
@@ -425,21 +459,19 @@ export class PixiRenderer implements IRenderer {
   private readonly swarmPoseScratch: InterpolatedPose = { x: 0, y: 0, angle: 0 };
   /** 2026-05-25 heap-growth gate step 6 — persistent scratches for the
    *  five containers `update()` allocated per frame (60-90 Hz). Each
-   *  is `.clear()`'d at the start of `update()` and refilled. The
-   *  `lingeringPosesView` Map's per-entry `{x, y}` literals are also
-   *  pooled via `_explosionPoseEntries` (grow-once, reused thereafter).
+   *  is `.clear()`'d at the start of `update()` and refilled.
    *  Pre-fix: 5 containers + N{x,y} entries per frame = real allocator
    *  pressure under combat (see capture lnnkkh, 2026-05-25). */
   private readonly _updateSeenScratch = new Set<string>();
   /** Dying capitals drawn at their last pose until their wreck pieces are
    *  (capital-breakup take B, 2026-11-13: the hull vanished ~0.5 s first). */
   private readonly _dyingHulls = new DyingHullHold();
-  /** Sprite key → the ship kind it was built for (active, swarm, parked).
+  /** Sprite key → the ship kind it was built for (every ship, swarm).
    *  Bound once (no per-frame closure, #14). */
   private readonly _spriteShipKind = (id: string): string | null | undefined => {
     const sp = this.sprites.get(id);
     if (sp !== undefined) return shipSpriteKinds.get(sp) ?? this._swarmSpriteSigs.get(id)?.shipKind;
-    return this.lingeringSprites.get(id)?.kind;
+    return undefined;
   };
   /** The sweep's per-id cleanup; `held` keeps the turret cluster on the
    *  still-drawn sprite. Bound once (#14). */
@@ -451,6 +483,50 @@ export class PixiRenderer implements IRenderer {
     this._swarmSpriteSigs.delete(id); // campaign 3.2 — drop build signature with the sprite
     this._artCtx.handles.delete(id); // Machined art — drop the handle with the sprite
   };
+  /** Bound once (#14): the per-pair step of `applyShipRekeys`. */
+  private readonly _rekeyShip = (from: string, to: string): void => {
+    this.rekeyShip(from, to);
+  };
+
+  /**
+   * RTS Part A seamless hand-over: a ship's mirror key changed (someone took
+   * or let go of its controls; `ColyseusClient.rekeyShip` queued the pair on
+   * `mirror.pendingShipRekeys`, which crosses the worker boundary with the
+   * mirror). Every per-ship piece of renderer state MOVES to the new key, so
+   * `updateShipSprites` finds the ship's sprite already built and the sweep
+   * never destroys it: same sprite and art handle, same turret cluster (guns,
+   * recoil, angles), health bar, label, exhaust, shield view, selection.
+   * A stale sprite under `to` is torn down first, exactly as the sweep would.
+   * Legacy effects (engine particles, shield ring) re-register by id on their
+   * own each frame; their visuals don't depend on the key's history.
+   */
+  private rekeyShip(from: string, to: string): void {
+    if (from === to) return;
+    const sprite = this.sprites.get(from);
+    if (sprite === undefined) return;
+    const stale = this.sprites.get(to);
+    if (stale !== undefined) {
+      this.sprites.delete(to);
+      stale.parent?.removeChild(stale);
+      this._forgetSprite(to, false);
+      stale.destroy({ children: true });
+    }
+    moveKey(this.sprites, from, to);
+    moveKey(this._artCtx.handles, from, to);
+    this.mountVisuals.rekeyShip(from, to);
+    this.healthBars?.rekey(from, to);
+    this.labels?.rekey(from, to);
+    this._farIcons.forgetShip(from, sprite);
+    this._fxEngines?.rekey(from, to);
+    this._fxShields?.rekey(from, to);
+    if (this._focusId === from) this._focusId = to;
+    if (this._hoveredId === from) this._hoveredId = to;
+    if (moveSetKey(this._selShips, from, to)) this.publishFleetSelection();
+    this._shipRekeysApplied++;
+  }
+
+  /** Re-keys this renderer has applied (diagnostic / E2E). */
+  private _shipRekeysApplied = 0;
   /** P3.8 — per-structure slewed mount (barrel/drill) arc-local angles, keyed by
    *  `swarm-<entityId>`. Persists across frames so the structure barrel SLEWS
    *  toward its target (rotateMountToward) instead of SNAPPING in one frame (the
@@ -486,8 +562,6 @@ export class PixiRenderer implements IRenderer {
   private readonly _directorLookup: CameraTargetLookup = this.createDirectorLookup();
   private readonly _updateRemoteHitTargetsScratch = new Set<string>();
   private readonly _updateLocalHitTargetsScratch = new Set<string>();
-  private readonly _updateLingeringPosesView = new Map<string, { x: number; y: number }>();
-  private readonly _updateLingeringPoseEntries: { x: number; y: number }[] = [];
   private readonly _updateProjSeenScratch = new Set<string>();
   /** 2026-05-26 heap-growth gate step 12 — pooled per-frame ctx objects
    *  for the extracted sprite updaters. Pre-fix each `update()` call
@@ -561,6 +635,18 @@ export class PixiRenderer implements IRenderer {
     helmCourseSeq: 0,
     helmCourseX: 0,
     helmCourseY: 0,
+    fleetSelSeq: 0,
+    fleetSelIds: [],
+    orderSeq: 0,
+    orderKind: 'move',
+    orderX: 0,
+    orderY: 0,
+    orderTargetId: null,
+    takeControlsSeq: 0,
+    takeControlsId: null,
+    fleetPickPoints: 0,
+    fleetPickSeq: 0,
+    fleetPickResult: null,
     placementPreviewConnectionCount: 0,
     selectedPickId: null,
     selectedPickKind: null,
@@ -1078,12 +1164,10 @@ export class PixiRenderer implements IRenderer {
         // updateSwarmSprites). Returns null for entities not in the
         // sprite map (despawned, never spawned, off-interest).
         getEntityPose: (entityId: string) => {
-          // Active ships + drones live in `this.sprites`; PARKED lingering hulls
-          // live in the SEPARATE `this.lingeringSprites` map. Effects registered
-          // for a lingering hull (the shield aura — P3.12 / WS-C3) must resolve
-          // its pose too, or the ring registers but `ShieldAura` hides it every
-          // frame (the "lingering ships don't draw a shield" bug). Fall back.
-          const sp = this.sprites.get(entityId) ?? this.lingeringSprites.get(entityId)?.sprite;
+          // Every ship (parked hulls too, RTS Part A S3) + drones live in
+          // `this.sprites`, so a parked hull's shield aura resolves its pose
+          // (P3.12 / WS-C3: the "lingering ships don't draw a shield" bug).
+          const sp = this.sprites.get(entityId);
           if (!sp) return null;
           // Pure seam helper: converts the Pixi sprite pose BACK to game
           // space (Y-up, angle un-negated). Mutates the reused scratch so
@@ -1107,6 +1191,8 @@ export class PixiRenderer implements IRenderer {
     // Incoming-fire markers sit under the radar's edge icons.
     this.incomingFire.init(this.camera);
     this.helmMarker.init(this.camera);
+    // RTS command view: selection rings / drag box / order flash, screen space.
+    this.fleetOverlay = new FleetOverlay(this.app.stage);
     this.halo.init(this.camera);
     this.halo.setIncoming(this.incomingFire);
     // Damage numbers attach to the world (pan with camera, anchored at
@@ -1117,10 +1203,10 @@ export class PixiRenderer implements IRenderer {
     this.levelUpIcons = new LevelUpIconManager(this.world, this.camera);
     this.healthBars = new HealthBarManager(this.world);
     this.labels = new LabelManager(this.world, !this._cleanWorld);
-    // Click-to-inspect selection bracket (Item B4). Parented to the world
-    // container (camera-transformed, world space like the health bars) so the
-    // 4-corner bracket tracks the selected entity as it (and the camera) moves.
-    this.selectionBracket = new SelectionBracket(this.world);
+    // THE selection marker (Item B4; RTS Part A): one 4-corner bracket per
+    // selected entity, screen space on the stage like the fleet overlay, drawn
+    // in the ticker after the camera tick (`drawFleetOverlay`).
+    this.selectionBracket = new SelectionBracket(this.app.stage);
     this.hoverBracket = new HoverBracket(this.world);
     this.aimFeedback = new AimFeedbackRenderer(this.world);
 
@@ -1129,6 +1215,10 @@ export class PixiRenderer implements IRenderer {
       // deltaMS keeps the Camera's zoom-ease framerate-independent
       // (60 / 90 / 120 Hz devices ease at the same wall-clock rate).
       this.camera.tick(this.app.ticker.deltaMS);
+      // Screen-space overlays project through THIS frame's camera (after its
+      // tick), the transform the world renders with below.
+      this.drawFleetOverlay();
+      if (this._ringProbeOn) this.captureFleetRingProbe();
       // Machined art: pack finished bakes every frame — including on the
       // galaxy map / warp screen, where `update()` doesn't run, so the
       // warm-up lands before the player joins.
@@ -1221,7 +1311,7 @@ export class PixiRenderer implements IRenderer {
    * Worker-context entry point for synthesised pointer events forwarded
    * from the main thread. The Camera consumes via its state machine.
    */
-  forwardPointerEvent(e: { type: string; pointerId: number; offsetX: number; offsetY: number; stamp: number; button?: number; pointerType?: string }): void {
+  forwardPointerEvent(e: { type: string; pointerId: number; offsetX: number; offsetY: number; stamp: number; button?: number; buttons?: number; shiftKey?: boolean; pointerType?: string }): void {
     // Galaxy selector (spawn/warp picker) owns pointer input for free
     // pan/zoom; a tap is resolved to a sector inside the layer. Otherwise
     // the world camera consumes it (gameplay pan/zoom + tap).
@@ -1241,39 +1331,364 @@ export class PixiRenderer implements IRenderer {
       this.routePlacementPointer(e.type, e.offsetX, e.offsetY, e.button ?? -1, e.pointerType ?? 'mouse');
       return;
     }
-    switch (e.type) {
+    // RTS command view (slice 13a): the router decides camera / box / select /
+    // order. Its `camera` actions run the camera below with taps ignored.
+    if (this.commandRoutingActive()) {
+      this.routeCommandPointer(e.type, e.pointerId, e.offsetX, e.offsetY, e.stamp,
+        e.button ?? 0, e.buttons ?? 0, e.shiftKey === true, e.pointerType ?? 'mouse');
+      return;
+    }
+    const wasTap = this.cameraPointer(e.type, e.pointerId, e.offsetX, e.offsetY, e.stamp);
+    if (wasTap) {
+      // Confirmed tap (single pointer, short duration, small distance):
+      // route to the registered tap-handler. The worker uses this to
+      // hit-test the GalaxyMapLayer (since Pixi's event subsystem
+      // isn't initialised without a DOM event source).
+      if (this.onTap) this.onTap(e.offsetX, e.offsetY);
+      // Click-to-inspect (Item B2): a gameplay tap selects an entity, gated
+      // off galaxy + placement so it never cross-fires with warp/picker/build.
+      if (!this.galaxyTapSuppressed() && !this._placementActive) {
+        this.handleGameplayTap(e.offsetX, e.offsetY);
+      }
+    }
+  }
+
+  /**
+   * The camera half of pointer handling (both render paths). Returns the
+   * camera's `wasTap` on pointerup; callers decide whether a tap means anything
+   * (command view ignores it: the router owns taps there).
+   */
+  private cameraPointer(type: string, pointerId: number, x: number, y: number, stamp: number): boolean {
+    switch (type) {
       case 'pointerdown':
-        this.camera.onPointerDown(e.pointerId, e.offsetX, e.offsetY, e.stamp);
-        break;
+        this.camera.onPointerDown(pointerId, x, y, stamp);
+        return false;
       case 'pointermove':
-        this.camera.onPointerMove(e.pointerId, e.offsetX, e.offsetY);
+        this.camera.onPointerMove(pointerId, x, y);
         // WS-10 (R2.4) — desktop hover outline. Renderer-local; gated like
         // selection so it never fires over the galaxy layer / during placement.
         if (!this.galaxyTapSuppressed() && !this._placementActive) {
-          this.handleGameplayHover(e.offsetX, e.offsetY);
+          this.handleGameplayHover(x, y);
         }
-        break;
-      case 'pointerup': {
-        const result = this.camera.onPointerUp(e.pointerId, e.offsetX, e.offsetY, e.stamp);
-        // Confirmed tap (single pointer, short duration, small distance):
-        // route to the registered tap-handler. The worker uses this to
-        // hit-test the GalaxyMapLayer (since Pixi's event subsystem
-        // isn't initialised without a DOM event source).
-        if (result.wasTap && this.onTap) {
-          this.onTap(e.offsetX, e.offsetY);
-        }
-        // Click-to-inspect (Item B2): a gameplay tap selects an entity, gated
-        // off galaxy + placement so it never cross-fires with warp/picker/build.
-        if (result.wasTap && !this.galaxyTapSuppressed() && !this._placementActive) {
-          this.handleGameplayTap(e.offsetX, e.offsetY);
-        }
-        break;
-      }
+        return false;
+      case 'pointerup':
+        return this.camera.onPointerUp(pointerId, x, y, stamp).wasTap;
       case 'pointercancel':
       case 'pointerleave':
-        this.camera.onPointerCancel(e.pointerId);
-        break;
+        this.camera.onPointerCancel(pointerId);
+        return false;
     }
+    return false;
+  }
+
+  /** Command view routes pointers through the router (never over the galaxy
+   *  overlay, whose taps stay warp taps; placement is routed before this). */
+  private commandRoutingActive(): boolean {
+    return this._cmdRouter.enabled && !this.galaxyTapSuppressed() && !this._placementActive;
+  }
+
+  private routeCommandPointer(
+    type: string, pointerId: number, x: number, y: number, stamp: number,
+    button: number, buttons: number, shiftKey: boolean, pointerType: string,
+  ): void {
+    if (type === 'pointerleave') {
+      // Not a router event: a leave after a lift is noise, and a live gesture
+      // keeps going (the DOM path captures the pointer in command view).
+      return;
+    }
+    if (type !== 'pointerdown' && type !== 'pointermove' && type !== 'pointerup' && type !== 'pointercancel') return;
+    // Allocated per input event (not a frame-loop path): the router keeps the
+    // down event of a gesture by reference.
+    const ev: RouterPointerEvent = { type, pointerId, button, buttons, x, y, shiftKey, pointerType, timeMs: stamp };
+    const actions = this._cmdRouter.handle(ev);
+    for (let i = 0; i < actions.length; i++) this.applyRouterAction(actions[i]!);
+  }
+
+  private applyRouterAction(a: RouterAction): void {
+    if (this._fleetPick.kind !== null && a.kind !== 'camera') {
+      this.applyPickRouterAction(a);
+      return;
+    }
+    switch (a.kind) {
+      case 'camera':
+        this.cameraPointer(a.ev.type, a.ev.pointerId, a.ev.x, a.ev.y, a.ev.timeMs);
+        return;
+      case 'boxStart':
+      case 'boxUpdate':
+        this._fleetBoxRect.x0 = a.x0; this._fleetBoxRect.y0 = a.y0;
+        this._fleetBoxRect.x1 = a.x1; this._fleetBoxRect.y1 = a.y1;
+        this._fleetBoxActive = true;
+        return;
+      case 'boxCancel':
+        this._fleetBoxActive = false;
+        return;
+      case 'boxEnd':
+        this._fleetBoxActive = false;
+        this.commandBoxSelect(a.x0, a.y0, a.x1, a.y1, a.additive);
+        return;
+      case 'tapSelect':
+        this.commandTap(a.x, a.y, a.additive, a.pointerType);
+        return;
+      case 'order':
+        this.commandOrder(a.x, a.y);
+        return;
+    }
+  }
+
+  /**
+   * Router actions while a fleet pick is on (slice 14b): a tap (or a box
+   * gesture's end, which a finger easily makes) is a pick, never a selection;
+   * a mouse right-click is Done for a patrol and a pick otherwise. Boxes are
+   * not drawn.
+   */
+  private applyPickRouterAction(a: RouterAction): void {
+    switch (a.kind) {
+      case 'tapSelect':
+      case 'order':
+        if (a.kind === 'order' && this._fleetPick.kind === 'patrol') {
+          this.commitFleetPick();
+          return;
+        }
+        this.pickTap(a.x, a.y);
+        return;
+      case 'boxStart':
+      case 'boxUpdate':
+      case 'boxCancel':
+      case 'boxEnd':
+        this._fleetBoxActive = false;
+        return;
+      case 'camera':
+        return;
+    }
+  }
+
+  /** A map tap during a fleet pick (`decidePickTap`). */
+  private pickTap(screenX: number, screenY: number): void {
+    const m = this._lastMirror;
+    if (m === null) return;
+    const w = this.camera.screenToWorld(screenX, screenY);
+    const gx = w.x;
+    const gy = -w.y;
+    const pick = this._fleetPick;
+    const own = pick.kind === 'escort' ? pickOwnShipAt(gx, gy, collectFleetShips(m), m.localPlayerId) : null;
+    switch (decidePickTap(pick.kind, own, own !== null && this._selShips.has(own), pick.count)) {
+      case 'addPoint':
+        pickAddPoint(pick, gx, gy);
+        this.feedback.fleetPickPoints = pick.count;
+        return;
+      case 'retreatHere':
+        this.publishPickResult({ kind: 'retreat', x: gx, y: gy });
+        return;
+      case 'escortShip':
+        this.publishPickResult({ kind: 'escort', escortId: own! });
+        return;
+      case 'ignore':
+        return;
+    }
+  }
+
+  /** End the pick and hand its result to the main thread (sent once per seq). */
+  private publishPickResult(result: FleetPickResult): void {
+    pickStart(this._fleetPick, null);
+    const fb = this.feedback;
+    fb.fleetPickPoints = 0;
+    fb.fleetPickResult = result;
+    fb.fleetPickSeq++;
+  }
+
+  /** Box (screen px) → own ships whose centre is inside it (game space). */
+  private commandBoxSelect(x0: number, y0: number, x1: number, y1: number, additive: boolean): void {
+    const m = this._lastMirror;
+    if (m === null) return;
+    const a = this.camera.screenToWorld(x0, y0);
+    const b = this.camera.screenToWorld(x1, y1);
+    const hits = boxSelectOwn(a.x, -a.y, b.x, -b.y, collectFleetShips(m), m.localPlayerId, this._squadOf);
+    // The focus stays only if it is still one of the selected ships.
+    this.setSelection(applySelection(this._selShips, hits, additive), this._focusId, this._focusKind);
+  }
+
+  /** Command-view tap (`decideTapAction`): an own ship selects it; a touch/pen
+   *  tap with a selection gives an order per `_fleetOrderMode`; otherwise it
+   *  falls through to the inspect select (a plain tap clears the selection). */
+  private commandTap(screenX: number, screenY: number, additive: boolean, pointerType: string): void {
+    const m = this._lastMirror;
+    if (m === null) return;
+    const w = this.camera.screenToWorld(screenX, screenY);
+    const gx = w.x;
+    const gy = -w.y;
+    const fleet = collectFleetShips(m);
+    const own = pickOwnShipAt(gx, gy, fleet, m.localPlayerId);
+    const touchOrder = own === null && pointerType !== 'mouse' && this._selShips.size > 0;
+    // Pick only when an order needs to know what is under the finger.
+    const hit = touchOrder ? pickEntityAt(gx, gy, m) : null;
+    const attackable = hit !== null && this.isAttackable(hit.id, hit.kind, m);
+    const action = decideTapAction({
+      pointerType,
+      hitOwn: own !== null,
+      hitEntity: hit !== null,
+      hitAttackable: attackable,
+      hasSelection: this._selShips.size > 0,
+      orderMode: this._fleetOrderMode,
+      additive,
+    });
+    // RTS slice 10: a second tap on the same own PARKED ship (not the active
+    // one, which is flown already) takes its controls. Any other tap breaks
+    // the pair.
+    const parked = own !== null && own !== m.localPlayerId ? own : null;
+    // eslint-disable-next-line no-restricted-properties -- real time: pointer stamps are Date.now() (both paths)
+    if (this._doubleTap.tap(parked, Date.now(), screenX, screenY)) {
+      this.feedback.takeControlsId = parked;
+      this.feedback.takeControlsSeq++;
+      return;
+    }
+    switch (action) {
+      case 'select': {
+        // Slice 15a: whole squad; a tap on an exactly-selected squad narrows.
+        // The tapped ship becomes the focus (its details panel); shift-tapping
+        // it off keeps the old focus if that is still selected.
+        const next = tapSelectOwn(this._selShips, own!, additive, fleet, m.localPlayerId, this._squadOf);
+        if (next.has(own!)) {
+          const entry = m.ships.get(own!);
+          this.setSelection(next, own, entry !== undefined && isParkedHull(m, own!, entry) ? 'lingering' : 'ship');
+        } else {
+          this.setSelection(next, this._focusId, this._focusKind);
+        }
+        return;
+      }
+      case 'orderMove':
+        this.publishOrder(gx, gy, null);
+        return;
+      case 'orderAttack':
+        this.publishOrder(gx, gy, hit!.id);
+        return;
+      case 'none':
+        return;
+      case 'deselect':
+        this.setSelection(new Set(), null, null);
+        this.handleGameplayTap(screenX, screenY);
+        return;
+      case 'inspect':
+        this.handleGameplayTap(screenX, screenY);
+        return;
+    }
+  }
+
+  /** Not own, not an asteroid: something the fleet can be told to attack. */
+  private isAttackable(id: string, kind: string, m: RenderMirror): boolean {
+    return kind !== 'asteroid' && !this._selShips.has(id) && !isOwnShipPresent(id, m);
+  }
+
+  /** Command-view right-click: attack a non-own entity under the cursor, else
+   *  move to the point. Needs a selection. */
+  private commandOrder(screenX: number, screenY: number): void {
+    const m = this._lastMirror;
+    if (m === null || this._selShips.size === 0) return;
+    const w = this.camera.screenToWorld(screenX, screenY);
+    const gx = w.x;
+    const gy = -w.y;
+    const hit = pickEntityAt(gx, gy, m);
+    this.publishOrder(gx, gy, hit !== null && this.isAttackable(hit.id, hit.kind, m) ? hit.id : null);
+  }
+
+  /** Publish an order via feedback (`gameRafLoop` sends it once per seq):
+   *  attack `targetId`, or move to (gx, gy) game space when null. */
+  private publishOrder(gx: number, gy: number, targetId: string | null): void {
+    const attack = targetId !== null;
+    const fb = this.feedback;
+    fb.orderKind = attack ? 'attack' : 'move';
+    fb.orderTargetId = targetId;
+    fb.orderX = gx;
+    fb.orderY = gy;
+    fb.orderSeq++;
+    this._orderFlash.x = gx;
+    this._orderFlash.y = gy;
+    this._orderFlash.attack = attack;
+    // eslint-disable-next-line no-restricted-properties -- real time: the order flash is UI
+    this._orderFlash.t0 = performance.now();
+  }
+
+  /**
+   * THE selection (RTS Part A: one selection concept): the selected ships
+   * (`_selShips`, each gets the same `SelectionBracket` marker) and the focus
+   * (`_focusId/_focusKind`, the entity whose details panel shows: the one you
+   * clicked). Rule: with ships selected, the focus is one of them or null;
+   * with none it can be anything you tapped. Publishes the ship set only when
+   * it changed; the focus is published every frame in `update()`.
+   */
+  private setSelection(nextShips: Set<string>, focusId: string | null, focusKind: PickedEntityKind | null): void {
+    const keepFocus = focusSurvives(nextShips, focusId);
+    this._focusId = keepFocus ? focusId : null;
+    this._focusKind = keepFocus ? focusKind : null;
+    if (sameSelection(this._selShips, nextShips)) return;
+    this._selShips = nextShips;
+    this.publishFleetSelection();
+  }
+
+  /** Focus an entity (inspect tap). Focusing one that is not a selected ship
+   *  ends the ship selection (the rule in {@link setSelection}). */
+  private setFocus(id: string | null, kind: PickedEntityKind | null): void {
+    if (id !== null && this._selShips.size > 0 && !this._selShips.has(id)) this.setSelection(new Set(), id, kind);
+    else this.setSelection(this._selShips, id, kind);
+  }
+
+  /**
+   * Per frame: drop selected ids that are no longer own ships in the mirror
+   * (in place, no allocation unless one went); a dropped focus goes with them.
+   * The markers and the overlay are drawn in the ticker, after this frame's
+   * camera tick.
+   */
+  private updateFleetSelection(mirror: RenderMirror): void {
+    if (this._selShips.size > 0) {
+      let pruned = false;
+      for (const id of this._selShips) {
+        if (!isOwnShipPresent(id, mirror)) {
+          this._selShips.delete(id);
+          if (id === this._focusId) {
+            this._focusId = null;
+            this._focusKind = null;
+          }
+          pruned = true;
+        }
+      }
+      if (pruned) this.publishFleetSelection();
+    }
+  }
+
+  /**
+   * Redraw the selection markers and the command-view overlay (box, order
+   * lines, flash, hold cue, pick route). Runs in the Pixi ticker AFTER
+   * `camera.tick`, right before the frame renders, so both project through
+   * the SAME camera transform the world is drawn with this frame. The overlay
+   * used to run inside `update()`, i.e. with the camera as it stood BEFORE
+   * this frame's tick: during a pan or a glide every marker sat a frame of
+   * camera motion (~20 px) off its ship and the ships "snapped into" them
+   * when the camera stopped (RTS review 2026-11-14; lock
+   * `tests/e2e/fleet-overlay-camera.spec.ts`).
+   */
+  private drawFleetOverlay(): void {
+    const mirror = this._lastMirror;
+    if (mirror === null) return;
+    this.selectionBracket?.draw(mirror, this._selShips, this._focusId, this._fleetProject, this.camera.scale.x);
+    if (this.fleetOverlay === null) return;
+    this.fleetOverlay.update(
+      mirror,
+      this._selShips,
+      this._fleetBoxActive ? this._fleetBoxRect : null,
+      this._orderFlash,
+      // eslint-disable-next-line no-restricted-properties -- real time: the selection overlay is UI
+      performance.now(),
+      this._fleetProject,
+      // eslint-disable-next-line no-restricted-properties -- real time: pointer stamps are Date.now() (both paths)
+      this._cmdRouter.holdArmedAt(Date.now(), this._holdArmed),
+      this._fleetModel,
+      this._fleetPick,
+    );
+  }
+
+  private publishFleetSelection(): void {
+    // Allocates on a selection change only (a gesture or a ship leaving).
+    this.feedback.fleetSelIds = Array.from(this._selShips);
+    this.feedback.fleetSelSeq++;
   }
 
   /**
@@ -1351,33 +1766,22 @@ export class PixiRenderer implements IRenderer {
         this.routePlacementPointer(e.type, e.offsetX, e.offsetY, e.button, e.pointerType);
         return;
       }
-      switch (e.type) {
-        case 'pointerdown':
-          this.camera.onPointerDown(e.pointerId, e.offsetX, e.offsetY, stamp);
-          break;
-        case 'pointermove':
-          this.camera.onPointerMove(e.pointerId, e.offsetX, e.offsetY);
-          // WS-10 (R2.4) — desktop hover outline (main-thread render path).
-          if (!this.galaxyTapSuppressed() && !this._placementActive) {
-            this.handleGameplayHover(e.offsetX, e.offsetY);
-          }
-          break;
-        case 'pointerup': {
-          const result = this.camera.onPointerUp(e.pointerId, e.offsetX, e.offsetY, stamp);
-          // Click-to-inspect (Item B2): a confirmed gameplay tap (not a drag)
-          // selects an entity. Gated off the galaxy layer + placement so it
-          // never cross-fires. The galaxy `isPanZoomActive` branch above
-          // already returned for the selector; `galaxyTapSuppressed()` also
-          // covers the in-game overlay (warp taps).
-          if (result.wasTap && !this.galaxyTapSuppressed() && !this._placementActive) {
-            this.handleGameplayTap(e.offsetX, e.offsetY);
-          }
-          break;
-        }
-        case 'pointercancel':
-        case 'pointerleave':
-          this.camera.onPointerCancel(e.pointerId);
-          break;
+      // RTS command view (slice 13a): router owns the gesture. Capture the
+      // pointer so a drag box keeps updating when it leaves the canvas.
+      if (this.commandRoutingActive()) {
+        setCanvasPointerCapture(canvas, e.type, e.pointerId);
+        this.routeCommandPointer(e.type, e.pointerId, e.offsetX, e.offsetY, stamp,
+          e.button, e.buttons, e.shiftKey, e.pointerType);
+        return;
+      }
+      const wasTap = this.cameraPointer(e.type, e.pointerId, e.offsetX, e.offsetY, stamp);
+      // Click-to-inspect (Item B2): a confirmed gameplay tap (not a drag)
+      // selects an entity. Gated off the galaxy layer + placement so it
+      // never cross-fires. The galaxy `isPanZoomActive` branch above
+      // already returned for the selector; `galaxyTapSuppressed()` also
+      // covers the in-game overlay (warp taps).
+      if (wasTap && !this.galaxyTapSuppressed() && !this._placementActive) {
+        this.handleGameplayTap(e.offsetX, e.offsetY);
       }
     };
     const onWheel = (e: WheelEvent): void => {
@@ -1494,8 +1898,7 @@ export class PixiRenderer implements IRenderer {
     const gameY = -w.y;
     const hit = pickEntityAt(gameX, gameY, this._lastMirror);
     if (hit === null) {
-      this._selectedId = null;
-      this._selectedKind = null;
+      this.setFocus(null, null);
       // Helm orders: a capital pilot's tap on empty space sets the course.
       const m = this._lastMirror;
       const own = m.localPlayerId ? m.ships.get(m.localPlayerId) : undefined;
@@ -1504,12 +1907,10 @@ export class PixiRenderer implements IRenderer {
         this.feedback.helmCourseY = gameY;
         this.feedback.helmCourseSeq++;
       }
-    } else if (hit.id === this._selectedId) {
-      this._selectedId = null; // re-tap toggles off
-      this._selectedKind = null;
+    } else if (hit.id === this._focusId) {
+      this.setFocus(null, null); // re-tap toggles off
     } else {
-      this._selectedId = hit.id;
-      this._selectedKind = hit.kind;
+      this.setFocus(hit.id, hit.kind);
     }
   }
 
@@ -1625,17 +2026,9 @@ export class PixiRenderer implements IRenderer {
   devSelectAtWorld(gameX: number, gameY: number): string | null {
     if (this._lastMirror === null) return null;
     const hit = pickEntityAt(gameX, gameY, this._lastMirror);
-    if (hit === null) {
-      this._selectedId = null;
-      this._selectedKind = null;
-    } else if (hit.id === this._selectedId) {
-      this._selectedId = null;
-      this._selectedKind = null;
-    } else {
-      this._selectedId = hit.id;
-      this._selectedKind = hit.kind;
-    }
-    return this._selectedId;
+    if (hit === null || hit.id === this._focusId) this.setFocus(null, null);
+    else this.setFocus(hit.id, hit.kind);
+    return this._focusId;
   }
 
   /** The zoom range follows the ship you fly: on a change of kind, the
@@ -1723,49 +2116,27 @@ export class PixiRenderer implements IRenderer {
     this.mountVisuals.setLocalAim(mirror.localPlayerId, mirror.localAimMountIds);
     this.applyHullZoom(mirror);
     this.mountVisuals.setFrame(this.fxNow(), this.effects?.getQuality() ?? 'medium');
+    // Seamless hand-over (RTS Part A): move re-keyed ships' state BEFORE the
+    // sprite pass, so it finds each sprite under its new key (no rebuild).
+    forEachShipRekey(mirror.pendingShipRekeys, this._rekeyShip);
     updateShipSprites(mirror, this._shipUpdaterCtx);
 
     // Explosion sprites spawned this frame for destroyed ships.
-    // 2026-05-13 — look up the targetId across both sprite maps
-    // (active ships by playerId, lingering hulls by shipInstanceId).
-    // Previously this only checked `this.sprites` (active-only) and
-    // defaulted to (0,0) when a lingering hull was destroyed — the
-    // user's "explosion appeared at zero zero" bug. Helper is in
-    // `spriteUpdateDecisions.ts` and is unit-tested there.
+    // 2026-05-13 — the "explosion appeared at zero zero" bug (a parked
+    // hull's sprite lived in a separate map). Since RTS Part A S3 every
+    // ship's sprite is in `this.sprites` (active by playerId, parked by
+    // shipInstanceId). Helper in `spriteUpdateDecisions.ts`, unit-tested.
     // A capital dying into a wreck stays drawn until its pieces are (marked
     // here while its sprite is still mapped; the sweeps below hand it over).
     noteDyingHulls(mirror.explodingShips, mirror.capitalWrecks, this._spriteShipKind, this._dyingHulls, this.fxNow(), mirror.subcapWrecks);
     if (mirror.explodingShips) {
-      // Wrap the lingering-sprite cache to expose just the {x, y}
-      // pose the helper expects. The cache value also carries `kind`
-      // which the helper doesn't need.
-      // 2026-05-25 heap-growth gate step 6: persistent Map + pooled
-      // {x,y} entries (peak == lingering-sprite count; grow-once).
-      const lingeringPosesView = this._updateLingeringPosesView;
-      lingeringPosesView.clear();
-      const lingeringPoseEntries = this._updateLingeringPoseEntries;
-      let lingeringPoseIdx = 0;
-      for (const [id, entry] of this.lingeringSprites) {
-        let pose = lingeringPoseEntries[lingeringPoseIdx];
-        if (!pose) {
-          pose = { x: 0, y: 0 };
-          lingeringPoseEntries[lingeringPoseIdx] = pose;
-        }
-        pose.x = entry.sprite.x;
-        pose.y = entry.sprite.y;
-        lingeringPosesView.set(id, pose);
-        lingeringPoseIdx++;
-      }
       for (const targetId of mirror.explodingShips) {
-        // PRESERVE the decideExplosionPosition lookup — the 2026-05-13
-        // Phase 6b fix. Naive `mirror.ships.get(targetId)?.pose` here
-        // would regress the "explosion at (0,0)" bug when a lingering
-        // hull (mirror.lingeringShips) is destroyed. The helper unifies
-        // the two sprite maps.
+        // PRESERVE the decideExplosionPosition lookup (the 2026-05-13 fix):
+        // the dying ship's mirror entry is already gone (killEntity), so the
+        // pose comes from its still-mapped SPRITE, never a (0,0) default.
         const pose = decideExplosionPosition({
           targetId,
-          activeShipsByPlayerId: this.sprites,
-          lingeringShipsByShipInstanceId: lingeringPosesView,
+          shipSprites: this.sprites,
         });
         if (!pose) continue; // ship not in any map — skip the VFX
 
@@ -1828,7 +2199,7 @@ export class PixiRenderer implements IRenderer {
     // Phase 5 — bolder defensive range ring on the hovered/selected turret. The
     // selection/hover ids are `swarm-<entityId>` (structures ride the swarm
     // channel); prefer the selected one.
-    const highlightedSel = this._selectedId ?? this._hoveredId;
+    const highlightedSel = this._focusId ?? this._hoveredId;
     this.connectorRenderer.highlightedStructureId =
       highlightedSel !== null && highlightedSel.startsWith('swarm-')
         ? parseInt(highlightedSel.slice('swarm-'.length), 10)
@@ -2298,7 +2669,8 @@ export class PixiRenderer implements IRenderer {
     // presentation clock, so speed effects follow the sector's speed like every
     // other effect (at 1× `at(t)` is `t`).
     const speedFrameMs = mirror.frameTimeMs !== undefined ? this.fxClock.at(mirror.frameTimeMs) : undefined;
-    const speedSample = speedFxSampleInto(this._speedSample, followed ? follow : null, speedFrameMs, skyCam.center, this.fxNow());
+    // Command view's free camera is moved by hand, not flown: no speed effects.
+    const speedSample = speedFxSampleInto(this._speedSample, followed ? follow : null, speedFrameMs, skyCam.center, this.fxNow(), this._spectator && !this._director.isActive());
     const backdropOn = this._backdrop?.update(skyCam, this.fxNow(), speedFxFullSpeed(speedShip?.kind), speedSample) ?? false;
     // Speed effects (C3): the backdrop's eased speed asks the camera to zoom
     // out a little; applied on the camera's next tick (none while it's baking).
@@ -2401,30 +2773,27 @@ export class PixiRenderer implements IRenderer {
     if (this._lockMarksVisible) this.aimFeedback?.update(mirror, this.camera.scale.x);
     else this.aimFeedback?.hide();
 
-    // Click-to-inspect selection bracket (Item B4). The renderer owns
-    // `_selectedId`; the bracket resolves its live pose from the mirror each
-    // frame (single pooled Graphics + dirty flag). If the selected entity has
-    // vanished from the mirror (despawned / left interest), the bracket reports
-    // it and we clear the selection so the panel + stats channel tear down.
-    if (this._selectedId !== null) {
-      const stillPresent = this.selectionBracket?.update(mirror, this._selectedId) ?? false;
-      if (!stillPresent) {
-        this._selectedId = null;
-        this._selectedKind = null;
-      }
-    } else {
-      this.selectionBracket?.update(mirror, null);
+    // The selection's focus (Item B4; RTS Part A). The renderer owns
+    // `_focusId`; the bracket resolves its live pose from the mirror each frame
+    // (the markers themselves are drawn in the ticker, `drawFleetOverlay`). If
+    // the focus has vanished from the mirror (despawned / left interest), clear
+    // it so the panel + stats channel tear down.
+    const focusPresent = this.selectionBracket?.resolveFocus(mirror, this._focusId) ?? false;
+    if (!focusPresent && this._focusId !== null) {
+      this._focusId = null;
+      this._focusKind = null;
     }
     // Publish the current selection for the main thread → Zustand bridge.
-    this.feedback.selectedPickId = this._selectedId;
-    this.feedback.selectedPickKind = this._selectedKind;
+    this.feedback.selectedPickId = this._focusId;
+    this.feedback.selectedPickKind = this._focusKind;
 
     // WS-10 (R2.4) — hover outline. Suppress it on the already-SELECTED entity so
     // the two brackets never stack on the same target. If the hovered entity
     // vanished from the mirror, clear `_hoveredId`. Renderer-local id published
     // for the E2E bridge (data-hover-pick-id) — NEVER Zustand (#2).
     // Below the full HUD (showcase `?hud=`) the hover outline is not drawn.
-    const hoverTarget = this._hoveredId === this._selectedId || !this._lockMarksVisible ? null : this._hoveredId;
+    const hovered = this._hoveredId;
+    const hoverTarget = hovered === null || hovered === this._focusId || this._selShips.has(hovered) || !this._lockMarksVisible ? null : hovered;
     if (hoverTarget !== null) {
       const stillHovered = this.hoverBracket?.update(mirror, hoverTarget) ?? false;
       if (!stillHovered) this._hoveredId = null;
@@ -2467,7 +2836,6 @@ export class PixiRenderer implements IRenderer {
     // Phase 1 — name labels above remote ships and drones (skip self).
     this.labels?.update(mirror);
 
-    this.updateLingeringShips(mirror);
     // Dying capitals: hand over to wreck pieces drawn this frame, or give up
     // at the deadline; the rest keep their light frame at the last pose.
     this._dyingHulls.settle(this.fxNow());
@@ -2479,6 +2847,7 @@ export class PixiRenderer implements IRenderer {
     this.incomingFire.update(mirror, this.fxNow()); // countdowns are game seconds
     // eslint-disable-next-line no-restricted-properties -- real time: the helm order marker is UI
     this.helmMarker.update(mirror, performance.now());
+    this.updateFleetSelection(mirror);
     this.halo.update(mirror);
 
     // ---------- RendererFeedback (end-of-frame, main-thread readable) ----------
@@ -2487,19 +2856,12 @@ export class PixiRenderer implements IRenderer {
     // Phase 4 of the worker migration will replace this with a FEEDBACK
     // postMessage from the renderer worker; the contract surface stays
     // the same (caller does `renderer.getFeedback()`).
+    // Every ship, parked hulls included (R2.32: the worker-boundary probe
+    // asserts a parked hull's barrels render; covers ACTIVE + LINGERING, #17).
     this.feedback.mountCounts.clear();
     for (const shipId of mirror.ships.keys()) {
       const count = this.mountVisuals.mountCountForShip(shipId);
       if (count > 0) this.feedback.mountCounts.set(shipId, count);
-    }
-    // R2.32 — lingering (parked) hulls also carry weapon-barrel clusters; surface
-    // their mount counts (reusing the existing mountCounts feedback field) so the
-    // worker-boundary probe can assert the barrels actually render.
-    if (mirror.lingeringShips) {
-      for (const id of mirror.lingeringShips.keys()) {
-        const count = this.mountVisuals.mountCountForShip(id);
-        if (count > 0) this.feedback.mountCounts.set(id, count);
-      }
     }
     this.feedback.haloArrowCount = this.halo.getDebugVisibleArrowCount();
     this.feedback.damageNumberActiveCount = this.damageNumbers?.getActiveCount() ?? 0;
@@ -2710,7 +3072,7 @@ export class PixiRenderer implements IRenderer {
 
   /** New engine exhaust for every ship sprite with Machined art: players
    *  pass their thrust / boost input, drones (`swarm-*`) follow their speed.
-   *  Lingering hulls and scrap are skipped. Reads the sprite's resolved pose
+   *  Scrap is skipped. Reads the sprite's resolved pose
    *  (one pose per frame). Ships it draws skip today's particle emitter. */
   /** Warp-to visuals for every visible ship (one resolved sprite pose each). */
   private drawWarpFx(mirror: RenderMirror): void {
@@ -2719,7 +3081,16 @@ export class PixiRenderer implements IRenderer {
     this._spoolFx.beginFrame(this.fxNow(), this.world.scale.x);
     const local = mirror.localPlayerId;
     const s = this._warpShipScratch;
+    const hullFed = this._hullWarpFed;
     for (const [id, ship] of mirror.ships) {
+      // ACTIVE ships always; a parked hull (#17 LINGERING) only while it has a
+      // warp phase (RTS fleet warp S4: its group spools / it just arrived),
+      // and one frame after (warpFxGate.ts).
+      const parked = isParkedHull(mirror, id, ship);
+      if (!warpFxFeedsShip(parked, ship.warp, parked && hullFed.has(id))) continue;
+      if (parked) {
+        if (ship.warp === undefined) hullFed.delete(id); else hullFed.add(id);
+      }
       const sp = this.sprites.get(id);
       // A remote ship on its run is hidden but still tracked (its departure).
       if (!sp || (!sp.visible && ship.warp !== 2)) continue;
@@ -2729,6 +3100,10 @@ export class PixiRenderer implements IRenderer {
       s.x = sp.x; s.y = sp.y; s.rotation = sp.rotation; s.warp = ship.warp; s.stern = stern; s.isLocal = id === local;
       fx.draw(id, s);
       this.drawSpoolFx(id, ship.warp, ship.kind, sp, id === local ? mirror.localSpoolMs : undefined);
+    }
+    // Hulls that left (warped out, or the sector changed): forget them.
+    if (hullFed.size > 0) {
+      for (const id of hullFed) if (!mirror.ships.has(id)) hullFed.delete(id); // TODO: alloc-debt (iterator; only while a hull warps)
     }
     // W2a — NPCs warping (flagship fleets). Fed while their phase is set and
     // one frame after it clears, so a cancelled spool settles to idle instead
@@ -2796,6 +3171,8 @@ export class PixiRenderer implements IRenderer {
       if (!h || h.job.type !== 'ship' || !h.ship) continue;
       let thrust: -1 | 0 | 1, boost: -1 | 0 | 1;
       if (mirror.ships.has(key)) {
+        // Every ship, AI-flown hulls included: their flame bits ride the
+        // same snapshot carriers under their shipInstanceId (RTS Part A S2).
         thrust = mirror.thrustingShips?.has(key) ? 1 : 0;
         boost = mirror.boostingShips?.has(key) ? 1 : 0;
       } else if (key.startsWith('swarm-') && this._swarmSpriteKinds.get(key) === 1) {
@@ -2807,25 +3184,40 @@ export class PixiRenderer implements IRenderer {
         thrust = -1;
         boost = droneBoostInput(mirror.swarm?.get(this.droneEidOf(key)));
       } else continue;
-      let top = this._fxTopSpeed.get(h.job.id), trail = this._fxTrailS.get(h.job.id);
-      if (top === undefined || trail === undefined) {
-        const k = getShipKind(h.job.id);
-        top = k.maxSpeed; trail = shipTuning(k).exhaustTrailS;
-        this._fxTopSpeed.set(h.job.id, top); this._fxTrailS.set(h.job.id, trail);
-      }
-      fx.draw(key, h.ship.nozzles, sp.x, sp.y, sp.rotation, thrust, boost, top, dt, now, trail);
-      // GPU-lit art: each engine is a light in its plume (its own hull takes little).
-      const ls = litPass.settings;
-      if (ls && ls.engineLights && ls.pointLights > 0) {
-        const owner = sp instanceof MachinedShipSprite && sp.lit.length > 0 ? sp.lit[0]!.lightOwnerId : -1;
-        const th = fx.thrustOf(key), c = Math.cos(sp.rotation), s = Math.sin(sp.rotation);
-        for (const nz of h.ship.nozzles) {
-          const ly = nz.y + engineLightAstern(nz.r);
-          litPass.scene.addLight(sp.x + nz.x * c - ly * s, sp.y + nz.x * s + ly * c, engineLightHeight(nz.r), 0xffa24a, engineLightIntensity(nz.r, th), engineLightReach(nz.r), owner);
-        }
-      }
+      this.drawFxEngineFor(fx, key, sp, h, thrust, boost, dt, now);
     }
     fx.endFrame();
+  }
+
+  /** One hull's exhaust (+ GPU-lit engine lights) for `drawFxEngines`. */
+  private drawFxEngineFor(
+    fx: FxEngines,
+    key: string,
+    sp: Container,
+    h: NonNullable<ReturnType<ShipArtCtx['handles']['get']>>,
+    thrust: -1 | 0 | 1,
+    boost: -1 | 0 | 1,
+    dt: number,
+    now: number,
+  ): void {
+    if (h.job.type !== 'ship' || !h.ship) return;
+    let top = this._fxTopSpeed.get(h.job.id), trail = this._fxTrailS.get(h.job.id);
+    if (top === undefined || trail === undefined) {
+      const k = getShipKind(h.job.id);
+      top = k.maxSpeed; trail = shipTuning(k).exhaustTrailS;
+      this._fxTopSpeed.set(h.job.id, top); this._fxTrailS.set(h.job.id, trail);
+    }
+    fx.draw(key, h.ship.nozzles, sp.x, sp.y, sp.rotation, thrust, boost, top, dt, now, trail);
+    // GPU-lit art: each engine is a light in its plume (its own hull takes little).
+    const ls = litPass.settings;
+    if (ls && ls.engineLights && ls.pointLights > 0) {
+      const owner = sp instanceof MachinedShipSprite && sp.lit.length > 0 ? sp.lit[0]!.lightOwnerId : -1;
+      const th = fx.thrustOf(key), c = Math.cos(sp.rotation), s = Math.sin(sp.rotation);
+      for (const nz of h.ship.nozzles) {
+        const ly = nz.y + engineLightAstern(nz.r);
+        litPass.scene.addLight(sp.x + nz.x * c - ly * s, sp.y + nz.x * s + ly * c, engineLightHeight(nz.r), 0xffa24a, engineLightIntensity(nz.r, th), engineLightReach(nz.r), owner);
+      }
+    }
   }
 
   private syncEngineContinuousEffects(mirror: RenderMirror): void {
@@ -2894,20 +3286,14 @@ export class PixiRenderer implements IRenderer {
     // event. Pre-fix the aura was gated on `shieldDown === false`
     // (explicit), so an unscathed just-spawned ship rendered no aura —
     // user perception: "I spawn in without a shield up."
+    // Every ship: ACTIVE and LINGERING (R2.32: a parked hull keeps its shield
+    // and shows its aura), #17.
     for (const [id, ship] of mirror.ships) {
       if (ship.shieldDown !== true) seen.add(id);
     }
     if (mirror.swarm) {
       for (const [id, sw] of mirror.swarm) {
         if (sw.shieldDown !== true && sw.kind === 1) seen.add(`swarm-${id}`);
-      }
-    }
-    // R2.32 — lingering (parked) hulls render their shield aura too. They are
-    // shipInstanceId-keyed (no `swarm-` prefix) and kept OUT of mirror.ships, so
-    // the radius lookup below also falls back to mirror.lingeringShips.
-    if (mirror.lingeringShips) {
-      for (const [id, ship] of mirror.lingeringShips) {
-        if (ship.shieldDown !== true) seen.add(id);
       }
     }
 
@@ -2943,105 +3329,6 @@ export class PixiRenderer implements IRenderer {
   /** Wall-clock of the last `effects.tick` call. Used to derive dt for the
    *  next call. 0 ⇒ first frame (use a default 16.67 ms to seed). */
   private lastEffectsTickNowMs = 0;
-
-  /** Phase 6b — lingering hulls (players who disconnected within the
-   *  15-min linger window OR whose ships have been displaced from
-   *  `playerToSlot` by a fresh spawn) are drawn with the SAME silhouette
-   *  + colour as the live ship (they still belong to a real player), with
-   *  a slight alpha drop (0.75) as a visual cue for "this hull is parked,
-   *  the pilot isn't currently flying it".
-   *
-   *  Phase A3: the create-vs-rebuild-vs-reposition decision is delegated
-   *  to `decideLingeringSpriteAction` (pure, unit-tested). The previous
-   *  inline version's `if (!ship.kind) continue` skip left lingering
-   *  hulls permanently invisible when the schema diff was late; the
-   *  extracted helper makes the fallback-kind behaviour an explicit
-   *  contract and prevents regression. */
-  /** Lingering hull sprites. Per-entry `stamp` field implements the
-   *  generation-counter pattern (R5 in the paradigm doc) — bump
-   *  `_lingeringFrameId` at the top of `updateLingeringShips`, stamp
-   *  every touched entry, sweep entries whose stamp lags. Replaces the
-   *  per-frame `new Set<string>()` the audit identified at this site. */
-  private readonly lingeringSprites = new Map<string, { sprite: Container; kind: string; stamp: number }>();
-  private _lingeringFrameId = 0;
-  private updateLingeringShips(mirror: RenderMirror): void {
-    if (!mirror.lingeringShips || mirror.lingeringShips.size === 0) {
-      if (this.lingeringSprites.size > 0) {
-        for (const [id, entry] of this.lingeringSprites) {
-          // A parked capital that died into a wreck stays drawn until its pieces are.
-          if (this._dyingHulls.tryHold(id, entry.sprite, this.fxNow())) {
-            this.mountVisuals.detachShip(id);
-            continue;
-          }
-          this.mountVisuals.removeShip(id); // R2.32 — free the weapon-barrel cluster
-          entry.sprite.destroy();
-        }
-        this.lingeringSprites.clear();
-      }
-      return;
-    }
-    // Generation-counter sweep (invariant #14, R5). Pre-Phase-4 this
-    // path allocated `new Set<string>()` per RAF (60-100 fps depending
-    // on device); the stamp field on each entry now carries the same
-    // signal with zero allocation.
-    const frameId = ++this._lingeringFrameId;
-    for (const [shipInstanceId, ship] of mirror.lingeringShips) {
-      const decision = decideLingeringSpriteAction({
-        cached: this.lingeringSprites.get(shipInstanceId),
-        currentKind: ship.kind,
-        fallbackKind: 'fighter',
-      });
-      let entry = this.lingeringSprites.get(shipInstanceId);
-      // Machined art: a parked hull swaps to its Machined sprite once ready.
-      const artKey = `linger-${shipInstanceId}`; // TODO: alloc-debt (one key string per lingering hull per frame)
-      const kind = 'kind' in decision ? decision.kind : (entry?.kind ?? 'fighter');
-      const lingerLv = this._artCtx.livery !== undefined ? ownerLivery(ship.ownerPlayerId) : undefined;
-      const lingerHandle = lingerLv
-        ? shipHandleFor(this._artCtx, artKey, kind, undefined, false, lingerLv.team, lingerLv.sigil, lingerLv.edge)
-        : shipHandleFor(this._artCtx, artKey, kind, undefined);
-      let action: SpriteDecision['action'] = decision.action;
-      if (entry && action === 'reposition' && shipArtSwap(this._artCtx, entry.sprite, lingerHandle) !== 'keep') action = 'rebuild';
-      if (action === 'rebuild') {
-        this.mountVisuals.removeShip(shipInstanceId); // drop the old cluster before its sprite dies
-        entry!.sprite.destroy();
-        this.lingeringSprites.delete(shipInstanceId);
-        entry = undefined;
-      }
-      if (action === 'create' || action === 'rebuild') {
-        const shape = shapeForKind(kind);
-        const sprite = buildArtShipSprite(lingerHandle, () => buildShipGfxFromShape(shape, shipPrimaryColor(getShipKind(kind))));
-        sprite.alpha = 0.75;
-        this.shipContainer.addChild(sprite);
-        // R2.32 — give the parked hull its weapon barrels. Parented to the
-        // sprite so they inherit its pose; frozen at baseAngle (no
-        // applyMountAngles call — an abandoned hull isn't aiming).
-        this.mountVisuals.ensureForShip(shipInstanceId, kind, sprite);
-        entry = { sprite, kind, stamp: frameId };
-        this.lingeringSprites.set(shipInstanceId, entry);
-      }
-      // 'skip' is not produced by the lingering decision today. Be
-      // defensive anyway.
-      if (action === 'skip' || !entry) continue;
-      entry.stamp = frameId;
-      entry.sprite.x = ship.x;
-      entry.sprite.y = -ship.y;
-      entry.sprite.rotation = -ship.angle;
-      updateArtShipLight(this._artCtx, entry.sprite);
-    }
-    for (const [id, entry] of this.lingeringSprites) {
-      if (entry.stamp !== frameId) {
-        // A parked capital that died into a wreck stays drawn until its
-        // pieces are (the capital-breakup take's cruiser was one).
-        if (this._dyingHulls.tryHold(id, entry.sprite, this.fxNow())) this.mountVisuals.detachShip(id);
-        else {
-          this.mountVisuals.removeShip(id); // R2.32 — free the weapon-barrel cluster
-          entry.sprite.destroy();
-        }
-        this.lingeringSprites.delete(id);
-        this._artCtx.handles.delete(`linger-${id}`);
-      }
-    }
-  }
 
   /**
    * Attach a screen-space overlay container to the stage, **above** the
@@ -3175,7 +3462,7 @@ export class PixiRenderer implements IRenderer {
   private readonly _fxShieldRadius = new Map<string, number>();
   /** Pixi-space pose of an entity's sprite, for the new shields. */
   private readonly _fxShieldPose = (id: string, out: { x: number; y: number }): boolean => {
-    const sp = this.sprites.get(id) ?? this.lingeringSprites.get(id)?.sprite;
+    const sp = this.sprites.get(id);
     if (!sp) return false;
     out.x = sp.x; out.y = sp.y;
     return true;
@@ -3216,6 +3503,9 @@ export class PixiRenderer implements IRenderer {
   private readonly _warpStern = new Map<string, number>();
   /** W2a — drones fed to WarpFx last frame (their sprite keys). */
   private readonly _droneWarpFed = new Set<string>();
+  /** Parked hulls fed to the warp effects last frame (`warpFxFeedsShip`).
+   *  A hull that left the mirror is dropped on the next frame's sweep. */
+  private readonly _hullWarpFed = new Set<string>();
   /** W2a — `swarm-<id>` keys, built once per drone (no per-frame string). */
   private readonly _droneWarpKeys = new Map<number, string>();
   /** Sprite key `swarm-<eid>` → eid, parsed once per key (#14). */
@@ -3263,8 +3553,40 @@ export class PixiRenderer implements IRenderer {
       speed: b?.speed.sf ?? 0, speedZoom: this.camera.speedZoom(), speedLevel: b?.speedLevel ?? 'off' };
   }
 
+  /** See `IRenderer.setFleetOrderMode`. */
+  setFleetOrderMode(mode: 'move' | 'attack'): void {
+    this._fleetOrderMode = mode;
+  }
+
+  /** See `IRenderer.setFleetPick`. */
+  setFleetPick(kind: FleetPickKindWire | null): void {
+    pickStart(this._fleetPick, kind);
+    this.feedback.fleetPickPoints = 0;
+    if (kind !== null) this._fleetBoxActive = false;
+  }
+
+  /** See `IRenderer.commitFleetPick`. A no-op until the route is long enough. */
+  commitFleetPick(): void {
+    const result = pickFinishPatrol(this._fleetPick);
+    if (result !== null) this.publishPickResult(result);
+  }
+
+  /** See `IRenderer.setFleetOverlayModel`. Allocates on a status change only. */
+  setFleetOverlayModel(model: FleetOverlayModel): void {
+    const next = new Map<string, FleetOverlayShip>();
+    for (const s of model.ships) next.set(s.id, s);
+    this._fleetModel = next;
+  }
+
   setSpectator(active: boolean): void {
     this._spectator = active;
+    // RTS command view == spectating for now (a later slice renames it).
+    // Leaving it drops any live box and clears the ship selection (and the
+    // focus with it when the focus was one of those ships).
+    const cancel = this._cmdRouter.setEnabled(active);
+    for (let i = 0; i < cancel.length; i++) this.applyRouterAction(cancel[i]!);
+    if (!active && this._selShips.size > 0) this.setSelection(new Set(), null, null);
+    if (!active) this.setFleetPick(null);
     // The radar is camera-relative while spectating. Pushed here (not read
     // from the store) so it works on the worker path too.
     this.halo.setSpectator(active);
@@ -3313,6 +3635,16 @@ export class PixiRenderer implements IRenderer {
   glideCameraTo(gameX: number, gameY: number, durationMs: number): void {
     if (!this.initialized) return;
     this.camera.glideTo(gameX, -gameY, durationMs);
+  }
+
+  /** RTS fleet warp (S8) — these own ships become THE selection (focus
+   *  cleared), through the one `setSelection`. Ids that are not own ships in
+   *  the last mirror are skipped (the per-frame prune would drop them). */
+  selectFleetShips(ids: readonly string[]): void {
+    const m = this._lastMirror;
+    const next = new Set<string>();
+    for (const id of ids) if (m === null || isOwnShipPresent(id, m)) next.add(id);
+    this.setSelection(next, null, null);
   }
 
   /**
@@ -3393,9 +3725,9 @@ export class PixiRenderer implements IRenderer {
   private cameraSprite(id: string): Container | undefined {
     if (id !== 'local') return this.sprites.get(id);
     const m = this._lastMirror;
-    const lk = localCameraKey(m?.localPlayerId ?? null, this._isDrawnSprite, m?.lingeringShips);
+    const lk = localCameraKey(m ?? null, this._isDrawnSprite);
     if (lk === null) return undefined;
-    return lk.parked ? this.lingeringSprites.get(lk.key)?.sprite : this.sprites.get(lk.key);
+    return this.sprites.get(lk.key);
   }
   private readonly _isDrawnSprite = (key: string): boolean => {
     const sp = this.sprites.get(key);
@@ -3418,6 +3750,66 @@ export class PixiRenderer implements IRenderer {
   getCameraCenterGame(): { x: number; y: number } {
     const c = this.camera.center;
     return { x: c.x, y: -c.y };
+  }
+
+  /**
+   * Test-only (RTS fleet-command E2E): the canvas-relative screen point of a
+   * GAME-space world point (Y-up → pixi `-y`), so a spec can box-select or
+   * click a ship where it is drawn. Read by the `__eqxWorldToScreen` DEV hook
+   * (main-thread renderer path, `?worker=0`). Not consumed by gameplay logic.
+   */
+  worldToScreenGame(x: number, y: number): { x: number; y: number } {
+    return this.camera.toScreen(x, -y);
+  }
+
+  /** Test-only ring probe state (RTS review 2026-11-14). Off until first read. */
+  private _ringProbeOn = false;
+  private readonly _ringProbe = { id: '', ringX: NaN, ringY: NaN, shipX: NaN, shipY: NaN, frames: 0 };
+  private readonly _ringProbePt = { x: 0, y: 0 };
+
+  /** Ticker, after the camera tick (the transform this frame renders with):
+   *  the first selection marker as drawn vs its ship sprite's screen point. */
+  private captureFleetRingProbe(): void {
+    const o = this.selectionBracket;
+    const id = o?.lastMarkerId ?? null;
+    if (o === null || id === null) return;
+    const sp = this.sprites.get(id);
+    if (sp === undefined) return;
+    const g = sp.parent ? sp.parent.toGlobal(sp.position, this._ringProbePt) : null;
+    if (g === null) return;
+    const p = this._ringProbe;
+    p.id = id; p.ringX = o.lastMarker.x; p.ringY = o.lastMarker.y; p.shipX = g.x; p.shipY = g.y; p.frames++;
+  }
+
+  /**
+   * Test-only (RTS review 2026-11-14): turns the per-frame ring probe on and
+   * returns the latest capture: the first selection marker's drawn centre and its
+   * ship's screen point, both as the frame renders. Read by the
+   * `__eqxFleetRingProbe` DEV hook (`?worker=0`). Not used by gameplay.
+   */
+  /**
+   * Test-only (RTS Part A seamless hand-over): the identity of the ship drawn
+   * under `key`: its sprite's and turret cluster's Pixi `uid`, its art handle's
+   * probe id, and how many re-keys this renderer has applied. A spec reads it
+   * before and after taking a ship's controls: the same numbers under the new
+   * key mean nothing was rebuilt. Read by the `__eqxShipVisualProbe` DEV hook
+   * (`?worker=0`). Not used by gameplay.
+   */
+  shipVisualProbe(key: string): { sprite: number | null; cluster: number | null; artHandle: number | null; rekeys: number } {
+    const sp = this.sprites.get(key);
+    const cl = this.mountVisuals.clusterOf(key);
+    const h = this._artCtx.handles.get(key);
+    return {
+      sprite: sp?.uid ?? null,
+      cluster: cl?.uid ?? null,
+      artHandle: h === undefined ? null : probeIdentity(h),
+      rekeys: this._shipRekeysApplied,
+    };
+  }
+
+  fleetRingProbe(): { id: string; ringX: number; ringY: number; shipX: number; shipY: number; frames: number } {
+    this._ringProbeOn = true;
+    return { ...this._ringProbe };
   }
 
   /**
@@ -3478,9 +3870,6 @@ export class PixiRenderer implements IRenderer {
     for (const [id, sp] of this.sprites) {
       if (isMachinedSprite(sp)) machined++;
       else if (!id.startsWith('swarm-') || this._artCtx.handles.has(id)) classic++;
-    }
-    for (const e of this.lingeringSprites.values()) {
-      if (isMachinedSprite(e.sprite)) machined++; else classic++;
     }
     // Capital destruction S2b: drawn wreck pieces (visible sprites of kind 4).
     // S3: textured pieces (parent art), pieces whose cut edges still glow,
@@ -3563,6 +3952,7 @@ export class PixiRenderer implements IRenderer {
     this.halo.destroy();
     this.incomingFire.destroy();
     this.helmMarker.destroy();
+    this.fleetOverlay?.destroy();
     this.backgroundGrid?.destroy();
     this.starfield?.destroy();
     // Warp stage + filters live on app.stage so `app.destroy({ children: true })`

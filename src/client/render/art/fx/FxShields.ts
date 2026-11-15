@@ -19,6 +19,7 @@ import { Container, Sprite, type Texture } from 'pixi.js';
 import type { ArtHandle, ArtService } from '../ArtService.js';
 import { emberTint, envelope, flipFrame, ShieldContacts, ShieldHits, SHIELD_CONTACTS, SHIELD_HITS } from './fxMath.js';
 import { h01 } from './fxTextures.js';
+import { moveKey } from '../../shipRekey.js';
 
 const tex = (h: ArtHandle): Texture | null => (h.state === 'ready' && h.fx ? h.fx.tex : null);
 
@@ -57,6 +58,18 @@ export class FxShields {
   }
 
   ready(): boolean { return !!(this.hit.fx && this.hit.state === 'ready' && tex(this.contact) && tex(this.dome) && tex(this.spark)); }
+
+  /** RTS Part A seamless hand-over: a ship changed key. Its shield view (hits,
+   *  held contacts) moves with it; without this the old key's shield read as
+   *  "went down" and played its BREAK on the hand-over. A stale view under
+   *  `to` is hidden and freed. */
+  rekey(from: string, to: string): void {
+    const v = this.views.get(from);
+    if (v === undefined || from === to) return;
+    const stale = moveKey(this.views, from, to);
+    v.id = to;
+    if (stale !== undefined) { this.hideView(stale); this.free.push(stale); }
+  }
 
   /** Entity `id` has its shield up (radius `r`, world units). Call every
    *  frame for every shielded entity, between `begin` and `end`. */

@@ -74,7 +74,7 @@ import type { Bus } from '../../core/events/Bus.js';
 import type { MapSchema } from '@colyseus/schema';
 import type { ShipState } from './schema/SectorState.js';
 import type { WorkerCmd } from './PhysicsWorkerProxy.js';
-import { isPilotedActive } from './shipLiveness.js';
+import { isPilotedActive } from '../../core/entity/shipLiveness.js';
 
 /** Result of a layered damage application (ship or drone). */
 export interface LayeredDamageResult {

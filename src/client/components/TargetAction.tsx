@@ -10,11 +10,13 @@ import { useUIStore } from '../state/store';
 import { getGameClient } from '../net/clientSingleton';
 import { groupColourHex } from '../hud/groupColours';
 
-const LOCKABLE = new Set(['ship', 'drone', 'structure']);
+/** Another player's AI-flown ship is selected as a `'lingering'` entity and is
+ *  lockable like any player's ship (your own fleet arrives with `isOwn`). */
+const LOCKABLE = new Set(['ship', 'lingering', 'drone', 'structure']);
 
 export function TargetAction({ isOwn }: { isOwn: boolean }): JSX.Element | null {
-  const kind = useUIStore((s) => s.selectedEntityKind);
-  const selected = useUIStore((s) => s.selectedEntityId);
+  const kind = useUIStore((s) => s.selection.focusKind);
+  const selected = useUIStore((s) => s.selection.focusId);
   const groups = useUIStore((s) => s.fcGroups);
   const active = useUIStore((s) => s.activeGroupId);
   const client = getGameClient();

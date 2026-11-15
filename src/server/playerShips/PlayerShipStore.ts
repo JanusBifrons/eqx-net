@@ -1,9 +1,10 @@
 /**
  * PlayerShipStore — Phase 2 multi-ship roster.
  *
- * A player owns up to `ROSTER_CAP` (10) ships. Each ship is a persistent
+ * A player owns any number of ships (no gameplay cap; `ROSTER_SOFT_GUARD`
+ * is an anti-abuse ceiling only). Each ship is a persistent
  * identity with its own kind, health, last position, last sector. Ships
- * persist indefinitely (only the 10-cap evicts), unlike the legacy
+ * persist indefinitely (until abandoned), unlike the legacy
  * `LimboStore` which auto-expired entries after a TTL.
  *
  * In-memory primary, persistence shadow on every mutation through the
@@ -28,8 +29,9 @@ import {
   type ShipKindId,
 } from '../../shared-types/shipKinds.js';
 
-/** Per-player roster cap. */
-export const ROSTER_CAP = 10;
+/** Anti-abuse ceiling on owned ships per player. Not a gameplay cap —
+ *  rosters are unlimited; this only stops runaway growth. */
+export const ROSTER_SOFT_GUARD = 200;
 
 /** Default linger window applied when a ship goes active (player joins
  *  a sector room). On disconnect the room schedules eviction after this
@@ -57,10 +59,10 @@ export interface ActivatedMount {
   weaponId: string;
 }
 
-/** Returned when a player tries to spawn an 11th ship. */
+/** Thrown when a player would exceed `ROSTER_SOFT_GUARD` ships. */
 export class RosterFullError extends Error {
   constructor(public readonly playerId: string) {
-    super(`Player ${playerId} is at roster cap (${ROSTER_CAP}). Abandon a ship to make room.`);
+    super(`Player ${playerId} is at the roster safety limit (${ROSTER_SOFT_GUARD}). Abandon a ship to make room.`);
     this.name = 'RosterFullError';
   }
 }
@@ -146,10 +148,10 @@ export class PlayerShipStore {
   }
 
   /** Create a new ship row for `playerId`. Throws `RosterFullError` when
-   *  the player is at cap. Returns the freshly-built record. */
+   *  the player is at the `ROSTER_SOFT_GUARD` anti-abuse limit. Returns the freshly-built record. */
   create(input: CreateShipInput): PlayerShipRecord {
     const owned = this.byPlayer.get(input.playerId);
-    if (owned !== undefined && owned.size >= ROSTER_CAP) {
+    if (owned !== undefined && owned.size >= ROSTER_SOFT_GUARD) {
       throw new RosterFullError(input.playerId);
     }
     const now = this.nowFn();

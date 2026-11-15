@@ -80,7 +80,7 @@ export async function captionOverlay(
   out: string,
   title: string,
   caption: string,
-  layout: 'lower-third' | 'side' | 'top' = 'lower-third',
+  layout: 'lower-third' | 'side' | 'top' | 'corner' = 'lower-third',
   /** Lower-third only: CSS `bottom` of the box, from `captionPlacement`
    *  (above the game's bottom HUD in a spectator take). */
   bottomPx: number = CAPTION_DEFAULT_BOTTOM,
@@ -92,8 +92,14 @@ export async function captionOverlay(
       ? 'left:96px;top:50%;transform:translateY(-50%);max-width:540px;'
       : layout === 'top'
         ? 'left:50%;top:22px;transform:translateX(-50%);max-width:1500px;padding:12px 24px 14px !important;'
-        : `left:72px;bottom:${bottomPx}px;max-width:1150px;`;
-  const compact = layout === 'top' ? '.t{font-size:18px;margin-bottom:4px}.c{font-size:24px;white-space:nowrap}' : '';
+        : layout === 'corner'
+          // Below the game's top-right buttons (settings, wallet, +).
+          ? 'right:36px;top:230px;max-width:470px;padding:10px 16px 12px !important;'
+          : `left:72px;bottom:${bottomPx}px;max-width:1150px;`;
+  const compact =
+    layout === 'top' ? '.t{font-size:18px;margin-bottom:4px}.c{font-size:24px;white-space:nowrap}'
+      : layout === 'corner' ? '.t{font-size:14px;letter-spacing:3px;margin-bottom:4px}.c{font-size:19px;line-height:1.3}'
+        : '';
   await shoot(
     browser,
     `<style>${BASE_CSS} html,body{background:transparent}

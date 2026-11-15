@@ -81,6 +81,29 @@ describe('AiController input-bit intents', () => {
     expect(sink.posts).toHaveLength(0);
   });
 
+  it('a hull registration (RTS owned ship) hands its keys and its held trigger over with its id, never queuing AI fire', () => {
+    const hullIds: Array<string | undefined> = [];
+    const triggers: string[] = [];
+    const sink: AiIntentSink = {
+      postIntent: () => {},
+      postInput: (_slot, _bits, hullId) => { hullIds.push(hullId); },
+      postHullFire: (hullId, targetId) => { triggers.push(`${hullId}->${targetId}`); },
+      flushInputs: () => {},
+    };
+    const ctrl = new AiController(sink);
+    const firing: AiIntent = { fx: 0, fy: 0, torque: 0, input: AI_INPUT_THRUST, fire: { dirX: 0, dirY: 1, targetId: 't' } };
+    const holding: AiIntent = { fx: 0, fy: 0, torque: 0, input: AI_INPUT_THRUST };
+    ctrl.register('hull-1', 3, new FixedBehaviour(firing), { hull: true });
+    ctrl.register('hull-2', 5, new FixedBehaviour(holding), { hull: true });
+    ctrl.register('drone-1', 4, new FixedBehaviour(firing));
+    ctrl.tick(7, 1 / 60, [], pose);
+    expect(hullIds).toEqual(['hull-1', 'hull-2', undefined]);
+    // Only the brain that would fire holds the hull's trigger.
+    expect(triggers).toEqual(['hull-1->t']);
+    const fires = ctrl.drainFireRequests();
+    expect(fires.map((f) => f.shooterId)).toEqual(['drone-1']);
+  });
+
   it('packs and decodes the five keys', () => {
     const out = { thrust: false, reverse: false, turnLeft: false, turnRight: false, boost: false };
     const bits = packAiInputBits(true, false, false, true, true);

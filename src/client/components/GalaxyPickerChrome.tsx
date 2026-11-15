@@ -17,6 +17,7 @@ import { loadStoredPlayerId } from '../identity/token';
 import { ShipPickerModal } from './ShipPickerModal';
 import { acquireRosterPolling, releaseRosterPolling } from './rosterPoller';
 import { useUIStore } from '../state/store';
+import { fleetWarpRequest } from '../app/fleetWarp';
 import type { ShipKindId } from '../../shared-types/shipKinds';
 import { logEvent } from '../debug/ClientLogger';
 import { useMountLog } from '../debug/useMountLog';
@@ -172,6 +173,12 @@ export function GalaxyPickerChrome({
   // Equinox Phase 7 (Item 1) — warp context gates "Warp here" on the player being
   // DOCKED + the sector being an adjacent neighbour.
   const transitState = useUIStore((s) => s.transitState);
+  // RTS fleet warp — in Command view "Warp here" warps the SELECTED ships, so
+  // with none selected it is disabled with a hint. Fly mode: never blocked.
+  const warpBlockedHint = useUIStore((s) => {
+    const r = fleetWarpRequest(s.pilotMode, s.selection.ids);
+    return r.allowed ? null : r.hint;
+  });
   const storedPlayerId = loadStoredPlayerId() ?? '';
 
   // 2026-06-19 pop-in fix — the map is "ready" (gate lifts) only when the global
@@ -572,6 +579,7 @@ export function GalaxyPickerChrome({
           onWarp?.(sector);
           setSelectedSectorKey(null);
         }}
+        warpBlockedHint={warpBlockedHint}
       />
 
       {/* Sector-click confirmation. Opened imperatively via apiRef when the

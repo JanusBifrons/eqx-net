@@ -151,6 +151,8 @@ export async function encodeClip(
      *  bezel + background, transparent over the screen). */
     device?: { layout: DeviceLayout; framePng: string } | null;
     maxBitrateKbps?: number;
+    /** Fade the caption out after this many ms (default: 1 s before the end). */
+    captionHoldMs?: number;
   },
 ): Promise<string> {
   const out = path.join(clipDir, 'clip.mp4');
@@ -176,7 +178,7 @@ export async function encodeClip(
   let filter: string;
   if (captionPng) {
     const capIn = 0.6;
-    const capOut = Math.max(capIn + 1, total - 1.0);
+    const capOut = Math.max(capIn + 1, opts.captionHoldMs ? Math.min(total - 1.0, opts.captionHoldMs / 1000) : total - 1.0);
     args.push('-loop', '1', '-i', captionPng);
     const ci = next++;
     filter =

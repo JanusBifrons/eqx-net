@@ -236,11 +236,15 @@ export class Recorder {
           actionError = e;
         })
       : null;
+    // A bottom HUD can also appear mid-take (the RTS fleet panel shows while
+    // ships are selected), so sample it through the take as well.
+    const hudSampler = setInterval(() => { void noteHud(); }, 1000);
     // `endsWithRun`: stop when run() is done (capped at durationMs).
     const takeStart = Date.now();
     if (shot.endsWithRun && actions) await Promise.race([actions, sleep(shot.durationMs)]);
     else await sleep(shot.durationMs);
     const takeMs = Math.min(shot.durationMs, Date.now() - takeStart);
+    clearInterval(hudSampler);
     await noteHud();
     const net1 = await readNet(page);
     const longFrames = await takeLongFrames(page);
@@ -335,15 +339,20 @@ async function readPilotMode(page: Pick<Page, 'evaluate'>): Promise<string | nul
 
 /**
  * Top edge (CSS px) of the game's bottom HUD that is showing: the spectator
- * build bar (`bottom-control-panel` in `build` mode). Null when hidden (pilot
- * mode, touch). Read only; the game UI is filmed as it is.
+ * build bar (`bottom-control-panel` in `build` mode) or the RTS fleet panel
+ * (`fleet-panel`, shown in its place while ships are selected). Null when
+ * neither shows (pilot mode, touch). Read only; the game UI is filmed as it is.
  */
 export async function measureBottomHudTop(page: Pick<Page, 'evaluate'>): Promise<number | null> {
   return page.evaluate(() => {
-    const el = document.querySelector('[data-testid="bottom-control-panel"][data-panel-mode="build"]');
-    if (!el) return null;
-    const r = el.getBoundingClientRect();
-    return r.height > 0 && r.width > 0 && r.top < window.innerHeight ? r.top : null;
+    let top: number | null = null;
+    for (const sel of ['[data-testid="bottom-control-panel"][data-panel-mode="build"]', '[data-testid="fleet-panel"]']) {
+      const el = document.querySelector(sel);
+      if (!el) continue;
+      const r = el.getBoundingClientRect();
+      if (r.height > 0 && r.width > 0 && r.top < window.innerHeight && (top === null || r.top < top)) top = r.top;
+    }
+    return top;
   });
 }
 
@@ -470,6 +479,7 @@ export function targetUrl(baseUrl: string, target: ShotTarget, testId: string, _
   if (process.env['EQX_SHIP_TUNING']) p.set('shipTuning', process.env['EQX_SHIP_TUNING']);
   if (process.env['EQX_SHIP_KIND_SCALE']) p.set('shipKindScale', process.env['EQX_SHIP_KIND_SCALE']);
   if (process.env['EQX_CAPITAL_STYLE']) p.set('capStyle', process.env['EQX_CAPITAL_STYLE']);
+  if (process.env['EQX_BARGE_LOOK']) p.set('bargeLook', process.env['EQX_BARGE_LOOK']);
   if (process.env['EQX_CAPITAL_MAP']) p.set('capMap', process.env['EQX_CAPITAL_MAP']);
   // Extra URL params for every shot in a run (e.g. `art=machined&fx=new`, so
   // comparison arms all film the same look).

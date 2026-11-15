@@ -142,6 +142,8 @@ const FEATURE_SPECS: string[] = [
   '**/auto-fire.spec.ts',
   '**/avatar-menu-logout.spec.ts',
   '**/boost-facing.spec.ts',
+  // RTS Part A S1 — an observer forward-predicts a remote pilot's held keys.
+  '**/remote-ship-held-thrust.spec.ts',
   '**/combat/*.spec.ts',
   '**/missile-frigate-homing.spec.ts',
   '**/collision-events.spec.ts',
@@ -153,6 +155,15 @@ const FEATURE_SPECS: string[] = [
   '**/spectator-mode.spec.ts',
   // Spectator build hotbar stays inside the viewport (frame review 2026-11-10).
   '**/build-hotbar-fits-viewport.spec.ts',
+  // RTS command layer: box-select, orders, stance, squads, patrol pick, Fly.
+  '**/fleet-command.spec.ts',
+  '**/rts-take-controls.spec.ts',
+  '**/rts-reselect.spec.ts',
+  '**/rts-warp-worker-errors.spec.ts',
+  // RTS fleet warp: Warp here warps the selected ships; the view follows.
+  '**/rts-fleet-warp.spec.ts',
+  '**/fleet-overlay-camera.spec.ts',
+  '**/command-view-camera.spec.ts',
   '**/cinematic-camera.spec.ts',
   '**/respawn-cascade-input-routing.spec.ts',
   '**/drawer-galaxy.spec.ts',
@@ -321,6 +332,10 @@ export default defineConfig({
             // so a spec polling for a lone event (a missile's expiry) could
             // miss it (2026-11-12). Specs filter with `?tag=` server-side.
             EQX_DEV_EVENTS_MAX: '5000',
+            // Galaxy rooms honour the testMode join overrides (timeScale, ...)
+            // so a spec can speed a real sector's game clock: rts-fleet-warp
+            // joins at timeScale=4 so the 30 s warp spool takes 7.5 s.
+            EQX_ALLOW_DEV_OVERRIDES: '1',
             ...(IS_OFFSET_LANE ? { PORT: String(E2E_SERVER_PORT) } : {}),
           },
         },

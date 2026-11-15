@@ -77,6 +77,7 @@ import {
   DESTROYER, LIGHT_CRUISER, HEAVY_CRUISER, BATTLECRUISER, BATTLESHIP,
   DESTROYER_B, DESTROYER_C, LIGHT_CRUISER_B, LIGHT_CRUISER_C, HEAVY_CRUISER_B, HEAVY_CRUISER_C,
   BATTLECRUISER_B, BATTLECRUISER_C, BATTLESHIP_B, BATTLESHIP_C, BATTLESHIP_RAIL, HEAVY_CRUISER_BEAM, BATTLECRUISER_LANCE,
+  BARGE, BARGE_LOOK_KIND,
 } from './shipKinds/capitals/index.js';
 import { SHIP_KINDS_LIST } from './shipKinds/catalogueOrder.js';
 import type { NpcAllegianceId } from './allegiances.js';
@@ -128,7 +129,7 @@ export const PLAYABLE_SHIP_KINDS_LIST: readonly ShipKind[] = Object.freeze(
  * The list is the source of truth for wire-format order; this object
  * exists for id-based lookup convenience.
  */
-export const SHIP_KINDS = Object.freeze({
+const CATALOGUE_KINDS = Object.freeze({
   fighter: FIGHTER,
   scout: SCOUT,
   heavy: HEAVY,
@@ -164,7 +165,15 @@ export const SHIP_KINDS = Object.freeze({
   'battleship-rail': BATTLESHIP_RAIL,
   'heavy-cruiser-beam': HEAVY_CRUISER_BEAM,
   'battlecruiser-lance': BATTLECRUISER_LANCE,
+  barge: BARGE,
 } as const) satisfies Readonly<Record<string, ShipKind>>;
+
+/** The catalogue, plus the mining-barge look kind at the very end when the
+ *  dev switch `?bargeLook=` / `EQX_BARGE_LOOK` is set (`bargeLookConfig.ts`;
+ *  same order as `SHIP_KINDS_LIST`). Unset, it is the catalogue as is. */
+export const SHIP_KINDS: typeof CATALOGUE_KINDS = BARGE_LOOK_KIND
+  ? Object.freeze({ ...CATALOGUE_KINDS, [BARGE_LOOK_KIND.id]: BARGE_LOOK_KIND })
+  : CATALOGUE_KINDS;
 
 /**
  * Catalogue stat-version. Bumped by hand whenever a kind's numerical stats
@@ -195,7 +204,8 @@ export const SHIP_KINDS = Object.freeze({
 // Not bumped for `cargoCapacity` / `collectsLoot` / `randomSpawn` (salvage PR 13):
 // the harvester's cargoCapacity 400 equals its old collector capacity and it is
 // npcOnly (never a stored player ship), so no stored stat changes.
-export const SHIP_KIND_CATALOGUE_VERSION = 27;
+// 27 → 28 (2026-11-15): the mining barge kind appended (salvage PR 15).
+export const SHIP_KIND_CATALOGUE_VERSION = 28;
 
 // The shield bubble pad is `shipTuning(kind).shieldPad` (shipScale/tuning.ts),
 // and the bubble radius is `shieldBubbleRadius(kind)`. The fixed

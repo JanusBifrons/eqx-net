@@ -162,7 +162,7 @@ Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each r
   - **Links:** a partner is a `PartnerLink` (local, or remote via `TeleportBroker.find`). The initiator drives both rooms' phases (`setPhase` on the far subsystem). Charge counts hops (`hopsToSector`; test rooms outside the galaxy graph count 1).
   - **The swap:** `swapAcross` trades the pad holds (`padSwapAcross`, one group), then collects BOTH pads' riders before dispatching either:
     - pilots go via `TransitOrchestrator.teleportOut` (instant, any sector);
-    - parked hulls, a disconnected pilot's included, are displaced if needed, removed quietly (`removeLingeringHullQuietly`) and rebuilt via the far room's `receiveLingeringHull`, with the roster row `markStored` to the new sector;
+    - parked hulls, a disconnected pilot's included, are displaced if needed and sent through `handOffHullsTo` (the ONE cross-sector hull hand-off, shared with the fleet warp: far-room `canReceiveHull` checked first, job exported, `removeLingeringHullQuietly`, `markStored` to the new sector, far `receiveLingeringHull`, `sector_change` audit, squads via `receiveFleetSquads`); they arrive guarding where they land, stance and squad kept;
     - NPC bots go via `TeleportBroker.moveBot` → `LivingWorldDirector.teleportBot` (registered for both directors in `index.ts`). Never move a director bot any other way, or the director's sector record goes stale.
   - **Rooms register** with the broker on create and unregister on dispose.
 - **T4 — tolls and consent pairing.**

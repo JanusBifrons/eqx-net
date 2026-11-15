@@ -60,7 +60,9 @@ function hsl(r: number, g: number, b: number): [number, number, number] {
 const hex3 = (c: number): [number, number, number] => [(c >> 16) & 255, (c >> 8) & 255, c & 255];
 
 const SUBCAPS = SHIP_KINDS_LIST.filter((k) => k.sizeClass !== 'capital').map((k) => k.id);
-const CAPITALS = SHIP_KINDS_LIST.filter((k) => k.sizeClass === 'capital').map((k) => k.id);
+// The warships: the mining barge's livery (container deck, no clear sigil
+// field) is not tuned yet, so these warship locks leave it out.
+const CAPITALS = SHIP_KINDS_LIST.filter((k) => k.sizeClass === 'capital' && k.id !== 'barge').map((k) => k.id);
 const LIVERY: Livery = { treatment: 'a', team: 0x3a7bff, sigil: 0xffd23a };
 
 

@@ -87,6 +87,24 @@ describe('skipStalledBacklog (round 3 fly-by judder: backlog replay after the lo
   it('never moves the tick backwards', () => {
     expect(skipStalledBacklog(500, 490)).toBe(500);
   });
+
+  it('returns a whole tick when the target is fractional (lead scaled by a slowed sector speed)', () => {
+    // 6 lead ticks at 0.873x = 5.238: the target is fractional. The frame
+    // must still run exactly one tick (resume < target, resume + 1 >= target).
+    const target = 1000 + 120 + 6 * 0.873;
+    const resume = skipStalledBacklog(1000, target);
+    expect(Number.isInteger(resume)).toBe(true);
+    expect(resume).toBeLessThan(target);
+    expect(resume + 1).toBeGreaterThanOrEqual(target);
+  });
+});
+
+describe('recoverInputTickFromStarvation with a fractional (speed-scaled) lead', () => {
+  it('snaps to a whole tick', () => {
+    const t = recoverInputTickFromStarvation(100, 110, 6 * 0.873);
+    expect(Number.isInteger(t)).toBe(true);
+    expect(t).toBeGreaterThan(110);
+  });
 });
 
 import { stallResumeAction, ANCHOR_STALE_MS, STALL_HOLD_MAX_MS } from './inputTickRecovery.js';
