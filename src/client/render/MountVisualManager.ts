@@ -311,6 +311,13 @@ export class MountVisualManager {
     best.lastShot = this.nowS;
     best.heat = heatAfter(best.heat, 0, 1);
     this.shotsMatched++;
+    // The renderer animates the guns (`applyMountAngles`) before it notes the
+    // frame's new shots, and draws the shot this frame: animate this gun
+    // again now so its flash and kick show WITH the shot, not a frame after
+    // it (rail take 7, f253: the slug's first frame showed a pellet at a
+    // still-charged muzzle with no flash). Its angle and pose are already
+    // set this frame.
+    if (best.layers && best.handle.ship) this.animateGun(best);
   }
 
   /** Each listed mount's last drawn shot on this ship (the flash), in fx ms

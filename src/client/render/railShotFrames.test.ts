@@ -67,6 +67,29 @@ function railFlash(): { mvm: MountVisualManager; flash: () => Sprite; shoot: () 
   };
 }
 
+/**
+ * Hostile review of rail take 7 (f253): one frame BEFORE the muzzle flash a
+ * dim pellet showed just past the muzzle while the barrel still showed its
+ * charge. It was the slug's first drawn frame: `PixiRenderer.update` turns
+ * and animates the guns (`updateSwarmSprites` → `applyMountAngles` →
+ * `animateGun`: flash, recoil) BEFORE it notes the frame's new shots
+ * (`noteTurretShots` → `noteShotNear`) and draws them
+ * (`updateProjectileSprites`), so a gun's flash came a frame after its
+ * slug. In that order (the renderer's), the gun matched to a new shot shows
+ * its flash in the same frame.
+ */
+describe('railgun shot frames: the slug never shows before its flash', () => {
+  it('the gun noted for a shot after the frame animated its guns flashes in that same frame', () => {
+    const { mvm, flash, shoot } = railFlash();
+    const mounts = getShipKind('battleship-rail').mounts!;
+    mvm.setFrame(50_000, 'high');
+    mvm.applyMountAngles('bs', mounts, mounts.map(() => 0)); // the swarm sprites
+    expect(flash().visible, 'no flash before the shot').toBe(false);
+    shoot(); // noteTurretShots: the slug is first in the mirror this frame
+    expect(flash().visible, 'the flash shows with the slug, not a frame later').toBe(true);
+  });
+});
+
 describe('railgun shot frames: nothing links the muzzle to the slug', () => {
   it('the rail flash is a burst at the muzzle, not a jet down the line of fire', () => {
     const { mvm, flash, shoot } = railFlash();
