@@ -230,6 +230,44 @@ makes it a PASS-THROUGH shell:
   `ColyseusClient.navalHitFlash.test.ts` "railgun",
   `tests/integration/sectorRoom/railgun.test.ts`.
 
+## Kills wait for the drawn shell (2026-11-15)
+
+Rail take 6 review: the cruiser split 3-5 frames before the drawn slug reached
+its hull (damage number at 4.933 s, split at 4.950 s, slug tip at the hull
+~5.0-5.03 s). Two timelines: the slug is drawn at the display tick (about
+`DISPLAY_DELAY_MS` + RTT/2 behind the server) and its hit's FX were held for
+it (`navalHitHold`), but the `destroy` event, sent in the same flush as the
+damage, ran `killSwarmEntity` on arrival: the hull left the mirror, the
+explosion fired, `flushQueuedDamageFx` released the held number (4.933), and
+the dying-hull hold handed the hull to its wreck pieces as soon as they
+arrived (the next frame, 4.950). All on the arrival timeline, ~100 ms early.
+
+Now (`ColyseusClient.deferKillForShell` / `releaseDeferredKills`):
+
+- A `destroy` for a swarm ship that still has a hit held for its drawn shell
+  (`NavalHitHold.holdsTarget`) does not kill it: the ship stays in the mirror,
+  drawn alive on the display timeline, and the decoder's full-snapshot sweep
+  skips it (`decodeSwarmPacket(…, keep)`).
+- Each frame, after the held hits are released (`placeShells`), a deferred
+  ship whose hits are all released (the display reached the `shell_end` tick)
+  is killed in that frame: hull hand-over, explosion and number together, as
+  the drawn slug arrives.
+- Meanwhile its new wreck's pieces get no sprite: `RenderMirror.wreckRevealFromTick`
+  (the newest snapshot tick − 30 at the deferral) hides pieces of wrecks whose
+  `deathTick` is on or after it until no death is held; pieces already drawn
+  are never hidden. The dying-hull hold then hands over as before.
+- Bounded (#16): the held hit's own safety deadline (`UNMATCHED_HOLD_MS` /
+  `MAX_HOLD_MS`) and the deferral's `MAX_HOLD_MS` game-ms deadline; a welcome
+  or sector handoff releases or clears them. Snapshots still say the ship is
+  dead; the event only sets WHEN it is drawn dying. A death with no held hit
+  (a beam, a hit already drawn) dies on arrival as before. An id recycled
+  meanwhile (another kind in the entry) is not killed.
+- Scope: swarm ships (AI pilots, capitals). A player-flown ship still dies on
+  the event (its death drives the spectator flip).
+- Locks: `ColyseusClient.shellKillTiming.test.ts` (failed first: the hull was
+  gone and the explosion queued on the destroy), `swarmSpriteUpdater.wreck.test.ts`
+  "wreck pieces wait for a held death".
+
 ## Client rules in detail
 
 Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each rule and points here.

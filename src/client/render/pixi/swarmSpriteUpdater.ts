@@ -217,8 +217,15 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     // (its geometry comes from it); until then it has no sprite at all.
     if (entry.kind === 4 && (entry.wreckId === undefined || wreckDescs === undefined || !wreckDescs.has(entry.wreckId) || ctx.wrecks === undefined)) continue;
     const spriteKey = `swarm-${entityId}`;
-    ctx.seenScratch.add(spriteKey);
     let sprite = ctx.sprites.get(spriteKey);
+    // A ship killed by an event shell is still drawn alive until the drawn
+    // shell reaches it (ColyseusClient deferred kills): its new wreck's
+    // pieces get no sprite until then (pieces already drawn stay).
+    if (entry.kind === 4 && sprite === undefined && mirror.wreckRevealFromTick !== undefined) {
+      const deathTick = wreckDescs!.get(entry.wreckId!)!.deathTick;
+      if (deathTick !== undefined && deathTick >= mirror.wreckRevealFromTick) continue;
+    }
+    ctx.seenScratch.add(spriteKey);
     // Equinox Phase 3 #20 — a recycled entityId can flip kind (a destroyed
     // structure's slot reused by a new drone). The sprite is cached by entityId;
     // if the kind changed since it was built, the cached visual is the WRONG
