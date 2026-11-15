@@ -62,5 +62,6 @@ Owner decision: land the AI-pilot branch with these skipped (`it.skip` plus a co
 - `kiteRunSmoothDuel` (a): the missile frigate opens or holds its gap on 0.70 of samples, bar 0.80.
 - `kiteRunSmoothDuel` (b): a fighter against a Robot Orb flips manoeuvre / turn key more than against a Robot Cube (Cube 1.10 turn reversals/s locally).
 - `npcFireLanes` "4-drone pack": flaky on CI (gate-on friendly hits 2 vs gate-off 0); passed locally on the merge tip.
+- `strafeParkedRobots` (b) (pilot nudges at the robots; skipped 2026-11-15): contacts with the pilot ~1 run in 3, bar 0. Two traces: a Robot Cube braked to ~10 u/s 183 u off the stopped pilot, then flew its attack run straight into it; the script's first lurch met a Robot Orb slowing through its pass. The test now runs on game time (server ticks), and the Orb's 1.27 s hover inside 3 lengths is fixed (no charge wind-up inside the pull-off distance). (a) still gates.
 
 Fixed on the way in: the charge laser missed a parked pilot every time because the AI flew its strafing pass during the wind-up (now it holds its line, `docs/architecture/ai-pilots.md`); that also fixed `attackRunTurnBack` (0 hits before). Four fire-control tests were re-staged for the dogfighting AI and the per-mount range gate (still targets via `peacefulDrones`; `npcWeaponEnergy` target moved into reach).

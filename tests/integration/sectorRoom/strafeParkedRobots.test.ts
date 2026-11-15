@@ -40,6 +40,13 @@ import { getShipKind } from '../../../src/shared-types/shipKinds.js';
 
 const SAMPLE_MS = 50;
 const WINDOW_MS = 30_000;
+/** All timing is game time (server ticks), never the wall clock: on a slow
+ *  CI host the room falls behind real time, and a wall-clock script then
+ *  lurches the pilot for longer in game terms than the filmed one does. */
+const TICK_MS = 1000 / 60;
+/** Wall-clock cap for one 30 s game-time scene: infrastructure only (CI
+ *  hosts have run this room at ~1/3 real time), not a tuning wait. */
+const SCENE_TIMEOUT_MS = 180_000;
 /** "Beside the target": inside this many own ship lengths (2 radii each). */
 const HOLD_LENGTHS = 3;
 /** "Holding": under this share of the robot's own cruise speed. */
@@ -70,6 +77,7 @@ interface Room {
   aiController: { getBehaviour(id: string): unknown };
   bus: { on(e: 'COLLISION_RESOLVED', fn: (p: { aId: string; bId: string; tick: number }) => void): void };
   applyDamage: (t: string, s: string, ...rest: unknown[]) => void;
+  serverTick: number;
 }
 
 interface Track {
@@ -193,18 +201,20 @@ describe('SectorRoom integration — robots strafe a parked pilot', () => {
       send(thrust, diff > 0.08, diff < -0.08);
     };
 
-    const tStart = Date.now();
-    while (Date.now() - tStart < 1000) { steer(Date.now()); await harness.advance(SAMPLE_MS); }
+    const gameMs = (): number => room.serverTick * TICK_MS;
+    const tStart = gameMs();
+    while (gameMs() - tStart < 1000) { steer(gameMs()); await harness.advance(SAMPLE_MS); }
     for (const t of tracks) t.prev = room._internals.swarmPose(t.id)!;
-    let prevT = Date.now();
+    let prevT = gameMs();
     const t0 = prevT;
-    while (Date.now() - t0 < WINDOW_MS) {
-      steer(Date.now());
+    while (gameMs() - t0 < WINDOW_MS) {
+      steer(gameMs());
       await harness.advance(SAMPLE_MS);
       const q = room._internals.playerPose(pilot);
       if (!q) break;
-      const now = Date.now();
+      const now = gameMs();
       const dtMs = now - prevT;
+      if (dtMs <= 0) continue;
       prevT = now;
       for (const t of tracks) {
         const p = room._internals.swarmPose(t.id);
@@ -249,11 +259,19 @@ describe('SectorRoom integration — robots strafe a parked pilot', () => {
     expect(hits, 'the robots still shoot').toBeGreaterThan(0);
   }
 
-  it('(a) the pilot never touches the stick', { timeout: 90_000 }, async () => {
+  it('(a) the pilot never touches the stick', { timeout: SCENE_TIMEOUT_MS }, async () => {
     await scene('still', false);
   });
 
-  it('(b) the pilot nudges toward the nearest robot, as the filmed script does', { timeout: 90_000 }, async () => {
+  // QUARANTINED (owner decision for AI-quality tests still red when #611
+  // landed): contacts with the pilot ~1 run in 3. Traced: (1) a Robot Cube
+  // braked to ~10 u/s 183 u off the STOPPED pilot, then flew its attack run
+  // straight into it; (2) the script's first lurch met a Robot Orb slowing
+  // through its pass (pilot closing at 51 u/s). The hover half is fixed (no
+  // charge wind-up inside the pull-off distance). Bars unchanged. See
+  // docs/HANDOFF-2026-11-13-night.md "Known red AI-quality tests"; un-skip in
+  // the PR that makes it pass.
+  it.skip('(b) the pilot nudges toward the nearest robot, as the filmed script does', { timeout: SCENE_TIMEOUT_MS }, async () => {
     await scene('nudge', true);
   });
 });
