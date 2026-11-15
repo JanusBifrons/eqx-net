@@ -2371,9 +2371,21 @@ line; a railgun kill erases a straight channel as wide as the bolt.
     the hull to ash. One tint for both weapons for now (the heavy beam's
     violet, white-hot); a per-weapon tint (railgun white-hot) would need the
     killing weapon on the wire or from the last `laser_fired` / shell.
+    **Reads on the kill frame** (filmed v10: the flash never showed, the
+    ship blinked out). The flash, glow and ring draw in
+    `FxExplosions.overLayer`, stacked above the beam containers
+    (`stackVaporiseOverBeams`: the heavy beam is still on the hull at the
+    kill); the white-hot core is full strength on the first frame (R × 3.2
+    wide, gone in 0.3 s), the tinted glow swells R × 4.4 → 7 (the glow
+    texture's visible core is ~a third of its half-width), the ring starts
+    hull-sized; the blast radius has a floor (`VAPORISE_MIN_RADIUS`, 70 u,
+    past the 60 u beam). A parked (lingering) hull is not in the active
+    sprite map, so its death blast is sized from its kind
+    (`dyingHullDiameter`: 2 × `shipExtent`), not the 40 u fallback (its
+    sprite's bounds ran several times the hull).
     Locks: `parseDestroy.test.ts`, `dyingHullHold.vaporise.test.ts`,
     `wreckArt.vaporise.test.ts`, `FxExplosions.vaporise.test.ts`,
-    `WreckBreakFx.vaporise.test.ts`.
+    `vaporiseBlast.test.ts`, `WreckBreakFx.vaporise.test.ts`.
   - **Composite kinds** (havok, the cargo pod: profile `none`, scrap groups)
     never reach the wreck path: a cut kill breaks them into their component
     scrap as before, with no `vaporised`. Follow-up.
