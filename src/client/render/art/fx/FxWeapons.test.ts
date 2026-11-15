@@ -6,7 +6,8 @@
 import { describe, expect, it } from 'vitest';
 import { Texture } from 'pixi.js';
 import type { ArtHandle, ArtService } from '../ArtService.js';
-import { FxBeams, FxProjectiles, fxProjectileStyle } from './FxWeapons.js';
+import { FxBeams, FxProjectiles, fxProjectileStyle, FX_GLOW_OVER_CORE } from './FxWeapons.js';
+import { HEAVY_BEAM_MIN_SCREEN_PX, HEAVY_BEAM_STYLE } from '../../beamStyles.js';
 
 /** An ArtService stand-in whose effect textures are ready at once. */
 function fakeArt(): ArtService {
@@ -147,6 +148,22 @@ describe('FxBeams', () => {
     expect(b.container.children[4]!.visible).toBe(false); // no flare
     b.setBeams([{ fromX: 0, fromY: 0, toX: 200, toY: 0 }], 1, 0, [true]);
     expect(b.container.children[4]!.visible).toBe(true);
+  });
+
+  // At capital zoom the heavy beam's core is floored at 12 px; its 60 u halo
+  // (20 u × glowScale 3) was ~2 px there, inside the core, so the glow never
+  // showed. The halo stays wider than the on-screen core.
+  it('the heavy beam halo stays wider than its screen-floored core at capital zoom', () => {
+    const b = new FxBeams(fakeArt(), 0xffaa44);
+    const cam = 0.03;
+    b.setBeams([{ fromX: 0, fromY: 0, toX: 3000, toY: 0, style: HEAVY_BEAM_STYLE }], 1, 0, [true], cam);
+    const halo = b.container.children[0]!;
+    const coreW = HEAVY_BEAM_MIN_SCREEN_PX / cam;
+    expect(halo.scale.y) // WHITE is 1 px tall
+      .toBeGreaterThanOrEqual(coreW * FX_GLOW_OVER_CORE.halo * 0.88 - 1e-6);
+    // A fighter beam keeps its own world-size halo.
+    b.setBeams([{ fromX: 0, fromY: 0, toX: 300, toY: 0 }], 1, 0, [true], cam);
+    expect(halo.scale.y).toBeLessThanOrEqual(20);
   });
 
   it('hides slots beyond the live count', () => {

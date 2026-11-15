@@ -10,6 +10,7 @@
  * runtime dependency, so the lock test (`beamStyles.test.ts`) needs no renderer.
  */
 import type { BeamSpriteStyle } from './BeamSpritePool.js';
+import type { BeamCrossSection } from './beamCrossSection.js';
 import { HEAVY_BEAM_WIDTH } from '../../core/combat/WeaponCatalogue.js';
 
 /** Remote players' / drones' / turrets' combat hitscan beam — thin warm amber.
@@ -35,6 +36,68 @@ export const HEAVY_BEAM_COLOR = 0xb46cff;
  *  filmed as a laser pointer next to a 120 px hull). */
 export const HEAVY_BEAM_MIN_SCREEN_PX = 12;
 
+/** The heavy beam's deep, saturated violet: the body of its cross-section
+ *  and the colour it lights hulls with (`addBeamLights`). Deeper than
+ *  `HEAVY_BEAM_COLOR` (owner 2026-11-15: the flat bar "looks a bit too
+ *  pastel"). */
+export const HEAVY_BEAM_DEEP_COLOR = 0x8c2cff;
+
+/**
+ * The heavy beam across its width (owner 2026-11-15: "could use some gradient";
+ * it was a flat lavender bar): a white-hot core, through hot violet, to the
+ * deep saturated violet body, opaque out to the core width (`at` 1 / span),
+ * then a soft glowing edge fading to nothing. Baked once into a tiny texture
+ * every heavy beam shares (`BeamSpritePool`); no filter.
+ */
+export const HEAVY_BEAM_CROSS_SECTION: BeamCrossSection = {
+  span: 1.6,
+  stops: [
+    { at: 0, color: 0xffffff, alpha: 1 },
+    { at: 0.1, color: 0xfbefff, alpha: 1 },
+    { at: 0.26, color: 0xd59cff, alpha: 1 },
+    { at: 0.45, color: 0xa040ff, alpha: 1 },
+    { at: 0.625, color: HEAVY_BEAM_DEEP_COLOR, alpha: 0.95 },
+    { at: 0.8, color: 0x7020e6, alpha: 0.4 },
+    { at: 1, color: 0x5a14c8, alpha: 0 },
+  ],
+};
+
+/**
+ * A beam that is a light source along its WHOLE length (the capital heavy
+ * beam; owner 2026-11-15: "could use lighting so it gives a purple glow on
+ * ships nearby, it's a light source"): besides its hit light, point lights
+ * evenly spaced from muzzle to hit, each reaching past the next, so the
+ * shooter, the target and any hull the beam passes near take its colour, with
+ * the shader's soft falloff. The lit pass has no line light; a hull picks the
+ * strongest few scene lights at its own rectangle, so the near ones win.
+ */
+export interface BeamLineLight {
+  /** Light colour (0xRRGGBB). */
+  readonly color: number;
+  /** Hit-point light intensity (the lit shader's scale; a blast is 3). */
+  readonly hitIntensity: number;
+  /** Each line light's intensity. */
+  readonly intensity: number;
+  /** Target spacing (world u) of the line lights; a longer beam than
+   *  `maxLights` × this spaces them wider and reaches further. */
+  readonly spacing: number;
+  /** Fewest world u a line light reaches. */
+  readonly minReach: number;
+  /** Line light reach as a share of the gap between two lights (> 0.5: they
+   *  overlap, so the glow runs unbroken along the beam). */
+  readonly reachPerGap: number;
+  /** Height (world u) above the hull top: higher lights a deck more head-on
+   *  (at 120 u a light 700 u off met a flat deck at ~10°: filmed, barely any
+   *  violet on either hull). */
+  readonly z: number;
+}
+
+/** The heavy beam as a light: deep violet along its length. */
+export const HEAVY_BEAM_LINE_LIGHT: BeamLineLight = {
+  color: HEAVY_BEAM_DEEP_COLOR, hitIntensity: 4.5, intensity: 4,
+  spacing: 900, minReach: 1000, reachPerGap: 1.1, z: 450,
+};
+
 /** The capital heavy beam (`heavy_beam` mounts): a thick, capital-scale beam —
  *  core `HEAVY_BEAM_WIDTH` wide, the width of the strip its slice erases on a
  *  kill. It does NOT taper: full width and brightness all the way to its hit
@@ -45,9 +108,12 @@ export const HEAVY_BEAM_MIN_SCREEN_PX = 12;
  *  pool's unfiltered `styledContainer`: the remote container's one orange glow
  *  filter would swamp the violet. The core is never under `minScreenPx` wide,
  *  so it reads heavier than a glowing fighter beam at capital zoom (where even
- *  60 u can be only a few px). `glowScale` widens the `?fx=new` halo / flow / flare. */
+ *  60 u can be only a few px). It draws with `HEAVY_BEAM_CROSS_SECTION` (its
+ *  colours, untinted); `tint` colours the `?fx=new` glow, which `glowScale`
+ *  widens (halo / flow / flare). */
 export const HEAVY_BEAM_STYLE: BeamSpriteStyle = {
   tint: HEAVY_BEAM_COLOR, width: HEAVY_BEAM_WIDTH, alpha: 1, taper: false, glowScale: 3, minScreenPx: HEAVY_BEAM_MIN_SCREEN_PX,
+  crossSection: HEAVY_BEAM_CROSS_SECTION, lineLight: HEAVY_BEAM_LINE_LIGHT,
 };
 
 /** A heavy beam that MISSES fades over this last share of its drawn length
@@ -185,6 +251,16 @@ export interface BeamLightSink {
   addLight(x: number, y: number, z: number, color: number, intensity: number, reach: number): void;
 }
 
+/** Most lights one line-lit beam adds (hit + line), with 8 point lights per
+ *  hull (the high tiers); `HEAVY_BEAM_MAX_LIGHTS_LOW` with 4. */
+export const HEAVY_BEAM_MAX_LIGHTS = 6;
+export const HEAVY_BEAM_MAX_LIGHTS_LOW = 4;
+
+/** The per-beam light budget for a lit pass giving each hull `pointLights`. */
+export function beamLightBudget(pointLights: number): number {
+  return pointLights >= 8 ? HEAVY_BEAM_MAX_LIGHTS : HEAVY_BEAM_MAX_LIGHTS_LOW;
+}
+
 /**
  * A beam lights where it hits and along its length (the GPU-lit art). The
  * beam is in GAME space and the lit scene in PIXI space (y down: pixiY =
@@ -192,15 +268,35 @@ export interface BeamLightSink {
  * lights sat at the beam's Y mirror: a heavy beam burning a cruiser 280 u
  * below the sector's x axis lit a spot 560 u up its hull (a hard rose wash on
  * the wreck piece there that vanished with the beam) and never the piece it
- * hit. A styled (heavy) beam lights in its own colour, `glowScale` wider.
+ * hit. A styled beam lights in its own colour, `glowScale` wider; one with a
+ * `lineLight` (the heavy beam) lights its whole length (`BeamLineLight`),
+ * at most `maxLights` lights in all (`beamLightBudget`). Alloc-free.
  */
 export function addBeamLights(
   sink: BeamLightSink,
-  b: { fromX: number; fromY: number; toX: number; toY: number; style?: { tint: number; glowScale?: number } | null },
+  b: {
+    fromX: number; fromY: number; toX: number; toY: number;
+    style?: { tint: number; glowScale?: number; lineLight?: BeamLineLight } | null;
+  },
+  maxLights: number = HEAVY_BEAM_MAX_LIGHTS,
 ): void {
   const len = Math.hypot(b.toX - b.fromX, b.toY - b.fromY);
-  const c = b.style ? b.style.tint : 0xff6a9a;
   const k = b.style?.glowScale ?? 1;
+  const ll = b.style?.lineLight;
+  if (ll && maxLights >= 2) {
+    // Line lights from the muzzle (t = 0: the shooter's own hull glows) one
+    // gap apart up to the last gap before the hit; the hit light closes it.
+    const n = Math.max(1, Math.min(maxLights - 1, Math.ceil(len / ll.spacing)));
+    const gap = len / n;
+    const reach = Math.max(ll.minReach, gap * ll.reachPerGap);
+    sink.addLight(b.toX, -b.toY, ll.z, ll.color, ll.hitIntensity, reach);
+    for (let j = 0; j < n; j++) {
+      const t = j / n;
+      sink.addLight(b.fromX + (b.toX - b.fromX) * t, -(b.fromY + (b.toY - b.fromY) * t), ll.z, ll.color, ll.intensity, reach);
+    }
+    return;
+  }
+  const c = b.style ? b.style.tint : 0xff6a9a;
   sink.addLight(b.toX, -b.toY, 6, c, 2.2, 120 * k);
   sink.addLight((b.fromX + b.toX) / 2, -(b.fromY + b.toY) / 2, 6, c, 0.8, len * 0.6 + 30 * k);
 }
