@@ -1145,3 +1145,21 @@ describe('b4 family: every hull painted', () => {
     }
   });
 });
+
+/** Owner (2026-11-15): robot paint is fine as is, "only problem is the
+ *  weathering is too extreme". Robots keep a faint mottle; no wear chips. */
+describe('robot livery weathering is light', () => {
+  it.each(['robot-square', 'robot-hexagon', 'robot-nexus'])('%s (b8): no dark primer chips inside its painted sections', (id) => {
+    const f = forgeShip(id, { ppu: 4, livery: { treatment: 'b8', team: 0x9b5cff, sigil: 1, edge: 'tooth' }, turretCover: turretCoverOf(id) });
+    expect(f.mat.some((m) => m === MAT.LIVERY)).toBe(true);
+    // A chip is a dark primer texel: PAINT at about half the hull grey.
+    const grey = lin(f.paint), greyLum = 0.2126 * grey[0] + 0.7152 * grey[1] + 0.0722 * grey[2];
+    let dark = 0;
+    for (let i = 0; i < f.cov.length; i++) {
+      if (f.cov[i]! <= 0.5 || f.mat[i] !== MAT.PAINT) continue;
+      const l = 0.2126 * f.albedo[i * 3]! + 0.7152 * f.albedo[i * 3 + 1]! + 0.0722 * f.albedo[i * 3 + 2]!;
+      if (l < greyLum * 0.66) dark++;
+    }
+    expect(dark).toBe(0);
+  });
+});

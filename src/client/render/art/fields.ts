@@ -1015,7 +1015,9 @@ function weatherLivery(
     return false;
   };
   const grey = lin(f.paint), metal = lin(PALETTE.metal);
-  const s = heavy ? 1 : 0.35;
+  // Robots ('light'): owner (2026-11-15) "the weathering is too extreme" on
+  // them, so a faint mottle only, light grime and chalk, and no chips.
+  const s = heavy ? 1 : light ? 0.12 : 0.35;
   // 'patch': texels to the nearest place the paint meets grey HULL (its
   // section edge), for flaking there. Space outside the hull counts as paint,
   // so a narrow bow does not flake away along its outline (in game the bows
@@ -1053,7 +1055,7 @@ function weatherLivery(
       // A capital's bow section wears half the chalk, flaking and scratches,
       // so it still reads red at line-up zoom (the stern keeps them).
       const bow = inBow !== null && inBow(i);
-      const w = light ? 0.5 : 1, zf = heavy ? 1 : 4, z0 = heavy ? 0.6 : 0.5;
+      const w = light ? 0.15 : 1, zf = heavy ? 1 : 4, z0 = heavy ? 0.6 : 0.5;
       const streak = valueNoise(tx * 0.15 * Math.min(2, zf), ty * 0.01 * zf, seed + 2);
       const dk = 1 - w * 0.5 * (1 - Math.pow(streak, 1.4));
       const chalk = Math.max(0, valueNoise(tx * 0.012 * zf, ty * 0.012 * zf, seed + 6) - 0.45) * (bow ? 0.35 : 0.7) * w; // 0 .. ~0.38
@@ -1077,7 +1079,7 @@ function weatherLivery(
       }
       const zone = valueNoise(tx * 0.025 * zf, ty * 0.025 * zf, seed + 5);
       const fleck = valueNoise(tx * 0.3 * Math.min(2, zf), ty * 0.3 * Math.min(2, zf), seed + 4);
-      if (zone > z0 && fleck > 0.74 - (zone - z0) * 0.9 && (!heavy || valueNoise(tx * 0.3, ty * 0.3, seed + 9) > CHIP_THIN)
+      if (!light && zone > z0 && fleck > 0.74 - (zone - z0) * 0.9 && (!heavy || valueNoise(tx * 0.3, ty * 0.3, seed + 9) > CHIP_THIN)
         && (!light || (dPaint![i]! >= CRISP_TEX && valueNoise(tx * 0.3 * zf, ty * 0.3 * zf, seed + 11) > 0.5))) {
         f.mat[i] = MAT.PAINT;
         f.key[i] = f.paint;
