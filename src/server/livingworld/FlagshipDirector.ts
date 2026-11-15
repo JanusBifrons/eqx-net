@@ -75,7 +75,9 @@ export function fleetCapitalKind(sectorKey: string, rng: Rng): ShipKindId {
 /**
  * W2b — a capital's hull style (A, B or C), seeded from the ship's own id so
  * a fleet's ships differ and the same ship keeps its style. Non-capital kinds
- * pass through. Pure (tests).
+ * pass through. Pure (tests). A class's fitted variants (plan section 9: the
+ * rail battleship) share the same even pick, so a battleship is rail-fitted
+ * one time in four.
  */
 export function styledKind(kind: ShipKindId, shipId: string): ShipKindId {
   const styles = CAPITAL_STYLE_VARIANTS[kind];
@@ -85,9 +87,10 @@ export function styledKind(kind: ShipKindId, shipId: string): ShipKindId {
   return styles[(h >>> 0) % styles.length] as ShipKindId;
 }
 
-/** The class of a capital kind (a style variant's base). */
-function classOf(kind: ShipKindId): string {
-  return kind.replace(/-[bc]$/, '');
+/** The class of a capital kind: a style or fit variant's base (`battleship-c`,
+ *  `battleship-rail` → `battleship`). Pure (tests). */
+export function classOf(kind: ShipKindId): string {
+  return kind.replace(/(?:-[bc])?(?:-rail)?$/, '');
 }
 
 const CLASS_PREFIX: Partial<Record<string, string>> = {

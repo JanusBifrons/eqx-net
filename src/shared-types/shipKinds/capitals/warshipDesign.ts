@@ -191,7 +191,22 @@ export interface WarshipDesign {
   mountCount: number;
 }
 
-export function warshipDesign(id: CapitalClassId, style: CapitalStyle, map: CapitalMap): WarshipDesign {
+/**
+ * A capital's weapon fit (plan section 9), the axis next to `style`: what its
+ * main battery and its secondaries mount. Same hull; only the mounts'
+ * `weaponId` change. The railgun carries its own charge (`chargeTicks`,
+ * 'when-bearing', 'mount-glow') in its weapon def, so the mount needs nothing
+ * else. 'beam' (main and secondary) arrives with the heavy_beam weapon.
+ */
+export interface CapitalFit {
+  main: 'naval' | 'railgun';
+  secondary: 'naval';
+}
+
+/** The all-naval fit every class is designed around (the default). */
+export const NAVAL_FIT: CapitalFit = { main: 'naval', secondary: 'naval' };
+
+export function warshipDesign(id: CapitalClassId, style: CapitalStyle, map: CapitalMap, fit: CapitalFit = NAVAL_FIT): WarshipDesign {
   const s = CAPITAL_STYLES[style];
   const t = capitalTargets(id, CAPITAL_MAPPINGS[map]);
   const p = solveCapitalPhysics(t);
@@ -229,7 +244,7 @@ export function warshipDesign(id: CapitalClassId, style: CapitalStyle, map: Capi
     mounts.push({
       id: `main-${i + 1}`, localX: 0, localY: L / 2 - tt * L,
       baseAngle: fwd ? 0 : Math.PI, arcMin: -MAIN_ARC, arcMax: MAIN_ARC,
-      rotationSpeed: TRAVERSE[mainSize], weaponId: NAVAL_GUN[mainSize], size: mainSize,
+      rotationSpeed: TRAVERSE[mainSize], weaponId: fit.main === 'railgun' ? 'railgun' : NAVAL_GUN[mainSize], size: mainSize,
       barrels: main.barrels, ...(scale !== 1 ? { turretScale: scale } : {}),
     });
   });
@@ -272,7 +287,7 @@ export function warshipDesign(id: CapitalClassId, style: CapitalStyle, map: Capi
   const record = {
     id,
     displayName: CLASS_NAMES[id],
-    description: `WW2-inspired ${CLASS_NAMES[id].toLowerCase()} (capital class, style ${style}: ${s.label}).`,
+    description: `WW2-inspired ${CLASS_NAMES[id].toLowerCase()} (capital class, style ${style}: ${s.label})${fit.main === 'railgun' ? ', railgun main battery' : ''}.`,
     npcOnly: true,
     sizeClass: 'capital',
     thrustImpulse: p.thrustImpulse,

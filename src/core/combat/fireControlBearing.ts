@@ -68,11 +68,35 @@ export function newFireTargetShape(): FireTargetShape {
 }
 
 /**
- * Fill `out` for a target at (x, y, angle). THE one fill both sides use (#15):
- * the server's `SectorRoom.resolveLockTarget` (swarm record / pilot ship) and
- * the client's `fcTargetPose` (swarm wire / ship mirror). A ship (any pilot)
- * keeps its kind and shield and takes its kind's radius (its lock signature); anything
- * else keeps `radius` (a structure's).
+ * Fill a range shape (`MountRangeTarget`) for a target heading `angle`. THE
+ * one fill of every fire range gate (#15): the player gate
+ * (`fillFireTargetShape`) and the server's NPC turret, drone and structure
+ * gates (`SectorRoom.writeSwarmRangeShape`, pilot hulls). A ship (any pilot)
+ * is its kind's hit shape (`shipHitShape`, which reads a missing kind as the
+ * default kind) and takes that kind's radius (its lock signature); anything
+ * else is a circle of `radius` (a structure's).
+ */
+export function fillRangeShape(
+  out: { -readonly [K in keyof MountRangeTarget]: MountRangeTarget[K] },
+  angle: number, ship: boolean, kindId: string | null, shieldUp: boolean, radius: number,
+): void {
+  if (ship) {
+    const kind = getShipKind(kindId);
+    out.kindId = kind.id;
+    out.radius = kind.radius;
+  } else {
+    out.kindId = null;
+    out.radius = radius;
+  }
+  out.angle = angle;
+  out.shieldUp = shieldUp;
+}
+
+/**
+ * Fill `out` for a target at (x, y, angle): its centre, ship flag and range
+ * shape (`fillRangeShape`). The server's `SectorRoom.resolveLockTarget` (swarm
+ * record / pilot ship) and the client's `fcTargetPose` (swarm wire / ship
+ * mirror) both use it (#15).
  */
 export function fillFireTargetShape(
   out: FireTargetShape, x: number, y: number, angle: number,
@@ -80,11 +104,8 @@ export function fillFireTargetShape(
 ): void {
   out.x = x;
   out.y = y;
-  out.angle = angle;
   out.ship = ship;
-  out.kindId = ship ? kindId : null;
-  out.shieldUp = shieldUp;
-  out.radius = ship ? getShipKind(kindId).radius : radius;
+  fillRangeShape(out, angle, ship, kindId, shieldUp, radius);
 }
 
 /**
