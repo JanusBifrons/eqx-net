@@ -10,6 +10,9 @@ import {
   WEAPON_IDS,
   DEFAULT_WEAPON,
   HEAVY_BEAM_WIDTH,
+  weaponTargetFactor,
+  weaponLayerMul,
+  type WeaponDef,
 } from './WeaponCatalogue.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { ENERGY_POOL_MUL } from '../../shared-types/shipScale/defineShipKind.js';
@@ -257,5 +260,36 @@ describe('WeaponCatalogue — capital railgun (plan beam-slices §7)', () => {
     for (const id of ['destroyer', 'light-cruiser', 'heavy-cruiser', 'battlecruiser']) {
       expect(rail.damage, id).toBeGreaterThan(getShipKind(id).maxHealth);
     }
+  });
+});
+
+describe('weaponTargetFactor (per-target damage factors)', () => {
+  const plain = getWeapon('laser');
+  const miner: WeaponDef = { ...plain, targetFactor: { shield: 0, hull: 0.05 } };
+
+  it('defaults every class to 1 for a weapon without factors', () => {
+    for (const cls of ['shield', 'hull', 'structure', 'wreck'] as const) {
+      expect(weaponTargetFactor(plain, cls)).toBe(1);
+    }
+  });
+
+  it('reads a set factor and defaults the absent keys to 1', () => {
+    expect(weaponTargetFactor(miner, 'shield')).toBe(0);
+    expect(weaponTargetFactor(miner, 'hull')).toBe(0.05);
+    expect(weaponTargetFactor(miner, 'structure')).toBe(1);
+    expect(weaponTargetFactor(miner, 'wreck')).toBe(1);
+  });
+
+  it('no catalogue weapon carries factors yet (every hit byte-identical)', () => {
+    for (const id of WEAPON_IDS) expect(getWeapon(id).targetFactor).toBeUndefined();
+  });
+
+  it('weaponLayerMul: undefined without factors; shield/hull for ships; structure on both layers', () => {
+    const out = { shield: -1, hull: -1 };
+    expect(weaponLayerMul(plain, false, out)).toBeUndefined();
+    expect(weaponLayerMul(miner, false, out)).toEqual({ shield: 0, hull: 0.05 });
+    const base: WeaponDef = { ...plain, targetFactor: { shield: 0, structure: 0.25 } };
+    expect(weaponLayerMul(base, true, out)).toEqual({ shield: 0.25, hull: 0.25 });
+    expect(weaponLayerMul(base, true, out)).toBe(out); // reused scratch, no allocation
   });
 });

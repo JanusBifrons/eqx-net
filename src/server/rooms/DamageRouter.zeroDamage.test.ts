@@ -30,6 +30,7 @@ import type { ShipPhysicsState } from '../../core/physics/World.js';
 import { DEFAULT_SHIP_KIND } from '../../shared-types/shipKinds.js';
 import type { DamageEvent } from '../../shared-types/messages.js';
 import type { Bus } from '../../core/events/Bus.js';
+import { getWeapon, weaponLayerMul, type WeaponDef } from '../../core/combat/WeaponCatalogue.js';
 
 const TICK = 500;
 
@@ -143,5 +144,41 @@ describe('DamageRouter — 0-damage wire guard (campaign 1.2)', () => {
     h.router.apply('p1', 'shooter', 2.6, 1, 2);
     expect(h.damageEvents).toHaveLength(1);
     expect(h.damageEvents[0]!.damage).toBe(3);
+  });
+});
+
+// Per-target damage factors (plan partitioned-chasing-lark PR 1): the room
+// resolves a weapon's `targetFactor` into a per-layer multiplier
+// (`weaponLayerMul`) and hands it to the ONE router call. A mining-laser-like
+// weapon {shield 0, hull 0.05} does nothing to a raised shield (no event, no
+// regen-timer reset) and 5 % to an exposed hull.
+describe('DamageRouter — per-target damage factors', () => {
+  const MINER: WeaponDef = { ...getWeapon('laser'), targetFactor: { shield: 0, hull: 0.05 } };
+  const mul = (): ReturnType<typeof weaponLayerMul> => weaponLayerMul(MINER, false, { shield: 1, hull: 1 });
+
+  it('a {shield 0} weapon does 0 to a shielded ship: no state change, no event, regen timer kept', () => {
+    const ship = addActiveShip({ shield: 30, health: 80, shieldLastDamageTick: 42 });
+    const destroyed = h.router.apply('p1', 'shooter', 100, 1, 2, mul());
+    expect(destroyed).toBe(false);
+    expect(ship.shield).toBe(30);
+    expect(ship.health).toBe(80);
+    expect(ship.shieldLastDamageTick).toBe(42); // regen NOT reset
+    expect(h.damageEvents).toHaveLength(0);
+  });
+
+  it('a {hull 0.05} weapon does 5 % to an unshielded hull, and the wire reports the scaled damage', () => {
+    const ship = addActiveShip({ shield: 0, health: 80 });
+    h.router.apply('p1', 'shooter', 100, 1, 2, mul());
+    expect(ship.health).toBeCloseTo(75, 10);
+    expect(ship.shieldLastDamageTick).toBe(TICK);
+    expect(h.damageEvents).toHaveLength(1);
+    expect(h.damageEvents[0]!.damage).toBe(5);
+  });
+
+  it('a weapon without factors is untouched (weaponLayerMul is undefined)', () => {
+    const ship = addActiveShip({ shield: 0, health: 80 });
+    h.router.apply('p1', 'shooter', 10, 1, 2, weaponLayerMul(getWeapon('laser'), false, { shield: 1, hull: 1 }));
+    expect(ship.health).toBe(70);
+    expect(h.damageEvents[0]!.damage).toBe(10);
   });
 });
