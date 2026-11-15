@@ -551,9 +551,18 @@ export class ColyseusGameClient {
   private readonly _cutField = new CutFieldClient({
     gameClock: { now: () => this.gameClock.now() },
     predWorld: () => this.predWorld,
+    // The piloted ship, or while spectating our own parked hull (spectate
+    // moves it to `lingeringShips`), so the field stays loaded around it.
+    // A free-flying spectator camera is not followed yet (its pose lives in
+    // the renderer): docs/architecture/macro-terrain.md.
     localPose: () => {
       const localId = this.mirror.localPlayerId;
-      return localId ? this.mirror.ships.get(localId) ?? null : null;
+      if (!localId) return null;
+      const own = this.mirror.ships.get(localId);
+      if (own) return own;
+      const parked = this.mirror.lingeringShips;
+      if (parked) for (const s of parked.values()) if (s.ownerPlayerId === localId) return s;
+      return null;
     },
     draw: {
       setFieldChunk: (cx, cy, outlines) => {

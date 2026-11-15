@@ -183,6 +183,30 @@ export function cutFieldPad(): number {
 }
 
 /** The rocks of a sliced field inside `view`. Generation-time code, not a hot path. */
+/** A lane: the strip of points within `half` of the line through `o` with
+ *  unit normal `n` (its direction is (n.y, -n.x)). Before the warp, which
+ *  bends lane walls by up to ~1.1 km. */
+export interface FieldLane { o: Pt; n: Pt; half: number }
+
+function laneStrips(R: number, B: number, rnd: (path: number, k: number) => number): FieldLane[] {
+  const dir = { x: 0, y: 0 };
+  const lanes: FieldLane[] = [];
+  for (let l = 0; l < SLICED.lanes; l++) {
+    unitDirFromSteps(rnd(1000 + l, 1) * ANGLE_STEPS, dir);
+    const n = { x: -dir.y, y: dir.x };
+    const off = (rnd(1000 + l, 2) - 0.5) * R * 0.5;
+    lanes.push({ o: { x: n.x * off, y: n.y * off }, n, half: (SLICED.laneWidthB * B) / 2 });
+  }
+  return lanes;
+}
+
+/** The field's lanes (test rooms and shots place ships in them). */
+export function slicedFieldLanes(o: Pick<SlicedOpts, 'seed' | 'battleshipLength' | 'radius'>): FieldLane[] {
+  const base = fnv1a32(`sliced:${o.seed}`);
+  const rnd = (path: number, k: number): number => mulberry32((Math.imul(path, 0x9e3779b1) ^ Math.imul(k + 1, 0x85ebca6b) ^ base) >>> 0)();
+  return laneStrips(o.radius ?? SLICED.radius, o.battleshipLength, rnd);
+}
+
 export function slicedField(o: SlicedOpts): SlicedRock[] {
   const S = SLICED, R = o.radius ?? S.radius, B = o.battleshipLength, F = o.fighterLength;
   const base = fnv1a32(`sliced:${o.seed}`);
@@ -197,13 +221,7 @@ export function slicedField(o: SlicedOpts): SlicedRock[] {
     outline.push({ x: dir.x * R, y: dir.y * R });
   }
   // Lanes: straight strips end to end through the field, cut first.
-  const lanes: Array<{ o: Pt; n: Pt; half: number }> = [];
-  for (let l = 0; l < S.lanes; l++) {
-    unitDirFromSteps(rnd(1000 + l, 1) * ANGLE_STEPS, dir);
-    const n = { x: -dir.y, y: dir.x };
-    const off = (rnd(1000 + l, 2) - 0.5) * R * 0.5;
-    lanes.push({ o: { x: n.x * off, y: n.y * off }, n, half: (S.laneWidthB * B) / 2 });
-  }
+  const lanes = laneStrips(R, B, rnd);
   const inLane = (p: Pt): boolean => lanes.some((ln) => Math.abs((p.x - ln.o.x) * ln.n.x + (p.y - ln.o.y) * ln.n.y) < ln.half);
   const pad = cutFieldPad();
   const touchesView = (poly: Pt[]): boolean => {
