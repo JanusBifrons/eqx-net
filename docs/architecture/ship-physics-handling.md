@@ -193,3 +193,7 @@ Measured at the 2× shipping scale by [ShipHandling.arcade.test.ts](../../src/co
 | capitals | unchanged (8–38 s) | 155–180 | no afterburner | — | unchanged (156–170 s) | 348–1645 | 0.01 | unchanged |
 
 (The trader's measured cruise drops because its old 3.9 s rise never quite settled inside the old maxSpeed clamp; its terminal is the clamp.) The harness locks per-class bands (t90, 180°, TTK floor, afterburner ratio and rise time for flyable kinds, slide between 0.1 and 0.75, brake under 0.4 s of cruise travel), so a later change can't drift back to floaty or fragile without failing.
+
+## One mass and inertia source per ship kind (2026-11-13)
+
+**Ship stats belong to the ship kind, never the pilot (owner rule 2026-11-13); one mass/inertia source.** Every body of a ship kind (pilot ship, server drone, client predWorld drone, the AI pilot's handling model) takes its mass and inertia from `shipBodyMass(kind)` / `shipBodyInertia(kind)` (`shared-types/shipScale/tuning.ts`): `spawnShip` uses them, and `spawnObstacle` with a ship kind pins them whatever mass the caller passes. A server drone gets its kind's linear + angular damping at spawn (`setPilotKind`). Only per-instance upgrades (`SET_STAT_MUL`, quality, fitted modules) may make one hull differ from another of its kind. Never add an NPC-only (or player-only) mass, damping, speed or turn constant. Lock: `tests/unit/shipStatsPilotAgnostic.test.ts` (every kind, real spawn paths).

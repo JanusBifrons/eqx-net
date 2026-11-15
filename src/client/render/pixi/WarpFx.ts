@@ -302,6 +302,9 @@ export class WarpFx {
   /** Direction of the last burst spawned (diagnostic / tests). */
   lastBurstDir(): { x: number; y: number } { return this.lastDir; }
   private readonly lastDir = { x: 0, y: 0 };
+  /** Kind and start point (Pixi space) of the last burst spawned (diagnostic / tests). */
+  lastBurst(): { kind: 'depart' | 'arrive' | null; x: number; y: number } { return this.lastAt; }
+  private readonly lastAt: { kind: 'depart' | 'arrive' | null; x: number; y: number } = { kind: null, x: 0, y: 0 };
   /** Ships spooling this frame (diagnostic / E2E). */
   spoolCount(): number { return this.spooling; }
 
@@ -326,6 +329,7 @@ export class WarpFx {
       this.bursts.push(b);
     }
     this.lastDir.x = dx; this.lastDir.y = dy;
+    this.lastAt.kind = kind; this.lastAt.x = x; this.lastAt.y = y;
     b.follow = follow;
     b.kind = kind; b.t0 = this.now; b.x = x; b.y = y; b.dx = dx; b.dy = dy; b.stern = Math.max(4, stern); b.live = true;
     b.root.visible = true;

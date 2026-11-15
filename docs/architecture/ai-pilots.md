@@ -7,7 +7,7 @@ How the AI brain in `src/core/ai/` turns decisions into flight. Which sides figh
 An NPC brain never emits an impulse or an angvel snap. It picks a FACING and a WANTED VELOCITY, and `ai/virtualPilot.ts` (`pilotInputs`, pure, alloc-free, caller-owned `PilotState`) turns them into the keys a player would press (thrust, reverse, turn left/right, boost) as `AiIntent.input` bits. The worker runs them through `applyShipInput` with the NPC's own kind.
 
 - **Boost shows like a pilot's:** `AiController.boostingSlot` remembers whether this tick's keys held boost; the room (after the disabled gate) puts it on the in-interest snapshot as `drones[].boost` (emit-when-true, #16), the client mirrors it to `SwarmRenderState.boosting`, and the engine exhaust draws the same boost flame a pilot's ship gets (`render/pixi/droneEngineInput.ts`). Thrust still follows speed (no key on the wire). Locks: `AiController.boost.test.ts`, `SnapshotBroadcaster.droneBoost.test.ts`, `snapshotRemoteSync.charging.test.ts`, `droneEngineInput.test.ts`.
-- **Handling comes from the kind:** `makePilotHandling(kind, massOf(kind, NPC_MASS_FALLBACK))`.
+- **Handling comes from the kind:** `makePilotHandling(kind, shipBodyMass(kind))`, the same mass a player's ship of that kind has (ship stats belong to the ship, never the pilot).
   - Snap turns stop on release.
   - Torque (capital) turns stop early on the predicted coast `ω/angularDamping`, and counter-turn when even that overshoots.
   - Throttle is bang-bang on the velocity error along the nose (reverse brakes).
@@ -17,6 +17,8 @@ An NPC brain never emits an impulse or an angvel snap. It picks a FACING and a W
 - **Every mode flies this way:** `HostileDroneBehaviour` uses it for combat, broadside, guard, patrol, move-to and flock. Its decisions (targets, ranges, fire gate) are unchanged.
 - **Pace:** out of combat it chooses `CALM_CRUISE_FRAC` (0.45) of its cruise speed (the pace the retired `ai.thrust` gave); in combat it has full handling and boost.
 - **Difficulty** knobs are the pilot's reaction latch and aim, never weaker engines.
+- **Hold the line while a charge winds up:** a charge shot leaves down the barrel when its wind-up ends, so while `view.isCharging(self.id)` (any mount charging in the server's `WeaponMountTicker.charges`, set on `AiController.isCharging`; server-only, no wire) the combat brain flies nose-on to the lead at the target's velocity instead of its manoeuvre. Without it a robot orb on a strafing pass slid ~400 u in the 1.2 s wind-up and missed even a parked pilot (6 of 6). Locks: `chargeLaser.test.ts`, `attackRunTurnBack.test.ts`.
+- **Start a wind-up only with room to hold it:** a brain whose gun charges in a locked direction pulls the trigger only at or beyond its attack run's pull-off distance (`shipTuning(kind).attackRunOvershoot`). Inside it the pass swings beside the target, and holding the line there parked a Robot Orb ~2.5 ship lengths off a parked pilot for the whole wind-up (a 1.27 s slow hold). Lock: `tests/unit/aiChargeWindUpRoom.test.ts`.
 
 Locks: `ai/virtualPilot.test.ts` (real Rapier body, fighter and capital, with and without a tick of lag) and the `HostileDroneBehaviour*.test.ts` suites (keys via `ai/pilotTestKit.ts`).
 

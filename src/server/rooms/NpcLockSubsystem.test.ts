@@ -166,6 +166,7 @@ describe('NpcLockSubsystem — lockedBy rows capped to the nearest threats (owne
     expect(rows.every((r) => r.s === 2)).toBe(true);
     expect(rows.map((r) => r.t).sort()).toEqual(nearest(LOCKED_BY_WIRE_ROWS).sort());
     expect(s.totalFor('p1')).toBe(25);
+    expect(s.lockedTotalFor('p1')).toBe(20); // the 5 nearer ones still acquire
   });
 
   it('a few completed locks lead, the nearest acquiring ones fill the rest', () => {
@@ -192,5 +193,6 @@ describe('NpcLockSubsystem — lockedBy rows capped to the nearest threats (owne
     s.step();
     expect(s.wireFor('p1')).toHaveLength(2);
     expect(s.totalFor('p1')).toBe(2);
+    expect(s.lockedTotalFor('p1')).toBe(s.wireFor('p1')!.filter((r) => r.s === 2).length);
   });
 });

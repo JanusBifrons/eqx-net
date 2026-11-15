@@ -32,6 +32,7 @@ import type { LaserFiredEvent } from '../../shared-types/messages.js';
 import type { ShipState } from './schema/SectorState.js';
 import { shipShotMuzzle, navalTurret, navalBarrelOffset } from '../../core/combat/muzzle.js';
 import { NEVER_FIRED } from '../../core/combat/fireTemporal.js';
+import { resolveSlotEnergyCost } from '../../core/combat/Energy.js';
 import { NOT_CHARGING, type MountCharges } from './WeaponMountTicker.js';
 
 /** Per-player pose the resolver reads to test target hits. */
@@ -77,6 +78,12 @@ export interface AiFireResolverDeps {
    *  the drone holds fire this tick (no cooldown spent). The room resolves the
    *  target's distance. Absent ⇒ never blocked (unit harnesses). */
   lineOfFireBlocked?: (shooterId: string, targetId: string, fx: number, fy: number, dx: number, dy: number) => boolean;
+  /** The ship's energy pool (owner rule 2026-11-13: an AI pilot's ship pays a
+   *  player's energy per slot trigger). Spends `cost` and returns true when
+   *  the pool can pay; false ⇒ the shot is refused and nothing is spent. The
+   *  room routes it to the AI pilot brain's pool (`IAiBehaviour.trySpendEnergy`),
+   *  the same pool boost draws on. Absent ⇒ free fire (unit harnesses). */
+  trySpendEnergy?: (shooterId: string, cost: number) => boolean;
   /** Cooldown ledger — keyed by shooter id (drone). */
   lastFireClientTick: Map<string, number>;
   /** Pose snapshot for the firing drone (SAB read). */
@@ -176,7 +183,7 @@ export class AiFireResolver implements WeaponFireSink {
    * broadcast with its own ray geometry; aggregate hit goes to the
    * damage sink (`applyDamage`).
    */
-  resolve(shooterId: string, dirX: number, dirY: number, tick: number, targetId: string): void {
+  resolve(shooterId: string, dirX: number, dirY: number, tick: number, targetId: string, cone = Infinity): void {
     const d = this.deps;
 
     const len = Math.hypot(dirX, dirY);
@@ -199,27 +206,11 @@ export class AiFireResolver implements WeaponFireSink {
     if (hasTurretFireControl(droneKind)) return;
     const slotMounts = d.resolveSlotMounts(droneKind);
     if (slotMounts.length === 0) return;
-    // Fire control: a pilot target needs a COMPLETED lock by this drone ⇒
-    // no shot (the cooldown is not spent).
-    if (d.fireBlocked?.(shooterId, targetId)) return;
-    // Line of fire: an ally (or its own base) in the way ⇒ hold this tick.
-    // Before the cooldown, so a held shot fires the moment the line clears.
-    if (d.lineOfFireBlocked?.(shooterId, targetId, selfX, selfY, dirNdx, dirNdy)) return;
-    // Fire control: a barrel fires only when it bears on the aim (the pilot's
-    // rule, `mountFireTolerance`). Every shot leaves down its drawn barrel, so
-    // a gun that doesn't bear would fire visibly off its target (owner
-    // 2026-11-14: "turrets aren't turning to shoot the direction they do").
-    // None bears ⇒ hold, spending no cooldown (a turret still slewing).
-    // Range: a mount fires only when the target's hull is within its own
-    // weapon reach of it, measured from the mount (owner 2026-11-14; a lock
-    // alone is no licence to fire from any distance).
-    const shape = targetId !== '' && d.targetShape?.(targetId, this._targetShape) === true ? this._targetShape : null;
-    const bearMask = this.bearingMask(shooterId, selfX, selfY, hullAngle, slotMounts, dirNdx, dirNdy, shape);
-    if (bearMask === 0) return;
-
     // Slot-level cooldown gate (mirrors PlayerFireResolver). The slot fires
     // as one trigger; its cooldown is the MAX over its mounts' weapons.
     // Single-slot drones reuse the per-shooter scalar `lastFireClientTick`.
+    // First: the AI pilot HOLDS the trigger while aimed (a request every
+    // tick), so a reloading gun stops here before the lock and line scans.
     let slotCooldown = 0;
     for (let i = 0; i < slotMounts.length; i++) {
       const c = getWeapon(slotMounts[i]!.weaponId).cooldownTicks;
@@ -227,6 +218,31 @@ export class AiFireResolver implements WeaponFireSink {
     }
     const lastFireCt = d.lastFireClientTick.get(shooterId) ?? NEVER_FIRED;
     if (tick - lastFireCt < slotCooldown) return;
+    // Fire control: a pilot target needs a COMPLETED lock by this drone ⇒
+    // no shot (the cooldown is not spent).
+    if (d.fireBlocked?.(shooterId, targetId)) return;
+    // Line of fire: an ally (or its own base) in the way ⇒ hold this tick
+    // without spending the cooldown, so a held shot fires the moment the line
+    // clears.
+    if (d.lineOfFireBlocked?.(shooterId, targetId, selfX, selfY, dirNdx, dirNdy)) return;
+    // Fire control: a barrel fires only when it bears on the aim (the pilot's
+    // rule, `mountFireTolerance`). Every shot leaves down its drawn barrel, so
+    // a gun that doesn't bear would fire visibly off its target (owner
+    // 2026-11-14: "turrets aren't turning to shoot the direction they do").
+    // None bears ⇒ hold, spending no cooldown (a turret still slewing). The AI
+    // pilot's `cone` (the angle the target's hull covers, pilot skill) narrows
+    // each barrel's window further: it fires only when the shot will hit.
+    // Range: a mount fires only when the target's hull is within its own
+    // weapon reach of it, measured from the mount (owner 2026-11-14; a lock
+    // alone is no licence to fire from any distance).
+    const shape = targetId !== '' && d.targetShape?.(targetId, this._targetShape) === true ? this._targetShape : null;
+    const bearMask = this.bearingMask(shooterId, selfX, selfY, hullAngle, slotMounts, dirNdx, dirNdy, shape, cone);
+    if (bearMask === 0) return;
+
+    // Energy gate, the player's rule (PlayerFireResolver): the slot trigger
+    // costs `resolveSlotEnergyCost` once; a short pool refuses the shot
+    // WITHOUT spending the cooldown, so it fires the moment it can pay.
+    if (d.trySpendEnergy !== undefined && !d.trySpendEnergy(shooterId, resolveSlotEnergyCost(droneKind))) return;
     d.lastFireClientTick.set(shooterId, tick);
 
     // Living World P3c — a CHARGE weapon winds up instead of firing: each
@@ -250,12 +266,13 @@ export class AiFireResolver implements WeaponFireSink {
 
   /** Bit i set ⇔ slot mount i's barrel (hull + base + slewed angle) bears on
    *  the aim direction within its weapon's window (`mountFireTolerance`, the
-   *  pilot's rule, #19) AND, with a known `target`, the target's hull is
-   *  within the mount's own weapon reach of its world origin (`mountInReach`).
+   *  pilot's rule, #19), narrowed to `cone` (the target hull's angular size),
+   *  AND, with a known `target`, the target's hull is within the mount's own
+   *  weapon reach of its world origin (`mountInReach`).
    *  Mounts past bit 30 always count as bearing. */
   private bearingMask(
     shooterId: string, sx: number, sy: number, hullAngle: number, slotMounts: ReadonlyArray<WeaponMount>,
-    dirX: number, dirY: number, target: AiFireTargetShape | null,
+    dirX: number, dirY: number, target: AiFireTargetShape | null, cone: number,
   ): number {
     const angles = this.deps.droneMountAngles.get(shooterId);
     const cosA = Math.cos(hullAngle), sinA = Math.sin(hullAngle);
@@ -270,7 +287,8 @@ export class AiFireResolver implements WeaponFireSink {
         if (!mountInReach(target.x - mx, target.y - my, reach, target)) continue;
       }
       const a = hullAngle + m.baseAngle + (angles?.[i] ?? 0);
-      if (barrelBearsOn(0, 0, a, dirX, dirY, mountFireTolerance(m.weaponId, reach))) mask |= 1 << i;
+      const tol = mountFireTolerance(m.weaponId, reach);
+      if (barrelBearsOn(0, 0, a, dirX, dirY, cone < tol ? cone : tol)) mask |= 1 << i;
     }
     return mask;
   }
@@ -278,11 +296,22 @@ export class AiFireResolver implements WeaponFireSink {
 
   /** Capital fire control: fire ONE mount along its barrel (hull angle +
    *  base angle + the slewed mount angle). Reload, reach and on-target checks
-   *  are the caller's (WeaponMountTicker.tickDrone). */
-  fireMount(shooterId: string, mountIdx: number): void {
-    const self = this.deps.swarmEntitySnapshot(shooterId);
-    if (!self) return;
+   *  are the caller's (WeaponMountTicker.tickDrone). Pays energy as a player
+   *  capital's turret does (PlayerFireResolver per-mount path: a partial
+   *  salvo pays its share), i.e. slot cost / mounts per mount. Returns false
+   *  when refused (no pose, or the pool can't pay) so the caller keeps the
+   *  reload. */
+  fireMount(shooterId: string, mountIdx: number): boolean {
+    const d = this.deps;
+    const self = d.swarmEntitySnapshot(shooterId);
+    if (!self) return false;
+    if (d.trySpendEnergy !== undefined) {
+      const kind = getShipKind(d.swarmRegistry.get(shooterId)?.shipKind ?? DEFAULT_SHIP_KIND);
+      const n = Math.min(d.resolveSlotMounts(kind).length, 31);
+      if (n > 0 && !d.trySpendEnergy(shooterId, resolveSlotEnergyCost(kind) / n)) return false;
+    }
     this.fireNow(shooterId, mountIdx);
+    return true;
   }
   /** Quad AA: the next barrel to fire, per shooter and mount index. */
   private readonly aaBarrel = new Map<string, Uint8Array>();

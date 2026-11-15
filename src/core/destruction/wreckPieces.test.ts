@@ -12,7 +12,7 @@ import {
 import { shipShapeToPolygon } from '../geometry/shipHullDecomp.js';
 import { shipHullOutline } from '../geometry/shipHullOutline.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
-import { massOf, shipTuning } from '../../shared-types/shipScale/tuning.js';
+import { shipBodyMass, shipTuning } from '../../shared-types/shipScale/tuning.js';
 import { cutDirFromAngle, CUT_ANGLE_STEPS, FRACTURE_QUANTUM } from './fractureHull.js';
 
 type V = { x: number; y: number };
@@ -105,7 +105,7 @@ describe('buildWreckPieces', () => {
     const kind = getShipKind('battleship');
     let m = 0;
     for (const p of pieces) m += p.mass;
-    expect(Math.abs(m - massOf(kind, 1)) / massOf(kind, 1)).toBeLessThan(0.01);
+    expect(Math.abs(m - shipBodyMass(kind)) / shipBodyMass(kind)).toBeLessThan(0.01);
     const d0 = pieces[0]!.mass / pieces[0]!.area;
     for (const p of pieces) expect(p.mass / p.area).toBeCloseTo(d0, 9);
   });

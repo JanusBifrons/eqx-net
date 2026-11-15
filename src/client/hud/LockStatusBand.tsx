@@ -69,14 +69,14 @@ export function summariseThreats(mirror: RenderMirror): ThreatSummary | null {
     }
   }
   if (out.acquiring > 0) out.acquiringPct = acquiringPct(out.acquiringPct);
-  // The rows rank completed locks first, so an acquiring row (or no lockers
-  // off the list) means every completed lock is a row: the rest of the total
-  // is acquiring. Every row locked with more off the list: at least that many.
-  const lockedAtLeast = total > list.length && out.acquiring === 0;
-  if (!lockedAtLeast) out.acquiring = total - out.locked;
-  // One kind: "Fighter" (+ " ×2" in the view). Mixed kinds: "3 ships".
-  out.lockedName = lockedAtLeast ? `${out.locked}+ ships`
-    : lockedNames.size === 1 ? [...lockedNames][0]! : `${out.locked} ships`;
+  // Completed locks off the rows ride `lockedByL` (the exact count); absent,
+  // the locked rows are all of them. The rest of the total is acquiring.
+  const offRows = Math.max(0, (mirror.localLockedByLocked ?? 0) - out.locked);
+  out.locked += offRows;
+  out.acquiring = total - out.locked;
+  // One kind on the rows: "Fighter" (+ " ×2" in the view). Mixed kinds or
+  // locks off the rows (kinds unknown): "14 ships".
+  out.lockedName = offRows === 0 && lockedNames.size === 1 ? [...lockedNames][0]! : `${out.locked} ships`;
   return out;
 }
 
