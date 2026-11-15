@@ -19,8 +19,8 @@ type Beat = { laser: number | null; tractor: number | null; dx: number; dy: numb
  *   is gone (it split or became a pod), take the rock piece (kind 4) nearest
  *   the last worked spot; with no piece left, the rock (kind 0) nearest the
  *   barge on the other side from the last one.
- * - Tractors: keep the held pod while it is there; else the ore pod (kind 3)
- *   nearest the barge; never the piece the lasers work.
+ * - Tractors: keep the held rock piece while it is there; else the cut
+ *   piece (kind 4) nearest the barge; never the piece the lasers work.
  * Only what is in frame is picked.
  * A non-null id means "lock this with that group" (the shot does it through
  * the HUD chip + the info box's LOCK, the real path).
@@ -29,7 +29,7 @@ async function beat(ctx: ShotContext): Promise<Beat> {
   // Half the frame in world u at the barge's closest zoom (1080p): only what
   // the viewer can see is worked.
   return ctx.page.evaluate((a) => {
-    type E = { kind: number; x: number; y: number };
+    type E = { kind: number; x: number; y: number; radius: number };
     const w = window as unknown as {
       __eqxClient?: { mirror?: { localPlayerId: string | null; ships: Map<string, { x: number; y: number }>; swarm: Map<number, E> } };
       __eqxMineLaser?: number;
@@ -75,18 +75,20 @@ async function beat(ctx: ShotContext): Promise<Beat> {
         laser = best;
       }
     }
-    // Tractors: an ore pod in frame (the nearest the barge) while there is
-    // one; never what the lasers work.
+    // Tractors: keep the held rock piece while it is there; else the cut
+    // piece (kind 4) the lasers are NOT working, the smallest in frame (a
+    // tractor's pull is a fixed force: mass matters, so a light piece moves).
     let tractor: number | null = null;
     let tWant: number | undefined;
-    let podD = Infinity;
-    for (const [eid, e] of m.swarm) {
-      if (e.kind !== 3 || Math.abs(e.x - me.x) > a.fw || Math.abs(e.y - me.y) > a.fh) continue;
-      const d = Math.hypot(e.x - me.x, e.y - me.y);
-      if (d < podD) { podD = d; tWant = eid; }
-    }
     const tCur = w.__eqxMineTractor !== undefined ? m.swarm.get(w.__eqxMineTractor) : undefined;
-    if (tCur !== undefined && tCur.kind === 3) tWant = w.__eqxMineTractor;
+    if (tCur !== undefined && tCur.kind === 4 && w.__eqxMineTractor !== w.__eqxMineLaser) tWant = w.__eqxMineTractor;
+    else {
+      let pd = Infinity;
+      for (const [eid, e] of m.swarm) {
+        if (e.kind !== 4 || eid === w.__eqxMineLaser || Math.abs(e.x - me.x) > a.fw || Math.abs(e.y - me.y) > a.fh) continue;
+        if (e.radius < pd) { pd = e.radius; tWant = eid; }
+      }
+    }
     if (tWant !== undefined && tWant !== w.__eqxMineTractor) { w.__eqxMineTractor = tWant; tractor = tWant; }
     const at = w.__eqxMineAt ?? { x: me.x, y: me.y };
     return { laser, tractor, dx: at.x - me.x, dy: at.y - me.y };
@@ -103,7 +105,9 @@ async function lockWith(ctx: ShotContext, group: string, eid: number): Promise<v
       __eqxStore?: { getState(): { setSelection(ids: readonly string[], id: string | null, kind: string | null): void } };
       __eqxClient?: { lockSelected?: () => boolean };
     };
-    w.__eqxStore?.getState().setSelection([], `swarm-${id}`, 'asteroid');
+    const k = (globalThis as { __eqxClient?: { mirror?: { swarm: Map<number, { kind: number }> } } }).__eqxClient?.mirror?.swarm.get(id)?.kind;
+    // The kind the real click-pick reports (pickEntity: 0 asteroid, else structure).
+    w.__eqxStore?.getState().setSelection([], `swarm-${id}`, k === 0 ? 'asteroid' : 'structure');
     w.__eqxClient?.lockSelected?.();
   }, eid);
 }
@@ -143,13 +147,13 @@ export const bargeMining: Shot = {
   id: 'barge-mining',
   section: 'mechanics',
   title: 'The mining barge works a rock field',
-  caption: 'Mining lasers slice a rock into pieces, then into ore pods; the tractors pull the pods into the hold.',
+  caption: 'Mining lasers slice a rock into pieces; the tractors pull the cut pieces in to the hull.',
   features: ['CAP'],
   docs: ['mining-and-salvage'],
   reel: false,
   server: 'lean',
   target: { room: 'showcase-barge-mining', params: { shipKind: 'barge', instantLock: 1, art: 'machined', fx: 'new', initialHull: 1_000_000 } },
-  durationMs: 55_000,
+  durationMs: 30_000,
   async startWhen(ctx) {
     await ctx.page.waitForFunction(() => {
       let n = 0;
@@ -168,7 +172,7 @@ export const bargeMining: Shot = {
     }
   },
   async run(ctx) {
-    for (let t = 0; t < 54_500; t += 500) {
+    for (let t = 0; t < 29_500; t += 500) {
       await step(ctx);
       await ctx.sleep(500);
     }
