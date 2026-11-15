@@ -481,7 +481,9 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   /** Guard post (server-only, set by a director via `setGuardPost`): a
    *  broadside capital with a post fights FROM it instead of holding the
    *  stand-off (which under real naval ranges is ~29 km away from what it
-   *  guards). Plain fields, no object, so set/clear never allocates (#14). */
+   *  guards). Every other ship takes it as a LEASH on its target pick (RTS
+   *  Part B slice 5, `guardLeash`). Plain fields, no object, so set/clear
+   *  never allocates (#14). */
   private guardOn = false;
   private guardX = 0;
   private guardY = 0;
@@ -527,6 +529,9 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   private readonly _pickOpts: PickTargetOptions;
   /** Same options without the sensor cap: the out-of-sensor fallback pick. */
   private readonly _pickOptsUncapped: PickTargetOptions;
+  /** The guard-leash pick (a non-broadside ship with a post): measured from
+   *  the POST, new picks AND the held target only inside the guard radius. */
+  private readonly _pickOptsGuard: PickTargetOptions;
   /** Bound once (no per-tick closure). Unused while every candidate carries
    *  its own `hostile` flag, kept for the pickTarget signature. */
   private readonly _isHostile = (id: string): boolean => this.hostileTo.has(id);
@@ -777,6 +782,15 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       ticksSincePrevTarget: 0,
       priorityBias: STRUCTURE_PRIORITY_BIAS,
       claimWeight: TARGET_CLAIM_WEIGHT,
+    };
+    this._pickOptsGuard = {
+      healthWeight: DRONE_TARGET_HEALTH_WEIGHT,
+      dwellTicks: DRONE_TARGET_DWELL_TICKS,
+      ticksSincePrevTarget: 0,
+      priorityBias: STRUCTURE_PRIORITY_BIAS,
+      claimWeight: TARGET_CLAIM_WEIGHT,
+      maxDistance: 0,
+      prevMaxDistance: 0,
     };
   }
 
@@ -1063,10 +1077,21 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     // (`hostileTo`, set via markHostile) across the sector is still hunted.
     // On-sight candidates never reach the fallback beyond ON_SIGHT_ENGAGE_RANGE
     // (they aren't hostile there), and the sensor range is floored at it.
+    // Guard leash (RTS Part B slice 5): a ship with a guard post (not a
+    // broadside capital, which flies its own guard) picks by distance from
+    // the POST, only inside the guard radius, held target included, and no
+    // uncapped fallback: what leaves the radius is let go.
     const sinceTicks = view.tick - this.prevTargetSinceTick;
-    this._pickOpts.ticksSincePrevTarget = sinceTicks;
-    let target = pickTarget(self.x, self.y, cand, this.prevTargetId, this._isHostile, this._pickOpts);
-    if (target === null && anyHostile) {
+    const leash = this.guardLeash();
+    let target: MountTargetView | null;
+    if (leash) {
+      this._pickOptsGuard.ticksSincePrevTarget = sinceTicks;
+      target = pickTarget(this.guardX, this.guardY, cand, this.prevTargetId, this._isHostile, this._pickOptsGuard);
+    } else {
+      this._pickOpts.ticksSincePrevTarget = sinceTicks;
+      target = pickTarget(self.x, self.y, cand, this.prevTargetId, this._isHostile, this._pickOpts);
+    }
+    if (target === null && anyHostile && !leash) {
       this._pickOptsUncapped.ticksSincePrevTarget = sinceTicks;
       target = pickTarget(self.x, self.y, cand, this.prevTargetId, this._isHostile, this._pickOptsUncapped);
     }
@@ -1125,6 +1150,8 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     // instead of the default origin orbit. This is how a roaming squad flies in
     // formation toward an arbitrary A→B destination.
     if (this.moveTarget !== null) return this.tickMoveTo(self, this.moveTarget.x, this.moveTarget.y);
+    // Guard leash: nothing to fight ⇒ back to the post.
+    if (this.guardLeash()) return this.tickMoveTo(self, this.guardX, this.guardY);
     const r = Math.hypot(self.x, self.y);
     const safeR = Math.max(r, 1);
 
@@ -1973,7 +2000,9 @@ export class HostileDroneBehaviour implements IAiBehaviour {
 
   /** Give this drone a GUARD POST: the area (centre + radius) it was sent to
    *  defend. A broadside capital with a post fights from it (see
-   *  `tickGuardBroadside`) instead of holding its gun stand-off. The radius is
+   *  `tickGuardBroadside`) instead of holding its gun stand-off; any other
+   *  ship engages only targets inside the radius (measured from the post)
+   *  and flies back to the post when it has none (the guard leash). The radius is
    *  at least `shipTuning(kind).guardRadiusMin` (#18), so a big hull has room
    *  to turn. Independent of the move target / flock roles (those steer the
    *  IDLE drone). Server-only: the client never ticks the drone brain. */
@@ -1982,10 +2011,18 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     this.guardX = x;
     this.guardY = y;
     this.guardR = Math.max(radius, shipTuning(this.kind).guardRadiusMin);
+    this._pickOptsGuard.maxDistance = this.guardR;
+    this._pickOptsGuard.prevMaxDistance = this.guardR;
   }
 
   clearGuardPost(): void {
     this.guardOn = false;
+  }
+
+  /** The guard post leashes this ship's target pick: every ship with a post
+   *  but a broadside capital (that one keeps `tickGuardBroadside`). */
+  private guardLeash(): boolean {
+    return this.guardOn && !this.broadside;
   }
 
   /** Test-visible: the effective guard radius (0 with no post). */

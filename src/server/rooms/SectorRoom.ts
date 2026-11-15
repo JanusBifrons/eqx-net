@@ -1007,7 +1007,8 @@ export class SectorRoom extends Room<SectorState> {
       return ship?.alive && this.playerToSlot.has(playerId) ? ship.shipInstanceId : null;
     },
     // RTS Part B: an owner's order reaches the AI pilot brain flying the hull.
-    // Move: fly there and hold. Stop: hold where it is. (Attack: slice 8.)
+    // Move: fly there and hold. Stop: guard where it is (the guard leash,
+    // slice 5). (Attack: slice 8.)
     orderIssued: (id, order) => {
       const brain = this.aiController.getBehaviour(id);
       if (brain === null) return;
@@ -1016,6 +1017,17 @@ export class SectorRoom extends Room<SectorState> {
         const p = this.lingeringPoseCache.get(id);
         if (p !== undefined) this.holdHullAt(brain, p.x, p.y);
       }
+    },
+    // RTS Part B slice 5: Defend guards its post (the given point, else where
+    // the hull is). Other modes keep the post they had (Hunt: slice 6).
+    modeSet: (id) => {
+      const brain = this.aiController.getBehaviour(id);
+      const w = this.fleet.brainOf(id);
+      if (brain === null || w === null || w.mode !== 'defend') return;
+      const p = this.lingeringPoseCache.get(id);
+      const x = w.guardPostX ?? p?.x;
+      const y = w.guardPostY ?? p?.y;
+      if (x !== undefined && y !== undefined) this.holdHullAt(brain, x, y);
     },
   });
   /** Reused `set_mode` parameters (#14; the brain copies the route). */
@@ -10468,7 +10480,8 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   /** RTS Part B: an owned hull's brain holds at (x, y): its move target, and
-   *  its guard post (a broadside capital fights from it). */
+   *  its guard post (the guard leash: it engages only inside the guard
+   *  radius round it; a broadside capital fights from it). */
   private holdHullAt(brain: IAiBehaviour, x: number, y: number): void {
     brain.setMoveTarget?.(x, y);
     brain.setGuardPost?.(x, y, 0);

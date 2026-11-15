@@ -108,6 +108,11 @@ export interface FleetCommandHooks {
    *  `order` is that ship's own). The room forwards it to the AI pilot brain
    *  that flies the hull (RTS Part B). Absent ⇒ ignored. */
   orderIssued?(shipId: string, order: Readonly<WingmanOrder>): void;
+  /** `shipId`'s brain took a new standing mode (`set_mode`; read it back
+   *  through `brainOf`, which has resolved the post). The room forwards a
+   *  Defend to the AI pilot brain as its guard post (RTS Part B slice 5).
+   *  Absent ⇒ ignored. */
+  modeSet?(shipId: string): void;
 }
 
 /** `set_mode` parameters (the wire message's optional fields). */
@@ -540,12 +545,16 @@ export class FleetCommandSubsystem {
             sd.x = md.x; sd.y = md.y; sd.route = md.route;
             sd.escortId = escortOk && !this.memberSquad.has(escortId!) ? escortId : undefined;
           }
-          if (id === this.squadLeader(sq)) e.brain.setMode(mode, sq.modeData);
+          if (id === this.squadLeader(sq)) {
+            e.brain.setMode(mode, sq.modeData);
+            this.hooks.modeSet?.(id);
+          }
           continue;
         }
         this.removeFromSquad(id);
       }
       e.brain.setMode(mode, md);
+      this.hooks.modeSet?.(id);
     }
     md.route = undefined;
     return this.accepted;

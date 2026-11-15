@@ -29,6 +29,13 @@ describe the wingman brain flying, read this section instead.
 - **Holds where it was parked:** attach sets the brain's move target and
   guard post at the hull's spot (`holdHullAt`); an idle brain with neither
   orbits the world origin (`tickPatrol`).
+- **Guard leash (slice 5):** Stop (`orderIssued`: guard where the hull is),
+  Move (guard the destination) and `set_mode` Defend (the `modeSet` hook:
+  the wingman store's resolved post, else the hull's spot) all go through
+  `holdHullAt`, so the brain engages only inside its guard radius round the
+  post and returns there when idle ([ai-pilots](ai-pilots.md) "Capital
+  broadside and guard posts"). Hunt lifts the leash in slice 6. Lock:
+  `tests/integration/sectorRoom/ownedShipsGuardLeash.test.ts`.
 - **Self pose:** `swarmEntitySnapshot` falls back to `lingeringPoseCache`
   (`lingeringHullSnapshot`, same shared scratch), so `runEntity` ticks a hull.
 - **Keys:** the AI input sink's ONE hull branch (`postInput(slot, bits,
