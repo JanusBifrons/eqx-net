@@ -22,15 +22,13 @@
  *
  * Runs once per death (not hot-loop code); allocates freely.
  */
-import {
-  fractureHull, projectToOutline, cutDirFromAngle, CUT_ANGLE_STEPS, FRACTURE_SNAP_CHANCE, EDGE_HULL, EDGE_CUT,
-  type FractureEdgeKind, type FractureKillCut,
-} from './fractureHull.js';
+import { projectToOutline, CUT_ANGLE_STEPS, FRACTURE_SNAP_CHANCE, EDGE_CUT, type FractureEdgeKind } from './fractureHull.js';
+import { fracturePiecesToGeometry, wreckRootFracture } from './wreckPieceFrame.js';
 import { DESTRUCTION_PROFILES } from '../../shared-types/shipScale/destruction.js';
 import { Rng, fnvMixU32 } from '../random/rng.js';
 import { shipHullOutline, shipShapeScale } from '../geometry/shipHullOutline.js';
 import { getShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
-import { shipBodyMass, shipTuning } from '../../shared-types/shipScale/tuning.js';
+import { shipTuning } from '../../shared-types/shipScale/tuning.js';
 import type { Vec2 } from '../swarm/asteroidShape.js';
 import { SUBCAP_WRECK_COLLISION_GROUPS, WRECK_COLLISION_GROUPS } from '../physics/collisionGroups.js';
 
@@ -266,23 +264,6 @@ export function hullLocalCutAngle(pose: WreckDeathPose, dirWorld: Vec2): number 
   return ((Math.round(t * CUT_ANGLE_STEPS) % CUT_ANGLE_STEPS) + CUT_ANGLE_STEPS) % CUT_ANGLE_STEPS;
 }
 
-/** The fracture's `cut` from the wreck inputs (undefined without a cut). */
-function wreckFractureCut(input: WreckFractureInputs): FractureKillCut | undefined {
-  if (input.cutKind === undefined || input.cutAng === undefined) return undefined;
-  const d = cutDirFromAngle(input.cutAng);
-  return { kind: input.cutKind, dirX: d.x, dirY: d.y, width: input.cutW ?? 0 };
-}
-
-function ringArea(r: ReadonlyArray<readonly [number, number]>): number {
-  let a = 0;
-  for (let i = 0; i < r.length; i++) {
-    const p = r[i]!;
-    const q = r[(i + 1) % r.length]!;
-    a += p[0] * q[1] - q[0] * p[1];
-  }
-  return Math.abs(a) / 2;
-}
-
 /** Saturating 0..1 "how violent" from the two damage inputs. */
 function violence(kb: number, rate: number): number {
   const f = (x: number): number => (x > 0 ? x / (x + 0.35) : 0);
@@ -297,88 +278,9 @@ function violence(kb: number, rate: number): number {
  * Runs once per wreck per side; allocates freely.
  */
 export function wreckPieceGeometry(input: WreckFractureInputs): WreckPieceGeometry[] {
-  const kind = getShipKind(input.kindId);
-  // The kind's destruction profile picks the fracture options (a capital's
-  // are the fracture defaults: byte-identical); `none` leaves no pieces.
-  const opts = DESTRUCTION_PROFILES[shipTuning(kind).destruction].fracture;
-  if (opts === null) return [];
-  const hull = shipHullOutline(kind);
-  const s = shipShapeScale(kind);
-  const fractured = fractureHull({
-    hull,
-    seed: input.seed >>> 0,
-    killPoint: { x: input.killX, y: input.killY },
-    maxPieces: opts.maxPieces,
-    killBlowDamage: input.killBlowDamage,
-    recentDamageRate: input.recentDamageRate,
-    // The descriptor's snap chance (what the server used) wins.
-    snapChance: input.snapChance,
-    fanCracks: opts.fanCracks,
-    farCrack: opts.farCrack,
-    chunkyPieces: opts.chunkyPieces,
-    chunkyMinWidthBeams: opts.chunkyMinWidthBeams,
-    soundMinShare: opts.soundMinShare,
-    extraChunkChance: opts.extraChunkChance,
-    jag: opts.jag,
-    cut: wreckFractureCut(input),
-  });
-  const hullAreaWorld = ringArea(hull) * s * s;
-  const density = hullAreaWorld > 0 ? shipBodyMass(kind) / hullAreaWorld : 0;
-  const inset = shipTuning(kind).wreckColliderInset;
-  const out: WreckPieceGeometry[] = [];
-  for (let i = 0; i < fractured.length; i++) {
-    const p = fractured[i]!;
-    const cmx = p.centroid.x * s;
-    const cmy = -p.centroid.y * s;
-    let radius = 0;
-    const parts: Vec2[][] = [];
-    for (const part of p.convexParts) {
-      const ring: Vec2[] = [];
-      // The Y flip turns CCW into CW: walk backwards to stay CCW.
-      for (let k = part.length - 1; k >= 0; k--) {
-        const v = part[k]!;
-        const x = v.x * s - cmx;
-        const y = -v.y * s - cmy;
-        ring.push({ x, y });
-        const r = Math.sqrt(x * x + y * y);
-        if (r > radius) radius = r;
-      }
-      parts.push(ring);
-    }
-    const n = p.outline.length;
-    const outline: Vec2[] = [];
-    const cutEdges: FractureEdgeKind[] = [];
-    for (let j = 0; j < n; j++) {
-      const v = p.outline[n - 1 - j]!;
-      outline.push({ x: v.x * s - cmx, y: -v.y * s - cmy });
-      // Reversed walk: new edge j is old edge (n - 2 - j) mod n.
-      cutEdges.push(p.cutEdges[(n - 2 - j + n) % n] ?? EDGE_HULL);
-    }
-    const area = p.area * s * s;
-    const colliderParts = parts.map((ring) => insetRing(ring, inset));
-    out.push({ index: i, cx: cmx, cy: cmy, parts, colliderParts, outline, cutEdges, area, mass: Math.max(1e-3, density * area), radius });
-  }
-  return out;
-}
-
-/** A convex ring with every vertex moved `inset` toward the ring's vertex
- *  centre (never more than half way). Every point of a shared cut edge moves
- *  into its own piece, so two neighbours' colliders start apart. */
-function insetRing(ring: ReadonlyArray<Vec2>, inset: number): Vec2[] {
-  let mx = 0;
-  let my = 0;
-  for (const v of ring) { mx += v.x; my += v.y; }
-  mx /= ring.length;
-  my /= ring.length;
-  const out: Vec2[] = [];
-  for (const v of ring) {
-    const dx = v.x - mx;
-    const dy = v.y - my;
-    const d = Math.sqrt(dx * dx + dy * dy);
-    const k = d > 0 ? Math.max(0.5, (d - inset) / d) : 1;
-    out.push({ x: mx + dx * k, y: my + dy * k });
-  }
-  return out;
+  // The raw fracture and its body-frame geometry live in wreckPieceFrame.ts,
+  // shared with the child fracture (`wreckChildGeometry`).
+  return fracturePiecesToGeometry(input.kindId, wreckRootFracture(input));
 }
 
 /** A shared cut between two neighbouring pieces: endpoints and the unit
