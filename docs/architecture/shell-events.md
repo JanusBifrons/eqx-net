@@ -242,7 +242,7 @@ explosion fired, `flushQueuedDamageFx` released the held number (4.933), and
 the dying-hull hold handed the hull to its wreck pieces as soon as they
 arrived (the next frame, 4.950). All on the arrival timeline, ~100 ms early.
 
-Now (`ColyseusClient.deferKillForShell` / `releaseDeferredKills`):
+Now (`net/drawnShellTiming.ts`, `DrawnShellTiming.deferKill` / `release`):
 
 - A `destroy` for a swarm ship whose KILLING hit (the damage event just
   before it, `newHealth` 0) is still held for its drawn shell
@@ -264,7 +264,7 @@ Now (`ColyseusClient.deferKillForShell` / `releaseDeferredKills`):
   (a beam, a hit already drawn) dies on arrival as before. An id recycled
   meanwhile (another kind in the entry) is not killed.
 - Scope: swarm ships (AI pilots, capitals) and pilot hulls: a parked
-  (lingering) hull and another pilot's ship (`deferShipKillForShell`, keyed
+  (lingering) hull and another pilot's ship (`deferShipKill`, keyed
   by wire id). While held, the snapshot routing keeps them though the server
   no longer lists them (`routeSnapshotShipStates` `keepLingering`,
   `syncMirror`'s departed sweep); the release kills the hull and evicts the
@@ -297,7 +297,7 @@ Now (`ColyseusClient.deferKillForShell` / `releaseDeferredKills`):
   that hit is the killing blow. Second leg: the hold matches hits to shells
   by position, so a beam hit whose point lies on a live shell's path is held
   too. The beam's `laser_fired` follows its damage and destroy with `to` =
-  the hit point (both sinks' `hitscan`); `ColyseusClient.onBeamFired`
+  the hit point (both sinks' `hitscan`); `DrawnShellTiming.onBeamFired`
   releases an unmatched held hit there (`NavalHitHold.releaseHitAt`) and with
   it any death held for it, in that frame.
 - Locks: `ColyseusClient.shellKillTiming.test.ts` (failed first: the hull was

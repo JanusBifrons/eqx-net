@@ -61,7 +61,7 @@ function makeEmptyRing(): PoseRingEntry[] {
  * is `performance.now()`. `stampByTick` stamps the pose ring with
  * `swarmArrivalStampMs(tick, nowMs)` instead (the live client). `keep`: ids
  * a full snapshot must not sweep (a ship whose death is held for its drawn
- * shell, `ColyseusClient` deferred kills; released within the hold's bound).
+ * shell, `DrawnShellTiming.swarmKills`; released within the hold's bound).
  */
 export function decodeSwarmPacket(
   input: ArrayBuffer | ArrayBufferView,

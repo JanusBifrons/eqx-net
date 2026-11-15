@@ -153,7 +153,7 @@ describe('a pass-through kill on a parked pilot hull waits for the drawn slug', 
  * `laser_fired` with `to` = the hit point.
  */
 describe('a beam kill on a parked hull with 5" shells in flight dies at once', () => {
-  let c: Internals & { onBeamFired(evt: LaserFiredEvent): void };
+  let c: Internals & { _shellTiming: { onBeamFired(evt: LaserFiredEvent): void } };
   // Two 5" shells from the battlecruiser at x = 0, 50 u/tick, fired at 990:
   // g-1 along y = 0, g-2 along y = 40; both reach the hull (x = 1050) at 1011.
   const GUNS: ShellSalvo = {
@@ -210,7 +210,7 @@ describe('a beam kill on a parked hull with 5" shells in flight dies at once', (
     const { dmg, fired } = beamKill(-60);
     c.handleDamage(dmg);
     c.handleDestroy(DESTROY);
-    c.onBeamFired(fired);
+    c._shellTiming.onBeamFired(fired);
     c.handleSnapshot(snapshot(1012, false));
     c.clockAnchorServerTick = 1012;
     c.placeShells(1004); // the first frame after: the shells are still far out
@@ -221,7 +221,7 @@ describe('a beam kill on a parked hull with 5" shells in flight dies at once', (
     const { dmg, fired } = beamKill(0); // on g-1's path, g-1 still in flight
     c.handleDamage(dmg);
     c.handleDestroy(DESTROY);
-    c.onBeamFired(fired);
+    c._shellTiming.onBeamFired(fired);
     c.handleSnapshot(snapshot(1012, false));
     c.clockAnchorServerTick = 1012;
     c.placeShells(1004);
