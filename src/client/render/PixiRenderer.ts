@@ -1787,7 +1787,7 @@ export class PixiRenderer implements IRenderer {
           this._hullBlastsReplaced++;
           continue;
         }
-        const diameter = dyingHullDiameter(dying, this.lingeringSprites.get(targetId)?.sprite); // a parked hull: its own size
+        const diameter = dyingHullDiameter(dying, this._spriteShipKind(targetId)); // a parked hull: its kind's size
         // A sub-cap breaking into wreck pieces (welcome `subcapWrecks`) gets a
         // smaller blast with shorter smoke (profile fx.deathBlastScale/Linger).
         const db = deathBlastFor(mirror.subcapWrecks, mirror.capitalWrecks, this._spriteShipKind(targetId), this._deathBlastScratch, vaporised);

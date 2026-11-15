@@ -3,7 +3,7 @@
  * v10, the flash never showed). Three causes, each locked here:
  * - the dying hull was the pilot's parked (lingering) hull, which is not in
  *   the active sprite map, so the blast was sized for a 40 u fallback
- *   (`dyingHullDiameter`);
+ *   (`dyingHullDiameter`: its kind's outline);
  * - the flash was too small for its glow texture and had no floor, so a
  *   small ship's vaporise showed a dot (`VAPORISE_MIN_RADIUS`);
  * - the flash drew under the heavy beam (`stackVaporiseOverBeams`).
@@ -12,6 +12,7 @@ import { describe, expect, it } from 'vitest';
 import { Container, Sprite, Texture } from 'pixi.js';
 import type { ArtHandle, ArtService } from '../art/ArtService.js';
 import { FxExplosions } from '../art/fx/FxExplosions.js';
+import { shipExtent } from '../art/fields.js';
 import { deathBlastFor, dyingHullDiameter, type DeathBlast } from './deathBlast.js';
 import { spawnVaporiseBlast, stackVaporiseOverBeams, VAPORISE_MIN_RADIUS } from './vaporiseBlast.js';
 
@@ -53,13 +54,15 @@ describe('dyingHullDiameter', () => {
     return c;
   };
 
-  it('a parked (lingering) hull is sized from its own sprite, not the 40 u fallback', () => {
-    expect(dyingHullDiameter(undefined, box(64, 88))).toBe(88);
+  it('a parked (lingering) hull is sized from its kind, not the 40 u fallback', () => {
+    expect(dyingHullDiameter(undefined, 'missile-frigate')).toBe(2 * shipExtent('missile-frigate'));
+    expect(dyingHullDiameter(undefined, 'missile-frigate')).toBeGreaterThan(80);
   });
 
-  it('the active sprite wins; nothing drawn falls back to 40', () => {
-    expect(dyingHullDiameter(box(30, 20), box(64, 88))).toBe(30);
-    expect(dyingHullDiameter(undefined, undefined)).toBe(40);
+  it('the active sprite wins; an unknown kind with nothing drawn falls back to 40', () => {
+    expect(dyingHullDiameter(box(30, 20), 'missile-frigate')).toBe(30);
+    expect(dyingHullDiameter(undefined, null)).toBe(40);
+    expect(dyingHullDiameter(undefined, 'no-such-kind')).toBe(40);
   });
 });
 

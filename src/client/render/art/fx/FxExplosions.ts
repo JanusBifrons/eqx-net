@@ -152,7 +152,7 @@ export class FxExplosions {
     core.visible = age < VAP_CORE_S;
     if (core.visible) {
       core.position.set(b.x, b.y);
-      core.scale.set((R * (4.8 + 1.2 * (age / VAP_CORE_S))) / core.texture.width);
+      core.scale.set((R * (3.2 + 0.8 * (age / VAP_CORE_S))) / core.texture.width);
       core.alpha = envelope(age, 0, VAP_CORE_S);
     }
     // The glow of the burning hull: swells, then fades over the burst.

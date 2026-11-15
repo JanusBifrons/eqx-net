@@ -5,6 +5,7 @@
  */
 import type { Container } from 'pixi.js';
 import { isShipKindId } from '../../../shared-types/shipKinds.js';
+import { shipExtent } from '../art/fields.js';
 import { destructionProfileOf } from '../../../shared-types/shipScale/destructionProfile.js';
 import { DESTRUCTION_PROFILES } from '../../../shared-types/shipScale/destruction.js';
 
@@ -25,6 +26,19 @@ export function hullDeathBlastReplaced(capitalWrecks: boolean | undefined, dying
 }
 
 /**
+ * The dying hull's drawn size (world units): its active sprite's, else (a
+ * parked, lingering hull: not in the active map) its kind's drawn outline
+ * (`shipExtent`, #18), else 40. A pilot spectating from a parked hull dies
+ * there; sizing it 40 u made its blast a fighter's (beam-vaporise-subcap v10:
+ * an invisible vaporise flash). The parked sprite's own bounds are not used:
+ * filmed (v11) they ran several times the hull and whited out the screen.
+ */
+export function dyingHullDiameter(active: Container | undefined, kind: string | null | undefined): number {
+  if (active) return Math.max(active.width, active.height);
+  return typeof kind === 'string' && isShipKindId(kind) ? 2 * shipExtent(kind) : 40;
+}
+
+/**
  * The ship's normal death explosion, scaled by its destruction profile
  * (`fx.deathBlastScale` radius, `fx.deathBlastLinger` smoke) while the room
  * breaks that profile into wrecks: a sub-capital with welcome `subcapWrecks`
@@ -38,17 +52,6 @@ export function hullDeathBlastReplaced(capitalWrecks: boolean | undefined, dying
  * only says so in a room that breaks the kind, so no flag gate. An unknown
  * kind takes the sub-cap look. Alloc-free.
  */
-/**
- * The dying hull's drawn size (world units): its active sprite, else its
- * parked (lingering) hull's sprite, else 40. A pilot spectating from a parked
- * hull dies there, keyed in the lingering map only; sizing it 40 u made its
- * blast a fighter's (beam-vaporise-subcap v10: an invisible vaporise flash).
- */
-export function dyingHullDiameter(active: Container | undefined, lingering: Container | undefined): number {
-  const hull = active ?? lingering;
-  return hull ? Math.max(hull.width, hull.height) : 40;
-}
-
 export interface DeathBlast {
   /** Radius multiplier on `blastRadiusFor(diameter)`. */
   scale: number;
