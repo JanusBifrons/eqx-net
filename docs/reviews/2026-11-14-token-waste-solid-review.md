@@ -25,7 +25,7 @@ hand-off plans for the top areas that a cheaper agent can execute one slice at a
 
 | Pass | What | How |
 |---|---|---|
-| Usage | `~/.claude/projects/C--Users-alecv-Documents-Projects-eqx-net/**/*.jsonl` (16 main + 328 subagent transcripts) | Node script: per-call `usage`, tool-result sizes, `nested_memory` attachments, shell commands classified by first verb |
+| Usage | `~/.claude/projects/C--Users-alecv-Documents-Projects-eqx-net/**/*.jsonl` (16 main + 328 subagent transcripts) | Node script: per-call `usage`, tool-result sizes, `nested_memory` attachments, shell commands classified by first verb; re-run with `node scripts/dev/token-report.mjs` |
 | Source sizes | `src/**`, `scripts/`, `tests/`, `showcase/`, `perf/`, `benchmarks/`, `diag/` | `git ls-files` + `wc`; `node scripts/audit-god-files.mjs --report`; method spans by regex |
 | Instruction files | root + `src/{server,client,core}/CLAUDE.md`, `plans/CLAUDE.md`, `.claude/skills/*`, repo and user `settings*.json`, both memory dirs | byte count per `##` section, date / PR-number counts, 10 path spot-checks |
 | Docs | `docs/**`, `plans/**`, `MANIFEST_*.md` | sizes, naming conventions, prior refactor plans and lessons |
