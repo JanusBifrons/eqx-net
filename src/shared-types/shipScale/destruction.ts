@@ -59,6 +59,27 @@ export interface DestructionFractureOptions {
   readonly jag?: { readonly depth: number; readonly roughness: number };
 }
 
+/** How a wreck piece breaks again (salvage stream; capital-destruction.md
+ *  §S4 "Re-split"). The server keeps a hidden integrity pool per piece:
+ *  `I_max = clamp01(pieceMass / shipBodyMass) × maxHull × integrityMul`,
+ *  at least `integrityMinFrac × maxHull`. At 0 a piece of at least
+ *  `minAreaFrac` of the hull's area re-fractures (`wreckChildGeometry`);
+ *  a smaller one becomes a salvage pod. */
+export interface DestructionResplit {
+  /** Least piece area, as a fraction of the whole hull's, that still splits;
+   *  below it the worn-out piece turns into salvage. */
+  readonly minAreaFrac: number;
+  /** Integrity of a piece per unit of its mass share × the kind's max hull. */
+  readonly integrityMul: number;
+  /** Floor on a piece's integrity, as a fraction of the kind's max hull. */
+  readonly integrityMinFrac: number;
+  /** Salvage units a whole hull's mass is worth (a pod carries its piece's
+   *  mass share of this). */
+  readonly salvagePerHull: number;
+  /** The child fracture's options (`maxPieces`: 2-3 children per split). */
+  readonly fracture: DestructionFractureOptions;
+}
+
 /** How the cut edges glow after the break. */
 export type WreckGlowStyle = 'full' | 'simple' | 'none';
 
@@ -120,6 +141,8 @@ export interface DestructionProfile {
   readonly id: DestructionProfileId;
   /** Null: the entity leaves no wreck pieces. */
   readonly fracture: DestructionFractureOptions | null;
+  /** Null: the entity's wreck pieces never break again. */
+  readonly resplit: DestructionResplit | null;
   /** Crack hold: the hull stays one body this long before it parts (ms). */
   readonly holdMs: number;
   /** Multiplier on `shipTuning(kind).wreckPushMax/Min`. */
@@ -169,6 +192,20 @@ const CAPITAL: DestructionProfile = {
   // fans and the far crack on, no chunky mode, the default jag): capital
   // output is byte-identical. Lock: `destructionProfile.test.ts`.
   fracture: { maxPieces: 64, snapChance: 0.2, fanCracks: true, farCrack: true, chunkyPieces: false },
+  // A capital piece breaks into 2-3 chunks through the sub-capital's chunky
+  // path (sound primary crack, one optional extra crack), with the capital's
+  // full jag so new cracks look like the old ones. Values and the depth-2
+  // sliver spike: capital-destruction.md §S4 "Re-split".
+  resplit: {
+    minAreaFrac: 0.02,
+    integrityMul: 0.5,
+    integrityMinFrac: 0.01,
+    salvagePerHull: 200,
+    fracture: {
+      maxPieces: 3, snapChance: 0.2, fanCracks: false, farCrack: false, chunkyPieces: true,
+      chunkyMinWidthBeams: 0.36, soundMinShare: 0.3, extraChunkChance: 0.4,
+    },
+  },
   holdMs: 1200,
   pushScale: 1,
   separateScale: 1,
@@ -225,6 +262,18 @@ const SUBCAP: DestructionProfile = {
     soundMinShare: 0.43,
     extraChunkChance: 0.4,
     jag: { depth: 1, roughness: 0.06 },
+  },
+  // A fighter's half breaks once more into 2 chunks, a quarter becomes
+  // salvage (capital-destruction.md §S4 "Re-split").
+  resplit: {
+    minAreaFrac: 0.25,
+    integrityMul: 1,
+    integrityMinFrac: 0.05,
+    salvagePerHull: 10,
+    fracture: {
+      maxPieces: 2, snapChance: 0.2, fanCracks: false, farCrack: false, chunkyPieces: true,
+      chunkyMinWidthBeams: 0.36, soundMinShare: 0.3, extraChunkChance: 0, jag: { depth: 1, roughness: 0.06 },
+    },
   },
   holdMs: 0,
   // The parting push is per unit of hull radius (`wreckPushMax/Min`: 1 % /
@@ -310,6 +359,7 @@ const SUBCAP: DestructionProfile = {
 const NONE: DestructionProfile = {
   id: 'none',
   fracture: null,
+  resplit: null,
   holdMs: 0,
   pushScale: 0,
   separateScale: 1,

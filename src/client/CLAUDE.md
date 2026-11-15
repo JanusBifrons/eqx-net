@@ -176,4 +176,5 @@ Detail: [art-direction](../../docs/architecture/art-direction.md).
 - **Anything that sets the camera scale handles the speed-zoom factor** as `Camera.tick` / `setZoom` do.
 - **Muzzle points come only from `core/combat/muzzle.ts`;** turret ring and gun are placed only by `art/turretLayout.ts`; rotation stays on `applyMountAngles`.
 - **The silhouette is the collider:** size art from `shipExtent`, never `ShipKind.radius`.
+- **Ship livery** is on by default (`readLivery`; `?livery=off` = the pre-livery bake, byte-identical); owner colours come only from `teamColorOf`/`teamSigilOf`/`teamEdgeOf`, resolved in `ownerLivery`; the default never changes the art mode. How it works: [art-direction](../../docs/architecture/art-direction.md) "Ship livery".
 - **Art budget:** effect textures (group 0) are never freed.

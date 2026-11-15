@@ -20,6 +20,7 @@ import type { SnapshotMessage, DamageEvent, DestroyEvent, LaserFiredEvent, Respa
 import { parseWelcome } from './parseWelcome';
 import { TRANSFER_PULSE_MS as GRID_PULSE_WINDOW_MS } from '@core/structures/structureGridConstants';
 import { PhysicsWorld, type ShipPhysicsState } from '@core/physics/World';
+import type { PadForceField } from '@core/physics/forceFields';
 import { decideStatAllocReanchor } from './localStatAlloc';
 import { visitDerivedWalls, type DerivedWallVisitor } from '../structures/derivedWalls.js';
 import { PAD_SPECS, PairRequestPromptSchema, TP_PHASE, TeleportCandidatesReplySchema, TollPromptSchema, isTeleporterKind } from '../../shared-types/teleport.js';
@@ -177,12 +178,13 @@ import {
 } from '../combat/HitPrediction.client';
 import { localFireSpawnsGhost, localFirePredicts, liveBeamVisible, LIVE_BEAM_PERSIST_MS } from '../combat/LocalBeam';
 import { flowMaterialToCode } from '../render/pixi/connectorVisual';
-import { findMount, isHeavyBeamMount, remoteBeamTtlMs } from '../render/beamStyles';
+import { findMount, isSustainedBeamMount, remoteBeamTtlMs } from '../render/beamStyles';
 import type { TouchInput } from '../input/TouchInput';
 import { joystickToInput, IDLE_INPUT_STATE, type JoystickInputState } from '../input/joystickToInput';
 import { aimInput } from '../input/AimInput';
 import { encodeAim } from '@core/combat/manualAim';
-import { lockLineScore } from '@core/combat/lockLine';
+import { isContactLockKind, isTerrainLockKind } from '@core/combat/lockState';
+import { LockLinePick } from './lockLinePick';
 import { decodeSwarmPacket } from './BinarySwarmDecoder';
 import {
   interpolateSwarmPose,
@@ -2071,7 +2073,7 @@ export class ColyseusGameClient {
       // The capital heavy beam (cooldown 10 ticks) holds longer so it reads as
       // one continuous burn, not a strobe (beamStyles `remoteBeamTtlMs`). Its
       // mount is looked up on the shooter's kind: no wire field.
-      const ttlMs = remoteBeamTtlMs(isAiShooter, isHeavyBeamMount(findMount(this.shooterKindMounts(evt.shooterId), evt.mountId)));
+      const ttlMs = remoteBeamTtlMs(isAiShooter, isSustainedBeamMount(findMount(this.shooterKindMounts(evt.shooterId), evt.mountId)));
       const lasers = (this.mirror.remoteLasers ??= new Map());
       let perShooter = lasers.get(evt.shooterId);
       if (!perShooter) {
@@ -4010,13 +4012,16 @@ export class ColyseusGameClient {
       if (mountAngles) forEachStructureMountAngles(mountAngles, this._applyStructureMountAngles);
     }
     this.syncPredWalls();
-    this.syncPadFields();
+    this.syncForceFields();
     this.syncMines();
   }
 
+  /** Scratch for `syncForceFields` (`setForceField` copies it; no per-frame object). */
+  private readonly _padForceField: PadForceField = { kind: 'pad', cx: 0, cy: 0, half: 0, active: false };
+
   /** v4 T2 — each teleporter's closing push in the prediction world, from the
    *  room-state phase (the server worker runs the same field, #15). */
-  private syncPadFields(): void {
+  private syncForceFields(): void {
     const world = this.predWorld;
     const structures = this.mirror.structures;
     const swarm = this.mirror.swarm;
@@ -4026,7 +4031,9 @@ export class ColyseusGameClient {
       if (t === undefined) continue;
       const e = swarm.get(id);
       if (!e || !isTeleporterKind(e.shipKind)) continue;
-      world.setPadField(padFieldId(id), e.x, e.y, PAD_SPECS[e.shipKind].padRadius, t.phase === TP_PHASE.CLOSING);
+      const f = this._padForceField;
+      f.cx = e.x; f.cy = e.y; f.half = PAD_SPECS[e.shipKind].padRadius; f.active = t.phase === TP_PHASE.CLOSING;
+      world.setForceField(padFieldId(id), f);
     }
   }
 
@@ -5963,31 +5970,17 @@ export class ColyseusGameClient {
     m.localLockGuide = bearing;
     m.localAimReach = reach;
     this._lgLocalId = localId;
-    this._lgX = ship.x;
-    this._lgY = ship.y;
-    this._lgDirX = -Math.sin(bearing);
-    this._lgDirY = Math.cos(bearing);
-    this._lgReach = reach;
-    // Sticky: the target the line already holds keeps it inside a wider cone.
-    this._lgHeld = m.localLockCandidate ?? null;
-    this._lgBest = null;
-    this._lgBestScore = Infinity;
+    this._lgPick.begin(ship.x, ship.y, bearing, reach, m.localLockCandidate ?? null);
     m.swarm?.forEach(this._lgVisitSwarm);
     m.ships.forEach(this._lgVisitShip);
-    m.localLockCandidate = this._lgBest;
-    return this._lgBest;
+    const best = this._lgPick.result(); // terrain only with no contact on the line
+    m.localLockCandidate = best;
+    return best;
   }
 
   /** Lock-line pick scratch (one pick at a time; reused, #14). */
   private _lgLocalId: string | null = null;
-  private _lgX = 0;
-  private _lgY = 0;
-  private _lgDirX = 0;
-  private _lgDirY = 1;
-  private _lgReach = 0;
-  private _lgHeld: string | null = null;
-  private _lgBest: string | null = null;
-  private _lgBestScore = Infinity;
+  private readonly _lgPick = new LockLinePick();
   /** Lock keys (`s:<entityId>` / `p:<playerId>`), built once per id. */
   private readonly _swarmLockKeys = new Map<number, string>();
   private readonly _shipLockKeys = new Map<string, string>();
@@ -6014,25 +6007,20 @@ export class ColyseusGameClient {
     return k;
   }
 
-  private lgConsider(key: string, x: number, y: number, radius: number): void {
-    const score = lockLineScore(x - this._lgX, y - this._lgY, this._lgDirX, this._lgDirY, radius, this._lgReach, key === this._lgHeld);
-    if (score < this._lgBestScore) {
-      this._lgBestScore = score;
-      this._lgBest = key;
-    }
-  }
-
-  /** Drones + structures (not your own) on the lock line. Bound once. */
+  /** Drones + structures (not your own) on the lock line; neutral terrain
+   *  (shared `isTerrainLockKind`, the server's `resolveLockTarget` rule, #15)
+   *  in its own lowest-priority tier. Bound once. */
   private readonly _lgVisitSwarm = (e: SwarmRenderState, entityId: number): void => {
-    if (e.kind !== 1 && e.kind !== 2) return;
+    const terrain = isTerrainLockKind(e.kind);
+    if (!terrain && !isContactLockKind(e.kind)) return;
     if (e.kind === 2 && this.mirror.structures?.get(entityId)?.owner === this._lgLocalId) return;
-    this.lgConsider(this.swarmLockKey(entityId), e.x, e.y, e.radius ?? 20);
+    this._lgPick.consider(this.swarmLockKey(entityId), e.x, e.y, e.radius ?? 20, terrain);
   };
 
   /** Other pilots' ships on the lock line. Bound once. */
   private readonly _lgVisitShip = (s: ShipRenderState, pid: string): void => {
     if (pid === this._lgLocalId) return;
-    this.lgConsider(this.shipLockKey(pid), s.x, s.y, getShipKind(s.kind ?? null).radius);
+    this._lgPick.consider(this.shipLockKey(pid), s.x, s.y, getShipKind(s.kind ?? null).radius, false);
   };
 
   /**
@@ -6675,7 +6663,7 @@ export class ColyseusGameClient {
     // P5 — fitted blueprints (store only on change; compared without allocating).
     if (!sameIds(s.fittedBlueprints, fitted)) s.setFittedBlueprints(fitted === undefined ? [] : fitted.slice());
     const capacity = Math.floor(
-      cargoCapacityForMaxHealth(getShipKind(this.mirror.ships.get(localId)?.kind ?? null).maxHealth)
+      cargoCapacityForMaxHealth(getShipKind(this.mirror.ships.get(localId)?.kind ?? null))
         * fittedCargoMul(fitted ?? EMPTY_IDS),
     );
     if (!cargoChanged(s.cargo, cargo) && s.cargoCapacity === capacity) return;

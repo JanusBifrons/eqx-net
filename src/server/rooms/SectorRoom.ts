@@ -119,6 +119,8 @@ import { cargoOpensFor, createRelationContext, isNpcOwner, npcOwner, parseOwner,
 import { BreakInCancelSchema, BreakInSchema, CARGO_ACCESS_RANGE, CargoMoveSchema, CargoQuerySchema, MAX_FREIGHT_ORDERS, SetFreightOrdersSchema, type BreakInNotice, type CargoState } from '../../shared-types/messages/cargoMessages.js';
 import { breakInDurationMs } from '../../shared-types/breakIn.js';
 import { BreakInSubsystem } from './BreakInSubsystem.js';
+import { ForceFieldSubsystem } from './ForceFieldSubsystem.js';
+import { registerTeleportMessages } from './TeleportMessageHandlers.js';
 import { stream } from '../../core/random/rng.js';
 import { HostileActLedger } from '../../core/relations/HostileActLedger.js';
 import { ProductionSubsystem } from '../structures/ProductionSubsystem.js';
@@ -128,27 +130,13 @@ import { linkEnds } from '../../core/bases/transitNetwork.js';
 import { hopDistance } from '../livingworld/population.js';
 import {
   DEFAULT_TELEPORT_RULES,
-  isFreeTeleporterKind,
   PAD_SPECS,
-  SetTeleportRulesSchema,
-  TeleportFireSchema,
-  TeleportPadLoadSchema,
-  TeleportPadUnloadSchema,
-  TeleportPairSchema,
-  TeleportUnpairSchema,
-  TeleportCandidatesQuerySchema,
-  TeleportPairRemoteSchema,
-  SetTeleportTollSchema,
-  TollAnswerSchema,
-  TeleportPairRequestSchema,
-  TeleportPairAnswerSchema,
   TOLL_DODGE_STANDING,
   TP_RULE_TOLL_HOSTILE,
   TeleportTollSchema,
   tollFor,
   type TollAnswer,
   type TollPrompt,
-  type PairRequestPrompt,
   onPad,
   padIrisSpanLocal,
   padPostCenters,
@@ -337,7 +325,7 @@ import { StorageService, fittedModuleIds, isOperationalStorage, structureUid, DE
 import { SCRAP_HP } from '../../core/swarm/scrapConstants.js';
 import { addPacked, cloneHold, emptyHold, extractRequested, holdWeight, isHoldEmpty, mergeInto, packedCount, takePacked, transferInto, type CargoRequest } from '../../core/cargo/hold.js';
 import type { HolderType, HoldRecord } from '../cargo/HoldStore.js';
-import { HARVESTER_CAPACITY, RAID_NOTICE_THROTTLE_MS, RAID_PRIORITY } from '../livingworld/RobotTerritory.js';
+import { RAID_NOTICE_THROTTLE_MS, RAID_PRIORITY } from '../livingworld/RobotTerritory.js';
 import { cargoCapacityForMaxHealth, GOOD_DEFS, GOOD_IDS, HoldSchema, type Hold } from '../../shared-types/goods.js';
 import { rollKillBounty, rollLoot } from '../../shared-types/lootTables.js';
 import { rollEliteLoot, ELITE_HEALTH_MUL } from '../../shared-types/elites.js';
@@ -411,7 +399,7 @@ import { isDebris, isLootPod, isWreckPiece } from '../net/SwarmEntityRegistry.js
 import { LineOfFireGate } from './LineOfFireGate.js';
 import { stampShipScale } from '../../shared-types/shipScale/welcomeScale.js';
 import { stampNavalRange } from '../../shared-types/combat/navalRange.js';
-import type { LockEntry } from '../../core/combat/lockState.js';
+import { isTerrainLockKind, swarmLockEligible, type LockEntry } from '../../core/combat/lockState.js';
 import { createSectorClock, type GameTimer } from '../time/gameTime.js';
 import { MIN_TIME_SCALE, MAX_TIME_SCALE, clampTimeScale, type GameClock } from '../../core/clock/GameClock.js';
 import { LoadSpeedController } from '../../core/clock/LoadSpeedController.js';
@@ -1006,6 +994,8 @@ export class SectorRoom extends Room<SectorState> {
     onStart: (actor, sid) => this.onBreakInStart(actor, sid),
     onEnd: (actor, sid, outcome, reason) => this.onBreakInEnd(actor, sid, outcome, reason),
   });
+  /** Force fields in this room's physics world (teleporter pad push today). */
+  private readonly forceFields = new ForceFieldSubsystem({ post: (cmd) => this.postToWorker(cmd) });
   /** C2 bespoke trigger (testMode `breakInMs`). */
   private testBreakInMs: number | null = null;
   /** Bespoke test/recording trigger (testMode `lockTimeCapS`): the longest
@@ -2910,11 +2900,11 @@ export class SectorRoom extends Room<SectorState> {
       setIrisActive: (rec, active) => this.forIrisSpan(rec, (id) => this.postToWorker({ type: 'SET_WALL_ACTIVE', id, active })),
       removeIris: (rec) => {
         this.forIrisSpan(rec, (id) => this.postToWorker({ type: 'REMOVE_WALL', id }));
-        this.postToWorker({ type: 'REMOVE_PAD_FIELD', id: `tpfield-${rec.id}` });
+        this.forceFields.remove(`tpfield-${rec.id}`);
       },
       setPadField: (rec, active) => {
         if (!isTeleporterKind(rec.kind)) return;
-        this.postToWorker({ type: 'SET_PAD_FIELD', id: `tpfield-${rec.id}`, cx: rec.x, cy: rec.y, half: PAD_SPECS[rec.kind].padRadius, active });
+        this.forceFields.set(`tpfield-${rec.id}`, { kind: 'pad', cx: rec.x, cy: rec.y, half: PAD_SPECS[rec.kind].padRadius, active });
       },
     });
     // v4 T3 — the broker reaches this room's teleporters from other sectors.
@@ -3532,141 +3522,23 @@ export class SectorRoom extends Room<SectorState> {
     this.onMessage('load_blueprint', blueprintMessage('load_blueprint'));
     this.onMessage('unload_blueprint', blueprintMessage('unload_blueprint'));
 
-    // v4 T1 — teleporters: pair, unpair, fire, rules, pad load/unload. Every
-    // message is owner-gated; a foreign / non-teleporter id is a silent no-op.
-    const ownTeleporter = (client: Client, entityId: number): StructureRecord | null => {
-      const owner = this.sessionToPlayer.get(client.sessionId);
-      const swarmRec = this.swarmRegistry.getByEntityId(entityId);
-      const rec = swarmRec ? this.structureRegistry.get(swarmRec.id) : undefined;
-      return owner && rec && rec.owner === owner && isTeleporterKind(rec.kind) ? rec : null;
-    };
-    const tpMessage = <T extends { entityId: number }>(
-      type: string,
-      schema: { safeParse(raw: unknown): { success: true; data: T } | { success: false } },
-      act: (rec: StructureRecord, msg: T, client: Client) => void,
-    ) => (client: Client, raw: unknown): void => {
-      const parsed = schema.safeParse(raw);
-      if (!parsed.success) {
-        this.malformed.record(client.sessionId, type);
-        return;
-      }
-      const rec = ownTeleporter(client, parsed.data.entityId);
-      if (rec) act(rec, parsed.data, client);
-    };
-    this.onMessage('teleport_pair', tpMessage('teleport_pair', TeleportPairSchema, (rec, msg, client) => {
-      const other = ownTeleporter(client, msg.partnerEntityId);
-      if (other) this.teleporters.pair(rec, other);
-    }));
-    // T3 — the sender's other teleporters, here and in every other sector.
-    // Any teleporter (yours or someone else's, for a pair request): it lists
-    // the SENDER's own teleporters.
-    this.onMessage('teleport_candidates', (client: Client, raw: unknown) => {
-      const parsed = TeleportCandidatesQuerySchema.safeParse(raw);
-      if (!parsed.success) {
-        this.malformed.record(client.sessionId, 'teleport_candidates');
-        return;
-      }
-      const msg = parsed.data;
-      const me = this.sessionToPlayer.get(client.sessionId);
-      const sw = this.swarmRegistry.getByEntityId(msg.entityId);
-      const rec = sw ? this.structureRegistry.get(sw.id) : undefined;
-      if (!me || !rec || !isTeleporterKind(rec.kind)) return;
-      const items: Array<{ sectorKey: string; uid: string; label: string }> = [];
-      const here = this.sectorKey ?? '';
-      for (const r of this.teleportRoom.ownTeleporters(me)) {
-        if (r === rec || r.uid === undefined) continue;
-        const km = (Math.hypot(r.x - rec.x, r.y - rec.y) / 1000).toFixed(1);
-        items.push({ sectorKey: here, uid: r.uid, label: `${getStructureKind(r.kind).displayName} · ${km} km` });
-      }
-      for (const { sectorKey, rec: r } of getTeleportBroker().ownTeleporters(me)) {
-        if (sectorKey === here || r.uid === undefined) continue;
-        const where = getSector(sectorKey)?.name ?? 'another sector';
-        items.push({ sectorKey, uid: r.uid, label: `${getStructureKind(r.kind).displayName} · ${where}` });
-      }
-      client.send('teleport_candidates', { type: 'teleport_candidates', entityId: msg.entityId, items: items.slice(0, 200) });
+    // v4 T1-T4 — teleporter messages (TeleportMessageHandlers.ts).
+    registerTeleportMessages({
+      onMessage: (type, handler) => this.onMessage(type, handler),
+      malformed: this.malformed,
+      sessionToPlayer: () => this.sessionToPlayer,
+      swarmRegistry: this.swarmRegistry,
+      structureRegistry: this.structureRegistry,
+      teleporters: () => this.teleporters,
+      teleportRoom: () => this.teleportRoom,
+      sectorKey: () => this.sectorKey,
+      now: () => this.gameClock.now(),
+      storage: () => this.storage,
+      rebuildStructuresSlice: () => this.rebuildStructuresSlice(),
+      answerToll: (pid, padId, answer) => this.answerToll(pid, padId, answer),
+      resolveOwnerName: (owner) => this.resolveOwnerName(owner),
+      relationCtx: this.relationCtx,
     });
-    // T4 — tolls: the owner sets one; riders answer the prompt.
-    this.onMessage('set_teleport_toll', tpMessage('set_teleport_toll', SetTeleportTollSchema, (rec, msg) => {
-      if (msg.toll === null || msg.toll.per1000 === 0) delete rec.tpToll;
-      else rec.tpToll = { ...msg.toll };
-      this.rebuildStructuresSlice();
-    }));
-    this.onMessage('teleport_toll_answer', (client: Client, raw: unknown) => {
-      const parsed = TollAnswerSchema.safeParse(raw);
-      if (!parsed.success) {
-        this.malformed.record(client.sessionId, 'teleport_toll_answer');
-        return;
-      }
-      const pid = this.sessionToPlayer.get(client.sessionId);
-      if (pid) this.answerToll(pid, parsed.data.padId, parsed.data.answer);
-    });
-    // T4 — ask another owner to pair their teleporter (here) with one of yours.
-    this.onMessage('teleport_pair_request', (client: Client, raw: unknown) => {
-      const parsed = TeleportPairRequestSchema.safeParse(raw);
-      if (!parsed.success) {
-        this.malformed.record(client.sessionId, 'teleport_pair_request');
-        return;
-      }
-      const pid = this.sessionToPlayer.get(client.sessionId);
-      const sw = this.swarmRegistry.getByEntityId(parsed.data.entityId);
-      const target = sw ? this.structureRegistry.get(sw.id) : undefined;
-      if (!pid || !target || !isTeleporterKind(target.kind) || !target.isConstructed || target.owner === pid || target.uid === undefined) return;
-      // v4 A — alien gates only ever link to each other; v4 H — an NPC
-      // teleporter is pre-linked by the transit network.
-      if (isFreeTeleporterKind(target.kind) || isNpcOwner(target.owner)) return;
-      if (relationOf(pid, target.owner, this.relationCtx) === 'hostile') return;
-      const here = this.sectorKey ?? '';
-      const mine = parsed.data.sectorKey === here
-        ? this.teleporters.byUid(parsed.data.uid)
-        : getTeleportBroker().find(parsed.data.sectorKey, parsed.data.uid)?.rec ?? null;
-      if (!mine || mine.owner !== pid || !mine.isConstructed) return;
-      const id = randomUUID();
-      getTeleportBroker().addRequest({
-        id, targetSector: here, targetUid: target.uid, toOwner: target.owner,
-        fromSector: parsed.data.sectorKey, fromUid: parsed.data.uid, fromOwner: pid, atMs: this.gameClock.now(),
-      });
-      const fromName = this.resolveOwnerName(pid) ?? 'A pilot';
-      const where = (sk: string): string => (sk === here ? 'here' : (getSector(sk)?.name ?? 'another sector'));
-      const label = `their ${getStructureKind(mine.kind).displayName} (${where(parsed.data.sectorKey)}) with your ${getStructureKind(target.kind).displayName} (${getSector(here)?.name ?? 'this sector'})`;
-      getTeleportBroker().sendToPlayer(target.owner, 'teleport_pair_request', { type: 'teleport_pair_request', requestId: id, fromName, label } satisfies PairRequestPrompt);
-    });
-    this.onMessage('teleport_pair_answer', (client: Client, raw: unknown) => {
-      const parsed = TeleportPairAnswerSchema.safeParse(raw);
-      if (!parsed.success) {
-        this.malformed.record(client.sessionId, 'teleport_pair_answer');
-        return;
-      }
-      const pid = this.sessionToPlayer.get(client.sessionId);
-      const broker = getTeleportBroker();
-      const req = broker.takeRequest(parsed.data.requestId, this.gameClock.now());
-      if (!pid || !req || req.toOwner !== pid || !parsed.data.accept) return;
-      const target = broker.find(req.targetSector, req.targetUid);
-      const from = broker.find(req.fromSector, req.fromUid);
-      if (!target || !from || target.rec.owner !== pid || from.rec.owner !== req.fromOwner) return;
-      target.room.teleporters.pair(target.rec, from.rec, from.room.teleporters, true);
-    });
-
-    this.onMessage('teleport_pair_remote', tpMessage('teleport_pair_remote', TeleportPairRemoteSchema, (rec, msg) => {
-      if (msg.sectorKey === (this.sectorKey ?? '')) {
-        const other = this.teleporters.byUid(msg.uid);
-        if (other && other.isConstructed) this.teleporters.pair(rec, other);
-        return;
-      }
-      const f = getTeleportBroker().find(msg.sectorKey, msg.uid);
-      if (f && f.rec.owner === rec.owner) this.teleporters.pair(rec, f.rec, f.room.teleporters);
-    }));
-    this.onMessage('teleport_unpair', tpMessage('teleport_unpair', TeleportUnpairSchema, (rec) => this.teleporters.unpair(rec)));
-    this.onMessage('teleport_fire', tpMessage('teleport_fire', TeleportFireSchema, (rec) => { this.teleporters.fire(rec, this.gameClock.now()); }));
-    this.onMessage('set_teleport_rules', tpMessage('set_teleport_rules', SetTeleportRulesSchema, (rec, msg) => this.teleporters.setRules(rec, msg.rules)));
-    this.onMessage('teleport_pad_load', tpMessage('teleport_pad_load', TeleportPadLoadSchema, (rec, msg) => {
-      if (!isTeleporterKind(rec.kind) || !rec.isConstructed) return;
-      this.storage.padLoad(rec, msg.good, msg.qty, PAD_SPECS[rec.kind].padCapacity);
-      this.rebuildStructuresSlice();
-    }));
-    this.onMessage('teleport_pad_unload', tpMessage('teleport_pad_unload', TeleportPadUnloadSchema, (rec) => {
-      this.storage.padUnload(rec);
-      this.rebuildStructuresSlice();
-    }));
 
     // F3 — a player edits their own faction's policy (owner = the session).
     this.onMessage('set_faction_policy', (client: Client, raw: unknown) => {
@@ -4547,14 +4419,14 @@ export class SectorRoom extends Room<SectorState> {
   private resolveLockTarget(pid: string, key: string, out: LockTargetView): boolean {
     if (key.startsWith('s:')) {
       const rec = this.swarmRegistry.getByEntityId(Number(key.slice(2)));
-      if (!rec || (rec.kind !== 1 && rec.kind !== 2)) return false; // asteroids / scrap: no
+      if (!rec || !swarmLockEligible(rec.kind, out)) return false; // terrain: never hostile
       if (rec.kind === 2) {
         // A structure outside the registry (testMode `structurePoses`
         // fixtures) has no owner: lockable, never hostile (failsafe first).
         const owner = this.structureRegistry.get(rec.id)?.owner;
         if (owner === pid) return false; // never your own base
         out.hostile = owner !== undefined && relationOf(pid, owner, this.relationCtx) === 'hostile';
-      } else {
+      } else if (!out.terrain) {
         out.hostile = this.npcHostileTo(rec.id, pid);
       }
       if (!this.swarmEntityPoseInto(rec.id, this._lockPose)) return false;
@@ -4571,7 +4443,7 @@ export class SectorRoom extends Room<SectorState> {
       out.x = p.x; out.y = p.y; out.vx = p.vx; out.vy = p.vy;
       // Fire shape: the hit shape the pilot's ship is hit on (shipHitShape).
       fillFireTargetShape(out, p.x, p.y, p.angle, true, ship.kind, ship.shield > 0, 0);
-      out.hostile = false; // PvP always runs the failsafe first
+      out.hostile = false; out.terrain = false; // PvP always runs the failsafe first
       return true;
     }
     return false;
@@ -4582,7 +4454,7 @@ export class SectorRoom extends Room<SectorState> {
     const tick = this.serverTick;
     if (key.startsWith('s:')) {
       const rec = this.swarmRegistry.getByEntityId(Number(key.slice(2)));
-      if (!rec) return;
+      if (!rec || isTerrainLockKind(rec.kind)) return; // terrain: never a hostile act (no ledger, aggro, log)
       if (rec.kind === 2) {
         const owner = this.structureRegistry.get(rec.id)?.owner;
         if (owner !== undefined) this.hostileActs.record(pid, owner, this.gameClock.now());
@@ -5166,16 +5038,16 @@ export class SectorRoom extends Room<SectorState> {
       if (damage > 0) this.gateGuard.onGateAttacked(targetId, shooterId, this.gameClock.now());
       return false;
     }
-    // The weapon's per-target factors, resolved once for this target's class
-    // (weapon-mounts.md "Per-target damage factors"); undefined ⇒ ×1.
+    // The weapon's per-target factors (weapon-mounts.md "Per-target damage factors"), and the
+    // EFFECTIVE damage they leave: the side effects below see that, so a 0-damage hit is no attack.
     const layerMul = weaponId === undefined ? undefined
       : weaponLayerMul(getWeapon(weaponId), this.structureRegistry.get(targetId) !== undefined, this._layerMul);
-    if (damage > 0) this.noteEconomicHit(targetId, shooterId);
-    if (damage > 0) this.noteStandingHit(targetId, shooterId);
+    const eff = this.damageRouter.effectiveDamage(targetId, damage, layerMul);
+    if (eff > 0) { this.noteEconomicHit(targetId, shooterId); this.noteStandingHit(targetId, shooterId); }
     // An NPC's own hit on a pilot keeps it hostile (owner 2026-11-12).
-    if (damage > 0 && this.playerToSlot.has(targetId)) this.refreshNpcAttackHostility(shooterId, targetId);
+    if (eff > 0 && this.playerToSlot.has(targetId)) this.refreshNpcAttackHostility(shooterId, targetId);
     // C2 — a hit ends the target's break-in (one Map lookup when none).
-    if (damage > 0 && this.breakIns.activeCount() > 0) this.breakIns.onActorDamaged(targetId);
+    if (eff > 0 && this.breakIns.activeCount() > 0) this.breakIns.onActorDamaged(targetId);
     // R2.18 — a Shield Pylon is undamageable while its wall is up: route the hit
     // into an active wall (drains the grid/batteries, can stun it) and skip the
     // pylon damage entirely (no damage event for the pylon). This single choke
@@ -5183,7 +5055,7 @@ export class SectorRoom extends Room<SectorState> {
     // AND ramming (SectorRoom.ts ram-contact path) — so the pylon is protected
     // against all of them while any of its walls is up. Wall stun timing is
     // wall-clock (Date.now), matching every other shieldWalls call site.
-    if (damage > 0) {
+    if (eff > 0) {
       const s = this.structureRegistry.get(targetId);
       if (s !== undefined && isNpcOwner(s.owner)) {
         // B2 — a player (or a player's turret) hitting an NPC base makes that
@@ -5230,15 +5102,15 @@ export class SectorRoom extends Room<SectorState> {
         // R2.18 — a Shield Pylon is undamageable while its wall is up: route the
         // hit into an active wall and skip the pylon damage entirely.
         if (s.kind === 'shield_pylon'
-          && this.shieldWalls.absorbForPylon(targetId, damage * (layerMul?.hull ?? 1), this.gameClock.now())) {
+          && this.shieldWalls.absorbForPylon(targetId, eff, this.gameClock.now())) {
           return false;
         }
       }
     }
     // S2a — remember the last hit on a capital (point, damage, recent rate)
     // before it lands, so its death knows where and how hard it was hit.
-    if (this.capitalWrecks !== null && damage > 0) {
-      this.capitalWrecks.noteHit(targetId, shooterId, damage, hitX, hitY, dirX, dirY, weaponId);
+    if (this.capitalWrecks !== null && eff > 0) {
+      this.capitalWrecks.noteHit(targetId, shooterId, eff, hitX, hitY, dirX, dirY, weaponId);
     }
     return this.damageRouter.apply(targetId, shooterId, damage, hitX, hitY, layerMul);
   }
@@ -10114,7 +9986,7 @@ export class SectorRoom extends Room<SectorState> {
   /** A ship's cargo capacity: its hull class, raised by a fitted Cargo
    *  Expander (shared helper, #15). Used by loot pickup and cargo access. */
   private shipCargoCapacity(kind: string, shipInstanceId: string): number {
-    return Math.floor(cargoCapacityForMaxHealth(getShipKind(kind as ShipKindId).maxHealth) * fittedCargoMul(this.fittedOf(shipInstanceId)));
+    return Math.floor(cargoCapacityForMaxHealth(getShipKind(kind as ShipKindId)) * fittedCargoMul(this.fittedOf(shipInstanceId)));
   }
 
   /**
@@ -10266,16 +10138,19 @@ export class SectorRoom extends Room<SectorState> {
       c.npc = false;
       visit(c);
     }
-    // Living World P3b — robot HARVESTERS collect too (#17: a live swarm entity
-    // of kind robot-harvester; its hold is keyed by its swarm id).
+    // NPC loot collectors (the `collectsLoot` kind trait, e.g. robot
+    // harvesters) collect too (#17: a live swarm entity, kind 1; its hold is
+    // keyed by its swarm id). Capacity is the kind's cargo capacity.
     for (const rec of this.swarmRegistry.all()) {
-      if (rec.kind !== 1 || rec.shipKind !== 'robot-harvester') continue;
+      if (rec.kind !== 1) continue;
+      const kindDef = getShipKind(rec.shipKind);
+      if (kindDef.collectsLoot !== true) continue;
       const b = slotBase(rec.slot);
       c.playerId = rec.id;
       c.shipInstanceId = rec.id;
       c.x = this.sabF32[b + SLOT_X_OFF]!;
       c.y = this.sabF32[b + SLOT_Y_OFF]!;
-      c.capacity = HARVESTER_CAPACITY;
+      c.capacity = cargoCapacityForMaxHealth(kindDef);
       c.npc = true;
       visit(c);
     }

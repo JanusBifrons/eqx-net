@@ -76,12 +76,12 @@ const ALLOWLIST = {
       'orchestrator target ~340 LOC.',
   },
   'src/client/render/art/ArtService.ts': { cap: 757, target: 600, reason: RATCHET_ONLY },
-  'src/client/render/art/fields.ts': { cap: 1166, target: 600, reason: RATCHET_ONLY },
+  'src/client/render/art/fields.ts': { cap: 1161, target: 600, reason: RATCHET_ONLY },
   'src/client/render/art/fx/fxTextures.ts': { cap: 783, target: 600, reason: RATCHET_ONLY },
   'src/client/render/galaxy/GalaxyMapLayer.ts': { cap: 1089, target: 600, reason: RATCHET_ONLY },
   'src/client/render/pixi/ConnectorRenderer.ts': { cap: 958, target: 600, reason: RATCHET_ONLY },
   'src/client/render/pixi/structureVisuals.ts': { cap: 739, target: 600, reason: RATCHET_ONLY },
-  'src/client/render/pixi/wreckArt.ts': { cap: 1933, target: 600, reason: RATCHET_ONLY },
+  'src/client/render/pixi/wreckArt.ts': { cap: 1925, target: 600, reason: RATCHET_ONLY },
   'src/client/render/worker/Camera.ts': { cap: 792, target: 600, reason: RATCHET_ONLY },
   'src/client/render/worker/WorkerRendererClient.ts': {
     cap: 844,
@@ -94,7 +94,6 @@ const ALLOWLIST = {
   'src/core/bases/growBase.ts': { cap: 740, target: 600, reason: RATCHET_ONLY },
   'src/core/contracts/IRenderer.ts': { cap: 1171, target: 600, reason: RATCHET_ONLY },
   'src/core/destruction/fractureHull.ts': { cap: 1756, target: 600, reason: RATCHET_ONLY },
-  'src/core/destruction/wreckPieces.ts': { cap: 690, target: 600, reason: RATCHET_ONLY },
   'src/core/physics/World.ts': { cap: 1287, target: 600, reason: RATCHET_ONLY },
   'src/core/physics/worker.ts': { cap: 792, target: 600, reason: RATCHET_ONLY },
   'src/server/cargo/StorageService.ts': { cap: 901, target: 600, reason: RATCHET_ONLY },
@@ -106,7 +105,7 @@ const ALLOWLIST = {
   'src/server/rooms/MissileSimulation.ts': { cap: 946, target: 600, reason: RATCHET_ONLY },
   'src/server/rooms/PlayerFireResolver.ts': { cap: 692, target: 600, reason: RATCHET_ONLY },
   'src/server/rooms/SectorRoom.ts': {
-    cap: 11931,
+    cap: 11813,
     target: 450,
     reason:
       'v3 plan commits 20-23 split this into 17 collaborators (PhysicsWorkerProxy, ' +

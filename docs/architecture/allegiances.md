@@ -64,6 +64,12 @@ kind on the binary swarm record. There is no faction byte and no
 - `shedImmune` — `LoadShedder` never evicts it (haulers, nexi, elites:
   entities whose silent removal would destroy value or break a world state
   machine).
+- `randomSpawn: false` — kept out of `GAMEPLAY_SHIP_KINDS_LIST` (the random
+  `HunterBotPool` / `SwarmSpawner` pickers) while staying player-pilotable,
+  unlike `npcOnly`. For owned-only kinds such as a future mining barge.
+
+Ship kinds are never faction-bound (owner rule): a ship's side comes from its
+owner. The kind's `allegiance` default only labels ownerless ambient spawns.
 
 ## How the AI sees other sides
 

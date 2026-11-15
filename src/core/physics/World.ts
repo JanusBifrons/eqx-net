@@ -18,6 +18,7 @@ const BOT_WARP_MIN_TURN = Math.PI / 20;
 import { castHitscan } from './hitscanRay.js';
 import { wallGeometry } from '../structures/ShieldWall.js';
 import { PAD_PUSH_ACCEL, padPushDir } from '../../shared-types/teleport.js';
+import { FORCE_FIELD_MASS_SCALED, type ForceField } from './forceFields.js';
 import { shipBodyInertia, shipBodyMass } from '../../shared-types/shipScale/tuning.js';
 import { CapitalOverlapResolver, newCapitalEntry } from './capitalOverlap.js';
 
@@ -104,8 +105,8 @@ export class PhysicsWorld {
   private world: RAPIER.World;
   private accumulator = 0;
   private bodies = new Map<string, ShipBody>();
-  /** v4 T2 — teleporter pad fields (see `setPadField`). */
-  private readonly padFields = new Map<string, { cx: number; cy: number; half: number; active: boolean }>();
+  /** Force fields (`setForceField`), one record per id, updated in place. */
+  private readonly forceFields = new Map<string, ForceField>();
   private readonly _padDir = { x: 0, y: 0 };
   private readonly _padImpulse = { x: 0, y: 0 };
   /** Reverse lookup: Rapier rigid-body handle → entity ID, for hitscan results. */
@@ -168,7 +169,7 @@ export class PhysicsWorld {
   tick(dtSeconds: number, eventQueue?: RAPIER.EventQueue): void {
     this.accumulator += dtSeconds;
     while (this.accumulator >= FIXED_DT) {
-      this.applyPadFields();
+      this.applyForceFields();
       this.world.step(eventQueue);
       this.capitals.resolve();
       if (this.settle.size > 0) this.settleStep();
@@ -451,26 +452,26 @@ export class PhysicsWorld {
   }
 
   /**
-   * v4 T2 — a teleporter pad's closing-iris push. While a field is active,
-   * every dynamic body straddling the pad edge is nudged fully in or fully
-   * out (`padPushDir`, shared) each fixed step. The server worker and the
-   * client's prediction world both run this, from the same pad phase, so a
-   * pushed ship never judders (#15). Idempotent on `id`.
+   * Force fields (`forceFields.ts`) push dynamic bodies each fixed step; the
+   * server worker and the client predWorld run the same list (#15). Kinds:
+   * `pad` (v4 T2 — a pad's closing push, in or out by `padPushDir`).
+   * Idempotent on `id`; values are COPIED, so a caller may reuse a scratch.
    */
-  setPadField(id: string, cx: number, cy: number, half: number, active: boolean): void {
-    const f = this.padFields.get(id);
-    if (f) { f.cx = cx; f.cy = cy; f.half = half; f.active = active; return; }
-    this.padFields.set(id, { cx, cy, half, active });
+  setForceField(id: string, field: ForceField): void {
+    const f = this.forceFields.get(id);
+    if (f !== undefined && f.kind === field.kind) { f.cx = field.cx; f.cy = field.cy; f.half = field.half; f.active = field.active; return; }
+    this.forceFields.set(id, { kind: field.kind, cx: field.cx, cy: field.cy, half: field.half, active: field.active });
   }
 
-  removePadField(id: string): void {
-    this.padFields.delete(id);
+  removeForceField(id: string): void {
+    this.forceFields.delete(id);
   }
 
-  private applyPadFields(): void {
-    if (this.padFields.size === 0) return;
-    for (const f of this.padFields.values()) {
+  private applyForceFields(): void {
+    if (this.forceFields.size === 0) return;
+    for (const f of this.forceFields.values()) {
       if (!f.active) continue;
+      const massScaled = FORCE_FIELD_MASS_SCALED[f.kind];
       for (const rec of this.bodies.values()) {
         const b = rec.body;
         if (!b.isDynamic()) continue;
@@ -478,7 +479,8 @@ export class PhysicsWorld {
         // runs only during a pad's ~4 s closing phase.
         const t = b.translation();
         if (!padPushDir(f.cx, f.cy, f.half, t.x, t.y, rec.kind.radius, this._padDir)) continue;
-        const j = b.mass() * PAD_PUSH_ACCEL * FIXED_DT;
+        // massScaled: mass × accel × dt; else force × dt (heavy bodies barely move).
+        const j = massScaled ? b.mass() * PAD_PUSH_ACCEL * FIXED_DT : PAD_PUSH_ACCEL * FIXED_DT;
         this._padImpulse.x = this._padDir.x * j;
         this._padImpulse.y = this._padDir.y * j;
         b.applyImpulse(this._padImpulse, true);
