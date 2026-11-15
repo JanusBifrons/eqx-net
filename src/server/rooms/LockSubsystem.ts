@@ -607,28 +607,17 @@ export class LockSubsystem {
   /** Lock time (s) of `this.target` for group `g` from `this.shooter` (both
    *  current). Infinity = can't lock right now. */
   private lockSecsNow(p: PlayerLocks, g: GroupState): number {
-    const inp = this.inputs;
-    inp.refSize = g.refSize;
-    inp.tracking = g.tracking;
-    inp.absRange = g.absRange;
-    inp.reach = g.reach;
-    inp.sensor = p.sensor;
-    inp.pilotSpeed = 1;
-    inp.signature = this.target.radius;
-    inp.dx = this.target.x - this.shooter.x;
-    inp.dy = this.target.y - this.shooter.y;
-    inp.dvx = this.target.vx - this.shooter.vx;
-    inp.dvy = this.target.vy - this.shooter.vy;
+    const inp = this.inputs, t = this.target, s = this.shooter;
+    inp.refSize = g.refSize; inp.tracking = g.tracking; inp.absRange = g.absRange; inp.reach = g.reach;
+    inp.sensor = p.sensor; inp.pilotSpeed = 1; inp.signature = t.radius;
+    inp.dx = t.x - s.x; inp.dy = t.y - s.y; inp.dvx = t.vx - s.vx; inp.dvy = t.vy - s.vy;
     return lockSeconds(inp, LOCK_TUNING);
   }
 
-  /** testMode `instantLock`: lock `e` (on `this.target`) completes now (a
-   *  failsafe still commits). */
+  /** testMode `instantLock`: lock `e` (on `this.target`) completes now (a failsafe still commits). */
   private completeInstant(playerId: string, e: LockEntry): void {
     if (e.stage === 'failsafe' && !this.target.terrain) this.deps.commitHostileAct(playerId, e.target);
-    e.stage = 'locked';
-    e.progress = 1;
-    e.lostFor = 0;
+    e.stage = 'locked'; e.progress = 1; e.lostFor = 0;
   }
 
   private writeWire(w: WireLock, e: LockEntry): void {
