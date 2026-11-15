@@ -269,30 +269,17 @@ export interface ShipTuning {
   /** Smallest guard radius round an NPC's guard post (`HostileDroneBehaviour.setGuardPost`):
    *  a post smaller than this would leave a big hull no room to turn. */
   guardRadiusMin: number;
-  /** Capital wreck break-up (capital-destruction.md): the outward push at
-   *  the kill point and far from it (u/s), as the speed it would give the
-   *  WHOLE hull: a piece's push is an impulse, this ÷ √(its mass share), ×
-   *  the profile's `pushScale` (`wreckBreakKicks`). Proportional to the hull
-   *  radius, so a bigger hull's debris field opens at the same rate relative
-   *  to its size: heavy cruiser (2×) ~22 / ~9 u/s, battleship ~29 / ~12.
-   *  Owner review 2026-11-13: "they should break apart slower and have more
-   *  inertia and weight" (the 2026-11-12 money-shot push was ~10× this). */
+  /** Wreck break-up outward push at / far from the kill point (u/s, as the
+   *  speed of the WHOLE hull; a piece gets this / sqrt(mass share) x `pushScale`).
+   *  Proportional to radius. Why and history: capital-destruction.md. */
   wreckPushMax: number;
   wreckPushMin: number;
-  /** Wreck break-up: the least speed (u/s) at which two neighbouring
-   *  pieces part along their shared cut, at every point of it (spin
-   *  included), so no seam hinges or slides shut (owner review 2026-11-13),
-   *  × the profile's `separateScale` (capital 0.05 since the 2026-11-15
-   *  mass-scaled kicks: only a guard). The raw value sizes the seeded spin.
-   *  Heavy cruiser (2×) ~31 u/s: fast enough that every cut is visibly open
-   *  1 s after the crack (owner, same day: at ~5 u/s the hull read as
-   *  "cracked but intact"), slow enough that no piece passes ~80 u/s. */
+  /** Least speed (u/s) two neighbouring pieces part at along their cut, so no
+   *  seam hinges shut, x `separateScale` (capital: only a guard). Also sizes
+   *  the seeded spin. capital-destruction.md "Mass-scaled break-up". */
   wreckSeparate: number;
-  /** Wreck break-up crack (`wreckBreakKicks`): each shared cut throws its
-   *  two faces apart with an impulse of hull mass × this (u/s) × (cut
-   *  length ÷ hull radius), × the profile's `crackScale`, so a heavy piece
-   *  parts slowly and a sliver faster (owner 2026-11-15: "an accurate mass
-   *  value vs the forces applied"). */
+  /** Crack impulse (u/s per hull mass x cut length / radius, x `crackScale`)
+   *  throwing the two faces of a cut apart: heavy pieces part slowly. */
   wreckCrack: number;
   /** Capital wreck pieces collide with each other: each convex collider part
    *  is shrunk this far (u, toward the part's centre) so neighbours that

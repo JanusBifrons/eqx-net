@@ -199,4 +199,6 @@ export const SHOWCASE_PENDING: Record<string, string> = {
     'Blueprints drop at random from elites/events and install at a signed-in base; needs a staged loot→install room for the P5 showcase.',
   'research-lab':
     'Lab jobs run for minutes on the 1 Hz grid pulse; needs a staged base with blueprints + a fast-pulse room before it can be filmed.',
+  'mining-and-salvage':
+    'No ship carries the mining laser or the tractor yet, and the tractor beam is not drawn until PR 11b: the shot lands with the mining barge (plan partitioned-chasing-lark), a barge cutting up and hauling a capital wreck.',
 };

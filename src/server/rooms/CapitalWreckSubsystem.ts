@@ -605,6 +605,15 @@ export class CapitalWreckSubsystem {
     return true;
   }
 
+  /** True while piece `id`'s wreck is still in its crack hold (before
+   *  `holdUntil`): its pieces move only as one rigid body then, so a tractor
+   *  leaves them alone until the hold ends (salvage plan PR 11). */
+  inCrackHold(id: string): boolean {
+    const wreckId = this.pieceWreck.get(id);
+    const w = wreckId !== undefined ? this.wrecks.get(wreckId) : undefined;
+    return w !== undefined && this.d.serverTick() < w.holdUntil;
+  }
+
   /** Pieces still holding together (waiting for their kick). */
   pendingKicks(): number {
     return this.kicks.length;
