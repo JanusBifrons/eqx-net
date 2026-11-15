@@ -9,6 +9,11 @@
  * two form up on the piloted ship as it flies. Spectate again: the ship the
  * owner flew stays in the squad and leads it as AI.
  *
+ * RTS Part B slice 10: the members' AI pilots fly as a loose pack on the
+ * leader (`setFlockFollow`), so "forms on A" reads the AI pilot brain's flock
+ * leader instead of the old wingman brain's formation slot; the distance
+ * check is unchanged (same spacing, same on-station radius).
+ *
  * Failing-first: before 4b `pilotShipOf` returned the playerId (never a squad
  * member's id) and reclaim detached the hull out of its squad, so the squad
  * dissolved below two members and nobody formed up on the pilot.
@@ -36,8 +41,7 @@ describe('SectorRoom integration — pilot-led squads (RTS slice 4b)', () => {
     if (harness) await harness.cleanup();
   }, 10_000);
 
-  // RTS Part B slice 10: squads fly as a loose pack on the AI pilot brain (setFlockFollow / setFlockLeaderCourse); the never-ticked wingman brain no longer flies formation slots.
-  it.skip('members form up on the ship the owner pilots; on release it leads the squad as AI', async () => {
+  it('members form up on the ship the owner pilots; on release it leads the squad as AI', async () => {
     const pid = randomUUID();
     let client = await harness.connectActive(pid, { shipKind: 'fighter', spawnX: 0, spawnY: 0 });
     const room = harness.getServerRoom()!;
@@ -75,7 +79,10 @@ describe('SectorRoom integration — pilot-led squads (RTS slice 4b)', () => {
     expect(fleet.isAttached(A)).toBe(false);
     expect(fleet.squadOf(A)?.id, 'A stays in its squad while piloted').toBe(sqId);
     expect(fleet.squad(sqId)!.leaderId, 'the piloted ship leads').toBe(A);
-    for (const id of [B, C]) expect(fleet.brainOf(id)!.formationLeaderId, `${id} forms on A`).toBe(A);
+    for (const id of [B, C]) {
+      expect(fleet.squadFollowOf(id), `${id} follows A`).toBe(A);
+      expect(internals.aiBrainOf(id)?.getFlockLeaderId?.(), `${id}'s AI pilot packs on A`).toBe(A);
+    }
 
     // Fly A north for a while; B and C (3500 u away) close on their slots round it.
     const r = room as unknown as {
@@ -118,8 +125,9 @@ describe('SectorRoom integration — pilot-led squads (RTS slice 4b)', () => {
     expect(fleet.isAttached(A), 'A is AI-flown again').toBe(true);
     expect(fleet.squadOf(A)?.id).toBe(sqId);
     expect(fleet.squad(sqId)!.leaderId).toBe(A);
-    expect(fleet.brainOf(A)!.formationLeaderId, 'the AI leader holds no slot').toBeNull();
-    for (const id of [B, C]) expect(fleet.brainOf(id)!.formationLeaderId).toBe(A);
+    expect(fleet.squadFollowOf(A), 'the AI leader follows nobody').toBeNull();
+    expect(internals.aiBrainOf(A)?.getFlockLeaderId?.()).toBeNull();
+    for (const id of [B, C]) expect(internals.aiBrainOf(id)?.getFlockLeaderId?.()).toBe(A);
 
     await harness.disconnectClient(client);
   }, 90_000);

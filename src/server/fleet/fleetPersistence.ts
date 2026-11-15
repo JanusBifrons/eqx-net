@@ -5,7 +5,8 @@
  * Persisted (in the sector snapshot, beside each lingering hull): the standing
  * MODE with its data (guard post / patrol route / escort id / retreat point),
  * the STANCE, and SQUAD membership (`squads[]`: id, owner, leader, members,
- * shape, squad mode). Direct orders (move / attack) are NOT persisted: an
+ * squad mode). Squads fly as a loose pack (RTS Part B slice 10): a squad
+ * saved before then carries a formation `shape`, which hydrate ignores. Direct orders (move / attack) are NOT persisted: an
  * order is a one-off the owner gave at a moment that has passed.
  *
  * Every field is OPTIONAL in the snapshot (additive, no schema-version bump):
@@ -16,7 +17,6 @@
 import { z } from 'zod';
 import { WingmanModeSchema, WingmanStanceSchema } from '../../shared-types/messages/clientMessages.js';
 import { WINGMAN_ROUTE_MAX, type WingmanMode, type WingmanStance } from '../../core/ai/wingman/types.js';
-import type { FormationShape } from '../../core/ai/formation.js';
 
 /** Saved mode parameters (the `set_mode` fields that describe a standing job). */
 export interface FleetSavedModeData {
@@ -41,7 +41,6 @@ export interface FleetSavedSquad {
   ownerId: string;
   leaderId: string;
   memberIds: string[];
-  shape: FormationShape;
   /** The squad-wide standing mode, when one was given. */
   mode?: WingmanMode;
   modeData?: FleetSavedModeData;
@@ -57,14 +56,12 @@ const ModeDataSchema = z.object({
   escortId: Id.optional(),
 });
 
-const FormationShapeSchema = z.enum(['wedge', 'line', 'column']);
-
 const SquadSchema = z.object({
   id: Id,
   ownerId: Id,
   leaderId: Id,
   memberIds: z.array(Id).max(64),
-  shape: FormationShapeSchema,
+  // An old save's formation `shape` (wedge / line / column) is stripped.
   mode: WingmanModeSchema.optional(),
   modeData: ModeDataSchema.optional(),
 });

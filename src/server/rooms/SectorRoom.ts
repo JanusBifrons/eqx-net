@@ -1072,6 +1072,12 @@ export class SectorRoom extends Room<SectorState> {
   private readonly fleetModeScratch: FleetModeData = {};
   /** Scratch for a wingman attack target's pose (#14). */
   private readonly wingmanTargetPose = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
+  /** The AI view's `resolveEntityInto`: a swarm ship, else an owned hull or a
+   *  pilot's active ship (`entityPoseInto`). Bound once (#14). */
+  private readonly _resolveAiEntityInto = (id: string, out: AiEntityPoseOut): boolean =>
+    this.swarmEntityPoseInto(id, out) || this.entityPoseInto(id, out);
+  /** Scratch: a pack's member ids for `setFlockFollow` (it copies them). */
+  private readonly hullPackIds: string[] = [];
   /** Reused wingman INPUT command (postMessage clones synchronously, #14). */
   private readonly wingmanInputCmd: Extract<WorkerCmd, { type: 'INPUT' }> = {
     type: 'INPUT', slot: 0, inputTick: 0, thrust: false, turnLeft: false, turnRight: false, boost: false, reverse: false,
@@ -5779,6 +5785,8 @@ export class SectorRoom extends Room<SectorState> {
       ? this.state.ships.get(targetId)?.health ?? -1
       : -1;
     if (ownedHullBefore >= 0) this.ownedHullRetaliates(targetId, shooterId);
+    // Slice 10: a hit on the ship a pilot flies turns its squad and escorts.
+    else if (damage > 0 && this.fleet.size > 0 && this.playerToSlot.has(targetId)) this.ownedHullRetaliates(targetId, shooterId);
     const destroyed = this.damageRouter.apply(targetId, shooterId, damage, hitX, hitY);
     if (ownedHullBefore >= 0) this.noteOwnedHullDamage(targetId, ownedHullBefore);
     return destroyed;
@@ -7544,7 +7552,7 @@ export class SectorRoom extends Room<SectorState> {
       for (const sq of squads) {
         const members = sq.memberIds.filter((mid) => moved.includes(mid));
         if (members.length === 0) continue;
-        carried.push({ id: sq.id, ownerId: sq.ownerId, leaderId: sq.leaderId, memberIds: members, shape: sq.shape });
+        carried.push({ id: sq.id, ownerId: sq.ownerId, leaderId: sq.leaderId, memberIds: members });
       }
       if (carried.length > 0) toRoom.receiveFleetSquads(carried);
     }
@@ -10610,6 +10618,8 @@ export class SectorRoom extends Room<SectorState> {
       // The ship's standing mode and attitude (a restored Hunt / Aggressive).
       this.applyHullMode(shipInstanceId);
       this.applyHullStance(shipInstanceId);
+      // The unregister above cleared every guard post anchored to this ship.
+      this.reapplyEscortsOf(shipInstanceId);
     }
     // Fresh neutral controls: the brain's first re-plan is up to 5 ticks away.
     const cmd = this.wingmanInputCmd;
@@ -10640,10 +10650,10 @@ export class SectorRoom extends Room<SectorState> {
       this.applyHullMode(sid);
     } else if (o !== null && o.kind === 'stop') {
       w.clearOrder();
-      if (w.formationLeaderId === null) {
+      if (fleet.squadFollowOf(sid) === null) {
         const p = this.lingeringPoseCache.get(sid);
         w.setMode('defend', hb.getGuardPostX?.() ?? p?.x ?? 0, hb.getGuardPostY?.() ?? p?.y ?? 0);
-      }
+      } else this.applyHullMode(sid);
     } else if (o === null && w.mode === 'retreat' && travel === 2) {
       const p = this.lingeringPoseCache.get(sid);
       w.setMode('defend', hb.getGuardPostX?.() ?? p?.x ?? 0, hb.getGuardPostY?.() ?? p?.y ?? 0);
@@ -10674,9 +10684,12 @@ export class SectorRoom extends Room<SectorState> {
 
   /** RTS Part B: an owned hull's brain holds at (x, y): its move target, and
    *  its guard post (the guard leash: it engages only inside the guard
-   *  radius round it; a broadside capital fights from it). */
-  private holdHullAt(brain: IAiBehaviour, x: number, y: number): void {
-    brain.setMoveTarget?.(x, y);
+   *  radius round it; a broadside capital fights from it). A squad's AI
+   *  leader (`leads`, slice 10) takes it as the flock leader's course, so it
+   *  cruises slower than its pack and they keep up, as an AI pilots' pack. */
+  private holdHullAt(brain: IAiBehaviour, x: number, y: number, leads = false): void {
+    if (leads && brain.setFlockLeaderCourse !== undefined) brain.setFlockLeaderCourse(x, y);
+    else brain.setMoveTarget?.(x, y);
     brain.setGuardPost?.(x, y, 0);
   }
 
@@ -10699,15 +10712,42 @@ export class SectorRoom extends Room<SectorState> {
    *  searches the sector (slice 6). Retreat (slice 9) travels to its point
    *  (else the post) like a Move, then defends there. Patrol (slice 11)
    *  flies the fleet route leg by leg from the waypoint nearest the hull
-   *  (`stepHullPatrol`). The modes not built on the brain yet (escort) hold
-   *  at the post, else where the hull is, so leaving a Hunt never leaves it
-   *  leashless. */
+   *  (`stepHullPatrol`).
+   *
+   *  Squads and Escort (slice 10), on the AI pilots' pack seams: a squad
+   *  member flies as a loose pack on its leader (`setFlockFollow`; the AI
+   *  leader flies the squad mode, `holdHullAt` `leads`, a patrol on its
+   *  legs). Escort (a ship's own, or its squad's) packs on the escorted ship
+   *  and guards a zone that follows it (`setGuardPost` anchored to it, as a
+   *  flagship's escorts); hits on it turn the escorts (`ownedHullRetaliates`).
+   *  An escorted ship that cannot be found: hold where the hull is. */
   private applyHullMode(id: string): void {
     const brain = this.aiController.getBehaviour(id);
-    const w = this.fleet.brainOf(id);
+    const fleet = this.fleet;
+    const w = fleet.brainOf(id);
     if (brain === null || w === null) return;
     const o = w.order;
     if (o !== null && o.kind === 'move' && brain.setTravel !== undefined) { brain.setTravel(o.x, o.y); return; }
+    const sq = fleet.squadOf(id);
+    const pack = this.hullPackIds;
+    const esc = fleet.escortTargetOf(id);
+    if (esc !== null && brain.setFlockFollow !== undefined && this.entityPoseInto(esc, this.wingmanTargetPose)) {
+      pack.length = 0;
+      if (sq !== null) for (let k = 0; k < sq.memberIds.length; k++) pack.push(sq.memberIds[k]!);
+      else pack.push(id);
+      pack.push(esc);
+      brain.setHunt?.(false);
+      brain.setFlockFollow(esc, pack);
+      brain.setGuardPost?.(this.wingmanTargetPose.x, this.wingmanTargetPose.y, 0, esc);
+      return;
+    }
+    const lead = fleet.squadFollowOf(id);
+    if (lead !== null && sq !== null && brain.setFlockFollow !== undefined) {
+      brain.setHunt?.(false);
+      brain.clearGuardPost?.();
+      brain.setFlockFollow(lead, sq.memberIds);
+      return;
+    }
     if (w.mode === 'hunt') { brain.setHunt?.(true); return; }
     brain.setHunt?.(false);
     const p = this.lingeringPoseCache.get(id);
@@ -10721,7 +10761,20 @@ export class SectorRoom extends Room<SectorState> {
     const y = (rx !== null ? w.retreatPointY : null) ?? w.guardPostY ?? p?.y;
     if (x === undefined || y === undefined) return;
     if (w.mode === 'retreat' && brain.setTravel !== undefined) brain.setTravel(x, y);
-    else this.holdHullAt(brain, x, y);
+    else this.holdHullAt(brain, x, y, sq !== null && sq.leaderId === id);
+  }
+
+  /** Slice 10: the ship `gone` left the AI controller (its owner took the
+   *  controls, or it died). Unregistering it cleared the guard post of every
+   *  brain anchored to it (`noteEntityGone`): re-apply each escort of it,
+   *  which packs on it again where its pilot flies it, else holds where it
+   *  is. Rare (a hand-over or a death), never per tick. */
+  private reapplyEscortsOf(gone: string): void {
+    const fleet = this.fleet;
+    for (let i = 0; i < fleet.size; i++) {
+      const id = fleet.idAt(i);
+      if (id !== gone && fleet.escortTargetOf(id) === gone) this.applyHullMode(id);
+    }
   }
 
   /** RTS Part B slice 6: the stance's attitude → the AI pilot brain. Aggressive
@@ -10753,6 +10806,7 @@ export class SectorRoom extends Room<SectorState> {
     this.boostingPlayers.delete(shipInstanceId);
     // RTS Part B: the AI pilot brain lets go (idempotent).
     this.aiController.unregister(shipInstanceId);
+    this.reapplyEscortsOf(shipInstanceId);
     this.hullHeldBits.delete(shipInstanceId);
     this.hullTrigger.delete(shipInstanceId);
     if (!this.fleet.isAttached(shipInstanceId)) return;
@@ -10933,7 +10987,7 @@ export class SectorRoom extends Room<SectorState> {
         }
       } else if (hb !== null && hb.getTravelState !== undefined) this.completeHullTravel(i, sid, hb);
       // Slice 11: a patrolling hull walks its route.
-      if (hb !== null && w.order === null && w.mode === 'patrol' && w.formationLeaderId === null) this.stepHullPatrol(w, hb, pose.x, pose.y, false);
+      if (hb !== null && w.order === null && w.mode === 'patrol' && fleet.squadFollowOf(sid) === null) this.stepHullPatrol(w, hb, pose.x, pose.y, false);
       if (hb !== null) this.syncHullOrder(hb, w.order);
       // The brain's target; with none, a live ordered target keeps the locks
       // (its pilot's take-controls handshake hides it from the brain's
@@ -10995,24 +11049,48 @@ export class SectorRoom extends Room<SectorState> {
     this.hullTrigger.clear();
   }
 
-  /** RTS Part B slice 4: an owned hull was hit — it and every squadmate of
+  /** RTS Part B slice 4: an owned ship was hit — it and every squadmate of
    *  the same owner turn on the shooter through the shared AI's retaliation
    *  ledger (`AiController.markHostile`). The shooter is keyed by its owner
    *  (`hostileActorOf`: a hull's shot counts for its owning player), so one
    *  mark covers that player's active ship and parked hulls. The owner's own
-   *  fire never turns their ships. Event-driven, alloc-free. */
-  private ownedHullRetaliates(hullId: string, shooterId: string): void {
-    const ownerId = this.fleet.ownerOfAttached(hullId);
+   *  fire never turns their ships. Only ships an AI pilot flies are marked
+   *  (the pilot's own ship is theirs to fly). Slice 10 (owner 2026-11-15): a
+   *  guarded ship counts as a member of the squad (or lone ship) escorting
+   *  it, so a hit on it turns its escorts and a hit on an escort turns the
+   *  guarded ship when an AI pilot flies it. `hitId`: an AI-flown hull, or
+   *  any other ship (a pilot's by playerId) that may be escorted.
+   *  Event-driven, alloc-free. */
+  private ownedHullRetaliates(hitId: string, shooterId: string): void {
+    const fleet = this.fleet;
+    let shipId = hitId;
+    let ownerId = fleet.ownerOfAttached(hitId);
+    if (ownerId === null) {
+      // A pilot's active ship (by playerId), in the fleet's id space.
+      const active = this.playerToActiveShipInstance.get(hitId);
+      if (active === undefined) return;
+      shipId = active;
+      ownerId = hitId;
+    }
     const actor = shooterId === '' ? '' : this.hostileActorOf(shooterId);
-    if (ownerId === null || actor === '' || actor === ownerId) return;
+    if (actor === '' || actor === ownerId) return;
     const tick = this.serverTick;
-    this.aiController.markHostile(hullId, actor, tick);
-    const sq = this.fleet.squadOf(hullId);
-    if (sq === null || sq.ownerId !== ownerId) return;
-    for (let i = 0; i < sq.memberIds.length; i++) {
-      const mid = sq.memberIds[i]!;
-      // Only hulls an AI pilot flies: the pilot's own ship is theirs to fly.
-      if (mid !== hullId && this.fleet.ownerOfAttached(mid) === ownerId) this.aiController.markHostile(mid, actor, tick);
+    const ai = this.aiController;
+    if (shipId === hitId) ai.markHostile(hitId, actor, tick);
+    const sq = fleet.squadOf(shipId);
+    if (sq !== null && sq.ownerId === ownerId) {
+      for (let i = 0; i < sq.memberIds.length; i++) {
+        const mid = sq.memberIds[i]!;
+        if (mid !== shipId && fleet.ownerOfAttached(mid) === ownerId) ai.markHostile(mid, actor, tick);
+      }
+    }
+    // The guarded ship is one of its escorts' squad: the ship this one
+    // escorts, and every ship escorting this one.
+    const guarded = fleet.escortTargetOf(shipId);
+    if (guarded !== null && fleet.ownerOfAttached(guarded) === ownerId) ai.markHostile(guarded, actor, tick);
+    for (let i = 0; i < fleet.size; i++) {
+      const id = fleet.idAt(i);
+      if (id !== shipId && fleet.ownerAt(i) === ownerId && fleet.escortTargetOf(id) === shipId) ai.markHostile(id, actor, tick);
     }
   }
 
@@ -13251,7 +13329,10 @@ export class SectorRoom extends Room<SectorState> {
       isPlayerConnected: this._isPlayerConnected,
       visitLingeringTargets: this._visitLingeringTargets,
       swarmEntitySnapshot: (id) => this.swarmEntitySnapshot(id),
-      resolveEntityInto: (id, out) => this.swarmEntityPoseInto(id, out),
+      // Flock leaders and guard anchors: swarm ships, and (RTS Part B slice
+      // 10) owned hulls and the ships pilots fly, so a squad packs on its
+      // leader and an escort's zone follows the ship it guards.
+      resolveEntityInto: this._resolveAiEntityInto,
       handleAiFire: (shooterId, dirX, dirY, tick, targetId, cone) => this.handleAiFire(shooterId, dirX, dirY, tick, targetId, cone),
       handleAiWarpOut: this._handleAiWarpOut,
       phaseTime,

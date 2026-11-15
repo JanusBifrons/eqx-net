@@ -60,7 +60,7 @@ describe('SectorRoom integration — wingman state survives a restart (RTS slice
     let fleet = room._internals.fleet;
     expect(fleet.setMode(OWNER, [patroller.shipId], 'patrol', { route: ROUTE })).toEqual([patroller.shipId]);
     expect(fleet.setStance(OWNER, [patroller.shipId], 'aggressive')).toEqual([patroller.shipId]);
-    const formed = fleet.formSquad(OWNER, [lead.shipId, wing.shipId], 'column');
+    const formed = fleet.formSquad(OWNER, [lead.shipId, wing.shipId]);
     expect(formed).not.toBeNull();
     fleet.applyOrder(OWNER, [lead.shipId, wing.shipId], { kind: 'move', x: 2000, y: 2000 }); // never persisted
     await h.advance(150);
@@ -116,13 +116,14 @@ describe('SectorRoom integration — wingman state survives a restart (RTS slice
 
     const sq = fleet.squadOf(wing.shipId)!;
     expect(sq).not.toBeNull();
-    expect(sq).toMatchObject({ ownerId: OWNER, leaderId: lead.shipId, shape: 'column' });
+    expect(sq).toMatchObject({ ownerId: OWNER, leaderId: lead.shipId });
     expect([...sq.memberIds].sort()).toEqual([lead.shipId, wing.shipId].sort());
     expect(fleet.brainOf(lead.shipId)!.order, 'direct orders are not persisted').toBeNull();
 
-    // The restored squad flies: the member takes its slot on the leader.
+    // The restored squad flies: the member's AI pilot packs on the leader.
     await h.advance(200);
-    expect(fleet.brainOf(wing.shipId)!.formationLeaderId).toBe(lead.shipId);
+    expect(fleet.squadFollowOf(wing.shipId)).toBe(lead.shipId);
+    expect(internals.aiBrainOf(wing.shipId)?.getFlockLeaderId?.()).toBe(lead.shipId);
     expect(fleet.statusFor(OWNER).find((s) => s.id === wing.shipId)?.squadLeaderId).toBe(lead.shipId);
   }, 30_000);
 });

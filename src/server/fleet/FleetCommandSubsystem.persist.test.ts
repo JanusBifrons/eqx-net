@@ -59,7 +59,7 @@ describe('FleetCommandSubsystem persistence (slice 9)', () => {
     a.sys.setMode('alice', ['r1'], 'retreat', { x: -900, y: 900 });
     a.sys.setMode('alice', ['h1'], 'hunt', { x: 1, y: 2 });
     a.sys.applyOrder('alice', ['h1'], { kind: 'move', x: 5000, y: 0 }); // not persisted
-    const sq = a.sys.formSquad('alice', ['s1', 's2'], 'line')!;
+    const sq = a.sys.formSquad('alice', ['s1', 's2'])!;
     a.sys.setMode('alice', ['s1', 's2'], 'defend', { x: 77, y: 88 }); // squad-wide
 
     const state = a.sys.exportState();
@@ -90,10 +90,12 @@ describe('FleetCommandSubsystem persistence (slice 9)', () => {
     expect([h1.mode, h1.guardPostX, h1.order]).toEqual(['hunt', 1, null]);
 
     const restored = b.sys.squad(sq.squadId)!;
-    expect(restored).toMatchObject({ ownerId: 'alice', leaderId: 's1', memberIds: ['s1', 's2'], shape: 'line', mode: 'defend' });
-    b.sys.tick(0); // re-slot: the leader flies the squad mode, the member holds its slot
+    expect(restored).toMatchObject({ ownerId: 'alice', leaderId: 's1', memberIds: ['s1', 's2'], mode: 'defend' });
+    // Squads fly as a loose pack (RTS Part B slice 10): no formation shape is saved.
+    expect(JSON.stringify(squads)).not.toContain('shape');
+    b.sys.tick(0); // roles: the leader flies the squad mode, the member follows it
     expect(b.sys.brainOf('s1')!.guardPostX).toBe(77);
-    expect(b.sys.brainOf('s2')!.formationLeaderId).toBe('s1');
+    expect(b.sys.squadFollowOf('s2')).toBe('s1');
     // A squad formed after the restore never reuses a restored id.
     b.add('t1', 'alice');
     b.add('t2', 'alice');
@@ -114,11 +116,26 @@ describe('FleetCommandSubsystem persistence (slice 9)', () => {
     add('y2', 'alice');
     expect(sys.restoreSquads([
       null,
-      { id: 'sq-1', ownerId: 'alice', leaderId: 'y1', memberIds: ['y1', 'y2'], shape: 'blob' }, // bad shape
-      { id: 'sq-2', ownerId: 'alice', leaderId: 'y1', memberIds: ['y1', 'ghost'], shape: 'wedge' }, // < 2 left
-      { id: 'sq-3', ownerId: 'alice', leaderId: 'y1', memberIds: 'y1,y2', shape: 'wedge' },
+      { id: 'sq-1', ownerId: 'alice', leaderId: '', memberIds: ['y1', 'y2'] }, // bad leader id
+      { id: 'sq-2', ownerId: 'alice', leaderId: 'y1', memberIds: ['y1', 'ghost'] }, // < 2 left
+      { id: 'sq-3', ownerId: 'alice', leaderId: 'y1', memberIds: 'y1,y2' },
     ])).toBe(0);
     expect(sys.squadOf('y1')).toBeNull();
+  });
+
+  it('a squad saved with a formation shape (before RTS Part B slice 10) still restores', () => {
+    const { sys, add } = harness();
+    add('z1', 'alice');
+    add('z2', 'alice');
+    add('z3', 'alice');
+    add('z4', 'alice');
+    expect(sys.restoreSquads([
+      { id: 'sq-7', ownerId: 'alice', leaderId: 'z1', memberIds: ['z1', 'z2'], shape: 'wedge', mode: 'defend', modeData: { x: 1, y: 2 } },
+      { id: 'sq-8', ownerId: 'alice', leaderId: 'z3', memberIds: ['z3', 'z4'], shape: 'blob' }, // any old value
+    ])).toBe(2);
+    expect(sys.squad('sq-7')).toMatchObject({ leaderId: 'z1', memberIds: ['z1', 'z2'], mode: 'defend' });
+    expect(sys.squad('sq-8')).toMatchObject({ leaderId: 'z3', memberIds: ['z3', 'z4'] });
+    expect(JSON.stringify(sys.exportSquads())).not.toContain('shape');
   });
 
   it('a member its squad owner does not own is dropped; an escort target the owner does not own becomes defend', () => {
@@ -127,13 +144,13 @@ describe('FleetCommandSubsystem persistence (slice 9)', () => {
     add('a2', 'alice');
     add('b1', 'bob');
     expect(sys.restoreSquads([
-      { id: 'sq-4', ownerId: 'alice', leaderId: 'b1', memberIds: ['b1', 'a1', 'a2'], shape: 'wedge' },
+      { id: 'sq-4', ownerId: 'alice', leaderId: 'b1', memberIds: ['b1', 'a1', 'a2'] },
     ])).toBe(1);
     expect(sys.squad('sq-4')).toMatchObject({ leaderId: 'a1', memberIds: ['a1', 'a2'] });
     expect(sys.squadOf('b1')).toBeNull();
     // Bob alone can't make a squad of Alice's ships either.
     expect(sys.restoreSquads([
-      { id: 'sq-5', ownerId: 'bob', leaderId: 'b1', memberIds: ['b1', 'a1'], shape: 'wedge' },
+      { id: 'sq-5', ownerId: 'bob', leaderId: 'b1', memberIds: ['b1', 'a1'] },
     ])).toBe(0);
 
     add('a3', 'alice');

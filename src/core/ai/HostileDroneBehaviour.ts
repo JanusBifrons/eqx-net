@@ -30,6 +30,7 @@ import {
   addAlignment,
   addSeparation,
   resolveFlock,
+  FLOCK_COHESION_GAIN,
 } from './flocking.js';
 import type { AiEntityPoseOut, AiShipActivity } from '../contracts/IAiBehaviour.js';
 import { shipBodyMass, shipTuning } from '../../shared-types/shipScale/tuning.js';
@@ -286,6 +287,12 @@ const HUNT_EDGE_FRAC = 0.95;
  *  the flock but still genuinely travelling. The director ALSO holds the leader
  *  outright when the squad is badly spread (course = its own pose). */
 const LEADER_CRUISE_THROTTLE = 0.55;
+/** A follower within this many follow distances of its leader reads as
+ *  "guarding" on the owner's panel, else "moving" (forming up). */
+const FLOCK_ACTIVITY_GAP_MUL = 2;
+/** A follower of a leader faster than the calm cruise flies this multiple of
+ *  the leader's speed (capped at its top speed) so the pack closes up. */
+const FLOCK_CATCH_UP = 1.25;
 
 // ── Combat context steering (AI steering plan slice 2c) ─────────────────
 /** Neighbours read per combat tick (nearest first). */
@@ -429,6 +436,10 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   private readonly _flockAcc: FlockAccumulator = makeFlockAccumulator();
   private readonly _flockOut: FlockOutput = makeFlockOutput();
   private readonly _leaderScratch: AiEntityPoseOut = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
+  /** Squared distance to the flock leader at the last flock tick (Infinity
+   *  until one), and the leader it was measured to: the panel's activity. */
+  private _flockGap2 = Infinity;
+  private _flockLeaderPrev: string | null = null;
   private readonly _neighborScratch: AiEntityPoseOut = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
 
   // ── Phase 1: hostility / state machine ────────────────────────────────
@@ -1252,7 +1263,10 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     view.claims?.claim(self.id, this.allegiance, newId);
     if (target === null) {
       if (this._picker.current === MANOEUVRE_FLEE) return this.tickFleeClear(self, view.tick);
-      return this.tickPatrol(self);
+      // A follower with nothing to shoot keeps with its pack (RTS Part B
+      // slice 10): under fire from out of reach it must not drop out of the
+      // flock and fly its old post / the origin orbit.
+      return this.leaderId !== null ? this.tickFlock(self, view) : this.tickPatrol(self);
     }
 
     const tdx = target.x - self.x;
@@ -2419,6 +2433,11 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       return this._targetDist2 > this.fireRange * this.fireRange ? 'chasing' : 'attacking';
     }
     if (this.hunting) return 'searching';
+    if (this.leaderId !== null) {
+      // With its pack (RTS squads / escorts): guarding once it is close.
+      const r = FLOCK_ACTIVITY_GAP_MUL * shipTuning(this.kind).flockFollow;
+      return this._flockGap2 > r * r ? 'moving' : 'guarding';
+    }
     if (this.guardOn) {
       const dx = this._lastX - this.guardX;
       const dy = this._lastY - this.guardY;
@@ -2483,6 +2502,10 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     this.searchWpY = y;
   }
 
+  /** The flock leader this ship follows (null = none: it leads or flies
+   *  alone). Server-only, test-visible. */
+  getFlockLeaderId(): string | null { return this.leaderId; }
+
   /** Test-visible: the effective guard radius (0 with no post). */
   getGuardRadius(): number {
     return this.guardOn ? this.guardR : 0;
@@ -2530,6 +2553,11 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   setFlockFollow(leaderId: string, memberIds: readonly string[]): void {
     this.leaderId = leaderId;
     this.moveTarget = null;
+    // Following is the ship's job: it ends a travel and a hunt (RTS squads).
+    this.travel = TRAVEL_NONE;
+    this.hunting = false;
+    if (this._flockLeaderPrev !== leaderId) this._flockGap2 = Infinity;
+    this._flockLeaderPrev = leaderId;
     this._flockLeaderCruise = false;
     this._flockMemberIds.length = 0;
     for (let i = 0; i < memberIds.length; i++) this._flockMemberIds.push(memberIds[i]!);
@@ -2671,14 +2699,18 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     // from every squad neighbour (incl. the leader) so they cluster around it at
     // a spacing rather than piling on. ALIGNMENT with the leader's heading so the
     // herd flies the course as one + keeps pace.
-    addCohesion(acc, self.x, self.y, leaderX, leaderY, shipTuning(this.kind).flockFollow);
+    const tuning = shipTuning(this.kind);
+    addCohesion(acc, self.x, self.y, leaderX, leaderY, FLOCK_COHESION_GAIN, tuning.flockFollow);
+    const gx = leaderX - self.x;
+    const gy = leaderY - self.y;
+    this._flockGap2 = gx * gx + gy * gy;
     for (let i = 0; i < this._flockMemberIds.length; i++) {
       const mid = this._flockMemberIds[i]!;
       if (mid === self.id) continue;
       const mx = mid === this.leaderId ? leaderX : (resolve(mid, this._neighborScratch) ? this._neighborScratch.x : NaN);
       if (Number.isNaN(mx)) continue;
       const my = mid === this.leaderId ? leaderY : this._neighborScratch.y;
-      addSeparation(acc, self.x, self.y, mx, my, shipTuning(this.kind).flockSeparation);
+      addSeparation(acc, self.x, self.y, mx, my, tuning.flockSeparation);
     }
     addAlignment(acc, this._leaderScratch.angle);
     const flock = resolveFlock(acc, this._flockOut);
@@ -2686,8 +2718,14 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     // Calm cruise scaled by the boids desired-velocity magnitude. As the follower
     // settles at the follow-radius, cohesion ramps to ~0 and separation cancels
     // it, so the magnitude shrinks toward the alignment term alone → the pilot
-    // eases off (and brakes the residual).
-    const speed = this.handling.cruiseSpeed * CALM_CRUISE_FRAC * flock.thrustScale;
+    // eases off (and brakes the residual). A leader faster than that (a pilot
+    // flying the squad's lead ship, RTS Part B slice 10; it cannot be made to
+    // wait) sets the pace: a little over its speed so the pack closes up,
+    // never over this ship's top speed and never boosting. An AI pilots' pack
+    // leader is throttled below the calm cruise, so its pack is unchanged.
+    const lv = Math.hypot(this._leaderScratch.vx, this._leaderScratch.vy);
+    const pace = Math.min(this.handling.maxSpeed, Math.max(this.handling.cruiseSpeed * CALM_CRUISE_FRAC, lv * FLOCK_CATCH_UP));
+    const speed = pace * flock.thrustScale;
     return this.fly(self, facingOf(flock.dirX, flock.dirY), flock.dirX * speed, flock.dirY * speed, false);
   }
 

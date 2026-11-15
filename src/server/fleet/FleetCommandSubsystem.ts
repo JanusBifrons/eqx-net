@@ -25,7 +25,6 @@
  * a no-op, so no ship is ever AI-flown.
  */
 import { WingmanBehaviour, type WingmanConfig } from '../../core/ai/WingmanBehaviour.js';
-import type { FormationShape } from '../../core/ai/formation.js';
 import {
   makeWingmanControls,
   reverseAccelFor,
@@ -167,8 +166,6 @@ export interface FleetSquad {
    *  its owner is flying when that is a member (pilot-led). */
   leaderId: string;
   readonly memberIds: string[];
-  /** Formation shape the members hold round the leader. */
-  readonly shape: FormationShape;
   /** The squad-wide standing mode (the last one given to the whole squad),
    *  or null: the leader keeps whatever it was doing. Re-applied to a new
    *  AI leader (leader died, pilot released the controls). */
@@ -177,13 +174,13 @@ export interface FleetSquad {
 
 /** Internal squad record (dense list + command scratch). */
 interface SquadState extends FleetSquad {
-  shape: FormationShape;
   mode: WingmanMode | null;
   /** Owned copy of the squad-wide mode data (route array by reference). */
   readonly modeData: FleetModeData;
-  /** Leader the members were last slotted on (null = none yet). */
+  /** Leader the members were last told to follow (null = none yet). */
   appliedLeader: string | null;
-  /** Membership / attachment changed: re-slot on the next tick. */
+  /** Membership / attachment / squad mode changed: re-apply the roles on
+   *  the next tick. */
   dirty: boolean;
   /** Index in the dense `squadList`. */
   index: number;
@@ -349,7 +346,7 @@ export class FleetCommandSubsystem {
    * Hand `shipId` to a wingman: Defend at `initialPose`, Defensive stance.
    * Re-attaching an attached ship replaces its brain. No-op under the kill
    * switch. A squad member (e.g. released by its pilot) rejoins its squad:
-   * the next tick gives it the squad mode (as leader) or its slot.
+   * the next tick gives it the squad mode (as leader) or its place in the pack.
    */
   attach(shipId: string, ownerId: string, ship: FleetShipInputs, initialPose: { x: number; y: number }): void {
     if (this.disabled) return;
@@ -419,9 +416,9 @@ export class FleetCommandSubsystem {
   /**
    * Issue `order` to every owned ship in `shipIds`. Returns the accepted ids.
    * Squads: when the ids cover every AI-flown member of a squad, the LEADER
-   * takes the order and the members keep formation (their own orders are
+   * takes the order and the members keep with it (their own orders are
    * dropped); a pilot-led squad ignores it (the pilot is flying). A subset of
-   * a squad: just those ships, which rejoin their slots when it is done.
+   * a squad: just those ships, which rejoin the pack when it is done.
    *
    * A MOVE that sends several ships (loose ships and whole squads' leaders)
    * to one point gives each its own spot round it: a hex cluster `spacing`
@@ -518,7 +515,7 @@ export class FleetCommandSubsystem {
    *
    * Squads: ids covering every AI-flown member ⇒ it becomes the SQUAD mode:
    * the leader flies it (stored for a pilot-led squad, applied on release),
-   * the members keep formation. A subset of a squad: those ships LEAVE the
+   * the members fly with it. A subset of a squad: those ships LEAVE the
    * squad and take the mode (a standing job has no end to rejoin after).
    */
   setMode(
@@ -552,6 +549,9 @@ export class FleetCommandSubsystem {
             const sd = sq.modeData;
             sd.x = md.x; sd.y = md.y; sd.route = md.route;
             sd.escortId = escortOk && !this.memberSquad.has(escortId!) ? escortId : undefined;
+            // An escort squad's members all follow the escorted ship (and a
+            // squad leaving escort follows its leader again): re-apply roles.
+            sq.dirty = true;
           }
           if (id === this.squadLeader(sq)) {
             e.brain.setMode(mode, sq.modeData);
@@ -605,14 +605,11 @@ export class FleetCommandSubsystem {
    * Group the caller's owned, AI-flown ships into a new squad (first accepted
    * id leads). Ships leave any squad they were in. Fewer than
    * {@link FLEET_SQUAD_MIN} or more than {@link FLEET_SQUAD_MAX} accepted ids
-   * ⇒ nothing changes and null. The members fly in `shape` formation on the
-   * leader from the next tick; the leader keeps what it was doing.
+   * ⇒ nothing changes and null. From the next tick the members fly as a loose
+   * pack on the leader (the AI pilot brain's flocking); the leader keeps what
+   * it was doing.
    */
-  formSquad(
-    callerId: string,
-    shipIds: readonly string[],
-    shape: FormationShape = 'wedge',
-  ): { squadId: string; memberIds: readonly string[] } | null {
+  formSquad(callerId: string, shipIds: readonly string[]): { squadId: string; memberIds: readonly string[] } | null {
     const n = this.collect(callerId, shipIds);
     if (n < FLEET_SQUAD_MIN || n > FLEET_SQUAD_MAX) return null;
     const memberIds = this.accepted.slice(0, n);
@@ -625,7 +622,6 @@ export class FleetCommandSubsystem {
       ownerId: callerId,
       leaderId: memberIds[0]!,
       memberIds,
-      shape,
       mode: null,
       modeData: {},
       appliedLeader: null,
@@ -669,7 +665,7 @@ export class FleetCommandSubsystem {
     return out;
   }
 
-  /** Every squad, members in slot order (pilot-flown members included). */
+  /** Every squad, members in order (pilot-flown members included). */
   exportSquads(): FleetSavedSquad[] {
     const out: FleetSavedSquad[] = [];
     for (const sq of this.squadList) {
@@ -678,7 +674,6 @@ export class FleetCommandSubsystem {
         ownerId: sq.ownerId,
         leaderId: sq.leaderId,
         memberIds: sq.memberIds.slice(),
-        shape: sq.shape,
       };
       if (sq.mode !== null) {
         s.mode = sq.mode;
@@ -764,7 +759,6 @@ export class FleetCommandSubsystem {
         ownerId: s.ownerId,
         leaderId: members.includes(s.leaderId) ? s.leaderId : members[0]!,
         memberIds: members,
-        shape: s.shape,
         mode,
         modeData,
         appliedLeader: null,
@@ -804,7 +798,7 @@ export class FleetCommandSubsystem {
 
   /**
    * Room tick. First each squad's leader is resolved (a member the owner is
-   * flying leads; a change re-slots the members). Then each brain re-plans
+   * flying leads; a change re-applies the roles). Then each brain re-plans
    * every `replanEvery` ticks, staggered by its attach phase, and posts its
    * controls; between re-plans the worker holds the last input (input-queue
    * rule #3). A held boost is re-checked against the energy gate every tick
@@ -823,11 +817,6 @@ export class FleetCommandSubsystem {
       const c = e.controls;
       if ((r + e.phase) % N === 0) {
         if (!hooks.readPose(e.id, this.pose)) continue;
-        if (e.role === ROLE_MEMBER) {
-          // Members follow the leader's target (an AI leader's; a pilot's is unknown here).
-          const lead = this.byId.get(this.squads.get(e.squadId!)!.appliedLeader!);
-          e.brain.setLeaderTarget(lead !== undefined ? lead.brain.targetId : null);
-        }
         this.tickingId = e.id;
         this.replansTotal++;
         const out = e.brain.tick(this.pose, this.view);
@@ -846,7 +835,7 @@ export class FleetCommandSubsystem {
 
   /**
    * Resolve each squad's leader (a member the owner is flying leads) and
-   * re-slot the members when it or the membership changed. The bookkeeping
+   * re-apply the roles when it or the membership changed. The bookkeeping
    * half of {@link tick}; the room calls it alone since RTS Part B (the AI
    * pilot brain flies the hulls, so the brain half no longer runs).
    */
@@ -945,36 +934,56 @@ export class FleetCommandSubsystem {
   }
 
   /** Give every attached member its role for `leader`: the leader (if AI-
-   *  flown) leaves formation and flies the squad mode; the others take slots
-   *  1.. in member order, spaced by the squad's largest hull spacing. */
+   *  flown) flies the squad mode; the others follow it as a loose pack (RTS
+   *  Part B slice 10: the room hands each role to the AI pilot brain through
+   *  `modeSet`, read back with `squadFollowOf` / `escortTargetOf`).
+   *  Event-driven (membership, leader or squad mode changed), never per tick. */
   private refreshSquad(sq: SquadState, leader: string): void {
     sq.dirty = false;
     sq.appliedLeader = leader;
     const ids = sq.memberIds;
-    let spacing = 0;
-    for (let k = 0; k < ids.length; k++) {
-      const m = this.byId.get(ids[k]!);
-      if (m !== undefined && m.brain.stationSpacing > spacing) spacing = m.brain.stationSpacing;
-    }
-    let slot = 1;
     for (let k = 0; k < ids.length; k++) {
       const id = ids[k]!;
       const m = this.byId.get(id);
+      if (m === undefined) continue;
       if (id === leader) {
-        if (m !== undefined && m.role !== ROLE_LEADER) {
+        if (m.role !== ROLE_LEADER) {
           const wasMember = m.role === ROLE_MEMBER;
-          m.brain.clearFormation();
           if (sq.mode !== null) m.brain.setMode(sq.mode, sq.modeData);
           else if (wasMember) m.brain.setMode('defend');
           m.role = ROLE_LEADER;
         }
-        continue;
-      }
-      if (m === undefined) continue;
-      m.brain.setFormationSlot(leader, slot, sq.shape, ids.length, spacing);
-      m.role = ROLE_MEMBER;
-      slot++;
+      } else m.role = ROLE_MEMBER;
+      this.hooks.modeSet?.(id);
     }
+  }
+
+  /**
+   * The ship `shipId` follows in its squad's pack: the squad leader (AI- or
+   * pilot-flown) for a member, null for the leader, a ship outside a squad,
+   * or before the roles are applied. An escort squad's ships follow the
+   * escorted ship instead (`escortTargetOf`).
+   */
+  squadFollowOf(shipId: string): string | null {
+    const e = this.byId.get(shipId);
+    if (e === undefined || e.role !== ROLE_MEMBER || e.squadId === null) return null;
+    return this.squads.get(e.squadId)?.appliedLeader ?? null;
+  }
+
+  /**
+   * The ship `shipId` escorts: its squad's escort target when the squad
+   * mode is Escort (every member, the leader too), else its own Escort mode's
+   * ship, else null. Attached ships only.
+   */
+  escortTargetOf(shipId: string): string | null {
+    const e = this.byId.get(shipId);
+    if (e === undefined) return null;
+    if (e.squadId !== null) {
+      const sq = this.squads.get(e.squadId);
+      if (sq !== undefined && sq.mode === 'escort') return sq.modeData.escortId ?? null;
+      if (e.role === ROLE_MEMBER) return null;
+    }
+    return e.brain.mode === 'escort' ? e.brain.escortId : null;
   }
 
   /** Remove `shipId` from its squad (attached or not). The squad dissolves
@@ -1018,12 +1027,13 @@ export class FleetCommandSubsystem {
     }
   }
 
-  /** The entry is no longer in a squad: drop the formation role (its mode
+  /** The entry is no longer in a squad: drop the pack role (its mode
    *  resumes from where it is). */
   private leaveRole(e: FleetEntry): void {
     e.squadId = null;
-    if (e.role === ROLE_MEMBER) e.brain.clearFormation();
+    const had = e.role !== ROLE_NONE;
     e.role = ROLE_NONE;
+    if (had) this.hooks.modeSet?.(e.id);
   }
 }
 

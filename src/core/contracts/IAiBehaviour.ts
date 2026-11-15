@@ -444,6 +444,9 @@ export interface IAiBehaviour {
    * lockstep surface / wire bump). `setMoveTarget` clears the follower role
    * (you're a leader/independent mover); `clearMoveTarget` reverts to orbit. */
   setFlockFollow?(leaderId: string, memberIds: readonly string[]): void;
+  /** The flock leader this ship follows (null: it leads or flies alone).
+   *  SERVER-ONLY; RTS squads read it back (tests, diagnostics). */
+  getFlockLeaderId?(): string | null;
   /**
    * Line-of-fire feedback (friendly fire): the room's `LineOfFireGate` held
    * this NPC's shot because a friendly body at (blockerX, blockerY) was on

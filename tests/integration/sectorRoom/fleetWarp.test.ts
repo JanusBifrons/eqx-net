@@ -83,7 +83,7 @@ describe('SectorRoom integration — RTS fleet warp moves the selected hulls (S3
     const fleet = ia.fleet;
     expect(fleet.setStance(OWNER, [lead, w1, w2], 'aggressive')).toHaveLength(3);
     expect(fleet.setMode(OWNER, [lead], 'patrol', { route: [[1500, 1500], [3000, 1500]] })).toEqual([lead]);
-    expect(fleet.formSquad(OWNER, [w1, w2], 'line')).not.toBeNull();
+    expect(fleet.formSquad(OWNER, [w1, w2])).not.toBeNull();
 
     const cmd = await harness!.connectAs(OWNER, A, { spectator: true });
     cmd.send('client_ready', { type: 'client_ready' });
