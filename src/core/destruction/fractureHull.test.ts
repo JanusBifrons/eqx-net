@@ -690,13 +690,18 @@ describe('fractureHull', () => {
 // v8: the sub-capital `soundMinShare` option; capital output unchanged.
 // v9: the optional kill `cut` (slice / channel); without one the output is
 // unchanged (same hashes), so only the version moved.
-const GOLDEN = { version: 9, pieces: 4, hash: 1220196282 };
-/** v9 kill cuts: a battleship and a fighter (sub-capital profile), each
+// v10: a capital cut kill's secondary cracks splinter off the cut (no longer
+// parallel to it) and jag harder; without a cut (and a sub-capital's cut)
+// the output is unchanged (same hashes), so only the version and the two
+// capital side-shot cut hashes moved (the bow-shot cuts here are 2-piece,
+// unchanged).
+const GOLDEN = { version: 10, pieces: 4, hash: 1220196282 };
+/** Kill cuts (v9; capital side shots v10): a battleship and a fighter (sub-capital profile), each
  *  sliced and channelled by a side shot and a bow shot. */
 const GOLDEN_CUT = {
   capital: {
-    slice: { pieces: 5, hash: 2611606597 },
-    channel: { pieces: 6, hash: 1932162009 },
+    slice: { pieces: 5, hash: 2190596232 },
+    channel: { pieces: 5, hash: 178517176 },
     bowSlice: { pieces: 2, hash: 3552817541 },
     bowChannel: { pieces: 2, hash: 3239178352 },
   },

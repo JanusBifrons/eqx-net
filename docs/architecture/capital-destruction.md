@@ -1950,10 +1950,11 @@ line; a railgun kill erases a straight channel as wide as the bolt.
   - **Slice:** that line IS the primary crack: no seeded tilt, no tip shift,
     no sub-capital sound-primary move. Its edges are `EDGE_CUT`, which
     `jagged()` leaves out (like `EDGE_SECTION`), so the main cut is dead
-    straight while the zone, fan, far and extra cracks stay jagged. The
-    secondary cracks and the piece count are exactly the un-cut ones: they
-    are laid out from the line the hull would have cracked along without the
-    cut (`crackPrimary`), and the violence table and snap draw are unchanged.
+    straight while the other cracks stay jagged. The violence table and snap
+    draw are unchanged. On a sub-capital the secondary crack (`extraCrack`) is
+    the un-cut one, laid out from the line the hull would have cracked along
+    without the cut (`crackPrimary`). A capital's secondary cracks are
+    splinters off the cut (v10, next bullet).
   - **Sliver guard (slice):** where the line through the kill point would
     leave a piece under the profile minimum (capital: `PRIMARY_MIN_SIDE` 3 %;
     sub-capital: its `soundMinShare`), it slides toward the hull's centroid
@@ -1973,6 +1974,40 @@ line; a railgun kill erases a straight channel as wide as the bolt.
     "railgun channel banks part".
   - No new seeded draw: a fracture without a cut is byte-identical to v8 (the
     golden hashes did not move; only `FRACTURE_ALGO_VERSION` went 8 → 9).
+  - **Splinters, not parallel cracks (capital, v10, 2026-11-15).** Two
+    hostile film reviews (a heavy-beam slice and a railgun channel on a heavy
+    cruiser) saw v9's zone cracks come out nearly straight, the full beam
+    wide and PARALLEL to the cut either side, so one shot read as three cuts.
+    Owner: "The main cut is dead straight. Splinter cracks stay jagged. The
+    piece count follows the existing violence table." On a capital cut kill
+    the zone, fan and far cracks are replaced by `cutSplinters` (own seeded
+    stream `seed ^ 0x5b11e`):
+    - **Count:** as many as the un-cut layout drew (zone + fan + far, after
+      the profile's options), at most `SPLINTER_MAX` 4, so the count still
+      follows the violence table (the sweep's mean piece count moved by
+      under 0.1 against v9 on heavy cruiser, battleship and destroyer).
+    - **First splinter on a side** (sides alternate, the first side seeded):
+      starts ON the cut and runs into that side only (a local line whose
+      region is that side), at a seeded 40–58° off the cut
+      (`SPLINTER_SLOPE_*`, a slope, no trig), rooted so it meets the hull's
+      edge 55–75 % of the cut's chord along the cut (`SPLINTER_REACH_*`): a
+      big chunk breaks out of the cut's corner. It leans the other way if
+      it would run within ~30° of the keel (`SPLINTER_KEEL_COS`; a
+      quartering cut).
+    - **Second on a side:** branches off the first 20–40 % of the way along
+      it (`SPLINTER_BRANCH_*`), leaning back the other way, into what the
+      first left; dropped if it would run down the keel.
+    - **Guard:** the fan's chunky guard, with a least width of
+      `SPLINTER_MIN_WIDTH_BEAMS` 0.3 beam, and no length check on a part that
+      keeps at least half the section (a cut kill's end section is long by
+      nature); the retry drops splinters last-first like fan cracks.
+    - **Jag:** splinters jag at `SPLINTER_ROUGHNESS` 0.4 (`JAG_ROUGHNESS` is
+      0.22; v9's cracks strayed ~7 % of their length, v10's ~12 %); a jag
+      that breaks a piece is first redrawn at 0.22 and only straightened if
+      that breaks it too.
+    - A fracture without a cut, and a sub-capital's cut, is byte-identical to
+      v9. Lock: `fractureHull.cutSplinters.test.ts` (every crack ≥ 25° off
+      the cut, jagged, never spanning the cut's chord; mean count vs v9).
 - **Wire.** `WreckDescriptor` / `WreckDescriptorSchema` / `isWreckDescriptor`
   gain optional `cutKind` ('slice' | 'channel'), `cutAng` (u16, 65536 per
   turn, hull 1× Pixi-up frame) and `cutW` (hull 1× units = world width ÷
@@ -2199,7 +2234,7 @@ Moved from `src/core/CLAUDE.md` (section "Capital fracture").
 - **Any change to its output bumps `FRACTURE_ALGO_VERSION`.** The golden test fails first.
 - **Concave hulls go through `splitByLine`,** which traces each disjoint part separately. Plain Sutherland–Hodgman bridges them; the U-hull test catches that.
 - **Jagged Voronoi cut edges** are seeded from the edge's own quantised endpoints, so both neighbours share the line. Section cuts and kill cuts (`EDGE_CUT`) stay straight.
-- **Kill cuts (v9).** `FractureInput.cut` (`slice` | `channel`, a direction in the hull frame, a channel width) is optional and changes nothing when absent; it adds no seeded draw. A cut's direction crosses the wire as a u16 angle and is decoded only by `cutDirFromAngle` (arithmetic, no trig) on both sides. Detail: "Kill cuts" above.
+- **Kill cuts (v9).** `FractureInput.cut` (`slice` | `channel`, a direction in the hull frame, a channel width) is optional and changes nothing when absent; v9 adds no seeded draw, and v10's capital splinters draw from their own stream. A cut's direction crosses the wire as a u16 angle and is decoded only by `cutDirFromAngle` (arithmetic, no trig) on both sides. Detail: "Kill cuts" above.
 - **Wreck pieces collide with each other, and neighbours always part (owner review 2026-11-13: heavy, no overlap, no hinge).** `WRECK_COLLISION_GROUPS` (0x0004FFFF, server spawn and client twin) lets pieces bump. Their collider is `WreckPieceGeometry.colliderParts` (each part inset by `shipTuning(kind).wreckColliderInset`, so neighbours spawn a hair apart); drawing and weapon hits keep `parts`. `buildWreckPieces` gives each piece a slow kick (push `wreckPushMax/Min`, rim-speed spin) and then the least momentum-conserving pushes that open every shared cut (collinear cut edges, or cut edges that only touch at a T-junction) at `wreckSeparate` or more at both ends, spin included (#18 for all three). Tuned 2026-11-13 so the break is SEEN but heavy: `wreckSeparate` 0.014 × radius/s (~31 u/s heavy cruiser), push 0.010 / 0.004; the narrowest cut is ~31 u open 1 s after the kick, no piece over ~75 u/s (`wreckPiecesSeparate.test.ts`). The separation multiplies along chains of neighbours, so it assumes v7's few chunks. The kick is applied after `WRECK_CRACK_MS` (`shared-types/wreckTiming.ts`, game ticks; a cut kill: at once, "Kill cuts"); until then the pieces move with the dead hull. Never give pieces a velocity field that lets a neighbour close on another along their cut.
 - **S2a: `wreckPieces.ts` / `wreckHits.ts`.** `buildWreckPieces` turns a death (kind, pose, kill point, damage inputs, seed) into rigid-body specs: the fracture on the 1× Pixi-up outline, pieces mapped like `shipShapeToPolygon` (x·s, −y·s, rings reversed to stay CCW), mass ∝ area, v + ω × r plus an outward push. `wreckRayHit` / `wreckSweepHit` are the one weapon-vs-wreck test (circle, then convex parts). The circle gate is `segmentNearCircle`, never `rayHitsSphere` (that returns null once the origin is inside the circle and past the centre, so shells passed through a long piece's far half; lock `wreckHits.test.ts`).
 - **S2b: `wreckPieceGeometry(WreckFractureInputs)` is the one source of a piece's shape** (body-local parts, outline, cut flags, mass, radius). The server's `buildWreckPieces` places its output and the client rebuilds it from the `wrecks[]` descriptor; never compute a piece's shape another way (#15, locked bit for bit by `tests/integration/wire/wreckGeometryParity.test.ts`). `World.spawnObstacle` skips a part Rapier cannot hull (a < 1 u sliver threw inside the worker; `World.slivers.test.ts`).
@@ -2223,6 +2258,7 @@ Moved from `src/core/CLAUDE.md` (2026-11-14); kept for the record.
 - **v6: cracks fan out from the kill point; the far field breaks along a few uneven, tilted cracks** (money-shot review: v5 cut a comb of even square bands and a ladder at the kill point). `crackLines` (its own seeded stream) adds fan cracks through the kill point and far cracks at seeded stations and tilts; the Voronoi seeds stay inside the fan (no far floor); cracks and the primary line are jagged, after `weldTJunctions` pairs T-junction edges. Lock: the v6 describe in `fractureHull.killFocus.test.ts` (far pieces, far tilt, radial cracks) on top of the v5 locks.
 - **v7: the hull breaks only where it was hit, into a few ENORMOUS chunks** (owner review 2026-11-13: v6 sliced the far hull where no shell hit and cut a comb of slivers at the impact; "The last hit's impact sets the split"). No Voronoi seeds, no far cracks: two jagged zone cracks ~a beam either side of the primary and 0–2 fan cracks from the kill point (`LocalLine`, split only their zone half) leave 2–4 chunks at the impact and one big section each side. A very heavy blow (≥ max hull) on a long hull rarely (12 %) adds ONE far crack. Piece count still rises with size and violence, but stays ~3–7. A fan crack only splits a section where every part it leaves is chunky (≥ `FAN_MIN_WIDTH_BEAMS` 0.45 beam wide, ≤ `FAN_MAX_ASPECT` 2.6× longer than that; filmed take 2026-11-13: a long thin triangle along the port edge). Lock: the v7 describe in `fractureHull.killFocus.test.ts` (no thin sliver, no long thin piece of any size, no far cut, 2–5 near pieces, ≤ 2 sections each side).
 - **v8: sub-capital pieces are never nearly the whole hull** (take 9 review 2026-11-14). The `soundMinShare` option (default 0.15); the sub-cap profile sets 0.43 (0.33 before take 10). Capital output unchanged. Lock: `wreckPieces.subcapParting.test.ts` "read as broken".
+- **v10: splinters off a capital cut kill** (2026-11-15). The secondary cracks of a capital slice or channel kill branch off the cut at 40–58° and jag harder, instead of running parallel to it (film review: one shot read as three cuts). Count still from the violence table. Output without a cut unchanged. Lock: `fractureHull.cutSplinters.test.ts`, "golden: v9 kill cuts" (capital side-shot hashes).
 - **v9: kill cuts** (2026-11-14). The optional `cut`: a heavy-beam `slice` is a dead-straight primary along the shot through the kill point (`EDGE_CUT`, never jagged; slid toward the centroid only off a sliver); a railgun `channel` erases a strip as wide as the bolt. Output without a cut unchanged (same golden hashes). Locks: "golden: v9 kill cuts", the "fracture v9" describe in `fractureHull.killFocus.test.ts`.
 ## Server implementation notes
 
@@ -2256,7 +2292,7 @@ Moved from `src/core/CLAUDE.md` (section "Capital fracture").
 - **Any change to its output bumps `FRACTURE_ALGO_VERSION`.** The golden test fails first.
 - **Concave hulls go through `splitByLine`,** which traces each disjoint part separately. Plain Sutherland–Hodgman bridges them; the U-hull test catches that.
 - **Jagged Voronoi cut edges** are seeded from the edge's own quantised endpoints, so both neighbours share the line. Section cuts and kill cuts (`EDGE_CUT`) stay straight.
-- **Kill cuts (v9).** `FractureInput.cut` (`slice` | `channel`, a direction in the hull frame, a channel width) is optional and changes nothing when absent; it adds no seeded draw. A cut's direction crosses the wire as a u16 angle and is decoded only by `cutDirFromAngle` (arithmetic, no trig) on both sides. Detail: "Kill cuts" above.
+- **Kill cuts (v9).** `FractureInput.cut` (`slice` | `channel`, a direction in the hull frame, a channel width) is optional and changes nothing when absent; v9 adds no seeded draw, and v10's capital splinters draw from their own stream. A cut's direction crosses the wire as a u16 angle and is decoded only by `cutDirFromAngle` (arithmetic, no trig) on both sides. Detail: "Kill cuts" above.
 - **Wreck pieces collide with each other, and neighbours always part (owner review 2026-11-13: heavy, no overlap, no hinge).** `WRECK_COLLISION_GROUPS` (0x0004FFFF, server spawn and client twin) lets pieces bump. Their collider is `WreckPieceGeometry.colliderParts` (each part inset by `shipTuning(kind).wreckColliderInset`, so neighbours spawn a hair apart); drawing and weapon hits keep `parts`. `buildWreckPieces` gives each piece a slow kick (push `wreckPushMax/Min`, rim-speed spin) and then the least momentum-conserving pushes that open every shared cut (collinear cut edges, or cut edges that only touch at a T-junction) at `wreckSeparate` or more at both ends, spin included (#18 for all three). Tuned 2026-11-13 so the break is SEEN but heavy: `wreckSeparate` 0.014 × radius/s (~31 u/s heavy cruiser), push 0.010 / 0.004; the narrowest cut is ~31 u open 1 s after the kick, no piece over ~75 u/s (`wreckPiecesSeparate.test.ts`). The separation multiplies along chains of neighbours, so it assumes v7's few chunks. The kick is applied after `WRECK_CRACK_MS` (`shared-types/wreckTiming.ts`, game ticks); until then the pieces move with the dead hull. Never give pieces a velocity field that lets a neighbour close on another along their cut.
 - **S2a: `wreckPieces.ts` / `wreckHits.ts`.** `buildWreckPieces` turns a death (kind, pose, kill point, damage inputs, seed) into rigid-body specs: the fracture on the 1× Pixi-up outline, pieces mapped like `shipShapeToPolygon` (x·s, −y·s, rings reversed to stay CCW), mass ∝ area, v + ω × r plus an outward push. `wreckRayHit` / `wreckSweepHit` are the one weapon-vs-wreck test (circle, then convex parts). The circle gate is `segmentNearCircle`, never `rayHitsSphere` (that returns null once the origin is inside the circle and past the centre, so shells passed through a long piece's far half; lock `wreckHits.test.ts`).
 - **S2b: `wreckPieceGeometry(WreckFractureInputs)` is the one source of a piece's shape** (body-local parts, outline, cut flags, mass, radius). The server's `buildWreckPieces` places its output and the client rebuilds it from the `wrecks[]` descriptor; never compute a piece's shape another way (#15, locked bit for bit by `tests/integration/wire/wreckGeometryParity.test.ts`). `World.spawnObstacle` skips a part Rapier cannot hull (a < 1 u sliver threw inside the worker; `World.slivers.test.ts`).
