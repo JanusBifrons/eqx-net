@@ -7,15 +7,16 @@ import { sendRoom } from './_helpers.js';
  * down to salvage), lock the piece of ITS wreck family (the cut children,
  * `mirror.wrecks` parent links) nearest where it was, else the nearest piece
  * to that point. The first lock takes the piece nearest the pilot. Each lock
- * is the info box's LOCK with every weapon group (a neutral terrain lock);
- * the capital's AUTO groups then fire on it turret by turret. Returns whether
- * a piece is locked.
+ * is the info box's LOCK with the ACTIVE weapon group only (the main battery,
+ * picked on the HUD weapon strip in setup; a neutral terrain lock), so only
+ * the heavy beams fire on it; the secondaries and AA hold no lock and stay
+ * quiet (AUTO picks only hostiles). Returns whether a piece is locked.
  */
 async function keepWorkingPiece(ctx: ShotContext): Promise<boolean> {
   return ctx.page.evaluate(() => {
     type Piece = { kind: number; x: number; y: number; wreckId?: number };
     const w = window as unknown as {
-      __eqxStore?: { getState(): { fcGroups: ReadonlyArray<{ id: string }>; setSelectedEntity(id: string | null, kind: string | null): void; setActiveGroupId(id: string): void } };
+      __eqxStore?: { getState(): { setSelectedEntity(id: string | null, kind: string | null): void } };
       __eqxClient?: {
         lockSelected?: () => boolean;
         mirror?: {
@@ -57,11 +58,8 @@ async function keepWorkingPiece(ctx: ShotContext): Promise<boolean> {
     if (best === null) return false;
     const p = m.swarm.get(best)!;
     w.__eqxShotWork = { eid: best, x: p.x, y: p.y, wreckId: p.wreckId ?? -1 };
-    for (const g of st.fcGroups) {
-      st.setActiveGroupId(g.id);
-      st.setSelectedEntity(`swarm-${best}`, 'wreck');
-      w.__eqxClient?.lockSelected?.();
-    }
+    st.setSelectedEntity(`swarm-${best}`, 'wreck');
+    w.__eqxClient?.lockSelected?.();
     return true;
   });
 }
@@ -71,7 +69,8 @@ async function keepWorkingPiece(ctx: ShotContext): Promise<boolean> {
  * they are hit, and the last small pieces turn into salvage pods. The pilot
  * flies a lance battlecruiser (heavy-beam main battery) off a battleship's
  * beam in `wreck-test`; one setup cue kills the battleship
- * (`test_kill_capitals`). The pilot locks the nearest piece in setup, and the
+ * (`test_kill_capitals`). The pilot picks the main battery on the HUD weapon
+ * strip and locks the nearest piece with it in setup, and the
  * take starts once the main battery's turrets have trained on it (they
  * traverse slowly: ~15 s for the quarter turn to the beam). During the take
  * the pilot keeps working that piece and, as it splits, the cut children
@@ -88,9 +87,11 @@ export const wreckResplit: Shot = {
   docs: ['mining-and-salvage'],
   reel: false,
   server: 'lean',
-  target: { room: 'wreck-test', params: { shipKind: 'battlecruiser-lance', initialHull: 1_000_000, instantLock: 1, noselfdmg: 1, art: 'machined', fx: 'new', spawnX: 5500, spawnY: 2500 } },
+  target: { room: 'wreck-test', params: { shipKind: 'battlecruiser-lance', instantLock: 1, art: 'machined', fx: 'new', spawnX: 5500, spawnY: 2500 } },
   // The pilot flies, so the take films the game's own follow camera (no
-  // `camera` script: a pan needs spectator mode, showcase-pipeline.md).
+  // `camera` script: a pan needs spectator mode, showcase-pipeline.md, and a
+  // spectator's parked hull doesn't fire). The follow camera keeps our ship
+  // centred, so the closest view of the pieces is the zoom-in cap.
   durationMs: 60_000,
   async startWhen(ctx) {
     await ctx.page.waitForFunction(() => {
@@ -98,14 +99,21 @@ export const wreckResplit: Shot = {
       (globalThis as { __eqxClient?: { mirror: { swarm: Map<number, { kind: number }> } } }).__eqxClient?.mirror.swarm.forEach((e) => { if (e.kind === 1) n++; });
       return n > 0;
     }, null, { timeout: 60_000, polling: 250 });
-    // Pull back with the mouse wheel, as a player would, until the battleship
-    // off the beam is in frame with our own ship.
+    // Zoom in with the mouse wheel, as a player would, to the game's zoom-in
+    // cap (the whole hull just fits: ~0.13 for this battlecruiser in a 720 px
+    // tall view), so the pieces off the beam read large. Owner (2026-11-15):
+    // "It's too zoomed out".
     const c = ctx.px(640, 360);
     await ctx.page.mouse.move(c.x, c.y);
-    for (let i = 0; i < 5; i++) {
-      await ctx.page.mouse.wheel(0, 100);
+    for (let i = 0; i < 15; i++) {
+      await ctx.page.mouse.wheel(0, -100);
       await ctx.sleep(120);
     }
+    // Pick the main battery (heavy beams) on the HUD weapon strip, as a player
+    // taps a group chip; the locks below go to it alone, so the 5" secondaries
+    // never fire. Owner (2026-11-15): "the 5 inch guns are firing, which
+    // muddies the water".
+    await ctx.page.getByTestId('fc-chip-main').click();
     await sendRoom(ctx, 'test_kill_capitals', { type: 'test_kill_capitals' });
     await ctx.sleep(2500); // the hull cracks and parts
     // Lock a piece and wait (≤ 30 s) until the main battery's beams are on it.
