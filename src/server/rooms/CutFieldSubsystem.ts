@@ -82,14 +82,24 @@ export class CutFieldSubsystem {
    *  tick. Its body turns dynamic and it rides the swarm wire by its rock key
    *  until its chunk unloads. */
   private wake(id: string, otherId: string, closingSpeed: number, tick: number): void {
-    const rec = this.registry.get(id);
-    if (rec?.fieldRock !== true || rec.fieldAwake === true) return;
     if (!fieldRockWakes(this.registry.get(otherId), closingSpeed)) return;
+    this.wakeRock(id, otherId, tick);
+  }
+
+  /** Wake a sleeping field rock for a reason other than a touch (a mining
+   *  laser about to cut it). Same per-tick cap. True when it is awake after the
+   *  call; false for anything that is not a field rock, or when the cap is hit
+   *  (try again next tick). */
+  wakeRock(id: string, by: string, tick: number): boolean {
+    const rec = this.registry.get(id);
+    if (rec?.fieldRock !== true) return false;
+    if (rec.fieldAwake === true) return true;
     if (tick !== this.wakeTick) { this.wakeTick = tick; this.wakesThisTick = 0; }
-    if (this.wakesThisTick >= FIELD_WAKES_PER_TICK) return;
+    if (this.wakesThisTick >= FIELD_WAKES_PER_TICK) return false;
     this.wakesThisTick++;
     rec.fieldAwake = true;
     this.hooks.post({ type: 'UNFIX_BODY', entityId: id });
-    serverLogEvent('field_rock_woke', { id, by: otherId, tick });
+    serverLogEvent('field_rock_woke', { id, by, tick });
+    return true;
   }
 }
