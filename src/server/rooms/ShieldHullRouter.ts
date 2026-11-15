@@ -63,6 +63,12 @@ function resolveSwarmShieldHull(rec: SwarmDamageTarget): { shieldMax: number; hu
   }
   return { shieldMax: getDroneShieldMax(rec.shipKind), hullMax: droneMaxHealthOf(rec) ?? 40 };
 }
+
+/** `resolveSwarmShieldHull`'s shield max alone, allocation-free (#14). */
+function swarmShieldMax(rec: SwarmDamageTarget): number {
+  if (rec.kind === SWARM_KIND_STRUCTURE) return getStructureKind(rec.shipKind ?? undefined).shieldMax ?? 0;
+  return getDroneShieldMax(rec.shipKind);
+}
 import type { ShieldEventMessage } from '../../shared-types/messages.js';
 import type { Bus } from '../../core/events/Bus.js';
 import type { MapSchema } from '@colyseus/schema';
@@ -179,6 +185,13 @@ export class ShieldHullRouter {
     // DamageEvent.shieldMax the client divides by reflects the upgrade too.
     const shieldMax = effectiveShipShieldMax(kind.shieldMax, ship.statAlloc);
     return { newShield: state.shield, shieldMax, hullMax: ship.maxHealth, hitLayer: r.hitLayer };
+  }
+
+  /** True when a hit on `rec` would land on a raised shield (the layer
+   *  `damageSwarmLayered` picks), read without applying anything. */
+  swarmShieldRaised(rec: SwarmDamageTarget): boolean {
+    const shieldMax = swarmShieldMax(rec);
+    return shieldMax > 0 && (this.swarmShield.get(rec.id) ?? shieldMax) > 0;
   }
 
   /**
