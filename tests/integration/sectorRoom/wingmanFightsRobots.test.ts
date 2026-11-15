@@ -36,7 +36,7 @@ describe('SectorRoom integration — wingmen vs robot cubes (RTS take)', () => {
     harness = undefined;
   }, 10_000);
 
-  // RTS Part B slice 6: hunt mode. Slice 3 moved the trigger to the brain's `intent.fire` with the line-of-fire gate (squadmate hits 1–4 a run over 6 runs, was 12–15), but the hulls still hold their move point, so a cube that breaks off past ~1.5 km is never chased (0–3 cubes left after 25 s).
+  // RTS Part B slice 6 (Hunt) fixed the chase: every run kills all three cubes (32–49 s; 8 runs). Still skipped: squadmate hits 4–5 a run over the full fight (4 runs; 1–4 in the 25 s window), over the limit of 3, which stays (line-of-fire work, not loosened).
   it.skip('five hunting, aggressive wingmen kill three robot cubes without shooting each other', async () => {
     harness = await bootSectorTestServer(structuredClone(SHOWCASE_RTS_OPTS) as unknown as Record<string, unknown>);
     const pid = randomUUID();
@@ -87,7 +87,8 @@ describe('SectorRoom integration — wingmen vs robot cubes (RTS take)', () => {
     internals.fleet.setStance(pid, ids, 'aggressive');
 
     const robotsLeft = (): number => robots.filter((id) => internals.swarmHealth.has(id)).length;
-    for (let i = 0; i < 50 && robotsLeft() > 0; i++) await harness.advance(500);
+    // A runtime ceiling (80 s), not a kill-time gate (slice 6 measured 32–49 s).
+    for (let i = 0; i < 160 && robotsLeft() > 0; i++) await harness.advance(500);
 
     const alive = ids.filter((id) => state.ships.get(id)?.alive === true).length;
     expect(bolts).toBeGreaterThan(0);

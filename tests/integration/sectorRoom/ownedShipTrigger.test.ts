@@ -62,6 +62,8 @@ describe('SectorRoom integration — owned ship trigger discipline (RTS Part B s
     await harness.advance(300);
     const internals = room()._internals;
     expect(internals.fleet.isAttached(sid)).toBe(true);
+    // Aggressive engages the robot on sight (slice 6); the default Defensive only hits back.
+    internals.fleet.setStance(pid, [sid], 'aggressive');
     const brain = internals.aiBrainOf(sid)!;
     const decide = brain.tick.bind(brain);
     brain.tick = (self: AiEntity, view: AiWorldView): AiIntent => {
