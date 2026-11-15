@@ -121,7 +121,6 @@ import { breakInDurationMs } from '../../shared-types/breakIn.js';
 import { BreakInSubsystem } from './BreakInSubsystem.js';
 import { ForceFieldSubsystem } from './ForceFieldSubsystem.js';
 import { registerTeleportMessages } from './TeleportMessageHandlers.js';
-import { stream } from '../../core/random/rng.js';
 import { HostileActLedger } from '../../core/relations/HostileActLedger.js';
 import { ProductionSubsystem } from '../structures/ProductionSubsystem.js';
 import { TeleporterSubsystem, type PartnerLink } from '../structures/TeleporterSubsystem.js';
