@@ -12,6 +12,8 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import { LaserGlow, type GlowLike, type LaserGlowBeams, type LaserGlowFactories } from './LaserGlow';
+import { BeamSpritePool } from '../../render/BeamSpritePool';
+import { HEAVY_BEAM_COLOR, HEAVY_BEAM_STYLE, REMOTE_BEAM_STYLE } from '../../render/beamStyles';
 
 function makeStubGfx(): Record<string, unknown> {
   return { filters: null };
@@ -117,5 +119,27 @@ describe('LaserGlow — tier round-trip', () => {
     glow.applyQuality('high');
     expect(glow.isLiveAttached()).toBe(true);
     expect(glow.getLiveFilter().outerStrength).toBe(2);
+  });
+});
+
+describe('LaserGlow — the heavy beam keeps its own colour', () => {
+  // On film the capital heavy beam read orange: it sat in the remote container,
+  // whose one orange glow filter swamped its violet core.
+  it('the orange remote glow filters fighter beams, never the violet heavy beam', () => {
+    const live = new BeamSpritePool(REMOTE_BEAM_STYLE);
+    const remote = new BeamSpritePool(REMOTE_BEAM_STYLE);
+    const glow = new LaserGlow({ liveBeamGfx: live.container, remoteBeamGfx: remote.container }, makeFactories());
+    remote.setBeams([
+      { fromX: 0, fromY: 0, toX: 300, toY: 0, style: null },
+      { fromX: 0, fromY: 50, toX: 3000, toY: 50, style: HEAVY_BEAM_STYLE },
+    ], 2, 0.05);
+    expect(glow.isRemoteAttached()).toBe(true);
+    expect(glow.getRemoteFilter().color).not.toBe(HEAVY_BEAM_COLOR);
+    // Fighter beam: under the orange-filtered container (unchanged).
+    expect(remote.coreAt(0)!.parent).toBe(remote.container);
+    // Heavy beam: no filtered ancestor at all.
+    const heavy = remote.coreAt(1)!;
+    expect(heavy.tint).toBe(HEAVY_BEAM_COLOR);
+    for (let n = heavy.parent; n; n = n.parent) expect(n.filters ?? null).toBeNull();
   });
 });
