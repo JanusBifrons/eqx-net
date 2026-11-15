@@ -156,3 +156,39 @@ describe('FxBeams', () => {
     expect(b.container.children.slice(5).every((c) => !c.visible)).toBe(true);
   });
 });
+
+describe('FxProjectiles: the railgun slug wake', () => {
+  it('a slug leaves a wake that lingers after it is gone, then fades (pieces per effects tier)', () => {
+    let now = 10_000;
+    let q: 'high' | 'medium' | 'low' | 'minimal' = 'high';
+    const p = new FxProjectiles(fakeArt(), () => q, () => now);
+    const shown = (): number => p.wakeLayer.children.filter((c) => c.visible).length;
+    p.beginFrame();
+    p.draw('s', 'slug', 3000, 0, 6000, 0, 1, 2, 3000); // 3 km out of the barrel
+    p.endFrame();
+    expect(shown()).toBe(10);
+    now += 300;
+    p.beginFrame(); p.endFrame(); // the slug is gone (it hit)
+    expect(p.wakeCount()).toBe(1);
+    expect(shown()).toBeGreaterThan(0);
+    now += 2_000; // past SLUG_WAKE_LIFE_S
+    p.beginFrame(); p.endFrame();
+    expect(shown()).toBe(0);
+    expect(p.wakeCount()).toBe(0);
+    q = 'medium';
+    p.beginFrame(); p.draw('t', 'slug', 3000, 0, 6000, 0, 1, 2, 3000); p.endFrame();
+    expect(shown()).toBe(6);
+    q = 'minimal';
+    p.beginFrame(); p.draw('t', 'slug', 3100, 0, 6000, 0, 1, 2, 3100); p.endFrame();
+    expect(shown()).toBe(0);
+  });
+
+  it('shells and bolts leave no wake', () => {
+    const p = new FxProjectiles(fakeArt(), () => 'high', () => 0);
+    p.beginFrame();
+    p.draw('a', 'shell', 0, 0, 100, 0, 1, 3, 500);
+    p.draw('b', 'bolt', 0, 0, 100, 0, 1);
+    p.endFrame();
+    expect(p.wakeLayer.children.length).toBe(0);
+  });
+});
