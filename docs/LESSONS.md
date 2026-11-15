@@ -3093,3 +3093,9 @@ Owner: "make it more like micro machines and make fights a bit longer. Also don'
 
 - **Finding (#611):** a locked-direction charge (robot charge laser) fires down the barrel when the wind-up ends. The new dogfighting AI kept flying its strafing pass during the 1.2 s wind-up, slid ~400 u and missed a parked pilot 6 times out of 6. The charge path and the manoeuvre layer were each right on their own.
 - **Rule:** while `view.isCharging` the combat brain holds its line on the target. Any new manoeuvre must respect it; a behaviour change to the AI's movement re-runs `chargeLaser.test.ts`.
+
+## 2026-11-15 — "Black gaps" in a wreck were the sky: measure a dark finding before fixing it
+
+- **Finding:** a hostile review of the rail-channel take said the channel and cracks between wreck pieces were painted near-black, darker than space. It looked like the old "dark scrap" class (a shadow or underlay under the pieces).
+- **Measured:** freeze the ticker (`app.ticker.stop()`), render by hand and read the canvas back while hiding one thing at a time: pieces only, the whole ship layer, each sibling. Every gap pixel equalled the bare backdrop, and the gaps were transparent over a magenta clear colour. On the filmed frame the gap matched the sky beside it. Nothing to fix; the sky behind the ship was near-black.
+- **Rule:** before fixing "too dark" or "black" in a film review, sample the frame (the region against its neighbours) and do a hide-one-at-a-time readback in the game. Fix only what the numbers show; a look preference goes to the owner.

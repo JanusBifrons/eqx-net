@@ -9,6 +9,7 @@ import {
   WEAPONS,
   WEAPON_IDS,
   DEFAULT_WEAPON,
+  HEAVY_BEAM_WIDTH,
 } from './WeaponCatalogue.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { ENERGY_POOL_MUL } from '../../shared-types/shipScale/defineShipKind.js';
@@ -207,10 +208,22 @@ describe('WeaponCatalogue — capital heavy beam (plan beam-slices §8)', () => 
     const w = getWeapon('heavy_beam');
     expect(w.id).toBe('heavy_beam');
     expect(w.mode).toBe('hitscan');
-    expect(w.killCut).toEqual({ kind: 'slice' });
+    expect(w.killCut).toEqual({ kind: 'slice', width: HEAVY_BEAM_WIDTH });
     // The compositor-stall floor (HITSCAN_DEF note): no beam fires faster.
     expect(w.cooldownTicks).toBeGreaterThanOrEqual(10);
     expect(WEAPON_IDS[WEAPON_IDS.length - 1]).toBe('heavy_beam');
+  });
+
+  it('follows through a kill for 0.5-1 s of game time; no other weapon does', () => {
+    // Owner: "show for half a second or one second through the clean cut".
+    const ft = getWeapon('heavy_beam').followThroughTicks ?? 0;
+    expect(ft).toBe(45);
+    expect(ft).toBeGreaterThanOrEqual(30);
+    expect(ft).toBeLessThanOrEqual(60);
+    // At least a few shots of its own cadence land inside the window.
+    expect(ft / getWeapon('heavy_beam').cooldownTicks).toBeGreaterThanOrEqual(3);
+    const others = [...WEAPONS.values()].filter((d) => d.followThroughTicks !== undefined).map((d) => d.id);
+    expect(others).toEqual(['heavy_beam']);
   });
 
   it('fighter and sub-cap beams do not slice: only the heavy beam has a slice cut', () => {

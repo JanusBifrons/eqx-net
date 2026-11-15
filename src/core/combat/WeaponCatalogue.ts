@@ -47,6 +47,13 @@ interface WeaponDefBase {
    *  the shot's line through the kill point; `channel` erases a straight strip
    *  `width` world units wide along that line. Absent ⇒ the normal break-up. */
   killCut?: WeaponKillCut;
+  /** Follow-through after a kill (capital turrets): when a shot from a mount
+   *  KILLS what it hit, that mount holds its angle and keeps firing at its own
+   *  cadence down the same line for this many game ticks (60 = 1 s at 1×), so
+   *  the beam burns on through the cut; then it resumes normal targeting
+   *  (`WeaponMountTicker.tickCapitalMounts`). Absent ⇒ none: the mount looks
+   *  for its next target at once. */
+  followThroughTicks?: number;
 }
 
 export interface HitscanWeaponDef extends WeaponDefBase {
@@ -62,8 +69,16 @@ export interface HitscanWeaponDef extends WeaponDefBase {
   falloff?: { minDamageFrac: number; maxRangeMul?: number };
 }
 
-/** A weapon's kill cut (`WeaponDefBase.killCut`). */
-export type WeaponKillCut = { kind: 'slice' } | { kind: 'channel'; width: number };
+/** A weapon's kill cut (`WeaponDefBase.killCut`). `width` in world units:
+ *  a channel's strip; a slice with a width erases a strip that wide too (the
+ *  heavy beam, fracture v10), without one it is a zero-width line. */
+export type WeaponKillCut = { kind: 'slice'; width?: number } | { kind: 'channel'; width: number };
+
+/** The heavy beam's width (world units): the strip its slice erases on a
+ *  kill (`killCut`) and the client's drawn core width (`HEAVY_BEAM_STYLE`),
+ *  so the gap and the beam that made it match (owner 2026-11-15: "the slice
+ *  is too thin compared to the width of the beam"). */
+export const HEAVY_BEAM_WIDTH = 60;
 
 export interface ProjectileWeaponDef extends WeaponDefBase {
   mode: 'projectile';
@@ -401,7 +416,10 @@ const RAILGUN_DEF: ProjectileWeaponDef = {
 const HEAVY_BEAM_DEF: HitscanWeaponDef = {
   id: 'heavy_beam', displayName: 'Heavy beam', mode: 'hitscan',
   damage: 260, cooldownTicks: 10, range: 20_000, energyCost: 45,
-  killCut: { kind: 'slice' },
+  killCut: { kind: 'slice', width: HEAVY_BEAM_WIDTH },
+  // Owner (game feel): "the beam should not turn after the kill and show for
+  // half a second or one second through the clean cut": 0.75 s.
+  followThroughTicks: 45,
 };
 
 /**

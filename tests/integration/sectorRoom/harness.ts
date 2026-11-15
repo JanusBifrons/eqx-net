@@ -174,6 +174,12 @@ export async function bootSectorTestServer(opts: {
    *  (no rocks) so a test can seed its own asteroids deterministically. When
    *  omitted, the room spawns the production `ASTEROIDS` roster. */
   asteroidConfig?: ReadonlyArray<{ x: number; y: number; vx: number; vy: number; radius: number; mass: number }>;
+  /** Bulk seed (room options `swarmCount` / `swarmRatio` / `swarmRadius` /
+   *  `swarmAtRest`): the terrain stress scenes' rock fields. */
+  swarmCount?: number;
+  swarmRatio?: number;
+  swarmRadius?: number;
+  swarmAtRest?: boolean;
   /** D2 — NPC bases grown by the generator. */
   npcBases?: ReadonlyArray<Record<string, unknown>>;
   /** T1 — seed the sector's own NPC base (as galaxy rooms do). */
@@ -276,6 +282,10 @@ export async function bootSectorTestServer(opts: {
     scenarioDrones: opts.scenarioDrones,
     scenarioAsteroids: opts.scenarioAsteroids,
     asteroidConfig: opts.asteroidConfig,
+    swarmCount: opts.swarmCount,
+    swarmRatio: opts.swarmRatio,
+    swarmRadius: opts.swarmRadius,
+    swarmAtRest: opts.swarmAtRest,
     sectorFeatures: opts.sectorFeatures,
     npcBases: opts.npcBases,
     galaxyBases: opts.galaxyBases,

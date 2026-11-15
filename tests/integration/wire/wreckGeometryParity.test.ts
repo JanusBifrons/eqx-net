@@ -99,6 +99,8 @@ describe('wreck geometry: server bodies == client rebuild (S2b)', () => {
 describe('wreck geometry with a kill cut: server inputs == client rebuild (v9)', () => {
   const cases: Array<[string, WreckFractureInputs]> = [
     ['battleship slice', { kindId: 'battleship', seed: 7, killX: 600, killY: -200, killBlowDamage: 0.9, recentDamageRate: 0.5, snapChance: 0.2, cutKind: 'slice', cutAng: 31000 }],
+    // v10: the heavy beam's wide slice (`cutKind` slice with a `cutW`).
+    ['battleship wide slice', { kindId: 'battleship', seed: 7, killX: 600, killY: -200, killBlowDamage: 0.9, recentDamageRate: 0.5, snapChance: 0.2, cutKind: 'slice', cutAng: 31000, cutW: 30 }],
     ['battleship channel', { kindId: 'battleship', seed: 7, killX: 600, killY: -200, killBlowDamage: 0.9, recentDamageRate: 0.5, snapChance: 0.2, cutKind: 'channel', cutAng: 31000, cutW: 90.5 }],
     ['heavy-cruiser bow channel', { kindId: 'heavy-cruiser', seed: 99, killX: 0, killY: -2000, killBlowDamage: 2, recentDamageRate: 1, snapChance: 0.2, cutKind: 'channel', cutAng: 16384, cutW: 40 }],
     ['fighter slice', { kindId: 'fighter', seed: 4242, killX: 3, killY: -1, killBlowDamage: 0.4, recentDamageRate: 0.3, snapChance: 0.4, cutKind: 'slice', cutAng: 1234 }],

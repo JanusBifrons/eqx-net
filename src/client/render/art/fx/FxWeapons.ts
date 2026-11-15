@@ -7,8 +7,8 @@
  *    and a flare where a beam ends on something.
  *  - `FxProjectiles` replaces bolt and tracer shapes with batched sprites: a
  *    glowing head and a short trail behind it along its velocity. A railgun
- *    slug also leaves a violet-blue ion wake on its `wakeLayer` that lingers
- *    where it passed and spreads as it fades (`SLUG_WAKE_LIFE_S`).
+ *    slug also trails a violet-blue ion wake on its `wakeLayer`: a tail behind
+ *    the slug that thins, spreads and fades fast (`SLUG_WAKE_TAIL`, `_LIFE_S`).
  *
  * Both use textures from `ArtService.fx` and draw nothing until those are
  * ready (today's look stays). Sprites are pooled; per frame is scalar writes
@@ -20,7 +20,7 @@ import type { ArtHandle, ArtService } from '../ArtService.js';
 import { NAVAL_SHELL_WEAPON_IDS } from '@core/combat/shellFlight';
 import { RAILGUN_BOLT_WIDTH, RAILGUN_RADIUS } from '../../../../shared-types/combat/navalGuns.js';
 import type { EffectQuality } from '@core/contracts/IEffects';
-import { slugWakeAlpha, slugWakeSegments, slugWakeWidth, SLUG_WAKE_LIFE_S, SLUG_WAKE_TINT } from './turretFx.js';
+import { slugWakeAlpha, slugWakeSegments, slugWakeWidth, SLUG_WAKE_LIFE_S, SLUG_WAKE_TAIL, SLUG_WAKE_TINT } from './turretFx.js';
 
 const tex = (h: ArtHandle): Texture | null => (h.state === 'ready' && h.fx ? h.fx.tex : null);
 
@@ -117,11 +117,12 @@ export class FxBeams {
 export type FxProjStyle = 'bolt' | 'tracer' | 'shell' | 'slug';
 
 /** A view; a slug's also carries its wake: `wake` sprites (made on first
- *  use), where it was fired (`ox`, `oy` at game ms `t0`; t0 < 0 = no wake),
- *  where it was last drawn (`hx`, `hy` at `th`), its heading and width. */
+ *  use), game ms it was first seen (`t0`; t0 < 0 = no wake), where it was
+ *  last drawn (`hx`, `hy` at `th`), its heading, width, speed (`sp`, u/s),
+ *  distance flown there (`fl`) and full tail length (`tl`). */
 interface ProjView {
   head: Sprite; core: Sprite; trail: Sprite[]; gen: number;
-  wake: Sprite[] | null; ox: number; oy: number; t0: number; hx: number; hy: number; th: number; ang: number; wid: number;
+  wake: Sprite[] | null; t0: number; hx: number; hy: number; th: number; ang: number; wid: number; sp: number; fl: number; tl: number;
 }
 /** Wake sprites per slug view (the high tier's `slugWakeSegments`). */
 const WAKE_MAX = 10;
@@ -220,44 +221,49 @@ export class FxProjectiles {
     }
     if (style === 'slug') {
       const now = this.clock();
-      if (v.t0 < 0) {
-        // The wake starts at the muzzle: `flown` back along the heading.
-        const back = Number.isFinite(flown) ? flown : 0;
-        v.ox = px - ux * back; v.oy = py - uy * back;
-        v.t0 = now - (back / sl) * 1000;
-      }
+      if (v.t0 < 0) v.t0 = now;
       v.hx = px; v.hy = py; v.th = now; v.ang = ang; v.wid = spWid;
+      v.sp = sl; v.fl = flown; v.tl = fullLen * SLUG_WAKE_TAIL;
       this.drawWake(v, now);
     }
   }
 
-  /** Draw a slug's wake: pieces from where it was fired to where it was last
-   *  seen, each fading and spreading from when the slug passed it. Returns
-   *  whether any piece still shows. Alloc-free after the view's first slug. */
+  /** Draw a slug's wake: a tail of pieces behind where the slug was last
+   *  seen, at most `tl` long and never behind the muzzle (`fl`). A piece `d`
+   *  behind the slug was passed `d / sp` s before it, plus the time since the
+   *  slug was last seen; it fades with that age and toward the tail's end,
+   *  and spreads and drifts as it fades. Returns whether any piece still
+   *  shows. Alloc-free after the view's first slug. */
   private drawWake(v: ProjView, now: number): boolean {
     const n = Math.min(WAKE_MAX, slugWakeSegments(this.quality()));
     if (n > 0 && v.wake === null) v.wake = this.makeWake();
     const wake = v.wake;
     if (wake === null) return false;
-    const dx = v.hx - v.ox, dy = v.hy - v.oy, L = Math.hypot(dx, dy);
+    const ext = Math.min(v.tl, v.fl);
+    const ux = Math.cos(v.ang), uy = Math.sin(v.ang);
     const w = wake[0]!.texture.width, h = wake[0]!.texture.height;
-    const nx = L > 0 ? -dy / L : 0, ny = L > 0 ? dx / L : 0;
+    const seg = ext / n;
+    const since = Math.max(0, now - v.th) / 1000;
     let any = false;
     for (let j = 0; j < wake.length; j++) {
       const s = wake[j]!;
-      if (j >= n || L < 1) { s.visible = false; continue; }
-      const f = (j + 0.5) / n;
-      const age = (now - (v.t0 + f * (v.th - v.t0))) / 1000;
-      const a = slugWakeAlpha(age);
+      if (j >= n || !(ext >= 1)) { s.visible = false; continue; }
+      const d = (j + 0.5) * seg;
+      const age = since + d / v.sp;
+      const a = slugWakeAlpha(age, d / v.tl);
       s.visible = a > 0.01;
       if (!s.visible) continue;
       any = true;
       const spread = slugWakeWidth(age);
       // It drifts apart a little as it spreads (an ion trail, not a rod).
       const drift = Math.sin(j * 2.3 + v.t0 * 0.001) * v.wid * 0.8 * Math.min(1, age / SLUG_WAKE_LIFE_S);
-      s.position.set(v.ox + dx * f + nx * drift, v.oy + dy * f + ny * drift);
+      // Each piece overlaps the one ahead of it (toward the slug) by 15 %
+      // so the tail reads unbroken; its back end stays inside the tail.
+      const ov = j > 0 ? seg * 0.15 : 0;
+      const mid = d - ov / 2;
+      s.position.set(v.hx - ux * mid - uy * drift, v.hy - uy * mid + ux * drift);
       s.rotation = v.ang;
-      s.scale.set(((L / n) * 1.3) / w, (v.wid * 1.4 * spread) / h);
+      s.scale.set((seg + ov) / w, (v.wid * 1.4 * spread) / h);
       s.alpha = a;
     }
     return any;
@@ -323,7 +329,7 @@ export class FxProjectiles {
   private make(): ProjView {
     const st = tex(this.streak)!;
     const mk = (tint: number): Sprite => { const s = new Sprite(st); s.anchor.set(0.5); s.tint = tint; s.visible = false; this.container.addChild(s); return s; };
-    return { head: mk(0xffffff), core: mk(0xffffff), trail: [mk(0xffffff), mk(0xffffff), mk(0xffffff)], gen: -1, wake: null, ox: 0, oy: 0, t0: -1, hx: 0, hy: 0, th: 0, ang: 0, wid: 0 };
+    return { head: mk(0xffffff), core: mk(0xffffff), trail: [mk(0xffffff), mk(0xffffff), mk(0xffffff)], gen: -1, wake: null, t0: -1, hx: 0, hy: 0, th: 0, ang: 0, wid: 0, sp: 1, fl: 0, tl: 0 };
   }
 }
 

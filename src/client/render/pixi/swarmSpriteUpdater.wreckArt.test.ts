@@ -18,7 +18,7 @@ import { WreckGeometryStore, rebuildWreckPieces } from '../../net/wreckGeometryS
 import {
   WreckArtState, WreckPieceSprite, WRECK_DISPLAY_OBJECTS_PER_PIECE_MAX, WRECK_RIPPLE_MAX, WRECK_BLAST_MAIN,
   WRECK_RIPPLE_R_MIN, WRECK_RIPPLE_R_MAX, WRECK_CRACK_FRONT_MS, WRECK_GLOW_END_S, wreckGlowTexture,
-  WRECK_BLAST_REACH, WRECK_RIPPLE_GAP_MS, wreckGlowAt, type WreckGlow,
+  WRECK_BLAST_REACH, WRECK_RIPPLE_GAP_MS, wreckGlowAt, type WreckGlow, WRECK_GLOW_TEX_ROWS, GLOW_TINT_SLICE, GLOW_TINT_CHANNEL,
   WRECK_BLAST_LINGER, wreckBlasts, type WreckBlast, wreckPieceFarLod,
 } from './wreckArt.js';
 import { FxExplosions } from '../art/fx/FxExplosions.js';
@@ -922,14 +922,27 @@ describe('updateSwarmSprites — the filmed v7 break-up (heavy cruiser, 16" salv
       expect(rr - bb, `${s.toFixed(1)} s: grey-brown, not red`).toBeLessThanOrEqual(0x30);
       expect(g.alpha, `${s.toFixed(1)} s: subtle`).toBeLessThanOrEqual(0.3);
     }
+    // A weapon's kill cut glows longer (the hero line), but its scorch is
+    // just as subtle and never black once it has cooled.
+    for (const tint of [GLOW_TINT_SLICE, GLOW_TINT_CHANNEL]) {
+      for (let s = 3.4; s < WRECK_GLOW_END_S; s += 0.1) {
+        wreckGlowAt(s, g, tint);
+        expect(Math.min((g.color >> 16) & 255, (g.color >> 8) & 255, g.color & 255), `tint ${tint} ${s.toFixed(1)} s`).toBeGreaterThanOrEqual(0x28);
+        expect(g.alpha, `tint ${tint} ${s.toFixed(1)} s: subtle`).toBeLessThanOrEqual(0.3);
+      }
+    }
     // Thin: the wide soft halo is gone once the edge is no longer glowing
     // (only the core stays as the scorch).
     const data = (wreckGlowTexture().source as unknown as { resource: Uint8Array }).resource;
-    const W = data.length / 8;
-    for (let i = 0; i < W; i++) {
-      const ageS = (i / (W - 1)) * WRECK_GLOW_END_S;
-      if (ageS < 2.2) continue;
-      expect(data[(W + i) * 4 + 3], `${ageS.toFixed(2)} s: no halo on a cooled edge`).toBe(0);
+    // Per tint: a core row then a halo row (a crack's halo is gone by 2.2 s,
+    // a kill cut's, held with its colour, by 2.7 s).
+    const W = data.length / (4 * WRECK_GLOW_TEX_ROWS);
+    for (let row = 1; row < WRECK_GLOW_TEX_ROWS; row += 2) {
+      for (let i = 0; i < W; i++) {
+        const ageS = (i / (W - 1)) * WRECK_GLOW_END_S;
+        if (ageS < (row === 1 ? 2.2 : 2.7)) continue;
+        expect(data[(row * W + i) * 4 + 3], `row ${row}, ${ageS.toFixed(2)} s: no halo on a cooled edge`).toBe(0);
+      }
     }
   });
 
