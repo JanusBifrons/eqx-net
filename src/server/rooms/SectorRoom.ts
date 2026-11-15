@@ -1720,6 +1720,9 @@ export class SectorRoom extends Room<SectorState> {
       swarmCount?: number;
       swarmRatio?: number; // asteroid fraction; default 0.8
       swarmRadius?: number; // spawn disc radius; default 18 000
+      /** Bulk-seeded rocks start still at the real asteroid mass, so they
+       *  settle and sleep (terrain stress scenes, macro-terrain.md). */
+      swarmAtRest?: boolean;
       /** Deterministic ship-kind sequence for drone spawns. When set, each
        *  successive drone takes the next kind in this array (round-robin
        *  past the end). Used by engineering rooms (`mount-test`) that need
@@ -3134,7 +3137,7 @@ export class SectorRoom extends Room<SectorState> {
       // small drone ring with a sunflower-spiral spread across a disc, sized
       // by `swarmCount`. Used by the bandwidth E2E and the dev-machine soak.
       const requested = roomOpts.swarmCount ?? 0;
-      const bulk = this.swarmSpawner.seed(requested, roomOpts.swarmRatio, roomOpts.swarmRadius);
+      const bulk = this.swarmSpawner.seed(requested, roomOpts.swarmRatio, roomOpts.swarmRadius, roomOpts.swarmAtRest ?? false);
       if (bulk < requested) {
         logger.error({ requested, spawned: bulk }, 'bulk seed truncated (slot pool exhausted)');
       }
