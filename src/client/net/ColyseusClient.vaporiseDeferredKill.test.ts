@@ -33,7 +33,6 @@ interface Internals {
   mirror: {
     ships: Map<string, unknown>;
     swarm?: Map<number, SwarmRenderState>;
-    lingeringShips?: Map<string, { x: number; y: number }>;
     explodingShips?: Set<string>;
     vaporisedShips?: Set<string>;
     projectiles?: Map<string, ProjectileRenderState>;
@@ -116,7 +115,7 @@ describe('a vaporised death held for a drawn shell is still vaporised when it is
     c.mirror.pendingShellEnds = [];
     c._shellEvents = true;
     c.handleSnapshot(snapshot(1006, true));
-    expect(c.mirror.lingeringShips!.has(HULL)).toBe(true);
+    expect(c.mirror.ships.has(HULL)).toBe(true);
     c.clockAnchorServerTick = 1010;
     c._shellStore.applySalvo(GUNS);
     seen = null;
