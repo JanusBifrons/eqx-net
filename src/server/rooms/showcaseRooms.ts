@@ -22,7 +22,7 @@ import { HEART_SUPER_GUNS, heartSuperGunFunds } from '../../core/bases/galaxyBas
 import { getStructureKind, type StructureKindId } from '../../shared-types/structureKinds.js';
 
 import { getShipKind } from '../../shared-types/shipKinds.js';
-import { SHOWCASE_BARGE_LOOK_OPTS, SHOWCASE_BARGE_THRUST_OPTS } from './showcaseBargeRooms.js';
+import { SHOWCASE_BARGE_LOOK_OPTS, SHOWCASE_BARGE_MINING_OPTS, SHOWCASE_BARGE_THRUST_OPTS } from './showcaseBargeRooms.js';
 
 export const SHOWCASE_PILOT_ID = '5ca5e000-0000-4000-8000-000000000001';
 
@@ -585,5 +585,6 @@ export const SHOWCASE_ROOMS = {
   'showcase-fleet-warp': SHOWCASE_FLEET_WARP_OPTS,
   'showcase-barge-look': SHOWCASE_BARGE_LOOK_OPTS,
   'showcase-barge-thrust': SHOWCASE_BARGE_THRUST_OPTS,
+  'showcase-barge-mining': SHOWCASE_BARGE_MINING_OPTS,
   'showcase-rts': SHOWCASE_RTS_OPTS,
 } as const;

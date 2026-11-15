@@ -54,6 +54,7 @@ import { tradeDeal, tradeRaid } from './shots/trade.js';
 import { cockpitBounty, cockpitHaul, cockpitRobots, cockpitStronghold } from './shots/cockpit.js';
 import { fireControlShots } from './shots/fireControl.js';
 import { bargeLook, bargeStern, bargeThrust } from './shots/bargeLook.js';
+import { bargeMining } from './shots/bargeMining.js';
 
 /** Every shot, in reel order. Catalogue = all of them; reel = `reel: true`. */
 export const SHOTS: readonly Shot[] = [
@@ -69,6 +70,7 @@ export const SHOTS: readonly Shot[] = [
   bargeLook,
   bargeStern,
   bargeThrust,
+  bargeMining,
   capitalBroadside,
   capitalBreakup,
   wreckResplit,

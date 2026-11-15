@@ -90,6 +90,8 @@ Tractor mounts (`tractor-*`) carry the `tractor` weapon and draw as dishes.
 
 To see one in the game, start the server with `EQX_BARGE_LOOK=A` (or B, C) and open the page with `?room=showcase-barge-look&bargeLook=A`: the barge parks beside a battleship and a few small ships. Room `showcase-barge-thrust` has one barge under way at full thrust. Showcase shots `barge-look`, `barge-stern` and `barge-thrust` film them. The switch is for this look review only. Unset, the catalogue is unchanged. Set, the look is added at the very end of the catalogue as kind `barge-look`, and it never spawns at random. Set it on both the server and the page. It stays for comparing looks B and C with the real barge (look A).
 
+Showcase room `showcase-barge-mining` puts the pilot in a barge (`?shipKind=barge`) with eight placed rocks of mixed sizes round it and nothing else; shot `barge-mining` locks a rock with the Mining lasers, cuts it and its pieces down to ore pods, and pulls the pods in with the Tractors.
+
 ## Coming next
 
 - **The mining barge:** the salvage ship that carries the mining laser.
