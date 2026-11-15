@@ -87,7 +87,7 @@ How each subsystem works (and its history) is in the "Server notes" section of t
 - 🔴 Classify by the registry kind, never an id prefix. `fillSwarmTargets` builds the cross-allegiance view once per tick, only with ≥ 2 allegiances present. `isHostileToPlayer` = stance OR ledger. Only a hit on a DRONE escalates the `FactionLedger`.
 - `npcOnly` kinds are refused on join (`isPlayableShipKindId`); `LoadShedder` skips `shedImmune` kinds. Allegiance decides targeting, never what a shot hits.
 - 🔴 Every shot hits the first thing in its path, own side included; the only skips are the shooter, a capital's own deck (`mountLineClear`) and, for any shot but a pilot's, a loot pod (`isLootPod`). A friendly accidental hit damages but never marks hostile or escalates (`isFriendlyFire`).
-- AI pilots hold fire while a friendly (or, for an AI-flown ship, a wreck piece) is on the line, only via `LineOfFireGate` (never a second scan); players are never gated. `friendlyFire.test.ts`, `npcLineOfFire.test.ts`.
+- AI pilots hold fire while a friendly (or, for an AI-flown ship, a wreck piece) is on the line, only via `LineOfFireGate` (never a second scan), owned hulls too; a pilot's own fire never. `friendlyFire.test.ts`, `npcLineOfFire.test.ts`.
 - Proximity queries in the drone brain go through `AiNeighbourGrid`, never a per-behaviour swarm scan (`AiNeighbourGrid.test.ts`).
 
 **Cargo and storage** ([loot-and-cargo](../../docs/features/loot-and-cargo.md)):
@@ -227,7 +227,7 @@ How each subsystem works (and its history) is in the "Server notes" section of t
 
 ## Fleet command (RTS)
 
-- **`SectorRoom.shipKeyMoved` is THE one re-key seam** when a ship's key moves (locks, fleet orders, turret angles); never add a second. An owned hull is flown by the AI pilot brain, registered `{ hull: true }` (keys as pilot INPUT); it fires through `PlayerFireResolver`, never `AiFireResolver`; fleet commands are owner-checked per id. Detail: [fleet-command](../../docs/architecture/fleet-command.md#7-zone-rules-in-full).
+- **`SectorRoom.shipKeyMoved` is THE one re-key seam** when a ship's key moves (locks, fleet orders, turret angles); never add a second. An owned hull is flown by the AI pilot brain, registered `{ hull: true }` (keys as pilot INPUT); it fires through `PlayerFireResolver` on its brain's `intent.fire`, never `AiFireResolver`; fleet commands are owner-checked per id. Detail: [fleet-command](../../docs/architecture/fleet-command.md#7-zone-rules-in-full).
 
 ## SectorRoom subsystems
 

@@ -7,10 +7,13 @@
  * (a drone's slot, a capital's turret, an NPC base's turret, a player base's
  * turret), the room asks this gate whether a FRIENDLY body lies on the shot's
  * path from the muzzle to the target. If one does, the shooter holds fire this
- * tick: the gun keeps aiming and the lock stays. Players are never gated.
+ * tick: the gun keeps aiming and the lock stays. A player-owned hull flown by
+ * the AI pilot (RTS) is gated too; a pilot's own fire never is.
  *
  * What counts as friendly is the caller's predicate (`SectorRoom.lofFriendly`);
- * this class only finds the bodies on the segment.
+ * this class only finds the bodies on the segment: the registry's, plus the
+ * players' ships (`ships`: pilots' active ships and parked hulls, which are
+ * not swarm records) binned in the same grid.
  *
  * Cost (root CLAUDE.md "gate on counts"): one broadphase per tick over the
  * swarm registry (the projectile broadphase type, #428), built lazily on the
@@ -22,7 +25,7 @@
  * `perfBudgets.ts` (`LINE_OF_FIRE_*`). Allocation-free in steady state (#14).
  */
 import { ProjectileBroadphase, type BroadphaseShape } from './ProjectileBroadphase.js';
-import { slotBase, SLOT_X_OFF, SLOT_Y_OFF, SLOT_ANGLE_OFF } from '../../shared-types/sabLayout.js';
+import { slotBase, SLOT_X_OFF, SLOT_Y_OFF, SLOT_ANGLE_OFF, SLOT_VX_OFF, SLOT_VY_OFF } from '../../shared-types/sabLayout.js';
 
 /** The swarm record fields the gate reads. */
 export interface LineOfFireBody extends BroadphaseShape {
@@ -33,6 +36,10 @@ export interface LineOfFireBody extends BroadphaseShape {
 export interface LineOfFireGateDeps<R extends LineOfFireBody> {
   /** Swarm registry (every kind: drones, structures, rocks, scrap). */
   registry: { all(): Iterable<R>; readonly version?: number };
+  /** Bodies outside the registry (the players' ships): fills `out` from 0
+   *  and returns the count. Read at each grid build, beside the registry, so
+   *  an AI pilot sees a player ship on its line. Absent ⇒ registry only. */
+  ships?: (out: R[]) => number;
   /** SAB Float32 view (slot-indexed poses). */
   sabF32: Float32Array;
   /** Current server tick: the grid is rebuilt once per tick at most. */
@@ -58,6 +65,13 @@ export class LineOfFireGate<R extends LineOfFireBody> {
   lastBlockerY = 0;
 
   private readonly bp = new ProjectileBroadphase<R>();
+  /** `deps.ships` output, reused (#14). */
+  private readonly shipScratch: R[] = [];
+  /** Velocity at the grid build, by dense index (the moving-shot check). */
+  private vx = new Float64Array(64);
+  private vy = new Float64Array(64);
+  /** Fastest body speed in this build (bounds the moving-shot query). */
+  private maxSpeed = 0;
   private builtTick = -1;
   private builtVersion = -1;
 
@@ -69,10 +83,17 @@ export class LineOfFireGate<R extends LineOfFireBody> {
    * are never tested (the target may share the shooter's side, e.g. a drone
    * that provoked it). Alloc-free: pass a pre-bound predicate, not a new
    * closure. A registry without `version` rebuilds on every check.
+   *
+   * A MOVING shot (`shotSpeed` > 0, u/s; the shooter's velocity
+   * (`svx`, `svy`), which the shot inherits): each friendly is ALSO tested
+   * where it will be, relative to the shot, when the shot reaches it, so a
+   * friend crossing the line during the shot's flight holds it too. Absent
+   * (0) ⇒ the pose at the grid build only.
    */
   blocked(
     fx: number, fy: number, dx: number, dy: number, maxDist: number,
     shooterId: string, targetId: string, friendly: (rec: R) => boolean,
+    shotSpeed = 0, svx = 0, svy = 0,
   ): boolean {
     if (!(maxDist > 0)) return false;
     this.checks++;
@@ -81,7 +102,10 @@ export class LineOfFireGate<R extends LineOfFireBody> {
     const version = d.registry.version ?? -1;
     if (tick !== this.builtTick || version !== this.builtVersion || version === -1) this.rebuild(tick, version);
     const bp = this.bp;
-    bp.query(fx, fy, dx * maxDist, dy * maxDist, 0);
+    const moving = shotSpeed > 0;
+    // A body can close at most (its speed + the shooter's) × the flight time.
+    const pad = moving ? (this.maxSpeed + Math.hypot(svx, svy)) * (maxDist / shotSpeed) : 0;
+    bp.query(fx, fy, dx * maxDist, dy * maxDist, pad);
     const n = bp.outCount;
     this.candidates += n;
     for (let k = 0; k < n; k++) {
@@ -89,7 +113,18 @@ export class LineOfFireGate<R extends LineOfFireBody> {
       const rec = bp.recs[i]!;
       if (rec.id === shooterId || rec.id === targetId || !friendly(rec)) continue;
       this.narrow++;
-      if (d.rayHit(rec, fx, fy, dx, dy, maxDist, bp.x[i]!, bp.y[i]!, bp.angle[i]!) !== null) {
+      let cx = bp.x[i]!, cy = bp.y[i]!;
+      let hit = d.rayHit(rec, fx, fy, dx, dy, maxDist, cx, cy, bp.angle[i]!) !== null;
+      if (!hit && moving) {
+        // Where it will be (in the shot's frame) when the shot is level with it.
+        const along = (cx - fx) * dx + (cy - fy) * dy;
+        const t = (along > 0 ? (along < maxDist ? along : maxDist) : 0) / shotSpeed;
+        cx += (this.vx[i]! - svx) * t;
+        cy += (this.vy[i]! - svy) * t;
+        this.narrow++;
+        hit = d.rayHit(rec, fx, fy, dx, dy, maxDist, cx, cy, bp.angle[i]!) !== null;
+      }
+      if (hit) {
         this.lastBlockerId = rec.id;
         this.lastBlockerX = bp.x[i]!;
         this.lastBlockerY = bp.y[i]!;
@@ -103,13 +138,29 @@ export class LineOfFireGate<R extends LineOfFireBody> {
     const d = this.deps;
     const bp = this.bp;
     bp.begin();
-    for (const rec of d.registry.all()) {
-      const b = slotBase(rec.slot);
-      bp.add(rec, d.sabF32[b + SLOT_X_OFF]!, d.sabF32[b + SLOT_Y_OFF]!, d.sabF32[b + SLOT_ANGLE_OFF]!);
-    }
+    this.maxSpeed = 0;
+    for (const rec of d.registry.all()) this.add(rec);
+    const n = d.ships?.(this.shipScratch) ?? 0;
+    for (let k = 0; k < n; k++) this.add(this.shipScratch[k]!);
     bp.end();
     this.builtTick = tick;
     this.builtVersion = version;
     this.builds++;
+  }
+
+  private add(rec: R): void {
+    const sab = this.deps.sabF32;
+    const b = slotBase(rec.slot);
+    const i = this.bp.count;
+    this.bp.add(rec, sab[b + SLOT_X_OFF]!, sab[b + SLOT_Y_OFF]!, sab[b + SLOT_ANGLE_OFF]!);
+    if (i >= this.vx.length) {
+      // Doubling growth past the high-water mark only (#14).
+      const nx = new Float64Array(this.vx.length * 2); nx.set(this.vx); this.vx = nx;
+      const ny = new Float64Array(this.vy.length * 2); ny.set(this.vy); this.vy = ny;
+    }
+    const vx = sab[b + SLOT_VX_OFF]!, vy = sab[b + SLOT_VY_OFF]!;
+    this.vx[i] = vx; this.vy[i] = vy;
+    const sp = Math.hypot(vx, vy);
+    if (sp > this.maxSpeed) this.maxSpeed = sp;
   }
 }

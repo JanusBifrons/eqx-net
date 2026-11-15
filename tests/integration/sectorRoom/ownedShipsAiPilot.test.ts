@@ -56,7 +56,11 @@ describe('SectorRoom integration — owned ships flown by the AI pilot brain (RT
     client.send('set_stance', { type: 'set_stance', shipIds: ids, stance: 'aggressive' });
     client.send('fleet_order', { type: 'fleet_order', shipIds: ids, kind: 'move', x: 250, y: 700 });
     const robotsLeft = (): number => robots.filter((id) => internals.swarmHealth.has(id)).length;
-    for (let i = 0; i < 80 && robotsLeft() > 0; i++) await harness.advance(500);
+    // A runtime ceiling, not a kill-time gate (kill time is not a metric).
+    // Since slice 3 a hull fires only on its pilot's trigger (in its fire
+    // range, aimed, line clear): 36-52 s here, with ~3 squadmate hits where
+    // the lock-only trigger took ~28-38 s and hit squadmates 13-24 times.
+    for (let i = 0; i < 160 && robotsLeft() > 0; i++) await harness.advance(500);
     expect(robotsLeft(), 'the owned fighters killed every cube').toBe(0);
   }, 120_000);
 

@@ -65,10 +65,25 @@ describe the wingman brain flying, read this section instead.
   (not only in a mixed-allegiance sector), so a hull sees on-sight foes
   (robots).
 - **Fire:** `tickWingmanTargets` points the hull's `wingmanLocks` at the
-  brain's `getTargetId()` (none under hold fire) → `tickHull` →
-  `fireHull`. The registration flag keeps the brain's `intent.fire` out of
-  `handleAiFire` / `AiFireResolver`. Slice 3 moves the trigger to
-  `intent.fire` (with the line-of-fire gate).
+  brain's `getTargetId()` (none under hold fire). The trigger is the brain's
+  `intent.fire` (slice 3): for a `{ hull: true }` registration
+  `AiController` hands it to the sink's ONE hull fire branch
+  (`postHullFire(hullId, targetId)` → `hullTrigger`, never `handleAiFire` /
+  `AiFireResolver`), and `tickWingmanFire` (same tick, after the AI tick)
+  pulls `fireHull` on each locked group only while the trigger is held at the
+  target the locks follow. So the hull fires only when its pilot would: aim
+  tolerance (the hull cone for fixed guns), range and the charge wind-up room.
+  A turret-fire-control hull (a capital) has no brain trigger (its brain never
+  fires; the turrets do as each bears, as for an AI capital), so its trigger
+  is its lock. Each barrel then passes the AI pilots' one `LineOfFireGate`
+  (`hullLineBlocked`; [allegiances](allegiances.md) "Line of fire"): a
+  player's ship, the owner's structures or a wreck piece on the line holds it,
+  and the brain hears the blocker (`noteBlocked`). Charges: the player
+  pipeline has no wind-up, so a hull never writes the one charge store
+  (`WeaponMountTicker.charges`); `isCharging` reads false for it and nothing
+  there needs re-keying in `shipKeyMoved`. Locks:
+  `tests/integration/sectorRoom/ownedShipTrigger.test.ts`,
+  `AiController.input.test.ts`, `LineOfFireGate.test.ts`.
 - **Retaliation (slice 4):** `applyDamage` on an attached hull calls
   `ownedHullRetaliates` (BEFORE the hit, so a killing blow still turns its
   squad): `aiController.markHostile(hull, hostileActorOf(shooter))` for the

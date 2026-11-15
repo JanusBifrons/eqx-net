@@ -36,7 +36,7 @@ describe('SectorRoom integration — wingmen vs robot cubes (RTS take)', () => {
     harness = undefined;
   }, 10_000);
 
-  // RTS Part B slice 3: the trigger moves to the brain's `intent.fire` with the line-of-fire gate. With the AI pilot brain all three cubes die (wingOnRobot >= 20), but the lock-driven fire still hits squadmates (11 > 3).
+  // RTS Part B slice 6: hunt mode. Slice 3 moved the trigger to the brain's `intent.fire` with the line-of-fire gate (squadmate hits 1–4 a run over 6 runs, was 12–15), but the hulls still hold their move point, so a cube that breaks off past ~1.5 km is never chased (0–3 cubes left after 25 s).
   it.skip('five hunting, aggressive wingmen kill three robot cubes without shooting each other', async () => {
     harness = await bootSectorTestServer(structuredClone(SHOWCASE_RTS_OPTS) as unknown as Record<string, unknown>);
     const pid = randomUUID();

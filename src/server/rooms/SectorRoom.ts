@@ -251,7 +251,9 @@ import { WeaponMountTicker } from './WeaponMountTicker.js';
 import { LockSubsystem, newLockTargetView, type LockTargetView } from './LockSubsystem.js';
 import { NpcLockSubsystem } from './NpcLockSubsystem.js';
 import { fillFireTargetShape, fillRangeShape, mountFiresOn, newFireTargetShape, type FireTargetShape } from '../../core/combat/fireControlBearing.js';
-import { weaponIdReach } from '../../core/combat/mountReach.js';
+import { weaponIdReach, hasTurretFireControl } from '../../core/combat/mountReach.js';
+import { getWeapon } from '../../core/combat/WeaponCatalogue.js';
+import { NAVAL_SHELL_WEAPON_IDS } from '../../core/combat/shellFlight.js';
 import { PhysicsWorkerProxy, type WorkerCmd } from './PhysicsWorkerProxy.js';
 import { ProjectilePipeline } from './ProjectilePipeline.js';
 import { MissileSimulation } from './MissileSimulation.js';
@@ -712,6 +714,26 @@ const FLEET_STOP_ORDER = { kind: 'stop' } as const;
 /** RTS Part B: an owned hull's AI controller registration (keys as pilot
  *  INPUT, no AI fire path). */
 const HULL_AI_REGISTRATION = Object.freeze({ hull: true });
+
+/** A player's ship (a pilot's ACTIVE ship, keyed by playerId, or a LINGERING
+ *  hull, keyed by shipInstanceId) as a `LineOfFireGate` body: players' ships
+ *  are not swarm records. One per ship key, reused (#14). */
+class LofShipBody {
+  id = '';
+  slot = 0;
+  /** Broadphase bound: kind 1 + `shipKind` bins by `shipHitBound`. */
+  radius = 0;
+  readonly kind = 1;
+  shipKind = '';
+  /** Owning player. */
+  owner = '';
+  /** The ship's instance id (= `id` for a lingering hull). */
+  sid = '';
+  ship: ShipState | null = null;
+  /** Build generation it was last filled in (stale-body sweep). */
+  gen = 0;
+}
+type LofBody = SwarmEntityRecord | LofShipBody;
 /** RTS fleet warp: `handOffHulls` until slice S3 moves hulls. */
 const NO_HULLS_MOVED: readonly string[] = [];
 // LAG_COMP_WINDOW now used inside PlayerFireResolver.ts
@@ -2195,6 +2217,9 @@ export class SectorRoom extends Room<SectorState> {
         // v4 A — a disabled NPC ship's engines are off (no keys held).
         this.aiInputBatch.push(slot, this.gateGuard.isSlotDisabled(slot, this.gameClock.now()) ? 0 : bits);
       },
+      // RTS Part B: THE hull fire branch: the brain holds the hull's trigger
+      // this tick (`tickWingmanFire` pulls it through the player pipeline).
+      postHullFire: (hullId, targetId) => { this.hullTrigger.set(hullId, targetId); },
       flushInputs: () => {
         if (this.aiInputBatch.count === 0) return;
         this.postToWorker(this.aiInputBatch.cmd);
@@ -2275,6 +2300,7 @@ export class SectorRoom extends Room<SectorState> {
       // RTS slice 5: a wingman's hull (shipInstanceId) gates on its own locks.
       fireAllowed: (pid, slotId) => this.locksFor(pid).hasLocked(pid, slotId),
       mountBearsOnLock: (pid, mountId, ox, oy, angle, weaponId) => this.mountBearsOnLock(pid, mountId, ox, oy, angle, weaponId),
+      hullLineBlocked: (sid, fx, fy, dx, dy, weaponId, svx, svy) => this.hullLineBlocked(sid, fx, fy, dx, dy, weaponId, svx, svy),
     });
 
     // AI drone weapon-fire resolver. Composes the per-mount hitscan +
@@ -9003,18 +9029,30 @@ export class SectorRoom extends Room<SectorState> {
    *  fire tests turn it off to show what a shot hits. */
   private npcLineOfFire = true;
   /** Lazily built (needs the SAB). */
-  private lineOfFireGate: LineOfFireGate<SwarmEntityRecord> | null = null;
+  private lineOfFireGate: LineOfFireGate<LofBody> | null = null;
   /** The current check's shooter (set before each `blocked` call; #14). */
-  private lofShooterKind = 0; // 1 = NPC ship, 2 = structure
+  private lofShooterKind = 0; // 1 = NPC ship, 2 = structure, 3 = owned hull (AI pilot)
+  /** An owned hull's target (kind 3): never a blocker by any of its keys. */
+  private lofTarget = '';
+  /** Players' ships as gate bodies, one per ship key (`fillLofShips`). */
+  private readonly lofShipBodies = new Map<string, LofShipBody>();
   private lofSide: NpcAllegianceId = 'drones';
   private lofOwner = '';
   private lofOwnerIsNpc = false;
   /** Pre-bound predicate for the gate (made once, #14). */
-  private readonly lofFriendly = (rec: SwarmEntityRecord): boolean => {
-    // An AI pilot never pours fire into a wreck piece on its line: each shot
-    // would stop on it and its knock-back shove it on ahead of the shooter,
-    // a dead hull flying beside a live ship (take 11 "ghost ship").
-    if (isWreckPiece(rec)) return this.lofShooterKind === 1;
+  private readonly lofFriendly = (rec: LofBody): boolean => {
+    if (rec instanceof LofShipBody) {
+      // A player's ship: an owned hull's AI pilot holds over every one (none
+      // is its enemy but its target); a player's turret over its owner's
+      // own ships; an NPC never.
+      if (this.lofShooterKind === 3) return rec.sid !== this.lofTarget;
+      return this.lofShooterKind === 2 && !this.lofOwnerIsNpc && rec.owner === this.lofOwner;
+    }
+    // An AI pilot (an NPC ship or an owned hull) never pours fire into a
+    // wreck piece on its line: each shot would stop on it and its knock-back
+    // shove it on ahead of the shooter, a dead hull flying beside a live
+    // ship (take 11 "ghost ship").
+    if (isWreckPiece(rec)) return this.lofShooterKind !== 2;
     if (rec.kind === SWARM_KIND_DRONE) {
       if (this.lofShooterKind === 1) return isFriendly(this.lofSide, allegianceOfKind(rec.shipKind));
       return this.lofOwnerIsNpc
@@ -9031,16 +9069,60 @@ export class SectorRoom extends Room<SectorState> {
     return this.lofOwnerIsNpc && isNpcOwner(owner) && relationOf(this.lofOwner, owner, this.relationCtx) === 'friendly';
   };
 
-  private lofGate(): LineOfFireGate<SwarmEntityRecord> {
+  private lofGate(): LineOfFireGate<LofBody> {
     if (this.lineOfFireGate === null) {
-      this.lineOfFireGate = new LineOfFireGate<SwarmEntityRecord>({
+      this.lineOfFireGate = new LineOfFireGate<LofBody>({
         registry: this.swarmRegistry,
         sabF32: this.sabF32,
         tick: () => this.serverTick,
-        rayHit: (rec, fx, fy, dx, dy, max, cx, cy, ca) => this.swarmRayHit(rec, fx, fy, dx, dy, max, cx, cy, ca),
+        ships: (out) => this.fillLofShips(out),
+        rayHit: (rec, fx, fy, dx, dy, max, cx, cy, ca) => rec instanceof LofShipBody
+          ? this.playerHitscanDist(rec.ship!, fx, fy, dx, dy, max, cx, cy, ca)
+          : this.swarmRayHit(rec, fx, fy, dx, dy, max, cx, cy, ca),
       });
     }
     return this.lineOfFireGate;
+  }
+
+  /**
+   * The players' ships for the line-of-fire grid (once per build): every
+   * ACTIVE ship that is in the world (alive, not on a warp run) and every
+   * LINGERING hull that is alive (#17: both are bodies a shot can hit; DEAD
+   * and TRAVELLING are not). Bodies are kept per ship key, pruned when the
+   * key leaves (#14: a new body only for a new ship key).
+   */
+  private fillLofShips(out: LofBody[]): number {
+    let n = 0;
+    const gen = ++this.lofShipGen;
+    for (const [pid, slot] of this.playerToSlot) {
+      const ship = this.getActiveShip(pid);
+      if (!ship || !ship.alive || ship.travelling) continue;
+      out[n++] = this.lofShipBody(pid, slot, ship, pid, gen);
+    }
+    for (const [sid, slot] of this.lingeringSlots) {
+      const ship = this.state.ships.get(sid);
+      if (!ship || !ship.alive) continue;
+      out[n++] = this.lofShipBody(sid, slot, ship, ship.playerId, gen);
+    }
+    if (this.lofShipBodies.size > n) {
+      for (const [k, b] of this.lofShipBodies) if (b.gen !== gen) this.lofShipBodies.delete(k);
+    }
+    return n;
+  }
+
+  private lofShipGen = 0;
+
+  private lofShipBody(key: string, slot: number, ship: ShipState, owner: string, gen: number): LofShipBody {
+    let b = this.lofShipBodies.get(key);
+    if (b === undefined) { b = new LofShipBody(); b.id = key; this.lofShipBodies.set(key, b); }
+    b.slot = slot;
+    b.ship = ship;
+    b.shipKind = ship.kind;
+    b.radius = tuningFor(ship.kind).hitRadius;
+    b.owner = owner;
+    b.sid = ship.shipInstanceId;
+    b.gen = gen;
+    return b;
   }
 
   /** An NPC ship's line of fire (drone slot or capital turret). */
@@ -9101,14 +9183,46 @@ export class SectorRoom extends Room<SectorState> {
     this.lofShooterKind = 2;
     this.lofOwner = rec.owner;
     this.lofOwnerIsNpc = isNpcOwner(rec.owner);
-    if (this.lofGate().blocked(fx, fy, dx, dy, maxDist, rec.id, targetId, this.lofFriendly)) return true;
-    if (this.lofOwnerIsNpc || rec.owner === targetId) return false;
-    // A player's turret never fires through its owner's own ship (#17: active only).
-    const ship = this.getActiveShip(rec.owner);
-    if (!ship || !ship.alive || ship.travelling) return false;
-    const pose = this.shipPoseCache.get(rec.owner);
-    if (!pose) return false;
-    return this.playerHitscanDist(ship, fx, fy, dx, dy, maxDist, pose.x, pose.y, pose.angle) !== null;
+    // A player's turret never fires through its owner's own ships (the gate's
+    // player-ship bodies: the active ship and parked hulls).
+    return this.lofGate().blocked(fx, fy, dx, dy, maxDist, rec.id, targetId, this.lofFriendly);
+  }
+
+  /** Scratch: an owned hull's target pose (`hullLineBlocked`). */
+  private readonly hullLofTarget = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
+
+  /**
+   * RTS Part B: an owned hull's barrel line (`PlayerFireResolver.fireHull`),
+   * from its muzzle to the target its AI pilot holds the trigger on. The one
+   * gate: a player's ship, the owner's structures or a wreck piece on the
+   * line holds the shot, and the brain hears which ally blocked it (as an NPC
+   * ship does). The line runs the shot's whole reach, not just to the target:
+   * a shot that misses flies on into whoever is behind it. A bolt or missile
+   * is checked as a moving shot (a friend that will cross its line in flight
+   * holds it too). A pilot's own fire never comes here.
+   */
+  private hullLineBlocked(
+    sid: string, fx: number, fy: number, dx: number, dy: number, weaponId: WeaponId, svx: number, svy: number,
+  ): boolean {
+    if (!this.npcLineOfFire) return false;
+    const targetId = this.hullTrigger.get(sid) ?? this.wingmanFireKeys.get(sid)?.id;
+    const ship = this.state.ships.get(sid);
+    const p = this.hullLofTarget;
+    if (targetId === undefined || ship === undefined || !this.entityPoseInto(targetId, p)) return false;
+    this.lofShooterKind = 3;
+    this.lofOwner = ship.playerId;
+    this.lofOwnerIsNpc = false;
+    this.lofTarget = targetId;
+    const gate = this.lofGate();
+    const w = getWeapon(weaponId);
+    const dist = Math.hypot(p.x - fx, p.y - fy);
+    // A beam or bolt that misses flies on to its reach; a missile homes and a
+    // naval shell's line is checked to its target (as an AI capital's turret).
+    const reach = w.mode === 'missile' || NAVAL_SHELL_WEAPON_IDS.has(weaponId) ? 0 : weaponIdReach(weaponId);
+    const shotSpeed = w.mode === 'hitscan' ? 0 : w.speed;
+    if (!gate.blocked(fx, fy, dx, dy, reach > dist ? reach : dist, sid, targetId, this.lofFriendly, shotSpeed, svx, svy)) return false;
+    this.aiController.noteBlocked(sid, this.serverTick, gate.lastBlockerX, gate.lastBlockerY);
+    return true;
   }
 
   /** The first thing a structure turret's beam meets, players included
@@ -10528,6 +10642,7 @@ export class SectorRoom extends Room<SectorState> {
     // RTS Part B: the AI pilot brain lets go (idempotent).
     this.aiController.unregister(shipInstanceId);
     this.hullHeldBits.delete(shipInstanceId);
+    this.hullTrigger.delete(shipInstanceId);
     if (!this.fleet.isAttached(shipInstanceId)) return;
     this.fleet.detach(shipInstanceId, keepSquad ? KEEP_SQUAD : undefined);
     // RTS slice 5: drop the hull's wingman fire state (locks, turret angles,
@@ -10577,6 +10692,10 @@ export class SectorRoom extends Room<SectorState> {
 
   /** Last control keys posted per AI-flown hull (the worker holds them). */
   private readonly hullHeldBits = new Map<string, AiInputBits>();
+  /** RTS Part B: hulls whose AI pilot holds the trigger THIS tick, and at
+   *  what (its `intent.fire`, via the sink's `postHullFire`). Filled by
+   *  the AI tick, consumed and cleared by `tickWingmanFire` the same tick. */
+  private readonly hullTrigger = new Map<string, string>();
   /** Running total of AI pilot decisions for owned hulls (perf scene count). */
   private hullBrainTicksTotal = 0;
 
@@ -10673,9 +10792,10 @@ export class SectorRoom extends Room<SectorState> {
    * Every ~10 Hz (the lock step cadence): each AI-flown hull points every
    * weapon group's lock at its AI pilot brain's target (`getTargetId`; MAN
    * groups: `requestLock`; a new target drops the old locks). Hold fire, or
-   * no target ⇒ every lock is cancelled (RTS Part B slice 2; slice 3 moves the
-   * trigger to the brain's `intent.fire`). The lock still takes the time a pilot's
-   * would (fights aren't instant), and a neutral target runs the failsafe.
+   * no target ⇒ every lock is cancelled (RTS Part B slice 2). The trigger is
+   * the brain's `intent.fire` (`tickWingmanFire`). The lock still takes the
+   * time a pilot's would (fights aren't instant), and a neutral target runs
+   * the failsafe.
    */
   private tickWingmanTargets(): void {
     const fleet = this.fleet;
@@ -10707,10 +10827,16 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   /**
-   * Every tick: each wingman's turrets slew to their group locks (the pilot's
-   * `tickPlayer` rule), and every group holding a LOCKED target pulls the
-   * trigger through the player resolver (lock gate, bearing, cooldown and
-   * energy are its own). Liveness: LINGERING hulls with a brain only (#17).
+   * Every tick: each owned hull's turrets slew to their group locks (the
+   * pilot's `tickPlayer` rule), and the hull pulls its trigger through the
+   * player resolver (lock gate, bearing, line of fire, cooldown and energy are
+   * its own) on every group holding a LOCKED target, but only while its AI
+   * pilot holds the trigger (RTS Part B slice 3): the brain's `intent.fire`
+   * at the target the locks follow, so the hull fires only when the brain
+   * would (aim tolerance, range, charge wind-up room). A turret-fire-control
+   * hull (a capital) has no brain trigger (its brain never fires; the
+   * turrets do as each bears, like an AI pilot's capital), so its trigger is
+   * its lock. Liveness: LINGERING hulls with a brain only (#17).
    */
   private tickWingmanFire(): void {
     const fleet = this.fleet;
@@ -10722,12 +10848,17 @@ export class SectorRoom extends Room<SectorState> {
       this.mountTicker.tickHull(sid, ship, pose);
       const groups = this.wingmanLocks.wireFor(sid);
       if (groups === undefined) continue;
+      if (!hasTurretFireControl(getShipKind(ship.kind))) {
+        const held = this.hullTrigger.get(sid);
+        if (held === undefined || this.wingmanFireKeys.get(sid)?.id !== held) continue;
+      }
       for (let g = 0; g < groups.length; g++) {
         const grp = groups[g]!;
         if (grp.l.length === 0 || !this.wingmanLocks.hasLocked(sid, grp.id)) continue;
         this.playerFireResolver.fireHull(sid, ship, grp.id);
       }
     }
+    this.hullTrigger.clear();
   }
 
   /** RTS Part B slice 4: an owned hull was hit — it and every squadmate of
