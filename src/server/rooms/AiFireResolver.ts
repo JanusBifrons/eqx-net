@@ -112,7 +112,8 @@ export interface AiFireResolverDeps {
   ) => number | null;
   /** Damage sink — invoked on a confirmed hit. (hitX, hitY) is the beam's
    *  impact point, (dirX, dirY) its direction (capital wreck hit tracker and
-   *  knock-back), `weaponId` the firing weapon. */
+   *  knock-back), `weaponId` the firing weapon. Returns true iff THIS call
+   *  destroyed the target (the room's choke point does; mocks may not). */
   applyDamage: (
     targetId: string,
     shooterId: string,
@@ -122,7 +123,7 @@ export interface AiFireResolverDeps {
     dirX?: number,
     dirY?: number,
     weaponId?: WeaponId,
-  ) => void;
+  ) => boolean | void;
   /** Friendly fire (owner decision 2026-11-10) — the first non-player thing
    *  along the beam: every swarm entity (drones of ANY side, structures of ANY
    *  owner, asteroids, scrap) and lingering hulls, skipping only `skipId` (the
@@ -175,6 +176,9 @@ export class AiFireResolver implements WeaponFireSink {
    *  `resolveFire`), so a beam hit tells applyDamage what landed it. */
   private _weaponId: WeaponId | undefined = undefined;
   private _wireShooterId = '';
+  /** Set by the hitscan sink when a beam of the shot now resolving destroyed
+   *  what it hit (`fireMount` reports it: the heavy beam's follow-through). */
+  private _shotKilled = false;
 
   /**
    * Resolve an AI fire claim. Cooldown-rejected → silent no-op.
@@ -300,8 +304,10 @@ export class AiFireResolver implements WeaponFireSink {
    *  capital's turret does (PlayerFireResolver per-mount path: a partial
    *  salvo pays its share), i.e. slot cost / mounts per mount. Returns false
    *  when refused (no pose, or the pool can't pay) so the caller keeps the
-   *  reload. */
-  fireMount(shooterId: string, mountIdx: number): boolean {
+   *  reload; 'killed' when it fired and one of its beams destroyed what it hit
+   *  (the caller's follow-through, `WeaponDefBase.followThroughTicks`); else
+   *  true. */
+  fireMount(shooterId: string, mountIdx: number): boolean | 'killed' {
     const d = this.deps;
     const self = d.swarmEntitySnapshot(shooterId);
     if (!self) return false;
@@ -310,8 +316,9 @@ export class AiFireResolver implements WeaponFireSink {
       const n = Math.min(d.resolveSlotMounts(kind).length, 31);
       if (n > 0 && !d.trySpendEnergy(shooterId, resolveSlotEnergyCost(kind) / n)) return false;
     }
+    this._shotKilled = false;
     this.fireNow(shooterId, mountIdx);
-    return true;
+    return this._shotKilled ? 'killed' : true;
   }
   /** Quad AA: the next barrel to fire, per shooter and mount index. */
   private readonly aaBarrel = new Map<string, Uint8Array>();
@@ -486,7 +493,9 @@ export class AiFireResolver implements WeaponFireSink {
         : damage;
       // The impact point and direction ride the damage call itself (wreck hit
       // tracker, knock-back; the damage event reports the true impact point).
-      d.applyDamage(hitId, this._shooterId, effDamage, rayFromX + ndx * hitDist, rayFromY + ndy * hitDist, ndx, ndy, this._weaponId);
+      if (d.applyDamage(hitId, this._shooterId, effDamage, rayFromX + ndx * hitDist, rayFromY + ndy * hitDist, ndx, ndy, this._weaponId) === true) {
+        this._shotKilled = true;
+      }
     }
 
     const blocked = wallDist !== null;

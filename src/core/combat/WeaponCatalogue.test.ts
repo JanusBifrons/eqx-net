@@ -213,6 +213,18 @@ describe('WeaponCatalogue — capital heavy beam (plan beam-slices §8)', () => 
     expect(WEAPON_IDS[WEAPON_IDS.length - 1]).toBe('heavy_beam');
   });
 
+  it('follows through a kill for 0.5-1 s of game time; no other weapon does', () => {
+    // Owner: "show for half a second or one second through the clean cut".
+    const ft = getWeapon('heavy_beam').followThroughTicks ?? 0;
+    expect(ft).toBe(45);
+    expect(ft).toBeGreaterThanOrEqual(30);
+    expect(ft).toBeLessThanOrEqual(60);
+    // At least a few shots of its own cadence land inside the window.
+    expect(ft / getWeapon('heavy_beam').cooldownTicks).toBeGreaterThanOrEqual(3);
+    const others = [...WEAPONS.values()].filter((d) => d.followThroughTicks !== undefined).map((d) => d.id);
+    expect(others).toEqual(['heavy_beam']);
+  });
+
   it('fighter and sub-cap beams do not slice: only the heavy beam has a slice cut', () => {
     const slicers = [...WEAPONS.values()].filter((d) => d.killCut?.kind === 'slice').map((d) => d.id);
     expect(slicers).toEqual(['heavy_beam']);

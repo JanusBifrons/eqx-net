@@ -2070,7 +2070,8 @@ export class SectorRoom extends Room<SectorState> {
       fireDroneMount: (id, i) => this.aiFireResolver.fireMount(id, i),
       fireBlocked: (id, targetId) => this.npcLocks.fireBlocked(id, targetId),
       // Friendly fire slice 2: a turret holds while an escort is on its line.
-      lineOfFireBlocked: (id, targetId, fx, fy, dx, dy, max) => this.npcShipLineBlocked(id, targetId, fx, fy, dx, dy, max),
+      lineOfFireBlocked: (id, targetId, fx, fy, dx, dy, max, passWrecks) =>
+        this.npcShipLineBlocked(id, targetId, fx, fy, dx, dy, max, passWrecks),
       // Capital turrets engage hostile structures too (the AI's per-tick set).
       hostileStructures: () => this.hostileStructureCircles,
       lockTimeCapS: () => this.testLockTimeCapS,
@@ -8424,12 +8425,14 @@ export class SectorRoom extends Room<SectorState> {
   private lofSide: NpcAllegianceId = 'drones';
   private lofOwner = '';
   private lofOwnerIsNpc = false;
+  /** This check lets wreck pieces pass (a capital turret's kill follow-through). */
+  private lofPassWrecks = false;
   /** Pre-bound predicate for the gate (made once, #14). */
   private readonly lofFriendly = (rec: SwarmEntityRecord): boolean => {
     // An AI pilot never pours fire into a wreck piece on its line: each shot
     // would stop on it and its knock-back shove it on ahead of the shooter,
     // a dead hull flying beside a live ship (take 11 "ghost ship").
-    if (isWreckPiece(rec)) return this.lofShooterKind === 1;
+    if (isWreckPiece(rec)) return this.lofShooterKind === 1 && !this.lofPassWrecks;
     if (rec.kind === SWARM_KIND_DRONE) {
       if (this.lofShooterKind === 1) return isFriendly(this.lofSide, allegianceOfKind(rec.shipKind));
       return this.lofOwnerIsNpc
@@ -8461,14 +8464,18 @@ export class SectorRoom extends Room<SectorState> {
   /** An NPC ship's line of fire (drone slot or capital turret). */
   private npcShipLineBlocked(
     shooterId: string, targetId: string, fx: number, fy: number, dx: number, dy: number, maxDist: number,
+    passWrecks = false,
   ): boolean {
     if (!this.npcLineOfFire) return false;
     const rec = this.swarmRegistry.get(shooterId);
     if (rec == null || rec.kind !== SWARM_KIND_DRONE) return false;
     this.lofShooterKind = 1;
     this.lofSide = allegianceOfKind(rec.shipKind);
+    this.lofPassWrecks = passWrecks;
     const gate = this.lofGate();
-    if (!gate.blocked(fx, fy, dx, dy, maxDist, shooterId, targetId, this.lofFriendly)) return false;
+    const blocked = gate.blocked(fx, fy, dx, dy, maxDist, shooterId, targetId, this.lofFriendly);
+    this.lofPassWrecks = false;
+    if (!blocked) return false;
     // Line-of-fire feedback: tell the brain which ally held its shot (drone
     // slots via AiFireResolver AND capital turret barrels via the mount ticker
     // both come through here; the behaviour counts at most once per tick).
