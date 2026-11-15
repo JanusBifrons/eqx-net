@@ -1557,12 +1557,15 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   }
 
   /**
-   * Ally fire lanes (slice 5b): for up to `ALLY_LANE_K` same-side NPC
+   * Ally fire lanes (slice 5b): for up to `ALLY_LANE_K` same-side AI-flown
    * wingmen within fire range that aimed this tick or the last few, danger
    * along wingman → its aim point (lane half-width = own radius ×
    * `ALLY_LANE_RADIUS_MUL` + the wingman's radius; look-ahead 1 s at
-   * max(cruise, own speed)). Pilots are skipped: a player is never steered round (and has no
-   * aim on the board). Returns true when this ship sits INSIDE a lane (it
+   * max(cruise, own speed)). Same side = `sideAt === allegiance`, pilot slot
+   * or not: a player-owned AI-flown hull sits in a pilot slot on the players
+   * side (RTS Part B), and its squadmates keep out of its lane. AI-flown =
+   * an aim on the board: a human pilot posts none, so no lane is ever made
+   * from a human's nose. Returns true when this ship sits INSIDE a lane (it
    * must get out: the caller lets the nose swing toward the exit). Alloc-free
    * (reuses `_nbIdx`).
    */
@@ -1576,7 +1579,8 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     let inside = false;
     for (let k = 0; k < n && used < ALLY_LANE_K; k++) {
       const i = idx[k]!;
-      if (nb.isPilotAt(i) || nb.sideAt(i) !== this.allegiance) continue;
+      if (nb.sideAt(i) !== this.allegiance) continue;
+      // Only an AI-flown ship posts its aim; a human pilot has none.
       if (!aims.read(nb.idAt(i), tick)) continue;
       used++;
       const hw = ALLY_LANE_RADIUS_MUL * this.kind.radius + nb.radiusAt(i);

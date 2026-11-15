@@ -30,7 +30,7 @@ import { getShipKind } from '../../../shared-types/shipKinds.js';
 
 const DRONE = getShipKind('fighter');
 
-interface Nb { id: string; x: number; y: number; side: string }
+interface Nb { id: string; x: number; y: number; side: string; pilot?: boolean }
 
 function query(list: Nb[]): IAiNeighbourQuery {
   return {
@@ -51,7 +51,7 @@ function query(list: Nb[]): IAiNeighbourQuery {
     vyAt: () => 0,
     radiusAt: () => DRONE.radius,
     sideAt: (i) => list[i]!.side,
-    isPilotAt: () => false,
+    isPilotAt: (i) => list[i]!.pilot === true,
     isCapitalAt: () => false,
   };
 }
@@ -128,8 +128,8 @@ describe('addAllyLaneDanger', () => {
   });
 });
 
-function tickWith(opts: { nbs?: Nb[]; aims?: AimBoard; block?: { x: number; y: number } }) {
-  const b = new HostileDroneBehaviour(DRONE);
+function tickWith(opts: { nbs?: Nb[]; aims?: AimBoard; block?: { x: number; y: number }; brain?: () => HostileDroneBehaviour }) {
+  const b = opts.brain ? opts.brain() : new HostileDroneBehaviour(DRONE);
   if (opts.block) b.noteBlocked(100, opts.block.x, opts.block.y);
   const view: AiWorldView = {
     players: [], tick: 100, dtSec: 1 / 60, swarms: [ROBOT],
@@ -177,6 +177,36 @@ describe('HostileDroneBehaviour — ally fire lanes', () => {
     setFireLaneAvoidance(false);
     const off = tickWith({ nbs, aims });
     expect(Math.abs(off.steer.dirX), 'seam off: straight on').toBeLessThan(0.2);
+  });
+
+  // RTS Part B: a player-owned ship (players side) sits in the neighbour grid
+  // in a pilot slot. Its lane counts only when it is AI-flown, i.e. it posted
+  // an aim on the board; a human pilot publishes none.
+  const ownedBrain = (): HostileDroneBehaviour => new HostileDroneBehaviour(DRONE, { side: 'players', ownerId: 'owner-1' });
+
+  it("an owned ship keeps out of an AI-flown squadmate's lane (pilot slot, posted aim)", () => {
+    const aims = new AimBoard();
+    aims.add('h2');
+    aims.write('h2', 500, 80, 100);
+    const nbs = [{ id: 'h2', x: -500, y: 80, side: 'players', pilot: true }];
+    const lane = tickWith({ nbs, aims, brain: ownedBrain });
+    expect(Math.abs(lane.steer.angle - angleForDir(0, 1)), 'the crossing heading is masked').toBeGreaterThan(0.3);
+  });
+
+  it("a human pilot's nose makes no lane (no aim on the board)", () => {
+    const aims = new AimBoard();
+    const nbs = [{ id: 'p1', x: -500, y: 80, side: 'players', pilot: true }];
+    const human = tickWith({ nbs, aims, brain: ownedBrain });
+    expect(Math.abs(human.steer.dirX), 'straight on').toBeLessThan(0.2);
+  });
+
+  it('a drone ignores a players-side lane (not its side)', () => {
+    const aims = new AimBoard();
+    aims.add('h2');
+    aims.write('h2', 500, 80, 100);
+    const nbs = [{ id: 'h2', x: -500, y: 80, side: 'players', pilot: true }];
+    const drone = tickWith({ nbs, aims });
+    expect(Math.abs(drone.steer.dirX), 'straight on').toBeLessThan(0.2);
   });
 });
 

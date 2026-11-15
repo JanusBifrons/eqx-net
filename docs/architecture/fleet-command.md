@@ -50,7 +50,10 @@ describe the wingman brain flying, read this section instead.
   check stays skipped (first kill ~tick 1035 vs its 450-tick window; lock
   restarts on target switches are part of it). `wingmanFightsRobots` "five
   hunting" now kills all three cubes every run (32–49 s) but stays skipped:
-  squadmate hits 4–5 a run over the full fight, limit 3 (line-of-fire work).
+  squadmate hits over the full fight, limit 3 (line-of-fire work). Owned
+  ships now keep out of AI-flown squadmates' fire lanes (pilot slot, aim on
+  the board): 8 runs each, squadmate hits 0/8/3/4/2/5/2/6 (mean 3.8) before,
+  6/2/3/5/2/4/1/0 (mean 2.9) after; 5 of 8 runs within the limit.
 - **Self pose:** `swarmEntitySnapshot` falls back to `lingeringPoseCache`
   (`lingeringHullSnapshot`, same shared scratch), so `runEntity` ticks a hull.
 - **Keys:** the AI input sink's ONE hull branch (`postInput(slot, bits,
