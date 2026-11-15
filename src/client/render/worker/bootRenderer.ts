@@ -23,6 +23,7 @@ export function rendererArgsFromBoot(
       ...(msg.fx ? { fx: true } : {}),
       ...(msg.speedFxOff ? { speedFx: false } : {}),
       ...(msg.lighting ? { lighting: msg.lighting } : {}),
+      ...(msg.livery ? { livery: msg.livery } : {}),
     },
     msg.fxKillSwitches,
   ];
