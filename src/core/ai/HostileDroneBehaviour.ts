@@ -498,6 +498,11 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   private guardX = 0;
   private guardY = 0;
   private guardR = 0;
+  /** The ship the guard post follows (owner 2026-11-15, flagship escorts:
+   *  "the zone follows the flagship"); null ⇒ a fixed post. Resolved each
+   *  tick into `_guardAnchorScratch` (`followGuardAnchor`). */
+  private guardAnchorId: string | null = null;
+  private readonly _guardAnchorScratch: AiEntityPoseOut = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
   /** On-sight engagement (RTS Part B slice 6, `setEngageOnSight`): off ⇒ this
    *  ship fights only what is on its retaliation ledger (`hostileTo`), the
    *  Defensive attitude. Drones and robots keep it on. */
@@ -936,6 +941,8 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       if (view.tick <= this._leavingUntil) return this.tickLeaving(self);
       this._leavingUntil = -1;
     }
+    // An anchored guard post sits on its anchor's live pose this tick.
+    if (this.guardAnchorId !== null) this.followGuardAnchor(view);
     // Spread targets: drop my claim; the combat pick below re-claims, so while
     // I pick, `view.claims` counts only the OTHER brains of my side.
     view.claims?.claim(self.id, this.allegiance, null);
@@ -2065,9 +2072,17 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    *  and flies back to the post when it has none (the guard leash). The radius is
    *  at least `shipTuning(kind).guardRadiusMin` (#18), so a big hull has room
    *  to turn. Independent of the move target / flock roles (those steer the
-   *  IDLE drone). Server-only: the client never ticks the drone brain. */
-  setGuardPost(x: number, y: number, radius: number): void {
+   *  IDLE drone). Server-only: the client never ticks the drone brain.
+   *
+   *  `anchorId` makes the post FOLLOW that ship (an escort guards round
+   *  the ship it escorts): each tick the post moves to the anchor's live pose
+   *  (`view.resolveEntityInto`); while the anchor can't be resolved the post
+   *  holds its last known spot ((x, y) until the first resolve); the post is
+   *  cleared when the anchor leaves the AI controller (`noteEntityGone`).
+   *  Omitted / null ⇒ a fixed post at (x, y). */
+  setGuardPost(x: number, y: number, radius: number, anchorId: string | null = null): void {
     this.guardOn = true;
+    this.guardAnchorId = anchorId;
     this.guardX = x;
     this.guardY = y;
     this.guardR = Math.max(radius, shipTuning(this.kind).guardRadiusMin);
@@ -2081,6 +2096,22 @@ export class HostileDroneBehaviour implements IAiBehaviour {
 
   clearGuardPost(): void {
     this.guardOn = false;
+    this.guardAnchorId = null;
+  }
+
+  /** Another AI ship left the controller (died / despawned): a guard post
+   *  anchored to it is cleared. */
+  noteEntityGone(entityId: string): void {
+    if (this.guardAnchorId === entityId) this.clearGuardPost();
+  }
+
+  /** Move an anchored guard post onto its anchor's live pose; an unresolved
+   *  anchor leaves the post at its last known spot. Alloc-free (#14). */
+  private followGuardAnchor(view: AiWorldView): void {
+    const resolve = view.resolveEntityInto;
+    if (!this.guardOn || resolve === undefined || !resolve(this.guardAnchorId!, this._guardAnchorScratch)) return;
+    this.guardX = this._guardAnchorScratch.x;
+    this.guardY = this._guardAnchorScratch.y;
   }
 
   /** The guard post leashes this ship's target pick: every ship with a post
@@ -2175,6 +2206,10 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   getGuardRadius(): number {
     return this.guardOn ? this.guardR : 0;
   }
+
+  /** Test-visible: the guard post's centre (null with no post). */
+  getGuardPostX(): number | null { return this.guardOn ? this.guardX : null; }
+  getGuardPostY(): number | null { return this.guardOn ? this.guardY : null; }
 
   /** Set/clear the in-sector move target — the LEADER's course (or a lone
    *  drone's destination). Setting a course clears any FOLLOWER role (you lead /

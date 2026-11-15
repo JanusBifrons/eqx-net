@@ -357,7 +357,7 @@ export class FlagshipDirector {
     // "should stay close to the thing it's defending"): its capitals fight from
     // there instead of steaming off to their gun stand-off. Refreshed every
     // control tick, so a warp to a new pocket moves the post with it.
-    this.guardPocket(f, room);
+    this.guardPocket(f, room, lead);
     // Still warping (a capital's spool + run): leave it be.
     const ph = room.botWarpPhase?.(f.leadId) ?? 0;
     if (f.escortDrop !== null && (ph !== 1 || this.flagshipNearlyAligned(f, lead))) this.sendEscorts(f, room);
@@ -383,8 +383,14 @@ export class FlagshipDirector {
     }
   }
 
-  /** Post every ship of the fleet on its current pocket (centre + radius). */
-  private guardPocket(f: Fleet, room: LivingWorldRoom): void {
+  /** Post the flagship on its current pocket (centre + radius). Each escort
+   *  guards a zone round the FLAGSHIP (owner 2026-11-15: "Leash, but the zone
+   *  follows the flagship"): its post is anchored to the flagship, so the AI
+   *  pilot brain re-centres it on the flagship's live pose every tick, and
+   *  the radius reaches a pocket radius past the escort's station
+   *  (`escortRing`). Who counts as hostile stays the existing rules' call
+   *  (allegiance stance, retaliation, faction escalation); none is added. */
+  private guardPocket(f: Fleet, room: LivingWorldRoom, lead: { x: number; y: number }): void {
     if (!room.setBotGuardPost || f.sectorKey === null) return;
     if (f.guardSiteSector !== f.sectorKey || f.guardSitePocket !== f.pocketId) {
       // The pocket changed (spawn or warp): look it up once.
@@ -397,7 +403,7 @@ export class FlagshipDirector {
     const site = f.guardSite;
     if (!site) return;
     room.setBotGuardPost(f.leadId, site.x, site.y, site.r);
-    for (const e of f.escorts) room.setBotGuardPost(e.id, site.x, site.y, site.r);
+    for (const e of f.escorts) room.setBotGuardPost(e.id, lead.x, lead.y, escortRing(f.kind, e.kind) + site.r, f.leadId);
   }
 
   /** Warp the whole fleet to another pocket (or a gate, to leave). */
