@@ -5125,6 +5125,14 @@ export class SectorRoom extends Room<SectorState> {
         const ship = this.getActiveShip(id) ?? this.state.ships.get(id);
         return ship !== undefined && this.wreckKindAllowed(ship.kind) ? (ship.kind as ShipKindId) : null;
       },
+      // The livery owner, as the client resolves it for the live hull: a
+      // player hull (active by playerId, parked by shipInstanceId) its
+      // pilot's id, a patrol its faction (snapshot `fac`), else none.
+      ownerOf: (id) => {
+        if (this.swarmRegistry.has(id)) return this.patrols.count > 0 ? this.patrols.factionOf(id) : undefined;
+        const ship = this.getActiveShip(id) ?? this.state.ships.get(id);
+        return ship !== undefined && ship.playerId !== '' ? ship.playerId : undefined;
+      },
       positionOf: (id) => {
         const p = this.shipPoseCache.get(id) ?? this.lingeringPoseCache.get(id);
         if (p) return { x: p.x, y: p.y };
