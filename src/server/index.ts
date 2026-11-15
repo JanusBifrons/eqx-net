@@ -721,9 +721,7 @@ gameServer
     maxClients: 4,
   })
   .filterBy(['testId']);
-// Cut field (macro terrain v2), `?room=cut-field-test&testId=<uuid>`: the `look` field, spawning
-// 700 u from a rock's edge (vertex -30120, 26501), facing it at `?initialAngle=2.972`
-// (cut-field-collision.spec.ts rams it).
+// Cut field `?room=cut-field-test`: 700 u off a rock (vertex -30120, 26501), facing it at `?initialAngle=2.972` (cut-field-collision.spec).
 gameServer.define('cut-field-test', SectorRoom, {
   testMode: true, cutField: { seed: 'look' }, asteroidConfig: [], droneCount: 0,
   defaultSpawnX: -30_002, defaultSpawnY: 27_191, maxClients: 4,

@@ -1469,8 +1469,7 @@ export class ColyseusGameClient {
   private resetPredictionState(): void {
     // S2b: wrecks belong to the old sector (clears mirror.wrecks too).
     this._wrecks.clear();
-    // The cut field belongs to the old sector; the next welcome re-arms it.
-    this._cutField.stop();
+    this._cutField.stop(); // the cut field belongs to the old sector; the next welcome re-arms it
     // Deaths held for their drawn shell belong to the old sector too.
     this._shellTiming.reset();
     // Fire control: NPC locks belong to the old sector.
@@ -7288,8 +7287,7 @@ export class ColyseusGameClient {
     }
   }
 
-  /** What the cut field has loaded (`cut-field-collision.spec.ts` waits on it). */
-  get cutFieldStats(): CutFieldSummary { return this._cutField.summary(); }
+  get cutFieldStats(): CutFieldSummary { return this._cutField.summary(); } // cut-field-collision.spec.ts waits on it
 
   dispose(): void {
     this._cutField.stop();

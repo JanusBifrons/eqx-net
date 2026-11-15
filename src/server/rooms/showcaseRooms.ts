@@ -561,20 +561,12 @@ export const SHOWCASE_HUB_OPTS = {
   maxClients: 4,
 };
 
-/** Cut-field test room (docs/architecture/macro-terrain.md, slice 3): the
- *  whole 300 km cut field for seed `look`, streamed by chunks near ships on
- *  both sides; no other rocks, no drones. Spawn: in a capital lane (shots set
- *  the exact pose from `slicedFieldLanes`). Capitals may be flown. */
+/** Cut-field test room (macro-terrain.md): seed `look`'s whole field, no other
+ *  rocks or drones; shots set the pose from `slicedFieldLanes`. */
 export const CUT_FIELD_LOOK_SEED = 'look';
 export const SHOWCASE_CUT_FIELD_OPTS = {
-  testMode: true,
-  cutField: { seed: CUT_FIELD_LOOK_SEED },
-  asteroidConfig: [],
-  droneCount: 0,
-  defaultSpawnX: 0,
-  defaultSpawnY: 0,
-  maxClients: 4,
-  pilotCapitals: true,
+  testMode: true, cutField: { seed: CUT_FIELD_LOOK_SEED }, asteroidConfig: [], droneCount: 0,
+  defaultSpawnX: 0, defaultSpawnY: 0, maxClients: 4, pilotCapitals: true,
 };
 
 /** Room name → options, registered in `index.ts`. */

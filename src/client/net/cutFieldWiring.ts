@@ -28,7 +28,8 @@ export function createGameCutField(host: CutFieldHost): CutFieldClient {
     gameClock: { now: () => host.gameClock().now() },
     predWorld: () => host.predWorld(),
     // The piloted ship, or while spectating our own parked hull (spectate
-    // moves it to `lingeringShips`), so the field stays loaded around it.
+    // leaves it parked in `ships`, keyed by shipInstanceId), so the field
+    // stays loaded around it.
     // A free-flying spectator camera is not followed yet (its pose lives in
     // the renderer).
     localPose: () => {
@@ -36,8 +37,7 @@ export function createGameCutField(host: CutFieldHost): CutFieldClient {
       if (!localId) return null;
       const own = mirror.ships.get(localId);
       if (own) return own;
-      const parked = mirror.lingeringShips;
-      if (parked) for (const s of parked.values()) if (s.ownerPlayerId === localId) return s;
+      for (const s of mirror.ships.values()) if (s.ownerPlayerId === localId) return s;
       return null;
     },
     draw: {
