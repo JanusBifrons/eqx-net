@@ -45,7 +45,8 @@ import {
   type WreckBlast,
   type WreckTexLayout,
 } from './wreckArt.js';
-import { rebuildWreckPieces } from '../../net/wreckGeometryStore.js';
+import { rebuildWreckPieces, resolveChildWreckPieces } from '../../net/wreckGeometryStore.js';
+import { wreckChainFracture, wreckChildSeed } from '../../../core/destruction/wreckChildren.js';
 import { FRACTURE_ALGO_VERSION, EDGE_CUT, EDGE_HULL, projectToOutline } from '../../../core/destruction/fractureHull.js';
 import { shipHullOutline } from '../../../core/geometry/shipHullOutline.js';
 import { getShipKind } from '../../../shared-types/shipKinds.js';
@@ -714,7 +715,8 @@ describe('a cut kill reads first: subdued splinters, the whole cut lit, a visibl
   // capital's collider `hull` is their convex hull, wider than the drawn
   // body between the side barbettes: the filmed "white bars stuck onto the
   // hull edge" sat out there, over transparent art).
-  const drawnRings = shipParts(getShipKind('heavy-cruiser')).map((q) => q.pts.map(([x, y]) => ({ x, y })));
+  // `shipParts` is Pixi-up; the pieces are math-up: flip to match.
+  const drawnRings = shipParts(getShipKind('heavy-cruiser')).map((q) => q.pts.map(([x, y]) => ({ x, y: -y })));
   const inPoly = (ring: ReadonlyArray<{ x: number; y: number }>, x: number, y: number): boolean => {
     let inside = false;
     for (let a = 0, b = ring.length - 1; a < ring.length; b = a++) {
@@ -968,5 +970,73 @@ describe('a cut kill reads first: subdued splinters, the whole cut lit, a visibl
         for (const { s } of all) s.destroy({ children: true });
       }
     }
+  });
+});
+
+describe('a re-split piece\'s slice glow runs the whole cut (owner, re-split take 11)', () => {
+  // Owner: "The burn line doesn't cover the whole slice width." A battleship
+  // wreck's biggest piece (an end of the hull, off amidships) is sliced again
+  // by a heavy beam. Each child's EDGE_CUT edge IS the beam's line across the
+  // parent piece (the shared fracture's output, ending on the piece outline),
+  // so the glow core must run from end to end of it.
+  const kind = 'battleship';
+  const hull = shipHullOutline(getShipKind(kind));
+  let minY = Infinity, maxY = -Infinity;
+  for (const [, y] of hull) { minY = Math.min(minY, y); maxY = Math.max(maxY, y); }
+  const k0 = projectToOutline(hull, { x: 1e4, y: (minY + maxY) / 2 });
+  const root: WreckDescriptor = {
+    wreckId: 1, parentKind: kind, seed: 5, killX: k0.x, killY: k0.y, killBlowDamage: 1.39, recentDamageRate: 2.4,
+    snapChance: 0, algoVersion: FRACTURE_ALGO_VERSION, deathTick: 100, cutKind: 'slice', cutAng: 32768, cutW: HEAVY_BEAM_WIDTH,
+  };
+  const raw = wreckChainFracture({
+    root: {
+      kindId: kind, seed: 5, killX: k0.x, killY: k0.y, killBlowDamage: 1.39, recentDamageRate: 2.4, snapChance: 0,
+      cutKind: 'slice', cutAng: 32768, cutW: HEAVY_BEAM_WIDTH,
+    },
+    steps: [],
+  });
+  let pi = 0;
+  for (let i = 1; i < raw.length; i++) if (raw[i]!.area > raw[pi]!.area) pi = i;
+  const po = raw[pi]!.outline.map((v) => [v.x, v.y] as const);
+  let py0 = Infinity, py1 = -Infinity;
+  for (const [, y] of po) { py0 = Math.min(py0, y); py1 = Math.max(py1, y); }
+  const kp = projectToOutline(po, { x: -1e4, y: (py0 + py1) / 2 });
+
+  it('each child\'s EDGE_CUT glow core ends at the cut\'s ends on the piece outline (within 2 % of its length)', () => {
+    let edges = 0;
+    for (const cutAng of [24000, 30000, 32768, 36000]) {
+      const child: WreckDescriptor = {
+        ...root, wreckId: 2, seed: wreckChildSeed(5, pi), parentWreck: 1, parentPiece: pi, killX: kp.x, killY: kp.y, cutAng,
+      };
+      const pieces = resolveChildWreckPieces(child, (id) => (id === 1 ? root : undefined))!;
+      expect(pieces.length).toBeGreaterThan(1);
+      const art = new WreckArtState(null, () => {});
+      pieces.forEach((p, i) => {
+        const s = new WreckPieceSprite(p, kind, null, art.infoFor(child, pieces, i, { x: 0, y: 0, angle: 0 }, 100, 1000), i);
+        s.update(1000, 0);
+        const pos = s.glowPositions()!, S = s.glowSegments();
+        let k = 0;
+        for (let e = 0; e < p.cutEdges.length; e++) {
+          if (!p.cutEdges[e]) continue;
+          if (p.cutEdges[e] === EDGE_CUT) {
+            edges++;
+            // The cut's ends on the outline (body-local math-up → Pixi-down).
+            const a = p.outline[e]!, b = p.outline[(e + 1) % p.outline.length]!;
+            const ea: [number, number] = [a.x, -a.y], eb: [number, number] = [b.x, -b.y];
+            const len = Math.hypot(b.x - a.x, b.y - a.y);
+            // The core quad's corners on the edge (3 and 2), either way round.
+            const q = (S + k) * 8;
+            const c3: [number, number] = [pos[q + 6]!, pos[q + 7]!], c2: [number, number] = [pos[q + 4]!, pos[q + 5]!];
+            const d = (u: [number, number], v: [number, number]): number => Math.hypot(u[0] - v[0], u[1] - v[1]);
+            const off = Math.min(Math.max(d(c3, ea), d(c2, eb)), Math.max(d(c3, eb), d(c2, ea)));
+            expect(off, `cutAng ${cutAng} piece ${i} edge ${e}: glow end off the cut end (cut ${len.toFixed(0)} u)`)
+              .toBeLessThanOrEqual(0.02 * len);
+          }
+          k++;
+        }
+        s.destroy({ children: true });
+      });
+    }
+    expect(edges).toBeGreaterThan(0);
   });
 });

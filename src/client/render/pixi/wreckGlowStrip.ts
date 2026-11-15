@@ -129,8 +129,12 @@ function drawnParts(kind: string): DrawnPart[] | null {
   if (isShipKindId(kind)) {
     const k = getShipKind(kind);
     if (k.shape.kind === 'composite') {
+      // `shipParts` is Pixi-up (the frame of `shape.hull`); the wreck pieces
+      // are math-up (`fracturePiecesToGeometry` flips y), so flip to match.
+      // Unflipped, a piece off amidships tested the art at its mirror
+      // station (the re-split's slice glow stopped short of the hull sides).
       d = shipParts(k).map(({ pts }) => {
-        const ring = pts.map(([x, y]) => ({ x, y }));
+        const ring = pts.map(([x, y]) => ({ x, y: -y }));
         let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
         for (const p of ring) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
         return { ring, x0, y0, x1, y1 };
