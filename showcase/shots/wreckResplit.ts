@@ -102,15 +102,15 @@ async function keepWorkingPiece(ctx: ShotContext, z: Zoom | null): Promise<Offse
       if (e.kind !== 4) continue;
       if (anyInFrame && (Math.abs(e.x - me.x) > fw || Math.abs(e.y - me.y) > fh)) continue;
       const d = Math.hypot(e.x - me.x, e.y - me.y);
-      // Mean off-bore angle over the main turrets (0 when no aim is known,
-      // so distance alone decides).
-      let off = 0;
+      // Smallest off-bore angle over the main turrets: the piece some turret
+      // already bears on (the aft turret faces away; a mean would skew the
+      // pick). 0 when no aim is known, so distance alone decides.
+      let off = guns.length > 0 ? Infinity : 0;
       for (const g of guns) {
         let da = Math.atan2(e.y - g.y, e.x - g.x) - g.dir;
         da = Math.atan2(Math.sin(da), Math.cos(da));
-        off += Math.abs(da);
+        if (Math.abs(da) < off) off = Math.abs(da);
       }
-      if (guns.length > 0) off /= guns.length;
       if (off < bestA - a.tie || (off <= bestA + a.tie && d < bestD)) {
         if (off < bestA) bestA = off;
         bestD = d;
