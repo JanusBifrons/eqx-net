@@ -30,6 +30,7 @@ import { shipTuning } from '../../../src/shared-types/shipScale/tuning.js';
 import { fracturePlan, FRACTURE_MAX_PIECES } from '../../../src/core/destruction/fractureHull.js';
 import { wreckPieceGeometry } from '../../../src/core/destruction/wreckPieces.js';
 import { WRECK_CRACK_MS } from '../../../src/shared-types/wreckTiming.js';
+import { DESTRUCTION_PROFILES } from '../../../src/shared-types/shipScale/destruction.js';
 
 type V = { x: number; y: number };
 const WRECK_KIND = 4;
@@ -203,21 +204,21 @@ describe('SectorRoom integration: capital wreck pieces separate', () => {
     expect(worstShrink.by, 'no neighbouring pair moves closer between samples (u)').toBeLessThan(0.5);
     // Crack delay: the hull holds its shape (pieces move as one) before it parts.
     expect(crackDrift, 'neighbours keep their spacing during the crack delay (u)').toBeLessThan(0.5);
-    // Parting at wreckSeparate or more from the end of the crack delay, less damping and spin.
-    expect(minEndGap, 'every neighbouring pair has a clear gap 8 s after the kick (u)').toBeGreaterThan(0.5 * t.wreckSeparate * (SAMPLES * STEP_MS - WRECK_CRACK_MS) / 1000);
-    // The break must be SEEN (owner review of a filmed take, 2026-11-13: gaps
-    // of 5-15 px after 8 s at the capital zoom ~0.17, "cracked but intact"
-    // for 3-4 s; the old numbers gave ~5 u at 1 s). 1 s after the kick every
-    // cut is open by >= 0.012 x radius (~26 u for the 2x heavy cruiser,
-    // >= 4.5 px at 0.17; measured ~31 u), and 8 s after by >= 0.065 x radius
-    // (~140 u; measured ~170-215 u).
-    expect(gapSeen, 'every cut has visibly opened 1 s after the kick (u)').toBeGreaterThan(0.012 * kind.radius);
-    expect(minEndGap, 'every cut is wide open 8 s after the kick (u)').toBeGreaterThan(0.065 * kind.radius);
-    // Heavy: a slow parting, not a fly-off (the old push was 175–370 u/s for
-    // this hull): no piece over 0.037 x radius (~80 u/s for a heavy cruiser;
-    // measured ~75), and slow turning.
-    expect(maxSpeed, 'pieces drift slowly (u/s)').toBeLessThan(0.037 * kind.radius);
-    expect(maxSpeed, '...but they do move apart').toBeGreaterThan(0.25 * t.wreckPushMin);
+    // Every cut opens: at the guard's least speed (`wreckSeparate` × the
+    // capital `separateScale`) or more from the end of the crack delay, less
+    // damping and spin. Owner 2026-11-15 ("the scrap/wreck should weigh A
+    // LOT ... a subtle much slower movement"): the kicks are impulses against
+    // each piece's mass, so two big neighbours part subtly (the 2026-11-13
+    // "seen" tuning opened every cut at ~31 u/s whatever it weighed, ~170 u
+    // in 8 s; now the narrowest gap is a few metres a second at most).
+    const sep = t.wreckSeparate * DESTRUCTION_PROFILES.capital.separateScale;
+    expect(gapSeen, 'every cut has opened 1 s after the kick (u)').toBeGreaterThan(0.25 * sep);
+    expect(minEndGap, 'every neighbouring pair has a clear gap 8 s after the kick (u)').toBeGreaterThan(0.5 * sep * (SAMPLES * STEP_MS - WRECK_CRACK_MS) / 1000);
+    // Heavy: a slow parting, not a fly-off: no piece over 0.015 x radius
+    // (~33 u/s for a heavy cruiser; ~75 before the mass-scaled kicks), and
+    // slow turning.
+    expect(maxSpeed, 'pieces drift slowly (u/s)').toBeLessThan(0.015 * kind.radius);
+    expect(maxSpeed, '...but they do move apart').toBeGreaterThan(sep);
     expect(maxSpin * 180 / Math.PI, 'pieces turn slowly (deg/s)').toBeLessThan(4);
 
     // Pieces are solid to each other: shove one into its neighbour (as a
@@ -237,7 +238,7 @@ describe('SectorRoom integration: capital wreck pieces separate', () => {
     const dl = Math.hypot(ss.x - sm.x, ss.y - sm.y);
     const ux = (ss.x - sm.x) / dl, uy = (ss.y - sm.y) / dl;
     // Close at ~110 u/s for a heavy cruiser: on top of the speed the pair is
-    // already parting at (~30+ u/s since the 2026-11-13 "seen" tuning).
+    // already parting at.
     const parting = Math.max(0, (ss.vx - sm.vx) * ux + (ss.vy - sm.vy) * uy);
     const shove = 0.05 * kind.radius + parting;
     const struckV0 = ss.vx * ux + ss.vy * uy;

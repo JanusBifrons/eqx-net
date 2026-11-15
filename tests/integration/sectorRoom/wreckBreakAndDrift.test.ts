@@ -20,6 +20,7 @@ import { shipHullOutline, shipShapeScale } from '../../../src/core/geometry/ship
 import { getShipKind } from '../../../src/shared-types/shipKinds.js';
 import { shipTuning } from '../../../src/shared-types/shipScale/tuning.js';
 import { fracturePlan, FRACTURE_MAX_PIECES } from '../../../src/core/destruction/fractureHull.js';
+import { DESTRUCTION_PROFILES } from '../../../src/shared-types/shipScale/destruction.js';
 
 type V = { x: number; y: number };
 const WRECK_KIND = 4;
@@ -140,29 +141,42 @@ describe('SectorRoom integration: capital wreck break and drift', () => {
     const ky = pose.y + d.killX * sc * s - d.killY * sc * c;
     // Past the crack delay (the hull holds together WRECK_CRACK_MS first).
     await harness.advance(1500);
-    // Speed (the hull was at rest) of every piece, and whether the piece
-    // nearest the kill point moves away from it.
-    let near = { d: Infinity, v: 0, out: 0 };
+    // Speed (the hull was at rest) of every piece, and the wreck's momentum
+    // (area ∝ mass) along the line from the kill point to its centre.
+    const areaOf = (id: string): number => {
+      let a = 0;
+      for (const part of internal.wreckParts(id)!) {
+        for (let i = 0; i < part.length; i++) {
+          const p = part[i]!, q = part[(i + 1) % part.length]!;
+          a += (p.x * q.y - q.x * p.y) / 2;
+        }
+      }
+      return a;
+    };
     let slowest = Infinity;
     let fastest = 0;
+    let px = 0, py = 0, cx = 0, cy = 0, m = 0;
     for (const id of ids) {
       const st = internal.wreckState(id)!;
-      const dist = Math.hypot(st.x - kx, st.y - ky);
       const v = Math.hypot(st.vx, st.vy);
       slowest = Math.min(slowest, v);
       fastest = Math.max(fastest, v);
-      if (dist < near.d) near = { d: dist, v, out: ((st.x - kx) * st.vx + (st.y - ky) * st.vy) / Math.max(dist, 1e-6) };
+      const a = areaOf(id);
+      px += a * st.vx; py += a * st.vy; cx += a * st.x; cy += a * st.y; m += a;
     }
-    console.log(`[drift] near piece ${near.v.toFixed(1)} u/s (${near.out.toFixed(1)} u/s outward) at ${near.d.toFixed(0)} u; speeds ${slowest.toFixed(1)}–${fastest.toFixed(1)} u/s`);
+    const outward = (px * (cx / m - kx) + py * (cy / m - ky)) / (m * Math.max(1e-6, Math.hypot(cx / m - kx, cy / m - ky)));
+    console.log(`[drift] wreck momentum ${outward.toFixed(2)} u/s away from the kill point; speeds ${slowest.toFixed(2)}–${fastest.toFixed(1)} u/s`);
     const t = shipTuning(kind);
+    const sep = t.wreckSeparate * DESTRUCTION_PROFILES.capital.separateScale;
     // Owner review 2026-11-13: "they should break apart slower and have more
-    // inertia and weight". Every piece parts, slowly (the 2026-11-12 push
-    // was ~370 u/s at the kill point for this hull). Owner, same day: the
-    // break must be SEEN, so the cuts part at ~30 u/s, but still no piece
-    // over ~80 u/s (0.037 x radius).
-    expect(near.out, 'the piece at the kill point moves away from it').toBeGreaterThan(0);
-    expect(slowest, 'every piece drifts').toBeGreaterThan(0.2 * t.wreckSeparate);
-    expect(fastest, '...slowly, like a heavy body').toBeLessThan(0.037 * kind.radius);
+    // inertia and weight". Owner 2026-11-15: "the scrap/wreck should weigh A
+    // LOT ... a subtle much slower movement": the kicks are impulses against
+    // each piece's mass (`wreckBreakKicks`). The blast throws the wreck off
+    // the kill point; every piece drifts, none over 0.015 x radius (~33 u/s;
+    // was ~80 before the mass-scaled kicks).
+    expect(outward, 'the wreck as a whole moves away from the kill point').toBeGreaterThan(0);
+    expect(slowest, 'every piece drifts').toBeGreaterThan(0.1 * sep);
+    expect(fastest, '...slowly, like a heavy body').toBeLessThan(0.015 * kind.radius);
     // The field's extent: the largest distance between two piece centres.
     const extent = (): number => {
       const ps = ids.map((id) => internal.wreckState(id)!);
@@ -188,11 +202,11 @@ describe('SectorRoom integration: capital wreck break and drift', () => {
     let spin = 0;
     for (const id of ids) spin = Math.max(spin, Math.abs(internal.wreckState(id)!.angvel));
     console.log(`[drift] pieces ${ids.length} spread ${r0.toFixed(1)} → ${r5.toFixed(1)}, extent ${e0.toFixed(0)} → ${e5.toFixed(0)}, max spin ${(spin * 180 / Math.PI).toFixed(2)} deg/s`);
-    // A slow, steady opening: the field grows by at least the neighbour
+    // A slow, steady opening: the field grows by at least the least seam
     // parting speed over 5 s, and by far less than the 2026-11-12 fly-off
     // (which opened ~1,500 u in 5 s).
-    expect(e5 - e0, 'the debris field keeps opening').toBeGreaterThan(5 * t.wreckSeparate);
-    expect(e5 - e0, '...slowly').toBeLessThan(0.3 * kind.radius);
+    expect(e5 - e0, 'the debris field keeps opening').toBeGreaterThan(5 * sep);
+    expect(e5 - e0, '...slowly').toBeLessThan(0.05 * kind.radius);
     expect(r5 - r0, 'mean distance from the debris centre grows').toBeGreaterThan(0);
     // Slow, heavy turning, still turning after 5 s of damping.
     expect(spin * 180 / Math.PI, 'pieces still turn').toBeGreaterThan(0.2);

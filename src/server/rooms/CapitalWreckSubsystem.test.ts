@@ -253,6 +253,26 @@ describe('CapitalWreckSubsystem', () => {
     expect(impulses).toHaveLength(2);
   });
 
+  it('a beam (hitscan-mode weapon) never shoves a piece, in the hold or after; a shell does (owner: "lasers shouldn\'t move the scrap")', () => {
+    const { sys, spawned: pieces, impulses, rigid, setTick } = make({ cap: 'battleship' }, true);
+    sys.forcedSeed = 9;
+    setTick(5000);
+    sys.onDeath('cap', 'battleship', pose, 10_000);
+    const big = pieces.reduce((a, b) => (b.mass > a.mass ? b : a));
+    for (const tick of [5000 + wreckCrackTicks() - 1, 5000 + wreckCrackTicks()]) {
+      setTick(tick);
+      for (const beam of ['heavy_beam', 'mining_laser', 'hitscan', 'charge-laser'] as const) {
+        // The shot still stops on the piece.
+        expect(sys.onWreckHit(big.id, 10, 20, 3, 4, 100, beam)).toBe(true);
+      }
+    }
+    expect(impulses).toHaveLength(0);
+    expect(rigid).toHaveLength(0);
+    // A real impact (a 16" shell) after the hold: one impulse.
+    expect(sys.onWreckHit(big.id, 10, 20, 3, 4, 1400, 'naval_xl')).toBe(true);
+    expect(impulses).toHaveLength(1);
+  });
+
   it('during the crack hold a hit shoves the WHOLE wreck as one body; after it, only the piece hit', () => {
     const { sys, spawned: pieces, impulses, rigid, setTick } = make({ cap: 'battleship' }, true);
     sys.forcedSeed = 9;

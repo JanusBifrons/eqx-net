@@ -262,21 +262,31 @@ export interface ShipTuning {
   /** Smallest guard radius round an NPC's guard post (`HostileDroneBehaviour.setGuardPost`):
    *  a post smaller than this would leave a big hull no room to turn. */
   guardRadiusMin: number;
-  /** Capital wreck break-up (capital-destruction.md): the outward push of a
-   *  piece at the kill point and far from it (u/s). Proportional to the hull
+  /** Capital wreck break-up (capital-destruction.md): the outward push at
+   *  the kill point and far from it (u/s), as the speed it would give the
+   *  WHOLE hull: a piece's push is an impulse, this ÷ √(its mass share), ×
+   *  the profile's `pushScale` (`wreckBreakKicks`). Proportional to the hull
    *  radius, so a bigger hull's debris field opens at the same rate relative
    *  to its size: heavy cruiser (2×) ~22 / ~9 u/s, battleship ~29 / ~12.
    *  Owner review 2026-11-13: "they should break apart slower and have more
    *  inertia and weight" (the 2026-11-12 money-shot push was ~10× this). */
   wreckPushMax: number;
   wreckPushMin: number;
-  /** Capital wreck break-up: the least speed (u/s) at which two neighbouring
+  /** Wreck break-up: the least speed (u/s) at which two neighbouring
    *  pieces part along their shared cut, at every point of it (spin
-   *  included), so no seam hinges or slides shut (owner review 2026-11-13).
+   *  included), so no seam hinges or slides shut (owner review 2026-11-13),
+   *  × the profile's `separateScale` (capital 0.05 since the 2026-11-15
+   *  mass-scaled kicks: only a guard). The raw value sizes the seeded spin.
    *  Heavy cruiser (2×) ~31 u/s: fast enough that every cut is visibly open
    *  1 s after the crack (owner, same day: at ~5 u/s the hull read as
    *  "cracked but intact"), slow enough that no piece passes ~80 u/s. */
   wreckSeparate: number;
+  /** Wreck break-up crack (`wreckBreakKicks`): each shared cut throws its
+   *  two faces apart with an impulse of hull mass × this (u/s) × (cut
+   *  length ÷ hull radius), × the profile's `crackScale`, so a heavy piece
+   *  parts slowly and a sliver faster (owner 2026-11-15: "an accurate mass
+   *  value vs the forces applied"). */
+  wreckCrack: number;
   /** Capital wreck pieces collide with each other: each convex collider part
    *  is shrunk this far (u, toward the part's centre) so neighbours that
    *  share a cut edge start a hair apart instead of touching. ~1 u for a 2×
@@ -328,6 +338,8 @@ const WRECK_PUSH_MIN_PER_RADIUS = 0.004;
 /** Least parting speed of two neighbouring wreck pieces, per unit of hull
  *  radius per second (`wreckSeparate`). */
 const WRECK_SEPARATE_PER_RADIUS = 0.014;
+/** Wreck crack impulse speed, per unit of hull radius per second (`wreckCrack`). */
+const WRECK_CRACK_PER_RADIUS = 0.0016;
 /** Wreck collider inset, per unit of hull radius (`wreckColliderInset`). */
 const WRECK_COLLIDER_INSET_PER_RADIUS = 0.0005;
 /** Wreck overkill knock speed / per-hit speed ceiling, per unit of hull
@@ -370,6 +382,7 @@ export function shipTuning(kind: ShipKind): ShipTuning {
     wreckPushMax: WRECK_PUSH_MAX_PER_RADIUS * kind.radius,
     wreckPushMin: WRECK_PUSH_MIN_PER_RADIUS * kind.radius,
     wreckSeparate: WRECK_SEPARATE_PER_RADIUS * kind.radius,
+    wreckCrack: WRECK_CRACK_PER_RADIUS * kind.radius,
     wreckColliderInset: WRECK_COLLIDER_INSET_PER_RADIUS * kind.radius,
     // Scaled by the destruction profile (capital ×1: unchanged; a sub-cap's
     // debris is visibly shoved by small arms, `destruction.ts`). The knock

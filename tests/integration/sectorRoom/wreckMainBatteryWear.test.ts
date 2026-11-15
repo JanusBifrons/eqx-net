@@ -10,8 +10,8 @@
  * main battery's trigger. Measured in game ticks (capital-destruction.md §S4
  * "Re-split"):
  *   - the biggest piece cracks after about 10 s of sustained fire;
- *   - from rest, the hits leave it creeping well under 5 u/s and barely
- *     turning;
+ *   - from rest, the hits leave it at rest: a beam carries no momentum
+ *     (owner 2026-11-15: "lasers shouldn't move the scrap");
  *   - its smallest child (the integrity floor) still lasts ~3 s.
  */
 import { describe, it, expect, afterEach } from 'vitest';
@@ -23,11 +23,11 @@ import { WRECK_CRACK_MS } from '../../../src/shared-types/wreckTiming.js';
 const WRECK_KIND = 4;
 const TICK_HZ = 60;
 
-describe('SectorRoom integration: a main battery wears a capital wreck piece slowly and barely moves it', () => {
+describe('SectorRoom integration: a main battery wears a capital wreck piece slowly and never moves it', () => {
   let harness: SectorTestHarness;
   afterEach(async () => { if (harness) await harness.cleanup(); }, 10_000);
 
-  it('a lance main battery takes ~10 s to crack the biggest battleship piece; it barely drifts or spins; the floor is ~3 s', async () => {
+  it('a lance main battery takes ~10 s to crack the biggest battleship piece; it stays at rest; the floor is ~3 s', async () => {
     harness = await bootSectorTestServer({
       sectorKey: null, droneCount: 0, testMode: true, peacefulDrones: true, asteroidConfig: [],
       capitalWrecks: true, pilotCapitals: true, traverseTicksCap: 0, lockTimeCapS: 0,
@@ -100,8 +100,9 @@ describe('SectorRoom integration: a main battery wears a capital wreck piece slo
     console.log(`[wreck wear] battleship biggest piece (I_max ${r.iMax.toFixed(0)}): split after ${r.splitS.toFixed(2)} s of lance main-battery fire; drift ${r.maxDv.toFixed(2)} u/s, spin ${r.maxW.toFixed(4)} rad/s over the first ${Math.min(10, r.splitS).toFixed(1)} s`);
     expect(r.splitS, 'about 10 s of sustained fire cracks a big piece').toBeGreaterThan(7);
     expect(r.splitS).toBeLessThan(14);
-    expect(r.maxDv, 'the hits barely move the piece').toBeLessThan(1.5);
-    expect(r.maxW, 'the hits barely turn the piece').toBeLessThan(0.02);
+    // A heavy beam is light, not an impact: ~10 s of it leave the piece at rest.
+    expect(r.maxDv, 'the beam does not move the piece (u/s)').toBeLessThan(0.05);
+    expect(r.maxW, 'the beam does not turn the piece (rad/s)').toBeLessThan(1e-3);
 
     // Its smallest child (at the integrity floor) still takes ~3 s.
     await harness.advance(100);

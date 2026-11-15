@@ -99,8 +99,9 @@ describe('DESTRUCTION_PROFILES', () => {
       // Not flung across the fight: the fastest piece drifts under ~1.5 radii in all.
       expect((t.wreckPushMax * s.pushScale * 1.25) / d / kind.radius, `${kind.id}: total drift`).toBeLessThan(1.5);
     }
-    // Capitals keep the capital seam speed (byte-identical kicks).
-    expect(DESTRUCTION_PROFILES.capital.separateScale).toBe(1);
+    // A capital's guard is only a floor (its pieces part by their mass,
+    // `wreckBreakKicks`); a sub-cap's opens the cuts.
+    expect(DESTRUCTION_PROFILES.capital.separateScale).toBeLessThan(0.1);
     expect(s.separateScale).toBeGreaterThan(1);
     // Speed under 1 % of the kick by 20 s; still visibly moving at 1 s.
     expect(Math.exp(-d * 20)).toBeLessThan(0.01);
