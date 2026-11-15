@@ -285,14 +285,27 @@ export function railVentPuff(t: number, k: number, g: RailGeom, out: RailPuff): 
  *  it: it thins, spreads and is gone in 0.7 s (a dispersing wisp, not a
  *  lingering line). */
 export const SLUG_WAKE_LIFE_S = 0.7;
-/** How far the wake trails behind the slug, in drawn slug-streak lengths:
- *  1,500 u behind the front of the native 1 km streak, so 500 u of violet
- *  shows past the white streak's tail. At 6,450 u/s (real range) that is the
- *  last ~0.23 s of flight, about a quarter of a heavy cruiser at capital
- *  zoom: a fast slug with a tail, never a line back to the muzzle. In streak
- *  lengths so the minimum-screen-width floor, which lengthens the streak at
- *  far zoom, lengthens the tail with it (else the streak would swallow it). */
-export const SLUG_WAKE_TAIL = 1.5;
+/** The slug's head is a short white-hot streak as long as its travel over
+ *  this many 60 fps frames of game time (motion blur: ~160 u at 6,450 u/s),
+ *  so it reads as a fast SLUG; a ~1 km streak read as a laser needle. */
+export const SLUG_HEAD_FRAMES = 1.5;
+/** ...but never shorter than this many of its own widths (the minimum
+ *  on-screen size: the width already has a pixel floor at far zoom). */
+export const SLUG_HEAD_MIN_ASPECT = 5;
+/** How far the wake trails behind the slug's head, in head lengths (~800 u
+ *  at real speed, the last ~0.12 s of flight): a short tail that starts
+ *  behind the head. In head lengths so the minimum-size floor, which
+ *  lengthens the head at far zoom, lengthens the tail with it. */
+export const SLUG_WAKE_TAIL = 5;
+/** Fresh out of the barrel the tail grows at this fraction of the slug's
+ *  speed, so its back end leaves the muzzle too: a tail pinned to the muzzle
+ *  is a line out of the barrel, which reads as a laser. */
+export const SLUG_WAKE_GROW = 0.5;
+
+/** The slug head's drawn length (u) at `speed` (u/s), `width` (u) wide. */
+export function slugHeadLength(speed: number, width: number): number {
+  return Math.max((speed * SLUG_HEAD_FRAMES) / 60, width * SLUG_HEAD_MIN_ASPECT);
+}
 /** The wake's violet-blue. */
 export const SLUG_WAKE_TINT = 0x9a86ff;
 

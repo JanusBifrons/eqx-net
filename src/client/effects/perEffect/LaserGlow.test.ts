@@ -12,8 +12,8 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import { LaserGlow, type GlowLike, type LaserGlowBeams, type LaserGlowFactories } from './LaserGlow';
-import { BeamSpritePool } from '../../render/BeamSpritePool';
-import { HEAVY_BEAM_COLOR, HEAVY_BEAM_STYLE, REMOTE_BEAM_STYLE } from '../../render/beamStyles';
+import { BeamSpritePool, crossSectionTextures } from '../../render/BeamSpritePool';
+import { HEAVY_BEAM_COLOR, HEAVY_BEAM_CROSS_SECTION, HEAVY_BEAM_STYLE, REMOTE_BEAM_STYLE } from '../../render/beamStyles';
 
 function makeStubGfx(): Record<string, unknown> {
   return { filters: null };
@@ -139,7 +139,8 @@ describe('LaserGlow — the heavy beam keeps its own colour', () => {
     expect(remote.coreAt(0)!.parent).toBe(remote.container);
     // Heavy beam: no filtered ancestor at all.
     const heavy = remote.coreAt(1)!;
-    expect(heavy.tint).toBe(HEAVY_BEAM_COLOR);
+    // Its violet is baked in its own cross-section texture (drawn untinted).
+    expect(heavy.texture).toBe(crossSectionTextures(HEAVY_BEAM_CROSS_SECTION).solid);
     for (let n = heavy.parent; n; n = n.parent) expect(n.filters ?? null).toBeNull();
   });
 });

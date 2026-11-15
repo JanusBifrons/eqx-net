@@ -2091,9 +2091,15 @@ line; a railgun kill erases a straight channel as wide as the bolt.
   same age, ending dark at the same `WRECK_GLOW_END_S` (4.5 s):
   - **Slice:** the beam's pale core at the instant, then `HEAVY_BEAM_COLOR`
     violet at full alpha to `CUT_GLOW_HOLD_S` (1.5 s; a crack is at alpha
-    ~0.65 and red by then), a bright violet ember (0xa050e8 at 2.2 s, alpha
-    0.92, deepening to 0x8834c8 at 0.72 by 3.4 s), a violet-grey scorch
-    (4.0 s, alpha 0.3), dark at 4.5 s.
+    ~0.65 and red by then), then burnt metal: a rose blush (0xe0507a at
+    2.0 s, alpha 0.97), an orange ember (0xff6418 at 2.5 s, alpha 0.92)
+    cooling to orange-red (0xd83c10 at 3.5 s, alpha 0.75), a brown scorch
+    (0x5a362c at 4.0 s, alpha 0.3), dark at 4.5 s. It used to cool through a
+    violet ember (0xa050e8 → 0x8834c8 → a violet-grey scorch); hostile film
+    review 2026-11-15 (beam take 6): ~3.5 s after the kill the lips were
+    still saturated violet, cooling straight to dark with no ember. The
+    violet is the beam's light; once it is gone the metal glows as hot metal
+    does, like the channel.
   - **Channel:** white-hot at full alpha to 1.5 s, then it cools like struck
     metal: yellow-white (2.0 s), an orange ember (0xff7a28, alpha 0.8 at
     2.8 s), a dull red-brown scorch (3.8 s, alpha 0.3), dark at 4.5 s.

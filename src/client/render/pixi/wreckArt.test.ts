@@ -347,16 +347,21 @@ describe('a kill cut glows in the weapon\'s colour (weapon cuts, look)', () => {
     }
   });
 
-  it('a slice edge cools through a violet ember to dark (never orange)', () => {
-    for (const s of [1.8, 2.3, 2.8]) {
+  // Hostile film review 2026-11-15 (beam take 6): ~3.5 s after the kill the
+  // slice lips were still saturated violet, cooling straight to dark. Burnt
+  // metal passes through an ember: the beam's violet for ~1.5 s, then a warm
+  // orange-red ember (as the channel cools) to scorch, dark by 4.5 s.
+  it('a slice edge cools from violet through a warm orange-red ember to dark', () => {
+    for (const s of [2.5, 2.8, 3.0, 3.3, 3.5]) {
       const w = wreckGlowAt(s, g(), GLOW_TINT_SLICE);
       const [r, gg, b] = rgb(w.color);
-      expect(w.alpha, `${s} s still showing`).toBeGreaterThan(0.25);
-      expect(b, `${s} s violet: blue over green`).toBeGreaterThan(gg + 0x20);
-      expect(r, `${s} s violet: red over green`).toBeGreaterThan(gg);
-      expect(b, `${s} s violet: blue near red`).toBeGreaterThan(r * 0.8);
+      expect(w.alpha, `${s} s still showing`).toBeGreaterThan(0.5);
+      expect(r, `${s} s ember: red-hot`).toBeGreaterThanOrEqual(0xc0);
+      expect(r - gg, `${s} s ember: orange-red, not yellow`).toBeGreaterThanOrEqual(0x60);
+      expect(gg, `${s} s ember: warm, not violet (green over blue)`).toBeGreaterThan(b);
     }
     expect(wreckGlowAt(WRECK_GLOW_END_S, g(), GLOW_TINT_SLICE).alpha).toBe(0);
+    expect(wreckGlowAt(4.45, g(), GLOW_TINT_SLICE).alpha).toBeLessThan(0.05);
   });
 
   it('a channel edge stays white-hot for ~1.5 s, then cools like struck metal to dark', () => {
@@ -650,7 +655,7 @@ describe('a cut kill reads first: subdued splinters, the whole cut lit, a visibl
     }
   });
 
-  it('the cut holds full colour ~1.5 s, then a clearly visible ember at 3 s (violet / orange), dark at 4.5 s', () => {
+  it('the cut holds full colour ~1.5 s, then a clearly visible warm ember at 3 s, dark at 4.5 s', () => {
     for (const tint of [GLOW_TINT_SLICE, GLOW_TINT_CHANNEL]) {
       expect(shown(wreckGlowAt(1.4, g(), tint)), `tint ${tint} 1.4 s`).toBeGreaterThan(0.9);
       // The ember stage: still clearly showing through ~3 s.
@@ -658,15 +663,11 @@ describe('a cut kill reads first: subdued splinters, the whole cut lit, a visibl
         expect(shown(wreckGlowAt(s, g(), tint)), `tint ${tint} ${s} s: visible`).toBeGreaterThanOrEqual(0.45);
       }
       expect(shown(wreckGlowAt(3.4, g(), tint)), `tint ${tint} 3.4 s`).toBeGreaterThanOrEqual(0.25);
+      // Both cool through a warm ember: burnt metal, whatever cut it.
       const [r, gg, b] = rgb(wreckGlowAt(3.0, g(), tint).color);
-      if (tint === GLOW_TINT_SLICE) {
-        expect(b, 'slice ember: violet (blue well over green)').toBeGreaterThan(gg + 0x40);
-        expect(r, 'slice ember: violet (red over green)').toBeGreaterThan(gg + 0x20);
-      } else {
-        expect(r, 'channel ember: orange-red').toBeGreaterThanOrEqual(0xc0);
-        expect(r - gg, 'channel ember: orange, not yellow-white').toBeGreaterThanOrEqual(0x40);
-        expect(gg, 'channel ember: warm').toBeGreaterThan(b);
-      }
+      expect(r, `tint ${tint} ember: orange-red`).toBeGreaterThanOrEqual(0xc0);
+      expect(r - gg, `tint ${tint} ember: orange, not yellow-white`).toBeGreaterThanOrEqual(0x40);
+      expect(gg, `tint ${tint} ember: warm`).toBeGreaterThan(b);
       // Dark by ~4.5 s (fading through a dim scorch from ~4 s).
       expect(shown(wreckGlowAt(4.3, g(), tint)), `tint ${tint} 4.3 s: nearly dark`).toBeLessThan(0.12);
       expect(wreckGlowAt(WRECK_GLOW_END_S, g(), tint).alpha).toBe(0);
