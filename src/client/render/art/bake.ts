@@ -95,7 +95,6 @@ export function bakeKey(j: BakeJob): string {
   return `m:${j.id}:${j.seed}:${j.accent ?? ''}${q ? `:r${q}` : ''}${j.rings ? ':R' : ''}`;
 }
 
-/** A liveried ship's key suffix (absent livery adds nothing). */
 /** A kind's turret bases (pivot + 1.4 x the larger of ring and cap): what a
  *  fitted turret hides for good, for a livery that keeps paint off it. The
  *  barrel is a thin, moving line, so its sweep is not counted. */
@@ -103,6 +102,7 @@ export function turretCoverOf(id: string): Array<{ x: number; y: number; reach: 
   return shipTurrets(id).map((t) => ({ x: t.px, y: t.py, reach: 1.4 * Math.max(t.ring, t.cap) }));
 }
 
+/** A liveried ship's key suffix (absent livery adds nothing). */
 function liveryTag(l: Livery): string { return `:L${l.treatment}${l.team.toString(16)}:${l.sigil.toString(16)}`; }
 
 /** A lit job's key (prefixed `L` by bakeKey): no sun, and no turn for

@@ -617,9 +617,9 @@ describe('capital sigils under every treatment', () => {
   const ppuS = (id: string): number => (isCap(id) ? ppuFor(id) * 6 : ppuFor(id));
   const ringsOf = (id: string): Array<{ x: number; y: number; r: number }> => shipTurrets(id).map((t) => ({ x: t.px, y: t.py, r: t.ring }));
 
-  for (const treatment of ['a', 'b', 'c'] as const) {
+  for (const treatment of ['a', 'b', 'c', 'b4'] as const) {
     it.each(CAPITALS)(`%s: two deck sigils under '${treatment}'`, (id) => {
-      const f = forgeShip(id, { ppu: ppuS(id), livery: { treatment, team: TEAM, sigil: 0x1a2b3c }, rings: ringsOf(id) });
+      const f = forgeShip(id, { ppu: ppuS(id), livery: { treatment, team: TEAM, sigil: 0x1a2b3c }, rings: ringsOf(id), turretCover: turretCoverOf(id) });
       expect((f.sigils ?? []).map((m) => m.kind)).toEqual(['sigil', 'sigil']);
     });
   }
@@ -758,6 +758,18 @@ describe("livery treatment 'b4' (painted sections, turret-proof spots)", () => {
         const wx = (i % g.w + 0.5 - g.ox) / g.ppu, wy = (Math.floor(i / g.w) + 0.5 - g.oy) / g.ppu;
         if (Math.hypot(wx - c.x, wy - c.y) < c.reach * 0.9 && f.mat[i] === MAT.LIVERY) throw new Error(`${id}: paint under a turret base at ${wx.toFixed(1)},${wy.toFixed(1)}`);
       }
+    }
+  });
+
+  it.each(['battleship', 'battlecruiser', 'destroyer'])('%s: a grey barbette round every turret base', (id) => {
+    const f = forge(id);
+    const { g } = f;
+    const cover = turretCoverOf(id);
+    for (let i = 0; i < f.cov.length; i++) {
+      if (f.mat[i] !== MAT.LIVERY) continue;
+      const wx = (i % g.w + 0.5 - g.ox) / g.ppu, wy = (Math.floor(i / g.w) + 0.5 - g.oy) / g.ppu;
+      if ((f.sigils ?? []).some((m) => Math.hypot(wx - m.x, wy - m.y) <= m.r * 1.05)) continue; // deck sigils keep B's places
+      for (const c of cover) expect(Math.hypot(wx - c.x, wy - c.y)).toBeGreaterThanOrEqual(c.reach * 0.9);
     }
   });
 
