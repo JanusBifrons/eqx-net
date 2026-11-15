@@ -665,10 +665,8 @@ export interface RenderMirror {
   damagedShips?: Set<string>;
   /** Ships that just exploded (single-frame trigger). */
   explodingShips?: Set<string>;
-  /** The subset of this frame's `explodingShips` that were vaporised
-   *  (`destroy.vaporised`, fracture v11: a cut kill left no wreck piece),
-   *  same keys. Single-frame trigger, cleared with `explodingShips`: the
-   *  renderer plays the vaporise blast and holds no dying hull for them. */
+  /** `explodingShips` that were vaporised (`destroy.vaporised`: a cut kill left
+   *  no wreck piece), cleared with it: vaporise blast, no dying-hull hold. */
   vaporisedShips?: Set<string>;
   /** Phase 4 (Leveling & XP, WS-B1) — one-shot level-up triggers to play this
    *  frame. Populated by `ColyseusClient`'s `ship_level_up` handler (pooled —

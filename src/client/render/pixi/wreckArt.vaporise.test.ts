@@ -6,7 +6,7 @@
  * wreck break-up (there is no wreck).
  */
 import { describe, it, expect } from 'vitest';
-import { deathBlastFor, hullDeathBlastReplaced, type DeathBlast } from './wreckArt.js';
+import { deathBlastFor, hullDeathBlastReplaced, type DeathBlast } from './deathBlast.js';
 import { DESTRUCTION_PROFILES } from '../../../shared-types/shipScale/destruction.js';
 
 const SUB = DESTRUCTION_PROFILES.subcap.fx;
