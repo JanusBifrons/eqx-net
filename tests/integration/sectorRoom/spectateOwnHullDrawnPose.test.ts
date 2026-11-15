@@ -15,7 +15,7 @@
  * `mirror.ships[localId]` from the schema entry, which carries NO pose (x/y
  * default to 0), and `tryInitPredWorld` respawned a predicted local cruiser at
  * the world origin with a fresh Reconciler. No snapshot ever corrects it
- * (the own parked entry is routed to `lingeringShips` while spectating), so it
+ * (the own parked entry is keyed by its shipInstanceId while spectating), so it
  * sat frozen inside the battleship.
  *
  * The bug lives at the wire boundary (a real schema patch without a pose), so
@@ -45,7 +45,6 @@ interface ClientInternals {
     localPlayerId: string | null;
     localShipInstanceId?: string | null;
     ships: Map<string, Pose & { vx: number; vy: number; angle: number; kind?: string }>;
-    lingeringShips?: Map<string, Pose & { ownerPlayerId?: string }>;
     swarm?: Map<number, unknown>;
   };
   syncMirror(state: unknown): void;
@@ -106,7 +105,6 @@ describe('spectate: the own parked hull is drawn where the server has it', () =>
     const c = client as unknown as ClientInternals;
     c.predWorld = await PhysicsWorld.create();
     c.room = cr;
-    if (!c.mirror.lingeringShips) c.mirror.lingeringShips = new Map();
     const state = cr.state as unknown as SectorState;
     let instanceId = '';
     for (const [key, ship] of state.ships) if (ship.playerId === pid) instanceId = key;
@@ -139,15 +137,22 @@ describe('spectate: the own parked hull is drawn where the server has it', () =>
     const drawn = c.mirror.ships.get(pid);
     const predicted = c.predWorld!.hasShip(pid);
     // The parked hull is not the pilot's ship any more: no predicted local body
-    // and no own entry in `mirror.ships` (the parked hull is drawn from
-    // `lingeringShips`, posed by snapshots).
+    // and no own entry under the playerId (the parked hull is drawn from
+    // the one ship list under its shipInstanceId, RTS Part A S3).
     expect(
       { predicted, drawn: drawn ? { x: Math.round(drawn.x), y: Math.round(drawn.y) } : null },
       `server parked hull at (${server.x.toFixed(1)}, ${server.y.toFixed(1)}); the client must not draw a predicted own cruiser elsewhere`,
     ).toEqual({ predicted: false, drawn: null });
     // ...and the parked hull itself is drawn at the server's pose.
-    const parked = [...c.mirror.lingeringShips!.values()].find((e) => e.ownerPlayerId === pid);
+    const parked = c.mirror.ships.get(instanceId) as (Pose & { ownerPlayerId?: string; isActive?: boolean }) | undefined;
     expect(parked, 'own parked hull listed').toBeDefined();
     expect(Math.hypot(parked!.x - server.x, parked!.y - server.y), 'parked hull drawn at the server pose').toBeLessThan(50);
+    expect(parked!.ownerPlayerId).toBe(pid);
+    expect(parked!.isActive).toBe(false);
+    // Its remote body (bare shipInstanceId key, B2: spawned from a snapshot
+    // pose, never the schema's (0,0)) stands at the server pose too.
+    expect(c.predWorld!.hasShip(instanceId), 'the parked hull has its remote body').toBe(true);
+    const body = c.predWorld!.getShipState(instanceId)!;
+    expect(Math.hypot(body.x - server.x, body.y - server.y), 'hull body at the server pose').toBeLessThan(50);
   });
 });

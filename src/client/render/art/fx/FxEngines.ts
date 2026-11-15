@@ -20,6 +20,7 @@ import { Container, MeshRope, Point, Sprite, type Texture } from 'pixi.js';
 import type { EffectQuality } from '@core/contracts/IEffects';
 import type { ArtHandle, ArtService } from '../ArtService.js';
 import { easeTo, exhaustTint, ExhaustRing, flameShape, type FlameShape } from './engineFx.js';
+import { moveKey } from '../../shipRekey.js';
 
 const tex = (h: ArtHandle): Texture | null => (h.state === 'ready' && h.fx ? h.fx.tex : null);
 
@@ -145,6 +146,18 @@ export class FxEngines {
       }
     }
     return true;
+  }
+
+  /** RTS Part A seamless hand-over: a ship changed key; its exhaust (flames,
+   *  eased thrust, ribbon trails) moves with it instead of restarting. A stale
+   *  view under `to` is hidden and freed. */
+  rekey(from: string, to: string): void {
+    if (from === to || !this.live.has(from)) return;
+    const stale = moveKey(this.live, from, to);
+    if (stale === undefined) return;
+    for (const nz of stale.nozzles) { nz.flame.visible = false; nz.core.visible = false; nz.glow.visible = false; nz.rope.visible = false; }
+    stale.primed = false;
+    this.free.push(stale);
   }
 
   /** Hide and release ships not drawn this frame. */

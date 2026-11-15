@@ -2,6 +2,7 @@ import { Container, Graphics } from 'pixi.js';
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import { getShipKind } from '@shared-types/shipKinds';
 import { interpolateSwarmPose, type InterpolatedPose } from '../net/swarmInterpolation';
+import { isShipIAmFlying } from './shipOwnership';
 
 /**
  * Hover outline (WS-10 / R2.4) — a SIBLING of {@link SelectionBracket} drawn
@@ -53,7 +54,11 @@ export class HoverBracket {
    * entity is gone (the caller clears `_hoveredId` on false).
    */
   update(mirror: RenderMirror, hoveredId: string | null): boolean {
-    if (hoveredId === null) {
+    // The ship I'm flying never gets the hover outline. `pickEntityAt` already
+    // skips it, but a hovered id survives the take-controls re-key
+    // (shipInstanceId -> playerId, `PixiRenderer.rekeyShip`) and then names the
+    // ship I now fly; refusing it here makes the caller clear `_hoveredId`.
+    if (hoveredId === null || isShipIAmFlying(mirror, hoveredId)) {
       this.gfx.visible = false;
       return false;
     }
@@ -85,11 +90,6 @@ export class HoverBracket {
           radius = sw.radius;
         }
       }
-    } else if (mirror.lingeringShips?.has(hoveredId)) {
-      const l = mirror.lingeringShips.get(hoveredId)!;
-      ex = l.x;
-      ey = l.y;
-      radius = shipRadius(l.kind);
     }
 
     if (ex === undefined || ey === undefined) {

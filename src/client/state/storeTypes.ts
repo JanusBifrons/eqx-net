@@ -125,6 +125,39 @@ export type TransitState = 'DOCKED' | 'SPOOLING' | 'IN_TRANSIT' | 'ARRIVED';
 export type PilotMode = 'pilot' | 'spectator';
 
 /**
+ * RTS command layer (slice 10) — the player-facing name of {@link PilotMode}:
+ * `fly` (at the controls) or `command` (free camera over your fleet, your ships
+ * AI-flown). The STORED field stays `pilotMode` (the join-readiness gate, the
+ * renderer's `setSpectator`, e2e probes and ~70 call sites read it); read this
+ * view through `selectControlMode` and never store it twice. Normal galaxy play
+ * starts in `command`: the join's `startMode` decides it, and the server flips
+ * the client at the arrival flip (`control_mode`). Before a join the store
+ * holds `fly` (`pilotMode = 'pilot'`), which the ship-bound readiness gate needs.
+ */
+export type ControlMode = 'fly' | 'command';
+
+/** What kind of entity the selection's focus is (routes the details panel:
+ *  `ship`/`structure` use the server `entity_stats` stream). */
+export type SelectionFocusKind = 'ship' | 'drone' | 'structure' | 'asteroid' | 'lingering';
+
+/**
+ * THE selection (RTS Part A: one selection concept). The renderer owns it
+ * (`RendererFeedback.fleetSelIds` + `selectedPickId/Kind`); the main thread
+ * mirrors it here on change only. Ids only, never positions (#2).
+ *  - `ids`: every selected ship (your own ships, picked in command view); each
+ *    gets the same marker. Drives the fleet panel / strip.
+ *  - `focusId` / `focusKind`: the entity whose details panel shows, the one you
+ *    clicked. With ships selected it is one of `ids` (or null); with none it
+ *    can be anything you tapped (a drone, a structure, someone else's ship).
+ *    The live hp/shield numbers live in the `selectionStats` singleton.
+ */
+export interface UISelection {
+  readonly ids: readonly string[];
+  readonly focusId: string | null;
+  readonly focusKind: SelectionFocusKind | null;
+}
+
+/**
  * Top-level UX phase. Lifted to Zustand so drawer tabs (Profile Logout,
  * Settings "Return to menu") can change it without prop-drilling through
  * App → ... → tab.
@@ -255,18 +288,16 @@ export interface UIStore {
   contactsOpen: boolean;
   /** Where a held warp goes (the picker's label), shown by the warp chip; null when none. */
   warpHeldTo: string | null;
-  /** Click-to-inspect selection (structures follow-up Item B3). The id of the
-   *  entity the player tapped to inspect, or null when nothing is selected.
-   *  Drives `EntityStatsPanel` VISIBILITY only — purity-clean (a discrete id
-   *  string, NOT a spatial field; the live hp/shield numbers live in the
-   *  non-Zustand `selectionStats` module singleton, polled by the panel). The
-   *  renderer owns the selection (`RendererFeedback.selectedPickId`); the main
-   *  thread mirrors transitions here on change only. */
-  selectedEntityId: string | null;
-  /** Kind of the selected entity — `ship`/`structure` use the server
-   *  `entity_stats` channel; `drone` reads health from the render mirror
-   *  directly. Null when nothing is selected. */
-  selectedEntityKind: 'ship' | 'drone' | 'structure' | 'asteroid' | 'lingering' | null;
+  /** THE selection (RTS Part A: one selection concept). See {@link UISelection}. */
+  selection: UISelection;
+  /** RTS command view (slice 14): the compact fleet strip's order-mode toggle,
+   *  what a tap on the map orders the selected ships to do. Discrete UI choice. */
+  fleetOrderMode: 'move' | 'attack';
+  /** RTS slice 14b: a mode button waiting for a target on the map (patrol
+   *  route / ship to escort / retreat point), or null. Discrete only: the
+   *  points live in the renderer; `points` is just how many are picked, and
+   *  `doneSeq` bumps when the player presses Done. */
+  fleetPick: { kind: 'patrol' | 'escort' | 'retreat'; points: number; doneSeq: number } | null;
   /** Helm orders (capital-ship R&D round 3 D), discrete UI state only: whether
    *  the ship you fly takes helm orders, whether a course is set, and the speed
    *  setting (0 stop, 1 one third, 2 two thirds, 3 full). The course point
@@ -511,11 +542,16 @@ export interface UIStore {
   setUpgradeAck: (
     ack: { shipInstanceId: string; alloc: Record<string, number>; spent: number; budget: number } | null,
   ) => void;
-  /** Set the inspected entity selection (Item B3). Both args change together. */
-  setSelectedEntity: (
-    id: string | null,
-    kind: 'ship' | 'drone' | 'structure' | 'asteroid' | 'lingering' | null,
-  ) => void;
+  /** Mirror the renderer's selection (ids + focus) in one write. An empty
+   *  `ids` also ends a fleet map pick (no ships left to command). */
+  setSelection: (ids: readonly string[], focusId: string | null, focusKind: SelectionFocusKind | null) => void;
+  setFleetOrderMode: (mode: 'move' | 'attack') => void;
+  /** Start a map pick for a mode, or cancel it (null). */
+  setFleetPick: (kind: 'patrol' | 'escort' | 'retreat' | null) => void;
+  /** Mirror the renderer's picked-point count (no-op when not picking). */
+  setFleetPickPoints: (points: number) => void;
+  /** Done pressed (a patrol with enough points); the renderer sends the route. */
+  requestFleetPickDone: () => void;
   setEnergyMax: (max: number) => void;
   setHelmState: (available: boolean, active: boolean, speed: 0 | 1 | 2 | 3) => void;
   setCargo: (cargo: CargoView | null, capacity: number) => void;

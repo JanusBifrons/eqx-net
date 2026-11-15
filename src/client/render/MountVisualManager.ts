@@ -83,6 +83,7 @@ import { isStructureKindId } from '../../shared-types/structureKinds';
 import { getShipKind, type WeaponMount } from '../../shared-types/shipKinds';
 import { shipPrimaryColor } from '@core/geometry/shipHullOutline';
 import { aimLineLengthForMount } from './aimLineLength';
+import { moveKey } from './shipRekey.js';
 import { GLOBAL_SHIP_TUNING } from '@shared-types/shipScale/lookup';
 import { HEAVY_BEAM_COLOR, HEAVY_BEAM_STYLE, isHeavyBeamMount } from './beamStyles';
 
@@ -491,6 +492,20 @@ export class MountVisualManager {
     for (const m of cluster.perMount.values()) if (m.gun?.layers) this.machinedGuns--;
     cluster.container.destroy({ children: true });
     this.clusters.delete(shipId);
+  }
+
+  /** RTS Part A seamless hand-over: the ship's key changed; its cluster (still
+   *  a child of the same sprite, guns, recoil and angles intact) moves to the
+   *  new key. A stale cluster under `to` is freed first. No-op without one. */
+  rekeyShip(from: string, to: string): void {
+    if (from === to || !this.clusters.has(from)) return;
+    this.removeShip(to);
+    moveKey(this.clusters, from, to);
+  }
+
+  /** The cluster container drawn for `shipId` (test / DEV identity probe). */
+  clusterOf(shipId: string): Container | undefined {
+    return this.clusters.get(shipId)?.container;
   }
 
   /** Recoil, flash, tip heat and the beam glow for one gun, this frame. */

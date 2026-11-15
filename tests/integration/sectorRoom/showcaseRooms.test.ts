@@ -26,6 +26,7 @@ import {
   SHOWCASE_GARRISON_OPTS,
   SHOWCASE_HUB_OPTS,
   SHOWCASE_PORT_PAD,
+  SHOWCASE_RTS_OPTS,
 } from '../../../src/server/rooms/showcaseRooms.js';
 
 function roomOf(roomId: string): SectorRoom {
@@ -220,5 +221,24 @@ describe('Showcase rooms', () => {
     expect(structures.some((s) => s.kind === 'miner')).toBe(true);
     internals.pulseStructureGrid();
     for (const s of internals.getStructuresSlice() ?? []) expect(s.powered).toBe(true);
+  });
+
+  it('rts: a Command-view join owns five parked, AI-flown fighters and a robot squad waits to the north', { timeout: 30_000 }, async () => {
+    harness = await bootSectorTestServer(opts(SHOWCASE_RTS_OPTS));
+    const pid = randomUUID();
+    const room = await harness.connectAs(pid, { shipKind: 'fighter', startMode: 'command' });
+    room.send('client_ready', { type: 'client_ready' });
+    await harness.events.waitFor({ tag: 'command_start', where: (d) => d['playerId'] === pid }, 5_000);
+    await harness.advance(300);
+    const server = harness.getServerRoom()!;
+    const state = server.state as SectorState;
+    const internals = server._internals;
+    const own = [...state.ships.values()].filter((s) => s.playerId === pid);
+    expect(own.filter((s) => s.isActive).length, 'no active hull: Command view').toBe(0);
+    expect(own.length, 'the own hull + four from the scene').toBe(5);
+    for (const s of own) expect(internals.fleet.isAttached(s.shipInstanceId), 'every hull AI-flown').toBe(true);
+    const robots = [...internals.swarmRegistry.all()].filter((r) => r.shipKind.startsWith('robot-'));
+    expect(robots.length).toBe(3);
+    await harness.disconnectClient(room);
   });
 });

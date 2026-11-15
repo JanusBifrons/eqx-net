@@ -190,10 +190,20 @@ export function isSectorIdle(
  * The 5-bit input vector each remote client uses to forward-predict
  * a ship between snapshots. Mirrors the SAB FLAG_INPUT_* layout.
  *
- * `lastInput` is included on every ship in every snapshot today —
- * 5 booleans per ship per 50 ms. For idle ships that's pure waste:
- * the bits don't change for seconds at a time. Stage 5 omits the
- * field when it matches the last-sent value for this recipient.
+ * Wire rule (RTS Part A S1, two-sided with the client's
+ * `preResetRemoteShips`): `lastInput` rides a ship's snapshot entry on
+ * EVERY snapshot while any bit is held, and is ABSENT exactly when the
+ * controls are idle. Absent = idle on the client.
+ *
+ * Why not "omit when unchanged" (the Stage 5 per-recipient dedupe this
+ * replaced): the client drops snapshots on purpose (the coalescer keeps
+ * only the newest; the DataChannel receiver discards superseded frames).
+ * Under the dedupe the client deleted the bits when absent, so a held key
+ * stopped being forward-predicted after one snapshot; making it keep the
+ * previous bits instead would leave a ship's thrust stuck on whenever the
+ * snapshot carrying the release was dropped. Stateless "held => sent"
+ * makes every snapshot the whole truth. Cost: the bits ride every
+ * snapshot for a ship with a key down; idle ships pay nothing, as before.
  */
 export type ShipInputBits = {
   thrust: boolean;
@@ -203,41 +213,8 @@ export type ShipInputBits = {
   reverse: boolean;
 };
 
-/** Per-recipient cache of the last `lastInput` bits sent for each ship.
- *  The room holds one of these per Colyseus client. */
-export interface LastInputCache {
-  perShip: Map<string, ShipInputBits>;
-}
-
-export function createLastInputCache(): LastInputCache {
-  return { perShip: new Map() };
-}
-
-/** Returns true iff `current` differs from the cached value (or no
- *  cache entry exists yet). Updates the cache when it returns true.
- *
- *  Caller wires this into the snapshot builder: include `lastInput` on
- *  the outbound state record only when this function returns true.
- *  When it returns false, the field is omitted and the client falls
- *  back to its previously-cached value — wire bytes saved without
- *  any change to the predicted-pose contract. */
-export function shouldIncludeLastInput(
-  cache: LastInputCache,
-  shipId: string,
-  current: ShipInputBits,
-): boolean {
-  const prev = cache.perShip.get(shipId);
-  if (
-    prev !== undefined &&
-    prev.thrust === current.thrust &&
-    prev.turnLeft === current.turnLeft &&
-    prev.turnRight === current.turnRight &&
-    prev.boost === current.boost &&
-    prev.reverse === current.reverse
-  ) {
-    return false;
-  }
-  // Clone — caller passes a transient object that may be reused next tick.
-  cache.perShip.set(shipId, { ...current });
-  return true;
+/** True iff any control bit is held, i.e. the snapshot must carry
+ *  `lastInput` for this ship (absent = idle). Pure, alloc-free. */
+export function shouldIncludeLastInput(current: ShipInputBits): boolean {
+  return current.thrust || current.turnLeft || current.turnRight || current.boost || current.reverse;
 }

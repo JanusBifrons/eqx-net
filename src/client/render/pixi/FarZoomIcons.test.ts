@@ -16,6 +16,7 @@ import {
   farIconRelation,
   isIconOnly,
   DEFAULT_FAR_ICON_COLOURS,
+  FAR_ICON_SELF_COLOUR,
 } from './FarZoomIcons.js';
 import type { RenderMirror } from '../../../core/contracts/IRenderer.js';
 import { getShipKind } from '../../../shared-types/shipKinds.js';
@@ -182,5 +183,22 @@ describe('FarZoomIcons (renderer)', () => {
     icons.update(m, s, 0.03);
     expect(iconOf(icons, 50, -50).tint).toBe(0x112233);
     expect(iconOf(icons, 100, 0).tint).toBe(0x445566);
+  });
+
+  it('AI-flown ships get icons like any ship: your fleet in the own colour, others as pilots (RTS Part A)', () => {
+    const icons = new FarZoomIcons();
+    const m = mirror();
+    m.ships.set('my-hull', { x: 200, y: 0, angle: 0, kind: 'fighter', ownerPlayerId: 'me', isActive: false } as never);
+    m.ships.set('their-hull', { x: 300, y: 0, angle: 0, kind: 'fighter', ownerPlayerId: 'p2', isActive: false } as never);
+    const s = sprites();
+    s.set('my-hull', new Container());
+    s.set('their-hull', new Container());
+    s.get('my-hull')!.position.set(200, 0);
+    s.get('their-hull')!.position.set(300, 0);
+    icons.update(m, s, 0.03);
+    expect(s.get('my-hull')!.renderable).toBe(false);
+    expect(s.get('their-hull')!.renderable).toBe(false);
+    expect(iconOf(icons, 200, 0).tint).toBe(FAR_ICON_SELF_COLOUR);
+    expect(iconOf(icons, 300, 0).tint).toBe(DEFAULT_FAR_ICON_COLOURS.friendly);
   });
 });
