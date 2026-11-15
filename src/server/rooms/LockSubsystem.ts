@@ -309,6 +309,11 @@ export class LockSubsystem {
     }
     if (!this.deps.resolveTarget(playerId, key, this.target)) return false;
     const entry = newLock(key, this.target.hostile || this.target.terrain);
+    // testMode `instantLock`: complete it here, not at the next lock step, so
+    // the wire never shows it one step at LOCKING 0% (a red ring flash).
+    if (p.instant && this.deps.shooterPose(playerId, this.shooter) && Number.isFinite(this.lockSecsNow(p, g))) {
+      this.completeInstant(playerId, entry);
+    }
     this.makeRoom(g);
     g.locks.push(entry);
     g.wire.l.push({ t: key, s: LOCK_STAGE_CODE[entry.stage], p: 0 });
@@ -567,19 +572,7 @@ export class LockSubsystem {
       const e = g.locks[i]!;
       let secs = Infinity;
       if (this.deps.resolveTarget(playerId, e.target, this.target)) {
-        const inp = this.inputs;
-        inp.refSize = g.refSize;
-        inp.tracking = g.tracking;
-        inp.absRange = g.absRange;
-        inp.reach = g.reach;
-        inp.sensor = p.sensor;
-        inp.pilotSpeed = 1;
-        inp.signature = this.target.radius;
-        inp.dx = this.target.x - this.shooter.x;
-        inp.dy = this.target.y - this.shooter.y;
-        inp.dvx = this.target.vx - this.shooter.vx;
-        inp.dvy = this.target.vy - this.shooter.vy;
-        secs = lockSeconds(inp, LOCK_TUNING);
+        secs = this.lockSecsNow(p, g);
       } else {
         // Gone (destroyed / left): drop now, no grace.
         g.locks.splice(i, 1);
@@ -588,11 +581,7 @@ export class LockSubsystem {
       }
       const failsafeSecs = Number.isFinite(secs) ? secs * LOCK_TUNING.failsafeMul : LOCK_TUNING.baseSeconds * LOCK_TUNING.failsafeMul;
       if (p.instant && Number.isFinite(secs) && e.stage !== 'locked' && e.track !== LOCK_TRACK.released) {
-        // testMode `instantLock`: the lock completes now (a failsafe still commits).
-        if (e.stage === 'failsafe' && !this.target.terrain) this.deps.commitHostileAct(playerId, e.target);
-        e.stage = 'locked';
-        e.progress = 1;
-        e.lostFor = 0;
+        this.completeInstant(playerId, e);
         continue;
       }
       const ev = stepLock(e, LOCK_DT, secs, failsafeSecs, LOCK_TUNING.lostGraceSeconds, LOCK_TUNING.decayMul);
@@ -613,6 +602,33 @@ export class LockSubsystem {
     }
     if (removed || g.wire.l.length !== g.locks.length) this.syncWireShape(g);
     else for (let i = 0; i < g.locks.length; i++) this.writeWire(g.wire.l[i]!, g.locks[i]!);
+  }
+
+  /** Lock time (s) of `this.target` for group `g` from `this.shooter` (both
+   *  current). Infinity = can't lock right now. */
+  private lockSecsNow(p: PlayerLocks, g: GroupState): number {
+    const inp = this.inputs;
+    inp.refSize = g.refSize;
+    inp.tracking = g.tracking;
+    inp.absRange = g.absRange;
+    inp.reach = g.reach;
+    inp.sensor = p.sensor;
+    inp.pilotSpeed = 1;
+    inp.signature = this.target.radius;
+    inp.dx = this.target.x - this.shooter.x;
+    inp.dy = this.target.y - this.shooter.y;
+    inp.dvx = this.target.vx - this.shooter.vx;
+    inp.dvy = this.target.vy - this.shooter.vy;
+    return lockSeconds(inp, LOCK_TUNING);
+  }
+
+  /** testMode `instantLock`: lock `e` (on `this.target`) completes now (a
+   *  failsafe still commits). */
+  private completeInstant(playerId: string, e: LockEntry): void {
+    if (e.stage === 'failsafe' && !this.target.terrain) this.deps.commitHostileAct(playerId, e.target);
+    e.stage = 'locked';
+    e.progress = 1;
+    e.lostFor = 0;
   }
 
   private writeWire(w: WireLock, e: LockEntry): void {
