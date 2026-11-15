@@ -15,7 +15,10 @@ import { updateSwarmSprites, type SwarmSpriteCtx } from './pixi/swarmSpriteUpdat
 import { DyingHullHold, noteDyingHulls } from './pixi/dyingHullHold.js';
 import { sweepUnseenSprites } from './pixi/spriteSweep.js';
 import { WreckGeometryStore } from '../net/wreckGeometryStore.js';
-import { WreckArtState, WreckPieceSprite, deathBlastFor, hullDeathBlastReplaced, wreckBlasts, wreckRippleCap, WRECK_BLAST_LINGER, type WreckBlast } from './pixi/wreckArt.js';
+import { WreckArtState, WreckPieceSprite, wreckBlasts, wreckRippleCap, WRECK_BLAST_LINGER, type WreckBlast } from './pixi/wreckArt.js';
+import { deathBlastFor, dyingHullDiameter, hullDeathBlastReplaced, type DeathBlast } from './pixi/deathBlast.js';
+import { spawnVaporiseBlast, stackVaporiseOverBeams } from './pixi/vaporiseBlast.js';
+import { LegacyExplosionSprites } from './pixi/legacyExplosionSprites.js';
 import { ConnectorRenderer } from './pixi/ConnectorRenderer.js';
 import { updateProjectileSprites, type ProjectileSpriteCtx } from './pixi/projectileSpriteUpdater.js';
 import { updateMissileSprites, type MissileSpriteCtx } from './pixi/missileSpriteUpdater.js';
@@ -88,7 +91,6 @@ import { getShipKind } from '../../shared-types/shipKinds';
 import {
   buildGhostGfx,
   applyMountOffset,
-  buildExplosionGfx,
   buildStructureGfx,
 } from './pixi/spriteBuilders.js';
 import { getStructureKind } from '@shared-types/structureKinds';
@@ -366,7 +368,7 @@ export class PixiRenderer implements IRenderer {
   /** Reused per-frame seen-set for the missile sprite updater. */
   private readonly _updateMissileSeenScratch = new Set<number>();
   private _missileUpdaterCtx!: MissileSpriteCtx;
-  private explosionSprites: Array<{ gfx: Graphics; framesLeft: number }> = [];
+  private readonly explosionSprites = new LegacyExplosionSprites();
   // Post-2026-06-01: beams now rendered via sprite pools (no Graphics
   // clear/redraw cycle). The `liveBeamGfx` / `remoteBeamGfx` accessor
   // fields are kept as Container types — same surface LaserGlow uses
@@ -581,7 +583,7 @@ export class PixiRenderer implements IRenderer {
   private _hullBlastsReplaced = 0;
   private readonly _wreckBlastScratch: WreckBlast[] = [];
   /** `deathBlastFor` out (reused, #14). */
-  private readonly _deathBlastScratch = { scale: 1, linger: 1 };
+  private readonly _deathBlastScratch: DeathBlast = { scale: 1, linger: 1, vaporise: false, tint: 0, seconds: 0 };
   private _projectileUpdaterCtx!: ProjectileSpriteCtx;
   /** Off-screen ring/edge indicator. Constructed in the constructor body
    *  (NOT a field initializer) so it sees the assigned `_isTouch` — field
@@ -1188,6 +1190,7 @@ export class PixiRenderer implements IRenderer {
       });
     }
 
+    stackVaporiseOverBeams(this.shipContainer, this._fxExplosions); // the vaporise flash reads over the beams
     // Incoming-fire markers sit under the radar's edge icons.
     this.incomingFire.init(this.camera);
     this.helmMarker.init(this.camera);
@@ -2128,7 +2131,7 @@ export class PixiRenderer implements IRenderer {
     // shipInstanceId). Helper in `spriteUpdateDecisions.ts`, unit-tested.
     // A capital dying into a wreck stays drawn until its pieces are (marked
     // here while its sprite is still mapped; the sweeps below hand it over).
-    noteDyingHulls(mirror.explodingShips, mirror.capitalWrecks, this._spriteShipKind, this._dyingHulls, this.fxNow(), mirror.subcapWrecks);
+    noteDyingHulls(mirror.explodingShips, mirror.capitalWrecks, this._spriteShipKind, this._dyingHulls, this.fxNow(), mirror.subcapWrecks, mirror.vaporisedShips);
     if (mirror.explodingShips) {
       for (const targetId of mirror.explodingShips) {
         // PRESERVE the decideExplosionPosition lookup (the 2026-05-13 fix):
@@ -2148,28 +2151,29 @@ export class PixiRenderer implements IRenderer {
         // New explosions (B4): sized from the dying sprite; replaces the
         // particle burst + shock filter when its textures are ready.
         const dying = this.sprites.get(targetId);
+        // Burned away by a cut kill (fracture v11): no wreck follows.
+        const vaporised = mirror.vaporisedShips?.has(targetId) === true;
         // Capital wrecks on: a dying capital explodes where it broke (the wreck
         // break-up at its kill point), not as a hull-sized blast over the whole
         // hull (money-shot review).
-        if (hullDeathBlastReplaced(mirror.capitalWrecks, dying instanceof MachinedShipSprite && dying.capital, this._spriteShipKind(targetId))) {
+        if (hullDeathBlastReplaced(mirror.capitalWrecks, dying instanceof MachinedShipSprite && dying.capital, this._spriteShipKind(targetId), vaporised)) {
           this._hullBlastsReplaced++;
           continue;
         }
-        const diameter = dying ? Math.max(dying.width, dying.height) : 40;
+        const diameter = dyingHullDiameter(dying, this._spriteShipKind(targetId)); // a parked hull: its kind's size
         // A sub-cap breaking into wreck pieces (welcome `subcapWrecks`) gets a
         // smaller blast with shorter smoke (profile fx.deathBlastScale/Linger).
-        const db = deathBlastFor(mirror.subcapWrecks, mirror.capitalWrecks, this._spriteShipKind(targetId), this._deathBlastScratch);
-        if (this._fxExplosions?.spawn(pose.x, -pose.y, blastRadiusFor(diameter) * db.scale, this.fxNow(), db.linger)) {
+        const db = deathBlastFor(mirror.subcapWrecks, mirror.capitalWrecks, this._spriteShipKind(targetId), this._deathBlastScratch, vaporised);
+        // The vaporise variant (flash, glow, ash puff; no fireball, smoke or
+        // wreck); its art not ready: fall through to today's fallback below.
+        if (db.vaporise && spawnVaporiseBlast(this.effects, this._fxExplosions, pose.x, -pose.y, diameter, this.fxNow(), db)) continue;
+        if (!db.vaporise && this._fxExplosions?.spawn(pose.x, -pose.y, blastRadiusFor(diameter) * db.scale, this.fxNow(), db.linger)) {
           // drawn by FxExplosions
         } else if (this.effects) {
           this.effects.spawnBurst('destruction', pose.x, -pose.y);
           this.effects.triggerOneShotFilter('destruction-shock', pose.x, -pose.y);
         } else {
-          const expl = buildExplosionGfx();
-          expl.x = pose.x;
-          expl.y = pose.y;
-          this.shipContainer.addChild(expl);
-          this.explosionSprites.push({ gfx: expl, framesLeft: 30 });
+          this.explosionSprites.spawn(this.shipContainer, pose.x, pose.y);
         }
       }
     }
@@ -2177,17 +2181,7 @@ export class PixiRenderer implements IRenderer {
     // Advance and remove expired explosion sprites (only the legacy
     // fallback path uses this; the EffectsService manages its own
     // particles + shock filters in its tick).
-    for (let i = this.explosionSprites.length - 1; i >= 0; i--) {
-      const e = this.explosionSprites[i]!;
-      e.framesLeft--;
-      e.gfx.alpha = e.framesLeft / 30;
-      e.gfx.scale.set(1 + (1 - e.framesLeft / 30) * 1.5);
-      if (e.framesLeft <= 0) {
-        this.shipContainer.removeChild(e.gfx);
-        e.gfx.destroy();
-        this.explosionSprites.splice(i, 1);
-      }
-    }
+    this.explosionSprites.tick(this.shipContainer);
 
     // Structures plan, Phase 3 — grid connector web (behind sprites). Joins
     // mirror.structures → mirror.swarm positions; no-op when no structures.

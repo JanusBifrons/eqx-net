@@ -334,6 +334,58 @@ reach is refused with no energy spent), `src/client/net/ColyseusClient.fireRange
 parity), `tests/unit/fireControlBearingParity.test.ts` (both sides call
 `mountFiresOn` + `fillFireTargetShape`, never a bare `mountBearsOn`).
 
+### The heavy beam hits by its width (owner 2026-11-15)
+
+The capital heavy beam is drawn `HEAVY_BEAM_WIDTH` (60 u) wide, but it was
+hit-tested as its thin centre line, so a near miss visibly covered a small ship
+and passed through it. Owner: "Hit by its width": anything the drawn beam covers
+is hit, and the beam stops on it.
+
+- **Data, not a branch.** `HitscanWeaponDef.hitWidth` (the heavy beam:
+  `HEAVY_BEAM_WIDTH`; every other beam unset = the thin ray, bit-identical) is
+  read only through `beamHalfWidth(def)` (`combat/Weapons.ts`). The
+  `HitscanWeapon` flyweight hands it to `WeaponFireSink.hitscan` as `halfWidth`.
+- **One capsule test, every shape.** The existing hit helpers take an optional
+  trailing `halfWidth` and sweep a disc of that radius down the ray (a capsule):
+  `shipRayHit` (shield bubble grown by it; hull polygon by the exact
+  capsule-vs-convex-polygon first contact), `wreckRayHit` (pieces),
+  `rayHitsConvexPolygon` (rocks, scrap), `rayHitsBox` (structure footprints and
+  gate parts: the box's outline rounded by the half-width, round corners), and
+  `rayHitsSphere(r + halfWidth)` for plain circles. 0 takes the old code path.
+- **Server.** `PlayerFireResolver.hitscan` and `AiFireResolver.hitscan` pass the
+  width into every candidate test: `SectorRoom.playerHitscanDist`,
+  `nonPlayerRayHit` → `swarmRayHit`, lingering hulls, and the player sink's
+  swarm pass. The hit distance is the first contact of the beam's edge; the hit
+  point and `laser_fired`'s end are the centre line at that distance, so the
+  drawn beam stops where its edge meets the target. Follow-through
+  `passDebris` is unchanged.
+- **Client (#15).** The pilot's own live beam and predicted hit
+  (`DisplayPoseHitscan.hitscan(…, halfWidth)`, `predictShotOutcome({ halfWidth })`,
+  `shieldEdgeDist`) use the same helpers: drawn drones, scrap and wreck pieces
+  through `rayHitsDrawnSwarmEntity`; predWorld bodies through
+  `PhysicsWorld.hitscan(…, halfWidth)` → `castHitscanDisc`
+  (`physics/hitscanRay.ts`), which asks Rapier only for the colliders overlapping
+  the box the swept disc covers and runs the same core capsule maths on each
+  collider's own shape and pose. Rapier's shape cast is NOT used: in 0.14 a ball
+  cast against a polygon or triangle missed 1–4 % of hits outright at offsets a
+  thin ray hit. Lock: `tests/integration/sectorRoom/heavyBeamWidthParity.test.ts`.
+- **Unchanged.** The lock and bearing gates (#19), fire range (`mountFiresOn`),
+  and shield walls: a wall stops a beam where its centre line crosses (server
+  `blockBeamAtWall`; the client's width query skips walls, the thin ray still
+  stops on them). The NPC line-of-fire gate (`LineOfFireGate`) still checks the
+  centre line, so an AI heavy beam may clip a friendly within 30 u of its line.
+- **Kill cut** (not changed here): a kill still slices along the beam's centre
+  line through the hit point, which for a grazing kill lies beside the hull.
+
+Locks: `src/core/combat/beamHitWidth.test.ts` (each shape hit inside the
+half-width at the brute-force first contact, missed outside it; half-width 0 is
+bit-identical), `tests/integration/sectorRoom/heavyBeamHitWidth.test.ts` (through
+a real room, both sinks: a heavy beam whose centre misses a frigate's bubble by
+20 u hits it and `laser_fired` ends at the first contact; a fighter beam on the
+same line misses), `heavyBeamWidthParity.test.ts` (client vs server, ships shield
+up/down, drawn drones, a rock, a structure box), `weapons.test.ts`,
+`HitPrediction.client.test.ts`.
+
 ## Server
 
 | Piece | File | Role |
@@ -540,6 +592,7 @@ The zone `CLAUDE.md` keeps a condensed form of these rules; this is the full wor
 
 ## History
 
+- **2026-11-15, the heavy beam hits by its width.** Owner decision ("Hit by its width"): the 60 u heavy beam hit-tested as a thin line, so a near miss drew over a small ship and passed through it. Now its hit test is a capsule of its drawn width on both sides (#15). See "The heavy beam hits by its width" above.
 - **2026-11-14, `lockedBy` capped to the nearest 8.** Owner decision: with locks at any distance every hostile in a sector could lock a pilot, and the own-ship `lockedBy` slice grew to ~20 rows in `capital-fleet` (+~4 KB/s per pilot, growing with sector size). The slice now carries only the 8 top lockers (completed first, then nearest) plus `lockedByN`, the total, so its cost is flat however many enemies lock on.
 
 - **2026-11-14, locks at any distance.** Owner decision: players, NPC ships and structures lock at any distance; distance only makes a lock slower; only firing is range-limited (per-turret fire range to the hull, the sibling fire-range changes). Lead calls in the same change: NPC hostility is refreshed by a lock only inside that NPC's fire range (before: "out of reach ⇒ lock drops ⇒ forgets 30 s later"; now "out of fire range ⇒ no refresh ⇒ forgets 30 s later"); AUTO groups release their own pick once it leaves fire range and re-pick, manual locks persist; AUTO's pick stays limited to what it could fire at. The wire `c` flag and the HUD now say CAN'T TRACK instead of OUT OF RANGE. See "Locks work at any distance" above.

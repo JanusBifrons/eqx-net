@@ -140,7 +140,20 @@ export interface DestructionFx {
    *  break-up and the fight stay readable and capitals feel bigger. */
   readonly deathBlastScale: number;
   readonly deathBlastLinger: number;
+  /** A vaporised death (fracture v11: a heavy-beam / railgun kill burned the
+   *  whole hull away, `destroy.vaporised`) plays the death explosion's
+   *  vaporise variant instead: a flash in `vaporiseTint`, a short expanding
+   *  glow and a puff of glowing ash, no fireball, smoke or wreck. Radius
+   *  multiplier on the normal blast, its length (s) and its tint.
+   *  capital-destruction.md "Burn-away and vaporised". */
+  readonly vaporiseBlastScale: number;
+  readonly vaporiseSeconds: number;
+  readonly vaporiseTint: number;
 }
+
+/** The vaporise look's tint: a hot violet-white (the heavy beam's violet,
+ *  burned white-hot), shared by every profile. */
+export const VAPORISE_TINT = 0xd0b0ff;
 
 export interface DestructionProfile {
   readonly id: DestructionProfileId;
@@ -258,6 +271,9 @@ const CAPITAL: DestructionProfile = {
     deadArt: false,
     deathBlastScale: 1,
     deathBlastLinger: 1,
+    vaporiseBlastScale: 0.8,
+    vaporiseSeconds: 0.7,
+    vaporiseTint: VAPORISE_TINT,
   },
 };
 
@@ -381,6 +397,11 @@ const SUBCAP: DestructionProfile = {
     deadArt: true,
     deathBlastScale: 0.5,
     deathBlastLinger: 0.5,
+    // Sized to the hull it burned away (the break-up blast is half size;
+    // here nothing else plays, so a little more).
+    vaporiseBlastScale: 0.8,
+    vaporiseSeconds: 0.7,
+    vaporiseTint: VAPORISE_TINT,
   },
 };
 
@@ -415,6 +436,9 @@ const NONE: DestructionProfile = {
     deadArt: false,
     deathBlastScale: 1,
     deathBlastLinger: 1,
+    vaporiseBlastScale: 0.8,
+    vaporiseSeconds: 0.7,
+    vaporiseTint: VAPORISE_TINT,
   },
 };
 

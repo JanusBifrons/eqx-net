@@ -110,6 +110,7 @@ export interface HitscanWeaponDef extends WeaponDefBase {
    *  falloff ⇒ flat damage. SERVER-AUTHORITATIVE — the client reads the scaled
    *  number off the `DamageEvent`, never predicts it (avoids desync). */
   falloff?: { minDamageFrac: number; maxRangeMul?: number };
+  hitWidth?: number; // it hits all this width covers (`beamHalfWidth`, Weapons.ts); absent ⇒ a thin line
 }
 
 /** A weapon's kill cut (`WeaponDefBase.killCut`). `width` in world units:

@@ -693,6 +693,7 @@ export interface RenderMirror {
   damagedShips?: Set<string>;
   /** Ships that just exploded (single-frame trigger). */
   explodingShips?: Set<string>;
+  vaporisedShips?: Set<string>; // vaporised `explodingShips`, cleared with it: vaporise blast, no hull hold
   /** Ship re-keys since the last rendered frame, as flat pairs
    *  `[from0, to0, from1, to1, ...]` (one-frame trigger, cleared by
    *  `consumeOneFrameTriggers`). A ship moves between its pilot's playerId and

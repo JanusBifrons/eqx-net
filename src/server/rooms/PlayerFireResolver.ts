@@ -171,11 +171,11 @@ export interface PlayerFireResolverDeps {
   mountWorldOrigin: (
     shipX: number, shipY: number, shipAngle: number, mount: WeaponMount,
   ) => { x: number; y: number };
-  /** Shield-aware ray-vs-ship test (cheap circle / hull-polygon refine). */
+  /** Shield-aware ray-vs-ship test; `halfWidth`: a wide beam's (absent ⇒ thin). */
   playerHitscanDist: (
     ship: ShipState,
     fromX: number, fromY: number, dirX: number, dirY: number, maxDist: number,
-    cx: number, cy: number, angle: number,
+    cx: number, cy: number, angle: number, halfWidth?: number,
   ) => number | null;
   /** Spawn a server-side projectile (delegates to ProjectilePipeline). */
   spawnServerProjectile: (
@@ -607,8 +607,9 @@ export class PlayerFireResolver implements WeaponFireSink {
   //     flyweight; relocated VERBATIM from the former mode if-tree (GEP B3). ───
 
   /** Beam: the 4-pass lag-comp candidate sweep + applyDamage + laser_fired,
-   *  updating the best-hit accumulator for the aggregate hit_ack. */
-  hitscan(ctx: WeaponFireContext, range: number, damage: number, falloffMinDamageFrac?: number, maxRange?: number): void {
+   *  updating the best-hit accumulator for the aggregate hit_ack. `hw`: a wide
+   *  beam's half-width (the heavy beam hits by its width, owner 2026-11-15). */
+  hitscan(ctx: WeaponFireContext, range: number, damage: number, falloffMinDamageFrac?: number, maxRange?: number, hw = 0): void {
     const d = this.deps;
     // P3.13 — `range` is the OPTIMAL (full-damage) range; the ray reaches
     // `maxRange` (≥ range) and damage falls off reverse-square BEYOND optimal.
@@ -633,7 +634,7 @@ export class PlayerFireResolver implements WeaponFireSink {
       const cx = rewound?.x ?? fallback?.x;
       const cy = rewound?.y ?? fallback?.y;
       if (cx === undefined || cy === undefined) continue;
-      const dist = d.playerHitscanDist(targetShip, rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, rewound?.angle ?? fallback?.angle ?? 0);
+      const dist = d.playerHitscanDist(targetShip, rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, rewound?.angle ?? fallback?.angle ?? 0, hw);
       if (dist !== null && dist < mountHitDist) {
         mountHitDist = dist;
         mountHitId = targetId;
@@ -651,8 +652,8 @@ export class PlayerFireResolver implements WeaponFireSink {
       // went straight through it).
       const lship = d.lingeringShip?.(shipInstanceId);
       const dist = lship !== undefined
-        ? d.playerHitscanDist(lship, rayFromX, rayFromY, ndx, ndy, rayRange, lingeringPose.x, lingeringPose.y, lingeringPose.angle)
-        : rayHitsSphere(rayFromX, rayFromY, ndx, ndy, rayRange, lingeringPose.x, lingeringPose.y, GLOBAL_SHIP_TUNING.hitRadius);
+        ? d.playerHitscanDist(lship, rayFromX, rayFromY, ndx, ndy, rayRange, lingeringPose.x, lingeringPose.y, lingeringPose.angle, hw)
+        : rayHitsSphere(rayFromX, rayFromY, ndx, ndy, rayRange, lingeringPose.x, lingeringPose.y, GLOBAL_SHIP_TUNING.hitRadius + hw);
       if (dist !== null && dist < mountHitDist) {
         mountHitDist = dist;
         mountHitId = shipInstanceId;
@@ -669,19 +670,19 @@ export class PlayerFireResolver implements WeaponFireSink {
       const ca = rewound?.angle ?? d.sabF32[b + SLOT_ANGLE_OFF]!;
       let dist: number | null;
       if (rec.kind === 0 && rec.vertices) {
-        dist = rayHitsConvexPolygon(rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, ca, rec.vertices);
+        dist = rayHitsConvexPolygon(rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, ca, rec.vertices, hw);
       } else if (rec.kind === 4) {
         // A capital wreck piece (S2a) stops the beam: its convex parts.
-        dist = wreckRayHit(rec.wreckParts, rec.radius, rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, ca);
+        dist = wreckRayHit(rec.wreckParts, rec.radius, rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, ca, hw);
       } else if (rec.halfW !== undefined && rec.halfH !== undefined) {
         // Structures (phase V): the footprint box, not the bounding circle.
-        dist = rayHitsBox(rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, rec.halfW, rec.halfH, rec.boxes);
+        dist = rayHitsBox(rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, rec.halfW, rec.halfH, rec.boxes, hw);
       } else if (rec.kind === 1 && rec.shipKind) {
         // A ship: the same shape as if a player flew it (`shipHitShape.ts`,
         // owner's rule 2026-11-13; the room's `playerHitscanDist` twin).
-        dist = shipRayHit(rec.shipKind, !rec.shieldDown, rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, ca);
+        dist = shipRayHit(rec.shipKind, !rec.shieldDown, rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, ca, hw);
       } else {
-        dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, rec.radius);
+        dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, rec.radius + hw);
       }
       if (dist !== null && dist < mountHitDist) {
         mountHitDist = dist;

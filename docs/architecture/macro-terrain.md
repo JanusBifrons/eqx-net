@@ -51,6 +51,24 @@ The field is split into a fixed grid of square chunks (`CHUNK_SIZE` = 4096 u, ab
 
 Next (plan v2 stages A3–F): owner shape tuning, cross-browser parity, chunk meshes with the procedural rock shader, then wake/deep sleep, the wire and the terrain store.
 
+### Ore (F1)
+
+Ore is a map over space, not a label on a rock (owner): the piece a mining laser cuts off yields what lay where that piece sat. `core/terrain/fieldOre.ts` gives the ice and crystal concentration (0..1 each, 0 = plain rock) at any rest-frame point.
+
+- **Loot table** (`ORE_TABLE`):
+  - The field is cut into `ORE_CELL` cells (8192 u), and each cell rolls its own hotspots from `(seed, cell)`.
+  - Small ice and crystal **pockets** (a few hundred u to about 1400 u) can turn up in any cell.
+  - Huge, rich **lodes** (2400–6000 u, peak 0.8–1) roll at full chance inside `ORE_CORE_SHARE` (0.35) of the field radius. The chance falls to none at `ORE_RIM_SHARE` (0.75).
+  - Measured on seed `look`: within 0.2 R, about 25 % of points hold ice and 12 % crystal. Past 0.7 R, 2 % hold ice and under 1 % crystal.
+- **Falloff:** `hotspotConc` is a smoothstep from the peak at the centre to 0 at the edge. The edge is roughened by `vnoise` (±`ORE_EDGE_DEPTH`). Where hotspots of one resource overlap, the strongest wins. No hotspot reaches past the 3×3 cells `oreAt` reads (tested).
+- **Rest frame:** ore is fixed to the rock, so a shoved or split rock carries it. Callers map a world point back through the rock's pose. Cut-field rocks spawn at angle 0.
+- **Deterministic and cheap:**
+  - Arithmetic only, seeded from `ore:<seed>`, a separate stream from the cuts.
+  - `ORE_VERSION` bumps on any change.
+  - `oreAt` allocates nothing, because the mining laser samples it on every hit (#14).
+  - Nothing rides the wire: a joiner rebuilds the map from the welcome seed (#16).
+- **Yield:** `oreRow(conc)` (`shared-types/asteroidResources.ts`) turns concentrations into a yield row: ice and crystal take their share of every 10 units mined, minerals the rest. Every extractor splits mined units by ONE function, `yieldInto(row, drawn, out)` (the grid Miner, robot harvesters via `OreDraw.mine`, the mining laser); a scattered rock's row is `ASTEROID_YIELD[kind]`. The Miner reads a rock's row through the `asteroidYieldOf` hook.
+
 ## The core idea
 
 A rock that nobody has touched is not data. Server and client recompute it from its field's seed with shared, arithmetic-only code. Only changes become records: a moved, mined or destroyed rock, or a battle wreck piece.
