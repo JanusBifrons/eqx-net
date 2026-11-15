@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { CapitalWreckSubsystem, type WreckPieceSpawn } from './CapitalWreckSubsystem.js';
 import { WEAPONS, type WeaponId, type WeaponKillCut } from '../../core/combat/WeaponCatalogue.js';
 import { shipShapeScale } from '../../core/geometry/shipHullOutline.js';
-import { buildWreckPieces, hullLocalCutAngle, wreckBodyParams, WRECK_ANGULAR_DAMPING, WRECK_LINEAR_DAMPING, WRECK_RECENT_DAMAGE_TICKS } from '../../core/destruction/wreckPieces.js';
+import { buildWreckPieces, hullLocalCutAngle, WRECK_ANGULAR_DAMPING, WRECK_LINEAR_DAMPING, WRECK_RECENT_DAMAGE_TICKS } from '../../core/destruction/wreckPieces.js';
 import { SUBCAP_WRECK_COLLISION_GROUPS, WRECK_COLLISION_GROUPS } from '../../core/physics/collisionGroups.js';
 import { DESTRUCTION_PROFILES } from '../../shared-types/shipScale/destruction.js';
 import { wreckCrackTicks } from '../../shared-types/wreckTiming.js';
@@ -116,23 +116,6 @@ describe('CapitalWreckSubsystem', () => {
           seed: 9, killBlowDamage: 0.2, recentDamageRate: 0.2, cutKind: cut.kind, cutAng: ang, cutW,
         }).pieces;
         expect(spawned.map((s) => [s.x, s.y])).toEqual(want.map((p) => [p.x, p.y]));
-      });
-    }
-  });
-
-  it('a sub-cap cut kill spawns its pieces with the profile\'s cut damping (beam take 7: they kept drifting), an un-cut one with its own', () => {
-    for (const cut of [true, false]) {
-      withKillCut('laser', { kind: 'slice', width: 60 }, () => {
-        const { sys, spawned } = make({ frig: 'missile-frigate' });
-        sys.forcedSeed = 3;
-        sys.noteHit('frig', 'attacker', 2000, -40, 0, cut ? 1 : undefined, cut ? 0 : undefined, 'laser');
-        expect(sys.onDeath('frig', 'missile-frigate', pose, 10_000)).toBeGreaterThan(0);
-        const body = wreckBodyParams('missile-frigate', cut);
-        for (const s of spawned) {
-          expect(s.linearDamping, `cut ${cut}`).toBe(body.linearDamping);
-          expect(s.angularDamping, `cut ${cut}`).toBe(body.angularDamping);
-        }
-        if (cut) expect(body.linearDamping).toBeLessThan(wreckBodyParams('missile-frigate').linearDamping);
       });
     }
   });

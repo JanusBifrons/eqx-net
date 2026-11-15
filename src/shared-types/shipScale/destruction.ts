@@ -158,13 +158,6 @@ export interface DestructionProfile {
   readonly spinScale: number;
   /** Multiplier on the wreck pieces' linear and angular damping. */
   readonly dampingScale: number;
-  /** A weapon's cut kill (a heavy-beam slice, a railgun channel): its own
-   *  seam scale and damping in place of `separateScale` / `dampingScale`
-   *  (`buildWreckPieces`, `wreckBodyParams(kind, true)`, both sides #15). A
-   *  clean cut parts gently and the pieces drift on, where the un-cut
-   *  break-up throws them apart and settles fast. */
-  readonly cutSeparateScale: number;
-  readonly cutDampingScale: number;
   /** Multipliers on the overkill knock-back (`shipTuning(kind)
    *  .wreckKnockSpeed` / `.wreckKnockMax`, applied there so every reader
    *  gets the profile's value). */
@@ -211,8 +204,6 @@ const CAPITAL: DestructionProfile = {
   separateScale: 1,
   spinScale: 1,
   dampingScale: 1,
-  cutSeparateScale: 1,
-  cutDampingScale: 1,
   knockScale: 1,
   knockMaxScale: 1,
   // Heavy chunks are knocked by every hit and drift on (owner, 2026-11-13).
@@ -303,15 +294,6 @@ const SUBCAP: DestructionProfile = {
   // from a 2 rad/s turn). Lock: `wreckPieces.subcapParting.test.ts`.
   spinScale: 0.3,
   dampingScale: 10,
-  // A weapon's cut kill (beam take 7 review, 2026-11-15): with the ×240 kick
-  // and ×10 damping a heavy-beam slice threw a frigate's halves apart at
-  // ~177 u/s (3.7 radii/s) and they were at rest ~3 s later: an explosion,
-  // then frozen. A clean slice parts at ~0.6 radius/s (frigate ~30 u/s) and
-  // drifts on under 0.09/s damping (still above the 6 u/s settle speed 6 s
-  // later, the gap still widening ~2 radii from 3 s to 8 s). Lock:
-  // `wreckPieces.subcapParting.test.ts` "parts gently and keeps drifting".
-  cutSeparateScale: 40,
-  cutDampingScale: 1.5,
   // Shots on debris shove it a little (owner, slice 2 report): a small-arms
   // hit moves half a fighter wreck ~10-25 u/s, a naval shell at most ~18
   // u/s (fighter), then the damping slows it. The capital rule ("a blow
@@ -365,8 +347,6 @@ const NONE: DestructionProfile = {
   separateScale: 1,
   spinScale: 1,
   dampingScale: 1,
-  cutSeparateScale: 1,
-  cutDampingScale: 1,
   knockScale: 1,
   knockMaxScale: 1,
   knockWakeScale: 0,

@@ -2321,7 +2321,7 @@ line; a railgun kill erases a straight channel as wide as the bolt.
 #### Sub-cap cut kills (beam take 7 review, 2026-11-15)
 
 A hostile film review of a heavy-beam slice kill on a missile frigate saw
-three faults. Causes and fixes (profile data, no branch):
+three faults. Causes and fixes for the first two (profile data, no branch):
 
 - **The two halves looked like different objects** (one nearly black with
   thin blue/white edge stripes, the other the frigate's normal lit blue).
@@ -2354,23 +2354,13 @@ three faults. Causes and fixes (profile data, no branch):
   at first sight. An un-cut sub-cap wreck keeps its 1 s simple glow. Lock:
   `swarmSpriteUpdater.subcapWreck.test.ts` "a sub-cap cut kill glows like
   a capital cut".
-- **The halves flew apart, then stopped dead.** A cut kill took the un-cut
-  break-up's numbers: `separateScale` 240 (seams open at 0.672 × 240 =
-  161 u/s; the frigate's halves parted at 177 u/s, 3.7 radii/s, each piece
-  ~80-100 u/s) and damping ×10 (0.6/s: 83 % of the gap is made in 3 s,
-  and the pieces fall to the 6 u/s settle speed and sleep ~3-5 s after the
-  kill). Profile fields `cutSeparateScale` / `cutDampingScale` (capital 1 /
-  1, byte-identical; sub-cap 40 / 1.5) replace them on a cut kill:
-  `buildWreckPieces` reads `cutSeparateScale` when the fracture has a cut,
-  and `wreckBodyParams(kind, cut)` the damping, on the server
-  (`CapitalWreckSubsystem.onDeath`) and in the client's predWorld twin
-  (`WreckClientLeaf`, from `WreckGeometryStore.cutKill`, #15). Measured
-  (frigate, slice along the hull): the halves part at 29.6 u/s (0.62
-  radius/s; pieces 18.7 and 12.2 u/s), damping 0.09/s, gap 28 u at 1 s,
-  78 u at 3 s, 169 u at 8 s, ~330 u in all; the slower piece reaches the
-  settle speed ~8 s after the kill, the faster ~12.6 s. Locks:
-  `wreckPieces.subcapParting.test.ts` "a sub-cap slice kill parts gently
-  and keeps drifting", `CapitalWreckSubsystem.test.ts` "cut damping".
+- **The halves flew apart, then stopped dead (reported, not changed
+  here).** A cut kill takes the un-cut break-up's numbers: `separateScale`
+  240 (the frigate's halves parted at ~177 u/s, 3.7 radii/s) and damping
+  ×10 (at rest ~3-5 s after the kill). Wreck and scrap MOTION belongs to the
+  salvage stream (owner + salvage session, 2026-11-15): every push becomes
+  an impulse against the piece's real mass, so heavy pieces drift slowly.
+  This PR leaves the parting kick and damping as they were.
 - **The 60 u strip on a small hull (reported, not changed).** The heavy
   beam's slice is `HEAVY_BEAM_WIDTH` (60 u) wide; the frigate is 64 × 88 u
   (radius 48). Across 7 beam bearings (0-90°, 3 seeds, slice through the

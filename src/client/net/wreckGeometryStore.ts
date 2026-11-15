@@ -252,11 +252,6 @@ export class WreckGeometryStore {
     return this.byId.has(wreckId);
   }
 
-  /** Was this wreck a weapon's cut kill (its descriptor has a `cutKind`)? */
-  cutKill(wreckId: number): boolean {
-    return this.byId.get(wreckId)?.desc.cutKind !== undefined;
-  }
-
   /** One piece of a known wreck, or null (unknown wreck / bad index / a
    *  child whose chain is not resolvable yet). The wreck's pieces are
    *  fractured on the first call and cached. */

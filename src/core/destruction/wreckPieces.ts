@@ -96,28 +96,22 @@ export interface WreckBodyParams {
 }
 
 const wreckBodyParamsCache = new Map<string, WreckBodyParams>();
-const wreckCutBodyParamsCache = new Map<string, WreckBodyParams>();
 
 /** The body parameters of a wreck piece of `kindId` (cached per kind: read
- *  at spawn, never allocates after the first call). `cut`: the wreck is a
- *  weapon's cut kill (its descriptor has a `cutKind`); its pieces take the
- *  profile's `cutDampingScale` (beam take 7 review, 2026-11-15: a sliced
- *  frigate's halves stopped dead ~3 s after the kill). */
-export function wreckBodyParams(kindId: ShipKindId, cut = false): WreckBodyParams {
-  const cache = cut ? wreckCutBodyParamsCache : wreckBodyParamsCache;
-  let p = cache.get(kindId);
+ *  at spawn, never allocates after the first call). */
+export function wreckBodyParams(kindId: ShipKindId): WreckBodyParams {
+  let p = wreckBodyParamsCache.get(kindId);
   if (p === undefined) {
     const kind = getShipKind(kindId);
     const prof = DESTRUCTION_PROFILES[shipTuning(kind).destruction];
-    const damp = cut ? prof.cutDampingScale : prof.dampingScale;
     p = {
       collisionGroups: prof.piecesCollide ? WRECK_COLLISION_GROUPS : SUBCAP_WRECK_COLLISION_GROUPS,
-      linearDamping: WRECK_LINEAR_DAMPING * damp,
-      angularDamping: WRECK_ANGULAR_DAMPING * damp,
+      linearDamping: WRECK_LINEAR_DAMPING * prof.dampingScale,
+      angularDamping: WRECK_ANGULAR_DAMPING * prof.dampingScale,
       settleSpeed: prof.settlePerRadius * kind.radius,
       settleSpin: prof.settleSpin,
     };
-    cache.set(kindId, p);
+    wreckBodyParamsCache.set(kindId, p);
   }
   return p;
 }
@@ -467,10 +461,7 @@ export function buildWreckPieces(input: WreckBuildInput): WreckBuild {
   // The profile's seam scale (capital 1: byte-identical; a sub-cap's cracks
   // open wide enough to read at fleet zoom). The spin above keeps the raw
   // `wreckSeparate`.
-  // A weapon's cut kill parts at the profile's own `cutSeparateScale` (a
-  // clean slice parts gently; beam take 7 review, 2026-11-15).
-  const prof = DESTRUCTION_PROFILES[tuning.destruction];
-  const sep = tuning.wreckSeparate * (fracture.cutKind !== undefined ? prof.cutSeparateScale : prof.separateScale);
+  const sep = tuning.wreckSeparate * DESTRUCTION_PROFILES[tuning.destruction].separateScale;
   // A channel's (or a wide slice's) two banks part like a shared cut (its
   // width, scaled frame).
   const seams = findSeams(geom, fracture.cutKind !== undefined ? (fracture.cutW ?? 0) * s : 0);

@@ -34,9 +34,6 @@ export type PredWorldHandle = Pick<
 export interface WreckGeometrySource {
   has(wreckId: number): boolean;
   piece(wreckId: number, index: number): WreckPieceGeometry | null;
-  /** A weapon's cut kill (the descriptor has a `cutKind`): its pieces take
-   *  the profile's cut damping (`wreckBodyParams(kind, true)`, #15). */
-  cutKill?(wreckId: number): boolean;
 }
 
 /** The hostility-ledger surface a drone leaf touches (register / unregister). */

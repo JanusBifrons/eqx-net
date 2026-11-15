@@ -323,9 +323,7 @@ export class CapitalWreckSubsystem {
     const profile = DESTRUCTION_PROFILES[tuning.destruction];
     const held = profile.holdMs > 0 && fracture.cutKind === undefined;
     const crackTicks = held ? wreckCrackTicks() : 0;
-    // A cut kill's pieces take the profile's cut damping (the client's
-    // predWorld twin reads the same off the descriptor's `cutKind`, #15).
-    const body = wreckBodyParams(kindId, fracture.cutKind !== undefined);
+    const body = wreckBodyParams(kindId);
     const fifo = profile.id === 'capital' ? this.live : this.liveSubcap;
     let hullMass = 0;
     for (const p of pieces) hullMass += p.mass;
