@@ -64,8 +64,9 @@ interface WeaponDefBase {
 }
 
 /** What a hit lands on, for `weaponTargetFactor`: a raised shield, an exposed
- *  (or shieldless) ship hull, a structure, or a capital wreck piece. */
-export type WeaponTargetClass = 'shield' | 'hull' | 'structure' | 'wreck';
+ *  (or shieldless) ship hull, a structure, a capital wreck piece, or an
+ *  asteroid ('rock': scales the ore a hit draws, server `OreDraw`). */
+export type WeaponTargetClass = 'shield' | 'hull' | 'structure' | 'wreck' | 'rock';
 
 /** `WeaponDefBase.targetFactor`: a damage multiplier per target class. */
 export type WeaponTargetFactor = { readonly [K in WeaponTargetClass]?: number };
@@ -75,10 +76,12 @@ export type WeaponTargetFactor = { readonly [K in WeaponTargetClass]?: number };
 export const WRECK_DEFAULT_TARGET_FACTOR = 0.1;
 
 /** The damage multiplier `def` applies against `cls`. Pure, allocation-free.
- *  Every class defaults to 1 except 'wreck' (`WRECK_DEFAULT_TARGET_FACTOR`):
- *  wreck pieces take no damage, the factor scales only their integrity wear. */
+ *  Every class defaults to 1 except wreck (`WRECK_DEFAULT_TARGET_FACTOR`:
+ *  wreck pieces take no damage, the factor scales only their integrity wear)
+ *  and rock (0: only a weapon that names a rock factor, the mining laser,
+ *  mines ore). */
 export function weaponTargetFactor(def: WeaponDef, cls: WeaponTargetClass): number {
-  return def.targetFactor?.[cls] ?? (cls === 'wreck' ? WRECK_DEFAULT_TARGET_FACTOR : 1);
+  return def.targetFactor?.[cls] ?? (cls === 'wreck' ? WRECK_DEFAULT_TARGET_FACTOR : cls === 'rock' ? 0 : 1);
 }
 
 /** Resolve `def`'s factors for one hit into the per-layer multiplier the
@@ -472,7 +475,8 @@ export const MINING_LASER_WIDTH = HEAVY_BEAM_WIDTH / 4;
  * The MINING LASER (plan partitioned-chasing-lark PR 7): a salvage beam (no
  * ship carries it yet), an ordinary hitscan beam like the heavy beam. Its
  * factors make it a tool: nothing on a raised shield, 5 % on a live hull or a
- * structure, full on a wreck piece (wear lands with PR 5); a hit its factor
+ * structure, full on a wreck piece (wear lands with PR 5); on a rock it
+ * draws ore (the server's `OreDraw`; no other weapon mines); a hit its factor
  * zeroes is no hostile act (`SectorRoom.applyDamage`). Its narrow slice cuts
  * along the beam. 120 × 6 Hz = 720/s on a wreck, 36/s on a bare hull; energy
  * 12/shot = 72/s, under a capital's 120/s regen, so it holds on (the heavy
@@ -483,7 +487,7 @@ const MINING_LASER_DEF: HitscanWeaponDef = {
   id: 'mining_laser', displayName: 'Mining laser', mode: 'hitscan',
   damage: 120, cooldownTicks: 10, range: 12_000, energyCost: 12,
   killCut: { kind: 'slice', width: MINING_LASER_WIDTH },
-  targetFactor: { shield: 0, hull: 0.05, structure: 0.05, wreck: 1 },
+  targetFactor: { shield: 0, hull: 0.05, structure: 0.05, wreck: 1, rock: 1 },
 };
 
 /**

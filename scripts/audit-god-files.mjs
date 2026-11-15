@@ -81,7 +81,7 @@ const ALLOWLIST = {
   'src/client/render/galaxy/GalaxyMapLayer.ts': { cap: 1089, target: 600, reason: RATCHET_ONLY },
   'src/client/render/pixi/ConnectorRenderer.ts': { cap: 958, target: 600, reason: RATCHET_ONLY },
   'src/client/render/pixi/structureVisuals.ts': { cap: 739, target: 600, reason: RATCHET_ONLY },
-  'src/client/render/pixi/wreckArt.ts': { cap: 1925, target: 600, reason: RATCHET_ONLY },
+  'src/client/render/pixi/wreckArt.ts': { cap: 1740, target: 600, reason: RATCHET_ONLY },
   'src/client/render/worker/Camera.ts': { cap: 792, target: 600, reason: RATCHET_ONLY },
   'src/client/render/worker/WorkerRendererClient.ts': {
     cap: 844,
@@ -94,7 +94,7 @@ const ALLOWLIST = {
   'src/core/bases/growBase.ts': { cap: 740, target: 600, reason: RATCHET_ONLY },
   'src/core/contracts/IRenderer.ts': { cap: 1171, target: 600, reason: RATCHET_ONLY },
   'src/core/destruction/fractureHull.ts': { cap: 1756, target: 600, reason: RATCHET_ONLY },
-  'src/core/physics/World.ts': { cap: 1287, target: 600, reason: RATCHET_ONLY },
+  'src/core/physics/World.ts': { cap: 1263, target: 600, reason: RATCHET_ONLY },
   'src/core/physics/worker.ts': { cap: 792, target: 600, reason: RATCHET_ONLY },
   'src/server/cargo/StorageService.ts': { cap: 901, target: 600, reason: RATCHET_ONLY },
   'src/server/economy/ConvoyDirector.ts': { cap: 605, target: 600, reason: RATCHET_ONLY },

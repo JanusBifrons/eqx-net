@@ -59,13 +59,16 @@ function makeEmptyRing(): PoseRingEntry[] {
  *
  * `nowMs` is injected so unit tests can pass a deterministic clock; default
  * is `performance.now()`. `stampByTick` stamps the pose ring with
- * `swarmArrivalStampMs(tick, nowMs)` instead (the live client).
+ * `swarmArrivalStampMs(tick, nowMs)` instead (the live client). `keep`: ids
+ * a full snapshot must not sweep (a ship whose death is held for its drawn
+ * shell, `DrawnShellTiming.swarmKills`; released within the hold's bound).
  */
 export function decodeSwarmPacket(
   input: ArrayBuffer | ArrayBufferView,
   mirror: RenderMirror,
   nowMs: number = performance.now(),
   stampByTick = false,
+  keep?: { has(id: number): boolean },
 ): void {
   // Build a DataView that reads the live bytes regardless of whether the
   // input is a raw ArrayBuffer, a Uint8Array view, or a SharedArrayBuffer-
@@ -145,6 +148,8 @@ export function decodeSwarmPacket(
     const componentIndexForEntry =
       kind === SWARM_KIND_SCRAP || kind === SWARM_KIND_WRECK ? componentIndex : undefined;
     const wreckId = kind === SWARM_KIND_WRECK ? wreckIdRaw : undefined;
+    // v6: the same u16 is an asteroid's shape seed.
+    const shapeSeed = kind === 0 ? wreckIdRaw : undefined;
     // P2c — an asteroid's resource kind rides the same byte (0 = rock).
     const asteroidResource = kind === 0 && shipKindByte !== 0 ? asteroidResourceFromIndex(shipKindByte) : undefined;
 
@@ -165,6 +170,7 @@ export function decodeSwarmPacket(
         ...(componentIndexForEntry !== undefined ? { componentIndex: componentIndexForEntry } : {}),
         ...(wreckId !== undefined ? { wreckId } : {}),
         ...(asteroidResource !== undefined ? { asteroidResource } : {}),
+        ...(shapeSeed !== undefined ? { shapeSeed } : {}),
         prevX: x, prevY: y, prevAngle: angle,
         prevArrivalMs: nowMs, latestArrivalMs: nowMs,
         poseRing: ring,
@@ -192,7 +198,13 @@ export function decodeSwarmPacket(
       if (shipKindId) entry.shipKind = shipKindId;
       if (componentIndexForEntry !== undefined) entry.componentIndex = componentIndexForEntry;
       if (wreckId !== undefined) entry.wreckId = wreckId;
-      if (asteroidResource !== undefined) entry.asteroidResource = asteroidResource;
+      // An asteroid record is authoritative for both fields: a reused wire id
+      // must not keep the previous rock's resource (absent = plain rock).
+      if (kind === 0) {
+        if (asteroidResource !== undefined) entry.asteroidResource = asteroidResource;
+        else if (entry.asteroidResource !== undefined) delete entry.asteroidResource;
+        entry.shapeSeed = wreckIdRaw;
+      }
       entry.sleeping = sleeping;
       entry.shieldDown = shieldDown;
       entry.lastUpdateTick = tick;
@@ -216,7 +228,7 @@ export function decodeSwarmPacket(
     // every Nth full refresh, and its lifetime is owned by the room-state
     // `structures` row (ColyseusClient.syncStructures removes its entry).
     for (const [id, e] of swarm) {
-      if (!seen.has(id) && e.kind !== SWARM_KIND_STRUCTURE) swarm.delete(id);
+      if (!seen.has(id) && e.kind !== SWARM_KIND_STRUCTURE && keep?.has(id) !== true) swarm.delete(id);
     }
   }
 }

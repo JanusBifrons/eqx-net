@@ -81,12 +81,12 @@ export function scrapHandleFor(actx: ShipArtCtx, key: string, parentKind: string
 /** An asteroid's handle. Its turn is taken once, when first seen: a slowly
  *  turning rock keeps that lighting rather than re-baking as it turns. */
 export function rockHandleFor(
-  actx: ShipArtCtx, key: string, entityId: number, radius: number, resource: string | undefined, rot: number,
+  actx: ShipArtCtx, key: string, shapeSeed: number, radius: number, resource: string | undefined, rot: number,
 ): ArtHandle | null {
   if (!actx.art) return null;
   let h = actx.handles.get(key);
-  if (!h || h.stale === true || h.job.type !== 'rock' || h.job.entityId !== entityId || h.job.radius !== radius || h.job.resource !== resource) {
-    h = actx.art.rock(entityId, radius, resource, rot);
+  if (!h || h.stale === true || h.job.type !== 'rock' || h.job.shapeSeed !== shapeSeed || h.job.radius !== radius || h.job.resource !== resource) {
+    h = actx.art.rock(shapeSeed, radius, resource, rot);
     actx.handles.set(key, h);
   }
   return h;
@@ -133,8 +133,6 @@ export function ownerLivery(owner: string): OwnerLivery {
   if (!l) { l = { team: teamColorOf(owner), sigil: teamSigilOf(owner), edge: teamEdgeOf(owner) }; ownerLiveries.set(owner, l); }
   return l;
 }
-/** Wreckage whose owner is unknown wears neutral grey scrap under a livery. */
-export const SCRAP_TEAM = 0x8a93a1;
 
 /** A live swarm ship's art. Classic look: a patrol bakes its faction paint.
  *  Livery (`actx.livery`): the owner (faction, else the kind's allegiance)
@@ -147,13 +145,14 @@ export function shipArtHandleForEntity(actx: ShipArtCtx, key: string, kind: stri
   return shipHandleFor(actx, key, kind, faction !== undefined ? npcFactionDef(faction)?.color : undefined);
 }
 
-/** A wreck piece's parent art. Under a livery: the owner's livery when the
- *  entry names one, else neutral grey scrap (never a bright fresh bake). */
+/** A wreck piece's parent art: the bake its live hull wore (no new bake),
+ *  so under a livery the owner resolves as `shipArtHandleForEntity` does
+ *  (the entry's faction, else the kind's allegiance). A neutral "unknown
+ *  owner" livery was a NEW capital bake (~10 s of forging), and the pieces
+ *  drew as flat grey polygons until it landed. `dead` (a sub-cap's dead
+ *  bake, `fx.deadArt`) keeps its own job. */
 export function wreckArtHandleFor(actx: ShipArtCtx, key: string, kind: string, faction: string | undefined, dead: boolean): ReturnType<typeof shipHandleFor> {
   if (actx.livery === undefined) return shipHandleFor(actx, key, kind, undefined, dead);
-  if (faction !== undefined) {
-    const lv = ownerLivery(faction);
-    return shipHandleFor(actx, key, kind, undefined, dead, lv.team, lv.sigil, lv.edge);
-  }
-  return shipHandleFor(actx, key, kind, undefined, dead, SCRAP_TEAM);
+  const lv = ownerLivery(faction ?? allegianceOfKind(kind));
+  return shipHandleFor(actx, key, kind, undefined, dead, lv.team, lv.sigil, lv.edge);
 }

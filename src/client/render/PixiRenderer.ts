@@ -73,7 +73,7 @@ import {
 import { newSpeedFxSample, speedFxSampleInto } from './camera/speedFxSample';
 import { GroupBoundsScanner } from './camera/groupBounds';
 import type { CameraCue, CameraGroup } from '@core/contracts/cameraScript';
-import { REMOTE_BEAM_STYLE, LIVE_BEAM_STYLE, liveBeamLook, liveBeamLine, MINING_BEAM_STYLE, remoteBeamStyleForMount, remoteBeamLine, remoteBeamSolidLen, addBeamLights, beamLightBudget, BeamHitMemory, type RemoteBeamLine } from './beamStyles';
+import { REMOTE_BEAM_STYLE, LIVE_BEAM_STYLE, liveBeamLook, liveBeamLine,MINING_BEAM_STYLE, remoteBeamStyleForMount, remoteBeamLine, remoteBeamSolidLen, addBeamLights, beamLightBudget, BeamHitMemory, type RemoteBeamLine } from './beamStyles';
 import { MountVisualManager } from './MountVisualManager';
 import { BackgroundGrid } from './BackgroundGrid';
 import { StarfieldBackground } from './StarfieldBackground';
@@ -389,7 +389,6 @@ export class PixiRenderer implements IRenderer {
    *  (JS Map preserves insertion order). */
   /** Scratch for `remoteBeamLine` (one per frame loop, #14). */
   private readonly _remoteBeamLine: RemoteBeamLine = { fromX: 0, fromY: 0, toX: 0, toY: 0 };
-  private readonly _liveBeamLine: RemoteBeamLine = { fromX: 0, fromY: 0, toX: 0, toY: 0 };
   private readonly _beamHitMem = new BeamHitMemory(); // the cut stays lit through a kill follow-through
   private readonly _remoteBeamCache: Array<{
     shooterId: string;
@@ -962,7 +961,7 @@ export class PixiRenderer implements IRenderer {
       wrecks: new WreckGeometryStore(),
       // S3: each wreck's death clock; a fresh wreck's break-up (dust, shards,
       // flash at the kill point) goes through the effects system, tier-capped.
-      wreckArt: new WreckArtState((x, y, radius, snap, seed, wfx, channel) => {
+      wreckArt: new WreckArtState((x, y, radius, snap, seed, wfx, channel, cut) => {
         // Money-shot review: a short small core flash + dust + shards
         // (WreckBreakFx) and fireballs at the kill point, sized by the hull
         // (FxExplosions, the same blasts every death uses), never a disc
@@ -971,7 +970,9 @@ export class PixiRenderer implements IRenderer {
         // sub-capital never reaches here: its ship's own death blast plays).
         if (wfx.breakBurst) {
           this._wreckBreaks++;
-          this.effects?.spawnBurst('wreck-break', x, y, { radius, ...(snap ? { flashScale: 1.6 } : {}) });
+          // A weapon's kill cut: the shards are toned down (WreckBreakFx) so
+          // the cut reads first (beam take 8 review: "confetti").
+          this.effects?.spawnBurst('wreck-break', x, y, { radius, ...(snap ? { flashScale: 1.6 } : {}), ...(cut ? { cutKill: true } : {}) });
           // A railgun channel kill: glowing ash and sparks along the channel
           // (a line emitter on the same break-up pool, tier-capped there).
           if (channel !== null) {
@@ -2124,12 +2125,8 @@ export class PixiRenderer implements IRenderer {
         const mountIdx = localMounts.findIndex((m) => m.id === mountId);
         const mount = mountIdx >= 0 ? localMounts[mountIdx] : undefined;
         const currentMountAngle = mountIdx >= 0 ? (localShip.mountAngles?.[mountIdx] ?? 0) : 0;
-        const origin = applyMountOffset(localShip.x, localShip.y, localShip.angle, mount);
-        const fireAngle = localShip.angle + (mount?.baseAngle ?? 0) + currentMountAngle;
-        // `beam.dist` runs from the barrel tip `updateLiveBeam` cast from (the
-        // shared muzzle), so the drawn end is the ray's hit point.
-        const muzzleD = mount ? shipShotMuzzle(localKind, mount) : shipTuning(localKind).muzzleClearance;
-        const line = liveBeamLine(origin.x, origin.y, fireAngle, muzzleD, beam.dist, this._liveBeamLine);
+        // From the barrel tip (the shared muzzle the client ray is cast from).
+        const line = liveBeamLine(localKind, mount, localShip.x, localShip.y, localShip.angle, currentMountAngle, beam.dist, this._remoteBeamLine);
         const fromX = line.fromX, fromY = line.fromY, toX = line.toX, toY = line.toY;
         let slot = this._liveBeamCache[slotIdx];
         if (!slot) {

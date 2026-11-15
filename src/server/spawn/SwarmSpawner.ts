@@ -3,7 +3,7 @@ import { SLOT_X_OFF, SLOT_Y_OFF, SLOT_VX_OFF, SLOT_VY_OFF, SLOT_ANGLE_OFF, SLOT_
 import { SwarmEntityRegistry, SWARM_KIND_WRECK, type SwarmKind } from '../net/SwarmEntityRegistry.js';
 import type { IAiBehaviour } from '../../core/contracts/IAiBehaviour.js';
 import type { SpatialGrid } from '../interest/SpatialGrid.js';
-import { generateAsteroidVertices, asteroidResources, type Vec2 } from '../../core/swarm/asteroidShape.js';
+import { generateAsteroidVertices, asteroidResources, asteroidShapeSeed, type Vec2 } from '../../core/swarm/asteroidShape.js';
 import { ASTEROID_DEFAULT_MASS } from '../../core/swarm/asteroidConstants.js';
 import { STRUCTURE_DEFAULT_MASS } from '../../core/swarm/structureConstants.js';
 import { SCRAP_DEFAULT_MASS, SCRAP_LINEAR_DAMPING } from '../../core/swarm/scrapConstants.js';
@@ -383,7 +383,10 @@ export class SwarmSpawner {
     let vertices: ReadonlyArray<Vec2> | undefined;
     let mass = a.mass;
     if (kind === 0) {
-      vertices = generateAsteroidVertices(rec.entityId, a.radius);
+      // Shape from the STABLE id (macro terrain 1a): wire ids are reused, so
+      // seeding by `entityId` would reshape a rock that leaves and returns.
+      rec.shapeSeed = asteroidShapeSeed(a.id);
+      vertices = generateAsteroidVertices(rec.shapeSeed, a.radius);
       rec.vertices = vertices;
       mass ??= ASTEROID_DEFAULT_MASS;
       // WS-4 / R2.27 — seed the finite mineable resource pool from the

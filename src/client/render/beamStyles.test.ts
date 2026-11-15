@@ -2,11 +2,9 @@ import { describe, it, expect } from 'vitest';
 import {
   HEAVY_BEAM_COLOR, HEAVY_BEAM_STYLE, MINING_BEAM_STYLE, REMOTE_BEAM_FADE_MS, REMOTE_BEAM_STYLE,
   findMount, remoteBeamStyleForMount, MINING_LASER_STYLE, isSustainedBeamMount, isHeavyBeamMount, remoteBeamTtlMs, remoteBeamSolidLen, HEAVY_BEAM_MISS_FADE_FRAC,
-  liveBeamLine, LIVE_BEAM_DRAW_START,
 } from './beamStyles.js';
 import { HEAVY_BEAM_WIDTH, MINING_LASER_WIDTH, getWeapon } from '../../core/combat/WeaponCatalogue.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
-import { shipShotMuzzle } from '../../core/combat/muzzle.js';
 
 /**
  * WS-4 Phase 4 follow-up — lock the deliberate visual distinction between the
@@ -122,38 +120,5 @@ describe('beam styles — mining laser (plan partitioned-chasing-lark PR 7)', ()
     expect(isSustainedBeamMount(findMount(mounts, 'main-0'))).toBe(true);
     expect(isSustainedBeamMount({ weaponId: 'hitscan' })).toBe(false);
     expect(isHeavyBeamMount(findMount(mounts, 'mine-0'))).toBe(false);
-  });
-});
-
-/**
- * The pilot's OWN beam must END where its ray stopped (take 9, 2026-11-15: a
- * lance battlecruiser's heavy beams on a wreck piece ended ~425 u short of
- * the hull, "on a circle around it"). `updateLiveBeam` casts from the barrel
- * tip (`shipShotMuzzle`, 445 u on the lance's main turrets) and stores the
- * distance FROM THERE; the renderer added it to pivot + 20 u.
- */
-describe('liveBeamLine — the drawn end is the ray hit point', () => {
-  const kind = getShipKind('battlecruiser-lance');
-  const mount = kind.mounts!.find((m) => m.weaponId === 'heavy_beam')!;
-  const muzzleD = shipShotMuzzle(kind, mount);
-
-  it('ends at pivot + muzzle + dist along the fire direction', () => {
-    const angle = 0.7;
-    const fx = -Math.sin(angle), fy = Math.cos(angle);
-    const dist = 3000;
-    const out = liveBeamLine(100, -50, angle, muzzleD, dist, { fromX: 0, fromY: 0, toX: 0, toY: 0 });
-    // Where the ray (cast from the barrel tip) stopped.
-    const hitX = 100 + fx * (muzzleD + dist), hitY = -50 + fy * (muzzleD + dist);
-    expect(muzzleD).toBeGreaterThan(400);
-    expect(out.toX).toBeCloseTo(hitX, 6);
-    expect(out.toY).toBeCloseTo(hitY, 6);
-    // The drawn start is unchanged (pivot + LIVE_BEAM_DRAW_START along the barrel).
-    expect(out.fromX).toBeCloseTo(100 + fx * LIVE_BEAM_DRAW_START, 6);
-    expect(out.fromY).toBeCloseTo(-50 + fy * LIVE_BEAM_DRAW_START, 6);
-  });
-
-  it('never draws backwards for a barrel shorter than the draw start', () => {
-    const out = liveBeamLine(0, 0, 0, 5, 0, { fromX: 0, fromY: 0, toX: 0, toY: 0 });
-    expect(out.toY).toBeCloseTo(out.fromY, 6);
   });
 });

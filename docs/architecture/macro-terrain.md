@@ -2,7 +2,7 @@
 
 <!-- showcase-exempt: Stage 0 harness only; the terrain-stress shot lands in slice 0d -->
 
-Status: **Stage 0 (stress harness) in progress.** Plan approved by the owner on 2026-11-15; the plan file is `tender-humming-whisper.md` in the plans folder.
+Status: **Stage 0 (stress harness) in progress; slice 1a (shape seed) done.** Plan approved by the owner on 2026-11-15; the plan file is `tender-humming-whisper.md` in the plans folder.
 
 ## Why
 
@@ -50,6 +50,25 @@ The density is one rock per ~250,000 u² (about 500 u apart).
 
 Pending: slice 0c fills this in from desktop and `--device phone-proxy` runs.
 
+## Stage 1: deep sleep
+
+### 1a: a rock's shape comes from its stable id
+
+A rock must keep its outline when it leaves the world and comes back (deep sleep), so its shape cannot depend on its wire id, which is reused.
+
+- **Seed:** each rock's shape seed is `asteroidShapeSeed(rec.id)`, a u16 hash of its stable registry id. It is computed once at spawn (`SwarmSpawner`) and kept on the record as `rec.shapeSeed`.
+- **Wire:** the seed rides the swarm wire in the u16 at +34 (`SWARM_REC_SHAPE_SEED_OFF`), the same bytes a wreck piece uses for its `wreckId` and that a rock left empty. Because the meaning of those bytes changed for rocks, `SWARM_WIRE_VERSION` went 5 → 6: an old client would have drawn the wrong outlines.
+- **Client:** the decoder keeps the seed on the mirror entry, and the prediction collider, the sprite and the baked art all build from it. `FORGE_VERSION` bumped, so rock art re-bakes.
+- **Determinism:** `generateAsteroidVertices` uses arithmetic only.
+  - Directions come from `unitDirFromSteps` (`core/geometry/unitDir.ts`). This is the Taylor-series helper the capital fracture already used, moved there so there is one copy.
+  - `Math.sin`/`Math.cos` are not bit-exact across JS engines. Field rocks will be derived on the client, so every browser must produce the server's vertices.
+- **Decoder fix:** an asteroid record now clears a stale `asteroidResource` when a plain rock reuses a wire id.
+- **Locks:**
+  - `SwarmSpawner.test.ts`: an outline survives a different wire id.
+  - `tests/unit/swarmWireRoundTrip.test.ts`: the seed round-trips, and a reused id keeps no old seed or resource.
+  - `unitDir.test.ts`: within 1e-12 of cos/sin at every step.
+
 ## History
 
-- 2026-11-15: plan approved; slice 0a adds the terrain stress scenes and the `swarmAtRest` bulk-seed option.
+- 2026-11-15: plan approved; slice 0a adds the terrain stress scenes and the `swarmAtRest` bulk-seed option. The first desktop timing run was invalid throughout (other sessions kept the host at 30–100 % CPU); timings wait for a quiet host.
+- 2026-11-15: slice 1a, rock shapes seeded by the stable id, swarm wire v6.

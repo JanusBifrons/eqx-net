@@ -22,7 +22,7 @@ import { Container, Mesh, Texture, TextureSource } from 'pixi.js';
 import { updateSwarmSprites, type SwarmSpriteCtx } from './swarmSpriteUpdater.js';
 import { MountVisualManager } from '../MountVisualManager.js';
 import { WreckGeometryStore, rebuildWreckPieces } from '../../net/wreckGeometryStore.js';
-import { WreckArtState, WreckPieceSprite, deathBlastFor, hullDeathBlastReplaced } from './wreckArt.js';
+import { GLOW_TINT_SLICE, WreckArtState, WreckPieceSprite, deathBlastFor, hullDeathBlastReplaced, wreckGlowAt } from './wreckArt.js';
 import { radarCategoryForSwarm } from '../halo/arrowGraphics.js';
 import { FarZoomIcons } from './FarZoomIcons.js';
 import { DESTRUCTION_PROFILES } from '../../../shared-types/shipScale/destruction.js';
@@ -30,7 +30,11 @@ import { DAMAGE_FLASH_COLOR } from './spriteBuilders.js';
 import type { ArtHandle, ArtService, ShipArt } from '../art/ArtService.js';
 import type { RenderMirror, SwarmRenderState, PoseRingEntry } from '../../../core/contracts/IRenderer.js';
 import { POSE_RING_DEPTH } from '../../../core/contracts/IRenderer.js';
-import { FRACTURE_ALGO_VERSION } from '../../../core/destruction/fractureHull.js';
+import { EDGE_CUT, FRACTURE_ALGO_VERSION } from '../../../core/destruction/fractureHull.js';
+import { buildWreckPieces, hullLocalCutAngle } from '../../../core/destruction/wreckPieces.js';
+import { shipShapeScale } from '../../../core/geometry/shipHullOutline.js';
+import { getShipKind } from '../../../shared-types/shipKinds.js';
+import { HEAVY_BEAM_WIDTH } from '../../../core/combat/WeaponCatalogue.js';
 import type { WreckDescriptor } from '../../../shared-types/messages/snapshotMessages.js';
 
 const SUB = DESTRUCTION_PROFILES.subcap.fx;
@@ -612,4 +616,75 @@ describe('sub-capital wreck pieces draw the dead bake, never the live one (take 
       for (const c of calls) expect(c, `${kind}: a piece drew the live bake`).toEqual({ id: kind, dead: true });
     });
   }
+});
+
+/** Hostile film review 2026-11-15 (heavy-beam slice of a missile frigate,
+ *  take 7): the violet cut lips vanished ~0.1 s after the beam stopped,
+ *  because a sub-cap's cut rode the 1 s simple glow (violet only to half of
+ *  it). A kill cut on a sub-cap glows like a capital's: the weapon's colour
+ *  held ~1.5 s, then an ember, dark by ~4.5 s (`fx.cutGlowStyle`). */
+describe('a sub-cap cut kill glows like a capital cut (beam take 7 review)', () => {
+  /** A heavy-beam slice kill of a missile frigate along its length (the
+   *  filmed case: two long pieces either side of the 60 u strip). */
+  function sliceDesc(): WreckDescriptor {
+    const kindId = 'missile-frigate' as const;
+    const pose = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
+    const dir = { x: 1, y: 0 };
+    const b = buildWreckPieces({
+      kindId, pose, killWorld: { x: -200, y: 0 }, attackerWorld: null, seed: 7, killBlowDamage: 0.3, recentDamageRate: 0.5,
+      cutKind: 'slice', cutAng: hullLocalCutAngle(pose, dir), cutW: HEAVY_BEAM_WIDTH / shipShapeScale(getShipKind(kindId)),
+    });
+    const f = b.fracture;
+    return {
+      wreckId: 7, parentKind: kindId, seed: f.seed, killX: f.killX, killY: f.killY,
+      killBlowDamage: f.killBlowDamage, recentDamageRate: f.recentDamageRate, snapChance: f.snapChance,
+      algoVersion: FRACTURE_ALGO_VERSION, deathTick: DEATH_TICK, cutKind: 'slice', cutAng: f.cutAng!, cutW: f.cutW!,
+    };
+  }
+
+  it('violet held ~1.5 s, an ember at 3 s, dark by 4.5 s, on both halves', () => {
+    const d = sliceDesc();
+    const geom = rebuildWreckPieces(d);
+    expect(geom.length, 'the filmed slice leaves two pieces').toBe(2);
+    const ctx = makeCtx(stubArt(fighterArt()), { breaks: 0, blasts: 0, ripples: 0 });
+    const m = mirrorFor(d, DEATH_TICK + 3);
+    const T0 = 10_000;
+    /** The brightest kill-cut (EDGE_CUT) edge of a piece now: alpha and its colour. */
+    const cutHeat = (p: WreckPieceSprite): number => {
+      const g = geom[p.pieceIndex]!;
+      let a = 0;
+      for (let i = 0; i < g.cutEdges.length; i++) if (g.cutEdges[i] === EDGE_CUT) a = Math.max(a, p.edgeHeat(i));
+      return a;
+    };
+    /** The colour of a piece's first kill-cut edge now. */
+    const cutColor = (p: WreckPieceSprite): number => {
+      const g = geom[p.pieceIndex]!;
+      return p.edgeColor(g.cutEdges.indexOf(EDGE_CUT));
+    };
+    const at =(s: number): WreckPieceSprite[] => {
+      ctx.fxNowMs = T0 + s * 1000;
+      updateSwarmSprites(m, ctx);
+      return pieces(ctx);
+    };
+    for (const p of at(0)) expect(geom[p.pieceIndex]!.cutEdges.includes(EDGE_CUT), 'each half has a kill-cut edge').toBe(true);
+    for (const p of at(1.2)) {
+      expect(cutHeat(p), 'the cut still glows at full strength 1.2 s after the kill').toBeGreaterThanOrEqual(0.95);
+      expect(cutColor(p), 'and in the beam\'s violet').toBe(wreckGlowAt(1.2, { color: 0, alpha: 0 }, GLOW_TINT_SLICE).color);
+    }
+    for (const p of at(3)) expect(cutHeat(p), 'an ember 3 s after the kill').toBeGreaterThanOrEqual(0.5);
+    for (const p of at(4.6)) {
+      expect(cutHeat(p), 'dark by ~4.5 s').toBe(0);
+      expect(p.glowPositions(), 'the glow object is gone').toBeNull();
+    }
+  });
+
+  it('an un-cut sub-cap wreck keeps the 1 s simple glow', () => {
+    const ctx = makeCtx(stubArt(fighterArt()), { breaks: 0, blasts: 0, ripples: 0 });
+    const m = mirrorFor(desc('missile-frigate', 31), DEATH_TICK + 3);
+    ctx.fxNowMs = 10_000;
+    updateSwarmSprites(m, ctx);
+    ctx.fxNowMs = 10_000 + GLOW_MS + 1;
+    updateSwarmSprites(m, ctx);
+    for (const p of pieces(ctx)) expect(p.glowPositions()).toBeNull();
+  });
 });

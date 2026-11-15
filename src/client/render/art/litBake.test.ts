@@ -39,7 +39,7 @@ describe('lit bakes', () => {
   it("a structure's or rock's turn doesn't change its lit key (the mesh turns)", () => {
     expect(bakeKey({ type: 'struct', id: 'solar', seed: 1, rot: Math.PI / 2, lit: true }))
       .toBe(bakeKey({ type: 'struct', id: 'solar', seed: 1, rot: 0, lit: true }));
-    expect(bakeKey({ type: 'rock', id: 'asteroid', entityId: 4, radius: 30, rot: 1.1, lit: true }))
-      .toBe(bakeKey({ type: 'rock', id: 'asteroid', entityId: 4, radius: 30, rot: 0, lit: true }));
+    expect(bakeKey({ type: 'rock', id: 'asteroid', shapeSeed: 4, radius: 30, rot: 1.1, lit: true }))
+      .toBe(bakeKey({ type: 'rock', id: 'asteroid', shapeSeed: 4, radius: 30, rot: 0, lit: true }));
   });
 });

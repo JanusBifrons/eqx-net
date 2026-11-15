@@ -77,13 +77,13 @@ function makeCtx(): SwarmSpriteCtx {
   };
 }
 
-/** Rail slot glows (a Container of bore + fill + head) drawn this frame:
+/** Rail slot glows (a Container of fill + head) drawn this frame:
  *  visible all the way up to the ship sprite. */
 function litRailSlots(sprite: Container): number {
   let n = 0;
   const walk = (c: Container, shown: boolean): void => {
     const on = shown && c.visible;
-    if (!(c instanceof Graphics) && c.children.length === 3 && c.children.every((k) => k instanceof Graphics)) {
+    if (!(c instanceof Graphics) && c.children.length === 2 && c.children.every((k) => k instanceof Graphics)) {
       if (on) n++;
       return;
     }

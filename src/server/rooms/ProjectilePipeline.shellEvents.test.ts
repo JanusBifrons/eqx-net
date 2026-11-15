@@ -13,7 +13,7 @@
 import { describe, expect, it } from 'vitest';
 import { ProjectilePipeline, type ProjectileRecord } from './ProjectilePipeline.js';
 import { SLOT_X_OFF, SLOT_Y_OFF, slotBase } from '../../shared-types/sabLayout.js';
-import { quantiseShellSpawn, shellPathEndTick, shellPoseAt } from '../../core/combat/shellFlight.js';
+import { quantiseShellSpawn, shellHitTick, shellPathEndTick, shellPoseAt } from '../../core/combat/shellFlight.js';
 import { shipBubbleRadius } from '../../core/combat/shipHitShape.js';
 import { getWeapon } from '../../core/combat/WeaponCatalogue.js';
 
@@ -96,6 +96,15 @@ describe('ProjectilePipeline — event shells (shell-events slice 1)', () => {
     // advance at tick 500 + k sweeps steps k → k + 1 (31.67 u each).
     const contact = 300 - shipBubbleRadius('fighter') - 4;
     expect(ends[0]!.tick).toBe(500 + Math.ceil(contact / (1900 / 60)) - 1);
+    // The other side (#15): the client waits for the drawn shell to REACH
+    // the hit, the fraction of that step it lies along (`shellHitTick`): the
+    // closed-form pose at that tick is the hit point, inside [tick, tick + 1].
+    const at = shellHitTick(0, 0, 1900, 0, 500, ends[0]!.tick, ends[0]!.x, ends[0]!.y);
+    expect(at).toBeGreaterThan(ends[0]!.tick);
+    expect(at).toBeLessThan(ends[0]!.tick + 1);
+    const pose = { x: 0, y: 0 };
+    shellPoseAt(0, 0, 1900, 0, 500, at, pose);
+    expect(pose.x).toBeCloseTo(ends[0]!.x, 6);
 
     const siege = harness([{ id: 'target', slot: 1, x: 300, y: 0 }]);
     siege.pipe.spawn('gun', 0, 0, 1900, 0, 100, 4, 400, 'naval_siege');

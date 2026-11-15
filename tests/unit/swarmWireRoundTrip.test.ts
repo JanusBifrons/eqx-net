@@ -151,6 +151,34 @@ describe('binary swarm wire — asteroid resource kind (P2c)', () => {
   });
 });
 
+describe('binary swarm wire — asteroid shape seed (v6, macro terrain 1a)', () => {
+  it('an asteroid carries its shape seed; a reused wire id never keeps the old rock\'s seed or resource', () => {
+    const registry = new SwarmEntityRegistry();
+    const encoder = new BinarySwarmBroadcast();
+    const { f32, u32 } = makeSab();
+    const ice = registry.register('belt-0-7', 3, 0, 40, 0, 0, 0);
+    ice.asteroidResource = 'ice';
+    ice.shapeSeed = 51_234; // > 255: needs the u16
+    setSlotPose(f32, 3, 0, 0, 0);
+    const mirror: RenderMirror = { ships: new Map(), localPlayerId: null };
+    decodeSwarmPacket(encoder.encode(registry, f32, u32, 60)!, mirror);
+    const first = mirror.swarm!.get(ice.entityId)!;
+    expect(first.shapeSeed).toBe(51_234);
+    expect(first.asteroidResource).toBe('ice');
+
+    // The ice rock leaves; a plain rock takes the same wire id.
+    const reusedId = ice.entityId;
+    registry.unregister('belt-0-7');
+    const plain = registry.register('belt-0-8', 3, 0, 40, 0, 0, 0);
+    plain.shapeSeed = 7;
+    expect(plain.entityId, 'the wire id is reused').toBe(reusedId);
+    decodeSwarmPacket(encoder.encode(registry, f32, u32, 120)!, mirror);
+    const second = mirror.swarm!.get(reusedId)!;
+    expect(second.shapeSeed).toBe(7);
+    expect(second.asteroidResource, 'plain rock: the old resource is cleared').toBeUndefined();
+  });
+});
+
 describe('binary swarm wire — capital wreck pieces (kind 4, v5)', () => {
   it('a wreck piece round-trips its parent kind, piece index and u16 wreckId', () => {
     const registry = new SwarmEntityRegistry();
@@ -167,7 +195,7 @@ describe('binary swarm wire — capital wreck pieces (kind 4, v5)', () => {
 
     const packet = encoder.encode(registry, f32, u32, 60);
     expect(packet, 'the wreck piece rides the wire').not.toBeNull();
-    expect(SWARM_WIRE_VERSION).toBe(5);
+    expect(SWARM_WIRE_VERSION).toBe(6);
     expect(SWARM_RECORD_BYTES).toBe(36);
     expect(packet!.byteLength).toBe(SWARM_HEADER_BYTES + 2 * SWARM_RECORD_BYTES);
     const mirror: RenderMirror = { ships: new Map(), localPlayerId: null };
