@@ -211,3 +211,14 @@ describe('classOf (a capital variant keeps its class)', () => {
     expect(classOf('heavy-cruiser')).toBe('heavy-cruiser');
   });
 });
+
+describe('classOf (a capital variant keeps its class)', () => {
+  it('strips style and fit suffixes, and only those', () => {
+    expect(classOf('battleship')).toBe('battleship');
+    expect(classOf('battleship-c')).toBe('battleship');
+    expect(classOf('light-cruiser-b')).toBe('light-cruiser');
+    // Plan section 9: a fit variant's class is its base class.
+    expect(classOf('battleship-rail')).toBe('battleship');
+    expect(classOf('heavy-cruiser')).toBe('heavy-cruiser');
+  });
+});

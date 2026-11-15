@@ -246,7 +246,7 @@ import { ROSTER_CAP, type ActivatedMount } from '../playerShips/PlayerShipStore.
 import { WeaponMountTicker } from './WeaponMountTicker.js';
 import { LockSubsystem, newLockTargetView, type LockTargetView } from './LockSubsystem.js';
 import { NpcLockSubsystem } from './NpcLockSubsystem.js';
-import { fillFireTargetShape, mountFiresOn, newFireTargetShape, type FireTargetShape } from '../../core/combat/fireControlBearing.js';
+import { fillFireTargetShape, fillRangeShape, mountFiresOn, newFireTargetShape, type FireTargetShape } from '../../core/combat/fireControlBearing.js';
 import { weaponIdReach } from '../../core/combat/mountReach.js';
 import { PhysicsWorkerProxy, type WorkerCmd } from './PhysicsWorkerProxy.js';
 import { ProjectilePipeline } from './ProjectilePipeline.js';
@@ -4650,7 +4650,7 @@ export class SectorRoom extends Room<SectorState> {
     const rec = this.swarmRegistry.get(npcId);
     if (!h || !rec || !this.swarmEntityPoseInto(npcId, this._lockPose)) return false;
     const t = this._fireRangeTarget;
-    t.kindId = h.ship.kind; t.angle = h.pose.angle; t.shieldUp = h.ship.shield > 0; t.radius = 0;
+    fillRangeShape(t, h.pose.angle, true, h.ship.kind, h.ship.shield > 0, 0);
     const nk = getShipKind(rec.shipKind ?? null);
     return mountsReachTarget(nk.mounts ?? NO_FIRE_MOUNTS, this._lockPose.x, this._lockPose.y, this._lockPose.angle, h.pose.x, h.pose.y, t);
   }
@@ -6561,11 +6561,9 @@ export class SectorRoom extends Room<SectorState> {
   private writeSwarmRangeShape(
     v: { -readonly [K in keyof MountRangeTarget]: MountRangeTarget[K] }, rec: SwarmEntityRecord,
   ): void {
-    const ship = rec.kind === 1 && rec.shipKind != null;
-    v.kindId = ship ? rec.shipKind : null;
-    v.angle = ship ? this.sabF32[slotBase(rec.slot) + SLOT_ANGLE_OFF]! : 0;
-    v.shieldUp = ship && !rec.shieldDown;
-    v.radius = ship ? 0 : rec.radius;
+    const ship = rec.kind === 1;
+    const angle = ship ? this.sabF32[slotBase(rec.slot) + SLOT_ANGLE_OFF]! : 0;
+    fillRangeShape(v, angle, ship, rec.shipKind ?? null, ship && !rec.shieldDown, rec.radius);
   }
 
   private writePilotTurretView(n: number, playerId: string): TurretTargetView | null {
@@ -6579,7 +6577,7 @@ export class SectorRoom extends Room<SectorState> {
     const kind = getShipKind(h.ship.kind);
     v.cls = targetClass(kind);
     v.signature = kind.radius;
-    v.kindId = h.ship.kind; v.angle = pose.angle; v.shieldUp = h.ship.shield > 0; v.radius = 0;
+    fillRangeShape(v, pose.angle, true, h.ship.kind, h.ship.shield > 0, 0);
     return v;
   }
 
@@ -8427,7 +8425,7 @@ export class SectorRoom extends Room<SectorState> {
     const h = this.engageablePilotHull(targetId);
     if (!h) return false;
     out.x = h.pose.x; out.y = h.pose.y;
-    out.kindId = h.ship.kind; out.angle = h.pose.angle; out.shieldUp = h.ship.shield > 0; out.radius = 0;
+    fillRangeShape(out, h.pose.angle, true, h.ship.kind, h.ship.shield > 0, 0);
     return true;
   }
 

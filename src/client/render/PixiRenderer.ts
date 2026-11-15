@@ -62,7 +62,7 @@ import { DEFAULT_SHIP_KIND } from '../../shared-types/shipKinds.js';
 import { shieldBubbleRadiusForEntity } from './pixi/shieldBubbleRadius.js';
 import { ART_OFF, type ArtOptions } from './art/artMode.js';
 import { buildArtShipSprite, isMachinedSprite, shipArtSwap, shipHandleFor, updateArtShipLight, type ShipArtCtx } from './art/shipArtSprites.js';
-import { BeamSpritePool, type BeamView } from './BeamSpritePool';
+import { BeamSpritePool, type BeamView, type BeamSpriteStyle } from './BeamSpritePool';
 import {
   CameraDirector,
   type CameraTargetLookup,
@@ -73,7 +73,7 @@ import {
 import { newSpeedFxSample, speedFxSampleInto } from './camera/speedFxSample';
 import { GroupBoundsScanner } from './camera/groupBounds';
 import type { CameraCue, CameraGroup } from '@core/contracts/cameraScript';
-import { REMOTE_BEAM_STYLE, MINING_BEAM_STYLE } from './beamStyles';
+import { REMOTE_BEAM_STYLE, MINING_BEAM_STYLE, remoteBeamStyleForMount } from './beamStyles';
 import { MountVisualManager } from './MountVisualManager';
 import { BackgroundGrid } from './BackgroundGrid';
 import { StarfieldBackground } from './StarfieldBackground';
@@ -395,6 +395,8 @@ export class PixiRenderer implements IRenderer {
     toX: number;
     toY: number;
     alpha: number;
+    /** Per-beam style override (the capital heavy beam); null = pool style. */
+    style: BeamSpriteStyle | null;
   }> = [];
   private _remoteBeamCacheCount = 0;
   /** WS-4 Phase 4 — drill-beam slots routed out of the remote-laser loop into
@@ -408,6 +410,7 @@ export class PixiRenderer implements IRenderer {
     toX: number;
     toY: number;
     alpha: number;
+    style: BeamSpriteStyle | null;
   }> = [];
   private _miningBeamCacheCount = 0;
   private initialized = false;
@@ -2023,7 +2026,7 @@ export class PixiRenderer implements IRenderer {
           const idx = isMining ? miningIdx : slotIdx;
           let slot = cache[idx];
           if (!slot) {
-            slot = { shooterId, mountId, fromX, fromY, toX, toY, alpha };
+            slot = { shooterId, mountId, fromX, fromY, toX, toY, alpha, style: null };
             cache[idx] = slot;
           }
           slot.shooterId = shooterId;
@@ -2033,6 +2036,10 @@ export class PixiRenderer implements IRenderer {
           slot.toX = toX;
           slot.toY = toY;
           slot.alpha = alpha;
+          // The capital heavy beam (plan beam-slices §8) draws thick and violet
+          // in the SAME pool: the style comes from the mount's catalogue weapon
+          // (shooter kind + mountId), no wire field.
+          slot.style = isMining ? null : remoteBeamStyleForMount(mount);
           if (!isMining) this._fxRemoteHit[idx] = laser.hit === true;
           // A beam landing on a shield is a held contact there.
           if (this._fxShieldsOn && !isMining && laser.hit && laser.targetId) this._fxShields!.beam(laser.targetId, 1 + idx, toX, toY, this._fxShieldPose);
@@ -2643,8 +2650,11 @@ export class PixiRenderer implements IRenderer {
   private beamLights(b: BeamView): void {
     const sc = litPass.scene;
     const len = Math.hypot(b.toX - b.fromX, b.toY - b.fromY);
-    sc.addLight(b.toX, b.toY, 6, 0xff6a9a, 2.2, 120);
-    sc.addLight((b.fromX + b.toX) / 2, (b.fromY + b.toY) / 2, 6, 0xff6a9a, 0.8, len * 0.6 + 30);
+    // A heavy beam lights the scene in its own colour, wider.
+    const c = b.style ? b.style.tint : 0xff6a9a;
+    const k = b.style?.glowScale ?? 1;
+    sc.addLight(b.toX, b.toY, 6, c, 2.2, 120 * k);
+    sc.addLight((b.fromX + b.toX) / 2, (b.fromY + b.toY) / 2, 6, c, 0.8, len * 0.6 + 30 * k);
   }
 
   /** Firing reactions for Machined guns (turrets T2): held beams by mount
