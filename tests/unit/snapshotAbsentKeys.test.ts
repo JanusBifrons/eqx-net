@@ -47,6 +47,7 @@ interface World {
   /** NPC lock rows on the pilot + the total of every locker. */
   lockRows?: Array<{ t: string; s: 1 | 2; p: number }>;
   lockTotal?: number;
+  lockLocked?: number;
 }
 
 function setup(world: World): { b: SnapshotBroadcaster; sent: SnapshotMessage[] } {
@@ -91,6 +92,7 @@ function setup(world: World): { b: SnapshotBroadcaster; sent: SnapshotMessage[] 
     timeScale: () => world.timeScale,
     lockedByOf: () => world.lockRows,
     lockedByTotalOf: () => world.lockTotal ?? world.lockRows?.length ?? 0,
+    lockedByLockedOf: () => world.lockLocked ?? 0,
     // Encode synchronously, like both production paths.
     sendSnapshot: (_c: Client, snap: SnapshotMessage) => {
       sent.push(ENCODERS.ws.unpack(ENCODERS.ws.pack(snap)) as SnapshotMessage);
@@ -156,7 +158,7 @@ describe('SnapshotBroadcaster — default fields are absent on the wire', () => 
     const last = sent[sent.length - 1]!;
     const st = last.states[`inst-${PID}`]!;
     for (const k of ['lastInput', 'mountAngles', 'shieldDown', 'level', 'statAlloc', 'cargo', 'depositing',
-      'groups', 'lockedBy', 'lockedByN', 'fitted', 'wallet', 'poseEpoch', 'warp', 'disabledMs', 'mounts'] as const) {
+      'groups', 'lockedBy', 'lockedByN', 'lockedByL', 'fitted', 'wallet', 'poseEpoch', 'warp', 'disabledMs', 'mounts'] as const) {
       expect(k in st, `states[].${k} absent when default`).toBe(false);
     }
     // One pilot, nothing happening: under 200 B per snapshot on both
@@ -204,11 +206,19 @@ describe('SnapshotBroadcaster — default fields are absent on the wire', () => 
     let st = sent[sent.length - 1]!.states[`inst-${PID}`]!;
     expect(st.lockedBy).toHaveLength(LOCKED_BY_WIRE_ROWS);
     expect(st.lockedByN).toBe(20);
+    // Every row locked and no completed lock off the list: no locked count.
+    expect('lockedByL' in st).toBe(false);
+    // 14 completed locks, 6 of them off the rows: the exact count rides.
+    world.lockLocked = 14;
+    for (let i = 0; i < 3; i++) b.broadcast(false);
+    st = sent[sent.length - 1]!.states[`inst-${PID}`]!;
+    expect(st.lockedByL).toBe(14);
     // Every locker on the list ⇒ no total key (the client reads the rows' count).
     world.lockTotal = LOCKED_BY_WIRE_ROWS;
     for (let i = 0; i < 3; i++) b.broadcast(false);
     st = sent[sent.length - 1]!.states[`inst-${PID}`]!;
     expect('lockedByN' in st).toBe(false);
+    expect('lockedByL' in st).toBe(false);
     expect(undefinedKeys(sent[sent.length - 1])).toEqual([]);
   });
 

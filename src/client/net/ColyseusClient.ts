@@ -3543,6 +3543,7 @@ export class ColyseusGameClient {
       this.applyFcGroups(serverState.groups);
       this.mirror.localLockedBy = serverState.lockedBy ?? NO_LOCKED_BY;
       this.mirror.localLockedByTotal = serverState.lockedByN ?? 0;
+      this.mirror.localLockedByLocked = serverState.lockedByL ?? 0;
 
       // Probe 5 (mobile-perf-investigation, 2026-05-24) — instrument
       // reconcile separately from the rest of handleSnapshot. The

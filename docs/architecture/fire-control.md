@@ -330,7 +330,8 @@ Target keys: `s:<entityId>` (swarm) or `p:<playerId>`.
 **Snapshot (#16), own active pilot only, shared refs mutated in place:**
 - `states[].groups`: `[{id, m: 0 auto | 1 manual, l: [{t, s: 0 failsafe | 1 acquiring | 2 locked, p: 0..100, r?: 1 released}]}]`
 - `states[].lockedBy`: `[{t, s: 1 | 2, p}]`: NPCs locking the pilot, at most `LOCKED_BY_WIRE_ROWS` (8, `lockProfile.ts`) rows: completed locks first, then nearest. `NpcLockSubsystem.rebuildWire` picks them each lock step by insertion into a reused top-N scratch (#14).
-- `states[].lockedByN`: how many NPCs lock the pilot in all; sent only when more than the rows (absent ⇒ the rows are everyone). The HUD threat banner shows it ("8+ SHIPS HAVE YOU LOCKED · 20 ON YOU"); the radar threat tint and aim marks use the rows only. Because rows rank completed locks first, an acquiring row means every completed lock is listed, so the rest of the total is acquiring.
+- `states[].lockedByN`: how many NPCs lock the pilot in all; sent only when more than the rows (absent ⇒ the rows are everyone). The HUD threat banner shows it ("14 SHIPS HAVE YOU LOCKED · 20 ON YOU"); the radar threat tint and aim marks use the rows only.
+- `states[].lockedByL`: how many of those hold a COMPLETED lock, sent only when some are off the rows (absent ⇒ the locked rows are all of them; rows rank completed locks first, so with an acquiring row it is always absent). The banner's exact locked count; the rest of the total is acquiring. Before it, a list of 8 completed rows with more lockers off the list could only read "8+".
 
 ## Client
 

@@ -85,6 +85,8 @@ function outranks(a: Entry, b: Entry): boolean {
 interface PilotState {
   entries: Map<string, Entry>;
   wire: WireLockedBy[];
+  /** Completed locks among `entries` (counted by `rebuildWire`). */
+  lockedN: number;
 }
 
 interface Geo { refSize: number; tracking: number; reach: number; sensor: number; absRange: boolean }
@@ -162,6 +164,11 @@ export class NpcLockSubsystem {
     return this.pilots.get(pilotId)?.entries.size ?? 0;
   }
 
+  /** How many of those hold a COMPLETED lock, rows or not. */
+  lockedTotalFor(pilotId: string): number {
+    return this.pilots.get(pilotId)?.lockedN ?? 0;
+  }
+
   /** True when `npcId` holds a completed lock on `pilotId`. */
   isLocked(npcId: string, pilotId: string): boolean {
     return this.pilots.get(pilotId)?.entries.get(npcId)?.locked === true;
@@ -187,12 +194,12 @@ export class NpcLockSubsystem {
     for (const pilotId of this.deps.pilots()) {
       let st = this.pilots.get(pilotId);
       if (!st) {
-        st = { entries: new Map(), wire: [] };
+        st = { entries: new Map(), wire: [], lockedN: 0 };
         this.pilots.set(pilotId, st);
       }
       const kind = this.deps.pilotPose(pilotId, this.pilot);
       if (!kind) {
-        if (st.entries.size > 0) { st.entries.clear(); st.wire.length = 0; }
+        if (st.entries.size > 0) { st.entries.clear(); st.wire.length = 0; st.lockedN = 0; }
         continue;
       }
       this.curState = st;
@@ -305,12 +312,15 @@ export class NpcLockSubsystem {
   private rebuildWire(st: PilotState): void {
     const top = this.top;
     let n = 0;
+    let locked = 0;
     for (const e of st.entries.values()) {
+      if (e.locked) locked++;
       if (n === LOCKED_BY_WIRE_ROWS && !outranks(e, top[n - 1]!)) continue;
       let i = n < LOCKED_BY_WIRE_ROWS ? n++ : n - 1;
       while (i > 0 && outranks(e, top[i - 1]!)) { top[i] = top[i - 1]!; i--; }
       top[i] = e;
     }
+    st.lockedN = locked;
     const wire = st.wire;
     wire.length = n;
     for (let i = 0; i < n; i++) wire[i] = top[i]!.wire;
