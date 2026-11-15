@@ -8575,10 +8575,11 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   /** Give a bot a guard post (the area it defends): a capital fights from it
-   *  instead of holding its gun stand-off. No-op for a bot with no behaviour
-   *  registered here (e.g. mid-transit). */
-  setBotGuardPost(botId: string, x: number, y: number, radius: number): void {
-    this.aiController.getBehaviour(botId)?.setGuardPost?.(x, y, radius);
+   *  instead of holding its gun stand-off. `anchorId`: the post follows that
+   *  ship (an escort's zone round its flagship). No-op for a bot with no
+   *  behaviour registered here (e.g. mid-transit). */
+  setBotGuardPost(botId: string, x: number, y: number, radius: number, anchorId?: string): void {
+    this.aiController.getBehaviour(botId)?.setGuardPost?.(x, y, radius, anchorId ?? null);
   }
 
   /** Leader-led flocking (non-combat herding) — mark a bot a FOLLOWER of

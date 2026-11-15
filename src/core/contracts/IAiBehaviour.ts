@@ -375,9 +375,14 @@ export interface IAiBehaviour {
    * never leaves its guard radius to hold its gun stand-off or chase a target
    * out of reach; with none it keeps the stand-off. SERVER-ONLY (no client
    * brain ⇒ no lockstep surface / wire bump).
+   * `anchorId`: the post FOLLOWS that ship's live pose (an escort's zone
+   * round the ship it escorts); (x, y) is the fallback until it resolves.
    */
-  setGuardPost?(x: number, y: number, radius: number): void;
+  setGuardPost?(x: number, y: number, radius: number, anchorId?: string | null): void;
   clearGuardPost?(): void;
+  /** Another AI ship left the controller (died / despawned); called by
+   *  `AiController.unregister` on every remaining brain. Server-only. */
+  noteEntityGone?(entityId: string): void;
   /** RTS attitude (SERVER-ONLY): off ⇒ engage only what is on the
    *  retaliation ledger (Defensive); on (the default) ⇒ also what is hostile
    *  on sight (Aggressive). */

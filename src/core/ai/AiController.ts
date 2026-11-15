@@ -148,6 +148,9 @@ export class AiController {
     this.claims.remove(entityId);
     this.claims.forgetTarget(entityId);
     this.pendingHostile.delete(entityId);
+    // A guard post anchored to this ship is cleared (escorts of a dead ship).
+    // Per removal, not per tick.
+    for (const reg of this.entities.values()) reg.behaviour.noteEntityGone?.(entityId);
   }
 
   has(entityId: string): boolean {
