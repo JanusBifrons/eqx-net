@@ -40,7 +40,7 @@ import { Container, Graphics, Matrix, Sprite } from 'pixi.js';
 import type { ArtHandle } from './art/ArtService.js';
 import { isMachinedSprite, type ShipArtCtx } from './art/shipArtSprites.js';
 import { muzzleReach, shipTurrets, structureTurrets, type TurretPlace } from './art/turretLayout.js';
-import { flashFrameAt, heatAfter, muzzleHeft, recoilAt, NAVAL_FLASH_LIFE_S, MUZZLE_FLASH_LIFE_S, muzzleLightAt, navalMuzzleLight, type MuzzleLight, MUZZLE_SMOKE_PUFFS, muzzleSmokePuff, type SmokePuff, railGeom, railHeatAt, railVentPuff, railVentPuffs, RAIL_VENTS, type RailGeom, type RailPuff } from './art/fx/turretFx.js';
+import { flashFrameAt, heatAfter, muzzleHeft, recoilAt, NAVAL_FLASH_LIFE_S, MUZZLE_FLASH_LIFE_S, muzzleLightAt, navalMuzzleLight, type MuzzleLight, MUZZLE_SMOKE_PUFFS, muzzleSmokePuff, type SmokePuff, railGeom, railHeatAt, railVentPuff, railVentPuffs, RAIL_VENTS, RAIL_FLASH_LIGHT, RAIL_FLASH_TINT, type RailGeom, type RailPuff } from './art/fx/turretFx.js';
 import { NAVAL_BARREL_SPAN } from '@core/combat/muzzle';
 import { getWeapon, isWeaponId } from '@core/combat/WeaponCatalogue';
 import type { EffectQuality } from '@core/contracts/IEffects';
@@ -140,7 +140,7 @@ interface AaBarrels {
 }
 
 /** Shot / beam colour at the muzzle, per family. */
-const MUZZLE_TINT = { bolt: 0xffc060, beam: 0x6fd0ff, missile: 0xffa050, charge: 0xd890ff, rail: 0xcfe4ff } as const;
+const MUZZLE_TINT = { bolt: 0xffc060, beam: 0x6fd0ff, missile: 0xffa050, charge: 0xd890ff, rail: RAIL_FLASH_TINT } as const;
 /** Railgun vent gas: spark-hot white-blue as it leaves, cooling to grey. */
 const RAIL_GAS_HOT = 0xe0ecff, RAIL_GAS = 0x9aa6b8;
 /** Hot rails after a shot (the tip glow, stretched along them). */
@@ -589,8 +589,10 @@ export class MountVisualManager {
         const L = navalMuzzleLight(w, this._light);
         const mid = flashes[flashes.length >> 1]!;
         if (fr < 0) { mid.x = ((flashes.length >> 1) - (n - 1) / 2) * pitch; mid.y = -gun.reach + kick; }
-        // The railgun's flash burns white-blue, not powder orange.
-        litPass.attachLight(mid, heft > 1 ? 0xcfe4ff : 0xff9a48, L.intensity * lk * heft, L.reach * heft, L.z);
+        // The railgun's flash burns white-blue, not powder orange; its light
+        // is a deeper blue at sqrt(heft) the brightness (full heft washed the
+        // whole hull near-white), its reach the full heft.
+        litPass.attachLight(mid, heft > 1 ? RAIL_FLASH_LIGHT : 0xff9a48, L.intensity * lk * Math.sqrt(heft), L.reach * heft, L.z);
       }
       for (let b = 0; b < flashes.length; b++) {
         const f = flashes[b]!;
