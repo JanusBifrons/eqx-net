@@ -51,7 +51,7 @@ async function keepWorkingPiece(ctx: ShotContext, z: Zoom | null): Promise<Offse
   return ctx.page.evaluate((a) => {
     type Piece = { kind: number; x: number; y: number };
     const w = window as unknown as {
-      __eqxStore?: { getState(): { setSelectedEntity(id: string | null, kind: string | null): void } };
+      __eqxStore?: { getState(): { setSelection(ids: readonly string[], id: string | null, kind: string | null): void } };
       __eqxClient?: {
         lockSelected?: () => boolean;
         mirror?: {
@@ -121,7 +121,7 @@ async function keepWorkingPiece(ctx: ShotContext, z: Zoom | null): Promise<Offse
     const p = m.swarm.get(best)!;
     w.__eqxShotWork = best;
     w.__eqxShotWorkAt = { x: p.x, y: p.y };
-    st.setSelectedEntity(`swarm-${best}`, 'wreck');
+    st.setSelection([], `swarm-${best}`, 'wreck');
     w.__eqxClient?.lockSelected?.();
     return { dx: p.x - me.x, dy: p.y - me.y };
   }, arg);
