@@ -100,6 +100,41 @@ export const SHOWCASE_CAPITAL_DUEL_OPTS = {
   defaultSpawnY: 0,
 };
 
+/** A bystander that holds its spot and never fights: a straight scripted
+ *  "path" to its own pose (`ScriptedPathBehaviour`, no combat brain), so test
+ *  aggro can't send it after the pilot and it stays where the scene put it. */
+function holdStation(kind: string, x: number, y: number): { kind: string; x: number; y: number; angle: number; path: { toX: number; toY: number; speed: number; loop: boolean } } {
+  return { kind, x, y, angle: 0, path: { toX: x, toY: y, speed: 0, loop: false } };
+}
+
+/** Weapon cuts (capital-destruction.md "Kill cuts"): a lance battlecruiser
+ *  (heavy beams in its main turrets) at the origin, nose +y, alone. The pilot
+ *  joins in the hull the shot wants: `beam-slice` a heavy cruiser 8,000 u off
+ *  its starboard beam (the default spawn), `beam-vaporise-subcap` a missile
+ *  frigate further out (its own `spawnX`). */
+export const SHOWCASE_BEAM_SLICE_OPTS = {
+  ...SHOWCASE_CAPITALS_COMBAT_OPTS,
+  dronePoses: [{ kind: 'battlecruiser-lance', x: 0, y: 0, angle: 0 }],
+  prebuiltStructures: [],
+  defaultSpawnX: 8000,
+  defaultSpawnY: 0,
+};
+
+/** Weapon cuts: a rail battleship at the origin, nose +y, the pilot (join
+ *  `shipKind=heavy-cruiser`) about 7,000 u off its starboard beam, and a light cruiser
+ *  holding station 3,000 u further out on the same line, so a slug that kills
+ *  the pilot flies on into it. */
+export const SHOWCASE_RAIL_CHANNEL_OPTS = {
+  ...SHOWCASE_CAPITALS_COMBAT_OPTS,
+  dronePoses: [
+    { kind: 'battleship-rail', x: 0, y: 0, angle: 0 },
+    holdStation('light-cruiser', 10_000, 0),
+  ],
+  prebuiltStructures: [],
+  defaultSpawnX: 7000,
+  defaultSpawnY: 0,
+};
+
 /** Real-scale ranges (docs/architecture/real-scale-ranges.md): the pilot
  *  (join `shipKind=battleship`) at the origin, nose +y, and an NPC battleship
  *  30 km off its starboard beam with a live brain. Needs a server and a page at
@@ -576,6 +611,8 @@ export const SHOWCASE_ROOMS = {
   'showcase-capitals': SHOWCASE_CAPITALS_OPTS,
   'showcase-capitals-combat': SHOWCASE_CAPITALS_COMBAT_OPTS,
   'showcase-capital-duel': SHOWCASE_CAPITAL_DUEL_OPTS,
+  'showcase-beam-slice': SHOWCASE_BEAM_SLICE_OPTS,
+  'showcase-rail-channel': SHOWCASE_RAIL_CHANNEL_OPTS,
   'showcase-long-guns': SHOWCASE_LONG_GUNS_OPTS,
   'showcase-melee': SHOWCASE_MELEE_OPTS,
   'showcase-coastal': SHOWCASE_COASTAL_OPTS,
