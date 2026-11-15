@@ -107,7 +107,34 @@ describe the wingman brain flying, read this section instead.
   `wingmanFightsRobots.test.ts` "shield hits alone".
 - **Orders:** the facade's `orderIssued` hook forwards each ship's own order:
   `move` → hold at the point, `stop` → hold where it is (both end a Hunt).
-  Attack and squads reach the brain in later slices.
+  Squads reach the brain in a later slice.
+- **Attack (slice 8):** `syncHullOrder` hands the wingman store's attack
+  target to the brain (`setOrderedTarget`, a swarm ship by its record id)
+  on the order and again from `tickWingmanTargets` (~10 Hz), so a
+  replaced order, a whole-squad command (members' orders cleared) or a
+  re-keyed target (`shipKeyMoved`) follows with no extra hook. The target
+  gets PRIORITY inside the brain's usual pick, not an override
+  ([ai-pilots](ai-pilots.md) "Player-owned ships"). The guard post is left
+  as it was, so when the order ends the ship goes back to its post / mode.
+  - **Completion:** in `tickWingmanTargets` an attack order whose target no
+    longer resolves (`entityPoseInto`: dead, despawned, left) is cleared
+    (`clearOrder`) and the owner's status is sent soon: the status shows the
+    ship's mode again.
+  - **Hand-over gap:** while the ordered target's pilot is in the
+    take-controls handshake it is not in the brain's candidates for a few
+    ticks; the hull's locks stay on the ordered target (it still resolves)
+    instead of restarting the lock.
+  - **Stance vs order (unchanged):** an order never changes the stance.
+    Hold fire still wins: no target, no lock, no fire, no chase; the order
+    stays (the status shows it) and takes effect once hold fire is lifted.
+    (The old wingman brain flew to the target without firing under hold
+    fire; the AI pilot brain's slice 7 rule "hold fire = no chase" is kept.)
+  - **Several ships, one target:** every ordered ship takes it, inside the
+    spread-targets rule: with three on it the third still takes it; a fourth
+    spreads to a free enemy at a comparable range.
+  - Lock: `ownedShipsAttackOrder.test.ts`, `handOverKeepsFleetState.test.ts`,
+    `lockAiFlownHull.test.ts`, `lockFollowsShipKey.test.ts`,
+    `HostileDroneBehaviour.orderedTarget.test.ts`.
 - **Cost:** a hull brain decides every tick (60 Hz) like any AI pilot; the
   wingman re-planned at 10 Hz. The `rts-fleet` scene's
   `wingmanReplansPerTick` now counts hull brain decisions.

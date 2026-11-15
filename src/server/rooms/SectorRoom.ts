@@ -80,6 +80,7 @@ import { PassiveDroneBehaviour } from '../../core/ai/PassiveDroneBehaviour.js';
 // pickTarget / rotateMountToward / wrapPi / MountTargetView now used
 // inside WeaponMountTicker.ts; this file no longer imports them.
 import type { AiPlayerView, AiStructureView, AiSwarmView, AiEntity, AiEntityPoseOut, IAiBehaviour } from '../../core/contracts/IAiBehaviour.js';
+import type { WingmanOrder } from '../../core/ai/wingman/types.js';
 import { assignPlayerId } from '../identity/PlayerIdentity.js';
 import type { WelcomeMessage } from '../../shared-types/messages.js';
 import { DEFAULT_SHIP_KIND, getShipKind, allegianceOfKind, isPlayableShipKindId, isShipKindId, type ShipKind, type ShipKindId, type WeaponMount } from '../../shared-types/shipKinds.js';
@@ -1030,10 +1031,12 @@ export class SectorRoom extends Room<SectorState> {
     },
     // RTS Part B: an owner's order reaches the AI pilot brain flying the hull.
     // Move: fly there and hold. Stop: guard where it is (the guard leash,
-    // slice 5). (Attack: slice 8.)
+    // slice 5). Attack (slice 8): the target gets priority in the brain's
+    // pick (`syncHullOrder`); the post stays, so the ship goes back to it.
     orderIssued: (id, order) => {
       const brain = this.aiController.getBehaviour(id);
       if (brain === null) return;
+      this.syncHullOrder(brain, order);
       if (order.kind === 'move') this.holdHullAt(brain, order.x, order.y);
       else if (order.kind === 'stop') {
         const p = this.lingeringPoseCache.get(id);
@@ -10600,6 +10603,18 @@ export class SectorRoom extends Room<SectorState> {
     brain.setGuardPost?.(x, y, 0);
   }
 
+  /** RTS Part B slice 8: the hull's order → its AI pilot brain's ordered
+   *  target (an attack order's target, by the id the brain's candidates
+   *  carry: a swarm ship by its record id), else none. Idempotent; a no-op
+   *  while unchanged. Called on every order and from the ~10 Hz target step,
+   *  so a completed, replaced or re-keyed order follows. */
+  private syncHullOrder(brain: IAiBehaviour, order: Readonly<WingmanOrder> | null): void {
+    if (brain.setOrderedTarget === undefined) return;
+    let t: string | null = null;
+    if (order !== null && order.kind === 'attack') t = this.swarmRecByAnyId(order.targetId)?.id ?? order.targetId;
+    if (brain.getOrderedTarget?.() !== t) brain.setOrderedTarget(t, this.serverTick);
+  }
+
   /** RTS Part B: the wingman store's mode → the AI pilot brain flying hull
    *  `id`. Defend guards its post (the given point, else where the hull is;
    *  slice 5). Hunt lifts the leash and searches the sector (slice 6). The
@@ -10809,9 +10824,27 @@ export class SectorRoom extends Room<SectorState> {
       const ship = this.state.ships.get(sid);
       const pose = this.lingeringPoseCache.get(sid);
       if (!ship?.alive || !pose) continue;
-      const target = fleet.brainAt(i).stance === 'holdFire'
+      // Slice 8: an attack order whose target is gone is done (the status
+      // shows the ship's mode again); otherwise the brain follows the order
+      // (a replaced order, a squad command, a re-keyed target).
+      const w = fleet.brainAt(i);
+      const o = w.order;
+      let ordered: string | null = null;
+      if (o !== null && o.kind === 'attack') {
+        if (this.entityPoseInto(o.targetId, this.wingmanTargetPose)) ordered = o.targetId;
+        else {
+          w.clearOrder();
+          this.fleetStatusSoonFor(fleet.ownerAt(i));
+        }
+      }
+      const hb = this.aiController.getBehaviour(sid);
+      if (hb !== null) this.syncHullOrder(hb, w.order);
+      // The brain's target; with none, a live ordered target keeps the locks
+      // (its pilot's take-controls handshake hides it from the brain's
+      // candidates for a few ticks; the lock must not restart).
+      const target = w.stance === 'holdFire'
         ? null
-        : (this.aiController.getBehaviour(sid)?.getTargetId?.() ?? null);
+        : (hb?.getTargetId?.() ?? ordered);
       const key = target === null ? null : this.wingmanLockKey(sid, target);
       const groups = this.wingmanLocks.wireFor(sid);
       if (key === null) {

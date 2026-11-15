@@ -228,6 +228,13 @@ const DRONE_TARGET_DWELL_TICKS = 30;
  *  structure's score is divided by `(1 + bias)`. With score ∝ d², a bias of 3
  *  means a structure up to 2× as far as a player still wins the pick. */
 const STRUCTURE_PRIORITY_BIAS = 3;
+/** RTS Part B slice 8 — the `priority` an owner's ATTACK ORDER gives its target
+ *  inside the same pick (owner rule: priority, never a hard override). With
+ *  `STRUCTURE_PRIORITY_BIAS` the target's score is divided by 13: it wins over
+ *  a free enemy up to ~3.6× nearer, and stays the pick with two squadmates
+ *  already on it (claims ×9); a fourth ship on it spreads to a free enemy at
+ *  a comparable distance (spread targets, dwell and stickiness unchanged). */
+const ORDERED_TARGET_PRIORITY = 4;
 /** Target orbit radius for IDLE patrol. Players spawn near the origin so
  *  this is comfortably outside the spawn zone without being so far that
  *  drones are off-screen most of the session. */
@@ -517,6 +524,14 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    *  sector in an expanding square round where the search began
    *  (`tickSearch`). Plain fields (#14). */
   private hunting = false;
+  /** RTS Part B slice 8 (`setOrderedTarget`): the owner's attack-order target.
+   *  On the retaliation ledger (never forgotten while ordered, so a Defensive
+   *  ship fights a neutral), `ORDERED_TARGET_PRIORITY` in the pick, and free of
+   *  the guard leash and the sensor cap. Null = no order. */
+  private orderedTargetId: string | null = null;
+  /** The ledger tick the order wrote for its target (-1 = none): lifting the
+   *  order forgets the mark unless the target hit this ship since. */
+  private orderMarkTick = -1;
   /** The search (re)starts from where the ship is on its next idle tick. */
   private searchReset = true;
   /** Current leg (0-based), its unit direction and its end point. */
@@ -956,7 +971,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     //    client.
     if (this.hostileTo.size > 0) {
       for (const [pid, lastHit] of this.lastHitByPlayer) {
-        if (view.tick - lastHit > FORGET_TICKS) {
+        if (view.tick - lastHit > FORGET_TICKS && pid !== this.orderedTargetId) {
           this.lastHitByPlayer.delete(pid);
           this.hostileTo.delete(pid);
           // Drop the sticky pin if the decayed player was our target.
@@ -1016,6 +1031,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     const onSight = this.engageOnSight;
     const ownerId = this.ownerId;
     const ownerFoe = view.hostileToPlayer;
+    const ordered = this.orderedTargetId;
     let n = 0;
     let anyHostile = false;
     for (const p of view.players) {
@@ -1034,7 +1050,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       c.maxHealth = p.maxHealth;
       c.kindId = p.kindId;
       c.shieldUp = p.shieldUp;
-      c.priority = 0;
+      c.priority = p.id === ordered ? ORDERED_TARGET_PRIORITY : 0;
       c.ship = true;
       c.hitRadius = p.kindId != null ? shipAimRadius(p.kindId, p.shieldUp === true) : DEFAULT_AIM_RADIUS;
       let h = this.hostileTo.has(p.id) || (p.ownerId !== undefined && this.hostileTo.has(p.ownerId));
@@ -1067,7 +1083,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
         c.maxHealth = s.maxHealth;
         c.kindId = undefined;
         c.shieldUp = undefined;
-        c.priority = s.priority;
+        c.priority = s.id === ordered ? Math.max(s.priority, ORDERED_TARGET_PRIORITY) : s.priority;
         c.ship = false;
         c.hitRadius = Infinity; // a footprint box, not a hull: the player window
         c.hostile = this.hostileTo.has(s.id);
@@ -1111,7 +1127,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
         c.maxHealth = s.maxHealth;
         c.kindId = s.kindId;
         c.shieldUp = s.shieldUp;
-        c.priority = 0;
+        c.priority = s.id === ordered ? ORDERED_TARGET_PRIORITY : 0;
         c.ship = true;
         c.hitRadius = s.kindId != null ? shipAimRadius(s.kindId, s.shieldUp === true) : DEFAULT_AIM_RADIUS;
         c.hostile = true;
@@ -1125,9 +1141,11 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     // hostile candidate; the pick scores a held one worse, so a free enemy wins
     // and the surplus doubles up only when we outnumber them.
     const claims = view.claims;
+    let orderedLive = false;
     for (let i = 0; i < n; i++) {
       const c = cand[i]!;
       c.claims = claims !== undefined && c.hostile ? claims.count(this.allegiance, c.id) : 0;
+      if (c.hostile && c.id === ordered) orderedLive = true;
     }
 
     // An IDLE entity with nothing on-sight-hostile in range keeps patrolling /
@@ -1151,7 +1169,24 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     const sinceTicks = view.tick - this.prevTargetSinceTick;
     const leash = this.guardLeash();
     let target: MountTargetView | null;
-    if (leash) {
+    if (orderedLive) {
+      // Attack order (slice 8): go and get it. The ordered target is free of
+      // the sensor cap and the guard leash; it wins on its priority inside the
+      // usual pick. Every other target keeps the leash (inside the guard
+      // radius round the post), narrowed in place (the pick is the last reader).
+      if (leash) {
+        const r2 = this.guardR * this.guardR;
+        for (let i = 0; i < n; i++) {
+          const c = cand[i]!;
+          if (!c.hostile || c.id === ordered) continue;
+          const dx = c.x - this.guardX;
+          const dy = c.y - this.guardY;
+          if (dx * dx + dy * dy > r2) c.hostile = false;
+        }
+      }
+      this._pickOptsUncapped.ticksSincePrevTarget = sinceTicks;
+      target = pickTarget(self.x, self.y, cand, this.prevTargetId, this._isHostile, this._pickOptsUncapped);
+    } else if (leash) {
       this._pickOptsGuard.ticksSincePrevTarget = sinceTicks;
       target = pickTarget(this.guardX, this.guardY, cand, this.prevTargetId, this._isHostile, this._pickOptsGuard);
       // Slice 6: a ship being shot answers. Nothing inside the radius ⇒ a
@@ -1168,7 +1203,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       this._pickOpts.ticksSincePrevTarget = sinceTicks;
       target = pickTarget(self.x, self.y, cand, this.prevTargetId, this._isHostile, this._pickOpts);
     }
-    if (target === null && anyHostile && !leash) {
+    if (target === null && anyHostile && !leash && !orderedLive) {
       this._pickOptsUncapped.ticksSincePrevTarget = sinceTicks;
       target = pickTarget(self.x, self.y, cand, this.prevTargetId, this._isHostile, this._pickOptsUncapped);
     }
@@ -2015,7 +2050,8 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    * fire control. Allocation-free.
    */
   private tickBroadside(self: AiEntity, target: MountTargetView, dx: number, dy: number, dist: number, rangeDist: number): AiIntent {
-    if (this.guardOn) return this.tickGuardBroadside(self, dx, dy);
+    // An attack order takes a guarding capital off its post (slice 8).
+    if (this.guardOn && target.id !== this.orderedTargetId) return this.tickGuardBroadside(self, dx, dy);
     const bearing = facingOf(dx, dy);
     const cruise = this.handling.cruiseSpeed;
     if (rangeDist > this.fireRange) {
@@ -2155,6 +2191,44 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   setHoldFire(on: boolean): void {
     this.holdFire = on;
   }
+
+  /**
+   * RTS Part B slice 8: the owner's ATTACK ORDER target (null lifts it). The
+   * target goes on the retaliation ledger (so a Defensive ship fights even a
+   * neutral) and stays there while ordered; inside the usual pick it carries
+   * `ORDERED_TARGET_PRIORITY` (spread targets, dwell and stickiness intact)
+   * and is free of the sensor cap and the guard leash (a guarding capital
+   * leaves its post for it). When it dies or the order is replaced the ship
+   * goes back to its job: the post, move target and hunt are untouched.
+   * Hold fire still wins (no target at all). A re-keyed ship (its owner took
+   * or let go of the controls) keeps its sticky pick. Server-only.
+   */
+  setOrderedTarget(id: string | null, atTick: number): void {
+    const next = id === this.ownerId ? null : id;
+    const prev = this.orderedTargetId;
+    if (next === prev) return;
+    if (prev !== null) {
+      // Forget the order's ledger mark unless the target hit this ship since.
+      if (this.orderMarkTick >= 0 && this.lastHitByPlayer.get(prev) === this.orderMarkTick) {
+        this.hostileTo.delete(prev);
+        this.lastHitByPlayer.delete(prev);
+      }
+      if (this.prevTargetId === prev) this.prevTargetId = next;
+    }
+    this.orderedTargetId = next;
+    this.orderMarkTick = -1;
+    if (next !== null) {
+      this.hostileTo.add(next);
+      if (!this.lastHitByPlayer.has(next)) {
+        this.lastHitByPlayer.set(next, atTick);
+        this.orderMarkTick = atTick;
+      }
+      this.state = 'COMBAT';
+    } else if (this.hostileTo.size === 0) this.state = 'IDLE';
+  }
+
+  /** Test-visible: the attack-order target (null = none). */
+  getOrderedTarget(): string | null { return this.orderedTargetId; }
 
   /** Test-visible: holding fire? */
   isHoldingFire(): boolean { return this.holdFire; }

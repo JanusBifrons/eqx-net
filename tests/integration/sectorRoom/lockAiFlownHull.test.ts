@@ -96,8 +96,7 @@ describe('SectorRoom integration — AI-flown player ships are lockable (RTS Par
     expect(hits.length, 'the locked shot damaged B\'s AI-flown hull').toBeGreaterThan(0);
   });
 
-  // RTS Part B slice 8: the attack order reaches the AI pilot brain; until then the hull never locks the named hull.
-  it.skip('an AI pilot ordered to attack another player\'s AI-flown hull locks it and hits it', { timeout: 40_000 }, async () => {
+  it('an AI pilot ordered to attack another player\'s AI-flown hull locks it and hits it', { timeout: 40_000 }, async () => {
     // B's hull parked ahead of A's; A parks too: both ships AI-flown.
     const bPid = randomUUID();
     const b = (await harness.connectActive(bPid, {

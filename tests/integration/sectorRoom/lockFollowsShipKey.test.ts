@@ -114,8 +114,7 @@ describe('SectorRoom integration — locks follow a ship when its key moves (RTS
     expect(await fireUntilHit(a, hull), 'A\'s locked shot hit B\'s AI-flown ship').toBe(true);
   });
 
-  // RTS Part B slice 8: the attack order reaches the AI pilot brain (priority inside its pick); until then the hull never locks the named target.
-  it.skip('B\'s own groups\' locks survive B letting go and taking the controls back', { timeout: 40_000 }, async () => {
+  it('B\'s own groups\' locks survive B letting go and taking the controls back', { timeout: 40_000 }, async () => {
     const aPid = randomUUID();
     await harness.connectActive(aPid, { shipKind: 'fighter', spawnX: 0, spawnY: 0, initialHull: 1_000_000, initialShield: 0 });
     const cPid = randomUUID();

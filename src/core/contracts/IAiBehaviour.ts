@@ -391,6 +391,11 @@ export interface IAiBehaviour {
    *  no retaliation, no trigger); the ship keeps flying its job. Attackers
    *  are still recorded, so lifting it answers a recent one. */
   setHoldFire?(on: boolean): void;
+  /** RTS attack order (SERVER-ONLY): `id` gets priority inside the usual
+   *  target pick and goes on the retaliation ledger while ordered, free of
+   *  the guard leash; null lifts it (the ship goes back to its job). */
+  setOrderedTarget?(id: string | null, atTick: number): void;
+  getOrderedTarget?(): string | null;
   /** RTS Hunt (SERVER-ONLY): no guard leash; with nothing to fight the ship
    *  searches the sector, then engages what it finds. A guard post ends it. */
   setHunt?(on: boolean): void;

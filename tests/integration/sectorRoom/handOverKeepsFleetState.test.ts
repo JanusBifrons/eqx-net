@@ -71,8 +71,7 @@ describe('SectorRoom integration — a ship changing hands keeps its fleet state
     return o !== null && o.kind === 'attack' ? o.targetId : null;
   };
 
-  // RTS Part B slice 8: the attack order reaches the AI pilot brain; until then the hull never locks the named ship.
-  it.skip('A\'s AI-flown ship keeps attacking B\'s ship while B lets go of its controls and takes them back', { timeout: 40_000 }, async () => {
+  it('A\'s AI-flown ship keeps attacking B\'s ship while B lets go of its controls and takes them back', { timeout: 40_000 }, async () => {
     const aPid = randomUUID();
     const a = (await harness.connectActive(aPid, {
       shipKind: 'fighter', spawnX: 0, spawnY: 0, initialHull: 1_000_000, initialShield: 0,
