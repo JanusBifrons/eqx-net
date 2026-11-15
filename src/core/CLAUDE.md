@@ -122,7 +122,7 @@ Pure simulation: physics, AI, combat math, reconciliation, the bus, DI contracts
 ## Capital fracture (`destruction/fractureHull.ts`)
 
 - **Deterministic both sides, no geometry on the wire (#15):** arithmetic + `Math.sqrt`/`round` only (no sin/cos/atan2/pow), mulberry32 `Rng`, fixed loop order, `FRACTURE_QUANTUM`, only `quickDecomp`/`makeCCW`. Any output change bumps `FRACTURE_ALGO_VERSION`; concave hulls go through `splitByLine`.
-- **One source each:** `wreckPieceGeometry` is a piece's shape; `wreckRayHit`/`wreckSweepHit` the only weapon-vs-wreck test (gated by `segmentNearCircle`, never `rayHitsSphere`).
+- **One source each:** `wreckPieceGeometry` is a piece's shape (`wreckChildGeometry` a re-split piece's, same `fractureHull`); `wreckRayHit`/`wreckSweepHit` the only weapon-vs-wreck test (gated by `segmentNearCircle`, never `rayHitsSphere`).
 - Never give pieces a velocity that closes a cut; per-profile numbers in `DESTRUCTION_PROFILES`, never a branch; new options default to old behaviour. [capital-destruction](../../docs/architecture/capital-destruction.md#core-rules-reference).
 
 ## Alien gates and the disabled input gate

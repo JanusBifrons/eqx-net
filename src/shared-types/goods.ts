@@ -150,8 +150,11 @@ export function legacyHoldCredits(json: string | null | undefined): number {
 export const REPAIR_CREDITS_PER_HP = 0.5;
 export const RESPEC_CREDIT_COST = 100;
 
-/** Cargo capacity (weight units) of a ship kind — derived, so it needs no
- *  catalogue field: tougher hulls haul more. Shared by the HUD + server clamp. */
-export function cargoCapacityForMaxHealth(maxHealth: number): number {
-  return Math.max(50, Math.round(maxHealth * 2));
+/** Cargo capacity (weight units) of a ship kind: the kind's `cargoCapacity`
+ *  override when it has one, else derived from toughness (tougher hulls haul
+ *  more). Takes the KIND so no caller can forget the override — the HUD, the
+ *  server clamp and NPC loot collectors all read this one function (#15). */
+export function cargoCapacityForMaxHealth(kind: { readonly maxHealth: number; readonly cargoCapacity?: number | undefined }): number {
+  if (kind.cargoCapacity !== undefined) return kind.cargoCapacity;
+  return Math.max(50, Math.round(kind.maxHealth * 2));
 }

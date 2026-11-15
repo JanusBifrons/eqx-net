@@ -801,6 +801,62 @@ slows in slow motion and speeds up at 4×.
   later: a deterministic re-fracture of that piece with a derived seed
   (`fnvMixU32(seed, pieceIndex)`), scheduled in server ticks, never wall time.
   It travels as a new descriptor that names its parent piece.
+
+#### Re-split: the core child fracture (salvage stream PR 3, 2026-11-15)
+
+A wreck piece can break again through the SAME `fractureHull` (no fork):
+`wreckChildGeometry(chain)` (`src/core/destruction/wreckChildren.ts`)
+re-fractures a piece's own outline. The chain is the root wreck's
+`WreckFractureInputs` plus one step per break: `{ pieceIndex, killX, killY,
+cutKind?, cutAng?, cutW? }`, the kill point in the hull's 1× Pixi-up frame
+(the fracture projects it onto the piece's outline) and the breaking weapon's
+kill cut, as the root descriptor carries it. Each step's seed is
+`fnvMixU32(parentSeed, pieceIndex)` (`wreckChildSeed`). A chain with no steps
+is the root wreck; a step naming a missing piece, or a kind whose profile has
+no `resplit`, gives no children.
+
+- **Split, not changed.** `wreckPieceGeometry` is now
+  `fracturePiecesToGeometry(kind, wreckRootFracture(input))`
+  (`wreckPieceFrame.ts`): the raw pieces in the hull's 1× frame, then the
+  body-frame geometry. Children go through the same second half, so they come
+  out in the root's frame (centroid in the ship's scaled math-up frame, mass
+  from area at the kind's density); the server places a child from its parent
+  piece's live pose as it placed the parent from the dead hull's.
+- **No algorithm change, so `FRACTURE_ALGO_VERSION` stays 10.** The root
+  output is byte-identical (golden in `wreckChildren.test.ts`, captured on
+  main before the split); the chain is additive. A child fracture runs in
+  fixed-count mode (no damage inputs: the cap is the target).
+- **Old cracks keep their kind.** The fracture marks its input's edges
+  `EDGE_HULL`; a child edge lying on one of its parent's cut edges takes that
+  edge's kind back (`inheritEdgeKinds`), so an old crack still glows and still
+  pairs as a seam.
+- **Options per profile** (`DESTRUCTION_PROFILES[*].resplit`; `none` is null).
+  Integrity is hidden and server-side: `I_max = clamp01(m_piece / shipBodyMass)
+  × maxHull × integrityMul`, at least `integrityMinFrac × maxHull`. At 0 a
+  piece of at least `minAreaFrac` of the hull's area splits; a smaller one
+  becomes a salvage pod worth its mass share of `salvagePerHull`.
+
+| | capital | subcap |
+|---|---|---|
+| `minAreaFrac` | 0.02 | 0.25 |
+| `integrityMul` | 0.5 | 1 |
+| `integrityMinFrac` | 0.01 | 0.05 |
+| `salvagePerHull` | 200 | 10 |
+| child `maxPieces` | 3 | 2 |
+| child fracture | chunky (sound primary, `soundMinShare` 0.3, min width 0.36 beam, extra chunk 0.4), fans and far crack off, capital jag | chunky, same shares, no extra chunk, sub-cap jag |
+
+- **The sliver spike.** `fractureHull` reads the ship-shaped keel, beam and
+  tip from whatever outline it gets (covariance axis, extent across it), so a
+  piece is just a smaller hull to it. Measured over every capital kind and six
+  sub-capitals (fighter, heavy, gunship, missile frigate, robot square, trader
+  hauler), three hits each (a bow-quarter hit and two violent beam hits),
+  every root piece re-split and every child once more (depth 2): each child is
+  at least 0.38 of its parent's least width, at most 4.8 long for its width (a
+  long hull half keeps its own shape), at least 9.8 % of its parent's area (a
+  capital's optional third chunk; sub-caps >= 29 %), and at most 21 convex
+  parts (sub-caps <= 3). No fracture option was needed. Lock:
+  `wreckChildren.test.ts` "child fracture spike" (bounds 0.3 / 5.5 / 0.08 /
+  24).
 - **Catastrophic case.** A big white flash, plus a blast that damages nearby
   ships. It waits on the owner's answer about how rare it is (§6).
 
@@ -2279,7 +2335,8 @@ Every client must produce the same pieces as the server, bit for bit, from
 - **Player capitals break up exactly like NPC capitals.** Anyone may salvage
   the wreck, including the former owner.
 - **Wreck pieces don't break further** ("No for now"). Shooting a piece never
-  re-fractures it.
+  re-fractures it. *Lifted 2026-11-15 (salvage stream): the core child
+  fracture exists (§S4 "Re-split"); the server wiring follows.*
 - **Smaller ships break up this way too** ("Yes"). Fighters, frigates and
   cruisers fracture dynamically like capitals, replacing today's hand-made
   scrap. This is a later slice, after the capital path works.
