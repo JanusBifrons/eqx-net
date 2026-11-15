@@ -1951,6 +1951,13 @@ line; a railgun kill erases a straight channel as wide as the bolt.
     `CHANNEL_SLIVER_SHARE` (5 %) of the hull beside it is erased too. The
     other cracks then split what is left. A cut is never dropped by the
     piece-cap retry: with every other crack gone it stands whatever the count.
+  - **Channel banks part:** the two banks face each other a channel width
+    apart, so they are not a shared cut; `findSeams(geom, channelGap)` pairs
+    them anyway (`EDGE_CUT` edges on the line `channelGap` out along the
+    normal), so the separation pass opens the channel like any cut. Without
+    it the kill push closed the channel at ~20–45 u/s while the jagged cracks
+    opened (rail-channel film 2026-11-15). Lock: `wreckPieces.test.ts`
+    "railgun channel banks part".
   - No new seeded draw: a fracture without a cut is byte-identical to v8 (the
     golden hashes did not move; only `FRACTURE_ALGO_VERSION` went 8 → 9).
 - **Wire.** `WreckDescriptor` / `WreckDescriptorSchema` / `isWreckDescriptor`
