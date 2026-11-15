@@ -59,6 +59,20 @@ export const STEP_EVERY_MS = 250;
 /** Field rocks a server tick may wake (ramming, plan v2 C2): a capital
  *  ploughing in touches many at once; the rest wake on later ticks. */
 export const FIELD_WAKES_PER_TICK = 4;
+/** An awake rock driven into a fixed one at least this fast (game u/s,
+ *  closing speed along the contact normal) wakes it too; cut pieces resting
+ *  against each other sit far below it. */
+export const FIELD_CHAIN_WAKE_SPEED = 20;
+
+/** Does a contact with `other` wake a fixed field rock? Anything that is not
+ *  a field rock (a ship, a drone, scrap) wakes it on touch; another field rock
+ *  only when it is awake and was driven in at least `FIELD_CHAIN_WAKE_SPEED`,
+ *  so a capital's shove spreads through the pile but resting neighbours never
+ *  wake each other. */
+export function fieldRockWakes(other: { fieldRock?: boolean; fieldAwake?: boolean } | null | undefined, closingSpeed: number): boolean {
+  if (other?.fieldRock !== true) return true;
+  return other.fieldAwake === true && closingSpeed >= FIELD_CHAIN_WAKE_SPEED;
+}
 /** Cuts run on the room's main thread: a chunk costs ~4 ms (p50), ~6 ms
  *  (p95) on the desktop, so 2 per step keeps a step near one tick's budget.
  *  Nearest first, and chunks load two out, so a cruising ship never outruns

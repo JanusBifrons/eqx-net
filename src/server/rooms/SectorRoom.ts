@@ -260,7 +260,7 @@ import { EntitySyncRouter } from './EntitySyncRouter.js';
 import { isEngageablePilotHull, isPilotedActive } from './shipLiveness.js';
 import { MalformedMessageTracker } from './MalformedMessageTracker.js';
 import { guarded } from './guardedLoop.js';
-import { CutFieldStreamer, cutFieldOpts, fieldRockBody, fieldRockMass, FIELD_WAKES_PER_TICK, STEP_EVERY_MS as CUT_FIELD_STEP_MS } from '../../core/terrain/chunkStreamer.js';
+import { CutFieldStreamer, cutFieldOpts, fieldRockBody, fieldRockMass, FIELD_WAKES_PER_TICK, fieldRockWakes, STEP_EVERY_MS as CUT_FIELD_STEP_MS } from '../../core/terrain/chunkStreamer.js';
 import { SectorPersistence } from './SectorPersistence.js';
 import { LivingWorldBotHooks } from './LivingWorldBotHooks.js';
 import { SceneScriptRunner, SceneScriptSchema, type SceneStatus } from './scene/SceneScriptRunner.js';
@@ -5370,10 +5370,14 @@ export class SectorRoom extends Room<SectorState> {
    * their cuts, so that would wake the whole field). At most
    * `FIELD_WAKES_PER_TICK` per tick.
    */
-  private wakeFieldRock(id: string, otherId: string, tick: number): void {
+  /** A field rock wakes when a ship touches it, or when an awake rock is
+   *  driven into it (closing speed >= FIELD_CHAIN_WAKE_SPEED), so a shoved
+   *  rock pushes the ones behind it instead of jamming against them. Cut
+   *  pieces resting against each other never reach that speed. */
+  private wakeFieldRock(id: string, otherId: string, closingSpeed: number, tick: number): void {
     const rec = this.swarmRegistry.get(id);
     if (rec?.fieldRock !== true || rec.fieldAwake === true) return;
-    if (this.swarmRegistry.get(otherId)?.fieldRock === true) return;
+    if (!fieldRockWakes(this.swarmRegistry.get(otherId), closingSpeed)) return;
     if (tick !== this.fieldWakeTick) { this.fieldWakeTick = tick; this.fieldWakesThisTick = 0; }
     if (this.fieldWakesThisTick >= FIELD_WAKES_PER_TICK) return;
     this.fieldWakesThisTick++;
@@ -8606,8 +8610,8 @@ export class SectorRoom extends Room<SectorState> {
             continue;
           }
           if (this.cutField) {
-            this.wakeFieldRock(p.aId, p.bId, tick);
-            this.wakeFieldRock(p.bId, p.aId, tick);
+            this.wakeFieldRock(p.aId, p.bId, p.normalSpeed, tick);
+            this.wakeFieldRock(p.bId, p.aId, p.normalSpeed, tick);
           }
           this.bus.emit('COLLISION_RESOLVED', {
             type: 'COLLISION_RESOLVED',

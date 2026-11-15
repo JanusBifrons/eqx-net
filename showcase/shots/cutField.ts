@@ -131,9 +131,9 @@ export const cutFieldRam: Shot = {
     },
   },
   hud: 'full',
-  durationMs: 24_000,
+  durationMs: 50_000,
   async run(ctx) {
     await ctx.sleep(2000);
-    await ctx.hold(['w', 'Shift'], 20_000);
+    await ctx.hold(['w', 'Shift'], 46_000);
   },
 };

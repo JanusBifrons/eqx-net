@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { CutFieldStreamer, MAX_CHUNKS_PER_STEP } from './chunkStreamer.js';
+import { CutFieldStreamer, MAX_CHUNKS_PER_STEP, FIELD_CHAIN_WAKE_SPEED, fieldRockWakes } from './chunkStreamer.js';
 import { CHUNK_SIZE } from './fieldLayout.js';
 
 // A 20 km field keeps the cuts cheap; the rules are the same at 300 km.
@@ -49,5 +49,19 @@ describe('CutFieldStreamer (macro terrain v2, cut-field slice 1)', () => {
     const { s, live } = rig(null);
     s.step();
     expect(live.size).toBe(0);
+  });
+});
+
+describe('fieldRockWakes (ramming, plan v2 C2)', () => {
+  it('a ship (or anything not a field rock) wakes a rock on touch', () => {
+    expect(fieldRockWakes(undefined, 0)).toBe(true);
+    expect(fieldRockWakes({}, 0)).toBe(true);
+  });
+  it('a fixed neighbour never wakes it, however hard the contact', () => {
+    expect(fieldRockWakes({ fieldRock: true }, 1_000)).toBe(false);
+  });
+  it('an awake rock wakes it only when driven in fast enough', () => {
+    expect(fieldRockWakes({ fieldRock: true, fieldAwake: true }, FIELD_CHAIN_WAKE_SPEED - 1)).toBe(false);
+    expect(fieldRockWakes({ fieldRock: true, fieldAwake: true }, FIELD_CHAIN_WAKE_SPEED)).toBe(true);
   });
 });
