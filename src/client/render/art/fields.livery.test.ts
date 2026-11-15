@@ -914,7 +914,7 @@ describe('b4 family: every hull painted', () => {
   const forge = (id: string, t: Livery['treatment'], edge?: Livery['edge']): Fields =>
     forgeShip(id, { ppu: ppuFor(id), livery: { treatment: t, team: 0xff4444, sigil: 0x1234, ...(edge ? { edge } : {}) }, turretCover: turretCoverOf(id) });
   /** Painted share of the hull, and painted texels in its front / rear quarter. */
-  const census = (f: Fields): { share: number; front: number; rear: number } => {
+  const census = (f: Fields): { share: number; front: number; rear: number; hull: number } => {
     const { w } = f.g;
     let y0 = Infinity, y1 = -Infinity;
     for (let i = 0; i < f.cov.length; i++) if (f.cov[i]! > 0.5) { const ty = Math.floor(i / w); y0 = Math.min(y0, ty); y1 = Math.max(y1, ty); }
@@ -928,7 +928,7 @@ describe('b4 family: every hull painted', () => {
       if (tb < 0.25) front++;
       if (tb > 0.75) rear++;
     }
-    return { share: liv / hull, front, rear };
+    return { share: liv / hull, front, rear, hull };
   };
   /** Paint mismatches across the centreline, on texels where the hull covers
    *  both sides (a robot's outline is not rasterised exactly mirror-image). */
@@ -965,6 +965,112 @@ describe('b4 family: every hull painted', () => {
     let diff = 0;
     for (let i = 0; i < a.mat.length; i++) if ((a.mat[i] === MAT.LIVERY) !== (b.mat[i] === MAT.LIVERY)) diff++;
     expect(diff).toBeGreaterThan(0);
+  });
+
+  /** The front section's edge per hull column: the deepest LIVERY row in the
+   *  hull's front 45 % (-1: none), plus the hull's row span. */
+  const frontEdge = (f: Fields): { edge: number[]; span: number } => {
+    const { w, h } = f.g;
+    let y0 = Infinity, y1 = -Infinity;
+    for (let i = 0; i < f.cov.length; i++) if (f.cov[i]! > 0.5) { const ty = Math.floor(i / w); y0 = Math.min(y0, ty); y1 = Math.max(y1, ty); }
+    const lim = Math.min(h - 1, Math.floor(y0 + 0.45 * (y1 - y0)));
+    const edge: number[] = [];
+    for (let x = 0; x < w; x++) {
+      let b = -1;
+      for (let y = y0; y <= lim; y++) if (f.mat[y * w + x] === MAT.LIVERY) b = y;
+      // The edge meets grey hull, a seam or a bare-metal greeble; a lit
+      // fitting (the core, a lamp) over the paint hides where it runs.
+      const below = f.mat[(b + 1) * w + x];
+      edge.push(b >= 0 && (below === MAT.PAINT || below === MAT.TRIM || below === MAT.METAL) ? b : -1);
+    }
+    return { edge, span: y1 - y0 };
+  };
+  /** Teeth along an edge: its aft-most turning points, ignoring wiggles under `tol` rows. */
+  const teethOf = (edge: number[], tol: number): number => {
+    const v = edge.filter((b) => b >= 0);
+    let teeth = 0, dir = 0, lo = v[0] ?? 0, hi = lo;
+    for (const b of v) {
+      lo = Math.min(lo, b); hi = Math.max(hi, b);
+      if (dir >= 0 && b <= hi - tol) { if (dir > 0) teeth++; dir = -1; lo = hi = b; } else if (dir <= 0 && b >= lo + tol) { dir = 1; lo = hi = b; }
+    }
+    return teeth;
+  };
+  /** Mean HSV saturation of a hull's LIVERY albedo, and its painted share. */
+  const paintStats = (f: Fields): { sat: number; share: number } => {
+    let s = 0, liv = 0, hull = 0;
+    for (let i = 0; i < f.cov.length; i++) {
+      if (f.cov[i]! <= 0.5) continue;
+      hull++;
+      if (f.mat[i] !== MAT.LIVERY) continue;
+      const r = f.albedo[i * 3]!, g = f.albedo[i * 3 + 1]!, b = f.albedo[i * 3 + 2]!, mx = Math.max(r, g, b);
+      s += mx > 0 ? (mx - Math.min(r, g, b)) / mx : 0;
+      liv++;
+    }
+    return { sat: s / Math.max(1, liv), share: liv / hull };
+  };
+
+  /** Review (combat zoom, robots ~75 px across): the dog-tooth could not be
+   *  read on a robot; its paint/grey boundary was a soft mottled diagonal. */
+  it.each(ROBOTS)('%s: dog-tooth shows >= 3 teeth, each >= 8%% of the hull length deep (b7, b8 tooth)', (id) => {
+    for (const [t, edge] of [['b7'], ['b8', 'tooth']] as const) {
+      const { edge: e, span } = frontEdge(forge(id, t, edge));
+      expect(teethOf(e, 0.08 * span), `${id} ${t}`).toBeGreaterThanOrEqual(3);
+    }
+  });
+
+  it.each(ROBOTS)('%s: swept (b5) is a chevron: the front edge runs monotone aft from the centreline to each side', (id) => {
+    const { edge: e, span } = frontEdge(forge(id, 'b5'));
+    let c = e.length >> 1;
+    for (let d = 0; e[c]! < 0 && d < e.length >> 3; d++) c = (e.length >> 1) + (d % 2 ? d : -d); // a fitting on the centreline
+    for (const step of [1, -1]) {
+      let prev = e[c]!;
+      expect(prev, id).toBeGreaterThanOrEqual(0);
+      for (let x = c + step; x >= 0 && x < e.length; x += step) {
+        if (e[x]! < 0) continue;
+        expect(e[x]!, `${id} column ${x}`).toBeGreaterThanOrEqual(prev - 1);
+        prev = Math.max(prev, e[x]!);
+      }
+      // A clearly pointed chevron: the sides reach well aft of the centre.
+      expect(prev - e[c]!, id).toBeGreaterThanOrEqual(0.1 * span);
+    }
+  });
+
+  it.each(ROBOTS)('%s: a crisp section edge, no flaking (paint just inside the front edge is solid)', (id) => {
+    for (const [t, edge] of [['b5'], ['b6'], ['b7'], ['b8', 'tooth']] as const) {
+      const f = forge(id, t, edge);
+      const { w } = f.g;
+      const { edge: e } = frontEdge(f);
+      let n = 0, liv = 0;
+      for (let x = 0; x < w; x++) {
+        for (let y = e[x]! - 3; y < e[x]! && e[x]! >= 0; y++) {
+          const i = y * w + x;
+          // Paint or grey hull only (a greeble or the core is a fitting on top).
+          if (y < 0 || f.cov[i]! <= 0.5 || (f.mat[i] !== MAT.LIVERY && f.mat[i] !== MAT.PAINT)) continue;
+          n++;
+          if (f.mat[i] === MAT.LIVERY) liv++;
+        }
+      }
+      expect(liv / n, `${id} ${t}${edge ?? ''}`).toBeGreaterThanOrEqual(0.97);
+    }
+  });
+
+  /** Review: orb (circle) robots read grey with a faint lilac cast while the
+   *  hexes read violet (its nose turret's paint keep-out ate the bow section). */
+  it('the orb wears sections as violet and as large as the hex (front, rear, saturation)', () => {
+    for (const [t, edge] of [['b5'], ['b7'], ['b8', 'tongue']] as const) {
+      const orb = forge('robot-circle', t, edge), hex = forge('robot-hexagon', t, edge);
+      const [co, ch] = [census(orb), census(hex)];
+      const [so, sh] = [paintStats(orb), paintStats(hex)];
+      const tag = `${t}${edge ?? ''}`;
+      expect(so.share, tag).toBeGreaterThanOrEqual(0.7 * sh.share);
+      expect(so.sat, tag).toBeGreaterThanOrEqual(0.7 * sh.sat);
+      expect(co.front / co.hull, `${tag} front`).toBeGreaterThanOrEqual(0.7 * (ch.front / ch.hull));
+      expect(co.rear / co.hull, `${tag} rear`).toBeGreaterThanOrEqual(0.7 * (ch.rear / ch.hull));
+    }
+  });
+
+  it.each(ROBOTS)('%s: robot paint is mirror-symmetric under b8 (every edge)', (id) => {
+    for (const edge of ['swept', 'tongue', 'tooth'] as const) expect(mirrored(forge(id, 'b8', edge)), `${id} ${edge}`).toBe(0);
   });
 
   it.each(ROBOTS)('%s: the core ring still glows in the team colour under b8', (id) => {

@@ -235,17 +235,29 @@ const B4_EDGE: Readonly<Record<'straight' | LiveryEdge, (ax: number) => number>>
   tongue: (ax) => 0.12 * (1 - ax * ax), // the centreline reaches further
   tooth: (ax) => { const u = ax * 2; return 0.045 * (1 - Math.abs(2 * (u - Math.floor(u)) - 1)); }, // dog-tooth: 2 broad teeth a side
 };
+/** A robot's section edges, bolder than `B4_EDGE` (a review at combat zoom,
+ *  ~75 px across, could not read the capital-scale shapes on a robot): tooth
+ *  is 4 deep teeth across the face (2 a side, 13 % of the hull length deep;
+ *  a row-relative tooth reads shallower on a tapering face),
+ *  swept a clearly pointed chevron, tongue a clearly rounded tongue. Same
+ *  units and rules as `B4_EDGE` (|x|, never negative). */
+const ROBOT_EDGE4: Readonly<Record<'straight' | LiveryEdge, (ax: number) => number>> = {
+  straight: () => 0,
+  swept: (ax) => 0.18 * ax,
+  tongue: (ax) => 0.15 * Math.sqrt(Math.max(0, 1 - ax * ax)),
+  tooth: (ax) => { const u = ax * 2; return 0.13 * (1 - Math.abs(2 * (u - Math.floor(u)) - 1)); },
+};
 /** A turret's paint keep-out radius as a multiple of max(ring, cap)
  *  (`turretCoverOf`); capital b4 sections widen it (`forgeShip`). */
 export const TURRET_COVER_REACH = 1.4;
 /** The b4-family treatments and the section edge each wears. */
-function b4EdgeOf(l: Livery | undefined): (typeof B4_EDGE)[keyof typeof B4_EDGE] | undefined {
+function b4EdgeOf(l: Livery | undefined): 'straight' | LiveryEdge | undefined {
   switch (l?.treatment) {
-    case 'b4': return B4_EDGE.straight;
-    case 'b5': return B4_EDGE.swept;
-    case 'b6': return B4_EDGE.tongue;
-    case 'b7': return B4_EDGE.tooth;
-    case 'b8': return B4_EDGE[l.edge ?? 'tongue'];
+    case 'b4': return 'straight';
+    case 'b5': return 'swept';
+    case 'b6': return 'tongue';
+    case 'b7': return 'tooth';
+    case 'b8': return l.edge ?? 'tongue';
     default: return undefined;
   }
 }
@@ -473,17 +485,23 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
   //    painted").
   //  - Robots: painted bow and stern sections like the capitals' (bow
   //    fraction < ROBOT_SEC4, never under ROBOT_MIN_TEX4 texels deep), in the
-  //    faction's edge shape, instead of B's corner tips; the core ring stays.
-  const b4Edge = b4EdgeOf(livery);
-  const b4 = b4Edge !== undefined;
-  const edgeOf = b4Edge ?? B4_EDGE.straight;
+  //    faction's edge shape drawn bolder (ROBOT_EDGE4), instead of B's corner
+  //    tips; the core ring stays. A crisp edge (no jitter, no flaking, half
+  //    the wear), and no turret keep-out: a sub-cap's keep-out (1.4x the
+  //    ring) round the orb's nose turret ate the middle of its bow section,
+  //    leaving two flecked slivers that read grey in game.
+  const b4Key = b4EdgeOf(livery);
+  const b4 = b4Key !== undefined;
+  const edgeOf = b4Key !== undefined ? B4_EDGE[b4Key] : B4_EDGE.straight;
+  const robotEdgeOf = ROBOT_EDGE4[b4Key ?? 'straight'];
   /** |x| over this row's half-width (0 = centreline, 1 = side). */
   const axOf = (wx: number, ty: number): number => Math.min(1, Math.abs(wx) / Math.max(1e-3, halfRow[ty] ?? 0));
   const CAP_BOW4 = 0.2, CAP_STERN4 = 0.085, EDGE_JIT4 = 0.018, TAIL_T4 = 0.66, TAIL_NEED4 = 0.05, TAIL_FULL4 = 0.085, B4_VALUE = 0.78;
   const TAIL_GROW4 = [1, 1.25, 1.5, 1.8, 2.2] as const;
-  /** Robot b4 sections: share of the hull length at each end, its texel
-   *  floor (the smallest cube must still show the edge shape) and edge jitter. */
-  const ROBOT_SEC4 = 0.27, ROBOT_MIN_TEX4 = 3.5, ROBOT_JIT4 = 0.03;
+  /** Robot b4 sections: share of the hull length at each end (the deepest
+   *  shape stays clear of 0.5, so bow and stern never meet) and its texel
+   *  floor (the smallest cube must still show the edge shape). */
+  const ROBOT_SEC4 = 0.24, ROBOT_MIN_TEX4 = 3.5;
   /** Dog-tooth's capital bow tip read thinnest at line-up zoom (its teeth hide
    *  under the forward turrets' keep-out): at the bow only, a fuller base and
    *  teeth twice as deep, so the outer teeth clear the barbettes. */
@@ -589,11 +607,10 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
       return -1;
     }
     if (b4 && arch === 'robot') {
-      // Bow and stern sections in the faction's edge shape (no corner tips).
-      if (underTurret(wx, wy)) return -1;
-      const jit = jit4(wx, wy, ROBOT_JIT4);
-      const off = edgeOf(axOf(wx, ty));
-      return tb < robotSec4 + jit + off || tb > 1 - robotSec4 + jit - off ? teamHex : -1;
+      // Bow and stern sections in the faction's edge shape (no corner tips),
+      // crisp and painted under the turret too (see ROBOT_EDGE4).
+      const off = robotEdgeOf(axOf(wx, ty));
+      return tb < robotSec4 + off || tb > 1 - robotSec4 - off ? teamHex : -1;
     }
     if (b4) {
       if (underTurret(wx, wy)) return -1;
@@ -737,6 +754,9 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
       for (const sx of [gx, -gx]) {
         putRect(sx, gy, hw, hh, (i, bev) => {
           f.height[i] = f.height[i]! + Math.max(0.25, Hmax * 0.09) * bev;
+          // A b4 robot's greeble inside a painted section is painted too, so
+          // a big block (the nexus's) never hides the section's edge shape.
+          if (robot4 && f.mat[i] === MAT.LIVERY) return;
           f.mat[i] = MAT.METAL;
           f.key[i] = PALETTE.metal;
           setAlbedo(f, i, metalDark, bev < 0.3 ? 0.8 : 1);
@@ -898,8 +918,10 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
   // Flaking band: 0.4 % of the hull length on a capital (in texels, so it is
   // the same on the hull at any bake resolution), 1.3 texels on a small ship.
   if (shade) {
-    weatherLivery(f, dist, hashStr(seedKey + ':wear'), sizeCls === 'capital', b4, sizeCls === 'capital' ? Math.max(1, len * 0.004 * g.ppu) : 1.3,
-      b4 && sizeCls === 'capital' ? inBow4 : null);
+    // A b4 robot: no flaking band (it wiped out the edge shape at combat
+    // zoom) and half the chalk, grime and chips (ROBOT_EDGE4).
+    weatherLivery(f, dist, hashStr(seedKey + ':wear'), sizeCls === 'capital', b4, robot4 ? 0 : sizeCls === 'capital' ? Math.max(1, len * 0.004 * g.ppu) : 1.3,
+      b4 && sizeCls === 'capital' ? inBow4 : null, robot4);
   }
 
   // Nav lights at the widest points: port (x<0) red, starboard green.
@@ -952,9 +974,13 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
  * hull. Mottled (~30-texel patches) and sun-faded toward the hull grey; on
  * capitals, chips of bare metal (~3-texel noise, more near the hull edge).
  * Sub-caps get a light mottle only, so their team colour stays strong.
+ * `light` ('patch' only): half the chalk, grime and chips, none near the section
+ * edge (CRISP_TEX) (a b4 robot, whose edge must stay crisp; it passes
+ * `flakeTex` 0 for no flaking).
  */
 function weatherLivery(
   f: Fields, dist: Float32Array, seed: number, heavy: boolean, patch = false, flakeTex = 2.5, inBow: ((i: number) => boolean) | null = null,
+  light = false,
 ): void {
   const g = f.g, n = g.w * g.h;
   // 'patch': deck sigils / chevrons stay clean team paint (a review saw them
@@ -972,7 +998,7 @@ function weatherLivery(
   // so a narrow bow does not flake away along its outline (in game the bows
   // vanished at line-up zoom). Mirror-symmetric like the paint.
   let dPaint: Float32Array | null = null;
-  if (patch) {
+  if (patch && (flakeTex > 0 || light)) {
     const mask = new Float32Array(n);
     for (let i = 0; i < n; i++) mask[i] = f.mat[i] === MAT.LIVERY || f.cov[i]! <= 0.5 ? 1 : 0;
     dPaint = distanceInside(mask, g.w, g.h);
@@ -1004,17 +1030,16 @@ function weatherLivery(
       // A capital's bow section wears half the chalk, flaking and scratches,
       // so it still reads red at line-up zoom (the stern keeps them).
       const bow = inBow !== null && inBow(i);
-      const w = 1, zf = heavy ? 1 : 4, z0 = heavy ? 0.6 : 0.5;
+      const w = light ? 0.5 : 1, zf = heavy ? 1 : 4, z0 = heavy ? 0.6 : 0.5;
       const streak = valueNoise(tx * 0.15 * Math.min(2, zf), ty * 0.01 * zf, seed + 2);
       const dk = 1 - w * 0.5 * (1 - Math.pow(streak, 1.4));
-      const chalk = Math.max(0, valueNoise(tx * 0.012 * zf, ty * 0.012 * zf, seed + 6) - 0.45) * (bow ? 0.35 : 0.7); // 0 .. ~0.38
+      const chalk = Math.max(0, valueNoise(tx * 0.012 * zf, ty * 0.012 * zf, seed + 6) - 0.45) * (bow ? 0.35 : 0.7) * w; // 0 .. ~0.38
       for (let c = 0; c < 3; c++) {
         const a = f.albedo[i * 3 + c]! * dk;
         f.albedo[i * 3 + c] = a + (grey[c]! * 1.2 - a) * chalk;
       }
       const E = bow ? flakeTex * 0.5 : flakeTex; // flaking band, texels
-      const de = dPaint![i]!;
-      if (de < E && valueNoise(tx * 0.35 * Math.min(2, zf), ty * 0.35 * Math.min(2, zf), seed + 7) > 0.32 + 0.55 * (de / E)) {
+      if (dPaint !== null && dPaint[i]! < E && valueNoise(tx * 0.35 * Math.min(2, zf), ty * 0.35 * Math.min(2, zf), seed + 7) > 0.32 + 0.55 * (dPaint[i]! / E)) {
         f.mat[i] = MAT.PAINT;
         f.key[i] = f.paint;
         setAlbedo(f, i, grey, 0.85 + 0.1 * n1);
@@ -1029,7 +1054,8 @@ function weatherLivery(
       }
       const zone = valueNoise(tx * 0.025 * zf, ty * 0.025 * zf, seed + 5);
       const fleck = valueNoise(tx * 0.3 * Math.min(2, zf), ty * 0.3 * Math.min(2, zf), seed + 4);
-      if (zone > z0 && fleck > 0.74 - (zone - z0) * 0.9 && (!heavy || valueNoise(tx * 0.3, ty * 0.3, seed + 9) > CHIP_THIN)) {
+      if (zone > z0 && fleck > 0.74 - (zone - z0) * 0.9 && (!heavy || valueNoise(tx * 0.3, ty * 0.3, seed + 9) > CHIP_THIN)
+        && (!light || (dPaint![i]! >= CRISP_TEX && valueNoise(tx * 0.3 * zf, ty * 0.3 * zf, seed + 11) > 0.5))) {
         f.mat[i] = MAT.PAINT;
         f.key[i] = f.paint;
         setAlbedo(f, i, grey, 0.5 + 0.12 * n1);
@@ -1050,6 +1076,10 @@ function weatherLivery(
  *  fleck-scale noise clears this (about 30 % fewer chips than sub-caps' rule;
  *  a review found the capital mottling too dense). */
 const CHIP_THIN = 0.38;
+/** `light` weathering: no chip within this many texels of the section edge
+ *  (`distanceInside` units: the edge texel is 1), so the edge shape reads as
+ *  one crisp line. */
+const CRISP_TEX = 5;
 
 /** Smallest clear circle (radius, texels) that takes an emblem; below it a
  *  hull gets the dorsal chevron. */
