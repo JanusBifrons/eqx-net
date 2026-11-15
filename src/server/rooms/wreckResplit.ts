@@ -10,14 +10,15 @@
  * angle θ puts the dead hull's (virtual) origin at O = P − R(θ)·(cx, cy), the
  * hit maps into the hull 1× Pixi-up frame through O and θ, and a child
  * spawns at O + R(θ)·(ccx, ccy), angle θ, with the parent's rigid motion
- * (v + ω × r, ω) and a small parting kick away from the hit, the way the
- * first break-up parts its pieces.
+ * (v + ω × r, ω) plus the parting kicks of the first break-up's model
+ * (`wreckBreakKicks`: impulses against each child's own mass, from the hit),
+ * at its gentlest (no violent-death boost).
  *
  * `WreckResplitter` runs the worn-out decision and the child spawn against
  * the subsystem's state through a narrow host. Runs once per split (not
  * hot-loop code); allocates freely.
  */
-import { hullLocalCutAngle, wreckBodyParams } from '../../core/destruction/wreckPieces.js';
+import { hullLocalCutAngle, wreckBodyParams, wreckBreakKicks } from '../../core/destruction/wreckPieces.js';
 import { wreckChildGeometry, wreckChildSeed, wreckResplitOptions, type WreckChildChain, type WreckChildStep } from '../../core/destruction/wreckChildren.js';
 import { wreckCanResplit, wreckPieceIntegrity, wreckSalvageQty, WRECK_RESPLITS_PER_TICK } from '../../core/destruction/wreckIntegrity.js';
 import { FRACTURE_ALGO_VERSION } from '../../core/destruction/fractureHull.js';
@@ -86,22 +87,24 @@ export function planWreckResplit(
   const geom = wreckChildGeometry(next);
   const children: WreckChildSpawn[] = [];
   if (geom.length < 2) return { step, chain: next, children };
-  const profile = DESTRUCTION_PROFILES[shipTuning(kind).destruction];
-  // The parting kick: the speed every first-break seam opens at (#18).
-  const sep = shipTuning(kind).wreckSeparate * profile.separateScale;
-  for (const g of geom) {
+  // The parting kicks: the first break-up's impulse model from the hit, at
+  // its gentlest (`harder` 0.75: wear, not a violent death).
+  const kick = wreckBreakKicks(
+    chain.root.kindId, geom, mx, my, 0.75, wreckChildSeed(chain.root.seed >>> 0, parent.index) ^ 0x3ec7,
+    step.cutW !== undefined ? step.cutW * s : 0,
+  );
+  for (let i = 0; i < geom.length; i++) {
+    const g = geom[i]!;
     const wx = ox + g.cx * c - g.cy * sn;
     const wy = oy + g.cx * sn + g.cy * c;
     const rx = wx - pose.x;
     const ry = wy - pose.y;
-    let kx = g.cx - mx;
-    let ky = g.cy - my;
-    const kl = Math.hypot(kx, ky);
-    if (kl > 1e-6) { kx /= kl; ky /= kl; } else { kx = 0; ky = 0; }
+    const kx = kick.kvx[i]!;
+    const ky = kick.kvy[i]!;
     children.push({
-      geom: g, x: wx, y: wy, angle: pose.angle, angvel: pose.angvel,
-      vx: pose.vx - pose.angvel * ry + (kx * c - ky * sn) * sep,
-      vy: pose.vy + pose.angvel * rx + (kx * sn + ky * c) * sep,
+      geom: g, x: wx, y: wy, angle: pose.angle, angvel: pose.angvel + kick.kw[i]!,
+      vx: pose.vx - pose.angvel * ry + kx * c - ky * sn,
+      vy: pose.vy + pose.angvel * rx + kx * sn + ky * c,
     });
   }
   return { step, chain: next, children };

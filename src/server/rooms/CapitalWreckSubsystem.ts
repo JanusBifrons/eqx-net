@@ -449,6 +449,11 @@ export class CapitalWreckSubsystem {
    * direction is degenerate. Scalars only, alloc-free (#14): it runs in the
    * projectile and beam hit paths.
    *
+   * A beam (a `hitscan`-mode weapon: light, no mass) never shoves debris
+   * (owner 2026-11-15: "lasers shouldn't move the scrap"): it still wears
+   * the piece's integrity and can split it, but posts no impulse. Only real
+   * impacts (shells, slugs; rams through the contact) push, by mass.
+   *
    * During the crack hold (the rest of a salvo landing right after the kill,
    * owner review 2026-11-13: the hull bent like a banana) the same impulse
    * goes to the WHOLE wreck as one rigid body (`impulseWreck`): Δv = J ÷ the
@@ -475,6 +480,8 @@ export class CapitalWreckSubsystem {
     if (k.integrity > 0) k.integrity -= damage * wreckWearFactor(weaponId);
     if (k.integrity <= 0 && w !== undefined && wreckId !== undefined && this.d.serverTick() >= w.holdUntil
       && this.resplit.wornOut(id, k, wreckId, w, hitX, hitY, dirX, dirY, weaponId)) return true;
+    // A beam carries no momentum: the shot stops on the piece, no shove.
+    if (weaponId !== undefined && WEAPONS.get(weaponId)?.mode === 'hitscan') return true;
     if (w !== undefined && this.d.impulseWreck !== undefined && this.d.serverTick() < w.holdUntil) {
       const jMax = k.maxDv * w.mass;
       if (j > jMax) j = jMax;

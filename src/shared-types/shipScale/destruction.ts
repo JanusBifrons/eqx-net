@@ -138,13 +138,19 @@ export interface DestructionProfile {
   readonly resplit: DestructionResplit | null;
   /** Crack hold: the hull stays one body this long before it parts (ms). */
   readonly holdMs: number;
-  /** Multiplier on `shipTuning(kind).wreckPushMax/Min`. */
+  /** Multiplier on `shipTuning(kind).wreckPushMax/Min`: the blast impulse
+   *  away from the break point (`wreckBreakKicks`; a piece's kick is the
+   *  push ÷ √its mass share). */
   readonly pushScale: number;
-  /** Multiplier on `shipTuning(kind).wreckSeparate`, the least speed at
-   *  which every shared cut opens (`buildWreckPieces`' seam pass). The push
-   *  runs away from the kill point, so it moves the pieces off TOGETHER; this
-   *  is what opens the cracks. */
+  /** Multiplier on `shipTuning(kind).wreckSeparate`, the guard: the least
+   *  speed at which every shared cut opens (`wreckBreakKicks`' seam pass,
+   *  mass-weighted impulses), so no cut closes, hinges or overlaps. */
   readonly separateScale: number;
+  /** Multiplier on `shipTuning(kind).wreckCrack`, the impulse each shared
+   *  cut throws its faces apart with (`wreckBreakKicks`). The push runs
+   *  away from the break point, so it moves the pieces off TOGETHER; this is
+   *  what opens the cracks, heavy pieces slowly and slivers faster. */
+  readonly crackScale: number;
   /** Multiplier on the pieces' spin at the break: the dying hull's turn
    *  (ω, and the ω × r it gives each piece) and the seeded kick spin
    *  (`buildWreckPieces`). 1: the hull's full spin carries on. */
@@ -198,8 +204,18 @@ const CAPITAL: DestructionProfile = {
     },
   },
   holdMs: 1200,
-  pushScale: 1,
-  separateScale: 1,
+  // Owner on the re-split clip (2026-11-15): "the scrap/wreck should weigh
+  // A LOT and be more resistant to moving ... a subtle much slower movement
+  // ... an accurate mass value vs the forces applied". The break-up kicks
+  // are impulses against each piece's mass (`wreckBreakKicks`): a heavy
+  // cruiser's big pieces (>= 30 % of the hull) part at ~3 u/s (median; was
+  // ~28), slivers (<= 7 %) at ~13 u/s (was ~50). The guard only keeps the
+  // cuts from closing (~1.5 u/s for a heavy cruiser; was 31 u/s, which set
+  // every cut's speed). Locks: `wreckPiecesSeparate.test.ts`,
+  // `wreckPieces.test.ts` "mass-scaled parting".
+  pushScale: 0.08,
+  separateScale: 0.05,
+  crackScale: 1,
   spinScale: 1,
   dampingScale: 1,
   // Owner on the re-split clip (2026-11-15): "scrap should weigh a lot and
@@ -273,10 +289,10 @@ const SUBCAP: DestructionProfile = {
   // The parting push is per unit of hull radius (`wreckPushMax/Min`: 1 % /
   // 0.4 % of the radius per second), which reads at capital scale but left a
   // fighter's pieces as one hull with a crack (~0.1 u/s; hostile review
-  // 2026-11-13). ×30 throws the wreck off the kill point; damping ×10 (slice
-  // 2's measured value: linear 0.6/s, sleep in ~14 game s) brings it to
+  // 2026-11-13). ×30 (×20 ÷ √share since the impulse kicks) throws the
+  // wreck off the kill point; damping ×10 (slice 2's measured value: linear 0.6/s, sleep in ~14 game s) brings it to
   // rest; no piece drifts over ~1.5 radii. Lock: `destructionProfile.test.ts`.
-  pushScale: 30,
+  pushScale: 20,
   // That push runs away from the kill point, so on a hit at one end every
   // piece goes the SAME way: ×50 alone left the cracks shut (round-2 review:
   // robot pieces still touching ~1 s after the break; the seam pass opened
@@ -290,7 +306,12 @@ const SUBCAP: DestructionProfile = {
   // >= ~3.3 radii/s (fighter ~86 u/s), ~2.5+ radii apart 1 s after the
   // break and ~6 at rest. Locks: `wreckPieces.subcapParting.test.ts`
   // (the kicks) + `subcapWrecks.test.ts` (the real server at 1 s).
+  // Wreck mass (2026-11-15): the kicks became impulses against each piece's
+  // mass. A sub-cap breaks into 2-3 near-equal chunks, so mass barely
+  // changes their parting; the reviewed floor stays (×240), no extra crack
+  // impulse on top, and the push is ×20 ÷ √share (≈ the old ×30 on a half).
   separateScale: 240,
+  crackScale: 0,
   // Owner on the v5 film (2026-11-13): "they spin too much when destroyed".
   // The pieces carried the dying hull's whole turn (a fighter hard over at
   // 2 rad/s threw them at ~115 °/s); ×0.3 keeps a lazy tumble (≤ ~35 °/s
@@ -346,6 +367,7 @@ const NONE: DestructionProfile = {
   holdMs: 0,
   pushScale: 0,
   separateScale: 1,
+  crackScale: 0,
   spinScale: 1,
   dampingScale: 1,
   knockScale: 1,
