@@ -3,8 +3,9 @@
  *
  * The welcome carries only the field seed; no rock rides the wire. This cuts
  * the chunks around the local ship with the shared `CutFieldStreamer` (the
- * server runs the same one), off the frame on its own slow timer, one chunk
- * per step. Each loaded chunk goes to the renderer as flat outlines (the
+ * server runs the same one) on its own slow timer, one chunk per step. The
+ * cutting itself (a few ms a chunk on a desktop, several times that on a
+ * phone) runs in the page's art bake pool, so it never lands on a frame. Each loaded chunk goes to the renderer as flat outlines (the
  * mirror's `pendingFieldChunks` drain queue);
  * only the rocks the local ship can touch get a locked predWorld body, streamed
  * by edge distance like structures (`wantPredBody`), because every correction
@@ -20,7 +21,7 @@ import {
   fieldRockBody,
   type FieldRockBody,
 } from '@core/terrain/chunkStreamer';
-import type { ChunkRock } from '@core/terrain/fieldLayout';
+import { rocksInChunk, type ChunkOpts, type ChunkRock } from '@core/terrain/fieldLayout';
 import { wantPredBody } from '../structures/predStructureStreaming.js';
 
 /** Client step cadence (wall time: it paces generation work, not anything in
@@ -33,6 +34,16 @@ const CLIENT_WAKE_CHUNKS = 3;
 const CLIENT_LINGER_MS = 5_000;
 /** Field rocks are fixed: their predWorld mass is irrelevant (locked). */
 const FIELD_ROCK_PRED_MASS = 3;
+/** Chunk cuts out in the pool at once (nearest first; a few, so ship bakes
+ *  still get workers). */
+export const MAX_CUTS_IN_FLIGHT = 2;
+/** Finished cuts the streamer stopped wanting are kept this many at most. */
+const MAX_READY_CUTS = 16;
+
+/** Cuts a chunk off the main thread (the art bake pool's `cutChunk`). */
+export interface ChunkCutter {
+  cutChunk?(field: ChunkOpts, cx: number, cy: number): Promise<ChunkRock[]>;
+}
 
 /** Where chunk outlines go (ColyseusClient: the mirror's drain queue). */
 export interface CutFieldDrawSink {
@@ -47,6 +58,8 @@ export interface CutFieldClientDeps {
   /** The local ship's pose, or null when there is none (spectating, dead). */
   localPose(): { x: number; y: number } | null;
   draw: CutFieldDrawSink;
+  /** The background cutter; omitted or without `cutChunk`: cut inline. */
+  cutter?: () => ChunkCutter | null;
 }
 
 interface LoadedRock { body: FieldRockBody; inPred: boolean }
@@ -56,6 +69,12 @@ export class CutFieldClient {
   private streamer: CutFieldStreamer | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
   private readonly rocks = new Map<string, LoadedRock>();
+  /** Cuts asked of the pool: null while out, the rocks once back. */
+  private readonly cuts = new Map<string, readonly ChunkRock[] | null>();
+  private inFlight = 0;
+  /** Bumped on stop, so a cut that lands after it is dropped. */
+  private gen = 0;
+  private inline = false;
   /** Counters for tests and diagnostics (counts, never timings). */
   readonly stats = { predBodies: 0 };
 
@@ -70,13 +89,15 @@ export class CutFieldClient {
     this.stop();
     this.seed = seed;
     if (seed === null) return;
-    this.streamer = new CutFieldStreamer(cutFieldOpts(seed), {
+    const field = cutFieldOpts(seed);
+    this.streamer = new CutFieldStreamer(field, {
       visitShips: (cb) => { const p = this.deps.localPose(); if (p) cb(p.x, p.y); },
       spawnRock: (id, rock) => { this.rocks.set(id, { body: fieldRockBody(rock), inPred: false }); return true; },
       removeRock: (id) => this.dropRock(id),
       nowMs: () => this.deps.gameClock.now(),
       chunkLoaded: (cx, cy, rocks) => this.deps.draw.setFieldChunk(cx, cy, packOutlines(rocks)),
       chunkUnloaded: (cx, cy) => this.deps.draw.setFieldChunk(cx, cy, null),
+      cutChunk: (cx, cy) => this.cutChunk(field, cx, cy),
     }, CLIENT_WAKE_CHUNKS, CLIENT_LINGER_MS, CLIENT_CUTS_PER_STEP);
     this.timer = setInterval(() => this.step(), CLIENT_STEP_MS);
   }
@@ -95,6 +116,46 @@ export class CutFieldClient {
     this.streamer?.clear();
     this.streamer = null;
     this.seed = null;
+    this.cuts.clear();
+    this.inFlight = 0;
+    this.gen++;
+  }
+
+  /** The streamer's cut hook: the chunk's rocks once the pool has cut them,
+   *  else null (asked again next step). Inline without a pool. */
+  private cutChunk(field: ChunkOpts, cx: number, cy: number): readonly ChunkRock[] | null {
+    const cutter = this.inline ? null : this.deps.cutter?.() ?? null;
+    if (!cutter?.cutChunk) return rocksInChunk(field, cx, cy);
+    const key = `${cx},${cy}`;
+    const have = this.cuts.get(key);
+    if (have) { this.cuts.delete(key); return have; }
+    if (have === null || this.inFlight >= MAX_CUTS_IN_FLIGHT) return null;
+    this.cuts.set(key, null);
+    this.inFlight++;
+    const gen = this.gen;
+    cutter.cutChunk(field, cx, cy).then((rocks) => {
+      if (gen !== this.gen) return;
+      this.inFlight--;
+      this.cuts.set(key, rocks);
+      this.trimReady();
+    }, () => {
+      if (gen !== this.gen) return;
+      // The pool failed: cut inline from now on (same rocks, #15).
+      this.inFlight--;
+      this.cuts.delete(key);
+      this.inline = true;
+    });
+    return null;
+  }
+
+  /** Drop the oldest finished cuts the ship flew away from before using. */
+  private trimReady(): void {
+    let ready = 0;
+    for (const v of this.cuts.values()) if (v) ready++;
+    for (const [k, v] of this.cuts) {
+      if (ready <= MAX_READY_CUTS) break;
+      if (v) { this.cuts.delete(k); ready--; }
+    }
   }
 
   private syncPred(): void {

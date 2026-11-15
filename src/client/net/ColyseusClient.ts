@@ -180,6 +180,7 @@ import {
 import { localFireSpawnsGhost, localFirePredicts, liveBeamVisible, LIVE_BEAM_PERSIST_MS } from '../combat/LocalBeam';
 import { flowMaterialToCode } from '../render/pixi/connectorVisual';
 import { findMount, isSustainedBeamMount, remoteBeamTtlMs } from '../render/beamStyles';
+import { pageBakeRunner } from '../render/art/ArtService';
 import type { TouchInput } from '../input/TouchInput';
 import { joystickToInput, IDLE_INPUT_STATE, type JoystickInputState } from '../input/joystickToInput';
 import { aimInput } from '../input/AimInput';
@@ -569,6 +570,9 @@ export class ColyseusGameClient {
         (this.mirror.pendingFieldChunks ??= []).push({ cx, cy, outlines });
       },
     },
+    // Chunks are cut in the page's art bake pool (shared with ship bakes on
+    // phones, where the renderer is on this thread).
+    cutter: pageBakeRunner,
   });
   /** Reused construction context — one instance mutated in place per entity, so
    *  swarm spawn allocates nothing (invariant #14). `predWorld` / `entry` are

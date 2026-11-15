@@ -56,7 +56,7 @@ Only test and showcase rooms set `cutField: { seed }`; live sectors never do unt
 - **Shared streamer.** `CutFieldStreamer` (`core/terrain/chunkStreamer.ts`) loads the chunks near each ship and unloads them after a linger; the server and the client both run it, so both hold the same rocks (#15). Field rocks never ride the wire; the welcome carries only the seed (#16).
 - **Server:** loaded rocks are Rapier FIXED bodies (`World.fixBody`, the worker's `staticBody: 'fixed'`), not locked dynamic ones; the wire and saves skip them. Cut pieces touch along their cuts, and as locked dynamic bodies the solver worked every rock–rock contact while they were awake (see Measurements). The streamer cuts at most 2 chunks per 250 ms step on the room's main thread.
 - **Chunk cuts** (`rocksInChunk`) pass `own` = the chunk, so pieces that can't hold a member rock are dropped before they are cut or finished; same rocks as cutting the padded view and filtering.
-- **Client:** `net/CutFieldClient.ts` cuts one chunk per 125 ms (7 × 7 chunks, ~28 km), adds predWorld bodies only near the ship, and hands chunk outlines to the renderer through `RenderMirror.pendingFieldChunks` → `render/field/CutFieldLayer.ts` (flat-coloured rocks).
+- **Client:** `net/CutFieldClient.ts` loads one chunk per 125 ms (7 × 7 chunks, ~28 km). The cutting runs in the page's art bake pool (`ArtService` `pageBakeRunner().cutChunk`, `bake.worker.ts`), at most 2 cuts out at once and ahead of queued bakes; the streamer's `cutChunk` hook returns null until a cut lands, and loads it on the next step. Without workers the pool cuts inline. On a phone the renderer shares that main thread, so a cut there dropped frames (see Measurements). The client adds predWorld bodies only near the ship, and hands chunk outlines to the renderer through `RenderMirror.pendingFieldChunks` → `render/field/CutFieldLayer.ts` (flat-coloured rocks).
 - **Spectating** streams around the own parked hull (spectate moves it to `lingeringShips`).
 - **Test room** `showcase-cut-field` (seed `look`); shots in `showcase/shots/cutField.ts`. Lane poses come from `slicedFieldLanes`.
 
@@ -65,8 +65,8 @@ Only test and showcase rooms set `cutField: { seed }`; live sectors never do unt
 - Concave outlines use one convex hull on both sides; poly-decomp later.
 - The client draws only the loaded 7 × 7 chunks, so far zoom shows a square edge; a far-zoom view of the whole field is open.
 - Collision E2E: `tests/e2e/cut-field-collision.spec.ts` (room `cut-field-test`) rams a field rock: the server logs `field:` contacts and the rendered ship stays outside the rock's collider.
-- Still to measure: a valid (quiet-host) desktop run and a phone-proxy run of perf scene `cut-field`, and a moving pilot (chunks streaming in while flying).
-- Chunk cuts still run on the main thread on both sides (~4 ms each); if a moving-pilot run shows hitches, move them to a worker.
+- Still to measure: a valid (quiet-host) desktop run; the phone GPU's draw cost (phone-proxy throttles the CPU only).
+- Server chunk cuts still run on the room's main thread (~4 ms each, 2 per step at most); move them to a worker if a busy sector shows tick spikes.
 
 Next (plan v2 stages A3–F): owner shape tuning, cross-browser parity, chunk meshes with the procedural rock shader, then wake/deep sleep, the wire and the terrain store.
 
@@ -115,6 +115,8 @@ Pending: slice 0c fills in the rock-field scenes from desktop and `--device phon
 | Physics step, 941 rocks, isolated: while awake | ~12 ms for the first 120 ticks after a load (locked dynamic) | 0.1–0.2 ms from tick 1 (fixed) |
 | Physics step, 941 rocks, isolated: asleep | 0.09 ms | 0.09 ms |
 | `rocksInChunk`, 169 chunks around lane 1 (avg 55 rocks, max 99) | p50 10.8 / p95 13.9 ms | p50 3.8 / p95 6.1 ms |
+
+**Phone-proxy, 6× CPU, flying down lane 1 (`cut-field-run`), busy host:** idle 0–6 hitches/min; flying 14–20 hitches/min (frame p99 33 ms) with the chunk cut on the main thread, and still 12–33 with it in the bake pool. So the cut is not the main per-chunk cost on a phone: the drawing of a new chunk or its predWorld bodies is the next suspect (unmeasured).
 
 Server tick, client frame and render barely notice an idle field; the cost was the physics worker solving touching locked bodies, and the chunk cut finishing rocks outside its chunk.
 

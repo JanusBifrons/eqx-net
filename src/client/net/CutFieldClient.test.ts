@@ -1,8 +1,8 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import type { PhysicsWorld } from '@core/physics/World';
-import { CHUNK_SIZE } from '@core/terrain/fieldLayout';
+import { CHUNK_SIZE, rocksInChunk, type ChunkOpts, type ChunkRock } from '@core/terrain/fieldLayout';
 import { PREDWORLD_STRUCTURE_RADIUS, PREDWORLD_STRUCTURE_HYSTERESIS } from '../../shared-types/structureBudgets.js';
-import { CutFieldClient } from './CutFieldClient.js';
+import { CutFieldClient, MAX_CUTS_IN_FLIGHT } from './CutFieldClient.js';
 
 /** A predWorld that records bodies (the client module only spawns, locks,
  *  despawns). */
@@ -82,5 +82,79 @@ describe('CutFieldClient (macro terrain v2, slice 2)', () => {
     expect(drawn.size).toBe(0);
     expect(bodies.size).toBe(0);
     expect(c.loadedRocks).toBe(0);
+  });
+});
+
+describe('CutFieldClient background cutting (phone frames stay clear)', () => {
+  /** A cutter whose cuts land only when the test says so. */
+  function heldCutter() {
+    const out: Array<{ cx: number; cy: number; land: () => void; fail: () => void }> = [];
+    const cutter = {
+      cutChunk: (field: ChunkOpts, cx: number, cy: number) => new Promise<ChunkRock[]>((resolve, reject) => {
+        out.push({ cx, cy, land: () => resolve(rocksInChunk(field, cx, cy)), fail: () => reject(new Error('x')) });
+      }),
+    };
+    return { cutter, out };
+  }
+  function asyncRig() {
+    const { pw } = fakePredWorld();
+    const pose = { x: 60_000, y: 0 };
+    const drawn = new Map<string, Float32Array>();
+    const held = heldCutter();
+    const c = new CutFieldClient({
+      gameClock: { now: () => 0 },
+      predWorld: () => pw,
+      localPose: () => pose,
+      draw: { setFieldChunk: (cx, cy, o) => { if (o) drawn.set(`${cx},${cy}`, o); else drawn.delete(`${cx},${cy}`); } },
+      cutter: () => held.cutter,
+    });
+    return { c, drawn, ...held };
+  }
+  const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
+
+  it('never cuts on the step: asks the pool, nearest first, a few at once', () => {
+    const { c, drawn, out } = asyncRig();
+    live = c;
+    c.setSeed('test-seed');
+    c.step();
+    c.step();
+    expect(drawn.size).toBe(0);
+    expect(out.length).toBe(MAX_CUTS_IN_FLIGHT);
+    expect(`${out[0]!.cx},${out[0]!.cy}`).toBe(`${Math.floor(60_000 / CHUNK_SIZE)},0`);
+  });
+
+  it('loads a chunk the step after its cut lands, with the same rocks as an inline cut', async () => {
+    const { c, drawn, out } = asyncRig();
+    live = c;
+    c.setSeed('test-seed');
+    c.step();
+    out[0]!.land();
+    await flush();
+    c.step();
+    const key = `${out[0]!.cx},${out[0]!.cy}`;
+    expect([...drawn.keys()]).toEqual([key]);
+    const inline = rig();
+    inline.pose.x = 60_000;
+    inline.c.setSeed('test-seed');
+    inline.c.step();
+    expect(drawn.get(key)).toEqual(inline.drawn.get(key));
+    inline.c.stop();
+  });
+
+  it('drops a cut that lands after stop, and falls back to inline if the pool fails', async () => {
+    const { c, drawn, out } = asyncRig();
+    live = c;
+    c.setSeed('test-seed');
+    c.step();
+    c.stop();
+    out[0]!.land();
+    await flush();
+    expect(drawn.size).toBe(0);
+    c.setSeed('test-seed');
+    c.step();
+    out[out.length - 1]!.fail();
+    await flush();
+    c.step();
+    expect(drawn.size).toBe(1);
   });
 });

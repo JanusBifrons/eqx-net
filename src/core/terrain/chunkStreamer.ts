@@ -65,6 +65,11 @@ export interface CutFieldHooks {
   chunkLoaded?(cx: number, cy: number, rocks: readonly ChunkRock[]): void;
   /** A whole chunk was dropped (after its rocks were removed). */
   chunkUnloaded?(cx: number, cy: number): void;
+  /** Where cut rocks come from. Omitted: `rocksInChunk` inline (server). The
+   *  client cuts in a background worker: this returns the chunk once it is
+   *  cut, else starts or awaits the cut and returns null (asked again next
+   *  step). Same rocks either way (#15). */
+  cutChunk?(cx: number, cy: number): readonly ChunkRock[] | null;
 }
 
 interface LoadedChunk { ids: string[]; lastNeededMs: number }
@@ -121,10 +126,11 @@ export class CutFieldStreamer {
       const have = this.loaded.get(key);
       if (have) { have.lastNeededMs = now; continue; }
       if (this.stats.cutsThisStep >= this.maxCutsPerStep) continue;
-      this.stats.cutsThisStep++;
       const cx = unpackX(key), cy = unpackY(key);
+      const rocks = this.hooks.cutChunk ? this.hooks.cutChunk(cx, cy) : rocksInChunk(this.field, cx, cy);
+      if (rocks === null) continue; // still being cut elsewhere
+      this.stats.cutsThisStep++;
       const ids: string[] = [];
-      const rocks = rocksInChunk(this.field, cx, cy);
       for (const rock of rocks) {
         const id = fieldRockId(rock.key);
         if (this.hooks.spawnRock(id, rock, cx, cy)) ids.push(id);
