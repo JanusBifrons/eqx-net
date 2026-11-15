@@ -154,6 +154,7 @@ Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each r
 - `WhileAwayDialog` summarises history newer than the localStorage watermark (`eqxTradeLastSeenMs`).
 - **Never add a top-level `src/client/trade/` dir:** it collides with the `/trade` Vite proxy. Trade client code lives in `net/trade*.ts`. The `clientDirProxyCollision.test.ts` guard locks this.
 - Locks: `tradeView.test.ts`, `TradeToasts.test.tsx`, `tests/e2e/trade-tab.spec.ts` (feature tier).
+- The sibling drawer tabs follow the same poll-while-shown rule. Locks: `FactionsTab.test.tsx` ([factions](factions.md)), `ContractsTab.test.tsx` ([bounties-and-events](../features/bounties-and-events.md)).
 
 ## Server implementation notes
 
