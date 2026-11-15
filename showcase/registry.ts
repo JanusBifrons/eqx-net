@@ -27,6 +27,7 @@ import { npcDogfight } from './shots/npcDogfight.js';
 import { timeScaleDial, timeScaleCapitals4x, capitalBreakupSlowmo, capitalBreakupFast } from './shots/timeScaleDial.js';
 import { wreckResplit } from './shots/wreckResplit.js';
 import { scrap } from './shots/scrap.js';
+import { tractorBeam } from './shots/tractorBeam.js';
 import { buildBase } from './shots/buildBase.js';
 import { gridAlive } from './shots/gridAlive.js';
 import { defence } from './shots/defence.js';
@@ -99,6 +100,7 @@ export const SHOTS: readonly Shot[] = [
   robots,
   nexus,
   scrap,
+  tractorBeam,
   loot,
   cockpitHaul,
   cockpitBounty,
@@ -206,5 +208,5 @@ export const SHOWCASE_PENDING: Record<string, string> = {
   'research-lab':
     'Lab jobs run for minutes on the 1 Hz grid pulse; needs a staged base with blueprints + a fast-pulse room before it can be filmed.',
   'mining-and-salvage':
-    'No ship carries the mining laser or the tractor yet, and the tractor beam is not drawn until PR 11b: the shot lands with the mining barge (plan partitioned-chasing-lark), a barge cutting up and hauling a capital wreck.',
+    'No ship carries the mining laser or the tractor yet (the catalogue shot `tractor-beam` lends a mount one with the `test_tractor` cue): the reel shot lands with the mining barge (plan partitioned-chasing-lark), a barge cutting up and hauling a capital wreck.',
 };

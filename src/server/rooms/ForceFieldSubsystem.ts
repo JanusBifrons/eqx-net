@@ -17,8 +17,7 @@
  */
 import { TRACTOR_LINE_CAP, type ForceField, type TractorForceField } from '../../core/physics/forceFields.js';
 import { getWeapon } from '../../core/combat/WeaponCatalogue.js';
-import { mountWeaponReach } from '../../core/combat/mountReach.js';
-import { MOUNT_SIZE_TUNING } from '../../shared-types/shipScale/tuning.js';
+import { setTractorMountConstants, setTractorMuzzle } from '../../core/combat/tractorField.js';
 import { encodeTractorLink, type BeamLinks } from '../../shared-types/beamLinksWire.js';
 import type { WeaponMount } from '../../shared-types/shipKinds.js';
 import type { WorkerCmd } from './PhysicsWorkerProxy.js';
@@ -132,8 +131,9 @@ export class ForceFieldSubsystem {
    * already passed the lock gate and paid energy (#19). Tractoring a ship is a
    * hostile act (`onShipTractored`); terrain is neutral. Returns false when
    * refused (no tractor weapon, no target, a self-target, the lease cap).
+   * `leaseTicks` overrides the weapon's lease (the `test_tractor` cue only).
    */
-  renewTractor(emitterId: string, mount: WeaponMount, targetId: string | null | undefined): boolean {
+  renewTractor(emitterId: string, mount: WeaponMount, targetId: string | null | undefined, leaseTicks?: number): boolean {
     const t = this.d.tractors;
     const spec = getWeapon(mount.weaponId).tractor;
     if (t === undefined || spec === undefined || !targetId || targetId === emitterId) return false;
@@ -161,11 +161,10 @@ export class ForceFieldSubsystem {
       lease.startTick = tick;
       lease.px = NaN;
     }
-    lease.endTick = tick + spec.leaseTicks;
+    lease.endTick = tick + (leaseTicks ?? spec.leaseTicks);
     const f = lease.field;
     f.target = targetId;
-    f.force = spec.force * MOUNT_SIZE_TUNING[mount.size ?? 'S'].power;
-    f.reach = mountWeaponReach(mount);
+    setTractorMountConstants(f, mount); // shared with the client predWorld (#15)
     if (!t.isTerrain(targetId)) t.onShipTractored(emitterId, targetId);
     return true;
   }
@@ -212,11 +211,7 @@ export class ForceFieldSubsystem {
           continue;
         }
         const f = lease.field;
-        const a = _pose.angle ?? 0;
-        const c = Math.cos(a), s = Math.sin(a);
-        const m = lease.mount;
-        f.mx = _pose.x + (m.localX * c - m.localY * s);
-        f.my = _pose.y + (m.localX * s + m.localY * c);
+        setTractorMuzzle(f, _pose.x, _pose.y, _pose.angle ?? 0, lease.mount);
         // Game ticks are fixed 1/60 s steps (time scale changes their rate).
         const first = lease.px !== lease.px;
         f.mvx = first ? 0 : (f.mx - lease.px) * 60;

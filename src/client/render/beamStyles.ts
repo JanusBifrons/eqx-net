@@ -146,6 +146,21 @@ export const MINING_LASER_STYLE: BeamSpriteStyle = {
   ...MINING_BEAM_STYLE, width: MINING_LASER_WIDTH, taper: false, minScreenPx: MINING_LASER_MIN_SCREEN_PX,
 };
 
+/** The tractor beam's pale blue (salvage plan PR 11b). */
+export const TRACTOR_BEAM_COLOR = 0xa8d4ff;
+
+/** The tractor beam's line (owner 2026-11-15: "a faint, thin, pale-blue line
+ *  from the barrel to the target … subtle, not a weapon beam"): flat (no
+ *  taper: it holds its target, it does not fade out at range), low alpha,
+ *  a hair wide at any zoom. Drawn by its own `BeamSpritePool`, unfiltered
+ *  (no glow, no lights): `render/tractorBeams.ts`. */
+export const TRACTOR_BEAM_STYLE: BeamSpriteStyle = { tint: TRACTOR_BEAM_COLOR, width: 1, alpha: 0.3, minScreenPx: 1.25 };
+
+/** The soft rings travelling along a tractor line toward its emitter (the
+ *  direction of pull): short bars across the line, a little brighter than
+ *  the line, faded in and out along it (`BeamView.alphaMul`). */
+export const TRACTOR_PULSE_STYLE: BeamSpriteStyle = { tint: 0xd2e8ff, width: 1, alpha: 0.55, minScreenPx: 2 };
+
 /** A heavy beam that MISSES fades over this last share of its drawn length
  *  (to its max range); one that hits is solid to the hit point. */
 export const HEAVY_BEAM_MISS_FADE_FRAC = 0.15;

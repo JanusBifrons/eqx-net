@@ -79,7 +79,8 @@ import {
 import { newSpeedFxSample, speedFxSampleInto } from './camera/speedFxSample';
 import { GroupBoundsScanner } from './camera/groupBounds';
 import type { CameraCue, CameraGroup } from '@core/contracts/cameraScript';
-import { REMOTE_BEAM_STYLE, LIVE_BEAM_STYLE, liveBeamLook, liveBeamLine,MINING_BEAM_STYLE, remoteBeamStyleForMount, remoteBeamLine, remoteBeamSolidLen, addBeamLights, beamLightBudget, BeamHitMemory, type RemoteBeamLine } from './beamStyles';
+import { fillTractorBeams } from './tractorBeams';
+import { REMOTE_BEAM_STYLE, LIVE_BEAM_STYLE, TRACTOR_BEAM_STYLE, liveBeamLook, liveBeamLine,MINING_BEAM_STYLE, remoteBeamStyleForMount, remoteBeamLine, remoteBeamSolidLen, addBeamLights, beamLightBudget, BeamHitMemory, type RemoteBeamLine } from './beamStyles';
 import { MountVisualManager } from './MountVisualManager';
 import { BackgroundGrid } from './BackgroundGrid';
 import { StarfieldBackground } from './StarfieldBackground';
@@ -393,6 +394,7 @@ export class PixiRenderer implements IRenderer {
    *  `liveCount` (the shared remote pool can't tell a drill beam from a combat
    *  laser). The faint always-on link hint stays in `ConnectorRenderer`. */
   private _miningBeamPool: BeamSpritePool | null = null;
+  private _tractorBeamPool: BeamSpritePool | null = null; private readonly _tractorViews: BeamView[] = []; // salvage PR 11b (tractorBeams.ts)
   private miningBeamGfx: Container | null = null;
   /**
    * Plan: combat-fx-hunt (2026-05-31) — beam endpoint cache for the
@@ -1149,6 +1151,7 @@ export class PixiRenderer implements IRenderer {
       this._miningBeamPool = new BeamSpritePool(MINING_BEAM_STYLE);
       this.miningBeamGfx = this._miningBeamPool.container;
       this.shipContainer.addChild(this.miningBeamGfx);
+      this._tractorBeamPool = new BeamSpritePool(TRACTOR_BEAM_STYLE); this.shipContainer.addChild(this._tractorBeamPool.container, this._tractorBeamPool.styledContainer); // faint, unfiltered
 
       this.effects = new EffectsService({
         app: this.app,
@@ -2283,6 +2286,7 @@ export class PixiRenderer implements IRenderer {
     // the shield sync closes it.
     this._fxShieldsOn = this._fxShields !== null && this._fxShields.ready();
     if (this._fxShieldsOn) this._fxShields!.begin();
+    this._tractorBeamPool?.setBeams(this._tractorViews, this._beamsDisabled ? 0 : fillTractorBeams(mirror, this.fxNow(), this.world.scale.x, this._tractorViews), this.world.scale.x);
     if (!this._beamsDisabled && mirror.remoteLasers && mirror.remoteLasers.size > 0 && this._remoteBeamPool) {
 
       // Origin tracking: the shooter pose moves every frame (drones each
