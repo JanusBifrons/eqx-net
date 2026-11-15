@@ -227,6 +227,11 @@ stand-off distances compare `fireRange × factor` with the hull distance
 (centre − `shipHitBound` when that is already past `fireRange`, else
 `shipHullDistance`), from the `kindId`/`angle`/`shieldUp` the room puts on
 `AiPlayerView` / `AiSwarmView`. Lock: `HostileDroneBehaviour.hullRange.test.ts`.
+Cost (`benchmarks/drone-brain-hull-range.bench.ts`, laptop, 2026-11-15): the
+battleship polygon distance is ~0.4 µs, a shield bubble ~0.2 µs; a whole
+combat tick is ~0.3 µs with no kind, ~0.5 µs against a far battleship (bound
+reject), ~0.7 µs with its hull in reach. Worst case 56 drones in reach of a
+battleship add ~25 µs per AI tick, ~0.15 % of the 16.67 ms budget. Print-only.
 
 Not yet hull-based: lock time (`lockSeconds`, centre distance; locks have no
 reach gate at all since 2026-11-14).
@@ -246,6 +251,13 @@ in `SectorRoom.resolveLockTarget` (swarm record `shipKind` / `!shieldDown` /
 `radius`; a pilot's `ShipState.kind` / `shield > 0`), the client in
 `ColyseusClient.fcTargetPose` (swarm wire `shipKind` / `shieldDown` / `radius`;
 the ship mirror's `kind` / `shieldDown`). `LockTargetView` extends it.
+Its range half is `fillRangeShape`, which every other range shape also uses
+(the server's NPC turret / drone / structure gates via
+`SectorRoom.writeSwarmRangeShape` and the pilot-hull fills, the client's
+`fcTargetShape`). A ship with no kind is the default kind's hull, the shape
+`shipHitShape` hits it on; the two fills once disagreed there (player gate:
+the default kind's radius circle; NPC gate: the record's radius circle). Lock:
+`tests/unit/fireControlBearingParity.test.ts`.
 
 Who calls it: the server's `SectorRoom.mountBearsOnLock` (→ `PlayerFireResolver`
 per mount), and the client's `fcGroupBears` (non-capital groups), `fcFireMounts`

@@ -13,6 +13,7 @@ import {
   newFireTargetShape,
 } from '../../src/core/combat/fireControlBearing.js';
 import { mountInReach } from '../../src/core/combat/mountReach.js';
+import { shipHullDistance } from '../../src/core/combat/shipHitShape.js';
 import { TURRET_FIRE_MISS, TURRET_FIRE_TOLERANCE } from '../../src/core/combat/mountFireControl.js';
 
 describe('barrelBearsOn (#15)', () => {
@@ -71,6 +72,34 @@ describe('mountInReach on a FireTargetShape / mountFiresOn', () => {
     fillFireTargetShape(t, 0, 500, 0, false, null, false, 100);
     expect(mountInReach(t.x, t.y, 401, t)).toBe(true);
     expect(mountInReach(t.x, t.y, 399, t)).toBe(false);
+  });
+
+  it('a ship with no kind is reached by the shape its hits use (the default kind\'s hull)', () => {
+    const t = newFireTargetShape();
+    fillFireTargetShape(t, 0, 0, 0.4, true, null, false, 0);
+    // A mount 500 u from the default hull's nearest point along +x.
+    let x = 1;
+    while (shipHullDistance(null, false, x, 0, 0, 0, 0.4) < 500) x += 1;
+    expect(mountInReach(t.x - x, t.y, 501, t)).toBe(true);
+    expect(mountInReach(t.x - x, t.y, 497, t)).toBe(false);
+  });
+
+  it('the NPC turret / drone gate fills its range shape with the same shared fill', () => {
+    // Two fills once disagreed for a ship with no kind (#15): the player gate
+    // took the default kind's radius, the NPC gate the record's radius.
+    const server = readFileSync('src/server/rooms/SectorRoom.ts', 'utf8');
+    const method = (src: string, name: string): string => {
+      const body = src.slice(src.indexOf(name));
+      return body.slice(0, body.search(/\r?\n {2}\}\r?\n/));
+    };
+    expect(method(server, 'private writeSwarmRangeShape(')).toMatch(/fillRangeShape\(/);
+    // Every pilot range shape too: no hand-written `kindId = …kind; … radius = 0` fills.
+    expect(server).not.toMatch(/\.kindId = h\.ship\.kind;/);
+    // The client's turret range shape (`fcTargetShape`) mirrors it.
+    const client = readFileSync('src/client/net/ColyseusClient.ts', 'utf8');
+    const fc = method(client, 'private fcTargetShape(');
+    expect(fc).toMatch(/fillRangeShape\(/);
+    expect(fc).not.toMatch(/\.kindId = /);
   });
 
   it('mountFiresOn needs both the range and the bearing', () => {
