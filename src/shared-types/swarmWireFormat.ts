@@ -105,6 +105,13 @@ export const SWARM_KIND_SCRAP = 3;
  *  same deterministic `wreckPieceGeometry`. No health (immune terrain). */
 export const SWARM_KIND_WRECK = 4;
 
+/** A loot pod: a scrap-kind record drawn as `cargo-pod` (LootSubsystem).
+ *  Loot, not a combatant: nobody's shot lands on it (players, AI pilots and
+ *  turrets alike; the client's drawn beam passes it too). */
+export function isLootPod(rec: { kind?: number; shipKind?: string | null }): boolean {
+  return rec.kind === SWARM_KIND_SCRAP && rec.shipKind === 'cargo-pod';
+}
+
 /** Maximum number of records that fit in a buffer of `bufBytes` total bytes. */
 export function swarmRecordCapacity(bufBytes: number): number {
   return Math.floor((bufBytes - SWARM_HEADER_BYTES) / SWARM_RECORD_BYTES);

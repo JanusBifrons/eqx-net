@@ -2286,7 +2286,6 @@ export class SectorRoom extends Room<SectorState> {
       lingeringSlots: this.lingeringSlots,
       lingeringShip: (sid) => this.state.ships.get(sid),
       // Only a pilot's own shot can land on a loot pod; AI and turret bolts pass it.
-      shotHitsLootPods: (ownerId) => this.playerToSlot.has(ownerId),
       applyDamage: (targetId, shooterId, damage, hitX, hitY, dirX, dirY, weaponId) =>
         this.applyDamage(targetId, shooterId, damage, hitX, hitY, dirX, dirY, weaponId),
       wallBlocksProjectile: (x, y, sx, sy, damage) => {
