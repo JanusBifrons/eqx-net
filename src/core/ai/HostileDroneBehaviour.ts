@@ -462,6 +462,10 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   /** Mode of the drone's bound weapon (first mount). Drives the steering
    *  branch in tickCombat. */
   private readonly weaponMode: WeaponMode;
+  /** The bound weapon winds up a 'locked-direction' charge, through which
+   *  the pilot holds its line (`view.isCharging`). Such a wind-up starts only
+   *  outside the attack run's pull-off distance (`_tac.overshoot`). */
+  private readonly chargeHoldsLine: boolean;
   /** Distance (world units) at/under which the drone fires. Beam → very
    *  close (~225); bolt → medium (~560); missile → long (~1400). */
   private readonly fireRange: number;
@@ -667,6 +671,9 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     // Weapon-aware engagement profile (weapons/energy/AI overhaul §4).
     const firstWeapon = getWeapon(this.kind.mounts?.[0]?.weaponId ?? 'hitscan');
     this.weaponMode = firstWeapon.mode;
+    this.chargeHoldsLine = (firstWeapon.chargeTicks ?? 0) > 0
+      && (firstWeapon.chargeRelease ?? 'locked-direction') === 'locked-direction'
+      && !hasTurretFireControl(this.kind);
     // Lead-aim muzzle speed: real projectile speed for bolts/missiles,
     // ~instant for hitscan (no lead). Drives the intercept in tickCombat.
     this.leadMuzzleSpeed = firstWeapon.mode === 'hitscan' ? 1e6 : firstWeapon.speed;
@@ -1246,7 +1253,14 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     // bearing and the energy, and fires the moment they all allow. A brain-side
     // cooldown spent here on a shot the resolver then held (a turret not yet
     // bearing) left the gun silent for a whole cooldown (0 hits a pass).
-    const willFire = aimed && inRange;
+    // A charge wind-up is held on its line (above), so it starts only outside
+    // the attack run's pull-off distance: inside it the pass swings beside the
+    // target, and holding the line there parked a Robot Orb ~2.5 lengths off a
+    // parked pilot for the whole 1.2 s wind-up (strafeParkedRobots). The
+    // pilot saves the charge for the next dive.
+    const windUpRoom = !this.chargeHoldsLine || rangeDist >= this._tac.overshoot
+      || view.isCharging?.(self.id) === true;
+    const willFire = aimed && inRange && windUpRoom;
     if (willFire) {
       const f = this._fireScratch;
       // Fire along the EXACT lead vector, NOT the body-forward axis. The
