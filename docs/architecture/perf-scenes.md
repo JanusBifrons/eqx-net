@@ -203,6 +203,26 @@ A scene marked `soak: true` runs only when named with `--scenes`: the long debri
 - **Another session on this machine?** Run with `EQX_SHOWCASE_PORT_OFFSET=300` (perf and showcase) so neither kills the other's servers, and only pass `--ignore-ports` for listeners you know are idle. Showcase takes record the same host-load samples in `manifest.json` (`hostLoad`).
 - **Look and feature R&D** is measured on the game itself behind a flag: `pnpm perf:scenes --base <sha> --head-params <flag>` (see `showcase-pipeline.md` "Filming and review rules").
 
+## Performance budgets and rules
+
+Root `CLAUDE.md` keeps the short form of these rules.
+
+| Surface | Budget | Notes |
+|---|---|---|
+| Physics tick (server + client `predWorld`) | 16.67 ms (60 Hz) | Fixed timestep (#4) |
+| Drawer click → visible | ≤ 500 ms | See `docs/LESSONS.md` "Drawer perf paradigm + MUI sx-hoist rules" |
+| Inline `sx={{...}}` allocation | Avoid per-render | Hoist static sx to a module const; `useMemo` for dynamic |
+| GC pauses | < 2 ms | `scripts/analyze-cdp-profile.mjs` |
+| Structures at base scale | Every number in [src/shared-types/structureBudgets.ts](../../src/shared-types/structureBudgets.ts), each with its measurement | Raised only by a reviewed change citing a NEW measurement; never widened to get green. Ledger: [structure-network-scale](structure-network-scale.md) |
+| SectorRoom `update()` per tick | Per [src/server/CLAUDE.md](../../src/server/CLAUDE.md) | |
+| Perf-scene COUNTS (every PR) | `src/shared-types/perf/perfBudgets.ts` (`COUNT_BUDGETS`, `CLIENT_COUNT_BUDGETS`) | Server: `perfSceneCounts.test.ts`; client: `pnpm perf:counts`. Budget = max of calibration runs + 25 %. See "The per-PR count gates" above |
+
+**Gate on counts, compare timings.** A per-PR test never asserts a wall-clock bound: count the work (calls, ticks, bytes, draw calls) or print the time and gate nothing. Timings are judged only by `pnpm perf:scenes` (same machine, interleaved A/B). A new count budget is calibrated locally AND on CI; one that differs materially between them stays print-only.
+
+- **Trust a metric only after its main-vs-main and injected-burn self-test** (see "Proving the gate sees a regression" above).
+- INVALID is never "fast"; INCONCLUSIVE is never a pass; at least 4 reps per arm. Counts gate; timings compare only against the same-session base arm.
+- **Per-entity art with its own draw call** (GPU-lit meshes) drops to a batched stand-in at the zoom where ships become far-zoom icons (wreck pieces: `wreckPieceFarLod`, [capital-destruction](capital-destruction.md)); never widen a draw-call budget instead.
+
 ## History
 
 - **Phone proxy (2026-11-08).** Added because the user could not run phone tests themselves ("I can't do that").
