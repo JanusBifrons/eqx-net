@@ -28,7 +28,7 @@ The mining barge carries it (below).
 
 - **A fixed force; mass matters.** A small mount barely moves a big chunk and a giant rock does not budge, which is why lasers break wrecks down before tractors haul them. Bigger mounts pull harder (`MOUNT_SIZE_TUNING.power`: AA 0.4, S 1, M 2.5, L 6, XL 15).
 - **Only the target moves.** The ship doing the pulling feels nothing.
-- **It cushions.** Inside a hold distance the pull turns into a soft spring, so the load hovers near the mount instead of slamming into the hull.
+- **It cushions.** Inside a hold distance the pull turns into a soft spring, so the load hovers near the mount instead of slamming into the hull. On a big ship the hold distance grows so the load always hovers clear of the hull, however far the mount sits from the ship's edge.
 - **Thrust escapes it.** A ship that thrusts away harder than the pull gets away.
 - **No damage.** A tractor never hits, never cuts, never sends a damage number.
 - **It hauls loot in.** A loot pod (salvage pods included) that your tractor pulls to within about 1.2 × the hold distance of the beam's mount goes straight into your hold, exactly as if you had flown over it: same pickup, same popup. A pod nobody is tractoring at that distance stays where it is (fly-over range is much shorter), and if your hold is full the pod just keeps hovering in the beam.
