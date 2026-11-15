@@ -157,6 +157,16 @@ export class DamageRouter {
     return this.applyInteraction(leaf, targetId, shooterId, damage, hitX, hitY, layerMul);
   }
 
+  /** The damage a hit on `targetId` will really do after the weapon's
+   *  per-target factor (`layerMul`, for the layer it will land on), read
+   *  BEFORE it lands, so the hit's side effects (standing, hostility, a
+   *  capital's `noteHit`) see what it does, not the raw number: a hit the
+   *  factor zeroes is not an attack. No factor ⇒ `damage`. */
+  effectiveDamage(targetId: string, damage: number, layerMul?: LayerMul): number {
+    if (layerMul === undefined) return damage;
+    return damage * (this.resolver.shieldRaised(targetId) ? layerMul.shield : layerMul.hull);
+  }
+
   /**
    * The single, MONOMORPHIC per-hit call site (HC#5). Reads the leaf's composed
    * `health` / `perHit` / `death` DATA — NOT a per-class virtual method. The

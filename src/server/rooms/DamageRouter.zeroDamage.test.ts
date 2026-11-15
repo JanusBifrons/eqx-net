@@ -182,3 +182,39 @@ describe('DamageRouter — per-target damage factors', () => {
     expect(h.damageEvents[0]!.damage).toBe(10);
   });
 });
+
+// Mining laser (plan partitioned-chasing-lark PR 7): `effectiveDamage` reads
+// the factored damage BEFORE the hit lands, for the room's side effects
+// (standing / hostility / `noteHit`): a hit it zeroes is not an attack.
+describe('DamageRouter.effectiveDamage — the mining laser', () => {
+  const laser = getWeapon('mining_laser');
+  const mul = (): ReturnType<typeof weaponLayerMul> => weaponLayerMul(laser, false, { shield: 1, hull: 1 });
+
+  it('a raised shield: 0 effective, and the hit changes nothing', () => {
+    const ship = addActiveShip({ shield: 30, health: 80 });
+    expect(h.router.effectiveDamage('p1', 120, mul())).toBe(0);
+    h.router.apply('p1', 'shooter', 120, 1, 2, mul());
+    expect(ship.shield).toBe(30);
+    expect(ship.health).toBe(80);
+    expect(h.damageEvents).toHaveLength(0);
+  });
+
+  it('an exposed hull: 5 %, and the hit does exactly that', () => {
+    const ship = addActiveShip({ shield: 0, health: 80 });
+    expect(h.router.effectiveDamage('p1', 120, mul())).toBeCloseTo(6, 10);
+    h.router.apply('p1', 'shooter', 120, 1, 2, mul());
+    expect(ship.health).toBeCloseTo(74, 10);
+  });
+
+  it('a lingering hull reads its own shield; no factor or an unknown target passes through', () => {
+    h.shipsMap.set('linger-1', shipStub({ playerId: 'p9', shipInstanceId: 'linger-1', isActive: false, shield: 10 }));
+    expect(h.router.effectiveDamage('linger-1', 120, mul())).toBe(0);
+    expect(h.router.effectiveDamage('p1', 120, undefined)).toBe(120);
+    expect(h.router.effectiveDamage('nobody', 120, mul())).toBeCloseTo(6, 10);
+  });
+
+  it('a shielded drone (no shield entry yet = full) takes 0', () => {
+    h.swarm.set('d1', { id: 'd1', entityId: 7, slot: 0, kind: 1, shipKind: 'fighter' } as unknown as SwarmDmgRecord);
+    expect(h.router.effectiveDamage('d1', 120, mul())).toBe(0);
+  });
+});

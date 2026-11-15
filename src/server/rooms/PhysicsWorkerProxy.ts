@@ -22,6 +22,7 @@
 
 import type { Logger } from 'pino';
 import type { Vec2 } from '../../core/swarm/asteroidShape.js';
+import type { ForceField } from '../../core/physics/forceFields.js';
 import { getPhysicsWorkerPool, type PooledWorld } from './PhysicsWorkerPool.js';
 
 /**
@@ -75,8 +76,10 @@ export type WorkerCmd =
   | { type: 'SPAWN_WALL';      id: string; ax: number; ay: number; bx: number; by: number; thickness: number }
   | { type: 'SET_WALL_ACTIVE'; id: string; active: boolean }
   | { type: 'REMOVE_WALL';     id: string }
-  | { type: 'SET_PAD_FIELD';   id: string; cx: number; cy: number; half: number; active: boolean }
-  | { type: 'REMOVE_PAD_FIELD'; id: string }
+  /** Force fields (teleporter pad push today): `World.setForceField`. Owned by
+   *  `ForceFieldSubsystem`; nothing else posts these. */
+  | { type: 'SET_FORCE_FIELD';    id: string; field: ForceField }
+  | { type: 'REMOVE_FORCE_FIELD'; id: string }
 ;
 
 /** Per-tick contact payload extracted from the worker's CONTACT_BATCH message.
