@@ -73,7 +73,7 @@ import {
 import { newSpeedFxSample, speedFxSampleInto } from './camera/speedFxSample';
 import { GroupBoundsScanner } from './camera/groupBounds';
 import type { CameraCue, CameraGroup } from '@core/contracts/cameraScript';
-import { REMOTE_BEAM_STYLE, LIVE_BEAM_STYLE, liveBeamLook, MINING_BEAM_STYLE, remoteBeamStyleForMount, remoteBeamLine, remoteBeamSolidLen, addBeamLights, beamLightBudget, BeamHitMemory, type RemoteBeamLine } from './beamStyles';
+import { REMOTE_BEAM_STYLE, LIVE_BEAM_STYLE, liveBeamLook, liveBeamLine, MINING_BEAM_STYLE, remoteBeamStyleForMount, remoteBeamLine, remoteBeamSolidLen, addBeamLights, beamLightBudget, BeamHitMemory, type RemoteBeamLine } from './beamStyles';
 import { MountVisualManager } from './MountVisualManager';
 import { BackgroundGrid } from './BackgroundGrid';
 import { StarfieldBackground } from './StarfieldBackground';
@@ -389,6 +389,7 @@ export class PixiRenderer implements IRenderer {
    *  (JS Map preserves insertion order). */
   /** Scratch for `remoteBeamLine` (one per frame loop, #14). */
   private readonly _remoteBeamLine: RemoteBeamLine = { fromX: 0, fromY: 0, toX: 0, toY: 0 };
+  private readonly _liveBeamLine: RemoteBeamLine = { fromX: 0, fromY: 0, toX: 0, toY: 0 };
   private readonly _beamHitMem = new BeamHitMemory(); // the cut stays lit through a kill follow-through
   private readonly _remoteBeamCache: Array<{
     shooterId: string;
@@ -2125,12 +2126,11 @@ export class PixiRenderer implements IRenderer {
         const currentMountAngle = mountIdx >= 0 ? (localShip.mountAngles?.[mountIdx] ?? 0) : 0;
         const origin = applyMountOffset(localShip.x, localShip.y, localShip.angle, mount);
         const fireAngle = localShip.angle + (mount?.baseAngle ?? 0) + currentMountAngle;
-        const fwdX = -Math.sin(fireAngle);
-        const fwdY =  Math.cos(fireAngle);
-        const fromX = origin.x + fwdX * 20;
-        const fromY = origin.y + fwdY * 20;
-        const toX = fromX + fwdX * beam.dist;
-        const toY = fromY + fwdY * beam.dist;
+        // `beam.dist` runs from the barrel tip `updateLiveBeam` cast from (the
+        // shared muzzle), so the drawn end is the ray's hit point.
+        const muzzleD = mount ? shipShotMuzzle(localKind, mount) : shipTuning(localKind).muzzleClearance;
+        const line = liveBeamLine(origin.x, origin.y, fireAngle, muzzleD, beam.dist, this._liveBeamLine);
+        const fromX = line.fromX, fromY = line.fromY, toX = line.toX, toY = line.toY;
         let slot = this._liveBeamCache[slotIdx];
         if (!slot) {
           slot = { mountId, fromX: 0, fromY: 0, toX: 0, toY: 0 };

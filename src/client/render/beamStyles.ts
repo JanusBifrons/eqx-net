@@ -308,6 +308,32 @@ export function remoteBeamLine(
   return out;
 }
 
+/** How far along the barrel the pilot's own beam starts drawing (world u),
+ *  from the mount pivot (the e2e detach check reads this circle). */
+export const LIVE_BEAM_DRAW_START = 20;
+
+/**
+ * The line the pilot's OWN beam is drawn along (`mirror.liveBeams`), into
+ * `out` (no allocation, #14). `dist` is the length `updateLiveBeam`'s ray
+ * travelled FROM THE BARREL TIP (`muzzleD`, `shipShotMuzzle`), so the end is
+ * pivot + muzzleD + dist: where the ray stopped. (It once ended at
+ * pivot + 20 + dist, 425 u short of the hit on a battlecruiser's 445 u main
+ * barrel, so its heavy beams stopped on "a circle" in front of the wreck.)
+ * The start stays `LIVE_BEAM_DRAW_START` along the barrel; an end inside
+ * that draws nothing rather than backwards.
+ */
+export function liveBeamLine(
+  pivotX: number, pivotY: number, fireAngle: number, muzzleD: number, dist: number, out: RemoteBeamLine,
+): RemoteBeamLine {
+  const fx = -Math.sin(fireAngle), fy = Math.cos(fireAngle);
+  const end = Math.max(LIVE_BEAM_DRAW_START, muzzleD + dist);
+  out.fromX = pivotX + fx * LIVE_BEAM_DRAW_START;
+  out.fromY = pivotY + fy * LIVE_BEAM_DRAW_START;
+  out.toX = pivotX + fx * end;
+  out.toY = pivotY + fy * end;
+  return out;
+}
+
 /** Where `addBeamLights` puts its lights (`LitScene.addLight`'s shape). */
 export interface BeamLightSink {
   addLight(x: number, y: number, z: number, color: number, intensity: number, reach: number): void;
