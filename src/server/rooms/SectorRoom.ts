@@ -411,7 +411,7 @@ import { isDebris, isLootPod, isWreckPiece } from '../net/SwarmEntityRegistry.js
 import { LineOfFireGate } from './LineOfFireGate.js';
 import { stampShipScale } from '../../shared-types/shipScale/welcomeScale.js';
 import { stampNavalRange } from '../../shared-types/combat/navalRange.js';
-import type { LockEntry } from '../../core/combat/lockState.js';
+import { isTerrainLockKind, swarmLockEligible, type LockEntry } from '../../core/combat/lockState.js';
 import { createSectorClock, type GameTimer } from '../time/gameTime.js';
 import { MIN_TIME_SCALE, MAX_TIME_SCALE, clampTimeScale, type GameClock } from '../../core/clock/GameClock.js';
 import { LoadSpeedController } from '../../core/clock/LoadSpeedController.js';
@@ -4547,14 +4547,14 @@ export class SectorRoom extends Room<SectorState> {
   private resolveLockTarget(pid: string, key: string, out: LockTargetView): boolean {
     if (key.startsWith('s:')) {
       const rec = this.swarmRegistry.getByEntityId(Number(key.slice(2)));
-      if (!rec || (rec.kind !== 1 && rec.kind !== 2)) return false; // asteroids / scrap: no
+      if (!rec || !swarmLockEligible(rec.kind, out)) return false; // terrain: never hostile
       if (rec.kind === 2) {
         // A structure outside the registry (testMode `structurePoses`
         // fixtures) has no owner: lockable, never hostile (failsafe first).
         const owner = this.structureRegistry.get(rec.id)?.owner;
         if (owner === pid) return false; // never your own base
         out.hostile = owner !== undefined && relationOf(pid, owner, this.relationCtx) === 'hostile';
-      } else {
+      } else if (!out.terrain) {
         out.hostile = this.npcHostileTo(rec.id, pid);
       }
       if (!this.swarmEntityPoseInto(rec.id, this._lockPose)) return false;
@@ -4571,7 +4571,7 @@ export class SectorRoom extends Room<SectorState> {
       out.x = p.x; out.y = p.y; out.vx = p.vx; out.vy = p.vy;
       // Fire shape: the hit shape the pilot's ship is hit on (shipHitShape).
       fillFireTargetShape(out, p.x, p.y, p.angle, true, ship.kind, ship.shield > 0, 0);
-      out.hostile = false; // PvP always runs the failsafe first
+      out.hostile = false; out.terrain = false; // PvP always runs the failsafe first
       return true;
     }
     return false;
@@ -4582,7 +4582,7 @@ export class SectorRoom extends Room<SectorState> {
     const tick = this.serverTick;
     if (key.startsWith('s:')) {
       const rec = this.swarmRegistry.getByEntityId(Number(key.slice(2)));
-      if (!rec) return;
+      if (!rec || isTerrainLockKind(rec.kind)) return; // terrain: never a hostile act (no ledger, aggro, log)
       if (rec.kind === 2) {
         const owner = this.structureRegistry.get(rec.id)?.owner;
         if (owner !== undefined) this.hostileActs.record(pid, owner, this.gameClock.now());
