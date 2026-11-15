@@ -40,7 +40,22 @@ export interface DestroyEvent {
   type: 'destroy';
   targetId: string;
   shooterId: string;
+  /** Fracture v11: a cut weapon's kill (heavy-beam slice, railgun channel)
+   *  burned every piece of the ship away, so no wreck follows. Absent on
+   *  every other death (emit-when-true). An effect hint only (#16): the
+   *  ship and its wreck state still come from the snapshot. */
+  vaporised?: true;
 }
+
+/** Defensive ingest schema for `destroy` (invariant #3). */
+export const DestroyEventSchema = z
+  .object({
+    type: z.literal('destroy'),
+    targetId: z.string().min(1).max(64),
+    shooterId: z.string().max(64),
+    vaporised: z.literal(true).optional(),
+  })
+  .strict();
 
 /** Server → client (broadcast): a player ship INSTANCE levelled up from a kill
  *  (Phase 4 WS-B1, plan: effervescent-umbrella). Broadcast to ALL clients —

@@ -8,7 +8,7 @@ import { RosterCountBadge } from '../../components/RosterCountBadge';
  * (anchor + ordering) is owned by `TopRightToolbar` so this component is
  * just the presentational chip; render it wherever the toolbar wants it.
  *
- * Phase 5 — adjacent `RosterCountBadge` surfaces N/10 so the player has an
+ * Phase 5 — adjacent `RosterCountBadge` surfaces the owned-ship count so the player has an
  * always-on cue for roster fullness without opening the drawer. The badge
  * reads from the same Zustand singleton the drawer Galaxy tab uses, so
  * abandon / spawn pushes update both surfaces in lockstep.

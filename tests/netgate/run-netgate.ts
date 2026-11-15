@@ -296,6 +296,9 @@ async function main(): Promise<void> {
             // Global setup, baseURL and SERVER_URL follow the gate's lane.
             ...LANE.playwrightEnv,
             CI_SKIP_WEBSERVER: '1',
+            // global-setup mints its test JWT from PLAYWRIGHT_SERVER_URL (default
+            // :2567): point it at THIS run's server so NETGATE_PORT_OFFSET works.
+            PLAYWRIGHT_SERVER_URL: process.env['PLAYWRIGHT_SERVER_URL'] ?? `http://localhost:${SERVER_PORT}`,
             NETGATE_TOKEN: token,
             NETGATE_RUN_MS: '8000',
             NETGATE_REPS: reps,

@@ -17,6 +17,7 @@ import {
   FireMessageSchema,
   HitAckSchema,
   DamageEventSchema,
+  DestroyEventSchema,
   ShipLevelUpEventSchema,
   ShipUpgradeAppliedEventSchema,
   ApplyShipUpgradeSchema,
@@ -185,6 +186,33 @@ describe('EngageTransitSchema', () => {
       }),
       { numRuns: 200 },
     );
+  });
+
+  // RTS fleet warp — `shipIds` (the selected ships warp together).
+  it('accepts shipIds (1..64 ids)', () => {
+    const one = EngageTransitSchema.safeParse({ type: 'engage_transit', targetSectorKey: 'orion-belt', shipIds: ['a'] });
+    expect(one.success).toBe(true);
+    const ids = Array.from({ length: 64 }, (_, i) => `s${i}`);
+    const max = EngageTransitSchema.safeParse({
+      type: 'engage_transit', targetSectorKey: 'orion-belt', shipIds: ids, arrival: { x: 1, y: 2 },
+    });
+    expect(max.success).toBe(true);
+  });
+
+  it('rejects an empty shipIds list, more than 64 ids, or a bad id', () => {
+    const base = { type: 'engage_transit', targetSectorKey: 'orion-belt' };
+    expect(EngageTransitSchema.safeParse({ ...base, shipIds: [] }).success).toBe(false);
+    expect(EngageTransitSchema.safeParse({ ...base, shipIds: Array.from({ length: 65 }, (_, i) => `s${i}`) }).success).toBe(false);
+    expect(EngageTransitSchema.safeParse({ ...base, shipIds: [''] }).success).toBe(false);
+    expect(EngageTransitSchema.safeParse({ ...base, shipIds: ['x'.repeat(65)] }).success).toBe(false);
+    expect(EngageTransitSchema.safeParse({ ...base, shipIds: [42] }).success).toBe(false);
+  });
+
+  it('rejects shipId and shipIds together (XOR)', () => {
+    const r = EngageTransitSchema.safeParse({
+      type: 'engage_transit', targetSectorKey: 'orion-belt', shipId: 'a', shipIds: ['b'],
+    });
+    expect(r.success).toBe(false);
   });
 
   it('property: the empty string is always rejected as shipId', () => {
@@ -788,5 +816,21 @@ describe('ShipRosterSchema (campaign 6.1)', () => {
     void ifaceToSchema;
     const parsed: ShipRosterMessage = ShipRosterSchema.parse(valid);
     expect(parsed.ships).toHaveLength(1);
+  });
+});
+
+describe('DestroyEventSchema (fracture v11: vaporised)', () => {
+  const valid = { type: 'destroy' as const, targetId: 'swarm-12', shooterId: 'p1' };
+
+  it('accepts a plain destroy and one marked vaporised', () => {
+    expect(DestroyEventSchema.safeParse(valid).success).toBe(true);
+    expect(DestroyEventSchema.safeParse({ ...valid, shooterId: '' }).success).toBe(true);
+    expect(DestroyEventSchema.safeParse({ ...valid, vaporised: true }).success).toBe(true);
+  });
+
+  it('rejects vaporised: false (emit-when-true), unknown fields and an empty target', () => {
+    expect(DestroyEventSchema.safeParse({ ...valid, vaporised: false }).success).toBe(false);
+    expect(DestroyEventSchema.safeParse({ ...valid, extra: 1 }).success).toBe(false);
+    expect(DestroyEventSchema.safeParse({ ...valid, targetId: '' }).success).toBe(false);
   });
 });

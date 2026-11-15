@@ -1,0 +1,278 @@
+import { Container, Graphics } from 'pixi.js';
+import type { FleetOverlayShip, RenderMirror } from '@core/contracts/IRenderer';
+import type { BoxRect, HoldArmed } from './input/commandPointerRouter.js';
+import type { FleetPickState } from './input/fleetPick.js';
+
+/**
+ * Command-view fleet overlay (RTS stream slice 13a).
+ *
+ * ONE screen-space `Graphics` (one draw call, draw-call budget) cleared and
+ * redrawn each frame with:
+ *  - the drag-selection box (screen px),
+ *  - a short-lived flash at the latest order point,
+ *  - an expanding ring at a touch held long enough to draw a box (slice 12),
+ *  - order lines for SELECTED ships (slice 15a): to the move destination, to
+ *    the attack target's current pose, to the escorted ship, and the patrol
+ *    route loop; capped at {@link MAX_ORDER_SEGMENTS} per frame.
+ * Nothing is created per ship. Hidden when there is nothing to draw.
+ * Selected ships themselves are marked by `SelectionBracket` (RTS Part A:
+ * one selection, one marker style); this overlay draws no ship marker.
+ *
+ * Positions are resolved from the mirror (game space, y up) and projected to
+ * screen through the injected `project` (pixi-world in, so y is negated).
+ */
+const BOX_COLOR = 0x7dff9a;
+const MOVE_FLASH_COLOR = 0x7dff9a;
+const ATTACK_FLASH_COLOR = 0xff5a4a;
+export const ORDER_FLASH_MS = 450;
+/** Hold cue: ring grows from HOLD_RING_R0 by HOLD_RING_GROW px over HOLD_RING_MS. */
+export const HOLD_RING_MS = 300;
+const HOLD_RING_R0 = 18;
+const HOLD_RING_GROW = 14;
+const HOLD_COLOR = 0x7dff9a;
+const ORDER_LINE_COLOR = 0x7dff9a;
+const ATTACK_LINE_COLOR = 0xff5a4a;
+const DEST_DOT_PX = 3;
+/** Draw-cost guard: order segments (lines + dest dots) per frame. */
+export const MAX_ORDER_SEGMENTS = 256;
+
+/**
+ * Game-space pose of an entity by pick id (playerId / shipInstanceId /
+ * `swarm-<n>`) into `out`; false when unknown. Alloc-free (the swarm id is
+ * parsed by hand, no substring).
+ */
+export function resolveEntityPos(mirror: RenderMirror, id: string, out: { x: number; y: number }): boolean {
+  const ship = mirror.ships.get(id);
+  if (ship !== undefined) { out.x = ship.x; out.y = ship.y; return true; }
+  if (mirror.swarm !== undefined && id.length > 6 && id.startsWith('swarm-')) {
+    let n = 0;
+    for (let i = 6; i < id.length; i++) {
+      const c = id.charCodeAt(i) - 48;
+      if (c < 0 || c > 9) return false;
+      n = n * 10 + c;
+    }
+    const sw = mirror.swarm.get(n);
+    if (sw !== undefined) { out.x = sw.x; out.y = sw.y; return true; }
+  }
+  return false;
+}
+
+export interface OrderFlash {
+  /** Game space. */
+  x: number;
+  y: number;
+  attack: boolean;
+  /** Real-time ms when the order was given; -1 = none. */
+  t0: number;
+}
+
+/** Patrol pick preview (slice 14b). */
+const PICK_COLOR = 0x7dd3ff;
+const PICK_DOT_PX = 4;
+const PICK_DIGIT_W = 5;
+const PICK_DIGIT_H = 8;
+
+/** Seven-segment masks for 0..9 (bit 0 = a top, b top-right, c bottom-right,
+ *  d bottom, e bottom-left, f top-left, g middle). */
+const SEGMENTS = [0x3f, 0x06, 0x5b, 0x4f, 0x66, 0x6d, 0x7d, 0x07, 0x7f, 0x6f] as const;
+
+/** Queue the line segments of digit `d` with its top-left at (x, y). */
+function drawDigit(g: Graphics, d: number, x: number, y: number): void {
+  const m = SEGMENTS[d]!;
+  const w = PICK_DIGIT_W;
+  const h = PICK_DIGIT_H / 2;
+  if (m & 0x01) g.moveTo(x, y).lineTo(x + w, y);
+  if (m & 0x02) g.moveTo(x + w, y).lineTo(x + w, y + h);
+  if (m & 0x04) g.moveTo(x + w, y + h).lineTo(x + w, y + 2 * h);
+  if (m & 0x08) g.moveTo(x, y + 2 * h).lineTo(x + w, y + 2 * h);
+  if (m & 0x10) g.moveTo(x, y + h).lineTo(x, y + 2 * h);
+  if (m & 0x20) g.moveTo(x, y).lineTo(x, y + h);
+  if (m & 0x40) g.moveTo(x, y + h).lineTo(x + w, y + h);
+}
+
+/** Queue a 1–2 digit number (alloc-free). */
+function drawNumber(g: Graphics, n: number, x: number, y: number): void {
+  if (n >= 10) {
+    drawDigit(g, Math.floor(n / 10) % 10, x, y);
+    drawDigit(g, n % 10, x + PICK_DIGIT_W + 3, y);
+  } else {
+    drawDigit(g, n, x, y);
+  }
+}
+
+export type ProjectFn =(pixiWorldX: number, pixiWorldY: number, out: { x: number; y: number }) => void;
+
+export class FleetOverlay {
+  private readonly gfx: Graphics;
+  private readonly _scratch = { x: 0, y: 0 };
+  private readonly _from = { x: 0, y: 0 };
+  private readonly _game = { x: 0, y: 0 };
+  private _segments = 0;
+  /** The hold-to-box cue was drawn in the last update (test/diag hook). */
+  lastHoldCue = false;
+  /** Order segments drawn in the last update (test/diag hook). */
+  lastOrderSegments = 0;
+  /** Patrol pick points drawn in the last update (test/diag hook). */
+  lastPickPoints = 0;
+
+  constructor(parent: Container) {
+    this.gfx = new Graphics();
+    this.gfx.visible = false;
+    parent.addChild(this.gfx);
+  }
+
+  update(
+    mirror: RenderMirror,
+    selected: ReadonlySet<string>,
+    box: BoxRect | null,
+    flash: OrderFlash,
+    nowMs: number,
+    project: ProjectFn,
+    /** Touch held past the box threshold (screen px), or null. */
+    hold: HoldArmed | null = null,
+    /** Own ships' squads + orders by id (slice 15a), or null. */
+    orders: ReadonlyMap<string, FleetOverlayShip> | null = null,
+    /** A patrol route being picked (slice 14b), or null. */
+    pick: FleetPickState | null = null,
+  ): void {
+    const g = this.gfx;
+    const flashAge = flash.t0 < 0 ? Infinity : nowMs - flash.t0;
+    const flashLive = flashAge >= 0 && flashAge < ORDER_FLASH_MS;
+    this.lastHoldCue = hold !== null;
+    const routeCount = pick !== null && pick.kind === 'patrol' ? pick.count : 0;
+    this.lastPickPoints = routeCount;
+    const hasOrders = orders !== null && orders.size > 0 && selected.size > 0;
+    if (!hasOrders && box === null && !flashLive && hold === null && routeCount === 0) {
+      if (g.visible) {
+        g.clear();
+        g.visible = false;
+      }
+      this.lastOrderSegments = 0;
+      return;
+    }
+    g.clear();
+    g.visible = true;
+    const s = this._scratch;
+
+    this._segments = 0;
+    if (hasOrders) {
+      // Two passes, one stroke each: friendly lines, then attack lines.
+      this.drawOrders(g, mirror, selected, orders, project, false);
+      this.drawOrders(g, mirror, selected, orders, project, true);
+    }
+    this.lastOrderSegments = this._segments;
+
+    if (box !== null) {
+      const x = Math.min(box.x0, box.x1);
+      const y = Math.min(box.y0, box.y1);
+      const w = Math.abs(box.x1 - box.x0);
+      const h = Math.abs(box.y1 - box.y0);
+      g.rect(x, y, w, h);
+      g.fill({ color: BOX_COLOR, alpha: 0.08 });
+      g.rect(x, y, w, h);
+      g.stroke({ width: 1, color: BOX_COLOR, alpha: 0.85 });
+    }
+
+    if (flashLive) {
+      const t = flashAge / ORDER_FLASH_MS;
+      project(flash.x, -flash.y, s);
+      g.circle(s.x, s.y, 4 + 14 * t);
+      g.stroke({ width: 2, color: flash.attack ? ATTACK_FLASH_COLOR : MOVE_FLASH_COLOR, alpha: 1 - t });
+    }
+
+    if (hold !== null) {
+      const t = Math.min(1, hold.armedMs / HOLD_RING_MS);
+      g.circle(hold.x, hold.y, HOLD_RING_R0 + HOLD_RING_GROW * t);
+      g.stroke({ width: 2, color: HOLD_COLOR, alpha: 0.9 - 0.4 * t });
+    }
+
+    if (routeCount > 0) this.drawPickRoute(g, pick!.route, routeCount, project);
+  }
+
+  /**
+   * The patrol route being picked (slice 14b): a closed loop through the
+   * points, a dot at each and its number beside it, drawn as line digits so
+   * it stays on this one Graphics (no Text objects).
+   */
+  private drawPickRoute(g: Graphics, route: ArrayLike<number>, count: number, project: ProjectFn): void {
+    const p = this._scratch;
+    if (count > 1) {
+      project(route[(count - 1) * 2]!, -route[(count - 1) * 2 + 1]!, p);
+      g.moveTo(p.x, p.y);
+      for (let i = 0; i < count; i++) {
+        project(route[i * 2]!, -route[i * 2 + 1]!, p);
+        g.lineTo(p.x, p.y);
+      }
+      g.stroke({ width: 1.5, color: PICK_COLOR, alpha: 0.8 });
+    }
+    for (let i = 0; i < count; i++) {
+      project(route[i * 2]!, -route[i * 2 + 1]!, p);
+      g.circle(p.x, p.y, PICK_DOT_PX);
+    }
+    g.fill({ color: PICK_COLOR, alpha: 0.95 });
+    for (let i = 0; i < count; i++) {
+      project(route[i * 2]!, -route[i * 2 + 1]!, p);
+      drawNumber(g, i + 1, p.x + PICK_DOT_PX + 3, p.y - PICK_DIGIT_H - 2);
+    }
+    g.stroke({ width: 1.5, color: PICK_COLOR, alpha: 0.95 });
+  }
+
+  private drawOrders(
+    g: Graphics,
+    mirror: RenderMirror,
+    selected: ReadonlySet<string>,
+    orders: ReadonlyMap<string, FleetOverlayShip>,
+    project: ProjectFn,
+    attack: boolean,
+  ): void {
+    const from = this._from;
+    const to = this._scratch;
+    const pos = this._game;
+    const start = this._segments;
+    for (const id of selected) {
+      if (this._segments >= MAX_ORDER_SEGMENTS) break;
+      const o = orders.get(id);
+      if (o === undefined) continue;
+      if (!resolveEntityPos(mirror, id, pos)) continue;
+      project(pos.x, -pos.y, from);
+      if (attack) {
+        if (o.targetId === undefined || !resolveEntityPos(mirror, o.targetId, pos)) continue;
+        project(pos.x, -pos.y, to);
+        g.moveTo(from.x, from.y).lineTo(to.x, to.y);
+        this._segments++;
+        continue;
+      }
+      if (o.destX !== undefined && o.destY !== undefined) {
+        project(o.destX, -o.destY, to);
+        g.moveTo(from.x, from.y).lineTo(to.x, to.y);
+        g.circle(to.x, to.y, DEST_DOT_PX);
+        this._segments += 2;
+      }
+      if (o.escortId !== undefined && this._segments < MAX_ORDER_SEGMENTS && resolveEntityPos(mirror, o.escortId, pos)) {
+        project(pos.x, -pos.y, to);
+        g.moveTo(from.x, from.y).lineTo(to.x, to.y);
+        this._segments++;
+      }
+      const route = o.route;
+      if (route !== undefined && route.length > 1) {
+        // Closed loop: last waypoint back to the first.
+        const last = route[route.length - 1]!;
+        project(last[0], -last[1], to);
+        g.moveTo(to.x, to.y);
+        for (let i = 0; i < route.length && this._segments < MAX_ORDER_SEGMENTS; i++) {
+          const p = route[i]!;
+          project(p[0], -p[1], to);
+          g.lineTo(to.x, to.y);
+          this._segments++;
+        }
+      }
+    }
+    if (this._segments > start) {
+      g.stroke({ width: 1, color: attack ? ATTACK_LINE_COLOR : ORDER_LINE_COLOR, alpha: 0.55 });
+    }
+  }
+
+  destroy(): void {
+    this.gfx.destroy();
+  }
+}

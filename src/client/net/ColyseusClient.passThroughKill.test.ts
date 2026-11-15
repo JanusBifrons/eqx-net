@@ -9,8 +9,8 @@
  * Why it survived `ColyseusClient.shellKillTiming.test.ts` (#13: this test
  * sits a level up, on the take's REAL victim and message sequence): that test
  * killed a swarm entry. In the rail-channel take the heavy cruiser is the
- * PILOT's own hull, parked when the pilot spectates (a lingering hull,
- * `mirror.lingeringShips`, keyed by shipInstanceId); the light cruiser is an
+ * PILOT's own hull, parked when the pilot spectates (a parked hull, in
+ * `mirror.ships` keyed by shipInstanceId); the light cruiser is an
  * AI ship (swarm). A `destroy` for a non-swarm id went straight to
  * `killEntity` (explosion + held number at once), and the next snapshot,
  * which no longer lists the hull, evicted it (`routeSnapshotShipStates`):
@@ -40,7 +40,6 @@ import type { ProjectileRenderState } from '../../core/contracts/IRenderer.js';
 interface Internals {
   mirror: {
     ships: Map<string, unknown>;
-    lingeringShips?: Map<string, { x: number; y: number }>;
     explodingShips?: Set<string>;
     projectiles?: Map<string, ProjectileRenderState>;
     pendingDamageNumbers?: Array<{ targetId: string; damage: number }>;
@@ -98,7 +97,7 @@ describe('a pass-through kill on a parked pilot hull waits for the drawn slug', 
     c._shellEvents = true;
     // The parked hull, from the snapshots before the shot.
     c.handleSnapshot(snapshot(1006, true));
-    expect(c.mirror.lingeringShips!.has(HULL)).toBe(true);
+    expect(c.mirror.ships.has(HULL)).toBe(true);
     c._shellStore.applySalvo(SALVO);
   });
 
@@ -116,7 +115,7 @@ describe('a pass-through kill on a parked pilot hull waits for the drawn slug', 
     for (let f = 0; f <= 16; f++) {
       const displayTick = 1004 + f * 0.5;
       c.placeShells(displayTick);
-      const alive = c.mirror.lingeringShips!.has(HULL);
+      const alive = c.mirror.ships.has(HULL);
       const exploding = c.mirror.explodingShips!.has(HULL);
       const numbers = c.mirror.pendingDamageNumbers!.length;
       if (died < 0 && (!alive || exploding || numbers > 0)) {
@@ -199,7 +198,7 @@ describe('a beam kill on a parked hull with 5" shells in flight dies at once', (
   });
 
   function expectDeadNow(): void {
-    expect(c.mirror.lingeringShips!.has(HULL), 'the hull goes on the destroy frame').toBe(false);
+    expect(c.mirror.ships.has(HULL), 'the hull goes on the destroy frame').toBe(false);
     expect(c.mirror.explodingShips!.has(HULL)).toBe(true);
     const beamNumbers = c.mirror.pendingDamageNumbers!.filter((n) => n.damage === 260);
     expect(beamNumbers, 'the beam\'s number comes with the explosion').toHaveLength(1);
@@ -236,10 +235,10 @@ describe('a beam kill on a parked hull with 5" shells in flight dies at once', (
     c.handleSnapshot(snapshot(1012, false));
     c.clockAnchorServerTick = 1012;
     c.placeShells(1004);
-    expect(c.mirror.lingeringShips!.has(HULL), 'drawn alive until its shell gets there').toBe(true);
+    expect(c.mirror.ships.has(HULL), 'drawn alive until its shell gets there').toBe(true);
     expect(c.mirror.explodingShips!.has(HULL)).toBe(false);
     c.placeShells(1011);
-    expect(c.mirror.lingeringShips!.has(HULL)).toBe(false);
+    expect(c.mirror.ships.has(HULL)).toBe(false);
     expect(c.mirror.explodingShips!.has(HULL)).toBe(true);
   });
 });

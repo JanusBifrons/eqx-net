@@ -1,198 +1,100 @@
 /**
  * Unit tests for the pure renderer-decision module.
  *
- * Regression locks for the Phase 6b "lingering hull invisible" bug
- * class. The previous bug was a too-aggressive `if (!ship.kind)
- * continue;` skip in the renderer that left the sprite uncreated
- * forever when the schema diff with `kind` landed late. These tests
- * lock the contract that "no cache + unknown kind" must produce a
- * `create` action with the fallback kind, NOT a `skip`.
+ * Regression locks for the Phase 6b "parked hull invisible" bug class. The
+ * previous bug was a too-aggressive `if (!ship.kind) continue;` skip in the
+ * renderer that left the sprite uncreated forever when the schema diff with
+ * `kind` landed late. These tests lock the contract that "no sprite + unknown
+ * kind" must `create` with the fallback kind, NOT skip. Since RTS Part A S3
+ * the decision is the ONE ship-sprite decision (`decideShipSpriteAction`) for
+ * every ship, parked hulls included.
  *
- * Property test (fast-check): for arbitrary `cached` / `currentKind`
- * pairs, the decision is deterministic and the chosen kind (when
- * present) is non-empty.
+ * Property test (fast-check): for arbitrary cached / current kinds, the
+ * decision is deterministic and the drawn kind is never empty.
  */
 import { describe, it, expect } from 'vitest';
 import * as fc from 'fast-check';
 import {
-  decideLingeringSpriteAction,
-  type SpriteCacheEntry,
+  decideArtSwap,
+  decideExplosionPosition,
+  decideShipSpriteAction,
+  isSpriteInView,
+  shipSpriteKind,
 } from './spriteUpdateDecisions.js';
 
-describe('decideLingeringSpriteAction', () => {
-  const fallback = 'fighter';
-
-  it('no cache + known kind → create with current kind', () => {
-    const d = decideLingeringSpriteAction({
-      cached: undefined,
-      currentKind: 'interceptor',
-      fallbackKind: fallback,
-    });
-    expect(d).toEqual({ action: 'create', kind: 'interceptor' });
+describe('decideShipSpriteAction', () => {
+  it('REGRESSION: no sprite + unknown kind → create, drawn with the FALLBACK (NOT skip)', () => {
+    expect(decideShipSpriteAction(undefined, undefined)).toBe('create');
+    expect(shipSpriteKind(undefined, undefined, 'fighter')).toBe('fighter');
   });
 
-  it('REGRESSION: no cache + unknown kind → create with FALLBACK (NOT skip)', () => {
-    // The bug we just shipped from: previous renderer code skipped
-    // when kind was unknown, leaving the sprite uncreated forever
-    // and the lingering hull permanently invisible. The fallback is
-    // the load-bearing fix.
-    const d = decideLingeringSpriteAction({
-      cached: undefined,
-      currentKind: undefined,
-      fallbackKind: fallback,
-    });
-    expect(d).toEqual({ action: 'create', kind: fallback });
+  it('no sprite + known kind → create with the current kind', () => {
+    expect(decideShipSpriteAction(undefined, 'heavy')).toBe('create');
+    expect(shipSpriteKind(undefined, 'heavy', 'fighter')).toBe('heavy');
   });
 
-  it('cache hit + same kind → reposition (no rebuild)', () => {
-    const cached: SpriteCacheEntry = { kind: 'interceptor' };
-    const d = decideLingeringSpriteAction({
-      cached,
-      currentKind: 'interceptor',
-      fallbackKind: fallback,
-    });
-    expect(d).toEqual({ action: 'reposition' });
+  it('sprite + same kind → reposition (no rebuild)', () => {
+    expect(decideShipSpriteAction('heavy', 'heavy')).toBe('reposition');
   });
 
-  it('cache hit + different known kind → rebuild', () => {
-    // The Phase 6b "interceptor renders as fighter" scenario: the
-    // schema diff with the real kind landed after the initial sprite
-    // was built with the fallback. Rebuild is the right action.
-    const cached: SpriteCacheEntry = { kind: 'fighter' };
-    const d = decideLingeringSpriteAction({
-      cached,
-      currentKind: 'interceptor',
-      fallbackKind: fallback,
-    });
-    expect(d).toEqual({ action: 'rebuild', kind: 'interceptor' });
+  it('sprite + a different known kind → rebuild for the new silhouette', () => {
+    expect(decideShipSpriteAction('fighter', 'heavy')).toBe('rebuild');
+    expect(shipSpriteKind('fighter', 'heavy', 'fighter')).toBe('heavy');
   });
 
-  it('cache hit + unknown current kind → reposition (do NOT rebuild on transient diff drop)', () => {
-    // If the schema diff happens not to carry kind on this update
-    // (defensive scenario — Colyseus schema 3.x always sends full
-    // state, but be belt-and-braces), keep the previously-known
-    // sprite. Don't tear it down.
-    const cached: SpriteCacheEntry = { kind: 'scout' };
-    const d = decideLingeringSpriteAction({
-      cached,
-      currentKind: undefined,
-      fallbackKind: fallback,
-    });
-    expect(d).toEqual({ action: 'reposition' });
+  it('sprite + unknown current kind → reposition, keeping the cached kind (no rebuild on a transient drop)', () => {
+    expect(decideShipSpriteAction('heavy', undefined)).toBe('reposition');
+    expect(shipSpriteKind('heavy', undefined, 'fighter')).toBe('heavy');
   });
 });
 
-describe('decideLingeringSpriteAction — property tests', () => {
-  it('always returns one of the four action variants', () => {
-    fc.assert(
-      fc.property(
-        fc.option(fc.constantFrom('fighter', 'interceptor', 'scout', 'heavy'), { nil: undefined }),
-        fc.option(fc.constantFrom('fighter', 'interceptor', 'scout', 'heavy'), { nil: undefined }),
-        fc.constantFrom('fighter', 'scout'),
-        (cachedKind, currentKind, fallback) => {
-          const cached = cachedKind ? { kind: cachedKind } : undefined;
-          const d = decideLingeringSpriteAction({ cached, currentKind, fallbackKind: fallback });
-          return ['create', 'rebuild', 'reposition', 'skip'].includes(d.action);
-        },
-      ),
-      { numRuns: 200 },
-    );
+describe('decideShipSpriteAction — property tests', () => {
+  const kindArb = fc.option(fc.constantFrom('fighter', 'heavy', 'scout', 'interceptor'), { nil: undefined });
+
+  it('always returns one of the three actions, deterministically', () => {
+    fc.assert(fc.property(kindArb, kindArb, (cached, current) => {
+      const a = decideShipSpriteAction(cached, current);
+      expect(['create', 'rebuild', 'reposition']).toContain(a);
+      expect(decideShipSpriteAction(cached, current)).toBe(a);
+    }));
   });
 
-  it('every create / rebuild decision produces a non-empty kind', () => {
-    fc.assert(
-      fc.property(
-        fc.option(fc.constantFrom('fighter', 'interceptor', 'scout', 'heavy'), { nil: undefined }),
-        fc.option(fc.constantFrom('fighter', 'interceptor', 'scout', 'heavy'), { nil: undefined }),
-        fc.constantFrom('fighter', 'scout'),
-        (cachedKind, currentKind, fallback) => {
-          const cached = cachedKind ? { kind: cachedKind } : undefined;
-          const d = decideLingeringSpriteAction({ cached, currentKind, fallbackKind: fallback });
-          if (d.action === 'create' || d.action === 'rebuild') {
-            return typeof d.kind === 'string' && d.kind.length > 0;
-          }
-          return true;
-        },
-      ),
-      { numRuns: 200 },
-    );
+  it('the drawn kind is never empty', () => {
+    fc.assert(fc.property(kindArb, kindArb, (cached, current) => {
+      expect(shipSpriteKind(cached, current, 'fighter').length).toBeGreaterThan(0);
+    }));
   });
 
-  it('cache + same kind ⇒ reposition (deterministic)', () => {
-    fc.assert(
-      fc.property(
-        fc.constantFrom('fighter', 'interceptor', 'scout', 'heavy'),
-        (kind) => {
-          const d = decideLingeringSpriteAction({
-            cached: { kind },
-            currentKind: kind,
-            fallbackKind: 'fighter',
-          });
-          return d.action === 'reposition';
-        },
-      ),
-      { numRuns: 50 },
-    );
+  it('same kind ⇒ reposition', () => {
+    fc.assert(fc.property(fc.constantFrom('fighter', 'heavy'), (k) => {
+      expect(decideShipSpriteAction(k, k)).toBe('reposition');
+    }));
   });
 });
 
 /**
- * 2026-05-13 user report: when a lingering hull was destroyed, the
- * explosion VFX spawned at (0,0) instead of the hull's actual
- * position. Root cause: the renderer's explosion handler only checked
- * the `sprites` map (active ships, keyed by playerId), but lingering
- * hulls live in `lingeringSprites` (keyed by shipInstanceId).
- * Lookup miss → defaulted to (0,0) silently.
- *
- * The `decideExplosionPosition` helper consolidates the lookup across
- * both sprite maps so the explosion fires at the visible
- * silhouette's position. Per Invariant #13, the failing test below
- * went in BEFORE the fix in `PixiRenderer.ts`.
+ * 2026-05-13 user report: when a parked hull was destroyed, the explosion VFX
+ * spawned at (0,0) instead of the hull's position: the lookup checked only the
+ * active ships' sprite map, while parked hulls had their own. Since RTS Part
+ * A S3 every ship's sprite is in ONE map (parked hulls by shipInstanceId), and
+ * the dying ship's mirror entry is already gone, so the pose is its sprite's.
  */
-import { decideArtSwap, decideExplosionPosition, isSpriteInView } from './spriteUpdateDecisions.js';
-
 describe('decideExplosionPosition', () => {
-  const empty = new Map<string, { x: number; y: number }>();
+  const sprites = new Map([
+    ['player-1', { x: 100, y: 200 }],
+    ['ship-instance-A', { x: 50, y: -75 }],
+  ]);
 
-  it('returns the active ship\'s pose when the target is a playerId', () => {
-    const pos = decideExplosionPosition({
-      targetId: 'player-1',
-      activeShipsByPlayerId: new Map([['player-1', { x: 100, y: 200 }]]),
-      lingeringShipsByShipInstanceId: empty,
-    });
-    expect(pos).toEqual({ x: 100, y: 200 });
+  it('returns a pilot ship\'s sprite pose (playerId key)', () => {
+    expect(decideExplosionPosition({ targetId: 'player-1', shipSprites: sprites })).toEqual({ x: 100, y: 200 });
   });
 
-  it('falls back to the lingering-hull pose when the target is a shipInstanceId in the lingering map', () => {
-    // The 2026-05-13 bug — this used to return (0,0). Now must return
-    // the lingering hull's real pose.
-    const pos = decideExplosionPosition({
-      targetId: 'ship-instance-A',
-      activeShipsByPlayerId: empty,
-      lingeringShipsByShipInstanceId: new Map([['ship-instance-A', { x: 50, y: -75 }]]),
-    });
-    expect(pos).toEqual({ x: 50, y: -75 });
+  it('returns a parked hull\'s sprite pose (shipInstanceId key) — never (0,0)', () => {
+    expect(decideExplosionPosition({ targetId: 'ship-instance-A', shipSprites: sprites })).toEqual({ x: 50, y: -75 });
   });
 
-  it('returns null when the target is in no map (caller can decide on fallback)', () => {
-    const pos = decideExplosionPosition({
-      targetId: 'unknown-id',
-      activeShipsByPlayerId: empty,
-      lingeringShipsByShipInstanceId: empty,
-    });
-    expect(pos).toBeNull();
-  });
-
-  it('prefers active ships when the same id appears in multiple maps (collision safety)', () => {
-    // Defence-in-depth: shipInstanceId and playerId namespaces are
-    // distinct in practice, but if they ever collide we want active
-    // to win because that's the still-piloted hull.
-    const pos = decideExplosionPosition({
-      targetId: 'X',
-      activeShipsByPlayerId: new Map([['X', { x: 1, y: 1 }]]),
-      lingeringShipsByShipInstanceId: new Map([['X', { x: 2, y: 2 }]]),
-    });
-    expect(pos).toEqual({ x: 1, y: 1 });
+  it('returns null when no sprite is mapped (caller skips the VFX)', () => {
+    expect(decideExplosionPosition({ targetId: 'unknown-id', shipSprites: sprites })).toBeNull();
   });
 });
 

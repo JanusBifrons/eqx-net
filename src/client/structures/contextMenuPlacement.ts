@@ -30,12 +30,20 @@ export interface ContextMenuPlacementOutcome {
  * @param lastPointerType  `pointerType` of the most recent `pointerdown`
  *                         (`'mouse'` | `'touch'` | `'pen'` | `''` if none yet)
  * @param galaxyMapOpen    whether the galaxy map is on screen (Equinox Phase 7)
+ * @param commandView      RTS command view (spectating) is on: right-click orders
  */
 export function decideContextMenuPlacement(
   hasPlacementKind: boolean,
   lastPointerType: string,
   galaxyMapOpen = false,
+  commandView = false,
 ): ContextMenuPlacementOutcome {
+  // RTS command view (slice 13a): right-click is the order button, so the
+  // native menu is always suppressed there. A placement still cancels on a
+  // mouse right-click (placement is routed before orders).
+  if (commandView && !galaxyMapOpen) {
+    return { preventDefault: true, cancel: hasPlacementKind && lastPointerType === 'mouse' };
+  }
   // Equinox Phase 7 (Item 4) — while the galaxy map is on screen, ALWAYS suppress
   // the native menu so a mobile long-press on the map never pops the OS context
   // menu (the "long press causes a context menu" report). Never cancel placement:

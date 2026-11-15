@@ -7,7 +7,7 @@
  * Pixi runtime needed.
  */
 import { describe, it, expect } from 'vitest';
-import { Camera, type CameraTarget } from './Camera.js';
+import { Camera, PAN_EASE_MS, glideEase, type CameraTarget } from './Camera.js';
 
 function makeTarget(): CameraTarget {
   return {
@@ -389,6 +389,25 @@ describe('Camera — one-shot glide (Phase 4 WS-A2 smooth ship-switch)', () => {
     expect(cam.isGliding()).toBe(false);
   });
 
+  it('the glide curve is ease-in-out: zero slope at both ends, symmetric, monotonic', () => {
+    expect(glideEase(0)).toBe(0);
+    expect(glideEase(1)).toBe(1);
+    expect(glideEase(0.5)).toBeCloseTo(0.5, 12);
+    const h = 1e-4;
+    expect((glideEase(h) - glideEase(0)) / h).toBeLessThan(1e-3); // flat start
+    expect((glideEase(1) - glideEase(1 - h)) / h).toBeLessThan(1e-3); // flat finish
+    let prev = 0;
+    for (let i = 1; i <= 100; i++) {
+      const t = i / 100;
+      const e = glideEase(t);
+      expect(e).toBeGreaterThanOrEqual(prev);
+      expect(e).toBeCloseTo(1 - glideEase(1 - t), 12); // symmetric
+      prev = e;
+    }
+    // Slow out of the start (ease-IN), unlike the old ease-out cubic.
+    expect(glideEase(0.1)).toBeLessThan(0.1);
+  });
+
   it('an active glide OVERRIDES the follow target (so a high-lerp follow cannot snap mid-glide)', () => {
     const target = makeTarget();
     // followLerpFactor:1 == the production gameplay camera (instant snap each tick).
@@ -414,6 +433,46 @@ describe('Camera — one-shot glide (Phase 4 WS-A2 smooth ship-switch)', () => {
     expect(cam.center.x).toBeCloseTo(1000, 3);
   });
 
+  it('a glide onto a MOVING ship ends on it: no jump when follow takes over (RTS Part A seamless take controls)', () => {
+    // Take controls: the camera glides from where you were looking to the
+    // ship you took, which keeps flying (here 400 u/s along x). The renderer
+    // re-issues follow with the ship's pose every frame. A glide to the FIXED
+    // pose at take-over time ended 420 ms × 400 u/s ≈ 168 u behind the ship,
+    // and follow then snapped the view on in one frame.
+    const target = makeTarget();
+    const cam = new Camera(target, { followLerpFactor: 1 });
+    cam.setScreenSize(800, 600);
+    cam.moveCenter(0, 0);
+    let shipX = 1000;
+    cam.follow({ x: shipX, y: 0 });
+    cam.glideTo(shipX, 0, 420);
+    let prev = cam.center.x;
+    let maxStep = 0;
+    for (let i = 0; i < 40; i++) {
+      shipX += 400 * (16 / 1000);
+      cam.follow({ x: shipX, y: 0 });
+      cam.tick(16);
+      const c = cam.center.x;
+      if (i > 0) maxStep = Math.max(maxStep, Math.abs(c - prev));
+      prev = c;
+    }
+    expect(cam.isGliding()).toBe(false);
+    expect(cam.center.x).toBeCloseTo(shipX, 3);
+    // The hand-over from glide to follow is one ordinary frame of ship motion,
+    // never a catch-up jump (6.4 u per frame at 400 u/s; the glide's own
+    // biggest step, early on, is ~1000 × (1 − (1 − 16/420)³) ≈ 110 u).
+    let stepAtEnd = 0;
+    for (let i = 0; i < 3; i++) {
+      shipX += 400 * (16 / 1000);
+      cam.follow({ x: shipX, y: 0 });
+      const before = cam.center.x;
+      cam.tick(16);
+      stepAtEnd = Math.max(stepAtEnd, Math.abs(cam.center.x - before));
+    }
+    expect(stepAtEnd).toBeLessThan(7);
+    expect(maxStep).toBeLessThan(150);
+  });
+
   it('cancelGlide stops the ease and hands the camera back to follow/pan', () => {
     const target = makeTarget();
     const cam = new Camera(target, { followLerpFactor: 1 });
@@ -428,17 +487,79 @@ describe('Camera — one-shot glide (Phase 4 WS-A2 smooth ship-switch)', () => {
 });
 
 describe('Camera — WASD free-pan velocity (Phase 5 spectator)', () => {
-  it('integrates the pan velocity into the target each tick (px/sec × dt)', () => {
+  it('integrates the pan velocity into the target each tick (px/sec × dt), after the ease-in', () => {
     const target = makeTarget();
     const cam = new Camera(target);
     cam.setScreenSize(800, 600);
     cam.setPanVelocity(-800, 565.7);
-    cam.tick(1000); // 1 s → the full velocity is applied
-    expect(target.x).toBeCloseTo(-800, 3);
-    expect(target.y).toBeCloseTo(565.7, 3);
-    cam.tick(500); // +0.5 s → half again
-    expect(target.x).toBeCloseTo(-1200, 3);
-    expect(target.y).toBeCloseTo(565.7 + 282.85, 2);
+    // 1 s: a linear ramp over PAN_EASE_MS (covers half the full-speed distance
+    // of that time) then cruise at full speed for the rest.
+    const lost = 1 - (PAN_EASE_MS / 1000) * 0.5; // fraction of the instant-speed distance
+    cam.tick(1000);
+    expect(target.x).toBeCloseTo(-800 * lost, 3);
+    expect(target.y).toBeCloseTo(565.7 * lost, 3);
+    cam.tick(500); // +0.5 s at full speed → exactly half the velocity again
+    expect(target.x).toBeCloseTo(-800 * lost - 400, 3);
+    expect(target.y).toBeCloseTo(565.7 * lost + 282.85, 2);
+  });
+
+  it('eases IN on a press: speed ramps up monotonically to the same top speed over PAN_EASE_MS', () => {
+    const cam = new Camera(makeTarget());
+    cam.setScreenSize(800, 600);
+    cam.setPanVelocity(-800, 0);
+    const v = { x: 0, y: 0 };
+    let prev = 0;
+    for (let ms = 16; ms < PAN_EASE_MS; ms += 16) {
+      cam.tick(16);
+      const speed = Math.abs(cam.panVelocityInto(v).x);
+      expect(speed).toBeGreaterThan(prev);
+      expect(speed).toBeLessThan(800);
+      prev = speed;
+    }
+    for (let i = 0; i < 5; i++) cam.tick(16);
+    expect(cam.panVelocityInto(v).x).toBe(-800); // same top speed, exactly
+    // Full speed is reached in the 0.15–0.25 s window.
+    expect(PAN_EASE_MS).toBeGreaterThanOrEqual(150);
+    expect(PAN_EASE_MS).toBeLessThanOrEqual(250);
+  });
+
+  it('glides to a stop after release: speed decays monotonically to exactly zero, no overshoot', () => {
+    const target = makeTarget();
+    const cam = new Camera(target);
+    cam.setScreenSize(800, 600);
+    cam.setPanVelocity(-800, 0);
+    cam.tick(1000); // at full speed
+    cam.setPanVelocity(0, 0);
+    const v = { x: 0, y: 0 };
+    let prevSpeed = 800;
+    let prevX = target.x;
+    for (let i = 0; i < 40; i++) {
+      cam.tick(16);
+      const vx = cam.panVelocityInto(v).x;
+      expect(vx).toBeLessThanOrEqual(0); // never reverses (no overshoot)
+      expect(Math.abs(vx)).toBeLessThanOrEqual(prevSpeed);
+      expect(target.x).toBeLessThanOrEqual(prevX); // keeps drifting the same way, never back
+      prevSpeed = Math.abs(vx);
+      prevX = target.x;
+    }
+    expect(cam.panVelocityInto(v).x).toBe(0);
+    const rest = target.x;
+    cam.tick(1000);
+    expect(target.x).toBe(rest); // fully stopped
+  });
+
+  it('is frame-rate independent: the same distance at 30 fps and 144 fps', () => {
+    const run = (stepMs: number): number => {
+      const target = makeTarget();
+      const cam = new Camera(target);
+      cam.setScreenSize(800, 600);
+      cam.setPanVelocity(800, 0);
+      for (let t = 0; t < 600; t += stepMs) cam.tick(Math.min(stepMs, 600 - t));
+      cam.setPanVelocity(0, 0);
+      for (let t = 0; t < 600; t += stepMs) cam.tick(Math.min(stepMs, 600 - t));
+      return target.x;
+    };
+    expect(run(1000 / 30)).toBeCloseTo(run(1000 / 144), 6);
   });
 
   it('a zero velocity does not move the camera', () => {

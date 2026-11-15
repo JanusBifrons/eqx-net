@@ -67,8 +67,8 @@ export function buildRadarGlyph(shape: RadarShape, color: number, glow: boolean)
  *                  (`shipKind === 'cargo-pod'`) → 'loot' (Living World P1a-2:
  *                  spot drops after a fight)
  *   - other      → null (unknown kinds never show)
- * Remote player ships are 'player' and lingering hulls 'lingering' via their own
- * mirror maps.
+ * Every ship (pilot- or AI-flown) is 'player' via the ship list (your own
+ * fleet in the own colour, RTS Part A).
  */
 export function radarCategoryForSwarm(swarmKind: number, hostile: boolean, shipKind?: string): RadarCategory | null {
   switch (swarmKind) {

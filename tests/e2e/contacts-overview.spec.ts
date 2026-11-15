@@ -12,6 +12,7 @@ import { test, expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { DEFAULT_BASE_URL } from './helpers/ports';
 import { activeGroupId, waitForFireControlHud } from './helpers/fireControl';
+import { launchGalaxyTestClient } from './helpers/gameScenario';
 
 const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 
@@ -59,6 +60,39 @@ test('desktop: O opens the contacts list; a click locks with the active group, a
     await page.screenshot({ path: 'diag/e2e-screenshots/contacts-overview/desktop.png' });
   } finally {
     await ctx.close();
+  }
+});
+
+/**
+ * RTS Part A — another player's ship flown by an AI pilot is a contact and
+ * locks like any player's ship. Player B joins in Command view (their hull
+ * parks, AI-flown) 300 u ahead of player A; A's list shows it under its
+ * `p:<shipInstanceId>` key (the server resolves that key), and a click locks it.
+ */
+test('another player\'s AI-flown ship is listed and locks like any player\'s ship', async ({ browser }) => {
+  test.setTimeout(90_000);
+  const testId = randomUUID();
+  const b = await launchGalaxyTestClient(browser, { testId, shipKind: 'fighter', spawnX: 0, spawnY: 300, startMode: 'command' });
+  const a = await launchGalaxyTestClient(browser, { testId, shipKind: 'fighter', spawnX: 0, spawnY: 0, instantLock: true });
+  try {
+    const page = a.page;
+    await waitForFireControlHud(page);
+    const gid = await activeGroupId(page);
+    await page.keyboard.press('o');
+    const panel = page.locator('[data-testid="contacts-panel"]');
+    await expect(panel).toBeVisible();
+    const row = panel.locator('[data-testid^="contact-row-p:"]');
+    await expect(row).toHaveCount(1, { timeout: 15_000 });
+    const key = (await row.getAttribute('data-key'))!;
+    // The hull's key is its shipInstanceId, never B's playerId (B flies nothing).
+    expect(key).not.toBe(`p:${b.playerId}`);
+    await expect(row).toHaveAttribute('data-kind', 'ship');
+    await row.click();
+    await expect(row).toHaveAttribute('data-lock', 'locked', { timeout: 15_000 });
+    await expect(page.locator(`[data-testid="fc-chip-${gid}"]`)).toHaveAttribute('data-locked', '1');
+  } finally {
+    await a.ctx.close();
+    await b.ctx.close();
   }
 });
 

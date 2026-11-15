@@ -62,13 +62,16 @@ export function createSwarmPerHit(deps: LeafDeps): PerHitEffect {
       // friendly fire included (a hit hurts whoever fired it). A shield hit
       // leaves the hull untouched (no spill), so it is not hull damage.
       if (rec.kind === 1 && out.hitLayer === 'hull') deps.aiController.noteDamage?.(rec.id, amount, atTick, out.hullMax);
-      if (sourceId && rec.kind === 1 && deps.isFriendlyFire?.(rec.id, sourceId) !== true) {
-        deps.aiController.markHostile(rec.id, sourceId, atTick);
+      // RTS slice 5: a wingman's hit makes the drone hostile to its OWNER (the
+      // hostility ledger is per player), so the NPC fights back properly.
+      const actor = sourceId ? (deps.hostileActorOf?.(sourceId) ?? sourceId) : sourceId;
+      if (actor && rec.kind === 1 && deps.isFriendlyFire?.(rec.id, actor) !== true) {
+        deps.aiController.markHostile(rec.id, actor, atTick);
         // Wave-system reactive escalation (req #5): if the shooter belongs to a
         // faction (player / owned structure), the room flips that faction
         // hostile + marks this drone hostile to the whole faction. Gated to
         // drones here; a drone-on-drone hit resolves to no faction in the room.
-        deps.onDroneDamaged?.(rec.id, sourceId, atTick);
+        deps.onDroneDamaged?.(rec.id, actor, atTick);
       }
     },
   };
@@ -86,11 +89,14 @@ export function createSwarmDeath(deps: LeafDeps): DeathPolicy {
       // drone-only at the call site below; the room's resolver guards composites
       // (a polygon kind / non-drone yields nothing). Mirrors the optional
       // onDroneDamaged seam — absent ⇒ no scrap (test fixtures).
-      deps.spawnScrapFromDrone?.(rec);
+      // A cut kill that burned every piece away (fracture v11) reports
+      // `vaporised`, which the destroy event carries.
+      const vaporised = deps.spawnScrapFromDrone?.(rec) === true;
       deps.evictSwarmEntity(rec, {
         broadcast: true,
         emitDestroyed: true,
         shooterId: sourceId,
+        vaporised,
       });
     },
   };

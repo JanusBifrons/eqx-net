@@ -3,7 +3,7 @@
  *
  * Reads `shipRoster: ShipRosterEntry[]` from Zustand (already populated
  * by Phase 2 `SHIP_ROSTER` push). Renders a small chip with the count
- * vs `ROSTER_CAP`. Turns red at cap (10/10). Hidden / muted at 0/10 so
+ * as a bare count (rosters are unlimited). Muted at 0 so
  * the affordance is discoverable but not loud.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
@@ -35,28 +35,28 @@ describe('RosterCountBadge', () => {
     expect(screen.getByTestId('roster-count-badge')).toBeInTheDocument();
   });
 
-  it('shows N/10 when the roster has N entries', () => {
+  it('shows N when the roster has N entries', () => {
     useUIStore.setState({ shipRoster: fakeRoster(4) });
     render(<RosterCountBadge />);
-    expect(screen.getByTestId('roster-count-badge')).toHaveTextContent('4/10');
+    expect(screen.getByTestId('roster-count-badge')).toHaveTextContent(/^4$/);
   });
 
-  it('shows 0/10 (muted) when the roster is empty', () => {
+  it('shows 0 (muted) when the roster is empty', () => {
     useUIStore.setState({ shipRoster: [] });
     render(<RosterCountBadge />);
     const badge = screen.getByTestId('roster-count-badge');
-    expect(badge).toHaveTextContent('0/10');
+    expect(badge).toHaveTextContent(/^0$/);
     // Muted state surfaced as a data attribute so styling can hook off it
     // without leaking CSS into the test assertion.
     expect(badge).toHaveAttribute('data-state', 'empty');
   });
 
-  it('shows 10/10 and marks state=full when at cap', () => {
-    useUIStore.setState({ shipRoster: fakeRoster(10) });
+  it('shows a bare count past the old 10-ship cap (no full state)', () => {
+    useUIStore.setState({ shipRoster: fakeRoster(12) });
     render(<RosterCountBadge />);
     const badge = screen.getByTestId('roster-count-badge');
-    expect(badge).toHaveTextContent('10/10');
-    expect(badge).toHaveAttribute('data-state', 'full');
+    expect(badge).toHaveTextContent(/^12$/);
+    expect(badge).toHaveAttribute('data-state', 'normal');
   });
 
   it('marks state=normal for in-between counts', () => {
