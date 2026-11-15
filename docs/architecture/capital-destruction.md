@@ -860,6 +860,49 @@ no `resplit`, gives no children.
 - **Catastrophic case.** A big white flash, plus a blast that damages nearby
   ships. It waits on the owner's answer about how rare it is (§6).
 
+#### Re-split on the wire: the descriptor chain (salvage stream PR 4, 2026-11-15)
+
+A child wreck is an ordinary `WreckDescriptor` with a NEW `wreckId` that
+names its parent: `parentWreck` (the parent's wreckId, u16) and
+`parentPiece` (the piece that broke, the parent's `componentIndex`, u8). The
+descriptor is ONE step of the chain: `killX`/`killY` are the breaking hit and
+`cutKind`/`cutAng`/`cutW` its kill cut, in the hull's 1× Pixi-up frame as
+for a root. `parentKind` and `algoVersion` repeat the root's; `seed` is the
+child's own fracture seed, `wreckChildSeed(parent.seed, parentPiece)`, so
+every link is checkable. `killBlowDamage`, `recentDamageRate` and
+`snapChance` are not child inputs (the kind's `resplit` profile sets the
+fracture); the server sends 0.
+
+- **Both or neither.** `parentWreck` and `parentPiece` are present together
+  (a child) or absent (a root), and a wreck is never its own parent: the zod
+  `WreckDescriptorSchema` refine and the alloc-free `isWreckDescriptor`
+  enforce the same rule (`wreckWire.test.ts`).
+- **Pieces as today.** A child wreck's pieces ride the binary swarm wire with
+  its own `wreckId` and their index as `componentIndex`; no record field
+  changes, so `SWARM_WIRE_VERSION` stays 5. The descriptor rides the existing
+  welcome / `wreckAdds` / `wreckSync` paths by reference (`WreckWireDeltas`
+  diffs whole descriptors), so the new fields go through unchanged.
+- **Client resolve.** `WreckGeometryStore` walks parent descriptors to the
+  root, builds the `WreckChildChain` and calls the shared
+  `wreckChildGeometry` (`resolveChildWreckPieces`, pure). A link that
+  disagrees with its parent (kind, version, seed) or a chain deeper than
+  `MAX_WRECK_CHAIN_DEPTH` (16, a cycle guard) resolves to nothing.
+- **Out of order is normal.** A child can land before its parent (an add
+  before the resync chunk holding the parent, the renderer seeing the mirror
+  in id order). The store keeps it DEFERRED: its pieces read null (no body,
+  no sprite) and it retries on the first lookup after the wreck set changes.
+  A resolved child re-checks its ancestors only after the set changes, and
+  rebuilds when one was replaced (a recycled id). Nothing is fractured per
+  lookup in the steady state.
+- **Contract (server, salvage PR 5):** every ancestor descriptor stays on the
+  wire while any descendant lives (a refcount on the parent wreck), even when
+  the parent has no live pieces of its own. An ancestor that leaves first
+  leaves its descendants unresolved until it is back.
+- **Locks:** `tests/integration/wire/wreckGeometryParity.test.ts` "wreck
+  child chains" (server `wreckChildGeometry` == the client's resolve, bit for
+  bit, depth 1 and 2, child before parent, parent removed and recycled,
+  renderer path, `WreckWireDeltas` pass-through, malformed links).
+
 ### Later: wrecks as terrain and salvage
 
 - **Terrain.** Long-lived wreck pieces: heavy, slow, cover that blocks ships
@@ -2182,9 +2225,40 @@ line; a railgun kill erases a straight channel as wide as the bolt.
     wedges a jagged splinter can leave). Always starting at 45° gave every
     end a long bevel, a triangle on a short edge: the "bevels". Each cut edge
     now glows along its full length (lit core ≥ a fifth of the cut core, or
-    half of the piece's own thickness in a wedge, over ≥ 90 % of every
+    half of the piece's own thickness in a wedge, over ≥ 90 % of the drawn length of every
     `EDGE_CUT` edge of heavy-cruiser slice and channel kills). Crack strips
     keep their square ends.
+  - **Incandescent, not painted** (hostile film reviews 2026-11-15, rail
+    and beam take 7: the channel walls read as "flat pale-white blocky
+    slabs ... like white paint or bricks, they do not glow", the slice's
+    ember bars as "hard-edged flat strips with no soft glow"). Every quad
+    used to sample one texel row, so each strip was a flat fill. A kill
+    cut's strip now carries a gradient ACROSS its width in the same mesh:
+    the texture has a block of `GLOW_ROW` rows per tint (`GLOW_ROWS_PER_TINT`
+    = 6: bleed-out, bleed, edge, deep, halo, halo-out), its edge corners
+    take one row and its outer corners the adjacent one, and the linear
+    filter blends them. The core runs from the full curve alpha at the cut
+    to `CUT_DEEP_A` (0.05 ×) inside, where it meets the halo with no hard
+    line; the halo (0.45 × at the cut) fades to nothing at its outer side;
+    a soft bleed (`CUT_BLEED_A` 1.2 × the halo share, `CUT_BLEED_CORE_MUL`
+    0.35 × the core wide, chamfered) reaches into the gap (it uses the head
+    halo's quad: a kill cut is no-hold, so it never has a head). While hot
+    the colour shifts across it (`CUT_DEEP_C`, `CUT_DEEP_SHIFT` 0.65): the
+    channel white-hot at the edge, yellow-orange deeper in; the slice a pale
+    violet rim (`SLICE_RIM_WHITE` 0.3 toward white), deeper violet in. The
+    shift is gone 0.5 s after the hold, so the ember is one hot-metal
+    colour. The curve (`wreckGlowAt`) and its timing are unchanged. A
+    crack's or splinter's strips keep flat rows: they look as before.
+  - **On the hull as drawn.** A capital's collider `hull` is the convex
+    hull of its parts, so between the side barbettes a piece's outline
+    spans empty space where its art is transparent; a cut runs across it,
+    and the glow strip drawn to the outline filmed as "white bars stuck
+    onto the hull edge" (rail take 7). `wreckGlowStrip.ts` holds every
+    glow strip to the piece's outline AND the kind's drawn parts
+    (`shipParts`, the art's own source; `onDrawnHull`), and trims each cut
+    edge to its longest drawn stretch (`drawnSpan`) before it is sized; a
+    strip that does not fit narrows in 0.75 × steps. Polygon kinds (their
+    outline is their drawing) are unchanged.
   - **Splinters read second** (owner 2026-11-15: keep the v10 splinter X,
     tone its glow down so the cut reads first; review: their orange rims were
     wider, brighter and longer than the cut). On a wreck with a `cutKind`,
@@ -2197,16 +2271,23 @@ line; a railgun kill erases a straight channel as wide as the bolt.
     life and gone by 85 % (cracks: their own orange and red), at the same
     width multiplier; its cracks stay as they were on a cut kill too.
   Still ONE glow mesh per piece, no new draw call: the glow textures bake a
-  row block per tint (`WRECK_GLOW_TEX_ROWS` = core + halo per tint; the
-  simple texture one row per tint), a segment's tint is its V (`glowV` /
-  `simpleGlowV`), and its width multipliers and chamfers are baked into its
-  quads at build (`SEG_STRIDE` 18). Locks: `wreckArt.test.ts` "a kill cut
+  row block per tint (`WRECK_GLOW_TEX_ROWS` = `GLOW_ROWS_PER_TINT` per tint;
+  the simple texture one row per tint), a segment's tint and place across
+  the strip are its V (`glowV(tint, row)` / `simpleGlowV`), and its width
+  multipliers, chamfers and bleed are baked into its quads at build
+  (`SEG_STRIDE` 22). Locks: `wreckArt.test.ts` "a kill cut
   glows in the weapon's colour" (violet / white-hot held ~1.5 s, never
   dimmer than a crack, the cut's core 2.5 × a crack's on real slice and
   channel pieces) and "a cut kill reads first" (splinters ≤ 0.5 × the cut's
   alpha at every age, ≤ 0.25 × its core, dark by 3 s; an un-cut wreck's
-  cracks unchanged; every `EDGE_CUT` edge lit along ≥ 90 %; the ember
-  visible at 3 s, dark at 4.5 s); `swarmSpriteUpdater.wreckArt.test.ts`
+  cracks unchanged; every `EDGE_CUT` edge lit along ≥ 90 % of its drawn length; the ember
+  visible at 3 s, dark at 4.5 s), "the cut glows like hot metal" (on real
+  heavy-cruiser slice and channel pieces, the composited glow falls off
+  from the cut edge inward, fades out at the halo's outer side, bleeds into
+  the gap; channel white at the edge and yellow-orange in, slice violet)
+  and "no glow strip lies outside its piece" (every glow triangle on the
+  drawn hull, outside the piece only as the bleed off a cut edge);
+  `swarmSpriteUpdater.wreckArt.test.ts`
   "char strip" (a cooled cut is a subtle scorch from 4 s, its halo gone by
   3.5 s);
   `fractureHull.test.ts` "cutEdges carries the edge kind".
@@ -2395,7 +2476,8 @@ Every client must produce the same pieces as the server, bit for bit, from
   the wreck, including the former owner.
 - **Wreck pieces don't break further** ("No for now"). Shooting a piece never
   re-fractures it. *Lifted 2026-11-15 (salvage stream): the core child
-  fracture exists (§S4 "Re-split"); the server wiring follows.*
+  fracture and its wire contract exist (§S4 "Re-split", "Re-split on the
+  wire"); server spawning follows.*
 - **Smaller ships break up this way too** ("Yes"). Fighters, frigates and
   cruisers fracture dynamically like capitals, replacing today's hand-made
   scrap. This is a later slice, after the capital path works.
