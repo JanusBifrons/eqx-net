@@ -291,6 +291,7 @@ import { shipTuning } from '../../shared-types/shipScale/tuning.js';
 import { FleetStatusStream } from '../fleet/FleetStatusStream.js';
 import { FleetStatusSoon } from '../fleet/FleetStatusSoon.js';
 import { decodeAiInputBits, packAiInputBits, type AiInputBits } from '../../core/contracts/IAiBehaviour.js';
+import type { WingmanBehaviour } from '../../core/ai/WingmanBehaviour.js';
 import { LeaveHandler } from './LeaveHandler.js';
 import { mirrorSabPoses } from './SabPoseMirror.js';
 import { updateSwarmInterestGrid } from './swarmInterestUpdater.js';
@@ -10650,6 +10651,27 @@ export class SectorRoom extends Room<SectorState> {
     this.fleetStatusSoonFor(fleet.ownerAt(i));
   }
 
+  /** RTS Part B slice 11: an owned hull in Patrol mode at (x, y) walks its
+   *  fleet route (the ONE route, on the wingman store): `stepPatrol` steps it
+   *  with the shared `stepRoute` (the garrison patrols' stepper), looping;
+   *  a new waypoint (or a brain no longer on its leg: a fight lost it, a
+   *  travel arrived) gets a fresh patrol leg from the last waypoint (from the
+   *  hull on the first leg). `fresh` forces the leg (the mode was just set).
+   *  Called from `applyHullMode` and the ~10 Hz target step. */
+  private stepHullPatrol(w: WingmanBehaviour, brain: IAiBehaviour, x: number, y: number, fresh: boolean): void {
+    if (brain.setPatrolLeg === undefined) return;
+    const before = w.patrolWaypointIndex;
+    const i = w.stepPatrol(x, y);
+    if (i < 0) return;
+    const moved = i !== before;
+    if (!fresh && !moved && brain.isPatrolling?.() === true) return;
+    const fromLast = moved && !fresh;
+    brain.setPatrolLeg(
+      fromLast ? w.patrolRouteX(before) : x, fromLast ? w.patrolRouteY(before) : y,
+      w.patrolRouteX(i), w.patrolRouteY(i),
+    );
+  }
+
   /** RTS Part B: an owned hull's brain holds at (x, y): its move target, and
    *  its guard post (the guard leash: it engages only inside the guard
    *  radius round it; a broadside capital fights from it). */
@@ -10675,9 +10697,11 @@ export class SectorRoom extends Room<SectorState> {
    *  the mode applies when the order completes. Defend guards its post (the
    *  given point, else where the hull is; slice 5). Hunt lifts the leash and
    *  searches the sector (slice 6). Retreat (slice 9) travels to its point
-   *  (else the post) like a Move, then defends there. The modes not built on
-   *  the brain yet (patrol, escort) hold at the post, else where the hull
-   *  is, so leaving a Hunt never leaves it leashless. */
+   *  (else the post) like a Move, then defends there. Patrol (slice 11)
+   *  flies the fleet route leg by leg from the waypoint nearest the hull
+   *  (`stepHullPatrol`). The modes not built on the brain yet (escort) hold
+   *  at the post, else where the hull is, so leaving a Hunt never leaves it
+   *  leashless. */
   private applyHullMode(id: string): void {
     const brain = this.aiController.getBehaviour(id);
     const w = this.fleet.brainOf(id);
@@ -10687,6 +10711,11 @@ export class SectorRoom extends Room<SectorState> {
     if (w.mode === 'hunt') { brain.setHunt?.(true); return; }
     brain.setHunt?.(false);
     const p = this.lingeringPoseCache.get(id);
+    if (w.mode === 'patrol' && w.patrolRouteLength > 0 && brain.setPatrolLeg !== undefined) {
+      w.reseekPatrol();
+      this.stepHullPatrol(w, brain, p?.x ?? w.patrolRouteX(0), p?.y ?? w.patrolRouteY(0), true);
+      return;
+    }
     const rx = w.mode === 'retreat' ? w.retreatPointX : null;
     const x = rx ?? w.guardPostX ?? p?.x;
     const y = (rx !== null ? w.retreatPointY : null) ?? w.guardPostY ?? p?.y;
@@ -10903,6 +10932,8 @@ export class SectorRoom extends Room<SectorState> {
           this.fleetStatusSoonFor(fleet.ownerAt(i));
         }
       } else if (hb !== null && hb.getTravelState !== undefined) this.completeHullTravel(i, sid, hb);
+      // Slice 11: a patrolling hull walks its route.
+      if (hb !== null && w.order === null && w.mode === 'patrol' && w.formationLeaderId === null) this.stepHullPatrol(w, hb, pose.x, pose.y, false);
       if (hb !== null) this.syncHullOrder(hb, w.order);
       // The brain's target; with none, a live ordered target keeps the locks
       // (its pilot's take-controls handshake hides it from the brain's

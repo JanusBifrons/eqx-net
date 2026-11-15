@@ -81,10 +81,9 @@ async function waitRowsActivity(page: Page, re: RegExp, what: string): Promise<v
 }
 
 test.describe('RTS fleet command loop @feature', () => {
-  // RTS Part B slice 11: patrol (one route stepper shared with PatrolSubsystem) and the
-  // panel activity from the AI pilot brain; until then the status never says Patrolling.
-  // (Box-select, the move order, hold fire and the squad steps pass on slice 2.)
-  test.skip('box-select, move order, stance, squad, patrol, Fly', async ({ browser }) => {
+  // Patrol (RTS Part B slice 11) walks the fleet route on the AI pilot brain; the
+  // panel activity comes from the brain.
+  test('box-select, move order, stance, squad, patrol, Fly', async ({ browser }) => {
     test.setTimeout(120_000);
     const testId = randomUUID();
     const a = await launchGalaxyTestClient(browser, {

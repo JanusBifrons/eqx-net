@@ -96,6 +96,7 @@ import type {
   WingmanWorldView,
 } from './wingman/types.js';
 import { makeWingmanControls, WINGMAN_ROUTE_MAX, WINGMAN_ROUTE_MIN } from './wingman/types.js';
+import { stepRoute } from './stepRoute.js';
 
 /** The brain contract the server's fleet subsystem drives once per tick. */
 export interface IWingmanBrain {
@@ -203,9 +204,9 @@ export class WingmanBehaviour implements IWingmanBrain {
    *  'guarding'). */
   private settling = false;
 
-  // Patrol.
-  private readonly routeX = new Float64Array(WINGMAN_ROUTE_MAX);
-  private readonly routeY = new Float64Array(WINGMAN_ROUTE_MAX);
+  // Patrol: the ship's ONE route (the fleet store's), packed x0, y0, x1, y1, ...
+  // (`stepRoute`'s layout).
+  private readonly route = new Float64Array(WINGMAN_ROUTE_MAX * 2);
   private routeLen = 0;
   private routeIdx = 0;
   /** True ⇒ the next patrol tick heads for the waypoint nearest the ship. */
@@ -301,8 +302,37 @@ export class WingmanBehaviour implements IWingmanBrain {
   /** Patrol: number of waypoints (0 when not patrolling a route). */
   get patrolRouteLength(): number { return this.routeLen; }
   /** Patrol: waypoint `i` (0 ≤ i < patrolRouteLength), x then y. */
-  patrolRouteX(i: number): number { return this.routeX[i]!; }
-  patrolRouteY(i: number): number { return this.routeY[i]!; }
+  patrolRouteX(i: number): number { return this.route[i * 2]!; }
+  patrolRouteY(i: number): number { return this.route[i * 2 + 1]!; }
+
+  /**
+   * Patrol (RTS Part B slice 11): step the route for a ship at (x, y) and
+   * return the waypoint to fly to (-1 with no route). After a resume (a new
+   * route, a finished order, a left formation) it starts from the waypoint
+   * nearest the ship; else it moves on once within the pass radius
+   * (`stepRoute`, shared with the garrison patrols), looping. The room calls
+   * it for an AI-flown hull; this brain's own `tick` calls it too.
+   */
+  stepPatrol(x: number, y: number): number {
+    const n = this.routeLen;
+    if (n < WINGMAN_ROUTE_MIN) return -1;
+    if (this.routeSeek) {
+      let best = 0, bestD = Infinity;
+      for (let i = 0; i < n; i++) {
+        const dx = this.route[i * 2]! - x, dy = this.route[i * 2 + 1]! - y;
+        const d = dx * dx + dy * dy;
+        if (d < bestD) { bestD = d; best = i; }
+      }
+      this.routeIdx = best;
+      this.routeSeek = false;
+    }
+    this.routeIdx = stepRoute(this.route, n, this.routeIdx, x, y, this.patrolPassRadius);
+    return this.routeIdx;
+  }
+
+  /** Patrol: the next `stepPatrol` starts from the waypoint nearest the ship
+   *  (the resume rule). */
+  reseekPatrol(): void { this.routeSeek = true; }
   /** Escort: the ship being escorted, or null. */
   get escortId(): string | null { return this._escortId; }
   /** Retreat: the point being retreated to, or null while none is set (the
@@ -367,7 +397,7 @@ export class WingmanBehaviour implements IWingmanBrain {
         const r = md?.route;
         const n = r !== undefined ? Math.min(r.length, WINGMAN_ROUTE_MAX) : 0;
         if (n >= WINGMAN_ROUTE_MIN) {
-          for (let i = 0; i < n; i++) { this.routeX[i] = r![i]![0]; this.routeY[i] = r![i]![1]; }
+          for (let i = 0; i < n; i++) { this.route[i * 2] = r![i]![0]; this.route[i * 2 + 1] = r![i]![1]; }
           this.routeLen = n;
           this.routeIdx = 0;
           this.routeSeek = true;
@@ -637,24 +667,8 @@ export class WingmanBehaviour implements IWingmanBrain {
   /** Patrol: fly the route as a closed loop, passing (not stopping at) each
    *  waypoint. After a resume, start from the waypoint nearest the ship. */
   private tickPatrol(self: WingmanPose): void {
-    const n = this.routeLen;
-    if (this.routeSeek) {
-      let best = 0, bestD = Infinity;
-      for (let i = 0; i < n; i++) {
-        const dx = this.routeX[i]! - self.x, dy = this.routeY[i]! - self.y;
-        const d = dx * dx + dy * dy;
-        if (d < bestD) { bestD = d; best = i; }
-      }
-      this.routeIdx = best;
-      this.routeSeek = false;
-    }
-    let tx = this.routeX[this.routeIdx]!, ty = this.routeY[this.routeIdx]!;
-    const dx = tx - self.x, dy = ty - self.y;
-    if (dx * dx + dy * dy <= this.patrolPassRadius * this.patrolPassRadius) {
-      this.routeIdx = (this.routeIdx + 1) % n;
-      tx = this.routeX[this.routeIdx]!; ty = this.routeY[this.routeIdx]!;
-    }
-    this.steerTo(self, tx, ty, true);
+    const i = this.stepPatrol(self.x, self.y);
+    this.steerTo(self, this.route[i * 2]!, this.route[i * 2 + 1]!, true);
     this._activity = 'patrolling';
   }
 

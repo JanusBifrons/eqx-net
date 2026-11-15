@@ -39,8 +39,8 @@ describe the wingman brain flying, read this section instead.
 - **Hunt and attitude (slice 6):** `modeSet` → `applyHullMode`: Hunt ⇒
   `setHunt(true)` (no leash; it searches the sector and engages what it
   finds, [ai-pilots](ai-pilots.md) "Player-owned ships"); Defend ⇒ guard
-  the post; patrol / escort / retreat hold where the hull is until their
-  slices. The new `stanceSet` hook (`setStance`, and `restoreShip` with
+  the post; Patrol walks its route (slice 11, below); escort holds where
+  the hull is until its slice. The new `stanceSet` hook (`setStance`, and `restoreShip` with
   `modeSet`) → `applyHullStance`: Aggressive ⇒ `setEngageOnSight(true)`,
   Defensive (the default) ⇒ off; hold fire (slice 7) ⇒ `setHoldFire(true)`:
   no target, no fire, no chase, the hull flies its job; every other stance
@@ -149,6 +149,28 @@ describe the wingman brain flying, read this section instead.
     `wingmanMovesParkedHull.test.ts`, `fleetCommandMessages.test.ts`,
     `wingmanBoost.test.ts`, `wingmanFlameIds.test.ts`,
     `fleetStatusAfterCommand.test.ts`, `HostileDroneBehaviour.travel.test.ts`.
+- **Patrol (slice 11):** the route is the wingman store's (ONE route list,
+  the one `set_mode` stores and the status streams). `applyHullMode` and the
+  ~10 Hz `tickWingmanTargets` call `stepHullPatrol`: `WingmanBehaviour.stepPatrol`
+  steps the route with `core/ai/stepRoute.ts` `stepRoute` (the SAME stepper
+  `PatrolSubsystem` flies the garrison patrols with), passing a waypoint
+  inside the store's `patrolPassRadius` (2 × `wingmanArrive`, so always
+  before the travel's own arrival) and looping last → first; a (re)set mode,
+  a finished order or a left formation starts from the waypoint nearest the
+  hull. Each new waypoint, or a brain no longer on its leg, gets
+  `setPatrolLeg(from, to)` (from the last waypoint; from the hull on the
+  first leg). Decision (attitude on a patrol): the leash is the guard
+  radius (`guardRadiusMin`) round the nearest point of the LEG, which is the
+  ship's own position while it is on the route. Aggressive engages what it
+  sees there and turns to fight it; Defensive answers an attacker out to the
+  radius plus its weapon reach; a fight that drags it a guard radius off
+  the route is let go and the leg flies on; hold fire just flies. (A leash
+  round the ship itself would chase forever: the centre moves with it.) A
+  broadside capital keeps its route and lets its turrets fight. Panel
+  activity `patrolling` (already on the wire), attacking / chasing while it
+  fights. Locks: `ownedShipsPatrol.test.ts` (3 points visited in order,
+  looping), `HostileDroneBehaviour.patrol.test.ts`, `stepRoute.test.ts`,
+  e2e `fleet-command.spec.ts` "the server reports the ships patrolling".
 - **Attack (slice 8):** `syncHullOrder` hands the wingman store's attack
   target to the brain (`setOrderedTarget`, a swarm ship by its record id)
   on the order and again from `tickWingmanTargets` (~10 Hz), so a

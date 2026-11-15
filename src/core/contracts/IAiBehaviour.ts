@@ -318,7 +318,7 @@ export function decodeAiInputBits(
 
 /** What an AI-flown ship is doing, in the fleet status activity words
  *  (`IAiBehaviour.getActivity`; a subset of the wingman activity table). */
-export type AiShipActivity = 'idle' | 'moving' | 'chasing' | 'attacking' | 'retreating' | 'guarding' | 'searching';
+export type AiShipActivity = 'idle' | 'moving' | 'patrolling' | 'chasing' | 'attacking' | 'retreating' | 'guarding' | 'searching';
 
 export interface IAiBehaviour {
   tick(self: AiEntity, view: AiWorldView): AiIntent;
@@ -407,6 +407,12 @@ export interface IAiBehaviour {
    *  turning to fight (fire only at what is already in the sights), then
    *  guard the point. A guard post, a hunt or a stop ends it. */
   setTravel?(x: number, y: number): void;
+  /** RTS Patrol (SERVER-ONLY, slice 11): one leg of the fleet route, from
+   *  (fromX, fromY) to (x, y): a travel that fights per the attitude within
+   *  the guard radius of the leg. Activity `patrolling`. */
+  setPatrolLeg?(fromX: number, fromY: number, x: number, y: number): void;
+  /** On a patrol leg (not yet arrived)? */
+  isPatrolling?(): boolean;
   /** 0 none, 1 on the way, 2 arrived (until the next job). */
   getTravelState?(): 0 | 1 | 2;
   /** The guard post's centre (null with no post). SERVER-ONLY. */

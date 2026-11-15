@@ -552,6 +552,15 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   private travel: TravelState = TRAVEL_NONE;
   private travelX = 0;
   private travelY = 0;
+  /** Patrol leg (RTS Part B slice 11, `setPatrolLeg`): a travel that FIGHTS.
+   *  The leash is the guard radius round the nearest point of the leg (from
+   *  (`legFromX`, `legFromY`) to the travel point): on the route that is the
+   *  ship's own position, so it engages what it sees near it (Aggressive) or
+   *  answers an attacker (Defensive), and lets go of a target that drags it
+   *  a guard radius off its route, then flies the leg on. Plain fields (#14). */
+  private travelFights = false;
+  private legFromX = 0;
+  private legFromY = 0;
   /** Squared distance to the target picked this tick, and this ship's
    *  position last tick (activity read-out). */
   private _targetDist2 = 0;
@@ -1194,7 +1203,10 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     // the POST, only inside the guard radius, held target included, and no
     // uncapped fallback: what leaves the radius is let go.
     const sinceTicks = view.tick - this.prevTargetSinceTick;
-    const leash = this.guardLeash();
+    // A patrol leg (slice 11) leashes round the nearest point of its leg.
+    const roam = this.travel === TRAVEL_ON_THE_WAY && this.travelFights && !this.broadside;
+    if (roam) this.legLeashCentre(self);
+    const leash = this.guardLeash() || roam;
     let target: MountTargetView | null;
     if (orderedLive) {
       // Attack order (slice 8): go and get it. The ordered target is free of
@@ -1247,7 +1259,9 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     const tdy = target.y - self.y;
     this._targetDist2 = tdx * tdx + tdy * tdy;
     // Travel (slice 9): keep going, shoot only what is already in the sights.
-    if (this.travel === TRAVEL_ON_THE_WAY) return this.tickTravel(self, view, target);
+    // A patrol leg (slice 11) turns and fights it, then flies the leg on; a
+    // broadside capital keeps its route and lets its turrets fight.
+    if (this.travel === TRAVEL_ON_THE_WAY && (!this.travelFights || this.broadside)) return this.tickTravel(self, view, target);
     // A hunter that found a fight searches again from wherever it ends.
     if (this.hunting) this.searchReset = true;
     return this.tickCombat(self, view, target);
@@ -2319,6 +2333,45 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     this.travel = TRAVEL_ON_THE_WAY;
     this.travelX = x;
     this.travelY = y;
+    this.travelFights = false;
+  }
+
+  /**
+   * RTS Part B slice 11: one leg of an owner's Patrol, from (fromX, fromY) to
+   * (x, y) (the room steps the fleet route with `stepRoute`). A travel that
+   * fights: Aggressive engages what it sees within its guard radius
+   * (`shipTuning.guardRadiusMin`) of the leg, Defensive answers an attacker
+   * out to that radius plus its weapon reach, hold fire just flies; a fight
+   * is let go a guard radius off the route and the leg flies on. Activity
+   * `patrolling`. Arrival is the travel's. Server-only.
+   */
+  setPatrolLeg(fromX: number, fromY: number, x: number, y: number): void {
+    this.setTravel(x, y);
+    this.travelFights = true;
+    this.legFromX = fromX;
+    this.legFromY = fromY;
+    this.guardR = shipTuning(this.kind).guardRadiusMin;
+    this._pickOptsGuard.maxDistance = this.guardR;
+    this._pickOptsGuard.prevMaxDistance = this.guardR;
+    this._pickOptsGuardRetaliate.maxDistance = this.guardR + this.fireRange;
+    this._pickOptsGuardRetaliate.prevMaxDistance = this.guardR + this.fireRange;
+  }
+
+  /** Test-visible: flying a patrol leg? */
+  isPatrolling(): boolean { return this.travel === TRAVEL_ON_THE_WAY && this.travelFights; }
+
+  /** Patrol leg: the leash centre (`guardX`, `guardY`, unused while no post
+   *  is held) = the nearest point of the leg to the ship. */
+  private legLeashCentre(self: AiEntity): void {
+    const ax = this.legFromX;
+    const ay = this.legFromY;
+    const bx = this.travelX - ax;
+    const by = this.travelY - ay;
+    const l2 = bx * bx + by * by;
+    let t = l2 > 1e-9 ? ((self.x - ax) * bx + (self.y - ay) * by) / l2 : 1;
+    if (t < 0) t = 0; else if (t > 1) t = 1;
+    this.guardX = ax + bx * t;
+    this.guardY = ay + by * t;
   }
 
   /** Travel state: `TRAVEL_NONE`, `TRAVEL_ON_THE_WAY` or `TRAVEL_ARRIVED`
@@ -2359,7 +2412,9 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    */
   getActivity(): AiShipActivity {
     if (this._leavingUntil >= 0) return 'retreating';
-    if (this.travel === TRAVEL_ON_THE_WAY) return 'moving';
+    if (this.travel === TRAVEL_ON_THE_WAY && (!this.travelFights || this.prevTargetId === null)) {
+      return this.travelFights ? 'patrolling' : 'moving';
+    }
     if (this.prevTargetId !== null) {
       return this._targetDist2 > this.fireRange * this.fireRange ? 'chasing' : 'attacking';
     }
