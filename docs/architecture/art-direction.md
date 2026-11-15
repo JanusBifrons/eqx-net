@@ -180,6 +180,94 @@ per-frame maths (`fxMath.ts`: flipbook frames, envelopes, backdrop depth,
   --only stills|clips|bench [--clip id]` (outputs `diag/art-lab/fx-r1/`).
   Phone: `phone.html?set=fx`.
 
+## Ship livery
+
+Every Machined ship wears a **livery**: a neutral grey hull with its owner
+faction's colour painted only in chosen sections, so a fleet reads by owner
+at a glance and the hulls still read as one universe. It is on by default
+(treatment `b8`); classic art is untouched.
+
+**Who owns a hull.** The owner is a faction id: a player's own id (each
+player is their own faction), an NPC faction from the owner string, else the
+kind's allegiance (drones, robots, traders). Wrecks and lingering hulls keep
+their owner's livery: a capital wreck's descriptor names its owner, and with
+none its pieces resolve the owner as the live hull did (faction, else the
+kind's allegiance), so they reuse the hull's bake and never wait on a new
+one (capital-destruction.md S3). Cargo pods are never liveried. The renderer resolves it in
+`art/shipArtSprites.ts` (`ownerLivery`, cached per owner; `shipHandleFor`
+compares scalars only, so a frame allocates nothing) from three pure
+functions in `shared-types/factions.ts`:
+
+- `teamColorOf`: an NPC faction's own colour; a player gets one of 12
+  `PLAYER_LIVERY` hues by a hash of their id.
+- `teamSigilOf`: a 16-bit seed for the faction's procedural sigil
+  (`sigilDesign`, mirror-symmetric; no six-pointed bursts).
+- `teamEdgeOf`: the shape of the painted section's edge. Fixed factions own
+  one (`FactionDef.liveryEdge`): **swept** chevron (sides reach further) for
+  Drones, Sol Dominion and The Ancients; **tooth** (dog-tooth) for Robots and
+  Verdant Reach; **tongue** (centreline reaches further) for Traders, Crimson
+  Expanse and Azure Deep. Minor factions take the three shapes in turn within
+  each region, so a region shows all three. Players get one by a hash of
+  their id.
+
+**What gets painted** (`forgeShip`, `fields.ts`; paint is `MAT.LIVERY`, the
+hull grey comes from `liveryHullGrey` / `LIVERY_SHADES.b8`):
+
+- **Capitals:** solid painted sections across hull and deck at the bow (a
+  fifth of the length) and stern, with a broken, mirror-symmetric edge in the
+  faction's shape. The paint is tinted by the hull's own tone underneath, so
+  it shades like the hull; the superstructure stays grey. Each turret base
+  keeps a grey barbette ring (a widened keep-out round the turret, so paint
+  never shows as a sliver between guns). Two clean deck sigils in the team
+  colour. Weathered (`weatherLivery`): mottle and sun-fade toward the grey,
+  fore-aft grime streaks, clustered dark-primer chips, chalky patches,
+  scratches to bare metal and flaking where paint meets grey hull; the bow
+  section wears about half of it so it still reads in colour at line-up zoom.
+- **Small ships:** flashes on the nose, the wingtips and the tail, none under
+  a turret's keep-out (`TURRET_COVER_REACH` × max(ring, cap) via
+  `turretCoverOf`). A hull whose visible paint is too small grows worn tail
+  flashes until the paint covers a set share of the hull: every hull shows
+  its colour. The same weathering family, finer grained.
+- **Robots:** painted bow and stern sections like the capitals', with
+  bolder edge shapes (square dog-teeth) so they read at combat zoom (~75 px
+  across), stopping short of the glowing core. Crisp edges, no turret
+  keep-out, no flaking, and a light wear only.
+- Running lights and the tail beacon stay the bright team colour.
+
+**Flag.** `?livery=` is read once on the main thread (`readLivery`,
+`art/artMode.ts`) and reaches the worker on BOOT. Absent or unknown =
+`DEFAULT_LIVERY` (`b8`); `off` = no livery, the pre-livery paint (byte
+identical to before the livery: `fields.livery.test.ts`). Other values are
+look-R&D overrides: `a` (rim band), `b` (nose, tips, bow fade), `c` (canopy
+ring, collars, sigils), `b2`/`b3` (shade experiments), `b4` (straight
+sections), `b5`/`b6`/`b7` (every faction forced to swept / tongue / tooth).
+The default livery is drawn on Machined art only and never changes the art
+mode; a livery named in the URL implies Machined unless `?art=` says
+otherwise. Showcase shots film the player's look, so they show the livery
+(`ship-gallery`, `capital-lineup`, `robots`).
+
+**Bake key and cache.** A liveried ship bake's key ends with
+`:L<treatment><team hex>:<sigil hex>[:<edge>]` (`bake.ts` `liveryTag`), so
+each faction is its own bake. Any change to the livery's forge output bumps
+`FORGE_VERSION` (`bakeStore.ts`; the `-lvN` suffix), or players' caches
+serve stale paint.
+
+Locks: `artMode.test.ts`, `fields.livery.test.ts`, `shipLivery.test.ts`,
+`shipSpriteUpdater.livery.test.ts`, `factions.livery.test.ts`,
+`tests/unit/machinedArt.test.ts`.
+
+**History.**
+- 2026-11-14: owner approved the experiment: grey hulls with owner-faction
+  spots behind `?livery=a|b|c`, filmed as options.
+- 2026-11-15: owner on `b`: capital paint "looks additive", "capitals are
+  key... sections of the hull which are more distinct... important it's
+  weathered"; small ships must keep visible colour with turrets fitted
+  (`b4`); "the straight lines look bad" (shaped edges `b5`..`b7`, then
+  `b8`: each faction its own edge); "all hulls should be painted"; on robots
+  "the weathering is too extreme" (light wear).
+- 2026-11-15: owner: "Land it with flag on". `b8` is the default;
+  `?livery=off` turns it off.
+
 ## Client rules in detail
 
 Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each rule and points here.

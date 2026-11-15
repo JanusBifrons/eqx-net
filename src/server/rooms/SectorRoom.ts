@@ -163,7 +163,7 @@ import type { NpcBaseTrade } from '../economy/ConvoyDirector.js';
 import { TARGET_MINUTES as CONVOY_TARGET_MINUTES } from '../../core/economy/convoys.js';
 import { RECIPES, blueprintProductFor, isRecipeId } from '../../shared-types/recipes.js';
 import { blueprintQuality } from '../../shared-types/blueprints.js';
-import { asteroidYield, asteroidYieldWeightPerUnit, rollAsteroidResource, type AsteroidFieldFeature, type AsteroidResourceId } from '../../shared-types/asteroidResources.js';
+import { rollAsteroidResource, type AsteroidFieldFeature, type AsteroidResourceId } from '../../shared-types/asteroidResources.js';
 import { getSector } from '../../core/galaxy/galaxy.js';
 import type { GoodId } from '../../shared-types/goods.js';
 import { usesAmmo } from '../../shared-types/ammo.js';
@@ -321,6 +321,7 @@ import { BpBuySchema, BpMarketQuerySchema, BpSellSchema, type BpListing, type Bp
 import { bpBuyPrice, bpSellPrice, getBlueprintMarket, listing as bpListing } from '../economy/BlueprintMarket.js';
 import { LabCancelSchema, LabQuerySchema, LabStartSchema, type LabStart, type LabState } from '../../shared-types/messages/labMessages.js';
 import { LootSubsystem, type LootCollector } from '../cargo/LootSubsystem.js';
+import { OreDraw, type OreHolder } from './OreDraw.js';
 import { StorageService, fittedModuleIds, isOperationalStorage, structureUid, DEPOSIT_DWELL_TICKS, DEPOSIT_RANGE, REPAIR_CREDITS_PER_HP, RESPEC_CREDIT_COST } from '../cargo/StorageService.js';
 import { SCRAP_HP } from '../../core/swarm/scrapConstants.js';
 import { addPacked, cloneHold, emptyHold, extractRequested, holdWeight, isHoldEmpty, mergeInto, packedCount, takePacked, transferInto, type CargoRequest } from '../../core/cargo/hold.js';
@@ -968,6 +969,8 @@ export class SectorRoom extends Room<SectorState> {
   private scrapSpawner!: ScrapSpawner;
   /** Living World P1a — loot pods, pickup, spill-on-death (see LootSubsystem). */
   private loot!: LootSubsystem;
+  /** Asteroid ore: the one draw path (Miner, harvesters, mining-laser hits paid on the pulse). */
+  private readonly oreDraw = new OreDraw({ swarmRegistry: this.swarmRegistry, holderOf: (id, out) => this.oreHolderOf(id, out), sectorKey: () => this.sectorKey });
   /** Living World P1a-2 — base storage holds (deposit / refine / spill). */
   private storage!: StorageService;
   /** Economy v2 W3 — Research Lab jobs (research / copy / combine). */
@@ -2760,7 +2763,7 @@ export class SectorRoom extends Room<SectorState> {
       findNearestAsteroid: (x, y, range) => this.findNearestAsteroid(x, y, range),
       // v4 T1 — spare power after the batteries charges teleporter capacitors.
       chargeCapacitors: (members, spare) => this.teleporters.chargeCapacitors(members, spare),
-      drawAsteroidResources: (entityId, amount) => this.drawAsteroidResources(entityId, amount),
+      drawAsteroidResources: (entityId, amount) => this.oreDraw.draw(entityId, amount),
       // P2c — asteroid kinds, extractor goods into network storage, nebulae.
       asteroidResourceOf: (entityId) => this.swarmRegistry.getByEntityId(entityId)?.asteroidResource ?? 'rock',
       depositGoods: (rec, good, n) => this.production.deposit(rec, good, n),
@@ -5040,6 +5043,7 @@ export class SectorRoom extends Room<SectorState> {
     }
     // Phase 4 warp travel: a ship on its run is out of the world (an NPC's too, W2a).
     if (this.warpTravel.isTravelling(targetId)) return false;
+    if (weaponId !== undefined && damage > 0) this.oreDraw.onHit(targetId, shooterId, damage, weaponId);
     if (this.npcWarps.size > 0 && this.botWarpPhase(targetId) === 2) return false;
     // v4 A — alien gates can't be damaged; whoever hits one is disabled.
     if (this.gateGuard.gateCount > 0 && this.gateGuard.isGate(targetId)) {
@@ -5132,6 +5136,14 @@ export class SectorRoom extends Room<SectorState> {
         if (rec) return rec.kind === SWARM_KIND_DRONE && rec.shipKind && this.wreckKindAllowed(rec.shipKind) ? (rec.shipKind as ShipKindId) : null;
         const ship = this.getActiveShip(id) ?? this.state.ships.get(id);
         return ship !== undefined && this.wreckKindAllowed(ship.kind) ? (ship.kind as ShipKindId) : null;
+      },
+      // The livery owner, as the client resolves it for the live hull: a
+      // player hull (active by playerId, parked by shipInstanceId) its
+      // pilot's id, a patrol its faction (snapshot `fac`), else none.
+      ownerOf: (id) => {
+        if (this.swarmRegistry.has(id)) return this.patrols.count > 0 ? this.patrols.factionOf(id) : undefined;
+        const ship = this.getActiveShip(id) ?? this.state.ships.get(id);
+        return ship !== undefined && ship.playerId !== '' ? ship.playerId : undefined;
       },
       positionOf: (id) => {
         const p = this.shipPoseCache.get(id) ?? this.lingeringPoseCache.get(id);
@@ -5461,6 +5473,7 @@ export class SectorRoom extends Room<SectorState> {
     this.hostileActs.sweep(this.gameClock.now());
     if (this.patrols.count > 0) this.patrols.tick(this.gameClock.now());
     this.gateGuard.sweep(this.gameClock.now());
+    this.oreDraw.flush(); // mining-laser ore owed since the last pulse
     if (this.structureRegistry.size === 0) return;
     const result = this.structureGrid.pulse(this.gameClock.now());
     // P2b — processors take inputs from and put outputs into network storage.
@@ -6239,17 +6252,19 @@ export class SectorRoom extends Room<SectorState> {
   private readonly _asteroidNotExhausted = (rec: SwarmEntityRecord): boolean =>
     rec.resources === undefined || rec.resources > 0;
 
-  /** WS-4 / R2.27 — draw up to `amount` from an asteroid's finite resource pool;
-   *  returns the amount ACTUALLY mined (0 once exhausted). The ONLY path that
-   *  depletes asteroid resources — combat never reaches it (asteroid-interaction
-   *  -model ADR). `resources===undefined` (un-seeded) ⇒ treat as infinite
-   *  (returns the full `amount`, the pre-WS-4 behaviour). */
-  private drawAsteroidResources(entityId: number, amount: number): number {
-    const rec = this.swarmRegistry.getByEntityId(entityId);
-    if (!rec || rec.resources === undefined) return amount;
-    const drawn = Math.min(amount, rec.resources);
-    rec.resources -= drawn;
-    return drawn;
+  /** Where a shooter's mined ore goes (`OreDraw.flush`): a live pilot's
+   *  rostered hull (#17 ACTIVE + alive, as loot pickup), or a `collectsLoot`
+   *  NPC's ownerless hold. Anything else has no hold: the rock keeps its ore. */
+  private oreHolderOf(id: string, out: OreHolder): boolean {
+    const ship = this.getActiveShip(id);
+    if (ship?.alive === true && ship.isActive && this.sectorKey !== null && getPlayerShipStore().get(ship.shipInstanceId) !== null) {
+      out.uid = ship.shipInstanceId; out.ownerId = id; out.capacity = this.shipCargoCapacity(ship.kind, ship.shipInstanceId);
+      return true;
+    }
+    const rec = this.swarmRegistry.get(id);
+    if (rec?.kind !== 1 || getShipKind(rec.shipKind).collectsLoot !== true) return false;
+    out.uid = rec.id; out.ownerId = null; out.capacity = cargoCapacityForMaxHealth(getShipKind(rec.shipKind));
+    return true;
   }
 
   /** WS-4 Phase 3 / R2.27 — apply the mining beam's light player-damage RAY:
@@ -10584,35 +10599,11 @@ export class SectorRoom extends Room<SectorState> {
     return a === null ? null : { entityId: a.entityId, x: a.x, y: a.y, radius: a.radius };
   }
 
-  /** W6 — LivingWorldRoom hook: a robot harvester mines a rock. Ore comes out
-   *  of the SAME finite pool the Miner draws from (`drawAsteroidResources`)
-   *  and splits by the SAME yield (`asteroidYield`); the draw is sized to the
-   *  hold's free weight first, so no ore is burned into a full hold. The new
-   *  hold is one commit (an ownerless NPC hold, like LootCollector's npc
-   *  pickups), so a killed harvester spills what it mined. Control cadence. */
+  /** W6 — LivingWorldRoom hook: a robot harvester mines a rock into its
+   *  ownerless hold (`OreDraw.mine`, the Miner's pool and yield), so a killed
+   *  harvester spills what it mined. Control cadence. */
   mineAsteroid(harvesterId: string, entityId: number, maxUnits: number, capacity: number): number {
-    const rock = this.swarmRegistry.getByEntityId(entityId);
-    if (!rock || rock.kind !== 0) return 0;
-    const store = getHoldStore();
-    const cur = store.get(harvesterId);
-    const hold = cur ? cloneHold(cur.hold) : emptyHold();
-    const before = holdWeight(hold);
-    const resource = rock.asteroidResource ?? 'rock';
-    const want = Math.min(maxUnits, Math.floor((capacity - before) / asteroidYieldWeightPerUnit(resource)));
-    if (want <= 0) return 0;
-    const drawn = this.drawAsteroidResources(entityId, want);
-    if (drawn <= 0) return 0;
-    const yieldOf = asteroidYield(resource, drawn);
-    for (const g of GOOD_IDS) {
-      const n = yieldOf[g] ?? 0;
-      if (n > 0) hold.goods[g] = (hold.goods[g] ?? 0) + n;
-    }
-    store.commit(
-      [{ holderUid: harvesterId, holderType: 'hauler', ownerId: null, sectorKey: this.sectorKey, x: null, y: null, hold, expiresAt: null }],
-      [],
-      this.sectorKey !== null,
-    );
-    return holdWeight(hold) - before;
+    return this.oreDraw.mine(harvesterId, null, entityId, maxUnits, capacity);
   }
 
   raidStorage(harvesterId: string, owner: string, uid: string, stepWeight: number): number {

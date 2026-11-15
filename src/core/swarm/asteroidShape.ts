@@ -1,10 +1,11 @@
 /**
  * Pure deterministic asteroid silhouette generator.
  *
- * The same `(entityId, targetRadius)` pair always produces the same vertex
+ * The same `(shapeSeed, targetRadius)` pair always produces the same vertex
  * array everywhere — server worker, server hit-test, client prediction, client
- * renderer. That determinism is what lets us reuse the wire's existing dense
- * `entityId` as a free shape seed: zero added bytes per snapshot.
+ * renderer. The u16 shape seed comes from the rock's stable id
+ * (`asteroidShapeSeed`) and rides the swarm wire in a u16 that kind 0 did not
+ * use, so a rock keeps its shape however its wire id changes.
  *
  * Vertices are emitted in CCW order around the origin with monotonic angles,
  * so the output is convex by construction. The Rapier `convexHull` collider
@@ -19,6 +20,8 @@ import {
   ASTEROID_VERTEX_RADIAL_MAX,
   ASTEROID_VERTEX_ANGULAR_JITTER,
 } from './asteroidConstants.js';
+import { ANGLE_STEPS, unitDirFromSteps } from '../geometry/unitDir.js';
+import { fnv1a32 } from '../random/rng.js';
 
 export interface Vec2 {
   x: number;
@@ -38,6 +41,22 @@ export function mulberry32(seed: number): () => number {
   };
 }
 
+/** Bump on any change to the outline an `(shapeSeed, radius)` pair gives.
+ *  v2 (macro terrain 1a): seeded by the rock's stable id, arithmetic only. */
+export const ASTEROID_SHAPE_VERSION = 2;
+
+/**
+ * A rock's shape seed: a u16 hash of its STABLE id (the registry `rec.id`,
+ * e.g. `belt-0-3`), never its wire `entityId`. Wire ids are reused, so a rock
+ * that leaves the world and comes back (deep sleep, macro-terrain.md) would
+ * otherwise come back a different shape. The seed rides the swarm wire in
+ * the u16 at `SWARM_REC_SHAPE_SEED_OFF` for kind 0, so both sides draw and
+ * collide with the same outline.
+ */
+export function asteroidShapeSeed(stableId: string): number {
+  return fnv1a32(stableId) & 0xffff;
+}
+
 /**
  * Generate a deterministic convex polygon for an asteroid.
  *
@@ -48,29 +67,33 @@ export function mulberry32(seed: number): () => number {
  * The visual output is still asteroid-shaped: flat edges where concavities
  * used to be, asymmetric silhouette overall.
  *
- * @param entityId - dense u16 already on the wire; reused as the shape seed
+ * Arithmetic only (`unitDirFromSteps`, never sin/cos), so the server and
+ * every browser engine produce bit-identical vertices.
+ *
+ * @param shapeSeed - the rock's u16 shape seed (`asteroidShapeSeed`)
  * @param targetRadius - bounding radius the polygon fits within
  */
-export function generateAsteroidVertices(entityId: number, targetRadius: number): Vec2[] {
-  // Golden-ratio hash breaks low-bit correlation between adjacent entityIds —
+export function generateAsteroidVertices(shapeSeed: number, targetRadius: number): Vec2[] {
+  // Golden-ratio hash breaks low-bit correlation between nearby seeds —
   // sequential seeds otherwise feed mulberry32 with patterns that produce
-  // visually similar shapes for entities that spawn together.
-  const seed = (Math.imul(entityId, 0x9e3779b1)) >>> 0;
+  // visually similar shapes.
+  const seed = (Math.imul(shapeSeed, 0x9e3779b1)) >>> 0;
   const prng = mulberry32(seed);
 
   const countSpan = ASTEROID_VERTEX_COUNT_MAX - ASTEROID_VERTEX_COUNT_MIN + 1;
   const count = ASTEROID_VERTEX_COUNT_MIN + Math.floor(prng() * countSpan);
 
-  const angleStep = (Math.PI * 2) / count;
+  // Angles in u16 steps (`ANGLE_STEPS` per turn).
+  const angleStep = ANGLE_STEPS / count;
   const angleJitter = angleStep * ASTEROID_VERTEX_ANGULAR_JITTER;
   const radialSpan = ASTEROID_VERTEX_RADIAL_MAX - ASTEROID_VERTEX_RADIAL_MIN;
 
   const samples: Vec2[] = new Array(count);
   for (let i = 0; i < count; i++) {
-    const baseAngle = i * angleStep;
-    const angle = baseAngle + (prng() - 0.5) * 2 * angleJitter;
+    const angle = i * angleStep + (prng() - 0.5) * 2 * angleJitter;
     const r = targetRadius * (ASTEROID_VERTEX_RADIAL_MIN + prng() * radialSpan);
-    samples[i] = { x: Math.cos(angle) * r, y: Math.sin(angle) * r };
+    const d = unitDirFromSteps(angle);
+    samples[i] = { x: d.x * r, y: d.y * r };
   }
   return convexHullCCW(samples);
 }

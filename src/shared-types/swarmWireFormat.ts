@@ -42,13 +42,16 @@
  * **Version contract**: a decoder that sees `version !== SWARM_WIRE_VERSION`
  * MUST drop the packet (and ideally surface a "please refresh" banner). Older
  * clients reading v5 with the v4 stride mis-attribute every byte after the
- * first record — never silently fall back. v4 had a 34-byte record without the
+ * first record — never silently fall back. v5 had the same 36-byte stride but
+ * its +34 u16 was 0 for asteroids; v6 carries an asteroid's shape seed there
+ * (macro terrain 1a), so a v5 client would draw and collide with the wrong
+ * rock outlines. v4 had a 34-byte record without the
  * trailing wreckId u16 (capital destruction S2b, 2026-11-12); v3 had a 33-byte record without the
  * trailing componentIndex byte; v2 had a 29-byte record without the embedded
  * angvel field; v1 had 28 bytes without shipKind.
  */
 
-export const SWARM_WIRE_VERSION = 5;
+export const SWARM_WIRE_VERSION = 6;
 
 export const SWARM_HEADER_BYTES = 8;
 export const SWARM_RECORD_BYTES = 36;
@@ -65,6 +68,10 @@ export const SWARM_REC_COMPONENT_INDEX_OFF = 33;
 /** Offset of the `wreckId` u16 within a record (v5 — NEW trailing field).
  *  Meaningful ONLY when `kind === SWARM_KIND_WRECK`; 0 for every other kind. */
 export const SWARM_REC_WRECK_ID_OFF = 34;
+/** v6 — the same u16 for an asteroid (`kind === 0`): its shape seed
+ *  (`asteroidShapeSeed` of its stable id), so its outline survives wire-id
+ *  reuse. 0 for kinds other than 0 and 4. */
+export const SWARM_REC_SHAPE_SEED_OFF = SWARM_REC_WRECK_ID_OFF;
 
 export const SWARM_FLAG_FULL = 1 << 0;
 export const SWARM_FLAG_DECIMATED = 1 << 1;
