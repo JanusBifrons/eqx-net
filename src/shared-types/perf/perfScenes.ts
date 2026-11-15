@@ -311,6 +311,21 @@ export const PERF_SCENES: readonly PerfScene[] = [
     minSwarm: ROCK_FIELD_FIGHT,
     soak: true,
   },
+  {
+    // Macro terrain v2 slice 4: the cut field (seed `look`, the showcase
+    // room's field), pilot idle beside lane 1's wall, camera pulled out so
+    // the client draws every chunk it has cut (7×7). Only rocks near ships
+    // exist on the server (chunks stream in as fixed bodies), so `minSwarm`
+    // just proves the field loaded.
+    id: 'cut-field',
+    title: 'The cut field: pilot idle beside a lane wall, camera pulled out',
+    room: { droneCount: 0, asteroidConfig: [], cutField: { seed: 'look' }, sceneScript: [{ atMs: 20_000, action: 'end' }] },
+    spawn: { x: -30_002, y: 27_191 },
+    camera: { x: -30_002, y: 27_191, zoom: 0.08 },
+    durationMs: 20_000,
+    minSwarm: 1,
+    soak: true,
+  },
 ];
 
 export function perfSceneById(id: string): PerfScene | undefined {

@@ -107,7 +107,7 @@ export class CutFieldClient {
         && wantPredBody(r.inPred, Math.hypot(b.x - me.x, b.y - me.y) - b.radius);
       if (want && !r.inPred) {
         pw.spawnObstacle(id, b.x, b.y, b.radius, FIELD_ROCK_PRED_MASS, b.verts);
-        pw.lockBody(id);
+        pw.fixBody(id);
         r.inPred = true;
       } else if (!want && r.inPred) {
         if (pw) pw.despawnShip(id);

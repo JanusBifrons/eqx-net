@@ -47,7 +47,11 @@ export function fieldRockBody(rock: ChunkRock): FieldRockBody {
 export const fieldRockId = (key: number): string => `field:${key}`;
 
 export const STEP_EVERY_MS = 250;
-export const MAX_CHUNKS_PER_STEP = 4;
+/** Cuts run on the room's main thread: a chunk costs ~4 ms (p50), ~6 ms
+ *  (p95) on the desktop, so 2 per step keeps a step near one tick's budget.
+ *  Nearest first, and chunks load two out, so a cruising ship never outruns
+ *  them. */
+export const MAX_CHUNKS_PER_STEP = 2;
 
 export interface CutFieldHooks {
   /** Visit every ship that should keep rocks loaded (pilots and AI hulls). */

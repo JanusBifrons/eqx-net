@@ -82,7 +82,7 @@ const CONTACT_FORCE_FLOOR = 200;
 interface SpawnCmd         { type: 'SPAWN';          slot: number; playerId: string; x: number; y: number; kindId?: string }
 interface DespawnCmd       { type: 'DESPAWN';        slot: number; playerId: string }
 interface InputCmd         { type: 'INPUT';          slot: number; inputTick: number; thrust: boolean; turnLeft: boolean; turnRight: boolean; boost: boolean; reverse: boolean; warpX?: number; warpY?: number }
-interface SpawnObstacleCmd { type: 'SPAWN_OBSTACLE'; slot: number; obstacleId: string; x: number; y: number; vx: number; vy: number; radius: number; mass: number; vertices?: ReadonlyArray<Vec2>; linearDamping?: number; staticBody?: boolean; collisionGroups?: number; angle?: number; parts?: ReadonlyArray<ReadonlyArray<Vec2>>; shieldKindId?: string; angvel?: number; angularDamping?: number; settleSpeed?: number; settleSpin?: number; shipKindId?: number }
+interface SpawnObstacleCmd { type: 'SPAWN_OBSTACLE'; slot: number; obstacleId: string; x: number; y: number; vx: number; vy: number; radius: number; mass: number; vertices?: ReadonlyArray<Vec2>; linearDamping?: number; staticBody?: boolean | 'fixed'; collisionGroups?: number; angle?: number; parts?: ReadonlyArray<ReadonlyArray<Vec2>>; shieldKindId?: string; angvel?: number; angularDamping?: number; settleSpeed?: number; settleSpin?: number; shipKindId?: number }
 interface AiIntentCmd      { type: 'AI_INTENT';      slot: number; fx: number; fy: number; torque: number; setAngvel?: number }
 /** Pilot layer: every AI slot driven by control keys this tick, in ONE message
  *  (replaces a post per drone). `slots[i]` flies with keys `bits[i]` (packed
@@ -323,7 +323,9 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
         // `spawnObstacle` + `lockBody`); the server worker is where the
         // authoritative body lived UNLOCKED, so a hit drifted it forever (no
         // friction). Drones + asteroids stay dynamic.
-        if (cmd.staticBody) physics.lockBody(cmd.obstacleId);
+        // Cut-field rocks ('fixed') become fixed bodies (`World.fixBody`).
+        if (cmd.staticBody === 'fixed') physics.fixBody(cmd.obstacleId);
+        else if (cmd.staticBody) physics.lockBody(cmd.obstacleId);
         // Pilot layer: a drone's ShipKind (catalogue index), flown by
         // AI_INPUTS through applyShipInput. Absent for asteroids / structures.
         if (cmd.shipKindId !== undefined) physics.setPilotKind(cmd.obstacleId, getShipKind(shipKindFromIndex(cmd.shipKindId)));

@@ -986,7 +986,9 @@ export class PhysicsWorld {
   isSleeping(id: string): boolean {
     const rec = this.bodies.get(id);
     if (!rec) return false;
-    return rec.body.isSleeping();
+    // A fixed body (cut-field rock) never simulates: it counts as asleep, so
+    // the worker treats it as quiet (no SAB rewrite each tick).
+    return rec.body.isSleeping() || rec.body.isFixed();
   }
 
   /**
@@ -1072,6 +1074,17 @@ export class PhysicsWorld {
   /** Set a body's angular damping (capital wreck pieces settle, S2a). */
   setAngularDamping(id: string, damping: number): void {
     this.bodies.get(id)?.body.setAngularDamping(damping);
+  }
+
+  /**
+   * Make a body FIXED: Rapier never simulates, wakes or solves it (fixed–fixed
+   * pairs are skipped), unlike `lockBody`, whose locked dynamic body still
+   * solves every contact with its neighbours while awake. For terrain that
+   * never moves (cut-field rocks, which touch along their cuts); same call on
+   * the server worker and the client predWorld (#15).
+   */
+  fixBody(id: string): void {
+    this.bodies.get(id)?.body.setBodyType(RAPIER.RigidBodyType.Fixed, true);
   }
 
   lockBody(id: string): void {

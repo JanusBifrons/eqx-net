@@ -65,7 +65,7 @@ export interface SpawnerHooks {
    *  / undefined (legacy axis-aligned spawn). `shipKindId` (drones only) is
    *  the drone kind's catalogue index (`shipKindToIndex`): the worker flies the
    *  body as that kind when the AI drives it with control keys (AI_INPUTS). */
-  postSpawnObstacle: (slot: number, id: string, x: number, y: number, vx: number, vy: number, radius: number, mass: number, vertices?: ReadonlyArray<Vec2>, linearDamping?: number, staticBody?: boolean, collisionGroups?: number, angle?: number, parts?: ReadonlyArray<ReadonlyArray<Vec2>>, shieldKindId?: string, spin?: { angvel: number; angularDamping: number; settleSpeed?: number; settleSpin?: number }, shipKindId?: number) => void;
+  postSpawnObstacle: (slot: number, id: string, x: number, y: number, vx: number, vy: number, radius: number, mass: number, vertices?: ReadonlyArray<Vec2>, linearDamping?: number, staticBody?: boolean | 'fixed', collisionGroups?: number, angle?: number, parts?: ReadonlyArray<ReadonlyArray<Vec2>>, shieldKindId?: string, spin?: { angvel: number; angularDamping: number; settleSpeed?: number; settleSpin?: number }, shipKindId?: number) => void;
   /** Direct write into the SAB so the first update() tick reads a sane pose. */
   sabF32: Float32Array;
   sabU32: Uint32Array;
@@ -431,7 +431,8 @@ export class SwarmSpawner {
     // ram impulses (the "I hit a pylon and it MOVED" bug). Drones (1) + asteroids
     // (0) + scrap (3) stay dynamic — drones fly, asteroids are bump-able (R2.33),
     // scrap drifts.
-    const staticBody = kind === 2 || (kind === 0 && a.fixed === true);
+    // Structures lock; cut-field rocks are fixed bodies (never simulated).
+    const staticBody = kind === 0 && a.fixed === true ? 'fixed' : kind === 2;
     // SCRAP (kind 3) carries a collision-group mask so scrap doesn't collide with
     // other scrap but does collide with everything else. Every other kind passes
     // undefined ⇒ Rapier's default groups (collide with all).

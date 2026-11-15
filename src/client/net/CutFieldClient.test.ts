@@ -13,6 +13,7 @@ function fakePredWorld() {
       bodies.set(id, { x, y, radius, verts: verts.length, locked: false });
     },
     lockBody: (id: string) => { const b = bodies.get(id); if (b) b.locked = true; },
+    fixBody: (id: string) => { const b = bodies.get(id); if (b) b.locked = true; },
     despawnShip: (id: string) => { bodies.delete(id); },
   };
   return { pw: pw as unknown as PhysicsWorld, bodies };
