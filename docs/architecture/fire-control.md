@@ -227,6 +227,11 @@ stand-off distances compare `fireRange × factor` with the hull distance
 (centre − `shipHitBound` when that is already past `fireRange`, else
 `shipHullDistance`), from the `kindId`/`angle`/`shieldUp` the room puts on
 `AiPlayerView` / `AiSwarmView`. Lock: `HostileDroneBehaviour.hullRange.test.ts`.
+Cost (`benchmarks/drone-brain-hull-range.bench.ts`, laptop, 2026-11-15): the
+battleship polygon distance is ~0.4 µs, a shield bubble ~0.2 µs; a whole
+combat tick is ~0.3 µs with no kind, ~0.5 µs against a far battleship (bound
+reject), ~0.7 µs with its hull in reach. Worst case 56 drones in reach of a
+battleship add ~25 µs per AI tick, ~0.15 % of the 16.67 ms budget. Print-only.
 
 Not yet hull-based: lock time (`lockSeconds`, centre distance; locks have no
 reach gate at all since 2026-11-14).

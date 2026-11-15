@@ -310,6 +310,39 @@ describe('SectorRoom integration — capital wrecks (S2a)', () => {
     }
   }, 25_000);
 
+  it('a heavy_beam kill slices the wreck; a fighter beam or a bolt kill does not', async () => {
+    // The catalogue's own records (no test-only killCut): only the capital
+    // heavy beam slices (plan beam-slices §8, owner: "heavy means only the
+    // new capital heavy beam").
+    const internal = await boot(true);
+    internal.setWreckSeed(shatterSeed());
+    const seen = new Set<number>();
+    const killWith = async (id: string, weaponId: 'heavy_beam' | 'hitscan' | 'laser') => {
+      for (const d of internal.wreckDescriptors()) seen.add(d.wreckId);
+      // Each hull well clear of the last one's wreck.
+      expect(internal.spawnTestDrone(id, 6000 + 4000 * seen.size, 0, 'battleship')).toBe(true);
+      await harness.advance(100);
+      const at = internal.wreckState(id)!;
+      const hit = worldHull('battleship', at.x, at.y, at.angle)[4]!;
+      const len = Math.hypot(at.x - hit.x, at.y - hit.y);
+      expect(internal.applyDamage(id, 'shooter-x', 1e7, hit.x, hit.y, (at.x - hit.x) / len, (at.y - hit.y) / len, weaponId)).toBe(true);
+      // This kill's descriptor: the one wreck id not seen before (copied, the
+      // subsystem reuses its list).
+      const fresh = internal.wreckDescriptors().filter((d) => !seen.has(d.wreckId));
+      expect(fresh.length).toBe(1);
+      return { ...fresh[0]! };
+    };
+    const sliced = await killWith('bb-heavy', 'heavy_beam');
+    expect(sliced.cutKind).toBe('slice');
+    expect(sliced.cutAng).toBeDefined();
+    expect(sliced.cutW).toBeUndefined();
+    for (const [id, w] of [['bb-beam', 'hitscan'], ['bb-bolt', 'laser']] as const) {
+      const plain = await killWith(id, w);
+      expect(plain.cutKind, w).toBeUndefined();
+      expect(plain.cutAng, w).toBeUndefined();
+    }
+  }, 25_000);
+
   it('with the flag off a capital dies exactly as today: no wreck bodies', async () => {
     const internal = await boot(false);
     internal.spawnTestDrone('bb', 6000, 0, 'battleship');
