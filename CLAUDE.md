@@ -54,6 +54,7 @@ Zones `src/core/`, `src/server/`, `src/client/` (each with its CLAUDE.md); `src/
 Every call re-reads the whole context, so its size sets the bill.
 - **Hand off early.** At a milestone (a PR merges, a stream stage closes) or once context passes ~250k tokens, write the handoff and start a fresh session.
 - A PostToolUse hook (`scripts/dev/context-nudge.mjs`) reminds you once at 250k and once at 400k.
+- `.claude/agents/general-purpose.md` is the built-in helper minus the `Artifact` tool (~14k tokens a call); keep its prompt in step with the built-in.
 - **Keep subagents in one zone.** Tell each subagent which zone it works in and to stay there: every zone it touches loads that zone's CLAUDE.md for the rest of its life.
 - **Search narrow, read by range.** Use the Grep tool or `git grep` scoped to `src/ docs/ tests/ scripts/`, never the repo root. Read files over 600 lines by range after `grep -n`. Cap shell output (`| head -40`). Don't re-read CLAUDE.md files through the shell; they are already in context.
 
