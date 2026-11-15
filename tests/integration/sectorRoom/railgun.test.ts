@@ -155,7 +155,8 @@ describe('SectorRoom integration — railgun', () => {
     // (NPCs hold fire only for FRIENDLIES on the line, LineOfFireGate, so a
     // drones-side blocker would rightly keep the battleship silent; traders
     // wander, hence the late spawn: the capped charge is 30 ticks. A picket
-    // because the turrets' slugs fly parallel, ~100 u apart.)
+    // tight enough that one slug (one barrel per turret) cannot slip between;
+    // close to the target, where the turrets' converging lines are within ±150 u.)
     const bb = [...internal.swarmRegistry.all()].find((r) => r.shipKind === 'battleship-rail');
     const bp = bb ? internal.swarmPose(bb.id) : null;
     const pp = internal.playerPose(pid);
@@ -163,10 +164,10 @@ describe('SectorRoom integration — railgun', () => {
     const len = Math.hypot(bp!.x - pp!.x, bp!.y - pp!.y);
     const ux = (bp!.x - pp!.x) / len, uy = (bp!.y - pp!.y) / len;
     const pickets: string[] = [];
-    for (let i = -3; i <= 3; i++) {
-      const id = `picket-${i + 3}`;
-      const along = len * 0.2;
-      expect(internal.spawnTestDrone(id, pp!.x + ux * along - uy * i * 50, pp!.y + uy * along + ux * i * 50, 'trader-hauler')).toBe(true);
+    for (let i = -5; i <= 5; i++) {
+      const id = `picket-${i + 5}`;
+      const along = len * 0.06;
+      expect(internal.spawnTestDrone(id, pp!.x + ux * along - uy * i * 30, pp!.y + uy * along + ux * i * 30, 'trader-hauler')).toBe(true);
       internal.swarmHealth.set(id, RAIL.damage - 1);
       pickets.push(id);
     }
