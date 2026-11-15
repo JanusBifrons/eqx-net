@@ -511,6 +511,18 @@ const COMBAT = combatDistanceScale();
 /** Sub-capital weapons only: the `naval_*` guns are absolute (navalGuns.ts). */
 const profiled = <T extends WeaponDef>(d: T): T => scaleWeaponDef(d, COMBAT.reach, COMBAT.splash);
 
+/**
+ * The capital turret weapons: absolute (never `profiled`), carried only on
+ * trained capital / coastal turrets (naval guns, railgun, heavy beam, mining
+ * laser). Everything else is a sub-capital weapon, usually a fighter's fixed
+ * gun. `isCapitalTurretWeapon` reads this list; the fire gate gives these the
+ * turret bearing rule (`fireControlBearing.mountFireTolerance`).
+ */
+const CAPITAL_TURRET_DEFS: readonly WeaponDef[] = [
+  NAVAL_S_DEF, NAVAL_M_DEF, NAVAL_L_DEF, NAVAL_XL_DEF, NAVAL_XXL_DEF, NAVAL_SIEGE_DEF,
+  RAILGUN_DEF, HEAVY_BEAM_DEF, MINING_LASER_DEF,
+];
+
 export const WEAPONS: ReadonlyMap<WeaponId, WeaponDef> = new Map<WeaponId, WeaponDef>([
   ['hitscan', profiled(HITSCAN_DEF)],
   ['laser', profiled(LASER_DEF)],
@@ -518,16 +530,16 @@ export const WEAPONS: ReadonlyMap<WeaponId, WeaponDef> = new Map<WeaponId, Weapo
   ['pulse-orb', profiled(PULSE_ORB_DEF)],
   ['charge-laser', profiled(CHARGE_LASER_DEF)],
   ['autocannon', profiled(AUTOCANNON_DEF)],
-  ['naval_s', NAVAL_S_DEF],
-  ['naval_m', NAVAL_M_DEF],
-  ['naval_l', NAVAL_L_DEF],
-  ['naval_xl', NAVAL_XL_DEF],
-  ['naval_xxl', NAVAL_XXL_DEF],
-  ['naval_siege', NAVAL_SIEGE_DEF],
-  ['railgun', RAILGUN_DEF],
-  ['heavy_beam', HEAVY_BEAM_DEF],
-  ['mining_laser', MINING_LASER_DEF],
+  ...CAPITAL_TURRET_DEFS.map((d): [WeaponId, WeaponDef] => [d.id, d]),
 ]);
+
+const CAPITAL_TURRET_WEAPON_IDS: ReadonlySet<string> = new Set(CAPITAL_TURRET_DEFS.map((d) => d.id));
+
+/** Is `id` a capital turret weapon (absolute reach, trained turret mount)?
+ *  Pure, allocation-free. */
+export function isCapitalTurretWeapon(id: string): boolean {
+  return CAPITAL_TURRET_WEAPON_IDS.has(id);
+}
 
 export const WEAPON_IDS: readonly WeaponId[] = ['hitscan', 'laser', 'heat-seeker', 'pulse-orb', 'charge-laser', 'autocannon', 'naval_s', 'naval_m', 'naval_l', 'naval_xl', 'naval_xxl', 'naval_siege', 'railgun', 'heavy_beam', 'mining_laser'] as const;
 
