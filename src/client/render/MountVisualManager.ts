@@ -40,7 +40,7 @@ import { Container, Graphics, Matrix, Sprite } from 'pixi.js';
 import type { ArtHandle } from './art/ArtService.js';
 import { isMachinedSprite, type ShipArtCtx } from './art/shipArtSprites.js';
 import { muzzleReach, shipTurrets, structureTurrets, type TurretPlace } from './art/turretLayout.js';
-import { flashFrameAt, heatAfter, muzzleHeft, recoilAt, NAVAL_FLASH_LIFE_S, MUZZLE_FLASH_LIFE_S, muzzleLightAt, navalMuzzleLight, type MuzzleLight, MUZZLE_SMOKE_PUFFS, muzzleSmokePuff, type SmokePuff, railGeom, railHeatAt, railVentPuff, railVentPuffs, RAIL_VENTS, RAIL_FLASH_LIGHT, RAIL_FLASH_TINT, type RailGeom, type RailPuff } from './art/fx/turretFx.js';
+import { flashFrameAt, heatAfter, muzzleHeft, recoilAt, NAVAL_FLASH_LIFE_S, MUZZLE_FLASH_LIFE_S, muzzleLightAt, navalMuzzleLight, type MuzzleLight, MUZZLE_SMOKE_PUFFS, muzzleSmokePuff, type SmokePuff, railGeom, railHeatAt, railVentPuff, railVentPuffs, RAIL_VENTS, RAIL_FLASH_LENGTH, RAIL_FLASH_LIGHT, RAIL_FLASH_TINT, type RailGeom, type RailPuff } from './art/fx/turretFx.js';
 import { NAVAL_BARREL_SPAN } from '@core/combat/muzzle';
 import { getWeapon, isWeaponId } from '@core/combat/WeaponCatalogue';
 import type { EffectQuality } from '@core/contracts/IEffects';
@@ -49,6 +49,7 @@ import { LitShipMesh } from './art/litShipShader.js';
 import { litPass } from './art/litPass.js';
 import { MachinedShipSprite } from './art/MachinedShipSprite.js';
 import type { ShipArt } from './art/ArtService.js';
+import { liveryHullGrey } from './art/fields.js';
 
 /** A gun's (or AA barrel's) two layers: baked sun frames cross-faded, or
  *  (GPU-lit art) one lit mesh in `a`, lit by `litPass`, and `b` unused. */
@@ -312,6 +313,13 @@ export class MountVisualManager {
     best.lastShot = this.nowS;
     best.heat = heatAfter(best.heat, 0, 1);
     this.shotsMatched++;
+    // The renderer animates the guns (`applyMountAngles`) before it notes the
+    // frame's new shots, and draws the shot this frame: animate this gun
+    // again now so its flash and kick show WITH the shot, not a frame after
+    // it (rail take 7, f253: the slug's first frame showed a pellet at a
+    // still-charged muzzle with no flash). Its angle and pose are already
+    // set this frame.
+    if (best.layers && best.handle.ship) this.animateGun(best);
   }
 
   /** Each listed mount's last drawn shot on this ship (the flash), in fx ms
@@ -616,7 +624,8 @@ export class MountVisualManager {
         f.texture = frames![fr]!;
         f.x = (b - (n - 1) / 2) * pitch;
         f.y = -gun.reach + kick;
-        f.scale.set((w * 7 * heft) / 64, (w * 22 * heft) / 64);
+        // The railgun's is a burst, as long as it is wide (RAIL_FLASH_LENGTH).
+        f.scale.set((w * 7 * heft) / 64, (w * (heft > 1 ? RAIL_FLASH_LENGTH : 22) * heft) / 64);
       }
     }
     const smokes = gun.smokes;
@@ -733,7 +742,7 @@ export class MountVisualManager {
     for (const p of places) if (p.mount.id === mount.id) place = p;
     if (!place) return null; // e.g. an activated latent mount, a miner drill
     const job = actx.handles.get(id)?.job;
-    const paint = job?.type === 'ship' ? (job.paint ?? color) : job?.type === 'struct' ? (job.accent ?? color) : color;
+    const paint = job?.type === 'ship' ? (job.livery ? liveryHullGrey(color, job.livery, kindId) : (job.paint ?? color)) : job?.type === 'struct' ? (job.accent ?? color) : color;
     const pivot = new Container();
     pivot.position.set(place.px, place.py);
     pivot.rotation = -mount.baseAngle;

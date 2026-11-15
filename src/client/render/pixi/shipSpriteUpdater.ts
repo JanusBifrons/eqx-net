@@ -37,7 +37,7 @@ import {
   shapeForKind,
 } from './spriteBuilders.js';
 import type { MountVisualManager } from '../MountVisualManager';
-import { buildArtShipSprite, shipArtSwap, shipHandleFor, updateArtShipLight, type ShipArtCtx } from '../art/shipArtSprites.js';
+import { buildArtShipSprite, ownerLivery, shipArtSwap, shipHandleFor, updateArtShipLight, type ShipArtCtx } from '../art/shipArtSprites.js';
 import { decideShipSpriteAction, shipSpriteKind } from '../spriteUpdateDecisions.js';
 
 export interface ShipSpriteCtx {
@@ -73,7 +73,11 @@ export function updateShipSprites(mirror: RenderMirror, ctx: ShipSpriteCtx): voi
     const kindId = shipSpriteKind(cachedKind, ship.kind, FALLBACK_KIND);
     // Machined art: build (or swap to) the Machined sprite once its art is
     // ready; until then, today's vector look. A changed kind rebuilds too.
-    const handle = shipHandleFor(ctx.art, key, kindId, undefined);
+    // Livery: the owner's faction id (a parked hull's owner, else the pilot's key).
+    const lv = ctx.art.livery !== undefined ? ownerLivery(ship.ownerPlayerId ?? key) : undefined;
+    const handle = lv
+      ? shipHandleFor(ctx.art, key, kindId, undefined, false, lv.team, lv.sigil, lv.edge)
+      : shipHandleFor(ctx.art, key, kindId, undefined);
     if (sprite && (decideShipSpriteAction(cachedKind, ship.kind) === 'rebuild'
       || shipArtSwap(ctx.art, sprite, handle) !== 'keep')) {
       ctx.mountVisuals.removeShip(key); // its barrel cluster is a child

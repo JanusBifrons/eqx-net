@@ -131,17 +131,15 @@ export interface RailSlotGfx { fill: Graphics; head: Graphics; y0: number; len: 
  *  there read as a projectile already out; rail take 6 review). */
 const RAIL_HEAD_FADE_FROM = 0.8;
 
-/** A railgun's charge glow (Pixi-up local, barrel to −y): a small glow in the
- *  bore, inside the slot's width (a disc half the breech wide read as the
- *  breech itself turning pale, then dark again the frame the shot showed),
- *  and the slot fill + head, sized from the drawn rails (`railGeom`, the
- *  same numbers the bake used, #18). */
+/** A railgun's charge glow (Pixi-up local, barrel to −y): the slot fill +
+ *  head, sized from the drawn rails (`railGeom`, the same numbers the bake
+ *  used, #18). Nothing is drawn over the breech, behind where the rails
+ *  start: the charge glow goes out at the shot, so anything there changed
+ *  the breech's look at the shot (take 6: a disc half the breech wide; take
+ *  7: the bore glow, a white dot at the pivot, gone on the fire frame). */
 function buildRailSlotGfx(houseW: number, houseL: number, len: number, wid: number): { g: Container; rail: RailSlotGfx } {
   const G = railGeom(houseW, houseL, len, wid);
   const g = new Container();
-  const bore = new Graphics();
-  bore.circle(0, 0, G.slotW * 0.5).fill({ color: RAIL_GLOW, alpha: 0.35 });
-  bore.circle(0, 0, G.slotW * 0.3).fill({ color: RAIL_CORE, alpha: 0.5 });
   const L = G.railY0 - G.muzzleY;
   // The fill is drawn from its origin (the breech end) out to −L; scale.y
   // is the charge, so it grows from the breech toward the muzzle.
@@ -157,7 +155,7 @@ function buildRailSlotGfx(houseW: number, houseL: number, len: number, wid: numb
   head.ellipse(0, 0, G.slotW * 0.5, headHalf).fill({ color: RAIL_GLOW, alpha: 0.35 });
   head.ellipse(0, 0, G.slotW * 0.25, G.slotW * 0.9).fill({ color: RAIL_CORE, alpha: 0.9 });
   head.y = G.railY0;
-  g.addChild(bore, fill, head);
+  g.addChild(fill, head);
   return { g, rail: { fill, head, y0: G.railY0, len: L, headHalf } };
 }
 
@@ -300,12 +298,16 @@ export function updateChargeTelegraph(
       const c = railSlotCharge(level, _slot);
       g.alpha = c.bright * flicker;
       rail.fill.scale.y = Math.max(0.001, c.fill);
-      // The front rides just behind the fill's edge, never past the muzzle,
-      // and fades out as the slot fills (a full slot has no front).
+      // The front rides just behind the fill's edge, never past the muzzle
+      // nor back over the breech (while the fill is shorter than the front
+      // it stays inside the rails and fades in), and fades out as the slot
+      // fills (a full slot has no front).
       const hs = 0.6 + 0.4 * c.fill;
       rail.head.scale.set(hs);
-      rail.head.y = rail.y0 - rail.len * c.fill + rail.headHalf * hs;
-      const ha = c.fill <= RAIL_HEAD_FADE_FROM ? 1 : Math.max(0, (1 - c.fill) / (1 - RAIL_HEAD_FADE_FROM));
+      const filled = rail.len * c.fill, hh = rail.headHalf * hs;
+      rail.head.y = rail.y0 - Math.max(filled - hh, hh);
+      const ha = (c.fill <= RAIL_HEAD_FADE_FROM ? 1 : Math.max(0, (1 - c.fill) / (1 - RAIL_HEAD_FADE_FROM)))
+        * Math.min(1, filled / (2 * hh));
       rail.head.alpha = ha;
       rail.head.visible = ha > 0;
       continue;

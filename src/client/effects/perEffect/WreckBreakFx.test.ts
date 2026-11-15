@@ -62,6 +62,66 @@ describe('WreckBreakFx', () => {
     expect(frames, 'flash frames at 60 Hz').toBeLessThanOrEqual(16);
   });
 
+  // Hostile film review 2026-11-15 (heavy-beam take 8): on a cut kill the
+  // break-up read as "dozens of flat, saturated orange triangles, 8–15 px,
+  // scattered widely … confetti" over the cut. On a cut kill the shards are
+  // metal chips: fewer, smaller, mostly hull-dark, a few hot ones near the
+  // cut. A kill without a cut keeps its burst.
+  describe('a cut kill tones the shards down so the cut reads first', () => {
+    const R = 2200;
+    /** Shards live after `secs` (layer children 140..219 are the shard pool). */
+    function shards(cutKill: boolean | undefined, secs: number): Array<{ x: number; y: number; size: number; tint: number }> {
+      const { world, f } = fx('high');
+      f.spawnBurst(0, 0, { radius: R, ...(cutKill === undefined ? {} : { cutKill }) });
+      for (let i = 0; i < Math.round(secs * 60); i++) f.tick(1 / 60);
+      const layer = world.children[0] as Container;
+      const out: Array<{ x: number; y: number; size: number; tint: number }> = [];
+      for (let i = 140; i < 220; i++) {
+        const g = layer.children[i]!;
+        if (!g.visible) continue;
+        out.push({ x: g.x, y: g.y, size: g.scale.x, tint: (g as unknown as { tint: number }).tint });
+      }
+      return out;
+    }
+    const sat = (c: number): number => {
+      const r = (c >> 16) & 255, g = (c >> 8) & 255, b = c & 255;
+      return Math.max(r, g, b) - Math.min(r, g, b);
+    };
+    const bright = (c: number): number => Math.max((c >> 16) & 255, (c >> 8) & 255, c & 255);
+
+    it('fewer and smaller shards than an un-cut burst', () => {
+      const plain = shards(false, 0.1), cut = shards(true, 0.1);
+      expect(plain.length).toBe(WRECK_BREAK_DIAL.high.shards);
+      expect(shards(undefined, 0.1).length, 'no flag: unchanged').toBe(plain.length);
+      expect(cut.length, 'fewer').toBeLessThanOrEqual(0.4 * plain.length);
+      expect(cut.length).toBeGreaterThan(0);
+      const mean = (a: Array<{ size: number }>): number => a.reduce((s, p) => s + p.size, 0) / a.length;
+      expect(mean(cut), 'smaller').toBeLessThanOrEqual(0.6 * mean(plain));
+    });
+
+    it('mostly dark, hull-coloured metal chips, a few hot ones', () => {
+      const cut = shards(true, 0.1);
+      const hot = cut.filter((p) => sat(p.tint) > 0x60 && bright(p.tint) > 0xb0);
+      expect(hot.length, 'a few hot chips').toBeGreaterThan(0);
+      expect(hot.length, 'only a few hot').toBeLessThanOrEqual(Math.ceil(0.34 * cut.length));
+      for (const p of cut) if (!hot.includes(p)) {
+        expect(sat(p.tint), `chip 0x${p.tint.toString(16)}: grey metal, not saturated orange`).toBeLessThanOrEqual(0x30);
+        expect(bright(p.tint), `chip 0x${p.tint.toString(16)}: darker than hot`).toBeLessThanOrEqual(0xa0);
+      }
+      // An un-cut burst keeps its hot orange shards.
+      expect(shards(false, 0.1).every((p) => sat(p.tint) > 0x60)).toBe(true);
+    });
+
+    it('chips stay closer to the cut than an un-cut burst\'s shards (not scattered widely)', () => {
+      const far = (a: Array<{ x: number; y: number }>): number => Math.max(...a.map((p) => Math.hypot(p.x, p.y)));
+      const cut = shards(true, 1), plain = shards(false, 1);
+      expect(far(cut)).toBeLessThanOrEqual(0.6 * far(plain));
+      // The hot ones stay nearest the cut.
+      const hot = cut.filter((p) => sat(p.tint) > 0x40 && bright(p.tint) > 0x90);
+      if (hot.length > 0) expect(far(hot)).toBeLessThanOrEqual(0.5 * far(cut) + 1e-6);
+    });
+  });
+
   it('many bursts reuse one bounded pool', () => {
     const { world, f } = fx('high');
     for (let i = 0; i < 10; i++) f.spawnBurst(i * 10, 0, { radius: 1500 });

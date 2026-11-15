@@ -1,5 +1,6 @@
 import type { Shot } from '../types.js';
 import { SURVIVE } from './_helpers.js';
+import { artSettled } from './capitals.js';
 
 /** Robots — a mixed-tier robot squad fights a drone pack (and the pilot). */
 export const robots: Shot = {
@@ -16,6 +17,11 @@ export const robots: Shot = {
   target: { room: 'robots-showcase', params: { shipKind: 'heavy', spawnX: 0, spawnY: 120, ...SURVIVE } },
   hud: 'minimal',
   durationMs: 12_000,
+  async startWhen(ctx) {
+    await artSettled(ctx);
+    // A framed camera needs a free camera: watch as a spectator (record as is).
+    await ctx.spectate();
+  },
   camera: [
     { atMs: 0, smoothMs: 0, shot: { kind: 'hold', x: 0, y: 480, zoom: 0.95 } },
     { atMs: 6000, smoothMs: 1200, shot: { kind: 'frame', group: 'drones', padding: 0.2, maxZoom: 1.2 } },

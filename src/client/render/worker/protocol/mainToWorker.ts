@@ -47,6 +47,8 @@ export interface BootMsg {
   speedFxOff?: boolean;
   /** GPU-lit art settings (`?shiplight=gpu`), plain data; absent = baked. */
   lighting?: import('../../art/lightingSettings.js').LightingSettings;
+  /** Ship livery treatment (`?livery=a|b|c`); absent = today's paint. */
+  livery?: import('../../art/artMode.js').LiveryTreatment;
   /**
    * FX kill switches (`?cleanworld=1`, `?nofilters=1`, …) resolved on the
    * main thread by `readFxKillSwitches()`. The worker has no `window`, so

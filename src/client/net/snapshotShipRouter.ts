@@ -42,6 +42,10 @@ export interface ShipRouterCtx {
    *  under its other key (its controls taken or let go) to its key now,
    *  keeping its entry, body and renderer state. Optional (tests). */
   rekeyShip?: (from: string, to: string) => void;
+  /** Parked hulls a snapshot must not evict though it no longer lists
+   *  them: a death held for its drawn shell (`DrawnShellTiming`
+   *  `deferShipKill`, bounded by the hold). Optional. */
+  keepLingering?: { has(id: string): boolean };
 }
 
 /**
@@ -57,7 +61,7 @@ export interface ShipRouterCtx {
  * `mirror.ships.has(localPlayerId)`. See `tests/e2e/spawn-handshake.spec.ts`.
  */
 export function routeSnapshotShipStates(snap: SnapshotMessage, ctx: ShipRouterCtx): void {
-  const { mirror, hullSeenScratch, hullEvictScratch } = ctx;
+  const { mirror, hullSeenScratch, hullEvictScratch, keepLingering } = ctx;
   const statesByKey: SnapshotMessage['states'] = {};
   const hullSeen = hullSeenScratch;
   hullSeen.clear();
@@ -114,7 +118,7 @@ export function routeSnapshotShipStates(snap: SnapshotMessage, ctx: ShipRouterCt
   const toEvict = hullEvictScratch;
   toEvict.length = 0;
   for (const [key, ship] of mirror.ships) {
-    if (!hullSeen.has(key) && isParkedHull(mirror, key, ship)) toEvict.push(key);
+    if (!hullSeen.has(key) && isParkedHull(mirror, key, ship) && keepLingering?.has(key) !== true) toEvict.push(key);
   }
   for (let i = 0; i < toEvict.length; i++) ctx.dropShip(toEvict[i]!);
   toEvict.length = 0;

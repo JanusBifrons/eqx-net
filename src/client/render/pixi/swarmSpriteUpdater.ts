@@ -55,8 +55,8 @@ import type { Text } from 'pixi.js';
 import { minerRangeForKind } from '../minerRangeRing.js';
 import type { MountVisualManager } from '../MountVisualManager';
 import {
-  buildArtShipSprite, isMachinedSprite, rockHandleFor, scrapHandleFor, shipArtSwap, shipHandleFor, structHandleFor,
-  updateArtShipLight, type ShipArtCtx,
+  buildArtShipSprite, isMachinedSprite, rockHandleFor, scrapHandleFor, shipArtSwap, structHandleFor,
+  updateArtShipLight, shipArtHandleForEntity, wreckArtHandleFor, type ShipArtCtx,
 } from '../art/shipArtSprites.js';
 import { MachinedShipSprite } from '../art/MachinedShipSprite.js';
 import {
@@ -217,8 +217,15 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     // (its geometry comes from it); until then it has no sprite at all.
     if (entry.kind === 4 && (entry.wreckId === undefined || wreckDescs === undefined || !wreckDescs.has(entry.wreckId) || ctx.wrecks === undefined)) continue;
     const spriteKey = `swarm-${entityId}`;
-    ctx.seenScratch.add(spriteKey);
     let sprite = ctx.sprites.get(spriteKey);
+    // A ship killed by an event shell is still drawn alive until the drawn
+    // shell reaches it (ColyseusClient deferred kills): its new wreck's
+    // pieces get no sprite until then (pieces already drawn stay).
+    if (entry.kind === 4 && sprite === undefined && mirror.wreckRevealFromTick !== undefined) {
+      const deathTick = wreckDescs!.get(entry.wreckId!)!.deathTick;
+      if (deathTick !== undefined && deathTick >= mirror.wreckRevealFromTick) continue;
+    }
+    ctx.seenScratch.add(spriteKey);
     // Equinox Phase 3 #20 — a recycled entityId can flip kind (a destroyed
     // structure's slot reused by a new drone). The sprite is cached by entityId;
     // if the kind changed since it was built, the cached visual is the WRONG
@@ -254,7 +261,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     const artHandle = !ctx.art.art
       ? null
       : entry.kind === 1 && entry.shipKind
-        ? shipHandleFor(ctx.art, spriteKey, entry.shipKind, entry.faction !== undefined ? npcFactionDef(entry.faction)?.color : undefined)
+        ? shipArtHandleForEntity(ctx.art, spriteKey, entry.shipKind, entry.faction)
         : entry.kind === 2 && entry.shipKind
           ? structHandleFor(ctx.art, spriteKey, entry.shipKind, -entry.angle)
           : entry.kind === 3 && entry.shipKind
@@ -269,7 +276,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     // piece once it is ready.
     const wreckParent = entry.kind === 4 ? entry.shipKind ?? wreckDescs!.get(entry.wreckId!)!.parentKind : '';
     const wreckArtHandle = entry.kind === 4 && ctx.art.art
-      ? shipHandleFor(ctx.art, spriteKey, wreckParent, undefined, wreckDeadArtFor(wreckParent))
+      ? wreckArtHandleFor(ctx.art, spriteKey, wreckParent, entry.faction, wreckDeadArtFor(wreckParent))
       : null;
     if (
       sprite instanceof WreckPieceSprite && wreckArtHandle !== null &&
