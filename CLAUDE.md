@@ -52,7 +52,7 @@ Zones `src/core/`, `src/server/`, `src/client/` (each with its CLAUDE.md); `src/
 ## Keep context small (token budget)
 
 Every call re-reads the whole context, so its size sets the bill.
-- **Hand off early.** At a milestone (a PR merges, a stream stage closes) or once context passes ~250k tokens, write the handoff and start a fresh session.
+- **Compact, don't relaunch.** Keep the stream's handoff (`.resume/<slug>.md`) current at every milestone. Sessions compact in place at ~250k and keep their window and name, so the owner can find every stream; never move a stream to a fresh session. Setup: [agent-workflow](docs/ops/agent-workflow.md#compact-dont-relaunch).
 - A PostToolUse hook (`scripts/dev/context-nudge.mjs`) reminds you once at 250k and once at 400k.
 - `.claude/agents/general-purpose.md` is the built-in helper minus the `Artifact` tool (~14k tokens a call); keep its prompt in step with the built-in.
 - **Keep subagents in one zone.** Tell each subagent which zone it works in and to stay there: every zone it touches loads that zone's CLAUDE.md for the rest of its life.

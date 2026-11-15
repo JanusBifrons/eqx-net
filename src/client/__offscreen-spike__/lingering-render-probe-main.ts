@@ -10,6 +10,9 @@
  * cloned across postMessage every frame), so per Invariant #13 the lock MUST
  * cross that boundary — a bare `PixiRenderer` unit would not.
  *
+ * RTS Part A S3: the parked hull is now an ordinary `mirror.ships` entry
+ * (shipInstanceId key, `isActive: false`) drawn by the one ship sprite path.
+ *
  * This probe constructs a REAL `WorkerRendererClient`, seeds a lingering hull in
  * a persistent mirror, posts it across several frames, and exposes the actual
  * drawn-artefact signal — `getFeedback().mountCounts` (populated from the real
@@ -35,7 +38,6 @@ function makePersistentMirror(): RenderMirror {
     ships: new Map(),
     localPlayerId: null,
     swarm: new Map(),
-    lingeringShips: new Map(),
     projectiles: new Map(),
     boostingShips: new Set(),
     thrustingShips: new Set(),
@@ -79,11 +81,14 @@ async function main(): Promise<void> {
 
   window.__lingerProbe = {
     seedLingering: (shieldDown: boolean): void => {
-      mirror.lingeringShips!.set(LINGER_ID, {
+      // A parked hull is an ordinary ship entry (RTS Part A S3): shipInstanceId
+      // key, isActive=false, its owner set.
+      mirror.ships.set(LINGER_ID, {
         x: 0, y: 0, vx: 0, vy: 0, angle: 0,
         kind: 'interceptor',
         shieldDown,
         ownerPlayerId: 'owner-1',
+        isActive: false,
       });
     },
     postFrame: (): void => {

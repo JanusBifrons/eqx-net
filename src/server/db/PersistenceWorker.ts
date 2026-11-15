@@ -319,7 +319,7 @@ function parseMounts(raw: string | null | undefined): ActivatedMount[] {
 /**
  * Boot hydrate. Reads `player_ships` rows from the read-only main-thread
  * connection. Unlike Limbo, this table is NOT pruned by TTL — entries
- * live indefinitely until the 10-cap evicts or the player abandons.
+ * live indefinitely until the player abandons.
  */
 export function initPlayerShipStore(): { hydrated: number } {
   const store = getPlayerShipStore();

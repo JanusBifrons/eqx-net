@@ -38,7 +38,7 @@ export async function allGroupsManual(ctx: ShotContext): Promise<void> {
 export async function lockAhead(ctx: ShotContext): Promise<void> {
   await ctx.page.evaluate(() => {
     const w = window as unknown as {
-      __eqxStore?: { getState(): { setSelectedEntity(id: string | null, kind: string | null): void } };
+      __eqxStore?: { getState(): { setSelection(ids: readonly string[], id: string | null, kind: string | null): void } };
       __eqxClient?: {
         lockSelected?: () => boolean;
         mirror?: {
@@ -65,7 +65,7 @@ export async function lockAhead(ctx: ShotContext): Promise<void> {
       if (score < bestScore) { bestScore = score; best = eid; bestKind = e.kind === 1 ? 'drone' : 'structure'; }
     }
     if (best === null) return;
-    w.__eqxStore?.getState().setSelectedEntity(`swarm-${best}`, bestKind);
+    w.__eqxStore?.getState().setSelection([], `swarm-${best}`, bestKind);
     c.lockSelected?.();
   });
   await ctx.page

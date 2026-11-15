@@ -11,6 +11,9 @@ export const MAX_WRECK_PIECE_INDEX = 0xff;
 /** Most descriptors a welcome may carry (every u16 wreck id). */
 export const MAX_WELCOME_WRECKS = WRECK_ID_END - 1;
 
+/** Longest wreck `owner` id (a playerId or a faction id). */
+export const MAX_WRECK_OWNER_LEN = 128;
+
 /** Sub-capital break-up slice 3 (#3) — one wreck's fracture inputs. Mirrors
  *  `WreckDescriptor`; the bidirectional assignability lock in
  *  `messages.test.ts` fails typecheck if they drift. */
@@ -31,6 +34,7 @@ export const WreckDescriptorSchema = z
     cutW: z.number().finite().min(0).optional(),
     parentWreck: z.number().int().min(1).max(WRECK_ID_END - 1).optional(),
     parentPiece: z.number().int().min(0).max(MAX_WRECK_PIECE_INDEX).optional(),
+    owner: z.string().min(1).max(MAX_WRECK_OWNER_LEN).optional(),
   })
   .strict()
   // A child names its parent wreck AND piece, or neither (a root); never itself.
@@ -75,6 +79,7 @@ export function isWreckDescriptor(v: unknown): v is WreckDescriptor {
     && (d['cutKind'] === undefined || d['cutKind'] === 'slice' || d['cutKind'] === 'channel')
     && (d['cutAng'] === undefined || (typeof d['cutAng'] === 'number' && Number.isInteger(d['cutAng']) && d['cutAng'] >= 0 && d['cutAng'] <= 0xffff))
     && (d['cutW'] === undefined || (finite(d['cutW']) && (d['cutW'] as number) >= 0))
+    && (d['owner'] === undefined || (typeof d['owner'] === 'string' && d['owner'].length > 0 && d['owner'].length <= MAX_WRECK_OWNER_LEN))
     && (d['parentWreck'] === undefined
       ? d['parentPiece'] === undefined
       : isWreckId(d['parentWreck']) && d['parentWreck'] !== d['wreckId']
@@ -132,6 +137,11 @@ export interface WreckDescriptor {
   /** The parent's piece that broke (its `componentIndex`, u8). Present
    *  exactly when `parentWreck` is. */
   parentPiece?: number;
+  /** Who owned the hull (the livery it wore, art-direction.md "Ship
+   *  livery"): a player's id for a player hull (active or parked), an NPC
+   *  patrol's faction; absent = the kind's allegiance. Not a fracture input:
+   *  the client's wreck pieces reuse the bake the live hull wore. */
+  owner?: string;
 }
 
 /** A rolling-resync chunk of the live wreck set (`SnapshotMessage.wreckSync`). */

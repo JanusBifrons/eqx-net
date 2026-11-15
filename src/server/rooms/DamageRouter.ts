@@ -103,6 +103,8 @@ export interface DamageRouterDeps {
   onDroneDamaged?: (droneId: string, sourceId: string, atTick: number) => void;
   /** Friendly fire — see `LeafDeps.isFriendlyFire`. */
   isFriendlyFire?: (victimId: string, sourceId: string) => boolean;
+  /** RTS slice 5 — see `LeafDeps.hostileActorOf`. */
+  hostileActorOf?: (sourceId: string) => string;
   /** Scrap-on-death (Phase 2b-ii) — invoked for a DRONE just before it's
    *  evicted on death, so a composite-kind drone breaks into scrap. Optional
    *  (test fixtures / engineering rooms without a ScrapSpawner omit it). */
@@ -120,6 +122,7 @@ export interface DamageRouterDeps {
     ship: { shipInstanceId: string; playerId: string; kind: string },
     pose: ShipPhysicsState | undefined,
     sourceId: string,
+    vaporised?: boolean,
   ) => void;
   /** Event bus — emits PLAYER_DAMAGED + SHIP_DESTROYED. */
   bus: Bus;

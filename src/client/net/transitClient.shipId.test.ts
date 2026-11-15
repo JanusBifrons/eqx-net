@@ -85,6 +85,33 @@ describe('engageTransit — wire shape', () => {
   });
 });
 
+describe('engageTransit — fleet warp shipIds', () => {
+  it('sends shipIds (and arrival) when given', () => {
+    const { room, sent } = makeFakeRoom();
+    engageTransit(room, 'orion-belt', { x: 5, y: 6 }, undefined, ['a', 'b']);
+    expect(sent[0]!.msg).toEqual({
+      type: 'engage_transit',
+      targetSectorKey: 'orion-belt',
+      arrival: { x: 5, y: 6 },
+      shipIds: ['a', 'b'],
+    });
+  });
+
+  it('omits an empty shipIds list', () => {
+    const { room, sent } = makeFakeRoom();
+    engageTransit(room, 'orion-belt', undefined, undefined, []);
+    expect(sent[0]!.msg).not.toHaveProperty('shipIds');
+  });
+
+  it('never sends shipId together with shipIds (the server rejects both)', () => {
+    const { room, sent } = makeFakeRoom();
+    engageTransit(room, 'orion-belt', undefined, 'solo', ['a']);
+    const msg = sent[0]!.msg as Record<string, unknown>;
+    expect(msg).not.toHaveProperty('shipId');
+    expect(msg).toHaveProperty('shipIds', ['a']);
+  });
+});
+
 describe('cancelTransit (regression)', () => {
   it('sends a cancel_transit message', () => {
     const { room, sent } = makeFakeRoom();

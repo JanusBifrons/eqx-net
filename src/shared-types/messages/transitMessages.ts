@@ -10,7 +10,10 @@ export type TransitCancelReason =
   | 'manual'
   | 'destination_unavailable'
   | 'token_expired'
-  | 'not_neighbour';
+  | 'not_neighbour'
+  /** RTS fleet warp: none of the named ships can warp (foreign, unknown,
+   *  dead, not parked in this sector, or already in another fleet warp). */
+  | 'no_ships';
 
 export interface TransitStateMessage {
   type: 'transit_state';
@@ -21,6 +24,32 @@ export interface TransitStateMessage {
   targetSectorKey?: string;
   /** When the state collapses to DOCKED via cancellation, why. */
   reason?: TransitCancelReason;
+}
+
+/**
+ * Server → client: the destination seat is reserved; the client leaves this
+ * room and consumes `reservation` (the one room-change path of a transit).
+ */
+export interface TransitReadyMessage {
+  type: 'transit_ready';
+  reservation: unknown;
+  transitToken?: string;
+  targetSectorKey: string;
+  /** RTS fleet warp: present when the commander follows their fleet with no
+   *  ship of their own (Command view, a spectator seat). The ships that went
+   *  (shipInstanceIds, unchanged across the hand-off): the client re-selects
+   *  them on arrival and glides the camera to them. Absent on a pilot transit. */
+  shipIds?: readonly string[];
+}
+
+/** Client-side parse of `transit_ready.shipIds` (#3: never trust the wire):
+ *  a string array of 1–64-char ids, at most 64, else undefined. */
+export function parseTransitReadyShipIds(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw) || raw.length > 64) return undefined;
+  for (const id of raw) {
+    if (typeof id !== 'string' || id.length < 1 || id.length > 64) return undefined;
+  }
+  return raw as string[];
 }
 
 /**

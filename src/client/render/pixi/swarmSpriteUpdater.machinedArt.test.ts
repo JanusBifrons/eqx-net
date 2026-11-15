@@ -57,8 +57,8 @@ function stubArt(): { svc: ArtService; handles: ArtHandle[]; makeReady: () => vo
     ship: (id: string, paint?: number) => mk({ type: 'ship', id, paint }),
     struct: (id: string, seed: number, rot = 0) => mk({ type: 'struct', id, seed, rot }),
     scrap: (id: string, component: number) => mk({ type: 'scrap', id, component }),
-    rock: (entityId: number, radius: number, resource: string | undefined, rot: number) =>
-      mk({ type: 'rock', id: 'asteroid', entityId, radius, resource, rot }),
+    rock: (shapeSeed: number, radius: number, resource: string | undefined, rot: number) =>
+      mk({ type: 'rock', id: 'asteroid', shapeSeed, radius, resource, rot }),
   } as unknown as ArtService;
   const flat = (): StructArt => ({ tex: Texture.EMPTY, albedo: Texture.EMPTY, w: 40, h: 40, density: 2, navLights: [] });
   return {

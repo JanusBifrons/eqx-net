@@ -40,7 +40,7 @@ import { Container, Graphics, Matrix, Sprite } from 'pixi.js';
 import type { ArtHandle } from './art/ArtService.js';
 import { isMachinedSprite, type ShipArtCtx } from './art/shipArtSprites.js';
 import { muzzleReach, shipTurrets, structureTurrets, type TurretPlace } from './art/turretLayout.js';
-import { flashFrameAt, heatAfter, muzzleHeft, recoilAt, NAVAL_FLASH_LIFE_S, MUZZLE_FLASH_LIFE_S, muzzleLightAt, navalMuzzleLight, type MuzzleLight, MUZZLE_SMOKE_PUFFS, muzzleSmokePuff, type SmokePuff, railGeom, railHeatAt, railVentPuff, railVentPuffs, RAIL_VENTS, RAIL_FLASH_LENGTH, RAIL_FLASH_LIGHT, RAIL_FLASH_TINT, type RailGeom, type RailPuff } from './art/fx/turretFx.js';
+import { flashFrameAt, heatAfter, muzzleHeft, recoilAt, NAVAL_FLASH_LIFE_S, MUZZLE_FLASH_LIFE_S, muzzleLightAt, navalMuzzleLight, type MuzzleLight, MUZZLE_SMOKE_PUFFS, muzzleSmokePuff, type SmokePuff, railGeom, railHeatAt, railVentPuff, railVentPuffs, RAIL_VENTS, RAIL_FLASH_LIGHT, RAIL_FLASH_TINT, type RailGeom, type RailPuff } from './art/fx/turretFx.js';
 import { NAVAL_BARREL_SPAN } from '@core/combat/muzzle';
 import { getWeapon, isWeaponId } from '@core/combat/WeaponCatalogue';
 import type { EffectQuality } from '@core/contracts/IEffects';
@@ -83,6 +83,7 @@ import { isStructureKindId } from '../../shared-types/structureKinds';
 import { getShipKind, type WeaponMount } from '../../shared-types/shipKinds';
 import { shipPrimaryColor } from '@core/geometry/shipHullOutline';
 import { aimLineLengthForMount } from './aimLineLength';
+import { moveKey } from './shipRekey.js';
 import { GLOBAL_SHIP_TUNING } from '@shared-types/shipScale/lookup';
 import { HEAVY_BEAM_COLOR, HEAVY_BEAM_STYLE, isHeavyBeamMount } from './beamStyles';
 
@@ -493,6 +494,20 @@ export class MountVisualManager {
     this.clusters.delete(shipId);
   }
 
+  /** RTS Part A seamless hand-over: the ship's key changed; its cluster (still
+   *  a child of the same sprite, guns, recoil and angles intact) moves to the
+   *  new key. A stale cluster under `to` is freed first. No-op without one. */
+  rekeyShip(from: string, to: string): void {
+    if (from === to || !this.clusters.has(from)) return;
+    this.removeShip(to);
+    moveKey(this.clusters, from, to);
+  }
+
+  /** The cluster container drawn for `shipId` (test / DEV identity probe). */
+  clusterOf(shipId: string): Container | undefined {
+    return this.clusters.get(shipId)?.container;
+  }
+
   /** Recoil, flash, tip heat and the beam glow for one gun, this frame. */
   private animateGun(gun: MachinedGun): void {
     const t = this.nowS, layers = gun.layers!;
@@ -609,8 +624,8 @@ export class MountVisualManager {
         f.texture = frames![fr]!;
         f.x = (b - (n - 1) / 2) * pitch;
         f.y = -gun.reach + kick;
-        // The railgun's is a burst, as long as it is wide (RAIL_FLASH_LENGTH).
-        f.scale.set((w * 7 * heft) / 64, (w * (heft > 1 ? RAIL_FLASH_LENGTH : 22) * heft) / 64);
+        // The railgun's too is the long jet, at its heft (the owner's pick).
+        f.scale.set((w * 7 * heft) / 64, (w * 22 * heft) / 64);
       }
     }
     const smokes = gun.smokes;

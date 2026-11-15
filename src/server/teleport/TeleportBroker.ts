@@ -10,6 +10,7 @@
 import type { StorageService } from '../cargo/StorageService.js';
 import type { StructureRecord } from '../structures/StructureRegistry.js';
 import type { TeleporterSubsystem } from '../structures/TeleporterSubsystem.js';
+import type { FleetSavedShip, FleetSavedSquad } from '../fleet/fleetPersistence.js';
 
 /** What the broker needs from a room. SectorRoom implements it. */
 export interface TeleportRoom {
@@ -33,15 +34,33 @@ export interface TeleportRoom {
   dispatchRiders(batch: RiderBatch, toRoom: TeleportRoom, to: StructureRecord): void;
   /** T4 — send a message to a player if they are in this room. */
   sendToPlayer(playerId: string, type: string, msg: unknown): boolean;
-  /** Rebuild a parked hull that rode a jump into this room. */
-  receiveLingeringHull(row: {
-    shipInstanceId: string;
-    playerId: string;
-    kind: string;
-    x: number; y: number; vx: number; vy: number; angle: number; angvel: number;
-    health: number;
-    shieldDown: boolean;
-  }): void;
+  /** True when a parked hull `shipInstanceId` can be rebuilt here right now
+   *  (a free physics slot, and no ship with that id already in this room).
+   *  The hand-off asks BEFORE it removes the hull at the source, so a hull
+   *  that can't fit stays where it is and is never lost. */
+  canReceiveHull(shipInstanceId: string): boolean;
+  /** Rebuild a parked hull that rode a jump (teleporter or fleet warp) into
+   *  this room. True when it is now here. */
+  receiveLingeringHull(row: HandedOffHull): boolean;
+  /** Re-form the squads whose members just arrived (`FleetCommandSubsystem.restoreSquads`). */
+  receiveFleetSquads(rows: readonly FleetSavedSquad[]): void;
+}
+
+/**
+ * A parked hull handed to another sector. The fleet fields are the AI pilot's
+ * standing job (`FleetCommandSubsystem.exportShip`); the destination applies
+ * the arrival rule (guard where it lands; stance and squad carry).
+ */
+export interface HandedOffHull extends FleetSavedShip {
+  shipInstanceId: string;
+  playerId: string;
+  kind: string;
+  x: number; y: number; vx: number; vy: number; angle: number; angvel: number;
+  health: number;
+  shieldDown: boolean;
+  /** How it arrived: a fleet `warp` is nudged clear of what is already there;
+   *  a `teleport` keeps its exact place on the pad. */
+  arrival: 'warp' | 'teleport';
 }
 
 /** Everything on one pad at the swap, as offsets from the pad's centre. */

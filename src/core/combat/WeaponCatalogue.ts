@@ -3,6 +3,7 @@ import {
   NAVAL_GUN_BALLISTICS as NAVAL, NAVAL_SIEGE_SPLASH, projectileEngageReach,
   RAILGUN_BALLISTICS, RAILGUN_BOLT_WIDTH, RAILGUN_RADIUS,
 } from '../../shared-types/combat/navalGuns.js';
+import { TRACTOR_DEF, type TractorSpec } from './tractorSpec.js';
 export type WeaponMode = 'hitscan' | 'projectile' | 'missile';
 export type WeaponId = 'hitscan' | 'laser' | 'heat-seeker' | 'pulse-orb' | 'charge-laser' | 'autocannon'
   | 'naval_s' | 'naval_m' | 'naval_l' | 'naval_xl'
@@ -13,7 +14,7 @@ export type WeaponId = 'hitscan' | 'laser' | 'heat-seeker' | 'pulse-orb' | 'char
   // Capital heavy beam (plan beam-slices §8): a sustained burn that slices.
   | 'heavy_beam'
   // Mining laser (plan partitioned-chasing-lark PR 7): a salvage beam.
-  | 'mining_laser';
+  | 'mining_laser' | 'tractor'; // tractor: salvage PR 11, a force, no damage
 
 interface WeaponDefBase {
   id: WeaponId;
@@ -56,16 +57,15 @@ interface WeaponDefBase {
    *  (`WeaponMountTicker.tickCapitalMounts`). Absent ⇒ none: the mount looks
    *  for its next target at once. */
   followThroughTicks?: number;
-  /** Per-target damage factors (docs/architecture/weapon-mounts.md
-   *  "Per-target damage factors"): a hit's damage is multiplied by the factor
-   *  for what it lands on, once, at `SectorRoom.applyDamage`. Read only
-   *  through `weaponTargetFactor`. Absent (or an absent key) ⇒ 1. */
+  /** Per-target damage multipliers, read only via `weaponTargetFactor` (weapon-mounts.md "Per-target damage factors"). */
   targetFactor?: WeaponTargetFactor;
+  tractor?: TractorSpec; // a TRACTOR beam: no ray, no damage; fire renews a lease (tractorSpec.ts)
 }
 
 /** What a hit lands on, for `weaponTargetFactor`: a raised shield, an exposed
- *  (or shieldless) ship hull, a structure, or a capital wreck piece. */
-export type WeaponTargetClass = 'shield' | 'hull' | 'structure' | 'wreck';
+ *  (or shieldless) ship hull, a structure, a capital wreck piece, or an
+ *  asteroid ('rock': scales the ore a hit draws, server `OreDraw`). */
+export type WeaponTargetClass = 'shield' | 'hull' | 'structure' | 'wreck' | 'rock';
 
 /** `WeaponDefBase.targetFactor`: a damage multiplier per target class. */
 export type WeaponTargetFactor = { readonly [K in WeaponTargetClass]?: number };
@@ -73,9 +73,10 @@ export type WeaponTargetFactor = { readonly [K in WeaponTargetClass]?: number };
 /** The damage multiplier `def` applies against `cls`. Pure, allocation-free.
  *  Every class defaults to 1 for now. The 'wreck' default becomes 0.1 when
  *  wreck integrity lands (plan partitioned-chasing-lark, PR 5); until then 1
- *  keeps every hit byte-identical. */
+ *  keeps every hit byte-identical. 'rock' defaults to 0: only a weapon that
+ *  names a rock factor (the mining laser) mines ore. */
 export function weaponTargetFactor(def: WeaponDef, cls: WeaponTargetClass): number {
-  return def.targetFactor?.[cls] ?? 1;
+  return def.targetFactor?.[cls] ?? (cls === 'rock' ? 0 : 1);
 }
 
 /** Resolve `def`'s factors for one hit into the per-layer multiplier the
@@ -469,7 +470,8 @@ export const MINING_LASER_WIDTH = HEAVY_BEAM_WIDTH / 4;
  * The MINING LASER (plan partitioned-chasing-lark PR 7): a salvage beam (no
  * ship carries it yet), an ordinary hitscan beam like the heavy beam. Its
  * factors make it a tool: nothing on a raised shield, 5 % on a live hull or a
- * structure, full on a wreck piece (wear lands with PR 5); a hit its factor
+ * structure, full on a wreck piece (wear lands with PR 5); on a rock it
+ * draws ore (the server's `OreDraw`; no other weapon mines); a hit its factor
  * zeroes is no hostile act (`SectorRoom.applyDamage`). Its narrow slice cuts
  * along the beam. 120 × 6 Hz = 720/s on a wreck, 36/s on a bare hull; energy
  * 12/shot = 72/s, under a capital's 120/s regen, so it holds on (the heavy
@@ -480,7 +482,7 @@ const MINING_LASER_DEF: HitscanWeaponDef = {
   id: 'mining_laser', displayName: 'Mining laser', mode: 'hitscan',
   damage: 120, cooldownTicks: 10, range: 12_000, energyCost: 12,
   killCut: { kind: 'slice', width: MINING_LASER_WIDTH },
-  targetFactor: { shield: 0, hull: 0.05, structure: 0.05, wreck: 1 },
+  targetFactor: { shield: 0, hull: 0.05, structure: 0.05, wreck: 1, rock: 1 },
 };
 
 /**
@@ -524,9 +526,10 @@ export const WEAPONS: ReadonlyMap<WeaponId, WeaponDef> = new Map<WeaponId, Weapo
   ['railgun', RAILGUN_DEF],
   ['heavy_beam', HEAVY_BEAM_DEF],
   ['mining_laser', MINING_LASER_DEF],
+  ['tractor', TRACTOR_DEF],
 ]);
 
-export const WEAPON_IDS: readonly WeaponId[] = ['hitscan', 'laser', 'heat-seeker', 'pulse-orb', 'charge-laser', 'autocannon', 'naval_s', 'naval_m', 'naval_l', 'naval_xl', 'naval_xxl', 'naval_siege', 'railgun', 'heavy_beam', 'mining_laser'] as const;
+export const WEAPON_IDS: readonly WeaponId[] = ['hitscan', 'laser', 'heat-seeker', 'pulse-orb', 'charge-laser', 'autocannon', 'naval_s', 'naval_m', 'naval_l', 'naval_xl', 'naval_xxl', 'naval_siege', 'railgun', 'heavy_beam', 'mining_laser', 'tractor'] as const;
 
 export const DEFAULT_WEAPON: WeaponId = 'hitscan';
 

@@ -169,3 +169,69 @@ describe('HostileDroneBehaviour — leader-led flocking (non-combat herding)', (
     expect(turnOf(intent)).toBe(-1);
   });
 });
+
+/** A view serving one leader pose with a velocity (vx, vy). */
+function viewWithMoving(id: string, p: { x: number; y: number; vx: number; vy: number; angle: number }): AiWorldView {
+  return {
+    players: [],
+    tick: 100,
+    dtSec: 1 / 60,
+    resolveEntityInto: (q: string, out: AiEntityPoseOut): boolean => {
+      if (q !== id) return false;
+      out.x = p.x; out.y = p.y; out.vx = p.vx; out.vy = p.vy; out.angle = p.angle; out.angvel = 0;
+      return true;
+    },
+  };
+}
+
+describe('HostileDroneBehaviour — RTS squads fly as a loose pack (RTS Part B slice 10)', () => {
+  it('under fire with nothing to shoot (COMBAT, no target in view) it keeps following the leader', () => {
+    // Failing first: the COMBAT branch fell back to the patrol orbit and
+    // ignored the leader, so a follower shot from out of view left its pack.
+    const leader = { leader: { x: 5000, y: -4000, angle: Math.PI } };
+    const idle = new HostileDroneBehaviour(KIND);
+    idle.setFlockFollow('leader', ['leader', 'f0']);
+    const shot = new HostileDroneBehaviour(KIND);
+    shot.setFlockFollow('leader', ['leader', 'f0']);
+    shot.markHostile('ghost', 100); // an attacker that is not in the view
+    const s = self({ x: 5000, y: 0, angle: 0 });
+    const a = idle.tick(s, viewWith(leader));
+    const b = shot.tick(s, viewWith(leader));
+    expect(shot.getTargetId?.() ?? null).toBeNull();
+    expect(b.input, 'the same keys as an idle follower').toBe(a.input);
+    expect(turnOf(b), 'turns toward the leader (south), not the orbit (north)').not.toBe(0);
+    expect(shot.getFlockLeaderId()).toBe('leader');
+  });
+
+  it('settles at a spacing round a parked leader, not on top of it', () => {
+    // Failing first: the follow distance went in as the cohesion GAIN, so the
+    // pull swamped separation and the follower parked ~1 u from the leader.
+    const b = new HostileDroneBehaviour(KIND);
+    b.setFlockFollow('leader', ['leader', 'f0']);
+    const view = viewWith({ leader: { x: 0, y: 900, angle: Math.PI / 2 } });
+    const body = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
+    for (let i = 0; i < 60 * 30; i++) stepKinematic(body, KIND, b.tick({ id: 'f0', ...body }, view));
+    const gap = Math.hypot(body.x, body.y - 900);
+    expect(gap).toBeGreaterThan(40);
+  });
+
+  it('keeps up with a leader faster than the calm cruise (a pilot), without boost', () => {
+    const h = makePilotHandling(KIND, shipBodyMass(KIND));
+    const v = h.maxSpeed * 0.8;
+    const b = new HostileDroneBehaviour(KIND);
+    b.setFlockFollow('leader', ['leader', 'f0']);
+    const r = flyFor(b, viewWithMoving('leader', { x: 0, y: 4000, vx: 0, vy: v, angle: 0 }), 600);
+    expect(r.boosted).toBe(false);
+    expect(r.top, 'faster than the calm cruise').toBeGreaterThan(CALM * 1.5);
+    expect(r.top).toBeLessThanOrEqual(h.maxSpeed + h.thrustAccel + 1e-6);
+  });
+
+  it('reports guarding once with its pack, moving while it closes up', () => {
+    const b = new HostileDroneBehaviour(KIND);
+    b.setFlockFollow('leader', ['leader', 'f0']);
+    b.tick(self({ x: 0, y: 0 }), viewWith({ leader: { x: 0, y: 5000 } }));
+    expect(b.getActivity()).toBe('moving');
+    b.tick(self({ x: 0, y: 4900 }), viewWith({ leader: { x: 0, y: 5000 } }));
+    expect(b.getActivity()).toBe('guarding');
+  });
+});

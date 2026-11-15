@@ -84,6 +84,10 @@ export interface AiFireResolverDeps {
    *  room routes it to the AI pilot brain's pool (`IAiBehaviour.trySpendEnergy`),
    *  the same pool boost draws on. Absent ⇒ free fire (unit harnesses). */
   trySpendEnergy?: (shooterId: string, cost: number) => boolean;
+  /** Tractor beam (salvage plan PR 11): an accepted fire of tractor `mount`
+   *  at `targetId` renews its lease (`ForceFieldSubsystem.renewTractor`, the
+   *  same call the player resolver makes). Absent ⇒ tractors do nothing. */
+  fireTractor?: (shooterId: string, mount: WeaponMount, targetId: string) => void;
   /** Cooldown ledger — keyed by shooter id (drone). */
   lastFireClientTick: Map<string, number>;
   /** Pose snapshot for the firing drone (SAB read). */
@@ -183,6 +187,10 @@ export class AiFireResolver implements WeaponFireSink {
   private _shotKilled = false;
   /** The shot now resolving passes debris (set by `fireMount`). */
   private _passDebris = false;
+  /** The target of the shot now resolving ('' = none) and the mount firing
+   *  (a tractor's lease needs both). */
+  private _targetId = '';
+  private _mount: WeaponMount | null = null;
 
   /**
    * Resolve an AI fire claim. Cooldown-rejected → silent no-op.
@@ -266,7 +274,9 @@ export class AiFireResolver implements WeaponFireSink {
       }
       return;
     }
+    this._targetId = targetId;
     this.fireNow(shooterId, -1, bearMask);
+    this._targetId = '';
   }
 
   /** Reused target shape for the range gate (#14). */
@@ -313,7 +323,7 @@ export class AiFireResolver implements WeaponFireSink {
    *  true. `passDebris`: the beam passes wreck pieces and scrap (no hit, no
    *  knock-back) and runs on to a ship, structure, rock or its full range
    *  (the kill follow-through: "cut right through"). */
-  fireMount(shooterId: string, mountIdx: number, passDebris = false): boolean | 'killed' {
+  fireMount(shooterId: string, mountIdx: number, passDebris = false, targetId = ''): boolean | 'killed' {
     const d = this.deps;
     const self = d.swarmEntitySnapshot(shooterId);
     if (!self) return false;
@@ -324,8 +334,10 @@ export class AiFireResolver implements WeaponFireSink {
     }
     this._shotKilled = false;
     this._passDebris = passDebris;
+    this._targetId = targetId;
     this.fireNow(shooterId, mountIdx);
     this._passDebris = false;
+    this._targetId = '';
     return this._shotKilled ? 'killed' : true;
   }
   /** Quad AA: the next barrel to fire, per shooter and mount index. */
@@ -419,6 +431,7 @@ export class AiFireResolver implements WeaponFireSink {
       ctx.shooterVy = svy;
       ctx.mountId = mount.id;
       this._weaponId = mount.weaponId;
+      this._mount = mount;
       // A naval turret fires a full salvo: one shell per barrel, each from
       // its own drawn barrel tip (shared offsets, core/combat/muzzle.ts).
       const naval = navalTurret(droneKind, mount);
@@ -540,6 +553,11 @@ export class AiFireResolver implements WeaponFireSink {
   /** Missile: lock-at-launch + lifecycle owned by MissileSimulation. */
   spawnMissile(ctx: WeaponFireContext, def: MissileWeaponDef): void {
     this.deps.spawnServerMissile(this._shooterId, ctx.fromX, ctx.fromY, ctx.dirX, ctx.dirY, def);
+  }
+
+  /** Tractor: renew the mount's lease on the shot's target (no ray, no damage). */
+  tractor(): void {
+    if (this._mount !== null && this._targetId !== '') this.deps.fireTractor?.(this._shooterId, this._mount, this._targetId);
   }
 }
 

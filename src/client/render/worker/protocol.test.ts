@@ -115,7 +115,6 @@ describe('renderer-worker protocol', () => {
           localPlayerId: null,
           serverTick: 0,
           swarm: new Map(),
-          lingeringShips: new Map(),
           projectiles: new Map(),
           serverGhostX: 0,
           serverGhostY: 0,
@@ -179,6 +178,24 @@ describe('renderer-worker protocol', () => {
       { name: 'SET_EFFECT_PARAMS shield', msg: { type: 'SET_EFFECT_PARAMS', effect: 'shield', params: { baseAlpha: 0.18, breatheAmplitude: 0.08 } } },
       { name: 'RESET_EFFECTS_HANDOFF', msg: { type: 'RESET_EFFECTS_HANDOFF' } },
       { name: 'SET_SPECTATOR on', msg: { type: 'SET_SPECTATOR', active: true } },
+      { name: 'SET_FLEET_ORDER_MODE attack', msg: { type: 'SET_FLEET_ORDER_MODE', mode: 'attack' } },
+      { name: 'SET_FLEET_PICK patrol', msg: { type: 'SET_FLEET_PICK', kind: 'patrol' } },
+      { name: 'SET_FLEET_PICK cancel', msg: { type: 'SET_FLEET_PICK', kind: null } },
+      { name: 'COMMIT_FLEET_PICK', msg: { type: 'COMMIT_FLEET_PICK' } },
+      {
+        name: 'SET_FLEET_OVERLAY_MODEL',
+        msg: {
+          type: 'SET_FLEET_OVERLAY_MODEL',
+          model: {
+            ships: [
+              { id: 'p1', squadId: 'sq-1', orderKind: 'move', destX: 120, destY: -40 },
+              { id: 'hull-2', squadId: 'sq-1', orderKind: 'attack', targetId: 'swarm-7' },
+              { id: 'hull-3', squadId: null, orderKind: null, route: [[0, 0], [100, 0], [100, 100]] },
+              { id: 'hull-4', squadId: null, orderKind: null, escortId: 'p1' },
+            ],
+          },
+        },
+      },
       { name: 'SET_RADAR_PREFS', msg: { type: 'SET_RADAR_PREFS', prefs: DEFAULT_RADAR_PREFS.touch } },
       {
         name: 'SET_RADAR_INSETS',
@@ -233,6 +250,18 @@ describe('renderer-worker protocol', () => {
             selectedPickKind: 'structure',
             hoveredPickId: 'swarm-7',
             miningBeamCount: 1,
+            fleetSelSeq: 3,
+            fleetSelIds: ['p1', 'hull-9'],
+            orderSeq: 2,
+            orderKind: 'attack',
+            orderX: 10,
+            orderY: -20,
+            orderTargetId: 'swarm-5',
+            takeControlsSeq: 2,
+            takeControlsId: 'hull-9',
+            fleetPickPoints: 3,
+            fleetPickSeq: 4,
+            fleetPickResult: { kind: 'patrol', route: [[0, 0], [100, -50], [30, 80]] },
           },
         },
       },
@@ -267,6 +296,14 @@ describe('renderer-worker protocol', () => {
         expect(back.feedback.selectedPickId).toBe('swarm-42');
         expect(back.feedback.selectedPickKind).toBe('structure');
         expect(back.feedback.miningBeamCount).toBe(1);
+        expect(back.feedback.fleetSelIds).toEqual(['p1', 'hull-9']);
+        expect(back.feedback.orderKind).toBe('attack');
+        expect(back.feedback.orderTargetId).toBe('swarm-5');
+        expect(back.feedback.takeControlsSeq).toBe(2);
+        expect(back.feedback.takeControlsId).toBe('hull-9');
+        expect(back.feedback.fleetPickPoints).toBe(3);
+        expect(back.feedback.fleetPickSeq).toBe(4);
+        expect(back.feedback.fleetPickResult).toEqual({ kind: 'patrol', route: [[0, 0], [100, -50], [30, 80]] });
       }
       if (back.type === 'FRAME_MARKERS') {
         // Primitive struct — every field must survive the clone intact

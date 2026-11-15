@@ -15,8 +15,8 @@ import { DEFAULT_BASE_URL } from './helpers/ports';
  * proximate bug):
  *  1. Server sets `ship.isActive = false` on join (handshake design).
  *  2. Client snapshot translator routes `isActive=false` to
- *     `mirror.lingeringShips`. The joiner's OWN ship ends up there
- *     instead of `mirror.ships`.
+ *     a parked-hull key (shipInstanceId). The joiner's OWN ship ends up there
+ *     instead of under its playerId in `mirror.ships`.
  *  3. `tryInitPredWorld(localPlayerId)` finds no entry in
  *     `mirror.ships` → returns early. `localPoseResolved` never
  *     flips → bootstrap stuck.

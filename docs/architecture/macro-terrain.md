@@ -2,7 +2,7 @@
 
 <!-- showcase-exempt: Stage 0 harness only; the terrain-stress shot lands in slice 0d -->
 
-Status: **Stage 0 (stress harness) in progress.** Plan approved by the owner on 2026-11-15; the plan file is `tender-humming-whisper.md` in the plans folder.
+Status: **plan v2 (the cut field) approved 2026-11-15; slices 0a, 1a, A1 and A2 done.** The plan file is `tender-humming-whisper.md` in the plans folder.
 
 ## Why
 
@@ -14,6 +14,42 @@ The game has no macro terrain. A sector holds a few small rock layouts, nebulae 
 - **One route-finder** for AI pilots and the player autopilot.
 
 Look and feel, and performance, are the guiding stars. Measurements set the limits, never numbers invented in advance.
+
+## The cut field (plan v2)
+
+After look tests with the owner (2026-11-15), a field is no longer thousands of placed rocks: evenly scattered rocks "read like a pattern". A field is **one giant convex shape cut up like a cake** (a fracture), in `src/core/terrain/fieldLayout.ts` (`slicedField`):
+
+1. **Lanes first.** One or two straight strips run end to end. Their walls are the first cuts, and the strip is removed, so lanes have clean walls.
+2. **Recursive cuts.** Each piece is cut across its longest dimension, at a seeded point 35–65 % along it, with a little angle jitter. That avoids slivers.
+3. **Where cutting stops.** A piece stops when it is rock-sized (4–20 fighter lengths, seeded), or rarely at 1–2 battleship lengths (the rare big rocks).
+4. **Streets.** Each piece shrinks toward its centre, leaving streets about two fighter widths wide at the core. Streets widen toward the rim, where pieces also drop out, giving a slow thinning from core to edge.
+5. **The core.** The middle is a hole.
+6. **Shape.** Edges are roughened by midpoint displacement, then one smooth two-scale warp bends every outline. Neighbours bend together, so streets curve.
+
+**Look and size.** The field is about 300 km across, which is never fully on screen at any zoom. The full field is 113,881 rocks; cutting it all in one go takes about 8 s.
+
+**Determinism and laziness.**
+- Every cut is seeded by the piece's path in the cut tree. A child's path mixes the parent's path with the depth and the side (`childPath`), so paths never collide.
+- Any region can be cut on its own: pieces outside a view box stop early. The box is padded by the warp amplitude (`cutFieldPad`), so a rock whose final outline reaches into the view is never dropped.
+- The code is arithmetic only (no sin/cos/atan2/pow/hypot or `**`), with `FIELD_LAYOUT_VERSION`, so every browser cuts the server's rocks. Saved rock records are keyed by that version.
+- Locks: `fieldLayout.test.ts` (same seed gives same rocks; unique paths; a sub-area cut equals the same rocks in a full cut, none missing) and `tests/unit/fieldLayoutArithmeticOnly.test.ts`.
+
+### Chunks and rock keys (A2)
+
+The field is split into a fixed grid of square chunks (`CHUNK_SIZE` = 4096 u, about 4 km).
+
+- **Membership.** A rock belongs to the chunk holding its **pre-warp centre**, half-open, so every rock has exactly one chunk.
+- **The key.** A rock's key is `(chunk x, chunk y, index)`, packed into one u32 (8 + 8 + 16 bits; `rockKey`, `unpackRockKey`). The index is the rock's rank by cut path within its chunk, so a rock has the same name whether one chunk or the whole field is cut, in any order.
+- **Cutting one chunk.** `rocksInChunk(field, cx, cy)` cuts one chunk at full detail. It is generation-time code: the client runs it off the frame and the server on wake.
+- **Measured on the full field** (seed `look`): 114,628 rocks in 3,924 chunks; a median of 21 rocks per chunk, p99 90, max 99.
+- **Rule.** Changing `CHUNK_SIZE` renames every rock, so it bumps `FIELD_LAYOUT_VERSION`.
+- **Locks** (`fieldLayout.test.ts`):
+  - every rock of a full cut lands in exactly one chunk, and chunk cuts equal the full cut;
+  - keys are unique and unpack to their chunk and index;
+  - cutting a neighbour first changes nothing;
+  - negative chunk coordinates pack correctly.
+
+Next (plan v2 stages A3–F): owner shape tuning, cross-browser parity, chunk meshes with the procedural rock shader, then wake/deep sleep, the wire and the terrain store.
 
 ## The core idea
 
@@ -50,6 +86,26 @@ The density is one rock per ~250,000 u² (about 500 u apart).
 
 Pending: slice 0c fills this in from desktop and `--device phone-proxy` runs.
 
+## Stage 1: deep sleep
+
+### 1a: a rock's shape comes from its stable id
+
+A rock must keep its outline when it leaves the world and comes back (deep sleep), so its shape cannot depend on its wire id, which is reused.
+
+- **Seed:** each rock's shape seed is `asteroidShapeSeed(rec.id)`, a u16 hash of its stable registry id. It is computed once at spawn (`SwarmSpawner`) and kept on the record as `rec.shapeSeed`.
+- **Wire:** the seed rides the swarm wire in the u16 at +34 (`SWARM_REC_SHAPE_SEED_OFF`), the same bytes a wreck piece uses for its `wreckId` and that a rock left empty. Because the meaning of those bytes changed for rocks, `SWARM_WIRE_VERSION` went 5 → 6: an old client would have drawn the wrong outlines.
+- **Client:** the decoder keeps the seed on the mirror entry, and the prediction collider, the sprite and the baked art all build from it. `FORGE_VERSION` bumped, so rock art re-bakes.
+- **Determinism:** `generateAsteroidVertices` uses arithmetic only.
+  - Directions come from `unitDirFromSteps` (`core/geometry/unitDir.ts`). This is the Taylor-series helper the capital fracture already used, moved there so there is one copy.
+  - `Math.sin`/`Math.cos` are not bit-exact across JS engines. Field rocks will be derived on the client, so every browser must produce the server's vertices.
+- **Decoder fix:** an asteroid record now clears a stale `asteroidResource` when a plain rock reuses a wire id.
+- **Locks:**
+  - `SwarmSpawner.test.ts`: an outline survives a different wire id.
+  - `tests/unit/swarmWireRoundTrip.test.ts`: the seed round-trips, and a reused id keeps no old seed or resource.
+  - `unitDir.test.ts`: within 1e-12 of cos/sin at every step.
+
 ## History
 
-- 2026-11-15: plan approved; slice 0a adds the terrain stress scenes and the `swarmAtRest` bulk-seed option.
+- 2026-11-15: plan approved; slice 0a adds the terrain stress scenes and the `swarmAtRest` bulk-seed option. The first desktop timing run was invalid throughout (other sessions kept the host at 30–100 % CPU); timings wait for a quiet host.
+- 2026-11-15: slice 1a, rock shapes seeded by the stable id, swarm wire v6.
+- 2026-11-15: look tests with the owner replaced placed rocks with the cut field (plan v2); slice A1 lands the generator, A2 the chunks and rock keys.

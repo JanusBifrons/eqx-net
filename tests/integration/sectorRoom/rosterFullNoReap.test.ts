@@ -5,8 +5,8 @@
  *   [20:05:13.303] INFO  ship abandoned   ← 18ms later
  *
  * The user reconnected with `isNewShip:true` while their roster was
- * already at the 10-ship cap. `bindRosterEntry` correctly refused to
- * create an 11th roster row (RosterFullError caught, returns ''),
+ * already at the roster limit. `bindRosterEntry` correctly refused to
+ * create a roster row past ROSTER_SOFT_GUARD (RosterFullError caught, returns ''),
  * but the FALLBACK at `SectorRoom.ts` line 2330-2332 — meant for
  * engineering rooms (sectorKey === null) — fires for ANY ship with
  * an empty `shipInstanceId`, including galaxy-room ships whose
@@ -33,6 +33,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import { getPlayerShipStore } from '../../../src/server/db/PersistenceWorker.js';
+import { ROSTER_SOFT_GUARD } from '../../../src/server/playerShips/PlayerShipStore.js';
 
 describe('SectorRoom integration — roster-full fresh-spawn is not reaped', () => {
   let harness: SectorTestHarness;
@@ -50,11 +51,11 @@ describe('SectorRoom integration — roster-full fresh-spawn is not reaped', () 
   it('full roster + isNewShip:true → server does NOT reap the fresh hull within ~500ms', async () => {
     const PID = randomUUID();
 
-    // Seed the player's roster to the 10-ship cap. PlayerShipStore.create
+    // Seed the player's roster to the ROSTER_SOFT_GUARD limit. PlayerShipStore.create
     // is the same path the spawn flow uses; this primes the store so the
-    // 11th spawn hits RosterFullError.
+    // next spawn hits RosterFullError.
     const store = getPlayerShipStore();
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < ROSTER_SOFT_GUARD; i++) {
       store.create({
         playerId: PID,
         userId: null,
@@ -64,7 +65,7 @@ describe('SectorRoom integration — roster-full fresh-spawn is not reaped', () 
         health: 500,
       });
     }
-    expect(store.listByPlayer(PID)).toHaveLength(10);
+    expect(store.listByPlayer(PID)).toHaveLength(ROSTER_SOFT_GUARD);
 
     // Now connect with isNewShip:true — bindRosterEntry will catch
     // RosterFullError and return ''. The synthetic-UUID fallback must

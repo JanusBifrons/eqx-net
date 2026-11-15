@@ -36,7 +36,8 @@ export function recoverInputTickFromStarvation(
   leadTicks: number,
 ): number {
   if (inputTick <= ackedTick) {
-    return ackedTick + leadTicks;
+    // The lead is speed-scaled (fractional at a slowed sector); ticks are whole.
+    return ackedTick + Math.ceil(leadTicks);
   }
   return inputTick;
 }
@@ -67,7 +68,10 @@ export const STALL_SKIP_TICKS = 30;
  * would re-open the spiral it prevents (the replay locks catch this).
  */
 export function skipStalledBacklog(inputTick: number, targetTick: number, maxTick = Infinity, maxBacklog = STALL_SKIP_TICKS): number {
-  const to = Math.min(targetTick - 1, maxTick - 1);
+  // targetTick is fractional at a slowed sector speed (the lead is scaled by
+  // it); a tick is a ring-buffer index, so resume on a whole tick. ceil keeps
+  // "this frame runs exactly one tick" (resume < target <= resume + 1).
+  const to = Math.ceil(Math.min(targetTick - 1, maxTick - 1));
   return to - inputTick > maxBacklog ? to : inputTick;
 }
 

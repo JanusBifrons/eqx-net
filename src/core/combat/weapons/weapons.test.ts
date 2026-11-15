@@ -50,7 +50,19 @@ class RecordingSink implements WeaponFireSink {
     this.calls.push('missile');
     this.missileDef = def;
   }
+  tractor(): void {
+    this.calls.push('tractor');
+  }
 }
+
+describe('tractor flyweight (salvage plan PR 11)', () => {
+  it('a def with a tractor block dispatches sink.tractor only: no ray, no damage, no spawn', () => {
+    const sink = new RecordingSink();
+    getWeaponObject('tractor').resolveFire(makeCtx(), sink);
+    expect(sink.calls).toEqual(['tractor']);
+    expect(getWeapon('tractor').damage).toBe(0);
+  });
+});
 
 describe('GEP B3 weapon flyweights — resolveFire parity with the fire-resolver per-mode logic', () => {
   it('HitscanWeapon casts a ray to optimal range + maxRange with its damage (== resolver hitscan branch)', () => {

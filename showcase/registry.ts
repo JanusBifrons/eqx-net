@@ -33,6 +33,7 @@ import { coastalCatalogue, coastalAa, coastalDuel, coastalSuperGuns, garrisonDef
 import { waveAttack } from './shots/waveAttack.js';
 import { levelUp } from './shots/levelUp.js';
 import { spectator } from './shots/spectator.js';
+import { rtsCommand } from './shots/rtsCommand.js';
 import { warp } from './shots/warp.js';
 import { scale } from './shots/scale.js';
 import { mobile } from './shots/mobile.js';
@@ -112,6 +113,7 @@ export const SHOTS: readonly Shot[] = [
   waveAttack,
   levelUp,
   spectator,
+  rtsCommand,
   radar,
   warp,
   scale,
@@ -198,5 +200,5 @@ export const SHOWCASE_PENDING: Record<string, string> = {
   'research-lab':
     'Lab jobs run for minutes on the 1 Hz grid pulse; needs a staged base with blueprints + a fast-pulse room before it can be filmed.',
   'mining-and-salvage':
-    'No ship carries the mining laser yet: the shot lands with the mining barge (plan partitioned-chasing-lark), a barge cutting up a capital wreck.',
+    'No ship carries the mining laser or the tractor yet, and the tractor beam is not drawn until PR 11b: the shot lands with the mining barge (plan partitioned-chasing-lark), a barge cutting up and hauling a capital wreck.',
 };

@@ -26,7 +26,7 @@ function stateWithRemote(x: number): { ships: Map<string, Record<string, unknown
 }
 
 describe('syncMirror keeps a remote ship\'s snapshot-only fields', () => {
-  it('warp / level / shieldDown / mountAngles survive a state patch; pose updates', () => {
+  it('warp / level / shieldDown / mountAngles survive a state patch; the schema never moves the pose', () => {
     const c = new ColyseusGameClient() as unknown as Internals;
     c.mirror.localPlayerId = 'me';
     c.syncMirror(stateWithRemote(10));
@@ -45,6 +45,9 @@ describe('syncMirror keeps a remote ship\'s snapshot-only fields', () => {
     expect(after.mountAngles).toEqual([0.25]);
     expect(after.kind).toBe('fighter');
     expect(after.displayName).toBe('Bob');
-    expect(after.x).toBe(20);
+    // The real schema carries no pose (its x/y are 0); an existing entry's
+    // pose is the snapshot's / the body's, never overwritten by a patch
+    // (RTS Part A S3, B2).
+    expect(after.x).toBe(10);
   });
 });
