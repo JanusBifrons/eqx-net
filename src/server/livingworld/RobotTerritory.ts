@@ -18,7 +18,8 @@
  */
 import { sectorSpace } from '../../shared-types/sectorBounds.js';
 import type { SectorOwner } from '../../shared-types/galaxySnapshot.js';
-import type { GoodId } from '../../shared-types/goods.js';
+import { cargoCapacityForMaxHealth, type GoodId } from '../../shared-types/goods.js';
+import { getShipKind } from '../../shared-types/shipKinds.js';
 import type { Bus } from '../../core/events/Bus.js';
 import {
   freshControl,
@@ -42,8 +43,9 @@ export const ROBOT_FACTION_ID = 'robots';
 /** P3b — harvesters: robot scavengers that bank loot into the nexus. */
 export const HARVESTERS_PER_NEXUS = 2;
 export const HARVESTER_ID_PREFIX = 'rbot-harv-';
-/** Cargo weight a harvester carries (the collector capacity). */
-export const HARVESTER_CAPACITY = 400;
+/** Cargo weight a harvester carries — its kind's cargo capacity (the same
+ *  number the loot collector clamps to, `cargoCapacityForMaxHealth`). */
+export const HARVESTER_CAPACITY = cargoCapacityForMaxHealth(getShipKind('robot-harvester'));
 /** A harvester heads home once this full (or when no pod is left to chase). */
 export const HARVESTER_RETURN_FRAC = 0.75;
 /** Within this distance of the nexus, a harvester banks its whole hold. */
