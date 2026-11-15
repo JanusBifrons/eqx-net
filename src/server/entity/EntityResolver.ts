@@ -157,4 +157,20 @@ export class EntityResolver {
     this.poseY = d.sabF32[b + SLOT_Y_OFF];
     return leaf;
   }
+
+  /**
+   * True when a hit on `targetId` would land on a raised shield: the layer
+   * `resolve` + `applyLayered` pick, in the same branch order, read with no
+   * side effect (no scratch write, no diag). False for an unknown, immune or
+   * shieldless target. Allocation-free.
+   */
+  shieldRaised(targetId: string): boolean {
+    const d = this.deps;
+    const direct = d.shipsMap.get(targetId);
+    if (direct && !direct.isActive) return direct.shield > 0;
+    const ship = d.getActiveShip(targetId);
+    if (ship) return ship.shield > 0;
+    const rec = d.swarmRegistry.get(targetId);
+    return rec ? d.shieldHullRouter.swarmShieldRaised(rec) : false;
+  }
 }

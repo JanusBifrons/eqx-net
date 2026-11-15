@@ -5046,16 +5046,16 @@ export class SectorRoom extends Room<SectorState> {
       if (damage > 0) this.gateGuard.onGateAttacked(targetId, shooterId, this.gameClock.now());
       return false;
     }
-    // The weapon's per-target factors, resolved once for this target's class
-    // (weapon-mounts.md "Per-target damage factors"); undefined ⇒ ×1.
+    // The weapon's per-target factors (weapon-mounts.md "Per-target damage factors"), and the
+    // EFFECTIVE damage they leave: the side effects below see that, so a 0-damage hit is no attack.
     const layerMul = weaponId === undefined ? undefined
       : weaponLayerMul(getWeapon(weaponId), this.structureRegistry.get(targetId) !== undefined, this._layerMul);
-    if (damage > 0) this.noteEconomicHit(targetId, shooterId);
-    if (damage > 0) this.noteStandingHit(targetId, shooterId);
+    const eff = this.damageRouter.effectiveDamage(targetId, damage, layerMul);
+    if (eff > 0) { this.noteEconomicHit(targetId, shooterId); this.noteStandingHit(targetId, shooterId); }
     // An NPC's own hit on a pilot keeps it hostile (owner 2026-11-12).
-    if (damage > 0 && this.playerToSlot.has(targetId)) this.refreshNpcAttackHostility(shooterId, targetId);
+    if (eff > 0 && this.playerToSlot.has(targetId)) this.refreshNpcAttackHostility(shooterId, targetId);
     // C2 — a hit ends the target's break-in (one Map lookup when none).
-    if (damage > 0 && this.breakIns.activeCount() > 0) this.breakIns.onActorDamaged(targetId);
+    if (eff > 0 && this.breakIns.activeCount() > 0) this.breakIns.onActorDamaged(targetId);
     // R2.18 — a Shield Pylon is undamageable while its wall is up: route the hit
     // into an active wall (drains the grid/batteries, can stun it) and skip the
     // pylon damage entirely (no damage event for the pylon). This single choke
@@ -5063,7 +5063,7 @@ export class SectorRoom extends Room<SectorState> {
     // AND ramming (SectorRoom.ts ram-contact path) — so the pylon is protected
     // against all of them while any of its walls is up. Wall stun timing is
     // wall-clock (Date.now), matching every other shieldWalls call site.
-    if (damage > 0) {
+    if (eff > 0) {
       const s = this.structureRegistry.get(targetId);
       if (s !== undefined && isNpcOwner(s.owner)) {
         // B2 — a player (or a player's turret) hitting an NPC base makes that
@@ -5110,15 +5110,15 @@ export class SectorRoom extends Room<SectorState> {
         // R2.18 — a Shield Pylon is undamageable while its wall is up: route the
         // hit into an active wall and skip the pylon damage entirely.
         if (s.kind === 'shield_pylon'
-          && this.shieldWalls.absorbForPylon(targetId, damage * (layerMul?.hull ?? 1), this.gameClock.now())) {
+          && this.shieldWalls.absorbForPylon(targetId, eff, this.gameClock.now())) {
           return false;
         }
       }
     }
     // S2a — remember the last hit on a capital (point, damage, recent rate)
     // before it lands, so its death knows where and how hard it was hit.
-    if (this.capitalWrecks !== null && damage > 0) {
-      this.capitalWrecks.noteHit(targetId, shooterId, damage, hitX, hitY, dirX, dirY, weaponId);
+    if (this.capitalWrecks !== null && eff > 0) {
+      this.capitalWrecks.noteHit(targetId, shooterId, eff, hitX, hitY, dirX, dirY, weaponId);
     }
     return this.damageRouter.apply(targetId, shooterId, damage, hitX, hitY, layerMul);
   }

@@ -5,6 +5,8 @@
  * (core/physics/forceFields.ts). Keep `dRef ≤ hold`, or a load reaching the
  * cushion still feels the full force and slams.
  */
+import type { HitscanWeaponDef } from './WeaponCatalogue.js';
+
 export interface TractorSpec {
   /** F_mount at power 1 (force units: impulse per second). */
   readonly force: number;
@@ -19,3 +21,19 @@ export interface TractorSpec {
    *  so a held trigger never flickers it off between shots). */
   readonly leaseTicks: number;
 }
+
+/**
+ * The salvage TRACTOR beam (plan partitioned-chasing-lark PR 11, owner
+ * 2026-11-15): lock-anchored on ONE locked target (any ship, wreck piece, pod
+ * or rock), also pulling bodies across the line muzzle → target. A fixed force
+ * (acceleration F / m), only the target moves, a cushion at `hold`, thrust
+ * escapes it. No damage, no ray: `mode: 'hitscan'` only gives it a `range`
+ * (its reach) and the instant aim lead. Cadence like the heavy beam; a 12-tick
+ * lease spans a missed shot. Absolute (never `profiled`). S mount: F 6,000 ⇒
+ * a 100-mass body at 60 u/s², a 2,000-mass one at 3 u/s² (XL ×15: 45 u/s²).
+ */
+export const TRACTOR_DEF: HitscanWeaponDef = {
+  id: 'tractor', displayName: 'Tractor beam', mode: 'hitscan',
+  damage: 0, cooldownTicks: 10, range: 3000, energyCost: 4,
+  tractor: { force: 6000, dRef: 250, hold: 250, lineHalfWidth: 40, lineFrac: 0.25, leaseTicks: 12 },
+};

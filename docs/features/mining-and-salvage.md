@@ -1,8 +1,18 @@
-# Mining and salvage
+# Mining and Salvage
 
-<!-- showcase-exempt: server and wire only so far; the tractor beam gets its shot with its client drawing and prediction (salvage plan PR 11b) -->
+Cutting up what is left after a battle: capital wrecks are a resource, and salvage ships carry a beam built to work them (plan partitioned-chasing-lark). This page grows with the salvage stream; today it covers the first piece, the mining laser.
 
-Salvage plan (partitioned-chasing-lark): wrecks split again, a mining laser cuts them down, a tractor beam hauls the pieces in, and a mining barge carries both. This guide grows as each piece lands; internals live in the linked architecture guides.
+## The mining laser
+
+- **A tool, not a weapon.** It is a steady amber beam, the same colour as the Miner's drill beam, so anyone watching reads "someone is mining", not "someone is shooting".
+- **It does nothing to a raised shield.** Hold it on a shielded ship and nothing happens: no damage, and it does not count as an attack. The ship's owner and their faction do not turn on you for it.
+- **It barely scratches a live ship.** On a ship whose shield is down, or on a base structure, it does 5 % of its strength. That does count as an attack, like any other hit.
+- **It is made for wrecks.** On a capital wreck it works at full strength. Wrecks do not wear down yet (that comes with wreck wear, the next step of the stream); until then a hit only pushes the wreck piece, as every weapon's hit does.
+- **It cuts in a line.** When a mining-laser hit breaks something apart, the break runs straight along the beam, a narrow cut, like the heavy beam's slice but much thinner.
+- **It is cheap to run.** A capital's energy recharges faster than the beam uses it, so it can stay on for as long as it is needed.
+- **Range:** a capital turret's reach (12 km), shorter than the heavy beam.
+
+No ship carries it yet: the mining barge that does is a later step.
 
 ## Tractor beam
 
@@ -20,4 +30,13 @@ Salvage plan (partitioned-chasing-lark): wrecks split again, a mining laser cuts
 
 **How it runs.** Every accepted fire renews a short lease for that mount and target. While the lease is live, the server's force-field list carries a `tractor` field that the physics worker applies every step; the lease ends 12 ticks after the last fire, or at once when the ship or the target is gone. A wreck that has just broken apart holds together as one rigid body for a moment (its crack hold): a tractor on one of its pieces holds on but does not pull until the hold ends. Internals: [physics-worker, Force fields](../architecture/physics-worker.md#force-fields), [weapon-mounts, Tractor beam](../architecture/weapon-mounts.md#tractor-beam).
 
-**Coming next.** The client draws the beam and predicts the pull from the snapshot's beam links (PR 11b, with an e2e test and a showcase shot); a pod pulled into the hold zone is picked up (PR 12); the mining barge mounts rows of tractors (PRs 13 to 15).
+## Coming next
+
+- **Wreck wear:** wrecks take damage and break into smaller pieces under the beam.
+- **The mining barge:** the salvage ship that carries the mining laser.
+- **Salvage yield:** what cutting up a wreck gives back.
+- **Tractor beam on screen:** the client draws the beam and predicts the pull from the snapshot's beam links (with an e2e test and a showcase shot); a pod pulled into the hold zone is picked up.
+
+## Under the hood
+
+The numbers and the rules (per-target damage factors, why a 0-damage hit is not an attack, the beam's look) are in [weapon-mounts](../architecture/weapon-mounts.md) ("Per-target damage factors", "The mining laser", "Tractor beam"); the tractor's force field and leases in [physics-worker](../architecture/physics-worker.md#force-fields).

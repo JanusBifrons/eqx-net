@@ -3,8 +3,7 @@ import {
   NAVAL_GUN_BALLISTICS as NAVAL, NAVAL_SIEGE_SPLASH, projectileEngageReach,
   RAILGUN_BALLISTICS, RAILGUN_BOLT_WIDTH, RAILGUN_RADIUS,
 } from '../../shared-types/combat/navalGuns.js';
-import type { TractorSpec } from './tractorSpec.js';
-export type { TractorSpec } from './tractorSpec.js';
+import { TRACTOR_DEF, type TractorSpec } from './tractorSpec.js';
 export type WeaponMode = 'hitscan' | 'projectile' | 'missile';
 export type WeaponId = 'hitscan' | 'laser' | 'heat-seeker' | 'pulse-orb' | 'charge-laser' | 'autocannon'
   | 'naval_s' | 'naval_m' | 'naval_l' | 'naval_xl'
@@ -14,8 +13,8 @@ export type WeaponId = 'hitscan' | 'laser' | 'heat-seeker' | 'pulse-orb' | 'char
   | 'railgun'
   // Capital heavy beam (plan beam-slices §8): a sustained burn that slices.
   | 'heavy_beam'
-  // Salvage tractor beam (plan partitioned-chasing-lark PR 11): a force, no damage.
-  | 'tractor';
+  // Mining laser (plan partitioned-chasing-lark PR 7): a salvage beam.
+  | 'mining_laser' | 'tractor'; // tractor: salvage PR 11, a force, no damage
 
 interface WeaponDefBase {
   id: WeaponId;
@@ -63,10 +62,7 @@ interface WeaponDefBase {
    *  for what it lands on, once, at `SectorRoom.applyDamage`. Read only
    *  through `weaponTargetFactor`. Absent (or an absent key) ⇒ 1. */
   targetFactor?: WeaponTargetFactor;
-  /** A TRACTOR beam (weapon-mounts.md "Tractor beam"): fire casts no ray and
-   *  deals no damage; it renews a force-field lease on the mount's LOCKED
-   *  target. The flyweight registry picks the tractor leaf off this field. */
-  tractor?: TractorSpec;
+  tractor?: TractorSpec; // a TRACTOR beam: no ray, no damage; fire renews a lease (tractorSpec.ts)
 }
 
 /** What a hit lands on, for `weaponTargetFactor`: a raised shield, an exposed
@@ -468,20 +464,25 @@ const HEAVY_BEAM_DEF: HitscanWeaponDef = {
   followThroughTicks: 45,
 };
 
+/** The mining laser's slice width (world u): a quarter of the heavy beam's. */
+export const MINING_LASER_WIDTH = HEAVY_BEAM_WIDTH / 4;
+
 /**
- * The salvage TRACTOR beam (plan partitioned-chasing-lark PR 11, owner
- * 2026-11-15): lock-anchored on ONE locked target (any ship, wreck piece, pod
- * or rock), also pulling bodies across the line muzzle → target. A fixed force
- * (acceleration F / m), only the target moves, a cushion at `hold`, thrust
- * escapes it. No damage, no ray: `mode: 'hitscan'` only gives it a `range`
- * (its reach) and the instant aim lead. Cadence like the heavy beam; a 12-tick
- * lease spans a missed shot. Absolute (never `profiled`). S mount: F 6,000 ⇒
- * a 100-mass body at 60 u/s², a 2,000-mass one at 3 u/s² (XL ×15: 45 u/s²).
+ * The MINING LASER (plan partitioned-chasing-lark PR 7): a salvage beam (no
+ * ship carries it yet), an ordinary hitscan beam like the heavy beam. Its
+ * factors make it a tool: nothing on a raised shield, 5 % on a live hull or a
+ * structure, full on a wreck piece (wear lands with PR 5); a hit its factor
+ * zeroes is no hostile act (`SectorRoom.applyDamage`). Its narrow slice cuts
+ * along the beam. 120 × 6 Hz = 720/s on a wreck, 36/s on a bare hull; energy
+ * 12/shot = 72/s, under a capital's 120/s regen, so it holds on (the heavy
+ * beam costs 45). Range 12,000 u, short of the heavy beam's 20,000; absolute
+ * (never `profiled`), scaled per mount by `mountWeaponReach`.
  */
-const TRACTOR_DEF: HitscanWeaponDef = {
-  id: 'tractor', displayName: 'Tractor beam', mode: 'hitscan',
-  damage: 0, cooldownTicks: 10, range: 3000, energyCost: 4,
-  tractor: { force: 6000, dRef: 250, hold: 250, lineHalfWidth: 40, lineFrac: 0.25, leaseTicks: 12 },
+const MINING_LASER_DEF: HitscanWeaponDef = {
+  id: 'mining_laser', displayName: 'Mining laser', mode: 'hitscan',
+  damage: 120, cooldownTicks: 10, range: 12_000, energyCost: 12,
+  killCut: { kind: 'slice', width: MINING_LASER_WIDTH },
+  targetFactor: { shield: 0, hull: 0.05, structure: 0.05, wreck: 1 },
 };
 
 /**
@@ -524,10 +525,11 @@ export const WEAPONS: ReadonlyMap<WeaponId, WeaponDef> = new Map<WeaponId, Weapo
   ['naval_siege', NAVAL_SIEGE_DEF],
   ['railgun', RAILGUN_DEF],
   ['heavy_beam', HEAVY_BEAM_DEF],
+  ['mining_laser', MINING_LASER_DEF],
   ['tractor', TRACTOR_DEF],
 ]);
 
-export const WEAPON_IDS: readonly WeaponId[] = ['hitscan', 'laser', 'heat-seeker', 'pulse-orb', 'charge-laser', 'autocannon', 'naval_s', 'naval_m', 'naval_l', 'naval_xl', 'naval_xxl', 'naval_siege', 'railgun', 'heavy_beam', 'tractor'] as const;
+export const WEAPON_IDS: readonly WeaponId[] = ['hitscan', 'laser', 'heat-seeker', 'pulse-orb', 'charge-laser', 'autocannon', 'naval_s', 'naval_m', 'naval_l', 'naval_xl', 'naval_xxl', 'naval_siege', 'railgun', 'heavy_beam', 'mining_laser', 'tractor'] as const;
 
 export const DEFAULT_WEAPON: WeaponId = 'hitscan';
 
