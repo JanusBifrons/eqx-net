@@ -33,8 +33,7 @@ describe('SectorRoom integration — fleet_status follows a command at once', ()
     if (harness) await harness.cleanup();
   }, 10_000);
 
-  // RTS Part B slice 9: the panel activity is derived from the AI pilot brain's state + order flags; the never-ticked wingman brain no longer updates it.
-  it.skip('a move order is reported as moving within ~150 ms, not on the next timer send', { timeout: 30_000 }, async () => {
+  it('a move order is reported as moving within ~150 ms, not on the next timer send', { timeout: 30_000 }, async () => {
     const pid = randomUUID();
     const a = await harness.connectActive(pid, { shipKind: 'fighter', spawnX: 0, spawnY: 0 });
     const room = harness.getServerRoom()!;

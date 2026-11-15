@@ -65,6 +65,6 @@ describe('fleet_status wire format', () => {
     expect([...FLEET_STATUS_STANCES]).toEqual([...WINGMAN_STANCES]);
     // Compile-time: every table entry is a WingmanActivity.
     const acts: readonly WingmanActivity[] = FLEET_STATUS_ACTIVITIES;
-    expect(acts.length).toBe(8);
+    expect(acts.length).toBe(9); // + searching (RTS Part B slice 9)
   });
 });

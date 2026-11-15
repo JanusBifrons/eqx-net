@@ -117,6 +117,10 @@ export interface FleetCommandHooks {
    *  back through `brainOf`). The room forwards the attitude to the AI pilot
    *  brain (RTS Part B slice 6). Absent ⇒ ignored. */
   stanceSet?(shipId: string): void;
+  /** What `shipId` is doing, from the AI pilot brain that flies it (RTS
+   *  Part B slice 9: travelling, fighting, guarding, searching), for the
+   *  status stream. Null / absent ⇒ the wingman store's own activity. */
+  activityOf?(shipId: string): WingmanActivity | null;
 }
 
 /** `set_mode` parameters (the wire message's optional fields). */
@@ -879,7 +883,7 @@ export class FleetCommandSubsystem {
       s.id = e.id;
       s.mode = b.mode;
       s.stance = b.stance;
-      s.activity = b.activity;
+      s.activity = this.hooks.activityOf?.(e.id) ?? b.activity;
       s.targetId = b.targetId;
       s.order = b.order;
       s.squadId = e.squadId;

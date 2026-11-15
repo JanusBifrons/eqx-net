@@ -22,6 +22,7 @@ export const FLEET_STATUS_MODES = ['patrol', 'defend', 'hunt', 'escort', 'retrea
 export const FLEET_STATUS_STANCES = ['aggressive', 'defensive', 'holdFire'] as const;
 export const FLEET_STATUS_ACTIVITIES = [
   'idle', 'moving', 'patrolling', 'chasing', 'attacking', 'retreating', 'formingUp', 'guarding',
+  'searching',
 ] as const;
 export const FLEET_STATUS_ORDERS = ['move', 'attack', 'stop'] as const;
 /** Slot 6 (morale) is RETIRED; it still accepts the old index range so an

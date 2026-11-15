@@ -108,9 +108,47 @@ describe the wingman brain flying, read this section instead.
   on). The fleet's `noteDamage` / `recentAttackerOf` ledger is gone.
   Lock: `ownedShipsRetaliate.test.ts`, `wingmanFights.test.ts` "defensive",
   `wingmanFightsRobots.test.ts` "shield hits alone".
-- **Orders:** the facade's `orderIssued` hook forwards each ship's own order:
-  `move` → hold at the point, `stop` → hold where it is (both end a Hunt).
-  Squads reach the brain in a later slice.
+- **Orders:** the facade's `orderIssued` hook forwards each ship's own order
+  (after the group-move spread). Squads reach the brain in a later slice.
+- **Move and Retreat (slice 9):** `move` → `setTravel(x, y)`: the ship flies
+  there and does not stop to fight; it still picks a target (locks and
+  trigger follow it) and fires only at one already in its sights, never
+  turning toward it ([ai-pilots](ai-pilots.md) "Player-owned ships"). The
+  Retreat mode is the same travel to its point (else the post), then the
+  mode becomes Defend there (the old wingman rule). Decision: a retreating
+  ship also shoots what is in front of it; it never turns to fight, so the
+  retreat is not slowed. `stop` → `stopAt`: brake along the course and guard
+  the halt spot. An attack that replaces a Move holds where the hull is.
+  `applyHullMode` leaves a travelling Move alone (the mode applies when it
+  completes) and re-issues it on attach.
+  - **Completion** (`completeHullTravel`, in `tickWingmanTargets` next to the
+    slice 8 attack half): a Move whose travel ended (arrived: inside
+    `shipTuning.wingmanArrive` and below 3 % of max speed) is cleared; the
+    store's post becomes the point and `applyHullMode` resumes the mode from
+    there (Defend guards it, Hunt searches from it, Retreat carries on). A
+    Stop completes at once into Defend at the halt spot (a squad member just
+    clears it). A Retreat that arrived becomes Defend. Each sends the owner's
+    status soon.
+  - **Boost:** a leg longer than 3 guard radii (`guardRadiusMin`) asks for
+    the top speed with boost allowed; the virtual pilot's own boost gate
+    (nose on course, speed gap, the pool pays) presses it. Shorter legs fly
+    the full cruise. No reserve is kept (as the old wingman).
+  - **Holding the point:** inside `wingmanArrive` of its post a holding ship
+    only brakes (no taps onto the exact point: with the nose kept, a sideways
+    offset of a few units was never closed and the ship tapped forward and
+    back every second).
+  - **Panel activity:** `FleetCommandHooks.activityOf` → the brain's
+    `getActivity()`: travelling ⇒ moving (Retreat ⇒ retreating), a target ⇒
+    attacking / chasing (beyond fire range), Hunt with nothing found ⇒
+    searching (a new, appended activity), a post ⇒ guarding (moving while
+    outside its radius), a warp-out run ⇒ retreating, else idle. Hold fire
+    picks no target, so it reports its job; the stance control shows Hold
+    fire. The status `targetId` still comes from the wingman store (the
+    order's target).
+  - Lock: `ownedShipsMoveOrder.test.ts`, `wingmanStopSettles.test.ts`,
+    `wingmanMovesParkedHull.test.ts`, `fleetCommandMessages.test.ts`,
+    `wingmanBoost.test.ts`, `wingmanFlameIds.test.ts`,
+    `fleetStatusAfterCommand.test.ts`, `HostileDroneBehaviour.travel.test.ts`.
 - **Attack (slice 8):** `syncHullOrder` hands the wingman store's attack
   target to the brain (`setOrderedTarget`, a swarm ship by its record id)
   on the order and again from `tickWingmanTargets` (~10 Hz), so a

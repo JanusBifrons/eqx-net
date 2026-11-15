@@ -316,6 +316,10 @@ export function decodeAiInputBits(
   out.boost = (bits & AI_INPUT_BOOST) !== 0;
 }
 
+/** What an AI-flown ship is doing, in the fleet status activity words
+ *  (`IAiBehaviour.getActivity`; a subset of the wingman activity table). */
+export type AiShipActivity = 'idle' | 'moving' | 'chasing' | 'attacking' | 'retreating' | 'guarding' | 'searching';
+
 export interface IAiBehaviour {
   tick(self: AiEntity, view: AiWorldView): AiIntent;
   /**
@@ -399,6 +403,21 @@ export interface IAiBehaviour {
   /** RTS Hunt (SERVER-ONLY): no guard leash; with nothing to fight the ship
    *  searches the sector, then engages what it finds. A guard post ends it. */
   setHunt?(on: boolean): void;
+  /** RTS Move / Retreat (SERVER-ONLY, slice 9): fly to (x, y) without
+   *  turning to fight (fire only at what is already in the sights), then
+   *  guard the point. A guard post, a hunt or a stop ends it. */
+  setTravel?(x: number, y: number): void;
+  /** 0 none, 1 on the way, 2 arrived (until the next job). */
+  getTravelState?(): 0 | 1 | 2;
+  /** The guard post's centre (null with no post). SERVER-ONLY. */
+  getGuardPostX?(): number | null;
+  getGuardPostY?(): number | null;
+  /** RTS Stop (SERVER-ONLY, slice 9): brake to a halt along the course from
+   *  the given pose and guard the spot it stops on. */
+  stopAt?(x: number, y: number, vx: number, vy: number): void;
+  /** What the ship is doing, for the owner's fleet panel (SERVER-ONLY,
+   *  slice 9): one of the fleet status activities. */
+  getActivity?(): AiShipActivity;
   /**
    * Leader-led flocking (non-combat herding): assign this drone the squad
    * LEADER's course. Like `setMoveTarget` but flags it a flock leader so the

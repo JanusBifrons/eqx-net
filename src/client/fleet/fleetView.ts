@@ -43,6 +43,8 @@ export function describeActivity(row: FleetStatusRow | undefined, targetName?: s
       return 'Forming up';
     case 'guarding':
       return `Guarding${t}`;
+    case 'searching':
+      return 'Searching';
   }
 }
 

@@ -1030,22 +1030,42 @@ export class SectorRoom extends Room<SectorState> {
       return ship?.alive && this.playerToSlot.has(playerId) ? ship.shipInstanceId : null;
     },
     // RTS Part B: an owner's order reaches the AI pilot brain flying the hull.
-    // Move: fly there and hold. Stop: guard where it is (the guard leash,
+    // Move (slice 9): travel there, shooting only what is in its sights on
+    // the way, then guard the point (`completeHullTravel` completes the
+    // order). Stop: brake to a halt and guard the spot (the guard leash,
     // slice 5). Attack (slice 8): the target gets priority in the brain's
-    // pick (`syncHullOrder`); the post stays, so the ship goes back to it.
+    // pick (`syncHullOrder`); the post stays, so the ship goes back to it
+    // (an attack that replaces a Move holds where the hull is).
     orderIssued: (id, order) => {
       const brain = this.aiController.getBehaviour(id);
       if (brain === null) return;
       this.syncHullOrder(brain, order);
-      if (order.kind === 'move') this.holdHullAt(brain, order.x, order.y);
-      else if (order.kind === 'stop') {
-        const p = this.lingeringPoseCache.get(id);
-        if (p !== undefined) this.holdHullAt(brain, p.x, p.y);
+      if (order.kind === 'move') {
+        if (brain.setTravel !== undefined) brain.setTravel(order.x, order.y);
+        else this.holdHullAt(brain, order.x, order.y);
+        return;
       }
+      const p = this.lingeringPoseCache.get(id);
+      if (p === undefined) return;
+      if (order.kind === 'stop') {
+        if (brain.stopAt !== undefined) brain.stopAt(p.x, p.y, p.vx, p.vy);
+        else this.holdHullAt(brain, p.x, p.y);
+      } else if (brain.getTravelState?.() === 1) this.holdHullAt(brain, p.x, p.y);
     },
     // RTS Part B: the standing mode and the attitude reach the AI pilot brain.
     modeSet: (id) => this.applyHullMode(id),
     stanceSet: (id) => this.applyHullStance(id),
+    // RTS Part B slice 9: the panel's activity comes from the AI pilot brain
+    // (a Retreat on its way reads "retreating").
+    activityOf: (id) => {
+      const a = this.aiController.getBehaviour(id)?.getActivity?.();
+      if (a === undefined) return null;
+      if (a === 'moving') {
+        const w = this.fleet.brainOf(id);
+        if (w !== null && w.mode === 'retreat' && w.order === null) return 'retreating';
+      }
+      return a;
+    },
   });
   /** Reused `set_mode` parameters (#14; the brain copies the route). */
   private readonly fleetModeScratch: FleetModeData = {};
@@ -10599,6 +10619,37 @@ export class SectorRoom extends Room<SectorState> {
     this.hullHeldBits.set(shipInstanceId, 0);
   }
 
+  /** RTS Part B slice 9: the travel half of order completion (the attack
+   *  half is in `tickWingmanTargets`, slice 8). A Move whose travel ended
+   *  (arrived, or replaced in the brain) is done: the wingman store's post
+   *  becomes the point and the mode resumes from there (`applyHullMode`:
+   *  Defend guards it, Hunt searches from it, Retreat carries on). A Stop
+   *  is done at once: Defend the halt spot (the old wingman's rule; a squad
+   *  member just clears it). A Retreat that arrived defends its point. Each
+   *  sends the owner's status soon. */
+  private completeHullTravel(i: number, sid: string, hb: IAiBehaviour): void {
+    const fleet = this.fleet;
+    const w = fleet.brainAt(i);
+    const o = w.order;
+    const travel = hb.getTravelState!();
+    if (o !== null && o.kind === 'move') {
+      if (travel === 1) return;
+      w.clearOrder();
+      w.setGuardPost(o.x, o.y);
+      this.applyHullMode(sid);
+    } else if (o !== null && o.kind === 'stop') {
+      w.clearOrder();
+      if (w.formationLeaderId === null) {
+        const p = this.lingeringPoseCache.get(sid);
+        w.setMode('defend', hb.getGuardPostX?.() ?? p?.x ?? 0, hb.getGuardPostY?.() ?? p?.y ?? 0);
+      }
+    } else if (o === null && w.mode === 'retreat' && travel === 2) {
+      const p = this.lingeringPoseCache.get(sid);
+      w.setMode('defend', hb.getGuardPostX?.() ?? p?.x ?? 0, hb.getGuardPostY?.() ?? p?.y ?? 0);
+    } else return;
+    this.fleetStatusSoonFor(fleet.ownerAt(i));
+  }
+
   /** RTS Part B: an owned hull's brain holds at (x, y): its move target, and
    *  its guard post (the guard leash: it engages only inside the guard
    *  radius round it; a broadside capital fights from it). */
@@ -10620,20 +10671,28 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   /** RTS Part B: the wingman store's mode → the AI pilot brain flying hull
-   *  `id`. Defend guards its post (the given point, else where the hull is;
-   *  slice 5). Hunt lifts the leash and searches the sector (slice 6). The
-   *  modes not built on the brain yet (patrol, escort, retreat) hold where
-   *  the hull is, so leaving a Hunt never leaves it leashless. */
+   *  `id`. A Move order in hand owns the brain (slice 9): it travels on, and
+   *  the mode applies when the order completes. Defend guards its post (the
+   *  given point, else where the hull is; slice 5). Hunt lifts the leash and
+   *  searches the sector (slice 6). Retreat (slice 9) travels to its point
+   *  (else the post) like a Move, then defends there. The modes not built on
+   *  the brain yet (patrol, escort) hold at the post, else where the hull
+   *  is, so leaving a Hunt never leaves it leashless. */
   private applyHullMode(id: string): void {
     const brain = this.aiController.getBehaviour(id);
     const w = this.fleet.brainOf(id);
     if (brain === null || w === null) return;
+    const o = w.order;
+    if (o !== null && o.kind === 'move' && brain.setTravel !== undefined) { brain.setTravel(o.x, o.y); return; }
     if (w.mode === 'hunt') { brain.setHunt?.(true); return; }
     brain.setHunt?.(false);
     const p = this.lingeringPoseCache.get(id);
-    const x = (w.mode === 'defend' ? w.guardPostX : undefined) ?? p?.x;
-    const y = (w.mode === 'defend' ? w.guardPostY : undefined) ?? p?.y;
-    if (x !== undefined && y !== undefined) this.holdHullAt(brain, x, y);
+    const rx = w.mode === 'retreat' ? w.retreatPointX : null;
+    const x = rx ?? w.guardPostX ?? p?.x;
+    const y = (rx !== null ? w.retreatPointY : null) ?? w.guardPostY ?? p?.y;
+    if (x === undefined || y === undefined) return;
+    if (w.mode === 'retreat' && brain.setTravel !== undefined) brain.setTravel(x, y);
+    else this.holdHullAt(brain, x, y);
   }
 
   /** RTS Part B slice 6: the stance's attitude → the AI pilot brain. Aggressive
@@ -10833,15 +10892,17 @@ export class SectorRoom extends Room<SectorState> {
       // (a replaced order, a squad command, a re-keyed target).
       const w = fleet.brainAt(i);
       const o = w.order;
+      const hb = this.aiController.getBehaviour(sid);
       let ordered: string | null = null;
       if (o !== null && o.kind === 'attack') {
         if (this.entityPoseInto(o.targetId, this.wingmanTargetPose)) ordered = o.targetId;
         else {
           w.clearOrder();
+          // A Retreat carries on to its point (slice 9).
+          if (w.mode === 'retreat') this.applyHullMode(sid);
           this.fleetStatusSoonFor(fleet.ownerAt(i));
         }
-      }
-      const hb = this.aiController.getBehaviour(sid);
+      } else if (hb !== null && hb.getTravelState !== undefined) this.completeHullTravel(i, sid, hb);
       if (hb !== null) this.syncHullOrder(hb, w.order);
       // The brain's target; with none, a live ordered target keeps the locks
       // (its pilot's take-controls handshake hides it from the brain's

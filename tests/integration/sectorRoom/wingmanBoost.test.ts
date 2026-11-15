@@ -18,9 +18,13 @@ import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import type { SectorState } from '../../../src/server/rooms/schema/SectorState.js';
 import { getShipKind } from '../../../src/shared-types/shipKinds.js';
 import { BOOST_TICK_COST } from '../../../src/core/combat/Energy.js';
+import { AI_INPUT_BOOST, AI_INPUT_THRUST, type AiIntent } from '../../../src/core/contracts/IAiBehaviour.js';
 
 interface Pose { x: number; y: number; vx: number; vy: number; angle: number; angvel: number }
-interface Ctl { thrust: boolean; boost: boolean }
+/** The AI pilot brain's actuation step (private): the keys for one tick,
+ *  boost allowed by the caller's `boostOk` (arg 4) and paid from the pool. */
+type FlyFn = (self: unknown, facing: number, vx: number, vy: number, boostOk: boolean, params?: unknown) => AiIntent;
+interface FlyingBrain { fly: FlyFn; getEnergy(): number }
 
 describe('SectorRoom integration — a wingman boosts on its own energy (RTS slice 4b)', () => {
   let harness: SectorTestHarness;
@@ -33,8 +37,12 @@ describe('SectorRoom integration — a wingman boosts on its own energy (RTS sli
     if (harness) await harness.cleanup();
   }, 10_000);
 
-  // RTS Part B slice 9: a long move boosts (travel flag) on the brain's boost gate; the `postWingmanInput` spy is gone.
-  it.skip('a long move boosts past cruise, drains the hull pool, and stops boosting when it runs out', async () => {
+  // RTS Part B slice 9: the AI pilot brain flies the hull, so the spies sit on
+  // its actuation step (`fly`) instead of the retired wingman INPUT post and
+  // `canBoost` hook: the control's boost is denied at the brain's own boost
+  // allowance, and each boost is checked against the pool the brain saw when
+  // it pressed it (the pool it pays from). Same assertions, same thresholds.
+  it('a long move boosts past cruise, drains the hull pool, and stops boosting when it runs out', async () => {
     const pidA = randomUUID();
     const pidB = randomUUID();
     const clientA = await harness.connectActive(pidA, { shipKind: 'fighter', spawnX: -3000, spawnY: 600 });
@@ -58,10 +66,13 @@ describe('SectorRoom integration — a wingman boosts on its own energy (RTS sli
     expect(internals.fleet.isAttached(boosted), 'the parked hull has a wingman brain').toBe(true);
     expect(internals.fleet.isAttached(control)).toBe(true);
 
-    // The control twin never boosts: wrap the room's energy gate for it only.
-    const hooks = (internals.fleet as unknown as { hooks: { canBoost: (id: string) => boolean } }).hooks;
-    const gate = hooks.canBoost;
-    hooks.canBoost = (id) => id !== control && gate(id);
+    // The control twin never boosts: deny its brain's boost allowance only.
+    const ai = (room as unknown as { aiController: { getBehaviour(id: string): unknown } }).aiController;
+    const boostedBrain = ai.getBehaviour(boosted) as FlyingBrain;
+    const controlBrain = ai.getBehaviour(control) as FlyingBrain;
+    expect(typeof boostedBrain.fly, 'the hull is flown by the AI pilot brain').toBe('function');
+    const controlFly = controlBrain.fly.bind(controlBrain);
+    controlBrain.fly = (self, facing, vx, vy, _boostOk, params) => controlFly(self, facing, vx, vy, false, params);
 
     const ship = state.ships.get(boosted)!;
     const kind = getShipKind('fighter');
@@ -75,28 +86,28 @@ describe('SectorRoom integration — a wingman boosts on its own energy (RTS sli
     // so the leg still runs it out and the gate has to drop the boost bit.
     ship.energy = BOOST_TICK_COST * 6;
 
-    // Every boost the room posts must be affordable at that moment; count the
-    // posts where the gate dropped a held boost because the pool ran dry.
+    // Every boost the brain presses must be affordable at that moment (the
+    // pool before it pays); count the ticks where a held boost was dropped
+    // because the pool ran dry.
     let boostPosts = 0;
     let unaffordableBoostPosts = 0;
     let droppedForEnergy = 0;
     let prevBoost = false;
-    const r = room as unknown as {
-      postWingmanInput: (id: string, c: Ctl, t: number) => void;
-      readLingeringPose: (id: string, out: Pose) => boolean;
-    };
-    const orig = r.postWingmanInput.bind(room);
-    r.postWingmanInput = (id, c, t) => {
-      if (id === boosted) {
-        if (c.boost) {
-          boostPosts++;
-          if (ship.energy < BOOST_TICK_COST) unaffordableBoostPosts++;
-        } else if (prevBoost && c.thrust && ship.energy < BOOST_TICK_COST) {
-          droppedForEnergy++;
-        }
-        prevBoost = c.boost;
+    const r = room as unknown as { readLingeringPose: (id: string, out: Pose) => boolean };
+    const boostedFly = boostedBrain.fly.bind(boostedBrain);
+    boostedBrain.fly = (self, facing, vx, vy, boostOk, params) => {
+      const before = boostedBrain.getEnergy();
+      const out = boostedFly(self, facing, vx, vy, boostOk, params);
+      const boost = (out.input! & AI_INPUT_BOOST) !== 0;
+      const thrust = (out.input! & AI_INPUT_THRUST) !== 0;
+      if (boost) {
+        boostPosts++;
+        if (before < BOOST_TICK_COST) unaffordableBoostPosts++;
+      } else if (prevBoost && thrust && before < BOOST_TICK_COST) {
+        droppedForEnergy++;
       }
-      orig(id, c, t);
+      prevBoost = boost;
+      return out;
     };
 
     // The same long leg east for both.

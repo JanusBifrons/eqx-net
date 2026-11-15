@@ -28,8 +28,7 @@ describe('SectorRoom integration — wingman flame rides thrustingIds / boosting
     if (harness) await harness.cleanup();
   }, 10_000);
 
-  // RTS Part B slice 9: a long move boosts (travel flag); today a move flies at the calm cruise, never boosting.
-  it.skip('a moving hull is in thrustingIds (and boostingIds while boosting), and leaves when stopped', async () => {
+  it('a moving hull is in thrustingIds (and boostingIds while boosting), and leaves when stopped', async () => {
     const owner = randomUUID();
     const observer = randomUUID();
     const ownerClient = await harness.connectActive(owner, { shipKind: 'fighter', spawnX: -3000, spawnY: 0 });

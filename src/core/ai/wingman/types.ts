@@ -37,7 +37,9 @@ export type WingmanActivity =
   | 'attacking'
   | 'retreating'
   | 'formingUp'
-  | 'guarding';
+  | 'guarding'
+  /** Hunt with nothing found yet: flying the search (RTS Part B slice 9). */
+  | 'searching';
 
 /**
  * The player control bits, exactly what a pilot presses. Structurally the same

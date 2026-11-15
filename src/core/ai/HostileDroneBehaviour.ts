@@ -31,7 +31,7 @@ import {
   addSeparation,
   resolveFlock,
 } from './flocking.js';
-import type { AiEntityPoseOut } from '../contracts/IAiBehaviour.js';
+import type { AiEntityPoseOut, AiShipActivity } from '../contracts/IAiBehaviour.js';
 import { shipBodyMass, shipTuning } from '../../shared-types/shipScale/tuning.js';
 import { AI_INPUT_BOOST, AI_INPUT_TURN_LEFT, AI_INPUT_TURN_RIGHT } from '../contracts/IAiBehaviour.js';
 import { BOOST_TICK_COST, canAfford, regenEnergyStep, spendEnergy } from '../combat/Energy.js';
@@ -259,6 +259,18 @@ const PATROL_INWARD_GAIN = 1.0;
  *  which the drone ramps thrust down so per-kind damping brakes it to a stop
  *  (the "slow down and come to a stop in formation, don't float past" feel). */
 const MOVE_ARRIVE_SLOW_RADIUS = 300;
+/** Travel (RTS Part B slice 9, `setTravel`): a leg longer than this many
+ *  guard radii (`shipTuning.guardRadiusMin`, #18) flies at the top speed and
+ *  may boost (the old wingman's long-leg rule, 3 × its guard radius). */
+const TRAVEL_LONG_LEG_GUARD_MUL = 3;
+/** Travel is done inside `shipTuning.wingmanArrive` and slower than this
+ *  share of the max speed (nearly stopped; the old wingman's arrival rule). */
+const TRAVEL_ARRIVE_SPEED_FRAC = 0.03;
+/** Travel state (`getTravelState`): none, on the way, arrived. */
+export const TRAVEL_NONE = 0;
+export const TRAVEL_ON_THE_WAY = 1;
+export const TRAVEL_ARRIVED = 2;
+export type TravelState = typeof TRAVEL_NONE | typeof TRAVEL_ON_THE_WAY | typeof TRAVEL_ARRIVED;
 /** Hunt search (RTS Part B slice 6): the expanding-square legs are this many
  *  sighting ranges apart, so each leg's swept band (one sighting range either
  *  side of the track) overlaps the last and nothing is skipped. */
@@ -532,6 +544,19 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   /** The ledger tick the order wrote for its target (-1 = none): lifting the
    *  order forgets the mark unless the target hit this ship since. */
   private orderMarkTick = -1;
+  /** Travel (RTS Part B slice 9, `setTravel`): an owner's Move / Retreat.
+   *  On the way the ship flies to (`travelX`, `travelY`) and never turns to
+   *  fight: it still picks a target (locks, the trigger) and fires only at
+   *  one already in its sights. Arrived ⇒ it guards the point. Set / cleared
+   *  by the job setters (a guard post, a hunt, a stop). */
+  private travel: TravelState = TRAVEL_NONE;
+  private travelX = 0;
+  private travelY = 0;
+  /** Squared distance to the target picked this tick, and this ship's
+   *  position last tick (activity read-out). */
+  private _targetDist2 = 0;
+  private _lastX = 0;
+  private _lastY = 0;
   /** The search (re)starts from where the ship is on its next idle tick. */
   private searchReset = true;
   /** Current leg (0-based), its unit direction and its end point. */
@@ -951,6 +976,8 @@ export class HostileDroneBehaviour implements IAiBehaviour {
 
   tick(self: AiEntity, view: AiWorldView): AiIntent {
     this._aimValid = false;
+    this._lastX = self.x;
+    this._lastY = self.y;
     this._pilot.turn.aimCone = 0;
     // Boost energy regenerates every tick, as a pilot's pool does.
     this.energy = regenEnergyStep(this.energy, this.energyMax, this.energyRegen);
@@ -1216,6 +1243,11 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       return this.tickPatrol(self);
     }
 
+    const tdx = target.x - self.x;
+    const tdy = target.y - self.y;
+    this._targetDist2 = tdx * tdx + tdy * tdy;
+    // Travel (slice 9): keep going, shoot only what is already in the sights.
+    if (this.travel === TRAVEL_ON_THE_WAY) return this.tickTravel(self, view, target);
     // A hunter that found a fight searches again from wherever it ends.
     if (this.hunting) this.searchReset = true;
     return this.tickCombat(self, view, target);
@@ -1263,7 +1295,21 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     // (formation slot / squad destination), fly to it and slow to a stop there,
     // instead of the default origin orbit. This is how a roaming squad flies in
     // formation toward an arbitrary A→B destination.
-    if (this.moveTarget !== null) return this.tickMoveTo(self, this.moveTarget.x, this.moveTarget.y);
+    if (this.travel === TRAVEL_ON_THE_WAY) return this.tickTravel(self, null, null);
+    if (this.moveTarget !== null) {
+      // Holding a post (slice 9): inside the arrive radius of it the ship
+      // stays where it is and only brakes. With the nose kept (`tickMoveTo`
+      // close in) a few units off the exact point to the side could never be
+      // closed: it tapped forward and back across it every second.
+      const mt = this.moveTarget;
+      if (this.guardOn && mt.x === this.guardX && mt.y === this.guardY) {
+        const dx = mt.x - self.x;
+        const dy = mt.y - self.y;
+        const r = shipTuning(this.kind).wingmanArrive;
+        if (dx * dx + dy * dy <= r * r) return this.fly(self, self.angle, 0, 0, false);
+      }
+      return this.tickMoveTo(self, mt.x, mt.y);
+    }
     // Guard leash: nothing to fight ⇒ back to the post.
     if (this.guardLeash()) return this.tickMoveTo(self, this.guardX, this.guardY);
     // Hunt: nothing to fight ⇒ search the sector.
@@ -2144,8 +2190,9 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     this._pickOptsGuard.prevMaxDistance = this.guardR;
     this._pickOptsGuardRetaliate.maxDistance = this.guardR + this.fireRange;
     this._pickOptsGuardRetaliate.prevMaxDistance = this.guardR + this.fireRange;
-    // A post is a hold: it ends a hunt.
+    // A post is a hold: it ends a hunt and a travel.
     this.hunting = false;
+    this.travel = TRAVEL_NONE;
   }
 
   clearGuardPost(): void {
@@ -2241,6 +2288,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     if (on) {
       this.guardOn = false;
       this.moveTarget = null;
+      this.travel = TRAVEL_NONE;
       this.leaderId = null;
       this._flockLeaderCruise = false;
       if (!this.hunting) this.searchReset = true;
@@ -2250,6 +2298,79 @@ export class HostileDroneBehaviour implements IAiBehaviour {
 
   /** Test-visible: hunting? */
   isHunting(): boolean { return this.hunting; }
+
+  /**
+   * RTS Part B slice 9: an owner's Move (or a Retreat) to (x, y). The ship
+   * flies there at its full cruise (a long leg at its top speed, boosting
+   * while the pool pays) and does not stop to fight: it still picks a target
+   * (its locks and trigger follow it) but fires only at one already in its
+   * sights, never turning toward it or chasing. Arrived (inside
+   * `shipTuning.wingmanArrive`, nearly stopped) it guards the point
+   * (`getTravelState` ⇒ arrived). Ends a hunt and the guard post (the
+   * leash would hold it to the old post); a guard post, a hunt or a stop
+   * ends the travel. Hold fire still wins (no target, no trigger).
+   * Server-only.
+   */
+  setTravel(x: number, y: number): void {
+    this.setMoveTarget(x, y);
+    this.guardOn = false;
+    this.guardAnchorId = null;
+    this.hunting = false;
+    this.travel = TRAVEL_ON_THE_WAY;
+    this.travelX = x;
+    this.travelY = y;
+  }
+
+  /** Travel state: `TRAVEL_NONE`, `TRAVEL_ON_THE_WAY` or `TRAVEL_ARRIVED`
+   *  (stays until the next job: a guard post, a hunt, a new travel). */
+  getTravelState(): TravelState { return this.travel; }
+
+  /**
+   * RTS Part B slice 9: Stop. The ship brakes to a halt along its course and
+   * guards the spot it stops on: the post is where the pilot's brakes
+   * (reverse plus damping, this kind's handling) bring it from (vx, vy) at
+   * (x, y), so the nose stays on course and it never turns back for a point
+   * it has already passed. Ends a travel and a hunt. Server-only.
+   */
+  stopAt(x: number, y: number, vx: number, vy: number): void {
+    const v = Math.hypot(vx, vy);
+    const h = this.handling;
+    const a = h.reverseAccel * 60;
+    const k = h.linearDamping;
+    let d = 0;
+    if (v > 1e-6) {
+      if (a <= 0) d = k > 0 ? v / k : 0;
+      else if (k <= 1e-9) d = (v * v) / (2 * a);
+      else d = v / k - (a / (k * k)) * Math.log(1 + (k * v) / a);
+    }
+    const px = v > 1e-6 ? x + (vx / v) * d : x;
+    const py = v > 1e-6 ? y + (vy / v) * d : y;
+    this.setMoveTarget(px, py);
+    this.setGuardPost(px, py, 0);
+  }
+
+  /**
+   * What the ship is doing, for the owner's fleet panel (RTS Part B slice 9),
+   * from this brain's own state: travelling ⇒ `moving`; fighting ⇒
+   * `chasing` (target beyond its fire range) or `attacking`; hunting with
+   * nothing found ⇒ `searching`; a post ⇒ `guarding` (`moving` while
+   * flying back to it); a warp-out run ⇒ `retreating`; else `idle`.
+   * Hold fire picks no target, so it reports the job it flies.
+   */
+  getActivity(): AiShipActivity {
+    if (this._leavingUntil >= 0) return 'retreating';
+    if (this.travel === TRAVEL_ON_THE_WAY) return 'moving';
+    if (this.prevTargetId !== null) {
+      return this._targetDist2 > this.fireRange * this.fireRange ? 'chasing' : 'attacking';
+    }
+    if (this.hunting) return 'searching';
+    if (this.guardOn) {
+      const dx = this._lastX - this.guardX;
+      const dy = this._lastY - this.guardY;
+      return dx * dx + dy * dy > this.guardR * this.guardR ? 'moving' : 'guarding';
+    }
+    return 'idle';
+  }
 
   /**
    * Hunt search: an expanding square (the standard search pattern) round
@@ -2361,10 +2482,12 @@ export class HostileDroneBehaviour implements IAiBehaviour {
 
   /** Fly to (tx, ty) and stop there: face the slot and ask the pilot for a
    *  speed it can still brake from (the arrive ramp), capped at the calm
-   *  cruise. At the slot the wanted velocity is zero and the nose stays put, so
-   *  the pilot brakes to a stop with reverse instead of turning around.
+   *  cruise (or `cruiseCap`: an owner's Move flies at the full cruise, a
+   *  long leg at the top speed with `boostOk`, `tickTravel`). At the slot
+   *  the wanted velocity is zero and the nose stays put, so the pilot brakes
+   *  to a stop with reverse instead of turning around.
    */
-  private tickMoveTo(self: AiEntity, tx: number, ty: number): AiIntent {
+  private tickMoveTo(self: AiEntity, tx: number, ty: number, cruiseCap = -1, boostOk = false): AiIntent {
     const steer = arrive(self.x, self.y, tx, ty, MOVE_ARRIVE_SLOW_RADIUS, this._steerScratch);
     // Arrived: inside the distance one tap of thrust carries this hull before
     // damping stops it (live thrust per tick / damping), any press can only
@@ -2375,12 +2498,94 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     if (steer.thrustScale <= 0 || steer.dist <= tapCoast) return this.fly(self, self.angle, 0, 0, false);
     // A flock leader cruises SLOWER than its full-cruise followers so they
     // tighten into the herd around it (the "make the leader wait" lever).
-    const cruise = this.handling.cruiseSpeed * CALM_CRUISE_FRAC * (this._flockLeaderCruise ? LEADER_CRUISE_THROTTLE : 1);
+    const cruise = cruiseCap >= 0
+      ? cruiseCap
+      : this.handling.cruiseSpeed * CALM_CRUISE_FRAC * (this._flockLeaderCruise ? LEADER_CRUISE_THROTTLE : 1);
     const speed = Math.min(cruise, brakingSpeed(this.handling, steer.dist));
     // Close in: keep the nose where it is and just brake (no turn-around for
     // an overshoot of a few lengths).
     const facing = steer.dist > shipTuning(this.kind).flockFollow ? facingOf(steer.dirX, steer.dirY) : self.angle;
-    return this.fly(self, facing, steer.dirX * speed, steer.dirY * speed, false);
+    return this.fly(self, facing, steer.dirX * speed, steer.dirY * speed, boostOk);
+  }
+
+  /**
+   * Travel (RTS Part B slice 9, `setTravel`): fly the leg and arrive. The
+   * full cruise; a leg longer than `TRAVEL_LONG_LEG_GUARD_MUL` guard radii
+   * asks for the top speed and lets the pilot boost (its own gate: nose on
+   * course, a real speed gap, the pool pays), the old wingman's long-leg
+   * rule. Arrived (inside `wingmanArrive`, nearly stopped) ⇒ it guards the
+   * point. `target` (picked this tick, or null): fired at only when it is
+   * already in the sights; the ship never turns toward it.
+   */
+  private tickTravel(self: AiEntity, view: AiWorldView | null, target: MountTargetView | null): AiIntent {
+    const x = this.travelX;
+    const y = this.travelY;
+    const t = shipTuning(this.kind);
+    const h = this.handling;
+    const dx = x - self.x;
+    const dy = y - self.y;
+    const d2 = dx * dx + dy * dy;
+    if (d2 <= t.wingmanArrive * t.wingmanArrive
+      && Math.hypot(self.vx, self.vy) <= h.maxSpeed * TRAVEL_ARRIVE_SPEED_FRAC) {
+      // Arrived: guard the point (the post ends the travel).
+      this.setGuardPost(x, y, 0);
+      this.travel = TRAVEL_ARRIVED;
+      return this.tickMoveTo(self, x, y);
+    }
+    const long = d2 > (TRAVEL_LONG_LEG_GUARD_MUL * t.guardRadiusMin) ** 2;
+    const intent = this.tickMoveTo(self, x, y, long ? h.maxSpeed : h.cruiseSpeed, long);
+    if (target !== null && view !== null) this.fireOnTheWay(self, view, target, intent);
+    return intent;
+  }
+
+  /**
+   * Travel's trigger: hold it at `target` only while the nose (or a turret's
+   * arc) already covers the lead point and it is in range, by the same aim
+   * rules as `tickCombat`'s fire gate (the hull cone for fixed guns, the
+   * turret half-arc added for turret kinds). Never steers. A charge weapon
+   * has no line to hold here (an owned hull's player pipeline has no
+   * wind-up), so the charge rule does not apply.
+   */
+  private fireOnTheWay(self: AiEntity, view: AiWorldView, target: MountTargetView, intent: AiIntent): void {
+    if (this.broadside) return;
+    const rawDx = target.x - self.x;
+    const rawDy = target.y - self.y;
+    const dist = Math.hypot(rawDx, rawDy);
+    if (dist < 1e-3) return;
+    let rangeDist = dist;
+    if (target.kindId != null) {
+      const far = dist - shipHitBound(target.kindId);
+      rangeDist = far > this.fireRange
+        ? far
+        : shipHullDistance(target.kindId, target.shieldUp === true, self.x, self.y, target.x, target.y, target.angle ?? 0);
+    }
+    if (rangeDist > this.fireRange) return;
+    const lead = dist / this.leadMuzzleSpeed;
+    const aimX = target.x + (target.vx - self.vx) * lead;
+    const aimY = target.y + (target.vy - self.vy) * lead;
+    const aimDx = aimX - self.x;
+    const aimDy = aimY - self.y;
+    const aimLen = Math.hypot(aimDx, aimDy);
+    view.aims?.write(self.id, aimX, aimY, view.tick);
+    const hullCone = hullFireCone(((target as { hitRadius?: number }).hitRadius ?? DEFAULT_AIM_RADIUS) + this.shotRadius, aimLen);
+    const tolerance = this.maxTurretHalfArc > 0
+      ? (rangeDist < this.fireRange * POINT_BLANK_RATIO ? DRONE_AIM_TOLERANCE_CLOSE : DRONE_AIM_TOLERANCE) + this.maxTurretHalfArc
+      : hullCone;
+    if (Math.abs(wrapAngle(facingOf(aimDx, aimDy) - self.angle)) > tolerance) return;
+    this._aimValid = true;
+    this._aimX = aimX;
+    this._aimY = aimY;
+    const f = this._fireScratch;
+    if (aimLen > 1e-6) {
+      f.dirX = aimDx / aimLen;
+      f.dirY = aimDy / aimLen;
+    } else {
+      f.dirX = -Math.sin(self.angle);
+      f.dirY = Math.cos(self.angle);
+    }
+    f.targetId = target.id;
+    f.cone = hullCone;
+    intent.fire = f;
   }
 
   /**

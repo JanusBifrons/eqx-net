@@ -33,8 +33,10 @@ describe('SectorRoom integration — a wingman flies the parked hull (RTS slice 
     if (harness) await harness.cleanup();
   }, 10_000);
 
-  // RTS Part B slice 9: move order completion on the AI pilot brain; the wingman INPUT spy (`postWingmanInput`) is gone (keys go through `postHullInput`).
-  it.skip('a move order flies the parked hull to the point; pilot_ship takes it back from the brain', async () => {
+  // RTS Part B slice 9: the hull's keys go through `postHullInput` (the AI
+  // pilot brain's one hull branch), so the "no input after reclaim" spy sits
+  // there instead of the retired wingman INPUT post.
+  it('a move order flies the parked hull to the point; pilot_ship takes it back from the brain', async () => {
     const pid = randomUUID();
     const client = await harness.connectActive(pid, { shipKind: 'fighter', spawnX: 0, spawnY: 0 });
     const room = harness.getServerRoom()!;
@@ -88,11 +90,11 @@ describe('SectorRoom integration — a wingman flies the parked hull (RTS slice 
     expect(miss, `hull stopped ${miss.toFixed(1)} u from the target (arrive radius ${arriveRadius})`)
       .toBeLessThanOrEqual(arriveRadius);
 
-    // Count wingman inputs for this hull from here on.
+    // Count AI pilot inputs for this hull from here on.
     let wingmanInputs = 0;
-    const r = room as unknown as { postWingmanInput: (id: string, c: unknown, t: number) => void };
-    const orig = r.postWingmanInput.bind(room);
-    r.postWingmanInput = (id, c, t) => { if (id === shipId) wingmanInputs++; orig(id, c, t); };
+    const r = room as unknown as { postHullInput: (id: string, bits: number) => void };
+    const orig = r.postHullInput.bind(room);
+    r.postHullInput = (id, bits) => { if (id === shipId) wingmanInputs++; orig(id, bits); };
 
     // Reclaim: the owner takes the helm back.
     client.send('pilot_ship', { type: 'pilot_ship', shipId });
