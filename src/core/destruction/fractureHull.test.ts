@@ -15,6 +15,8 @@ import {
   FRACTURE_MAX_PIECES,
   FRACTURE_SNAP_CHANCE,
   FRACTURE_QUANTUM,
+  EDGE_CUT,
+  EDGE_HULL,
   type FractureInput,
   type FracturePiece,
 } from './fractureHull.js';
@@ -597,6 +599,37 @@ describe('fractureHull', () => {
         extraChunkChance: sub.extraChunkChance, jag: sub.jag,
       }, 1.5),
     }).toEqual(GOLDEN_CUT);
+  });
+
+  it('cutEdges carries the edge kind: EDGE_CUT marks a slice line and the channel walls, never a kill without a cut', () => {
+    const bs = hull('battleship');
+    const side = projectToOutline(bs, { x: 1e5, y: 0 });
+    const base: FractureInput = {
+      hull: bs, seed: 20261115, killPoint: side, maxPieces: FRACTURE_MAX_PIECES, killBlowDamage: 0.8, recentDamageRate: 0.6,
+    };
+    const kinds = (pieces: FracturePiece[]): Set<number> => new Set(pieces.flatMap((p) => p.cutEdges));
+    const plain = fractureHull(base);
+    expect(kinds(plain).has(EDGE_CUT)).toBe(false);
+    expect(kinds(plain).has(EDGE_HULL)).toBe(true);
+    for (const kind of ['slice', 'channel'] as const) {
+      const pieces = fractureHull({ ...base, cut: { kind, dirX: -1, dirY: 0.1, width: 120 } });
+      const ks = kinds(pieces);
+      expect(ks.has(EDGE_CUT), kind).toBe(true);
+      // Every kind is an EDGE_* number; hull edges stay EDGE_HULL (falsy).
+      for (const k of ks) expect(Number.isInteger(k) && k >= EDGE_HULL && k <= EDGE_CUT).toBe(true);
+      // The kill-cut edges are straight: each EDGE_CUT edge lies on the cut's
+      // line (slice) or one of the two walls (channel), i.e. parallel to it.
+      for (const p of pieces) {
+        for (let i = 0; i < p.outline.length; i++) {
+          if (p.cutEdges[i] !== EDGE_CUT) continue;
+          const a = p.outline[i]!, b = p.outline[(i + 1) % p.outline.length]!;
+          const len = Math.hypot(b.x - a.x, b.y - a.y);
+          if (len < 1) continue;
+          const cross = Math.abs(((b.x - a.x) * 0.1 - (b.y - a.y) * -1) / (len * Math.hypot(1, 0.1)));
+          expect(cross, `${kind} EDGE_CUT edge off the cut direction`).toBeLessThan(0.02);
+        }
+      }
+    }
   });
 
   it.runIf(!!process.env.EQX_FRACTURE_SVG)('prints review SVGs (kill points on the hull edge)', async () => {

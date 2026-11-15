@@ -18,7 +18,7 @@ import { WreckGeometryStore, rebuildWreckPieces } from '../../net/wreckGeometryS
 import {
   WreckArtState, WreckPieceSprite, WRECK_DISPLAY_OBJECTS_PER_PIECE_MAX, WRECK_RIPPLE_MAX, WRECK_BLAST_MAIN,
   WRECK_RIPPLE_R_MIN, WRECK_RIPPLE_R_MAX, WRECK_CRACK_FRONT_MS, WRECK_GLOW_END_S, wreckGlowTexture,
-  WRECK_BLAST_REACH, WRECK_RIPPLE_GAP_MS, wreckGlowAt, type WreckGlow,
+  WRECK_BLAST_REACH, WRECK_RIPPLE_GAP_MS, wreckGlowAt, type WreckGlow, WRECK_GLOW_TEX_ROWS,
   WRECK_BLAST_LINGER, wreckBlasts, type WreckBlast, wreckPieceFarLod,
 } from './wreckArt.js';
 import { FxExplosions } from '../art/fx/FxExplosions.js';
@@ -925,11 +925,14 @@ describe('updateSwarmSprites — the filmed v7 break-up (heavy cruiser, 16" salv
     // Thin: the wide soft halo is gone once the edge is no longer glowing
     // (only the core stays as the scorch).
     const data = (wreckGlowTexture().source as unknown as { resource: Uint8Array }).resource;
-    const W = data.length / 8;
-    for (let i = 0; i < W; i++) {
-      const ageS = (i / (W - 1)) * WRECK_GLOW_END_S;
-      if (ageS < 2.2) continue;
-      expect(data[(W + i) * 4 + 3], `${ageS.toFixed(2)} s: no halo on a cooled edge`).toBe(0);
+    // Per tint: a core row then a halo row (a kill cut cools like a crack).
+    const W = data.length / (4 * WRECK_GLOW_TEX_ROWS);
+    for (let row = 1; row < WRECK_GLOW_TEX_ROWS; row += 2) {
+      for (let i = 0; i < W; i++) {
+        const ageS = (i / (W - 1)) * WRECK_GLOW_END_S;
+        if (ageS < 2.2) continue;
+        expect(data[(row * W + i) * 4 + 3], `row ${row}, ${ageS.toFixed(2)} s: no halo on a cooled edge`).toBe(0);
+      }
     }
   });
 

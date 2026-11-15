@@ -55,6 +55,8 @@ import { isIconOnly } from './FarZoomIcons.js';
 import { getShipKind, isShipKindId } from '../../../shared-types/shipKinds.js';
 import { shipShapeScale } from '../../../core/geometry/shipHullOutline.js';
 import type { WreckPieceGeometry } from '../../../core/destruction/wreckPieces.js';
+import { EDGE_CUT } from '../../../core/destruction/fractureHull.js';
+import { HEAVY_BEAM_COLOR } from '../beamStyles.js';
 import type { WreckDescriptor } from '../../../shared-types/messages/snapshotMessages.js';
 import { destructionProfileOf } from '../../../shared-types/shipScale/destructionProfile.js';
 import type { DestructionFx, DestructionProfileId, WreckGlowStyle } from '../../../shared-types/shipScale/destruction.js';
@@ -161,16 +163,69 @@ function lerpColor(a: number, b: number, t: number): number {
   return (Math.round(r) << 16) | (Math.round(g) << 8) | Math.round(bl);
 }
 
-/** The cut-edge glow `ageS` seconds after death (pure, alloc-free). */
-export function wreckGlowAt(ageS: number, out: WreckGlow): WreckGlow {
+// ── Glow tints: a weapon's kill cut burns in its own colour ──────────────
+
+/** A crack (every cut but a weapon's kill cut): the molten curve as is. */
+export const GLOW_TINT_CRACK = 0;
+/** The heavy beam's slice line (`EDGE_CUT` on a `slice` kill): the beam's
+ *  violet where it burned through, then the same ember and scorch. */
+export const GLOW_TINT_SLICE = 1;
+/** The railgun's channel walls (`EDGE_CUT` on a `channel` kill): white-hot
+ *  metal where the slug punched through, then the same ember and scorch. */
+export const GLOW_TINT_CHANNEL = 2;
+/** Tints baked into the glow textures (one row block each). */
+export const WRECK_GLOW_TINTS = 3;
+/** Each tint's colour at the instant of the cut, and the colour it holds
+ *  while hot. The slice starts as the beam's own pale core and settles to
+ *  the beam colour; the channel is white-hot throughout. */
+const TINT_C0: readonly number[] = [0, lerpColor(0xffffff, HEAVY_BEAM_COLOR, 0.45), 0xffffff];
+const TINT_C1: readonly number[] = [0, HEAVY_BEAM_COLOR, 0xf4f2ff];
+/** Full glow: the tint goes from C0 to C1 by this age (s), holds to
+ *  `TINT_HOLD_S` (the end of the molten-orange stage), then blends into the
+ *  base curve, which it reaches at the ember (`WRECK_GLOW_EMBER_S`): a cut
+ *  kill cools exactly like any other crack from there on. */
+const TINT_HOT_S = 0.12;
+const TINT_HOLD_S = 0.6;
+/** The simple (sub-capital) glow: the same, over its life fraction (held to
+ *  the end of its orange stage, gone by the end of its red stage). */
+const SIMPLE_TINT_HOT = 0.1;
+const SIMPLE_TINT_HOLD = 0.3;
+const SIMPLE_TINT_GONE = 0.7;
+
+/** The glow tint of an edge: `EDGE_CUT` edges of a cut kill take the
+ *  weapon's tint; every other edge (and any edge of a kill without a cut)
+ *  keeps the crack curve. Pure. */
+export function glowTintOf(edgeKind: number | undefined, cutKind: 'slice' | 'channel' | undefined): number {
+  if (edgeKind !== EDGE_CUT || cutKind === undefined) return GLOW_TINT_CRACK;
+  return cutKind === 'slice' ? GLOW_TINT_SLICE : GLOW_TINT_CHANNEL;
+}
+
+/** Blend `out.color` toward `tint`'s colour (C0 → C1 by `hot`, 0..1) by
+ *  `heat` (1 = all tint, 0 = the base curve). */
+function applyTint(out: WreckGlow, tint: number, hot: number, heat: number): void {
+  if (tint === GLOW_TINT_CRACK || !(heat > 0)) return;
+  const c = lerpColor(TINT_C0[tint]!, TINT_C1[tint]!, Math.min(1, Math.max(0, hot)));
+  out.color = lerpColor(out.color, c, Math.min(1, heat));
+}
+
+/** The cut-edge glow `ageS` seconds after death (pure, alloc-free). `tint`
+ *  (`glowTintOf`) colours a weapon's kill cut while it is hot; it cools
+ *  through the same ember and scorch, and alpha never changes with it. */
+export function wreckGlowAt(ageS: number, out: WreckGlow, tint = GLOW_TINT_CRACK): WreckGlow {
   const last = GLOW_T.length - 1;
   if (!(ageS < GLOW_T[last]!)) { out.color = GLOW_C[last]!; out.alpha = 0; return out; }
-  if (ageS <= 0) { out.color = GLOW_C[0]!; out.alpha = GLOW_A[0]!; return out; }
+  if (ageS <= 0) {
+    out.color = GLOW_C[0]!; out.alpha = GLOW_A[0]!;
+    applyTint(out, tint, 0, 1);
+    return out;
+  }
   let i = 0;
   while (ageS > GLOW_T[i + 1]!) i++;
   const t = (ageS - GLOW_T[i]!) / (GLOW_T[i + 1]! - GLOW_T[i]!);
   out.color = lerpColor(GLOW_C[i]!, GLOW_C[i + 1]!, t);
   out.alpha = GLOW_A[i]! + (GLOW_A[i + 1]! - GLOW_A[i]!) * t;
+  const heat = ageS <= TINT_HOLD_S ? 1 : (WRECK_GLOW_EMBER_S - ageS) / (WRECK_GLOW_EMBER_S - TINT_HOLD_S);
+  applyTint(out, tint, ageS / TINT_HOT_S, heat);
   return out;
 }
 
@@ -178,9 +233,13 @@ export function wreckGlowAt(ageS: number, out: WreckGlow): WreckGlow {
 
 /** Texels along the glow curve (U = age / WRECK_GLOW_END_S). */
 const GLOW_TEX_W = 128;
-/** Row centres: the bright core, the soft halo (alpha × 0.3). */
-const V_CORE = 0.25;
-const V_HALO = 0.75;
+/** Rows of the glow texture: per tint, the bright core then its soft halo
+ *  (alpha × 0.3). */
+export const WRECK_GLOW_TEX_ROWS = WRECK_GLOW_TINTS * 2;
+/** V of a row centre: `tint`'s core, or its halo. Pure. */
+export function glowV(tint: number, halo: boolean): number {
+  return (tint * 2 + (halo ? 1 : 0) + 0.5) / WRECK_GLOW_TEX_ROWS;
+}
 /** U of the last texel: dark (an unlit or cooled segment). */
 const U_DARK = (GLOW_TEX_W - 0.5) / GLOW_TEX_W;
 /** U of the first texel: white-hot (the crack front itself). */
@@ -188,26 +247,30 @@ const U_HOT = 0.5 / GLOW_TEX_W;
 
 let _glowTex: Texture | null = null;
 
-/** The glow curve baked into a 64×2 texture (row 0 core, row 1 halo), so a
- *  segment's colour and alpha follow from its U alone. Made once. */
+/** The glow curve baked into a GLOW_TEX_W × `WRECK_GLOW_TEX_ROWS` texture
+ *  (per tint: a core row, a halo row), so a segment's colour and alpha
+ *  follow from its U alone and its tint from its V: every tint stays in the
+ *  piece's ONE glow mesh. Made once. */
 export function wreckGlowTexture(): Texture {
   if (_glowTex !== null) return _glowTex;
-  const data = new Uint8Array(GLOW_TEX_W * 2 * 4);
+  const data = new Uint8Array(GLOW_TEX_W * WRECK_GLOW_TEX_ROWS * 4);
   const g: WreckGlow = { color: 0, alpha: 0 };
   for (let i = 0; i < GLOW_TEX_W; i++) {
     const ageS = (i / (GLOW_TEX_W - 1)) * WRECK_GLOW_END_S;
-    wreckGlowAt(ageS, g);
     const halo = 0.3 * Math.max(0, Math.min(1, (HALO_GONE_S - ageS) / (HALO_GONE_S - HALO_FADE_FROM_S)));
-    for (let row = 0; row < 2; row++) {
-      const o = (row * GLOW_TEX_W + i) * 4;
-      data[o] = (g.color >> 16) & 255;
-      data[o + 1] = (g.color >> 8) & 255;
-      data[o + 2] = g.color & 255;
-      data[o + 3] = Math.round(255 * g.alpha * (row === 0 ? 1 : halo));
+    for (let tint = 0; tint < WRECK_GLOW_TINTS; tint++) {
+      wreckGlowAt(ageS, g, tint);
+      for (let h = 0; h < 2; h++) {
+        const o = ((tint * 2 + h) * GLOW_TEX_W + i) * 4;
+        data[o] = (g.color >> 16) & 255;
+        data[o + 1] = (g.color >> 8) & 255;
+        data[o + 2] = g.color & 255;
+        data[o + 3] = Math.round(255 * g.alpha * (h === 0 ? 1 : halo));
+      }
     }
   }
   _glowTex = new Texture({ source: new BufferImageSource({
-    resource: data, width: GLOW_TEX_W, height: 2, alphaMode: 'premultiply-alpha-on-upload', scaleMode: 'linear',
+    resource: data, width: GLOW_TEX_W, height: WRECK_GLOW_TEX_ROWS, alphaMode: 'premultiply-alpha-on-upload', scaleMode: 'linear',
   }) });
   return _glowTex;
 }
@@ -233,39 +296,53 @@ const SIMPLE_T = [0, 0.3, 0.55, 0.7, 1];
 const SIMPLE_C = [0xff8a2a, 0xff7a20, 0xe8200c, 0xb01808, 0x300804];
 const SIMPLE_A = [1, 1, 0.9, 0.7, 0];
 
-/** The simple glow at `frac` of its life (pure, alloc-free). */
-export function simpleGlowAt(frac: number, out: WreckGlow): WreckGlow {
+/** The simple glow at `frac` of its life (pure, alloc-free); `tint` as in
+ *  `wreckGlowAt`, over the simple curve's orange and red stages. */
+export function simpleGlowAt(frac: number, out: WreckGlow, tint = GLOW_TINT_CRACK): WreckGlow {
   const last = SIMPLE_T.length - 1;
   if (!(frac < 1)) { out.color = SIMPLE_C[last]!; out.alpha = 0; return out; }
-  if (!(frac > 0)) { out.color = SIMPLE_C[0]!; out.alpha = SIMPLE_A[0]!; return out; }
+  if (!(frac > 0)) {
+    out.color = SIMPLE_C[0]!; out.alpha = SIMPLE_A[0]!;
+    applyTint(out, tint, 0, 1);
+    return out;
+  }
   let i = 0;
   while (frac > SIMPLE_T[i + 1]!) i++;
   const t = (frac - SIMPLE_T[i]!) / (SIMPLE_T[i + 1]! - SIMPLE_T[i]!);
   out.color = lerpColor(SIMPLE_C[i]!, SIMPLE_C[i + 1]!, t);
   out.alpha = SIMPLE_A[i]! + (SIMPLE_A[i + 1]! - SIMPLE_A[i]!) * t;
+  const heat = frac <= SIMPLE_TINT_HOLD ? 1 : (SIMPLE_TINT_GONE - frac) / (SIMPLE_TINT_GONE - SIMPLE_TINT_HOLD);
+  applyTint(out, tint, frac / SIMPLE_TINT_HOT, heat);
   return out;
 }
 
 let _simpleGlowTex: Texture | null = null;
 
-/** The simple glow's curve baked into a GLOW_TEX_W×1 texture (U = life
- *  fraction). Made once. */
+/** The simple glow's curve baked into a GLOW_TEX_W × `WRECK_GLOW_TINTS`
+ *  texture (U = life fraction, one row per tint). Made once. */
 export function wreckSimpleGlowTexture(): Texture {
   if (_simpleGlowTex !== null) return _simpleGlowTex;
-  const data = new Uint8Array(GLOW_TEX_W * 4);
+  const data = new Uint8Array(GLOW_TEX_W * WRECK_GLOW_TINTS * 4);
   const g: WreckGlow = { color: 0, alpha: 0 };
-  for (let i = 0; i < GLOW_TEX_W; i++) {
-    simpleGlowAt(i / (GLOW_TEX_W - 1), g);
-    const o = i * 4;
-    data[o] = (g.color >> 16) & 255;
-    data[o + 1] = (g.color >> 8) & 255;
-    data[o + 2] = g.color & 255;
-    data[o + 3] = Math.round(255 * g.alpha);
+  for (let tint = 0; tint < WRECK_GLOW_TINTS; tint++) {
+    for (let i = 0; i < GLOW_TEX_W; i++) {
+      simpleGlowAt(i / (GLOW_TEX_W - 1), g, tint);
+      const o = (tint * GLOW_TEX_W + i) * 4;
+      data[o] = (g.color >> 16) & 255;
+      data[o + 1] = (g.color >> 8) & 255;
+      data[o + 2] = g.color & 255;
+      data[o + 3] = Math.round(255 * g.alpha);
+    }
   }
   _simpleGlowTex = new Texture({ source: new BufferImageSource({
-    resource: data, width: GLOW_TEX_W, height: 1, alphaMode: 'premultiply-alpha-on-upload', scaleMode: 'linear',
+    resource: data, width: GLOW_TEX_W, height: WRECK_GLOW_TINTS, alphaMode: 'premultiply-alpha-on-upload', scaleMode: 'linear',
   }) });
   return _simpleGlowTex;
+}
+
+/** V of `tint`'s row on the simple glow texture. Pure. */
+export function simpleGlowV(tint: number): number {
+  return (tint + 0.5) / WRECK_GLOW_TINTS;
 }
 
 /** U on the simple glow texture at `frac` of its life (clamped). */
@@ -372,7 +449,7 @@ export function crackIntervals(pieces: readonly WreckPieceGeometry[], kill: CutF
 
 /** Runs of consecutive cut edges as `[start, length]` (edge i runs outline[i]
  *  → outline[i+1]); a run wrapping past the end is one run. */
-export function cutEdgeRuns(cutEdges: readonly boolean[]): Array<[number, number]> {
+export function cutEdgeRuns(cutEdges: readonly (boolean | number)[]): Array<[number, number]> {
   const n = cutEdges.length;
   const out: Array<[number, number]> = [];
   let any = false;
@@ -1046,6 +1123,8 @@ export class WreckPieceSprite extends Container {
   /** Per cut segment (`SEG_STRIDE` floats) and outline edge → segment. */
   private seg = new Float64Array(0);
   private edgeSeg = new Int32Array(0);
+  /** Each segment's glow tint (`glowTintOf`: a kill cut burns in the weapon's colour). */
+  private segTint = new Uint8Array(0);
   private segN = 0;
   private halfCore = 0;
   private halfHalo = 0;
@@ -1170,6 +1249,8 @@ export class WreckPieceSprite extends Container {
     if (S === 0) return;
     this.edgeSeg = new Int32Array(n).fill(-1);
     this.seg = new Float64Array(S * SEG_STRIDE);
+    this.segTint = new Uint8Array(S);
+    const cutKind = info.desc.cutKind;
     // Widths follow the wreck's size (#18), so the cracks read at capital zoom.
     const core = Math.min(120, Math.max(4, info.hullR * GLOW_CORE_R));
     this.halfCore = core / 2;
@@ -1214,6 +1295,7 @@ export class WreckPieceSprite extends Container {
       }
       if (!stripInside(o, nx, ny, fx, fy, mx, my, s[q + 12]!, s[q + 13]!)) { s[q + 12] = 0; s[q + 13] = 0; }
       this.glowEndMs = Math.max(this.glowEndMs, s[q + 9]! + WRECK_GLOW_END_S * 1000);
+      this.segTint[k] = glowTintOf(piece.cutEdges[edge], cutKind);
       this.edgeSeg[edge] = k++;
     });
     this.segN = S;
@@ -1229,7 +1311,8 @@ export class WreckPieceSprite extends Container {
       indices[ii] = v0; indices[ii + 1] = v0 + 1; indices[ii + 2] = v0 + 2;
       indices[ii + 3] = v0; indices[ii + 4] = v0 + 2; indices[ii + 5] = v0 + 3;
       const block = Math.floor(j / S);
-      const v = block === 1 || block === 3 ? V_CORE : V_HALO;
+      // Its tint's row (one mesh whatever the tints): core or halo.
+      const v = glowV(this.segTint[j % S]!, !(block === 1 || block === 3));
       for (let c = 0; c < 4; c++) { uvs[(v0 + c) * 2] = block >= 2 ? U_HOT : U_DARK; uvs[(v0 + c) * 2 + 1] = v; }
     }
     const geometry = new MeshGeometry({ positions, uvs, indices });
@@ -1262,7 +1345,8 @@ export class WreckPieceSprite extends Container {
       const v0 = k * 4, ii = k * 6, q = k * SEG_STRIDE;
       indices[ii] = v0; indices[ii + 1] = v0 + 1; indices[ii + 2] = v0 + 2;
       indices[ii + 3] = v0; indices[ii + 4] = v0 + 2; indices[ii + 5] = v0 + 3;
-      for (let c = 0; c < 4; c++) { uvs[(v0 + c) * 2] = u0; uvs[(v0 + c) * 2 + 1] = 0.5; }
+      const v = simpleGlowV(this.segTint[k]!);
+      for (let c = 0; c < 4; c++) { uvs[(v0 + c) * 2] = u0; uvs[(v0 + c) * 2 + 1] = v; }
       const mx = s[q + 10]!, my = s[q + 11]!;
       writeStrip(
         positions, v0,
@@ -1513,8 +1597,9 @@ export class WreckPieceSprite extends Container {
   /** The glow's colour at the last update (the simple glow's curve; the full
    *  glow's at its first segment's age). Tests/diagnostics. */
   glowColor(): number {
-    if (this.simple) return simpleGlowAt(this.lastT / this.glowEndMs, _glow).color;
-    return wreckGlowAt((this.lastT - (this.seg[6] ?? 0)) / 1000, _glow).color;
+    const tint = this.segTint[0] ?? GLOW_TINT_CRACK;
+    if (this.simple) return simpleGlowAt(this.lastT / this.glowEndMs, _glow, tint).color;
+    return wreckGlowAt((this.lastT - (this.seg[6] ?? 0)) / 1000, _glow, tint).color;
   }
 
   /** Cut segments the glow covers (0 once cool). Tests/diagnostics. */
@@ -1554,6 +1639,23 @@ export class WreckPieceSprite extends Container {
     const q = k * SEG_STRIDE;
     if (crackFrontAt(this.info, this.lastT, this.info.noHold) < this.seg[q + 4]!) return 0;
     return wreckGlowAt((this.lastT - this.seg[q + 6]!) / 1000, _glow).alpha;
+  }
+
+  /** Outline edge `i`'s glow tint (`GLOW_TINT_*`; -1 for an edge with no
+   *  glow segment). Tests/diagnostics. */
+  edgeTint(i: number): number {
+    const k = this.glow === null ? -1 : (this.edgeSeg[i] ?? -1);
+    return k < 0 ? -1 : this.segTint[k]!;
+  }
+
+  /** Outline edge `i`'s glow colour at the last update (-1 for an edge with
+   *  no glow segment). Tests/diagnostics. */
+  edgeColor(i: number): number {
+    const k = this.glow === null ? -1 : (this.edgeSeg[i] ?? -1);
+    if (k < 0) return -1;
+    const tint = this.segTint[k]!;
+    if (this.simple) return simpleGlowAt(this.lastT / this.glowEndMs, _glow, tint).color;
+    return wreckGlowAt((this.lastT - this.seg[k * SEG_STRIDE + 6]!) / 1000, _glow, tint).color;
   }
 
   /** The glow mesh's vertex positions (body-local, Pixi-down; null once
