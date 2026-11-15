@@ -6,7 +6,8 @@
  * snapshot's start tick (a late joiner sees the true progress, #16/#20).
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { buildChargeTelegraph, chargeGlowLevel, chargeTelegraphStyle, updateChargeTelegraph } from './chargeTelegraph.js';
+import { buildChargeTelegraph, chargeGlowLevel, chargeTelegraphStyle, updateChargeTelegraph, CHARGE_HOLD_MAX_MS } from './chargeTelegraph.js';
+import { DISPLAY_DELAY_MS } from '../../net/swarmInterpolation.js';
 import { getWeapon, type WeaponDef } from '../../../core/combat/WeaponCatalogue.js';
 import { getShipKind } from '../../../shared-types/shipKinds.js';
 
@@ -74,8 +75,11 @@ describe('mount-glow telegraph', () => {
     // Past the charge it holds at full (with a small flicker).
     updateChargeTelegraph(t, 1 << s, 1000, 1030, fx0 + 120 * TICK_MS, undefined);
     expect(g.alpha).toBeGreaterThan(0.84);
-    // The charge ends: hidden.
+    // The charge ends at full: the glow holds for the shot (it discharges
+    // into it), and with no shot seen it goes out after the hold's cap.
     updateChargeTelegraph(t, 0, undefined, 1200, fx0 + 200 * TICK_MS, undefined);
+    expect(t.root.visible).toBe(true);
+    updateChargeTelegraph(t, 0, undefined, 1200, fx0 + 200 * TICK_MS + CHARGE_HOLD_MAX_MS + 1, undefined);
     expect(t.root.visible).toBe(false);
   });
 
@@ -144,9 +148,125 @@ describe('rail-slot telegraph (the railgun)', () => {
     expect(f.fill).toBeCloseTo(1, 5);
     // Pixi-up: the muzzle is at -y, so the head moves to more negative y.
     expect(h.headY).toBeLessThan(q.headY);
-    expect(f.headY).toBeCloseTo(rail.y0 - rail.len, 3);
+    // Full: the front (just behind the fill edge) is at the muzzle.
+    expect(f.headY - rail.headHalf * rail.head.scale.y).toBeCloseTo(rail.y0 - rail.len, 3);
     expect(h.alpha).toBeGreaterThan(q.alpha);
     // The glow stays the gun's own size (no 'mount-glow' scale ramp).
     expect(t.glows[i]!.scale.x).toBe(1);
+  });
+});
+
+/**
+ * Hostile review (2026-11-15, rail fire tile 4.10-4.22 s): the slot went
+ * dark ~6 frames before the muzzle flash, so the gun seemed to power down and
+ * then fire. The charge mask comes off the newest snapshot (it clears the
+ * tick the server fires), but the slug and its flash are drawn on the display
+ * timeline, DISPLAY_DELAY_MS (100 ms = 6 ticks) behind. The slot must stay
+ * full, and flare, until that gun's shot shows.
+ */
+describe('rail-slot discharge: the charge holds until the shot shows', () => {
+  const mounts = getShipKind('battleship-rail').mounts;
+  const i = mounts.findIndex((m) => m.weaponId === 'railgun');
+  const chargeTicks = getWeapon('railgun').chargeTicks!;
+  const shots = (): number[] => new Array<number>(mounts.length).fill(-Infinity);
+  /** A telegraph with mount i charged to full at fx `fx`. */
+  const charged = (fx: number) => {
+    const t = buildChargeTelegraph('battleship-rail', 200)!;
+    updateChargeTelegraph(t, 1 << i, 1000, 1000 + chargeTicks, fx, undefined, undefined, shots());
+    expect(t.rails[i]!.fill.scale.y).toBeCloseTo(1, 5);
+    return t;
+  };
+
+  it('the mask clears the tick the server fires; the slot stays full until the flash (display delay later)', () => {
+    const fx0 = 200_000;
+    const t = charged(fx0);
+    const g = t.glows[i]!, rail = t.rails[i]!;
+    const fullAlpha = g.alpha;
+    const shot = shots();
+    // Server fired: the next snapshot drops the bit. The flash is drawn only
+    // when the display clock reaches the fire tick, DISPLAY_DELAY_MS later.
+    for (let ms = TICK_MS; ms < DISPLAY_DELAY_MS; ms += TICK_MS) {
+      updateChargeTelegraph(t, 0, undefined, 1000 + chargeTicks + 3, fx0 + ms, undefined, undefined, shot);
+      expect(t.root.visible, `slot dark ${ms.toFixed(0)} ms before the flash`).toBe(true);
+      expect(g.visible).toBe(true);
+      expect(rail.fill.scale.y).toBeCloseTo(1, 5);
+      expect(g.alpha, 'full, flaring, not fading').toBeGreaterThanOrEqual(fullAlpha * 0.99);
+    }
+    // The flash: that gun's shot is drawn (MountVisualManager lastShot).
+    shot[i] = fx0 + DISPLAY_DELAY_MS;
+    updateChargeTelegraph(t, 0, undefined, 1000 + chargeTicks + 6, fx0 + DISPLAY_DELAY_MS, undefined, undefined, shot);
+    expect(t.root.visible, 'discharged into the shot').toBe(false);
+  });
+
+  it('with no shot seen (a lost event), snapshots alone still put it out after the cap (#16)', () => {
+    const fx0 = 300_000;
+    const t = charged(fx0);
+    updateChargeTelegraph(t, 0, undefined, 2000, fx0 + TICK_MS, undefined, undefined, shots());
+    expect(t.root.visible).toBe(true);
+    updateChargeTelegraph(t, 0, undefined, 2000, fx0 + TICK_MS + CHARGE_HOLD_MAX_MS + 1, undefined, undefined, shots());
+    expect(t.root.visible).toBe(false);
+    expect(CHARGE_HOLD_MAX_MS).toBeGreaterThan(DISPLAY_DELAY_MS);
+  });
+
+  it('a shot from before this charge does not end the hold', () => {
+    const fx0 = 400_000;
+    const t = charged(fx0);
+    const shot = shots();
+    shot[i] = fx0 - 30_000; // the previous shot
+    updateChargeTelegraph(t, 0, undefined, 2000, fx0 + TICK_MS, undefined, undefined, shot);
+    expect(t.root.visible).toBe(true);
+  });
+
+  it('a charge cut short (not full) goes dark at once, no hold', () => {
+    const t = buildChargeTelegraph('battleship-rail', 200)!;
+    const fx0 = 500_000;
+    updateChargeTelegraph(t, 1 << i, 1000, 1000 + (chargeTicks >> 1), fx0, undefined, undefined, shots());
+    updateChargeTelegraph(t, 0, undefined, 2000, fx0 + TICK_MS, undefined, undefined, shots());
+    expect(t.root.visible).toBe(false);
+  });
+});
+
+/**
+ * Hostile review of rail take 6 (2026-11-15, turret tile): between the last
+ * charge frame and the fire frame the breech swapped from a light disc to the
+ * dark toothed ring (the charge's bore glow was a disc half the breech wide,
+ * gone the frame the shot showed), and during the charge a bright arrowhead
+ * sat at the muzzle tip, reading as a projectile already there.
+ */
+describe('rail-slot: the breech stays the breech; nothing projectile-like at the muzzle', () => {
+  const mounts = getShipKind('battleship-rail').mounts;
+  const i = mounts.findIndex((m) => m.weaponId === 'railgun');
+  const chargeTicks = getWeapon('railgun').chargeTicks!;
+  const shots = (): number[] => new Array<number>(mounts.length).fill(-Infinity);
+
+  it('the bore glow stays inside the slot (no light disc over the breech ring)', () => {
+    const t = buildChargeTelegraph('battleship-rail', 200)!;
+    const rail = t.rails[i]!;
+    const g = rail.fill.parent!;
+    const slotW = rail.fill.getLocalBounds().width;
+    for (const c of g.children) {
+      if (c === rail.fill || c === rail.head) continue;
+      expect(c.getLocalBounds().width, 'a breech-wide glow disc').toBeLessThanOrEqual(slotW * 1.05);
+    }
+  });
+
+  it('the charge front never reaches past the muzzle, and no bright head sits there at full or while it holds', () => {
+    const t = buildChargeTelegraph('battleship-rail', 200)!;
+    const rail = t.rails[i]!;
+    const muzzleY = rail.y0 - rail.len; // Pixi-up: the muzzle is at -y
+    const front = (): number => rail.head.y + rail.head.getLocalBounds().minY * rail.head.scale.y;
+    const headShows = (): number => (rail.head.visible ? rail.head.alpha : 0);
+    for (const frac of [0.25, 0.5, 0.8, 0.95, 1]) {
+      t.startTick = -1;
+      updateChargeTelegraph(t, 1 << i, 1000, 1000 + Math.round(chargeTicks * frac), 90_000, undefined, undefined, shots());
+      expect(front(), `charge ${frac}: head past the muzzle`).toBeGreaterThanOrEqual(muzzleY - 1e-6);
+    }
+    expect(headShows(), 'a full slot has no front: no arrowhead at the muzzle').toBeLessThanOrEqual(0.05);
+    // The discharge hold (mask cleared, shot not yet drawn).
+    for (let ms = TICK_MS; ms < DISPLAY_DELAY_MS; ms += TICK_MS) {
+      updateChargeTelegraph(t, 0, undefined, 1000 + chargeTicks + 3, 90_000 + ms, undefined, undefined, shots());
+      expect(t.root.visible).toBe(true);
+      expect(headShows(), `hold +${ms.toFixed(0)} ms: arrowhead at the muzzle`).toBeLessThanOrEqual(0.05);
+    }
   });
 });

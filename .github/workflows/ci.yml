@@ -98,6 +98,11 @@ jobs:
       - name: Dependency graph (boundary DAG, invariant #1)
         if: needs.changes.outputs.code == 'true'
         run: pnpm exec depcruise src
+      # File-size ratchet (token-waste review 2026-11-14 section 7, C3): a src/** file
+      # over 600 LOC needs an ALLOWLIST cap in scripts/audit-god-files.mjs and may not grow.
+      - name: File-size ratchet
+        if: needs.changes.outputs.code == 'true'
+        run: node scripts/audit-god-files.mjs
       # C1: knip dead-code report — non-blocking until triaged (--no-exit-code),
       # promote to blocking after the backlog is cleared.
       - name: Dead-code report (knip, non-blocking)

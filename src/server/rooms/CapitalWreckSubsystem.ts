@@ -301,7 +301,9 @@ export class CapitalWreckSubsystem {
       cutKind = killCut.kind;
       cutAng = hullLocalCutAngle(pose, { x: e.dirX, y: e.dirY });
       // The wire width is in the hull's 1× frame.
-      if (killCut.kind === 'channel') cutW = killCut.width / shipShapeScale(getShipKind(kindId));
+      // A channel's strip, or a wide slice's (the heavy beam, fracture v10).
+      const w = killCut.width ?? 0;
+      if (w > 0) cutW = w / shipShapeScale(getShipKind(kindId));
     }
     this.forget(targetId);
     const seed = this.forcedSeed ?? fnvMixU32(fnv1a32(targetId), this.d.serverTick() >>> 0);

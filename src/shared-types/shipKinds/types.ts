@@ -132,7 +132,7 @@ export type ShipShape = z.infer<typeof ShipShapeSchema>;
 
 /** Catalogue-id of the weapon installed in a mount. Must match a
  *  `WeaponId` from `src/core/combat/WeaponCatalogue.ts`. */
-export const MountWeaponIdSchema = z.enum(['hitscan', 'laser', 'heat-seeker', 'pulse-orb', 'charge-laser', 'autocannon', 'naval_s', 'naval_m', 'naval_l', 'naval_xl', 'naval_xxl', 'naval_siege', 'railgun', 'heavy_beam']);
+export const MountWeaponIdSchema = z.enum(['hitscan', 'laser', 'heat-seeker', 'pulse-orb', 'charge-laser', 'autocannon', 'naval_s', 'naval_m', 'naval_l', 'naval_xl', 'naval_xxl', 'naval_siege', 'railgun', 'heavy_beam', 'mining_laser']);
 
 export const WeaponMountSchema = z
   .object({
@@ -313,6 +313,20 @@ export const ShipKindSchema = z
      *  `GAMEPLAY_SHIP_KINDS_LIST` (random drone pickers) AND rejected as a
      *  PLAYER ship kind server-side (`isPlayableShipKindId`). Default `false`. */
     npcOnly: z.boolean().optional(),
+    /** `false` ⇒ never picked by the RANDOM spawn pools
+     *  (`GAMEPLAY_SHIP_KINDS_LIST` → `HunterBotPool`, `SwarmSpawner`) while
+     *  staying player-pilotable (unlike `npcOnly`). For kinds that only exist
+     *  because an owner bought / built them (e.g. a future mining barge).
+     *  Absent ⇒ eligible (every existing kind). */
+    randomSpawn: z.literal(false).optional(),
+    /** Cargo capacity (weight units) override. Absent ⇒ derived from hull
+     *  toughness — `cargoCapacityForMaxHealth` (shared-types/goods.ts) is the
+     *  one place this is read, on server and client alike (#15). */
+    cargoCapacity: z.number().int().positive().optional(),
+    /** An NPC (swarm kind-1) entity of this kind scoops loot pods into its own
+     *  hold through the player pickup path (`SectorRoom.forEachLootCollector`),
+     *  with capacity from `cargoCapacityForMaxHealth`. Default `false`. */
+    collectsLoot: z.boolean().optional(),
     /** Immune to `LoadShedder` eviction (haulers, nexi, elites — entities whose
      *  silent removal would destroy value or break a world state machine).
      *  Default `false`. */

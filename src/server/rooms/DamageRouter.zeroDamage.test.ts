@@ -30,6 +30,7 @@ import type { ShipPhysicsState } from '../../core/physics/World.js';
 import { DEFAULT_SHIP_KIND } from '../../shared-types/shipKinds.js';
 import type { DamageEvent } from '../../shared-types/messages.js';
 import type { Bus } from '../../core/events/Bus.js';
+import { getWeapon, weaponLayerMul, type WeaponDef } from '../../core/combat/WeaponCatalogue.js';
 
 const TICK = 500;
 
@@ -143,5 +144,77 @@ describe('DamageRouter — 0-damage wire guard (campaign 1.2)', () => {
     h.router.apply('p1', 'shooter', 2.6, 1, 2);
     expect(h.damageEvents).toHaveLength(1);
     expect(h.damageEvents[0]!.damage).toBe(3);
+  });
+});
+
+// Per-target damage factors (plan partitioned-chasing-lark PR 1): the room
+// resolves a weapon's `targetFactor` into a per-layer multiplier
+// (`weaponLayerMul`) and hands it to the ONE router call. A mining-laser-like
+// weapon {shield 0, hull 0.05} does nothing to a raised shield (no event, no
+// regen-timer reset) and 5 % to an exposed hull.
+describe('DamageRouter — per-target damage factors', () => {
+  const MINER: WeaponDef = { ...getWeapon('laser'), targetFactor: { shield: 0, hull: 0.05 } };
+  const mul = (): ReturnType<typeof weaponLayerMul> => weaponLayerMul(MINER, false, { shield: 1, hull: 1 });
+
+  it('a {shield 0} weapon does 0 to a shielded ship: no state change, no event, regen timer kept', () => {
+    const ship = addActiveShip({ shield: 30, health: 80, shieldLastDamageTick: 42 });
+    const destroyed = h.router.apply('p1', 'shooter', 100, 1, 2, mul());
+    expect(destroyed).toBe(false);
+    expect(ship.shield).toBe(30);
+    expect(ship.health).toBe(80);
+    expect(ship.shieldLastDamageTick).toBe(42); // regen NOT reset
+    expect(h.damageEvents).toHaveLength(0);
+  });
+
+  it('a {hull 0.05} weapon does 5 % to an unshielded hull, and the wire reports the scaled damage', () => {
+    const ship = addActiveShip({ shield: 0, health: 80 });
+    h.router.apply('p1', 'shooter', 100, 1, 2, mul());
+    expect(ship.health).toBeCloseTo(75, 10);
+    expect(ship.shieldLastDamageTick).toBe(TICK);
+    expect(h.damageEvents).toHaveLength(1);
+    expect(h.damageEvents[0]!.damage).toBe(5);
+  });
+
+  it('a weapon without factors is untouched (weaponLayerMul is undefined)', () => {
+    const ship = addActiveShip({ shield: 0, health: 80 });
+    h.router.apply('p1', 'shooter', 10, 1, 2, weaponLayerMul(getWeapon('laser'), false, { shield: 1, hull: 1 }));
+    expect(ship.health).toBe(70);
+    expect(h.damageEvents[0]!.damage).toBe(10);
+  });
+});
+
+// Mining laser (plan partitioned-chasing-lark PR 7): `effectiveDamage` reads
+// the factored damage BEFORE the hit lands, for the room's side effects
+// (standing / hostility / `noteHit`): a hit it zeroes is not an attack.
+describe('DamageRouter.effectiveDamage — the mining laser', () => {
+  const laser = getWeapon('mining_laser');
+  const mul = (): ReturnType<typeof weaponLayerMul> => weaponLayerMul(laser, false, { shield: 1, hull: 1 });
+
+  it('a raised shield: 0 effective, and the hit changes nothing', () => {
+    const ship = addActiveShip({ shield: 30, health: 80 });
+    expect(h.router.effectiveDamage('p1', 120, mul())).toBe(0);
+    h.router.apply('p1', 'shooter', 120, 1, 2, mul());
+    expect(ship.shield).toBe(30);
+    expect(ship.health).toBe(80);
+    expect(h.damageEvents).toHaveLength(0);
+  });
+
+  it('an exposed hull: 5 %, and the hit does exactly that', () => {
+    const ship = addActiveShip({ shield: 0, health: 80 });
+    expect(h.router.effectiveDamage('p1', 120, mul())).toBeCloseTo(6, 10);
+    h.router.apply('p1', 'shooter', 120, 1, 2, mul());
+    expect(ship.health).toBeCloseTo(74, 10);
+  });
+
+  it('a lingering hull reads its own shield; no factor or an unknown target passes through', () => {
+    h.shipsMap.set('linger-1', shipStub({ playerId: 'p9', shipInstanceId: 'linger-1', isActive: false, shield: 10 }));
+    expect(h.router.effectiveDamage('linger-1', 120, mul())).toBe(0);
+    expect(h.router.effectiveDamage('p1', 120, undefined)).toBe(120);
+    expect(h.router.effectiveDamage('nobody', 120, mul())).toBeCloseTo(6, 10);
+  });
+
+  it('a shielded drone (no shield entry yet = full) takes 0', () => {
+    h.swarm.set('d1', { id: 'd1', entityId: 7, slot: 0, kind: 1, shipKind: 'fighter' } as unknown as SwarmDmgRecord);
+    expect(h.router.effectiveDamage('d1', 120, mul())).toBe(0);
   });
 });

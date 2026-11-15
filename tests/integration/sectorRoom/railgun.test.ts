@@ -171,7 +171,15 @@ describe('SectorRoom integration — railgun', () => {
       internal.swarmHealth.set(id, RAIL.damage - 1);
       pickets.push(id);
     }
-    while (Date.now() < deadline && !railTuples().some((t) => t[5] === undefined)) await harness.advance(50);
+    // Wait for the KILLING slug's own final hit, not just any slug's: the three
+    // turrets' slugs end a tick or two apart, often in separate shell_end
+    // messages, so stopping at the first final one raced the asserted slug.
+    const killerEnded = (): boolean => {
+      const all = railTuples();
+      const k = all.find((t) => t[5] === 1);
+      return k !== undefined && all.some((t) => t[0] === k[0] && t[5] === undefined);
+    };
+    while (Date.now() < deadline && !killerEnded()) await harness.advance(50);
     expect(railShells.size, 'the rail battleship fired its railguns').toBeGreaterThan(0);
     expect(pickets.some((id) => !internal.swarmRegistry.get(id)), 'a slug killed a ship in its line').toBe(true);
     const all = railTuples();

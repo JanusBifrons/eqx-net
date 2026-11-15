@@ -16,6 +16,12 @@
  * snapping turret would hide whether the real rate keeps up. Every
  * `laser_fired`, the hull angle and the killing turret's angle are read
  * server-side, per tick.
+ *
+ * Full length (owner: "its full length is cut short by the ship it's hitting
+ * and once it's destroyed it returns to its full length for 0.75 s ... to
+ * show it's cut right through"): a follow-through beam passes debris (the
+ * victim's wreck pieces, scrap), so on an empty line it ends at the weapon's
+ * full range, and no wreck piece takes damage from it.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
@@ -32,14 +38,20 @@ interface IntentSink {
   postInput?: (slot: number, bits: number) => void;
 }
 interface RoomInternals {
-  aiFireResolver: { deps: { broadcast: (type: string, msg: LaserFiredEvent) => void } };
+  aiFireResolver: { deps: {
+    broadcast: (type: string, msg: LaserFiredEvent) => void;
+    applyDamage: (targetId: string, shooterId: string, ...rest: unknown[]) => boolean | void;
+  } };
   mountTicker: { droneMountAngles: Map<string, Float32Array> };
-  swarmRegistry: { all: () => Iterable<{ id: string; entityId: number; slot: number; shipKind?: string | null }> };
+  swarmRegistry: {
+    all: () => Iterable<{ id: string; entityId: number; slot: number; kind: number; radius: number; shipKind?: string | null }>;
+    get: (id: string) => { kind: number } | undefined;
+  };
   aiController: { sink: IntentSink };
   testTraverseTicksCap: number | undefined;
 }
 
-interface Shot { tick: number; mountId: string; dir: number; mountAngle: number; targetId?: string }
+interface Shot { tick: number; mountId: string; fromX: number; fromY: number; dir: number; len: number; mountAngle: number; targetId?: string }
 
 const angleOf = (x: number, y: number): number => Math.atan2(-x, y);
 
@@ -95,13 +107,21 @@ describe('SectorRoom integration — heavy-beam follow-through after a kill', ()
       if (type === 'laser_fired' && msg.shooterId === wireId && msg.mountId && beamMounts.has(msg.mountId)) {
         const i = kind.mounts.findIndex((m) => m.id === msg.mountId);
         shots.push({
-          tick: room._internals.serverTick, mountId: msg.mountId,
+          tick: room._internals.serverTick, mountId: msg.mountId, fromX: msg.fromX, fromY: msg.fromY,
           dir: angleOf(msg.toX - msg.fromX, msg.toY - msg.fromY),
+          len: Math.hypot(msg.toX - msg.fromX, msg.toY - msg.fromY),
           mountAngle: r.mountTicker.droneMountAngles.get(lanceId)?.[i] ?? NaN,
           targetId: msg.targetId,
         });
       }
       orig(type, msg);
+    };
+    // Every lance beam hit on a wreck piece (swarm kind 4), by tick.
+    const wreckHitTicks: number[] = [];
+    const origDamage = deps.applyDamage.bind(deps);
+    deps.applyDamage = (targetId, shooterId, ...rest) => {
+      if (shooterId === lanceId && r.swarmRegistry.get(targetId)?.kind === 4) wreckHitTicks.push(room._internals.serverTick);
+      return origDamage(targetId, shooterId, ...rest);
     };
 
     // The beams hit the pilot first; then leave it one beam's worth of hull.
@@ -133,7 +153,20 @@ describe('SectorRoom integration — heavy-beam follow-through after a kill', ()
       const hits = shots.filter((s) => s.targetId === pid);
       const last = hits[hits.length - 1];
       const pilotAlive = [...room.state.ships.values()].some((s) => s.playerId === pid && s.isActive && s.alive);
-      if (killMount === '' && !pilotAlive && last !== undefined) { killTick = last.tick; killMount = last.mountId; }
+      if (killMount === '' && !pilotAlive && last !== undefined) {
+        killTick = last.tick; killMount = last.mountId;
+        // A piece of the victim drifts across the cut: the largest wreck piece
+        // is set at rest on the kill line, past where the victim was.
+        let piece: { id: string; radius: number } | undefined;
+        for (const rec of r.swarmRegistry.all()) if (rec.kind === 4 && (piece === undefined || rec.radius > piece.radius)) piece = rec;
+        expect(piece, 'the kill left wreck pieces').toBeDefined();
+        const along = last.len + 2_500;
+        const ux = -Math.sin(last.dir), uy = Math.cos(last.dir);
+        room._internals.postToWorker({
+          type: 'SET_POSITION', entityId: piece!.id, x: last.fromX + ux * along, y: last.fromY + uy * along,
+          angle: 0, vx: 0, vy: 0, angvel: 0,
+        });
+      }
       if (killMount !== '') {
         const i = kind.mounts.findIndex((m) => m.id === killMount);
         const a = r.mountTicker.droneMountAngles.get(lanceId)?.[i];
@@ -154,6 +187,15 @@ describe('SectorRoom integration — heavy-beam follow-through after a kill', ()
 
     const killShot = shots.filter((s) => s.mountId === killMount && s.tick === killTick).pop()!;
     const window = shots.filter((s) => s.mountId === killMount && s.tick > killTick && s.tick < killTick + follow);
+    // The punch-through coincides with the death (owner, on film: the ship
+    // died ~9 frames before the beam ran full length, because the killing
+    // pulse ended at the hull and the first follow-through waited a reload):
+    // a full-length beam down the kill line within 2 ticks of the kill.
+    const punch = window[0];
+    expect(punch, 'a follow-through beam fired').toBeDefined();
+    expect(punch!.tick - killTick, 'the first full-length beam follows the kill within 2 ticks').toBeLessThanOrEqual(2);
+    expect(punch!.len, 'the punch-through beam runs its full length').toBeGreaterThan(beam.range - 1);
+    expect(Math.abs(wrapPi(punch!.dir - killShot.dir)), 'the punch-through beam is on the kill line').toBeLessThan(0.002);
     // It keeps firing at its normal cadence through the window ...
     expect(window.length, 'the killing turret kept firing through the follow-through')
       .toBeGreaterThanOrEqual(Math.floor((follow - 1) / beam.cooldownTicks) - 1);
@@ -177,6 +219,15 @@ describe('SectorRoom integration — heavy-beam follow-through after a kill', ()
         expect(Math.abs(wrapPi(w - killShot.dir)), `turret world bearing at kill+${t - killTick}`).toBeLessThan(0.002);
       }
     }
+    // ... at full length: it passes the victim's wreck (no piece takes a hit)
+    // and nothing else is on the line, so each beam runs to the weapon's range.
+    expect(beam.falloff, 'heavy beam: range is its full reach').toBeUndefined();
+    for (const s of window) {
+      expect(s.targetId, `follow-through beam at kill+${s.tick - killTick} hit nothing`).toBeUndefined();
+      expect(s.len, `follow-through beam at kill+${s.tick - killTick} runs its full length`).toBeGreaterThan(beam.range - 1);
+    }
+    expect(wreckHitTicks.filter((t) => t > killTick && t < killTick + follow), 'no wreck piece took a follow-through beam')
+      .toEqual([]);
     // Then it resumes: with no target left it trains home (snaps, traverse cap 0).
     let resumed = false;
     for (const [t, a] of angleByTick) if (t >= killTick + follow && Math.abs(wrapPi(a - killShot.mountAngle)) > 0.1) resumed = true;

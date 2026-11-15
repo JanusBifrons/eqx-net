@@ -61,7 +61,7 @@ import { FxFences, FxShields } from './art/fx/FxShields.js';
 import { DEFAULT_SHIP_KIND } from '../../shared-types/shipKinds.js';
 import { shieldBubbleRadiusForEntity } from './pixi/shieldBubbleRadius.js';
 import { ART_OFF, type ArtOptions } from './art/artMode.js';
-import { buildArtShipSprite, isMachinedSprite, shipArtSwap, shipHandleFor, updateArtShipLight, type ShipArtCtx } from './art/shipArtSprites.js';
+import { buildArtShipSprite, isMachinedSprite, ownerLivery, shipArtSwap, shipHandleFor, updateArtShipLight, type ShipArtCtx } from './art/shipArtSprites.js';
 import { BeamSpritePool, type BeamView, type BeamSpriteStyle } from './BeamSpritePool';
 import {
   CameraDirector,
@@ -73,7 +73,7 @@ import {
 import { newSpeedFxSample, speedFxSampleInto } from './camera/speedFxSample';
 import { GroupBoundsScanner } from './camera/groupBounds';
 import type { CameraCue, CameraGroup } from '@core/contracts/cameraScript';
-import { REMOTE_BEAM_STYLE, MINING_BEAM_STYLE, remoteBeamStyleForMount, remoteBeamFireAngle } from './beamStyles';
+import { REMOTE_BEAM_STYLE, MINING_BEAM_STYLE, remoteBeamStyleForMount, remoteBeamLine, remoteBeamSolidLen, addBeamLights, beamLightBudget, BeamHitMemory, type RemoteBeamLine } from './beamStyles';
 import { MountVisualManager } from './MountVisualManager';
 import { BackgroundGrid } from './BackgroundGrid';
 import { StarfieldBackground } from './StarfieldBackground';
@@ -387,6 +387,9 @@ export class PixiRenderer implements IRenderer {
    *  cost was per-frame × per-beam — the cache compounds. Flat array
    *  matches liveBeam pattern; iteration order is stable across frames
    *  (JS Map preserves insertion order). */
+  /** Scratch for `remoteBeamLine` (one per frame loop, #14). */
+  private readonly _remoteBeamLine: RemoteBeamLine = { fromX: 0, fromY: 0, toX: 0, toY: 0 };
+  private readonly _beamHitMem = new BeamHitMemory(); // the cut stays lit through a kill follow-through
   private readonly _remoteBeamCache: Array<{
     shooterId: string;
     mountId: string;
@@ -397,6 +400,9 @@ export class PixiRenderer implements IRenderer {
     alpha: number;
     /** Per-beam style override (the capital heavy beam); null = pool style. */
     style: BeamSpriteStyle | null;
+    /** Solid length (`remoteBeamSolidLen`): the heavy beam is solid to its
+     *  hit; undefined = the pool's taper (fighter beams). */
+    solidLen?: number;
   }> = [];
   private _remoteBeamCacheCount = 0;
   /** WS-4 Phase 4 — drill-beam slots routed out of the remote-laser loop into
@@ -411,6 +417,7 @@ export class PixiRenderer implements IRenderer {
     toY: number;
     alpha: number;
     style: BeamSpriteStyle | null;
+    solidLen?: number;
   }> = [];
   private _miningBeamCacheCount = 0;
   private initialized = false;
@@ -816,10 +823,11 @@ export class PixiRenderer implements IRenderer {
       litPass.settings = this._artOpts.lighting ?? null;
       // Machined turrets ride the new effects (rings in the bakes, baked guns).
       this._artCtx.turrets = this._artOpts.fx === true;
+      if (this._artOpts.livery) this._artCtx.livery = this._artOpts.livery;
       this.mountVisuals.setArt(this._artCtx);
       // Warm-up: bake the likely art now (this runs on the galaxy map /
       // warp screen), behind anything that appears on screen meanwhile.
-      art.warmUp(warmUpJobs(this._artOpts.fx === true));
+      art.warmUp(warmUpJobs(this._artOpts.fx === true, this._artOpts.livery));
       // New backdrop (B2): behind the world, with dust in front of it. Until
       // its star tiles are baked, today's starfield keeps drawing.
       if (this._artOpts.fx === true) {
@@ -1993,37 +2001,38 @@ export class PixiRenderer implements IRenderer {
           let fromY: number;
           let toX: number;
           let toY: number;
+          const isMining = mountId === 'drill';
+          // The capital heavy beam (plan beam-slices §8) draws thick and violet
+          // in the SAME pool: the style comes from the mount's catalogue weapon
+          // (shooter kind + mountId), no wire field. A styled pulse also holds
+          // the line it was fired along (`remoteBeamLine`): muzzle to the
+          // server's end point, never the live barrel angle.
+          const style = isMining ? null : remoteBeamStyleForMount(mount);
+          const line = this._remoteBeamLine;
           if (shooter) {
             const origin = applyMountOffset(shooter.x, shooter.y, shooter.angle, mount);
-            const fireAngle = shooter.angle + (mount?.baseAngle ?? 0) + (currentMountAngle ?? 0);
-            const fwdX = -Math.sin(fireAngle);
-            const fwdY =  Math.cos(fireAngle);
             // The barrel tip (shared with the server, core/combat/muzzle.ts).
             const muzzleD = mount ? shipShotMuzzle(shooterKind, mount) : shipTuning(shooterKind).muzzleClearance;
-            fromX = origin.x + fwdX * muzzleD;
-            fromY = origin.y + fwdY * muzzleD;
-            toX = fromX + fwdX * laser.range;
-            toY = fromY + fwdY * laser.range;
+            remoteBeamLine(
+              style !== null, shooter.angle, mount?.baseAngle ?? 0, currentMountAngle ?? 0,
+              origin.x, origin.y, muzzleD, laser.range, laser.toX, laser.toY, line,
+            );
+            fromX = line.fromX; fromY = line.fromY; toX = line.toX; toY = line.toY;
           } else if (swarmShooter) {
             const origin = applyMountOffset(swarmShooter.x, swarmShooter.y, swarmShooter.angle, mount);
-            // A turning mount with no known angle (out of this viewer's
-            // interest, so no `drones[].mountAngles`) aims at the wire end.
-            const fireAngle = remoteBeamFireAngle(
-              swarmShooter.angle, mount?.baseAngle ?? 0, mount ? currentMountAngle : 0,
-              origin.x, origin.y, laser.toX, laser.toY,
-            );
-            const fwdX = -Math.sin(fireAngle);
-            const fwdY =  Math.cos(fireAngle);
             // Drone barrel offset is `radius + 2` along the mount's fire
             // direction (no mount → centre of drone). Matches the
             // pre-refactor visual where the beam clears the drone hull.
             // A drone's turning turret fires from its barrel tip (the server's
             // AiFireResolver uses the same shared muzzle).
             const barrelOffset = mount ? shipShotMuzzle(shooterKind, mount, true) : swarmShooter.radius + 2;
-            fromX = origin.x + fwdX * barrelOffset;
-            fromY = origin.y + fwdY * barrelOffset;
-            toX = fromX + fwdX * laser.range;
-            toY = fromY + fwdY * laser.range;
+            // A turning mount with no known angle (out of this viewer's
+            // interest, so no `drones[].mountAngles`) aims at the wire end.
+            remoteBeamLine(
+              style !== null, swarmShooter.angle, mount?.baseAngle ?? 0, mount ? currentMountAngle : 0,
+              origin.x, origin.y, barrelOffset, laser.range, laser.toX, laser.toY, line,
+            );
+            fromX = line.fromX; fromY = line.fromY; toX = line.toX; toY = line.toY;
           } else {
             fromX = laser.fromX;
             fromY = laser.fromY;
@@ -2034,7 +2043,6 @@ export class PixiRenderer implements IRenderer {
           // mining beam (mountId 'drill') routes into the dedicated mining pool
           // (WS-4 Phase 4) so it draws as a distinct fat amber drill beam and is
           // isolatable for the E2E; everything else stays in the remote pool.
-          const isMining = mountId === 'drill';
           const cache = isMining ? this._miningBeamCache : this._remoteBeamCache;
           const idx = isMining ? miningIdx : slotIdx;
           let slot = cache[idx];
@@ -2042,18 +2050,13 @@ export class PixiRenderer implements IRenderer {
             slot = { shooterId, mountId, fromX, fromY, toX, toY, alpha, style: null };
             cache[idx] = slot;
           }
-          slot.shooterId = shooterId;
-          slot.mountId = mountId;
-          slot.fromX = fromX;
-          slot.fromY = fromY;
-          slot.toX = toX;
-          slot.toY = toY;
+          slot.shooterId = shooterId; slot.mountId = mountId;
+          slot.fromX = fromX; slot.fromY = fromY; slot.toX = toX; slot.toY = toY;
           slot.alpha = alpha;
-          // The capital heavy beam (plan beam-slices §8) draws thick and violet
-          // in the SAME pool: the style comes from the mount's catalogue weapon
-          // (shooter kind + mountId), no wire field.
-          slot.style = isMining ? null : remoteBeamStyleForMount(mount);
-          if (!isMining) this._fxRemoteHit[idx] = laser.hit === true;
+          slot.style = style;
+          // ...and burns full width to its hit point (a short fade past a miss).
+          slot.solidLen = remoteBeamSolidLen(style, Math.hypot(toX - fromX, toY - fromY), laser.hit === true);
+          if (!isMining) { this._fxRemoteHit[idx] = laser.hit === true; this._beamHitMem.track(shooterId, mountId, laser.hit === true, slot); }
           // A beam landing on a shield is a held contact there.
           if (this._fxShieldsOn && !isMining && laser.hit && laser.targetId) this._fxShields!.beam(laser.targetId, 1 + idx, toX, toY, this._fxShieldPose);
           // A beam that hit something with no target id stopped on a fence.
@@ -2062,7 +2065,7 @@ export class PixiRenderer implements IRenderer {
           else slotIdx++;
         }
       }
-      this._remoteBeamCacheCount = slotIdx;
+      this._remoteBeamCacheCount = slotIdx; this._beamHitMem.endFrame();
       this._miningBeamCacheCount = miningIdx;
 
       // Sprite-pool driven render — no clear/redraw, just transforms.
@@ -2070,7 +2073,7 @@ export class PixiRenderer implements IRenderer {
       // the transform writes are cheap (see the always-call rationale above).
       this._remoteBeamPool.setBeams(this._remoteBeamCache, slotIdx, this.world.scale.x);
       this.remoteBeamGfx!.visible = true;
-      this._fxRemoteBeams?.setBeams(this._remoteBeamCache, slotIdx, this.fxNow(), this._fxRemoteHit);
+      this._fxRemoteBeams?.setBeams(this._remoteBeamCache, slotIdx, this.fxNow(), this._fxRemoteHit, this.world.scale.x);
       if (this._miningBeamPool && this.miningBeamGfx) {
         this._miningBeamPool.setBeams(this._miningBeamCache, miningIdx);
         this.miningBeamGfx.visible = miningIdx > 0;
@@ -2080,7 +2083,7 @@ export class PixiRenderer implements IRenderer {
       this.remoteBeamGfx.visible = false;
       this._remoteBeamPool.hideAll();
       this._fxRemoteBeams?.hideAll();
-      this._remoteBeamCacheCount = 0;
+      this._remoteBeamCacheCount = 0; this._beamHitMem.endFrame();
       if (this._miningBeamPool && this.miningBeamGfx) {
         this.miningBeamGfx.visible = false;
         this._miningBeamPool.hideAll();
@@ -2661,13 +2664,8 @@ export class PixiRenderer implements IRenderer {
 
   /** A beam lights where it hits and along its length. */
   private beamLights(b: BeamView): void {
-    const sc = litPass.scene;
-    const len = Math.hypot(b.toX - b.fromX, b.toY - b.fromY);
-    // A heavy beam lights the scene in its own colour, wider.
-    const c = b.style ? b.style.tint : 0xff6a9a;
-    const k = b.style?.glowScale ?? 1;
-    sc.addLight(b.toX, b.toY, 6, c, 2.2, 120 * k);
-    sc.addLight((b.fromX + b.toX) / 2, (b.fromY + b.toY) / 2, 6, c, 0.8, len * 0.6 + 30 * k);
+    // Game space in, Pixi space to the lit scene (beamStyles `addBeamLights`).
+    addBeamLights(litPass.scene, b, beamLightBudget(litPass.settings?.pointLights ?? 0));
   }
 
   /** Firing reactions for Machined guns (turrets T2): held beams by mount
@@ -2999,7 +2997,10 @@ export class PixiRenderer implements IRenderer {
       // Machined art: a parked hull swaps to its Machined sprite once ready.
       const artKey = `linger-${shipInstanceId}`; // TODO: alloc-debt (one key string per lingering hull per frame)
       const kind = 'kind' in decision ? decision.kind : (entry?.kind ?? 'fighter');
-      const lingerHandle = shipHandleFor(this._artCtx, artKey, kind, undefined);
+      const lingerLv = this._artCtx.livery !== undefined ? ownerLivery(ship.ownerPlayerId) : undefined;
+      const lingerHandle = lingerLv
+        ? shipHandleFor(this._artCtx, artKey, kind, undefined, false, lingerLv.team, lingerLv.sigil, lingerLv.edge)
+        : shipHandleFor(this._artCtx, artKey, kind, undefined);
       let action: SpriteDecision['action'] = decision.action;
       if (entry && action === 'reposition' && shipArtSwap(this._artCtx, entry.sprite, lingerHandle) !== 'keep') action = 'rebuild';
       if (action === 'rebuild') {

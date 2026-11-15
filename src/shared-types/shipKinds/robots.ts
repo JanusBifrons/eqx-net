@@ -156,6 +156,8 @@ export const ROBOT_HARVESTER: ShipKind = defineShipKind({
   description: 'A robot scavenger. Collects loot and hoards it at the nexus.',
   allegiance: 'robots',
   npcOnly: true,
+  collectsLoot: true,
+  cargoCapacity: 400,
   thrustImpulse: 2.4,
   reverseFactor: 0.5,
   boostMultiplier: 1.4,

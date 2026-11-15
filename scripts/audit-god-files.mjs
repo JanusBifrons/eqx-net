@@ -39,6 +39,10 @@ const SRC_DIR = join(REPO_ROOT, 'src');
 const CEILING_LOC = 600;
 const CAP_SLACK = 10; // tolerate a small in-flight delta during a session
 
+/** Files already over the ceiling when the ratchet went into CI (token-waste review 2026-11-14 section 7, C3). */
+const RATCHET_ONLY =
+  'over the 600-LOC ceiling when the ratchet went into CI; may only shrink (lower the cap when it does)';
+
 /**
  * Allowlist for the v3 god-file refactor. Each entry must include:
  *   - `cap`:    current LOC + small slack. File may not grow past this.
@@ -49,43 +53,87 @@ const CAP_SLACK = 10; // tolerate a small in-flight delta during a session
  * Path keys are repo-root-relative, POSIX-style (forward slashes).
  */
 const ALLOWLIST = {
-  'src/server/rooms/SectorRoom.ts': {
-    cap: 2500,
-    target: 450,
-    reason:
-      'v3 plan commits 20-23 split this into 17 collaborators (PhysicsWorkerProxy, ' +
-      'PlayerSlotMap, SwarmRegistry, CombatResolver, LagCompRing, WeaponMountTicker, ' +
-      'BroadcastScheduler, etc.); orchestrator target ~450 LOC.',
-  },
+  'src/client/App.tsx': { cap: 1144, target: 600, reason: RATCHET_ONLY },
+  'src/client/__art-lab__/fx.ts': { cap: 979, target: 600, reason: RATCHET_ONLY },
+  'src/client/__art-lab__/main.ts': { cap: 702, target: 600, reason: RATCHET_ONLY },
+  'src/client/components/EntityStatsPanel.tsx': { cap: 893, target: 600, reason: RATCHET_ONLY },
+  'src/client/components/GalaxyPickerChrome.tsx': { cap: 634, target: 600, reason: RATCHET_ONLY },
   'src/client/net/ColyseusClient.ts': {
-    cap: 3530,
+    cap: 7110,
     target: 350,
     reason:
       'v3 plan commits 16-19 split this into 15 collaborators (PredictionStateManager, ' +
       'SnapshotApplier, MirrorUpdater, etc.); orchestrator target ~350 LOC.',
   },
+  'src/client/render/HaloRadar.ts': { cap: 662, target: 600, reason: RATCHET_ONLY },
+  'src/client/render/MountVisualManager.ts': { cap: 917, target: 600, reason: RATCHET_ONLY },
   'src/client/render/PixiRenderer.ts': {
-    cap: 1190,
+    cap: 3574,
     target: 340,
     reason:
       'v3 plan commits 10-14 split this into 15 collaborators (PixiAppLifecycle, ' +
       'CameraController, SpriteFactory, SpriteRegistry, ShipSpriteUpdater, etc.); ' +
       'orchestrator target ~340 LOC.',
   },
+  'src/client/render/art/ArtService.ts': { cap: 757, target: 600, reason: RATCHET_ONLY },
+  'src/client/render/art/fields.ts': { cap: 1161, target: 600, reason: RATCHET_ONLY },
+  'src/client/render/art/fx/fxTextures.ts': { cap: 783, target: 600, reason: RATCHET_ONLY },
+  'src/client/render/galaxy/GalaxyMapLayer.ts': { cap: 1089, target: 600, reason: RATCHET_ONLY },
+  'src/client/render/pixi/ConnectorRenderer.ts': { cap: 958, target: 600, reason: RATCHET_ONLY },
+  'src/client/render/pixi/structureVisuals.ts': { cap: 739, target: 600, reason: RATCHET_ONLY },
+  'src/client/render/pixi/wreckArt.ts': { cap: 1925, target: 600, reason: RATCHET_ONLY },
+  'src/client/render/worker/Camera.ts': { cap: 792, target: 600, reason: RATCHET_ONLY },
+  'src/client/render/worker/WorkerRendererClient.ts': {
+    cap: 844,
+    target: 600,
+    reason: RATCHET_ONLY,
+  },
+  'src/client/state/storeTypes.ts': { cap: 650, target: 600, reason: RATCHET_ONLY },
+  'src/core/ai/HostileDroneBehaviour.ts': { cap: 2197, target: 600, reason: RATCHET_ONLY },
+  'src/core/ai/tactics/manoeuvres.ts': { cap: 679, target: 600, reason: RATCHET_ONLY },
+  'src/core/bases/growBase.ts': { cap: 740, target: 600, reason: RATCHET_ONLY },
+  'src/core/contracts/IRenderer.ts': { cap: 1171, target: 600, reason: RATCHET_ONLY },
+  'src/core/destruction/fractureHull.ts': { cap: 1756, target: 600, reason: RATCHET_ONLY },
+  'src/core/physics/World.ts': { cap: 1287, target: 600, reason: RATCHET_ONLY },
+  'src/core/physics/worker.ts': { cap: 792, target: 600, reason: RATCHET_ONLY },
+  'src/server/cargo/StorageService.ts': { cap: 901, target: 600, reason: RATCHET_ONLY },
+  'src/server/economy/ConvoyDirector.ts': { cap: 605, target: 600, reason: RATCHET_ONLY },
+  'src/server/economy/TradeDirector.ts': { cap: 891, target: 600, reason: RATCHET_ONLY },
+  'src/server/index.ts': { cap: 1699, target: 600, reason: RATCHET_ONLY },
+  'src/server/livingworld/LivingWorldDirector.ts': { cap: 1575, target: 600, reason: RATCHET_ONLY },
+  'src/server/rooms/LockSubsystem.ts': { cap: 631, target: 600, reason: RATCHET_ONLY },
+  'src/server/rooms/MissileSimulation.ts': { cap: 946, target: 600, reason: RATCHET_ONLY },
+  'src/server/rooms/PlayerFireResolver.ts': { cap: 692, target: 600, reason: RATCHET_ONLY },
+  'src/server/rooms/SectorRoom.ts': {
+    cap: 11813,
+    target: 450,
+    reason:
+      'v3 plan commits 20-23 split this into 17 collaborators (PhysicsWorkerProxy, ' +
+      'PlayerSlotMap, SwarmRegistry, CombatResolver, LagCompRing, WeaponMountTicker, ' +
+      'BroadcastScheduler, etc.); orchestrator target ~450 LOC.',
+  },
+  'src/server/rooms/SnapshotBroadcaster.ts': { cap: 1286, target: 600, reason: RATCHET_ONLY },
+  'src/server/rooms/WeaponMountTicker.ts': { cap: 923, target: 600, reason: RATCHET_ONLY },
+  'src/server/structures/StructureGridSubsystem.ts': {
+    cap: 1119,
+    target: 600,
+    reason: RATCHET_ONLY,
+  },
+  'src/shared-types/structureKinds.ts': { cap: 1447, target: 600, reason: RATCHET_ONLY },
 };
 
 /**
  * Byte budgets for the auto-injected instruction files (repo-root-relative),
- * measured with LF line endings. Set from the sizes after the 2026-11-14
- * CLAUDE.md diet plus ~5% headroom. Lower a budget when a file shrinks;
+ * measured with LF line endings. Set from the sizes after the second CLAUDE.md
+ * diet pass (2026-11-15) plus ~5% headroom. Lower a budget when a file shrinks;
  * never raise one to fit new text: move detail to a docs/ guide instead.
  */
 const CLAUDE_MD_BUDGETS = {
-  'CLAUDE.md': 32000,
-  'src/server/CLAUDE.md': 35500,
-  'src/client/CLAUDE.md': 31500,
-  'src/core/CLAUDE.md': 19500,
-  'plans/CLAUDE.md': 3000,
+  'CLAUDE.md': 16000,
+  'src/server/CLAUDE.md': 23900,
+  'src/client/CLAUDE.md': 26000,
+  'src/core/CLAUDE.md': 15200,
+  'plans/CLAUDE.md': 2000,
 };
 
 function claudeMdViolations() {
@@ -141,7 +189,9 @@ function main() {
   if (process.argv.includes('--claude-md')) {
     const v = claudeMdViolations();
     if (v.length === 0) {
-      console.log(`✓ audit-god-files --claude-md: ${Object.keys(CLAUDE_MD_BUDGETS).length} files within budget`);
+      console.log(
+        `✓ audit-god-files --claude-md: ${Object.keys(CLAUDE_MD_BUDGETS).length} files within budget`,
+      );
       process.exit(0);
     }
     console.error(`✗ audit-god-files --claude-md: ${v.length} file(s) over budget\n`);

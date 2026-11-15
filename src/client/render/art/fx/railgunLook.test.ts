@@ -100,10 +100,10 @@ describe('railgun slug wake', () => {
     expect(slugWakeSegments('minimal')).toBe(0);
   });
 
-  it('a wake piece fades and spreads over its life (1-2 s)', () => {
-    expect(SLUG_WAKE_LIFE_S).toBeGreaterThanOrEqual(1);
-    expect(SLUG_WAKE_LIFE_S).toBeLessThanOrEqual(2);
-    expect(slugWakeAlpha(0)).toBeGreaterThan(slugWakeAlpha(0.8));
+  it('a wake piece disperses quickly (0.5-0.8 s): fades and spreads', () => {
+    expect(SLUG_WAKE_LIFE_S).toBeGreaterThanOrEqual(0.5);
+    expect(SLUG_WAKE_LIFE_S).toBeLessThanOrEqual(0.8);
+    expect(slugWakeAlpha(0)).toBeGreaterThan(slugWakeAlpha(0.4));
     expect(slugWakeAlpha(SLUG_WAKE_LIFE_S)).toBe(0);
     expect(slugWakeWidth(SLUG_WAKE_LIFE_S * 0.9)).toBeGreaterThan(slugWakeWidth(0));
   });

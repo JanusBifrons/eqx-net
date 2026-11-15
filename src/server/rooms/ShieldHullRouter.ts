@@ -23,6 +23,7 @@
 import {
   applyLayeredDamage,
   regenStep,
+  type LayerMul,
   type ShieldHullState,
 } from '../../core/combat/ShieldHull.js';
 import {
@@ -61,6 +62,12 @@ function resolveSwarmShieldHull(rec: SwarmDamageTarget): { shieldMax: number; hu
     return { shieldMax: k.shieldMax ?? 0, hullMax: k.maxHealth };
   }
   return { shieldMax: getDroneShieldMax(rec.shipKind), hullMax: droneMaxHealthOf(rec) ?? 40 };
+}
+
+/** `resolveSwarmShieldHull`'s shield max alone, allocation-free (#14). */
+function swarmShieldMax(rec: SwarmDamageTarget): number {
+  if (rec.kind === SWARM_KIND_STRUCTURE) return getStructureKind(rec.shipKind ?? undefined).shieldMax ?? 0;
+  return getDroneShieldMax(rec.shipKind);
 }
 import type { ShieldEventMessage } from '../../shared-types/messages.js';
 import type { Bus } from '../../core/events/Bus.js';
@@ -140,12 +147,14 @@ export class ShieldHullRouter {
    * Shield→hull layered damage for a schema ShipState (active or
    * lingering). Mutates ship.health (hull) + ship.shield +
    * shieldLastDamageTick. On the 0-cross-down: emit SHIELD_BROKEN +
-   * post SET_HULL_EXPOSED (when a workerBodyId is provided).
+   * post SET_HULL_EXPOSED (when a workerBodyId is provided). `layerMul`
+   * scales the hit per layer (a weapon's target factors); absent ⇒ ×1.
    */
   damageShipLayered(
     ship: ShipState,
     damage: number,
     workerBodyId: string | null,
+    layerMul?: LayerMul,
   ): LayeredDamageResult {
     const d = this.deps;
     const kind = getShipKind(ship.kind);
@@ -154,7 +163,7 @@ export class ShieldHullRouter {
       hull: ship.health,
       lastDamageTick: ship.shieldLastDamageTick,
     };
-    const r = applyLayeredDamage(state, damage, d.serverTick());
+    const r = applyLayeredDamage(state, damage, d.serverTick(), layerMul);
     ship.shield = state.shield;
     ship.health = state.hull;
     ship.shieldLastDamageTick = state.lastDamageTick;
@@ -178,6 +187,13 @@ export class ShieldHullRouter {
     return { newShield: state.shield, shieldMax, hullMax: ship.maxHealth, hitLayer: r.hitLayer };
   }
 
+  /** True when a hit on `rec` would land on a raised shield (the layer
+   *  `damageSwarmLayered` picks), read without applying anything. */
+  swarmShieldRaised(rec: SwarmDamageTarget): boolean {
+    const shieldMax = swarmShieldMax(rec);
+    return shieldMax > 0 && (this.swarmShield.get(rec.id) ?? shieldMax) > 0;
+  }
+
   /**
    * Shield→hull layered damage for a swarm drone. State lives in
    * swarmShield / swarmShieldLastDmg (here); hull in swarmHealth.
@@ -185,11 +201,13 @@ export class ShieldHullRouter {
    *
    * On the 0-cross-down: flip `rec.shieldDown=true` AND post
    * SET_HULL_EXPOSED. The drone wire bit + collider swap shipped in
-   * Phase 6.
+   * Phase 6. `layerMul` as in `damageShipLayered` (a shieldless entity
+   * takes the hull factor).
    */
   damageSwarmLayered(
     rec: SwarmDamageTarget,
     damage: number,
+    layerMul?: LayerMul,
   ): LayeredDamageResult | null {
     const d = this.deps;
     const hull0 = this.swarmHealth.get(rec.id);
@@ -203,7 +221,11 @@ export class ShieldHullRouter {
       // directly; do NOT create a swarmShield entry (the regen pass would
       // otherwise resurrect a shield) and NEVER post SET_HULL_EXPOSED — so the
       // collider stays the spawned hull and can't be swapped/shrunk.
-      const newHull = Math.max(0, hull0 - damage);
+      // A weapon factor that zeroes the hit leaves the entity untouched.
+      if (layerMul !== undefined && !(damage * layerMul.hull > 0)) {
+        return { newShield: 0, shieldMax: 0, hullMax, hitLayer: 'hull' };
+      }
+      const newHull = Math.max(0, hull0 - (layerMul === undefined ? damage : damage * layerMul.hull));
       this.swarmHealth.set(rec.id, newHull);
       this.swarmShieldLastDmg.set(rec.id, d.serverTick());
       return { newShield: 0, shieldMax: 0, hullMax, hitLayer: 'hull' };
@@ -213,7 +235,7 @@ export class ShieldHullRouter {
       hull: hull0,
       lastDamageTick: this.swarmShieldLastDmg.get(rec.id) ?? d.serverTick(),
     };
-    const r = applyLayeredDamage(state, damage, d.serverTick());
+    const r = applyLayeredDamage(state, damage, d.serverTick(), layerMul);
     this.swarmShield.set(rec.id, state.shield);
     this.swarmShieldLastDmg.set(rec.id, state.lastDamageTick);
     this.swarmHealth.set(rec.id, state.hull);

@@ -128,3 +128,37 @@ describe('regenStep (Halo-classic)', () => {
     expect(resumed.regenerated).toBe(true);
   });
 });
+
+describe('applyLayeredDamage with a per-layer multiplier (weapon targetFactor)', () => {
+  const MINER = { shield: 0, hull: 0.05 };
+
+  it('a raised shield takes damage x shield factor; 0 is a no-op that keeps the regen timer', () => {
+    const s = st(50, 100, 7);
+    const r = applyLayeredDamage(s, 40, 500, MINER);
+    expect(s).toEqual({ shield: 50, hull: 100, lastDamageTick: 7 });
+    expect(r).toEqual({ hitLayer: 'shield', brokeThisHit: false, shieldAbsorbed: 0, hullDamage: 0 });
+  });
+
+  it('an exposed hull takes damage x hull factor', () => {
+    const s = st(0, 100, 7);
+    const r = applyLayeredDamage(s, 40, 500, MINER);
+    expect(s.hull).toBeCloseTo(98, 10);
+    expect(s.lastDamageTick).toBe(500);
+    expect(r.hitLayer).toBe('hull');
+    expect(r.hullDamage).toBeCloseTo(2, 10);
+  });
+
+  it('the shield factor alone scales a shield hit (and can break it)', () => {
+    const s = st(10, 100);
+    const r = applyLayeredDamage(s, 40, 500, { shield: 0.5, hull: 1 });
+    expect(s.shield).toBe(0);
+    expect(r.brokeThisHit).toBe(true);
+    expect(r.shieldAbsorbed).toBe(10);
+  });
+
+  it('a x1 multiplier is byte-identical to no multiplier', () => {
+    const a = st(30, 100); const b = st(30, 100);
+    expect(applyLayeredDamage(a, 12.3, 9, { shield: 1, hull: 1 })).toEqual(applyLayeredDamage(b, 12.3, 9));
+    expect(a).toEqual(b);
+  });
+});

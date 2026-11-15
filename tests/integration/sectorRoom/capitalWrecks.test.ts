@@ -19,7 +19,7 @@ import { getShipKind } from '../../../src/shared-types/shipKinds.js';
 import { cutDirFromAngle, fracturePlan } from '../../../src/core/destruction/fractureHull.js';
 import { wreckPieceGeometry } from '../../../src/core/destruction/wreckPieces.js';
 import { shipShapeScale } from '../../../src/core/geometry/shipHullOutline.js';
-import { WEAPONS } from '../../../src/core/combat/WeaponCatalogue.js';
+import { HEAVY_BEAM_WIDTH, WEAPONS } from '../../../src/core/combat/WeaponCatalogue.js';
 import { WRECK_CRACK_MS } from '../../../src/shared-types/wreckTiming.js';
 
 type V = { x: number; y: number };
@@ -335,7 +335,8 @@ describe('SectorRoom integration — capital wrecks (S2a)', () => {
     const sliced = await killWith('bb-heavy', 'heavy_beam');
     expect(sliced.cutKind).toBe('slice');
     expect(sliced.cutAng).toBeDefined();
-    expect(sliced.cutW).toBeUndefined();
+    // v10: its slice erases a strip as wide as the beam (hull 1x frame).
+    expect(sliced.cutW).toBe(HEAVY_BEAM_WIDTH / shipShapeScale(getShipKind('battleship')));
     for (const [id, w] of [['bb-beam', 'hitscan'], ['bb-bolt', 'laser']] as const) {
       const plain = await killWith(id, w);
       expect(plain.cutKind, w).toBeUndefined();

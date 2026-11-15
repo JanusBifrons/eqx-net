@@ -304,7 +304,7 @@ describe('sub-capital kill cuts (fracture v9)', () => {
   }
 
   for (const kind of SUBCAP_KINDS) {
-    it(`${kind.id}: slices and channels leave valid pieces, the channel strip empty`, () => {
+    it(`${kind.id}: slices and channels leave valid pieces, the channel (and wide slice) strip empty`, () => {
       const hull = shipHullOutline(kind);
       const hp = hull.map(([x, y]) => ({ x, y }));
       const hullArea = Math.abs(area(hp));
@@ -312,11 +312,12 @@ describe('sub-capital kill cuts (fracture v9)', () => {
       const W = 0.12 * scale;
       for (let seed = 0; seed < 20; seed++) {
         for (const v of VIOLENCE) {
-          for (const cutKind of ['slice', 'channel'] as const) {
-            const input = cutInput(hull, seed, v, cutKind, W);
-            const tag = `${kind.id} ${cutKind} seed ${seed} violence ${v}`;
+          // v10: a slice with a width (the heavy beam) erases a strip like a channel.
+          for (const [cutKind, wide] of [['slice', false], ['slice', true], ['channel', true]] as const) {
+            const input = cutInput(hull, seed, v, cutKind, wide ? W : 0);
+            const tag = `${kind.id} ${cutKind}${wide && cutKind === 'slice' ? ' (wide)' : ''} seed ${seed} violence ${v}`;
             const pieces = fractureHull(input);
-            expect(pieces.length, tag).toBeGreaterThanOrEqual(cutKind === 'slice' ? 2 : 1);
+            expect(pieces.length, tag).toBeGreaterThanOrEqual(wide ? 1 : 2);
             let sum = 0;
             for (const p of pieces) {
               sum += p.area;
@@ -329,14 +330,14 @@ describe('sub-capital kill cuts (fracture v9)', () => {
               expect(Math.abs(partSum - p.area), `${tag}: parts tile the piece`).toBeLessThan(1e-6 * hullArea + 1e-9);
               expect(p.area / hullArea, `${tag}: piece share`).toBeGreaterThanOrEqual(0.05);
             }
-            if (cutKind === 'slice') {
+            if (!wide) {
               expect(Math.abs(sum - hullArea) / hullArea, `${tag}: area`).toBeLessThan(5e-3);
             } else {
               expect(sum, `${tag}: the channel took area`).toBeLessThan(hullArea);
               const k = input.cut!;
               const l = Math.hypot(k.dirX, k.dirY);
               const plan = fracturePlan(input);
-              const kp = plan.killPoint;
+              const kp = plan.primary!.point; // a slice may slide off a sliver
               for (const p of pieces) {
                 for (const q of p.outline) {
                   const d = Math.abs(((q.x - kp.x) * -k.dirY + (q.y - kp.y) * k.dirX) / l);

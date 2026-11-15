@@ -356,3 +356,18 @@ Then the real systems run: power, batteries, fence, turrets, production. NPC str
 - **Mine Layers:** `MineFieldSubsystem` (`structures/`) is ticked with the 10 Hz structure tick, after the turrets, and reuses their target grids, magazine (`rec.ammo`) and `setActive`. Mines are static and live in ROOM STATE (`SectorState.mines`, #16); `mine_detonated` is only an accelerator. Mines whose layer is gone are swept even when the sector has no structures left. Not persisted. Story: [docs/features/mine-layer.md](../features/mine-layer.md).
 - **Station taxes (D3):** a recipe output `{ credits: n }` takes no storage space. When the cycle ends, `payCredits` pays it to a PLAYER owner's wallet (`station_taxes`); an NPC owner gets nothing. Never put credits in a hold.
 - Locks: `ProductionSubsystem.test.ts` and `tests/integration/sectorRoom/production.test.ts`. Story: [docs/architecture/production-chains.md](../architecture/production-chains.md).
+
+### Server rules in full (moved from src/server/CLAUDE.md)
+
+The zone `CLAUDE.md` keeps a condensed form of these rules; this is the full wording with its lock tests.
+
+#### Production
+
+- **Production:** `ProductionSubsystem` runs on the 1 Hz pulse before `storage.flushDirty()`; inputs are taken all-or-nothing at cycle start, outputs put all-or-nothing at the end; it stays allocation-free (0.3 ms per pulse at 60 processors). `set_recipe` is owner-gated.
+- **Blueprint slots:** move a blueprint only via `StorageService.loadBlueprint` / `unloadBlueprint` / `takeSlotForSpill` (one hold group each). Only the player's `place_structure` passes `requirePacked: true`.
+- **Drills and ammo:** a drill never mines into a full network (`canDepositGoods`); a turret calls `spendAmmo` before every shot and holds fire with none (`rec.noAmmo`). Locks: `extraction.test.ts`, `ProductionSubsystem.test.ts`, `production.test.ts`.
+- **Active power:** `StructureGridSubsystem.setActive(rec, active)` is the one switch; never write `rec.drawFull`. A new power consumer that works must call it.
+- **A fence blocks its owner's own fire.** Lock: `turretVsOwnFence.test.ts`. Mines live in room state (#16); `mine_detonated` is only an accelerator ([mine-layer](../../docs/features/mine-layer.md)).
+- **Credits outputs** pay a PLAYER owner's wallet via `payCredits`; never put credits in a hold.
+- Detail: [production-chains.md](../../docs/architecture/production-chains.md#server-implementation-notes).
+

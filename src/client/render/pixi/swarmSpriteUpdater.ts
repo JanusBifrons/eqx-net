@@ -55,8 +55,8 @@ import type { Text } from 'pixi.js';
 import { minerRangeForKind } from '../minerRangeRing.js';
 import type { MountVisualManager } from '../MountVisualManager';
 import {
-  buildArtShipSprite, isMachinedSprite, rockHandleFor, scrapHandleFor, shipArtSwap, shipHandleFor, structHandleFor,
-  updateArtShipLight, type ShipArtCtx,
+  buildArtShipSprite, isMachinedSprite, rockHandleFor, scrapHandleFor, shipArtSwap, structHandleFor,
+  updateArtShipLight, shipArtHandleForEntity, wreckArtHandleFor, type ShipArtCtx,
 } from '../art/shipArtSprites.js';
 import { MachinedShipSprite } from '../art/MachinedShipSprite.js';
 import {
@@ -254,7 +254,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     const artHandle = !ctx.art.art
       ? null
       : entry.kind === 1 && entry.shipKind
-        ? shipHandleFor(ctx.art, spriteKey, entry.shipKind, entry.faction !== undefined ? npcFactionDef(entry.faction)?.color : undefined)
+        ? shipArtHandleForEntity(ctx.art, spriteKey, entry.shipKind, entry.faction)
         : entry.kind === 2 && entry.shipKind
           ? structHandleFor(ctx.art, spriteKey, entry.shipKind, -entry.angle)
           : entry.kind === 3 && entry.shipKind
@@ -269,7 +269,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     // piece once it is ready.
     const wreckParent = entry.kind === 4 ? entry.shipKind ?? wreckDescs!.get(entry.wreckId!)!.parentKind : '';
     const wreckArtHandle = entry.kind === 4 && ctx.art.art
-      ? shipHandleFor(ctx.art, spriteKey, wreckParent, undefined, wreckDeadArtFor(wreckParent))
+      ? wreckArtHandleFor(ctx.art, spriteKey, wreckParent, entry.faction, wreckDeadArtFor(wreckParent))
       : null;
     if (
       sprite instanceof WreckPieceSprite && wreckArtHandle !== null &&
@@ -413,7 +413,10 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
       if (tele !== undefined) {
         const mask = entry.chargingMask ?? 0;
         if (mask !== 0 && sprite.children[sprite.children.length - 1] !== tele.root) sprite.addChild(tele.root);
-        updateChargeTelegraph(tele, mask, entry.chargeStartTick, entry.lastUpdateTick, fxNow, entry.displayMountAngles ?? entry.mountAngles, entry.chargeOffsets);
+        // A full charge holds until its gun's shot shows (drawn a display
+        // delay after the mask clears): read the guns' last shots then.
+        if (mask !== 0 || tele.prevMask !== 0 || tele.heldMask !== 0) ctx.mountVisuals.lastShotsMs(spriteKey, tele.mountIds, tele.shotMs);
+        updateChargeTelegraph(tele, mask, entry.chargeStartTick, entry.lastUpdateTick, fxNow, entry.displayMountAngles ?? entry.mountAngles, entry.chargeOffsets, tele.shotMs);
       }
       // P4a — a named elite wears a slowly-pulsing gold ring.
       let ring = eliteRings.get(sprite);

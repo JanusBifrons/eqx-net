@@ -114,7 +114,7 @@ It is separate from base storage, so production never draws from it.
 | Cycle and rules (pure) | `src/core/structures/teleportCycle.test.ts` |
 | Integration | `tests/integration/sectorRoom/teleporter.test.ts`: charge capped at the jump's need, pad load, the swap with only the firing end paying, arrivals unloading, late-joiner room state, owner gating |
 | E2E | `tests/e2e/teleporter.spec.ts` (`teleport-test` room, feature tier): the cargo flow, and a pilot on the pad who is warned, rides, and stays on the far pad |
-| T2 unit | `src/shared-types/teleport.test.ts` (pad geometry, push direction); `src/core/physics/World.padField.test.ts` (the push in, out, off, and two worlds agree) |
+| T2 unit | `src/shared-types/teleport.test.ts` (pad geometry, push direction); `src/core/physics/World.forceField.test.ts` (the push in, out, off, and two worlds agree) |
 | T2 integration | `teleporter.test.ts`: a pilot on pad A and a drone on pad B trade places, and the pilot's epoch bumps |
 | T3 integration | `teleporterAcross.test.ts` (two real galaxy rooms): candidates by sector name, pairing both ways, the hop-based charge, the cycle in both rooms, the pad holds swapped across rooms, the pilot sent to the far sector, a parked hull rebuilt there |
 | T3 unit | `LivingWorldDirector.teleportBot.test.ts`, `tests/unit/teleportClientWireParity.test.ts` |
@@ -135,7 +135,7 @@ Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each r
 - **`components/TeleporterPanel.tsx`** mounts in the inspector for your own built teleporter. It reads the room-state row decoded into `StructureRenderState.teleport` from the mirror at 4 Hz (no Zustand). It lists pairing candidates by kind and distance, never ids. Senders live in `structureActionsClient.ts`.
 - **T2 — on-pad prediction.**
   - **Walls:** `visitDerivedWalls` emits each teleporter's iris spans (blocking only while SEALED, keys from `-2e9`), so prediction and drawing follow the server walls.
-  - **Push:** `syncPadFields` sets each pad's closing push in predWorld from the room-state phase.
+  - **Push:** `syncForceFields` sets each pad's closing push (a `pad` force field) in predWorld from the room-state phase.
   - **Re-seed:** an own-ship `poseEpoch` change makes `handleSnapshot` re-seed the local body at the snapshot pose with a fresh `Reconciler`, and that snapshot skips the reconcile (a snap, not a slide). `_localPoseEpoch` resets to -1 on sector handoff.
   - **Warning:** `TeleportWarning` (top-centre) is derived from room state + the mirror, never a message.
 - **T4 — tolls and pairing prompts.** `TeleportPrompts` (top-centre, `order={2}`, right under the energy bar so nothing above it changes height) shows a toll (`teleport_toll` → Zustand `tollPrompt`, Pay / Don't pay / Always / Never) and pair requests (`teleport_pair_request` → `pairRequests`, Accept / Decline). They are offers, not state. The owner's toll select lives in `TeleporterPanel`; `ForeignTeleporterPanel` asks another owner to pair. Every sender has a case in `teleportClientWireParity.test.ts`.
@@ -154,7 +154,7 @@ Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each r
 - **Persisted:** partner, rules and charge go in the sector snapshot `teleport` block (rules re-validated on restore).
 - **Pairing (T1):** same sector, same owner.
 - **T2 — the doors and the ride:**
-  - **Phase effects:** `applyPhaseEffects` turns the pad field on while CLOSING (`SET_PAD_FIELD`) and the iris walls solid while SEALED (`tpiris-<id>-<i>`, spawned once, inactive).
+  - **Phase effects:** `applyPhaseEffects` turns the pad's force field on while CLOSING (through `ForceFieldSubsystem`, `SET_FORCE_FIELD`; [physics-worker](../architecture/physics-worker.md#force-fields)) and the iris walls solid while SEALED (`tpiris-<id>-<i>`, spawned once, inactive).
   - **The swap:** `SectorRoom.swapPadShips` collects riders by liveness class (#17: ACTIVE alive players, LINGERING hulls, swarm kinds 1 and 3), then moves them all (SAB + `SET_POSITION` + pose caches).
   - **Riders' clients:** an active rider's `ShipState.poseEpoch` bumps and rides the own-ship snapshot entry (#16), and the broadcast grace is extended.
   - **Spawn clearance** treats a pad as its posts (`pushSolidBoxes`).
@@ -171,3 +171,16 @@ Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each r
   - **Payment** goes wallet → wallet for a player owner, or into the owner faction's treasury (`EconomyStore.creditTreasury`, persisted). Remembered answers are `EconomyStore.tollPref`.
   - **Pairing with another owner:** `teleport_pair_request` → `TeleportBroker.addRequest` + a prompt to the owner (`sendToPlayer` reaches them in any room) → `teleport_pair_answer`; only the owner of the asked teleporter can accept. `pair(…, consented=true)` skips the same-owner check.
 - Lock: `tests/integration/sectorRoom/teleporter.test.ts`. Story: [docs/features/teleporters.md](../features/teleporters.md).
+
+### Server rules in full (moved from src/server/CLAUDE.md)
+
+The zone `CLAUDE.md` keeps a condensed form of these rules; this is the full wording with its lock tests.
+
+#### Teleporters and alien gates
+
+- **Pad holds** move only via `StorageService.padLoad` / `padUnload` / `padSwap` / `padSwapAcross` / `takePadForSpill` (one group each). Capacitor charge never discharges batteries.
+- **Director bots** cross only via `TeleportBroker.moveBot` → `LivingWorldDirector.teleportBot`. Rooms register with the broker on create and unregister on dispose. Lock: `teleporter.test.ts`.
+- **Pairing consent:** only the owner of the asked teleporter can accept a `teleport_pair_request` (`teleport_pair_answer` handler in `SectorRoom` checks `req.toOwner` and the target's owner). Lock: `teleporterAcross.test.ts`.
+- **Alien gates** are unbuildable and invulnerable; pair a gate only through `findAlienTwin`, never a pre-computed uid. `evictSwarmEntity` must `forget` the ship; the disable runs through the shared `gateDisabledInput` (#15). Locks: `AlienGateGuard.test.ts`, `disableParity.test.ts`, `alienGates.test.ts`.
+- Detail: [teleporters.md](../../docs/features/teleporters.md#server-implementation-notes), [alien-gates.md](../../docs/features/alien-gates.md#server-implementation-notes).
+

@@ -13,6 +13,7 @@ import { MachinedFlatSprite } from './art/MachinedFlatSprite.js';
 import type { ArtHandle, ArtService, ShipArt } from './art/ArtService.js';
 import type { ShipArtCtx } from './art/shipArtSprites.js';
 import type { BakeJob } from './art/bake.js';
+import { liveryGrey } from './art/fields.js';
 import { getShipKind } from '../../shared-types/shipKinds';
 import { getStructureKind } from '../../shared-types/structureKinds';
 
@@ -93,5 +94,20 @@ describe('MountVisualManager — Machined turrets', () => {
     mvm.applyMountAngles('them', mounts, undefined);
     expect(guides(local)).toEqual([true, true]);
     expect(guides(remote)).toEqual([false, false]);
+  });
+});
+
+describe('MountVisualManager — livery turrets', () => {
+  it('a liveried hull keeps its guns grey (not team-coloured); unliveried takes the paint', () => {
+    const color = 0x5a7a9a;
+    for (const livery of [undefined, { treatment: 'a' as const, team: 0x3a7bff, sigil: 0xffd23a }]) {
+      const { ctx, acquired } = fakeCtx();
+      ctx.handles.set('p1', { key: 'h', job: { type: 'ship', id: 'gunship', paint: 0xff0000, ...(livery ? { livery } : {}) }, rig: undefined as never, state: 'ready', ship: null, struct: null });
+      const mvm = new MountVisualManager();
+      mvm.setArt(ctx);
+      mvm.ensureForMounts('p1', 'gunship', getShipKind('gunship').mounts!, color, new MachinedShipSprite(art()));
+      const job = acquired[0]!.job;
+      expect(job.type === 'turret' ? job.paint : -1).toBe(livery ? liveryGrey(color) : 0xff0000);
+    }
   });
 });
