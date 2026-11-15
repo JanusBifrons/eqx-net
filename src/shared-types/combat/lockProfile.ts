@@ -17,9 +17,10 @@
  * letting it finish is a hostile act.
  */
 import type { ShipKind } from '../shipKinds/types.js';
+import type { MountSize } from '../shipScale/tuning.js';
 
-/** A mount's size class (WeaponMountSchema.size). */
-export type MountSize = 'AA' | 'S' | 'M' | 'L' | 'XL';
+/** A mount's size class (WeaponMountSchema.size); one type, in shipScale/tuning. */
+export type { MountSize };
 
 export interface LockTuning {
   /** Seconds for a matched weapon/target at point-blank, sitting still. */

@@ -17,8 +17,7 @@ const BOT_WARP_ALIGN_RAD = 0.06;
 const BOT_WARP_MIN_TURN = Math.PI / 20;
 import { castHitscan } from './hitscanRay.js';
 import { wallGeometry } from '../structures/ShieldWall.js';
-import { PAD_PUSH_ACCEL, padPushDir } from '../../shared-types/teleport.js';
-import { FORCE_FIELD_MASS_SCALED, type ForceField } from './forceFields.js';
+import { applyForceFields, storeForceField, type ForceField } from './forceFields.js';
 import { shipBodyInertia, shipBodyMass } from '../../shared-types/shipScale/tuning.js';
 import { CapitalOverlapResolver, newCapitalEntry } from './capitalOverlap.js';
 
@@ -107,8 +106,6 @@ export class PhysicsWorld {
   private bodies = new Map<string, ShipBody>();
   /** Force fields (`setForceField`), one record per id, updated in place. */
   private readonly forceFields = new Map<string, ForceField>();
-  private readonly _padDir = { x: 0, y: 0 };
-  private readonly _padImpulse = { x: 0, y: 0 };
   /** Reverse lookup: Rapier rigid-body handle → entity ID, for hitscan results. */
   private handleToId = new Map<number, string>();
   /** Shield-wall span bodies + colliders, keyed by wall id. Kept SEPARATE from
@@ -169,7 +166,7 @@ export class PhysicsWorld {
   tick(dtSeconds: number, eventQueue?: RAPIER.EventQueue): void {
     this.accumulator += dtSeconds;
     while (this.accumulator >= FIXED_DT) {
-      this.applyForceFields();
+      applyForceFields(this.forceFields, this.bodies, FIXED_DT);
       this.world.step(eventQueue);
       this.capitals.resolve();
       if (this.settle.size > 0) this.settleStep();
@@ -452,40 +449,18 @@ export class PhysicsWorld {
   }
 
   /**
-   * Force fields (`forceFields.ts`) push dynamic bodies each fixed step; the
-   * server worker and the client predWorld run the same list (#15). Kinds:
-   * `pad` (v4 T2 — a pad's closing push, in or out by `padPushDir`).
-   * Idempotent on `id`; values are COPIED, so a caller may reuse a scratch.
+   * Force fields (`forceFields.ts`: kinds `pad` and `tractor`, their
+   * formulas and the per-step loop `applyForceFields`) push dynamic bodies
+   * each fixed step; the server worker and the client predWorld run the same
+   * list (#15). Idempotent on `id`; values are COPIED (`storeForceField`), so
+   * a caller may reuse a scratch.
    */
   setForceField(id: string, field: ForceField): void {
-    const f = this.forceFields.get(id);
-    if (f !== undefined && f.kind === field.kind) { f.cx = field.cx; f.cy = field.cy; f.half = field.half; f.active = field.active; return; }
-    this.forceFields.set(id, { kind: field.kind, cx: field.cx, cy: field.cy, half: field.half, active: field.active });
+    this.forceFields.set(id, storeForceField(this.forceFields.get(id), field));
   }
 
   removeForceField(id: string): void {
     this.forceFields.delete(id);
-  }
-
-  private applyForceFields(): void {
-    if (this.forceFields.size === 0) return;
-    for (const f of this.forceFields.values()) {
-      if (!f.active) continue;
-      const massScaled = FORCE_FIELD_MASS_SCALED[f.kind];
-      for (const rec of this.bodies.values()) {
-        const b = rec.body;
-        if (!b.isDynamic()) continue;
-        // TODO: alloc-debt — Rapier's translation() returns a fresh vector; this
-        // runs only during a pad's ~4 s closing phase.
-        const t = b.translation();
-        if (!padPushDir(f.cx, f.cy, f.half, t.x, t.y, rec.kind.radius, this._padDir)) continue;
-        // massScaled: mass × accel × dt; else force × dt (heavy bodies barely move).
-        const j = massScaled ? b.mass() * PAD_PUSH_ACCEL * FIXED_DT : PAD_PUSH_ACCEL * FIXED_DT;
-        this._padImpulse.x = this._padDir.x * j;
-        this._padImpulse.y = this._padDir.y * j;
-        b.applyImpulse(this._padImpulse, true);
-      }
-    }
   }
 
   /** Remove a wall span entirely (pylon destroyed / pair severed). */

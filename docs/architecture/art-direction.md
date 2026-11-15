@@ -190,8 +190,10 @@ at a glance and the hulls still read as one universe. It is on by default
 **Who owns a hull.** The owner is a faction id: a player's own id (each
 player is their own faction), an NPC faction from the owner string, else the
 kind's allegiance (drones, robots, traders). Wrecks and lingering hulls keep
-their owner's livery; wreckage with no known owner is neutral grey scrap
-(`SCRAP_TEAM`). Cargo pods are never liveried. The renderer resolves it in
+their owner's livery: a capital wreck's descriptor names its owner, and with
+none its pieces resolve the owner as the live hull did (faction, else the
+kind's allegiance), so they reuse the hull's bake and never wait on a new
+one (capital-destruction.md S3). Cargo pods are never liveried. The renderer resolves it in
 `art/shipArtSprites.ts` (`ownerLivery`, cached per owner; `shipHandleFor`
 compares scalars only, so a frame allocates nothing) from three pure
 functions in `shared-types/factions.ts`:

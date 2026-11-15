@@ -29,8 +29,10 @@ import { ARCADE_HANDLING, handlingClassOf } from './arcadeHandling.js';
 export type SizeClass = 'fighter' | 'frigate' | 'cruiser' | 'capital';
 export const SIZE_CLASSES: readonly SizeClass[] = ['fighter', 'frigate', 'cruiser', 'capital'];
 
-/** Mount size: scales a weapon's reach, projectile radius and splash. */
-export type MountSize = 'S' | 'M' | 'L' | 'XL';
+/** Mount size, the ONE type (`combat/lockProfile.ts` re-exports it): scales
+ *  a weapon's reach, projectile radius, splash and tractor power. `AA` is the
+ *  light quick-tracking anti-air / utility mount, below `S`. */
+export type MountSize = 'AA' | 'S' | 'M' | 'L' | 'XL';
 
 /** The 1× fighter values every size-dependent number starts from. These ARE
  *  the old constants (kept here so the 1× game is unchanged). */
@@ -98,12 +100,17 @@ export const CLASS_TUNING: Readonly<Record<SizeClass, ClassTuning>> = {
   capital: { geometry: 2, spacing: 2, bakeMaxSide: 3072, mountSize: 'L', clearHull: true },
 };
 
-/** Mount size multipliers on weapon reach / projectile radius / splash. */
-export const MOUNT_SIZE_TUNING: Readonly<Record<MountSize, { reach: number; radius: number; splash: number }>> = {
-  S: { reach: 1, radius: 1, splash: 1 },
-  M: { reach: 1.25, radius: 1.5, splash: 1.5 },
-  L: { reach: 1.6, radius: 2.5, splash: 2.5 },
-  XL: { reach: 2.2, radius: 4, splash: 4 },
+/** Mount size multipliers on weapon reach / projectile radius / splash, and
+ *  `power`: the tractor force multiplier (F_mount = weapon force × power;
+ *  a FORCE, so a small mount barely moves a big chunk). AA sits below S on
+ *  every column (a light utility mount). Guide: physics-worker.md
+ *  "Force fields". */
+export const MOUNT_SIZE_TUNING: Readonly<Record<MountSize, { reach: number; radius: number; splash: number; power: number }>> = {
+  AA: { reach: 0.8, radius: 0.75, splash: 0.75, power: 0.4 },
+  S: { reach: 1, radius: 1, splash: 1, power: 1 },
+  M: { reach: 1.25, radius: 1.5, splash: 1.5, power: 2.5 },
+  L: { reach: 1.6, radius: 2.5, splash: 2.5, power: 6 },
+  XL: { reach: 2.2, radius: 4, splash: 4, power: 15 },
 };
 
 /** A kind's size class: authored, else by its UNSCALED radius. */

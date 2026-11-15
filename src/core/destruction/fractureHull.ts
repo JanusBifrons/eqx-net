@@ -32,6 +32,7 @@
 import decomp from 'poly-decomp';
 import { Rng, fnvMixU32 } from '../random/rng.js';
 import type { Vec2 } from '../swarm/asteroidShape.js';
+import { ANGLE_STEPS, unitDirFromSteps } from '../geometry/unitDir.js';
 
 /** Bump on ANY change to the produced geometry (rides the S2 descriptor).
  *  v2: primary break line through the kill point, seeded clean snap,
@@ -307,31 +308,16 @@ export interface FractureKillCut {
 
 /** A kill cut's direction travels as a u16 angle (`CUT_ANGLE_STEPS` per
  *  turn, the wreck descriptor's `cutAng`). */
-export const CUT_ANGLE_STEPS = 65536;
+export const CUT_ANGLE_STEPS = ANGLE_STEPS;
 
 /**
  * The unit direction of a u16 cut angle (`cutAng`: angle × 65536 / 2π, in
  * the hull's 1× Pixi-up frame, x then y). Both sides turn the descriptor's
- * angle into the fracture's `cut` direction with this, so it is arithmetic
- * only (never sin/cos): the quarter-turn angle, folded to at most π/4, goes
- * through fixed Taylor series (error < 1e-13), the quadrant by sign swaps.
+ * angle into the fracture's `cut` direction with this; it is the shared
+ * arithmetic-only `unitDirFromSteps` (never sin/cos).
  */
 export function cutDirFromAngle(ang: number): Vec2 {
-  const a = (Math.round(ang) % CUT_ANGLE_STEPS + CUT_ANGLE_STEPS) % CUT_ANGLE_STEPS;
-  const quadrant = Math.floor(a / 16384);
-  const r = a - quadrant * 16384;
-  const fold = r > 8192;
-  const x = (fold ? 16384 - r : r) * (Math.PI / 32768);
-  const x2 = x * x;
-  // sin and cos of x ≤ π/4 (Horner, fixed order).
-  const sx = x * (1 - x2 / 6 * (1 - x2 / 20 * (1 - x2 / 42 * (1 - x2 / 72 * (1 - x2 / 110 * (1 - x2 / 156))))));
-  const cx = 1 - x2 / 2 * (1 - x2 / 12 * (1 - x2 / 30 * (1 - x2 / 56 * (1 - x2 / 90 * (1 - x2 / 132 * (1 - x2 / 182))))));
-  const c = fold ? sx : cx;
-  const s = fold ? cx : sx;
-  if (quadrant === 0) return { x: c, y: s };
-  if (quadrant === 1) return { x: -s, y: c };
-  if (quadrant === 2) return { x: -c, y: -s };
-  return { x: s, y: -c };
+  return unitDirFromSteps(ang);
 }
 
 /** The seeded decisions taken before any geometry (exposed for S2 and tests). */

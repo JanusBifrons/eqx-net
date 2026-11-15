@@ -478,7 +478,9 @@ player-flown (active or parked), breaks it into wreck bodies on the server.
   teleport guard for drawing, the remote-entity anchor for the body.
 - **Descriptor.** One `WreckDescriptor` per live wreck (`{ wreckId,
   parentKind, seed, killX, killY, killBlowDamage, recentDamageRate,
-  snapChance, algoVersion, deathTick?, cutKind?, cutAng?, cutW? }`; the kill
+  snapChance, algoVersion, deathTick?, cutKind?, cutAng?, cutW?, owner? }`;
+  `owner` is who owned the hull, for the livery its pieces wear: see S3
+  "Texture continuity"; the kill
   point is hull-local, 1×
   Pixi-up, already on the outline). `CapitalWreckSubsystem` hands out a free
   u16 `wreckId` per wreck and keeps the list (a shared array rebuilt only when
@@ -628,6 +630,21 @@ pieces stay for ever and the glow ends dark. As built
   review: slice A through the default shader gave flat grey slabs). Before
   the art is ready (or in the classic look) the piece is
   today's plain polygon, swapped once the art arrives.
+- **The live hull's bake under a livery (fix 2026-11-15).** The default
+  look wears a livery (art-direction.md "Ship livery"), and the livery is
+  part of the bake key, so "the handle the live hull drew" means the same
+  owner. `wreckArtHandleFor` resolves it like the live hull: the
+  descriptor's `owner` (`CapitalWreckDeps.ownerOf`: a player hull's
+  playerId, active or parked; a patrol's faction), else the entry's
+  faction, else the kind's allegiance (an NPC's live hull). Filmed bug
+  (beam-slice, default look): pieces carry no owner, so each wreck asked for
+  a NEW capital bake in a neutral "scrap" livery (~10 s of forging per kind),
+  and the hull drew as a flat grey silhouette of plain polygons for 15+ s
+  (reproduced on main with `test_kill_capitals` in `wreck-test`; fine with
+  `?livery=off`). Locks: the livery cases in
+  `swarmSpriteUpdater.wreckArt.test.ts`, the owner case in
+  `CapitalWreckSubsystem.test.ts`, the player-capital case in
+  `tests/integration/sectorRoom/capitalWrecks.test.ts`.
 - **Glowing cut edges.** One glow per piece over its `cutEdges` (the
   original outline never glows; since 2026-11-13 a mesh lit by a crack front,
   see "Cracks spread" below), coloured by `wreckGlowAt`: white-hot for
@@ -2282,7 +2299,9 @@ line; a railgun kill erases a straight channel as wide as the bolt.
     its cracks unchanged. Full (capital) glow only.
   - The simple (sub-capital) glow tints the same way, held to 50 % of its
     life and gone by 85 % (cracks: their own orange and red), at the same
-    width multiplier; its cracks stay as they were on a cut kill too.
+    width multiplier; its cracks stay as they were on a cut kill too. No
+    profile draws a cut kill on the simple glow any more: a sub-cap's cut
+    kill takes the full glow (`fx.cutGlowStyle`, "Sub-cap cut kills" below).
   Still ONE glow mesh per piece, no new draw call: the glow textures bake a
   row block per tint (`WRECK_GLOW_TEX_ROWS` = `GLOW_ROWS_PER_TINT` per tint;
   the simple texture one row per tint), a segment's tint and place across
@@ -2349,6 +2368,62 @@ line; a railgun kill erases a straight channel as wide as the bolt.
   `wreckPieces.test.ts` "kill-cut direction";
   `tests/integration/wire/wreckGeometryParity.test.ts` (cut descriptors
   rebuild bit for bit); `wreckWire.test.ts`.
+
+#### Sub-cap cut kills (beam take 7 review, 2026-11-15)
+
+A hostile film review of a heavy-beam slice kill on a missile frigate saw
+three faults. Causes and fixes for the first two (profile data, no branch):
+
+- **The two halves looked like different objects** (one nearly black with
+  thin blue/white edge stripes, the other the frigate's normal lit blue).
+  Both drew the same dead bake through the same GPU-lit shader. The
+  shader's self-shadow marches toward the sun over the PARENT hull's whole
+  height map, so a piece is shaded by hull the break removed. Under the
+  live looks (shadow length 3, sun ~25°, no ambient on the night look) the
+  shadow reaches several times the hull's height, and the 60 u slice leaves
+  the frigate two thin strips: the half on the far side from the sun sat
+  wholly in the shadow of the vanished middle (black, lit only by rim
+  light). Fix: wreck-piece art (the dead bake, `fx.deadArt`) casts no self
+  shadow. GPU-lit: `LitShipMesh.selfShadow = false` on every piece mesh of
+  a `deadArt` profile (`setLight` sends 0 march steps). Baked: the dead bake
+  is shaded with `shadows = false` (key `:D2`, so stored copies of the old
+  shadowed bake are not reused). Capitals (`deadArt` false) keep their
+  self-shadow, byte-identical; their pieces are large next to the shadow's
+  reach, so the phantom shadow is a band along the cut there (a follow-up
+  if a film shows it). Locks: `swarmSpriteUpdater.subcapDeadTint.test.ts`
+  "both halves of a sub-cap wreck are lit by the same rule".
+- **The violet cut vanished ~0.1 s after the beam stopped:** the sub-cap
+  cut rode the 1 s simple glow (violet to 50 % of it). Profile field
+  `fx.cutGlowStyle` (capital and sub-cap `full`, none `none`): a wreck
+  with a `cutKind` draws that style. A sub-cap slice now burns like a
+  capital's (violet held 1.5 s, rose blush, orange ember, scorch, dark at
+  4.5 s); its other crack is a subdued splinter; widths scale with the
+  wreck's radius (#18: a frigate's cut core ~10 u). With no crack front the
+  full glow still needs the crack span (`crackMin/Reach`), which
+  `WreckArtState.infoFor` now computes for any full glow; `noHold` lights
+  every cut at once. A descriptor first seen within 4.5 s starts its glow
+  at first sight. An un-cut sub-cap wreck keeps its 1 s simple glow. Lock:
+  `swarmSpriteUpdater.subcapWreck.test.ts` "a sub-cap cut kill glows like
+  a capital cut".
+- **The halves flew apart, then stopped dead (reported, not changed
+  here).** A cut kill takes the un-cut break-up's numbers: `separateScale`
+  240 (the frigate's halves parted at ~177 u/s, 3.7 radii/s) and damping
+  ×10 (at rest ~3-5 s after the kill). Wreck and scrap MOTION belongs to the
+  salvage stream (owner + salvage session, 2026-11-15): every push becomes
+  an impulse against the piece's real mass, so heavy pieces drift slowly.
+  This PR leaves the parting kick and damping as they were.
+- **The 60 u strip on a small hull (reported, not changed).** The heavy
+  beam's slice is `HEAVY_BEAM_WIDTH` (60 u) wide; the frigate is 64 × 88 u
+  (radius 48). Across 7 beam bearings (0-90°, 3 seeds, slice through the
+  centre): along the hull, 2 strips keeping 22 % of the area; at 15-75°,
+  ONE piece of 6-15 %; across the hull (90°), nothing (the whole hull is
+  erased; no wreck). A fighter (40 × 52), a heavy (48 × 56) and a gunship
+  (40 × 56) leave no wreck at every bearing. Whether a sub-cap's strip
+  should be capped to a share of the hull (e.g. a profile
+  `cutMaxWidthShare` in the fracture options, a `FRACTURE_ALGO_VERSION`
+  bump) or a beam wider than the ship should vaporise it is an owner call;
+  the beam width (the owner's v10 "too thin" call for capitals) is not
+  changed here.
 
 #### Far-zoom LOD for wreck pieces (2026-11-14)
 

@@ -129,7 +129,7 @@ export function shapeForKind(kindId: string | undefined): ShipShape {
 // tier emits a sparse plume rather than falling back to a flame). See
 // `src/client/effects/perEffect/EngineEmitter.ts`.
 
-export function buildAsteroidGfx(entityId: number, radius: number): Graphics {
+export function buildAsteroidGfx(shapeSeed: number, radius: number): Graphics {
   const g = new Graphics();
   // Same generator the server uses to build the convex-hull collider — both
   // sides seed from the same entityId, so the rendered silhouette matches the
@@ -138,7 +138,7 @@ export function buildAsteroidGfx(entityId: number, radius: number): Graphics {
   // For symmetric polygons (ship/drone) the y-flip is invisible, but an
   // asymmetric polygon mismatches its collision hull as it rotates unless
   // every vertex's y is negated for drawing only.
-  const mathVerts = generateAsteroidVertices(entityId, radius);
+  const mathVerts = generateAsteroidVertices(shapeSeed, radius);
   const screenVerts = mathVerts.map((v) => ({ x: v.x, y: -v.y }));
   g.poly(screenVerts);
   g.fill({ color: ASTEROID_COLOR });
