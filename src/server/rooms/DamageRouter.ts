@@ -41,6 +41,7 @@ import type { DamageEvent, DestroyEvent } from '../../shared-types/messages.js';
 import type { ShipState } from './schema/SectorState.js';
 import type { WorkerCmd } from './PhysicsWorkerProxy.js';
 import type { ShieldHullRouter } from './ShieldHullRouter.js';
+import type { LayerMul } from '../../core/combat/ShieldHull.js';
 import {
   resetInteractionResult,
   type InteractionResultMut,
@@ -148,10 +149,12 @@ export class DamageRouter {
   /** Dispatch a confirmed hit: resolve the target leaf, then apply the
    *  interaction. Behaviour byte-identical to the old if-tree (golden-master).
    *  Returns true iff THIS hit destroyed the target (`out.destroyed`). */
-  apply(targetId: string, shooterId: string, damage: number, hitX?: number, hitY?: number): boolean {
+  apply(
+    targetId: string, shooterId: string, damage: number, hitX?: number, hitY?: number, layerMul?: LayerMul,
+  ): boolean {
     const leaf = this.resolver.resolve(targetId, shooterId, damage);
     if (leaf === null) return false;
-    return this.applyInteraction(leaf, targetId, shooterId, damage, hitX, hitY);
+    return this.applyInteraction(leaf, targetId, shooterId, damage, hitX, hitY, layerMul);
   }
 
   /**
@@ -172,14 +175,22 @@ export class DamageRouter {
     damage: number,
     hitX?: number,
     hitY?: number,
+    layerMul?: LayerMul,
   ): boolean {
     const out = this._out;
     resetInteractionResult(out);
     const tick = this.deps.serverTick();
     const wireTargetId = this.resolver.wireTargetId;
 
-    leaf.health.applyLayered(leaf.target, damage, tick, out);
+    leaf.health.applyLayered(leaf.target, damage, tick, out, layerMul);
     if (!out.applied) return false; // immune target — no event
+    // The damage the hit layer actually took (a weapon's per-target factor);
+    // with no factor it IS `damage`. A hit the factor zeroes is a no-op: no
+    // event, no per-hit effect (the layer above left the state untouched).
+    if (layerMul !== undefined) {
+      damage *= out.hitLayer === 'shield' ? layerMul.shield : layerMul.hull;
+      if (!(damage > 0)) return false;
+    }
 
     // Campaign 1.2 (invariant #15 — the ram path's P3.3 rounds-before-emit,
     // applied at the ONE wire emit site so missile splash / mining chips are

@@ -25,6 +25,8 @@
  * zone-pure; concrete server bindings narrow it to the real store type.
  */
 
+import type { LayerMul } from '../combat/ShieldHull.js';
+
 /** A discrete interaction delivered to an entity. Phase 1 = damage only; the
  *  discriminant leaves room for `'heal'` / `'force'` (black-hole pull) later. */
 export interface Interaction {
@@ -75,7 +77,9 @@ export function resetInteractionResult(out: InteractionResultMut): InteractionRe
  * not on its record). Stateless + per-kind: the SAME instance handles every
  * entity of its kind; the entity-specific state is the `target` argument.
  * Set `out.applied=false` for an immune/absent target (asteroid).
+ * `layerMul` (a weapon's per-target factors) scales the hit per layer; absent
+ * ⇒ ×1.
  */
 export interface HealthBinding {
-  applyLayered(target: unknown, amount: number, atTick: number, out: InteractionResultMut): void;
+  applyLayered(target: unknown, amount: number, atTick: number, out: InteractionResultMut, layerMul?: LayerMul): void;
 }
