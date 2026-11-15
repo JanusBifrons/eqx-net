@@ -122,18 +122,26 @@ function buildMountGlowGfx(r: number, len: number, wid: number): Graphics {
 }
 
 /** A railgun's slot charge: `fill` (scaled 0..1 along the slot from the
- *  breech) and the bright `head` at its front. Children of the mount glow. */
-export interface RailSlotGfx { fill: Graphics; head: Graphics; y0: number; len: number }
+ *  breech) and the bright `head` at its front (`headHalf`: its half-length
+ *  at scale 1). Children of the mount glow. */
+export interface RailSlotGfx { fill: Graphics; head: Graphics; y0: number; len: number; headHalf: number }
 
-/** A railgun's charge glow (Pixi-up local, barrel to −y): a soft glow in the
- *  breech bore, and the slot fill + head, sized from the drawn rails
- *  (`railGeom`, the same numbers the bake used, #18). */
+/** The slot's light front fades out over the last part of the fill: a full
+ *  slot has no front, so nothing bright sits at the muzzle tip (a head
+ *  there read as a projectile already out; rail take 6 review). */
+const RAIL_HEAD_FADE_FROM = 0.8;
+
+/** A railgun's charge glow (Pixi-up local, barrel to −y): a small glow in the
+ *  bore, inside the slot's width (a disc half the breech wide read as the
+ *  breech itself turning pale, then dark again the frame the shot showed),
+ *  and the slot fill + head, sized from the drawn rails (`railGeom`, the
+ *  same numbers the bake used, #18). */
 function buildRailSlotGfx(houseW: number, houseL: number, len: number, wid: number): { g: Container; rail: RailSlotGfx } {
   const G = railGeom(houseW, houseL, len, wid);
   const g = new Container();
   const bore = new Graphics();
-  bore.circle(0, 0, G.breechR * 0.5).fill({ color: RAIL_GLOW, alpha: 0.22 });
-  bore.circle(0, 0, G.slotW * 0.9).fill({ color: RAIL_CORE, alpha: 0.5 });
+  bore.circle(0, 0, G.slotW * 0.5).fill({ color: RAIL_GLOW, alpha: 0.35 });
+  bore.circle(0, 0, G.slotW * 0.3).fill({ color: RAIL_CORE, alpha: 0.5 });
   const L = G.railY0 - G.muzzleY;
   // The fill is drawn from its origin (the breech end) out to −L; scale.y
   // is the charge, so it grows from the breech toward the muzzle.
@@ -143,12 +151,14 @@ function buildRailSlotGfx(houseW: number, houseL: number, len: number, wid: numb
   fill.rect(-G.slotW * 0.3, -L, G.slotW * 0.6, L).fill({ color: RAIL_GLOW, alpha: 0.8 });
   fill.rect(-G.slotW * 0.12, -L, G.slotW * 0.24, L).fill({ color: RAIL_CORE, alpha: 0.95 });
   fill.y = G.railY0;
+  // The light's front: a soft glow inside the slot, behind the fill's edge.
+  const headHalf = G.slotW * 1.6;
   const head = new Graphics();
-  head.ellipse(0, 0, G.slotW * 0.9, G.slotW * 2.6).fill({ color: RAIL_GLOW, alpha: 0.35 });
-  head.ellipse(0, 0, G.slotW * 0.4, G.slotW * 1.4).fill({ color: RAIL_CORE, alpha: 0.9 });
+  head.ellipse(0, 0, G.slotW * 0.5, headHalf).fill({ color: RAIL_GLOW, alpha: 0.35 });
+  head.ellipse(0, 0, G.slotW * 0.25, G.slotW * 0.9).fill({ color: RAIL_CORE, alpha: 0.9 });
   head.y = G.railY0;
   g.addChild(bore, fill, head);
-  return { g, rail: { fill, head, y0: G.railY0, len: L } };
+  return { g, rail: { fill, head, y0: G.railY0, len: L, headHalf } };
 }
 
 /** Build a kind's telegraph (hidden), or null when it has no charge weapon. */
@@ -267,13 +277,13 @@ export function updateChargeTelegraph(
     g.rotation = -(t.baseAngles[i]! + (mountAngles?.[i] ?? 0));
     const rail = t.rails[i];
     if (hold) {
-      // Discharging: full and flaring until the shot shows.
+      // Discharging: full and flaring until the shot shows. A full slot has
+      // no front (no head at the muzzle tip: it read as a projectile).
       const f = Math.min(1, (fxNowMs - t.heldSinceMs[i]!) / DISPLAY_DELAY_MS);
       g.alpha = 1;
       if (rail) {
         rail.fill.scale.y = 1;
-        rail.head.y = rail.y0 - rail.len;
-        rail.head.scale.set(1 + 0.6 * f);
+        rail.head.visible = false;
       } else {
         g.scale.set(1 + 0.2 * f);
       }
@@ -290,8 +300,14 @@ export function updateChargeTelegraph(
       const c = railSlotCharge(level, _slot);
       g.alpha = c.bright * flicker;
       rail.fill.scale.y = Math.max(0.001, c.fill);
-      rail.head.y = rail.y0 - rail.len * c.fill;
-      rail.head.scale.set(0.6 + 0.4 * c.fill);
+      // The front rides just behind the fill's edge, never past the muzzle,
+      // and fades out as the slot fills (a full slot has no front).
+      const hs = 0.6 + 0.4 * c.fill;
+      rail.head.scale.set(hs);
+      rail.head.y = rail.y0 - rail.len * c.fill + rail.headHalf * hs;
+      const ha = c.fill <= RAIL_HEAD_FADE_FROM ? 1 : Math.max(0, (1 - c.fill) / (1 - RAIL_HEAD_FADE_FROM));
+      rail.head.alpha = ha;
+      rail.head.visible = ha > 0;
       continue;
     }
     g.alpha = (0.15 + 0.85 * level) * flicker;
