@@ -130,4 +130,45 @@ describe('HostileDroneBehaviour — hold fire (RTS Part B slice 7)', () => {
     }
     expect(b.getTargetId(), 'Defensive did not answer the earlier attacker').toBe('r1');
   });
+
+  it('an attack order is obeyed under hold fire: only the ordered target is chased and fired on; after the order it holds fire again', () => {
+    const b = owned();
+    b.setEngageOnSight(false);
+    b.setHoldFire(true);
+    const self = body(0, 0, 0);
+    // A nearer attacker shooting the ship, and the ordered target further out.
+    const view: Mut<AiWorldView> = {
+      players: [], swarms: [robot('near', 300, 0), robot('ordered', 0, 1500)], tick: 100, dtSec: 1 / 60,
+    };
+    b.setOrderedTarget('ordered', 100);
+    let fired = false;
+    let other = false;
+    let picked = false;
+    const startDist = 1500;
+    for (let t = 100; t < 100 + 60 * 8; t++) {
+      view.tick = t;
+      b.markHostile('near', t);
+      const intent = b.tick(self, view);
+      const id = b.getTargetId();
+      if (id === 'ordered') picked = true;
+      else if (id !== null) other = true;
+      if (intent.fire) fired = true;
+      stepKinematic(self, KIND, intent);
+    }
+    expect(picked, 'ignored the attack order').toBe(true);
+    expect(other, 'picked a target of its own under hold fire').toBe(false);
+    expect(fired, 'never fired on the ordered target').toBe(true);
+    expect(Math.hypot(self.x, self.y - 1500), 'did not close on the ordered target').toBeLessThan(startDist);
+    // Order over: back to hold fire (no target, no trigger) despite the attacker.
+    b.setOrderedTarget(null, view.tick);
+    let after = false;
+    for (let t = view.tick + 1; t < view.tick + 120; t++) {
+      view.tick = t;
+      b.markHostile('near', t);
+      const intent = b.tick(self, view);
+      if (intent.fire || b.getTargetId() !== null) after = true;
+      stepKinematic(self, KIND, intent);
+    }
+    expect(after, 'kept fighting after the order ended').toBe(false);
+  });
 });

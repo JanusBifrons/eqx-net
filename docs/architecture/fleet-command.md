@@ -84,7 +84,7 @@ brain. The fleet vocabulary (`FleetMode`, `FleetStance`, `FleetOrder`,
   (not only in a mixed-allegiance sector), so a hull sees on-sight foes
   (robots).
 - **Fire:** `tickWingmanTargets` points the hull's `wingmanLocks` at the
-  brain's `getTargetId()` (none under hold fire). The trigger is the brain's
+  brain's `getTargetId()` (under hold fire: only a live attack-order target). The trigger is the brain's
   `intent.fire` (slice 3): for a `{ hull: true }` registration
   `AiController` hands it to the sink's ONE hull fire branch
   (`postHullFire(hullId, targetId)` → `hullTrigger`, never `handleAiFire` /
@@ -220,11 +220,13 @@ brain. The fleet vocabulary (`FleetMode`, `FleetStance`, `FleetOrder`,
     take-controls handshake it is not in the brain's candidates for a few
     ticks; the hull's locks stay on the ordered target (it still resolves)
     instead of restarting the lock.
-  - **Stance vs order (unchanged):** an order never changes the stance.
-    Hold fire still wins: no target, no lock, no fire, no chase; the order
-    stays (the status shows it) and takes effect once hold fire is lifted.
-    (The old wingman brain flew to the target without firing under hold
-    fire; the AI pilot brain's slice 7 rule "hold fire = no chase" is kept.)
+  - **Stance vs order:** an order never changes the stance. An attack order
+    is a direct command and is obeyed under hold fire: the ship chases,
+    locks and fires on the ordered target ONLY. Hold fire still stops it
+    choosing targets of its own (no on-sight, no retaliation, no chase of
+    anyone else); when the order ends (target gone or order lifted) it holds
+    fire again, flying its job. (Fix 2026-11-15: before, hold fire ignored
+    the order until lifted, which was illogical.)
   - **Several ships, one target:** every ordered ship takes it, inside the
     spread-targets rule: with three on it the third still takes it; a fourth
     spreads to a free enemy at a comparable range.

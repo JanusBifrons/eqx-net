@@ -1040,8 +1040,11 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     // 2a) Hold fire (RTS Part B slice 7): no target, no chase, no trigger; the
     //     ship carries on with its job (post / move / search / flock). The
     //     ledger above keeps recording and decaying, so lifting hold fire
-    //     answers a recent attacker.
-    if (this.holdFire) {
+    //     answers a recent attacker. An ATTACK ORDER is the exception: the
+    //     ordered target alone is engaged (chase, lock, fire); every other
+    //     contact stays ignored (narrowed after the candidate build below).
+    const holdOrder = this.holdFire && this.orderedTargetId !== null;
+    if (this.holdFire && !holdOrder) {
       this.prevTargetId = null;
       if (this._picker.current === MANOEUVRE_FLEE) return this.tickFleeClear(self, view.tick);
       return this.leaderId !== null ? this.tickFlock(self, view) : this.tickPatrol(self);
@@ -1184,6 +1187,20 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       }
     }
     if (cand.length !== n) cand.length = n;
+    // Hold fire under an attack order: the ordered target is the only foe.
+    if (holdOrder) {
+      anyHostile = false;
+      for (let i = 0; i < n; i++) {
+        const c = cand[i]!;
+        c.hostile = c.ledger = c.id === ordered && c.hostile;
+        if (c.hostile) anyHostile = true;
+      }
+      if (!anyHostile) {
+        this.prevTargetId = null;
+        if (this._picker.current === MANOEUVRE_FLEE) return this.tickFleeClear(self, view.tick);
+        return this.leaderId !== null ? this.tickFlock(self, view) : this.tickPatrol(self);
+      }
+    }
     // Spread targets (owner 2026-11-14): how many of my side already hold each
     // hostile candidate; the pick scores a held one worse, so a free enemy wins
     // and the surplus doubles up only when we outnumber them.
@@ -2261,7 +2278,8 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    *  no fire, no chase and no turning toward an attacker; the ship keeps
    *  flying its job. Attackers still land on the retaliation ledger
    *  (`markHostile`), so lifting it under Defensive answers one that hit
-   *  within `FORGET_TICKS`. Independent of `setEngageOnSight`, which keeps
+   *  within `FORGET_TICKS`. An attack order (`setOrderedTarget`) is still
+   *  obeyed: that target alone is chased and fired on. Independent of `setEngageOnSight`, which keeps
    *  the attitude to return to. Default off. Server-only. */
   setHoldFire(on: boolean): void {
     this.holdFire = on;
@@ -2275,7 +2293,8 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    * and is free of the sensor cap and the guard leash (a guarding capital
    * leaves its post for it). When it dies or the order is replaced the ship
    * goes back to its job: the post, move target and hunt are untouched.
-   * Hold fire still wins (no target at all). A re-keyed ship (its owner took
+   * Under hold fire the ordered target is the ONLY one engaged (no other
+   * pick, no retaliation); when the order ends hold fire resumes. A re-keyed ship (its owner took
    * or let go of the controls) keeps its sticky pick. Server-only.
    */
   setOrderedTarget(id: string | null, atTick: number): void {

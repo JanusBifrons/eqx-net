@@ -10983,8 +10983,9 @@ export class SectorRoom extends Room<SectorState> {
       // The brain's target; with none, a live ordered target keeps the locks
       // (its pilot's take-controls handshake hides it from the brain's
       // candidates for a few ticks; the lock must not restart).
+      // Hold fire locks only an ordered target (an attack order is obeyed).
       const target = w.stance === 'holdFire'
-        ? null
+        ? ordered
         : (hb?.getTargetId?.() ?? ordered);
       const key = target === null ? null : this.wingmanLockKey(sid, target);
       const groups = this.wingmanLocks.wireFor(sid);
