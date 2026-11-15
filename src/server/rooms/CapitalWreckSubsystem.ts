@@ -316,8 +316,10 @@ export class CapitalWreckSubsystem {
     const tuning = shipTuning(getShipKind(kindId));
     // The profile decides the hold (capital: `WRECK_CRACK_MS` in game ticks;
     // sub-cap 0: the kick rides the spawn velocity), the body and the FIFO.
+    // A cut kill splits at once (owner, weapon cuts): no hold whatever the
+    // profile; the client reads the same from the descriptor's `cutKind`.
     const profile = DESTRUCTION_PROFILES[tuning.destruction];
-    const held = profile.holdMs > 0;
+    const held = profile.holdMs > 0 && fracture.cutKind === undefined;
     const crackTicks = held ? wreckCrackTicks() : 0;
     const body = wreckBodyParams(kindId);
     const fifo = profile.id === 'capital' ? this.live : this.liveSubcap;
