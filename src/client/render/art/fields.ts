@@ -467,13 +467,28 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
   //  - Sub-caps: B's spots, but none under a turret's reach (it only showed
   //    as a lopsided sliver); a hull whose visible spots are under
   //    TAIL_NEED4 of its area wears worn tail flashes on its rear corners
-  //    INSTEAD of those spots.
+  //    INSTEAD of those spots; one whose spots are under TAIL_FULL4 wears
+  //    them as well. The flashes grow (TAIL_GROW4) until the paint reaches
+  //    TAIL_FULL4 of the hull (owner, 2026-11-15: "all hulls should be
+  //    painted").
+  //  - Robots: painted bow and stern sections like the capitals' (bow
+  //    fraction < ROBOT_SEC4, never under ROBOT_MIN_TEX4 texels deep), in the
+  //    faction's edge shape, instead of B's corner tips; the core ring stays.
   const b4Edge = b4EdgeOf(livery);
   const b4 = b4Edge !== undefined;
   const edgeOf = b4Edge ?? B4_EDGE.straight;
   /** |x| over this row's half-width (0 = centreline, 1 = side). */
   const axOf = (wx: number, ty: number): number => Math.min(1, Math.abs(wx) / Math.max(1e-3, halfRow[ty] ?? 0));
-  const CAP_BOW4 = 0.2, CAP_STERN4 = 0.085, EDGE_JIT4 = 0.018, TAIL_T4 = 0.66, TAIL_NEED4 = 0.05, B4_VALUE = 0.78;
+  const CAP_BOW4 = 0.2, CAP_STERN4 = 0.085, EDGE_JIT4 = 0.018, TAIL_T4 = 0.66, TAIL_NEED4 = 0.05, TAIL_FULL4 = 0.085, B4_VALUE = 0.78;
+  const TAIL_GROW4 = [1, 1.25, 1.5, 1.8, 2.2] as const;
+  /** Robot b4 sections: share of the hull length at each end, its texel
+   *  floor (the smallest cube must still show the edge shape) and edge jitter. */
+  const ROBOT_SEC4 = 0.27, ROBOT_MIN_TEX4 = 3.5, ROBOT_JIT4 = 0.03;
+  /** Dog-tooth's capital bow tip read thinnest at line-up zoom (its teeth hide
+   *  under the forward turrets' keep-out): at the bow only, a fuller base and
+   *  teeth twice as deep, so the outer teeth clear the barbettes. */
+  const toothBow = edgeOf === B4_EDGE.tooth;
+  const bowOff4 = (ax: number): number => (toothBow ? 0.04 + 2 * edgeOf(ax) : edgeOf(ax));
   const paintLum = (() => { const p = lin(f.paint); return Math.max(1e-4, 0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2]); })();
   const cover = b4 ? opts.turretCover ?? [] : [];
   /** Inside a turret's paint keep-out, its reach times `k`. */
@@ -482,20 +497,27 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
     return false;
   };
   /** Capital section paint keeps a wider grey margin round each turret base
-   *  (a review could not see one at `turretCoverOf`'s reach). */
-  const CAP_KEEPOUT4 = 1.7 / TURRET_COVER_REACH;
-  /** Capital b4: the section edge's broken jitter (mirror-symmetric). */
-  const jit4 = (wx: number, wy: number): number => EDGE_JIT4 * (valueNoise((Math.abs(wx) / len) * 40, (wy / len) * 40, edgeSeed) - 0.5) * 2;
+   *  (a review could not see one at `turretCoverOf`'s reach); the paint a
+   *  shaped edge adds beyond b4's straight section (swept arms reaching past
+   *  the secondaries) keeps a wider one still (a review saw only a sliver). */
+  const CAP_KEEPOUT4 = 1.7 / TURRET_COVER_REACH, CAP_KEEPOUT_SHAPE4 = 2.0 / TURRET_COVER_REACH;
+  /** b4 sections: the edge's broken jitter (mirror-symmetric). */
+  const jit4 = (wx: number, wy: number, a = EDGE_JIT4): number => a * (valueNoise((Math.abs(wx) / len) * 40, (wy / len) * 40, edgeSeed) - 0.5) * 2;
   /** Capital b4: inside the painted BOW section (its edge as the paint draws it). */
   const inBow4 = (i: number): boolean => {
     const ty = Math.floor(i / g.w);
     const wx = (i % g.w + 0.5 - g.ox) / g.ppu, wy = (ty + 0.5 - g.oy) / g.ppu;
-    return (wy - yMin) / len < CAP_BOW4 + jit4(wx, wy) + edgeOf(axOf(wx, ty));
+    return (wy - yMin) / len < CAP_BOW4 + jit4(wx, wy) + bowOff4(axOf(wx, ty));
   };
+  const robot4 = b4 && arch === 'robot';
+  const robotSec4 = Math.max(ROBOT_SEC4, ROBOT_MIN_TEX4 / Math.max(1e-3, len * g.ppu));
   const roleOf = (i: number): string | undefined => (parts[layer[i]!] as { role?: string } | undefined)?.role;
   const edgeSeed = hashStr(seedKey + ':b4edge');
-  let tailFlash = false;
-  const tailW = Math.max(minLiv * 1.5, 0.24 * maxDu);
+  let tailFlash = false, tailSpots = false;
+  let tailW = Math.max(minLiv * 1.5, 0.24 * maxDu), tailT = TAIL_T4;
+  /** A tail-flash texel (a broken, worn, mirror-symmetric edge); `off`: the section-edge shape's offset. */
+  const flashAt = (tb: number, du: number, wx: number, wy: number, off: number): boolean =>
+    tb > tailT - 1.6 * off && du < tailW * (0.75 + 0.5 * valueNoise(Math.abs(wx) * 0.9, wy * 0.9, edgeSeed));
   /** A wingtip texel: in a wing row, outside TIP_B of the half-span and of
    *  that row's half-width (never a band under 2 texels). Robots: only their
    *  outermost corners, port and starboard. */
@@ -514,16 +536,35 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
   if (b4 && sizeCls !== 'capital' && arch !== 'robot') {
     // Visible share of B's spots once the turrets are fitted.
     let vis = 0, hull = 0;
+    const spotAt = new Uint8Array(n);
     for (let i = 0; i < n; i++) {
       if (f.cov[i]! <= 0.5) continue;
       hull++;
       const ty = Math.floor(i / g.w);
       const wx = (i % g.w + 0.5 - g.ox) / g.ppu, wy = (ty + 0.5 - g.oy) / g.ppu;
       const tb = (wy - yMin) / len, du = dist[i]! / g.ppu;
+      // The straight (b4) layout decides, so a shaped edge only adds paint.
       const spot = tb < NOSE_B || tipAt(wx, wy, ty) || (pin && du < 2 * spacing && tb < 0.4);
-      if (spot && !underTurret(wx, wy)) vis++;
+      if (spot && !underTurret(wx, wy)) { vis++; spotAt[i] = 1; }
     }
-    tailFlash = vis < TAIL_NEED4 * hull;
+    tailFlash = vis < TAIL_FULL4 * hull;
+    tailSpots = tailFlash && vis >= TAIL_NEED4 * hull;
+    if (tailFlash) {
+      // Grow the flashes until the hull's visible paint reaches TAIL_FULL4.
+      const w0 = tailW;
+      for (const k of TAIL_GROW4) {
+        tailW = w0 * k;
+        tailT = TAIL_T4 - 0.12 * (k - 1);
+        let p = tailSpots ? vis : 0;
+        for (let i = 0; i < n; i++) {
+          if (f.cov[i]! <= 0.5 || (tailSpots && spotAt[i])) continue;
+          const ty = Math.floor(i / g.w);
+          const wx = (i % g.w + 0.5 - g.ox) / g.ppu, wy = (ty + 0.5 - g.oy) / g.ppu;
+          if (!underTurret(wx, wy) && flashAt((wy - yMin) / len, dist[i]! / g.ppu, wx, wy, 0)) p++;
+        }
+        if (p >= TAIL_FULL4 * hull) break;
+      }
+    }
   }
 
   /** The livery colour of this texel, or -1 for none (grey). */
@@ -542,17 +583,24 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
       // the guns are what real warships carry.)
       if (underTurret(wx, wy, CAP_KEEPOUT4)) return -1;
       const jit = jit4(wx, wy);
+      if (tb < CAP_BOW4 + jit || tb > 1 - CAP_STERN4 + jit) return teamHex; // b4's straight section
       const off = edgeOf(axOf(wx, ty));
-      if (tb < CAP_BOW4 + jit + off || tb > 1 - CAP_STERN4 + jit - 0.6 * off) return teamHex;
+      if (tb < CAP_BOW4 + jit + bowOff4(axOf(wx, ty)) || tb > 1 - CAP_STERN4 + jit - 0.6 * off) return underTurret(wx, wy, CAP_KEEPOUT_SHAPE4) ? -1 : teamHex;
       return -1;
     }
-    if (b4 && arch !== 'robot') {
+    if (b4 && arch === 'robot') {
+      // Bow and stern sections in the faction's edge shape (no corner tips).
       if (underTurret(wx, wy)) return -1;
-      // A broken, worn edge on the flash (mirror-symmetric).
-      if (tailFlash && tb > TAIL_T4 - 1.6 * edgeOf(axOf(wx, ty)) && du < tailW * (0.75 + 0.5 * valueNoise(Math.abs(wx) * 0.9, wy * 0.9, edgeSeed))) return teamHex;
-      // A hull that needs flashes shows them alone: what is left of its
-      // turret-hidden spots would only peek out as slivers.
-      if (tailFlash) return -1;
+      const jit = jit4(wx, wy, ROBOT_JIT4);
+      const off = edgeOf(axOf(wx, ty));
+      return tb < robotSec4 + jit + off || tb > 1 - robotSec4 + jit - off ? teamHex : -1;
+    }
+    if (b4) {
+      if (underTurret(wx, wy)) return -1;
+      if (tailFlash && flashAt(tb, du, wx, wy, edgeOf(axOf(wx, ty)))) return teamHex;
+      // A hull whose spots are mostly turret-hidden shows the flashes alone:
+      // what is left of them would only peek out as slivers.
+      if (tailFlash && !tailSpots) return -1;
     }
     if (sizeCls === 'capital') {
       if (!onHullLayer(i)) return -1;
@@ -613,16 +661,19 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
       const col = lin(colHex);
       const surf = mat === MAT.PAINT ? col : metal;
       f.key[i] = mat === MAT.PAINT ? colHex : PALETTE.metal;
-      const livHex = livery && !inGroove ? liveryHexAt(du, i, wx, wy, ty) : -1;
-      if (inGroove) {
+      // A b4 robot's section paints over its seams too (shaded as seams): the
+      // spoke seams are one-sided, and the section must stay mirror-symmetric.
+      const livHex = livery && (!inGroove || robot4) ? liveryHexAt(du, i, wx, wy, ty) : -1;
+      if (inGroove && livHex < 0) {
         setAlbedo(f, i, surf, 0.38);
         mat = MAT.TRIM;
         h -= Math.min(0.3, Hmax * 0.05);
       } else if (livHex >= 0) {
         // 'b4': tinted, so the paint carries the hull's tone here.
         const tone = b4 ? B4_VALUE * Math.min(1.15, Math.max(0.6, (0.2126 * surf[0]! + 0.7152 * surf[1]! + 0.0722 * surf[2]!) / paintLum)) : 1;
-        paintEnamel(f, i, livHex, pv * (0.95 + 0.08 * nz) * tone);
+        paintEnamel(f, i, livHex, (inGroove ? 0.38 : pv * (0.95 + 0.08 * nz)) * tone);
         mat = MAT.LIVERY;
+        if (inGroove) h -= Math.min(0.3, Hmax * 0.05);
       } else {
         setAlbedo(f, i, surf, pv * (0.95 + 0.08 * nz));
       }

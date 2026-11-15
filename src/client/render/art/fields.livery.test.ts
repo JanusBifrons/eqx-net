@@ -806,7 +806,8 @@ describe("livery 'b5' / 'b6' / 'b7' / 'b8' (shaped section edges)", () => {
     return (f.sigils ?? []).some((m) => Math.hypot(wx - m.x, wy - m.y) <= m.r * 1.1);
   };
   it.each(['b5', 'b6', 'b7'] as const)("'%s': the section edges are shaped (paint differs from b4's straight edges)", (t) => {
-    for (const [id, min] of [['battleship', 0.005], ['gunship', 0.003]] as const) {
+    // Battleship 0.004: the paint a shape adds keeps a 2x barbette margin.
+    for (const [id, min] of [['battleship', 0.004], ['gunship', 0.003]] as const) {
       const a = forge(id, 'b4'), b = forge(id, t);
       let diff = 0, hull = 0;
       for (let i = 0; i < a.cov.length; i++) {
@@ -901,6 +902,86 @@ describe("livery 'b5' / 'b6' / 'b7' / 'b8' (shaped section edges)", () => {
         for (let c = 0; c < 3; c++) expect(f.albedo[i * 3 + c], `${id} texel ${i}`).toBeCloseTo(want[c]!, 6);
       }
       expect(n, id).toBeGreaterThan(0);
+    }
+  });
+});
+
+/** Owner (2026-11-15): "All hulls should be painted." In the b4 family every
+ *  robot wears painted bow and stern sections in the faction's edge shape
+ *  (no corner tips), and every small ship shows a clear painted section. */
+describe('b4 family: every hull painted', () => {
+  const ROBOTS = SHIP_KINDS_LIST.filter((k) => k.id.startsWith('robot')).map((k) => k.id);
+  const forge = (id: string, t: Livery['treatment'], edge?: Livery['edge']): Fields =>
+    forgeShip(id, { ppu: ppuFor(id), livery: { treatment: t, team: 0xff4444, sigil: 0x1234, ...(edge ? { edge } : {}) }, turretCover: turretCoverOf(id) });
+  /** Painted share of the hull, and painted texels in its front / rear quarter. */
+  const census = (f: Fields): { share: number; front: number; rear: number } => {
+    const { w } = f.g;
+    let y0 = Infinity, y1 = -Infinity;
+    for (let i = 0; i < f.cov.length; i++) if (f.cov[i]! > 0.5) { const ty = Math.floor(i / w); y0 = Math.min(y0, ty); y1 = Math.max(y1, ty); }
+    let hull = 0, liv = 0, front = 0, rear = 0;
+    for (let i = 0; i < f.cov.length; i++) {
+      if (f.cov[i]! <= 0.5) continue;
+      hull++;
+      if (f.mat[i] !== MAT.LIVERY) continue;
+      liv++;
+      const tb = (Math.floor(i / w) - y0) / (y1 - y0);
+      if (tb < 0.25) front++;
+      if (tb > 0.75) rear++;
+    }
+    return { share: liv / hull, front, rear };
+  };
+  /** Paint mismatches across the centreline, on texels where the hull covers
+   *  both sides (a robot's outline is not rasterised exactly mirror-image). */
+  const mirrored = (f: Fields): number => {
+    const { w, h } = f.g;
+    let mis = 0;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x, j = y * w + (w - 1 - x);
+        if (f.cov[i]! <= 0.5 || f.cov[j]! <= 0.5) continue;
+        if ((f.mat[i] === MAT.LIVERY) !== (f.mat[j] === MAT.LIVERY)) mis++;
+      }
+    }
+    return mis;
+  };
+
+  it('there are robot kinds to test', () => expect(ROBOTS.length).toBeGreaterThanOrEqual(3));
+
+  it.each(ROBOTS)('%s: painted front and rear sections, >= 10%% of the hull, under every b4-family treatment', (id) => {
+    for (const [t, edge] of [['b4'], ['b5'], ['b6'], ['b7'], ['b8', 'swept'], ['b8', 'tooth']] as const) {
+      const c = census(forge(id, t, edge));
+      expect(c.front, `${id} ${t}${edge ?? ''} front`).toBeGreaterThan(0);
+      expect(c.rear, `${id} ${t}${edge ?? ''} rear`).toBeGreaterThan(0);
+      expect(c.share, `${id} ${t}${edge ?? ''}`).toBeGreaterThanOrEqual(0.1);
+    }
+  });
+
+  it.each(ROBOTS)('%s: robot paint is mirror-symmetric under b5 / b6 / b7', (id) => {
+    for (const t of ['b5', 'b6', 'b7'] as const) expect(mirrored(forge(id, t)), `${id} ${t}`).toBe(0);
+  });
+
+  it.each(ROBOTS)('%s: the edge shape shows (b5 paint differs from b7)', (id) => {
+    const a = forge(id, 'b5'), b = forge(id, 'b7');
+    let diff = 0;
+    for (let i = 0; i < a.mat.length; i++) if ((a.mat[i] === MAT.LIVERY) !== (b.mat[i] === MAT.LIVERY)) diff++;
+    expect(diff).toBeGreaterThan(0);
+  });
+
+  it.each(ROBOTS)('%s: the core ring still glows in the team colour under b8', (id) => {
+    const f = forge(id, 'b8', 'tongue');
+    const { g } = f;
+    let core = 0;
+    for (let i = 0; i < f.mat.length; i++) {
+      if (f.mat[i] !== MAT.LIGHT) continue;
+      const wx = (i % g.w + 0.5 - g.ox) / g.ppu, wy = (Math.floor(i / g.w) + 0.5 - g.oy) / g.ppu;
+      if (Math.hypot(wx, wy) < shipExtent(id) * 0.3) core++;
+    }
+    expect(core).toBeGreaterThan(0);
+  });
+
+  it.each(SUBCAPS)("%s: >= 6%% of the hull painted under 'b8' with turret cover", (id) => {
+    for (const edge of ['swept', 'tongue', 'tooth'] as const) {
+      expect(census(forge(id, 'b8', edge)).share, `${id} ${edge}`).toBeGreaterThanOrEqual(0.06);
     }
   });
 });
