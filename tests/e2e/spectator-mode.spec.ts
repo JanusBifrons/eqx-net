@@ -93,7 +93,7 @@ test('spectating chip sits on an opaque dark HUD backing, not a see-through wash
   expect(Math.max(r, g, b), `chip background ${bg} is not a dark HUD panel`).toBeLessThanOrEqual(40);
 });
 
-test('spectator camera free-roams (drag pans, no follow snap-back)', async ({ page }) => {
+test('spectator camera free-roams (middle-drag pans, no follow snap-back)', async ({ page }) => {
   test.setTimeout(45_000);
   await join(page, { worker0: true });
   await killLocalShip(page);
@@ -115,12 +115,15 @@ test('spectator camera free-roams (drag pans, no follow snap-back)', async ({ pa
 
   const before = await readCenter();
 
-  // Drag the canvas — in spectator the camera pans and STAYS (no follow yanks
-  // it back to a ship that no longer exists).
+  // MIDDLE-drag the canvas — in spectator (Command view) the camera pans and
+  // STAYS (no follow yanks it back to a ship that no longer exists). A LEFT
+  // drag draws a fleet selection box in Command view by design (RTS slice
+  // 13a, owner decision); the command router passes the middle button to the
+  // camera.
   await page.mouse.move(cx, cy);
-  await page.mouse.down();
+  await page.mouse.down({ button: 'middle' });
   await page.mouse.move(cx - 220, cy - 160, { steps: 8 });
-  await page.mouse.up();
+  await page.mouse.up({ button: 'middle' });
   await page.waitForTimeout(400); // let momentum settle
 
   const after = await readCenter();
@@ -168,8 +171,8 @@ test('spectator input is pan, not thrust — the ship does NOT move on W', async
   // predicted phantom, fixed 2026-11-12; spectate-no-phantom-own-ship.spec.ts).
   const parkedPos = (): Promise<{ x: number; y: number } | null> =>
     page.evaluate(() => {
-      const m = (globalThis as { __eqxClient?: { mirror: { localPlayerId: string | null; lingeringShips?: Map<string, { ownerPlayerId?: string; x: number; y: number }> } } }).__eqxClient?.mirror;
-      for (const e of m?.lingeringShips?.values() ?? []) if (e.ownerPlayerId === m?.localPlayerId) return { x: e.x, y: e.y };
+      const m = (globalThis as { __eqxClient?: { mirror: { localPlayerId: string | null; ships: Map<string, { isActive?: boolean; ownerPlayerId?: string; x: number; y: number }> } } }).__eqxClient?.mirror;
+      for (const e of [...(m?.ships?.values() ?? [])].filter((e) => e.isActive === false)) if (e.ownerPlayerId === m?.localPlayerId) return { x: e.x, y: e.y };
       return null;
     });
 
@@ -177,8 +180,8 @@ test('spectator input is pan, not thrust — the ship does NOT move on W', async
   // a CI runner), so wait for it rather than read it at a fixed delay.
   await page.waitForFunction(
     () => {
-      const m = (globalThis as { __eqxClient?: { mirror: { localPlayerId: string | null; lingeringShips?: Map<string, { ownerPlayerId?: string }> } } }).__eqxClient?.mirror;
-      for (const e of m?.lingeringShips?.values() ?? []) if (e.ownerPlayerId === m?.localPlayerId) return true;
+      const m = (globalThis as { __eqxClient?: { mirror: { localPlayerId: string | null; ships: Map<string, { isActive?: boolean; ownerPlayerId?: string }> } } }).__eqxClient?.mirror;
+      for (const e of [...(m?.ships?.values() ?? [])].filter((e) => e.isActive === false)) if (e.ownerPlayerId === m?.localPlayerId) return true;
       return false;
     }, undefined,
     { timeout: 10_000 },
@@ -187,9 +190,9 @@ test('spectator input is pan, not thrust — the ship does NOT move on W', async
   await page.waitForTimeout(600);
   const before = await parkedPos();
   // CI-only failure (train #528/#529): the parked hull arrived, then left
-  // lingeringShips. Dump the client's view so the next CI run names the cause.
+  // the parked hulls (mirror.ships, isActive=false). Dump the client's view so the next CI run names the cause.
   const view = before !== null ? '' : await page.evaluate(() => {
-    const c = (globalThis as { __eqxClient?: { mirror: { localPlayerId: string | null; localShipInstanceId?: string | null; ships: Map<string, unknown>; lingeringShips?: Map<string, { ownerPlayerId?: string }> }; room?: { state?: { ships?: Map<string, { playerId: string; isActive: boolean; alive: boolean }> } } } }).__eqxClient;
+    const c = (globalThis as { __eqxClient?: { mirror: { localPlayerId: string | null; localShipInstanceId?: string | null; ships: Map<string, { isActive?: boolean; ownerPlayerId?: string }> }; room?: { state?: { ships?: Map<string, { playerId: string; isActive: boolean; alive: boolean }> } } } }).__eqxClient;
     const st = (globalThis as { __eqxStore?: { getState(): { pilotMode?: string; phase?: string } } }).__eqxStore?.getState();
     const schema: unknown[] = [];
     c?.room?.state?.ships?.forEach((s, k) => { if (s.playerId === c.mirror.localPlayerId) schema.push({ k, isActive: s.isActive, alive: s.alive }); });
@@ -197,7 +200,7 @@ test('spectator input is pan, not thrust — the ship does NOT move on W', async
       pilotMode: st?.pilotMode, phase: st?.phase,
       localId: c?.mirror.localPlayerId, localInstance: c?.mirror.localShipInstanceId,
       ships: [...(c?.mirror.ships.keys() ?? [])],
-      lingering: [...(c?.mirror.lingeringShips?.entries() ?? [])].map(([k, e]) => [k, e.ownerPlayerId]),
+      lingering: [...([...(c?.mirror.ships?.entries() ?? [])].filter(([, e]) => e.isActive === false))].map(([k, e]) => [k, e.ownerPlayerId]),
       schema,
     });
   });
@@ -290,5 +293,31 @@ test('pilot/spectate toggle round-trips pilot↔spectator', async ({ browser }) 
     () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-pilot-mode') === 'pilot', undefined,
     { timeout: 10_000 },
   );
+  await ctx.close();
+});
+
+test('RTS slice 10: a command-view join lands in Command, ship parked; Fly takes it back', async ({ browser }) => {
+  test.setTimeout(60_000);
+  // Normal galaxy play joins with startMode=command: the hull spawns, is parked
+  // (AI-flown) at the arrival flip, and the player lands in command view. The
+  // galaxy-test room defaults to fly, so this opts in explicitly.
+  const { ctx, page } = await launchGalaxyTestClient(browser, {
+    testId: randomUUID(), shipKind: 'fighter', startMode: 'command',
+  });
+  await page.waitForFunction(
+    () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-pilot-mode') === 'spectator', undefined,
+    { timeout: 15_000 },
+  );
+  await expect(page.locator('[data-testid="spectator-indicator"]')).toHaveText(/Command view/i);
+  await expect(page.locator('[data-testid="pilot-spectator-toggle"]')).toHaveAttribute('data-control-mode', 'command');
+
+  // Fly with nothing selected lists our parked ship; picking it takes the controls.
+  await page.locator('[data-testid="pilot-toggle"]').click();
+  await page.locator('[data-testid^="pilot-menu-ship-"]').first().click({ timeout: 10_000 });
+  await page.waitForFunction(
+    () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-pilot-mode') === 'pilot', undefined,
+    { timeout: 10_000 },
+  );
+  await expect(page.locator('[data-testid="spectator-indicator"]')).toHaveCount(0);
   await ctx.close();
 });

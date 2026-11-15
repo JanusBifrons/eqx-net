@@ -22,6 +22,7 @@
  * 1 Hz structure pulse; steady state allocates nothing.
  */
 import type { FactionId } from '../../shared-types/factions.js';
+import { stepRoute } from '../../core/ai/stepRoute.js';
 
 export const PATROL_BOT_PREFIX = 'patrol-';
 /** Pilots this close to a garrison's footprint can draw its patrol. */
@@ -124,9 +125,7 @@ export class PatrolSubsystem {
           if (nowMs - s.deadAtMs >= PATROL_RESPAWN_MS) this.spawnShip(p, s);
           continue;
         }
-        const wx = p.points[s.leg * 2]!;
-        const wy = p.points[s.leg * 2 + 1]!;
-        if (Math.hypot(this.scratch.x - wx, this.scratch.y - wy) <= PATROL_ARRIVE) s.leg = (s.leg + 1) % 4;
+        s.leg = stepRoute(p.points, 4, s.leg, this.scratch.x, this.scratch.y, PATROL_ARRIVE);
         this.h.moveTo(s.id, p.points[s.leg * 2]!, p.points[s.leg * 2 + 1]!);
       }
       this.currentPatrol = p;

@@ -52,6 +52,10 @@
  * vega-reach / lyra-fringe / cygnus-arm. The engage_transit ownership check
  * passes because we leave `shipId` unset (legacy SAB-pose path) and
  * `target: 'cygnus-arm'` is a real neighbour.
+ * `startMode=fly`: a real galaxy room starts in command view (RTS slice 10),
+ * where the hull is parked and the server refuses a warp with no live flown
+ * ship (DOCKED "destroyed"), so the spool overlay only appeared when the
+ * engage beat the arrival flip. This spec warps the ship you fly.
  */
 import { test, expect, type Page } from '@playwright/test';
 import { DEFAULT_BASE_URL } from './helpers/ports';
@@ -87,7 +91,7 @@ test('warp engage → SPOOLING overlay → cancel → DOCKED (state-machine roun
   const SPAWN_Y = -200;
 
   await page.goto(
-    `${BASE_URL}/?galaxy=sol-prime&spawnX=${SPAWN_X}&spawnY=${SPAWN_Y}`,
+    `${BASE_URL}/?galaxy=sol-prime&startMode=fly&spawnX=${SPAWN_X}&spawnY=${SPAWN_Y}`,
     { waitUntil: 'domcontentloaded', timeout: 30_000 },
   );
 

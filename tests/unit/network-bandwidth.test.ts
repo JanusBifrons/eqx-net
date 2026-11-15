@@ -121,9 +121,9 @@ function buildSnapshotJsonSize(
 ): number {
   const states: SnapshotMessage['states'] = {};
   for (const s of allShips) {
-    // Mirror production: lastInput omitted when bits unchanged. In this
-    // bench all ships have idle bits so lastInput stays omitted after
-    // the first snapshot — match production's steady-state cost.
+    // Mirror production: lastInput is absent while a ship's controls are
+    // idle (it rides every snapshot only while a key is held). In this
+    // bench all ships are idle, so no lastInput — production's cost.
     states[s.id] = {
       x: s.x, y: s.y, vx: s.vx, vy: s.vy, angle: s.angle, angvel: s.angvel,
     };

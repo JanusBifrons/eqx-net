@@ -14,7 +14,7 @@ import { matchMaker } from 'colyseus';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import { getPlayerShipStore } from '../../../src/server/db/PersistenceWorker.js';
-import { ROSTER_CAP } from '../../../src/server/playerShips/PlayerShipStore.js';
+import { ROSTER_SOFT_GUARD } from '../../../src/server/playerShips/PlayerShipStore.js';
 import { getShipKind } from '../../../src/shared-types/shipKinds.js';
 import { qualityHullFactor } from '../../../src/shared-types/blueprints.js';
 import type { BlueprintResult } from '../../../src/shared-types/blueprints.js';
@@ -81,7 +81,7 @@ describe('SectorRoom integration — unpacking hulls (economy v2 W5a)', () => {
 
     // A full roster refuses and leaves the crate where it is.
     cap.hold.packed!.push({ product: 'hull:gunship', quality: 60 });
-    while (getPlayerShipStore().listByPlayer(pid).length < ROSTER_CAP) {
+    while (getPlayerShipStore().listByPlayer(pid).length < ROSTER_SOFT_GUARD) {
       getPlayerShipStore().create({ playerId: pid, userId: null, kind: 'scout', sectorKey: 'sol-prime', x: 0, y: 0, health: 100 });
     }
     const full = await unpack(capEid, 'gunship');

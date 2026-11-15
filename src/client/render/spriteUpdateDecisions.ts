@@ -1,93 +1,64 @@
 /**
  * Phase A3 — pure decision logic for per-entity sprite updates.
  *
- * Extracted from `PixiRenderer.updateLingeringShips` to make the
- * decisions testable WITHOUT
- * a Pixi runtime. The Pixi calls (Graphics instantiation, addChild,
- * tint, alpha, destroy) remain in `PixiRenderer.ts`; only the
- * "should I create / rebuild / reposition / skip" branching lives
- * here.
+ * Extracted from the renderer to make the decisions testable WITHOUT a Pixi
+ * runtime. The Pixi calls (Graphics instantiation, addChild, tint, destroy)
+ * remain in the renderer; only the "should I create / rebuild / reposition"
+ * branching lives here.
  *
- * **The bug class this catches**: the Phase 6b lingering hull was
- * permanently invisible because `updateLingeringShips` had a
- * `if (!ship.kind) continue;` guard — a defensive-looking check that
- * silently dropped every frame when the schema diff with `kind` hadn't
- * landed yet. A unit test on the pure helper would have failed
- * loudly: "kind-unknown with no cache should `create` with the
- * fallback kind, not `skip`." This module makes that contract
- * explicit and testable.
+ * **The bug class this catches**: the Phase 6b parked hull was permanently
+ * invisible because its updater had a `if (!ship.kind) continue;` guard — a
+ * defensive-looking check that silently dropped every frame when the schema
+ * diff with `kind` hadn't landed yet. "kind-unknown with no cache should
+ * `create` with the fallback kind, not `skip`" is now an explicit contract.
  *
- * **The rule** (per `src/client/CLAUDE.md`): renderer per-entity
- * decision logic must live here and be unit-tested. Pixi calls stay
- * in `PixiRenderer.ts` but should be a thin shell over this module's
- * outputs.
+ * **The rule** (per `src/client/CLAUDE.md`): renderer per-entity decision
+ * logic must live here and be unit-tested.
  */
 
-/** What the renderer should do this frame for one entity. */
-export type SpriteDecision =
-  | { action: 'create';     kind: string }
-  | { action: 'rebuild';    kind: string }
-  | { action: 'reposition' }
-  | { action: 'skip';       reason: string };
-
-/** What the renderer remembers about a previously-built sprite. */
-export interface SpriteCacheEntry {
-  /** The kind the sprite was built with. Comparison key for rebuilds. */
-  kind: string;
-}
+/** What the renderer should do this frame for one ship sprite. Constant
+ *  strings (no allocation: called per ship per frame, #14). */
+export type ShipSpriteAction = 'create' | 'rebuild' | 'reposition';
 
 /**
- * Phase 6b lingering-hull decision.
+ * The ship-sprite decision for EVERY ship (RTS Part A S3: generalised from
+ * the old parked-hull decision, so a parked / AI-flown hull and an active ship
+ * share one path). `cachedKind` is the kind the cached sprite was built for
+ * (undefined = no sprite yet).
  *
  * Rules:
- *  - **No cache hit**: build a new sprite. Use `currentKind` if
- *    available; fall back to `fallbackKind` if the kind hasn't been
- *    populated yet (the schema diff may arrive after the first
- *    snapshot). Use of the fallback is the bug-fix from the Phase 6b
- *    "invisible after snapshot" incident — we'd rather show the wrong
- *    silhouette for one frame than nothing at all.
- *  - **Cache hit with same kind**: just reposition this frame.
- *  - **Cache hit with different known kind**: rebuild the sprite to
- *    pick up the new silhouette.
- *  - **Cache hit with unknown current kind**: reposition. Don't
- *    rebuild on a transient field drop — the previously-known kind
- *    is still our best information.
+ *  - **No cached sprite**: build one, with `currentKind` if known, else the
+ *    fallback kind (`shipSpriteKind`): show the wrong silhouette for a frame
+ *    rather than nothing (the Phase 6b "invisible after snapshot" incident).
+ *  - **Cached, same kind**: reposition.
+ *  - **Cached, a DIFFERENT known kind**: rebuild for the new silhouette.
+ *  - **Cached, current kind unknown**: reposition — a transient field drop
+ *    must not rebuild; the cached kind is still the best information.
  */
-export function decideLingeringSpriteAction(args: {
-  cached: SpriteCacheEntry | undefined;
-  currentKind: string | undefined;
-  fallbackKind: string;
-}): SpriteDecision {
-  const { cached, currentKind, fallbackKind } = args;
-  if (!cached) {
-    return { action: 'create', kind: currentKind ?? fallbackKind };
-  }
-  // Cache hit. Decide based on whether the current kind matches.
-  if (currentKind && currentKind !== cached.kind) {
-    return { action: 'rebuild', kind: currentKind };
-  }
-  return { action: 'reposition' };
+export function decideShipSpriteAction(cachedKind: string | undefined, currentKind: string | undefined): ShipSpriteAction {
+  if (cachedKind === undefined) return 'create';
+  if (currentKind !== undefined && currentKind !== cachedKind) return 'rebuild';
+  return 'reposition';
+}
+
+/** The kind a ship sprite is (re)built or kept as: the entry's kind, else the
+ *  kind the cached sprite already shows, else the fallback. */
+export function shipSpriteKind(cachedKind: string | undefined, currentKind: string | undefined, fallbackKind: string): string {
+  return currentKind ?? cachedKind ?? fallbackKind;
 }
 
 /**
  * Position lookup for an explosion VFX spawn.
  *
- * Bug repro (2026-05-13 user smoke-test): when a lingering hull was
- * shot down, the explosion VFX rendered at (0, 0) instead of the
- * hull's actual position. Root cause: the renderer only checked the
- * **active-ships** sprite map (keyed by playerId), but lingering
- * hulls live in `lingeringSprites` (keyed by shipInstanceId). Lookup
- * failed → defaulted to `(0, 0)`.
+ * Bug repro (2026-05-13 user smoke-test): when a parked hull was shot down,
+ * the explosion VFX rendered at (0, 0) instead of the hull's position: its
+ * sprite lived in a separate map the lookup didn't check. Since RTS Part A S3
+ * every ship's sprite is in ONE map (active ships by playerId, parked hulls by
+ * shipInstanceId); the dying ship's mirror entry is already gone, so the pose
+ * comes from its sprite.
  *
- * This helper looks up the targetId across both sprite maps
- * (active ships, lingering hulls) so the explosion spawns
- * over whichever silhouette was visible to the player at the moment
- * of destruction.
- *
- * Returns `null` if no sprite is found in any map — the caller can
- * decide whether to skip the VFX entirely or fall back somewhere
- * sensible (rather than the silent (0, 0) of the previous
- * implementation).
+ * Returns `null` if no sprite is found — the caller skips the VFX (never the
+ * silent (0, 0) of the original implementation).
  */
 export interface SpritePoseRef {
   /** World-space (or Pixi container-space) x. */
@@ -99,14 +70,11 @@ export interface SpritePoseRef {
 
 export function decideExplosionPosition(args: {
   targetId: string;
-  activeShipsByPlayerId: ReadonlyMap<string, SpritePoseRef>;
-  lingeringShipsByShipInstanceId: ReadonlyMap<string, SpritePoseRef>;
+  shipSprites: ReadonlyMap<string, SpritePoseRef>;
 }): SpritePoseRef | null {
-  const { targetId, activeShipsByPlayerId, lingeringShipsByShipInstanceId } = args;
-  const active = activeShipsByPlayerId.get(targetId);
-  if (active) return { x: active.x, y: active.y };
-  const lingering = lingeringShipsByShipInstanceId.get(targetId);
-  if (lingering) return { x: lingering.x, y: lingering.y };
+  const sp = args.shipSprites.get(args.targetId);
+  // TODO: alloc-debt — one {x,y} per destroyed ship (discrete event, not per frame).
+  if (sp) return { x: sp.x, y: sp.y };
   return null;
 }
 

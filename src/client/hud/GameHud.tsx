@@ -18,6 +18,8 @@ import type { TouchInput } from '../input/TouchInput';
 import { Slot } from '../layout/Slot';
 import { SpeedDialMenu } from '../components/SpeedDialMenu';
 import { BottomControlPanel } from '../components/BottomControlPanel';
+import { FleetPanel } from '../components/FleetPanel';
+import { FleetStrip } from '../components/FleetStrip';
 import { getGameClient } from '../net/clientSingleton';
 import { FloatingStick } from './FloatingStick';
 import type { StickVec } from './floatingStickMath';
@@ -68,6 +70,15 @@ export function GameHud({ touchInput }: Props): JSX.Element | null {
       {/* ── Desktop ─────────────────────────────────────────────────────── */}
       {/* The build palette while spectating (the weapon strip replaces the old weapon-slot bar). */}
       {!touch && <Slot anchor="bottom-center" order={1}><BottomControlPanel /></Slot>}
+      {/* RTS command view: the fleet panel (desktop) / strip (compact) replaces the
+          build palette while own ships are selected (each renders null otherwise;
+          the touch sticks are hidden while spectating, so the bottom edge is free). */}
+      {/* Always mounted (like the palette): the death flip must not mount UI. order 2
+          keeps the empty wrapper ABOVE the palette, so it never shifts the palette. */}
+      <Slot anchor="bottom-center" order={2}>
+        <FleetPanel />
+        <FleetStrip />
+      </Slot>
       {!touch && flying && (
         <Slot anchor="bottom-right" order={1}><DesktopFcHint scale={scale} /></Slot>
       )}

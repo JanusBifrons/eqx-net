@@ -76,6 +76,12 @@ function makeRoom(opts: { sectorKey: string | null; playerId: string }): {
     broadcast: (type, message, options) => {
       broadcasts.push({ type, message, except: options?.except });
     },
+    // RTS fleet warp hooks — inert defaults; the fleet describe overrides them.
+    canFleetWarp: () => false,
+    holdFleetShips: () => undefined,
+    releaseFleetShips: () => undefined,
+    fleetAnchor: () => null,
+    handOffHulls: () => [],
   };
 
   return {
@@ -536,6 +542,255 @@ describe('TransitOrchestrator', () => {
       await vi.runAllTimersAsync();
       const opts = reserve.mock.calls[0]![1] as Record<string, unknown>;
       expect(opts).not.toHaveProperty('shipId');
+    });
+  });
+
+  // ── RTS fleet warp: the selected ships warp together (Command view) ──────
+  describe('fleet warp (shipIds)', () => {
+    interface Call { op: string; ids?: readonly string[]; opts?: Record<string, unknown> }
+
+    /** A commander ('cmd') in Command view (no live hull) with parked hulls
+     *  h1..h3; 'foreign' belongs to someone else. `calls` records the hook
+     *  order (hold / release / reserve / handOff). */
+    function fleetHarness(opts: { client?: boolean } = {}) {
+      const r = makeRoom({ sectorKey: 'sol-prime', playerId: 'cmd' });
+      const parked = new Set(['h1', 'h2', 'h3']);
+      const calls: Call[] = [];
+      r.room.hasLiveHull = () => false;
+      r.room.canFleetWarp = (c, id) => c === 'cmd' && parked.has(id);
+      r.room.holdFleetShips = (_c, ids) => { calls.push({ op: 'hold', ids: [...ids] }); };
+      r.room.releaseFleetShips = (_c, ids) => { calls.push({ op: 'release', ids: [...ids] }); };
+      r.room.fleetAnchor = () => ({ x: 700, y: -300 });
+      r.room.handOffHulls = (ids) => { calls.push({ op: 'handOff', ids: [...ids] }); return [...ids]; };
+      if (opts.client === false) r.room.clientForPlayer = () => null;
+      const store = new PlayerShipStore({});
+      const orch = new TransitOrchestrator(r.room, undefined, store);
+      const reserve = vi.fn(async (_name: string, o: Record<string, unknown>) => {
+        calls.push({ op: 'reserve', opts: o });
+        return { sessionId: 'seat' };
+      });
+      orch.setReserveByNameOverride(reserve as unknown as Parameters<TransitOrchestrator['setReserveByNameOverride']>[0]);
+      const states = (): Array<{ state: string; reason?: string }> =>
+        r.sent.filter((s) => s.channel === 'transit_state').map((s) => s.msg as { state: string; reason?: string });
+      return { ...r, parked, calls, orch, reserve, store, states };
+    }
+
+    async function spoolOut(): Promise<void> {
+      vi.advanceTimersByTime(SPOOL_DURATION_MS);
+      await vi.runAllTimersAsync();
+    }
+
+    it('rejects with no_ships when none of the ids can warp (foreign / unknown)', () => {
+      const h = fleetHarness();
+      const key = h.orch.beginFleetTransit('cmd', 'cygnus-arm', ['foreign', 'nope']);
+      expect(key).toBeNull();
+      expect(h.states()).toEqual([expect.objectContaining({ state: 'DOCKED', reason: 'no_ships' })]);
+      expect(h.calls).toEqual([]);
+    });
+
+    it('skips the live-hull gate: a commander with no ship can start one; foreign ids drop', () => {
+      const h = fleetHarness();
+      const key = h.orch.beginFleetTransit('cmd', 'cygnus-arm', ['h1', 'foreign', 'h2', 'h1']);
+      expect(key).not.toBeNull();
+      expect(h.orch.fleetMembers(key!)).toEqual(['h1', 'h2']);
+      expect(h.calls).toEqual([{ op: 'hold', ids: ['h1', 'h2'] }]);
+      expect(h.states()[0]).toMatchObject({ state: 'SPOOLING', spoolMs: SPOOL_DURATION_MS });
+      // The pilot path is untouched: the commander is not "in flight".
+      expect(h.orch.isInFlight('cmd')).toBe(false);
+    });
+
+    it('still rejects a non-neighbour target', () => {
+      const h = fleetHarness();
+      expect(h.orch.beginFleetTransit('cmd', 'nowhere', ['h1'])).toBeNull();
+      expect(h.states()[0]).toMatchObject({ state: 'DOCKED', reason: 'not_neighbour' });
+    });
+
+    it('announces "N × ship" incoming at the destination, and updates the count on a drop', async () => {
+      const reg: Array<{ playerId: string; count?: number; label: string }> = [];
+      const cleared: string[] = [];
+      const { setIncomingPlayerSink } = await import('../livingworld/incomingPlayerSink.js');
+      setIncomingPlayerSink({
+        registerIncomingPlayer: (s) => { reg.push(s); },
+        clearIncomingPlayer: (id) => { cleared.push(id); },
+        replayIncomingTo: () => undefined,
+      });
+      try {
+        const h = fleetHarness();
+        const key = h.orch.beginFleetTransit('cmd', 'cygnus-arm', ['h1', 'h2', 'h3'])!;
+        expect(reg.at(-1)).toMatchObject({ playerId: key, count: 3, label: 'ship', destSectorKey: 'cygnus-arm' });
+        h.orch.dropHull('h3');
+        expect(reg.at(-1)).toMatchObject({ playerId: key, count: 2 });
+        await spoolOut();
+        expect(cleared).toContain(key);
+      } finally {
+        setIncomingPlayerSink(null);
+      }
+    });
+
+    it('commit reserves the commander a spectator seat at the anchor FIRST, then hands the hulls off', async () => {
+      const h = fleetHarness();
+      h.orch.beginFleetTransit('cmd', 'cygnus-arm', ['h1', 'h2']);
+      await spoolOut();
+      const ops = h.calls.map((c) => c.op);
+      expect(ops).toEqual(['hold', 'reserve', 'handOff']);
+      expect(h.reserve.mock.calls[0]![0]).toBe('galaxy-cygnus-arm');
+      expect(h.calls[1]!.opts).toMatchObject({ playerId: 'cmd', spectator: true, spawnX: 700, spawnY: -300 });
+      expect(h.calls[1]!.opts).not.toHaveProperty('shipId');
+      expect(h.calls[2]!.ids).toEqual(['h1', 'h2']);
+      const ready = h.sent.find((s) => s.channel === 'transit_ready');
+      expect(ready).toBeDefined();
+      expect(h.room.playerToTransitInFlight.has('cmd')).toBe(true);
+      expect(h.orch.fleetGroupOf('h1')).toBeNull();
+    });
+
+    it('a picked arrival point is the anchor (clamped)', async () => {
+      const h = fleetHarness();
+      h.orch.beginFleetTransit('cmd', 'cygnus-arm', ['h1'], { x: 1e9, y: 10 });
+      await spoolOut();
+      expect(h.calls[1]!.opts).toMatchObject({ spawnX: SECTOR_PLAYABLE_HALF_EXTENT, spawnY: 10 });
+    });
+
+    it('an absent commander: no seat, the hulls still go', async () => {
+      const h = fleetHarness({ client: false });
+      h.orch.beginFleetTransit('cmd', 'cygnus-arm', ['h1', 'h2']);
+      await spoolOut();
+      expect(h.reserve).not.toHaveBeenCalled();
+      expect(h.calls.map((c) => c.op)).toEqual(['hold', 'handOff']);
+      expect(h.room.playerToTransitInFlight.has('cmd')).toBe(false);
+    });
+
+    it('a commander flying a ship outside the group stays; only the hulls go', async () => {
+      const h = fleetHarness();
+      h.orch.beginFleetTransit('cmd', 'cygnus-arm', ['h1']);
+      h.room.hasLiveHull = () => true; // took the controls of another ship meanwhile
+      await spoolOut();
+      expect(h.reserve).not.toHaveBeenCalled();
+      expect(h.calls.map((c) => c.op)).toEqual(['hold', 'handOff']);
+      expect(h.states().at(-1)).toMatchObject({ state: 'DOCKED' });
+    });
+
+    it('hulls the hand-off did not move are released', async () => {
+      const h = fleetHarness();
+      h.room.handOffHulls = (ids) => { h.calls.push({ op: 'handOff', ids: [...ids] }); return [ids[0]!]; };
+      h.orch.beginFleetTransit('cmd', 'cygnus-arm', ['h1', 'h2']);
+      await spoolOut();
+      expect(h.calls.at(-1)).toEqual({ op: 'release', ids: ['h2'] });
+    });
+
+    it('a seat that cannot be reserved aborts the jump and releases the ships', async () => {
+      const h = fleetHarness();
+      h.reserve.mockImplementationOnce(async () => { throw new Error('no room'); });
+      h.orch.beginFleetTransit('cmd', 'cygnus-arm', ['h1', 'h2']);
+      await spoolOut();
+      expect(h.calls.map((c) => c.op)).toEqual(['hold', 'release']);
+      expect(h.states().at(-1)).toMatchObject({ state: 'DOCKED', reason: 'destination_unavailable' });
+      expect(h.orch.fleetGroupOf('h1')).toBeNull();
+    });
+
+    it('cancel (the commander\'s cancel_transit) releases the hold', async () => {
+      const h = fleetHarness();
+      h.orch.beginFleetTransit('cmd', 'cygnus-arm', ['h1', 'h2']);
+      h.orch.cancelFleetTransits('cmd', 'manual');
+      expect(h.calls.at(-1)).toEqual({ op: 'release', ids: ['h1', 'h2'] });
+      expect(h.states().at(-1)).toMatchObject({ state: 'DOCKED', reason: 'manual' });
+      await spoolOut();
+      expect(h.reserve).not.toHaveBeenCalled();
+      expect(h.calls.some((c) => c.op === 'handOff')).toBe(false);
+    });
+
+    it('a disconnect (pilot-path cancel) does not cancel the fleet warp', async () => {
+      const h = fleetHarness();
+      h.orch.beginFleetTransit('cmd', 'cygnus-arm', ['h1']);
+      h.orch.cancelTransit('cmd', 'manual'); // what LeaveHandler calls
+      await spoolOut();
+      expect(h.calls.map((c) => c.op)).toContain('handOff');
+    });
+
+    it('losing every hull cancels with destroyed', async () => {
+      const h = fleetHarness();
+      h.orch.beginFleetTransit('cmd', 'cygnus-arm', ['h1', 'h2']);
+      h.orch.dropHull('h1');
+      expect(h.orch.fleetGroupOf('h2')).not.toBeNull();
+      h.orch.dropHull('h2');
+      expect(h.states().at(-1)).toMatchObject({ state: 'DOCKED', reason: 'destroyed' });
+      await spoolOut();
+      expect(h.reserve).not.toHaveBeenCalled();
+    });
+
+    it('a new order to a spooling ship takes it out (the others still go)', async () => {
+      const h = fleetHarness();
+      h.orch.beginFleetTransit('cmd', 'cygnus-arm', ['h1', 'h2']);
+      h.orch.fleetCommandIssued('cmd', ['h1'], false);
+      expect(h.orch.fleetGroupOf('h1')).toBeNull();
+      // An order replaces the hold itself: no release for it.
+      expect(h.calls.filter((c) => c.op === 'release')).toEqual([]);
+      // A mode / stance does not, so its hold is let go.
+      h.orch.fleetCommandIssued('cmd', ['h2', 'h3'], true);
+      expect(h.calls.at(-1)).toEqual({ op: 'release', ids: ['h2'] });
+      // Group now empty ⇒ cancelled.
+      expect(h.states().at(-1)).toMatchObject({ state: 'DOCKED' });
+    });
+
+    it('another player\'s command never touches the group', () => {
+      const h = fleetHarness();
+      h.orch.beginFleetTransit('cmd', 'cygnus-arm', ['h1']);
+      h.orch.fleetCommandIssued('someone-else', ['h1'], true);
+      expect(h.orch.fleetGroupOf('h1')).not.toBeNull();
+    });
+
+    it('taking the controls of a spooling ship keeps it in the group; the commander goes with it by the pilot path', async () => {
+      const h = fleetHarness();
+      const key = h.orch.beginFleetTransit('cmd', 'cygnus-arm', ['h1', 'h2'])!;
+      // The room: noteTakeControls, then the reclaim's detachWingman → dropHull.
+      h.orch.noteTakeControls('cmd', 'h1');
+      h.orch.dropHull('h1');
+      h.parked.delete('h1');
+      expect(h.orch.fleetMembers(key)).toEqual(['h1', 'h2']);
+      // The reclaim landed: the commander flies h1 in its slot.
+      h.room.hasLiveHull = () => true;
+      (h.room.playerToActiveShipInstance as Map<string, string>).set('cmd', 'h1');
+      await spoolOut();
+      expect(h.calls.map((c) => c.op)).toEqual(['hold', 'reserve', 'handOff']);
+      expect(h.calls[1]!.opts).toMatchObject({ playerId: 'cmd', shipId: 'h1' });
+      expect(h.calls[1]!.opts).not.toHaveProperty('spectator');
+      expect(h.calls[2]!.ids).toEqual(['h2']);
+      // The flown ship warps out like a pilot's.
+      expect(h.broadcasts.some((b) => b.type === 'warp_out')).toBe(true);
+    });
+
+    it('a pilot warp is refused while the ship flown is in a fleet warp', () => {
+      const h = fleetHarness();
+      h.orch.beginFleetTransit('cmd', 'cygnus-arm', ['h1', 'h2']);
+      h.orch.noteTakeControls('cmd', 'h1');
+      h.orch.dropHull('h1');
+      (h.room.playerToActiveShipInstance as Map<string, string>).set('cmd', 'h1');
+      h.room.hasLiveHull = () => true;
+      expect(h.orch.beginTransit('cmd', 'cygnus-arm')).toBe(false);
+    });
+
+    it('two fleet warps run at once; a ship is in at most one', async () => {
+      const h = fleetHarness();
+      const a = h.orch.beginFleetTransit('cmd', 'cygnus-arm', ['h1', 'h2'])!;
+      const b = h.orch.beginFleetTransit('cmd', 'cygnus-arm', ['h2', 'h3'])!;
+      expect(a).not.toBe(b);
+      expect(h.orch.fleetMembers(a)).toEqual(['h1', 'h2']);
+      expect(h.orch.fleetMembers(b)).toEqual(['h3']);
+      await spoolOut();
+      const handOffs = h.calls.filter((c) => c.op === 'handOff').map((c) => c.ids);
+      expect(handOffs).toEqual([['h1', 'h2'], ['h3']]);
+      expect(h.reserve).toHaveBeenCalledTimes(2);
+    });
+
+    it('the commit\'s own hull removals are not drops', async () => {
+      const h = fleetHarness();
+      h.room.handOffHulls = (ids) => {
+        h.calls.push({ op: 'handOff', ids: [...ids] });
+        for (const id of ids) h.orch.dropHull(id); // detachWingman during the move
+        return [...ids];
+      };
+      h.orch.beginFleetTransit('cmd', 'cygnus-arm', ['h1', 'h2']);
+      await spoolOut();
+      expect(h.states().map((s) => s.state)).toEqual(['SPOOLING', 'IN_TRANSIT']);
     });
   });
 });

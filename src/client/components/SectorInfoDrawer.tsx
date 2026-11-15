@@ -87,6 +87,13 @@ const SCROLL_SX = {
   pb: 1,
 } as const;
 
+const WARP_CELL_SX = { flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: 0.25 } as const;
+const WARP_BUTTON_SX = {
+  bgcolor: '#0088cc', color: '#04140b', fontWeight: 700, fontSize: 12, '&:hover': { bgcolor: '#33bbff' },
+  '&.Mui-disabled': { bgcolor: '#1f2a33', color: '#6b7280' },
+} as const;
+const WARP_HINT_SX = { color: '#9ca3af', fontSize: 9, textAlign: 'center' } as const;
+
 const ACTIONBAR_SX = {
   display: 'flex',
   alignItems: 'center',
@@ -153,6 +160,9 @@ export interface SectorInfoDrawerProps {
   onJoin: (sectorKey: string) => void;
   /** Warp CTA — engage transit to this (adjacent) sector. */
   onWarp: (sectorKey: string) => void;
+  /** RTS fleet warp: when set, "Warp here" is shown DISABLED with this hint
+   *  (Command view with no ships selected: "Select ships to warp"). */
+  warpBlockedHint?: string | null;
   /** Equinox Phase 5 (WS-3) — landing CTA to join this sector as a SPECTATOR,
    *  SKIPPING the ship-kind picker (free-roam camera + construction; the hull
    *  parks as a lingering hull you can pilot later). Omitted ⇒ no Spectate
@@ -197,6 +207,7 @@ export function SectorInfoDrawer({
   onJoin,
   onWarp,
   onSpectate,
+  warpBlockedHint = null,
 }: SectorInfoDrawerProps): JSX.Element {
   const portrait = useMediaQuery('(orientation: portrait)');
   const anchor: 'bottom' | 'right' = portrait ? 'bottom' : 'right';
@@ -444,16 +455,24 @@ export function SectorInfoDrawer({
             </IconButton>
             {isWarp ? (
               warpable ? (
-                <Button
-                  fullWidth
-                  size="small"
-                  variant="contained"
-                  data-testid="sector-drawer-warp"
-                  onClick={() => sectorKey && onWarp(sectorKey)}
-                  sx={{ flex: 1, bgcolor: '#0088cc', color: '#04140b', fontWeight: 700, fontSize: 12, '&:hover': { bgcolor: '#33bbff' } }}
-                >
-                  Warp here
-                </Button>
+                <Box sx={WARP_CELL_SX}>
+                  <Button
+                    fullWidth
+                    size="small"
+                    variant="contained"
+                    data-testid="sector-drawer-warp"
+                    disabled={warpBlockedHint !== null}
+                    onClick={() => sectorKey && warpBlockedHint === null && onWarp(sectorKey)}
+                    sx={WARP_BUTTON_SX}
+                  >
+                    Warp here
+                  </Button>
+                  {warpBlockedHint !== null && (
+                    <Typography data-testid="sector-drawer-warp-hint" sx={WARP_HINT_SX}>
+                      {warpBlockedHint}
+                    </Typography>
+                  )}
+                </Box>
               ) : (
                 <Typography sx={{ flex: 1, color: '#6b7280', fontSize: 9, textAlign: 'center' }}>
                   {sectorKey === currentSectorKey ? 'You are here' : 'Not adjacent — warp via a neighbour'}

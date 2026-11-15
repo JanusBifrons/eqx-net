@@ -4,7 +4,7 @@
  * no class instances). Locked by `protocol.test.ts`.
  */
 
-import type { RenderMirror, SwarmRenderState, WarpCenter } from '@core/contracts/IRenderer';
+import type { FleetOverlayModel, FleetPickKindWire, RenderMirror, SwarmRenderState, WarpCenter } from '@core/contracts/IRenderer';
 import type { EffectQuality } from '@core/contracts/IEffects';
 import type { CameraCue } from '@core/contracts/cameraScript';
 import type { WarpParams } from './warpParams.js';
@@ -237,6 +237,33 @@ export interface SetSpectatorMsg {
   active: boolean;
 }
 
+/** RTS slice 12 — the fleet strip's touch tap-order mode. See
+ *  `IRenderer.setFleetOrderMode`. Posted on change only. */
+export interface SetFleetOrderModeMsg {
+  type: 'SET_FLEET_ORDER_MODE';
+  mode: 'move' | 'attack';
+}
+
+/** RTS slice 15a — own ships' squads + orders for selection expansion and
+ *  order lines. See `IRenderer.setFleetOverlayModel`. Posted when the main
+ *  thread's fleet status version moves. */
+export interface SetFleetOverlayModelMsg {
+  type: 'SET_FLEET_OVERLAY_MODEL';
+  model: FleetOverlayModel;
+}
+
+/** RTS slice 14b — start (or cancel, null) a map pick for a fleet mode.
+ *  See `IRenderer.setFleetPick`. */
+export interface SetFleetPickMsg {
+  type: 'SET_FLEET_PICK';
+  kind: FleetPickKindWire | null;
+}
+
+/** RTS slice 14b — Done for a patrol pick. See `IRenderer.commitFleetPick`. */
+export interface CommitFleetPickMsg {
+  type: 'COMMIT_FLEET_PICK';
+}
+
 /** Off-screen indicator radar (plan sparkling-wondering-rose) — the active
  *  preferences. Posted on change only (the live settings modal coalesces to
  *  ≤ one post per animation frame). */
@@ -277,6 +304,15 @@ export interface GlideCameraMsg {
   gameX: number;
   gameY: number;
   durationMs: number;
+}
+
+/**
+ * RTS fleet warp (S8) — set THE selection to these own ships (posted once on
+ * arrival with the fleet). Drives `PixiRenderer.selectFleetShips`.
+ */
+export interface SelectFleetShipsMsg {
+  type: 'SELECT_FLEET_SHIPS';
+  ids: string[];
 }
 
 /**
@@ -417,11 +453,16 @@ export type MainToWorkerMsg =
   | TriggerWarpInMsg
   | SetLoadCurtainMsg
   | SetSpectatorMsg
+  | SetFleetOrderModeMsg
+  | SetFleetOverlayModelMsg
+  | SetFleetPickMsg
+  | CommitFleetPickMsg
   | SetRadarPrefsMsg
   | SetRadarInsetsMsg
   | SetRadarSuppressedMsg
   | SetHudOverlaysMsg
   | GlideCameraMsg
+  | SelectFleetShipsMsg
   | SetCameraScriptMsg
   | PanCameraMsg
   | SetDiagMarkersMsg
