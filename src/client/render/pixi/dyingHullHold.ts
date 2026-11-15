@@ -72,7 +72,10 @@ export function deathLeavesWreck(capitalWrecks: boolean | undefined, kind: strin
 /**
  * This frame's deaths (`mirror.explodingShips`, keyed as the sprite maps key
  * them): mark each one that leaves a wreck. `kindOf` resolves a sprite key to
- * the ship kind it was built for. Alloc-free.
+ * the ship kind it was built for. A death in `vaporised` (`mirror
+ * .vaporisedShips`: a cut kill burned the whole hull away, fracture v11)
+ * leaves no piece, so it is never held: the hull goes at once under its
+ * vaporise flash. Alloc-free.
  */
 export function noteDyingHulls(
   exploding: ReadonlySet<string> | undefined,
@@ -81,9 +84,11 @@ export function noteDyingHulls(
   hold: DyingHullHold,
   nowMs: number,
   subcapWrecks?: boolean,
+  vaporised?: ReadonlySet<string>,
 ): void {
   if (exploding === undefined || exploding.size === 0 || (capitalWrecks !== true && subcapWrecks !== true)) return;
   for (const id of exploding) {
+    if (vaporised !== undefined && vaporised.has(id)) continue;
     const kind = kindOf(id);
     const holdMs = dyingHoldMsFor(capitalWrecks, kind, subcapWrecks);
     if (holdMs > 0) hold.markDying(id, kind!, nowMs, holdMs);

@@ -82,6 +82,15 @@ describe('resolveClosestPredictedHit — aggregate the closest mount-hit (mirror
 });
 
 describe('predictShotOutcome — ledger.predict + immediate tagged feedback', () => {
+  it('a wide beam half-width reaches the predWorld ray (the heavy beam hits by its width, #15)', () => {
+    const seen: Array<number | undefined> = [];
+    const w: PredHitscanWorld = { hitscan: (_fx, _fy, _dx, _dy, _m, _e, hw) => { seen.push(hw); return null; } };
+    const base = { ledger: new HitPredictionLedger(), sink: recordingSink(), world: w, mode: 'hitscan' as const, damage: 20, mounts: [mount(5)], maxDist: 500, excludeId: 'me', nowMs: 1000 };
+    predictShotOutcome({ ...base, clientShotId: 'wide', halfWidth: 30 });
+    predictShotOutcome({ ...base, clientShotId: 'thin' });
+    expect(seen).toEqual([30, 0]);
+  });
+
   it('hitscan hit → ledger predicts the target + a TAGGED number + flash; returns the target id', () => {
     const ledger = new HitPredictionLedger();
     const sink = recordingSink();
