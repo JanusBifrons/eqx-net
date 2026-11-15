@@ -35,8 +35,8 @@ export interface ShipRouterCtx {
   lingeringSeenScratch: Set<string>;
   lingeringToEvictScratch: string[];
   /** Lingering hulls a snapshot must not evict though it no longer lists
-   *  them: a death held for its drawn shell (`ColyseusClient`
-   *  `deferShipKillForShell`, bounded by the hold). Optional. */
+   *  them: a death held for its drawn shell (`DrawnShellTiming`
+   *  `deferShipKill`, bounded by the hold). Optional. */
   keepLingering?: { has(id: string): boolean };
 }
 

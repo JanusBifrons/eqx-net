@@ -45,7 +45,8 @@ import { MineDetonatedSchema } from '@shared-types/mines';
 import { ShellBlastSchema } from '@shared-types/shellBlast';
 import { ShellEndSchema, ShellSalvoSchema, type ShellEnd } from '@shared-types/messages/shellEvents';
 import { ShellSalvoStore } from './shellSalvoStore';
-import { NavalHitHold, MAX_HOLD_MS, type HeldDamage } from './navalHitHold';
+import { NavalHitHold, type HeldDamage } from './navalHitHold';
+import { DrawnShellTiming } from './drawnShellTiming';
 import { CollisionResolvedMessageSchema, HitAckSchema, DamageEventSchema, MissileFiredEventSchema, MissileDetonatedEventSchema, WallHitEventSchema, EntityStatsSchema, WarpWarningSchema, WarpWarningClearSchema, BaseReadySchema, ShipLevelUpEventSchema, ShipUpgradeAppliedEventSchema, MountActivatedEventSchema } from '@shared-types/messages';
 import { LootCollectedEventSchema, CargoDepositedEventSchema, NoticeEventSchema } from '@shared-types/messages/lootMessages';
 import { formatLootPickup, LOOT_FEED_TTL_MS, cargoChanged } from './lootView';
@@ -192,14 +193,6 @@ import {
 } from './swarmInterpolation';
 /** One server tick in ms (shells as events: the display-tick estimate). */
 const SHELL_TICK_MS = 1000 / 60;
-/** A swarm ship's death held for its drawn shell (`deferKillForShell`):
- *  its wire id, the kind it was (an id recycled meanwhile is not killed) and
- *  the game-ms deadline. */
-interface DeferredKill { wireId: string; kind: number; shipKind: string | undefined; deadline: number }
-/** Ticks before the newest snapshot tick from which a held death's wreck
- *  pieces wait (`RenderMirror.wreckRevealFromTick`): the kill tick is at or
- *  before the newest tick heard of, give or take a DataChannel refresh. */
-const DEFERRED_KILL_TICK_SLACK = 30;
 import { updateAnchor } from './clockAnchor';
 import { getSector } from '@core/galaxy/galaxy';
 import { AiController, type AiIntentSink } from '@core/ai/AiController';
@@ -982,11 +975,16 @@ export class ColyseusGameClient {
    *  `[...this.mirror.lingeringShips.keys()]` (a per-snapshot array
    *  allocation). Cleared via `length = 0` at the eviction site. */
   private readonly _lingeringToEvictScratch: string[] = [];
-  /** Pilot hulls (parked, or another pilot's) whose death is held for the
-   *  drawn shell, keyed by wire id (`deferShipKillForShell`); the snapshot
-   *  routing keeps them meanwhile. Records share `_deferredKillFree`.
-   *  Declared before the router ctx below, which reads it. */
-  private readonly _deferredShipKills = new Map<string, DeferredKill>();
+  /** Hits and kills wait for the drawn shell (`drawnShellTiming.ts`).
+   *  Declared before the router ctx below, which reads its `shipKills`. */
+  private readonly _shellTiming = new DrawnShellTiming({
+    mirror: () => this.mirror, store: () => this._shellStore,
+    hold: () => this._navalHitHold, sink: () => this._heldDamageSink,
+    shellEvents: () => this._shellEvents, now: () => this.gameClock.now(),
+    anchorTick: () => this.clockAnchorServerTick,
+    killSwarmEntity: (id) => this.killSwarmEntity(id), killEntity: (id) => this.killEntity(id),
+    despawnLinger: (id) => { if (this.predWorld) this.lingerBodies.despawn(id, this.predWorld); },
+  });
   /** Phase 4 (plan: quirky-rabbit) — class-field Set scratches replacing
    *  the per-call `new Set<string>()` literals at the syncMirror /
    *  updateLiveBeam sites. Each is cleared at the top of its consumer;
@@ -1029,7 +1027,7 @@ export class ColyseusGameClient {
     tryEnsureLingerPredBody: this._boundTryEnsureLingerPredBody,
     lingeringSeenScratch: this._lingeringSeenScratch,
     lingeringToEvictScratch: this._lingeringToEvictScratch,
-    keepLingering: this._deferredShipKills,
+    keepLingering: this._shellTiming.shipKills,
   };
   /** 2026-05-26 heap-growth gate step 12 — pooled ctx for
    *  `preResetRemoteShips`. Same pattern as above; `predWorld` is the
@@ -1389,21 +1387,12 @@ export class ColyseusGameClient {
   private readonly _heldDamageSink = {
     applyHeldDamage: (h: HeldDamage): void => this.applyDamageFx(h.evt, h.suppressNumber),
   };
-  /** Swarm ships killed by an event shell, still drawn alive until the drawn
-   *  shell reaches them (`deferKillForShell`), keyed by entity id (the
-   *  decoder's full-snapshot sweep skips them). Records pooled (#14). */
-  private readonly _deferredKills = new Map<number, DeferredKill>();
-  private readonly _deferredKillFree: DeferredKill[] = [];
 
   private resetPredictionState(): void {
     // S2b: wrecks belong to the old sector (clears mirror.wrecks too).
     this._wrecks.clear();
     // Deaths held for their drawn shell belong to the old sector too.
-    for (const k of this._deferredKills.values()) this._deferredKillFree.push(k);
-    this._deferredKills.clear();
-    for (const k of this._deferredShipKills.values()) this._deferredKillFree.push(k);
-    this._deferredShipKills.clear();
-    this.mirror.wreckRevealFromTick = undefined;
+    this._shellTiming.reset();
     // Fire control: NPC locks belong to the old sector.
     this.mirror.localLockedBy = NO_LOCKED_BY;
     // A new sector / ship: seed the energy pool again from the new ship.
@@ -1630,15 +1619,7 @@ export class ColyseusGameClient {
         this._wrecks.apply(msg.wrecks ?? NO_WRECK_LIST);
         this.mirror.wrecks = this._wrecks.descriptors;
       }
-      this._shellStore.clear();
-      this._navalHitHold.flush(this._heldDamageSink);
-      if (this._deferredKills.size > 0 || this._deferredShipKills.size > 0) this.releaseDeferredKills();
-      if (this._shellEvents) {
-        this.mirror.shellSalvos = this._shellStore.map;
-        for (const s of msg.shellsInFlight ?? []) this._shellStore.applySalvo(s);
-      } else {
-        this.mirror.shellSalvos = undefined;
-      }
+      this._shellTiming.onWelcome(this._shellEvents, msg.shellsInFlight);
       const idChanged = storedPlayerId && msg.playerId !== storedPlayerId;
       logEvent('cc_welcome', {
         playerId: msg.playerId,
@@ -1867,10 +1848,10 @@ export class ColyseusGameClient {
       const decodeStartMs = performance.now();
       if (raw instanceof ArrayBuffer) {
         if (bw) { bw.swarmBytes += raw.byteLength; bw.swarmPackets += 1; }
-        decodeSwarmPacket(raw, this.mirror, performance.now(), true, this._deferredKills);
+        decodeSwarmPacket(raw, this.mirror, performance.now(), true, this._shellTiming.swarmKills);
       } else if (ArrayBuffer.isView(raw)) {
         if (bw) { bw.swarmBytes += raw.byteLength; bw.swarmPackets += 1; }
-        decodeSwarmPacket(raw, this.mirror, performance.now(), true, this._deferredKills);
+        decodeSwarmPacket(raw, this.mirror, performance.now(), true, this._shellTiming.swarmKills);
       }
       this.syncSwarmIntoPredWorld();
       const decodeMs = performance.now() - decodeStartMs;
@@ -2068,7 +2049,7 @@ export class ColyseusGameClient {
     });
 
     room.onMessage('laser_fired', (evt: LaserFiredEvent) => {
-      this.onBeamFired(evt);
+      this._shellTiming.onBeamFired(evt);
       // Own shots are already shown as liveBeams — only store remote ones.
       if (evt.shooterId === this.mirror.localPlayerId) return;
       const dx = evt.toX - evt.fromX;
@@ -2855,134 +2836,15 @@ export class ColyseusGameClient {
     // flash coincides with the drawn impact instead of leading it by the
     // display delay + RTT/2 (navalHitHold.ts). State above is never held.
     if (!showFx) return;
-    if (this._shellEvents && this._navalHitHold.maybeHold(
-      evt, suppressNumber, this._shellStore.map, this.gameClock.now(),
-    )) return;
+    if (this._shellTiming.holdHit(evt, suppressNumber)) return;
     this.applyDamageFx(evt, suppressNumber);
   }
 
-  /** A `shell_end`: mark the shells, and match held naval hits to it. */
-  private applyShellEnd(msg: ShellEnd): void {
-    this._shellStore.applyEnd(msg, this.mirror.pendingShellEnds ??= []);
-    if (this._navalHitHold.size === 0) return;
-    const now = this.gameClock.now();
-    // Held hits wait for the drawn shell to REACH the hit, a fraction of a
-    // step after the reported tick (`ShellSalvoStore.hitTick`), like its burst.
-    for (const e of msg.e) this._navalHitHold.onShellEnd(this._shellStore.hitTick(e[0], e[1], e[2], e[3]), e[2], e[3], now);
-  }
+  /** A `shell_end` (`DrawnShellTiming.onShellEnd`). */
+  private applyShellEnd(msg: ShellEnd): void { this._shellTiming.onShellEnd(msg); }
 
-  /** One frame of event shells at `displayTick`: draw, burst, and release
-   *  the held hits whose burst is now drawn (or whose safety ran out). */
-  private placeShells(displayTick: number): void {
-    if (this.mirror.projectiles) {
-      this._shellStore.place(this.mirror.projectiles, displayTick, this.mirror.pendingShellEnds ??= []);
-    }
-    if (this._navalHitHold.size > 0) {
-      this._navalHitHold.release(displayTick, this.gameClock.now(), this._heldDamageSink);
-    }
-    if (this._deferredKills.size > 0 || this._deferredShipKills.size > 0) this.releaseDeferredKills();
-  }
-
-  /**
-   * A `destroy` for swarm ship `wireId` while a hit on it is still held for
-   * its drawn shell (`navalHitHold`): the shell is drawn on the display
-   * timeline, ~`DISPLAY_DELAY_MS` + RTT/2 behind this event, so killing now
-   * split the hull and showed its number frames before the drawn shell got
-   * there (rail take 6 review; shell-events.md "Kills wait for the drawn
-   * shell"). Keep it drawn alive and kill it when that hit is released
-   * (`releaseDeferredKills`, from `placeShells`); its new wreck pieces wait
-   * too (`mirror.wreckRevealFromTick`). Returns whether it was deferred.
-   * Bounded by the hold's own safety deadline and `MAX_HOLD_MS` (#16).
-   * Only the KILLING hit counts (`holdsKill`): shells still in flight to it
-   * that did not kill it never hold a death (heavy-beam take 8: a beam kill
-   * waited ~0.9 s for unrelated 5" shells).
-   */
-  private deferKillForShell(wireId: string): boolean {
-    if (!this._shellEvents || this._navalHitHold.size === 0 || !this._navalHitHold.holdsKill(wireId)) return false;
-    if (!wireId.startsWith('swarm-')) return this.deferShipKillForShell(wireId);
-    const entityId = parseInt(wireId.slice('swarm-'.length), 10);
-    const entry = Number.isNaN(entityId) ? undefined : this.mirror.swarm?.get(entityId);
-    if (entry === undefined) return false;
-    let k = this._deferredKills.get(entityId);
-    if (k === undefined) {
-      k = this._deferredKillFree.pop() ?? { wireId: '', kind: 0, shipKind: undefined, deadline: 0 };
-      this._deferredKills.set(entityId, k);
-    }
-    k.wireId = wireId; k.kind = entry.kind; k.shipKind = entry.shipKind;
-    k.deadline = this.gameClock.now() + MAX_HOLD_MS;
-    this.holdDeferredWrecks();
-    return true;
-  }
-
-  /**
-   * The same deferral for a pilot's hull: a parked (lingering) hull, keyed by
-   * shipInstanceId, or another pilot's active ship. Rail take 7: the heavy
-   * cruiser the slug passed through was the spectating pilot's PARKED hull;
-   * its destroy went to `killEntity` at once and the next snapshot (which no
-   * longer lists it) evicted it, ~6 frames before the drawn slug got there.
-   * While deferred, the snapshot routing keeps it (`routeSnapshotShipStates`
-   * `keepLingering`, `syncMirror`'s departed sweep). The local pilot's own
-   * active ship still dies on the event (its death drives the spectator flip).
-   */
-  private deferShipKillForShell(wireId: string): boolean {
-    if (wireId === this.mirror.localPlayerId) return false;
-    if (this.mirror.lingeringShips?.has(wireId) !== true && !this.mirror.ships.has(wireId)) return false;
-    let k = this._deferredShipKills.get(wireId);
-    if (k === undefined) {
-      k = this._deferredKillFree.pop() ?? { wireId: '', kind: 0, shipKind: undefined, deadline: 0 };
-      this._deferredShipKills.set(wireId, k);
-    }
-    k.wireId = wireId; k.kind = 0; k.shipKind = undefined;
-    k.deadline = this.gameClock.now() + MAX_HOLD_MS;
-    this.holdDeferredWrecks();
-    return true;
-  }
-
-  /** A held death's new wreck pieces wait (`mirror.wreckRevealFromTick`):
-   *  the kill happened at or before the newest tick heard of; the slack
-   *  covers a binary refresh (DataChannel) that ran ahead of this event. */
-  private holdDeferredWrecks(): void {
-    const from = this.clockAnchorServerTick - DEFERRED_KILL_TICK_SLACK;
-    const cur = this.mirror.wreckRevealFromTick;
-    this.mirror.wreckRevealFromTick = cur === undefined ? from : Math.min(cur, from);
-  }
-
-  /**
-   * A beam hit (`laser_fired`, sent after its damage and destroy): a hit
-   * held at the beam's end point was matched to a live shell's path only by
-   * position. It is the beam's, shown on arrival: release it, and with it a
-   * death held for it (`deferKillForShell`), in this frame.
-   */
-  private onBeamFired(evt: LaserFiredEvent): void {
-    if (!evt.hit || evt.targetId === undefined || this._navalHitHold.size === 0) return;
-    if (!this._navalHitHold.releaseHitAt(evt.targetId, evt.toX, evt.toY, this._heldDamageSink)) return;
-    if (this._deferredKills.size > 0 || this._deferredShipKills.size > 0) this.releaseDeferredKills();
-  }
-
-  /** Kill each deferred ship whose killing hit has been released (its drawn
-   *  shell reached it) or whose deadline passed, in this frame. */
-  private releaseDeferredKills(): void {
-    const now = this.gameClock.now();
-    for (const [entityId, k] of this._deferredKills) {
-      if (now < k.deadline && this._navalHitHold.holdsKill(k.wireId)) continue;
-      this._deferredKills.delete(entityId);
-      this._deferredKillFree.push(k);
-      // The id was recycled for a new entity meanwhile: that one is not dead.
-      const e = this.mirror.swarm?.get(entityId);
-      if (e !== undefined && (e.kind !== k.kind || e.shipKind !== k.shipKind)) continue;
-      this.killSwarmEntity(k.wireId);
-    }
-    for (const [id, k] of this._deferredShipKills) {
-      if (now < k.deadline && this._navalHitHold.holdsKill(id)) continue;
-      this._deferredShipKills.delete(id);
-      this._deferredKillFree.push(k);
-      this.killEntity(id);
-      // A parked hull: gone with its explosion (the snapshot routing kept it
-      // while its death was held, so nothing else evicts it this frame).
-      if (this.mirror.lingeringShips?.delete(id) === true && this.predWorld) this.lingerBodies.despawn(id, this.predWorld);
-    }
-    if (this._deferredKills.size === 0 && this._deferredShipKills.size === 0) this.mirror.wreckRevealFromTick = undefined;
-  }
+  /** One frame of event shells at `displayTick` (`DrawnShellTiming.place`). */
+  private placeShells(displayTick: number): void { this._shellTiming.place(displayTick); }
 
   /** The FX half of a damage event with positive damage: hull flash,
    *  floating number, health-bar hit, impact spark. */
@@ -3098,13 +2960,11 @@ export class ColyseusGameClient {
 
   private handleDestroy(evt: DestroyEvent): void {
     if (evt.targetId.startsWith('swarm-')) {
-      // Killed by an event shell still drawn in flight: it dies when the
-      // drawn shell reaches it, not on this event's arrival.
-      if (this.deferKillForShell(evt.targetId)) return;
+      if (this._shellTiming.deferKill(evt.targetId)) return;
       this.killSwarmEntity(evt.targetId);
       return;
     }
-    if (this.deferKillForShell(evt.targetId)) return;
+    if (this._shellTiming.deferKill(evt.targetId)) return;
     this.killEntity(evt.targetId);
   }
 
@@ -4354,10 +4214,9 @@ export class ColyseusGameClient {
       }
     }
 
-    // Remove departed ships (not one whose death is held for its drawn
-    // shell: `deferShipKillForShell` kills it when the shell reaches it).
+    // Remove departed ships (not one whose death is held for its drawn shell).
     for (const key of this.mirror.ships.keys()) {
-      if (!seen.has(key) && !this._deferredShipKills.has(key)) {
+      if (!seen.has(key) && !this._shellTiming.shipKills.has(key)) {
         this.mirror.ships.delete(key);
         this.remoteHistory.delete(key);
         if (this.predRemoteShipIds.has(key)) {
@@ -4973,10 +4832,7 @@ export class ColyseusGameClient {
       // Shells as events (slice 2b): draw salvo shells at the display tick
       // (server tick estimate minus the remote-entity display delay), and
       // burst them when the display reaches their hit. At the FRAME's own
-      // time (the RAF stamp), like the local ship: `gameClock.now()` read here
-      // has run on by this frame's snapshot work, which lands on alternate
-      // frames, so a railgun slug stepped ~1/3 then ~5/3 of a frame's travel
-      // (rail take 6 review; ColyseusClient.shellFrameTime.test.ts).
+      // time (RAF stamp), not `gameClock.now()` (shellFrameTime.test.ts).
       if (this._shellEvents) {
         const displayTick = this.clockAnchorServerTick
           + (this.gameClock.at(frameNowMs ?? this.clock.now()) - this.clockAnchorPerfNow) / SHELL_TICK_MS
