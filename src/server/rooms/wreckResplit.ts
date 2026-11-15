@@ -23,7 +23,7 @@ import { wreckChildGeometry, wreckChildSeed, wreckResplitOptions, type WreckChil
 import { wreckCanResplit, wreckHullArea, wreckPieceIntegrity, wreckSalvageQty, WRECK_RESPLITS_PER_TICK } from '../../core/destruction/wreckIntegrity.js';
 import type { BurnLines } from '../../core/destruction/burnLines.js';
 import { FRACTURE_ALGO_VERSION } from '../../core/destruction/fractureHull.js';
-import type { CapitalWreckDeps, LiveWreck, PieceKnock } from './CapitalWreckSubsystem.js';
+import type { CapitalWreckDeps, LiveWreck, PieceKnock } from './capitalWreckTypes.js';
 import type { WreckPieceGeometry } from '../../core/destruction/wreckPieceFrame.js';
 import { DESTRUCTION_PROFILES } from '../../shared-types/shipScale/destruction.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';

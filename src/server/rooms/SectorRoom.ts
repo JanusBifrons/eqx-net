@@ -295,6 +295,7 @@ import {
   FLAG_SLEEPING,
   // SEQLOCK_IDX + SLOT_APPLIED_TICK_OFF moved into SabPoseMirror.ts
   slotBase,
+  slotPoseInto,
   SAB_TOTAL_BYTES,
   MAX_ENTITIES,
 } from '../../shared-types/sabLayout.js';
@@ -5170,10 +5171,8 @@ export class SectorRoom extends Room<SectorState> {
       // shipInstanceId), the frame its burn line is kept in. #14: into `out`.
       hullPoseInto: (id, out) => {
         const slot = this.swarmRegistry.get(id)?.slot ?? this.playerToSlot.get(id) ?? this.lingeringSlots.get(id);
-        if (slot === undefined) return false;
-        const b = slotBase(slot), f = this.sabF32;
-        out.x = f[b + SLOT_X_OFF]!; out.y = f[b + SLOT_Y_OFF]!; out.angle = f[b + SLOT_ANGLE_OFF]!;
-        return true;
+        if (slot !== undefined) slotPoseInto(this.sabF32, slot, out);
+        return slot !== undefined;
       },
       dropSalvage: (qty, x, y, vx, vy) => { this.loot.drop({ goods: { salvage: qty }, blueprints: [] }, x, y, vx, vy, { cause: 'salvage' }); },
     });
@@ -5182,11 +5181,7 @@ export class SectorRoom extends Room<SectorState> {
   /** A live wreck piece's SAB pose into `out` (#14 with a reused `out`), or null when gone. */
   private wreckPose(id: string, out: WreckPiecePose = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 }): WreckPiecePose | null {
     const rec = this.swarmRegistry.get(id);
-    if (!rec) return null;
-    const b = slotBase(rec.slot), f = this.sabF32;
-    out.x = f[b + SLOT_X_OFF]!; out.y = f[b + SLOT_Y_OFF]!; out.vx = f[b + SLOT_VX_OFF]!; out.vy = f[b + SLOT_VY_OFF]!;
-    out.angle = f[b + SLOT_ANGLE_OFF]!; out.angvel = f[b + SLOT_ANGVEL_OFF]!;
-    return out;
+    return rec ? slotPoseInto(this.sabF32, rec.slot, out) : null;
   }
 
   /** Does a ship of `kindId` break into wreck pieces in this room? Read from
@@ -5213,11 +5208,8 @@ export class SectorRoom extends Room<SectorState> {
     const activeHull = this.getActiveShip(playerId);
     const slot = this.playerToSlot.get(playerId);
     if (activeHull === undefined || slot === undefined || activeHull.alive !== false || this.capitalWrecks === null || !this.wreckKindAllowed(activeHull.kind)) return false;
-    const b = slotBase(slot);
-    const vaporised = this.spawnCapitalWreck(playerId, activeHull.kind, {
-      x: this.sabF32[b + SLOT_X_OFF]!, y: this.sabF32[b + SLOT_Y_OFF]!, vx: this.sabF32[b + SLOT_VX_OFF]!, vy: this.sabF32[b + SLOT_VY_OFF]!,
-      angle: this.sabF32[b + SLOT_ANGLE_OFF]!, angvel: this.sabF32[b + SLOT_ANGVEL_OFF]!,
-    }, activeHull.maxHealth > 0 ? activeHull.maxHealth : getShipKind(activeHull.kind).maxHealth, slot, playerId);
+    const vaporised = this.spawnCapitalWreck(playerId, activeHull.kind, slotPoseInto(this.sabF32, slot, { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 }),
+      activeHull.maxHealth > 0 ? activeHull.maxHealth : getShipKind(activeHull.kind).maxHealth, slot, playerId);
     if (vaporised) this.vaporisedActiveDeath = playerId;
     return vaporised;
   }
@@ -5301,12 +5293,8 @@ export class SectorRoom extends Room<SectorState> {
     // Sub-capital break-up slice 2: any kind whose profile breaks (flags).
     let vaporised = false; // fracture v11: the eviction's `destroy` says so
     if (this.capitalWrecks !== null && rec.kind === SWARM_KIND_DRONE && rec.shipKind && this.wreckKindAllowed(rec.shipKind)) {
-      const wb = slotBase(rec.slot);
-      vaporised = this.spawnCapitalWreck(rec.id, rec.shipKind!, {
-        x: this.sabF32[wb + SLOT_X_OFF]!, y: this.sabF32[wb + SLOT_Y_OFF]!,
-        vx: this.sabF32[wb + SLOT_VX_OFF]!, vy: this.sabF32[wb + SLOT_VY_OFF]!,
-        angle: this.sabF32[wb + SLOT_ANGLE_OFF]!, angvel: this.sabF32[wb + SLOT_ANGVEL_OFF]!,
-      }, droneMaxHealthOf(rec) ?? 1, rec.slot, rec.id);
+      vaporised = this.spawnCapitalWreck(rec.id, rec.shipKind!, slotPoseInto(this.sabF32, rec.slot, { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 }),
+        droneMaxHealthOf(rec) ?? 1, rec.slot, rec.id);
     }
     const kind = getShipKind(rec.shipKind);
     if (shipScrapGroups(kind.id).length === 0) return vaporised; // polygon kind ⇒ no scrap

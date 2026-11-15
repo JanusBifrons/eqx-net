@@ -33,6 +33,9 @@ import decomp from 'poly-decomp';
 import { Rng, fnvMixU32 } from '../random/rng.js';
 import type { Vec2 } from '../swarm/asteroidShape.js';
 import { ANGLE_STEPS, unitDirFromSteps } from '../geometry/unitDir.js';
+import {
+  applyExtraCuts, cutStrip, dedupe, ringArea, splitBoth, splitByLine, type FractureLine, type P,
+} from './fractureSplit.js';
 
 /** Bump on ANY change to the produced geometry (rides the S2 descriptor).
  *  v2: primary break line through the kill point, seeded clean snap,
@@ -367,13 +370,6 @@ export interface FracturePiece {
   readonly centroid: Vec2;
 }
 
-/** Internal vertex: position + kind of the edge that starts here. */
-interface P {
-  x: number;
-  y: number;
-  k: number;
-}
-
 export function fractureHull(input: FractureInput): FracturePiece[] {
   const hull = normaliseHull(input.hull);
   if (hull.length < 3) return [];
@@ -410,23 +406,12 @@ export function fractureHull(input: FractureInput): FracturePiece[] {
   const burnMin = burnShare * hullArea;
   const stripMinPart = (burnShare > 0 ? burnShare : CHANNEL_SLIVER_SHARE) * hullArea;
   let start: P[][] = [hull];
-  if (strip && primary !== null) start = cutStrip(start, primary.nx, primary.ny, primary.c, plan.cut!.width / 2, stripMinPart);
+  if (strip && primary !== null) start = cutStrip(start, primary.nx, primary.ny, primary.c, plan.cut!.width / 2, stripMinPart, EDGE_CUT);
   // v12 multi-cut: each further beam's line splits every part it crosses (a
   // wide one erases its strip like the main cut). They are fixed in `start`,
   // so the cap's retry loop never drops one.
   if (primary !== null && cutKind !== null && input.extraCuts !== undefined) {
-    const n = Math.min(input.extraCuts.length, FRACTURE_MAX_EXTRA_CUTS);
-    for (let i = 0; i < n; i++) {
-      const xc = input.extraCuts[i]!;
-      const l = Math.sqrt(xc.dirX * xc.dirX + xc.dirY * xc.dirY);
-      if (!(l > 0)) continue;
-      const nx = -xc.dirY / l;
-      const ny = xc.dirX / l;
-      const c = nx * xc.x + ny * xc.y;
-      start = xc.width > 0
-        ? cutStrip(start, nx, ny, c, xc.width / 2, stripMinPart)
-        : splitBoth(start, { nx, ny, c, kind: EDGE_CUT });
-    }
+    start = applyExtraCuts(start, input.extraCuts, FRACTURE_MAX_EXTRA_CUTS, stripMinPart, EDGE_CUT);
   }
 
   // v7 cracks: zone cracks either side of the primary, a fan into the zone
@@ -744,14 +729,6 @@ function keelAxis(hull: P[]): Vec2 {
   }
   const l = Math.sqrt(n2);
   return { x: v2x / l, y: v2y / l };
-}
-
-/** A splitting line `nx·x + ny·y = c`; both sides are kept. */
-interface FractureLine {
-  nx: number;
-  ny: number;
-  c: number;
-  kind: number;
 }
 
 function primaryCut(p: NonNullable<FracturePlan['primary']>, kind = EDGE_PRIMARY): FractureLine {
@@ -1132,31 +1109,6 @@ function ringCentroid(r: ReadonlyArray<{ x: number; y: number }>): Vec2 {
   return a === 0 ? { x: r[0]!.x, y: r[0]!.y } : { x: cx / (3 * a), y: cy / (3 * a) };
 }
 
-/** v9 channel, v10 wide slice, v12 extra cut: erase the strip
- *  `|nx·x + ny·y − c| < half` from every ring (two straight `EDGE_CUT`
- *  cuts). A part the strip leaves under `minPart` is erased with it; a ring
- *  the strip misses is kept whole whatever its size. */
-function cutStrip(rings: P[][], nx: number, ny: number, c: number, half: number, minPart: number): P[][] {
-  const out: P[][] = [];
-  for (const ring of rings) {
-    const sides = [
-      splitByLine(ring, nx, ny, c - half, EDGE_CUT),
-      splitByLine(ring, -nx, -ny, -(c + half), EDGE_CUT),
-    ];
-    for (const side of sides) for (const r of side) if (r === ring || ringArea(r) >= minPart) out.push(r);
-  }
-  return out;
-}
-
-function splitBoth(sections: P[][], l: FractureLine): P[][] {
-  const next: P[][] = [];
-  for (const s of sections) {
-    for (const part of splitByLine(s, l.nx, l.ny, l.c, l.kind)) next.push(part);
-    for (const part of splitByLine(s, -l.nx, -l.ny, -l.c, l.kind)) next.push(part);
-  }
-  return next;
-}
-
 /** Split `start` (the hull, or what a v9 channel left of it) by every
  *  global line, then each of the first `nLocal` local lines splits only the
  *  sections whose centroid lies in its region. */
@@ -1271,126 +1223,6 @@ function convexHullOf(ring: ReadonlyArray<{ x: number; y: number }>): Array<{ x:
   lower.pop();
   upper.pop();
   return lower.concat(upper);
-}
-
-// ───────────────────── robust split of a simple polygon by a line ─────────────────────
-
-interface Node {
-  x: number;
-  y: number;
-  k: number;
-  /** 0 = original vertex, 1 = entering crossing, 2 = exiting crossing */
-  cross: number;
-  t: number;
-  tk: number;
-  ring: number;
-  partner: number;
-}
-
-/**
- * Parts of the simple CCW polygon `poly` where `nx·x + ny·y − c < 0`, as
- * separate simple CCW polygons. Unlike Sutherland–Hodgman this never joins
- * disjoint parts with a zero-width bridge: crossings are sorted along the line
- * and paired into inside intervals, and each part is traced through them.
- * A vertex exactly ON the line counts as outside (symbolic perturbation), and
- * ties along the line are broken by the perturbation's first-order term, so
- * the pairing is consistent even through vertices.
- */
-function splitByLine(poly: P[], nx: number, ny: number, c: number, newKind: number): P[][] {
-  const n = poly.length;
-  const d: number[] = new Array<number>(n);
-  let anyIn = false;
-  let anyOut = false;
-  for (let i = 0; i < n; i++) {
-    const di = nx * poly[i]!.x + ny * poly[i]!.y - c;
-    d[i] = di;
-    if (di < 0) anyIn = true;
-    else anyOut = true;
-  }
-  if (!anyIn) return [];
-  if (!anyOut) return [poly];
-
-  const ux = -ny;
-  const uy = nx;
-  const ring: Node[] = [];
-  const crossings: Node[] = [];
-  for (let i = 0; i < n; i++) {
-    const a = poly[i]!;
-    const b = poly[(i + 1) % n]!;
-    const da = d[i]!;
-    const db = d[(i + 1) % n]!;
-    ring.push({ x: a.x, y: a.y, k: a.k, cross: 0, t: 0, tk: 0, ring: ring.length, partner: -1 });
-    const aIn = da < 0;
-    const bIn = db < 0;
-    if (aIn === bIn) continue;
-    // Always interpolate from the OUT end to the IN end, so a shared edge
-    // crossed from either side yields the bit-identical point.
-    const o = aIn ? b : a;
-    const q = aIn ? a : b;
-    const dO = aIn ? db : da;
-    const dQ = aIn ? da : db;
-    const s = dO / (dO - dQ);
-    const x = o.x + (q.x - o.x) * s;
-    const y = o.y + (q.y - o.y) * s;
-    const node: Node = {
-      x,
-      y,
-      k: aIn ? newKind : a.k,
-      cross: aIn ? 2 : 1,
-      t: x * ux + y * uy,
-      tk: ((q.x - o.x) * ux + (q.y - o.y) * uy) / (dO - dQ),
-      ring: ring.length,
-      partner: -1,
-    };
-    ring.push(node);
-    crossings.push(node);
-  }
-  crossings.sort((p, q) => p.t - q.t || p.tk - q.tk || p.ring - q.ring);
-  for (let m = 0; m + 1 < crossings.length; m += 2) {
-    const p = crossings[m]!;
-    const q = crossings[m + 1]!;
-    if (p.cross === q.cross) return [sutherlandHodgman(poly, d, newKind)];
-    p.partner = q.ring;
-    q.partner = p.ring;
-  }
-
-  const visited = new Uint8Array(ring.length);
-  const out: P[][] = [];
-  for (const start of crossings) {
-    if (start.cross !== 1 || visited[start.ring]) continue;
-    const piece: P[] = [];
-    let idx = start.ring;
-    let guard = ring.length + 1;
-    while (!visited[idx] && guard-- > 0) {
-      visited[idx] = 1;
-      const nd = ring[idx]!;
-      piece.push({ x: nd.x, y: nd.y, k: nd.k });
-      if (nd.cross === 2) idx = nd.partner;
-      else idx = (idx + 1) % ring.length;
-      // Skip outside original vertices (only reachable through an entering crossing).
-    }
-    const cleaned = dedupe(piece);
-    if (cleaned.length >= 3 && ringArea(cleaned) > 0) out.push(cleaned);
-  }
-  return out;
-}
-
-/** Fallback for a degenerate crossing pairing (never seen in tests). */
-function sutherlandHodgman(poly: P[], d: number[], newKind: number): P[] {
-  const out: P[] = [];
-  const n = poly.length;
-  for (let i = 0; i < n; i++) {
-    const a = poly[i]!;
-    const b = poly[(i + 1) % n]!;
-    const da = d[i]!;
-    const db = d[(i + 1) % n]!;
-    if (da < 0) out.push({ x: a.x, y: a.y, k: db < 0 ? a.k : newKind });
-    if ((da < 0) !== (db < 0)) {
-      const s = da / (da - db);
-      out.push({ x: a.x + (b.x - a.x) * s, y: a.y + (b.y - a.y) * s, k: da < 0 ? newKind : a.k });
-    }
-  }
-  return dedupe(out);
 }
 
 // ───────────────────────────── quantise ─────────────────────────────
@@ -1669,18 +1501,6 @@ function normaliseHull(hull: ReadonlyArray<readonly [number, number]>): P[] {
   return ring;
 }
 
-/** Drop consecutive duplicate vertices (keeping the later one's edge kind). */
-function dedupe(r: P[]): P[] {
-  const out: P[] = [];
-  for (let i = 0; i < r.length; i++) {
-    const p = r[i]!;
-    const nx = r[(i + 1) % r.length]!;
-    if (r.length > 1 && p.x === nx.x && p.y === nx.y) continue;
-    out.push(p);
-  }
-  return out;
-}
-
 /** Remove zero-width spikes (b where a→b→c folds straight back). */
 function stripSpikes(r: P[]): P[] {
   const pts = r.slice();
@@ -1714,16 +1534,6 @@ function stripSpikes(r: P[]): P[] {
 function allAtLeast(rings: ReadonlyArray<P[]>, min: number): boolean {
   for (const r of rings) if (ringArea(r) < min) return false;
   return true;
-}
-
-function ringArea(r: ReadonlyArray<{ x: number; y: number }>): number {
-  let s = 0;
-  for (let i = 0; i < r.length; i++) {
-    const a = r[i]!;
-    const b = r[(i + 1) % r.length]!;
-    s += a.x * b.y - b.x * a.y;
-  }
-  return s / 2;
 }
 
 function tupleArea(r: ReadonlyArray<readonly [number, number]>): number {
