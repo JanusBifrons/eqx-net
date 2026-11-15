@@ -29,7 +29,9 @@
  * subsystems like `LaserGlow` attach filters to. Filters work on
  * Container exactly the same as on Graphics.
  */
-import { Container, Sprite, Texture } from 'pixi.js';
+import { BufferImageSource, Container, Sprite, Texture } from 'pixi.js';
+import type { BeamLineLight } from './beamStyles.js';
+import { CROSS_SECTION_ROWS, crossSectionPixels, type BeamCrossSection } from './beamCrossSection.js';
 
 export interface BeamView {
   /** World-space `from` point — anchor of the sprite. */
@@ -76,6 +78,52 @@ export interface BeamSpriteStyle {
    *  camera scale, so a capital-scale beam stays heavy at capital zoom (like
    *  the naval shells' `SHELL_MIN_SCREEN_PX`). Absent: world width only. */
   minScreenPx?: number;
+  /** A baked colour cross-section (the capital heavy beam: a white-hot core
+   *  through saturated violet to soft glowing edges). Drawn untinted on one
+   *  tiny texture shared by every beam of this profile, `span` × the core
+   *  width wide. Absent: the flat texture tinted `tint`. */
+  crossSection?: BeamCrossSection;
+  /** The beam is a light along its whole length (`addBeamLights`; the
+   *  heavy beam). Absent: a hit light and a soft one at its middle. */
+  lineLight?: BeamLineLight;
+}
+
+/** The core width a `style` beam is drawn at (world u): its `width`, but
+ *  never under `minScreenPx` on screen when `cameraScale` (px per u) is known. */
+export function beamCoreWidth(style: BeamSpriteStyle, cameraScale?: number): number {
+  return style.minScreenPx !== undefined && cameraScale !== undefined && cameraScale > 0
+    ? Math.max(style.width, style.minScreenPx / cameraScale)
+    : style.width;
+}
+
+/** The shared solid / fade-tail textures of a cross-section profile. */
+interface CrossSectionTextures { readonly solid: Texture; readonly fade: Texture }
+const _crossSectionTextures = new Map<BeamCrossSection, CrossSectionTextures>();
+/** Fade-tail texture width (its alpha ramps 1 → 0 left to right). */
+const CROSS_SECTION_FADE_W = 64;
+
+function bufferTexture(px: Uint8Array, width: number, height: number): Texture {
+  return new Texture({
+    source: new BufferImageSource({
+      resource: px, width, height, alphaMode: 'premultiplied-alpha', scaleMode: 'linear',
+    }),
+  });
+}
+
+/** Lazily-built textures of `cs` (from pixel buffers: no canvas, so they are
+ *  real headless too), shared by every beam drawn with that profile: the
+ *  heavy beams batch together. */
+export function crossSectionTextures(cs: BeamCrossSection): CrossSectionTextures {
+  let t = _crossSectionTextures.get(cs);
+  if (!t) {
+    const H = CROSS_SECTION_ROWS, W = CROSS_SECTION_FADE_W;
+    t = {
+      solid: bufferTexture(crossSectionPixels(cs, 1, H), 1, H),
+      fade: bufferTexture(crossSectionPixels(cs, W, H, (x) => 1 - x / (W - 1)), W, H),
+    };
+    _crossSectionTextures.set(cs, t);
+  }
+  return t;
 }
 
 /**
@@ -206,6 +254,8 @@ export class BeamSpritePool {
   /** Core / tail sprite drawn for beam `i` this frame (test + feedback reads). */
   private readonly _coreOf: Sprite[] = [];
   private readonly _fadeOf: (Sprite | null)[] = [];
+  /** Core width (world u) beam `i` was drawn at this frame (test reads). */
+  private readonly _coreWOf: number[] = [];
   private readonly _style: BeamSpriteStyle;
   /** Number of sprites currently representing live beams (visible). */
   private _liveCount = 0;
@@ -263,11 +313,18 @@ export class BeamSpritePool {
       this._fadeOf[i] = null;
       sprite.visible = true;
       const st = b.style ?? this._style;
-      sprite.tint = st.tint;
+      // A cross-section style carries its colours in its own texture: drawn
+      // untinted, `span` × the core width wide (the soft edges sit outside
+      // the core). Textures are `texH` px tall, so scale.y = drawn width / texH.
+      const xs = st.crossSection ? crossSectionTextures(st.crossSection) : null;
+      const tint = xs ? 0xffffff : st.tint;
+      sprite.tint = tint;
       sprite.alpha = st.alpha;
-      const width = st.minScreenPx !== undefined && cameraScale !== undefined && cameraScale > 0
-        ? Math.max(st.width, st.minScreenPx / cameraScale)
-        : st.width;
+      const coreW = beamCoreWidth(st, cameraScale);
+      this._coreWOf[i] = coreW;
+      const drawnW = xs ? coreW * st.crossSection!.span : coreW;
+      const solidTex = xs ? xs.solid : this._solidTexture;
+      const fadeTex = xs ? xs.fade : this._fadeTexture;
       // World-space line: from (b.fromX, b.fromY) to (b.toX, b.toY).
       // Pixi screen Y is flipped vs game-space Y per the project's
       // pixiY = -gameY convention (see src/client/CLAUDE.md), so we
@@ -280,7 +337,7 @@ export class BeamSpritePool {
       sprite.y = -b.fromY;
       sprite.rotation = rot;
 
-      if (taper && b.solidLen !== undefined) {
+      if ((taper || xs) && b.solidLen !== undefined) {
         // P1a — explicit solid length: draw a full-strength SOLID core
         // [0, solidLen] (clips solid at any hit) plus a LINEAR fade TAIL
         // [solidLen, len] (the optimal→max falloff band, fading to nothing). This
@@ -288,33 +345,34 @@ export class BeamSpritePool {
         // a FRACTION of the drawn length (so it fled the optimal range and read as
         // "goes forever / solid past the guide / never tapers").
         const solidLen = Math.max(0, Math.min(b.solidLen, len));
-        sprite.texture = this._solidTexture;
+        sprite.texture = solidTex;
         // scale.x renders `world units = scale.x × texture.width`, so the world
         // length must be DIVIDED by the texture width. The solid core uses the
         // 1×1 WHITE texture (÷1 = no-op), but the fade tail below uses the 256-px
         // gradient texture — without the division it rendered 256× too long, so
         // the "fade" stretched ~19 200 u and the beam looked solid to infinity /
         // ran off the screen (the "renders infinitely" bug; headless tests use
-        // the 1×1 WHITE fallback so they never saw it). textures are 1 px tall.
-        sprite.scale.set(Math.max(solidLen, 0.0001) / this._solidTexture.width, width);
+        // the 1×1 WHITE fallback so they never saw it).
+        sprite.scale.set(Math.max(solidLen, 0.0001) / solidTex.width, drawnW / solidTex.height);
         const tailLen = len - solidLen;
         let fade = lane.fadePool[li];
         if (tailLen > 0.01) {
           if (!fade) {
-            fade = new Sprite(this._fadeTexture!);
+            fade = new Sprite(fadeTex!);
             fade.anchor.set(0, 0.5);
             lane.fadePool[li] = fade;
             lane.container.addChild(fade);
           }
           this._fadeOf[i] = fade;
+          fade.texture = fadeTex!;
           fade.visible = true;
-          fade.tint = st.tint;
+          fade.tint = tint;
           fade.alpha = st.alpha;
           fade.x = b.fromX + Math.cos(rot) * solidLen;
           fade.y = -b.fromY + Math.sin(rot) * solidLen;
           fade.rotation = rot;
           // ÷ texture width (256 for the real gradient) — see the solid-core note.
-          fade.scale.set(tailLen / this._fadeTexture!.width, width);
+          fade.scale.set(tailLen / fadeTex!.width, drawnW / fadeTex!.height);
         } else if (fade) {
           this._fadeOf[i] = fade;
           fade.visible = false;
@@ -326,9 +384,9 @@ export class BeamSpritePool {
         // even in a taper pool: full strength to its end point.
         // ÷ texture width (256 for the taper gradient) — see the solid-core note;
         // without it remote/enemy beams rendered 256× too long too.
-        const tex = b.style && !b.style.taper ? this._solidTexture : this._texture;
+        const tex = b.style && !b.style.taper ? solidTex : this._texture;
         sprite.texture = tex;
-        sprite.scale.set(len / tex.width, width);
+        sprite.scale.set(len / tex.width, drawnW / tex.height);
         const fade = lane.fadePool[li];
         if (fade) fade.visible = false;
       }
@@ -390,12 +448,13 @@ export class BeamSpritePool {
     return f ? { visible: f.visible, lenX: f.scale.x * f.texture.width, x: f.x } : null;
   }
 
-  /** Test-only: beam `i`'s drawn core — tint, WORLD width (scale.y; the
-   *  textures are 1 px tall), the container it sits in and its texture — or
-   *  null. */
-  coreAt(i: number): { tint: number; width: number; parent: Container | null; texture: Texture } | null {
+  /** Test-only: beam `i`'s drawn core — tint, core WORLD width (`width`; the
+   *  opaque body), the whole sprite's WORLD width (`drawnWidth` = scale.y ×
+   *  texture height; wider than `width` by a cross-section's `span`), the
+   *  container it sits in and its texture — or null. */
+  coreAt(i: number): { tint: number; width: number; drawnWidth: number; parent: Container | null; texture: Texture } | null {
     const s = i < this._liveCount ? this._coreOf[i] : undefined;
     if (!s || !s.visible) return null;
-    return { tint: s.tint, width: s.scale.y, parent: s.parent, texture: s.texture };
+    return { tint: s.tint, width: this._coreWOf[i]!, drawnWidth: s.scale.y * s.texture.height, parent: s.parent, texture: s.texture };
   }
 }

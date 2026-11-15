@@ -73,7 +73,7 @@ import {
 import { newSpeedFxSample, speedFxSampleInto } from './camera/speedFxSample';
 import { GroupBoundsScanner } from './camera/groupBounds';
 import type { CameraCue, CameraGroup } from '@core/contracts/cameraScript';
-import { REMOTE_BEAM_STYLE, MINING_BEAM_STYLE, remoteBeamStyleForMount, remoteBeamLine, remoteBeamSolidLen, addBeamLights, type RemoteBeamLine } from './beamStyles';
+import { REMOTE_BEAM_STYLE, MINING_BEAM_STYLE, remoteBeamStyleForMount, remoteBeamLine, remoteBeamSolidLen, addBeamLights, beamLightBudget, type RemoteBeamLine } from './beamStyles';
 import { MountVisualManager } from './MountVisualManager';
 import { BackgroundGrid } from './BackgroundGrid';
 import { StarfieldBackground } from './StarfieldBackground';
@@ -2075,7 +2075,7 @@ export class PixiRenderer implements IRenderer {
       // the transform writes are cheap (see the always-call rationale above).
       this._remoteBeamPool.setBeams(this._remoteBeamCache, slotIdx, this.world.scale.x);
       this.remoteBeamGfx!.visible = true;
-      this._fxRemoteBeams?.setBeams(this._remoteBeamCache, slotIdx, this.fxNow(), this._fxRemoteHit);
+      this._fxRemoteBeams?.setBeams(this._remoteBeamCache, slotIdx, this.fxNow(), this._fxRemoteHit, this.world.scale.x);
       if (this._miningBeamPool && this.miningBeamGfx) {
         this._miningBeamPool.setBeams(this._miningBeamCache, miningIdx);
         this.miningBeamGfx.visible = miningIdx > 0;
@@ -2667,7 +2667,7 @@ export class PixiRenderer implements IRenderer {
   /** A beam lights where it hits and along its length. */
   private beamLights(b: BeamView): void {
     // Game space in, Pixi space to the lit scene (beamStyles `addBeamLights`).
-    addBeamLights(litPass.scene, b);
+    addBeamLights(litPass.scene, b, beamLightBudget(litPass.settings?.pointLights ?? 0));
   }
 
   /** Firing reactions for Machined guns (turrets T2): held beams by mount
