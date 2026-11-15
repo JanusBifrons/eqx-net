@@ -177,6 +177,7 @@ import {
 } from '../combat/HitPrediction.client';
 import { localFireSpawnsGhost, localFirePredicts, liveBeamVisible, LIVE_BEAM_PERSIST_MS } from '../combat/LocalBeam';
 import { flowMaterialToCode } from '../render/pixi/connectorVisual';
+import { findMount, isHeavyBeamMount, remoteBeamTtlMs } from '../render/beamStyles';
 import type { TouchInput } from '../input/TouchInput';
 import { joystickToInput, IDLE_INPUT_STATE, type JoystickInputState } from '../input/joystickToInput';
 import { aimInput } from '../input/AimInput';
@@ -2066,8 +2067,11 @@ export class ColyseusGameClient {
       // Pre-2c servers omit `mountId`; we synthesise `'forward'` so the entry
       // still has a stable key and legacy single-mount rendering is unchanged.
       const isAiShooter = evt.shooterId.startsWith('swarm-');
-      const ttlMs = isAiShooter ? 250 : 400;
       const mountKey = evt.mountId ?? 'forward';
+      // The capital heavy beam (cooldown 10 ticks) holds longer so it reads as
+      // one continuous burn, not a strobe (beamStyles `remoteBeamTtlMs`). Its
+      // mount is looked up on the shooter's kind: no wire field.
+      const ttlMs = remoteBeamTtlMs(isAiShooter, isHeavyBeamMount(findMount(this.shooterKindMounts(evt.shooterId), evt.mountId)));
       const lasers = (this.mirror.remoteLasers ??= new Map());
       let perShooter = lasers.get(evt.shooterId);
       if (!perShooter) {
@@ -3737,6 +3741,18 @@ export class ColyseusGameClient {
         });
       }
     }
+  }
+
+  /** The catalogue mounts of a `laser_fired` shooter's ship kind (a remote
+   *  player's ship, or a `swarm-<id>` drone/capital), or undefined when the
+   *  shooter isn't mirrored. Same lookup the renderer's beam loop does. */
+  private shooterKindMounts(shooterId: string): readonly WeaponMount[] | undefined {
+    const ship = this.mirror.ships.get(shooterId);
+    if (ship) return ship.kind ? getShipKind(ship.kind).mounts : undefined;
+    if (!shooterId.startsWith('swarm-')) return undefined;
+    const entityId = parseInt(shooterId.slice('swarm-'.length), 10);
+    const sw = Number.isNaN(entityId) ? undefined : this.mirror.swarm?.get(entityId);
+    return sw?.shipKind ? getShipKind(sw.shipKind).mounts : undefined;
   }
 
   /**

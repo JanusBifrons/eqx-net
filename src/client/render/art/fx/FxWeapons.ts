@@ -20,7 +20,9 @@ import { RAILGUN_BOLT_WIDTH, RAILGUN_RADIUS } from '../../../../shared-types/com
 
 const tex = (h: ArtHandle): Texture | null => (h.state === 'ready' && h.fx ? h.fx.tex : null);
 
-interface BeamSlot { halo: Sprite; flow: TilingSprite; tail: Sprite; muzzle: Sprite; flare: Sprite }
+/** `tint`: the colour the slot's sprites carry now (a heavy beam re-tints its
+ *  slot; written only on change). */
+interface BeamSlot { halo: Sprite; flow: TilingSprite; tail: Sprite; muzzle: Sprite; flare: Sprite; tint: number }
 
 export class FxBeams {
   readonly container = new Container();
@@ -63,23 +65,28 @@ export class FxBeams {
       const len = Math.hypot(dx, dy);
       if (len < 0.5) { s.halo.visible = false; s.flow.visible = false; s.tail.visible = false; s.muzzle.visible = false; s.flare.visible = false; continue; }
       const ang = Math.atan2(dy, dx);
+      // A per-beam style (the capital heavy beam) re-tints the slot and scales
+      // its glow; everything else draws in the pool colour at 1x.
+      const tint = b.style ? b.style.tint : this.color;
+      const k = b.style?.glowScale ?? 1;
+      if (s.tint !== tint) { s.tint = tint; s.halo.tint = tint; s.flow.tint = tint; s.tail.tint = tint; s.muzzle.tint = tint; }
       const solid = Math.min(len, b.solidLen ?? (hits ? (hits[i] ? len : len * 0.55) : len));
       const fl = 0.88 + 0.12 * Math.sin(t * 57 + i * 1.7) * Math.sin(t * 23 + i);
       s.halo.position.set(fx, fy); s.halo.rotation = ang;
-      s.halo.scale.set(solid / s.halo.texture.width, (20 * fl) / s.halo.texture.height);
+      s.halo.scale.set(solid / s.halo.texture.width, (20 * k * fl) / s.halo.texture.height);
       s.flow.position.set(fx, fy); s.flow.rotation = ang;
-      s.flow.width = solid; s.flow.scale.y = 8 / s.flow.texture.height;
+      s.flow.width = solid; s.flow.scale.y = (8 * k) / s.flow.texture.height;
       s.flow.tilePosition.x = -t * 420;
       const tailLen = len - solid;
       s.tail.visible = tailLen > 1;
       if (tailLen > 1) {
         s.tail.position.set(fx + Math.cos(ang) * solid, fy + Math.sin(ang) * solid); s.tail.rotation = ang;
-        s.tail.scale.set(tailLen / s.tail.texture.width, 12 / s.tail.texture.height);
+        s.tail.scale.set(tailLen / s.tail.texture.width, (12 * k) / s.tail.texture.height);
       }
-      s.muzzle.position.set(fx, fy); s.muzzle.scale.set((20 / s.muzzle.texture.width) * fl);
+      s.muzzle.position.set(fx, fy); s.muzzle.scale.set(((20 * k) / s.muzzle.texture.width) * fl);
       // A beam whose solid part reaches its end has landed on something.
       s.flare.visible = tailLen <= 1;
-      if (s.flare.visible) { s.flare.position.set(tx, ty); s.flare.scale.set((36 / s.flare.texture.width) * fl); }
+      if (s.flare.visible) { s.flare.position.set(tx, ty); s.flare.scale.set(((36 * k) / s.flare.texture.width) * fl); }
     }
   }
 
@@ -98,7 +105,7 @@ export class FxBeams {
     const tail = mk(tr, this.color, 0.6, 0);
     const muzzle = mk(gl, this.color, 0.9, 0.5);
     const flare = mk(gl, 0xffffff, 0.95, 0.5);
-    return { halo, flow, tail, muzzle, flare };
+    return { halo, flow, tail, muzzle, flare, tint: this.color };
   }
 }
 

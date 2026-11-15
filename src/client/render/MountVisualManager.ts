@@ -83,6 +83,7 @@ import { getShipKind, type WeaponMount } from '../../shared-types/shipKinds';
 import { shipPrimaryColor } from '@core/geometry/shipHullOutline';
 import { aimLineLengthForMount } from './aimLineLength';
 import { GLOBAL_SHIP_TUNING } from '@shared-types/shipScale/lookup';
+import { HEAVY_BEAM_COLOR, HEAVY_BEAM_STYLE, isHeavyBeamMount } from './beamStyles';
 
 /** Shared frozen empty mount-list. The `?? EMPTY_MOUNTS` fallback for a
  *  mountless kind avoids allocating a fresh `[]` literal every time
@@ -529,7 +530,9 @@ export class MountVisualManager {
         tip.alpha = glow;
         tip.x = flashX;
         tip.y = -gun.reach + flashKick;
-        tip.scale.set(((gun.place.wid * (fam === 'bolt' ? 1.6 : 3)) / 64) * (1 + 0.4 * glow));
+        // A heavy-beam projector's tip burns bigger, in the beam's violet.
+        const tipK = isHeavyBeamMount(gun.place.mount) ? (HEAVY_BEAM_STYLE.glowScale ?? 1) * 0.6 : 1;
+        tip.scale.set(((gun.place.wid * (fam === 'bolt' ? 1.6 : 3) * tipK) / 64) * (1 + 0.4 * glow));
       }
     }
   }
@@ -614,7 +617,7 @@ export class MountVisualManager {
       gun.pivot.addChild(f); gun.flash = f;
     }
     if (!gun.tip && glow) {
-      const g = new Sprite(glow); g.anchor.set(0.5); g.blendMode = 'add'; g.tint = gun.place.family === 'bolt' ? 0xff6a2a : tint; g.visible = false;
+      const g = new Sprite(glow); g.anchor.set(0.5); g.blendMode = 'add'; g.tint = gun.place.family === 'bolt' ? 0xff6a2a : isHeavyBeamMount(gun.place.mount) ? HEAVY_BEAM_COLOR : tint; g.visible = false;
       gun.pivot.addChild(g); gun.tip = g;
     }
     const naval = gun.place.naval && gun.place.mount.size !== 'AA' ? gun.place.naval : undefined;
