@@ -17,6 +17,10 @@ import { HEAVY_BEAM_WIDTH, MINING_LASER_WIDTH } from '../../core/combat/WeaponCa
  *  `taper` (P3.13) — combat beams fade toward the tip of their range. */
 export const REMOTE_BEAM_STYLE: BeamSpriteStyle = { tint: 0xffaa44, width: 2, alpha: 1, taper: true };
 
+/** The pilot's own hitscan beams (`mirror.liveBeams`): a white core that
+ *  `LaserGlow` haloes cyan, tapering to the tip of its range. */
+export const LIVE_BEAM_STYLE: BeamSpriteStyle = { tint: 0xffffff, width: 2, alpha: 1, taper: true };
+
 /** The Miner's mining (drill) beam — deliberately DISTINCT from the combat
  *  beam: a fatter, warmer amber at lower alpha so a player reads "mining laser",
  *  not "someone is shooting". */
@@ -151,6 +155,33 @@ export const HEAVY_BEAM_MISS_FADE_FRAC = 0.15;
 export function remoteBeamSolidLen(style: BeamSpriteStyle | null, len: number, hit: boolean): number | undefined {
   if (style === null || style.taper) return undefined;
   return hit ? len : len * (1 - HEAVY_BEAM_MISS_FADE_FRAC);
+}
+
+/** What a pilot's own beam slot draws with (`BeamView.style` / `solidLen`). */
+export interface LiveBeamLook { style?: BeamSpriteStyle | null; solidLen?: number }
+
+/**
+ * The look of the pilot's OWN beam from `mount` (PixiRenderer's live-beam
+ * loop, `mirror.liveBeams`), into `out` (no allocation, #14): `len` the drawn
+ * length, `solidDist` the client ray's solid length, `hit` whether it stopped
+ * on something.
+ *
+ * A styled mount (the heavy beam, the mining laser) draws with the SAME style
+ * and solid length as when another ship fires it (`remoteBeamStyleForMount`,
+ * `remoteBeamSolidLen`): the pool's unfiltered `styledContainer`, its
+ * `minScreenPx` floor. Anything else keeps the live style and the ray's
+ * solid length. (The pilot's heavy beam once drew with the fighter look: a
+ * 2 u core under the cyan `LaserGlow`, a fraction of a px at capital zoom,
+ * so it rasterised as a faint cyan dotted line.)
+ */
+export function liveBeamLook(
+  mount: { readonly weaponId: string } | null | undefined,
+  len: number, solidDist: number | undefined, hit: boolean, out: LiveBeamLook,
+): LiveBeamLook {
+  const style = remoteBeamStyleForMount(mount);
+  out.style = style;
+  out.solidLen = remoteBeamSolidLen(style, len, hit) ?? solidDist;
+  return out;
 }
 
 /** True when `mount` carries the capital heavy beam. */

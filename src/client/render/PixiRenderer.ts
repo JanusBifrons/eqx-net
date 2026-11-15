@@ -73,7 +73,7 @@ import {
 import { newSpeedFxSample, speedFxSampleInto } from './camera/speedFxSample';
 import { GroupBoundsScanner } from './camera/groupBounds';
 import type { CameraCue, CameraGroup } from '@core/contracts/cameraScript';
-import { REMOTE_BEAM_STYLE, MINING_BEAM_STYLE, remoteBeamStyleForMount, remoteBeamLine, remoteBeamSolidLen, addBeamLights, beamLightBudget, BeamHitMemory, type RemoteBeamLine } from './beamStyles';
+import { REMOTE_BEAM_STYLE, LIVE_BEAM_STYLE, liveBeamLook, MINING_BEAM_STYLE, remoteBeamStyleForMount, remoteBeamLine, remoteBeamSolidLen, addBeamLights, beamLightBudget, BeamHitMemory, type RemoteBeamLine } from './beamStyles';
 import { MountVisualManager } from './MountVisualManager';
 import { BackgroundGrid } from './BackgroundGrid';
 import { StarfieldBackground } from './StarfieldBackground';
@@ -106,7 +106,6 @@ const BACKGROUND_COLOR = 0x05070f;
 // 0.5 — close to the OLD max zoom-out (0.4), raised slightly — so you spawn
 // seeing more of the sector. `?zoom=` still overrides for on-device A/B.
 const DEFAULT_GAMEPLAY_ZOOM = 0.5;
-const LASER_CORE_COLOR = 0xffffff;
 
 // Per-frame Pixi stroke-style scratches. The renderer redraws beams
 // every RAF (60–90 Hz) via clear() + moveTo + lineTo + stroke(...). Pre-
@@ -380,6 +379,7 @@ export class PixiRenderer implements IRenderer {
     toX: number;
     toY: number;
     solidLen?: number;
+    style?: BeamSpriteStyle | null;
   }> = [];
   private _liveBeamCacheCount = 0;
   /** Same dirty-flag cache for remote shooters' beams (per-shooter +
@@ -1047,9 +1047,9 @@ export class PixiRenderer implements IRenderer {
       // `liveBeamGfx` / `remoteBeamGfx` so LaserGlow can attach a
       // GlowFilter to it at construct time. Empty pools render as
       // nothing — no visual change before first beam.
-      this._liveBeamPool = new BeamSpritePool({ tint: LASER_CORE_COLOR, width: 2, alpha: 1, taper: true });
+      this._liveBeamPool = new BeamSpritePool(LIVE_BEAM_STYLE);
       this.liveBeamGfx = this._liveBeamPool.container;
-      this.shipContainer.addChild(this.liveBeamGfx);
+      this.shipContainer.addChild(this.liveBeamGfx, this._liveBeamPool.styledContainer); // heavy beams: unfiltered sibling
       this._remoteBeamPool = new BeamSpritePool(REMOTE_BEAM_STYLE);
       this.remoteBeamGfx = this._remoteBeamPool.container;
       this.shipContainer.addChild(this.remoteBeamGfx, this._remoteBeamPool.styledContainer); // heavy beams: unfiltered sibling
@@ -2141,8 +2141,9 @@ export class PixiRenderer implements IRenderer {
         slot.toX = toX;
         slot.toY = toY;
         // P1a — the full-strength solid length (== aim guide / optimal range when
-        // not clipped); beyond it the pool fades the beam to nothing.
-        slot.solidLen = beam.solidDist;
+        // not clipped; beyond it the pool fades the beam to nothing) and the
+        // per-beam style of the mount's weapon.
+        liveBeamLook(mount, beam.dist, beam.solidDist, beam.hitId !== undefined, slot);
         if (this._fxShieldsOn && beam.hitId) this._fxShields!.beam(beam.hitId, 500 + slotIdx, toX, toY, this._fxShieldPose);
         // The local beam stops on a fence's prediction collider.
         if (beam.hitId?.startsWith('predwall-')) this._fxFences?.beam(500 + slotIdx, toX, toY);
@@ -2151,9 +2152,9 @@ export class PixiRenderer implements IRenderer {
       this._liveBeamCacheCount = slotIdx;
 
       // Sprite-pool driven render (matches remoteBeam path) — always re-set.
-      this._liveBeamPool.setBeams(this._liveBeamCache, slotIdx);
+      this._liveBeamPool.setBeams(this._liveBeamCache, slotIdx, this.world.scale.x);
       this.liveBeamGfx!.visible = true;
-      this._fxLiveBeams?.setBeams(this._liveBeamCache, slotIdx, this.fxNow());
+      this._fxLiveBeams?.setBeams(this._liveBeamCache, slotIdx, this.fxNow(), undefined, this.world.scale.x);
       // E2E observable: publish the ACTUAL drawn beam origin (the sprite
       // transform), not a recompute — this is what catches the detach bug.
       this.feedback.liveBeamRenderedFromX = this._liveBeamPool.renderedFromX;
