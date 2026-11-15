@@ -826,7 +826,7 @@ export class PixiRenderer implements IRenderer {
       this.mountVisuals.setArt(this._artCtx);
       // Warm-up: bake the likely art now (this runs on the galaxy map /
       // warp screen), behind anything that appears on screen meanwhile.
-      art.warmUp(warmUpJobs(this._artOpts.fx === true));
+      art.warmUp(warmUpJobs(this._artOpts.fx === true, this._artOpts.livery));
       // New backdrop (B2): behind the world, with dust in front of it. Until
       // its star tiles are baked, today's starfield keeps drawing.
       if (this._artOpts.fx === true) {
