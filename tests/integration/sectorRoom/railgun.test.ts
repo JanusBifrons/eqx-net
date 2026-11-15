@@ -9,7 +9,9 @@
  *    waiting out its real wind-up (the per-mount start ticks ride the
  *    snapshot meanwhile);
  *  - a real `battleship-rail` AI charges its railgun main turrets and fires;
- *    its slug kills a ship in its line and stops in its target.
+ *    its slug kills a ship in its line and stops in its target (the
+ *    `traverseTicksCap` trigger snaps its turrets onto their bearings: a 16"
+ *    turret trains at ~4 deg/s, ~15 s of waiting otherwise).
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
@@ -92,14 +94,14 @@ describe('SectorRoom integration — railgun', () => {
     expect(fin[0]![2]).toBeGreaterThan(10_000);
   });
 
-  it('a battleship-rail AI charges its main turrets and fires railgun slugs after the chargeTicksCap, not the real 6 s', { timeout: 60_000 }, async () => {
+  it('a battleship-rail AI charges its main turrets and fires railgun slugs after the chargeTicksCap, not the real 6 s', { timeout: 15_000 }, async () => {
     // The rail fit puts the railgun on every main mount (capital fit axis, plan §9).
     const rails = (getShipKind('battleship-rail').mounts ?? []).filter((m) => m.weaponId === 'railgun');
     expect(rails.length, 'battleship-rail carries railgun main turrets').toBeGreaterThan(0);
     const CAP = 30;
     harness = await bootSectorTestServer({
       sectorKey: null, droneCount: 0, testMode: true, asteroidConfig: [], pilotCapitals: true,
-      chargeTicksCap: CAP, lockTimeCapS: 0,
+      chargeTicksCap: CAP, lockTimeCapS: 0, traverseTicksCap: 0,
       dronePoses: [{ kind: 'battleship-rail', x: 5000, y: 0, angle: (50 * Math.PI) / 180 }],
     });
     const cr = await harness.connectActive(randomUUID(), {
@@ -111,7 +113,7 @@ describe('SectorRoom integration — railgun', () => {
     });
     const salvos: ShellSalvo[] = [];
     cr.onMessage('shell_salvo', (m: ShellSalvo) => { if (m.w === 'railgun') salvos.push(m); });
-    const deadline = Date.now() + 30_000;
+    const deadline = Date.now() + 8_000;
     while (Date.now() < deadline && salvos.length === 0) await new Promise((r) => setTimeout(r, 50));
     expect(firstStart, 'a main-turret charge was seen').toBeGreaterThanOrEqual(0);
     expect(salvos.length, 'the charged railgun fired').toBeGreaterThan(0);
@@ -120,10 +122,10 @@ describe('SectorRoom integration — railgun', () => {
     expect(waited, "the cap, not the weapon's own 360-tick charge").toBeLessThan(RAIL.chargeTicks!);
   });
 
-  it("a battleship-rail AI's slug kills a ship in its line, flies on and stops in its target", { timeout: 60_000 }, async () => {
+  it("a battleship-rail AI's slug kills a ship in its line, flies on and stops in its target", { timeout: 15_000 }, async () => {
     harness = await bootSectorTestServer({
       sectorKey: null, droneCount: 0, testMode: true, asteroidConfig: [], pilotCapitals: true,
-      chargeTicksCap: 30, lockTimeCapS: 0,
+      chargeTicksCap: 30, lockTimeCapS: 0, traverseTicksCap: 0,
       dronePoses: [{ kind: 'battleship-rail', x: 9000, y: 0, angle: Math.PI }],
     });
     const pid = randomUUID();
@@ -145,7 +147,7 @@ describe('SectorRoom integration — railgun', () => {
       for (const d of snap.drones ?? []) if ((d.chargingMask ?? 0) !== 0) charging = true;
     });
     const railTuples = (): ShellEnd['e'] => ends.flatMap((m) => m.e).filter((t) => railShells.has(String(t[0])));
-    const deadline = Date.now() + 30_000;
+    const deadline = Date.now() + 8_000;
     while (Date.now() < deadline && !charging) await harness.advance(25);
     expect(charging, 'the rail battleship charged its main turrets').toBe(true);
     // Once the railguns charge, put a picket of neutral (trader) hulls across
