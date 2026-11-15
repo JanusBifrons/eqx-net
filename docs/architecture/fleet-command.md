@@ -52,22 +52,6 @@ describe the wingman brain flying, read this section instead.
   (not only in a mixed-allegiance sector), so a hull sees on-sight foes
   (robots).
 - **Fire:** `tickWingmanTargets` points the hull's `wingmanLocks` at the
-<<<<<<< HEAD
-  brain's `getTargetId()` (none under hold fire) → `tickHull` →
-  `fireHull`. The registration flag keeps the brain's `intent.fire` out of
-  `handleAiFire` / `AiFireResolver`. Slice 3 moves the trigger to
-  `intent.fire` (with the line-of-fire gate).
-- **Retaliation (slice 4):** `applyDamage` on an attached hull calls
-  `ownedHullRetaliates` (BEFORE the hit, so a killing blow still turns its
-  squad): `aiController.markHostile(hull, hostileActorOf(shooter))` for the
-  hull and each AI-flown member of its squad with the same owner; the
-  owner's own fire (their playerId or another of their hulls) is skipped.
-  After the hit, `noteOwnedHullDamage` → `aiController.noteDamage` with the
-  hull lost (shield-only hits note nothing; owned ships roll but always fight
-  on). The fleet's `noteDamage` / `recentAttackerOf` ledger is gone.
-  Lock: `ownedShipsRetaliate.test.ts`, `wingmanFights.test.ts` "defensive",
-  `wingmanFightsRobots.test.ts` "shield hits alone".
-=======
   brain's `getTargetId()` (none under hold fire). The trigger is the brain's
   `intent.fire` (slice 3): for a `{ hull: true }` registration
   `AiController` hands it to the sink's ONE hull fire branch
@@ -87,7 +71,16 @@ describe the wingman brain flying, read this section instead.
   there needs re-keying in `shipKeyMoved`. Locks:
   `tests/integration/sectorRoom/ownedShipTrigger.test.ts`,
   `AiController.input.test.ts`, `LineOfFireGate.test.ts`.
->>>>>>> 5938efe5 (Owned ships fire on their AI pilot's trigger (RTS Part B slice 3))
+- **Retaliation (slice 4):** `applyDamage` on an attached hull calls
+  `ownedHullRetaliates` (BEFORE the hit, so a killing blow still turns its
+  squad): `aiController.markHostile(hull, hostileActorOf(shooter))` for the
+  hull and each AI-flown member of its squad with the same owner; the
+  owner's own fire (their playerId or another of their hulls) is skipped.
+  After the hit, `noteOwnedHullDamage` → `aiController.noteDamage` with the
+  hull lost (shield-only hits note nothing; owned ships roll but always fight
+  on). The fleet's `noteDamage` / `recentAttackerOf` ledger is gone.
+  Lock: `ownedShipsRetaliate.test.ts`, `wingmanFights.test.ts` "defensive",
+  `wingmanFightsRobots.test.ts` "shield hits alone".
 - **Orders:** the facade's `orderIssued` hook forwards each ship's own order:
   `move` → hold at the point, `stop` → hold where it is. Attack, modes,
   stance (except hold fire) and squads reach the brain in later slices.
