@@ -22,7 +22,9 @@
  *
  * Runs once per death (not hot-loop code); allocates freely.
  */
-import { projectToOutline, CUT_ANGLE_STEPS, FRACTURE_SNAP_CHANCE, EDGE_CUT } from './fractureHull.js';
+import { projectToOutline, FRACTURE_SNAP_CHANCE, EDGE_CUT } from './fractureHull.js';
+import { hullCutAngleOf } from './burnLines.js';
+import type { WreckExtraCut } from '../../shared-types/messages/wreckDescriptor.js';
 import { fracturePiecesToGeometry, wreckRootFracture } from './wreckPieceFrame.js';
 import type { WreckFractureInputs, WreckPieceGeometry } from './wreckPieceFrame.js';
 export type { WreckFractureInputs, WreckPieceGeometry } from './wreckPieceFrame.js';
@@ -145,10 +147,17 @@ export interface WreckBuildInput {
   cutKind?: 'slice' | 'channel';
   cutAng?: number;
   cutW?: number;
+  /** v12 multi-cut: the other cutting beams' lines (`BurnLines.extraCuts`),
+   *  copied into the fracture inputs as they are (only with a cut). */
+  extraCuts?: ReadonlyArray<WreckExtraCut>;
 }
 
 export interface WreckPieceSpec {
   index: number;
+  /** Centroid in the ship's scaled math-up frame (the geometry's `cx`,
+   *  `cy`): where the hull's frame sits under the piece. */
+  cx: number;
+  cy: number;
   x: number;
   y: number;
   /** Spawn velocity: the dead hull's rigid motion at this point (v + ω × r),
@@ -203,13 +212,7 @@ export function hullLocalKillPoint(kindId: ShipKindId, pose: WreckDeathPose, wor
  *  integer it returns reaches the fracture, so its trig never has to agree
  *  across engines. */
 export function hullLocalCutAngle(pose: WreckDeathPose, dirWorld: Vec2): number {
-  const c = Math.cos(pose.angle);
-  const sn = Math.sin(pose.angle);
-  const mx = dirWorld.x * c + dirWorld.y * sn;
-  const my = -dirWorld.x * sn + dirWorld.y * c;
-  // Math-up → Pixi-up flips y.
-  const t = Math.atan2(-my, mx) / (2 * Math.PI);
-  return ((Math.round(t * CUT_ANGLE_STEPS) % CUT_ANGLE_STEPS) + CUT_ANGLE_STEPS) % CUT_ANGLE_STEPS;
+  return hullCutAngleOf(pose.angle, dirWorld.x, dirWorld.y);
 }
 
 /** Saturating 0..1 "how violent" from the two damage inputs. */
@@ -527,6 +530,7 @@ export function buildWreckPieces(input: WreckBuildInput): WreckBuild {
     fracture.cutKind = input.cutKind;
     fracture.cutAng = input.cutAng;
     if (input.cutW !== undefined) fracture.cutW = input.cutW;
+    if (input.extraCuts !== undefined && input.extraCuts.length > 0) fracture.extraCuts = input.extraCuts;
   }
   const geom = wreckPieceGeometry(fracture);
 
@@ -551,6 +555,8 @@ export function buildWreckPieces(input: WreckBuildInput): WreckBuild {
     const ry = centre.y - pose.y;
     pieces.push({
       index: g.index,
+      cx: g.cx,
+      cy: g.cy,
       x: centre.x,
       y: centre.y,
       vx: pose.vx - hullW * ry,

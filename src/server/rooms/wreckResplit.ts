@@ -20,7 +20,8 @@
  */
 import { hullLocalCutAngle, wreckBodyParams, wreckBreakKicks } from '../../core/destruction/wreckPieces.js';
 import { wreckChildGeometry, wreckChildSeed, wreckResplitOptions, type WreckChildChain, type WreckChildStep } from '../../core/destruction/wreckChildren.js';
-import { wreckCanResplit, wreckPieceIntegrity, wreckSalvageQty, WRECK_RESPLITS_PER_TICK } from '../../core/destruction/wreckIntegrity.js';
+import { wreckCanResplit, wreckHullArea, wreckPieceIntegrity, wreckSalvageQty, WRECK_RESPLITS_PER_TICK } from '../../core/destruction/wreckIntegrity.js';
+import type { BurnLines } from '../../core/destruction/burnLines.js';
 import { FRACTURE_ALGO_VERSION } from '../../core/destruction/fractureHull.js';
 import type { CapitalWreckDeps, LiveWreck, PieceKnock } from './CapitalWreckSubsystem.js';
 import type { WreckPieceGeometry } from '../../core/destruction/wreckPieceFrame.js';
@@ -58,10 +59,16 @@ export function wreckChainSeed(chain: WreckChildChain): number {
  * shot travelling (dirX, dirY) hit it at world (hitX, hitY). Returns the new
  * step (the child descriptor's fields), the child chain and the placed
  * children; no children when the fracture gave fewer than two.
+ *
+ * Fracture v12 multi-cut: with a cutting shot and the piece's `burn` lines
+ * (at server tick `tick`), every other beam that burned it in the last
+ * moment cuts its own line too (`BurnLines.extraCuts`: near-duplicates of
+ * the breaking shot and of each other merged), carried on the step.
  */
 export function planWreckResplit(
   chain: WreckChildChain, parent: WreckPieceGeometry, pose: WreckPiecePose,
   hitX: number, hitY: number, dirX: number, dirY: number, weaponId: WeaponId | undefined,
+  burn: BurnLines | null = null, tick = 0,
 ): { step: WreckChildStep; chain: WreckChildChain; children: WreckChildSpawn[] } {
   const kind = getShipKind(chain.root.kindId);
   const s = shipShapeScale(kind);
@@ -82,6 +89,8 @@ export function planWreckResplit(
     step.cutAng = hullLocalCutAngle({ x: 0, y: 0, vx: 0, vy: 0, angle: pose.angle, angvel: 0 }, { x: dirX, y: dirY });
     const w = killCut.width ?? 0;
     if (w > 0) step.cutW = w / s;
+    const extra = burn?.extraCuts(tick, step.killX, step.killY, step.cutAng, step.cutW ?? 0);
+    if (extra !== undefined) step.extraCuts = extra;
   }
   const next: WreckChildChain = { root: chain.root, steps: [...chain.steps, step] };
   const geom = wreckChildGeometry(next);
@@ -169,8 +178,11 @@ export class WreckResplitter {
     const capital = DESTRUCTION_PROFILES[shipTuning(getShipKind(kindId)).destruction].id === 'capital';
     const fifo = this.h.fifo(capital);
     if (fifo.length - 1 + rs.fracture.maxPieces <= this.h.cap(capital) && wreckCanResplit(kindId, parent.area, parent.radius)) {
-      const plan = planWreckResplit(w.chain, parent, pose, hitX, hitY, dirX, dirY, weaponId);
-      if (plan.children.length >= 2 && this.spawnChildren(id, k, wreckId, w, plan, fifo, tick)) return true;
+      const plan = planWreckResplit(w.chain, parent, pose, hitX, hitY, dirX, dirY, weaponId, k.burn, tick);
+      // v12: several beams' cuts may leave more children than one fracture's
+      // cap; the FIFO must still hold them all.
+      if (plan.children.length >= 2 && fifo.length - 1 + plan.children.length <= this.h.cap(capital)
+        && this.spawnChildren(id, k, wreckId, w, plan, fifo, tick)) return true;
     }
     if (this.d.dropSalvage === undefined) {
       k.integrity = Number.POSITIVE_INFINITY;
@@ -182,7 +194,10 @@ export class WreckResplitter {
   }
 
   /** Spawn the planned children as a child wreck and retire the parent
-   *  piece; false when no child body could spawn. */
+   *  piece; false when no child body could spawn. A multi-cut break (v12,
+   *  the step has `extraCuts`) turns each child under the kind's re-split
+   *  floor (`resplit.minAreaFrac` of the hull) into a salvage pod instead of
+   *  a sliver of a piece; all of them pods: the parent just leaves (true). */
   private spawnChildren(
     id: string, k: PieceKnock, wreckId: number, w: LiveWreck,
     plan: ReturnType<typeof planWreckResplit>, fifo: string[], tick: number,
@@ -192,8 +207,17 @@ export class WreckResplitter {
     const body = wreckBodyParams(kindId);
     const ids: string[] = [];
     let mass = 0;
+    let pods = 0;
+    const rs = wreckResplitOptions(kindId);
+    const podBelow = plan.step.extraCuts !== undefined && rs !== null && this.d.dropSalvage !== undefined
+      ? rs.minAreaFrac * wreckHullArea(kindId) : 0;
     for (const c of plan.children) {
       const g = c.geom;
+      if (g.area < podBelow) {
+        this.d.dropSalvage!(wreckSalvageQty(kindId, g.mass), c.x, c.y, c.vx, c.vy);
+        pods++;
+        continue;
+      }
       const cid = `wreck-${serial}-${g.index}`;
       const ok = this.d.spawnPiece({
         id: cid, x: c.x, y: c.y, vx: c.vx, vy: c.vy, angle: c.angle, angvel: c.angvel,
@@ -205,9 +229,16 @@ export class WreckResplitter {
       if (!ok) continue;
       ids.push(cid);
       mass += g.mass;
-      this.h.addPiece(cid, childId, { ...k, mass: g.mass, index: g.index, integrity: wreckPieceIntegrity(kindId, g.mass) }, fifo);
+      this.h.addPiece(cid, childId, {
+        ...k, mass: g.mass, index: g.index, integrity: wreckPieceIntegrity(kindId, g.mass),
+        cx: g.cx, cy: g.cy, radius: g.radius, burn: null,
+      }, fifo);
     }
-    if (ids.length === 0) return false;
+    if (ids.length === 0) {
+      if (pods === 0) return false;
+      this.h.dropPiece(id, fifo);
+      return true;
+    }
     const st = plan.step;
     this.h.addWreck({
       desc: {
@@ -216,6 +247,7 @@ export class WreckResplitter {
         killBlowDamage: 0, recentDamageRate: 0, snapChance: 0, algoVersion: FRACTURE_ALGO_VERSION, deathTick: tick,
         ...(st.cutKind !== undefined ? { cutKind: st.cutKind, cutAng: st.cutAng } : {}),
         ...(st.cutW !== undefined ? { cutW: st.cutW } : {}),
+        ...(st.extraCuts !== undefined ? { extraCuts: st.extraCuts.slice() } : {}),
         parentWreck: wreckId, parentPiece: k.index,
       },
       pieces: ids.length, ids, mass, holdUntil: tick, chain: plan.chain, parent: wreckId, children: 0,

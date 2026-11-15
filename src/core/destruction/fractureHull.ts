@@ -74,9 +74,15 @@ import { ANGLE_STEPS, unitDirFromSteps } from '../geometry/unitDir.js';
  *  v9 kill cuts (`cut`: a straight slice line, a railgun channel strip);
  *  v10 capital splinters off the cut and the heavy beam's wide slice; v11
  *  `cutBurnMinShare`: a cut kill burns away pieces too small (none left =
- *  vaporised). Each is byte-identical without a cut; detail and history in
- *  capital-destruction.md "Kill cuts" and its version trail. */
-export const FRACTURE_ALGO_VERSION = 11;
+ *  vaporised); v12 multi-cut (`extraCuts`: every other beam that burned the
+ *  hull in the last moment cuts its own straight line too, owner
+ *  2026-11-15 "one cut per beam"). Each is byte-identical without a cut
+ *  (v12: without `extraCuts`); detail and history in capital-destruction.md
+ *  "Kill cuts" and its version trail. */
+export const FRACTURE_ALGO_VERSION = 12;
+/** v12: most `extraCuts` a fracture applies (more are ignored): with the
+ *  main cut, four beams' lines at most. */
+export const FRACTURE_MAX_EXTRA_CUTS = 3;
 /** Default chance that a hull snaps cleanly in two along the primary line
  *  instead of shattering (owner: "just make it a chance"). */
 export const FRACTURE_SNAP_CHANCE = 0.2;
@@ -283,6 +289,26 @@ export interface FractureInput {
    *  (the strip's sliver erase, a crack that would leave one is dropped, a
    *  last pass after the jag); none left = vaporised. Absent: v10. */
   readonly cutBurnMinShare?: number;
+  /** v12 multi-cut (owner 2026-11-15, "one cut per beam"): further straight
+   *  `EDGE_CUT` lines from the other beams that burned the hull, each
+   *  through its own point along its own direction; only with a `cut`. Each
+   *  splits every part it crosses after the main cut's strip (a `width` over
+   *  0 erases its strip through the channel code, with the same sliver
+   *  erase); like the main cut they are never dropped for the piece cap,
+   *  and the burn-away share applies to what is left after all of them. At
+   *  most `FRACTURE_MAX_EXTRA_CUTS`. Absent: v11. */
+  readonly extraCuts?: ReadonlyArray<FractureExtraCut>;
+}
+
+/** v12: one further cut line (`FractureInput.extraCuts`), hull frame: the
+ *  infinite line through (x, y) along (dirX, dirY) (any length but zero);
+ *  `width` over 0 erases a strip that wide centred on it. */
+export interface FractureExtraCut {
+  readonly x: number;
+  readonly y: number;
+  readonly dirX: number;
+  readonly dirY: number;
+  readonly width: number;
 }
 
 /** A kill cut in the hull's frame (`FractureInput.cut`). `width`: a
@@ -382,16 +408,25 @@ export function fractureHull(input: FractureInput): FracturePiece[] {
   // (`CHANNEL_SLIVER_SHARE`) is erased with it.
   const burnShare = cutKind !== null && input.cutBurnMinShare !== undefined && input.cutBurnMinShare > 0 ? input.cutBurnMinShare : 0;
   const burnMin = burnShare * hullArea;
+  const stripMinPart = (burnShare > 0 ? burnShare : CHANNEL_SLIVER_SHARE) * hullArea;
   let start: P[][] = [hull];
-  if (strip && primary !== null) {
-    const half = plan.cut!.width / 2;
-    const minPart = (burnShare > 0 ? burnShare : CHANNEL_SLIVER_SHARE) * hullArea;
-    start = [];
-    const sides = [
-      splitByLine(hull, primary.nx, primary.ny, primary.c - half, EDGE_CUT),
-      splitByLine(hull, -primary.nx, -primary.ny, -(primary.c + half), EDGE_CUT),
-    ];
-    for (const side of sides) for (const r of side) if (ringArea(r) >= minPart) start.push(r);
+  if (strip && primary !== null) start = cutStrip(start, primary.nx, primary.ny, primary.c, plan.cut!.width / 2, stripMinPart);
+  // v12 multi-cut: each further beam's line splits every part it crosses (a
+  // wide one erases its strip like the main cut). They are fixed in `start`,
+  // so the cap's retry loop never drops one.
+  if (primary !== null && cutKind !== null && input.extraCuts !== undefined) {
+    const n = Math.min(input.extraCuts.length, FRACTURE_MAX_EXTRA_CUTS);
+    for (let i = 0; i < n; i++) {
+      const xc = input.extraCuts[i]!;
+      const l = Math.sqrt(xc.dirX * xc.dirX + xc.dirY * xc.dirY);
+      if (!(l > 0)) continue;
+      const nx = -xc.dirY / l;
+      const ny = xc.dirX / l;
+      const c = nx * xc.x + ny * xc.y;
+      start = xc.width > 0
+        ? cutStrip(start, nx, ny, c, xc.width / 2, stripMinPart)
+        : splitBoth(start, { nx, ny, c, kind: EDGE_CUT });
+    }
   }
 
   // v7 cracks: zone cracks either side of the primary, a fan into the zone
@@ -1095,6 +1130,22 @@ function ringCentroid(r: ReadonlyArray<{ x: number; y: number }>): Vec2 {
     cy += (p.y + q2.y) * w;
   }
   return a === 0 ? { x: r[0]!.x, y: r[0]!.y } : { x: cx / (3 * a), y: cy / (3 * a) };
+}
+
+/** v9 channel, v10 wide slice, v12 extra cut: erase the strip
+ *  `|nx·x + ny·y − c| < half` from every ring (two straight `EDGE_CUT`
+ *  cuts). A part the strip leaves under `minPart` is erased with it; a ring
+ *  the strip misses is kept whole whatever its size. */
+function cutStrip(rings: P[][], nx: number, ny: number, c: number, half: number, minPart: number): P[][] {
+  const out: P[][] = [];
+  for (const ring of rings) {
+    const sides = [
+      splitByLine(ring, nx, ny, c - half, EDGE_CUT),
+      splitByLine(ring, -nx, -ny, -(c + half), EDGE_CUT),
+    ];
+    for (const side of sides) for (const r of side) if (r === ring || ringArea(r) >= minPart) out.push(r);
+  }
+  return out;
 }
 
 function splitBoth(sections: P[][], l: FractureLine): P[][] {

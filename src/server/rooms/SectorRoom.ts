@@ -121,7 +121,6 @@ import { breakInDurationMs } from '../../shared-types/breakIn.js';
 import { BreakInSubsystem } from './BreakInSubsystem.js';
 import { ForceFieldSubsystem } from './ForceFieldSubsystem.js';
 import { registerTeleportMessages } from './TeleportMessageHandlers.js';
-import { stream } from '../../core/random/rng.js';
 import { HostileActLedger } from '../../core/relations/HostileActLedger.js';
 import { ProductionSubsystem } from '../structures/ProductionSubsystem.js';
 import { TeleporterSubsystem, type PartnerLink } from '../structures/TeleporterSubsystem.js';
@@ -5016,7 +5015,7 @@ export class SectorRoom extends Room<SectorState> {
     // their own splash impulse, rams through the contact itself.
     if (this.capitalWrecks !== null && damage > 0 && hitX !== undefined && hitY !== undefined
       && dirX !== undefined && dirY !== undefined) {
-      this.capitalWrecks.onWreckHit(targetId, hitX, hitY, dirX, dirY, damage, weaponId);
+      this.capitalWrecks.onWreckHit(targetId, hitX, hitY, dirX, dirY, damage, weaponId, shooterId);
     }
     // Phase 4 warp travel: a ship on its run is out of the world (an NPC's too, W2a).
     if (this.warpTravel.isTravelling(targetId)) return false;
@@ -5157,6 +5156,17 @@ export class SectorRoom extends Room<SectorState> {
         return rec != null && ((this.sabU32[slotBase(rec.slot) + SLOT_FLAGS_OFF] ?? 0) & FLAG_SLEEPING) !== 0;
       },
       piecePose: (id) => this.wreckPose(id),
+      piecePoseInto: (id, out) => this.wreckPose(id, out) !== null,
+      // Fracture v12 multi-cut: a live hull's SAB pose at a cutting hit (a
+      // drone by its record, an active hull by playerId, a parked one by
+      // shipInstanceId), the frame its burn line is kept in. #14: into `out`.
+      hullPoseInto: (id, out) => {
+        const slot = this.swarmRegistry.get(id)?.slot ?? this.playerToSlot.get(id) ?? this.lingeringSlots.get(id);
+        if (slot === undefined) return false;
+        const b = slotBase(slot), f = this.sabF32;
+        out.x = f[b + SLOT_X_OFF]!; out.y = f[b + SLOT_Y_OFF]!; out.angle = f[b + SLOT_ANGLE_OFF]!;
+        return true;
+      },
       dropSalvage: (qty, x, y, vx, vy) => { this.loot.drop({ goods: { salvage: qty }, blueprints: [] }, x, y, vx, vy, { cause: 'salvage' }); },
     });
   }

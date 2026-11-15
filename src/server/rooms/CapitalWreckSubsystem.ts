@@ -48,6 +48,7 @@ import { WEAPONS, type WeaponId } from '../../core/combat/WeaponCatalogue.js';
 import { shipShapeScale } from '../../core/geometry/shipHullOutline.js';
 import type { WreckChildChain } from '../../core/destruction/wreckChildren.js';
 import { wreckPieceIntegrity, wreckWearFactor } from '../../core/destruction/wreckIntegrity.js';
+import { BurnLines, BURN_LINE_MERGE_GAP_PER_RADIUS, hullPointInto } from '../../core/destruction/burnLines.js';
 import { WreckResplitter, type WreckPiecePose } from './wreckResplit.js';
 export type { WreckPiecePose };
 
@@ -83,6 +84,9 @@ interface HitEntry {
   /** Damage per bucket; `stamp[i]` is the bucket index it holds. */
   dmg: Float64Array;
   stamp: Int32Array;
+  /** Fracture v12 multi-cut: the hull's recent cutting-beam lines (null
+   *  until its first cutting hit; cleared when the entry is reused). */
+  burn: BurnLines | null;
 }
 
 /** What `onDeath` did with a dying ship. `vaporised`: a cut weapon's kill
@@ -171,6 +175,15 @@ export interface CapitalWreckDeps {
   pieceAsleep?: (id: string) => boolean;
   /** A live piece's pose and motion, or null. Absent ⇒ no re-split (§S4). */
   piecePose?: (id: string) => WreckPiecePose | null;
+  /** Alloc-free `piecePose`: write a live piece's pose into `out`; false
+   *  when it is gone. Absent ⇒ a cutting hit on a piece burns no line (its
+   *  re-split cuts along the breaking shot only). */
+  piecePoseInto?: (id: string, out: WreckPiecePose) => boolean;
+  /** Write a LIVE tracked hull's pose (x, y, angle; a drone, an active or a
+   *  lingering hull) into `out`; false when unknown. Absent ⇒ a cutting hit
+   *  on a hull burns no line (its kill split cuts along the killing shot
+   *  only). Fracture v12 multi-cut. */
+  hullPoseInto?: (id: string, out: WreckPiecePose) => boolean;
   /** Drop a `qty`-unit salvage pod (a worn-out piece too small to split).
    *  Absent ⇒ such a piece just stops wearing. */
   dropSalvage?: (qty: number, x: number, y: number, vx: number, vy: number) => void;
@@ -193,10 +206,29 @@ export interface PieceKnock {
   /** §S4: index in its wreck's last generation; hidden integrity (never on the wire). */
   index: number;
   integrity: number;
+  /** Fracture v12 multi-cut: the piece's centroid in the dead hull's scaled
+   *  math-up frame (its geometry's `cx`, `cy`: where the hull's frame sits
+   *  under it), its bounding radius, and its recent cutting-beam lines
+   *  (null until its first cutting hit; never inherited by its children). */
+  cx: number;
+  cy: number;
+  radius: number;
+  burn: BurnLines | null;
 }
 
 /** Scratch for a piece's centre in `onWreckHit` (#14). */
 const CENTRE_SCRATCH: WreckPiecePose = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
+/** Scratch for a burn line's target pose (#14). */
+const BURN_POSE: WreckPiecePose = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
+const BURN_PT = { x: 0, y: 0 };
+
+/** The world width of a weapon's cut, or -1 when it does not cut (no
+ *  `killCut`): only cutting beams burn lines. */
+function cutWidthOf(weaponId: WeaponId | null | undefined): number {
+  if (weaponId === undefined || weaponId === null) return -1;
+  const kc = WEAPONS.get(weaponId)?.killCut;
+  return kc === undefined ? -1 : (kc.width ?? 0);
+}
 
 /** A piece's separating kick, held until the wreck's crack delay ends. */
 interface PendingKick {
@@ -257,16 +289,31 @@ export class CapitalWreckSubsystem {
     dirX?: number, dirY?: number, weaponId?: WeaponId,
   ): void {
     if (damage <= 0) return;
-    if (this.d.wreckKindOf(targetId) === null) return;
+    const kindId = this.d.wreckKindOf(targetId);
+    if (kindId === null) return;
     let e = this.entries.get(targetId);
     if (e === undefined) {
       e = this.pool.pop() ?? {
         hasPoint: false, x: 0, y: 0, hasDir: false, dirX: 0, dirY: 0, weaponId: null,
-        lastDamage: 0, shooterId: '', dmg: new Float64Array(BUCKETS), stamp: new Int32Array(BUCKETS).fill(-1),
+        lastDamage: 0, shooterId: '', dmg: new Float64Array(BUCKETS), stamp: new Int32Array(BUCKETS).fill(-1), burn: null,
       };
       e.dmg.fill(0);
       e.stamp.fill(-1);
+      e.burn?.clear(e.burn.mergeGap);
       this.entries.set(targetId, e);
+    }
+    // Fracture v12 multi-cut: a cutting beam burns its line into the hull
+    // (hull frame, at the hull's pose now), so a kill split cuts along every
+    // beam that burned it in the last moment, any shooter's.
+    const cw = cutWidthOf(weaponId);
+    if (cw >= 0 && hitX !== undefined && hitY !== undefined && dirX !== undefined && dirY !== undefined
+      && (dirX !== 0 || dirY !== 0) && this.d.hullPoseInto?.(targetId, BURN_POSE) === true) {
+      const kind = getShipKind(kindId);
+      const s = shipShapeScale(kind);
+      const gap = (BURN_LINE_MERGE_GAP_PER_RADIUS * kind.radius) / s;
+      if (e.burn === null) e.burn = new BurnLines(gap); // once per pooled entry
+      else e.burn.mergeGap = gap;
+      e.burn.record(shooterId, this.d.serverTick(), BURN_POSE.x, BURN_POSE.y, BURN_POSE.angle, s, hitX, hitY, dirX, dirY, cw);
     }
     e.hasPoint = hitX !== undefined && hitY !== undefined;
     e.x = hitX ?? 0;
@@ -352,10 +399,17 @@ export class CapitalWreckSubsystem {
       const w = killCut.width ?? 0;
       if (w > 0) cutW = w / shipShapeScale(getShipKind(kindId));
     }
+    // Fracture v12 multi-cut: the other beams that burned the hull in the
+    // last moment cut their own lines too (the killing shot's is the main cut).
+    let extraCuts: ReturnType<BurnLines['extraCuts']>;
+    if (e !== undefined && cutAng !== undefined && e.hasPoint && e.burn !== null) {
+      hullPointInto(pose.x, pose.y, pose.angle, shipShapeScale(getShipKind(kindId)), e.x, e.y, BURN_PT);
+      extraCuts = e.burn.extraCuts(tick, BURN_PT.x, BURN_PT.y, cutAng, cutW ?? 0);
+    }
     this.forget(targetId);
     const seed = this.forcedSeed ?? fnvMixU32(fnv1a32(targetId), this.d.serverTick() >>> 0);
     const { pieces, fracture } = buildWreckPieces({
-      kindId, pose, killWorld, attackerWorld, seed, killBlowDamage, recentDamageRate, cutKind, cutAng, cutW,
+      kindId, pose, killWorld, attackerWorld, seed, killBlowDamage, recentDamageRate, cutKind, cutAng, cutW, extraCuts,
     });
     // Fracture v11: a cut kill that left no piece (each burned away) is a
     // vaporised ship. Its body goes too: nothing is left to hand over to.
@@ -403,6 +457,7 @@ export class CapitalWreckSubsystem {
       this.knock.set(id, {
         mass: p.mass, impulsePerDamage, maxDv: tuning.wreckKnockMax, spin: profile.spinScale, wakeDv: profile.knockWakeScale * tuning.wreckKnockMax,
         index: p.index, integrity: wreckPieceIntegrity(kindId, p.mass),
+        cx: p.cx, cy: p.cy, radius: p.radius, burn: null,
       });
       // The hull holds together for the crack delay, then parts (game ticks).
       if (held) this.kicks.push({ id, dueTick: tick + crackTicks, vx: p.kickVx, vy: p.kickVy, w: p.kickAngvel, angle0: pose.angle });
@@ -420,6 +475,7 @@ export class CapitalWreckSubsystem {
           // Emit-when-present: an un-cut wreck's descriptor is unchanged.
           ...(fracture.cutKind !== undefined ? { cutKind: fracture.cutKind, cutAng: fracture.cutAng } : {}),
           ...(fracture.cutW !== undefined ? { cutW: fracture.cutW } : {}),
+          ...(fracture.extraCuts !== undefined ? { extraCuts: fracture.extraCuts.slice() } : {}),
           ...(owner !== undefined && owner !== '' ? { owner } : {}),
         },
         pieces: spawned,
@@ -490,7 +546,9 @@ export class CapitalWreckSubsystem {
    * (sub-caps: twice the cap, so small arms leave it asleep; capitals: 0,
    * every hit). A lighter hit returns true (the shot stops) and does nothing.
    */
-  onWreckHit(id: string, hitX: number, hitY: number, dirX: number, dirY: number, damage: number, weaponId?: WeaponId): boolean {
+  onWreckHit(
+    id: string, hitX: number, hitY: number, dirX: number, dirY: number, damage: number, weaponId?: WeaponId, shooterId = '',
+  ): boolean {
     const k = this.knock.get(id);
     if (k === undefined || this.d.impulsePiece === undefined || !(damage > 0)) return false;
     const len = Math.hypot(dirX, dirY);
@@ -498,6 +556,21 @@ export class CapitalWreckSubsystem {
     let j = damage * k.impulsePerDamage;
     const wreckId = this.pieceWreck.get(id);
     const w = wreckId !== undefined ? this.wrecks.get(wreckId) : undefined;
+    // Fracture v12 multi-cut: a cutting beam burns its line into the piece
+    // (the dead hull's frame under it, at its pose now), so when it gives
+    // way it breaks along every beam that burned it in the last moment.
+    const cw = cutWidthOf(weaponId);
+    if (cw >= 0 && w !== undefined && this.d.piecePoseInto?.(id, BURN_POSE) === true) {
+      const s = shipShapeScale(getShipKind(w.chain.root.kindId));
+      const gap = (BURN_LINE_MERGE_GAP_PER_RADIUS * k.radius) / s;
+      if (k.burn === null) k.burn = new BurnLines(gap); // once per piece, on its first cutting hit
+      const c = Math.cos(BURN_POSE.angle);
+      const sn = Math.sin(BURN_POSE.angle);
+      // The dead hull's (virtual) origin under this piece.
+      const ox = BURN_POSE.x - (k.cx * c - k.cy * sn);
+      const oy = BURN_POSE.y - (k.cx * sn + k.cy * c);
+      k.burn.record(shooterId, this.d.serverTick(), ox, oy, BURN_POSE.angle, s, hitX, hitY, dirX, dirY, cw);
+    }
     // Re-split (§S4): the hit wears the piece's hidden integrity; worn out
     // (and past the crack hold) it splits or turns to salvage instead of
     // being shoved.
