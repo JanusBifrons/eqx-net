@@ -12,6 +12,12 @@
  */
 export const FEATURE_TRIGGERS = [
   {
+    // Macro terrain v2: the cut field (flag cutField), both sides cut the same rocks.
+    area: 'cut field',
+    paths: ['src/core/terrain/', 'src/client/net/CutFieldClient', 'src/client/render/field/'],
+    specs: ['cut-field-collision'],
+  },
+  {
     area: 'structures',
     paths: ['src/server/structures/', 'src/core/structures/', 'src/client/structures/', 'src/shared-types/structureKinds',
       'src/client/components/StructurePlacementBanner', 'src/client/components/SpeedDialMenu', 'src/client/components/buildCategories',

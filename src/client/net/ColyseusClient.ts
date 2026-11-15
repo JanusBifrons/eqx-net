@@ -7041,6 +7041,12 @@ export class ColyseusGameClient {
     }
   }
 
+  /** Cut field (flag `cutField`): what this client has loaded. Read by the
+   *  E2E (`cut-field-collision.spec.ts`) to start once the rocks are in. */
+  get cutFieldStats(): { chunks: number; rocks: number; predBodies: number } {
+    return { chunks: this._cutField.chunksLoaded, rocks: this._cutField.loadedRocks, predBodies: this._cutField.stats.predBodies };
+  }
+
   dispose(): void {
     this._cutField.stop();
     // Game time scale: the next session starts at 1× until its snapshots say otherwise.
