@@ -119,6 +119,7 @@ import { cargoOpensFor, createRelationContext, isNpcOwner, npcOwner, parseOwner,
 import { BreakInCancelSchema, BreakInSchema, CARGO_ACCESS_RANGE, CargoMoveSchema, CargoQuerySchema, MAX_FREIGHT_ORDERS, SetFreightOrdersSchema, type BreakInNotice, type CargoState } from '../../shared-types/messages/cargoMessages.js';
 import { breakInDurationMs } from '../../shared-types/breakIn.js';
 import { BreakInSubsystem } from './BreakInSubsystem.js';
+import { ForceFieldSubsystem } from './ForceFieldSubsystem.js';
 import { stream } from '../../core/random/rng.js';
 import { HostileActLedger } from '../../core/relations/HostileActLedger.js';
 import { ProductionSubsystem } from '../structures/ProductionSubsystem.js';
@@ -1006,6 +1007,8 @@ export class SectorRoom extends Room<SectorState> {
     onStart: (actor, sid) => this.onBreakInStart(actor, sid),
     onEnd: (actor, sid, outcome, reason) => this.onBreakInEnd(actor, sid, outcome, reason),
   });
+  /** Force fields in this room's physics world (teleporter pad push today). */
+  private readonly forceFields = new ForceFieldSubsystem({ post: (cmd) => this.postToWorker(cmd) });
   /** C2 bespoke trigger (testMode `breakInMs`). */
   private testBreakInMs: number | null = null;
   /** Bespoke test/recording trigger (testMode `lockTimeCapS`): the longest
@@ -2908,11 +2911,11 @@ export class SectorRoom extends Room<SectorState> {
       setIrisActive: (rec, active) => this.forIrisSpan(rec, (id) => this.postToWorker({ type: 'SET_WALL_ACTIVE', id, active })),
       removeIris: (rec) => {
         this.forIrisSpan(rec, (id) => this.postToWorker({ type: 'REMOVE_WALL', id }));
-        this.postToWorker({ type: 'REMOVE_PAD_FIELD', id: `tpfield-${rec.id}` });
+        this.forceFields.remove(`tpfield-${rec.id}`);
       },
       setPadField: (rec, active) => {
         if (!isTeleporterKind(rec.kind)) return;
-        this.postToWorker({ type: 'SET_PAD_FIELD', id: `tpfield-${rec.id}`, cx: rec.x, cy: rec.y, half: PAD_SPECS[rec.kind].padRadius, active });
+        this.forceFields.set(`tpfield-${rec.id}`, { kind: 'pad', cx: rec.x, cy: rec.y, half: PAD_SPECS[rec.kind].padRadius, active });
       },
     });
     // v4 T3 — the broker reaches this room's teleporters from other sectors.

@@ -20,6 +20,7 @@ import type { SnapshotMessage, DamageEvent, DestroyEvent, LaserFiredEvent, Respa
 import { parseWelcome } from './parseWelcome';
 import { TRANSFER_PULSE_MS as GRID_PULSE_WINDOW_MS } from '@core/structures/structureGridConstants';
 import { PhysicsWorld, type ShipPhysicsState } from '@core/physics/World';
+import type { PadForceField } from '@core/physics/forceFields';
 import { decideStatAllocReanchor } from './localStatAlloc';
 import { visitDerivedWalls, type DerivedWallVisitor } from '../structures/derivedWalls.js';
 import { PAD_SPECS, PairRequestPromptSchema, TP_PHASE, TeleportCandidatesReplySchema, TollPromptSchema, isTeleporterKind } from '../../shared-types/teleport.js';
@@ -4010,13 +4011,16 @@ export class ColyseusGameClient {
       if (mountAngles) forEachStructureMountAngles(mountAngles, this._applyStructureMountAngles);
     }
     this.syncPredWalls();
-    this.syncPadFields();
+    this.syncForceFields();
     this.syncMines();
   }
 
+  /** Scratch for `syncForceFields` (`setForceField` copies it; no per-frame object). */
+  private readonly _padForceField: PadForceField = { kind: 'pad', cx: 0, cy: 0, half: 0, active: false };
+
   /** v4 T2 — each teleporter's closing push in the prediction world, from the
    *  room-state phase (the server worker runs the same field, #15). */
-  private syncPadFields(): void {
+  private syncForceFields(): void {
     const world = this.predWorld;
     const structures = this.mirror.structures;
     const swarm = this.mirror.swarm;
@@ -4026,7 +4030,9 @@ export class ColyseusGameClient {
       if (t === undefined) continue;
       const e = swarm.get(id);
       if (!e || !isTeleporterKind(e.shipKind)) continue;
-      world.setPadField(padFieldId(id), e.x, e.y, PAD_SPECS[e.shipKind].padRadius, t.phase === TP_PHASE.CLOSING);
+      const f = this._padForceField;
+      f.cx = e.x; f.cy = e.y; f.half = PAD_SPECS[e.shipKind].padRadius; f.active = t.phase === TP_PHASE.CLOSING;
+      world.setForceField(padFieldId(id), f);
     }
   }
 
