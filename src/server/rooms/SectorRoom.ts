@@ -337,7 +337,7 @@ import { StorageService, fittedModuleIds, isOperationalStorage, structureUid, DE
 import { SCRAP_HP } from '../../core/swarm/scrapConstants.js';
 import { addPacked, cloneHold, emptyHold, extractRequested, holdWeight, isHoldEmpty, mergeInto, packedCount, takePacked, transferInto, type CargoRequest } from '../../core/cargo/hold.js';
 import type { HolderType, HoldRecord } from '../cargo/HoldStore.js';
-import { HARVESTER_CAPACITY, RAID_NOTICE_THROTTLE_MS, RAID_PRIORITY } from '../livingworld/RobotTerritory.js';
+import { RAID_NOTICE_THROTTLE_MS, RAID_PRIORITY } from '../livingworld/RobotTerritory.js';
 import { cargoCapacityForMaxHealth, GOOD_DEFS, GOOD_IDS, HoldSchema, type Hold } from '../../shared-types/goods.js';
 import { rollKillBounty, rollLoot } from '../../shared-types/lootTables.js';
 import { rollEliteLoot, ELITE_HEALTH_MUL } from '../../shared-types/elites.js';
@@ -10107,7 +10107,7 @@ export class SectorRoom extends Room<SectorState> {
   /** A ship's cargo capacity: its hull class, raised by a fitted Cargo
    *  Expander (shared helper, #15). Used by loot pickup and cargo access. */
   private shipCargoCapacity(kind: string, shipInstanceId: string): number {
-    return Math.floor(cargoCapacityForMaxHealth(getShipKind(kind as ShipKindId).maxHealth) * fittedCargoMul(this.fittedOf(shipInstanceId)));
+    return Math.floor(cargoCapacityForMaxHealth(getShipKind(kind as ShipKindId)) * fittedCargoMul(this.fittedOf(shipInstanceId)));
   }
 
   /**
@@ -10259,16 +10259,19 @@ export class SectorRoom extends Room<SectorState> {
       c.npc = false;
       visit(c);
     }
-    // Living World P3b — robot HARVESTERS collect too (#17: a live swarm entity
-    // of kind robot-harvester; its hold is keyed by its swarm id).
+    // NPC loot collectors (the `collectsLoot` kind trait, e.g. robot
+    // harvesters) collect too (#17: a live swarm entity, kind 1; its hold is
+    // keyed by its swarm id). Capacity is the kind's cargo capacity.
     for (const rec of this.swarmRegistry.all()) {
-      if (rec.kind !== 1 || rec.shipKind !== 'robot-harvester') continue;
+      if (rec.kind !== 1) continue;
+      const kindDef = getShipKind(rec.shipKind);
+      if (kindDef.collectsLoot !== true) continue;
       const b = slotBase(rec.slot);
       c.playerId = rec.id;
       c.shipInstanceId = rec.id;
       c.x = this.sabF32[b + SLOT_X_OFF]!;
       c.y = this.sabF32[b + SLOT_Y_OFF]!;
-      c.capacity = HARVESTER_CAPACITY;
+      c.capacity = cargoCapacityForMaxHealth(kindDef);
       c.npc = true;
       visit(c);
     }
