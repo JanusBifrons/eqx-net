@@ -96,4 +96,28 @@ describe('lock line pick (updateLockGuide)', () => {
     expect(rel.target).toBeNull();
     expect(rel.b).toBeUndefined();
   });
+
+  it('neutral terrain (asteroid 0, scrap / loot pod 3, wreck piece 4) is a candidate only with no contact on the line', () => {
+    m.swarm.set(10, drone(0, 120, 0)); // asteroid, dead centre and nearest
+    m.swarm.set(11, drone(0, 140, 4)); // wreck piece
+    m.swarm.set(12, drone(0, 160, 3)); // scrap / loot pod
+    m.swarm.set(13, drone(60, 600, 1)); // a drone, worse centred and far
+    expect(client.updateLockGuide(0)).toBe('s:13'); // contacts first, always
+    m.swarm.delete(13);
+    m.localLockCandidate = null;
+    expect(client.updateLockGuide(0)).toBe('s:10'); // then the best terrain by the shared score
+    m.swarm.delete(10);
+    m.localLockCandidate = null;
+    expect(client.updateLockGuide(0)).toBe('s:11');
+    m.swarm.delete(11);
+    m.localLockCandidate = null;
+    expect(client.updateLockGuide(0)).toBe('s:12');
+  });
+
+  it('a held terrain lock loses the line to a contact that crosses it', () => {
+    m.swarm.set(20, drone(0, 150, 4));
+    expect(client.updateLockGuide(0)).toBe('s:20');
+    m.swarm.set(21, drone(30, 400, 1));
+    expect(client.updateLockGuide(0)).toBe('s:21');
+  });
 });

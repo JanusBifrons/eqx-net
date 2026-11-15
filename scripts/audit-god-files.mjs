@@ -76,7 +76,7 @@ const ALLOWLIST = {
       'orchestrator target ~340 LOC.',
   },
   'src/client/render/art/ArtService.ts': { cap: 757, target: 600, reason: RATCHET_ONLY },
-  'src/client/render/art/fields.ts': { cap: 1166, target: 600, reason: RATCHET_ONLY },
+  'src/client/render/art/fields.ts': { cap: 1161, target: 600, reason: RATCHET_ONLY },
   'src/client/render/art/fx/fxTextures.ts': { cap: 783, target: 600, reason: RATCHET_ONLY },
   'src/client/render/galaxy/GalaxyMapLayer.ts': { cap: 1089, target: 600, reason: RATCHET_ONLY },
   'src/client/render/pixi/ConnectorRenderer.ts': { cap: 958, target: 600, reason: RATCHET_ONLY },
@@ -105,7 +105,7 @@ const ALLOWLIST = {
   'src/server/rooms/MissileSimulation.ts': { cap: 946, target: 600, reason: RATCHET_ONLY },
   'src/server/rooms/PlayerFireResolver.ts': { cap: 692, target: 600, reason: RATCHET_ONLY },
   'src/server/rooms/SectorRoom.ts': {
-    cap: 11931,
+    cap: 11813,
     target: 450,
     reason:
       'v3 plan commits 20-23 split this into 17 collaborators (PhysicsWorkerProxy, ' +
