@@ -98,3 +98,15 @@ The design research behind the original plan is kept in
   - **Spawns** are nudged out of every structure box (`nearestClearPoint` in `onJoin`).
   - **Several bases:** `galaxyBasePlan` gives a sector one to three bases (each its own owner, a different role, big bases alone, within `NPC_STRUCTURES_PER_SECTOR_MAX`), each seeded with `NPC_BASE_GAP` from the earlier ones. A base that finds no site is skipped and logged.
   - **Kill switch:** `EQX_DISABLE_NPC_BASES=1`. Lock: `galaxyBases.test.ts`.
+
+### Server rules in full (moved from src/server/CLAUDE.md)
+
+The zone `CLAUDE.md` keeps a condensed form of these rules; this is the full wording with its lock tests.
+
+#### NPC bases, convoys and transit links
+
+- **Order:** galaxy bases seed AFTER `hydrateFromSnapshot`, and alien gates AFTER the bases; keep it. NPC structures are not persisted (regenerated from the seed). Kill switches `EQX_DISABLE_NPC_BASES=1`, `EQX_DISABLE_CONVOYS`. Lock: `galaxyBases.test.ts`.
+- **Convoys:** `ConvoyDirector` runs on its 1 s unref'd loop, never the 60 Hz tick; every value move is ONE `tradeTransfer`; every trade quote goes through `TradeDirector.quote(kind, good, rep, sectorKey)`.
+- **Link teleporters** pair at run time through `findLinkTwin`, never by position; NPC-owned teleporters refuse pairing requests. Military bases' gates are owner + allies; patrol ids start `patrol-` (in `isDirectorBotId`). Lock: `transitHubs.test.ts`.
+- Detail: [procedural-bases.md](../../docs/architecture/procedural-bases.md#server-implementation-notes), [economy-and-trade.md](../../docs/architecture/economy-and-trade.md#server-implementation-notes), [transit-hubs.md](../../docs/features/transit-hubs.md#server-implementation-notes), [military-bases.md](../../docs/features/military-bases.md#server-implementation-notes).
+
