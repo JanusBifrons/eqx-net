@@ -158,6 +158,8 @@ const FEATURE_SPECS: string[] = [
   '**/rts-take-controls.spec.ts',
   '**/rts-reselect.spec.ts',
   '**/rts-warp-worker-errors.spec.ts',
+  // RTS fleet warp: Warp here warps the selected ships; the view follows.
+  '**/rts-fleet-warp.spec.ts',
   '**/fleet-overlay-camera.spec.ts',
   '**/command-view-camera.spec.ts',
   '**/cinematic-camera.spec.ts',
@@ -328,6 +330,10 @@ export default defineConfig({
             // so a spec polling for a lone event (a missile's expiry) could
             // miss it (2026-11-12). Specs filter with `?tag=` server-side.
             EQX_DEV_EVENTS_MAX: '5000',
+            // Galaxy rooms honour the testMode join overrides (timeScale, ...)
+            // so a spec can speed a real sector's game clock: rts-fleet-warp
+            // joins at timeScale=4 so the 30 s warp spool takes 7.5 s.
+            EQX_ALLOW_DEV_OVERRIDES: '1',
             ...(IS_OFFSET_LANE ? { PORT: String(E2E_SERVER_PORT) } : {}),
           },
         },
