@@ -17,6 +17,15 @@
  * (#16). Each mount ramps from its OWN start (`chargeOffsets`, ticks after
  * the earliest), so a battleship's main turrets that began charging apart
  * glow apart. Allocation-free per frame (#14).
+ *
+ * Discharge into the shot: the mask comes off the NEWEST snapshot, so it
+ * clears the tick the server fires, but the slug and its muzzle flash are
+ * drawn on the display timeline (`DISPLAY_DELAY_MS` behind). A gun whose
+ * charge ended full (within `CHARGE_DONE_SLACK_MS` of it: the drawn ramp
+ * lags the server's ticks by a fraction of a frame, so a charge that fires on
+ * time is drawn at 0.9999, never 1) therefore holds its glow full (flaring) until that gun's
+ * shot shows (`shotMs`, MountVisualManager's last-shot time) or, with no
+ * shot seen, `CHARGE_HOLD_MAX_MS` (snapshots alone converge, #16).
  */
 import { Container, Graphics } from 'pixi.js';
 import { getShipKind } from '../../../shared-types/shipKinds.js';
@@ -24,6 +33,7 @@ import { getWeapon, type WeaponDef } from '../../../core/combat/WeaponCatalogue.
 import { shipTurrets } from '../art/turretLayout.js';
 import { railGeom, railSlotCharge, type RailSlotCharge, type TurretFamily } from '../art/fx/turretFx.js';
 import { buildChargeTelegraphGfx } from './spriteBuilders.js';
+import { DISPLAY_DELAY_MS } from '../../net/swarmInterpolation.js';
 
 /** Game ms per server tick. */
 const TICK_MS = 1000 / 60;
@@ -33,6 +43,14 @@ const GLOW_CORE = 0xfff0ff;
 /** The railgun's charge: blue-white light in the slot between its rails. */
 const RAIL_GLOW = 0x7fb4ff;
 const RAIL_CORE = 0xeef6ff;
+/** Longest a full charge holds after its mask clears with no shot seen: the
+ *  display delay (the flash comes that much after the clear) plus a
+ *  snapshot interval and some jitter. */
+export const CHARGE_HOLD_MAX_MS = DISPLAY_DELAY_MS + 100;
+/** A cleared charge this close to full (ms of ramp left) was a shot, not a
+ *  charge cut short: the drawn ramp trails the server's ticks by up to a
+ *  frame, and the mask can come off a snapshot interval (~50 ms) late. */
+export const CHARGE_DONE_SLACK_MS = 100;
 
 export type ChargeTelegraphStyle = 'ring-line' | 'mount-glow' | 'rail-slot';
 
@@ -70,6 +88,21 @@ export interface ChargeTelegraph {
   /** The latched start: the snapshot's start tick and its fxNow. */
   startTick: number;
   startFxMs: number;
+  /** Per kind mount: the catalogue mount id (the caller's last-shot lookup). */
+  readonly mountIds: ReadonlyArray<string>;
+  /** Per kind mount: the caller's scratch for each gun's last drawn shot
+   *  (fx ms, −Infinity = none), filled before `updateChargeTelegraph`. */
+  readonly shotMs: number[];
+  /** Per kind mount: the level drawn last frame, and the fx ms its charge
+   *  began (a shot after the charge's midpoint is this charge's shot). */
+  readonly levels: number[];
+  readonly chargeFromMs: number[];
+  /** Mounts whose full charge ended and whose shot has not shown yet, and
+   *  the fx ms each hold began. */
+  heldMask: number;
+  readonly heldSinceMs: number[];
+  /** Last frame's mask (a set bit that clears starts a hold). */
+  prevMask: number;
 }
 
 /** A glow on one gun: a soft disc on the mount plus a streak up the barrel
@@ -173,7 +206,13 @@ export function buildChargeTelegraph(kindId: string | undefined, radius: number)
     root.addChildAt(ring, 0);
   }
   root.visible = false;
-  return { root, ring, ringMask, glows, rails, chargeMs, baseAngles, startTick: -1, startFxMs: 0 };
+  const n = mounts.length;
+  return {
+    root, ring, ringMask, glows, rails, chargeMs, baseAngles, startTick: -1, startFxMs: 0,
+    mountIds: mounts.map((m) => m.id), shotMs: new Array<number>(n).fill(-Infinity),
+    levels: new Array<number>(n).fill(0), chargeFromMs: new Array<number>(n).fill(0),
+    heldMask: 0, heldSinceMs: new Array<number>(n).fill(0), prevMask: 0,
+  };
 }
 
 /** Scratch for one rail slot's charge (alloc-free per frame). */
@@ -184,22 +223,29 @@ const _slot: RailSlotCharge = { fill: 0, bright: 0 };
  * `nowTick` the entity's latest server tick (to latch the start on the game
  * clock), `fxNowMs` the renderer's game-time clock, `mountAngles` the drawn
  * arc-local mount angles (the glow turns with its gun), `offsets` each
- * charging mount's start after `startTick` (one per set bit; absent = 0).
+ * charging mount's start after `startTick` (one per set bit; absent = 0),
+ * `shotMs` each kind mount's last drawn shot (fx ms; absent = none seen).
  */
 export function updateChargeTelegraph(
   t: ChargeTelegraph, mask: number, startTick: number | undefined, nowTick: number, fxNowMs: number,
-  mountAngles: ArrayLike<number> | undefined, offsets?: ArrayLike<number>,
+  mountAngles: ArrayLike<number> | undefined, offsets?: ArrayLike<number>, shotMs?: ArrayLike<number>,
 ): void {
-  if (mask === 0) {
+  const held = updateHolds(t, mask, fxNowMs, shotMs);
+  t.prevMask = mask;
+  if (mask === 0 && held === 0) {
     if (t.root.visible) t.root.visible = false;
     t.startTick = -1;
     return;
   }
   t.root.visible = true;
-  const st = startTick ?? nowTick;
-  if (st !== t.startTick) {
-    t.startTick = st;
-    t.startFxMs = fxNowMs - Math.max(0, nowTick - st) * TICK_MS;
+  if (mask !== 0) {
+    const st = startTick ?? nowTick;
+    if (st !== t.startTick) {
+      t.startTick = st;
+      t.startFxMs = fxNowMs - Math.max(0, nowTick - st) * TICK_MS;
+    }
+  } else {
+    t.startTick = -1;
   }
   const elapsed = fxNowMs - t.startFxMs;
   if (t.ring !== null) {
@@ -215,13 +261,29 @@ export function updateChargeTelegraph(
     if (on) bit++;
     const g = glows[i];
     if (g === null || g === undefined) continue;
-    g.visible = on;
-    if (!on) continue;
-    const off = offsets !== undefined && k < offsets.length ? offsets[k]! * TICK_MS : 0;
-    const level = chargeGlowLevel(elapsed - off, t.chargeMs[i]!);
-    const flicker = level >= 1 ? 0.85 + 0.15 * Math.sin(fxNowMs / 45) : 1;
+    const hold = !on && i < 31 && (held & (1 << i)) !== 0;
+    g.visible = on || hold;
+    if (!on && !hold) { t.levels[i] = 0; continue; }
     g.rotation = -(t.baseAngles[i]! + (mountAngles?.[i] ?? 0));
     const rail = t.rails[i];
+    if (hold) {
+      // Discharging: full and flaring until the shot shows.
+      const f = Math.min(1, (fxNowMs - t.heldSinceMs[i]!) / DISPLAY_DELAY_MS);
+      g.alpha = 1;
+      if (rail) {
+        rail.fill.scale.y = 1;
+        rail.head.y = rail.y0 - rail.len;
+        rail.head.scale.set(1 + 0.6 * f);
+      } else {
+        g.scale.set(1 + 0.2 * f);
+      }
+      continue;
+    }
+    const off = offsets !== undefined && k < offsets.length ? offsets[k]! * TICK_MS : 0;
+    t.chargeFromMs[i] = t.startFxMs + off;
+    const level = chargeGlowLevel(elapsed - off, t.chargeMs[i]!);
+    t.levels[i] = level;
+    const flicker = level >= 1 ? 0.85 + 0.15 * Math.sin(fxNowMs / 45) : 1;
     if (rail) {
       // The railgun: the slot fills from the breech to the muzzle and
       // brightens as it nears full; the glow stays the gun's own size.
@@ -235,4 +297,31 @@ export function updateChargeTelegraph(
     g.alpha = (0.15 + 0.85 * level) * flicker;
     g.scale.set(0.5 + 0.5 * level);
   }
+}
+
+/**
+ * This frame's holds: a glow mount whose bit cleared after a full charge
+ * (within `CHARGE_DONE_SLACK_MS`) starts one; a hold ends when that gun's shot shows (a shot after its
+ * charge's midpoint) or after `CHARGE_HOLD_MAX_MS`. A charging mount is
+ * never held. Returns (and stores) the held mask.
+ */
+function updateHolds(t: ChargeTelegraph, mask: number, fxNowMs: number, shotMs: ArrayLike<number> | undefined): number {
+  const cleared = t.prevMask & ~mask;
+  let held = t.heldMask & ~mask;
+  if (cleared === 0 && held === 0) { t.heldMask = 0; return 0; }
+  const glows = t.glows;
+  const n = glows.length < 31 ? glows.length : 31;
+  for (let i = 0; i < n; i++) {
+    const bit = 1 << i;
+    if (glows[i] === null) continue;
+    if ((cleared & bit) !== 0) {
+      if ((1 - t.levels[i]!) * t.chargeMs[i]! <= CHARGE_DONE_SLACK_MS) { held |= bit; t.heldSinceMs[i] = fxNowMs; }
+      t.levels[i] = 0;
+    }
+    if ((held & bit) === 0) continue;
+    const shot = shotMs !== undefined && i < shotMs.length ? shotMs[i]! : -Infinity;
+    if (shot >= t.chargeFromMs[i]! + t.chargeMs[i]! * 0.5 || fxNowMs - t.heldSinceMs[i]! > CHARGE_HOLD_MAX_MS) held &= ~bit;
+  }
+  t.heldMask = held;
+  return held;
 }
