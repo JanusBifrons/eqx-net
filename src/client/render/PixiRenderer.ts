@@ -73,7 +73,7 @@ import {
 import { newSpeedFxSample, speedFxSampleInto } from './camera/speedFxSample';
 import { GroupBoundsScanner } from './camera/groupBounds';
 import type { CameraCue, CameraGroup } from '@core/contracts/cameraScript';
-import { REMOTE_BEAM_STYLE, MINING_BEAM_STYLE, remoteBeamStyleForMount } from './beamStyles';
+import { REMOTE_BEAM_STYLE, MINING_BEAM_STYLE, remoteBeamStyleForMount, remoteBeamFireAngle } from './beamStyles';
 import { MountVisualManager } from './MountVisualManager';
 import { BackgroundGrid } from './BackgroundGrid';
 import { StarfieldBackground } from './StarfieldBackground';
@@ -1964,7 +1964,9 @@ export class PixiRenderer implements IRenderer {
           // mountAngles` (snapshot-anchored, in-interest drones only).
           const mount = shooterKind.mounts?.find((m) => m.id === mountId);
           const mountIdx = shooterKind.mounts?.findIndex((m) => m.id === mountId) ?? -1;
-          let currentMountAngle = 0;
+          // Undefined = this viewer has no angle for the turret (an
+          // out-of-interest drone): the beam then aims at the wire end point.
+          let currentMountAngle: number | undefined = 0;
           if (shooter && mount && mountIdx >= 0) {
             currentMountAngle = shooter.mountAngles?.[mountIdx] ?? 0;
           } else if (swarmShooter && mount && mountIdx >= 0) {
@@ -1977,7 +1979,7 @@ export class PixiRenderer implements IRenderer {
               const sw = mirror.swarm?.get(entityId);
               // The angle the turret is DRAWN at (swarmSpriteUpdater), so the
               // beam leaves down the barrel on screen, not the raw 20 Hz step.
-              currentMountAngle = (sw?.displayMountAngles ?? sw?.mountAngles)?.[mountIdx] ?? 0;
+              currentMountAngle = (sw?.displayMountAngles ?? sw?.mountAngles)?.[mountIdx];
             }
           }
 
@@ -1987,7 +1989,7 @@ export class PixiRenderer implements IRenderer {
           let toY: number;
           if (shooter) {
             const origin = applyMountOffset(shooter.x, shooter.y, shooter.angle, mount);
-            const fireAngle = shooter.angle + (mount?.baseAngle ?? 0) + currentMountAngle;
+            const fireAngle = shooter.angle + (mount?.baseAngle ?? 0) + (currentMountAngle ?? 0);
             const fwdX = -Math.sin(fireAngle);
             const fwdY =  Math.cos(fireAngle);
             // The barrel tip (shared with the server, core/combat/muzzle.ts).
@@ -1998,7 +2000,12 @@ export class PixiRenderer implements IRenderer {
             toY = fromY + fwdY * laser.range;
           } else if (swarmShooter) {
             const origin = applyMountOffset(swarmShooter.x, swarmShooter.y, swarmShooter.angle, mount);
-            const fireAngle = swarmShooter.angle + (mount?.baseAngle ?? 0) + currentMountAngle;
+            // A turning mount with no known angle (out of this viewer's
+            // interest, so no `drones[].mountAngles`) aims at the wire end.
+            const fireAngle = remoteBeamFireAngle(
+              swarmShooter.angle, mount?.baseAngle ?? 0, mount ? currentMountAngle : 0,
+              origin.x, origin.y, laser.toX, laser.toY,
+            );
             const fwdX = -Math.sin(fireAngle);
             const fwdY =  Math.cos(fireAngle);
             // Drone barrel offset is `radius + 2` along the mount's fire

@@ -91,3 +91,26 @@ export function remoteBeamTtlMs(isAiShooter: boolean, heavy: boolean): number {
   if (heavy) return HEAVY_BEAM_TTL_MS;
   return isAiShooter ? 250 : 400;
 }
+
+/**
+ * The fire angle a remote beam is drawn along (PixiRenderer's remote-laser
+ * loop): the shooter's live hull angle + the mount's base angle + the turret's
+ * slewed angle, so the beam leaves down the drawn barrel.
+ *
+ * With no turret angle known (`mountAngle` undefined) it aims from the beam's
+ * live origin at the wire end point (`laser_fired.to`) instead. Turret angles
+ * ride `snapshot.drones[].mountAngles` only for drones in the viewer's
+ * interest window, which scales with the viewer's hull: a capital burning a
+ * frigate from 8 km is outside the frigate's window, and an angle defaulted
+ * to 0 sent the beam along the mount's base bearing, off screen.
+ */
+export function remoteBeamFireAngle(
+  poseAngle: number, baseAngle: number, mountAngle: number | undefined,
+  originX: number, originY: number, toX: number, toY: number,
+): number {
+  if (mountAngle !== undefined) return poseAngle + baseAngle + mountAngle;
+  const dx = toX - originX, dy = toY - originY;
+  if (dx === 0 && dy === 0) return poseAngle + baseAngle;
+  // Game-space forward is (-sin a, cos a).
+  return Math.atan2(-dx, dy);
+}
