@@ -100,7 +100,7 @@ test('in-game ship swap does NOT leave a stale joystick (two thumbsticks bug)', 
 
   // Step 1 — auto-join galaxy-sol-prime. GameSurface mounts; on a
   // touch viewport, MobileControls mounts too. Roster gets one row.
-  await page.goto(`${BASE_URL}/?galaxy=sol-prime`, {
+  await page.goto(`${BASE_URL}/?galaxy=sol-prime&startMode=fly`, {
     waitUntil: 'domcontentloaded',
     timeout: 60_000,
   });

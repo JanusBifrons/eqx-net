@@ -46,7 +46,7 @@ test('engage_transit to a NON-neighbour is rejected with not_neighbour (#17)', a
   const errors: string[] = [];
   page.on('pageerror', (err) => errors.push(`PAGEERROR: ${err.message}`));
 
-  await page.goto(`${BASE_URL}/?galaxy=thornfield`, {
+  await page.goto(`${BASE_URL}/?galaxy=thornfield&startMode=fly`, {
     waitUntil: 'domcontentloaded',
     timeout: 30_000,
   });
