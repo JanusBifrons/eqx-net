@@ -27,13 +27,13 @@ describe('SectorRoom integration — capital beam fits (plan section 9)', () => 
     harness = undefined;
   }, 10_000);
 
-  it('a beam cruiser fires laser_fired from its heavy_beam secondaries and its kill slices', { timeout: 60_000 }, async () => {
+  it('a beam cruiser fires laser_fired from its heavy_beam secondaries and its kill slices', { timeout: 15_000 }, async () => {
     const kind = getShipKind('heavy-cruiser-beam');
     const beamMounts = new Set(kind.mounts.filter((m) => m.weaponId === 'heavy_beam').map((m) => m.id));
     expect([...beamMounts].every((id) => id.startsWith('sec-'))).toBe(true);
     const beam = getWeapon('heavy_beam');
     harness = await bootSectorTestServer({
-      sectorKey: null, droneCount: 0, testMode: true, asteroidConfig: [], pilotCapitals: true, capitalWrecks: true,
+      sectorKey: null, droneCount: 0, testMode: true, asteroidConfig: [], pilotCapitals: true, capitalWrecks: true, traverseTicksCap: 0,
       // Heading π: bow along −y, starboard (+x mount side) faces −x, at the pilot.
       dronePoses: [{ kind: 'heavy-cruiser-beam', x: 5000, y: 0, angle: Math.PI }],
     });
@@ -48,7 +48,7 @@ describe('SectorRoom integration — capital beam fits (plan section 9)', () => 
 
     // First: the heavy beams fire and hit the pilot at full damage (one
     // emitter per beam turret: `capitalShips.test.ts`).
-    const deadline = Date.now() + 30_000;
+    const deadline = Date.now() + 8_000;
     while (Date.now() < deadline && beamHits.length < 4) await new Promise((r) => setTimeout(r, 50));
     expect(beams.length, 'a heavy_beam mount fired laser_fired').toBeGreaterThan(0);
     expect(beams[0]!.shooterId.startsWith('swarm-')).toBe(true);
@@ -61,7 +61,7 @@ describe('SectorRoom integration — capital beam fits (plan section 9)', () => 
     const internal = room._internals;
     const before = internal.wreckDescriptors().length;
     for (const [, s] of room.state.ships) if (s.playerId === pid && s.isActive) s.health = beam.damage / 2;
-    const deadline2 = Date.now() + 20_000;
+    const deadline2 = Date.now() + 8_000;
     while (Date.now() < deadline2 && internal.wreckDescriptors().length === before) await harness.advance(50);
     const fresh = internal.wreckDescriptors().slice(before);
     expect(fresh.length, 'the pilot heavy cruiser broke up').toBe(1);
@@ -69,16 +69,16 @@ describe('SectorRoom integration — capital beam fits (plan section 9)', () => 
     expect(fresh[0]!.cutKind, 'a heavy-beam kill slices').toBe('slice');
   });
 
-  it('a lance battlecruiser fires laser_fired from its heavy_beam main turrets', { timeout: 60_000 }, async () => {
+  it('a lance battlecruiser fires laser_fired from its heavy_beam main turrets', { timeout: 15_000 }, async () => {
     const kind = getShipKind('battlecruiser-lance');
     const beamMounts = new Set(kind.mounts.filter((m) => m.weaponId === 'heavy_beam').map((m) => m.id));
     expect(beamMounts.size).toBeGreaterThan(0);
     expect([...beamMounts].every((id) => id.startsWith('main-'))).toBe(true);
     harness = await bootSectorTestServer({
-      sectorKey: null, droneCount: 0, testMode: true, asteroidConfig: [], pilotCapitals: true,
-      // Heading π/2: bow along −x, at the pilot. (The first main-battery shot
-      // takes ~10 s here, the same for the plain battlecruiser's 8" guns.)
-      dronePoses: [{ kind: 'battlecruiser-lance', x: 5000, y: 0, angle: Math.PI / 2 }],
+      sectorKey: null, droneCount: 0, testMode: true, asteroidConfig: [], pilotCapitals: true, lockTimeCapS: 0, traverseTicksCap: 0,
+      // Heading π: broadside to the pilot. traverseTicksCap: 0 snaps the
+      // main turrets onto their bearing (real 16" training takes ~10 s).
+      dronePoses: [{ kind: 'battlecruiser-lance', x: 5000, y: 0, angle: Math.PI }],
     });
     const pid = randomUUID();
     const cr = await harness.connectActive(pid, {
@@ -86,7 +86,7 @@ describe('SectorRoom integration — capital beam fits (plan section 9)', () => 
     });
     const beams: LaserFired[] = [];
     cr.onMessage('laser_fired', (m: LaserFired) => { if (m.mountId && beamMounts.has(m.mountId) && m.targetId === pid) beams.push(m); });
-    const deadline = Date.now() + 30_000;
+    const deadline = Date.now() + 8_000;
     while (Date.now() < deadline && beams.length === 0) await new Promise((r) => setTimeout(r, 50));
     expect(beams.length, 'a heavy_beam main turret hit the pilot').toBeGreaterThan(0);
   });
