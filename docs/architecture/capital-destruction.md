@@ -1991,8 +1991,8 @@ line; a railgun kill erases a straight channel as wide as the bolt.
   `capitalWrecks.test.ts` "a heavy_beam kill slices the wreck; a fighter beam
   or a bolt kill does not"; `WeaponCatalogue.test.ts` (only `heavy_beam`
   slices).
-- **Not yet:** the heavy beam's look (`beamStyles`), a capital variant that
-  mounts it, the instant hold and the cut glow.
+- **Not yet:** the heavy beam's look (`beamStyles`), the instant hold and the
+  cut glow. The beam fits that mount it: [capital-ships](../features/capital-ships.md#weapon-fits-plan-section-9).
 - Locks: `fractureHull.test.ts` "golden: v9 kill cuts" (battleship and
   fighter, side and bow, slice and channel); `fractureHull.killFocus.test.ts`
   "fracture v9" (the slice's cut is collinear with the shot through the kill

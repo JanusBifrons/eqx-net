@@ -183,6 +183,20 @@ describe('styledKind (W2b: a hull style per ship)', () => {
     expect([...seen].sort()).toEqual(['battleship', 'battleship-b', 'battleship-c', 'battleship-rail']);
     expect(styledKind('gunship', 'flagship-1-e3')).toBe('gunship');
   });
+
+  it('plan section 9: fields the beam cruiser and the lance battlecruiser at one ship in four, deterministically', () => {
+    for (const [cls, fitted] of [['heavy-cruiser', 'heavy-cruiser-beam'], ['battlecruiser', 'battlecruiser-lance']] as const) {
+      let n = 0;
+      for (let i = 0; i < 400; i++) {
+        const k = styledKind(cls, `flagship-${i}-lead`);
+        expect(k).toBe(styledKind(cls, `flagship-${i}-lead`));
+        if (k === fitted) n++;
+      }
+      // One of four even picks: a modest share, never zero, never most.
+      expect(n).toBeGreaterThan(60);
+      expect(n).toBeLessThan(140);
+    }
+  });
 });
 
 describe('classOf (a capital variant keeps its class)', () => {
@@ -192,6 +206,8 @@ describe('classOf (a capital variant keeps its class)', () => {
     expect(classOf('light-cruiser-b')).toBe('light-cruiser');
     // Plan section 9: a fit variant's class is its base class.
     expect(classOf('battleship-rail')).toBe('battleship');
+    expect(classOf('heavy-cruiser-beam')).toBe('heavy-cruiser');
+    expect(classOf('battlecruiser-lance')).toBe('battlecruiser');
     expect(classOf('heavy-cruiser')).toBe('heavy-cruiser');
   });
 });
