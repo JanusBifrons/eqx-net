@@ -11,7 +11,7 @@
  */
 import type { BeamSpriteStyle } from './BeamSpritePool.js';
 import type { BeamCrossSection } from './beamCrossSection.js';
-import { HEAVY_BEAM_WIDTH } from '../../core/combat/WeaponCatalogue.js';
+import { HEAVY_BEAM_WIDTH, MINING_LASER_WIDTH } from '../../core/combat/WeaponCatalogue.js';
 
 /** Remote players' / drones' / turrets' combat hitscan beam — thin warm amber.
  *  `taper` (P3.13) — combat beams fade toward the tip of their range. */
@@ -126,6 +126,19 @@ export const HEAVY_BEAM_STYLE: BeamSpriteStyle = {
   crossSection: HEAVY_BEAM_CROSS_SECTION, lineLight: HEAVY_BEAM_LINE_LIGHT,
 };
 
+/** Fewest screen px the mining laser's core is drawn wide (`minScreenPx`):
+ *  thinner than the heavy beam's 12, still visible at capital zoom. */
+export const MINING_LASER_MIN_SCREEN_PX = 5;
+
+/** The mining laser (`mining_laser` mounts; plan partitioned-chasing-lark
+ *  PR 7): the Miner's drill-beam colours (`MINING_BEAM_STYLE`, so a player
+ *  reads "mining", not "attack") at capital scale: core `MINING_LASER_WIDTH`
+ *  wide, the strip its slice erases. Solid to the hit point (no taper), drawn
+ *  by the same remote pool as every other beam (a per-beam style). */
+export const MINING_LASER_STYLE: BeamSpriteStyle = {
+  ...MINING_BEAM_STYLE, width: MINING_LASER_WIDTH, taper: false, minScreenPx: MINING_LASER_MIN_SCREEN_PX,
+};
+
 /** A heavy beam that MISSES fades over this last share of its drawn length
  *  (to its max range); one that hits is solid to the hit point. */
 export const HEAVY_BEAM_MISS_FADE_FRAC = 0.15;
@@ -145,14 +158,22 @@ export function isHeavyBeamMount(mount: { readonly weaponId: string } | null | u
   return mount?.weaponId === 'heavy_beam';
 }
 
+/** True when `mount` fires a sustained capital beam at the 10-tick cadence
+ *  (the heavy beam, the mining laser): it holds `HEAVY_BEAM_TTL_MS` so it
+ *  reads as one burn, not a strobe (`remoteBeamTtlMs`). */
+export function isSustainedBeamMount(mount: { readonly weaponId: string } | null | undefined): boolean {
+  return remoteBeamStyleForMount(mount) !== null;
+}
+
 /** The remote-pool style a beam from `mount` draws with: the heavy style for a
- *  `heavy_beam` mount, else `null` (the pool's own fighter style). The client
- *  resolves `mount` from the shooter's kind and `laser_fired.mountId`, so no
- *  wire change. */
+ *  `heavy_beam` mount, the mining-laser style for a `mining_laser` mount, else
+ *  `null` (the pool's own fighter style). The client resolves `mount` from the
+ *  shooter's kind and `laser_fired.mountId`, so no wire change. */
 export function remoteBeamStyleForMount(
   mount: { readonly weaponId: string } | null | undefined,
 ): BeamSpriteStyle | null {
-  return isHeavyBeamMount(mount) ? HEAVY_BEAM_STYLE : null;
+  if (isHeavyBeamMount(mount)) return HEAVY_BEAM_STYLE;
+  return mount?.weaponId === 'mining_laser' ? MINING_LASER_STYLE : null;
 }
 
 /** The mount `mountId` on a ship kind's catalogue `mounts` (alloc-free loop;
