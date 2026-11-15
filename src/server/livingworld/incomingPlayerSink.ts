@@ -20,6 +20,8 @@ export interface IncomingPlayerSink {
     sourceSectorKey: string;
     label: string;
     etaMs: number;
+    /** Ships inbound (RTS fleet warp: the group size). Absent ⇒ 1. */
+    count?: number;
   }): void;
   clearIncomingPlayer(playerId: string, destSectorKey: string): void;
   /** Send a pilot who just arrived in `destSectorKey` every warning still

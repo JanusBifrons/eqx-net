@@ -21,6 +21,7 @@ import type { DamageEvent, LaserFiredEvent } from '@shared-types/messages';
 import type { ShellEnd, ShellSalvo } from '@shared-types/messages/shellEvents';
 import { MAX_HOLD_MS, type HeldDamageSink, type NavalHitHold } from './navalHitHold';
 import type { ShellSalvoStore } from './shellSalvoStore';
+import { isParkedHull } from '../render/shipOwnership.js';
 
 /** A ship's death held for its drawn shell: its wire id, the kind it was (an
  *  id recycled meanwhile is not killed) and the game-ms deadline. */
@@ -155,7 +156,7 @@ export class DrawnShellTiming {
   private deferShipKill(wireId: string): boolean {
     const mirror = this.host.mirror();
     if (wireId === mirror.localPlayerId) return false;
-    if (mirror.lingeringShips?.has(wireId) !== true && !mirror.ships.has(wireId)) return false;
+    if (!mirror.ships.has(wireId)) return false;
     let k = this.shipKills.get(wireId);
     if (k === undefined) {
       k = this.free.pop() ?? { wireId: '', kind: 0, shipKind: undefined, deadline: 0 };
@@ -213,7 +214,8 @@ export class DrawnShellTiming {
       host.killEntity(id);
       // A parked hull: gone with its explosion (the snapshot routing kept it
       // while its death was held, so nothing else evicts it this frame).
-      if (mirror.lingeringShips?.delete(id) === true) host.despawnLinger(id);
+      const hull = mirror.ships.get(id);
+      if (hull !== undefined && isParkedHull(mirror, id, hull)) host.despawnLinger(id);
     }
     if (!this.pending) mirror.wreckRevealFromTick = undefined;
   }

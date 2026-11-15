@@ -7,19 +7,15 @@
  * ⇒ same output, so it is unit-testable without a renderer.
  *
  * Selectable kinds:
- *   - player SHIPS (`mirror.ships`, playerId-keyed) — EXCLUDING the local
- *     player's own ACTIVE ship. The own ship is the `mirror.ships` entry at key
- *     `localPlayerId`; lingering hulls of a displaced player live in a SEPARATE
- *     map (`mirror.lingeringShips`) and are not scanned here, so excluding the
- *     `localPlayerId` key excludes exactly the own ship and nothing else. (The
- *     handoff frames this as "exclude via `localShipInstanceId`, not
- *     `localPlayerId`" because `mirror.ships` carries no instanceId; the
- *     displaced-player case it warns about is structurally impossible to
- *     mis-handle here precisely because lingering hulls aren't in `mirror.ships`.)
+ *   - SHIPS (`mirror.ships`) — EXCLUDING the ship I'm flying
+ *     (`isShipIAmFlying`: the entry at key `localPlayerId`). Parked hulls share
+ *     the map since RTS Part A S3 under their shipInstanceId, so a displaced
+ *     player's old hull never collides with that key.
  *   - DRONES (`mirror.swarm`, `kind === 1`), STRUCTURES (`kind === 2`) and
  *     ASTEROIDS (`kind === 0`, WS-9/R2.23 — "every entity should be selectable
  *     except weapons fire").
- *   - LINGERING HULLS (`mirror.lingeringShips`, WS-9/R2.23 — surface the owner).
+ *   - PARKED HULLS (`mirror.ships` entries `isParkedHull`, kind 'lingering';
+ *     WS-9/R2.23 — surface the owner).
  *
  * Explicitly NOT selectable: weapons fire (projectiles / missiles / beams live
  * in their own mirror maps, never scanned here).
@@ -29,7 +25,7 @@
  * frame the same way:
  *   - ship  → `playerId` (key in `mirror.ships`)
  *   - drone / structure / asteroid → `swarm-${entityId}`
- *   - lingering → `shipInstanceId` (key in `mirror.lingeringShips`)
+ *   - lingering → `shipInstanceId` (its key in `mirror.ships`)
  *
  * Radius model: swarm entries carry a `radius`; ships derive theirs from
  * the ship-kind catalogue collision radius. The hit test is "distance to centre
@@ -39,6 +35,7 @@
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import { getStructureKind, isStructureKindId } from '../../shared-types/structureKinds.js';
 import { getShipKind } from '@shared-types/shipKinds';
+import { isParkedHull, isShipIAmFlying } from './shipOwnership.js';
 
 /** Selectable entity classes. `drone`/`asteroid`/`lingering` read from
  *  the mirror directly (no server stats channel); `ship`/`structure` use
@@ -70,11 +67,10 @@ export function pickEntityAt(
   // Compare by centre distance among entities whose hit-disc contains the tap.
   let bestDistSq = Infinity;
 
-  const localId = mirror.localPlayerId;
-
-  // ── Player ships (playerId-keyed). Exclude the own active ship. ──
+  // ── Every ship (pilots' by playerId, parked hulls by shipInstanceId; #17:
+  // ACTIVE + LINGERING). Exclude the ship I'm flying. ──
   for (const [id, ship] of mirror.ships) {
-    if (id === localId) continue; // own ship — never selectable
+    if (isShipIAmFlying(mirror, id)) continue; // own ship — never selectable
     const radius = shipRadius(ship.kind);
     const dx = ship.x - worldX;
     const dy = ship.y - worldY;
@@ -83,7 +79,9 @@ export function pickEntityAt(
     if (distSq <= reach * reach && distSq < bestDistSq) {
       bestDistSq = distSq;
       bestId = id;
-      bestKind = 'ship';
+      // A parked hull (shipInstanceId key, same list since RTS Part A S3)
+      // keeps its own pick kind (WS-9/R2.23: surfaces whose hull it is).
+      bestKind = isParkedHull(mirror, id, ship) ? 'lingering' : 'ship';
     }
   }
 
@@ -113,23 +111,6 @@ export function pickEntityAt(
         bestDistSq = distSq;
         bestId = `swarm-${entityId}`;
         bestKind = sw.kind === 0 ? 'asteroid' : sw.kind === 1 ? 'drone' : 'structure';
-      }
-    }
-  }
-
-  // ── Lingering hulls (shipInstanceId-keyed; displaced/disconnected players).
-  // WS-9/R2.23 — selectable to surface whose hull it is. ──
-  if (mirror.lingeringShips) {
-    for (const [shipInstanceId, l] of mirror.lingeringShips) {
-      const radius = shipRadius(l.kind);
-      const dx = l.x - worldX;
-      const dy = l.y - worldY;
-      const distSq = dx * dx + dy * dy;
-      const reach = radius + TAP_SLOP;
-      if (distSq <= reach * reach && distSq < bestDistSq) {
-        bestDistSq = distSq;
-        bestId = shipInstanceId;
-        bestKind = 'lingering';
       }
     }
   }

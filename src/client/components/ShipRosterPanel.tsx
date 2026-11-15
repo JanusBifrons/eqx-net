@@ -2,7 +2,6 @@ import { Box, Typography } from '@mui/material';
 import { useCallback, useEffect, useState } from 'react';
 import { ShipRosterCard, type RosterShipEntry } from './ShipRosterCard';
 import { ShipDetailModal } from './ShipDetailModal';
-import { ROSTER_CAP } from './rosterConstants';
 import { logEvent } from '../debug/ClientLogger';
 import { useMountLog } from '../debug/useMountLog';
 import { useUIStore } from '../state/store';
@@ -151,7 +150,7 @@ export function ShipRosterPanel({ playerId, compact = false, onSpawn }: ShipRost
           Ships
         </Typography>
         <Typography sx={{ color: '#888', fontSize: 8 }}>
-          {ships.length}/{ROSTER_CAP}
+          {ships.length}
         </Typography>
       </Box>
       {ships.length === 0 ? (

@@ -2,7 +2,8 @@
  * Shield contacts from collisions (user report 2026-11-07: "the shield should
  * show on collisions when it's raised, same as on shots hitting the
  * shields"). `collision_resolved` names each side as the client knows it
- * (`eA`/`eB`: -1 = a pilot, its id is the playerId; >= 0 = a swarm entity);
+ * (`eA`/`eB`: -1 = a ship, its id is its `mirror.ships` key — a pilot's
+ * playerId or an AI-flown ship's sid; >= 0 = a swarm entity);
  * each named side gets a contact facing the other body. The renderer draws it
  * only on a raised shield, like a shot's hit.
  */

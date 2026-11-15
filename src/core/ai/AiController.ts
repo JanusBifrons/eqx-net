@@ -45,8 +45,16 @@ export interface AiIntentSink {
   /** Pilot layer: queue this tick's control keys for a slot (an intent with
    *  `input` set). The sink BATCHES them (server: `AiInputBatch`) and sends
    *  the whole tick at {@link flushInputs}; never one post per call. Optional:
-   *  a sink without it drops input intents (no brain emits them in that zone). */
-  postInput?(slot: number, bits: AiInputBits): void;
+   *  a sink without it drops input intents (no brain emits them in that zone).
+   *  `hullId` is set for a player-owned hull ({@link AiRegisterOptions.hull}):
+   *  the sink's ONE hull branch posts those keys as the hull's pilot INPUT. */
+  postInput?(slot: number, bits: AiInputBits, hullId?: string): void;
+  /** A player-owned hull's brain holds its trigger this tick at `targetId`
+   *  (its `intent.fire`). The sink's ONE hull fire branch pulls the hull's
+   *  own trigger through the PLAYER fire pipeline, so the hull fires only
+   *  when its AI pilot would (aim, range, wind-up room). Optional: a sink
+   *  without it drops a hull's fire. */
+  postHullFire?(hullId: string, targetId: string): void;
   /** Send every input queued since the last flush as ONE worker message
    *  (`AI_INPUTS`). Called once at the end of `AiController.tick` when at least
    *  one input was queued. */
@@ -58,6 +66,18 @@ interface AiRegistration {
   behaviour: IAiBehaviour;
   /** This tick's control keys held boost (the snapshot shows the flame, #16). */
   boost: boolean;
+  /** A player-owned hull (RTS): its keys go out as pilot INPUT and its fire
+   *  goes to `postHullFire` (the player pipeline), never the AI fire path. */
+  hull: boolean;
+}
+
+/** Registration options. All absent ⇒ a swarm AI ship. */
+export interface AiRegisterOptions {
+  /** The entity is a player-owned hull (RTS owned ship), keyed by its
+   *  shipInstanceId: its control keys reach the sink with `hullId` set, and
+   *  its `intent.fire` goes to the sink's `postHullFire`, never queued for
+   *  `handleAiFire` / `AiFireResolver`. */
+  readonly hull?: boolean;
 }
 
 /**
@@ -104,11 +124,15 @@ export class AiController {
   /** Charge wind-up query handed to brains as `view.isCharging` (the server
    *  sets it to its fire resolver's). Absent ⇒ no brain is ever charging. */
   isCharging: ((entityId: string) => boolean) | undefined = undefined;
+  /** NPC→player hostility handed to brains as `view.hostileToPlayer` (owned
+   *  ships engage what is hostile to their owner). The server sets it to its
+   *  truce-aware query; the default asks the registered brains. Bound once. */
+  hostileToPlayer: (entityId: string, playerId: string) => boolean = (e, p) => this.isEntityHostileToPlayer(e, p);
 
   constructor(private readonly sink: AiIntentSink) {}
 
-  register(entityId: string, slot: number, behaviour: IAiBehaviour): void {
-    this.entities.set(entityId, { slot, behaviour, boost: false });
+  register(entityId: string, slot: number, behaviour: IAiBehaviour, opts?: AiRegisterOptions): void {
+    this.entities.set(entityId, { slot, behaviour, boost: false, hull: opts?.hull === true });
     this.aims.add(entityId);
     // Apply any hostility that arrived before this entity registered.
     const pending = this.pendingHostile.get(entityId);
@@ -124,6 +148,9 @@ export class AiController {
     this.claims.remove(entityId);
     this.claims.forgetTarget(entityId);
     this.pendingHostile.delete(entityId);
+    // A guard post anchored to this ship is cleared (escorts of a dead ship).
+    // Per removal, not per tick.
+    for (const reg of this.entities.values()) reg.behaviour.noteEntityGone?.(entityId);
   }
 
   has(entityId: string): boolean {
@@ -295,7 +322,7 @@ export class AiController {
     // every behaviour. The 60/sec rate is negligible vs the rest of
     // the engine; leave as-is. See `swarmEntitySnapshot` doc for the
     // full GC-pressure story.
-    const view: AiWorldView = { players, structures, swarms, tick, dtSec, resolveEntityInto, neighbours, stats: this.stats, aims: this.aims, claims: this.claims, isCharging: this.isCharging };
+    const view: AiWorldView = { players, structures, swarms, tick, dtSec, resolveEntityInto, neighbours, stats: this.stats, aims: this.aims, claims: this.claims, isCharging: this.isCharging, hostileToPlayer: this.hostileToPlayer };
     this.inputsQueued = 0;
     for (const [id, reg] of this.entities) {
       this.runEntity(id, reg, view, tick, entitySnapshot);
@@ -325,7 +352,7 @@ export class AiController {
     if (intent.input !== undefined) {
       // Pilot layer: control keys replace the impulse for this tick.
       if (this.sink.postInput) {
-        this.sink.postInput(reg.slot, intent.input);
+        this.sink.postInput(reg.slot, intent.input, reg.hull ? id : undefined);
         this.inputsQueued++;
         reg.boost = (intent.input & AI_INPUT_BOOST) !== 0;
       }
@@ -345,7 +372,11 @@ export class AiController {
       this.warpOutYs[k] = intent.warpOut.y;
     }
 
-    if (intent.fire) {
+    // A player-owned hull fires through the player pipeline, never here: its
+    // brain's held trigger is the hull's trigger.
+    if (intent.fire && reg.hull) {
+      this.sink.postHullFire?.(id, intent.fire.targetId);
+    } else if (intent.fire) {
       this.fireQueue.push({
         shooterId: id,
         dirX: intent.fire.dirX,

@@ -96,7 +96,7 @@ test('drawer → Show galaxy map → X close: stays interactive, no double-mount
 
   // === 1. Spawn === (initial connect+welcome is not lag-gated)
   stamp('goto start', { assertUnderMaxStep: false });
-  await page.goto(`${BASE_URL}/?galaxy=sol-prime`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+  await page.goto(`${BASE_URL}/?galaxy=sol-prime&startMode=fly`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
   stamp('goto done', { assertUnderMaxStep: false });
   await waitForLocalShip(page);
   stamp('local ship rendered', { assertUnderMaxStep: false });
@@ -183,7 +183,7 @@ test('drawer Galaxy tab → roster card opens detail modal (real clicks)', async
   page.on('pageerror', (err) => errors.push(`PAGEERROR: ${err.message}`));
 
   // === 1. Spawn via auto-join URL. ===
-  await page.goto(`${BASE_URL}/?galaxy=sol-prime`, {
+  await page.goto(`${BASE_URL}/?galaxy=sol-prime&startMode=fly`, {
     waitUntil: 'domcontentloaded',
     timeout: 30_000,
   });

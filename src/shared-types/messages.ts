@@ -33,6 +33,15 @@ export {
   RepairShipSchema,
   PilotShipSchema,
   SpectateSchema,
+  FleetModeSchema,
+  FleetStanceSchema,
+  FleetOrderSchema,
+  SetModeSchema,
+  SetStanceSchema,
+  FormSquadSchema,
+  DisbandSquadSchema,
+  CommandSchema,
+  StartModeSchema,
   StatIdSchema,
   StatAllocSchema,
   ApplyShipUpgradeSchema,
@@ -57,6 +66,13 @@ export type {
   SetGateAccessMessage,
   PilotShipMessage,
   SpectateMessage,
+  FleetOrderMessage,
+  SetModeMessage,
+  SetStanceMessage,
+  FormSquadMessage,
+  DisbandSquadMessage,
+  CommandMessage,
+  StartMode,
   StatId,
   WireStatAlloc,
   ApplyShipUpgradeMessage,
@@ -75,7 +91,6 @@ export { SESSION_REPLACED_CLOSE_CODE } from './messages/snapshotMessages.js';
 // the 20 Hz `snapshot` is the documented invariant-#3 carve-out — see the
 // SnapshotMessage docstring).
 export { WelcomeSchema } from './messages/snapshotMessages.js';
-
 // Combat outcomes (server → client)
 export {
   CollisionResolvedMessageSchema,
@@ -107,11 +122,13 @@ export {
   WarpWarningClearSchema,
   WarpDispositionSchema,
   BaseReadySchema,
+  parseTransitReadyShipIds,
 } from './messages/transitMessages.js';
 export type {
   TransitStateLabel,
   TransitCancelReason,
   TransitStateMessage,
+  TransitReadyMessage,
   WarpOutEvent,
   WarpInEvent,
   WarpWarningEvent,
@@ -135,6 +152,13 @@ export type {
   DeselectEntityMessage,
   EntityStatsMessage,
 } from './messages/selectionMessages.js';
+
+// RTS command layer slice 7 — owner-only fleet status stream (server → client)
+export {
+  FleetStatusMessageSchema,
+  encodeFleetStatusRow,
+  decodeFleetStatusRow,
+} from './messages/fleetStatusMessages.js';
 
 // Missile subsystem (server → client)
 export {

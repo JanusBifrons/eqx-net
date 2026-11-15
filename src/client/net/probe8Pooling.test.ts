@@ -9,8 +9,8 @@
  * the residual 0.1 MB/sec by pooling the remaining hot per-snapshot
  * mirror.set() sites:
  *
- *   - mirror.lingeringShips.set (handleSnapshot — per inactive hull
- *     per snapshot)
+ *   - the parked-hull entry (handleSnapshot — per inactive hull; since
+ *     RTS Part A S3 an entry in `mirror.ships`, pooled by the router)
  *   - mirror.projectiles.set (syncProjectiles — per in-flight projectile
  *     per snapshot)
  *   - snap = { ...snap, states: ... } → snap.states = ... (one alloc
@@ -24,8 +24,11 @@
 import { describe, it, expect } from 'vitest';
 import type {
   ProjectileRenderState,
-  LingeringShipRenderState,
+  RenderMirror,
+  ShipRenderState,
 } from '@core/contracts/IRenderer';
+import type { SnapshotMessage } from '@shared-types/messages';
+import { routeSnapshotShipStates, type ShipRouterCtx } from './snapshotShipRouter.js';
 
 /**
  * Pure helpers that mirror the inline pooling patterns in
@@ -62,24 +65,25 @@ function updateProjectilePooled(
   }
 }
 
-function updateLingeringPooled(
-  lingering: Map<string, LingeringShipRenderState>,
-  id: string,
-  pose: { x: number; y: number; vx: number; vy: number; angle: number; ownerPlayerId: string },
-): LingeringShipRenderState {
-  let entry = lingering.get(id);
-  if (!entry) {
-    entry = { ...pose };
-    lingering.set(id, entry);
-  } else {
-    entry.x = pose.x;
-    entry.y = pose.y;
-    entry.vx = pose.vx;
-    entry.vy = pose.vy;
-    entry.angle = pose.angle;
-    entry.ownerPlayerId = pose.ownerPlayerId;
-  }
-  return entry;
+/** RTS Part A S3: parked hulls are pooled in the ONE ship list by the REAL
+ *  snapshot router (no more inline lingering-map copy to mirror here). */
+function routerCtx(): ShipRouterCtx {
+  const mirror = { ships: new Map(), localPlayerId: 'me', localShipInstanceId: null } as unknown as RenderMirror;
+  return {
+    mirror,
+    hullSeenScratch: new Set<string>(),
+    hullEvictScratch: [],
+    dropShip: (k: string) => { mirror.ships.delete(k); },
+  };
+}
+
+function routeHull(ctx: ShipRouterCtx, id: string, x: number, ownerPlayerId: string): ShipRenderState {
+  const snap = {
+    type: 'snapshot', serverTick: 1, ackedTick: 0,
+    states: { [id]: { x, y: 2, vx: 0, vy: 0, angle: 0, angvel: 0, playerId: ownerPlayerId, isActive: false } },
+  } as unknown as SnapshotMessage;
+  routeSnapshotShipStates(snap, ctx);
+  return ctx.mirror.ships.get(id)!;
 }
 
 describe('Probe 8 — projectile pooling', () => {
@@ -121,27 +125,25 @@ describe('Probe 8 — projectile pooling', () => {
   });
 });
 
-describe('Probe 8 — lingering hull pooling (handleSnapshot path)', () => {
-  it('first call creates new entry with provided pose', () => {
-    const m = new Map<string, LingeringShipRenderState>();
-    updateLingeringPooled(m, 'l1', { x: 1, y: 2, vx: 3, vy: 4, angle: 0.5, ownerPlayerId: 'p1' });
-    const e = m.get('l1')!;
+describe('Probe 8 — parked hull pooling (the snapshot router, one ship list)', () => {
+  it('first snapshot creates the entry with the snapshot pose', () => {
+    const ctx = routerCtx();
+    const e = routeHull(ctx, 'l1', 1, 'p1');
     expect(e.x).toBe(1);
     expect(e.ownerPlayerId).toBe('p1');
+    expect(e.isActive).toBe(false);
   });
 
-  it('subsequent calls mutate pose, preserve kind/displayName added by sibling site', () => {
-    const m = new Map<string, LingeringShipRenderState>();
-    updateLingeringPooled(m, 'l1', { x: 1, y: 2, vx: 0, vy: 0, angle: 0, ownerPlayerId: 'p1' });
-    // Simulate syncMirror writing identity fields.
-    const ref = m.get('l1')!;
+  it('later snapshots reuse the SAME entry and keep kind/displayName from the sibling site', () => {
+    const ctx = routerCtx();
+    const ref = routeHull(ctx, 'l1', 1, 'p1');
+    // syncMirror writes identity fields.
     ref.kind = 'interceptor';
     ref.displayName = 'Bob';
-    // Next snapshot updates pose.
-    updateLingeringPooled(m, 'l1', { x: 99, y: 88, vx: 5, vy: 6, angle: 1.0, ownerPlayerId: 'p1' });
-    const e = m.get('l1')!;
-    expect(e).toBe(ref); // same reference
-    expect(e.x).toBe(99); // pose updated
+    const e = routeHull(ctx, 'l1', 99, 'p1');
+    expect(e).toBe(ref); // same reference (pooled)
+    // Pose after the seed is the remote body's (or the snapshot's while the
+    // hull has no body: `spawnRemoteShipBodies`), never re-copied here.
     expect(e.kind).toBe('interceptor'); // preserved
     expect(e.displayName).toBe('Bob'); // preserved
   });
@@ -176,14 +178,16 @@ describe('Probe 8 — handleSnapshot snap.states mutation (avoiding spread)', ()
 describe('Probe 8 — allocation-count parity sweep (projectiles + lingering)', () => {
   it('100 updates × 10 projectiles + 10 lingering → 20 Map entries total, no growth', () => {
     const proj = new Map<string, ProjectileRenderState>();
-    const ling = new Map<string, LingeringShipRenderState>();
+    const ctx = routerCtx();
     for (let pass = 0; pass < 100; pass++) {
+      const states: Record<string, unknown> = {};
       for (let i = 0; i < 10; i++) {
         updateProjectilePooled(proj, `p${i}`, { x: pass, y: 0, vx: 1, vy: 0, ownerId: 'a', weaponId: 'h' });
-        updateLingeringPooled(ling, `l${i}`, { x: pass, y: 0, vx: 0, vy: 0, angle: 0, ownerPlayerId: 'p' });
+        states[`l${i}`] = { x: pass, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0, playerId: 'p', isActive: false };
       }
+      routeSnapshotShipStates({ type: 'snapshot', serverTick: pass, ackedTick: 0, states } as unknown as SnapshotMessage, ctx);
     }
     expect(proj.size).toBe(10);
-    expect(ling.size).toBe(10);
+    expect(ctx.mirror.ships.size).toBe(10);
   });
 });

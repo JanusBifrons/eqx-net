@@ -320,6 +320,33 @@ describe('LockSubsystem', () => {
     expect(h.locks.forceLock('nobody', 's:1')).toBe(0);
   });
 
+  it('shipKeyMoved: locks on the ship follow its new key, and its own groups move to the sibling machine', () => {
+    // p1 holds a lock on ship `p:hull`; the ship's own groups (key `hull`, in
+    // the sibling machine) hold a lock on `s:1`. Its owner `p2` takes it.
+    const h = harness();
+    const sib = harness();
+    h.targets.set('p:hull', still(200, true));
+    h.targets.set('p:p2', still(200, true));
+    sib.targets.set('s:1', still(200, true));
+    expect(h.locks.forceLock('p1', 'p:hull', 'primary')).toBe(1);
+    sib.locks.enable('hull', false, 'manual');
+    expect(sib.locks.forceLock('hull', 's:1')).toBeGreaterThan(0);
+    h.locks.enable('p2');
+
+    sib.locks.shipKeyMoved('hull', 'p2', h.locks);
+    expect(h.locks.wireFor('p1')![0]!.l.map((l) => l.t), 'the lock on the ship, re-keyed').toEqual(['p:p2']);
+    expect(h.locks.hasLocked('p1', 'primary'), 'still LOCKED, no restart').toBe(true);
+    expect(h.locks.wireFor('p2')?.[0]?.l[0]?.t, 'the ship\'s own lock is now its pilot\'s').toBe('s:1');
+    expect(h.locks.hasLocked('p2', 'primary')).toBe(true);
+    expect(h.locks.wireFor('p2')![0]!.m, 'the pilot gets the slot start mode (AUTO), not the AI pilot\'s MAN').toBe(0);
+    expect(sib.locks.wireFor('hull'), 'nothing left behind').toBeUndefined();
+
+    // And back: the owner lets go; with no AI pilot (`into` null) its locks drop.
+    h.locks.shipKeyMoved('p2', 'hull', null);
+    expect(h.locks.wireFor('p1')![0]!.l[0]!.t).toBe('p:hull');
+    expect(h.locks.wireFor('p2')).toBeUndefined();
+  });
+
   describe('held locks (the lock line)', () => {
     const pct = (h: ReturnType<typeof harness>): number => h.locks.wireFor('p1')![0]!.l[0]?.p ?? -1;
     const ahead = (y: number): LockTargetView => ({ x: 0, y, vx: 0, vy: 0, angle: 0, ship: false, kindId: null, shieldUp: false, radius: 30, hostile: true, terrain: false });
