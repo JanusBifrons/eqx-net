@@ -34,8 +34,9 @@ export const MAT = {
   LIVERY: 9,
 } as const;
 
-/** Which spot treatment a livery uses (the spots come in later slices). */
-export type LiveryTreatment = 'a' | 'b' | 'c';
+/** Which spot treatment a livery uses. 'b2' / 'b3': treatment 'b''s spots
+ *  with a shade experiment (`LIVERY_SHADES`). */
+export type LiveryTreatment = 'a' | 'b' | 'c' | 'b2' | 'b3';
 /** A ship livery: grey hull, the owner's colours only in chosen spots. */
 export interface Livery {
   treatment: LiveryTreatment;
@@ -165,7 +166,7 @@ const LIV_S_KNEE = 0.1, LIV_S_CEIL = 0.14, LIV_S_LOUD = 0.1;
  * CIE76 dE (fields.livery.test.ts); a neon sub-cap colour becomes a grey with
  * a hint of its hue at about its own lightness.
  */
-export function liveryGrey(hex: number): number {
+export function liveryGrey(hex: number, shiftL = 0, maxS = 1): number {
   const r = ((hex >> 16) & 255) / 255, g = ((hex >> 8) & 255) / 255, b = (hex & 255) / 255;
   const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
   const l = (mx + mn) / 2;
@@ -178,9 +179,11 @@ export function liveryGrey(hex: number): number {
   let s2 = s <= LIV_S_KNEE ? s : LIV_S_KNEE + (LIV_S_CEIL - LIV_S_KNEE) * Math.tanh((s - LIV_S_KNEE) / (LIV_S_CEIL - LIV_S_KNEE));
   const loud = Math.min(1, Math.max(0, (s - 0.25) / 0.35));
   s2 -= (s2 - LIV_S_LOUD) * loud * loud * (3 - 2 * loud);
-  const l2 = l < LIV_L_LO ? LIV_L_LO - LIV_L_SOFT_LO * Math.tanh((LIV_L_LO - l) / LIV_L_SOFT_LO)
+  if (s2 > maxS) s2 = maxS;
+  let l2 = l < LIV_L_LO ? LIV_L_LO - LIV_L_SOFT_LO * Math.tanh((LIV_L_LO - l) / LIV_L_SOFT_LO)
     : l > LIV_L_HI ? LIV_L_HI + LIV_L_SOFT_HI * Math.tanh((l - LIV_L_HI) / LIV_L_SOFT_HI)
       : l;
+  if (shiftL !== 0) l2 = Math.max(0.04, Math.min(0.96, l2 + shiftL));
   const q = l2 < 0.5 ? l2 * (1 + s2) : l2 + s2 - l2 * s2, p = 2 * l2 - q;
   const ch = (t: number): number => {
     t = ((t % 1) + 1) % 1;
@@ -188,6 +191,38 @@ export function liveryGrey(hex: number): number {
     return Math.round(Math.max(0, Math.min(1, v)) * 255);
   };
   return (ch(h + 1 / 3) << 16) | (ch(h) << 8) | ch(h - 1 / 3);
+}
+
+/**
+ * Shade experiments on treatment 'b' (owner, 2026-11-15: capital paint "looks
+ * additive", sub-cap hull too bright and team colour too dull). Sub-caps: the
+ * hull grey drops `hullDl` in HSL lightness, its hue trace capped at `hullS`
+ * saturation (a neutral grey), and the team paint is `muted(team,
+ * teamS, teamD)`. Capitals: the team paint is a naval tone at about the hull's
+ * own value (`muted(team, capS, capD)`), the bow/stern fade is a weathered
+ * gradient, and every livery texel is mottled and sun-faded, with chips of
+ * bare metal (`weatherLivery`). Running lights stay the bright team colour.
+ */
+export interface LiveryShade { hullDl: number; hullS: number; teamS: number; teamD: number; capS: number; capD: number }
+export const LIVERY_SHADES: Readonly<Record<'b2' | 'b3', LiveryShade>> = {
+  b2: { hullDl: -0.12, hullS: 0.04, teamS: 1.15, teamD: 1.0, capS: 0.72, capD: 0.74 },
+  b3: { hullDl: -0.2, hullS: 0.03, teamS: 1.3, teamD: 1.0, capS: 0.62, capD: 0.6 },
+};
+/** The shade experiment a livery uses, or undefined (plain treatment). */
+export function liveryShade(l: Livery | undefined): LiveryShade | undefined {
+  return l && (l.treatment === 'b2' || l.treatment === 'b3') ? LIVERY_SHADES[l.treatment] : undefined;
+}
+/** A liveried hull's grey for this kind (a shade experiment darkens sub-caps). */
+export function liveryHullGrey(hex: number, l: Livery | undefined, kindId: string): number {
+  const sh = liveryShade(l);
+  const sub = sh !== undefined && sizeClassOf(getShipKind(kindId)) !== 'capital';
+  return sub ? liveryGrey(hex, sh.hullDl, sh.hullS) : liveryGrey(hex);
+}
+/** The team paint a livery lays on this size class. */
+function liveryTeamPaint(l: Livery, capital: boolean): number {
+  const sh = liveryShade(l);
+  if (!sh) return liveryPaint(l.team);
+  return capital ? muted(l.team, sh.capS, sh.capD) : muted(l.team, sh.teamS, sh.teamD);
 }
 
 /** Paint one texel in a livery's team enamel (for the spot treatments). */
@@ -276,7 +311,7 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
   const parts = opts.parts ?? shipParts(kind);
   const g = gridFor(parts.map((p) => p.pts), opts.ppu, 3);
   const livery = opts.livery;
-  const basePaint = livery ? liveryGrey(parts[0]!.color) : opts.paint ?? parts[0]!.color;
+  const basePaint = livery ? liveryHullGrey(parts[0]!.color, livery, kindId) : opts.paint ?? parts[0]!.color;
   const f = newFields(g, paintOf(basePaint));
   if (livery) f.livery = livery;
   const n = g.w * g.h;
@@ -288,7 +323,7 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
   const partCols: number[] = [];
   parts.forEach((p, idx) => {
     const c = rasterPoly(g, p.pts);
-    partCols.push(livery ? liveryGrey(p.color) : p.color);
+    partCols.push(livery ? liveryHullGrey(p.color, livery, kindId) : p.color);
     for (let i = 0; i < n; i++) {
       if (c[i]! > f.cov[i]!) f.cov[i] = c[i]!;
       if (c[i]! > 0.5) layer[i] = idx;
@@ -350,8 +385,12 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
   // mirrored, the stern of the hull layer only (the same 3 keys, so both ends
   // match; the nozzles are stamped over the stern). Robots get only the tips. Plus a tail beacon (sub-caps)
   // or team running lights (capitals), stamped after the nozzles.
-  const treatB = livery?.treatment === 'b';
-  const teamHex = livery ? liveryPaint(livery.team) : 0;
+  const shade = liveryShade(livery);
+  const treatB = livery?.treatment === 'b' || shade !== undefined;
+  const teamHex = livery ? liveryTeamPaint(livery, sizeCls === 'capital') : 0;
+  /** Lamps glow in the plain team colour whatever the paint's shade. */
+  const lampHex = livery ? liveryPaint(livery.team) : 0;
+  const fadeSeed = hashStr(seedKey + ':fade');
   const CAP_FADE_B = 0.35, NOSE_B = 0.22, TIP_B = 0.72, WIDE_ROW_B = 0.6, WING_OVER_MEDIAN = 1.2, ROBOT_TIP_B = 0.86;
   const halfRow = new Float32Array(treatB ? g.h : 0);
   let maxHalf = 0, maxRad = 0, wingRow = 0;
@@ -394,6 +433,15 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
     const tb = (wy - yMin) / len;
     if (sizeCls === 'capital') {
       if (!onHullLayer(i)) return -1;
+      if (shade) {
+        // A weathered gradient: full at the ends, thinning in uneven patches
+        // toward grey, the far edge broken up rather than a straight line.
+        const p = Math.max(1 - tb / CAP_FADE_B, 1 - (1 - tb) / CAP_FADE_B);
+        if (p <= 0) return -1;
+        const q = p + 0.45 * (valueNoise((wx / len) * 14, (wy / len) * 14, fadeSeed) - 0.5);
+        if (q < 0.15) return -1;
+        return mixHex(teamHex, f.paint, Math.min(0.85, Math.pow(1 - Math.min(1, q), 1.6)));
+      }
       const bow = fadeStep(teamHex, f.paint, tb, 0, CAP_FADE_B);
       return bow >= 0 ? bow : fadeStep(teamHex, f.paint, 1 - tb, 0, CAP_FADE_B);
     }
@@ -669,8 +717,9 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
 
   if (sigilsOn && livery && hBase) {
     const deck = sizeCls === 'capital' ? parts.findIndex((p) => (p as { role?: string }).role === 'deck') : -1;
-    stampSigils(f, livery, hBase, deck >= 0 ? (i) => layer[i] === deck : null, yMin, len);
+    stampSigils(f, livery, hBase, deck >= 0 ? (i) => layer[i] === deck : null, yMin, len, teamHex);
   }
+  if (shade) weatherLivery(f, dist, hashStr(seedKey + ':wear'), sizeCls === 'capital');
 
   // Nav lights at the widest points: port (x<0) red, starboard green.
   if (opts.scrap) return f; // dead: no running lights
@@ -698,7 +747,7 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
       // just inside its rear edge), where the hull is deep enough to hold it.
       const step = 0.5 / g.ppu;
       for (let by = sternLine - lampR * 2; by > yMin + len * 0.5; by -= step) {
-        if (distAt(0, by) >= lampR * 2) { lamp(0, by, teamHex); break; }
+        if (distAt(0, by) >= lampR * 2) { lamp(0, by, lampHex); break; }
       }
     } else {
       // Running lights: up to 4 a side along the hull edge, clear of the
@@ -709,12 +758,43 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
         if (ty < 0 || ty >= g.h || Math.abs(ly - wideY) < len * 0.06) continue;
         const lx = halfRow[ty]! - inset;
         if (lx <= inset || distAt(lx, ly) <= 0) continue;
-        lamp(-lx, ly, teamHex);
-        lamp(lx, ly, teamHex);
+        lamp(-lx, ly, lampHex);
+        lamp(lx, ly, lampHex);
       }
     }
   }
   return f;
+}
+
+/**
+ * Shade experiments: weather every livery texel so the paint belongs to the
+ * hull. Mottled (~30-texel patches) and sun-faded toward the hull grey; on
+ * capitals, chips of bare metal (~3-texel noise, more near the hull edge).
+ * Sub-caps get a light mottle only, so their team colour stays strong.
+ */
+function weatherLivery(f: Fields, dist: Float32Array, seed: number, heavy: boolean): void {
+  const g = f.g, n = g.w * g.h;
+  const grey = lin(f.paint), metal = lin(PALETTE.metal);
+  const s = heavy ? 1 : 0.35;
+  for (let i = 0; i < n; i++) {
+    if (f.mat[i] !== MAT.LIVERY) continue;
+    const tx = i % g.w, ty = (i / g.w) | 0;
+    const n1 = valueNoise(tx * 0.033, ty * 0.033, seed);
+    const n2 = valueNoise(tx * 0.35, ty * 0.35, seed + 1);
+    const mott = 1 + s * 0.3 * (n1 - 0.5);
+    const fade = s * (0.1 + 0.2 * n1);
+    for (let c = 0; c < 3; c++) {
+      const a = f.albedo[i * 3 + c]! * mott;
+      f.albedo[i * 3 + c] = a + (grey[c]! - a) * fade;
+    }
+    if (!heavy) continue;
+    const wear = 0.18 * Math.max(0, 1 - dist[i]! / 3);
+    if (n2 + wear > 0.8) {
+      f.mat[i] = MAT.METAL;
+      f.key[i] = PALETTE.metal;
+      setAlbedo(f, i, metal, 0.78 + 0.25 * n1);
+    }
+  }
 }
 
 /** Smallest clear circle (radius, texels) that takes an emblem; below it a
@@ -754,6 +834,7 @@ function stampSigils(
   onDeck: ((i: number) => boolean) | null,
   yMin: number,
   len: number,
+  teamPaint = liveryPaint(livery.team),
 ): void {
   const g = f.g, n = g.w * g.h;
   const clear = new Uint8Array(n);
@@ -780,10 +861,10 @@ function stampSigils(
     for (let tx = 0; tx < g.w; tx++) if (f.cov[ty * g.w + tx]! > 0.5) h = Math.max(h, Math.abs(tx + 0.5 - g.ox));
     return h;
   };
-  const team = lin(liveryPaint(livery.team));
+  const team = lin(teamPaint);
   const paintAt = (i: number, a: number): void => {
     if (!ok[i] || a <= 0.02) return;
-    if (a >= 0.5) { paintLivery(f, i, livery.team); return; }
+    if (a >= 0.5) { paintEnamel(f, i, teamPaint, 1); return; }
     for (let c = 0; c < 3; c++) f.albedo[i * 3 + c] = f.albedo[i * 3 + c]! * (1 - a) + team[c]! * a;
   };
   /** Stamp a mark of radius R (texels) centred at texel coords (cx, cy). */

@@ -652,3 +652,66 @@ function pointIn(pts: ReadonlyArray<readonly [number, number]>, x: number, y: nu
   }
   return c;
 }
+
+/** Shade experiments 'b2' / 'b3' (owner, 2026-11-15): sub-cap hull darker and
+ *  team paint stronger than 'b'; capital paint weathered into the hull. */
+describe("livery shade experiments 'b2' / 'b3'", () => {
+  const TEAM = 0xff4444;
+  const lv = (t: Livery['treatment']): Livery => ({ treatment: t, team: TEAM, sigil: 0x1234 });
+  const meanLum = (f: Fields, m: number): number => {
+    let s = 0, c = 0;
+    for (let i = 0; i < f.cov.length; i++) {
+      if (f.cov[i]! <= 0.5 || f.mat[i] !== m) continue;
+      s += 0.2126 * f.albedo[i * 3]! + 0.7152 * f.albedo[i * 3 + 1]! + 0.0722 * f.albedo[i * 3 + 2]!; c++;
+    }
+    return c ? s / c : NaN;
+  };
+  const chroma = (f: Fields): number => {
+    let s = 0, c = 0;
+    for (let i = 0; i < f.cov.length; i++) {
+      if (f.mat[i] !== MAT.LIVERY) continue;
+      const r = f.albedo[i * 3]!, g = f.albedo[i * 3 + 1]!, b = f.albedo[i * 3 + 2]!;
+      s += Math.max(r, g, b) - Math.min(r, g, b); c++;
+    }
+    return s / c;
+  };
+
+  it('readLivery-shaped treatments keep the b layout (silhouette unchanged, paint present)', () => {
+    for (const t of ['b2', 'b3'] as const) {
+      const plain = forgeShip('fighter', { ppu: ppuFor('fighter') });
+      const f = forgeShip('fighter', { ppu: ppuFor('fighter'), livery: lv(t) });
+      for (let i = 0; i < f.cov.length; i++) expect(f.cov[i]).toBe(plain.cov[i]);
+      expect(f.mat.some((m) => m === MAT.LIVERY)).toBe(true);
+    }
+  });
+
+  it('a sub-cap hull gets darker b -> b2 -> b3, and its team paint stronger than b', () => {
+    const [b, b2, b3] = (['b', 'b2', 'b3'] as const).map((t) => forgeShip('heavy', { ppu: ppuFor('heavy'), livery: lv(t) }));
+    expect(meanLum(b2!, MAT.PAINT)).toBeLessThan(meanLum(b!, MAT.PAINT));
+    expect(meanLum(b3!, MAT.PAINT)).toBeLessThan(meanLum(b2!, MAT.PAINT));
+    expect(chroma(b2!)).toBeGreaterThan(chroma(b!) * 0.95);
+    expect(chroma(b3!)).toBeGreaterThan(chroma(b!));
+  });
+
+  it('a capital hull grey is untouched; its paint is toned down and chipped to bare metal', () => {
+    const id = 'battleship';
+    const b = forgeShip(id, { ppu: ppuFor(id), livery: lv('b') });
+    const b2 = forgeShip(id, { ppu: ppuFor(id), livery: lv('b2') });
+    expect(b2.paint).toBe(b.paint);
+    expect(chroma(b2)).toBeLessThan(chroma(b));
+    // Chips: METAL texels where 'b' had LIVERY.
+    let liv = 0, chips = 0;
+    for (let i = 0; i < b.mat.length; i++) {
+      if (b.mat[i] !== MAT.LIVERY) continue;
+      liv++;
+      if (b2.mat[i] === MAT.METAL) chips++;
+    }
+    expect(chips / liv).toBeGreaterThan(0.03);
+    expect(chips / liv).toBeLessThan(0.4);
+  });
+
+  it('running lights keep the bright team colour', () => {
+    const f = forgeShip('battleship', { ppu: ppuFor('battleship'), livery: lv('b2') });
+    expect(f.navLights.some((l) => l.color === liveryPaint(TEAM))).toBe(true);
+  });
+});

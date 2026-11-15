@@ -7,11 +7,14 @@ describe('readLivery', () => {
     expect(readLivery('?livery=a')).toBe('a');
     expect(readLivery('?room=sector&livery=b')).toBe('b');
     expect(readLivery('?livery=c&art=machined')).toBe('c');
+    expect(readLivery('?livery=b2')).toBe('b2');
+    expect(readLivery('?livery=b3&art=machined')).toBe('b3');
   });
   it('off, absent or unknown is undefined', () => {
     expect(readLivery('?livery=off')).toBeUndefined();
     expect(readLivery('')).toBeUndefined();
     expect(readLivery('?livery=d')).toBeUndefined();
+    expect(readLivery('?livery=b4')).toBeUndefined();
   });
   it('a livery forces Machined art unless ?art= says otherwise', () => {
     expect(resolveArtMode('?livery=a', true, null)).toBe('machined');
