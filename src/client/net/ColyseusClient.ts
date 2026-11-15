@@ -162,7 +162,7 @@ import { installLongtaskObserver } from '../debug/longtaskObserver';
 import { installPageLifecycleObserver } from '../debug/pageLifecycleObserver';
 import { recordServerGcPause, startHealthStatsPublisher } from '../debug/healthStats';
 import { GhostManager } from '../combat/GhostProjectile';
-import { HITSCAN_RANGE } from '@core/combat/Weapons';
+import { HITSCAN_RANGE, beamHalfWidth } from '@core/combat/Weapons';
 import { shipShotMuzzle } from '@core/combat/muzzle';
 import { tuningFor } from '@shared-types/shipScale/lookup';
 
@@ -6014,7 +6014,7 @@ export class ColyseusGameClient {
       const beamMax = beamMaxDist(wdef);
       // Remote drones/scrap are tested at their DRAWN pose (the pose the
       // turret aims at), not their predicted-timeline body.
-      const hit = skipHitscan ? null : this.displayHitscan().hitscan(fromX, fromY, fwdX, fwdY, beamMax, localId);
+      const hit = skipHitscan ? null : this.displayHitscan().hitscan(fromX, fromY, fwdX, fwdY, beamMax, localId, beamHalfWidth(wdef));
       // `?probe=ghost` diagnostic (laser "ghost at (0,0)" investigation,
       // 2026-06-03). When the beam stops on a body whose pose is within
       // ε of world origin, log the hitId — its namespace prefix names the
@@ -6032,7 +6032,7 @@ export class ColyseusGameClient {
       // Clipped at a real hit ⇒ solid all the way to the target (solidDist===dist,
       // no fade). No hit ⇒ draw to max with the solid part capped at the optimal
       // range and a fade beyond it to nothing.
-      const drawDist = hit ? this.shieldEdgeDist(hit, fromX, fromY, fwdX, fwdY, beamMax) : beamMax;
+      const drawDist = hit ? this.shieldEdgeDist(hit, fromX, fromY, fwdX, fwdY, beamMax, beamHalfWidth(wdef)) : beamMax;
       liveBeams.set(mount.id, {
         dist: drawDist,
         // No hit ⇒ the SOLID core is only VISUAL_BEAM_SOLID_FRAC of the optimal
@@ -6055,12 +6055,13 @@ export class ColyseusGameClient {
    * Recomputing the distance to the shield sphere ANALYTICALLY guarantees
    * the beam terminates exactly on the ring. Returns the predWorld dist
    * unchanged for a shield-DOWN/hull hit, an asteroid, or a miss.
+   * A wide beam (`halfWidth`, the heavy beam) meets the ring grown by its half-width (#15).
    * Allocation-free — `rayHitsSphere` is pure scalar (Invariant #14).
    */
   private shieldEdgeDist(
     hit: { hitId: string; dist: number },
     fromX: number, fromY: number, fwdX: number, fwdY: number,
-    maxRange: number = HITSCAN_RANGE,
+    maxRange: number = HITSCAN_RANGE, halfWidth = 0,
   ): number {
     const hitId = hit.hitId;
     if (hitId.startsWith('swarm-')) {
@@ -6068,7 +6069,7 @@ export class ColyseusGameClient {
       // Drones only (kind===1); asteroids (kind===0) have no shield.
       if (sw && sw.kind === 1 && sw.shieldDown !== true && sw.shipKind) {
         // The shared ship hit shape, as the server resolves it (#15).
-        const d = shipRayHit(sw.shipKind, true, fromX, fromY, fwdX, fwdY, maxRange, sw.x, sw.y, sw.angle);
+        const d = shipRayHit(sw.shipKind, true, fromX, fromY, fwdX, fwdY, maxRange, sw.x, sw.y, sw.angle, halfWidth);
         if (d !== null) return d;
       }
       return hit.dist;
@@ -6076,7 +6077,7 @@ export class ColyseusGameClient {
     const ship = this.mirror.ships.get(hitId);
     if (ship && ship.shieldDown !== true) {
       // The same shape as a drone of that kind (`SectorRoom.playerHitscanDist`, #15).
-      const d = shipRayHit(ship.kind ?? null, true, fromX, fromY, fwdX, fwdY, maxRange, ship.x, ship.y, ship.angle);
+      const d = shipRayHit(ship.kind ?? null, true, fromX, fromY, fwdX, fwdY, maxRange, ship.x, ship.y, ship.angle, halfWidth);
       if (d !== null) return d;
     }
     return hit.dist;
@@ -7217,7 +7218,7 @@ export class ColyseusGameClient {
       sink: predSink,
       world: this.displayHitscan(),
       clientShotId: shotId,
-      mode: weaponDef.mode,
+      mode: weaponDef.mode, halfWidth: beamHalfWidth(weaponDef),
       damage: weaponDef.damage,
       mounts: mountGeom,
       maxDist: predMaxDist,

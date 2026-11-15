@@ -30,15 +30,19 @@ export function segmentNearCircle(
   return px * px + py * py <= r * r;
 }
 
-/** Ray vs a wreck piece at (cx, cy, angle): distance to entry, or null. */
+/** Ray vs a wreck piece at (cx, cy, angle): distance to entry, or null.
+ *  `halfWidth`: a wide beam's (`beamHalfWidth`), swept as a capsule; 0 ⇒ thin.
+ *  (`wreckSweepHit` refines a projectile step to the bare parts, ignoring its
+ *  radius, so a beam's width is tested here, on the same parts.) */
 export function wreckRayHit(
   parts: ReadonlyArray<ReadonlyArray<Vec2>> | undefined, radius: number,
   fx: number, fy: number, dx: number, dy: number, maxDist: number,
   cx: number, cy: number, angle: number,
+  halfWidth = 0,
 ): number | null {
-  if (parts === undefined) return rayHitsSphere(fx, fy, dx, dy, maxDist, cx, cy, radius);
-  if (!segmentNearCircle(fx, fy, dx * maxDist, dy * maxDist, cx, cy, radius)) return null;
-  return rayHitsShipPolygon(fx, fy, dx, dy, maxDist, cx, cy, angle, parts);
+  if (parts === undefined) return rayHitsSphere(fx, fy, dx, dy, maxDist, cx, cy, radius + halfWidth);
+  if (!segmentNearCircle(fx, fy, dx * maxDist, dy * maxDist, cx, cy, radius + halfWidth)) return null;
+  return rayHitsShipPolygon(fx, fy, dx, dy, maxDist, cx, cy, angle, parts, halfWidth);
 }
 
 /** One projectile step vs a wreck piece: entry + hit point, or null. */

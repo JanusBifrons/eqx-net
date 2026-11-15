@@ -165,7 +165,7 @@ import type { NpcBaseTrade } from '../economy/ConvoyDirector.js';
 import { TARGET_MINUTES as CONVOY_TARGET_MINUTES } from '../../core/economy/convoys.js';
 import { RECIPES, blueprintProductFor, isRecipeId } from '../../shared-types/recipes.js';
 import { blueprintQuality } from '../../shared-types/blueprints.js';
-import { rollAsteroidResource, type AsteroidFieldFeature, type AsteroidResourceId } from '../../shared-types/asteroidResources.js';
+import { ASTEROID_YIELD, rollAsteroidResource, type AsteroidFieldFeature, type AsteroidResourceId } from '../../shared-types/asteroidResources.js';
 import { getSector, isNeighbour } from '../../core/galaxy/galaxy.js';
 import type { GoodId } from '../../shared-types/goods.js';
 import { usesAmmo } from '../../shared-types/ammo.js';
@@ -2302,8 +2302,8 @@ export class SectorRoom extends Room<SectorState> {
       resolveInstanceMounts: (ship) => this.resolveInstanceMounts(ship),
       resolveInstanceFireMounts: (ship, slotId) => this.resolveInstanceFireMounts(ship, slotId),
       mountWorldOrigin: (x, y, ang, m) => this.mountWorldOrigin(x, y, ang, m),
-      playerHitscanDist: (s, fx, fy, dx, dy, md, cx, cy, ang) =>
-        this.playerHitscanDist(s, fx, fy, dx, dy, md, cx, cy, ang),
+      playerHitscanDist: (s, fx, fy, dx, dy, md, cx, cy, ang, hw) =>
+        this.playerHitscanDist(s, fx, fy, dx, dy, md, cx, cy, ang, hw),
       spawnServerProjectile: (ownerId, x, y, vx, vy, dmg, r, mt, wId) =>
         this.spawnServerProjectile(ownerId, x, y, vx, vy, dmg, r, mt, wId),
       spawnServerMissile: (ownerId, x, y, dx, dy, def) =>
@@ -2346,14 +2346,14 @@ export class SectorRoom extends Room<SectorState> {
       playerToSlot: this.playerToSlot,
       getActiveShip: (pid) => this.getActiveShip(pid),
       shipPoseCache: this.shipPoseCache,
-      playerHitscanDist: (s, fx, fy, dx, dy, md, cx, cy, ang) =>
-        this.playerHitscanDist(s, fx, fy, dx, dy, md, cx, cy, ang),
+      playerHitscanDist: (s, fx, fy, dx, dy, md, cx, cy, ang, hw) =>
+        this.playerHitscanDist(s, fx, fy, dx, dy, md, cx, cy, ang, hw),
       applyDamage: (targetId, shooterId, damage, hitX, hitY, dirX, dirY, weaponId) =>
         this.applyDamage(targetId, shooterId, damage, hitX, hitY, dirX, dirY, weaponId),
       // Friendly fire (owner decision 2026-11-10): the beam meets whatever is
       // in its path, its own side and neutral structures included.
-      nonPlayerRayHit: (fx, fy, dx, dy, maxDist, skipId, passDebris) =>
-        this.nonPlayerRayHit(fx, fy, dx, dy, maxDist, skipId, passDebris),
+      nonPlayerRayHit: (fx, fy, dx, dy, maxDist, skipId, passDebris, hw) =>
+        this.nonPlayerRayHit(fx, fy, dx, dy, maxDist, skipId, passDebris, hw),
       blockBeamAtWall: (fx, fy, dx, dy, maxDist, damage) =>
         this.blockShotAtWall(fx, fy, dx, dy, maxDist, damage),
       broadcast: (type, msg) => this.broadcast(type, msg),
@@ -2985,7 +2985,7 @@ export class SectorRoom extends Room<SectorState> {
       chargeCapacitors: (members, spare) => this.teleporters.chargeCapacitors(members, spare),
       drawAsteroidResources: (entityId, amount) => this.oreDraw.draw(entityId, amount),
       // P2c — asteroid kinds, extractor goods into network storage, nebulae.
-      asteroidResourceOf: (entityId) => this.swarmRegistry.getByEntityId(entityId)?.asteroidResource ?? 'rock',
+      asteroidYieldOf: (entityId) => ASTEROID_YIELD[this.swarmRegistry.getByEntityId(entityId)?.asteroidResource ?? 'rock'],
       depositGoods: (rec, good, n) => this.production.deposit(rec, good, n),
       canDepositGoods: (rec, goods) => this.production.canDeposit(rec, goods),
       sectorHasNebula: () => this.sectorFeatures.includes('nebula'),
@@ -8833,13 +8833,14 @@ export class SectorRoom extends Room<SectorState> {
   private playerHitscanDist(
     ship: ShipState,
     fx: number, fy: number, dx: number, dy: number, maxDist: number,
-    cx: number, cy: number, angle: number,
+    cx: number, cy: number, angle: number, halfWidth = 0,
   ): number | null {
     // The ship's own hit shape, whoever flies it (`shipHitShape.ts`, owner's
     // rule 2026-11-13): the shield bubble (radius + shieldPad, the drawn aura)
     // while its shield is up, the hull once it is down, a capital's hull either
-    // way. NPC beams and bolts on drones go through the same helper.
-    return shipRayHit(ship.kind, ship.shield > 0, fx, fy, dx, dy, maxDist, cx, cy, angle);
+    // way. NPC beams and bolts on drones go through the same helper. A wide
+    // beam (`halfWidth`, the heavy beam) hits by its width.
+    return shipRayHit(ship.kind, ship.shield > 0, fx, fy, dx, dy, maxDist, cx, cy, angle, halfWidth);
   }
 
   /** Reused result of `nonPlayerRayHit` (#14). */
@@ -8854,9 +8855,10 @@ export class SectorRoom extends Room<SectorState> {
    * turret beam. Returns the reused `_rayHit` or null. Alloc-free.
    * `passDebris`: wreck pieces and scrap don't stop it (`isDebris`; a heavy
    * beam's kill follow-through runs on through the cut at full length).
+   * `halfWidth`: a wide beam hits by its width (`beamHalfWidth`); 0 ⇒ thin.
    */
   private nonPlayerRayHit(
-    fx: number, fy: number, dx: number, dy: number, maxDist: number, skipId: string, passDebris = false,
+    fx: number, fy: number, dx: number, dy: number, maxDist: number, skipId: string, passDebris = false, halfWidth = 0,
   ): { id: string; wireId: string; dist: number } | null {
     let best = maxDist;
     let bestId: string | null = null;
@@ -8867,8 +8869,8 @@ export class SectorRoom extends Room<SectorState> {
       // A parked hull is the same ship it was when flown (#18), not a fighter.
       const ls = this.state.ships.get(shipInstanceId);
       const d = ls !== undefined
-        ? this.playerHitscanDist(ls, fx, fy, dx, dy, best, p.x, p.y, p.angle)
-        : rayHitsSphere(fx, fy, dx, dy, best, p.x, p.y, GLOBAL_SHIP_TUNING.hitRadius);
+        ? this.playerHitscanDist(ls, fx, fy, dx, dy, best, p.x, p.y, p.angle, halfWidth)
+        : rayHitsSphere(fx, fy, dx, dy, best, p.x, p.y, GLOBAL_SHIP_TUNING.hitRadius + halfWidth);
       if (d !== null && d < best) { best = d; bestId = shipInstanceId; bestEid = -1; }
     }
     for (const rec of this.swarmRegistry.all()) {
@@ -8879,7 +8881,7 @@ export class SectorRoom extends Room<SectorState> {
       const b = slotBase(rec.slot);
       const d = this.swarmRayHit(
         rec, fx, fy, dx, dy, best,
-        this.sabF32[b + SLOT_X_OFF]!, this.sabF32[b + SLOT_Y_OFF]!, this.sabF32[b + SLOT_ANGLE_OFF]!,
+        this.sabF32[b + SLOT_X_OFF]!, this.sabF32[b + SLOT_Y_OFF]!, this.sabF32[b + SLOT_ANGLE_OFF]!, halfWidth,
       );
       if (d !== null && d < best) { best = d; bestId = rec.id; bestEid = rec.entityId; }
     }
@@ -8893,17 +8895,18 @@ export class SectorRoom extends Room<SectorState> {
 
   /** Narrow phase for one swarm entity at (cx, cy, ca): the same shapes every
    *  NPC/turret beam uses (rock polygon, structure box, ship circle + capital
-   *  hull refine). Shared by `nonPlayerRayHit` and the line-of-fire gate. */
+   *  hull refine). Shared by `nonPlayerRayHit` and the line-of-fire gate.
+   *  `hw`: a wide beam's half-width, the same capsule on every shape. */
   private swarmRayHit(
     rec: SwarmEntityRecord, fx: number, fy: number, dx: number, dy: number, maxDist: number,
-    cx: number, cy: number, ca: number,
+    cx: number, cy: number, ca: number, hw = 0,
   ): number | null {
-    if (rec.kind === 0 && rec.vertices) return rayHitsConvexPolygon(fx, fy, dx, dy, maxDist, cx, cy, ca, rec.vertices);
-    if (isWreckPiece(rec)) return wreckRayHit(rec.wreckParts, rec.radius, fx, fy, dx, dy, maxDist, cx, cy, ca);
-    if (rec.halfW !== undefined && rec.halfH !== undefined) return rayHitsBox(fx, fy, dx, dy, maxDist, cx, cy, rec.halfW, rec.halfH, rec.boxes);
+    if (rec.kind === 0 && rec.vertices) return rayHitsConvexPolygon(fx, fy, dx, dy, maxDist, cx, cy, ca, rec.vertices, hw);
+    if (isWreckPiece(rec)) return wreckRayHit(rec.wreckParts, rec.radius, fx, fy, dx, dy, maxDist, cx, cy, ca, hw);
+    if (rec.halfW !== undefined && rec.halfH !== undefined) return rayHitsBox(fx, fy, dx, dy, maxDist, cx, cy, rec.halfW, rec.halfH, rec.boxes, hw);
     // A ship: the same shape as if a player flew it (`shipHitShape.ts`).
-    if (rec.kind === 1 && rec.shipKind) return shipRayHit(rec.shipKind, !rec.shieldDown, fx, fy, dx, dy, maxDist, cx, cy, ca);
-    return rayHitsSphere(fx, fy, dx, dy, maxDist, cx, cy, rec.radius);
+    if (rec.kind === 1 && rec.shipKind) return shipRayHit(rec.shipKind, !rec.shieldDown, fx, fy, dx, dy, maxDist, cx, cy, ca, hw);
+    return rayHitsSphere(fx, fy, dx, dy, maxDist, cx, cy, rec.radius + hw);
   }
 
   // ─── NPC line of fire (friendly fire slice 2) ────────────────────────────

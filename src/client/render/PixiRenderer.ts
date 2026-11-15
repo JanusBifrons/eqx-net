@@ -82,7 +82,7 @@ import {
 import { newSpeedFxSample, speedFxSampleInto } from './camera/speedFxSample';
 import { GroupBoundsScanner } from './camera/groupBounds';
 import type { CameraCue, CameraGroup } from '@core/contracts/cameraScript';
-import { REMOTE_BEAM_STYLE, LIVE_BEAM_STYLE, liveBeamLook, MINING_BEAM_STYLE, remoteBeamStyleForMount, remoteBeamLine, remoteBeamSolidLen, addBeamLights, beamLightBudget, BeamHitMemory, type RemoteBeamLine } from './beamStyles';
+import { REMOTE_BEAM_STYLE, LIVE_BEAM_STYLE, liveBeamLook, liveBeamLine,MINING_BEAM_STYLE, remoteBeamStyleForMount, remoteBeamLine, remoteBeamSolidLen, addBeamLights, beamLightBudget, BeamHitMemory, type RemoteBeamLine } from './beamStyles';
 import { MountVisualManager } from './MountVisualManager';
 import { BackgroundGrid } from './BackgroundGrid';
 import { StarfieldBackground } from './StarfieldBackground';
@@ -2490,14 +2490,9 @@ export class PixiRenderer implements IRenderer {
         const mountIdx = localMounts.findIndex((m) => m.id === mountId);
         const mount = mountIdx >= 0 ? localMounts[mountIdx] : undefined;
         const currentMountAngle = mountIdx >= 0 ? (localShip.mountAngles?.[mountIdx] ?? 0) : 0;
-        const origin = applyMountOffset(localShip.x, localShip.y, localShip.angle, mount);
-        const fireAngle = localShip.angle + (mount?.baseAngle ?? 0) + currentMountAngle;
-        const fwdX = -Math.sin(fireAngle);
-        const fwdY =  Math.cos(fireAngle);
-        const fromX = origin.x + fwdX * 20;
-        const fromY = origin.y + fwdY * 20;
-        const toX = fromX + fwdX * beam.dist;
-        const toY = fromY + fwdY * beam.dist;
+        // From the barrel tip (the shared muzzle the client ray is cast from).
+        const line = liveBeamLine(localKind, mount, localShip.x, localShip.y, localShip.angle, currentMountAngle, beam.dist, this._remoteBeamLine);
+        const fromX = line.fromX, fromY = line.fromY, toX = line.toX, toY = line.toY;
         let slot = this._liveBeamCache[slotIdx];
         if (!slot) {
           slot = { mountId, fromX: 0, fromY: 0, toX: 0, toY: 0 };

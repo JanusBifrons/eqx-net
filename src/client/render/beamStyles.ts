@@ -12,6 +12,9 @@
 import type { BeamSpriteStyle } from './BeamSpritePool.js';
 import type { BeamCrossSection } from './beamCrossSection.js';
 import { HEAVY_BEAM_WIDTH, MINING_LASER_WIDTH } from '../../core/combat/WeaponCatalogue.js';
+import type { ShipKind, WeaponMount } from '../../shared-types/shipKinds/types.js';
+import { shipShotMuzzle } from '../../core/combat/muzzle.js';
+import { shipTuning } from '../../shared-types/shipScale/tuning.js';
 
 /** Remote players' / drones' / turrets' combat hitscan beam — thin warm amber.
  *  `taper` (P3.13) — combat beams fade toward the tip of their range. */
@@ -305,6 +308,31 @@ export function remoteBeamLine(
     out.toX = out.fromX + fx * range;
     out.toY = out.fromY + fy * range;
   }
+  return out;
+}
+
+/**
+ * The line the pilot's OWN beam from `mount` is drawn along this frame (game
+ * space, PixiRenderer's live loop), into `out` (no allocation, #14). `ship*`
+ * is the drawn hull pose, `mountAngle` the turret's slewed angle and `dist`
+ * the client ray's length (`mirror.liveBeams[mount].dist`).
+ */
+export function liveBeamLine(
+  kind: ShipKind, mount: WeaponMount | undefined,
+  shipX: number, shipY: number, shipAngle: number, mountAngle: number,
+  dist: number, out: RemoteBeamLine,
+): RemoteBeamLine {
+  const c = Math.cos(shipAngle), s = Math.sin(shipAngle);
+  const lx = mount?.localX ?? 0, ly = mount?.localY ?? 0;
+  const a = shipAngle + (mount?.baseAngle ?? 0) + mountAngle;
+  const fx = -Math.sin(a), fy = Math.cos(a);
+  // The barrel tip: the point the client ray (`ColyseusClient.updateLiveBeam`)
+  // and the server's fire ray leave (core/combat/muzzle.ts, #15).
+  const muzzleD = mount ? shipShotMuzzle(kind, mount) : shipTuning(kind).muzzleClearance;
+  out.fromX = shipX + lx * c - ly * s + fx * muzzleD;
+  out.fromY = shipY + lx * s + ly * c + fy * muzzleD;
+  out.toX = out.fromX + fx * dist;
+  out.toY = out.fromY + fy * dist;
   return out;
 }
 
