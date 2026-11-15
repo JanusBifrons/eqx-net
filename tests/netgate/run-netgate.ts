@@ -25,16 +25,19 @@ import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { EqxLatencyProxy } from './eqxLatencyProxy';
 import { PROFILE_PRIMARY, PROFILE_REGRESSION_INJECT } from './latencyProfile';
+import { resolveNetgatePorts } from './netgatePorts';
 
 // NETGATE_PORT_OFFSET shifts every port (default 0 = the canonical set), so
 // the gate can run beside a dev session on 2567/5173 that another session
-// owns — killPort() below would otherwise reclaim it.
-const PORT_OFFSET = Number(process.env['NETGATE_PORT_OFFSET'] ?? 0);
-const SERVER_PORT = 2567 + PORT_OFFSET;
-const PROXY_BASE_PORT = 2568 + PORT_OFFSET; // baseline arm → proxy
-const PROXY_HEAD_PORT = 2569 + PORT_OFFSET; // HEAD arm → proxy
-const VITE_BASE_PORT = 5274 + PORT_OFFSET;
-const VITE_HEAD_PORT = 5273 + PORT_OFFSET;
+// owns — killPort() below would otherwise reclaim it. The Playwright child
+// gets the same offset as EQX_E2E_PORT_OFFSET (see netgatePorts.ts), so its
+// global setup mints the token from THIS server, not :2567.
+const LANE = resolveNetgatePorts(process.env);
+const SERVER_PORT = LANE.server;
+const PROXY_BASE_PORT = LANE.proxyBase;
+const PROXY_HEAD_PORT = LANE.proxyHead;
+const VITE_BASE_PORT = LANE.viteBase;
+const VITE_HEAD_PORT = LANE.viteHead;
 const PORTS = [SERVER_PORT, PROXY_BASE_PORT, PROXY_HEAD_PORT, VITE_BASE_PORT, VITE_HEAD_PORT];
 const isWin = process.platform === 'win32';
 
@@ -256,7 +259,7 @@ async function main(): Promise<void> {
         `(${regress ? 'REGRESSION_INJECT — acceptance self-test' : 'PRIMARY'})`,
     );
 
-    log('starting Vite arms (baseline :5274, HEAD :5273)…');
+    log(`starting Vite arms (baseline :${VITE_BASE_PORT}, HEAD :${VITE_HEAD_PORT})…`);
     viteBase = startVite(baseDir, VITE_BASE_PORT, PROXY_BASE_PORT);
     viteHead = startVite(headDir, VITE_HEAD_PORT, PROXY_HEAD_PORT);
     await waitFor(
@@ -290,6 +293,8 @@ async function main(): Promise<void> {
           shell: isWin,
           env: {
             ...process.env,
+            // Global setup, baseURL and SERVER_URL follow the gate's lane.
+            ...LANE.playwrightEnv,
             CI_SKIP_WEBSERVER: '1',
             // global-setup mints its test JWT from PLAYWRIGHT_SERVER_URL (default
             // :2567): point it at THIS run's server so NETGATE_PORT_OFFSET works.

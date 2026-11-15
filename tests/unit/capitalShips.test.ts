@@ -110,8 +110,11 @@ describe('the catalogue capitals', () => {
     expect(JSON.stringify((rail.shape as { hull: unknown }).hull)).toBe(JSON.stringify((base.shape as { hull: unknown }).hull));
     expect(rail.mounts.map((m) => m.id)).toEqual(base.mounts.map((m) => m.id));
     for (const [i, m] of rail.mounts.entries()) {
-      if (m.id.startsWith('main-')) expect(m.weaponId).toBe('railgun');
-      else expect(m.weaponId).toBe(base.mounts[i]!.weaponId);
+      if (m.id.startsWith('main-')) {
+        expect(m.weaponId).toBe('railgun');
+        // One barrel, one slug per shot (the fire path shoots one per barrel).
+        expect(m.barrels).toBe(1);
+      } else expect(m.weaponId).toBe(base.mounts[i]!.weaponId);
     }
   });
 

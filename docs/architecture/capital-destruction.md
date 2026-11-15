@@ -781,6 +781,19 @@ slows in slow motion and speeds up at 4×.
   near-parallel cracks closer than ~0.56 beams (`fractureHull.killFocus.test.ts`
   "no two cracks run near-parallel"), and every piece keeps its art. Fixed
   by drawing each piece's glow on its own side only (above).
+- **The "near-black gaps" (rail-channel take, 2026-11-15) are the sky.**
+  Review: the channel and the cracks between parted pieces read as black
+  shapes pasted on the hull. Measured, not a render bug: in the GPU-lit
+  look (plain break-up in `wreck-test`, and the rail-channel scene with the
+  pilot's parked heavy cruiser) every gap pixel equals the bare backdrop
+  with the whole ship layer hidden (0 of ~15,600 gap pixels darker); over a
+  magenta clear colour the gaps are fully transparent; and no other display
+  object darkens them (each hidden in turn). On the filmed frames the gap
+  matches the sky beside it (channel band 40–47 luma where a nebula wisp
+  runs through it, the open sky next to it 16–18 with no wisp). The sky
+  behind a capital at push-in zoom is mostly near-black, so a hole next to
+  a lit hull reads as a black shape. Any change is a look decision for the
+  owner, not a fix.
 
 ### S4: secondary breaks and the catastrophic flash
 
@@ -788,8 +801,107 @@ slows in slow motion and speeds up at 4×.
   later: a deterministic re-fracture of that piece with a derived seed
   (`fnvMixU32(seed, pieceIndex)`), scheduled in server ticks, never wall time.
   It travels as a new descriptor that names its parent piece.
+
+#### Re-split: the core child fracture (salvage stream PR 3, 2026-11-15)
+
+A wreck piece can break again through the SAME `fractureHull` (no fork):
+`wreckChildGeometry(chain)` (`src/core/destruction/wreckChildren.ts`)
+re-fractures a piece's own outline. The chain is the root wreck's
+`WreckFractureInputs` plus one step per break: `{ pieceIndex, killX, killY,
+cutKind?, cutAng?, cutW? }`, the kill point in the hull's 1× Pixi-up frame
+(the fracture projects it onto the piece's outline) and the breaking weapon's
+kill cut, as the root descriptor carries it. Each step's seed is
+`fnvMixU32(parentSeed, pieceIndex)` (`wreckChildSeed`). A chain with no steps
+is the root wreck; a step naming a missing piece, or a kind whose profile has
+no `resplit`, gives no children.
+
+- **Split, not changed.** `wreckPieceGeometry` is now
+  `fracturePiecesToGeometry(kind, wreckRootFracture(input))`
+  (`wreckPieceFrame.ts`): the raw pieces in the hull's 1× frame, then the
+  body-frame geometry. Children go through the same second half, so they come
+  out in the root's frame (centroid in the ship's scaled math-up frame, mass
+  from area at the kind's density); the server places a child from its parent
+  piece's live pose as it placed the parent from the dead hull's.
+- **No algorithm change, so `FRACTURE_ALGO_VERSION` stays 10.** The root
+  output is byte-identical (golden in `wreckChildren.test.ts`, captured on
+  main before the split); the chain is additive. A child fracture runs in
+  fixed-count mode (no damage inputs: the cap is the target).
+- **Old cracks keep their kind.** The fracture marks its input's edges
+  `EDGE_HULL`; a child edge lying on one of its parent's cut edges takes that
+  edge's kind back (`inheritEdgeKinds`), so an old crack still glows and still
+  pairs as a seam.
+- **Options per profile** (`DESTRUCTION_PROFILES[*].resplit`; `none` is null).
+  Integrity is hidden and server-side: `I_max = clamp01(m_piece / shipBodyMass)
+  × maxHull × integrityMul`, at least `integrityMinFrac × maxHull`. At 0 a
+  piece of at least `minAreaFrac` of the hull's area splits; a smaller one
+  becomes a salvage pod worth its mass share of `salvagePerHull`.
+
+| | capital | subcap |
+|---|---|---|
+| `minAreaFrac` | 0.02 | 0.25 |
+| `integrityMul` | 0.5 | 1 |
+| `integrityMinFrac` | 0.01 | 0.05 |
+| `salvagePerHull` | 200 | 10 |
+| child `maxPieces` | 3 | 2 |
+| child fracture | chunky (sound primary, `soundMinShare` 0.3, min width 0.36 beam, extra chunk 0.4), fans and far crack off, capital jag | chunky, same shares, no extra chunk, sub-cap jag |
+
+- **The sliver spike.** `fractureHull` reads the ship-shaped keel, beam and
+  tip from whatever outline it gets (covariance axis, extent across it), so a
+  piece is just a smaller hull to it. Measured over every capital kind and six
+  sub-capitals (fighter, heavy, gunship, missile frigate, robot square, trader
+  hauler), three hits each (a bow-quarter hit and two violent beam hits),
+  every root piece re-split and every child once more (depth 2): each child is
+  at least 0.38 of its parent's least width, at most 4.8 long for its width (a
+  long hull half keeps its own shape), at least 9.8 % of its parent's area (a
+  capital's optional third chunk; sub-caps >= 29 %), and at most 21 convex
+  parts (sub-caps <= 3). No fracture option was needed. Lock:
+  `wreckChildren.test.ts` "child fracture spike" (bounds 0.3 / 5.5 / 0.08 /
+  24).
 - **Catastrophic case.** A big white flash, plus a blast that damages nearby
   ships. It waits on the owner's answer about how rare it is (§6).
+
+#### Re-split on the wire: the descriptor chain (salvage stream PR 4, 2026-11-15)
+
+A child wreck is an ordinary `WreckDescriptor` with a NEW `wreckId` that
+names its parent: `parentWreck` (the parent's wreckId, u16) and
+`parentPiece` (the piece that broke, the parent's `componentIndex`, u8). The
+descriptor is ONE step of the chain: `killX`/`killY` are the breaking hit and
+`cutKind`/`cutAng`/`cutW` its kill cut, in the hull's 1× Pixi-up frame as
+for a root. `parentKind` and `algoVersion` repeat the root's; `seed` is the
+child's own fracture seed, `wreckChildSeed(parent.seed, parentPiece)`, so
+every link is checkable. `killBlowDamage`, `recentDamageRate` and
+`snapChance` are not child inputs (the kind's `resplit` profile sets the
+fracture); the server sends 0.
+
+- **Both or neither.** `parentWreck` and `parentPiece` are present together
+  (a child) or absent (a root), and a wreck is never its own parent: the zod
+  `WreckDescriptorSchema` refine and the alloc-free `isWreckDescriptor`
+  enforce the same rule (`wreckWire.test.ts`).
+- **Pieces as today.** A child wreck's pieces ride the binary swarm wire with
+  its own `wreckId` and their index as `componentIndex`; no record field
+  changes, so `SWARM_WIRE_VERSION` stays 5. The descriptor rides the existing
+  welcome / `wreckAdds` / `wreckSync` paths by reference (`WreckWireDeltas`
+  diffs whole descriptors), so the new fields go through unchanged.
+- **Client resolve.** `WreckGeometryStore` walks parent descriptors to the
+  root, builds the `WreckChildChain` and calls the shared
+  `wreckChildGeometry` (`resolveChildWreckPieces`, pure). A link that
+  disagrees with its parent (kind, version, seed) or a chain deeper than
+  `MAX_WRECK_CHAIN_DEPTH` (16, a cycle guard) resolves to nothing.
+- **Out of order is normal.** A child can land before its parent (an add
+  before the resync chunk holding the parent, the renderer seeing the mirror
+  in id order). The store keeps it DEFERRED: its pieces read null (no body,
+  no sprite) and it retries on the first lookup after the wreck set changes.
+  A resolved child re-checks its ancestors only after the set changes, and
+  rebuilds when one was replaced (a recycled id). Nothing is fractured per
+  lookup in the steady state.
+- **Contract (server, salvage PR 5):** every ancestor descriptor stays on the
+  wire while any descendant lives (a refcount on the parent wreck), even when
+  the parent has no live pieces of its own. An ancestor that leaves first
+  leaves its descendants unresolved until it is back.
+- **Locks:** `tests/integration/wire/wreckGeometryParity.test.ts` "wreck
+  child chains" (server `wreckChildGeometry` == the client's resolve, bit for
+  bit, depth 1 and 2, child before parent, parent removed and recycled,
+  renderer path, `WreckWireDeltas` pass-through, malformed links).
 
 ### Later: wrecks as terrain and salvage
 
@@ -1923,24 +2035,43 @@ counts unchanged, budgets not re-set. Locks tightened: "read as broken"
 
 ### Kill cuts: beam slices and railgun channels (fracture v9, 2026-11-14)
 
-Plan "beam slices, railgun channels, capital heavy beams", steps 2–3 (the
-fracture and the wire; the server's death wiring, the instant hold and the
-glow come later). Owner: a heavy-beam kill slices the ship along the beam's
+Plan "beam slices, railgun channels, capital heavy beams", steps 2–4 (the
+fracture, the wire, the server's death wiring, the instant split and the
+look of a cut kill). Owner: a heavy-beam kill slices the ship along the beam's
 line; a railgun kill erases a straight channel as wide as the bolt.
 
-- **Weapon record.** `WeaponDefBase.killCut?: { kind: 'slice' } | { kind:
-  'channel'; width }` (`combat/WeaponCatalogue.ts`, `width` in world units).
-  No weapon sets it yet.
+- **Weapon record.** `WeaponDefBase.killCut?: { kind: 'slice'; width? } |
+  { kind: 'channel'; width }` (`combat/WeaponCatalogue.ts`, `width` in world
+  units). The heavy beam sets `{ kind: 'slice', width: HEAVY_BEAM_WIDTH }`
+  (60 u, v10), the capital railgun `{ kind: 'channel', width:
+  RAILGUN_BOLT_WIDTH }`.
+- **Wide slice (v10, 2026-11-15).** Owner: "the slice is too thin compared to
+  the width of the beam". A slice with a width over 0 erases a straight strip
+  that wide along its line through the channel's code (two straight
+  `EDGE_CUT` lines at ±width/2, the strip and any part under
+  `CHANNEL_SLIVER_SHARE` beside it dropped), keeping the slice's sliver slide
+  and its `slice` kind on the wire (`cutKind: 'slice'`, so the client still
+  tints it violet; the descriptor carries `cutW`, which the server now sends
+  for any cut with a width). Its banks part like the channel's
+  (`findSeams(geom, cutW)` for any cut kind). The violence table, the v10
+  splinters and the straight cut edges are as for a channel. The client
+  draws the heavy beam's core `HEAVY_BEAM_WIDTH` wide too
+  (`HEAVY_BEAM_STYLE.width`, weapon-mounts.md "Heavy beam look"), so the gap
+  and the beam that made it match. A slice with width 0 is v9's zero-width
+  line. Locks: "golden: v9 kill cuts" (`wideSlice`), `wreckPieces.test.ts`
+  banks part (slice), `wreckGeometryParity` "battleship wide slice",
+  `beamStyles.test.ts`, `capitalWrecks.test.ts`.
 - **Fracture input.** `FractureInput.cut?: { kind, dirX, dirY, width }` in the
   hull's frame. The line runs through the kill point (on the outline) along
   the direction; a zero direction is no cut.
   - **Slice:** that line IS the primary crack: no seeded tilt, no tip shift,
     no sub-capital sound-primary move. Its edges are `EDGE_CUT`, which
     `jagged()` leaves out (like `EDGE_SECTION`), so the main cut is dead
-    straight while the zone, fan, far and extra cracks stay jagged. The
-    secondary cracks and the piece count are exactly the un-cut ones: they
-    are laid out from the line the hull would have cracked along without the
-    cut (`crackPrimary`), and the violence table and snap draw are unchanged.
+    straight while the other cracks stay jagged. The violence table and snap
+    draw are unchanged. On a sub-capital the secondary crack (`extraCrack`) is
+    the un-cut one, laid out from the line the hull would have cracked along
+    without the cut (`crackPrimary`). A capital's secondary cracks are
+    splinters off the cut (v10, next bullet).
   - **Sliver guard (slice):** where the line through the kill point would
     leave a piece under the profile minimum (capital: `PRIMARY_MIN_SIDE` 3 %;
     sub-capital: its `soundMinShare`), it slides toward the hull's centroid
@@ -1951,8 +2082,49 @@ line; a railgun kill erases a straight channel as wide as the bolt.
     `CHANNEL_SLIVER_SHARE` (5 %) of the hull beside it is erased too. The
     other cracks then split what is left. A cut is never dropped by the
     piece-cap retry: with every other crack gone it stands whatever the count.
+  - **Channel banks part:** the two banks face each other a channel width
+    apart, so they are not a shared cut; `findSeams(geom, channelGap)` pairs
+    them anyway (`EDGE_CUT` edges on the line `channelGap` out along the
+    normal), so the separation pass opens the channel like any cut. Without
+    it the kill push closed the channel at ~20–45 u/s while the jagged cracks
+    opened (rail-channel film 2026-11-15). Lock: `wreckPieces.test.ts`
+    "railgun channel banks part".
   - No new seeded draw: a fracture without a cut is byte-identical to v8 (the
     golden hashes did not move; only `FRACTURE_ALGO_VERSION` went 8 → 9).
+  - **Splinters, not parallel cracks (capital, v10, 2026-11-15).** Two
+    hostile film reviews (a heavy-beam slice and a railgun channel on a heavy
+    cruiser) saw v9's zone cracks come out nearly straight, the full beam
+    wide and PARALLEL to the cut either side, so one shot read as three cuts.
+    Owner: "The main cut is dead straight. Splinter cracks stay jagged. The
+    piece count follows the existing violence table." On a capital cut kill
+    the zone, fan and far cracks are replaced by `cutSplinters` (own seeded
+    stream `seed ^ 0x5b11e`):
+    - **Count:** as many as the un-cut layout drew (zone + fan + far, after
+      the profile's options), at most `SPLINTER_MAX` 4, so the count still
+      follows the violence table (the sweep's mean piece count moved by
+      under 0.1 against v9 on heavy cruiser, battleship and destroyer).
+    - **First splinter on a side** (sides alternate, the first side seeded):
+      starts ON the cut and runs into that side only (a local line whose
+      region is that side), at a seeded 40–58° off the cut
+      (`SPLINTER_SLOPE_*`, a slope, no trig), rooted so it meets the hull's
+      edge 55–75 % of the cut's chord along the cut (`SPLINTER_REACH_*`): a
+      big chunk breaks out of the cut's corner. It leans the other way if
+      it would run within ~30° of the keel (`SPLINTER_KEEL_COS`; a
+      quartering cut).
+    - **Second on a side:** branches off the first 20–40 % of the way along
+      it (`SPLINTER_BRANCH_*`), leaning back the other way, into what the
+      first left; dropped if it would run down the keel.
+    - **Guard:** the fan's chunky guard, with a least width of
+      `SPLINTER_MIN_WIDTH_BEAMS` 0.3 beam, and no length check on a part that
+      keeps at least half the section (a cut kill's end section is long by
+      nature); the retry drops splinters last-first like fan cracks.
+    - **Jag:** splinters jag at `SPLINTER_ROUGHNESS` 0.4 (`JAG_ROUGHNESS` is
+      0.22; v9's cracks strayed ~7 % of their length, v10's ~12 %); a jag
+      that breaks a piece is first redrawn at 0.22 and only straightened if
+      that breaks it too.
+    - A fracture without a cut, and a sub-capital's cut, is byte-identical to
+      v9. Lock: `fractureHull.cutSplinters.test.ts` (every crack ≥ 25° off
+      the cut, jagged, never spanning the cut's chord; mean count vs v9).
 - **Wire.** `WreckDescriptor` / `WreckDescriptorSchema` / `isWreckDescriptor`
   gain optional `cutKind` ('slice' | 'channel'), `cutAng` (u16, 65536 per
   turn, hull 1× Pixi-up frame) and `cutW` (hull 1× units = world width ÷
@@ -2003,8 +2175,137 @@ line; a railgun kill erases a straight channel as wide as the bolt.
   keeps the hull drawn until every piece is drawable (it ends that frame),
   not a split delay. Locks: `CapitalWreckSubsystem.test.ts` and
   `wreckArt.test.ts` "a cut kill splits at once".
-- **Not yet:** the cut glow colours and channel ash. The beam fits that
-  mount the heavy beam: [capital-ships](../features/capital-ships.md#weapon-fits-plan-section-9).
+- **Cut glow colours (plan step 4, 2026-11-15).** `FracturePiece.cutEdges`
+  (and `WreckPieceGeometry.cutEdges`) carry each edge's `EDGE_*` kind, not a
+  boolean: `EDGE_HULL` (0) is falsy, so every "is it a cut" reader is
+  unchanged and the goldens did not move (no version bump). `glowTintOf(kind,
+  cutKind)` gives an `EDGE_CUT` edge of a slice kill `GLOW_TINT_SLICE` and
+  of a channel kill `GLOW_TINT_CHANNEL`; every other edge (the jagged
+  splinter cracks) keeps `GLOW_TINT_CRACK`, the molten curve, unchanged.
+  Owner: the cut glows in the weapon's colour, cooling through ember to dark,
+  and it is the hero line of the break-up (filmed review 2026-11-15: the
+  slice read as a 1–2 px violet hairline beside white-yellow splinter cracks,
+  with no violet left once the beam stopped). So a kill cut has its own
+  curve in `wreckGlowAt` (`CUT_T/C/A`), never dimmer than a crack of the
+  same age, ending dark at the same `WRECK_GLOW_END_S` (4.5 s):
+  - **Slice:** the beam's pale core at the instant, then `HEAVY_BEAM_COLOR`
+    violet at full alpha to `CUT_GLOW_HOLD_S` (1.5 s; a crack is at alpha
+    ~0.65 and red by then), then burnt metal: a rose blush (0xe0507a at
+    2.0 s, alpha 0.97), an orange ember (0xff6418 at 2.5 s, alpha 0.92)
+    cooling to orange-red (0xd83c10 at 3.5 s, alpha 0.75), a brown scorch
+    (0x5a362c at 4.0 s, alpha 0.3), dark at 4.5 s. It used to cool through a
+    violet ember (0xa050e8 → 0x8834c8 → a violet-grey scorch); hostile film
+    review 2026-11-15 (beam take 6): ~3.5 s after the kill the lips were
+    still saturated violet, cooling straight to dark with no ember. The
+    violet is the beam's light; once it is gone the metal glows as hot metal
+    does, like the channel.
+  - **Channel:** white-hot at full alpha to 1.5 s, then it cools like struck
+    metal: yellow-white (2.0 s), an orange ember (0xff7a28, alpha 0.8 at
+    2.8 s), a dull red-brown scorch (3.8 s, alpha 0.3), dark at 4.5 s.
+  - **The ember is a stage of its own** (second film review 2026-11-15: the
+    old ember, 0x7428a8 at 2.3 s falling to a 0.32-alpha grey-violet at
+    3 s, read as dark ~2.3 s after the kill with no violet ember seen; it was
+    the curve, not the clock: the glow ages on game time from first sight
+    and its texture U is linear in age). On screen (alpha × brightest
+    channel) the cut shows ≥ 0.45 at 2.3–3.0 s and ≥ 0.25 at 3.4 s, < 0.12
+    at 4.3 s.
+  - **Width:** a kill cut's core is `CUT_GLOW_WIDTH_MUL` (2.5) × a crack's;
+    its halo reaches `CUT_HALO_CORE_MUL` (1.6) × its own core (a crack's: 3 ×;
+    at 3 × the 2.5 × core it was a flat slab ~150 u deep on a heavy cruiser,
+    filmed as four violet "bevels"), is brighter (0.45 × the core alpha, a
+    crack's 0.3) and lasts with the ember (gone by 3.4 s; a crack's by 2.0 s).
+  - **Chamfered ends:** a kill cut is ONE long straight edge whose two ends
+    are hull corners or splinter junctions. A square strip end measured 0
+    wide at an acute corner (`insideWidth`) and the strip narrowed to a
+    sliver or to nothing: that was the first filmed hairline. A kill cut's
+    strip ends are chamfered (`writeStrip` ratios), each end the SHORTEST
+    chamfer that fits, from `CHAMFER_MIN` (1/32: all but square, for the
+    ~90° hull corners of a side cut; a truly square end lies on the hull
+    side and fails the inside test) doubling to `CHAMFER_MAX` (8, the 7–15°
+    wedges a jagged splinter can leave). Always starting at 45° gave every
+    end a long bevel, a triangle on a short edge: the "bevels". Each cut edge
+    now glows along its full length (lit core ≥ a fifth of the cut core, or
+    half of the piece's own thickness in a wedge, over ≥ 90 % of the drawn length of every
+    `EDGE_CUT` edge of heavy-cruiser slice and channel kills). Crack strips
+    keep their square ends.
+  - **Incandescent, not painted** (hostile film reviews 2026-11-15, rail
+    and beam take 7: the channel walls read as "flat pale-white blocky
+    slabs ... like white paint or bricks, they do not glow", the slice's
+    ember bars as "hard-edged flat strips with no soft glow"). Every quad
+    used to sample one texel row, so each strip was a flat fill. A kill
+    cut's strip now carries a gradient ACROSS its width in the same mesh:
+    the texture has a block of `GLOW_ROW` rows per tint (`GLOW_ROWS_PER_TINT`
+    = 6: bleed-out, bleed, edge, deep, halo, halo-out), its edge corners
+    take one row and its outer corners the adjacent one, and the linear
+    filter blends them. The core runs from the full curve alpha at the cut
+    to `CUT_DEEP_A` (0.05 ×) inside, where it meets the halo with no hard
+    line; the halo (0.45 × at the cut) fades to nothing at its outer side;
+    a soft bleed (`CUT_BLEED_A` 1.2 × the halo share, `CUT_BLEED_CORE_MUL`
+    0.35 × the core wide, chamfered) reaches into the gap (it uses the head
+    halo's quad: a kill cut is no-hold, so it never has a head). While hot
+    the colour shifts across it (`CUT_DEEP_C`, `CUT_DEEP_SHIFT` 0.65): the
+    channel white-hot at the edge, yellow-orange deeper in; the slice a pale
+    violet rim (`SLICE_RIM_WHITE` 0.3 toward white), deeper violet in. The
+    shift is gone 0.5 s after the hold, so the ember is one hot-metal
+    colour. The curve (`wreckGlowAt`) and its timing are unchanged. A
+    crack's or splinter's strips keep flat rows: they look as before.
+  - **On the hull as drawn.** A capital's collider `hull` is the convex
+    hull of its parts, so between the side barbettes a piece's outline
+    spans empty space where its art is transparent; a cut runs across it,
+    and the glow strip drawn to the outline filmed as "white bars stuck
+    onto the hull edge" (rail take 7). `wreckGlowStrip.ts` holds every
+    glow strip to the piece's outline AND the kind's drawn parts
+    (`shipParts`, the art's own source; `onDrawnHull`), and trims each cut
+    edge to its longest drawn stretch (`drawnSpan`) before it is sized; a
+    strip that does not fit narrows in 0.75 × steps. Polygon kinds (their
+    outline is their drawing) are unchanged.
+  - **Splinters read second** (owner 2026-11-15: keep the v10 splinter X,
+    tone its glow down so the cut reads first; review: their orange rims were
+    wider, brighter and longer than the cut). On a wreck with a `cutKind`,
+    every non-`EDGE_CUT` crack is `GLOW_TINT_SPLINTER`: the crack colours at
+    `SPLINTER_GLOW_ALPHA` (0.45) × the crack alpha on a short curve, dark by
+    `SPLINTER_GLOW_END_S` (2.6 s), core and halo `SPLINTER_GLOW_WIDTH_MUL`
+    (0.5) × a crack's (so 0.2 × the cut's core). A wreck without a cut keeps
+    its cracks unchanged. Full (capital) glow only.
+  - The simple (sub-capital) glow tints the same way, held to 50 % of its
+    life and gone by 85 % (cracks: their own orange and red), at the same
+    width multiplier; its cracks stay as they were on a cut kill too.
+  Still ONE glow mesh per piece, no new draw call: the glow textures bake a
+  row block per tint (`WRECK_GLOW_TEX_ROWS` = `GLOW_ROWS_PER_TINT` per tint;
+  the simple texture one row per tint), a segment's tint and place across
+  the strip are its V (`glowV(tint, row)` / `simpleGlowV`), and its width
+  multipliers, chamfers and bleed are baked into its quads at build
+  (`SEG_STRIDE` 22). Locks: `wreckArt.test.ts` "a kill cut
+  glows in the weapon's colour" (violet / white-hot held ~1.5 s, never
+  dimmer than a crack, the cut's core 2.5 × a crack's on real slice and
+  channel pieces) and "a cut kill reads first" (splinters ≤ 0.5 × the cut's
+  alpha at every age, ≤ 0.25 × its core, dark by 3 s; an un-cut wreck's
+  cracks unchanged; every `EDGE_CUT` edge lit along ≥ 90 % of its drawn length; the ember
+  visible at 3 s, dark at 4.5 s), "the cut glows like hot metal" (on real
+  heavy-cruiser slice and channel pieces, the composited glow falls off
+  from the cut edge inward, fades out at the halo's outer side, bleeds into
+  the gap; channel white at the edge and yellow-orange in, slice violet)
+  and "no glow strip lies outside its piece" (every glow triangle on the
+  drawn hull, outside the piece only as the bleed off a cut edge);
+  `swarmSpriteUpdater.wreckArt.test.ts`
+  "char strip" (a cooled cut is a subtle scorch from 4 s, its halo gone by
+  3.5 s);
+  `fractureHull.test.ts` "cutEdges carries the edge kind".
+- **Channel ash (plan step 4).** A fresh wreck with `cutKind: 'channel'`
+  passes the channel line to the break-up sink (`WreckBreakSink`'s
+  `channel`: from the kill point, the slug's entry, to `channelFarEnd`, the
+  `EDGE_CUT` vertex farthest from it, where the slug left the hull; null for
+  a slice or an un-cut kill). The renderer sends it as a `wreck-ash` burst to
+  the same `WreckBreakFx` pool, whose `spawnChannelAsh` is a line emitter:
+  glowing ash anywhere along the channel drifting off its walls (white-hot,
+  ember, grey) and a few sparks flung on along the slug's path out of the
+  far end. Tier counts `WRECK_ASH_DIAL` (high 48 + 16 … minimal 4 + 0), none
+  with particles off; it plays only where the break-up plays (a capital
+  profile's `breakBurst`, a fresh wreck). Lock: `WreckBreakFx.test.ts`
+  "channel ash"; `wreckArt.test.ts` "a channel kill sheds ash".
+- **Not yet:** channel ash on a sub-capital (its profile has no break-up
+  burst, so only its glow tints). The beam fits that mount the heavy beam:
+  [capital-ships](../features/capital-ships.md#weapon-fits-plan-section-9).
 - Locks: `fractureHull.test.ts` "golden: v9 kill cuts" (battleship and
   fighter, side and bow, slice and channel); `fractureHull.killFocus.test.ts`
   "fracture v9" (the slice's cut is collinear with the shot through the kill
@@ -2115,7 +2416,9 @@ Every client must produce the same pieces as the server, bit for bit, from
 - **Player capitals break up exactly like NPC capitals.** Anyone may salvage
   the wreck, including the former owner.
 - **Wreck pieces don't break further** ("No for now"). Shooting a piece never
-  re-fractures it.
+  re-fractures it. *Lifted 2026-11-15 (salvage stream): the core child
+  fracture and its wire contract exist (§S4 "Re-split", "Re-split on the
+  wire"); server spawning follows.*
 - **Smaller ships break up this way too** ("Yes"). Fighters, frigates and
   cruisers fracture dynamically like capitals, replacing today's hand-made
   scrap. This is a later slice, after the capital path works.
@@ -2149,7 +2452,7 @@ Moved from `src/core/CLAUDE.md` (section "Capital fracture").
 - **Any change to its output bumps `FRACTURE_ALGO_VERSION`.** The golden test fails first.
 - **Concave hulls go through `splitByLine`,** which traces each disjoint part separately. Plain Sutherland–Hodgman bridges them; the U-hull test catches that.
 - **Jagged Voronoi cut edges** are seeded from the edge's own quantised endpoints, so both neighbours share the line. Section cuts and kill cuts (`EDGE_CUT`) stay straight.
-- **Kill cuts (v9).** `FractureInput.cut` (`slice` | `channel`, a direction in the hull frame, a channel width) is optional and changes nothing when absent; it adds no seeded draw. A cut's direction crosses the wire as a u16 angle and is decoded only by `cutDirFromAngle` (arithmetic, no trig) on both sides. Detail: "Kill cuts" above.
+- **Kill cuts (v9).** `FractureInput.cut` (`slice` | `channel`, a direction in the hull frame, a channel width) is optional and changes nothing when absent; v9 adds no seeded draw, and v10's capital splinters draw from their own stream. A cut's direction crosses the wire as a u16 angle and is decoded only by `cutDirFromAngle` (arithmetic, no trig) on both sides. Detail: "Kill cuts" above.
 - **Wreck pieces collide with each other, and neighbours always part (owner review 2026-11-13: heavy, no overlap, no hinge).** `WRECK_COLLISION_GROUPS` (0x0004FFFF, server spawn and client twin) lets pieces bump. Their collider is `WreckPieceGeometry.colliderParts` (each part inset by `shipTuning(kind).wreckColliderInset`, so neighbours spawn a hair apart); drawing and weapon hits keep `parts`. `buildWreckPieces` gives each piece a slow kick (push `wreckPushMax/Min`, rim-speed spin) and then the least momentum-conserving pushes that open every shared cut (collinear cut edges, or cut edges that only touch at a T-junction) at `wreckSeparate` or more at both ends, spin included (#18 for all three). Tuned 2026-11-13 so the break is SEEN but heavy: `wreckSeparate` 0.014 × radius/s (~31 u/s heavy cruiser), push 0.010 / 0.004; the narrowest cut is ~31 u open 1 s after the kick, no piece over ~75 u/s (`wreckPiecesSeparate.test.ts`). The separation multiplies along chains of neighbours, so it assumes v7's few chunks. The kick is applied after `WRECK_CRACK_MS` (`shared-types/wreckTiming.ts`, game ticks; a cut kill: at once, "Kill cuts"); until then the pieces move with the dead hull. Never give pieces a velocity field that lets a neighbour close on another along their cut.
 - **S2a: `wreckPieces.ts` / `wreckHits.ts`.** `buildWreckPieces` turns a death (kind, pose, kill point, damage inputs, seed) into rigid-body specs: the fracture on the 1× Pixi-up outline, pieces mapped like `shipShapeToPolygon` (x·s, −y·s, rings reversed to stay CCW), mass ∝ area, v + ω × r plus an outward push. `wreckRayHit` / `wreckSweepHit` are the one weapon-vs-wreck test (circle, then convex parts). The circle gate is `segmentNearCircle`, never `rayHitsSphere` (that returns null once the origin is inside the circle and past the centre, so shells passed through a long piece's far half; lock `wreckHits.test.ts`).
 - **S2b: `wreckPieceGeometry(WreckFractureInputs)` is the one source of a piece's shape** (body-local parts, outline, cut flags, mass, radius). The server's `buildWreckPieces` places its output and the client rebuilds it from the `wrecks[]` descriptor; never compute a piece's shape another way (#15, locked bit for bit by `tests/integration/wire/wreckGeometryParity.test.ts`). `World.spawnObstacle` skips a part Rapier cannot hull (a < 1 u sliver threw inside the worker; `World.slivers.test.ts`).
@@ -2173,6 +2476,8 @@ Moved from `src/core/CLAUDE.md` (2026-11-14); kept for the record.
 - **v6: cracks fan out from the kill point; the far field breaks along a few uneven, tilted cracks** (money-shot review: v5 cut a comb of even square bands and a ladder at the kill point). `crackLines` (its own seeded stream) adds fan cracks through the kill point and far cracks at seeded stations and tilts; the Voronoi seeds stay inside the fan (no far floor); cracks and the primary line are jagged, after `weldTJunctions` pairs T-junction edges. Lock: the v6 describe in `fractureHull.killFocus.test.ts` (far pieces, far tilt, radial cracks) on top of the v5 locks.
 - **v7: the hull breaks only where it was hit, into a few ENORMOUS chunks** (owner review 2026-11-13: v6 sliced the far hull where no shell hit and cut a comb of slivers at the impact; "The last hit's impact sets the split"). No Voronoi seeds, no far cracks: two jagged zone cracks ~a beam either side of the primary and 0–2 fan cracks from the kill point (`LocalLine`, split only their zone half) leave 2–4 chunks at the impact and one big section each side. A very heavy blow (≥ max hull) on a long hull rarely (12 %) adds ONE far crack. Piece count still rises with size and violence, but stays ~3–7. A fan crack only splits a section where every part it leaves is chunky (≥ `FAN_MIN_WIDTH_BEAMS` 0.45 beam wide, ≤ `FAN_MAX_ASPECT` 2.6× longer than that; filmed take 2026-11-13: a long thin triangle along the port edge). Lock: the v7 describe in `fractureHull.killFocus.test.ts` (no thin sliver, no long thin piece of any size, no far cut, 2–5 near pieces, ≤ 2 sections each side).
 - **v8: sub-capital pieces are never nearly the whole hull** (take 9 review 2026-11-14). The `soundMinShare` option (default 0.15); the sub-cap profile sets 0.43 (0.33 before take 10). Capital output unchanged. Lock: `wreckPieces.subcapParting.test.ts` "read as broken".
+- **v10: a wide heavy-beam slice** (2026-11-15). A slice with a width erases a strip that wide like a channel; the heavy beam's is `HEAVY_BEAM_WIDTH` 60 u, its drawn core the same.
+- **v10: splinters off a capital cut kill** (2026-11-15). The secondary cracks of a capital slice or channel kill branch off the cut at 40–58° and jag harder, instead of running parallel to it (film review: one shot read as three cuts). Count still from the violence table. Output without a cut unchanged. Lock: `fractureHull.cutSplinters.test.ts`, "golden: v9 kill cuts" (capital side-shot hashes).
 - **v9: kill cuts** (2026-11-14). The optional `cut`: a heavy-beam `slice` is a dead-straight primary along the shot through the kill point (`EDGE_CUT`, never jagged; slid toward the centroid only off a sliver); a railgun `channel` erases a strip as wide as the bolt. Output without a cut unchanged (same golden hashes). Locks: "golden: v9 kill cuts", the "fracture v9" describe in `fractureHull.killFocus.test.ts`.
 ## Server implementation notes
 
@@ -2192,6 +2497,17 @@ Moved from `src/core/CLAUDE.md` (2026-11-14); kept for the record.
 - **Settled bodies are cheap in the worker.** A body asleep since before this tick and already flagged `FLAG_SLEEPING` (and not a pilot-input slot) is in the worker's `quietIds`: `getAllShipStates(quietIds)` skips its Rapier reads and allocation, and its SAB record (the resting pose) is left as is. Anything that moves a body must wake it (every `World` mutation passes `wakeUp = true`); a woken body is written again on the next tick.
 - **Test trigger:** testMode `test_kill_capitals` (every capital NPC takes a lethal hit, re-hit through a shield); room `wreck-test`.
 
+### Server rules in full (moved from src/server/CLAUDE.md)
+
+The zone `CLAUDE.md` keeps a condensed form of these rules; this is the full wording with its lock tests.
+
+#### Capital wrecks
+
+- **Break-up ON by default** (`capitalWrecks` / `subcapWrecks`, owner 2026-11-14): a room opts out with `false`, env `EQX_*_WRECKS=0` forces it off (`wreckSwitchOn`); one death effect per ship (a breaking kind never sheds scrap). Hit tracking is pooled (#14). Test trigger: `test_kill_capitals`, room `wreck-test`.
+- **Wreck pieces (kind 4) block every weapon but the railgun slug and a heavy-beam kill follow-through (`isDebris`):** a new weapon or hit path must handle kind 4 and pass its shot direction (knock-back). Locks: `wreckOverkillKnockback.test.ts`, `wreckRigidHold.test.ts`.
+- **Snapshots carry wreck deltas only:** never the whole list, never vertices; every piece removal reaches `pieceGone`. Locks: `SnapshotBroadcaster.wreckDeltas.test.ts`, `wreckWireConvergence.test.ts`, `wreckLateJoiner.test.ts`.
+- Detail: [capital-destruction.md](../../docs/architecture/capital-destruction.md#server-implementation-notes).
+
 ## Core rules reference
 
 Moved from `src/core/CLAUDE.md` (section "Capital fracture").
@@ -2206,7 +2522,7 @@ Moved from `src/core/CLAUDE.md` (section "Capital fracture").
 - **Any change to its output bumps `FRACTURE_ALGO_VERSION`.** The golden test fails first.
 - **Concave hulls go through `splitByLine`,** which traces each disjoint part separately. Plain Sutherland–Hodgman bridges them; the U-hull test catches that.
 - **Jagged Voronoi cut edges** are seeded from the edge's own quantised endpoints, so both neighbours share the line. Section cuts and kill cuts (`EDGE_CUT`) stay straight.
-- **Kill cuts (v9).** `FractureInput.cut` (`slice` | `channel`, a direction in the hull frame, a channel width) is optional and changes nothing when absent; it adds no seeded draw. A cut's direction crosses the wire as a u16 angle and is decoded only by `cutDirFromAngle` (arithmetic, no trig) on both sides. Detail: "Kill cuts" above.
+- **Kill cuts (v9).** `FractureInput.cut` (`slice` | `channel`, a direction in the hull frame, a channel width) is optional and changes nothing when absent; v9 adds no seeded draw, and v10's capital splinters draw from their own stream. A cut's direction crosses the wire as a u16 angle and is decoded only by `cutDirFromAngle` (arithmetic, no trig) on both sides. Detail: "Kill cuts" above.
 - **Wreck pieces collide with each other, and neighbours always part (owner review 2026-11-13: heavy, no overlap, no hinge).** `WRECK_COLLISION_GROUPS` (0x0004FFFF, server spawn and client twin) lets pieces bump. Their collider is `WreckPieceGeometry.colliderParts` (each part inset by `shipTuning(kind).wreckColliderInset`, so neighbours spawn a hair apart); drawing and weapon hits keep `parts`. `buildWreckPieces` gives each piece a slow kick (push `wreckPushMax/Min`, rim-speed spin) and then the least momentum-conserving pushes that open every shared cut (collinear cut edges, or cut edges that only touch at a T-junction) at `wreckSeparate` or more at both ends, spin included (#18 for all three). Tuned 2026-11-13 so the break is SEEN but heavy: `wreckSeparate` 0.014 × radius/s (~31 u/s heavy cruiser), push 0.010 / 0.004; the narrowest cut is ~31 u open 1 s after the kick, no piece over ~75 u/s (`wreckPiecesSeparate.test.ts`). The separation multiplies along chains of neighbours, so it assumes v7's few chunks. The kick is applied after `WRECK_CRACK_MS` (`shared-types/wreckTiming.ts`, game ticks); until then the pieces move with the dead hull. Never give pieces a velocity field that lets a neighbour close on another along their cut.
 - **S2a: `wreckPieces.ts` / `wreckHits.ts`.** `buildWreckPieces` turns a death (kind, pose, kill point, damage inputs, seed) into rigid-body specs: the fracture on the 1× Pixi-up outline, pieces mapped like `shipShapeToPolygon` (x·s, −y·s, rings reversed to stay CCW), mass ∝ area, v + ω × r plus an outward push. `wreckRayHit` / `wreckSweepHit` are the one weapon-vs-wreck test (circle, then convex parts). The circle gate is `segmentNearCircle`, never `rayHitsSphere` (that returns null once the origin is inside the circle and past the centre, so shells passed through a long piece's far half; lock `wreckHits.test.ts`).
 - **S2b: `wreckPieceGeometry(WreckFractureInputs)` is the one source of a piece's shape** (body-local parts, outline, cut flags, mass, radius). The server's `buildWreckPieces` places its output and the client rebuilds it from the `wrecks[]` descriptor; never compute a piece's shape another way (#15, locked bit for bit by `tests/integration/wire/wreckGeometryParity.test.ts`). `World.spawnObstacle` skips a part Rapier cannot hull (a < 1 u sliver threw inside the worker; `World.slivers.test.ts`).

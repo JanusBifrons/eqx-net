@@ -9,6 +9,10 @@ import {
   WEAPONS,
   WEAPON_IDS,
   DEFAULT_WEAPON,
+  HEAVY_BEAM_WIDTH,
+  weaponTargetFactor,
+  weaponLayerMul,
+  type WeaponDef,
 } from './WeaponCatalogue.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { ENERGY_POOL_MUL } from '../../shared-types/shipScale/defineShipKind.js';
@@ -207,10 +211,22 @@ describe('WeaponCatalogue — capital heavy beam (plan beam-slices §8)', () => 
     const w = getWeapon('heavy_beam');
     expect(w.id).toBe('heavy_beam');
     expect(w.mode).toBe('hitscan');
-    expect(w.killCut).toEqual({ kind: 'slice' });
+    expect(w.killCut).toEqual({ kind: 'slice', width: HEAVY_BEAM_WIDTH });
     // The compositor-stall floor (HITSCAN_DEF note): no beam fires faster.
     expect(w.cooldownTicks).toBeGreaterThanOrEqual(10);
     expect(WEAPON_IDS[WEAPON_IDS.length - 1]).toBe('heavy_beam');
+  });
+
+  it('follows through a kill for 0.5-1 s of game time; no other weapon does', () => {
+    // Owner: "show for half a second or one second through the clean cut".
+    const ft = getWeapon('heavy_beam').followThroughTicks ?? 0;
+    expect(ft).toBe(45);
+    expect(ft).toBeGreaterThanOrEqual(30);
+    expect(ft).toBeLessThanOrEqual(60);
+    // At least a few shots of its own cadence land inside the window.
+    expect(ft / getWeapon('heavy_beam').cooldownTicks).toBeGreaterThanOrEqual(3);
+    const others = [...WEAPONS.values()].filter((d) => d.followThroughTicks !== undefined).map((d) => d.id);
+    expect(others).toEqual(['heavy_beam']);
   });
 
   it('fighter and sub-cap beams do not slice: only the heavy beam has a slice cut', () => {
@@ -232,5 +248,48 @@ describe('WeaponCatalogue — capital heavy beam (plan beam-slices §8)', () => 
     expect(burnS).toBeGreaterThanOrEqual(2 * ENERGY_POOL_MUL);
     expect(burnS).toBeLessThanOrEqual(6 * ENERGY_POOL_MUL);
     expect(w.damage * shotsPerSec * burnS).toBeGreaterThanOrEqual(cap.maxHealth + (cap.shieldMax ?? 0));
+  });
+});
+
+describe('WeaponCatalogue — capital railgun (plan beam-slices §7)', () => {
+  it('one slug kills any shield-down capital up to a battlecruiser, so a kill can scythe on down the line', () => {
+    // One barrel per rail turret: the slug carries the turret's whole punch.
+    // A shield takes a whole hit (no spill), so the cut needs the shield down
+    // first; then one slug must kill the hull for the channel to open.
+    const rail = getWeapon('railgun');
+    for (const id of ['destroyer', 'light-cruiser', 'heavy-cruiser', 'battlecruiser']) {
+      expect(rail.damage, id).toBeGreaterThan(getShipKind(id).maxHealth);
+    }
+  });
+});
+
+describe('weaponTargetFactor (per-target damage factors)', () => {
+  const plain = getWeapon('laser');
+  const miner: WeaponDef = { ...plain, targetFactor: { shield: 0, hull: 0.05 } };
+
+  it('defaults every class to 1 for a weapon without factors', () => {
+    for (const cls of ['shield', 'hull', 'structure', 'wreck'] as const) {
+      expect(weaponTargetFactor(plain, cls)).toBe(1);
+    }
+  });
+
+  it('reads a set factor and defaults the absent keys to 1', () => {
+    expect(weaponTargetFactor(miner, 'shield')).toBe(0);
+    expect(weaponTargetFactor(miner, 'hull')).toBe(0.05);
+    expect(weaponTargetFactor(miner, 'structure')).toBe(1);
+    expect(weaponTargetFactor(miner, 'wreck')).toBe(1);
+  });
+
+  it('no catalogue weapon carries factors yet (every hit byte-identical)', () => {
+    for (const id of WEAPON_IDS) expect(getWeapon(id).targetFactor).toBeUndefined();
+  });
+
+  it('weaponLayerMul: undefined without factors; shield/hull for ships; structure on both layers', () => {
+    const out = { shield: -1, hull: -1 };
+    expect(weaponLayerMul(plain, false, out)).toBeUndefined();
+    expect(weaponLayerMul(miner, false, out)).toEqual({ shield: 0, hull: 0.05 });
+    const base: WeaponDef = { ...plain, targetFactor: { shield: 0, structure: 0.25 } };
+    expect(weaponLayerMul(base, true, out)).toEqual({ shield: 0.25, hull: 0.25 });
+    expect(weaponLayerMul(base, true, out)).toBe(out); // reused scratch, no allocation
   });
 });

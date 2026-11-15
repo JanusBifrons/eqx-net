@@ -25,7 +25,7 @@ The deterministic suite (typecheck + lint + unit + integration + bench) verifies
 
 **Running it by hand.**
 
-- `pnpm e2e:netgate` — defaults: scenarios `core`, baseline `origin/main`, head = working tree, primary mobile profile (≈120 ms RTT ±60 ms, 0 % drop), 4 interleaved reps `A/B/A/B/A/B/A/B`. `NETGATE_SCENARIOS=<csv>` selects scenarios (each is its own Playwright `test()`); the netgate `workflow_dispatch` has a `scenarios` input. `NETGATE_PORT_OFFSET` moves its ports when another session is active.
+- `pnpm e2e:netgate` — defaults: scenarios `core`, baseline `origin/main`, head = working tree, primary mobile profile (≈120 ms RTT ±60 ms, 0 % drop), 4 interleaved reps `A/B/A/B/A/B/A/B`. `NETGATE_SCENARIOS=<csv>` selects scenarios (each is its own Playwright `test()`); the netgate `workflow_dispatch` has a `scenarios` input. `NETGATE_PORT_OFFSET=N` moves every port when another session is active: server 2567+N, proxies 2568/2569+N, Vite arms 5274/5273+N; the Playwright child gets `EQX_E2E_PORT_OFFSET=N` (plus explicit `PLAYWRIGHT_SERVER_URL`/`PLAYWRIGHT_BASE_URL`), so global setup mints its token from the gate's server. Ports resolve in `tests/netgate/netgatePorts.ts` (unit-locked). Pick N so none of those ports is taken.
 - The driver (`tests/netgate/run-netgate.ts`) creates two git worktrees under `.claude/worktrees/netgate-{baseline,head}` (incremental — preserves `node_modules` across runs), boots two `vite` dev servers with HMR disabled on both, starts a per-arm HTTP+WS latency proxy, and runs `tests/e2e/netcode-health.spec.ts` interleaved on each. ~6–8 min for a single-scenario acceptance run.
 
 **What it gates (single source of truth: `tests/netgate/netHealthBudget.ts`).** `ticksAhead`, `maxDriftUnits`, `meanDriftUnits`, `droppedSnapshotsRecent` — each metric uses a **relative AND absolute** AND-gate (head must be both worse than baseline by margin AND past the documented playable ceiling to fail). Improvements (ratio ≤ 1) can never fail. Liveness preconditions (`snapshotCount > 40`, `diagEnabled === false`) are a DISTINCT result channel — "the gate did not validly run" must never read as "healthy."
@@ -87,7 +87,7 @@ The user typed `/netgate` (or `/netgate <baselineRef> <headRef>`). Arguments:
 
 ## Clean up afterwards
 
-When the run ends (pass or fail): stop the servers, proxies and headless Chrome it started (`netstat -ano | findstr ":2567 :5173 :2767 :5373" | findstr LISTENING`), delete its scratch files and logs once read, and trim any status note in auto-memory. See root `CLAUDE.md` "Clean up at every stage".
+When the run ends (pass or fail): stop the servers, proxies and headless Chrome it started (`netstat -ano | findstr ":2567 :5173 :2767 :5373" | findstr LISTENING`), delete its scratch files and logs once read, and trim any status note in auto-memory. See `docs/ops/agent-workflow.md` "Clean up at every stage".
 
 ## On flakes
 
@@ -103,7 +103,7 @@ Never widen a `MARGIN/EPS/CEIL` to "smooth over" the flake. The anti-flake archi
 - Budget module (single source of truth): `tests/netgate/netHealthBudget.ts`
 - Driver: `tests/netgate/run-netgate.ts`
 - Spec: `tests/e2e/netcode-health.spec.ts`
-- Root CLAUDE.md: "Netcode-health gate" section (the rules; this file holds the mechanics)
+- Root CLAUDE.md: "Netcode-health gate" section (the short rules; this file holds the full rules and mechanics)
 
 ## History
 

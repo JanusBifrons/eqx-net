@@ -661,6 +661,24 @@ corruption); now gated on `rec.kind === 1`. See [docs/architecture/structures-an
   - **Binary channel:** a sleeping out-of-interest structure rides only every `STRUCTURE_OUT_OF_INTEREST_FULL_EVERY` (5th) full refresh. Room state owns structure lifetime on the client.
   - **Test view:** `_internals.getStructuresSlice()` is the pre-A2 row shape rebuilt from room state.
 
+### Server rules in full (moved from src/server/CLAUDE.md)
+
+The zone `CLAUDE.md` keeps a condensed form of these rules; this is the full wording with its lock tests.
+
+#### Structure network at base scale
+
+- **Generated structures use the real rules:** a generated base places with `place(…, { skipAutoConnect: true, rot })` and links with `connectExplicit` (re-checks `canConnect`); never auto-connect one (it would close gates). Players never pass `skipAutoConnect`.
+- **Structure room state (A2 rules):** a `StructureState` field has no initialiser and is assigned only on change and only away from `STRUCTURE_DEFAULTS` (compare `(st.f ?? DEFAULT) !== value`). Production and teleporter fields follow the same rule.
+- **Budgets and layouts:** structure-heavy content stays inside `src/shared-types/structureBudgets.ts`. Test layouts live only in `rooms/scenarioLayouts.ts`; re-derive hand-placed ones against the real footprint boxes. Only ACTIVE player ships open gates (#17). Lock: `structureRotation.test.ts`.
+- Detail: [structures guide](../../docs/architecture/structures-and-power-grid.md#structure-network-at-base-scale), [scale ledger](../../docs/architecture/structure-network-scale.md).
+
+#### Structures: placement, power grid, shield fence
+
+- **Placement checks structures AND asteroids** through the shared `canPlaceStructureAt` / `placementRejection`; `remove` is owner-gated. Locks: `placementRules.test.ts`, `StructurePlacementSubsystem.test.ts`, `structurePlacementValidation.test.ts`.
+- **Grid changes touch the snapshot path** (`structures[]`, `grid_pulse`): `pnpm e2e:netgate` required. `StructureGridSubsystem.pulse()` is the directly-callable 1 Hz heartbeat, off the 60 Hz tick.
+- **Shield-wall bodies live in `PhysicsWorld.wallBodies`**, never `this.bodies`. A pylon with any active wall takes no damage (`applyDamage` → `absorbForPylon`). Swarm shield regen covers `rec.kind === 1` only.
+- Detail: [structures-and-power-grid.md](../../docs/architecture/structures-and-power-grid.md#server-implementation-notes).
+
 ## History
 
 - **Structure rotation reaches the physics body.** `SwarmSpawner` forwards the spawn angle for structures (kind 2) as well as scrap, and primes the SAB angle. (It used to forward it for scrap only, so rotated structures collided and drew at 0° — locked by `structureRotation.test.ts`.)

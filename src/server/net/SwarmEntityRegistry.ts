@@ -32,6 +32,12 @@ export function isWreckPiece(rec: { kind: number }): boolean {
   return rec.kind === SWARM_KIND_WRECK;
 }
 
+/** Debris: a wreck piece or scrap (kind 3, loot pods included). Shots that
+ *  "ignore debris" (a heavy beam's kill follow-through) pass these. */
+export function isDebris(rec: { kind: number }): boolean {
+  return rec.kind === SWARM_KIND_WRECK || rec.kind === 3;
+}
+
 /** A loot pod: a scrap-kind record drawn as `cargo-pod` (LootSubsystem).
  *  Loot, not a combatant: AI and turret shots pass through it. */
 export function isLootPod(rec: { kind?: number; shipKind?: string | null }): boolean {

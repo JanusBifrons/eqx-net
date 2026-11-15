@@ -26,8 +26,9 @@ export interface PerfScene {
   durationMs: number;
   /** A run is valid only if at least this many swarm entities are live at the end. */
   minSwarm: number;
-  /** A long soak: left out of a default `pnpm perf:scenes` run (name it
-   *  with `--scenes`). */
+  /** Left out of a default `pnpm perf:scenes` run (name it with
+   *  `--scenes`): the long soaks, and the terrain stress scenes, which only
+   *  terrain PRs need. */
   soak?: boolean;
 }
 
@@ -41,6 +42,18 @@ const sustainedFight = (n: number, x: number, y: number, gap: number): SceneStep
     fight(`blue${i}`, 'fighter', x - gap, y, n, t),
     fight(`red${i}`, 'robot-square', x + gap, y, n, t),
   ]);
+
+/** Macro-terrain Stage 0 (docs/architecture/macro-terrain.md): a still rock
+ *  field from the bulk seed (`swarmRatio: 1` = rocks only, `swarmAtRest` =
+ *  real asteroid mass, no drift, so the rocks settle and sleep). Counts stay
+ *  under the 5,120-slot cap with room for the ships and scrap of a fight. */
+const rockField = (count: number, radius: number): Record<string, unknown> =>
+  ({ droneCount: 0, swarmCount: count, swarmRatio: 1, swarmRadius: radius, swarmAtRest: true });
+
+/** Rock counts of the terrain scenes (the integration census reads these). */
+export const ROCK_FIELD_SMALL = 1000;
+export const ROCK_FIELD_LARGE = 4500;
+export const ROCK_FIELD_FIGHT = 4000;
 
 export const PERF_SCENES: readonly PerfScene[] = [
   {
@@ -283,6 +296,45 @@ export const PERF_SCENES: readonly PerfScene[] = [
     camera: { x: 0, y: 12_000, zoom: 0.05 },
     durationMs: 30_000,
     minSwarm: 10,
+  },
+  {
+    // Macro-terrain Stage 0: what a still field costs at a modest count.
+    id: 'rock-field-1k',
+    title: '1,000 still rocks in a 9 km disc, pilot idle in the middle',
+    room: { ...rockField(ROCK_FIELD_SMALL, 9000), sceneScript: [{ atMs: 20_000, action: 'end' }] },
+    spawn: { x: 0, y: 0 },
+    camera: { x: 0, y: 0, zoom: 0.45 },
+    durationMs: 20_000,
+    minSwarm: ROCK_FIELD_SMALL,
+    soak: true,
+  },
+  {
+    // Macro-terrain Stage 0: the same field density over a wider disc, near
+    // the slot cap. Expected walls: the 1 Hz full snapshot resends every rock
+    // to every client, and the client keeps one display object per rock.
+    id: 'rock-field-4500',
+    title: '4,500 still rocks in a 19 km disc, pilot idle in the middle',
+    room: { ...rockField(ROCK_FIELD_LARGE, 19_000), sceneScript: [{ atMs: 20_000, action: 'end' }] },
+    spawn: { x: 0, y: 0 },
+    camera: { x: 0, y: 0, zoom: 0.45 },
+    durationMs: 20_000,
+    minSwarm: ROCK_FIELD_LARGE,
+    soak: true,
+  },
+  {
+    // Macro-terrain Stage 0: a fight inside a field, so shots, rams and
+    // explosions wake rocks (churn between awake and asleep).
+    id: 'rock-field-fight',
+    title: 'A 10-a-side fight, reinforced, inside 4,000 still rocks',
+    room: {
+      ...rockField(ROCK_FIELD_FIGHT, 18_000),
+      sceneScript: [...sustainedFight(10, 0, 1200, 300), { atMs: 30_000, action: 'end' }],
+    },
+    spawn: { x: 0, y: -400 },
+    camera: { x: 0, y: 1200, zoom: 0.45 },
+    durationMs: 30_000,
+    minSwarm: ROCK_FIELD_FIGHT,
+    soak: true,
   },
 ];
 

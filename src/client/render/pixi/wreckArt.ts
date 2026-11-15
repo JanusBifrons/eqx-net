@@ -18,7 +18,12 @@
  * segment's ignition (molten, an ember at ~1.8 s, dark at `WRECK_GLOW_END_S`
  * (4.5 s); the mesh is destroyed when the last crack is dark), drawn on the
  * piece's own side of each cut so an opening gap stays empty. The
- * original hull outline never glows. The clock is the wreck's death tick
+ * original hull outline never glows. A weapon's kill cut (`glowTintOf`) is the
+ * hero line: its own curve in the weapon's colour (held ~1.5 s, a visible
+ * ember to ~3.4 s), 2.5x wider, ends chamfered only as far as they must be;
+ * the same kill's splinter cracks are subdued (`GLOW_TINT_SPLINTER`: half as
+ * wide, under half as bright, dark by 2.6 s) so the cut reads first (docs
+ * "Cut glow colours"). The clock is the wreck's death tick
  * from its descriptor (`deathTick`), so a late joiner sees it cool.
  *
  * **Cracks spread, then it breaks** (owner, 2026-11-13: "The instant split
@@ -55,6 +60,9 @@ import { isIconOnly } from './FarZoomIcons.js';
 import { getShipKind, isShipKindId } from '../../../shared-types/shipKinds.js';
 import { shipShapeScale } from '../../../core/geometry/shipHullOutline.js';
 import type { WreckPieceGeometry } from '../../../core/destruction/wreckPieces.js';
+import { EDGE_CUT } from '../../../core/destruction/fractureHull.js';
+import { HEAVY_BEAM_COLOR } from '../beamStyles.js';
+import { drawnSpan, insideWidth, lastChamferRatio, onDrawnHull, pointInRing, stripInside, writeStrip, type InsideTest } from './wreckGlowStrip.js';
 import type { WreckDescriptor } from '../../../shared-types/messages/snapshotMessages.js';
 import { destructionProfileOf } from '../../../shared-types/shipScale/destructionProfile.js';
 import type { DestructionFx, DestructionProfileId, WreckGlowStyle } from '../../../shared-types/shipScale/destruction.js';
@@ -161,53 +169,230 @@ function lerpColor(a: number, b: number, t: number): number {
   return (Math.round(r) << 16) | (Math.round(g) << 8) | Math.round(bl);
 }
 
-/** The cut-edge glow `ageS` seconds after death (pure, alloc-free). */
-export function wreckGlowAt(ageS: number, out: WreckGlow): WreckGlow {
-  const last = GLOW_T.length - 1;
-  if (!(ageS < GLOW_T[last]!)) { out.color = GLOW_C[last]!; out.alpha = 0; return out; }
-  if (ageS <= 0) { out.color = GLOW_C[0]!; out.alpha = GLOW_A[0]!; return out; }
+// ── Glow tints: a weapon's kill cut burns in its own colour ──────────────
+
+/** A crack (every cut but a weapon's kill cut): the molten curve as is. */
+export const GLOW_TINT_CRACK = 0;
+/** The heavy beam's slice line (`EDGE_CUT` on a `slice` kill): the beam's
+ *  violet where it burned through, then the same ember and scorch. */
+export const GLOW_TINT_SLICE = 1;
+/** The railgun's channel walls (`EDGE_CUT` on a `channel` kill): white-hot
+ *  metal where the slug punched through, then the same ember and scorch. */
+export const GLOW_TINT_CHANNEL = 2;
+/** A splinter crack of a weapon's kill cut (every non-`EDGE_CUT` edge of a
+ *  wreck with a `cutKind`, full glow only): the crack curve, subdued so the
+ *  cut reads first (owner 2026-11-15: keep the X of splinters, tone their
+ *  glow down). `SPLINTER_GLOW_ALPHA` × a crack's alpha, `SPLINTER_GLOW_WIDTH_MUL`
+ *  × its width, dark by `SPLINTER_GLOW_END_S`. */
+export const GLOW_TINT_SPLINTER = 3;
+/** Tints baked into the glow textures (one row block each). */
+export const WRECK_GLOW_TINTS = 4;
+/** A weapon's kill cut is the hero of the break-up (owner, filmed review
+ *  2026-11-15: the slice read as a 1–2 px violet hairline beside white-yellow
+ *  splinter cracks, and no violet was left once the beam stopped). So a
+ *  tinted edge has its OWN curve, not the crack curve re-coloured: full
+ *  brightness in the weapon's colour for `CUT_GLOW_HOLD_S`, then it cools
+ *  through a hot-metal ember to the same dark scorch, always at least
+ *  as bright as a crack of the same age. Keyframes per tint (index 0, the
+ *  crack, uses `GLOW_T/C/A`).
+ *  - Slice: the beam's pale core at the instant of the cut, the beam's
+ *    violet held ~1.5 s, then burnt metal: through a rose blush to an
+ *    orange ember, an orange-red ember to ~3.5 s, a brown scorch, dark
+ *    (hostile review 2026-11-15, beam take 6: a violet ember cooling straight
+ *    to dark read as saturated violet lips ~3.5 s after the kill, with no
+ *    ember; metal cut by any weapon glows hot-metal colours as it cools).
+ *  - Channel: white-hot held, then it cools like struck metal (yellow-white,
+ *    orange-red ember, scorch, dark).
+ *  The ember is a stage of its own, clearly showing to ~3.4 s (second film
+ *  review 2026-11-15: the old ember, a dark 0x7428a8 at 2.3 s falling to a
+ *  0.32-alpha grey-violet at 3 s, read as dark ~2.3 s after the kill, with
+ *  no violet ember seen); the scorch fades out over the last second. */
+export const CUT_GLOW_HOLD_S = 1.5;
+const SLICE_PALE = lerpColor(0xffffff, HEAVY_BEAM_COLOR, 0.45);
+/** Splinter (`GLOW_TINT_SPLINTER`): alpha × this, width × the next, dark by
+ *  the last (s), a short life on the crack curve's colours. */
+export const SPLINTER_GLOW_ALPHA = 0.45;
+export const SPLINTER_GLOW_WIDTH_MUL = 0.5;
+export const SPLINTER_GLOW_END_S = 2.6;
+const CUT_T: readonly (readonly number[])[] = [
+  GLOW_T,
+  [0, 0.12, CUT_GLOW_HOLD_S, 2.0, 2.5, 3.5, 4.0, WRECK_GLOW_END_S],
+  [0, 0.12, CUT_GLOW_HOLD_S, 2.0, 2.8, 3.8, WRECK_GLOW_END_S],
+  [0, 0.08, 0.35, 1.0, 1.6, 2.1, SPLINTER_GLOW_END_S],
+];
+const CUT_C: readonly (readonly number[])[] = [
+  GLOW_C,
+  [SLICE_PALE, HEAVY_BEAM_COLOR, HEAVY_BEAM_COLOR, 0xe0507a, 0xff6418, 0xd83c10, 0x5a362c, 0x3a2f2a],
+  [0xffffff, 0xf4f2ff, 0xf4f2ff, 0xffd890, 0xff7a28, 0x8a4028, 0x3a2f2a],
+  GLOW_C,
+];
+const CUT_A: readonly (readonly number[])[] = [
+  GLOW_A,
+  [1, 1, 1, 0.97, 0.92, 0.75, 0.3, 0],
+  [1, 1, 1, 0.95, 0.8, 0.3, 0],
+  GLOW_A.map((a) => a * SPLINTER_GLOW_ALPHA),
+];
+/** A tinted cut's glow core is this many times a crack's width: the cut
+ *  reads as the widest, brightest line on the wreck. Baked into the glow
+ *  mesh at build (one mesh per piece still). */
+export const CUT_GLOW_WIDTH_MUL = 2.5;
+/** A tinted cut's soft halo reaches this many times ITS core (a crack's:
+ *  `GLOW_HALO_MUL`, 3). At 3 × the 2.5 × core it was a flat slab ~150 u
+ *  deep on a heavy cruiser, filmed as four violet "bevels" instead of a
+ *  glowing edge (review 2026-11-15). */
+const CUT_HALO_CORE_MUL = 1.6;
+/** The soft halo of a tinted cut: brighter than a crack's (× alpha), held
+ *  with the colour and gone by the end of its ember. */
+const CUT_HALO_A = 0.45;
+const CUT_HALO_FADE_FROM_S = CUT_GLOW_HOLD_S;
+const CUT_HALO_GONE_S = 3.4;
+/** The simple (sub-capital) glow: the tint holds over this life fraction
+ *  (past the end of its orange stage), and is gone by the end of its red. */
+const SIMPLE_TINT_HOT = 0.1;
+const SIMPLE_TINT_HOLD = 0.5;
+const SIMPLE_TINT_GONE = 0.85;
+
+/** The glow tint of an edge: `EDGE_CUT` edges of a cut kill take the
+ *  weapon's tint; every other edge (and any edge of a kill without a cut)
+ *  keeps the crack curve. Pure. */
+export function glowTintOf(edgeKind: number | undefined, cutKind: 'slice' | 'channel' | undefined): number {
+  if (cutKind === undefined) return GLOW_TINT_CRACK;
+  if (edgeKind !== EDGE_CUT) return GLOW_TINT_SPLINTER;
+  return cutKind === 'slice' ? GLOW_TINT_SLICE : GLOW_TINT_CHANNEL;
+}
+
+/** A weapon's kill cut (slice or channel), not a crack or a splinter. Pure. */
+export function isKillCutTint(tint: number): boolean {
+  return tint === GLOW_TINT_SLICE || tint === GLOW_TINT_CHANNEL;
+}
+
+/** The core strip width multiplier for a glow tint (1 for a crack, 0.5 for
+ *  a splinter, 2.5 for a kill cut). Pure. */
+export function glowWidthMul(tint: number): number {
+  if (tint === GLOW_TINT_SPLINTER) return SPLINTER_GLOW_WIDTH_MUL;
+  return isKillCutTint(tint) ? CUT_GLOW_WIDTH_MUL : 1;
+}
+
+/** The halo strip's reach as a multiple of the tint's core. Pure. */
+export function glowHaloMul(tint: number): number {
+  return isKillCutTint(tint) ? CUT_HALO_CORE_MUL : GLOW_HALO_MUL;
+}
+
+/** The (simple glow) tint colour: C0 at the cut, C1 once hot. */
+const TINT_C0: readonly number[] = [0, SLICE_PALE, 0xffffff];
+const TINT_C1: readonly number[] = [0, HEAVY_BEAM_COLOR, 0xf4f2ff];
+
+/** Blend `out.color` toward `tint`'s colour (C0 → C1 by `hot`, 0..1) by
+ *  `heat` (1 = all tint, 0 = the base curve). */
+function applyTint(out: WreckGlow, tint: number, hot: number, heat: number): void {
+  if (!isKillCutTint(tint) || !(heat > 0)) return;
+  const c = lerpColor(TINT_C0[tint]!, TINT_C1[tint]!, Math.min(1, Math.max(0, hot)));
+  out.color = lerpColor(out.color, c, Math.min(1, heat));
+}
+
+/** The cut-edge glow `ageS` seconds after death (pure, alloc-free). `tint`
+ *  (`glowTintOf`) picks the curve: a crack's molten orange, or a weapon's
+ *  kill cut, held in its colour longer and brighter (`CUT_T/C/A`). Every
+ *  curve ends dark at `WRECK_GLOW_END_S`. */
+export function wreckGlowAt(ageS: number, out: WreckGlow, tint = GLOW_TINT_CRACK): WreckGlow {
+  const T = CUT_T[tint] ?? GLOW_T, C = CUT_C[tint] ?? GLOW_C, A = CUT_A[tint] ?? GLOW_A;
+  const last = T.length - 1;
+  if (!(ageS < T[last]!)) { out.color = C[last]!; out.alpha = 0; return out; }
+  if (ageS <= 0) { out.color = C[0]!; out.alpha = A[0]!; return out; }
   let i = 0;
-  while (ageS > GLOW_T[i + 1]!) i++;
-  const t = (ageS - GLOW_T[i]!) / (GLOW_T[i + 1]! - GLOW_T[i]!);
-  out.color = lerpColor(GLOW_C[i]!, GLOW_C[i + 1]!, t);
-  out.alpha = GLOW_A[i]! + (GLOW_A[i + 1]! - GLOW_A[i]!) * t;
+  while (ageS > T[i + 1]!) i++;
+  const t = (ageS - T[i]!) / (T[i + 1]! - T[i]!);
+  out.color = lerpColor(C[i]!, C[i + 1]!, t);
+  out.alpha = A[i]! + (A[i + 1]! - A[i]!) * t;
   return out;
+}
+
+/** The soft halo's alpha share (× the core's) for `tint` at `ageS`: only
+ *  while the edge glows, so a cooled edge keeps just its thin scorch. */
+function haloShare(ageS: number, tint: number): number {
+  const cut = isKillCutTint(tint);
+  const a = cut ? CUT_HALO_A : 0.3;
+  const from = cut ? CUT_HALO_FADE_FROM_S : HALO_FADE_FROM_S;
+  const gone = cut ? CUT_HALO_GONE_S : HALO_GONE_S;
+  return a * Math.max(0, Math.min(1, (gone - ageS) / (gone - from)));
 }
 
 // ── The glow as a texture (per-segment ageing) ────────────────────────────
 
 /** Texels along the glow curve (U = age / WRECK_GLOW_END_S). */
 const GLOW_TEX_W = 128;
-/** Row centres: the bright core, the soft halo (alpha × 0.3). */
-const V_CORE = 0.25;
-const V_HALO = 0.75;
+/** Rows of the glow texture per tint (one block each). A strip's V runs
+ *  across its WIDTH between two adjacent rows, so the linear filter makes a
+ *  gradient across it in the one mesh: a kill cut's core runs from `EDGE`
+ *  at the cut to `DEEP` inside, its halo `HALO` → `HALO_OUT`, its bleed
+ *  into the gap `BLEED` → `BLEED_OUT` (hostile film review 2026-11-15: a
+ *  flat fill read as "flat painted slabs"). A crack's strips stay flat (V
+ *  at `EDGE` / `HALO`), as before. */
+export const GLOW_ROW = { BLEED_OUT: 0, BLEED: 1, EDGE: 2, DEEP: 3, HALO: 4, HALO_OUT: 5 } as const;
+export const GLOW_ROWS_PER_TINT = 6;
+export const WRECK_GLOW_TEX_ROWS = WRECK_GLOW_TINTS * GLOW_ROWS_PER_TINT;
+/** V of a row centre (`GLOW_ROW`) in `tint`'s block. Pure. */
+export function glowV(tint: number, row: number): number {
+  return (tint * GLOW_ROWS_PER_TINT + row + 0.5) / WRECK_GLOW_TEX_ROWS;
+}
 /** U of the last texel: dark (an unlit or cooled segment). */
 const U_DARK = (GLOW_TEX_W - 0.5) / GLOW_TEX_W;
 /** U of the first texel: white-hot (the crack front itself). */
 const U_HOT = 0.5 / GLOW_TEX_W;
+/** Incandescent metal: a kill cut is brightest AT the cut, falling off into
+ *  the hull. Its core's inner side is `CUT_DEEP_A` × the edge's alpha (so it
+ *  meets the halo with no hard line), in `CUT_DEEP_C` (the channel: white-hot
+ *  at the edge, yellow-orange deeper in; the slice: a pale violet rim,
+ *  deeper violet in) while hot, by `CUT_DEEP_SHIFT`, gone 0.5 s after the
+ *  hold: the ember is one hot-metal colour. The slice's rim is `SLICE_RIM_WHITE`
+ *  toward white. The bleed into the gap starts at `CUT_BLEED_A` × the
+ *  halo's alpha share. */
+const CUT_DEEP_A = 0.05;
+const CUT_DEEP_C: readonly number[] = [0, 0x7a2ae0, 0xff8a20];
+const CUT_DEEP_SHIFT = 0.65;
+const SLICE_RIM_WHITE = 0.3;
+const CUT_BLEED_A = 1.2;
+/** The bleed's reach into the gap, × the cut's core width. */
+const CUT_BLEED_CORE_MUL = 0.35;
 
 let _glowTex: Texture | null = null;
 
-/** The glow curve baked into a 64×2 texture (row 0 core, row 1 halo), so a
- *  segment's colour and alpha follow from its U alone. Made once. */
+/** The glow curve baked into a GLOW_TEX_W × `WRECK_GLOW_TEX_ROWS` texture
+ *  (per tint the `GLOW_ROW` rows), so a segment's colour and alpha follow
+ *  from its U alone and its tint and place across the strip from its V:
+ *  every tint stays in the piece's ONE glow mesh. Made once. */
 export function wreckGlowTexture(): Texture {
   if (_glowTex !== null) return _glowTex;
-  const data = new Uint8Array(GLOW_TEX_W * 2 * 4);
+  const data = new Uint8Array(GLOW_TEX_W * WRECK_GLOW_TEX_ROWS * 4);
   const g: WreckGlow = { color: 0, alpha: 0 };
+  const put = (tint: number, row: number, i: number, c: number, a: number): void => {
+    const o = ((tint * GLOW_ROWS_PER_TINT + row) * GLOW_TEX_W + i) * 4;
+    data[o] = (c >> 16) & 255; data[o + 1] = (c >> 8) & 255; data[o + 2] = c & 255;
+    data[o + 3] = Math.round(255 * Math.max(0, Math.min(1, a)));
+  };
   for (let i = 0; i < GLOW_TEX_W; i++) {
     const ageS = (i / (GLOW_TEX_W - 1)) * WRECK_GLOW_END_S;
-    wreckGlowAt(ageS, g);
-    const halo = 0.3 * Math.max(0, Math.min(1, (HALO_GONE_S - ageS) / (HALO_GONE_S - HALO_FADE_FROM_S)));
-    for (let row = 0; row < 2; row++) {
-      const o = (row * GLOW_TEX_W + i) * 4;
-      data[o] = (g.color >> 16) & 255;
-      data[o + 1] = (g.color >> 8) & 255;
-      data[o + 2] = g.color & 255;
-      data[o + 3] = Math.round(255 * g.alpha * (row === 0 ? 1 : halo));
+    for (let tint = 0; tint < WRECK_GLOW_TINTS; tint++) {
+      wreckGlowAt(ageS, g, tint);
+      const halo = haloShare(ageS, tint);
+      let edge = g.color, deep = g.color, deepA = g.alpha;
+      if (isKillCutTint(tint)) {
+        // The hot shift holds with the weapon's colour, gone 0.5 s after.
+        const heat = Math.max(0, Math.min(1, (CUT_GLOW_HOLD_S + 0.5 - ageS) / 0.5));
+        deep = lerpColor(g.color, CUT_DEEP_C[tint]!, CUT_DEEP_SHIFT * heat);
+        if (tint === GLOW_TINT_SLICE) edge = lerpColor(g.color, 0xffffff, SLICE_RIM_WHITE * heat);
+        deepA = g.alpha * CUT_DEEP_A;
+      }
+      put(tint, GLOW_ROW.BLEED_OUT, i, edge, 0);
+      put(tint, GLOW_ROW.BLEED, i, edge, g.alpha * halo * CUT_BLEED_A);
+      put(tint, GLOW_ROW.EDGE, i, edge, g.alpha);
+      put(tint, GLOW_ROW.DEEP, i, deep, deepA);
+      put(tint, GLOW_ROW.HALO, i, deep, g.alpha * halo);
+      put(tint, GLOW_ROW.HALO_OUT, i, deep, 0);
     }
   }
   _glowTex = new Texture({ source: new BufferImageSource({
-    resource: data, width: GLOW_TEX_W, height: 2, alphaMode: 'premultiply-alpha-on-upload', scaleMode: 'linear',
+    resource: data, width: GLOW_TEX_W, height: WRECK_GLOW_TEX_ROWS, alphaMode: 'premultiply-alpha-on-upload', scaleMode: 'linear',
   }) });
   return _glowTex;
 }
@@ -233,39 +418,53 @@ const SIMPLE_T = [0, 0.3, 0.55, 0.7, 1];
 const SIMPLE_C = [0xff8a2a, 0xff7a20, 0xe8200c, 0xb01808, 0x300804];
 const SIMPLE_A = [1, 1, 0.9, 0.7, 0];
 
-/** The simple glow at `frac` of its life (pure, alloc-free). */
-export function simpleGlowAt(frac: number, out: WreckGlow): WreckGlow {
+/** The simple glow at `frac` of its life (pure, alloc-free); `tint` as in
+ *  `wreckGlowAt`, over the simple curve's orange and red stages. */
+export function simpleGlowAt(frac: number, out: WreckGlow, tint = GLOW_TINT_CRACK): WreckGlow {
   const last = SIMPLE_T.length - 1;
   if (!(frac < 1)) { out.color = SIMPLE_C[last]!; out.alpha = 0; return out; }
-  if (!(frac > 0)) { out.color = SIMPLE_C[0]!; out.alpha = SIMPLE_A[0]!; return out; }
+  if (!(frac > 0)) {
+    out.color = SIMPLE_C[0]!; out.alpha = SIMPLE_A[0]!;
+    applyTint(out, tint, 0, 1);
+    return out;
+  }
   let i = 0;
   while (frac > SIMPLE_T[i + 1]!) i++;
   const t = (frac - SIMPLE_T[i]!) / (SIMPLE_T[i + 1]! - SIMPLE_T[i]!);
   out.color = lerpColor(SIMPLE_C[i]!, SIMPLE_C[i + 1]!, t);
   out.alpha = SIMPLE_A[i]! + (SIMPLE_A[i + 1]! - SIMPLE_A[i]!) * t;
+  const heat = frac <= SIMPLE_TINT_HOLD ? 1 : (SIMPLE_TINT_GONE - frac) / (SIMPLE_TINT_GONE - SIMPLE_TINT_HOLD);
+  applyTint(out, tint, frac / SIMPLE_TINT_HOT, heat);
   return out;
 }
 
 let _simpleGlowTex: Texture | null = null;
 
-/** The simple glow's curve baked into a GLOW_TEX_W×1 texture (U = life
- *  fraction). Made once. */
+/** The simple glow's curve baked into a GLOW_TEX_W × `WRECK_GLOW_TINTS`
+ *  texture (U = life fraction, one row per tint). Made once. */
 export function wreckSimpleGlowTexture(): Texture {
   if (_simpleGlowTex !== null) return _simpleGlowTex;
-  const data = new Uint8Array(GLOW_TEX_W * 4);
+  const data = new Uint8Array(GLOW_TEX_W * WRECK_GLOW_TINTS * 4);
   const g: WreckGlow = { color: 0, alpha: 0 };
-  for (let i = 0; i < GLOW_TEX_W; i++) {
-    simpleGlowAt(i / (GLOW_TEX_W - 1), g);
-    const o = i * 4;
-    data[o] = (g.color >> 16) & 255;
-    data[o + 1] = (g.color >> 8) & 255;
-    data[o + 2] = g.color & 255;
-    data[o + 3] = Math.round(255 * g.alpha);
+  for (let tint = 0; tint < WRECK_GLOW_TINTS; tint++) {
+    for (let i = 0; i < GLOW_TEX_W; i++) {
+      simpleGlowAt(i / (GLOW_TEX_W - 1), g, tint);
+      const o = (tint * GLOW_TEX_W + i) * 4;
+      data[o] = (g.color >> 16) & 255;
+      data[o + 1] = (g.color >> 8) & 255;
+      data[o + 2] = g.color & 255;
+      data[o + 3] = Math.round(255 * g.alpha);
+    }
   }
   _simpleGlowTex = new Texture({ source: new BufferImageSource({
-    resource: data, width: GLOW_TEX_W, height: 1, alphaMode: 'premultiply-alpha-on-upload', scaleMode: 'linear',
+    resource: data, width: GLOW_TEX_W, height: WRECK_GLOW_TINTS, alphaMode: 'premultiply-alpha-on-upload', scaleMode: 'linear',
   }) });
   return _simpleGlowTex;
+}
+
+/** V of `tint`'s row on the simple glow texture. Pure. */
+export function simpleGlowV(tint: number): number {
+  return (tint + 0.5) / WRECK_GLOW_TINTS;
 }
 
 /** U on the simple glow texture at `frac` of its life (clamped). */
@@ -372,7 +571,7 @@ export function crackIntervals(pieces: readonly WreckPieceGeometry[], kill: CutF
 
 /** Runs of consecutive cut edges as `[start, length]` (edge i runs outline[i]
  *  → outline[i+1]); a run wrapping past the end is one run. */
-export function cutEdgeRuns(cutEdges: readonly boolean[]): Array<[number, number]> {
+export function cutEdgeRuns(cutEdges: readonly (boolean | number)[]): Array<[number, number]> {
   const n = cutEdges.length;
   const out: Array<[number, number]> = [];
   let any = false;
@@ -877,10 +1076,39 @@ export function deathBlastFor(
   return out;
 }
 
+/** A railgun channel through a wreck, game space: from the slug's entry
+ *  (`ax, ay`, the kill point) to where it left the hull (`bx, by`). */
+export interface WreckChannelLine { ax: number; ay: number; bx: number; by: number }
+
 /** Break-up sink: kill point (game space), wreck radius, clean snap, seed,
- *  and the wreck's effects (the sink plays only the parts `fx` asks for:
- *  `breakBurst`, `killBlasts`). */
-export type WreckBreakSink = (x: number, y: number, radius: number, snap: boolean, seed: number, fx: DestructionFx) => void;
+ *  the wreck's effects (the sink plays only the parts `fx` asks for:
+ *  `breakBurst`, `killBlasts`) and, for a `channel` kill, the channel line
+ *  (its glowing ash; null otherwise; a reused scratch, read it at once). */
+export type WreckBreakSink = (
+  x: number, y: number, radius: number, snap: boolean, seed: number, fx: DestructionFx, channel: WreckChannelLine | null,
+) => void;
+
+const _channel: WreckChannelLine = { ax: 0, ay: 0, bx: 0, by: 0 };
+
+/** The channel's far end (hull frame, math-up, like `forEachCut`): the
+ *  `EDGE_CUT` vertex farthest from the kill point, where the slug left the
+ *  hull. Null without a channel edge. Once per fresh wreck. */
+export function channelFarEnd(pieces: readonly WreckPieceGeometry[], killX: number, killY: number): { x: number; y: number } | null {
+  let best = -1, bx = 0, by = 0;
+  for (const p of pieces) {
+    const o = p.outline, n = o.length;
+    for (let i = 0; i < n; i++) {
+      if (p.cutEdges[i] !== EDGE_CUT) continue;
+      for (let e = 0; e < 2; e++) {
+        const v = o[(i + e) % n]!;
+        const x = v.x + p.cx, y = v.y + p.cy;
+        const d = (x - killX) * (x - killX) + (y - killY) * (y - killY);
+        if (d > best) { best = d; bx = x; by = y; }
+      }
+    }
+  }
+  return best < 0 ? null : { x: bx, y: by };
+}
 
 /**
  * Renderer-side state of each wreck in view: when it died (on this
@@ -966,7 +1194,17 @@ export class WreckArtState {
     if ((fx.breakBurst || fx.killBlasts) && ageMs < WRECK_BREAK_FX_MAX_AGE_MS && g !== undefined && this.onBreak !== null) {
       const dx = info.killX - g.cx, dy = info.killY - g.cy;
       const c = Math.cos(pose.angle), sn = Math.sin(pose.angle);
-      this.onBreak(pose.x + dx * c - dy * sn, pose.y + dx * sn + dy * c, hullR, info.snap, desc.seed, fx);
+      const kx = pose.x + dx * c - dy * sn, ky = pose.y + dx * sn + dy * c;
+      // A railgun channel sheds ash along the line the slug punched through.
+      const far = desc.cutKind === 'channel' ? channelFarEnd(pieces, info.killX, info.killY) : null;
+      let channel: WreckChannelLine | null = null;
+      if (far !== null) {
+        const fx2 = far.x - g.cx, fy2 = far.y - g.cy;
+        _channel.ax = kx; _channel.ay = ky;
+        _channel.bx = pose.x + fx2 * c - fy2 * sn; _channel.by = pose.y + fx2 * sn + fy2 * c;
+        channel = _channel;
+      }
+      this.onBreak(kx, ky, hullR, info.snap, desc.seed, fx, channel);
     }
     return info;
   }
@@ -1046,6 +1284,8 @@ export class WreckPieceSprite extends Container {
   /** Per cut segment (`SEG_STRIDE` floats) and outline edge → segment. */
   private seg = new Float64Array(0);
   private edgeSeg = new Int32Array(0);
+  /** Each segment's glow tint (`glowTintOf`: a kill cut burns in the weapon's colour). */
+  private segTint = new Uint8Array(0);
   private segN = 0;
   private halfCore = 0;
   private halfHalo = 0;
@@ -1170,6 +1410,8 @@ export class WreckPieceSprite extends Container {
     if (S === 0) return;
     this.edgeSeg = new Int32Array(n).fill(-1);
     this.seg = new Float64Array(S * SEG_STRIDE);
+    this.segTint = new Uint8Array(S);
+    const cutKind = info.desc.cutKind;
     // Widths follow the wreck's size (#18), so the cracks read at capital zoom.
     const core = Math.min(120, Math.max(4, info.hullR * GLOW_CORE_R));
     this.halfCore = core / 2;
@@ -1183,14 +1425,41 @@ export class WreckPieceSprite extends Container {
     this.simpleW = Math.max(SIMPLE_GLOW_MIN_W, info.hullR * SIMPLE_GLOW_W_R);
     const reach = this.simple ? Math.max(this.halfHalo, this.simpleW) : this.halfHalo;
     let k = 0;
+    // On the piece AS DRAWN (`wreckGlowStrip`): a capital's outline spans
+    // empty space beside its body, where its art is transparent.
+    const kind = this.parentKind, pcx = piece.cx, pcy = piece.cy;
+    const onArt: InsideTest = (x, y) => onDrawnHull(kind, x + pcx, y + pcy);
+    const inside: InsideTest = (x, y) => pointInRing(o, x, y) && onArt(x, y);
     forEachCut(piece, info, (hax, hay, hbx, hby, da, db, edge) => {
       // Body-local, math-up; then stored Pixi-down.
       const ax = hax - piece.cx, ay = hay - piece.cy, bx = hbx - piece.cx, by = hby - piece.cy;
       const fwd = da <= db;
-      const nx = fwd ? ax : bx, ny = fwd ? ay : by, fx = fwd ? bx : ax, fy = fwd ? by : ay;
-      const dn = fwd ? da : db, df = fwd ? db : da;
+      let nx = fwd ? ax : bx, ny = fwd ? ay : by, fx = fwd ? bx : ax, fy = fwd ? by : ay;
+      let dn = fwd ? da : db, df = fwd ? db : da;
+      const el = Math.hypot(bx - ax, by - ay);
+      const mx = el > 1e-6 ? -(by - ay) / el : 0, my = el > 1e-6 ? (bx - ax) / el : 0; // math-up, into the piece
+      // Only the drawn stretch of the edge glows (the filmed "white bars
+      // stuck onto the hull edge" ran on over transparent art).
+      const span = drawnSpan(onArt, nx, ny, fx, fy, mx, my, 0.2);
+      const drawn = span.t0 <= span.t1;
+      if (drawn) {
+        const t0 = span.t0, t1 = span.t1, x0 = nx, y0 = ny, ex = fx - nx, ey = fy - ny, dd = df - dn;
+        nx = x0 + ex * t0; ny = y0 + ey * t0; fx = x0 + ex * t1; fy = y0 + ey * t1;
+        dn += dd * t0; df = dn + dd * (t1 - t0);
+      }
       const len = Math.hypot(fx - nx, fy - ny);
       const s = this.seg, q = k * SEG_STRIDE;
+      // A weapon's kill cut burns in its colour and draws wider (its tint and
+      // width are set once here, in the one mesh: V row and strip width).
+      // A splinter of a cut kill is subdued on the full (capital) glow only;
+      // the simple (sub-capital) glow keeps its cracks as they were.
+      const t0 = glowTintOf(piece.cutEdges[edge], cutKind);
+      const tint = this.simple && t0 === GLOW_TINT_SPLINTER ? GLOW_TINT_CRACK : t0;
+      const mul = glowWidthMul(tint);
+      this.segTint[k] = tint;
+      s[q + 14] = mul;
+      // Its halo's half-width (world u): a kill cut's hugs its core.
+      s[q + 17] = this.halfCore * mul * glowHaloMul(tint);
       s[q] = nx; s[q + 1] = -ny; s[q + 2] = fx; s[q + 3] = -fy;
       s[q + 4] = dn; s[q + 5] = df; s[q + 6] = crackIgniteMs(info, dn, info.noHold);
       s[q + 7] = len > 1e-6 ? (fx - nx) / len : 1;
@@ -1198,21 +1467,36 @@ export class WreckPieceSprite extends Container {
       s[q + 9] = crackIgniteMs(info, df, info.noHold);
       // Into the piece (Pixi-down): the outline is CCW in math-up, so its
       // inside is left of edge a → b, (−(by−ay), bx−ax); flip y for Pixi.
-      const el = Math.hypot(bx - ax, by - ay);
-      const mx = el > 1e-6 ? -(by - ay) / el : 0, my = el > 1e-6 ? (bx - ax) / el : 0; // math-up
       s[q + 10] = mx;
       s[q + 11] = -my;
       // How wide the strip may be at each end and stay inside the piece (a
       // sharp corner, e.g. the wedge at the kill point, would poke it out).
-      s[q + 12] = insideWidth(o, nx, ny, mx, my, reach);
-      s[q + 13] = insideWidth(o, fx, fy, mx, my, reach);
+      // A kill cut's strip is chamfered (`writeStrip`): it is ONE long
+      // edge whose two ends are both hull corners, so a square strip end
+      // measured 0 wide there and the whole strip narrowed to nothing (the
+      // filmed "1–2 px hairline", 2026-11-15). A crack's is square as before.
+      const ch = isKillCutTint(tint);
+      const dx = len > 1e-6 ? (fx - nx) / len : 1, dy = len > 1e-6 ? (fy - ny) / len : 0;
+      const want = drawn ? (this.simple ? reach * mul : s[q + 17]!) : 0;
+      s[q + 12] = insideWidth(inside, nx, ny, mx, my, want, ch ? dx : 0, ch ? dy : 0, len);
+      s[q + 15] = lastChamferRatio();
+      s[q + 13] = insideWidth(inside, fx, fy, mx, my, want, ch ? -dx : 0, ch ? -dy : 0, len);
+      s[q + 16] = lastChamferRatio();
+      const cn = s[q + 15]!, cf = s[q + 16]!;
+      // A kill cut's soft bleed into the gap, on the drawn hull, chamfered.
+      const bleed = ch && drawn ? this.halfCore * mul * CUT_BLEED_CORE_MUL : 0;
+      s[q + 18] = insideWidth(onArt, nx, ny, -mx, -my, bleed, dx, dy, len);
+      s[q + 20] = lastChamferRatio();
+      s[q + 19] = insideWidth(onArt, fx, fy, -mx, -my, bleed, -dx, -dy, len);
+      s[q + 21] = lastChamferRatio();
+      if (!stripInside(onArt, nx, ny, fx, fy, -mx, -my, s[q + 18]!, s[q + 19]!, s[q + 20]!, s[q + 21]!)) { s[q + 18] = 0; s[q + 19] = 0; }
       // Both ends inside is not enough on a concave piece (the bow): the
       // strip's far side can still cross the outline between them (filmed
       // v3 takes: the scorch stuck out past the hull). Narrow until it fits.
-      for (let tries = 0; tries < 6 && !stripInside(o, nx, ny, fx, fy, mx, my, s[q + 12]!, s[q + 13]!); tries++) {
-        s[q + 12] = s[q + 12]! * 0.5; s[q + 13] = s[q + 13]! * 0.5;
+      for (let tries = 0; tries < 16 && !stripInside(inside, nx, ny, fx, fy, mx, my, s[q + 12]!, s[q + 13]!, cn, cf); tries++) {
+        s[q + 12] = s[q + 12]! * 0.75; s[q + 13] = s[q + 13]! * 0.75;
       }
-      if (!stripInside(o, nx, ny, fx, fy, mx, my, s[q + 12]!, s[q + 13]!)) { s[q + 12] = 0; s[q + 13] = 0; }
+      if (!stripInside(inside, nx, ny, fx, fy, mx, my, s[q + 12]!, s[q + 13]!, cn, cf)) { s[q + 12] = 0; s[q + 13] = 0; }
       this.glowEndMs = Math.max(this.glowEndMs, s[q + 9]! + WRECK_GLOW_END_S * 1000);
       this.edgeSeg[edge] = k++;
     });
@@ -1228,9 +1512,12 @@ export class WreckPieceSprite extends Container {
       const v0 = j * 4, ii = j * 6;
       indices[ii] = v0; indices[ii + 1] = v0 + 1; indices[ii + 2] = v0 + 2;
       indices[ii + 3] = v0; indices[ii + 4] = v0 + 2; indices[ii + 5] = v0 + 3;
-      const block = Math.floor(j / S);
-      const v = block === 1 || block === 3 ? V_CORE : V_HALO;
-      for (let c = 0; c < 4; c++) { uvs[(v0 + c) * 2] = block >= 2 ? U_HOT : U_DARK; uvs[(v0 + c) * 2 + 1] = v; }
+      const block = Math.floor(j / S), tint = this.segTint[j % S]!, kill = isKillCutTint(tint);
+      // Its tint's rows (one mesh whatever the tints). A kill cut's V runs
+      // across the strip, edge (corners 2, 3) → outer (0, 1): a gradient.
+      const [vOut, vEdge] = GLOW_BLOCK_ROWS[kill ? 1 : 0]![block]!;
+      const aged = block < 2 || (kill && block === 2);
+      for (let c = 0; c < 4; c++) { uvs[(v0 + c) * 2] = aged ? U_DARK : U_HOT; uvs[(v0 + c) * 2 + 1] = glowV(tint, c >= 2 ? vEdge : vOut); }
     }
     const geometry = new MeshGeometry({ positions, uvs, indices });
     geometry.batchMode = 'batch';
@@ -1253,7 +1540,7 @@ export class WreckPieceSprite extends Container {
     // pieces still touch the two read as ONE line, not a stroke twice as
     // wide (owner's v5 film 2026-11-13: "a filled 3-4 px bar for ~0.2 s,
     // then a line"). As they part, each face keeps the same thin line.
-    const S = this.segN, s = this.seg, half = this.simpleW / 2;
+    const S = this.segN, s = this.seg;
     const positions = new Float32Array(S * 8);
     const uvs = new Float32Array(S * 8);
     const indices = new Uint32Array(S * 6);
@@ -1262,12 +1549,14 @@ export class WreckPieceSprite extends Container {
       const v0 = k * 4, ii = k * 6, q = k * SEG_STRIDE;
       indices[ii] = v0; indices[ii + 1] = v0 + 1; indices[ii + 2] = v0 + 2;
       indices[ii + 3] = v0; indices[ii + 4] = v0 + 2; indices[ii + 5] = v0 + 3;
-      for (let c = 0; c < 4; c++) { uvs[(v0 + c) * 2] = u0; uvs[(v0 + c) * 2 + 1] = 0.5; }
+      const v = simpleGlowV(this.segTint[k]!);
+      for (let c = 0; c < 4; c++) { uvs[(v0 + c) * 2] = u0; uvs[(v0 + c) * 2 + 1] = v; }
       const mx = s[q + 10]!, my = s[q + 11]!;
+      const half = (this.simpleW / 2) * s[q + 14]!;
       writeStrip(
         positions, v0,
         s[q]! - mx * half, s[q + 1]! - my * half, s[q + 2]! - mx * half, s[q + 3]! - my * half,
-        mx, my, half + Math.min(half, s[q + 12]!), half + Math.min(half, s[q + 13]!),
+        mx, my, half + Math.min(half, s[q + 12]!), half + Math.min(half, s[q + 13]!), s[q + 15]!, s[q + 16]!,
       );
     }
     this.grown = true;
@@ -1301,12 +1590,12 @@ export class WreckPieceSprite extends Container {
     const uv = geom.uvs;
     if (!this.grown) {
       const pos = geom.positions;
-      const hc = this.halfCore, hh = this.halfHalo;
       let heads = 0;
       for (let k = 0; k < S; k++) {
         const q = k * SEG_STRIDE;
+        const hc = this.halfCore * s[q + 14]!, hh = s[q + 17]!;
         const nx = s[q]!, ny = s[q + 1]!, dn = s[q + 4]!, df = s[q + 5]!;
-        const inx = s[q + 10]!, iny = s[q + 11]!;
+        const inx = s[q + 10]!, iny = s[q + 11]!, cn = s[q + 15]!, cf = s[q + 16]!;
         const lit = F >= dn;
         const frac = !lit ? 0 : df > dn ? Math.min(1, (F - dn) / (df - dn)) : 1;
         const fx = s[q + 2]!, fy = s[q + 3]!;
@@ -1314,8 +1603,8 @@ export class WreckPieceSprite extends Container {
         // Halo and core on this piece's side of the crack only (its half of
         // the stroke; the neighbour draws the other half).
         const wn = s[q + 12]!, we = wn + (s[q + 13]! - wn) * frac;
-        writeStrip(pos, k * 4, nx, ny, ex, ey, inx, iny, lit ? Math.min(hh, wn) : 0, lit ? Math.min(hh, we) : 0);
-        writeStrip(pos, (S + k) * 4, nx, ny, ex, ey, inx, iny, lit ? Math.min(hc, wn) : 0, lit ? Math.min(hc, we) : 0);
+        writeStrip(pos, k * 4, nx, ny, ex, ey, inx, iny, lit ? Math.min(hh, wn) : 0, lit ? Math.min(hh, we) : 0, cn, cf);
+        writeStrip(pos, (S + k) * 4, nx, ny, ex, ey, inx, iny, lit ? Math.min(hc, wn) : 0, lit ? Math.min(hc, we) : 0, cn, cf);
         // The white-hot head: the last stretch behind the tip of a crack the
         // front is still running along, wider than the crack it leaves.
         // On this piece's side only, like the stroke (it was a quad centred
@@ -1329,7 +1618,11 @@ export class WreckPieceSprite extends Container {
           hx = ex - (fx - nx) * back; hy = ey - (fy - ny) * back;
           wh = wn + (s[q + 13]! - wn) * (frac - back);
         }
-        writeStrip(pos, (2 * S + k) * 4, hx, hy, ex, ey, inx, iny, growing ? Math.min(this.halfHeadHalo, wh) : 0, growing ? Math.min(this.halfHeadHalo, we) : 0);
+        if (isKillCutTint(this.segTint[k]!)) {
+          // No head on a kill cut (no-hold): its block is the soft bleed.
+          const bn = s[q + 18]!, be = bn + (s[q + 19]! - bn) * frac;
+          writeStrip(pos, (2 * S + k) * 4, nx, ny, ex, ey, -inx, -iny, lit ? bn : 0, lit ? be : 0, s[q + 20]!, s[q + 21]!);
+        } else writeStrip(pos, (2 * S + k) * 4, hx, hy, ex, ey, inx, iny, growing ? Math.min(this.halfHeadHalo, wh) : 0, growing ? Math.min(this.halfHeadHalo, we) : 0);
         writeStrip(pos, (3 * S + k) * 4, hx, hy, ex, ey, inx, iny, growing ? Math.min(this.halfHead, wh) : 0, growing ? Math.min(this.halfHead, we) : 0);
       }
       this.heads = heads;
@@ -1353,6 +1646,7 @@ export class WreckPieceSprite extends Container {
       const h = k * 8, c = (S + k) * 8;
       uv[h] = ua; uv[h + 2] = ub; uv[h + 4] = ub; uv[h + 6] = ua;
       uv[c] = ua; uv[c + 2] = ub; uv[c + 4] = ub; uv[c + 6] = ua;
+      if (isKillCutTint(this.segTint[k]!)) { const b = (2 * S + k) * 8; uv[b] = ua; uv[b + 2] = ub; uv[b + 4] = ub; uv[b + 6] = ua; }
     }
     geom.getBuffer('aUV').update();
     this.writes++;
@@ -1513,8 +1807,9 @@ export class WreckPieceSprite extends Container {
   /** The glow's colour at the last update (the simple glow's curve; the full
    *  glow's at its first segment's age). Tests/diagnostics. */
   glowColor(): number {
-    if (this.simple) return simpleGlowAt(this.lastT / this.glowEndMs, _glow).color;
-    return wreckGlowAt((this.lastT - (this.seg[6] ?? 0)) / 1000, _glow).color;
+    const tint = this.segTint[0] ?? GLOW_TINT_CRACK;
+    if (this.simple) return simpleGlowAt(this.lastT / this.glowEndMs, _glow, tint).color;
+    return wreckGlowAt((this.lastT - (this.seg[6] ?? 0)) / 1000, _glow, tint).color;
   }
 
   /** Cut segments the glow covers (0 once cool). Tests/diagnostics. */
@@ -1550,16 +1845,53 @@ export class WreckPieceSprite extends Container {
   edgeHeat(i: number): number {
     const k = this.glow === null ? -1 : (this.edgeSeg[i] ?? -1);
     if (k < 0) return 0;
-    if (this.simple) return simpleGlowAt(this.lastT / this.glowEndMs, _glow).alpha;
+    const tint = this.segTint[k]!;
+    if (this.simple) return simpleGlowAt(this.lastT / this.glowEndMs, _glow, tint).alpha;
     const q = k * SEG_STRIDE;
     if (crackFrontAt(this.info, this.lastT, this.info.noHold) < this.seg[q + 4]!) return 0;
-    return wreckGlowAt((this.lastT - this.seg[q + 6]!) / 1000, _glow).alpha;
+    return wreckGlowAt((this.lastT - this.seg[q + 6]!) / 1000, _glow, tint).alpha;
+  }
+
+  /** Outline edge `i`'s glow core width (world u, at its near end, as built:
+   *  0 for an edge with no glow segment or not yet lit). Tests/diagnostics. */
+  edgeCoreWidth(i: number): number {
+    const k = this.glow === null ? -1 : (this.edgeSeg[i] ?? -1);
+    if (k < 0) return 0;
+    const pos = this.glowGeom!.positions;
+    const o = ((this.simple ? 0 : this.segN) + k) * 8;
+    // Corner 0's distance from the edge line (corners 3 → 2).
+    const ex = pos[o + 4]! - pos[o + 6]!, ey = pos[o + 5]! - pos[o + 7]!, el = Math.hypot(ex, ey);
+    if (!(el > 1e-9)) return 0;
+    return Math.abs((pos[o]! - pos[o + 6]!) * ey - (pos[o + 1]! - pos[o + 7]!) * ex) / el;
+  }
+
+  /** Outline edge `i`'s glow tint (`GLOW_TINT_*`; -1 for an edge with no
+   *  glow segment). Tests/diagnostics. */
+  edgeTint(i: number): number {
+    const k = this.glow === null ? -1 : (this.edgeSeg[i] ?? -1);
+    return k < 0 ? -1 : this.segTint[k]!;
+  }
+
+  /** Outline edge `i`'s glow colour at the last update (-1 for an edge with
+   *  no glow segment). Tests/diagnostics. */
+  edgeColor(i: number): number {
+    const k = this.glow === null ? -1 : (this.edgeSeg[i] ?? -1);
+    if (k < 0) return -1;
+    const tint = this.segTint[k]!;
+    if (this.simple) return simpleGlowAt(this.lastT / this.glowEndMs, _glow, tint).color;
+    return wreckGlowAt((this.lastT - this.seg[k * SEG_STRIDE + 6]!) / 1000, _glow, tint).color;
   }
 
   /** The glow mesh's vertex positions (body-local, Pixi-down; null once
    *  cool). Tests/diagnostics. */
   glowPositions(): Float32Array | null {
     return this.glowGeom === null ? null : this.glowGeom.positions;
+  }
+
+  /** The glow mesh's buffers (null once cool). Tests/diagnostics. */
+  glowMesh(): { positions: Float32Array; uvs: Float32Array; indices: Uint32Array } | null {
+    const g = this.glowGeom;
+    return g === null ? null : { positions: g.positions, uvs: g.uvs, indices: g.indices as Uint32Array };
   }
 
   /** The glow strip's texture (the shared glow-curve texture; the simple
@@ -1569,62 +1901,21 @@ export class WreckPieceSprite extends Container {
   }
 }
 
-/** Floats per cut segment: near x,y and far x,y (Pixi-down), near/far crack
- *  distance, near-end ignition (game ms after the front started), unit
- *  direction x,y, far-end ignition, unit normal into the piece x,y, the
- *  widest the strip may be at the near / far end and stay inside. */
-const SEG_STRIDE = 14;
-/** Glow quads per cut segment: halo, core, head halo, head core. */
+/** Floats per cut segment: near x,y and far x,y (Pixi-down; the drawn
+ *  stretch of the edge), near/far crack distance, near-end ignition (game
+ *  ms after the front started), unit direction x,y, far-end ignition, unit
+ *  normal into the piece x,y, the widest the strip may be at the near / far
+ *  end and stay inside, its width multiplier (`glowWidthMul` of its tint),
+ *  the chamfer ratio at the near / far end (0 = square; `writeStrip`), its
+ *  halo's half-width (`glowHaloMul`), and a kill cut's bleed into the gap:
+ *  its width and chamfer at the near / far end. */
+const SEG_STRIDE = 22;
+/** Per glow block (halo, core, head halo or bleed, head core): its outer
+ *  and edge `GLOW_ROW`s, for a crack [0] (flat) and a kill cut [1]. */
+const GLOW_BLOCK_ROWS: ReadonlyArray<ReadonlyArray<readonly [number, number]>> = [
+  [[GLOW_ROW.HALO, GLOW_ROW.HALO], [GLOW_ROW.EDGE, GLOW_ROW.EDGE], [GLOW_ROW.HALO, GLOW_ROW.HALO], [GLOW_ROW.EDGE, GLOW_ROW.EDGE]],
+  [[GLOW_ROW.HALO_OUT, GLOW_ROW.HALO], [GLOW_ROW.DEEP, GLOW_ROW.EDGE], [GLOW_ROW.BLEED_OUT, GLOW_ROW.BLEED], [GLOW_ROW.EDGE, GLOW_ROW.EDGE]],
+];
+/** Glow quads per cut segment: halo, core, head halo (a kill cut's soft
+ *  bleed into the gap: it has no head), head core. */
 const GLOW_QUADS_PER_SEG = 4;
-
-/** Four corners of a strip on one side of the edge (px,py) → (qx,qy): from
- *  the edge to `wp` / `wq` (at each end) along the unit normal (nx,ny).
- *  Corners 0 and 3 at the near end, 1 and 2 at the far end (the U layout
- *  `writeGlow` relies on). In place. */
-function writeStrip(
-  pos: Float32Array, v0: number, px: number, py: number, qx: number, qy: number,
-  nx: number, ny: number, wp: number, wq: number,
-): void {
-  const o = v0 * 2;
-  pos[o] = px + nx * wp; pos[o + 1] = py + ny * wp;
-  pos[o + 2] = qx + nx * wq; pos[o + 3] = qy + ny * wq;
-  pos[o + 4] = qx; pos[o + 5] = qy;
-  pos[o + 6] = px; pos[o + 7] = py;
-}
-
-/** How far (≤ `w`) a strip may reach from outline point (x, y) along the
- *  inward normal (mx, my) and stay inside the ring (math-up). Halved until
- *  the strip's tip and middle are inside; 0 at a sharp corner. Build-time. */
-function insideWidth(ring: ReadonlyArray<{ x: number; y: number }>, x: number, y: number, mx: number, my: number, w: number): number {
-  for (let k = 0; k < 6; k++, w *= 0.5) {
-    if (pointInRing(ring, x + mx * w, y + my * w) && pointInRing(ring, x + mx * w * 0.5, y + my * w * 0.5)) return w;
-  }
-  return 0;
-}
-
-/** Even-odd point-in-polygon. */
-function pointInRing(ring: ReadonlyArray<{ x: number; y: number }>, x: number, y: number): boolean {
-  let inside = false;
-  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-    const a = ring[i]!, b = ring[j]!;
-    if ((a.y > y) !== (b.y > y) && x < ((b.x - a.x) * (y - a.y)) / (b.y - a.y) + a.x) inside = !inside;
-  }
-  return inside;
-}
-
-/** Whether the strip from edge (ax,ay) → (bx,by) out to `wa` / `wb` along
- *  the inward normal (mx, my) lies inside the ring (math-up): its far side
- *  and its middle, sampled along the edge. Build-time. */
-function stripInside(
-  ring: ReadonlyArray<{ x: number; y: number }>, ax: number, ay: number, bx: number, by: number,
-  mx: number, my: number, wa: number, wb: number,
-): boolean {
-  for (let i = 0; i <= STRIP_SAMPLES; i++) {
-    const f = i / STRIP_SAMPLES, w = wa + (wb - wa) * f;
-    if (!(w > 0)) continue;
-    const x = ax + (bx - ax) * f, y = ay + (by - ay) * f;
-    if (!pointInRing(ring, x + mx * w, y + my * w) || !pointInRing(ring, x + mx * w * 0.5, y + my * w * 0.5)) return false;
-  }
-  return true;
-}
-const STRIP_SAMPLES = 16;

@@ -14,6 +14,7 @@
  */
 
 import type { HealthBinding, InteractionResultMut } from '../../core/contracts/IDamageable.js';
+import type { LayerMul } from '../../core/combat/ShieldHull.js';
 import type { ShipState } from '../rooms/schema/SectorState.js';
 import type { ShieldHullRouter, SwarmDamageTarget } from '../rooms/ShieldHullRouter.js';
 
@@ -23,9 +24,9 @@ function shipBinding(
   workerBodyIdFor: (ship: ShipState) => string | null,
 ): HealthBinding {
   return {
-    applyLayered(target: unknown, amount: number, _atTick: number, out: InteractionResultMut): void {
+    applyLayered(target: unknown, amount: number, _atTick: number, out: InteractionResultMut, layerMul?: LayerMul): void {
       const ship = target as ShipState;
-      const r = router.damageShipLayered(ship, amount, workerBodyIdFor(ship));
+      const r = router.damageShipLayered(ship, amount, workerBodyIdFor(ship), layerMul);
       out.applied = true;
       out.newHealth = ship.health;
       out.newShield = r.newShield;
@@ -57,9 +58,9 @@ export function lingeringHealthBinding(router: ShieldHullRouter): HealthBinding 
  */
 export function swarmHealthBinding(router: ShieldHullRouter): HealthBinding {
   return {
-    applyLayered(target: unknown, amount: number, _atTick: number, out: InteractionResultMut): void {
+    applyLayered(target: unknown, amount: number, _atTick: number, out: InteractionResultMut, layerMul?: LayerMul): void {
       const rec = target as SwarmDamageTarget;
-      const r = router.damageSwarmLayered(rec, amount);
+      const r = router.damageSwarmLayered(rec, amount, layerMul);
       if (r === null) {
         out.applied = false; // asteroid — immune, store untouched
         return;
