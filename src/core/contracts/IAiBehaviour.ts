@@ -147,6 +147,11 @@ export interface AiWorldView {
    *  target until then. SERVER-ONLY, no wire surface (the snapshot's
    *  `drones[].charging` is the client's copy). Absent ⇒ never charging. */
   isCharging?(entityId: string): boolean;
+  /** Is entity `entityId` hostile to player `playerId` (stance or ledger,
+   *  the room's one NPC→player hostility answer)? A player-owned ship engages
+   *  what is hostile to its OWNER (RTS Part B slice 6). SERVER-ONLY, no wire
+   *  surface. Absent ⇒ never. */
+  hostileToPlayer?(entityId: string, playerId: string): boolean;
 }
 
 /** Body-target claims per NPC side (spread targets). One claim per brain;
@@ -373,6 +378,13 @@ export interface IAiBehaviour {
    */
   setGuardPost?(x: number, y: number, radius: number): void;
   clearGuardPost?(): void;
+  /** RTS attitude (SERVER-ONLY): off ⇒ engage only what is on the
+   *  retaliation ledger (Defensive); on (the default) ⇒ also what is hostile
+   *  on sight (Aggressive). */
+  setEngageOnSight?(on: boolean): void;
+  /** RTS Hunt (SERVER-ONLY): no guard leash; with nothing to fight the ship
+   *  searches the sector, then engages what it finds. A guard post ends it. */
+  setHunt?(on: boolean): void;
   /**
    * Leader-led flocking (non-combat herding): assign this drone the squad
    * LEADER's course. Like `setMoveTarget` but flags it a flock leader so the

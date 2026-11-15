@@ -1018,17 +1018,9 @@ export class SectorRoom extends Room<SectorState> {
         if (p !== undefined) this.holdHullAt(brain, p.x, p.y);
       }
     },
-    // RTS Part B slice 5: Defend guards its post (the given point, else where
-    // the hull is). Other modes keep the post they had (Hunt: slice 6).
-    modeSet: (id) => {
-      const brain = this.aiController.getBehaviour(id);
-      const w = this.fleet.brainOf(id);
-      if (brain === null || w === null || w.mode !== 'defend') return;
-      const p = this.lingeringPoseCache.get(id);
-      const x = w.guardPostX ?? p?.x;
-      const y = w.guardPostY ?? p?.y;
-      if (x !== undefined && y !== undefined) this.holdHullAt(brain, x, y);
-    },
+    // RTS Part B: the standing mode and the attitude reach the AI pilot brain.
+    modeSet: (id) => this.applyHullMode(id),
+    stanceSet: (id) => this.applyHullStance(id),
   });
   /** Reused `set_mode` parameters (#14; the brain copies the route). */
   private readonly fleetModeScratch: FleetModeData = {};
@@ -2325,6 +2317,9 @@ export class SectorRoom extends Room<SectorState> {
     });
     // A brain holds its line while its charge winds up (view.isCharging).
     this.aiController.isCharging = (id) => this.mountTicker.charges.mask(id) !== 0;
+    // Owned ships engage what is hostile to their owner: the room's one
+    // truce-aware NPC→player answer (RTS Part B slice 6).
+    this.aiController.hostileToPlayer = (id, playerId) => this.npcHostileTo(id, playerId);
 
     // Two-layer shield/hull damage + regen routing. Owns the swarm-side
     // shield state + the three layered-damage methods. Composes the pure
@@ -10469,6 +10464,9 @@ export class SectorRoom extends Room<SectorState> {
       this.holdHullAt(brain, this.sabF32[b + SLOT_X_OFF]!, this.sabF32[b + SLOT_Y_OFF]!);
       this.aiController.unregister(shipInstanceId);
       this.aiController.register(shipInstanceId, slot, brain, HULL_AI_REGISTRATION);
+      // The ship's standing mode and attitude (a restored Hunt / Aggressive).
+      this.applyHullMode(shipInstanceId);
+      this.applyHullStance(shipInstanceId);
     }
     // Fresh neutral controls: the brain's first re-plan is up to 5 ticks away.
     const cmd = this.wingmanInputCmd;
@@ -10485,6 +10483,35 @@ export class SectorRoom extends Room<SectorState> {
   private holdHullAt(brain: IAiBehaviour, x: number, y: number): void {
     brain.setMoveTarget?.(x, y);
     brain.setGuardPost?.(x, y, 0);
+  }
+
+  /** RTS Part B: the wingman store's mode → the AI pilot brain flying hull
+   *  `id`. Defend guards its post (the given point, else where the hull is;
+   *  slice 5). Hunt lifts the leash and searches the sector (slice 6). The
+   *  modes not built on the brain yet (patrol, escort, retreat) hold where
+   *  the hull is, so leaving a Hunt never leaves it leashless. */
+  private applyHullMode(id: string): void {
+    const brain = this.aiController.getBehaviour(id);
+    const w = this.fleet.brainOf(id);
+    if (brain === null || w === null) return;
+    if (w.mode === 'hunt') { brain.setHunt?.(true); return; }
+    brain.setHunt?.(false);
+    const p = this.lingeringPoseCache.get(id);
+    const x = (w.mode === 'defend' ? w.guardPostX : undefined) ?? p?.x;
+    const y = (w.mode === 'defend' ? w.guardPostY : undefined) ?? p?.y;
+    if (x !== undefined && y !== undefined) this.holdHullAt(brain, x, y);
+  }
+
+  /** RTS Part B slice 6: the stance's attitude → the AI pilot brain. Aggressive
+   *  engages anything hostile it sees (robots and drones hostile to players,
+   *  and whatever is hostile to the owner); Defensive only hits back (the
+   *  retaliation ledger). Hold fire is slice 7 (the fire path holds it). */
+  private applyHullStance(id: string): void {
+    const brain = this.aiController.getBehaviour(id);
+    const w = this.fleet.brainOf(id);
+    if (brain === null || w === null) return;
+    if (w.stance === 'aggressive') brain.setEngageOnSight?.(true);
+    else if (w.stance === 'defensive') brain.setEngageOnSight?.(false);
   }
 
   /** Stop flying a hull: its owner reclaimed it, or it left the world. Call

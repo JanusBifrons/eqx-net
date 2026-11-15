@@ -67,7 +67,7 @@ describe('SectorRoom integration — wingmen fight (RTS slice 5)', () => {
   }
 
   // RTS Part B slice 6: hunt + attitude: engage what is hostile to the OWNER; until then a drone is only an enemy by retaliation.
-  it.skip('aggressive + hunt: the wingman damages a drone hostile to its owner', async () => {
+  it('aggressive + hunt: the wingman damages a drone hostile to its owner', async () => {
     const { pid, sid, client, internals } = await parkFighter();
     const p = aheadInReach();
     expect(internals.spawnTestDrone('foe', p.x, p.y, 'fighter')).toBe(true);

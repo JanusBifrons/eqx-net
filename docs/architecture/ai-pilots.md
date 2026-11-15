@@ -40,8 +40,11 @@ An RTS owned ship is flown by this same brain, built with `new HostileDroneBehav
 - **Wiring (RTS Part B slice 2):** `AiController.register(id, slot, brain, { hull: true })`: the hull's keys reach the sink with its id (the sink's one hull branch posts them as pilot `INPUT`) and its `intent.fire` never reaches `handleAiFire`; self pose falls back to `lingeringPoseCache`. Detail: [fleet-command](fleet-command.md) §0.
 - **Retaliation and morale (RTS Part B slice 4):** a hit on an owned hull calls `AiController.markHostile(hull, shooter's owner)` for the hull and every AI-flown squadmate of the same owner (`SectorRoom.ownedHullRetaliates`; the shooter goes through `hostileActorOf`, so one playerId covers that player's active ship and parked hulls), and `AiController.noteDamage` with the HULL the hit took (never shield damage). No fleet-side retaliation ledger. Lock: `tests/integration/sectorRoom/ownedShipsRetaliate.test.ts`.
 - **Handling:** the kind passed in is used as is (`makePilotHandling`), so a pre-scaled kind (upgrades, `energyMax`) flows through.
+- **Attitude (RTS Part B slice 6):** `setEngageOnSight(on)`, default on (drones and robots unchanged). On (Aggressive) it engages what it sees: the on-sight stance table, robots, and any swarm ship hostile to its OWNER (`view.hostileToPlayer(id, ownerId)`, which the room sets to its truce-aware `npcHostileTo`). Off (Defensive) it fights only its retaliation ledger.
+- **Hunt (RTS Part B slice 6):** `setHunt(true)` clears the guard post and move target and sights on-sight enemies out to the sensor range (not `ON_SIGHT_ENGAGE_RANGE`). With nothing to fight, `tickSearch` flies an expanding square (legs d, d, 2d, 2d, ... with d = 1.5 × sensor range, 90° left turns, first leg along the nose) round where the search began, each leg a plain `tickMoveTo`, waypoints clamped to 95 % of `SECTOR_PLAYABLE_HALF_EXTENT`; a fight restarts the square from where it ends. A guard post ends the hunt.
+- **Retaliation past the leash (slice 6):** a guarding ship with nothing inside its radius picks a LEDGER target out to guard radius + its fire range (`_pickOptsGuardRetaliate`), so a ship shot from just outside its area fires back from the edge, then goes back to its post. On-sight targets stay inside the radius.
 
-Lock: `ai/HostileDroneBehaviour.ownedSide.test.ts`.
+Lock: `ai/HostileDroneBehaviour.ownedSide.test.ts`, `ai/HostileDroneBehaviour.hunt.test.ts`.
 
 ## Roles and the sensor-capped target pick
 

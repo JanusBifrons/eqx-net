@@ -26,7 +26,7 @@ describe('SectorRoom integration — wingman kill XP', () => {
   }, 10_000);
 
   // RTS Part B slice 6: hunt + attitude: engage a drone hostile to the OWNER (here via `test_aggro`).
-  it.skip("the wingman hull's roster row gains the kill XP", async () => {
+  it("the wingman hull's roster row gains the kill XP", async () => {
     const pid = randomUUID();
     const client = await harness.connectActive(pid, { shipKind: 'fighter', spawnX: 0, spawnY: 0, instantLock: true });
     const room = harness.getServerRoom()! as unknown as SectorRoom;

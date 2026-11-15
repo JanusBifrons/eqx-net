@@ -34,8 +34,21 @@ describe the wingman brain flying, read this section instead.
   the wingman store's resolved post, else the hull's spot) all go through
   `holdHullAt`, so the brain engages only inside its guard radius round the
   post and returns there when idle ([ai-pilots](ai-pilots.md) "Capital
-  broadside and guard posts"). Hunt lifts the leash in slice 6. Lock:
+  broadside and guard posts"). Lock:
   `tests/integration/sectorRoom/ownedShipsGuardLeash.test.ts`.
+- **Hunt and attitude (slice 6):** `modeSet` → `applyHullMode`: Hunt ⇒
+  `setHunt(true)` (no leash; it searches the sector and engages what it
+  finds, [ai-pilots](ai-pilots.md) "Player-owned ships"); Defend ⇒ guard
+  the post; patrol / escort / retreat hold where the hull is until their
+  slices. The new `stanceSet` hook (`setStance`, and `restoreShip` with
+  `modeSet`) → `applyHullStance`: Aggressive ⇒ `setEngageOnSight(true)`,
+  Defensive (the default) ⇒ off; hold fire is slice 7. Attach applies both,
+  so a restored Hunt / Aggressive ship resumes. An Aggressive ship engages
+  anything hostile to its owner (`AiController.hostileToPlayer` =
+  `npcHostileTo`). Lock: `ownedShipsHunt.test.ts`, `wingmanFights.test.ts`
+  "aggressive + hunt", `wingmanKillXp.test.ts`. The `rtsFleetScene` kill
+  check stays skipped (first kill ~tick 1035 vs its 450-tick window; lock
+  restarts on target switches are part of it).
 - **Self pose:** `swarmEntitySnapshot` falls back to `lingeringPoseCache`
   (`lingeringHullSnapshot`, same shared scratch), so `runEntity` ticks a hull.
 - **Keys:** the AI input sink's ONE hull branch (`postInput(slot, bits,
@@ -67,8 +80,8 @@ describe the wingman brain flying, read this section instead.
   Lock: `ownedShipsRetaliate.test.ts`, `wingmanFights.test.ts` "defensive",
   `wingmanFightsRobots.test.ts` "shield hits alone".
 - **Orders:** the facade's `orderIssued` hook forwards each ship's own order:
-  `move` → hold at the point, `stop` → hold where it is. Attack, modes,
-  stance (except hold fire) and squads reach the brain in later slices.
+  `move` → hold at the point, `stop` → hold where it is (both end a Hunt).
+  Attack, hold fire and squads reach the brain in later slices.
 - **Cost:** a hull brain decides every tick (60 Hz) like any AI pilot; the
   wingman re-planned at 10 Hz. The `rts-fleet` scene's
   `wingmanReplansPerTick` now counts hull brain decisions.

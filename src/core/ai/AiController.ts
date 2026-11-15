@@ -117,6 +117,10 @@ export class AiController {
   /** Charge wind-up query handed to brains as `view.isCharging` (the server
    *  sets it to its fire resolver's). Absent ⇒ no brain is ever charging. */
   isCharging: ((entityId: string) => boolean) | undefined = undefined;
+  /** NPC→player hostility handed to brains as `view.hostileToPlayer` (owned
+   *  ships engage what is hostile to their owner). The server sets it to its
+   *  truce-aware query; the default asks the registered brains. Bound once. */
+  hostileToPlayer: (entityId: string, playerId: string) => boolean = (e, p) => this.isEntityHostileToPlayer(e, p);
 
   constructor(private readonly sink: AiIntentSink) {}
 
@@ -308,7 +312,7 @@ export class AiController {
     // every behaviour. The 60/sec rate is negligible vs the rest of
     // the engine; leave as-is. See `swarmEntitySnapshot` doc for the
     // full GC-pressure story.
-    const view: AiWorldView = { players, structures, swarms, tick, dtSec, resolveEntityInto, neighbours, stats: this.stats, aims: this.aims, claims: this.claims, isCharging: this.isCharging };
+    const view: AiWorldView = { players, structures, swarms, tick, dtSec, resolveEntityInto, neighbours, stats: this.stats, aims: this.aims, claims: this.claims, isCharging: this.isCharging, hostileToPlayer: this.hostileToPlayer };
     this.inputsQueued = 0;
     for (const [id, reg] of this.entities) {
       this.runEntity(id, reg, view, tick, entitySnapshot);

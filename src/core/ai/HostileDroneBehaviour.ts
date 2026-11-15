@@ -9,6 +9,7 @@ import { hasTurretFireControl, mountWeaponReach } from '../combat/mountReach.js'
 import { FC_MOUNT_FIRE_TOLERANCE } from '../combat/fireControlBearing.js';
 import { shipAimRadius, shipBubbleRadius, shipHitBound, shipHullDistance } from '../combat/shipHitShape.js';
 import { getShipKind, type ShipKind } from '../../shared-types/shipKinds.js';
+import { SECTOR_PLAYABLE_HALF_EXTENT } from '../../shared-types/sectorBounds.js';
 import {
   isOnSightHostile,
   isFriendly,
@@ -251,6 +252,12 @@ const PATROL_INWARD_GAIN = 1.0;
  *  which the drone ramps thrust down so per-kind damping brakes it to a stop
  *  (the "slow down and come to a stop in formation, don't float past" feel). */
 const MOVE_ARRIVE_SLOW_RADIUS = 300;
+/** Hunt search (RTS Part B slice 6): the expanding-square legs are this many
+ *  sighting ranges apart, so each leg's swept band (one sighting range either
+ *  side of the track) overlaps the last and nothing is skipped. */
+const HUNT_LEG_SPACING_MUL = 1.5;
+/** Hunt search waypoints stay inside this share of the sector half extent. */
+const HUNT_EDGE_FRAC = 0.95;
 /** Non-combat herding: a flock LEADER cruises its course at this fraction of the
  *  calm cruise, so its FOLLOWERS — moving at the full calm cruise
  *  — actually outrun it and tighten into the herd. Without the throttle the
@@ -458,6 +465,9 @@ export class HostileDroneBehaviour implements IAiBehaviour {
      *  so `pickTarget` reads it instead of the callback. For a drones-only view
      *  it equals `hostileTo.has(id)` ⇒ byte-identical to pre-P0. */
     hostile: boolean;
+    /** Hostile through the retaliation ledger (`hostileTo`), not on sight:
+     *  the guard leash reaches these out to guard radius + weapon reach. */
+    ledger: boolean;
   }> = [];
   /** Allegiances P0 — this entity's NPC side (from its kind) and whether that
    *  side attacks players ON SIGHT (robots do; drones don't — drones are driven
@@ -488,6 +498,23 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   private guardX = 0;
   private guardY = 0;
   private guardR = 0;
+  /** On-sight engagement (RTS Part B slice 6, `setEngageOnSight`): off ⇒ this
+   *  ship fights only what is on its retaliation ledger (`hostileTo`), the
+   *  Defensive attitude. Drones and robots keep it on. */
+  private engageOnSight = true;
+  /** Hunt (RTS Part B slice 6, `setHunt`): no leash, on-sight engagement out
+   *  to the sensor range, and with nothing to fight the ship searches the
+   *  sector in an expanding square round where the search began
+   *  (`tickSearch`). Plain fields (#14). */
+  private hunting = false;
+  /** The search (re)starts from where the ship is on its next idle tick. */
+  private searchReset = true;
+  /** Current leg (0-based), its unit direction and its end point. */
+  private searchLeg = 0;
+  private searchDirX = 0;
+  private searchDirY = 1;
+  private searchWpX = 0;
+  private searchWpY = 0;
 
   // ── Weapon-aware engagement (weapons/energy/AI overhaul §4) ───────────
   // Computed once in the constructor from this drone's bound weapon (no
@@ -532,6 +559,10 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   /** The guard-leash pick (a non-broadside ship with a post): measured from
    *  the POST, new picks AND the held target only inside the guard radius. */
   private readonly _pickOptsGuard: PickTargetOptions;
+  /** The guard-leash pick for RETALIATION targets only (slice 6): a ship being
+   *  shot answers out to its guard radius plus its weapon reach, so it fires
+   *  back from the edge of its area. */
+  private readonly _pickOptsGuardRetaliate: PickTargetOptions;
   /** Bound once (no per-tick closure). Unused while every candidate carries
    *  its own `hostile` flag, kept for the pickTarget signature. */
   private readonly _isHostile = (id: string): boolean => this.hostileTo.has(id);
@@ -792,6 +823,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       maxDistance: 0,
       prevMaxDistance: 0,
     };
+    this._pickOptsGuardRetaliate = { ...this._pickOptsGuard };
   }
 
   /** Test-visible engagement profile. */
@@ -931,7 +963,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     //    players; drones vs robots) — only when the view could contain such a
     //    target. A drones-only sector (`view.swarms` absent, drones not on-sight
     //    to players) takes the pre-P0 fast path, byte-identical.
-    const canEngageOnSight = this.onSightPlayers || (view.swarms !== undefined && view.swarms.length > 0);
+    const canEngageOnSight = this.engageOnSight && (this.onSightPlayers || (view.swarms !== undefined && view.swarms.length > 0));
     if (this.state === 'IDLE' && !canEngageOnSight) {
       if (this._picker.current === MANOEUVRE_FLEE) return this.tickFleeClear(self, view.tick);
       return this.leaderId !== null ? this.tickFlock(self, view) : this.tickPatrol(self);
@@ -956,13 +988,19 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     // appear here when the server's faction-filtered view includes them AND
     // they're in this drone's `hostileTo` set (so a neutral base is never hit).
     const cand = this._combatTargets;
-    const engageR2 = ON_SIGHT_ENGAGE_RANGE * ON_SIGHT_ENGAGE_RANGE;
+    // On sight (slice 6): a hunter sights out to its sensor range; Defensive
+    // (`engageOnSight` off) sights nothing and fights only its ledger.
+    const engageR = this.hunting ? this.sensorRange : ON_SIGHT_ENGAGE_RANGE;
+    const engageR2 = engageR * engageR;
+    const onSight = this.engageOnSight;
+    const ownerId = this.ownerId;
+    const ownerFoe = view.hostileToPlayer;
     let n = 0;
     let anyHostile = false;
     for (const p of view.players) {
       let c = cand[n];
       if (!c) {
-        c = { id: '', x: 0, y: 0, vx: 0, vy: 0, angle: undefined, priority: 0, ship: true, hostile: false, claims: 0, hitRadius: 0 };
+        c = { id: '', x: 0, y: 0, vx: 0, vy: 0, angle: undefined, priority: 0, ship: true, hostile: false, ledger: false, claims: 0, hitRadius: 0 };
         cand[n] = c;
       }
       c.id = p.id;
@@ -980,7 +1018,8 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       c.hitRadius = p.kindId != null ? shipAimRadius(p.kindId, p.shieldUp === true) : DEFAULT_AIM_RADIUS;
       let h = this.hostileTo.has(p.id) || (p.ownerId !== undefined && this.hostileTo.has(p.ownerId));
       if (h && this.ownerId !== null && (p.id === this.ownerId || p.ownerId === this.ownerId)) h = false;
-      if (!h && this.onSightPlayers && p.truce !== true) {
+      c.ledger = h;
+      if (!h && onSight && this.onSightPlayers && p.truce !== true) {
         const dx = p.x - self.x;
         const dy = p.y - self.y;
         h = dx * dx + dy * dy <= engageR2;
@@ -994,7 +1033,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       for (const s of structs) {
         let c = cand[n];
         if (!c) {
-          c = { id: '', x: 0, y: 0, vx: 0, vy: 0, angle: undefined, priority: 0, ship: true, hostile: false, claims: 0, hitRadius: 0 };
+          c = { id: '', x: 0, y: 0, vx: 0, vy: 0, angle: undefined, priority: 0, ship: true, hostile: false, ledger: false, claims: 0, hitRadius: 0 };
           cand[n] = c;
         }
         c.id = s.id;
@@ -1011,6 +1050,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
         c.ship = false;
         c.hitRadius = Infinity; // a footprint box, not a hull: the player window
         c.hostile = this.hostileTo.has(s.id);
+        c.ledger = c.hostile;
         if (c.hostile) anyHostile = true;
         n++;
       }
@@ -1023,8 +1063,13 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       for (const s of swarms) {
         if (s.id === self.id) continue;
         let h = this.hostileTo.has(s.id);
-        if (!h && isNpcAllegianceId(s.allegiance)
-          && (isOnSightHostile(this.allegiance, s.allegiance) || (this.foesOfPlayers && isOnSightHostile(s.allegiance, PLAYERS_SIDE)))) {
+        const ledger = h;
+        // On sight: the stance table, a players-side ship's foes of players,
+        // and (owned ships) anything hostile to the OWNER (slice 6).
+        if (!h && onSight && isNpcAllegianceId(s.allegiance)
+          && (isOnSightHostile(this.allegiance, s.allegiance)
+            || (this.foesOfPlayers && isOnSightHostile(s.allegiance, PLAYERS_SIDE))
+            || (ownerId !== null && ownerFoe !== undefined && ownerFoe(s.id, ownerId)))) {
           const dx = s.x - self.x;
           const dy = s.y - self.y;
           h = dx * dx + dy * dy <= engageR2;
@@ -1032,7 +1077,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
         if (!h) continue;
         let c = cand[n];
         if (!c) {
-          c = { id: '', x: 0, y: 0, vx: 0, vy: 0, angle: undefined, priority: 0, ship: true, hostile: false, claims: 0, hitRadius: 0 };
+          c = { id: '', x: 0, y: 0, vx: 0, vy: 0, angle: undefined, priority: 0, ship: true, hostile: false, ledger: false, claims: 0, hitRadius: 0 };
           cand[n] = c;
         }
         c.id = s.id;
@@ -1049,6 +1094,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
         c.ship = true;
         c.hitRadius = s.kindId != null ? shipAimRadius(s.kindId, s.shieldUp === true) : DEFAULT_AIM_RADIUS;
         c.hostile = true;
+        c.ledger = ledger;
         anyHostile = true;
         n++;
       }
@@ -1087,6 +1133,16 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     if (leash) {
       this._pickOptsGuard.ticksSincePrevTarget = sinceTicks;
       target = pickTarget(this.guardX, this.guardY, cand, this.prevTargetId, this._isHostile, this._pickOptsGuard);
+      // Slice 6: a ship being shot answers. Nothing inside the radius ⇒ a
+      // RETALIATION target out to the radius plus the weapon reach (so it
+      // fires back from the edge of its area); on-sight ones stay inside.
+      // Narrows `hostile` to the ledger in place: the pick is the buffer's
+      // last reader this tick.
+      if (target === null && this.hostileTo.size > 0) {
+        for (let i = 0; i < n; i++) { const c = cand[i]!; c.hostile = c.ledger; }
+        this._pickOptsGuardRetaliate.ticksSincePrevTarget = sinceTicks;
+        target = pickTarget(this.guardX, this.guardY, cand, this.prevTargetId, this._isHostile, this._pickOptsGuardRetaliate);
+      }
     } else {
       this._pickOpts.ticksSincePrevTarget = sinceTicks;
       target = pickTarget(self.x, self.y, cand, this.prevTargetId, this._isHostile, this._pickOpts);
@@ -1104,6 +1160,8 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       return this.tickPatrol(self);
     }
 
+    // A hunter that found a fight searches again from wherever it ends.
+    if (this.hunting) this.searchReset = true;
     return this.tickCombat(self, view, target);
   }
 
@@ -1152,6 +1210,8 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     if (this.moveTarget !== null) return this.tickMoveTo(self, this.moveTarget.x, this.moveTarget.y);
     // Guard leash: nothing to fight ⇒ back to the post.
     if (this.guardLeash()) return this.tickMoveTo(self, this.guardX, this.guardY);
+    // Hunt: nothing to fight ⇒ search the sector.
+    if (this.hunting) return this.tickSearch(self);
     const r = Math.hypot(self.x, self.y);
     const safeR = Math.max(r, 1);
 
@@ -2013,6 +2073,10 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     this.guardR = Math.max(radius, shipTuning(this.kind).guardRadiusMin);
     this._pickOptsGuard.maxDistance = this.guardR;
     this._pickOptsGuard.prevMaxDistance = this.guardR;
+    this._pickOptsGuardRetaliate.maxDistance = this.guardR + this.fireRange;
+    this._pickOptsGuardRetaliate.prevMaxDistance = this.guardR + this.fireRange;
+    // A post is a hold: it ends a hunt.
+    this.hunting = false;
   }
 
   clearGuardPost(): void {
@@ -2023,6 +2087,88 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    *  but a broadside capital (that one keeps `tickGuardBroadside`). */
   private guardLeash(): boolean {
     return this.guardOn && !this.broadside;
+  }
+
+  /** On-sight engagement on / off (RTS Part B slice 6): the Aggressive
+   *  attitude engages anything hostile it sees; Defensive (off) only hits back
+   *  at what is on its retaliation ledger (`markHostile`). Default on, so
+   *  drones and robots are unchanged. Server-only. */
+  setEngageOnSight(on: boolean): void {
+    this.engageOnSight = on;
+  }
+
+  /** Hunt on / off (RTS Part B slice 6): on lifts the guard leash and the
+   *  move target, widens on-sight engagement to the sensor range, and with
+   *  nothing to fight the ship searches the sector (`tickSearch`). A later
+   *  guard post (a hold) ends the hunt. Server-only. */
+  setHunt(on: boolean): void {
+    if (on) {
+      this.guardOn = false;
+      this.moveTarget = null;
+      this.leaderId = null;
+      this._flockLeaderCruise = false;
+      if (!this.hunting) this.searchReset = true;
+    }
+    this.hunting = on;
+  }
+
+  /** Test-visible: hunting? */
+  isHunting(): boolean { return this.hunting; }
+
+  /**
+   * Hunt search: an expanding square (the standard search pattern) round
+   * where the search began, legs `HUNT_LEG_SPACING_MUL` sighting ranges
+   * apart (d, d, 2d, 2d, 3d, ...; each turn 90° left), the first leg along
+   * the nose. Each leg is a plain fly-to (`tickMoveTo`, player controls); a
+   * leg counts as flown once inside the arrive radius, so the ship rolls on
+   * without stopping. Waypoints are clamped inside the sector; once the
+   * square outgrows the sector the search starts again from where the ship
+   * is. A fight that ends restarts it from there (`searchReset`, set by
+   * the combat branch).
+   */
+  private tickSearch(self: AiEntity): AiIntent {
+    const lim = SECTOR_PLAYABLE_HALF_EXTENT * HUNT_EDGE_FRAC;
+    const d = HUNT_LEG_SPACING_MUL * this.sensorRange;
+    if (this.searchReset) {
+      this.searchReset = false;
+      this.searchLeg = 0;
+      this.searchDirX = -Math.sin(self.angle);
+      this.searchDirY = Math.cos(self.angle);
+      this.searchWpX = self.x;
+      this.searchWpY = self.y;
+      this.nextSearchLeg(d, lim);
+    }
+    // This leg flown (or clamped to where the ship already is): the next.
+    for (let i = 0; i < 4; i++) {
+      const dx = this.searchWpX - self.x;
+      const dy = this.searchWpY - self.y;
+      if (dx * dx + dy * dy > MOVE_ARRIVE_SLOW_RADIUS * MOVE_ARRIVE_SLOW_RADIUS) break;
+      this.searchLeg++;
+      // Turn 90° left: (x, y) → (-y, x).
+      const t = this.searchDirX;
+      this.searchDirX = -this.searchDirY;
+      this.searchDirY = t;
+      if ((Math.floor(this.searchLeg / 2) + 1) * d > 2 * lim) {
+        // The square covers the sector: a new one from here.
+        this.searchLeg = 0;
+        this.searchWpX = self.x;
+        this.searchWpY = self.y;
+      }
+      this.nextSearchLeg(d, lim);
+    }
+    return this.tickMoveTo(self, this.searchWpX, this.searchWpY);
+  }
+
+  /** The end of leg `searchLeg` from the last waypoint, clamped inside the
+   *  sector. */
+  private nextSearchLeg(d: number, lim: number): void {
+    const len = (Math.floor(this.searchLeg / 2) + 1) * d;
+    let x = this.searchWpX + this.searchDirX * len;
+    let y = this.searchWpY + this.searchDirY * len;
+    if (x > lim) x = lim; else if (x < -lim) x = -lim;
+    if (y > lim) y = lim; else if (y < -lim) y = -lim;
+    this.searchWpX = x;
+    this.searchWpY = y;
   }
 
   /** Test-visible: the effective guard radius (0 with no post). */

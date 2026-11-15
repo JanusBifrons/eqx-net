@@ -20,10 +20,13 @@ describe('perf scene rts-fleet — an AI-flown fleet of parked hulls', () => {
   let harness: SectorTestHarness | undefined;
   afterEach(async () => { if (harness) await harness.cleanup(); harness = undefined; }, 15_000);
 
-  // RTS Part B slice 6: the hulls engage drones hostile to their OWNER (hunt +
-  // attitude); until then they ignore the scene's drone pack, so "the wingmen
-  // killed some of the first wave" cannot hold (it already failed before
-  // slice 2, see the RTS Part B plan).
+  // RTS Part B: since slice 6 the hulls engage the drone pack (hunt +
+  // aggressive: every hull holds a target and their shots land), but the
+  // first kill comes at ~tick 1035, not inside the 450-tick window. Part of
+  // it: each brain target switch (spread targets / dwell) cancels and
+  // restarts the hull's lock (`tickWingmanTargets`), ~150 switches over the
+  // 40 hulls in the window; even with no switching no drone died by tick 450.
+  // Left skipped for the lock / fire slices; the threshold is not loosened.
   it.skip('gives the pilot 40 AI-flown hulls that decide every tick and fire', { timeout: 60_000 }, async () => {
     const scene = perfSceneById('rts-fleet')!;
     harness = await bootSectorTestServer({

@@ -3,7 +3,7 @@
  * brain (`HostileDroneBehaviour`, players side), end to end.
  *
  * 1. Room `showcase-rts`: the pilot owns five parked fighters; three robot
- *    cubes hold ~2 km north. Four owned fighters ordered to move north meet
+ *    cubes hold ~2 km north. Four owned fighters, Aggressive, ordered north meet
  *    the cubes (robots attack players on sight) and kill all three.
  * 2. An idle owned ship holds where it was parked: an IDLE AI pilot with no
  *    post orbits the world origin (`tickPatrol`), so without the attach-time
@@ -51,6 +51,9 @@ describe('SectorRoom integration — owned ships flown by the AI pilot brain (RT
     const robots = [...internals.swarmRegistry.all()].filter((r) => r.shipKind.startsWith('robot-')).map((r) => r.id);
     expect(robots).toHaveLength(3);
 
+    // Aggressive engages what it sees (slice 6); the default Defensive only
+    // hits back. The rts showcase shot sets the same before its move.
+    client.send('set_stance', { type: 'set_stance', shipIds: ids, stance: 'aggressive' });
     client.send('fleet_order', { type: 'fleet_order', shipIds: ids, kind: 'move', x: 250, y: 700 });
     const robotsLeft = (): number => robots.filter((id) => internals.swarmHealth.has(id)).length;
     for (let i = 0; i < 80 && robotsLeft() > 0; i++) await harness.advance(500);

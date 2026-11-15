@@ -110,9 +110,13 @@ export interface FleetCommandHooks {
   orderIssued?(shipId: string, order: Readonly<WingmanOrder>): void;
   /** `shipId`'s brain took a new standing mode (`set_mode`; read it back
    *  through `brainOf`, which has resolved the post). The room forwards a
-   *  Defend to the AI pilot brain as its guard post (RTS Part B slice 5).
-   *  Absent ⇒ ignored. */
+   *  Defend to the AI pilot brain as its guard post (RTS Part B slice 5),
+   *  a Hunt as hunt (slice 6). Absent ⇒ ignored. */
   modeSet?(shipId: string): void;
+  /** `shipId`'s brain took a new stance (`set_stance` or a restore; read it
+   *  back through `brainOf`). The room forwards the attitude to the AI pilot
+   *  brain (RTS Part B slice 6). Absent ⇒ ignored. */
+  stanceSet?(shipId: string): void;
 }
 
 /** `set_mode` parameters (the wire message's optional fields). */
@@ -585,7 +589,11 @@ export class FleetCommandSubsystem {
    *  when the leader engages). */
   setStance(callerId: string, shipIds: readonly string[], stance: WingmanStance): readonly string[] {
     const n = this.collect(callerId, shipIds);
-    for (let i = 0; i < n; i++) this.byId.get(this.accepted[i]!)!.brain.setStance(stance);
+    for (let i = 0; i < n; i++) {
+      const id = this.accepted[i]!;
+      this.byId.get(id)!.brain.setStance(stance);
+      this.hooks.stanceSet?.(id);
+    }
     return this.accepted;
   }
 
@@ -700,11 +708,13 @@ export class FleetCommandSubsystem {
     const m = parseSavedMode(saved);
     if (m !== null) {
       e.brain.setMode(m.mode, this.validatedModeData(e.ownerId, m.mode, m.modeData, shipId));
+      this.hooks.modeSet?.(shipId);
       applied = true;
     }
     const st = parseSavedStance(saved.stance);
     if (st !== null) {
       e.brain.setStance(st);
+      this.hooks.stanceSet?.(shipId);
       applied = true;
     }
     return applied;
