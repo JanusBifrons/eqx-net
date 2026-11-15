@@ -1,6 +1,7 @@
 import type { Shot } from '../types.js';
 import { slicedFieldLanes } from '../../src/core/terrain/fieldLayout.js';
 import { cutFieldOpts } from '../../src/core/terrain/chunkStreamer.js';
+import { flyRoute } from './_pilot.js';
 
 /**
  * Cut-field test room stills (docs/architecture/macro-terrain.md, slice 3).
@@ -69,4 +70,36 @@ export const cutFieldOverview: Shot = {
     { atMs: 0, smoothMs: 0, shot: { kind: 'hold', x: CENTRE.x, y: CENTRE.y, zoom: 0.04 } },
     { atMs: 8000, smoothMs: 2000, shot: { kind: 'hold', x: CENTRE.x, y: CENTRE.y, zoom: 0.1 } },
   ],
+};
+
+/** The fly-through (slice 3): a fighter down capital lane 1 on the follow
+ *  camera, 3.7 km off the centre line on the side where the rock wall stays
+ *  ~300–900 u away for 10 km (from rocksInChunk for seed `look`), so the wall
+ *  streams past. Steered by the shared `flyRoute` pilot. */
+const RUN_SIDE = -3700;
+const runAt = (t: number): [number, number] => [
+  Math.round(lane.o.x + dx * t + lane.n.x * RUN_SIDE),
+  Math.round(lane.o.y + dy * t + lane.n.y * RUN_SIDE),
+];
+const [RUN_X, RUN_Y] = runAt(35_000);
+export const cutFieldLaneRun: Shot = {
+  id: 'cut-field-lane-run',
+  section: 'mechanics',
+  title: 'Cut field: a fighter down a capital lane',
+  caption: 'A fighter flies down a capital lane of the cut asteroid field, the rock wall streaming past.',
+  features: ['ART'],
+  docs: ['macro-terrain'],
+  reel: false,
+  server: 'lean',
+  target: {
+    room: 'showcase-cut-field',
+    params: { shipKind: 'fighter', spawnX: RUN_X, spawnY: RUN_Y, initialAngle: ANGLE, initialHull: 1_000_000 },
+  },
+  hud: 'full',
+  durationMs: 32_000,
+  endsWithRun: true,
+  async run(ctx) {
+    await ctx.sleep(1500);
+    await flyRoute(ctx, [runAt(38_000), runAt(41_000), runAt(44_000), runAt(47_000)], { cruise: 420, maxMs: 28_000 });
+  },
 };

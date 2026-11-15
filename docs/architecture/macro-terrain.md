@@ -49,6 +49,23 @@ The field is split into a fixed grid of square chunks (`CHUNK_SIZE` = 4096 u, ab
   - cutting a neighbour first changes nothing;
   - negative chunk coordinates pack correctly.
 
+### In the game (behind the `cutField` room option)
+
+Only test and showcase rooms set `cutField: { seed }`; live sectors never do until the owner has seen a fly-through.
+
+- **Shared streamer.** `CutFieldStreamer` (`core/terrain/chunkStreamer.ts`) loads the chunks near each ship and unloads them after a linger; the server and the client both run it, so both hold the same rocks (#15). Field rocks never ride the wire; the welcome carries only the seed (#16).
+- **Server:** loaded rocks are fixed bodies; the wire and saves skip them.
+- **Client:** `net/CutFieldClient.ts` cuts one chunk per 125 ms (7 × 7 chunks, ~28 km), adds predWorld bodies only near the ship, and hands chunk outlines to the renderer through `RenderMirror.pendingFieldChunks` → `render/field/CutFieldLayer.ts` (flat-coloured rocks).
+- **Spectating** streams around the own parked hull (spectate moves it to `lingeringShips`).
+- **Test room** `showcase-cut-field` (seed `look`); shots in `showcase/shots/cutField.ts`. Lane poses come from `slicedFieldLanes`.
+
+**Follow-ups:**
+- A free-flying spectator camera doesn't bring rocks with it: the camera pose lives in the renderer, and feeding it back means a new `RendererFeedback` field (phase-gate review).
+- Concave outlines use one convex hull on both sides; poly-decomp later.
+- The client draws only the loaded 7 × 7 chunks, so far zoom shows a square edge; a far-zoom view of the whole field is open.
+- An E2E that a ship collides with a field rock on both sides (invariant #9).
+- Measurements (frame, server tick, physics step, bodies, chunk-cut time; desktop and phone-sized): one busy-host take logged the server behind (30 Hz per game second).
+
 Next (plan v2 stages A3–F): owner shape tuning, cross-browser parity, chunk meshes with the procedural rock shader, then wake/deep sleep, the wire and the terrain store.
 
 ## The core idea
