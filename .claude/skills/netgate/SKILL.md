@@ -87,7 +87,7 @@ The user typed `/netgate` (or `/netgate <baselineRef> <headRef>`). Arguments:
 
 ## Clean up afterwards
 
-When the run ends (pass or fail): stop the servers, proxies and headless Chrome it started (`netstat -ano | findstr ":2567 :5173 :2767 :5373" | findstr LISTENING`), delete its scratch files and logs once read, and trim any status note in auto-memory. See root `CLAUDE.md` "Clean up at every stage".
+When the run ends (pass or fail): stop the servers, proxies and headless Chrome it started (`netstat -ano | findstr ":2567 :5173 :2767 :5373" | findstr LISTENING`), delete its scratch files and logs once read, and trim any status note in auto-memory. See `docs/ops/agent-workflow.md` "Clean up at every stage".
 
 ## On flakes
 
@@ -103,7 +103,7 @@ Never widen a `MARGIN/EPS/CEIL` to "smooth over" the flake. The anti-flake archi
 - Budget module (single source of truth): `tests/netgate/netHealthBudget.ts`
 - Driver: `tests/netgate/run-netgate.ts`
 - Spec: `tests/e2e/netcode-health.spec.ts`
-- Root CLAUDE.md: "Netcode-health gate" section (the rules; this file holds the mechanics)
+- Root CLAUDE.md: "Netcode-health gate" section (the short rules; this file holds the full rules and mechanics)
 
 ## History
 
