@@ -32,7 +32,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { ColyseusGameClient } from './ColyseusClient.js';
 import { MockClock } from '../../core/clock/Clock.js';
 import { useUIStore } from '../state/store.js';
-import type { DamageEvent, DestroyEvent, SnapshotMessage } from '../../shared-types/messages.js';
+import type { DamageEvent, DestroyEvent, LaserFiredEvent, SnapshotMessage } from '../../shared-types/messages.js';
 import type { ShellEnd, ShellSalvo } from '../../shared-types/messages/shellEvents.js';
 import type { ShellSalvoStore } from './shellSalvoStore.js';
 import type { ProjectileRenderState } from '../../core/contracts/IRenderer.js';
@@ -136,5 +136,110 @@ describe('a pass-through kill on a parked pilot hull waits for the drawn slug', 
     expect(died, 'it died once the drawn slug reached it').toBe(1010.5);
     // The slug flew on.
     expect(c.mirror.projectiles!.has('slug-1')).toBe(true);
+  });
+});
+
+/**
+ * A death waits ONLY for the shell that dealt it (heavy-beam take 8 review,
+ * 2026-11-15, built with the deferral above): a battlecruiser's heavy beam
+ * killed the pilot's parked heavy cruiser, but the hull stayed whole ~0.9 s
+ * while the beam already shot through it, and +260 numbers kept popping.
+ * The battlecruiser's 5" secondaries had shells in flight to the same hull,
+ * so a hit was held for a drawn shell (`holdsTarget`) and the BEAM's kill
+ * waited for those unrelated shells. A beam hit is not a shell hit: its
+ * death and its number go on the frame its destroy arrives.
+ *
+ * Server order for one beam shot (`hitscan` sinks): damage, destroy, then
+ * `laser_fired` with `to` = the hit point.
+ */
+describe('a beam kill on a parked hull with 5" shells in flight dies at once', () => {
+  let c: Internals & { onBeamFired(evt: LaserFiredEvent): void };
+  // Two 5" shells from the battlecruiser at x = 0, 50 u/tick, fired at 990:
+  // g-1 along y = 0, g-2 along y = 40; both reach the hull (x = 1050) at 1011.
+  const GUNS: ShellSalvo = {
+    type: 'shell_salvo', s: 2, o: 'swarm-3', w: 'naval_s', t: 990, n: 600,
+    sh: [['g-1', 0, 0, 3000, 0], ['g-2', 0, 40, 3000, 0]],
+  };
+  // g-2 already hit the hull on the server (tick 1011); its hit is held.
+  const SHELL_HIT: DamageEvent = {
+    type: 'damage', targetId: HULL, damage: 60, newHealth: 300, shooterId: 'swarm-3',
+    hitX: 1050, hitY: 40, newShield: 0, shieldMax: 1000, hullMax: 6000, hitLayer: 'hull',
+  };
+  const SHELL_END: ShellEnd = { type: 'shell_end', e: [['g-2', 1010, 1050, 40, 0]] };
+
+  function beamKill(hitY: number): { dmg: DamageEvent; fired: LaserFiredEvent } {
+    return {
+      dmg: {
+        type: 'damage', targetId: HULL, damage: 260, newHealth: 0, shooterId: 'swarm-3',
+        hitX: 1050, hitY, newShield: 0, shieldMax: 1000, hullMax: 6000, hitLayer: 'hull',
+      },
+      fired: {
+        type: 'laser_fired', shooterId: 'swarm-3', mountId: 'beam-1',
+        fromX: 0, fromY: hitY, toX: 1050, toY: hitY, hit: true, targetId: HULL,
+      },
+    };
+  }
+
+  beforeEach(() => {
+    useUIStore.getState().setPilotMode('spectator');
+    c = new ColyseusGameClient(new MockClock(50_000)) as unknown as typeof c;
+    c.mirror.localPlayerId = 'me';
+    c.mirror.explodingShips = new Set();
+    c.mirror.projectiles = new Map();
+    c.mirror.pendingDamageNumbers = [];
+    c.mirror.pendingHealthBarHits = [];
+    c.mirror.pendingEffectTriggers = [];
+    c.mirror.pendingShellEnds = [];
+    c._shellEvents = true;
+    c.handleSnapshot(snapshot(1006, true));
+    c._shellStore.applySalvo(GUNS);
+    c.handleDamage(SHELL_HIT);
+    c.applyShellEnd(SHELL_END);
+    expect(c.mirror.pendingDamageNumbers, 'the 5" hit waits for its drawn shell').toHaveLength(0);
+  });
+
+  function expectDeadNow(): void {
+    expect(c.mirror.lingeringShips!.has(HULL), 'the hull goes on the destroy frame').toBe(false);
+    expect(c.mirror.explodingShips!.has(HULL)).toBe(true);
+    const beamNumbers = c.mirror.pendingDamageNumbers!.filter((n) => n.damage === 260);
+    expect(beamNumbers, 'the beam\'s number comes with the explosion').toHaveLength(1);
+    expect(c.mirror.wreckRevealFromTick, 'its wreck pieces are not held').toBeUndefined();
+  }
+
+  it('the beam hits off the shells\' paths: dies on the destroy, not when the shells land', () => {
+    const { dmg, fired } = beamKill(-60);
+    c.handleDamage(dmg);
+    c.handleDestroy(DESTROY);
+    c.onBeamFired(fired);
+    c.handleSnapshot(snapshot(1012, false));
+    c.clockAnchorServerTick = 1012;
+    c.placeShells(1004); // the first frame after: the shells are still far out
+    expectDeadNow();
+  });
+
+  it('the beam hits on a live shell\'s path (held by position): still dies on the destroy', () => {
+    const { dmg, fired } = beamKill(0); // on g-1's path, g-1 still in flight
+    c.handleDamage(dmg);
+    c.handleDestroy(DESTROY);
+    c.onBeamFired(fired);
+    c.handleSnapshot(snapshot(1012, false));
+    c.clockAnchorServerTick = 1012;
+    c.placeShells(1004);
+    expectDeadNow();
+  });
+
+  it('a 5" kill on the same hull still waits for its drawn shell', () => {
+    const kill: DamageEvent = { ...SHELL_HIT, hitY: 0, damage: 60, newHealth: 0 };
+    c.handleDamage(kill);
+    c.handleDestroy(DESTROY);
+    c.applyShellEnd({ type: 'shell_end', e: [['g-1', 1010, 1050, 0, 0]] });
+    c.handleSnapshot(snapshot(1012, false));
+    c.clockAnchorServerTick = 1012;
+    c.placeShells(1004);
+    expect(c.mirror.lingeringShips!.has(HULL), 'drawn alive until its shell gets there').toBe(true);
+    expect(c.mirror.explodingShips!.has(HULL)).toBe(false);
+    c.placeShells(1011);
+    expect(c.mirror.lingeringShips!.has(HULL)).toBe(false);
+    expect(c.mirror.explodingShips!.has(HULL)).toBe(true);
   });
 });

@@ -244,8 +244,9 @@ arrived (the next frame, 4.950). All on the arrival timeline, ~100 ms early.
 
 Now (`ColyseusClient.deferKillForShell` / `releaseDeferredKills`):
 
-- A `destroy` for a swarm ship that still has a hit held for its drawn shell
-  (`NavalHitHold.holdsTarget`) does not kill it: the ship stays in the mirror,
+- A `destroy` for a swarm ship whose KILLING hit (the damage event just
+  before it, `newHealth` 0) is still held for its drawn shell
+  (`NavalHitHold.holdsKill`) does not kill it: the ship stays in the mirror,
   drawn alive on the display timeline, and the decoder's full-snapshot sweep
   skips it (`decodeSwarmPacket(…, keep)`).
 - Each frame, after the held hits are released (`placeShells`), a deferred
@@ -285,13 +286,28 @@ Now (`ColyseusClient.deferKillForShell` / `releaseDeferredKills`):
   `destroy` went to `killEntity` at once and the next snapshot evicted it.
   `continues: 1` was not the cause (its tuple matches the held hit like a
   final one).
+- **Only the killing shell holds a death** (heavy-beam take 8): a heavy beam
+  killed the pilot's parked heavy cruiser, but the hull stayed whole ~0.9 s
+  with the beam already through it, +260 numbers popping meanwhile. The
+  battlecruiser's 5" secondaries had shells in flight to the same hull, so
+  `holdsTarget` was true and the beam's kill waited for those shells (or
+  `MAX_HOLD_MS`). Now the deferral and its release ask `holdsKill`: a held
+  hit on that target that took its hull to 0. The server sends the lethal
+  `damage` right before its `destroy` (`DamageRouter.applyInteraction`), so
+  that hit is the killing blow. Second leg: the hold matches hits to shells
+  by position, so a beam hit whose point lies on a live shell's path is held
+  too. The beam's `laser_fired` follows its damage and destroy with `to` =
+  the hit point (both sinks' `hitscan`); `ColyseusClient.onBeamFired`
+  releases an unmatched held hit there (`NavalHitHold.releaseHitAt`) and with
+  it any death held for it, in that frame.
 - Locks: `ColyseusClient.shellKillTiming.test.ts` (failed first: the hull was
   gone and the explosion queued on the destroy), `swarmSpriteUpdater.wreck.test.ts`
   "wreck pieces wait for a held death", `ColyseusClient.passThroughKill.test.ts`
   (the take's real victim and message order, snapshots through the real
   routing; failed first: the hull died on the destroy with the drawn slug
-  650 u short), `ColyseusClient.damageAfterDeath.test.ts` (the number comes
-  with the deferred explosion).
+  650 u short; its "beam kill … dies at once" cases failed first: the hull
+  stayed drawn after the beam's destroy), `ColyseusClient.damageAfterDeath.test.ts`
+  (the number comes with the deferred explosion).
 
 ## Client rules in detail
 

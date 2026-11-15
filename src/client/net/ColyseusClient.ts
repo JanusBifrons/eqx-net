@@ -2068,6 +2068,7 @@ export class ColyseusGameClient {
     });
 
     room.onMessage('laser_fired', (evt: LaserFiredEvent) => {
+      this.onBeamFired(evt);
       // Own shots are already shown as liveBeams — only store remote ones.
       if (evt.shooterId === this.mirror.localPlayerId) return;
       const dx = evt.toX - evt.fromX;
@@ -2892,9 +2893,12 @@ export class ColyseusGameClient {
    * (`releaseDeferredKills`, from `placeShells`); its new wreck pieces wait
    * too (`mirror.wreckRevealFromTick`). Returns whether it was deferred.
    * Bounded by the hold's own safety deadline and `MAX_HOLD_MS` (#16).
+   * Only the KILLING hit counts (`holdsKill`): shells still in flight to it
+   * that did not kill it never hold a death (heavy-beam take 8: a beam kill
+   * waited ~0.9 s for unrelated 5" shells).
    */
   private deferKillForShell(wireId: string): boolean {
-    if (!this._shellEvents || this._navalHitHold.size === 0 || !this._navalHitHold.holdsTarget(wireId)) return false;
+    if (!this._shellEvents || this._navalHitHold.size === 0 || !this._navalHitHold.holdsKill(wireId)) return false;
     if (!wireId.startsWith('swarm-')) return this.deferShipKillForShell(wireId);
     const entityId = parseInt(wireId.slice('swarm-'.length), 10);
     const entry = Number.isNaN(entityId) ? undefined : this.mirror.swarm?.get(entityId);
@@ -2943,12 +2947,24 @@ export class ColyseusGameClient {
     this.mirror.wreckRevealFromTick = cur === undefined ? from : Math.min(cur, from);
   }
 
-  /** Kill each deferred ship whose held hit has been released (its drawn
+  /**
+   * A beam hit (`laser_fired`, sent after its damage and destroy): a hit
+   * held at the beam's end point was matched to a live shell's path only by
+   * position. It is the beam's, shown on arrival: release it, and with it a
+   * death held for it (`deferKillForShell`), in this frame.
+   */
+  private onBeamFired(evt: LaserFiredEvent): void {
+    if (!evt.hit || evt.targetId === undefined || this._navalHitHold.size === 0) return;
+    if (!this._navalHitHold.releaseHitAt(evt.targetId, evt.toX, evt.toY, this._heldDamageSink)) return;
+    if (this._deferredKills.size > 0 || this._deferredShipKills.size > 0) this.releaseDeferredKills();
+  }
+
+  /** Kill each deferred ship whose killing hit has been released (its drawn
    *  shell reached it) or whose deadline passed, in this frame. */
   private releaseDeferredKills(): void {
     const now = this.gameClock.now();
     for (const [entityId, k] of this._deferredKills) {
-      if (now < k.deadline && this._navalHitHold.holdsTarget(k.wireId)) continue;
+      if (now < k.deadline && this._navalHitHold.holdsKill(k.wireId)) continue;
       this._deferredKills.delete(entityId);
       this._deferredKillFree.push(k);
       // The id was recycled for a new entity meanwhile: that one is not dead.
@@ -2957,7 +2973,7 @@ export class ColyseusGameClient {
       this.killSwarmEntity(k.wireId);
     }
     for (const [id, k] of this._deferredShipKills) {
-      if (now < k.deadline && this._navalHitHold.holdsTarget(id)) continue;
+      if (now < k.deadline && this._navalHitHold.holdsKill(id)) continue;
       this._deferredShipKills.delete(id);
       this._deferredKillFree.push(k);
       this.killEntity(id);
