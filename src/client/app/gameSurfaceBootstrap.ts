@@ -204,6 +204,9 @@ export function buildJoinSpec(
   // Charge-up — `?chargeTicksCap=N`: no capital-turret charge (the railgun's
   // ~6 s wind-up) takes longer than N ticks (testMode rooms only).
   if (urlParams.has('chargeTicksCap')) extraJoinOptions['chargeTicksCap'] = parseInt(urlParams.get('chargeTicksCap')!, 10);
+  // Turret traverse — `?traverseTicksCap=N`: no capital turret takes longer
+  // than N ticks to train a full turn; 0 = snap (testMode rooms only).
+  if (urlParams.has('traverseTicksCap')) extraJoinOptions['traverseTicksCap'] = parseInt(urlParams.get('traverseTicksCap')!, 10);
   // Time scale — `?timeScale=N`: this sector's game speed (0.25–4; test and
   // recording rooms). The client follows it from Phase 4 of the stream.
   if (urlParams.has('timeScale')) extraJoinOptions['timeScale'] = parseFloat(urlParams.get('timeScale')!);

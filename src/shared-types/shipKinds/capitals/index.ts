@@ -19,6 +19,9 @@ export const HEAVY_CRUISER: ShipKind = build('heavy-cruiser');
 export const BATTLECRUISER: ShipKind = build('battlecruiser');
 export const BATTLESHIP: ShipKind = build('battleship');
 
+/** A fitted kind's main-battery id suffix (`variant`). */
+const MAIN_FIT_SUFFIX: Readonly<Record<CapitalFit['main'], string>> = { naval: '', railgun: '-rail', beam: '-lance' };
+
 /**
  * Hull-style variants (wrap-up W2b, user 2026-11-08: keep all three styles
  * for variety). Each class's style B and C hulls are their own kinds, ids
@@ -29,7 +32,8 @@ export const BATTLESHIP: ShipKind = build('battleship');
  *
  * Fit variants (plan section 9): the same path with a weapon `fit` instead of
  * (or as well as) a hull style. A fitted kind's id ends in the fit's suffix
- * (`-rail`: railgun main battery) after any style suffix; a fitted kind on the
+ * after any style suffix: the main battery's (`-rail` railguns, `-lance` heavy
+ * beams), then the secondaries' (`-beam` heavy beams). A fitted kind on the
  * base hull (`style` omitted) takes the R&D switch's style like the base kind.
  */
 const variant = (
@@ -37,7 +41,7 @@ const variant = (
   fit: CapitalFit = NAVAL_FIT,
 ): ShipKind => {
   const styleSuffix = style ? `-${style.toLowerCase()}` : '';
-  const fitSuffix = fit.main === 'railgun' ? '-rail' : '';
+  const fitSuffix = MAIN_FIT_SUFFIX[fit.main] + (fit.secondary === 'beam' ? '-beam' : '');
   return defineCapitalShipKind({
     ...warshipDesign(id, style ?? CAPITAL_STYLE, CAPITAL_MAP, fit).record, id: `${id}${styleSuffix}${fitSuffix}`,
   });
@@ -56,6 +60,10 @@ export const BATTLESHIP_C: ShipKind = variant('battleship', 'C');
 
 /** Plan section 9: the rail battleship, a battleship whose main battery is railguns. */
 export const BATTLESHIP_RAIL: ShipKind = variant('battleship', null, { main: 'railgun', secondary: 'naval' });
+/** Plan section 9: the beam cruiser, a heavy cruiser whose secondaries are heavy beams. */
+export const HEAVY_CRUISER_BEAM: ShipKind = variant('heavy-cruiser', null, { main: 'naval', secondary: 'beam' });
+/** Plan section 9: the lance battlecruiser, a battlecruiser whose main battery is heavy beams. */
+export const BATTLECRUISER_LANCE: ShipKind = variant('battlecruiser', null, { main: 'beam', secondary: 'naval' });
 
 /**
  * A capital class's kinds: its hull styles in order A, B, C (base kind first),
@@ -64,7 +72,7 @@ export const BATTLESHIP_RAIL: ShipKind = variant('battleship', null, { main: 'ra
 export const CAPITAL_STYLE_VARIANTS: Readonly<Record<string, readonly string[]>> = {
   destroyer: ['destroyer', 'destroyer-b', 'destroyer-c'],
   'light-cruiser': ['light-cruiser', 'light-cruiser-b', 'light-cruiser-c'],
-  'heavy-cruiser': ['heavy-cruiser', 'heavy-cruiser-b', 'heavy-cruiser-c'],
-  battlecruiser: ['battlecruiser', 'battlecruiser-b', 'battlecruiser-c'],
+  'heavy-cruiser': ['heavy-cruiser', 'heavy-cruiser-b', 'heavy-cruiser-c', 'heavy-cruiser-beam'],
+  battlecruiser: ['battlecruiser', 'battlecruiser-b', 'battlecruiser-c', 'battlecruiser-lance'],
   battleship: ['battleship', 'battleship-b', 'battleship-c', 'battleship-rail'],
 };

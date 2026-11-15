@@ -19,6 +19,10 @@ import {
   WRECK_GLOW_END_S,
   wreckBlasts,
   hullDeathBlastReplaced,
+  crackFrontAt,
+  crackIgniteMs,
+  WreckArtState,
+  WRECK_CRACK_FRONT_MS,
   type WreckBlast,
   type WreckTexLayout,
 } from './wreckArt.js';
@@ -242,5 +246,37 @@ describe('wreckBlasts: the break-up explosion at the kill point (money-shot revi
     wreckBlasts(0, 0, 2000, 99999, c);
     expect(a).toEqual(b);
     expect(a[1]!.x).not.toBeCloseTo(c[1]!.x);
+  });
+});
+
+describe('a cut kill splits at once: no crack front, no ripples (weapon cuts)', () => {
+  const span = { crackMin: 50, crackReach: 400 };
+
+  it('crackFrontAt with no hold has every crack reached from the death on', () => {
+    expect(crackFrontAt(span, 0, true)).toBe(400);
+    expect(crackFrontAt(span, 16, true)).toBe(400);
+    expect(crackFrontAt(span, -1, true)).toBe(-Infinity);
+    expect(crackIgniteMs(span, 300, true)).toBe(0);
+  });
+
+  it('without no-hold the front still runs (unchanged)', () => {
+    expect(crackFrontAt(span, 0)).toBe(50);
+    expect(crackFrontAt(span, WRECK_CRACK_FRONT_MS / 2)).toBeCloseTo(225, 6);
+    expect(crackFrontAt(span, WRECK_CRACK_FRONT_MS)).toBe(400);
+    expect(crackIgniteMs(span, 225)).toBeCloseTo(WRECK_CRACK_FRONT_MS / 2, 6);
+  });
+
+  it('a fresh wreck with a cutKind is no-hold and gets no ripples; an un-cut one keeps them', () => {
+    const cut: WreckDescriptor = { ...DESC, deathTick: 100, cutKind: 'channel', cutAng: 0.3, cutW: 20 };
+    const plain: WreckDescriptor = { ...DESC, wreckId: 4, deathTick: 100 };
+    const art = new WreckArtState(null, () => {});
+    const pose = { x: 0, y: 0, angle: 0 };
+    const ci = art.infoFor(cut, rebuildWreckPieces(cut), 0, pose, 101, 1000);
+    const pi = art.infoFor(plain, rebuildWreckPieces(plain), 0, pose, 101, 1000);
+    expect(ci.noHold).toBe(true);
+    expect(ci.ripples).toHaveLength(0);
+    expect(crackFrontAt(ci, 0, ci.noHold)).toBe(ci.crackReach);
+    expect(pi.noHold).toBe(false);
+    expect(pi.ripples.length).toBeGreaterThan(0);
   });
 });

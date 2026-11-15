@@ -1125,7 +1125,7 @@ export class PixiRenderer implements IRenderer {
       this.shipContainer.addChild(this.liveBeamGfx);
       this._remoteBeamPool = new BeamSpritePool(REMOTE_BEAM_STYLE);
       this.remoteBeamGfx = this._remoteBeamPool.container;
-      this.shipContainer.addChild(this.remoteBeamGfx);
+      this.shipContainer.addChild(this.remoteBeamGfx, this._remoteBeamPool.styledContainer); // heavy beams: unfiltered sibling
       // WS-4 Phase 4 — the Miner's mining beam: a distinct fat warm-amber drill
       // beam, separate pool so its `liveCount` is isolatable + its look differs
       // from the combat laser. Styles are named consts (beamStyles.ts) so the
@@ -2426,7 +2426,7 @@ export class PixiRenderer implements IRenderer {
       // Sprite-pool driven render — no clear/redraw, just transforms.
       // Always re-set: the pool resolves its own pooling + visibility and
       // the transform writes are cheap (see the always-call rationale above).
-      this._remoteBeamPool.setBeams(this._remoteBeamCache, slotIdx);
+      this._remoteBeamPool.setBeams(this._remoteBeamCache, slotIdx, this.world.scale.x);
       this.remoteBeamGfx!.visible = true;
       this._fxRemoteBeams?.setBeams(this._remoteBeamCache, slotIdx, this.fxNow(), this._fxRemoteHit);
       if (this._miningBeamPool && this.miningBeamGfx) {
