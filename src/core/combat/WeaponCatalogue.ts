@@ -57,10 +57,7 @@ interface WeaponDefBase {
    *  (`WeaponMountTicker.tickCapitalMounts`). Absent ⇒ none: the mount looks
    *  for its next target at once. */
   followThroughTicks?: number;
-  /** Per-target damage factors (docs/architecture/weapon-mounts.md
-   *  "Per-target damage factors"): a hit's damage is multiplied by the factor
-   *  for what it lands on, once, at `SectorRoom.applyDamage`. Read only
-   *  through `weaponTargetFactor`. Absent (or an absent key) ⇒ 1. */
+  /** Per-target damage multipliers, read only via `weaponTargetFactor` (weapon-mounts.md "Per-target damage factors"). */
   targetFactor?: WeaponTargetFactor;
   tractor?: TractorSpec; // a TRACTOR beam: no ray, no damage; fire renews a lease (tractorSpec.ts)
 }
