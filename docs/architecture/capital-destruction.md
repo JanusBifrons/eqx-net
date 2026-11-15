@@ -478,7 +478,9 @@ player-flown (active or parked), breaks it into wreck bodies on the server.
   teleport guard for drawing, the remote-entity anchor for the body.
 - **Descriptor.** One `WreckDescriptor` per live wreck (`{ wreckId,
   parentKind, seed, killX, killY, killBlowDamage, recentDamageRate,
-  snapChance, algoVersion, deathTick?, cutKind?, cutAng?, cutW? }`; the kill
+  snapChance, algoVersion, deathTick?, cutKind?, cutAng?, cutW?, owner? }`;
+  `owner` is who owned the hull, for the livery its pieces wear: see S3
+  "Texture continuity"; the kill
   point is hull-local, 1×
   Pixi-up, already on the outline). `CapitalWreckSubsystem` hands out a free
   u16 `wreckId` per wreck and keeps the list (a shared array rebuilt only when
@@ -628,6 +630,21 @@ pieces stay for ever and the glow ends dark. As built
   review: slice A through the default shader gave flat grey slabs). Before
   the art is ready (or in the classic look) the piece is
   today's plain polygon, swapped once the art arrives.
+- **The live hull's bake under a livery (fix 2026-11-15).** The default
+  look wears a livery (art-direction.md "Ship livery"), and the livery is
+  part of the bake key, so "the handle the live hull drew" means the same
+  owner. `wreckArtHandleFor` resolves it like the live hull: the
+  descriptor's `owner` (`CapitalWreckDeps.ownerOf`: a player hull's
+  playerId, active or parked; a patrol's faction), else the entry's
+  faction, else the kind's allegiance (an NPC's live hull). Filmed bug
+  (beam-slice, default look): pieces carry no owner, so each wreck asked for
+  a NEW capital bake in a neutral "scrap" livery (~10 s of forging per kind),
+  and the hull drew as a flat grey silhouette of plain polygons for 15+ s
+  (reproduced on main with `test_kill_capitals` in `wreck-test`; fine with
+  `?livery=off`). Locks: the livery cases in
+  `swarmSpriteUpdater.wreckArt.test.ts`, the owner case in
+  `CapitalWreckSubsystem.test.ts`, the player-capital case in
+  `tests/integration/sectorRoom/capitalWrecks.test.ts`.
 - **Glowing cut edges.** One glow per piece over its `cutEdges` (the
   original outline never glows; since 2026-11-13 a mesh lit by a crack front,
   see "Cracks spread" below), coloured by `wreckGlowAt`: white-hot for

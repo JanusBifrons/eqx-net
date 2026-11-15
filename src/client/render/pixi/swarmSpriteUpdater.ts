@@ -273,10 +273,12 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     // handle the live hull used (no re-bake); a sub-cap's is the parent's DEAD
     // bake (`fx.deadArt`: no glowing robot core, canopy, engines or running
     // lights; take 10 review, "keeps the robot's glowing eye"). Swap the plain
-    // piece once it is ready.
-    const wreckParent = entry.kind === 4 ? entry.shipKind ?? wreckDescs!.get(entry.wreckId!)!.parentKind : '';
-    const wreckArtHandle = entry.kind === 4 && ctx.art.art
-      ? wreckArtHandleFor(ctx.art, spriteKey, wreckParent, entry.faction, wreckDeadArtFor(wreckParent))
+    // piece once it is ready. Under a livery the owner is the descriptor's
+    // (the live hull's livery), so the capital's bake is the one it wore.
+    const wreckDesc = entry.kind === 4 ? wreckDescs!.get(entry.wreckId!)! : undefined;
+    const wreckParent = wreckDesc !== undefined ? entry.shipKind ?? wreckDesc.parentKind : '';
+    const wreckArtHandle = wreckDesc !== undefined && ctx.art.art
+      ? wreckArtHandleFor(ctx.art, spriteKey, wreckParent, wreckDesc.owner ?? entry.faction, wreckDeadArtFor(wreckParent))
       : null;
     if (
       sprite instanceof WreckPieceSprite && wreckArtHandle !== null &&
