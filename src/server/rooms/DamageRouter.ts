@@ -95,7 +95,7 @@ export interface DamageRouterDeps {
   /** Swarm registry lookup. */
   swarmRegistry: SwarmDmgSource;
   /** Quiet despawn of a drone (`{ broadcast:true, emitDestroyed:true }`). */
-  evictSwarmEntity: (rec: SwarmDmgRecord, opts: { broadcast: boolean; emitDestroyed: boolean; shooterId?: string }) => void;
+  evictSwarmEntity: (rec: SwarmDmgRecord, opts: { broadcast: boolean; emitDestroyed: boolean; shooterId?: string; vaporised?: boolean }) => void;
   /** Hostility ledger — drone hits flip COMBAT + add shooter. */
   aiController: HostilityLedger;
   /** Wave-system reactive faction escalation — invoked on an applied DRONE hit
@@ -106,13 +106,15 @@ export interface DamageRouterDeps {
   /** Scrap-on-death (Phase 2b-ii) — invoked for a DRONE just before it's
    *  evicted on death, so a composite-kind drone breaks into scrap. Optional
    *  (test fixtures / engineering rooms without a ScrapSpawner omit it). */
-  spawnScrapFromDrone?: (rec: SwarmDmgRecord) => void;
+  spawnScrapFromDrone?: (rec: SwarmDmgRecord) => boolean | void;
   /** Scrap-on-death for a LINGERING hull (Equinox P6.3) — invoked from the
    *  lingering death policy just before it tears down the slot + pose, so a
    *  composite-kind lingering hull breaks into scrap like an active ship. Pose
    *  is read from lingeringPoseCache before deletion. Optional (test fixtures /
    *  engineering rooms without a ScrapSpawner omit it). */
-  spawnScrapFromLingeringHull?: (kind: ShipKindId, pose: ShipPhysicsState, shipInstanceId: string) => void;
+  spawnScrapFromLingeringHull?: (kind: ShipKindId, pose: ShipPhysicsState, shipInstanceId: string) => boolean | void;
+  /** See `LeafDeps.spawnWreckFromActiveHull`. */
+  spawnWreckFromActiveHull?: (playerId: string) => boolean;
   /** A1 — see `LeafDeps.onLingeringHullDeath`. */
   onLingeringHullDeath?: (
     ship: { shipInstanceId: string; playerId: string; kind: string },

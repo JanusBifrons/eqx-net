@@ -86,11 +86,14 @@ export function createSwarmDeath(deps: LeafDeps): DeathPolicy {
       // drone-only at the call site below; the room's resolver guards composites
       // (a polygon kind / non-drone yields nothing). Mirrors the optional
       // onDroneDamaged seam — absent ⇒ no scrap (test fixtures).
-      deps.spawnScrapFromDrone?.(rec);
+      // A cut kill that burned every piece away (fracture v11) reports
+      // `vaporised`, which the destroy event carries.
+      const vaporised = deps.spawnScrapFromDrone?.(rec) === true;
       deps.evictSwarmEntity(rec, {
         broadcast: true,
         emitDestroyed: true,
         shooterId: sourceId,
+        vaporised,
       });
     },
   };

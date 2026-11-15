@@ -2210,10 +2210,12 @@ export class SectorRoom extends Room<SectorState> {
         // linger-<id> body is despawned by the death policy right after).
         const ship = this.state.ships.get(shipInstanceId);
         // The parked body (linger-<id>) goes before the pieces spawn.
-        this.spawnCapitalWreck(shipInstanceId, kind, pose, ship?.maxHealth ?? getShipKind(kind).maxHealth,
+        const vaporised = this.spawnCapitalWreck(shipInstanceId, kind, pose, ship?.maxHealth ?? getShipKind(kind).maxHealth,
           this.lingeringSlots.get(shipInstanceId), `linger-${shipInstanceId}`);
         this.spawnHullScrap(kind, pose, shipInstanceId);
+        return vaporised;
       },
+      spawnWreckFromActiveHull: (playerId) => this.spawnActiveHullWreck(playerId),
       // A1 — a lingering hull died in combat: the SHIP_DESTROYED handler can't
       // find it (already out of shipsMap), so the roster wipe + XP happen here.
       onLingeringHullDeath: (ship, pose, sourceId) => this.onLingeringHullDeath(ship, pose, sourceId),
@@ -4303,24 +4305,7 @@ export class SectorRoom extends Room<SectorState> {
         this.evictOwnerlessShip(destroyedShip.shipInstanceId);
       }
 
-      // S2a — a dying ACTIVE capital breaks into wreck bodies (flag on). The
-      // dead hull stops being a ship: its worker body is despawned (the slot
-      // stays allocated for respawn / pilot swap, which re-spawn the body),
-      // so the pieces never overlap a corpse collider.
-      // Sub-capital break-up slice 2: the same for a breaking sub-capital.
-      if (activeHull !== undefined && activeHull.alive === false && this.capitalWrecks !== null && this.wreckKindAllowed(activeHull.kind)) {
-        const slot = this.playerToSlot.get(evt.targetId);
-        if (slot !== undefined) {
-          const b = slotBase(slot);
-          this.spawnCapitalWreck(evt.targetId, activeHull.kind, {
-            x: this.sabF32[b + SLOT_X_OFF]!, y: this.sabF32[b + SLOT_Y_OFF]!,
-            vx: this.sabF32[b + SLOT_VX_OFF]!, vy: this.sabF32[b + SLOT_VY_OFF]!,
-            angle: this.sabF32[b + SLOT_ANGLE_OFF]!, angvel: this.sabF32[b + SLOT_ANGVEL_OFF]!,
-          }, activeHull.maxHealth > 0 ? activeHull.maxHealth : getShipKind(activeHull.kind).maxHealth,
-          // The body goes BEFORE the pieces spawn (only when there are pieces).
-          slot, evt.targetId);
-        }
-      }
+      // S2a: an ACTIVE hull's wreck comes from its death policy (`spawnActiveHullWreck`).
 
       // Scrap-on-death (Phase 2b-ii) — break a dying ACTIVE composite hull into
       // floating scrap. Only the active-hull case (we have a playerId-keyed slot
@@ -5314,10 +5299,23 @@ export class SectorRoom extends Room<SectorState> {
     }
   }
 
+  /** S2a: a dying ACTIVE hull breaks into wreck bodies, its worker body
+   *  despawned (the slot stays for respawn / pilot swap). Called by its death
+   *  policy BEFORE the `destroy` broadcast; true = vaporised (fracture v11). */
+  private spawnActiveHullWreck(playerId: string): boolean {
+    const activeHull = this.getActiveShip(playerId);
+    const slot = this.playerToSlot.get(playerId);
+    if (activeHull === undefined || slot === undefined || activeHull.alive !== false || this.capitalWrecks === null || !this.wreckKindAllowed(activeHull.kind)) return false;
+    const b = slotBase(slot);
+    return this.spawnCapitalWreck(playerId, activeHull.kind, {
+      x: this.sabF32[b + SLOT_X_OFF]!, y: this.sabF32[b + SLOT_Y_OFF]!, vx: this.sabF32[b + SLOT_VX_OFF]!, vy: this.sabF32[b + SLOT_VY_OFF]!,
+      angle: this.sabF32[b + SLOT_ANGLE_OFF]!, angvel: this.sabF32[b + SLOT_ANGVEL_OFF]!,
+    }, activeHull.maxHealth > 0 ? activeHull.maxHealth : getShipKind(activeHull.kind).maxHealth, slot, playerId);
+  }
+
   /** S2a: a dying capital (any liveness class) breaks into wreck bodies.
-   *  `targetId` is the id its hits were tracked under. Returns pieces spawned;
-   *  0 when the flag is off or the kind isn't a capital. Call while the
-   *  dying body is live; `bodySlot` / `bodyId` name its worker body, which
+   *  `targetId` is the id its hits were tracked under. True when a cut kill
+   *  vaporised it (fracture v11). Call while the dying body is live; `bodySlot` / `bodyId` name its worker body, which
    *  is despawned BEFORE the pieces spawn (the worker may step between two
    *  commands, so a later despawn left the pieces overlapping the hull for
    *  a step; `CapitalWreckSubsystem.onDeath`). The caller's own despawn
@@ -5327,13 +5325,13 @@ export class SectorRoom extends Room<SectorState> {
     pose: { x: number; y: number; vx: number; vy: number; angle: number; angvel?: number },
     maxHull: number,
     bodySlot?: number, bodyId?: string,
-  ): number {
-    if (this.capitalWrecks === null || !this.wreckKindAllowed(kindId)) return 0;
+  ): boolean {
+    if (this.capitalWrecks === null || !this.wreckKindAllowed(kindId)) return false;
     const despawn = bodySlot !== undefined && bodyId !== undefined
       ? () => this.postToWorker({ type: 'DESPAWN', slot: bodySlot, playerId: bodyId })
       : undefined;
     return this.capitalWrecks.onDeath(targetId, kindId as ShipKindId,
-      { x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy, angle: pose.angle, angvel: pose.angvel ?? 0 }, maxHull, despawn);
+      { x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy, angle: pose.angle, angvel: pose.angvel ?? 0 }, maxHull, despawn).vaporised;
   }
 
   /** LoadShedder: can ANY connected player see this drone? The same view the
@@ -5379,26 +5377,27 @@ export class SectorRoom extends Room<SectorState> {
    * component; polygon kinds (fighter/scout/…) yield nothing. Reads the pose
    * off the SAB via `rec.slot`.
    */
-  private spawnScrapFromDrone(rec: SwarmEntityRecord): void {
+  private spawnScrapFromDrone(rec: SwarmEntityRecord): boolean {
     // Anti-recursion: a dying SCRAP piece (kind 3) routes through the same
     // drone-leaf death policy, but its rec.shipKind is the PARENT composite
     // kind (which has scrap groups) — without this guard a destroyed scrap
     // piece would shatter into more scrap forever. Only a DRONE (kind 1) death
     // spawns scrap here.
-    if (rec.kind === SWARM_KIND_SCRAP) return;
+    if (rec.kind === SWARM_KIND_SCRAP) return false;
     // S2a — a capital drone breaks into wreck bodies (flag on). Pose from the
     // SAB: the drone's body is still live here (evicted right after).
     // Sub-capital break-up slice 2: any kind whose profile breaks (flags).
+    let vaporised = false; // fracture v11: the eviction's `destroy` says so
     if (this.capitalWrecks !== null && rec.kind === SWARM_KIND_DRONE && rec.shipKind && this.wreckKindAllowed(rec.shipKind)) {
       const wb = slotBase(rec.slot);
-      this.spawnCapitalWreck(rec.id, rec.shipKind!, {
+      vaporised = this.spawnCapitalWreck(rec.id, rec.shipKind!, {
         x: this.sabF32[wb + SLOT_X_OFF]!, y: this.sabF32[wb + SLOT_Y_OFF]!,
         vx: this.sabF32[wb + SLOT_VX_OFF]!, vy: this.sabF32[wb + SLOT_VY_OFF]!,
         angle: this.sabF32[wb + SLOT_ANGLE_OFF]!, angvel: this.sabF32[wb + SLOT_ANGVEL_OFF]!,
       }, droneMaxHealthOf(rec) ?? 1, rec.slot, rec.id);
     }
     const kind = getShipKind(rec.shipKind);
-    if (shipScrapGroups(kind.id).length === 0) return; // polygon kind ⇒ no scrap
+    if (shipScrapGroups(kind.id).length === 0) return vaporised; // polygon kind ⇒ no scrap
     const b = slotBase(rec.slot);
     const pose = {
       x:     this.sabF32[b + SLOT_X_OFF]!,
@@ -5408,6 +5407,7 @@ export class SectorRoom extends Room<SectorState> {
       angle: this.sabF32[b + SLOT_ANGLE_OFF]!,
     };
     this.scrapSpawner.spawnFromDeath(kind.id, pose, `scrap-${rec.id}`);
+    return vaporised;
   }
 
   /**
@@ -5442,7 +5442,7 @@ export class SectorRoom extends Room<SectorState> {
    */
   private evictSwarmEntity(
     rec: SwarmEntityRecord,
-    opts: { broadcast: boolean; emitDestroyed: boolean; shooterId?: string },
+    opts: { broadcast: boolean; emitDestroyed: boolean; shooterId?: string; vaporised?: boolean },
   ): void {
     // A turret's kill mid-tick must not leave the evicted drone selectable by
     // the next turret in the same tick (the linear scan never saw it).

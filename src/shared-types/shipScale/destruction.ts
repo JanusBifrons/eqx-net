@@ -57,6 +57,11 @@ export interface DestructionFractureOptions {
   readonly extraChunkChance?: number;
   /** Jag of the cut edges (default depth 4, roughness 0.22). */
   readonly jag?: { readonly depth: number; readonly roughness: number };
+  /** A cut weapon's kill (heavy-beam slice, railgun channel) burns away
+   *  every piece under this share of the hull's area; none left = the ship
+   *  is vaporised (fracture v11). Absent: the fracture's 5 % channel sliver
+   *  erase only. capital-destruction.md "Kill cuts", "Burn-away". */
+  readonly cutBurnMinShare?: number;
 }
 
 /** How a wreck piece breaks again (salvage stream; capital-destruction.md
@@ -245,6 +250,15 @@ const SUBCAP: DestructionProfile = {
     soundMinShare: 0.43,
     extraChunkChance: 0.4,
     jag: { depth: 1, roughness: 0.06 },
+    // Owner 2026-11-15: a cut kill burns away "any piece too small". A
+    // fifth of the hull: under the re-split's salvage floor (a quarter), so
+    // what survives a cut is a real chunk. Heavy beam (60 u strip): a
+    // fighter or gunship (20 u wide at 1x, ×2) has nothing left; a missile
+    // frigate cut across keeps ~7 % + ~15 % banks, both burn: vaporised.
+    // Railgun (16 u): a gunship channel off the keel leaves ~12 % (burns)
+    // and ~44 %; across a missile frigate ~32 % + ~46 % (both drift on).
+    // capital-destruction.md "Burn-away". The capital keeps the 5 % erase.
+    cutBurnMinShare: 0.2,
   },
   // A fighter's half breaks once more into 2 chunks, a quarter becomes
   // salvage (capital-destruction.md §S4 "Re-split").

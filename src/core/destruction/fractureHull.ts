@@ -70,26 +70,12 @@ import type { Vec2 } from '../swarm/asteroidShape.js';
  *  v8 (take 9 review, 2026-11-14): the `soundMinShare` option; the
  *  sub-capital profile sets 0.33, so its sound primary crack leaves no piece
  *  over ~70 % of the hull. Capital output is unchanged (default 0.15).
- *  v9 (beam slices, railgun channels, 2026-11-14): the optional `cut` input.
- *  A `slice` runs the primary line dead straight along the shot through the
- *  kill point (no tilt, no tip shift, no sound-primary move; slid toward the
- *  centroid only when it would leave a sliver); a `channel` erases a strip
- *  `width` wide along that line. Both are `EDGE_CUT` edges (never jagged).
- *  No new seeded draw: a fracture without a cut is byte-identical to v8.
- *  v10 (hostile film reviews 2026-11-15, a heavy-beam slice and a railgun
- *  channel on a heavy cruiser: the zone cracks ran nearly straight, full
- *  beam, PARALLEL to the cut either side, so one shot read as three cuts):
- *  on a capital cut kill the secondary cracks are SPLINTERS that branch off
- *  the cut (`cutSplinters`, its own seeded stream): each runs from a point on
- *  the cut at 40-58 deg to it, into one side only, the second on a side
- *  branching off the first; as many as the un-cut layout's cracks (so the
- *  count still follows the violence table), at most `SPLINTER_MAX`. They jag
- *  at `SPLINTER_ROUGHNESS`. A fracture without a cut (and a sub-capital's
- *  cut) is byte-identical to v9. Also v10 (owner: "the slice is too thin
- *  compared to the width of the beam"): a slice with a `width` erases a
- *  strip that wide, through the channel's code (the heavy beam:
- *  `HEAVY_BEAM_WIDTH`). */
-export const FRACTURE_ALGO_VERSION = 10;
+ *  v9 kill cuts (`cut`: a straight slice line, a railgun channel strip);
+ *  v10 capital splinters off the cut and the heavy beam's wide slice; v11
+ *  `cutBurnMinShare`: a cut kill burns away pieces too small (none left =
+ *  vaporised). Each is byte-identical without a cut; detail and history in
+ *  capital-destruction.md "Kill cuts" and its version trail. */
+export const FRACTURE_ALGO_VERSION = 11;
 /** Default chance that a hull snaps cleanly in two along the primary line
  *  instead of shattering (owner: "just make it a chance"). */
 export const FRACTURE_SNAP_CHANCE = 0.2;
@@ -292,6 +278,10 @@ export interface FractureInput {
    *  centred on it is erased. The secondary cracks and the piece count are
    *  the same as without a cut. */
   readonly cut?: FractureKillCut;
+  /** v11: on a cut kill every piece under this share of the hull burns away
+   *  (the strip's sliver erase, a crack that would leave one is dropped, a
+   *  last pass after the jag); none left = vaporised. Absent: v10. */
+  readonly cutBurnMinShare?: number;
 }
 
 /** A kill cut in the hull's frame (`FractureInput.cut`). `width`: a
@@ -404,10 +394,12 @@ export function fractureHull(input: FractureInput): FracturePiece[] {
   // v9 channel: the strip either side of the cut line is erased first; the
   // other cracks then split what is left. A sliver beside the channel
   // (`CHANNEL_SLIVER_SHARE`) is erased with it.
+  const burnShare = cutKind !== null && input.cutBurnMinShare !== undefined && input.cutBurnMinShare > 0 ? input.cutBurnMinShare : 0;
+  const burnMin = burnShare * hullArea;
   let start: P[][] = [hull];
   if (strip && primary !== null) {
     const half = plan.cut!.width / 2;
-    const minPart = CHANNEL_SLIVER_SHARE * hullArea;
+    const minPart = (burnShare > 0 ? burnShare : CHANNEL_SLIVER_SHARE) * hullArea;
     start = [];
     const sides = [
       splitByLine(hull, primary.nx, primary.ny, primary.c - half, EDGE_CUT),
@@ -467,11 +459,20 @@ export function fractureHull(input: FractureInput): FracturePiece[] {
     // v9: a kill cut is never dropped: with every other crack gone it stands
     // whatever the count (a slice across a concave hull may cut three).
     const cutStands = cutKind !== null && usePrimary && onlyPrimary;
-    if ((quantised.length <= cap || cutStands) && (!chunkyOnly || onlyPrimary || allChunky(quantised, beam, chunkyWidth))) {
+    // v11: a crack never leaves a piece the cut would burn (only the cut burns).
+    if (
+      (quantised.length <= cap || cutStands)
+      && (!chunkyOnly || onlyPrimary || allChunky(quantised, beam, chunkyWidth))
+      && (burnShare === 0 || onlyPrimary || allAtLeast(quantised, burnMin))
+    ) {
       const jagged = jagCutEdges(
         weldTJunctions(quantised), input.seed >>> 0, scale, jagDepth, jagRoughness, splinterKill ? JAG_ROUGHNESS : undefined,
       );
-      return jagged.map(toPiece);
+      if (burnShare === 0) return jagged.map(toPiece);
+      // v11: what is left too small burns away, after the jag. None: vaporised.
+      const out: FracturePiece[] = [];
+      for (const r of jagged) if (ringArea(r) >= burnMin) out.push(toPiece(r));
+      return out;
     }
     if (nFan > 0) nFan--;
     else if (useFar) useFar = false;
@@ -1670,6 +1671,12 @@ function stripSpikes(r: P[]): P[] {
     }
   }
   return pts;
+}
+
+/** v11: every ring holds at least `min` area. */
+function allAtLeast(rings: ReadonlyArray<P[]>, min: number): boolean {
+  for (const r of rings) if (ringArea(r) < min) return false;
+  return true;
 }
 
 function ringArea(r: ReadonlyArray<{ x: number; y: number }>): number {

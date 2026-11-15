@@ -2222,6 +2222,65 @@ line; a railgun kill erases a straight channel as wide as the bolt.
   with particles off; it plays only where the break-up plays (a capital
   profile's `breakBurst`, a fresh wreck). Lock: `WreckBreakFx.test.ts`
   "channel ash"; `wreckArt.test.ts` "a channel kill sheds ash".
+- **Burn-away and vaporised (fracture v11, 2026-11-15).** Owner: when a cut
+  weapon (heavy-beam slice or railgun channel) kills a ship, "any piece too
+  small" burns away instead of drifting as wreckage; if no piece survives,
+  the whole ship is vaporised. Same rule for every ship, whoever flies it.
+  - **The share.** `DestructionFractureOptions.cutBurnMinShare` (the
+    fracture's `FractureInput.cutBurnMinShare`), a share of the hull's area
+    (scale-free, #18). On a cut kill it replaces `CHANNEL_SLIVER_SHARE` in
+    the strip's sliver erase, a secondary crack that would leave a piece
+    under it is dropped by the retry (like an over-cap crack: only the cut
+    burns mass), and a last pass after the jag erases any piece still under
+    it, so every piece returned holds at least the share. Absent (the
+    capital profile, the re-split profiles) the fracture is v10's; a
+    fracture without a cut ignores it.
+  - **Numbers.** Sub-capital 0.2 (a fifth of the hull, under the re-split's
+    quarter salvage floor, so what survives a cut is a real chunk). Real
+    ships (hull 1× units, `shipShapeScale` 2 for these sub-caps, so the
+    60 u heavy beam is 30 wide and the 16 u slug 8):
+    | ship / shot | v10 pieces (share of hull) | v11 |
+    |---|---|---|
+    | fighter (20 × 26), heavy beam, any line | none (the beam is wider than the ship) | vaporised |
+    | gunship (20 × 28), heavy beam, any line | none | vaporised |
+    | missile frigate (32 × 44), heavy beam across | 0.07 + 0.15 | vaporised |
+    | missile frigate, heavy beam at 45° | 0.10 | vaporised |
+    | missile frigate, heavy beam along the keel | none | vaporised |
+    | missile frigate, railgun across | 0.32 + 0.46 (0.26 + 0.52 at a quarter) | unchanged |
+    | gunship, railgun along, 4 u off the keel | 0.12 + 0.44 | 0.44 |
+    | fighter, railgun along the keel | 0.18 + 0.18 | vaporised |
+    | heavy cruiser (454 × 4385, scale 1), heavy beam across | 2–5 pieces, 0.35–0.59 hulks + 0.01–0.03 splinter chips | unchanged (capital: 5 % strip erase only) |
+    The capital keeps no burn share: a heavy cruiser cut leaves its huge
+    hulks whatever the share, and its splinter chips are the look the
+    owner approved (v10).
+  - **Server.** `buildWreckPieces` returning no piece on a cut kill is a
+    vaporised ship: `CapitalWreckSubsystem.onDeath` returns
+    `{ pieces: 0, vaporised: true }` (`WreckDeathOutcome`), spawns no
+    descriptor and still despawns the dying body (`despawnDyingBody`, which
+    before v11 ran only when there were pieces: a fighter killed by the
+    60 u heavy beam already had none, and an active hull's corpse body
+    stayed in the world). Each death path asks for the wreck BEFORE its
+    `destroy` broadcast so the event can carry it: a drone through
+    `spawnScrapFromDrone` → `evictSwarmEntity({ vaporised })`, a lingering
+    hull through `spawnScrapFromLingeringHull` (moved ahead of its
+    broadcast), an active hull through the new `spawnWreckFromActiveHull`
+    leaf dep (the wreck spawn moved out of the `SHIP_DESTROYED` handler into
+    the death policy, `SectorRoom.spawnActiveHullWreck`).
+  - **Wire.** `DestroyEvent.vaporised?: true` (emit-when-true;
+    `DestroyEventSchema`, strict). An effect hint only (#16): a vaporised
+    ship has no wreck descriptor, so a late joiner sees the same nothing.
+    The client effect is a separate PR.
+  - **Composite kinds** (havok, the cargo pod: profile `none`, scrap groups)
+    never reach the wreck path: a cut kill breaks them into their component
+    scrap as before, with no `vaporised`. Follow-up.
+  - Locks: `fractureHull.cutBurn.test.ts` (the threshold edge for a channel,
+    a wide slice and a line slice; all-burn; the option inert without a cut;
+    the real ships above; every sub-cap cut piece ≥ the share);
+    `CapitalWreckSubsystem.test.ts` "burns every piece away";
+    `tests/integration/sectorRoom/cutVaporise.test.ts` (fighter, gunship,
+    missile frigate across: `destroy` with `vaporised`, no wreck; heavy
+    cruiser: its hulks; a player-flown fighter too);
+    `wreckGeometryParity` "v11 burn-away"; `messages.test.ts`.
 - **Not yet:** channel ash on a sub-capital (its profile has no break-up
   burst, so only its glow tints). The beam fits that mount the heavy beam:
   [capital-ships](../features/capital-ships.md#weapon-fits-plan-section-9).
@@ -2395,6 +2454,7 @@ Moved from `src/core/CLAUDE.md` (2026-11-14); kept for the record.
 - **v7: the hull breaks only where it was hit, into a few ENORMOUS chunks** (owner review 2026-11-13: v6 sliced the far hull where no shell hit and cut a comb of slivers at the impact; "The last hit's impact sets the split"). No Voronoi seeds, no far cracks: two jagged zone cracks ~a beam either side of the primary and 0–2 fan cracks from the kill point (`LocalLine`, split only their zone half) leave 2–4 chunks at the impact and one big section each side. A very heavy blow (≥ max hull) on a long hull rarely (12 %) adds ONE far crack. Piece count still rises with size and violence, but stays ~3–7. A fan crack only splits a section where every part it leaves is chunky (≥ `FAN_MIN_WIDTH_BEAMS` 0.45 beam wide, ≤ `FAN_MAX_ASPECT` 2.6× longer than that; filmed take 2026-11-13: a long thin triangle along the port edge). Lock: the v7 describe in `fractureHull.killFocus.test.ts` (no thin sliver, no long thin piece of any size, no far cut, 2–5 near pieces, ≤ 2 sections each side).
 - **v8: sub-capital pieces are never nearly the whole hull** (take 9 review 2026-11-14). The `soundMinShare` option (default 0.15); the sub-cap profile sets 0.43 (0.33 before take 10). Capital output unchanged. Lock: `wreckPieces.subcapParting.test.ts` "read as broken".
 - **v10: a wide heavy-beam slice** (2026-11-15). A slice with a width erases a strip that wide like a channel; the heavy beam's is `HEAVY_BEAM_WIDTH` 60 u, its drawn core the same.
+- **v11: a cut kill burns away pieces too small** (2026-11-15). The optional `cutBurnMinShare` (sub-capital profile 0.2): on a heavy-beam slice or railgun channel kill every piece under that share of the hull burns away, a crack that would leave one is dropped; none left = vaporised (`DestroyEvent.vaporised`). Capital and un-cut output unchanged. Lock: `fractureHull.cutBurn.test.ts`; detail: "Kill cuts", "Burn-away".
 - **v10: splinters off a capital cut kill** (2026-11-15). The secondary cracks of a capital slice or channel kill branch off the cut at 40–58° and jag harder, instead of running parallel to it (film review: one shot read as three cuts). Count still from the violence table. Output without a cut unchanged. Lock: `fractureHull.cutSplinters.test.ts`, "golden: v9 kill cuts" (capital side-shot hashes).
 - **v9: kill cuts** (2026-11-14). The optional `cut`: a heavy-beam `slice` is a dead-straight primary along the shot through the kill point (`EDGE_CUT`, never jagged; slid toward the centroid only off a sliver); a railgun `channel` erases a strip as wide as the bolt. Output without a cut unchanged (same golden hashes). Locks: "golden: v9 kill cuts", the "fracture v9" describe in `fractureHull.killFocus.test.ts`.
 ## Server implementation notes

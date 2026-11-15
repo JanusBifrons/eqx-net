@@ -48,6 +48,7 @@ export function wreckRootFracture(input: WreckFractureInputs): FracturePiece[] {
     soundMinShare: opts.soundMinShare,
     extraChunkChance: opts.extraChunkChance,
     jag: opts.jag,
+    cutBurnMinShare: opts.cutBurnMinShare,
     cut: wreckFractureCut(input),
   });
 }
