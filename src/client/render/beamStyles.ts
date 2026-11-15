@@ -30,8 +30,9 @@ export const HEAVY_BEAM_COLOR = 0xb46cff;
 
 /** Fewest screen px the heavy beam's core is drawn wide (`minScreenPx`): at
  *  capital zoom its 10 u core is under a px, thinner on screen than a fighter
- *  beam's glow; 6 px keeps it reading as the heaviest beam in the fight. */
-export const HEAVY_BEAM_MIN_SCREEN_PX = 6;
+ *  beam's glow; 12 px keeps it reading as the heaviest beam in the fight (6 px
+ *  filmed as a laser pointer next to a 120 px hull). */
+export const HEAVY_BEAM_MIN_SCREEN_PX = 12;
 
 /** The capital heavy beam (`heavy_beam` mounts): a thick, capital-scale beam —
  *  core ~5× the fighter beam's width, tapering like every combat beam. Drawn by
