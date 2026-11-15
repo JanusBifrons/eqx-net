@@ -36,7 +36,7 @@ export interface ArtOptions {
   /** Ship livery treatment: `DEFAULT_LIVERY` unless `?livery=off` (none) or
    *  another treatment (look R&D). Absent = the pre-livery paint. Machined only. */
   livery?: LiveryTreatment;
-  /** Cut-field ore look under trial (`?ore=tint|veins|seams`, F1c); absent = off. */
+  /** Cut-field ore look (`?ore=off|tint|veins|seams`, F1c); absent = veins (owner's pick). */
   ore?: FieldOreLook;
 }
 

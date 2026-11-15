@@ -205,10 +205,10 @@ let view: UniformGroup | null = null;
 let rockLook: UniformGroup | null = null;
 let sunAzSet = NaN;
 
-/** Ore look styles (`?ore=`, F1c look test; the owner picks one). */
+/** Ore look styles (`?ore=`, F1c); veins is the default (owner 2026-11-15). */
 export const FIELD_ORE_STYLES = ['off', 'tint', 'veins', 'seams'] as const;
 export type FieldOreStyle = (typeof FIELD_ORE_STYLES)[number];
-let oreStyle = 0;
+let oreStyle = 2; // veins: the owner's pick (2026-11-15)
 
 /** Pick the ore look; applies to every field rock at once. */
 export function setFieldOreStyle(style: FieldOreStyle): void {
