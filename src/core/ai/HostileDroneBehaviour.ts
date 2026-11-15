@@ -301,6 +301,10 @@ const AVOID_LOOK_S = 3;
  *  across each other's closest-approach point: the turn key flapped at full
  *  rate nose to nose (filmed Robot Orb, 2026-11-14). */
 const AVOID_SIDE_IDLE_TICKS = 60;
+/** Wreck pieces read per hull-avoidance check (nearest first): a ship flying
+ *  through a fresh break-up has a dozen pieces round it, and the nearest few
+ *  are the ones it can hit next. */
+const WRECK_AVOID_K = 4;
 /** Simulation ticks per second (fixed 60 Hz step). */
 const TICKS_PER_S_SIM = 60;
 
@@ -551,6 +555,9 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   private _avSide = 0;
   /** Tick of the last dodge (frees the latch after `AVOID_SIDE_IDLE_TICKS`). */
   private _avLastTick = 0;
+  /** Hull-avoidance scan scratch: soonest collision this tick and its side. */
+  private _avBestT = Infinity;
+  private _avBestSide = 0;
   /** Ticks flown with the afterburner lit (test-visible). */
   private _boostTicks = 0;
   /** The target the still-memory is about, and the last ticks it was under
@@ -1218,7 +1225,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       this._goal.spendReserve = false;
       this._goal.throttleNow = false;
       this._manoeuvres[this._picker.current]!.writeGoal(this._tac, this._ctxMaps, this._goal);
-      intent = this.flyCombatContext(self, nb, view.aims, ux, uy, desiredAngle, rangeDist <= this.fireRange, this._goal);
+      intent = this.flyCombatContext(self, nb, view.debris, view.aims, ux, uy, desiredAngle, rangeDist <= this.fireRange, this._goal);
       if (this._picker.current === MANOEUVRE_FLEE && this._flee.wantsWarpOut(view.tick)) {
         this.requestWarpOut(self, intent);
         return intent;
@@ -1305,6 +1312,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   private flyCombatContext(
     self: AiEntity,
     nb: IAiNeighbourQuery,
+    debris: IAiNeighbourQuery | undefined,
     aims: IAiAimBoard | undefined,
     ux: number,
     uy: number,
@@ -1372,8 +1380,9 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       wvx *= h.maxSpeed / wv;
       wvy *= h.maxSpeed / wv;
     }
-    // Collision course with a hull (the target included)? Dodge it first.
-    if (!h.torqueTurn && this.hullAvoid(self, nb)) {
+    // Collision course with a hull (the target included) or a wreck piece?
+    // Dodge it first.
+    if (!h.torqueTurn && this.hullAvoid(self, nb, debris)) {
       this._avoidTicks++;
       this._faceMove = true;
       const g = h.maxSpeed;
@@ -1512,7 +1521,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    * `AVOID_SIDE_IDLE_TICKS` without a dodge): once committed, the dodge
    * holds it. Allocation-free (#14).
    */
-  private hullAvoid(self: AiEntity, nb: IAiNeighbourQuery): boolean {
+  private hullAvoid(self: AiEntity, nb: IAiNeighbourQuery, debris: IAiNeighbourQuery | undefined): boolean {
     const h = this.handling;
     const r = this.kind.radius;
     // The dodge burns the afterburner while the pool allows it.
@@ -1520,28 +1529,44 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     const accel = h.thrustAccel * 60 * boostMul;
     if (accel <= 0) return false;
     const reach = AVOID_LOOK_S * (Math.hypot(self.vx, self.vy) + h.cruiseSpeed) + 4 * r;
+    const tick = this._tac.tick;
+    if (this._avSide !== 0 && tick - this._avLastTick > AVOID_SIDE_IDLE_TICKS) this._avSide = 0;
+    this._avBestT = Infinity;
+    this._avBestSide = 0;
     const idx = this._nbIdx;
-    const n = nb.queryNeighbours(self.x, self.y, reach, COMBAT_NEIGHBOUR_K, idx, self.id);
+    let n = nb.queryNeighbours(self.x, self.y, reach, COMBAT_NEIGHBOUR_K, idx, self.id);
+    this.avoidScan(self, nb, n, accel, false);
+    // Wreck pieces are solid terrain: steer round them by the same rule
+    // (take 11 "ghost ship": a piece caught on the bubble rode along).
+    if (debris !== undefined && debris.count > 0) {
+      n = debris.queryNeighbours(self.x, self.y, reach, WRECK_AVOID_K, idx);
+      this.avoidScan(self, debris, n, accel, true);
+    }
+    if (this._avBestT === Infinity) return false;
+    if (this._avBestSide !== 0) this._avSide = this._avBestSide;
+    this._avLastTick = tick;
+    return true;
+  }
+
+  /**
+   * One source's candidates for `hullAvoid` (entries `_nbIdx[0..n)` of
+   * `q`): keeps the soonest collision in `_avBestT` and its dodge in
+   * `_avX/_avY`. `isDebris`: a wreck piece already inside the clearance
+   * with no real closing speed (riding on the bubble) is a collision NOW:
+   * the ship slides off it sideways, square to its own velocity, so it is
+   * never carried along. Allocation-free (#14).
+   */
+  private avoidScan(self: AiEntity, q: IAiNeighbourQuery, n: number, accel: number, isDebris: boolean): void {
+    const h = this.handling;
+    const r = this.kind.radius;
+    const idx = this._nbIdx;
     const fx = -Math.sin(self.angle);
     const fy = Math.cos(self.angle);
     const minW2 = 0.01 * h.cruiseSpeed * h.cruiseSpeed;
-    const tick = this._tac.tick;
-    if (this._avSide !== 0 && tick - this._avLastTick > AVOID_SIDE_IDLE_TICKS) this._avSide = 0;
-    let bestT = Infinity;
-    let bestSide = 0;
     for (let k = 0; k < n; k++) {
       const i = idx[k]!;
-      const px = nb.xAt(i) - self.x;
-      const py = nb.yAt(i) - self.y;
-      const wx = nb.vxAt(i) - self.vx;
-      const wy = nb.vyAt(i) - self.vy;
-      const w2 = wx * wx + wy * wy;
-      if (w2 < minW2) continue;
-      const t = -(px * wx + py * wy) / w2;
-      if (t <= 0 || t >= bestT) continue;
-      const mx = px + wx * t;
-      const my = py + wy * t;
-      const miss = Math.hypot(mx, my);
+      const px = q.xAt(i) - self.x;
+      const py = q.yAt(i) - self.y;
       // Shields up, ships collide as their bubbles (hull radius + shield
       // pad, cede4a25), so clear both bubbles: the neighbour's pad is taken
       // as mine (the grid carries only its hull radius; a pad follows the
@@ -1549,7 +1574,43 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       // the 2x default, inside the ~80 u the bubbles touch at: two fighters
       // boosting through a head-on pass grazed in 3 of 8 duels (dogfight
       // x8, 2026-11-14, once the doubled pool kept both boosting 6 s in).
-      const clear = hullClearance(r, nb.radiusAt(i), this.shieldPad);
+      const clear = hullClearance(r, q.radiusAt(i), this.shieldPad);
+      const wx = q.vxAt(i) - self.vx;
+      const wy = q.vyAt(i) - self.vy;
+      const w2 = wx * wx + wy * wy;
+      const p2 = px * px + py * py;
+      if (isDebris && p2 < clear * clear && (w2 < minW2 || px * wx + py * wy >= 0)) {
+        // Riding on (or drifting off) the bubble: slide off it now, to the
+        // side of my own velocity away from the piece (straight away from it
+        // when all but stopped). Most urgent: t = 0.
+        if (this._avBestT <= 0) continue;
+        const sp2 = self.vx * self.vx + self.vy * self.vy;
+        let dx: number;
+        let dy: number;
+        if (sp2 > minW2) {
+          const sl = Math.sqrt(sp2);
+          // Left of my velocity is (−vy, vx); the piece on my left ⇒ go right.
+          const side = -self.vy * px + self.vx * py > 0 ? -1 : 1;
+          dx = (-self.vy / sl) * side;
+          dy = (self.vx / sl) * side;
+        } else {
+          const pl = Math.sqrt(p2);
+          if (pl < 1e-6) continue;
+          dx = -px / pl;
+          dy = -py / pl;
+        }
+        this._avBestT = 0;
+        this._avBestSide = 0;
+        this._avX = dx;
+        this._avY = dy;
+        continue;
+      }
+      if (w2 < minW2) continue;
+      const t = -(px * wx + py * wy) / w2;
+      if (t <= 0 || t >= this._avBestT) continue;
+      const mx = px + wx * t;
+      const my = py + wy * t;
+      const miss = Math.hypot(mx, my);
       if (miss >= clear) continue;
       // Away from where it passes (−m, square to w), as a side of w: +1 its
       // left (−wy, wx), −1 its right; dead head-on, the right. A latched
@@ -1563,15 +1624,11 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       const turn = Math.acos(c > 1 ? 1 : c < -1 ? -1 : c) / Math.max(h.maxAngvel, 1e-3);
       const need = AVOID_SAFETY * (turn + Math.sqrt((2 * (clear - miss)) / accel)) + AVOID_LATENCY_S;
       if (t > need) continue;
-      bestT = t;
-      bestSide = side;
+      this._avBestT = t;
+      this._avBestSide = side;
       this._avX = dx;
       this._avY = dy;
     }
-    if (bestT === Infinity) return false;
-    this._avSide = bestSide;
-    this._avLastTick = tick;
-    return true;
   }
 
   /** Refresh the tactical context for this combat tick (plain writes, #14). */

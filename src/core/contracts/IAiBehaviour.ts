@@ -131,6 +131,11 @@ export interface AiWorldView {
    *  engageable pilot hulls, rebuilt once per tick by the server. SERVER-ONLY,
    *  no wire surface (same rationale as `structures`). Absent ⇒ no index. */
   readonly neighbours?: IAiNeighbourQuery;
+  /** Per-tick index over this tick's wreck pieces (terrain, not ships: only
+   *  position, velocity and `radiusAt` are meaningful). Hull avoidance steers
+   *  round them as round a ship. SERVER-ONLY, no wire surface. Absent or
+   *  empty ⇒ no debris avoidance. */
+  readonly debris?: IAiNeighbourQuery;
   /** The controller's work counters (absent ⇒ nothing counts). */
   readonly stats?: AiTickStats;
   /** Per-entity current aim points (fire-lane awareness, AI slice 5b): a

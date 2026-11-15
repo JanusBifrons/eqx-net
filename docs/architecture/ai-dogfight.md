@@ -85,6 +85,37 @@ parked ship:
 Duels with a moving ship keep the old run unchanged: the point beside the
 target, the timer, the straight extend.
 
+## Wreck pieces: steered round like ships
+
+A dead ship's wreck pieces are solid. An AI pilot that flew straight through
+a melee caught a slowed piece on its shield bubble and carried it along for
+5-15 s, ~58-75 u from its centre at nearly its own speed (take 11, the
+"ghost ship"). Gunfire shoving was the other half, fixed by the line-of-fire
+hold. Now hull avoidance reads the pieces too:
+
+- The room builds a second per-tick `AiNeighbourGrid` of wreck pieces
+  (`SectorRoom.aiWreckGrid`), filled in the same registry walk as the ship
+  grid, and hands it to every brain as `AiWorldView.debris`.
+- `hullAvoid` checks the ships first, then the nearest `WRECK_AVOID_K` (4)
+  pieces within the same look-ahead reach, by the same rule: a piece on a
+  collision course inside `hullClearance(own radius, piece radius, own
+  shieldPad)`, sooner than the ship can turn and slide clear, makes it
+  dodge. The query runs only while the sector has pieces.
+- A piece already inside the clearance with no real closing speed (riding
+  on the bubble, or drifting off it) is a collision now: the ship slides off
+  it sideways, square to its own velocity, away from the piece.
+- Only the steering changes: collision groups and how pieces bounce stay.
+
+Cost: one extra grid query per combat tick per ship while pieces exist,
+counted in `aiNeighbourQueriesPerTick`. Locks:
+`ai/HostileDroneBehaviour.wreckAvoid.test.ts` (a piece dead ahead: the
+pilot turns aside and passes it at the clearance or more; blind, the same
+course runs through it) and `tests/integration/sectorRoom/aiAvoidWrecks.test.ts`
+(3v3 fighters across eighteen dead fighters' pieces, 20 game s: no piece
+alongside a live ship, inside 1.5 × clearance under 30 u/s relative, for
+over 1 s; piece-ship pairs that touch at most half the blind arm's:
+2026-11-14, 25-47 blind → 9-13 avoiding).
+
 ## Locks
 
 - `tests/integration/sectorRoom/strafeParkedRobots.test.ts`: a Robot Orb and a
