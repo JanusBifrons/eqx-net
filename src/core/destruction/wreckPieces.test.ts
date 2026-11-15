@@ -14,6 +14,7 @@ import { shipHullOutline, shipShapeScale } from '../geometry/shipHullOutline.js'
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { shipBodyMass, shipTuning } from '../../shared-types/shipScale/tuning.js';
 import { cutDirFromAngle, CUT_ANGLE_STEPS, EDGE_CUT, FRACTURE_QUANTUM } from './fractureHull.js';
+import { HEAVY_BEAM_WIDTH } from '../combat/WeaponCatalogue.js';
 
 const shipScaleOf = (k: Parameters<typeof getShipKind>[0]): number => shipShapeScale(getShipKind(k));
 
@@ -291,14 +292,15 @@ describe('kill-cut direction (fracture v9)', () => {
   });
 });
 
-describe('railgun channel banks part (fracture v9)', () => {
+describe('railgun channel (and heavy-beam slice) banks part (fracture v9, v10)', () => {
   // Filmed 2026-11-15 (rail-channel showcase, heavy-cruiser:channel): the two
   // banks of the channel are not a shared cut (parallel, a bolt's width
   // apart), so the seam pass never parted them and the kill push closed the
   // channel at ~20–45 u/s while the jagged cracks opened: no visible gap
   // along the slug's line.
-  it('the pieces either side of the channel open it at wreckSeparate or more at both ends', () => {
-    const W = 16; // RAILGUN_BOLT_WIDTH, world units
+  // v10: the heavy beam's wide slice erases a strip the same way and its
+  // banks part the same way (owner: the slice was too thin for the beam).
+  for (const [cutKind, W] of [['channel', 16 /* RAILGUN_BOLT_WIDTH */], ['slice', HEAVY_BEAM_WIDTH]] as const) it(`${cutKind}: the pieces either side of the strip open it at wreckSeparate or more at both ends`, () => {
     for (const kindId of ['heavy-cruiser', 'battleship', 'destroyer'] as const) {
       const kind = getShipKind(kindId);
       const t = shipTuning(kind);
@@ -308,7 +310,7 @@ describe('railgun channel banks part (fracture v9)', () => {
         const cutAng = hullLocalCutAngle(flat, { x: 1, y: 0 });
         const { pieces, fracture } = buildWreckPieces({
           kindId, pose: flat, killWorld: { x: -500, y: 30 }, attackerWorld: null, seed,
-          killBlowDamage: 0.3, recentDamageRate: 0.3, cutKind: 'channel', cutAng, cutW: W / sc,
+          killBlowDamage: 0.3, recentDamageRate: 0.3, cutKind, cutAng, cutW: W / sc,
         });
         const geom = wreckPieceGeometry(fracture);
         let banks = 0;
@@ -347,7 +349,7 @@ describe('railgun channel banks part (fracture v9)', () => {
             }
           }
         }
-        expect(banks, `${kindId} seed ${seed}: the channel has two banks`).toBeGreaterThan(0);
+        expect(banks, `${kindId} ${cutKind} seed ${seed}: the strip has two banks`).toBeGreaterThan(0);
       }
     }
   });

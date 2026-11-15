@@ -612,8 +612,9 @@ export function buildWreckPieces(input: WreckBuildInput): WreckBuild {
   // open wide enough to read at fleet zoom). The spin above keeps the raw
   // `wreckSeparate`.
   const sep = tuning.wreckSeparate * DESTRUCTION_PROFILES[tuning.destruction].separateScale;
-  // A channel's two banks part like a shared cut (its width, scaled frame).
-  const seams = findSeams(geom, fracture.cutKind === 'channel' ? (fracture.cutW ?? 0) * s : 0);
+  // A channel's (or a wide slice's) two banks part like a shared cut (its
+  // width, scaled frame).
+  const seams = findSeams(geom, fracture.cutKind !== undefined ? (fracture.cutW ?? 0) * s : 0);
   for (let it = 0; it < SEPARATE_ITERATIONS; it++) {
     let worst = 0;
     for (const sm of seams) {

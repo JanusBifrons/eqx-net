@@ -10,6 +10,7 @@
  * runtime dependency, so the lock test (`beamStyles.test.ts`) needs no renderer.
  */
 import type { BeamSpriteStyle } from './BeamSpritePool.js';
+import { HEAVY_BEAM_WIDTH } from '../../core/combat/WeaponCatalogue.js';
 
 /** Remote players' / drones' / turrets' combat hitscan beam — thin warm amber.
  *  `taper` (P3.13) — combat beams fade toward the tip of their range. */
@@ -35,15 +36,33 @@ export const HEAVY_BEAM_COLOR = 0xb46cff;
 export const HEAVY_BEAM_MIN_SCREEN_PX = 12;
 
 /** The capital heavy beam (`heavy_beam` mounts): a thick, capital-scale beam —
- *  core ~5× the fighter beam's width, tapering like every combat beam. Drawn by
+ *  core `HEAVY_BEAM_WIDTH` wide, the width of the strip its slice erases on a
+ *  kill. It does NOT taper: full width and brightness all the way to its hit
+ *  point (filmed review 2026-11-15: on the fighter taper gradient it thinned
+ *  and dimmed over its last third, right at the impact); only a miss fades,
+ *  over its last `HEAVY_BEAM_MISS_FADE_FRAC` (`remoteBeamSolidLen`). Drawn by
  *  the SAME remote pool as fighter beams (a per-beam style override), in the
  *  pool's unfiltered `styledContainer`: the remote container's one orange glow
  *  filter would swamp the violet. The core is never under `minScreenPx` wide,
- *  so it reads heavier than a glowing fighter beam at capital zoom (where 10 u
- *  is under a px). `glowScale` widens the `?fx=new` halo / flow / flare. */
+ *  so it reads heavier than a glowing fighter beam at capital zoom (where even
+ *  60 u can be only a few px). `glowScale` widens the `?fx=new` halo / flow / flare. */
 export const HEAVY_BEAM_STYLE: BeamSpriteStyle = {
-  tint: HEAVY_BEAM_COLOR, width: 10, alpha: 1, taper: true, glowScale: 3, minScreenPx: HEAVY_BEAM_MIN_SCREEN_PX,
+  tint: HEAVY_BEAM_COLOR, width: HEAVY_BEAM_WIDTH, alpha: 1, taper: false, glowScale: 3, minScreenPx: HEAVY_BEAM_MIN_SCREEN_PX,
 };
+
+/** A heavy beam that MISSES fades over this last share of its drawn length
+ *  (to its max range); one that hits is solid to the hit point. */
+export const HEAVY_BEAM_MISS_FADE_FRAC = 0.15;
+
+/** The solid length (`BeamView.solidLen`) a remote beam of `style` draws
+ *  with over `len` world units: a non-tapering style (the heavy beam) is
+ *  solid to its end on a hit, and fades only over its last
+ *  `HEAVY_BEAM_MISS_FADE_FRAC` on a miss; anything else (null: the fighter
+ *  pool style, or a tapering style) is undefined, the pool's own taper. */
+export function remoteBeamSolidLen(style: BeamSpriteStyle | null, len: number, hit: boolean): number | undefined {
+  if (style === null || style.taper) return undefined;
+  return hit ? len : len * (1 - HEAVY_BEAM_MISS_FADE_FRAC);
+}
 
 /** True when `mount` carries the capital heavy beam. */
 export function isHeavyBeamMount(mount: { readonly weaponId: string } | null | undefined): boolean {

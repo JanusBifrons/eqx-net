@@ -411,7 +411,7 @@ import { shipRayHit, shipSweepHit } from '../../core/combat/shipHitShape.js';
 import { mayBeInReach, maxShipRangeBound, mountsReachTarget, type MountRangeTarget } from '../../core/combat/mountReach.js';
 import { CapitalWreckSubsystem } from './CapitalWreckSubsystem.js';
 import { wreckRayHit } from '../../core/destruction/wreckHits.js';
-import { isLootPod, isWreckPiece } from '../net/SwarmEntityRegistry.js';
+import { isDebris, isLootPod, isWreckPiece } from '../net/SwarmEntityRegistry.js';
 import { LineOfFireGate } from './LineOfFireGate.js';
 import { stampShipScale } from '../../shared-types/shipScale/welcomeScale.js';
 import { stampNavalRange } from '../../shared-types/combat/navalRange.js';
@@ -1720,6 +1720,9 @@ export class SectorRoom extends Room<SectorState> {
       swarmCount?: number;
       swarmRatio?: number; // asteroid fraction; default 0.8
       swarmRadius?: number; // spawn disc radius; default 18 000
+      /** Bulk-seeded rocks start still at the real asteroid mass, so they
+       *  settle and sleep (terrain stress scenes, macro-terrain.md). */
+      swarmAtRest?: boolean;
       /** Deterministic ship-kind sequence for drone spawns. When set, each
        *  successive drone takes the next kind in this array (round-robin
        *  past the end). Used by engineering rooms (`mount-test`) that need
@@ -2067,7 +2070,7 @@ export class SectorRoom extends Room<SectorState> {
       resolveInstanceFireMounts: (ship) => this.resolveInstanceFireMounts(ship),
       // Capital turret fire control (the resolver is built later; resolve lazily).
       currentTick: () => this.serverTick,
-      fireDroneMount: (id, i) => this.aiFireResolver.fireMount(id, i),
+      fireDroneMount: (id, i, passDebris) => this.aiFireResolver.fireMount(id, i, passDebris),
       fireBlocked: (id, targetId) => this.npcLocks.fireBlocked(id, targetId),
       // Friendly fire slice 2: a turret holds while an escort is on its line.
       lineOfFireBlocked: (id, targetId, fx, fy, dx, dy, max, passWrecks) =>
@@ -2150,8 +2153,8 @@ export class SectorRoom extends Room<SectorState> {
         this.applyDamage(targetId, shooterId, damage, hitX, hitY, dirX, dirY, weaponId),
       // Friendly fire (owner decision 2026-11-10): the beam meets whatever is
       // in its path, its own side and neutral structures included.
-      nonPlayerRayHit: (fx, fy, dx, dy, maxDist, skipId) =>
-        this.nonPlayerRayHit(fx, fy, dx, dy, maxDist, skipId),
+      nonPlayerRayHit: (fx, fy, dx, dy, maxDist, skipId, passDebris) =>
+        this.nonPlayerRayHit(fx, fy, dx, dy, maxDist, skipId, passDebris),
       blockBeamAtWall: (fx, fy, dx, dy, maxDist, damage) =>
         this.blockShotAtWall(fx, fy, dx, dy, maxDist, damage),
       broadcast: (type, msg) => this.broadcast(type, msg),
@@ -3134,7 +3137,7 @@ export class SectorRoom extends Room<SectorState> {
       // small drone ring with a sunflower-spiral spread across a disc, sized
       // by `swarmCount`. Used by the bandwidth E2E and the dev-machine soak.
       const requested = roomOpts.swarmCount ?? 0;
-      const bulk = this.swarmSpawner.seed(requested, roomOpts.swarmRatio, roomOpts.swarmRadius);
+      const bulk = this.swarmSpawner.seed(requested, roomOpts.swarmRatio, roomOpts.swarmRadius, roomOpts.swarmAtRest ?? false);
       if (bulk < requested) {
         logger.error({ requested, spawned: bulk }, 'bulk seed truncated (slot pool exhausted)');
       }
@@ -8353,9 +8356,11 @@ export class SectorRoom extends Room<SectorState> {
    * shooter). Live SAB poses, the same shapes as the player beam
    * (`PlayerFireResolver.hitscan`). Used by the NPC beam and the structure
    * turret beam. Returns the reused `_rayHit` or null. Alloc-free.
+   * `passDebris`: wreck pieces and scrap don't stop it (`isDebris`; a heavy
+   * beam's kill follow-through runs on through the cut at full length).
    */
   private nonPlayerRayHit(
-    fx: number, fy: number, dx: number, dy: number, maxDist: number, skipId: string,
+    fx: number, fy: number, dx: number, dy: number, maxDist: number, skipId: string, passDebris = false,
   ): { id: string; wireId: string; dist: number } | null {
     let best = maxDist;
     let bestId: string | null = null;
@@ -8374,6 +8379,7 @@ export class SectorRoom extends Room<SectorState> {
       if (rec.id === skipId) continue;
       // Nobody fights a loot pod (owner 2026-11-13): AI and turret beams pass it.
       if (isLootPod(rec)) continue;
+      if (passDebris && isDebris(rec)) continue;
       const b = slotBase(rec.slot);
       const d = this.swarmRayHit(
         rec, fx, fy, dx, dy, best,

@@ -37,6 +37,13 @@ describe('perf scenes — counts stay under budget', () => {
         ...(r['asteroidConfig'] ? { asteroidConfig: r['asteroidConfig'] as [] } : {}),
         ...(r['sectorFeatures'] ? { sectorFeatures: r['sectorFeatures'] as [] } : {}),
         ...(r['npcBases'] ? { npcBases: r['npcBases'] as never } : {}),
+        // Terrain stress scenes' bulk-seeded rock fields.
+        ...(r['swarmCount'] !== undefined ? {
+          swarmCount: r['swarmCount'] as number,
+          swarmRatio: r['swarmRatio'] as number | undefined,
+          swarmRadius: r['swarmRadius'] as number | undefined,
+          swarmAtRest: r['swarmAtRest'] as boolean | undefined,
+        } : {}),
         sceneScript: scene.room.sceneScript,
         perfFixedLoad: true,
         defaultSpawnX: scene.spawn.x,

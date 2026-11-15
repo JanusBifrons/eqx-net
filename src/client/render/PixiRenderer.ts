@@ -73,7 +73,7 @@ import {
 import { newSpeedFxSample, speedFxSampleInto } from './camera/speedFxSample';
 import { GroupBoundsScanner } from './camera/groupBounds';
 import type { CameraCue, CameraGroup } from '@core/contracts/cameraScript';
-import { REMOTE_BEAM_STYLE, MINING_BEAM_STYLE, remoteBeamStyleForMount, remoteBeamLine, addBeamLights, type RemoteBeamLine } from './beamStyles';
+import { REMOTE_BEAM_STYLE, MINING_BEAM_STYLE, remoteBeamStyleForMount, remoteBeamLine, remoteBeamSolidLen, addBeamLights, type RemoteBeamLine } from './beamStyles';
 import { MountVisualManager } from './MountVisualManager';
 import { BackgroundGrid } from './BackgroundGrid';
 import { StarfieldBackground } from './StarfieldBackground';
@@ -399,6 +399,9 @@ export class PixiRenderer implements IRenderer {
     alpha: number;
     /** Per-beam style override (the capital heavy beam); null = pool style. */
     style: BeamSpriteStyle | null;
+    /** Solid length (`remoteBeamSolidLen`): the heavy beam is solid to its
+     *  hit; undefined = the pool's taper (fighter beams). */
+    solidLen?: number;
   }> = [];
   private _remoteBeamCacheCount = 0;
   /** WS-4 Phase 4 — drill-beam slots routed out of the remote-laser loop into
@@ -413,6 +416,7 @@ export class PixiRenderer implements IRenderer {
     toY: number;
     alpha: number;
     style: BeamSpriteStyle | null;
+    solidLen?: number;
   }> = [];
   private _miningBeamCacheCount = 0;
   private initialized = false;
@@ -2052,6 +2056,8 @@ export class PixiRenderer implements IRenderer {
           slot.toY = toY;
           slot.alpha = alpha;
           slot.style = style;
+          // ...and burns full width to its hit point (a short fade past a miss).
+          slot.solidLen = remoteBeamSolidLen(style, Math.hypot(toX - fromX, toY - fromY), laser.hit === true);
           if (!isMining) this._fxRemoteHit[idx] = laser.hit === true;
           // A beam landing on a shield is a held contact there.
           if (this._fxShieldsOn && !isMining && laser.hit && laser.targetId) this._fxShields!.beam(laser.targetId, 1 + idx, toX, toY, this._fxShieldPose);

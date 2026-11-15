@@ -322,10 +322,13 @@ export class BeamSpritePool {
       } else {
         // Legacy single-sprite path: the per-style texture (gradient if taper,
         // else WHITE) stretched to the full length. Used by remote/mining beams.
+        // A per-beam style that does not taper (the heavy beam) draws solid
+        // even in a taper pool: full strength to its end point.
         // ÷ texture width (256 for the taper gradient) — see the solid-core note;
         // without it remote/enemy beams rendered 256× too long too.
-        sprite.texture = this._texture;
-        sprite.scale.set(len / this._texture.width, width);
+        const tex = b.style && !b.style.taper ? this._solidTexture : this._texture;
+        sprite.texture = tex;
+        sprite.scale.set(len / tex.width, width);
         const fade = lane.fadePool[li];
         if (fade) fade.visible = false;
       }
@@ -388,10 +391,11 @@ export class BeamSpritePool {
   }
 
   /** Test-only: beam `i`'s drawn core — tint, WORLD width (scale.y; the
-   *  textures are 1 px tall) and the container it sits in — or null. */
-  coreAt(i: number): { tint: number; width: number; parent: Container | null } | null {
+   *  textures are 1 px tall), the container it sits in and its texture — or
+   *  null. */
+  coreAt(i: number): { tint: number; width: number; parent: Container | null; texture: Texture } | null {
     const s = i < this._liveCount ? this._coreOf[i] : undefined;
     if (!s || !s.visible) return null;
-    return { tint: s.tint, width: s.scale.y, parent: s.parent };
+    return { tint: s.tint, width: s.scale.y, parent: s.parent, texture: s.texture };
   }
 }
