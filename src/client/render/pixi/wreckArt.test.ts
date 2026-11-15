@@ -24,6 +24,7 @@ import {
   WreckArtState,
   WRECK_CRACK_FRONT_MS,
   WreckPieceSprite,
+  channelFarEnd,
   wreckGlowTexture,
   simpleGlowAt,
   glowTintOf,
@@ -391,5 +392,39 @@ describe('a kill cut glows in the weapon\'s colour (weapon cuts, look)', () => {
     expect(WRECK_GLOW_TEX_ROWS).toBe(2 * WRECK_GLOW_TINTS);
     expect(glowV(GLOW_TINT_CRACK, false)).toBeCloseTo(0.5 / WRECK_GLOW_TEX_ROWS);
     expect(glowV(GLOW_TINT_CHANNEL, true)).toBeCloseTo((WRECK_GLOW_TEX_ROWS - 0.5) / WRECK_GLOW_TEX_ROWS);
+  });
+});
+
+describe('a channel kill sheds ash along the channel (weapon cuts, look)', () => {
+  type Seen = { x: number; y: number; ch: { ax: number; ay: number; bx: number; by: number } | null };
+  const breakOf = (d: WreckDescriptor): Seen[] => {
+    const seen: Seen[] = [];
+    const art = new WreckArtState((x, y, _r, _s, _seed, _fx, ch) => {
+      seen.push({ x, y, ch: ch === null ? null : { ...ch } });
+    }, () => {});
+    art.infoFor(d, rebuildWreckPieces(d)!, 0, { x: 5000, y: -2000, angle: 0.7 }, 101, 1000);
+    return seen;
+  };
+
+  it('the break-up sink gets the channel line (kill point to the far wall end) only for a channel kill', () => {
+    const base = { ...DESC, killX: 300, killY: 0, deathTick: 100, cutAng: 32768, cutW: 120 };
+    const ch = breakOf({ ...base, wreckId: 50, cutKind: 'channel' });
+    expect(ch).toHaveLength(1);
+    const line = ch[0]!.ch!;
+    expect(line, 'a channel line').not.toBeNull();
+    expect(line.ax).toBe(ch[0]!.x);
+    expect(line.ay).toBe(ch[0]!.y);
+    // It runs across the hull: a good share of the wreck's size long.
+    const pieces = rebuildWreckPieces({ ...base, wreckId: 50, cutKind: 'channel' })!;
+    let hullR = 0;
+    for (const p of pieces) hullR = Math.max(hullR, Math.hypot(p.cx, p.cy) + p.radius);
+    expect(Math.hypot(line.bx - line.ax, line.by - line.ay)).toBeGreaterThan(0.2 * hullR);
+    expect(breakOf({ ...base, wreckId: 51, cutKind: 'slice' })[0]!.ch, 'a slice has no ash line').toBeNull();
+    expect(breakOf({ ...DESC, wreckId: 52, deathTick: 100 })[0]!.ch, 'no cut, no ash').toBeNull();
+  });
+
+  it('channelFarEnd is null without EDGE_CUT edges', () => {
+    const plain = rebuildWreckPieces({ ...DESC, wreckId: 53 })!;
+    expect(channelFarEnd(plain, 0, 0)).toBeNull();
   });
 });

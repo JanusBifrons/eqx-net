@@ -954,10 +954,39 @@ export function deathBlastFor(
   return out;
 }
 
+/** A railgun channel through a wreck, game space: from the slug's entry
+ *  (`ax, ay`, the kill point) to where it left the hull (`bx, by`). */
+export interface WreckChannelLine { ax: number; ay: number; bx: number; by: number }
+
 /** Break-up sink: kill point (game space), wreck radius, clean snap, seed,
- *  and the wreck's effects (the sink plays only the parts `fx` asks for:
- *  `breakBurst`, `killBlasts`). */
-export type WreckBreakSink = (x: number, y: number, radius: number, snap: boolean, seed: number, fx: DestructionFx) => void;
+ *  the wreck's effects (the sink plays only the parts `fx` asks for:
+ *  `breakBurst`, `killBlasts`) and, for a `channel` kill, the channel line
+ *  (its glowing ash; null otherwise; a reused scratch, read it at once). */
+export type WreckBreakSink = (
+  x: number, y: number, radius: number, snap: boolean, seed: number, fx: DestructionFx, channel: WreckChannelLine | null,
+) => void;
+
+const _channel: WreckChannelLine = { ax: 0, ay: 0, bx: 0, by: 0 };
+
+/** The channel's far end (hull frame, math-up, like `forEachCut`): the
+ *  `EDGE_CUT` vertex farthest from the kill point, where the slug left the
+ *  hull. Null without a channel edge. Once per fresh wreck. */
+export function channelFarEnd(pieces: readonly WreckPieceGeometry[], killX: number, killY: number): { x: number; y: number } | null {
+  let best = -1, bx = 0, by = 0;
+  for (const p of pieces) {
+    const o = p.outline, n = o.length;
+    for (let i = 0; i < n; i++) {
+      if (p.cutEdges[i] !== EDGE_CUT) continue;
+      for (let e = 0; e < 2; e++) {
+        const v = o[(i + e) % n]!;
+        const x = v.x + p.cx, y = v.y + p.cy;
+        const d = (x - killX) * (x - killX) + (y - killY) * (y - killY);
+        if (d > best) { best = d; bx = x; by = y; }
+      }
+    }
+  }
+  return best < 0 ? null : { x: bx, y: by };
+}
 
 /**
  * Renderer-side state of each wreck in view: when it died (on this
@@ -1043,7 +1072,17 @@ export class WreckArtState {
     if ((fx.breakBurst || fx.killBlasts) && ageMs < WRECK_BREAK_FX_MAX_AGE_MS && g !== undefined && this.onBreak !== null) {
       const dx = info.killX - g.cx, dy = info.killY - g.cy;
       const c = Math.cos(pose.angle), sn = Math.sin(pose.angle);
-      this.onBreak(pose.x + dx * c - dy * sn, pose.y + dx * sn + dy * c, hullR, info.snap, desc.seed, fx);
+      const kx = pose.x + dx * c - dy * sn, ky = pose.y + dx * sn + dy * c;
+      // A railgun channel sheds ash along the line the slug punched through.
+      const far = desc.cutKind === 'channel' ? channelFarEnd(pieces, info.killX, info.killY) : null;
+      let channel: WreckChannelLine | null = null;
+      if (far !== null) {
+        const fx2 = far.x - g.cx, fy2 = far.y - g.cy;
+        _channel.ax = kx; _channel.ay = ky;
+        _channel.bx = pose.x + fx2 * c - fy2 * sn; _channel.by = pose.y + fx2 * sn + fy2 * c;
+        channel = _channel;
+      }
+      this.onBreak(kx, ky, hullR, info.snap, desc.seed, fx, channel);
     }
     return info;
   }

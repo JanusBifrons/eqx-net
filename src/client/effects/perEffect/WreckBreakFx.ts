@@ -12,7 +12,14 @@
  *
  *   high 70 dust + 40 shards · medium 40 + 24 · low 18 + 10 · minimal 8 + 4
  *
- * The pool (`MAX_DUST` + `MAX_SHARDS` + `MAX_FLASHES`) is built on the FIRST
+ * **Channel ash** (weapon cuts: a railgun `channel` kill, `spawnChannelAsh`).
+ * A LINE emitter on the same pool: glowing ash along the channel the slug
+ * punched through the hull, shed from its white-hot walls (white-hot, then
+ * ember, then grey, drifting off the walls), plus a few sparks thrown along
+ * the slug's path out of the far side. Counts follow the effects tier
+ * (`WRECK_ASH_DIAL`), none with particles off.
+ *
+ * The pool (`MAX_DUST` + `MAX_SHARDS` + `MAX_FLASHES` + `MAX_ASH`) is built on the FIRST
  * break-up (never for a session without one) and reused; its container is only
  * on the stage while something is live, so an idle pool adds no display
  * objects. The per-frame tick allocates nothing (invariant #14).
@@ -23,6 +30,7 @@ import type { EffectQuality, ParticleBurstOpts } from '@core/contracts/IEffects'
 const MAX_DUST = 140;
 const MAX_SHARDS = 80;
 const MAX_FLASHES = 4;
+const MAX_ASH = 96;
 
 /** Per-tier counts for one break-up. */
 export const WRECK_BREAK_DIAL: Record<EffectQuality, { dust: number; shards: number }> = {
@@ -31,6 +39,29 @@ export const WRECK_BREAK_DIAL: Record<EffectQuality, { dust: number; shards: num
   low: { dust: 18, shards: 10 },
   minimal: { dust: 8, shards: 4 },
 };
+
+/** Per-tier counts for one channel's ash line (sparks reuse the shard pool). */
+export const WRECK_ASH_DIAL: Record<EffectQuality, { ash: number; sparks: number }> = {
+  high: { ash: 48, sparks: 16 },
+  medium: { ash: 28, sparks: 10 },
+  low: { ash: 12, sparks: 4 },
+  minimal: { ash: 4, sparks: 0 },
+};
+
+/** Ash: white-hot off the wall, an ember, then grey as it drifts away. */
+const ASH_HOT = 0xfff4e0;
+const ASH_EMBER = 0xff7a20;
+const ASH_COLD = 0x4a3c34;
+/** Ash size, drift speed (shares of the wreck radius) and life (s). */
+const ASH_SIZE_MIN = 0.004;
+const ASH_SIZE_VAR = 0.006;
+const ASH_SPEED_MIN = 0.01;
+const ASH_SPEED_VAR = 0.04;
+const ASH_LIFE_S = 1.2;
+const ASH_LIFE_VAR_S = 1.4;
+/** Sparks out of the far side, along the slug's path (share of the radius per s). */
+const SPARK_SPEED_MIN = 0.3;
+const SPARK_SPEED_VAR = 0.5;
 
 /** The core flash: short and small (money-shot review: a hull-wide white disc
  *  and grey halo read as a UI overlay and hid the break). The fireballs
@@ -60,7 +91,7 @@ interface Particle {
   x: number; y: number; vx: number; vy: number;
   spin: number; size: number; grow: number;
   life: number; life0: number;
-  /** 0 dust, 1 shard, 2 flash. */
+  /** 0 dust, 1 shard, 2 flash, 3 ash. */
   kind: number;
 }
 
@@ -94,10 +125,10 @@ export class WreckBreakFx {
 
   private build(): void {
     this.built = true;
-    const mk = (kind: number): Particle => {
+    const mk = (shape: number, kind = shape): Particle => {
       const g = new Graphics();
-      if (kind === 0) g.circle(0, 0, 1).fill({ color: 0xffffff, alpha: 1 });
-      else if (kind === 1) g.poly([0, -1.6, 0.7, 1, -0.7, 1]).fill({ color: 0xffffff });
+      if (shape === 0) g.circle(0, 0, 1).fill({ color: 0xffffff, alpha: 1 });
+      else if (shape === 1) g.poly([0, -1.6, 0.7, 1, -0.7, 1]).fill({ color: 0xffffff });
       else {
         g.circle(0, 0, 1.6).fill({ color: 0xffffff, alpha: 0.3 });
         g.circle(0, 0, 1).fill({ color: 0xffffff, alpha: 1 });
@@ -109,6 +140,7 @@ export class WreckBreakFx {
     for (let i = 0; i < MAX_DUST; i++) this.pool.push(mk(0));
     for (let i = 0; i < MAX_SHARDS; i++) this.pool.push(mk(1));
     for (let i = 0; i < MAX_FLASHES; i++) this.pool.push(mk(2));
+    for (let i = 0; i < MAX_ASH; i++) this.pool.push(mk(0, 3));
   }
 
   /** The oldest free (else oldest live) particle of a kind. */
@@ -153,6 +185,49 @@ export class WreckBreakFx {
     }
   }
 
+  /**
+   * A railgun channel's ash: a line emitter from the slug's entry (`ax, ay`,
+   * the kill point) to where it left the hull (`bx, by`), game space (Y up).
+   * `radius` = the wreck's radius. Ash drifts off the channel walls; sparks
+   * fly on along the slug's path out of the far end.
+   */
+  spawnChannelAsh(ax: number, ay: number, bx: number, by: number, radius: number): void {
+    if (this.particlesDisabled) return;
+    const dial = WRECK_ASH_DIAL[this.getQuality()];
+    if (dial.ash + dial.sparks === 0) return;
+    if (!this.built) this.build();
+    if (this.layer.parent === null) this.world.addChild(this.layer);
+    const R = Math.max(20, radius);
+    const pax = ax, pay = -ay, pbx = bx, pby = -by; // Pixi space
+    const lx = pbx - pax, ly = pby - pay;
+    const len = Math.hypot(lx, ly);
+    const ux = len > 1e-6 ? lx / len : 1, uy = len > 1e-6 ? ly / len : 0;
+    for (let i = 0; i < dial.ash; i++) {
+      const p = this.take(3);
+      if (p === null) break;
+      // Anywhere along the channel, off either wall, drifting outward from
+      // it with a little of the slug's way.
+      const t = this.rnd();
+      const side = this.rnd() < 0.5 ? -1 : 1;
+      const sp = R * (ASH_SPEED_MIN + this.rnd() * ASH_SPEED_VAR);
+      const along = (this.rnd() - 0.3) * 0.6;
+      const vx = (-uy * side + ux * along) * sp, vy = (ux * side + uy * along) * sp;
+      this.arm(p, pax + lx * t, pay + ly * t, vx, vy, 0,
+        R * (ASH_SIZE_MIN + this.rnd() * ASH_SIZE_VAR), 0, ASH_LIFE_S + this.rnd() * ASH_LIFE_VAR_S);
+    }
+    for (let i = 0; i < dial.sparks; i++) {
+      const p = this.take(1);
+      if (p === null) break;
+      // Out of the far end, in a narrow cone along the slug's path.
+      const spread = (this.rnd() - 0.5) * 0.6;
+      const dx = ux - uy * spread, dy = uy + ux * spread;
+      const sp = R * (SPARK_SPEED_MIN + this.rnd() * SPARK_SPEED_VAR);
+      this.arm(p, pbx, pby, dx * sp, dy * sp, (this.rnd() - 0.5) * 16,
+        R * (0.004 + this.rnd() * 0.006), 0, 0.5 + this.rnd() * 0.7);
+      p.gfx.rotation = Math.atan2(dy, dx) + Math.PI / 2;
+    }
+  }
+
   private arm(p: Particle, x: number, y: number, vx: number, vy: number, spin: number, size: number, grow: number, life: number): void {
     if (p.life <= 0) this.live++;
     p.x = x; p.y = y; p.vx = vx; p.vy = vy; p.spin = spin; p.size = size; p.grow = grow;
@@ -191,6 +266,10 @@ export class WreckBreakFx {
         g.scale.set(p.size + p.grow * u);
         g.alpha = DUST_ALPHA * (1 - u);
         g.tint = DUST_TINT;
+      } else if (p.kind === 3) {
+        // Ash: white-hot to an ember in the first third, then grey; fades out.
+        g.tint = u < 0.3 ? lerpColor(ASH_HOT, ASH_EMBER, u / 0.3) : lerpColor(ASH_EMBER, ASH_COLD, Math.min(1, (u - 0.3) / 0.5));
+        g.alpha = u < 0.6 ? 1 : (1 - u) / 0.4;
       } else {
         g.rotation += p.spin * dtSec;
         g.tint = lerpColor(SHARD_HOT, SHARD_COLD, Math.min(1, u * 1.5));
