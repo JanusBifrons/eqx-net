@@ -148,7 +148,8 @@ describe('rail-slot telegraph (the railgun)', () => {
     expect(f.fill).toBeCloseTo(1, 5);
     // Pixi-up: the muzzle is at -y, so the head moves to more negative y.
     expect(h.headY).toBeLessThan(q.headY);
-    expect(f.headY).toBeCloseTo(rail.y0 - rail.len, 3);
+    // Full: the front (just behind the fill edge) is at the muzzle.
+    expect(f.headY - rail.headHalf * rail.head.scale.y).toBeCloseTo(rail.y0 - rail.len, 3);
     expect(h.alpha).toBeGreaterThan(q.alpha);
     // The glow stays the gun's own size (no 'mount-glow' scale ramp).
     expect(t.glows[i]!.scale.x).toBe(1);
@@ -222,5 +223,50 @@ describe('rail-slot discharge: the charge holds until the shot shows', () => {
     updateChargeTelegraph(t, 1 << i, 1000, 1000 + (chargeTicks >> 1), fx0, undefined, undefined, shots());
     updateChargeTelegraph(t, 0, undefined, 2000, fx0 + TICK_MS, undefined, undefined, shots());
     expect(t.root.visible).toBe(false);
+  });
+});
+
+/**
+ * Hostile review of rail take 6 (2026-11-15, turret tile): between the last
+ * charge frame and the fire frame the breech swapped from a light disc to the
+ * dark toothed ring (the charge's bore glow was a disc half the breech wide,
+ * gone the frame the shot showed), and during the charge a bright arrowhead
+ * sat at the muzzle tip, reading as a projectile already there.
+ */
+describe('rail-slot: the breech stays the breech; nothing projectile-like at the muzzle', () => {
+  const mounts = getShipKind('battleship-rail').mounts;
+  const i = mounts.findIndex((m) => m.weaponId === 'railgun');
+  const chargeTicks = getWeapon('railgun').chargeTicks!;
+  const shots = (): number[] => new Array<number>(mounts.length).fill(-Infinity);
+
+  it('the bore glow stays inside the slot (no light disc over the breech ring)', () => {
+    const t = buildChargeTelegraph('battleship-rail', 200)!;
+    const rail = t.rails[i]!;
+    const g = rail.fill.parent!;
+    const slotW = rail.fill.getLocalBounds().width;
+    for (const c of g.children) {
+      if (c === rail.fill || c === rail.head) continue;
+      expect(c.getLocalBounds().width, 'a breech-wide glow disc').toBeLessThanOrEqual(slotW * 1.05);
+    }
+  });
+
+  it('the charge front never reaches past the muzzle, and no bright head sits there at full or while it holds', () => {
+    const t = buildChargeTelegraph('battleship-rail', 200)!;
+    const rail = t.rails[i]!;
+    const muzzleY = rail.y0 - rail.len; // Pixi-up: the muzzle is at -y
+    const front = (): number => rail.head.y + rail.head.getLocalBounds().minY * rail.head.scale.y;
+    const headShows = (): number => (rail.head.visible ? rail.head.alpha : 0);
+    for (const frac of [0.25, 0.5, 0.8, 0.95, 1]) {
+      t.startTick = -1;
+      updateChargeTelegraph(t, 1 << i, 1000, 1000 + Math.round(chargeTicks * frac), 90_000, undefined, undefined, shots());
+      expect(front(), `charge ${frac}: head past the muzzle`).toBeGreaterThanOrEqual(muzzleY - 1e-6);
+    }
+    expect(headShows(), 'a full slot has no front: no arrowhead at the muzzle').toBeLessThanOrEqual(0.05);
+    // The discharge hold (mask cleared, shot not yet drawn).
+    for (let ms = TICK_MS; ms < DISPLAY_DELAY_MS; ms += TICK_MS) {
+      updateChargeTelegraph(t, 0, undefined, 1000 + chargeTicks + 3, 90_000 + ms, undefined, undefined, shots());
+      expect(t.root.visible).toBe(true);
+      expect(headShows(), `hold +${ms.toFixed(0)} ms: arrowhead at the muzzle`).toBeLessThanOrEqual(0.05);
+    }
   });
 });
