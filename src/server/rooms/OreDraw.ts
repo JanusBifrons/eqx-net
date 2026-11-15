@@ -16,8 +16,8 @@
  */
 import { getWeapon, weaponTargetFactor, type WeaponId } from '../../core/combat/WeaponCatalogue.js';
 import { cloneHold, emptyHold, holdWeight } from '../../core/cargo/hold.js';
-import { GOOD_IDS } from '../../shared-types/goods.js';
-import { asteroidYield, asteroidYieldWeightPerUnit } from '../../shared-types/asteroidResources.js';
+import { GOOD_IDS, type GoodId } from '../../shared-types/goods.js';
+import { ASTEROID_YIELD, asteroidYieldWeightPerUnit, yieldInto } from '../../shared-types/asteroidResources.js';
 import { getHoldStore } from '../db/PersistenceWorker.js';
 import type { SwarmEntityRecord } from '../net/SwarmEntityRegistry.js';
 
@@ -45,6 +45,8 @@ export class OreDraw {
    *  reused across pulses; a shooter idle for a whole pulse is forgotten. */
   private readonly owed = new Map<string, Map<number, number>>();
   private readonly _holder: OreHolder = { uid: '', ownerId: null, capacity: 0 };
+  /** Reused yield record (`yieldInto`). */
+  private readonly yieldScratch: Partial<Record<GoodId, number>> = {};
 
   constructor(private readonly d: OreDrawDeps) {}
 
@@ -59,7 +61,7 @@ export class OreDraw {
   }
 
   /** Mine up to `maxUnits` from rock `entityId` into `holderUid`'s hold, split by
-   *  the rock's yield (`asteroidYield`). The draw is sized to the hold's free
+   *  the rock's yield (`yieldInto`, the one split). The draw is sized to the hold's free
    *  weight first, so no ore is burned into a full hold. One hold commit; a
    *  pilot's hold is a 'ship' row (like a loot pickup), else an ownerless
    *  'hauler' row. Returns the weight gained. */
@@ -70,12 +72,12 @@ export class OreDraw {
     const cur = store.get(holderUid);
     const hold = cur ? cloneHold(cur.hold) : emptyHold();
     const before = holdWeight(hold);
-    const resource = rock.asteroidResource ?? 'rock';
-    const want = Math.min(maxUnits, Math.floor((capacity - before) / asteroidYieldWeightPerUnit(resource)));
+    const row = ASTEROID_YIELD[rock.asteroidResource ?? 'rock'];
+    const want = Math.min(maxUnits, Math.floor((capacity - before) / asteroidYieldWeightPerUnit(row)));
     if (want <= 0) return 0;
     const drawn = this.draw(entityId, want);
     if (drawn <= 0) return 0;
-    const yieldOf = asteroidYield(resource, drawn);
+    const yieldOf = yieldInto(row, drawn, this.yieldScratch);
     for (const g of GOOD_IDS) {
       const n = yieldOf[g] ?? 0;
       if (n > 0) hold.goods[g] = (hold.goods[g] ?? 0) + n;
