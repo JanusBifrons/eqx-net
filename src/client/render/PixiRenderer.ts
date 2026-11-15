@@ -183,7 +183,7 @@ export class PixiRenderer implements IRenderer {
 
   constructor(isTouch = false, art: ArtOptions = ART_OFF, fxKillSwitches?: FxKillSwitches) {
     this._isTouch = isTouch;
-    this._artOpts = art;
+    this._artOpts = art; this._cutField.setOreStyle(art.ore ?? 'veins');
     this._fxKillSwitches = fxKillSwitches;
     this.halo = new HaloRadar(isTouch);
   }

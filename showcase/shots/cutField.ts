@@ -72,6 +72,34 @@ export const cutFieldOverview: Shot = {
   ],
 };
 
+/** The ore look (F1c): where a big ice lode (centre -28 406, 34 564) meets a
+ *  crystal one (-30 026, 38 076) beside the lane, ~4 km from its centre (from
+ *  `hotspotsInBox` for seed `look`). Spectator holds at the wide, capital and
+ *  fighter zooms; film with `EQX_SHOWCASE_PARAMS=ore=<style>`. */
+const ORE_EDGE = { x: -29_100, y: 36_070 };
+export const cutFieldOre: Shot = {
+  id: 'cut-field-ore',
+  section: 'mechanics',
+  title: 'Cut field ore: ice and crystal lodes',
+  caption: 'Ice and crystal deposits showing in the rock where the ore map has them (still for review).',
+  features: ['ART'],
+  docs: ['macro-terrain'],
+  reel: false,
+  server: 'lean',
+  target: {
+    room: 'showcase-cut-field',
+    params: { shipKind: 'fighter', spawnX: CENTRE.x, spawnY: CENTRE.y, initialAngle: ANGLE, initialHull: 1_000_000 },
+  },
+  hud: 'full',
+  durationMs: 20_000,
+  async startWhen(ctx) { await ctx.sleep(6000); await ctx.spectate(); },
+  camera: [
+    { atMs: 0, smoothMs: 0, shot: { kind: 'hold', x: ORE_EDGE.x, y: ORE_EDGE.y, zoom: 0.05 } },
+    { atMs: 6000, smoothMs: 0, shot: { kind: 'hold', x: ORE_EDGE.x, y: ORE_EDGE.y, zoom: 0.15 } },
+    { atMs: 12000, smoothMs: 0, shot: { kind: 'hold', x: ORE_EDGE.x, y: ORE_EDGE.y, zoom: 0.5 } },
+  ],
+};
+
 /** The fly-through (slice 3): a fighter down capital lane 1 on the follow
  *  camera, 3.7 km off the centre line on the side where the rock wall stays
  *  ~300–900 u away for 10 km (from rocksInChunk for seed `look`), so the wall

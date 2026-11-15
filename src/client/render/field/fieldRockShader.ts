@@ -18,6 +18,8 @@ in vec2 aPosition;
 in vec2 aUV;
 in vec2 aLocal;
 in vec4 aRock;
+in vec2 aOre;
+out vec2 vOre;
 out vec2 vLocal;
 out float vT;
 out vec4 vRock;
@@ -40,6 +42,7 @@ void main() {
   vLocal = aLocal;
   vT = aUV.x;
   vRock = aRock;
+  vOre = aOre;
   vColor = uColor * uWorldColorAlpha;
 }`;
 
@@ -48,10 +51,15 @@ precision highp float;
 in vec2 vLocal;
 in float vT;
 in vec4 vRock;
+in vec2 vOre;
 in vec2 vSunDir;
 in vec4 vColor;
 out vec4 finalColor;
 uniform vec3 uAlbedo;
+// Ore look (F1c): x = style (0 off, 1 tint, 2 veins, 3 seams); ice, crystal albedo.
+uniform vec4 uOreStyle;
+uniform vec3 uIceAlbedo;
+uniform vec3 uCrystalAlbedo;
 // x: sun elevation (rad), y: exposure, z: sun azimuth (Pixi world).
 uniform vec4 uSunLook;
 uniform vec3 uSunColor;
@@ -152,9 +160,41 @@ void main() {
   float ce = cos(uSunLook.x);
   vec3 L = vec3(vSunDir * ce, sin(uSunLook.x));
   float nd = max(0.0, dot(N, L));
-  vec3 albedo = uAlbedo * clamp(1.0 + alb, 0.4, 1.6) * (1.0 - 0.65 * crack);
+  vec3 base = uAlbedo;
+  float style = uOreStyle.x;
+  float gloss = 0.0;
+  if (style > 0.5) {
+    // The ore map, read where this pixel is: a pocket's edge runs across a rock.
+    float ice = clamp(vOre.x, 0.0, 1.0), cry = clamp(vOre.y, 0.0, 1.0);
+    if (style < 1.5) {
+      // Tint: the rock takes the ore's colour as its share grows.
+      base = mix(base, uIceAlbedo, smoothstep(0.0, 0.8, ice));
+      base = mix(base, uCrystalAlbedo, smoothstep(0.0, 0.8, cry));
+    } else {
+      // Patches of ore in the rock, more of the surface as concentration grows:
+      // ice as smooth pale sheets, crystal as bright veins along the cracks.
+      float fine = clamp(R * 0.08, 6.0, 900.0);
+      float fade = clamp(fine / px * 0.5 - 1.0, 0.0, 1.0);
+      float m = noised(q / fine + 3.0, seed + 91.0).x * fade + 0.5 * (1.0 - fade);
+      float iceM = smoothstep(1.0 - ice, 1.05 - ice * 0.6, m);
+      float cryM = smoothstep(1.0 - cry, 1.05 - cry * 0.6, 1.0 - m);
+      base = mix(mix(base, uIceAlbedo, 0.35 * ice), uIceAlbedo * 1.25, iceM);
+      base = mix(mix(base, uCrystalAlbedo, 0.3 * cry), uCrystalAlbedo * 1.4, cryM);
+      gloss = iceM * 0.4 + cryM * 0.25;
+      alb *= 1.0 - 0.6 * iceM;
+      if (style > 2.5) {
+        // Seams: the cracks run with ore instead of shadow.
+        float seam = crack * max(ice, cry);
+        base = mix(base, (ice > cry ? uIceAlbedo * 1.3 : uCrystalAlbedo * 1.6), seam);
+        crack *= 1.0 - max(ice, cry);
+      }
+    }
+  }
+  vec3 albedo = base * clamp(1.0 + alb, 0.4, 1.6) * (1.0 - 0.65 * crack);
   // No sky rim light: on the dome's edge it read as a glow (owner 2026-11-15).
   vec3 c = albedo * (uSunColor * nd + uAmbient * 4.0 * ao);
+  // A wet sheen on ore patches: a little specular toward the sun.
+  if (gloss > 0.0) c += uSunColor * gloss * pow(max(0.0, dot(reflect(-L, N), vec3(0.0, 0.0, 1.0))), 24.0);
   c *= uSunLook.y;
   vec3 rgb = vec3(linToSrgb(tone(c.r)), linToSrgb(tone(c.g)), linToSrgb(tone(c.b)));
   finalColor = vec4(rgb, 1.0) * vColor;
@@ -164,6 +204,19 @@ let program: GlProgram | null = null;
 let view: UniformGroup | null = null;
 let rockLook: UniformGroup | null = null;
 let sunAzSet = NaN;
+
+/** Ore look styles (`?ore=`, F1c); veins is the default (owner 2026-11-15). */
+export const FIELD_ORE_STYLES = ['off', 'tint', 'veins', 'seams'] as const;
+export type FieldOreStyle = (typeof FIELD_ORE_STYLES)[number];
+let oreStyle = 2; // veins: the owner's pick (2026-11-15)
+
+/** Pick the ore look; applies to every field rock at once. */
+export function setFieldOreStyle(style: FieldOreStyle): void {
+  oreStyle = FIELD_ORE_STYLES.indexOf(style);
+  if (!rockLook) return;
+  (rockLook.uniforms as unknown as { uOreStyle: Float32Array }).uOreStyle[0] = oreStyle;
+  rockLook.update();
+}
 
 export function fieldRockProgram(): GlProgram {
   program ??= GlProgram.from({ vertex: VERTEX, fragment: FRAGMENT, name: 'field-rock-proc' });
@@ -180,7 +233,12 @@ export function fieldRockShaderResources(): Record<string, UniformGroup> {
       uAmbient: { value: new Float32Array(r.ambient), type: 'vec3<f32>' },
     });
     sunAzSet = r.sunAz;
-    rockLook = new UniformGroup({ uAlbedo: { value: new Float32Array(lin(ROCK_COLORS['rock']!)), type: 'vec3<f32>' } });
+    rockLook = new UniformGroup({
+      uAlbedo: { value: new Float32Array(lin(ROCK_COLORS['rock']!)), type: 'vec3<f32>' },
+      uOreStyle: { value: new Float32Array([oreStyle, 0, 0, 0]), type: 'vec4<f32>' },
+      uIceAlbedo: { value: new Float32Array(lin(ROCK_COLORS['ice']!)), type: 'vec3<f32>' },
+      uCrystalAlbedo: { value: new Float32Array(lin(ROCK_COLORS['crystal']!)), type: 'vec3<f32>' },
+    });
   }
   return { fieldRockView: view, fieldRockLook: rockLook! };
 }
