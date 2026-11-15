@@ -30,7 +30,8 @@
  * seeded from the wreck seed, capped by the effects tier). The glow is one
  * Mesh of quads on a tiny glow-curve texture: per frame only its positions
  * (while growing) and U coordinates (the age of each segment) are rewritten
- * in place.
+ * in place. A cut kill (descriptor `cutKind`) has no hold, so no front and
+ * no ripples: every cut lights at once (`WreckInfo.noHold`).
  *
  * Everything here is built ONCE per piece; the per-frame work is a texture
  * pick and in-place scalar writes (invariant #14).
@@ -278,9 +279,12 @@ export function simpleGlowU(frac: number): number {
 /** How far (hull frame, from the kill point) the crack front has run `tMs`
  *  GAME ms after death: the nearest cut at 0, the farthest at
  *  `WRECK_CRACK_FRONT_MS`. Distance is straight-line from the kill point, so
- *  the front is a ring spreading from the hit, lighting the cuts it crosses. */
-export function crackFrontAt(info: CrackSpan, tMs: number): number {
+ *  the front is a ring spreading from the hit, lighting the cuts it crosses.
+ *  `noHold` (a cut kill, `WreckInfo.noHold`): the hull split at once, so
+ *  there is no front: every crack is reached from the death on. */
+export function crackFrontAt(info: CrackSpan, tMs: number, noHold = false): number {
   if (!(tMs >= 0)) return -Infinity;
+  if (noHold) return info.crackReach;
   const k = Math.min(1, tMs / WRECK_CRACK_FRONT_MS);
   // Exactly the farthest crack at the end (the paced sum can round a hair
   // short and leave the last head running for ever).
@@ -298,8 +302,10 @@ export function crackFrontAt(info: CrackSpan, tMs: number): number {
   return info.crackReach;
 }
 
-/** When (game ms after the front started) the front reaches distance `d`. */
-export function crackIgniteMs(info: CrackSpan, d: number): number {
+/** When (game ms after the front started) the front reaches distance `d`
+ *  (`noHold`: at once, see `crackFrontAt`). */
+export function crackIgniteMs(info: CrackSpan, d: number, noHold = false): number {
+  if (noHold) return 0;
   const iv = info.crackIv, C = info.crackCover ?? 0;
   if (iv !== undefined && iv.length > 0 && C > 1e-6) {
     return shareAtCover(info, Math.min(C, crackCoveredAt(iv, d))) * WRECK_CRACK_FRONT_MS;
@@ -526,6 +532,10 @@ export interface WreckInfo {
   /** The glow this wreck draws: the profile's style, or `none` for a
    *  `simple` glow at the minimal effects tier. */
   glow: WreckGlowStyle;
+  /** A cut kill (the descriptor has a `cutKind`): the server skipped the
+   *  crack hold and the hull split on the death tick, so no crack front runs
+   *  and no ripples fire; every cut lights at once. */
+  noHold: boolean;
 }
 
 /** A wreck's profile, by its parent kind. */
@@ -550,7 +560,7 @@ export function coolWreckInfo(desc: WreckDescriptor): WreckInfo {
   return {
     deathMs: -Infinity, hullR: 0, killX: 0, killY: 0, snap: false, desc,
     crackMin: 0, crackReach: 0, crackIv: NO_IV, crackCover: 0, crackHidden: 0, ripples: NO_RIPPLES, rippleFired: NO_FIRED, onRipple: null,
-    profile: p.id, fx: p.fx, glow: 'none',
+    profile: p.id, fx: p.fx, glow: 'none', noHold: desc.cutKind !== undefined,
   };
 }
 
@@ -929,7 +939,7 @@ export class WreckArtState {
       deathMs: nowMs - crackAgeMs, hullR, killX: desc.killX * s, killY: -desc.killY * s, snap: pieces.length <= 2, desc,
       crackMin: Infinity, crackReach: 0, crackIv: NO_IV, crackCover: 0, crackHidden: 0,
       ripples: NO_RIPPLES, rippleFired: NO_FIRED, onRipple: this.onRipple,
-      profile: prof.id, fx, glow,
+      profile: prof.id, fx, glow, noHold: desc.cutKind !== undefined,
     };
     if (fx.crackFront) {
       info.crackD = new CrackDistances(pieces, info.killX, info.killY);
@@ -947,7 +957,7 @@ export class WreckArtState {
     }
     // Ripples only for a wreck seen inside its crack window (late joiners:
     // none); they fire as the front (from first sight) passes them.
-    if (fx.ripples && ageMs < WRECK_CRACK_MS && this.onRipple !== null) {
+    if (fx.ripples && !info.noHold && ageMs < WRECK_CRACK_MS && this.onRipple !== null) {
       info.ripples = wreckRipples(pieces, info, desc.seed, Math.min(WRECK_RIPPLE_MAX, this.rippleCap()));
       info.rippleFired = new Uint8Array(info.ripples.length);
     }
@@ -1182,10 +1192,10 @@ export class WreckPieceSprite extends Container {
       const len = Math.hypot(fx - nx, fy - ny);
       const s = this.seg, q = k * SEG_STRIDE;
       s[q] = nx; s[q + 1] = -ny; s[q + 2] = fx; s[q + 3] = -fy;
-      s[q + 4] = dn; s[q + 5] = df; s[q + 6] = crackIgniteMs(info, dn);
+      s[q + 4] = dn; s[q + 5] = df; s[q + 6] = crackIgniteMs(info, dn, info.noHold);
       s[q + 7] = len > 1e-6 ? (fx - nx) / len : 1;
       s[q + 8] = len > 1e-6 ? -(fy - ny) / len : 0;
-      s[q + 9] = crackIgniteMs(info, df);
+      s[q + 9] = crackIgniteMs(info, df, info.noHold);
       // Into the piece (Pixi-down): the outline is CCW in math-up, so its
       // inside is left of edge a → b, (−(by−ay), bx−ax); flip y for Pixi.
       const el = Math.hypot(bx - ax, by - ay);
@@ -1287,7 +1297,7 @@ export class WreckPieceSprite extends Container {
    *  writes only (invariant #14). */
   private writeGlow(t: number): void {
     const geom = this.glowGeom!, s = this.seg, S = this.segN, info = this.info;
-    const F = crackFrontAt(info, t);
+    const F = crackFrontAt(info, t, info.noHold);
     const uv = geom.uvs;
     if (!this.grown) {
       const pos = geom.positions;
@@ -1542,7 +1552,7 @@ export class WreckPieceSprite extends Container {
     if (k < 0) return 0;
     if (this.simple) return simpleGlowAt(this.lastT / this.glowEndMs, _glow).alpha;
     const q = k * SEG_STRIDE;
-    if (crackFrontAt(this.info, this.lastT) < this.seg[q + 4]!) return 0;
+    if (crackFrontAt(this.info, this.lastT, this.info.noHold) < this.seg[q + 4]!) return 0;
     return wreckGlowAt((this.lastT - this.seg[q + 6]!) / 1000, _glow).alpha;
   }
 
