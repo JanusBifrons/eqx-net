@@ -105,6 +105,13 @@ export function muzzleHeft(weaponId: string): number {
   return weaponId === 'railgun' ? RAILGUN_MUZZLE_HEFT : 1;
 }
 
+/** The railgun's muzzle flash tint: white-blue and blue-dominant (the white
+ *  flash flipbook times this), never the near-white of a hot powder flash. */
+export const RAIL_FLASH_TINT = 0x8cb4ff;
+/** The light the railgun's flash casts on its hull: a deeper blue, so the
+ *  lit deck reads blue rather than washed white. */
+export const RAIL_FLASH_LIGHT = 0x6e9cff;
+
 /** Capital naval guns (review round 2026-11-07, "bigger effects"): a long
  *  directed flash out of each barrel, propellant smoke blown forward along it
  *  (`muzzleSmokePuff`), and a burst where the shell lands. Sizes follow the
@@ -274,8 +281,18 @@ export function railVentPuff(t: number, k: number, g: RailGeom, out: RailPuff): 
 
 // ------------------------------------------------------- the slug's wake
 
-/** How long a railgun slug's ion wake lingers where it passed. */
-export const SLUG_WAKE_LIFE_S = 1.6;
+/** How long a piece of a railgun slug's ion wake lasts after the slug passed
+ *  it: it thins, spreads and is gone in 0.7 s (a dispersing wisp, not a
+ *  lingering line). */
+export const SLUG_WAKE_LIFE_S = 0.7;
+/** How far the wake trails behind the slug, in drawn slug-streak lengths:
+ *  1,500 u behind the front of the native 1 km streak, so 500 u of violet
+ *  shows past the white streak's tail. At 6,450 u/s (real range) that is the
+ *  last ~0.23 s of flight, about a quarter of a heavy cruiser at capital
+ *  zoom: a fast slug with a tail, never a line back to the muzzle. In streak
+ *  lengths so the minimum-screen-width floor, which lengthens the streak at
+ *  far zoom, lengthens the tail with it (else the streak would swallow it). */
+export const SLUG_WAKE_TAIL = 1.5;
 /** The wake's violet-blue. */
 export const SLUG_WAKE_TINT = 0x9a86ff;
 
@@ -284,11 +301,13 @@ export function slugWakeSegments(quality: EffectQuality): number {
   return quality === 'high' ? 10 : quality === 'medium' ? 6 : quality === 'low' ? 3 : 0;
 }
 
-/** A wake piece `age` s after the slug passed it: its alpha (0 = gone) and
- *  its width as a multiple of the fresh wake's (it spreads as it fades). */
-export function slugWakeAlpha(age: number): number {
-  if (age < 0 || age >= SLUG_WAKE_LIFE_S) return 0;
-  return 0.85 * (1 - age / SLUG_WAKE_LIFE_S) ** 1.5;
+/** A wake piece `age` s after the slug passed it, `along` (0..1) of the
+ *  tail behind the slug: its alpha (0 = gone; brightest at the slug, nothing
+ *  at the tail's end) and its width as a multiple of the fresh wake's (it
+ *  spreads as it fades). */
+export function slugWakeAlpha(age: number, along = 0): number {
+  if (age < 0 || age >= SLUG_WAKE_LIFE_S || along >= 1) return 0;
+  return 0.85 * (1 - age / SLUG_WAKE_LIFE_S) ** 1.5 * (1 - Math.max(0, along)) ** 1.2;
 }
 export function slugWakeWidth(age: number): number {
   return 1 + 3 * Math.min(1, Math.max(0, age) / SLUG_WAKE_LIFE_S);

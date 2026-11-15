@@ -82,11 +82,11 @@ You are diagnosing a failing Playwright spec in EQX Peri. The goal is a **determ
 
 ## Clean up afterwards
 
-When the run ends (pass or fail): stop the servers, proxies and headless Chrome it started (`netstat -ano | findstr ":2567 :5173 :2767 :5373" | findstr LISTENING`), delete its scratch files and logs once read, and trim any status note in auto-memory. See root `CLAUDE.md` "Clean up at every stage".
+When the run ends (pass or fail): stop the servers, proxies and headless Chrome it started (`netstat -ano | findstr ":2567 :5173 :2767 :5373" | findstr LISTENING`), delete its scratch files and logs once read, and trim any status note in auto-memory. See `docs/ops/agent-workflow.md` "Clean up at every stage".
 
 ## References
 
-- Test-harness philosophy: root `CLAUDE.md` "Test-harness philosophy" section.
+- Test-harness philosophy: `docs/architecture/e2e-framework.md` "Bespoke gameplay triggers" (root `CLAUDE.md` keeps the short form).
 - Bespoke triggers catalogue: `docs/architecture/e2e-framework.md` "Bespoke gameplay triggers".
 - Plan: `C:\Users\alecv\.claude\plans\i-want-you-to-lively-tulip.md` Phase 4c.
 - Invariant #13 (the right test LEVEL): root `CLAUDE.md`.

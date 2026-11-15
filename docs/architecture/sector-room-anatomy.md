@@ -234,3 +234,19 @@ field.
 Moved verbatim from the old "Thresholds" section of `src/server/CLAUDE.md`. The rules stay there in short form; current values are in [server-thresholds](server-thresholds.md). Dates, plan names and "was" notes below are history.
 
 - **Phase 6a foundation — shipInstanceId on the wire + isActive flag (2026-05-13)**: `WelcomeMessage.shipInstanceId` (already shipped in Phase 5) and `SnapshotMessage.states[shipInstanceId]` (new — keyed by shipInstanceId, each entry carries `playerId` + `isActive`) form the wire-level identity for "which hull is this". The Colyseus `SectorState.ships` MapSchema **stays keyed by playerId in 6a** (Option A) — the one-active-hull-per-player invariant still holds, so the ~25 internal `state.ships.get(playerId)` callsites don't need a mechanical rekey yet. Phase 6b flips the schema key when lingering hulls actually require >1 entry per player. `playerToActiveShipInstance: Map<playerId, shipInstanceId>` is the indirection map populated on spawn and cleared on leave/eviction/wreck-conversion; `resolveActiveShipKey(playerId)` is the canonical lookup helper. Engineering rooms (`sectorKey === null`) generate a synthetic `randomUUID()` for `ship.shipInstanceId` at join time so the wire key + downstream lookups are never empty. `ShipState.isActive` is always true in 6a; Phase 6b sets it false for lingering hulls so the client's snapshot translator can gate visibility. Client side (C-ii strategy): `ColyseusClient.handleSnapshot` translates the shipInstanceId-keyed wire format to a playerId-keyed local view at ingest, skipping `isActive=false` entries. Internal mirror / predWorld / reconciler keys remain playerId so no render-code change is needed. Tests: `SectorRoom.shipKey.test.ts` locks the helper; `messages.test.ts` "Phase 6a wire shape" describe locks the wire contract.
+
+### Server rules in full (moved from src/server/CLAUDE.md)
+
+The zone `CLAUDE.md` keeps a condensed form of these rules; this is the full wording with its lock tests.
+
+#### Combat Architecture (Phase 4)
+
+- **Lag-comp hit tests are pure geometry** (`rayHitsSphere` against `SnapshotRing`), never Rapier `castRay`: the main thread has no live Rapier world.
+- **Stale fire claims are clamped** to `serverTick - LAG_COMP_WINDOW` (`clampFireTick`), never rejected.
+- **Bolts and missiles step by worker ticks**, not room updates (capped catch-up). Lock: `ProjectilePipeline.workerTicks.test.ts`.
+- **Adding a weapon never edits `SectorRoom.ts`**, only the catalogue; each projectile record carries its own damage, radius and lifetime.
+- **Projectiles hit swarm entities through `ProjectileBroadphase`**, which must equal the full scan. Lock: `ProjectilePipeline.broadphase.test.ts`.
+- **Every cleanup path (leave, transit, death, eviction) clears `playerMountAngles` and `droneMountAngles`** with `lastFireClientTick`, or they leak across reconnects.
+- **Drones target active hulls only.** Lock: `tests/integration/sectorRoom/droneTargetActiveOnly.test.ts`.
+- Detail: [sector-room-anatomy.md](../../docs/architecture/sector-room-anatomy.md#server-implementation-notes) (lag comp, backpressure, cooldown), [weapon-mounts.md](../../docs/architecture/weapon-mounts.md#server-implementation-notes) (multi-mount fire, mount rotation, snapshot `mountAngles`/`hp`).
+

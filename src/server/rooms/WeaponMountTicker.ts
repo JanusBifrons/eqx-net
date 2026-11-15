@@ -755,6 +755,11 @@ export class WeaponMountTicker {
         follow[i] = tick + ft;
         // The killing beam's world line (the frame fireMount fires along).
         followBearing[i] = wrapPi(ang + mount.baseAngle + angles[i]!);
+        // Punch through as the target dies: the killing pulse ended at its
+        // hull, so the first full-length pulse fires NEXT tick (the victim is
+        // dead by then, so it can't be hit twice), then the normal cadence.
+        // Waiting a reload showed the death ~9 frames before the cut.
+        reload[i] = tick + 1 - w.cooldownTicks;
         per[i] = null;
         if (lock.target !== '') resetLock(lock, '');
       }

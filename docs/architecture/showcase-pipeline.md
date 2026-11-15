@@ -228,7 +228,7 @@ Root `CLAUDE.md` keeps the short form of these; this is the full text.
 
 **Look and feature R&D happens in the game, behind a flag, on a branch (standing user directive).** Not in a parallel renderer. Film it with `EQX_SHOWCASE_PARAMS=<flag>` on existing shots and measure it with `pnpm perf:scenes --base <sha> --head-params <flag>`. Example: GPU-lit art (`?shiplight=gpu`, [gpu-lit-ships.md](gpu-lit-ships.md)).
 
-**Before EVERY recording**, clean up first (root `CLAUDE.md` "Clean up at every stage") and check free RAM; use `EQX_SHOWCASE_PORT_OFFSET` when another session is recording.
+**Before EVERY recording**, clean up first ([agent-workflow](../ops/agent-workflow.md) "Clean up at every stage") and check free RAM; use `EQX_SHOWCASE_PORT_OFFSET` when another session is recording.
 
 ## Known limits
 
