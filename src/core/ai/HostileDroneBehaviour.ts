@@ -15,7 +15,7 @@ import {
   isNpcAllegianceId,
   ON_SIGHT_ENGAGE_RANGE,
   PLAYERS_SIDE,
-  type NpcAllegianceId,
+  type AllegianceSide,
 } from '../../shared-types/allegiances.js';
 import { pickTarget, type MountTargetView, type PickTargetOptions } from './WeaponMountController.js';
 import { arrive, makeSteerOutput, type SteerOutput } from './steering.js';
@@ -347,6 +347,33 @@ interface MoraleInputsScratch {
  *  (FLEE, REGROUP, etc.) — the structure is intentionally minimal here. */
 export type DroneState = 'IDLE' | 'COMBAT';
 
+/** A ship's one energy pool as the AI pilot reads and spends it (boost and
+ *  guns). Structural, so a hull's own record (`ShipState`, `energy` field)
+ *  can be handed in as is. */
+export interface ShipEnergyPool {
+  energy: number;
+}
+
+/**
+ * Construction options for an AI pilot brain. All absent ⇒ a drone-side brain,
+ * byte-identical to one built from the kind alone.
+ */
+export interface HostileDroneBehaviourOptions {
+  /** Fly for the players side instead of the kind's NPC allegiance (an RTS
+   *  owned ship): target claims and neighbour grouping use the players side;
+   *  every pilot is friendly; anything that attacks players on sight is an
+   *  enemy; the ship never runs (morale always Fight on). */
+  readonly side?: typeof PLAYERS_SIDE;
+  /** The player who owns this ship: its own fire never turns the brain on it. */
+  readonly ownerId?: string;
+  /** The ship's one energy pool. Absent ⇒ a pool of its own, full at the
+   *  kind's `energyMax`. Either way the brain reads and spends it the same. */
+  readonly energyPool?: ShipEnergyPool;
+}
+
+/** Morale weights of a ship that never runs: every roll is Fight on. */
+const NEVER_RUN_MORALE = Object.freeze({ fightOn: 1, fallBack: 0, flee: 0 });
+
 export class HostileDroneBehaviour implements IAiBehaviour {
   private readonly kind: ShipKind;
 
@@ -435,8 +462,12 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   /** Allegiances P0 — this entity's NPC side (from its kind) and whether that
    *  side attacks players ON SIGHT (robots do; drones don't — drones are driven
    *  by waves + retaliation through `hostileTo`). */
-  private readonly allegiance: NpcAllegianceId;
+  private readonly allegiance: AllegianceSide;
   private readonly onSightPlayers: boolean;
+  /** Players side only: a swarm ship that attacks players on sight is an enemy. */
+  private readonly foesOfPlayers: boolean;
+  /** The owning player (null for an unowned ship). */
+  private readonly ownerId: string | null;
   /** Phase 4c (2026-05-11) — half-arc of the widest rotating mount in
    *  this kind's primary slot, used to widen the body-aim fire gate so
    *  drones with turrets fire even when the body is off-aim by less than
@@ -521,11 +552,14 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   private readonly handling: PilotHandling;
   /** Virtual-pilot state (reaction latch), owned per drone. */
   private readonly _pilot: PilotState = makePilotState();
-  /** Ship energy (server-only): the kind's pool, regenerated each tick and
-   *  spent per boosted tick AND per weapon slot trigger (`trySpendEnergy`,
-   *  called by the fire resolvers) with the shared `Energy.ts` helpers, as a
-   *  pilot's. */
-  private energy: number;
+  /** Ship energy (server-only): the ship's one pool (`opts.energyPool`, else
+   *  its own, full at the kind's max), regenerated each tick and spent per
+   *  boosted tick AND per weapon slot trigger (`trySpendEnergy`, called by the
+   *  fire resolvers) with the shared `Energy.ts` helpers, as a pilot's. Every
+   *  read and write goes through `energy`, the one accessor. */
+  private readonly _energyPool: ShipEnergyPool;
+  private get energy(): number { return this._energyPool.energy; }
+  private set energy(v: number) { this._energyPool.energy = v; }
   private readonly energyMax: number;
   private readonly energyRegen: number;
   /** Combat context steering (slice 2c): maps, output and neighbour buffer,
@@ -635,7 +669,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   private _hitsVal = 0;
   private _hitsTick = 0;
 
-  constructor(kind?: ShipKind | string) {
+  constructor(kind?: ShipKind | string, opts?: HostileDroneBehaviourOptions) {
     // Accept the kind as either a `ShipKind` record or a kind id (string), so
     // tests that don't care about kind tuning can still construct with no
     // arg (`new HostileDroneBehaviour()` falls back to the catalogue default).
@@ -643,9 +677,14 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       ? kind
       : getShipKind(typeof kind === 'string' ? kind : null);
     const a = this.kind.allegiance;
-    this.allegiance = a !== undefined && isNpcAllegianceId(a) ? a : 'drones';
+    const playersSide = opts?.side === PLAYERS_SIDE;
+    this.allegiance = playersSide ? PLAYERS_SIDE : a !== undefined && isNpcAllegianceId(a) ? a : 'drones';
     this.onSightPlayers = isOnSightHostile(this.allegiance, PLAYERS_SIDE);
-    this.friendlyToPilots = isFriendly(this.allegiance, PLAYERS_SIDE);
+    // The players side holds every pilot friendly (player-vs-player is the
+    // players' own choice, never this brain's: retaliation still applies).
+    this.friendlyToPilots = playersSide || isFriendly(this.allegiance, PLAYERS_SIDE);
+    this.foesOfPlayers = playersSide;
+    this.ownerId = opts?.ownerId ?? null;
     this.combatSeparation = shipTuning(this.kind).combatSeparation;
     this.shieldPad = shipTuning(this.kind).shieldPad;
     this.role = roleProfile(this.kind.aiRole);
@@ -653,7 +692,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     this.handling = makePilotHandling(this.kind, shipBodyMass(this.kind));
     this.energyMax = this.kind.energyMax ?? 100;
     this.energyRegen = this.kind.energyRegenRate ?? 0.25;
-    this.energy = this.energyMax;
+    this._energyPool = opts?.energyPool ?? { energy: this.energyMax };
     // Compute the half-arc of the widest rotating mount across the kind's
     // mounts. `arcMax - arcMin` is the FULL arc; halving it gives the
     // distance the mount can swing from `baseAngle` in either direction.
@@ -706,6 +745,8 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     // A ship whose guns are missiles holds its distance whatever its role:
     // Kite is its best manoeuvre (`missileArmedProfile`).
     if (this.weaponMode === 'missile' && !this.broadside) this.role = missileArmedProfile(this.kind.aiRole);
+    // A players-side ship never runs: every morale roll comes out Fight on.
+    if (playersSide) this.role = Object.freeze({ ...this.role, moraleWeights: NEVER_RUN_MORALE });
     this.sensorRange = roleSensorRange(this.kind.aiRole, this.fireRange);
     const tac = this._tac;
     tac.fireRange = this.fireRange;
@@ -761,7 +802,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    * lockstep-consistent without a wire-format bump.
    */
   markHostile(shooterId: string, atTick: number): void {
-    if (!shooterId) return;
+    if (!shooterId || shooterId === this.ownerId) return;
     this.hostileTo.add(shooterId);
     this.lastHitByPlayer.set(shooterId, atTick);
     this.state = 'COMBAT';
@@ -924,6 +965,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       c.ship = true;
       c.hitRadius = p.kindId != null ? shipAimRadius(p.kindId, p.shieldUp === true) : DEFAULT_AIM_RADIUS;
       let h = this.hostileTo.has(p.id) || (p.ownerId !== undefined && this.hostileTo.has(p.ownerId));
+      if (h && this.ownerId !== null && (p.id === this.ownerId || p.ownerId === this.ownerId)) h = false;
       if (!h && this.onSightPlayers && p.truce !== true) {
         const dx = p.x - self.x;
         const dy = p.y - self.y;
@@ -967,7 +1009,8 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       for (const s of swarms) {
         if (s.id === self.id) continue;
         let h = this.hostileTo.has(s.id);
-        if (!h && isNpcAllegianceId(s.allegiance) && isOnSightHostile(this.allegiance, s.allegiance)) {
+        if (!h && isNpcAllegianceId(s.allegiance)
+          && (isOnSightHostile(this.allegiance, s.allegiance) || (this.foesOfPlayers && isOnSightHostile(s.allegiance, PLAYERS_SIDE)))) {
           const dx = s.x - self.x;
           const dy = s.y - self.y;
           h = dx * dx + dy * dy <= engageR2;

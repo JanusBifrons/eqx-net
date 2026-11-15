@@ -28,6 +28,18 @@ Locks: `ai/virtualPilot.test.ts` (real Rapier body, fighter and capital, with an
 - **With a post** (`setGuardPost(x, y, radius)`, server-only, radius ≥ `shipTuning(kind).guardRadiusMin` per #18) it fights FROM the post (`tickGuardBroadside`): a velocity controller holds it at rest inside `GUARD_HOLD_FRAC` of the radius and draws it back beyond that, beam to the target while inside `GUARD_RETURN_FRAC`. It never leaves the radius for range or to chase.
 - All ratios are of the kind's own `maxSpeed` / radius; plain-field state (alloc-free, #14). Lock: `ai/HostileDroneBehaviour.guard.test.ts`.
 
+## Player-owned ships (players side)
+
+An RTS owned ship is flown by this same brain, built with `new HostileDroneBehaviour(kind, { side: 'players', ownerId, energyPool })`. All options absent ⇒ a drone, byte-identical.
+
+- **Side:** `side: 'players'` replaces the kind's NPC allegiance, so target claims and neighbour grouping use the players side, whatever the hull. Every pilot is friendly; a pilot is a target only through the retaliation ledger (`markHostile`), never the owner or the owner's other ships (the owner's fire is ignored).
+- **Enemies:** a swarm ship whose allegiance attacks players on sight (`isOnSightHostile(its side, 'players')`, robots) is engaged within `ON_SIGHT_ENGAGE_RANGE`; drones (neutral to players) only on retaliation.
+- **Never runs:** its role's morale weights become Fight on 1 / Fall back 0 / Flee 0, so every roll fights on.
+- **Energy:** `energyPool` is the ship's one pool (`{ energy }`, a hull record fits as is); the brain regenerates and spends it exactly as it does its own drone pool. Whoever wires it must tick that pool's regen once (the brain's), not also in the room's pilot energy loop.
+- **Handling:** the kind passed in is used as is (`makePilotHandling`), so a pre-scaled kind (upgrades, `energyMax`) flows through.
+
+Lock: `ai/HostileDroneBehaviour.ownedSide.test.ts`.
+
 ## Roles and the sensor-capped target pick
 
 - Every ship kind carries `aiRole` (`scout|interceptor|fighter|gunship|missileBoat|capital|robot|civilian`), a catalogue data field, not on the wire.
