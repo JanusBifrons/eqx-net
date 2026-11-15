@@ -386,8 +386,8 @@ export class ArtService {
   }
 
   /** An asteroid by its seeded outline (static: one frame at its turn). */
-  rock(entityId: number, radius: number, resource: string | undefined, rot: number): ArtHandle {
-    return this.acquire({ type: 'rock', id: 'asteroid', entityId, radius, resource, rot });
+  rock(shapeSeed: number, radius: number, resource: string | undefined, rot: number): ArtHandle {
+    return this.acquire({ type: 'rock', id: 'asteroid', shapeSeed, radius, resource, rot });
   }
 
   /** The handle for a job: an existing one if any, else a new pending one

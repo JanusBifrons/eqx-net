@@ -106,6 +106,13 @@ export interface DestructionFx {
   readonly glowStyle: WreckGlowStyle;
   /** How long the cut-edge glow lasts (s). */
   readonly glowSeconds: number;
+  /** The glow of a weapon's cut kill (the wreck's descriptor has a
+   *  `cutKind`): `full` gives its kill cut the weapon's colour held ~1.5 s,
+   *  an ember, dark at 4.5 s (`wreckGlowAt`'s cut curves, width from the
+   *  hull, #18), its other cracks subdued splinters. Beam take 7 review
+   *  (2026-11-15): on the 1 s simple glow a sub-cap's violet cut was gone
+   *  ~0.1 s after the beam stopped. */
+  readonly cutGlowStyle: WreckGlowStyle;
   /** The longest the client holds the dying hull on screen while it waits
    *  for its wreck pieces to be drawable (game ms; `dyingHullHold.ts`). The
    *  hold ends the frame every piece is drawn, so this is only the deadline
@@ -217,6 +224,7 @@ const CAPITAL: DestructionProfile = {
     hullDeathBlastReplaced: true,
     glowStyle: 'full',
     glowSeconds: 4.5,
+    cutGlowStyle: 'full',
     dyingHoldMs: 1500,
     deadTint: null,
     burntArt: true,
@@ -327,6 +335,8 @@ const SUBCAP: DestructionProfile = {
     hullDeathBlastReplaced: false,
     glowStyle: 'simple',
     glowSeconds: 1,
+    // A cut kill glows like a capital's (violet ~1.5 s, ember, dark 4.5 s).
+    cutGlowStyle: 'full',
     // Brief: no crack hold, so a sub-cap's pieces are drawable at once. The
     // held hull sits under its death explosion; 600 ms of it read as "dead
     // ship sits there, then pops" (round-2 review), so the pieces take over
@@ -365,6 +375,7 @@ const NONE: DestructionProfile = {
     hullDeathBlastReplaced: false,
     glowStyle: 'none',
     glowSeconds: 0,
+    cutGlowStyle: 'none',
     dyingHoldMs: 0,
     deadTint: null,
     burntArt: false,

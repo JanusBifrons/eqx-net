@@ -6,7 +6,7 @@ import { SCRAP_LINEAR_DAMPING, SCRAP_DEFAULT_MASS } from '../../core/swarm/scrap
 import { SCRAP_COLLISION_GROUPS } from '../../core/physics/collisionGroups.js';
 import { SWARM_KIND_SCRAP } from '../../shared-types/swarmWireFormat.js';
 import { SHIP_KINDS, SHIP_KINDS_LIST, shipKindToIndex } from '../../shared-types/shipKinds.js';
-import type { Vec2 } from '../../core/swarm/asteroidShape.js';
+import { asteroidShapeSeed, generateAsteroidVertices, type Vec2 } from '../../core/swarm/asteroidShape.js';
 import {
   SAB_TOTAL_BYTES,
   slotBase,
@@ -68,6 +68,35 @@ describe('SwarmSpawner', () => {
     expect(cap.staticBody).toBe(true); // the P0 fix — structures never move
     expect(drone.staticBody).toBeFalsy(); // drones fly
     expect(rock.staticBody).toBeFalsy(); // asteroids stay dynamic / bump-able
+  });
+
+  // Macro terrain 1a: a rock's outline (collider, hit shape, art) comes from
+  // its STABLE id, never its wire id. Wire ids are reused, so a rock that
+  // leaves and comes back on another wire id must keep its shape.
+  it('an asteroid keeps its outline whatever wire id it gets (shape seeded by its stable id)', () => {
+    spawner.spawnAsteroid({ id: 'filler', x: 0, y: 0, vx: 0, vy: 0, radius: 30 });
+    registry.unregister('filler');
+    spawner.spawnAsteroid({ id: 'belt-0-3', x: 0, y: 0, vx: 0, vy: 0, radius: 30 });
+    const a = registry.get('belt-0-3')!;
+    const firstVerts = posted.find((p) => p.id === 'belt-0-3')!.vertices;
+
+    // Fresh registry: the same rock now lands on a different wire id.
+    const registry2 = new SwarmEntityRegistry();
+    const posted2: Array<{ id: string; vertices?: ReadonlyArray<Vec2> }> = [];
+    const spawner2 = new SwarmSpawner(registry2, {
+      takeSlot: () => 20,
+      postSpawnObstacle: (_slot, id, _x, _y, _vx, _vy, _r, _m, vertices) => posted2.push({ id, vertices }),
+      sabF32: f32,
+      sabU32: u32,
+    });
+    spawner2.spawnAsteroid({ id: 'other-rock', x: 0, y: 0, vx: 0, vy: 0, radius: 30 }); // holds wire id 0
+    spawner2.spawnAsteroid({ id: 'belt-0-3', x: 0, y: 0, vx: 0, vy: 0, radius: 30 });
+    const b = registry2.get('belt-0-3')!;
+    expect(b.entityId).not.toBe(a.entityId);
+    expect(b.shapeSeed).toBe(asteroidShapeSeed('belt-0-3'));
+    expect(a.shapeSeed).toBe(b.shapeSeed);
+    expect(posted2.find((p) => p.id === 'belt-0-3')!.vertices).toEqual(firstVerts);
+    expect(b.vertices).toEqual(generateAsteroidVertices(asteroidShapeSeed('belt-0-3'), 30));
   });
 
   // Pilot layer: the worker must know a drone's kind to fly it with player
