@@ -182,6 +182,11 @@ describe('SectorRoom integration — capital wrecks (S2a)', () => {
       await harness.advance(3000);
       expect(internal.swarmHealth.get(clear), `${weapon} reaches a target in the clear`).toBeLessThan(clear0);
       expect(internal.swarmHealth.get(hidden), `${weapon} stops at the wreck`).toBe(hidden0);
+      // Clear this weapon's targets: wreck pieces are heavy and barely drift
+      // (knockScale 0.003), so the next weapon's targets spawn a few units
+      // from these and its shot would hit whichever fighter is first.
+      internal.evictSwarm(hidden);
+      internal.evictSwarm(clear);
     }
   }, 25_000);
 
