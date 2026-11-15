@@ -3,7 +3,7 @@ import {
   HEAVY_BEAM_COLOR, HEAVY_BEAM_STYLE, MINING_BEAM_STYLE, REMOTE_BEAM_FADE_MS, REMOTE_BEAM_STYLE,
   findMount, remoteBeamStyleForMount, remoteBeamTtlMs,
 } from './beamStyles.js';
-import { getWeapon } from '../../core/combat/WeaponCatalogue.js';
+import { HEAVY_BEAM_WIDTH, getWeapon } from '../../core/combat/WeaponCatalogue.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 
 /**
@@ -68,6 +68,12 @@ describe('beam styles — capital heavy beam (plan beam-slices §8)', () => {
     expect(HEAVY_BEAM_STYLE.taper).toBe(true);
     expect(HEAVY_BEAM_STYLE.tint).toBe(HEAVY_BEAM_COLOR);
     for (const c of [REMOTE_BEAM_STYLE.tint, MINING_BEAM_STYLE.tint, 0x6fd0ff]) expect(HEAVY_BEAM_COLOR).not.toBe(c);
+  });
+
+  it('is drawn as wide as the strip its slice erases (owner: the slice was too thin for the beam)', () => {
+    expect(HEAVY_BEAM_STYLE.width).toBe(HEAVY_BEAM_WIDTH);
+    expect(getWeapon('heavy_beam').killCut).toEqual({ kind: 'slice', width: HEAVY_BEAM_WIDTH });
+    expect(HEAVY_BEAM_STYLE.minScreenPx).toBe(12);
   });
 
   it('holds full brightness across the whole fire interval (a burn, not a strobe)', () => {
