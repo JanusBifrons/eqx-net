@@ -37,4 +37,8 @@ describe('rendererArgsFromBoot (worker BOOT → PixiRenderer)', () => {
     expect(isTouch).toBe(true);
     expect(art).toEqual({ mode: 'machined', delayMs: 5, fx: true, speedFx: false });
   });
+
+  it('carries the cut-field ore look to the worker', () => {
+    expect(rendererArgsFromBoot(boot({ ore: 'veins' }))[1].ore).toBe('veins');
+  });
 });

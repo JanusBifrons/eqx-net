@@ -36,6 +36,16 @@ export interface ArtOptions {
   /** Ship livery treatment: `DEFAULT_LIVERY` unless `?livery=off` (none) or
    *  another treatment (look R&D). Absent = the pre-livery paint. Machined only. */
   livery?: LiveryTreatment;
+  /** Cut-field ore look under trial (`?ore=tint|veins|seams`, F1c); absent = off. */
+  ore?: FieldOreLook;
+}
+
+export type FieldOreLook = 'off' | 'tint' | 'veins' | 'seams';
+
+/** `?ore=off|tint|veins|seams`, or undefined when absent or unknown. */
+export function readOreLook(search: string): FieldOreLook | undefined {
+  const m = /[?&]ore=(off|tint|veins|seams)\b/.exec(search);
+  return m ? (m[1] as FieldOreLook) : undefined;
 }
 
 export const ART_OFF: ArtOptions = { mode: 'classic' };

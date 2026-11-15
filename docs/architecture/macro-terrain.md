@@ -92,6 +92,7 @@ Ore is a map over space, not a label on a rock (owner): the piece a mining laser
   - `oreAt` allocates nothing, because the mining laser samples it on every hit (#14).
   - Nothing rides the wire: a joiner rebuilds the map from the welcome seed (#16).
 - **Yield:** `oreRow(conc)` (`shared-types/asteroidResources.ts`) turns concentrations into a yield row: ice and crystal take their share of every 10 units mined, minerals the rest. Every extractor splits mined units by ONE function, `yieldInto(row, drawn, out)` (the grid Miner, robot harvesters via `OreDraw.mine`, the mining laser); a scattered rock's row is `ASTEROID_YIELD[kind]`. The Miner reads a rock's row through the `asteroidYieldOf` hook.
+- **Look (F1c):** the rock surface shows the ore where the map has it. `oreForOutlines` samples `[ice, crystal]` at every fan vertex when a chunk loads (client, main thread); it rides `pendingFieldChunks[].ore` into the `aOre` attribute, and `fieldRockShader` draws it by style: `?ore=off|tint|veins|seams` (trial, default off until the owner picks; shot `cut-field-ore`). A woken rock keeps its own vertices' ore.
 
 ## The core idea
 

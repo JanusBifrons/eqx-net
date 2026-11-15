@@ -10,7 +10,7 @@
 import { Container, Mesh, MeshGeometry, Shader } from 'pixi.js';
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import { unpackRockKey } from '../../../core/terrain/fieldLayout';
-import { fieldRockShaderResources, fieldRockProgram, setFieldRockView } from './fieldRockShader';
+import { fieldRockShaderResources, fieldRockProgram, setFieldOreStyle, setFieldRockView, type FieldOreStyle } from './fieldRockShader';
 
 /** Chunk coords as one number (each fits ±32k). */
 const chunkKey = (cx: number, cy: number): number => (cx + 32768) * 65536 + (cy + 32768);
@@ -22,6 +22,7 @@ export interface FieldChunkMeshData {
   uvs: Float32Array; // aUV.x: 1 at the rock's centre, 0 on its outline
   local: Float32Array; // aLocal: offset from the rock's centre (Pixi)
   rock: Float32Array; // aRock: radius, noise offset x/y, seed
+  ore: Float32Array; // aOre: ice, crystal concentration (0..1) at the vertex
   indices: Uint32Array;
 }
 
@@ -32,7 +33,7 @@ function rockSeed(x: number, y: number): number {
   return (h ^ (h >>> 13)) >>> 0;
 }
 
-export function buildFieldChunkMesh(outlines: Float32Array): FieldChunkMeshData {
+export function buildFieldChunkMesh(outlines: Float32Array, ore?: Float32Array | null): FieldChunkMeshData {
   let verts = 0, tris = 0, i = 0;
   while (i < outlines.length) { const n = outlines[i]!; verts += n + 1; tris += n; i += 1 + n * 2; }
   const positions = new Float32Array(verts * 2), uvs = new Float32Array(verts * 2);
@@ -67,7 +68,8 @@ export function buildFieldChunkMesh(outlines: Float32Array): FieldChunkMeshData 
     }
     i += n * 2;
   }
-  return { positions, uvs, local, rock, indices };
+  const oreOut = ore && ore.length === verts * 2 ? ore : new Float32Array(verts * 2);
+  return { positions, uvs, local, rock, ore: oreOut, indices };
 }
 
 /** Frames a woken rock may go unseen on the swarm wire before it shows in its
@@ -82,6 +84,7 @@ interface LoadedChunk {
   /** Per rock: its first vertex (the centre) in `data`. */
   firstVert: Int32Array;
   outlines: Float32Array;
+  ore: Float32Array | null;
 }
 
 export class CutFieldLayer {
@@ -100,6 +103,9 @@ export class CutFieldLayer {
 
   get chunkCount(): number { return this.chunks.size; }
 
+  /** The ore look (`?ore=`, F1c trial): shared by every field rock. */
+  setOreStyle(style: FieldOreStyle): void { setFieldOreStyle(style); }
+
   /** Per frame: the sector's sun (Pixi azimuth) and the camera zoom (world
    *  scale), so the surface detail stops at ~2 px. A compare unless moved. */
   /** Each frame: apply the chunks loaded or dropped since the last frame
@@ -107,7 +113,7 @@ export class CutFieldLayer {
   update(mirror: RenderMirror, sunAz: number, cameraScale: number): void {
     const chunks = mirror.pendingFieldChunks;
     if (chunks && chunks.length > 0) {
-      for (const c of chunks) this.setChunk(c.cx, c.cy, c.outlines);
+      for (const c of chunks) this.setChunk(c.cx, c.cy, c.outlines, c.ore);
       chunks.length = 0;
     }
     this.setView(sunAz, cameraScale);
@@ -137,7 +143,8 @@ export class CutFieldLayer {
     const c = this.chunks.get(chunkKey(k.cx, k.cy));
     if (!c || k.index >= c.starts.length) return null;
     const s = c.starts[k.index]!;
-    const d = buildFieldChunkMesh(c.outlines.subarray(s, s + 1 + c.outlines[s]! * 2));
+    const v0 = c.firstVert[k.index]!, n = c.outlines[s]!;
+    const d = buildFieldChunkMesh(c.outlines.subarray(s, s + 1 + n * 2), c.ore?.subarray(v0 * 2, (v0 + n + 1) * 2));
     d.positions.set(d.local); // centred: local == position minus the centre
     return this.meshOf(d);
   }
@@ -162,6 +169,7 @@ export class CutFieldLayer {
     const geometry = new MeshGeometry({ positions: d.positions.slice(), uvs: d.uvs, indices: d.indices });
     geometry.addAttribute('aLocal', { buffer: d.local, format: 'float32x2' });
     geometry.addAttribute('aRock', { buffer: d.rock, format: 'float32x4' });
+    geometry.addAttribute('aOre', { buffer: d.ore, format: 'float32x2' });
     this.shader ??= new Shader({ glProgram: fieldRockProgram(), resources: fieldRockShaderResources() });
     const mesh = new Mesh({ geometry, shader: this.shader });
     mesh.once('destroyed', () => geometry.destroy());
@@ -169,12 +177,12 @@ export class CutFieldLayer {
   }
 
   /** See `IRenderer.setFieldChunk`. Game space in, Pixi space out (y flips). */
-  setChunk(cx: number, cy: number, outlines: Float32Array | null): void {
+  setChunk(cx: number, cy: number, outlines: Float32Array | null, ore: Float32Array | null = null): void {
     const key = chunkKey(cx, cy);
     this.chunks.get(key)?.mesh.destroy();
     this.chunks.delete(key);
     if (outlines === null || outlines.length === 0) return;
-    const data = buildFieldChunkMesh(outlines);
+    const data = buildFieldChunkMesh(outlines, ore);
     let rocks = 0;
     for (let i = 0; i < outlines.length; i += 1 + outlines[i]! * 2) rocks++;
     const starts = new Int32Array(rocks), firstVert = new Int32Array(rocks);
@@ -182,7 +190,7 @@ export class CutFieldLayer {
       starts[r] = i; firstVert[r] = v; v += outlines[i]! + 1;
     }
     const mesh = this.meshOf(data);
-    this.chunks.set(key, { mesh, data, starts, firstVert, outlines });
+    this.chunks.set(key, { mesh, data, starts, firstVert, outlines, ore });
     this.container.addChild(mesh);
     // A rock woken before this chunk (re)arrived stays out of it.
     for (const wk of this.woken.keys()) {

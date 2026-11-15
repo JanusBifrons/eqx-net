@@ -6,6 +6,7 @@ vi.mock('./fieldRockShader', () => ({
   fieldRockProgram: () => ({}),
   fieldRockShaderResources: () => ({}),
   setFieldRockView: () => {},
+  setFieldOreStyle: () => {},
 }));
 import { rockKey } from '../../../core/terrain/fieldLayout';
 import { buildFieldChunkMesh, CutFieldLayer, WOKEN_ROCK_FORGET_FRAMES } from './CutFieldLayer';
@@ -34,6 +35,12 @@ describe('cut-field chunk mesh (procedural rock look)', () => {
     expect(r0[0]).toBeCloseTo(Math.hypot(5, 5), 4);
     expect(d.rock[5 * 4 + 3]).not.toBe(r0[3]);
   });
+
+  it('carries the ore per vertex (F1c), zeros when none is given', () => {
+    expect(Array.from(d.ore)).toEqual(new Array(18).fill(0));
+    const ore = new Float32Array(18).map((_, i) => i / 18);
+    expect(buildFieldChunkMesh(outlines, ore).ore).toBe(ore);
+  });
 });
 
 describe('CutFieldLayer — woken rocks (macro terrain C2)', () => {
@@ -52,6 +59,13 @@ describe('CutFieldLayer — woken rocks (macro terrain C2)', () => {
     for (let v = 6; v < 9; v++) expect([hidden[v * 2], hidden[v * 2 + 1]]).toEqual([hidden[10], hidden[11]]);
 
     const sprite = layer.buildRockSprite(key)!;
+    expect(sprite).not.toBeNull();
+    const ore = new Float32Array(18).map((_, i) => i);
+    const lit = new CutFieldLayer();
+    lit.setChunk(2, -1, outlines, ore);
+    // The woken triangle keeps its own vertices' ore (verts 5..8).
+    expect(Array.from(lit.buildRockSprite(key)!.geometry.getBuffer('aOre').data as Float32Array)).toEqual([10, 11, 12, 13, 14, 15, 16, 17]);
+    lit.clear();
     expect(sprite).not.toBeNull();
     const sp = Array.from(sprite.geometry.positions);
     expect([sp[0]! + 0, sp[1]! + 0]).toEqual([0, 0]); // centred

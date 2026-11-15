@@ -632,8 +632,9 @@ export interface RenderMirror {
   /** Macro terrain v2 (room flag `cutField`): cut-field chunks loaded or
    *  dropped since the last frame. `outlines` is [n, x0, y0, …, n, …] in game
    *  space; null drops the chunk. Drained each frame, like `pendingWarpEvents`;
-   *  only a chunk load or unload adds an entry, never a frame. */
-  pendingFieldChunks?: Array<{ cx: number; cy: number; outlines: Float32Array | null }>;
+   *  only a chunk load or unload adds an entry, never a frame. `ore`: [ice,
+   *  crystal] per rock-fan vertex (`oreForOutlines`), for the ore look. */
+  pendingFieldChunks?: Array<{ cx: number; cy: number; outlines: Float32Array | null; ore?: Float32Array | null }>;
   /** Missile detonations to play this frame. The renderer drains the
    *  array, spawns explosion VFX at each `(x, y)`, sizes the sprite to
    *  `splashRadius`, and triggers a camera shake with magnitude inverse

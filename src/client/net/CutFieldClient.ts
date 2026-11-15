@@ -22,7 +22,8 @@ import {
   fieldRockId,
   type FieldRockBody,
 } from '@core/terrain/chunkStreamer';
-import { rocksInChunk, type ChunkOpts, type ChunkRock } from '@core/terrain/fieldLayout';
+import { rocksInChunk, SLICED, type ChunkOpts, type ChunkRock } from '@core/terrain/fieldLayout';
+import { oreForOutlines, oreSeed } from '@core/terrain/fieldOre';
 import { wantPredBody } from '../structures/predStructureStreaming.js';
 import type { FieldRockSource } from './entity/IClientEntityLeaf.js';
 
@@ -53,8 +54,9 @@ export interface ChunkCutter {
 /** Where chunk outlines go (ColyseusClient: the mirror's drain queue). */
 export interface CutFieldDrawSink {
   /** Draw one chunk: `outlines` is [n, x0, y0, …, x(n-1), y(n-1), n, …] in
-   *  game space; null drops the chunk. */
-  setFieldChunk(cx: number, cy: number, outlines: Float32Array | null): void;
+   *  game space; null drops the chunk. `ore`: [ice, crystal] per fan vertex
+   *  (`oreForOutlines`), so the look shows where the ore is (F1c). */
+  setFieldChunk(cx: number, cy: number, outlines: Float32Array | null, ore?: Float32Array | null): void;
 }
 
 export interface CutFieldClientDeps {
@@ -117,13 +119,16 @@ export class CutFieldClient implements FieldRockSource {
     this.stop();
     this.seed = seed;
     if (seed === null) return;
-    const field = cutFieldOpts(seed);
+    const field = cutFieldOpts(seed), ore = oreSeed(seed);
     this.streamer = new CutFieldStreamer(field, {
       visitShips: (cb) => { const p = this.deps.localPose(); if (p) cb(p.x, p.y); },
       spawnRock: (id, rock) => { this.rocks.set(id, { body: fieldRockBody(rock), key: rock.key, inPred: false }); return true; },
       removeRock: (id) => this.dropRock(id),
       nowMs: () => this.deps.gameClock.now(),
-      chunkLoaded: (cx, cy, rocks) => this.deps.draw.setFieldChunk(cx, cy, packOutlines(rocks)),
+      chunkLoaded: (cx, cy, rocks) => {
+        const outlines = packOutlines(rocks);
+        this.deps.draw.setFieldChunk(cx, cy, outlines, oreForOutlines(ore, SLICED.radius, outlines));
+      },
       chunkUnloaded: (cx, cy) => this.deps.draw.setFieldChunk(cx, cy, null),
       cutChunk: (cx, cy) => this.cutChunk(field, cx, cy),
     }, CLIENT_WAKE_CHUNKS, CLIENT_LINGER_MS, CLIENT_CUTS_PER_STEP);
