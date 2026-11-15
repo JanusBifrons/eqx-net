@@ -57,6 +57,11 @@ export interface DestructionFractureOptions {
   readonly extraChunkChance?: number;
   /** Jag of the cut edges (default depth 4, roughness 0.22). */
   readonly jag?: { readonly depth: number; readonly roughness: number };
+  /** A cut weapon's kill (heavy-beam slice, railgun channel) burns away
+   *  every piece under this share of the hull's area; none left = the ship
+   *  is vaporised (fracture v11). Absent: the fracture's 5 % channel sliver
+   *  erase only. capital-destruction.md "Kill cuts", "Burn-away". */
+  readonly cutBurnMinShare?: number;
 }
 
 /** How a wreck piece breaks again (salvage stream; capital-destruction.md
@@ -101,6 +106,13 @@ export interface DestructionFx {
   readonly glowStyle: WreckGlowStyle;
   /** How long the cut-edge glow lasts (s). */
   readonly glowSeconds: number;
+  /** The glow of a weapon's cut kill (the wreck's descriptor has a
+   *  `cutKind`): `full` gives its kill cut the weapon's colour held ~1.5 s,
+   *  an ember, dark at 4.5 s (`wreckGlowAt`'s cut curves, width from the
+   *  hull, #18), its other cracks subdued splinters. Beam take 7 review
+   *  (2026-11-15): on the 1 s simple glow a sub-cap's violet cut was gone
+   *  ~0.1 s after the beam stopped. */
+  readonly cutGlowStyle: WreckGlowStyle;
   /** The longest the client holds the dying hull on screen while it waits
    *  for its wreck pieces to be drawable (game ms; `dyingHullHold.ts`). The
    *  hold ends the frame every piece is drawn, so this is only the deadline
@@ -212,6 +224,7 @@ const CAPITAL: DestructionProfile = {
     hullDeathBlastReplaced: true,
     glowStyle: 'full',
     glowSeconds: 4.5,
+    cutGlowStyle: 'full',
     dyingHoldMs: 1500,
     deadTint: null,
     burntArt: true,
@@ -245,6 +258,15 @@ const SUBCAP: DestructionProfile = {
     soundMinShare: 0.43,
     extraChunkChance: 0.4,
     jag: { depth: 1, roughness: 0.06 },
+    // Owner 2026-11-15: a cut kill burns away "any piece too small". A
+    // fifth of the hull: under the re-split's salvage floor (a quarter), so
+    // what survives a cut is a real chunk. Heavy beam (60 u strip): a
+    // fighter or gunship (20 u wide at 1x, ×2) has nothing left; a missile
+    // frigate cut across keeps ~7 % + ~15 % banks, both burn: vaporised.
+    // Railgun (16 u): a gunship channel off the keel leaves ~12 % (burns)
+    // and ~44 %; across a missile frigate ~32 % + ~46 % (both drift on).
+    // capital-destruction.md "Burn-away". The capital keeps the 5 % erase.
+    cutBurnMinShare: 0.2,
   },
   // A fighter's half breaks once more into 2 chunks, a quarter becomes
   // salvage (capital-destruction.md §S4 "Re-split").
@@ -313,6 +335,8 @@ const SUBCAP: DestructionProfile = {
     hullDeathBlastReplaced: false,
     glowStyle: 'simple',
     glowSeconds: 1,
+    // A cut kill glows like a capital's (violet ~1.5 s, ember, dark 4.5 s).
+    cutGlowStyle: 'full',
     // Brief: no crack hold, so a sub-cap's pieces are drawable at once. The
     // held hull sits under its death explosion; 600 ms of it read as "dead
     // ship sits there, then pops" (round-2 review), so the pieces take over
@@ -351,6 +375,7 @@ const NONE: DestructionProfile = {
     hullDeathBlastReplaced: false,
     glowStyle: 'none',
     glowSeconds: 0,
+    cutGlowStyle: 'none',
     dyingHoldMs: 0,
     deadTint: null,
     burntArt: false,

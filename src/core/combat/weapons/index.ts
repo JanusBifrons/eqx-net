@@ -11,8 +11,12 @@ import { Weapon } from './Weapon.js';
 import { HitscanWeapon } from './HitscanWeapon.js';
 import { ProjectileWeapon } from './ProjectileWeapon.js';
 import { MissileWeapon } from './MissileWeapon.js';
+import { TractorWeapon } from './TractorWeapon.js';
 
 function makeWeapon(def: WeaponDef): Weapon {
+  // The one catalogue-driven tractor branch: a def with a `tractor` block
+  // never fires its mode's shot (salvage plan PR 11).
+  if (def.tractor !== undefined) return new TractorWeapon(def);
   switch (def.mode) {
     case 'hitscan':
       return new HitscanWeapon(def);
@@ -42,3 +46,4 @@ export type { WeaponFireContext, WeaponFireSink } from './Weapon.js';
 export { HitscanWeapon } from './HitscanWeapon.js';
 export { ProjectileWeapon } from './ProjectileWeapon.js';
 export { MissileWeapon } from './MissileWeapon.js';
+export { TractorWeapon } from './TractorWeapon.js';

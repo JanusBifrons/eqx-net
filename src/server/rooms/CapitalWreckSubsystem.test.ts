@@ -13,7 +13,7 @@ import { wreckCrackTicks } from '../../shared-types/wreckTiming.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { shipTuning } from '../../shared-types/shipScale/tuning.js';
 
-function make(kinds: Record<string, string> = { cap: 'battleship' }, withRigid = false) {
+function make(kinds: Record<string, string> = { cap: 'battleship' }, withRigid = false, owners: Record<string, string> = {}) {
   const rigid: Array<{ ids: readonly string[]; jx: number; jy: number; px: number; py: number }> = [];
   let tick = 1000;
   const spawned: WreckPieceSpawn[] = [];
@@ -25,6 +25,7 @@ function make(kinds: Record<string, string> = { cap: 'battleship' }, withRigid =
   const sys = new CapitalWreckSubsystem({
     serverTick: () => tick,
     wreckKindOf: (id) => (kinds[id] as 'battleship' | undefined) ?? null,
+    ownerOf: (id) => owners[id],
     positionOf: (id) => (id === 'attacker' ? { x: 5000, y: 0 } : null),
     spawnPiece: (s) => { spawned.push(s); live.add(s.id); return true; },
     removePiece: (id) => { live.delete(id); removed.push(id); },
@@ -66,7 +67,7 @@ describe('CapitalWreckSubsystem', () => {
     setTick(100 + WRECK_RECENT_DAMAGE_TICKS * 3);
     sys.noteHit('cap', 'attacker', 1000, 300, -200);
     sys.noteHit('cap', 'attacker', 2000, 120, 40);
-    const n = sys.onDeath('cap', 'battleship', pose, 10_000);
+    const n = sys.onDeath('cap', 'battleship', pose, 10_000).pieces;
     const want = buildWreckPieces({
       kindId: 'battleship', pose, killWorld: { x: 120, y: 40 }, attackerWorld: { x: 5000, y: 0 },
       seed: 9, killBlowDamage: 0.2, recentDamageRate: 0.3,
@@ -103,7 +104,7 @@ describe('CapitalWreckSubsystem', () => {
         const { sys, spawned } = make();
         sys.forcedSeed = 9;
         sys.noteHit('cap', 'attacker', 2000, 120, 40, dir.x, dir.y, 'laser');
-        expect(sys.onDeath('cap', 'battleship', turned, 10_000)).toBeGreaterThan(0);
+        expect(sys.onDeath('cap', 'battleship', turned, 10_000).pieces).toBeGreaterThan(0);
         const cutW = cut.kind === 'channel' ? cut.width / shipShapeScale(getShipKind('battleship')) : undefined;
         const d = sys.descriptors()[0]!;
         expect(d.cutKind).toBe(cut.kind);
@@ -118,6 +119,18 @@ describe('CapitalWreckSubsystem', () => {
         expect(spawned.map((s) => [s.x, s.y])).toEqual(want.map((p) => [p.x, p.y]));
       });
     }
+  });
+
+  // Filmed 2026-11-15: a pilot's capital broke into flat grey pieces under
+  // the default livery; the client had no owner for the wreck, so it asked
+  // for a new (neutral) bake instead of the one the live hull wore.
+  it("the descriptor names the hull's owner (the livery its pieces wear); none when unknown", () => {
+    const { sys } = make({ cap: 'battleship', npc: 'battleship' }, false, { cap: 'player-7' });
+    sys.onDeath('cap', 'battleship', pose, 10_000);
+    sys.onDeath('npc', 'battleship', { ...pose, x: 90_000 }, 10_000);
+    const [a, b] = sys.descriptors();
+    expect(a!.owner).toBe('player-7');
+    expect('owner' in b!).toBe(false);
   });
 
   it('without a killCut weapon (or with no shot direction) the descriptor carries no cut', () => {
@@ -144,7 +157,7 @@ describe('CapitalWreckSubsystem', () => {
         const { sys, spawned, kicks, rigid, impulses } = make({ cap: 'battleship' }, true);
         sys.forcedSeed = 9;
         sys.noteHit('cap', 'attacker', 2000, 120, 40, 1, 0, 'laser');
-        const n = sys.onDeath('cap', 'battleship', pose, 10_000);
+        const n = sys.onDeath('cap', 'battleship', pose, 10_000).pieces;
         const cutW = cut.kind === 'channel' ? cut.width / shipShapeScale(getShipKind('battleship')) : undefined;
         const want = buildWreckPieces({
           kindId: 'battleship', pose, killWorld: { x: 120, y: 40 }, attackerWorld: { x: 5000, y: 0 },
@@ -170,9 +183,9 @@ describe('CapitalWreckSubsystem', () => {
   it('ignores hits on non-capitals and breaks a hull once per death tick', () => {
     const { sys, spawned } = make();
     sys.noteHit('fighter', 'attacker', 50, 0, 0);
-    expect(sys.onDeath('cap', 'battleship', pose, 10_000)).toBeGreaterThan(0);
+    expect(sys.onDeath('cap', 'battleship', pose, 10_000).pieces).toBeGreaterThan(0);
     const first = spawned.length;
-    expect(sys.onDeath('cap', 'battleship', pose, 10_000)).toBe(0);
+    expect(sys.onDeath('cap', 'battleship', pose, 10_000)).toEqual({ pieces: 0, vaporised: false });
     expect(spawned.length).toBe(first);
   });
 
@@ -194,7 +207,7 @@ describe('CapitalWreckSubsystem', () => {
     setTick(2000);
     sys.noteHit('cap', 'attacker', 2000, 120, 40);
     const deathPose = { ...pose, angle: 0.3 };
-    const n = sys.onDeath('cap', 'battleship', deathPose, 10_000);
+    const n = sys.onDeath('cap', 'battleship', deathPose, 10_000).pieces;
     const want = buildWreckPieces({
       kindId: 'battleship', pose: deathPose, killWorld: { x: 120, y: 40 }, attackerWorld: { x: 5000, y: 0 },
       seed: 9, killBlowDamage: 0.2, recentDamageRate: 0.2,
@@ -313,7 +326,7 @@ describe('CapitalWreckSubsystem — sub-capital profile (sub-cap break-up slice 
     const { sys, spawned, kicks, rigid, impulses } = make({ f: 'fighter' }, true);
     sys.forcedSeed = 11;
     const at = { x: 100, y: -50, vx: 30, vy: -10, angle: 0.4, angvel: 0.5 };
-    const n = sys.onDeath('f', 'fighter', at, 1000);
+    const n = sys.onDeath('f', 'fighter', at, 1000).pieces;
     const want = buildWreckPieces({ kindId: 'fighter', pose: at, killWorld: null, attackerWorld: null, seed: 11, killBlowDamage: 0, recentDamageRate: 0 }).pieces;
     expect(n).toBe(want.length);
     expect(n).toBeGreaterThanOrEqual(2);
@@ -368,5 +381,26 @@ describe('CapitalWreckSubsystem — sub-capital profile (sub-cap break-up slice 
     const order = perDeath.flat();
     expect(removed).toEqual(order.slice(0, removed.length));
     expect(removed.length).toBe(order.length - 5);
+  });
+});
+
+describe('CapitalWreckSubsystem: a cut kill that burns every piece away (fracture v11)', () => {
+  it('a heavy-beam kill on a fighter is vaporised: no piece, no descriptor, the dying body still despawned', () => {
+    const { sys, spawned } = make({ f: 'fighter' });
+    let despawns = 0;
+    sys.noteHit('f', 'attacker', 500, 10, 0, -1, 0, 'heavy_beam');
+    expect(sys.onDeath('f', 'fighter', pose, 300, () => { despawns++; })).toEqual({ pieces: 0, vaporised: true });
+    expect(spawned).toHaveLength(0);
+    expect(sys.descriptors()).toHaveLength(0);
+    expect(despawns).toBe(1);
+  });
+
+  it('a heavy-beam kill on a heavy cruiser leaves its hulks; an un-cut death with no pieces is never vaporised', () => {
+    const { sys, spawned } = make({ c: 'heavy-cruiser' });
+    sys.noteHit('c', 'attacker', 5000, 300, 0, -1, 0, 'heavy_beam');
+    const out = sys.onDeath('c', 'heavy-cruiser', pose, 20_000);
+    expect(out.vaporised).toBe(false);
+    expect(out.pieces).toBeGreaterThanOrEqual(2);
+    expect(spawned.length).toBe(out.pieces);
   });
 });

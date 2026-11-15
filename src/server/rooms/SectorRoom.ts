@@ -119,7 +119,8 @@ import { cargoOpensFor, createRelationContext, isNpcOwner, npcOwner, parseOwner,
 import { BreakInCancelSchema, BreakInSchema, CARGO_ACCESS_RANGE, CargoMoveSchema, CargoQuerySchema, MAX_FREIGHT_ORDERS, SetFreightOrdersSchema, type BreakInNotice, type CargoState } from '../../shared-types/messages/cargoMessages.js';
 import { breakInDurationMs } from '../../shared-types/breakIn.js';
 import { BreakInSubsystem } from './BreakInSubsystem.js';
-import { stream } from '../../core/random/rng.js';
+import { ForceFieldSubsystem, lockKeyBodyId } from './ForceFieldSubsystem.js';
+import { registerTeleportMessages } from './TeleportMessageHandlers.js';
 import { HostileActLedger } from '../../core/relations/HostileActLedger.js';
 import { ProductionSubsystem } from '../structures/ProductionSubsystem.js';
 import { TeleporterSubsystem, type PartnerLink } from '../structures/TeleporterSubsystem.js';
@@ -128,27 +129,13 @@ import { linkEnds } from '../../core/bases/transitNetwork.js';
 import { hopDistance } from '../livingworld/population.js';
 import {
   DEFAULT_TELEPORT_RULES,
-  isFreeTeleporterKind,
   PAD_SPECS,
-  SetTeleportRulesSchema,
-  TeleportFireSchema,
-  TeleportPadLoadSchema,
-  TeleportPadUnloadSchema,
-  TeleportPairSchema,
-  TeleportUnpairSchema,
-  TeleportCandidatesQuerySchema,
-  TeleportPairRemoteSchema,
-  SetTeleportTollSchema,
-  TollAnswerSchema,
-  TeleportPairRequestSchema,
-  TeleportPairAnswerSchema,
   TOLL_DODGE_STANDING,
   TP_RULE_TOLL_HOSTILE,
   TeleportTollSchema,
   tollFor,
   type TollAnswer,
   type TollPrompt,
-  type PairRequestPrompt,
   onPad,
   padIrisSpanLocal,
   padPostCenters,
@@ -175,16 +162,13 @@ import type { NpcBaseTrade } from '../economy/ConvoyDirector.js';
 import { TARGET_MINUTES as CONVOY_TARGET_MINUTES } from '../../core/economy/convoys.js';
 import { RECIPES, blueprintProductFor, isRecipeId } from '../../shared-types/recipes.js';
 import { blueprintQuality } from '../../shared-types/blueprints.js';
-import { asteroidYield, asteroidYieldWeightPerUnit, rollAsteroidResource, type AsteroidFieldFeature, type AsteroidResourceId } from '../../shared-types/asteroidResources.js';
+import { rollAsteroidResource, type AsteroidFieldFeature, type AsteroidResourceId } from '../../shared-types/asteroidResources.js';
 import { getSector } from '../../core/galaxy/galaxy.js';
 import type { GoodId } from '../../shared-types/goods.js';
 import { usesAmmo } from '../../shared-types/ammo.js';
 
 /** P2d — one unit of munitions (a turret's magazine reload). */
 const ONE_MUNITION = Object.freeze({ munitions: 1 });
-/** An NPC kill's loot pod spawns this many hull radii (plus its own radius)
- *  from the dead ship's centre: beside the wreck, not in it (`dropKillLoot`). */
-const KILL_POD_CLEAR_RADII = 1.2;
 /** Welcome extras for a room that breaks capitals into wrecks (shared, frozen). */
 type WreckWelcomeFields = {
   capitalWrecks?: true;
@@ -333,14 +317,16 @@ import { BpBuySchema, BpMarketQuerySchema, BpSellSchema, type BpListing, type Bp
 import { bpBuyPrice, bpSellPrice, getBlueprintMarket, listing as bpListing } from '../economy/BlueprintMarket.js';
 import { LabCancelSchema, LabQuerySchema, LabStartSchema, type LabStart, type LabState } from '../../shared-types/messages/labMessages.js';
 import { LootSubsystem, type LootCollector } from '../cargo/LootSubsystem.js';
+import { OreDraw, type OreHolder } from './OreDraw.js';
 import { StorageService, fittedModuleIds, isOperationalStorage, structureUid, DEPOSIT_DWELL_TICKS, DEPOSIT_RANGE, REPAIR_CREDITS_PER_HP, RESPEC_CREDIT_COST } from '../cargo/StorageService.js';
 import { SCRAP_HP } from '../../core/swarm/scrapConstants.js';
 import { addPacked, cloneHold, emptyHold, extractRequested, holdWeight, isHoldEmpty, mergeInto, packedCount, takePacked, transferInto, type CargoRequest } from '../../core/cargo/hold.js';
 import type { HolderType, HoldRecord } from '../cargo/HoldStore.js';
 import { RAID_NOTICE_THROTTLE_MS, RAID_PRIORITY } from '../livingworld/RobotTerritory.js';
 import { cargoCapacityForMaxHealth, GOOD_DEFS, GOOD_IDS, HoldSchema, type Hold } from '../../shared-types/goods.js';
-import { rollKillBounty, rollLoot } from '../../shared-types/lootTables.js';
-import { rollEliteLoot, ELITE_HEALTH_MUL } from '../../shared-types/elites.js';
+import { rollKillBounty } from '../../shared-types/lootTables.js';
+import { deathHullLoot, killPodSpot, rollHullLoot, vaporisedSalvageExtra } from '../cargo/hullLoot.js';
+import { ELITE_HEALTH_MUL } from '../../shared-types/elites.js';
 import { ELITE_BOUNTY_CREDITS, PlaceBountySchema, type BountyResult } from '../../shared-types/contracts.js';
 import {
   InstallBlueprintSchema, UnpackHullSchema, qualityHullFactor, STARTER_HULL_KINDS, STARTER_STRUCTURE_KINDS, blueprintName, fittedCargoMul, fittedHullMul, fittedUid, productName, weaponUnlocked, type BlueprintResult,
@@ -411,7 +397,7 @@ import { isDebris, isLootPod, isWreckPiece } from '../net/SwarmEntityRegistry.js
 import { LineOfFireGate } from './LineOfFireGate.js';
 import { stampShipScale } from '../../shared-types/shipScale/welcomeScale.js';
 import { stampNavalRange } from '../../shared-types/combat/navalRange.js';
-import type { LockEntry } from '../../core/combat/lockState.js';
+import { isTerrainLockKind, swarmLockEligible, type LockEntry } from '../../core/combat/lockState.js';
 import { createSectorClock, type GameTimer } from '../time/gameTime.js';
 import { MIN_TIME_SCALE, MAX_TIME_SCALE, clampTimeScale, type GameClock } from '../../core/clock/GameClock.js';
 import { LoadSpeedController } from '../../core/clock/LoadSpeedController.js';
@@ -980,6 +966,8 @@ export class SectorRoom extends Room<SectorState> {
   private scrapSpawner!: ScrapSpawner;
   /** Living World P1a — loot pods, pickup, spill-on-death (see LootSubsystem). */
   private loot!: LootSubsystem;
+  /** Asteroid ore: the one draw path (Miner, harvesters, mining-laser hits paid on the pulse). */
+  private readonly oreDraw = new OreDraw({ swarmRegistry: this.swarmRegistry, holderOf: (id, out) => this.oreHolderOf(id, out), sectorKey: () => this.sectorKey });
   /** Living World P1a-2 — base storage holds (deposit / refine / spill). */
   private storage!: StorageService;
   /** Economy v2 W3 — Research Lab jobs (research / copy / combine). */
@@ -1006,6 +994,14 @@ export class SectorRoom extends Room<SectorState> {
     onStart: (actor, sid) => this.onBreakInStart(actor, sid),
     onEnd: (actor, sid, outcome, reason) => this.onBreakInEnd(actor, sid, outcome, reason),
   });
+  /** Force fields in this room's physics world (teleporter pad push today). */
+  private readonly forceFields = new ForceFieldSubsystem({ post: (cmd) => this.postToWorker(cmd), tractors: {
+    tick: () => this.serverTick, poseOf: (id, out) => this.aiFireTargetShape(id, out), wireRef: (id) => this.swarmRegistry.get(id)?.entityId ?? id,
+    lineBodies: (fx, fy, tx, ty, w, a, b, ids, cap) => this.lofGate().lineBodies(fx, fy, tx, ty, w, a, b, ids, cap),
+    inCrackHold: (id) => this.capitalWrecks?.inCrackHold(id) === true, isTerrain: (id) => isTerrainLockKind(this.swarmRegistry.get(id)?.kind ?? -1),
+    // Tractoring a ship is a hostile act, like a hit (weapon-mounts.md "Tractor beam"); terrain is neutral.
+    onShipTractored: (e, t) => { this.noteStandingHit(t, e); if (this.playerToSlot.has(t)) this.refreshNpcAttackHostility(e, t); else if (this.swarmRegistry.get(t)?.kind === 1 && !this.isFriendlyFire(t, e)) this.aiController.markHostile(t, e, this.serverTick); },
+  } });
   /** C2 bespoke trigger (testMode `breakInMs`). */
   private testBreakInMs: number | null = null;
   /** Bespoke test/recording trigger (testMode `lockTimeCapS`): the longest
@@ -1139,7 +1135,7 @@ export class SectorRoom extends Room<SectorState> {
    *  attached by reference to every recipient). Undefined ⇒ no structures. */
   /** A2 — the snapshot's slim cosmetic slice (turret / mining targets only);
    *  structure grid state itself lives in `state.structures`. */
-  private structuresSlice: SnapshotMessage['structureTargets'] = undefined;
+  private structuresSlice: number[] | undefined = undefined;
   /** Coastal defences — the defence turrets' angles, rebuilt each turret tick
    *  into one reused array (#14); undefined while every turret rests. */
   private readonly structureMountAnglesBuf: number[] = [];
@@ -1419,7 +1415,7 @@ export class SectorRoom extends Room<SectorState> {
     /** Lingering-hull slot map (shipInstanceId → slot). Lets the resume-as-
      *  existing-ship integration test assert a lingering hull was evicted
      *  before the fresh-spawn restore (playtest 2026-06-10 Issue 6). */
-    lingeringSlots: Map<string, number>;
+    lingeringSlots: Map<string, number>; forceFields: ForceFieldSubsystem;
     /** Phase 5 (persistence v5) — drive the lingering-hull boot reconstruction
      *  directly (no DB cycle) for the round-trip integration test. */
     restoreLingeringHulls: (rows: readonly SectorSnapshotLingeringHull[]) => void;
@@ -1534,7 +1530,7 @@ export class SectorRoom extends Room<SectorState> {
       droppedTicks: this.sabU32[WORKER_DROPPED_TICKS_IDX] ?? 0,
       sessionToPlayer: this.sessionToPlayer,
       ownerlessShips: this.ownerlessShips,
-      lingeringSlots: this.lingeringSlots,
+      lingeringSlots: this.lingeringSlots, forceFields: this.forceFields,
       restoreLingeringHulls: (rows) => this.restoreLingeringHullsFromSnapshot(rows),
       aiPlayerScratch: this.aiPlayerScratch,
       postToWorker: (cmd) => this.postToWorker(cmd),
@@ -2068,7 +2064,7 @@ export class SectorRoom extends Room<SectorState> {
       resolveInstanceFireMounts: (ship) => this.resolveInstanceFireMounts(ship),
       // Capital turret fire control (the resolver is built later; resolve lazily).
       currentTick: () => this.serverTick,
-      fireDroneMount: (id, i, passDebris) => this.aiFireResolver.fireMount(id, i, passDebris),
+      fireDroneMount: (id, i, passDebris, target) => this.aiFireResolver.fireMount(id, i, passDebris, target),
       fireBlocked: (id, targetId) => this.npcLocks.fireBlocked(id, targetId),
       // Friendly fire slice 2: a turret holds while an escort is on its line.
       lineOfFireBlocked: (id, targetId, fx, fy, dx, dy, max, passWrecks) =>
@@ -2121,6 +2117,7 @@ export class SectorRoom extends Room<SectorState> {
       malformed: this.malformed,
       fireAllowed: (pid, slotId) => this.locks.hasLocked(pid, slotId),
       mountBearsOnLock: (pid, mountId, ox, oy, angle, weaponId) => this.mountBearsOnLock(pid, mountId, ox, oy, angle, weaponId),
+      fireTractor: (pid, m) => this.forceFields.renewTractor(pid, m, lockKeyBodyId(this.locks.aimKeyFor(pid, m.id), this.swarmRegistry)),
     });
 
     // AI drone weapon-fire resolver. Composes the per-mount hitscan +
@@ -2137,6 +2134,7 @@ export class SectorRoom extends Room<SectorState> {
       lastFireClientTick: this.lastFireClientTick,
       swarmEntitySnapshot: (id) => this.swarmEntitySnapshot(id),
       targetShape: (id, out) => this.aiFireTargetShape(id, out),
+      fireTractor: (id, m, target) => this.forceFields.renewTractor(id, m, target),
       swarmRegistry: this.swarmRegistry,
       resolveSlotMounts: (kind, slotId) => this.resolveSlotMounts(kind, slotId),
       mountWorldOrigin: (x, y, ang, m) => this.mountWorldOrigin(x, y, ang, m),
@@ -2210,13 +2208,15 @@ export class SectorRoom extends Room<SectorState> {
         // linger-<id> body is despawned by the death policy right after).
         const ship = this.state.ships.get(shipInstanceId);
         // The parked body (linger-<id>) goes before the pieces spawn.
-        this.spawnCapitalWreck(shipInstanceId, kind, pose, ship?.maxHealth ?? getShipKind(kind).maxHealth,
+        const vaporised = this.spawnCapitalWreck(shipInstanceId, kind, pose, ship?.maxHealth ?? getShipKind(kind).maxHealth,
           this.lingeringSlots.get(shipInstanceId), `linger-${shipInstanceId}`);
         this.spawnHullScrap(kind, pose, shipInstanceId);
+        return vaporised;
       },
+      spawnWreckFromActiveHull: (playerId) => this.spawnActiveHullWreck(playerId),
       // A1 — a lingering hull died in combat: the SHIP_DESTROYED handler can't
       // find it (already out of shipsMap), so the roster wipe + XP happen here.
-      onLingeringHullDeath: (ship, pose, sourceId) => this.onLingeringHullDeath(ship, pose, sourceId),
+      onLingeringHullDeath: (ship, pose, sourceId, vaporised) => this.onLingeringHullDeath(ship, pose, sourceId, vaporised === true),
       bus: this.bus,
       broadcastDamage: (msg) => this.broadcast('damage', msg),
       broadcastDestroy: (msg) => this.broadcast('destroy', msg),
@@ -2441,7 +2441,7 @@ export class SectorRoom extends Room<SectorState> {
       },
       // Structures plan, Phase 3 — the cached slice (rebuilt at the 1 Hz grid
       // pulse / on placement), attached by reference to every recipient.
-      getStructuresSlice: () => this.structuresSlice,
+      getStructuresSlice: () => this.forceFields.beamLinks(this.structuresSlice),
       getStructureMountAngles: () => this.structureMountAnglesSlice,
       // Capital destruction S2b: the wreck descriptors (null when off).
       getWrecks: () => this.capitalWrecks?.descriptors() ?? null,
@@ -2762,7 +2762,7 @@ export class SectorRoom extends Room<SectorState> {
       findNearestAsteroid: (x, y, range) => this.findNearestAsteroid(x, y, range),
       // v4 T1 — spare power after the batteries charges teleporter capacitors.
       chargeCapacitors: (members, spare) => this.teleporters.chargeCapacitors(members, spare),
-      drawAsteroidResources: (entityId, amount) => this.drawAsteroidResources(entityId, amount),
+      drawAsteroidResources: (entityId, amount) => this.oreDraw.draw(entityId, amount),
       // P2c — asteroid kinds, extractor goods into network storage, nebulae.
       asteroidResourceOf: (entityId) => this.swarmRegistry.getByEntityId(entityId)?.asteroidResource ?? 'rock',
       depositGoods: (rec, good, n) => this.production.deposit(rec, good, n),
@@ -2910,11 +2910,11 @@ export class SectorRoom extends Room<SectorState> {
       setIrisActive: (rec, active) => this.forIrisSpan(rec, (id) => this.postToWorker({ type: 'SET_WALL_ACTIVE', id, active })),
       removeIris: (rec) => {
         this.forIrisSpan(rec, (id) => this.postToWorker({ type: 'REMOVE_WALL', id }));
-        this.postToWorker({ type: 'REMOVE_PAD_FIELD', id: `tpfield-${rec.id}` });
+        this.forceFields.remove(`tpfield-${rec.id}`);
       },
       setPadField: (rec, active) => {
         if (!isTeleporterKind(rec.kind)) return;
-        this.postToWorker({ type: 'SET_PAD_FIELD', id: `tpfield-${rec.id}`, cx: rec.x, cy: rec.y, half: PAD_SPECS[rec.kind].padRadius, active });
+        this.forceFields.set(`tpfield-${rec.id}`, { kind: 'pad', cx: rec.x, cy: rec.y, half: PAD_SPECS[rec.kind].padRadius, active });
       },
     });
     // v4 T3 — the broker reaches this room's teleporters from other sectors.
@@ -3532,141 +3532,23 @@ export class SectorRoom extends Room<SectorState> {
     this.onMessage('load_blueprint', blueprintMessage('load_blueprint'));
     this.onMessage('unload_blueprint', blueprintMessage('unload_blueprint'));
 
-    // v4 T1 — teleporters: pair, unpair, fire, rules, pad load/unload. Every
-    // message is owner-gated; a foreign / non-teleporter id is a silent no-op.
-    const ownTeleporter = (client: Client, entityId: number): StructureRecord | null => {
-      const owner = this.sessionToPlayer.get(client.sessionId);
-      const swarmRec = this.swarmRegistry.getByEntityId(entityId);
-      const rec = swarmRec ? this.structureRegistry.get(swarmRec.id) : undefined;
-      return owner && rec && rec.owner === owner && isTeleporterKind(rec.kind) ? rec : null;
-    };
-    const tpMessage = <T extends { entityId: number }>(
-      type: string,
-      schema: { safeParse(raw: unknown): { success: true; data: T } | { success: false } },
-      act: (rec: StructureRecord, msg: T, client: Client) => void,
-    ) => (client: Client, raw: unknown): void => {
-      const parsed = schema.safeParse(raw);
-      if (!parsed.success) {
-        this.malformed.record(client.sessionId, type);
-        return;
-      }
-      const rec = ownTeleporter(client, parsed.data.entityId);
-      if (rec) act(rec, parsed.data, client);
-    };
-    this.onMessage('teleport_pair', tpMessage('teleport_pair', TeleportPairSchema, (rec, msg, client) => {
-      const other = ownTeleporter(client, msg.partnerEntityId);
-      if (other) this.teleporters.pair(rec, other);
-    }));
-    // T3 — the sender's other teleporters, here and in every other sector.
-    // Any teleporter (yours or someone else's, for a pair request): it lists
-    // the SENDER's own teleporters.
-    this.onMessage('teleport_candidates', (client: Client, raw: unknown) => {
-      const parsed = TeleportCandidatesQuerySchema.safeParse(raw);
-      if (!parsed.success) {
-        this.malformed.record(client.sessionId, 'teleport_candidates');
-        return;
-      }
-      const msg = parsed.data;
-      const me = this.sessionToPlayer.get(client.sessionId);
-      const sw = this.swarmRegistry.getByEntityId(msg.entityId);
-      const rec = sw ? this.structureRegistry.get(sw.id) : undefined;
-      if (!me || !rec || !isTeleporterKind(rec.kind)) return;
-      const items: Array<{ sectorKey: string; uid: string; label: string }> = [];
-      const here = this.sectorKey ?? '';
-      for (const r of this.teleportRoom.ownTeleporters(me)) {
-        if (r === rec || r.uid === undefined) continue;
-        const km = (Math.hypot(r.x - rec.x, r.y - rec.y) / 1000).toFixed(1);
-        items.push({ sectorKey: here, uid: r.uid, label: `${getStructureKind(r.kind).displayName} · ${km} km` });
-      }
-      for (const { sectorKey, rec: r } of getTeleportBroker().ownTeleporters(me)) {
-        if (sectorKey === here || r.uid === undefined) continue;
-        const where = getSector(sectorKey)?.name ?? 'another sector';
-        items.push({ sectorKey, uid: r.uid, label: `${getStructureKind(r.kind).displayName} · ${where}` });
-      }
-      client.send('teleport_candidates', { type: 'teleport_candidates', entityId: msg.entityId, items: items.slice(0, 200) });
+    // v4 T1-T4 — teleporter messages (TeleportMessageHandlers.ts).
+    registerTeleportMessages({
+      onMessage: (type, handler) => this.onMessage(type, handler),
+      malformed: this.malformed,
+      sessionToPlayer: () => this.sessionToPlayer,
+      swarmRegistry: this.swarmRegistry,
+      structureRegistry: this.structureRegistry,
+      teleporters: () => this.teleporters,
+      teleportRoom: () => this.teleportRoom,
+      sectorKey: () => this.sectorKey,
+      now: () => this.gameClock.now(),
+      storage: () => this.storage,
+      rebuildStructuresSlice: () => this.rebuildStructuresSlice(),
+      answerToll: (pid, padId, answer) => this.answerToll(pid, padId, answer),
+      resolveOwnerName: (owner) => this.resolveOwnerName(owner),
+      relationCtx: this.relationCtx,
     });
-    // T4 — tolls: the owner sets one; riders answer the prompt.
-    this.onMessage('set_teleport_toll', tpMessage('set_teleport_toll', SetTeleportTollSchema, (rec, msg) => {
-      if (msg.toll === null || msg.toll.per1000 === 0) delete rec.tpToll;
-      else rec.tpToll = { ...msg.toll };
-      this.rebuildStructuresSlice();
-    }));
-    this.onMessage('teleport_toll_answer', (client: Client, raw: unknown) => {
-      const parsed = TollAnswerSchema.safeParse(raw);
-      if (!parsed.success) {
-        this.malformed.record(client.sessionId, 'teleport_toll_answer');
-        return;
-      }
-      const pid = this.sessionToPlayer.get(client.sessionId);
-      if (pid) this.answerToll(pid, parsed.data.padId, parsed.data.answer);
-    });
-    // T4 — ask another owner to pair their teleporter (here) with one of yours.
-    this.onMessage('teleport_pair_request', (client: Client, raw: unknown) => {
-      const parsed = TeleportPairRequestSchema.safeParse(raw);
-      if (!parsed.success) {
-        this.malformed.record(client.sessionId, 'teleport_pair_request');
-        return;
-      }
-      const pid = this.sessionToPlayer.get(client.sessionId);
-      const sw = this.swarmRegistry.getByEntityId(parsed.data.entityId);
-      const target = sw ? this.structureRegistry.get(sw.id) : undefined;
-      if (!pid || !target || !isTeleporterKind(target.kind) || !target.isConstructed || target.owner === pid || target.uid === undefined) return;
-      // v4 A — alien gates only ever link to each other; v4 H — an NPC
-      // teleporter is pre-linked by the transit network.
-      if (isFreeTeleporterKind(target.kind) || isNpcOwner(target.owner)) return;
-      if (relationOf(pid, target.owner, this.relationCtx) === 'hostile') return;
-      const here = this.sectorKey ?? '';
-      const mine = parsed.data.sectorKey === here
-        ? this.teleporters.byUid(parsed.data.uid)
-        : getTeleportBroker().find(parsed.data.sectorKey, parsed.data.uid)?.rec ?? null;
-      if (!mine || mine.owner !== pid || !mine.isConstructed) return;
-      const id = randomUUID();
-      getTeleportBroker().addRequest({
-        id, targetSector: here, targetUid: target.uid, toOwner: target.owner,
-        fromSector: parsed.data.sectorKey, fromUid: parsed.data.uid, fromOwner: pid, atMs: this.gameClock.now(),
-      });
-      const fromName = this.resolveOwnerName(pid) ?? 'A pilot';
-      const where = (sk: string): string => (sk === here ? 'here' : (getSector(sk)?.name ?? 'another sector'));
-      const label = `their ${getStructureKind(mine.kind).displayName} (${where(parsed.data.sectorKey)}) with your ${getStructureKind(target.kind).displayName} (${getSector(here)?.name ?? 'this sector'})`;
-      getTeleportBroker().sendToPlayer(target.owner, 'teleport_pair_request', { type: 'teleport_pair_request', requestId: id, fromName, label } satisfies PairRequestPrompt);
-    });
-    this.onMessage('teleport_pair_answer', (client: Client, raw: unknown) => {
-      const parsed = TeleportPairAnswerSchema.safeParse(raw);
-      if (!parsed.success) {
-        this.malformed.record(client.sessionId, 'teleport_pair_answer');
-        return;
-      }
-      const pid = this.sessionToPlayer.get(client.sessionId);
-      const broker = getTeleportBroker();
-      const req = broker.takeRequest(parsed.data.requestId, this.gameClock.now());
-      if (!pid || !req || req.toOwner !== pid || !parsed.data.accept) return;
-      const target = broker.find(req.targetSector, req.targetUid);
-      const from = broker.find(req.fromSector, req.fromUid);
-      if (!target || !from || target.rec.owner !== pid || from.rec.owner !== req.fromOwner) return;
-      target.room.teleporters.pair(target.rec, from.rec, from.room.teleporters, true);
-    });
-
-    this.onMessage('teleport_pair_remote', tpMessage('teleport_pair_remote', TeleportPairRemoteSchema, (rec, msg) => {
-      if (msg.sectorKey === (this.sectorKey ?? '')) {
-        const other = this.teleporters.byUid(msg.uid);
-        if (other && other.isConstructed) this.teleporters.pair(rec, other);
-        return;
-      }
-      const f = getTeleportBroker().find(msg.sectorKey, msg.uid);
-      if (f && f.rec.owner === rec.owner) this.teleporters.pair(rec, f.rec, f.room.teleporters);
-    }));
-    this.onMessage('teleport_unpair', tpMessage('teleport_unpair', TeleportUnpairSchema, (rec) => this.teleporters.unpair(rec)));
-    this.onMessage('teleport_fire', tpMessage('teleport_fire', TeleportFireSchema, (rec) => { this.teleporters.fire(rec, this.gameClock.now()); }));
-    this.onMessage('set_teleport_rules', tpMessage('set_teleport_rules', SetTeleportRulesSchema, (rec, msg) => this.teleporters.setRules(rec, msg.rules)));
-    this.onMessage('teleport_pad_load', tpMessage('teleport_pad_load', TeleportPadLoadSchema, (rec, msg) => {
-      if (!isTeleporterKind(rec.kind) || !rec.isConstructed) return;
-      this.storage.padLoad(rec, msg.good, msg.qty, PAD_SPECS[rec.kind].padCapacity);
-      this.rebuildStructuresSlice();
-    }));
-    this.onMessage('teleport_pad_unload', tpMessage('teleport_pad_unload', TeleportPadUnloadSchema, (rec) => {
-      this.storage.padUnload(rec);
-      this.rebuildStructuresSlice();
-    }));
 
     // F3 — a player edits their own faction's policy (owner = the session).
     this.onMessage('set_faction_policy', (client: Client, raw: unknown) => {
@@ -4238,6 +4120,9 @@ export class SectorRoom extends Room<SectorState> {
       const activeHull = this.getActiveShip(evt.targetId);
       const destroyedShip = activeHull ?? this.state.ships.get(evt.targetId);
       const victimPlayerId = activeHull ? evt.targetId : destroyedShip?.playerId;
+      // Its death policy noted a vaporised hull just before this emit.
+      const vaporised = this.vaporisedActiveDeath === evt.targetId;
+      this.vaporisedActiveDeath = null;
 
       const killerUser = this.playerToUser.get(evt.shooterId) ?? null;
       const victimUser = victimPlayerId !== undefined
@@ -4289,7 +4174,8 @@ export class SectorRoom extends Room<SectorState> {
           const b = slot !== undefined ? slotBase(slot) : -1;
           const pose = this.shipPoseCache.get(evt.targetId)
             ?? (b >= 0 ? { x: this.sabF32[b + SLOT_X_OFF]!, y: this.sabF32[b + SLOT_Y_OFF]!, vx: this.sabF32[b + SLOT_VX_OFF]!, vy: this.sabF32[b + SLOT_VY_OFF]! } : undefined);
-          this.spillOrLoseShipHold(destroyedShip.shipInstanceId, evt.targetId, pose, 'death');
+          this.spillOrLoseShipHold(destroyedShip.shipInstanceId, evt.targetId, pose, 'death',
+            { kind: destroyedShip.kind, vaporised, shooterId: evt.shooterId });
         }
         this.deleteRosterRow(destroyedShip.shipInstanceId);
       }
@@ -4303,24 +4189,7 @@ export class SectorRoom extends Room<SectorState> {
         this.evictOwnerlessShip(destroyedShip.shipInstanceId);
       }
 
-      // S2a — a dying ACTIVE capital breaks into wreck bodies (flag on). The
-      // dead hull stops being a ship: its worker body is despawned (the slot
-      // stays allocated for respawn / pilot swap, which re-spawn the body),
-      // so the pieces never overlap a corpse collider.
-      // Sub-capital break-up slice 2: the same for a breaking sub-capital.
-      if (activeHull !== undefined && activeHull.alive === false && this.capitalWrecks !== null && this.wreckKindAllowed(activeHull.kind)) {
-        const slot = this.playerToSlot.get(evt.targetId);
-        if (slot !== undefined) {
-          const b = slotBase(slot);
-          this.spawnCapitalWreck(evt.targetId, activeHull.kind, {
-            x: this.sabF32[b + SLOT_X_OFF]!, y: this.sabF32[b + SLOT_Y_OFF]!,
-            vx: this.sabF32[b + SLOT_VX_OFF]!, vy: this.sabF32[b + SLOT_VY_OFF]!,
-            angle: this.sabF32[b + SLOT_ANGLE_OFF]!, angvel: this.sabF32[b + SLOT_ANGVEL_OFF]!,
-          }, activeHull.maxHealth > 0 ? activeHull.maxHealth : getShipKind(activeHull.kind).maxHealth,
-          // The body goes BEFORE the pieces spawn (only when there are pieces).
-          slot, evt.targetId);
-        }
-      }
+      // S2a: an ACTIVE hull's wreck comes from its death policy (`spawnActiveHullWreck`).
 
       // Scrap-on-death (Phase 2b-ii) — break a dying ACTIVE composite hull into
       // floating scrap. Only the active-hull case (we have a playerId-keyed slot
@@ -4547,14 +4416,14 @@ export class SectorRoom extends Room<SectorState> {
   private resolveLockTarget(pid: string, key: string, out: LockTargetView): boolean {
     if (key.startsWith('s:')) {
       const rec = this.swarmRegistry.getByEntityId(Number(key.slice(2)));
-      if (!rec || (rec.kind !== 1 && rec.kind !== 2)) return false; // asteroids / scrap: no
+      if (!rec || !swarmLockEligible(rec.kind, out)) return false; // terrain: never hostile
       if (rec.kind === 2) {
         // A structure outside the registry (testMode `structurePoses`
         // fixtures) has no owner: lockable, never hostile (failsafe first).
         const owner = this.structureRegistry.get(rec.id)?.owner;
         if (owner === pid) return false; // never your own base
         out.hostile = owner !== undefined && relationOf(pid, owner, this.relationCtx) === 'hostile';
-      } else {
+      } else if (!out.terrain) {
         out.hostile = this.npcHostileTo(rec.id, pid);
       }
       if (!this.swarmEntityPoseInto(rec.id, this._lockPose)) return false;
@@ -4571,7 +4440,7 @@ export class SectorRoom extends Room<SectorState> {
       out.x = p.x; out.y = p.y; out.vx = p.vx; out.vy = p.vy;
       // Fire shape: the hit shape the pilot's ship is hit on (shipHitShape).
       fillFireTargetShape(out, p.x, p.y, p.angle, true, ship.kind, ship.shield > 0, 0);
-      out.hostile = false; // PvP always runs the failsafe first
+      out.hostile = false; out.terrain = false; // PvP always runs the failsafe first
       return true;
     }
     return false;
@@ -4582,7 +4451,7 @@ export class SectorRoom extends Room<SectorState> {
     const tick = this.serverTick;
     if (key.startsWith('s:')) {
       const rec = this.swarmRegistry.getByEntityId(Number(key.slice(2)));
-      if (!rec) return;
+      if (!rec || isTerrainLockKind(rec.kind)) return; // terrain: never a hostile act (no ledger, aggro, log)
       if (rec.kind === 2) {
         const owner = this.structureRegistry.get(rec.id)?.owner;
         if (owner !== undefined) this.hostileActs.record(pid, owner, this.gameClock.now());
@@ -5160,6 +5029,7 @@ export class SectorRoom extends Room<SectorState> {
     }
     // Phase 4 warp travel: a ship on its run is out of the world (an NPC's too, W2a).
     if (this.warpTravel.isTravelling(targetId)) return false;
+    if (weaponId !== undefined && damage > 0) this.oreDraw.onHit(targetId, shooterId, damage, weaponId);
     if (this.npcWarps.size > 0 && this.botWarpPhase(targetId) === 2) return false;
     // v4 A — alien gates can't be damaged; whoever hits one is disabled.
     if (this.gateGuard.gateCount > 0 && this.gateGuard.isGate(targetId)) {
@@ -5253,6 +5123,14 @@ export class SectorRoom extends Room<SectorState> {
         const ship = this.getActiveShip(id) ?? this.state.ships.get(id);
         return ship !== undefined && this.wreckKindAllowed(ship.kind) ? (ship.kind as ShipKindId) : null;
       },
+      // The livery owner, as the client resolves it for the live hull: a
+      // player hull (active by playerId, parked by shipInstanceId) its
+      // pilot's id, a patrol its faction (snapshot `fac`), else none.
+      ownerOf: (id) => {
+        if (this.swarmRegistry.has(id)) return this.patrols.count > 0 ? this.patrols.factionOf(id) : undefined;
+        const ship = this.getActiveShip(id) ?? this.state.ships.get(id);
+        return ship !== undefined && ship.playerId !== '' ? ship.playerId : undefined;
+      },
       positionOf: (id) => {
         const p = this.shipPoseCache.get(id) ?? this.lingeringPoseCache.get(id);
         if (p) return { x: p.x, y: p.y };
@@ -5314,10 +5192,31 @@ export class SectorRoom extends Room<SectorState> {
     }
   }
 
+  /** S2a: a dying ACTIVE hull breaks into wreck bodies, its worker body
+   *  despawned (the slot stays for respawn / pilot swap). Called by its death
+   *  policy BEFORE the `destroy` broadcast; true = vaporised (fracture v11).
+   *  A vaporised death is noted for the `SHIP_DESTROYED` handler's pod
+   *  (`vaporisedActiveDeath`: emitted right after, same call stack). */
+  private spawnActiveHullWreck(playerId: string): boolean {
+    this.vaporisedActiveDeath = null;
+    const activeHull = this.getActiveShip(playerId);
+    const slot = this.playerToSlot.get(playerId);
+    if (activeHull === undefined || slot === undefined || activeHull.alive !== false || this.capitalWrecks === null || !this.wreckKindAllowed(activeHull.kind)) return false;
+    const b = slotBase(slot);
+    const vaporised = this.spawnCapitalWreck(playerId, activeHull.kind, {
+      x: this.sabF32[b + SLOT_X_OFF]!, y: this.sabF32[b + SLOT_Y_OFF]!, vx: this.sabF32[b + SLOT_VX_OFF]!, vy: this.sabF32[b + SLOT_VY_OFF]!,
+      angle: this.sabF32[b + SLOT_ANGLE_OFF]!, angvel: this.sabF32[b + SLOT_ANGVEL_OFF]!,
+    }, activeHull.maxHealth > 0 ? activeHull.maxHealth : getShipKind(activeHull.kind).maxHealth, slot, playerId);
+    if (vaporised) this.vaporisedActiveDeath = playerId;
+    return vaporised;
+  }
+  /** The playerId whose ACTIVE hull was just vaporised, for its pod's
+   *  vaporised salvage; read and cleared by the `SHIP_DESTROYED` handler. */
+  private vaporisedActiveDeath: string | null = null;
+
   /** S2a: a dying capital (any liveness class) breaks into wreck bodies.
-   *  `targetId` is the id its hits were tracked under. Returns pieces spawned;
-   *  0 when the flag is off or the kind isn't a capital. Call while the
-   *  dying body is live; `bodySlot` / `bodyId` name its worker body, which
+   *  `targetId` is the id its hits were tracked under. True when a cut kill
+   *  vaporised it (fracture v11). Call while the dying body is live; `bodySlot` / `bodyId` name its worker body, which
    *  is despawned BEFORE the pieces spawn (the worker may step between two
    *  commands, so a later despawn left the pieces overlapping the hull for
    *  a step; `CapitalWreckSubsystem.onDeath`). The caller's own despawn
@@ -5327,13 +5226,13 @@ export class SectorRoom extends Room<SectorState> {
     pose: { x: number; y: number; vx: number; vy: number; angle: number; angvel?: number },
     maxHull: number,
     bodySlot?: number, bodyId?: string,
-  ): number {
-    if (this.capitalWrecks === null || !this.wreckKindAllowed(kindId)) return 0;
+  ): boolean {
+    if (this.capitalWrecks === null || !this.wreckKindAllowed(kindId)) return false;
     const despawn = bodySlot !== undefined && bodyId !== undefined
       ? () => this.postToWorker({ type: 'DESPAWN', slot: bodySlot, playerId: bodyId })
       : undefined;
     return this.capitalWrecks.onDeath(targetId, kindId as ShipKindId,
-      { x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy, angle: pose.angle, angvel: pose.angvel ?? 0 }, maxHull, despawn);
+      { x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy, angle: pose.angle, angvel: pose.angvel ?? 0 }, maxHull, despawn).vaporised;
   }
 
   /** LoadShedder: can ANY connected player see this drone? The same view the
@@ -5379,26 +5278,27 @@ export class SectorRoom extends Room<SectorState> {
    * component; polygon kinds (fighter/scout/…) yield nothing. Reads the pose
    * off the SAB via `rec.slot`.
    */
-  private spawnScrapFromDrone(rec: SwarmEntityRecord): void {
+  private spawnScrapFromDrone(rec: SwarmEntityRecord): boolean {
     // Anti-recursion: a dying SCRAP piece (kind 3) routes through the same
     // drone-leaf death policy, but its rec.shipKind is the PARENT composite
     // kind (which has scrap groups) — without this guard a destroyed scrap
     // piece would shatter into more scrap forever. Only a DRONE (kind 1) death
     // spawns scrap here.
-    if (rec.kind === SWARM_KIND_SCRAP) return;
+    if (rec.kind === SWARM_KIND_SCRAP) return false;
     // S2a — a capital drone breaks into wreck bodies (flag on). Pose from the
     // SAB: the drone's body is still live here (evicted right after).
     // Sub-capital break-up slice 2: any kind whose profile breaks (flags).
+    let vaporised = false; // fracture v11: the eviction's `destroy` says so
     if (this.capitalWrecks !== null && rec.kind === SWARM_KIND_DRONE && rec.shipKind && this.wreckKindAllowed(rec.shipKind)) {
       const wb = slotBase(rec.slot);
-      this.spawnCapitalWreck(rec.id, rec.shipKind!, {
+      vaporised = this.spawnCapitalWreck(rec.id, rec.shipKind!, {
         x: this.sabF32[wb + SLOT_X_OFF]!, y: this.sabF32[wb + SLOT_Y_OFF]!,
         vx: this.sabF32[wb + SLOT_VX_OFF]!, vy: this.sabF32[wb + SLOT_VY_OFF]!,
         angle: this.sabF32[wb + SLOT_ANGLE_OFF]!, angvel: this.sabF32[wb + SLOT_ANGVEL_OFF]!,
       }, droneMaxHealthOf(rec) ?? 1, rec.slot, rec.id);
     }
     const kind = getShipKind(rec.shipKind);
-    if (shipScrapGroups(kind.id).length === 0) return; // polygon kind ⇒ no scrap
+    if (shipScrapGroups(kind.id).length === 0) return vaporised; // polygon kind ⇒ no scrap
     const b = slotBase(rec.slot);
     const pose = {
       x:     this.sabF32[b + SLOT_X_OFF]!,
@@ -5408,6 +5308,7 @@ export class SectorRoom extends Room<SectorState> {
       angle: this.sabF32[b + SLOT_ANGLE_OFF]!,
     };
     this.scrapSpawner.spawnFromDeath(kind.id, pose, `scrap-${rec.id}`);
+    return vaporised;
   }
 
   /**
@@ -5442,7 +5343,7 @@ export class SectorRoom extends Room<SectorState> {
    */
   private evictSwarmEntity(
     rec: SwarmEntityRecord,
-    opts: { broadcast: boolean; emitDestroyed: boolean; shooterId?: string },
+    opts: { broadcast: boolean; emitDestroyed: boolean; shooterId?: string; vaporised?: boolean },
   ): void {
     // A turret's kill mid-tick must not leave the evicted drone selectable by
     // the next turret in the same tick (the linear scan never saw it).
@@ -5501,7 +5402,7 @@ export class SectorRoom extends Room<SectorState> {
     // destroyed in combat loses its contents. A pod the LootSubsystem despawns
     // itself (pickup / TTL) is already off its books, so `isPod` is false then.
     if (opts.emitDestroyed && rec.kind === SWARM_KIND_DRONE) {
-      this.dropKillLoot(rec, opts.shooterId);
+      this.dropKillLoot(rec, opts.shooterId, opts.vaporised === true);
     }
     // C3 — an NPC loot hold (memory only) goes with its ship. Trade and convoy
     // haulers keep theirs: their cargo travels with them between sectors.
@@ -5581,6 +5482,7 @@ export class SectorRoom extends Room<SectorState> {
     this.hostileActs.sweep(this.gameClock.now());
     if (this.patrols.count > 0) this.patrols.tick(this.gameClock.now());
     this.gateGuard.sweep(this.gameClock.now());
+    this.oreDraw.flush(); // mining-laser ore owed since the last pulse
     if (this.structureRegistry.size === 0) return;
     const result = this.structureGrid.pulse(this.gameClock.now());
     // P2b — processors take inputs from and put outputs into network storage.
@@ -6359,17 +6261,19 @@ export class SectorRoom extends Room<SectorState> {
   private readonly _asteroidNotExhausted = (rec: SwarmEntityRecord): boolean =>
     rec.resources === undefined || rec.resources > 0;
 
-  /** WS-4 / R2.27 — draw up to `amount` from an asteroid's finite resource pool;
-   *  returns the amount ACTUALLY mined (0 once exhausted). The ONLY path that
-   *  depletes asteroid resources — combat never reaches it (asteroid-interaction
-   *  -model ADR). `resources===undefined` (un-seeded) ⇒ treat as infinite
-   *  (returns the full `amount`, the pre-WS-4 behaviour). */
-  private drawAsteroidResources(entityId: number, amount: number): number {
-    const rec = this.swarmRegistry.getByEntityId(entityId);
-    if (!rec || rec.resources === undefined) return amount;
-    const drawn = Math.min(amount, rec.resources);
-    rec.resources -= drawn;
-    return drawn;
+  /** Where a shooter's mined ore goes (`OreDraw.flush`): a live pilot's
+   *  rostered hull (#17 ACTIVE + alive, as loot pickup), or a `collectsLoot`
+   *  NPC's ownerless hold. Anything else has no hold: the rock keeps its ore. */
+  private oreHolderOf(id: string, out: OreHolder): boolean {
+    const ship = this.getActiveShip(id);
+    if (ship?.alive === true && ship.isActive && this.sectorKey !== null && getPlayerShipStore().get(ship.shipInstanceId) !== null) {
+      out.uid = ship.shipInstanceId; out.ownerId = id; out.capacity = this.shipCargoCapacity(ship.kind, ship.shipInstanceId);
+      return true;
+    }
+    const rec = this.swarmRegistry.get(id);
+    if (rec?.kind !== 1 || getShipKind(rec.shipKind).collectsLoot !== true) return false;
+    out.uid = rec.id; out.ownerId = null; out.capacity = cargoCapacityForMaxHealth(getShipKind(rec.shipKind));
+    return true;
   }
 
   /** WS-4 Phase 3 / R2.27 — apply the mining beam's light player-damage RAY:
@@ -10075,11 +9979,13 @@ export class SectorRoom extends Room<SectorState> {
     ship: { shipInstanceId: string; playerId: string; kind: string },
     pose: { x: number; y: number; vx: number; vy: number } | undefined,
     sourceId: string,
+    vaporised = false,
   ): void {
     this.awardKillXp(sourceId, getShipKind(ship.kind).maxHealth);
     // Hardcore: the dead hull's hold spills where it died (atomic with the
-    // ship-hold delete). With no pose the hold is simply lost.
-    this.spillOrLoseShipHold(ship.shipInstanceId, ship.playerId, pose, 'lingering_death');
+    // ship-hold delete), with its hull salvage. With no pose both are lost.
+    this.spillOrLoseShipHold(ship.shipInstanceId, ship.playerId, pose, 'lingering_death',
+      { kind: ship.kind, vaporised, shooterId: sourceId });
     this.deleteRosterRow(ship.shipInstanceId);
     const timer = this.ownerlessShips.get(ship.shipInstanceId);
     if (timer) clearTimeout(timer);
@@ -10089,26 +9995,37 @@ export class SectorRoom extends Room<SectorState> {
   // ── Living World P1a — loot hooks ────────────────────────────────────────
 
   /** Spill a ship's carried hold at `pose` (one atomic group). Without a pose
-   *  the hold is deleted and audited as lost — never left orphaned. */
+   *  the hold is deleted and audited as lost — never left orphaned. `death`
+   *  (not an abandon): its kind's hull loot joins the pod beside the kill, as
+   *  an AI pilot's ship drops it (owner 2026-11-15; `deathHullLoot`). */
   private spillOrLoseShipHold(
     shipInstanceId: string,
     playerId: string,
     pose: { x: number; y: number; vx: number; vy: number } | undefined,
     cause: string,
+    death?: { kind: string; vaporised: boolean; shooterId: string },
   ): void {
     // P5 — installed blueprints are lost with the ship (death or abandon).
     this.dropFitted(shipInstanceId);
-    if (shipInstanceId === '' || this.loot.shipHold(shipInstanceId) === undefined) return;
+    if (shipInstanceId === '') return;
+    const carried = this.loot.shipHold(shipInstanceId) !== undefined;
+    if (!carried && (death === undefined || pose === undefined)) return;
     if (pose !== undefined) {
-      // Living World P1a-2 — an ABANDONED hull becomes a salvageable derelict
-      // (fly alongside to salvage over time); a death spills an instant pod.
-      this.loot.spillShipHold(shipInstanceId, pose.x, pose.y, pose.vx, pose.vy, cause, {
-        player: true, derelict: cause === 'abandoned',
-      });
+      if (death !== undefined) {
+        const hull = deathHullLoot(shipInstanceId, death.kind, death.vaporised);
+        const spot = this.podSpot(hashString(shipInstanceId), pose.x, pose.y, getShipKind(death.kind).radius, death.shooterId);
+        this.loot.spillShipHold(shipInstanceId, spot.x, spot.y, pose.vx, pose.vy, cause, { player: true, extra: hull });
+      } else {
+        // Living World P1a-2 — an ABANDONED hull becomes a salvageable derelict
+        // (fly alongside to salvage over time).
+        this.loot.spillShipHold(shipInstanceId, pose.x, pose.y, pose.vx, pose.vy, cause, {
+          player: true, derelict: cause === 'abandoned',
+        });
+      }
     } else {
       getHoldStore().delete(shipInstanceId, this.sectorKey !== null);
     }
-    auditEvent({ event: 'cargo_lost', sector: this.sectorKey ?? undefined, playerId, shipInstanceId, cause });
+    if (carried) auditEvent({ event: 'cargo_lost', sector: this.sectorKey ?? undefined, playerId, shipInstanceId, cause });
   }
 
   /** A ship's cargo capacity: its hull class, raised by a fitted Cargo
@@ -10704,35 +10621,11 @@ export class SectorRoom extends Room<SectorState> {
     return a === null ? null : { entityId: a.entityId, x: a.x, y: a.y, radius: a.radius };
   }
 
-  /** W6 — LivingWorldRoom hook: a robot harvester mines a rock. Ore comes out
-   *  of the SAME finite pool the Miner draws from (`drawAsteroidResources`)
-   *  and splits by the SAME yield (`asteroidYield`); the draw is sized to the
-   *  hold's free weight first, so no ore is burned into a full hold. The new
-   *  hold is one commit (an ownerless NPC hold, like LootCollector's npc
-   *  pickups), so a killed harvester spills what it mined. Control cadence. */
+  /** W6 — LivingWorldRoom hook: a robot harvester mines a rock into its
+   *  ownerless hold (`OreDraw.mine`, the Miner's pool and yield), so a killed
+   *  harvester spills what it mined. Control cadence. */
   mineAsteroid(harvesterId: string, entityId: number, maxUnits: number, capacity: number): number {
-    const rock = this.swarmRegistry.getByEntityId(entityId);
-    if (!rock || rock.kind !== 0) return 0;
-    const store = getHoldStore();
-    const cur = store.get(harvesterId);
-    const hold = cur ? cloneHold(cur.hold) : emptyHold();
-    const before = holdWeight(hold);
-    const resource = rock.asteroidResource ?? 'rock';
-    const want = Math.min(maxUnits, Math.floor((capacity - before) / asteroidYieldWeightPerUnit(resource)));
-    if (want <= 0) return 0;
-    const drawn = this.drawAsteroidResources(entityId, want);
-    if (drawn <= 0) return 0;
-    const yieldOf = asteroidYield(resource, drawn);
-    for (const g of GOOD_IDS) {
-      const n = yieldOf[g] ?? 0;
-      if (n > 0) hold.goods[g] = (hold.goods[g] ?? 0) + n;
-    }
-    store.commit(
-      [{ holderUid: harvesterId, holderType: 'hauler', ownerId: null, sectorKey: this.sectorKey, x: null, y: null, hold, expiresAt: null }],
-      [],
-      this.sectorKey !== null,
-    );
-    return holdWeight(hold) - before;
+    return this.oreDraw.mine(harvesterId, null, entityId, maxUnits, capacity);
   }
 
   raidStorage(harvesterId: string, owner: string, uid: string, stepWeight: number): number {
@@ -11072,13 +10965,8 @@ export class SectorRoom extends Room<SectorState> {
     return this.aiController.isEntityHostileToPlayer(entityId, playerId, this.playerTruce(playerId));
   }
 
-  private dropKillLoot(rec: SwarmEntityRecord, shooterId?: string): void {
+  private dropKillLoot(rec: SwarmEntityRecord, shooterId?: string, vaporised = false): void {
     const b = slotBase(rec.slot);
-    const cx = this.sabF32[b + SLOT_X_OFF]!;
-    const cy = this.sabF32[b + SLOT_Y_OFF]!;
-    // The pod keeps the ship's velocity, so it drifts with the wreck.
-    const vx = this.sabF32[b + SLOT_VX_OFF]!;
-    const vy = this.sabF32[b + SLOT_VY_OFF]!;
     // C3 — an NPC ship's loot IS its hold: rolled once from a seed (so a
     // break-in that already took some leaves less to drop), and a trade
     // hauler's hold is its cargo. Anything with a hold spills where it died.
@@ -11086,46 +10974,31 @@ export class SectorRoom extends Room<SectorState> {
     // An NPC drop is an ordinary pod (its contents' tier), never the bright
     // dead-player spill tier (owner 2026-11-13).
     if (!isHoldEmpty(hold)) {
-      // Beside the wreck, not in it (owner's v5 film, 2026-11-13): a pod at
-      // the hull's centre took the rest of the salvo at once (a second blast
-      // and a damage number ~1 s after each death) and hid the break-up. It
-      // spawns just outside the hull, to the SIDE of the killer's line of
-      // fire (the far side is where the misses go); side and, with no known
-      // killer, direction are seeded from the ship's id (deterministic).
-      const h = hashString(`${rec.id}:${rec.entityId}`);
-      let ux = 0;
-      let uy = 0;
-      let sx = Number.NaN;
-      let sy = Number.NaN;
-      if (shooterId !== undefined && shooterId !== '') {
-        const p = this.shipPoseCache.get(shooterId) ?? this.lingeringPoseCache.get(shooterId);
-        if (p !== undefined) { sx = p.x; sy = p.y; }
-        else {
-          const srec = this.swarmRegistry.get(shooterId);
-          if (srec) {
-            const sb = slotBase(srec.slot);
-            sx = this.sabF32[sb + SLOT_X_OFF]!;
-            sy = this.sabF32[sb + SLOT_Y_OFF]!;
-          }
-        }
-      }
-      const lx = cx - sx;
-      const ly = cy - sy;
-      const ll = Math.hypot(lx, ly);
-      if (ll > 1e-6) {
-        const side = (h & 1) === 0 ? 1 : -1;
-        ux = (-ly / ll) * side;
-        uy = (lx / ll) * side;
-      } else {
-        const a = (h / 4294967296) * 2 * Math.PI;
-        ux = Math.cos(a);
-        uy = Math.sin(a);
-      }
-      const off = rec.radius * KILL_POD_CLEAR_RADII + getShipKind('cargo-pod').radius;
-      this.loot.spillShipHold(rec.id, cx + ux * off, cy + uy * off, vx, vy, isHaulerId(rec.id) ? 'hauler-raided' : 'kill', { player: false });
+      const key = `${rec.id}:${rec.entityId}`;
+      // Vaporised (owner 2026-11-15): its hull salvage still aboard × 1.5.
+      const extra = vaporised ? vaporisedSalvageExtra(key, rec.shipKind, rec.elite !== undefined, hold.goods.salvage ?? 0) : undefined;
+      const spot = this.podSpot(hashString(key), this.sabF32[b + SLOT_X_OFF]!, this.sabF32[b + SLOT_Y_OFF]!, rec.radius, shooterId);
+      // The pod keeps the ship's velocity, so it drifts with the wreck.
+      this.loot.spillShipHold(rec.id, spot.x, spot.y, this.sabF32[b + SLOT_VX_OFF]!, this.sabF32[b + SLOT_VY_OFF]!,
+        isHaulerId(rec.id) ? 'hauler-raided' : 'kill', extra !== undefined ? { player: false, extra } : { player: false });
     }
     else getHoldStore().delete(rec.id, false);
   }
+
+  /** `killPodSpot` for a dead ship at (cx, cy), the killer's live pose looked
+   *  up by id (pilot, parked hull or swarm ship). Returns the reused `_podSpot`. */
+  private podSpot(seed: number, cx: number, cy: number, hullRadius: number, shooterId?: string): { x: number; y: number } {
+    let sx = Number.NaN;
+    let sy = Number.NaN;
+    if (shooterId !== undefined && shooterId !== '') {
+      const p = this.shipPoseCache.get(shooterId) ?? this.lingeringPoseCache.get(shooterId);
+      const srec = p === undefined ? this.swarmRegistry.get(shooterId) : undefined;
+      if (p !== undefined) { sx = p.x; sy = p.y; }
+      else if (srec) { sx = this.sabF32[slotBase(srec.slot) + SLOT_X_OFF]!; sy = this.sabF32[slotBase(srec.slot) + SLOT_Y_OFF]!; }
+    }
+    return killPodSpot(this._podSpot, seed, cx, cy, hullRadius, sx, sy);
+  }
+  private readonly _podSpot = { x: 0, y: 0 };
 
   /**
    * C3 — an NPC ship's hold: a trade hauler's real cargo, or (any other NPC)
@@ -11141,9 +11014,7 @@ export class SectorRoom extends Room<SectorState> {
     // Roll this spawn's loot table ONCE, on top of anything it already
     // carries (a nexus hoard, a harvester's scoop, a hauler's cargo).
     this.npcLootRolled.add(key);
-    const rng = stream(hashString(key), 'npc-hold');
-    const f = (): number => rng.u32() / 4294967296;
-    const loot = rec.elite !== undefined ? rollEliteLoot(rec.shipKind, f) : rollLoot(rec.shipKind, f);
+    const loot = rollHullLoot(key, rec.shipKind, rec.elite !== undefined);
     if (row !== undefined) {
       if (isHoldEmpty(loot)) return row.hold;
       const merged = cloneHold(row.hold);
@@ -11865,6 +11736,7 @@ export class SectorRoom extends Room<SectorState> {
     // Capital wrecks: pieces whose crack delay is over get their slow
     // separating kick (no-op with no wreck holding together).
     this.capitalWrecks?.tick();
+    this.forceFields.tickTractors(); // tractor leases: re-pose, expire
 
     // Tick-budget telemetry. Cumulative phase totals across the last ~60 ticks
     // are emitted as one server event per second. The first capture told us

@@ -5,7 +5,7 @@
  */
 import { generateAsteroidVertices } from '../../../core/swarm/asteroidShape.js';
 import { distanceInside, gridFor, hashStr, rasterPoly, rng, type Poly } from './raster.js';
-import { lin, MAT, newFields, setAlbedo, valueNoise, type Fields } from './fields.js';
+import { lin, MAT, newFields, setAlbedo, valueNoise, type Fields } from './fieldsCore.js';
 
 /** Rock base colours: plain, ice, crystal (the game's asteroid tints). */
 export const ROCK_COLORS: Record<string, number> = { rock: 0x7a6248, ice: 0x8fb4c8, crystal: 0x8a6fb0 };
@@ -15,8 +15,8 @@ export const ROCK_COLORS: Record<string, number> = { rock: 0x7a6248, ice: 0x8fb4
  * (`generateAsteroidVertices`, drawn with y flipped like `buildAsteroidGfx`).
  * A rounded, lumpy body with craters; matte rock, no paint or lights.
  */
-export function forgeRock(entityId: number, radius: number, resource: string | undefined, opts: { ppu: number }): Fields {
-  const outline: Poly = generateAsteroidVertices(entityId, radius).map((v) => [v.x, -v.y] as const);
+export function forgeRock(shapeSeed: number, radius: number, resource: string | undefined, opts: { ppu: number }): Fields {
+  const outline: Poly = generateAsteroidVertices(shapeSeed, radius).map((v) => [v.x, -v.y] as const);
   const g = gridFor([outline], opts.ppu, 2);
   const base = ROCK_COLORS[resource ?? 'rock'] ?? ROCK_COLORS['rock']!;
   const f = newFields(g, base);
@@ -27,7 +27,7 @@ export function forgeRock(entityId: number, radius: number, resource: string | u
   let maxD = 0;
   for (let i = 0; i < n; i++) if (dist[i]! > maxD) maxD = dist[i]!;
   const maxDu = Math.max(0.5, maxD / g.ppu);
-  const seed = hashStr(`rock:${entityId}`);
+  const seed = hashStr(`rock:${shapeSeed}`);
   const R = rng(seed);
   // A few craters, each a shallow bowl with a raised rim.
   const craters: Array<{ x: number; y: number; r: number }> = [];

@@ -4,7 +4,8 @@
  * Pure.
  */
 import { gridFor, rasterPoly } from './raster.js';
-import { lin, MAT, newFields, paintOf, PALETTE, setAlbedo, type Fields, type TurretGunSpec } from './fields.js';
+import { lin, MAT, newFields, paintOf, PALETTE, setAlbedo, type Fields } from './fieldsCore.js';
+import type { TurretGunSpec } from './fields.js';
 
 /**
  * A tractor emitter seen from above (mining barge): a round dish on a

@@ -14,6 +14,8 @@ EQX Peri ships come in **kinds** — distinct hulls with their own physics, AI t
 
 **Nose turrets (2026-11-14):** the fighter, scout and heavy (and the robot-square, robot-circle and robot-hexagon) carry a nose turret that trains ±20° off the nose (4 rad/s on fighter-sized hulls, 3 rad/s on heavier ones), for every pilot. Detail: [weapon-mounts.md](../architecture/weapon-mounts.md#nose-turrets-2026-11-14).
 
+**Livery (2026-11-15):** with detailed (Machined) art every hull is grey with its owner faction's colour painted on (capitals' weathered bow and stern sections, small ships' nose, wingtip and tail flashes); each faction has its own section-edge shape, and every player is their own faction. Detail: [art-direction.md](../architecture/art-direction.md#ship-livery).
+
 Numbers derive from the steady-state formula `v_terminal = thrustImpulse · boost / (1 − e^(−damping/60))` at the fixed 60 Hz step. See [docs/architecture/ship-physics-handling.md](../architecture/ship-physics-handling.md) for the full model.
 
 ## Picker UI

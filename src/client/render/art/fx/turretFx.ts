@@ -282,31 +282,10 @@ export function railVentPuff(t: number, k: number, g: RailGeom, out: RailPuff): 
 
 // ------------------------------------------------------- the slug's wake
 
-/** How long a piece of a railgun slug's ion wake lasts after the slug passed
- *  it: it thins, spreads and is gone in 0.7 s (a dispersing wisp, not a
- *  lingering line). */
-export const SLUG_WAKE_LIFE_S = 0.7;
-/** The slug's head is a short white-hot streak as long as its travel over
- *  this many 60 fps frames of game time (motion blur: ~160 u at 6,450 u/s),
- *  so it reads as a fast SLUG; a ~1 km streak read as a laser needle. */
-export const SLUG_HEAD_FRAMES = 1.5;
-/** ...but never shorter than this many of its own widths (the minimum
- *  on-screen size: the width already has a pixel floor at far zoom). */
-export const SLUG_HEAD_MIN_ASPECT = 5;
-/** How far the wake trails behind the slug's head, in head lengths (~800 u
- *  at real speed, the last ~0.12 s of flight): a short tail that starts
- *  behind the head. In head lengths so the minimum-size floor, which
- *  lengthens the head at far zoom, lengthens the tail with it. */
-export const SLUG_WAKE_TAIL = 5;
-/** Fresh out of the barrel the tail grows at this fraction of the slug's
- *  speed, so its back end leaves the muzzle too: a tail pinned to the muzzle
- *  is a line out of the barrel, which reads as a laser. */
-export const SLUG_WAKE_GROW = 0.5;
-
-/** The slug head's drawn length (u) at `speed` (u/s), `width` (u) wide. */
-export function slugHeadLength(speed: number, width: number): number {
-  return Math.max((speed * SLUG_HEAD_FRAMES) / 60, width * SLUG_HEAD_MIN_ASPECT);
-}
+/** How long a railgun slug's ion wake lingers where it passed (the owner's
+ *  pick, 2026-11-15: v4's long trail back toward the muzzle). Each piece
+ *  fades, spreads and drifts over this life from when the slug passed it. */
+export const SLUG_WAKE_LIFE_S = 1.6;
 /** The wake's violet-blue. */
 export const SLUG_WAKE_TINT = 0x9a86ff;
 
@@ -315,13 +294,11 @@ export function slugWakeSegments(quality: EffectQuality): number {
   return quality === 'high' ? 10 : quality === 'medium' ? 6 : quality === 'low' ? 3 : 0;
 }
 
-/** A wake piece `age` s after the slug passed it, `along` (0..1) of the
- *  tail behind the slug: its alpha (0 = gone; brightest at the slug, nothing
- *  at the tail's end) and its width as a multiple of the fresh wake's (it
- *  spreads as it fades). */
-export function slugWakeAlpha(age: number, along = 0): number {
-  if (age < 0 || age >= SLUG_WAKE_LIFE_S || along >= 1) return 0;
-  return 0.85 * (1 - age / SLUG_WAKE_LIFE_S) ** 1.5 * (1 - Math.max(0, along)) ** 1.2;
+/** A wake piece `age` s after the slug passed it: its alpha (0 = gone) and
+ *  its width as a multiple of the fresh wake's (it spreads as it fades). */
+export function slugWakeAlpha(age: number): number {
+  if (age < 0 || age >= SLUG_WAKE_LIFE_S) return 0;
+  return 0.85 * (1 - age / SLUG_WAKE_LIFE_S) ** 1.5;
 }
 export function slugWakeWidth(age: number): number {
   return 1 + 3 * Math.min(1, Math.max(0, age) / SLUG_WAKE_LIFE_S);

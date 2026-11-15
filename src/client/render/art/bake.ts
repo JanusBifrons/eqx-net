@@ -5,7 +5,7 @@
  * in the bake workers (`bake.worker.ts`). A bake is a list of RGBA frames plus
  * the few facts the runtime needs (size, density, light and nozzle spots).
  */
-import { forgeScrap, forgeShip, forgeStructure, forgeTurretGun, shipExtent, type Fields, type GunFamily } from './fields.js';
+import { forgeScrap, forgeShip, forgeStructure, forgeTurretGun, shipExtent, TURRET_COVER_REACH, type Fields, type GunFamily, type Livery } from './fields.js';
 import { forgeRock } from './rockForge.js';
 import { forgeTractorDish } from './tractorDish.js';
 import { shipTurrets, structureTurrets } from './turretLayout.js';
@@ -68,8 +68,9 @@ export type LitFlag = { lit?: boolean };
 export type BakeJob =
   /** `rings` (R&D, rnd/turrets): cut turret rings into the hull at its mounts.
    *  `dead`: a wreck piece's art (the forge's `scrap` look: no canopy, core,
-   *  engines or running lights), same hull and grid as the live bake. */
-  | ({ type: 'ship'; id: string; paint?: number; rings?: boolean; dead?: boolean } & LitFlag)
+   *  engines or running lights), same hull and grid as the live bake.
+   *  `livery`: the owner's livery (art-direction.md "Ship livery"). */
+  | ({ type: 'ship'; id: string; paint?: number; rings?: boolean; dead?: boolean; livery?: Livery } & LitFlag)
   /** `rot`: the structure's sprite rotation (radians, quarter turns). The sun
    *  is baked relative to it, so a turned structure is still lit from the
    *  sector's sun rather than having its lighting turn with it. */
@@ -79,7 +80,7 @@ export type BakeJob =
   /** One component of a destroyed ship; tumbles, so baked like a ship. */
   | ({ type: 'scrap'; id: string; component: number } & LitFlag)
   /** An asteroid, by its seeded outline; static, so one frame at its turn. */
-  | ({ type: 'rock'; id: string; entityId: number; radius: number; resource?: string; rot?: number } & LitFlag)
+  | ({ type: 'rock'; id: string; shapeSeed: number; radius: number; resource?: string; rot?: number } & LitFlag)
   /** An effect or backdrop texture (art/fx/fxTextures.ts, plan iridescent-seeking-rainbow v3). */
   | { type: 'fx'; id: string; variant?: string; seed?: number };
 
@@ -90,20 +91,30 @@ const SCALE_TAG = SHIP_SCALE === 1 ? '' : `@s${SHIP_SCALE}`;
 /** The cache key a job's result is stored under (shared by main and workers). */
 export function bakeKey(j: BakeJob): string {
   if (j.type !== 'fx' && j.lit) return `L${litKeyBody(j)}`;
-  if (j.type === 'ship') return `m:${j.id}:${j.paint ?? ''}${j.rings ? ':R' : ''}${j.dead ? ':D' : ''}${isCapitalKind(j.id) ? ':T' : ''}${SCALE_TAG}`;
+  if (j.type === 'ship') return `m:${j.id}:${j.paint ?? ''}${j.rings ? ':R' : ''}${j.dead ? ':D2' : ''}${isCapitalKind(j.id) ? ':T' : ''}${j.livery ? liveryTag(j.livery) : ''}${SCALE_TAG}`;
   if (j.type === 'turret') return `g:${j.id}:${j.paint}:${j.len.toFixed(2)}:${j.wid.toFixed(2)}:${j.cap.toFixed(2)}:${j.ppu}${j.naval ? `:n${j.naval.barrels}:${j.naval.houseW.toFixed(2)}:${j.naval.houseL.toFixed(2)}${j.naval.part ? `:${j.naval.part}` : ''}` : ''}`;
   if (j.type === 'scrap') return `s:${j.id}:${j.component}${SCALE_TAG}`;
   if (j.type === 'fx') return `x:${FX_VERSION}:${j.id}:${j.variant ?? ''}:${j.seed ?? ''}`;
-  if (j.type === 'rock') return `r:${j.entityId}:${j.radius}:${j.resource ?? ''}:${quarterTurnsFine(j.rot ?? 0)}`;
+  if (j.type === 'rock') return `r:${j.shapeSeed}:${j.radius}:${j.resource ?? ''}:${quarterTurnsFine(j.rot ?? 0)}`;
   const q = quarterTurns(j.rot ?? 0);
   return `m:${j.id}:${j.seed}:${j.accent ?? ''}${q ? `:r${q}` : ''}${j.rings ? ':R' : ''}`;
 }
+
+/** A kind's turret bases (pivot + 1.4 x the larger of ring and cap): what a
+ *  fitted turret hides for good, for a livery that keeps paint off it. The
+ *  barrel is a thin, moving line, so its sweep is not counted. */
+export function turretCoverOf(id: string): Array<{ x: number; y: number; reach: number }> {
+  return shipTurrets(id).map((t) => ({ x: t.px, y: t.py, reach: TURRET_COVER_REACH * Math.max(t.ring, t.cap) }));
+}
+
+/** A liveried ship's key suffix (absent livery adds nothing). */
+function liveryTag(l: Livery): string { return `:L${l.treatment}${l.team.toString(16)}:${l.sigil.toString(16)}${l.edge ? `:${l.edge}` : ''}`; }
 
 /** A lit job's key (prefixed `L` by bakeKey): no sun, and no turn for
  *  structures and rocks (the mesh turns; the maps don't change). */
 function litKeyBody(j: Exclude<BakeJob, { type: 'fx' }>): string {
   if (j.type === 'struct') return `m:${j.id}:${j.seed}:${j.accent ?? ''}${j.rings ? ':R' : ''}`;
-  if (j.type === 'rock') return `r:${j.entityId}:${j.radius}:${j.resource ?? ''}`;
+  if (j.type === 'rock') return `r:${j.shapeSeed}:${j.radius}:${j.resource ?? ''}`;
   return bakeKey({ ...j, lit: false });
 }
 
@@ -202,7 +213,7 @@ export function runBake(j: BakeJob, rig: LightRig): Baked {
   }
   if (j.type === 'rock') {
     const ppu = Math.min(1.5, ROCK_MAX_SIDE / (j.radius * 2.6 + 4));
-    const f = forgeRock(j.entityId, j.radius, j.resource, { ppu });
+    const f = forgeRock(j.shapeSeed, j.radius, j.resource, { ppu });
     if (j.lit) return litBaked(f, Infinity);
     const turn = quarterTurnsFine(j.rot ?? 0) * (Math.PI / 8);
     return { frames: [litFrame(f, rig, rig.sunAz - turn), albedoHalf(f)], w: f.g.w, h: f.g.h, density: f.g.ppu, nozzles: [], navLights: [] };
@@ -218,14 +229,17 @@ export function runBake(j: BakeJob, rig: LightRig): Baked {
   if (j.type === 'ship' || j.type === 'scrap') {
     const rings = j.type === 'ship' && j.rings ? shipTurrets(j.id).map((t) => ({ x: t.px, y: t.py, r: t.ring })) : undefined;
     const f = j.type === 'ship'
-      ? forgeShip(j.id, { ppu: shipPpu(j.id), paint: j.paint, rings, ...(j.dead ? { scrap: true } : {}) })
+      ? forgeShip(j.id, { ppu: shipPpu(j.id), paint: j.paint, rings, ...(j.dead ? { scrap: true } : {}), ...(j.livery ? { livery: j.livery, turretCover: turretCoverOf(j.id) } : {}) })
       : forgeScrap(j.id, j.component, { ppu: scrapPpu(j.id) });
     if (j.lit) return litBaked(f, j.type === 'ship' && isCapitalKind(j.id) ? TILE_MAX_SIDE : Infinity);
     const frames: Frame[] = [];
     const tiled = j.type === 'ship' && isCapitalKind(j.id) && f.g.h > TILE_MAX_SIDE;
     const steps = j.type === 'ship' && isCapitalKind(j.id) ? CAPITAL_SUN_STEPS : SUN_STEPS;
+    // A wreck piece's dead bake casts no self shadow (the hull that would
+    // cast it is broken off; beam take 7 review), as on the GPU-lit path.
+    const shadows = !(j.type === 'ship' && j.dead === true);
     for (let k = 0; k < steps; k++) {
-      const lit = litFrame(f, rig, (k / steps) * Math.PI * 2);
+      const lit = litFrame(f, rig, (k / steps) * Math.PI * 2, shadows);
       if (tiled) splitRows(lit, TILE_MAX_SIDE, frames); else frames.push(lit);
     }
     const tiles = tiled ? Math.ceil(f.g.h / TILE_MAX_SIDE) : 1;

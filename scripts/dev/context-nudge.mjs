@@ -1,15 +1,16 @@
-#!/usr/bin/env node
 /**
  * Session-length nudge (PostToolUse hook, wired in .claude/settings.json).
  *
- * Root CLAUDE.md "Keep context small" says to hand off once context passes
- * ~250k tokens. Nothing prompted that rule, so main sessions drifted to
+ * Root CLAUDE.md "Keep context small": keep the handoff current and let the
+ * session compact in place at ~250k tokens (it keeps its window and name). Nothing prompted that rule, so main sessions drifted to
  * 500-960k. This hook reads the tail of the session transcript, takes the
  * context size from the last assistant `message.usage`, and injects a short
  * reminder the first time each threshold is crossed in a session.
  *
  * A nudge, never a block: every failure path exits 0 with no output.
  * Subagents (stdin has `agent_id`) are skipped. Dependency-free Node ESM.
+ * No shebang on purpose: it runs as `node <file>`, and a shebang in a CRLF
+ * checkout (autocrlf) breaks Vite's SSR transform, so vitest cannot import it.
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -72,10 +73,10 @@ export function contextTokens(transcriptPath) {
 export function message(tokens, threshold) {
   const k = Math.round(tokens / 1000);
   const line = `${Math.round(threshold / 1000)}k`;
-  const base = `Context is ~${k}k tokens (over the ${line} line; CLAUDE.md 'Keep context small' says hand off at ~250k).`;
+  const base = `Context is ~${k}k tokens (over the ${line} line; CLAUDE.md 'Keep context small').`;
   return threshold >= 400_000
-    ? `${base} Write the handoff (.resume/<slug>.md) now and start a fresh session; do not open new work here.`
-    : `${base} At the next milestone (PR merged, stage closed), write the handoff (.resume/<slug>.md) and start a fresh session.`;
+    ? `${base} Update the handoff (.resume/<slug>.md) now: this session compacts in place (it keeps its window and name). Do not relaunch a fresh session.`
+    : `${base} Keep the handoff (.resume/<slug>.md) current at the next milestone; the session compacts in place at ~250k. Do not relaunch a fresh session.`;
 }
 
 function stateFile(sessionId, stateDir) {

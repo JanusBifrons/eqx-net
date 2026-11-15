@@ -11,81 +11,23 @@
 import { getShipKind, type ShipKind } from '../../../shared-types/shipKinds.js';
 import { buildStructureVisual, PROPOSED_FOOTPRINTS } from '../pixi/structureVisuals.js';
 import { getStructureKind, isStructureKindId } from '../../../shared-types/structureKinds.js';
-import { boxBlur, distanceInside, gridFor, hashStr, insidePoly, rasterPoly, rng, type Grid, type Poly } from './raster.js';
+import { boxBlur, distanceInside, gridFor, hashStr, insidePoly, rasterPoly, rng, type Poly } from './raster.js';
 import { shipScrapGroups } from '../../../core/geometry/shipScrapGroups.js';
 import { shipShapeScale } from '../../../core/geometry/shipHullOutline.js';
 import { NAVAL_BARREL_SPAN } from '../../../core/combat/muzzle.js';
 import { planBowFeatures, type BowFeature } from './bowDetail.js';
+import { sizeClassOf } from '../../../shared-types/shipScale/tuning.js';
 import { railGeom, RAIL_VENTS } from './fx/turretFx.js';
+import { hash01, lin, MAT, newFields, paintOf, PALETTE, setAlbedo, valueNoise, type Fields, type Livery } from './fieldsCore.js';
+import { stampSigils } from './sigil.js';
+import { liveryHullGrey, liveryLayout, liveryPaint, paintEnamel, paintLivery, weatherLivery } from './liveryForge.js';
 
-export const MAT = {
-  NONE: 0,
-  METAL: 1,
-  PAINT: 2,
-  TRIM: 3,
-  GLASS: 4,
-  NOZZLE: 5,
-  LIGHT: 6,
-  WINDOW: 7,
-  ROCK: 8,
-} as const;
+// Primitives and livery live in their own modules; re-exported so callers keep one import.
+export { hash01, lin, MAT, paintOf, PALETTE, valueNoise, type Fields, type Livery, type LiveryEdge, type LiveryTreatment } from './fieldsCore.js';
+export {
+  LIVERY_SHADES, liveryGrey, liveryHullGrey, liveryPaint, liveryShade, paintLivery, TURRET_COVER_REACH, type LiveryShade,
+} from './liveryForge.js';
 
-export interface Fields {
-  g: Grid;
-  /** Coverage 0..1. */
-  cov: Float32Array;
-  /** Height, world units. */
-  height: Float32Array;
-  /** Material id per texel (MAT). */
-  mat: Uint8Array;
-  /** Linear-RGB albedo, 3 floats per texel. */
-  albedo: Float32Array;
-  /** Linear-RGB emission, 3 floats per texel. */
-  emis: Float32Array;
-  /** sRGB hex of the material's base colour per texel: the pixel look's ramp
-   *  key (so grime and panel jitter never split a surface into many ramps). */
-  key: Uint32Array;
-  /** The paint colour this set was built with (for faction tints / ramps). */
-  paint: number;
-  /** Nav lights + nozzles in local world units (runtime glow sprites). */
-  navLights: Array<{ x: number; y: number; color: number }>;
-  nozzles: Array<{ x: number; y: number; r: number; len?: number }>;
-  /** Hull vent slits drawn (centre + half extents, local world units; ships). */
-  vents?: Array<{ x: number; y: number; hw: number; hh: number }>;
-  /** Capital bow fittings stamped into the hull (bowDetail.ts; ships). */
-  bow?: BowFeature[];
-}
-
-/** sRGB hex → linear rgb. */
-export function lin(hex: number): [number, number, number] {
-  const f = (c: number): number => {
-    const v = c / 255;
-    return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
-  };
-  return [f((hex >> 16) & 255), f((hex >> 8) & 255), f(hex & 255)];
-}
-
-export function newFields(g: Grid, paint: number): Fields {
-  const n = g.w * g.h;
-  return {
-    g,
-    cov: new Float32Array(n),
-    height: new Float32Array(n),
-    mat: new Uint8Array(n),
-    albedo: new Float32Array(n * 3),
-    emis: new Float32Array(n * 3),
-    key: new Uint32Array(n),
-    paint,
-    navLights: [],
-    nozzles: [],
-  };
-}
-
-export function setAlbedo(f: Fields, i: number, c: readonly number[], k = 1): void {
-  f.albedo[i * 3] = c[0]! * k;
-  f.albedo[i * 3 + 1] = c[1]! * k;
-  f.albedo[i * 3 + 2] = c[2]! * k;
-}
 
 /** Per-kind recipe nudges. Everything else is derived from the geometry. */
 type Archetype = 'fighter' | 'freighter' | 'robot';
@@ -104,27 +46,7 @@ export const OWN_PAINT_ROLES: ReadonlySet<string> = new Set([
   'housing', 'radiator', 'pipe', 'gantry', 'intake',
 ]);
 
-/** Hull metal, trim and glass base colours (sRGB). One shared material set so
- *  every ship and structure reads as one universe. */
-export const PALETTE = {
-  metal: 0x737c8b,
-  metalWorn: 0xb4bcc8,
-  trim: 0x262b34,
-  glass: 0x123247,
-  nozzle: 0x1b1c22,
-  engine: 0xffa24a,
-  navPort: 0xff3b3b,
-  navStarboard: 0x3bff7a,
-};
 
-/** Soften a catalogue colour into a paint: less neon, a touch darker. */
-export function paintOf(hex: number): number {
-  const r = (hex >> 16) & 255, g = (hex >> 8) & 255, b = hex & 255;
-  const grey = (r + g + b) / 3;
-  const s = 0.78, d = 0.86;
-  const m = (c: number): number => Math.round(Math.max(0, Math.min(255, (grey + (c - grey) * s) * d)));
-  return (m(r) << 16) | (m(g) << 8) | m(b);
-}
 
 /** World-space part polygons for a ship kind (same transform as the game). */
 export function shipParts(kind: ShipKind): Array<{ pts: Poly; color: number; role?: string }> {
@@ -150,8 +72,12 @@ export function shipExtent(id: string): number {
 export interface ShipForgeOpts {
   /** Texels per world unit. */
   ppu: number;
-  /** Override the paint (faction colour). Default: the catalogue colour. */
+  /** Override the paint (faction colour). Default: the catalogue colour.
+   *  Ignored when `livery` is set. */
   paint?: number;
+  /** Livery: every part colour becomes its `liveryGrey`; the team colour is
+   *  kept for spot treatments (and a robot's core ring). Overrides `paint`. */
+  livery?: Livery;
   /** Forge these parts instead of the kind's hull (a scrap component). */
   parts?: Array<{ pts: Poly; color: number }>;
   /** Seed text for the plating (default: the kind id). */
@@ -160,6 +86,10 @@ export interface ShipForgeOpts {
   scrap?: boolean;
   /** Turret rings to cut into the hull (local world units, Pixi-up), R&D. */
   rings?: ReadonlyArray<{ x: number; y: number; r: number }>;
+  /** Where the kind's turret bases sit and how far they reach (pivot +
+   *  reach, local world units): livery 'b4' keeps paint off what a turret
+   *  hides. From `turretLayout.shipTurrets` (bake.ts). */
+  turretCover?: ReadonlyArray<{ x: number; y: number; reach: number }>;
 }
 
 /**
@@ -181,8 +111,10 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
   const arch = archetypeOf(kind.id);
   const parts = opts.parts ?? shipParts(kind);
   const g = gridFor(parts.map((p) => p.pts), opts.ppu, 3);
-  const basePaint = opts.paint ?? parts[0]!.color;
+  const livery = opts.livery;
+  const basePaint = livery ? liveryHullGrey(parts[0]!.color, livery, kindId) : opts.paint ?? parts[0]!.color;
   const f = newFields(g, paintOf(basePaint));
+  if (livery) f.livery = livery;
   const n = g.w * g.h;
   const seedKey = opts.seedKey ?? kind.id;
   const R = rng(hashStr(seedKey));
@@ -193,7 +125,7 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
   const ownPaint: boolean[] = [];
   parts.forEach((p, idx) => {
     const c = rasterPoly(g, p.pts);
-    partCols.push(p.color);
+    partCols.push(livery ? liveryHullGrey(p.color, livery, kindId) : p.color);
     ownPaint.push(OWN_PAINT_ROLES.has((p as { role?: string }).role ?? ''));
     for (let i = 0; i < n; i++) {
       if (c[i]! > f.cov[i]!) f.cov[i] = c[i]!;
@@ -229,6 +161,11 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
     cuts.push(arch === 'freighter' ? yMin + len * ((k + 1) / (nCuts + 1)) : yMin + len * (0.3 + R() * 0.6));
   }
   const paintBands = [true, true, R() < 0.45, true, R() < 0.5];
+
+  const sizeCls = sizeClassOf(kind);
+  const { treatB, teamHex, lampHex, halfRow, shade, b4, robot4, inBow4, liveryHexAt, b4Tone } = liveryLayout({
+    f, livery, turretCover: opts.turretCover, g, dist, parts, layer, arch, sizeCls, seedKey, yMin, len, maxDu, bw, spacing,
+  });
 
   const metal = lin(PALETTE.metal);
   const noiseSeed = hashStr(seedKey + ':grime');
@@ -273,10 +210,19 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
       const col = lin(colHex);
       const surf = mat === MAT.PAINT ? col : metal;
       f.key[i] = mat === MAT.PAINT ? colHex : PALETTE.metal;
-      if (inGroove) {
+      // A b4 robot's section paints over its seams too (shaded as seams): the
+      // spoke seams are one-sided, and the section must stay mirror-symmetric.
+      const livHex = livery && (!inGroove || robot4) ? liveryHexAt(du, i, wx, wy, ty) : -1;
+      if (inGroove && livHex < 0) {
         setAlbedo(f, i, surf, 0.38);
         mat = MAT.TRIM;
         h -= Math.min(0.3, Hmax * 0.05);
+      } else if (livHex >= 0) {
+        // 'b4': tinted, so the paint carries the hull's tone here.
+        const tone = b4 ? b4Tone(surf) : 1;
+        paintEnamel(f, i, livHex, (inGroove ? 0.38 : pv * (0.95 + 0.08 * nz)) * tone);
+        mat = MAT.LIVERY;
+        if (inGroove) h -= Math.min(0.3, Hmax * 0.05);
       } else {
         setAlbedo(f, i, surf, pv * (0.95 + 0.08 * nz));
       }
@@ -284,6 +230,16 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
       f.mat[i] = mat;
     }
   }
+
+  // Livery treatment 'c' (grey, small accents + faction sigil): a team ring
+  // round the canopy, team collars on the nozzles, and the faction's emblem
+  // on the largest clear flat area (the deck, fore and aft, on capitals),
+  // or a dorsal chevron where no area is big enough. A capital carries its
+  // two deck emblems under every treatment. The plated height field is kept:
+  // any texel a later fitting changes is no place for an emblem.
+  const treatC = livery?.treatment === 'c' && !opts.scrap;
+  const sigilsOn = treatC || (!!livery && !opts.scrap && sizeCls === 'capital');
+  const hBase = sigilsOn ? f.height.slice() : undefined;
 
   const put = (cx: number, cy: number, rx: number, ry: number, fn: (i: number, k: number) => void): void => {
     const x0 = Math.floor((cx - rx) * g.ppu + g.ox), x1 = Math.ceil((cx + rx) * g.ppu + g.ox);
@@ -330,6 +286,9 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
       for (const sx of [gx, -gx]) {
         putRect(sx, gy, hw, hh, (i, bev) => {
           f.height[i] = f.height[i]! + Math.max(0.25, Hmax * 0.09) * bev;
+          // A b4 robot's greeble inside a painted section is painted too, so
+          // a big block (the nexus's) never hides the section's edge shape.
+          if (robot4 && f.mat[i] === MAT.LIVERY) return;
           f.mat[i] = MAT.METAL;
           f.key[i] = PALETTE.metal;
           setAlbedo(f, i, metalDark, bev < 0.3 ? 0.8 : 1);
@@ -388,10 +347,20 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
       setAlbedo(f, i, lin(PALETTE.glass));
       f.height[i] = f.height[i]! + rr * 0.55 * Math.sqrt(Math.max(0, 1 - k));
     });
+    if (treatC && livery) {
+      // A thin team ring round the canopy: ellipse scale 1 .. 1.35, never
+      // under ~2 texels across.
+      const s = Math.max(1.35, 1 + 2.2 / (rr * 0.7 * g.ppu));
+      put(0, bestY, rr * 0.7 * s, rr * 1.25 * s, (i, k) => {
+        const m = f.mat[i];
+        if (k * s * s <= 1 || m === MAT.GLASS || m === MAT.LIGHT || m === MAT.NOZZLE) return;
+        paintLivery(f, i, livery.team);
+      });
+    }
   } else {
     // A robot's core: a glowing ring.
     const rr = Math.max(1, maxDu * 0.35);
-    const e = lin(kind.shape.kind === 'polygon' ? kind.shape.color : 0xff4060);
+    const e = lin(livery ? liveryPaint(livery.team) : kind.shape.kind === 'polygon' ? kind.shape.color : 0xff4060);
     put(0, 0, rr, rr, (i, k) => {
       if (k > 0.45 && k < 0.8) {
         f.mat[i] = MAT.LIGHT;
@@ -407,7 +376,9 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
 
   if (opts.rings) for (const rg of opts.rings) stampTurretRing(f, rg.x, rg.y, rg.r);
 
-  // Nozzles at the stern.
+  // Nozzles at the stern. `sternLine`: the front edge of the nozzle bank (the
+  // tail beacon sits ahead of it).
+  let sternLine = yMax;
   if (arch !== 'robot' && !opts.scrap) {
     // Stern = the hull outline's rear extent (same rule as render/pixi/engineGeometry.ts).
     let stern = 0;
@@ -449,6 +420,10 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
     // length (2 × radius) instead: a barge's giant bells need a longer one.
     const plume = t ? (t.plume !== undefined ? (t.plume * 2 * kind.radius) / (8.4 * nr) : Math.max(1, (0.24 * kind.radius) / (8.4 * nr))) : 1;
     const eng = lin(PALETTE.engine);
+    sternLine = ny - nr * 0.85;
+    // Treatment 'c': the nozzle's bevel ring is a team collar, widened to
+    // about 2 texels where the bevel is thinner (putRect's bevel width).
+    const collarBev = treatC ? Math.max(0.35, Math.min(0.6, 2.2 / (g.ppu * Math.max(0.25, nr * 0.85 * 0.5)))) : 0;
     for (const nx of xs) {
       f.nozzles.push(plume > 1 ? { x: nx, y: ny + nr * 0.6, r: nr, len: plume } : { x: nx, y: ny + nr * 0.6, r: nr });
       if (t?.bell) {
@@ -473,6 +448,11 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
         continue;
       }
       putRect(nx, ny, nr, nr * 0.85, (i, bev) => {
+        if (livery && bev < collarBev) {
+          paintLivery(f, i, livery.team, 0.85);
+          f.height[i] = f.height[i]! + Hmax * 0.08;
+          return;
+        }
         f.mat[i] = MAT.NOZZLE;
         f.key[i] = PALETTE.nozzle;
         setAlbedo(f, i, lin(bev < 0.35 ? PALETTE.metal : PALETTE.nozzle), bev < 0.35 ? 0.7 : 1);
@@ -486,6 +466,19 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
     }
   }
 
+  if (sigilsOn && livery && hBase) {
+    const deck = sizeCls === 'capital' ? parts.findIndex((p) => (p as { role?: string }).role === 'deck') : -1;
+    stampSigils(f, livery, hBase, deck >= 0 ? (i) => layer[i] === deck : null, yMin, len, teamHex);
+  }
+  // Flaking band: 0.4 % of the hull length on a capital (in texels, so it is
+  // the same on the hull at any bake resolution), 1.3 texels on a small ship.
+  if (shade) {
+    // A b4 robot: no flaking band (it wiped out the edge shape at combat
+    // zoom) and half the chalk, grime and chips (ROBOT_EDGE4).
+    weatherLivery(f, dist, hashStr(seedKey + ':wear'), sizeCls === 'capital', b4, robot4 ? 0 : sizeCls === 'capital' ? Math.max(1, len * 0.004 * g.ppu) : 1.3,
+      b4 && sizeCls === 'capital' ? inBow4 : null, robot4);
+  }
+
   // Nav lights at the widest points: port (x<0) red, starboard green.
   if (opts.scrap) return f; // dead: no running lights
   let wideX = 0, wideY = 0;
@@ -495,17 +488,42 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
     if (wx > wideX) { wideX = wx; wideY = (Math.floor(i / g.w) + 0.5 - g.oy) / g.ppu; }
   }
   const inset = Math.max(0.5, 1.5 / g.ppu);
-  for (const [sx, col] of [[-1, PALETTE.navPort], [1, PALETTE.navStarboard]] as const) {
-    const lx = sx * (wideX - inset);
-    f.navLights.push({ x: lx, y: wideY, color: col });
+  const lampR = Math.max(0.35, 0.8 / g.ppu);
+  const lamp = (lx: number, ly: number, col: number): void => {
+    f.navLights.push({ x: lx, y: ly, color: col });
     const e = lin(col);
-    put(lx, wideY, Math.max(0.35, 0.8 / g.ppu), Math.max(0.35, 0.8 / g.ppu), (i) => {
+    put(lx, ly, lampR, lampR, (i) => {
       f.mat[i] = MAT.LIGHT;
       f.emis[i * 3] = e[0]; f.emis[i * 3 + 1] = e[1]; f.emis[i * 3 + 2] = e[2];
     });
+  };
+  for (const [sx, col] of [[-1, PALETTE.navPort], [1, PALETTE.navStarboard]] as const) lamp(sx * (wideX - inset), wideY, col);
+
+  if (treatB && livery) {
+    if (sizeCls !== 'capital') {
+      // Tail beacon: on the centreline, just ahead of the nozzles (a robot:
+      // just inside its rear edge), where the hull is deep enough to hold it.
+      const step = 0.5 / g.ppu;
+      for (let by = sternLine - lampR * 2; by > yMin + len * 0.5; by -= step) {
+        if (distAt(0, by) >= lampR * 2) { lamp(0, by, lampHex); break; }
+      }
+    } else {
+      // Running lights: up to 4 a side along the hull edge, clear of the
+      // red/green nav lights.
+      for (let k = 0; k < 4; k++) {
+        const ly = yMin + len * (0.18 + k * 0.2);
+        const ty = Math.floor(ly * g.ppu + g.oy);
+        if (ty < 0 || ty >= g.h || Math.abs(ly - wideY) < len * 0.06) continue;
+        const lx = halfRow[ty]! - inset;
+        if (lx <= inset || distAt(lx, ly) <= 0) continue;
+        lamp(-lx, ly, lampHex);
+        lamp(lx, ly, lampHex);
+      }
+    }
   }
   return f;
 }
+
 
 /**
  * A scrap piece: one component of a destroyed ship, from the same recentred
@@ -523,28 +541,6 @@ export function forgeScrap(parentKindId: string, componentIndex: number, opts: {
 }
 
 
-/** Hash of an integer to 0..1. */
-export function hash01(a: number, seed: number): number {
-  let h = Math.imul(a ^ seed, 2654435761);
-  h = Math.imul(h ^ (h >>> 15), 2246822519);
-  return ((h ^ (h >>> 13)) >>> 0) / 4294967296;
-}
-
-/** Hashed value noise in 0..1 (smooth, cheap). */
-function latticeHash(a: number, b: number, seed: number): number {
-  let h = Math.imul(a, 374761393) + Math.imul(b, 668265263) + seed;
-  h = Math.imul(h ^ (h >>> 13), 1274126177);
-  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
-}
-
-export function valueNoise(x: number, y: number, seed: number): number {
-  const xi = Math.floor(x), yi = Math.floor(y);
-  const xf = x - xi, yf = y - yi;
-  const sx = xf * xf * (3 - 2 * xf), sy = yf * yf * (3 - 2 * yf);
-  const a = latticeHash(xi, yi, seed), b = latticeHash(xi + 1, yi, seed);
-  const c = latticeHash(xi, yi + 1, seed), d = latticeHash(xi + 1, yi + 1, seed);
-  return a + (b - a) * sx + (c - a) * sy + (a - b - c + d) * sx * sy;
-}
 
 export interface StructureForgeOpts {
   /** Texels per world unit, before the size cap. */

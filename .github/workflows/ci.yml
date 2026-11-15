@@ -129,7 +129,9 @@ jobs:
   unit-tests:
     needs: changes
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # 30: the suite passes but reached 17-20+ min after the capital art tests
+    # (~6 min alone); runs were cancelled at 20. Infrastructure limit.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

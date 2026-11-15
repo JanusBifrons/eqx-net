@@ -56,6 +56,25 @@ export function shellPoseAt(
 }
 
 /**
+ * The fractional tick at which the closed-form pose reaches a hit at (hx, hy)
+ * that the server reported at `endTick`. The pipeline's advance at tick S
+ * sweeps the shell from its pose at S to S + 1 (`shellPoseAt(…, S + 1)`), so
+ * the hit lies somewhere along that step: its projection on the shell's line
+ * gives the fraction, clamped to [endTick, endTick + 1]. A drawn shell (pose
+ * at the display tick) is AT the hit at this tick; at `endTick` it is still
+ * up to one step short (a railgun slug: ~107 u). Pure.
+ */
+export function shellHitTick(
+  x0: number, y0: number, vx: number, vy: number,
+  fireTick: number, endTick: number, hx: number, hy: number,
+): number {
+  const v2 = vx * vx + vy * vy;
+  if (!(v2 > 0)) return endTick;
+  const t = fireTick + ((hx - x0) * vx + (hy - y0) * vy) / (v2 * SHELL_TICK_DT_S);
+  return t < endTick ? endTick : t > endTick + 1 ? endTick + 1 : t;
+}
+
+/**
  * The tick whose pose ends a shell's swept path. On its last advance
  * (`serverTick − birthTick = maxTicks`) the pipeline still tests the step
  * from `maxTicks` to `maxTicks + 1`, so a shell can hit anything up to

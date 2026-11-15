@@ -71,7 +71,15 @@ export interface FactionDef {
   readonly region?: string;
   /** What a minor faction does (it owns bases of matching roles). */
   readonly specialty?: MinorSpecialty;
+  /** The shape of its ships' painted-section edges (livery look R&D). */
+  readonly liveryEdge?: LiveryEdge;
 }
+
+/** Painted-section edge shapes a faction's livery can wear: a swept chevron
+ *  (the sides reach further), a tongue (the centreline reaches further) or a
+ *  dog-tooth. */
+export type LiveryEdge = 'swept' | 'tongue' | 'tooth';
+export const LIVERY_EDGES: readonly LiveryEdge[] = Object.freeze(['swept', 'tongue', 'tooth'] as const);
 
 export type MinorSpecialty = 'mining' | 'freight' | 'manufacturer' | 'militia';
 
@@ -81,14 +89,14 @@ export type MinorSpecialty = 'mining' | 'freight' | 'manufacturer' | 'militia';
  * region ids from `galaxy.ts` (`core` is the Sol Dominion).
  */
 export const FIXED_FACTIONS: readonly FactionDef[] = Object.freeze([
-  { id: 'drones', displayName: 'Drones', kind: 'swarm', color: 0xff4444, allegiance: 'drones' },
-  { id: 'robots', displayName: 'Robots', kind: 'swarm', color: 0xc070ff, allegiance: 'robots' },
-  { id: 'traders', displayName: 'Traders', kind: 'guild', color: 0xffd060, allegiance: 'traders' },
-  { id: 'core', displayName: 'Sol Dominion', kind: 'power', color: 0x6fb6ff, region: 'core' },
-  { id: 'verdant-reach', displayName: 'Verdant Reach', kind: 'power', color: 0x5fd6a0, region: 'verdant-reach' },
-  { id: 'crimson-expanse', displayName: 'Crimson Expanse', kind: 'power', color: 0xff7a5c, region: 'crimson-expanse' },
-  { id: 'azure-deep', displayName: 'Azure Deep', kind: 'power', color: 0x4fd0e8, region: 'azure-deep' },
-  { id: 'ancients', displayName: 'The Ancients', kind: 'ancient', color: 0xd8c4ff },
+  { id: 'drones', displayName: 'Drones', kind: 'swarm', color: 0xff4444, allegiance: 'drones', liveryEdge: 'swept' },
+  { id: 'robots', displayName: 'Robots', kind: 'swarm', color: 0xc070ff, allegiance: 'robots', liveryEdge: 'tooth' },
+  { id: 'traders', displayName: 'Traders', kind: 'guild', color: 0xffd060, allegiance: 'traders', liveryEdge: 'tongue' },
+  { id: 'core', displayName: 'Sol Dominion', kind: 'power', color: 0x6fb6ff, region: 'core', liveryEdge: 'swept' },
+  { id: 'verdant-reach', displayName: 'Verdant Reach', kind: 'power', color: 0x5fd6a0, region: 'verdant-reach', liveryEdge: 'tooth' },
+  { id: 'crimson-expanse', displayName: 'Crimson Expanse', kind: 'power', color: 0xff7a5c, region: 'crimson-expanse', liveryEdge: 'tongue' },
+  { id: 'azure-deep', displayName: 'Azure Deep', kind: 'power', color: 0x4fd0e8, region: 'azure-deep', liveryEdge: 'tongue' },
+  { id: 'ancients', displayName: 'The Ancients', kind: 'ancient', color: 0xd8c4ff, liveryEdge: 'swept' },
 ] as FactionDef[]);
 
 /** The region powers, by region id. */
@@ -141,7 +149,10 @@ function generateMinorFactions(): FactionDef[] {
       const displayName = `${name} ${suffix}`;
       const id = displayName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/-+$/, '');
       const hue = Math.floor(rnd() * 360);
-      out.push({ id, displayName, kind: 'minor', color: hslToRgb(hue, 0.45, 0.62), region, specialty });
+      // Livery edge by position, not the seeded stream (drawing from it would
+      // rename every minor faction): a region's minors wear all three shapes.
+      const liveryEdge = LIVERY_EDGES[i % LIVERY_EDGES.length]!;
+      out.push({ id, displayName, kind: 'minor', color: hslToRgb(hue, 0.45, 0.62), region, specialty, liveryEdge });
     }
   }
   return out;
@@ -320,3 +331,50 @@ export const PlayerFactionsViewSchema = z.object({
   policy: PlayerPolicyWireSchema,
 });
 export type PlayerFactionsView = z.infer<typeof PlayerFactionsViewSchema>;
+
+// ── Ship liveries ───────────────────────────────────────────────────────────
+
+/** FNV-1a 32-bit of a string (unsigned). Local copy: shared-types stays free of core. */
+function fnv1a(s: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
+/**
+ * The player livery palette: 12 hues 30° apart (offset 15° so none lands on
+ * the pure primaries), saturation 0.6, lightness 0.55 — reads on grey hulls.
+ */
+export const PLAYER_LIVERY: readonly number[] = Object.freeze(
+  Array.from({ length: 12 }, (_, i) => hslToRgb(15 + i * 30, 0.6, 0.55)),
+);
+
+function liverySlot(id: FactionId): number {
+  return fnv1a(id) % PLAYER_LIVERY.length;
+}
+
+/** The single colour authority for a faction's ships: an NPC faction's own
+ *  colour (drones, robots, traders included), else a player's palette slot. */
+export function teamColorOf(id: FactionId): number {
+  const def = NPC_FACTIONS.get(id);
+  if (def) return def.color;
+  return PLAYER_LIVERY[liverySlot(id)]!;
+}
+
+/** A deterministic 16-bit sigil seed for a faction's ship markings. */
+export function teamSigilOf(id: FactionId): number {
+  const h = fnv1a(id);
+  if (NPC_FACTIONS.has(id)) return h & 0xffff;
+  return ((liverySlot(id) << 12) | ((h >>> 16) & 0x0fff)) & 0xffff;
+}
+
+/** A faction's painted-section edge shape (livery 'b8'): an NPC faction's
+ *  own, else a stable hash of the id over `LIVERY_EDGES`. */
+export function teamEdgeOf(id: FactionId): LiveryEdge {
+  const own = NPC_FACTIONS.get(id)?.liveryEdge;
+  if (own) return own;
+  return LIVERY_EDGES[(fnv1a(id) >>> 8) % LIVERY_EDGES.length]!;
+}

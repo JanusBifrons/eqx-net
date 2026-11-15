@@ -11,7 +11,7 @@ import { isLitKey, type Baked } from './bake.js';
 import type { LightRig } from './shade.js';
 
 /** Bump whenever forge output changes, or old art would be served. */
-export const FORGE_VERSION = 'r2.6'; // r2.6: barge bells, tractor dishes, own-paint part roles
+export const FORGE_VERSION = 'r2.7-lv16'; // r2.7: barge bells, tractor dishes, own-paint part roles; r2.6: rock outlines seeded by the rock's stable id, arithmetic only (macro terrain 1a); r2.5: capital bow fittings (bowDetail.ts); -lv1..lv16: ship livery branch (sigils, stern fade, b2/b3 shades, b4 layout)
 
 const DB = 'eqx-art-lab';
 const STORE = 'bakes';

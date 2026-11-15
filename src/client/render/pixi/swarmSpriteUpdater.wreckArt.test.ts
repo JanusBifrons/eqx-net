@@ -18,7 +18,7 @@ import { WreckGeometryStore, rebuildWreckPieces } from '../../net/wreckGeometryS
 import {
   WreckArtState, WreckPieceSprite, WRECK_DISPLAY_OBJECTS_PER_PIECE_MAX, WRECK_RIPPLE_MAX, WRECK_BLAST_MAIN,
   WRECK_RIPPLE_R_MIN, WRECK_RIPPLE_R_MAX, WRECK_CRACK_FRONT_MS, WRECK_GLOW_END_S, wreckGlowTexture,
-  WRECK_BLAST_REACH, WRECK_RIPPLE_GAP_MS, wreckGlowAt, type WreckGlow, WRECK_GLOW_TEX_ROWS, GLOW_TINT_SLICE, GLOW_TINT_CHANNEL,
+  WRECK_BLAST_REACH, WRECK_RIPPLE_GAP_MS, wreckGlowAt, type WreckGlow, WRECK_GLOW_TEX_ROWS, GLOW_ROW, GLOW_ROWS_PER_TINT, GLOW_TINT_SLICE, GLOW_TINT_CHANNEL,
   WRECK_BLAST_LINGER, wreckBlasts, type WreckBlast, wreckPieceFarLod,
 } from './wreckArt.js';
 import { FxExplosions } from '../art/fx/FxExplosions.js';
@@ -29,6 +29,9 @@ import { shipHullOutline, shipShapeScale } from '../../../core/geometry/shipHull
 import { getShipKind } from '../../../shared-types/shipKinds.js';
 import { WRECK_CRACK_MS } from '../../../shared-types/wreckTiming.js';
 import type { ArtHandle, ArtService, ShipArt } from '../art/ArtService.js';
+import { bakeKey } from '../art/bake.js';
+import { ownerLivery, shipHandleFor } from '../art/shipArtSprites.js';
+import type { Livery } from '../art/fields.js';
 import type { RenderMirror, SwarmRenderState, PoseRingEntry } from '../../../core/contracts/IRenderer.js';
 import { POSE_RING_DEPTH } from '../../../core/contracts/IRenderer.js';
 import { FRACTURE_ALGO_VERSION } from '../../../core/destruction/fractureHull.js';
@@ -370,6 +373,68 @@ describe('updateSwarmSprites — capital wreck art (S3)', () => {
     } finally {
       litPass.settings = prev;
     }
+  });
+
+  // Filmed 2026-11-15 (beam-slice, the default look, livery b8 on since the
+  // livery landed): after the kill the wreck drew as a flat grey silhouette
+  // of the whole hull for 15+ s. Each piece asked the art service for a NEW
+  // bake (the capital in neutral scrap livery: ~10 s of forging per kind),
+  // never the bake the live hull already wore, and drew the plain polygon
+  // while it waited. A piece wears the live hull's own handle (no new bake):
+  // the owner comes from the descriptor (`owner`), else as for a live NPC.
+  function liveryWreck(drawLive: (ctx: SwarmSpriteCtx) => void, d: WreckDescriptor): void {
+    const art = battleshipArt();
+    const handles = new Map<string, ArtHandle>();
+    const asked: string[] = [];
+    let warm = true; // the live hull's frame: whatever it asks for is baked
+    const svc = {
+      lightRig: {},
+      ship: (id: string, paint?: number, _urgent?: boolean, rings = false, dead = false, livery?: Livery) => {
+        const job = { type: 'ship' as const, id, paint, ...(rings ? { rings } : {}), ...(dead ? { dead } : {}), ...(livery ? { livery } : {}) };
+        const key = bakeKey(job);
+        if (!warm) asked.push(key);
+        let h = handles.get(key);
+        if (!h) {
+          h = { key, job, rig: {} as ArtHandle['rig'], state: warm ? 'ready' : 'pending', ship: warm ? art : null, struct: null };
+          handles.set(key, h);
+        }
+        return h;
+      },
+    } as unknown as ArtService;
+    const ctx = makeCtx(svc, []);
+    ctx.art.livery = 'b8';
+    drawLive(ctx);
+    const liveKeys = new Set(handles.keys());
+    expect(liveKeys.size).toBe(1);
+    // It dies; its pieces arrive.
+    warm = false;
+    const mirror = mirrorFor(d, DEATH_TICK + 3);
+    updateSwarmSprites(mirror, ctx);
+    expect(asked.length).toBeGreaterThan(0);
+    for (const k of asked) expect(liveKeys.has(k), `a new bake was asked for: ${k}`).toBe(true);
+    const own = new Set(art.frames);
+    for (let i = 0; i < mirror.swarm!.size; i++) {
+      const s = ctx.sprites.get(`swarm-${100 + i}`) as WreckPieceSprite;
+      expect(s, `piece ${i} drawn`).toBeInstanceOf(WreckPieceSprite);
+      const meshes = s.children.filter((c): c is Mesh => c instanceof Mesh && c.texture !== s.glowTexture());
+      expect(meshes.length, `piece ${i} wears the hull art, not the plain polygon`).toBeGreaterThan(0);
+      for (const m of meshes) expect(own.has(m.texture)).toBe(true);
+    }
+  }
+
+  it('livery on, an NPC capital: the pieces wear the bake the live hull drew, from the first frame (no new bake)', () => {
+    // The live battleship (an NPC: no `fac`, its kind's allegiance owns it).
+    const live = { ...piece(0, 0, 0, getShipKind('battleship').radius, DEATH_TICK - 10), kind: 1, componentIndex: undefined, wreckId: undefined } as SwarmRenderState;
+    liveryWreck((ctx) => updateSwarmSprites({ swarm: new Map([[7, live]]) } as unknown as RenderMirror, ctx), desc(DEATH_TICK));
+  });
+
+  it("livery on, a player's capital: the pieces wear the pilot's livery bake (descriptor owner), no new bake", () => {
+    // The pilot's hull draws in shipSpriteUpdater with its owner's livery.
+    const lv = ownerLivery('player-7');
+    liveryWreck(
+      (ctx) => { shipHandleFor(ctx.art, 'player-7', 'battleship', undefined, false, lv.team, lv.sigil, lv.edge); },
+      { ...desc(DEATH_TICK), owner: 'player-7' },
+    );
   });
 
   it('classic look (no art): plain pieces still glow on their cut edges', () => {
@@ -935,14 +1000,18 @@ describe('updateSwarmSprites — the filmed v7 break-up (heavy cruiser, 16" salv
     // Thin: the wide soft halo is gone once the edge is no longer glowing
     // (only the core stays as the scorch).
     const data = (wreckGlowTexture().source as unknown as { resource: Uint8Array }).resource;
-    // Per tint: a core row then a halo row (a crack's or a splinter's halo is
-    // gone by 2.2 s, a kill cut's, held with its ember, by 3.5 s).
+    // Per tint a block of rows; its halo and its bleed into the gap (a
+    // crack's or a splinter's halo is gone by 2.2 s, a kill cut's, held with
+    // its ember, by 3.5 s).
     const W = data.length / (4 * WRECK_GLOW_TEX_ROWS);
-    for (let row = 1; row < WRECK_GLOW_TEX_ROWS; row += 2) {
-      for (let i = 0; i < W; i++) {
-        const ageS = (i / (W - 1)) * WRECK_GLOW_END_S;
-        if (ageS < (row === 3 || row === 5 ? 3.5 : 2.2)) continue;
-        expect(data[(row * W + i) * 4 + 3], `row ${row}, ${ageS.toFixed(2)} s: no halo on a cooled edge`).toBe(0);
+    for (let tint = 0; tint < WRECK_GLOW_TEX_ROWS / GLOW_ROWS_PER_TINT; tint++) {
+      for (const r of [GLOW_ROW.HALO, GLOW_ROW.BLEED]) {
+        const row = tint * GLOW_ROWS_PER_TINT + r;
+        for (let i = 0; i < W; i++) {
+          const ageS = (i / (W - 1)) * WRECK_GLOW_END_S;
+          if (ageS < (tint === GLOW_TINT_SLICE || tint === GLOW_TINT_CHANNEL ? 3.5 : 2.2)) continue;
+          expect(data[(row * W + i) * 4 + 3], `row ${row}, ${ageS.toFixed(2)} s: no halo on a cooled edge`).toBe(0);
+        }
       }
     }
   });

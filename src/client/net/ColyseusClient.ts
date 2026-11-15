@@ -4,11 +4,11 @@ import { SWARM_KIND_STRUCTURE } from '../../shared-types/swarmWireFormat.js';
 import {
   STRUCTURE_TARGET_NONE,
   decodePlayerTurretTarget,
-  STRUCTURE_TARGET_STRIDE,
   MOUNT_ANGLE_QUANTUM,
   forEachStructureMountAngles,
   type StructureStateView,
 } from '../../shared-types/structureStateWire.js';
+import { forEachBeamLink, type BeamLinkVisitor } from '../../shared-types/beamLinksWire.js';
 import { Client, Room } from 'colyseus.js';
 import type { RenderMirror, ShipRenderState, StructureRenderState, SwarmRenderState } from '@core/contracts/IRenderer';
 import type { IAudio } from '@core/contracts/IAudio';
@@ -20,6 +20,7 @@ import type { SnapshotMessage, DamageEvent, DestroyEvent, LaserFiredEvent, Respa
 import { parseWelcome } from './parseWelcome';
 import { TRANSFER_PULSE_MS as GRID_PULSE_WINDOW_MS } from '@core/structures/structureGridConstants';
 import { PhysicsWorld, type ShipPhysicsState } from '@core/physics/World';
+import type { PadForceField } from '@core/physics/forceFields';
 import { decideStatAllocReanchor } from './localStatAlloc';
 import { visitDerivedWalls, type DerivedWallVisitor } from '../structures/derivedWalls.js';
 import { PAD_SPECS, PairRequestPromptSchema, TP_PHASE, TeleportCandidatesReplySchema, TollPromptSchema, isTeleporterKind } from '../../shared-types/teleport.js';
@@ -46,6 +47,7 @@ import { ShellBlastSchema } from '@shared-types/shellBlast';
 import { ShellEndSchema, ShellSalvoSchema, type ShellEnd } from '@shared-types/messages/shellEvents';
 import { ShellSalvoStore } from './shellSalvoStore';
 import { NavalHitHold, type HeldDamage } from './navalHitHold';
+import { DrawnShellTiming } from './drawnShellTiming';
 import { CollisionResolvedMessageSchema, HitAckSchema, DamageEventSchema, MissileFiredEventSchema, MissileDetonatedEventSchema, WallHitEventSchema, EntityStatsSchema, WarpWarningSchema, WarpWarningClearSchema, BaseReadySchema, ShipLevelUpEventSchema, ShipUpgradeAppliedEventSchema, MountActivatedEventSchema } from '@shared-types/messages';
 import { LootCollectedEventSchema, CargoDepositedEventSchema, NoticeEventSchema } from '@shared-types/messages/lootMessages';
 import { formatLootPickup, LOOT_FEED_TTL_MS, cargoChanged } from './lootView';
@@ -182,7 +184,8 @@ import type { TouchInput } from '../input/TouchInput';
 import { joystickToInput, IDLE_INPUT_STATE, type JoystickInputState } from '../input/joystickToInput';
 import { aimInput } from '../input/AimInput';
 import { encodeAim } from '@core/combat/manualAim';
-import { lockLineScore } from '@core/combat/lockLine';
+import { isContactLockKind, isTerrainLockKind } from '@core/combat/lockState';
+import { LockLinePick } from './lockLinePick';
 import { decodeSwarmPacket } from './BinarySwarmDecoder';
 import {
   interpolateSwarmPose,
@@ -974,6 +977,16 @@ export class ColyseusGameClient {
    *  `[...this.mirror.lingeringShips.keys()]` (a per-snapshot array
    *  allocation). Cleared via `length = 0` at the eviction site. */
   private readonly _lingeringToEvictScratch: string[] = [];
+  /** Hits and kills wait for the drawn shell (`drawnShellTiming.ts`).
+   *  Declared before the router ctx below, which reads its `shipKills`. */
+  private readonly _shellTiming = new DrawnShellTiming({
+    mirror: () => this.mirror, store: () => this._shellStore,
+    hold: () => this._navalHitHold, sink: () => this._heldDamageSink,
+    shellEvents: () => this._shellEvents, now: () => this.gameClock.now(),
+    anchorTick: () => this.clockAnchorServerTick,
+    killSwarmEntity: (id) => this.killSwarmEntity(id), killEntity: (id) => this.killEntity(id),
+    despawnLinger: (id) => { if (this.predWorld) this.lingerBodies.despawn(id, this.predWorld); },
+  });
   /** Phase 4 (plan: quirky-rabbit) — class-field Set scratches replacing
    *  the per-call `new Set<string>()` literals at the syncMirror /
    *  updateLiveBeam sites. Each is cleared at the top of its consumer;
@@ -1016,6 +1029,7 @@ export class ColyseusGameClient {
     tryEnsureLingerPredBody: this._boundTryEnsureLingerPredBody,
     lingeringSeenScratch: this._lingeringSeenScratch,
     lingeringToEvictScratch: this._lingeringToEvictScratch,
+    keepLingering: this._shellTiming.shipKills,
   };
   /** 2026-05-26 heap-growth gate step 12 — pooled ctx for
    *  `preResetRemoteShips`. Same pattern as above; `predWorld` is the
@@ -1379,6 +1393,8 @@ export class ColyseusGameClient {
   private resetPredictionState(): void {
     // S2b: wrecks belong to the old sector (clears mirror.wrecks too).
     this._wrecks.clear();
+    // Deaths held for their drawn shell belong to the old sector too.
+    this._shellTiming.reset();
     // Fire control: NPC locks belong to the old sector.
     this.mirror.localLockedBy = NO_LOCKED_BY;
     // A new sector / ship: seed the energy pool again from the new ship.
@@ -1605,14 +1621,7 @@ export class ColyseusGameClient {
         this._wrecks.apply(msg.wrecks ?? NO_WRECK_LIST);
         this.mirror.wrecks = this._wrecks.descriptors;
       }
-      this._shellStore.clear();
-      this._navalHitHold.flush(this._heldDamageSink);
-      if (this._shellEvents) {
-        this.mirror.shellSalvos = this._shellStore.map;
-        for (const s of msg.shellsInFlight ?? []) this._shellStore.applySalvo(s);
-      } else {
-        this.mirror.shellSalvos = undefined;
-      }
+      this._shellTiming.onWelcome(this._shellEvents, msg.shellsInFlight);
       const idChanged = storedPlayerId && msg.playerId !== storedPlayerId;
       logEvent('cc_welcome', {
         playerId: msg.playerId,
@@ -1841,10 +1850,10 @@ export class ColyseusGameClient {
       const decodeStartMs = performance.now();
       if (raw instanceof ArrayBuffer) {
         if (bw) { bw.swarmBytes += raw.byteLength; bw.swarmPackets += 1; }
-        decodeSwarmPacket(raw, this.mirror, performance.now(), true);
+        decodeSwarmPacket(raw, this.mirror, performance.now(), true, this._shellTiming.swarmKills);
       } else if (ArrayBuffer.isView(raw)) {
         if (bw) { bw.swarmBytes += raw.byteLength; bw.swarmPackets += 1; }
-        decodeSwarmPacket(raw, this.mirror, performance.now(), true);
+        decodeSwarmPacket(raw, this.mirror, performance.now(), true, this._shellTiming.swarmKills);
       }
       this.syncSwarmIntoPredWorld();
       const decodeMs = performance.now() - decodeStartMs;
@@ -2042,6 +2051,7 @@ export class ColyseusGameClient {
     });
 
     room.onMessage('laser_fired', (evt: LaserFiredEvent) => {
+      this._shellTiming.onBeamFired(evt);
       // Own shots are already shown as liveBeams — only store remote ones.
       if (evt.shooterId === this.mirror.localPlayerId) return;
       const dx = evt.toX - evt.fromX;
@@ -2828,30 +2838,15 @@ export class ColyseusGameClient {
     // flash coincides with the drawn impact instead of leading it by the
     // display delay + RTT/2 (navalHitHold.ts). State above is never held.
     if (!showFx) return;
-    if (this._shellEvents && this._navalHitHold.maybeHold(
-      evt, suppressNumber, this._shellStore.map, this.gameClock.now(),
-    )) return;
+    if (this._shellTiming.holdHit(evt, suppressNumber)) return;
     this.applyDamageFx(evt, suppressNumber);
   }
 
-  /** A `shell_end`: mark the shells, and match held naval hits to it. */
-  private applyShellEnd(msg: ShellEnd): void {
-    this._shellStore.applyEnd(msg, this.mirror.pendingShellEnds ??= []);
-    if (this._navalHitHold.size === 0) return;
-    const now = this.gameClock.now();
-    for (const e of msg.e) this._navalHitHold.onShellEnd(e[1], e[2], e[3], now);
-  }
+  /** A `shell_end` (`DrawnShellTiming.onShellEnd`). */
+  private applyShellEnd(msg: ShellEnd): void { this._shellTiming.onShellEnd(msg); }
 
-  /** One frame of event shells at `displayTick`: draw, burst, and release
-   *  the held hits whose burst is now drawn (or whose safety ran out). */
-  private placeShells(displayTick: number): void {
-    if (this.mirror.projectiles) {
-      this._shellStore.place(this.mirror.projectiles, displayTick, this.mirror.pendingShellEnds ??= []);
-    }
-    if (this._navalHitHold.size > 0) {
-      this._navalHitHold.release(displayTick, this.gameClock.now(), this._heldDamageSink);
-    }
-  }
+  /** One frame of event shells at `displayTick` (`DrawnShellTiming.place`). */
+  private placeShells(displayTick: number): void { this._shellTiming.place(displayTick); }
 
   /** The FX half of a damage event with positive damage: hull flash,
    *  floating number, health-bar hit, impact spark. */
@@ -2967,9 +2962,11 @@ export class ColyseusGameClient {
 
   private handleDestroy(evt: DestroyEvent): void {
     if (evt.targetId.startsWith('swarm-')) {
+      if (this._shellTiming.deferKill(evt.targetId)) return;
       this.killSwarmEntity(evt.targetId);
       return;
     }
+    if (this._shellTiming.deferKill(evt.targetId)) return;
     this.killEntity(evt.targetId);
   }
 
@@ -3943,6 +3940,22 @@ export class ColyseusGameClient {
     this._structureGen.set(id, this._structureGenN);
   };
 
+  /** Beam links (shared-types/beamLinksWire.ts): structure turret / mining
+   *  targets onto their rows. Ship tractor links decode here and are drawn and
+   *  predicted by the tractor client slice (salvage plan PR 11b). Bound once. */
+  private readonly _beamLinkVisitor: BeamLinkVisitor = {
+    structure: (sid, turret, mining) => {
+      const row = this._structureMap?.get(sid);
+      if (!row) return;
+      // B2 — a negative slot below NONE is a PLAYER target (an owner-table index).
+      const ownerIdx = decodePlayerTurretTarget(turret);
+      if (ownerIdx >= 0) row.turretTargetPlayerId = this._structureOwners.ids[ownerIdx];
+      else if (turret !== STRUCTURE_TARGET_NONE) row.turretTargetId = turret;
+      if (mining !== STRUCTURE_TARGET_NONE) row.miningTargetId = mining;
+    },
+    tractor: () => {},
+  };
+
   /** Coastal defences — copy one structure's server turret angles onto its
    *  row (the array is reused, #14). Bound once. */
   private readonly _applyStructureMountAngles = (entityId: number, flat: readonly number[], start: number, count: number): void => {
@@ -3995,28 +4008,20 @@ export class ColyseusGameClient {
         const sw = this.mirror.swarm?.get(id);
         if (sw && sw.kind === SWARM_KIND_STRUCTURE) this.mirror.swarm!.delete(id);
       }
-      if (targets) {
-        for (let i = 0; i + 2 < targets.length; i += STRUCTURE_TARGET_STRIDE) {
-          const row = map.get(targets[i]!);
-          if (!row) continue;
-          const turret = targets[i + 1]!;
-          // B2 — a negative slot below NONE is a PLAYER target (an owner-table index).
-          const ownerIdx = decodePlayerTurretTarget(turret);
-          if (ownerIdx >= 0) row.turretTargetPlayerId = this._structureOwners.ids[ownerIdx];
-          else if (turret !== STRUCTURE_TARGET_NONE) row.turretTargetId = turret;
-          if (targets[i + 2] !== STRUCTURE_TARGET_NONE) row.miningTargetId = targets[i + 2];
-        }
-      }
+      if (targets) forEachBeamLink(targets, this._beamLinkVisitor);
       if (mountAngles) forEachStructureMountAngles(mountAngles, this._applyStructureMountAngles);
     }
     this.syncPredWalls();
-    this.syncPadFields();
+    this.syncForceFields();
     this.syncMines();
   }
 
+  /** Scratch for `syncForceFields` (`setForceField` copies it; no per-frame object). */
+  private readonly _padForceField: PadForceField = { kind: 'pad', cx: 0, cy: 0, half: 0, active: false };
+
   /** v4 T2 — each teleporter's closing push in the prediction world, from the
    *  room-state phase (the server worker runs the same field, #15). */
-  private syncPadFields(): void {
+  private syncForceFields(): void {
     const world = this.predWorld;
     const structures = this.mirror.structures;
     const swarm = this.mirror.swarm;
@@ -4026,7 +4031,9 @@ export class ColyseusGameClient {
       if (t === undefined) continue;
       const e = swarm.get(id);
       if (!e || !isTeleporterKind(e.shipKind)) continue;
-      world.setPadField(padFieldId(id), e.x, e.y, PAD_SPECS[e.shipKind].padRadius, t.phase === TP_PHASE.CLOSING);
+      const f = this._padForceField;
+      f.cx = e.x; f.cy = e.y; f.half = PAD_SPECS[e.shipKind].padRadius; f.active = t.phase === TP_PHASE.CLOSING;
+      world.setForceField(padFieldId(id), f);
     }
   }
 
@@ -4219,9 +4226,9 @@ export class ColyseusGameClient {
       }
     }
 
-    // Remove departed ships.
+    // Remove departed ships (not one whose death is held for its drawn shell).
     for (const key of this.mirror.ships.keys()) {
-      if (!seen.has(key)) {
+      if (!seen.has(key) && !this._shellTiming.shipKills.has(key)) {
         this.mirror.ships.delete(key);
         this.remoteHistory.delete(key);
         if (this.predRemoteShipIds.has(key)) {
@@ -4836,10 +4843,12 @@ export class ColyseusGameClient {
       this.ghostManager.update(this.gameFrameMs(), this.mirror.projectiles);
       // Shells as events (slice 2b): draw salvo shells at the display tick
       // (server tick estimate minus the remote-entity display delay), and
-      // burst them when the display reaches their hit.
+      // burst them when the display reaches their hit. At the FRAME's own
+      // time (RAF stamp), not `gameClock.now()` (shellFrameTime.test.ts).
       if (this._shellEvents) {
         const displayTick = this.clockAnchorServerTick
-          + (this.gameClock.now() - this.clockAnchorPerfNow) / SHELL_TICK_MS - SHELL_DISPLAY_DELAY_MS / SHELL_TICK_MS;
+          + (this.gameClock.at(frameNowMs ?? this.clock.now()) - this.clockAnchorPerfNow) / SHELL_TICK_MS
+          - SHELL_DISPLAY_DELAY_MS / SHELL_TICK_MS;
         this.placeShells(displayTick);
       }
 
@@ -5734,9 +5743,12 @@ export class ColyseusGameClient {
 
     // Drop entries for mounts no longer present (e.g. ship-kind changed
     // mid-life — currently impossible but cheap to guard).
+    // A capital group fires each turret only while it bears (`fcFireMounts`):
+    // a turret aimed away draws no beam (it once drew one to max range).
+    const bearingOnly = this._fcPerMount && this._fireSlotOverride !== null;
     const mountIds = this._liveBeamMountIdsScratch;
     mountIds.clear();
-    for (const m of mounts) mountIds.add(m.id);
+    for (const m of mounts) if (!bearingOnly || this._fcBearing.has(m.id)) mountIds.add(m.id);
     for (const id of liveBeams.keys()) if (!mountIds.has(id)) liveBeams.delete(id);
 
     const cosA = Math.cos(ship.angle);
@@ -5744,6 +5756,7 @@ export class ColyseusGameClient {
     const mountAngles = ship.mountAngles;
     for (let i = 0; i < mounts.length; i++) {
       const mount = mounts[i]!;
+      if (!mountIds.has(mount.id)) continue;
       const mountWorldX = ship.x + (mount.localX * cosA - mount.localY * sinA);
       const mountWorldY = ship.y + (mount.localX * sinA + mount.localY * cosA);
       const angleIdx = this.instanceMountIndex(ship.kind, ship.activatedMounts, mount.id);
@@ -5891,6 +5904,9 @@ export class ColyseusGameClient {
   private readonly _fcMountLastTick = new Map<string, number>();
   /** Mounts in the salvo being sent (capitals; empty = every bearing mount). */
   private readonly _fcSalvo = new Set<string>();
+  /** Mounts that bore on their target this fire tick (capitals): the only
+   *  ones `updateLiveBeam` draws a beam from. */
+  private readonly _fcBearing = new Set<string>();
   private readonly _fcPickX = new Float64Array(8);
   private readonly _fcPickY = new Float64Array(8);
   /** Per-lock hit shapes for `pickTurretLock`'s hull range gate (reused, #14). */
@@ -5963,31 +5979,17 @@ export class ColyseusGameClient {
     m.localLockGuide = bearing;
     m.localAimReach = reach;
     this._lgLocalId = localId;
-    this._lgX = ship.x;
-    this._lgY = ship.y;
-    this._lgDirX = -Math.sin(bearing);
-    this._lgDirY = Math.cos(bearing);
-    this._lgReach = reach;
-    // Sticky: the target the line already holds keeps it inside a wider cone.
-    this._lgHeld = m.localLockCandidate ?? null;
-    this._lgBest = null;
-    this._lgBestScore = Infinity;
+    this._lgPick.begin(ship.x, ship.y, bearing, reach, m.localLockCandidate ?? null);
     m.swarm?.forEach(this._lgVisitSwarm);
     m.ships.forEach(this._lgVisitShip);
-    m.localLockCandidate = this._lgBest;
-    return this._lgBest;
+    const best = this._lgPick.result(); // terrain only with no contact on the line
+    m.localLockCandidate = best;
+    return best;
   }
 
   /** Lock-line pick scratch (one pick at a time; reused, #14). */
   private _lgLocalId: string | null = null;
-  private _lgX = 0;
-  private _lgY = 0;
-  private _lgDirX = 0;
-  private _lgDirY = 1;
-  private _lgReach = 0;
-  private _lgHeld: string | null = null;
-  private _lgBest: string | null = null;
-  private _lgBestScore = Infinity;
+  private readonly _lgPick = new LockLinePick();
   /** Lock keys (`s:<entityId>` / `p:<playerId>`), built once per id. */
   private readonly _swarmLockKeys = new Map<number, string>();
   private readonly _shipLockKeys = new Map<string, string>();
@@ -6014,25 +6016,20 @@ export class ColyseusGameClient {
     return k;
   }
 
-  private lgConsider(key: string, x: number, y: number, radius: number): void {
-    const score = lockLineScore(x - this._lgX, y - this._lgY, this._lgDirX, this._lgDirY, radius, this._lgReach, key === this._lgHeld);
-    if (score < this._lgBestScore) {
-      this._lgBestScore = score;
-      this._lgBest = key;
-    }
-  }
-
-  /** Drones + structures (not your own) on the lock line. Bound once. */
+  /** Drones + structures (not your own) on the lock line; neutral terrain
+   *  (shared `isTerrainLockKind`, the server's `resolveLockTarget` rule, #15)
+   *  in its own lowest-priority tier. Bound once. */
   private readonly _lgVisitSwarm = (e: SwarmRenderState, entityId: number): void => {
-    if (e.kind !== 1 && e.kind !== 2) return;
+    const terrain = isTerrainLockKind(e.kind);
+    if (!terrain && !isContactLockKind(e.kind)) return;
     if (e.kind === 2 && this.mirror.structures?.get(entityId)?.owner === this._lgLocalId) return;
-    this.lgConsider(this.swarmLockKey(entityId), e.x, e.y, e.radius ?? 20);
+    this._lgPick.consider(this.swarmLockKey(entityId), e.x, e.y, e.radius ?? 20, terrain);
   };
 
   /** Other pilots' ships on the lock line. Bound once. */
   private readonly _lgVisitShip = (s: ShipRenderState, pid: string): void => {
     if (pid === this._lgLocalId) return;
-    this.lgConsider(this.shipLockKey(pid), s.x, s.y, getShipKind(s.kind ?? null).radius);
+    this._lgPick.consider(this.shipLockKey(pid), s.x, s.y, getShipKind(s.kind ?? null).radius, false);
   };
 
   /**
@@ -6337,6 +6334,7 @@ export class ColyseusGameClient {
     this.fcSyncKind(this.mirror.ships.get(localId)?.kind ?? null);
     const activeGroup = useUIStore.getState().activeGroupId;
     const nowMs = this.clock.now();
+    this._fcBearing.clear();
     let beamGroup: string | null = null;
     for (const g of this._fcGroups) {
       let lockedKey: string | null = null;
@@ -6418,6 +6416,7 @@ export class ColyseusGameClient {
       // In the mount's own reach of the target's hull AND on bearing (#15).
       if (!mountFiresOn(m.weaponId, def.reach, ox, oy, st.angle + m.baseAngle + (angles?.[i] ?? 0), this._fcPose)) continue;
       bears = true;
+      this._fcBearing.add(m.id);
       const cd = getWeapon(m.weaponId).cooldownTicks;
       const lastMs = this._fcMountLastMs.get(m.id);
       if (lastMs !== undefined && nowMs - lastMs < (cd * 1000) / 60) continue;

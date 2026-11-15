@@ -2,6 +2,23 @@
 
 Root `CLAUDE.md` keeps the short form of each standing rule below; this page holds the full text, the commands and the reasons. Read it when you open a PR, clean up after a run, plan a feature that touches an existing system, or start a server.
 
+## Compact, don't relaunch
+
+The owner tracks every stream by its session window and name, often from the phone. A stream therefore stays in ONE session for its whole life; it never hands off to a fresh session.
+
+- **Compaction in place.** On this machine Claude Code compacts a session in place at ~250k tokens: user settings `autoCompactWindow: 250000`.
+- **Before compaction.** A `PreCompact` hook (`~/.claude/hooks/precompact.js`) tells the summary to keep:
+  - the stream and its plan file;
+  - the current slice;
+  - open PRs, branches and worktrees;
+  - running background agents and what each is doing;
+  - the owner's decisions;
+  - the handoff file and the next step.
+- **After compaction.** A `SessionStart` hook with the `compact` matcher (`~/.claude/hooks/session-compact.js`) tells the session to re-read its handoff and memory before acting.
+- **The session's job.** Keep `.resume/<slug>.md` current at every milestone, so the summary and the handoff agree.
+- **The reminder.** `scripts/dev/context-nudge.mjs` (a project PostToolUse hook) reminds the session at 250k and 400k.
+- **Limit.** Claude Code cannot start a fresh session or `/clear` itself. The `eqx-resume` launcher stays for relaunching parked streams after a reboot.
+
 ## Commit cadence
 
 Commit at every milestone where the inner loop (`pnpm typecheck && pnpm lint && pnpm test`) is green and the change is a coherent unit, usually one plan step per commit, subject in the imperative with the plan reference. Group only related changes. Never commit yellow code to save progress; `--no-verify` is forbidden. Before a session ends, `git status` is clean or the pending work is noted.

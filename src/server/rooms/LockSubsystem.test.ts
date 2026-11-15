@@ -47,7 +47,9 @@ function harness(kindId = 'fighter'): {
   return { locks, targets, commits, refreshes, setAuto: (k) => { auto = k; }, anyTargetArgs };
 }
 
-const still = (x: number, hostile: boolean): LockTargetView => ({ x, y: 0, vx: 0, vy: 0, angle: 0, ship: false, kindId: null, shieldUp: false, radius: 30, hostile });
+const still = (x: number, hostile: boolean): LockTargetView => ({ x, y: 0, vx: 0, vy: 0, angle: 0, ship: false, kindId: null, shieldUp: false, radius: 30, hostile, terrain: false });
+/** Neutral terrain (asteroid / scrap / wreck piece): `resolveLockTarget` fills `terrain`. */
+const rock = (x: number): LockTargetView => ({ ...still(x, false), terrain: true });
 /** Crossing far too fast for a fighter's guns to track (past `maxSeconds`). */
 const crossing = (x: number, hostile: boolean): LockTargetView => ({ ...still(x, hostile), vy: 5000 });
 /** Lock-line bearing straight ahead (+y; ship-angle convention: forward = (-sin b, cos b)). */
@@ -320,7 +322,7 @@ describe('LockSubsystem', () => {
 
   describe('held locks (the lock line)', () => {
     const pct = (h: ReturnType<typeof harness>): number => h.locks.wireFor('p1')![0]!.l[0]?.p ?? -1;
-    const ahead = (y: number): LockTargetView => ({ x: 0, y, vx: 0, vy: 0, angle: 0, ship: false, kindId: null, shieldUp: false, radius: 30, hostile: true });
+    const ahead = (y: number): LockTargetView => ({ x: 0, y, vx: 0, vy: 0, angle: 0, ship: false, kindId: null, shieldUp: false, radius: 30, hostile: true, terrain: false });
 
     it('builds only while held: let go part-way and it drains back to 0, then drops', () => {
       const h = harness();
@@ -399,6 +401,40 @@ describe('LockSubsystem', () => {
       h.locks.requestLock('p1', 'primary', 's:1');
       steps(h.locks, 40);
       expect(h.locks.hasLocked('p1', 'primary')).toBe(true);
+    });
+  });
+
+  describe('neutral terrain locks (asteroids, scrap / loot pods, wreck pieces)', () => {
+    it('locks with no failsafe and never commits a hostile act or refreshes hostility', () => {
+      const h = harness();
+      h.targets.set('s:40', rock(200));
+      expect(h.locks.requestLock('p1', 'primary', 's:40')).toBe(true);
+      expect(h.locks.wireFor('p1')![0]!.l[0]!.s).toBe(1); // straight to acquiring
+      steps(h.locks, 80);
+      expect(h.locks.hasLocked('p1', 'primary')).toBe(true);
+      expect(h.commits).toEqual([]);
+      expect(h.refreshes).toEqual([]);
+    });
+
+    it('testMode instantLock: a terrain lock completes at once with no hostile act', () => {
+      const h = harness();
+      h.locks.enable('p1', true);
+      h.targets.set('s:41', rock(200));
+      h.locks.requestLock('p1', 'primary', 's:41');
+      steps(h.locks, 1);
+      expect(h.locks.hasLocked('p1', 'primary')).toBe(true);
+      expect(h.commits).toEqual([]);
+    });
+
+    it('a held lock-line terrain lock builds with no failsafe and no hostile act', () => {
+      const h = harness();
+      h.targets.set('s:42', { ...rock(0), y: 200 });
+      h.locks.trackLock('p1', 'primary', 's:42', AHEAD);
+      expect(h.locks.wireFor('p1')![0]!.l[0]!.s).toBe(1);
+      steps(h.locks, 80);
+      expect(h.locks.hasLocked('p1', 'primary')).toBe(true);
+      expect(h.commits).toEqual([]);
+      expect(h.refreshes).toEqual([]);
     });
   });
 
