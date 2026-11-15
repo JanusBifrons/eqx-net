@@ -44,6 +44,12 @@ export interface TestClientOpts {
    *  structures, structure / coastal turrets) takes longer than N seconds;
    *  0 = the first lock step. Reaches the room on the room-creating client. */
   lockTimeCapS?: number;
+  /** Charge-up bespoke trigger (`?chargeTicksCap=N`, testMode rooms only): no
+   *  capital-turret charge (the railgun's ~6 s wind-up) lasts longer than N ticks. */
+  chargeTicksCap?: number;
+  /** Turret-traverse bespoke trigger (`?traverseTicksCap=N`, testMode rooms only):
+   *  no capital turret takes longer than N ticks to train a full turn; 0 = snap. */
+  traverseTicksCap?: number;
   /** Time scale trigger (`?timeScale=N`, testMode rooms): the sector's game
    *  speed, 0.25–4. Room-wide. */
   timeScale?: number;
@@ -95,6 +101,8 @@ export async function launchTestClient(browser: Browser, opts: TestClientOpts) {
   if (opts.injectLeak !== undefined) params.set('injectLeak', String(opts.injectLeak));
   if (opts.instantLock) params.set('instantLock', '1');
   if (opts.lockTimeCapS !== undefined) params.set('lockTimeCapS', String(opts.lockTimeCapS));
+  if (opts.chargeTicksCap !== undefined) params.set('chargeTicksCap', String(opts.chargeTicksCap));
+  if (opts.traverseTicksCap !== undefined) params.set('traverseTicksCap', String(opts.traverseTicksCap));
   if (opts.timeScale !== undefined) params.set('timeScale', String(opts.timeScale));
   if (opts.anyTarget) params.set('anyTarget', '1');
   if (opts.groupMode) params.set('groupMode', opts.groupMode);

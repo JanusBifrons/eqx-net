@@ -171,3 +171,16 @@ Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each r
   - **Payment** goes wallet → wallet for a player owner, or into the owner faction's treasury (`EconomyStore.creditTreasury`, persisted). Remembered answers are `EconomyStore.tollPref`.
   - **Pairing with another owner:** `teleport_pair_request` → `TeleportBroker.addRequest` + a prompt to the owner (`sendToPlayer` reaches them in any room) → `teleport_pair_answer`; only the owner of the asked teleporter can accept. `pair(…, consented=true)` skips the same-owner check.
 - Lock: `tests/integration/sectorRoom/teleporter.test.ts`. Story: [docs/features/teleporters.md](../features/teleporters.md).
+
+### Server rules in full (moved from src/server/CLAUDE.md)
+
+The zone `CLAUDE.md` keeps a condensed form of these rules; this is the full wording with its lock tests.
+
+#### Teleporters and alien gates
+
+- **Pad holds** move only via `StorageService.padLoad` / `padUnload` / `padSwap` / `padSwapAcross` / `takePadForSpill` (one group each). Capacitor charge never discharges batteries.
+- **Director bots** cross only via `TeleportBroker.moveBot` → `LivingWorldDirector.teleportBot`. Rooms register with the broker on create and unregister on dispose. Lock: `teleporter.test.ts`.
+- **Pairing consent:** only the owner of the asked teleporter can accept a `teleport_pair_request` (`teleport_pair_answer` handler in `SectorRoom` checks `req.toOwner` and the target's owner). Lock: `teleporterAcross.test.ts`.
+- **Alien gates** are unbuildable and invulnerable; pair a gate only through `findAlienTwin`, never a pre-computed uid. `evictSwarmEntity` must `forget` the ship; the disable runs through the shared `gateDisabledInput` (#15). Locks: `AlienGateGuard.test.ts`, `disableParity.test.ts`, `alienGates.test.ts`.
+- Detail: [teleporters.md](../../docs/features/teleporters.md#server-implementation-notes), [alien-gates.md](../../docs/features/alien-gates.md#server-implementation-notes).
+

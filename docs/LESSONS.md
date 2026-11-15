@@ -3042,6 +3042,26 @@ Owner: "make it more like micro machines and make fights a bit longer. Also don'
 - **Rule:** anything that reasons about how an NPC body responds (the pilot's braking, arrive ramps, tests) must use the spawned mass, `NPC_MASS_FALLBACK` from `shipScale/tuning.ts` (now the spawner's source too), never `thrustImpulse` alone. Whether NPC bodies should match the player's mass is an owner balance call (it also changes ramming), not a pilot fix.
 - **Also:** the old impulse brain needed `HostileDroneBehaviour` to know nothing about inertia. A capital flown by keys turns by torque, so the pilot must stop the turn early on the coast `ω / angularDamping` (Rapier's damping sums to exactly that), or it swings past the heading by ~4° and hunts.
 
+## 2026-11-13 — Ship stats belong to the ship, never the pilot (one mass source)
+
+- **Owner rule:** "Ships turning, acceleration, weapons, everything is related to the ship, regardless of pilot." An NPC-flown ship and a player-flown ship of the same kind must have the same physical and combat stats; only per-instance upgrades (leveling `SET_STAT_MUL`, quality, fitted modules) differ.
+- **Symptom:** a kind with no authored `mass` had THREE masses: 1 as a player ship (`World.spawnShip`, `massOf(kind, 1)`), 2 as a server drone (`SwarmSpawner`, `NPC_MASS_FALLBACK`) and 3 in the client predWorld (`DroneClientLeaf`, `DRONE_FALLBACK_MASS`). At the 2× default that is 8 / 16 / 24: the same fighter accelerated half as hard and turned capitals half as fast when an NPC flew it. A server drone body also had angular damping 0 until its first AI input.
+- **Why the old parity test passed:** `World.aiInput.test.ts` spawned its "drone" with `massOf(kind, 1)` by hand instead of the spawner's mass, so it compared a pilot ship with a pilot-massed obstacle.
+- **Fix:** `shipBodyMass(kind)` / `shipBodyInertia(kind)` (`shipScale/tuning.ts`) are the ONE source. `spawnShip` uses them, and `spawnObstacle` with a ship kind (every drone, server and client) pins them whatever mass the caller passed. `NPC_MASS_FALLBACK`, `DRONE_DEFAULT_MASS`, `DRONE_FALLBACK_MASS` and `DroneSpec.mass/radius` are gone. `World.setPilotKind` (server worker only) gives the drone body its kind's damping at spawn. Lock: `tests/unit/shipStatsPilotAgnostic.test.ts` (every catalogue kind: mass, inertia, damping, motion under the same keys, through the real spawner and the real client leaf).
+- **Rule:** a parity test must build each side through its real spawn path, never by copying a constant into the test.
+
+## 2026-11-13 — AI pilots' guns were free: a ship rule enforced only on the player path
+
+- **Finding:** `PlayerFireResolver` gated every slot trigger on `canAfford(pool, resolveSlotEnergyCost(slot))`, but `AiFireResolver` (and capital `fireMount`) had no energy gate at all, while the virtual pilot (PR #549) had already given each AI pilot's ship a boost pool. An AI-flown fighter could boost to empty and still fire every cooldown; a player of the same kind could not.
+- **Fix:** one pool per AI-flown ship on its brain, spent through `IAiBehaviour.trySpendEnergy` by boost and by both AI fire paths, with the player's refusal rule (no cooldown/reload spent). Capital turrets pay the player capital's per-mount share.
+- **Balance:** at today's numbers no existing suite changed. Most AI-flown weapons regen faster than they fire (fighter laser: cost 2 per 10 ticks, regen 2.5), so energy bites only when boost drains the pool or on missile/charge kinds (robot-hexagon: 60 per 90 ticks vs regen 31.5 ⇒ about 5 opening shots, then regen-paced).
+- **Rule:** a ship rule (handling, energy, cooldown, damage) lives where BOTH pilots go through it. When adding one to the player path, ask what the AI pilot path does.
+
+## 2026-11-13 — AI pilot keys must be held between messages, like a pilot's
+
+- **Finding (filmed npc-dogfight / fleet-melee, "ships barely move"):** the worker applied each AI pilot's `AI_INPUTS` keys on ONE physics step and then dropped them. The room loop (main thread) and the worker (its own 60 Hz timer) are not lock-stepped, so steps with no fresh message ran with no keys: no thrust, no brake, a snap turn left spinning at its last rate. On a real dev server 8 % of steps had no keys on an idle box and 46 % with the room loop slowed to ~32 Hz (`EQX_PERF_BURN_MS=30`), where NPC turn rate fell 0.36 → 0.12 rad/s. A pilot's held input (input queue rule #3) never had this coupling, and the in-process integration harness runs an idle room loop, so it never showed.
+- **Rule:** keys from a brain are HELD by the worker until replaced, cleared only by despawn, a switch to the impulse path or a bot warp. Lock: `src/server/rooms/physicsWorkerAiInputHeld.test.ts` (real bundled worker, keys at 20 Hz must fly like keys every step).
+- **Not the whole story:** the same filmed take's server log showed 92 % of steps keyed at 59.9 Hz, so the slow look of those clips is mostly elsewhere: an AI-flown body at twice a player's mass (#556), a 4.7 s thrust time constant (`1 / linearDamping`), and a fight that ends in ~8 s once hulls are mortal (the integration test makes them endless).
 ## 2026-11-14 — "notepack skips undefined" stopped being true: the snapshot paid for every empty key
 
 - **Symptom:** capital-fleet's rx rose from ~17 to ~21 KB/s per pilot over three days with no single big change; the snapshot JSON alone went 9.8 → 13.1 KB/s for one pilot's ship and a few drones.
@@ -3063,3 +3083,19 @@ Owner: "make it more like micro machines and make fights a bit longer. Also don'
 
 - **Finding (fleet-melee follow, take 10: "the ship jitters, or is it the camera"):** a per-frame probe showed the camera moving evenly (jerk 0.03 u) while the drawn drone stepped 0–5.3 u per frame at a ~2.8 u cruise. The pose ring stamped each binary packet with the time it was DECODED, and packets decode once per RAF, so two ticks in one frame shared a stamp. The "display delay makes us immune to arrival jitter" claim only holds if the samples carry the time they stand for.
 - **Rule:** stamp an interpolation sample with its source time (server tick on a fitted clock, `swarmArrivalStampMs`), never with when the client happened to process it. When a followed entity "jitters", measure the drawn pose and the camera separately per frame before touching either. The source time must be right too: a packet labelled with a tick read earlier than its poses (room loop vs physics worker loop) pops the drone one step forward (take 11); label it with the SAB tick read right before the encode (`sabPoseTick`).
+
+## 2026-11-14 — A new welcome key must reach clients before the server sends it
+
+- **Finding (PR #584, netgate red 3×):** switching the sub-cap break-up on made the server send `subcapWrecks: true` in `welcome`. `WelcomeSchema` is `.strict()`, so the netgate's baseline arm (origin/main client against the HEAD server) dropped the whole welcome (`welcome_malformed_dropped`) and never showed a ship: `waitForFunction` timed out on "Ships > 0", with no console error.
+- **Rule:** an additive key on a strict server→client message lands reader-first: the schema change ships to `main` on its own, then the server starts sending it. The netgate baseline arm enforces this one-release skew.
+
+## 2026-11-14 — A charge weapon needs the pilot to hold its line
+
+- **Finding (#611):** a locked-direction charge (robot charge laser) fires down the barrel when the wind-up ends. The new dogfighting AI kept flying its strafing pass during the 1.2 s wind-up, slid ~400 u and missed a parked pilot 6 times out of 6. The charge path and the manoeuvre layer were each right on their own.
+- **Rule:** while `view.isCharging` the combat brain holds its line on the target. Any new manoeuvre must respect it; a behaviour change to the AI's movement re-runs `chargeLaser.test.ts`.
+
+## 2026-11-15 — "Black gaps" in a wreck were the sky: measure a dark finding before fixing it
+
+- **Finding:** a hostile review of the rail-channel take said the channel and cracks between wreck pieces were painted near-black, darker than space. It looked like the old "dark scrap" class (a shadow or underlay under the pieces).
+- **Measured:** freeze the ticker (`app.ticker.stop()`), render by hand and read the canvas back while hiding one thing at a time: pieces only, the whole ship layer, each sibling. Every gap pixel equalled the bare backdrop, and the gaps were transparent over a magenta clear colour. On the filmed frame the gap matched the sky beside it. Nothing to fix; the sky behind the ship was near-black.
+- **Rule:** before fixing "too dark" or "black" in a film review, sample the frame (the region against its neighbours) and do a hide-one-at-a-time readback in the game. Fix only what the numbers show; a look preference goes to the owner.

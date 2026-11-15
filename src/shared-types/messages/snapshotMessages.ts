@@ -47,6 +47,11 @@ export interface WelcomeMessage {
    *  explosion at the kill point instead of the hull-sized death blast
    *  (money-shot review). Absent = no wrecks. */
   capitalWrecks?: true;
+  /** Sub-capital break-up: set when this room breaks dying sub-capitals into
+   *  wreck pieces (`subcapWrecks` / `EQX_SUBCAP_WRECKS`). The client then
+   *  holds the dying hull briefly until its pieces are drawn; the ship's
+   *  normal death explosion still plays. Absent = no sub-cap wrecks. */
+  subcapWrecks?: true;
   /** Sub-capital break-up slice 3 — the FULL set of live wreck descriptors at
    *  join (#16). Snapshots then carry only `wreckAdds` / `wreckRemoves` and a
    *  slow `wreckSync`. Absent = none (or wrecks off). */
@@ -85,6 +90,9 @@ export const WreckDescriptorSchema = z
     snapChance: z.number().finite(),
     algoVersion: z.number().int(),
     deathTick: z.number().int().optional(),
+    cutKind: z.enum(['slice', 'channel']).optional(),
+    cutAng: z.number().int().min(0).max(0xffff).optional(),
+    cutW: z.number().finite().min(0).optional(),
   })
   .strict();
 
@@ -123,7 +131,10 @@ export function isWreckDescriptor(v: unknown): v is WreckDescriptor {
     && finite(d['killX']) && finite(d['killY']) && finite(d['killBlowDamage'])
     && finite(d['recentDamageRate']) && finite(d['snapChance'])
     && typeof d['algoVersion'] === 'number' && Number.isInteger(d['algoVersion'])
-    && (d['deathTick'] === undefined || (typeof d['deathTick'] === 'number' && Number.isInteger(d['deathTick'])));
+    && (d['deathTick'] === undefined || (typeof d['deathTick'] === 'number' && Number.isInteger(d['deathTick'])))
+    && (d['cutKind'] === undefined || d['cutKind'] === 'slice' || d['cutKind'] === 'channel')
+    && (d['cutAng'] === undefined || (typeof d['cutAng'] === 'number' && Number.isInteger(d['cutAng']) && d['cutAng'] >= 0 && d['cutAng'] <= 0xffff))
+    && (d['cutW'] === undefined || (finite(d['cutW']) && (d['cutW'] as number) >= 0));
 }
 
 /** Campaign 6.1 (anti-patterns review C-core 3) — defensive ingest schema for
@@ -151,6 +162,7 @@ export const WelcomeSchema = z
     shellEvents: z.literal(true).optional(),
     shellsInFlight: z.array(ShellSalvoSchema).max(256).optional(),
     capitalWrecks: z.literal(true).optional(),
+    subcapWrecks: z.literal(true).optional(),
     wrecks: z.array(WreckDescriptorSchema).max(MAX_WELCOME_WRECKS).optional(),
   })
   .strict();
@@ -313,8 +325,17 @@ export interface SnapshotMessage {
        *  Absent ⇒ not a fire-control pilot (or no groups). */
       groups?: Array<{ id: string; m: 0 | 1; l: Array<{ t: string; s: number; p: number; r?: 1; c?: 1 }> }>;
       /** Fire control — NPCs locking this pilot: `t` = `s:<entityId>`,
-       *  `s` 1 acquiring / 2 locked, `p` 0..100. Own pilot only; absent ⇒ none. */
+       *  `s` 1 acquiring / 2 locked, `p` 0..100. Own pilot only; absent ⇒ none.
+       *  At most `LOCKED_BY_WIRE_ROWS` rows: completed locks first, then nearest. */
       lockedBy?: Array<{ t: string; s: 1 | 2; p: number }>;
+      /** Fire control — how many NPCs lock this pilot in all, sent only when
+       *  more than the `lockedBy` rows (absent ⇒ the rows are everyone). The
+       *  HUD banner's count. No `SWARM_WIRE_VERSION` bump (slim JSON field). */
+      lockedByN?: number;
+      /** Fire control — how many of those hold a COMPLETED lock, sent only
+       *  when some are off the `lockedBy` rows (absent ⇒ the locked rows are
+       *  all of them). The banner's exact locked count. Slim JSON field. */
+      lockedByL?: number;
       /** Phase 4 (Dynamic weapon mounts, WS-B3) — the hull's ACTIVATED latent
        *  mount slots (`{ slotId, weaponId }[]`). PUBLIC (unlike `statAlloc`):
        *  emitted for EVERY ship (active + lingering) that has ≥ 1 activated
@@ -372,10 +393,26 @@ export interface SnapshotMessage {
      *  bytes; absence does NOT force-clear (the client ledger's time-decay
      *  owns forgetting, exactly as with the event path). */
     hostile?: boolean;
-    /** Living World P3c — true while this drone winds up a CHARGE weapon (the
-     *  robot orb's charge laser): the client draws the telegraph. Emit-when-
-     *  true; absence means "not charging" (the wind-up is ~1.2 s). */
-    charging?: boolean;
+    /** Charge-up: bit i set while slot mount i charges a CHARGE weapon (or
+     *  holds a completed 'when-bearing' charge); the client draws each
+     *  weapon's telegraph (`chargeTelegraph`). Emit-when-non-zero; absence
+     *  means "not charging". Read from the one server store
+     *  (`WeaponMountTicker.charges`). */
+    chargingMask?: number;
+    /** The server tick the earliest charging mount began charging (present
+     *  with `chargingMask`). The telegraph ramps from it on the game clock,
+     *  so a late joiner sees the charge at its true progress (#16). */
+    chargeStartTick?: number;
+    /** Per-mount charge starts (railgun battleships: several main turrets
+     *  charging from different ticks): one entry per SET bit of
+     *  `chargingMask`, lowest bit first, each that mount's start in ticks
+     *  AFTER `chargeStartTick` (0..65535). Emit-when-non-default: absent when
+     *  every charging mount began on `chargeStartTick` (a lone charge always). */
+    chargeOffsets?: number[];
+    /** Take 12 — true while this AI ship's pilot holds the boost key: the
+     *  client draws the same boost flame a pilot's ship gets (#16).
+     *  Emit-when-true; absence means "not boosting". */
+    boost?: boolean;
     /** Living World P4a — a named ELITE's display name (sent every snapshot
      *  while the elite is in interest; absent for ordinary NPCs). */
     elite?: string;
@@ -516,6 +553,17 @@ export interface WreckDescriptor {
    *  starts its molten cut-edge glow from it; absent ⇒ drawn already cool
    *  (as a late joiner sees it). Not a fracture input. */
   deathTick?: number;
+  /** Fracture v9 kill cut, from the killing weapon's `killCut` (absent =
+   *  the normal break-up): `slice` cuts dead straight along the shot,
+   *  `channel` erases a strip `cutW` wide along it (v10: so does a slice
+   *  with a `cutW`, the heavy beam). */
+  cutKind?: 'slice' | 'channel';
+  /** The cut line's direction, a u16 angle (65536 per turn) in the hull's
+   *  1× Pixi-up frame; decoded by the shared trig-free `cutDirFromAngle`. */
+  cutAng?: number;
+  /** The cut's strip width (a channel, or a wide slice) in the hull's 1×
+   *  frame; absent = a zero-width slice. */
+  cutW?: number;
 }
 
 /** A rolling-resync chunk of the live wreck set (`SnapshotMessage.wreckSync`). */

@@ -23,11 +23,7 @@ import { getShipKind } from '@shared-types/shipKinds';
 import { HostileDroneBehaviour } from '@core/ai/HostileDroneBehaviour';
 import { ClientEntityLeafBase } from '../ClientEntityLeafBase.js';
 import type { ClientSpawnCtx, ClientSyncCtx } from '../IClientEntityLeaf.js';
-import { massOf } from '../../../../shared-types/shipScale/tuning.js';
-
-/** Fallback mass when the catalogue lookup yields no mass (defensive — matches
- *  the pre-refactor `?? 3`). */
-const DRONE_FALLBACK_MASS = 3;
+import { shipBodyMass } from '../../../../shared-types/shipScale/tuning.js';
 
 export class DroneClientLeaf extends ClientEntityLeafBase {
   constructor() {
@@ -36,13 +32,13 @@ export class DroneClientLeaf extends ClientEntityLeafBase {
 
   spawnBody(ctx: ClientSpawnCtx): void {
     const kind = getShipKind(ctx.entry.shipKind ?? null);
-    // Circular collider (no vertices), catalogue mass, UNLOCKED.
+    // Shield collider, the ship kind's mass (a pilot's too), UNLOCKED.
     ctx.predWorld.spawnObstacle(
       ctx.key,
       ctx.entry.x,
       ctx.entry.y,
       ctx.entry.radius,
-      massOf(kind, DRONE_FALLBACK_MASS),
+      shipBodyMass(kind),
       undefined,
       undefined,
       undefined,

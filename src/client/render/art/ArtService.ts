@@ -354,11 +354,11 @@ export class ArtService {
 
   get lightRig(): LightRig { return this.rig; }
 
-  /** `rings`: cut turret rings into the hull at its mounts (new effects). */
-  ship(id: string, paint?: number, urgent = true, rings = false, livery?: Livery): ArtHandle {
-    const job: Extract<BakeJob, { type: 'ship' }> = rings ? { type: 'ship', id, paint, rings } : { type: 'ship', id, paint };
-    if (livery) job.livery = livery;
-    return this.acquire(job, urgent);
+  /** `rings`: cut turret rings into the hull at its mounts (new effects).
+   *  `dead`: a wreck piece's art (no canopy, core, engines or running lights).
+   *  `livery`: the owner's livery (art-direction.md "Ship livery"). */
+  ship(id: string, paint?: number, urgent = true, rings = false, dead = false, livery?: Livery): ArtHandle {
+    return this.acquire({ type: 'ship', id, paint, ...(rings ? { rings } : {}), ...(dead ? { dead } : {}), ...(livery ? { livery } : {}) }, urgent);
   }
 
   struct(id: string, seed: number, rot = 0, accent?: number, urgent = true, rings = false): ArtHandle {

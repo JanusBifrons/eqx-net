@@ -26,9 +26,13 @@ export interface PerfScene {
   durationMs: number;
   /** A run is valid only if at least this many swarm entities are live at the end. */
   minSwarm: number;
+  /** Left out of a default `pnpm perf:scenes` run (name it with
+   *  `--scenes`): the long soaks, and the terrain stress scenes, which only
+   *  terrain PRs need. */
+  soak?: boolean;
 }
 
-const fight = (tag: string, kind: string, x: number, y: number, count: number, atMs = 0): SceneStep =>
+const fight = (tag: string, kind: string, x: number, y: number, count: number, atMs = 0): Extract<SceneStep, { action: 'spawn' }> =>
   ({ atMs, action: 'spawn', tag, kind, count, x, y, spread: 260 });
 
 /** Both sides, reinforced every 10 s: a 30-ship clash is over in ~10 s, so
@@ -39,7 +43,37 @@ const sustainedFight = (n: number, x: number, y: number, gap: number): SceneStep
     fight(`red${i}`, 'robot-square', x + gap, y, n, t),
   ]);
 
+/** Macro-terrain Stage 0 (docs/architecture/macro-terrain.md): a still rock
+ *  field from the bulk seed (`swarmRatio: 1` = rocks only, `swarmAtRest` =
+ *  real asteroid mass, no drift, so the rocks settle and sleep). Counts stay
+ *  under the 5,120-slot cap with room for the ships and scrap of a fight. */
+const rockField = (count: number, radius: number): Record<string, unknown> =>
+  ({ droneCount: 0, swarmCount: count, swarmRatio: 1, swarmRadius: radius, swarmAtRest: true });
+
+/** Rock counts of the terrain scenes (the integration census reads these). */
+export const ROCK_FIELD_SMALL = 1000;
+export const ROCK_FIELD_LARGE = 4500;
+export const ROCK_FIELD_FIGHT = 4000;
+
 export const PERF_SCENES: readonly PerfScene[] = [
+  {
+    // Showcase (local, unfiled): a small 3v3 fighter fight to film dogfighting.
+    id: 'dogfight-3v3',
+    title: 'Three drone fighters vs three robots (small dogfight)',
+    room: {
+      droneCount: 0,
+      asteroidConfig: [],
+      sceneScript: [
+        { atMs: 0, action: 'spawn', tag: 'blue', kind: 'fighter', count: 3, x: -750, y: 0, spread: 150 },
+        { atMs: 0, action: 'spawn', tag: 'red', kind: 'robot-square', count: 3, x: 750, y: 0, spread: 150 },
+        { atMs: 60_000, action: 'end' },
+      ],
+    },
+    spawn: { x: 0, y: -2200 },
+    camera: { x: 0, y: 0, zoom: 0.6 },
+    durationMs: 60_000,
+    minSwarm: 0,
+  },
   {
     id: 'idle',
     title: 'Empty sector, pilot idle: the harness floor',
@@ -61,6 +95,85 @@ export const PERF_SCENES: readonly PerfScene[] = [
     camera: { x: 0, y: 1200, zoom: 0.45 },
     durationMs: 30_000,
     minSwarm: 30,
+  },
+  {
+    // Sub-capital break-up slice 5 (plan subcapital-breakup.md): the
+    // fleet-fight setup played for ten minutes with `subcapWrecks` on, so
+    // every kill leaves permanent pieces that drift to a stop and sleep. Run
+    // with `--sample-ms 30000` for the over-time curve (pieces alive, sleeping
+    // share, tick cost, wire, frame time); `--base-env EQX_SUBCAP_WRECKS=0`
+    // is the same scene with the flag forced off. Results:
+    // docs/architecture/capital-destruction.md "Soak results".
+    id: 'fleet-fight-soak',
+    title: 'The fleet fight for 10 minutes with sub-cap wrecks on (debris soak)',
+    room: {
+      droneCount: 0,
+      asteroidConfig: [],
+      subcapWrecks: true,
+      sceneScript: [
+        { ...fight('blue', 'fighter', -300, 1200, 30), repeatEveryMs: 10_000, repeatUntilMs: 600_000 },
+        { ...fight('red', 'robot-square', 300, 1200, 30), repeatEveryMs: 10_000, repeatUntilMs: 600_000 },
+        { atMs: 600_000, action: 'end' },
+      ],
+    },
+    spawn: { x: 0, y: -400 },
+    camera: { x: 0, y: 1200, zoom: 0.45 },
+    durationMs: 600_000,
+    minSwarm: 30,
+    soak: true,
+  },
+  {
+    // The same soak at 10 ships a side a wave. The full soak's 30-a-side
+    // waves outrun the killing (~250 more ships alive a minute), so its client
+    // falls over within ~2.5 min whatever the debris does; at 10 a side the
+    // fight stays bounded and the debris is what grows (slice 5 soak results).
+    id: 'fleet-fight-soak-lite',
+    title: 'A bounded 10-a-side fleet fight for 10 minutes with sub-cap wrecks on (debris soak)',
+    room: {
+      droneCount: 0,
+      asteroidConfig: [],
+      subcapWrecks: true,
+      sceneScript: [
+        { ...fight('blue', 'fighter', -300, 1200, 10), repeatEveryMs: 10_000, repeatUntilMs: 600_000 },
+        { ...fight('red', 'robot-square', 300, 1200, 10), repeatEveryMs: 10_000, repeatUntilMs: 600_000 },
+        { atMs: 600_000, action: 'end' },
+      ],
+    },
+    spawn: { x: 0, y: -400 },
+    camera: { x: 0, y: 1200, zoom: 0.45 },
+    durationMs: 600_000,
+    minSwarm: 10,
+    soak: true,
+  },
+  {
+    // The lite soak with the sector's automatic slowdown ON (time scale
+    // Phase 5, `LoadSpeedController`, 0.7 floor), as in a real sector: test
+    // rooms have it off unless they opt in. Asks whether the game's own time
+    // dilation keeps the client smooth as the debris grows. The scene clock
+    // is game time, so a slowed take runs up to 1/0.7 × longer in wall time.
+    // `perfFixedLoad: false` is load-bearing: perf rooms default to fixed
+    // load, which skips the slowdown controller (and the cost clock and load
+    // shedder) even with `autoTimeScale` on. Here the room protects itself
+    // exactly as a real sector does.
+    id: 'fleet-fight-soak-lite-dilated',
+    title: 'The lite debris soak with the automatic slowdown on (time dilation)',
+    room: {
+      droneCount: 0,
+      asteroidConfig: [],
+      subcapWrecks: true,
+      autoTimeScale: true,
+      perfFixedLoad: false,
+      sceneScript: [
+        { ...fight('blue', 'fighter', -300, 1200, 10), repeatEveryMs: 10_000, repeatUntilMs: 600_000 },
+        { ...fight('red', 'robot-square', 300, 1200, 10), repeatEveryMs: 10_000, repeatUntilMs: 600_000 },
+        { atMs: 600_000, action: 'end' },
+      ],
+    },
+    spawn: { x: 0, y: -400 },
+    camera: { x: 0, y: 1200, zoom: 0.45 },
+    durationMs: 600_000,
+    minSwarm: 10,
+    soak: true,
   },
   {
     id: 'teleport-raid',
@@ -158,6 +271,45 @@ export const PERF_SCENES: readonly PerfScene[] = [
     camera: { x: 0, y: 12_000, zoom: 0.05 },
     durationMs: 30_000,
     minSwarm: 10,
+  },
+  {
+    // Macro-terrain Stage 0: what a still field costs at a modest count.
+    id: 'rock-field-1k',
+    title: '1,000 still rocks in a 9 km disc, pilot idle in the middle',
+    room: { ...rockField(ROCK_FIELD_SMALL, 9000), sceneScript: [{ atMs: 20_000, action: 'end' }] },
+    spawn: { x: 0, y: 0 },
+    camera: { x: 0, y: 0, zoom: 0.45 },
+    durationMs: 20_000,
+    minSwarm: ROCK_FIELD_SMALL,
+    soak: true,
+  },
+  {
+    // Macro-terrain Stage 0: the same field density over a wider disc, near
+    // the slot cap. Expected walls: the 1 Hz full snapshot resends every rock
+    // to every client, and the client keeps one display object per rock.
+    id: 'rock-field-4500',
+    title: '4,500 still rocks in a 19 km disc, pilot idle in the middle',
+    room: { ...rockField(ROCK_FIELD_LARGE, 19_000), sceneScript: [{ atMs: 20_000, action: 'end' }] },
+    spawn: { x: 0, y: 0 },
+    camera: { x: 0, y: 0, zoom: 0.45 },
+    durationMs: 20_000,
+    minSwarm: ROCK_FIELD_LARGE,
+    soak: true,
+  },
+  {
+    // Macro-terrain Stage 0: a fight inside a field, so shots, rams and
+    // explosions wake rocks (churn between awake and asleep).
+    id: 'rock-field-fight',
+    title: 'A 10-a-side fight, reinforced, inside 4,000 still rocks',
+    room: {
+      ...rockField(ROCK_FIELD_FIGHT, 18_000),
+      sceneScript: [...sustainedFight(10, 0, 1200, 300), { atMs: 30_000, action: 'end' }],
+    },
+    spawn: { x: 0, y: -400 },
+    camera: { x: 0, y: 1200, zoom: 0.45 },
+    durationMs: 30_000,
+    minSwarm: ROCK_FIELD_FIGHT,
+    soak: true,
   },
 ];
 

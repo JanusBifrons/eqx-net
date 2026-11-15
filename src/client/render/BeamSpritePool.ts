@@ -46,6 +46,14 @@ export interface BeamView {
    * is solid (the legacy single-sprite gradient look for remote beams).
    */
   solidLen?: number;
+  /**
+   * Per-beam style override (the capital heavy beam, plan beam-slices §8): its
+   * tint / width / alpha replace the pool's for this beam only, so heavy and
+   * fighter beams share ONE pool (same textures, so they still batch). It draws
+   * in the pool's `styledContainer`, outside the glow-filtered `container`.
+   * Absent/null: the pool's style. The texture stays the pool's.
+   */
+  style?: BeamSpriteStyle | null;
 }
 
 export interface BeamSpriteStyle {
@@ -61,6 +69,13 @@ export interface BeamSpriteStyle {
    *  range; the tip fades to nothing). Absent/false ⇒ the flat white texture
    *  (the mining DRILL beam stays a solid connection). */
   taper?: boolean;
+  /** `?fx=new` glow overlay (`FxBeams`) halo / flow / flare size multiplier
+   *  for a beam drawn with this style. Absent: 1 (the fighter look). */
+  glowScale?: number;
+  /** Fewest screen px the core is drawn wide when `setBeams` is given the
+   *  camera scale, so a capital-scale beam stays heavy at capital zoom (like
+   *  the naval shells' `SHELL_MIN_SCREEN_PX`). Absent: world width only. */
+  minScreenPx?: number;
 }
 
 /**
@@ -146,16 +161,51 @@ function beamFadeTailTexture(): Texture {
   }
 }
 
-export class BeamSpritePool {
+/** One drawing lane of a pool: its container and pooled core / tail sprites. */
+interface BeamLane {
   readonly container: Container;
+  readonly pool: Sprite[];
+  /** Parallel pool of falloff-tail sprites (taper + solidLen only). */
+  readonly fadePool: Sprite[];
+  /** Sprites in use this frame. */
+  used: number;
+}
+
+function makeLane(container: Container): BeamLane {
+  return { container, pool: [], fadePool: [], used: 0 };
+}
+
+function hideFrom(lane: BeamLane, from: number): void {
+  for (let i = from; i < lane.pool.length; i++) {
+    const s = lane.pool[i];
+    if (s && s.visible) s.visible = false;
+    const f = lane.fadePool[i];
+    if (f && f.visible) f.visible = false;
+  }
+}
+
+export class BeamSpritePool {
+  /** The pool's own beams (its style): the container `LaserGlow` filters. */
+  readonly container: Container;
+  /**
+   * Beams with a per-beam `style` override (the capital heavy beam) draw here,
+   * a SIBLING the owner adds next to `container`, never inside it: the
+   * container-wide glow filter (`LaserGlow`, one colour for every remote beam)
+   * would otherwise wash the override's own colour into the pool's glow (the
+   * violet heavy beam read as a thin orange line). It has no filter, so no
+   * extra filter pass; same shared textures, so its sprites still batch.
+   */
+  readonly styledContainer: Container;
   private readonly _texture: Texture;
   /** Solid (full-strength) texture for the `solidLen` core segment. */
   private readonly _solidTexture: Texture;
   /** Linear fade texture for the falloff tail (taper pools only). */
   private readonly _fadeTexture: Texture | null;
-  private readonly _pool: Sprite[] = [];
-  /** Parallel pool of falloff-tail sprites (one per beam, taper + solidLen only). */
-  private readonly _fadePool: Sprite[] = [];
+  private readonly _main: BeamLane;
+  private readonly _styled: BeamLane;
+  /** Core / tail sprite drawn for beam `i` this frame (test + feedback reads). */
+  private readonly _coreOf: Sprite[] = [];
+  private readonly _fadeOf: (Sprite | null)[] = [];
   private readonly _style: BeamSpriteStyle;
   /** Number of sprites currently representing live beams (visible). */
   private _liveCount = 0;
@@ -170,35 +220,54 @@ export class BeamSpritePool {
     this._fadeTexture = style.taper ? beamFadeTailTexture() : null;
     this.container = new Container();
     this.container.label = 'BeamSpritePool';
+    this.styledContainer = new Container();
+    this.styledContainer.label = 'BeamSpritePool.styled';
+    this.styledContainer.visible = false;
+    this._main = makeLane(this.container);
+    this._styled = makeLane(this.styledContainer);
   }
 
   /**
    * Sync the pool to render exactly `count` beams. Reads from
    * `beams[0..count-1]`. Sprites beyond `count` are hidden but kept
-   * in the pool for later frames (no destroy churn).
+   * in the pool for later frames (no destroy churn). A beam with a `style`
+   * override draws in `styledContainer`, the rest in `container`.
+   *
+   * `cameraScale` (screen px per world unit): a style with `minScreenPx` draws
+   * its core at least that many px wide. Omitted: world widths only.
    *
    * Caller is responsible for the "did anything actually change?"
    * dirty-flag gate above this call site — if no beam moved, the
    * pool still gets re-set to the same values, which is cheap
    * (transform writes, no geometry rebuild).
    */
-  setBeams(beams: readonly BeamView[], count: number): void {
+  setBeams(beams: readonly BeamView[], count: number, cameraScale?: number): void {
     const taper = this._fadeTexture !== null;
+    this._main.used = 0;
+    this._styled.used = 0;
     for (let i = 0; i < count; i++) {
       const b = beams[i]!;
-      let sprite = this._pool[i];
+      const lane = b.style ? this._styled : this._main;
+      const li = lane.used++;
+      let sprite = lane.pool[li];
       if (!sprite) {
         sprite = new Sprite(this._texture);
         // Anchor at (0, 0.5) → sprite's local origin is at the FROM
         // end and its Y-center is on the beam's line. scale.x stretches
         // along the beam direction; scale.y becomes the stroke width.
         sprite.anchor.set(0, 0.5);
-        sprite.tint = this._style.tint;
-        sprite.alpha = this._style.alpha;
-        this._pool[i] = sprite;
-        this.container.addChild(sprite);
+        lane.pool[li] = sprite;
+        lane.container.addChild(sprite);
       }
+      this._coreOf[i] = sprite;
+      this._fadeOf[i] = null;
       sprite.visible = true;
+      const st = b.style ?? this._style;
+      sprite.tint = st.tint;
+      sprite.alpha = st.alpha;
+      const width = st.minScreenPx !== undefined && cameraScale !== undefined && cameraScale > 0
+        ? Math.max(st.width, st.minScreenPx / cameraScale)
+        : st.width;
       // World-space line: from (b.fromX, b.fromY) to (b.toX, b.toY).
       // Pixi screen Y is flipped vs game-space Y per the project's
       // pixiY = -gameY convention (see src/client/CLAUDE.md), so we
@@ -227,56 +296,55 @@ export class BeamSpritePool {
         // the "fade" stretched ~19 200 u and the beam looked solid to infinity /
         // ran off the screen (the "renders infinitely" bug; headless tests use
         // the 1×1 WHITE fallback so they never saw it). textures are 1 px tall.
-        sprite.scale.set(Math.max(solidLen, 0.0001) / this._solidTexture.width, this._style.width);
+        sprite.scale.set(Math.max(solidLen, 0.0001) / this._solidTexture.width, width);
         const tailLen = len - solidLen;
-        let fade = this._fadePool[i];
+        let fade = lane.fadePool[li];
         if (tailLen > 0.01) {
           if (!fade) {
             fade = new Sprite(this._fadeTexture!);
             fade.anchor.set(0, 0.5);
-            fade.tint = this._style.tint;
-            fade.alpha = this._style.alpha;
-            this._fadePool[i] = fade;
-            this.container.addChild(fade);
+            lane.fadePool[li] = fade;
+            lane.container.addChild(fade);
           }
+          this._fadeOf[i] = fade;
           fade.visible = true;
+          fade.tint = st.tint;
+          fade.alpha = st.alpha;
           fade.x = b.fromX + Math.cos(rot) * solidLen;
           fade.y = -b.fromY + Math.sin(rot) * solidLen;
           fade.rotation = rot;
           // ÷ texture width (256 for the real gradient) — see the solid-core note.
-          fade.scale.set(tailLen / this._fadeTexture!.width, this._style.width);
+          fade.scale.set(tailLen / this._fadeTexture!.width, width);
         } else if (fade) {
+          this._fadeOf[i] = fade;
           fade.visible = false;
         }
       } else {
         // Legacy single-sprite path: the per-style texture (gradient if taper,
         // else WHITE) stretched to the full length. Used by remote/mining beams.
+        // A per-beam style that does not taper (the heavy beam) draws solid
+        // even in a taper pool: full strength to its end point.
         // ÷ texture width (256 for the taper gradient) — see the solid-core note;
         // without it remote/enemy beams rendered 256× too long too.
-        sprite.texture = this._texture;
-        sprite.scale.set(len / this._texture.width, this._style.width);
-        const fade = this._fadePool[i];
+        const tex = b.style && !b.style.taper ? this._solidTexture : this._texture;
+        sprite.texture = tex;
+        sprite.scale.set(len / tex.width, width);
+        const fade = lane.fadePool[li];
         if (fade) fade.visible = false;
       }
     }
-    // Hide stale sprites left over from a higher-count frame (both pools).
-    for (let i = count; i < this._pool.length; i++) {
-      const s = this._pool[i];
-      if (s && s.visible) s.visible = false;
-      const f = this._fadePool[i];
-      if (f && f.visible) f.visible = false;
-    }
+    // Hide stale sprites left over from a higher-count frame (both lanes).
+    hideFrom(this._main, this._main.used);
+    hideFrom(this._styled, this._styled.used);
+    this.styledContainer.visible = this._styled.used > 0;
     this._liveCount = count;
   }
 
   /** Hide all beams (e.g. when the lasers slice becomes empty). */
   hideAll(): void {
-    for (let i = 0; i < this._pool.length; i++) {
-      const s = this._pool[i];
-      if (s && s.visible) s.visible = false;
-      const f = this._fadePool[i];
-      if (f && f.visible) f.visible = false;
-    }
+    hideFrom(this._main, 0);
+    hideFrom(this._styled, 0);
+    this.styledContainer.visible = false;
     this._liveCount = 0;
   }
 
@@ -293,23 +361,23 @@ export class BeamSpritePool {
    * `pixiY = -gameY` flip applied in `setBeams`.
    */
   get renderedFromX(): number | null {
-    return this._liveCount > 0 ? (this._pool[0]?.x ?? null) : null;
+    return this._liveCount > 0 ? (this._coreOf[0]?.x ?? null) : null;
   }
 
   get renderedFromY(): number | null {
-    return this._liveCount > 0 ? -(this._pool[0]?.y ?? 0) : null;
+    return this._liveCount > 0 ? -(this._coreOf[0]?.y ?? 0) : null;
   }
 
-  /** Test-only: total pool size (visible + hidden). */
+  /** Test-only: total pool size (visible + hidden, both lanes). */
   get poolSize(): number {
-    return this._pool.length;
+    return this._main.pool.length + this._styled.pool.length;
   }
 
   /** Test-only (P1a): the drawn SOLID-core WORLD length for beam `i` (= scale.x ×
    *  texture width, so it's correct for any texture width — see the setBeams
    *  texture-width note), or null when no such sprite is visible. */
   solidLenAt(i: number): number | null {
-    const s = this._pool[i];
+    const s = i < this._liveCount ? this._coreOf[i] : undefined;
     return s && s.visible ? s.scale.x * s.texture.width : null;
   }
 
@@ -318,7 +386,16 @@ export class BeamSpritePool {
    *  width) and pixi-space start x — or null when the pool has no tail sprite for
    *  that index. */
   fadeTailAt(i: number): { visible: boolean; lenX: number; x: number } | null {
-    const f = this._fadePool[i];
+    const f = i < this._liveCount ? this._fadeOf[i] : undefined;
     return f ? { visible: f.visible, lenX: f.scale.x * f.texture.width, x: f.x } : null;
+  }
+
+  /** Test-only: beam `i`'s drawn core — tint, WORLD width (scale.y; the
+   *  textures are 1 px tall), the container it sits in and its texture — or
+   *  null. */
+  coreAt(i: number): { tint: number; width: number; parent: Container | null; texture: Texture } | null {
+    const s = i < this._liveCount ? this._coreOf[i] : undefined;
+    if (!s || !s.visible) return null;
+    return { tint: s.tint, width: s.scale.y, parent: s.parent, texture: s.texture };
   }
 }

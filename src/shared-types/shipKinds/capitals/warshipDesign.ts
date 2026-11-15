@@ -191,7 +191,29 @@ export interface WarshipDesign {
   mountCount: number;
 }
 
-export function warshipDesign(id: CapitalClassId, style: CapitalStyle, map: CapitalMap): WarshipDesign {
+/**
+ * A capital's weapon fit (plan section 9), the axis next to `style`: what its
+ * main battery and its secondaries mount. Same hull; only the mounts'
+ * `weaponId` change. The railgun carries its own charge (`chargeTicks`,
+ * 'when-bearing', 'mount-glow') in its weapon def. 'beam' mounts the capital
+ * `heavy_beam` (hitscan, fired through the ordinary AI beam path). Both are
+ * ONE barrel per turret (`barrels: 1`): the fire path shoots one slug or ray
+ * per barrel, and their numbers are per mount.
+ */
+export interface CapitalFit {
+  main: 'naval' | 'railgun' | 'beam';
+  secondary: 'naval' | 'beam';
+}
+
+/** The description's note for a main-battery fit. */
+const FIT_NOTE: Readonly<Record<CapitalFit['main'], string>> = {
+  naval: '', railgun: ', railgun main battery', beam: ', heavy beam main battery',
+};
+
+/** The all-naval fit every class is designed around (the default). */
+export const NAVAL_FIT: CapitalFit = { main: 'naval', secondary: 'naval' };
+
+export function warshipDesign(id: CapitalClassId, style: CapitalStyle, map: CapitalMap, fit: CapitalFit = NAVAL_FIT): WarshipDesign {
   const s = CAPITAL_STYLES[style];
   const t = capitalTargets(id, CAPITAL_MAPPINGS[map]);
   const p = solveCapitalPhysics(t);
@@ -229,8 +251,9 @@ export function warshipDesign(id: CapitalClassId, style: CapitalStyle, map: Capi
     mounts.push({
       id: `main-${i + 1}`, localX: 0, localY: L / 2 - tt * L,
       baseAngle: fwd ? 0 : Math.PI, arcMin: -MAIN_ARC, arcMax: MAIN_ARC,
-      rotationSpeed: TRAVERSE[mainSize], weaponId: NAVAL_GUN[mainSize], size: mainSize,
-      barrels: main.barrels, ...(scale !== 1 ? { turretScale: scale } : {}),
+      rotationSpeed: TRAVERSE[mainSize],
+      weaponId: fit.main === 'naval' ? NAVAL_GUN[mainSize] : fit.main === 'railgun' ? 'railgun' : 'heavy_beam', size: mainSize,
+      barrels: fit.main === 'naval' ? main.barrels : 1, ...(scale !== 1 ? { turretScale: scale } : {}),
     });
   });
   SECONDARY[id].forEach((tt, i) => {
@@ -241,7 +264,8 @@ export function warshipDesign(id: CapitalClassId, style: CapitalStyle, map: Capi
         id: `sec-${side > 0 ? 's' : 'p'}${i + 1}`, localX: x, localY: L / 2 - tt * L,
         // Starboard (+x) faces −π/2 in the mount frame (0 = forward), port +π/2.
         baseAngle: side > 0 ? -Math.PI / 2 : Math.PI / 2, arcMin: -1.4, arcMax: 1.4,
-        rotationSpeed: TRAVERSE.S, weaponId: NAVAL_GUN.S, size: 'S', barrels: 2,
+        rotationSpeed: TRAVERSE.S, weaponId: fit.secondary === 'beam' ? 'heavy_beam' : NAVAL_GUN.S, size: 'S',
+        barrels: fit.secondary === 'beam' ? 1 : 2,
       });
     }
   });
@@ -272,7 +296,7 @@ export function warshipDesign(id: CapitalClassId, style: CapitalStyle, map: Capi
   const record = {
     id,
     displayName: CLASS_NAMES[id],
-    description: `WW2-inspired ${CLASS_NAMES[id].toLowerCase()} (capital class, style ${style}: ${s.label}).`,
+    description: `WW2-inspired ${CLASS_NAMES[id].toLowerCase()} (capital class, style ${style}: ${s.label})${FIT_NOTE[fit.main]}${fit.secondary === 'beam' ? ', heavy beam secondaries' : ''}.`,
     npcOnly: true,
     sizeClass: 'capital',
     thrustImpulse: p.thrustImpulse,

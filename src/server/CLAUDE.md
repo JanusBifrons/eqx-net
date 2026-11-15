@@ -12,14 +12,14 @@ Never import from `src/server/`:
 - The client-side Colyseus package: `colyseus.js` (the server uses `colyseus`, not `colyseus.js`)
 - Anything under `src/client/**`
 
-Allowed: `colyseus`, `@colyseus/schema`, `@colyseus/ws-transport`, `express`, `zod`, `node:sqlite` (built-in, replaces `better-sqlite3` — see `docs/LESSONS.md` for why), `bcryptjs`, `jose`, `dotenv`, `pino` + `pino-pretty`, `src/core`, `src/shared-types`. Phase 9 may additionally allow `@colyseus/redis-driver` / `@colyseus/redis-presence` *iff* the multi-VM deployment shape is chosen.
+Allowed: `colyseus`, `@colyseus/schema`, `@colyseus/ws-transport`, `express`, `zod`, `node:sqlite` (built-in, replaces `better-sqlite3`; see `docs/LESSONS.md`), `bcryptjs`, `jose`, `dotenv`, `pino` + `pino-pretty`, `src/core`, `src/shared-types`. `@colyseus/redis-driver` / `@colyseus/redis-presence` only if the multi-VM deployment shape is chosen.
 
 ---
 
 ## Authority Model
 
 - Clients send **inputs**. The server decides **outcomes**. Never the other way around.
-- Any state that matters is computed server-side. Client-side prediction (Phase 3) and ghost projectiles (Phase 4) are presentation tricks; they must never influence the authoritative state.
+- Any state that matters is computed server-side. Client prediction and ghost projectiles are presentation tricks; they never influence authoritative state.
 - The Colyseus `SectorRoom` owns one sector's physics world, AI, combat resolution, and broadcast path. Everything else (persistence, orchestration, galaxy registry) is a supporting service the room uses.
 
 ---
@@ -42,136 +42,96 @@ How each subsystem works (and its history) is in the "Server notes" section of t
 - Auth endpoints are rate-limited per IP (429 + `Retry-After`); `/healthz` and `/diag` are not. Every inbound wire id is `.min(1).max(64)`; testMode seed arrays are bounded at `onCreate` (`MAX_SEED_ENTRIES`).
 - Over-rate inputs (`MAX_INPUTS_PER_TICK`) and lock messages (`MAX_LOCK_MSGS_PER_TICK` via `lockMsgAllowed`) are silently dropped.
 
-**Snapshots and lag compensation** ([snapshot-cadence](../../docs/architecture/snapshot-cadence.md)):
-- One snapshot cadence per recipient (`shouldBroadcastFar`, per-client phase offset); never two cadences (their union gives irregular intervals). Schedule on `broadcastCounter`, never `serverTick`.
-- Idle sectors suppress broadcasts; the join grace forces them after every join, spawn or reconnect (`joinBroadcastGrace.test.ts`). `lastInput` is omitted when unchanged for that recipient.
-- Backpressure drops the oldest queued snapshot, then force-closes. The lag-comp ring is pre-allocated (no per-tick allocation); the swarm encoder runs per client inside the backpressure loop.
-- A fire claim older than `LAG_COMP_WINDOW` is clamped to the window floor (`clampFireTick`), never rejected; the per-shooter cooldown stays the separate anti-rapid-fire guard.
-- The NPC lock step stays inside its budget (`benchmarks/npc-locks.bench.ts`).
+**Snapshots and lag compensation** ([snapshot-cadence](../../docs/architecture/snapshot-cadence.md#server-implementation-notes)):
+- One snapshot cadence per recipient (`shouldBroadcastFar`), scheduled on `broadcastCounter`, never `serverTick`. Idle sectors suppress broadcasts; the join grace forces them after a join/spawn/reconnect.
+- Backpressure drops the oldest snapshot, then force-closes; the lag-comp ring is pre-allocated. A fire claim older than `LAG_COMP_WINDOW` is clamped (`clampFireTick`), never rejected. NPC locks stay in budget.
 
 **Load** ([game-time-scale](../../docs/architecture/game-time-scale.md)):
 - Load shedding removes only kind-1 drones outside EVERY connected player's view (`loadShedOutOfView.test.ts`); in-view load is carried by the slowdown. Never shed `shedImmune`, elite or event NPCs.
 - A shed despawns quietly (`evictSwarmEntity({ broadcast: false, emitDestroyed: false })`, no `ENTITY_DESTROYED`) and emits `ENTITY_SHED`. Only the worker writes `CLOCK_RATE_IDX`; the server's path is the `CLOCK_RATE` message.
 
-**Persistence and roster** ([persistence-and-migrations](../../docs/architecture/persistence-and-migrations.md)):
-- The `dbWorker` is the sole DB writer; every write goes through `IPersistenceSink` (CRITICAL or VOLATILE lane); the main thread opens the DB read-only. On Windows dev, stop the server with `POST /dev/shutdown`.
-- Reconnect and transit arrival both restore from the roster (`PlayerShipStore`) through the one `onJoin` shipId-restore path; there is no `LimboStore`. A lingering hull stays until combat, respawn-evict or abandon.
-- Persistence is opt-out per kind in `SectorPersistence.persist()`: structures, scrap and lingering hulls persist; projectiles never; drones belong to the director. Re-derive adjacency and scrap colliders on hydrate; never key on entity ids across a restart.
-- Bumping `CURRENT_SCHEMA_VERSION` tears down and reseeds every sector. New `player_ships` columns go through the idempotent `PLAYER_SHIPS_MIGRATIONS`; JSON columns parse defensively.
-- A PR that edits numeric fields in `SHIP_KINDS` bumps `SHIP_KIND_CATALOGUE_VERSION` by 1; a mount-layout change needs its own migration story.
-- Galaxy sectors are created eagerly at boot and simulate with no players; the broadcast loop skips an empty room.
+**Persistence and roster** ([persistence-and-migrations](../../docs/architecture/persistence-and-migrations.md#server-implementation-notes)):
+- The `dbWorker` is the sole DB writer via `IPersistenceSink`; the main thread opens the DB read-only. Stop a Windows dev server with `POST /dev/shutdown`.
+- Reconnect and transit arrival restore from the roster through the one `onJoin` shipId-restore path. Persistence is opt-out per kind (`SectorPersistence.persist()`); never key on entity ids across a restart.
+- A schema bump reseeds every sector; new `player_ships` columns use `PLAYER_SHIPS_MIGRATIONS`. Editing `SHIP_KINDS` numbers bumps `SHIP_KIND_CATALOGUE_VERSION`. Sectors are created eagerly at boot.
 
 **Transit** ([travel-state](../../docs/architecture/travel-state.md), [configurable-arrival](../../docs/features/configurable-arrival.md)):
 - During the spool the ship stays in the source room, damageable; its destruction aborts the transit. Commit reads the SAB pose, not the schema. Engineering rooms (`sectorKey === null`) have no transit or linger.
 - An `arrival` point overrides only x/y and is clamped (`clampToSectorBounds`). A transit `shipId` is ownership-checked before the state machine starts (foreign or unknown ⇒ reject).
 - Look up a player's active hull with `resolveActiveShipKey(playerId)`; snapshot `states` are keyed by `shipInstanceId` ([sector-room-anatomy](../../docs/architecture/sector-room-anatomy.md)).
 
-**Leveling and mounts** ([leveling-and-upgrades](../../docs/architecture/leveling-and-upgrades.md), [weapon-mounts](../../docs/architecture/weapon-mounts.md)):
-- 🔴 XP, stat allocation and activated mounts belong to the ship INSTANCE; only player killers earn XP; a destroyed ship's roster row (all progression) is deleted.
-- `apply_ship_upgrade` / `respec_ship` / `activate_mount` / `upgrade_structure`: check ownership, then budget or slot; anything invalid is a silent no-op. The stat budget can never be exceeded.
-- 🔴 Physics multipliers apply only in `applyShipInput`, identically on the server worker and client predWorld. Other multipliers are server-authoritative at every hull-seed site (`effectiveShip*`); a live respec clamps down (no free heal); `mul.damage` scales player weapons only.
-- Activated-mount geometry comes only from the `slots.ts` resolvers, never the wire. `effectiveStructureMaxHealth` is the one structure max-HP helper; a structure upgrade reuses the build phase; turret reach is never levelled.
-- Own-ship slim snapshot fields (`statAlloc`, `cargo`, `depositing`, `wallet`, `fitted`) are own-only and emit-when-non-empty (#16, no wire bump).
-- A mid-upgrade Capital stays a funding source and route source (`structureUpgradeCapital.test.ts`).
+**Leveling and mounts** ([leveling-and-upgrades](../../docs/architecture/leveling-and-upgrades.md#server-implementation-notes), [weapon-mounts](../../docs/architecture/weapon-mounts.md)):
+- 🔴 Progression belongs to the ship INSTANCE; only player killers earn XP. Upgrade/respec/activate messages check ownership then budget; invalid is a silent no-op.
+- 🔴 Physics multipliers apply only in `applyShipInput` (server worker and client predWorld alike); other multipliers are server-authoritative at every hull-seed site (`effectiveShip*`).
+- Mount geometry comes only from the `slots.ts` resolvers, never the wire. Own-ship slim fields are own-only and emit-when-non-empty.
 
-**Living world** ([living-world](../../docs/architecture/living-world.md), [wave-attacks](../../docs/features/wave-attacks.md), [living-galaxy](../../docs/architecture/living-galaxy.md)):
-- The director owns bot lifecycle. A quiet despawn never emits `ENTITY_DESTROYED` (its respawn trigger). Hostility uses `markHostile` + `bot_aggro`; no proactive hostility branch or wire flag. Null-guard every director reference (`EQX_DISABLE_LIVING_WORLD`).
-- Drones go hostile only through the `FactionLedger` (a wave against a ready base, or a member hitting a drone); a player with no base is not hunted. A ready base draws waves whether or not its owner is present; a wave is time-boxed. 🔴 Drones prefer structures via `pickTarget` `priorityBias` (server-only).
-- 🔴 Entry-only ingress: a from-nowhere drone spawn happens only at a galaxy entry sector, at the edge, never on top of a player. Squads traverse hop by hop; with zero hop travel a hop is an atomic despawn/spawn.
-- Wave members landing at their target are marked hostile inline; a wave hop lands at the clamped carry pose, a roam hop at the shared squad edge pose (`squadEdgePose`).
-- 🔴 `warp_warning` comes only from the `IncomingRegistry` (the hop choke point `startSquadMemberTransit`, plus player transit); never add a second source.
-- 🔴 Flock roles are assigned by the director; steering is per tick in the drone brain (`resolveEntityInto`); server-only, no wire bump. Flock and spool numbers are feel knobs: confirm on device. `livingWorldFormation.test.ts`.
-- Director persistence and galaxy stats run on the control loop, never in `update()`. The drone director is the only `/galaxy/snapshot` provider and incoming-player sink.
+**Living world** ([living-world](../../docs/architecture/living-world.md#server-implementation-notes), [wave-attacks](../../docs/features/wave-attacks.md), [living-galaxy](../../docs/architecture/living-galaxy.md)):
+- The director owns bot lifecycle; a quiet despawn never emits `ENTITY_DESTROYED`. Hostility only via `markHostile` + `bot_aggro` and the `FactionLedger`. Null-guard every director reference.
+- 🔴 Entry-only ingress: from-nowhere drone spawns only at a galaxy entry sector edge; squads traverse hop by hop. 🔴 `warp_warning` comes only from the `IncomingRegistry`.
+- 🔴 Flock roles come from the director, steering per tick in the drone brain. Director persistence runs on the control loop, never in `update()`.
 
-**Allegiances and friendly fire** ([allegiances](../../docs/architecture/allegiances.md)):
-- 🔴 Classify by the registry kind, never an id prefix. `fillSwarmTargets` builds the cross-allegiance view once per tick, only with ≥ 2 allegiances present. `isHostileToPlayer` = stance OR ledger. Only a hit on a DRONE escalates the `FactionLedger`.
-- `npcOnly` kinds are refused on join (`isPlayableShipKindId`); `LoadShedder` skips `shedImmune` kinds. Allegiance decides targeting, never what a shot hits.
-- 🔴 Every shot hits the first thing in its path, own side included; the only skips are the shooter and a capital's own deck (`mountLineClear`). A friendly accidental hit damages but never marks hostile or escalates (`isFriendlyFire`).
-- NPCs hold fire while a friendly is on the line, only via `LineOfFireGate` (never a second scan); players are never gated. `friendlyFire.test.ts`, `npcLineOfFire.test.ts`.
-- Proximity queries in the drone brain go through `AiNeighbourGrid`, never a per-behaviour swarm scan (`AiNeighbourGrid.test.ts`).
+**Allegiances and friendly fire** ([allegiances](../../docs/architecture/allegiances.md#server-implementation-notes)):
+- 🔴 Classify by the registry kind, never an id prefix. `isHostileToPlayer` = stance OR ledger; only a hit on a DRONE escalates the `FactionLedger`. Allegiance decides targeting, never what a shot hits.
+- 🔴 Every shot hits the first thing in its path, own side included (skips: shooter, a capital's own deck, loot pods for non-pilot shots); friendly hits never mark hostile.
+- AI pilots hold fire on a friendly line only via `LineOfFireGate`; players are never gated. Drone-brain proximity queries use `AiNeighbourGrid`.
 
-**Cargo and storage** ([loot-and-cargo](../../docs/features/loot-and-cargo.md)):
-- 🔴 Value only moves (`transferInto`), never copies; every transfer is ONE atomic `GROUP` of absolute `HOLD_PUT` / `HOLD_DELETE`; `HoldStore` is the authority. Every death and abandon seam spills the hold.
-- Loot pods are spawned directly (never via the `ScrapSpawner` FIFO, never in the sector snapshot) and restored from `holds`. Only an ACTIVE, alive hull with a roster row collects.
-- A structure's hold is keyed by its deterministic `uid`. `StorageService` is the one store of value for storage; a storage hold is owner-only on `entity_stats`; storage leaving the world spills.
-- 🔴 AI targets ACTIVE, disconnected and displaced lingering hulls; a connected inactive hull (pending join) is untargetable (#17). `storageDeposit.test.ts`, `lingeringAiTargetable.test.ts`.
+**Cargo and storage** ([loot-and-cargo](../../docs/features/loot-and-cargo.md#server-implementation-notes)):
+- 🔴 Value only moves (`transferInto`), never copies; every transfer is ONE atomic `GROUP`; `HoldStore` is the authority. Every death and abandon seam spills the hold.
+- Loot pods spawn directly, never via `ScrapSpawner`. `StorageService` is the one store of value for storage. 🔴 AI targets ACTIVE, disconnected and displaced lingering hulls, never a pending-join hull.
 
 **NPC sides** ([robots](../../docs/features/robots.md), [robot-territory](../../docs/features/robot-territory.md), [bounties-and-events](../../docs/features/bounties-and-events.md)):
 - 🔴 Classify a director bot id with `isDirectorBotId`, never a prefix literal (a new director adds its prefix there). The robot director persists to its own `allegiance_director_state` row.
 - Only the robot director gets a `respawnAnchor`. Harvesters mine only through `SectorRoom.mineAsteroid`; a raid step is one `StorageService.tradeTransfer` group. Charge weapons fire via `releaseCharges`; `evictSwarmEntity` forgets the shooter.
 - 🔴 An elite is a tag on the swarm record (`markElite`), never a new kind; every per-entity max hull goes through `droneMaxHealthOf`. Elites and event NPCs are never load-shed.
 
-**Economy** ([economy-and-trade](../../docs/architecture/economy-and-trade.md), [economy-wallet](../../docs/features/economy-wallet.md), [blueprints](../../docs/features/blueprints.md), [research-lab](../../docs/features/research-lab.md)):
-- 🔴 Each trade visit's value moves are ONE `tradeTransfer` group, with its `TRADE_DEAL_PUT` in the same commit. Any NPC carrying a hold spills it on death, so a kill never mints value; value changes hands only on safe departure, and a raid refunds the escrow. The one NPC→player hostility query is `SectorRoom.npcHostileTo`.
-- Haulers are not persisted; `TradeDirector.reconcile()` runs at boot before `start()`. Standing reads go through `EconomyStore.standing` / `TradeSink.standing`.
-- Credits never live in a `Hold`; every source credits and every sink debits the `Wallet` (all-or-nothing). A credit move atomic with goods uses `creditDeferred` / `debitDeferred` in the same commit group. Guests are full players (no sign-in gate). Trade refunds wallet-paid credits on every unwind.
-- Blueprint maths only through `applyBlueprint`; packed items move only via `addPacked` / `takePacked`; market prices only from `blueprintValue`; buy/sell commits storage + wallet as one group.
-- A fresh galaxy spawn of a non-starter hull downgrades to `DEFAULT_SHIP_KIND`. `qualityHullFactor` is the one quality source, at every max-hull site.
-- Unpacking a hull: check the roster cap, take the crate, then create the row (put the crate back on failure). Packed-gate builds commit only after the structure registers; starter kinds and generated builds skip it. A prepaid structure reclaims no minerals: it repacks.
-- A lab job holds its blueprints; start commits storage, job and fee as one group. Installed blueprints are a `fitted` hold, installed in one group (`installBlueprint`), dropped by `spillOrLoseShipHold`. Lab rules live only in `shared-types/research.ts`; its panel is rebuilt from `lab_state` only.
+**Economy** ([economy-and-trade](../../docs/architecture/economy-and-trade.md#server-implementation-notes), [economy-wallet](../../docs/features/economy-wallet.md), [blueprints](../../docs/features/blueprints.md), [research-lab](../../docs/features/research-lab.md)):
+- 🔴 Each trade visit is ONE `tradeTransfer` group; an NPC hold spills on death, so a kill never mints value. NPC→player hostility is `SectorRoom.npcHostileTo`.
+- Credits never live in a `Hold`: every source/sink goes through the `Wallet` (all-or-nothing; `creditDeferred` / `debitDeferred` when atomic with goods). Guests are full players.
+- Blueprint maths only via `applyBlueprint`; packed items only via `addPacked` / `takePacked`; prices only from `blueprintValue`; `qualityHullFactor` is the one quality source. Lab rules live in `shared-types/research.ts`.
 
-**Capital combat** ([capital-ships](../../docs/features/capital-ships.md), [shell-events](../../docs/architecture/shell-events.md), [real-scale-ranges](../../docs/architecture/real-scale-ranges.md)):
-- 🔴 Capitals never fire as a hull-aimed salvo; each mount leads its own target and fires only when reloaded, in reach and on bearing. Each turret picks its own target (`mountTargeting.ts`); targeting only, shells hit whatever they meet.
-- Turret reach comes from `mountTargetReach` on the server player, drone and client aim paths (#15). A capital given a guard post keeps station inside its radius; a director that spawns a defending capital posts it.
-- Naval shells travel only as `ShellEventHub` events, never in `projectiles[]`; route new viewer rules through the hub. A capital and its shells are WIDE interest entities.
-- `EQX_NAVAL_RANGE` is read once per process; the server stamps it on the welcome (`stampNavalRange`). Far drones' slim slice and the drone `swarm-<id>` wire owner are snapshot-only views.
-- Locks: `tests/unit/capitalCombat.test.ts`, `tests/integration/sectorRoom/capitalEngagement.test.ts`.
+**Capital combat** ([capital-ships](../../docs/features/capital-ships.md#server-implementation-notes), [shell-events](../../docs/architecture/shell-events.md), [real-scale-ranges](../../docs/architecture/real-scale-ranges.md)):
+- 🔴 No hull-aimed salvo: each mount picks and leads its own target (`mountTargeting.ts`) and fires when reloaded, in reach (`mountTargetReach`) and on bearing.
+- Naval shells travel only as `ShellEventHub` events, never in `projectiles[]`. `EQX_NAVAL_RANGE` is read once per process and stamped on the welcome.
 
 ---
 
 ## Structure network at base scale
 
-- **Generated structures use the real rules:** a generated base places with `place(…, { skipAutoConnect: true, rot })` and links with `connectExplicit` (re-checks `canConnect`); never auto-connect one (it would close gates). Players never pass `skipAutoConnect`.
-- **Structure room state (A2 rules):** a `StructureState` field has no initialiser and is assigned only on change and only away from `STRUCTURE_DEFAULTS` (compare `(st.f ?? DEFAULT) !== value`). Production and teleporter fields follow the same rule.
-- **Budgets and layouts:** structure-heavy content stays inside `src/shared-types/structureBudgets.ts`. Test layouts live only in `rooms/scenarioLayouts.ts`; re-derive hand-placed ones against the real footprint boxes. Only ACTIVE player ships open gates (#17). Lock: `structureRotation.test.ts`.
-- Detail: [structures guide](../../docs/architecture/structures-and-power-grid.md#structure-network-at-base-scale), [scale ledger](../../docs/architecture/structure-network-scale.md).
+- **Generated bases** place with `skipAutoConnect: true` and link with `connectExplicit`; players never pass `skipAutoConnect`.
+- **`StructureState` fields** have no initialiser and are assigned only on change and away from `STRUCTURE_DEFAULTS`. Budgets live in `structureBudgets.ts`; test layouts only in `rooms/scenarioLayouts.ts`.
+- Full text and locks: [structures guide](../../docs/architecture/structures-and-power-grid.md#server-implementation-notes), [scale ledger](../../docs/architecture/structure-network-scale.md).
 
 ## Production
 
-- **Production:** `ProductionSubsystem` runs on the 1 Hz pulse before `storage.flushDirty()`; inputs are taken all-or-nothing at cycle start, outputs put all-or-nothing at the end; it stays allocation-free (0.3 ms per pulse at 60 processors). `set_recipe` is owner-gated.
-- **Blueprint slots:** move a blueprint only via `StorageService.loadBlueprint` / `unloadBlueprint` / `takeSlotForSpill` (one hold group each). Only the player's `place_structure` passes `requirePacked: true`.
-- **Drills and ammo:** a drill never mines into a full network (`canDepositGoods`); a turret calls `spendAmmo` before every shot and holds fire with none (`rec.noAmmo`). Locks: `extraction.test.ts`, `ProductionSubsystem.test.ts`, `production.test.ts`.
-- **Active power:** `StructureGridSubsystem.setActive(rec, active)` is the one switch; never write `rec.drawFull`. A new power consumer that works must call it.
-- **A fence blocks its owner's own fire.** Lock: `turretVsOwnFence.test.ts`. Mines live in room state (#16); `mine_detonated` is only an accelerator ([mine-layer](../../docs/features/mine-layer.md)).
-- **Credits outputs** pay a PLAYER owner's wallet via `payCredits`; never put credits in a hold.
-- Detail: [production-chains.md](../../docs/architecture/production-chains.md#server-implementation-notes).
+- **`ProductionSubsystem`** runs on the 1 Hz pulse before `storage.flushDirty()`, all-or-nothing in and out, allocation-free. Blueprint slots move only via `StorageService` slot methods.
+- **Drills** never mine into a full network; turrets `spendAmmo` before every shot. Power switches only via `StructureGridSubsystem.setActive`. Credits outputs pay the wallet (`payCredits`). A fence blocks its owner's fire.
+- Full text and locks: [production-chains.md](../../docs/architecture/production-chains.md#server-implementation-notes).
 
 ## Cargo access
 
-- **Gate:** `SectorRoom.cargoAccess` (relation, live ACTIVE ship #17, `CARGO_ACCESS_RANGE`) is re-checked on every `cargo_query` / `cargo_move`.
-- **Moves:** only via `StorageService.cargoTake` / `cargoPut` / `marketBuy` / `marketSell` (one hold group each, wallet ops as `extraOps`); never let a market fill skip `recordDockFill`. A manual move sets `manualCargo` (auto-deposit off).
-- **Break-ins and ship cargo:** starting a break-in is a hostile act and any hit cancels it; an NPC's loot is rolled once per spawn (`npcHold`), so stolen loot never drops twice. Standing-order wallet ops land in the same group as the goods. Lock: `cargoAccess.test.ts`.
-- Detail: [loot-and-cargo.md](../../docs/features/loot-and-cargo.md#server-implementation-notes).
+- **Gate:** `SectorRoom.cargoAccess` is re-checked on every `cargo_query` / `cargo_move`; moves only via `StorageService.cargoTake` / `cargoPut` / `marketBuy` / `marketSell`.
+- **Break-ins** are hostile acts; an NPC's loot is rolled once per spawn (`npcHold`).
+- Full text and locks: [loot-and-cargo.md](../../docs/features/loot-and-cargo.md#server-implementation-notes).
 
 ## NPC bases, convoys and transit links
 
-- **Order:** galaxy bases seed AFTER `hydrateFromSnapshot`, and alien gates AFTER the bases; keep it. NPC structures are not persisted (regenerated from the seed). Kill switches `EQX_DISABLE_NPC_BASES=1`, `EQX_DISABLE_CONVOYS`. Lock: `galaxyBases.test.ts`.
-- **Convoys:** `ConvoyDirector` runs on its 1 s unref'd loop, never the 60 Hz tick; every value move is ONE `tradeTransfer`; every trade quote goes through `TradeDirector.quote(kind, good, rep, sectorKey)`.
-- **Link teleporters** pair at run time through `findLinkTwin`, never by position; NPC-owned teleporters refuse pairing requests. Military bases' gates are owner + allies; patrol ids start `patrol-` (in `isDirectorBotId`). Lock: `transitHubs.test.ts`.
-- Detail: [procedural-bases.md](../../docs/architecture/procedural-bases.md#server-implementation-notes), [economy-and-trade.md](../../docs/architecture/economy-and-trade.md#server-implementation-notes), [transit-hubs.md](../../docs/features/transit-hubs.md#server-implementation-notes), [military-bases.md](../../docs/features/military-bases.md#server-implementation-notes).
+- **Order:** galaxy bases seed after `hydrateFromSnapshot`, alien gates after the bases. NPC structures are regenerated, not persisted. `ConvoyDirector` runs on its 1 s loop; trade quotes via `TradeDirector.quote`.
+- **Link teleporters** pair through `findLinkTwin`, never by position.
+- Full text and locks: [procedural-bases.md](../../docs/architecture/procedural-bases.md#server-implementation-notes), [economy-and-trade.md](../../docs/architecture/economy-and-trade.md#server-implementation-notes), [transit-hubs.md](../../docs/features/transit-hubs.md#server-implementation-notes), [military-bases.md](../../docs/features/military-bases.md#server-implementation-notes).
 
 ## Teleporters and alien gates
 
-- **Pad holds** move only via `StorageService.padLoad` / `padUnload` / `padSwap` / `padSwapAcross` / `takePadForSpill` (one group each). Capacitor charge never discharges batteries.
-- **Director bots** cross only via `TeleportBroker.moveBot` → `LivingWorldDirector.teleportBot`. Rooms register with the broker on create and unregister on dispose. Lock: `teleporter.test.ts`.
-- **Pairing consent:** only the owner of the asked teleporter can accept a `teleport_pair_request` (`teleport_pair_answer` handler in `SectorRoom` checks `req.toOwner` and the target's owner). Lock: `teleporterAcross.test.ts`.
-- **Alien gates** are unbuildable and invulnerable; pair a gate only through `findAlienTwin`, never a pre-computed uid. `evictSwarmEntity` must `forget` the ship; the disable runs through the shared `gateDisabledInput` (#15). Locks: `AlienGateGuard.test.ts`, `disableParity.test.ts`, `alienGates.test.ts`.
-- Detail: [teleporters.md](../../docs/features/teleporters.md#server-implementation-notes), [alien-gates.md](../../docs/features/alien-gates.md#server-implementation-notes).
+- **Pad holds** move only via the `StorageService.pad*` methods. Director bots cross only via `TeleportBroker.moveBot`. Only the asked teleporter's owner accepts a pair request.
+- **Alien gates** are unbuildable and invulnerable; pair only via `findAlienTwin`.
+- Full text and locks: [teleporters.md](../../docs/features/teleporters.md#server-implementation-notes), [alien-gates.md](../../docs/features/alien-gates.md#server-implementation-notes).
 
 ## Fire control: lock-to-fire is universal (root invariant #19)
 
-- **Every player is tracked:** `LockSubsystem` from `onJoin` to leave (`LeaveHandler.forgetLocks`). Never reintroduce a pass-through ("legacy rules") for an untracked player.
-- **Fire gate:** a group fires only with a LOCKED target, and only the mounts that pass the shared `mountFiresOn`: in the mount's own reach of the target's hit shape AND bearing per `mountBearsOn` (naval guns `TURRET_FIRE_MISS`, others `FC_MOUNT_FIRE_TOLERANCE`); none ⇒ `hit_ack { rejected }`, no cooldown or energy spent. Locks: `playerNavalFireTolerance.test.ts`, `playerTurretFireRange.test.ts`.
-- **Turret aim:** player mounts aim only at their group's lock (locked, else acquiring), else home; capital per-turret picks use the shared `pickTurretLock` (#15). No player auto-target or manual-aim mount path.
-- **Heavy guns lock small targets slowly, never impossibly, whoever flies the ship:** player and NPC take ONE `lockSeconds` path; never add a per-pilot flag (a pilot difference is a bug). Locks: `npcLockParity.test.ts`, `lockTime.test.ts`, `fireControlLocks.test.ts`.
-- **`lock_track` is verified** with the shared `lockLineHolds`; a failing claim releases the lock. Lock: `LockSubsystem.test.ts` "lock_track is verified".
-- **Tests use the triggers** (`instantLock`, `anyTarget`, `groupMode: 'manual'`, `_internals.forceLock`, room `lockTimeCapS`); never add a test-only fire bypass. Lock: `tests/integration/sectorRoom/lockTimeCap.test.ts`.
-- **Locks and attacks keep hostility alive, never create it:** a live player lock on an already-hostile NPC, and an NPC's own lock/hits on a pilot already in its ledger, re-stamp hostility. Locks: `lockKeepsHostile.test.ts`, `npcStaysHostileWhileAttacking.test.ts`.
-- **NPC drones and NPC capital turrets fire only with a completed lock on their own target** (capitals lock structures per turret). Locks: `NpcLockSubsystem.test.ts`, `capitalLockGate.test.ts`, `coastalDuel.test.ts`.
-- **An AI shot leaves down its drawn barrel; only a barrel that bears fires.** `swarmEntitySnapshot` fills ONE shared scratch: copy what you need before any other lookup. Locks: `aiTurretFacesShot.test.ts` (unit + integration), client `aiTurretDrawnFollowsSnapshot.test.ts`.
-- **Spectating doesn't dodge a fight:** NPC fire control engages a pilot via `engageablePilotHull`; a pilot capital is hit on its hull outline. Locks: `spectateStillTargeted.test.ts`, `capitalShieldHugsHull.test.ts`.
-- **Not yet gated:** a drone shot at a non-pilot target that strays into a pilot.
-- Detail (wiring, snapshot slices, per-mount ledgers): [fire-control.md](../../docs/architecture/fire-control.md#server-implementation-notes).
+- **Every player is tracked** by `LockSubsystem` from join to leave. A group fires only with a LOCKED target and only mounts passing `mountFiresOn` (reach + bearing); none ⇒ `hit_ack { rejected }`, nothing spent.
+- **Player mounts aim only at their group's lock**, else home. Every self-chosen target ranks by `mountPriority`. Player and NPC share ONE `lockSeconds` path (no per-pilot flag). `lock_track` is verified with `lockLineHolds`.
+- **Locks work at any distance; only firing is range-limited.** Locks and attacks keep hostility alive, never create it. Tests use the lock triggers, never a fire bypass.
+- **NPC drones, NPC capital turrets and structure turrets fire only with a completed lock**; their range is per mount to the target's hull via `mountInReach`. An AI shot leaves its drawn barrel. Spectating doesn't dodge a fight.
+- Full text and locks: [fire-control.md](../../docs/architecture/fire-control.md#server-implementation-notes).
 
 ## Defence fire control (plan coastal-defences)
 
@@ -211,16 +171,12 @@ How each subsystem works (and its history) is in the "Server notes" section of t
 
 ---
 
-## Combat Architecture (Phase 4)
+## Combat Architecture
 
-- **Lag-comp hit tests are pure geometry** (`rayHitsSphere` against `SnapshotRing`), never Rapier `castRay`: the main thread has no live Rapier world.
-- **Stale fire claims are clamped** to `serverTick - LAG_COMP_WINDOW` (`clampFireTick`), never rejected.
-- **Bolts and missiles step by worker ticks**, not room updates (capped catch-up). Lock: `ProjectilePipeline.workerTicks.test.ts`.
-- **Adding a weapon never edits `SectorRoom.ts`**, only the catalogue; each projectile record carries its own damage, radius and lifetime.
-- **Projectiles hit swarm entities through `ProjectileBroadphase`**, which must equal the full scan. Lock: `ProjectilePipeline.broadphase.test.ts`.
-- **Every cleanup path (leave, transit, death, eviction) clears `playerMountAngles` and `droneMountAngles`** with `lastFireClientTick`, or they leak across reconnects.
-- **Drones target active hulls only.** Lock: `tests/integration/sectorRoom/droneTargetActiveOnly.test.ts`.
-- Detail: [sector-room-anatomy.md](../../docs/architecture/sector-room-anatomy.md#server-implementation-notes) (lag comp, backpressure, cooldown), [weapon-mounts.md](../../docs/architecture/weapon-mounts.md#server-implementation-notes) (multi-mount fire, mount rotation, snapshot `mountAngles`/`hp`).
+- **Lag-comp hit tests are pure geometry** (`rayHitsSphere` on `SnapshotRing`), never Rapier `castRay`. Stale fire claims are clamped, never rejected. Projectiles step by worker ticks.
+- **Adding a weapon never edits `SectorRoom.ts`**, only the catalogue. Swarm hits go through `ProjectileBroadphase` (must equal the full scan).
+- **Every cleanup path clears `playerMountAngles` and `droneMountAngles`** with `lastFireClientTick`. Drones target active hulls only.
+- Full text and locks: [sector-room-anatomy.md](../../docs/architecture/sector-room-anatomy.md#server-implementation-notes), [weapon-mounts.md](../../docs/architecture/weapon-mounts.md#server-implementation-notes).
 
 ## SectorRoom subsystems
 
@@ -238,18 +194,15 @@ How each subsystem works (and its history) is in the "Server notes" section of t
 
 ## Generic Entity Pipeline
 
-- **A new damageable type is a leaf + a registry row**, never a new dispatch branch; `EntityResolver` owns the ordered selection. Golden master: `DamageRouter.dispatch.test.ts`.
-- **`applyInteraction` stays ONE monomorphic function**; never a per-class `receiveInteraction()`. Locks: the guard comment + `benchmarks/damageDispatch.bench.ts`.
-- **A new pose-core kind is a swarm-registry record**; seeding `swarmHealth` on spawn is its only damage line (absent = immune). Add its integration test.
-- **Entity-sync sends go through `EntitySyncRouter.route`** (binary pose-core first, then the JSON slice); a byte change to either broadcaster needs the netgate. Lock: `EntitySyncRouter.test.ts`.
-- Detail: [generic-entity-pipeline.md](../../docs/architecture/generic-entity-pipeline.md#server-implementation-notes).
+- **A new damageable type is a leaf + a registry row**, never a dispatch branch; `applyInteraction` stays ONE monomorphic function. A new pose-core kind is a swarm-registry record (seed `swarmHealth` to be damageable).
+- **Entity-sync sends go through `EntitySyncRouter.route`**; a byte change needs the netgate.
+- Full text and locks: [generic-entity-pipeline.md](../../docs/architecture/generic-entity-pipeline.md#server-implementation-notes).
 
 ## Structures: placement, power grid, shield fence
 
-- **Placement checks structures AND asteroids** through the shared `canPlaceStructureAt` / `placementRejection`; `remove` is owner-gated. Locks: `placementRules.test.ts`, `StructurePlacementSubsystem.test.ts`, `structurePlacementValidation.test.ts`.
-- **Grid changes touch the snapshot path** (`structures[]`, `grid_pulse`): `pnpm e2e:netgate` required. `StructureGridSubsystem.pulse()` is the directly-callable 1 Hz heartbeat, off the 60 Hz tick.
-- **Shield-wall bodies live in `PhysicsWorld.wallBodies`**, never `this.bodies`. A pylon with any active wall takes no damage (`applyDamage` → `absorbForPylon`). Swarm shield regen covers `rec.kind === 1` only.
-- Detail: [structures-and-power-grid.md](../../docs/architecture/structures-and-power-grid.md#server-implementation-notes).
+- **Placement checks structures AND asteroids** via `canPlaceStructureAt`; `remove` is owner-gated. Grid changes touch the snapshot path: netgate.
+- **Shield-wall bodies live in `PhysicsWorld.wallBodies`**; a pylon with an active wall takes no damage.
+- Full text and locks: [structures-and-power-grid.md](../../docs/architecture/structures-and-power-grid.md#server-implementation-notes).
 
 ## Abandon → scrap (no wrecks)
 
@@ -271,10 +224,9 @@ How each subsystem works (and its history) is in the "Server notes" section of t
 
 ## Capital wrecks
 
-- **Behind `capitalWrecks` / `EQX_CAPITAL_WRECKS=1`, off by default.** Hit tracking is pooled (#14). Test trigger: `test_kill_capitals`, room `wreck-test`.
-- **Wreck pieces (kind 4) block every weapon:** a new weapon or hit path must handle kind 4 and pass its shot direction (knock-back). Locks: `wreckOverkillKnockback.test.ts`, `wreckRigidHold.test.ts`.
-- **Snapshots carry wreck deltas only:** never the whole list, never vertices; every piece removal reaches `pieceGone`. Locks: `SnapshotBroadcaster.wreckDeltas.test.ts`, `wreckWireConvergence.test.ts`, `wreckLateJoiner.test.ts`.
-- Detail: [capital-destruction.md](../../docs/architecture/capital-destruction.md#server-implementation-notes).
+- **Break-up is ON by default** (`wreckSwitchOn`; a room opts out, `EQX_*_WRECKS=0` forces off); one death effect per ship.
+- **Wreck pieces (kind 4) block every weapon but the railgun slug and heavy-beam follow-through**: a new hit path handles kind 4. Snapshots carry wreck deltas only.
+- Full text and locks: [capital-destruction.md](../../docs/architecture/capital-destruction.md#server-implementation-notes).
 
 ## Solar-system sectors
 

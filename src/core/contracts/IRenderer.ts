@@ -176,9 +176,20 @@ export interface SwarmRenderState {
    *  auto-fire). Absent ⇒ treated as 1 (full): the server omits `hp` for
    *  undamaged drones. Low-cadence (snapshot rate), not per-frame. */
   healthFrac?: number;
-  /** Living World P3c — this drone is winding up a CHARGE weapon (snapshot
-   *  `drones[].charging`). Drives the telegraph glow. Snapshot cadence. */
-  charging?: boolean;
+  /** Charge-up: bit i set while slot mount i charges (snapshot
+   *  `drones[].chargingMask`; 0 / absent = none). Drives the one charge
+   *  telegraph. Snapshot cadence. */
+  chargingMask?: number;
+  /** Server tick the earliest charge began (snapshot `drones[].chargeStartTick`);
+   *  the telegraph ramps from it on the game clock. */
+  chargeStartTick?: number;
+  /** Per-mount starts as ticks after `chargeStartTick`, one per set bit of
+   *  `chargingMask` (snapshot `drones[].chargeOffsets`); absent = every
+   *  charging mount began on `chargeStartTick`. */
+  chargeOffsets?: readonly number[];
+  /** This AI ship's pilot holds the boost key (snapshot `drones[].boost`).
+   *  Drives the same boost flame a pilot's ship gets. Snapshot cadence. */
+  boosting?: boolean;
   /** Living World P4a — a named ELITE's display name (snapshot `drones[].elite`).
    *  Drives the gold label + ring. Snapshot cadence. */
   eliteName?: string;
@@ -492,6 +503,10 @@ export interface RenderMirror {
    *  a dying capital then gets the break-up explosion at its kill point, not
    *  the hull-sized death blast. */
   capitalWrecks?: boolean;
+  /** The room breaks dying sub-capitals into wrecks (welcome `subcapWrecks`,
+   *  sub-capital break-up): the dying hull is held briefly until its pieces
+   *  are drawn. Its normal death explosion still plays. */
+  subcapWrecks?: boolean;
   /** Mine Layer — proximity mines, keyed by mine id (room state `mines`). */
   mines?: Map<string, MineRenderState>;
   /** Structures plan, Phase 3 — connection flash windows from the discrete
@@ -709,6 +724,12 @@ export interface RenderMirror {
   /** Fire control: NPCs locking the local pilot (own-ship `lockedBy` slice, shared ref).
    *  `t` = `s:<entityId>`, `s` 1 acquiring / 2 locked, `p` 0..100. */
   localLockedBy?: ReadonlyArray<{ t: string; s: number; p: number }>;
+  /** Fire control: how many NPCs lock the local pilot in all (`lockedByN`);
+   *  0 ⇒ the `localLockedBy` rows are everyone. The rows are only the nearest. */
+  localLockedByTotal?: number;
+  /** How many of those hold a completed lock (`lockedByL`); 0 ⇒ the locked
+   *  `localLockedBy` rows are all of them. */
+  localLockedByLocked?: number;
   /** When false, the renderer hides the orange server-ghost diamond. Default true. */
   showServerGhost?: boolean;
   /**

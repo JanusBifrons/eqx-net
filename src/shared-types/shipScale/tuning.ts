@@ -23,7 +23,8 @@ import type { ShipKind, WeaponMount } from '../shipKinds/types.js';
 import { SHIP_SCALE, SHIP_TUNING, type ShipTuningProfile } from './config.js';
 import { NAVAL_RANGE, type NavalRangeMode } from '../combat/navalRange.js';
 import { REAL_NAVAL_GUNS, navalGunEngageReach, type NavalGunId } from '../combat/navalGuns.js';
-import { destructionProfileIdForKind, type DestructionProfileId } from './destruction.js';
+import { DESTRUCTION_PROFILES, destructionProfileIdForKind, type DestructionProfileId } from './destruction.js';
+import { ARCADE_HANDLING, handlingClassOf } from './arcadeHandling.js';
 
 export type SizeClass = 'fighter' | 'frigate' | 'cruiser' | 'capital';
 export const SIZE_CLASSES: readonly SizeClass[] = ['fighter', 'frigate', 'cruiser', 'capital'];
@@ -56,6 +57,13 @@ export const BASE = {
   lootPickup: 80,
   /** Flocking (were FLOCK_FOLLOW_DISTANCE / FLOCK_SEPARATION_RADIUS). */
   flockFollow: 220, flockSeparation: 150,
+  /** Combat spacing: same-side ships inside it steer apart while fighting
+   *  (context-steering danger in `HostileDroneBehaviour.tickCombat`). */
+  combatSeparation: 160,
+  /** Dogfight attack run: how far a diving ship carries on past its target
+   *  before it extends away; the dive aims a quarter of it to one side, so it
+   *  passes beside the target, not into it. */
+  attackRunOvershoot: 220,
   /** Smallest guard area an NPC holds round its post (a 1x fighter's). */
   guardRadiusMin: 600,
   /** Art bake: ppu for small / big hulls, the radius between them, the side cap. */
@@ -197,10 +205,23 @@ export function massOf(kind: { mass?: number; massScale?: number }, fallback: nu
   return (kind.mass ?? fallback) * (kind.massScale ?? 1);
 }
 
-/** An NPC (swarm drone) body's mass when its kind authors none. One source for
- *  the spawner (`SwarmSpawner.DRONE_DEFAULT_MASS`) and the AI pilot, which needs
- *  the body's mass to know how hard a tick of thrust pushes it. */
-export const NPC_MASS_FALLBACK = 2;
+/** A ship body's mass: the kind's authored mass (1 when it authors none)
+ *  times the motion model's multiplier. THE one source for every body of a
+ *  ship kind, whoever flies it: the pilot ship (`World.spawnShip`), the AI pilot's
+ *  drone (`World.spawnObstacle` with its kind, server worker and client
+ *  predWorld) and the AI pilot's handling model. Ship stats belong to the
+ *  ship, never the pilot (owner 2026-11-13): before this an AI pilot flew an
+ *  unauthored kind at mass 2 (server) / 3 (client predWorld) against a
+ *  pilot's 1. */
+export function shipBodyMass(kind: ShipKind): number {
+  return massOf(kind, 1);
+}
+
+/** A ship body's rotational inertia, from `shipBodyMass` and the bare
+ *  `kind.radius` (the shield pad does not change handling). */
+export function shipBodyInertia(kind: ShipKind): number {
+  return shipAngularInertia(shipBodyMass(kind), kind.radius);
+}
 
 /** A ship body's rotational inertia: the disc formula the physics world
  *  sets (`World.spawnShip`, density-0 colliders), shared with the capital
@@ -233,6 +254,11 @@ export interface ShipTuning {
   lootPickup: number;
   flockFollow: number;
   flockSeparation: number;
+  /** Same-side spacing held in combat (AI steering 2c): 160 u for a 1x fighter. */
+  combatSeparation: number;
+  /** Dogfight attack run overshoot past the target (AI decision layer):
+   *  220 u for a 1x fighter, at least 4 × radius. */
+  attackRunOvershoot: number;
   /** Smallest guard radius round an NPC's guard post (`HostileDroneBehaviour.setGuardPost`):
    *  a post smaller than this would leave a big hull no room to turn. */
   guardRadiusMin: number;
@@ -244,9 +270,6 @@ export interface ShipTuning {
    *  inertia and weight" (the 2026-11-12 money-shot push was ~10× this). */
   wreckPushMax: number;
   wreckPushMin: number;
-  /** How this kind breaks up when it dies (`destruction.ts`): `capital`,
-   *  `subcap` or `none`. The numbers are `DESTRUCTION_PROFILES[id]`. */
-  destruction: DestructionProfileId;
   /** Capital wreck break-up: the least speed (u/s) at which two neighbouring
    *  pieces part along their shared cut, at every point of it (spin
    *  included), so no seam hinges or slides shut (owner review 2026-11-13).
@@ -267,8 +290,13 @@ export interface ShipTuning {
    *  (1400 dmg) moves its biggest piece (~30 % of the hull) ~30 u/s. */
   wreckKnockSpeed: number;
   /** The most one hit may change a wreck piece's speed (u/s), so small arms
-   *  on a sliver never fling it. Heavy cruiser (2×) ~55 u/s. */
+   *  on a sliver never fling it. Heavy cruiser (2×) ~55 u/s. Both knock
+   *  numbers carry the destruction profile's `knockScale` / `knockMaxScale`
+   *  (sub-caps: fighter ~92 u/s / ~18 u/s, so a hit visibly shoves debris). */
   wreckKnockMax: number;
+  /** How this kind breaks up when it dies (`destruction.ts`): `capital`,
+   *  `subcap` or `none`. The numbers are `DESTRUCTION_PROFILES[id]`. */
+  destruction: DestructionProfileId;
   /** Art bake pixels per world unit, and the texture side cap. */
   bakePpu: number;
   bakeMaxSide: number;
@@ -314,6 +342,8 @@ export function shipTuning(kind: ShipKind): ShipTuning {
   const ct = CLASS_TUNING[cls];
   const g = s * ct.geometry, sp = s * ct.spacing;
   const unscaledR = kind.radius / s;
+  const destruction = destructionProfileIdForKind(kind);
+  const knockProfile = DESTRUCTION_PROFILES[destruction];
   t = {
     sizeClass: cls,
     appliedScale: s,
@@ -332,14 +362,21 @@ export function shipTuning(kind: ShipKind): ShipTuning {
     lootPickup: ct.clearHull ? Math.max(BASE.lootPickup * sp, kind.radius * 1.3) : BASE.lootPickup * sp,
     flockFollow: ct.clearHull ? Math.max(BASE.flockFollow * sp, kind.radius * 3.3) : BASE.flockFollow * sp,
     flockSeparation: ct.clearHull ? Math.max(BASE.flockSeparation * sp, kind.radius * 2.2) : BASE.flockSeparation * sp,
+    combatSeparation: ct.clearHull ? Math.max(BASE.combatSeparation * sp, kind.radius * 2.4) : BASE.combatSeparation * sp,
+    attackRunOvershoot: Math.max(BASE.attackRunOvershoot * sp, kind.radius * 4),
     guardRadiusMin: ct.clearHull ? Math.max(BASE.guardRadiusMin * sp, kind.radius * 2) : BASE.guardRadiusMin * sp,
     wreckPushMax: WRECK_PUSH_MAX_PER_RADIUS * kind.radius,
     wreckPushMin: WRECK_PUSH_MIN_PER_RADIUS * kind.radius,
-    destruction: destructionProfileIdForKind(kind),
     wreckSeparate: WRECK_SEPARATE_PER_RADIUS * kind.radius,
     wreckColliderInset: WRECK_COLLIDER_INSET_PER_RADIUS * kind.radius,
-    wreckKnockSpeed: WRECK_KNOCK_PER_RADIUS * kind.radius,
-    wreckKnockMax: WRECK_KNOCK_MAX_PER_RADIUS * kind.radius,
+    // Scaled by the destruction profile (capital ×1: unchanged; a sub-cap's
+    // debris is visibly shoved by small arms, `destruction.ts`). The knock
+    // reads damage ÷ max hull, so it also carries the arcade layer's `tough`
+    // (×1.6–1.75 hull, capitals ×1): a tougher hull makes the fight longer,
+    // not its debris heavier (the knock the owner approved, pre-arcade).
+    wreckKnockSpeed: WRECK_KNOCK_PER_RADIUS * kind.radius * knockProfile.knockScale * ARCADE_HANDLING[handlingClassOf(kind)].tough,
+    wreckKnockMax: WRECK_KNOCK_MAX_PER_RADIUS * kind.radius * knockProfile.knockMaxScale,
+    destruction,
     // Pixel density by the UNSCALED hull (so a 2× fighter stays as sharp per
     // world unit as today's), within the class's side budget.
     bakePpu: unscaledR >= BASE.ppuBigRadius ? BASE.ppuBig : BASE.ppuSmall,

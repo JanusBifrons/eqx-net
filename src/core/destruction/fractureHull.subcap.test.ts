@@ -9,7 +9,7 @@
  * simple outlines, convex parts, no slivers.
  */
 import { describe, expect, it } from 'vitest';
-import { fractureHull, FRACTURE_QUANTUM, type FractureInput, type FracturePiece } from './fractureHull.js';
+import { fractureHull, fracturePlan, FRACTURE_QUANTUM, type FractureInput, type FracturePiece } from './fractureHull.js';
 import { wreckPieceGeometry } from './wreckPieces.js';
 import { SHIP_KINDS, SHIP_KINDS_LIST } from '../../shared-types/shipKinds.js';
 import { shipTuning } from '../../shared-types/shipScale/tuning.js';
@@ -173,7 +173,8 @@ describe('sub-capital fracture (destruction profile `subcap`)', () => {
             expect(p.convexParts.length, `${tag}: convex parts`).toBeLessThanOrEqual(8);
             // No slivers: a real share of the hull, and not thin.
             expect(p.area / hullArea, `${tag}: piece share`).toBeGreaterThanOrEqual(0.08);
-            expect(minWidth(p.outline) / hullWidth, `${tag}: piece width`).toBeGreaterThanOrEqual(0.25);
+            // 0.3 since the review (2026-11-13: "some pieces are thin strips").
+            expect(minWidth(p.outline) / hullWidth, `${tag}: piece width`).toBeGreaterThanOrEqual(0.3);
           }
           // Area conserved, to the 1/64 grid the hull itself snaps to.
           expect(Math.abs(sum - hullArea) / hullArea, `${tag}: area`).toBeLessThan(5e-3);
@@ -185,6 +186,53 @@ describe('sub-capital fracture (destruction profile `subcap`)', () => {
       expect(counts.get(2) ?? 0).toBeGreaterThan(SEEDS * VIOLENCE.length * 0.5);
     });
   }
+
+  /**
+   * Hostile review 2026-11-13 (30-v-30 fleet fight): "the drone pieces have
+   * saw-toothed outlines". A clean break in two is a near-straight cut: at
+   * most one shallow kink (≤ 2 vertices inside the hull per piece), none
+   * further than 5 % of the cut's length off its chord.
+   */
+  it('a clean break is a near-straight cut, not a saw-tooth (jag roughness)', () => {
+    const distToSeg = (p: V, a: V, b: V): number => {
+      const ex = b.x - a.x, ey = b.y - a.y;
+      const l2 = ex * ex + ey * ey;
+      const t = l2 > 0 ? Math.max(0, Math.min(1, ((p.x - a.x) * ex + (p.y - a.y) * ey) / l2)) : 0;
+      return Math.hypot(p.x - a.x - t * ex, p.y - a.y - t * ey);
+    };
+    let checked = 0;
+    for (const kind of SUBCAP_KINDS) {
+      const hull = shipHullOutline(kind).map(([x, y]) => ({ x, y }));
+      const onHull = (p: V): boolean => {
+        for (let i = 0; i < hull.length; i++) if (distToSeg(p, hull[i]!, hull[(i + 1) % hull.length]!) <= 2 * FRACTURE_QUANTUM) return true;
+        return false;
+      };
+      for (let seed = 0; seed < SEEDS; seed++) {
+        for (const v of VIOLENCE) {
+          const pieces = fractureHull(subcapInput(shipHullOutline(kind), seed, v));
+          if (pieces.length !== 2) continue;
+          for (const p of pieces) {
+            const o = p.outline;
+            const inner: number[] = [];
+            for (let i = 0; i < o.length; i++) if (!onHull(o[i]!)) inner.push(i);
+            const tag = `${kind.id} seed ${seed} violence ${v}`;
+            expect(inner.length, `${tag}: vertices inside the hull (jag points)`).toBeLessThanOrEqual(2);
+            if (inner.length === 0) continue;
+            // The cut's chord: the hull vertices either side of the inner run.
+            const n = o.length;
+            const a = o[(inner[0]! - 1 + n) % n]!;
+            const b = o[(inner[inner.length - 1]! + 1) % n]!;
+            const chord = Math.hypot(b.x - a.x, b.y - a.y);
+            for (const i of inner) {
+              expect(distToSeg(o[i]!, a, b) / chord, `${tag}: jag depth off the chord`).toBeLessThanOrEqual(0.05);
+            }
+            checked++;
+          }
+        }
+      }
+    }
+    expect(checked).toBeGreaterThan(100);
+  });
 
   it('sometimes leaves a third chunk on the bigger sub-capitals', () => {
     for (const id of ['trader-hauler', 'missile-frigate', 'gunship', 'fighter'] as const) {
@@ -244,4 +292,64 @@ describe('capital fracture is unchanged by the profile options', () => {
       }
     }
   });
+});
+
+describe('sub-capital kill cuts (fracture v9)', () => {
+  /** A shot into the hull from the kill point's side, turned a seeded
+   *  ±40° off straight at the centre. */
+  function cutInput(hull: ReadonlyArray<readonly [number, number]>, seed: number, v: number, kind: 'slice' | 'channel', width: number): FractureInput {
+    const base = { ...subcapInput(hull, seed, v), soundMinShare: SUB.soundMinShare };
+    const ang = Math.atan2(-base.killPoint.y, -base.killPoint.x) + (((seed * 37) % 81) - 40) * (Math.PI / 180);
+    return { ...base, cut: { kind, dirX: Math.cos(ang), dirY: Math.sin(ang), width } };
+  }
+
+  for (const kind of SUBCAP_KINDS) {
+    it(`${kind.id}: slices and channels leave valid pieces, the channel (and wide slice) strip empty`, () => {
+      const hull = shipHullOutline(kind);
+      const hp = hull.map(([x, y]) => ({ x, y }));
+      const hullArea = Math.abs(area(hp));
+      const scale = Math.sqrt(hullArea);
+      const W = 0.12 * scale;
+      for (let seed = 0; seed < 20; seed++) {
+        for (const v of VIOLENCE) {
+          // v10: a slice with a width (the heavy beam) erases a strip like a channel.
+          for (const [cutKind, wide] of [['slice', false], ['slice', true], ['channel', true]] as const) {
+            const input = cutInput(hull, seed, v, cutKind, wide ? W : 0);
+            const tag = `${kind.id} ${cutKind}${wide && cutKind === 'slice' ? ' (wide)' : ''} seed ${seed} violence ${v}`;
+            const pieces = fractureHull(input);
+            expect(pieces.length, tag).toBeGreaterThanOrEqual(wide ? 1 : 2);
+            let sum = 0;
+            for (const p of pieces) {
+              sum += p.area;
+              expect(isSimple(p.outline), `${tag}: simple outline`).toBe(true);
+              let partSum = 0;
+              for (const part of p.convexParts) {
+                expect(isConvexCcw(part, scale), `${tag}: convex part`).toBe(true);
+                partSum += area(part);
+              }
+              expect(Math.abs(partSum - p.area), `${tag}: parts tile the piece`).toBeLessThan(1e-6 * hullArea + 1e-9);
+              expect(p.area / hullArea, `${tag}: piece share`).toBeGreaterThanOrEqual(0.05);
+            }
+            if (!wide) {
+              expect(Math.abs(sum - hullArea) / hullArea, `${tag}: area`).toBeLessThan(5e-3);
+            } else {
+              expect(sum, `${tag}: the channel took area`).toBeLessThan(hullArea);
+              const k = input.cut!;
+              const l = Math.hypot(k.dirX, k.dirY);
+              const plan = fracturePlan(input);
+              const kp = plan.primary!.point; // a slice may slide off a sliver
+              for (const p of pieces) {
+                for (const q of p.outline) {
+                  const d = Math.abs(((q.x - kp.x) * -k.dirY + (q.y - kp.y) * k.dirX) / l);
+                  expect(d, `${tag}: a vertex inside the channel`).toBeGreaterThanOrEqual(W / 2 - 0.05);
+                }
+              }
+            }
+          }
+        }
+      }
+      // Deterministic.
+      expect(fractureHull(cutInput(hull, 3, 1, 'slice', W))).toEqual(fractureHull(cutInput(hull, 3, 1, 'slice', W)));
+    });
+  }
 });

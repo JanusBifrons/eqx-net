@@ -63,6 +63,7 @@ import type { ShellKeyRecord } from '../../shared-types/messages/shellEvents.js'
 import type { Hold } from '../../shared-types/goods.js';
 import { isHoldEmpty } from '../../core/cargo/hold.js';
 import type { SceneWorkCounters } from './scene/SceneWorkCounters.js';
+import type { MountCharges } from './WeaponMountTicker.js';
 
 /** Shared empty stat-allocation reference (Phase 4 WS-B2). A frozen singleton so
  *  the per-broadcast scratch initializer + every un-upgraded ship reuse ONE
@@ -177,8 +178,11 @@ export interface SnapshotBroadcasterDeps {
    *  `drones[].hostile` bit: is this drone (swarm string id) hostile to this
    *  player? Wired to the room's AI hostility ledger. */
   isDroneHostileTo: (droneId: string, playerId: string) => boolean;
-  /** P3c — the drone is winding up a charge weapon (the telegraph bit). */
-  isDroneCharging?: (droneId: string) => boolean;
+  /** The one per-mount charge store (`WeaponMountTicker.charges`): the
+   *  slice's `chargingMask` / `chargeStartTick` (the telegraph, #16). */
+  droneCharges?: Pick<MountCharges, 'mask' | 'startTick' | 'offsetsInto'>;
+  /** The AI pilot holds the boost key this tick (the boost flame, #16). */
+  isDroneBoosting?: (droneId: string) => boolean;
   /** Living World P1a — the carried hold of a ship instance (a SHARED reference
    *  from the HoldStore, replaced only on a discrete transfer — #14 safe), or
    *  undefined when it carries nothing. Absent dep ⇒ no cargo slice. */
@@ -191,6 +195,10 @@ export interface SnapshotBroadcasterDeps {
   lockGroupsOf?: (playerId: string) => Array<{ id: string; m: 0 | 1; l: Array<{ t: string; s: number; p: number; r?: 1 }> }> | undefined;
   /** Fire control — NPCs locking the pilot (shared ref, #16). */
   lockedByOf?: (playerId: string) => Array<{ t: string; s: 1 | 2; p: number }> | undefined;
+  /** Every NPC locking the pilot (`lockedByOf` carries only the top rows). */
+  lockedByTotalOf?: (playerId: string) => number;
+  /** How many of those hold a completed lock (`lockedByL`). */
+  lockedByLockedOf?: (playerId: string) => number;
   /** Phase 4 warp travel — the player's ship dropped out of a warp in the last
    *  moment (others draw the arrival). Absent ⇒ never. */
   warpArrived?: (playerId: string) => boolean;
@@ -334,6 +342,8 @@ type MutableStateEntry = {
   depositing?: number;
   groups?: Array<{ id: string; m: 0 | 1; l: Array<{ t: string; s: number; p: number; r?: 1; c?: 1 }> }>;
   lockedBy?: Array<{ t: string; s: 1 | 2; p: number }>;
+  lockedByN?: number;
+  lockedByL?: number;
   fitted?: string[];
   wallet?: number;
   poseEpoch?: number;
@@ -365,7 +375,13 @@ type MutableDroneEntry = {
   shieldDown?: boolean;
   hp?: number;
   hostile?: boolean;
-  charging?: boolean;
+  /** Per-mount charge bits + the earliest charge's start tick (emit-when-non-zero). */
+  chargingMask?: number;
+  chargeStartTick?: number;
+  /** Per-mount charge start offsets (emit-when-non-default). */
+  chargeOffsets?: number[];
+  /** The AI pilot holds boost (emit-when-true). */
+  boost?: boolean;
   elite?: string;
   fac?: string;
   /** W2a NPC warp-to: 1 spool, 2 run, 3 just arrived (emit-when-non-zero). */
@@ -634,7 +650,8 @@ export class SnapshotBroadcaster {
   private static writeDroneSlot(
     arr: MutableDroneEntry[], i: number,
     id: number, mountAngles: number[] | undefined, shieldDown: boolean,
-    hp: number | undefined, hostile: boolean, charging = false, elite?: string, fac?: string, warp: 0 | 1 | 2 | 3 = 0,
+    hp: number | undefined, hostile: boolean, chargingMask = 0, chargeStartTick = 0, elite?: string, fac?: string,
+    warp: 0 | 1 | 2 | 3 = 0, boost = false, chargeOffsets?: number[],
   ): void {
     const slot = arr[i];
     if (!slot) {
@@ -643,15 +660,20 @@ export class SnapshotBroadcaster {
       if (shieldDown) fresh.shieldDown = true;
       if (hp !== undefined) fresh.hp = hp;
       if (hostile) fresh.hostile = true;
-      if (charging) fresh.charging = true;
+      if (chargingMask !== 0) { fresh.chargingMask = chargingMask; fresh.chargeStartTick = chargeStartTick; }
+      if (chargeOffsets !== undefined) fresh.chargeOffsets = chargeOffsets;
+      if (boost) fresh.boost = true;
       if (elite !== undefined) fresh.elite = elite;
       if (fac !== undefined) fresh.fac = fac;
       if (warp !== 0) fresh.warp = warp;
       arr[i] = fresh;
       return;
     }
-    if (charging) slot.charging = true;
-    else delete slot.charging;
+    if (chargingMask !== 0) { slot.chargingMask = chargingMask; slot.chargeStartTick = chargeStartTick; }
+    else { delete slot.chargingMask; delete slot.chargeStartTick; }
+    setOrDrop(slot, 'chargeOffsets', chargeOffsets);
+    if (boost) slot.boost = true;
+    else delete slot.boost;
     if (elite !== undefined) slot.elite = elite;
     else delete slot.elite;
     if (fac !== undefined) slot.fac = fac;
@@ -937,7 +959,19 @@ export class SnapshotBroadcaster {
         setOrDrop(entry, 'depositing', ownActive ? this.deps.depositProgressOf?.(ship.shipInstanceId) : undefined);
         // Fire control (#16): the own pilot's groups + locks (shared ref).
         setOrDrop(entry, 'groups', ownActive ? this.deps.lockGroupsOf?.(ship.playerId) : undefined);
-        setOrDrop(entry, 'lockedBy', ownActive ? this.deps.lockedByOf?.(ship.playerId) : undefined);
+        const lockedBy = ownActive ? this.deps.lockedByOf?.(ship.playerId) : undefined;
+        setOrDrop(entry, 'lockedBy', lockedBy);
+        // The total of every locker, only when the rows are capped (absent ⇒
+        // the rows are everyone; #16 the banner's count).
+        const lockedByN = lockedBy !== undefined ? (this.deps.lockedByTotalOf?.(ship.playerId) ?? 0) : 0;
+        const capped = lockedBy !== undefined && lockedByN > lockedBy.length;
+        setOrDrop(entry, 'lockedByN', capped ? lockedByN : undefined);
+        // Completed locks in all, only when some are off the rows (absent ⇒
+        // the locked rows are every completed lock): the banner's exact count.
+        let lockedRows = 0;
+        if (capped) for (let i = 0; i < lockedBy.length; i++) if (lockedBy[i]!.s === 2) lockedRows++;
+        const lockedByL = capped ? (this.deps.lockedByLockedOf?.(ship.playerId) ?? 0) : 0;
+        setOrDrop(entry, 'lockedByL', lockedByL > lockedRows ? lockedByL : undefined);
         // P5 (#16) — the own ACTIVE hull's fitted blueprints, emit-when-non-empty
         // (shared reference; the encoder never mutates it).
         const fitted = ownActive ? this.deps.fittedOf?.(ship.shipInstanceId) : undefined;
@@ -1046,18 +1080,29 @@ export class SnapshotBroadcaster {
           // Campaign 2.1 — per-recipient hostility bit (invariant #16: the
           // snapshot backstop for the bot_aggro accelerant). Emit-when-true.
           const hostile = d.isDroneHostileTo(rec.id, recipientPlayerId);
-          // P3c — charge-weapon wind-up telegraph (emit-when-true, #16).
-          const charging = d.isDroneCharging?.(rec.id) === true;
+          // Charge-up telegraph: per-mount bits + start tick (emit-when-non-zero, #16).
+          const chargingMask = d.droneCharges?.mask(rec.id) ?? 0;
+          const chargeStartTick = chargingMask !== 0 ? d.droneCharges!.startTick(rec.id) : 0;
+          // Per-mount starts, only when the charging mounts began apart.
+          let chargeOffsets: number[] | undefined;
+          if (chargingMask !== 0 && (chargingMask & (chargingMask - 1)) !== 0) {
+            const off = this.acquireMountAngles(0);
+            if (d.droneCharges!.offsetsInto(rec.id, chargeStartTick, off)) chargeOffsets = off;
+          }
           // P4a — an elite always reports (its name drives the label, #16).
           const elite = rec.elite?.name;
           // v4 M2 — a patrol always reports whose it is (#16: the client tint).
           const fac = d.droneFactionOf?.(rec.id);
           // W2a — an NPC warp (spool / run / just arrived) drives the client fx (#16).
           const warp = d.droneWarpOf?.(rec.id) ?? 0;
-          if (!droneMountAnglesArr && !rec.shieldDown && hpPct === undefined && !hostile && !charging && elite === undefined && fac === undefined && warp === 0) continue;
+          // Take 12 — the AI pilot's boost key, so its ship shows the same
+          // boost flame a pilot's does (#16; emit-when-true).
+          const boost = d.isDroneBoosting?.(rec.id) === true;
+          if (!droneMountAnglesArr && !rec.shieldDown && hpPct === undefined && !hostile && chargingMask === 0 && elite === undefined && fac === undefined && warp === 0 && !boost) continue;
           SnapshotBroadcaster.writeDroneSlot(
             dronesScratch, dronesCount,
-            eid, droneMountAnglesArr, rec.shieldDown ?? false, hpPct, hostile, charging, elite, fac, warp,
+            eid, droneMountAnglesArr, rec.shieldDown ?? false, hpPct, hostile, chargingMask, chargeStartTick, elite, fac, warp, boost,
+            chargeOffsets,
           );
           dronesCount++;
         }
@@ -1069,7 +1114,7 @@ export class SnapshotBroadcaster {
           if (interest && interest.has(w.entityId)) continue;
           const warp = d.droneWarpOf?.(id) ?? 0;
           if (warp === 0) continue;
-          SnapshotBroadcaster.writeDroneSlot(dronesScratch, dronesCount, w.entityId, undefined, false, undefined, false, false, undefined, undefined, warp);
+          SnapshotBroadcaster.writeDroneSlot(dronesScratch, dronesCount, w.entityId, undefined, false, undefined, false, 0, 0, undefined, undefined, warp);
           dronesCount++;
         }
       }
@@ -1196,6 +1241,8 @@ export class SnapshotBroadcaster {
       if (work !== undefined && work.active) {
         work.snapshots++;
         work.snapshotEntities += projectilesCount + missilesCount + dronesCount + asteroidsCount;
+        // Slice 3 wire: descriptors ride as deltas plus a rolling resync chunk.
+        work.wreckDescriptors += (snap.wreckAdds?.length ?? 0) + (snap.wreckSync?.d.length ?? 0);
       }
     }
 

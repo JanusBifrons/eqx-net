@@ -174,6 +174,12 @@ export async function bootSectorTestServer(opts: {
    *  (no rocks) so a test can seed its own asteroids deterministically. When
    *  omitted, the room spawns the production `ASTEROIDS` roster. */
   asteroidConfig?: ReadonlyArray<{ x: number; y: number; vx: number; vy: number; radius: number; mass: number }>;
+  /** Bulk seed (room options `swarmCount` / `swarmRatio` / `swarmRadius` /
+   *  `swarmAtRest`): the terrain stress scenes' rock fields. */
+  swarmCount?: number;
+  swarmRatio?: number;
+  swarmRadius?: number;
+  swarmAtRest?: boolean;
   /** D2 — NPC bases grown by the generator. */
   npcBases?: ReadonlyArray<Record<string, unknown>>;
   /** T1 — seed the sector's own NPC base (as galaxy rooms do). */
@@ -187,6 +193,10 @@ export async function bootSectorTestServer(opts: {
   breakInMs?: number;
   /** Bespoke test trigger: no NON-player lock takes longer than this (s); 0 = the first step. */
   lockTimeCapS?: number;
+  /** Bespoke test trigger: no capital-turret charge takes longer than this (ticks). */
+  chargeTicksCap?: number;
+  /** Bespoke test trigger: no capital turret takes longer than this to train a full turn (ticks); 0 = snap. */
+  traverseTicksCap?: number;
   /** Time scale trigger: this sector's game speed (0.25–4). */
   timeScale?: number;
   /** The `test-sector-fast` physics speed-up (room option `testTimeScale`). */
@@ -206,6 +216,7 @@ export async function bootSectorTestServer(opts: {
   pilotCapitals?: boolean;
   /** Capital destruction S2a: a dying capital breaks into wreck bodies. */
   capitalWrecks?: boolean;
+  subcapWrecks?: boolean;
   /** P2c — sector features for the room (asteroid mix, nebula). */
   sectorFeatures?: string[];
   /** Room-level default spawn point (forwarded to `defaultSpawnX/Y`). */
@@ -271,6 +282,10 @@ export async function bootSectorTestServer(opts: {
     scenarioDrones: opts.scenarioDrones,
     scenarioAsteroids: opts.scenarioAsteroids,
     asteroidConfig: opts.asteroidConfig,
+    swarmCount: opts.swarmCount,
+    swarmRatio: opts.swarmRatio,
+    swarmRadius: opts.swarmRadius,
+    swarmAtRest: opts.swarmAtRest,
     sectorFeatures: opts.sectorFeatures,
     npcBases: opts.npcBases,
     galaxyBases: opts.galaxyBases,
@@ -279,6 +294,8 @@ export async function bootSectorTestServer(opts: {
     pocketPads: opts.pocketPads,
     breakInMs: opts.breakInMs,
     lockTimeCapS: opts.lockTimeCapS,
+    chargeTicksCap: opts.chargeTicksCap,
+    traverseTicksCap: opts.traverseTicksCap,
     timeScale: opts.timeScale,
     testTimeScale: opts.testTimeScale,
     autoTimeScale: opts.autoTimeScale,
@@ -290,6 +307,7 @@ export async function bootSectorTestServer(opts: {
     peacefulDrones: opts.peacefulDrones,
     pilotCapitals: opts.pilotCapitals,
     capitalWrecks: opts.capitalWrecks,
+    subcapWrecks: opts.subcapWrecks,
     tradeEnabled: opts.tradeEnabled,
     enforceHullGate: opts.enforceHullGate,
     seedStorageHold: opts.seedStorageHold,

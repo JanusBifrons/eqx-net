@@ -1,11 +1,11 @@
 /**
  * Real-scale naval ranges (`navalRange=real`): the client's lock-line pick
- * (`updateLockGuide`) has no distance or interest cut-off of its own, only the
- * active group's reach × `LOCK_LINE.reachSlack` (the shared rule the server
- * verifies `lock_track` with, #15). A battleship pilot pointing the main
- * battery's line at a target 30 km out picks it, whatever its kind: an NPC
- * capital, an NPC fighter, a structure or another pilot. Past reach × 1.1 the
- * line holds nothing.
+ * (`updateLockGuide`) has no distance or interest cut-off of its own, and
+ * (owner 2026-11-14: locks work at any distance) no reach cap either: the
+ * shared rule the server verifies `lock_track` with is `lockLineScore` (#15).
+ * A battleship pilot pointing the main battery's line at a target 30 km out
+ * picks it, whatever its kind: an NPC capital, an NPC fighter, a structure or
+ * another pilot. Past reach the line still holds it.
  *
  * The catalogue is built at module load, so the modules are re-imported with
  * the switch on (the same pattern as tests/unit/navalRangeSwitch.test.ts).
@@ -86,11 +86,13 @@ describe('real naval ranges — the lock-line pick reaches 30 km', () => {
       expect(lockLineHolds(x, y, decodeAim(msg.b!), 50, reach), `${key}: the server accepts the claim`).toBe(true);
     }
 
-    // Past reach × 1.1 (42.6 km) the line holds nothing.
+    // Past reach (45 km > 38.7 km) the line still holds it: locks work at
+    // any distance (owner 2026-11-14); only firing is range-limited.
     m.swarm.clear();
     m.ships.delete('other');
     client.releaseLockGuide();
     m.swarm.set(5, swarm(1, 0, 45_000, getShipKind('battleship').radius));
-    expect(client.updateLockGuide(0), 'a capital 45 km out: past reach').toBeNull();
+    expect(client.updateLockGuide(0), 'a capital 45 km out: past reach, still picked').toBe('s:5');
+    expect(lockLineHolds(0, 45_000, 0, 50, reach), 'the server accepts it too').toBe(true);
   });
 });

@@ -12,7 +12,7 @@ import { SWARM_KIND_SCRAP } from '../../shared-types/swarmWireFormat.js';
 import { SHIP_KINDS_LIST, GAMEPLAY_SHIP_KINDS_LIST, shipKindToIndex, type ShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
 import { structureHalfExtents, structureHullPoints } from '../../shared-types/structureKinds.js';
 import { gateColliderPolygons, gateWorldAxisBoxes } from '../../core/structures/gateGeometry.js';
-import { massOf, NPC_MASS_FALLBACK } from '../../shared-types/shipScale/tuning.js';
+import { shipBodyMass } from '../../shared-types/shipScale/tuning.js';
 
 export interface AsteroidSpec {
   id: string;
@@ -34,8 +34,6 @@ export interface DroneSpec {
   y: number;
   vx?: number;
   vy?: number;
-  radius?: number;
-  mass?: number;
   /** Force a specific ship kind for this drone. Wins over the
    *  `pickDroneKind` hook and the random fallback — used by the Living
    *  World Director to carry a bot's kind across an inter-sector warp /
@@ -59,7 +57,7 @@ export interface SpawnerHooks {
    *  / undefined (legacy axis-aligned spawn). `shipKindId` (drones only) is
    *  the drone kind's catalogue index (`shipKindToIndex`): the worker flies the
    *  body as that kind when the AI drives it with control keys (AI_INPUTS). */
-  postSpawnObstacle: (slot: number, id: string, x: number, y: number, vx: number, vy: number, radius: number, mass: number, vertices?: ReadonlyArray<Vec2>, linearDamping?: number, staticBody?: boolean, collisionGroups?: number, angle?: number, parts?: ReadonlyArray<ReadonlyArray<Vec2>>, shieldKindId?: string, spin?: { angvel: number; angularDamping: number }, shipKindId?: number) => void;
+  postSpawnObstacle: (slot: number, id: string, x: number, y: number, vx: number, vy: number, radius: number, mass: number, vertices?: ReadonlyArray<Vec2>, linearDamping?: number, staticBody?: boolean, collisionGroups?: number, angle?: number, parts?: ReadonlyArray<ReadonlyArray<Vec2>>, shieldKindId?: string, spin?: { angvel: number; angularDamping: number; settleSpeed?: number; settleSpin?: number }, shipKindId?: number) => void;
   /** Direct write into the SAB so the first update() tick reads a sane pose. */
   sabF32: Float32Array;
   sabU32: Uint32Array;
@@ -83,8 +81,6 @@ export interface SpawnerHooks {
   registerLagComp?: (id: string) => void;
 }
 
-const DRONE_DEFAULT_RADIUS = 14;
-export const DRONE_DEFAULT_MASS = NPC_MASS_FALLBACK;
 
 /**
  * Owns swarm entity creation. Allocates a slot, primes the SAB, posts a
@@ -123,7 +119,7 @@ export class SwarmSpawner {
    * Slot exhaustion is logged by the caller — `seed()` returns the truncated
    * count without throwing so a too-large `swarmCount` degrades gracefully.
    */
-  seed(count: number, ratio = 0.8, radius = 18_000): number {
+  seed(count: number, ratio = 0.8, radius = 18_000, atRest = false): number {
     if (count <= 0) return 0;
     let spawned = 0;
     // Sunflower-spiral spread across a disc bounded by `radius`. Gives a
@@ -135,7 +131,9 @@ export class SwarmSpawner {
     // far outside any reasonable interest window — so the player at origin
     // never saw a drone. Interleaving keeps the kind ratio while putting
     // drones at every distance band.
-    const dronesPerCycle = Math.max(1, Math.round((1 - ratio) * 10));
+    // `ratio: 1` means rocks only (the terrain stress scenes); any other
+    // ratio keeps at least one drone per cycle, as before.
+    const dronesPerCycle = ratio >= 1 ? 0 : Math.max(1, Math.round((1 - ratio) * 10));
     const droneStride = 10; // 10 entities per cycle; `dronesPerCycle` of them are drones
     const PHI = Math.PI * (3 - Math.sqrt(5)); // golden angle
     for (let i = 0; i < count; i++) {
@@ -154,16 +152,19 @@ export class SwarmSpawner {
           id: `swarm-asteroid-${i}`,
           x, y,
           // Tiny drift so the wire isn't entirely static at low speeds.
-          vx: Math.cos(angle * 1.7) * 0.5,
-          vy: Math.sin(angle * 1.7) * 0.5,
+          // `atRest` (terrain stress scenes): no drift, so the rocks settle
+          // and sleep as a real field does.
+          vx: atRest ? 0 : Math.cos(angle * 1.7) * 0.5,
+          vy: atRest ? 0 : Math.sin(angle * 1.7) * 0.5,
           radius: asteroidRadius,
           // Stress-test rooms keep the original light asteroid mass (1) for
           // bandwidth-budget continuity. Galaxy rooms and hand-rolled rosters
           // get ASTEROID_DEFAULT_MASS via the spawner default. The bulk-seed
           // mass-feel doesn't matter — there's no gameplay collision testing
           // in `swarm-soak` / `swarm-tidi`; they exist purely as broadcast /
-          // load benchmarks.
-          mass: 1,
+          // load benchmarks. `atRest` rocks take the real asteroid mass
+          // (the spawner default) so the terrain scenes measure a real field.
+          ...(atRest ? {} : { mass: 1 }),
         });
       if (!ok) break;
       spawned++;
@@ -189,17 +190,13 @@ export class SwarmSpawner {
   spawnDrone(d: DroneSpec): boolean {
     const kindId = d.kind ?? (this.hooks.pickDroneKind ? this.hooks.pickDroneKind() : pickRandomShipKind());
     const kind = SHIP_KINDS_LIST.find((k) => k.id === kindId) ?? SHIP_KINDS_LIST[0]!;
-    // Explicit per-spawn `radius` / `mass` still wins; otherwise fall back to
-    // the kind's tuning values so each kind has its own physical footprint.
-    const radius = d.radius ?? kind.radius ?? DRONE_DEFAULT_RADIUS;
-    // 2026-05-28 fix: respect `kind.mass`. Pre-fix this fell straight through
-    // to `DRONE_DEFAULT_MASS` (= 2), so a Crossguard drone (kind.mass = 30)
-    // spawned at mass 2 — the player could push it across the sector with
-    // basic thrust. Symmetric server↔client: the binary swarm wire doesn't
-    // carry per-drone mass; both sides re-derive it from `entry.shipKind`
-    // → catalogue lookup, so this fix lands on both. Player ships
-    // (`spawnShip`) already use `kind.mass` (see World.ts:161).
-    const mass = d.mass ?? massOf(kind, DRONE_DEFAULT_MASS);
+    // Radius and mass are the KIND's, exactly a pilot ship's of that kind
+    // (ship stats belong to the ship, never the pilot; owner 2026-11-13).
+    // No per-spawn override: the worker pins the body from the kind anyway
+    // (`World.spawnObstacle` with the shield kind), and both sides re-derive
+    // it from the kind (the swarm wire carries no mass).
+    const radius = kind.radius;
+    const mass = shipBodyMass(kind);
     const spec: AsteroidSpec = {
       id: d.id, x: d.x, y: d.y, vx: d.vx ?? 0, vy: d.vy ?? 0, radius, mass,
     };
@@ -306,6 +303,11 @@ export class SwarmSpawner {
     radius: number; mass: number; parentShipKind: ShipKindId; pieceIndex: number; wreckId: number;
     parts: ReadonlyArray<ReadonlyArray<Vec2>>; colliderParts: ReadonlyArray<ReadonlyArray<Vec2>>;
     linearDamping: number; angularDamping: number;
+    /** `wreckBodyParams(kind).collisionGroups`; absent ⇒ the capital groups. */
+    collisionGroups?: number;
+    /** `wreckBodyParams(kind).settleSpeed/settleSpin`; absent ⇒ no settle. */
+    settleSpeed?: number;
+    settleSpin?: number;
   }): boolean {
     const slot = this.hooks.takeSlot();
     if (slot === undefined) return false;
@@ -325,8 +327,8 @@ export class SwarmSpawner {
     rec.wreckParts = spec.parts;
     this.hooks.postSpawnObstacle(
       slot, spec.id, spec.x, spec.y, spec.vx, spec.vy, spec.radius, spec.mass, undefined,
-      spec.linearDamping, false, WRECK_COLLISION_GROUPS, spec.angle, spec.colliderParts, undefined,
-      { angvel: spec.angvel, angularDamping: spec.angularDamping },
+      spec.linearDamping, false, spec.collisionGroups ?? WRECK_COLLISION_GROUPS, spec.angle, spec.colliderParts, undefined,
+      { angvel: spec.angvel, angularDamping: spec.angularDamping, ...(spec.settleSpeed ? { settleSpeed: spec.settleSpeed, settleSpin: spec.settleSpin ?? 0 } : {}) },
     );
     this.hooks.interestGrid?.insert(rec.entityId, spec.x, spec.y, spec.radius);
     return true;
@@ -402,7 +404,7 @@ export class SwarmSpawner {
       rec.vertices = vertices;
       mass ??= SCRAP_DEFAULT_MASS;
     } else {
-      mass ??= DRONE_DEFAULT_MASS;
+      mass ??= shipKind ? shipBodyMass(shipKind) : 1;
     }
 
     // WS-11 (R2.25) — DRONES (kind 1) get their per-kind `linearDamping` so the

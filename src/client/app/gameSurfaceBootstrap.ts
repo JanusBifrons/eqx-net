@@ -203,6 +203,12 @@ export function buildJoinSpec(
   // and structure turrets) takes longer than N s; 0 = the first step. Reaches
   // onCreate on the room-creating client and caps the room. testMode-gated.
   if (urlParams.has('lockTimeCapS')) extraJoinOptions['lockTimeCapS'] = parseFloat(urlParams.get('lockTimeCapS')!);
+  // Charge-up — `?chargeTicksCap=N`: no capital-turret charge (the railgun's
+  // ~6 s wind-up) takes longer than N ticks (testMode rooms only).
+  if (urlParams.has('chargeTicksCap')) extraJoinOptions['chargeTicksCap'] = parseInt(urlParams.get('chargeTicksCap')!, 10);
+  // Turret traverse — `?traverseTicksCap=N`: no capital turret takes longer
+  // than N ticks to train a full turn; 0 = snap (testMode rooms only).
+  if (urlParams.has('traverseTicksCap')) extraJoinOptions['traverseTicksCap'] = parseInt(urlParams.get('traverseTicksCap')!, 10);
   // Time scale — `?timeScale=N`: this sector's game speed (0.25–4; test and
   // recording rooms). The client follows it from Phase 4 of the stream.
   if (urlParams.has('timeScale')) extraJoinOptions['timeScale'] = parseFloat(urlParams.get('timeScale')!);

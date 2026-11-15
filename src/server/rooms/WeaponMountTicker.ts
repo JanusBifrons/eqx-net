@@ -30,7 +30,7 @@ import {
 } from '../../core/ai/WeaponMountController.js';
 
 import { mountTargetReach, mountWeaponReach, hasTurretFireControl } from '../../core/combat/mountReach.js';
-import { mountLineClear, mountPriority, targetClass, type TargetClass } from '../../core/combat/mountTargeting.js';
+import { mountLineClear, mountPriority, targetClass, STRUCTURE_TARGET_CLASS, type TargetClass } from '../../core/combat/mountTargeting.js';
 import { leadArcBearing, mountCanEngage, onTarget } from '../../core/combat/mountFireControl.js';
 import { getWeapon } from '../../core/combat/WeaponCatalogue.js';
 import { shipShotMuzzle } from '../../core/combat/muzzle.js';
@@ -133,11 +133,16 @@ export interface WeaponMountTickerDeps {
    *  (LINGERING, no active hull) under the PILOT's id, so drone turrets and
    *  capital turrets keep engaging it (their `hostileTo` and NPC locks are
    *  keyed by pilot). Absent ⇒ ACTIVE hulls only (unit harnesses). */
-  visitParkedPilotHulls?: (visit: (pid: string, x: number, y: number, vx: number, vy: number, kindId: string) => void) => void;
+  visitParkedPilotHulls?: (
+    visit: (pid: string, x: number, y: number, vx: number, vy: number, kindId: string, angle: number, shieldUp: boolean) => void,
+  ) => void;
   /** Fire ONE mount of a capital drone along its barrel (the resolver reads
    *  the slewed angle). Called only when that mount is on target, in reach
-   *  and reloaded. */
-  fireDroneMount?: (droneId: string, mountIdx: number) => void;
+   *  and reloaded. Returns false when the shot was refused (the ship's energy
+   *  pool can't pay): the reload is then not spent. 'killed' = it fired and
+   *  destroyed what it hit (starts the weapon's `followThroughTicks`).
+   *  `passDebris`: the shot passes wreck pieces and scrap (the follow-through). */
+  fireDroneMount?: (droneId: string, mountIdx: number, passDebris?: boolean) => boolean | 'killed' | void;
   /** Fire control (PR 1d slice 2): true ⇒ the capital holds no COMPLETED
    *  lock on this mount's target (a pilot), so the mount aims but holds fire
    *  (reload not spent). Absent ⇒ never blocked (unit harnesses). */
@@ -145,9 +150,12 @@ export interface WeaponMountTickerDeps {
   /** NPC line of fire (friendly fire slice 2): true ⇒ a FRIENDLY body lies on
    *  this turret's shot from its muzzle (fx, fy) along unit (dx, dy) for
    *  `maxDist` (to the target), so it holds fire this tick: it keeps aiming,
-   *  the lock stays and the reload is not spent. Absent ⇒ never blocked. */
+   *  the lock stays and the reload is not spent. Absent ⇒ never blocked.
+   *  `passWrecks`: wreck pieces don't hold it (a kill follow-through burns on
+   *  through its own victim's wreck; friendlies still do). */
   lineOfFireBlocked?: (
     droneId: string, targetId: string, fx: number, fy: number, dx: number, dy: number, maxDist: number,
+    passWrecks?: boolean,
   ) => boolean;
   /** Structures hostile to the drones this tick (the AI's structure target
    *  set, built once per tick by the room). Capital turrets engage them too,
@@ -158,11 +166,93 @@ export interface WeaponMountTickerDeps {
    *  structure takes longer than this many seconds while in reach (0 = the
    *  first tick). Absent / undefined = the lock rules unchanged. */
   lockTimeCapS?: () => number | undefined;
+  /** testMode `chargeTicksCap` (room / join option): no capital-turret
+   *  charge lasts longer than this many ticks (0 = the shot goes on the next
+   *  tick it may). Undefined = each weapon's own `chargeTicks`. */
+  chargeTicksCap?: () => number | undefined;
+  /** testMode `traverseTicksCap` (room / join option): no capital turret
+   *  takes longer than this many ticks to train across a full turn (0 = it
+   *  snaps onto its bearing). Undefined = each mount's own `rotationSpeed`. */
+  traverseTicksCap?: () => number | undefined;
 }
 
-/** A structure is a fixed, armoured target: every naval calibre engages it
- *  (secondaries first, mains next, AA last; `mountPriority`). */
-const STRUCTURE_TARGET_CLASS: TargetClass = 'small-capital';
+
+/** A mount that is not charging (the charge-start sentinel; ticks are ≥ 0). */
+export const NOT_CHARGING = -1;
+
+/**
+ * THE per-mount charge store (plan step 6): for each AI ship, the server tick
+ * each mount began charging, or `NOT_CHARGING`, indexed like the ship's slot
+ * mounts (`resolveSlotMounts`). Capital turrets (`tickCapitalMounts`) and the
+ * AI salvo path (`AiFireResolver`) both read and write it; the snapshot's
+ * `drones[].chargingMask` / `chargeStartTick` read it. One Int32Array per
+ * ship, made on its first charge and reused (#14); `forget` on removal (a
+ * dead ship's charge never fires).
+ */
+export class MountCharges {
+  readonly starts = new Map<string, Int32Array>();
+
+  /** The ship's start array, made (all idle) on first use or a size change. */
+  startsFor(droneId: string, n: number): Int32Array {
+    let a = this.starts.get(droneId);
+    if (!a || a.length !== n) { a = new Int32Array(n).fill(NOT_CHARGING); this.starts.set(droneId, a); }
+    return a;
+  }
+
+  /** Bit i set ⇔ mount i is charging (or holding a completed charge).
+   *  Mounts past bit 30 are not reported. */
+  mask(droneId: string): number {
+    const a = this.starts.get(droneId);
+    if (a === undefined) return 0;
+    let m = 0;
+    for (let i = 0; i < a.length && i < 31; i++) if (a[i]! !== NOT_CHARGING) m |= 1 << i;
+    return m;
+  }
+
+  /** The earliest start tick among the ship's charging mounts, or
+   *  `NOT_CHARGING` when none charges. */
+  startTick(droneId: string): number {
+    const a = this.starts.get(droneId);
+    if (a === undefined) return NOT_CHARGING;
+    let t = NOT_CHARGING;
+    for (let i = 0; i < a.length; i++) {
+      const s = a[i]!;
+      if (s !== NOT_CHARGING && (t === NOT_CHARGING || s < t)) t = s;
+    }
+    return t;
+  }
+
+  /**
+   * Each charging mount's start as ticks after `base` (the earliest start,
+   * `startTick`), one per set bit of `mask`, lowest bit first, into `out`
+   * (length set). Returns false (and leaves `out` empty) when every
+   * charging mount began on `base`: the snapshot then omits the offsets.
+   * Clamped to u16. Alloc-free.
+   */
+  offsetsInto(droneId: string, base: number, out: number[]): boolean {
+    out.length = 0;
+    const a = this.starts.get(droneId);
+    if (a === undefined) return false;
+    let any = false;
+    let k = 0;
+    for (let i = 0; i < a.length && i < 31; i++) {
+      const s = a[i]!;
+      if (s === NOT_CHARGING) continue;
+      let off = s - base;
+      if (off < 0) off = 0;
+      else if (off > 65_535) off = 65_535;
+      if (off !== 0) any = true;
+      out[k++] = off;
+    }
+    if (!any) out.length = 0;
+    return any;
+  }
+
+  /** The ship left the world (death, eviction, shed): drop its charges. */
+  forget(droneId: string): void {
+    this.starts.delete(droneId);
+  }
+}
 
 const DT_SEC = 1 / 60;
 /** The on-target rules live with the shared fire control (plan
@@ -186,6 +276,9 @@ export class WeaponMountTicker {
   readonly droneSlotTargets = new Map<string, string | null>();
   /** Capital fire control: last fire tick per mount, keyed by drone id. */
   readonly droneMountReload = new Map<string, Int32Array>();
+  /** Per-mount charge state beside the reload (plan step 6): the ONE charge
+   *  store, shared with `AiFireResolver`. */
+  readonly charges = new MountCharges();
 
   /** Pooled per-tick player candidates (rebuilt by tickDrone). Logical-length
    *  over physical slot (plan: quirky-rabbit, Phase 5): slots are reused and
@@ -197,14 +290,24 @@ export class WeaponMountTicker {
   readonly droneMountLastOk = new Map<string, Int32Array>();
   /** Capitals: each mount's current target id, keyed by drone id. */
   readonly droneMountTargetIds = new Map<string, (string | null)[]>();
+  /** Capitals: the tick each mount's kill follow-through ends (it holds the
+   *  kill's world line and fires down it while `tick <` this), keyed by drone
+   *  id. Made once per drone, reused (#14). */
+  readonly droneMountFollowUntil = new Map<string, Int32Array>();
+  /** Capitals: each mount's follow-through WORLD bearing (hull + base + mount
+   *  angle at the kill), keyed by drone id. Made once per drone (#14). */
+  readonly droneMountFollowBearing = new Map<string, Float32Array>();
 
   /** tickDrone's candidate count while the parked-hull visitor appends. */
   private targetCount = 0;
   /** Append one spectate-parked pilot hull to this tick's candidates. Bound
    *  once (#14). */
-  private readonly addParkedTarget = (pid: string, x: number, y: number, vx: number, vy: number, kindId: string): void => {
+  private readonly addParkedTarget = (
+    pid: string, x: number, y: number, vx: number, vy: number, kindId: string, angle: number, shieldUp: boolean,
+  ): void => {
     const n = this.targetCount;
     WeaponMountTicker.writeTargetSlot(this.droneMountTargetsScratch, n, pid, x, y, vx, vy);
+    WeaponMountTicker.writeTargetShape(this.droneMountTargetsScratch[n]!, kindId, angle, shieldUp, 0);
     this.droneTargetKinds[n] = kindId;
     this.targetCount = n + 1;
   };
@@ -271,6 +374,19 @@ export class WeaponMountTicker {
     // doesn't leak a stale value into a target that now has none.
     slot.health = health;
     slot.maxHealth = maxHealth;
+  }
+
+  /** Write a view's hit shape for the turrets' hull range gate
+   *  (`mountInReach`): a ship's kind, heading and shield, or a circle
+   *  `radius` (kindId null). Same local readonly cast as `writeTargetSlot`. */
+  private static writeTargetShape(
+    v: MountTargetView, kindId: string | null, angle: number, shieldUp: boolean, radius: number,
+  ): void {
+    const slot = v as { -readonly [K in keyof MountTargetView]: MountTargetView[K] };
+    slot.kindId = kindId;
+    slot.angle = angle;
+    slot.shieldUp = shieldUp;
+    slot.radius = radius;
   }
 
   constructor(private readonly deps: WeaponMountTickerDeps) {}
@@ -352,6 +468,7 @@ export class WeaponMountTicker {
       const pose = d.shipPoseCache.get(pid);
       if (!pose) continue;
       WeaponMountTicker.writeTargetSlot(targets, count, pid, pose.x, pose.y, pose.vx, pose.vy);
+      WeaponMountTicker.writeTargetShape(targets[count]!, ship.kind, pose.angle, ship.shield > 0, 0);
       this.droneTargetKinds[count] = ship.kind;
       count++;
     }
@@ -428,6 +545,7 @@ export class WeaponMountTicker {
       const prevTargetId = this.droneSlotTargets.get(rec.id) ?? null;
       const target = pickTarget(droneX, droneY, targets, prevTargetId, isHostile, {
         maxDistance: mountTargetReach(kind, mounts),
+        reachToHull: true,
       });
       this.droneSlotTargets.set(rec.id, target?.id ?? null);
 
@@ -466,8 +584,9 @@ export class WeaponMountTicker {
   ): boolean {
     if (!isHostile(t.id)) return false;
     const dx = t.x - mx, dy = t.y - my;
-    // Reach, arc and tracking: the shared fire control (structures use it too).
-    if (!mountCanEngage(mount, ang, dx, dy, reach, t.vx - selfVx, t.vy - selfVy)) return false;
+    // Reach (mount to the target's hull), arc and tracking: the shared fire
+    // control (structures use it too).
+    if (!mountCanEngage(mount, ang, dx, dy, reach, t.vx - selfVx, t.vy - selfVy, t)) return false;
     return mountLineClear(kind, mount, wrapPi(Math.atan2(-dx, dy) - ang));
   }
 
@@ -496,6 +615,10 @@ export class WeaponMountTicker {
     if (!lastOk || lastOk.length !== n) { lastOk = new Int32Array(n); this.droneMountLastOk.set(droneId, lastOk); }
     let locks = this.droneMountLocks.get(droneId);
     if (!locks || locks.length !== n) { locks = Array.from({ length: n }, () => newLock('', true)); this.droneMountLocks.set(droneId, locks); }
+    let follow = this.droneMountFollowUntil.get(droneId);
+    if (!follow || follow.length !== n) { follow = new Int32Array(n); this.droneMountFollowUntil.set(droneId, follow); }
+    let followBearing = this.droneMountFollowBearing.get(droneId);
+    if (!followBearing || followBearing.length !== n) { followBearing = new Float32Array(n); this.droneMountFollowBearing.set(droneId, followBearing); }
     const sensor = sensorFor(kind);
     const tick = d.currentTick!();
     const selfVx = d.sabF32[b + SLOT_VX_OFF]!, selfVy = d.sabF32[b + SLOT_VY_OFF]!;
@@ -507,11 +630,20 @@ export class WeaponMountTicker {
       const mx = x + (mount.localX * cosA - mount.localY * sinA);
       const my = y + (mount.localX * sinA + mount.localY * cosA);
       const reach = mountWeaponReach(mount);
+      // Follow-through: this mount's last shot killed its target, so it holds
+      // the kill's world line and burns on down it until the window ends.
+      if (tick < follow[i]!) {
+        this.followThrough(droneId, kind, mount, i, angles, reload, tick, mx, my, ang, reach, followBearing[i]!);
+        continue;
+      }
       // STICKY (user, 2026-11-07: "don't constantly retarget"): a turret
       // re-checks only its own target each tick. If that target briefly can't
       // be engaged it keeps aiming at it for TARGET_HOLD_TICKS before letting
-      // go, and it searches for a new one only when it has none, every
-      // RETARGET_TICKS, staggered across mounts. Cheap and steady.
+      // go. It searches every RETARGET_TICKS, staggered across mounts: with
+      // no target for the best (priority, distance); holding one, only for a
+      // STRICTLY preferred class (a battery that turned hostile after the
+      // turret settled on a fighter: coastal-duel, owner 2026-11-14), so a
+      // turret never hops between targets of its preferred class.
       let best = -1;
       let engageable = false;
       const prev = per[i];
@@ -521,29 +653,38 @@ export class WeaponMountTicker {
         if (engageable) lastOk[i] = tick;
         else if (best < 0 || tick - lastOk[i]! > TARGET_HOLD_TICKS) { best = -1; per[i] = null; }
       }
-      if (best < 0 && (tick + i * 7) % RETARGET_TICKS === 0) {
-        // Search: lowest (priority, distance) among targets it can engage.
-        let bestPri = Infinity, bestD2 = Infinity;
+      const held = best;
+      const heldPri = held >= 0 ? mountPriority(mount.size, cls[held]!) : Infinity;
+      if (heldPri > 0 && (tick + i * 7) % RETARGET_TICKS === 0) {
+        // Search: lowest (priority, distance) among targets it can engage;
+        // a held target is beaten only by a better class (bestD2 = -1).
+        let bestPri = heldPri, bestD2 = held >= 0 ? -1 : Infinity;
         for (let j = 0; j < targets.length; j++) {
           const t = targets[j]!;
+          // Class first: the cheap reject before the engage checks.
+          const pri = mountPriority(mount.size, cls[j]!);
+          if (pri > bestPri) continue;
+          const dx = t.x - mx, dy = t.y - my;
+          const d2 = dx * dx + dy * dy;
+          if (pri === bestPri && d2 >= bestD2) continue;
           if (!this.canEngage(kind, mount, t, mx, my, ang, reach, selfVx, selfVy, isHostile)) continue;
           // A structure this gun can't lock from here (out of reach, or past
           // `maxSeconds` for a sub-capital gun, by the shared ship lock rules)
           // is no target for it: lock to fire. A heavy gun locks a small
           // structure slowly, never impossibly (owner 2026-11-13).
           if (sig[j]! >= 0 && !Number.isFinite(this.structureLockSecs(mount, reach, sensor, sig[j]!, t, mx, my, selfVx, selfVy))) continue;
-          const dx = t.x - mx, dy = t.y - my;
-          const d2 = dx * dx + dy * dy;
-          const pri = mountPriority(mount.size, cls[j]!);
-          if (pri < bestPri || (pri === bestPri && d2 < bestD2)) { bestPri = pri; bestD2 = d2; best = j; }
+          bestPri = pri; bestD2 = d2; best = j;
         }
-        if (best >= 0) { engageable = true; lastOk[i] = tick; }
+        if (best >= 0 && best !== held) { engageable = true; lastOk[i] = tick; }
       }
       const lock = locks[i]!;
       if (best < 0) {
         per[i] = null;
         if (lock.target !== '') resetLock(lock, '');
-        angles[i] = rotateMountToward(angles[i]!, 0, mount, DT_SEC);
+        angles[i] = rotateMountToward(angles[i]!, 0, mount, this.traverseDt(mount));
+        // A 'locked-direction' charge fires when it completes, target or not;
+        // a 'when-bearing' one holds until the gun bears on a target again.
+        this.releaseLockedCharge(droneId, i, mount, tick, reload);
         continue;
       }
       const t = targets[best]!;
@@ -568,9 +709,18 @@ export class WeaponMountTicker {
       const dx = t.x - mx, dy = t.y - my;
       const dist = Math.hypot(dx, dy);
       const want = leadArcBearing(dx, dy, t.vx - selfVx, t.vy - selfVy, w.mode === 'hitscan' ? 0 : w.speed, ang, mount.baseAngle);
-      angles[i] = rotateMountToward(angles[i]!, want, mount, DT_SEC);
+      angles[i] = rotateMountToward(angles[i]!, want, mount, this.traverseDt(mount));
+      // Charge-up (plan step 6): the turret keeps tracking while it charges.
+      // 'locked-direction' fires the moment the charge completes; a charging
+      // 'when-bearing' gun waits out the charge, then fires through the
+      // normal gates below (held while they fail).
+      if (this.releaseLockedCharge(droneId, i, mount, tick, reload)) continue;
+      const chargeT = w.chargeTicks ?? 0;
+      const chargeStarts = chargeT > 0 ? this.charges.startsFor(droneId, n) : null;
+      const charging = chargeStarts !== null && chargeStarts[i]! !== NOT_CHARGING;
+      if (charging && tick - chargeStarts[i]! < this.chargeTicksOf(chargeT)) continue;
       if (!engageable) continue; // held through a brief loss: aim, don't fire
-      if (tick - reload[i]! < w.cooldownTicks) continue;
+      if (!charging && tick - reload[i]! < w.cooldownTicks) continue;
       // On target = the shot would pass within TURRET_FIRE_MISS of the aim
       // point (an angle alone is a 250 u miss at 5,000 u).
       if (!onTarget(want, angles[i]!, dist)) continue;
@@ -588,9 +738,104 @@ export class WeaponMountTicker {
         const muzzle = shipShotMuzzle(kind, mount, true);
         if (d.lineOfFireBlocked(droneId, t.id, mx + ndx * muzzle, my + ndy * muzzle, ndx, ndy, dist - muzzle)) continue;
       }
+      // A charge weapon that is loaded, locked and bearing begins its charge
+      // instead of firing (the turret keeps tracking).
+      if (chargeStarts !== null && !charging) { chargeStarts[i] = tick; continue; }
+      // Energy refused (a player capital's rule): keep the reload (and a
+      // completed charge), retry next tick.
+      const fired = d.fireDroneMount!(droneId, i);
+      if (fired === false) continue;
+      if (chargeStarts !== null) chargeStarts[i] = NOT_CHARGING;
       reload[i] = tick;
-      d.fireDroneMount!(droneId, i);
+      // The shot killed: no slew to a new target; the mount follows through
+      // (owner: "the beam should not turn after the kill"). The dead target
+      // is dropped now, so the mount searches afresh when the window ends.
+      const ft = w.followThroughTicks ?? 0;
+      if (fired === 'killed' && ft > 0) {
+        follow[i] = tick + ft;
+        // The killing beam's world line (the frame fireMount fires along).
+        followBearing[i] = wrapPi(ang + mount.baseAngle + angles[i]!);
+        // Punch through as the target dies: the killing pulse ended at its
+        // hull, so the first full-length pulse fires NEXT tick (the victim is
+        // dead by then, so it can't be hit twice), then the normal cadence.
+        // Waiting a reload showed the death ~9 frames before the cut.
+        reload[i] = tick + 1 - w.cooldownTicks;
+        per[i] = null;
+        if (lock.target !== '') resetLock(lock, '');
+      }
     }
+  }
+
+  /**
+   * One tick of a capital mount's kill follow-through
+   * (`WeaponDefBase.followThroughTicks`): the same trigger pull continuing
+   * down the dead target's line. The turret holds the kill's WORLD bearing,
+   * not its angle on the hull (the AI pilot may keep turning the hull; a
+   * hull-relative hold swung the beam down the victim's hull): each tick it
+   * trains toward that bearing less the hull and base angles through the one
+   * rotation primitive (#12), so its arc and traverse rate bind as always (a
+   * hull turning faster than the turret can follow drags the beam only by
+   * the difference). It fires at its weapon's cadence with no target: the shot
+   * passes debris (wreck pieces, scrap: no hit, no knock-back) and hits the
+   * first ship, structure or rock on the line, else runs its full range, so
+   * the beam shows full length through the cut. No lock
+   * or bearing gate (#19: those license acquiring a target, and this shot
+   * aims at none, like a completed 'locked-direction' charge); the hull's own
+   * deck (`mountLineClear`) and a FRIENDLY on the line of fire still hold it,
+   * a wreck piece does not.
+   */
+  private followThrough(
+    droneId: string, kind: ShipKind, mount: WeaponMount, i: number, angles: Float32Array, reload: Int32Array,
+    tick: number, mx: number, my: number, ang: number, reach: number, worldBearing: number,
+  ): void {
+    const d = this.deps;
+    angles[i] = rotateMountToward(angles[i]!, wrapPi(worldBearing - ang - mount.baseAngle), mount, this.traverseDt(mount));
+    if (tick - reload[i]! < getWeapon(mount.weaponId).cooldownTicks) return;
+    const local = mount.baseAngle + angles[i]!;
+    if (!mountLineClear(kind, mount, local)) return;
+    if (d.lineOfFireBlocked !== undefined) {
+      const a = ang + local;
+      const ndx = -Math.sin(a), ndy = Math.cos(a);
+      const muzzle = shipShotMuzzle(kind, mount, true);
+      if (d.lineOfFireBlocked(droneId, '', mx + ndx * muzzle, my + ndy * muzzle, ndx, ndy, reach - muzzle, true)) return;
+    }
+    if (d.fireDroneMount!(droneId, i, true) === false) return;
+    reload[i] = tick;
+  }
+
+  /** A 'locked-direction' charge on capital mount i that has completed fires
+   *  now, down the barrel, whatever it bears on (true = it fired, or is still
+   *  charging: the caller does nothing more with this mount this tick). */
+  private releaseLockedCharge(
+    droneId: string, i: number, mount: WeaponMount, tick: number, reload: Int32Array,
+  ): boolean {
+    const starts = this.charges.starts.get(droneId);
+    if (starts === undefined || starts[i]! === NOT_CHARGING) return false;
+    const w = getWeapon(mount.weaponId);
+    if (w.chargeRelease === 'when-bearing') return false;
+    if (tick - starts[i]! < this.chargeTicksOf(w.chargeTicks ?? 0)) return true;
+    starts[i] = NOT_CHARGING;
+    reload[i] = tick;
+    this.deps.fireDroneMount!(droneId, i);
+    return true;
+  }
+
+  /** A capital turret's charge length: the weapon's, under the testMode
+   *  `chargeTicksCap` when set. */
+  private chargeTicksOf(chargeTicks: number): number {
+    const cap = this.deps.chargeTicksCap?.();
+    return cap !== undefined && cap < chargeTicks ? cap : chargeTicks;
+  }
+
+  /** The time step a capital turret trains by this tick: `DT_SEC`, scaled up
+   *  under the testMode `traverseTicksCap` so a full turn takes at most that
+   *  many ticks (Infinity for 0: it snaps). Never slower than the mount's own. */
+  private traverseDt(mount: WeaponMount): number {
+    const cap = this.deps.traverseTicksCap?.();
+    if (cap === undefined || mount.rotationSpeed <= 0) return DT_SEC;
+    if (cap === 0) return Infinity;
+    const capped = (2 * Math.PI) / (cap * mount.rotationSpeed);
+    return capped > DT_SEC ? capped : DT_SEC;
   }
 
   /** Cleanup hook: drop all per-player state on leave/transit/death. */
@@ -622,6 +867,7 @@ export class WeaponMountTicker {
       for (let k = 0; k < structs.length; k++, n++) {
         const s = structs[k]!;
         WeaponMountTicker.writeTargetSlot(this.capStructViews, k, s.id, s.x, s.y, 0, 0);
+        WeaponMountTicker.writeTargetShape(this.capStructViews[k]!, null, 0, false, s.radius);
         out[n] = this.capStructViews[k]!;
         this.capTargetCls[n] = STRUCTURE_TARGET_CLASS;
         this.capTargetSig[n] = s.radius;
@@ -650,7 +896,7 @@ export class WeaponMountTicker {
     inp.dy = t.y - my;
     inp.dvx = t.vx - selfVx;
     inp.dvy = t.vy - selfVy;
-    return capLockSeconds(lockSeconds(inp, LOCK_TUNING), inp, LOCK_TUNING, this.deps.lockTimeCapS?.());
+    return capLockSeconds(lockSeconds(inp, LOCK_TUNING), inp, this.deps.lockTimeCapS?.());
   }
 
   /** Cleanup hook: drop all per-drone state on eviction/destroy/shed. */
@@ -659,8 +905,11 @@ export class WeaponMountTicker {
     this.droneMountAngles.delete(droneId);
     this.droneSlotTargets.delete(droneId);
     this.droneMountReload.delete(droneId);
+    this.charges.forget(droneId);
     this.droneMountTargetIds.delete(droneId);
     this.droneMountLastOk.delete(droneId);
+    this.droneMountFollowUntil.delete(droneId);
+    this.droneMountFollowBearing.delete(droneId);
   }
 }
 

@@ -21,18 +21,26 @@
  * Steady state allocates nothing (#14): an entry and its wire row are created
  * when an NPC starts locking someone, then mutated in place; the per-step
  * sweep uses a generation stamp.
+ *
+ * The wire carries at most `LOCKED_BY_WIRE_ROWS` rows per pilot (owner
+ * 2026-11-14): completed locks first, then nearest. `totalFor` counts every
+ * locker (the snapshot's `lockedByN`), so the cost stays flat however many
+ * hostiles lock on. The pick is an insertion into a reused top-N scratch.
  */
-import { LOCK_TUNING, sensorFor, signatureFor } from '../../shared-types/combat/lockProfile.js';
+import { LOCK_TUNING, LOCKED_BY_WIRE_ROWS, sensorFor, signatureFor } from '../../shared-types/combat/lockProfile.js';
 import { capLockSeconds, lockSeconds, type LockInputs } from '../../core/combat/lockTime.js';
 import type { ShipKind } from '../../shared-types/shipKinds/types.js';
 import { groupGeometry } from './LockSubsystem.js';
-import { hasTurretFireControl } from '../../core/combat/mountReach.js';
+import { hasTurretFireControl, mountsReachTarget, prepareRangeTarget, type MountRangeTarget, type RangeTargetPrep } from '../../core/combat/mountReach.js';
 import type { WeaponMount } from '../../shared-types/shipKinds/types.js';
 
 /** Wire row: who is locking the pilot. `t` = `s:<entityId>`, `s` 1 acquiring / 2 locked, `p` 0..100. */
 export interface WireLockedBy { t: string; s: 1 | 2; p: number }
 
-export interface NpcPose { x: number; y: number; vx: number; vy: number }
+/** `angle`: hull heading (ship-angle convention), for the fire-range test
+ *  (mount positions, hull polygon); absent = 0. `shieldUp`: a pilot hull's
+ *  shield (its fire-range hit shape); absent = up. */
+export interface NpcPose { x: number; y: number; vx: number; vy: number; angle?: number; shieldUp?: boolean }
 
 export interface NpcLockDeps {
   /** Pilots to protect (every tracked player). */
@@ -44,15 +52,17 @@ export interface NpcLockDeps {
   /** NPC pose + kind; null when gone. */
   npcPose(npcId: string, out: NpcPose): ShipKind | null;
   /** testMode `instantLock` on the pilot: every NPC lock on them completes
-   *  the step it starts, whatever the size/tracking terms, while in reach. */
+   *  the step it starts, whatever the size/tracking terms and distance. */
   instantLock?(pilotId: string): boolean;
   /** testMode `lockTimeCapS` (room option): no NPC lock takes longer than
-   *  this many seconds while in reach (0 = the first step). Undefined = off. */
+   *  this many seconds, at any distance (0 = the first step). Undefined = off. */
   lockTimeCapS?(): number | undefined;
   /** "An NPC that is attacking stays hostile" (owner 2026-11-12): called every
-   *  lock step while `npcId` is locking or holds a lock on `pilotId` (in reach,
-   *  trackable). The room re-stamps that NPC's hostility to the pilot, so the
-   *  30 s decay runs from when its own lock drops. */
+   *  lock step while `npcId` is locking or holds a lock on `pilotId` AND the
+   *  pilot is inside the NPC's FIRE range (any of its mounts reaches the
+   *  pilot's hull). The room re-stamps that NPC's hostility to the pilot, so
+   *  the 30 s decay runs from when the pilot leaves its fire range (locks
+   *  work at any distance since 2026-11-14, so the lock itself can't end it). */
   refreshHostility?(npcId: string, pilotId: string): void;
 }
 
@@ -62,33 +72,49 @@ interface Entry {
   locked: boolean;
   lostFor: number;
   gen: number;
+  /** Squared distance to the pilot at its last lock step (wire ranking). */
+  d2: number;
   wire: WireLockedBy;
+}
+
+/** Wire rank: a completed lock beats one still building; then the nearer. */
+function outranks(a: Entry, b: Entry): boolean {
+  return a.locked !== b.locked ? a.locked : a.d2 < b.d2;
 }
 
 interface PilotState {
   entries: Map<string, Entry>;
   wire: WireLockedBy[];
+  /** Completed locks among `entries` (counted by `rebuildWire`). */
+  lockedN: number;
 }
 
 interface Geo { refSize: number; tracking: number; reach: number; sensor: number; absRange: boolean }
 
 const LOCK_DT = 0.1;
+const NO_MOUNTS: ReadonlyArray<WeaponMount> = [];
 
 export class NpcLockSubsystem {
   private readonly pilots = new Map<string, PilotState>();
   /** Lock profiles per kind: one for a drone (its whole loadout); one per
    *  mount size for a capital (each turret engages on its own). */
   private readonly geoByKind = new Map<string, Geo[]>();
-  private readonly pilot: NpcPose = { x: 0, y: 0, vx: 0, vy: 0 };
-  private readonly npc: NpcPose = { x: 0, y: 0, vx: 0, vy: 0 };
+  private readonly pilot: NpcPose = { x: 0, y: 0, vx: 0, vy: 0, angle: 0 };
+  private readonly npc: NpcPose = { x: 0, y: 0, vx: 0, vy: 0, angle: 0 };
+  /** The pilot as a fire-range target (refreshed per pilot; #14). */
+  private readonly pilotTarget: { -readonly [K in keyof MountRangeTarget]: MountRangeTarget[K] } = { kindId: null, angle: 0, shieldUp: true, radius: 0 };
   private readonly inputs: LockInputs = {
     refSize: 1, tracking: 1, reach: 1, sensor: 1, pilotSpeed: 1, signature: 1, dx: 0, dy: 0, dvx: 0, dvy: 0,
   };
   private gen = 0;
+  /** Top-N scratch for the wire pick (reused across pilots; #14). */
+  private readonly top: Entry[] = [];
   // Per-step scratch for the visitor (no closure allocation per pilot).
   private curState: PilotState | null = null;
   private curPilotId = '';
   private curSignature = 1;
+  /** The pilot's range shape (bound, circle), resolved once per pilot. */
+  private readonly curPrep: RangeTargetPrep = { bound: 0, circle: 0 };
   private curInstant = false;
   private curCap: number | undefined = undefined;
 
@@ -127,9 +153,20 @@ export class NpcLockSubsystem {
     }
   }
 
+  /** The pilot's wire rows: the top `LOCKED_BY_WIRE_ROWS` lockers (shared ref). */
   wireFor(pilotId: string): WireLockedBy[] | undefined {
     const st = this.pilots.get(pilotId);
     return st && st.wire.length > 0 ? st.wire : undefined;
+  }
+
+  /** Every NPC locking (or holding a lock on) the pilot, rows or not. */
+  totalFor(pilotId: string): number {
+    return this.pilots.get(pilotId)?.entries.size ?? 0;
+  }
+
+  /** How many of those hold a COMPLETED lock, rows or not. */
+  lockedTotalFor(pilotId: string): number {
+    return this.pilots.get(pilotId)?.lockedN ?? 0;
   }
 
   /** True when `npcId` holds a completed lock on `pilotId`. */
@@ -157,29 +194,33 @@ export class NpcLockSubsystem {
     for (const pilotId of this.deps.pilots()) {
       let st = this.pilots.get(pilotId);
       if (!st) {
-        st = { entries: new Map(), wire: [] };
+        st = { entries: new Map(), wire: [], lockedN: 0 };
         this.pilots.set(pilotId, st);
       }
       const kind = this.deps.pilotPose(pilotId, this.pilot);
       if (!kind) {
-        if (st.entries.size > 0) { st.entries.clear(); st.wire.length = 0; }
+        if (st.entries.size > 0) { st.entries.clear(); st.wire.length = 0; st.lockedN = 0; }
         continue;
       }
       this.curState = st;
       this.curPilotId = pilotId;
       this.curSignature = signatureFor(kind);
+      const pt = this.pilotTarget;
+      pt.angle = this.pilot.angle ?? 0; pt.shieldUp = this.pilot.shieldUp !== false;
+      pt.kindId = kind.id; pt.radius = 0;
+      prepareRangeTarget(pt, this.curPrep);
       this.curInstant = this.deps.instantLock?.(pilotId) === true;
       this.curCap = this.deps.lockTimeCapS?.();
       this.deps.forEachHostileNpc(pilotId, this.visit);
       // Sweep: NPCs that stopped locking this step keep their progress for the
       // grace window, then drop.
-      let changed = false;
       for (const [id, e] of st.entries) {
         if (e.gen === this.gen) continue;
         e.lostFor += LOCK_DT;
-        if (e.lostFor > LOCK_TUNING.lostGraceSeconds) { st.entries.delete(id); changed = true; }
+        if (e.lostFor > LOCK_TUNING.lostGraceSeconds) st.entries.delete(id);
       }
-      if (changed || st.wire.length !== st.entries.size) this.rebuildWire(st);
+      // Re-ranked every step: locks complete and distances change.
+      if (st.entries.size > 0 || st.wire.length > 0) this.rebuildWire(st);
     }
     // Pilots who left fire control.
     if (this.pilots.size > 0) {
@@ -204,8 +245,18 @@ export class NpcLockSubsystem {
     inp.dy = this.pilot.y - this.npc.y;
     inp.dvx = this.pilot.vx - this.npc.vx;
     inp.dvy = this.pilot.vy - this.npc.vy;
-    // The fastest of the NPC's lock profiles (a drone has one).
+    // No reach gate: locks work at any distance (owner 2026-11-14). WHICH
+    // profile builds the lock still follows reach, because a capital holds
+    // ONE lock per pilot that every turret fires on: the fastest profile
+    // whose guns may reach the pilot (a drone has one); with none in reach,
+    // the longest-reach profile (the gun that reaches them first). Without
+    // this a capital's AA (whose reach-share range term saturates past its
+    // reach) would lock a far fighter in seconds and license the 16".
     let secs = Infinity;
+    let farSecs = Infinity;
+    let farReach = 0;
+    let anyInReach = false;
+    const d2 = inp.dx * inp.dx + inp.dy * inp.dy;
     for (let i = 0; i < gs.length; i++) {
       const g = gs[i]!;
       if (g.reach <= 0) continue;
@@ -214,41 +265,64 @@ export class NpcLockSubsystem {
       inp.absRange = g.absRange;
       inp.reach = g.reach;
       inp.sensor = g.sensor;
-      const s = capLockSeconds(lockSeconds(inp, LOCK_TUNING), inp, LOCK_TUNING, this.curCap);
-      if (s < secs) secs = s;
+      const s = capLockSeconds(lockSeconds(inp, LOCK_TUNING), inp, this.curCap);
+      // `mayBeInReach` with the pilot's bound hoisted out of the pair loop.
+      const r = g.reach * LOCK_TUNING.reachSlack + this.curPrep.bound;
+      if (d2 <= r * r) {
+        anyInReach = true;
+        if (s < secs) secs = s;
+      } else if (g.reach > farReach) {
+        farReach = g.reach;
+        farSecs = s;
+      }
     }
-    if (this.curInstant && this.inReach(gs)) secs = 0;
+    if (!anyInReach) secs = farSecs;
+    if (this.curInstant && (anyInReach || farReach > 0)) secs = 0;
     let e = st.entries.get(npcId);
     if (!Number.isFinite(secs)) {
-      // Out of reach or can't track: not locking this step (grace applies).
+      // Can't track (or no gun): not locking this step (grace applies).
       return;
     }
     if (!e) {
-      e = { npcId, progress: 0, locked: false, lostFor: 0, gen: 0, wire: { t: `s:${entityId}`, s: 1, p: 0 } };
+      e = { npcId, progress: 0, locked: false, lostFor: 0, gen: 0, d2: 0, wire: { t: `s:${entityId}`, s: 1, p: 0 } };
       st.entries.set(npcId, e);
     }
     e.gen = this.gen;
     e.lostFor = 0;
+    e.d2 = d2;
     if (!e.locked) {
       e.progress = secs === 0 ? 1 : Math.min(1, e.progress + LOCK_DT / Math.max(0.05, secs));
       if (e.progress >= 1) e.locked = true;
     }
     e.wire.s = e.locked ? 2 : 1;
     e.wire.p = Math.round(e.progress * 100);
-    // Its own live lock keeps it hostile. Out of reach (or unable to track)
-    // the NPC isn't visited, so the refresh stops and the 30 s decay starts.
-    this.deps.refreshHostility?.(npcId, this.curPilotId);
+    // Its own live lock keeps it hostile, but only while the pilot is inside
+    // its FIRE range (lead call, 2026-11-14): a lock now holds at any
+    // distance, so without this gate a far lock would keep it hostile
+    // forever. Outside fire range the refresh stops and the 30 s decay runs.
+    // The pilot's range shape is resolved once per pilot (`curPrep`).
+    const refresh = this.deps.refreshHostility;
+    if (refresh && mountsReachTarget(kind.mounts ?? NO_MOUNTS, this.npc.x, this.npc.y, this.npc.angle ?? 0,
+      this.pilot.x, this.pilot.y, this.pilotTarget, 1, this.curPrep)) {
+      refresh(npcId, this.curPilotId);
+    }
   };
 
-  /** The pilot (this.inputs dx/dy) is within reach of any lock profile. */
-  private inReach(gs: Geo[]): boolean {
-    const d = Math.hypot(this.inputs.dx, this.inputs.dy);
-    for (let i = 0; i < gs.length; i++) if (gs[i]!.reach > 0 && d <= gs[i]!.reach * LOCK_TUNING.reachSlack) return true;
-    return false;
-  }
-
+  /** The top `LOCKED_BY_WIRE_ROWS` entries by `outranks`, into `st.wire`. */
   private rebuildWire(st: PilotState): void {
-    st.wire.length = 0;
-    for (const e of st.entries.values()) st.wire.push(e.wire);
+    const top = this.top;
+    let n = 0;
+    let locked = 0;
+    for (const e of st.entries.values()) {
+      if (e.locked) locked++;
+      if (n === LOCKED_BY_WIRE_ROWS && !outranks(e, top[n - 1]!)) continue;
+      let i = n < LOCKED_BY_WIRE_ROWS ? n++ : n - 1;
+      while (i > 0 && outranks(e, top[i - 1]!)) { top[i] = top[i - 1]!; i--; }
+      top[i] = e;
+    }
+    st.lockedN = locked;
+    const wire = st.wire;
+    wire.length = n;
+    for (let i = 0; i < n; i++) wire[i] = top[i]!.wire;
   }
 }

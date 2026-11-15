@@ -1,4 +1,4 @@
-import { Application, Graphics, Container, type Texture } from 'pixi.js';
+import { Application, Graphics, Container, RenderLayer, type Texture } from 'pixi.js';
 import { Camera } from './worker/Camera';
 import type { IRenderer, RenderMirror, RendererFeedback } from '@core/contracts/IRenderer';
 import { GameClock } from '@core/clock/GameClock';
@@ -15,7 +15,7 @@ import { updateSwarmSprites, type SwarmSpriteCtx } from './pixi/swarmSpriteUpdat
 import { DyingHullHold, noteDyingHulls } from './pixi/dyingHullHold.js';
 import { sweepUnseenSprites } from './pixi/spriteSweep.js';
 import { WreckGeometryStore } from '../net/wreckGeometryStore.js';
-import { WreckArtState, WreckPieceSprite, hullDeathBlastReplaced, wreckBlasts, wreckRippleCap, WRECK_BLAST_LINGER, type WreckBlast } from './pixi/wreckArt.js';
+import { WreckArtState, WreckPieceSprite, deathBlastFor, hullDeathBlastReplaced, wreckBlasts, wreckRippleCap, WRECK_BLAST_LINGER, type WreckBlast } from './pixi/wreckArt.js';
 import { ConnectorRenderer } from './pixi/ConnectorRenderer.js';
 import { updateProjectileSprites, type ProjectileSpriteCtx } from './pixi/projectileSpriteUpdater.js';
 import { updateMissileSprites, type MissileSpriteCtx } from './pixi/missileSpriteUpdater.js';
@@ -42,6 +42,7 @@ import { litPass } from './art/litPass.js';
 import { engineLightAstern, engineLightHeight, engineLightIntensity, engineLightReach } from './art/lightingSettings.js';
 import { WarpSpoolFx, type SpoolFxShip, type Nozzle } from './pixi/WarpSpoolFx.js';
 import { WARP_SPOOL_TICKS } from '@core/physics/warpDrive';
+import { NAVAL_SHELL_WEAPON_IDS } from '@core/combat/shellFlight';
 import { MachinedFlatSprite } from './art/MachinedFlatSprite.js';
 import { warmUpJobs } from './art/warmUp.js';
 import { Backdrop } from './art/fx/Backdrop.js';
@@ -50,6 +51,7 @@ import { FxBeams, FxProjectiles } from './art/fx/FxWeapons.js';
 import { blastRadiusFor, FxExplosions, FxMissileTrails } from './art/fx/FxExplosions.js';
 import { NavalShellBursts } from './art/fx/navalShellBursts.js';
 import { FxEngines } from './art/fx/FxEngines.js';
+import { droneBoostInput } from './pixi/droneEngineInput.js';
 import { WarpFx, type WarpFxShip } from './pixi/WarpFx.js';
 import { shipShotMuzzle } from '@core/combat/muzzle';
 import { FarZoomIcons } from './pixi/FarZoomIcons';
@@ -60,7 +62,7 @@ import { DEFAULT_SHIP_KIND } from '../../shared-types/shipKinds.js';
 import { shieldBubbleRadiusForEntity } from './pixi/shieldBubbleRadius.js';
 import { ART_OFF, type ArtOptions } from './art/artMode.js';
 import { buildArtShipSprite, isMachinedSprite, ownerLivery, shipArtSwap, shipHandleFor, updateArtShipLight, type ShipArtCtx } from './art/shipArtSprites.js';
-import { BeamSpritePool, type BeamView } from './BeamSpritePool';
+import { BeamSpritePool, type BeamView, type BeamSpriteStyle } from './BeamSpritePool';
 import {
   CameraDirector,
   type CameraTargetLookup,
@@ -71,7 +73,7 @@ import {
 import { newSpeedFxSample, speedFxSampleInto } from './camera/speedFxSample';
 import { GroupBoundsScanner } from './camera/groupBounds';
 import type { CameraCue, CameraGroup } from '@core/contracts/cameraScript';
-import { REMOTE_BEAM_STYLE, MINING_BEAM_STYLE } from './beamStyles';
+import { REMOTE_BEAM_STYLE, MINING_BEAM_STYLE, remoteBeamStyleForMount, remoteBeamLine, remoteBeamSolidLen, addBeamLights, type RemoteBeamLine } from './beamStyles';
 import { MountVisualManager } from './MountVisualManager';
 import { BackgroundGrid } from './BackgroundGrid';
 import { StarfieldBackground } from './StarfieldBackground';
@@ -278,6 +280,8 @@ export class PixiRenderer implements IRenderer {
   private sprites = new Map<string, Container>();
   /** Screen-size LOD (capital-ship R&D round 3 E1): tiny ships draw as dots. */
   private readonly _farIcons = new FarZoomIcons();
+  /** Far-zoom wreck-piece specks, one batch (wreckArt.ts `setFarZoom`). */
+  private readonly _wreckFarLayer = new RenderLayer();
   /** Machined art (plan iridescent-seeking-rainbow): shared by the ship,
    *  swarm and lingering updaters. `art` is set in `init` when `?art=machined`
    *  (or the default) asks for it; null ⇒ today's vector look everywhere. */
@@ -383,6 +387,8 @@ export class PixiRenderer implements IRenderer {
    *  cost was per-frame × per-beam — the cache compounds. Flat array
    *  matches liveBeam pattern; iteration order is stable across frames
    *  (JS Map preserves insertion order). */
+  /** Scratch for `remoteBeamLine` (one per frame loop, #14). */
+  private readonly _remoteBeamLine: RemoteBeamLine = { fromX: 0, fromY: 0, toX: 0, toY: 0 };
   private readonly _remoteBeamCache: Array<{
     shooterId: string;
     mountId: string;
@@ -391,6 +397,11 @@ export class PixiRenderer implements IRenderer {
     toX: number;
     toY: number;
     alpha: number;
+    /** Per-beam style override (the capital heavy beam); null = pool style. */
+    style: BeamSpriteStyle | null;
+    /** Solid length (`remoteBeamSolidLen`): the heavy beam is solid to its
+     *  hit; undefined = the pool's taper (fighter beams). */
+    solidLen?: number;
   }> = [];
   private _remoteBeamCacheCount = 0;
   /** WS-4 Phase 4 — drill-beam slots routed out of the remote-laser loop into
@@ -404,6 +415,8 @@ export class PixiRenderer implements IRenderer {
     toX: number;
     toY: number;
     alpha: number;
+    style: BeamSpriteStyle | null;
+    solidLen?: number;
   }> = [];
   private _miningBeamCacheCount = 0;
   private initialized = false;
@@ -492,6 +505,8 @@ export class PixiRenderer implements IRenderer {
   /** Capital death blasts left to the wreck break-up (test hook). */
   private _hullBlastsReplaced = 0;
   private readonly _wreckBlastScratch: WreckBlast[] = [];
+  /** `deathBlastFor` out (reused, #14). */
+  private readonly _deathBlastScratch = { scale: 1, linger: 1 };
   private _projectileUpdaterCtx!: ProjectileSpriteCtx;
   /** Off-screen ring/edge indicator. Constructed in the constructor body
    *  (NOT a field initializer) so it sees the assigned `_isTouch` — field
@@ -892,6 +907,9 @@ export class PixiRenderer implements IRenderer {
 
     this.shipContainer = new Container();
     this.camera.addChild(this.shipContainer);
+    // Far-zoom wreck specks (wreckArt.ts `setFarZoom`): drawn together as one
+    // batch, under the ship icons.
+    this.camera.addChild(this._wreckFarLayer);
     // Far-zoom ship icons above the ships they stand in for (FarZoomIcons.ts).
     this.camera.addChild(this._farIcons.container);
 
@@ -942,14 +960,23 @@ export class PixiRenderer implements IRenderer {
       wrecks: new WreckGeometryStore(),
       // S3: each wreck's death clock; a fresh wreck's break-up (dust, shards,
       // flash at the kill point) goes through the effects system, tier-capped.
-      wreckArt: new WreckArtState((x, y, radius, snap, seed) => {
-        this._wreckBreaks++;
+      wreckArt: new WreckArtState((x, y, radius, snap, seed, wfx, channel) => {
         // Money-shot review: a short small core flash + dust + shards
         // (WreckBreakFx) and fireballs at the kill point, sized by the hull
         // (FxExplosions, the same blasts every death uses), never a disc
-        // over the whole hull. Once per wreck.
-        this.effects?.spawnBurst('wreck-break', x, y, { radius, ...(snap ? { flashScale: 1.6 } : {}) });
-        const fx = this._fxExplosions;
+        // over the whole hull. Once per wreck, each part only where the
+        // wreck's destruction profile asks for it (capitals: both; a
+        // sub-capital never reaches here: its ship's own death blast plays).
+        if (wfx.breakBurst) {
+          this._wreckBreaks++;
+          this.effects?.spawnBurst('wreck-break', x, y, { radius, ...(snap ? { flashScale: 1.6 } : {}) });
+          // A railgun channel kill: glowing ash and sparks along the channel
+          // (a line emitter on the same break-up pool, tier-capped there).
+          if (channel !== null) {
+            this.effects?.spawnBurst('wreck-ash', channel.ax, channel.ay, { radius, lineToX: channel.bx, lineToY: channel.by });
+          }
+        }
+        const fx = wfx.killBlasts ? this._fxExplosions : null;
         if (fx !== null) {
           const n = wreckBlasts(x, y, radius, seed, this._wreckBlastScratch);
           const now = this.fxNow();
@@ -963,7 +990,7 @@ export class PixiRenderer implements IRenderer {
         // ripple along the cracks while the hull holds together. Pooled
         // FxExplosions bursts; how many per wreck follows the effects tier.
         if (this._fxExplosions?.spawn(x, y, r, this.fxNow())) this._wreckRipplesSpawned++;
-      }, () => wreckRippleCap(this.effects?.getQuality() ?? 'medium')),
+      }, () => wreckRippleCap(this.effects?.getQuality() ?? 'medium'), () => this.effects?.getQuality() ?? 'medium'),
       dyingHulls: this._dyingHulls,
     };
     this._projectileUpdaterCtx = {
@@ -983,8 +1010,9 @@ export class PixiRenderer implements IRenderer {
       const art = this._artCtx.art;
       this._fxLiveBeams = new FxBeams(art, 0x6fd0ff);
       this._fxRemoteBeams = new FxBeams(art, 0xffaa44);
-      this._fxProjectiles = new FxProjectiles(art);
-      this.shipContainer.addChild(this._fxRemoteBeams.container, this._fxLiveBeams.container, this._fxProjectiles.container);
+      // Railgun slug wakes read the effects tier and the game-time fx clock (#20).
+      this._fxProjectiles = new FxProjectiles(art, () => this.effects?.getQuality() ?? 'medium', () => this.fxNow());
+      this.shipContainer.addChild(this._fxRemoteBeams.container, this._fxLiveBeams.container, this._fxProjectiles.wakeLayer, this._fxProjectiles.container);
       this._projectileUpdaterCtx.fx = this._fxProjectiles;
       // B4: explosions (ship / drone / structure deaths, missile detonations)
       // and missile smoke trails.
@@ -1024,7 +1052,7 @@ export class PixiRenderer implements IRenderer {
       this.shipContainer.addChild(this.liveBeamGfx);
       this._remoteBeamPool = new BeamSpritePool(REMOTE_BEAM_STYLE);
       this.remoteBeamGfx = this._remoteBeamPool.container;
-      this.shipContainer.addChild(this.remoteBeamGfx);
+      this.shipContainer.addChild(this.remoteBeamGfx, this._remoteBeamPool.styledContainer); // heavy beams: unfiltered sibling
       // WS-4 Phase 4 — the Miner's mining beam: a distinct fat warm-amber drill
       // beam, separate pool so its `liveCount` is isolatable + its look differs
       // from the combat laser. Styles are named consts (beamStyles.ts) so the
@@ -1703,7 +1731,7 @@ export class PixiRenderer implements IRenderer {
     // `spriteUpdateDecisions.ts` and is unit-tested there.
     // A capital dying into a wreck stays drawn until its pieces are (marked
     // here while its sprite is still mapped; the sweeps below hand it over).
-    noteDyingHulls(mirror.explodingShips, mirror.capitalWrecks, this._spriteShipKind, this._dyingHulls, this.fxNow());
+    noteDyingHulls(mirror.explodingShips, mirror.capitalWrecks, this._spriteShipKind, this._dyingHulls, this.fxNow(), mirror.subcapWrecks);
     if (mirror.explodingShips) {
       // Wrap the lingering-sprite cache to expose just the {x, y}
       // pose the helper expects. The cache value also carries `kind`
@@ -1749,12 +1777,15 @@ export class PixiRenderer implements IRenderer {
         // Capital wrecks on: a dying capital explodes where it broke (the wreck
         // break-up at its kill point), not as a hull-sized blast over the whole
         // hull (money-shot review).
-        if (hullDeathBlastReplaced(mirror.capitalWrecks, dying instanceof MachinedShipSprite && dying.capital)) {
+        if (hullDeathBlastReplaced(mirror.capitalWrecks, dying instanceof MachinedShipSprite && dying.capital, this._spriteShipKind(targetId))) {
           this._hullBlastsReplaced++;
           continue;
         }
         const diameter = dying ? Math.max(dying.width, dying.height) : 40;
-        if (this._fxExplosions?.spawn(pose.x, -pose.y, blastRadiusFor(diameter), this.fxNow())) {
+        // A sub-cap breaking into wreck pieces (welcome `subcapWrecks`) gets a
+        // smaller blast with shorter smoke (profile fx.deathBlastScale/Linger).
+        const db = deathBlastFor(mirror.subcapWrecks, mirror.capitalWrecks, this._spriteShipKind(targetId), this._deathBlastScratch);
+        if (this._fxExplosions?.spawn(pose.x, -pose.y, blastRadiusFor(diameter) * db.scale, this.fxNow(), db.linger)) {
           // drawn by FxExplosions
         } else if (this.effects) {
           this.effects.spawnBurst('destruction', pose.x, -pose.y);
@@ -1822,6 +1853,8 @@ export class PixiRenderer implements IRenderer {
     this._lastSwarmUpdateNow = swarmNow;
     this._swarmUpdaterCtx.viewBounds = this.camera.visibleBoundsInto(this._swarmViewScratch);
     this._swarmUpdaterCtx.fxNowMs = this.fxNow(); // wreck glow follows the game speed
+    this._swarmUpdaterCtx.cameraScale = this.world.scale.x; // wreck-piece far-zoom LOD
+    this._swarmUpdaterCtx.wreckFarLayer = this._wreckFarLayer;
     updateSwarmSprites(mirror, this._swarmUpdaterCtx);
     this._farIcons.update(mirror, this.sprites, this.world.scale.x);
     this.noteTurretShots(mirror);
@@ -1944,7 +1977,9 @@ export class PixiRenderer implements IRenderer {
           // mountAngles` (snapshot-anchored, in-interest drones only).
           const mount = shooterKind.mounts?.find((m) => m.id === mountId);
           const mountIdx = shooterKind.mounts?.findIndex((m) => m.id === mountId) ?? -1;
-          let currentMountAngle = 0;
+          // Undefined = this viewer has no angle for the turret (an
+          // out-of-interest drone): the beam then aims at the wire end point.
+          let currentMountAngle: number | undefined = 0;
           if (shooter && mount && mountIdx >= 0) {
             currentMountAngle = shooter.mountAngles?.[mountIdx] ?? 0;
           } else if (swarmShooter && mount && mountIdx >= 0) {
@@ -1957,7 +1992,7 @@ export class PixiRenderer implements IRenderer {
               const sw = mirror.swarm?.get(entityId);
               // The angle the turret is DRAWN at (swarmSpriteUpdater), so the
               // beam leaves down the barrel on screen, not the raw 20 Hz step.
-              currentMountAngle = (sw?.displayMountAngles ?? sw?.mountAngles)?.[mountIdx] ?? 0;
+              currentMountAngle = (sw?.displayMountAngles ?? sw?.mountAngles)?.[mountIdx];
             }
           }
 
@@ -1965,32 +2000,38 @@ export class PixiRenderer implements IRenderer {
           let fromY: number;
           let toX: number;
           let toY: number;
+          const isMining = mountId === 'drill';
+          // The capital heavy beam (plan beam-slices §8) draws thick and violet
+          // in the SAME pool: the style comes from the mount's catalogue weapon
+          // (shooter kind + mountId), no wire field. A styled pulse also holds
+          // the line it was fired along (`remoteBeamLine`): muzzle to the
+          // server's end point, never the live barrel angle.
+          const style = isMining ? null : remoteBeamStyleForMount(mount);
+          const line = this._remoteBeamLine;
           if (shooter) {
             const origin = applyMountOffset(shooter.x, shooter.y, shooter.angle, mount);
-            const fireAngle = shooter.angle + (mount?.baseAngle ?? 0) + currentMountAngle;
-            const fwdX = -Math.sin(fireAngle);
-            const fwdY =  Math.cos(fireAngle);
             // The barrel tip (shared with the server, core/combat/muzzle.ts).
             const muzzleD = mount ? shipShotMuzzle(shooterKind, mount) : shipTuning(shooterKind).muzzleClearance;
-            fromX = origin.x + fwdX * muzzleD;
-            fromY = origin.y + fwdY * muzzleD;
-            toX = fromX + fwdX * laser.range;
-            toY = fromY + fwdY * laser.range;
+            remoteBeamLine(
+              style !== null, shooter.angle, mount?.baseAngle ?? 0, currentMountAngle ?? 0,
+              origin.x, origin.y, muzzleD, laser.range, laser.toX, laser.toY, line,
+            );
+            fromX = line.fromX; fromY = line.fromY; toX = line.toX; toY = line.toY;
           } else if (swarmShooter) {
             const origin = applyMountOffset(swarmShooter.x, swarmShooter.y, swarmShooter.angle, mount);
-            const fireAngle = swarmShooter.angle + (mount?.baseAngle ?? 0) + currentMountAngle;
-            const fwdX = -Math.sin(fireAngle);
-            const fwdY =  Math.cos(fireAngle);
             // Drone barrel offset is `radius + 2` along the mount's fire
             // direction (no mount → centre of drone). Matches the
             // pre-refactor visual where the beam clears the drone hull.
             // A drone's turning turret fires from its barrel tip (the server's
             // AiFireResolver uses the same shared muzzle).
             const barrelOffset = mount ? shipShotMuzzle(shooterKind, mount, true) : swarmShooter.radius + 2;
-            fromX = origin.x + fwdX * barrelOffset;
-            fromY = origin.y + fwdY * barrelOffset;
-            toX = fromX + fwdX * laser.range;
-            toY = fromY + fwdY * laser.range;
+            // A turning mount with no known angle (out of this viewer's
+            // interest, so no `drones[].mountAngles`) aims at the wire end.
+            remoteBeamLine(
+              style !== null, swarmShooter.angle, mount?.baseAngle ?? 0, mount ? currentMountAngle : 0,
+              origin.x, origin.y, barrelOffset, laser.range, laser.toX, laser.toY, line,
+            );
+            fromX = line.fromX; fromY = line.fromY; toX = line.toX; toY = line.toY;
           } else {
             fromX = laser.fromX;
             fromY = laser.fromY;
@@ -2001,12 +2042,11 @@ export class PixiRenderer implements IRenderer {
           // mining beam (mountId 'drill') routes into the dedicated mining pool
           // (WS-4 Phase 4) so it draws as a distinct fat amber drill beam and is
           // isolatable for the E2E; everything else stays in the remote pool.
-          const isMining = mountId === 'drill';
           const cache = isMining ? this._miningBeamCache : this._remoteBeamCache;
           const idx = isMining ? miningIdx : slotIdx;
           let slot = cache[idx];
           if (!slot) {
-            slot = { shooterId, mountId, fromX, fromY, toX, toY, alpha };
+            slot = { shooterId, mountId, fromX, fromY, toX, toY, alpha, style: null };
             cache[idx] = slot;
           }
           slot.shooterId = shooterId;
@@ -2016,6 +2056,9 @@ export class PixiRenderer implements IRenderer {
           slot.toX = toX;
           slot.toY = toY;
           slot.alpha = alpha;
+          slot.style = style;
+          // ...and burns full width to its hit point (a short fade past a miss).
+          slot.solidLen = remoteBeamSolidLen(style, Math.hypot(toX - fromX, toY - fromY), laser.hit === true);
           if (!isMining) this._fxRemoteHit[idx] = laser.hit === true;
           // A beam landing on a shield is a held contact there.
           if (this._fxShieldsOn && !isMining && laser.hit && laser.targetId) this._fxShields!.beam(laser.targetId, 1 + idx, toX, toY, this._fxShieldPose);
@@ -2031,7 +2074,7 @@ export class PixiRenderer implements IRenderer {
       // Sprite-pool driven render — no clear/redraw, just transforms.
       // Always re-set: the pool resolves its own pooling + visibility and
       // the transform writes are cheap (see the always-call rationale above).
-      this._remoteBeamPool.setBeams(this._remoteBeamCache, slotIdx);
+      this._remoteBeamPool.setBeams(this._remoteBeamCache, slotIdx, this.world.scale.x);
       this.remoteBeamGfx!.visible = true;
       this._fxRemoteBeams?.setBeams(this._remoteBeamCache, slotIdx, this.fxNow(), this._fxRemoteHit);
       if (this._miningBeamPool && this.miningBeamGfx) {
@@ -2611,8 +2654,9 @@ export class PixiRenderer implements IRenderer {
     if (mirror.projectiles) for (const p of mirror.projectiles.values()) {
       if (p.beam) continue;
       const w = p.weaponId ?? '';
-      const K = w === 'naval_siege' ? 10 : w === 'naval_xxl' ? 7 : w === 'naval_xl' ? 6 : w === 'naval_l' ? 4.5 : w === 'naval_m' ? 3 : w === 'naval_s' ? 2 : 1;
-      const color = w.startsWith('naval_') || w === 'autocannon' ? 0xffc070 : 0x9fd8ff;
+      const K = w === 'naval_siege' ? 10 : w === 'naval_xxl' ? 7 : w === 'naval_xl' || w === 'railgun' ? 6 : w === 'naval_l' ? 4.5 : w === 'naval_m' ? 3 : w === 'naval_s' ? 2 : 1;
+      // The railgun slug burns white-blue; powder shells and autocannon amber.
+      const color = w === 'railgun' ? 0xcfe8ff : NAVAL_SHELL_WEAPON_IDS.has(w) || w === 'autocannon' ? 0xffc070 : 0x9fd8ff;
       const x = p.x, y = -p.y;
       sc.addLight(x, y, 5 * K, color, K > 1 ? 0.36 * K : 0.9, 55 * K);
     }
@@ -2623,10 +2667,8 @@ export class PixiRenderer implements IRenderer {
 
   /** A beam lights where it hits and along its length. */
   private beamLights(b: BeamView): void {
-    const sc = litPass.scene;
-    const len = Math.hypot(b.toX - b.fromX, b.toY - b.fromY);
-    sc.addLight(b.toX, b.toY, 6, 0xff6a9a, 2.2, 120);
-    sc.addLight((b.fromX + b.toX) / 2, (b.fromY + b.toY) / 2, 6, 0xff6a9a, 0.8, len * 0.6 + 30);
+    // Game space in, Pixi space to the lit scene (beamStyles `addBeamLights`).
+    addBeamLights(litPass.scene, b);
   }
 
   /** Firing reactions for Machined guns (turrets T2): held beams by mount
@@ -2711,6 +2753,11 @@ export class PixiRenderer implements IRenderer {
       this.drawSpoolFx(key, e.warp, e.shipKind, sp, undefined);
       if (e.warp === undefined) fed.delete(key); else fed.add(key);
     }
+    // A ship that died this frame left the mirror because it died, not because
+    // it warped out: no departure (same keys as the sprite maps).
+    if (mirror.explodingShips && mirror.explodingShips.size > 0) {
+      for (const id of mirror.explodingShips) { fx.died(id); fed.delete(id); }
+    }
     fx.endFrame();
     this._spoolFx.endFrame();
   }
@@ -2760,7 +2807,10 @@ export class PixiRenderer implements IRenderer {
         // Drones only. A capital wreck piece (kind 4) holds its dead ship's
         // art handle, nozzles and all, so without this gate every drifting
         // piece drew the battleship's four-flame exhaust and ribbons.
-        thrust = -1; boost = -1;
+        // Thrust follows speed (no key on the wire); boost is the AI pilot's
+        // real boost key from the snapshot, the same flame a pilot's gets.
+        thrust = -1;
+        boost = droneBoostInput(mirror.swarm?.get(this.droneEidOf(key)));
       } else continue;
       let top = this._fxTopSpeed.get(h.job.id), trail = this._fxTrailS.get(h.job.id);
       if (top === undefined || trail === undefined) {
@@ -2952,7 +3002,7 @@ export class PixiRenderer implements IRenderer {
       const kind = 'kind' in decision ? decision.kind : (entry?.kind ?? 'fighter');
       const lingerLv = this._artCtx.livery !== undefined ? ownerLivery(ship.ownerPlayerId) : undefined;
       const lingerHandle = lingerLv
-        ? shipHandleFor(this._artCtx, artKey, kind, undefined, lingerLv.team, lingerLv.sigil, lingerLv.edge)
+        ? shipHandleFor(this._artCtx, artKey, kind, undefined, false, lingerLv.team, lingerLv.sigil, lingerLv.edge)
         : shipHandleFor(this._artCtx, artKey, kind, undefined);
       let action: SpriteDecision['action'] = decision.action;
       if (entry && action === 'reposition' && shipArtSwap(this._artCtx, entry.sprite, lingerHandle) !== 'keep') action = 'rebuild';
@@ -3173,6 +3223,17 @@ export class PixiRenderer implements IRenderer {
   private readonly _droneWarpFed = new Set<string>();
   /** W2a — `swarm-<id>` keys, built once per drone (no per-frame string). */
   private readonly _droneWarpKeys = new Map<number, string>();
+  /** Sprite key `swarm-<eid>` → eid, parsed once per key (#14). */
+  private readonly _droneEidOfKey = new Map<string, number>();
+  private droneEidOf(key: string): number {
+    let eid = this._droneEidOfKey.get(key);
+    if (eid === undefined) {
+      if (this._droneEidOfKey.size > 4096) this._droneEidOfKey.clear(); // bound it; rebuilt on demand
+      eid = parseInt(key.slice(6), 10);
+      this._droneEidOfKey.set(key, eid);
+    }
+    return eid;
+  }
   private droneWarpKey(eid: number): string {
     let k = this._droneWarpKeys.get(eid);
     if (k === undefined) {
@@ -3417,7 +3478,7 @@ export class PixiRenderer implements IRenderer {
 
   /** Machined art status: the service's counts plus how many ship sprites
    *  are drawing Machined vs today's look right now. */
-  artStats(): { mode: 'classic' | 'machined'; machinedSprites: number; classicShipSprites: number; backdrop: ReturnType<PixiRenderer['backdropStats']>; fxProjectiles: number; fxBeam: boolean; fxExplosions: number; fxShields: number; fxFences: number; fxFenceHits: number; fxFenceContacts: number; fxEngines: number; engineParticles: number; turrets: number; turretShots: number; turretAim: ReturnType<MountVisualManager['aimProbe']>; lodDots: number; effectQuality: string; fxRibbons: number; localEngine: ReturnType<FxEngines['debugView']>; warpBursts: number; warpSpooling: number; spoolFxDrawn: number; ownArt: string | null; helmMarker: boolean; wreckPieces: number; wreckTextured: number; wreckGlowing: number; wreckBreaks: number; wreckEngines: number; wreckLit: number; wreckRawMaps: number; wreckBlasts: number; wreckRipples: number; hullBlastsReplaced: number; litMeshes: number } & Partial<ReturnType<NonNullable<ShipArtCtx['art']>['stats']>> {
+  artStats(): { mode: 'classic' | 'machined'; machinedSprites: number; classicShipSprites: number; backdrop: ReturnType<PixiRenderer['backdropStats']>; fxProjectiles: number; fxWakes: number; fxBeam: boolean; fxExplosions: number; fxShields: number; fxFences: number; fxFenceHits: number; fxFenceContacts: number; fxEngines: number; engineParticles: number; turrets: number; turretShots: number; turretAim: ReturnType<MountVisualManager['aimProbe']>; lodDots: number; effectQuality: string; fxRibbons: number; localEngine: ReturnType<FxEngines['debugView']>; warpBursts: number; warpSpooling: number; spoolFxDrawn: number; ownArt: string | null; helmMarker: boolean; wreckPieces: number; wreckTextured: number; wreckGlowing: number; wreckBreaks: number; wreckEngines: number; wreckLit: number; wreckRawMaps: number; wreckFarLod: number; wreckBlasts: number; wreckRipples: number; hullBlastsReplaced: number; litMeshes: number } & Partial<ReturnType<NonNullable<ShipArtCtx['art']>['stats']>> {
     let machined = 0, classic = 0;
     for (const [id, sp] of this.sprites) {
       if (isMachinedSprite(sp)) machined++;
@@ -3432,7 +3493,7 @@ export class PixiRenderer implements IRenderer {
     // wreckEngines: pieces drawing engine exhaust this frame. Must stay 0: a
     // piece wears the dead ship's art handle (nozzles and all), but a wreck
     // has no engines.
-    let wreckPieces = 0, wreckTextured = 0, wreckGlowing = 0, wreckEngines = 0, wreckLit = 0, wreckRawMaps = 0;
+    let wreckPieces = 0, wreckTextured = 0, wreckGlowing = 0, wreckEngines = 0, wreckLit = 0, wreckRawMaps = 0, wreckFarLod = 0;
     for (const [id, k] of this._swarmSpriteKinds) {
       if (k !== 4) continue;
       if (this._fxEngines?.drew(id) === true) wreckEngines++;
@@ -3442,6 +3503,7 @@ export class PixiRenderer implements IRenderer {
       if (sp instanceof WreckPieceSprite) {
         if (sp.art !== null) wreckTextured++;
         if (sp.glowAlpha() > 0) wreckGlowing++;
+        if (sp.farZoom) wreckFarLod++;
         const am = sp.artMode();
         if (am === 'lit') wreckLit++;
         else if (am === 'raw-maps') wreckRawMaps++;
@@ -3449,7 +3511,7 @@ export class PixiRenderer implements IRenderer {
     }
     const wreckBreaks = this._wreckBreaks;
     const art = this._artCtx.art;
-    return { wreckPieces, wreckTextured, wreckGlowing, wreckBreaks, wreckEngines, wreckLit, wreckRawMaps, wreckBlasts: this._wreckBlastsSpawned, wreckRipples: this._wreckRipplesSpawned, hullBlastsReplaced: this._hullBlastsReplaced, litMeshes: litPass.settings ? litPass.count : -1, mode: art ? 'machined' : 'classic', machinedSprites: machined, classicShipSprites: classic, backdrop: this.backdropStats(), fxProjectiles: this._fxProjectiles?.liveCount() ?? 0, fxBeam: this._fxLiveBeams?.container.visible === true, fxExplosions: this._fxExplosions?.activeCount() ?? 0, fxShields: this._fxShieldsOn ? this._fxShields!.count() : -1, fxFences: this._fxFences?.count() ?? 0, fxFenceHits: this._fxFences?.hitCount ?? 0, fxFenceContacts: this._fxFences?.contactCount() ?? 0, fxEngines: this._fxEngines?.drawn() ?? -1, engineParticles: this.effects ? this.effects.debugCopyEngineParticleWorld(this._engineDbgScratch) : 0, turrets: this.mountVisuals.machinedGunCount(), turretShots: this.mountVisuals.turretShotCount(), turretAim: this.mountVisuals.aimProbe(), lodDots: this._farIcons.iconCount, effectQuality: this.effects?.getQuality() ?? 'none', fxRibbons: this._fxEngines?.ribbons() ?? -1, warpBursts: this._warpFx.burstCount(), warpSpooling: this._warpFx.spoolCount(), spoolFxDrawn: this._spoolFx.spooling, helmMarker: this.helmMarker.isVisible(), ownArt: this._lastMirror?.localPlayerId ? (this._artCtx.handles.get(this._lastMirror.localPlayerId)?.state ?? 'none') : null, localEngine: this._lastMirror?.localPlayerId ? (this._fxEngines?.debugView(this._lastMirror.localPlayerId) ?? null) : null, ...(art ? art.stats() : {}) };
+    return { wreckPieces, wreckTextured, wreckGlowing, wreckBreaks, wreckEngines, wreckLit, wreckRawMaps, wreckFarLod, wreckBlasts: this._wreckBlastsSpawned, wreckRipples: this._wreckRipplesSpawned, hullBlastsReplaced: this._hullBlastsReplaced, litMeshes: litPass.settings ? litPass.count : -1, mode: art ? 'machined' : 'classic', machinedSprites: machined, classicShipSprites: classic, backdrop: this.backdropStats(), fxProjectiles: this._fxProjectiles?.liveCount() ?? 0, fxWakes: this._fxProjectiles?.wakeCount() ?? 0, fxBeam: this._fxLiveBeams?.container.visible === true, fxExplosions: this._fxExplosions?.activeCount() ?? 0, fxShields: this._fxShieldsOn ? this._fxShields!.count() : -1, fxFences: this._fxFences?.count() ?? 0, fxFenceHits: this._fxFences?.hitCount ?? 0, fxFenceContacts: this._fxFences?.contactCount() ?? 0, fxEngines: this._fxEngines?.drawn() ?? -1, engineParticles: this.effects ? this.effects.debugCopyEngineParticleWorld(this._engineDbgScratch) : 0, turrets: this.mountVisuals.machinedGunCount(), turretShots: this.mountVisuals.turretShotCount(), turretAim: this.mountVisuals.aimProbe(), lodDots: this._farIcons.iconCount, effectQuality: this.effects?.getQuality() ?? 'none', fxRibbons: this._fxEngines?.ribbons() ?? -1, warpBursts: this._warpFx.burstCount(), warpSpooling: this._warpFx.spoolCount(), spoolFxDrawn: this._spoolFx.spooling, helmMarker: this.helmMarker.isVisible(), ownArt: this._lastMirror?.localPlayerId ? (this._artCtx.handles.get(this._lastMirror.localPlayerId)?.state ?? 'none') : null, localEngine: this._lastMirror?.localPlayerId ? (this._fxEngines?.debugView(this._lastMirror.localPlayerId) ?? null) : null, ...(art ? art.stats() : {}) };
   }
 
   dispose(): void {

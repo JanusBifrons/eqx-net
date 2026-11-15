@@ -18,11 +18,11 @@ left out. Each row:
 | Icon | The shared visual language (`render/entityVisuals.ts`): red star hostile NPC, amber diamond neutral NPC, green triangle pilot, blue hexagon structure |
 | Name | Kind name, elite name, pilot display name, or "Turret · Owner" for a structure. Never an id |
 | ⚠ / ◎ (red) | It has you locked / is locking you (`localLockedBy`) |
-| ● / ○ / · | In lock reach of the active group (group colour) / of another group only / of none. Lock reach is the group's weapon reach × `LOCK_TUNING.reachSlack`, the same rule the server uses |
+| ● / ○ / · | In FIRE reach of the active group (group colour) / of another group only / of none: the group's weapon reach, not a lock limit (locks work at any distance since 2026-11-14) |
 | Distance | `450 m`, `3.2 km`, `39 km` (1 km = 1,000 u) |
 | Lock | `LOCK` or the acquiring percent (capped at 99 until the lock completes, like the lock band) in the colour of the group holding it; yellow while a failsafe runs |
 
-Rows out of every group's reach are dimmed. The list sorts hostiles first, then
+Rows out of every group's fire reach are dimmed (still lockable). The list sorts hostiles first, then
 by distance; the header button switches to nearest first. It shows at most 40
 rows.
 

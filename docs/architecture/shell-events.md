@@ -62,6 +62,7 @@ ShellEndSchema = z.object({
     z.number().int(),            // tick of the hit
     z.number(), z.number(),      // hit point
     z.number().nonnegative(),    // blast radius (0 = none; replaces shell_blast for shells)
+    z.literal(1).optional(),     // continues: a pass-through kill (railgun); the shell flies on
   ])).min(1).max(256),
 }).strict();
 ```
@@ -192,6 +193,42 @@ These were settled on the owner's standing rule: record the game as it is and sh
 - **Client:** `NavalShellBursts` lost its absence guess (`shellEndedOnHit` is deleted): it bursts only the `[x, y, shellRadius]` triples `ShellSalvoStore.place()` queues when the display reaches a `shell_end`. A miss, or a shell leaving view, never bursts.
 - **Measured:** the `naval-broadside` perf scene (slice 3 row): rx per pilot 254 → 67 KB/s, ×0.26, p = 0.03, with no frame or tick regression.
 - **Locks:** `SnapshotBroadcaster.navalShells.test.ts` (no calibre ever in `projectiles[]`), `navalShellBursts.test.ts` (no `shell_end`, no burst; the burst lands on the drawn point), `tests/unit/navalShellMissParity.test.ts` (a miss expires with no `shell_end` and the client draws nothing, every naval gun), and the integration tests `capitalEngagement`, `coastalDefences`, `coastalDuel` and `shellEvents`, which now observe `shell_salvo`.
+
+## Railgun pass-through (2026-11-14)
+
+Plan "beam slices, railgun channels, capital heavy beams", step 7. The capital
+railgun's slug is a naval event shell (`'railgun'` is in
+`NAVAL_SHELL_WEAPON_IDS` and `NavalWeaponIdSchema`), very fast and flat
+(`RAILGUN_BALLISTICS`, `shared-types/combat/navalGuns.ts`: 5× the 16"
+shell's speed, at least its reach). Its weapon has a channel `killCut`, which
+makes it a PASS-THROUGH shell:
+
+- **Server (`ProjectilePipeline`).** `applyDamage` returns whether the hit
+  destroyed the target. When it did and the shell passes through
+  (`passesThrough(weaponId)`: a channel `killCut`), the shell is not dropped:
+  it looks again along the rest of the same step (victims excluded, at most
+  `MAX_PASS_HITS_PER_STEP` per step) at FULL damage, and carries on. It ends at
+  the first target that survives a hit (`shell_end` as usual) or at the end
+  of its flight (silent). A pooled per-shell victim list (`ProjectileRecord.hits`)
+  means it never hits one target twice. It skips capital wreck pieces (kind 4)
+  in `canHitSwarm`: "the slug ignores debris" (owner).
+- **Wire.** No new message: the `shell_end` tuple gets an optional 6th
+  element `continues: 1`. `ShellEventHub.onEnd(…, continues)` queues a pooled
+  pass-through hit and does NOT retire the shell, so re-tests, keyframes and
+  the join payload keep describing the live slug (#16). In a flush the
+  pass-through tuples go before the final ends, so a slug that kills and then
+  stops in one flush arrives in order.
+- **Client.** `ShellSalvoStore.applyEnd` queues a continues tuple as a burst
+  for when the display reaches its tick and leaves the shell unended, so it
+  keeps drawing and `navalHitHold` still holds the next victim's hit (its
+  `onShellEnd` matches by point, so the passed victim's flash is released at
+  that burst, not at the timeout). The burst is sized by `shellBurstSize`
+  (`turretFx.ts`; the railgun's small 5 u slug bursts at
+  `RAILGUN_BURST_MUL` × its radius).
+- **Locks:** `ProjectilePipeline.passThrough.test.ts`, `ShellEventHub.test.ts`
+  "pass-through", `shellSalvoStore.test.ts` "pass-through",
+  `ColyseusClient.navalHitFlash.test.ts` "railgun",
+  `tests/integration/sectorRoom/railgun.test.ts`.
 
 ## Client rules in detail
 

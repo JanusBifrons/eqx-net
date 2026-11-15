@@ -69,6 +69,8 @@ export interface SwarmDmgSource {
 /** Hostility ledger surface for the markHostile flip on a drone hit. */
 export interface HostilityLedger {
   markHostile(droneId: string, playerId: string, tick: number): void;
+  /** Morale (AI slice 6b): damage a drone took. Optional for fakes. */
+  noteDamage?(droneId: string, amount: number, tick: number, maxHull?: number): void;
 }
 
 export interface DamageRouterDeps {
@@ -144,11 +146,12 @@ export class DamageRouter {
   }
 
   /** Dispatch a confirmed hit: resolve the target leaf, then apply the
-   *  interaction. Behaviour byte-identical to the old if-tree (golden-master). */
-  apply(targetId: string, shooterId: string, damage: number, hitX?: number, hitY?: number): void {
+   *  interaction. Behaviour byte-identical to the old if-tree (golden-master).
+   *  Returns true iff THIS hit destroyed the target (`out.destroyed`). */
+  apply(targetId: string, shooterId: string, damage: number, hitX?: number, hitY?: number): boolean {
     const leaf = this.resolver.resolve(targetId, shooterId, damage);
-    if (leaf === null) return;
-    this.applyInteraction(leaf, targetId, shooterId, damage, hitX, hitY);
+    if (leaf === null) return false;
+    return this.applyInteraction(leaf, targetId, shooterId, damage, hitX, hitY);
   }
 
   /**
@@ -169,14 +172,14 @@ export class DamageRouter {
     damage: number,
     hitX?: number,
     hitY?: number,
-  ): void {
+  ): boolean {
     const out = this._out;
     resetInteractionResult(out);
     const tick = this.deps.serverTick();
     const wireTargetId = this.resolver.wireTargetId;
 
     leaf.health.applyLayered(leaf.target, damage, tick, out);
-    if (!out.applied) return; // immune target — no event
+    if (!out.applied) return false; // immune target — no event
 
     // Campaign 1.2 (invariant #15 — the ram path's P3.3 rounds-before-emit,
     // applied at the ONE wire emit site so missile splash / mining chips are
@@ -210,5 +213,6 @@ export class DamageRouter {
     if (out.destroyed) {
       leaf.death.onDestroyed(leaf.target, targetId, wireTargetId, shooterId, tick);
     }
+    return out.destroyed;
   }
 }

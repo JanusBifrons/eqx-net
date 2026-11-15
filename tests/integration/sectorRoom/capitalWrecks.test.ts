@@ -1,8 +1,8 @@
 /**
  * Capital destruction S2a (docs/architecture/capital-destruction.md §S2): a
  * dying capital breaks into wreck pieces that are solid bodies on the server.
- * Behind the `capitalWrecks` room option (off by default: clients don't draw
- * wrecks until S3, and a playtest must never meet invisible walls).
+ * Behind the `capitalWrecks` room option, ON by default since 2026-11-14
+ * (owner: "land it switched on"); `capitalWrecks: false` opts a room out.
  *
  * Drives the real chain: applyDamage → DamageRouter → the capital's death
  * (swarm death policy / SHIP_DESTROYED) → CapitalWreckSubsystem →
@@ -16,7 +16,10 @@ import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import { shipShapeToPolygon } from '../../../src/core/geometry/shipHullDecomp.js';
 import { shipHullOutline } from '../../../src/core/geometry/shipHullOutline.js';
 import { getShipKind } from '../../../src/shared-types/shipKinds.js';
-import { fracturePlan } from '../../../src/core/destruction/fractureHull.js';
+import { cutDirFromAngle, fracturePlan } from '../../../src/core/destruction/fractureHull.js';
+import { wreckPieceGeometry } from '../../../src/core/destruction/wreckPieces.js';
+import { shipShapeScale } from '../../../src/core/geometry/shipHullOutline.js';
+import { HEAVY_BEAM_WIDTH, WEAPONS } from '../../../src/core/combat/WeaponCatalogue.js';
 import { WRECK_CRACK_MS } from '../../../src/shared-types/wreckTiming.js';
 
 type V = { x: number; y: number };
@@ -207,9 +210,138 @@ describe('SectorRoom integration — capital wrecks (S2a)', () => {
     await harness.connectActive(victim, { shipKind: 'battleship', spawnX: 8000, spawnY: 0 });
     await harness.advance(100);
     // The shield takes the first hit whole (no spill-over); the second kills.
-    internal.applyDamage(victim, 'shooter-x', 1e9);
-    internal.applyDamage(victim, 'shooter-x', 1e9);
+    // applyDamage reports true on the killing call only.
+    expect(internal.applyDamage(victim, 'shooter-x', 1e9)).toBe(false);
+    expect(internal.applyDamage(victim, 'shooter-x', 1e9)).toBe(true);
     expect(wrecks(internal).length).toBeGreaterThanOrEqual(2);
+    expect(internal.applyDamage(victim, 'shooter-x', 1e9)).toBe(false);
+  }, 25_000);
+
+  it('applyDamage returns true only on the call that destroys an NPC capital', async () => {
+    const internal = await boot(true);
+    internal.spawnTestDrone('bb', 6000, 0, 'battleship');
+    await harness.advance(100);
+    internal.swarmHealth.set('bb', 100);
+    // A chip that leaves it alive, a hit with point + direction + weapon that
+    // kills it, then a hit on the gone hull.
+    expect(internal.applyDamage('bb', 'shooter-x', 10)).toBe(false);
+    expect(internal.applyDamage('bb', 'shooter-x', 1e7, 6000, 0, 1, 0, 'naval_l')).toBe(true);
+    expect(internal.swarmRegistry.get('bb')).toBeFalsy();
+    expect(internal.applyDamage('bb', 'shooter-x', 1e7)).toBe(false);
+  }, 25_000);
+
+  it('a killCut slice kill: the descriptor carries the shot direction in the hull frame and the pieces split straight along the shot', async () => {
+    // No weapon has a kill cut yet: give the laser one for this test only.
+    const laser = WEAPONS.get('laser')!;
+    const had = 'killCut' in laser;
+    const prev = laser.killCut;
+    laser.killCut = { kind: 'slice' };
+    try {
+      const internal = await boot(true);
+      internal.setWreckSeed(shatterSeed());
+      expect(internal.spawnTestDrone('bb', 6000, 0, 'battleship')).toBe(true);
+      await harness.advance(100);
+      const at = internal.wreckState('bb')!;
+      const hit = worldHull('battleship', at.x, at.y, at.angle)[4]!;
+      // A shot from outside the hull through the hit point toward the centre.
+      const len = Math.hypot(at.x - hit.x, at.y - hit.y);
+      const dir = { x: (at.x - hit.x) / len, y: (at.y - hit.y) / len };
+      expect(internal.applyDamage('bb', 'shooter-x', 1e7, hit.x, hit.y, dir.x, dir.y, 'laser')).toBe(true);
+      const desc = internal.wreckDescriptors().find((d) => d.parentKind === 'battleship')!;
+      expect(desc.cutKind).toBe('slice');
+      expect(desc.cutW).toBeUndefined();
+      // The shot in the hull's math-up frame (turned back by the hull's angle),
+      // then Pixi-up (y flipped): the angle the descriptor must carry.
+      const c = Math.cos(at.angle);
+      const sn = Math.sin(at.angle);
+      const hx = dir.x * c + dir.y * sn;
+      const hy = -dir.x * sn + dir.y * c;
+      const got = cutDirFromAngle(desc.cutAng!);
+      expect(got.x * hx + got.y * -hy).toBeGreaterThan(Math.cos(0.002));
+
+      // Rebuild the pieces from the descriptor (what a client does): a cut
+      // edge runs dead straight along the shot through the kill point,
+      // across the whole hull. The same wreck without the cut does not.
+      const s = shipShapeScale(getShipKind('battleship'));
+      const k = { x: desc.killX * s, y: -desc.killY * s };
+      const d = { x: hx, y: hy };
+      const dist = (p: V): number => (p.x - k.x) * -d.y + (p.y - k.y) * d.x;
+      const onShotLine = (cut: boolean): number => {
+        const inputs = {
+          kindId: 'battleship' as const, seed: desc.seed, killX: desc.killX, killY: desc.killY,
+          killBlowDamage: desc.killBlowDamage, recentDamageRate: desc.recentDamageRate, snapChance: desc.snapChance,
+          ...(cut ? { cutKind: desc.cutKind, cutAng: desc.cutAng } : {}),
+        };
+        let total = 0;
+        for (const g of wreckPieceGeometry(inputs)) {
+          let run = 0;
+          for (let i = 0; i < g.outline.length; i++) {
+            if (!g.cutEdges[i]) continue;
+            const a = g.outline[i]!;
+            const b = g.outline[(i + 1) % g.outline.length]!;
+            const pa = { x: a.x + g.cx, y: a.y + g.cy };
+            const pb = { x: b.x + g.cx, y: b.y + g.cy };
+            // 2 u: the u16 angle's quantisation over the hull's beam.
+            if (Math.abs(dist(pa)) < 2 && Math.abs(dist(pb)) < 2) run += Math.hypot(pb.x - pa.x, pb.y - pa.y);
+          }
+          total += run;
+        }
+        return total;
+      };
+      // The chord of the hull along that line (math-up, scaled frame).
+      const hull = shipShapeToPolygon(getShipKind('battleship'));
+      const ts: number[] = [];
+      for (let i = 0; i < hull.length; i++) {
+        const a = hull[i]!;
+        const b = hull[(i + 1) % hull.length]!;
+        const da = dist(a);
+        const db = dist(b);
+        if ((da < 0) === (db < 0)) continue;
+        const f = da / (da - db);
+        ts.push((a.x + (b.x - a.x) * f - k.x) * d.x + (a.y + (b.y - a.y) * f - k.y) * d.y);
+      }
+      ts.sort((p, q) => p - q);
+      const chord = ts[ts.length - 1]! - ts[0]!;
+      // Every cut edge is on two pieces: the whole chord, counted twice.
+      expect(onShotLine(true)).toBeGreaterThan(1.9 * chord);
+      expect(onShotLine(false)).toBeLessThan(0.5 * chord);
+    } finally {
+      if (had) laser.killCut = prev; else delete laser.killCut;
+    }
+  }, 25_000);
+
+  it('a heavy_beam kill slices the wreck; a fighter beam or a bolt kill does not', async () => {
+    // The catalogue's own records (no test-only killCut): only the capital
+    // heavy beam slices (plan beam-slices §8, owner: "heavy means only the
+    // new capital heavy beam").
+    const internal = await boot(true);
+    internal.setWreckSeed(shatterSeed());
+    const seen = new Set<number>();
+    const killWith = async (id: string, weaponId: 'heavy_beam' | 'hitscan' | 'laser') => {
+      for (const d of internal.wreckDescriptors()) seen.add(d.wreckId);
+      // Each hull well clear of the last one's wreck.
+      expect(internal.spawnTestDrone(id, 6000 + 4000 * seen.size, 0, 'battleship')).toBe(true);
+      await harness.advance(100);
+      const at = internal.wreckState(id)!;
+      const hit = worldHull('battleship', at.x, at.y, at.angle)[4]!;
+      const len = Math.hypot(at.x - hit.x, at.y - hit.y);
+      expect(internal.applyDamage(id, 'shooter-x', 1e7, hit.x, hit.y, (at.x - hit.x) / len, (at.y - hit.y) / len, weaponId)).toBe(true);
+      // This kill's descriptor: the one wreck id not seen before (copied, the
+      // subsystem reuses its list).
+      const fresh = internal.wreckDescriptors().filter((d) => !seen.has(d.wreckId));
+      expect(fresh.length).toBe(1);
+      return { ...fresh[0]! };
+    };
+    const sliced = await killWith('bb-heavy', 'heavy_beam');
+    expect(sliced.cutKind).toBe('slice');
+    expect(sliced.cutAng).toBeDefined();
+    // v10: its slice erases a strip as wide as the beam (hull 1x frame).
+    expect(sliced.cutW).toBe(HEAVY_BEAM_WIDTH / shipShapeScale(getShipKind('battleship')));
+    for (const [id, w] of [['bb-beam', 'hitscan'], ['bb-bolt', 'laser']] as const) {
+      const plain = await killWith(id, w);
+      expect(plain.cutKind, w).toBeUndefined();
+      expect(plain.cutAng, w).toBeUndefined();
+    }
   }, 25_000);
 
   it('with the flag off a capital dies exactly as today: no wreck bodies', async () => {

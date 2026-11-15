@@ -65,7 +65,7 @@ export function updateShipSprites(mirror: RenderMirror, ctx: ShipSpriteCtx): voi
     // Livery: the mirror key is the player id = the player's faction id.
     const lv = ctx.art.livery !== undefined ? ownerLivery(playerId) : undefined;
     const handle = lv
-      ? shipHandleFor(ctx.art, playerId, ship.kind ?? 'fighter', undefined, lv.team, lv.sigil, lv.edge)
+      ? shipHandleFor(ctx.art, playerId, ship.kind ?? 'fighter', undefined, false, lv.team, lv.sigil, lv.edge)
       : shipHandleFor(ctx.art, playerId, ship.kind ?? 'fighter', undefined);
     if (sprite && shipArtSwap(ctx.art, sprite, handle) !== 'keep') {
       ctx.mountVisuals.removeShip(playerId); // its barrel cluster is a child

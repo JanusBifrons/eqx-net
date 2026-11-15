@@ -69,3 +69,42 @@ describe('ProjectilePipeline — friendly fire', () => {
     expect(hits).toEqual([{ target: 'd-a', shooter: 'player-1' }]);
   });
 });
+
+describe('ProjectilePipeline — loot pods', () => {
+  function podPipeline() {
+    const sab = new Float32Array(4096);
+    const recs = [
+      { id: 'pod-1', slot: 1, x: 100, kind: 3, shipKind: 'cargo-pod' },
+      { id: 'r-enemy', slot: 2, x: 200, kind: 1, shipKind: 'robot-square' },
+    ];
+    for (const r of recs) sab[slotBase(r.slot) + SLOT_X_OFF] = r.x;
+    const hits: Array<{ target: string; shooter: string }> = [];
+    const pipe = new ProjectilePipeline({
+      sabF32: sab,
+      serverTick: () => 0,
+      playerToSlot: [],
+      getActiveShip: () => undefined,
+      shipPoseCache: new Map(),
+      playerSweep: () => null,
+      swarmRegistry: { all: () => recs.map((r) => ({ id: r.id, slot: r.slot, radius: 12, kind: r.kind, shipKind: r.shipKind })) },
+      lingeringSlots: new Map(),
+      shotHitsLootPods: (owner) => owner === 'player-1',
+      applyDamage: (target, shooter) => { hits.push({ target, shooter }); },
+    });
+    return { pipe, hits };
+  }
+
+  it('an AI pilot bolt passes a loot pod and lands on the ship behind it', () => {
+    const { pipe, hits } = podPipeline();
+    pipe.spawn('d-shooter', 20, 0, 1200, 0, 10, 4, 120, 'laser');
+    fly(pipe, 30);
+    expect(hits).toEqual([{ target: 'r-enemy', shooter: 'd-shooter' }]);
+  });
+
+  it('a pilot\'s own bolt still lands on the loot pod', () => {
+    const { pipe, hits } = podPipeline();
+    pipe.spawn('player-1', 20, 0, 1200, 0, 10, 4, 120, 'laser');
+    fly(pipe, 30);
+    expect(hits).toEqual([{ target: 'pod-1', shooter: 'player-1' }]);
+  });
+});

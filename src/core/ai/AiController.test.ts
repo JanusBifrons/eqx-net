@@ -3,7 +3,6 @@ import { AiController, type AiIntentSink } from './AiController.js';
 import { HostileDroneBehaviour } from './HostileDroneBehaviour.js';
 import { DriftingAsteroidBehaviour } from './DriftingAsteroidBehaviour.js';
 import { AI_INPUT_THRUST, type AiEntity, type AiInputBits, type AiPlayerView } from '../contracts/IAiBehaviour.js';
-import { WEAPON_COOLDOWN_TICKS } from '../combat/Weapons.js';
 
 interface PostedIntent { slot: number; fx: number; fy: number; torque: number; input?: AiInputBits }
 
@@ -78,7 +77,7 @@ describe('AiController', () => {
     expect(sink.posted).toHaveLength(0);
   });
 
-  it('drainFireRequests returns and clears queued fires; cooldown enforced', () => {
+  it('drainFireRequests returns and clears queued fires; the trigger is held', () => {
     ctrl.register('drone-1', 4, new HostileDroneBehaviour());
     // Phase 1: drones default to IDLE patrol and only fire at hostile
     // players. Mark p1 as the attacker to put the drone into COMBAT.
@@ -93,12 +92,9 @@ describe('AiController', () => {
     // Drain clears the queue.
     expect(ctrl.drainFireRequests()).toHaveLength(0);
 
-    // Within cooldown — no new fire.
-    ctrl.tick(100 + WEAPON_COOLDOWN_TICKS - 1, 1 / 60, [playerAt('p1', 0, 100)], () => entityAt('drone-1', 0, 0, 0, 0));
-    expect(ctrl.drainFireRequests()).toHaveLength(0);
-
-    // Off cooldown — fires again.
-    ctrl.tick(100 + WEAPON_COOLDOWN_TICKS, 1 / 60, [playerAt('p1', 0, 100)], () => entityAt('drone-1', 0, 0, 0, 0));
+    // Still aimed next tick: the trigger stays held (AiFireResolver owns
+    // the cooldown).
+    ctrl.tick(101, 1 / 60, [playerAt('p1', 0, 100)], () => entityAt('drone-1', 0, 0, 0, 0));
     fires = ctrl.drainFireRequests();
     expect(fires).toHaveLength(1);
   });

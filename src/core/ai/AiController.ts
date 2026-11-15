@@ -8,7 +8,11 @@ import type {
   AiWorldView,
   AiInputBits,
   IAiNeighbourQuery,
+  AiTickStats,
 } from '../contracts/IAiBehaviour.js';
+import { AimBoard } from './tactics/fireLanes.js';
+import { TargetClaimBoard } from './tactics/targetClaims.js';
+import { AI_INPUT_BOOST } from '../contracts/IAiBehaviour.js';
 
 /**
  * Per-tick fire request emitted by a behaviour. The controller buffers these
@@ -25,6 +29,9 @@ export interface AiFireRequest {
   targetId: string;
   /** Server tick at which the AI declared the shot. */
   tick: number;
+  /** The cone (rad) the target's hull covers from the shooter (pilot skill):
+   *  a barrel fires only if its line falls inside it. Absent ⇒ no extra limit. */
+  cone?: number;
 }
 
 export interface AiIntentSink {
@@ -49,6 +56,8 @@ export interface AiIntentSink {
 interface AiRegistration {
   slot: number;
   behaviour: IAiBehaviour;
+  /** This tick's control keys held boost (the snapshot shows the flame, #16). */
+  boost: boolean;
 }
 
 /**
@@ -63,7 +72,22 @@ interface AiRegistration {
  */
 export class AiController {
   private readonly entities = new Map<string, AiRegistration>();
+  /** Work counters behaviours bump through `view.stats` (running totals,
+   *  print-only: the scene counters read `decisions`). */
+  readonly stats: AiTickStats = { decisions: 0 };
+  /** Each brain's current aim point (fire-lane awareness, AI slice 5b): one
+   *  slot per registered entity, handed to brains as `view.aims`. */
+  readonly aims = new AimBoard();
+  /** Each brain's body target per side (spread targets, 2026-11-14), handed
+   *  to brains as `view.claims`. */
+  readonly claims = new TargetClaimBoard();
   private readonly fireQueue: AiFireRequest[] = [];
+  /** Morale warp-out requests this tick (AI slice 6b): parallel arrays,
+   *  reused (rare; amortised growth only). */
+  private readonly warpOutIds: string[] = [];
+  private readonly warpOutXs: number[] = [];
+  private readonly warpOutYs: number[] = [];
+  private warpOutCount = 0;
   /**
    * Hostility marked for an entity that is not yet registered, buffered so it
    * is APPLIED when the entity registers. Without this a `markHostile` /
@@ -77,10 +101,15 @@ export class AiController {
    */
   private readonly pendingHostile = new Map<string, Map<string, number>>();
 
+  /** Charge wind-up query handed to brains as `view.isCharging` (the server
+   *  sets it to its fire resolver's). Absent ⇒ no brain is ever charging. */
+  isCharging: ((entityId: string) => boolean) | undefined = undefined;
+
   constructor(private readonly sink: AiIntentSink) {}
 
   register(entityId: string, slot: number, behaviour: IAiBehaviour): void {
-    this.entities.set(entityId, { slot, behaviour });
+    this.entities.set(entityId, { slot, behaviour, boost: false });
+    this.aims.add(entityId);
     // Apply any hostility that arrived before this entity registered.
     const pending = this.pendingHostile.get(entityId);
     if (pending) {
@@ -91,6 +120,9 @@ export class AiController {
 
   unregister(entityId: string): void {
     this.entities.delete(entityId);
+    this.aims.remove(entityId);
+    this.claims.remove(entityId);
+    this.claims.forgetTarget(entityId);
     this.pendingHostile.delete(entityId);
   }
 
@@ -100,6 +132,13 @@ export class AiController {
 
   size(): number {
     return this.entities.size;
+  }
+
+  /** The slot of an AI ship whose control keys held boost this tick, else -1.
+   *  The room still applies its own gates (a disabled ship holds no keys). */
+  boostingSlot(entityId: string): number {
+    const reg = this.entities.get(entityId);
+    return reg !== undefined && reg.boost ? reg.slot : -1;
   }
 
   /** Phase 4c (2026-05-11) — read access to the registered behaviour for
@@ -138,6 +177,29 @@ export class AiController {
     if (prev === undefined || atTick > prev) pending.set(shooterId, atTick);
   }
 
+  /** Damage an entity took (morale, AI slice 6b). Server-only; a no-op for an
+   *  unregistered id or a behaviour without the hook. Alloc-free. */
+  noteDamage(entityId: string, amount: number, atTick: number, maxHull?: number): void {
+    this.entities.get(entityId)?.behaviour.noteDamage?.(amount, atTick, maxHull);
+  }
+
+  /** The squad's capital died: a morale trigger for this entity. */
+  noteCapitalLost(entityId: string): void {
+    this.entities.get(entityId)?.behaviour.noteCapitalLost?.();
+  }
+
+  /**
+   * Hand this tick's morale warp-out requests (`AiIntent.warpOut`) to `cb`
+   * and clear them. The caller passes a long-lived bound method (no closure
+   * per tick).
+   */
+  drainWarpOuts(cb: (entityId: string, x: number, y: number) => void): void {
+    const n = this.warpOutCount;
+    if (n === 0) return;
+    this.warpOutCount = 0;
+    for (let i = 0; i < n; i++) cb(this.warpOutIds[i]!, this.warpOutXs[i]!, this.warpOutYs[i]!);
+  }
+
   /**
    * Line-of-fire feedback: tell `entityId`'s brain a friendly body at
    * (blockerX, blockerY) held its shot this tick. No-op for unregistered ids
@@ -160,6 +222,7 @@ export class AiController {
     }
     // Also drop any buffered (pre-register) hostility for this player.
     for (const pending of this.pendingHostile.values()) pending.delete(playerId);
+    this.claims.forgetTarget(playerId);
   }
 
   /**
@@ -170,6 +233,8 @@ export class AiController {
    */
   clear(): void {
     this.entities.clear();
+    this.aims.clear();
+    this.claims.clear();
     this.pendingHostile.clear();
   }
 
@@ -230,7 +295,7 @@ export class AiController {
     // every behaviour. The 60/sec rate is negligible vs the rest of
     // the engine; leave as-is. See `swarmEntitySnapshot` doc for the
     // full GC-pressure story.
-    const view: AiWorldView = { players, structures, swarms, tick, dtSec, resolveEntityInto, neighbours };
+    const view: AiWorldView = { players, structures, swarms, tick, dtSec, resolveEntityInto, neighbours, stats: this.stats, aims: this.aims, claims: this.claims, isCharging: this.isCharging };
     this.inputsQueued = 0;
     for (const [id, reg] of this.entities) {
       this.runEntity(id, reg, view, tick, entitySnapshot);
@@ -252,6 +317,7 @@ export class AiController {
     tick: number,
     entitySnapshot: (id: string) => AiEntity | null,
   ): void {
+    reg.boost = false;
     const self = entitySnapshot(id);
     if (!self) return;
     const intent = reg.behaviour.tick(self, view);
@@ -261,6 +327,7 @@ export class AiController {
       if (this.sink.postInput) {
         this.sink.postInput(reg.slot, intent.input);
         this.inputsQueued++;
+        reg.boost = (intent.input & AI_INPUT_BOOST) !== 0;
       }
     } else if (
       intent.fx !== 0 ||
@@ -271,12 +338,20 @@ export class AiController {
       this.sink.postIntent(reg.slot, intent.fx, intent.fy, intent.torque, intent.setAngvel);
     }
 
+    if (intent.warpOut !== undefined) {
+      const k = this.warpOutCount++;
+      this.warpOutIds[k] = id;
+      this.warpOutXs[k] = intent.warpOut.x;
+      this.warpOutYs[k] = intent.warpOut.y;
+    }
+
     if (intent.fire) {
       this.fireQueue.push({
         shooterId: id,
         dirX: intent.fire.dirX,
         dirY: intent.fire.dirY,
         targetId: intent.fire.targetId,
+        cone: intent.fire.cone,
         tick,
       });
     }

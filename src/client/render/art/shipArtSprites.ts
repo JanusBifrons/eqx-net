@@ -30,12 +30,13 @@ export interface ShipArtCtx {
   livery?: import('./fields.js').LiveryTreatment;
 }
 
-/** The handle a ship should use now (re-acquired only on a kind/paint change). */
-/** `team`/`sigil`/`edge` (owner colours): with `actx.livery` set and a team
+/** The handle a ship should use now (re-acquired only on a kind/paint change).
+ *  `dead`: a wreck piece's bake (no live lights; see `BakeJob`).
+ *  `team`/`sigil`/`edge` (owner colours): with `actx.livery` set and a team
  *  given, the hull is liveried (sigil defaults to the team colour). The change check
  *  compares scalars only; the Livery object is built only on re-acquire. */
 export function shipHandleFor(
-  actx: ShipArtCtx, key: string, kindId: string, paint: number | undefined, team?: number, sigil?: number, edge?: LiveryEdge,
+  actx: ShipArtCtx, key: string, kindId: string, paint: number | undefined, dead = false, team?: number, sigil?: number, edge?: LiveryEdge,
 ): ArtHandle | null {
   if (!actx.art) return null;
   let h = actx.handles.get(key);
@@ -46,8 +47,8 @@ export function shipHandleFor(
   const liveryChanged = treat === undefined
     ? lv !== undefined
     : lv === undefined || lv.treatment !== treat || lv.team !== team || lv.sigil !== sig || lv.edge !== edge;
-  if (!h || h.stale === true || h.job.type !== 'ship' || h.job.id !== kindId || h.job.paint !== paint || (h.job.rings === true) !== rings || liveryChanged) {
-    h = actx.art.ship(kindId, paint, true, rings, treat !== undefined && team !== undefined ? { treatment: treat, team, sigil: sig, ...(edge !== undefined ? { edge } : {}) } : undefined);
+  if (!h || h.stale === true || h.job.type !== 'ship' || h.job.id !== kindId || h.job.paint !== paint || (h.job.rings === true) !== rings || (h.job.dead === true) !== dead || liveryChanged) {
+    h = actx.art.ship(kindId, paint, true, rings, dead, treat !== undefined && team !== undefined ? { treatment: treat, team, sigil: sig, ...(edge !== undefined ? { edge } : {}) } : undefined);
     actx.handles.set(key, h);
   }
   return h;

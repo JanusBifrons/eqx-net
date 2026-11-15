@@ -6,7 +6,9 @@
  *    energy strip along the solid part, a fading tail beyond it, a muzzle glow,
  *    and a flare where a beam ends on something.
  *  - `FxProjectiles` replaces bolt and tracer shapes with batched sprites: a
- *    glowing head and a short trail behind it along its velocity.
+ *    glowing head and a short trail behind it along its velocity. A railgun
+ *    slug also trails a violet-blue ion wake on its `wakeLayer`: a tail behind
+ *    the slug that thins, spreads and fades fast (`SLUG_WAKE_TAIL`, `_LIFE_S`).
  *
  * Both use textures from `ArtService.fx` and draw nothing until those are
  * ready (today's look stays). Sprites are pooled; per frame is scalar writes
@@ -15,10 +17,16 @@
 import { Container, Sprite, TilingSprite, type Texture } from 'pixi.js';
 import type { BeamView } from '../../BeamSpritePool.js';
 import type { ArtHandle, ArtService } from '../ArtService.js';
+import { NAVAL_SHELL_WEAPON_IDS } from '@core/combat/shellFlight';
+import { RAILGUN_BOLT_WIDTH, RAILGUN_RADIUS } from '../../../../shared-types/combat/navalGuns.js';
+import type { EffectQuality } from '@core/contracts/IEffects';
+import { slugWakeAlpha, slugWakeSegments, slugWakeWidth, SLUG_WAKE_LIFE_S, SLUG_WAKE_TAIL, SLUG_WAKE_TINT } from './turretFx.js';
 
 const tex = (h: ArtHandle): Texture | null => (h.state === 'ready' && h.fx ? h.fx.tex : null);
 
-interface BeamSlot { halo: Sprite; flow: TilingSprite; tail: Sprite; muzzle: Sprite; flare: Sprite }
+/** `tint`: the colour the slot's sprites carry now (a heavy beam re-tints its
+ *  slot; written only on change). */
+interface BeamSlot { halo: Sprite; flow: TilingSprite; tail: Sprite; muzzle: Sprite; flare: Sprite; tint: number }
 
 export class FxBeams {
   readonly container = new Container();
@@ -61,23 +69,28 @@ export class FxBeams {
       const len = Math.hypot(dx, dy);
       if (len < 0.5) { s.halo.visible = false; s.flow.visible = false; s.tail.visible = false; s.muzzle.visible = false; s.flare.visible = false; continue; }
       const ang = Math.atan2(dy, dx);
+      // A per-beam style (the capital heavy beam) re-tints the slot and scales
+      // its glow; everything else draws in the pool colour at 1x.
+      const tint = b.style ? b.style.tint : this.color;
+      const k = b.style?.glowScale ?? 1;
+      if (s.tint !== tint) { s.tint = tint; s.halo.tint = tint; s.flow.tint = tint; s.tail.tint = tint; s.muzzle.tint = tint; }
       const solid = Math.min(len, b.solidLen ?? (hits ? (hits[i] ? len : len * 0.55) : len));
       const fl = 0.88 + 0.12 * Math.sin(t * 57 + i * 1.7) * Math.sin(t * 23 + i);
       s.halo.position.set(fx, fy); s.halo.rotation = ang;
-      s.halo.scale.set(solid / s.halo.texture.width, (20 * fl) / s.halo.texture.height);
+      s.halo.scale.set(solid / s.halo.texture.width, (20 * k * fl) / s.halo.texture.height);
       s.flow.position.set(fx, fy); s.flow.rotation = ang;
-      s.flow.width = solid; s.flow.scale.y = 8 / s.flow.texture.height;
+      s.flow.width = solid; s.flow.scale.y = (8 * k) / s.flow.texture.height;
       s.flow.tilePosition.x = -t * 420;
       const tailLen = len - solid;
       s.tail.visible = tailLen > 1;
       if (tailLen > 1) {
         s.tail.position.set(fx + Math.cos(ang) * solid, fy + Math.sin(ang) * solid); s.tail.rotation = ang;
-        s.tail.scale.set(tailLen / s.tail.texture.width, 12 / s.tail.texture.height);
+        s.tail.scale.set(tailLen / s.tail.texture.width, (12 * k) / s.tail.texture.height);
       }
-      s.muzzle.position.set(fx, fy); s.muzzle.scale.set((20 / s.muzzle.texture.width) * fl);
+      s.muzzle.position.set(fx, fy); s.muzzle.scale.set(((20 * k) / s.muzzle.texture.width) * fl);
       // A beam whose solid part reaches its end has landed on something.
       s.flare.visible = tailLen <= 1;
-      if (s.flare.visible) { s.flare.position.set(tx, ty); s.flare.scale.set((36 / s.flare.texture.width) * fl); }
+      if (s.flare.visible) { s.flare.position.set(tx, ty); s.flare.scale.set(((36 * k) / s.flare.texture.width) * fl); }
     }
   }
 
@@ -96,31 +109,61 @@ export class FxBeams {
     const tail = mk(tr, this.color, 0.6, 0);
     const muzzle = mk(gl, this.color, 0.9, 0.5);
     const flare = mk(gl, 0xffffff, 0.95, 0.5);
-    return { halo, flow, tail, muzzle, flare };
+    return { halo, flow, tail, muzzle, flare, tint: this.color };
   }
 }
 
 /** How a projectile looks. */
-export type FxProjStyle = 'bolt' | 'tracer' | 'shell';
+export type FxProjStyle = 'bolt' | 'tracer' | 'shell' | 'slug';
 
-interface ProjView { head: Sprite; core: Sprite; trail: Sprite[]; gen: number }
+/** A view; a slug's also carries its wake: `wake` sprites (made on first
+ *  use), game ms it was first seen (`t0`; t0 < 0 = no wake), where it was
+ *  last drawn (`hx`, `hy` at `th`), its heading, width, speed (`sp`, u/s),
+ *  distance flown there (`fl`) and full tail length (`tl`). */
+interface ProjView {
+  head: Sprite; core: Sprite; trail: Sprite[]; gen: number;
+  wake: Sprite[] | null; t0: number; hx: number; hy: number; th: number; ang: number; wid: number; sp: number; fl: number; tl: number;
+}
+/** Wake sprites per slug view (the high tier's `slugWakeSegments`). */
+const WAKE_MAX = 10;
+/** Slug wakes still fading after their slug has gone (oldest dropped). */
+const MAX_FADING = 16;
 
 const BOLT = { len: 30, width: 9, trail: 3, tint: 0xffc860 };
 const TRACER = { len: 38, width: 4, trail: 0, tint: 0xffe6a0 };
 /** Capital naval shells, per unit of the gun's shell radius (a 16" shell,
  *  radius 6, draws ~240 u long) so they read at capital zoom. */
 const SHELL = { len: 40, width: 4, trail: 3, tint: 0xffb347 };
+/** The railgun slug (plan beam-slices §7): a long, white-hot streak, per unit
+ *  of its shell radius like a shell. Its drawn width is the bolt width, the
+ *  width of the channel a kill cuts (`RAILGUN_BOLT_WIDTH`); ~1 km long. */
+const SLUG = { len: 200, width: RAILGUN_BOLT_WIDTH / RAILGUN_RADIUS, trail: 3, tint: 0xd8ecff };
+
+/** A shell-like style's streak width per unit of size (the min-screen-size
+ *  floor measures it). */
+export function fxShellWidth(style: FxProjStyle): number {
+  return style === 'slug' ? SLUG.width : SHELL.width;
+}
 
 export class FxProjectiles {
   readonly container = new Container();
+  /** Railgun slug wakes, drawn under the projectiles. */
+  readonly wakeLayer = new Container();
   private readonly live = new Map<string, ProjView>();
   private readonly free: ProjView[] = [];
+  /** Wakes of slugs already gone, fading out (`fadingN` in use). */
+  private readonly fading: ProjView[] = [];
+  private fadingN = 0;
   private readonly streak: ArtHandle;
   private gen = 0;
 
-  constructor(art: ArtService) {
+  /** `quality`: the effects tier (wake pieces per slug); `clock`: the
+   *  renderer's game-time effects clock in ms (`fxNow`, #20). */
+  constructor(art: ArtService, private readonly quality: () => EffectQuality = () => 'high', private readonly clock: () => number = () => 0) {
     this.container.blendMode = 'add';
     this.container.eventMode = 'none';
+    this.wakeLayer.blendMode = 'add';
+    this.wakeLayer.eventMode = 'none';
     this.streak = art.fx('streak', undefined, undefined, false);
   }
 
@@ -144,8 +187,9 @@ export class FxProjectiles {
       this.live.set(id, v);
     }
     v.gen = this.gen;
-    const base = style === 'bolt' ? BOLT : style === 'shell' ? SHELL : TRACER;
-    const shell = style === 'shell';
+    const base = style === 'bolt' ? BOLT : style === 'shell' ? SHELL : style === 'slug' ? SLUG : TRACER;
+    // A slug is drawn as a shell: a streak trailing from its front end.
+    const shell = style === 'shell' || style === 'slug';
     const k0 = shell ? size : 1;
     const ax = shell ? 1 : 0.5; // shells: anchor on the streak's front end
     const maxLen = shell ? flown : Infinity;
@@ -167,7 +211,7 @@ export class FxProjectiles {
     v.core.scale.set((spLen * 0.6) / w, (spWid * 0.33 + 0.8) / h); v.core.alpha = alpha;
     for (let k = 0; k < v.trail.length; k++) {
       const tr = v.trail[k]!;
-      const back = (k + 1) * 12 * k0;
+      const back = (k + 1) * (style === 'slug' ? 60 : 12) * k0;
       tr.visible = k < base.trail && back < maxLen;
       if (!tr.visible) continue;
       tr.anchor.x = ax;
@@ -175,6 +219,69 @@ export class FxProjectiles {
       tr.scale.set(Math.min(spLen * (0.9 - k * 0.15), maxLen - back) / w, (spWid * (0.8 - k * 0.18)) / h);
       tr.alpha = alpha * (0.42 - k * 0.12);
     }
+    if (style === 'slug') {
+      const now = this.clock();
+      if (v.t0 < 0) v.t0 = now;
+      v.hx = px; v.hy = py; v.th = now; v.ang = ang; v.wid = spWid;
+      v.sp = sl; v.fl = flown; v.tl = fullLen * SLUG_WAKE_TAIL;
+      this.drawWake(v, now);
+    }
+  }
+
+  /** Draw a slug's wake: a tail of pieces behind where the slug was last
+   *  seen, at most `tl` long and never behind the muzzle (`fl`). A piece `d`
+   *  behind the slug was passed `d / sp` s before it, plus the time since the
+   *  slug was last seen; it fades with that age and toward the tail's end,
+   *  and spreads and drifts as it fades. Returns whether any piece still
+   *  shows. Alloc-free after the view's first slug. */
+  private drawWake(v: ProjView, now: number): boolean {
+    const n = Math.min(WAKE_MAX, slugWakeSegments(this.quality()));
+    if (n > 0 && v.wake === null) v.wake = this.makeWake();
+    const wake = v.wake;
+    if (wake === null) return false;
+    const ext = Math.min(v.tl, v.fl);
+    const ux = Math.cos(v.ang), uy = Math.sin(v.ang);
+    const w = wake[0]!.texture.width, h = wake[0]!.texture.height;
+    const seg = ext / n;
+    const since = Math.max(0, now - v.th) / 1000;
+    let any = false;
+    for (let j = 0; j < wake.length; j++) {
+      const s = wake[j]!;
+      if (j >= n || !(ext >= 1)) { s.visible = false; continue; }
+      const d = (j + 0.5) * seg;
+      const age = since + d / v.sp;
+      const a = slugWakeAlpha(age, d / v.tl);
+      s.visible = a > 0.01;
+      if (!s.visible) continue;
+      any = true;
+      const spread = slugWakeWidth(age);
+      // It drifts apart a little as it spreads (an ion trail, not a rod).
+      const drift = Math.sin(j * 2.3 + v.t0 * 0.001) * v.wid * 0.8 * Math.min(1, age / SLUG_WAKE_LIFE_S);
+      // Each piece overlaps the one ahead of it (toward the slug) by 15 %
+      // so the tail reads unbroken; its back end stays inside the tail.
+      const ov = j > 0 ? seg * 0.15 : 0;
+      const mid = d - ov / 2;
+      s.position.set(v.hx - ux * mid - uy * drift, v.hy - uy * mid + ux * drift);
+      s.rotation = v.ang;
+      s.scale.set((seg + ov) / w, (v.wid * 1.4 * spread) / h);
+      s.alpha = a;
+    }
+    return any;
+  }
+
+  private makeWake(): Sprite[] {
+    const st = tex(this.streak)!;
+    const list: Sprite[] = [];
+    for (let j = 0; j < WAKE_MAX; j++) {
+      const s = new Sprite(st); s.anchor.set(0.5); s.tint = SLUG_WAKE_TINT; s.visible = false;
+      this.wakeLayer.addChild(s); list.push(s);
+    }
+    return list;
+  }
+
+  private hideWake(v: ProjView): void {
+    v.t0 = -1;
+    if (v.wake) for (const s of v.wake) s.visible = false;
   }
 
   /** Release projectiles not drawn this frame back to the pool. */
@@ -184,18 +291,45 @@ export class FxProjectiles {
       v.head.visible = false; v.core.visible = false;
       for (const tr of v.trail) tr.visible = false;
       this.live.delete(id);
-      this.free.push(v);
+      // A slug's wake lingers after it: keep the view until the wake fades.
+      if (v.t0 >= 0 && v.wake !== null) {
+        if (this.fadingN >= MAX_FADING) { const old = this.fading[0]!; this.hideWake(old); this.free.push(old); this.removeFading(0); }
+        this.fading[this.fadingN++] = v;
+      } else {
+        this.hideWake(v);
+        this.free.push(v);
+      }
     }
+    const now = this.clock();
+    for (let i = this.fadingN - 1; i >= 0; i--) {
+      const v = this.fading[i]!;
+      if (this.drawWake(v, now)) continue;
+      this.hideWake(v);
+      this.free.push(v);
+      this.removeFading(i);
+    }
+  }
+
+  private removeFading(i: number): void {
+    for (let k = i; k < this.fadingN - 1; k++) this.fading[k] = this.fading[k + 1]!;
+    this.fadingN--;
+  }
+
+  /** Slug wakes drawing now (live slugs and fading ones). */
+  wakeCount(): number {
+    let n = this.fadingN;
+    for (const v of this.live.values()) if (v.t0 >= 0) n++;
+    return n;
   }
 
   liveCount(): number { return this.live.size; }
 
-  destroy(): void { this.container.destroy({ children: true }); }
+  destroy(): void { this.container.destroy({ children: true }); this.wakeLayer.destroy({ children: true }); }
 
   private make(): ProjView {
     const st = tex(this.streak)!;
     const mk = (tint: number): Sprite => { const s = new Sprite(st); s.anchor.set(0.5); s.tint = tint; s.visible = false; this.container.addChild(s); return s; };
-    return { head: mk(0xffffff), core: mk(0xffffff), trail: [mk(0xffffff), mk(0xffffff), mk(0xffffff)], gen: -1 };
+    return { head: mk(0xffffff), core: mk(0xffffff), trail: [mk(0xffffff), mk(0xffffff), mk(0xffffff)], gen: -1, wake: null, t0: -1, hx: 0, hy: 0, th: 0, ang: 0, wid: 0, sp: 1, fl: 0, tl: 0 };
   }
 }
 
@@ -204,6 +338,7 @@ export class FxProjectiles {
 export function fxProjectileStyle(weaponId: string | undefined, isBeam: boolean): FxProjStyle | null {
   if (isBeam) return null;
   if (weaponId === 'pulse-orb') return null;
-  if (weaponId !== undefined && weaponId.startsWith('naval_')) return 'shell';
+  if (weaponId === 'railgun') return 'slug';
+  if (weaponId !== undefined && NAVAL_SHELL_WEAPON_IDS.has(weaponId)) return 'shell';
   return weaponId === 'laser' ? 'bolt' : 'tracer';
 }

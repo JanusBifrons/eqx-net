@@ -37,6 +37,7 @@ export { DEFAULT_WARP_PARAMS } from './protocol/warpParams.js';
 export type {
   BootMsg,
   MirrorUpdateMsg,
+  SwarmDeltaMsg,
   SetVisibleMsg,
   SetCurrentSectorMsg,
   SetTransitDockedMsg,

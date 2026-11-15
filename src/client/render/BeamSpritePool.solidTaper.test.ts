@@ -111,3 +111,18 @@ describe('BeamSpritePool — solid core + falloff taper (P1a)', () => {
     expect(pool.solidLenAt(0)).toBeCloseTo(300, 1);
   });
 });
+
+describe('BeamSpritePool — per-beam style override (capital heavy beam, plan beam-slices §8)', () => {
+  it('a beam with a style draws in its tint and width (styled lane); the next beam keeps the pool style', () => {
+    const pool = new BeamSpritePool(TAPER_STYLE);
+    const heavy = { tint: 0xb46cff, width: 10, alpha: 1, taper: true };
+    pool.setBeams([{ ...horizontalBeam(375), style: heavy }, horizontalBeam(375)], 2);
+    expect(pool.coreAt(0)).toMatchObject({ tint: 0xb46cff, width: 10, parent: pool.styledContainer });
+    expect(pool.coreAt(1)).toMatchObject({ tint: TAPER_STYLE.tint, width: TAPER_STYLE.width, parent: pool.container });
+    // A plain beam in slot 0 draws in the pool style, in the main container.
+    pool.setBeams([horizontalBeam(375)], 1);
+    expect(pool.coreAt(0)).toMatchObject({ tint: TAPER_STYLE.tint, width: TAPER_STYLE.width, parent: pool.container });
+    // Sprites are pooled per lane: no growth on re-use.
+    expect(pool.container.children.length + pool.styledContainer.children.length).toBe(2);
+  });
+});

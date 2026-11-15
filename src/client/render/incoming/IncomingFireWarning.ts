@@ -22,6 +22,7 @@
 import { Container, Graphics, Text, TextStyle } from 'pixi.js';
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import { getWeapon, isWeaponId } from '@core/combat/WeaponCatalogue';
+import { NAVAL_SHELL_WEAPON_IDS } from '@core/combat/shellFlight';
 import { tuningFor } from '../../../shared-types/shipScale/lookup.js';
 import type { Camera } from '../worker/Camera';
 import {
@@ -127,7 +128,7 @@ export class IncomingFireWarning implements IncomingGroups {
     let n = 0;
     if (mirror.projectiles) for (const [id, p] of mirror.projectiles) {
       const w = p.weaponId;
-      if (p.beam || w === undefined || !w.startsWith('naval_')) continue;
+      if (p.beam || w === undefined || !NAVAL_SHELL_WEAPON_IDS.has(w)) continue;
       let rec = this.shells.get(id);
       if (rec === undefined) {
         rec = this.free.pop() ?? { sx: 0, sy: 0, maxTicks: 0, splash: 0, gen: 0 };

@@ -40,7 +40,7 @@ import { Container, Graphics, Matrix, Sprite } from 'pixi.js';
 import type { ArtHandle } from './art/ArtService.js';
 import { isMachinedSprite, type ShipArtCtx } from './art/shipArtSprites.js';
 import { muzzleReach, shipTurrets, structureTurrets, type TurretPlace } from './art/turretLayout.js';
-import { flashFrameAt, heatAfter, recoilAt, NAVAL_FLASH_LIFE_S, MUZZLE_FLASH_LIFE_S, muzzleLightAt, navalMuzzleLight, type MuzzleLight, MUZZLE_SMOKE_PUFFS, muzzleSmokePuff, type SmokePuff } from './art/fx/turretFx.js';
+import { flashFrameAt, heatAfter, muzzleHeft, recoilAt, NAVAL_FLASH_LIFE_S, MUZZLE_FLASH_LIFE_S, muzzleLightAt, navalMuzzleLight, type MuzzleLight, MUZZLE_SMOKE_PUFFS, muzzleSmokePuff, type SmokePuff, railGeom, railHeatAt, railVentPuff, railVentPuffs, RAIL_VENTS, RAIL_FLASH_LIGHT, RAIL_FLASH_TINT, type RailGeom, type RailPuff } from './art/fx/turretFx.js';
 import { NAVAL_BARREL_SPAN } from '@core/combat/muzzle';
 import { getWeapon, isWeaponId } from '@core/combat/WeaponCatalogue';
 import type { EffectQuality } from '@core/contracts/IEffects';
@@ -84,6 +84,7 @@ import { getShipKind, type WeaponMount } from '../../shared-types/shipKinds';
 import { shipPrimaryColor } from '@core/geometry/shipHullOutline';
 import { aimLineLengthForMount } from './aimLineLength';
 import { GLOBAL_SHIP_TUNING } from '@shared-types/shipScale/lookup';
+import { HEAVY_BEAM_COLOR, HEAVY_BEAM_STYLE, isHeavyBeamMount } from './beamStyles';
 
 /** Shared frozen empty mount-list. The `?? EMPTY_MOUNTS` fallback for a
  *  mountless kind avoids allocating a fresh `[]` literal every time
@@ -118,6 +119,8 @@ interface MachinedGun {
   /** Quad AA: the barrels are their own sprites so each recoils alone as it
    *  fires (review 2026-11-07); the gunhouse bakes without them. */
   aa: AaBarrels | null;
+  /** The railgun's split-rail geometry (its vents and hot rails), else null. */
+  rail: RailGeom | null;
   lastShot: number;
   beamUntil: number;
   heat: number;
@@ -138,7 +141,11 @@ interface AaBarrels {
 }
 
 /** Shot / beam colour at the muzzle, per family. */
-const MUZZLE_TINT = { bolt: 0xffc060, beam: 0x6fd0ff, missile: 0xffa050, charge: 0xd890ff } as const;
+const MUZZLE_TINT = { bolt: 0xffc060, beam: 0x6fd0ff, missile: 0xffa050, charge: 0xd890ff, rail: RAIL_FLASH_TINT } as const;
+/** Railgun vent gas: spark-hot white-blue as it leaves, cooling to grey. */
+const RAIL_GAS_HOT = 0xe0ecff, RAIL_GAS = 0x9aa6b8;
+/** Hot rails after a shot (the tip glow, stretched along them). */
+const RAIL_HOT = 0xff8a40;
 /** Furthest a new bolt may spawn from a barrel tip and still be that barrel's
  *  (world units; bolts are first seen a frame or two after leaving). */
 const SHOT_MATCH_DIST = 60;
@@ -218,12 +225,15 @@ export class MountVisualManager {
   /** This frame's renderer clock (s) and whether flash / heat draw. */
   private nowS = 0;
   private reactions = true;
+  /** Railgun vent puffs drawn per gun this frame (`railVentPuffs`). */
+  private ventPuffs = 0;
 
   /** Per frame, before the sprite updates: the clock and the quality tier
    *  (low and minimal drop the flash and heat; recoil stays). */
   setFrame(nowMs: number, quality: EffectQuality): void {
     this.nowS = nowMs / 1000;
     this.reactions = quality === 'high' || quality === 'medium';
+    this.ventPuffs = railVentPuffs(quality);
   }
 
   /** A beam is holding on this ship's mount (unknown id: its first gun). */
@@ -302,6 +312,17 @@ export class MountVisualManager {
     best.lastShot = this.nowS;
     best.heat = heatAfter(best.heat, 0, 1);
     this.shotsMatched++;
+  }
+
+  /** Each listed mount's last drawn shot on this ship (the flash), in fx ms
+   *  (−Infinity: no such gun). The charge telegraph holds a full charge
+   *  until its gun's shot shows (chargeTelegraph.ts). Alloc-free. */
+  lastShotsMs(shipId: string, mountIds: ReadonlyArray<string>, out: number[]): void {
+    const cluster = this.clusters.get(shipId);
+    for (let i = 0; i < mountIds.length; i++) {
+      const g = cluster?.perMount.get(mountIds[i]!)?.gun;
+      out[i] = g ? g.lastShot * 1000 : -Infinity;
+    }
   }
 
   private _lastShotMountId: string | null = null;
@@ -471,9 +492,12 @@ export class MountVisualManager {
     const dt = Math.max(0, Math.min(0.1, t - gun.lastT));
     gun.lastT = t;
     const fam = gun.place.family;
-    const kicks = fam === 'bolt' || fam === 'missile';
+    // The railgun draws as a charge gun but fires a slug: a heavier kick and
+    // flash than a powder gun's (`muzzleHeft`).
+    const heft = muzzleHeft(gun.place.mount.weaponId);
+    const kicks = fam === 'bolt' || fam === 'missile' || heft > 1;
     const since = t - gun.lastShot;
-    const kick = kicks ? recoilAt(since) * Math.max(gun.place.len, gun.place.wid) * (fam === 'missile' ? 0.06 : 0.2) : 0;
+    const kick = kicks ? recoilAt(since / heft) * Math.max(gun.place.len, gun.place.wid) * (fam === 'missile' ? 0.06 : 0.2) * heft : 0;
     const aa = gun.aa;
     const houseKick = aa ? 0 : kick;
     layers.a.y = houseKick; layers.b.y = houseKick;
@@ -494,6 +518,7 @@ export class MountVisualManager {
     if (!this.reactions) {
       if (gun.flash) gun.flash.visible = false;
       if (gun.tip) gun.tip.visible = false;
+      if (gun.smokes) for (const s of gun.smokes) s.visible = false;
       return;
     }
     if (!gun.flash || !gun.tip || (gun.place.naval && gun.place.mount.size !== 'AA' && (!gun.smokes || !gun.barrelFlashes))) this.buildReactionSprites(gun);
@@ -505,7 +530,7 @@ export class MountVisualManager {
       // propellant smoke blown forward along it (children of the pivot, so
       // they follow the barrels' rotation and recoil).
       if (flash) flash.visible = false;
-      this.animateNavalMuzzles(gun, naval, kicks ? since : -1, kick);
+      this.animateNavalMuzzles(gun, naval, kicks ? since : -1, kick, heft);
     } else if (flash) {
       const frames = this.flashFrames();
       const fr = kicks && frames ? flashFrameAt(since, frames.length) : -1;
@@ -520,37 +545,55 @@ export class MountVisualManager {
       if (fr >= 0 || lk > 0) { flash.x = flashX; flash.y = -gun.reach + flashKick; }
       if (lk > 0 && litPass.settings && litPass.settings.pointLights > 0) litPass.attachLight(flash, 0xffa050, lk, 60, 6);
     }
-    if (tip) {
+    const rail = gun.rail;
+    if (tip && rail) {
+      // The railgun's rails glow hot after a shot and cool over ~2 s: the
+      // tip glow, stretched along the rails (it recoils with them).
+      const glow = railHeatAt(since) * 0.85;
+      tip.visible = glow > 0.02;
+      if (tip.visible) {
+        tip.alpha = glow;
+        tip.x = 0;
+        tip.y = (rail.railY0 + rail.muzzleY) * 0.5 + kick;
+        tip.scale.set((rail.railOuter * 3.2) / tip.texture.width, ((rail.railY0 - rail.muzzleY) * 1.15) / tip.texture.height);
+      }
+    } else if (tip) {
       const glow = fam === 'bolt' ? gun.heat * 0.8 : beamOn ? 0.9 : 0;
       tip.visible = glow > 0.02;
       if (tip.visible) {
         tip.alpha = glow;
         tip.x = flashX;
         tip.y = -gun.reach + flashKick;
-        tip.scale.set(((gun.place.wid * (fam === 'bolt' ? 1.6 : 3)) / 64) * (1 + 0.4 * glow));
+        // A heavy-beam projector's tip burns bigger, in the beam's violet.
+        const tipK = isHeavyBeamMount(gun.place.mount) ? (HEAVY_BEAM_STYLE.glowScale ?? 1) * 0.6 : 1;
+        tip.scale.set(((gun.place.wid * (fam === 'bolt' ? 1.6 : 3) * tipK) / 64) * (1 + 0.4 * glow));
       }
     }
   }
 
   /** Per-barrel flash + forward smoke for a naval turret, `since` seconds
    *  after its last salvo (-1 = not firing). Alloc-free (#14). */
-  private animateNavalMuzzles(gun: MachinedGun, naval: { barrels: number; houseW: number }, since: number, kick: number): void {
+  private animateNavalMuzzles(gun: MachinedGun, naval: { barrels: number; houseW: number }, since: number, kick: number, heft = 1): void {
     const w = gun.place.wid;
     const n = naval.barrels;
     const pitch = n > 1 ? (naval.houseW * NAVAL_BARREL_SPAN) / (n - 1) : 0;
     const frames = this.flashFrames();
-    const fr = since >= 0 && frames ? flashFrameAt(since, frames.length, NAVAL_FLASH_LIFE_S) : -1;
+    const life = NAVAL_FLASH_LIFE_S * heft;
+    const fr = since >= 0 && frames ? flashFrameAt(since, frames.length, life) : -1;
     const flashes = gun.barrelFlashes;
     if (flashes) {
       // GPU-lit art: the salvo lights the gun, its neighbours and the deck.
       // Every naval calibre (16" down to the 5" secondaries) lights in
       // proportion to its gun, and the light outlives the flash briefly.
-      const lk = since >= 0 && frames ? muzzleLightAt(since, NAVAL_FLASH_LIFE_S) : 0;
+      const lk = since >= 0 && frames ? muzzleLightAt(since, life) : 0;
       if (lk > 0 && litPass.settings && litPass.settings.pointLights > 0 && flashes.length > 0) {
         const L = navalMuzzleLight(w, this._light);
         const mid = flashes[flashes.length >> 1]!;
         if (fr < 0) { mid.x = ((flashes.length >> 1) - (n - 1) / 2) * pitch; mid.y = -gun.reach + kick; }
-        litPass.attachLight(mid, 0xff9a48, L.intensity * lk, L.reach, L.z);
+        // The railgun's flash burns white-blue, not powder orange; its light
+        // is a deeper blue at sqrt(heft) the brightness (full heft washed the
+        // whole hull near-white), its reach the full heft.
+        litPass.attachLight(mid, heft > 1 ? RAIL_FLASH_LIGHT : 0xff9a48, L.intensity * lk * Math.sqrt(heft), L.reach * heft, L.z);
       }
       for (let b = 0; b < flashes.length; b++) {
         const f = flashes[b]!;
@@ -559,11 +602,12 @@ export class MountVisualManager {
         f.texture = frames![fr]!;
         f.x = (b - (n - 1) / 2) * pitch;
         f.y = -gun.reach + kick;
-        f.scale.set((w * 7) / 64, (w * 22) / 64);
+        f.scale.set((w * 7 * heft) / 64, (w * 22 * heft) / 64);
       }
     }
     const smokes = gun.smokes;
     if (!smokes) return;
+    if (gun.rail) { this.animateRailVents(gun.rail, smokes, since, kick); return; }
     const tex = smokes[0]!.texture;
     const tw = Math.max(1, tex.width);
     for (let b = 0; b < n; b++) {
@@ -581,6 +625,27 @@ export class MountVisualManager {
       }
     }
   }
+
+  /** The railgun's vent gas after a shot: puffs blown sideways out of the
+   *  vents along each rail (`railVentPuff`), `ventPuffs` of them by
+   *  effects tier, spark-hot as they leave. Alloc-free (#14). */
+  private animateRailVents(g: RailGeom, smokes: Sprite[], since: number, kick: number): void {
+    const tw = Math.max(1, smokes[0]!.texture.width);
+    const n = this.ventPuffs;
+    for (let k = 0; k < smokes.length; k++) {
+      const s = smokes[k]!;
+      const p = since >= 0 && k < n ? railVentPuff(since, k, g, this._railPuff) : null;
+      s.visible = p !== null && p.alpha > 0.01;
+      if (!s.visible) continue;
+      s.x = p!.x;
+      s.y = p!.y + kick;
+      s.rotation = k * 1.37 + since * 0.8;
+      s.alpha = p!.alpha;
+      s.tint = p!.hot > 0 ? RAIL_GAS_HOT : RAIL_GAS;
+      s.scale.set(p!.size / tw);
+    }
+  }
+  private readonly _railPuff: RailPuff = { x: 0, y: 0, size: 0, alpha: 0, hot: 0 };
 
   /** The flash flipbook cells, once baked. */
   private flashFrames(): readonly import('pixi.js').Texture[] | null {
@@ -610,7 +675,7 @@ export class MountVisualManager {
       gun.pivot.addChild(f); gun.flash = f;
     }
     if (!gun.tip && glow) {
-      const g = new Sprite(glow); g.anchor.set(0.5); g.blendMode = 'add'; g.tint = gun.place.family === 'bolt' ? 0xff6a2a : tint; g.visible = false;
+      const g = new Sprite(glow); g.anchor.set(0.5); g.blendMode = 'add'; g.tint = gun.place.family === 'bolt' ? 0xff6a2a : gun.rail ? RAIL_HOT : isHeavyBeamMount(gun.place.mount) ? HEAVY_BEAM_COLOR : tint; g.visible = false;
       gun.pivot.addChild(g); gun.tip = g;
     }
     const naval = gun.place.naval && gun.place.mount.size !== 'AA' ? gun.place.naval : undefined;
@@ -620,8 +685,10 @@ export class MountVisualManager {
       if (smoke) {
         // Smoke under the flash (added first), normal blend, warm grey.
         const list: Sprite[] = [];
-        for (let i = 0; i < naval.barrels * MUZZLE_SMOKE_PUFFS; i++) {
-          const s = new Sprite(smoke); s.anchor.set(0.5); s.tint = 0xb8b0a4; s.visible = false;
+        // The railgun vents gas from its rails instead (two puffs a vent).
+        const count = gun.rail ? RAIL_VENTS.length * 2 : naval.barrels * MUZZLE_SMOKE_PUFFS;
+        for (let i = 0; i < count; i++) {
+          const s = new Sprite(smoke); s.anchor.set(0.5); s.tint = gun.rail ? RAIL_GAS : 0xb8b0a4; s.visible = false;
           gun.pivot.addChildAt(s, 0); list.push(s);
         }
         gun.smokes = list;
@@ -686,7 +753,9 @@ export class MountVisualManager {
     const travel = w && w.mode !== 'hitscan' ? w.speed * SHOT_FIRST_SEEN_S : 0;
     return {
       place, pivot, handle, layers: null, reach, matchDist: Math.max(SHOT_MATCH_DIST, reach, travel),
-      flash: null, tip: null, barrelFlashes: null, smokes: null, aa, lastShot: -9, beamUntil: -1, heat: 0, lastT: this.nowS, aim: 0,
+      flash: null, tip: null, barrelFlashes: null, smokes: null, aa,
+      rail: place.family === 'rail' && place.naval ? railGeom(place.naval.houseW, place.naval.houseL, place.len, place.wid) : null,
+      lastShot: -9, beamUntil: -1, heat: 0, lastT: this.nowS, aim: 0,
     };
   }
 

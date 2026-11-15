@@ -32,6 +32,7 @@ function padFieldId(id: number): string {
   return s;
 }
 import { pointSegmentDistance, wantPredBody } from '../structures/predStructureStreaming.js';
+import { PREDWORLD_STRUCTURE_RADIUS, PREDWORLD_WRECK_RADIUS } from '../../shared-types/structureBudgets.js';
 import { Reconciler, type InputRecord } from '@core/prediction/Reconciler';
 import { springStep, type SpringState } from '@core/math/CritDampedSpring';
 import {
@@ -153,9 +154,9 @@ import { shipShotMuzzle } from '@core/combat/muzzle';
 import { tuningFor } from '@shared-types/shipScale/lookup';
 
 // A group fires only when a barrel bears on its lock: the shared rule (#15).
-import { fillFireTargetShape, mountFiresOn, newFireTargetShape, type FireTargetShape } from '@core/combat/fireControlBearing';
+import { fillFireTargetShape, fillRangeShape, mountFiresOn, newFireTargetShape, type FireTargetShape } from '@core/combat/fireControlBearing';
 import { pickTurretLock } from '@core/combat/turretLockPick';
-import { hasTurretFireControl, mountWeaponReach, weaponIdReach } from '@core/combat/mountReach';
+import { hasTurretFireControl, mountWeaponReach, weaponIdReach, type MountRangeTarget } from '@core/combat/mountReach';
 /** No aim guides (the mirror's `localAimMountIds`): the lock rings replace them. */
 const EMPTY_AIM_IDS: readonly string[] = Object.freeze([]);
 import { getWeapon, weaponAutoFireRange, type WeaponDef, type WeaponId } from '@core/combat/WeaponCatalogue';
@@ -176,6 +177,7 @@ import {
 } from '../combat/HitPrediction.client';
 import { localFireSpawnsGhost, localFirePredicts, liveBeamVisible, LIVE_BEAM_PERSIST_MS } from '../combat/LocalBeam';
 import { flowMaterialToCode } from '../render/pixi/connectorVisual';
+import { findMount, isHeavyBeamMount, remoteBeamTtlMs } from '../render/beamStyles';
 import type { TouchInput } from '../input/TouchInput';
 import { joystickToInput, IDLE_INPUT_STATE, type JoystickInputState } from '../input/joystickToInput';
 import { aimInput } from '../input/AimInput';
@@ -296,6 +298,31 @@ function _pa5(n: number): number { return parseFloat(n.toFixed(5)); }
 const NO_LOCKED_BY: ReadonlyArray<{ t: string; s: number; p: number }> = [];
 /** A welcome from a wreck room with no live wreck (slice 3). */
 const NO_WRECK_LIST: readonly import('@shared-types/messages/snapshotMessages').WreckDescriptor[] = [];
+
+const SWARM_ID_PREFIX = 'swarm-';
+
+/**
+ * Is `targetId` (`swarm-<entityId>`) a wreck piece (swarm kind 4)? A hit on
+ * debris shows its impact spark and flash but NO floating damage number or
+ * health bar, for every wreck profile, capitals included (hostile review
+ * 2026-11-13: numbers coalesce by screen spot, so hits on a dead ship's
+ * pieces kept climbing its floating number after the explosion). Parses the
+ * id in place (no substring; called per damage event, #14).
+ */
+export function isWreckPieceTarget(
+  targetId: string, swarm: ReadonlyMap<number, Pick<SwarmRenderState, 'kind'>> | undefined,
+): boolean {
+  if (swarm === undefined || !targetId.startsWith(SWARM_ID_PREFIX)) return false;
+  const n = targetId.length;
+  if (n === SWARM_ID_PREFIX.length) return false;
+  let id = 0;
+  for (let i = SWARM_ID_PREFIX.length; i < n; i++) {
+    const c = targetId.charCodeAt(i) - 48;
+    if (c < 0 || c > 9) return false;
+    id = id * 10 + c;
+  }
+  return swarm.get(id)?.kind === SWARM_KIND_WRECK;
+}
 
 export class ColyseusGameClient {
   /**
@@ -1570,9 +1597,11 @@ export class ColyseusGameClient {
       // Capital wrecks on: a dying capital explodes at its kill point (the
       // wreck break-up), not as a hull-sized blast (money-shot review).
       this.mirror.capitalWrecks = msg.capitalWrecks === true;
+      // Sub-cap wrecks on: a dying sub-cap's hull is held until its pieces draw.
+      this.mirror.subcapWrecks = msg.subcapWrecks === true;
       // Sub-capital break-up slice 3: the welcome carries the FULL live wreck
       // set (#16); snapshots then carry only adds, removes and a slow resync.
-      if (msg.capitalWrecks === true) {
+      if (msg.capitalWrecks === true || msg.subcapWrecks === true) {
         this._wrecks.apply(msg.wrecks ?? NO_WRECK_LIST);
         this.mirror.wrecks = this._wrecks.descriptors;
       }
@@ -2038,8 +2067,11 @@ export class ColyseusGameClient {
       // Pre-2c servers omit `mountId`; we synthesise `'forward'` so the entry
       // still has a stable key and legacy single-mount rendering is unchanged.
       const isAiShooter = evt.shooterId.startsWith('swarm-');
-      const ttlMs = isAiShooter ? 250 : 400;
       const mountKey = evt.mountId ?? 'forward';
+      // The capital heavy beam (cooldown 10 ticks) holds longer so it reads as
+      // one continuous burn, not a strobe (beamStyles `remoteBeamTtlMs`). Its
+      // mount is looked up on the shooter's kind: no wire field.
+      const ttlMs = remoteBeamTtlMs(isAiShooter, isHeavyBeamMount(findMount(this.shooterKindMounts(evt.shooterId), evt.mountId)));
       const lasers = (this.mirror.remoteLasers ??= new Map());
       let perShooter = lasers.get(evt.shooterId);
       if (!perShooter) {
@@ -2827,13 +2859,15 @@ export class ColyseusGameClient {
     const localId = this.mirror.localPlayerId;
     // Flash the damaged ship for 6 frames.
     this._damageFlashFrames.set(evt.targetId, 6);
+    // Debris (a wreck piece): spark and flash only, no number or health bar.
+    const debris = isWreckPieceTarget(evt.targetId, this.mirror.swarm);
 
     // Floating damage number at hit location. weapon-hit-prediction
     // Phase 3 — suppressed when a confirmed/settled prediction already
     // showed this number (de-dupe: exactly one number per confirmed hit).
     // Everything else in handleDamage stays unconditional — this remains
     // the SOLE HP/HUD/flash/healthbar/hostility authority.
-    if (!suppressNumber && this.mirror.pendingDamageNumbers) {
+    if (!suppressNumber && !debris && this.mirror.pendingDamageNumbers) {
       const targetShip = this.mirror.ships.get(evt.targetId);
       const x = evt.hitX ?? targetShip?.x ?? 0;
       const y = evt.hitY ?? targetShip?.y ?? 0;
@@ -2846,7 +2880,7 @@ export class ColyseusGameClient {
     // looks like zero damage: the hull bar stays at 100% while shield
     // absorbs (no-spillover) the first N hits, and drones have no other
     // shield-feedback surface (only player ships have a HUD ShieldHullBar).
-    if (evt.shooterId === localId && this.mirror.pendingHealthBarHits) {
+    if (evt.shooterId === localId && !debris && this.mirror.pendingHealthBarHits) {
       const healthPct = evt.hullMax > 0 ? Math.max(0, evt.newHealth / evt.hullMax) : 0;
       const shieldPct = evt.shieldMax > 0 ? Math.max(0, evt.newShield / evt.shieldMax) : 0;
       // Pre-hit HULL fraction for the chip-damage band: a HULL hit removed
@@ -3508,6 +3542,8 @@ export class ColyseusGameClient {
       // Fire control (#16): the pilot's groups + locks, always applied.
       this.applyFcGroups(serverState.groups);
       this.mirror.localLockedBy = serverState.lockedBy ?? NO_LOCKED_BY;
+      this.mirror.localLockedByTotal = serverState.lockedByN ?? 0;
+      this.mirror.localLockedByLocked = serverState.lockedByL ?? 0;
 
       // Probe 5 (mobile-perf-investigation, 2026-05-24) — instrument
       // reconcile separately from the rest of handleSnapshot. The
@@ -3708,6 +3744,18 @@ export class ColyseusGameClient {
     }
   }
 
+  /** The catalogue mounts of a `laser_fired` shooter's ship kind (a remote
+   *  player's ship, or a `swarm-<id>` drone/capital), or undefined when the
+   *  shooter isn't mirrored. Same lookup the renderer's beam loop does. */
+  private shooterKindMounts(shooterId: string): readonly WeaponMount[] | undefined {
+    const ship = this.mirror.ships.get(shooterId);
+    if (ship) return ship.kind ? getShipKind(ship.kind).mounts : undefined;
+    if (!shooterId.startsWith('swarm-')) return undefined;
+    const entityId = parseInt(shooterId.slice('swarm-'.length), 10);
+    const sw = Number.isNaN(entityId) ? undefined : this.mirror.swarm?.get(entityId);
+    return sw?.shipKind ? getShipKind(sw.shipKind).mounts : undefined;
+  }
+
   /**
    * Sync swarm entries into the prediction world. Called after every binary
    * `swarm` packet decode. New entries spawn predWorld bodies (so the local
@@ -3737,6 +3785,10 @@ export class ColyseusGameClient {
     // correction replays the whole prediction world). No local ship ⇒ keep all.
     const localId = this.mirror.localPlayerId;
     const me = localId ? this.mirror.ships.get(localId) : undefined;
+    // Wreck pieces stream by the GAP between hulls: the local hull's radius
+    // (213 u for a 2× crossguard) is not part of the PREDWORLD_WRECK_RADIUS
+    // travel budget.
+    const myHull = me ? getShipKind(me.kind ?? null).radius : 0;
     for (const [entityId, entry] of this.mirror.swarm) {
       // HC#2: an unrecognised pose-core kind resolves to `null` and is SKIPPED —
       // it never falls through to the drone path (the old `else`-is-drone branch
@@ -3751,9 +3803,14 @@ export class ColyseusGameClient {
       // S2b: a wreck piece needs its wreck's descriptor for its geometry; until
       // it arrives (≤ 0.5 s for a late joiner) the piece has no body yet.
       if (entry.kind === SWARM_KIND_WRECK && (entry.wreckId === undefined || !this._wrecks.has(entry.wreckId))) continue;
-      if (entry.kind === 2 && me) {
-        const edge = Math.hypot(entry.x - me.x, entry.y - me.y) - entry.radius;
-        if (!wantPredBody(this.predWorld.hasShip(key), edge)) continue; // unseen ⇒ swept below
+      // Wreck pieces stream in the same way (soak 2026-11-13: ~700 pieces in
+      // the predWorld put 56 % of the client main thread into Rapier's step).
+      // A piece only matters to prediction where the local ship can touch it.
+      if ((entry.kind === 2 || entry.kind === SWARM_KIND_WRECK) && me) {
+        const wreck = entry.kind === SWARM_KIND_WRECK;
+        const edge = Math.hypot(entry.x - me.x, entry.y - me.y) - entry.radius - (wreck ? myHull : 0);
+        const radius = wreck ? PREDWORLD_WRECK_RADIUS : PREDWORLD_STRUCTURE_RADIUS;
+        if (!wantPredBody(this.predWorld.hasShip(key), edge, radius)) continue; // unseen ⇒ swept below
       }
       seen.add(key);
       ctx.entityId = entityId;
@@ -5836,6 +5893,9 @@ export class ColyseusGameClient {
   private readonly _fcSalvo = new Set<string>();
   private readonly _fcPickX = new Float64Array(8);
   private readonly _fcPickY = new Float64Array(8);
+  /** Per-lock hit shapes for `pickTurretLock`'s hull range gate (reused, #14). */
+  private readonly _fcPickShapes: { -readonly [K in keyof MountRangeTarget]: MountRangeTarget[K] }[] =
+    Array.from({ length: 8 }, () => ({ kindId: null, angle: 0, shieldUp: false, radius: 0 }));
   private readonly _fcPickKeys: string[] = [];
   /** Parsed lock keys (`s:<n>` / `p:<id>`), so per-frame lookups never slice strings. */
   private readonly _fcKeys = new Map<string, { swarm: number; player: string | null }>();
@@ -6083,6 +6143,23 @@ export class ColyseusGameClient {
     return k;
   }
 
+  /** A lock target's hit shape for the shared turret range gate
+   *  (`pickTurretLock` → `mountInReach`), from the mirror: the same fields the
+   *  server's `resolveLockTarget` fills (#15). */
+  private fcTargetShape(key: string, out: { -readonly [K in keyof MountRangeTarget]: MountRangeTarget[K] }): void {
+    const k = this.fcKey(key);
+    if (k.player !== null) {
+      const s = this.mirror.ships.get(k.player);
+      if (s) fillRangeShape(out, s.angle, true, s.kind ?? null, s.shieldDown !== true, 0);
+      else fillRangeShape(out, 0, false, null, false, 0); // not visible: a point
+      return;
+    }
+    const e = this.mirror.swarm?.get(k.swarm);
+    if (!e) { fillRangeShape(out, 0, false, null, false, 0); return; }
+    const ship = e.kind === 1;
+    fillRangeShape(out, ship ? e.angle : 0, ship, e.shipKind ?? null, ship && e.shieldDown !== true, e.radius);
+  }
+
   /**
    * World pose + hit shape of a lock target from the render mirror (false =
    * not visible). The same fields the server's `resolveLockTarget` fills
@@ -6143,6 +6220,7 @@ export class ColyseusGameClient {
       if (!this.fcTargetPose(l.t, this._fcPickPose)) continue;
       this._fcPickX[keys.length] = this._fcPickPose.x;
       this._fcPickY[keys.length] = this._fcPickPose.y;
+      this.fcTargetShape(l.t, this._fcPickShapes[keys.length]!);
       keys.push(l.t);
     }
     if (keys.length === 0) return first;
@@ -6151,7 +6229,7 @@ export class ColyseusGameClient {
     const sinA = Math.sin(sAngle);
     const mx = sx + (m.localX * cosA - m.localY * sinA);
     const my = sy + (m.localX * sinA + m.localY * cosA);
-    return keys[pickTurretLock(m, sAngle, mx, my, def.reach, def.ordinal, keys.length, this._fcPickX, this._fcPickY)]!;
+    return keys[pickTurretLock(m, sAngle, mx, my, def.reach, def.ordinal, keys.length, this._fcPickX, this._fcPickY, this._fcPickShapes)]!;
   }
   private readonly _fcPickPose: FireTargetShape = newFireTargetShape();
 
@@ -6809,6 +6887,8 @@ export class ColyseusGameClient {
     const clockNow = this.clock.now();
     const predSink: PredictedFeedbackSink = {
       pushDamageNumber: (targetId, x, y, damage, tag) => {
+        // Debris: never a number (the authoritative path skips it too).
+        if (isWreckPieceTarget(targetId, this.mirror.swarm)) return;
         if (!isHitscan || damage <= 0) {
           this.mirror.pendingDamageNumbers?.push({ targetId, x, y, damage, tag });
           // Probe 4 (mobile-perf-investigation, 2026-05-24) — replaced the

@@ -37,27 +37,27 @@ function ctx(livery?: Livery['treatment']): { actx: ShipArtCtx; calls: (Livery |
 describe('shipHandleFor livery', () => {
   it('re-acquires only when a livery scalar changes', () => {
     const { actx, calls } = ctx('a');
-    const h1 = shipHandleFor(actx, 'k', 'fighter', undefined, L.team, L.sigil);
+    const h1 = shipHandleFor(actx, 'k', 'fighter', undefined, false, L.team, L.sigil);
     expect(calls).toEqual([L]);
-    expect(shipHandleFor(actx, 'k', 'fighter', undefined, L.team, L.sigil)).toBe(h1);
+    expect(shipHandleFor(actx, 'k', 'fighter', undefined, false, L.team, L.sigil)).toBe(h1);
     expect(calls).toHaveLength(1);
-    shipHandleFor(actx, 'k', 'fighter', undefined, 0xff0000, L.sigil);
-    shipHandleFor(actx, 'k', 'fighter', undefined, 0xff0000, 0x00ff00);
-    shipHandleFor(actx, 'k', 'fighter', undefined, 0xff0000, 0x00ff00);
+    shipHandleFor(actx, 'k', 'fighter', undefined, false, 0xff0000, L.sigil);
+    shipHandleFor(actx, 'k', 'fighter', undefined, false, 0xff0000, 0x00ff00);
+    shipHandleFor(actx, 'k', 'fighter', undefined, false, 0xff0000, 0x00ff00);
     actx.livery = 'c';
-    shipHandleFor(actx, 'k', 'fighter', undefined, 0xff0000, 0x00ff00);
+    shipHandleFor(actx, 'k', 'fighter', undefined, false, 0xff0000, 0x00ff00);
     expect(calls.map((c) => c && `${c.treatment}${c.team}:${c.sigil}`)).toEqual([
       `a${L.team}:${L.sigil}`, `a${0xff0000}:${L.sigil}`, `a${0xff0000}:${0x00ff00}`, `c${0xff0000}:${0x00ff00}`,
     ]);
   });
   it('flag off or no team: no livery, existing callers unchanged', () => {
     const { actx, calls } = ctx();
-    shipHandleFor(actx, 'k', 'fighter', undefined, L.team, L.sigil);
+    shipHandleFor(actx, 'k', 'fighter', undefined, false, L.team, L.sigil);
     shipHandleFor(actx, 'k', 'fighter', undefined);
     expect(calls).toEqual([undefined]);
     const on = ctx('b');
     shipHandleFor(on.actx, 'k', 'fighter', undefined);
-    shipHandleFor(on.actx, 'k', 'fighter', undefined, L.team);
+    shipHandleFor(on.actx, 'k', 'fighter', undefined, false, L.team);
     expect(on.calls).toEqual([undefined, { treatment: 'b', team: L.team, sigil: L.team }]);
   });
 });
@@ -70,10 +70,10 @@ describe('livery edge plumbing (b8)', () => {
   });
   it('shipHandleFor passes the edge into the Livery and re-acquires only when it changes', () => {
     const { actx, calls } = ctx('b8');
-    const h1 = shipHandleFor(actx, 'k', 'fighter', undefined, L.team, L.sigil, 'swept');
-    expect(shipHandleFor(actx, 'k', 'fighter', undefined, L.team, L.sigil, 'swept')).toBe(h1);
-    shipHandleFor(actx, 'k', 'fighter', undefined, L.team, L.sigil, 'tooth');
-    shipHandleFor(actx, 'k', 'fighter', undefined, L.team, L.sigil, 'tooth');
+    const h1 = shipHandleFor(actx, 'k', 'fighter', undefined, false, L.team, L.sigil, 'swept');
+    expect(shipHandleFor(actx, 'k', 'fighter', undefined, false, L.team, L.sigil, 'swept')).toBe(h1);
+    shipHandleFor(actx, 'k', 'fighter', undefined, false, L.team, L.sigil, 'tooth');
+    shipHandleFor(actx, 'k', 'fighter', undefined, false, L.team, L.sigil, 'tooth');
     expect(calls).toEqual([{ treatment: 'b8', team: L.team, sigil: L.sigil, edge: 'swept' }, { treatment: 'b8', team: L.team, sigil: L.sigil, edge: 'tooth' }]);
   });
 });

@@ -23,6 +23,7 @@ import type { ShipPhysicsState } from '../../src/core/physics/World.js';
 import type { ShipState } from '../../src/server/rooms/schema/SectorState.js';
 import type { SnapshotMessage, WreckDescriptor } from '../../src/shared-types/messages.js';
 import { carryWreckDeltas } from '../../src/client/net/SnapshotCoalescer.js';
+import { LOCKED_BY_WIRE_ROWS } from '../../src/shared-types/combat/lockProfile.js';
 
 const PID = 'pilot-a';
 const SID = `s-${PID}`;
@@ -43,6 +44,10 @@ interface World {
   timeScale: SnapshotMessage['timeScale'];
   mountAngles: SnapshotMessage['structureMountAngles'];
   playerAngles: Float32Array;
+  /** NPC lock rows on the pilot + the total of every locker. */
+  lockRows?: Array<{ t: string; s: 1 | 2; p: number }>;
+  lockTotal?: number;
+  lockLocked?: number;
 }
 
 function setup(world: World): { b: SnapshotBroadcaster; sent: SnapshotMessage[] } {
@@ -85,6 +90,9 @@ function setup(world: World): { b: SnapshotBroadcaster; sent: SnapshotMessage[] 
     getWrecks: () => [],
     wrecksVersion: () => 0,
     timeScale: () => world.timeScale,
+    lockedByOf: () => world.lockRows,
+    lockedByTotalOf: () => world.lockTotal ?? world.lockRows?.length ?? 0,
+    lockedByLockedOf: () => world.lockLocked ?? 0,
     // Encode synchronously, like both production paths.
     sendSnapshot: (_c: Client, snap: SnapshotMessage) => {
       sent.push(ENCODERS.ws.unpack(ENCODERS.ws.pack(snap)) as SnapshotMessage);
@@ -150,7 +158,7 @@ describe('SnapshotBroadcaster — default fields are absent on the wire', () => 
     const last = sent[sent.length - 1]!;
     const st = last.states[`inst-${PID}`]!;
     for (const k of ['lastInput', 'mountAngles', 'shieldDown', 'level', 'statAlloc', 'cargo', 'depositing',
-      'groups', 'lockedBy', 'fitted', 'wallet', 'poseEpoch', 'warp', 'disabledMs', 'mounts'] as const) {
+      'groups', 'lockedBy', 'lockedByN', 'lockedByL', 'fitted', 'wallet', 'poseEpoch', 'warp', 'disabledMs', 'mounts'] as const) {
       expect(k in st, `states[].${k} absent when default`).toBe(false);
     }
     // One pilot, nothing happening: under 200 B per snapshot on both
@@ -185,6 +193,33 @@ describe('SnapshotBroadcaster — default fields are absent on the wire', () => 
       const st = s.states[`inst-${PID}`]!;
       expect('level' in st || 'mountAngles' in st).toBe(false);
     }
+  });
+
+  it('lockedBy rows + lockedByN: the total rides only when the rows are capped (owner 2026-11-14)', () => {
+    const rows = Array.from({ length: LOCKED_BY_WIRE_ROWS }, (_, i) => ({ t: `s:${i + 1}`, s: 2 as const, p: 100 }));
+    const world: World = {
+      boosting: new Set(), hostile: new Set(), level: 1, timeScale: undefined, mountAngles: undefined,
+      playerAngles: new Float32Array(1), lockRows: rows, lockTotal: 20,
+    };
+    const { b, sent } = setup(world);
+    for (let i = 0; i < 3; i++) b.broadcast(false);
+    let st = sent[sent.length - 1]!.states[`inst-${PID}`]!;
+    expect(st.lockedBy).toHaveLength(LOCKED_BY_WIRE_ROWS);
+    expect(st.lockedByN).toBe(20);
+    // Every row locked and no completed lock off the list: no locked count.
+    expect('lockedByL' in st).toBe(false);
+    // 14 completed locks, 6 of them off the rows: the exact count rides.
+    world.lockLocked = 14;
+    for (let i = 0; i < 3; i++) b.broadcast(false);
+    st = sent[sent.length - 1]!.states[`inst-${PID}`]!;
+    expect(st.lockedByL).toBe(14);
+    // Every locker on the list ⇒ no total key (the client reads the rows' count).
+    world.lockTotal = LOCKED_BY_WIRE_ROWS;
+    for (let i = 0; i < 3; i++) b.broadcast(false);
+    st = sent[sent.length - 1]!.states[`inst-${PID}`]!;
+    expect('lockedByN' in st).toBe(false);
+    expect('lockedByL' in st).toBe(false);
+    expect(undefinedKeys(sent[sent.length - 1])).toEqual([]);
   });
 
   it('client side (#15): a decoded snapshot with the keys absent reads as empty / default', () => {

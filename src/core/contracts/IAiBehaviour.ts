@@ -17,6 +17,10 @@ export interface AiPlayerView {
   readonly y: number;
   readonly vx: number;
   readonly vy: number;
+  /** Facing (rad; forward (-sin, cos)). Optional: absent = unknown. The
+   *  dogfight layer reads it to tell a parked target aimed at the drone from
+   *  one that is not (`TacticalContext.targetBowCos`). Server-populated. */
+  readonly angle?: number;
   /** Current hull health + its max, for health-weighted target selection
    *  (drones focus the wounded). Optional — when absent the picker falls back
    *  to pure nearest. Server-populated; the client never builds drone views
@@ -31,6 +35,12 @@ export interface AiPlayerView {
    *  (robot reputation ≥ ROBOT_TRUCE_AT): robots no longer engage them on sight.
    *  Retaliation (`hostileTo`) still applies. Server-populated only. */
   truce?: boolean;
+  /** Hull shape (kind, shield; heading is `angle`) so the brain ranges to
+   *  the HULL, as the fire gate does, and sizes a fixed gun's trigger cone by
+   *  it (`shipAimRadius`). Absent ⇒ ranged from the centre, aimed at the
+   *  default kind's bubble. */
+  readonly kindId?: string | null;
+  readonly shieldUp?: boolean;
 }
 
 /**
@@ -63,10 +73,15 @@ export interface AiSwarmView {
   readonly y: number;
   readonly vx: number;
   readonly vy: number;
+  /** Facing (rad; forward (-sin, cos)). Optional: absent = unknown. */
+  readonly angle?: number;
   /** The entity's NPC allegiance (derived from its ship kind). */
   readonly allegiance: string;
   readonly health?: number;
   readonly maxHealth?: number;
+  /** Hull shape, as on `AiPlayerView`. */
+  readonly kindId?: string | null;
+  readonly shieldUp?: boolean;
 }
 
 /**
@@ -116,6 +131,41 @@ export interface AiWorldView {
    *  engageable pilot hulls, rebuilt once per tick by the server. SERVER-ONLY,
    *  no wire surface (same rationale as `structures`). Absent ⇒ no index. */
   readonly neighbours?: IAiNeighbourQuery;
+  /** The controller's work counters (absent ⇒ nothing counts). */
+  readonly stats?: AiTickStats;
+  /** Per-entity current aim points (fire-lane awareness, AI slice 5b): a
+   *  brain writes its own, reads a wingman's. Owned by `AiController`.
+   *  Absent ⇒ no lane awareness. */
+  readonly aims?: IAiAimBoard;
+  /** Who each side's brains currently target (spread targets, 2026-11-14): a
+   *  brain claims its body target, the others read the count. Owned by
+   *  `AiController`. Absent ⇒ no spreading (every target scores unclaimed). */
+  readonly claims?: IAiTargetClaims;
+  /** True while this entity's weapon is winding up a charge (the resolver
+   *  owns the charge; `AiFireResolver.isCharging`). A charge shot leaves down
+   *  the barrel when the wind-up ends, so the pilot holds its line on the
+   *  target until then. SERVER-ONLY, no wire surface (the snapshot's
+   *  `drones[].charging` is the client's copy). Absent ⇒ never charging. */
+  isCharging?(entityId: string): boolean;
+}
+
+/** Body-target claims per NPC side (spread targets). One claim per brain;
+ *  `count` is how many brains of `side` hold `targetId` right now. Alloc-free
+ *  on the hot path (a target id seen for the first time adds one map entry). */
+export interface IAiTargetClaims {
+  /** Set (or clear, with `null`) this brain's claim. */
+  claim(entityId: string, side: string, targetId: string | null): void;
+  count(side: string, targetId: string): number;
+}
+
+/** Each brain's current aim point, keyed by entity id (AI slice 5b).
+ *  Alloc-free: `read` fills `readX/readY` and returns false when `id` has
+ *  not aimed lately. */
+export interface IAiAimBoard {
+  write(id: string, x: number, y: number, tick: number): void;
+  read(id: string, tick: number): boolean;
+  readonly readX: number;
+  readonly readY: number;
 }
 
 /**
@@ -142,6 +192,9 @@ export interface IAiNeighbourQuery {
   /** NPC allegiance id, or `'players'` for a pilot hull. */
   sideAt(i: number): string;
   isPilotAt(i: number): boolean;
+  /** A capital-role NPC (`aiRole === 'capital'`): what a damaged ship falls
+   *  back on (AI slice 6b). Always false for a pilot hull. */
+  isCapitalAt(i: number): boolean;
 }
 
 /** Mutable pose buffer for `AiWorldView.resolveEntityInto` (caller-owned, so
@@ -164,6 +217,14 @@ export interface AiEntity {
   readonly vy: number;
   readonly angle: number;
   readonly angvel: number;
+  /** Current hull health (server-filled; absent ⇒ unknown, read as full). */
+  readonly health?: number;
+}
+
+/** Per-room AI work counters a behaviour may bump (print-only, server). */
+export interface AiTickStats {
+  /** Decision-layer re-scores (running total). */
+  decisions: number;
 }
 
 /**
@@ -202,7 +263,12 @@ export interface AiIntent {
   input?: AiInputBits;
   /** `targetId`: the entity the shot is aimed at (the fire gate checks the
    *  shooter holds a lock on it when it is a pilot). */
-  fire?: { dirX: number; dirY: number; targetId: string };
+  fire?: { dirX: number; dirY: number; targetId: string; cone?: number };
+  /** Morale `Flee` (AI slice 6b): the ship asks to warp out to (x, y), far
+   *  along its escape heading. Server-only: `AiController` queues it and the
+   *  room sends the bot on an NPC warp (`BOT_WARP`), the same spool → run →
+   *  drop a pilot's warp uses. Set on one tick only. */
+  warpOut?: { x: number; y: number };
 }
 
 /**
@@ -256,6 +322,14 @@ export interface IAiBehaviour {
    */
   markHostile?(shooterId: string, atTick: number): void;
   purgeHostility?(playerId: string): void;
+  /** Hull damage this entity took (morale, AI slice 6b; shield hits are not
+   *  fed). Server-only: the room's
+   *  damage path calls it through `AiController.noteDamage` with the
+   *  entity's own max hull (an elite's is 4× its kind's). Plain-field write,
+   *  alloc-free. */
+  noteDamage?(amount: number, atTick: number, maxHull?: number): void;
+  /** The squad's capital died (a morale trigger, AI slice 6b). */
+  noteCapitalLost?(): void;
   /**
    * Optional read-only query: is the behaviour currently hostile to the
    * given player? Used by render-side surfaces (e.g. the halo radar) that
@@ -263,6 +337,18 @@ export interface IAiBehaviour {
    * Pure / side-effect-free; safe to call every frame.
    */
   isHostileToPlayer?(playerId: string, truce?: boolean): boolean;
+  /**
+   * Optional SERVER-ONLY ship energy pool (owner rule 2026-11-13: an AI pilot's ship
+   * runs a player's ship rules). One pool per AI-flown ship, shared by boost and
+   * weapons. `trySpendEnergy(cost)` spends `cost` when the pool can afford it
+   * (`canAfford` / `spendEnergy`, `combat/Energy.ts`) and returns true, else
+   * spends nothing and returns false. The fire resolvers call it per slot
+   * trigger with `resolveSlotEnergyCost`, as `PlayerFireResolver` does for a
+   * player. `getEnergyFrac()` is the pool as 0..1 (for the brain's tactics).
+   * Absent ⇒ free fire (non-ship behaviours, unit harnesses).
+   */
+  trySpendEnergy?(cost: number): boolean;
+  getEnergyFrac?(): number;
   /**
    * Optional in-sector MOVE target (roaming-formation system, Phase 5).
    * SERVER-ONLY: the `LivingWorldDirector` assigns each squad member a

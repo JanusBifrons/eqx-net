@@ -26,8 +26,8 @@ const plan = (id: string) => planBowFeatures(id, shipParts(getShipKind(id)));
 const has = (kinds: readonly BowFeatureKind[], k: BowFeatureKind): boolean => kinds.includes(k);
 
 describe('capital bow detail', () => {
-  it('covers all fifteen capital kinds', () => {
-    expect(CAPITALS).toHaveLength(15);
+  it('covers all eighteen capital kinds (fifteen hulls + three fits)', () => {
+    expect(CAPITALS).toHaveLength(18);
   });
 
   it.each(CAPITALS)('%s: anchor gear, breakwater, fittings and seams', (id) => {
