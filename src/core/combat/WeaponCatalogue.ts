@@ -3,6 +3,7 @@ import {
   NAVAL_GUN_BALLISTICS as NAVAL, NAVAL_SIEGE_SPLASH, projectileEngageReach,
   RAILGUN_BALLISTICS, RAILGUN_BOLT_WIDTH, RAILGUN_RADIUS,
 } from '../../shared-types/combat/navalGuns.js';
+import { TRACTOR_DEF, type TractorSpec } from './tractorSpec.js';
 export type WeaponMode = 'hitscan' | 'projectile' | 'missile';
 export type WeaponId = 'hitscan' | 'laser' | 'heat-seeker' | 'pulse-orb' | 'charge-laser' | 'autocannon'
   | 'naval_s' | 'naval_m' | 'naval_l' | 'naval_xl'
@@ -13,7 +14,7 @@ export type WeaponId = 'hitscan' | 'laser' | 'heat-seeker' | 'pulse-orb' | 'char
   // Capital heavy beam (plan beam-slices §8): a sustained burn that slices.
   | 'heavy_beam'
   // Mining laser (plan partitioned-chasing-lark PR 7): a salvage beam.
-  | 'mining_laser';
+  | 'mining_laser' | 'tractor'; // tractor: salvage PR 11, a force, no damage
 
 interface WeaponDefBase {
   id: WeaponId;
@@ -56,11 +57,9 @@ interface WeaponDefBase {
    *  (`WeaponMountTicker.tickCapitalMounts`). Absent ⇒ none: the mount looks
    *  for its next target at once. */
   followThroughTicks?: number;
-  /** Per-target damage factors (docs/architecture/weapon-mounts.md
-   *  "Per-target damage factors"): a hit's damage is multiplied by the factor
-   *  for what it lands on, once, at `SectorRoom.applyDamage`. Read only
-   *  through `weaponTargetFactor`. Absent (or an absent key) ⇒ 1. */
+  /** Per-target damage multipliers, read only via `weaponTargetFactor` (weapon-mounts.md "Per-target damage factors"). */
   targetFactor?: WeaponTargetFactor;
+  tractor?: TractorSpec; // a TRACTOR beam: no ray, no damage; fire renews a lease (tractorSpec.ts)
 }
 
 /** What a hit lands on, for `weaponTargetFactor`: a raised shield, an exposed
@@ -527,9 +526,10 @@ export const WEAPONS: ReadonlyMap<WeaponId, WeaponDef> = new Map<WeaponId, Weapo
   ['railgun', RAILGUN_DEF],
   ['heavy_beam', HEAVY_BEAM_DEF],
   ['mining_laser', MINING_LASER_DEF],
+  ['tractor', TRACTOR_DEF],
 ]);
 
-export const WEAPON_IDS: readonly WeaponId[] = ['hitscan', 'laser', 'heat-seeker', 'pulse-orb', 'charge-laser', 'autocannon', 'naval_s', 'naval_m', 'naval_l', 'naval_xl', 'naval_xxl', 'naval_siege', 'railgun', 'heavy_beam', 'mining_laser'] as const;
+export const WEAPON_IDS: readonly WeaponId[] = ['hitscan', 'laser', 'heat-seeker', 'pulse-orb', 'charge-laser', 'autocannon', 'naval_s', 'naval_m', 'naval_l', 'naval_xl', 'naval_xxl', 'naval_siege', 'railgun', 'heavy_beam', 'mining_laser', 'tractor'] as const;
 
 export const DEFAULT_WEAPON: WeaponId = 'hitscan';
 
