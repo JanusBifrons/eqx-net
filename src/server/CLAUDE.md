@@ -227,7 +227,7 @@ How each subsystem works (and its history) is in the "Server notes" section of t
 
 ## Fleet command (RTS)
 
-- **`SectorRoom.shipKeyMoved` is THE one re-key seam** when a ship's key moves (locks, fleet orders, turret angles); never add a second. Wingmen fire through `PlayerFireResolver`, never `AiFireResolver`; fleet commands are owner-checked per id. Detail: [fleet-command](../../docs/architecture/fleet-command.md#7-zone-rules-in-full).
+- **`SectorRoom.shipKeyMoved` is THE one re-key seam** when a ship's key moves (locks, fleet orders, turret angles); never add a second. An owned hull is flown by the AI pilot brain, registered `{ hull: true }` (keys as pilot INPUT); it fires through `PlayerFireResolver`, never `AiFireResolver`; fleet commands are owner-checked per id. Detail: [fleet-command](../../docs/architecture/fleet-command.md#7-zone-rules-in-full).
 
 ## SectorRoom subsystems
 

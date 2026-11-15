@@ -35,7 +35,8 @@ An RTS owned ship is flown by this same brain, built with `new HostileDroneBehav
 - **Side:** `side: 'players'` replaces the kind's NPC allegiance, so target claims and neighbour grouping use the players side, whatever the hull. Every pilot is friendly; a pilot is a target only through the retaliation ledger (`markHostile`), never the owner or the owner's other ships (the owner's fire is ignored).
 - **Enemies:** a swarm ship whose allegiance attacks players on sight (`isOnSightHostile(its side, 'players')`, robots) is engaged within `ON_SIGHT_ENGAGE_RANGE`; drones (neutral to players) only on retaliation.
 - **Never runs:** its role's morale weights become Fight on 1 / Fall back 0 / Flee 0, so every roll fights on.
-- **Energy:** `energyPool` is the ship's one pool (`{ energy }`, a hull record fits as is); the brain regenerates and spends it exactly as it does its own drone pool. Whoever wires it must tick that pool's regen once (the brain's), not also in the room's pilot energy loop.
+- **Energy:** `energyPool` is the ship's one pool (`{ energy }`, a hull record fits as is); the brain regenerates and spends it exactly as it does its own drone pool. The brain is the pool's one regen owner: `SectorRoom.tickEnergy` does not also regenerate parked hulls (lock: `ownedShipsAiPilot.test.ts`).
+- **Wiring (RTS Part B slice 2):** `AiController.register(id, slot, brain, { hull: true })`: the hull's keys reach the sink with its id (the sink's one hull branch posts them as pilot `INPUT`) and its `intent.fire` never reaches `handleAiFire`; self pose falls back to `lingeringPoseCache`. Detail: [fleet-command](fleet-command.md) §0.
 - **Handling:** the kind passed in is used as is (`makePilotHandling`), so a pre-scaled kind (upgrades, `energyMax`) flows through.
 
 Lock: `ai/HostileDroneBehaviour.ownedSide.test.ts`.

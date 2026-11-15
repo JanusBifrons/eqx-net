@@ -7,6 +7,57 @@ where it is. The zone CLAUDE.md files carry the rules in short
 "RTS command view", `src/core/CLAUDE.md` "AI pilots use a player's controls
 only"); §7 keeps their full pre-diet text.
 
+## 0. RTS Part B: the AI pilot brain flies owned hulls (in progress)
+
+Part B replaces the wingman brain with the shared AI pilot brain, slice by
+slice (plan `rts-one-ai-one-ship.md`, "Part B v2"). As of slice 2 an owned
+hull is FLOWN by `HostileDroneBehaviour` (players side, [ai-pilots](ai-pilots.md)
+"Player-owned ships"); `WingmanBehaviour` still exists, never ticked, only as
+the store of mode / stance / order / squad state for the commands, the
+status stream and persistence (deleted in slice 12). Where §1–§2 below
+describe the wingman brain flying, read this section instead.
+
+- **Attach / detach** (`SectorRoom.attachWingman` / `detachWingman`, under
+  the same `EQX_DISABLE_WINGMEN` kill switch): the room registers the hull in
+  `AiController` with `new HostileDroneBehaviour(pilotKindFor(kind,
+  statAlloc), { side: 'players', ownerId, energyPool: <the ShipState> })`
+  and the `{ hull: true }` registration flag, and unregisters it at every
+  exit. `pilotKindFor` (`FleetCommandSubsystem.ts`) folds the ship's
+  upgrades into the kind exactly as `applyShipInput` applies them (thrust,
+  speed cap, turn) plus `effectiveShipEnergyMax`; `wingmanConfigFor` reads
+  the same numbers from it.
+- **Holds where it was parked:** attach sets the brain's move target and
+  guard post at the hull's spot (`holdHullAt`); an idle brain with neither
+  orbits the world origin (`tickPatrol`).
+- **Self pose:** `swarmEntitySnapshot` falls back to `lingeringPoseCache`
+  (`lingeringHullSnapshot`, same shared scratch), so `runEntity` ticks a hull.
+- **Keys:** the AI input sink's ONE hull branch (`postInput(slot, bits,
+  hullId)`, `hullId` set only for a hull registration) posts the keys as the
+  hull's pilot `INPUT` (`postHullInput`), never `AI_INPUTS`: the flame flags
+  show and a reclaim's INPUT replaces them (`aiInputHeld` is only cleared by
+  `DESPAWN` / `AI_INTENT`, so `AI_INPUTS` on a hull would outlive a take-back).
+  Posted only when the keys change; the worker holds the last INPUT.
+- **Energy: one owner.** The brain regenerates the hull's pool and pays its
+  boost every tick it is ticked; `tickEnergy` no longer regenerates parked
+  hulls and a hull never joins `boostingPlayers`. Guns still pay from the same
+  pool through `PlayerFireResolver.fireHull`.
+- **Enemies:** `fillSwarmTargets` fills whenever an owned hull is attached
+  (not only in a mixed-allegiance sector), so a hull sees on-sight foes
+  (robots).
+- **Fire:** `tickWingmanTargets` points the hull's `wingmanLocks` at the
+  brain's `getTargetId()` (none under hold fire) → `tickHull` →
+  `fireHull`. The registration flag keeps the brain's `intent.fire` out of
+  `handleAiFire` / `AiFireResolver`. Slice 3 moves the trigger to
+  `intent.fire` (with the line-of-fire gate).
+- **Orders:** the facade's `orderIssued` hook forwards each ship's own order:
+  `move` → hold at the point, `stop` → hold where it is. Attack, modes,
+  stance (except hold fire), squads and retaliation reach the brain in later
+  slices.
+- **Cost:** a hull brain decides every tick (60 Hz) like any AI pilot; the
+  wingman re-planned at 10 Hz. The `rts-fleet` scene's
+  `wingmanReplansPerTick` now counts hull brain decisions.
+- Lock: `tests/integration/sectorRoom/ownedShipsAiPilot.test.ts`.
+
 ## 1. A parked ship is a lingering hull with a wingman brain
 
 There is no new entity type. A ship you are not flying is the existing
@@ -75,8 +126,9 @@ does not use `AiFireResolver`. A separate `LockSubsystem` instance
 (`wingmanLocks`, keyed by shipInstanceId, groups in MAN) gives it locks;
 `WeaponMountTicker.tickHull` aims its mounts with the pilot's rule;
 `PlayerFireResolver.fireHull` fires with the full lock-to-fire gate (#19),
-mount bearing, cooldown, energy and damage upgrades. Target choice
-(`fleet/wingmanFireTarget.ts`, ~10 Hz) is where the stance applies. A hit from
+mount bearing, cooldown, energy and damage upgrades. The target (~10 Hz,
+`tickWingmanTargets`) is the AI pilot brain's own (`getTargetId()`, none under
+hold fire; §0; the old stance picker `wingmanFireTarget.ts` is gone). A hit from
 a hull counts as its owner's hostile act (standing, faction escalation, NPC
 base reactions), so commanding a fleet is never a way to dodge consequences.
 
@@ -358,9 +410,8 @@ physics worker.
 ## 5. Tests
 
 - Brain: `WingmanBehaviour*.test.ts`, `intentToControlBits.test.ts`.
-- Subsystem: `FleetCommandSubsystem*.test.ts`, `FleetStatusStream.test.ts`,
-  `wingmanFireTarget.test.ts`.
-- Room: `tests/integration/sectorRoom/` `fleetCommandMessages`,
+- Subsystem: `FleetCommandSubsystem*.test.ts`, `FleetStatusStream.test.ts`.
+- Room: `tests/integration/sectorRoom/` `ownedShipsAiPilot` (Part B), `fleetCommandMessages`,
   `wingmanMovesParkedHull`, `wingmanFights`, `wingmanBoost`, `pilotLedSquad`,
   `commandDefaultJoin`, `fleetWarp` (S3 hand-off), `teleporterAcross`.
 - Client units: `commandPointerRouter`, `tapAction`, `fleetSelection*`,

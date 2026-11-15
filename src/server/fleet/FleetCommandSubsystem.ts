@@ -39,7 +39,7 @@ import {
   type WingmanWorldView,
 } from '../../core/ai/wingman/types.js';
 import { fnv1a32 } from '../../core/random/rng.js';
-import { deriveStatMultipliers, type StatAlloc } from '../../core/leveling/shipStats.js';
+import { deriveStatMultipliers, effectiveShipEnergyMax, type StatAlloc } from '../../core/leveling/shipStats.js';
 import { getWeapon } from '../../core/combat/WeaponCatalogue.js';
 import type { ShipKind } from '../../shared-types/shipKinds/types.js';
 import { massOf, shipTuning } from '../../shared-types/shipScale/tuning.js';
@@ -104,6 +104,10 @@ export interface FleetCommandHooks {
    *  the members form up on it (resolved through `resolvePoseInto`, so the
    *  room must resolve the pilot's active ship by this id). */
   pilotShipOf?(playerId: string): string | null;
+  /** An order was handed to `shipId`'s brain (after any group-move spread:
+   *  `order` is that ship's own). The room forwards it to the AI pilot brain
+   *  that flies the hull (RTS Part B). Absent ⇒ ignored. */
+  orderIssued?(shipId: string, order: Readonly<WingmanOrder>): void;
 }
 
 /** `set_mode` parameters (the wire message's optional fields). */
@@ -207,6 +211,26 @@ interface FleetEntry {
 }
 
 /**
+ * The kind as this ship flies it: the catalogue kind with the ship's upgrades
+ * folded in, exactly as `applyShipInput` applies them (`topSpeed` scales the
+ * thrust and the speed cap, `turnRate` the turn rate and torque) and the
+ * pool cap `effectiveShipEnergyMax` gives. The AI pilot brain flying an owned
+ * hull is built from it (`makePilotHandling`, its energy cap), so an upgraded
+ * ship is flown as the ship it is. A fresh object (attach time, never per tick).
+ */
+export function pilotKindFor(kind: ShipKind, statAlloc?: StatAlloc): ShipKind {
+  const mul = deriveStatMultipliers(statAlloc);
+  return {
+    ...kind,
+    thrustImpulse: kind.thrustImpulse * mul.topSpeed,
+    maxSpeed: kind.maxSpeed * mul.topSpeed,
+    maxAngvel: kind.maxAngvel * mul.turnRate,
+    ...(kind.turnTorque !== undefined ? { turnTorque: kind.turnTorque * mul.turnRate } : {}),
+    energyMax: effectiveShipEnergyMax(kind.energyMax ?? 100, statAlloc),
+  };
+}
+
+/**
  * The wingman config for a kind + upgrade allocation: the same multipliers
  * `applyShipInput` applies (topSpeed scales thrust and the speed cap, turnRate
  * the turn), mass from the catalogue exactly as `World.spawnShip` sets it, and
@@ -215,12 +239,13 @@ interface FleetEntry {
 export function wingmanConfigFor(kind: ShipKind, statAlloc?: StatAlloc, fireRange?: number): WingmanConfig {
   const mul = deriveStatMultipliers(statAlloc);
   const mass = massOf(kind, 1);
+  const flown = pilotKindFor(kind, statAlloc);
   const stats: WingmanShipStats = {
-    maxSpeed: kind.maxSpeed * mul.topSpeed,
+    maxSpeed: flown.maxSpeed,
     linearDamping: kind.linearDamping,
-    maxAngvel: kind.maxAngvel * mul.turnRate,
+    maxAngvel: flown.maxAngvel,
     angularDamping: kind.angularDamping,
-    ...(kind.turnTorque !== undefined ? { turnTorque: kind.turnTorque * mul.turnRate } : {}),
+    ...(flown.turnTorque !== undefined ? { turnTorque: flown.turnTorque } : {}),
     reverseAccel: reverseAccelFor(kind, mass, mul.topSpeed),
   };
   const t = shipTuning(kind);
@@ -409,7 +434,10 @@ export class FleetCommandSubsystem {
       movers.push(e);
     }
     if (order.kind === 'move' && movers.length > 1) this.spreadMove(order.x, order.y);
-    else for (let i = 0; i < movers.length; i++) movers[i]!.brain.issueOrder(order);
+    else for (let i = 0; i < movers.length; i++) {
+      movers[i]!.brain.issueOrder(order);
+      this.hooks.orderIssued?.(movers[i]!.id, order);
+    }
     movers.length = 0;
     return this.accepted;
   }
@@ -468,6 +496,7 @@ export class FleetCommandSubsystem {
       e.moveOrder.x = sx[best]!;
       e.moveOrder.y = sy[best]!;
       e.brain.issueOrder(e.moveOrder);
+      this.hooks.orderIssued?.(e.id, e.moveOrder);
       movers[pick] = null;
     }
   }
@@ -808,12 +837,7 @@ export class FleetCommandSubsystem {
    * and re-posted without it once unaffordable.
    */
   tick(serverTick: number): void {
-    const sqs = this.squadList;
-    for (let i = 0; i < sqs.length; i++) {
-      const sq = sqs[i]!;
-      const leader = this.squadLeader(sq);
-      if (sq.dirty || leader !== sq.appliedLeader) this.refreshSquad(sq, leader);
-    }
+    this.refreshSquads();
     const list = this.entries;
     if (list.length === 0) return;
     const hooks = this.hooks;
@@ -843,6 +867,21 @@ export class FleetCommandSubsystem {
         c.boost = false;
         hooks.postInput(e.id, c, serverTick);
       }
+    }
+  }
+
+  /**
+   * Resolve each squad's leader (a member the owner is flying leads) and
+   * re-slot the members when it or the membership changed. The bookkeeping
+   * half of {@link tick}; the room calls it alone since RTS Part B (the AI
+   * pilot brain flies the hulls, so the brain half no longer runs).
+   */
+  refreshSquads(): void {
+    const sqs = this.squadList;
+    for (let i = 0; i < sqs.length; i++) {
+      const sq = sqs[i]!;
+      const leader = this.squadLeader(sq);
+      if (sq.dirty || leader !== sq.appliedLeader) this.refreshSquad(sq, leader);
     }
   }
 

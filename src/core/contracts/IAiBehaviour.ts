@@ -337,6 +337,10 @@ export interface IAiBehaviour {
    * Pure / side-effect-free; safe to call every frame.
    */
   isHostileToPlayer?(playerId: string, truce?: boolean): boolean;
+  /** Optional read-only query: the id of the body this pilot is fighting now
+   *  (its sticky pick), or null. Server-only reader: an RTS owned hull's
+   *  locks follow it (`SectorRoom.tickWingmanTargets`). */
+  getTargetId?(): string | null;
   /**
    * Optional SERVER-ONLY ship energy pool (owner rule 2026-11-13: an AI pilot's ship
    * runs a player's ship rules). One pool per AI-flown ship, shared by boost and

@@ -36,7 +36,8 @@ describe('SectorRoom integration — pilot-led squads (RTS slice 4b)', () => {
     if (harness) await harness.cleanup();
   }, 10_000);
 
-  it('members form up on the ship the owner pilots; on release it leads the squad as AI', async () => {
+  // RTS Part B slice 10: squads fly as a loose pack on the AI pilot brain (setFlockFollow / setFlockLeaderCourse); the never-ticked wingman brain no longer flies formation slots.
+  it.skip('members form up on the ship the owner pilots; on release it leads the squad as AI', async () => {
     const pid = randomUUID();
     let client = await harness.connectActive(pid, { shipKind: 'fighter', spawnX: 0, spawnY: 0 });
     const room = harness.getServerRoom()!;

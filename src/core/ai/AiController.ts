@@ -45,8 +45,10 @@ export interface AiIntentSink {
   /** Pilot layer: queue this tick's control keys for a slot (an intent with
    *  `input` set). The sink BATCHES them (server: `AiInputBatch`) and sends
    *  the whole tick at {@link flushInputs}; never one post per call. Optional:
-   *  a sink without it drops input intents (no brain emits them in that zone). */
-  postInput?(slot: number, bits: AiInputBits): void;
+   *  a sink without it drops input intents (no brain emits them in that zone).
+   *  `hullId` is set for a player-owned hull ({@link AiRegisterOptions.hull}):
+   *  the sink's ONE hull branch posts those keys as the hull's pilot INPUT. */
+  postInput?(slot: number, bits: AiInputBits, hullId?: string): void;
   /** Send every input queued since the last flush as ONE worker message
    *  (`AI_INPUTS`). Called once at the end of `AiController.tick` when at least
    *  one input was queued. */
@@ -58,6 +60,17 @@ interface AiRegistration {
   behaviour: IAiBehaviour;
   /** This tick's control keys held boost (the snapshot shows the flame, #16). */
   boost: boolean;
+  /** A player-owned hull (RTS): its keys go out as pilot INPUT and its fire
+   *  never reaches the AI fire path (it fires through the player pipeline). */
+  hull: boolean;
+}
+
+/** Registration options. All absent ⇒ a swarm AI ship. */
+export interface AiRegisterOptions {
+  /** The entity is a player-owned hull (RTS owned ship), keyed by its
+   *  shipInstanceId: its control keys reach the sink with `hullId` set, and
+   *  its `intent.fire` is never queued for `handleAiFire` / `AiFireResolver`. */
+  readonly hull?: boolean;
 }
 
 /**
@@ -107,8 +120,8 @@ export class AiController {
 
   constructor(private readonly sink: AiIntentSink) {}
 
-  register(entityId: string, slot: number, behaviour: IAiBehaviour): void {
-    this.entities.set(entityId, { slot, behaviour, boost: false });
+  register(entityId: string, slot: number, behaviour: IAiBehaviour, opts?: AiRegisterOptions): void {
+    this.entities.set(entityId, { slot, behaviour, boost: false, hull: opts?.hull === true });
     this.aims.add(entityId);
     // Apply any hostility that arrived before this entity registered.
     const pending = this.pendingHostile.get(entityId);
@@ -325,7 +338,7 @@ export class AiController {
     if (intent.input !== undefined) {
       // Pilot layer: control keys replace the impulse for this tick.
       if (this.sink.postInput) {
-        this.sink.postInput(reg.slot, intent.input);
+        this.sink.postInput(reg.slot, intent.input, reg.hull ? id : undefined);
         this.inputsQueued++;
         reg.boost = (intent.input & AI_INPUT_BOOST) !== 0;
       }
@@ -345,7 +358,8 @@ export class AiController {
       this.warpOutYs[k] = intent.warpOut.y;
     }
 
-    if (intent.fire) {
+    // A player-owned hull fires through the player pipeline, never here.
+    if (intent.fire && !reg.hull) {
       this.fireQueue.push({
         shooterId: id,
         dirX: intent.fire.dirX,

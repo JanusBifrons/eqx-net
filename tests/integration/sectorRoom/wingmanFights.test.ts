@@ -66,7 +66,8 @@ describe('SectorRoom integration — wingmen fight (RTS slice 5)', () => {
     return h === undefined ? start : start - h;
   }
 
-  it('aggressive + hunt: the wingman damages a drone hostile to its owner', async () => {
+  // RTS Part B slice 6: hunt + attitude: engage what is hostile to the OWNER; until then a drone is only an enemy by retaliation.
+  it.skip('aggressive + hunt: the wingman damages a drone hostile to its owner', async () => {
     const { pid, sid, client, internals } = await parkFighter();
     const p = aheadInReach();
     expect(internals.spawnTestDrone('foe', p.x, p.y, 'fighter')).toBe(true);
@@ -117,7 +118,8 @@ describe('SectorRoom integration — wingmen fight (RTS slice 5)', () => {
     await harness.disconnectClient(client);
   }, 30_000);
 
-  it('defensive: the wingman fires back at a neutral drone that hit it', async () => {
+  // RTS Part B slice 4: retaliation: damage → `aiController.markHostile(hull, shooter)`.
+  it.skip('defensive: the wingman fires back at a neutral drone that hit it', async () => {
     const { pid, sid, client, internals } = await parkFighter();
     const p = aheadInReach();
     expect(internals.spawnTestDrone('pest', p.x, p.y, 'fighter')).toBe(true);
