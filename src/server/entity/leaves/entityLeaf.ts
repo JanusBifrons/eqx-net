@@ -197,10 +197,12 @@ export interface LeafDeps {
    *  room can do what the `SHIP_DESTROYED` handler cannot for a lingering hull
    *  (the handler's lookup misses once the ship leaves `shipsMap`): delete the
    *  roster row (D9), award kill XP, clear the ownerless marker, and spill the
-   *  ship's hold. `pose` is undefined if the pose cache had no entry. */
+   *  ship's hold with its hull salvage (`vaporised`: a cut kill burned it
+   *  away, fracture v11). `pose` is undefined if the pose cache had no entry. */
   onLingeringHullDeath?: (
     ship: { shipInstanceId: string; playerId: string; kind: string },
     pose: ShipPhysicsState | undefined,
     sourceId: string,
+    vaporised?: boolean,
   ) => void;
 }

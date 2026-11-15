@@ -161,6 +161,7 @@ export function createLingeringHullEntity(
         { shipInstanceId: ship.shipInstanceId || targetId, playerId: ship.playerId, kind: ship.kind },
         scrapPose,
         sourceId,
+        vaporised,
       );
       const slot = deps.lingeringSlots.get(targetId);
       if (slot !== undefined) {

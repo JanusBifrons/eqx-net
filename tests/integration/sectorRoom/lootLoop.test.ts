@@ -20,6 +20,7 @@ import type { SectorState } from '../../../src/server/rooms/schema/SectorState.j
 import type { SnapshotMessage } from '../../../src/shared-types/messages/snapshotMessages.js';
 import { getHoldStore, getPlayerShipStore, getWallet } from '../../../src/server/db/PersistenceWorker.js';
 import { POD_TIER_SPILL } from '../../../src/shared-types/shipKinds/cargoPod.js';
+import { rollHullLoot } from '../../../src/server/cargo/hullLoot.js';
 
 function room(id: string): SectorRoom {
   return matchMaker.getLocalRoomById(id) as unknown as SectorRoom;
@@ -91,6 +92,7 @@ describe('SectorRoom integration — loot loop (P1a-1)', () => {
     let shipId = '';
     for (const [, s] of state.ships) if (s.playerId === pid && s.isActive) shipId = s.shipInstanceId;
     expect(getHoldStore().get(shipId)?.hold.goods.alloy).toBe(3);
+    const hullKind = state.ships.get(shipId)!.kind;
     expect(getWallet().balance(pid)).toBe(120);
     const podsBefore = internal.loot.podCount();
 
@@ -101,7 +103,9 @@ describe('SectorRoom integration — loot loop (P1a-1)', () => {
     expect(internal.loot.podCount()).toBe(podsBefore + 1);
     let spilled = 0;
     for (const id of internal.loot.podIds()) spilled += getHoldStore().get(id)?.hold.goods.alloy ?? 0;
-    expect(spilled).toBe(3);
+    // The hold, plus the hull's own loot roll (every ship drops its kind's
+    // hull loot, owner 2026-11-15; vaporiseSalvage.test.ts).
+    expect(spilled).toBe(3 + (rollHullLoot(shipId, hullKind, false).goods.alloy ?? 0));
     // Economy v2 — credits are virtual: dying can never lose them.
     expect(getWallet().balance(pid)).toBe(120);
   });
