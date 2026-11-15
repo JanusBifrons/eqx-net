@@ -20,7 +20,7 @@ import type { ArtHandle, ArtService } from '../ArtService.js';
 import { NAVAL_SHELL_WEAPON_IDS } from '@core/combat/shellFlight';
 import { RAILGUN_BOLT_WIDTH, RAILGUN_RADIUS } from '../../../../shared-types/combat/navalGuns.js';
 import type { EffectQuality } from '@core/contracts/IEffects';
-import { slugWakeAlpha, slugWakeSegments, slugWakeWidth, SLUG_WAKE_LIFE_S, SLUG_WAKE_TAIL, SLUG_WAKE_TINT } from './turretFx.js';
+import { slugHeadLength, slugWakeAlpha, slugWakeSegments, slugWakeWidth, SLUG_WAKE_GROW, SLUG_WAKE_LIFE_S, SLUG_WAKE_TAIL, SLUG_WAKE_TINT } from './turretFx.js';
 
 const tex = (h: ArtHandle): Texture | null => (h.state === 'ready' && h.fx ? h.fx.tex : null);
 
@@ -124,13 +124,14 @@ export class FxBeams {
 /** How a projectile looks. */
 export type FxProjStyle = 'bolt' | 'tracer' | 'shell' | 'slug';
 
-/** A view; a slug's also carries its wake: `wake` sprites (made on first
- *  use), game ms it was first seen (`t0`; t0 < 0 = no wake), where it was
- *  last drawn (`hx`, `hy` at `th`), its heading, width, speed (`sp`, u/s),
- *  distance flown there (`fl`) and full tail length (`tl`). */
+/** A view; a slug's also carries a bloom at its tip (`bloom`, made on first
+ *  use) and its wake: `wake` sprites (made on first use), game ms it was
+ *  first seen (`t0`; t0 < 0 = no wake), where its head's front was last drawn
+ *  (`hx`, `hy` at `th`), its heading, width, speed (`sp`, u/s), distance
+ *  flown there (`fl`), drawn head length (`hl`) and full tail length (`tl`). */
 interface ProjView {
-  head: Sprite; core: Sprite; trail: Sprite[]; gen: number;
-  wake: Sprite[] | null; t0: number; hx: number; hy: number; th: number; ang: number; wid: number; sp: number; fl: number; tl: number;
+  head: Sprite; core: Sprite; trail: Sprite[]; gen: number; bloom: Sprite | null;
+  wake: Sprite[] | null; t0: number; hx: number; hy: number; th: number; ang: number; wid: number; sp: number; fl: number; hl: number; tl: number;
 }
 /** Wake sprites per slug view (the high tier's `slugWakeSegments`). */
 const WAKE_MAX = 10;
@@ -142,10 +143,14 @@ const TRACER = { len: 38, width: 4, trail: 0, tint: 0xffe6a0 };
 /** Capital naval shells, per unit of the gun's shell radius (a 16" shell,
  *  radius 6, draws ~240 u long) so they read at capital zoom. */
 const SHELL = { len: 40, width: 4, trail: 3, tint: 0xffb347 };
-/** The railgun slug (plan beam-slices §7): a long, white-hot streak, per unit
+/** The railgun slug (plan beam-slices §7): a compact white-hot head, per unit
  *  of its shell radius like a shell. Its drawn width is the bolt width, the
- *  width of the channel a kill cuts (`RAILGUN_BOLT_WIDTH`); ~1 km long. */
-const SLUG = { len: 200, width: RAILGUN_BOLT_WIDTH / RAILGUN_RADIUS, trail: 3, tint: 0xd8ecff };
+ *  width of the channel a kill cuts (`RAILGUN_BOLT_WIDTH`); its length is
+ *  motion blur (`slugHeadLength`, so `len` is unused), and its tail is the
+ *  violet wake, not trail streaks. */
+const SLUG = { len: 0, width: RAILGUN_BOLT_WIDTH / RAILGUN_RADIUS, trail: 0, tint: 0xeef6ff };
+/** The slug's tip bloom: diameter in head widths, tint, alpha. */
+const SLUG_BLOOM = { diam: 3, tint: 0xcfe0ff, alpha: 0.9 };
 
 /** A shell-like style's streak width per unit of size (the min-screen-size
  *  floor measures it). */
@@ -163,6 +168,7 @@ export class FxProjectiles {
   private readonly fading: ProjView[] = [];
   private fadingN = 0;
   private readonly streak: ArtHandle;
+  private readonly glow: ArtHandle;
   private gen = 0;
 
   /** `quality`: the effects tier (wake pieces per slug); `clock`: the
@@ -173,6 +179,7 @@ export class FxProjectiles {
     this.wakeLayer.blendMode = 'add';
     this.wakeLayer.eventMode = 'none';
     this.streak = art.fx('streak', undefined, undefined, false);
+    this.glow = art.fx('glow', undefined, undefined, false);
   }
 
   ready(): boolean { return tex(this.streak) !== null; }
@@ -201,14 +208,15 @@ export class FxProjectiles {
     const k0 = shell ? size : 1;
     const ax = shell ? 1 : 0.5; // shells: anchor on the streak's front end
     const maxLen = shell ? flown : Infinity;
-    const fullLen = base.len * k0;
+    const sl = Math.hypot(vx, vy) || 1;
+    // A slug's head is motion blur: ~1.5 frames of its travel (min size).
+    const fullLen = style === 'slug' ? slugHeadLength(sl, base.width * k0) : base.len * k0;
     const spLen = Math.min(fullLen, maxLen);
     // A streak still growing (just fired) keeps its proportions, thin as well
     // as short: capping only its length drew a fat block at the turret.
     const spWid = base.width * k0 * (spLen / fullLen);
     v.head.anchor.x = ax; v.core.anchor.x = ax;
     const px = x, py = -y;
-    const sl = Math.hypot(vx, vy) || 1;
     const ux = vx / sl, uy = -vy / sl;
     const ang = Math.atan2(uy, ux);
     const w = v.head.texture.width, h = v.head.texture.height;
@@ -228,26 +236,49 @@ export class FxProjectiles {
       tr.alpha = alpha * (0.42 - k * 0.12);
     }
     if (style === 'slug') {
+      this.drawBloom(v, px, py, ux, uy, spLen, spWid, alpha);
       const now = this.clock();
       if (v.t0 < 0) v.t0 = now;
       v.hx = px; v.hy = py; v.th = now; v.ang = ang; v.wid = spWid;
-      v.sp = sl; v.fl = flown; v.tl = fullLen * SLUG_WAKE_TAIL;
+      v.sp = sl; v.fl = flown; v.hl = spLen; v.tl = fullLen * SLUG_WAKE_TAIL;
       this.drawWake(v, now);
+    } else if (v.bloom !== null) {
+      v.bloom.visible = false;
     }
   }
 
-  /** Draw a slug's wake: a tail of pieces behind where the slug was last
-   *  seen, at most `tl` long and never behind the muzzle (`fl`). A piece `d`
-   *  behind the slug was passed `d / sp` s before it, plus the time since the
-   *  slug was last seen; it fades with that age and toward the tail's end,
-   *  and spreads and drifts as it fades. Returns whether any piece still
-   *  shows. Alloc-free after the view's first slug. */
+  /** The slug's very bright tip: a small round bloom just inside the head's
+   *  front. Made on the view's first slug; skipped until the glow is ready. */
+  private drawBloom(v: ProjView, px: number, py: number, ux: number, uy: number, len: number, wid: number, alpha: number): void {
+    if (v.bloom === null) {
+      const gl = tex(this.glow);
+      if (gl === null) return;
+      const b = new Sprite(gl); b.anchor.set(0.5); b.tint = SLUG_BLOOM.tint;
+      this.container.addChild(b);
+      v.bloom = b;
+    }
+    const b = v.bloom;
+    const back = len * 0.2;
+    b.visible = true;
+    b.position.set(px - ux * back, py - uy * back);
+    b.scale.set((wid * SLUG_BLOOM.diam) / b.texture.width);
+    b.alpha = alpha * SLUG_BLOOM.alpha;
+  }
+
+  /** Draw a slug's wake: a tail of pieces starting behind the head's back
+   *  end (`hl` behind where the slug was last seen), at most `tl` long, and
+   *  while the slug is fresh out of the barrel growing at `SLUG_WAKE_GROW` of
+   *  its speed, so its back end is never pinned to the muzzle (`fl`). A piece
+   *  `d` behind the slug was passed `d / sp` s before it, plus the time since
+   *  the slug was last seen; it fades with that age and toward the tail's
+   *  back end, and spreads and drifts as it fades. Returns whether any piece
+   *  still shows. Alloc-free after the view's first slug. */
   private drawWake(v: ProjView, now: number): boolean {
     const n = Math.min(WAKE_MAX, slugWakeSegments(this.quality()));
     if (n > 0 && v.wake === null) v.wake = this.makeWake();
     const wake = v.wake;
     if (wake === null) return false;
-    const ext = Math.min(v.tl, v.fl);
+    const ext = Math.min(v.tl, Math.max(0, v.fl - v.hl) * SLUG_WAKE_GROW);
     const ux = Math.cos(v.ang), uy = Math.sin(v.ang);
     const w = wake[0]!.texture.width, h = wake[0]!.texture.height;
     const seg = ext / n;
@@ -257,8 +288,8 @@ export class FxProjectiles {
       const s = wake[j]!;
       if (j >= n || !(ext >= 1)) { s.visible = false; continue; }
       const d = (j + 0.5) * seg;
-      const age = since + d / v.sp;
-      const a = slugWakeAlpha(age, d / v.tl);
+      const age = since + (v.hl + d) / v.sp;
+      const a = slugWakeAlpha(age, d / ext);
       s.visible = a > 0.01;
       if (!s.visible) continue;
       any = true;
@@ -268,7 +299,7 @@ export class FxProjectiles {
       // Each piece overlaps the one ahead of it (toward the slug) by 15 %
       // so the tail reads unbroken; its back end stays inside the tail.
       const ov = j > 0 ? seg * 0.15 : 0;
-      const mid = d - ov / 2;
+      const mid = v.hl + d - ov / 2;
       s.position.set(v.hx - ux * mid - uy * drift, v.hy - uy * mid + ux * drift);
       s.rotation = v.ang;
       s.scale.set((seg + ov) / w, (v.wid * 1.4 * spread) / h);
@@ -297,6 +328,7 @@ export class FxProjectiles {
     for (const [id, v] of this.live) {
       if (v.gen === this.gen) continue;
       v.head.visible = false; v.core.visible = false;
+      if (v.bloom !== null) v.bloom.visible = false;
       for (const tr of v.trail) tr.visible = false;
       this.live.delete(id);
       // A slug's wake lingers after it: keep the view until the wake fades.
@@ -337,7 +369,7 @@ export class FxProjectiles {
   private make(): ProjView {
     const st = tex(this.streak)!;
     const mk = (tint: number): Sprite => { const s = new Sprite(st); s.anchor.set(0.5); s.tint = tint; s.visible = false; this.container.addChild(s); return s; };
-    return { head: mk(0xffffff), core: mk(0xffffff), trail: [mk(0xffffff), mk(0xffffff), mk(0xffffff)], gen: -1, wake: null, t0: -1, hx: 0, hy: 0, th: 0, ang: 0, wid: 0, sp: 1, fl: 0, tl: 0 };
+    return { head: mk(0xffffff), core: mk(0xffffff), trail: [mk(0xffffff), mk(0xffffff), mk(0xffffff)], gen: -1, bloom: null, wake: null, t0: -1, hx: 0, hy: 0, th: 0, ang: 0, wid: 0, sp: 1, fl: 0, hl: 0, tl: 0 };
   }
 }
 
