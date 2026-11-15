@@ -314,7 +314,19 @@ player-flown (active or parked), breaks it into wreck bodies on the server.
     16" shell (1400) is J ≈ 21,000, so its biggest piece (~640–715 mass)
     moves ~30–33 u/s and turns ~3°/s on a hit 0.3 radius off centre, a
     mid-size piece (~80) hits the cap, and a 10-damage bolt moves the big
-    piece ~0.2 u/s (a sliver can still reach the cap: it is tiny).
+    piece ~0.2 u/s (a sliver can still reach the cap: it is tiny). Those
+    were the numbers before the owner's re-split clip review (2026-11-15:
+    "It's also pushing the scrap away ... scrap should weigh a lot and be
+    very resistant to sliding at this sort of size and scale"): the capital
+    profile now has `knockScale` 0.003 and `knockMaxScale` 0.1, so
+    `wreckKnockSpeed` is 0.000036 and `wreckKnockMax` 0.0025 × hull radius
+    per second (heavy cruiser ≈ 0.08 u/s / 5.5 u/s; the 16" shell above
+    moves its biggest piece ~0.1 u/s). Measured
+    (`wreckMainBatteryWear.test.ts`): 10 s of a lance battlecruiser's main
+    battery on a battleship's biggest piece from rest leaves it creeping
+    ~0.5 u/s with no measurable spin (was ~109 u/s over 8 s). The
+    pieces' damping is unchanged (it also sets how far the death parting
+    carries them).
     - **During the crack hold the whole wreck takes the hit (owner review
       2026-11-13).** A battleship salvo lands over ~0.5 s: the first shell
       breaks the hull and the rest arrive during the `WRECK_CRACK_MS` hold.
@@ -951,9 +963,19 @@ Wreck pieces now wear down and break again. Pure numbers in
 - **Rate limit.** At most `WRECK_RESPLITS_PER_TICK` (2) worn-out pieces are
   handled per tick (each runs a fracture and spawns bodies); a piece over
   budget stays at 0 and goes on its next hit.
-- **Numbers.** A battleship (max hull 11,328) whose biggest piece is 47 % of
-  the hull: I_max 2,647, about 3.7 s of one mining laser (120 per 10 ticks),
-  26,470 damage from ordinary guns. A heavy cruiser's biggest piece: ~950.
+- **Numbers** (capital `integrityMul` 0.62, `integrityMinFrac` 0.09 since
+  the owner's re-split clip review, 2026-11-15: "It's splitting stuff like
+  almost instantly ... no time for me to understand"; it was 0.5 / 0.01). A
+  battleship (max hull 11,328) whose biggest piece is 47 % of the hull:
+  I_max ~3,300, about 4.6 s of one mining laser (120 per 10 ticks), ~33,000
+  damage from ordinary guns; the floor is ~1,020 for any battleship piece. A
+  heavy cruiser's biggest piece: ~1,180, floor ~360. Measured
+  (`wreckMainBatteryWear.test.ts`, a lance battlecruiser's main battery
+  sustaining ~2,800 heavy-beam damage/s, ~280/s of wear): the biggest piece
+  of a battleship (~40 % of its hull, I_max 2,814) cracks after ~10.2 s
+  (was ~8.3 s), its smallest child (I_max 1,258) after ~4.5 s (the old
+  floor was ~0.4 s of the same fire). Guns still wear ten times slower than
+  the mining laser.
 - **Filming.** `wreck-test` allows capital pilots: a lance battlecruiser
   (heavy-beam main battery) off the battleship's beam, `test_kill_capitals`,
   then lock a piece with every group and its AUTO turrets cut it up
@@ -967,7 +989,10 @@ Wreck pieces now wear down and break again. Pure numbers in
 - **Locks:** `wreckIntegrity.test.ts`, `wreckResplit.test.ts` (wear 10×,
   split + descriptor + determinism + placement + refcount, salvage, rate
   limit, cap full), `tests/integration/sectorRoom/wreckResplit.test.ts` (a
-  real room: wear, split, child bodies == chain geometry, salvage pod).
+  real room: wear, split, child bodies == chain geometry, salvage pod),
+  `tests/integration/sectorRoom/wreckMainBatteryWear.test.ts` (a lance main
+  battery: ~10 s to crack the biggest battleship piece, a child >= ~3 s,
+  drift < 1.5 u/s).
 
 ### Later: wrecks as terrain and salvage
 

@@ -184,8 +184,13 @@ const CAPITAL: DestructionProfile = {
   // sliver spike: capital-destruction.md §S4 "Re-split".
   resplit: {
     minAreaFrac: 0.02,
-    integrityMul: 0.5,
-    integrityMinFrac: 0.01,
+    // Owner on the re-split clip (2026-11-15): "splitting stuff almost
+    // instantly ... no time for me to understand". A lance battlecruiser's
+    // main battery (sustained ~2,800 heavy-beam damage/s, so ~280/s of wear)
+    // cracks a battleship's biggest piece (~40 % of the hull) in ~10 s, and
+    // no piece in under ~3.6 s (the floor). Lock: `wreckMainBatteryWear.test.ts`.
+    integrityMul: 0.62,
+    integrityMinFrac: 0.09,
     salvagePerHull: 200,
     fracture: {
       maxPieces: 3, snapChance: 0.2, fanCracks: false, farCrack: false, chunkyPieces: true,
@@ -197,9 +202,15 @@ const CAPITAL: DestructionProfile = {
   separateScale: 1,
   spinScale: 1,
   dampingScale: 1,
-  knockScale: 1,
-  knockMaxScale: 1,
-  // Heavy chunks are knocked by every hit and drift on (owner, 2026-11-13).
+  // Owner on the re-split clip (2026-11-15): "scrap should weigh a lot and
+  // be very resistant to sliding at this sort of size and scale". A blow
+  // worth the whole hull moves it at 0.3 % of the base `wreckKnockSpeed`,
+  // each hit at most 10 % of the base `wreckKnockMax`: 10 s of a lance main
+  // battery leaves a battleship's biggest piece creeping at well under
+  // 5 u/s. Lock: `wreckMainBatteryWear.test.ts`.
+  knockScale: 0.003,
+  knockMaxScale: 0.1,
+  // Heavy chunks are knocked by every hit (owner, 2026-11-13), barely.
   knockWakeScale: 0,
   settlePerRadius: 0,
   settleSpin: 0,

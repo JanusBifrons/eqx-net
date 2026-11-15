@@ -286,11 +286,13 @@ export interface ShipTuning {
    *  shells knock the pieces about). A hit of `damage` on a piece gives it an
    *  impulse J = (damage ÷ maxHull) × hull mass × this (u/s) at the hit point
    *  along the shot: a blow worth the whole hull's HP would move the whole
-   *  hull at this speed. Heavy cruiser (2×) ~26 u/s, so one 16" shell
-   *  (1400 dmg) moves its biggest piece (~30 % of the hull) ~30 u/s. */
+   *  hull at this speed. Base 0.012 × radius (heavy cruiser 2× ~26 u/s) ×
+   *  the profile's `knockScale` (capital 0.003 since 2026-11-15: ~0.08 u/s,
+   *  so pieces barely slide under fire). */
   wreckKnockSpeed: number;
   /** The most one hit may change a wreck piece's speed (u/s), so small arms
-   *  on a sliver never fling it. Heavy cruiser (2×) ~55 u/s. Both knock
+   *  on a sliver never fling it. Base 0.025 × radius (heavy cruiser ~55
+   *  u/s; capital `knockMaxScale` 0.1: ~5.5 u/s). Both knock
    *  numbers carry the destruction profile's `knockScale` / `knockMaxScale`
    *  (sub-caps: fighter ~92 u/s / ~18 u/s, so a hit visibly shoves debris). */
   wreckKnockMax: number;
