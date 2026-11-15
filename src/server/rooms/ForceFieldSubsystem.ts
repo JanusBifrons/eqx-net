@@ -26,6 +26,11 @@ import type { WorkerCmd } from './PhysicsWorkerProxy.js';
 /** Most live tractor leases per room (salvage plan perf guard: the wire cap). */
 export const TRACTOR_LEASE_CAP = 128;
 
+/** A tractored loot pod within this multiple of the weapon's `hold` of the
+ *  beam's muzzle is picked up into the emitter's hold (salvage plan PR 12,
+ *  `inTractorHold`): a little past the cushion, so a hovering pod is taken. */
+export const TRACTOR_PICKUP_HOLD_MUL = 1.2;
+
 /** A body's live centre and heading (the room's fire-target shape view,
  *  `AiFireTargetShape`; the extra fields are written, never read here). */
 export interface TractorPoseOut {
@@ -163,6 +168,29 @@ export class ForceFieldSubsystem {
     f.reach = mountWeaponReach(mount);
     if (!t.isTerrain(targetId)) t.onShipTractored(emitterId, targetId);
     return true;
+  }
+
+  /**
+   * Is (x, y) inside the pickup zone of a live tractor lease from `emitterId`
+   * on `targetId`, within `TRACTOR_PICKUP_HOLD_MUL × hold` of that beam's
+   * muzzle? Asked by the loot collector's hold-zone pickup (salvage plan
+   * PR 12); the pickup itself stays `LootSubsystem`'s one atomic path. A lease
+   * not yet posed (no muzzle), held off by a crack hold, or lapsed never
+   * counts. Allocation-free (#14).
+   */
+  inTractorHold(emitterId: string, targetId: string, x: number, y: number): boolean {
+    const t = this.d.tractors;
+    const byMount = this.leases.get(emitterId);
+    if (t === undefined || byMount === undefined) return false;
+    const tick = t.tick();
+    for (const lease of byMount.values()) {
+      const f = lease.field;
+      if (lease.target !== targetId || tick >= lease.endTick || lease.px !== lease.px || !f.active) continue;
+      const r = f.hold * TRACTOR_PICKUP_HOLD_MUL;
+      const dx = x - f.mx, dy = y - f.my;
+      if (dx * dx + dy * dy <= r * r) return true;
+    }
+    return false;
   }
 
   /**
