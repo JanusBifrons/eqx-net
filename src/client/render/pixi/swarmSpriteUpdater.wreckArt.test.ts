@@ -922,10 +922,11 @@ describe('updateSwarmSprites — the filmed v7 break-up (heavy cruiser, 16" salv
       expect(rr - bb, `${s.toFixed(1)} s: grey-brown, not red`).toBeLessThanOrEqual(0x30);
       expect(g.alpha, `${s.toFixed(1)} s: subtle`).toBeLessThanOrEqual(0.3);
     }
-    // A weapon's kill cut glows longer (the hero line), but its scorch is
+    // A weapon's kill cut glows longer (the hero line: a visible ember to
+    // ~3.4 s, owner 2026-11-15), but its scorch over the last half second is
     // just as subtle and never black once it has cooled.
     for (const tint of [GLOW_TINT_SLICE, GLOW_TINT_CHANNEL]) {
-      for (let s = 3.4; s < WRECK_GLOW_END_S; s += 0.1) {
+      for (let s = 4.0; s < WRECK_GLOW_END_S; s += 0.1) {
         wreckGlowAt(s, g, tint);
         expect(Math.min((g.color >> 16) & 255, (g.color >> 8) & 255, g.color & 255), `tint ${tint} ${s.toFixed(1)} s`).toBeGreaterThanOrEqual(0x28);
         expect(g.alpha, `tint ${tint} ${s.toFixed(1)} s: subtle`).toBeLessThanOrEqual(0.3);
@@ -934,13 +935,13 @@ describe('updateSwarmSprites — the filmed v7 break-up (heavy cruiser, 16" salv
     // Thin: the wide soft halo is gone once the edge is no longer glowing
     // (only the core stays as the scorch).
     const data = (wreckGlowTexture().source as unknown as { resource: Uint8Array }).resource;
-    // Per tint: a core row then a halo row (a crack's halo is gone by 2.2 s,
-    // a kill cut's, held with its colour, by 2.7 s).
+    // Per tint: a core row then a halo row (a crack's or a splinter's halo is
+    // gone by 2.2 s, a kill cut's, held with its ember, by 3.5 s).
     const W = data.length / (4 * WRECK_GLOW_TEX_ROWS);
     for (let row = 1; row < WRECK_GLOW_TEX_ROWS; row += 2) {
       for (let i = 0; i < W; i++) {
         const ageS = (i / (W - 1)) * WRECK_GLOW_END_S;
-        if (ageS < (row === 1 ? 2.2 : 2.7)) continue;
+        if (ageS < (row === 3 || row === 5 ? 3.5 : 2.2)) continue;
         expect(data[(row * W + i) * 4 + 3], `row ${row}, ${ageS.toFixed(2)} s: no halo on a cooled edge`).toBe(0);
       }
     }
