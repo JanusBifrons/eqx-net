@@ -781,6 +781,19 @@ slows in slow motion and speeds up at 4×.
   near-parallel cracks closer than ~0.56 beams (`fractureHull.killFocus.test.ts`
   "no two cracks run near-parallel"), and every piece keeps its art. Fixed
   by drawing each piece's glow on its own side only (above).
+- **The "near-black gaps" (rail-channel take, 2026-11-15) are the sky.**
+  Review: the channel and the cracks between parted pieces read as black
+  shapes pasted on the hull. Measured, not a render bug: in the GPU-lit
+  look (plain break-up in `wreck-test`, and the rail-channel scene with the
+  pilot's parked heavy cruiser) every gap pixel equals the bare backdrop
+  with the whole ship layer hidden (0 of ~15,600 gap pixels darker); over a
+  magenta clear colour the gaps are fully transparent; and no other display
+  object darkens them (each hidden in turn). On the filmed frames the gap
+  matches the sky beside it (channel band 40–47 luma where a nebula wisp
+  runs through it, the open sky next to it 16–18 with no wisp). The sky
+  behind a capital at push-in zoom is mostly near-black, so a hole next to
+  a lit hull reads as a black shape. Any change is a look decision for the
+  owner, not a fix.
 
 ### S4: secondary breaks and the catastrophic flash
 
