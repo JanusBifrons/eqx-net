@@ -30,6 +30,13 @@ import type { ArtHandle, ArtService, ShipArt } from '../art/ArtService.js';
 import type { RenderMirror, SwarmRenderState, PoseRingEntry } from '../../../core/contracts/IRenderer.js';
 import { POSE_RING_DEPTH } from '../../../core/contracts/IRenderer.js';
 import { FRACTURE_ALGO_VERSION } from '../../../core/destruction/fractureHull.js';
+import { buildWreckPieces, hullLocalCutAngle } from '../../../core/destruction/wreckPieces.js';
+import { shipShapeScale } from '../../../core/geometry/shipHullOutline.js';
+import { getShipKind } from '../../../shared-types/shipKinds.js';
+import { HEAVY_BEAM_WIDTH } from '../../../core/combat/WeaponCatalogue.js';
+import { DEFAULT_RIG, litFrame } from '../art/shade.js';
+import { runBake, shipPpu } from '../art/bake.js';
+import { forgeShip } from '../art/fields.js';
 import type { WreckDescriptor } from '../../../shared-types/messages/snapshotMessages.js';
 import type { WreckPieceGeometry } from '../../../core/destruction/wreckPieces.js';
 
@@ -258,5 +265,70 @@ describe('every sub-cap piece keeps its normal brightness from its first frame (
     // And a late joiner's (cool) piece likewise.
     const cool = new WreckPieceSprite(g, 'robot-square', bakedArt(), coolWreckInfo(d), 0);
     for (const n of artNodes(cool)) expect(drawnTint(n)).toBe(NORMAL);
+  });
+});
+
+/** Hostile film review 2026-11-15 (heavy-beam slice of a missile frigate,
+ *  take 7): the two halves looked like different objects, one nearly black
+ *  with thin blue/white edge stripes, the other the frigate's normal lit blue.
+ *  Both draw the same dead bake through the same lit shader; the shader's
+ *  self-shadow marches over the PARENT hull's whole height map, so the half
+ *  on the far side from the sun sat in the shadow of hull the cut had
+ *  removed (night look: no ambient, so a shadowed face is black but for its
+ *  rim light). Wreck-piece art (the dead bake, `fx.deadArt`) casts no self
+ *  shadow, on the GPU-lit path and in the baked frames alike, so both halves
+ *  of one ship are lit by the same rule. */
+describe('both halves of a sub-cap wreck are lit by the same rule (beam take 7)', () => {
+  /** The filmed case: a heavy-beam slice along a missile frigate. */
+  function sliceDesc(kindId: 'missile-frigate' | 'battleship', wreckId: number): WreckDescriptor {
+    const pose = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
+    const b = buildWreckPieces({
+      kindId, pose, killWorld: { x: -2000, y: 0 }, attackerWorld: null, seed: 7, killBlowDamage: 0.3, recentDamageRate: 0.5,
+      cutKind: 'slice', cutAng: hullLocalCutAngle(pose, { x: 1, y: 0 }), cutW: HEAVY_BEAM_WIDTH / shipShapeScale(getShipKind(kindId)),
+    });
+    const f = b.fracture;
+    return {
+      wreckId, parentKind: kindId, seed: f.seed, killX: f.killX, killY: f.killY,
+      killBlowDamage: f.killBlowDamage, recentDamageRate: f.recentDamageRate, snapChance: f.snapChance,
+      algoVersion: FRACTURE_ALGO_VERSION, deathTick: 100, cutKind: 'slice', cutAng: f.cutAng!, cutW: f.cutW!,
+    };
+  }
+  /** The self-shadow march length the mesh's shader was given (0 = none). */
+  const shadowSteps = (m: LitShipMesh): number => (m as unknown as { u: Record<string, Float32Array> }).u['uShadow']![0]!;
+
+  it('GPU-lit: no wreck-piece mesh of a sub-cap self-shadows; a capital piece still does', () => {
+    const prev = litPass.settings;
+    litPass.settings = LOOK_NIGHT;
+    try {
+      for (const [kind, want] of [['missile-frigate', false], ['battleship', true]] as const) {
+        const d = sliceDesc(kind, kind === 'battleship' ? 2 : 1);
+        const geom = rebuildWreckPieces(d);
+        expect(geom.length, `${kind}: the slice leaves pieces`).toBeGreaterThanOrEqual(2);
+        const info = new WreckArtState().infoFor(d, geom, 0, { x: 0, y: 0, angle: 0 }, 110, 1000);
+        for (const g of geom) {
+          const p = new WreckPieceSprite(g, kind, litArt(), info, g.index);
+          const meshes = p.children.filter((c): c is LitShipMesh => c instanceof LitShipMesh);
+          expect(meshes.length, `${kind}: lit path`).toBeGreaterThan(0);
+          for (const m of meshes) {
+            m.setLight(DEFAULT_RIG, 0, 0, 0.3, null);
+            expect(shadowSteps(m) > 0, `${kind} piece ${g.index}: self-shadow over the parent's whole height map`).toBe(want);
+          }
+          p.destroy({ children: true });
+        }
+      }
+    } finally {
+      litPass.settings = prev;
+    }
+  });
+
+  it('baked: the dead bake (wreck-piece art) carries no cast self-shadow', () => {
+    const job = { type: 'ship', id: 'missile-frigate', dead: true } as const;
+    const baked = runBake(job, DEFAULT_RIG);
+    const f = forgeShip('missile-frigate', { ppu: shipPpu('missile-frigate'), scrap: true });
+    const steps = baked.frames.length;
+    for (const k of [0, Math.floor(steps / 4), Math.floor(steps / 2)]) {
+      const unshadowed = litFrame(f, DEFAULT_RIG, (k / steps) * Math.PI * 2, false);
+      expect(Buffer.compare(Buffer.from(baked.frames[k]!.data), Buffer.from(unshadowed.data)), `sun step ${k}`).toBe(0);
+    }
   });
 });
