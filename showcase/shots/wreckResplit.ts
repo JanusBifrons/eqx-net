@@ -54,15 +54,23 @@ export const wreckResplit: Shot = {
   reel: false,
   server: 'lean',
   target: { room: 'wreck-test', params: { shipKind: 'battlecruiser-lance', initialHull: 1_000_000, instantLock: 1, noselfdmg: 1, art: 'machined', fx: 'new', spawnX: 5500, spawnY: 2500 } },
-  hud: 'minimal',
+  // The pilot flies, so the take films the game's own follow camera (no
+  // `camera` script: a pan needs spectator mode, showcase-pipeline.md).
   durationMs: 30_000,
-  camera: [{ atMs: 0, smoothMs: 250, shot: { kind: 'track', target: 'local', zoom: 0.07 } }],
   async startWhen(ctx) {
     await ctx.page.waitForFunction(() => {
       let n = 0;
       (globalThis as { __eqxClient?: { mirror: { swarm: Map<number, { kind: number }> } } }).__eqxClient?.mirror.swarm.forEach((e) => { if (e.kind === 1) n++; });
       return n > 0;
     }, null, { timeout: 60_000, polling: 250 });
+    // Pull back with the mouse wheel, as a player would, until the battleship
+    // off the beam is in frame with our own ship.
+    const c = ctx.px(640, 360);
+    await ctx.page.mouse.move(c.x, c.y);
+    for (let i = 0; i < 5; i++) {
+      await ctx.page.mouse.wheel(0, 100);
+      await ctx.sleep(120);
+    }
     await sendRoom(ctx, 'test_kill_capitals', { type: 'test_kill_capitals' });
     await ctx.sleep(2500); // the hull cracks and parts
   },
