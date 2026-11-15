@@ -96,6 +96,7 @@ export {
   CollisionResolvedMessageSchema,
   HitAckSchema,
   DamageEventSchema,
+  DestroyEventSchema,
   ShipLevelUpEventSchema,
   ShipUpgradeAppliedEventSchema,
   WireActivatedMountSchema,

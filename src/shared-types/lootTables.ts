@@ -118,3 +118,19 @@ export function rollLoot(kindId: string | null | undefined, rng: () => number): 
   }
   return out;
 }
+
+/**
+ * Vaporised salvage (owner 2026-11-15): a ship a cut weapon burns away whole
+ * (heavy-beam slice or railgun channel, fracture v11 `vaporised`) still leaves
+ * ONE pod, as any kill does, with its hull's salvage × this, "because the beam
+ * rendered the whole ship down". Only the hull roll's `salvage` scales: carried
+ * cargo, alloy, cores, blueprints, packed items and the bounty don't. Every
+ * ship, whoever flies it (loot-and-cargo.md "Hull salvage").
+ */
+export const VAPORISE_SALVAGE_MUL = 1.5;
+
+/** The extra salvage a vaporised ship adds on top of `hullSalvage` (the
+ *  salvage its hull roll left aboard): round(s × VAPORISE_SALVAGE_MUL) − s. */
+export function vaporiseSalvageBonus(hullSalvage: number): number {
+  return hullSalvage > 0 ? Math.round(hullSalvage * VAPORISE_SALVAGE_MUL) - hullSalvage : 0;
+}

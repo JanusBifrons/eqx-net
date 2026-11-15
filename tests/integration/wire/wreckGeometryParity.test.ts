@@ -139,6 +139,31 @@ describe('wreck geometry with a kill cut: server inputs == client rebuild (v9)',
     });
   }
 
+  // Fracture v11: around the sub-capital's burn-away share (0.2 of the hull)
+  // the client drops exactly the pieces the server burned. A railgun channel
+  // down a gunship 4 u (1x) off its keel leaves ~12 % (burns) and ~44 %
+  // (drifts on): one piece, rebuilt bit for bit, and no second index.
+  it('v11 burn-away: a gunship channel keeps one piece on both sides, its small bank burned on both', () => {
+    const inputs: WreckFractureInputs = {
+      kindId: 'gunship', seed: 3, killX: 4, killY: -16, killBlowDamage: 0.3, recentDamageRate: 0.3, snapChance: 0.2,
+      cutKind: 'channel', cutAng: 16384, cutW: 8,
+    };
+    const server = wreckPieceGeometry(inputs);
+    expect(server).toHaveLength(1);
+    const desc: WreckDescriptor = {
+      wreckId: 77, parentKind: 'gunship', seed: 3, killX: 4, killY: -16, killBlowDamage: 0.3, recentDamageRate: 0.3,
+      snapChance: 0.2, algoVersion: FRACTURE_ALGO_VERSION, cutKind: 'channel', cutAng: 16384, cutW: 8,
+    };
+    const store = new WreckGeometryStore();
+    store.add(JSON.parse(JSON.stringify([desc])) as WreckDescriptor[]);
+    const g = store.piece(77, 0);
+    expect(g).not.toBeNull();
+    expect(g!.parts).toStrictEqual(server[0]!.parts);
+    expect(g!.colliderParts).toStrictEqual(server[0]!.colliderParts);
+    expect(Object.is(g!.mass, server[0]!.mass)).toBe(true);
+    expect(store.piece(77, 1), 'the burned bank is not rebuilt').toBeNull();
+  });
+
   it('a recycled wreck id whose only change is the cut is rebuilt', () => {
     const base: WreckDescriptor = {
       wreckId: 9, parentKind: 'battleship', seed: 7, killX: 600, killY: -200, killBlowDamage: 0.9,
