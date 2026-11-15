@@ -29,33 +29,45 @@
  *    them. A dark hold base under the cargo is the shadow between stacks.
  *  - Deckhouse: tiers in hull steel with window strips, bridge wings, a mast.
  *
- * Tractor beams do not exist yet: tractor mounts carry ids `tractor-*` and the
- * `mining_laser` weapon as a placeholder; PR 15 swaps their `weaponId`.
- * Ships are never faction-bound: no allegiance here, ever.
+ * Tractor mounts (ids `tractor-*`) carry the `tractor` weapon, lasers the
+ * `mining_laser`. Ships are never faction-bound: no allegiance here, ever.
  *
- * Not a catalogue kind: `bargeLookConfig.ts` appends the chosen variant behind
- * the dev flag `?bargeLook=` / `EQX_BARGE_LOOK` only. Coordinates as in
+ * The owner picked look A (2026-11-15): it is the catalogue kind `barge`
+ * (`BARGE_KIND_ID`, `capitals/index.ts`), pilotable, never in a random
+ * spawn pool. All three looks stay viewable as kind `barge-look` behind the
+ * dev flag `?bargeLook=` / `EQX_BARGE_LOOK` (`bargeLookConfig.ts`). Coordinates as in
  * `warshipDesign.ts` (Pixi-up points, mount `localY` positive forward).
  * Pure: imports only shared data.
  */
 import { capitalTargets, solveCapitalPhysics, CAPITAL_MAPPINGS, type CapitalMountSize } from '../../shipScale/capitalReference.js';
 import { CAPITAL_TURRETS } from '../../shipScale/capitalTurrets.js';
+import type { MountSize } from '../../shipScale/tuning.js';
 import type { CapitalMap } from './capitalConfig.js';
 import { circle, convexHull, hullHalfWidth, rect, type Pt } from './warshipDesign.js';
 
 import type { BargeLook } from './bargeLookConfig.js';
 export type { BargeLook };
 export const BARGE_LOOKS: readonly BargeLook[] = ['A', 'B', 'C'];
-/** The look kind's id (R&D only; PR 15 appends the picked hull as its own kind). */
+/** The look kind's id (the R&D flag's kind). */
 export const BARGE_LOOK_KIND_ID = 'barge-look';
+/** The real mining barge's kind id (look `BARGE_PICK`). */
+export const BARGE_KIND_ID = 'barge';
+/** The owner's pick (2026-11-15): "just use A". */
+export const BARGE_PICK: BargeLook = 'A';
 
-/** Mount width in world units per size class (a battleship's 16" house is
- *  ~320): XL / L / M mining lasers, M / S tractor dishes. */
-const HOUSE: Readonly<Record<CapitalMountSize, number>> = { S: 100, M: 150, L: 230, XL: 320 };
+/** Mount width in world units per size class at 1× (a battleship's 16"
+ *  house is ~320): XL / L / M / AA mining lasers, M / S / AA tractor dishes.
+ *  The catalogue scales it with the hull (`defineCapitalShipKind`); reach,
+ *  beam radius and tractor power come from the mount size
+ *  (`MOUNT_SIZE_TUNING`, #18). */
+const HOUSE: Readonly<Record<MountSize, number>> = { AA: 70, S: 100, M: 150, L: 230, XL: 320 };
 /** Traverse (rad/s): mining turrets slew faster than naval guns. */
-const SLEW: Readonly<Record<CapitalMountSize, number>> = { S: 0.5, M: 0.35, L: 0.25, XL: 0.18 };
-/** Placeholder until the tractor beam exists (PR 15 swaps it). */
-export const TRACTOR_PLACEHOLDER_WEAPON = 'mining_laser';
+const SLEW: Readonly<Record<MountSize, number>> = { AA: 0.7, S: 0.5, M: 0.35, L: 0.25, XL: 0.18 };
+/** The weapon a `tractor-*` mount carries. */
+export const TRACTOR_WEAPON = 'tractor';
+/** Cargo capacity (weight units) per u² of plan cargo footprint: a hold
+ *  several times a battleship's (look A ≈ 105,000). */
+const HOLD_PER_AREA = 0.04;
 /** The stern engine module's width × the hull beam. */
 export const ENGINE_WIDTH = 1.4;
 /** Full-thrust plume length × the hull length. */
@@ -103,8 +115,8 @@ export interface BargeDesign {
   length: number;
   beam: number;
   /** Mount counts per size, lasers and tractors separately. */
-  lasers: Record<CapitalMountSize, number>;
-  tractors: Record<CapitalMountSize, number>;
+  lasers: Record<MountSize, number>;
+  tractors: Record<MountSize, number>;
   /** Plan area of the cargo footprint (container stacks, hatch covers), u². */
   holdArea: number;
   /** Stern engine module width (u). */
@@ -120,7 +132,16 @@ const area = (pts: readonly Pt[]): number => {
   return Math.abs(a) / 2;
 };
 
-export function bargeDesign(look: BargeLook, map: CapitalMap = 'C'): BargeDesign {
+/** Pattern letter → mount: upper case a mining laser, lower case a tractor
+ *  dish; `a`/`A` is the AA size, the rest their own size letter. */
+const patternMount = (ch: string): { kind: 'laser' | 'tractor'; size: MountSize } => {
+  const up = ch.toUpperCase();
+  return { kind: ch === up ? 'laser' : 'tractor', size: up === 'A' ? 'AA' : (up as CapitalMountSize) };
+};
+
+/** `kindId`: `BARGE_LOOK_KIND_ID` (default) builds the R&D look kind
+ *  (npcOnly); `BARGE_KIND_ID` the real, pilotable mining barge. */
+export function bargeDesign(look: BargeLook, map: CapitalMap = 'C', kindId: string = BARGE_LOOK_KIND_ID): BargeDesign {
   const v = BARGE_VARIANTS[look];
   const L = v.length, B = v.beam;
   /** Total-length station (0 bow … 1 engine module's aft face). */
@@ -136,31 +157,30 @@ export function bargeDesign(look: BargeLook, map: CapitalMap = 'C'): BargeDesign
     parts.push({ points, color, offsetX: 0, offsetY: 0, role });
   };
   const mounts: Array<Record<string, unknown>> = [];
-  const lasers = { S: 0, M: 0, L: 0, XL: 0 }, tractors = { S: 0, M: 0, L: 0, XL: 0 };
+  const lasers = { AA: 0, S: 0, M: 0, L: 0, XL: 0 }, tractors = { AA: 0, S: 0, M: 0, L: 0, XL: 0 };
   let holdArea = 0;
   const hold = (points: Pt[], color: number): void => { holdArea += area(points); part(points, color, 'cargo'); };
 
   /** A mining laser or a tractor dish on a deck plate. `facing`: rest
    *  bearing in the mount frame (0 forward, −π/2 starboard, +π/2 port). */
-  const mount = (kind: 'laser' | 'tractor', size: CapitalMountSize, x: number, y: number, facing: number, arc = 1.6): void => {
+  const mount = (kind: 'laser' | 'tractor', size: MountSize, x: number, y: number, facing: number, arc = 1.6): void => {
     const scale = HOUSE[size] / (CAPITAL_TURRETS[size].houseW * Bc);
     part(circle(x, y, HOUSE[size] * 0.62, 16), COLORS.plate, 'housing');
     const n = (kind === 'laser' ? lasers : tractors)[size]++;
     mounts.push({
       id: `${kind}-${size.toLowerCase()}${n + 1}${x > 0.5 ? 's' : x < -0.5 ? 'p' : 'c'}`, localX: x, localY: -y,
       baseAngle: facing, arcMin: -arc, arcMax: arc, rotationSpeed: SLEW[size],
-      weaponId: kind === 'laser' ? 'mining_laser' : TRACTOR_PLACEHOLDER_WEAPON, size, barrels: 1, turretScale: scale,
+      weaponId: kind === 'laser' ? 'mining_laser' : TRACTOR_WEAPON, size, barrels: 1, turretScale: scale,
     });
   };
-  /** A row down both sides, inboard of the edge. Pattern letters: upper case
-   *  a laser of that size, lower case a tractor dish. */
+  /** A row down both sides, inboard of the edge (pattern: `patternMount`). */
   const sideRows = (pattern: string, t0: number, t1: number, edge: (t: number) => number): void => {
     const n = pattern.length;
     for (let i = 0; i < n; i++) {
-      const ch = pattern[i]!, size = ch.toUpperCase() as CapitalMountSize;
+      const { kind, size } = patternMount(pattern[i]!);
       const t = n === 1 ? t0 : t0 + ((t1 - t0) * i) / (n - 1);
       for (const side of [1, -1] as const) {
-        mount(ch === size ? 'laser' : 'tractor', size, side * (edge(t) - HOUSE[size] * 0.62 - B * 0.02), hy(t), side > 0 ? -Math.PI / 2 : Math.PI / 2);
+        mount(kind, size, side * (edge(t) - HOUSE[size] * 0.62 - B * 0.02), hy(t), side > 0 ? -Math.PI / 2 : Math.PI / 2);
       }
     }
   };
@@ -229,7 +249,8 @@ export function bargeDesign(look: BargeLook, map: CapitalMap = 'C'): BargeDesign
     containerDeck(0.17, 0.75, B * 0.66, 13, 6);
     deckhouse(0.77, 0.85, [0.84, 0.6, 0.36], B * 0.47);
     const edge = (t: number): number => hullHalfWidth(s, t) * B;
-    sideRows('sssMsssMsss', 0.18, 0.74, edge);
+    // S and AA tractor dishes, an M tractor amidships, M and AA lasers.
+    sideRows('sasMAmAMsas', 0.18, 0.74, edge);
     // Big lasers: the bow corners angled forward, the aft corners outboard-forward.
     mount('laser', 'XL', B * 0.25, hy(0.1), -0.3, 1.9);
     mount('laser', 'XL', -B * 0.25, hy(0.1), 0.3, 1.9);
@@ -295,10 +316,13 @@ export function bargeDesign(look: BargeLook, map: CapitalMap = 'C'): BargeDesign
   const health = Math.round(900 * Math.pow(mass / CAPITAL_MAPPINGS[map].destroyerMass, 0.85));
   const ids = mounts.map((m) => m['id'] as string);
   const record = {
-    id: BARGE_LOOK_KIND_ID,
+    id: kindId,
     displayName: 'Mining Barge',
-    description: `Mining barge look option ${look} (${v.label}): container hold, mining lasers and tractors down both sides, oversized stern engines.`,
-    npcOnly: true,
+    description: kindId === BARGE_KIND_ID
+      ? 'Mining barge: a container hold, mining lasers and tractors down both sides, oversized stern engines.'
+      : `Mining barge look option ${look} (${v.label}): container hold, mining lasers and tractors down both sides, oversized stern engines.`,
+    // The real barge is pilotable; the R&D look kind stays NPC-only.
+    npcOnly: kindId !== BARGE_KIND_ID,
     randomSpawn: false,
     sizeClass: 'capital',
     thrustImpulse: p.thrustImpulse,
@@ -319,7 +343,7 @@ export function bargeDesign(look: BargeLook, map: CapitalMap = 'C'): BargeDesign
     shieldRegenRate: (health * 0.5) / 600,
     energyMax: 600,
     energyRegenRate: 2,
-    cargoCapacity: Math.round(holdArea / 100),
+    cargoCapacity: Math.round(holdArea * HOLD_PER_AREA),
     ai: { thrust: p.thrustImpulse },
     aiRole: 'civilian',
     shape: { kind: 'composite', scale: 1, hull, parts },

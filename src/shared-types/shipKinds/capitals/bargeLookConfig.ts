@@ -10,8 +10,8 @@
  * Set ⇒ the chosen look is appended to the END of the catalogue as kind
  * `barge-look` (npcOnly, never in a random spawn pool), so the ordinary kind
  * path (collider, turrets, forge art, engine FX, wire) draws it. Set it on
- * BOTH the server and the page. Goes away once the owner picks (PR 15 appends
- * the real kind). The kind itself is built in `capitals/index.ts`; this file
+ * BOTH the server and the page. The owner picked A (the real kind `barge`);
+ * the flag stays to compare looks. The kind itself is built in `capitals/index.ts`; this file
  * stays import-free at runtime (the ship-scale config reads the worker suffix).
  */
 /** A barge look option (`bargeDesign.ts`). */

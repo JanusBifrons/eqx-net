@@ -30,7 +30,7 @@ describe.each(['A', 'B', 'C'] as const)('barge look %s in the forge', (look) => 
   it('is appended at the end of the catalogue, and bakes', async () => {
     const m = await load(look);
     expect(m.SHIP_KINDS_LIST.at(-1)!.id).toBe('barge-look');
-    expect(m.SHIP_KINDS_LIST.at(-2)!.id).toBe('battlecruiser-lance');
+    expect(m.SHIP_KINDS_LIST.at(-2)!.id).toBe('barge');
     expect(Object.keys(m.SHIP_KINDS)).toEqual(m.SHIP_KINDS_LIST.map((k) => k.id));
     const kind = m.getShipKind('barge-look');
     const f = m.forgeShip('barge-look', { ppu: m.shipPpu('barge-look') });
@@ -104,7 +104,8 @@ describe('bow fallback leaves the warships alone', () => {
     vi.resetModules();
     vi.unstubAllEnvs();
     const kinds = await import('../../../shared-types/shipKinds.js');
-    for (const k of kinds.SHIP_KINDS_LIST.filter((x) => x.sizeClass === 'capital')) {
+    // Warships only: the mining barge carries no main battery.
+    for (const k of kinds.SHIP_KINDS_LIST.filter((x) => x.sizeClass === 'capital' && x.id !== 'barge')) {
       const mainA = (k.mounts ?? []).find((x) => x.id.startsWith('main-') && x.localY > 0);
       expect(mainA, k.id).toBeDefined();
     }

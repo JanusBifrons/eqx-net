@@ -77,7 +77,7 @@ import {
   DESTROYER, LIGHT_CRUISER, HEAVY_CRUISER, BATTLECRUISER, BATTLESHIP,
   DESTROYER_B, DESTROYER_C, LIGHT_CRUISER_B, LIGHT_CRUISER_C, HEAVY_CRUISER_B, HEAVY_CRUISER_C,
   BATTLECRUISER_B, BATTLECRUISER_C, BATTLESHIP_B, BATTLESHIP_C, BATTLESHIP_RAIL, HEAVY_CRUISER_BEAM, BATTLECRUISER_LANCE,
-  BARGE_LOOK_KIND,
+  BARGE, BARGE_LOOK_KIND,
 } from './shipKinds/capitals/index.js';
 import { SHIP_KINDS_LIST } from './shipKinds/catalogueOrder.js';
 import type { NpcAllegianceId } from './allegiances.js';
@@ -165,6 +165,7 @@ const CATALOGUE_KINDS = Object.freeze({
   'battleship-rail': BATTLESHIP_RAIL,
   'heavy-cruiser-beam': HEAVY_CRUISER_BEAM,
   'battlecruiser-lance': BATTLECRUISER_LANCE,
+  barge: BARGE,
 } as const) satisfies Readonly<Record<string, ShipKind>>;
 
 /** The catalogue, plus the mining-barge look kind at the very end when the
@@ -203,7 +204,8 @@ export const SHIP_KINDS: typeof CATALOGUE_KINDS = BARGE_LOOK_KIND
 // Not bumped for `cargoCapacity` / `collectsLoot` / `randomSpawn` (salvage PR 13):
 // the harvester's cargoCapacity 400 equals its old collector capacity and it is
 // npcOnly (never a stored player ship), so no stored stat changes.
-export const SHIP_KIND_CATALOGUE_VERSION = 27;
+// 27 → 28 (2026-11-15): the mining barge kind appended (salvage PR 15).
+export const SHIP_KIND_CATALOGUE_VERSION = 28;
 
 // The shield bubble pad is `shipTuning(kind).shieldPad` (shipScale/tuning.ts),
 // and the bubble radius is `shieldBubbleRadius(kind)`. The fixed

@@ -43,10 +43,8 @@ export interface TurretPlace {
 }
 
 function familyOf(m: WeaponMount): TurretFamily {
-  // A barge's tractor mounts carry a placeholder weapon until the tractor
-  // beam exists (plan partitioned-chasing-lark PR 15, which keys this on the
-  // tractor weapon instead of the mount id); they draw as dishes already.
-  if (m.id.startsWith('tractor-')) return 'tractor';
+  // A tractor emitter draws as a dish (no barrel).
+  if (m.weaponId === 'tractor') return 'tractor';
   const w = getWeapon(m.weaponId as WeaponId);
   return familyFor(m.weaponId, w.mode, (w.chargeTicks ?? 0) > 0);
 }

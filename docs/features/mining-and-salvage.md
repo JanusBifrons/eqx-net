@@ -12,7 +12,7 @@ Cutting up what is left after a battle: capital wrecks are a resource, and salva
 - **It is cheap to run.** A capital's energy recharges faster than the beam uses it, so it can stay on for as long as it is needed.
 - **Range:** a capital turret's reach (12 km), shorter than the heavy beam.
 
-No ship carries it yet: the mining barge that does is a later step.
+The mining barge carries it (below).
 
 ## Tractor beam
 
@@ -38,7 +38,15 @@ No ship carries it yet: the mining barge that does is a later step.
 - **Guns do not mine.** Shooting a rock with any other weapon takes nothing out of it.
 - **Rocks do not break up yet.** A mined rock only loses ore; splitting rocks comes with the new terrain.
 
-## The mining barge: look options
+## The mining barge
+
+The owner picked look A, the container ship. It is the ship kind `barge`, the last kind in the catalogue:
+
+- **Anyone can own one.** A player can fly it; it is not tied to any side. Its side is its owner's, never the ship kind's, so it has no allegiance, and it never spawns at random (`randomSpawn: false`): a barge exists only because someone owns it. Its AI pilot uses the civilian role.
+- **A huge hold.** About 105,000 units, several times a battleship's (`cargoCapacity`, read by `cargoCapacityForMaxHealth` on the server and the client alike).
+- **26 mounts, all on the hull's drawn dishes.** Mining lasers (weapon group "Mining lasers"): 2 XL at the bow corners angled forward, 2 L at the aft corners, and 4 M and 4 AA in the side rows. Tractors (group "Tractors"): 8 S, 4 AA and 2 M dishes in the side rows. Reach, beam size and tractor pull scale with the mount size (`MOUNT_SIZE_TUNING`).
+
+### Look options
 
 The barge is a container ship for salvage: about 1.3 times a battleship's length (7,480 u), twice its beam, a deck of container stacks, a few big mining lasers at the bow corners and rows of small tractor dishes down both sides so it can strip-mine a field, and a stern engine module wider than the hull (1.4 beams) with three or four round bell nozzles, each about a quarter of the beam across, whose plume at full thrust is 30 % of the hull's length. It has no side of its own: whoever owns it decides that.
 
@@ -53,16 +61,16 @@ How they are drawn, all through the ordinary ship art:
 - **Engines:** `thrusters.bell` draws round bells (rim, dark throat, hot core) instead of block nozzles; `thrusters.plume` sets the full-thrust flame length as a fraction of the hull length, read by the forge into the engine FX.
 - **Mounts:** a mining laser on a capital mount draws as a round emitter with a lens barrel, and a tractor as a dish, sized by its mount class (`turretLayout.ts`), not as a naval gunhouse.
 
-Tractor beams do not exist yet, so tractor mounts (`tractor-*`) carry the mining laser as a placeholder until the tractor arrives.
+Tractor mounts (`tractor-*`) carry the `tractor` weapon and draw as dishes.
 
-To see one in the game, start the server with `EQX_BARGE_LOOK=A` (or B, C) and open the page with `?room=showcase-barge-look&bargeLook=A`: the barge parks beside a battleship and a few small ships. Room `showcase-barge-thrust` has one barge under way at full thrust. Showcase shots `barge-look`, `barge-stern` and `barge-thrust` film them. The switch is for this look review only. Unset, the catalogue is unchanged. Set, the look is added at the very end of the catalogue as kind `barge-look`, and it never spawns at random. Set it on both the server and the page. When the owner picks a look, it is added as a real ship kind and the switch goes away.
+To see one in the game, start the server with `EQX_BARGE_LOOK=A` (or B, C) and open the page with `?room=showcase-barge-look&bargeLook=A`: the barge parks beside a battleship and a few small ships. Room `showcase-barge-thrust` has one barge under way at full thrust. Showcase shots `barge-look`, `barge-stern` and `barge-thrust` film them. The switch is for this look review only. Unset, the catalogue is unchanged. Set, the look is added at the very end of the catalogue as kind `barge-look`, and it never spawns at random. Set it on both the server and the page. It stays for comparing looks B and C with the real barge (look A).
 
 ## Coming next
 
 - **Rock splitting:** a mined rock breaks into smaller rocks, through the same split code as wrecks.
 
 - **Wreck wear:** wrecks take damage and break into smaller pieces under the beam.
-- **The mining barge:** the salvage ship that carries the mining laser.
+- **The barge's AI pilot:** its turrets pick salvage targets and it strip-mines a wreck field, banking at its owner's base.
 - **Salvage yield:** what cutting up a wreck gives back.
 - **Tractor beam on screen:** the client draws the beam and predicts the pull from the snapshot's beam links (with an e2e test and a showcase shot); a pod pulled into the hold zone is picked up.
 

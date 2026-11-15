@@ -10,7 +10,7 @@
 import { describe, expect, it } from 'vitest';
 import { defineCapitalShipKind } from '../../shipScale/defineShipKind.js';
 import { getShipKind, isShipKindId, SHIP_KINDS, SHIP_KINDS_LIST } from '../../shipKinds.js';
-import { BARGE_LOOKS, BARGE_LOOK_KIND_ID, TRACTOR_PLACEHOLDER_WEAPON, bargeDesign } from './bargeDesign.js';
+import { BARGE_LOOKS, BARGE_LOOK_KIND_ID, TRACTOR_WEAPON, bargeDesign } from './bargeDesign.js';
 import { BARGE_LOOK, resolveBargeLook } from './bargeLookConfig.js';
 import { inRandomSpawnPool } from '../../shipKinds.js';
 
@@ -45,7 +45,7 @@ describe.each(BARGE_LOOKS)('barge look %s', (look) => {
 
   it('is lined with mining lasers and tractors of varying sizes, down both sides', () => {
     const m = kind.mounts ?? [];
-    expect(m.every((x) => [String('mining_laser'), TRACTOR_PLACEHOLDER_WEAPON].includes(x.weaponId))).toBe(true);
+    expect(m.every((x) => [String('mining_laser'), TRACTOR_WEAPON].includes(x.weaponId))).toBe(true);
     // Three or more visible size classes; a few big lasers (XL) at the bow
     // angled forward; tractors are the small dishes.
     expect(new Set(m.map((x) => x.size)).size).toBeGreaterThanOrEqual(3);
@@ -60,7 +60,7 @@ describe.each(BARGE_LOOKS)('barge look %s', (look) => {
     expect(tr.filter((x) => x.size === 'S').length).toBeGreaterThanOrEqual(4);
     expect(m.filter((x) => x.localX > 0).length).toBe(m.filter((x) => x.localX < 0).length);
     expect(new Set(m.map((x) => x.id)).size).toBe(m.length);
-    expect(d.lasers.S + d.lasers.M + d.lasers.L + d.lasers.XL + d.tractors.S + d.tractors.M + d.tractors.L + d.tractors.XL).toBe(m.length);
+    expect(d.lasers.AA + d.tractors.AA + d.lasers.S + d.lasers.M + d.lasers.L + d.lasers.XL + d.tractors.S + d.tractors.M + d.tractors.L + d.tractors.XL).toBe(m.length);
     // Every mount is in exactly one weapon group.
     const grouped = (kind.slots ?? []).flatMap((s) => s.mountIds);
     expect(grouped.sort()).toEqual(m.map((x) => x.id).sort());
@@ -93,7 +93,7 @@ describe('barge look switch', () => {
 
   it.runIf(BARGE_LOOK === null)('unset: the catalogue has no barge-look kind', () => {
     expect(isShipKindId(BARGE_LOOK_KIND_ID)).toBe(false);
-    expect(SHIP_KINDS_LIST.at(-1)!.id).toBe('battlecruiser-lance');
+    expect(SHIP_KINDS_LIST.at(-1)!.id).toBe('barge');
     expect(Object.keys(SHIP_KINDS)).toEqual(SHIP_KINDS_LIST.map((k) => k.id));
   });
 });
