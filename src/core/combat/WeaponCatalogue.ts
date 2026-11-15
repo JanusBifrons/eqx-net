@@ -68,12 +68,16 @@ export type WeaponTargetClass = 'shield' | 'hull' | 'structure' | 'wreck';
 /** `WeaponDefBase.targetFactor`: a damage multiplier per target class. */
 export type WeaponTargetFactor = { readonly [K in WeaponTargetClass]?: number };
 
+/** A weapon's 'wreck' factor when it names none: ordinary guns wear a wreck
+ *  piece's hidden integrity ten times slower than the mining laser (factor 1;
+ *  owner 2026-11-15, capital-destruction.md §S4 "Re-split"). */
+export const WRECK_DEFAULT_TARGET_FACTOR = 0.1;
+
 /** The damage multiplier `def` applies against `cls`. Pure, allocation-free.
- *  Every class defaults to 1 for now. The 'wreck' default becomes 0.1 when
- *  wreck integrity lands (plan partitioned-chasing-lark, PR 5); until then 1
- *  keeps every hit byte-identical. */
+ *  Every class defaults to 1 except 'wreck' (`WRECK_DEFAULT_TARGET_FACTOR`):
+ *  wreck pieces take no damage, the factor scales only their integrity wear. */
 export function weaponTargetFactor(def: WeaponDef, cls: WeaponTargetClass): number {
-  return def.targetFactor?.[cls] ?? 1;
+  return def.targetFactor?.[cls] ?? (cls === 'wreck' ? WRECK_DEFAULT_TARGET_FACTOR : 1);
 }
 
 /** Resolve `def`'s factors for one hit into the per-layer multiplier the

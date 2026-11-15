@@ -46,6 +46,10 @@ import type { WreckDescriptor } from '../../shared-types/messages/snapshotMessag
 import { wreckCrackTicks } from '../../shared-types/wreckTiming.js';
 import { WEAPONS, type WeaponId } from '../../core/combat/WeaponCatalogue.js';
 import { shipShapeScale } from '../../core/geometry/shipHullOutline.js';
+import type { WreckChildChain } from '../../core/destruction/wreckChildren.js';
+import { wreckPieceIntegrity, wreckWearFactor } from '../../core/destruction/wreckIntegrity.js';
+import { WreckResplitter, type WreckPiecePose } from './wreckResplit.js';
+export type { WreckPiecePose };
 
 const BUCKETS = 6;
 const BUCKET_TICKS = WRECK_RECENT_DAMAGE_TICKS / BUCKETS;
@@ -98,7 +102,7 @@ export interface WreckPieceSpawn {
   settleSpin: number;
 }
 
-interface LiveWreck {
+export interface LiveWreck {
   desc: WreckDescriptor;
   /** Pieces of this wreck still alive. */
   pieces: number;
@@ -109,6 +113,11 @@ interface LiveWreck {
   mass: number;
   /** Server tick the crack hold ends (the separating kicks are due). */
   holdUntil: number;
+  /** §S4: the chain these pieces are the last generation of, the parent
+   *  wreck (0 = root) and its live child wrecks (refcount, `retire`). */
+  chain: WreckChildChain;
+  parent: number;
+  children: number;
 }
 
 export interface CapitalWreckDeps {
@@ -135,7 +144,7 @@ export interface CapitalWreckDeps {
   impulsePiece?: (id: string, jx: number, jy: number, px: number, py: number) => void;
   /** Write a live piece's centre (world) into `out`; false when it is gone.
    *  Optional: absent ⇒ a hit always turns a piece by its full lever arm. */
-  pieceCentreInto?: (id: string, out: { x: number; y: number }) => boolean;
+  pieceCentreInto?: (id: string, out: WreckPiecePose) => boolean;
   /** Apply impulse (jx, jy) at world point (px, py) to the WHOLE wreck as one
    *  rigid body (every piece in `ids`; gone ones are skipped), so the pieces
    *  keep their relative poses: a hit during the crack hold. Optional: absent
@@ -144,10 +153,15 @@ export interface CapitalWreckDeps {
   /** Is this live piece asleep (FLAG_SLEEPING)? Optional: absent ⇒ every
    *  hit shoves (no resting-piece knock gate). */
   pieceAsleep?: (id: string) => boolean;
+  /** A live piece's pose and motion, or null. Absent ⇒ no re-split (§S4). */
+  piecePose?: (id: string) => WreckPiecePose | null;
+  /** Drop a `qty`-unit salvage pod (a worn-out piece too small to split).
+   *  Absent ⇒ such a piece just stops wearing. */
+  dropSalvage?: (qty: number, x: number, y: number, vx: number, vy: number) => void;
 }
 
 /** How hard a hit knocks one piece (fixed at spawn; read per hit, #14). */
-interface PieceKnock {
+export interface PieceKnock {
   /** The piece's mass (its body's mass). */
   mass: number;
   /** Impulse per point of damage: hull mass × `wreckKnockSpeed` ÷ max hull. */
@@ -160,10 +174,13 @@ interface PieceKnock {
   /** Least uncapped speed change (u/s) that wakes a RESTING piece: the
    *  profile's `knockWakeScale` × `wreckKnockMax`. 0 = every hit shoves. */
   wakeDv: number;
+  /** §S4: index in its wreck's last generation; hidden integrity (never on the wire). */
+  index: number;
+  integrity: number;
 }
 
 /** Scratch for a piece's centre in `onWreckHit` (#14). */
-const CENTRE_SCRATCH = { x: 0, y: 0 };
+const CENTRE_SCRATCH: WreckPiecePose = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
 
 /** A piece's separating kick, held until the wreck's crack delay ends. */
 interface PendingKick {
@@ -201,7 +218,19 @@ export class CapitalWreckSubsystem {
   /** Test seam: a fixed fracture seed. */
   forcedSeed: number | null = null;
 
-  constructor(private readonly d: CapitalWreckDeps) {}
+  /** Worn-out pieces split or turn to salvage (§S4, wreckResplit.ts). */
+  private readonly resplit: WreckResplitter;
+
+  constructor(private readonly d: CapitalWreckDeps) {
+    this.resplit = new WreckResplitter(d, {
+      fifo: (capital) => (capital ? this.live : this.liveSubcap),
+      cap: (capital) => (capital ? MAX_LIVE_WRECK_PIECES : (this.subcapCapOverride ?? MAX_LIVE_SUBCAP_WRECK_PIECES)),
+      newWreck: () => [this.allocWreckId(), this.deaths++],
+      addPiece: (id, wreckId, entry, fifo) => { this.knock.set(id, entry); fifo.push(id); this.pieceWreck.set(id, wreckId); },
+      addWreck: (w, parent) => { this.wrecks.set(w.desc.wreckId, w); parent.children++; this.setChanged(); },
+      dropPiece: (id, fifo) => this.dropPiece(id, fifo),
+    });
+  }
 
   /** Record a hit on `targetId` (called for every damaging hit). Cheap for
    *  non-capitals (one kind lookup). `hitX/hitY` absent ⇒ the attacker's
@@ -349,7 +378,10 @@ export class CapitalWreckSubsystem {
       spawned++;
       spawnedMass += p.mass;
       spawnedIds.push(id);
-      this.knock.set(id, { mass: p.mass, impulsePerDamage, maxDv: tuning.wreckKnockMax, spin: profile.spinScale, wakeDv: profile.knockWakeScale * tuning.wreckKnockMax });
+      this.knock.set(id, {
+        mass: p.mass, impulsePerDamage, maxDv: tuning.wreckKnockMax, spin: profile.spinScale, wakeDv: profile.knockWakeScale * tuning.wreckKnockMax,
+        index: p.index, integrity: wreckPieceIntegrity(kindId, p.mass),
+      });
       // The hull holds together for the crack delay, then parts (game ticks).
       if (held) this.kicks.push({ id, dueTick: tick + crackTicks, vx: p.kickVx, vy: p.kickVy, w: p.kickAngvel, angle0: pose.angle });
       fifo.push(id);
@@ -370,6 +402,9 @@ export class CapitalWreckSubsystem {
         ids: spawnedIds,
         mass: spawnedMass,
         holdUntil: tick + crackTicks,
+        chain: { root: fracture, steps: [] },
+        parent: 0,
+        children: 0,
       });
       this.setChanged();
     }
@@ -426,7 +461,7 @@ export class CapitalWreckSubsystem {
    * (sub-caps: twice the cap, so small arms leave it asleep; capitals: 0,
    * every hit). A lighter hit returns true (the shot stops) and does nothing.
    */
-  onWreckHit(id: string, hitX: number, hitY: number, dirX: number, dirY: number, damage: number): boolean {
+  onWreckHit(id: string, hitX: number, hitY: number, dirX: number, dirY: number, damage: number, weaponId?: WeaponId): boolean {
     const k = this.knock.get(id);
     if (k === undefined || this.d.impulsePiece === undefined || !(damage > 0)) return false;
     const len = Math.hypot(dirX, dirY);
@@ -434,6 +469,12 @@ export class CapitalWreckSubsystem {
     let j = damage * k.impulsePerDamage;
     const wreckId = this.pieceWreck.get(id);
     const w = wreckId !== undefined ? this.wrecks.get(wreckId) : undefined;
+    // Re-split (§S4): the hit wears the piece's hidden integrity; worn out
+    // (and past the crack hold) it splits or turns to salvage instead of
+    // being shoved.
+    if (k.integrity > 0) k.integrity -= damage * wreckWearFactor(weaponId);
+    if (k.integrity <= 0 && w !== undefined && wreckId !== undefined && this.d.serverTick() >= w.holdUntil
+      && this.resplit.wornOut(id, k, wreckId, w, hitX, hitY, dirX, dirY, weaponId)) return true;
     if (w !== undefined && this.d.impulseWreck !== undefined && this.d.serverTick() < w.holdUntil) {
       const jMax = k.maxDv * w.mass;
       if (j > jMax) j = jMax;
@@ -489,10 +530,37 @@ export class CapitalWreckSubsystem {
     const w = this.wrecks.get(wreckId);
     if (w === undefined) return;
     w.pieces--;
-    if (w.pieces <= 0) {
+    this.retire(wreckId, w);
+  }
+
+  /** Drop a wreck with no live pieces nor child wrecks, then each ancestor
+   *  left so (§S4: ancestors stay on the wire while a descendant lives). */
+  private retire(wreckId: number, w: LiveWreck): void {
+    let changed = false;
+    while (w.pieces <= 0 && w.children <= 0) {
       this.wrecks.delete(wreckId);
-      this.setChanged();
+      changed = true;
+      const p = w.parent !== 0 ? this.wrecks.get(w.parent) : undefined;
+      if (p === undefined) break;
+      p.children--;
+      wreckId = w.parent;
+      w = p;
     }
+    if (changed) this.setChanged();
+  }
+
+  /** Remove a live piece that broke or turned to salvage (out of its FIFO,
+   *  its body, its wreck's count). */
+  private dropPiece(id: string, fifo: string[]): void {
+    const i = fifo.indexOf(id);
+    if (i >= 0) fifo.splice(i, 1);
+    if (this.d.isLive(id)) this.d.removePiece(id);
+    this.pieceGone(id);
+  }
+
+  /** Test seam: a live piece's hidden integrity (undefined: not a piece). */
+  pieceIntegrity(id: string): number | undefined {
+    return this.knock.get(id)?.integrity;
   }
 
   /** The snapshot slice: one descriptor per live wreck (shared array, rebuilt

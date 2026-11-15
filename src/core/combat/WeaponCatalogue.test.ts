@@ -11,6 +11,7 @@ import {
   DEFAULT_WEAPON,
   HEAVY_BEAM_WIDTH,
   weaponTargetFactor,
+  WRECK_DEFAULT_TARGET_FACTOR,
   weaponLayerMul,
   type WeaponDef,
 } from './WeaponCatalogue.js';
@@ -267,17 +268,20 @@ describe('weaponTargetFactor (per-target damage factors)', () => {
   const plain = getWeapon('laser');
   const miner: WeaponDef = { ...plain, targetFactor: { shield: 0, hull: 0.05 } };
 
-  it('defaults every class to 1 for a weapon without factors', () => {
-    for (const cls of ['shield', 'hull', 'structure', 'wreck'] as const) {
+  it('defaults every class to 1 for a weapon without factors, a wreck to 0.1', () => {
+    for (const cls of ['shield', 'hull', 'structure'] as const) {
       expect(weaponTargetFactor(plain, cls)).toBe(1);
     }
+    // Ordinary guns wear wreck integrity 10x slower than the mining laser (1).
+    expect(weaponTargetFactor(plain, 'wreck')).toBe(WRECK_DEFAULT_TARGET_FACTOR);
+    expect(WRECK_DEFAULT_TARGET_FACTOR).toBe(0.1);
   });
 
   it('reads a set factor and defaults the absent keys to 1', () => {
     expect(weaponTargetFactor(miner, 'shield')).toBe(0);
     expect(weaponTargetFactor(miner, 'hull')).toBe(0.05);
     expect(weaponTargetFactor(miner, 'structure')).toBe(1);
-    expect(weaponTargetFactor(miner, 'wreck')).toBe(1);
+    expect(weaponTargetFactor(miner, 'wreck')).toBe(WRECK_DEFAULT_TARGET_FACTOR);
   });
 
   it('no catalogue weapon carries factors yet (every hit byte-identical)', () => {

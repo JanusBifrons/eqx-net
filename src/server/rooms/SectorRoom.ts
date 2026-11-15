@@ -405,7 +405,7 @@ import { type ShellSalvo } from '../../shared-types/messages/shellEvents.js';
 import { tuningFor, GLOBAL_SHIP_TUNING } from '../../shared-types/shipScale/lookup.js';
 import { shipRayHit, shipSweepHit } from '../../core/combat/shipHitShape.js';
 import { mayBeInReach, maxShipRangeBound, mountsReachTarget, type MountRangeTarget } from '../../core/combat/mountReach.js';
-import { CapitalWreckSubsystem } from './CapitalWreckSubsystem.js';
+import { CapitalWreckSubsystem, type WreckPiecePose } from './CapitalWreckSubsystem.js';
 import { wreckRayHit } from '../../core/destruction/wreckHits.js';
 import { isDebris, isLootPod, isWreckPiece } from '../net/SwarmEntityRegistry.js';
 import { LineOfFireGate } from './LineOfFireGate.js';
@@ -1033,6 +1033,7 @@ export class SectorRoom extends Room<SectorState> {
   /** Reused per-hit weapon layer multiplier (`applyDamage`, #14). */
   private readonly _layerMul = { shield: 1, hull: 1 };
   /** Reused `WRECK_IMPULSE` command (overkill knock-back, #14). */
+  private readonly _wreckPose: WreckPiecePose = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
   private readonly _wreckImpulseCmd = { type: 'WRECK_IMPULSE' as const, entityId: '', jx: 0, jy: 0, px: 0, py: 0 };
   /** Reused `WRECK_RIGID_IMPULSE` command (a hit during the crack hold, #14). */
   private readonly _wreckRigidImpulseCmd: { type: 'WRECK_RIGID_IMPULSE'; entityIds: readonly string[]; jx: number; jy: number; px: number; py: number } =
@@ -1509,6 +1510,8 @@ export class SectorRoom extends Room<SectorState> {
     loot: LootSubsystem;
     /** S2a — a swarm entity's full SAB state (pose, velocity, spin). */
     wreckState: (id: string) => { x: number; y: number; vx: number; vy: number; angle: number; angvel: number } | null;
+    /** Salvage PR 5: a wreck piece's hidden integrity (undefined: none). */
+    wreckIntegrity: (id: string) => number | undefined;
     /** S2a — a wreck piece's convex parts (body-local), or null. */
     wreckParts: (id: string) => ReadonlyArray<ReadonlyArray<{ x: number; y: number }>> | null;
     /** S2a — fix the fracture seed (null = per death). */
@@ -1587,13 +1590,8 @@ export class SectorRoom extends Room<SectorState> {
         return { x: this.sabF32[b + SLOT_X_OFF]!, y: this.sabF32[b + SLOT_Y_OFF]!, angle: this.sabF32[b + SLOT_ANGLE_OFF]! };
       },
       damageSwarmLayered: (rec, damage) => this.damageSwarmLayered(rec, damage),
-      wreckState: (id) => {
-        const rec = this.swarmRegistry.get(id);
-        if (!rec) return null;
-        const b = slotBase(rec.slot);
-        const f = this.sabF32;
-        return { x: f[b + SLOT_X_OFF]!, y: f[b + SLOT_Y_OFF]!, vx: f[b + SLOT_VX_OFF]!, vy: f[b + SLOT_VY_OFF]!, angle: f[b + SLOT_ANGLE_OFF]!, angvel: f[b + SLOT_ANGVEL_OFF]! };
-      },
+      wreckState: (id) => this.wreckPose(id),
+      wreckIntegrity: (id) => this.capitalWrecks?.pieceIntegrity(id),
       wreckParts: (id) => this.swarmRegistry.get(id)?.wreckParts ?? null,
       setWreckSeed: (seed) => { if (this.capitalWrecks) this.capitalWrecks.forcedSeed = seed; },
       swarmSleeping: (id) => {
@@ -5156,7 +5154,7 @@ export class SectorRoom extends Room<SectorState> {
     // their own splash impulse, rams through the contact itself.
     if (this.capitalWrecks !== null && damage > 0 && hitX !== undefined && hitY !== undefined
       && dirX !== undefined && dirY !== undefined) {
-      this.capitalWrecks.onWreckHit(targetId, hitX, hitY, dirX, dirY, damage);
+      this.capitalWrecks.onWreckHit(targetId, hitX, hitY, dirX, dirY, damage, weaponId);
     }
     // Phase 4 warp travel: a ship on its run is out of the world (an NPC's too, W2a).
     if (this.warpTravel.isTravelling(targetId)) return false;
@@ -5267,10 +5265,7 @@ export class SectorRoom extends Room<SectorState> {
         if (rec) this.evictSwarmEntity(rec, { broadcast: false, emitDestroyed: false });
       },
       isLive: (id) => this.swarmRegistry.has(id),
-      pieceAngle: (id) => {
-        const rec = this.swarmRegistry.get(id);
-        return rec ? this.sabF32[slotBase(rec.slot) + SLOT_ANGLE_OFF]! : null;
-      },
+      pieceAngle: (id) => this.wreckPose(id, this._wreckPose)?.angle ?? null,
       kickPiece: (id, dvx, dvy, dw) => this.postToWorker({ type: 'WRECK_KICK', entityId: id, dvx, dvy, dw }),
       // A reused command (#14): postMessage clones it synchronously.
       impulsePiece: (id, jx, jy, px, py) => {
@@ -5279,14 +5274,7 @@ export class SectorRoom extends Room<SectorState> {
         this.postToWorker(c);
       },
       // A piece's body sits on its centroid: its SAB pose is the centre (#14).
-      pieceCentreInto: (id, out) => {
-        const rec = this.swarmRegistry.get(id);
-        if (!rec) return false;
-        const b = slotBase(rec.slot);
-        out.x = this.sabF32[b + SLOT_X_OFF]!;
-        out.y = this.sabF32[b + SLOT_Y_OFF]!;
-        return true;
-      },
+      pieceCentreInto: (id, out) => this.wreckPose(id, out) !== null,
       // During the crack hold: the whole wreck as one rigid body (#14 as above).
       impulseWreck: (ids, jx, jy, px, py) => {
         const c = this._wreckRigidImpulseCmd;
@@ -5297,7 +5285,19 @@ export class SectorRoom extends Room<SectorState> {
         const rec = this.swarmRegistry.get(id);
         return rec != null && ((this.sabU32[slotBase(rec.slot) + SLOT_FLAGS_OFF] ?? 0) & FLAG_SLEEPING) !== 0;
       },
+      piecePose: (id) => this.wreckPose(id),
+      dropSalvage: (qty, x, y, vx, vy) => { this.loot.drop({ goods: { salvage: qty }, blueprints: [] }, x, y, vx, vy, { cause: 'salvage' }); },
     });
+  }
+
+  /** A live wreck piece's SAB pose into `out` (#14 with a reused `out`), or null when gone. */
+  private wreckPose(id: string, out: WreckPiecePose = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 }): WreckPiecePose | null {
+    const rec = this.swarmRegistry.get(id);
+    if (!rec) return null;
+    const b = slotBase(rec.slot), f = this.sabF32;
+    out.x = f[b + SLOT_X_OFF]!; out.y = f[b + SLOT_Y_OFF]!; out.vx = f[b + SLOT_VX_OFF]!; out.vy = f[b + SLOT_VY_OFF]!;
+    out.angle = f[b + SLOT_ANGLE_OFF]!; out.angvel = f[b + SLOT_ANGVEL_OFF]!;
+    return out;
   }
 
   /** Does a ship of `kindId` break into wreck pieces in this room? Read from
