@@ -364,11 +364,13 @@ const NAVAL_SIEGE_DEF: ProjectileWeaponDef = {
  * and flat (`RAILGUN_BALLISTICS`), small, heavy. A hit that doesn't kill
  * stops it; a kill erases a channel as wide as the drawn bolt along its line
  * (`killCut`) and the slug carries on at full damage (`ProjectilePipeline`
- * pass-through). Absolute like the naval guns (never `profiled`).
+ * pass-through). Absolute like the naval guns (never `profiled`). One barrel
+ * per turret, so the slug carries the turret's whole punch: 7500 kills any
+ * shield-down capital up to a battlecruiser (a battleship takes two).
  */
 const RAILGUN_DEF: ProjectileWeaponDef = {
   id: 'railgun', displayName: 'Railgun', mode: 'projectile',
-  damage: 2400, cooldownTicks: 2400, ...RAILGUN_BALLISTICS, radius: RAILGUN_RADIUS, energyCost: 1,
+  damage: 7500, cooldownTicks: 2400, ...RAILGUN_BALLISTICS, radius: RAILGUN_RADIUS, energyCost: 1,
   chargeTicks: 360, chargeRelease: 'when-bearing', chargeTelegraph: 'mount-glow',
   killCut: { kind: 'channel', width: RAILGUN_BOLT_WIDTH },
 };

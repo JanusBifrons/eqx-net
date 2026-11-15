@@ -234,3 +234,15 @@ describe('WeaponCatalogue — capital heavy beam (plan beam-slices §8)', () => 
     expect(w.damage * shotsPerSec * burnS).toBeGreaterThanOrEqual(cap.maxHealth + (cap.shieldMax ?? 0));
   });
 });
+
+describe('WeaponCatalogue — capital railgun (plan beam-slices §7)', () => {
+  it('one slug kills any shield-down capital up to a battlecruiser, so a kill can scythe on down the line', () => {
+    // One barrel per rail turret: the slug carries the turret's whole punch.
+    // A shield takes a whole hit (no spill), so the cut needs the shield down
+    // first; then one slug must kill the hull for the channel to open.
+    const rail = getWeapon('railgun');
+    for (const id of ['destroyer', 'light-cruiser', 'heavy-cruiser', 'battlecruiser']) {
+      expect(rail.damage, id).toBeGreaterThan(getShipKind(id).maxHealth);
+    }
+  });
+});
