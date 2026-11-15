@@ -8,7 +8,8 @@ import {
   forEachStructureMountAngles,
   type StructureStateView,
 } from '../../shared-types/structureStateWire.js';
-import { forEachBeamLink, type BeamLinkVisitor } from '../../shared-types/beamLinksWire.js';
+import type { BeamLinkVisitor } from '../../shared-types/beamLinksWire.js';
+import { TractorLinkClient } from './tractorLinks.js';
 import { Client, Room } from 'colyseus.js';
 import type { RenderMirror, ShipRenderState, StructureRenderState, SwarmRenderState } from '@core/contracts/IRenderer';
 import type { IAudio } from '@core/contracts/IAudio';
@@ -3941,8 +3942,9 @@ export class ColyseusGameClient {
   };
 
   /** Beam links (shared-types/beamLinksWire.ts): structure turret / mining
-   *  targets onto their rows. Ship tractor links decode here and are drawn and
-   *  predicted by the tractor client slice (salvage plan PR 11b). Bound once. */
+   *  targets onto their rows; ship tractor links go to the tractor client
+   *  slice (`tractorLinks.ts`: mirror rows + predWorld fields). Bound once. */
+  private readonly _tractors = new TractorLinkClient(this.mirror, this._swarmBodyKeyCache);
   private readonly _beamLinkVisitor: BeamLinkVisitor = {
     structure: (sid, turret, mining) => {
       const row = this._structureMap?.get(sid);
@@ -3953,7 +3955,7 @@ export class ColyseusGameClient {
       else if (turret !== STRUCTURE_TARGET_NONE) row.turretTargetId = turret;
       if (mining !== STRUCTURE_TARGET_NONE) row.miningTargetId = mining;
     },
-    tractor: () => {},
+    tractor: this._tractors.add,
   };
 
   /** Coastal defences — copy one structure's server turret angles onto its
@@ -4008,9 +4010,10 @@ export class ColyseusGameClient {
         const sw = this.mirror.swarm?.get(id);
         if (sw && sw.kind === SWARM_KIND_STRUCTURE) this.mirror.swarm!.delete(id);
       }
-      if (targets) forEachBeamLink(targets, this._beamLinkVisitor);
       if (mountAngles) forEachStructureMountAngles(mountAngles, this._applyStructureMountAngles);
     }
+    // Beam links walk with or without structures: a tractor needs none.
+    this._tractors.sync(targets, this._beamLinkVisitor, this.predWorld);
     this.syncPredWalls();
     this.syncForceFields();
     this.syncMines();

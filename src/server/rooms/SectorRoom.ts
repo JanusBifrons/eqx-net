@@ -3298,7 +3298,12 @@ export class SectorRoom extends Room<SectorState> {
       applyDamage: (id, shooter, dmg, x, y) => { this.applyDamage(id, shooter, dmg, x, y); },
       warpBot: (id, x, y) => { this.warpBot(id, x, y); },
       setBotMoveTarget: (id, x, y) => this.setBotMoveTarget(id, x, y),
+      testTractor: (pid, entityId, ticks) => {
+        const m = getShipKind(this.getActiveShip(pid)?.kind ?? null).mounts?.[0], t = this.swarmRegistry.getByEntityId(entityId);
+        if (m && t) this.forceFields.renewTractor(pid, { ...m, weaponId: 'tractor' }, t.id, ticks);
+      },
     });
+    this.onMessage('test_tractor', (client: Client, raw: unknown) => testHandlers.tractor(client, raw));
     this.onMessage('test_aggro', (client: Client, raw: unknown) => testHandlers.aggro(client, raw));
     this.onMessage('test_reload_turrets', (client: Client, raw: unknown) => testHandlers.reloadTurrets(client, raw));
     this.onMessage('test_kill_capitals', (client: Client, raw: unknown) => testHandlers.killCapitals(client, raw));

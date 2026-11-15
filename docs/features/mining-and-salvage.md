@@ -30,6 +30,8 @@ No ship carries it yet: the mining barge that does is a later step.
 
 **How it runs.** Every accepted fire renews a short lease for that mount and target. While the lease is live, the server's force-field list carries a `tractor` field that the physics worker applies every step; the lease ends 12 ticks after the last fire, or at once when the ship or the target is gone. A wreck that has just broken apart holds together as one rigid body for a moment (its crack hold): a tractor on one of its pieces holds on but does not pull until the hold ends. Internals: [physics-worker, Force fields](../architecture/physics-worker.md#force-fields), [weapon-mounts, Tractor beam](../architecture/weapon-mounts.md#tractor-beam).
 
+**What you see.** A faint, thin, pale-blue line from the mount's barrel to the target, with soft rings running along it back toward the ship, so you can tell which way it pulls. It is meant to be subtle, not a weapon beam. Your own game predicts the pull, so a ship being pulled moves smoothly, and a player who joins late sees a held beam straight away.
+
 ## Mining asteroids
 
 - **The mining laser mines rock.** Hold it on a locked asteroid and the rock's ore goes into your hold: about 30 units a second per beam, a little faster than a base Miner's drill. Whatever comes out of the rock goes into the hold; nothing is lost on the way.
@@ -45,7 +47,7 @@ No ship carries it yet: the mining barge that does is a later step.
 - **Wreck wear:** wrecks take damage and break into smaller pieces under the beam.
 - **The mining barge:** the salvage ship that carries the mining laser.
 - **Salvage yield:** what cutting up a wreck gives back.
-- **Tractor beam on screen:** the client draws the beam and predicts the pull from the snapshot's beam links (with an e2e test and a showcase shot); a pod pulled into the hold zone is picked up.
+- **Tractor pickup:** a pod pulled into the hold zone is picked up.
 
 ## Under the hood
 
