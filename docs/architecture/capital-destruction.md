@@ -2091,33 +2091,62 @@ line; a railgun kill erases a straight channel as wide as the bolt.
   same age, ending dark at the same `WRECK_GLOW_END_S` (4.5 s):
   - **Slice:** the beam's pale core at the instant, then `HEAVY_BEAM_COLOR`
     violet at full alpha to `CUT_GLOW_HOLD_S` (1.5 s; a crack is at alpha
-    ~0.65 and red by then), a deep violet ember (0x7428a8, alpha 0.7 at 2.3 s),
-    a violet-grey scorch, dark.
+    ~0.65 and red by then), a bright violet ember (0xa050e8 at 2.2 s, alpha
+    0.92, deepening to 0x8834c8 at 0.72 by 3.4 s), a violet-grey scorch
+    (4.0 s, alpha 0.3), dark at 4.5 s.
   - **Channel:** white-hot at full alpha to 1.5 s, then it cools like struck
-    metal: yellow-white (2.0 s), an orange-red ember (2.6 s), scorch, dark.
-  - **Width:** a kill cut's core and halo are `CUT_GLOW_WIDTH_MUL` (2.5) ×
-    a crack's, and its halo is brighter (0.45 × the core alpha, a crack's
-    0.3) and lasts with the colour (gone by 2.6 s; a crack's by 2.0 s).
+    metal: yellow-white (2.0 s), an orange ember (0xff7a28, alpha 0.8 at
+    2.8 s), a dull red-brown scorch (3.8 s, alpha 0.3), dark at 4.5 s.
+  - **The ember is a stage of its own** (second film review 2026-11-15: the
+    old ember, 0x7428a8 at 2.3 s falling to a 0.32-alpha grey-violet at
+    3 s, read as dark ~2.3 s after the kill with no violet ember seen; it was
+    the curve, not the clock: the glow ages on game time from first sight
+    and its texture U is linear in age). On screen (alpha × brightest
+    channel) the cut shows ≥ 0.45 at 2.3–3.0 s and ≥ 0.25 at 3.4 s, < 0.12
+    at 4.3 s.
+  - **Width:** a kill cut's core is `CUT_GLOW_WIDTH_MUL` (2.5) × a crack's;
+    its halo reaches `CUT_HALO_CORE_MUL` (1.6) × its own core (a crack's: 3 ×;
+    at 3 × the 2.5 × core it was a flat slab ~150 u deep on a heavy cruiser,
+    filmed as four violet "bevels"), is brighter (0.45 × the core alpha, a
+    crack's 0.3) and lasts with the ember (gone by 3.4 s; a crack's by 2.0 s).
   - **Chamfered ends:** a kill cut is ONE long straight edge whose two ends
-    are both hull corners (one is often the wedge at the kill point). A
-    square strip end measured 0 wide there (`insideWidth`) and the strip
-    narrowed to a sliver or to nothing: that was the filmed hairline. A kill
-    cut's strip ends are chamfered (`writeStrip` ratios, 1 = 45°, up to
-    `CHAMFER_MAX` 4 for an acute corner, chosen per end at build), so it
-    keeps its full width along the cut and still stays inside the piece.
-    Crack strips keep their square ends.
+    are hull corners or splinter junctions. A square strip end measured 0
+    wide at an acute corner (`insideWidth`) and the strip narrowed to a
+    sliver or to nothing: that was the first filmed hairline. A kill cut's
+    strip ends are chamfered (`writeStrip` ratios), each end the SHORTEST
+    chamfer that fits, from `CHAMFER_MIN` (1/32: all but square, for the
+    ~90° hull corners of a side cut; a truly square end lies on the hull
+    side and fails the inside test) doubling to `CHAMFER_MAX` (8, the 7–15°
+    wedges a jagged splinter can leave). Always starting at 45° gave every
+    end a long bevel, a triangle on a short edge: the "bevels". Each cut edge
+    now glows along its full length (lit core ≥ a fifth of the cut core, or
+    half of the piece's own thickness in a wedge, over ≥ 90 % of every
+    `EDGE_CUT` edge of heavy-cruiser slice and channel kills). Crack strips
+    keep their square ends.
+  - **Splinters read second** (owner 2026-11-15: keep the v10 splinter X,
+    tone its glow down so the cut reads first; review: their orange rims were
+    wider, brighter and longer than the cut). On a wreck with a `cutKind`,
+    every non-`EDGE_CUT` crack is `GLOW_TINT_SPLINTER`: the crack colours at
+    `SPLINTER_GLOW_ALPHA` (0.45) × the crack alpha on a short curve, dark by
+    `SPLINTER_GLOW_END_S` (2.6 s), core and halo `SPLINTER_GLOW_WIDTH_MUL`
+    (0.5) × a crack's (so 0.2 × the cut's core). A wreck without a cut keeps
+    its cracks unchanged. Full (capital) glow only.
   - The simple (sub-capital) glow tints the same way, held to 50 % of its
     life and gone by 85 % (cracks: their own orange and red), at the same
-    width multiplier.
+    width multiplier; its cracks stay as they were on a cut kill too.
   Still ONE glow mesh per piece, no new draw call: the glow textures bake a
   row block per tint (`WRECK_GLOW_TEX_ROWS` = core + halo per tint; the
   simple texture one row per tint), a segment's tint is its V (`glowV` /
-  `simpleGlowV`), and its width multiplier and chamfers are baked into its
-  quads at build (`SEG_STRIDE` 17). Locks: `wreckArt.test.ts` "a kill cut
+  `simpleGlowV`), and its width multipliers and chamfers are baked into its
+  quads at build (`SEG_STRIDE` 18). Locks: `wreckArt.test.ts` "a kill cut
   glows in the weapon's colour" (violet / white-hot held ~1.5 s, never
-  dimmer than a crack, cracks unchanged, the cut's core 2.5 × a crack's on
-  real slice and channel pieces); `swarmSpriteUpdater.wreckArt.test.ts`
-  "char strip" (a cooled cut is a subtle scorch, its halo gone by 2.7 s);
+  dimmer than a crack, the cut's core 2.5 × a crack's on real slice and
+  channel pieces) and "a cut kill reads first" (splinters ≤ 0.5 × the cut's
+  alpha at every age, ≤ 0.25 × its core, dark by 3 s; an un-cut wreck's
+  cracks unchanged; every `EDGE_CUT` edge lit along ≥ 90 %; the ember
+  visible at 3 s, dark at 4.5 s); `swarmSpriteUpdater.wreckArt.test.ts`
+  "char strip" (a cooled cut is a subtle scorch from 4 s, its halo gone by
+  3.5 s);
   `fractureHull.test.ts` "cutEdges carries the edge kind".
 - **Channel ash (plan step 4).** A fresh wreck with `cutKind: 'channel'`
   passes the channel line to the break-up sink (`WreckBreakSink`'s
