@@ -53,7 +53,7 @@ test('after spawning in sol-prime, the drawer Galaxy tab panel shows the new shi
   test.setTimeout(60_000);
   // Spawn via URL escape — the welcome cycle persists eqxPlayerId AND
   // the spawn flow calls bindRosterRow → store.create.
-  await page.goto(`${BASE_URL}/?galaxy=sol-prime`, {
+  await page.goto(`${BASE_URL}/?galaxy=sol-prime&startMode=fly`, {
     waitUntil: 'domcontentloaded',
     timeout: 60_000,
   });

@@ -73,9 +73,9 @@ describe('HoverBracket', () => {
     expect(gfxOf(bracket).x).toBe(5);
   });
 
-  it('resolves a lingering hull from mirror.lingeringShips', () => {
+  it('resolves a parked hull from the one ship list (RTS Part A S3)', () => {
     const m = mirror({
-      lingeringShips: new Map([['linger-1', { x: 11, y: 22, angle: 0, vx: 0, vy: 0, kind: 'fighter', ownerPlayerId: 'o1' }]]) as never,
+      ships: new Map([['linger-1', { x: 11, y: 22, angle: 0, vx: 0, vy: 0, kind: 'fighter', ownerPlayerId: 'o1', isActive: false }]]) as never,
     });
     expect(bracket.update(m, 'linger-1')).toBe(true);
     expect(gfxOf(bracket).x).toBe(11);
@@ -85,6 +85,18 @@ describe('HoverBracket', () => {
     const m = mirror({ ships: new Map([['p1', { x: 0, y: 0, angle: 0, vx: 0, vy: 0, kind: 'fighter' }]]) as never });
     expect(bracket.update(m, 'p1')).toBe(true);
     expect(bracket.update(mirror({}), 'p1')).toBe(false);
+    expect(gfxOf(bracket).visible).toBe(false);
+  });
+
+  it('never outlines the ship I am flying (stale hover across the take-controls re-key)', () => {
+    // Hovering my AI-flown hull (keyed by shipInstanceId), then taking its
+    // controls re-keys it to my playerId — the renderer carries `_hoveredId`
+    // across the re-key, so the bracket is asked for the ship I now fly.
+    const m = mirror({
+      localPlayerId: 'me',
+      ships: new Map([['me', { x: 3, y: 4, angle: 0, vx: 0, vy: 0, kind: 'fighter' }]]) as never,
+    });
+    expect(bracket.update(m, 'me')).toBe(false);
     expect(gfxOf(bracket).visible).toBe(false);
   });
 

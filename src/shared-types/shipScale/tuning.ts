@@ -68,6 +68,8 @@ export const BASE = {
   attackRunOvershoot: 220,
   /** Smallest guard area an NPC holds round its post (a 1x fighter's). */
   guardRadiusMin: 600,
+  /** A wingman's order to a point is done inside this (a 1x fighter's). */
+  wingmanArrive: 40,
   /** Art bake: ppu for small / big hulls, the radius between them, the side cap. */
   ppuSmall: 4, ppuBig: 3, ppuBigRadius: 25, bakeMaxSide: 512,
 } as const;
@@ -269,6 +271,9 @@ export interface ShipTuning {
   /** Smallest guard radius round an NPC's guard post (`HostileDroneBehaviour.setGuardPost`):
    *  a post smaller than this would leave a big hull no room to turn. */
   guardRadiusMin: number;
+  /** Owned ships (RTS command layer): a Move order is done inside this
+   *  radius (the AI pilot brain's travel arrival); a big hull can't park on a dot. */
+  wingmanArrive: number;
   /** Capital wreck break-up (capital-destruction.md): the outward push of a
    *  piece at the kill point and far from it (u/s). Proportional to the hull
    *  radius, so a bigger hull's debris field opens at the same rate relative
@@ -372,6 +377,7 @@ export function shipTuning(kind: ShipKind): ShipTuning {
     combatSeparation: ct.clearHull ? Math.max(BASE.combatSeparation * sp, kind.radius * 2.4) : BASE.combatSeparation * sp,
     attackRunOvershoot: Math.max(BASE.attackRunOvershoot * sp, kind.radius * 4),
     guardRadiusMin: ct.clearHull ? Math.max(BASE.guardRadiusMin * sp, kind.radius * 2) : BASE.guardRadiusMin * sp,
+    wingmanArrive: ct.clearHull ? Math.max(BASE.wingmanArrive * sp, kind.radius * 1.5) : BASE.wingmanArrive * sp,
     wreckPushMax: WRECK_PUSH_MAX_PER_RADIUS * kind.radius,
     wreckPushMin: WRECK_PUSH_MIN_PER_RADIUS * kind.radius,
     wreckSeparate: WRECK_SEPARATE_PER_RADIUS * kind.radius,

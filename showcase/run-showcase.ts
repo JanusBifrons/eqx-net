@@ -341,6 +341,7 @@ async function takeWithRetry(
     cuts: shot.cuts,
     device,
     ...(shot.maxBitrateKbps ? { maxBitrateKbps: shot.maxBitrateKbps } : {}),
+    ...(shot.captionHoldMs ? { captionHoldMs: shot.captionHoldMs } : {}),
   });
   const qa = await qaClip(mp4, path.join(out, 'contact-sheets', `${shot.id}.png`));
   const problems = [...best.problems];

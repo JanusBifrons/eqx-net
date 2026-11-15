@@ -11,6 +11,14 @@
  * frame, and the speed zoom made the whole view breathe ~2 px at the screen
  * edge (capital-guns-fighter take, 2026-11-12). Same lesson as the cinematic
  * director's velocity estimate. Lock: `speedFxSample.test.ts`.
+ *
+ * Command view's free camera is not flight: nothing is followed and the
+ * player moves the view by hand (WASD, drag, wheel zoom round the cursor).
+ * Measuring the camera centre there zoomed the view out by up to 20 % on
+ * every pan and eased it back after, the commander view "stutters like it
+ * thinks I've still got a ship travelling fast" (owner, 2026-11-14). So a
+ * free camera holds the last sample position: the speed eases to zero.
+ * Lock: `speedFxSample.test.ts`, `tests/e2e/command-view-camera.spec.ts`.
  */
 
 /** One (position, time) sample for `stepSpeedFx`. Pixi space (y down). */
@@ -32,10 +40,12 @@ export function newSpeedFxSample(): SpeedFxSample {
 /**
  * Fill `out` with this frame's speed sample. Allocation-free.
  * @param followPose the pose the camera follows this frame (Pixi space), or
- *   null when nothing is followed (spectator, cinematic script).
+ *   null when nothing is followed (command view, cinematic script).
  * @param frameTimeMs the time that pose was drawn for (`mirror.frameTimeMs`).
  * @param camCenter the camera centre as it stands (Pixi space).
  * @param wallNowMs the renderer's own clock.
+ * @param freeCamera true in command view: the view moves only by the player's
+ *   hand, so the sample holds its last position (no speed).
  */
 export function speedFxSampleInto(
   out: SpeedFxSample,
@@ -43,7 +53,13 @@ export function speedFxSampleInto(
   frameTimeMs: number | undefined,
   camCenter: { readonly x: number; readonly y: number },
   wallNowMs: number,
+  freeCamera = false,
 ): SpeedFxSample {
+  if (freeCamera) {
+    out.t = wallNowMs;
+    out.fromPose = false;
+    return out;
+  }
   if (followPose && frameTimeMs !== undefined && Number.isFinite(frameTimeMs)) {
     out.x = followPose.x;
     out.y = followPose.y;

@@ -21,7 +21,8 @@ import { linkId } from '../../core/bases/transitNetwork.js';
 import { HEART_SUPER_GUNS, heartSuperGunFunds } from '../../core/bases/galaxyBases.js';
 import { getStructureKind, type StructureKindId } from '../../shared-types/structureKinds.js';
 
-import { getShipKind, isShipKindId } from '../../shared-types/shipKinds.js';
+import { getShipKind } from '../../shared-types/shipKinds.js';
+import { SHOWCASE_BARGE_LOOK_OPTS, SHOWCASE_BARGE_THRUST_OPTS } from './showcaseBargeRooms.js';
 
 export const SHOWCASE_PILOT_ID = '5ca5e000-0000-4000-8000-000000000001';
 
@@ -145,6 +146,35 @@ export const SHOWCASE_MELEE_OPTS = {
   ],
   defaultSpawnX: 0,
   defaultSpawnY: -1100,
+  maxClients: 4,
+};
+
+/**
+ * RTS command layer sign-off film: the pilot owns five fighters (its own hull
+ * plus four more), all parked and AI-flown, with three robot cubes (the
+ * weakest robot) holding position ~2 km north, just outside either side's
+ * 1.6 km on-sight range of the parked fleet. Robots are hostile to players on
+ * sight (allegiance stance, no 30 s decay), so a fleet sent a few hundred
+ * units north and set to Hunt finds them. Roster-backed (real sectorKey,
+ * outside the galaxy graph) because a Command-view join and parked hulls need
+ * one. The four extra hulls come from the scene script's `fleet` step when
+ * the pilot is ready; join with `startMode=command`.
+ */
+export const SHOWCASE_RTS_OPTS = {
+  sectorKey: 'showcase-rts',
+  testMode: true,
+  droneCount: 0,
+  asteroidConfig: [],
+  dronePoses: [
+    { kind: 'robot-square', x: 150, y: 2000, angle: Math.PI },
+    { kind: 'robot-square', x: 350, y: 2050, angle: Math.PI },
+    { kind: 'robot-square', x: 250, y: 2200, angle: Math.PI },
+  ],
+  sceneScript: [
+    { atMs: 0, action: 'fleet', tag: 'wing', kind: 'fighter', count: 4, x: 0, y: 0, spread: 360 },
+  ],
+  defaultSpawnX: 0,
+  defaultSpawnY: 0,
   maxClients: 4,
 };
 
@@ -532,44 +562,6 @@ export const SHOWCASE_HUB_OPTS = {
   maxClients: 4,
 };
 
-
-/**
- * Mining-barge look options (plan partitioned-chasing-lark, PR 14): the look
- * picked by `EQX_BARGE_LOOK` (A|B|C, server) and `?bargeLook=` (page) parked
- * nose up, a battleship off its starboard side and a few sub-caps off its port
- * side, for scale. Without the switch the barge pose is left out.
- */
-function bargeLookPoses(): Array<{ kind: string; x: number; y: number; angle: number }> {
-  const poses: Array<{ kind: string; x: number; y: number; angle: number }> = [{ kind: 'battleship', x: 2000, y: 0, angle: 0 }];
-  if (isShipKindId('barge-look')) poses.push({ kind: 'barge-look', x: 0, y: 0, angle: 0 });
-  const subs = ['fighter', 'heavy', 'gunship', 'interceptor', 'missile-frigate'];
-  subs.forEach((kind, i) => poses.push({ kind, x: -1150 - (i % 2) * 160, y: -900 + i * 260, angle: 0 }));
-  return poses;
-}
-export const SHOWCASE_BARGE_LOOK_OPTS = {
-  testMode: true,
-  asteroidConfig: [],
-  peacefulDrones: true,
-  dronePoses: bargeLookPoses(),
-  defaultSpawnX: -1400,
-  defaultSpawnY: -4600,
-  maxClients: 4,
-  /** Join `?shipKind=barge-look` to fly the look (the engines close-up). */
-  pilotCapitals: true,
-};
-
-/** The barge look under way (an NPC on a scripted straight line at about
- *  60 % of its top speed, so its engines run at full thrust), for the stern
- *  close-up; the pilot (a fighter) watches from off its beam. */
-export const SHOWCASE_BARGE_THRUST_OPTS = {
-  ...SHOWCASE_BARGE_LOOK_OPTS,
-  dronePoses: isShipKindId('barge-look')
-    ? [{ kind: 'barge-look', x: 0, y: 0, angle: 0, vy: 60, path: { toX: 0, toY: 400_000, speed: 70, loop: false } }]
-    : [],
-  defaultSpawnX: -6000,
-  defaultSpawnY: 0,
-};
-
 /** Room name → options, registered in `index.ts`. */
 export const SHOWCASE_ROOMS = {
   'showcase-ship-gallery': SHOWCASE_SHIP_GALLERY_OPTS,
@@ -593,4 +585,5 @@ export const SHOWCASE_ROOMS = {
   'showcase-fleet-warp': SHOWCASE_FLEET_WARP_OPTS,
   'showcase-barge-look': SHOWCASE_BARGE_LOOK_OPTS,
   'showcase-barge-thrust': SHOWCASE_BARGE_THRUST_OPTS,
+  'showcase-rts': SHOWCASE_RTS_OPTS,
 } as const;

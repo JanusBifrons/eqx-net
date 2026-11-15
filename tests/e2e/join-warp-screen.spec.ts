@@ -69,7 +69,7 @@ test('join → WarpScreen visible immediately, hides when ready, ship not at (0,
   const SPAWN_Y = -400;
 
   await page.goto(
-    `${BASE_URL}/?galaxy=sol-prime&spawnX=${SPAWN_X}&spawnY=${SPAWN_Y}`,
+    `${BASE_URL}/?galaxy=sol-prime&startMode=fly&spawnX=${SPAWN_X}&spawnY=${SPAWN_Y}`,
     { waitUntil: 'domcontentloaded', timeout: 60_000 },
   );
 
@@ -201,7 +201,7 @@ test('viewport rotation forwards a resize to the worker (no stretched aspect)', 
   // devices (this spec sets hasTouch) default to the main-thread PixiRenderer
   // (2026-05-22), which never emits it — so without ?worker=1 this test runs
   // the wrong renderer and sees 0 events.
-  await page.goto(`${BASE_URL}/?galaxy=sol-prime&worker=1`, {
+  await page.goto(`${BASE_URL}/?galaxy=sol-prime&startMode=fly&worker=1`, {
     waitUntil: 'domcontentloaded',
     timeout: 60_000,
   });
@@ -264,7 +264,7 @@ test('after warp hides, UI is interactive — taps reach the drawer-toggle', asy
   // Symptom (user reported 2026-05-14): "the entire UI was dead. I
   // couldn't touch or click anything."
   test.setTimeout(45_000);
-  await page.goto(`${BASE_URL}/?galaxy=sol-prime`, {
+  await page.goto(`${BASE_URL}/?galaxy=sol-prime&startMode=fly`, {
     waitUntil: 'domcontentloaded',
     timeout: 60_000,
   });

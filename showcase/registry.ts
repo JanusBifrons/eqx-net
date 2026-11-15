@@ -33,6 +33,7 @@ import { coastalCatalogue, coastalAa, coastalDuel, coastalSuperGuns, garrisonDef
 import { waveAttack } from './shots/waveAttack.js';
 import { levelUp } from './shots/levelUp.js';
 import { spectator } from './shots/spectator.js';
+import { rtsCommand } from './shots/rtsCommand.js';
 import { warp } from './shots/warp.js';
 import { scale } from './shots/scale.js';
 import { mobile } from './shots/mobile.js';
@@ -116,6 +117,7 @@ export const SHOTS: readonly Shot[] = [
   waveAttack,
   levelUp,
   spectator,
+  rtsCommand,
   radar,
   warp,
   scale,

@@ -1,17 +1,21 @@
 /**
- * Per-frame active-ship sprite update — lifted out of
- * `PixiRenderer.update()`.
+ * Per-frame ship sprite update — lifted out of `PixiRenderer.update()`.
  *
- * One pass over `mirror.ships`:
+ * One pass over `mirror.ships`: EVERY ship, active ships (playerId keys) and
+ * parked / AI-flown hulls (shipInstanceId keys) alike since RTS Part A S3 (the
+ * separate parked-hull updater, its 0.75 alpha and its frozen turrets are
+ * gone):
  *   - Lazy-construct the sprite from the catalogue's polygon + colour
- *     (local-vs-remote is communicated by camera-follow, not colour).
+ *     (local-vs-remote is communicated by camera-follow, not colour); rebuild
+ *     it when the ship's kind changes (`decideShipSpriteAction`), with a
+ *     fallback kind until the schema diff brings one.
  *   - Attach mount visuals (turret sprites + aim lines) per the ship
  *     catalogue. `ensureForShip` is idempotent — re-uses the existing
  *     cluster while `ship.kind` is unchanged.
  *   - Apply per-mount rotation angles. Local player's
  *     `tickLocalMountAim` populates `mirror.ships.get(localId)
- *     .mountAngles`; remotes get the server's authoritative angles
- *     via the snapshot.
+ *     .mountAngles`; remotes (parked hulls included) get the server's
+ *     authoritative angles via the snapshot.
  *   - Write pose + tint (damage flash > beam hit > normal).
  *
  * Engine exhaust is NOT drawn here — the particle-only `EngineEmitter`
@@ -34,6 +38,7 @@ import {
 } from './spriteBuilders.js';
 import type { MountVisualManager } from '../MountVisualManager';
 import { buildArtShipSprite, ownerLivery, shipArtSwap, shipHandleFor, updateArtShipLight, type ShipArtCtx } from '../art/shipArtSprites.js';
+import { decideShipSpriteAction, shipSpriteKind } from '../spriteUpdateDecisions.js';
 
 export interface ShipSpriteCtx {
   shipContainer: Container;
@@ -45,41 +50,48 @@ export interface ShipSpriteCtx {
    *  recomputing per ship. */
   remoteHitTargets: Set<string>;
   localHitTargets: Set<string>;
-  /** Persistent scratch — caller adds each visited playerId so the
+  /** Persistent scratch — caller adds each visited ship key so the
    *  caller can drop sprites for ships absent from `mirror.ships`. */
   seenScratch: Set<string>;
 }
 
-/** The ship kind each active-ship sprite was built for (dies with the
- *  sprite). The renderer reads it when the ship dies, after its mirror entry
- *  is gone (a dying capital is held until its wreck is drawn). */
+/** The ship kind each ship sprite was built for (dies with the sprite). The
+ *  renderer reads it when the ship dies, after its mirror entry is gone (a
+ *  dying capital is held until its wreck is drawn), and to rebuild a sprite
+ *  whose ship changed kind. */
 export const shipSpriteKinds = new WeakMap<Container, string>();
 
-export function updateShipSprites(mirror: RenderMirror, ctx: ShipSpriteCtx): void {
-  for (const [playerId, ship] of mirror.ships) {
-    ctx.seenScratch.add(playerId);
+/** A ship whose kind the schema diff hasn't brought yet is drawn as this. */
+const FALLBACK_KIND = 'fighter';
 
-    let sprite = ctx.sprites.get(playerId);
+export function updateShipSprites(mirror: RenderMirror, ctx: ShipSpriteCtx): void {
+  for (const [key, ship] of mirror.ships) {
+    ctx.seenScratch.add(key);
+
+    let sprite = ctx.sprites.get(key);
+    const cachedKind = sprite !== undefined ? shipSpriteKinds.get(sprite) : undefined;
+    const kindId = shipSpriteKind(cachedKind, ship.kind, FALLBACK_KIND);
     // Machined art: build (or swap to) the Machined sprite once its art is
-    // ready; until then, today's vector look.
-    // Livery: the mirror key is the player id = the player's faction id.
-    const lv = ctx.art.livery !== undefined ? ownerLivery(playerId) : undefined;
+    // ready; until then, today's vector look. A changed kind rebuilds too.
+    // Livery: the owner's faction id (a parked hull's owner, else the pilot's key).
+    const lv = ctx.art.livery !== undefined ? ownerLivery(ship.ownerPlayerId ?? key) : undefined;
     const handle = lv
-      ? shipHandleFor(ctx.art, playerId, ship.kind ?? 'fighter', undefined, false, lv.team, lv.sigil, lv.edge)
-      : shipHandleFor(ctx.art, playerId, ship.kind ?? 'fighter', undefined);
-    if (sprite && shipArtSwap(ctx.art, sprite, handle) !== 'keep') {
-      ctx.mountVisuals.removeShip(playerId); // its barrel cluster is a child
+      ? shipHandleFor(ctx.art, key, kindId, undefined, false, lv.team, lv.sigil, lv.edge)
+      : shipHandleFor(ctx.art, key, kindId, undefined);
+    if (sprite && (decideShipSpriteAction(cachedKind, ship.kind) === 'rebuild'
+      || shipArtSwap(ctx.art, sprite, handle) !== 'keep')) {
+      ctx.mountVisuals.removeShip(key); // its barrel cluster is a child
       ctx.shipContainer.removeChild(sprite);
       sprite.destroy({ children: true });
       sprite = undefined;
     }
     if (!sprite) {
-      sprite = buildArtShipSprite(handle, () => buildShipGfxFromShape(shapeForKind(ship.kind)));
+      sprite = buildArtShipSprite(handle, () => buildShipGfxFromShape(shapeForKind(kindId)));
       ctx.shipContainer.addChild(sprite);
-      ctx.sprites.set(playerId, sprite);
-      shipSpriteKinds.set(sprite, ship.kind ?? 'fighter');
+      ctx.sprites.set(key, sprite);
+      shipSpriteKinds.set(sprite, kindId);
     }
-    const shipKind = getShipKind(ship.kind ?? null);
+    const shipKind = getShipKind(kindId);
     // WS-B3 — the per-instance mount list `[...kind.mounts, ...activated]`. When
     // the ship has ACTIVATED latent mounts the cluster is built for the full
     // list (extra turrets drawn) and rebuilt when the set changes (`mountSig`).
@@ -94,13 +106,13 @@ export function updateShipSprites(mirror: RenderMirror, ctx: ShipSpriteCtx): voi
       // un-upgraded path stays alloc-free (invariant #14).
       let sig = '';
       for (const a of activated) sig += a.slotId + '|' + a.weaponId + ';';
-      ctx.mountVisuals.ensureForInstance(playerId, ship.kind, shipMounts, shipPrimaryColor(shipKind), sig, sprite);
+      ctx.mountVisuals.ensureForInstance(key, kindId, shipMounts, shipPrimaryColor(shipKind), sig, sprite);
     } else {
-      ctx.mountVisuals.ensureForShip(playerId, ship.kind, sprite);
+      ctx.mountVisuals.ensureForShip(key, kindId, sprite);
       shipMounts = shipKind.mounts ?? [];
     }
     if (shipMounts.length > 0) {
-      ctx.mountVisuals.applyMountAngles(playerId, shipMounts, ship.mountAngles);
+      ctx.mountVisuals.applyMountAngles(key, shipMounts, ship.mountAngles);
     }
 
     sprite.x = ship.x;
@@ -108,13 +120,13 @@ export function updateShipSprites(mirror: RenderMirror, ctx: ShipSpriteCtx): voi
     sprite.rotation = -ship.angle;
     // Phase 4 warp travel: another pilot's ship on its warp run is out of the
     // world (its departure and arrival are drawn by WarpFx).
-    sprite.visible = !(ship.warp === 2 && playerId !== mirror.localPlayerId);
+    sprite.visible = !(ship.warp === 2 && key !== mirror.localPlayerId);
     updateArtShipLight(ctx.art, sprite);
 
     // Damage flash takes priority; beam hit tint is secondary.
-    if (mirror.damagedShips?.has(playerId)) {
+    if (mirror.damagedShips?.has(key)) {
       sprite.tint = DAMAGE_FLASH_COLOR;
-    } else if (ctx.localHitTargets.has(playerId) || ctx.remoteHitTargets.has(playerId)) {
+    } else if (ctx.localHitTargets.has(key) || ctx.remoteHitTargets.has(key)) {
       sprite.tint = 0xff2222;
     } else {
       sprite.tint = 0xffffff;

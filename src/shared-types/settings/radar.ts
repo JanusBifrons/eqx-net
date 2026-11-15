@@ -17,8 +17,13 @@ export const DEVICE_CLASSES = ['desktop', 'touch'] as const;
 export type DeviceClass = (typeof DEVICE_CLASSES)[number];
 
 /** Radar-only contact categories. The first four share the entity visual
- *  language (`entityVisuals.ts`); asteroid / scrap / lingering are radar-only
- *  and OFF by default. Append-only order (it is the UI row order). */
+ *  language (`entityVisuals.ts`); asteroid / scrap are radar-only and OFF by
+ *  default. Append-only order (it is the UI row order).
+ *  RTS Part A (owner decision 2026-11-14): there is no separate category for
+ *  ships an AI pilot flies (the old hidden-by-default `lingering`): every ship
+ *  is a `player` contact, your own fleet drawn in {@link OWN_SHIP_COLOUR}. An
+ *  old saved pref that still carries `lingering` is accepted and the key
+ *  dropped ({@link RadarPrefsSchema}). */
 export const RADAR_CATEGORIES = [
   'hostile',
   'player',
@@ -26,7 +31,6 @@ export const RADAR_CATEGORIES = [
   'structure',
   'asteroid',
   'scrap',
-  'lingering',
   // Living World P1a-2: loot pods + derelicts (cargo-pod scrap). ON by default.
   'loot',
   // Living World P2: trade haulers (traders side). ON by default.
@@ -34,7 +38,29 @@ export const RADAR_CATEGORIES = [
 ] as const;
 export type RadarCategory = (typeof RADAR_CATEGORIES)[number];
 
-export const RADAR_SHAPES = ['star', 'diamond', 'triangle', 'hexagon', 'circle', 'square'] as const;
+/** Your own ships (the one you fly and your fleet): the far-zoom icons' "you"
+ *  white, apart from every relationship colour. The radar draws your fleet in
+ *  it too (RTS Part A). */
+export const OWN_SHIP_COLOUR = 0xffffff;
+
+/** Category keys a saved pref may carry from before they were retired. */
+const RETIRED_CATEGORIES = ['lingering'] as const;
+
+/** Drop retired category keys from a saved pref before the strict parse, so
+ *  an old pref never fails (it would otherwise reset every setting). Pure. */
+export function stripRetiredRadarCategories(raw: unknown): unknown {
+  if (raw === null || typeof raw !== 'object') return raw;
+  const cats = (raw as { categories?: unknown }).categories;
+  if (cats === null || typeof cats !== 'object') return raw;
+  let hit = false;
+  for (const k of RETIRED_CATEGORIES) if (k in cats) hit = true;
+  if (!hit) return raw;
+  const next: Record<string, unknown> = { ...(cats as Record<string, unknown>) };
+  for (const k of RETIRED_CATEGORIES) delete next[k];
+  return { ...(raw as Record<string, unknown>), categories: next };
+}
+
+export const RADAR_SHAPES =['star', 'diamond', 'triangle', 'hexagon', 'circle', 'square'] as const;
 export type RadarShape = (typeof RADAR_SHAPES)[number];
 
 const CategorySchema = z
@@ -51,7 +77,7 @@ const CategorySchema = z
   .strict();
 export type RadarCategoryPrefs = z.infer<typeof CategorySchema>;
 
-export const RadarPrefsSchema = z
+const RadarPrefsObjectSchema = z
   .object({
     /** Gap between the icon track and the screen edge (CSS px). */
     edgeInsetPx: z.number().min(0).max(120),
@@ -88,14 +114,16 @@ export const RadarPrefsSchema = z
         structure: CategorySchema,
         asteroid: CategorySchema,
         scrap: CategorySchema,
-        lingering: CategorySchema,
         loot: CategorySchema,
         trader: CategorySchema,
       })
       .strict(),
   })
   .strict();
-export type RadarPrefs = z.infer<typeof RadarPrefsSchema>;
+/** The saved-pref parser: retired category keys are dropped first (an old pref
+ *  with `lingering` parses), then everything else is strict. */
+export const RadarPrefsSchema = z.preprocess(stripRetiredRadarCategories, RadarPrefsObjectSchema);
+export type RadarPrefs = z.infer<typeof RadarPrefsObjectSchema>;
 
 function categories(touch: boolean): RadarPrefs['categories'] {
   return {
@@ -105,7 +133,6 @@ function categories(touch: boolean): RadarPrefs['categories'] {
     structure: { enabled: true, shape: 'hexagon', color: 0x9ab4dd, sizeMul: 1, opacityMul: 0.9 },
     asteroid: { enabled: false, shape: 'circle', color: 0x9a8f80, sizeMul: 0.8, opacityMul: 0.7 },
     scrap: { enabled: false, shape: 'square', color: 0xb8b8b8, sizeMul: 0.7, opacityMul: 0.7 },
-    lingering: { enabled: false, shape: 'triangle', color: 0x6b9b7b, sizeMul: 0.9, opacityMul: 0.7 },
     loot: { enabled: true, shape: 'circle', color: 0xffc94a, sizeMul: touch ? 0.8 : 0.9, opacityMul: 0.9 },
     trader: { enabled: true, shape: 'square', color: 0x7fd6a8, sizeMul: 1, opacityMul: 0.95 },
   };

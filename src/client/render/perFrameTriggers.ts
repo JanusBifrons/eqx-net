@@ -61,6 +61,9 @@ export interface OneFrameTriggerSurface {
   /** Shells as events (slice 2b): `shell_end` impact bursts, flat triples.
    *  Same consume-after-render contract. */
   pendingShellEnds?: { length: number };
+  /** RTS Part A: ship re-keys `[from, to, ...]`. Clearing on a skip frame
+   *  would make the renderer rebuild the ship instead of moving it. */
+  pendingShipRekeys?: { length: number };
 }
 
 /**
@@ -97,4 +100,7 @@ export function consumeOneFrameTriggers(
   // pendingShellEnds — shells as events, slice 2b: clearing on a skip frame
   // would drop a shell's only impact burst.
   if (mirror.pendingShellEnds) mirror.pendingShellEnds.length = 0;
+  // pendingShipRekeys — RTS Part A seamless take-controls: a re-key lost on a
+  // skip frame would make the renderer rebuild the ship (the flicker).
+  if (mirror.pendingShipRekeys) mirror.pendingShipRekeys.length = 0;
 }

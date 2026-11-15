@@ -309,7 +309,7 @@ export function isRammingProbeEnabled(): boolean {
  * investigation, 2026-06-03). When on, `ColyseusClient.updateLiveBeam`
  * emits a `beam_hit_origin { hitId, x, y }` event whenever the live-beam
  * hitscan resolves a hit whose body pose is within ε of world origin —
- * the hitId namespace prefix (`linger-` / `swarm-` / a raw
+ * the hitId namespace prefix (`swarm-` / a raw shipInstanceId or
  * playerId) names the entity class the beam stops on.
  *
  * Opt-in ONLY — **webdriver does NOT auto-enable** (same discipline as
