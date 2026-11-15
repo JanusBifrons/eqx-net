@@ -4,11 +4,11 @@ import { SWARM_KIND_STRUCTURE } from '../../shared-types/swarmWireFormat.js';
 import {
   STRUCTURE_TARGET_NONE,
   decodePlayerTurretTarget,
-  STRUCTURE_TARGET_STRIDE,
   MOUNT_ANGLE_QUANTUM,
   forEachStructureMountAngles,
   type StructureStateView,
 } from '../../shared-types/structureStateWire.js';
+import { forEachBeamLink, type BeamLinkVisitor } from '../../shared-types/beamLinksWire.js';
 import { Client, Room } from 'colyseus.js';
 import type { RenderMirror, ShipRenderState, StructureRenderState, SwarmRenderState } from '@core/contracts/IRenderer';
 import type { IAudio } from '@core/contracts/IAudio';
@@ -3945,6 +3945,22 @@ export class ColyseusGameClient {
     this._structureGen.set(id, this._structureGenN);
   };
 
+  /** Beam links (shared-types/beamLinksWire.ts): structure turret / mining
+   *  targets onto their rows. Ship tractor links decode here and are drawn and
+   *  predicted by the tractor client slice (salvage plan PR 11b). Bound once. */
+  private readonly _beamLinkVisitor: BeamLinkVisitor = {
+    structure: (sid, turret, mining) => {
+      const row = this._structureMap?.get(sid);
+      if (!row) return;
+      // B2 — a negative slot below NONE is a PLAYER target (an owner-table index).
+      const ownerIdx = decodePlayerTurretTarget(turret);
+      if (ownerIdx >= 0) row.turretTargetPlayerId = this._structureOwners.ids[ownerIdx];
+      else if (turret !== STRUCTURE_TARGET_NONE) row.turretTargetId = turret;
+      if (mining !== STRUCTURE_TARGET_NONE) row.miningTargetId = mining;
+    },
+    tractor: () => {},
+  };
+
   /** Coastal defences — copy one structure's server turret angles onto its
    *  row (the array is reused, #14). Bound once. */
   private readonly _applyStructureMountAngles = (entityId: number, flat: readonly number[], start: number, count: number): void => {
@@ -3997,18 +4013,7 @@ export class ColyseusGameClient {
         const sw = this.mirror.swarm?.get(id);
         if (sw && sw.kind === SWARM_KIND_STRUCTURE) this.mirror.swarm!.delete(id);
       }
-      if (targets) {
-        for (let i = 0; i + 2 < targets.length; i += STRUCTURE_TARGET_STRIDE) {
-          const row = map.get(targets[i]!);
-          if (!row) continue;
-          const turret = targets[i + 1]!;
-          // B2 — a negative slot below NONE is a PLAYER target (an owner-table index).
-          const ownerIdx = decodePlayerTurretTarget(turret);
-          if (ownerIdx >= 0) row.turretTargetPlayerId = this._structureOwners.ids[ownerIdx];
-          else if (turret !== STRUCTURE_TARGET_NONE) row.turretTargetId = turret;
-          if (targets[i + 2] !== STRUCTURE_TARGET_NONE) row.miningTargetId = targets[i + 2];
-        }
-      }
+      if (targets) forEachBeamLink(targets, this._beamLinkVisitor);
       if (mountAngles) forEachStructureMountAngles(mountAngles, this._applyStructureMountAngles);
     }
     this.syncPredWalls();

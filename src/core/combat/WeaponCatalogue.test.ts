@@ -16,6 +16,7 @@ import {
 } from './WeaponCatalogue.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { ENERGY_POOL_MUL } from '../../shared-types/shipScale/defineShipKind.js';
+import { MountWeaponIdSchema } from '../../shared-types/shipKinds/types.js';
 
 describe('WeaponCatalogue', () => {
   it.runIf(AT_AUTHORED_SHIP_SCALE)('getWeapon returns the hitscan (beam) definition', () => {
@@ -64,9 +65,10 @@ describe('WeaponCatalogue', () => {
     expect(isWeaponId(null)).toBe(false);
   });
 
-  it('every weapon has positive damage, cooldown, and energy cost', () => {
+  it('every weapon has positive damage (a tractor: none), cooldown, and energy cost', () => {
     for (const w of WEAPONS.values()) {
-      expect(w.damage).toBeGreaterThan(0);
+      if (w.tractor !== undefined) expect(w.damage).toBe(0);
+      else expect(w.damage).toBeGreaterThan(0);
       expect(w.cooldownTicks).toBeGreaterThan(0);
       expect(w.energyCost).toBeGreaterThan(0);
     }
@@ -206,6 +208,24 @@ describe('WeaponCatalogue — TTK targets (lock the math, not the literals)', ()
   });
 });
 
+describe('WeaponCatalogue — tractor beam (salvage plan PR 11)', () => {
+  it('is appended last, deals no damage, renews a lease longer than its cooldown, and keeps dRef ≤ hold', () => {
+    const w = getWeapon('tractor');
+    expect(WEAPON_IDS[WEAPON_IDS.length - 1]).toBe('tractor');
+    expect(w.damage).toBe(0);
+    const t = w.tractor!;
+    expect(t.leaseTicks).toBeGreaterThan(w.cooldownTicks);
+    expect(t.dRef).toBeLessThanOrEqual(t.hold);
+    expect(t.lineFrac).toBeGreaterThan(0);
+    expect(t.lineFrac).toBeLessThan(1);
+    const tractors = [...WEAPONS.values()].filter((d) => d.tractor !== undefined).map((d) => d.id);
+    expect(tractors).toEqual(['tractor']);
+  });
+  it('MountWeaponIdSchema matches WEAPON_IDS (catalogue parity)', () => {
+    expect([...MountWeaponIdSchema.options]).toEqual([...WEAPON_IDS]);
+  });
+});
+
 describe('WeaponCatalogue — capital heavy beam (plan beam-slices §8)', () => {
   it('is a hitscan beam with a slice kill cut, appended last, cadence at the 10-tick floor or slower', () => {
     const w = getWeapon('heavy_beam');
@@ -214,7 +234,7 @@ describe('WeaponCatalogue — capital heavy beam (plan beam-slices §8)', () => 
     expect(w.killCut).toEqual({ kind: 'slice', width: HEAVY_BEAM_WIDTH });
     // The compositor-stall floor (HITSCAN_DEF note): no beam fires faster.
     expect(w.cooldownTicks).toBeGreaterThanOrEqual(10);
-    expect(WEAPON_IDS[WEAPON_IDS.length - 1]).toBe('heavy_beam');
+    expect(WEAPON_IDS.indexOf('heavy_beam')).toBe(WEAPON_IDS.indexOf('railgun') + 1);
   });
 
   it('follows through a kill for 0.5-1 s of game time; no other weapon does', () => {

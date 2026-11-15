@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { Hold } from '../goods.js';
+import type { BeamLinks } from '../beamLinksWire.js';
 import { ShellSalvoSchema, type ShellKeyRecord, type ShellSalvo } from './shellEvents.js';
 
 export interface WelcomeMessage {
@@ -492,8 +493,10 @@ export interface SnapshotMessage {
    *  snapshot keeps only the fast cosmetics, as flat triples
    *  `[structureEntityId, turretTargetEntityId, miningTargetEntityId]` (-1 =
    *  none) for structures that currently have a target. Absent when none. See
-   *  src/shared-types/structureStateWire.ts. */
-  structureTargets?: number[];
+   *  src/shared-types/structureStateWire.ts. Salvage plan PR 11: the one
+   *  beam-links encoding, so ship tractor links ride here too, after the
+   *  structure triples (src/shared-types/beamLinksWire.ts). */
+  structureTargets?: BeamLinks;
   /** Coastal defences (plan coastal-defences) — the server's slewed turret
    *  angles for defence structures that are off their rest bearing, as flat
    *  runs `[structureEntityId, mountCount, q0, q1, …]` with each angle in

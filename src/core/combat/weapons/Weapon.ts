@@ -24,7 +24,7 @@
  * arrays (this layer holds no mutable state — zero hot-loop allocation, #14).
  */
 
-import type { WeaponId, MissileWeaponDef } from '../WeaponCatalogue.js';
+import type { WeaponId, MissileWeaponDef, WeaponDef } from '../WeaponCatalogue.js';
 
 /**
  * Per-mount fire geometry handed to a weapon. Reused by the resolver (mutated
@@ -72,6 +72,9 @@ export interface WeaponFireSink {
   ): void;
   /** Spawn a server homing missile (lock-at-launch lives in the simulation). */
   spawnMissile(ctx: WeaponFireContext, def: MissileWeaponDef): void;
+  /** Tractor beam (`def.tractor` set): renew the force-field lease of the
+   *  firing mount on its locked target. No ray, no damage, no broadcast. */
+  tractor(ctx: WeaponFireContext, def: WeaponDef): void;
 }
 
 /**

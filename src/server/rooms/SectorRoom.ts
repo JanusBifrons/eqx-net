@@ -119,7 +119,7 @@ import { cargoOpensFor, createRelationContext, isNpcOwner, npcOwner, parseOwner,
 import { BreakInCancelSchema, BreakInSchema, CARGO_ACCESS_RANGE, CargoMoveSchema, CargoQuerySchema, MAX_FREIGHT_ORDERS, SetFreightOrdersSchema, type BreakInNotice, type CargoState } from '../../shared-types/messages/cargoMessages.js';
 import { breakInDurationMs } from '../../shared-types/breakIn.js';
 import { BreakInSubsystem } from './BreakInSubsystem.js';
-import { ForceFieldSubsystem } from './ForceFieldSubsystem.js';
+import { ForceFieldSubsystem, lockKeyBodyId } from './ForceFieldSubsystem.js';
 import { registerTeleportMessages } from './TeleportMessageHandlers.js';
 import { stream } from '../../core/random/rng.js';
 import { HostileActLedger } from '../../core/relations/HostileActLedger.js';
@@ -995,7 +995,13 @@ export class SectorRoom extends Room<SectorState> {
     onEnd: (actor, sid, outcome, reason) => this.onBreakInEnd(actor, sid, outcome, reason),
   });
   /** Force fields in this room's physics world (teleporter pad push today). */
-  private readonly forceFields = new ForceFieldSubsystem({ post: (cmd) => this.postToWorker(cmd) });
+  private readonly forceFields = new ForceFieldSubsystem({ post: (cmd) => this.postToWorker(cmd), tractors: {
+    tick: () => this.serverTick, poseOf: (id, out) => this.aiFireTargetShape(id, out), wireRef: (id) => this.swarmRegistry.get(id)?.entityId ?? id,
+    lineBodies: (fx, fy, tx, ty, w, a, b, ids, cap) => this.lofGate().lineBodies(fx, fy, tx, ty, w, a, b, ids, cap),
+    inCrackHold: (id) => this.capitalWrecks?.inCrackHold(id) === true, isTerrain: (id) => isTerrainLockKind(this.swarmRegistry.get(id)?.kind ?? -1),
+    // Tractoring a ship is a hostile act, like a hit (weapon-mounts.md "Tractor beam"); terrain is neutral.
+    onShipTractored: (e, t) => { this.noteStandingHit(t, e); if (this.playerToSlot.has(t)) this.refreshNpcAttackHostility(e, t); else if (this.swarmRegistry.get(t)?.kind === 1 && !this.isFriendlyFire(t, e)) this.aiController.markHostile(t, e, this.serverTick); },
+  } });
   /** C2 bespoke trigger (testMode `breakInMs`). */
   private testBreakInMs: number | null = null;
   /** Bespoke test/recording trigger (testMode `lockTimeCapS`): the longest
@@ -1129,7 +1135,7 @@ export class SectorRoom extends Room<SectorState> {
    *  attached by reference to every recipient). Undefined ⇒ no structures. */
   /** A2 — the snapshot's slim cosmetic slice (turret / mining targets only);
    *  structure grid state itself lives in `state.structures`. */
-  private structuresSlice: SnapshotMessage['structureTargets'] = undefined;
+  private structuresSlice: number[] | undefined = undefined;
   /** Coastal defences — the defence turrets' angles, rebuilt each turret tick
    *  into one reused array (#14); undefined while every turret rests. */
   private readonly structureMountAnglesBuf: number[] = [];
@@ -1409,7 +1415,7 @@ export class SectorRoom extends Room<SectorState> {
     /** Lingering-hull slot map (shipInstanceId → slot). Lets the resume-as-
      *  existing-ship integration test assert a lingering hull was evicted
      *  before the fresh-spawn restore (playtest 2026-06-10 Issue 6). */
-    lingeringSlots: Map<string, number>;
+    lingeringSlots: Map<string, number>; forceFields: ForceFieldSubsystem;
     /** Phase 5 (persistence v5) — drive the lingering-hull boot reconstruction
      *  directly (no DB cycle) for the round-trip integration test. */
     restoreLingeringHulls: (rows: readonly SectorSnapshotLingeringHull[]) => void;
@@ -1524,7 +1530,7 @@ export class SectorRoom extends Room<SectorState> {
       droppedTicks: this.sabU32[WORKER_DROPPED_TICKS_IDX] ?? 0,
       sessionToPlayer: this.sessionToPlayer,
       ownerlessShips: this.ownerlessShips,
-      lingeringSlots: this.lingeringSlots,
+      lingeringSlots: this.lingeringSlots, forceFields: this.forceFields,
       restoreLingeringHulls: (rows) => this.restoreLingeringHullsFromSnapshot(rows),
       aiPlayerScratch: this.aiPlayerScratch,
       postToWorker: (cmd) => this.postToWorker(cmd),
@@ -2058,7 +2064,7 @@ export class SectorRoom extends Room<SectorState> {
       resolveInstanceFireMounts: (ship) => this.resolveInstanceFireMounts(ship),
       // Capital turret fire control (the resolver is built later; resolve lazily).
       currentTick: () => this.serverTick,
-      fireDroneMount: (id, i, passDebris) => this.aiFireResolver.fireMount(id, i, passDebris),
+      fireDroneMount: (id, i, passDebris, target) => this.aiFireResolver.fireMount(id, i, passDebris, target),
       fireBlocked: (id, targetId) => this.npcLocks.fireBlocked(id, targetId),
       // Friendly fire slice 2: a turret holds while an escort is on its line.
       lineOfFireBlocked: (id, targetId, fx, fy, dx, dy, max, passWrecks) =>
@@ -2111,6 +2117,7 @@ export class SectorRoom extends Room<SectorState> {
       malformed: this.malformed,
       fireAllowed: (pid, slotId) => this.locks.hasLocked(pid, slotId),
       mountBearsOnLock: (pid, mountId, ox, oy, angle, weaponId) => this.mountBearsOnLock(pid, mountId, ox, oy, angle, weaponId),
+      fireTractor: (pid, m) => this.forceFields.renewTractor(pid, m, lockKeyBodyId(this.locks.aimKeyFor(pid, m.id), this.swarmRegistry)),
     });
 
     // AI drone weapon-fire resolver. Composes the per-mount hitscan +
@@ -2127,6 +2134,7 @@ export class SectorRoom extends Room<SectorState> {
       lastFireClientTick: this.lastFireClientTick,
       swarmEntitySnapshot: (id) => this.swarmEntitySnapshot(id),
       targetShape: (id, out) => this.aiFireTargetShape(id, out),
+      fireTractor: (id, m, target) => this.forceFields.renewTractor(id, m, target),
       swarmRegistry: this.swarmRegistry,
       resolveSlotMounts: (kind, slotId) => this.resolveSlotMounts(kind, slotId),
       mountWorldOrigin: (x, y, ang, m) => this.mountWorldOrigin(x, y, ang, m),
@@ -2431,7 +2439,7 @@ export class SectorRoom extends Room<SectorState> {
       },
       // Structures plan, Phase 3 — the cached slice (rebuilt at the 1 Hz grid
       // pulse / on placement), attached by reference to every recipient.
-      getStructuresSlice: () => this.structuresSlice,
+      getStructuresSlice: () => this.forceFields.beamLinks(this.structuresSlice),
       getStructureMountAngles: () => this.structureMountAnglesSlice,
       // Capital destruction S2b: the wreck descriptors (null when off).
       getWrecks: () => this.capitalWrecks?.descriptors() ?? null,
@@ -11737,6 +11745,7 @@ export class SectorRoom extends Room<SectorState> {
     // Capital wrecks: pieces whose crack delay is over get their slow
     // separating kick (no-op with no wreck holding together).
     this.capitalWrecks?.tick();
+    this.forceFields.tickTractors(); // tractor leases: re-pose, expire
 
     // Tick-budget telemetry. Cumulative phase totals across the last ~60 ticks
     // are emitted as one server event per second. The first capture told us
