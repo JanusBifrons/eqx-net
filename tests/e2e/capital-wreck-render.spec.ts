@@ -194,7 +194,7 @@ test('beams wear a wreck piece until it re-splits; the children are drawn', asyn
         wrecks?: Map<number, { parentWreck?: number }>;
       };
     };
-    __eqxStore?: { getState(): { fcGroups: ReadonlyArray<{ id: string }>; setSelectedEntity(id: string | null, kind: string | null): void; setActiveGroupId(id: string): void } };
+    __eqxStore?: { getState(): { fcGroups: ReadonlyArray<{ id: string }>; setSelection(ids: readonly string[], id: string | null, kind: string | null): void; setActiveGroupId(id: string): void } };
     __eqxArtStats?: () => { wreckPieces: number };
   };
   await page.waitForFunction(() => {
@@ -227,7 +227,7 @@ test('beams wear a wreck piece until it re-splits; the children are drawn', asyn
     if (best === null) return;
     for (const grp of st.fcGroups) {
       st.setActiveGroupId(grp.id);
-      st.setSelectedEntity(`swarm-${best}`, 'wreck');
+      st.setSelection([], `swarm-${best}`, 'wreck');
       g.__eqxClient?.lockSelected?.();
     }
   });
