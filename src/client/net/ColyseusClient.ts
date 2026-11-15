@@ -154,7 +154,7 @@ import { shipShotMuzzle } from '@core/combat/muzzle';
 import { tuningFor } from '@shared-types/shipScale/lookup';
 
 // A group fires only when a barrel bears on its lock: the shared rule (#15).
-import { fillFireTargetShape, mountFiresOn, newFireTargetShape, type FireTargetShape } from '@core/combat/fireControlBearing';
+import { fillFireTargetShape, fillRangeShape, mountFiresOn, newFireTargetShape, type FireTargetShape } from '@core/combat/fireControlBearing';
 import { pickTurretLock } from '@core/combat/turretLockPick';
 import { hasTurretFireControl, mountWeaponReach, weaponIdReach, type MountRangeTarget } from '@core/combat/mountReach';
 /** No aim guides (the mirror's `localAimMountIds`): the lock rings replace them. */
@@ -6133,15 +6133,14 @@ export class ColyseusGameClient {
     const k = this.fcKey(key);
     if (k.player !== null) {
       const s = this.mirror.ships.get(k.player);
-      out.kindId = s?.kind ?? null; out.angle = s?.angle ?? 0; out.shieldUp = s?.shieldDown !== true; out.radius = 0;
+      if (s) fillRangeShape(out, s.angle, true, s.kind ?? null, s.shieldDown !== true, 0);
+      else fillRangeShape(out, 0, false, null, false, 0); // not visible: a point
       return;
     }
     const e = this.mirror.swarm?.get(k.swarm);
-    const ship = e !== undefined && e.kind === 1 && e.shipKind != null;
-    out.kindId = ship ? e.shipKind! : null;
-    out.angle = ship ? e.angle : 0;
-    out.shieldUp = ship && e.shieldDown !== true;
-    out.radius = ship || e === undefined ? 0 : e.radius;
+    if (!e) { fillRangeShape(out, 0, false, null, false, 0); return; }
+    const ship = e.kind === 1;
+    fillRangeShape(out, ship ? e.angle : 0, ship, e.shipKind ?? null, ship && e.shieldDown !== true, e.radius);
   }
 
   /**
