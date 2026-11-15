@@ -81,7 +81,7 @@ const ALLOWLIST = {
   'src/client/render/galaxy/GalaxyMapLayer.ts': { cap: 1089, target: 600, reason: RATCHET_ONLY },
   'src/client/render/pixi/ConnectorRenderer.ts': { cap: 958, target: 600, reason: RATCHET_ONLY },
   'src/client/render/pixi/structureVisuals.ts': { cap: 739, target: 600, reason: RATCHET_ONLY },
-  'src/client/render/pixi/wreckArt.ts': { cap: 1925, target: 600, reason: RATCHET_ONLY },
+  'src/client/render/pixi/wreckArt.ts': { cap: 1740, target: 600, reason: RATCHET_ONLY },
   'src/client/render/worker/Camera.ts': { cap: 792, target: 600, reason: RATCHET_ONLY },
   'src/client/render/worker/WorkerRendererClient.ts': {
     cap: 844,
