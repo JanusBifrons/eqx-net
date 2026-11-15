@@ -125,6 +125,8 @@ interface MissileImpulseCmd { type: 'MISSILE_IMPULSE'; entityId: string; fx: num
 /** Capital wreck: add a velocity (u/s) and spin (rad/s) to a piece's body (its
  *  separating kick once the crack delay is over). Silent no-op when gone. */
 interface WreckKickCmd { type: 'WRECK_KICK'; entityId: string; dvx: number; dvy: number; dw: number }
+/** A fixed body (cut-field rock) becomes dynamic: a ship rammed it. */
+interface UnfixBodyCmd { type: 'UNFIX_BODY'; entityId: string }
 /** Capital wreck: an overkill hit's impulse (jx, jy) at world point (px, py)
  *  on a piece, so an off-centre hit also turns it. Silent no-op when gone. */
 interface WreckImpulseCmd { type: 'WRECK_IMPULSE'; entityId: string; jx: number; jy: number; px: number; py: number }
@@ -142,7 +144,7 @@ interface RemoveWallCmd     { type: 'REMOVE_WALL';     id: string }
 /** Force fields (teleporter pad push today; PhysicsWorld.setForceField, forceFields.ts). */
 interface SetForceFieldCmd    { type: 'SET_FORCE_FIELD';    id: string; field: ForceField }
 interface RemoveForceFieldCmd { type: 'REMOVE_FORCE_FIELD'; id: string }
-type WorkerCommand = SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiIntentCmd | AiInputsCmd | ClockRateCmd | SetPositionCmd | WarpRetargetCmd | RekeyShipCmd | SetHullExposedCmd | SetStatMulCmd | MissileImpulseCmd | WreckKickCmd | WreckImpulseCmd | WreckRigidImpulseCmd | SpawnWallCmd | SetWallActiveCmd | RemoveWallCmd | SetForceFieldCmd | RemoveForceFieldCmd | BotWarpCmd | SetTimeScaleCmd;
+type WorkerCommand = SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiIntentCmd | AiInputsCmd | ClockRateCmd | SetPositionCmd | WarpRetargetCmd | RekeyShipCmd | SetHullExposedCmd | SetStatMulCmd | MissileImpulseCmd | WreckKickCmd | UnfixBodyCmd | WreckImpulseCmd | WreckRigidImpulseCmd | SpawnWallCmd | SetWallActiveCmd | RemoveWallCmd | SetForceFieldCmd | RemoveForceFieldCmd | BotWarpCmd | SetTimeScaleCmd;
 
 /** Pool commands (main → pooled worker): host / free one sector's world. */
 interface AddWorldCmd    { type: 'ADD_WORLD'; worldId: number; sab: SharedArrayBuffer }
@@ -415,6 +417,10 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
         // where a drone died between detonate and apply.
         physics.applyImpulse(cmd.entityId, cmd.fx, cmd.fy, 0);
         wakeCensus?.noteImpulse(cmd.entityId, 'missile');
+        break;
+      }
+      case 'UNFIX_BODY': {
+        physics.unfixBody(cmd.entityId);
         break;
       }
       case 'WRECK_KICK': {

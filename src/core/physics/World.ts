@@ -1087,6 +1087,15 @@ export class PhysicsWorld {
     this.bodies.get(id)?.body.setBodyType(RAPIER.RigidBodyType.Fixed, true);
   }
 
+  /** Wake a fixed body into an ordinary dynamic one (a cut-field rock a ship
+   *  rammed): it keeps its colliders and their mass, and is awake at once. */
+  unfixBody(id: string): void {
+    const b = this.bodies.get(id)?.body;
+    if (!b || !b.isFixed()) return;
+    b.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
+    b.wakeUp();
+  }
+
   lockBody(id: string): void {
     const rec = this.bodies.get(id);
     if (!rec) return;

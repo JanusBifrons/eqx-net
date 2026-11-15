@@ -19,10 +19,12 @@ import {
   CutFieldStreamer,
   cutFieldOpts,
   fieldRockBody,
+  fieldRockId,
   type FieldRockBody,
 } from '@core/terrain/chunkStreamer';
 import { rocksInChunk, type ChunkOpts, type ChunkRock } from '@core/terrain/fieldLayout';
 import { wantPredBody } from '../structures/predStructureStreaming.js';
+import type { FieldRockSource } from './entity/IClientEntityLeaf.js';
 
 /** Client step cadence (wall time: it paces generation work, not anything in
  *  the game; the client has no game-time timer host). One chunk cut per step
@@ -39,6 +41,9 @@ const FIELD_ROCK_PRED_MASS = 3;
 export const MAX_CUTS_IN_FLIGHT = 2;
 /** Finished cuts the streamer stopped wanting are kept this many at most. */
 const MAX_READY_CUTS = 16;
+/** An awake rock not seen on the swarm wire for this long (game ms) is
+ *  asleep again: its chunk went away on the server and will re-cut fixed. */
+export const FIELD_AWAKE_FORGET_MS = 2_000;
 
 /** Cuts a chunk off the main thread (the art bake pool's `cutChunk`). */
 export interface ChunkCutter {
@@ -62,9 +67,9 @@ export interface CutFieldClientDeps {
   cutter?: () => ChunkCutter | null;
 }
 
-interface LoadedRock { body: FieldRockBody; inPred: boolean }
+interface LoadedRock { body: FieldRockBody; key: number; inPred: boolean }
 
-export class CutFieldClient {
+export class CutFieldClient implements FieldRockSource {
   private seed: string | null = null;
   private streamer: CutFieldStreamer | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -75,10 +80,27 @@ export class CutFieldClient {
   /** Bumped on stop, so a cut that lands after it is dropped. */
   private gen = 0;
   private inline = false;
+  /** Awake rocks (rock key → game ms last seen on the swarm wire): they
+   *  collide as swarm bodies, so their fixed body stays out. */
+  private readonly awake = new Map<number, number>();
   /** Counters for tests and diagnostics (counts, never timings). */
-  readonly stats = { predBodies: 0 };
+  readonly stats = { predBodies: 0, awake: 0 };
 
   constructor(private readonly deps: CutFieldClientDeps) {}
+
+  /** The asteroid leaf, for an awake field rock on the swarm wire: mark it
+   *  awake, drop its fixed predWorld body, return its centred outline. */
+  wakeFieldRock(key: number): ReadonlyArray<{ x: number; y: number }> | null {
+    this.awake.set(key, this.deps.gameClock.now());
+    const id = fieldRockId(key);
+    const r = this.rocks.get(id);
+    if (!r) return null;
+    if (r.inPred) {
+      this.deps.predWorld()?.despawnShip(id);
+      r.inPred = false;
+    }
+    return r.body.verts;
+  }
 
   get loadedRocks(): number { return this.rocks.size; }
   get chunksLoaded(): number { return this.streamer?.stats.chunksLoaded ?? 0; }
@@ -92,7 +114,7 @@ export class CutFieldClient {
     const field = cutFieldOpts(seed);
     this.streamer = new CutFieldStreamer(field, {
       visitShips: (cb) => { const p = this.deps.localPose(); if (p) cb(p.x, p.y); },
-      spawnRock: (id, rock) => { this.rocks.set(id, { body: fieldRockBody(rock), inPred: false }); return true; },
+      spawnRock: (id, rock) => { this.rocks.set(id, { body: fieldRockBody(rock), key: rock.key, inPred: false }); return true; },
       removeRock: (id) => this.dropRock(id),
       nowMs: () => this.deps.gameClock.now(),
       chunkLoaded: (cx, cy, rocks) => this.deps.draw.setFieldChunk(cx, cy, packOutlines(rocks)),
@@ -117,6 +139,7 @@ export class CutFieldClient {
     this.streamer = null;
     this.seed = null;
     this.cuts.clear();
+    this.awake.clear();
     this.inFlight = 0;
     this.gen++;
   }
@@ -161,10 +184,14 @@ export class CutFieldClient {
   private syncPred(): void {
     const pw = this.deps.predWorld();
     const me = this.deps.localPose();
+    const now = this.deps.gameClock.now();
+    for (const [k, seen] of this.awake) {
+      if (now - seen > FIELD_AWAKE_FORGET_MS) this.awake.delete(k);
+    }
     let n = 0;
     for (const [id, r] of this.rocks) {
       const b = r.body;
-      const want = pw !== null && me !== null
+      const want = pw !== null && me !== null && !this.awake.has(r.key)
         && wantPredBody(r.inPred, Math.hypot(b.x - me.x, b.y - me.y) - b.radius);
       if (want && !r.inPred) {
         pw.spawnObstacle(id, b.x, b.y, b.radius, FIELD_ROCK_PRED_MASS, b.verts);
@@ -177,6 +204,7 @@ export class CutFieldClient {
       if (r.inPred) n++;
     }
     this.stats.predBodies = n;
+    this.stats.awake = this.awake.size;
   }
 
   private dropRock(id: string): void {

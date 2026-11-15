@@ -64,6 +64,7 @@ export type WorkerCmd =
    *  despawned entities. See docs/architecture/missile-simulation.md. */
   | { type: 'MISSILE_IMPULSE'; entityId: string; fx: number; fy: number }
   | { type: 'WRECK_KICK'; entityId: string; dvx: number; dvy: number; dw: number }
+  | { type: 'UNFIX_BODY'; entityId: string }
   /** A capital wreck piece's overkill knock-back: impulse (jx, jy) at world
    *  point (px, py) via `World.applyImpulseAtPoint`. */
   | { type: 'WRECK_IMPULSE'; entityId: string; jx: number; jy: number; px: number; py: number }

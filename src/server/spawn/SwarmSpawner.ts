@@ -34,6 +34,8 @@ export interface AsteroidSpec {
   /** Cut-field rock: every client cuts it from the field seed, so it stays off
    *  the swarm wire and out of the sector save (macro terrain plan v2). */
   fieldRock?: boolean;
+  /** Its rock key (`rockKey`): an awake field rock carries it on the wire. */
+  fieldKey?: number;
 }
 
 export interface DroneSpec {
@@ -396,6 +398,7 @@ export class SwarmSpawner {
       rec.shapeSeed = asteroidShapeSeed(a.id);
       vertices = a.vertices ?? generateAsteroidVertices(rec.shapeSeed, a.radius);
       if (a.fieldRock) rec.fieldRock = true;
+      if (a.fieldKey !== undefined) rec.fieldKey = a.fieldKey;
       rec.vertices = vertices;
       mass ??= ASTEROID_DEFAULT_MASS;
       // WS-4 / R2.27 — seed the finite mineable resource pool from the

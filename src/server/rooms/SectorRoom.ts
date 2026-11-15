@@ -260,7 +260,7 @@ import { EntitySyncRouter } from './EntitySyncRouter.js';
 import { isEngageablePilotHull, isPilotedActive } from './shipLiveness.js';
 import { MalformedMessageTracker } from './MalformedMessageTracker.js';
 import { guarded } from './guardedLoop.js';
-import { CutFieldStreamer, cutFieldOpts, fieldRockBody, STEP_EVERY_MS as CUT_FIELD_STEP_MS } from '../../core/terrain/chunkStreamer.js';
+import { CutFieldStreamer, cutFieldOpts, fieldRockBody, fieldRockMass, FIELD_WAKES_PER_TICK, STEP_EVERY_MS as CUT_FIELD_STEP_MS } from '../../core/terrain/chunkStreamer.js';
 import { SectorPersistence } from './SectorPersistence.js';
 import { LivingWorldBotHooks } from './LivingWorldBotHooks.js';
 import { SceneScriptRunner, SceneScriptSchema, type SceneStatus } from './scene/SceneScriptRunner.js';
@@ -1119,6 +1119,8 @@ export class SectorRoom extends Room<SectorState> {
   /** Macro terrain v2 (flag `cutField`): chunks of a cut field near ships. */
   private cutField: CutFieldStreamer | undefined;
   private cutFieldTimer: GameTimer | undefined;
+  private fieldWakeTick = -1;
+  private fieldWakesThisTick = 0;
   /** The welcome's cut-field seed (#16: a joiner cuts the same rocks). */
   private cutFieldWelcome: { cutField?: { seed: string } } = {};
   /** Faster turret aim/fire timer (Phase 5; unref'd). */
@@ -5349,15 +5351,35 @@ export class SectorRoom extends Room<SectorState> {
       spawnRock: (id, rock) => {
         // The same body the client builds (#15): centred on the outline.
         const b = fieldRockBody(rock);
-        return this.swarmSpawner.spawnAsteroid({ id, x: b.x, y: b.y, vx: 0, vy: 0, radius: b.radius, vertices: b.verts, fixed: true, fieldRock: true });
+        return this.swarmSpawner.spawnAsteroid({ id, x: b.x, y: b.y, vx: 0, vy: 0, radius: b.radius, vertices: b.verts, mass: fieldRockMass(b.radius), fixed: true, fieldRock: true, fieldKey: rock.key });
       },
       removeRock: (id) => {
         const rec = this.swarmRegistry.get(id);
-        if (rec) this.evictSwarmEntity(rec, { broadcast: false, emitDestroyed: false });
+        // An awake rock is on the wire: clients are told it left.
+        if (rec) this.evictSwarmEntity(rec, { broadcast: rec.fieldAwake === true, emitDestroyed: false });
       },
       nowMs: () => this.gameClock.now(),
     });
     this.cutFieldTimer = this.gameClock.every(CUT_FIELD_STEP_MS, guarded('cut-field', () => this.cutField?.step()));
+  }
+
+  /**
+   * Macro terrain v2 C2: a cut-field rock something rammed wakes: its fixed
+   * body turns dynamic and it rides the swarm wire by its rock key until its
+   * chunk unloads. Rock-on-rock contacts never wake (cut pieces touch along
+   * their cuts, so that would wake the whole field). At most
+   * `FIELD_WAKES_PER_TICK` per tick.
+   */
+  private wakeFieldRock(id: string, otherId: string, tick: number): void {
+    const rec = this.swarmRegistry.get(id);
+    if (rec?.fieldRock !== true || rec.fieldAwake === true) return;
+    if (this.swarmRegistry.get(otherId)?.fieldRock === true) return;
+    if (tick !== this.fieldWakeTick) { this.fieldWakeTick = tick; this.fieldWakesThisTick = 0; }
+    if (this.fieldWakesThisTick >= FIELD_WAKES_PER_TICK) return;
+    this.fieldWakesThisTick++;
+    rec.fieldAwake = true;
+    this.postToWorker({ type: 'UNFIX_BODY', entityId: id });
+    serverLogEvent('field_rock_woke', { id, by: otherId, tick });
   }
 
   private evictSwarmEntity(
@@ -8582,6 +8604,10 @@ export class SectorRoom extends Room<SectorState> {
               impulse: parseFloat(p.force.toFixed(3)),
             });
             continue;
+          }
+          if (this.cutField) {
+            this.wakeFieldRock(p.aId, p.bId, tick);
+            this.wakeFieldRock(p.bId, p.aId, tick);
           }
           this.bus.emit('COLLISION_RESOLVED', {
             type: 'COLLISION_RESOLVED',

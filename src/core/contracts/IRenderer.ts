@@ -164,6 +164,10 @@ export interface SwarmRenderState {
   /** Asteroid (`kind === 0`, wire v6): its u16 shape seed, the one input
    *  (with `radius`) of its outline on both sides. Absent for other kinds. */
   shapeSeed?: number;
+  /** An awake cut-field rock (`kind === 0`, wire v7 flag FIELD_ROCK): its
+   *  rock key. Its outline is the client's own cut of that rock, not
+   *  `shapeSeed`'s. Absent for every other entity. */
+  fieldKey?: number;
   /** Phase: shield — true while this drone's shield is down (hull
    *  exposed). Decoded from swarm recordFlags bit 1 and kept consistent
    *  for in-interest drones by the snapshot drones[] loop. */

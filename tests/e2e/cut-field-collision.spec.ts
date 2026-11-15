@@ -7,7 +7,10 @@
  * be blocked on BOTH sides:
  *   1. SERVER: a `collision_resolved` involving a `field:` body lands in
  *      `/dev/events`.
- *   2. CLIENT: the rendered local ship's centre never gets inside any field
+ *   2. WAKE (plan C2/C3): the rammed rock turns into a moving body
+ *      (`field_rock_woke`) and rides the swarm wire with its rock key, so the
+ *      client swaps its fixed body for the moving one (`cutFieldStats.awake`).
+ *   3. CLIENT: the rendered local ship's centre never gets inside any field
  *      rock's collider (the convex hull of its outline, built from the same
  *      seed here). A missing predWorld body shows as the ship flying in, then
  *      being yanked back by correction; a missing server body as flying
@@ -29,7 +32,7 @@ const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 const SERVER_URL = process.env['EQX_SERVER_URL'] ?? DEFAULT_SERVER_URL;
 
 interface ServerLogEntry { ts: number; tag: string; data: Record<string, unknown> }
-type CutFieldStats = { chunks: number; rocks: number; predBodies: number };
+type CutFieldStats = { chunks: number; rocks: number; predBodies: number; awake: number };
 type EqxWindow = { __eqxClient?: { cutFieldStats?: CutFieldStats } };
 
 /** Spawn (room `defaultSpawnX/Y`) and the nearest rock outline vertex. */
@@ -119,14 +122,23 @@ test('ship ramming a cut-field rock is blocked on server and client', async ({ b
   await sample();
 
   const events = ((await (await fetch(`${SERVER_URL}/dev/events?limit=500`)).json()) as { events: ServerLogEntry[] }).events;
+  const woke = events.filter((e) => e.tag === 'field_rock_woke');
+  const awakeOnClient = await page.waitForFunction(
+    () => ((window as unknown as EqxWindow).__eqxClient?.cutFieldStats?.awake ?? 0) > 0,
+    undefined,
+    { timeout: 5_000 },
+  ).then(() => true, () => false);
   const fieldContacts = events.filter((e) => e.tag === 'collision_resolved'
     && (String(e.data['aId']).startsWith('field:') || String(e.data['bId']).startsWith('field:')));
 
   // eslint-disable-next-line no-console
-  console.log(`\n=== Cut-field ram: peak advance ${peak.toFixed(0)} u (rock edge at ${GAP.toFixed(0)}); deepest inside a rock ${deepest.toFixed(0)} u; field contacts ${fieldContacts.length}; path ${JSON.stringify(path.filter((_, i) => i % 4 === 0))} ===\n`);
+  console.log(`\n=== Cut-field ram: peak advance ${peak.toFixed(0)} u (rock edge at ${GAP.toFixed(0)}); deepest inside a rock ${deepest.toFixed(0)} u; field contacts ${fieldContacts.length}; woke ${woke.length}; path ${JSON.stringify(path.filter((_, i) => i % 4 === 0))} ===\n`);
 
   expect(peak, 'the ship must reach the rock (else the ram proves nothing)').toBeGreaterThan(GAP - 150);
   expect(fieldContacts.length, 'server must log a collision_resolved with a field: rock').toBeGreaterThan(0);
+  expect(woke.length, 'the rammed field rock must wake on the server').toBeGreaterThan(0);
+  expect(String(woke[0]!.data['id']).startsWith('field:')).toBe(true);
+  expect(awakeOnClient, 'the woken rock must reach the client on the swarm wire').toBe(true);
   expect(deepest, `rendered ship must never go inside a field rock (deepest ${deepest.toFixed(0)} u < ${MAX_DEPTH})`).toBeLessThan(MAX_DEPTH);
 
   await ctx.close();

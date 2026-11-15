@@ -15,7 +15,7 @@ import { capitalFleetWarp, capitalFleetArrive, capitalLineup, capitalBroadside, 
 import { machinedArt } from './shots/machinedArt.js';
 import { newEffects } from './shots/newEffects.js';
 import { crossingSector } from './shots/crossingSector.js';
-import { cutFieldLaneFighter, cutFieldLaneBattleship, cutFieldOverview, cutFieldLaneRun } from './shots/cutField.js';
+import { cutFieldLaneFighter, cutFieldLaneBattleship, cutFieldOverview, cutFieldLaneRun, cutFieldRam } from './shots/cutField.js';
 import { machinedTurrets } from './shots/machinedTurrets.js';
 import { flight } from './shots/flight.js';
 import { beamCombat } from './shots/beamCombat.js';
@@ -93,6 +93,7 @@ export const SHOTS: readonly Shot[] = [
   cutFieldOverview,
   cutFieldLaneBattleship,
   cutFieldLaneRun,
+  cutFieldRam,
   machinedTurrets,
   robots,
   nexus,

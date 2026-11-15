@@ -180,7 +180,7 @@ import {
 import { localFireSpawnsGhost, localFirePredicts, liveBeamVisible, LIVE_BEAM_PERSIST_MS } from '../combat/LocalBeam';
 import { flowMaterialToCode } from '../render/pixi/connectorVisual';
 import { findMount, isSustainedBeamMount, remoteBeamTtlMs } from '../render/beamStyles';
-import { pageBakeRunner } from '../render/art/ArtService';
+import type { ChunkCutter } from './CutFieldClient.js';
 import type { TouchInput } from '../input/TouchInput';
 import { joystickToInput, IDLE_INPUT_STATE, type JoystickInputState } from '../input/joystickToInput';
 import { aimInput } from '../input/AimInput';
@@ -549,6 +549,13 @@ export class ColyseusGameClient {
   private readonly _wrecks = new WreckGeometryStore();
   /** Macro terrain v2 (room flag `cutField`): the cut field's chunks near the
    *  local ship, cut from the welcome's seed (none ride the wire). */
+  /** The art bake pool, loaded lazily: a static import would pull its Worker
+   *  URL into every module that imports this one (Vite can't parse it under
+   *  vitest). Until it loads, a chunk is cut inline. */
+  private _chunkCutter: ChunkCutter | null = null;
+  private readonly _chunkCutterLoad = typeof Worker === 'undefined'
+    ? null
+    : import('../render/art/ArtService').then((m) => { this._chunkCutter = m.pageBakeRunner(); }, () => {});
   private readonly _cutField = new CutFieldClient({
     gameClock: { now: () => this.gameClock.now() },
     predWorld: () => this.predWorld,
@@ -572,7 +579,7 @@ export class ColyseusGameClient {
     },
     // Chunks are cut in the page's art bake pool (shared with ship bakes on
     // phones, where the renderer is on this thread).
-    cutter: pageBakeRunner,
+    cutter: () => this._chunkCutter,
   });
   /** Reused construction context — one instance mutated in place per entity, so
    *  swarm spawn allocates nothing (invariant #14). `predWorld` / `entry` are
@@ -581,6 +588,7 @@ export class ColyseusGameClient {
     predWorld: null as unknown as ClientSpawnCtx['predWorld'],
     aiController: this._aiController,
     wrecks: this._wrecks,
+    fieldRocks: this._cutField,
     entityId: 0,
     key: '',
     entry: null as unknown as ClientSpawnCtx['entry'],
@@ -7047,8 +7055,9 @@ export class ColyseusGameClient {
 
   /** Cut field (flag `cutField`): what this client has loaded. Read by the
    *  E2E (`cut-field-collision.spec.ts`) to start once the rocks are in. */
-  get cutFieldStats(): { chunks: number; rocks: number; predBodies: number } {
-    return { chunks: this._cutField.chunksLoaded, rocks: this._cutField.loadedRocks, predBodies: this._cutField.stats.predBodies };
+  get cutFieldStats(): { chunks: number; rocks: number; predBodies: number; awake: number } {
+    const s = this._cutField.stats;
+    return { chunks: this._cutField.chunksLoaded, rocks: this._cutField.loadedRocks, predBodies: s.predBodies, awake: s.awake };
   }
 
   dispose(): void {

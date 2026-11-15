@@ -18,6 +18,7 @@
  * work over several steps.
  */
 import { getShipKind } from '../../shared-types/shipKinds.js';
+import { shipBodyMass } from '../../shared-types/shipScale/tuning.js';
 import { CHUNK_SIZE, rocksInChunk, type ChunkOpts, type ChunkRock } from './fieldLayout.js';
 
 /** The cut options for a field seed: one source for both sides (#15). */
@@ -43,10 +44,21 @@ export function fieldRockBody(rock: ChunkRock): FieldRockBody {
   return { x: mx, y: my, radius: Math.sqrt(r2), verts };
 }
 
+/** A woken field rock's mass: as heavy as a battleship of its size (same
+ *  mass per area), so fighters bounce off big rocks and capitals shove them.
+ *  From the live kind (#18). */
+export function fieldRockMass(radius: number): number {
+  const bs = getShipKind('battleship');
+  return shipBodyMass(bs) * (radius / bs.radius) ** 2;
+}
+
 /** The id both sides give a field rock (server registry, client predWorld). */
 export const fieldRockId = (key: number): string => `field:${key}`;
 
 export const STEP_EVERY_MS = 250;
+/** Field rocks a server tick may wake (ramming, plan v2 C2): a capital
+ *  ploughing in touches many at once; the rest wake on later ticks. */
+export const FIELD_WAKES_PER_TICK = 4;
 /** Cuts run on the room's main thread: a chunk costs ~4 ms (p50), ~6 ms
  *  (p95) on the desktop, so 2 per step keeps a step near one tick's budget.
  *  Nearest first, and chunks load two out, so a cruising ship never outruns

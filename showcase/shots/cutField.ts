@@ -103,3 +103,37 @@ export const cutFieldLaneRun: Shot = {
     await flyRoute(ctx, [runAt(38_000), runAt(41_000), runAt(44_000), runAt(47_000)], { cruise: 420, maxMs: 28_000 });
   },
 };
+
+/** Waking (plan C2): a battleship backs off the lane-1 wall rock the
+ *  collision E2E rams (3.7 km off, clear of rocks, facing the wall) and
+ *  ploughs in under thrust + boost. Each rock it touches wakes and is shoved
+ *  aside: a rock weighs a battleship × (its radius / a battleship's)², so
+ *  these ~300 u rocks are about 1 % of the ship. Follow camera, full HUD. */
+const RAM_BACK = 3700;
+const RAM_HEAD = { x: (-30_120 - WALL.x) / 700, y: (26_501 - WALL.y) / 700 };
+export const cutFieldRam: Shot = {
+  id: 'cut-field-ram',
+  section: 'mechanics',
+  title: 'Cut field: a battleship ploughs into the rocks',
+  caption: 'A battleship rams the cut field: every rock it touches wakes and is shoved aside.',
+  features: ['ART'],
+  docs: ['macro-terrain'],
+  reel: false,
+  server: 'lean',
+  target: {
+    room: 'showcase-cut-field',
+    params: {
+      shipKind: 'battleship',
+      spawnX: Math.round(WALL.x - RAM_HEAD.x * RAM_BACK),
+      spawnY: Math.round(WALL.y - RAM_HEAD.y * RAM_BACK),
+      initialAngle: WALL_ANGLE,
+      initialHull: 1_000_000,
+    },
+  },
+  hud: 'full',
+  durationMs: 24_000,
+  async run(ctx) {
+    await ctx.sleep(2000);
+    await ctx.hold(['w', 'Shift'], 20_000);
+  },
+};

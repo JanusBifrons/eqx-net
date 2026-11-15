@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import type { PhysicsWorld } from '@core/physics/World';
 import { CHUNK_SIZE, rocksInChunk, type ChunkOpts, type ChunkRock } from '@core/terrain/fieldLayout';
 import { PREDWORLD_STRUCTURE_RADIUS, PREDWORLD_STRUCTURE_HYSTERESIS } from '../../shared-types/structureBudgets.js';
-import { CutFieldClient, MAX_CUTS_IN_FLIGHT } from './CutFieldClient.js';
+import { CutFieldClient, FIELD_AWAKE_FORGET_MS, MAX_CUTS_IN_FLIGHT } from './CutFieldClient.js';
 
 /** A predWorld that records bodies (the client module only spawns, locks,
  *  despawns). */
@@ -156,5 +156,47 @@ describe('CutFieldClient background cutting (phone frames stay clear)', () => {
     await flush();
     c.step();
     expect(drawn.size).toBe(1);
+  });
+});
+
+describe('CutFieldClient — woken rocks (macro terrain C2)', () => {
+  it('an awake rock loses its fixed body, hands over its outline, and comes back once off the wire', () => {
+    const { pw, bodies } = fakePredWorld();
+    const pose = { x: 60_000, y: 0 };
+    let now = 0;
+    const c = new CutFieldClient({
+      gameClock: { now: () => now },
+      predWorld: () => pw,
+      localPose: () => pose,
+      draw: { setFieldChunk: () => {} },
+    });
+    live = c;
+    c.setSeed('test-seed');
+    for (let i = 0; i < 60; i++) c.step();
+    const id = [...bodies.keys()][0]!;
+    const key = Number(id.slice('field:'.length));
+    const verts = c.wakeFieldRock(key);
+    expect(verts, 'the cut outline').not.toBeNull();
+    expect(verts!.length).toBeGreaterThanOrEqual(3);
+    expect(bodies.has(id), 'fixed body dropped on wake').toBe(false);
+    c.step();
+    expect(bodies.has(id), 'kept out while awake').toBe(false);
+    // Still on the wire: each sync re-marks it.
+    now += FIELD_AWAKE_FORGET_MS - 1;
+    c.wakeFieldRock(key);
+    now += FIELD_AWAKE_FORGET_MS - 1;
+    c.step();
+    expect(bodies.has(id)).toBe(false);
+    // Off the wire past the forget window: its chunk re-cut it fixed.
+    now += FIELD_AWAKE_FORGET_MS + 1;
+    c.step();
+    expect(bodies.has(id), 'fixed body back once asleep').toBe(true);
+  });
+
+  it('an awake rock whose chunk this client has not cut gets null (generated fallback)', () => {
+    const { c } = rig();
+    live = c;
+    c.setSeed('test-seed');
+    expect(c.wakeFieldRock(12345)).toBeNull();
   });
 });

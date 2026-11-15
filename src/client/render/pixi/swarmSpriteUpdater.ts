@@ -27,6 +27,7 @@
  */
 
 import { npcFactionDef } from '../../../shared-types/factions.js';
+import type { CutFieldLayer } from '../field/CutFieldLayer';
 import { isSpriteInView } from '../spriteUpdateDecisions.js';
 import type { Container, Graphics, RenderLayer } from 'pixi.js';
 import type { RenderMirror } from '@core/contracts/IRenderer';
@@ -92,6 +93,8 @@ export interface SpriteBuildSig {
   radius: number;
   /** S2b: a wreck piece's wreck (0 for every other kind). */
   wreckId: number;
+  /** An awake cut-field rock's key (-1 for everything else). */
+  fieldKey: number;
 }
 
 export interface SwarmSpriteCtx {
@@ -143,6 +146,10 @@ export interface SwarmSpriteCtx {
   /** Capital destruction S3: per-wreck death clock + break-up sink. Absent ⇒
    *  pieces draw cool and no break-up plays. */
   wreckArt?: WreckArtState;
+  /** Macro terrain C2: the cut-field layer. An awake field rock (an asteroid
+   *  with `fieldKey`) draws its own cut outline and leaves its chunk mesh.
+   *  Absent ⇒ it draws as a plain asteroid. */
+  fieldRocks?: Pick<CutFieldLayer, 'noteAwake' | 'buildRockSprite'>;
   /** The renderer's presentation clock (fxNow, ms), which follows the game
    *  speed: wreck death clocks and the cut-edge glow age on it, so they slow
    *  down in slow motion and speed up at 4x. Absent: the wall `now` (tests).
@@ -218,6 +225,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     if (entry.kind === 4 && (entry.wreckId === undefined || wreckDescs === undefined || !wreckDescs.has(entry.wreckId) || ctx.wrecks === undefined)) continue;
     const spriteKey = `swarm-${entityId}`;
     ctx.seenScratch.add(spriteKey);
+    if (entry.fieldKey !== undefined) ctx.fieldRocks?.noteAwake(entry.fieldKey);
     let sprite = ctx.sprites.get(spriteKey);
     // Equinox Phase 3 #20 — a recycled entityId can flip kind (a destroyed
     // structure's slot reused by a new drone). The sprite is cached by entityId;
@@ -237,7 +245,8 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         sig.shipKind !== (entry.shipKind ?? null) ||
         sig.componentIndex !== (entry.componentIndex ?? 0) ||
         sig.radius !== entry.radius ||
-        sig.wreckId !== (entry.wreckId ?? 0))
+        sig.wreckId !== (entry.wreckId ?? 0) ||
+        sig.fieldKey !== (entry.fieldKey ?? -1))
     ) {
       ctx.shipContainer.removeChild(sprite);
       ctx.mountVisuals.removeShip(spriteKey);
@@ -259,7 +268,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
           ? structHandleFor(ctx.art, spriteKey, entry.shipKind, -entry.angle)
           : entry.kind === 3 && entry.shipKind
             ? scrapHandleFor(ctx.art, spriteKey, entry.shipKind, entry.componentIndex ?? 0)
-            : entry.kind === 0
+            : entry.kind === 0 && entry.fieldKey === undefined
               ? rockHandleFor(ctx.art, spriteKey, entry.shapeSeed ?? 0, entry.radius, entry.asteroidResource, -entry.angle)
               : null;
     // S3: a wreck piece draws its PARENT kind's baked art. A capital's is the
@@ -356,7 +365,10 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         sprite = new WreckPieceSprite(g, entry.shipKind ?? desc.parentKind, shipArt, info, index);
       } else {
         const rockRadius = entry.radius;
-        sprite = buildArtShipSprite(artHandle, () => buildAsteroidGfx(entry.shapeSeed ?? 0, rockRadius));
+        // An awake cut-field rock keeps its cut shape and rock surface.
+        const field = entry.fieldKey !== undefined ? ctx.fieldRocks?.buildRockSprite(entry.fieldKey) ?? null : null;
+        if (field !== null) sprite = field;
+        else sprite = buildArtShipSprite(artHandle, () => buildAsteroidGfx(entry.shapeSeed ?? 0, rockRadius));
         // P2c — ice and crystal-veined rocks read apart from plain rock (the
         // Machined rock bakes its resource colour instead).
         // (Applied in the per-frame tint block below, the one tint site.)
@@ -370,6 +382,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         componentIndex: entry.componentIndex ?? 0,
         radius: entry.radius,
         wreckId: entry.wreckId ?? 0,
+        fieldKey: entry.fieldKey ?? -1,
       });
     }
     // Drones (kind 1) AND scrap (kind 3): read the already-resolved

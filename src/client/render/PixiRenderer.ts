@@ -964,6 +964,7 @@ export class PixiRenderer implements IRenderer {
       art: this._artCtx,
       // Capital destruction S2b: wreck piece geometry rebuilt from mirror.wrecks.
       wrecks: new WreckGeometryStore(),
+      fieldRocks: this._cutField,
       // S3: each wreck's death clock; a fresh wreck's break-up (dust, shards,
       // flash at the kill point) goes through the effects system, tier-capped.
       wreckArt: new WreckArtState((x, y, radius, snap, seed, wfx, channel) => {
@@ -2476,6 +2477,7 @@ export class PixiRenderer implements IRenderer {
       for (const c of fieldChunks) this._cutField.setChunk(c.cx, c.cy, c.outlines);
       fieldChunks.length = 0;
     }
+    this._cutField.setView(this._artCtx.sunAz, this.camera.scale.x);
 
     // Phase 1 — name labels above remote ships and drones (skip self).
     this.labels?.update(mirror);

@@ -25,6 +25,7 @@ import {
   SWARM_FLAG_FULL,
   SWARM_RECORD_FLAG_SLEEPING,
   SWARM_RECORD_FLAG_SHIELD_DOWN,
+  SWARM_RECORD_FLAG_FIELD_ROCK,
   SWARM_WIRE_VERSION,
   swarmPacketSize,
 } from '../../shared-types/swarmWireFormat.js';
@@ -110,8 +111,10 @@ export class BinarySwarmBroadcast {
     let writeOffset = SWARM_HEADER_BYTES;
 
     for (const rec of registry.all()) {
-      // Cut-field rocks: every client cuts them from the field seed itself.
-      if (rec.fieldRock === true) continue;
+      // Cut-field rocks: every client cuts them from the field seed itself;
+      // only an awake one (rammed, now moving) rides the wire, by its key.
+      if (rec.fieldRock === true && rec.fieldAwake !== true) continue;
+      const fieldKey = rec.fieldAwake === true && rec.fieldKey !== undefined ? rec.fieldKey : -1;
       const base = slotBase(rec.slot);
       const x = sabF32[base + SLOT_X_OFF]!;
       const y = sabF32[base + SLOT_Y_OFF]!;
@@ -166,6 +169,7 @@ export class BinarySwarmBroadcast {
       this.view.setUint8(writeOffset + 2, rec.kind);
       let recFlags = sleeping ? SWARM_RECORD_FLAG_SLEEPING : 0;
       if (rec.shieldDown) recFlags |= SWARM_RECORD_FLAG_SHIELD_DOWN;
+      if (fieldKey >= 0) recFlags |= SWARM_RECORD_FLAG_FIELD_ROCK;
       this.view.setUint8(writeOffset + 3, recFlags);
       this.view.setFloat32(writeOffset + 4, x, true);
       this.view.setFloat32(writeOffset + 8, y, true);
@@ -195,17 +199,26 @@ export class BinarySwarmBroadcast {
         // P2c — an asteroid's resource kind (rock = 0 is the default byte).
         shipKindIdx = asteroidResourceIndex(rec.asteroidResource);
       }
-      this.view.setUint8(writeOffset + SWARM_REC_SHIP_KIND_OFF, shipKindIdx);
-      // v4: componentIndex — which scrap group of the parent ship-kind this
-      // piece is. Meaningful ONLY for kind=scrap; 0 for every other record.
-      this.view.setUint8(writeOffset + SWARM_REC_COMPONENT_INDEX_OFF, rec.componentIndex ?? 0);
-      // v5: the wreck a wreck piece belongs to (capital destruction S2b);
-      // v6: an asteroid's shape seed (macro terrain 1a); 0 otherwise.
-      this.view.setUint16(
-        writeOffset + SWARM_REC_WRECK_ID_OFF,
-        rec.kind === SWARM_KIND_WRECK ? (rec.wreckId ?? 0) : rec.kind === 0 ? (rec.shapeSeed ?? 0) : 0,
-        true,
-      );
+      // v7: an awake field rock's key fills +32/+33/+34 instead.
+      // (`rockKey` packing: chunk-x byte, chunk-y byte, index u16; the
+      // decoder's `fieldRockKeyFromWire` reverses it.)
+      if (fieldKey >= 0) {
+        this.view.setUint8(writeOffset + SWARM_REC_SHIP_KIND_OFF, (fieldKey >>> 24) & 0xff);
+        this.view.setUint8(writeOffset + SWARM_REC_COMPONENT_INDEX_OFF, (fieldKey >>> 16) & 0xff);
+        this.view.setUint16(writeOffset + SWARM_REC_WRECK_ID_OFF, fieldKey & 0xffff, true);
+      } else {
+        this.view.setUint8(writeOffset + SWARM_REC_SHIP_KIND_OFF, shipKindIdx);
+        // v4: componentIndex — which scrap group of the parent ship-kind this
+        // piece is. Meaningful ONLY for kind=scrap; 0 for every other record.
+        this.view.setUint8(writeOffset + SWARM_REC_COMPONENT_INDEX_OFF, rec.componentIndex ?? 0);
+        // v5: the wreck a wreck piece belongs to (capital destruction S2b);
+        // v6: an asteroid's shape seed (macro terrain 1a); 0 otherwise.
+        this.view.setUint16(
+          writeOffset + SWARM_REC_WRECK_ID_OFF,
+          rec.kind === SWARM_KIND_WRECK ? (rec.wreckId ?? 0) : rec.kind === 0 ? (rec.shapeSeed ?? 0) : 0,
+          true,
+        );
+      }
       writeOffset += SWARM_RECORD_BYTES;
 
       // Update bookkeeping so future deltas are computed against this pose.

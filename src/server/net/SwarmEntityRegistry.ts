@@ -88,6 +88,11 @@ export interface SwarmEntityRecord {
   /** Cut-field rock (macro terrain plan v2): every client cuts it from the
    *  field seed, so the swarm wire and the sector save skip it. */
   fieldRock?: boolean;
+  /** A field rock's key (`rockKey`), for the wire once it is awake. */
+  fieldKey?: number;
+  /** A field rock a ship rammed: now a dynamic body, on the swarm wire
+   *  (flag FIELD_ROCK + key) until its chunk unloads. Still never saved. */
+  fieldAwake?: boolean;
   /** Wreck pieces (kind 4): the convex parts, body-local math-up, CCW. Weapon
    *  hits refine the bounding circle to these (the same parts the physics
    *  body is built from). */
