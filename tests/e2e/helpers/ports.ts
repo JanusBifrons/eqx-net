@@ -12,19 +12,27 @@
  * still win over the offset-derived defaults.
  */
 
-function parseOffset(raw: string | undefined): number {
+/** Parse a port-offset env value (unset/empty = 0); `name` labels the error.
+ *  Shared with the netgate driver (`NETGATE_PORT_OFFSET`). */
+export function parsePortOffset(raw: string | undefined, name = 'EQX_E2E_PORT_OFFSET'): number {
   if (raw === undefined || raw.trim() === '') return 0;
   const n = Number(raw);
   if (!Number.isInteger(n) || n < 0 || n > 60_000) {
-    throw new Error(`EQX_E2E_PORT_OFFSET must be a non-negative integer, got "${raw}"`);
+    throw new Error(`${name} must be a non-negative integer, got "${raw}"`);
   }
   return n;
 }
 
-export const E2E_PORT_OFFSET = parseOffset(process.env['EQX_E2E_PORT_OFFSET']);
-export const E2E_SERVER_PORT = 2567 + E2E_PORT_OFFSET;
-export const E2E_CLIENT_PORT = 5173 + E2E_PORT_OFFSET;
-export const E2E_HMR_PORT = 24678 + E2E_PORT_OFFSET;
+/** The lane's ports for offset N (pure; the constants below use the env offset). */
+export function e2ePortsForOffset(offset: number): { server: number; client: number; hmr: number } {
+  return { server: 2567 + offset, client: 5173 + offset, hmr: 24678 + offset };
+}
+
+export const E2E_PORT_OFFSET = parsePortOffset(process.env['EQX_E2E_PORT_OFFSET']);
+const LANE = e2ePortsForOffset(E2E_PORT_OFFSET);
+export const E2E_SERVER_PORT = LANE.server;
+export const E2E_CLIENT_PORT = LANE.client;
+export const E2E_HMR_PORT = LANE.hmr;
 
 /** Offset-derived defaults (no env override applied). */
 export const DEFAULT_BASE_URL = `http://localhost:${E2E_CLIENT_PORT}`;

@@ -3099,3 +3099,8 @@ Owner: "make it more like micro machines and make fights a bit longer. Also don'
 - **Finding:** a hostile review of the rail-channel take said the channel and cracks between wreck pieces were painted near-black, darker than space. It looked like the old "dark scrap" class (a shadow or underlay under the pieces).
 - **Measured:** freeze the ticker (`app.ticker.stop()`), render by hand and read the canvas back while hiding one thing at a time: pieces only, the whole ship layer, each sibling. Every gap pixel equalled the bare backdrop, and the gaps were transparent over a magenta clear colour. On the filmed frame the gap matched the sky beside it. Nothing to fix; the sky behind the ship was near-black.
 - **Rule:** before fixing "too dark" or "black" in a film review, sample the frame (the region against its neighbours) and do a hide-one-at-a-time readback in the game. Fix only what the numbers show; a look preference goes to the owner.
+
+## 2026-11-15 — A shebang in a CRLF checkout makes a script unimportable by vitest
+
+- **Finding:** `tests/unit/context-nudge.test.ts` collected 0 tests on Windows ("Invalid or unexpected token", at a meaningless line in the test file) but passed on CI. The test imports `scripts/dev/context-nudge.mjs`, which began with `#!/usr/bin/env node`. With `core.autocrlf=true` that line ends in `\r\n`; Vite's SSR transform only skips a hashbang matching `/^#!.*\n/`, and `.` does not match `\r`, so the imports were hoisted above the `#!` and the module no longer parsed.
+- **Rule:** a script a test imports carries no shebang; run it as `node <file>`. The error location vitest prints points at the test file, not the imported script, so check the imports' first line.

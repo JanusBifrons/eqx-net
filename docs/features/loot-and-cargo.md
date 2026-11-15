@@ -45,7 +45,11 @@ Part 2 (P1a-2) adds base storage, auto-deposit, derelicts and credit sinks.
 A dead player's spilled cargo glows bright magenta. An NPC's drop is an
 ordinary pod coloured by its contents (owner 2026-11-13: bright NPC pods read
 as live ships among the wreckage). Cargo capacity is derived
-from the ship's toughness (`maxHealth × 2`), so heavier hulls haul more.
+from the ship's toughness (`maxHealth × 2`), so heavier hulls haul more, unless
+the kind sets a `cargoCapacity` override (the robot harvester's 400; later a
+mining barge). Server clamp, client HUD and NPC collectors all call the one
+`cargoCapacityForMaxHealth(kind)`. An NPC kind with `collectsLoot: true` scoops
+pods through the same pickup path as players (`SectorRoom.forEachLootCollector`).
 
 ## How it works
 
