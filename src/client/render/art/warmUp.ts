@@ -11,11 +11,13 @@
  * base has, then the rest of the common set. On a device's second visit all
  * of it comes from the cache in a fraction of a second.
  */
-import { SHIP_KINDS_LIST } from '../../../shared-types/shipKinds.js';
+import { allegianceOfKind, SHIP_KINDS_LIST } from '../../../shared-types/shipKinds.js';
+import { teamColorOf, teamEdgeOf, teamSigilOf } from '../../../shared-types/factions.js';
 import { FX_WARM } from './fx/fxTextures.js';
 import type { BakeJob } from './bake.js';
 import { seedVariant } from './bake.js';
-import { shipExtent } from './fields.js';
+import { shipExtent, type LiveryTreatment } from './fields.js';
+import { hasTurrets } from './turretLayout.js';
 
 /** Structures worth baking ahead, most common first. All at their usual
  *  (unturned) orientation; other turns bake on demand. */
@@ -31,13 +33,25 @@ export const WARM_STRUCTURES: readonly string[] = [
  *  capital hulls players rarely meet; they bake on demand. */
 const WARM_SHIP_MAX_EXTENT = 100;
 
-/** `fx`: also the effect textures every sector uses (the new effects). */
-export function warmUpJobs(fx = false): BakeJob[] {
+/** `fx`: also the effect textures every sector uses (the new effects).
+ *  `livery`: the ship livery in use (on by default): each ship is queued in
+ *  the livery of its usual owner (its kind's allegiance), with turret rings
+ *  when the new effects fit turrets, i.e. the same job `shipHandleFor` asks
+ *  for, so the bake is reused. Cargo pods keep their tier paint. */
+export function warmUpJobs(fx = false, livery?: LiveryTreatment): BakeJob[] {
   const jobs: BakeJob[] = [];
   // Effects first: they are few, small and on screen in every fight.
   if (fx) for (const id of FX_WARM) jobs.push({ type: 'fx', id });
   for (const k of SHIP_KINDS_LIST) {
-    if (shipExtent(k.id) < WARM_SHIP_MAX_EXTENT) jobs.push({ type: 'ship', id: k.id });
+    if (shipExtent(k.id) >= WARM_SHIP_MAX_EXTENT) continue;
+    if (livery === undefined || k.id === 'cargo-pod') { jobs.push({ type: 'ship', id: k.id }); continue; }
+    const owner = allegianceOfKind(k.id);
+    const job: Extract<BakeJob, { type: 'ship' }> = {
+      type: 'ship', id: k.id, paint: undefined,
+      livery: { treatment: livery, team: teamColorOf(owner), sigil: teamSigilOf(owner), edge: teamEdgeOf(owner) },
+    };
+    if (fx && hasTurrets(k.id, false)) job.rings = true;
+    jobs.push(job);
   }
   // Seed 1 is what the renderer asks for (structHandleFor), so the keys match.
   for (const id of WARM_STRUCTURES) jobs.push({ type: 'struct', id, seed: seedVariant(1), rot: 0 });

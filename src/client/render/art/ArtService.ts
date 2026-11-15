@@ -15,6 +15,7 @@
 import { Rectangle, Texture } from 'pixi.js';
 import { FX_SPECS, isFxId, type FxId, type FxSpec } from './fx/fxTextures.js';
 import { Atlas, PageBudget, type AtlasOpts } from './atlas.js';
+import type { Livery } from './fields.js';
 import { bakeKey, runBake, seedVariant, type Baked, type BakeJob, type LitMeta } from './bake.js';
 import type { LightingSettings } from './lightingSettings.js';
 import { loadBakes, saveBakes, storeKey } from './bakeStore.js';
@@ -354,9 +355,10 @@ export class ArtService {
   get lightRig(): LightRig { return this.rig; }
 
   /** `rings`: cut turret rings into the hull at its mounts (new effects).
-   *  `dead`: a wreck piece's art (no canopy, core, engines or running lights). */
-  ship(id: string, paint?: number, urgent = true, rings = false, dead = false): ArtHandle {
-    return this.acquire({ type: 'ship', id, paint, ...(rings ? { rings } : {}), ...(dead ? { dead } : {}) }, urgent);
+   *  `dead`: a wreck piece's art (no canopy, core, engines or running lights).
+   *  `livery`: the owner's livery (art-direction.md "Ship livery"). */
+  ship(id: string, paint?: number, urgent = true, rings = false, dead = false, livery?: Livery): ArtHandle {
+    return this.acquire({ type: 'ship', id, paint, ...(rings ? { rings } : {}), ...(dead ? { dead } : {}), ...(livery ? { livery } : {}) }, urgent);
   }
 
   struct(id: string, seed: number, rot = 0, accent?: number, urgent = true, rings = false): ArtHandle {
