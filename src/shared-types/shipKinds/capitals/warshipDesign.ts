@@ -195,10 +195,10 @@ export interface WarshipDesign {
  * A capital's weapon fit (plan section 9), the axis next to `style`: what its
  * main battery and its secondaries mount. Same hull; only the mounts'
  * `weaponId` change. The railgun carries its own charge (`chargeTicks`,
- * 'when-bearing', 'mount-glow') in its weapon def, so the mount needs nothing
- * else. 'beam' mounts the capital `heavy_beam` (hitscan, fired through the
- * ordinary AI beam path) with ONE emitter per turret (`barrels: 1`): the fire
- * path shoots one ray per barrel, and the heavy beam's numbers are per mount.
+ * 'when-bearing', 'mount-glow') in its weapon def. 'beam' mounts the capital
+ * `heavy_beam` (hitscan, fired through the ordinary AI beam path). Both are
+ * ONE barrel per turret (`barrels: 1`): the fire path shoots one slug or ray
+ * per barrel, and their numbers are per mount.
  */
 export interface CapitalFit {
   main: 'naval' | 'railgun' | 'beam';
@@ -253,7 +253,7 @@ export function warshipDesign(id: CapitalClassId, style: CapitalStyle, map: Capi
       baseAngle: fwd ? 0 : Math.PI, arcMin: -MAIN_ARC, arcMax: MAIN_ARC,
       rotationSpeed: TRAVERSE[mainSize],
       weaponId: fit.main === 'naval' ? NAVAL_GUN[mainSize] : fit.main === 'railgun' ? 'railgun' : 'heavy_beam', size: mainSize,
-      barrels: fit.main === 'beam' ? 1 : main.barrels, ...(scale !== 1 ? { turretScale: scale } : {}),
+      barrels: fit.main === 'naval' ? main.barrels : 1, ...(scale !== 1 ? { turretScale: scale } : {}),
     });
   });
   SECONDARY[id].forEach((tt, i) => {
