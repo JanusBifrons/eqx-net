@@ -21,7 +21,7 @@
  * Records and projectile entries are pooled and mutated in place (#14).
  */
 import type { ProjectileRenderState, ShellSalvoRenderInfo } from '@core/contracts/IRenderer';
-import { shellPathEndTick, SHELL_TICK_DT_S } from '@core/combat/shellFlight';
+import { shellHitTick, shellPathEndTick, SHELL_TICK_DT_S } from '@core/combat/shellFlight';
 import type { ShellEnd, ShellKeyRecord, ShellSalvo } from '@shared-types/messages/shellEvents';
 import { getWeapon, isWeaponId } from '@core/combat/WeaponCatalogue';
 import { shellBurstSize } from '../render/art/fx/turretFx.js';
@@ -77,7 +77,8 @@ export class ShellSalvoStore {
   /**
    * A `shell_end`: those shells hit something at `tick`, at (x, y). The shell
    * keeps flying on screen until the display clock reaches the hit
-   * (`place`). An end for a shell we never saw bursts at once.
+   * (`place`): the fraction of the step the hit lies along, not the step's
+   * start (`shellHitTick`). An end for a shell we never saw bursts at once.
    */
   applyEnd(msg: ShellEnd, bursts?: number[]): void {
     for (const e of msg.e) {
@@ -86,17 +87,28 @@ export class ShellSalvoStore {
         if (bursts) bursts.push(e[2], e[3], DEFAULT_SHELL_RADIUS);
         continue;
       }
+      // The drawn shell reaches the hit a fraction of a step after the
+      // reported tick (the step at S sweeps S -> S + 1).
+      const at = shellHitTick(r.x0, r.y0, r.vx, r.vy, r.t, e[1], e[2], e[3]);
       if (e[5] === 1) {
         // A pass-through kill: burst there when the display reaches it; the
         // shell flies on (its end, if any, comes in a later tuple).
         const p = this.passes;
         const i = this.passLen;
-        p[i] = e[1]; p[i + 1] = e[2]; p[i + 2] = e[3]; p[i + 3] = shellBurstSize(r.w, r.wr);
+        p[i] = at; p[i + 1] = e[2]; p[i + 2] = e[3]; p[i + 3] = shellBurstSize(r.w, r.wr);
         this.passLen = i + PASS_STRIDE;
         continue;
       }
-      r.endTick = e[1]; r.ex = e[2]; r.ey = e[3];
+      r.endTick = at; r.ex = e[2]; r.ey = e[3];
     }
+  }
+
+  /** The (fractional) display tick at which drawn shell `id` reaches a hit
+   *  reported at `tick`, (x, y) (`shellHitTick`); `tick` for a shell we don't
+   *  hold. Held hits and deferred kills wait for this, like the burst. */
+  hitTick(id: string, tick: number, x: number, y: number): number {
+    const r = this.map.get(id);
+    return r === undefined ? tick : shellHitTick(r.x0, r.y0, r.vx, r.vy, r.t, tick, x, y);
   }
 
   /**
