@@ -31,9 +31,6 @@ import type { RenderMirror, SwarmRenderState, PoseRingEntry } from '../../../cor
 import { POSE_RING_DEPTH } from '../../../core/contracts/IRenderer.js';
 import { FRACTURE_ALGO_VERSION } from '../../../core/destruction/fractureHull.js';
 import { buildWreckPieces, hullLocalCutAngle } from '../../../core/destruction/wreckPieces.js';
-import { shipShapeScale } from '../../../core/geometry/shipHullOutline.js';
-import { getShipKind } from '../../../shared-types/shipKinds.js';
-import { HEAVY_BEAM_WIDTH } from '../../../core/combat/WeaponCatalogue.js';
 import { DEFAULT_RIG, litFrame } from '../art/shade.js';
 import { runBake, shipPpu } from '../art/bake.js';
 import { forgeShip } from '../art/fields.js';
@@ -279,12 +276,13 @@ describe('every sub-cap piece keeps its normal brightness from its first frame (
  *  shadow, on the GPU-lit path and in the baked frames alike, so both halves
  *  of one ship are lit by the same rule. */
 describe('both halves of a sub-cap wreck are lit by the same rule (beam take 7)', () => {
-  /** The filmed case: a heavy-beam slice along a missile frigate. */
+  /** A slice along the hull (two halves). Thin (zero-width) slice: a 60 u
+   *  heavy-beam strip burns a missile frigate away (fracture v11). */
   function sliceDesc(kindId: 'missile-frigate' | 'battleship', wreckId: number): WreckDescriptor {
     const pose = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
     const b = buildWreckPieces({
       kindId, pose, killWorld: { x: -2000, y: 0 }, attackerWorld: null, seed: 7, killBlowDamage: 0.3, recentDamageRate: 0.5,
-      cutKind: 'slice', cutAng: hullLocalCutAngle(pose, { x: 1, y: 0 }), cutW: HEAVY_BEAM_WIDTH / shipShapeScale(getShipKind(kindId)),
+      cutKind: 'slice', cutAng: hullLocalCutAngle(pose, { x: 1, y: 0 }), cutW: 0,
     });
     const f = b.fracture;
     return {

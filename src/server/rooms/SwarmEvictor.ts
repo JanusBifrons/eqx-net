@@ -52,6 +52,9 @@ export interface EvictSwarmOpts {
   broadcast: boolean;
   emitDestroyed: boolean;
   shooterId?: string;
+  /** A cut kill burned the whole ship away (fracture v11): the destroy
+   *  event says so, for the client's effect. */
+  vaporised?: boolean;
 }
 
 export class SwarmEvictor {
@@ -64,6 +67,8 @@ export class SwarmEvictor {
         type: 'destroy',
         targetId: `swarm-${rec.entityId}`,
         shooterId: opts.shooterId ?? '',
+        // Emit-when-true: an ordinary death's event is unchanged.
+        ...(opts.vaporised === true ? { vaporised: true as const } : {}),
       });
     }
     if (opts.emitDestroyed) {
