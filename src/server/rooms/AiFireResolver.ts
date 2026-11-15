@@ -104,11 +104,12 @@ export interface AiFireResolverDeps {
   getActiveShip: (playerId: string) => ShipState | undefined;
   /** Per-tick player pose cache. */
   shipPoseCache: Map<string, ShipPose>;
-  /** Shield-aware ray-vs-ship test (cheap circle / hull-polygon refine). */
+  /** Shield-aware ray-vs-ship test (cheap circle / hull-polygon refine);
+   *  `halfWidth`: a wide beam hits by its width (0 / absent ⇒ thin). */
   playerHitscanDist: (
     ship: ShipState,
     fromX: number, fromY: number, dirX: number, dirY: number, maxDist: number,
-    cx: number, cy: number, angle: number,
+    cx: number, cy: number, angle: number, halfWidth?: number,
   ) => number | null;
   /** Damage sink — invoked on a confirmed hit. (hitX, hitY) is the beam's
    *  impact point, (dirX, dirY) its direction (capital wreck hit tracker and
@@ -134,7 +135,7 @@ export interface AiFireResolverDeps {
    *  (a heavy beam's kill follow-through, `fireMount`). */
   nonPlayerRayHit?: (
     fromX: number, fromY: number, dirX: number, dirY: number, maxDist: number, skipId: string,
-    passDebris?: boolean,
+    passDebris?: boolean, halfWidth?: number,
   ) => { id: string; wireId: string; dist: number } | null;
   /** Shield-fence plan — if an ACTIVE shield wall lies along the beam within
    *  `maxDist`, absorb the shot (apply the wall's grid-power damage model) and
@@ -452,8 +453,8 @@ export class AiFireResolver implements WeaponFireSink {
 
   /** Beam: instant lag-comp-free hit test against live player poses; on hit,
    *  applyDamage (internal shooter id); always broadcast laser_fired on the
-   *  WIRE shooter id. */
-  hitscan(ctx: WeaponFireContext, range: number, damage: number, falloffMinDamageFrac?: number, maxRange?: number): void {
+   *  WIRE shooter id. A wide beam (`hw`, the heavy beam) hits by its width. */
+  hitscan(ctx: WeaponFireContext, range: number, damage: number, falloffMinDamageFrac?: number, maxRange?: number, hw = 0): void {
     const d = this.deps;
     // P3.13 — `range` is the OPTIMAL (full-damage) range; the ray reaches
     // `maxRange` (≥ range) and damage falls off reverse-square BEYOND optimal.
@@ -470,7 +471,7 @@ export class AiFireResolver implements WeaponFireSink {
       if (!targetShip || !targetShip.alive) continue;
       const pose = d.shipPoseCache.get(targetId);
       if (!pose) continue;
-      const dist = d.playerHitscanDist(targetShip, rayFromX, rayFromY, ndx, ndy, rayRange, pose.x, pose.y, pose.angle);
+      const dist = d.playerHitscanDist(targetShip, rayFromX, rayFromY, ndx, ndy, rayRange, pose.x, pose.y, pose.angle, hw);
       if (dist !== null && dist < hitDist) {
         hitDist = dist;
         hitId = targetId;
@@ -481,7 +482,7 @@ export class AiFireResolver implements WeaponFireSink {
     // Friendly fire (owner decision 2026-11-10): everything else in the path,
     // whatever its side — drones, structures, rocks, scrap, parked hulls.
     // Closest-of-both wins, so an ally in front of the target takes the beam.
-    const other = d.nonPlayerRayHit?.(rayFromX, rayFromY, ndx, ndy, Math.min(rayRange, hitDist), this._shooterId, this._passDebris) ?? null;
+    const other = d.nonPlayerRayHit?.(rayFromX, rayFromY, ndx, ndy, Math.min(rayRange, hitDist), this._shooterId, this._passDebris, hw) ?? null;
     if (other !== null && other.dist < hitDist) {
       hitDist = other.dist;
       hitId = other.id;

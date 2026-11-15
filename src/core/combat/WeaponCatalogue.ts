@@ -109,6 +109,7 @@ export interface HitscanWeaponDef extends WeaponDefBase {
    *  falloff ⇒ flat damage. SERVER-AUTHORITATIVE — the client reads the scaled
    *  number off the `DamageEvent`, never predicts it (avoids desync). */
   falloff?: { minDamageFrac: number; maxRangeMul?: number };
+  hitWidth?: number; // it hits all this width covers (`beamHalfWidth`, Weapons.ts); absent ⇒ a thin line
 }
 
 /** A weapon's kill cut (`WeaponDefBase.killCut`). `width` in world units:
@@ -116,10 +117,9 @@ export interface HitscanWeaponDef extends WeaponDefBase {
  *  heavy beam, fracture v10), without one it is a zero-width line. */
 export type WeaponKillCut = { kind: 'slice'; width?: number } | { kind: 'channel'; width: number };
 
-/** The heavy beam's width (world units): the strip its slice erases on a
- *  kill (`killCut`) and the client's drawn core width (`HEAVY_BEAM_STYLE`),
- *  so the gap and the beam that made it match (owner 2026-11-15: "the slice
- *  is too thin compared to the width of the beam"). */
+/** The heavy beam's width (world u): its kill slice's strip (`killCut`), its drawn
+ *  core (`HEAVY_BEAM_STYLE`) and what it hits by (`hitWidth`), so gap, hit and beam
+ *  match (owner 2026-11-15: "the slice is too thin ..."; "Hit by its width"). */
 export const HEAVY_BEAM_WIDTH = 60;
 
 export interface ProjectileWeaponDef extends WeaponDefBase {
@@ -458,7 +458,7 @@ const RAILGUN_DEF: ProjectileWeaponDef = {
 const HEAVY_BEAM_DEF: HitscanWeaponDef = {
   id: 'heavy_beam', displayName: 'Heavy beam', mode: 'hitscan',
   damage: 260, cooldownTicks: 10, range: 20_000, energyCost: 45,
-  killCut: { kind: 'slice', width: HEAVY_BEAM_WIDTH },
+  killCut: { kind: 'slice', width: HEAVY_BEAM_WIDTH }, hitWidth: HEAVY_BEAM_WIDTH,
   // Owner (game feel): "the beam should not turn after the kill and show for
   // half a second or one second through the clean cut": 0.75 s.
   followThroughTicks: 45,
