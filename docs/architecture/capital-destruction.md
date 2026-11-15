@@ -1941,9 +1941,27 @@ fracture, the wire, the server's death wiring, the instant split and the
 look of a cut kill). Owner: a heavy-beam kill slices the ship along the beam's
 line; a railgun kill erases a straight channel as wide as the bolt.
 
-- **Weapon record.** `WeaponDefBase.killCut?: { kind: 'slice' } | { kind:
-  'channel'; width }` (`combat/WeaponCatalogue.ts`, `width` in world units).
-  No weapon sets it yet.
+- **Weapon record.** `WeaponDefBase.killCut?: { kind: 'slice'; width? } |
+  { kind: 'channel'; width }` (`combat/WeaponCatalogue.ts`, `width` in world
+  units). The heavy beam sets `{ kind: 'slice', width: HEAVY_BEAM_WIDTH }`
+  (60 u, v10), the capital railgun `{ kind: 'channel', width:
+  RAILGUN_BOLT_WIDTH }`.
+- **Wide slice (v10, 2026-11-15).** Owner: "the slice is too thin compared to
+  the width of the beam". A slice with a width over 0 erases a straight strip
+  that wide along its line through the channel's code (two straight
+  `EDGE_CUT` lines at ±width/2, the strip and any part under
+  `CHANNEL_SLIVER_SHARE` beside it dropped), keeping the slice's sliver slide
+  and its `slice` kind on the wire (`cutKind: 'slice'`, so the client still
+  tints it violet; the descriptor carries `cutW`, which the server now sends
+  for any cut with a width). Its banks part like the channel's
+  (`findSeams(geom, cutW)` for any cut kind). The violence table, the v10
+  splinters and the straight cut edges are as for a channel. The client
+  draws the heavy beam's core `HEAVY_BEAM_WIDTH` wide too
+  (`HEAVY_BEAM_STYLE.width`, weapon-mounts.md "Heavy beam look"), so the gap
+  and the beam that made it match. A slice with width 0 is v9's zero-width
+  line. Locks: "golden: v9 kill cuts" (`wideSlice`), `wreckPieces.test.ts`
+  banks part (slice), `wreckGeometryParity` "battleship wide slice",
+  `beamStyles.test.ts`, `capitalWrecks.test.ts`.
 - **Fracture input.** `FractureInput.cut?: { kind, dirX, dirY, width }` in the
   hull's frame. The line runs through the kill point (on the outline) along
   the direction; a zero direction is no cut.
@@ -2258,6 +2276,7 @@ Moved from `src/core/CLAUDE.md` (2026-11-14); kept for the record.
 - **v6: cracks fan out from the kill point; the far field breaks along a few uneven, tilted cracks** (money-shot review: v5 cut a comb of even square bands and a ladder at the kill point). `crackLines` (its own seeded stream) adds fan cracks through the kill point and far cracks at seeded stations and tilts; the Voronoi seeds stay inside the fan (no far floor); cracks and the primary line are jagged, after `weldTJunctions` pairs T-junction edges. Lock: the v6 describe in `fractureHull.killFocus.test.ts` (far pieces, far tilt, radial cracks) on top of the v5 locks.
 - **v7: the hull breaks only where it was hit, into a few ENORMOUS chunks** (owner review 2026-11-13: v6 sliced the far hull where no shell hit and cut a comb of slivers at the impact; "The last hit's impact sets the split"). No Voronoi seeds, no far cracks: two jagged zone cracks ~a beam either side of the primary and 0–2 fan cracks from the kill point (`LocalLine`, split only their zone half) leave 2–4 chunks at the impact and one big section each side. A very heavy blow (≥ max hull) on a long hull rarely (12 %) adds ONE far crack. Piece count still rises with size and violence, but stays ~3–7. A fan crack only splits a section where every part it leaves is chunky (≥ `FAN_MIN_WIDTH_BEAMS` 0.45 beam wide, ≤ `FAN_MAX_ASPECT` 2.6× longer than that; filmed take 2026-11-13: a long thin triangle along the port edge). Lock: the v7 describe in `fractureHull.killFocus.test.ts` (no thin sliver, no long thin piece of any size, no far cut, 2–5 near pieces, ≤ 2 sections each side).
 - **v8: sub-capital pieces are never nearly the whole hull** (take 9 review 2026-11-14). The `soundMinShare` option (default 0.15); the sub-cap profile sets 0.43 (0.33 before take 10). Capital output unchanged. Lock: `wreckPieces.subcapParting.test.ts` "read as broken".
+- **v10: a wide heavy-beam slice** (2026-11-15). A slice with a width erases a strip that wide like a channel; the heavy beam's is `HEAVY_BEAM_WIDTH` 60 u, its drawn core the same.
 - **v10: splinters off a capital cut kill** (2026-11-15). The secondary cracks of a capital slice or channel kill branch off the cut at 40–58° and jag harder, instead of running parallel to it (film review: one shot read as three cuts). Count still from the violence table. Output without a cut unchanged. Lock: `fractureHull.cutSplinters.test.ts`, "golden: v9 kill cuts" (capital side-shot hashes).
 - **v9: kill cuts** (2026-11-14). The optional `cut`: a heavy-beam `slice` is a dead-straight primary along the shot through the kill point (`EDGE_CUT`, never jagged; slid toward the centroid only off a sliver); a railgun `channel` erases a strip as wide as the bolt. Output without a cut unchanged (same golden hashes). Locks: "golden: v9 kill cuts", the "fracture v9" describe in `fractureHull.killFocus.test.ts`.
 ## Server implementation notes

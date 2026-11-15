@@ -579,14 +579,16 @@ describe('fractureHull', () => {
       const side = projectToOutline(h, { x: 0.6 * x1, y: (y0 + y1) / 2 });
       const bow = projectToOutline(h, { x: 0, y: -1e5 });
       const base = { hull: h, seed: 20261114, maxPieces: FRACTURE_MAX_PIECES, killBlowDamage: 0.8, recentDamageRate: 0.6, ...opts };
-      const one = (k: V, dirX: number, dirY: number, kind: 'slice' | 'channel') => {
-        const pieces = fractureHull({ ...base, killPoint: k, cut: { kind, dirX, dirY, width } });
+      const one = (k: V, dirX: number, dirY: number, kind: 'slice' | 'channel', w = width) => {
+        const pieces = fractureHull({ ...base, killPoint: k, cut: { kind, dirX, dirY, width: w } });
         return { pieces: pieces.length, hash: hashPieces(pieces) };
       };
       return {
-        slice: one(side, -1, 0.15, 'slice'),
+        slice: one(side, -1, 0.15, 'slice', 0),
+        // v10: a slice with a width (the heavy beam) erases a strip.
+        wideSlice: one(side, -1, 0.15, 'slice'),
         channel: one(side, -1, 0.15, 'channel'),
-        bowSlice: one(bow, 0.05, 1, 'slice'),
+        bowSlice: one(bow, 0.05, 1, 'slice', 0),
         bowChannel: one(bow, 0.05, 1, 'channel'),
       };
     };
@@ -701,12 +703,14 @@ const GOLDEN = { version: 10, pieces: 4, hash: 1220196282 };
 const GOLDEN_CUT = {
   capital: {
     slice: { pieces: 5, hash: 2190596232 },
+    wideSlice: { pieces: 5, hash: 178517176 }, // the channel's strip: same pieces
     channel: { pieces: 5, hash: 178517176 },
     bowSlice: { pieces: 2, hash: 3552817541 },
     bowChannel: { pieces: 2, hash: 3239178352 },
   },
   subcap: {
     slice: { pieces: 2, hash: 318138258 },
+    wideSlice: { pieces: 2, hash: 1648155327 },
     channel: { pieces: 2, hash: 1695779947 },
     bowSlice: { pieces: 2, hash: 4233612981 },
     bowChannel: { pieces: 2, hash: 3819904497 },

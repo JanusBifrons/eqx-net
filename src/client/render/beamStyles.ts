@@ -10,6 +10,7 @@
  * runtime dependency, so the lock test (`beamStyles.test.ts`) needs no renderer.
  */
 import type { BeamSpriteStyle } from './BeamSpritePool.js';
+import { HEAVY_BEAM_WIDTH } from '../../core/combat/WeaponCatalogue.js';
 
 /** Remote players' / drones' / turrets' combat hitscan beam — thin warm amber.
  *  `taper` (P3.13) — combat beams fade toward the tip of their range. */
@@ -35,14 +36,15 @@ export const HEAVY_BEAM_COLOR = 0xb46cff;
 export const HEAVY_BEAM_MIN_SCREEN_PX = 12;
 
 /** The capital heavy beam (`heavy_beam` mounts): a thick, capital-scale beam —
- *  core ~5× the fighter beam's width, tapering like every combat beam. Drawn by
+ *  core `HEAVY_BEAM_WIDTH` wide (core), the width of the strip its slice
+ *  erases on a kill, tapering like every combat beam. Drawn by
  *  the SAME remote pool as fighter beams (a per-beam style override), in the
  *  pool's unfiltered `styledContainer`: the remote container's one orange glow
  *  filter would swamp the violet. The core is never under `minScreenPx` wide,
- *  so it reads heavier than a glowing fighter beam at capital zoom (where 10 u
- *  is under a px). `glowScale` widens the `?fx=new` halo / flow / flare. */
+ *  so it reads heavier than a glowing fighter beam at capital zoom (where even
+ *  60 u can be only a few px). `glowScale` widens the `?fx=new` halo / flow / flare. */
 export const HEAVY_BEAM_STYLE: BeamSpriteStyle = {
-  tint: HEAVY_BEAM_COLOR, width: 10, alpha: 1, taper: true, glowScale: 3, minScreenPx: HEAVY_BEAM_MIN_SCREEN_PX,
+  tint: HEAVY_BEAM_COLOR, width: HEAVY_BEAM_WIDTH, alpha: 1, taper: true, glowScale: 3, minScreenPx: HEAVY_BEAM_MIN_SCREEN_PX,
 };
 
 /** True when `mount` carries the capital heavy beam. */

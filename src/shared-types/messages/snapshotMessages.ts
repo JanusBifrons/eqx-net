@@ -555,12 +555,14 @@ export interface WreckDescriptor {
   deathTick?: number;
   /** Fracture v9 kill cut, from the killing weapon's `killCut` (absent =
    *  the normal break-up): `slice` cuts dead straight along the shot,
-   *  `channel` erases a strip `cutW` wide along it. */
+   *  `channel` erases a strip `cutW` wide along it (v10: so does a slice
+   *  with a `cutW`, the heavy beam). */
   cutKind?: 'slice' | 'channel';
   /** The cut line's direction, a u16 angle (65536 per turn) in the hull's
    *  1× Pixi-up frame; decoded by the shared trig-free `cutDirFromAngle`. */
   cutAng?: number;
-  /** A channel's width in the hull's 1× frame. */
+  /** The cut's strip width (a channel, or a wide slice) in the hull's 1×
+   *  frame; absent = a zero-width slice. */
   cutW?: number;
 }
 

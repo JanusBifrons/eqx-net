@@ -85,7 +85,10 @@ import type { Vec2 } from '../swarm/asteroidShape.js';
  *  branching off the first; as many as the un-cut layout's cracks (so the
  *  count still follows the violence table), at most `SPLINTER_MAX`. They jag
  *  at `SPLINTER_ROUGHNESS`. A fracture without a cut (and a sub-capital's
- *  cut) is byte-identical to v9. */
+ *  cut) is byte-identical to v9. Also v10 (owner: "the slice is too thin
+ *  compared to the width of the beam"): a slice with a `width` erases a
+ *  strip that wide, through the channel's code (the heavy beam:
+ *  `HEAVY_BEAM_WIDTH`). */
 export const FRACTURE_ALGO_VERSION = 10;
 /** Default chance that a hull snaps cleanly in two along the primary line
  *  instead of shattering (owner: "just make it a chance"). */
@@ -284,14 +287,17 @@ export interface FractureInput {
   /** v9: the killing weapon's cut (absent = the normal break-up). The line
    *  runs through the kill point along (dirX, dirY) in the hull's frame (any
    *  length but zero; a zero direction means no cut). `slice`: that line is
-   *  the primary crack, dead straight. `channel`: the strip `width` wide
+   *  the primary crack, dead straight (v10: with a `width` over 0, the strip
+   *  that wide is erased, like a channel). `channel`: the strip `width` wide
    *  centred on it is erased. The secondary cracks and the piece count are
    *  the same as without a cut. */
   readonly cut?: FractureKillCut;
 }
 
-/** A kill cut in the hull's frame (`FractureInput.cut`). `width` is read
- *  only by a `channel`. */
+/** A kill cut in the hull's frame (`FractureInput.cut`). `width`: a
+ *  channel's strip; a slice with a width over 0 (v10, the heavy beam) erases
+ *  a strip that wide too, with the slice's sliver slide and its `slice` kind
+ *  (the client's violet tint); 0 is v9's zero-width slice line. */
 export interface FractureKillCut {
   readonly kind: 'slice' | 'channel';
   readonly dirX: number;
@@ -371,6 +377,9 @@ export function fractureHull(input: FractureInput): FracturePiece[] {
   if (hull.length < 3) return [];
   const plan = planFor(input, hull);
   const cutKind = plan.cut === null ? null : plan.cut.kind;
+  // A channel, or (v10) a slice with a width (the heavy beam): a strip
+  // erased between two straight cuts at +-width/2.
+  const strip = plan.cut !== null && (plan.cut.kind === 'channel' || plan.cut.width > 0);
   const cap = plan.snap ? clampCap(input.maxPieces) : plan.targetPieces;
   const hullArea = ringArea(hull);
   const scale = Math.sqrt(hullArea);
@@ -396,7 +405,7 @@ export function fractureHull(input: FractureInput): FracturePiece[] {
   // other cracks then split what is left. A sliver beside the channel
   // (`CHANNEL_SLIVER_SHARE`) is erased with it.
   let start: P[][] = [hull];
-  if (cutKind === 'channel' && primary !== null) {
+  if (strip && primary !== null) {
     const half = plan.cut!.width / 2;
     const minPart = CHANNEL_SLIVER_SHARE * hullArea;
     start = [];
@@ -448,7 +457,7 @@ export function fractureHull(input: FractureInput): FracturePiece[] {
   let nFan = cracks.fan.length;
   for (;;) {
     const lines: FractureLine[] = [];
-    if (usePrimary && cutKind !== 'channel') lines.push(primary!);
+    if (usePrimary && !strip) lines.push(primary!);
     for (let i = 0; i < nZone; i++) lines.push(cracks.zone[i]!);
     if (useFar) for (const f of cracks.far) lines.push(f);
     if (useCuts) for (const c of cuts) lines.push(sectionLine(c));
@@ -576,7 +585,7 @@ function planFor(input: FractureInput, hull: P[]): InternalPlan {
     const cl = Math.sqrt(ic.dirX * ic.dirX + ic.dirY * ic.dirY);
     if (cl > 0) {
       const dir = { x: ic.dirX / cl, y: ic.dirY / cl };
-      cut = { kind: ic.kind, width: ic.kind === 'channel' && ic.width > 0 ? ic.width : 0 };
+      cut = { kind: ic.kind, width: ic.width > 0 ? ic.width : 0 };
       primary = { point: ic.kind === 'slice' ? slicePoint(hull, kill, dir, cutMinShare(input)) : kill, dir };
     }
   }

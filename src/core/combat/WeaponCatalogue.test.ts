@@ -9,6 +9,7 @@ import {
   WEAPONS,
   WEAPON_IDS,
   DEFAULT_WEAPON,
+  HEAVY_BEAM_WIDTH,
 } from './WeaponCatalogue.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { ENERGY_POOL_MUL } from '../../shared-types/shipScale/defineShipKind.js';
@@ -207,7 +208,7 @@ describe('WeaponCatalogue — capital heavy beam (plan beam-slices §8)', () => 
     const w = getWeapon('heavy_beam');
     expect(w.id).toBe('heavy_beam');
     expect(w.mode).toBe('hitscan');
-    expect(w.killCut).toEqual({ kind: 'slice' });
+    expect(w.killCut).toEqual({ kind: 'slice', width: HEAVY_BEAM_WIDTH });
     // The compositor-stall floor (HITSCAN_DEF note): no beam fires faster.
     expect(w.cooldownTicks).toBeGreaterThanOrEqual(10);
     expect(WEAPON_IDS[WEAPON_IDS.length - 1]).toBe('heavy_beam');
