@@ -30,8 +30,8 @@ function makeSim() {
   const sabF32 = new Float32Array(4096);
   const events: Array<{ tag: string; data: Record<string, unknown> }> = [];
 
-  function addDrone(id: string, slot: number, x: number, y: number): void {
-    drones.set(id, { id, slot, radius: 8, kind: 1 });
+  function addDrone(id: string, slot: number, x: number, y: number, kind = 1): void {
+    drones.set(id, { id, slot, radius: 8, kind });
     const b = slotBase(slot);
     sabF32[b + SLOT_X_OFF] = x;
     sabF32[b + SLOT_Y_OFF] = y;
@@ -97,5 +97,17 @@ describe('MissileSimulation — mid-flight re-acquisition (Issue 10)', () => {
     drones.delete('swarm-a'); // no hostiles left at all
     for (let i = 0; i < 25; i++) sim.advance();
     expect(events.some((e) => e.tag === 'missile_reacquired')).toBe(false);
+  });
+});
+
+describe('MissileSimulation — terrain is never a seeker lock', () => {
+  it('skips a nearer asteroid (0), scrap / loot pod (3) and wreck piece (4) for the drone behind them', () => {
+    const { sim, addDrone, events } = makeSim();
+    addDrone('rock', 0, 100, 0, 0);
+    addDrone('scrap-1', 1, 120, 0, 3);
+    addDrone('wreck-1', 2, 140, 0, 4);
+    addDrone('swarm-far', 3, 700, 0);
+    sim.spawn('player-a', 0, 0, 0, 1, HEAT_SEEKER, () => true);
+    expect(events.find((e) => e.tag === 'missile_spawned')?.data['lockedTargetId']).toBe('swarm-far');
   });
 });

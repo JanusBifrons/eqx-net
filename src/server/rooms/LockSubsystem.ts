@@ -27,11 +27,15 @@ export interface LockTargetView extends FireTargetShape {
   vy: number;
   /** Already hostile to the locking player (skips the failsafe ring). */
   hostile: boolean;
+  /** Neutral terrain (asteroid, scrap / loot pod, wreck piece; shared
+   *  `isTerrainLockKind`): no failsafe, never a hostile act, never a
+   *  hostility refresh. */
+  terrain: boolean;
 }
 
 /** A blank `LockTargetView` (scratch; allocate once, fill per call). */
 export function newLockTargetView(): LockTargetView {
-  return { x: 0, y: 0, vx: 0, vy: 0, angle: 0, ship: false, kindId: null, shieldUp: false, radius: 1, hostile: false };
+  return { x: 0, y: 0, vx: 0, vy: 0, angle: 0, ship: false, kindId: null, shieldUp: false, radius: 1, hostile: false, terrain: false };
 }
 
 export interface LockShooterView {
@@ -304,7 +308,7 @@ export class LockSubsystem {
       return true;
     }
     if (!this.deps.resolveTarget(playerId, key, this.target)) return false;
-    const entry = newLock(key, this.target.hostile);
+    const entry = newLock(key, this.target.hostile || this.target.terrain);
     this.makeRoom(g);
     g.locks.push(entry);
     g.wire.l.push({ t: key, s: LOCK_STAGE_CODE[entry.stage], p: 0 });
@@ -340,7 +344,7 @@ export class LockSubsystem {
     }
     if (key !== null && !found && this.deps.resolveTarget(playerId, key, this.target)) {
       this.makeRoom(g);
-      g.locks.push(newLock(key, this.target.hostile, LOCK_TRACK.held));
+      g.locks.push(newLock(key, this.target.hostile || this.target.terrain, LOCK_TRACK.held));
     }
     this.syncWireShape(g);
   }
@@ -585,19 +589,20 @@ export class LockSubsystem {
       const failsafeSecs = Number.isFinite(secs) ? secs * LOCK_TUNING.failsafeMul : LOCK_TUNING.baseSeconds * LOCK_TUNING.failsafeMul;
       if (p.instant && Number.isFinite(secs) && e.stage !== 'locked' && e.track !== LOCK_TRACK.released) {
         // testMode `instantLock`: the lock completes now (a failsafe still commits).
-        if (e.stage === 'failsafe') this.deps.commitHostileAct(playerId, e.target);
+        if (e.stage === 'failsafe' && !this.target.terrain) this.deps.commitHostileAct(playerId, e.target);
         e.stage = 'locked';
         e.progress = 1;
         e.lostFor = 0;
         continue;
       }
       const ev = stepLock(e, LOCK_DT, secs, failsafeSecs, LOCK_TUNING.lostGraceSeconds, LOCK_TUNING.decayMul);
-      if (ev === 'commit') this.deps.commitHostileAct(playerId, e.target);
+      // Terrain is never a hostile act (it never enters `failsafe` either).
+      if (ev === 'commit') { if (!this.target.terrain) this.deps.commitHostileAct(playerId, e.target); }
       // Being targeted is a hostile act: a live (not draining) lock past its
       // failsafe keeps the target's hostility current. A failsafe ring is still
       // harmless until it commits; a non-hostile target never gets here
       // except through that commit.
-      else if (ev !== 'dropped' && this.target.hostile && e.stage !== 'failsafe'
+      else if (ev !== 'dropped' && this.target.hostile && !this.target.terrain && e.stage !== 'failsafe'
         && (e.track !== LOCK_TRACK.released || e.stage === 'locked')) {
         this.deps.refreshHostility(playerId, e.target);
       }

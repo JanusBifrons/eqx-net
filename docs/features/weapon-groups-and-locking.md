@@ -52,6 +52,11 @@ pick for themselves; hold the group's chip to fire it.
 first (1.75× as long). Let go of it and nothing happens. Finish it and you have
 committed a hostile act; the normal red lock then runs.
 
+**Rocks, scrap and wrecks** can be locked as well (for mining lasers and
+tractors). Locking them is never hostile: no failsafe ring, nobody is alerted.
+The lock line only takes them when no ship or structure is under it, and AUTO
+groups and missiles never pick them.
+
 ## Firing
 
 A group fires at its LOCKED target when it is AUTO (or its chip is held in MAN)

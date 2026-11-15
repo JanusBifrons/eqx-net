@@ -184,6 +184,7 @@ import { joystickToInput, IDLE_INPUT_STATE, type JoystickInputState } from '../i
 import { aimInput } from '../input/AimInput';
 import { encodeAim } from '@core/combat/manualAim';
 import { lockLineScore } from '@core/combat/lockLine';
+import { isContactLockKind, isTerrainLockKind } from '@core/combat/lockState';
 import { decodeSwarmPacket } from './BinarySwarmDecoder';
 import {
   interpolateSwarmPose,
@@ -5978,10 +5979,14 @@ export class ColyseusGameClient {
     this._lgHeld = m.localLockCandidate ?? null;
     this._lgBest = null;
     this._lgBestScore = Infinity;
+    this._lgTerrainBest = null;
+    this._lgTerrainScore = Infinity;
     m.swarm?.forEach(this._lgVisitSwarm);
     m.ships.forEach(this._lgVisitShip);
-    m.localLockCandidate = this._lgBest;
-    return this._lgBest;
+    // Terrain is the LOWEST priority: it wins only with no contact on the line.
+    const best = this._lgBest ?? this._lgTerrainBest;
+    m.localLockCandidate = best;
+    return best;
   }
 
   /** Lock-line pick scratch (one pick at a time; reused, #14). */
@@ -5994,6 +5999,10 @@ export class ColyseusGameClient {
   private _lgHeld: string | null = null;
   private _lgBest: string | null = null;
   private _lgBestScore = Infinity;
+  /** Best neutral-terrain candidate (asteroid, scrap / loot pod, wreck piece),
+   *  used only when no contact is on the line. */
+  private _lgTerrainBest: string | null = null;
+  private _lgTerrainScore = Infinity;
   /** Lock keys (`s:<entityId>` / `p:<playerId>`), built once per id. */
   private readonly _swarmLockKeys = new Map<number, string>();
   private readonly _shipLockKeys = new Map<string, string>();
@@ -6028,9 +6037,20 @@ export class ColyseusGameClient {
     }
   }
 
-  /** Drones + structures (not your own) on the lock line. Bound once. */
+  /** Drones + structures (not your own) on the lock line; neutral terrain
+   *  (shared `isTerrainLockKind`, the server's `resolveLockTarget` rule, #15)
+   *  in its own lowest-priority tier. Bound once. */
   private readonly _lgVisitSwarm = (e: SwarmRenderState, entityId: number): void => {
-    if (e.kind !== 1 && e.kind !== 2) return;
+    if (isTerrainLockKind(e.kind)) {
+      const key = this.swarmLockKey(entityId);
+      const score = lockLineScore(e.x - this._lgX, e.y - this._lgY, this._lgDirX, this._lgDirY, e.radius ?? 20, this._lgReach, key === this._lgHeld);
+      if (score < this._lgTerrainScore) {
+        this._lgTerrainScore = score;
+        this._lgTerrainBest = key;
+      }
+      return;
+    }
+    if (!isContactLockKind(e.kind)) return;
     if (e.kind === 2 && this.mirror.structures?.get(entityId)?.owner === this._lgLocalId) return;
     this.lgConsider(this.swarmLockKey(entityId), e.x, e.y, e.radius ?? 20);
   };
