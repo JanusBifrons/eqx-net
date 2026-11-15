@@ -903,6 +903,70 @@ fracture); the server sends 0.
   bit, depth 1 and 2, child before parent, parent removed and recycled,
   renderer path, `WreckWireDeltas` pass-through, malformed links).
 
+#### Re-split on the server: integrity, split, salvage (salvage stream PRs 5-6, 2026-11-15)
+
+Wreck pieces now wear down and break again. Pure numbers in
+`src/core/destruction/wreckIntegrity.ts`; the per-piece state in
+`CapitalWreckSubsystem`'s piece entry; the split itself in
+`src/server/rooms/wreckResplit.ts` (`WreckResplitter`, `planWreckResplit`).
+
+- **Hidden integrity.** Each piece gets `I_max = clamp01(m_piece /
+  shipBodyMass) × maxHull × integrityMul`, at least `integrityMinFrac ×
+  maxHull` (`wreckPieceIntegrity`), at spawn, root and child alike. It lives
+  on the server only: never on the wire, never shown. A kind with no
+  `resplit` gets an infinite pool (never wears).
+- **Wear.** `SectorRoom.applyDamage` hands the weapon to `onWreckHit`; each
+  hit wears `damage × weaponTargetFactor(def, 'wreck')` (`wreckWearFactor`).
+  The default wreck factor is `WRECK_DEFAULT_TARGET_FACTOR` 0.1, the mining
+  laser's 1, so ordinary guns wear a wreck ten times slower (owner). An
+  untagged hit (no weapon id) wears at 0.1. Only hits that reach
+  `onWreckHit` wear: the existing `damage > 0` gate, and a hit point AND
+  direction are needed, so splash and missile hits (no direction) and rams do
+  not wear a wreck (they push it through their own impulse paths).
+- **At 0.** Past the crack hold, the piece splits when its area is at least
+  `minAreaFrac` × the hull's area (`wreckHullArea`), its radius at least
+  `WRECK_RESPLIT_MIN_RADIUS_PER_RADIUS` (0.05) × the kind's radius (#18), and
+  its FIFO (`MAX_LIVE_WRECK_PIECES` / the sub-cap one) has room for a whole
+  child fracture (`resplit.fracture.maxPieces`). The split is a child wreck:
+  a new `wreckId` whose descriptor is one chain step (`parentWreck`,
+  `parentPiece`, `seed = wreckChildSeed(parent.seed, piece)`, the hit as the
+  kill point in the hull's 1× frame, the weapon's `killCut`: heavy beam,
+  railgun and mining laser cut their own line), its pieces spawned through
+  the same `spawnPiece` as a death, the parent piece removed.
+- **Placement.** Every piece's body frame is the dead hull's scaled frame
+  translated to its centroid (never turned), so the server finds the dead
+  hull's virtual origin under the live piece (`O = P − R(θ)·(cx, cy)`), maps
+  the hit into the 1× frame through it and spawns each child at `O +
+  R(θ)·(ccx, ccy)`, angle θ, with the parent's rigid motion (`v + ω × r`, ω)
+  plus a parting kick of `wreckSeparate × separateScale` away from the hit.
+  The children tile the parent: their mass centre is where it was
+  (`wreckResplit.test.ts`).
+- **Too small, or cap full: salvage** (PR 6). The piece leaves
+  (`removePiece` → `pieceGone`) and a `LootSubsystem.drop` pod of the
+  `salvage` good takes its place, moving with it: `max(1, round(m_piece /
+  shipBodyMass × salvagePerHull))` units (`wreckSalvageQty`).
+- **Refcount.** A wreck's descriptor leaves only when it has no live pieces
+  AND no live child wrecks; then each ancestor left with neither leaves too
+  (`retire`). This is the PR 4 wire contract.
+- **Rate limit.** At most `WRECK_RESPLITS_PER_TICK` (2) worn-out pieces are
+  handled per tick (each runs a fracture and spawns bodies); a piece over
+  budget stays at 0 and goes on its next hit.
+- **Numbers.** A battleship (max hull 11,328) whose biggest piece is 47 % of
+  the hull: I_max 2,647, about 3.7 s of one mining laser (120 per 10 ticks),
+  26,470 damage from ordinary guns. A heavy cruiser's biggest piece: ~950.
+- **Filming.** `wreck-test` allows capital pilots: a lance battlecruiser
+  (heavy-beam main battery) off the battleship's beam, `test_kill_capitals`,
+  then lock the nearest piece with every group and its AUTO turrets cut it
+  up (`tests/e2e/capital-wreck-render.spec.ts` "re-splits"; showcase shot
+  `wreck-resplit`). No ship carries the mining laser yet, so the film shows
+  ordinary beams at 0.1. Activated latent mounts (the fighter's wing
+  hardpoints) form a `wing` group the client fire control does not fire
+  yet, so they cannot carry a test mining laser.
+- **Locks:** `wreckIntegrity.test.ts`, `wreckResplit.test.ts` (wear 10×,
+  split + descriptor + determinism + placement + refcount, salvage, rate
+  limit, cap full), `tests/integration/sectorRoom/wreckResplit.test.ts` (a
+  real room: wear, split, child bodies == chain geometry, salvage pod).
+
 ### Later: wrecks as terrain and salvage
 
 - **Terrain.** Long-lived wreck pieces: heavy, slow, cover that blocks ships
@@ -2416,9 +2480,9 @@ Every client must produce the same pieces as the server, bit for bit, from
 - **Player capitals break up exactly like NPC capitals.** Anyone may salvage
   the wreck, including the former owner.
 - **Wreck pieces don't break further** ("No for now"). Shooting a piece never
-  re-fractures it. *Lifted 2026-11-15 (salvage stream): the core child
-  fracture and its wire contract exist (§S4 "Re-split", "Re-split on the
-  wire"); server spawning follows.*
+  re-fractures it. *Reversed 2026-11-15 (salvage stream): pieces wear down
+  under fire (ordinary guns 10× slower than the mining laser), split again
+  and end as salvage (§S4 "Re-split on the server").*
 - **Smaller ships break up this way too** ("Yes"). Fighters, frigates and
   cruisers fracture dynamically like capitals, replacing today's hand-made
   scrap. This is a later slice, after the capital path works.

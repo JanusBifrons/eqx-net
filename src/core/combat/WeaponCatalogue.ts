@@ -70,9 +70,8 @@ export type WeaponTargetClass = 'shield' | 'hull' | 'structure' | 'wreck';
 /** `WeaponDefBase.targetFactor`: a damage multiplier per target class. */
 export type WeaponTargetFactor = { readonly [K in WeaponTargetClass]?: number };
 
-/** A weapon's 'wreck' factor when it names none: ordinary guns wear a wreck
- *  piece's hidden integrity ten times slower than the mining laser (factor 1;
- *  owner 2026-11-15, capital-destruction.md §S4 "Re-split"). */
+/** 'wreck' factor of a weapon naming none: ordinary guns wear wreck integrity
+ *  10× slower than the mining laser (1; capital-destruction.md §S4). */
 export const WRECK_DEFAULT_TARGET_FACTOR = 0.1;
 
 /** The damage multiplier `def` applies against `cls`. Pure, allocation-free.

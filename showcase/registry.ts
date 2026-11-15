@@ -25,6 +25,7 @@ import { longGuns } from './shots/longGuns.js';
 import { fleetMelee } from './shots/fleetMelee.js';
 import { npcDogfight } from './shots/npcDogfight.js';
 import { timeScaleDial, timeScaleCapitals4x, capitalBreakupSlowmo, capitalBreakupFast } from './shots/timeScaleDial.js';
+import { wreckResplit } from './shots/wreckResplit.js';
 import { scrap } from './shots/scrap.js';
 import { buildBase } from './shots/buildBase.js';
 import { gridAlive } from './shots/gridAlive.js';
@@ -64,6 +65,7 @@ export const SHOTS: readonly Shot[] = [
   capitalLineup,
   capitalBroadside,
   capitalBreakup,
+  wreckResplit,
   capitalFleetWarp,
   capitalFleetArrive,
   capitalFlyby,
@@ -197,6 +199,4 @@ export const SHOWCASE_PENDING: Record<string, string> = {
     'Blueprints drop at random from elites/events and install at a signed-in base; needs a staged loot→install room for the P5 showcase.',
   'research-lab':
     'Lab jobs run for minutes on the 1 Hz grid pulse; needs a staged base with blueprints + a fast-pulse room before it can be filmed.',
-  'mining-and-salvage':
-    'No ship carries the mining laser yet: the shot lands with the mining barge (plan partitioned-chasing-lark), a barge cutting up a capital wreck.',
 };

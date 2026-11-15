@@ -169,3 +169,84 @@ test('GPU-lit look: every wreck piece draws the dead ship\'s art through the lit
   // ...instead of the hull-sized death blast over the whole hull (#493).
   expect(s.hullBlastsReplaced, JSON.stringify(s)).toBe(1);
 });
+
+/**
+ * Salvage stream PR 5 — a worn-out wreck piece re-splits and the client draws
+ * its children. The pilot flies a lance battlecruiser (heavy-beam main
+ * battery; `wreck-test` allows capital pilots) off the battleship's beam;
+ * `test_kill_capitals` breaks the battleship; the pilot locks the nearest
+ * piece with every group (a neutral terrain lock) and the AUTO groups' turrets
+ * fire on it. Ordinary guns wear a wreck at 0.1 of their damage, so the beams
+ * wear its hidden integrity down in seconds; the piece splits into a CHILD
+ * wreck whose descriptor names it, and every piece on the wire is drawn.
+ */
+test('beams wear a wreck piece until it re-splits; the children are drawn', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto(`${BASE_URL}?room=wreck-test&testId=${randomUUID()}&worker=0&shipKind=battlecruiser-lance&initialHull=1000000&instantLock=1&zoom=0.05&spawnX=5500&spawnY=2500`);
+  type G = {
+    __eqxClient?: {
+      getRoom?: () => { send: (ch: string, m: unknown) => void } | null;
+      lockSelected?: () => boolean;
+      mirror: {
+        localPlayerId: string | null;
+        ships: Map<string, { x: number; y: number }>;
+        swarm?: Map<number, { kind: number; shipKind?: string; x: number; y: number }>;
+        wrecks?: Map<number, { parentWreck?: number }>;
+      };
+    };
+    __eqxStore?: { getState(): { fcGroups: ReadonlyArray<{ id: string }>; setSelectedEntity(id: string | null, kind: string | null): void; setActiveGroupId(id: string): void } };
+    __eqxArtStats?: () => { wreckPieces: number };
+  };
+  await page.waitForFunction(() => {
+    const c = (globalThis as unknown as G).__eqxClient;
+    for (const e of c?.mirror.swarm?.values() ?? []) if (e.kind === 1 && e.shipKind === 'battleship') return true;
+    return false;
+  }, undefined, { timeout: 45_000 });
+  await page.evaluate(() => {
+    (globalThis as unknown as G).__eqxClient?.getRoom?.()?.send('test_kill_capitals', { type: 'test_kill_capitals' });
+  });
+  await page.waitForFunction(() => {
+    let n = 0;
+    for (const e of (globalThis as unknown as G).__eqxClient?.mirror.swarm?.values() ?? []) if (e.kind === 4) n++;
+    return n >= 2;
+  }, undefined, { timeout: 15_000 });
+
+  // Lock the nearest wreck piece with every group; re-lock when it is gone.
+  const lockNearest = () => page.evaluate(() => {
+    const g = globalThis as unknown as G;
+    const m = g.__eqxClient?.mirror;
+    const me = m?.localPlayerId ? m.ships.get(m.localPlayerId) : undefined;
+    const st = g.__eqxStore?.getState();
+    if (!m || !me || !st) return;
+    let best: number | null = null, bestD = Infinity;
+    for (const [eid, e] of m.swarm ?? []) {
+      if (e.kind !== 4) continue;
+      const d = Math.hypot(e.x - me.x, e.y - me.y);
+      if (d < bestD) { bestD = d; best = eid; }
+    }
+    if (best === null) return;
+    for (const grp of st.fcGroups) {
+      st.setActiveGroupId(grp.id);
+      st.setSelectedEntity(`swarm-${best}`, 'wreck');
+      g.__eqxClient?.lockSelected?.();
+    }
+  });
+  const childWrecks = () => page.evaluate(() => {
+    let n = 0;
+    for (const w of (globalThis as unknown as G).__eqxClient?.mirror.wrecks?.values() ?? []) if (w.parentWreck !== undefined) n++;
+    return n;
+  });
+  for (let i = 0; i < 40 && (await childWrecks()) === 0; i++) {
+    await lockNearest();
+    await page.waitForTimeout(500);
+  }
+  expect(await childWrecks(), 'a worn-out piece re-split into a child wreck').toBeGreaterThanOrEqual(1);
+  // Every piece on the wire, the child wreck's included, is drawn.
+  await page.waitForFunction(() => {
+    const g = globalThis as unknown as G;
+    let pieces = 0;
+    for (const e of g.__eqxClient?.mirror.swarm?.values() ?? []) if (e.kind === 4) pieces++;
+    return pieces >= 2 && (g.__eqxArtStats?.().wreckPieces ?? 0) === pieces;
+  }, undefined, { timeout: 15_000 });
+  if (process.env['EQX_WRECK_SHOT']) await page.screenshot({ path: process.env['EQX_WRECK_SHOT'].replace(/.png$/, '-resplit.png') });
+});
