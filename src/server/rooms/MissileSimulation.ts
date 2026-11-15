@@ -68,6 +68,7 @@ import type {
   MissileDetonatedEvent,
 } from '../../shared-types/messages/missileMessages.js';
 import { GLOBAL_SHIP_TUNING } from '../../shared-types/shipScale/lookup.js';
+import { isTerrainLockKind } from '../../core/combat/lockState.js';
 
 /** Maximum simultaneous in-flight missiles per sector. 256 = ~4× the
  *  steady-state ceiling under saturation (8 frigates × 3 mounts ×
@@ -616,7 +617,7 @@ export class MissileSimulation {
       if (!pose) continue;
       candidates.push({ id: playerId, x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy });
     }
-    // Swarm — drones only. Asteroids (kind=0) are EXCLUDED at the
+    // Swarm — contacts only. Asteroids (kind=0) are EXCLUDED at the
     // candidate-build site (not via a string-prefix predicate, which
     // misses galaxy-sector asteroid ids like `asteroid-0`). They have
     // no `swarmHealth` entry so `damageSwarmLayered` short-circuits to
@@ -626,8 +627,10 @@ export class MissileSimulation {
     // bots both pass this gate.
     for (const rec of this.deps.swarmRegistry.all()) {
       if (rec.id === ownerId) continue;
-      if (rec.kind === 0) continue;
-      if (rec.kind === 4) continue; // wreck pieces are terrain, never a lock
+      // Terrain (asteroids, scrap / loot pods, wreck pieces; shared
+      // `isTerrainLockKind`) is never a seeker's lock, even though a pilot's
+      // weapon group may lock it as a neutral target.
+      if (isTerrainLockKind(rec.kind)) continue;
       const b = slotBase(rec.slot);
       const cx = this.deps.sabF32[b + SLOT_X_OFF]!;
       const cy = this.deps.sabF32[b + SLOT_Y_OFF]!;

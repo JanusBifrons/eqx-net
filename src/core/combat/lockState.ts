@@ -9,8 +9,43 @@
  *                                                           `lostGrace` ──▶ dropped
  *
  * `failsafe` only runs for targets that are NOT already hostile (neutral or
- * allied); a hostile target starts in `acquiring`.
+ * allied); a hostile target starts in `acquiring`. A NEUTRAL TERRAIN target
+ * (asteroid, scrap / loot pod, wreck piece) also starts in `acquiring`:
+ * locking terrain is never a hostile act, so it has no failsafe to commit.
  */
+
+import { SWARM_KIND_ASTEROID, SWARM_KIND_DRONE, SWARM_KIND_SCRAP, SWARM_KIND_STRUCTURE, SWARM_KIND_WRECK } from '../../shared-types/swarmWireFormat.js';
+
+/**
+ * Lock eligibility of a swarm entity kind — the ONE predicate the server
+ * (`SectorRoom.resolveLockTarget`), the client lock line
+ * (`ColyseusClient.updateLockGuide`) and missile seekers share (#15).
+ * Contacts (NPC ships, structures) are what fire control is about; terrain
+ * (asteroids, scrap / loot pods, wreck pieces) is lockable too, as a NEUTRAL
+ * target at the lowest priority: no hostile act, no failsafe, never an AUTO
+ * pick, never a missile seeker's lock.
+ */
+export function isContactLockKind(kind: number): boolean {
+  return kind === SWARM_KIND_DRONE || kind === SWARM_KIND_STRUCTURE;
+}
+
+/** Neutral terrain lock (see `isContactLockKind`). */
+export function isTerrainLockKind(kind: number): boolean {
+  return kind === SWARM_KIND_ASTEROID || kind === SWARM_KIND_SCRAP || kind === SWARM_KIND_WRECK;
+}
+
+/**
+ * Lock eligibility of a swarm kind for a resolved target (the server's
+ * `resolveLockTarget`): fills `out.terrain`; neutral terrain is lockable for
+ * mining lasers / tractors but never hostile and never a hostile act, so it
+ * also clears `out.hostile`. A contact's hostility is left to the caller.
+ * False = not lockable.
+ */
+export function swarmLockEligible(kind: number, out: { terrain: boolean; hostile: boolean }): boolean {
+  out.terrain = isTerrainLockKind(kind);
+  if (out.terrain) out.hostile = false;
+  return out.terrain || isContactLockKind(kind);
+}
 
 export type LockStage = 'failsafe' | 'acquiring' | 'locked';
 
