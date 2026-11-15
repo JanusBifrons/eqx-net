@@ -18,7 +18,7 @@ import { WreckGeometryStore, rebuildWreckPieces } from '../../net/wreckGeometryS
 import {
   WreckArtState, WreckPieceSprite, WRECK_DISPLAY_OBJECTS_PER_PIECE_MAX, WRECK_RIPPLE_MAX, WRECK_BLAST_MAIN,
   WRECK_RIPPLE_R_MIN, WRECK_RIPPLE_R_MAX, WRECK_CRACK_FRONT_MS, WRECK_GLOW_END_S, wreckGlowTexture,
-  WRECK_BLAST_REACH, WRECK_RIPPLE_GAP_MS, wreckGlowAt, type WreckGlow, WRECK_GLOW_TEX_ROWS, GLOW_TINT_SLICE, GLOW_TINT_CHANNEL,
+  WRECK_BLAST_REACH, WRECK_RIPPLE_GAP_MS, wreckGlowAt, type WreckGlow, WRECK_GLOW_TEX_ROWS, GLOW_ROW, GLOW_ROWS_PER_TINT, GLOW_TINT_SLICE, GLOW_TINT_CHANNEL,
   WRECK_BLAST_LINGER, wreckBlasts, type WreckBlast, wreckPieceFarLod,
 } from './wreckArt.js';
 import { FxExplosions } from '../art/fx/FxExplosions.js';
@@ -935,14 +935,18 @@ describe('updateSwarmSprites — the filmed v7 break-up (heavy cruiser, 16" salv
     // Thin: the wide soft halo is gone once the edge is no longer glowing
     // (only the core stays as the scorch).
     const data = (wreckGlowTexture().source as unknown as { resource: Uint8Array }).resource;
-    // Per tint: a core row then a halo row (a crack's or a splinter's halo is
-    // gone by 2.2 s, a kill cut's, held with its ember, by 3.5 s).
+    // Per tint a block of rows; its halo and its bleed into the gap (a
+    // crack's or a splinter's halo is gone by 2.2 s, a kill cut's, held with
+    // its ember, by 3.5 s).
     const W = data.length / (4 * WRECK_GLOW_TEX_ROWS);
-    for (let row = 1; row < WRECK_GLOW_TEX_ROWS; row += 2) {
-      for (let i = 0; i < W; i++) {
-        const ageS = (i / (W - 1)) * WRECK_GLOW_END_S;
-        if (ageS < (row === 3 || row === 5 ? 3.5 : 2.2)) continue;
-        expect(data[(row * W + i) * 4 + 3], `row ${row}, ${ageS.toFixed(2)} s: no halo on a cooled edge`).toBe(0);
+    for (let tint = 0; tint < WRECK_GLOW_TEX_ROWS / GLOW_ROWS_PER_TINT; tint++) {
+      for (const r of [GLOW_ROW.HALO, GLOW_ROW.BLEED]) {
+        const row = tint * GLOW_ROWS_PER_TINT + r;
+        for (let i = 0; i < W; i++) {
+          const ageS = (i / (W - 1)) * WRECK_GLOW_END_S;
+          if (ageS < (tint === GLOW_TINT_SLICE || tint === GLOW_TINT_CHANNEL ? 3.5 : 2.2)) continue;
+          expect(data[(row * W + i) * 4 + 3], `row ${row}, ${ageS.toFixed(2)} s: no halo on a cooled edge`).toBe(0);
+        }
       }
     }
   });

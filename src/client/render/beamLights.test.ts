@@ -16,8 +16,9 @@
 import { describe, it, expect } from 'vitest';
 import {
   addBeamLights, beamLightBudget, HEAVY_BEAM_DEEP_COLOR, HEAVY_BEAM_LINE_LIGHT, HEAVY_BEAM_MAX_LIGHTS, HEAVY_BEAM_MAX_LIGHTS_LOW,
-  HEAVY_BEAM_STYLE, type BeamLightSink,
+  HEAVY_BEAM_STYLE, BeamHitMemory, type BeamLightSink,
 } from './beamStyles.js';
+import type { BeamView } from './BeamSpritePool.js';
 
 interface L { x: number; y: number; z: number; color: number; intensity: number; reach: number }
 function sink(): BeamLightSink & { lights: L[] } {
@@ -179,5 +180,92 @@ describe('heavy beam: a violet light source at the muzzle, along the beam and at
     addBeamLights(s, { ...beam, toX: 500 });
     expect(s.lights.length).toBe(2);
     expect(s.lights[1]!.x).toBe(0);
+  });
+});
+
+/**
+ * Hostile film review 2026-11-15 (beam take 7): on the frame after the kill
+ * the heavy cruiser's violet light went out (hull back to plain grey) while the
+ * follow-through beam burned on through the wreck at full strength for ~1.1 s.
+ * The follow-through pulses pass debris, so they have no hit (`laser.hit`
+ * false, end at max range): no hit spot, and the line lights from the muzzle
+ * (at most 4–6 × 900 u) never reach an 8 km target. The beam still crosses the
+ * wreck, so the cut stays lit where it crosses (`BeamHitMemory`), until the
+ * beam stops.
+ */
+describe('heavy beam follow-through: the cut stays lit while the beam burns through it', () => {
+  // Kill pulse: muzzle (0, -250) to the hit at (8000, -280). Follow-through:
+  // the same line on to its 20 km range, no hit.
+  const kill = { fromX: 0, fromY: -250, toX: 8000, toY: -280 };
+  const through = { fromX: 0, fromY: -250, toX: 20_000, toY: -250 + (-30 * 20_000) / 8000 };
+  function view(l: typeof kill): BeamView {
+    return { ...l, style: HEAVY_BEAM_STYLE };
+  }
+
+  it('a no-hit pulse after a hit on the same line keeps the hit spot at the hit point; shooter lights unchanged', () => {
+    const mem = new BeamHitMemory();
+    const v = view(kill);
+    mem.track('swarm-7', 'hb0', true, v);
+    const atKill = sink();
+    addBeamLights(atKill, v);
+    mem.endFrame();
+    for (let frame = 0; frame < 45; frame++) {
+      Object.assign(v, through);
+      mem.track('swarm-7', 'hb0', false, v);
+      const s = sink();
+      addBeamLights(s, v);
+      const spot = s.lights[0]!;
+      expect(spot.x, `frame ${frame}`).toBeCloseTo(8000, 0);
+      expect(spot.y, `frame ${frame}`).toBeCloseTo(280, 0); // Pixi space
+      // The hit spot's own falloff (tight, not a line light).
+      expect(spot.intensity).toBe(atKill.lights[0]!.intensity);
+      expect(spot.reach).toBe(atKill.lights[0]!.reach);
+      expect(spot.z).toBe(atKill.lights[0]!.z);
+      // The shooter-side lights are the fixed-distance ones, as on any beam.
+      const plain = sink();
+      addBeamLights(plain, { ...through, style: HEAVY_BEAM_STYLE });
+      expect(s.lights.slice(1)).toEqual(plain.lights.slice(1));
+      expect(s.lights.length).toBe(plain.lights.length); // within the budget
+      mem.endFrame();
+    }
+  });
+
+  it('goes out with the beam: after a frame without the beam, a later no-hit pulse does not light the old hit', () => {
+    const mem = new BeamHitMemory();
+    const v = view(kill);
+    mem.track('swarm-7', 'hb0', true, v);
+    mem.endFrame();
+    mem.endFrame(); // the beam stopped: no track this frame
+    Object.assign(v, through);
+    mem.track('swarm-7', 'hb0', false, v);
+    const s = sink();
+    addBeamLights(s, v);
+    expect(s.lights[0]!.x).toBe(20_000);
+  });
+
+  it('a miss on another line (the turret swung off) does not light the old hit', () => {
+    const mem = new BeamHitMemory();
+    const v = view(kill);
+    mem.track('swarm-7', 'hb0', true, v);
+    mem.endFrame();
+    Object.assign(v, { fromX: 0, fromY: -250, toX: 0, toY: 19_750 });
+    mem.track('swarm-7', 'hb0', false, v);
+    const s = sink();
+    addBeamLights(s, v);
+    expect(s.lights[0]!.x).toBe(0);
+    expect(s.lights[0]!.y).toBe(-19_750);
+  });
+
+  it("another mount's or shooter's hit lights nothing on this beam", () => {
+    const mem = new BeamHitMemory();
+    const other = view(kill);
+    mem.track('swarm-7', 'hb1', true, other);
+    mem.track('swarm-9', 'hb0', true, view(kill));
+    mem.endFrame();
+    const v = view(through);
+    mem.track('swarm-7', 'hb0', false, v);
+    const s = sink();
+    addBeamLights(s, v);
+    expect(s.lights[0]!.x).toBe(20_000);
   });
 });

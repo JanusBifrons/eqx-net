@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * Session-length nudge (PostToolUse hook, wired in .claude/settings.json).
  *
@@ -10,6 +9,8 @@
  *
  * A nudge, never a block: every failure path exits 0 with no output.
  * Subagents (stdin has `agent_id`) are skipped. Dependency-free Node ESM.
+ * No shebang on purpose: it runs as `node <file>`, and a shebang in a CRLF
+ * checkout (autocrlf) breaks Vite's SSR transform, so vitest cannot import it.
  */
 import fs from 'node:fs';
 import os from 'node:os';

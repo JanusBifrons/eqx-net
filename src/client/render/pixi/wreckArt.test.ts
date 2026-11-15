@@ -39,6 +39,8 @@ import {
   SPLINTER_GLOW_WIDTH_MUL,
   WRECK_GLOW_TINTS,
   WRECK_GLOW_TEX_ROWS,
+  GLOW_ROW,
+  GLOW_ROWS_PER_TINT,
   type WreckGlow,
   type WreckBlast,
   type WreckTexLayout,
@@ -50,6 +52,7 @@ import { getShipKind } from '../../../shared-types/shipKinds.js';
 import { HEAVY_BEAM_WIDTH } from '../../../core/combat/WeaponCatalogue.js';
 import { RAILGUN_BOLT_WIDTH } from '../../../shared-types/combat/navalGuns.js';
 import { HEAVY_BEAM_COLOR } from '../beamStyles.js';
+import { shipParts } from '../art/fields.js';
 import { Mesh } from 'pixi.js';
 import type { WreckDescriptor } from '../../../shared-types/messages/snapshotMessages.js';
 import type { WreckPieceGeometry } from '../../../core/destruction/wreckPieces.js';
@@ -449,12 +452,16 @@ describe('a kill cut glows in the weapon\'s colour (weapon cuts, look)', () => {
     }
   });
 
-  it('the glow texture bakes one core and one halo row per tint', () => {
+  it('the glow texture bakes one block of rows per tint (a gradient across a kill cut\'s strip)', () => {
     const tex = wreckGlowTexture();
     expect(tex.source.height).toBe(WRECK_GLOW_TEX_ROWS);
-    expect(WRECK_GLOW_TEX_ROWS).toBe(2 * WRECK_GLOW_TINTS);
-    expect(glowV(GLOW_TINT_CRACK, false)).toBeCloseTo(0.5 / WRECK_GLOW_TEX_ROWS);
-    expect(glowV(GLOW_TINT_SPLINTER, true)).toBeCloseTo((WRECK_GLOW_TEX_ROWS - 0.5) / WRECK_GLOW_TEX_ROWS);
+    expect(WRECK_GLOW_TEX_ROWS).toBe(GLOW_ROWS_PER_TINT * WRECK_GLOW_TINTS);
+    expect(glowV(GLOW_TINT_CRACK, 0)).toBeCloseTo(0.5 / WRECK_GLOW_TEX_ROWS);
+    expect(glowV(GLOW_TINT_SPLINTER, GLOW_ROWS_PER_TINT - 1)).toBeCloseTo((WRECK_GLOW_TEX_ROWS - 0.5) / WRECK_GLOW_TEX_ROWS);
+    // Each gradient runs between ADJACENT rows (the linear filter blends them).
+    expect(GLOW_ROW.DEEP - GLOW_ROW.EDGE).toBe(1);
+    expect(GLOW_ROW.HALO_OUT - GLOW_ROW.HALO).toBe(1);
+    expect(GLOW_ROW.BLEED - GLOW_ROW.BLEED_OUT).toBe(1);
   });
 });
 
@@ -624,7 +631,27 @@ describe('a cut kill reads first: subdued splinters, the whole cut lit, a visibl
     return best;
   }
 
-  it('every EDGE_CUT edge glows along >= 90 % of its length (no wedge-ended "bevels", no sliver)', () => {
+  // The hull as drawn: the art is rasterised from the kind's parts (a
+  // capital's collider `hull` is their convex hull, wider than the drawn
+  // body between the side barbettes: the filmed "white bars stuck onto the
+  // hull edge" sat out there, over transparent art).
+  const drawnRings = shipParts(getShipKind('heavy-cruiser')).map((q) => q.pts.map(([x, y]) => ({ x, y })));
+  const inPoly = (ring: ReadonlyArray<{ x: number; y: number }>, x: number, y: number): boolean => {
+    let inside = false;
+    for (let a = 0, b = ring.length - 1; a < ring.length; b = a++) {
+      const u = ring[a]!, w = ring[b]!;
+      if ((u.y > y) !== (w.y > y) && x < ((w.x - u.x) * (y - u.y)) / (w.y - u.y) + u.x) inside = !inside;
+    }
+    return inside;
+  };
+  /** Whether the point `f` along edge i, a hair inside the piece, is on the drawn hull. */
+  function onDrawn(p: WreckPieceGeometry, i: number, f: number): boolean {
+    const o = p.outline, a = o[i]!, b = o[(i + 1) % o.length]!, el = Math.hypot(b.x - a.x, b.y - a.y);
+    const x = a.x + (b.x - a.x) * f - ((b.y - a.y) / el) * 0.5 + p.cx, y = a.y + (b.y - a.y) * f + ((b.x - a.x) / el) * 0.5 + p.cy;
+    return drawnRings.some((r) => inPoly(r, x, y));
+  }
+
+  it('every EDGE_CUT edge glows along >= 90 % of its drawn length (no wedge-ended "bevels", no sliver)', () => {
     for (const [cutKind, cutW] of CUTS) {
       for (const seed of SEEDS) {
         const all = sprites(filmed(seed, cutKind, cutW));
@@ -640,13 +667,17 @@ describe('a cut kill reads first: subdued splinters, the whole cut lit, a visibl
             edges++;
             // Lit: the core at least a fifth of the cut core's full width,
             // or half of what the piece itself is thick there (a wedge).
+            // Over its DRAWN stretch: a capital's outline spans empty space
+            // beside its body (transparent art), where nothing glows.
             const N = 100;
-            let lit = 0;
+            let lit = 0, drawnN = 0;
             for (let m = 0; m <= N; m++) {
               const f = m / N;
+              if (!onDrawn(p, i, f)) continue;
+              drawnN++;
               if (litReach(s, p, i, f, true) >= Math.min(0.2 * nominal, 0.5 * thickness(p, i, f)) - 1e-6) lit++;
             }
-            expect(lit / (N + 1), `${cutKind} s${seed} edge ${i}: lit share of its length`).toBeGreaterThanOrEqual(0.9);
+            if (drawnN > 0) expect(lit / drawnN, `${cutKind} s${seed} edge ${i}: lit share of its drawn length`).toBeGreaterThanOrEqual(0.9);
           }
         }
         expect(edges).toBeGreaterThan(0);
@@ -687,6 +718,172 @@ describe('a cut kill reads first: subdued splinters, the whole cut lit, a visibl
         expect(a, `${cutKind} ${ms} ms`).toBeLessThanOrEqual(hi);
       }
       for (const { s } of all) s.destroy({ children: true });
+    }
+  });
+
+  // Hostile film reviews 2026-11-15 (rail take 7, beam take 7): the cut glow
+  // read as FLAT PAINTED SLABS ("flat pale-white blocky slabs ... like white
+  // paint or bricks, they do not glow"; "hard-edged flat strips with no soft
+  // glow"), sometimes "white bars stuck onto the hull edge". The cut must read
+  // as incandescent metal: brightest AT the cut edge, falling off smoothly
+  // into the hull, a soft bleed into the gap, and never past the hull.
+  /** The glow mesh's premultiplied RGBA at body-local Pixi-down (x, y): its
+   *  triangles composited in draw order on the glow texture (bilinear). */
+  function glowRgbaAt(s: WreckPieceSprite, x: number, y: number): [number, number, number, number] {
+    const m = s.glowMesh()!, src = wreckGlowTexture().source;
+    const data = src.resource as Uint8Array, W = src.width, H = src.height;
+    const texel = (tx: number, ty: number): number[] => {
+      const o = (Math.min(H - 1, Math.max(0, ty)) * W + Math.min(W - 1, Math.max(0, tx))) * 4, a = data[o + 3]! / 255;
+      return [(data[o]! / 255) * a, (data[o + 1]! / 255) * a, (data[o + 2]! / 255) * a, a];
+    };
+    const sample = (u: number, v: number): number[] => {
+      const fx = u * W - 0.5, fy = v * H - 0.5, x0 = Math.floor(fx), y0 = Math.floor(fy), ax = fx - x0, ay = fy - y0;
+      const a = texel(x0, y0), b = texel(x0 + 1, y0), c = texel(x0, y0 + 1), d = texel(x0 + 1, y0 + 1);
+      return a.map((_, k) => (a[k]! * (1 - ax) + b[k]! * ax) * (1 - ay) + (c[k]! * (1 - ax) + d[k]! * ax) * ay);
+    };
+    const out = [0, 0, 0, 0];
+    const P = m.positions, U = m.uvs, I = m.indices;
+    for (let t = 0; t < I.length; t += 3) {
+      const i0 = I[t]!, i1 = I[t + 1]!, i2 = I[t + 2]!;
+      const x0 = P[i0 * 2]!, y0 = P[i0 * 2 + 1]!, x1 = P[i1 * 2]!, y1 = P[i1 * 2 + 1]!, x2 = P[i2 * 2]!, y2 = P[i2 * 2 + 1]!;
+      const den = (y1 - y2) * (x0 - x2) + (x2 - x1) * (y0 - y2);
+      if (Math.abs(den) < 1e-9) continue;
+      const l0 = ((y1 - y2) * (x - x2) + (x2 - x1) * (y - y2)) / den;
+      const l1 = ((y2 - y0) * (x - x2) + (x0 - x2) * (y - y2)) / den, l2 = 1 - l0 - l1;
+      if (l0 < -1e-6 || l1 < -1e-6 || l2 < -1e-6) continue;
+      const c = sample(l0 * U[i0 * 2]! + l1 * U[i1 * 2]! + l2 * U[i2 * 2]!, l0 * U[i0 * 2 + 1]! + l1 * U[i1 * 2 + 1]! + l2 * U[i2 * 2 + 1]!);
+      for (let k = 0; k < 4; k++) out[k] = c[k]! + out[k]! * (1 - c[3]!);
+    }
+    return out as [number, number, number, number];
+  }
+  /** On screen: the brightest premultiplied channel. */
+  const lum = (c: number[]): number => Math.max(c[0]!, c[1]!, c[2]!);
+  /** Un-premultiplied colour channels (0..255). */
+  const straight = (c: number[]): number[] => c.slice(0, 3).map((v) => (c[3]! > 1e-6 ? (255 * v) / c[3]! : 0));
+  /** Body-local Pixi-down point `d` inward (negative: out into the gap) from `f` along edge i. */
+  function across(p: WreckPieceGeometry, i: number, f: number, d: number): [number, number] {
+    const o = p.outline, a = o[i]!, b = o[(i + 1) % o.length]!, el = Math.hypot(b.x - a.x, b.y - a.y);
+    const mx = -(b.y - a.y) / el, my = (b.x - a.x) / el;
+    return [a.x + (b.x - a.x) * f + mx * d, -(a.y + (b.y - a.y) * f + my * d)];
+  }
+
+  it('the cut glows like hot metal: brightest at the cut edge, falling off smoothly into the hull, a soft bleed into the gap', () => {
+    for (const [cutKind, cutW] of CUTS) {
+      for (const seed of SEEDS.slice(0, 3)) {
+        const all = sprites(filmed(seed, cutKind, cutW));
+        let checked = 0;
+        for (const ageMs of [300, 2500]) {
+          let nominal = 0;
+          for (const { p, s } of all) {
+            s.update(1000 + ageMs, 0);
+            for (let i = 0; i < p.cutEdges.length; i++) if (p.cutEdges[i] === EDGE_CUT) nominal = Math.max(nominal, s.edgeCoreWidth(i));
+          }
+          for (const { p, s } of all) {
+            for (let i = 0; i < p.cutEdges.length; i++) {
+              if (p.cutEdges[i] !== EDGE_CUT) continue;
+              for (const f of [0.35, 0.5, 0.65]) {
+                // The core's width where it is sampled (a full-width stretch).
+                const cw = litReach(s, p, i, f, true);
+                if (cw < 0.9 * nominal || thickness(p, i, f) < 2.5 * cw || !onDrawn(p, i, f)) continue;
+                const at = (d: number): [number, number, number, number] => glowRgbaAt(s, ...across(p, i, f, d * cw));
+                const tag = `${cutKind} s${seed} ${ageMs} ms edge ${i} f${f}`;
+                const edge = lum(at(0.03));
+                expect(edge, `${tag}: lit at the edge`).toBeGreaterThan(ageMs < 1000 ? 0.85 : 0.4);
+                // A gradient, not a flat fill: falling all the way in.
+                let prev = edge;
+                for (const d of [0.15, 0.3, 0.5, 0.7, 0.9, 1.1, 1.3]) {
+                  const l = lum(at(d));
+                  expect(l, `${tag}: non-increasing at ${d} x core`).toBeLessThanOrEqual(prev + 0.02);
+                  prev = l;
+                }
+                expect(lum(at(0.5)), `${tag}: half-way in dimmer than the edge`).toBeLessThanOrEqual(0.85 * edge);
+                expect(lum(at(0.9)), `${tag}: the core's inner side well dimmer`).toBeLessThanOrEqual(0.5 * edge);
+                // Soft: no hard outer edge, it fades out to nothing.
+                expect(lum(at((0.97 * litReach(s, p, i, f)) / cw)), `${tag}: faded out at the halo's outer side`).toBeLessThanOrEqual(0.12 * edge);
+                if (ageMs < 1000) {
+                  // A soft bleed into the gap, dimmer than the edge itself.
+                  const bleed = lum(at(-0.08));
+                  expect(bleed, `${tag}: bleeds into the gap`).toBeGreaterThan(0.08);
+                  expect(bleed, `${tag}: the bleed is softer than the edge`).toBeLessThan(edge);
+                  const [r0, g0, b0] = straight(at(0.03)), [r1, g1, b1] = straight(at(0.9));
+                  if (cutKind === 'channel') {
+                    expect(Math.min(r0!, g0!, b0!), `${tag}: white-hot at the edge`).toBeGreaterThanOrEqual(0xd8);
+                    expect(r1! - b1!, `${tag}: yellow-orange deeper in`).toBeGreaterThanOrEqual(0x50);
+                  } else {
+                    for (const [r, g, b] of [[r0!, g0!, b0!], [r1!, g1!, b1!]]) {
+                      expect(b! - g!, `${tag}: violet`).toBeGreaterThanOrEqual(0x30);
+                      expect(r! - g!, `${tag}: violet`).toBeGreaterThanOrEqual(0x10);
+                    }
+                  }
+                }
+                checked++;
+              }
+            }
+          }
+        }
+        expect(checked, `${cutKind} s${seed}: some cut points checked`).toBeGreaterThan(0);
+        for (const { s } of all) s.destroy({ children: true });
+      }
+    }
+  });
+
+  it('no glow strip lies outside its piece, except a small soft bleed into the cut gap (inside the hull)', () => {
+    const inRing = (ring: ReadonlyArray<{ x: number; y: number }>, x: number, y: number): boolean => {
+      let inside = false;
+      for (let a = 0, b = ring.length - 1; a < ring.length; b = a++) {
+        const p = ring[a]!, q = ring[b]!;
+        if ((p.y > y) !== (q.y > y) && x < ((q.x - p.x) * (y - p.y)) / (q.y - p.y) + p.x) inside = !inside;
+      }
+      return inside;
+    };
+    const segDist = (x: number, y: number, a: { x: number; y: number }, b: { x: number; y: number }): number => {
+      const ex = b.x - a.x, ey = b.y - a.y, l2 = ex * ex + ey * ey;
+      const t = l2 > 0 ? Math.max(0, Math.min(1, ((x - a.x) * ex + (y - a.y) * ey) / l2)) : 0;
+      return Math.hypot(x - a.x - ex * t, y - a.y - ey * t);
+    };
+    const drawn = drawnRings;
+    const onArt = (x: number, y: number, eps: number): boolean =>
+      drawn.some((r) => inRing(r, x, y) || r.some((a, k) => segDist(x, y, a, r[(k + 1) % r.length]!) <= eps));
+    for (const [cutKind, cutW] of CUTS) {
+      for (const seed of SEEDS) {
+        const all = sprites(filmed(seed, cutKind, cutW));
+        let nominal = 0;
+        for (const { p, s } of all) {
+          s.update(1000 + 300, 0);
+          for (let i = 0; i < p.cutEdges.length; i++) if (p.cutEdges[i] === EDGE_CUT) nominal = Math.max(nominal, s.edgeCoreWidth(i));
+        }
+        const bleed = 0.5 * nominal, eps = 1;
+        let pts = 0;
+        for (const { p, s } of all) {
+          const m = s.glowMesh();
+          if (m === null) continue;
+          const o = p.outline, n = o.length, P = m.positions, I = m.indices;
+          const outlineDist = (x: number, y: number, cutOnly: boolean): number => {
+            let best = Infinity;
+            for (let i = 0; i < n; i++) if (!cutOnly || p.cutEdges[i] === EDGE_CUT) best = Math.min(best, segDist(x, y, o[i]!, o[(i + 1) % n]!));
+            return best;
+          };
+          for (let t = 0; t < I.length; t += 3) {
+            const v = [I[t]!, I[t + 1]!, I[t + 2]!].map((k) => [P[k * 2]!, -P[k * 2 + 1]!] as const);
+            const area = Math.abs((v[1]![0] - v[0]![0]) * (v[2]![1] - v[0]![1]) - (v[2]![0] - v[0]![0]) * (v[1]![1] - v[0]![1]));
+            if (area < 1e-6) continue;
+            // Its corners and the middles of its sides (body-local, math-up).
+            const probe: Array<readonly [number, number]> = [...v];
+            for (let a = 0; a < 3; a++) probe.push([(v[a]![0] + v[(a + 1) % 3]![0]) / 2, (v[a]![1] + v[(a + 1) % 3]![1]) / 2]);
+            for (const [x, y] of probe) {
+              pts++;
+              const tag = `${cutKind} s${seed} (${(x + p.cx).toFixed(0)}, ${(y + p.cy).toFixed(0)})`;
+              expect(onArt(x + p.cx, y + p.cy, eps), `${tag}: on the drawn hull`).toBe(true);
+              if (inRing(o, x, y) || outlineDist(x, y, false) <= eps) continue;
+              expect(outlineDist(x, y, true), `${tag}: outside the piece only as a bleed off a cut edge`).toBeLessThanOrEqual(bleed);
+              const hx = x + p.cx, hy = y + p.cy;
+              expect(onArt(hx, hy, eps), `${tag}: the bleed never past the drawn hull`).toBe(true);
+            }
+          }
+        }
+        expect(pts).toBeGreaterThan(0);
+        for (const { s } of all) s.destroy({ children: true });
+      }
     }
   });
 });
