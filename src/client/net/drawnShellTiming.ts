@@ -24,8 +24,9 @@ import type { ShellSalvoStore } from './shellSalvoStore';
 import { isParkedHull } from '../render/shipOwnership.js';
 
 /** A ship's death held for its drawn shell: its wire id, the kind it was (an
- *  id recycled meanwhile is not killed) and the game-ms deadline. */
-interface DeferredKill { wireId: string; kind: number; shipKind: string | undefined; deadline: number }
+ *  id recycled meanwhile is not killed), the game-ms deadline, and whether
+ *  its destroy said `vaporised` (re-marked on the release frame). */
+interface DeferredKill { wireId: string; kind: number; shipKind: string | undefined; deadline: number; vaporised: boolean }
 
 /** Ticks before the newest snapshot tick from which a held death's wreck
  *  pieces wait (`RenderMirror.wreckRevealFromTick`): the kill tick is at or
@@ -124,21 +125,22 @@ export class DrawnShellTiming {
    * Returns whether it was deferred. Only the KILLING hit counts
    * (`holdsKill`): shells still in flight to it that did not kill it never
    * hold a death (heavy-beam take 8: a beam kill waited ~0.9 s for unrelated
-   * 5" shells).
+   * 5" shells). `vaporised` (the destroy's, fracture v11) rides the record:
+   * `mirror.vaporisedShips` is one-frame, so the release marks it again.
    */
-  deferKill(wireId: string): boolean {
+  deferKill(wireId: string, vaporised: boolean): boolean {
     const hold = this.host.hold();
     if (!this.host.shellEvents() || hold.size === 0 || !hold.holdsKill(wireId)) return false;
-    if (!wireId.startsWith('swarm-')) return this.deferShipKill(wireId);
+    if (!wireId.startsWith('swarm-')) return this.deferShipKill(wireId, vaporised);
     const entityId = parseInt(wireId.slice('swarm-'.length), 10);
     const entry = Number.isNaN(entityId) ? undefined : this.host.mirror().swarm?.get(entityId);
     if (entry === undefined) return false;
     let k = this.swarmKills.get(entityId);
     if (k === undefined) {
-      k = this.free.pop() ?? { wireId: '', kind: 0, shipKind: undefined, deadline: 0 };
+      k = this.free.pop() ?? { wireId: '', kind: 0, shipKind: undefined, deadline: 0, vaporised: false };
       this.swarmKills.set(entityId, k);
     }
-    k.wireId = wireId; k.kind = entry.kind; k.shipKind = entry.shipKind;
+    k.wireId = wireId; k.kind = entry.kind; k.shipKind = entry.shipKind; k.vaporised = vaporised;
     k.deadline = this.host.now() + MAX_HOLD_MS;
     this.holdWrecks();
     return true;
@@ -153,16 +155,16 @@ export class DrawnShellTiming {
    * The local pilot's own active ship still dies on the event (its death
    * drives the spectator flip).
    */
-  private deferShipKill(wireId: string): boolean {
+  private deferShipKill(wireId: string, vaporised: boolean): boolean {
     const mirror = this.host.mirror();
     if (wireId === mirror.localPlayerId) return false;
     if (!mirror.ships.has(wireId)) return false;
     let k = this.shipKills.get(wireId);
     if (k === undefined) {
-      k = this.free.pop() ?? { wireId: '', kind: 0, shipKind: undefined, deadline: 0 };
+      k = this.free.pop() ?? { wireId: '', kind: 0, shipKind: undefined, deadline: 0, vaporised: false };
       this.shipKills.set(wireId, k);
     }
-    k.wireId = wireId; k.kind = 0; k.shipKind = undefined;
+    k.wireId = wireId; k.kind = 0; k.shipKind = undefined; k.vaporised = vaporised;
     k.deadline = this.host.now() + MAX_HOLD_MS;
     this.holdWrecks();
     return true;
@@ -192,7 +194,8 @@ export class DrawnShellTiming {
   }
 
   /** Kill each deferred ship whose killing hit has been released (its drawn
-   *  shell reached it) or whose deadline passed, in this frame. */
+   *  shell reached it) or whose deadline passed, in this frame; a vaporised
+   *  one goes into `mirror.vaporisedShips` in that same frame. */
   release(): void {
     const host = this.host;
     const hold = host.hold();
@@ -205,12 +208,15 @@ export class DrawnShellTiming {
       // The id was recycled for a new entity meanwhile: that one is not dead.
       const e = mirror.swarm?.get(entityId);
       if (e !== undefined && (e.kind !== k.kind || e.shipKind !== k.shipKind)) continue;
+      // Vaporised: marked in the same frame as its explosion (one-frame set).
+      if (k.vaporised) mirror.vaporisedShips?.add(k.wireId);
       host.killSwarmEntity(k.wireId);
     }
     for (const [id, k] of this.shipKills) {
       if (now < k.deadline && hold.holdsKill(id)) continue;
       this.shipKills.delete(id);
       this.free.push(k);
+      if (k.vaporised) mirror.vaporisedShips?.add(id);
       host.killEntity(id);
       // A parked hull: gone with its explosion (the snapshot routing kept it
       // while its death was held, so nothing else evicts it this frame).
