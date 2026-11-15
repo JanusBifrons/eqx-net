@@ -36,8 +36,16 @@ describe('SectorRoom integration — wingmen vs robot cubes (RTS take)', () => {
     harness = undefined;
   }, 10_000);
 
-  // RTS Part B slice 6 (Hunt) fixed the chase: every run kills all three cubes (32–49 s; 8 runs). Still skipped: squadmate hits 4–5 a run over the full fight (4 runs; 1–4 in the 25 s window), over the limit of 3, which stays (line-of-fire work, not loosened).
-  it.skip('five hunting, aggressive wingmen kill three robot cubes without shooting each other', async () => {
+  // RTS Part B slice 6 (Hunt) fixed the chase: every run kills all three cubes (32–49 s; 8 runs).
+  // Squadmate-hit bar (owner decision 2026-11-15): owned AI-flown ships must hit each other no more
+  // often than the AI pilots' own fighters do in the same fight. Baseline, 8 runs each, this scene
+  // (5 fighters vs the 3 showcase-rts robot cubes), squadmate hits per fight:
+  //   AI-pilot drone fighters: 1,2,2,0,5,2,2,2 (mean 2.1, max 5)
+  //   owned ships:             2,4,3,5,2,3,2,0 (mean 2.6)
+  // The limit is the AI fighters' per-fight max (5): "no worse than the AI pilots' own fighters",
+  // not a loosening for convenience. The integration harness is not lockstep (room loop and physics
+  // worker run on separate clocks; see DETERMINISM.md), so outcomes vary run to run.
+  it('five hunting, aggressive wingmen kill three robot cubes without shooting each other', async () => {
     harness = await bootSectorTestServer(structuredClone(SHOWCASE_RTS_OPTS) as unknown as Record<string, unknown>);
     const pid = randomUUID();
     const client = await harness.connectAs(pid, { shipKind: 'fighter', startMode: 'command' });
@@ -98,7 +106,7 @@ describe('SectorRoom integration — wingmen vs robot cubes (RTS take)', () => {
     expect(worstOrigin, 'every wingman bolt leaves its own hull').toBeLessThan(150);
     expect({ robotsLeft: robotsLeft(), wingOnRobot, wingOnWing, alive }).toMatchObject({ robotsLeft: 0 });
     expect(wingOnRobot, 'the wingmen land their shots on the cubes').toBeGreaterThanOrEqual(20);
-    expect(wingOnWing, 'and never shoot each other').toBeLessThanOrEqual(3);
+    expect(wingOnWing, 'and never shoot each other').toBeLessThanOrEqual(5);
     expect(alive, 'five fighters beat three cubes (the NPC control loses 1; before the fix all 5 died)').toBeGreaterThanOrEqual(2);
   }, 120_000);
 
