@@ -69,6 +69,8 @@ export interface CutFieldClientDeps {
 
 interface LoadedRock { body: FieldRockBody; key: number; inPred: boolean }
 
+export interface CutFieldSummary { chunks: number; rocks: number; predBodies: number; awake: number }
+
 export class CutFieldClient implements FieldRockSource {
   private seed: string | null = null;
   private streamer: CutFieldStreamer | null = null;
@@ -103,6 +105,10 @@ export class CutFieldClient implements FieldRockSource {
   }
 
   get loadedRocks(): number { return this.rocks.size; }
+  /** Counts for the E2E and perf scenes (allocates; never per frame). */
+  summary(): CutFieldSummary {
+    return { chunks: this.chunksLoaded, rocks: this.rocks.size, predBodies: this.stats.predBodies, awake: this.stats.awake };
+  }
   get chunksLoaded(): number { return this.streamer?.stats.chunksLoaded ?? 0; }
 
   /** From the welcome: a seed turns the field on, null turns it off. */

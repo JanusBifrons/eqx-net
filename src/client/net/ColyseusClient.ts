@@ -95,7 +95,7 @@ import { recoverInputTickFromStarvation, skipStalledBacklog, stallResumeAction }
 import { LingeringPredBodyManager } from './LingeringPredBodyManager.js';
 import { SnapshotCoalescer } from './SnapshotCoalescer.js';
 import { ClientEntityFactory } from './entity/ClientEntityFactory.js';
-import { CutFieldClient } from './CutFieldClient.js';
+import { createGameCutField, type CutFieldSummary } from './cutFieldWiring.js';
 import { WreckGeometryStore } from './wreckGeometryStore.js';
 import { SWARM_KIND_WRECK } from '@shared-types/swarmWireFormat';
 import type { ClientSpawnCtx } from './entity/IClientEntityLeaf.js';
@@ -181,7 +181,6 @@ import {
 import { localFireSpawnsGhost, localFirePredicts, liveBeamVisible, LIVE_BEAM_PERSIST_MS } from '../combat/LocalBeam';
 import { flowMaterialToCode } from '../render/pixi/connectorVisual';
 import { findMount, isSustainedBeamMount, remoteBeamTtlMs } from '../render/beamStyles';
-import type { ChunkCutter } from './CutFieldClient.js';
 import type { TouchInput } from '../input/TouchInput';
 import { joystickToInput, IDLE_INPUT_STATE, type JoystickInputState } from '../input/joystickToInput';
 import { aimInput } from '../input/AimInput';
@@ -548,40 +547,7 @@ export class ColyseusGameClient {
   /** Capital destruction S2b: wreck geometry rebuilt from the snapshot's
    *  `wrecks[]` descriptors. Its `descriptors` map IS `mirror.wrecks`. */
   private readonly _wrecks = new WreckGeometryStore();
-  /** Macro terrain v2 (room flag `cutField`): the cut field's chunks near the
-   *  local ship, cut from the welcome's seed (none ride the wire). */
-  /** The art bake pool, loaded lazily: a static import would pull its Worker
-   *  URL into every module that imports this one (Vite can't parse it under
-   *  vitest). Until it loads, a chunk is cut inline. */
-  private _chunkCutter: ChunkCutter | null = null;
-  private readonly _chunkCutterLoad = typeof Worker === 'undefined'
-    ? null
-    : import('../render/art/ArtService').then((m) => { this._chunkCutter = m.pageBakeRunner(); }, () => {});
-  private readonly _cutField = new CutFieldClient({
-    gameClock: { now: () => this.gameClock.now() },
-    predWorld: () => this.predWorld,
-    // The piloted ship, or while spectating our own parked hull (spectate
-    // moves it to `lingeringShips`), so the field stays loaded around it.
-    // A free-flying spectator camera is not followed yet (its pose lives in
-    // the renderer): docs/architecture/macro-terrain.md.
-    localPose: () => {
-      const localId = this.mirror.localPlayerId;
-      if (!localId) return null;
-      const own = this.mirror.ships.get(localId);
-      if (own) return own;
-      const parked = this.mirror.lingeringShips;
-      if (parked) for (const s of parked.values()) if (s.ownerPlayerId === localId) return s;
-      return null;
-    },
-    draw: {
-      setFieldChunk: (cx, cy, outlines) => {
-        (this.mirror.pendingFieldChunks ??= []).push({ cx, cy, outlines });
-      },
-    },
-    // Chunks are cut in the page's art bake pool (shared with ship bakes on
-    // phones, where the renderer is on this thread).
-    cutter: () => this._chunkCutter,
-  });
+  private readonly _cutField = createGameCutField({ gameClock: () => this.gameClock, predWorld: () => this.predWorld, mirror: this.mirror }); // macro terrain v2
   /** Reused construction context — one instance mutated in place per entity, so
    *  swarm spawn allocates nothing (invariant #14). `predWorld` / `entry` are
    *  filled per use; `aiController` is the (constant) hostility ledger. */
@@ -7064,12 +7030,8 @@ export class ColyseusGameClient {
     }
   }
 
-  /** Cut field (flag `cutField`): what this client has loaded. Read by the
-   *  E2E (`cut-field-collision.spec.ts`) to start once the rocks are in. */
-  get cutFieldStats(): { chunks: number; rocks: number; predBodies: number; awake: number } {
-    const s = this._cutField.stats;
-    return { chunks: this._cutField.chunksLoaded, rocks: this._cutField.loadedRocks, predBodies: s.predBodies, awake: s.awake };
-  }
+  /** What the cut field has loaded (`cut-field-collision.spec.ts` waits on it). */
+  get cutFieldStats(): CutFieldSummary { return this._cutField.summary(); }
 
   dispose(): void {
     this._cutField.stop();

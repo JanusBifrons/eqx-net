@@ -256,7 +256,7 @@ import { EntitySyncRouter } from './EntitySyncRouter.js';
 import { isEngageablePilotHull, isPilotedActive } from './shipLiveness.js';
 import { MalformedMessageTracker } from './MalformedMessageTracker.js';
 import { guarded } from './guardedLoop.js';
-import { CutFieldStreamer, cutFieldOpts, fieldRockBody, fieldRockMass, FIELD_WAKES_PER_TICK, fieldRockWakes, STEP_EVERY_MS as CUT_FIELD_STEP_MS } from '../../core/terrain/chunkStreamer.js';
+import { CutFieldSubsystem } from './CutFieldSubsystem.js';
 import { SectorPersistence } from './SectorPersistence.js';
 import { LivingWorldBotHooks } from './LivingWorldBotHooks.js';
 import { SceneScriptRunner, SceneScriptSchema, type SceneStatus } from './scene/SceneScriptRunner.js';
@@ -1122,13 +1122,7 @@ export class SectorRoom extends Room<SectorState> {
   private mineField!: MineFieldSubsystem;
   /** 1 Hz grid heartbeat timer (unref'd; off the physics tick). */
   private structureGridTimer: GameTimer | undefined;
-  /** Macro terrain v2 (flag `cutField`): chunks of a cut field near ships. */
-  private cutField: CutFieldStreamer | undefined;
-  private cutFieldTimer: GameTimer | undefined;
-  private fieldWakeTick = -1;
-  private fieldWakesThisTick = 0;
-  /** The welcome's cut-field seed (#16: a joiner cuts the same rocks). */
-  private cutFieldWelcome: { cutField?: { seed: string } } = {};
+  private cutField: CutFieldSubsystem | undefined; // macro terrain v2 (room option `cutField`)
   /** Faster turret aim/fire timer (Phase 5; unref'd). */
   private structureTurretTimer: GameTimer | undefined;
   /** Click-to-inspect live-stats channel (structures follow-up Item B5) +
@@ -1411,8 +1405,7 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   get _internals(): {
-    /** Macro terrain v2 (flag `cutField`): the cut-field streamer, if on. */
-    cutField: CutFieldStreamer | undefined;
+    cutField: CutFieldSubsystem['streamer'] | undefined;
     serverTick: number;
     /** Ticks the physics worker's catch-up cap dropped (a starved host). */
     droppedTicks: number;
@@ -1536,7 +1529,7 @@ export class SectorRoom extends Room<SectorState> {
   } {
     return {
       loot: this.loot,
-      cutField: this.cutField,
+      cutField: this.cutField?.streamer,
       serverTick: this.serverTick,
       droppedTicks: this.sabU32[WORKER_DROPPED_TICKS_IDX] ?? 0,
       sessionToPlayer: this.sessionToPlayer,
@@ -1722,10 +1715,7 @@ export class SectorRoom extends Room<SectorState> {
        * mix) instead of using `asteroidConfig` + `droneCount`. When set,
        * suppresses both legacy paths so we don't double-spawn.
        */
-      /** Macro terrain plan v2, behind this flag: stream a cut asteroid field
-       *  (src/core/terrain/fieldLayout.ts) into the room, its rocks loaded as
-       *  fixed colliders only near ships (`CutFieldStreamer`). Test and
-       *  showcase rooms only until the owner signs off a fly-through. */
+      /** Macro terrain v2: stream a cut field (test and showcase rooms only, docs/architecture/macro-terrain.md). */
       cutField?: { seed: string };
       swarmCount?: number;
       swarmRatio?: number; // asteroid fraction; default 0.8
@@ -2979,7 +2969,8 @@ export class SectorRoom extends Room<SectorState> {
     this.structureGridTimer = this.gameClock.every(pulseMs, guarded('structure-grid-tick', () => this.structureGridTick()));
     // Phase 5 — turret aim/fire on a faster cadence than the grid pulse.
     this.structureTurretTimer = this.gameClock.every(TURRET_TICK_MS, guarded('structure-turret-tick', () => this.structureTurretTick()));
-    if (roomOpts.cutField) this.startCutField(roomOpts.cutField.seed);
+    if (roomOpts.cutField) this.cutField = new CutFieldSubsystem(roomOpts.cutField.seed, this.gameClock, this.swarmRegistry, this.swarmSpawner, {
+      shipSlots: () => this.playerToSlot.values(), sab: () => this.sabF32, post: (cmd) => this.postToWorker(cmd), evict: (rec, broadcast) => this.evictSwarmEntity(rec, { broadcast, emitDestroyed: false }) });
 
     // Click-to-inspect live-stats channel (structures follow-up Item B5). Its
     // own ~5 Hz timer (200 ms), unref'd + OFF the snapshot/physics tick — the
@@ -5358,63 +5349,6 @@ export class SectorRoom extends Room<SectorState> {
    * The `ENTITY_SHED` bus channel (separate from `ENTITY_DESTROYED`) lets
    * persistence/telemetry distinguish the two.
    */
-  /**
-   * Macro terrain v2 (flag `cutField`): stream a cut field's chunks near ships
-   * as fixed rock colliders, on the streamer's own game-clock timer (never the
-   * room tick, #14). Field rocks stay off the swarm wire and the save.
-   */
-  private startCutField(seed: string): void {
-    this.cutFieldWelcome = { cutField: { seed } };
-    this.cutField = new CutFieldStreamer(cutFieldOpts(seed), {
-      visitShips: (cb) => {
-        for (const [, slot] of this.playerToSlot) {
-          const b = slotBase(slot);
-          cb(this.sabF32[b + SLOT_X_OFF]!, this.sabF32[b + SLOT_Y_OFF]!);
-        }
-        for (const rec of this.swarmRegistry.all()) {
-          if (rec.kind !== SWARM_KIND_DRONE) continue;
-          const b = slotBase(rec.slot);
-          cb(this.sabF32[b + SLOT_X_OFF]!, this.sabF32[b + SLOT_Y_OFF]!);
-        }
-      },
-      spawnRock: (id, rock) => {
-        // The same body the client builds (#15): centred on the outline.
-        const b = fieldRockBody(rock);
-        return this.swarmSpawner.spawnAsteroid({ id, x: b.x, y: b.y, vx: 0, vy: 0, radius: b.radius, vertices: b.verts, mass: fieldRockMass(b.radius), fixed: true, fieldRock: true, fieldKey: rock.key });
-      },
-      removeRock: (id) => {
-        const rec = this.swarmRegistry.get(id);
-        // An awake rock is on the wire: clients are told it left.
-        if (rec) this.evictSwarmEntity(rec, { broadcast: rec.fieldAwake === true, emitDestroyed: false });
-      },
-      nowMs: () => this.gameClock.now(),
-    });
-    this.cutFieldTimer = this.gameClock.every(CUT_FIELD_STEP_MS, guarded('cut-field', () => this.cutField?.step()));
-  }
-
-  /**
-   * Macro terrain v2 C2: a cut-field rock something rammed wakes: its fixed
-   * body turns dynamic and it rides the swarm wire by its rock key until its
-   * chunk unloads. Rock-on-rock contacts never wake (cut pieces touch along
-   * their cuts, so that would wake the whole field). At most
-   * `FIELD_WAKES_PER_TICK` per tick.
-   */
-  /** A field rock wakes when a ship touches it, or when an awake rock is
-   *  driven into it (closing speed >= FIELD_CHAIN_WAKE_SPEED), so a shoved
-   *  rock pushes the ones behind it instead of jamming against them. Cut
-   *  pieces resting against each other never reach that speed. */
-  private wakeFieldRock(id: string, otherId: string, closingSpeed: number, tick: number): void {
-    const rec = this.swarmRegistry.get(id);
-    if (rec?.fieldRock !== true || rec.fieldAwake === true) return;
-    if (!fieldRockWakes(this.swarmRegistry.get(otherId), closingSpeed)) return;
-    if (tick !== this.fieldWakeTick) { this.fieldWakeTick = tick; this.fieldWakesThisTick = 0; }
-    if (this.fieldWakesThisTick >= FIELD_WAKES_PER_TICK) return;
-    this.fieldWakesThisTick++;
-    rec.fieldAwake = true;
-    this.postToWorker({ type: 'UNFIX_BODY', entityId: id });
-    serverLogEvent('field_rock_woke', { id, by: otherId, tick });
-  }
-
   private evictSwarmEntity(
     rec: SwarmEntityRecord,
     opts: { broadcast: boolean; emitDestroyed: boolean; shooterId?: string; vaporised?: boolean },
@@ -8641,10 +8575,7 @@ export class SectorRoom extends Room<SectorState> {
             });
             continue;
           }
-          if (this.cutField) {
-            this.wakeFieldRock(p.aId, p.bId, p.normalSpeed, tick);
-            this.wakeFieldRock(p.bId, p.aId, p.normalSpeed, tick);
-          }
+          this.cutField?.onContact(p.aId, p.bId, p.normalSpeed, tick);
           this.bus.emit('COLLISION_RESOLVED', {
             type: 'COLLISION_RESOLVED',
             aId: p.aId,
@@ -8959,7 +8890,7 @@ export class SectorRoom extends Room<SectorState> {
           sectorKey: this.sectorKey,
           shipInstanceId: existingShip?.shipInstanceId ?? '',
         };
-        client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields(), ...this.cutFieldWelcome }));
+        client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields(), ...this.cutField?.welcome }));
 
         setSession(client.sessionId, {
           roomId: this.roomId,
@@ -9465,7 +9396,7 @@ export class SectorRoom extends Room<SectorState> {
       sectorKey: this.sectorKey,
       shipInstanceId: ship.shipInstanceId,
     };
-    client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields(), ...this.cutFieldWelcome }));
+    client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields(), ...this.cutField?.welcome }));
 
     // Prefer the auth-validated userId from this connect; fall back to the
     // Limbo-resumed value when this connect was anonymous (covers the
@@ -9587,7 +9518,7 @@ export class SectorRoom extends Room<SectorState> {
       shipInstanceId: '',
       spectator: true,
     };
-    client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields(), ...this.cutFieldWelcome }));
+    client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields(), ...this.cutField?.welcome }));
 
     setSession(client.sessionId, {
       roomId: this.roomId,
@@ -9902,7 +9833,7 @@ export class SectorRoom extends Room<SectorState> {
       sectorKey: this.sectorKey,
       shipInstanceId: shipId,
     };
-    client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields(), ...this.cutFieldWelcome }));
+    client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields(), ...this.cutField?.welcome }));
     this.pendingJoin.set(playerId, {
       joinTick: tick,
       watchdogTick: tick + CLIENT_READY_TIMEOUT_TICKS,
@@ -11454,9 +11385,8 @@ export class SectorRoom extends Room<SectorState> {
     this.gameClock.cancelAll();
     if (this.tradeRegisteredKey !== null) getTradeSink()?.unregisterRoom(this.tradeRegisteredKey, this);
     if (this.teleportRoom) getTeleportBroker().unregister(this.teleportRoom);
+    this.cutField?.dispose();
     // Structures plan, Phase 3 — stop the grid pulse heartbeat.
-    this.cutFieldTimer?.cancel();
-    this.cutFieldTimer = undefined;
     if (this.structureGridTimer !== undefined) {
       this.structureGridTimer.cancel();
       this.structureGridTimer = undefined;

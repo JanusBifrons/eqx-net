@@ -961,9 +961,7 @@ export class PhysicsWorld {
   isSleeping(id: string): boolean {
     const rec = this.bodies.get(id);
     if (!rec) return false;
-    // A fixed body (cut-field rock) never simulates: it counts as asleep, so
-    // the worker treats it as quiet (no SAB rewrite each tick).
-    return rec.body.isSleeping() || rec.body.isFixed();
+    return rec.body.isSleeping() || rec.body.isFixed(); // fixed (cut-field rock): never simulates, so quiet
   }
 
   /**
@@ -1051,24 +1049,12 @@ export class PhysicsWorld {
     this.bodies.get(id)?.body.setAngularDamping(damping);
   }
 
-  /**
-   * Make a body FIXED: Rapier never simulates, wakes or solves it (fixed–fixed
-   * pairs are skipped), unlike `lockBody`, whose locked dynamic body still
-   * solves every contact with its neighbours while awake. For terrain that
-   * never moves (cut-field rocks, which touch along their cuts); same call on
-   * the server worker and the client predWorld (#15).
-   */
-  fixBody(id: string): void {
-    this.bodies.get(id)?.body.setBodyType(RAPIER.RigidBodyType.Fixed, true);
-  }
-
-  /** Wake a fixed body into an ordinary dynamic one (a cut-field rock a ship
-   *  rammed): it keeps its colliders and their mass, and is awake at once. */
+  /** FIXED terrain (cut-field rocks): never simulated or solved, unlike a `lockBody` body; same call on the server worker and predWorld (#15). */
+  fixBody(id: string): void { this.bodies.get(id)?.body.setBodyType(RAPIER.RigidBodyType.Fixed, true); }
+  /** Wake a fixed body into a dynamic one (a rammed rock), keeping its colliders and mass. */
   unfixBody(id: string): void {
     const b = this.bodies.get(id)?.body;
-    if (!b || !b.isFixed()) return;
-    b.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
-    b.wakeUp();
+    if (b?.isFixed()) { b.setBodyType(RAPIER.RigidBodyType.Dynamic, true); b.wakeUp(); }
   }
 
   lockBody(id: string): void {

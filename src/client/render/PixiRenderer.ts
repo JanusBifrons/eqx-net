@@ -909,8 +909,7 @@ export class PixiRenderer implements IRenderer {
       this.backgroundGrid.attach(this.camera);
     }
 
-    // Cut-field rocks sit under everything that moves.
-    this.camera.addChild(this._cutField.container);
+    this.camera.addChild(this._cutField.container); // cut-field rocks: under everything that moves
     this.shipContainer = new Container();
     this.camera.addChild(this.shipContainer);
     // Far-zoom wreck specks (wreckArt.ts `setFarZoom`): drawn together as one
@@ -2474,13 +2473,7 @@ export class PixiRenderer implements IRenderer {
     // the multi-pass filter chain every frame → frame rate collapses
     // (the late-onset spiral pattern in captures `af742v` / `ecat41`).
     this.drainRemoteWarp(mirror);
-    // Cut-field chunks loaded or dropped since the last frame (rare).
-    const fieldChunks = mirror.pendingFieldChunks;
-    if (fieldChunks && fieldChunks.length > 0) {
-      for (const c of fieldChunks) this._cutField.setChunk(c.cx, c.cy, c.outlines);
-      fieldChunks.length = 0;
-    }
-    this._cutField.setView(this._artCtx.sunAz, this.camera.scale.x);
+    this._cutField.update(mirror, this._artCtx.sunAz, this.camera.scale.x); // cut-field chunks + view
 
     // Phase 1 — name labels above remote ships and drones (skip self).
     this.labels?.update(mirror);

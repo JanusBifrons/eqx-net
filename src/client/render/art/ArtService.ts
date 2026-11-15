@@ -22,7 +22,7 @@ import { loadBakes, saveBakes, storeKey } from './bakeStore.js';
 import type { Frame, LightRig } from './shade.js';
 import { sunRigForSector } from './sunRig.js';
 import { shipScaleWorkerName } from '../../../shared-types/shipScale/config.js';
-import { rocksInChunk, type ChunkOpts, type ChunkRock } from '../../../core/terrain/fieldLayout.js';
+import { ChunkCutJobs, cutInline, type ChunkOpts, type ChunkRock } from './chunkCutJobs.js';
 
 export type ArtState = 'pending' | 'ready' | 'failed';
 
@@ -116,9 +116,7 @@ export interface BakeRunner {
   run(job: BakeJob, rig: LightRig, urgent?: boolean): Promise<Baked>;
   /** Move a queued (not yet started) job to the front. */
   promote?(job: BakeJob): void;
-  /** The pool's second job: cut one cut-field chunk (macro terrain), queued
-   *  behind bakes, so a phone's frame never pays for it. */
-  cutChunk?(field: ChunkOpts, cx: number, cy: number): Promise<ChunkRock[]>;
+  cutChunk?(field: ChunkOpts, cx: number, cy: number): Promise<ChunkRock[]>; // cut-field chunks, off the frame (chunkCutJobs.ts)
   readonly workers: number;
   destroy(): void;
 }
@@ -641,9 +639,7 @@ export class WorkerBakeRunner implements BakeRunner {
   private readonly pool: Worker[] = [];
   private readonly idle: Worker[] = [];
   private readonly queue: Array<{ job: BakeJob; rig: LightRig; resolve: (b: Baked) => void; reject: (e: Error) => void }> = [];
-  /** Cut-field chunk cuts: a few ms each, so they go before any bake, in
-   *  the order asked (nearest first). */
-  private readonly cuts: Array<{ field: ChunkOpts; cx: number; cy: number; resolve: (r: ChunkRock[]) => void; reject: (e: Error) => void }> = [];
+  private readonly cuts = new ChunkCutJobs();
   private seq = 0;
 
   constructor(size: number, factory: () => Worker, private readonly delayMs = 0) {
@@ -670,22 +666,9 @@ export class WorkerBakeRunner implements BakeRunner {
     if (i > 0) this.queue.unshift(this.queue.splice(i, 1)[0]!);
   }
 
-  cutChunk(field: ChunkOpts, cx: number, cy: number): Promise<ChunkRock[]> {
-    return new Promise((resolve, reject) => {
-      this.cuts.push({ field, cx, cy, resolve, reject });
-      this.pump();
-    });
-  }
-
+  cutChunk(field: ChunkOpts, cx: number, cy: number): Promise<ChunkRock[]> { const p = this.cuts.add(field, cx, cy); this.pump(); return p; }
   private pump(): void {
-    while (this.idle.length > 0 && this.cuts.length > 0) {
-      const w = this.idle.pop()!;
-      const cut = this.cuts.shift()!;
-      const done = (): void => { this.idle.push(w); this.pump(); };
-      w.onmessage = (e: MessageEvent<{ rocks: ChunkRock[] }>): void => { cut.resolve(e.data.rocks); done(); };
-      w.onerror = (err): void => { cut.reject(new Error(err.message)); done(); };
-      w.postMessage({ seq: this.seq++, cut: { field: cut.field, cx: cut.cx, cy: cut.cy } });
-    }
+    this.cuts.drain(this.idle, () => this.seq++, (w) => { this.idle.push(w); this.pump(); });
     while (this.idle.length > 0 && this.queue.length > 0) {
       const w = this.idle.pop()!;
       const item = this.queue.shift()!;
@@ -706,8 +689,7 @@ export class WorkerBakeRunner implements BakeRunner {
     this.idle.length = 0;
     for (const q of this.queue) q.reject(new Error('art service destroyed'));
     this.queue.length = 0;
-    for (const c of this.cuts) c.reject(new Error('art service destroyed'));
-    this.cuts.length = 0;
+    this.cuts.rejectAll();
   }
 }
 
@@ -729,14 +711,7 @@ export class InlineBakeRunner implements BakeRunner {
     this.chain = p.catch(() => undefined);
     return p;
   }
-  cutChunk(field: ChunkOpts, cx: number, cy: number): Promise<ChunkRock[]> {
-    return new Promise((resolve, reject) => {
-      setTimeout(() => {
-        if (this.stopped) { reject(new Error('art service destroyed')); return; }
-        try { resolve(rocksInChunk(field, cx, cy)); } catch (e) { reject(e instanceof Error ? e : new Error(String(e))); }
-      }, 0);
-    });
-  }
+  cutChunk(field: ChunkOpts, cx: number, cy: number): Promise<ChunkRock[]> { return cutInline(field, cx, cy, () => this.stopped); }
   destroy(): void { this.stopped = true; }
 }
 
@@ -774,12 +749,7 @@ function pageRunner(o: CreateArtServiceOpts): BakeRunner {
   return sharedRunner;
 }
 
-/** This page's bake pool, for its other job (cut-field chunk cuts). Made on
- *  demand, shared with this realm's art services. */
-export function pageBakeRunner(): BakeRunner {
-  return pageRunner({ touch: false });
-}
-
+export const pageBakeRunner = (): BakeRunner => pageRunner({ touch: false }); // this page's pool, for cut-field chunk cuts
 export function createArtService(o: CreateArtServiceOpts): ArtService {
   const opts = atlasOptsFor(o.touch, (globalThis.navigator as { deviceMemory?: number } | undefined)?.deviceMemory);
   const budget = new PageBudget(opts.maxPages ?? Infinity);

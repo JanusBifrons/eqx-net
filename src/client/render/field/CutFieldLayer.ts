@@ -8,6 +8,7 @@
  * only `setView` runs, a compare unless the camera zoom or the sun moved.
  */
 import { Container, Mesh, MeshGeometry, Shader } from 'pixi.js';
+import type { RenderMirror } from '@core/contracts/IRenderer';
 import { unpackRockKey } from '../../../core/terrain/fieldLayout';
 import { fieldRockShaderResources, fieldRockProgram, setFieldRockView } from './fieldRockShader';
 
@@ -101,6 +102,17 @@ export class CutFieldLayer {
 
   /** Per frame: the sector's sun (Pixi azimuth) and the camera zoom (world
    *  scale), so the surface detail stops at ~2 px. A compare unless moved. */
+  /** Each frame: apply the chunks loaded or dropped since the last frame
+   *  (`mirror.pendingFieldChunks`, rare; drained here), then `setView`. */
+  update(mirror: RenderMirror, sunAz: number, cameraScale: number): void {
+    const chunks = mirror.pendingFieldChunks;
+    if (chunks && chunks.length > 0) {
+      for (const c of chunks) this.setChunk(c.cx, c.cy, c.outlines);
+      chunks.length = 0;
+    }
+    this.setView(sunAz, cameraScale);
+  }
+
   setView(sunAz: number, cameraScale: number): void {
     this.frame++;
     if (this.chunks.size > 0) setFieldRockView(sunAz, cameraScale);
