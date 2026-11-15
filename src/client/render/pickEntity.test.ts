@@ -34,7 +34,7 @@ function swarm(x: number, y: number, kind: number, radius = 30): SwarmRenderStat
 }
 
 function lingering(x: number, y: number, ownerPlayerId: string, kind = 'fighter'): ShipRenderState & { ownerPlayerId: string } {
-  return { x, y, angle: 0, vx: 0, vy: 0, kind, ownerPlayerId };
+  return { x, y, angle: 0, vx: 0, vy: 0, kind, ownerPlayerId, isActive: false };
 }
 
 function mirror(over: Partial<RenderMirror>): RenderMirror {
@@ -101,7 +101,7 @@ describe('pickEntityAt', () => {
 
   it('lingering hulls ARE selectable by shipInstanceId (WS-9/R2.23)', () => {
     const m = mirror({
-      lingeringShips: new Map([['linger-xyz', lingering(300, 300, 'owner-1')]]),
+      ships: new Map([['linger-xyz', lingering(300, 300, 'owner-1')]]),
     });
     const hit = pickEntityAt(302, 298, m);
     expect(hit).toEqual({ id: 'linger-xyz', kind: 'lingering' });
@@ -110,7 +110,7 @@ describe('pickEntityAt', () => {
   it('a closer drone beats a lingering hull across buckets', () => {
     const m = mirror({
       swarm: new Map([[1, swarm(10, 0, 1, 40)]]), // drone centre 10 from origin
-      lingeringShips: new Map([['linger-far', lingering(100, 0, 'owner-2')]]), // 100 away
+      ships: new Map([['linger-far', lingering(100, 0, 'owner-2')]]), // 100 away
     });
     const hit = pickEntityAt(0, 0, m);
     expect(hit).toEqual({ id: 'swarm-1', kind: 'drone' });

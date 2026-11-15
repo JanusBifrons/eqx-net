@@ -34,6 +34,9 @@ import { mergePlayerPresence } from './app/galaxyPresence';
 import { loadStoredPlayerId } from './identity/token';
 import { Keyboard } from './input/Keyboard';
 import { SpectatorPanInput } from './input/SpectatorPanInput';
+import { sendFleetOrder } from './ships/shipActionsClient';
+import { installFleetCommandSenders } from './fleet/installFleetCommandSenders';
+import { canFinishFleetPick } from './fleet/fleetPickView';
 import { TouchInput, isTouchDevice } from './input/TouchInput';
 import { useUIStore, useGameReady, useIsLoadingActive } from './state/store';
 import { useAuthStore } from './auth/authStore';
@@ -42,7 +45,8 @@ import { ErrorBoundary } from './components/ErrorOverlay';
 import { HyperspaceOverlay } from './components/HyperspaceOverlay';
 import { WarpScreen } from './components/WarpScreen';
 import { LostConnectionOverlay } from './components/LostConnectionOverlay';
-import { engageTransit, cancelTransit } from './net/transitClient';
+import { cancelTransit } from './net/transitClient';
+import { fleetWarpRequest, sendWarpHere } from './app/fleetWarp';
 import { isSpectating } from './spectator/spectatorMode';
 import { logEvent } from './debug/ClientLogger';
 import { captureDeviceInfo } from './debug/deviceInfo';
@@ -259,6 +263,24 @@ function GameSurface({
     rendererRef.current?.setSpectator(spectating);
   }, [spectating]);
 
+  // RTS command view (slice 12) — the fleet strip's touch tap-order toggle.
+  // A discrete choice; the renderer decides per tap what it orders.
+  const fleetOrderMode = useUIStore((s) => s.fleetOrderMode);
+  useEffect(() => {
+    rendererRef.current?.setFleetOrderMode(fleetOrderMode);
+  }, [fleetOrderMode]);
+
+  // RTS slice 14b — a mode waiting for a target on the map. The renderer
+  // keeps the picked points; Done (button / Enter) asks it to send the route.
+  const fleetPickKind = useUIStore((s) => s.fleetPick?.kind ?? null);
+  useEffect(() => {
+    rendererRef.current?.setFleetPick(fleetPickKind);
+  }, [fleetPickKind]);
+  const fleetPickDoneSeq = useUIStore((s) => s.fleetPick?.doneSeq ?? 0);
+  useEffect(() => {
+    if (fleetPickDoneSeq > 0) rendererRef.current?.commitFleetPick();
+  }, [fleetPickDoneSeq]);
+
   // Radar (plan sparkling-wondering-rose) — clear the off-screen radar only
   // while IN_TRANSIT / ARRIVED (the mirror still holds the OLD sector). It stays
   // live through the SPOOLING window, when drones can still attack you. Pushed
@@ -386,6 +408,10 @@ function GameSurface({
   const handleEngageTransit = useCallback((targetSectorKey: string) => {
     const room = clientRef.current?.getRoom();
     if (!room) return;
+    // RTS fleet warp: in Command view the SELECTED ships warp (none = no warp;
+    // the drawer button is disabled then). Fly mode is unchanged.
+    const ui = useUIStore.getState();
+    if (!fleetWarpRequest(ui.pilotMode, ui.selection.ids).allowed) return;
     // F-transit-instrument — t0 for the transit timeline. The user's
     // "warp-out" == opening the in-game galaxy MAP and tapping a
     // neighbour, which routes here. Gated/no-op unless ?diag=1 /
@@ -403,7 +429,7 @@ function GameSurface({
     } else if (s.arrivalMode === 'home') {
       arrival = { x: s.homePosX, y: s.homePosY };
     }
-    engageTransit(room, targetSectorKey, arrival);
+    sendWarpHere(room, targetSectorKey, arrival, s.pilotMode, s.selection.ids);
   }, []);
   const handleCancelTransit = useCallback(() => {
     const room = clientRef.current?.getRoom();
@@ -497,6 +523,10 @@ function GameSurface({
     // HUD mode (`?hud=` / `?cinematic=1`) → the world lock marks + edge radar.
     // `__eqxCinema.setHud` re-pushes it mid-take.
     applyHudOverlays(renderer, hudModeFromSearch(window.location.search), window.location.search);
+    // RTS touch tap-order mode: seed the new renderer (the effect below
+    // pushes later changes).
+    renderer.setFleetOrderMode(useUIStore.getState().fleetOrderMode);
+    renderer.setFleetPick(useUIStore.getState().fleetPick?.kind ?? null);
     // Perf scenes (`?perfprobe=1` only): frame times, long tasks, bytes.
     if (perfProbeEnabled(window.location.search)) {
       installPerfProbe(renderer, useWorker);
@@ -508,8 +538,13 @@ function GameSurface({
     // Phase 5 — spectator WASD free-pan: feed the held-key velocity to the
     // renderer's camera. Self-gated by setEnabled (the spectating effect arms it
     // only on desktop while spectating).
-    spectatorPanRef.current = new SpectatorPanInput((vx, vy) =>
-      rendererRef.current?.setPanVelocity(vx, vy),
+    spectatorPanRef.current = new SpectatorPanInput(
+      (vx, vy) => rendererRef.current?.setPanVelocity(vx, vy),
+      () => {
+        // RTS "hold": stop the current fleet selection (no-op when empty).
+        const ids = useUIStore.getState().selection.ids;
+        if (ids.length > 0) sendFleetOrder([...ids], { kind: 'stop' });
+      },
     );
     installProfileWindow();
 
@@ -522,6 +557,8 @@ function GameSurface({
     // tab's 5 s arrival-snapshot poll) can reach `mirror` without prop
     // drilling. See `src/client/net/clientSingleton.ts`.
     setGameClient(gameClient);
+    // RTS fleet panel: plug the panel's command seam into the network senders.
+    installFleetCommandSenders();
     // Expose for the dev-only diagnostic capture (SettingsModal "Capture" button
     // reads `__eqxClient.stats`). DEV-only assignment guarded by Vite's tree-shaking.
     if (import.meta.env.DEV) {
@@ -579,6 +616,30 @@ function GameSurface({
           };
           return r?.getCameraCenterGame ? r.getCameraCenterGame() : { x: NaN, y: NaN };
         };
+      // RTS fleet-command E2E — project a GAME-space point to canvas pixels so
+      // the spec can box-select / click own ships where they are drawn.
+      // Main-thread renderer only (`?worker=0`).
+      (window as unknown as { __eqxWorldToScreen?: (x: number, y: number) => { x: number; y: number } })
+        .__eqxWorldToScreen = (x, y) => {
+          const r = rendererRef.current as unknown as {
+            worldToScreenGame?: (x: number, y: number) => { x: number; y: number };
+          };
+          return r?.worldToScreenGame ? r.worldToScreenGame(x, y) : { x: NaN, y: NaN };
+        };
+      // RTS review 2026-11-14 — the selection ring vs its ship, as rendered:
+      // turns on the renderer's per-frame capture and returns the last one.
+      // Main-thread renderer only (`?worker=0`).
+      (window as unknown as { __eqxFleetRingProbe?: () => unknown }).__eqxFleetRingProbe = () => {
+        const r = rendererRef.current as unknown as { fleetRingProbe?: () => unknown };
+        return r?.fleetRingProbe ? r.fleetRingProbe() : null;
+      };
+      // RTS Part A seamless hand-over — the identity of the ship drawn under a
+      // mirror key (sprite / turret cluster uid, art handle id), so a spec can
+      // assert taking the controls rebuilt nothing. Main-thread renderer only.
+      (window as unknown as { __eqxShipVisualProbe?: (key: string) => unknown }).__eqxShipVisualProbe = (key) => {
+        const r = rendererRef.current as unknown as { shipVisualProbe?: (key: string) => unknown };
+        return r?.shipVisualProbe ? r.shipVisualProbe(key) : null;
+      };
       // Cinematic camera + HUD control for the showcase capture pipeline
       // (docs/architecture/showcase-pipeline.md). Calls the renderer DIRECTLY —
       // shot keyframes carry x/y and must never touch Zustand (invariant #2).
@@ -621,6 +682,15 @@ function GameSurface({
       if (e.key === 'Escape' && useUIStore.getState().placementKind) {
         useUIStore.getState().setPlacementKind(null);
       }
+      // RTS slice 14b — Escape cancels a fleet map pick; Enter is Done for a
+      // patrol route with enough points. Not from a text field.
+      const pick = useUIStore.getState().fleetPick;
+      const inField = e.target instanceof HTMLElement
+        && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable);
+      if (pick !== null && !inField) {
+        if (e.key === 'Escape') useUIStore.getState().setFleetPick(null);
+        else if (e.key === 'Enter' && canFinishFleetPick(pick)) useUIStore.getState().requestFleetPickDone();
+      }
       // Phase V — R rotates the placement ghost a quarter turn (structures are
       // rectangles; storage runs in rows). Main-thread, both render paths.
       if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.key === 'r' || e.key === 'R') && useUIStore.getState().placementKind) {
@@ -655,6 +725,7 @@ function GameSurface({
         s.placementKind !== null,
         lastPointerType,
         galaxyMapOpen,
+        s.pilotMode === 'spectator', // RTS command view: right-click orders
       );
       if (outcome.preventDefault) e.preventDefault();
       if (outcome.cancel) useUIStore.getState().setPlacementKind(null);

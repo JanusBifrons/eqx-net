@@ -267,7 +267,8 @@ export function newSpeedFxState(): SpeedFxState {
 
 /**
  * Advance the eased speed from the camera centre at `nowMs`. The speed is the
- * camera's own motion, so it follows the ship and also a fast spectator pan.
+ * motion the caller samples (`speedFxSampleInto`: the followed ship; none in
+ * command view, where the camera is moved by hand).
  * Allocation-free.
  */
 export function stepSpeedFx(st: SpeedFxState, cx: number, cy: number, nowMs: number, max = 750): void {

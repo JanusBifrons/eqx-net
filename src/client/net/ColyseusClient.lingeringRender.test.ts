@@ -17,7 +17,10 @@
  *     decays to zero over ~200 ms, so the visual smoothly converges
  *     to the server-true position instead of snapping.
  *
- * Same code shape as the remote-ship reconciler.
+ * Same code shape as the remote-ship reconciler — and since RTS Part A S3
+ * it IS the remote-ship path (`preResetRemoteShips` +
+ * `computeRemoteLerpOffsets` + the `updateMirror` offset loop), body keyed by
+ * the bare shipInstanceId.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { ColyseusGameClient } from './ColyseusClient.js';
@@ -29,7 +32,7 @@ interface Internals {
   updateMirror(): void;
   predWorld: PhysicsWorld | null;
   mirror: {
-    lingeringShips?: Map<string, { x: number; y: number; vx: number; vy: number; angle: number; kind?: string }>;
+    ships: Map<string, { x: number; y: number; vx: number; vy: number; angle: number; kind?: string; isActive?: boolean; ownerPlayerId?: string }>;
     localPlayerId: string | null;
   };
 }
@@ -56,16 +59,15 @@ describe('lingering hull predict-and-reconcile with sprite lerp offset', () => {
     // The class doesn't expose a way to inject a predWorld at
     // construction; assign directly through the internals cast.
     internals.predWorld = await PhysicsWorld.create();
-    // The mirror is initialised internally; ensure the lingeringShips
-    // map exists for the snapshot routing to populate.
-    if (!internals.mirror.lingeringShips) {
-      internals.mirror.lingeringShips = new Map();
-    }
-    // Lingering routing requires the entry to have a `kind` before the
-    // body is spawned (`tryEnsureLingerPredBody` bails if kind missing).
-    // Pre-populate via syncMirror's path: just seed the kind directly.
-    internals.mirror.lingeringShips.set('SHIP_A', {
-      x: 0, y: 0, vx: 0, vy: 0, angle: 0, kind: 'fighter',
+    // Remote bodies spawn only once we know who we are; this client has no
+    // reconciler (no own ship: command view, the RTS default), so the
+    // snapshot takes the reconciler-less remote-ship path.
+    internals.mirror.localPlayerId = 'local-player';
+    // RTS Part A S3: the hull is an ordinary `mirror.ships` entry under its
+    // shipInstanceId. The body spawns once the entry knows its `kind` (the
+    // schema diff, `syncMirror`); seed it directly.
+    internals.mirror.ships.set('SHIP_A', {
+      x: 0, y: 0, vx: 0, vy: 0, angle: 0, kind: 'fighter', isActive: false, ownerPlayerId: 'player-A',
     });
   });
 
@@ -74,12 +76,12 @@ describe('lingering hull predict-and-reconcile with sprite lerp offset', () => {
     internals.handleSnapshot(makeSnapshot({
       'SHIP_A': lingeringEntry('player-A', 100, 100),
     }));
-    expect(internals.predWorld!.hasShip('linger-SHIP_A')).toBe(true);
+    expect(internals.predWorld!.hasShip('SHIP_A')).toBe(true);
 
     // Simulate prediction integrating the body forward (e.g. after a
     // collision push). Body now at ~130, ahead of where the next
     // snapshot will say.
-    internals.predWorld!.setShipState('linger-SHIP_A', {
+    internals.predWorld!.setShipState('SHIP_A', {
       x: 130, y: 100, vx: 0, vy: 0, angle: 0, angvel: 0,
     });
 
@@ -90,7 +92,7 @@ describe('lingering hull predict-and-reconcile with sprite lerp offset', () => {
     }));
 
     // Body teleports to server-authoritative pose.
-    const bodyAfter = internals.predWorld!.getShipState('linger-SHIP_A')!;
+    const bodyAfter = internals.predWorld!.getShipState('SHIP_A')!;
     expect(bodyAfter.x).toBeCloseTo(110, 1);
 
     // updateMirror computes sprite position = body + offset. On the
@@ -100,7 +102,7 @@ describe('lingering hull predict-and-reconcile with sprite lerp offset', () => {
     // only after the spring has had a chance to decay.
     (internals as unknown as { lastFrameMs: number }).lastFrameMs = 16; // simulate 60Hz
     internals.updateMirror();
-    const mirrorEntry = internals.mirror.lingeringShips!.get('SHIP_A')!;
+    const mirrorEntry = internals.mirror.ships.get('SHIP_A')!;
     expect(
       mirrorEntry.x,
       `Sprite should be near the predicted pose (130), well above the snapshot pose (110). ` +
@@ -111,7 +113,7 @@ describe('lingering hull predict-and-reconcile with sprite lerp offset', () => {
     // repeatedly to let the spring decay. Sprite should converge to
     // the server-authoritative body pose.
     for (let i = 0; i < 30; i++) internals.updateMirror();
-    const mirrorEntryConverged = internals.mirror.lingeringShips!.get('SHIP_A')!;
+    const mirrorEntryConverged = internals.mirror.ships.get('SHIP_A')!;
     expect(
       Math.abs(mirrorEntryConverged.x - 110),
       `After ~500 ms of decay, sprite should converge to the server pose (110), got ${mirrorEntryConverged.x.toFixed(2)}.`,

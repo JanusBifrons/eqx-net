@@ -8,7 +8,7 @@ import { DEFAULT_BASE_URL } from './helpers/ports';
  * class): the bug — `PixiRenderer.updateLingeringShips` built only a bare
  * silhouette with NO `MountVisualManager` cluster — lives across the
  * `WorkerRendererClient ↔ renderer.worker` structured-clone boundary (the
- * production touch default is the worker path, and `mirror.lingeringShips` is
+ * production touch default is the worker path, and the parked hull (a `mirror.ships` entry since RTS Part A S3) is
  * cloned across postMessage every frame). So this drives a REAL
  * `WorkerRendererClient` via the lingering-render probe page and reads the
  * ACTUAL drawn mount-cluster size (`getFeedback().mountCounts`), not a recompute
@@ -71,7 +71,7 @@ test('a lingering hull renders its weapon barrels across the worker boundary', a
  * P3.12 / WS-C3 — a lingering (parked) hull with its shield UP must DRAW its
  * shield aura. Same worker-boundary class as the barrels above.
  *
- * The bug: R2.32 made `syncShieldAuraEffects` iterate `mirror.lingeringShips`
+ * The bug: R2.32 made `syncShieldAuraEffects` iterate the parked hulls
  * (so the aura ring REGISTERS), but the `getEntityPose` effects closure looked
  * up ONLY `this.sprites` — a lingering hull's sprite lives in the SEPARATE
  * `this.lingeringSprites` map, so the pose resolved to `null` and `ShieldAura`

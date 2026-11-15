@@ -37,6 +37,7 @@ function makeRenderer(): { r: Harness; fx: WarpFx; setNow(ms: number): void } {
   r._warpShipScratch = { x: 0, y: 0, rotation: 0, warp: undefined, stern: 0, isLocal: false };
   r._warpStern = new Map<string, number>();
   r._droneWarpFed = new Set<string>();
+  r._hullWarpFed = new Set<string>();
   r._droneWarpKeys = new Map<number, string>();
   return { r, fx, setNow: (ms) => { now = ms; } };
 }

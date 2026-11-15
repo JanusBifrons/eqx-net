@@ -20,6 +20,8 @@
 import { ART_OFF, type ArtOptions } from '../art/artMode.js';
 import { readFxKillSwitches } from '../fxKillSwitches.js';
 import type {
+  FleetOverlayModel,
+  FleetPickKindWire,
   IRenderer,
   RenderMirror,
   RendererFeedback,
@@ -85,6 +87,18 @@ function emptyFeedback(): RendererFeedback {
     helmCourseSeq: 0,
     helmCourseX: 0,
     helmCourseY: 0,
+    fleetSelSeq: 0,
+    fleetSelIds: [],
+    orderSeq: 0,
+    orderKind: 'move',
+    orderX: 0,
+    orderY: 0,
+    orderTargetId: null,
+    takeControlsSeq: 0,
+    takeControlsId: null,
+    fleetPickPoints: 0,
+    fleetPickSeq: 0,
+    fleetPickResult: null,
     placementPreviewConnectionCount: 0,
     selectedPickId: null,
     selectedPickKind: null,
@@ -111,6 +125,8 @@ export class WorkerRendererClient implements IRenderer {
    *  the RenderMirror) so the main-thread pointer listeners can capture the
    *  pointer during a placement drag (playtest 2026-06-10 Issue 9). */
   private _placementActive = false;
+  /** Mirrors `setSpectator` (command view): pointers are captured per gesture. */
+  private _commandView = false;
   private readonly feedback: RendererFeedback = emptyFeedback();
   /** Swarm change-set encoder + the reused MIRROR_UPDATE message / transfer
    *  list (no per-frame allocation, #14). */
@@ -256,7 +272,9 @@ export class WorkerRendererClient implements IRenderer {
       // that leaves the canvas keeps delivering move/up here — otherwise the
       // ghost stalls (playtest 2026-06-10 Issue 9). Placement-active is mirrored
       // from the RenderMirror in `update()` (the worker owns the ghost).
-      if (this._placementActive) setCanvasPointerCapture(canvas, e.type, e.pointerId);
+      // RTS command view (slice 13a): capture too, so a drag-select box keeps
+      // updating when the pointer leaves the canvas.
+      if (this._placementActive || this._commandView) setCanvasPointerCapture(canvas, e.type, e.pointerId);
       this.postPointerEvent(serialisePointerEvent(e));
     };
     const onWheel = (e: WheelEvent): void => {
@@ -560,7 +578,28 @@ export class WorkerRendererClient implements IRenderer {
   setSector(_sectorKey: string | null): void { /* covered by SET_CURRENT_SECTOR */ }
 
   setSpectator(active: boolean): void {
+    this._commandView = active;
     this.post({ type: 'SET_SPECTATOR', active });
+  }
+
+  /** See `IRenderer.setFleetOrderMode`. Posts to the worker's renderer. */
+  setFleetOrderMode(mode: 'move' | 'attack'): void {
+    this.post({ type: 'SET_FLEET_ORDER_MODE', mode });
+  }
+
+  /** See `IRenderer.setFleetOverlayModel`. Posts to the worker's renderer. */
+  setFleetOverlayModel(model: FleetOverlayModel): void {
+    this.post({ type: 'SET_FLEET_OVERLAY_MODEL', model });
+  }
+
+  /** See `IRenderer.setFleetPick`. Posts to the worker's renderer. */
+  setFleetPick(kind: FleetPickKindWire | null): void {
+    this.post({ type: 'SET_FLEET_PICK', kind });
+  }
+
+  /** See `IRenderer.commitFleetPick`. Posts to the worker's renderer. */
+  commitFleetPick(): void {
+    this.post({ type: 'COMMIT_FLEET_PICK' });
   }
 
   /** See `IRenderer.setRadarPrefs`. */
@@ -594,6 +633,11 @@ export class WorkerRendererClient implements IRenderer {
    */
   glideCameraTo(gameX: number, gameY: number, durationMs: number): void {
     this.post({ type: 'GLIDE_CAMERA', gameX, gameY, durationMs });
+  }
+
+  /** RTS fleet warp (S8) — see `IRenderer.selectFleetShips`. */
+  selectFleetShips(ids: readonly string[]): void {
+    this.post({ type: 'SELECT_FLEET_SHIPS', ids: [...ids] });
   }
 
   /**
@@ -765,6 +809,22 @@ export class WorkerRendererClient implements IRenderer {
         this.feedback.helmCourseSeq = msg.feedback.helmCourseSeq;
         this.feedback.helmCourseX = msg.feedback.helmCourseX;
         this.feedback.helmCourseY = msg.feedback.helmCourseY;
+        if (msg.feedback.fleetSelSeq !== this.feedback.fleetSelSeq) {
+          this.feedback.fleetSelSeq = msg.feedback.fleetSelSeq;
+          this.feedback.fleetSelIds = msg.feedback.fleetSelIds;
+        }
+        this.feedback.orderSeq = msg.feedback.orderSeq;
+        this.feedback.orderKind = msg.feedback.orderKind;
+        this.feedback.orderX = msg.feedback.orderX;
+        this.feedback.orderY = msg.feedback.orderY;
+        this.feedback.orderTargetId = msg.feedback.orderTargetId;
+        this.feedback.takeControlsSeq = msg.feedback.takeControlsSeq;
+        this.feedback.takeControlsId = msg.feedback.takeControlsId;
+        this.feedback.fleetPickPoints = msg.feedback.fleetPickPoints;
+        if (msg.feedback.fleetPickSeq !== this.feedback.fleetPickSeq) {
+          this.feedback.fleetPickSeq = msg.feedback.fleetPickSeq;
+          this.feedback.fleetPickResult = msg.feedback.fleetPickResult;
+        }
         this.feedback.placementPreviewConnectionCount =
           msg.feedback.placementPreviewConnectionCount;
         this.feedback.selectedPickId = msg.feedback.selectedPickId;

@@ -78,6 +78,28 @@ describe('lock line pick (updateLockGuide)', () => {
     expect(Object.is(a, b)).toBe(true);
   });
 
+  it('another player\'s AI-flown ship is on the lock line under its mirror key; your own fleet never is', () => {
+    const theirs = 'aaaaaaaa-0000-4000-8000-0000000000aa';
+    const mine = 'bbbbbbbb-0000-4000-8000-0000000000bb';
+    type Entry = { x: number; y: number; vx: number; vy: number; angle: number; kind?: string; isActive?: boolean; ownerPlayerId?: string };
+    const ships = m.ships as unknown as Map<string, Entry>;
+    // Own parked ship dead ahead and closest: never picked.
+    ships.set(mine, { x: 0, y: 120, vx: 0, vy: 0, angle: 0, kind: 'fighter', isActive: false, ownerPlayerId: ME });
+    ships.set(theirs, { x: 0, y: 260, vx: 0, vy: 0, angle: 0, kind: 'fighter', isActive: false, ownerPlayerId: 'other' });
+    expect(client.updateLockGuide(0)).toBe(`p:${theirs}`);
+    // lockSelected (inspector / T key) builds the same key; own fleet refused.
+    useUIStore.setState({ selection: { ids: [], focusId: theirs, focusKind: 'ship' } });
+    expect(client.lockSelected()).toBe(true);
+    const [type, msg] = send.mock.calls.at(-1)! as [string, { target: string }];
+    expect(type).toBe('lock_request');
+    expect(msg.target).toBe(`p:${theirs}`);
+    useUIStore.setState({ selection: { ids: [], focusId: mine, focusKind: 'ship' } });
+    expect(client.lockSelected()).toBe(false);
+    useUIStore.setState({ selection: { ids: [], focusId: ME, focusKind: 'ship' } });
+    expect(client.lockSelected()).toBe(false);
+    useUIStore.setState({ selection: { ids: [], focusId: null, focusKind: 'ship' } });
+  });
+
   it('a held target claim carries b; the server check accepts it on that line', () => {
     m.swarm.set(9, drone(10, 250));
     const bearing = 0.03;

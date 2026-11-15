@@ -42,7 +42,7 @@ export interface PredictionSeed {
 
 /**
  * Opaque handles into the prediction substrate. Consumers (e.g.
- * `LingeringPredBodyManager`, `ClientPhysicsBridge`) read these through
+ * `ClientPhysicsBridge`) read these through
  * the accessor methods rather than touching the implementation fields
  * directly.
  */

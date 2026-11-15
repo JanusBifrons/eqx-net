@@ -47,6 +47,12 @@ export interface PredictionStats {
   maxAngleDriftRad: number;
   /** Sum of all angle drift magnitudes. Divide by snapshotCount for mean. */
   totalAngleDriftRad: number;
+  /** REMOTE ships: sum of every snapshot's reset correction (pre-reset
+   *  predicted pose vs post-reconcile pose, world units) and how many were
+   *  summed. Divide for the mean: how far forward prediction missed. Print-only
+   *  (RTS Part A S1's E2E reads it); never gated by the netgate. */
+  remoteCorrTotalUnits: number;
+  remoteCorrSamples: number;
   /** Max − min of the last 10 snapshot intervals (ms). 0 if < 2 snapshots. */
   snapshotJitterMs: number;
   /** Correction rate over the most recent 10-snapshot rolling window (0–1). */

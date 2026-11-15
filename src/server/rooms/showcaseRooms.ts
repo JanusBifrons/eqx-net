@@ -149,6 +149,35 @@ export const SHOWCASE_MELEE_OPTS = {
 };
 
 /**
+ * RTS command layer sign-off film: the pilot owns five fighters (its own hull
+ * plus four more), all parked and AI-flown, with three robot cubes (the
+ * weakest robot) holding position ~2 km north, just outside either side's
+ * 1.6 km on-sight range of the parked fleet. Robots are hostile to players on
+ * sight (allegiance stance, no 30 s decay), so a fleet sent a few hundred
+ * units north and set to Hunt finds them. Roster-backed (real sectorKey,
+ * outside the galaxy graph) because a Command-view join and parked hulls need
+ * one. The four extra hulls come from the scene script's `fleet` step when
+ * the pilot is ready; join with `startMode=command`.
+ */
+export const SHOWCASE_RTS_OPTS = {
+  sectorKey: 'showcase-rts',
+  testMode: true,
+  droneCount: 0,
+  asteroidConfig: [],
+  dronePoses: [
+    { kind: 'robot-square', x: 150, y: 2000, angle: Math.PI },
+    { kind: 'robot-square', x: 350, y: 2050, angle: Math.PI },
+    { kind: 'robot-square', x: 250, y: 2200, angle: Math.PI },
+  ],
+  sceneScript: [
+    { atMs: 0, action: 'fleet', tag: 'wing', kind: 'fighter', count: 4, x: 0, y: 0, spread: 360 },
+  ],
+  defaultSpawnX: 0,
+  defaultSpawnY: 0,
+  maxClients: 4,
+};
+
+/**
  * Wrap-up W2c: a flagship fleet to film warping (the NPC warp). A style-B
  * battleship at the origin with a destroyer on each beam. The pilot sits south, clear
  * of the hull. Cue the jump with `test_fleet_warp` once the art has baked.
@@ -570,4 +599,5 @@ export const SHOWCASE_ROOMS = {
   'showcase-coastal-aa': SHOWCASE_COASTAL_AA_OPTS,
   'showcase-coastal-duel': SHOWCASE_COASTAL_DUEL_OPTS,
   'showcase-fleet-warp': SHOWCASE_FLEET_WARP_OPTS,
+  'showcase-rts': SHOWCASE_RTS_OPTS,
 } as const;

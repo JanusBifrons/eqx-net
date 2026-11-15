@@ -18,6 +18,13 @@ export const FEATURE_TRIGGERS = [
     specs: ['cut-field-collision'],
   },
   {
+    // RTS Part A S1: remote ships' input bits + offsets (held bits every snapshot, absent = idle).
+    area: 'remote ship prediction',
+    paths: ['src/client/net/snapshotRemoteSync', 'src/client/net/remoteLerpOffsets', 'src/server/net/snapshotScheduler',
+      'src/server/rooms/SnapshotBroadcaster'],
+    specs: ['remote-ship-held-thrust'],
+  },
+  {
     area: 'structures',
     paths: ['src/server/structures/', 'src/core/structures/', 'src/client/structures/', 'src/shared-types/structureKinds',
       'src/client/components/StructurePlacementBanner', 'src/client/components/SpeedDialMenu', 'src/client/components/buildCategories',
@@ -64,6 +71,20 @@ export const FEATURE_TRIGGERS = [
       'src/client/input/MouseLock', 'tests/e2e/helpers/fireControl', 'src/client/components/ContactsOverview',
       'src/client/components/contactRows'],
     specs: ['lock-to-fire-default', 'fire-control-lock', 'contacts-overview', 'auto-fire', 'auto-fire-multitouch', 'fx-weapons', 'drone-destruction'],
+  },
+  {
+    // RTS command layer: Command view selection, orders, the fleet panel, wingman brains.
+    area: 'fleet command',
+    paths: ['src/client/fleet/', 'src/client/render/input/', 'src/client/render/fleetSelection', 'src/client/render/FleetOverlay', 'src/client/render/SelectionBracket',
+      'src/client/components/FleetPanel', 'src/client/components/FleetStrip', 'src/client/components/FleetPickBar',
+      'src/client/app/fleetWarp', 'src/client/net/fleetWarpFollow',
+      'src/server/fleet/', 'src/core/ai/stepRoute', 'src/shared-types/messages/fleetStatusMessages'],
+    specs: ['fleet-command', 'spectator-mode', 'rts-take-controls', 'rts-fleet-warp', 'fleet-overlay-camera', 'command-view-camera', 'entity-inspect'],
+  },
+  {
+    area: 'render worker input',
+    paths: ['src/client/render/worker/renderer.worker.ts', 'src/client/render/worker/WorkerRendererClient.ts'],
+    specs: ['rts-warp-worker-errors'],
   },
   {
     area: 'beams',

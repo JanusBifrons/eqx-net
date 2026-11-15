@@ -36,6 +36,16 @@ describe('decideContextMenuPlacement', () => {
     expect(decideContextMenuPlacement(true, 'mouse', true)).toEqual({ preventDefault: true, cancel: false });
   });
 
+  // RTS command view (slice 13a): right-click is the order button.
+  it('command view → always suppress the menu; only a mouse right-click cancels a placement', () => {
+    expect(decideContextMenuPlacement(false, 'mouse', false, true)).toEqual({ preventDefault: true, cancel: false });
+    expect(decideContextMenuPlacement(false, 'touch', false, true)).toEqual({ preventDefault: true, cancel: false });
+    expect(decideContextMenuPlacement(true, 'mouse', false, true)).toEqual({ preventDefault: true, cancel: true });
+    expect(decideContextMenuPlacement(true, 'touch', false, true)).toEqual({ preventDefault: true, cancel: false });
+    // The galaxy map branch still wins.
+    expect(decideContextMenuPlacement(true, 'mouse', true, true)).toEqual({ preventDefault: true, cancel: false });
+  });
+
   it('galaxy map closed (default arg) → unchanged behaviour', () => {
     expect(decideContextMenuPlacement(false, 'mouse')).toEqual({ preventDefault: false, cancel: false });
     expect(decideContextMenuPlacement(true, 'mouse')).toEqual({ preventDefault: true, cancel: true });

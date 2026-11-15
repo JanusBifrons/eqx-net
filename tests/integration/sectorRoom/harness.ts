@@ -512,6 +512,8 @@ export async function bootLivingWorldTestServer(opts: {
    *  owner present. */
   /** v4 T3 — teleporter cycle speed in every sector (1 = real time). */
   teleportCycleScale?: number;
+  /** testMode player warp spool in every sector (ms; production 5 min). */
+  transitSpoolMsOverride?: number;
   /** v4 A — seed the alien gates in every sector (off by default). */
   alienGates?: boolean;
   /** v4 H — grow each sector's real NPC bases (galaxyBasePlan; off by default). */
@@ -552,6 +554,7 @@ export async function bootLivingWorldTestServer(opts: {
       droneCount: 0,
       testMode: true,
       ...(opts.teleportCycleScale !== undefined ? { teleportCycleScale: opts.teleportCycleScale } : {}),
+      ...(opts.transitSpoolMsOverride !== undefined ? { transitSpoolMsOverride: opts.transitSpoolMsOverride } : {}),
       ...(opts.alienGates === true ? { alienGates: true } : {}),
       ...(opts.galaxyBases === true ? { galaxyBases: true } : {}),
       // Seed a base ⇒ also clear the ambient asteroid field: placement is

@@ -103,8 +103,12 @@ beyond a banded grouping distance → project → spring-smooth → fade-in.
 7. **Device-aware defaults and settings** (§4) — touch is its own design, not a
    scaled-down desktop.
 8. **Categories are radar-only** (hostile, neutral, player, structure, asteroid,
-   scrap, lingering); the first four reuse the shared `ENTITY_VISUALS` shapes and
+   scrap, loot, trader); the first four reuse the shared `ENTITY_VISUALS` shapes and
    colours. Off-by-default categories are range-filtered before the sort.
+   RTS Part A: there is no category for a ship an AI pilot flies (the old
+   `lingering`, retired; an old saved pref carrying it parses with the key
+   dropped): every ship is a `player` contact, your own fleet in
+   `OWN_SHIP_COLOUR` (white, the far icons' "you"), others in the player colour.
 9. **Lock marks** (fire control). NPC locks start beyond the screen edge, so an
    off-screen contact locking the local ship (own-ship `lockedBy`, acquiring or
    locked) draws in threat red, and one of the pilot's own LOCKED targets
@@ -131,7 +135,7 @@ Sizes are CSS px (the renderer's resolution handles device pixel ratio).
 | Visibility hysteresis | 16 px | 12 px | R4 |
 | Min spacing (de-overlap) | 12 px | 10 px | R3 |
 | Max icons | 24 | 12 | R3 — fewer on a small screen |
-| Categories on | hostile, player, neutral, structure | hostile, player, structure, neutral | asteroids / scrap / lingering off by default |
+| Categories on | hostile, player, neutral, structure | hostile, player, structure, neutral | asteroids / scrap off by default |
 
 These are starting values to be **validated in the `radar-sandbox` room**
 (objects at graded distances and bearings incl. corners, drones flying in/out
@@ -250,7 +254,7 @@ Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each r
 
 - **Off-screen ring indicator (halo radar) — clustering + on-screen suppression + dead-zone (Equinox Phase 3, WS-B).** `HaloRadar.update()` is per-RAF (invariant #14 — all helpers are alloc-free scalar math + caller-owned `out` scratch). Decision logic is PURE + unit-locked (Phase A3 rule); the Pixi painting stays in `arrowGraphics.ts` / `HaloRadar.ts`. Three behaviours + thresholds: (1) **on-screen entities are excluded at CANDIDATE-BUILD time** via the pure `isEntityOnScreen` (`halo/visibility.ts`), NOT a timer — this replaced the old `ON_SCREEN_HIDE_MS=500` timer that let a just-placed visible structure's ring icon pop in / zoom / vanish. (2) **Distance-banded wedge grouping** — `groupingDistanceForBand(closestDist)` (`halo/wedgeGrouping.ts`) bands the grouping distance from `RADAR_GROUPING_DISTANCE_MIN=250` u (close ⇒ tight grouping, close clusters collapse to one wedge rep) up to `RADAR_GROUPING_DISTANCE_MAX=2000` u (far ⇒ legacy flat distance, spread-out targets keep singleton arrows). (3) **Dead-zone hysteresis band** — `getVisibleBoundsWithDeadZone` insets the on-screen rect by `DEAD_ZONE_PX_DESKTOP=48` / `DEAD_ZONE_PX_MOBILE=28` px (× world-per-px) so an edge-grazing contact doesn't flicker on/off the ring. (4) **Mobile glyph scaling** — `HALO_GLYPH_TOUCH_SCALE=0.65` via `haloGlyphRadius(grouped, isTouch)` (`halo/arrowGraphics.ts`); `isTouch` threads from `PixiRenderer._isTouch` → `new HaloRadar(isTouch)` (constructed in the PixiRenderer constructor BODY, not a field initializer, so it sees the assigned `_isTouch`). Industry-standard rationale + the full constant table: [docs/architecture/off-screen-indicators.md](../../docs/architecture/off-screen-indicators.md). (5) **Lock marks** — an off-screen contact locking you tints threat red, your own LOCKED target tints its group colour; pure `halo/lockMarks.ts` `radarLockTint` over `mirror.localGroups`/`localLockedBy`, marked contacts are never wedge-grouped (`Candidate.marked`) and sort first. Locks: `halo/visibility.test.ts`, `halo/bandedGrouping.test.ts`, `halo/arrowGraphics.radiusScale.test.ts`, `halo/lockMarks.test.ts`; E2E `ring-indicator-*.spec.ts`.
 
-- **Far-zoom ship icons (owner decision 2026-11-12; replaced the round-3 LOD dots).** [render/pixi/FarZoomIcons.ts](../../src/client/render/pixi/FarZoomIcons.ts): a player ship or drone whose TRUE on-screen diameter (`2 · radius · zoom`, CSS px) drops below `FAR_ICON.fadeStartPx` (14) gains a constant 10 px heading chevron that fades in linearly; below `solidPx` (8) it is solid and the sprite stops rendering (`renderable = false`, back above 8 × 1.25). Coloured by the radar relationship colours (hostile / pilot / neutral / trader; you = white; follows `setRadarPrefs`). One shared canvas texture, one container, generation-swept pool, no per-frame allocation. Keep `fadeStartPx` below a fighter/scout at the spawn zoom so normal play is untouched (locked at the 2× ship scale). Asteroids, structures and scrap are out of scope. Locks: `FarZoomIcons.test.ts`, `tests/e2e/capital-helm.spec.ts`. Story: [docs/architecture/off-screen-indicators.md](../../docs/architecture/off-screen-indicators.md) section 8.
+- **Far-zoom ship icons (owner decision 2026-11-12; replaced the round-3 LOD dots).** [render/pixi/FarZoomIcons.ts](../../src/client/render/pixi/FarZoomIcons.ts): a player ship or drone whose TRUE on-screen diameter (`2 · radius · zoom`, CSS px) drops below `FAR_ICON.fadeStartPx` (14) gains a constant 10 px heading chevron that fades in linearly; below `solidPx` (8) it is solid and the sprite stops rendering (`renderable = false`, back above 8 × 1.25). Coloured by the radar relationship colours (hostile / pilot / neutral / trader; yours = white, your AI-flown fleet included; follows `setRadarPrefs`). One shared canvas texture, one container, generation-swept pool, no per-frame allocation. Keep `fadeStartPx` below a fighter/scout at the spawn zoom so normal play is untouched (locked at the 2× ship scale). Asteroids, structures and scrap are out of scope. Locks: `FarZoomIcons.test.ts`, `tests/e2e/capital-helm.spec.ts`. Story: [docs/architecture/off-screen-indicators.md](../../docs/architecture/off-screen-indicators.md) section 8.
 
 ### Incoming naval fire
 

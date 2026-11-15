@@ -274,6 +274,12 @@ async function runOnce(browser: Browser, arm: Arm, scene: PerfScene, log: (m: st
           serverAiAgentsPerTick: s['work'].aiAgentsPerTick, serverSwarmRecordsPerTick: s['work'].swarmRecordsPerTick,
           serverSwarmBytesPerTick: s['work'].swarmBytesPerTick, serverEntitiesPerSnapshot: s['work'].entitiesPerSnapshot,
         } : {}),
+        // RTS wingmen (print-only): brains, re-plans, owner-hostile lookups / scans per tick.
+        ...(s['work']?.wingmenPerTick != null ? {
+          serverWingmenPerTick: s['work'].wingmenPerTick, serverWingmanReplansPerTick: s['work'].wingmanReplansPerTick,
+          serverWingmanHostileQueriesPerTick: s['work'].wingmanHostileQueriesPerTick,
+          serverWingmanHostileScansPerTick: s['work'].wingmanHostileScansPerTick,
+        } : {}),
       },
       raw: { client, server: s },
       ...(series.length ? { series } : {}),

@@ -118,6 +118,22 @@ export const DIRECTOR_MIN_SCALE = 0.01;
  */
 const ZOOM_SNAP_FRACTION = 1e-4;
 
+/**
+ * WASD free-pan ease time: a held key reaches full pan speed over this long,
+ * and a released key glides to a stop over the same time (Command view feel,
+ * owner pick 2026-11-15). Lock: `Camera.test.ts` "WASD free-pan".
+ */
+export const PAN_EASE_MS = 200;
+
+/**
+ * Take-controls glide curve: cubic ease-in-out (zero slope at both ends, so the
+ * camera neither lurches off the start nor brakes hard into the ship).
+ * `t` in [0, 1] → eased fraction in [0, 1].
+ */
+export function glideEase(t: number): number {
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
 const DEFAULTS: ResolvedOpts = {
   minScale: 0.4,
   maxScale: 4,
@@ -188,11 +204,17 @@ export class Camera {
   private zoomAnchorY = 0;
   private hasZoomTarget = false;
 
-  // Phase 5 — WASD free-pan velocity in SCREEN px/sec (spectator). Set on key
-  // state changes (event-driven, never per-frame) via `setPanVelocity`; `tick`
-  // integrates it into the camera transform. Both 0 ⇒ no pan (the common case).
+  // Phase 5 — WASD free-pan velocity in SCREEN px/sec (spectator). The COMMANDED
+  // velocity (`panCmdVx/Vy`) is set on key state changes (event-driven, never
+  // per-frame) via `setPanVelocity`; `tick` eases the ACTUAL velocity
+  // (`panVx/Vy`) toward it at a constant rate (`panAccel`, px/sec²) and
+  // integrates that into the camera transform — so a press eases in and a
+  // release glides to a stop over `PAN_EASE_MS`. All 0 ⇒ no pan (the common case).
+  private panCmdVx = 0;
+  private panCmdVy = 0;
   private panVx = 0;
   private panVy = 0;
+  private panAccel = 0;
 
   // Cinematic director target (CameraDirector — docs/architecture/cinematic-camera.md).
   // When set it has TOP precedence in tick(): director > glide > follow > pan.
@@ -539,16 +561,22 @@ export class Camera {
       this.momentum.step(this.target);
     }
 
-    // One-shot glide (WS-A2) — OVERRIDES follow while active. Eased (ease-out
+    // One-shot glide (WS-A2) — OVERRIDES follow while active. Eased (ease-in-out
     // cubic) fraction from the captured start point to the destination, driven
     // by elapsed ms (framerate-independent). On completion it snaps exactly to
     // the destination and clears, handing the camera back to follow.
     if (this.gliding && this.screenW > 0 && this.screenH > 0) {
       this.glideElapsedMs += dtMs;
       const t = Math.min(1, this.glideElapsedMs / this.glideDurMs);
-      const e = 1 - Math.pow(1 - t, 3); // ease-out cubic
-      const cx = this.glideFromX + (this.glideToX - this.glideFromX) * e;
-      const cy = this.glideFromY + (this.glideToY - this.glideFromY) * e;
+      const e = glideEase(t); // ease-in-out cubic
+      // Glide to the LIVE follow target when there is one (the ship you just
+      // took keeps flying during the glide): a fixed end point left the camera
+      // that far behind, and the follow snapped it on at the end (a jump the
+      // size of the ship's travel over the glide; RTS Part A seamless hand-over).
+      const toX = this.followTarget !== null ? this.followTarget.x : this.glideToX;
+      const toY = this.followTarget !== null ? this.followTarget.y : this.glideToY;
+      const cx = this.glideFromX + (toX - this.glideFromX) * e;
+      const cy = this.glideFromY + (toY - this.glideFromY) * e;
       this.target.x = this.screenW / 2 - cx * this.target.scale.x;
       this.target.y = this.screenH / 2 - cy * this.target.scale.y;
       if (t >= 1) this.gliding = false;
@@ -567,11 +595,54 @@ export class Camera {
     // px-this-frame). Skipped while a pointer drag owns the camera so the two
     // pan sources don't fight; in spectator `followTarget` is null, so this is
     // the only camera driver.
-    if ((this.panVx !== 0 || this.panVy !== 0) && !this.drag.isPanning() && this.pointers.size === 0) {
-      const f = dtMs / 1000;
-      this.target.x += this.panVx * f;
-      this.target.y += this.panVy * f;
+    this.tickPan(dtMs);
+  }
+
+  /** Ease the WASD pan velocity toward the commanded one and integrate it. */
+  private tickPan(dtMs: number): void {
+    if (this.drag.isPanning() || this.pointers.size > 0) {
+      // A pointer owns the camera: drop any WASD momentum so it eases in afresh
+      // after the drag instead of resuming mid-glide.
+      this.panVx = 0;
+      this.panVy = 0;
+      return;
     }
+    if (this.panCmdVx === 0 && this.panCmdVy === 0) {
+      // Following a ship with no pan held: no glide-out (it would only nudge
+      // the followed view for a few frames).
+      if (this.followTarget !== null) this.panVx = this.panVy = 0;
+      if (this.panVx === 0 && this.panVy === 0) return;
+    }
+    const f = dtMs / 1000;
+    // Constant-rate approach toward the commanded velocity — a straight line
+    // in velocity space, so it never overshoots. Position integrates the exact
+    // area under that piecewise-linear velocity (ramp trapezoid + cruise), so
+    // the distance covered does not depend on the frame rate.
+    const v0x = this.panVx;
+    const v0y = this.panVy;
+    const dvx = this.panCmdVx - v0x;
+    const dvy = this.panCmdVy - v0y;
+    const dv = Math.hypot(dvx, dvy);
+    const step = this.panAccel * f;
+    let tRamp = f;
+    if (dv <= step) {
+      this.panVx = this.panCmdVx;
+      this.panVy = this.panCmdVy;
+      tRamp = this.panAccel > 0 ? dv / this.panAccel : 0;
+    } else {
+      this.panVx = v0x + (dvx / dv) * step;
+      this.panVy = v0y + (dvy / dv) * step;
+    }
+    const cruise = f - tRamp;
+    this.target.x += (v0x + this.panVx) * 0.5 * tRamp + this.panVx * cruise;
+    this.target.y += (v0y + this.panVy) * 0.5 * tRamp + this.panVy * cruise;
+  }
+
+  /** Test/diagnostic: the current (eased) WASD pan velocity, SCREEN px/sec. */
+  panVelocityInto(out: { x: number; y: number }): { x: number; y: number } {
+    out.x = this.panVx;
+    out.y = this.panVy;
+    return out;
   }
 
   private tickDirector(dtMs: number): void {
@@ -611,10 +682,18 @@ export class Camera {
    * pan. Cleared when leaving spectator. Convention: +vy pans the VIEW up (the
    * world container moves down to reveal content above), matching the drag-pan
    * sign (`target.y += dy`).
+   *
+   * Eased: this sets the COMMANDED velocity; `tick` ramps the actual velocity
+   * toward it, reaching full speed (and gliding back to rest after a release)
+   * over `PAN_EASE_MS`. The rate is sized from the larger of the current and
+   * new speeds, so both start-up and stop take `PAN_EASE_MS`; top speed is
+   * unchanged.
    */
   setPanVelocity(vx: number, vy: number): void {
-    this.panVx = vx;
-    this.panVy = vy;
+    this.panCmdVx = vx;
+    this.panCmdVy = vy;
+    const top = Math.max(Math.hypot(vx, vy), Math.hypot(this.panVx, this.panVy));
+    if (top > 0) this.panAccel = top / (PAN_EASE_MS / 1000);
   }
 
   // ---------- Coord conversion ----------

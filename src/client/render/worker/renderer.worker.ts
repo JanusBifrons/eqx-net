@@ -45,6 +45,15 @@ const swarmBufTransfer: Transferable[] = [new ArrayBuffer(0)];
 
 let renderer: PixiRenderer | null = null;
 let galaxyLayer: GalaxyMapLayer | null = null;
+/**
+ * True once `renderer.init` has resolved (READY posted). `renderer` is set
+ * BEFORE the async init so config messages that follow BOOT (HUD overlays,
+ * Command view, …) land on it, but the main thread forwards canvas input from
+ * the moment it posts BOOT: a pointer or wheel event that arrives mid-init
+ * has no Camera to move and is dropped (RTS smoke 2026-11-14: "Cannot read
+ * properties of undefined (reading 'onPointerMove')" on every sector load).
+ */
+let rendererReady = false;
 
 /**
  * F1 (warp-spool perf — `docs/HANDOFF-warp-spool-perf-followup.md`).
@@ -105,6 +114,7 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
             post({ type: 'OVERLAY_TAPPED', sectorKey });
           }
         });
+        rendererReady = true;
         post({ type: 'READY' });
         break;
       }
@@ -144,6 +154,18 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
             helmCourseSeq: fb.helmCourseSeq,
             helmCourseX: fb.helmCourseX,
             helmCourseY: fb.helmCourseY,
+            fleetSelSeq: fb.fleetSelSeq,
+            fleetSelIds: fb.fleetSelIds,
+            orderSeq: fb.orderSeq,
+            orderKind: fb.orderKind,
+            orderX: fb.orderX,
+            orderY: fb.orderY,
+            orderTargetId: fb.orderTargetId,
+            takeControlsSeq: fb.takeControlsSeq,
+            takeControlsId: fb.takeControlsId,
+            fleetPickPoints: fb.fleetPickPoints,
+            fleetPickSeq: fb.fleetPickSeq,
+            fleetPickResult: fb.fleetPickResult,
             placementPreviewConnectionCount: fb.placementPreviewConnectionCount,
             selectedPickId: fb.selectedPickId,
             selectedPickKind: fb.selectedPickKind,
@@ -166,13 +188,13 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
       }
 
       case 'POINTER_EVENT': {
-        if (!renderer) return;
+        if (!renderer || !rendererReady) return;
         renderer.forwardPointerEvent(msg.native);
         break;
       }
 
       case 'WHEEL_EVENT': {
-        if (!renderer) return;
+        if (!renderer || !rendererReady) return;
         renderer.forwardWheelEvent(msg.native.deltaY, msg.native.offsetX, msg.native.offsetY);
         break;
       }
@@ -237,6 +259,30 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
         break;
       }
 
+      case 'SET_FLEET_ORDER_MODE': {
+        if (!renderer) return;
+        renderer.setFleetOrderMode(msg.mode);
+        break;
+      }
+
+      case 'SET_FLEET_OVERLAY_MODEL': {
+        if (!renderer) return;
+        renderer.setFleetOverlayModel(msg.model);
+        break;
+      }
+
+      case 'SET_FLEET_PICK': {
+        if (!renderer) return;
+        renderer.setFleetPick(msg.kind);
+        break;
+      }
+
+      case 'COMMIT_FLEET_PICK': {
+        if (!renderer) return;
+        renderer.commitFleetPick();
+        break;
+      }
+
       case 'SET_RADAR_PREFS': {
         if (!renderer) return;
         renderer.setRadarPrefs(msg.prefs);
@@ -264,6 +310,12 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
       case 'GLIDE_CAMERA': {
         if (!renderer) return;
         renderer.glideCameraTo(msg.gameX, msg.gameY, msg.durationMs);
+        break;
+      }
+
+      case 'SELECT_FLEET_SHIPS': {
+        if (!renderer) return;
+        renderer.selectFleetShips(msg.ids);
         break;
       }
 
@@ -340,6 +392,7 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
           }
           renderer = null;
         }
+        rendererReady = false;
         self.close();
         break;
       }

@@ -120,6 +120,19 @@ export const WelcomeSchema = z
   })
   .strict();
 
+/** RTS command layer (slice 10) — server → client: the server just put this
+ *  player into COMMAND view (a `startMode: 'command'` join parked their hull as
+ *  an AI-flown lingering hull at the arrival flip). The client drops its local
+ *  prediction body and enters command view (`pilotMode = 'spectator'`). Sent
+ *  once per such join; the snapshot (own hull inactive + a parked hull in `mirror.ships`)
+ *  is the state carrier (#16), this only flips the local mode at once. */
+export const ControlModeMessageSchema = z
+  .object({
+    type: z.literal('control_mode'),
+    mode: z.enum(['command', 'fly']),
+  })
+  .strict();
+
 /** Authoritative snapshot broadcast by the server at 20 Hz for client-side
  *  reconciliation. Phase 5c: `obstacles` removed — asteroids and drones now
  *  flow through the binary swarm channel (see `client.send('swarm', buf)`)
@@ -196,6 +209,9 @@ export interface SnapshotMessage {
        *  invariant). Phase 6b introduces `isActive=false` for lingering
        *  hulls; client uses this to gate visibility / interaction. */
       isActive: boolean;
+      /** Present on EVERY snapshot while any bit is held; absent = idle
+       *  (RTS Part A S1, server `shouldIncludeLastInput`, client
+       *  `preResetRemoteShips`). Never deduped: the client drops snapshots. */
       lastInput?: {
         thrust: boolean;
         turnLeft: boolean;

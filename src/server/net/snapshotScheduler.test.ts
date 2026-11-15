@@ -16,7 +16,6 @@ import {
   createIdleTracker,
   noteSectorEvent,
   isSectorIdle,
-  createLastInputCache,
   shouldIncludeLastInput,
   type ShipInputBits,
 } from './snapshotScheduler';
@@ -285,38 +284,19 @@ describe('snapshotScheduler — re-arm on event (Stage 5 cycle 6)', () => {
   });
 });
 
-describe('snapshotScheduler — lastInput omission (Stage 5 cycle 7)', () => {
+describe('snapshotScheduler — lastInput: held bits always ride, idle is absent (RTS Part A S1)', () => {
   const idle: ShipInputBits = { thrust: false, turnLeft: false, turnRight: false, boost: false, reverse: false };
-  const thrustOn: ShipInputBits = { thrust: true, turnLeft: false, turnRight: false, boost: false, reverse: false };
-  const thrustAndTurn: ShipInputBits = { thrust: true, turnLeft: true, turnRight: false, boost: false, reverse: false };
 
-  it('first call for a ship always includes lastInput', () => {
-    const cache = createLastInputCache();
-    expect(shouldIncludeLastInput(cache, 'ship1', idle)).toBe(true);
+  it('idle bits are never sent (absent = idle on the client)', () => {
+    expect(shouldIncludeLastInput(idle)).toBe(false);
+    expect(shouldIncludeLastInput(idle)).toBe(false);
   });
 
-  it('repeated identical input is omitted on the second send', () => {
-    const cache = createLastInputCache();
-    expect(shouldIncludeLastInput(cache, 'ship1', idle)).toBe(true);   // 1st send: include
-    expect(shouldIncludeLastInput(cache, 'ship1', idle)).toBe(false);  // 2nd send: omit
-    expect(shouldIncludeLastInput(cache, 'ship1', idle)).toBe(false);  // 3rd send: omit
-  });
-
-  it('a change in any bit re-includes the field', () => {
-    const cache = createLastInputCache();
-    shouldIncludeLastInput(cache, 'ship1', idle);
-    shouldIncludeLastInput(cache, 'ship1', idle); // omitted (same)
-    expect(shouldIncludeLastInput(cache, 'ship1', thrustOn)).toBe(true);     // thrust changed
-    expect(shouldIncludeLastInput(cache, 'ship1', thrustOn)).toBe(false);    // unchanged again
-    expect(shouldIncludeLastInput(cache, 'ship1', thrustAndTurn)).toBe(true); // turnLeft changed
-  });
-
-  it('per-ship cache is isolated', () => {
-    const cache = createLastInputCache();
-    expect(shouldIncludeLastInput(cache, 'shipA', idle)).toBe(true);
-    expect(shouldIncludeLastInput(cache, 'shipB', idle)).toBe(true);   // ship B is "first time"
-    expect(shouldIncludeLastInput(cache, 'shipA', idle)).toBe(false);  // ship A still cached
-    expect(shouldIncludeLastInput(cache, 'shipB', thrustOn)).toBe(true);
-    expect(shouldIncludeLastInput(cache, 'shipA', idle)).toBe(false);  // unaffected by ship B's change
+  it('any held bit is sent on EVERY call, unchanged or not (no dedupe: a dropped snapshot must not strand a held key)', () => {
+    for (const bit of ['thrust', 'turnLeft', 'turnRight', 'boost', 'reverse'] as const) {
+      const held: ShipInputBits = { ...idle, [bit]: true };
+      expect(shouldIncludeLastInput(held), bit).toBe(true);
+      expect(shouldIncludeLastInput(held), bit + ' (repeat)').toBe(true);
+    }
   });
 });

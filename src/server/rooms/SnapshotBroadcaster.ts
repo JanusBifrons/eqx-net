@@ -14,8 +14,6 @@
  *     loops drift, which caused ~25% missed broadcasts pre-Phase-3).
  *   - `sabAppliedTicks` — per-player worker-applied tick anchor (read
  *     by the per-recipient snapshot for `ackedTick`).
- *   - `lastInputCaches` — per-session caches that decide when to
- *     omit `lastInput` from the wire (idle-bits dedupe).
  *   - `interestScratch` — per-session 9-cell drone interest sets,
  *     reused by `update()`'s swarm-broadcast block.
  *
@@ -47,8 +45,6 @@ import { SWARM_KIND_STRUCTURE } from '../../shared-types/swarmWireFormat.js';
 import {
   shouldBroadcastFar,
   shouldIncludeLastInput,
-  createLastInputCache,
-  type LastInputCache,
   type ShipInputBits,
 } from '../net/snapshotScheduler.js';
 import { checkBackpressure } from '../net/Backpressure.js';
@@ -200,14 +196,16 @@ export interface SnapshotBroadcasterDeps {
   /** How many of those hold a completed lock (`lockedByL`). */
   lockedByLockedOf?: (playerId: string) => number;
   /** Phase 4 warp travel — the player's ship dropped out of a warp in the last
-   *  moment (others draw the arrival). Absent ⇒ never. */
+   *  moment (others draw the arrival). Also asked with a parked hull's
+   *  shipInstanceId (RTS fleet warp: the hull was just handed in). Absent ⇒ never. */
   warpArrived?: (playerId: string) => boolean;
   /** The player's ship is still joining (its client hasn't said ready): it is
    *  sent to its own pilot only, never to others (it would show as a parked
    *  hull, then blink to active). Absent ⇒ never. */
   isJoining?: (playerId: string) => boolean;
   /** Phase 4 travel: the player is spooling an inter-sector transit (shown as
-   *  the same warp build-up, 1). Absent ⇒ never. */
+   *  the same warp build-up, 1). Also asked with a shipInstanceId (RTS fleet
+   *  warp: that ship spools in a fleet group). Absent ⇒ never. */
   transitSpooling?: (playerId: string) => boolean;
   /** Living World P5 — the blueprints fitted to a ship instance (own active
    *  ship only on the wire). A SHARED reference; undefined ⇒ none known. */
@@ -424,8 +422,6 @@ export class SnapshotBroadcaster {
   broadcastCounter = 0;
   /** Per-player worker-applied tick. Updated from the room's worker SAB read. */
   readonly sabAppliedTicks = new Map<string, number>();
-  /** Per-session lastInput dedupe caches. */
-  readonly lastInputCaches = new Map<string, LastInputCache>();
   /** Per-session 9-cell drone interest sets (populated by the room's
    *  swarm-broadcast block earlier in update()). */
   readonly interestScratch = new Map<string, Set<number>>();
@@ -751,7 +747,6 @@ export class SnapshotBroadcaster {
 
   /** Drop per-session caches on disconnect. */
   onClientLeave(sessionId: string): void {
-    this.lastInputCaches.delete(sessionId);
     this.interestScratch.delete(sessionId);
     this.deps.shellEvents?.()?.forgetViewer(sessionId);
   }
@@ -795,7 +790,8 @@ export class SnapshotBroadcaster {
       entry.lastInput.boost     = !!(flags & FLAG_INPUT_BOOST);
       entry.lastInput.reverse   = !!(flags & FLAG_INPUT_REVERSE);
       entry.warp = flags & FLAG_WARP_CRUISE ? 2 : flags & FLAG_WARP_SPOOL ? 1
-        : this.deps.transitSpooling?.(playerId) === true ? 1
+        : this.deps.transitSpooling?.(playerId) === true
+          || this.deps.transitSpooling?.(entry.shipInstanceId) === true ? 1
         : this.deps.warpArrived?.(playerId) === true ? 3 : 0;
       entry.joining = !ship.isActive && this.deps.isJoining?.(playerId) === true;
       entry.energy = ship.energy;
@@ -811,8 +807,12 @@ export class SnapshotBroadcaster {
     }
     // Phase 6b — append lingering hulls. Pose from lingeringPoseCache;
     // owner from state.ships entry's playerId; isActive=false. lastInput
-    // is all-false (the worker doesn't apply input to lingering hulls).
-    for (const [shipInstanceId] of d.lingeringSlots) {
+    // comes from the hull's slot FLAGS word, like an active ship's: since RTS
+    // slice 4 a wingman flies the hull with INPUT commands and the worker
+    // mirrors the last-applied bits there (all-false for a hull nobody
+    // flies). Observers forward-predict the hull with them and draw its
+    // thrust flame (RTS slice 4c). Same idle-bits dedupe as active ships.
+    for (const [shipInstanceId, slot] of d.lingeringSlots) {
       const ship = d.shipsMap.get(shipInstanceId);
       if (!ship || !ship.alive) continue;
       const pose = d.lingeringPoseCache.get(shipInstanceId);
@@ -822,11 +822,18 @@ export class SnapshotBroadcaster {
       entry.shipInstanceId = shipInstanceId;
       entry.isActive = false;
       entry.pose = pose;
-      entry.lastInput.thrust = false;
-      entry.lastInput.turnLeft = false;
-      entry.lastInput.turnRight = false;
-      entry.lastInput.boost = false;
-      entry.lastInput.reverse = false;
+      const lflags = d.sabU32[slotBase(slot) + SLOT_FLAGS_OFF] ?? 0;
+      entry.lastInput.thrust    = !!(lflags & FLAG_INPUT_THRUST);
+      entry.lastInput.turnLeft  = !!(lflags & FLAG_INPUT_TURN_LEFT);
+      entry.lastInput.turnRight = !!(lflags & FLAG_INPUT_TURN_RIGHT);
+      entry.lastInput.boost     = !!(lflags & FLAG_INPUT_BOOST);
+      entry.lastInput.reverse   = !!(lflags & FLAG_INPUT_REVERSE);
+      // RTS Part A S2: an AI-flown hull's flame rides the SAME carriers as
+      // every ship (snapshot thrustingIds / boostingIds), keyed by its
+      // shipInstanceId (never collides with a playerId), read from the
+      // mirrored INPUT bits. Alive LINGERING hulls only (#17, checked above).
+      if (entry.lastInput.thrust) this._thrustingIdsScratch.push(shipInstanceId);
+      if (entry.lastInput.boost) this._boostingIdsScratch.push(shipInstanceId);
       entry.energy = 0;
       // R2.32 — a lingering hull keeps its at-disconnect shield state so a
       // parked hull whose shield was broken still renders hull-exposed.
@@ -839,7 +846,13 @@ export class SnapshotBroadcaster {
       // upgraded hull renders its extra turrets to observers).
       entry.mounts = ship.mounts ?? EMPTY_MOUNTS;
       entry.poseEpoch = 0;
-      entry.warp = 0;
+      // RTS fleet warp (S4): a hull spooling in a fleet warp shows the same
+      // build-up as a pilot (1); a hull a fleet warp just handed in draws the
+      // drop (3). The same deps as an active ship, keyed by the hull's
+      // shipInstanceId (never collides with a playerId); the "just arrived"
+      // window is the room's WarpTravelTracker, never a timer of its own.
+      entry.warp = this.deps.transitSpooling?.(shipInstanceId) === true ? 1
+        : this.deps.warpArrived?.(shipInstanceId) === true ? 3 : 0;
       entry.joining = false;
       allShipsCount++;
       this._aliveShipInstanceIds.add(shipInstanceId);
@@ -850,6 +863,9 @@ export class SnapshotBroadcaster {
     // Boosting/thrusting filter — small lists, sent in every snapshot.
     // Class-field scratches cleared at the top of broadcast().
     const boostingIds = this._boostingIdsScratch;
+    // `boostingPlayers` also holds AI-flown hulls' shipInstanceIds (energy
+    // drain); those were pushed from the lingering loop above and fail this
+    // playerId alive filter, so none appears twice.
     for (const id of d.boostingPlayers) if (this._aliveIdsScratch.has(id)) boostingIds.push(id);
     const thrustingIds = this._thrustingIdsScratch;
     for (const id of d.thrustingPlayers) if (this._aliveIdsScratch.has(id)) thrustingIds.push(id);
@@ -885,12 +901,6 @@ export class SnapshotBroadcaster {
       const recipientPose = d.shipPoseCache.get(recipientPlayerId);
       if (!recipientPose) continue;
 
-      let lastInputCache = this.lastInputCaches.get(client.sessionId);
-      if (!lastInputCache) {
-        lastInputCache = createLastInputCache();
-        this.lastInputCaches.set(client.sessionId, lastInputCache);
-      }
-
       // Build per-recipient states map. The Record itself MUST be
       // freshly allocated (notepack.io would encode stale keys from a
       // reused Record). The VALUES inside are pooled in
@@ -899,8 +909,19 @@ export class SnapshotBroadcaster {
       for (const ship of allShips) {
         // A ship still joining is its own pilot's business until it arrives.
         if (ship.joining && ship.playerId !== recipientPlayerId) continue;
-        const includeLastInput = shouldIncludeLastInput(lastInputCache, ship.playerId, ship.lastInput);
-        const angles = d.playerMountAngles.get(ship.playerId);
+        // Held bits ride every snapshot; idle ⇒ absent (RTS Part A S1, see
+        // `shouldIncludeLastInput`). Stateless, so a dropped snapshot can
+        // never leave a control stuck on at a viewer.
+        const includeLastInput = shouldIncludeLastInput(ship.lastInput);
+        // A lingering hull's turrets are its own (an AI-flown hull's are keyed
+        // by shipInstanceId, RTS slice 5), never its owner's active ship's.
+        // A hull its owner just took back (isActive=false through the join
+        // handshake, out of `lingeringSlots`) is keyed by its pilot already:
+        // reading it by shipInstanceId snapped its turrets home for the
+        // handshake (seamless hand-over, `SectorRoom.shipKeyMoved`).
+        const angles = d.playerMountAngles.get(
+          d.lingeringSlots.has(ship.shipInstanceId) ? ship.shipInstanceId : ship.playerId,
+        );
         let mountAnglesArr: number[] | undefined;
         if (angles && angles.length > 0) {
           let anyNonZero = false;

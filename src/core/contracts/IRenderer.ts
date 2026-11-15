@@ -56,6 +56,27 @@ export interface ShipRenderState {
    *  from the catalogue — never on the wire). Absent ⇒ no activated mounts.
    *  Non-spatial discrete data — purity-clean (Invariant #2). */
   activatedMounts?: Array<{ slotId: string; weaponId: string }>;
+  /** RTS Part A S0 — the wire's `isActive` (a session/pilot is driving the
+   *  hull), mirrored as-is. `false` on a parked (lingering) hull and on the
+   *  local welcome ship during the pending-join handshake; absent ⇒ not yet
+   *  written (treated as active). Read only through the named predicates in
+   *  `src/client/render/shipOwnership.ts` (#17), never ad hoc. */
+  isActive?: boolean;
+  /** The playerId that owns this hull. Active entries in `mirror.ships` are
+   *  keyed by it; parked (AI-flown) hulls, keyed by shipInstanceId in the same
+   *  map since RTS Part A S3, always carry it. Read through `shipOwner` / `isOwnedByMe`. */
+  ownerPlayerId?: string;
+  /** The wire's shipInstanceId of the hull this entry draws (the snapshot /
+   *  schema key). A parked hull is keyed by it; an active ship (keyed by its
+   *  pilot's playerId) carries it so a re-key (taking or letting go of the
+   *  controls) finds the entry it moves (`net/shipRekey.ts`). */
+  shipInstanceId?: string;
+  /** RTS Part A step 8: the room-state `ShipState.health` / `maxHealth`,
+   *  copied by `syncMirror` for every ship (pilot- or AI-flown). The fleet
+   *  panel's hull % reads these (`net/shipSchemaHealth.ts`). Absent until the
+   *  schema brings them. Discrete scalars, never spatial (#2). */
+  health?: number;
+  maxHealth?: number;
 }
 
 /**
@@ -481,15 +502,13 @@ export interface RenderMirror {
    *  performance.now base; deltas only). The cinematic camera's velocity
    *  estimate uses it. Absent ⇒ the renderer's clock. */
   frameTimeMs?: number;
+  /** EVERY ship (RTS Part A S3, one ship list): active ships keyed by their
+   *  pilot's playerId (local prediction is playerId-keyed), parked / AI-flown
+   *  hulls (wire `isActive=false`) keyed by shipInstanceId. Which key a wire
+   *  ship gets is `client/net/shipMirrorKey.ts`; loops that treat the two
+   *  differently gate on the named predicates in
+   *  `client/render/shipOwnership.ts` (`isParkedHull`, #17). */
   ships: Map<string, ShipRenderState>;
-  /** Phase 6b — lingering player hulls (isActive=false on the wire).
-   *  These are NOT in `mirror.ships` (which is playerId-keyed and would
-   *  collide with a player's currently-piloted hull). The renderer iterates
-   *  this map separately and draws with a grey-ish tint
-   *  to signal "this hull is parked but still belongs to a real player".
-   *  Pose fields populated from `SnapshotMessage.states[*]` entries whose
-   *  `isActive === false`; identity (kind, displayName) carried alongside. */
-  lingeringShips?: Map<string, ShipRenderState & { ownerPlayerId: string }>;
   /**
    * Swarm entities (asteroids + drones) shipped via the binary swarm channel.
    * Keyed by the server's dense u16 entityId. Sleeping entries remain in the
@@ -685,6 +704,15 @@ export interface RenderMirror {
   damagedShips?: Set<string>;
   /** Ships that just exploded (single-frame trigger). */
   explodingShips?: Set<string>;
+  /** Ship re-keys since the last rendered frame, as flat pairs
+   *  `[from0, to0, from1, to1, ...]` (one-frame trigger, cleared by
+   *  `consumeOneFrameTriggers`). A ship moves between its pilot's playerId and
+   *  its shipInstanceId when someone takes or lets go of its controls (RTS
+   *  Part A). The renderer moves its per-ship state (sprite, art, turrets,
+   *  health bar, label, engine and shield effects, selection) to the new key
+   *  instead of rebuilding it, so the hand-over doesn't flicker. Written only
+   *  by `ColyseusClient.rekeyShip`. */
+  pendingShipRekeys?: string[];
   /** Phase 4 (Leveling & XP, WS-B1) — one-shot level-up triggers to play this
    *  frame. Populated by `ColyseusClient`'s `ship_level_up` handler (pooled —
    *  the array's slot instances persist; `.length` truncates the logical view,
@@ -824,7 +852,7 @@ export interface RendererFeedback {
    * drawn-artefact signal (NOT the registered count). Lets the worker-boundary
    * lingering-render probe assert a parked hull's shield aura actually draws
    * (P3.12 / WS-C3): pre-fix `getEntityPose` returned null for lingering hulls
-   * (their sprites live in `lingeringSprites`, not `sprites`), so the ring
+   * (their sprites lived in a separate map before RTS Part A S3), so the ring
    * registered but stayed `visible=false` → this count was 0. Mirrors
    * `damageNumberActiveCount` as a test-observable.
    */
@@ -920,6 +948,43 @@ export interface RendererFeedback {
   helmCourseX: number;
   helmCourseY: number;
   /**
+   * RTS command view (slice 13a). The renderer owns the own-ship fleet
+   * selection; `fleetSelSeq` bumps whenever it changes and `fleetSelIds` is
+   * then replaced (a fresh array per change, never mutated in place), so the
+   * main thread edge-detects on the seq. Ids follow the pick convention
+   * (active ship = playerId, lingering hull = shipInstanceId).
+   */
+  fleetSelSeq: number;
+  fleetSelIds: readonly string[];
+  /**
+   * RTS command view (slice 13a): the latest order given with a right-click
+   * (mouse) in command view. `orderSeq` bumps per order; `orderX/Y` is the
+   * GAME-space point; `orderTargetId` is set for an attack order, else null.
+   */
+  orderSeq: number;
+  orderKind: 'move' | 'attack';
+  orderX: number;
+  orderY: number;
+  orderTargetId: string | null;
+  /**
+   * RTS slice 10: a double tap / double click on one of your own parked ships
+   * in command view = take the controls of it. `takeControlsSeq` bumps per
+   * double tap; `takeControlsId` is the ship (lingering hull shipInstanceId).
+   * The main thread sends `pilot_ship` once per seq.
+   */
+  takeControlsSeq: number;
+  takeControlsId: string | null;
+  /**
+   * RTS slice 14b: "pick on the map" for patrol / escort / retreat.
+   * `fleetPickPoints` is the number of patrol waypoints picked so far (the
+   * points stay in the renderer). `fleetPickSeq` bumps when a pick finishes;
+   * `fleetPickResult` is then replaced (never mutated), and the main thread
+   * sends it once as `set_mode` for the selection.
+   */
+  fleetPickPoints: number;
+  fleetPickSeq: number;
+  fleetPickResult: FleetPickResultWire | null;
+  /**
    * Structure placement connection-range preview (structures follow-up Item C).
    * The number of existing structures the placement ghost WOULD connect to if
    * placed at its current position — computed by the `ConnectorRenderer` preview
@@ -935,7 +1000,7 @@ export interface RendererFeedback {
    * owns the selected entity (set on a gameplay tap that resolves to an
    * entity via `pickEntityAt`, toggled off on re-tap, cleared on empty-space
    * tap) and publishes its id here so the main thread can mirror it into the
-   * discrete Zustand `selectedEntityId` (panel visibility). `null` when nothing
+   * discrete Zustand `selection.focusId` (panel visibility). `null` when nothing
    * is selected. The id form matches the `HealthBarManager` lookup convention:
    * `playerId` for a ship, `swarm-<entityId>` for a drone/structure. Non-spatial
    * / UI-affordance surface — not consumed by gameplay logic.
@@ -1061,6 +1126,31 @@ export interface IRenderer {
    */
   setSpectator(active: boolean): void;
   /**
+   * RTS command view (slice 12): what a TOUCH tap with a fleet selection
+   * orders — 'move' to the tap point, or 'attack' the entity under it. The
+   * fleet strip's discrete toggle, pushed on change (worker
+   * `SET_FLEET_ORDER_MODE`). Mouse orders stay on right-click.
+   */
+  setFleetOrderMode(mode: 'move' | 'attack'): void;
+  /**
+   * RTS command view (slice 15a): squads + order markers of the local
+   * player's own ships, built on the main thread from `fleet/fleetStatus.ts`
+   * and pushed only when its version moves (worker `SET_FLEET_OVERLAY_MODEL`).
+   * The renderer expands selections to whole squads and draws order lines
+   * for the SELECTED ships from it. Plain data, structured-cloneable.
+   */
+  setFleetOverlayModel(model: FleetOverlayModel): void;
+  /**
+   * RTS slice 14b: start picking a mode's target on the map (patrol route,
+   * ship to escort, retreat point), or cancel with null. While picking, a
+   * map tap goes to the pick instead of the selection (worker
+   * `SET_FLEET_PICK`). Points are dropped on every call.
+   */
+  setFleetPick(kind: FleetPickKindWire | null): void;
+  /** RTS slice 14b: Done for a patrol pick (worker `COMMIT_FLEET_PICK`).
+   *  Publishes the route via feedback when it has enough points. */
+  commitFleetPick(): void;
+  /**
    * The sector being shown changed (null on the galaxy map). Picks the new
    * backdrop's nebula (plan iridescent-seeking-rainbow v3, B2). On the worker
    * path the worker already hears it through `SET_CURRENT_SECTOR`.
@@ -1098,6 +1188,13 @@ export interface IRenderer {
    * transition; once it completes, follow resumes on the new ship.
    */
   glideCameraTo(gameX: number, gameY: number, durationMs: number): void;
+  /**
+   * RTS fleet warp (S8) — make these own ships THE selection (the one the
+   * renderer owns; the focus is cleared). Ids not present as own ships in the
+   * mirror are skipped. Used once when a commander arrives with the fleet
+   * they warped: the same shipInstanceIds, re-selected in the new sector.
+   */
+  selectFleetShips(ids: readonly string[]): void;
   /**
    * Phase 5 — set the SPECTATOR WASD free-pan velocity in SCREEN px/sec. The
    * main thread computes it from the held WASD/arrow keys and calls this ONLY on
@@ -1153,3 +1250,33 @@ export type WarpCenter =
   | { kind: 'entity'; entityId: string }
   | { kind: 'world'; worldX: number; worldY: number }
   | { kind: 'screen'; screenX: number; screenY: number };
+
+/** One own ship's squad + order, as the renderer needs it (RTS slice 15a). */
+export interface FleetOverlayShip {
+  id: string;
+  squadId: string | null;
+  orderKind: 'move' | 'attack' | 'stop' | null;
+  /** Move destination, game space. */
+  destX?: number;
+  destY?: number;
+  /** Attack target (pick-id convention: playerId / shipInstanceId / `swarm-<n>`). */
+  targetId?: string;
+  /** Ship being escorted (same id convention). */
+  escortId?: string;
+  /** Patrol route waypoints, game space (a closed loop). */
+  route?: [number, number][];
+}
+
+/** RTS slice 14b: what a map pick is for. */
+export type FleetPickKindWire = 'patrol' | 'escort' | 'retreat';
+
+/** RTS slice 14b: a finished map pick (game space). Plain data. */
+export type FleetPickResultWire =
+  | { kind: 'patrol'; route: [number, number][] }
+  | { kind: 'escort'; escortId: string }
+  | { kind: 'retreat'; x?: number; y?: number };
+
+/** See `IRenderer.setFleetOverlayModel`. */
+export interface FleetOverlayModel {
+  ships: FleetOverlayShip[];
+}

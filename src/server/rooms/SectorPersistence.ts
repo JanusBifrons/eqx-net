@@ -36,6 +36,7 @@ import {
   type SectorSnapshotScrap,
   type SectorSnapshotLingeringHull,
 } from './SectorSnapshot.js';
+import type { FleetSavedSquad } from '../fleet/fleetPersistence.js';
 
 /** The minimal structure shape `persist()` reads (a subset of `StructureRecord`). */
 export interface PersistableStructure {
@@ -97,6 +98,13 @@ export interface SectorPersistenceDeps {
   /** Reconstruct the lingering hulls on hydrate (re-spawn the in-world hull).
    *  Owned by `SectorRoom`. Runs during hydrate (before any onJoin). */
   restoreLingeringHulls: (rows: readonly SectorSnapshotLingeringHull[]) => void;
+  /** RTS slice 9 — the wingman squads to persist (`FleetCommandSubsystem.exportSquads`).
+   *  Optional: absent ⇒ no squads are written. */
+  fleetSquads?: () => readonly FleetSavedSquad[];
+  /** RTS slice 9 — re-form the saved squads on hydrate, AFTER the lingering
+   *  hulls (and their wingman brains) are restored. Rows are unvalidated JSON:
+   *  the subsystem validates each. Optional: absent ⇒ squads are not restored. */
+  restoreFleetSquads?: (rows: readonly unknown[]) => void;
   /** Write a snapshot row for this sector (production: `saveSnapshot`). */
   saveRow: (sectorKey: string, payload: SectorSnapshotPayload) => void;
   /** Load the most-recent snapshot row for this sector (production: a sqlite
@@ -219,6 +227,7 @@ export class SectorPersistence {
     for (const s of d.scrapEntities()) scrap.push(s);
     const lingeringHulls: SectorSnapshotLingeringHull[] = [];
     for (const h of d.lingeringHulls()) lingeringHulls.push(h);
+    const squads: FleetSavedSquad[] = d.fleetSquads !== undefined ? [...d.fleetSquads()] : [];
     const payload: SectorSnapshotPayload = {
       schemaVersion: CURRENT_SCHEMA_VERSION,
       // Campaign 6.2 — stamp the live structure catalogue so hydrate can
@@ -230,6 +239,7 @@ export class SectorPersistence {
       ...(structures.length > 0 ? { structures } : {}),
       ...(scrap.length > 0 ? { scrap } : {}),
       ...(lingeringHulls.length > 0 ? { lingeringHulls } : {}),
+      ...(squads.length > 0 ? { squads } : {}),
     };
     try {
       d.saveRow(sectorKey, payload);
@@ -323,6 +333,16 @@ export class SectorPersistence {
         d.logger.warn({ err, sectorKey }, 'lingering-hull restore failed — partial hydrate');
       }
     }
+    // RTS slice 9 — squads after the hulls (members must be attached first).
+    // Older snapshots have none; a non-array is ignored.
+    const squads: readonly unknown[] = Array.isArray(payload.squads) ? payload.squads : [];
+    if (squads.length > 0 && d.restoreFleetSquads !== undefined) {
+      try {
+        d.restoreFleetSquads(squads);
+      } catch (err) {
+        d.logger.warn({ err, sectorKey }, 'wingman squad restore failed — partial hydrate');
+      }
+    }
     d.logger.info(
       {
         sectorKey,
@@ -331,6 +351,7 @@ export class SectorPersistence {
         structures: structures.length,
         scrap: scrap.length,
         lingeringHulls: lingeringHulls.length,
+        squads: squads.length,
       },
       'sector hydrated from snapshot',
     );
