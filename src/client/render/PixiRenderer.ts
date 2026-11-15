@@ -73,7 +73,7 @@ import {
 import { newSpeedFxSample, speedFxSampleInto } from './camera/speedFxSample';
 import { GroupBoundsScanner } from './camera/groupBounds';
 import type { CameraCue, CameraGroup } from '@core/contracts/cameraScript';
-import { REMOTE_BEAM_STYLE, MINING_BEAM_STYLE, remoteBeamStyleForMount, remoteBeamLine, remoteBeamSolidLen, addBeamLights, beamLightBudget, type RemoteBeamLine } from './beamStyles';
+import { REMOTE_BEAM_STYLE, MINING_BEAM_STYLE, remoteBeamStyleForMount, remoteBeamLine, remoteBeamSolidLen, addBeamLights, beamLightBudget, BeamHitMemory, type RemoteBeamLine } from './beamStyles';
 import { MountVisualManager } from './MountVisualManager';
 import { BackgroundGrid } from './BackgroundGrid';
 import { StarfieldBackground } from './StarfieldBackground';
@@ -389,6 +389,7 @@ export class PixiRenderer implements IRenderer {
    *  (JS Map preserves insertion order). */
   /** Scratch for `remoteBeamLine` (one per frame loop, #14). */
   private readonly _remoteBeamLine: RemoteBeamLine = { fromX: 0, fromY: 0, toX: 0, toY: 0 };
+  private readonly _beamHitMem = new BeamHitMemory(); // the cut stays lit through a kill follow-through
   private readonly _remoteBeamCache: Array<{
     shooterId: string;
     mountId: string;
@@ -2048,17 +2049,13 @@ export class PixiRenderer implements IRenderer {
             slot = { shooterId, mountId, fromX, fromY, toX, toY, alpha, style: null };
             cache[idx] = slot;
           }
-          slot.shooterId = shooterId;
-          slot.mountId = mountId;
-          slot.fromX = fromX;
-          slot.fromY = fromY;
-          slot.toX = toX;
-          slot.toY = toY;
+          slot.shooterId = shooterId; slot.mountId = mountId;
+          slot.fromX = fromX; slot.fromY = fromY; slot.toX = toX; slot.toY = toY;
           slot.alpha = alpha;
           slot.style = style;
           // ...and burns full width to its hit point (a short fade past a miss).
           slot.solidLen = remoteBeamSolidLen(style, Math.hypot(toX - fromX, toY - fromY), laser.hit === true);
-          if (!isMining) this._fxRemoteHit[idx] = laser.hit === true;
+          if (!isMining) { this._fxRemoteHit[idx] = laser.hit === true; this._beamHitMem.track(shooterId, mountId, laser.hit === true, slot); }
           // A beam landing on a shield is a held contact there.
           if (this._fxShieldsOn && !isMining && laser.hit && laser.targetId) this._fxShields!.beam(laser.targetId, 1 + idx, toX, toY, this._fxShieldPose);
           // A beam that hit something with no target id stopped on a fence.
@@ -2067,7 +2064,7 @@ export class PixiRenderer implements IRenderer {
           else slotIdx++;
         }
       }
-      this._remoteBeamCacheCount = slotIdx;
+      this._remoteBeamCacheCount = slotIdx; this._beamHitMem.endFrame();
       this._miningBeamCacheCount = miningIdx;
 
       // Sprite-pool driven render — no clear/redraw, just transforms.
@@ -2085,7 +2082,7 @@ export class PixiRenderer implements IRenderer {
       this.remoteBeamGfx.visible = false;
       this._remoteBeamPool.hideAll();
       this._fxRemoteBeams?.hideAll();
-      this._remoteBeamCacheCount = 0;
+      this._remoteBeamCacheCount = 0; this._beamHitMem.endFrame();
       if (this._miningBeamPool && this.miningBeamGfx) {
         this.miningBeamGfx.visible = false;
         this._miningBeamPool.hideAll();

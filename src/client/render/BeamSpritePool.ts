@@ -56,6 +56,11 @@ export interface BeamView {
    * Absent/null: the pool's style. The texture stays the pool's.
    */
   style?: BeamSpriteStyle | null;
+  /** Where a no-hit pulse crosses what its mount last hit on this line (the
+   *  heavy beam's kill follow-through burning through the wreck), set by
+   *  `BeamHitMemory.track`; the hit spot lights there. NaN/absent: none. */
+  passX?: number;
+  passY?: number;
 }
 
 export interface BeamSpriteStyle {
