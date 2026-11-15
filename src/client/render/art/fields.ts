@@ -867,12 +867,14 @@ function weatherLivery(f: Fields, dist: Float32Array, seed: number, heavy: boole
   const g = f.g, n = g.w * g.h;
   const grey = lin(f.paint), metal = lin(PALETTE.metal);
   const s = heavy ? 1 : 0.35;
-  // 'patch': texels to the nearest edge of the paint (section edge or hull
-  // edge), for flaking there. The paint is mirror-symmetric, so this is too.
+  // 'patch': texels to the nearest place the paint meets grey HULL (its
+  // section edge), for flaking there. Space outside the hull counts as paint,
+  // so a narrow bow does not flake away along its outline (in game the bows
+  // vanished at line-up zoom). Mirror-symmetric like the paint.
   let dPaint: Float32Array | null = null;
   if (patch) {
     const mask = new Float32Array(n);
-    for (let i = 0; i < n; i++) mask[i] = f.mat[i] === MAT.LIVERY ? 1 : 0;
+    for (let i = 0; i < n; i++) mask[i] = f.mat[i] === MAT.LIVERY || f.cov[i]! <= 0.5 ? 1 : 0;
     dPaint = distanceInside(mask, g.w, g.h);
   }
   for (let i = 0; i < n; i++) {
