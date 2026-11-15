@@ -246,6 +246,13 @@ in `SectorRoom.resolveLockTarget` (swarm record `shipKind` / `!shieldDown` /
 `radius`; a pilot's `ShipState.kind` / `shield > 0`), the client in
 `ColyseusClient.fcTargetPose` (swarm wire `shipKind` / `shieldDown` / `radius`;
 the ship mirror's `kind` / `shieldDown`). `LockTargetView` extends it.
+Its range half is `fillRangeShape`, which every other range shape also uses
+(the server's NPC turret / drone / structure gates via
+`SectorRoom.writeSwarmRangeShape` and the pilot-hull fills, the client's
+`fcTargetShape`). A ship with no kind is the default kind's hull, the shape
+`shipHitShape` hits it on; the two fills once disagreed there (player gate:
+the default kind's radius circle; NPC gate: the record's radius circle). Lock:
+`tests/unit/fireControlBearingParity.test.ts`.
 
 Who calls it: the server's `SectorRoom.mountBearsOnLock` (→ `PlayerFireResolver`
 per mount), and the client's `fcGroupBears` (non-capital groups), `fcFireMounts`
