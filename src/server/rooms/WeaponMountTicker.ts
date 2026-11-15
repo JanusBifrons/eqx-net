@@ -289,10 +289,13 @@ export class WeaponMountTicker {
   readonly droneMountLastOk = new Map<string, Int32Array>();
   /** Capitals: each mount's current target id, keyed by drone id. */
   readonly droneMountTargetIds = new Map<string, (string | null)[]>();
-  /** Capitals: the tick each mount's kill follow-through ends (it holds its
-   *  angle and fires down that line while `tick <` this), keyed by drone id.
-   *  Made once per drone, reused (#14). */
+  /** Capitals: the tick each mount's kill follow-through ends (it holds the
+   *  kill's world line and fires down it while `tick <` this), keyed by drone
+   *  id. Made once per drone, reused (#14). */
   readonly droneMountFollowUntil = new Map<string, Int32Array>();
+  /** Capitals: each mount's follow-through WORLD bearing (hull + base + mount
+   *  angle at the kill), keyed by drone id. Made once per drone (#14). */
+  readonly droneMountFollowBearing = new Map<string, Float32Array>();
 
   /** tickDrone's candidate count while the parked-hull visitor appends. */
   private targetCount = 0;
@@ -613,6 +616,8 @@ export class WeaponMountTicker {
     if (!locks || locks.length !== n) { locks = Array.from({ length: n }, () => newLock('', true)); this.droneMountLocks.set(droneId, locks); }
     let follow = this.droneMountFollowUntil.get(droneId);
     if (!follow || follow.length !== n) { follow = new Int32Array(n); this.droneMountFollowUntil.set(droneId, follow); }
+    let followBearing = this.droneMountFollowBearing.get(droneId);
+    if (!followBearing || followBearing.length !== n) { followBearing = new Float32Array(n); this.droneMountFollowBearing.set(droneId, followBearing); }
     const sensor = sensorFor(kind);
     const tick = d.currentTick!();
     const selfVx = d.sabF32[b + SLOT_VX_OFF]!, selfVy = d.sabF32[b + SLOT_VY_OFF]!;
@@ -625,9 +630,9 @@ export class WeaponMountTicker {
       const my = y + (mount.localX * sinA + mount.localY * cosA);
       const reach = mountWeaponReach(mount);
       // Follow-through: this mount's last shot killed its target, so it holds
-      // its angle and burns on down the same line until the window ends.
+      // the kill's world line and burns on down it until the window ends.
       if (tick < follow[i]!) {
-        this.followThrough(droneId, kind, mount, i, angles, reload, tick, mx, my, ang, reach);
+        this.followThrough(droneId, kind, mount, i, angles, reload, tick, mx, my, ang, reach, followBearing[i]!);
         continue;
       }
       // STICKY (user, 2026-11-07: "don't constantly retarget"): a turret
@@ -747,6 +752,8 @@ export class WeaponMountTicker {
       const ft = w.followThroughTicks ?? 0;
       if (fired === 'killed' && ft > 0) {
         follow[i] = tick + ft;
+        // The killing beam's world line (the frame fireMount fires along).
+        followBearing[i] = wrapPi(ang + mount.baseAngle + angles[i]!);
         per[i] = null;
         if (lock.target !== '') resetLock(lock, '');
       }
@@ -756,9 +763,13 @@ export class WeaponMountTicker {
   /**
    * One tick of a capital mount's kill follow-through
    * (`WeaponDefBase.followThroughTicks`): the same trigger pull continuing
-   * down the dead target's line. The turret holds its angle (aimed at its own
-   * angle through the one rotation primitive, #12, so it doesn't move) and
-   * fires at its weapon's cadence with no target: the shot hits whatever is
+   * down the dead target's line. The turret holds the kill's WORLD bearing,
+   * not its angle on the hull (the AI pilot may keep turning the hull; a
+   * hull-relative hold swung the beam down the victim's hull): each tick it
+   * trains toward that bearing less the hull and base angles through the one
+   * rotation primitive (#12), so its arc and traverse rate bind as always (a
+   * hull turning faster than the turret can follow drags the beam only by
+   * the difference). It fires at its weapon's cadence with no target: the shot hits whatever is
    * on the line (wreck pieces, a ship behind) or runs to its range. No lock
    * or bearing gate (#19: those license acquiring a target, and this shot
    * aims at none, like a completed 'locked-direction' charge); the hull's own
@@ -768,10 +779,10 @@ export class WeaponMountTicker {
    */
   private followThrough(
     droneId: string, kind: ShipKind, mount: WeaponMount, i: number, angles: Float32Array, reload: Int32Array,
-    tick: number, mx: number, my: number, ang: number, reach: number,
+    tick: number, mx: number, my: number, ang: number, reach: number, worldBearing: number,
   ): void {
     const d = this.deps;
-    angles[i] = rotateMountToward(angles[i]!, angles[i]!, mount, DT_SEC);
+    angles[i] = rotateMountToward(angles[i]!, wrapPi(worldBearing - ang - mount.baseAngle), mount, this.traverseDt(mount));
     if (tick - reload[i]! < getWeapon(mount.weaponId).cooldownTicks) return;
     const local = mount.baseAngle + angles[i]!;
     if (!mountLineClear(kind, mount, local)) return;
@@ -891,6 +902,7 @@ export class WeaponMountTicker {
     this.droneMountTargetIds.delete(droneId);
     this.droneMountLastOk.delete(droneId);
     this.droneMountFollowUntil.delete(droneId);
+    this.droneMountFollowBearing.delete(droneId);
   }
 }
 

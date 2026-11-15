@@ -2,15 +2,20 @@
  * Heavy-beam follow-through (owner, game feel: "the beam should not turn
  * after the kill and show for half a second or one second through the clean
  * cut"). When a heavy-beam turret's shot KILLS its target, that turret holds
- * its angle and keeps firing at its own cadence down the same line for the
+ * the beam's WORLD line and keeps firing at its own cadence down it for the
  * weapon's `followThroughTicks`, so the beam burns on through the slice; then
  * it resumes normal targeting.
  *
  * A lance battlecruiser broadside to a pilot heavy cruiser (the beamFits
- * setup; `traverseTicksCap: 0` snaps the turrets, so without the hold a
- * turret would swing home the very tick after the kill). The pilot is left
- * one beam's worth of hull, so the next heavy-beam hit is the kill. Every
- * `laser_fired` and the killing turret's angle are read server-side, per tick.
+ * setup; `traverseTicksCap: 0` snaps the turrets onto the pilot). The pilot
+ * is left one beam's worth of hull, so the next heavy-beam hit is the kill.
+ * From then the lance's hull is held turning (its AI pilot's keys replaced by
+ * turn-left, the player controls it flies by) and the turrets train at their
+ * REAL traverse rate (the cap lifted): a hold relative to the hull swings the
+ * beam with the hull (found on film: it slid down the victim's hull), and a
+ * snapping turret would hide whether the real rate keeps up. Every
+ * `laser_fired`, the hull angle and the killing turret's angle are read
+ * server-side, per tick.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
@@ -20,11 +25,18 @@ import type { LaserFiredEvent } from '../../../src/shared-types/messages.js';
 import { getWeapon } from '../../../src/core/combat/WeaponCatalogue.js';
 import { getShipKind } from '../../../src/shared-types/shipKinds.js';
 import { wrapPi } from '../../../src/core/ai/WeaponMountController.js';
+import { AI_INPUT_TURN_LEFT } from '../../../src/core/contracts/IAiBehaviour.js';
 
+interface IntentSink {
+  postIntent: (slot: number, fx: number, fy: number, torque: number, setAngvel?: number) => void;
+  postInput?: (slot: number, bits: number) => void;
+}
 interface RoomInternals {
   aiFireResolver: { deps: { broadcast: (type: string, msg: LaserFiredEvent) => void } };
   mountTicker: { droneMountAngles: Map<string, Float32Array> };
-  swarmRegistry: { all: () => Iterable<{ id: string; entityId: number; shipKind?: string | null }> };
+  swarmRegistry: { all: () => Iterable<{ id: string; entityId: number; slot: number; shipKind?: string | null }> };
+  aiController: { sink: IntentSink };
+  testTraverseTicksCap: number | undefined;
 }
 
 interface Shot { tick: number; mountId: string; dir: number; mountAngle: number; targetId?: string }
@@ -38,7 +50,7 @@ describe('SectorRoom integration — heavy-beam follow-through after a kill', ()
     harness = undefined;
   }, 10_000);
 
-  it('the killing turret holds its angle and keeps burning down the same line, then resumes', { timeout: 15_000 }, async () => {
+  it('the killing turret holds the world line while the hull turns, burning on, then resumes', { timeout: 15_000 }, async () => {
     const beam = getWeapon('heavy_beam');
     const follow = beam.followThroughTicks ?? 0;
     expect(follow).toBeGreaterThan(0);
@@ -57,8 +69,24 @@ describe('SectorRoom integration — heavy-beam follow-through after a kill', ()
     const r = room as unknown as RoomInternals;
     let lanceId = '';
     let wireId = '';
-    for (const rec of r.swarmRegistry.all()) if (rec.shipKind === 'battlecruiser-lance') { lanceId = rec.id; wireId = `swarm-${rec.entityId}`; }
+    let lanceSlot = -1;
+    for (const rec of r.swarmRegistry.all()) {
+      if (rec.shipKind === 'battlecruiser-lance') { lanceId = rec.id; wireId = `swarm-${rec.entityId}`; lanceSlot = rec.slot; }
+    }
     expect(lanceId).not.toBe('');
+    const hullAngle = (): number => room._internals.swarmPose(lanceId)?.angle ?? NaN;
+
+    // Hold the lance's hull turning once `spin` is set: its AI pilot's keys
+    // (or impulse intent) are replaced by turn-left for that slot.
+    let spin = false;
+    const sink = r.aiController.sink;
+    const origInput = sink.postInput!.bind(sink);
+    const origIntent = sink.postIntent.bind(sink);
+    sink.postInput = (slot, bits) => origInput(slot, spin && slot === lanceSlot ? AI_INPUT_TURN_LEFT : bits);
+    sink.postIntent = (slot, fx, fy, torque, setAngvel) => {
+      if (spin && slot === lanceSlot) origInput(slot, AI_INPUT_TURN_LEFT);
+      else origIntent(slot, fx, fy, torque, setAngvel);
+    };
 
     const shots: Shot[] = [];
     const deps = r.aiFireResolver.deps;
@@ -80,9 +108,23 @@ describe('SectorRoom integration — heavy-beam follow-through after a kill', ()
     const d1 = Date.now() + 8_000;
     while (Date.now() < d1 && !shots.some((s) => s.targetId === pid)) await harness.advance(20);
     expect(shots.some((s) => s.targetId === pid), 'a heavy beam hit the pilot').toBe(true);
+    // From here the hull turns and the turrets train at their real rate;
+    // then the kill. A capital takes seconds to spin up, so the test sets the
+    // hull already turning at its full rate (left), and the held key keeps it.
+    spin = true;
+    r.testTraverseTicksCap = undefined;
+    const maxTurn = kind.maxAngvel;
+    const st = room._internals.wreckState(lanceId)!;
+    room._internals.postToWorker({ type: 'SET_POSITION', entityId: lanceId, x: st.x, y: st.y, angle: st.angle, vx: st.vx, vy: st.vy, angvel: maxTurn });
+    const d0 = Date.now() + 2_000;
+    while (Date.now() < d0 && Math.abs(room._internals.wreckState(lanceId)?.angvel ?? 0) < 0.8 * maxTurn) await harness.advance(4);
+    expect(Math.abs(room._internals.wreckState(lanceId)?.angvel ?? 0), 'the hull is turning').toBeGreaterThan(0.8 * maxTurn);
     for (const [, s] of room.state.ships) if (s.playerId === pid && s.isActive) s.health = beam.damage / 2;
 
-    // Sample the killing turret's angle every few ms (each server tick).
+    // Sample the killing turret's world bearing (hull + base + mount angle)
+    // and the hull angle every few ms (each server tick).
+    const worldByTick = new Map<number, number>();
+    const hullByTick = new Map<number, number>();
     const angleByTick = new Map<number, number>();
     let killTick = -1;
     let killMount = '';
@@ -95,8 +137,16 @@ describe('SectorRoom integration — heavy-beam follow-through after a kill', ()
       if (killMount !== '') {
         const i = kind.mounts.findIndex((m) => m.id === killMount);
         const a = r.mountTicker.droneMountAngles.get(lanceId)?.[i];
-        if (a !== undefined) angleByTick.set(room._internals.serverTick, a);
-        if (room._internals.serverTick > killTick + follow + 20) break;
+        const t = room._internals.serverTick;
+        const h = hullAngle();
+        if (a !== undefined) {
+          angleByTick.set(t, a);
+          hullByTick.set(t, h);
+          worldByTick.set(t, h + kind.mounts[i]!.baseAngle + a);
+        }
+        // The window is over: snap again so the resume shows in a few ticks.
+        if (t >= killTick + follow) r.testTraverseTicksCap = 0;
+        if (t > killTick + follow + 20) break;
       }
       await harness.advance(4);
     }
@@ -114,13 +164,18 @@ describe('SectorRoom integration — heavy-beam follow-through after a kill', ()
       expect(gap).toBeGreaterThanOrEqual(beam.cooldownTicks);
       expect(gap).toBeLessThanOrEqual(beam.cooldownTicks + 3);
     }
-    // ... down the same line, its turret not turning.
+    // The hull really turned through the window (else this proves nothing).
+    let hMin = Infinity, hMax = -Infinity;
+    for (const [t, h] of hullByTick) if (t > killTick && t < killTick + follow) { hMin = Math.min(hMin, h); hMax = Math.max(hMax, h); }
+    expect(hMax - hMin, 'the hull turned during the follow-through').toBeGreaterThan(0.006);
+    // ... down the same WORLD line: the beam doesn't turn with the hull.
     for (const s of window) {
-      expect(s.mountAngle, 'turret angle held through the follow-through').toBeCloseTo(killShot.mountAngle, 6);
-      expect(Math.abs(wrapPi(s.dir - killShot.dir)), 'beam along the kill line').toBeLessThan(0.02);
+      expect(Math.abs(wrapPi(s.dir - killShot.dir)), `beam on the kill line at kill+${s.tick - killTick}`).toBeLessThan(0.002);
     }
-    for (const [t, a] of angleByTick) {
-      if (t > killTick && t < killTick + follow) expect(a, `turret angle at kill+${t - killTick}`).toBeCloseTo(killShot.mountAngle, 6);
+    for (const [t, w] of worldByTick) {
+      if (t > killTick && t < killTick + follow) {
+        expect(Math.abs(wrapPi(w - killShot.dir)), `turret world bearing at kill+${t - killTick}`).toBeLessThan(0.002);
+      }
     }
     // Then it resumes: with no target left it trains home (snaps, traverse cap 0).
     let resumed = false;
