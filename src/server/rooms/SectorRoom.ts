@@ -67,7 +67,7 @@ import {
   type LastInputCache,
   type IdleTracker,
 } from '../net/snapshotScheduler.js';
-import { SwarmSpawner, DRONE_DEFAULT_MASS, type AsteroidSpec } from '../spawn/SwarmSpawner.js';
+import { SwarmSpawner, type AsteroidSpec } from '../spawn/SwarmSpawner.js';
 import { ScriptedPathBehaviour } from '../../core/ai/ScriptedPathBehaviour.js';
 import { ScrapSpawner } from '../spawn/ScrapSpawner.js';
 import { wreckSwitchOn } from './wreckSwitch.js';
@@ -402,7 +402,7 @@ import {
 // getWeapon/isWeaponId/HitscanWeaponDef/ProjectileWeaponDef now used inside PlayerFireResolver.ts
 import type { WeaponId, MissileWeaponDef } from '../../core/combat/WeaponCatalogue.js';
 import { regenEnergyStep, spendEnergy, BOOST_TICK_COST } from '../../core/combat/Energy.js';
-import { massOf, shipTuning, shellViewHalfExtent } from '../../shared-types/shipScale/tuning.js';
+import { shipBodyMass, shipTuning, shellViewHalfExtent } from '../../shared-types/shipScale/tuning.js';
 import { ShellEventHub, type ShellViewer } from './ShellEventHub.js';
 import { type ShellSalvo } from '../../shared-types/messages/shellEvents.js';
 import { tuningFor, GLOBAL_SHIP_TUNING } from '../../shared-types/shipScale/lookup.js';
@@ -411,7 +411,7 @@ import { shipRayHit, shipSweepHit } from '../../core/combat/shipHitShape.js';
 import { mayBeInReach, maxShipRangeBound, mountsReachTarget, type MountRangeTarget } from '../../core/combat/mountReach.js';
 import { CapitalWreckSubsystem } from './CapitalWreckSubsystem.js';
 import { wreckRayHit } from '../../core/destruction/wreckHits.js';
-import { isWreckPiece } from '../net/SwarmEntityRegistry.js';
+import { isLootPod, isWreckPiece } from '../net/SwarmEntityRegistry.js';
 import { LineOfFireGate } from './LineOfFireGate.js';
 import { stampShipScale } from '../../shared-types/shipScale/welcomeScale.js';
 import { stampNavalRange } from '../../shared-types/combat/navalRange.js';
@@ -515,6 +515,13 @@ const LockTimeCapSchema = z.number().finite().min(0).max(600);
 const ChargeTicksCapSchema = z.number().int().min(0).max(36_000);
 
 /**
+ * testMode `traverseTicksCap` (room option, join option, URL `?traverseTicksCap=`):
+ * the longest any capital turret may take to train across a full turn, in
+ * ticks (a 16" trains at ~4 deg/s, so ~15 s onto a target abeam). 0 = snap.
+ */
+const TraverseTicksCapSchema = z.number().int().min(0).max(36_000);
+
+/**
  * Game speed override for a sector (time scale stream): testMode room option,
  * join option and URL `?timeScale=`, or `EQX_TIME_SCALE` outside production.
  * The automatic load controller (Phase 5) may still slow a sector below it.
@@ -610,6 +617,9 @@ const JoinOptionsSchema = z
     /** Test-only bespoke trigger (charge-up): the longest any capital-turret
      *  charge in this room may take, in ticks. Room-wide; testMode-gated. */
     chargeTicksCap: ChargeTicksCapSchema.optional(),
+    /** Test-only bespoke trigger (turret traverse): the longest any capital
+     *  turret takes to train a full turn, in ticks. Room-wide; testMode-gated. */
+    traverseTicksCap: TraverseTicksCapSchema.optional(),
     /** Test/recording trigger (time scale): set this sector's game speed
      *  (0.25–4). Room-wide. testMode-gated. */
     timeScale: TimeScaleSchema.optional(),
@@ -868,6 +878,11 @@ export interface StructureRowView {
   wallActive?: boolean;
 }
 
+/** Ticks a ship that fled stays in the room on its warp run before it leaves
+ *  (0.5 s, as long as the arrival window): long enough for every client's
+ *  snapshot to carry the run, so each draws the departure. */
+const LEAVE_RUN_TICKS = 30;
+
 export class SectorRoom extends Room<SectorState> {
   /** Owns the physics worker (lifecycle + message routing + typed
    *  postMessage facade). Extracted to PhysicsWorkerProxy.ts (commit 20
@@ -1003,6 +1018,9 @@ export class SectorRoom extends Room<SectorState> {
   /** Bespoke test/recording trigger (testMode `chargeTicksCap`): the longest
    *  a capital-turret charge may take, in ticks. Undefined = off. */
   private testChargeTicksCap: number | undefined = undefined;
+  /** Bespoke test/recording trigger (testMode `traverseTicksCap`): the longest
+   *  a capital turret takes to train a full turn, in ticks. Undefined = off. */
+  private testTraverseTicksCap: number | undefined = undefined;
   /** Round 3 D test switch (testMode `pilotCapitals`). */
   private testPilotCapitals = false;
   /** Capital destruction S2a (`capitalWrecks` room option / EQX_CAPITAL_WRECKS):
@@ -1281,7 +1299,7 @@ export class SectorRoom extends Room<SectorState> {
   private pendingJoin = new Map<string, PendingJoinRecord>();
   /** W2a NPC warp-to: bots sent on a warp (`warpBot`), until they have
    *  landed and their arrival window has passed. Empty in normal play. */
-  private readonly npcWarps = new Map<string, { entityId: number; lastPhase: 0 | 1 | 2; arrivedUntil: number; started: boolean; idleTicks: number }>();
+  private readonly npcWarps = new Map<string, { entityId: number; lastPhase: 0 | 1 | 2; arrivedUntil: number; started: boolean; idleTicks: number; leave: boolean; leaveAt: number; leaveX: number; leaveY: number }>();
   /** Phase 4 warp travel: a ship on its warp run is out of the world
    *  (rooms/warpTravel.ts). Ticked after the pending-join drain. */
   private readonly warpTravel = new WarpTravelTracker({
@@ -1467,6 +1485,8 @@ export class SectorRoom extends Room<SectorState> {
     lineOfFireCounts: () => { checks: number; candidates: number; narrow: number };
     /** NPC line of fire on/off (the slice-1 friendly fire tests turn it off). */
     setNpcLineOfFire: (on: boolean) => void;
+    /** AI steering 2c: hand brains the neighbour grid (default on). */
+    setAiNeighbours: (on: boolean) => void;
     /** Does NPC `id`'s brain treat `otherId` as hostile (stance or ledger)? */
     npcHostileTo: (id: string, otherId: string) => boolean;
     /** Mine Layers' live mines (integration tests). */
@@ -1551,6 +1571,7 @@ export class SectorRoom extends Room<SectorState> {
         return { checks: g?.checks ?? 0, candidates: g?.candidates ?? 0, narrow: g?.narrow ?? 0 };
       },
       setNpcLineOfFire: (on) => { this.npcLineOfFire = on; },
+      setAiNeighbours: (on) => { this.aiNeighboursOn = on; },
       npcHostileTo: (id, otherId) => this.aiController.isEntityHostileToPlayer(id, otherId),
       mineField: this.mineField,
       rebuildStructuresSlice: () => this.rebuildStructuresSlice(),
@@ -1878,6 +1899,9 @@ export class SectorRoom extends Room<SectorState> {
       /** Bespoke test trigger: no capital-turret charge takes longer than this
        *  (ticks). zod-checked; testMode-only. */
       chargeTicksCap?: unknown;
+      /** Bespoke test trigger: no capital turret takes longer than this to
+       *  train a full turn (ticks). zod-checked; testMode-only. */
+      traverseTicksCap?: unknown;
       /** Game speed for this sector (0.25–4). zod-checked; testMode-only. */
       timeScale?: unknown;
       /** testMode: run the automatic slowdown here too (on by default only in
@@ -2051,6 +2075,7 @@ export class SectorRoom extends Room<SectorState> {
       hostileStructures: () => this.hostileStructureCircles,
       lockTimeCapS: () => this.testLockTimeCapS,
       chargeTicksCap: () => this.testChargeTicksCap,
+      traverseTicksCap: () => this.testTraverseTicksCap,
       onClearPlayer: (pid) => this.locks.clearLocks(pid),
       aimTargetFor: (pid, mountId, out) => this.lockAimTarget(pid, mountId, out),
       visitParkedPilotHulls: this._visitParkedPilotHulls,
@@ -2100,6 +2125,11 @@ export class SectorRoom extends Room<SectorState> {
     // laser_fired broadcast path that mirrors the player handleFire.
     this.aiFireResolver = new AiFireResolver({
       fireBlocked: (id, targetId) => this.npcLocks.fireBlocked(id, targetId),
+      // One energy pool per AI-flown ship, shared by boost and guns, on its brain.
+      trySpendEnergy: (id, cost) => {
+        const b = this.aiController.getBehaviour(id);
+        return b?.trySpendEnergy === undefined ? true : b.trySpendEnergy(cost);
+      },
       // Friendly fire slice 2: a drone holds while an ally is in the way.
       lineOfFireBlocked: (id, targetId, fx, fy, dx, dy) => this.droneLineBlocked(id, targetId, fx, fy, dx, dy),
       lastFireClientTick: this.lastFireClientTick,
@@ -2129,6 +2159,8 @@ export class SectorRoom extends Room<SectorState> {
       spawnServerMissile: (ownerId, x, y, dx, dy, def) =>
         this.spawnServerMissile(ownerId, x, y, dx, dy, def),
     });
+    // A brain holds its line while its charge winds up (view.isCharging).
+    this.aiController.isCharging = (id) => this.mountTicker.charges.mask(id) !== 0;
 
     // Two-layer shield/hull damage + regen routing. Owns the swarm-side
     // shield state + the three layered-damage methods. Composes the pure
@@ -2252,6 +2284,8 @@ export class SectorRoom extends Room<SectorState> {
       swarmRegistry: this.swarmRegistry,
       lingeringSlots: this.lingeringSlots,
       lingeringShip: (sid) => this.state.ships.get(sid),
+      // Only a pilot's own shot can land on a loot pod; AI and turret bolts pass it.
+      shotHitsLootPods: (ownerId) => this.playerToSlot.has(ownerId),
       applyDamage: (targetId, shooterId, damage, hitX, hitY, dirX, dirY, weaponId) =>
         this.applyDamage(targetId, shooterId, damage, hitX, hitY, dirX, dirY, weaponId),
       wallBlocksProjectile: (x, y, sx, sy, damage) => {
@@ -2377,6 +2411,7 @@ export class SectorRoom extends Room<SectorState> {
       lockGroupsOf: (pid) => this.locks.wireFor(pid),
       lockedByOf: (pid) => this.npcLocks.wireFor(pid),
       lockedByTotalOf: (pid) => this.npcLocks.totalFor(pid),
+      lockedByLockedOf: (pid) => this.npcLocks.lockedTotalFor(pid),
       warpArrived: (playerId) => this.warpTravel.arrivedRecently(playerId, this.serverTick),
       isJoining: (playerId) => this.pendingJoin.has(playerId),
       transitSpooling: (playerId) => this.transitOrchestrator?.isInFlight(playerId) === true,
@@ -3025,7 +3060,7 @@ export class SectorRoom extends Room<SectorState> {
         if (!rec) continue;
         if (pose.path) {
           // Radar sandbox — scripted fly-in / fly-out / tangential pass.
-          const mass = massOf(getShipKind(pose.kind), DRONE_DEFAULT_MASS);
+          const mass = shipBodyMass(getShipKind(pose.kind));
           this.aiController.register(droneId, rec.slot, new ScriptedPathBehaviour({
             from: { x: pose.x, y: pose.y },
             to: { x: pose.path.toX, y: pose.path.toY },
@@ -3152,6 +3187,11 @@ export class SectorRoom extends Room<SectorState> {
       const cap = ChargeTicksCapSchema.safeParse(roomOpts.chargeTicksCap);
       if (cap.success) this.testChargeTicksCap = cap.data;
       else logger.warn({ value: roomOpts.chargeTicksCap }, 'chargeTicksCap: invalid room option, ignored');
+    }
+    if (this.testMode && roomOpts.traverseTicksCap !== undefined) {
+      const cap = TraverseTicksCapSchema.safeParse(roomOpts.traverseTicksCap);
+      if (cap.success) this.testTraverseTicksCap = cap.data;
+      else logger.warn({ value: roomOpts.traverseTicksCap }, 'traverseTicksCap: invalid room option, ignored');
     }
     this.autoSlowdown = !this.testMode || roomOpts.autoTimeScale === true;
     if (this.testMode && roomOpts.timeScale !== undefined) {
@@ -4852,6 +4892,7 @@ export class SectorRoom extends Room<SectorState> {
     s.vy = this.sabF32[b + SLOT_VY_OFF]!;
     s.angle = this.sabF32[b + SLOT_ANGLE_OFF]!;
     s.angvel = this.sabF32[b + SLOT_ANGVEL_OFF]!;
+    s.health = this.swarmHealth.get(id);
     return s;
   }
 
@@ -4902,8 +4943,8 @@ export class SectorRoom extends Room<SectorState> {
       if (!pose) continue;
       out.push({
         id: shipInstanceId, ownerId: ship.playerId,
-        x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy,
-        health: ship.health, maxHealth: ship.maxHealth,
+        x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy, angle: pose.angle,
+        health: ship.health, maxHealth: ship.maxHealth, kindId: ship.kind ?? null, shieldUp: ship.shield > 0,
       });
     }
   };
@@ -4920,6 +4961,9 @@ export class SectorRoom extends Room<SectorState> {
   /** AI steering 2a — per-tick neighbour index over combat drones + pilot
    *  hulls, rebuilt once per tick in `runAiTick` (alloc-free, #14). */
   private readonly aiNeighbourGrid = new AiNeighbourGrid();
+  /** Tests (`_internals.setAiNeighbours`): off ⇒ brains get no `view.neighbours`
+   *  (no combat separation), the A/B control for slice 2c. */
+  private aiNeighboursOn = true;
   /** Add every kind-1 swarm combatant (all allegiances) with its SAB pose.
    *  Same set `fillSwarmTargets` covers; bound once (#14). */
   private readonly _visitAiNeighbourDrones = (_grid: AiNeighbourGrid): void => {
@@ -4932,7 +4976,7 @@ export class SectorRoom extends Room<SectorState> {
       rec.id,
       this.sabF32[b + SLOT_X_OFF]!, this.sabF32[b + SLOT_Y_OFF]!,
       this.sabF32[b + SLOT_VX_OFF]!, this.sabF32[b + SLOT_VY_OFF]!,
-      rec.radius, allegianceOfKind(rec.shipKind),
+      rec.radius, allegianceOfKind(rec.shipKind), getShipKind(rec.shipKind ?? null).aiRole === 'capital',
     );
   };
 
@@ -4969,12 +5013,12 @@ export class SectorRoom extends Room<SectorState> {
       v.y = this.sabF32[b + SLOT_Y_OFF]!;
       v.vx = this.sabF32[b + SLOT_VX_OFF]!;
       v.vy = this.sabF32[b + SLOT_VY_OFF]!;
+      v.angle = this.sabF32[b + SLOT_ANGLE_OFF]!;
       v.allegiance = allegianceOfKind(rec.shipKind);
       v.health = this.swarmHealth.get(rec.id);
       v.maxHealth = getShipKind(rec.shipKind).maxHealth;
       v.radius = rec.radius;
       v.kindId = rec.shipKind ?? null;
-      v.angle = this.sabF32[b + SLOT_ANGLE_OFF]!;
       v.shieldUp = !rec.shieldDown;
       out.push(v);
       n++;
@@ -4991,7 +5035,7 @@ export class SectorRoom extends Room<SectorState> {
    * broadcast tail with this method, eliminating the duplication. For 5c+
    * preview the duplication is contained to this single method.
    */
-  private handleAiFire(shooterId: string, dirX: number, dirY: number, tick: number, targetId: string): void {
+  private handleAiFire(shooterId: string, dirX: number, dirY: number, tick: number, targetId: string, cone?: number): void {
     if (this.gateGuard.gateCount > 0) {
       const now = this.gameClock.now();
       if (this.gateGuard.isDisabled(shooterId, now)) return;
@@ -5002,7 +5046,7 @@ export class SectorRoom extends Room<SectorState> {
         if (this.gateGuard.isDisabled(shooterId, now)) return;
       }
     }
-    this.aiFireResolver.resolve(shooterId, dirX, dirY, tick, targetId);
+    this.aiFireResolver.resolve(shooterId, dirX, dirY, tick, targetId, cone);
   }
 
   private spawnServerProjectile(ownerId: string, x: number, y: number, vx: number, vy: number, damage: number, radius: number, maxTicks: number, weaponId: WeaponId): void {
@@ -7839,9 +7883,28 @@ export class SectorRoom extends Room<SectorState> {
     // inside an asteroid belt rock killed an escort in the first test run).
     const p = this.landingPoint(botId, Math.max(-lim, Math.min(lim, x)), Math.max(-lim, Math.min(lim, y)), rec.shipKind);
     this.postToWorker({ type: 'BOT_WARP', slot: rec.slot, x: p.x, y: p.y });
-    if (!this.npcWarps.has(botId)) this.npcWarps.set(botId, { entityId: rec.entityId, lastPhase: 0, arrivedUntil: -1, started: false, idleTicks: 0 });
+    if (!this.npcWarps.has(botId)) this.npcWarps.set(botId, { entityId: rec.entityId, lastPhase: 0, arrivedUntil: -1, started: false, idleTicks: 0, leave: false, leaveAt: -1, leaveX: 0, leaveY: 0 });
     return true;
   }
+
+  /** Morale flee (AI slice 6b): a fleeing NPC asked to warp out to (x, y)
+   *  (`AiIntent.warpOut`, drained by `runAiTick`). The same NPC warp as a
+   *  flagship fleet's (`warpBot`) spool, but a ship that fled LEAVES the
+   *  sector once its spool ends (`tickNpcWarps`): the same departure as any
+   *  NPC leaving a sector (`despawnLivingWorldBot`: `warp_out` where it
+   *  stood, quiet evict, `BOT_DESPAWNED`). Before 2026-11-14 it ran the
+   *  in-sector warp and parked at the drop, still in the room. It stays in
+   *  the room for LEAVE_RUN_TICKS of its run first, so every client sees the
+   *  run begin (`drones[].warp` 2 while the ship is still in the swarm
+   *  stream) and draws the departure (take 7: removed on the run's first
+   *  tick, the ship just vanished). Rare; a bound field so the per-tick ctx
+   *  carries no new closure. */
+  private readonly _handleAiWarpOut = (botId: string, x: number, y: number): void => {
+    if (!this.warpBot(botId, x, y)) return;
+    const w = this.npcWarps.get(botId);
+    if (w !== undefined) w.leave = true;
+    serverLogEvent('npc_morale_warp_out', { botId, sectorKey: this.sectorKey ?? '' });
+  };
 
   /** Drop a bot's warp request (cancels a spool; a run can't be stopped). */
   cancelBotWarp(botId: string): void {
@@ -7866,6 +7929,28 @@ export class SectorRoom extends Room<SectorState> {
       const f = this.sabU32[slotBase(rec.slot) + SLOT_FLAGS_OFF] ?? 0;
       const phase: 0 | 1 | 2 = f & FLAG_WARP_CRUISE ? 2 : f & FLAG_WARP_SPOOL ? 1 : 0;
       if (phase !== 0) w.started = true;
+      // A morale warp-out leaves the sector once its run has begun: the
+      // room's departure (`warp_out` where the run started), not a drop in
+      // this room. The run is shown for LEAVE_RUN_TICKS first: a client draws
+      // a ship's departure when it sees the run start (WarpFx, the same as a
+      // pilot's), and the swarm stream and the snapshot are separate packets,
+      // so removing the ship on the run's first tick could reach a client
+      // before (or without) the phase that draws it.
+      if (w.leave && w.started && (phase === 2 || w.leaveAt >= 0)) {
+        if (w.leaveAt < 0) {
+          w.leaveAt = this.serverTick + LEAVE_RUN_TICKS;
+          // Where the run starts (the SAB pose of the run's first tick is at
+          // most one tick's run along it).
+          const b = slotBase(rec.slot);
+          w.leaveX = this.sabF32[b + SLOT_X_OFF]!;
+          w.leaveY = this.sabF32[b + SLOT_Y_OFF]!;
+        }
+        w.lastPhase = 2;
+        if (this.serverTick < w.leaveAt && phase === 2) continue;
+        this.npcWarps.delete(id);
+        if (this.livingWorldBotHooks.despawnBot(id, 'fled', w.leaveX, w.leaveY) !== null) serverLogEvent('npc_morale_departed', { botId: id, sectorKey: this.sectorKey ?? '' });
+        continue;
+      }
       if (w.lastPhase === 2 && phase === 0) w.arrivedUntil = this.serverTick + ARRIVED_TICKS;
       w.lastPhase = phase;
       // Done: idle after the arrival window (or a spool that was cancelled /
@@ -8286,6 +8371,8 @@ export class SectorRoom extends Room<SectorState> {
     }
     for (const rec of this.swarmRegistry.all()) {
       if (rec.id === skipId) continue;
+      // Nobody fights a loot pod (owner 2026-11-13): AI and turret beams pass it.
+      if (isLootPod(rec)) continue;
       const b = slotBase(rec.slot);
       const d = this.swarmRayHit(
         rec, fx, fy, dx, dy, best,
@@ -9367,6 +9454,10 @@ export class SectorRoom extends Room<SectorState> {
     // `chargeTicksCap` on a join caps every capital-turret charge in this room.
     if ((this.testMode || ALLOW_DEV_OVERRIDES) && parsed.success && parsed.data.chargeTicksCap !== undefined) {
       this.testChargeTicksCap = parsed.data.chargeTicksCap;
+    }
+    // `traverseTicksCap` on a join caps every capital turret's training in this room.
+    if ((this.testMode || ALLOW_DEV_OVERRIDES) && parsed.success && parsed.data.traverseTicksCap !== undefined) {
+      this.testTraverseTicksCap = parsed.data.traverseTicksCap;
     }
     // `timeScale` on a join sets this sector's game speed (test/recording).
     if ((this.testMode || ALLOW_DEV_OVERRIDES) && parsed.success && parsed.data.timeScale !== undefined) {
@@ -11761,7 +11852,7 @@ export class SectorRoom extends Room<SectorState> {
       fillStructureTargets: (out) => this.fillStructureTargets(out),
       aiSwarmScratch: this.aiSwarmScratch,
       fillSwarmTargets: (out) => this.fillSwarmTargets(out),
-      aiNeighbourGrid: this.aiNeighbourGrid,
+      aiNeighbourGrid: this.aiNeighboursOn ? this.aiNeighbourGrid : undefined,
       visitAiNeighbourDrones: this._visitAiNeighbourDrones,
       hasTruce: (pid) => this.playerTruce(pid),
       // Living World P1a-2 (decision 7) — offline hulls are fair game.
@@ -11769,7 +11860,8 @@ export class SectorRoom extends Room<SectorState> {
       visitLingeringTargets: this._visitLingeringTargets,
       swarmEntitySnapshot: (id) => this.swarmEntitySnapshot(id),
       resolveEntityInto: (id, out) => this.swarmEntityPoseInto(id, out),
-      handleAiFire: (shooterId, dirX, dirY, tick, targetId) => this.handleAiFire(shooterId, dirX, dirY, tick, targetId),
+      handleAiFire: (shooterId, dirX, dirY, tick, targetId, cone) => this.handleAiFire(shooterId, dirX, dirY, tick, targetId, cone),
+      handleAiWarpOut: this._handleAiWarpOut,
       phaseTime,
     });
     // Living World P3c — fire every NPC charge weapon whose wind-up elapsed.
@@ -11824,6 +11916,7 @@ export class SectorRoom extends Room<SectorState> {
         this.sceneWork.endTick(this.sabU32[COUNT_IDX] ?? 0, this.aiController.size());
         if (this.lineOfFireGate) this.sceneWork.lineOfFire(this.lineOfFireGate.checks, this.lineOfFireGate.narrow);
         this.sceneWork.aiNeighbours(this.aiNeighbourGrid.queriesTotal);
+        this.sceneWork.aiDecisions(this.aiController.stats.decisions);
         this.sceneWork.wreckPiecesTick(this.capitalWrecks?.liveCount() ?? 0);
       }
       this.sceneWork.active = running;

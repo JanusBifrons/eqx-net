@@ -88,7 +88,7 @@ export const fleetMelee: Shot = {
   title: 'Fleet melee',
   caption: 'A drone-faction fighter flown by its AI pilot in a melee against the robot faction; the AI pilots hold fire while an ally is in the line and can still hit their own side.',
   features: ['M19'],
-  docs: ['allegiances', 'fire-control'],
+  docs: ['allegiances', 'fire-control', 'ai-dogfight'],
   reel: false,
   server: 'lean',
   target: { room: 'showcase-melee', params: { shipKind: 'fighter' } },

@@ -76,7 +76,7 @@ import { PATROL_FIGHTER } from './shipKinds/patrols.js';
 import {
   DESTROYER, LIGHT_CRUISER, HEAVY_CRUISER, BATTLECRUISER, BATTLESHIP,
   DESTROYER_B, DESTROYER_C, LIGHT_CRUISER_B, LIGHT_CRUISER_C, HEAVY_CRUISER_B, HEAVY_CRUISER_C,
-  BATTLECRUISER_B, BATTLECRUISER_C, BATTLESHIP_B, BATTLESHIP_C, BATTLESHIP_RAIL,
+  BATTLECRUISER_B, BATTLECRUISER_C, BATTLESHIP_B, BATTLESHIP_C, BATTLESHIP_RAIL, HEAVY_CRUISER_BEAM, BATTLECRUISER_LANCE,
 } from './shipKinds/capitals/index.js';
 import { SHIP_KINDS_LIST } from './shipKinds/catalogueOrder.js';
 import type { NpcAllegianceId } from './allegiances.js';
@@ -155,6 +155,8 @@ export const SHIP_KINDS = Object.freeze({
   'battleship-b': BATTLESHIP_B,
   'battleship-c': BATTLESHIP_C,
   'battleship-rail': BATTLESHIP_RAIL,
+  'heavy-cruiser-beam': HEAVY_CRUISER_BEAM,
+  'battlecruiser-lance': BATTLECRUISER_LANCE,
 } as const) satisfies Readonly<Record<string, ShipKind>>;
 
 /**
@@ -181,7 +183,9 @@ export const SHIP_KINDS = Object.freeze({
 // damping, thrust, turn rate, hull, shield and regen.
 // 25 → 26 (2026-11-14): fighter, scout, heavy, robot-square, robot-circle and
 // robot-hexagon nose guns become small-arc turrets (`noseTurretMount`).
-export const SHIP_KIND_CATALOGUE_VERSION = 26;
+// 26 → 27 (2026-11-14): energy pool ×2 for every kind (`ENERGY_POOL_MUL`,
+// shipScale/defineShipKind.ts).
+export const SHIP_KIND_CATALOGUE_VERSION = 27;
 
 // The shield bubble pad is `shipTuning(kind).shieldPad` (shipScale/tuning.ts),
 // and the bubble radius is `shieldBubbleRadius(kind)`. The fixed

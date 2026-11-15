@@ -73,7 +73,10 @@ export interface AiTickCtx {
    *  owned buffer (server-only; no client brain). Feeds a follower its leader's
    *  + neighbours' live poses each tick. */
   resolveEntityInto: (id: string, out: AiEntityPoseOut) => boolean;
-  handleAiFire: (shooterId: string, dirX: number, dirY: number, tick: number, targetId: string) => void;
+  handleAiFire: (shooterId: string, dirX: number, dirY: number, tick: number, targetId: string, cone?: number) => void;
+  /** Morale flee (AI slice 6b): send this bot on an NPC warp to (x, y).
+   *  Must be a long-lived function (no per-tick closure). Absent ⇒ ignored. */
+  handleAiWarpOut?: (entityId: string, x: number, y: number) => void;
   /** Phase-time callback — fires for 'aiTick' after the controller tick
    *  and 'aiFire' after the fire pipeline drains. */
   phaseTime: (key: string) => void;
@@ -142,6 +145,7 @@ export function runAiTick(ctx: AiTickCtx): void {
   ctx.phaseTime('aiTick');
 
   const fires = ctx.aiController.drainFireRequests();
-  for (const f of fires) ctx.handleAiFire(f.shooterId, f.dirX, f.dirY, f.tick, f.targetId);
+  for (const f of fires) ctx.handleAiFire(f.shooterId, f.dirX, f.dirY, f.tick, f.targetId, f.cone);
+  if (ctx.handleAiWarpOut) ctx.aiController.drainWarpOuts(ctx.handleAiWarpOut);
   ctx.phaseTime('aiFire');
 }

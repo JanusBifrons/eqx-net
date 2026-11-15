@@ -2033,7 +2033,8 @@ line; a railgun kill erases a straight channel as wide as the bolt.
   profile's `breakBurst`, a fresh wreck). Lock: `WreckBreakFx.test.ts`
   "channel ash"; `wreckArt.test.ts` "a channel kill sheds ash".
 - **Not yet:** channel ash on a sub-capital (its profile has no break-up
-  burst, so only its glow tints).
+  burst, so only its glow tints). The beam fits that mount the heavy beam:
+  [capital-ships](../features/capital-ships.md#weapon-fits-plan-section-9).
 - Locks: `fractureHull.test.ts` "golden: v9 kill cuts" (battleship and
   fighter, side and bow, slice and channel); `fractureHull.killFocus.test.ts`
   "fracture v9" (the slice's cut is collinear with the shot through the kill

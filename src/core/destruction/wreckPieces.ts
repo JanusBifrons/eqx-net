@@ -30,7 +30,7 @@ import { DESTRUCTION_PROFILES } from '../../shared-types/shipScale/destruction.j
 import { Rng, fnvMixU32 } from '../random/rng.js';
 import { shipHullOutline, shipShapeScale } from '../geometry/shipHullOutline.js';
 import { getShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
-import { massOf, shipTuning } from '../../shared-types/shipScale/tuning.js';
+import { shipBodyMass, shipTuning } from '../../shared-types/shipScale/tuning.js';
 import type { Vec2 } from '../swarm/asteroidShape.js';
 import { SUBCAP_WRECK_COLLISION_GROUPS, WRECK_COLLISION_GROUPS } from '../physics/collisionGroups.js';
 
@@ -323,7 +323,7 @@ export function wreckPieceGeometry(input: WreckFractureInputs): WreckPieceGeomet
     cut: wreckFractureCut(input),
   });
   const hullAreaWorld = ringArea(hull) * s * s;
-  const density = hullAreaWorld > 0 ? massOf(kind, 1) / hullAreaWorld : 0;
+  const density = hullAreaWorld > 0 ? shipBodyMass(kind) / hullAreaWorld : 0;
   const inset = shipTuning(kind).wreckColliderInset;
   const out: WreckPieceGeometry[] = [];
   for (let i = 0; i < fractured.length; i++) {

@@ -46,6 +46,7 @@ Never weaken the forbidden list in `eslint.config.js`: it is the "no web leaks" 
 
 - `world.step(1/60)` inside a `while (accumulator >= fixedDt)` accumulator loop. No variable-dt stepping, ever.
 - Rapier bodies / colliders are pooled; do not allocate per-tick.
+- **Ship stats belong to the kind, never the pilot:** mass and inertia only from `shipBodyMass` / `shipBodyInertia`.
 - Sleep callbacks drive `ENTITY_SLEPT` / `ENTITY_WOKE`: do not suppress or re-enter them without thinking about the handshake.
 - **Spawned bodies:** drones get their kind's `linearDamping` (the client predWorld drone body stays undamped, anchored each snapshot); asteroids stay ballistic; structures (kind 2) are LOCKED on spawn (`staticBody` → `lockBody`), as in the client predWorld. Locks: `World.test.ts`, `SwarmSpawner.test.ts`, `structure-ram-blocked.spec.ts`.
 - **Soft CCD on every dynamic body** (`SOFT_CCD_PREDICTION`); never switch to full `setCcdEnabled(true)` (`World.ccd.test.ts`).
@@ -89,6 +90,7 @@ Never weaken the forbidden list in `eslint.config.js`: it is the "no web leaks" 
 
 - **One worker, many worlds:** each sector world lives in its `createWorld(sab, post)` closure; never put per-sector state at module scope in `worker.ts`.
 - **Worker→main messages** are `READY`, `SLEEP_TRANSITION` and `CONTACT_BATCH`. A new variant extends the worker's `postMessage` site and the SectorRoom handler's `msg.type` discriminator. Keep the `WorkerCommand` union, `SectorRoom.WorkerCmd` and the guide's command list in sync.
+- **AI pilot keys are held** every step until the next `AI_INPUTS` (`aiInputHeld`); a bot warp flies its spool on them.
 - **Impact damage reads `normalSpeed` and the body masses** (`combat/Ramming.ts`), never post-step velocity.
 - Detail: [physics-worker](../../docs/architecture/physics-worker.md#worker-to-main-messages).
 
@@ -118,10 +120,11 @@ Pure module at [src/core/ai/WeaponMountController.ts](ai/WeaponMountController.t
 Pure simulation: physics, AI, combat math, reconciliation, the event bus, DI contracts, shared math, deterministic state machines (e.g. `TransitStateMachine`), leveling curves and grid logic. Rules for those modules:
 
 - **AI pilots use a player's controls only:** a brain picks a facing and a wanted velocity; `ai/virtualPilot.ts` turns them into `AiIntent.input` keys run through `applyShipInput`. Never add an AI-only actuation path; difficulty is reaction and aim, never weaker engines (`ai/virtualPilot.test.ts`).
+- **Combat AI** extends `HostileDroneBehaviour` + `ai/tactics/` only; mass-dependent numbers come from the live kind. Detail: [ai-dogfight](../../docs/architecture/ai-dogfight.md).
 - **AI distances are multiples of the ship's own numbers** (fire range, `maxSpeed`, `shipTuning`, #18), AI scratch is class fields (#14), and combat movement uses `ai/contextSteering.ts`, never summed weighted vectors. Detail: [ai-pilots](../../docs/architecture/ai-pilots.md), [allegiances](../../docs/architecture/allegiances.md).
 - **Leveling** (`leveling/`): the server is the only authority that runs it; `STAT_IDS` is append-only. Physics stats enter ONLY through `applyShipInput(body, kind, input, mul?)`, driven identically on worker and predWorld; caps go through the one `effectiveShip*` / `effectiveStructureMaxHealth` helper. Detail: [leveling-and-upgrades](../../docs/architecture/leveling-and-upgrades.md).
 - **Power grid** (`structures/`): works over `GridNode`, never the server registry; an unbuilt node is never traversable; `Grid.powerSummaryFor` stays instantaneous. Detail: [structures-and-power-grid](../../docs/architecture/structures-and-power-grid.md#the-power-grid-phase-3--shipped).
-- **Weapons:** `combat/WeaponCatalogue.ts` is the append-only, pure source (`WEAPON_IDS`). Never branch on weapon id in core; a new weapon is a catalogue row. Energy uses the same `combat/Energy.ts` helpers on both sides. Detail: [weapon-mounts](../../docs/architecture/weapon-mounts.md#weapon-catalogue-fire-classes-and-energy-core).
+- **Weapons:** `combat/WeaponCatalogue.ts` is the append-only, pure source (`WEAPON_IDS`). Never branch on weapon id in core; a new weapon is a catalogue row. Energy uses the same `combat/Energy.ts` helpers on both sides. An AI-flown ship pays boost and weapons from one pool, via `IAiBehaviour.trySpendEnergy` ([fire-control](../../docs/architecture/fire-control.md#ai-pilot-weapon-energy)). Detail: [weapon-mounts](../../docs/architecture/weapon-mounts.md#weapon-catalogue-fire-classes-and-energy-core).
 - **One source each (#15):** `combat/mountReach.ts` `mountTargetReach` is the target-pick radius for both sides; `NAVAL_SHELL_WEAPON_IDS` is the naval list; a shell path ends at `shellPathEndTick(t, n)`, never `t + n` ([shell-events](../../docs/architecture/shell-events.md#slice-1-as-built-2026-11-11)).
 
 ## What does NOT belong in src/core

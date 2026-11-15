@@ -113,19 +113,16 @@ describe('BeamSpritePool — solid core + falloff taper (P1a)', () => {
 });
 
 describe('BeamSpritePool — per-beam style override (capital heavy beam, plan beam-slices §8)', () => {
-  it('a beam with a style draws in its tint and width; the next beam keeps the pool style; one container', () => {
+  it('a beam with a style draws in its tint and width (styled lane); the next beam keeps the pool style', () => {
     const pool = new BeamSpritePool(TAPER_STYLE);
     const heavy = { tint: 0xb46cff, width: 10, alpha: 1, taper: true };
     pool.setBeams([{ ...horizontalBeam(375), style: heavy }, horizontalBeam(375)], 2);
-    const [a, b] = pool.container.children as unknown as Array<{ tint: number; scale: { y: number } }>;
-    expect(a!.tint).toBe(0xb46cff);
-    expect(a!.scale.y).toBe(10);
-    expect(b!.tint).toBe(TAPER_STYLE.tint);
-    expect(b!.scale.y).toBe(TAPER_STYLE.width);
-    // Re-using the slot for a plain beam restores the pool style.
+    expect(pool.coreAt(0)).toMatchObject({ tint: 0xb46cff, width: 10, parent: pool.styledContainer });
+    expect(pool.coreAt(1)).toMatchObject({ tint: TAPER_STYLE.tint, width: TAPER_STYLE.width, parent: pool.container });
+    // A plain beam in slot 0 draws in the pool style, in the main container.
     pool.setBeams([horizontalBeam(375)], 1);
-    expect(a!.tint).toBe(TAPER_STYLE.tint);
-    expect(a!.scale.y).toBe(TAPER_STYLE.width);
-    expect(pool.container.children.length).toBe(2);
+    expect(pool.coreAt(0)).toMatchObject({ tint: TAPER_STYLE.tint, width: TAPER_STYLE.width, parent: pool.container });
+    // Sprites are pooled per lane: no growth on re-use.
+    expect(pool.container.children.length + pool.styledContainer.children.length).toBe(2);
   });
 });

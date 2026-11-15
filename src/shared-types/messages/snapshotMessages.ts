@@ -332,6 +332,10 @@ export interface SnapshotMessage {
        *  more than the `lockedBy` rows (absent ⇒ the rows are everyone). The
        *  HUD banner's count. No `SWARM_WIRE_VERSION` bump (slim JSON field). */
       lockedByN?: number;
+      /** Fire control — how many of those hold a COMPLETED lock, sent only
+       *  when some are off the `lockedBy` rows (absent ⇒ the locked rows are
+       *  all of them). The banner's exact locked count. Slim JSON field. */
+      lockedByL?: number;
       /** Phase 4 (Dynamic weapon mounts, WS-B3) — the hull's ACTIVATED latent
        *  mount slots (`{ slotId, weaponId }[]`). PUBLIC (unlike `statAlloc`):
        *  emitted for EVERY ship (active + lingering) that has ≥ 1 activated

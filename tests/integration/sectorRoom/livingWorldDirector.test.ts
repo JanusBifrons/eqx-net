@@ -155,6 +155,36 @@ describe('LivingWorldDirector — multi-sector population control', () => {
     expect(s.respawning).toBe(0);
   }, 20_000);
 
+  it('a bot that flees and warps out (morale) frees its pool record and is replaced', async () => {
+    // A morale warp-out leaves the sector through the room's NPC departure
+    // (BOT_DESPAWNED, no ENTITY_DESTROYED). The director must release the
+    // record like a kill, or the sector never refills (2026-11-14).
+    h = await bootLivingWorldTestServer({
+      sectors: ['sol-prime'],
+      botCount: 2,
+      seed: 5,
+      director: { respawnDelayMs: 250 },
+    });
+    await h.waitUntil(() => h!.director.snapshot().active === 2, 6000, 'both bots active');
+
+    const room = h.getRoom('sol-prime') as unknown as {
+      _handleAiWarpOut: (id: string, x: number, y: number) => void;
+      getBotPose: (id: string) => { x: number; y: number } | null;
+    };
+    const p = room.getBotPose('lwbot-0')!;
+    // The brain's warp-out request, through the room's real handler.
+    room._handleAiWarpOut('lwbot-0', p.x + 3000, p.y);
+
+    await h.waitUntil(() => room.getBotPose('lwbot-0') === null, 8000, 'the fled bot leaves the sector');
+    // The pool reuses the id: a replacement `lwbot-0` back in the world. (The
+    // record's own "active" count can't show it: a leaked record stays
+    // "active" with no ship behind it.)
+    await h.waitUntil(() => room.getBotPose('lwbot-0') !== null, 6000, 'its record is released and a replacement warps in');
+    const s = h.director.snapshot();
+    expect(s.total).toBe(2);
+    expect(s.respawning).toBe(0);
+  }, 30_000);
+
   it('shed-and-pauses under load, refilling only once sheds stop', async () => {
     h = await bootLivingWorldTestServer({
       sectors: ['sol-prime'],

@@ -62,6 +62,15 @@ export function shipHitBound(kindId: string | null | undefined): number {
   return b;
 }
 
+/** The circle an aimer lines a fixed gun up on: the shield bubble while a
+ *  non-capital's shield is up, else the kind's own hull radius (the polygon's
+ *  size, #18). Used for the AI pilot's trigger cone, never for a hit test. */
+export function shipAimRadius(kindId: string | null | undefined, shieldUp: boolean): number {
+  const k = getShipKind(kindId ?? null);
+  if (shieldUp && !isCapitalKindId(k.id)) return k.radius + shipTuning(k).shieldPad;
+  return k.radius;
+}
+
 /** The radius a blast measures a ship's edge by: its kind's own size (#18). */
 export function shipSplashRadius(kindId: string | null | undefined): number {
   return getShipKind(kindId ?? null).radius;

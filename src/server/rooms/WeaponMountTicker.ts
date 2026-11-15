@@ -138,8 +138,9 @@ export interface WeaponMountTickerDeps {
   ) => void;
   /** Fire ONE mount of a capital drone along its barrel (the resolver reads
    *  the slewed angle). Called only when that mount is on target, in reach
-   *  and reloaded. */
-  fireDroneMount?: (droneId: string, mountIdx: number) => void;
+   *  and reloaded. Returns false when the shot was refused (the ship's energy
+   *  pool can't pay): the reload is then not spent. */
+  fireDroneMount?: (droneId: string, mountIdx: number) => boolean | void;
   /** Fire control (PR 1d slice 2): true ⇒ the capital holds no COMPLETED
    *  lock on this mount's target (a pilot), so the mount aims but holds fire
    *  (reload not spent). Absent ⇒ never blocked (unit harnesses). */
@@ -164,6 +165,10 @@ export interface WeaponMountTickerDeps {
    *  charge lasts longer than this many ticks (0 = the shot goes on the next
    *  tick it may). Undefined = each weapon's own `chargeTicks`. */
   chargeTicksCap?: () => number | undefined;
+  /** testMode `traverseTicksCap` (room / join option): no capital turret
+   *  takes longer than this many ticks to train across a full turn (0 = it
+   *  snaps onto its bearing). Undefined = each mount's own `rotationSpeed`. */
+  traverseTicksCap?: () => number | undefined;
 }
 
 
@@ -654,7 +659,7 @@ export class WeaponMountTicker {
       if (best < 0) {
         per[i] = null;
         if (lock.target !== '') resetLock(lock, '');
-        angles[i] = rotateMountToward(angles[i]!, 0, mount, DT_SEC);
+        angles[i] = rotateMountToward(angles[i]!, 0, mount, this.traverseDt(mount));
         // A 'locked-direction' charge fires when it completes, target or not;
         // a 'when-bearing' one holds until the gun bears on a target again.
         this.releaseLockedCharge(droneId, i, mount, tick, reload);
@@ -682,7 +687,7 @@ export class WeaponMountTicker {
       const dx = t.x - mx, dy = t.y - my;
       const dist = Math.hypot(dx, dy);
       const want = leadArcBearing(dx, dy, t.vx - selfVx, t.vy - selfVy, w.mode === 'hitscan' ? 0 : w.speed, ang, mount.baseAngle);
-      angles[i] = rotateMountToward(angles[i]!, want, mount, DT_SEC);
+      angles[i] = rotateMountToward(angles[i]!, want, mount, this.traverseDt(mount));
       // Charge-up (plan step 6): the turret keeps tracking while it charges.
       // 'locked-direction' fires the moment the charge completes; a charging
       // 'when-bearing' gun waits out the charge, then fires through the
@@ -711,14 +716,14 @@ export class WeaponMountTicker {
         const muzzle = shipShotMuzzle(kind, mount, true);
         if (d.lineOfFireBlocked(droneId, t.id, mx + ndx * muzzle, my + ndy * muzzle, ndx, ndy, dist - muzzle)) continue;
       }
-      if (chargeStarts !== null) {
-        // Loaded, locked and bearing: a charge weapon begins its charge
-        // instead of firing (the turret keeps tracking).
-        if (!charging) { chargeStarts[i] = tick; continue; }
-        chargeStarts[i] = NOT_CHARGING;
-      }
+      // A charge weapon that is loaded, locked and bearing begins its charge
+      // instead of firing (the turret keeps tracking).
+      if (chargeStarts !== null && !charging) { chargeStarts[i] = tick; continue; }
+      // Energy refused (a player capital's rule): keep the reload (and a
+      // completed charge), retry next tick.
+      if (d.fireDroneMount!(droneId, i) === false) continue;
+      if (chargeStarts !== null) chargeStarts[i] = NOT_CHARGING;
       reload[i] = tick;
-      d.fireDroneMount!(droneId, i);
     }
   }
 
@@ -744,6 +749,17 @@ export class WeaponMountTicker {
   private chargeTicksOf(chargeTicks: number): number {
     const cap = this.deps.chargeTicksCap?.();
     return cap !== undefined && cap < chargeTicks ? cap : chargeTicks;
+  }
+
+  /** The time step a capital turret trains by this tick: `DT_SEC`, scaled up
+   *  under the testMode `traverseTicksCap` so a full turn takes at most that
+   *  many ticks (Infinity for 0: it snaps). Never slower than the mount's own. */
+  private traverseDt(mount: WeaponMount): number {
+    const cap = this.deps.traverseTicksCap?.();
+    if (cap === undefined || mount.rotationSpeed <= 0) return DT_SEC;
+    if (cap === 0) return Infinity;
+    const capped = (2 * Math.PI) / (cap * mount.rotationSpeed);
+    return capped > DT_SEC ? capped : DT_SEC;
   }
 
   /** Cleanup hook: drop all per-player state on leave/transit/death. */
