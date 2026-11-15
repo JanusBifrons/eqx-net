@@ -107,6 +107,7 @@ import { recoverInputTickFromStarvation, skipStalledBacklog, stallResumeAction }
 import { SnapshotCoalescer } from './SnapshotCoalescer.js';
 import { ClientEntityFactory } from './entity/ClientEntityFactory.js';
 import { createGameCutField, type CutFieldSummary } from './cutFieldWiring.js';
+import { clearMirror } from './clearMirror.js';
 import { WreckGeometryStore } from './wreckGeometryStore.js';
 import { SWARM_KIND_WRECK } from '@shared-types/swarmWireFormat';
 import type { ClientSpawnCtx } from './entity/IClientEntityLeaf.js';
@@ -7277,26 +7278,6 @@ export class ColyseusGameClient {
     });
   }
 
-  /**
-   * Plan: crispy-kazoo, Commit 6 — reflection-based mirror clear.
-   *
-   * Walks every property on `mirror` and clears Maps / Sets / Arrays
-   * generically. The plan's prophylactic against future mirror
-   * additions: adding a new field to `RenderMirror` does NOT require
-   * touching dispose — the walk picks it up automatically. The
-   * disposeAudit test populates every field with a sentinel value
-   * and asserts they're empty post-dispose.
-   */
-  private clearMirror(): void {
-    const m = this.mirror as unknown as Record<string, unknown>;
-    for (const k of Object.keys(m)) {
-      const v = m[k];
-      if (v instanceof Map) v.clear();
-      else if (v instanceof Set) v.clear();
-      else if (Array.isArray(v)) v.length = 0;
-    }
-  }
-
   get cutFieldStats(): CutFieldSummary { return this._cutField.summary(); } // cut-field-collision.spec.ts waits on it
 
   dispose(): void {
@@ -7358,7 +7339,7 @@ export class ColyseusGameClient {
     this._scheduledDamageSpawns.length = 0;
 
     // Reflection-based clear: every Map / Set / Array on `mirror` empties.
-    this.clearMirror();
+    clearMirror(this.mirror); // ./clearMirror.ts
 
     // Stats + per-connection accumulators — reset to freshly-constructed
     // (non-nullable types) so a re-mount sees a clean baseline.
