@@ -956,9 +956,11 @@ Wreck pieces now wear down and break again. Pure numbers in
   26,470 damage from ordinary guns. A heavy cruiser's biggest piece: ~950.
 - **Filming.** `wreck-test` allows capital pilots: a lance battlecruiser
   (heavy-beam main battery) off the battleship's beam, `test_kill_capitals`,
-  then lock the nearest piece with every group and its AUTO turrets cut it
-  up (`tests/e2e/capital-wreck-render.spec.ts` "re-splits"; showcase shot
-  `wreck-resplit`). No ship carries the mining laser yet, so the film shows
+  then lock a piece with every group and its AUTO turrets cut it up
+  (`tests/e2e/capital-wreck-render.spec.ts` "re-splits"). The showcase shot
+  `wreck-resplit` keeps working one piece as a player would: when it splits,
+  it locks the cut child nearest where it was. The main battery traverses
+  ~15 s to the beam, so the take starts once its beams are on the piece. No ship carries the mining laser yet, so the film shows
   ordinary beams at 0.1. Activated latent mounts (the fighter's wing
   hardpoints) form a `wing` group the client fire control does not fire
   yet, so they cannot carry a test mining laser.
