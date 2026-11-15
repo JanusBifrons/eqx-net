@@ -1,6 +1,7 @@
 import { Container, Graphics } from 'pixi.js';
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import { interpolateSwarmPose, type InterpolatedPose } from '../net/swarmInterpolation';
+import { moveKey } from './shipRekey.js';
 
 const BAR_WIDTH = 40;
 const BAR_HEIGHT = 4;
@@ -165,6 +166,21 @@ export class HealthBarManager {
     entry.chipHealthPct = Math.max(entry.chipHealthPct, chipSeed);
     entry.lastHitTime = performance.now();
     entry.gfx.alpha = 1;
+  }
+
+  /** RTS Part A seamless hand-over: the entity's key changed; its bar (fill,
+   *  chip band, fade timer) moves with it. A stale bar under `to` is freed. */
+  rekey(from: string, to: string): void {
+    const stale = moveKey(this.bars, from, to);
+    if (stale === undefined) return;
+    HealthBarManager.debugCounters.gfxRelease++;
+    this.container.removeChild(stale.gfx);
+    this.freeGfx.push(stale.gfx);
+  }
+
+  /** True while `entityId` has a bar (test / DEV identity probe). */
+  hasBar(entityId: string): boolean {
+    return this.bars.has(entityId);
   }
 
   update(mirror: RenderMirror): void {

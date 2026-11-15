@@ -147,6 +147,11 @@ export interface AiWorldView {
    *  target until then. SERVER-ONLY, no wire surface (the snapshot's
    *  `drones[].charging` is the client's copy). Absent ⇒ never charging. */
   isCharging?(entityId: string): boolean;
+  /** Is entity `entityId` hostile to player `playerId` (stance or ledger,
+   *  the room's one NPC→player hostility answer)? A player-owned ship engages
+   *  what is hostile to its OWNER (RTS Part B slice 6). SERVER-ONLY, no wire
+   *  surface. Absent ⇒ never. */
+  hostileToPlayer?(entityId: string, playerId: string): boolean;
 }
 
 /** Body-target claims per NPC side (spread targets). One claim per brain;
@@ -311,6 +316,10 @@ export function decodeAiInputBits(
   out.boost = (bits & AI_INPUT_BOOST) !== 0;
 }
 
+/** What an AI-flown ship is doing, in the fleet status activity words
+ *  (`IAiBehaviour.getActivity`; a subset of the wingman activity table). */
+export type AiShipActivity = 'idle' | 'moving' | 'patrolling' | 'chasing' | 'attacking' | 'retreating' | 'guarding' | 'searching';
+
 export interface IAiBehaviour {
   tick(self: AiEntity, view: AiWorldView): AiIntent;
   /**
@@ -337,6 +346,10 @@ export interface IAiBehaviour {
    * Pure / side-effect-free; safe to call every frame.
    */
   isHostileToPlayer?(playerId: string, truce?: boolean): boolean;
+  /** Optional read-only query: the id of the body this pilot is fighting now
+   *  (its sticky pick), or null. Server-only reader: an RTS owned hull's
+   *  locks follow it (`SectorRoom.tickWingmanTargets`). */
+  getTargetId?(): string | null;
   /**
    * Optional SERVER-ONLY ship energy pool (owner rule 2026-11-13: an AI pilot's ship
    * runs a player's ship rules). One pool per AI-flown ship, shared by boost and
@@ -366,9 +379,51 @@ export interface IAiBehaviour {
    * never leaves its guard radius to hold its gun stand-off or chase a target
    * out of reach; with none it keeps the stand-off. SERVER-ONLY (no client
    * brain ⇒ no lockstep surface / wire bump).
+   * `anchorId`: the post FOLLOWS that ship's live pose (an escort's zone
+   * round the ship it escorts); (x, y) is the fallback until it resolves.
    */
-  setGuardPost?(x: number, y: number, radius: number): void;
+  setGuardPost?(x: number, y: number, radius: number, anchorId?: string | null): void;
   clearGuardPost?(): void;
+  /** Another AI ship left the controller (died / despawned); called by
+   *  `AiController.unregister` on every remaining brain. Server-only. */
+  noteEntityGone?(entityId: string): void;
+  /** RTS attitude (SERVER-ONLY): off ⇒ engage only what is on the
+   *  retaliation ledger (Defensive); on (the default) ⇒ also what is hostile
+   *  on sight (Aggressive). */
+  setEngageOnSight?(on: boolean): void;
+  /** RTS hold fire (SERVER-ONLY): on ⇒ pick no target at all (no on-sight,
+   *  no retaliation, no trigger); the ship keeps flying its job. Attackers
+   *  are still recorded, so lifting it answers a recent one. */
+  setHoldFire?(on: boolean): void;
+  /** RTS attack order (SERVER-ONLY): `id` gets priority inside the usual
+   *  target pick and goes on the retaliation ledger while ordered, free of
+   *  the guard leash; null lifts it (the ship goes back to its job). */
+  setOrderedTarget?(id: string | null, atTick: number): void;
+  getOrderedTarget?(): string | null;
+  /** RTS Hunt (SERVER-ONLY): no guard leash; with nothing to fight the ship
+   *  searches the sector, then engages what it finds. A guard post ends it. */
+  setHunt?(on: boolean): void;
+  /** RTS Move / Retreat (SERVER-ONLY, slice 9): fly to (x, y) without
+   *  turning to fight (fire only at what is already in the sights), then
+   *  guard the point. A guard post, a hunt or a stop ends it. */
+  setTravel?(x: number, y: number): void;
+  /** RTS Patrol (SERVER-ONLY, slice 11): one leg of the fleet route, from
+   *  (fromX, fromY) to (x, y): a travel that fights per the attitude within
+   *  the guard radius of the leg. Activity `patrolling`. */
+  setPatrolLeg?(fromX: number, fromY: number, x: number, y: number): void;
+  /** On a patrol leg (not yet arrived)? */
+  isPatrolling?(): boolean;
+  /** 0 none, 1 on the way, 2 arrived (until the next job). */
+  getTravelState?(): 0 | 1 | 2;
+  /** The guard post's centre (null with no post). SERVER-ONLY. */
+  getGuardPostX?(): number | null;
+  getGuardPostY?(): number | null;
+  /** RTS Stop (SERVER-ONLY, slice 9): brake to a halt along the course from
+   *  the given pose and guard the spot it stops on. */
+  stopAt?(x: number, y: number, vx: number, vy: number): void;
+  /** What the ship is doing, for the owner's fleet panel (SERVER-ONLY,
+   *  slice 9): one of the fleet status activities. */
+  getActivity?(): AiShipActivity;
   /**
    * Leader-led flocking (non-combat herding): assign this drone the squad
    * LEADER's course. Like `setMoveTarget` but flags it a flock leader so the
@@ -389,6 +444,9 @@ export interface IAiBehaviour {
    * lockstep surface / wire bump). `setMoveTarget` clears the follower role
    * (you're a leader/independent mover); `clearMoveTarget` reverts to orbit. */
   setFlockFollow?(leaderId: string, memberIds: readonly string[]): void;
+  /** The flock leader this ship follows (null: it leads or flies alone).
+   *  SERVER-ONLY; RTS squads read it back (tests, diagnostics). */
+  getFlockLeaderId?(): string | null;
   /**
    * Line-of-fire feedback (friendly fire): the room's `LineOfFireGate` held
    * this NPC's shot because a friendly body at (blockerX, blockerY) was on

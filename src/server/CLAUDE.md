@@ -73,7 +73,7 @@ How each subsystem works (and its history) is in the "Server notes" section of t
 **Allegiances and friendly fire** ([allegiances](../../docs/architecture/allegiances.md#server-implementation-notes)):
 - 🔴 Classify by the registry kind, never an id prefix. `isHostileToPlayer` = stance OR ledger; only a hit on a DRONE escalates the `FactionLedger`. Allegiance decides targeting, never what a shot hits.
 - 🔴 Every shot hits the first thing in its path, own side included (skips: shooter, a capital's own deck, loot pods for non-pilot shots); friendly hits never mark hostile.
-- AI pilots hold fire on a friendly line only via `LineOfFireGate`; players are never gated. Drone-brain proximity queries use `AiNeighbourGrid`.
+- AI pilots (AI-flown owned hulls too) hold fire on a friendly line only via `LineOfFireGate`; players are never gated. Drone-brain proximity queries use `AiNeighbourGrid`.
 
 **Cargo and storage** ([loot-and-cargo](../../docs/features/loot-and-cargo.md#server-implementation-notes)):
 - 🔴 Value only moves (`transferInto`), never copies; every transfer is ONE atomic `GROUP`; `HoldStore` is the authority. Every death and abandon seam spills the hold.
@@ -81,7 +81,7 @@ How each subsystem works (and its history) is in the "Server notes" section of t
 
 **NPC sides** ([robots](../../docs/features/robots.md), [robot-territory](../../docs/features/robot-territory.md), [bounties-and-events](../../docs/features/bounties-and-events.md)):
 - 🔴 Classify a director bot id with `isDirectorBotId`, never a prefix literal (a new director adds its prefix there). The robot director persists to its own `allegiance_director_state` row.
-- Only the robot director gets a `respawnAnchor`. Harvesters mine only through `SectorRoom.mineAsteroid`; a raid step is one `StorageService.tradeTransfer` group. Charge weapons fire via `releaseCharges`; `evictSwarmEntity` forgets the shooter.
+- Only the robot director gets a `respawnAnchor`. Rock ore leaves only through `OreDraw` (harvesters via `SectorRoom.mineAsteroid`, mining-laser hits paid on the 1 Hz pulse); a raid step is one `StorageService.tradeTransfer` group. Charge weapons fire via `releaseCharges`; `evictSwarmEntity` forgets the shooter.
 - 🔴 An elite is a tag on the swarm record (`markElite`), never a new kind; every per-entity max hull goes through `droneMaxHealthOf`. Elites and event NPCs are never load-shed.
 
 **Economy** ([economy-and-trade](../../docs/architecture/economy-and-trade.md#server-implementation-notes), [economy-wallet](../../docs/features/economy-wallet.md), [blueprints](../../docs/features/blueprints.md), [research-lab](../../docs/features/research-lab.md)):
@@ -177,6 +177,10 @@ How each subsystem works (and its history) is in the "Server notes" section of t
 - **Adding a weapon never edits `SectorRoom.ts`**, only the catalogue. Swarm hits go through `ProjectileBroadphase` (must equal the full scan).
 - **Every cleanup path clears `playerMountAngles` and `droneMountAngles`** with `lastFireClientTick`. Drones target active hulls only.
 - Full text and locks: [sector-room-anatomy.md](../../docs/architecture/sector-room-anatomy.md#server-implementation-notes), [weapon-mounts.md](../../docs/architecture/weapon-mounts.md#server-implementation-notes).
+
+## Fleet command (RTS)
+
+- **`SectorRoom.shipKeyMoved` is THE one re-key seam** when a ship's key moves (locks, fleet orders, turret angles); never add a second. An owned hull is flown by the AI pilot brain, registered `{ hull: true }` (keys as pilot INPUT); it fires through `PlayerFireResolver` on its brain's `intent.fire`, never `AiFireResolver`; fleet commands are owner-checked per id. Detail: [fleet-command](../../docs/architecture/fleet-command.md#7-zone-rules-in-full).
 
 ## SectorRoom subsystems
 

@@ -41,7 +41,7 @@ test('after Spectate the client never re-predicts its own ship', async ({ browse
   // body, then dropped on the next schema patch, so sample both).
   await page.evaluate(() => {
     const g = globalThis as unknown as {
-      __eqxClient: { mirror: { localPlayerId: string; ships: Map<string, { x: number; y: number }>; lingeringShips?: Map<string, { ownerPlayerId?: string }> }; predWorld?: { hasShip(id: string): boolean } };
+      __eqxClient: { mirror: { localPlayerId: string; ships: Map<string, { x: number; y: number; isActive?: boolean; ownerPlayerId?: string }> }; predWorld?: { hasShip(id: string): boolean } };
       __eqxStore: { getState(): { pilotMode?: string } };
       __phantomLog: Array<{ spectating: boolean; body: boolean; entry: boolean }>;
       __phantomStop?: boolean;
@@ -69,8 +69,8 @@ test('after Spectate the client never re-predicts its own ship', async ({ browse
   );
   // The parked hull reaches the client as a lingering hull of ours.
   await page.waitForFunction(() => {
-    const c = (globalThis as { __eqxClient?: { mirror: { localPlayerId: string; lingeringShips?: Map<string, { ownerPlayerId?: string }> } } }).__eqxClient;
-    for (const e of c?.mirror.lingeringShips?.values() ?? []) if (e.ownerPlayerId === c?.mirror.localPlayerId) return true;
+    const c = (globalThis as { __eqxClient?: { mirror: { localPlayerId: string; ships: Map<string, { isActive?: boolean; ownerPlayerId?: string }> } } }).__eqxClient;
+    for (const e of [...(c?.mirror.ships?.values() ?? [])].filter((e) => e.isActive === false)) if (e.ownerPlayerId === c?.mirror.localPlayerId) return true;
     return false;
   }, undefined, { timeout: 10_000 });
   // Sample a fixed number of spectating FRAMES, not a fixed time: the

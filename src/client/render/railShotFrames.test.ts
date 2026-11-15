@@ -1,22 +1,17 @@
 /**
  * The railgun shot, frame by frame, through the real MountVisualManager (the
- * muzzle flash) and the real FxProjectiles (the slug and its tail): what a
- * viewer sees between the muzzle and the slug (hostile review of rail take 7,
- * 2026-11-15, f254-f264): "the slug's tail is still tied to the muzzle for
- * ~0.17 s before separating; it must never draw from the muzzle".
+ * muzzle flash) and the real FxProjectiles (the slug and its ion trail).
  *
- * Why it survived the FxWeapons tail test (#13, a level up): that test drew
- * the slug alone, and its tail's back end did leave the muzzle, at HALF the
- * slug's speed (`SLUG_WAKE_GROW` 0.5). In the game the railgun's flash is
- * the naval flash at 1.8× heft, 22 gun widths long: a ~1.4 km jet down the
- * line of fire for its ~0.4 s life. The slow tail's back end stayed inside
- * that jet, so muzzle → jet → tail → slug read as one line for ~10 frames.
+ * The look is the owner's pick from five filmed versions (2026-11-15): "V6 I
+ * think is the best, except it should have a longer tail like v4". So the
+ * flash is v6's long white-blue JET down the line of fire (the naval flash at
+ * the railgun heft, 22 gun widths long), the slug is v6's long white streak,
+ * and the violet ion trail is v4's: drawn from the muzzle to the slug and
+ * lingering ~1.6 s where the slug passed, fading and spreading as it goes.
+ * (Rail takes 6-7 had tried a burst flash and a short tail flying off with a
+ * compact head; the owner preferred the long look.)
  *
- * Contract: the rail flash is a BURST at the muzzle (it reaches forward no
- * further than it is wide), and the tail exists only behind the head: from
- * zero length at the muzzle, its back end flies off at most a fifth slower
- * than the slug, so once the slug is clear of the flash there is dark space
- * between the flash and the tail on every frame.
+ * The timing fix stays: the flash shows in the frame the slug is first drawn.
  */
 import { describe, expect, it } from 'vitest';
 import { Texture, type Sprite } from 'pixi.js';
@@ -28,15 +23,9 @@ import { getShipKind } from '../../shared-types/shipKinds';
 import { shipTurrets, muzzleReach } from './art/turretLayout.js';
 import { FxProjectiles } from './art/fx/FxWeapons.js';
 import { RAILGUN_BALLISTICS } from '../../shared-types/combat/navalGuns.js';
-import { flashFrameAt, muzzleHeft, NAVAL_FLASH_LIFE_S } from './art/fx/turretFx.js';
 
 const FRAME_MS = 1000 / 60;
-/** The muzzle-flash flipbook (`muzzleFlashFlipbook`): its cell (px; the
- *  sprite scale is per cell), frame count, and how far its forward cone
- *  reaches up the cell at frame `fr` (`py < 0.9 k`, k = 1 − fr / frames). */
-const FLASH_CELL = 64;
-const FLASH_FRAMES = 4;
-const coneReach = (fr: number): number => 0.9 * (1 - fr / FLASH_FRAMES);
+/** The muzzle-flash flipbook (`muzzleFlashFlipbook`): four frames. */
 const flashFrames = [Texture.WHITE, Texture.WHITE, Texture.WHITE, Texture.WHITE];
 const shipArt = (): ShipArt => ({ frames: Array.from({ length: 16 }, () => Texture.WHITE), w: 32, h: 32, density: 4, nozzles: [], navLights: [] });
 
@@ -90,8 +79,9 @@ describe('railgun shot frames: the slug never shows before its flash', () => {
   });
 });
 
-describe('railgun shot frames: nothing links the muzzle to the slug', () => {
-  it('the rail flash is a burst at the muzzle, not a jet down the line of fire', () => {
+
+describe("railgun shot frames: the owner's look (v6 with v4's trail)", () => {
+  it('the rail flash is the long jet down the line of fire, at the railgun heft', () => {
     const { mvm, flash, shoot } = railFlash();
     const mounts = getShipKind('battleship-rail').mounts!;
     let fx = 50_000;
@@ -103,13 +93,11 @@ describe('railgun shot frames: nothing links the muzzle to the slug', () => {
     mvm.applyMountAngles('bs', mounts, mounts.map(() => 0));
     const f = flash();
     expect(f.visible).toBe(true);
-    // Forward (along the barrel) vs across, in flipbook cells.
-    expect(f.scale.y, 'reaches forward no further than it is wide').toBeLessThanOrEqual(f.scale.x * 1.0001);
+    // Forward (along the barrel) vs across, in flipbook cells: 22 to 7.
+    expect(f.scale.y, 'reaches forward three times as far as it is wide').toBeGreaterThanOrEqual(f.scale.x * 3);
   });
 
-  it('frame by frame: the tail grows from the muzzle behind the head, and once the slug clears the flash dark space separates them', () => {
-    const { mvm, flash, shoot } = railFlash();
-    const mounts = getShipKind('battleship-rail').mounts!;
+  it('frame by frame: the trail runs from the muzzle to the slug and lingers there', () => {
     const SP = RAILGUN_BALLISTICS.speed;
     const size = 5; // a capital-zoom size floor, as on film
     let fx = 50_000;
@@ -118,33 +106,33 @@ describe('railgun shot frames: nothing links the muzzle to the slug', () => {
         fx: { tex: Texture.WHITE, frames: [Texture.WHITE], w: 1, h: 1 } });
       return { fx: () => h() } as unknown as ArtService;
     })(), () => 'high', () => fx);
-    mvm.setFrame(fx, 'high');
-    mvm.applyMountAngles('bs', mounts, mounts.map(() => 0));
-    shoot();
-    let separated = 0;
-    for (let f = 1; f <= 30; f++) {
-      fx += FRAME_MS;
-      mvm.setFrame(fx, 'high');
-      mvm.applyMountAngles('bs', mounts, mounts.map(() => 0));
-      const fl = flash();
-      const fr = flashFrameAt(f / 60, FLASH_FRAMES, NAVAL_FLASH_LIFE_S * muzzleHeft('railgun'));
-      const flashReach = fl.visible && fr >= 0 ? fl.scale.y * FLASH_CELL * coneReach(fr) : 0;
-      // The slug, `flown` from the muzzle (x = 0) along +x.
-      const flown = (SP * f) / 60;
-      p.beginFrame(); p.draw('slug', 'slug', flown, 0, SP, 0, 1, size, flown); p.endFrame();
-      const [headBack] = span(p.container.children[0] as unknown as S);
-      let tailBack = Infinity;
+    const trailSpan = (): [number, number] => {
+      let back = Infinity, front = -Infinity;
       for (const s of p.wakeLayer.children as unknown as S[]) {
         if (!s.visible || s.alpha <= 0.01) continue;
-        tailBack = Math.min(tailBack, span(s)[0]);
+        const [b, f] = span(s);
+        back = Math.min(back, b); front = Math.max(front, f);
       }
-      if (tailBack === Infinity) continue;
-      expect(tailBack, `frame ${f}: the tail's back end flies off with the slug`).toBeGreaterThanOrEqual(0.75 * headBack - 1e-6);
-      if (headBack > flashReach) {
-        expect(tailBack, `frame ${f}: the tail bridges the slug to the flash (${flashReach.toFixed(0)} u)`).toBeGreaterThan(flashReach);
-        separated++;
-      }
+      return [back, front];
+    };
+    let flown = 0;
+    for (let f = 1; f <= 60; f++) {
+      fx += FRAME_MS;
+      flown = (SP * f) / 60;
+      p.beginFrame(); p.draw('slug', 'slug', flown, 0, SP, 0, 1, size, flown); p.endFrame();
+      const [back, front] = trailSpan();
+      if (back === Infinity) continue;
+      // Within its life the trail still reaches back to the muzzle (one
+      // wake piece of slack), and never runs ahead of the slug.
+      expect(back, `frame ${f}: the trail reaches back toward the muzzle`).toBeLessThanOrEqual(flown / 10 + 1e-6);
+      expect(front, `frame ${f}: nothing ahead of the slug`).toBeLessThanOrEqual(flown * 1.05 + 1e-6);
     }
-    expect(separated, 'the slug clears the flash within the trace').toBeGreaterThan(20);
+    // The slug hits: its trail lingers a second, then is gone by ~1.6 s.
+    fx += 1_000;
+    p.beginFrame(); p.endFrame();
+    expect(trailSpan()[0], 'still showing 1 s after the hit').toBeLessThan(Infinity);
+    fx += 700;
+    p.beginFrame(); p.endFrame();
+    expect(trailSpan()[0], 'gone ~1.6 s after the slug passed').toBe(Infinity);
   });
 });

@@ -129,6 +129,11 @@ export interface CapitalWreckDeps {
    *  capital with `capitalWrecks`; a polygon sub-capital with `subcapWrecks`),
    *  else null. */
   wreckKindOf: (targetId: string) => ShipKindId | null;
+  /** Who owned a dying hull (the descriptor's `owner`: the livery its
+   *  pieces wear on the client): a player hull's playerId (active or
+   *  parked), an NPC patrol's faction, else undefined (the kind's
+   *  allegiance). Optional: absent ⇒ no owner on the wire. */
+  ownerOf?: (targetId: string) => string | undefined;
   /** World position of an entity (the attacker fallback), or null. */
   positionOf: (id: string) => Vec2 | null;
   /** Spawn one wreck body; false = no free slot. */
@@ -373,6 +378,7 @@ export class CapitalWreckSubsystem {
       this.pieceWreck.set(id, wreckId);
     }
     if (spawned > 0) {
+      const owner = this.d.ownerOf?.(targetId);
       this.wrecks.set(wreckId, {
         desc: {
           wreckId, parentKind: kindId, seed: fracture.seed, killX: fracture.killX, killY: fracture.killY,
@@ -382,6 +388,7 @@ export class CapitalWreckSubsystem {
           // Emit-when-present: an un-cut wreck's descriptor is unchanged.
           ...(fracture.cutKind !== undefined ? { cutKind: fracture.cutKind, cutAng: fracture.cutAng } : {}),
           ...(fracture.cutW !== undefined ? { cutW: fracture.cutW } : {}),
+          ...(owner !== undefined && owner !== '' ? { owner } : {}),
         },
         pieces: spawned,
         ids: spawnedIds,
@@ -475,6 +482,15 @@ export class CapitalWreckSubsystem {
     }
     this.d.impulsePiece(id, dirX * s, dirY * s, px, py);
     return true;
+  }
+
+  /** True while piece `id`'s wreck is still in its crack hold (before
+   *  `holdUntil`): its pieces move only as one rigid body then, so a tractor
+   *  leaves them alone until the hold ends (salvage plan PR 11). */
+  inCrackHold(id: string): boolean {
+    const wreckId = this.pieceWreck.get(id);
+    const w = wreckId !== undefined ? this.wrecks.get(wreckId) : undefined;
+    return w !== undefined && this.d.serverTick() < w.holdUntil;
   }
 
   /** Pieces still holding together (waiting for their kick). */

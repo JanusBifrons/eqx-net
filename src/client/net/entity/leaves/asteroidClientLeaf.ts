@@ -26,7 +26,7 @@ export class AsteroidClientLeaf extends ClientEntityLeafBase {
       ctx.entry.y,
       ctx.entry.radius,
       ASTEROID_MASS,
-      generateAsteroidVertices(ctx.entityId, ctx.entry.radius),
+      generateAsteroidVertices(ctx.entry.shapeSeed ?? 0, ctx.entry.radius),
     );
     ctx.predWorld.lockBody(ctx.key); // static server-side
   }

@@ -17,6 +17,7 @@ import { TELEPORT_HOP_DISTANCE_U, TP_PHASE, jumpCharge } from '../../../src/shar
 import { hopDistance } from '../../../src/server/livingworld/population.js';
 import { getSector } from '../../../src/core/galaxy/galaxy.js';
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
+import { getPlayerShipStore } from '../../../src/server/db/PersistenceWorker.js';
 
 const OWNER = 'face0000-0000-4000-8000-000000000002';
 const OTHER = 'face0000-0000-4000-8000-000000000003';
@@ -81,6 +82,14 @@ describe('SectorRoom integration — teleporters across sectors (v4 T3)', () => 
     await harness.advance(300);
     const parkedId = [...roomB.state.ships.values()].find((sh) => sh.playerId === OTHER)?.shipInstanceId ?? '';
     expect(parkedId, 'the parked hull is in B').toBeTruthy();
+    // A second parked hull on the far pad whose AI pilot has a stance and a
+    // patrol route in B.
+    const flownId = getPlayerShipStore().create({ playerId: OTHER, userId: null, kind: 'fighter', sectorKey: B, x: -1300, y: -60, health: 150 }).shipId;
+    ib.restoreLingeringHulls([{
+      shipInstanceId: flownId, playerId: OTHER, kind: 'fighter', x: -1300, y: -60, vx: 0, vy: 0, angle: 0, angvel: 0, health: 150, shieldDown: false,
+    }]);
+    expect(ib.fleet.setStance(OTHER, [flownId], 'holdFire')).toEqual([flownId]);
+    expect(ib.fleet.setMode(OTHER, [flownId], 'patrol', { route: [[-1300, -60], [-1300, -900]] })).toEqual([flownId]);
 
     // Something on each pad's hold.
     tpA.padHold = { goods: { alloy: 5 }, blueprints: [] };
@@ -110,6 +119,13 @@ describe('SectorRoom integration — teleporters across sectors (v4 T3)', () => 
     // The parked hull rode the other way: rebuilt in A, gone from B.
     expect(ia.lingeringSlots.has(parkedId)).toBe(true);
     expect(ib.lingeringSlots.has(parkedId)).toBe(false);
+    // Owner rule (same as a fleet warp): its stance carries; it guards where
+    // it lands (B's patrol route stayed in B). Roster re-homed to A.
+    expect(ia.lingeringSlots.has(flownId)).toBe(true);
+    const brain = ia.fleet.ordersOf(flownId)!;
+    expect(brain.stance).toBe('holdFire');
+    expect(brain.mode).toBe('defend');
+    for (const id of [parkedId, flownId]) expect(getPlayerShipStore().get(id)?.lastSectorKey).toBe(A);
   });
 });
 

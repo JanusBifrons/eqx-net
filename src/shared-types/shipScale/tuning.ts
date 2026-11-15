@@ -29,8 +29,10 @@ import { ARCADE_HANDLING, handlingClassOf } from './arcadeHandling.js';
 export type SizeClass = 'fighter' | 'frigate' | 'cruiser' | 'capital';
 export const SIZE_CLASSES: readonly SizeClass[] = ['fighter', 'frigate', 'cruiser', 'capital'];
 
-/** Mount size: scales a weapon's reach, projectile radius and splash. */
-export type MountSize = 'S' | 'M' | 'L' | 'XL';
+/** Mount size, the ONE type (`combat/lockProfile.ts` re-exports it): scales
+ *  a weapon's reach, projectile radius, splash and tractor power. `AA` is the
+ *  light quick-tracking anti-air / utility mount, below `S`. */
+export type MountSize = 'AA' | 'S' | 'M' | 'L' | 'XL';
 
 /** The 1× fighter values every size-dependent number starts from. These ARE
  *  the old constants (kept here so the 1× game is unchanged). */
@@ -66,6 +68,8 @@ export const BASE = {
   attackRunOvershoot: 220,
   /** Smallest guard area an NPC holds round its post (a 1x fighter's). */
   guardRadiusMin: 600,
+  /** A wingman's order to a point is done inside this (a 1x fighter's). */
+  wingmanArrive: 40,
   /** Art bake: ppu for small / big hulls, the radius between them, the side cap. */
   ppuSmall: 4, ppuBig: 3, ppuBigRadius: 25, bakeMaxSide: 512,
 } as const;
@@ -96,12 +100,17 @@ export const CLASS_TUNING: Readonly<Record<SizeClass, ClassTuning>> = {
   capital: { geometry: 2, spacing: 2, bakeMaxSide: 3072, mountSize: 'L', clearHull: true },
 };
 
-/** Mount size multipliers on weapon reach / projectile radius / splash. */
-export const MOUNT_SIZE_TUNING: Readonly<Record<MountSize, { reach: number; radius: number; splash: number }>> = {
-  S: { reach: 1, radius: 1, splash: 1 },
-  M: { reach: 1.25, radius: 1.5, splash: 1.5 },
-  L: { reach: 1.6, radius: 2.5, splash: 2.5 },
-  XL: { reach: 2.2, radius: 4, splash: 4 },
+/** Mount size multipliers on weapon reach / projectile radius / splash, and
+ *  `power`: the tractor force multiplier (F_mount = weapon force × power;
+ *  a FORCE, so a small mount barely moves a big chunk). AA sits below S on
+ *  every column (a light utility mount). Guide: physics-worker.md
+ *  "Force fields". */
+export const MOUNT_SIZE_TUNING: Readonly<Record<MountSize, { reach: number; radius: number; splash: number; power: number }>> = {
+  AA: { reach: 0.8, radius: 0.75, splash: 0.75, power: 0.4 },
+  S: { reach: 1, radius: 1, splash: 1, power: 1 },
+  M: { reach: 1.25, radius: 1.5, splash: 1.5, power: 2.5 },
+  L: { reach: 1.6, radius: 2.5, splash: 2.5, power: 6 },
+  XL: { reach: 2.2, radius: 4, splash: 4, power: 15 },
 };
 
 /** A kind's size class: authored, else by its UNSCALED radius. */
@@ -262,6 +271,9 @@ export interface ShipTuning {
   /** Smallest guard radius round an NPC's guard post (`HostileDroneBehaviour.setGuardPost`):
    *  a post smaller than this would leave a big hull no room to turn. */
   guardRadiusMin: number;
+  /** Owned ships (RTS command layer): a Move order is done inside this
+   *  radius (the AI pilot brain's travel arrival); a big hull can't park on a dot. */
+  wingmanArrive: number;
   /** Capital wreck break-up (capital-destruction.md): the outward push of a
    *  piece at the kill point and far from it (u/s). Proportional to the hull
    *  radius, so a bigger hull's debris field opens at the same rate relative
@@ -365,6 +377,7 @@ export function shipTuning(kind: ShipKind): ShipTuning {
     combatSeparation: ct.clearHull ? Math.max(BASE.combatSeparation * sp, kind.radius * 2.4) : BASE.combatSeparation * sp,
     attackRunOvershoot: Math.max(BASE.attackRunOvershoot * sp, kind.radius * 4),
     guardRadiusMin: ct.clearHull ? Math.max(BASE.guardRadiusMin * sp, kind.radius * 2) : BASE.guardRadiusMin * sp,
+    wingmanArrive: ct.clearHull ? Math.max(BASE.wingmanArrive * sp, kind.radius * 1.5) : BASE.wingmanArrive * sp,
     wreckPushMax: WRECK_PUSH_MAX_PER_RADIUS * kind.radius,
     wreckPushMin: WRECK_PUSH_MIN_PER_RADIUS * kind.radius,
     wreckSeparate: WRECK_SEPARATE_PER_RADIUS * kind.radius,

@@ -246,6 +246,31 @@ export const PERF_SCENES: readonly PerfScene[] = [
     minSwarm: 1,
   },
   {
+    // RTS command layer: the cost of a big AI-flown fleet. 40 parked fighters
+    // owned by the pilot, each flown by its wingman brain (hunt, aggressive:
+    // re-plan, owner-hostile scan, own locks, player fire pipeline), against
+    // 20 hostile drones reinforced every 8 s. The hulls' hit points are huge
+    // so the fleet stays 40 strong for the whole window. A/B it against the
+    // same build with EQX_DISABLE_WINGMEN=1 (--base-env): the hulls then sit
+    // parked, as they do on main before the RTS layer.
+    id: 'rts-fleet',
+    title: '40 AI-flown parked hulls hunt 20 hostile drones, reinforced every 8 s',
+    room: {
+      droneCount: 0,
+      asteroidConfig: [],
+      sceneScript: [
+        { atMs: 0, action: 'fleet', tag: 'wing', kind: 'fighter', count: 40, x: 0, y: 0, spread: 500, mode: 'hunt', stance: 'aggressive', health: 1_000_000 },
+        ...[0, 8_000, 16_000, 24_000].map((t, i): SceneStep =>
+          ({ atMs: t, action: 'spawn', tag: `foe${i}`, kind: 'fighter', count: 20, x: 0, y: 900, spread: 260, hostile: true })),
+        { atMs: 30_000, action: 'end' },
+      ],
+    },
+    spawn: { x: 0, y: -900 },
+    camera: { x: 0, y: 300, zoom: 0.45 },
+    durationMs: 30_000,
+    minSwarm: 1,
+  },
+  {
     // Shells as events, slice 3 (docs/architecture/shell-events.md): ten
     // battleships, hostile, open fire on a capital pilot 15 km off (NPC
     // capital turrets engage pilots and structures, never other NPCs, and a
