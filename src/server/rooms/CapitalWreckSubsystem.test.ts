@@ -138,6 +138,35 @@ describe('CapitalWreckSubsystem', () => {
     });
   });
 
+  it('a cut kill splits at once: no crack hold, the kick is in the spawn motion, no rigid hold', () => {
+    for (const cut of [{ kind: 'slice' } as const, { kind: 'channel', width: 120 } as const]) {
+      withKillCut('laser', cut, () => {
+        const { sys, spawned, kicks, rigid, impulses } = make({ cap: 'battleship' }, true);
+        sys.forcedSeed = 9;
+        sys.noteHit('cap', 'attacker', 2000, 120, 40, 1, 0, 'laser');
+        const n = sys.onDeath('cap', 'battleship', pose, 10_000);
+        const cutW = cut.kind === 'channel' ? cut.width / shipShapeScale(getShipKind('battleship')) : undefined;
+        const want = buildWreckPieces({
+          kindId: 'battleship', pose, killWorld: { x: 120, y: 40 }, attackerWorld: { x: 5000, y: 0 },
+          seed: 9, killBlowDamage: 0.2, recentDamageRate: 0.2, cutKind: cut.kind, cutAng: hullLocalCutAngle(pose, { x: 1, y: 0 }), cutW,
+        }).pieces;
+        expect(n).toBe(want.length);
+        expect(sys.pendingKicks()).toBe(0);
+        for (let i = 0; i < n; i++) {
+          expect(spawned[i]!.vx).toBeCloseTo(want[i]!.vx + want[i]!.kickVx, 9);
+          expect(spawned[i]!.vy).toBeCloseTo(want[i]!.vy + want[i]!.kickVy, 9);
+          expect(spawned[i]!.angvel).toBeCloseTo(want[i]!.angvel + want[i]!.kickAngvel, 9);
+        }
+        sys.tick();
+        expect(kicks).toHaveLength(0);
+        // A hit right after the kill shoves the piece hit, never the whole wreck.
+        expect(sys.onWreckHit(spawned[0]!.id, 0, 0, 1, 0, 500)).toBe(true);
+        expect(rigid).toHaveLength(0);
+        expect(impulses).toHaveLength(1);
+      });
+    }
+  });
+
   it('ignores hits on non-capitals and breaks a hull once per death tick', () => {
     const { sys, spawned } = make();
     sys.noteHit('fighter', 'attacker', 50, 0, 0);
