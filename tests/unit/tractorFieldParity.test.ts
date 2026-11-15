@@ -72,4 +72,51 @@ describe('tractor field parity (server lease ↔ client predWorld)', () => {
       expect(c.my).toBeCloseTo(sf.my, 9);
     });
   }
+
+  it('same cushion both sides for a capital mount: the load rests clear of its hull (setTractorHold)', () => {
+    const bs = getShipKind('battleship').mounts as WeaponMount[];
+    const mount = bs.find((m) => m.localX !== 0) ?? bs[0]!;
+    const keep = { weaponId: mount.weaponId, size: mount.size };
+    mount.weaponId = 'tractor';
+    mount.size = 'M';
+    try {
+      const ship = { x: 0, y: 0, angle: 0.4 };
+      const c = Math.cos(ship.angle), s = Math.sin(ship.angle);
+      const side = mount.localX >= 0 ? 1 : -1;
+      const rock = { x: side * 2500 * c - mount.localY * s, y: side * 2500 * s + mount.localY * c, radius: 220 };
+      const posted: WorkerCmd[] = [];
+      const server = new ForceFieldSubsystem({
+        post: (cmd) => posted.push(cmd),
+        tractors: {
+          tick: () => 500,
+          poseOf: (id: string, out: TractorPoseOut) => {
+            if (id === 'cap') { out.x = ship.x; out.y = ship.y; out.angle = ship.angle; out.kindId = 'battleship'; out.radius = 0; return true; }
+            if (id === 'rock') { out.x = rock.x; out.y = rock.y; out.angle = 0; out.kindId = null; out.radius = rock.radius; return true; }
+            return false;
+          },
+          lineBodies: () => 0, inCrackHold: () => false, wireRef: (id) => (id === 'rock' ? 42 : id),
+          onShipTractored: () => {}, isTerrain: () => true,
+        },
+      });
+      expect(server.renewTractor('cap', mount, 'rock')).toBe(true);
+      server.tickTractors();
+      const sf = (posted.filter((x) => x.type === 'SET_FORCE_FIELD').at(-1) as { field: TractorForceField }).field;
+      const mirror = {
+        ships: new Map([['cap', { ...ship, vx: 0, vy: 0, kind: 'battleship' }]]),
+        swarm: new Map([[42, { x: rock.x, y: rock.y, angle: 0, vx: 0, vy: 0, kind: 4, radius: rock.radius }]]),
+      };
+      const client = new TractorLinkClient(mirror, new Map([[42, 'rock']]));
+      let cf: TractorForceField | null = null;
+      client.sync(server.beamLinks(undefined) as BeamLinks, { structure: () => {}, tractor: client.add }, {
+        setForceField: (_id: string, f: ForceField) => { cf = { ...(f as TractorForceField) }; },
+        removeForceField: () => {},
+      });
+      expect(cf).not.toBeNull();
+      expect(sf.hold, 'the cushion reaches past the hull').toBeGreaterThan(rock.radius);
+      expect(cf!.hold).toBe(sf.hold);
+    } finally {
+      mount.weaponId = keep.weaponId;
+      mount.size = keep.size;
+    }
+  });
 });

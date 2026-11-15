@@ -17,7 +17,7 @@
  */
 import { TRACTOR_LINE_CAP, type ForceField, type TractorForceField } from '../../core/physics/forceFields.js';
 import { getWeapon } from '../../core/combat/WeaponCatalogue.js';
-import { setTractorMountConstants, setTractorMuzzle } from '../../core/combat/tractorField.js';
+import { setTractorHold, setTractorMountConstants, setTractorMuzzle } from '../../core/combat/tractorField.js';
 import { encodeTractorLink, type BeamLinks } from '../../shared-types/beamLinksWire.js';
 import type { WeaponMount } from '../../shared-types/shipKinds.js';
 import type { WorkerCmd } from './PhysicsWorkerProxy.js';
@@ -184,6 +184,8 @@ export class ForceFieldSubsystem {
         }
         const f = lease.field;
         setTractorMuzzle(f, _pose.x, _pose.y, _pose.angle ?? 0, lease.mount);
+        // The cushion keeps the load off the emitter's own hull (shared, #15).
+        setTractorHold(f, lease.mount, _pose.kindId, _pose.angle ?? 0, _tpose.x, _tpose.y, _tpose.radius ?? 0);
         // Game ticks are fixed 1/60 s steps (time scale changes their rate).
         const first = lease.px !== lease.px;
         f.mvx = first ? 0 : (f.mx - lease.px) * 60;

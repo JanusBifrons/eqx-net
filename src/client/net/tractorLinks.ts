@@ -16,7 +16,7 @@
 import type { BeamLinkVisitor, BeamLinks } from '../../shared-types/beamLinksWire.js';
 import { forEachBeamLink } from '../../shared-types/beamLinksWire.js';
 import { TRACTOR_LINE_CAP, type ForceField, type TractorForceField } from '../../core/physics/forceFields.js';
-import { setTractorMountConstants, setTractorMuzzle } from '../../core/combat/tractorField.js';
+import { setTractorHold, setTractorMountConstants, setTractorMuzzle } from '../../core/combat/tractorField.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { findMount } from '../render/beamStyles.js';
 
@@ -31,7 +31,7 @@ export interface TractorLinkRow {
 /** What the slice reads of the client's mirror (poses, kinds). */
 export interface TractorMirrorView {
   ships: ReadonlyMap<string, { x: number; y: number; angle: number; vx: number; vy: number; kind?: string }>;
-  swarm?: ReadonlyMap<number, { x: number; y: number; angle: number; vx: number; vy: number; shipKind?: string }>;
+  swarm?: ReadonlyMap<number, { x: number; y: number; angle: number; vx: number; vy: number; kind?: number; shipKind?: string; radius?: number }>;
   tractorLinks?: TractorLinkRow[];
 }
 
@@ -121,6 +121,19 @@ export class TractorLinkClient {
     const f = this.field;
     if (mount === null || !setTractorMountConstants(f, mount)) return false;
     setTractorMuzzle(f, e.x, e.y, e.angle, mount);
+    // The cushion keeps the load off the emitter's own hull (the server's, #15).
+    const t = typeof row.target === 'number' ? m.swarm?.get(row.target) : m.ships.get(row.target);
+    if (t === undefined) return false;
+    // The load's radius as the server reads it (`fillRangeShape`): a ship's
+    // kind radius, anything else its wire radius.
+    let tr: number;
+    if (typeof row.target === 'number') {
+      const sw = t as { kind?: number; shipKind?: string; radius?: number };
+      tr = sw.kind === 1 ? getShipKind(sw.shipKind ?? null).radius : (sw.radius ?? 0);
+    } else {
+      tr = getShipKind((t as { kind?: string }).kind ?? null).radius;
+    }
+    setTractorHold(f, mount, kindId, e.angle, t.x, t.y, tr);
     f.mvx = e.vx; f.mvy = e.vy;
     f.target = target; f.emitter = emitter;
     f.active = true;
