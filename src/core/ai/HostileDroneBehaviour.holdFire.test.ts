@@ -162,7 +162,8 @@ describe('HostileDroneBehaviour — hold fire (RTS Part B slice 7)', () => {
     // Order over: back to hold fire (no target, no trigger) despite the attacker.
     b.setOrderedTarget(null, view.tick);
     let after = false;
-    for (let t = view.tick + 1; t < view.tick + 120; t++) {
+    const endTick = view.tick + 120; // fixed bound: the loop advances view.tick
+    for (let t = view.tick + 1; t < endTick; t++) {
       view.tick = t;
       b.markHostile('near', t);
       const intent = b.tick(self, view);
