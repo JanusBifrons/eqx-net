@@ -191,11 +191,15 @@ export const WRECK_GLOW_TINTS = 4;
  *  splinter cracks, and no violet was left once the beam stopped). So a
  *  tinted edge has its OWN curve, not the crack curve re-coloured: full
  *  brightness in the weapon's colour for `CUT_GLOW_HOLD_S`, then it cools
- *  through an ember of that colour to the same dark scorch, always at least
+ *  through a hot-metal ember to the same dark scorch, always at least
  *  as bright as a crack of the same age. Keyframes per tint (index 0, the
  *  crack, uses `GLOW_T/C/A`).
  *  - Slice: the beam's pale core at the instant of the cut, the beam's
- *    violet held, a deep violet ember, a violet-grey scorch, dark.
+ *    violet held ~1.5 s, then burnt metal: through a rose blush to an
+ *    orange ember, an orange-red ember to ~3.5 s, a brown scorch, dark
+ *    (hostile review 2026-11-15, beam take 6: a violet ember cooling straight
+ *    to dark read as saturated violet lips ~3.5 s after the kill, with no
+ *    ember; metal cut by any weapon glows hot-metal colours as it cools).
  *  - Channel: white-hot held, then it cools like struck metal (yellow-white,
  *    orange-red ember, scorch, dark).
  *  The ember is a stage of its own, clearly showing to ~3.4 s (second film
@@ -211,19 +215,19 @@ export const SPLINTER_GLOW_WIDTH_MUL = 0.5;
 export const SPLINTER_GLOW_END_S = 2.6;
 const CUT_T: readonly (readonly number[])[] = [
   GLOW_T,
-  [0, 0.12, CUT_GLOW_HOLD_S, 2.2, 3.4, 4.0, WRECK_GLOW_END_S],
+  [0, 0.12, CUT_GLOW_HOLD_S, 2.0, 2.5, 3.5, 4.0, WRECK_GLOW_END_S],
   [0, 0.12, CUT_GLOW_HOLD_S, 2.0, 2.8, 3.8, WRECK_GLOW_END_S],
   [0, 0.08, 0.35, 1.0, 1.6, 2.1, SPLINTER_GLOW_END_S],
 ];
 const CUT_C: readonly (readonly number[])[] = [
   GLOW_C,
-  [SLICE_PALE, HEAVY_BEAM_COLOR, HEAVY_BEAM_COLOR, 0xa050e8, 0x8834c8, 0x4a3450, 0x3a2f2a],
+  [SLICE_PALE, HEAVY_BEAM_COLOR, HEAVY_BEAM_COLOR, 0xe0507a, 0xff6418, 0xd83c10, 0x5a362c, 0x3a2f2a],
   [0xffffff, 0xf4f2ff, 0xf4f2ff, 0xffd890, 0xff7a28, 0x8a4028, 0x3a2f2a],
   GLOW_C,
 ];
 const CUT_A: readonly (readonly number[])[] = [
   GLOW_A,
-  [1, 1, 1, 0.92, 0.72, 0.3, 0],
+  [1, 1, 1, 0.97, 0.92, 0.75, 0.3, 0],
   [1, 1, 1, 0.95, 0.8, 0.3, 0],
   GLOW_A.map((a) => a * SPLINTER_GLOW_ALPHA),
 ];

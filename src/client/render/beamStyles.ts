@@ -63,39 +63,49 @@ export const HEAVY_BEAM_CROSS_SECTION: BeamCrossSection = {
 };
 
 /**
- * A beam that is a light source along its WHOLE length (the capital heavy
- * beam; owner 2026-11-15: "could use lighting so it gives a purple glow on
- * ships nearby, it's a light source"): besides its hit light, point lights
- * evenly spaced from muzzle to hit, each reaching past the next, so the
- * shooter, the target and any hull the beam passes near take its colour, with
- * the shader's soft falloff. The lit pass has no line light; a hull picks the
- * strongest few scene lights at its own rectangle, so the near ones win.
+ * A beam that is a light source along its length (the capital heavy beam;
+ * owner 2026-11-15: "could use lighting so it gives a purple glow on ships
+ * nearby, it's a light source"): point lights at FIXED distances from the
+ * muzzle (`spacing` apart, the first on the muzzle, so the shooter's own hull
+ * glows), each reaching past the next, plus a tight spot at the hit point.
+ * Nothing depends on the beam's total length: a follow-through beam running on
+ * past a dead target to full range moves only its end light and never changes
+ * the light on the shooter (hostile review 2026-11-15: lights spaced as shares
+ * of the length spread to 4 km apart with 4.4 km reach on the kill frame, and
+ * the shooter's whole hull went flat violet). The lit pass has no line light;
+ * a hull picks the strongest few scene lights at its own rectangle.
  */
 export interface BeamLineLight {
   /** Light colour (0xRRGGBB). */
   readonly color: number;
   /** Hit-point light intensity (the lit shader's scale; a blast is 3). */
   readonly hitIntensity: number;
+  /** Hit-point light reach (world u): a spot, so the target is lit from the
+   *  point it is hit and its far side stays dark (at the line reach, 450 u
+   *  up, it was a flat lilac wash over ~60 % of a cruiser). */
+  readonly hitReach: number;
+  /** Hit-point light height above the hull top (world u): low, so the deck
+   *  beside the hit faces it and the deck farther off meets it at a glance. */
+  readonly hitZ: number;
   /** Each line light's intensity. */
   readonly intensity: number;
-  /** Target spacing (world u) of the line lights; a longer beam than
-   *  `maxLights` × this spaces them wider and reaches further. */
+  /** World u between line lights, from the muzzle. */
   readonly spacing: number;
-  /** Fewest world u a line light reaches. */
-  readonly minReach: number;
-  /** Line light reach as a share of the gap between two lights (> 0.5: they
-   *  overlap, so the glow runs unbroken along the beam). */
-  readonly reachPerGap: number;
+  /** World u a line light reaches (> spacing / 2: they overlap, so the glow
+   *  runs unbroken along the lit stretch). A line light stops short of the
+   *  hit by at least this, so it never washes over the target. */
+  readonly reach: number;
   /** Height (world u) above the hull top: higher lights a deck more head-on
    *  (at 120 u a light 700 u off met a flat deck at ~10°: filmed, barely any
    *  violet on either hull). */
   readonly z: number;
 }
 
-/** The heavy beam as a light: deep violet along its length. */
+/** The heavy beam as a light: deep violet at the muzzle, along the beam and
+ *  as a spot at the hit. */
 export const HEAVY_BEAM_LINE_LIGHT: BeamLineLight = {
-  color: HEAVY_BEAM_DEEP_COLOR, hitIntensity: 4.5, intensity: 4,
-  spacing: 900, minReach: 1000, reachPerGap: 1.1, z: 450,
+  color: HEAVY_BEAM_DEEP_COLOR, hitIntensity: 5, hitReach: 700, hitZ: 150,
+  intensity: 4, spacing: 900, reach: 1000, z: 450,
 };
 
 /** The capital heavy beam (`heavy_beam` mounts): a thick, capital-scale beam —
@@ -269,7 +279,7 @@ export function beamLightBudget(pointLights: number): number {
  * below the sector's x axis lit a spot 560 u up its hull (a hard rose wash on
  * the wreck piece there that vanished with the beam) and never the piece it
  * hit. A styled beam lights in its own colour, `glowScale` wider; one with a
- * `lineLight` (the heavy beam) lights its whole length (`BeamLineLight`),
+ * `lineLight` (the heavy beam) lights its muzzle, its length and its hit (`BeamLineLight`),
  * at most `maxLights` lights in all (`beamLightBudget`). Alloc-free.
  */
 export function addBeamLights(
@@ -284,15 +294,16 @@ export function addBeamLights(
   const k = b.style?.glowScale ?? 1;
   const ll = b.style?.lineLight;
   if (ll && maxLights >= 2) {
-    // Line lights from the muzzle (t = 0: the shooter's own hull glows) one
-    // gap apart up to the last gap before the hit; the hit light closes it.
-    const n = Math.max(1, Math.min(maxLights - 1, Math.ceil(len / ll.spacing)));
-    const gap = len / n;
-    const reach = Math.max(ll.minReach, gap * ll.reachPerGap);
-    sink.addLight(b.toX, -b.toY, ll.z, ll.color, ll.hitIntensity, reach);
-    for (let j = 0; j < n; j++) {
-      const t = j / n;
-      sink.addLight(b.fromX + (b.toX - b.fromX) * t, -(b.fromY + (b.toY - b.fromY) * t), ll.z, ll.color, ll.intensity, reach);
+    // The hit spot, then line lights at fixed distances from the muzzle (the
+    // first ON it: the shooter's own hull glows), within the budget and each
+    // at least its reach short of the hit. Independent of the beam's length.
+    sink.addLight(b.toX, -b.toY, ll.hitZ, ll.color, ll.hitIntensity, ll.hitReach);
+    const ux = len > 0 ? (b.toX - b.fromX) / len : 0;
+    const uy = len > 0 ? (b.toY - b.fromY) / len : 0;
+    for (let j = 0; j < maxLights - 1; j++) {
+      const d = j * ll.spacing;
+      if (j > 0 && d + ll.reach > len) break;
+      sink.addLight(b.fromX + ux * d, -(b.fromY + uy * d), ll.z, ll.color, ll.intensity, ll.reach);
     }
     return;
   }
