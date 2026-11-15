@@ -2182,9 +2182,40 @@ line; a railgun kill erases a straight channel as wide as the bolt.
     wedges a jagged splinter can leave). Always starting at 45° gave every
     end a long bevel, a triangle on a short edge: the "bevels". Each cut edge
     now glows along its full length (lit core ≥ a fifth of the cut core, or
-    half of the piece's own thickness in a wedge, over ≥ 90 % of every
+    half of the piece's own thickness in a wedge, over ≥ 90 % of the drawn length of every
     `EDGE_CUT` edge of heavy-cruiser slice and channel kills). Crack strips
     keep their square ends.
+  - **Incandescent, not painted** (hostile film reviews 2026-11-15, rail
+    and beam take 7: the channel walls read as "flat pale-white blocky
+    slabs ... like white paint or bricks, they do not glow", the slice's
+    ember bars as "hard-edged flat strips with no soft glow"). Every quad
+    used to sample one texel row, so each strip was a flat fill. A kill
+    cut's strip now carries a gradient ACROSS its width in the same mesh:
+    the texture has a block of `GLOW_ROW` rows per tint (`GLOW_ROWS_PER_TINT`
+    = 6: bleed-out, bleed, edge, deep, halo, halo-out), its edge corners
+    take one row and its outer corners the adjacent one, and the linear
+    filter blends them. The core runs from the full curve alpha at the cut
+    to `CUT_DEEP_A` (0.05 ×) inside, where it meets the halo with no hard
+    line; the halo (0.45 × at the cut) fades to nothing at its outer side;
+    a soft bleed (`CUT_BLEED_A` 1.2 × the halo share, `CUT_BLEED_CORE_MUL`
+    0.35 × the core wide, chamfered) reaches into the gap (it uses the head
+    halo's quad: a kill cut is no-hold, so it never has a head). While hot
+    the colour shifts across it (`CUT_DEEP_C`, `CUT_DEEP_SHIFT` 0.65): the
+    channel white-hot at the edge, yellow-orange deeper in; the slice a pale
+    violet rim (`SLICE_RIM_WHITE` 0.3 toward white), deeper violet in. The
+    shift is gone 0.5 s after the hold, so the ember is one hot-metal
+    colour. The curve (`wreckGlowAt`) and its timing are unchanged. A
+    crack's or splinter's strips keep flat rows: they look as before.
+  - **On the hull as drawn.** A capital's collider `hull` is the convex
+    hull of its parts, so between the side barbettes a piece's outline
+    spans empty space where its art is transparent; a cut runs across it,
+    and the glow strip drawn to the outline filmed as "white bars stuck
+    onto the hull edge" (rail take 7). `wreckGlowStrip.ts` holds every
+    glow strip to the piece's outline AND the kind's drawn parts
+    (`shipParts`, the art's own source; `onDrawnHull`), and trims each cut
+    edge to its longest drawn stretch (`drawnSpan`) before it is sized; a
+    strip that does not fit narrows in 0.75 × steps. Polygon kinds (their
+    outline is their drawing) are unchanged.
   - **Splinters read second** (owner 2026-11-15: keep the v10 splinter X,
     tone its glow down so the cut reads first; review: their orange rims were
     wider, brighter and longer than the cut). On a wreck with a `cutKind`,
@@ -2197,16 +2228,23 @@ line; a railgun kill erases a straight channel as wide as the bolt.
     life and gone by 85 % (cracks: their own orange and red), at the same
     width multiplier; its cracks stay as they were on a cut kill too.
   Still ONE glow mesh per piece, no new draw call: the glow textures bake a
-  row block per tint (`WRECK_GLOW_TEX_ROWS` = core + halo per tint; the
-  simple texture one row per tint), a segment's tint is its V (`glowV` /
-  `simpleGlowV`), and its width multipliers and chamfers are baked into its
-  quads at build (`SEG_STRIDE` 18). Locks: `wreckArt.test.ts` "a kill cut
+  row block per tint (`WRECK_GLOW_TEX_ROWS` = `GLOW_ROWS_PER_TINT` per tint;
+  the simple texture one row per tint), a segment's tint and place across
+  the strip are its V (`glowV(tint, row)` / `simpleGlowV`), and its width
+  multipliers, chamfers and bleed are baked into its quads at build
+  (`SEG_STRIDE` 22). Locks: `wreckArt.test.ts` "a kill cut
   glows in the weapon's colour" (violet / white-hot held ~1.5 s, never
   dimmer than a crack, the cut's core 2.5 × a crack's on real slice and
   channel pieces) and "a cut kill reads first" (splinters ≤ 0.5 × the cut's
   alpha at every age, ≤ 0.25 × its core, dark by 3 s; an un-cut wreck's
-  cracks unchanged; every `EDGE_CUT` edge lit along ≥ 90 %; the ember
-  visible at 3 s, dark at 4.5 s); `swarmSpriteUpdater.wreckArt.test.ts`
+  cracks unchanged; every `EDGE_CUT` edge lit along ≥ 90 % of its drawn length; the ember
+  visible at 3 s, dark at 4.5 s), "the cut glows like hot metal" (on real
+  heavy-cruiser slice and channel pieces, the composited glow falls off
+  from the cut edge inward, fades out at the halo's outer side, bleeds into
+  the gap; channel white at the edge and yellow-orange in, slice violet)
+  and "no glow strip lies outside its piece" (every glow triangle on the
+  drawn hull, outside the piece only as the bleed off a cut edge);
+  `swarmSpriteUpdater.wreckArt.test.ts`
   "char strip" (a cooled cut is a subtle scorch from 4 s, its halo gone by
   3.5 s);
   `fractureHull.test.ts` "cutEdges carries the edge kind".
