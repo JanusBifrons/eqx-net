@@ -49,6 +49,12 @@ export interface AiIntentSink {
    *  `hullId` is set for a player-owned hull ({@link AiRegisterOptions.hull}):
    *  the sink's ONE hull branch posts those keys as the hull's pilot INPUT. */
   postInput?(slot: number, bits: AiInputBits, hullId?: string): void;
+  /** A player-owned hull's brain holds its trigger this tick at `targetId`
+   *  (its `intent.fire`). The sink's ONE hull fire branch pulls the hull's
+   *  own trigger through the PLAYER fire pipeline, so the hull fires only
+   *  when its AI pilot would (aim, range, wind-up room). Optional: a sink
+   *  without it drops a hull's fire. */
+  postHullFire?(hullId: string, targetId: string): void;
   /** Send every input queued since the last flush as ONE worker message
    *  (`AI_INPUTS`). Called once at the end of `AiController.tick` when at least
    *  one input was queued. */
@@ -61,7 +67,7 @@ interface AiRegistration {
   /** This tick's control keys held boost (the snapshot shows the flame, #16). */
   boost: boolean;
   /** A player-owned hull (RTS): its keys go out as pilot INPUT and its fire
-   *  never reaches the AI fire path (it fires through the player pipeline). */
+   *  goes to `postHullFire` (the player pipeline), never the AI fire path. */
   hull: boolean;
 }
 
@@ -69,7 +75,8 @@ interface AiRegistration {
 export interface AiRegisterOptions {
   /** The entity is a player-owned hull (RTS owned ship), keyed by its
    *  shipInstanceId: its control keys reach the sink with `hullId` set, and
-   *  its `intent.fire` is never queued for `handleAiFire` / `AiFireResolver`. */
+   *  its `intent.fire` goes to the sink's `postHullFire`, never queued for
+   *  `handleAiFire` / `AiFireResolver`. */
   readonly hull?: boolean;
 }
 
@@ -358,8 +365,11 @@ export class AiController {
       this.warpOutYs[k] = intent.warpOut.y;
     }
 
-    // A player-owned hull fires through the player pipeline, never here.
-    if (intent.fire && !reg.hull) {
+    // A player-owned hull fires through the player pipeline, never here: its
+    // brain's held trigger is the hull's trigger.
+    if (intent.fire && reg.hull) {
+      this.sink.postHullFire?.(id, intent.fire.targetId);
+    } else if (intent.fire) {
       this.fireQueue.push({
         shooterId: id,
         dirX: intent.fire.dirX,

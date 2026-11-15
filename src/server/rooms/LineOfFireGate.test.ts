@@ -11,7 +11,7 @@
 import { describe, expect, it } from 'vitest';
 import { LineOfFireGate, type LineOfFireBody } from './LineOfFireGate.js';
 import { rayHitsSphere } from '../../core/combat/Weapons.js';
-import { SAB_TOTAL_BYTES, SLOT_X_OFF, SLOT_Y_OFF, slotBase } from '../../shared-types/sabLayout.js';
+import { SAB_TOTAL_BYTES, SLOT_X_OFF, SLOT_Y_OFF, SLOT_VX_OFF, slotBase } from '../../shared-types/sabLayout.js';
 import { LINE_OF_FIRE_BUDGET } from '../../shared-types/perf/perfBudgets.js';
 
 interface Body extends LineOfFireBody { side: number }
@@ -99,6 +99,45 @@ describe('LineOfFireGate', () => {
     const onlyTarget = (b: Body) => b === tg;
     const tb = slotBase(tg.slot);
     expect(gate.blocked(-3000, sab[tb + SLOT_Y_OFF]!, 1, 0, 6000, 'x', tg.id, onlyTarget)).toBe(false);
+  });
+
+  it('players\' ships (`ships`, outside the registry) block like registry bodies', () => {
+    const sab = new Float32Array(new ArrayBuffer(SAB_TOTAL_BYTES));
+    const put = (slot: number, x: number, y: number) => { const b = slotBase(slot); sab[b + SLOT_X_OFF] = x; sab[b + SLOT_Y_OFF] = y; };
+    const recs: Body[] = [{ id: 'target', slot: 0, side: 1, radius: 20 }];
+    put(0, 0, 600);
+    const ship: Body = { id: 'pilot-ship', slot: 5, side: 0, radius: 30 };
+    put(5, 0, 300);
+    let tick = 0;
+    let shipThere = true;
+    const gate = new LineOfFireGate<Body>({
+      registry: { all: () => recs, version: 1 }, sabF32: sab, tick: () => tick, rayHit: hit,
+      ships: (out) => { if (!shipThere) return 0; out[0] = ship; return 1; },
+    });
+    expect(gate.blocked(0, 0, 0, 1, 600, 'shooter', 'target', side0)).toBe(true);
+    expect(gate.lastBlockerId).toBe('pilot-ship');
+    // Read at each build: once the ship leaves, the next tick's grid has none.
+    shipThere = false;
+    tick++;
+    expect(gate.blocked(0, 0, 0, 1, 600, 'shooter', 'target', side0)).toBe(false);
+  });
+
+  it('a moving shot also holds for a friend that will cross its line in flight', () => {
+    const sab = new Float32Array(new ArrayBuffer(SAB_TOTAL_BYTES));
+    const b = slotBase(0);
+    // A friend 200 u right of the line at 400 u out, flying left at 400 u/s.
+    sab[b + SLOT_X_OFF] = 200; sab[b + SLOT_Y_OFF] = 400; sab[b + SLOT_VX_OFF] = -400;
+    const recs: Body[] = [{ id: 'friend', slot: 0, side: 0, radius: 20 }];
+    const gate = new LineOfFireGate<Body>({ registry: { all: () => recs, version: 1 }, sabF32: sab, tick: () => 0, rayHit: hit });
+    // Static check: clear. A bolt at 800 u/s reaches 400 u in 0.5 s, when the
+    // friend is on the line: held.
+    expect(gate.blocked(0, 0, 0, 1, 800, 's', 't', side0)).toBe(false);
+    expect(gate.blocked(0, 0, 0, 1, 800, 's', 't', side0, 800)).toBe(true);
+    // The shot inherits the shooter's velocity: a shooter flying with the
+    // friend leaves the friend where it is relative to the shot.
+    expect(gate.blocked(0, 0, 0, 1, 800, 's', 't', side0, 800, -400, 0)).toBe(false);
+    // A beam (no speed) is the static check.
+    expect(gate.blocked(0, 0, 0, 1, 800, 's', 't', side0, 0)).toBe(false);
   });
 
   it(`fleet fight: work per tick stays within budget (${JSON.stringify(LINE_OF_FIRE_BUDGET)})`, () => {

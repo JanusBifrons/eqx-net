@@ -37,8 +37,12 @@ An RTS owned ship is flown by this same brain, built with `new HostileDroneBehav
 - **Enemies:** a swarm ship whose allegiance attacks players on sight (`isOnSightHostile(its side, 'players')`, robots) is engaged within `ON_SIGHT_ENGAGE_RANGE`; drones (neutral to players) only on retaliation.
 - **Never runs:** its role's morale weights become Fight on 1 / Fall back 0 / Flee 0, so every roll fights on.
 - **Energy:** `energyPool` is the ship's one pool (`{ energy }`, a hull record fits as is); the brain regenerates and spends it exactly as it does its own drone pool. The brain is the pool's one regen owner: `SectorRoom.tickEnergy` does not also regenerate parked hulls (lock: `ownedShipsAiPilot.test.ts`).
+<<<<<<< HEAD
 - **Wiring (RTS Part B slice 2):** `AiController.register(id, slot, brain, { hull: true })`: the hull's keys reach the sink with its id (the sink's one hull branch posts them as pilot `INPUT`) and its `intent.fire` never reaches `handleAiFire`; self pose falls back to `lingeringPoseCache`. Detail: [fleet-command](fleet-command.md) §0.
 - **Retaliation and morale (RTS Part B slice 4):** a hit on an owned hull calls `AiController.markHostile(hull, shooter's owner)` for the hull and every AI-flown squadmate of the same owner (`SectorRoom.ownedHullRetaliates`; the shooter goes through `hostileActorOf`, so one playerId covers that player's active ship and parked hulls), and `AiController.noteDamage` with the HULL the hit took (never shield damage). No fleet-side retaliation ledger. Lock: `tests/integration/sectorRoom/ownedShipsRetaliate.test.ts`.
+=======
+- **Wiring (RTS Part B slices 2–3):** `AiController.register(id, slot, brain, { hull: true })`: the hull's keys reach the sink with its id (the sink's one hull branch posts them as pilot `INPUT`) and its `intent.fire` goes to the sink's `postHullFire` (the hull's trigger in the player fire pipeline, gated by the line-of-fire gate), never `handleAiFire`; self pose falls back to `lingeringPoseCache`. Detail: [fleet-command](fleet-command.md) §0.
+>>>>>>> 5938efe5 (Owned ships fire on their AI pilot's trigger (RTS Part B slice 3))
 - **Handling:** the kind passed in is used as is (`makePilotHandling`), so a pre-scaled kind (upgrades, `energyMax`) flows through.
 
 Lock: `ai/HostileDroneBehaviour.ownedSide.test.ts`.

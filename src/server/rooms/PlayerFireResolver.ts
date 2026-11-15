@@ -128,6 +128,15 @@ export interface PlayerFireResolverDeps {
    *  its group's lock target? A turret parked at its arc limit never does, so it
    *  never fires out of its arc. Absent only in resolver unit harnesses. */
   mountBearsOnLock?: (playerId: string, mountId: string, ox: number, oy: number, angle: number, weaponId: WeaponId) => boolean;
+  /** RTS Part B: the AI pilot's line of fire for a `fireHull` shot only (the
+   *  room's one `LineOfFireGate`): true holds this barrel's `weaponId`
+   *  shot, from its muzzle (fx, fy) along unit (dx, dy), fired from a hull
+   *  moving at (svx, svy), because a friendly body is (or will be) on its
+   *  line. A pilot's own fire is never gated. */
+  hullLineBlocked?: (
+    shipInstanceId: string, fx: number, fy: number, dx: number, dy: number,
+    weaponId: WeaponId, svx: number, svy: number,
+  ) => boolean;
   /** Lag-comp pose ring. */
   snapshotRing: SnapshotRingReader;
   /** Per-tick cached player poses (fallback when ring misses). */
@@ -380,7 +389,16 @@ export class PlayerFireResolver implements WeaponFireSink {
           for (let j = 0; j < inst.length; j++) if (inst[j]!.id === mount.id) { k = j; break; }
           const a = pose.angle + mount.baseAngle + (angles?.[k] ?? 0);
           const o = d.mountWorldOrigin(pose.x, pose.y, pose.angle, mount);
-          if (d.mountBearsOnLock(shooterId, mount.id, o.x, o.y, a, mount.weaponId)) bearMask |= 1 << mIdx;
+          const ox = o.x, oy = o.y;
+          if (!d.mountBearsOnLock(shooterId, mount.id, ox, oy, a, mount.weaponId)) continue;
+          // An AI-flown hull's barrel holds while a friendly is on its line
+          // (the AI pilots' one line-of-fire gate); a pilot's never does.
+          if (this._hullShot && d.hullLineBlocked) {
+            const dx = -Math.sin(a), dy = Math.cos(a);
+            const mz = shipShotMuzzle(shipKind, mount);
+            if (d.hullLineBlocked(shooterId, ox + dx * mz, oy + dy * mz, dx, dy, mount.weaponId, pose.vx, pose.vy)) continue;
+          }
+          bearMask |= 1 << mIdx;
         }
       }
       if (bearMask === 0) {
