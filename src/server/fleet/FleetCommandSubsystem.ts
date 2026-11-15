@@ -199,9 +199,6 @@ interface FleetEntry {
   readonly controls: WingmanControls;
   /** Command de-dup stamp. */
   stamp: number;
-  /** Last entity that damaged this ship (RTS slice 5), or null. */
-  attackerId: string | null;
-  attackedTick: number;
   /** Gap this hull keeps to its neighbours when several ships are sent to
    *  one point (`shipTuning(kind).flockSeparation`, #18). */
   readonly spacing: number;
@@ -362,8 +359,6 @@ export class FleetCommandSubsystem {
       index: this.entries.length,
       controls: makeWingmanControls(),
       stamp: 0,
-      attackerId: null,
-      attackedTick: 0,
       spacing: shipTuning(ship.kind).flockSeparation,
       moveOrder: { kind: 'move', x: 0, y: 0 },
     };
@@ -557,53 +552,10 @@ export class FleetCommandSubsystem {
   }
 
   /**
-   * The AI-flown `shipId` took damage (the room's damage path calls this).
-   * Feeds its morale; a FallBack / Flee roll makes it break off and retreat
-   * away from (threatX, threatY). Unknown ids are ignored.
-   */
-  noteDamage(
-    shipId: string, amount: number, maxHull: number, hullFrac: number,
-    threatX?: number, threatY?: number, attackerId?: string, tick?: number,
-  ): void {
-    const e = this.byId.get(shipId);
-    if (e === undefined) return;
-    e.brain.reportDamage(amount, maxHull, hullFrac, threatX, threatY);
-    // RTS slice 5: remember who hit it, for the Defensive stance's "fire back".
-    if (attackerId !== undefined && attackerId !== '' && tick !== undefined) {
-      e.attackerId = attackerId;
-      e.attackedTick = tick;
-    }
-  }
-
-  /**
-   * RTS slice 5 — the last ship that damaged `shipId` or a member of its
-   * squad within `windowTicks` of `tick` (its own attacker first, then the
-   * most recent squadmate's), or null. Alloc-free.
-   */
-  recentAttackerOf(shipId: string, tick: number, windowTicks: number): string | null {
-    const e = this.byId.get(shipId);
-    if (e === undefined) return null;
-    if (e.attackerId !== null && tick - e.attackedTick <= windowTicks) return e.attackerId;
-    if (e.squadId === null) return null;
-    const sq = this.squads.get(e.squadId);
-    if (!sq) return null;
-    let best: string | null = null;
-    let bestTick = -Infinity;
-    for (let i = 0; i < sq.memberIds.length; i++) {
-      const m = this.byId.get(sq.memberIds[i]!);
-      if (m === undefined || m === e || m.attackerId === null) continue;
-      if (tick - m.attackedTick > windowTicks || m.attackedTick <= bestTick) continue;
-      best = m.attackerId;
-      bestTick = m.attackedTick;
-    }
-    return best;
-  }
-
-  /**
    * A ship's key moved (its owner took or let go of its controls: playerId
    * <-> shipInstanceId). Every reference the fleet holds to it by that key
    * follows it: attack orders, chases and squad-leader targets
-   * (`WingmanBehaviour.shipKeyMoved`) and the last attacker for retaliation.
+   * (`WingmanBehaviour.shipKeyMoved`).
    * Called only from the room's one "ship key moved" seam. Rare, never per tick.
    */
   shipKeyMoved(from: string, to: string): void {
@@ -611,7 +563,6 @@ export class FleetCommandSubsystem {
     for (let i = 0; i < list.length; i++) {
       const e = list[i]!;
       e.brain.shipKeyMoved(from, to);
-      if (e.attackerId === from) e.attackerId = to;
     }
   }
 

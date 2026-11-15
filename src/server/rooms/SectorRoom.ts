@@ -5710,15 +5710,16 @@ export class SectorRoom extends Room<SectorState> {
     if (this.capitalWrecks !== null && damage > 0) {
       this.capitalWrecks.noteHit(targetId, shooterId, damage, hitX, hitY, dirX, dirY, weaponId);
     }
-    // RTS slice 5: an AI-flown hull's morale + "who hit me" (Defensive stance).
-    // Morale weighs the HULL a hit took, never what the shield soaked (a few
-    // shield hits rolled a retreat at hull 100 %: RTS take 2026-11-14), so
-    // read the hull either side of the hit.
-    const wingHullBefore = damage > 0 && this.fleet.size > 0 && this.fleet.isAttached(targetId)
+    // RTS Part B slice 4: a hit on an owned hull goes through the shared AI's
+    // ledgers: retaliation (`markHostile`, before the hit: a killing blow still
+    // turns its squad) and morale data (after: the HULL the hit took, never
+    // what the shield soaked; RTS take 2026-11-14).
+    const ownedHullBefore = damage > 0 && this.fleet.size > 0 && this.fleet.isAttached(targetId)
       ? this.state.ships.get(targetId)?.health ?? -1
       : -1;
+    if (ownedHullBefore >= 0) this.ownedHullRetaliates(targetId, shooterId);
     const destroyed = this.damageRouter.apply(targetId, shooterId, damage, hitX, hitY);
-    if (wingHullBefore >= 0) this.noteWingmanDamage(targetId, shooterId, wingHullBefore);
+    if (ownedHullBefore >= 0) this.noteOwnedHullDamage(targetId, ownedHullBefore);
     return destroyed;
   }
 
@@ -10689,21 +10690,36 @@ export class SectorRoom extends Room<SectorState> {
     }
   }
 
-  /** RTS slice 5: a hit on an AI-flown hull feeds its morale (with the
-   *  attacker's position as the threat) and its "recently hit by" record.
-   *  `hullBefore` is the hull before the hit: morale counts only the hull
-   *  LOST (0 when the shield took it all; the attacker is still recorded). */
-  private noteWingmanDamage(targetId: string, shooterId: string, hullBefore: number): void {
-    const ship = this.state.ships.get(targetId);
+  /** RTS Part B slice 4: an owned hull was hit — it and every squadmate of
+   *  the same owner turn on the shooter through the shared AI's retaliation
+   *  ledger (`AiController.markHostile`). The shooter is keyed by its owner
+   *  (`hostileActorOf`: a hull's shot counts for its owning player), so one
+   *  mark covers that player's active ship and parked hulls. The owner's own
+   *  fire never turns their ships. Event-driven, alloc-free. */
+  private ownedHullRetaliates(hullId: string, shooterId: string): void {
+    const ownerId = this.fleet.ownerOfAttached(hullId);
+    const actor = shooterId === '' ? '' : this.hostileActorOf(shooterId);
+    if (ownerId === null || actor === '' || actor === ownerId) return;
+    const tick = this.serverTick;
+    this.aiController.markHostile(hullId, actor, tick);
+    const sq = this.fleet.squadOf(hullId);
+    if (sq === null || sq.ownerId !== ownerId) return;
+    for (let i = 0; i < sq.memberIds.length; i++) {
+      const mid = sq.memberIds[i]!;
+      // Only hulls an AI pilot flies: the pilot's own ship is theirs to fly.
+      if (mid !== hullId && this.fleet.ownerOfAttached(mid) === ownerId) this.aiController.markHostile(mid, actor, tick);
+    }
+  }
+
+  /** RTS Part B slice 4: the hull an owned ship lost to a hit, into the AI
+   *  pilot brain's morale data (`AiController.noteDamage`; owned ships roll
+   *  but never run: players-side morale weights). `hullBefore` is the hull
+   *  before the hit; a hit the shield soaked notes nothing. */
+  private noteOwnedHullDamage(hullId: string, hullBefore: number): void {
+    const ship = this.state.ships.get(hullId);
     if (!ship || !ship.alive) return;
-    const maxHull = ship.maxHealth > 0 ? ship.maxHealth : 1;
-    const hullLost = Math.max(0, hullBefore - Math.max(0, ship.health));
-    const p = this.wingmanTargetPose;
-    const known = shooterId !== '' && this.entityPoseInto(shooterId, p);
-    this.fleet.noteDamage(
-      targetId, hullLost, maxHull, Math.max(0, ship.health) / maxHull,
-      known ? p.x : undefined, known ? p.y : undefined, shooterId, this.serverTick,
-    );
+    const hullLost = hullBefore - Math.max(0, ship.health);
+    if (hullLost > 0) this.aiController.noteDamage(hullId, hullLost, this.serverTick, ship.maxHealth > 0 ? ship.maxHealth : undefined);
   }
 
   /** STOP PILOTING (the `spectate` and `command` messages): park the caller's

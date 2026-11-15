@@ -368,17 +368,12 @@ describe('FleetCommandSubsystem — modes (RTS slice 8)', () => {
     expect(sys.statusFor('alice').find((s) => s.id === 'a1')!.targetId).toBe('swarm-9');
   });
 
-  it('retreat takes a point; noteDamage reaches the brain\'s morale (seeded per ship id)', () => {
+  it('retreat takes a point', () => {
     const { sys, add } = modesHarness();
     add('a1', 'alice', 0, 0);
     sys.setMode('alice', ['a1'], 'retreat', { x: 3000, y: 0 });
     sys.tick(0);
     expect(sys.statusFor('alice')[0]!.activity).toBe('retreating');
-
-    sys.noteDamage('a1', 90, 100, 0.1, 100, 0);
-    sys.noteDamage('ghost', 90, 100, 0.1); // unknown: ignored
-    sys.tick(1);
-    expect(sys.brainOf('a1')!.moraleOutcome).not.toBeNull();
   });
 
   it('wingmanConfigFor carries the hull\'s aiRole and fire range', () => {
@@ -386,26 +381,5 @@ describe('FleetCommandSubsystem — modes (RTS slice 8)', () => {
     const cfg = wingmanConfigFor(kind, undefined, 900);
     expect(cfg.aiRole).toBe(kind.aiRole);
     expect(cfg.fireRange).toBe(900);
-  });
-
-  it('recentAttackerOf: its own recent attacker, else a squadmate\'s, within the window (RTS slice 5)', () => {
-    const { sys, add } = harness();
-    add('a', 'alice');
-    add('b', 'alice');
-    add('c', 'alice');
-    expect(sys.recentAttackerOf('a', 100, 600)).toBeNull();
-    // A hit with no attacker id records nothing.
-    sys.noteDamage('a', 5, 100, 0.95, 10, 10);
-    expect(sys.recentAttackerOf('a', 100, 600)).toBeNull();
-    sys.noteDamage('a', 5, 100, 0.9, 10, 10, 'drone-1', 100);
-    expect(sys.recentAttackerOf('a', 650, 600)).toBe('drone-1');
-    expect(sys.recentAttackerOf('a', 701, 600), 'too long ago').toBeNull();
-    // b isn't in a squad with a yet: a's attacker is not b's business.
-    expect(sys.recentAttackerOf('b', 120, 600)).toBeNull();
-    sys.formSquad('alice', ['a', 'b', 'c']);
-    sys.noteDamage('c', 5, 100, 0.9, 0, 0, 'drone-2', 110);
-    expect(sys.recentAttackerOf('b', 120, 600), 'the most recent squadmate attacker').toBe('drone-2');
-    expect(sys.recentAttackerOf('a', 120, 600), 'its own attacker comes first').toBe('drone-1');
-    expect(sys.recentAttackerOf('ghost', 120, 600)).toBeNull();
   });
 });

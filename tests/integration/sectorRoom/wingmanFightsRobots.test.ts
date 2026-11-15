@@ -25,6 +25,8 @@ import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import { SHOWCASE_RTS_OPTS } from '../../../src/server/rooms/showcaseRooms.js';
 import type { SectorState } from '../../../src/server/rooms/schema/SectorState.js';
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
+import { HostileDroneBehaviour } from '../../../src/core/ai/HostileDroneBehaviour.js';
+import { MORALE_OUTCOME } from '../../../src/core/ai/tactics/morale.js';
 
 describe('SectorRoom integration — wingmen vs robot cubes (RTS take)', () => {
   let harness: SectorTestHarness | undefined;
@@ -99,8 +101,9 @@ describe('SectorRoom integration — wingmen vs robot cubes (RTS take)', () => {
     expect(alive, 'five fighters beat three cubes (the NPC control loses 1; before the fix all 5 died)').toBeGreaterThanOrEqual(2);
   }, 120_000);
 
-  // RTS Part B slice 4: owned ships never run (no morale; `noteDamage` folds into retaliation). The never-ticked wingman brain no longer rolls morale.
-  it.skip('shield hits alone never roll morale; hull loss still does', async () => {
+  // RTS Part B slice 4: the hit's hull loss reaches the AI pilot brain's morale
+  // through `AiController.noteDamage`; an owned ship's roll is always Fight on.
+  it('shield hits alone never roll morale; hull loss still does (and the owned ship fights on)', async () => {
     harness = await bootSectorTestServer({ sectorKey: 'sol-prime', droneCount: 0, testMode: true, asteroidConfig: [] });
     const pid = randomUUID();
     const client = await harness.connectActive(pid, { shipKind: 'fighter', spawnX: 0, spawnY: 0 });
@@ -114,7 +117,9 @@ describe('SectorRoom integration — wingmen vs robot cubes (RTS take)', () => {
     expect(internals.fleet.isAttached(sid)).toBe(true);
     expect(internals.spawnTestDrone('pest', 0, 900, 'fighter')).toBe(true);
     const ship = state.ships.get(sid)!;
-    const brain = internals.fleet.brainOf(sid)!;
+    const brain = internals.aiBrainOf(sid);
+    expect(brain).toBeInstanceOf(HostileDroneBehaviour);
+    const pilot = brain as HostileDroneBehaviour;
     expect(ship.shield, 'precondition: a full shield').toBeGreaterThan(ship.maxHealth * 0.6);
 
     // 60 % of max hull in shield hits inside one second: the burst trigger
@@ -125,8 +130,7 @@ describe('SectorRoom integration — wingmen vs robot cubes (RTS take)', () => {
       await harness.advance(150);
     }
     expect(ship.health, 'precondition: the shield took every hit').toBe(ship.maxHealth);
-    expect(brain.moraleOutcome, 'no morale roll on shield damage').toBeNull();
-    expect(brain.isMoraleRetreating).toBe(false);
+    expect(pilot.getLastMoraleOutcome(), 'no morale roll on shield damage').toBe(-1);
 
     // Shield gone: the next blows land on the hull and the burst trigger rolls.
     for (let i = 0; i < 8 && ship.health > ship.maxHealth * 0.6; i++) {
@@ -134,7 +138,9 @@ describe('SectorRoom integration — wingmen vs robot cubes (RTS take)', () => {
       await harness.advance(100);
     }
     expect(ship.health).toBeLessThan(ship.maxHealth);
-    expect(brain.moraleOutcome, 'hull loss rolls the morale die').not.toBeNull();
+    // The roll happens at the brain's next decision.
+    for (let i = 0; i < 10 && pilot.getLastMoraleOutcome() === -1; i++) await harness.advance(100);
+    expect(pilot.getLastMoraleOutcome(), 'hull loss rolls the morale die: an owned ship fights on').toBe(MORALE_OUTCOME.FightOn);
     await harness.disconnectClient(client);
   }, 60_000);
 });
