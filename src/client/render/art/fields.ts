@@ -208,7 +208,7 @@ export interface LiveryShade { hullDl: number; hullS: number; teamS: number; tea
 export const LIVERY_SHADES: Readonly<Record<'b2' | 'b3' | 'b4', LiveryShade>> = {
   b2: { hullDl: -0.12, hullS: 0.04, teamS: 1.15, teamD: 1.0, capS: 0.72, capD: 0.74 },
   b3: { hullDl: -0.2, hullS: 0.03, teamS: 1.3, teamD: 1.0, capS: 0.62, capD: 0.6 },
-  b4: { hullDl: -0.2, hullS: 0.03, teamS: 1.3, teamD: 1.0, capS: 0.5, capD: 0.74 },
+  b4: { hullDl: -0.2, hullS: 0.03, teamS: 1.1, teamD: 0.95, capS: 0.5, capD: 0.74 },
 };
 /** The shade experiment a livery uses, or undefined (plain treatment). */
 export function liveryShade(l: Livery | undefined): LiveryShade | undefined {
@@ -861,12 +861,14 @@ function weatherLivery(f: Fields, dist: Float32Array, seed: number, heavy: boole
       // 'b4', every size (so small ships match the capitals): thin grime
       // streaks running fore-aft, and chips CLUSTERED in wear zones, of dark
       // primer (the hull grey at about half value; matte, so no sparkle).
-      const w = heavy ? 1 : 0.6;
-      const streak = valueNoise(tx * 0.15, ty * 0.01, seed + 2);
+      // Sub-cap hulls are a few hundred texels, so their wear zones and
+      // streaks are finer (~4x) to land on the small flashes at all.
+      const w = heavy ? 1 : 0.8, zf = heavy ? 1 : 4;
+      const streak = valueNoise(tx * 0.15 * Math.min(2, zf), ty * 0.01 * zf, seed + 2);
       const dk = 1 - w * 0.38 * (1 - Math.pow(streak, 1.4));
       for (let c = 0; c < 3; c++) f.albedo[i * 3 + c] = f.albedo[i * 3 + c]! * dk;
-      const zone = valueNoise(tx * 0.025, ty * 0.025, seed + 5);
-      const fleck = valueNoise(tx * 0.3, ty * 0.3, seed + 4);
+      const zone = valueNoise(tx * 0.025 * zf, ty * 0.025 * zf, seed + 5);
+      const fleck = valueNoise(tx * 0.3 * Math.min(2, zf), ty * 0.3 * Math.min(2, zf), seed + 4);
       if (zone > 0.6 && fleck > 0.74 - (zone - 0.6) * 0.9) {
         f.mat[i] = MAT.PAINT;
         f.key[i] = f.paint;
