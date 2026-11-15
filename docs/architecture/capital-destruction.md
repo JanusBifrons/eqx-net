@@ -2007,19 +2007,45 @@ line; a railgun kill erases a straight channel as wide as the bolt.
   (and `WreckPieceGeometry.cutEdges`) carry each edge's `EDGE_*` kind, not a
   boolean: `EDGE_HULL` (0) is falsy, so every "is it a cut" reader is
   unchanged and the goldens did not move (no version bump). `glowTintOf(kind,
-  cutKind)` gives an `EDGE_CUT` edge of a slice kill `GLOW_TINT_SLICE` (the
-  heavy beam's `HEAVY_BEAM_COLOR` violet, from its pale core at the instant of
-  the cut) and of a channel kill `GLOW_TINT_CHANNEL` (white-hot); every other
-  edge keeps the crack curve. `wreckGlowAt` / `simpleGlowAt` take the tint: it
-  holds while the crack would be molten orange (0.6 s; simple glow 30 % of its
-  life), then blends into the base curve, reaching it at the ember (1.8 s;
-  simple: 70 %), so a cut cools through the same ember and scorch, and alpha
-  never changes with the tint. Still ONE glow mesh per piece: the glow
-  textures bake a row block per tint (`WRECK_GLOW_TEX_ROWS` = core + halo per
-  tint; the simple texture one row per tint) and a segment's tint is its V
-  (`glowV` / `simpleGlowV`), set once at build. Locks: `wreckArt.test.ts` "a
-  kill cut glows in the weapon's colour"; `fractureHull.test.ts` "cutEdges
-  carries the edge kind".
+  cutKind)` gives an `EDGE_CUT` edge of a slice kill `GLOW_TINT_SLICE` and
+  of a channel kill `GLOW_TINT_CHANNEL`; every other edge (the jagged
+  splinter cracks) keeps `GLOW_TINT_CRACK`, the molten curve, unchanged.
+  Owner: the cut glows in the weapon's colour, cooling through ember to dark,
+  and it is the hero line of the break-up (filmed review 2026-11-15: the
+  slice read as a 1–2 px violet hairline beside white-yellow splinter cracks,
+  with no violet left once the beam stopped). So a kill cut has its own
+  curve in `wreckGlowAt` (`CUT_T/C/A`), never dimmer than a crack of the
+  same age, ending dark at the same `WRECK_GLOW_END_S` (4.5 s):
+  - **Slice:** the beam's pale core at the instant, then `HEAVY_BEAM_COLOR`
+    violet at full alpha to `CUT_GLOW_HOLD_S` (1.5 s; a crack is at alpha
+    ~0.65 and red by then), a deep violet ember (0x7428a8, alpha 0.7 at 2.3 s),
+    a violet-grey scorch, dark.
+  - **Channel:** white-hot at full alpha to 1.5 s, then it cools like struck
+    metal: yellow-white (2.0 s), an orange-red ember (2.6 s), scorch, dark.
+  - **Width:** a kill cut's core and halo are `CUT_GLOW_WIDTH_MUL` (2.5) ×
+    a crack's, and its halo is brighter (0.45 × the core alpha, a crack's
+    0.3) and lasts with the colour (gone by 2.6 s; a crack's by 2.0 s).
+  - **Chamfered ends:** a kill cut is ONE long straight edge whose two ends
+    are both hull corners (one is often the wedge at the kill point). A
+    square strip end measured 0 wide there (`insideWidth`) and the strip
+    narrowed to a sliver or to nothing: that was the filmed hairline. A kill
+    cut's strip ends are chamfered (`writeStrip` ratios, 1 = 45°, up to
+    `CHAMFER_MAX` 4 for an acute corner, chosen per end at build), so it
+    keeps its full width along the cut and still stays inside the piece.
+    Crack strips keep their square ends.
+  - The simple (sub-capital) glow tints the same way, held to 50 % of its
+    life and gone by 85 % (cracks: their own orange and red), at the same
+    width multiplier.
+  Still ONE glow mesh per piece, no new draw call: the glow textures bake a
+  row block per tint (`WRECK_GLOW_TEX_ROWS` = core + halo per tint; the
+  simple texture one row per tint), a segment's tint is its V (`glowV` /
+  `simpleGlowV`), and its width multiplier and chamfers are baked into its
+  quads at build (`SEG_STRIDE` 17). Locks: `wreckArt.test.ts` "a kill cut
+  glows in the weapon's colour" (violet / white-hot held ~1.5 s, never
+  dimmer than a crack, cracks unchanged, the cut's core 2.5 × a crack's on
+  real slice and channel pieces); `swarmSpriteUpdater.wreckArt.test.ts`
+  "char strip" (a cooled cut is a subtle scorch, its halo gone by 2.7 s);
+  `fractureHull.test.ts` "cutEdges carries the edge kind".
 - **Channel ash (plan step 4).** A fresh wreck with `cutKind: 'channel'`
   passes the channel line to the break-up sink (`WreckBreakSink`'s
   `channel`: from the kill point, the slug's entry, to `channelFarEnd`, the
