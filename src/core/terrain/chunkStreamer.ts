@@ -19,7 +19,8 @@
  */
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { shipBodyMass } from '../../shared-types/shipScale/tuning.js';
-import { CHUNK_SIZE, rocksInChunk, type ChunkOpts, type ChunkRock } from './fieldLayout.js';
+import { convexParts } from '../geometry/shipHullDecomp.js';
+import { CHUNK_SIZE, FIELD_COLLIDER_SIMPLIFY, rocksInChunk, type ChunkOpts, type ChunkRock } from './fieldLayout.js';
 
 /** The cut options for a field seed: one source for both sides (#15). */
 export function cutFieldOpts(seed: string): ChunkOpts {
@@ -27,9 +28,13 @@ export function cutFieldOpts(seed: string): ChunkOpts {
 }
 
 /** A field rock as a body: centred on its outline's vertex mean, the outline
- *  relative to that centre, and its bounding radius. Both sides build the
- *  collider from this, so their rocks match (#15). Generation-time only. */
-export interface FieldRockBody { x: number; y: number; radius: number; verts: { x: number; y: number }[] }
+ *  relative to that centre, its bounding radius, and the convex parts its
+ *  collider is built from (plan C1: it follows the rock's dents). Both sides
+ *  build the collider from this, so their rocks match (#15). Generation-time
+ *  only. `parts` null ⇒ the outline's convex hull (an outline that crosses
+ *  itself). */
+export interface FieldRockBody { x: number; y: number; radius: number; verts: { x: number; y: number }[]; parts: { x: number; y: number }[][] | null }
+
 
 export function fieldRockBody(rock: ChunkRock): FieldRockBody {
   let mx = 0, my = 0;
@@ -41,7 +46,10 @@ export function fieldRockBody(rock: ChunkRock): FieldRockBody {
     r2 = Math.max(r2, dx * dx + dy * dy);
     return { x: dx, y: dy };
   });
-  return { x: mx, y: my, radius: Math.sqrt(r2), verts };
+  let area2 = 0;
+  for (let k = 0; k < verts.length; k++) { const a = verts[k]!, c = verts[(k + 1) % verts.length]!; area2 += a.x * c.y - c.x * a.y; }
+  const eqRadius = Math.sqrt(Math.abs(area2) / 2 / Math.PI);
+  return { x: mx, y: my, radius: Math.sqrt(r2), verts, parts: convexParts(verts, FIELD_COLLIDER_SIMPLIFY * eqRadius) };
 }
 
 /** A woken field rock's mass: as heavy as a battleship of its size (same

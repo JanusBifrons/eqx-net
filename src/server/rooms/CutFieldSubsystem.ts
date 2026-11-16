@@ -85,7 +85,7 @@ export class CutFieldSubsystem {
         if (this.consumed.has(rock.key)) return false;
         // The same body the client builds (#15): centred on the outline.
         const b = fieldRockBody(rock);
-        if (!spawner.spawnAsteroid({ id, x: b.x, y: b.y, vx: 0, vy: 0, radius: b.radius, vertices: b.verts, mass: fieldRockMass(b.radius), fixed: true, fieldRock: true, fieldKey: rock.key })) return false;
+        if (!spawner.spawnAsteroid({ id, x: b.x, y: b.y, vx: 0, vy: 0, radius: b.radius, vertices: b.verts, mass: fieldRockMass(b.radius), fixed: true, fieldRock: true, fieldKey: rock.key, parts: b.parts ?? undefined })) return false;
         const left = this.minedPool.get(rock.key);
         const rec = left === undefined ? null : registry.get(id);
         if (rec !== null && rec.resources !== undefined) rec.resources = Math.min(rec.resources, left!);

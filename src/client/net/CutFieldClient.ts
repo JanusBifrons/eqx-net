@@ -116,7 +116,7 @@ export class CutFieldClient implements FieldRockSource {
 
   /** The asteroid leaf, for an awake field rock on the swarm wire: mark it
    *  awake, drop its fixed predWorld body, return its centred outline. */
-  wakeFieldRock(key: number): ReadonlyArray<{ x: number; y: number }> | null {
+  wakeFieldRock(key: number): FieldRockBody | null {
     this.awake.set(key, this.deps.gameClock.now());
     const id = fieldRockId(key);
     const r = this.rocks.get(id);
@@ -125,7 +125,7 @@ export class CutFieldClient implements FieldRockSource {
       this.deps.predWorld()?.despawnShip(id);
       r.inPred = false;
     }
-    return bodyOf(r).verts;
+    return bodyOf(r);
   }
 
   get loadedRocks(): number { return this.rocks.size; }
@@ -263,7 +263,7 @@ export class CutFieldClient implements FieldRockSource {
         && wantPredBody(r.inPred, Math.sqrt(dx * dx + dy * dy) - p[j + 2]!);
       if (want && !r.inPred) {
         const b = bodyOf(r);
-        pw.spawnObstacle(id, b.x, b.y, b.radius, FIELD_ROCK_PRED_MASS, b.verts);
+        pw.spawnObstacle(id, b.x, b.y, b.radius, FIELD_ROCK_PRED_MASS, b.verts, undefined, undefined, b.parts ?? undefined);
         pw.fixBody(id);
         r.inPred = true;
       } else if (!want && r.inPred) {
