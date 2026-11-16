@@ -34,6 +34,8 @@ import { SOLAR_SECTORS } from '../../../../shared-types/sectorBounds.js';
 import { hashKey, landmarkScreen, SOLAR_SKY_SCALE, nebulaDensityAtSeed, newSpeedFxState, sectorSky, SKY_LAYERS, SPEED_FX, speedZoomFor, stepSpeedFx, visitNebulae, visitSkyLayer, type Landmark, type NebulaRegion, type SpeedFxLevel } from './depth.js';
 import { h01 } from './fxTextures.js';
 import type { SpeedFxSample } from '../../camera/speedFxSample.js';
+import { parseNebLook } from './nebulaLook.js';
+import { NebulaVolume } from './nebulaVolume.js';
 
 export interface BackdropCamera {
   readonly center: { x: number; y: number };
@@ -259,6 +261,8 @@ export class Backdrop {
     }
   };
   private t = 0;
+  /** Dense-nebula look R&D: the whole sector is inside it (null = C2 regions). */
+  private vol: NebulaVolume | null = null;
   /** Landmarks drawn last frame (stats). */
   visibleLandmarks = 0;
   /** This sector's sky, e.g. "planet@1200,-800 moon@..." (stats / E2E). */
@@ -266,7 +270,9 @@ export class Backdrop {
 
   constructor(private readonly art: ArtService, private readonly getQuality: () => string,
     /** Speed effects strength ('off' turns them off: Settings → Graphics). */
-    readonly speedLevel: SpeedFxLevel = 'large') {
+    readonly speedLevel: SpeedFxLevel = 'large',
+    /** Dense-nebula look R&D (`?neblook=`): "preset:seed"; absent = the C2 regions. */
+    nebLook?: string) {
     this.sky.eventMode = 'none';
     this.fore.eventMode = 'none';
     this.fore.blendMode = 'add';
@@ -325,6 +331,8 @@ export class Backdrop {
     }
     // The colour grade while inside a nebula (a faint full-screen tint).
     this.grade.texture = Texture.WHITE; this.grade.blendMode = 'add'; this.grade.alpha = 0;
+    const look = parseNebLook(nebLook);
+    if (look) this.vol = new NebulaVolume(art, look, this.nebBack, this.nebFront);
     this.fore.addChild(this.grade);
     this.setSector(null);
   }
@@ -402,12 +410,14 @@ export class Backdrop {
     if (speedSample) stepSpeedFx(this.speed, speedSample.x, speedSample.y, speedSample.t, fullSpeed);
     else stepSpeedFx(this.speed, cx, cy, nowMs, fullSpeed);
     // Nebulae live in GAME space (Y up); the camera centre is Pixi space (Y down).
-    const d = nebulaDensityAtSeed(this.nebSeed, cx, -cy, this.scratchR);
+    const d = this.vol ? 1 : nebulaDensityAtSeed(this.nebSeed, cx, -cy, this.scratchR);
+    const dim = this.vol ? this.vol.style.dim : 0.55;
+    if (this.vol) { this.nebula.s.visible = false; this.lanes.s.visible = false; }
     this.density = d;
     for (let i = 0; i < this.tiles.length; i++) {
       const tl = this.tiles[i]!;
       const tex = readyTex(tl.h);
-      if (!tex) { tl.s.visible = false; continue; }
+      if (!tex || (this.vol && (tl === this.nebula || tl === this.lanes))) { tl.s.visible = false; continue; }
       if (tl.s.texture !== tex) tl.s.texture = tex;
       tl.s.visible = true;
       if (tl.s.width !== W) tl.s.width = W;
@@ -420,7 +430,7 @@ export class Backdrop {
       // and phone GPUs sampling at half precision make the stars jump there
       // (phone run 2026-11-07, "jerky/jumpy stars").
       tl.s.tilePosition.set(wrapTile(this.xf.x, tex.width * ts), wrapTile(this.xf.y, tex.height * ts));
-      tl.s.alpha = tl.alpha * (tl.win ? zoomWindow(zoom, tl.win[0], tl.win[1], tl.win[2], tl.win[3]) : 1) * (tl.star ? 1 - 0.55 * d : skyKeep);
+      tl.s.alpha = tl.alpha * (tl.win ? zoomWindow(zoom, tl.win[0], tl.win[1], tl.win[2], tl.win[3]) : 1) * (tl.star ? 1 - dim * d : skyKeep);
     }
     for (let i = 0; i < this.sprites.length; i++) {
       const ss = this.sprites[i]!;
@@ -447,20 +457,23 @@ export class Backdrop {
     this.visibleLandmarks = shown;
     // Nebula volumes near the camera (none at minimal).
     this.nebSlot = 0; this.nebQ = q; this.nebGradeTint = 0xffffff;
-    if (q !== 'minimal') {
+    if (this.vol) {
+      this.vol.update(cx, cy, zoom, W, H, this.t, q);
+      this.nebGradeTint = this.vol.gradeTint;
+    } else if (q !== 'minimal') {
       const reach = Math.max(W, H) / 2 / (0.6 * Math.pow(Math.max(1e-3, zoom), 0.6));
       visitNebulae(this.nebSeed, cx, -cy, reach, this.scratchR, this.visitNebula);
     }
     for (let j = this.nebSlot; j < NEB_SLOTS; j++) for (const w of this.wisps[j]!) w.s.visible = false;
     this.grade.tint = this.nebGradeTint;
     this.grade.width = W; this.grade.height = H;
-    this.grade.alpha = 0.045 * d;
+    this.grade.alpha = (this.vol ? this.vol.style.grade : 0.045) * d;
     this.grade.visible = d > 0;
     // Dust motes (none on low; fewer on medium).
     const glow = readyTex(this.glow);
     const nearN = !glow || q === 'low' || q === 'minimal' ? 0 : q === 'medium' ? 40 : NEAR_MOTES;
     const foreN = !glow || q === 'low' || q === 'minimal' ? 0 : q === 'medium' ? 16 : FORE_MOTES;
-    this.fore.visible = foreN > 0 || this.nebSlot > 0;
+    this.fore.visible = foreN > 0 || this.nebSlot > 0 || this.vol !== null;
     this.layoutMotes(this.nearMotes, nearN, glow, 0.4, 0.7, 0.4, cx, cy, zoom, W, H);
     this.layoutMotes(this.foreMotes, foreN, glow, 1.3, 1.1, 1, cx, cy, zoom, W, H);
     return true;

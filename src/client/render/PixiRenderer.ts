@@ -922,7 +922,7 @@ export class PixiRenderer implements IRenderer {
       // New backdrop (B2): behind the world, with dust in front of it. Until
       // its star tiles are baked, today's starfield keeps drawing.
       if (this._artOpts.fx === true) {
-        const bd = new Backdrop(art, () => this.effects?.getQuality() ?? 'medium', this._artOpts.speedFx === false ? 'off' : 'large');
+        const bd = new Backdrop(art, () => this.effects?.getQuality() ?? 'medium', this._artOpts.speedFx === false ? 'off' : 'large', this._artOpts.nebLook);
         const wi = this.app.stage.getChildIndex(this.world);
         this.app.stage.addChildAt(bd.sky, wi);
         this.app.stage.addChildAt(bd.fore, wi + 2);
