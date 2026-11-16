@@ -5,25 +5,28 @@
  * the chunks around the local ship with the shared `CutFieldStreamer` (the
  * server runs the same one) on its own slow timer, one chunk per step. The
  * cutting itself (a few ms a chunk on a desktop, several times that on a
- * phone) runs in the page's art bake pool, so it never lands on a frame. Each loaded chunk goes to the renderer as flat outlines (the
- * mirror's `pendingFieldChunks` drain queue);
+ * phone) runs in the page's art bake pool, so it never lands on a frame; the
+ * pool also packs the chunk (`packChunk`: draw outlines, ore, bodies) and
+ * transfers it, so the main thread does no per-rock work on arrival. Each
+ * loaded chunk goes to the renderer as flat outlines (the mirror's
+ * `pendingFieldChunks` drain queue);
  * only the rocks the local ship can touch get a locked predWorld body, streamed
  * by edge distance like structures (`wantPredBody`), because every correction
  * replays ~20 ticks over the whole predWorld.
  *
- * The body is `fieldRockBody` on both sides (#15): same centre, outline and id.
+ * The body is `fieldRockBody` on both sides (#15): same centre, outline and id
+ * (packed in float64, unpacked only for rocks that get a collider or wake).
  */
 
 import type { PhysicsWorld } from '@core/physics/World';
 import {
   CutFieldStreamer,
   cutFieldOpts,
-  fieldRockBody,
   fieldRockId,
   type FieldRockBody,
 } from '@core/terrain/chunkStreamer';
-import { rocksInChunk, SLICED, type ChunkOpts, type ChunkRock } from '@core/terrain/fieldLayout';
-import { oreForOutlines, oreSeed } from '@core/terrain/fieldOre';
+import { rocksInChunk, type ChunkOpts } from '@core/terrain/fieldLayout';
+import { packChunk, packedRockBody, type PackedChunk } from '@core/terrain/packedChunk';
 import { wantPredBody } from '../structures/predStructureStreaming.js';
 import type { FieldRockSource } from './entity/IClientEntityLeaf.js';
 
@@ -48,7 +51,7 @@ export const FIELD_AWAKE_FORGET_MS = 2_000;
 
 /** Cuts a chunk off the main thread (the art bake pool's `cutChunk`). */
 export interface ChunkCutter {
-  cutChunk?(field: ChunkOpts, cx: number, cy: number): Promise<ChunkRock[]>;
+  cutChunk?(field: ChunkOpts, cx: number, cy: number): Promise<PackedChunk>;
 }
 
 /** Where chunk outlines go (ColyseusClient: the mirror's drain queue). */
@@ -69,17 +72,31 @@ export interface CutFieldClientDeps {
   cutter?: () => ChunkCutter | null;
 }
 
-interface LoadedRock { body: FieldRockBody; key: number; inPred: boolean }
+/** A rock as this side's streamer sees it: a handle into its packed chunk. */
+interface PackedRock { key: number; chunk: PackedChunk; i: number }
+/** `body` is unpacked the first time the rock needs a collider or wakes. */
+interface LoadedRock { chunk: PackedChunk; i: number; key: number; body: FieldRockBody | null; inPred: boolean }
+
+/** The streamer's handles for a packed chunk (one small object per rock). */
+function rocksOf(chunk: PackedChunk): PackedRock[] {
+  const out: PackedRock[] = new Array(chunk.keys.length);
+  for (let i = 0; i < out.length; i++) out[i] = { key: chunk.keys[i]!, chunk, i };
+  return out;
+}
+
+const NO_OUTLINES = new Float32Array(0);
+
+const bodyOf = (r: LoadedRock): FieldRockBody => (r.body ??= packedRockBody(r.chunk, r.i));
 
 export interface CutFieldSummary { chunks: number; rocks: number; predBodies: number; awake: number }
 
 export class CutFieldClient implements FieldRockSource {
   private seed: string | null = null;
-  private streamer: CutFieldStreamer | null = null;
+  private streamer: CutFieldStreamer<PackedRock> | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
   private readonly rocks = new Map<string, LoadedRock>();
   /** Cuts asked of the pool: null while out, the rocks once back. */
-  private readonly cuts = new Map<string, readonly ChunkRock[] | null>();
+  private readonly cuts = new Map<string, PackedChunk | null>();
   private inFlight = 0;
   /** Bumped on stop, so a cut that lands after it is dropped. */
   private gen = 0;
@@ -103,7 +120,7 @@ export class CutFieldClient implements FieldRockSource {
       this.deps.predWorld()?.despawnShip(id);
       r.inPred = false;
     }
-    return r.body.verts;
+    return bodyOf(r).verts;
   }
 
   get loadedRocks(): number { return this.rocks.size; }
@@ -119,15 +136,15 @@ export class CutFieldClient implements FieldRockSource {
     this.stop();
     this.seed = seed;
     if (seed === null) return;
-    const field = cutFieldOpts(seed), ore = oreSeed(seed);
-    this.streamer = new CutFieldStreamer(field, {
+    const field = cutFieldOpts(seed);
+    this.streamer = new CutFieldStreamer<PackedRock>(field, {
       visitShips: (cb) => { const p = this.deps.localPose(); if (p) cb(p.x, p.y); },
-      spawnRock: (id, rock) => { this.rocks.set(id, { body: fieldRockBody(rock), key: rock.key, inPred: false }); return true; },
+      spawnRock: (id, rock) => { this.rocks.set(id, { chunk: rock.chunk, i: rock.i, key: rock.key, body: null, inPred: false }); return true; },
       removeRock: (id) => this.dropRock(id),
       nowMs: () => this.deps.gameClock.now(),
       chunkLoaded: (cx, cy, rocks) => {
-        const outlines = packOutlines(rocks);
-        this.deps.draw.setFieldChunk(cx, cy, outlines, oreForOutlines(ore, SLICED.radius, outlines));
+        const c = rocks[0]?.chunk; // none: an empty chunk
+        this.deps.draw.setFieldChunk(cx, cy, c?.outlines ?? NO_OUTLINES, c?.ore ?? NO_OUTLINES);
       },
       chunkUnloaded: (cx, cy) => this.deps.draw.setFieldChunk(cx, cy, null),
       cutChunk: (cx, cy) => this.cutChunk(field, cx, cy),
@@ -157,20 +174,20 @@ export class CutFieldClient implements FieldRockSource {
 
   /** The streamer's cut hook: the chunk's rocks once the pool has cut them,
    *  else null (asked again next step). Inline without a pool. */
-  private cutChunk(field: ChunkOpts, cx: number, cy: number): readonly ChunkRock[] | null {
+  private cutChunk(field: ChunkOpts, cx: number, cy: number): readonly PackedRock[] | null {
     const cutter = this.inline ? null : this.deps.cutter?.() ?? null;
-    if (!cutter?.cutChunk) return rocksInChunk(field, cx, cy);
+    if (!cutter?.cutChunk) return rocksOf(packChunk(rocksInChunk(field, cx, cy), field.seed));
     const key = `${cx},${cy}`;
     const have = this.cuts.get(key);
-    if (have) { this.cuts.delete(key); return have; }
+    if (have) { this.cuts.delete(key); return rocksOf(have); }
     if (have === null || this.inFlight >= MAX_CUTS_IN_FLIGHT) return null;
     this.cuts.set(key, null);
     this.inFlight++;
     const gen = this.gen;
-    cutter.cutChunk(field, cx, cy).then((rocks) => {
+    cutter.cutChunk(field, cx, cy).then((packed) => {
       if (gen !== this.gen) return;
       this.inFlight--;
-      this.cuts.set(key, rocks);
+      this.cuts.set(key, packed);
       this.trimReady();
     }, () => {
       if (gen !== this.gen) return;
@@ -201,10 +218,13 @@ export class CutFieldClient implements FieldRockSource {
     }
     let n = 0;
     for (const [id, r] of this.rocks) {
-      const b = r.body;
+      const p = r.chunk.bodies, j = r.i * 3; // x, y, radius
+      const dx = p[j]! - (me?.x ?? 0), dy = p[j + 1]! - (me?.y ?? 0);
+      // sqrt, not Math.hypot: this runs over every loaded rock (thousands) a step.
       const want = pw !== null && me !== null && !this.awake.has(r.key)
-        && wantPredBody(r.inPred, Math.hypot(b.x - me.x, b.y - me.y) - b.radius);
+        && wantPredBody(r.inPred, Math.sqrt(dx * dx + dy * dy) - p[j + 2]!);
       if (want && !r.inPred) {
+        const b = bodyOf(r);
         pw.spawnObstacle(id, b.x, b.y, b.radius, FIELD_ROCK_PRED_MASS, b.verts);
         pw.fixBody(id);
         r.inPred = true;
@@ -224,17 +244,4 @@ export class CutFieldClient implements FieldRockSource {
     if (r.inPred) this.deps.predWorld()?.despawnShip(id);
     this.rocks.delete(id);
   }
-}
-
-/** A chunk's outlines as one flat array (cheap to post to the render worker). */
-export function packOutlines(rocks: readonly ChunkRock[]): Float32Array {
-  let len = 0;
-  for (const r of rocks) len += 1 + r.verts.length * 2;
-  const out = new Float32Array(len);
-  let i = 0;
-  for (const r of rocks) {
-    out[i++] = r.verts.length;
-    for (const v of r.verts) { out[i++] = v.x; out[i++] = v.y; }
-  }
-  return out;
 }
