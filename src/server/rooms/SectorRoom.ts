@@ -1146,7 +1146,7 @@ export class SectorRoom extends Room<SectorState> {
   private readonly forceFields = new ForceFieldSubsystem({ post: (cmd) => this.postToWorker(cmd), tractors: {
     tick: () => this.serverTick, poseOf: (id, out) => this.aiFireTargetShape(id, out), wireRef: (id) => this.swarmRegistry.get(id)?.entityId ?? id,
     lineBodies: (fx, fy, tx, ty, w, a, b, ids, cap) => this.lofGate().lineBodies(fx, fy, tx, ty, w, a, b, ids, cap),
-    inCrackHold: (id) => this.capitalWrecks?.inCrackHold(id) === true, isTerrain: (id) => isTerrainLockKind(this.swarmRegistry.get(id)?.kind ?? -1),
+    inCrackHold: (id) => this.capitalWrecks?.inCrackHold(id) === true, isTerrain: (id) => isTerrainLockKind(this.swarmRegistry.get(id)?.kind ?? -1), isWreckPiece: (id) => { const r = this.swarmRegistry.get(id); return r != null && isWreckPiece(r); },
     // Tractoring a ship is a hostile act, like a hit (weapon-mounts.md "Tractor beam"); terrain is neutral.
     onShipTractored: (e, t) => { this.noteStandingHit(t, e); if (this.playerToSlot.has(t)) this.refreshNpcAttackHostility(e, t); else if (this.swarmRegistry.get(t)?.kind === 1 && !this.isFriendlyFire(t, e)) this.aiController.markHostile(t, e, this.serverTick); },
   } });
@@ -1696,8 +1696,8 @@ export class SectorRoom extends Room<SectorState> {
     loot: LootSubsystem;
     /** S2a — a swarm entity's full SAB state (pose, velocity, spin). */
     wreckState: (id: string) => { x: number; y: number; vx: number; vy: number; angle: number; angvel: number } | null;
-    /** Salvage PR 5: a wreck piece's hidden integrity (undefined: none). */
-    wreckIntegrity: (id: string) => number | undefined;
+    /** Salvage PR 5: a wreck piece's hidden integrity (undefined: none); its whole-piece salvage (0: none). */
+    wreckIntegrity: (id: string) => number | undefined; wreckSalvage: (id: string) => number;
     /** S2a — a wreck piece's convex parts (body-local), or null. */
     wreckParts: (id: string) => ReadonlyArray<ReadonlyArray<{ x: number; y: number }>> | null;
     /** S2a — fix the fracture seed (null = per death). */
@@ -1784,7 +1784,7 @@ export class SectorRoom extends Room<SectorState> {
       },
       damageSwarmLayered: (rec, damage) => this.damageSwarmLayered(rec, damage),
       wreckState: (id) => this.wreckPose(id),
-      wreckIntegrity: (id) => this.capitalWrecks?.pieceIntegrity(id),
+      wreckIntegrity: (id) => this.capitalWrecks?.pieceIntegrity(id), wreckSalvage: (id) => this.capitalWrecks?.pieceSalvageQty(id) ?? 0,
       wreckParts: (id) => this.swarmRegistry.get(id)?.wreckParts ?? null,
       setWreckSeed: (seed) => { if (this.capitalWrecks) this.capitalWrecks.forcedSeed = seed; },
       swarmSleeping: (id) => {
@@ -2918,14 +2918,12 @@ export class SectorRoom extends Room<SectorState> {
         return p;
       },
       forEachCollector: (visit) => this.forEachLootCollector(visit),
-      inTractorHold: (c, podId, x, y) => this.forceFields.inTractorHold(c.playerId, podId, x, y), // emitter id: a pilot's playerId or an AI ship's swarm id
+      // Tractor hold zone (emitter id: a pilot's playerId or an AI ship's swarm id): a pod is picked up, a wreck piece stored whole.
+      inTractorHold: (c, podId, x, y) => this.forceFields.inTractorHold(c.playerId, podId, x, y),
+      heldPieces: { any: () => this.forceFields.tractorCount > 0, forEach: (c, visit) => this.forceFields.forEachHeldPiece(c.playerId, visit), salvageQty: (id) => this.capitalWrecks?.pieceSalvageQty(id) ?? 0, remove: (id) => this.capitalWrecks?.storePiece(id) },
       onCollected: (c, moved, podId) => this.onLootCollected(c, moved, podId),
-      onDropped: (podId, hold, cause) => {
-        auditEvent({ event: 'loot_dropped', sector: this.sectorKey ?? undefined, podId, cause, weight: holdWeight(hold) });
-      },
-      onDestroyed: (podId, hold, cause) => {
-        auditEvent({ event: 'loot_destroyed', sector: this.sectorKey ?? undefined, podId, cause, weight: holdWeight(hold) });
-      },
+      onDropped: (podId, hold, cause) => auditEvent({ event: 'loot_dropped', sector: this.sectorKey ?? undefined, podId, cause, weight: holdWeight(hold) }),
+      onDestroyed: (podId, hold, cause) => auditEvent({ event: 'loot_destroyed', sector: this.sectorKey ?? undefined, podId, cause, weight: holdWeight(hold) }),
     });
 
     // ── Structure placement (structures plan, Phase 2) ──────────────────
