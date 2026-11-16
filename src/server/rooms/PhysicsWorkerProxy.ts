@@ -38,7 +38,7 @@ export type WorkerCmd =
   | { type: 'DESPAWN';        slot: number; playerId: string }
   | { type: 'REKEY_SHIP';     oldId: string; newId: string }
   | { type: 'INPUT';          slot: number; inputTick: number; thrust: boolean; turnLeft: boolean; turnRight: boolean; boost: boolean; reverse: boolean; warpX?: number; warpY?: number }
-  | { type: 'SPAWN_OBSTACLE'; slot: number; obstacleId: string; x: number; y: number; vx: number; vy: number; radius: number; mass: number; vertices?: ReadonlyArray<Vec2>; linearDamping?: number; staticBody?: boolean; collisionGroups?: number; angle?: number; parts?: ReadonlyArray<ReadonlyArray<Vec2>>; shieldKindId?: string; angvel?: number; angularDamping?: number; settleSpeed?: number; settleSpin?: number; shipKindId?: number }
+  | { type: 'SPAWN_OBSTACLE'; slot: number; obstacleId: string; x: number; y: number; vx: number; vy: number; radius: number; mass: number; vertices?: ReadonlyArray<Vec2>; linearDamping?: number; staticBody?: boolean | 'fixed'; collisionGroups?: number; angle?: number; parts?: ReadonlyArray<ReadonlyArray<Vec2>>; shieldKindId?: string; angvel?: number; angularDamping?: number; settleSpeed?: number; settleSpin?: number; shipKindId?: number }
   | { type: 'AI_INTENT';      slot: number; fx: number; fy: number; torque: number; setAngvel?: number }
   /** Pilot layer: every AI slot flown by control keys this tick, in ONE
    *  message. `slots[i]` gets packed `AiInputBits` `bits[i]` for i < `count`. */
@@ -64,6 +64,7 @@ export type WorkerCmd =
    *  despawned entities. See docs/architecture/missile-simulation.md. */
   | { type: 'MISSILE_IMPULSE'; entityId: string; fx: number; fy: number }
   | { type: 'WRECK_KICK'; entityId: string; dvx: number; dvy: number; dw: number }
+  | { type: 'UNFIX_BODY'; entityId: string }
   /** A capital wreck piece's overkill knock-back: impulse (jx, jy) at world
    *  point (px, py) via `World.applyImpulseAtPoint`. */
   | { type: 'WRECK_IMPULSE'; entityId: string; jx: number; jy: number; px: number; py: number }
@@ -80,6 +81,10 @@ export type WorkerCmd =
    *  `ForceFieldSubsystem`; nothing else posts these. */
   | { type: 'SET_FORCE_FIELD';    id: string; field: ForceField }
   | { type: 'REMOVE_FORCE_FIELD'; id: string }
+  /** Several commands in ONE message, handled in order with no physics step
+   *  between them (`beginBatch` / `endBatch`): one wreck's piece spawns and
+   *  kicks, so every piece starts on the same step. */
+  | { type: 'BATCH'; cmds: WorkerCmd[] }
 ;
 
 /** Per-tick contact payload extracted from the worker's CONTACT_BATCH message.
@@ -172,9 +177,47 @@ export class PhysicsWorkerProxy {
    *  `EQX_WAKE_CENSUS=1`, `core/physics/wakeCensus.ts`); null otherwise. */
   lastWakeCensus: unknown = null;
 
+  /** Commands held by an open batch (reused, #14) and the batch depth. */
+  private readonly batchCmds: WorkerCmd[] = [];
+  private readonly batchMsg: { type: 'BATCH'; cmds: WorkerCmd[] } = { type: 'BATCH', cmds: this.batchCmds };
+  private batchDepth = 0;
+
   /** Type-safe postMessage facade — the only sanctioned path to the worker. */
   postCommand(cmd: WorkerCmd): void {
-    this.world?.post(cmd);
+    if (this.batchDepth === 0) {
+      this.world?.post(cmd);
+      return;
+    }
+    // A sender that reuses one command object (#14) and posts it again
+    // inside the batch would overwrite the held one: send what is held first.
+    if (this.batchCmds.includes(cmd)) this.flushBatch();
+    this.batchCmds.push(cmd);
+  }
+
+  /**
+   * Hold every `postCommand` until the matching `endBatch`, then send them
+   * as ONE `BATCH` message (nests; the outermost end sends). The worker
+   * handles each message as its own task and may step between two, so
+   * commands that must land on the same physics step (one wreck's piece
+   * spawns with the dead hull's despawn; its pieces' kicks) go in one.
+   * A held command is cloned only at `endBatch`: don't mutate it before.
+   */
+  beginBatch(): void {
+    this.batchDepth++;
+  }
+
+  /** Close a `beginBatch`; the outermost one posts the held commands. */
+  endBatch(): void {
+    if (this.batchDepth === 0) return;
+    if (--this.batchDepth === 0) this.flushBatch();
+  }
+
+  private flushBatch(): void {
+    const cmds = this.batchCmds;
+    if (cmds.length === 1) this.world?.post(cmds[0]!);
+    // postMessage clones synchronously, so the message and list are reused.
+    else if (cmds.length > 1) this.world?.post(this.batchMsg);
+    cmds.length = 0;
   }
 
   /** Used by `onDispose`: frees this room's world (the pool worker stays). */

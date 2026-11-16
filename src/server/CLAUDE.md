@@ -72,7 +72,7 @@ How each subsystem works (and its history) is in the "Server notes" section of t
 
 **Allegiances and friendly fire** ([allegiances](../../docs/architecture/allegiances.md#server-implementation-notes)):
 - 🔴 Classify by the registry kind, never an id prefix. `isHostileToPlayer` = stance OR ledger; only a hit on a DRONE escalates the `FactionLedger`. Allegiance decides targeting, never what a shot hits.
-- 🔴 Every shot hits the first thing in its path, own side included (skips: shooter, a capital's own deck, loot pods for non-pilot shots); friendly hits never mark hostile.
+- 🔴 Every shot hits the first thing in its path, own side included (skips: shooter, a capital's own deck, loot pods for non-pilot shots and mining tools); friendly hits never mark hostile.
 - AI pilots (AI-flown owned hulls too) hold fire on a friendly line only via `LineOfFireGate`; players are never gated. Drone-brain proximity queries use `AiNeighbourGrid`.
 
 **Cargo and storage** ([loot-and-cargo](../../docs/features/loot-and-cargo.md#server-implementation-notes)):
@@ -229,7 +229,7 @@ How each subsystem works (and its history) is in the "Server notes" section of t
 ## Capital wrecks
 
 - **Break-up is ON by default** (`wreckSwitchOn`; a room opts out, `EQX_*_WRECKS=0` forces off); one death effect per ship.
-- **Wreck pieces (kind 4) block every weapon but the railgun slug and heavy-beam follow-through**: a new hit path handles kind 4. Snapshots carry wreck deltas only.
+- **Wreck pieces (kind 4) block every weapon but the railgun slug**: a new hit path handles kind 4. Snapshots carry wreck deltas only.
 - Full text and locks: [capital-destruction.md](../../docs/architecture/capital-destruction.md#server-implementation-notes).
 
 ## Solar-system sectors

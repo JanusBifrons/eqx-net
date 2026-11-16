@@ -58,7 +58,20 @@ export interface WelcomeMessage {
    *  join (#16). Snapshots then carry only `wreckAdds` / `wreckRemoves` and a
    *  slow `wreckSync`. Absent = none (or wrecks off). */
   wrecks?: WreckDescriptor[];
+  /** Macro terrain v2 (room flag `cutField`): the field seed; the client cuts
+   *  the same rocks from it, minus `consumed`: the keys of rocks broken up
+   *  (C3; later breaks arrive as `field_consumed`). Absent = no cut field. */
+  cutField?: { seed: string; consumed?: number[] };
 }
+
+/** Macro terrain C3: a packed field rock key (`rockKey`, u32). */
+const RockKeySchema = z.number().int().min(0).max(0xffff_ffff);
+/** Consumed rock keys a welcome carries at most (the oldest first). */
+export const MAX_WELCOME_CONSUMED_ROCKS = 16_384;
+/** `field_consumed` (server → every client, reliable): cut-field rock `k`
+ *  was broken up; never cut it whole again. Welcome + these = the set (#16). */
+export const FieldConsumedSchema = z.object({ k: RockKeySchema }).strict();
+export type FieldConsumedMessage = z.infer<typeof FieldConsumedSchema>;
 
 /** PR 3a (account-bound identity) — sent to a session immediately before the
  *  server disconnects it because the SAME account logged in from another
@@ -111,6 +124,12 @@ export const WelcomeSchema = z
     capitalWrecks: z.literal(true).optional(),
     subcapWrecks: z.literal(true).optional(),
     wrecks: z.array(WreckDescriptorSchema).max(MAX_WELCOME_WRECKS).optional(),
+    /** Macro terrain v2 (room flag `cutField`): the field seed. The client
+     *  cuts the same rocks from it; none of them ride the wire. */
+    cutField: z.object({
+      seed: z.string().min(1).max(64),
+      consumed: z.array(RockKeySchema).max(MAX_WELCOME_CONSUMED_ROCKS).optional(),
+    }).strict().optional(),
   })
   .strict();
 
@@ -286,7 +305,7 @@ export interface SnapshotMessage {
        *  id, mode (m: 0 auto / 1 manual) and lock queue (t: target key,
        *  s: stage 0 failsafe / 1 acquiring / 2 locked, p: progress 0..100).
        *  Absent ⇒ not a fire-control pilot (or no groups). */
-      groups?: Array<{ id: string; m: 0 | 1; l: Array<{ t: string; s: number; p: number; r?: 1; c?: 1 }> }>;
+      groups?: Array<{ id: string; m: 0 | 1; l: Array<{ t: string; s: number; p: number; r?: 1; c?: 1; f?: number }> }>;
       /** Fire control — NPCs locking this pilot: `t` = `s:<entityId>`,
        *  `s` 1 acquiring / 2 locked, `p` 0..100. Own pilot only; absent ⇒ none.
        *  At most `LOCKED_BY_WIRE_ROWS` rows: completed locks first, then nearest. */

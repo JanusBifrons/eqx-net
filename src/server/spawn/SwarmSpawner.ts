@@ -9,7 +9,7 @@ import { STRUCTURE_DEFAULT_MASS } from '../../core/swarm/structureConstants.js';
 import { SCRAP_DEFAULT_MASS, SCRAP_LINEAR_DAMPING } from '../../core/swarm/scrapConstants.js';
 import { SCRAP_COLLISION_GROUPS, WRECK_COLLISION_GROUPS } from '../../core/physics/collisionGroups.js';
 import { SWARM_KIND_SCRAP } from '../../shared-types/swarmWireFormat.js';
-import { SHIP_KINDS_LIST, GAMEPLAY_SHIP_KINDS_LIST, shipKindToIndex, type ShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
+import { SHIP_KINDS_LIST, GAMEPLAY_SHIP_KINDS_LIST, kindHasShield, shipKindToIndex, type ShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
 import { structureHalfExtents, structureHullPoints } from '../../shared-types/structureKinds.js';
 import { gateColliderPolygons, gateWorldAxisBoxes } from '../../core/structures/gateGeometry.js';
 import { shipBodyMass } from '../../shared-types/shipScale/tuning.js';
@@ -26,6 +26,19 @@ export interface AsteroidSpec {
   mass?: number;
   /** P2c — what a Miner gets from it (absent ⇒ rock). Asteroids only. */
   resource?: AsteroidResourceId;
+  /** Cut-field rock: its outline (relative to x, y), instead of the seeded
+   *  `generateAsteroidVertices` shape. Asteroids only. */
+  vertices?: ReadonlyArray<Vec2>;
+  /** Too massive to move: a locked body, like a structure. Asteroids only. */
+  fixed?: boolean;
+  /** Cut-field rock: every client cuts it from the field seed, so it stays off
+   *  the swarm wire and out of the sector save (macro terrain plan v2). */
+  fieldRock?: boolean;
+  /** Its rock key (`rockKey`): an awake field rock carries it on the wire. */
+  fieldKey?: number;
+  /** Cut-field rock: its collider's convex parts (`FieldRockBody.parts`,
+   *  plan C1), so it follows the rock's dents; absent ⇒ one convex hull. */
+  parts?: ReadonlyArray<ReadonlyArray<Vec2>>;
 }
 
 export interface DroneSpec {
@@ -57,7 +70,7 @@ export interface SpawnerHooks {
    *  / undefined (legacy axis-aligned spawn). `shipKindId` (drones only) is
    *  the drone kind's catalogue index (`shipKindToIndex`): the worker flies the
    *  body as that kind when the AI drives it with control keys (AI_INPUTS). */
-  postSpawnObstacle: (slot: number, id: string, x: number, y: number, vx: number, vy: number, radius: number, mass: number, vertices?: ReadonlyArray<Vec2>, linearDamping?: number, staticBody?: boolean, collisionGroups?: number, angle?: number, parts?: ReadonlyArray<ReadonlyArray<Vec2>>, shieldKindId?: string, spin?: { angvel: number; angularDamping: number; settleSpeed?: number; settleSpin?: number }, shipKindId?: number) => void;
+  postSpawnObstacle: (slot: number, id: string, x: number, y: number, vx: number, vy: number, radius: number, mass: number, vertices?: ReadonlyArray<Vec2>, linearDamping?: number, staticBody?: boolean | 'fixed', collisionGroups?: number, angle?: number, parts?: ReadonlyArray<ReadonlyArray<Vec2>>, shieldKindId?: string, spin?: { angvel: number; angularDamping: number; settleSpeed?: number; settleSpin?: number }, shipKindId?: number) => void;
   /** Direct write into the SAB so the first update() tick reads a sane pose. */
   sabF32: Float32Array;
   sabU32: Uint32Array;
@@ -174,7 +187,7 @@ export class SwarmSpawner {
 
   /** Spawn one asteroid. Returns true on success, false if no free slot. */
   spawnAsteroid(a: AsteroidSpec): boolean {
-    const ok = this.spawnOne(0, a, undefined);
+    const ok = this.spawnOne(0, a, undefined, undefined, undefined, 0, a.parts);
     if (ok && a.resource !== undefined && a.resource !== 'rock') {
       const rec = this.registry.get(a.id);
       if (rec) rec.asteroidResource = a.resource;
@@ -300,7 +313,7 @@ export class SwarmSpawner {
    *  on it and do nothing (EntityResolver treats kind 4 as immune). */
   spawnWreck(spec: {
     id: string; x: number; y: number; vx: number; vy: number; angle: number; angvel: number;
-    radius: number; mass: number; parentShipKind: ShipKindId; pieceIndex: number; wreckId: number;
+    radius: number; mass: number; parentShipKind: ShipKindId | undefined; pieceIndex: number; wreckId: number;
     parts: ReadonlyArray<ReadonlyArray<Vec2>>; colliderParts: ReadonlyArray<ReadonlyArray<Vec2>>;
     linearDamping: number; angularDamping: number;
     /** `wreckBodyParams(kind).collisionGroups`; absent ⇒ the capital groups. */
@@ -372,6 +385,10 @@ export class SwarmSpawner {
     const rec = this.registry.register(a.id, slot, kind, a.radius, a.x, a.y, 0);
     if (kind === 1 && shipKind) {
       rec.shipKind = shipKind.id;
+      // A kind with no shield (every capital) is shield-down from spawn: no
+      // aura, hits and collisions on the hull (the worker mounts the hull
+      // collider itself, `PhysicsWorld.spawnObstacle`).
+      rec.shieldDown = !kindHasShield(shipKind);
     }
 
     // Asteroids get a deterministic convex-polygon collider derived from their
@@ -386,7 +403,11 @@ export class SwarmSpawner {
       // Shape from the STABLE id (macro terrain 1a): wire ids are reused, so
       // seeding by `entityId` would reshape a rock that leaves and returns.
       rec.shapeSeed = asteroidShapeSeed(a.id);
-      vertices = generateAsteroidVertices(rec.shapeSeed, a.radius);
+      vertices = a.vertices ?? generateAsteroidVertices(rec.shapeSeed, a.radius);
+      if (a.fieldRock) { rec.fieldRock = true; rec.restX = a.x; rec.restY = a.y; }
+      if (a.fieldKey !== undefined) rec.fieldKey = a.fieldKey;
+      // A cut-field rock's convex parts are its weapon hit shape too (C1b).
+      if (a.fieldRock && structureParts !== undefined) rec.wreckParts = structureParts;
       rec.vertices = vertices;
       mass ??= ASTEROID_DEFAULT_MASS;
       // WS-4 / R2.27 — seed the finite mineable resource pool from the
@@ -422,7 +443,8 @@ export class SwarmSpawner {
     // ram impulses (the "I hit a pylon and it MOVED" bug). Drones (1) + asteroids
     // (0) + scrap (3) stay dynamic — drones fly, asteroids are bump-able (R2.33),
     // scrap drifts.
-    const staticBody = kind === 2;
+    // Structures lock; cut-field rocks are fixed bodies (never simulated).
+    const staticBody = kind === 0 && a.fixed === true ? 'fixed' : kind === 2;
     // SCRAP (kind 3) carries a collision-group mask so scrap doesn't collide with
     // other scrap but does collide with everything else. Every other kind passes
     // undefined ⇒ Rapier's default groups (collide with all).

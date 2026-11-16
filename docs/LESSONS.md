@@ -3114,3 +3114,24 @@ Owner: "make it more like micro machines and make fights a bit longer. Also don'
 
 - **Finding:** `tests/unit/context-nudge.test.ts` collected 0 tests on Windows ("Invalid or unexpected token", at a meaningless line in the test file) but passed on CI. The test imports `scripts/dev/context-nudge.mjs`, which began with `#!/usr/bin/env node`. With `core.autocrlf=true` that line ends in `\r\n`; Vite's SSR transform only skips a hashbang matching `/^#!.*\n/`, and `.` does not match `\r`, so the imports were hoisted above the `#!` and the module no longer parsed.
 - **Rule:** a script a test imports carries no shebang; run it as `node <file>`. The error location vitest prints points at the test file, not the imported script, so check the imports' first line.
+
+## 2026-11-16 — v8 coverage slowed the art pixel tests ~6× and set the unit check's wall clock
+
+- **Finding:** the required `unit-tests` job took ~17 min, almost all of it art tests (`fields.livery.test.ts` 1016 s on CI, 131 s plain locally). v8 coverage instruments every pixel-loop iteration: `hullVents.lightCruiserC.test.ts` took 6.5 s plain and 40 s with `--coverage`.
+- **Rule:** pixel-heavy art tests (forge / bake / livery loops) match `ART_TEST_GLOBS` in `vitest.config.ts`; the main config excludes them and `vitest.art.config.ts` (`pnpm test:art`, CI job `unit-art`) runs them without coverage. `pnpm test` runs both configs. A new art test that forges or bakes pixels goes under `src/client/render/art/` (or joins the globs); measure a slow unit file with and without `--coverage` before splitting it.
+
+## 2026-11-16 — an integration duel window in wall time ran a host-load-dependent amount of game
+
+- **Finding:** `dogfight.test.ts` sampled duels for 20 s / 30 s of `Date.now()`; `harness.advance(ms)` is a real `setTimeout`, so a loaded host ran a different number of ticks and the ram counts drifted (attack-run rams 2-3 against a limit of 1).
+- **Rule:** bound integration observation windows by `room.serverTick` (60 per game second) and derive per-sample dt from the tick delta, skipping samples where no tick passed.
+- **Follow-up:** with the window on ticks, CI still gave the same 3 attack-run rams on one branch every time and 0 on main: the physics worker's thread timing shifts a near-miss into a contact. A ram count from a thread-timed sim is a measurement, not a gate. The owner signed off the dogfight look; ram counts are printed, never asserted, and the AI is never tuned to chase them.
+
+## 2026-11-16 — the physics worker can step between two of your messages
+
+- **Finding:** `subcapWrecks.test.ts` "missile-frigate's pieces stand clearly apart" failed only beside other integration files (1.34 vs 1.5 hull radii). Each wreck piece was its own `SPAWN_OBSTACLE` `postMessage`; the worker thread handles each message as its own task with its step timer between, so on a loaded host one piece of a ship killed at speed started a step ahead of its neighbour and the wreck parted differently each run.
+- **Rule:** commands that must land on the same physics step go in ONE message: wrap them in `PhysicsWorkerProxy.beginBatch()` / `endBatch()` (a `BATCH { cmds }`). Order inside one message is kept; order across messages is not "same step". Lock: `tests/integration/sectorRoom/wreckSpawnOneMessage.test.ts`.
+
+## 2026-11-16 — two SAB reads in one room tick can be a worker step apart
+
+- **Finding:** a capital turret was aimed from the hull pose its ticker read off the SAB, then the shot was cast from a second, later SAB read (`swarmEntitySnapshot`). The physics worker writes the SAB on its own thread, so on a loaded host the second read was a step on: a turning lance's kill follow-through left the kill line by one tick of turn and hit its own wreck (`beamFollowThrough.test.ts`, 1 run in 2 alongside other integration files).
+- **Rule:** a decision and the act it licenses use ONE pose read: pass the pose that was aimed with (or hit-tested against) down to whatever acts on it, never re-read the SAB. To test it deterministically, move the SAB between the two calls in the test (`beamKillBurnsGap.test.ts` "worker step").

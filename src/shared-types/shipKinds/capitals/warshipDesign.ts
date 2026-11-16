@@ -312,9 +312,11 @@ export function warshipDesign(id: CapitalClassId, style: CapitalStyle, map: Capi
     mass: p.mass,
     thrusters: { count: engines, size: B * 0.07 },
     maxHealth: health,
-    shieldMax: Math.round(health * 0.5),
+    // Capitals have no shield (owner 2026-11-16: "capital ships never have
+    // shields"): every hit lands on the hull.
+    shieldMax: 0,
     shieldRegenDelayTicks: 600,
-    shieldRegenRate: (health * 0.5) / 600,
+    shieldRegenRate: 0,
     energyMax: 600,
     energyRegenRate: 2,
     ai: { thrust: p.thrustImpulse },

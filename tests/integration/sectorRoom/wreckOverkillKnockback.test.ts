@@ -15,6 +15,14 @@
  * centre, travelling away from the rest of the wreck. The piece's velocity
  * must change along the shot by about the expected amount, and its spin must
  * change in the direction the off-centre hit turns it.
+ *
+ * Owner on the re-split clip (2026-11-15): "scrap should weigh a lot and be
+ * very resistant to sliding". The capital knock is now 0.3 % of what it was
+ * (cap 10 %), so a real 16" shell moves the big piece ~0.1 u/s, lost in
+ * the piece's own drift. The second shell is a test shell sized to shove it
+ * half the per-hit cap from rest (its drift zeroed), so the wiring (along the
+ * shot, the expected impulse, the turn) stays measurable; a real shell's
+ * expected shove is checked to be tiny.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
@@ -26,6 +34,7 @@ import { fracturePlan, FRACTURE_MAX_PIECES } from '../../../src/core/destruction
 import { shipHullOutline } from '../../../src/core/geometry/shipHullOutline.js';
 import { wreckPieceGeometry } from '../../../src/core/destruction/wreckPieces.js';
 import { WRECK_CRACK_MS } from '../../../src/shared-types/wreckTiming.js';
+import { WEAPONS } from '../../../src/core/combat/WeaponCatalogue.js';
 
 const WRECK_KIND = 4;
 const KIND = 'heavy-cruiser';
@@ -34,7 +43,10 @@ const SHELL_SPEED = 3000;
 
 describe('SectorRoom integration: overkill shells knock wreck pieces back', () => {
   let harness: SectorTestHarness;
-  afterEach(async () => { if (harness) await harness.cleanup(); }, 10_000);
+  afterEach(async () => {
+    delete WEAPONS.get('naval_xl')!.targetFactor;
+    if (harness) await harness.cleanup();
+  }, 10_000);
 
   it('a 16" shell landing on a wreck piece after the kill shoves it along the shot and turns it', async () => {
     const kind = getShipKind(KIND);
@@ -116,8 +128,19 @@ describe('SectorRoom integration: overkill shells knock wreck pieces back', () =
     expect(best, 'some line of fire reaches the biggest piece first').not.toBeNull();
     const shot = best!;
 
+    const t = shipTuning(kind);
+    // Owner 2026-11-15: a real 16" shell barely moves the biggest piece.
+    const realShove = Math.min((SHELL_DAMAGE / kind.maxHealth) * kind.mass * t.wreckKnockSpeed / massOf(target), t.wreckKnockMax);
+    expect(realShove, 'a real 16" shell barely moves a big capital piece (u/s)').toBeLessThan(0.5);
+    // A test shell worth half the per-hit cap, fired at the piece from rest;
+    // it wears nothing (wreck factor 0), so the piece does not split.
+    WEAPONS.get('naval_xl')!.targetFactor = { wreck: 0 };
+    const damage = (0.5 * t.wreckKnockMax * massOf(target) * kind.maxHealth) / (kind.mass * t.wreckKnockSpeed);
+    const z = internal.wreckState(target)!;
+    internal.postToWorker({ type: 'SET_POSITION', entityId: target, x: z.x, y: z.y, angle: z.angle, vx: 0, vy: 0, angvel: 0 });
+    await harness.advance(50);
     const before = internal.wreckState(target)!;
-    internal.spawnTestProjectile('bb-shooter', shot.sx, shot.sy, shot.dx * SHELL_SPEED, shot.dy * SHELL_SPEED, 'naval_xl', SHELL_DAMAGE);
+    internal.spawnTestProjectile('bb-shooter', shot.sx, shot.sy, shot.dx * SHELL_SPEED, shot.dy * SHELL_SPEED, 'naval_xl', damage);
     // Long enough for the shell to arrive, short enough that the shoved
     // piece can't reach a neighbour while we measure.
     await harness.advance((shot.dist / SHELL_SPEED) * 1000 + 120);
@@ -127,11 +150,10 @@ describe('SectorRoom integration: overkill shells knock wreck pieces back', () =
     const along = dvx * shot.dx + dvy * shot.dy;
     const across = Math.abs(-dvx * shot.dy + dvy * shot.dx);
     const dw = after.angvel - before.angvel;
-    const t = shipTuning(kind);
-    const expected = Math.min((SHELL_DAMAGE / kind.maxHealth) * kind.mass * t.wreckKnockSpeed / massOf(target), t.wreckKnockMax);
+    const expected = Math.min((damage / kind.maxHealth) * kind.mass * t.wreckKnockSpeed / massOf(target), t.wreckKnockMax);
     console.log(`[wreck knockback] piece ${target} mass ${massOf(target).toFixed(0)} r ${rPiece.toFixed(0)}: Δv along ${along.toFixed(2)} u/s (expected ${expected.toFixed(2)}), across ${across.toFixed(2)}, Δω ${(dw * 180 / Math.PI).toFixed(3)} deg/s, offset ${shot.off.toFixed(0)} u`);
 
-    expect(along, 'the overkill shell shoves the piece along the shot (u/s)').toBeGreaterThan(10);
+    expect(along, 'the overkill shell shoves the piece along the shot (u/s)').toBeGreaterThan(0.3 * t.wreckKnockMax);
     expect(along, '...by about the expected impulse').toBeGreaterThan(0.7 * expected);
     expect(along, '...and no more').toBeLessThan(1.2 * expected);
     expect(along, 'nothing flies off absurdly fast').toBeLessThan(0.03 * kind.radius);
@@ -139,7 +161,7 @@ describe('SectorRoom integration: overkill shells knock wreck pieces back', () =
     // An off-centre hit turns the piece: the hit point sits `off` to the left
     // of the line through the centre, so a shot along +d turns it clockwise
     // (negative ω) for off > 0.
-    expect(Math.abs(dw) * 180 / Math.PI, 'the off-centre hit turns the piece (deg/s)').toBeGreaterThan(0.3);
+    expect(Math.abs(dw) * 180 / Math.PI, 'the off-centre hit turns the piece (deg/s)').toBeGreaterThan(0.02);
     expect(Math.sign(dw), 'it turns the way the off-centre hit pushes it').toBe(-Math.sign(shot.off));
   }, 60_000);
 });

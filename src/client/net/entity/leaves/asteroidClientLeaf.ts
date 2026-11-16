@@ -20,18 +20,30 @@ export class AsteroidClientLeaf extends ClientEntityLeafBase {
   }
 
   spawnBody(ctx: ClientSpawnCtx): void {
+    // An awake cut-field rock (macro terrain C2) collides as its cut outline,
+    // the same verts the server's body has (#15); a client that has not cut
+    // that chunk yet falls back to a generated rock of the same radius.
+    const fk = ctx.entry.fieldKey;
+    const field = fk !== undefined ? ctx.fieldRocks?.wakeFieldRock(fk) ?? null : null;
+    const verts = field?.verts ?? generateAsteroidVertices(ctx.entry.shapeSeed ?? 0, ctx.entry.radius);
     ctx.predWorld.spawnObstacle(
       ctx.key,
       ctx.entry.x,
       ctx.entry.y,
       ctx.entry.radius,
       ASTEROID_MASS,
-      generateAsteroidVertices(ctx.entry.shapeSeed ?? 0, ctx.entry.radius),
+      verts,
+      undefined,
+      undefined,
+      field?.parts ?? undefined, // its convex parts (plan C1), like the server's body
     );
     ctx.predWorld.lockBody(ctx.key); // static server-side
   }
 
   onSync(ctx: ClientSyncCtx): void {
+    // Keeps the rock's fixed cut-field body away while it is on the wire.
+    const fk = ctx.entry.fieldKey;
+    if (fk !== undefined) ctx.fieldRocks?.wakeFieldRock(fk);
     this.repose(ctx); // locked / static — the authoritative packet pose is correct
   }
 }

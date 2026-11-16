@@ -1,0 +1,327 @@
+{
+  "when": "2026-11-15T20:33:01.382Z",
+  "device": "phone-proxy",
+  "reps": 2,
+  "cpuRate": 6,
+  "noiseCheck": false,
+  "host": {
+    "hostname": "2T9394",
+    "platform": "win32 10.0.26200",
+    "node": "v24.14.0",
+    "cpuModel": "AMD Ryzen 7 9800X3D 8-Core Processor",
+    "threads": 16,
+    "totalMemMb": 31849,
+    "freeMemMbAtStart": 14353,
+    "gpuRenderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 5070 Ti (0x00002C05) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "browserArgs": [
+      "--use-angle=d3d11",
+      "--ignore-gpu-blocklist",
+      "--enable-gpu-rasterization",
+      "--disable-background-timer-throttling",
+      "--disable-renderer-backgrounding",
+      "--disable-backgrounding-occluded-windows"
+    ],
+    "headed": false
+  },
+  "load": {
+    "gate": false,
+    "limits": {
+      "minFreeMemMb": 1024,
+      "maxCpuPct": 25
+    },
+    "ignorePorts": [],
+    "portOffset": 300,
+    "atStart": {
+      "at": "2026-11-15T20:30:41.793Z",
+      "cpuPct": 11.7,
+      "cpuWindowMs": 1000,
+      "threads": 16,
+      "freeMemMb": 14464,
+      "totalMemMb": 31849,
+      "foreignListeners": [],
+      "foreignProcs": {
+        "node": 33,
+        "chrome": 0
+      }
+    }
+  },
+  "arms": [
+    {
+      "name": "head",
+      "sha": "4f02f21e",
+      "clientParams": {
+        "shipKind": "fighter",
+        "initialHull": "1000000",
+        "art": "machined",
+        "fx": "new",
+        "diag": "0",
+        "perfprobe": "1"
+      },
+      "serverEnv": {}
+    }
+  ],
+  "scenes": {
+    "idle": {
+      "title": "Empty sector, pilot idle: the harness floor",
+      "injected": {
+        "serverBurnMs": 0,
+        "clientBurnMs": 0
+      },
+      "verdict": null,
+      "base": [],
+      "head": [
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.15,
+            "serverTickP99": 0.21,
+            "serverTickMax": 0.37,
+            "workerTickP95": 0.08,
+            "clientFrameP95": 16.7,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 0,
+            "renderP95": 1.4,
+            "renderP99": 2,
+            "longTaskMsPerMin": 0,
+            "serverCpuMsPerTick": 17.083,
+            "serverUpdateCpuMsPerTick": 0,
+            "workerElu": 0.006
+          },
+          "counts": {
+            "rxKBps": 5.332581564961624,
+            "displayObjects": 722,
+            "sprites": 1,
+            "swarmAtEnd": 0,
+            "heapMb": 98,
+            "serverBodiesPerTick": 0.98,
+            "serverContactsPerTick": 0,
+            "serverAiAgentsPerTick": 0,
+            "serverSwarmRecordsPerTick": 0,
+            "serverSwarmBytesPerTick": 0,
+            "serverEntitiesPerSnapshot": 0
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-15T20:30:47.632Z",
+              "cpuPct": 12.8,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 13231,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 33,
+                "chrome": 0
+              }
+            },
+            "after": {
+              "at": "2026-11-15T20:31:15.218Z",
+              "cpuPct": 11.4,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 13490,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 33,
+                "chrome": 0
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.12,
+            "serverTickP99": 0.18,
+            "serverTickMax": 0.23,
+            "workerTickP95": 0.08,
+            "clientFrameP95": 16.8,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 3.028009084027252,
+            "renderP95": 1.5,
+            "renderP99": 1.9,
+            "longTaskMsPerMin": 0,
+            "serverCpuMsPerTick": 16.655,
+            "serverUpdateCpuMsPerTick": 0,
+            "workerElu": 0.005
+          },
+          "counts": {
+            "rxKBps": 5.342336534822104,
+            "displayObjects": 722,
+            "sprites": 1,
+            "swarmAtEnd": 0,
+            "heapMb": 82,
+            "serverBodiesPerTick": 0.99,
+            "serverContactsPerTick": 0,
+            "serverAiAgentsPerTick": 0,
+            "serverSwarmRecordsPerTick": 0,
+            "serverSwarmBytesPerTick": 0,
+            "serverEntitiesPerSnapshot": 0
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-15T20:31:55.487Z",
+              "cpuPct": 10.9,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 13177,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 33,
+                "chrome": 0
+              }
+            },
+            "after": {
+              "at": "2026-11-15T20:32:22.812Z",
+              "cpuPct": 11.2,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 13235,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 33,
+                "chrome": 0
+              }
+            }
+          },
+          "raw": null
+        }
+      ]
+    },
+    "cut-field-run": {
+      "title": "The cut field: a fighter flying flat out down a lane",
+      "injected": {
+        "serverBurnMs": 0,
+        "clientBurnMs": 0
+      },
+      "verdict": null,
+      "base": [],
+      "head": [
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.39,
+            "serverTickP99": 0.52,
+            "serverTickMax": 3.18,
+            "workerTickP95": 0.97,
+            "clientFrameP95": 16.8,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 8.002934409283403,
+            "renderP95": 1.8,
+            "renderP99": 2.8,
+            "longTaskMsPerMin": 0,
+            "serverCpuMsPerTick": 17.543,
+            "serverUpdateCpuMsPerTick": 0.59,
+            "workerElu": 0.046
+          },
+          "counts": {
+            "rxKBps": 7.8261117618126645,
+            "displayObjects": 767,
+            "sprites": 1,
+            "swarmAtEnd": 1210,
+            "heapMb": 82,
+            "serverBodiesPerTick": 13.55,
+            "serverContactsPerTick": 0,
+            "serverAiAgentsPerTick": 0,
+            "serverSwarmRecordsPerTick": 0,
+            "serverSwarmBytesPerTick": 0,
+            "serverEntitiesPerSnapshot": 0
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-15T20:31:16.557Z",
+              "cpuPct": 12.8,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 13491,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 33,
+                "chrome": 0
+              }
+            },
+            "after": {
+              "at": "2026-11-15T20:31:54.138Z",
+              "cpuPct": 15.3,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 13123,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 33,
+                "chrome": 0
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.39,
+            "serverTickP99": 0.5,
+            "serverTickMax": 0.94,
+            "workerTickP95": 1.01,
+            "clientFrameP95": 16.8,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 16.41699158629181,
+            "renderP95": 2,
+            "renderP99": 3.2,
+            "longTaskMsPerMin": 0,
+            "serverCpuMsPerTick": 17.405,
+            "serverUpdateCpuMsPerTick": 0,
+            "workerElu": 0.049
+          },
+          "counts": {
+            "rxKBps": 7.862300078237226,
+            "displayObjects": 767,
+            "sprites": 1,
+            "swarmAtEnd": 1582,
+            "heapMb": 82,
+            "serverBodiesPerTick": 14.7,
+            "serverContactsPerTick": 0,
+            "serverAiAgentsPerTick": 0,
+            "serverSwarmRecordsPerTick": 0,
+            "serverSwarmBytesPerTick": 0,
+            "serverEntitiesPerSnapshot": 0
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-15T20:32:24.176Z",
+              "cpuPct": 10.9,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 13265,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 33,
+                "chrome": 0
+              }
+            },
+            "after": {
+              "at": "2026-11-15T20:33:01.056Z",
+              "cpuPct": 14.9,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 12983,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 33,
+                "chrome": 0
+              }
+            }
+          },
+          "raw": null
+        }
+      ]
+    }
+  }
+}

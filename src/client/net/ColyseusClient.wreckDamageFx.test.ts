@@ -14,12 +14,12 @@
  * naval-hit hold release go through (the predicted path shares the guard).
  */
 import { describe, it, expect, beforeEach } from 'vitest';
-import { ColyseusGameClient, isWreckPieceTarget } from './ColyseusClient.js';
+import { ColyseusGameClient, isNoDamageNumberTarget, isUnseenSwarmTarget, isWreckPieceTarget } from './ColyseusClient.js';
 import type { DamageEvent } from '../../shared-types/messages.js';
 
 interface MirrorSubset {
   ships: Map<string, { x: number; y: number; vx: number; vy: number; angle: number }>;
-  swarm?: Map<number, { kind: number; x: number; y: number }>;
+  swarm?: Map<number, { kind: number; x: number; y: number; shipKind?: string }>;
   localPlayerId: string | null;
   pendingDamageNumbers?: Array<{ targetId: string }>;
   pendingHealthBarHits?: Array<{ entityId: string }>;
@@ -47,6 +47,8 @@ describe('a hit on a wreck piece: spark only, no damage number or health bar', (
       [101, { kind: 4, x: 5, y: 6 }], // a wreck piece (sub-cap or capital alike)
       [102, { kind: 1, x: 9, y: 9 }], // a live drone
       [103, { kind: 3, x: 1, y: 1 }], // scrap (unchanged: still numbered)
+      [104, { kind: 0, x: 2, y: 2 }], // a field rock (mining is not combat: no number)
+      [105, { kind: 3, x: 3, y: 3, shipKind: 'cargo-pod' }], // an ore/loot pod (salvage: no number)
     ]);
     internals.mirror.pendingDamageNumbers = [];
     internals.mirror.pendingHealthBarHits = [];
@@ -101,4 +103,58 @@ describe('a hit on a wreck piece: spark only, no damage number or health bar', (
     expect(isWreckPieceTarget('player-101', swarm)).toBe(false);
     expect(isWreckPieceTarget('swarm-101', undefined)).toBe(false);
   });
+it('a field rock (kind 0): no number; health bar and flash stay; a ship still gets one', () => {
+    internals.mirror.ships.set('player-7', { x: 0, y: 0, vx: 0, vy: 0, angle: 0 });
+    internals.handleDamage(hit('swarm-104'));
+    expect(internals.mirror.pendingDamageNumbers).toHaveLength(0);
+    expect(internals.mirror.pendingHealthBarHits).toHaveLength(1);
+    expect(internals._damageFlashFrames.has('swarm-104')).toBe(true);
+    internals.handleDamage(hit('player-7'));
+    expect(internals.mirror.pendingDamageNumbers!.map((d) => d.targetId)).toEqual(['player-7']);
+  });
+
+  it('isNoDamageNumberTarget: rocks and wreck pieces (incl. rock pieces) only', () => {
+    const swarm = internals.mirror.swarm as unknown as Parameters<typeof isNoDamageNumberTarget>[1];
+    expect(isNoDamageNumberTarget('swarm-104', swarm)).toBe(true);
+    expect(isNoDamageNumberTarget('swarm-101', swarm)).toBe(true);
+    expect(isNoDamageNumberTarget('swarm-102', swarm)).toBe(false);
+    expect(isNoDamageNumberTarget('swarm-103', swarm)).toBe(false);
+    expect(isNoDamageNumberTarget('swarm-999', swarm)).toBe(false);
+    // An ore pod (a cut rock's sliver, barge-mining take 2026-11-16): the
+    // mining lasers and tractored pieces hit it; it is salvage, not a foe.
+    expect(isNoDamageNumberTarget('swarm-105', swarm)).toBe(true);
+    internals.handleDamage(hit('swarm-105'));
+    expect(internals.mirror.pendingDamageNumbers).toHaveLength(0);
+    expect(isNoDamageNumberTarget('player-104', swarm)).toBe(false);
+  });
+
+  /**
+   * Stern-clip take (owner, 2026-11-16: "some weird damage number that came
+   * up at the end"): a red 260 in empty space in the beam, beside the
+   * frigate's bow wreck. The beam wore the bow piece out; it turned to a
+   * salvage pod (`dropPieceSalvage`) on its own spot, in the beam, and the
+   * next pulse (260) killed the pod. The pod lived one pulse: its damage
+   * event came before any snapshot listing it, so the client never drew it
+   * and could not tell it was a pod. A hit on a swarm entity the client has
+   * no entry for gets no number: nothing is drawn there.
+   */
+  it('a swarm target the client has no entry for (spawned and killed between snapshots): no number', () => {
+    internals.handleDamage({ ...hit('swarm-999'), damage: 260, newHealth: 0 });
+    expect(internals.mirror.pendingDamageNumbers, 'a number over nothing').toHaveLength(0);
+    // The flash and spark stay (the beam did hit there); only the number goes.
+    expect(internals.mirror.pendingEffectTriggers!.map((t) => t.kind)).toEqual(['impact']);
+    const swarm = internals.mirror.swarm as unknown as Parameters<typeof isUnseenSwarmTarget>[1];
+    expect(isUnseenSwarmTarget('swarm-999', swarm)).toBe(true);
+    expect(isUnseenSwarmTarget('swarm-999', undefined)).toBe(true);
+    expect(isUnseenSwarmTarget('swarm-105', swarm)).toBe(false);
+    expect(isUnseenSwarmTarget('player-999', swarm)).toBe(false);
+    // Once the snapshot lists it, it is numbered by kind as usual.
+    internals.handleDamage(hit('swarm-102'));
+    expect(internals.mirror.pendingDamageNumbers!.map((d) => d.targetId)).toEqual(['swarm-102']);
+    // A ship keyed `swarm-…` in the ships mirror keeps its number.
+    internals.mirror.ships.set('swarm-7', { x: 0, y: 0, vx: 0, vy: 0, angle: 0 });
+    internals.handleDamage(hit('swarm-7'));
+    expect(internals.mirror.pendingDamageNumbers!.map((d) => d.targetId)).toEqual(['swarm-102', 'swarm-7']);
+  });
 });
+

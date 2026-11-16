@@ -12,6 +12,7 @@ import { DESTRUCTION_PROFILES } from '../../shared-types/shipScale/destruction.j
 import { wreckCrackTicks } from '../../shared-types/wreckTiming.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { shipTuning } from '../../shared-types/shipScale/tuning.js';
+import { wreckSalvageQty } from '../../core/destruction/wreckIntegrity.js';
 
 function make(kinds: Record<string, string> = { cap: 'battleship' }, withRigid = false, owners: Record<string, string> = {}) {
   const rigid: Array<{ ids: readonly string[]; jx: number; jy: number; px: number; py: number }> = [];
@@ -266,6 +267,26 @@ describe('CapitalWreckSubsystem', () => {
     expect(impulses).toHaveLength(2);
   });
 
+  it('a beam (hitscan-mode weapon) never shoves a piece, in the hold or after; a shell does (owner: "lasers shouldn\'t move the scrap")', () => {
+    const { sys, spawned: pieces, impulses, rigid, setTick } = make({ cap: 'battleship' }, true);
+    sys.forcedSeed = 9;
+    setTick(5000);
+    sys.onDeath('cap', 'battleship', pose, 10_000);
+    const big = pieces.reduce((a, b) => (b.mass > a.mass ? b : a));
+    for (const tick of [5000 + wreckCrackTicks() - 1, 5000 + wreckCrackTicks()]) {
+      setTick(tick);
+      for (const beam of ['heavy_beam', 'mining_laser', 'hitscan', 'charge-laser'] as const) {
+        // The shot still stops on the piece.
+        expect(sys.onWreckHit(big.id, 10, 20, 3, 4, 100, beam)).toBe(true);
+      }
+    }
+    expect(impulses).toHaveLength(0);
+    expect(rigid).toHaveLength(0);
+    // A real impact (a 16" shell) after the hold: one impulse.
+    expect(sys.onWreckHit(big.id, 10, 20, 3, 4, 1400, 'naval_xl')).toBe(true);
+    expect(impulses).toHaveLength(1);
+  });
+
   it('during the crack hold a hit shoves the WHOLE wreck as one body; after it, only the piece hit', () => {
     const { sys, spawned: pieces, impulses, rigid, setTick } = make({ cap: 'battleship' }, true);
     sys.forcedSeed = 9;
@@ -402,5 +423,28 @@ describe('CapitalWreckSubsystem: a cut kill that burns every piece away (fractur
     expect(out.vaporised).toBe(false);
     expect(out.pieces).toBeGreaterThanOrEqual(2);
     expect(spawned.length).toBe(out.pieces);
+  });
+});
+
+describe('CapitalWreckSubsystem: a tractored piece stored whole (piece store)', () => {
+  it('pieceSalvageQty is the worn-out pod\'s wreckSalvageQty; storePiece removes it through the wreck path', () => {
+    for (const [id, kind] of [['f', 'fighter'], ['cap', 'battleship']] as const) {
+      const { sys, spawned, removed, live } = make({ [id]: kind });
+      sys.forcedSeed = 9;
+      sys.onDeath(id, kind, pose, 10_000);
+      expect(spawned.length).toBeGreaterThanOrEqual(2);
+      const p = spawned[0]!;
+      expect(sys.pieceSalvageQty(p.id)).toBe(wreckSalvageQty(kind, p.mass));
+      expect(sys.pieceSalvageQty(p.id)).toBeGreaterThan(0);
+      expect(sys.pieceSalvageQty('nope')).toBe(0);
+      const before = sys.liveCount();
+      sys.storePiece(p.id);
+      expect(removed).toEqual([p.id]);
+      expect(live.has(p.id)).toBe(false);
+      expect(sys.liveCount()).toBe(before - 1);
+      expect(sys.pieceSalvageQty(p.id), 'gone: nothing to store twice').toBe(0);
+      sys.storePiece(p.id); // a second mount on the same piece: a no-op
+      expect(removed).toEqual([p.id]);
+    }
   });
 });

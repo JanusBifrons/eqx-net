@@ -35,6 +35,8 @@ import { wreckChildGeometry, wreckChildSeed, type WreckChildStep } from '@core/d
 import { FRACTURE_ALGO_VERSION } from '@core/destruction/fractureHull';
 import { isShipKindId, type ShipKindId } from '@shared-types/shipKinds';
 import { isWreckDescriptor, isWreckId, type SnapshotMessage, type WreckDescriptor, type WreckSync } from '@shared-types/messages/snapshotMessages';
+import { WRECK_ROCK_PARENT_KIND, type WreckRockRef } from '@shared-types/messages/wreckDescriptor';
+import type { WreckFractureInputs } from '@core/destruction/wreckPieceFrame';
 
 /** Deepest child chain the client resolves (a guard against a parent cycle
  *  on a malformed wire; real chains are a few breaks deep). */
@@ -56,12 +58,34 @@ function sameInputs(a: WreckDescriptor, b: WreckDescriptor): boolean {
     && a.killBlowDamage === b.killBlowDamage && a.recentDamageRate === b.recentDamageRate
     && a.snapChance === b.snapChance && a.algoVersion === b.algoVersion
     && a.cutKind === b.cutKind && a.cutAng === b.cutAng && a.cutW === b.cutW
-    && a.parentWreck === b.parentWreck && a.parentPiece === b.parentPiece;
+    && sameExtraCuts(a.extraCuts, b.extraCuts)
+    && a.parentWreck === b.parentWreck && a.parentPiece === b.parentPiece
+    && a.rock?.id === b.rock?.id && a.rock?.shape === b.rock?.shape && a.rock?.r === b.rock?.r;
+}
+
+/** A root descriptor's source: its rock (rock cut), else its ship kind. */
+function rootSource(d: WreckDescriptor): Pick<WreckFractureInputs, 'kindId' | 'rock'> {
+  return d.rock !== undefined ? { rock: d.rock } : { kindId: d.parentKind as ShipKindId };
+}
+
+/** Fracture v12: the same further cut lines, in the same order. */
+function sameExtraCuts(a: WreckDescriptor['extraCuts'], b: WreckDescriptor['extraCuts']): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const p = a[i]!;
+    const q = b[i]!;
+    if (p.x !== q.x || p.y !== q.y || p.ang !== q.ang || p.w !== q.w) return false;
+  }
+  return true;
 }
 
 /** The step a child descriptor names (its break of its parent's piece). */
 function stepOf(d: WreckDescriptor): WreckChildStep {
-  return { pieceIndex: d.parentPiece!, killX: d.killX, killY: d.killY, cutKind: d.cutKind, cutAng: d.cutAng, cutW: d.cutW };
+  return {
+    pieceIndex: d.parentPiece!, killX: d.killX, killY: d.killY, cutKind: d.cutKind, cutAng: d.cutAng, cutW: d.cutW,
+    extraCuts: d.extraCuts,
+  };
 }
 
 /**
@@ -89,25 +113,29 @@ export function resolveChildWreckPieces(
     cur = p;
   }
   steps.reverse();
+  if (cur.parentKind === WRECK_ROCK_PARENT_KIND && cur.rock === undefined) return null;
   return wreckChildGeometry({
     root: {
-      kindId: cur.parentKind as ShipKindId, seed: cur.seed, killX: cur.killX, killY: cur.killY,
+      ...rootSource(cur), seed: cur.seed, killX: cur.killX, killY: cur.killY,
       killBlowDamage: cur.killBlowDamage, recentDamageRate: cur.recentDamageRate, snapChance: cur.snapChance,
-      cutKind: cur.cutKind, cutAng: cur.cutAng, cutW: cur.cutW,
+      cutKind: cur.cutKind, cutAng: cur.cutAng, cutW: cur.cutW, extraCuts: cur.extraCuts,
     },
     steps,
   });
 }
 
-/** Is this descriptor one this client can rebuild? */
+/** Is this descriptor one this client can rebuild? A rock's wreck (rock
+ *  cut) names `WRECK_ROCK_PARENT_KIND`; its root carries the rock. */
 export function wreckDescriptorUsable(d: WreckDescriptor): boolean {
-  return d.algoVersion === FRACTURE_ALGO_VERSION && isShipKindId(d.parentKind);
+  if (d.algoVersion !== FRACTURE_ALGO_VERSION) return false;
+  if (d.parentKind === WRECK_ROCK_PARENT_KIND) return d.rock !== undefined || d.parentWreck !== undefined;
+  return isShipKindId(d.parentKind);
 }
 
 /** The deterministic pieces of one wreck (pure; the parity tests call it). */
 export function rebuildWreckPieces(d: WreckDescriptor): WreckPieceGeometry[] {
   return wreckPieceGeometry({
-    kindId: d.parentKind as ShipKindId,
+    ...rootSource(d),
     seed: d.seed,
     killX: d.killX,
     killY: d.killY,
@@ -118,6 +146,8 @@ export function rebuildWreckPieces(d: WreckDescriptor): WreckPieceGeometry[] {
     cutKind: d.cutKind,
     cutAng: d.cutAng,
     cutW: d.cutW,
+    // v12 multi-cut: the other beams' lines, as-is too.
+    extraCuts: d.extraCuts,
   });
 }
 
@@ -245,6 +275,19 @@ export class WreckGeometryStore {
     e.gen = gen;
     this.descriptors.set(d.wreckId, d);
     return e;
+  }
+
+  /** Rock cut: the rock wreck `wreckId` (or the root it resolves to) was
+   *  cut from; undefined for a ship's wreck or an unknown one. Walks at most
+   *  `MAX_WRECK_CHAIN_DEPTH` parents; no allocation. */
+  rockOf(wreckId: number): WreckRockRef | undefined {
+    let d = this.byId.get(wreckId)?.desc;
+    for (let i = 0; d !== undefined && i <= MAX_WRECK_CHAIN_DEPTH; i++) {
+      if (d.parentKind !== WRECK_ROCK_PARENT_KIND) return undefined;
+      if (d.parentWreck === undefined) return d.rock;
+      d = this.byId.get(d.parentWreck)?.desc;
+    }
+    return undefined;
   }
 
   /** Is this wreck known (and rebuildable)? */

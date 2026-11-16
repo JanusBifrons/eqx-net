@@ -4,6 +4,7 @@ import { polygonArea, verticesToFloat32, type Vec2 } from '../swarm/asteroidShap
 import {
   DEFAULT_SHIP_KIND,
   getShipKind,
+  kindHasShield,
   type ShipKind,
   type ShipKindId,
 } from '../../shared-types/shipKinds.js';
@@ -242,6 +243,12 @@ export class PhysicsWorld {
     this.bodies.set(id, rec);
     this.handleToId.set(body.handle, id);
     this.registerCapital(rec, kind);
+    if (!kindHasShield(kind)) this.setHullExposed(id, true, kind);
+  }
+
+  /** Is the hull collider mounted (shield down, or no shield)? */
+  isHullExposed(id: string): boolean | undefined {
+    return this.bodies.get(id)?.exposed;
   }
 
   /** Capitals join the hull-overlap pass (capitalOverlap.ts); every other
@@ -386,6 +393,8 @@ export class PhysicsWorld {
     this.handleToId.set(body.handle, id);
     // An NPC capital (a drone spawned with its capital kind's shield).
     if (shieldKind) this.registerCapital(rec, shieldKind);
+    // A drone of a kind with no shield collides on its hull from spawn.
+    if (shieldKind && !kindHasShield(shieldKind)) this.setHullExposed(id, true, shieldKind);
   }
 
   /** Spawn a fast-moving kinematic projectile body (sensor — no physics impulses). */
@@ -496,6 +505,7 @@ export class PhysicsWorld {
   setHullExposed(id: string, exposed: boolean, kind: ShipKind): void {
     const rec = this.bodies.get(id);
     if (!rec) return;
+    if (!kindHasShield(kind)) exposed = true; // no shield (capitals): hull, always
     if (rec.exposed === exposed) return; // idempotent -- no redundant churn
     const body = rec.body;
     // Collect-then-remove: removeCollider mutates the body's collider list,
@@ -505,21 +515,11 @@ export class PhysicsWorld {
     for (const c of cols) this.world.removeCollider(c, true);
     if (exposed) {
       // TRIANGLE colliders, fan-triangulated from each convex part
-      // (`shipCollisionTriangles`). The 2026-05-28 `convexHull`-per-part
-      // experiment (BISECT ARM A) was REVERTED on 2026-06-11: in Rapier 2D
-      // ONLY `triangle` shapes fire `CONTACT_FORCE_EVENTS` for two bodies
-      // overlapping at zero closing velocity — `convexHull`/`cuboid` emit
-      // none (the bare-Rapier diagnostic in `hullCollisionNoTouch.test.ts`
-      // proves all three). The ram-damage telemetry AND the
-      // `t-ship-no-self-collision` E2E positive control both depend on those
-      // static-overlap events, so convexHull silently broke them (the
-      // positive control had been RED since 2026-05-28). The convexHull
-      // "interior-diagonal artifact" concern is moot: a body can't reach an
-      // interior fan diagonal without first crossing an exterior edge (which
-      // blocks it), and steady-state penetration is owned by the stiff solver
-      // (`PhysicsWorld.create` — numSolverIterations 16 + small-steps PGS),
-      // not the collider shape. This matches the documented invariant in
-      // src/core/CLAUDE.md ("setHullExposed emits triangle, NOT convexHull").
+      // (`shipCollisionTriangles`), never `convexHull`/`cuboid`: in Rapier 2D
+      // only triangles fire `CONTACT_FORCE_EVENTS` for bodies overlapping at
+      // zero closing speed, which ram damage and `t-ship-no-self-collision`
+      // need (`hullCollisionNoTouch.test.ts`; the 2026-05-28 convexHull
+      // experiment was reverted 2026-06-11). Penetration is the stiff solver's.
       for (const t of shipCollisionTriangles(kind.id)) {
         this.world.createCollider(
           configureShipCollider(
@@ -961,7 +961,7 @@ export class PhysicsWorld {
   isSleeping(id: string): boolean {
     const rec = this.bodies.get(id);
     if (!rec) return false;
-    return rec.body.isSleeping();
+    return rec.body.isSleeping() || rec.body.isFixed(); // fixed (cut-field rock): never simulates, so quiet
   }
 
   /**
@@ -1048,6 +1048,11 @@ export class PhysicsWorld {
   setAngularDamping(id: string, damping: number): void {
     this.bodies.get(id)?.body.setAngularDamping(damping);
   }
+
+  /** FIXED terrain (cut-field rocks): never simulated or solved, unlike a `lockBody` body; same call on the server worker and predWorld (#15). */
+  fixBody(id: string): void { this.bodies.get(id)?.body.setBodyType(RAPIER.RigidBodyType.Fixed, true); }
+  /** Wake a fixed body into a dynamic one (a rammed rock), keeping its colliders and mass. */
+  unfixBody(id: string): void { const b = this.bodies.get(id)?.body; if (b?.isFixed()) { b.setBodyType(RAPIER.RigidBodyType.Dynamic, true); b.wakeUp(); } }
 
   lockBody(id: string): void {
     const rec = this.bodies.get(id);
@@ -1225,6 +1230,8 @@ export class PhysicsWorld {
      *  timeline, while the turret aims at the drawn pose, so the caller tests
      *  them at the drawn pose itself. Absent ⇒ every body counts (unchanged). */
     skipId?: (id: string) => boolean,
+    /** A wide beam's half-width (`beamHalfWidth`): it hits by its width. 0 ⇒ the thin ray. */
+    halfWidth = 0,
   ): { hitId: string; dist: number } | null {
     const excludeRec = this.bodies.get(excludeId);
     this._raySkip = skipId ?? null;
@@ -1239,6 +1246,7 @@ export class PhysicsWorld {
       excludeRec?.body,
       this.wallHandleToId,
       skipId ? this._rayPredicate : undefined,
+      halfWidth,
     );
     this._raySkip = null;
     return hit;

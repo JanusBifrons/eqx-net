@@ -15,14 +15,21 @@ function harness(kindId = 'fighter'): {
   setAuto: (key: string | null) => void;
   /** The `anyTarget` flag of every `autoPick` call, in order. */
   anyTargetArgs: boolean[];
+  /** Dep call counts (`shipOf`, `resolveTarget`). */
+  calls: { shipOf: number; resolve: number };
+  /** Keys `salvageOf` calls salvage (never haulable). */
+  salvage: Set<string>;
 } {
   const targets = new Map<string, LockTargetView>();
   const commits: string[] = [];
   const refreshes: string[] = [];
   let auto: string | null = null;
   const anyTargetArgs: boolean[] = [];
+  const calls = { shipOf: 0, resolve: 0 };
+  const salvage = new Set<string>();
   const deps: LockSubsystemDeps = {
     resolveTarget: (_p, key, out) => {
+      calls.resolve++;
       const t = targets.get(key);
       if (!t) return false;
       Object.assign(out, t);
@@ -32,7 +39,12 @@ function harness(kindId = 'fighter'): {
       out.x = 0; out.y = 0; out.vx = 0; out.vy = 0; out.angle = 0;
       return true;
     },
-    shipOf: () => ({ kind: getShipKind(kindId), activated: [] }),
+    shipOf: () => { calls.shipOf++; return { kind: getShipKind(kindId), activated: [] }; },
+    salvageOf: (_p, key, out) => {
+      if (!salvage.has(key)) return false;
+      out.mass = Infinity; out.holdWeight = Infinity; out.freeHold = 0;
+      return true;
+    },
     autoPick: (_p, _r, _x, _y, bears, anyTarget) => {
       anyTargetArgs.push(anyTarget);
       if (auto === null) return null;
@@ -44,7 +56,7 @@ function harness(kindId = 'fighter'): {
   };
   const locks = new LockSubsystem(deps);
   locks.enable('p1');
-  return { locks, targets, commits, refreshes, setAuto: (k) => { auto = k; }, anyTargetArgs };
+  return { locks, targets, commits, refreshes, setAuto: (k) => { auto = k; }, anyTargetArgs, calls, salvage };
 }
 
 const still = (x: number, hostile: boolean): LockTargetView => ({ x, y: 0, vx: 0, vy: 0, angle: 0, ship: false, kindId: null, shieldUp: false, radius: 30, hostile, terrain: false });
@@ -347,6 +359,48 @@ describe('LockSubsystem', () => {
     expect(h.locks.wireFor('p2')).toBeUndefined();
   });
 
+  describe('targetSplit (a locked rock / wreck piece breaks)', () => {
+    // A capital group holds 3 locks. Pieces come biggest first.
+    const setup = (): { h: ReturnType<typeof harness>; gid: string } => {
+      const h = harness('destroyer');
+      for (const k of ['s:1', 's:9', 's:11', 's:12', 's:13']) h.targets.set(k, rock(200));
+      expect(h.locks.forceLock('p1', 's:1')).toBeGreaterThan(0);
+      const gid = h.locks.wireFor('p1')![0]!.id;
+      return { h, gid };
+    };
+    const keys = (h: ReturnType<typeof harness>, gid: string): string[] =>
+      h.locks.wireFor('p1')!.find((g) => g.id === gid)!.l.map((l) => l.t);
+
+    it('a locked target splitting into 3 pieces with 2 free slots: the two biggest pieces, both LOCKED at once', () => {
+      const { h, gid } = setup();
+      h.locks.cancelLock('p1', gid);
+      h.locks.forceLock('p1', 's:9', gid); // an unrelated lock takes one of the 3 slots
+      h.locks.forceLock('p1', 's:1', gid);
+      h.locks.targetSplit('s:1', ['s:11', 's:12', 's:13']);
+      expect(keys(h, gid)).toEqual(['s:9', 's:11', 's:12']);
+      for (const l of h.locks.wireFor('p1')!.find((g) => g.id === gid)!.l) expect(l.s, l.t).toBe(2);
+      expect(h.locks.hasLocked('p1', gid)).toBe(true);
+      expect(h.commits, 'a split is not a hostile act').toEqual([]);
+    });
+
+    it('a group with no lock on the target is untouched', () => {
+      const { h, gid } = setup();
+      h.locks.cancelLock('p1', gid);
+      h.locks.forceLock('p1', 's:9', gid);
+      h.locks.targetSplit('s:1', ['s:11', 's:12', 's:13']);
+      expect(keys(h, gid)).toEqual(['s:9']);
+    });
+
+    it('a piece the group already locks is not doubled', () => {
+      const { h, gid } = setup();
+      h.locks.cancelLock('p1', gid);
+      h.locks.forceLock('p1', 's:11', gid);
+      h.locks.forceLock('p1', 's:1', gid);
+      h.locks.targetSplit('s:1', ['s:11', 's:12', 's:13']);
+      expect(keys(h, gid)).toEqual(['s:11', 's:12', 's:13']);
+    });
+  });
+
   describe('held locks (the lock line)', () => {
     const pct = (h: ReturnType<typeof harness>): number => h.locks.wireFor('p1')![0]!.l[0]?.p ?? -1;
     const ahead = (y: number): LockTargetView => ({ x: 0, y, vx: 0, vy: 0, angle: 0, ship: false, kindId: null, shieldUp: false, radius: 30, hostile: true, terrain: false });
@@ -453,6 +507,19 @@ describe('LockSubsystem', () => {
       expect(h.commits).toEqual([]);
     });
 
+    it('testMode instantLock: a requested lock is LOCKED on the wire at once, never one step at LOCKING 0%', () => {
+      // Showcase review (wreck-resplit take 5): moving the lock to a new wreck
+      // piece flashed a red "LOCKING 0%" ring for the ~0.1 s until the next
+      // lock step, though `instantLock` locks complete at once.
+      const h = harness();
+      h.locks.enable('p1', true);
+      h.targets.set('s:43', rock(200));
+      h.locks.requestLock('p1', 'primary', 's:43');
+      expect(h.locks.wireFor('p1')![0]!.l[0]!.s).toBe(2);
+      expect(h.locks.hasLocked('p1', 'primary')).toBe(true);
+      expect(h.commits).toEqual([]);
+    });
+
     it('a held lock-line terrain lock builds with no failsafe and no hostile act', () => {
       const h = harness();
       h.targets.set('s:42', { ...rock(0), y: 200 });
@@ -502,5 +569,26 @@ describe('LockSubsystem capital turret split (PR 1d slice 4)', () => {
     h.targets.set('s:1', { ...still(1500, true), y: 0 });
     h.locks.forceLock('p1', 's:1', 'main');
     for (const m of ['main-1', 'main-2', 'main-3', 'main-4', 'main-5']) expect(h.locks.aimKeyFor('p1', m)).toBe('s:1');
+  });
+});
+
+describe('LockSubsystem hot-path cost (salvage PR 16 review, #14)', () => {
+  it('one lock step asks for the ship once per player, not once per group', () => {
+    const h = harness('destroyer');
+    h.targets.set('s:1', { ...still(1500, true), y: 0 });
+    h.locks.forceLock('p1', 's:1');
+    h.calls.shipOf = 0;
+    h.locks.step();
+    expect(h.calls.shipOf).toBe(1);
+  });
+
+  it('a plain gun on one salvage lock keeps the one-lock fast path (no per-mount target resolve)', () => {
+    const h = harness('destroyer');
+    h.targets.set('s:1', { ...rock(1500), y: 0 });
+    h.salvage.add('s:1');
+    h.locks.forceLock('p1', 's:1', 'main');
+    h.calls.resolve = 0;
+    for (const m of ['main-1', 'main-2', 'main-3']) expect(h.locks.aimKeyFor('p1', m)).toBe('s:1');
+    expect(h.calls.resolve).toBe(0);
   });
 });

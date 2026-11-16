@@ -37,3 +37,9 @@ export const SHOWCASE_BARGE_THRUST_OPTS = {
   defaultSpawnX: -6000,
   defaultSpawnY: 0,
 };
+
+/** The barge look rooms, spread into `SHOWCASE_ROOMS`. */
+export const SHOWCASE_BARGE_ROOMS = {
+  'showcase-barge-look': SHOWCASE_BARGE_LOOK_OPTS,
+  'showcase-barge-thrust': SHOWCASE_BARGE_THRUST_OPTS,
+} as const;

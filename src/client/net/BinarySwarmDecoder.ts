@@ -23,6 +23,8 @@ import {
   SWARM_RECORD_FLAG_SLEEPING,
   SWARM_RECORD_FLAG_SHIELD_DOWN,
   SWARM_WIRE_VERSION,
+  SWARM_RECORD_FLAG_FIELD_ROCK,
+  fieldRockKeyFromWire,
   SWARM_KIND_DRONE,
   SWARM_KIND_STRUCTURE,
   SWARM_KIND_SCRAP,
@@ -131,6 +133,11 @@ export function decodeSwarmPacket(
 
     const sleeping = (recFlags & SWARM_RECORD_FLAG_SLEEPING) !== 0;
     const shieldDown = (recFlags & SWARM_RECORD_FLAG_SHIELD_DOWN) !== 0;
+    // v7: an awake cut-field rock carries its rock key in the three subtype
+    // fields, not a resource byte and shape seed.
+    const fieldKey = kind === 0 && (recFlags & SWARM_RECORD_FLAG_FIELD_ROCK) !== 0
+      ? fieldRockKeyFromWire(shipKindByte, componentIndex, wreckIdRaw)
+      : -1;
     // The shared subtype byte demuxes on `kind`: a drone decodes a ship-kind
     // id, a structure decodes a structure-kind id (both drive the silhouette +
     // tint), a scrap piece decodes its PARENT ship-kind id (drives its sub-shape
@@ -149,9 +156,9 @@ export function decodeSwarmPacket(
       kind === SWARM_KIND_SCRAP || kind === SWARM_KIND_WRECK ? componentIndex : undefined;
     const wreckId = kind === SWARM_KIND_WRECK ? wreckIdRaw : undefined;
     // v6: the same u16 is an asteroid's shape seed.
-    const shapeSeed = kind === 0 ? wreckIdRaw : undefined;
+    const shapeSeed = kind === 0 && fieldKey < 0 ? wreckIdRaw : undefined;
     // P2c — an asteroid's resource kind rides the same byte (0 = rock).
-    const asteroidResource = kind === 0 && shipKindByte !== 0 ? asteroidResourceFromIndex(shipKindByte) : undefined;
+    const asteroidResource = kind === 0 && fieldKey < 0 && shipKindByte !== 0 ? asteroidResourceFromIndex(shipKindByte) : undefined;
 
     let entry = swarm.get(entityId);
     if (!entry) {
@@ -171,6 +178,7 @@ export function decodeSwarmPacket(
         ...(wreckId !== undefined ? { wreckId } : {}),
         ...(asteroidResource !== undefined ? { asteroidResource } : {}),
         ...(shapeSeed !== undefined ? { shapeSeed } : {}),
+        ...(fieldKey >= 0 ? { fieldKey } : {}),
         prevX: x, prevY: y, prevAngle: angle,
         prevArrivalMs: nowMs, latestArrivalMs: nowMs,
         poseRing: ring,
@@ -203,7 +211,8 @@ export function decodeSwarmPacket(
       if (kind === 0) {
         if (asteroidResource !== undefined) entry.asteroidResource = asteroidResource;
         else if (entry.asteroidResource !== undefined) delete entry.asteroidResource;
-        entry.shapeSeed = wreckIdRaw;
+        if (fieldKey >= 0) entry.fieldKey = fieldKey;
+        else { entry.shapeSeed = wreckIdRaw; if (entry.fieldKey !== undefined) delete entry.fieldKey; }
       }
       entry.sleeping = sleeping;
       entry.shieldDown = shieldDown;

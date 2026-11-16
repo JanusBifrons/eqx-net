@@ -15,6 +15,7 @@ import { capitalFleetWarp, capitalFleetArrive, capitalLineup, capitalBroadside, 
 import { machinedArt } from './shots/machinedArt.js';
 import { newEffects } from './shots/newEffects.js';
 import { crossingSector } from './shots/crossingSector.js';
+import { cutFieldLaneFighter, cutFieldLaneBattleship, cutFieldOverview, cutFieldLaneRun, cutFieldRam, cutFieldOre } from './shots/cutField.js';
 import { machinedTurrets } from './shots/machinedTurrets.js';
 import { flight } from './shots/flight.js';
 import { beamCombat } from './shots/beamCombat.js';
@@ -25,6 +26,7 @@ import { longGuns } from './shots/longGuns.js';
 import { fleetMelee } from './shots/fleetMelee.js';
 import { npcDogfight } from './shots/npcDogfight.js';
 import { timeScaleDial, timeScaleCapitals4x, capitalBreakupSlowmo, capitalBreakupFast } from './shots/timeScaleDial.js';
+import { wreckResplit } from './shots/wreckResplit.js';
 import { scrap } from './shots/scrap.js';
 import { buildBase } from './shots/buildBase.js';
 import { gridAlive } from './shots/gridAlive.js';
@@ -52,6 +54,7 @@ import { tradeDeal, tradeRaid } from './shots/trade.js';
 import { cockpitBounty, cockpitHaul, cockpitRobots, cockpitStronghold } from './shots/cockpit.js';
 import { fireControlShots } from './shots/fireControl.js';
 import { bargeLook, bargeStern, bargeThrust } from './shots/bargeLook.js';
+import { beamSlice, beamVaporiseSubcap, beamCollateralSubcap, beamCollateralEdge, railChannel } from './shots/weaponCuts.js';
 
 /** Every shot, in reel order. Catalogue = all of them; reel = `reel: true`. */
 export const SHOTS: readonly Shot[] = [
@@ -69,6 +72,12 @@ export const SHOTS: readonly Shot[] = [
   bargeThrust,
   capitalBroadside,
   capitalBreakup,
+  wreckResplit,
+  beamSlice,
+  beamVaporiseSubcap,
+  beamCollateralSubcap,
+  beamCollateralEdge,
+  railChannel,
   capitalFleetWarp,
   capitalFleetArrive,
   capitalFlyby,
@@ -93,6 +102,12 @@ export const SHOTS: readonly Shot[] = [
   capitalBreakupFast,
   newEffects,
   crossingSector,
+  cutFieldLaneFighter,
+  cutFieldOverview,
+  cutFieldOre,
+  cutFieldLaneBattleship,
+  cutFieldLaneRun,
+  cutFieldRam,
   machinedTurrets,
   robots,
   nexus,
@@ -204,5 +219,5 @@ export const SHOWCASE_PENDING: Record<string, string> = {
   'research-lab':
     'Lab jobs run for minutes on the 1 Hz grid pulse; needs a staged base with blueprints + a fast-pulse room before it can be filmed.',
   'mining-and-salvage':
-    'No ship carries the mining laser or the tractor yet, and the tractor beam is not drawn until PR 11b: the shot lands with the mining barge (plan partitioned-chasing-lark), a barge cutting up and hauling a capital wreck.',
+    'No ship carries the mining laser or the tractor yet, and the tractor beam is not drawn until PR 11b: the shot lands with the mining barge (plan partitioned-chasing-lark), a barge cutting up and hauling a capital wreck, and a barge lasering a cut-field ore lode (macro terrain F1d: ice/crystal veins pay that ore).',
 };

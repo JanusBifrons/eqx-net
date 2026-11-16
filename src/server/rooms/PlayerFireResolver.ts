@@ -27,13 +27,14 @@
 
 import { shipRayHit } from '../../core/combat/shipHitShape.js';
 import { wreckRayHit } from '../../core/destruction/wreckHits.js';
+import { isLootPod } from '../net/SwarmEntityRegistry.js';
 import type { Client } from 'colyseus';
 import type { Logger } from 'pino';
 import {
   MissileWeaponDef,
   WeaponId,
   getWeapon,
-  hitscanFalloffFrac,
+  hitscanFalloffFrac, isMiningTool,
 } from '../../core/combat/WeaponCatalogue.js';
 import {
   rayHitsSphere,
@@ -41,7 +42,7 @@ import {
   rayHitsConvexPolygon,
 } from '../../core/combat/Weapons.js';
 import { shipShotMuzzle, navalTurret, navalBarrelOffset } from '../../core/combat/muzzle.js';
-import { hasTurretFireControl } from '../../core/combat/mountReach.js';
+import { hasTurretFireControl, mountRangeFactor } from '../../core/combat/mountReach.js';
 import { GLOBAL_SHIP_TUNING } from '../../shared-types/shipScale/lookup.js';
 import { getWeaponObject } from '../../core/combat/weapons/index.js';
 import type { WeaponFireContext, WeaponFireSink } from '../../core/combat/weapons/Weapon.js';
@@ -126,16 +127,16 @@ export interface PlayerFireResolverDeps {
   fireAllowed?: (playerId: string, slotId: string | undefined) => boolean;
   /** Fire control: does this mount's barrel (world origin + world angle) bear on
    *  its group's lock target? A turret parked at its arc limit never does, so it
-   *  never fires out of its arc. Absent only in resolver unit harnesses. */
-  mountBearsOnLock?: (playerId: string, mountId: string, ox: number, oy: number, angle: number, weaponId: WeaponId) => boolean;
+   *  never fires out of its arc (`size`: the mount's, mining reach). Absent only in resolver unit harnesses. */
+  mountBearsOnLock?: (playerId: string, mountId: string, ox: number, oy: number, angle: number, weaponId: WeaponId, size: WeaponMount['size']) => boolean;
   /** RTS Part B: the AI pilot's line of fire for a `fireHull` shot only (the
    *  room's one `LineOfFireGate`): true holds this barrel's `weaponId`
-   *  shot, from its muzzle (fx, fy) along unit (dx, dy), fired from a hull
-   *  moving at (svx, svy), because a friendly body is (or will be) on its
-   *  line. A pilot's own fire is never gated. */
+   *  shot (mount size `size`), from its muzzle (fx, fy) along unit (dx, dy),
+   *  fired from a hull moving at (svx, svy), because a friendly body is (or
+   *  will be) on its line. A pilot's own fire is never gated. */
   hullLineBlocked?: (
     shipInstanceId: string, fx: number, fy: number, dx: number, dy: number,
-    weaponId: WeaponId, svx: number, svy: number,
+    weaponId: WeaponId, svx: number, svy: number, size: WeaponMount['size'],
   ) => boolean;
   /** Tractor fire: renew `mount`'s lease on its group lock (as the AI's). */
   fireTractor?: (playerId: string, mount: WeaponMount) => void;
@@ -171,11 +172,11 @@ export interface PlayerFireResolverDeps {
   mountWorldOrigin: (
     shipX: number, shipY: number, shipAngle: number, mount: WeaponMount,
   ) => { x: number; y: number };
-  /** Shield-aware ray-vs-ship test (cheap circle / hull-polygon refine). */
+  /** Shield-aware ray-vs-ship test; `halfWidth`: a wide beam's (absent ⇒ thin). */
   playerHitscanDist: (
     ship: ShipState,
     fromX: number, fromY: number, dirX: number, dirY: number, maxDist: number,
-    cx: number, cy: number, angle: number,
+    cx: number, cy: number, angle: number, halfWidth?: number,
   ) => number | null;
   /** Spawn a server-side projectile (delegates to ProjectilePipeline). */
   spawnServerProjectile: (
@@ -228,7 +229,7 @@ export class PlayerFireResolver implements WeaponFireSink {
   /** Reused per-mount fire geometry (the resolver IS the WeaponFireSink — see
    *  `src/core/combat/weapons/`). Mutated per mount; no per-fire allocation. */
   private readonly _fireCtx: WeaponFireContext = {
-    fromX: 0, fromY: 0, dirX: 0, dirY: 0, shooterVx: 0, shooterVy: 0, mountId: '',
+    fromX: 0, fromY: 0, dirX: 0, dirY: 0, shooterVx: 0, shooterVy: 0, mountId: '', rangeMul: 1,
   };
   // Per-fire-event sink state — set in resolve() before the salvo, read by the
   // sink methods. resolve() is synchronous + single-threaded, so race-free.
@@ -393,13 +394,13 @@ export class PlayerFireResolver implements WeaponFireSink {
           const a = pose.angle + mount.baseAngle + (angles?.[k] ?? 0);
           const o = d.mountWorldOrigin(pose.x, pose.y, pose.angle, mount);
           const ox = o.x, oy = o.y;
-          if (!d.mountBearsOnLock(shooterId, mount.id, ox, oy, a, mount.weaponId)) continue;
+          if (!d.mountBearsOnLock(shooterId, mount.id, ox, oy, a, mount.weaponId, mount.size)) continue;
           // An AI-flown hull's barrel holds while a friendly is on its line
           // (the AI pilots' one line-of-fire gate); a pilot's never does.
           if (this._hullShot && d.hullLineBlocked) {
             const dx = -Math.sin(a), dy = Math.cos(a);
             const mz = shipShotMuzzle(shipKind, mount);
-            if (d.hullLineBlocked(shooterId, ox + dx * mz, oy + dy * mz, dx, dy, mount.weaponId, pose.vx, pose.vy)) continue;
+            if (d.hullLineBlocked(shooterId, ox + dx * mz, oy + dy * mz, dx, dy, mount.weaponId, pose.vx, pose.vy, mount.size)) continue;
           }
           bearMask |= 1 << mIdx;
         }
@@ -558,9 +559,9 @@ export class PlayerFireResolver implements WeaponFireSink {
         },
       });
 
-      // Per-mode fire dispatch collapses to one virtual call (GEP B3): the
-      // weapon flyweight calls back the matching sink method below
-      // (hitscan / spawnProjectile / spawnMissile).
+      // Per-mode fire dispatch: one virtual call (GEP B3); the weapon calls
+      // back the matching sink method below (hitscan / spawnProjectile / spawnMissile).
+      ctx.rangeMul = mountRangeFactor(mount.weaponId, mount.size); // a mining tool's sized beam
       ctx.fromX = rayFromX;
       ctx.fromY = rayFromY;
       ctx.dirX = ndx;
@@ -607,8 +608,9 @@ export class PlayerFireResolver implements WeaponFireSink {
   //     flyweight; relocated VERBATIM from the former mode if-tree (GEP B3). ───
 
   /** Beam: the 4-pass lag-comp candidate sweep + applyDamage + laser_fired,
-   *  updating the best-hit accumulator for the aggregate hit_ack. */
-  hitscan(ctx: WeaponFireContext, range: number, damage: number, falloffMinDamageFrac?: number, maxRange?: number): void {
+   *  updating the best-hit accumulator for the aggregate hit_ack. `hw`: a wide
+   *  beam's half-width (the heavy beam hits by its width, owner 2026-11-15). */
+  hitscan(ctx: WeaponFireContext, range: number, damage: number, falloffMinDamageFrac?: number, maxRange?: number, hw = 0): void {
     const d = this.deps;
     // P3.13 — `range` is the OPTIMAL (full-damage) range; the ray reaches
     // `maxRange` (≥ range) and damage falls off reverse-square BEYOND optimal.
@@ -633,7 +635,7 @@ export class PlayerFireResolver implements WeaponFireSink {
       const cx = rewound?.x ?? fallback?.x;
       const cy = rewound?.y ?? fallback?.y;
       if (cx === undefined || cy === undefined) continue;
-      const dist = d.playerHitscanDist(targetShip, rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, rewound?.angle ?? fallback?.angle ?? 0);
+      const dist = d.playerHitscanDist(targetShip, rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, rewound?.angle ?? fallback?.angle ?? 0, hw);
       if (dist !== null && dist < mountHitDist) {
         mountHitDist = dist;
         mountHitId = targetId;
@@ -651,8 +653,8 @@ export class PlayerFireResolver implements WeaponFireSink {
       // went straight through it).
       const lship = d.lingeringShip?.(shipInstanceId);
       const dist = lship !== undefined
-        ? d.playerHitscanDist(lship, rayFromX, rayFromY, ndx, ndy, rayRange, lingeringPose.x, lingeringPose.y, lingeringPose.angle)
-        : rayHitsSphere(rayFromX, rayFromY, ndx, ndy, rayRange, lingeringPose.x, lingeringPose.y, GLOBAL_SHIP_TUNING.hitRadius);
+        ? d.playerHitscanDist(lship, rayFromX, rayFromY, ndx, ndy, rayRange, lingeringPose.x, lingeringPose.y, lingeringPose.angle, hw)
+        : rayHitsSphere(rayFromX, rayFromY, ndx, ndy, rayRange, lingeringPose.x, lingeringPose.y, GLOBAL_SHIP_TUNING.hitRadius + hw);
       if (dist !== null && dist < mountHitDist) {
         mountHitDist = dist;
         mountHitId = shipInstanceId;
@@ -662,26 +664,25 @@ export class PlayerFireResolver implements WeaponFireSink {
 
     // 3. Swarm (drones + asteroids).
     for (const rec of d.swarmRegistry.all()) {
+      if (isLootPod(rec) && isMiningTool(this._weaponId)) continue; // only a mining tool passes a loot pod (#15: displayPoseHitscan)
       const rewound = d.snapshotRing.getPoseAt(rec.id, effTick);
       const b = slotBase(rec.slot);
       const cx = rewound?.x ?? d.sabF32[b + SLOT_X_OFF]!;
       const cy = rewound?.y ?? d.sabF32[b + SLOT_Y_OFF]!;
       const ca = rewound?.angle ?? d.sabF32[b + SLOT_ANGLE_OFF]!;
       let dist: number | null;
-      if (rec.kind === 0 && rec.vertices) {
-        dist = rayHitsConvexPolygon(rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, ca, rec.vertices);
-      } else if (rec.kind === 4) {
-        // A capital wreck piece (S2a) stops the beam: its convex parts.
-        dist = wreckRayHit(rec.wreckParts, rec.radius, rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, ca);
-      } else if (rec.halfW !== undefined && rec.halfH !== undefined) {
-        // Structures (phase V): the footprint box, not the bounding circle.
-        dist = rayHitsBox(rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, rec.halfW, rec.halfH, rec.boxes);
+      if (rec.kind === 4 || rec.wreckParts !== undefined) { // a wreck piece (S2a) or cut-field rock (C1b): its convex parts
+        dist = wreckRayHit(rec.wreckParts, rec.radius, rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, ca, hw);
+      } else if (rec.kind === 0 && rec.vertices) {
+        dist = rayHitsConvexPolygon(rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, ca, rec.vertices, hw);
+      } else if (rec.halfW !== undefined && rec.halfH !== undefined) { // structures: the footprint box
+        dist = rayHitsBox(rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, rec.halfW, rec.halfH, rec.boxes, hw);
       } else if (rec.kind === 1 && rec.shipKind) {
         // A ship: the same shape as if a player flew it (`shipHitShape.ts`,
         // owner's rule 2026-11-13; the room's `playerHitscanDist` twin).
-        dist = shipRayHit(rec.shipKind, !rec.shieldDown, rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, ca);
+        dist = shipRayHit(rec.shipKind, !rec.shieldDown, rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, ca, hw);
       } else {
-        dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, rec.radius);
+        dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, rec.radius + hw);
       }
       if (dist !== null && dist < mountHitDist) {
         mountHitDist = dist;

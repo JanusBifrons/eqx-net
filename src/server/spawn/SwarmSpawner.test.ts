@@ -18,7 +18,7 @@ interface PostedCmd {
   slot: number; id: string; x: number; y: number; vx: number; vy: number; radius: number; mass: number;
   vertices?: ReadonlyArray<Vec2>;
   linearDamping?: number;
-  staticBody?: boolean;
+  staticBody?: boolean | 'fixed';
   collisionGroups?: number;
   angle?: number;
   shipKindId?: number;
@@ -68,6 +68,14 @@ describe('SwarmSpawner', () => {
     expect(cap.staticBody).toBe(true); // the P0 fix — structures never move
     expect(drone.staticBody).toBeFalsy(); // drones fly
     expect(rock.staticBody).toBeFalsy(); // asteroids stay dynamic / bump-able
+  });
+
+  // Cut-field rocks touch along their cuts: as locked DYNAMIC bodies the
+  // solver worked every rock–rock contact (~12 ms a step for 941 rocks while
+  // awake, 2 s after each load), so they spawn as FIXED bodies.
+  it('a cut-field rock spawns as a fixed body (never simulated)', () => {
+    spawner.spawnAsteroid({ id: 'field:1', x: 0, y: 0, vx: 0, vy: 0, radius: 30, fixed: true, fieldRock: true });
+    expect(posted.find((p) => p.id === 'field:1')!.staticBody).toBe('fixed');
   });
 
   // Macro terrain 1a: a rock's outline (collider, hit shape, art) comes from
@@ -354,5 +362,27 @@ describe('pickRandomShipKind — engineering kinds excluded (capture ilhqk6)', (
     // not deleting.
     expect(SHIP_KINDS.crossguard.engineeringOnly).toBe(true);
     expect(SHIP_KINDS.el.engineeringOnly).toBe(true);
+  });
+});
+
+// Owner 2026-11-16: capital ships never have shields. A kind with no shield
+// pool spawns shield-DOWN on the wire (no aura, hits land on the hull); a
+// shielded kind still spawns shield-up.
+describe('SwarmSpawner: a shieldless kind spawns shield-down', () => {
+  it('a destroyer drone is shieldDown at spawn; a fighter is not', () => {
+    const registry = new SwarmEntityRegistry();
+    const sab = new SharedArrayBuffer(SAB_TOTAL_BYTES);
+    const slots = [1, 2];
+    const spawner = new SwarmSpawner(registry, {
+      takeSlot: () => slots.pop(),
+      postSpawnObstacle: () => {},
+      sabF32: new Float32Array(sab),
+      sabU32: new Uint32Array(sab),
+      registerLagComp: () => {},
+    });
+    expect(spawner.spawnDrone({ id: 'cap', x: 0, y: 0, kind: 'destroyer' })).toBe(true);
+    expect(spawner.spawnDrone({ id: 'fig', x: 0, y: 0, kind: 'fighter' })).toBe(true);
+    expect(registry.get('cap')!.shieldDown).toBe(true);
+    expect(registry.get('fig')!.shieldDown).toBe(false);
   });
 });

@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { LootSubsystem, LOOT_POD_TTL_MS, MAX_LIVE_LOOT_PER_SECTOR, DERELICT_SALVAGE_STEP, type LootCollector } from './LootSubsystem.js';
+import { LootSubsystem, LOOT_POD_TTL_MS, MAX_LIVE_LOOT_PER_SECTOR, DERELICT_SALVAGE_STEP, type LootCollector, type LootSubsystemDeps } from './LootSubsystem.js';
 import { HoldStore } from './HoldStore.js';
 import type { IPersistenceSink, PersistOp } from '../../core/contracts/IPersistenceSink.js';
 import type { Hold } from '../../shared-types/goods.js';
+import { getShipKind, type ShipKind, type WeaponMount } from '../../shared-types/shipKinds.js';
+import { LOOT_PICKUP_RADIUS } from './LootSubsystem.js';
+import { SALVAGE_CONSUME_FRAC } from '../../core/combat/salvageTargeting.js';
+import type { PieceStoreView } from '../rooms/wreckLineage.js';
 
 function capture() {
   const ops: PersistOp[] = [];
@@ -19,7 +23,7 @@ function h(goods: Hold['goods']): Hold {
   return { goods: { ...goods }, blueprints: [] };
 }
 
-function setup(opts: { sectorKey?: string | null; collectors?: LootCollector[] } = {}) {
+function setup(opts: { sectorKey?: string | null; collectors?: LootCollector[]; heldPieces?: LootSubsystemDeps['heldPieces'] } = {}) {
   const { ops, sink } = capture();
   let now = 1_000;
   const store = new HoldStore({ persistence: () => sink, now: () => now });
@@ -37,11 +41,12 @@ function setup(opts: { sectorKey?: string | null; collectors?: LootCollector[] }
     podPose: (id) => poses.get(id) ?? null,
     forEachCollector: (visit) => { for (const c of collectors) visit(c); },
     onCollected: (_c, moved, podId) => { collected.push({ moved, podId }); },
+    ...(opts.heldPieces ? { heldPieces: opts.heldPieces } : {}),
   });
   return { loot, store, ops, poses, despawned, collected, collectors, advance: (ms: number) => { now += ms; } };
 }
 
-const SHIP: LootCollector = { playerId: 'p1', shipInstanceId: 'ship-1', x: 0, y: 0, capacity: 300 };
+const SHIP: LootCollector = { playerId: 'p1', shipInstanceId: 'ship-1', x: 0, y: 0, capacity: 300, kind: getShipKind('fighter') };
 
 describe('LootSubsystem (P1a-1)', () => {
   it('fly-over pickup moves the pod into the ship hold and deletes the pod in ONE atomic group', () => {
@@ -165,5 +170,137 @@ describe('LootSubsystem (P1a-1)', () => {
     const t = setup({ sectorKey: null });
     t.loot.drop(h({ salvage: 1 }), 0, 0);
     expect(t.ops).toHaveLength(0);
+  });
+});
+
+describe('LootSubsystem: tractored wreck pieces are stored whole (piece store)', () => {
+  function rig(capacity: number, startSalvage = 0) {
+    const pieces = new Map<string, number>([['wreck-1', 7]]);
+    const removed: string[] = [];
+    const held: string[] = ['wreck-1'];
+    const t = setup({
+      collectors: [{ ...SHIP, capacity }],
+      heldPieces: {
+        any: () => held.length > 0,
+        forEach: (c, visit) => { if (c.playerId === 'p1') for (const id of held) visit(id); },
+        near: () => {},
+        store: (id, out) => {
+          const q = pieces.get(id);
+          if (q === undefined) return false;
+          out.qty = q; out.ore = undefined; out.holdWeight = q; out.mass = 1e9; out.radius = 500; // salvage weighs 1
+          return true;
+        },
+        ore: () => ({}),
+        remove: (id) => { pieces.delete(id); removed.push(id); },
+      },
+    });
+    if (startSalvage > 0) t.store.put({ holderUid: 'ship-1', holderType: 'ship', ownerId: 'p1', sectorKey: null, x: null, y: null, hold: h({ salvage: startSalvage }), expiresAt: null }, true);
+    t.ops.length = 0;
+    return { t, pieces, removed, held };
+  }
+
+  it('with room: the piece\'s salvage goes into the hold in ONE commit and the piece is removed (no pods needed)', () => {
+    const { t, removed } = rig(300, 2);
+    expect(t.loot.podCount()).toBe(0);
+    t.loot.collectTick();
+    expect(t.store.get('ship-1')!.hold.goods.salvage).toBe(9);
+    expect(removed).toEqual(['wreck-1']);
+    expect(t.ops, 'one persisted write').toHaveLength(1);
+    expect(t.loot.podCount(), 'no pod in between').toBe(0);
+    expect(t.collected).toEqual([{ moved: h({ salvage: 7 }), podId: 'wreck-1' }]);
+  });
+
+  it('a hold without room for ALL of it changes nothing: the piece stays, no pod, no write', () => {
+    const { t, removed, pieces } = rig(8, 2); // 6 free < 7
+    t.loot.collectTick();
+    expect(t.store.get('ship-1')!.hold.goods.salvage).toBe(2);
+    expect(removed).toEqual([]);
+    expect(pieces.has('wreck-1')).toBe(true);
+    expect(t.ops).toHaveLength(0);
+    expect(t.loot.podCount()).toBe(0);
+  });
+
+  it('a piece visited twice in a pass (two mounts) is stored once', () => {
+    const { t, removed, held } = rig(300);
+    held.push('wreck-1');
+    t.loot.collectTick();
+    expect(t.store.get('ship-1')!.hold.goods.salvage).toBe(7);
+    expect(removed).toEqual(['wreck-1']);
+  });
+});
+
+describe('LootSubsystem: consumable pieces are taken in by proximity (the factory line)', () => {
+  /** A destroyer whose mounts are all tractors (a mining tool: it consumes). */
+  const miner = (): ShipKind => {
+    const base = getShipKind('destroyer');
+    return { ...base, mounts: (base.mounts ?? []).map((m): WeaponMount => ({ ...m, weaponId: 'tractor' })) };
+  };
+  type P = { x: number; y: number; radius: number; qty: number; rock?: true };
+  function rig(kind: ShipKind, ps: Record<string, P>, capacity = 300) {
+    const removed: string[] = [];
+    const reach: number[] = [];
+    const t = setup({
+      collectors: [{ ...SHIP, capacity, kind }],
+      heldPieces: {
+        any: () => true,
+        forEach: () => {},
+        near: (x, y, r, maxR, visit) => {
+          reach.push(r);
+          for (const [id, p] of Object.entries(ps)) {
+            if (!removed.includes(id) && p.radius <= maxR && Math.hypot(p.x - x, p.y - y) <= r + p.radius) visit(id, p.x, p.y);
+          }
+        },
+        store: (id, out: PieceStoreView) => {
+          const p = ps[id];
+          if (p === undefined || removed.includes(id)) return false;
+          out.radius = p.radius; out.mass = 1; out.qty = p.qty; out.holdWeight = p.qty;
+          out.ore = p.rock ? { rockId: 'rock-9', resource: 'rock', perArea: 1 } : undefined;
+          return true;
+        },
+        ore: (_o, _x, _y, units) => ({ minerals: units }),
+        remove: (id) => { removed.push(id); },
+      },
+    });
+    t.ops.length = 0;
+    return { t, removed, reach };
+  }
+
+  it('a small piece at the hull goes in whole (one commit); a big one and a far one stay', () => {
+    const kind = miner();
+    const small = SALVAGE_CONSUME_FRAC * kind.radius * 0.5;
+    const { t, removed, reach } = rig(kind, {
+      near: { x: kind.radius + 20, y: 0, radius: small, qty: 4 },
+      big: { x: -(kind.radius + 20), y: 0, radius: SALVAGE_CONSUME_FRAC * kind.radius * 2, qty: 4 },
+      far: { x: 0, y: kind.radius + LOOT_PICKUP_RADIUS + small + 500, radius: small, qty: 4 },
+    });
+    t.loot.collectTick();
+    expect(reach, 'the pickup reach is the pod reach past the hull edge').toEqual([kind.radius + LOOT_PICKUP_RADIUS]);
+    expect(removed).toEqual(['near']);
+    expect(t.store.get('ship-1')!.hold.goods.salvage).toBe(4);
+    expect(t.ops, 'one persisted write').toHaveLength(1);
+  });
+
+  it('a rock piece goes in as its ore (the room ore path), not salvage', () => {
+    const kind = miner();
+    const { t, removed } = rig(kind, { r: { x: kind.radius, y: 0, radius: 10, qty: 6, rock: true } });
+    t.loot.collectTick();
+    expect(removed).toEqual(['r']);
+    expect(t.store.get('ship-1')!.hold.goods).toEqual({ minerals: 6 });
+  });
+
+  it('a hold without room for it: not consumable, the piece stays', () => {
+    const kind = miner();
+    const { t, removed } = rig(kind, { p: { x: kind.radius, y: 0, radius: 10, qty: 40 } }, 30);
+    t.loot.collectTick();
+    expect(removed).toEqual([]);
+    expect(t.store.get('ship-1')).toBeUndefined();
+  });
+
+  it('a ship with no mining tool takes nothing in (unchanged)', () => {
+    const kind = getShipKind('destroyer'); // naval guns only
+    const { t, removed, reach } = rig(kind, { p: { x: kind.radius, y: 0, radius: 10, qty: 4 } });
+    t.loot.collectTick();
+    expect(reach).toEqual([]);
+    expect(removed).toEqual([]);
   });
 });

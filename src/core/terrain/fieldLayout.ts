@@ -102,16 +102,18 @@ function inset(poly: Pt[], d: number): Pt[] | null {
   return out;
 }
 
-/** Smooth seeded value noise in -1..1 (arithmetic only). */
-function vnoise(x: number, y: number, seed: number): number {
+function latticeHash(a: number, b: number, seed: number): number {
+  let k = (Math.imul(a, 374761393) + Math.imul(b, 668265263) + seed) | 0;
+  k = Math.imul(k ^ (k >>> 13), 1274126177);
+  return ((k ^ (k >>> 16)) >>> 0) / 4294967296;
+}
+
+/** Smooth seeded value noise in -1..1 (arithmetic only, allocation-free; the
+ *  ore map's deposit edges use it too, fieldOre.ts). */
+export function vnoise(x: number, y: number, seed: number): number {
   const xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi;
-  const h = (a: number, b: number): number => {
-    let k = (Math.imul(a, 374761393) + Math.imul(b, 668265263) + seed) | 0;
-    k = Math.imul(k ^ (k >>> 13), 1274126177);
-    return ((k ^ (k >>> 16)) >>> 0) / 4294967296;
-  };
   const sx = xf * xf * (3 - 2 * xf), sy = yf * yf * (3 - 2 * yf);
-  const a = h(xi, yi), b = h(xi + 1, yi), c = h(xi, yi + 1), d = h(xi + 1, yi + 1);
+  const a = latticeHash(xi, yi, seed), b = latticeHash(xi + 1, yi, seed), c = latticeHash(xi, yi + 1, seed), d = latticeHash(xi + 1, yi + 1, seed);
   return (a + (b - a) * sx + (c - a) * sy + (a - b - c + d) * sx * sy) * 2 - 1;
 }
 
@@ -166,6 +168,11 @@ export interface SlicedOpts {
   minSize?: number;
   /** Field radius override (tests); default `SLICED.radius`. */
   radius?: number;
+  /** Only rocks whose pre-warp centre is in this half-open box (a chunk).
+   *  Same rocks as cutting everything and filtering, much less work: a cut
+   *  child lies inside its parent, so a piece whose box misses `own` holds no
+   *  member and is dropped before it is cut or finished. */
+  own?: { x0: number; y0: number; x1: number; y1: number };
 }
 
 /** A child's path in the cut tree: the parent's hash mixed with the depth and
@@ -183,6 +190,30 @@ export function cutFieldPad(): number {
 }
 
 /** The rocks of a sliced field inside `view`. Generation-time code, not a hot path. */
+/** A lane: the strip of points within `half` of the line through `o` with
+ *  unit normal `n` (its direction is (n.y, -n.x)). Before the warp, which
+ *  bends lane walls by up to ~1.1 km. */
+export interface FieldLane { o: Pt; n: Pt; half: number }
+
+function laneStrips(R: number, B: number, rnd: (path: number, k: number) => number): FieldLane[] {
+  const dir = { x: 0, y: 0 };
+  const lanes: FieldLane[] = [];
+  for (let l = 0; l < SLICED.lanes; l++) {
+    unitDirFromSteps(rnd(1000 + l, 1) * ANGLE_STEPS, dir);
+    const n = { x: -dir.y, y: dir.x };
+    const off = (rnd(1000 + l, 2) - 0.5) * R * 0.5;
+    lanes.push({ o: { x: n.x * off, y: n.y * off }, n, half: (SLICED.laneWidthB * B) / 2 });
+  }
+  return lanes;
+}
+
+/** The field's lanes (test rooms and shots place ships in them). */
+export function slicedFieldLanes(o: Pick<SlicedOpts, 'seed' | 'battleshipLength' | 'radius'>): FieldLane[] {
+  const base = fnv1a32(`sliced:${o.seed}`);
+  const rnd = (path: number, k: number): number => mulberry32((Math.imul(path, 0x9e3779b1) ^ Math.imul(k + 1, 0x85ebca6b) ^ base) >>> 0)();
+  return laneStrips(o.radius ?? SLICED.radius, o.battleshipLength, rnd);
+}
+
 export function slicedField(o: SlicedOpts): SlicedRock[] {
   const S = SLICED, R = o.radius ?? S.radius, B = o.battleshipLength, F = o.fighterLength;
   const base = fnv1a32(`sliced:${o.seed}`);
@@ -197,13 +228,7 @@ export function slicedField(o: SlicedOpts): SlicedRock[] {
     outline.push({ x: dir.x * R, y: dir.y * R });
   }
   // Lanes: straight strips end to end through the field, cut first.
-  const lanes: Array<{ o: Pt; n: Pt; half: number }> = [];
-  for (let l = 0; l < S.lanes; l++) {
-    unitDirFromSteps(rnd(1000 + l, 1) * ANGLE_STEPS, dir);
-    const n = { x: -dir.y, y: dir.x };
-    const off = (rnd(1000 + l, 2) - 0.5) * R * 0.5;
-    lanes.push({ o: { x: n.x * off, y: n.y * off }, n, half: (S.laneWidthB * B) / 2 });
-  }
+  const lanes = laneStrips(R, B, rnd);
   const inLane = (p: Pt): boolean => lanes.some((ln) => Math.abs((p.x - ln.o.x) * ln.n.x + (p.y - ln.o.y) * ln.n.y) < ln.half);
   const pad = cutFieldPad();
   const touchesView = (poly: Pt[]): boolean => {
@@ -230,8 +255,16 @@ export function slicedField(o: SlicedOpts): SlicedRock[] {
     }
     stack.length = 0; stack.push(...next);
   }
+  const own = o.own;
+  const missesOwn = (poly: Pt[]): boolean => {
+    if (!own) return false;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const p of poly) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
+    return x1 < own.x0 || x0 >= own.x1 || y1 < own.y0 || y0 >= own.y1;
+  };
   while (stack.length > 0) {
     const { poly, path, depth } = stack.pop()!;
+    if (missesOwn(poly)) continue;
     const c = centroidOf(poly);
     if (inLane(c)) continue; // the lane strip itself
     const size = Math.sqrt(areaOf(poly));
@@ -242,6 +275,7 @@ export function slicedField(o: SlicedOpts): SlicedRock[] {
     const lodStop = o.minSize !== undefined && size < o.minSize;
     if (size <= small || bigStop || lodStop || depth > 40 || !touchesView(poly)) {
       if (!touchesView(poly)) continue;
+      if (own && !(c.x >= own.x0 && c.x < own.x1 && c.y >= own.y0 && c.y < own.y1)) continue;
       // Thin out toward the rim (smoothly), wider streets there.
       const keep = S.rimKeep + (1 - S.rimKeep) * (1 - d * d);
       if (rnd(path, 5) > keep) continue;
@@ -284,6 +318,15 @@ export function slicedField(o: SlicedOpts): SlicedRock[] {
 
 /** Chunk side in world units (~4 km). Part of the layout: changing it renames
  *  every rock, so bump FIELD_LAYOUT_VERSION with it. */
+/** How far a rock's collider may stray from its drawn outline, as a share of
+ *  the radius of a circle with the rock's area (not its bounding radius, which
+ *  a long thin rock inflates): bumps and dents shallower than this are
+ *  smoothed over before the outline is split into convex parts
+ *  (`convexParts`). Keeps a rock at about 4.5 parts (at most 9) instead of
+ *  about 25, area within 4.8 % (measured on 644 rocks, two seeds).
+ *  docs/architecture/macro-terrain.md. */
+export const FIELD_COLLIDER_SIMPLIFY = 0.06;
+
 export const CHUNK_SIZE = 4096;
 /** Chunk coordinates fit a signed byte: ±128 chunks = ±524 km, past any sector. */
 const CHUNK_COORD_BIAS = 128;
@@ -330,6 +373,7 @@ export function rocksInChunk(o: ChunkOpts, cx: number, cy: number): ChunkRock[] 
   const cut = slicedField({
     seed: o.seed, battleshipLength: o.battleshipLength, fighterLength: o.fighterLength,
     view: { x0, y0, x1: x0 + CHUNK_SIZE, y1: y0 + CHUNK_SIZE },
+    own: { x0, y0, x1: x0 + CHUNK_SIZE, y1: y0 + CHUNK_SIZE },
     ...(o.radius !== undefined ? { radius: o.radius } : {}),
   });
   // Members: pre-warp centre inside this chunk (half-open, so each rock has

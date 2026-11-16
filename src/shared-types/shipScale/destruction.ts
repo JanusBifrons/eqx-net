@@ -31,8 +31,8 @@
  */
 import type { ShipKind } from '../shipKinds/types.js';
 
-export type DestructionProfileId = 'capital' | 'subcap' | 'none';
-export const DESTRUCTION_PROFILE_IDS: readonly DestructionProfileId[] = ['capital', 'subcap', 'none'];
+export type DestructionProfileId = 'capital' | 'subcap' | 'none' | 'rock';
+export const DESTRUCTION_PROFILE_IDS: readonly DestructionProfileId[] = ['capital', 'subcap', 'none', 'rock'];
 
 /** The options `fractureHull` takes from a profile (same field names as its
  *  `FractureInput`; an absent field means the fracture default). */
@@ -140,6 +140,37 @@ export interface DestructionFx {
    *  break-up and the fight stay readable and capitals feel bigger. */
   readonly deathBlastScale: number;
   readonly deathBlastLinger: number;
+  /** A vaporised death (fracture v11: a heavy-beam / railgun kill burned the
+   *  whole hull away, `destroy.vaporised`) plays the death explosion's
+   *  vaporise variant instead: a flash in `vaporiseTint`, a short expanding
+   *  glow and a puff of glowing ash, no fireball, smoke or wreck. Radius
+   *  multiplier on the normal blast, its length (s) and its tint.
+   *  capital-destruction.md "Burn-away and vaporised". */
+  readonly vaporiseBlastScale: number;
+  readonly vaporiseSeconds: number;
+  readonly vaporiseTint: number;
+}
+
+/** The vaporise look's tint: a hot violet-white (the heavy beam's violet,
+ *  burned white-hot), shared by every profile. */
+export const VAPORISE_TINT = 0xd0b0ff;
+
+/** A beam's burned gap (fracture v13; capital-destruction.md "Burned gap"):
+ *  a slice kill cut with a width erases a strip this much wider than the
+ *  beam (world u, absolute like the beam's width), so the beam that cut it
+ *  shines through without touching either bank. Owner 2026-11-16: "the gap
+ *  is exactly the width of the laser. Maybe make it like 2 or 3 pixels
+ *  wider ... just to give it a very tiny buffer". */
+export const BEAM_CUT_BUFFER = 3;
+
+/** The world width of the strip a weapon's kill cut erases (`killCut`): a
+ *  slice with a width is the beam's width plus `BEAM_CUT_BUFFER`, a channel
+ *  its own width, a thin slice 0 (a zero-width line). The ONE source for
+ *  every cut width the server puts in a descriptor or a burn line (#15). */
+export function killCutStripWidth(cut: { readonly kind: 'slice' | 'channel'; readonly width?: number }): number {
+  const w = cut.width ?? 0;
+  if (!(w > 0)) return 0;
+  return cut.kind === 'slice' ? w + BEAM_CUT_BUFFER : w;
 }
 
 export interface DestructionProfile {
@@ -150,13 +181,25 @@ export interface DestructionProfile {
   readonly resplit: DestructionResplit | null;
   /** Crack hold: the hull stays one body this long before it parts (ms). */
   readonly holdMs: number;
-  /** Multiplier on `shipTuning(kind).wreckPushMax/Min`. */
+  /** Multiplier on `shipTuning(kind).wreckPushMax/Min`: the blast impulse
+   *  away from the break point (`wreckBreakKicks`; a piece's kick is the
+   *  push ÷ √its mass share). */
   readonly pushScale: number;
-  /** Multiplier on `shipTuning(kind).wreckSeparate`, the least speed at
-   *  which every shared cut opens (`buildWreckPieces`' seam pass). The push
-   *  runs away from the kill point, so it moves the pieces off TOGETHER; this
-   *  is what opens the cracks. */
+  /** A beam's burned gap (fracture v13): each piece of a break along a
+   *  wide slice gets this extra speed (u/s) straight away from the burned
+   *  strip, on its own side, on top of everything else it inherits (owner
+   *  2026-11-16: "a very slight force pushing those parts apart"). Never
+   *  toward the strip, so it never closes the cut. */
+  readonly cutPartSpeed: number;
+  /** Multiplier on `shipTuning(kind).wreckSeparate`, the guard: the least
+   *  speed at which every shared cut opens (`wreckBreakKicks`' seam pass,
+   *  mass-weighted impulses), so no cut closes, hinges or overlaps. */
   readonly separateScale: number;
+  /** Multiplier on `shipTuning(kind).wreckCrack`, the impulse each shared
+   *  cut throws its faces apart with (`wreckBreakKicks`). The push runs
+   *  away from the break point, so it moves the pieces off TOGETHER; this is
+   *  what opens the cracks, heavy pieces slowly and slivers faster. */
+  readonly crackScale: number;
   /** Multiplier on the pieces' spin at the break: the dying hull's turn
    *  (ω, and the ω × r it gives each piece) and the seeded kick spin
    *  (`buildWreckPieces`). 1: the hull's full spin carries on. */
@@ -196,8 +239,13 @@ const CAPITAL: DestructionProfile = {
   // sliver spike: capital-destruction.md §S4 "Re-split".
   resplit: {
     minAreaFrac: 0.02,
-    integrityMul: 0.5,
-    integrityMinFrac: 0.01,
+    // Owner on the re-split clip (2026-11-15): "splitting stuff almost
+    // instantly ... no time for me to understand". A lance battlecruiser's
+    // main battery (sustained ~2,800 heavy-beam damage/s, so ~280/s of wear)
+    // cracks a battleship's biggest piece (~40 % of the hull) in ~10 s, and
+    // no piece in under ~3.6 s (the floor). Lock: `wreckMainBatteryWear.test.ts`.
+    integrityMul: 0.62,
+    integrityMinFrac: 0.09,
     salvagePerHull: 200,
     fracture: {
       maxPieces: 3, snapChance: 0.2, fanCracks: false, farCrack: false, chunkyPieces: true,
@@ -205,13 +253,30 @@ const CAPITAL: DestructionProfile = {
     },
   },
   holdMs: 1200,
-  pushScale: 1,
-  separateScale: 1,
+  // Owner on the re-split clip (2026-11-15): "the scrap/wreck should weigh
+  // A LOT and be more resistant to moving ... a subtle much slower movement
+  // ... an accurate mass value vs the forces applied". The break-up kicks
+  // are impulses against each piece's mass (`wreckBreakKicks`): a heavy
+  // cruiser's big pieces (>= 30 % of the hull) part at ~3 u/s (median; was
+  // ~28), slivers (<= 7 %) at ~13 u/s (was ~50). The guard only keeps the
+  // cuts from closing (~1.5 u/s for a heavy cruiser; was 31 u/s, which set
+  // every cut's speed). Locks: `wreckPiecesSeparate.test.ts`,
+  // `wreckPieces.test.ts` "mass-scaled parting".
+  pushScale: 0.08,
+  cutPartSpeed: 3,
+  separateScale: 0.05,
+  crackScale: 1,
   spinScale: 1,
   dampingScale: 1,
-  knockScale: 1,
-  knockMaxScale: 1,
-  // Heavy chunks are knocked by every hit and drift on (owner, 2026-11-13).
+  // Owner on the re-split clip (2026-11-15): "scrap should weigh a lot and
+  // be very resistant to sliding at this sort of size and scale". A blow
+  // worth the whole hull moves it at 0.3 % of the base `wreckKnockSpeed`,
+  // each hit at most 10 % of the base `wreckKnockMax`: 10 s of a lance main
+  // battery leaves a battleship's biggest piece creeping at well under
+  // 5 u/s. Lock: `wreckMainBatteryWear.test.ts`.
+  knockScale: 0.003,
+  knockMaxScale: 0.1,
+  // Heavy chunks are knocked by every hit (owner, 2026-11-13), barely.
   knockWakeScale: 0,
   settlePerRadius: 0,
   settleSpin: 0,
@@ -231,6 +296,9 @@ const CAPITAL: DestructionProfile = {
     deadArt: false,
     deathBlastScale: 1,
     deathBlastLinger: 1,
+    vaporiseBlastScale: 0.8,
+    vaporiseSeconds: 0.7,
+    vaporiseTint: VAPORISE_TINT,
   },
 };
 
@@ -284,10 +352,11 @@ const SUBCAP: DestructionProfile = {
   // The parting push is per unit of hull radius (`wreckPushMax/Min`: 1 % /
   // 0.4 % of the radius per second), which reads at capital scale but left a
   // fighter's pieces as one hull with a crack (~0.1 u/s; hostile review
-  // 2026-11-13). ×30 throws the wreck off the kill point; damping ×10 (slice
-  // 2's measured value: linear 0.6/s, sleep in ~14 game s) brings it to
+  // 2026-11-13). ×30 (×20 ÷ √share since the impulse kicks) throws the
+  // wreck off the kill point; damping ×10 (slice 2's measured value: linear 0.6/s, sleep in ~14 game s) brings it to
   // rest; no piece drifts over ~1.5 radii. Lock: `destructionProfile.test.ts`.
-  pushScale: 30,
+  pushScale: 20,
+  cutPartSpeed: 3,
   // That push runs away from the kill point, so on a hit at one end every
   // piece goes the SAME way: ×50 alone left the cracks shut (round-2 review:
   // robot pieces still touching ~1 s after the break; the seam pass opened
@@ -301,7 +370,12 @@ const SUBCAP: DestructionProfile = {
   // >= ~3.3 radii/s (fighter ~86 u/s), ~2.5+ radii apart 1 s after the
   // break and ~6 at rest. Locks: `wreckPieces.subcapParting.test.ts`
   // (the kicks) + `subcapWrecks.test.ts` (the real server at 1 s).
+  // Wreck mass (2026-11-15): the kicks became impulses against each piece's
+  // mass. A sub-cap breaks into 2-3 near-equal chunks, so mass barely
+  // changes their parting; the reviewed floor stays (×240), no extra crack
+  // impulse on top, and the push is ×20 ÷ √share (≈ the old ×30 on a half).
   separateScale: 240,
+  crackScale: 0,
   // Owner on the v5 film (2026-11-13): "they spin too much when destroyed".
   // The pieces carried the dying hull's whole turn (a fighter hard over at
   // 2 rad/s threw them at ~115 °/s); ×0.3 keeps a lazy tumble (≤ ~35 °/s
@@ -349,6 +423,11 @@ const SUBCAP: DestructionProfile = {
     deadArt: true,
     deathBlastScale: 0.5,
     deathBlastLinger: 0.5,
+    // Sized to the hull it burned away (the break-up blast is half size;
+    // here nothing else plays, so a little more).
+    vaporiseBlastScale: 0.8,
+    vaporiseSeconds: 0.7,
+    vaporiseTint: VAPORISE_TINT,
   },
 };
 
@@ -358,7 +437,9 @@ const NONE: DestructionProfile = {
   resplit: null,
   holdMs: 0,
   pushScale: 0,
+  cutPartSpeed: 0,
   separateScale: 1,
+  crackScale: 0,
   spinScale: 1,
   dampingScale: 1,
   knockScale: 1,
@@ -382,13 +463,50 @@ const NONE: DestructionProfile = {
     deadArt: false,
     deathBlastScale: 1,
     deathBlastLinger: 1,
+    vaporiseBlastScale: 0.8,
+    vaporiseSeconds: 0.7,
+    vaporiseTint: VAPORISE_TINT,
   },
+};
+
+/** A rock the mining laser wore out (salvage stream, rock cut;
+ *  mining-and-salvage.md "Mining asteroids"). Never a ship's profile: a
+ *  rock's wreck source (`rockWreckSource`) names it. It breaks like a
+ *  sub-capital re-split, 2-3 chunky pieces along its burn lines, again and
+ *  again; a worn-out piece under 6 % of the rock turns into an ore pod.
+ *  Integrity per area is `ROCK_INTEGRITY_PER_AREA` (× `integrityMul` 1).
+ *  Pieces part gently, collide with each other and settle like sub-cap
+ *  debris; shots never shove them. `salvagePerHull` is unused: a rock's
+ *  pods carry its ore. */
+const ROCK_FRACTURE: DestructionFractureOptions = {
+  maxPieces: 3, snapChance: 0.2, fanCracks: false, farCrack: false, chunkyPieces: true,
+  chunkyMinWidthBeams: 0.36, soundMinShare: 0.3, extraChunkChance: 0.4, jag: { depth: 1, roughness: 0.12 },
+};
+const ROCK: DestructionProfile = {
+  id: 'rock',
+  fracture: ROCK_FRACTURE,
+  resplit: { minAreaFrac: 0.06, integrityMul: 1, integrityMinFrac: 0.03, salvagePerHull: 0, fracture: ROCK_FRACTURE },
+  holdMs: 0,
+  pushScale: 2,
+  separateScale: 20,
+  crackScale: 0,
+  spinScale: 0.3,
+  cutPartSpeed: 0,
+  dampingScale: 10,
+  knockScale: 0,
+  knockMaxScale: 0,
+  knockWakeScale: 0,
+  settlePerRadius: 0.125,
+  settleSpin: 0.3,
+  piecesCollide: true,
+  fx: { ...NONE.fx, glowStyle: 'simple', glowSeconds: 1, cutGlowStyle: 'full' },
 };
 
 export const DESTRUCTION_PROFILES: Readonly<Record<DestructionProfileId, DestructionProfile>> = {
   capital: CAPITAL,
   subcap: SUBCAP,
   none: NONE,
+  rock: ROCK,
 };
 
 /** The cargo pod leaves its glowing scrap, not wreck pieces. */

@@ -21,7 +21,7 @@
  * Power is AGGREGATED (not routed per-connection), so power doesn't flash — only
  * the mineral streams do. The single Phase-3 flow material is `minerals`.
  */
-import { ASTEROID_YIELD, type AsteroidResourceId } from '../../shared-types/asteroidResources.js';
+import { ASTEROID_YIELD, yieldHasGoods, yieldInto, type YieldRow } from '../../shared-types/asteroidResources.js';
 import { GOOD_IDS, type GoodId } from '../../shared-types/goods.js';
 import { AMMO_SHOTS_PER_UNIT } from '../../shared-types/ammo.js';
 import { structureDraw } from '../../shared-types/structurePower.js';
@@ -109,8 +109,9 @@ export interface StructureGridHooks {
    *  (pre-WS-4 / unit-harness fallback). MUST be reachable only from mining —
    *  combat never depletes asteroid resources (asteroid-interaction-model ADR). */
   drawAsteroidResources?(entityId: number, amount: number): number;
-  /** P2c — an asteroid's resource kind (absent hook ⇒ rock). */
-  asteroidResourceOf?(entityId: number): AsteroidResourceId;
+  /** P2c — what an asteroid yields per 10 mined (`ASTEROID_YIELD` by kind, or a
+   *  cut-field rock's ore row); absent hook ⇒ plain rock. */
+  asteroidYieldOf?(entityId: number): YieldRow;
   /** P2c — put `n` of a good into `rec`'s owner network storage (all or
    *  nothing); returns what was stored. */
   depositGoods?(rec: StructureRecord, good: GoodId, n: number): number;
@@ -682,16 +683,17 @@ export class StructureGridSubsystem {
       // returns the amount actually mined; absent hook ⇒ flat rate (pre-WS-4 /
       // unit-harness fallback). Combat never reaches this hook (ADR boundary).
       // P2c — what the rock yields: rock → minerals, ice → ice, crystal-veined
-      // → minerals + crystal (ASTEROID_YIELD, per 10 mined). Minerals go to the
+      // → minerals + crystal (a yield row per 10 mined, split by `yieldInto`). Minerals go to the
       // drill's buffer (hauled to the Capital as before); other goods go
       // straight into the owner's network storage.
-      const resource = this.hooks.asteroidResourceOf?.(target.entityId) ?? 'rock';
-      const y = ASTEROID_YIELD[resource];
+      const y = this.hooks.asteroidYieldOf?.(target.entityId) ?? ASTEROID_YIELD.rock;
+      const deposit = yieldHasGoods(y) ? this.hooks.depositGoods : undefined;
       let want = Math.min(kind.miningRate ?? 0, kind.storageCapacity - rec.minerals);
       // A full network never burns finite ore: if this pulse's goods wouldn't
       // all fit, the drill idles and the rock keeps them.
-      if (resource !== 'rock' && this.hooks.depositGoods && this.hooks.canDepositGoods && want > 0) {
-        const plan = this.yieldGoods(y, want);
+      if (deposit && this.hooks.canDepositGoods && want > 0) {
+        const plan = yieldInto(y, want, this._yieldScratch);
+        plan.minerals = 0;
         if (!this.hooks.canDepositGoods(rec, plan)) {
           this.setActive(rec, false);
           continue;
@@ -700,34 +702,19 @@ export class StructureGridSubsystem {
       const drawn = this.hooks.drawAsteroidResources
         ? this.hooks.drawAsteroidResources(target.entityId, want)
         : want;
-      const mineralsPart = resource === 'rock' ? drawn : Math.floor((drawn * (y.minerals ?? 0)) / 10);
-      rec.minerals = Math.min(kind.storageCapacity, rec.minerals + mineralsPart);
-      if (resource !== 'rock' && this.hooks.depositGoods) {
+      const goods = yieldInto(y, drawn, this._yieldScratch);
+      rec.minerals = Math.min(kind.storageCapacity, rec.minerals + (goods.minerals ?? 0));
+      if (deposit) {
         // Same order as the check above, and never more than it planned, so it fits.
-        const goods = this.yieldGoods(y, drawn);
         for (const g of GOOD_IDS) {
-          const n = goods[g] ?? 0;
-          if (n > 0) this.hooks.depositGoods(rec, g, n);
+          const n = g === 'minerals' ? 0 : goods[g] ?? 0;
+          if (n > 0) deposit(rec, g, n);
         }
       }
     }
   }
 
-  /** The non-mineral goods `drawn` units of a rock yield, into a reused
-   *  scratch record (alloc-free). */
-  private yieldGoods(y: Readonly<Partial<Record<GoodId, number>>>, drawn: number): Readonly<Partial<Record<GoodId, number>>> {
-    const out = this._yieldScratch;
-    const mineralsPart = Math.floor((drawn * (y.minerals ?? 0)) / 10);
-    const rest = drawn - mineralsPart;
-    for (const g of GOOD_IDS) {
-      if (out[g] !== undefined) out[g] = 0;
-      if (g === 'minerals') continue;
-      const share = y[g] ?? 0;
-      if (share <= 0) continue;
-      out[g] = Math.floor((rest * share) / (10 - (y.minerals ?? 0)));
-    }
-    return out;
-  }
+  /** Reused yield record for the Miner (alloc-free, #14). */
   private readonly _yieldScratch: Partial<Record<GoodId, number>> = {};
 
   /**

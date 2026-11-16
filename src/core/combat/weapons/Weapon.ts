@@ -43,6 +43,9 @@ export interface WeaponFireContext {
   shooterVy: number;
   /** The firing mount's id (sink-only: the `laser_fired` mountId). */
   mountId: string;
+  /** The mount's size factor on its weapon's range (`mountRangeFactor`: a
+   *  mining tool's sized reach, 1 for a gun). A beam's ray scales by it. */
+  rangeMul: number;
 }
 
 /**
@@ -58,8 +61,10 @@ export interface WeaponFireSink {
    *  casts that far and `falloffMinDamageFrac` scales `damage` reverse-square
    *  from full at `range` to the floor at `maxRange` (`hitscanFalloffFrac(hitDist,
    *  range, maxRange, frac)`). Omit `maxRange`/`falloffMinDamageFrac` ⇒ a flat
-   *  beam of `range` (back-compat). */
-  hitscan(ctx: WeaponFireContext, range: number, damage: number, falloffMinDamageFrac?: number, maxRange?: number): void;
+   *  beam of `range` (back-compat). `halfWidth` (`beamHalfWidth`): a wide
+   *  beam's hit test sweeps a disc of this radius down the ray; 0 / absent ⇒
+   *  the thin ray. */
+  hitscan(ctx: WeaponFireContext, range: number, damage: number, falloffMinDamageFrac?: number, maxRange?: number, halfWidth?: number): void;
   /** Spawn a server projectile with the given velocity + ballistics. */
   spawnProjectile(
     ctx: WeaponFireContext,

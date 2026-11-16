@@ -338,9 +338,11 @@ export function bargeDesign(look: BargeLook, map: CapitalMap = 'C', kindId: stri
     mass: p.mass,
     thrusters: v.thrusters,
     maxHealth: health,
-    shieldMax: Math.round(health * 0.5),
+    // Capitals have no shield (owner: "capital ships never have shields"),
+    // the barge included: every hit lands on the hull.
+    shieldMax: 0,
     shieldRegenDelayTicks: 600,
-    shieldRegenRate: (health * 0.5) / 600,
+    shieldRegenRate: 0,
     energyMax: 600,
     energyRegenRate: 2,
     cargoCapacity: Math.round(holdArea * HOLD_PER_AREA),

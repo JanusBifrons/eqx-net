@@ -236,6 +236,14 @@ export function getShipKind(id: string | null | undefined): ShipKind {
   return (SHIP_KINDS as Record<string, ShipKind>)[DEFAULT_SHIP_KIND]!;
 }
 
+/** Does this kind carry a shield at all? `shieldMax` 0 (every capital, owner
+ *  2026-11-16) ⇒ no: it is always hit and collides on its hull, its shield is
+ *  reported down from spawn. The ONE test for "shieldless", never a
+ *  capital branch. */
+export function kindHasShield(kind: Pick<ShipKind, 'shieldMax'>): boolean {
+  return kind.shieldMax > 0;
+}
+
 /** Type guard — narrows a string to `ShipKindId` if it's a known kind. */
 export function isShipKindId(id: string): id is ShipKindId {
   return Object.prototype.hasOwnProperty.call(SHIP_KINDS, id);

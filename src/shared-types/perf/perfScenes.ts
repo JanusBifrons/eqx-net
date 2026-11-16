@@ -30,6 +30,10 @@ export interface PerfScene {
    *  `--scenes`): the long soaks, and the terrain stress scenes, which only
    *  terrain PRs need. */
   soak?: boolean;
+  /** A flying pilot: the client spawns facing `initialAngle` and the runner
+   *  holds these keys for the whole window. The camera then follows the ship
+   *  as in play (`camera` is not held). */
+  pilotHold?: { keys: string[]; initialAngle: number };
 }
 
 const fight = (tag: string, kind: string, x: number, y: number, count: number, atMs = 0): Extract<SceneStep, { action: 'spawn' }> =>
@@ -298,6 +302,28 @@ export const PERF_SCENES: readonly PerfScene[] = [
     minSwarm: 10,
   },
   {
+    // Rock cut (salvage stream, docs/features/mining-and-salvage.md): eight
+    // rocks mined to a break at t = 2 s, their wreck pieces on screen at the
+    // normal zoom, where each piece draws its stretch of the rock's art as one
+    // batched mesh. The intact arm: `--base HEAD --base-env EQX_SCENE_ROCK_CUT=0`
+    // (the same rocks left whole).
+    id: 'rock-cut',
+    title: 'Eight rocks mined into wreck pieces, seen at the normal zoom',
+    room: {
+      droneCount: 0,
+      asteroidConfig: [],
+      sceneScript: [
+        { atMs: 0, action: 'rocks', tag: 'rock', count: 8, x: 0, y: 0, spread: 700, radius: 90 },
+        { atMs: 2000, action: 'rockCut', tag: 'rock', count: 8 },
+        { atMs: 20_000, action: 'end' },
+      ],
+    },
+    spawn: { x: 0, y: -1100 },
+    camera: { x: 0, y: 0, zoom: 0.6 },
+    durationMs: 20_000,
+    minSwarm: 8,
+  },
+  {
     // Macro-terrain Stage 0: what a still field costs at a modest count.
     id: 'rock-field-1k',
     title: '1,000 still rocks in a 9 km disc, pilot idle in the middle',
@@ -334,6 +360,36 @@ export const PERF_SCENES: readonly PerfScene[] = [
     camera: { x: 0, y: 1200, zoom: 0.45 },
     durationMs: 30_000,
     minSwarm: ROCK_FIELD_FIGHT,
+    soak: true,
+  },
+  {
+    // Macro terrain v2 slice 4: the cut field (seed `look`, the showcase
+    // room's field), pilot idle beside lane 1's wall, camera pulled out so
+    // the client draws every chunk it has cut (7×7). Only rocks near ships
+    // exist on the server (chunks stream in as fixed bodies), so `minSwarm`
+    // just proves the field loaded.
+    id: 'cut-field',
+    title: 'The cut field: pilot idle beside a lane wall, camera pulled out',
+    room: { droneCount: 0, asteroidConfig: [], cutField: { seed: 'look' }, sceneScript: [{ atMs: 20_000, action: 'end' }] },
+    spawn: { x: -30_002, y: 27_191 },
+    camera: { x: -30_002, y: 27_191, zoom: 0.08 },
+    durationMs: 20_000,
+    minSwarm: 1,
+    soak: true,
+  },
+  {
+    // The cut field while flying: a fighter holds thrust + boost straight
+    // down lane 1's centre line (4.6 km to each wall), so chunks stream in
+    // on both sides for the whole window: the cut, body and draw cost of
+    // moving through the field.
+    id: 'cut-field-run',
+    title: 'The cut field: a fighter flying flat out down a lane',
+    room: { droneCount: 0, asteroidConfig: [], cutField: { seed: 'look' }, sceneScript: [{ atMs: 30_000, action: 'end' }] },
+    spawn: { x: -11_147, y: 20_249 },
+    pilotHold: { keys: ['w', 'Shift'], initialAngle: 1.028 },
+    camera: { x: -11_147, y: 20_249, zoom: 0.45 },
+    durationMs: 30_000,
+    minSwarm: 1,
     soak: true,
   },
 ];

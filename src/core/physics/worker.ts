@@ -2,7 +2,7 @@
  * Physics worker — runs Rapier at 60 Hz in a dedicated worker_threads thread.
  *
  * Communication contract with the main thread (SectorRoom):
- *   Main → Worker  postMessage commands: SPAWN | DESPAWN | INPUT | SPAWN_OBSTACLE | AI_INTENT | AI_INPUTS | CLOCK_RATE | SET_POSITION | REKEY_SHIP | SET_HULL_EXPOSED
+ *   Main → Worker  postMessage commands: SPAWN | DESPAWN | INPUT | SPAWN_OBSTACLE | AI_INTENT | AI_INPUTS | CLOCK_RATE | SET_POSITION | REKEY_SHIP | SET_HULL_EXPOSED | BATCH
  *   Worker → Main  postMessage events:   READY | SLEEP_TRANSITION
  *   Shared memory  SharedArrayBuffer (see sabLayout.ts) — written here under seqlock,
  *                  read by main thread between writes.
@@ -23,8 +23,7 @@
  *   - CLOCK_RATE command carries a TiDi rate (0.7..1.0). The worker writes it
  *     to the SAB header (CLOCK_RATE_IDX) and uses it to scale the accumulator
  *     input on each step: physics.tick(FIXED_DT * rate). Rapier's per-step dt
- *     stays fixed — only how much wall-clock time accumulates per step is
- *     scaled. This preserves deterministic collision behaviour at all rates.
+ *     stays fixed (only wall-clock accrual per step scales): deterministic.
  */
 import { parentPort, workerData } from 'node:worker_threads';
 import RAPIER from '@dimforge/rapier2d-compat';
@@ -82,7 +81,7 @@ const CONTACT_FORCE_FLOOR = 200;
 interface SpawnCmd         { type: 'SPAWN';          slot: number; playerId: string; x: number; y: number; kindId?: string }
 interface DespawnCmd       { type: 'DESPAWN';        slot: number; playerId: string }
 interface InputCmd         { type: 'INPUT';          slot: number; inputTick: number; thrust: boolean; turnLeft: boolean; turnRight: boolean; boost: boolean; reverse: boolean; warpX?: number; warpY?: number }
-interface SpawnObstacleCmd { type: 'SPAWN_OBSTACLE'; slot: number; obstacleId: string; x: number; y: number; vx: number; vy: number; radius: number; mass: number; vertices?: ReadonlyArray<Vec2>; linearDamping?: number; staticBody?: boolean; collisionGroups?: number; angle?: number; parts?: ReadonlyArray<ReadonlyArray<Vec2>>; shieldKindId?: string; angvel?: number; angularDamping?: number; settleSpeed?: number; settleSpin?: number; shipKindId?: number }
+interface SpawnObstacleCmd { type: 'SPAWN_OBSTACLE'; slot: number; obstacleId: string; x: number; y: number; vx: number; vy: number; radius: number; mass: number; vertices?: ReadonlyArray<Vec2>; linearDamping?: number; staticBody?: boolean | 'fixed'; collisionGroups?: number; angle?: number; parts?: ReadonlyArray<ReadonlyArray<Vec2>>; shieldKindId?: string; angvel?: number; angularDamping?: number; settleSpeed?: number; settleSpin?: number; shipKindId?: number }
 interface AiIntentCmd      { type: 'AI_INTENT';      slot: number; fx: number; fy: number; torque: number; setAngvel?: number }
 /** Pilot layer: every AI slot driven by control keys this tick, in ONE message
  *  (replaces a post per drone). `slots[i]` flies with keys `bits[i]` (packed
@@ -125,6 +124,8 @@ interface MissileImpulseCmd { type: 'MISSILE_IMPULSE'; entityId: string; fx: num
 /** Capital wreck: add a velocity (u/s) and spin (rad/s) to a piece's body (its
  *  separating kick once the crack delay is over). Silent no-op when gone. */
 interface WreckKickCmd { type: 'WRECK_KICK'; entityId: string; dvx: number; dvy: number; dw: number }
+/** A fixed body (cut-field rock) becomes dynamic: a ship rammed it. */
+interface UnfixBodyCmd { type: 'UNFIX_BODY'; entityId: string }
 /** Capital wreck: an overkill hit's impulse (jx, jy) at world point (px, py)
  *  on a piece, so an off-centre hit also turns it. Silent no-op when gone. */
 interface WreckImpulseCmd { type: 'WRECK_IMPULSE'; entityId: string; jx: number; jy: number; px: number; py: number }
@@ -142,7 +143,8 @@ interface RemoveWallCmd     { type: 'REMOVE_WALL';     id: string }
 /** Force fields (teleporter pad push today; PhysicsWorld.setForceField, forceFields.ts). */
 interface SetForceFieldCmd    { type: 'SET_FORCE_FIELD';    id: string; field: ForceField }
 interface RemoveForceFieldCmd { type: 'REMOVE_FORCE_FIELD'; id: string }
-type WorkerCommand = SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiIntentCmd | AiInputsCmd | ClockRateCmd | SetPositionCmd | WarpRetargetCmd | RekeyShipCmd | SetHullExposedCmd | SetStatMulCmd | MissileImpulseCmd | WreckKickCmd | WreckImpulseCmd | WreckRigidImpulseCmd | SpawnWallCmd | SetWallActiveCmd | RemoveWallCmd | SetForceFieldCmd | RemoveForceFieldCmd | BotWarpCmd | SetTimeScaleCmd;
+interface BatchCmd { type: 'BATCH'; cmds: WorkerCommand[] } // in order, no step between (one wreck's pieces)
+type WorkerCommand = SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiIntentCmd | AiInputsCmd | ClockRateCmd | SetPositionCmd | WarpRetargetCmd | RekeyShipCmd | SetHullExposedCmd | SetStatMulCmd | MissileImpulseCmd | WreckKickCmd | UnfixBodyCmd | WreckImpulseCmd | WreckRigidImpulseCmd | SpawnWallCmd | SetWallActiveCmd | RemoveWallCmd | SetForceFieldCmd | RemoveForceFieldCmd | BotWarpCmd | SetTimeScaleCmd | BatchCmd;
 
 /** Pool commands (main → pooled worker): host / free one sector's world. */
 interface AddWorldCmd    { type: 'ADD_WORLD'; worldId: number; sab: SharedArrayBuffer }
@@ -323,7 +325,9 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
         // `spawnObstacle` + `lockBody`); the server worker is where the
         // authoritative body lived UNLOCKED, so a hit drifted it forever (no
         // friction). Drones + asteroids stay dynamic.
-        if (cmd.staticBody) physics.lockBody(cmd.obstacleId);
+        // Cut-field rocks ('fixed') become fixed bodies (`World.fixBody`).
+        if (cmd.staticBody === 'fixed') physics.fixBody(cmd.obstacleId);
+        else if (cmd.staticBody) physics.lockBody(cmd.obstacleId);
         // Pilot layer: a drone's ShipKind (catalogue index), flown by
         // AI_INPUTS through applyShipInput. Absent for asteroids / structures.
         if (cmd.shipKindId !== undefined) physics.setPilotKind(cmd.obstacleId, getShipKind(shipKindFromIndex(cmd.shipKindId)));
@@ -415,6 +419,11 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
         wakeCensus?.noteImpulse(cmd.entityId, 'missile');
         break;
       }
+      case 'UNFIX_BODY': {
+        physics.unfixBody(cmd.entityId);
+        break;
+      }
+      case 'BATCH': for (let i = 0; i < cmd.cmds.length; i++) handle(cmd.cmds[i]!); break;
       case 'WRECK_KICK': {
         physics.addVelocity(cmd.entityId, cmd.dvx, cmd.dvy, cmd.dw);
         wakeCensus?.noteImpulse(cmd.entityId, 'kick');

@@ -10,9 +10,9 @@
  *                   the shield-up collider and the drawn aura (`shieldBubbleRadius`);
  *   - shield DOWN ⇒ the hull polygon (`shipCollisionParts`, the shield-down
  *                   collider), gated by a cheap "does it come near" circle;
- *   - a CAPITAL   ⇒ always the hull polygon (its shield follows its hull, and
- *                   its circle is half the hull's LENGTH; the pad is not
- *                   modelled), shield up or down.
+ *   - NO SHIELD   ⇒ always the hull polygon, whatever `shieldUp` says: a kind
+ *                   with `shieldMax` 0 (`kindHasShield`; every capital, owner
+ *                   2026-11-16 "capital ships never have shields").
  *
  * Splash is measured to `shipSplashRadius` (the kind's own radius, #18).
  *
@@ -23,7 +23,7 @@
  *
  * Pure and allocation-free after the first call per kind (#14).
  */
-import { getShipKind } from '../../shared-types/shipKinds.js';
+import { getShipKind, kindHasShield } from '../../shared-types/shipKinds.js';
 import { shipTuning } from '../../shared-types/shipScale/tuning.js';
 import { shipCollisionParts } from '../geometry/shipHullDecomp.js';
 import {
@@ -34,9 +34,8 @@ import {
   segmentNearCircle,
   sweptSegmentHitsShipPolygon,
 } from './Weapons.js';
-import { isCapitalKindId } from './capitalHits.js';
 
-/** The shield bubble's radius (shield-up hit circle of a non-capital). */
+/** The shield bubble's radius (shield-up hit circle of a shielded kind). */
 export function shipBubbleRadius(kindId: string | null | undefined): number {
   const k = getShipKind(kindId ?? null);
   return k.radius + shipTuning(k).shieldPad;
@@ -63,11 +62,11 @@ export function shipHitBound(kindId: string | null | undefined): number {
 }
 
 /** The circle an aimer lines a fixed gun up on: the shield bubble while a
- *  non-capital's shield is up, else the kind's own hull radius (the polygon's
+ *  shielded kind's shield is up, else the kind's own hull radius (the polygon's
  *  size, #18). Used for the AI pilot's trigger cone, never for a hit test. */
 export function shipAimRadius(kindId: string | null | undefined, shieldUp: boolean): number {
   const k = getShipKind(kindId ?? null);
-  if (shieldUp && !isCapitalKindId(k.id)) return k.radius + shipTuning(k).shieldPad;
+  if (shieldUp && kindHasShield(k)) return k.radius + shipTuning(k).shieldPad;
   return k.radius;
 }
 
@@ -76,18 +75,23 @@ export function shipSplashRadius(kindId: string | null | undefined): number {
   return getShipKind(kindId ?? null).radius;
 }
 
-/** Distance along the unit ray to the ship at (cx, cy, angle), or null. */
+/** Distance along the unit ray to the ship at (cx, cy, angle), or null.
+ *  `halfWidth` (a wide beam, `beamHalfWidth`; owner 2026-11-15 "Hit by its
+ *  width"): the first contact of a disc of that radius swept down the ray, so
+ *  the shape is hit wherever the drawn beam covers it. 0 ⇒ the thin ray. */
 export function shipRayHit(
   kindId: string | null | undefined, shieldUp: boolean,
   fx: number, fy: number, dx: number, dy: number, maxDist: number,
   cx: number, cy: number, angle: number,
+  halfWidth = 0,
 ): number | null {
-  const id = getShipKind(kindId ?? null).id;
-  if (shieldUp && !isCapitalKindId(id)) return rayHitsSphere(fx, fy, dx, dy, maxDist, cx, cy, shipBubbleRadius(id));
+  const k = getShipKind(kindId ?? null);
+  const id = k.id;
+  if (shieldUp && kindHasShield(k)) return rayHitsSphere(fx, fy, dx, dy, maxDist, cx, cy, shipBubbleRadius(id) + halfWidth);
   // "Does the ray come near?", never `rayHitsSphere`: that misses once the
   // origin is inside the circle past the centre (the far half of a hull).
-  if (!segmentNearCircle(fx, fy, dx * maxDist, dy * maxDist, cx, cy, shipHitBound(id))) return null;
-  return rayHitsShipPolygon(fx, fy, dx, dy, maxDist, cx, cy, angle, shipCollisionParts(id));
+  if (!segmentNearCircle(fx, fy, dx * maxDist, dy * maxDist, cx, cy, shipHitBound(id) + halfWidth)) return null;
+  return rayHitsShipPolygon(fx, fy, dx, dy, maxDist, cx, cy, angle, shipCollisionParts(id), halfWidth);
 }
 
 /** First contact of a projectile step with the ship at (cx, cy, angle). */
@@ -96,8 +100,9 @@ export function shipSweepHit(
   fromX: number, fromY: number, stepX: number, stepY: number, projRadius: number,
   cx: number, cy: number, angle: number,
 ): { entry: number; hitX: number; hitY: number } | null {
-  const id = getShipKind(kindId ?? null).id;
-  if (shieldUp && !isCapitalKindId(id)) {
+  const k = getShipKind(kindId ?? null);
+  const id = k.id;
+  if (shieldUp && kindHasShield(k)) {
     return projectileSweepCircle(fromX, fromY, stepX, stepY, projRadius, cx, cy, shipBubbleRadius(id));
   }
   if (!segmentNearCircle(fromX, fromY, stepX, stepY, cx, cy, shipHitBound(id) + projRadius)) return null;
@@ -107,7 +112,7 @@ export function shipSweepHit(
 /**
  * Distance from the world point (px, py) (a turret's muzzle) to the nearest
  * point of the ship's hit shape at (cx, cy, angle); 0 when the point is
- * inside. The same shape the hits use: a non-capital with its shield up is
+ * inside. The same shape the hits use: a shielded kind with its shield up is
  * its bubble circle, everything else the hull polygon. Exact; for a range
  * gate use `shipWithinHullReach`, which skips the polygon when the bounding
  * circle already settles it.
@@ -116,8 +121,9 @@ export function shipHullDistance(
   kindId: string | null | undefined, shieldUp: boolean,
   px: number, py: number, cx: number, cy: number, angle: number,
 ): number {
-  const id = getShipKind(kindId ?? null).id;
-  if (shieldUp && !isCapitalKindId(id)) {
+  const k = getShipKind(kindId ?? null);
+  const id = k.id;
+  if (shieldUp && kindHasShield(k)) {
     const d = Math.hypot(px - cx, py - cy) - shipBubbleRadius(id);
     return d > 0 ? d : 0;
   }

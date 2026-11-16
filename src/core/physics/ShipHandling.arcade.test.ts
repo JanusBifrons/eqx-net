@@ -166,11 +166,13 @@ describe.runIf(SHIP_SCALE === 2)('ship handling — arcade (Micro Machines) feel
   // second. Heavies a bit slower. Capitals are exempt from the arcade layer
   // (their handling comes from the WW2-grounded solver, capitalShips.test.ts):
   // the band only pins that they stay ponderous.
-  const BANDS: Record<Exclude<HandlingClass, 'exempt'>, { t90: [number, number]; turn180: [number, number]; ttkMin: number }> = {
+  const BANDS: Record<Exclude<HandlingClass, 'exempt'>, { t90: [number, number]; turn180: [number, number]; ttkMin?: number }> = {
     light: { t90: [0.25, 0.8], turn180: [0.4, 0.8], ttkMin: 3.5 },
     medium: { t90: [0.4, 0.9], turn180: [0.55, 1.0], ttkMin: 5 },
     heavy: { t90: [0.15, 1.4], turn180: [0.6, 2.0], ttkMin: 10 },
-    capital: { t90: [5, 60], turn180: [100, 220], ttkMin: 15 },
+    // No capital kill-time floor: kill time is never a gate or a metric
+    // (owner rule). The measured time is printed, not asserted.
+    capital: { t90: [5, 60], turn180: [100, 220] },
   };
 
   for (const k of TUNED) {
@@ -183,7 +185,8 @@ describe.runIf(SHIP_SCALE === 2)('ship handling — arcade (Micro Machines) feel
       // The mining barge is a loaded freighter, slower to turn than any
       // warship (bargeDesign: 1.6x a battleship's turn response).
       expect(r.turn180).toBeLessThanOrEqual(k.id === 'barge' ? b.turn180[1] * 1.6 : b.turn180[1]);
-      expect(r.ttk).toBeGreaterThanOrEqual(b.ttkMin);
+      if (b.ttkMin === undefined) console.log(`${k.id}: ttk ${r.ttk.toFixed(1)} s (print only)`);
+      else expect(r.ttk).toBeGreaterThanOrEqual(b.ttkMin);
       if (r.cls === 'capital') return;
       // The afterburner (player-flyable kinds; NPC drones close with the AI's
       // own ENGAGE_BOOST): a clearly higher top speed, 1.4–2.2× cruise, most

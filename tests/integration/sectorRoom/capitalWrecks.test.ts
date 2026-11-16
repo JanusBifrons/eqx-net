@@ -21,6 +21,7 @@ import { wreckPieceGeometry } from '../../../src/core/destruction/wreckPieces.js
 import { shipShapeScale } from '../../../src/core/geometry/shipHullOutline.js';
 import { HEAVY_BEAM_WIDTH, WEAPONS } from '../../../src/core/combat/WeaponCatalogue.js';
 import { WRECK_CRACK_MS } from '../../../src/shared-types/wreckTiming.js';
+import { BEAM_CUT_BUFFER } from '../../../src/shared-types/shipScale/destruction.js';
 
 type V = { x: number; y: number };
 const WRECK_KIND = 4;
@@ -89,7 +90,7 @@ describe('SectorRoom integration — capital wrecks (S2a)', () => {
     return [...internal.swarmRegistry.all()].filter((r) => r.kind === WRECK_KIND);
   }
 
-  it('an NPC capital killed with the flag on leaves N ≥ 2 wreck bodies tiling its hull, holding together, then parting outward', async () => {
+  it('an NPC capital killed with the flag on leaves N ≥ 2 wreck bodies tiling its hull, holding together, then parting away from the kill point', async () => {
     const internal = await boot(true);
     expect(internal.spawnTestDrone('bb', 6000, 0, 'battleship')).toBe(true);
     await harness.advance(100);
@@ -123,14 +124,19 @@ describe('SectorRoom integration — capital wrecks (S2a)', () => {
       expect(Math.hypot(st.vx - at.vx, st.vy - at.vy)).toBeLessThan(1);
     }
     expect(Math.abs(total - want) / want).toBeLessThan(0.005);
-    // After WRECK_CRACK_MS the pieces part, on the whole AWAY from the kill point.
+    // After WRECK_CRACK_MS the pieces part. The kicks are impulses against
+    // each piece's mass (`wreckBreakKicks`): the cracks push neighbours both
+    // ways (momentum kept), the blast throws the wreck as a whole AWAY from
+    // the kill point. Mass ∝ area (one density).
     await harness.advance(WRECK_CRACK_MS + 300);
-    let outward = 0;
+    let px = 0, py = 0, cx = 0, cy = 0, m = 0;
     for (const r of ps) {
       const st = internal.wreckState(r.id)!;
-      if ((st.vx - at.vx) * (st.x - hit.x) + (st.vy - at.vy) * (st.y - hit.y) > 0) outward++;
+      let a = 0;
+      for (const part of internal.wreckParts(r.id)!) a += area(part);
+      px += a * (st.vx - at.vx); py += a * (st.vy - at.vy); cx += a * st.x; cy += a * st.y; m += a;
     }
-    expect(outward / ps.length).toBeGreaterThan(0.75);
+    expect(px * (cx / m - hit.x) + py * (cy / m - hit.y), 'the wreck moves away from the kill point').toBeGreaterThan(0);
   }, 25_000);
 
   it('a single huge final hit breaks into more pieces than a slow grind (same seed)', async () => {
@@ -177,6 +183,11 @@ describe('SectorRoom integration — capital wrecks (S2a)', () => {
       await harness.advance(3000);
       expect(internal.swarmHealth.get(clear), `${weapon} reaches a target in the clear`).toBeLessThan(clear0);
       expect(internal.swarmHealth.get(hidden), `${weapon} stops at the wreck`).toBe(hidden0);
+      // Clear this weapon's targets: wreck pieces are heavy and barely drift
+      // (knockScale 0.003), so the next weapon's targets spawn a few units
+      // from these and its shot would hit whichever fighter is first.
+      internal.evictSwarm(hidden);
+      internal.evictSwarm(clear);
     }
   }, 25_000);
 
@@ -209,9 +220,8 @@ describe('SectorRoom integration — capital wrecks (S2a)', () => {
     const victim = randomUUID();
     await harness.connectActive(victim, { shipKind: 'battleship', spawnX: 8000, spawnY: 0 });
     await harness.advance(100);
-    // The shield takes the first hit whole (no spill-over); the second kills.
-    // applyDamage reports true on the killing call only.
-    expect(internal.applyDamage(victim, 'shooter-x', 1e9)).toBe(false);
+    // A capital has no shield (owner 2026-11-16): the first hit lands on the
+    // hull and kills. applyDamage reports true on the killing call only.
     expect(internal.applyDamage(victim, 'shooter-x', 1e9)).toBe(true);
     expect(wrecks(internal).length).toBeGreaterThanOrEqual(2);
     // The wreck names its pilot: the client's pieces wear the livery bake the
@@ -338,8 +348,8 @@ describe('SectorRoom integration — capital wrecks (S2a)', () => {
     const sliced = await killWith('bb-heavy', 'heavy_beam');
     expect(sliced.cutKind).toBe('slice');
     expect(sliced.cutAng).toBeDefined();
-    // v10: its slice erases a strip as wide as the beam (hull 1x frame).
-    expect(sliced.cutW).toBe(HEAVY_BEAM_WIDTH / shipShapeScale(getShipKind('battleship')));
+    // v13: its slice burns a gap the beam's width plus BEAM_CUT_BUFFER (hull 1x frame).
+    expect(sliced.cutW).toBe((HEAVY_BEAM_WIDTH + BEAM_CUT_BUFFER) / shipShapeScale(getShipKind('battleship')));
     for (const [id, w] of [['bb-beam', 'hitscan'], ['bb-bolt', 'laser']] as const) {
       const plain = await killWith(id, w);
       expect(plain.cutKind, w).toBeUndefined();

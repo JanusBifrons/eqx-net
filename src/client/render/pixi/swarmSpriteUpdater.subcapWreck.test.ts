@@ -22,7 +22,8 @@ import { Container, Mesh, Texture, TextureSource } from 'pixi.js';
 import { updateSwarmSprites, type SwarmSpriteCtx } from './swarmSpriteUpdater.js';
 import { MountVisualManager } from '../MountVisualManager.js';
 import { WreckGeometryStore, rebuildWreckPieces } from '../../net/wreckGeometryStore.js';
-import { GLOW_TINT_SLICE, WreckArtState, WreckPieceSprite, deathBlastFor, hullDeathBlastReplaced, wreckGlowAt } from './wreckArt.js';
+import { GLOW_TINT_SLICE, WreckArtState, WreckPieceSprite, wreckGlowAt } from './wreckArt.js';
+import { deathBlastFor, hullDeathBlastReplaced } from './deathBlast.js';
 import { radarCategoryForSwarm } from '../halo/arrowGraphics.js';
 import { FarZoomIcons } from './FarZoomIcons.js';
 import { DESTRUCTION_PROFILES } from '../../../shared-types/shipScale/destruction.js';
@@ -514,9 +515,9 @@ describe('sub-capital wrecks: the quiet look (slice 4)', () => {
    *  about half the size with shorter smoke, while the room breaks
    *  sub-caps into wrecks; unchanged when off; capitals unchanged. */
   it('the death blast is shrunk for sub-caps when subcapWrecks is on, unchanged otherwise', () => {
-    const out = { scale: 0, linger: 0 };
+    const out = { scale: 0, linger: 0, vaporise: false, tint: 0, seconds: 0 };
     deathBlastFor(true, false, 'robot-square', out);
-    expect(out).toEqual({ scale: SUB.deathBlastScale, linger: SUB.deathBlastLinger });
+    expect(out).toEqual({ scale: SUB.deathBlastScale, linger: SUB.deathBlastLinger, vaporise: false, tint: 0, seconds: 0 });
     expect(out.scale).toBeCloseTo(0.5, 5);
     expect(out.linger).toBeCloseTo(0.5, 5);
     deathBlastFor(true, false, 'fighter', out);
@@ -526,7 +527,7 @@ describe('sub-capital wrecks: the quiet look (slice 4)', () => {
       [true, false, 'cargo-pod'], [true, false, null], [true, false, 'no-such-kind'],
     ] as const) {
       deathBlastFor(sub, cap, kind, out);
-      expect(out, `${String(sub)} ${String(cap)} ${String(kind)}`).toEqual({ scale: 1, linger: 1 });
+      expect(out, `${String(sub)} ${String(cap)} ${String(kind)}`).toEqual({ scale: 1, linger: 1, vaporise: false, tint: 0, seconds: 0 });
     }
   });
 

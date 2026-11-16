@@ -33,7 +33,7 @@ import type { Vec2 } from '@core/swarm/asteroidShape';
 import { rayHitsSphere, rayHitsConvexPolygon } from '@core/combat/Weapons';
 import { shipRayHit } from '@core/combat/shipHitShape';
 import { scrapColliderFor } from '@core/geometry/scrapCollider';
-import { SWARM_KIND_DRONE, SWARM_KIND_SCRAP, SWARM_KIND_WRECK } from '@shared-types/swarmWireFormat';
+import { SWARM_KIND_DRONE, SWARM_KIND_SCRAP, SWARM_KIND_WRECK, isLootPod } from '@shared-types/swarmWireFormat';
 import { wreckRayHit } from '@core/destruction/wreckHits';
 import type { WreckGeometrySource } from '../net/entity/IClientEntityLeaf.js';
 import type { ShipKindId } from '@shared-types/shipKinds';
@@ -59,33 +59,43 @@ function scrapVertices(parentKind: string, componentIndex: number): Vec2[] | nul
 /**
  * Distance along the ray to a drone/scrap at its drawn pose, or null.
  * Shapes mirror the predWorld colliders (`setHullExposed`,
- * `shipShieldColliderDesc`, `scrapClientLeaf`).
+ * `shipShieldColliderDesc`, `scrapClientLeaf`). `halfWidth`: a wide beam
+ * (the heavy beam) hits by its width, through the same core helpers the
+ * server uses (#15); 0 ⇒ the thin ray.
  */
 export function rayHitsDrawnSwarmEntity(
   e: SwarmRenderState,
   fromX: number, fromY: number, dirX: number, dirY: number, maxDist: number,
   wrecks?: WreckGeometrySource,
+  halfWidth = 0,
+  /** A mining tool's beam (`isMiningTool`) passes loot pods; every other shot hits them. */
+  passLootPods = false,
 ): number | null {
   if (e.kind === SWARM_KIND_DRONE) {
     // The SAME hit shape the server uses for this ship, player or NPC
     // (`shipHitShape.ts`, #15): bubble while the shield is up, hull once it
     // is down, a capital's hull either way.
-    if (e.shipKind) return shipRayHit(e.shipKind, e.shieldDown !== true, fromX, fromY, dirX, dirY, maxDist, e.x, e.y, e.angle);
-    return rayHitsSphere(fromX, fromY, dirX, dirY, maxDist, e.x, e.y, e.radius);
+    if (e.shipKind) return shipRayHit(e.shipKind, e.shieldDown !== true, fromX, fromY, dirX, dirY, maxDist, e.x, e.y, e.angle, halfWidth);
+    return rayHitsSphere(fromX, fromY, dirX, dirY, maxDist, e.x, e.y, e.radius + halfWidth);
   }
   if (e.kind === SWARM_KIND_SCRAP) {
-    const c = rayHitsSphere(fromX, fromY, dirX, dirY, maxDist, e.x, e.y, e.radius);
-    if (c === null || !e.shipKind) return c;
+    // Only a mining tool passes a loot pod (the server's skip, #15); any
+    // other shot stops on its circle, as on the server (the pod's diamond
+    // collider is clockwise, which the convex test cannot take).
+    const pod = isLootPod(e);
+    if (pod && passLootPods) return null;
+    const c = rayHitsSphere(fromX, fromY, dirX, dirY, maxDist, e.x, e.y, e.radius + halfWidth);
+    if (c === null || !e.shipKind || pod) return c;
     const v = scrapVertices(e.shipKind, e.componentIndex ?? 0);
     if (v === null) return c;
-    return rayHitsConvexPolygon(fromX, fromY, dirX, dirY, maxDist, e.x, e.y, e.angle, v);
+    return rayHitsConvexPolygon(fromX, fromY, dirX, dirY, maxDist, e.x, e.y, e.angle, v, halfWidth);
   }
   if (e.kind === SWARM_KIND_WRECK) {
     // Capital wreck piece (S2b): the same circle-then-convex-parts test the
     // server's weapons use (`wreckRayHit`, #15), on the rebuilt geometry.
     const g = wrecks !== undefined && e.wreckId !== undefined ? wrecks.piece(e.wreckId, e.componentIndex ?? 0) : null;
     if (g === null) return null;
-    return wreckRayHit(g.parts, g.radius, fromX, fromY, dirX, dirY, maxDist, e.x, e.y, e.angle);
+    return wreckRayHit(g.parts, g.radius, fromX, fromY, dirX, dirY, maxDist, e.x, e.y, e.angle, halfWidth);
   }
   return null;
 }
@@ -110,10 +120,13 @@ export class DisplayPoseHitscan implements PredHitscanWorld {
   hitscan(
     fromX: number, fromY: number, dirX: number, dirY: number,
     maxDist: number, excludeId: string,
+    /** A wide beam's half-width (`beamHalfWidth`); 0 ⇒ the thin ray. */
+    halfWidth = 0,
+    passLootPods = false,
   ): { hitId: string; dist: number } | null {
     const world = this.world;
     if (world === null) return null;
-    const h = world.hitscan(fromX, fromY, dirX, dirY, maxDist, excludeId, this.skip);
+    const h = world.hitscan(fromX, fromY, dirX, dirY, maxDist, excludeId, this.skip, halfWidth);
     let bestId: string | null = null;
     let bestDist = maxDist;
     if (h !== null) {
@@ -121,13 +134,17 @@ export class DisplayPoseHitscan implements PredHitscanWorld {
       bestDist = h.dist;
     }
     const swarm = this.swarm;
-    if (swarm !== undefined && this.movingKeys.size > 0) {
+    if (swarm !== undefined) {
       for (const [entityId, e] of swarm) {
         if (e.kind !== SWARM_KIND_DRONE && e.kind !== SWARM_KIND_SCRAP && e.kind !== SWARM_KIND_WRECK) continue;
         const key = this.keyCache.get(entityId);
-        // Only entities that have a collision body count (as before).
-        if (key === undefined || key === excludeId || !this.movingKeys.has(key)) continue;
-        const d = rayHitsDrawnSwarmEntity(e, fromX, fromY, dirX, dirY, bestDist, this.wrecks);
+        if (key === undefined || key === excludeId) continue;
+        // Drones and scrap count when they have a collision body (as before).
+        // A wreck piece always does: pieces stream into the predWorld only
+        // near the local ship, but a far one still stops the server's shots
+        // ("wrecks block shots"), so the drawn beam ends on it too.
+        if (e.kind !== SWARM_KIND_WRECK && !this.movingKeys.has(key)) continue;
+        const d = rayHitsDrawnSwarmEntity(e, fromX, fromY, dirX, dirY, bestDist, this.wrecks, halfWidth, passLootPods);
         if (d !== null && (bestId === null || d < bestDist)) {
           bestDist = d;
           bestId = key;

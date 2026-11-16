@@ -16,7 +16,7 @@
  * "Multi-mount fire path" section).
  */
 
-import { hasTurretFireControl, mountInReach, mountWeaponReach } from '../../core/combat/mountReach.js';
+import { hasTurretFireControl, mountInReach, mountRangeFactor, mountWeaponReach } from '../../core/combat/mountReach.js';
 import { barrelBearsOn, mountFireTolerance } from '../../core/combat/fireControlBearing.js';
 import { DEFAULT_SHIP_KIND, getShipKind, type ShipKind, type WeaponMount } from '../../shared-types/shipKinds.js';
 import {
@@ -108,11 +108,12 @@ export interface AiFireResolverDeps {
   getActiveShip: (playerId: string) => ShipState | undefined;
   /** Per-tick player pose cache. */
   shipPoseCache: Map<string, ShipPose>;
-  /** Shield-aware ray-vs-ship test (cheap circle / hull-polygon refine). */
+  /** Shield-aware ray-vs-ship test (cheap circle / hull-polygon refine);
+   *  `halfWidth`: a wide beam hits by its width (0 / absent ⇒ thin). */
   playerHitscanDist: (
     ship: ShipState,
     fromX: number, fromY: number, dirX: number, dirY: number, maxDist: number,
-    cx: number, cy: number, angle: number,
+    cx: number, cy: number, angle: number, halfWidth?: number,
   ) => number | null;
   /** Damage sink — invoked on a confirmed hit. (hitX, hitY) is the beam's
    *  impact point, (dirX, dirY) its direction (capital wreck hit tracker and
@@ -134,11 +135,10 @@ export interface AiFireResolverDeps {
    *  shooter). Returns a reused scratch (read it before the next call) or null.
    *  Absent ⇒ the beam tests players only (unit harnesses). Replaced the
    *  hostile-structure + other-allegiance passes, which let a beam pass through
-   *  its own side. `passDebris`: wreck pieces and scrap don't stop the ray
-   *  (a heavy beam's kill follow-through, `fireMount`). */
+   *  its own side. `halfWidth`: a wide beam's (`beamHalfWidth`). */
   nonPlayerRayHit?: (
     fromX: number, fromY: number, dirX: number, dirY: number, maxDist: number, skipId: string,
-    passDebris?: boolean,
+    halfWidth?: number,
   ) => { id: string; wireId: string; dist: number } | null;
   /** Shield-fence plan — if an ACTIVE shield wall lies along the beam within
    *  `maxDist`, absorb the shot (apply the wall's grid-power damage model) and
@@ -174,7 +174,7 @@ export class AiFireResolver implements WeaponFireSink {
   /** Reused per-mount fire geometry (the resolver IS the WeaponFireSink — see
    *  `src/core/combat/weapons/`). Mutated per mount; no per-fire allocation. */
   private readonly _fireCtx: WeaponFireContext = {
-    fromX: 0, fromY: 0, dirX: 0, dirY: 0, shooterVx: 0, shooterVy: 0, mountId: '',
+    fromX: 0, fromY: 0, dirX: 0, dirY: 0, shooterVx: 0, shooterVy: 0, mountId: '', rangeMul: 1,
   };
   // Per-fire-event sink state — set in resolve() before the salvo.
   private _shooterId = '';
@@ -185,8 +185,9 @@ export class AiFireResolver implements WeaponFireSink {
   /** Set by the hitscan sink when a beam of the shot now resolving destroyed
    *  what it hit (`fireMount` reports it: the heavy beam's follow-through). */
   private _shotKilled = false;
-  /** The shot now resolving passes debris (set by `fireMount`). */
-  private _passDebris = false;
+  /** Where the killing beam hit (valid while `_shotKilled`). */
+  private _killX = 0;
+  private _killY = 0;
   /** The target of the shot now resolving ('' = none) and the mount firing
    *  (a tractor's lease needs both). */
   private _targetId = '';
@@ -320,10 +321,14 @@ export class AiFireResolver implements WeaponFireSink {
    *  when refused (no pose, or the pool can't pay) so the caller keeps the
    *  reload; 'killed' when it fired and one of its beams destroyed what it hit
    *  (the caller's follow-through, `WeaponDefBase.followThroughTicks`); else
-   *  true. `passDebris`: the beam passes wreck pieces and scrap (no hit, no
-   *  knock-back) and runs on to a ship, structure, rock or its full range
-   *  (the kill follow-through: "cut right through"). */
-  fireMount(shooterId: string, mountIdx: number, passDebris = false, targetId = ''): boolean | 'killed' {
+   *  true. On 'killed', `killAt` (caller-owned scratch, #14) gets the point
+   *  the killing beam hit. `from`: the hull pose the caller aimed the mount
+   *  from (its x, y, angle); the shot is cast from it, so it leaves down the
+   *  aimed line even when the worker has stepped the hull since. */
+  fireMount(
+    shooterId: string, mountIdx: number, targetId = '', killAt?: { x: number; y: number },
+    from?: { readonly x: number; readonly y: number; readonly angle: number },
+  ): boolean | 'killed' {
     const d = this.deps;
     const self = d.swarmEntitySnapshot(shooterId);
     if (!self) return false;
@@ -333,12 +338,12 @@ export class AiFireResolver implements WeaponFireSink {
       if (n > 0 && !d.trySpendEnergy(shooterId, resolveSlotEnergyCost(kind) / n)) return false;
     }
     this._shotKilled = false;
-    this._passDebris = passDebris;
     this._targetId = targetId;
-    this.fireNow(shooterId, mountIdx);
-    this._passDebris = false;
+    this.fireNow(shooterId, mountIdx, -1, from);
     this._targetId = '';
-    return this._shotKilled ? 'killed' : true;
+    if (!this._shotKilled) return true;
+    if (killAt !== undefined) { killAt.x = this._killX; killAt.y = this._killY; }
+    return 'killed';
   }
   /** Quad AA: the next barrel to fire, per shooter and mount index. */
   private readonly aaBarrel = new Map<string, Uint8Array>();
@@ -376,8 +381,11 @@ export class AiFireResolver implements WeaponFireSink {
   }
 
   /** Fire the shooter's active slot now, each mount down its own barrel.
-   *  `onlyMount` ≥ 0 fires that mount alone; `mask` picks mounts by bit. */
-  private fireNow(shooterId: string, onlyMount = -1, mask = -1): void {
+   *  `onlyMount` ≥ 0 fires that mount alone; `mask` picks mounts by bit.
+   *  `from`: the pose the shot was aimed from (`fireMount`), else the live SAB. */
+  private fireNow(
+    shooterId: string, onlyMount = -1, mask = -1, from?: { readonly x: number; readonly y: number; readonly angle: number },
+  ): void {
     const d = this.deps;
     const self = d.swarmEntitySnapshot(shooterId);
     if (!self) return;
@@ -385,7 +393,11 @@ export class AiFireResolver implements WeaponFireSink {
     // mount loop looks up other ships through it, and the next barrel then
     // fired from the target's pose and angle (a twin turret's second beam
     // left far off its drawn barrel; aiTurretFacesShot integration test).
-    const sx = self.x, sy = self.y, sAngle = self.angle, svx = self.vx, svy = self.vy;
+    // One frame for aim and shot: the physics worker steps the SAB on its own
+    // thread, so this read can be a step past the pose the caller aimed from
+    // (a turning lance's follow-through left its kill line and stopped on
+    // its own wreck; beamKillBurnsGap.test.ts "worker step").
+    const sx = from?.x ?? self.x, sy = from?.y ?? self.y, sAngle = from?.angle ?? self.angle, svx = self.vx, svy = self.vy;
     const shooterRec = d.swarmRegistry.get(shooterId);
     const droneKindId = shooterRec?.shipKind ?? DEFAULT_SHIP_KIND;
     const droneKind = getShipKind(droneKindId);
@@ -430,6 +442,7 @@ export class AiFireResolver implements WeaponFireSink {
       ctx.shooterVx = svx;
       ctx.shooterVy = svy;
       ctx.mountId = mount.id;
+      ctx.rangeMul = mountRangeFactor(mount.weaponId, mount.size); // a mining tool's sized beam
       this._weaponId = mount.weaponId;
       this._mount = mount;
       // A naval turret fires a full salvo: one shell per barrel, each from
@@ -465,8 +478,8 @@ export class AiFireResolver implements WeaponFireSink {
 
   /** Beam: instant lag-comp-free hit test against live player poses; on hit,
    *  applyDamage (internal shooter id); always broadcast laser_fired on the
-   *  WIRE shooter id. */
-  hitscan(ctx: WeaponFireContext, range: number, damage: number, falloffMinDamageFrac?: number, maxRange?: number): void {
+   *  WIRE shooter id. A wide beam (`hw`, the heavy beam) hits by its width. */
+  hitscan(ctx: WeaponFireContext, range: number, damage: number, falloffMinDamageFrac?: number, maxRange?: number, hw = 0): void {
     const d = this.deps;
     // P3.13 — `range` is the OPTIMAL (full-damage) range; the ray reaches
     // `maxRange` (≥ range) and damage falls off reverse-square BEYOND optimal.
@@ -483,7 +496,7 @@ export class AiFireResolver implements WeaponFireSink {
       if (!targetShip || !targetShip.alive) continue;
       const pose = d.shipPoseCache.get(targetId);
       if (!pose) continue;
-      const dist = d.playerHitscanDist(targetShip, rayFromX, rayFromY, ndx, ndy, rayRange, pose.x, pose.y, pose.angle);
+      const dist = d.playerHitscanDist(targetShip, rayFromX, rayFromY, ndx, ndy, rayRange, pose.x, pose.y, pose.angle, hw);
       if (dist !== null && dist < hitDist) {
         hitDist = dist;
         hitId = targetId;
@@ -494,7 +507,7 @@ export class AiFireResolver implements WeaponFireSink {
     // Friendly fire (owner decision 2026-11-10): everything else in the path,
     // whatever its side — drones, structures, rocks, scrap, parked hulls.
     // Closest-of-both wins, so an ally in front of the target takes the beam.
-    const other = d.nonPlayerRayHit?.(rayFromX, rayFromY, ndx, ndy, Math.min(rayRange, hitDist), this._shooterId, this._passDebris) ?? null;
+    const other = d.nonPlayerRayHit?.(rayFromX, rayFromY, ndx, ndy, Math.min(rayRange, hitDist), this._shooterId, hw) ?? null;
     if (other !== null && other.dist < hitDist) {
       hitDist = other.dist;
       hitId = other.id;
@@ -516,6 +529,8 @@ export class AiFireResolver implements WeaponFireSink {
       // tracker, knock-back; the damage event reports the true impact point).
       if (d.applyDamage(hitId, this._shooterId, effDamage, rayFromX + ndx * hitDist, rayFromY + ndy * hitDist, ndx, ndy, this._weaponId) === true) {
         this._shotKilled = true;
+        this._killX = rayFromX + ndx * hitDist;
+        this._killY = rayFromY + ndy * hitDist;
       }
     }
 

@@ -697,7 +697,12 @@ describe('fractureHull', () => {
 // the output is unchanged (same hashes), so only the version and the two
 // capital side-shot cut hashes moved (the bow-shot cuts here are 2-piece,
 // unchanged).
-const GOLDEN = { version: 11, pieces: 4, hash: 1220196282 };
+// v12: the optional `extraCuts` (multi-cut); without them every hash here is
+// unchanged, so only the version moved.
+// v13: a wide slice runs through the kill point as given (no projection, no
+// sliver slide): the fighter's wide slice slid before, now it is the
+// channel's strip (same hash); every other hash unchanged.
+const GOLDEN = { version: 13, pieces: 4, hash: 1220196282 };
 /** Kill cuts (v9; capital side shots v10): a battleship and a fighter (sub-capital profile), each
  *  sliced and channelled by a side shot and a bow shot. */
 const GOLDEN_CUT = {
@@ -710,7 +715,7 @@ const GOLDEN_CUT = {
   },
   subcap: {
     slice: { pieces: 2, hash: 318138258 },
-    wideSlice: { pieces: 2, hash: 1648155327 },
+    wideSlice: { pieces: 2, hash: 1695779947 }, // v13: the channel's strip (no slide)
     channel: { pieces: 2, hash: 1695779947 },
     bowSlice: { pieces: 2, hash: 4233612981 },
     bowChannel: { pieces: 2, hash: 3819904497 },

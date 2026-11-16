@@ -14,6 +14,7 @@ import { getWeaponObject } from './index.js';
 import type { WeaponFireContext, WeaponFireSink } from './Weapon.js';
 import {
   getWeapon,
+  HEAVY_BEAM_WIDTH,
   type HitscanWeaponDef,
   type ProjectileWeaponDef,
   type MissileWeaponDef,
@@ -21,18 +22,18 @@ import {
 } from '../WeaponCatalogue.js';
 
 function makeCtx(over: Partial<WeaponFireContext> = {}): WeaponFireContext {
-  return { fromX: 10, fromY: 20, dirX: 0.6, dirY: 0.8, shooterVx: 5, shooterVy: -3, mountId: 'm0', ...over };
+  return { fromX: 10, fromY: 20, dirX: 0.6, dirY: 0.8, shooterVx: 5, shooterVy: -3, mountId: 'm0', rangeMul: 1, ...over };
 }
 
 class RecordingSink implements WeaponFireSink {
   calls: string[] = [];
-  hitscanArgs?: { range: number; damage: number; falloffMinDamageFrac?: number; maxRange?: number };
+  hitscanArgs?: { range: number; damage: number; falloffMinDamageFrac?: number; maxRange?: number; halfWidth?: number };
   projArgs?: { vx: number; vy: number; damage: number; radius: number; maxTicks: number; weaponId: WeaponId };
   missileDef?: MissileWeaponDef;
 
-  hitscan(_ctx: WeaponFireContext, range: number, damage: number, falloffMinDamageFrac?: number, maxRange?: number): void {
+  hitscan(_ctx: WeaponFireContext, range: number, damage: number, falloffMinDamageFrac?: number, maxRange?: number, halfWidth?: number): void {
     this.calls.push('hitscan');
-    this.hitscanArgs = { range, damage, falloffMinDamageFrac, maxRange };
+    this.hitscanArgs = { range, damage, falloffMinDamageFrac, maxRange, halfWidth };
   }
   spawnProjectile(
     _ctx: WeaponFireContext,
@@ -80,7 +81,14 @@ describe('GEP B3 weapon flyweights — resolveFire parity with the fire-resolver
       damage: def.damage,
       falloffMinDamageFrac: def.falloff?.minDamageFrac,
       maxRange: expectedMax,
+      halfWidth: 0,
     });
+  });
+
+  it('HitscanWeapon hands the sink a wide beam half-width (the heavy beam hits by its width)', () => {
+    const sink = new RecordingSink();
+    getWeaponObject('heavy_beam').resolveFire(makeCtx(), sink);
+    expect(sink.hitscanArgs!.halfWidth).toBe(HEAVY_BEAM_WIDTH / 2);
   });
 
   it('ProjectileWeapon spawns with shooterV + dir*speed + the def ballistics (== resolver projectile branch)', () => {

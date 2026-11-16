@@ -12,6 +12,7 @@ import { PhysicsWorld } from '../../core/physics/World.js';
 import type { SwarmRenderState } from '../../core/contracts/IRenderer.js';
 import { DisplayPoseHitscan, rayHitsDrawnSwarmEntity } from './displayPoseHitscan.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
+import { isMiningTool } from '../../core/combat/WeaponCatalogue.js';
 
 beforeAll(async () => {
   await RAPIER.init();
@@ -25,7 +26,7 @@ function drone(x: number, y: number, shieldDown = false): SwarmRenderState {
   } as unknown as SwarmRenderState;
 }
 
-async function setup(): Promise<{ w: PhysicsWorld; h: DisplayPoseHitscan; swarm: Map<number, SwarmRenderState> }> {
+async function setup(): Promise<{ w: PhysicsWorld; h: DisplayPoseHitscan; swarm: Map<number, SwarmRenderState>; keys: Map<number, string> }> {
   const w = await PhysicsWorld.create();
   w.spawnShip('me', 0, 0);
   // Drone 1: DRAWN at (0, 200); its predicted-timeline body leads to (80, 200).
@@ -39,7 +40,7 @@ async function setup(): Promise<{ w: PhysicsWorld; h: DisplayPoseHitscan; swarm:
   const h = new DisplayPoseHitscan(moving, keys);
   h.world = w;
   h.swarm = swarm;
-  return { w, h, swarm };
+  return { w, h, swarm, keys };
 }
 
 describe('DisplayPoseHitscan', () => {
@@ -82,6 +83,18 @@ describe('DisplayPoseHitscan', () => {
     w.dispose();
   });
 
+  // Only a mining tool's beam passes a loot pod (the server's skip, #15); a gun's drawn beam ends on it.
+  it('a loot pod stops a gun\'s drawn beam but not a mining tool\'s; other scrap stops both', () => {
+    const pod = { ...drone(0, 100, false), kind: 3, radius: 9, shipKind: 'cargo-pod' } as SwarmRenderState;
+    expect(rayHitsDrawnSwarmEntity(pod, 0, 0, 0, 1, 400)).not.toBeNull();
+    expect(rayHitsDrawnSwarmEntity(pod, 0, 0, 0, 1, 400, undefined, 0, isMiningTool('laser'))).not.toBeNull();
+    expect(rayHitsDrawnSwarmEntity(pod, 0, 0, 0, 1, 400, undefined, 0, isMiningTool('mining_laser'))).toBeNull();
+    expect(rayHitsDrawnSwarmEntity(pod, 0, 0, 0, 1, 400, undefined, 0, isMiningTool('tractor'))).toBeNull();
+    const scrap = { ...pod, shipKind: undefined } as SwarmRenderState;
+    expect(rayHitsDrawnSwarmEntity(scrap, 0, 0, 0, 1, 400)).not.toBeNull();
+    expect(rayHitsDrawnSwarmEntity(scrap, 0, 0, 0, 1, 400, undefined, 0, true)).not.toBeNull();
+  });
+
   // 2026-11-13: the circle gate was `rayHitsSphere`, null once the ray starts
   // inside the circle past the centre, so a beam fired from beside a capital
   // (its circle is half the hull's length) across the far half missed. Same
@@ -98,6 +111,24 @@ describe('DisplayPoseHitscan', () => {
       expect(rayHitsDrawnSwarmEntity(bb, fx, fy, 1, 0, R)).toBeNull();
     });
   }
+
+  // Showcase review (wreck-resplit take 5): a lance battlecruiser's beams on a
+  // locked wreck piece 5 km off were drawn their full 20 km straight through
+  // it. Wreck pieces stream into the predWorld only near the local ship
+  // (PREDWORLD_WRECK_RADIUS), and this ray tested only entities with a body,
+  // so a far piece was invisible to it while the server's beam stopped on it.
+  it('a wreck piece with no predWorld body (far, streamed out) still stops the beam at its drawn hull', async () => {
+    const { w, h, swarm, keys } = await setup();
+    swarm.get(1)!.x = 300; // drone out of the way
+    const square = [[{ x: -40, y: -40 }, { x: 40, y: -40 }, { x: 40, y: 40 }, { x: -40, y: 40 }]];
+    swarm.set(7, { ...drone(0, 250), kind: 4, radius: 57, shipKind: undefined, wreckId: 3, componentIndex: 0 } as unknown as SwarmRenderState);
+    h.wrecks = { has: (id) => id === 3, piece: (id) => (id === 3 ? { parts: square, radius: 57 } as never : null) };
+    keys.set(7, 'swarm-7');
+    const hit = h.hitscan(0, 0, 0, 1, 500, 'me');
+    expect(hit?.hitId).toBe('swarm-7');
+    expect(hit!.dist).toBeCloseTo(210, 0);
+    w.dispose();
+  });
 
   it('the closest of predWorld and drawn hits wins', async () => {
     const { w, h, swarm } = await setup();

@@ -57,7 +57,8 @@ import type { ShipArt } from '../art/ArtService.js';
 import { sunFrameBlend, type SunBlend } from '../art/machinedShipLight.js';
 import { buildWreckPieceGfx, wreckPieceColors } from './spriteBuilders.js';
 import { isIconOnly } from './FarZoomIcons.js';
-import { getShipKind, isShipKindId } from '../../../shared-types/shipKinds.js';
+import { rockPieceSpeckColor, type RockPieceArt } from './rockPieceArt.js';
+import { getShipKind } from '../../../shared-types/shipKinds.js';
 import { shipShapeScale } from '../../../core/geometry/shipHullOutline.js';
 import type { WreckPieceGeometry } from '../../../core/destruction/wreckPieces.js';
 import { EDGE_CUT } from '../../../core/destruction/fractureHull.js';
@@ -73,9 +74,9 @@ export {
   simpleGlowAt, wreckGlowAt, type WreckGlow,
 } from './wreckGlowCurves.js';
 import { drawnSpan, insideWidth, lastChamferRatio, onDrawnHull, pointInRing, stripInside, writeStrip, type InsideTest } from './wreckGlowStrip.js';
-import type { WreckDescriptor } from '../../../shared-types/messages/snapshotMessages.js';
+import { WRECK_ROCK_PARENT_KIND, type WreckDescriptor } from '../../../shared-types/messages/wreckDescriptor.js';
 import { destructionProfileOf } from '../../../shared-types/shipScale/destructionProfile.js';
-import type { DestructionFx, DestructionProfileId, WreckGlowStyle } from '../../../shared-types/shipScale/destruction.js';
+import { DESTRUCTION_PROFILES, type DestructionFx, type DestructionProfileId, type WreckGlowStyle } from '../../../shared-types/shipScale/destruction.js';
 
 /** Container + meshes (≤ 6 tiles) + one glow mesh (the crack strokes). */
 export const WRECK_DISPLAY_OBJECTS_PER_PIECE_MAX = 8;
@@ -542,9 +543,9 @@ export interface WreckInfo {
   noHold: boolean;
 }
 
-/** A wreck's profile, by its parent kind. */
+/** A wreck's profile, by its parent kind (a rock's wreck: the rock profile, never a ship lookup). */
 function profileFor(desc: WreckDescriptor): { id: DestructionProfileId; fx: DestructionFx } {
-  return destructionProfileOf({ type: 'ship', kindId: desc.parentKind });
+  return desc.parentKind === WRECK_ROCK_PARENT_KIND ? DESTRUCTION_PROFILES.rock : destructionProfileOf({ type: 'ship', kindId: desc.parentKind });
 }
 
 /** One small blast on a crack: its piece, the point body-local (math-up),
@@ -843,44 +844,6 @@ export function wreckBlasts(x: number, y: number, radius: number, seed: number, 
   return 3;
 }
 
-/**
- * True when a dying ship's own death blast is left to the wreck break-up:
- * the room breaks capitals into wrecks (welcome `capitalWrecks`) and the
- * dying sprite is a capital. #493's hull-sized blast (radius ≈ the hull)
- * otherwise covers the whole hull exactly when it breaks (money-shot
- * review); the break-up's fireballs at the kill point replace it. With the
- * dying kind given, its destruction profile must say so too
- * (`fx.hullDeathBlastReplaced`): a sub-capital's wreck never replaces the
- * ship's normal death explosion (sub-capital break-up, slice 4).
- */
-export function hullDeathBlastReplaced(capitalWrecks: boolean | undefined, dyingIsCapital: boolean, dyingKind?: string | null): boolean {
-  if (capitalWrecks !== true || !dyingIsCapital) return false;
-  return dyingKind == null || destructionProfileOf({ type: 'ship', kindId: dyingKind }).fx.hullDeathBlastReplaced;
-}
-
-/**
- * The ship's normal death explosion, scaled by its destruction profile
- * (`fx.deathBlastScale` radius, `fx.deathBlastLinger` smoke) while the room
- * breaks that profile into wrecks: a sub-capital with welcome `subcapWrecks`
- * (owner 2026-11-13, "Shrink it": ~half size, shorter smoke, so the break-up
- * and the fight stay readable and capitals feel bigger). Everything else,
- * and every death with the flag off, is 1 / 1 (unchanged). Alloc-free.
- */
-export function deathBlastFor(
-  subcapWrecks: boolean | undefined, capitalWrecks: boolean | undefined, kind: string | null | undefined,
-  out: { scale: number; linger: number },
-): { scale: number; linger: number } {
-  out.scale = 1;
-  out.linger = 1;
-  if (typeof kind !== 'string' || !isShipKindId(kind)) return out;
-  const p = destructionProfileOf({ type: 'ship', kindId: kind });
-  const on = p.id === 'subcap' ? subcapWrecks === true : p.id === 'capital' ? capitalWrecks === true : false;
-  if (!on) return out;
-  out.scale = p.fx.deathBlastScale;
-  out.linger = p.fx.deathBlastLinger;
-  return out;
-}
-
 /** A railgun channel through a wreck, game space: from the slug's entry
  *  (`ax, ay`, the kill point) to where it left the hull (`bx, by`). */
 export interface WreckChannelLine { ax: number; ay: number; bx: number; by: number }
@@ -954,7 +917,7 @@ export class WreckArtState {
       && prev.desc.killX === desc.killX && prev.desc.killY === desc.killY) return prev;
     const prof = profileFor(desc);
     const fx = prof.fx;
-    const s = shipShapeScale(getShipKind(desc.parentKind));
+    const s = desc.parentKind === WRECK_ROCK_PARENT_KIND ? 1 : shipShapeScale(getShipKind(desc.parentKind)); // rock pieces: scale 1
     let hullR = 0;
     for (const p of pieces) hullR = Math.max(hullR, Math.hypot(p.cx, p.cy) + p.radius);
     const ageMs = desc.deathTick !== undefined ? Math.max(0, serverTick - desc.deathTick) * TICK_MS : Infinity;
@@ -1149,15 +1112,17 @@ export class WreckPieceSprite extends Container {
 
   constructor(
     piece: WreckPieceGeometry, parentKind: string, readonly art: ShipArt | null, readonly info: WreckInfo,
-    /** This piece's index in its wreck (its ripples). */
-    readonly pieceIndex = 0,
+    /** This piece's index in its wreck (its ripples); a rock piece's art (`buildRockPieceArt`, no ship lookups). */
+    readonly pieceIndex = 0, readonly rockArt: RockPieceArt | null = null,
   ) {
     super();
     this.piece = piece;
     this.parentKind = parentKind;
-    this.shipRadius = getShipKind(parentKind).radius;
+    // A rock piece's LOD switches on its parent rock's size (no ship kind).
+    this.shipRadius = rockArt !== null ? rockArt.rock.r : getShipKind(parentKind).radius;
     const settings = litPass.settings;
-    if (art !== null && art.lit !== undefined && settings !== null) {
+    if (rockArt !== null) this.artParts.push(this.addChild(rockArt));
+    else if (art !== null && art.lit !== undefined && settings !== null) {
       // GPU-lit art (the player's default look): the frames are data pages
       // of UNLIT maps (albedo, normals, emission). Only the lit shader turns
       // them into a lit hull, so each tile piece is a LitShipMesh carrying
@@ -1508,7 +1473,9 @@ export class WreckPieceSprite extends Container {
    * only on a change.
    */
   setFarZoom(scale: number, layer: RenderLayer | null = null): void {
-    if (this.litMeshes === 0) return;
+    // A rock piece always takes the speck: as the rock does at far zoom,
+    // lit or not (one batched speck instead of the piece mesh).
+    if (this.litMeshes === 0 && this.rockArt === null) return;
     const lod = wreckPieceFarLod(this.shipRadius, scale, this.farLod);
     if (lod === this.farLod) return;
     this.farLod = lod;
@@ -1525,7 +1492,7 @@ export class WreckPieceSprite extends Container {
       g.position.set((x0 + x1) / 2, -(y0 + y1) / 2); // pixiY = -gameY
       g.width = Math.max(1e-3, x1 - x0);
       g.height = Math.max(1e-3, y1 - y0);
-      const fill = wreckPieceColors(this.parentKind).fill;
+      const fill = this.rockArt !== null ? rockPieceSpeckColor(this.rockArt.rock) : wreckPieceColors(this.parentKind).fill;
       g.tint = this.info.fx.burntArt ? mulColor(fill, burntTint(this.piece, this.info)) : mulColor(fill, this.artTint);
       this.addChildAt(g, 0); // under the glow
       this.farGfx = g;
