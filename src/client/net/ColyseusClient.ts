@@ -106,6 +106,8 @@ import {
 import { recoverInputTickFromStarvation, skipStalledBacklog, stallResumeAction } from './inputTickRecovery';
 import { SnapshotCoalescer } from './SnapshotCoalescer.js';
 import { ClientEntityFactory } from './entity/ClientEntityFactory.js';
+import { createGameCutField, type CutFieldSummary } from './cutFieldWiring.js';
+import { clearMirror } from './clearMirror.js';
 import { WreckGeometryStore } from './wreckGeometryStore.js';
 import { SWARM_KIND_WRECK } from '@shared-types/swarmWireFormat';
 import type { ClientSpawnCtx } from './entity/IClientEntityLeaf.js';
@@ -556,6 +558,7 @@ export class ColyseusGameClient {
   /** Capital destruction S2b: wreck geometry rebuilt from the snapshot's
    *  `wrecks[]` descriptors. Its `descriptors` map IS `mirror.wrecks`. */
   private readonly _wrecks = new WreckGeometryStore();
+  private readonly _cutField = createGameCutField({ gameClock: () => this.gameClock, predWorld: () => this.predWorld, mirror: this.mirror }); // macro terrain v2
   /** Reused construction context — one instance mutated in place per entity, so
    *  swarm spawn allocates nothing (invariant #14). `predWorld` / `entry` are
    *  filled per use; `aiController` is the (constant) hostility ledger. */
@@ -563,6 +566,7 @@ export class ColyseusGameClient {
     predWorld: null as unknown as ClientSpawnCtx['predWorld'],
     aiController: this._aiController,
     wrecks: this._wrecks,
+    fieldRocks: this._cutField,
     entityId: 0,
     key: '',
     entry: null as unknown as ClientSpawnCtx['entry'],
@@ -1468,6 +1472,7 @@ export class ColyseusGameClient {
   private resetPredictionState(): void {
     // S2b: wrecks belong to the old sector (clears mirror.wrecks too).
     this._wrecks.clear();
+    this._cutField.stop(); // the cut field belongs to the old sector; the next welcome re-arms it
     // Deaths held for their drawn shell belong to the old sector too.
     this._shellTiming.reset();
     // Fire control: NPC locks belong to the old sector.
@@ -1690,6 +1695,8 @@ export class ColyseusGameClient {
       this.mirror.capitalWrecks = msg.capitalWrecks === true;
       // Sub-cap wrecks on: a dying sub-cap's hull is held until its pieces draw.
       this.mirror.subcapWrecks = msg.subcapWrecks === true;
+      // Cut field on: cut the same rocks as the server from its seed (#16).
+      this._cutField.setSeed(msg.cutField?.seed ?? null);
       // Sub-capital break-up slice 3: the welcome carries the FULL live wreck
       // set (#16); snapshots then carry only adds, removes and a slow resync.
       if (msg.capitalWrecks === true || msg.subcapWrecks === true) {
@@ -7269,27 +7276,10 @@ export class ColyseusGameClient {
     });
   }
 
-  /**
-   * Plan: crispy-kazoo, Commit 6 — reflection-based mirror clear.
-   *
-   * Walks every property on `mirror` and clears Maps / Sets / Arrays
-   * generically. The plan's prophylactic against future mirror
-   * additions: adding a new field to `RenderMirror` does NOT require
-   * touching dispose — the walk picks it up automatically. The
-   * disposeAudit test populates every field with a sentinel value
-   * and asserts they're empty post-dispose.
-   */
-  private clearMirror(): void {
-    const m = this.mirror as unknown as Record<string, unknown>;
-    for (const k of Object.keys(m)) {
-      const v = m[k];
-      if (v instanceof Map) v.clear();
-      else if (v instanceof Set) v.clear();
-      else if (Array.isArray(v)) v.length = 0;
-    }
-  }
+  get cutFieldStats(): CutFieldSummary { return this._cutField.summary(); } // cut-field-collision.spec.ts waits on it
 
   dispose(): void {
+    this._cutField.stop();
     // Game time scale: the next session starts at 1× until its snapshots say otherwise.
     useUIStore.getState().setTimeScale(1);
     this.disposed = true;
@@ -7347,7 +7337,7 @@ export class ColyseusGameClient {
     this._scheduledDamageSpawns.length = 0;
 
     // Reflection-based clear: every Map / Set / Array on `mirror` empties.
-    this.clearMirror();
+    clearMirror(this.mirror); // ./clearMirror.ts
 
     // Stats + per-connection accumulators — reset to freshly-constructed
     // (non-nullable types) so a re-mount sees a clean baseline.

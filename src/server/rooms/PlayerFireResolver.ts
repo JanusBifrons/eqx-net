@@ -664,8 +664,7 @@ export class PlayerFireResolver implements WeaponFireSink {
 
     // 3. Swarm (drones + asteroids).
     for (const rec of d.swarmRegistry.all()) {
-      // Nobody fights a loot pod, a pilot included (`isLootPod`).
-      if (isLootPod(rec)) continue;
+      if (isLootPod(rec)) continue; // nobody fights a loot pod, a pilot included
       const rewound = d.snapshotRing.getPoseAt(rec.id, effTick);
       const b = slotBase(rec.slot);
       const cx = rewound?.x ?? d.sabF32[b + SLOT_X_OFF]!;
@@ -674,11 +673,9 @@ export class PlayerFireResolver implements WeaponFireSink {
       let dist: number | null;
       if (rec.kind === 0 && rec.vertices) {
         dist = rayHitsConvexPolygon(rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, ca, rec.vertices, hw);
-      } else if (rec.kind === 4) {
-        // A capital wreck piece (S2a) stops the beam: its convex parts.
+      } else if (rec.kind === 4) { // a wreck piece (S2a) stops the beam: its convex parts
         dist = wreckRayHit(rec.wreckParts, rec.radius, rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, ca, hw);
-      } else if (rec.halfW !== undefined && rec.halfH !== undefined) {
-        // Structures (phase V): the footprint box, not the bounding circle.
+      } else if (rec.halfW !== undefined && rec.halfH !== undefined) { // structures: the footprint box
         dist = rayHitsBox(rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, rec.halfW, rec.halfH, rec.boxes, hw);
       } else if (rec.kind === 1 && rec.shipKind) {
         // A ship: the same shape as if a player flew it (`shipHitShape.ts`,

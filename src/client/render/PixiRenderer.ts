@@ -85,6 +85,7 @@ import type { CameraCue, CameraGroup } from '@core/contracts/cameraScript';
 import { REMOTE_BEAM_STYLE, LIVE_BEAM_STYLE, liveBeamLook, liveBeamLine,MINING_BEAM_STYLE, remoteBeamStyleForMount, remoteBeamLine, remoteBeamSolidLen, addBeamLights, beamLightBudget, BeamHitMemory, type RemoteBeamLine } from './beamStyles';
 import { MountVisualManager } from './MountVisualManager';
 import { BackgroundGrid } from './BackgroundGrid';
+import { CutFieldLayer } from './field/CutFieldLayer';
 import { StarfieldBackground } from './StarfieldBackground';
 import { logEvent, isDiagEnabled } from '../debug/ClientLogger';
 import { getShipKind } from '../../shared-types/shipKinds';
@@ -182,7 +183,7 @@ export class PixiRenderer implements IRenderer {
 
   constructor(isTouch = false, art: ArtOptions = ART_OFF, fxKillSwitches?: FxKillSwitches) {
     this._isTouch = isTouch;
-    this._artOpts = art;
+    this._artOpts = art; this._cutField.setOreStyle(art.ore ?? 'veins');
     this._fxKillSwitches = fxKillSwitches;
     this.halo = new HaloRadar(isTouch);
   }
@@ -318,6 +319,8 @@ export class PixiRenderer implements IRenderer {
   private readonly _farIcons = new FarZoomIcons();
   /** Far-zoom wreck-piece specks, one batch (wreckArt.ts `setFarZoom`). */
   private readonly _wreckFarLayer = new RenderLayer();
+  /** Macro terrain v2 (room flag `cutField`): loaded cut-field chunks. */
+  private readonly _cutField = new CutFieldLayer();
   /** Machined art (plan iridescent-seeking-rainbow): shared by the ship,
    *  swarm and lingering updaters. `art` is set in `init` when `?art=machined`
    *  (or the default) asks for it; null ⇒ today's vector look everywhere. */
@@ -994,6 +997,7 @@ export class PixiRenderer implements IRenderer {
       this.backgroundGrid.attach(this.camera);
     }
 
+    this.camera.addChild(this._cutField.container); // cut-field rocks: under everything that moves
     this.shipContainer = new Container();
     this.camera.addChild(this.shipContainer);
     // Far-zoom wreck specks (wreckArt.ts `setFarZoom`): drawn together as one
@@ -1047,6 +1051,7 @@ export class PixiRenderer implements IRenderer {
       art: this._artCtx,
       // Capital destruction S2b: wreck piece geometry rebuilt from mirror.wrecks.
       wrecks: new WreckGeometryStore(),
+      fieldRocks: this._cutField,
       // S3: each wreck's death clock; a fresh wreck's break-up (dust, shards,
       // flash at the kill point) goes through the effects system, tier-capped.
       wreckArt: new WreckArtState((x, y, radius, snap, seed, wfx, channel, cut) => {
@@ -2826,6 +2831,7 @@ export class PixiRenderer implements IRenderer {
     // the multi-pass filter chain every frame → frame rate collapses
     // (the late-onset spiral pattern in captures `af742v` / `ecat41`).
     this.drainRemoteWarp(mirror);
+    this._cutField.update(mirror, this._artCtx.sunAz, this.camera.scale.x); // cut-field chunks + view
 
     // Phase 1 — name labels above remote ships and drones (skip self).
     this.labels?.update(mirror);

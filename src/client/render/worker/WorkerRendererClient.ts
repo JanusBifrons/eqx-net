@@ -223,7 +223,7 @@ export class WorkerRendererClient implements IRenderer {
       ...(this._art.fx ? { fx: true } : {}),
       ...(this._art.speedFx === false ? { speedFxOff: true } : {}),
       ...(this._art.lighting ? { lighting: this._art.lighting } : {}),
-      ...(this._art.livery ? { livery: this._art.livery } : {}),
+      ...(this._art.livery ? { livery: this._art.livery } : {}), ...(this._art.ore ? { ore: this._art.ore } : {}),
       // The worker has no `window`: resolve `?cleanworld=1` & co. here.
       fxKillSwitches: readFxKillSwitches(),
     }, [offscreen]);
@@ -432,6 +432,7 @@ export class WorkerRendererClient implements IRenderer {
     if (mirror.pendingDamageNumberCancels) mirror.pendingDamageNumberCancels.length = 0;
     if (mirror.pendingHealthBarHits) mirror.pendingHealthBarHits.length = 0;
     if (mirror.pendingWarpEvents) mirror.pendingWarpEvents.length = 0;
+    if (mirror.pendingFieldChunks) mirror.pendingFieldChunks.length = 0;
   }
 
   /** Post one MIRROR_UPDATE: the mirror minus `swarm`, plus the swarm delta. */

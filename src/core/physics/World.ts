@@ -961,7 +961,7 @@ export class PhysicsWorld {
   isSleeping(id: string): boolean {
     const rec = this.bodies.get(id);
     if (!rec) return false;
-    return rec.body.isSleeping();
+    return rec.body.isSleeping() || rec.body.isFixed(); // fixed (cut-field rock): never simulates, so quiet
   }
 
   /**
@@ -1048,6 +1048,11 @@ export class PhysicsWorld {
   setAngularDamping(id: string, damping: number): void {
     this.bodies.get(id)?.body.setAngularDamping(damping);
   }
+
+  /** FIXED terrain (cut-field rocks): never simulated or solved, unlike a `lockBody` body; same call on the server worker and predWorld (#15). */
+  fixBody(id: string): void { this.bodies.get(id)?.body.setBodyType(RAPIER.RigidBodyType.Fixed, true); }
+  /** Wake a fixed body into a dynamic one (a rammed rock), keeping its colliders and mass. */
+  unfixBody(id: string): void { const b = this.bodies.get(id)?.body; if (b?.isFixed()) { b.setBodyType(RAPIER.RigidBodyType.Dynamic, true); b.wakeUp(); } }
 
   lockBody(id: string): void {
     const rec = this.bodies.get(id);
