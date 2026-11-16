@@ -10,7 +10,21 @@ Cutting up what is left after a battle: capital wrecks are a resource, and salva
 - **It is made for wrecks.** On a wreck it works at full strength.
 - **It cuts in a line.** When a mining-laser hit breaks something apart, the break runs straight along the beam, a narrow cut, like the heavy beam's slice but much thinner.
 - **It is cheap to run.** A capital's energy recharges faster than the beam uses it, so it can stay on for as long as it is needed.
-- **Range:** a capital turret's reach (12 km), shorter than the heavy beam.
+- **Range: bigger mounts reach further** ([range by mount size](#range-by-mount-size)). An XL mount reaches 12 km (a capital turret's reach, shorter than the heavy beam); smaller mounts reach less.
+
+### Range by mount size
+
+**What happens (owner 2026-11-16).** A mining laser or a tractor reaches further the bigger its mount: XL keeps the full catalogue range, smaller mounts a fixed share of it (mount size reach ÷ XL reach, 0.8 / 1 / 1.25 / 1.6 against 2.2). An unsized mount counts as S. Guns are not affected: every gun keeps its range at every mount size.
+
+| Mount | Mining laser | Tractor |
+|---|---|---|
+| XL | 12,000 u | 3,000 u |
+| L | ≈ 8,727 u | ≈ 2,182 u |
+| M | ≈ 6,818 u | ≈ 1,705 u |
+| S (and unsized) | ≈ 5,455 u | ≈ 1,364 u |
+| AA | ≈ 4,364 u | ≈ 1,091 u |
+
+A mount fires only at a locked target inside its own reach (locks still work at any distance), so a small laser has to be brought in closer to a rock than a big one. The aim guide and the contact list's group reach show the same per-mount number. Tractors pull up to their reach and no further; the [size ladder](#the-size-ladder-big-lasers-feed-big-tractors-feed-small-lasers) is unchanged, because it judges a tractor at 500 u, far inside even an AA tractor's reach.
 
 No ship carries it yet: the mining barge that does is a later step.
 
@@ -36,7 +50,7 @@ No ship carries it yet: the mining barge that does is a later step.
 
 **Is it hostile?** Tractoring another pilot pulls them against their will, so tractoring a SHIP is a hostile act exactly like shooting at it: the same standing hit, and an NPC tractored by a pilot turns hostile to that pilot as if hit (an NPC's tractor on a pilot keeps its hostility alive, never creates it). Tractoring terrain (rocks, wreck pieces, loot pods, scrap) is neutral, the same as locking it.
 
-**Numbers** (`tractor` in `WeaponCatalogue.ts`, an S mount): force 6,000, full force inside 250 u and inverse-square beyond; hold 250 u (keep `dRef ≤ hold`, or a load arriving at the cushion still slams); reach 3,000 u; beam line 40 u either side at a quarter of the force; fires every 10 ticks (like the heavy beam) for 4 energy; each shot keeps the beam on for 12 ticks.
+**Numbers** (`tractor` in `WeaponCatalogue.ts`, an S mount): force 6,000, full force inside 250 u and inverse-square beyond; hold 250 u (keep `dRef ≤ hold`, or a load arriving at the cushion still slams); reach 3,000 u at an XL mount, ≈ 1,364 u at this S one ([range by mount size](#range-by-mount-size)); beam line 40 u either side at a quarter of the force; fires every 10 ticks (like the heavy beam) for 4 energy; each shot keeps the beam on for 12 ticks.
 
 **How it runs.** Every accepted fire renews a short lease for that mount and target. While the lease is live, the server's force-field list carries a `tractor` field that the physics worker applies every step; the lease ends 12 ticks after the last fire, or at once when the ship or the target is gone. A wreck that has just broken apart holds together as one rigid body for a moment (its crack hold): a tractor on one of its pieces holds on but does not pull until the hold ends. Pickup: on each loot collect pass (~10 Hz) `LootSubsystem` asks, for a pod beyond the fly-over radius, `ForceFieldSubsystem.inTractorHold(collector, pod, x, y)`: does this collector (its pilot id, or an AI ship's swarm id) hold a live, posed lease on that pod with the pod within `TRACTOR_PICKUP_HOLD_MUL` (1.2) × `hold` of the beam's muzzle? If so the pod goes through the same atomic `pickUp` as a fly-over (one `HoldStore` group; a full hold moves nothing and the pod stays). The same pass stores a held wreck piece: `ForceFieldSubsystem.forEachHeldPiece` visits the wreck pieces the collector's own leases hold in that zone; the piece's worth (`CapitalWreckSubsystem.pieceStore`: `wreckSalvageQty` salvage, or a rock piece's ore) goes into the hold in one `HoldStore` commit, all or nothing, and `storePiece` removes the piece through the worn-out path. Only collectors pick up (#17: active rostered hulls and `collectsLoot` AI ships). Locks: `tests/integration/sectorRoom/tractorPickup.test.ts`, `ForceFieldSubsystem.test.ts`. Internals: [physics-worker, Force fields](../architecture/physics-worker.md#force-fields), [weapon-mounts, Tractor beam](../architecture/weapon-mounts.md#tractor-beam).
 
@@ -66,7 +80,7 @@ No ship carries it yet: the mining barge that does is a later step.
 
 **Today's sizes** (a piece's weight; a rough cut-rock radius at the rock density 0.25, taking a piece as a disc): AA up to 60 (about 9 u), S up to 150 (about 14 u), M up to 375 (about 22 u), L up to 900 (about 34 u), XL up to 2,250 (about 54 u); anything heavier, and every whole field rock, is too big for any tractor. Fighter debris is AA size, so on a ship whose lasers are all S or bigger the tractors take it.
 
-**Where pieces end up.** A tractor holds its piece on a cushion 250 u from its mount (every size). Every mining laser reaches 12,000 u, so the held piece is well inside the reach of every laser on the same ship (even a barge is ~7,500 u long).
+**Where pieces end up.** A tractor holds its piece on a cushion 250 u from its mount (every size). A mining laser reaches 4,364 u (AA) to 12,000 u (XL) ([range by mount size](#range-by-mount-size)), so the held piece is inside the reach of every laser near that tractor; on a long hull (a barge is ~7,500 u long) a small laser at the far end may not reach it, so small lasers sit near the tractors that feed them.
 
 **How it runs.** `salvageTier` / `salvageTierMass` / `mountTier` (`core/combat/salvageTargeting.ts`) give the sizes; the lock step stamps each piece's size on its lock (`lockSalvageFlags`, `server/rooms/lockSalvage.ts`), it rides to the pilot's client on the wire lock, and the shared `pickTurretLock` (`laserCutsTier` / `tractorTakesTier`) makes the same choice on both sides. Locks: `salvageTargeting.test.ts`, `turretLockPick.salvage.test.ts`, `tests/unit/salvageLockParity.test.ts`, `tests/integration/sectorRoom/sizeLadder.test.ts`, `salvageLockFlags.test.ts`.
 

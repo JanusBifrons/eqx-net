@@ -20,7 +20,7 @@ import { isSalvageWeapon } from '../../core/combat/salvageTargeting.js';
 import { shipGroups } from './lockGroups.js';
 import { mountInReach, mountWeaponReach } from '../../core/combat/mountReach.js';
 import type { FireTargetShape } from '../../core/combat/fireControlBearing.js';
-import { getWeapon, weaponAutoFireRange } from '../../core/combat/WeaponCatalogue.js';
+import { getWeapon } from '../../core/combat/WeaponCatalogue.js';
 import type { ShipKind, WeaponMount } from '../../shared-types/shipKinds/types.js';
 
 /** A lockable target, resolved each lock step. Its `FireTargetShape` half
@@ -141,7 +141,7 @@ export function groupGeometry(mounts: ReadonlyArray<WeaponMount>): {
   for (const m of mounts) {
     const s = (m.size ?? 'none') as MountSize | 'none';
     if (SIZE_RANK[s] > SIZE_RANK[size]) size = s;
-    const r = weaponAutoFireRange(getWeapon(m.weaponId));
+    const r = mountWeaponReach(m);
     if (r > reach) reach = r;
   }
   const p = WEAPON_LOCK_PROFILE[size];
