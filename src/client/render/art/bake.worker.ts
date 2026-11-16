@@ -6,6 +6,7 @@
 import { runBake, type BakeJob } from './bake.js';
 import type { LightRig } from './shade.js';
 import { rocksInChunk, type ChunkOpts } from '../../../core/terrain/fieldLayout.js';
+import { packChunk, packedBuffers } from '../../../core/terrain/packedChunk.js';
 
 /** A bake, or (the pool's second job) one cut-field chunk to cut. */
 type Req =
@@ -15,7 +16,8 @@ type Req =
 self.onmessage = (e: MessageEvent<Req>): void => {
   if (e.data.cut) {
     const { seq, cut } = e.data;
-    (self as unknown as Worker).postMessage({ seq, rocks: rocksInChunk(cut.field, cut.cx, cut.cy) });
+    const packed = packChunk(rocksInChunk(cut.field, cut.cx, cut.cy), cut.field.seed);
+    (self as unknown as Worker).postMessage({ seq, packed }, packedBuffers(packed));
     return;
   }
   const { seq, job, rig } = e.data;
