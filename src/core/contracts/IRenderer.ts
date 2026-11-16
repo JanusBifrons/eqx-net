@@ -1,4 +1,5 @@
 import type { CameraCue } from './cameraScript.js';
+import type { PackedChunk } from '../terrain/packedChunk.js';
 import type { WreckDescriptor } from '../../shared-types/messages/snapshotMessages.js';
 import type { RadarInsets, RadarPrefs } from '../../shared-types/settings/radar.js';
 import type { PerfProbeOp, RenderPerfReading } from './rendererPerfProbe.js';
@@ -634,8 +635,10 @@ export interface RenderMirror {
    *  dropped since the last frame. `outlines` is [n, x0, y0, …, n, …] in game
    *  space; null drops the chunk. Drained each frame, like `pendingWarpEvents`;
    *  only a chunk load or unload adds an entry, never a frame. `ore`: [ice,
-   *  crystal] per rock-fan vertex (`oreForOutlines`), for the ore look. */
-  pendingFieldChunks?: Array<{ cx: number; cy: number; outlines: Float32Array | null; ore?: Float32Array | null }>;
+   *  crystal] per rock-fan vertex (`oreForOutlines`), for the ore look.
+   *  `bodies`: the packed chunk (each rock's body and convex parts), so the
+   *  link preview tests an awake rock's real shape (C5c). */
+  pendingFieldChunks?: Array<{ cx: number; cy: number; outlines: Float32Array | null; ore?: Float32Array | null; bodies?: PackedChunk | null }>;
   /** Missile detonations to play this frame. The renderer drains the
    *  array, spawns explosion VFX at each `(x, y)`, sizes the sprite to
    *  `splashRadius`, and triggers a camera shake with magnitude inverse

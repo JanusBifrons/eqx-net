@@ -1003,15 +1003,14 @@ export class PixiRenderer implements IRenderer {
     this.camera.addChild(this._cutField.container); // cut-field rocks: under everything that moves
     this.shipContainer = new Container();
     this.camera.addChild(this.shipContainer);
-    // Far-zoom wreck specks (wreckArt.ts `setFarZoom`): drawn together as one
-    // batch, under the ship icons.
+    // Far-zoom wreck specks (wreckArt.ts `setFarZoom`): one batch, under the ship icons.
     this.camera.addChild(this._wreckFarLayer);
     // Far-zoom ship icons above the ships they stand in for (FarZoomIcons.ts).
     this.camera.addChild(this._farIcons.container);
 
     // Structures plan, Phase 3 — the grid connector web. Added FIRST so the
     // lines render BEHIND the structure/ship sprites added later.
-    this.connectorRenderer = new ConnectorRenderer();
+    this.connectorRenderer = new ConnectorRenderer(this._cutField);
     this.connectorRenderer.setTurretOverlaysVisible(this._lockMarksVisible);
     // A3 — the static layer (idle web, range rings, wall rails) sits behind the
     // per-frame layer.

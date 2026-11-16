@@ -50,6 +50,7 @@ import {
   structureMirrorToGridNode,
   ghostToGridNode,
   asteroidObstaclesFromSwarm,
+  RockObstacleShapes, type FieldRockBodySource,
 } from '../../structures/mirrorToGridNode.js';
 
 /** A pooled, mutable stand-in for a {@link Connection} used ONLY by the placement
@@ -230,6 +231,10 @@ export class ConnectorRenderer {
   // these stay empty/untouched during normal play.
   /** Reused obstacle array (asteroids), refilled in place each preview frame. */
   private readonly _previewObstacles: GridObstacle[] = [];
+  /** Each rock's convex parts for the preview's line of sight (C5c, the
+   *  server's shape); its `fieldRocks` is the cut-field layer (PixiRenderer). */
+  readonly rockShapes = new RockObstacleShapes();
+  constructor(fieldRocks: FieldRockBodySource | null = null) { this.rockShapes.fieldRocks = fieldRocks; }
   /** Reused ghost node (node `a` passed to `canConnect`). */
   private readonly _ghostNode: GridNode = blankGridNode();
   /** Reused node map for the LOS check (`canConnect` clips the segment against
@@ -690,7 +695,7 @@ export class ConnectorRenderer {
 
     // Build the obstacle list (asteroids) + the node map + adjacency for the
     // SAME canConnect the server uses, all into reused scratch.
-    const obstacles = asteroidObstaclesFromSwarm(swarm, this._previewObstacles);
+    const obstacles = asteroidObstaclesFromSwarm(swarm, this._previewObstacles, this.rockShapes);
 
     const nodes = this._previewNodes;
     nodes.clear();
