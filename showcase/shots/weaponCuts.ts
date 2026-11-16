@@ -292,33 +292,44 @@ async function npcOf(ctx: ShotContext, kind: string): Promise<{ wire: string; x:
   }, kind).catch(() => null);
 }
 
-/** Records, in the page, the shooter of the last beam that hit `wire` (an
- *  observation of the room's `laser_fired` broadcasts; nothing is sent). */
+type BeamsOnLog = { lastShooter: string | null; hits: number; killer: string | null };
+
+/** Records, in the page, the shooter of the last beam that hit `wire` and,
+ *  from the room's `destroy` event, who killed it (observations of the
+ *  room's broadcasts; nothing is sent). */
 async function watchBeamsOn(ctx: ShotContext, wire: string): Promise<void> {
   await ctx.page.evaluate((w) => {
-    const g = globalThis as { __eqxClient?: { room?: { onMessage(t: string, cb: (e: { shooterId: string; targetId?: string }) => void): void } }; __collateral?: { lastShooter: string | null; hits: number } };
-    const rec = { lastShooter: null as string | null, hits: 0 };
+    const g = globalThis as { __eqxClient?: { room?: { onMessage(t: string, cb: (e: { shooterId: string; targetId?: string }) => void): void } }; __collateral?: BeamsOnLog };
+    const rec: BeamsOnLog = { lastShooter: null, hits: 0, killer: null };
     g.__collateral = rec;
     g.__eqxClient?.room?.onMessage('laser_fired', (e) => { if (e.targetId === w) { rec.lastShooter = e.shooterId; rec.hits++; } });
+    g.__eqxClient?.room?.onMessage('destroy', (e) => { if (e.targetId === w) rec.killer = e.shooterId; });
   }, wire);
 }
 
-async function beamsOnLog(ctx: ShotContext): Promise<{ lastShooter: string | null; hits: number }> {
-  return ctx.page.evaluate(() => (globalThis as { __collateral?: { lastShooter: string | null; hits: number } }).__collateral ?? { lastShooter: null, hits: 0 })
-    .catch(() => ({ lastShooter: null, hits: 0 }));
+async function beamsOnLog(ctx: ShotContext): Promise<BeamsOnLog> {
+  const none: BeamsOnLog = { lastShooter: null, hits: 0, killer: null };
+  return ctx.page.evaluate(() => (globalThis as { __collateral?: BeamsOnLog }).__collateral ?? null)
+    .then((r) => r ?? none).catch(() => none);
 }
+
+/** How long the shot waits for the kill after your capital arrives: the
+ *  room's `BEAM_COLLATERAL.killWindowMs` (60 s, asserted at 1x by
+ *  beamCollateralKill.test.ts) plus a margin for a busy host. */
+const COLLATERAL_WAIT_MS = 75_000;
 
 /**
  * Shot A3, collateral: your lance battlecruiser (AI-flown, Hunt + Aggressive)
  * fights the enemy's lance battlecruiser, and the enemy's missile frigate sits
- * on the line between them. Nobody locks or aims at the frigate; your heavy
- * beams, laid on the enemy capital, burn through it on the way. Wide on both
- * capitals while the turrets train and the fight opens, then a hold on the
- * frigate and the enemy capital behind it (the beams cross the frame); at the
- * kill (the frigate leaves the mirror: an observation, no cue) the camera
- * frames the kill point and, once it shows, the salvage pod. Logs the kill
- * time and whose beam last hit it. No `test_aggro`: the enemy capital is
- * hostile from its spawn, and the frigate must stay out of the fight.
+ * side-on across the line between them (12 km from yours, 7.5 km from the
+ * enemy's). Nobody locks or aims at the frigate; your heavy beams, laid on the
+ * enemy capital, burn through it on the way. Wide on both capitals while the
+ * turrets train, then a hold on the frigate (the beams cross the frame); at
+ * the kill (the frigate leaves the mirror or the room's `destroy` names it:
+ * observations, no cue) the camera frames the kill point and, once it shows,
+ * the salvage pod. Logs the kill time, the killer and whose beam last hit it.
+ * No `test_aggro`: the enemy capital is hostile from its spawn, and the
+ * frigate must stay out of the fight.
  */
 export const beamCollateralSubcap: Shot = {
   id: 'beam-collateral-subcap',
@@ -342,7 +353,7 @@ export const beamCollateralSubcap: Shot = {
       let ok = false;
       m?.ships?.forEach((s) => { if (s.ownerPlayerId === m.localPlayerId && s.kind === 'battlecruiser-lance') ok = true; });
       return ok;
-    }, undefined, { timeout: 30_000, polling: 250 });
+    }, undefined, { timeout: 60_000, polling: 250 });
     const f = await npcOf(ctx, 'missile-frigate');
     if (f) await watchBeamsOn(ctx, f.wire);
     await ctx.spectate();
@@ -362,20 +373,21 @@ export const beamCollateralSubcap: Shot = {
     let closed = false;
     let at = -1;
     let kill = frig ?? { wire: '', x: 0, y: 0 };
-    while (Date.now() - t0 < 90_000) {
+    while (Date.now() - t0 < COLLATERAL_WAIT_MS) {
       frig = await npcOf(ctx, 'missile-frigate');
-      if (!frig) { at = Date.now() - t0; break; }
+      // Dead: gone from the mirror, or the room's `destroy` named it.
+      if (!frig || (await beamsOnLog(ctx)).killer !== null) { at = Date.now() - t0; break; }
       kill = frig;
-      // The fight opens ~10 s after your capital arrives (its turrets lock
+      // The fight opens ~9 s after your capital arrives (its turrets lock
       // and train): close in before then.
       if (!closed && Date.now() - t0 >= 4000) {
         closed = true;
-        // The frigate with the enemy capital's bow beyond it: the beams come
-        // up from your capital (off the bottom of the frame) through it.
-        const e = (await npcOf(ctx, 'battlecruiser-lance')) ?? b;
+        // The frigate, side-on across the frame: the beams come up from your
+        // capital (off the bottom of the frame), through it, on toward the
+        // enemy capital (off the top).
         await ctx.cinema.play([holdOnBox(ctx, {
-          minX: Math.min(frig.x, e.x) - 1500, maxX: Math.max(frig.x, e.x) + 1500,
-          minY: frig.y - 800, maxY: e.y,
+          minX: frig.x - 1200, maxX: frig.x + 1200,
+          minY: frig.y - 1500, maxY: frig.y + 1500,
         }, 3, 2500)]);
       }
       await ctx.sleep(50);
@@ -383,8 +395,8 @@ export const beamCollateralSubcap: Shot = {
     if (at < 0) { ctx.log('  [beam-collateral] the frigate did not die inside the cap'); return; }
     const log = await beamsOnLog(ctx);
     const me = await myCapital(ctx);
-    const who = log.lastShooter === null ? 'no beam hit it' : log.lastShooter === me?.id ? "your capital's beam" : `another shooter (${log.lastShooter})`;
-    ctx.log(`  [beam-collateral] frigate down at ${(at / 1000).toFixed(1)}s at (${kill.x.toFixed(0)}, ${kill.y.toFixed(0)}); last beam on it: ${who}; beam hits on it ${log.hits}`);
+    const name = (id: string | null, none: string): string => id === null ? none : id === me?.id ? 'your capital' : `another shooter (${id})`;
+    ctx.log(`  [beam-collateral] frigate down at ${(at / 1000).toFixed(1)}s at (${kill.x.toFixed(0)}, ${kill.y.toFixed(0)}); killed by ${name(log.killer, 'unknown (no destroy event seen)')}; last beam on it: ${name(log.lastShooter, 'none')}; beam hits on it ${log.hits}`);
     await ctx.cinema.play([holdOnBox(ctx, { minX: kill.x - 120, maxX: kill.x + 120, minY: kill.y - 120, maxY: kill.y + 120 }, 3, 900)]);
     let pod: { x: number; y: number; radius: number } | null = null;
     const end = Date.now() + 6000;

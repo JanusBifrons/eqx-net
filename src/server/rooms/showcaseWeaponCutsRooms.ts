@@ -42,17 +42,17 @@ export function weaponCutsRoomOpts<T extends object>(base: T) {
   };
   /** Weapon cuts, collateral (`beam-collateral-subcap`): your lance
    *  battlecruiser (a scene `fleet` hull owned by the pilot, AI-flown, Hunt +
-   *  Aggressive) at the origin, nose north, and the enemy's lance
-   *  battlecruiser due north, nose south (`hostile`: marked hostile to the
-   *  pilot on join, so it fights back). The two close head on, so the line
-   *  between them stays put. The enemy's missile frigate holds station on
-   *  that line, ahead of the enemy capital. Nobody locks or aims at it; your
-   *  capital's heavy beams, laid on the enemy capital, burn through it on the
-   *  way. The capitals start past the 5" secondaries' reach, so only the
-   *  heavy beams can fire at first. The pilot's own ship parks due south,
-   *  behind yours and out of the enemy's reach, and the shot spectates. Roster-backed (a real
-   *  `sectorKey` outside the galaxy graph) because the `fleet` step needs a
-   *  roster. */
+   *  Aggressive; it holds near its spot while the fight is at beam range) at
+   *  the origin, nose north, and the enemy's lance battlecruiser due north,
+   *  nose south (`hostile`: marked hostile to the pilot on join, so it fights
+   *  back). The enemy's missile frigate holds station side-on across the line
+   *  between them, mid-way, so every beam your capital lays on the enemy
+   *  crosses it whatever the enemy capital does inside the kill window. Nobody
+   *  locks or aims at it; it is only in the way. The capitals start past the
+   *  5" secondaries' reach, so only the heavy beams can fire at first. The
+   *  pilot's own ship parks due south, behind yours and out of the enemy's
+   *  reach, and the shot spectates. Roster-backed (a real `sectorKey` outside
+   *  the galaxy graph) because the `fleet` step needs a roster. */
   const beamCollateral = {
     ...base,
     sectorKey: 'showcase-beam-collateral',
@@ -78,10 +78,12 @@ export const BEAM_COLLATERAL = {
   /** The enemy capital, due north of yours: past the 5" secondaries' reach
    *  (16.6 km), inside the heavy beams' (20 km). */
   enemyY: 19_500,
-  /** The enemy's frigate, on the line between them, 5 km ahead of the enemy
-   *  capital: clear of its bow (~1.4 km ahead of its centre) after the enemy
-   *  has closed ~2 km by the time your beams open fire. */
-  frigateY: 14_500,
+  /** The enemy's frigate, on the line between them, 12 km from yours. Your
+   *  heavy-beam turrets sit on your bow (~1.4–1.8 km ahead of centre, ~150 u
+   *  off the keel), so close to your capital the beams pass beside it (3 km
+   *  missed it); here they have converged on the line. 7.5 km from the enemy
+   *  capital, which closes ~1 km in the window, so it never reaches it. */
+  frigateY: 12_000,
   /** The pilot's own ship, due south behind yours, out of the enemy's reach
    *  (25.5 km). On the line, so the enemy capital, hostile to the pilot,
    *  drifts toward it along the line and not off it. */
@@ -90,4 +92,8 @@ export const BEAM_COLLATERAL = {
   /** Game ms after the pilot's ready when your capital arrives (a 10x hull's
    *  art bakes in ~15 s). */
   mineAtMs: 20_000,
+  /** Game ms after your capital arrives by which the frigate is dead (its
+   *  locks take a pilot's full time). The integration test asserts it at 1x;
+   *  the shot waits at least this long. */
+  killWindowMs: 60_000,
 } as const;
