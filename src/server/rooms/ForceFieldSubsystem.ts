@@ -67,6 +67,9 @@ export interface TractorDeps {
   onShipTractored(emitterId: string, targetId: string): void;
   /** Is `id` terrain (rock, loot pod, wreck piece: neutral to lock and pull)? */
   isTerrain(id: string): boolean;
+  /** Is `id` a wreck piece (swarm kind 4)? Absent ⇒ `forEachHeldPiece`
+   *  visits nothing. */
+  isWreckPiece?(id: string): boolean;
 }
 
 export interface ForceFieldDeps {
@@ -88,7 +91,18 @@ interface TractorLease {
   readonly field: TractorForceField;
 }
 
-const _pose: TractorPoseOut = { x: 0, y: 0, angle: 0, kindId: null, shieldUp: false, radius: 0 };
+/** Is (x, y) inside `lease`'s pickup zone (`TRACTOR_PICKUP_HOLD_MUL × hold`
+ *  of its muzzle)? A lease not yet posed (no muzzle), held off by a crack
+ *  hold, or lapsed never counts. */
+function inHoldZone(lease: TractorLease, tick: number, x: number, y: number): boolean {
+  const f = lease.field;
+  if (tick >= lease.endTick || lease.px !== lease.px || !f.active) return false;
+  const r = f.hold * TRACTOR_PICKUP_HOLD_MUL;
+  const dx = x - f.mx, dy = y - f.my;
+  return dx * dx + dy * dy <= r * r;
+}
+
+const _pose: TractorPoseOut ={ x: 0, y: 0, angle: 0, kindId: null, shieldUp: false, radius: 0 };
 const _tpose: TractorPoseOut = { x: 0, y: 0, angle: 0, kindId: null, shieldUp: false, radius: 0 };
 
 export class ForceFieldSubsystem {
@@ -184,13 +198,29 @@ export class ForceFieldSubsystem {
     if (t === undefined || byMount === undefined) return false;
     const tick = t.tick();
     for (const lease of byMount.values()) {
-      const f = lease.field;
-      if (lease.target !== targetId || tick >= lease.endTick || lease.px !== lease.px || !f.active) continue;
-      const r = f.hold * TRACTOR_PICKUP_HOLD_MUL;
-      const dx = x - f.mx, dy = y - f.my;
-      if (dx * dx + dy * dy <= r * r) return true;
+      if (lease.target === targetId && inHoldZone(lease, tick, x, y)) return true;
     }
     return false;
+  }
+
+  /**
+   * Visit each wreck piece (`isWreckPiece`) that a live, posed lease of
+   * `emitterId` holds inside its pickup zone (the `inTractorHold` zone, at
+   * the piece's live centre). Asked by the loot collector's hold-zone pass,
+   * which stores such a piece whole when the hold has room (piece store).
+   * Only this emitter's own beams, so only a piece it is already towing. Two
+   * mounts on one piece visit it twice: the visitor tolerates a piece already
+   * gone. Allocation-free (#14).
+   */
+  forEachHeldPiece(emitterId: string, visit: (pieceId: string) => void): void {
+    const t = this.d.tractors;
+    const byMount = this.leases.get(emitterId);
+    if (t?.isWreckPiece === undefined || byMount === undefined) return;
+    const tick = t.tick();
+    for (const lease of byMount.values()) {
+      if (!t.isWreckPiece(lease.target) || !t.poseOf(lease.target, _tpose)) continue;
+      if (inHoldZone(lease, tick, _tpose.x, _tpose.y)) visit(lease.target);
+    }
   }
 
   /**
