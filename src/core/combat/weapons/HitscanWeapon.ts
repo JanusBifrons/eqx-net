@@ -7,6 +7,7 @@
 
 import { Weapon, type WeaponFireContext, type WeaponFireSink } from './Weapon.js';
 import type { HitscanWeaponDef, WeaponId } from '../WeaponCatalogue.js';
+import { beamHalfWidth } from '../Weapons.js';
 
 export class HitscanWeapon extends Weapon {
   readonly id: WeaponId;
@@ -22,6 +23,7 @@ export class HitscanWeapon extends Weapon {
     // optimal. maxRangeMul absent/≤1 ⇒ maxRange = range (flat, back-compat).
     const f = this.def.falloff;
     const maxRange = f?.maxRangeMul && f.maxRangeMul > 1 ? this.def.range * f.maxRangeMul : this.def.range;
-    sink.hitscan(ctx, this.def.range, this.def.damage, f?.minDamageFrac, maxRange);
+    // A wide beam (the heavy beam) hits by its width: half of it rides along.
+    sink.hitscan(ctx, this.def.range, this.def.damage, f?.minDamageFrac, maxRange, beamHalfWidth(this.def));
   }
 }

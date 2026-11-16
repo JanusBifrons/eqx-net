@@ -18,7 +18,6 @@ import {
   WRECK_GLOW_EMBER_S,
   WRECK_GLOW_END_S,
   wreckBlasts,
-  hullDeathBlastReplaced,
   crackFrontAt,
   crackIgniteMs,
   WreckArtState,
@@ -45,6 +44,7 @@ import {
   type WreckBlast,
   type WreckTexLayout,
 } from './wreckArt.js';
+import { hullDeathBlastReplaced } from './deathBlast.js';
 import { rebuildWreckPieces } from '../../net/wreckGeometryStore.js';
 import { FRACTURE_ALGO_VERSION, EDGE_CUT, EDGE_HULL, projectToOutline } from '../../../core/destruction/fractureHull.js';
 import { shipHullOutline } from '../../../core/geometry/shipHullOutline.js';

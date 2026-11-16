@@ -2403,7 +2403,46 @@ line; a railgun kill erases a straight channel as wide as the bolt.
   - **Wire.** `DestroyEvent.vaporised?: true` (emit-when-true;
     `DestroyEventSchema`, strict). An effect hint only (#16): a vaporised
     ship has no wreck descriptor, so a late joiner sees the same nothing.
-    The client effect is a separate PR.
+  - **Client.** `destroy` parses through `parseDestroy` (the strict schema;
+    malformed dropped with a sampled `destroy_malformed_dropped` log, #3).
+    A vaporised death adds its id to `mirror.vaporisedShips` (the same key
+    as `explodingShips`, a one-frame trigger cleared with it). A death held
+    for its drawn shell (`DrawnShellTiming.deferKill`, shell-events.md
+    "Kills wait for the drawn shell") carries `vaporised` on its record and
+    is marked in the frame it is released, never on the deferred destroy
+    (`ColyseusClient.vaporiseDeferredKill.test.ts`). The renderer
+    then (a) holds no dying hull for it (`noteDyingHulls` skips it: the
+    sub-cap hold used to wait 250 ms for pieces that never come), (b) never
+    hands its blast to a wreck break-up (`hullDeathBlastReplaced`), and
+    (c) plays the death explosion's **vaporise variant**: `deathBlastFor`
+    picks the profile's `fx.vaporiseBlastScale` (0.8 of the normal blast
+    radius), `vaporiseSeconds` (0.7 s) and `vaporiseTint` (`VAPORISE_TINT`,
+    a hot violet-white), and `FxExplosions.spawnVaporise` draws a flash in
+    the tint that swells into a short glow, a tinted shock ring and glowing
+    motes thrown out (fewer on lower tiers), with no fireball, no dark smoke
+    and no wreck; a `wreck-ash` burst with no line end
+    (`WreckBreakFx.spawnVaporAsh`) adds a puff of glowing ash over the hull
+    on the channel-ash pool (near-white in the tint, then the tint, then
+    grey; under 0.8 s; `WRECK_ASH_DIAL` counts, none with particles off).
+    Why no fireball: nothing is left to explode; the beam or slug burned
+    the hull to ash. One tint for both weapons for now (the heavy beam's
+    violet, white-hot); a per-weapon tint (railgun white-hot) would need the
+    killing weapon on the wire or from the last `laser_fired` / shell.
+    **Reads on the kill frame** (filmed v10: the flash never showed, the
+    ship blinked out). The flash, glow and ring draw in
+    `FxExplosions.overLayer`, stacked above the beam containers
+    (`stackVaporiseOverBeams`: the heavy beam is still on the hull at the
+    kill); the white-hot core is full strength on the first frame (R × 3.2
+    wide, gone in 0.3 s), the tinted glow swells R × 4.4 → 7 (the glow
+    texture's visible core is ~a third of its half-width), the ring starts
+    hull-sized; the blast radius has a floor (`VAPORISE_MIN_RADIUS`, 70 u,
+    past the 60 u beam). A parked (lingering) hull is not in the active
+    sprite map, so its death blast is sized from its kind
+    (`dyingHullDiameter`: 2 × `shipExtent`), not the 40 u fallback (its
+    sprite's bounds ran several times the hull).
+    Locks: `parseDestroy.test.ts`, `dyingHullHold.vaporise.test.ts`,
+    `wreckArt.vaporise.test.ts`, `FxExplosions.vaporise.test.ts`,
+    `vaporiseBlast.test.ts`, `WreckBreakFx.vaporise.test.ts`.
   - **Vaporised salvage (owner 2026-11-15).** A vaporised ship leaves ONE
     loot pod, as any kill does, with its hull's salvage ×
     `VAPORISE_SALVAGE_MUL` = 1.5 ("the beam rendered the whole ship
