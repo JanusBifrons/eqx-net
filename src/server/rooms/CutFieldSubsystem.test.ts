@@ -3,6 +3,7 @@ import type { GameClock } from '../../core/clock/GameClock.js';
 import { FIELD_WAKES_PER_TICK } from '../../core/terrain/chunkStreamer.js';
 import type { SwarmEntityRecord, SwarmEntityRegistry } from '../net/SwarmEntityRegistry.js';
 import type { SwarmSpawner } from '../spawn/SwarmSpawner.js';
+import { SLOT_X_OFF, SLOT_Y_OFF, slotBase } from '../../shared-types/sabLayout.js';
 import { CutFieldSubsystem, toRestFrame } from './CutFieldSubsystem.js';
 import type { WorkerCmd } from './PhysicsWorkerProxy.js';
 
@@ -57,5 +58,82 @@ describe('toRestFrame (F1b: an awake rock samples its ore where it was cut)', ()
 
   it('is the identity for a rock still at rest', () => {
     expect(toRestFrame(5, 6, 5, 6, 0, 17, -3, { x: 0, y: 0 })).toEqual({ x: 17, y: -3 });
+  });
+});
+
+describe('CutFieldSubsystem change record (mined pool, consumed rocks)', () => {
+  /** A real streamer over a fake spawner: one ship in the `look` field's lane,
+   *  flown away (its chunks unload after the linger) and back (they re-cut). */
+  function field() {
+    let now = 0;
+    const recs = new Map<string, SwarmEntityRecord>();
+    const sab = new Float32Array(slotBase(1));
+    const clock = { now: () => now, every: () => ({ cancel: () => {} }) } as unknown as GameClock;
+    const registry = { get: (id: string) => recs.get(id) ?? null, all: () => [] } as unknown as SwarmEntityRegistry;
+    const spawner = {
+      spawnAsteroid: (a: { id: string; fieldKey: number }) => {
+        recs.set(a.id, { id: a.id, fieldRock: true, fieldKey: a.fieldKey, resources: 100, resourcesMax: 100 } as SwarmEntityRecord);
+        return true;
+      },
+    } as unknown as SwarmSpawner;
+    const sub = new CutFieldSubsystem('look', clock, registry, spawner, {
+      shipSlots: () => [0], sab: () => sab, post: () => {}, evict: (rec) => { recs.delete(rec.id); },
+    });
+    const at = (x: number, y: number) => { sab[slotBase(0) + SLOT_X_OFF] = x; sab[slotBase(0) + SLOT_Y_OFF] = y; };
+    const settle = () => { for (let i = 0; i < 40; i++) sub.streamer.step(); };
+    /** Fly away until everything unloads, then come back and re-cut. */
+    const awayAndBack = () => {
+      at(9e6, 9e6); now += 60_000; settle();
+      expect(recs.size, 'all chunks unloaded').toBe(0);
+      at(-30_120, 26_501); now += 1; settle();
+    };
+    at(-30_120, 26_501); settle();
+    return { sub, recs, awayAndBack };
+  }
+
+  it('a mined rock keeps what is left in it across an unload and re-cut', () => {
+    const { recs, awayAndBack } = field();
+    const [mined, untouched] = [...recs.values()];
+    expect(mined && untouched).toBeTruthy();
+    mined!.resources = 37;
+    awayAndBack();
+    expect(recs.get(mined!.id)!.resources).toBe(37);
+    expect(recs.get(untouched!.id)!.resources).toBe(100);
+  });
+
+  it('a consumed rock is never cut whole again', () => {
+    const { sub, recs, awayAndBack } = field();
+    const gone = [...recs.values()][0]!;
+    sub.markConsumed(gone.fieldKey!);
+    expect(sub.isConsumed(gone.fieldKey!)).toBe(true);
+    const before = recs.size;
+    awayAndBack();
+    expect(recs.has(gone.id)).toBe(false);
+    expect(recs.size).toBe(before - 1);
+  });
+});
+
+describe('CutFieldSubsystem.oreAtRest (pieces of a broken-up rock)', () => {
+  it('samples the field where the point was before the piece moved', async () => {
+    const { oreAt, oreSeed } = await import('../../core/terrain/fieldOre.js');
+    const { SLICED } = await import('../../core/terrain/fieldLayout.js');
+    const { sub } = setup({});
+    // A point that holds ore in field 't' (search the field near its centre).
+    let rx = 0, ry = 0, best = -1;
+    const c = { ice: 0, crystal: 0 };
+    for (let x = -60_000; x <= 60_000; x += 1_500) for (let y = -60_000; y <= 60_000; y += 1_500) {
+      oreAt(oreSeed('t'), SLICED.radius, x, y, c);
+      if (c.ice + c.crystal > best) { best = c.ice + c.crystal; rx = x; ry = y; }
+    }
+    expect(best).toBeGreaterThan(0.2);
+    const want = oreAt(oreSeed('t'), SLICED.radius, rx, ry, { ice: 0, crystal: 0 });
+    // The parent's rest centre sits (100, -70) from that point. It now sits at
+    // (500, 500), turned +90°, so the rest offset (-100, 70) is world (-70, -100).
+    const got = sub.oreAtRest(rx + 100, ry - 70, 500, 500, Math.PI / 2, 430, 400, { ice: 0, crystal: 0 });
+    // Unturned, the same world point samples somewhere else.
+    const wrong = sub.oreAtRest(rx + 100, ry - 70, 500, 500, 0, 430, 400, { ice: 0, crystal: 0 });
+    expect(wrong.ice + wrong.crystal).not.toBeCloseTo(best, 6);
+    expect(got.ice).toBeCloseTo(want.ice, 9);
+    expect(got.crystal).toBeCloseTo(want.crystal, 9);
   });
 });
