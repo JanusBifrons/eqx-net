@@ -31,7 +31,7 @@ import {
 
 import { mountTargetReach, mountWeaponReach, hasTurretFireControl } from '../../core/combat/mountReach.js';
 import { mountLineClear, mountPriority, targetClass, STRUCTURE_TARGET_CLASS, type TargetClass } from '../../core/combat/mountTargeting.js';
-import { barrelRayHits, turretSettled, leadArcBearing, mountCanEngage, onTarget } from '../../core/combat/mountFireControl.js';
+import { turretShotBears, leadArcBearing, mountCanEngage } from '../../core/combat/mountFireControl.js';
 import { getWeapon } from '../../core/combat/WeaponCatalogue.js';
 import { shipShotMuzzle } from '../../core/combat/muzzle.js';
 import { newLock, stepLock, type LockEntry } from '../../core/combat/lockState.js';
@@ -647,8 +647,7 @@ export class WeaponMountTicker {
       const mx = x + (mount.localX * cosA - mount.localY * sinA);
       const my = y + (mount.localX * sinA + mount.localY * cosA);
       const reach = mountWeaponReach(mount);
-      // Follow-through: this mount's last shot killed its target, so it aims
-      // at the kill point and burns on through it until the window ends.
+      // Follow-through: its last shot killed, so it burns on through the kill point.
       if (tick < follow[i]!) {
         this.followThrough(droneId, kind, mount, i, angles, reload, tick, mx, my, ang, reach, followPt[2 * i]!, followPt[2 * i + 1]!);
         continue;
@@ -738,20 +737,10 @@ export class WeaponMountTicker {
       if (charging && tick - chargeStarts[i]! < this.chargeTicksOf(chargeT)) continue;
       if (!engageable) continue; // held through a brief loss: aim, don't fire
       if (!charging && tick - reload[i]! < w.cooldownTicks) continue;
-      // On target = the shot would pass within TURRET_FIRE_MISS of the aim
-      // point (an angle alone is a 250 u miss at 5,000 u).
-      if (!onTarget(want, angles[i]!, dist)) continue;
-      // ... the turret has finished turning onto it (`turretSettled`) ...
-      if (!turretSettled(want, angles[i]!)) continue;
-      // ... and a ray down the barrel, from the muzzle, hits the target at
-      // the aim point (a beam fired beside a frigate grazed it with its edge).
-      {
-        const a = ang + mount.baseAngle + angles[i]!;
-        const muzzle = shipShotMuzzle(kind, mount, true);
-        const lead = w.mode === 'hitscan' ? 0 : dist / w.speed;
-        if (!barrelRayHits(t, t.x + (t.vx - selfVx) * lead, t.y + (t.vy - selfVy) * lead,
-          mx - Math.sin(a) * muzzle, my + Math.cos(a) * muzzle, a, 2 * dist + 1_000)) continue;
-      }
+      // On target, settled and a barrel ray hits the hull (`turretShotBears`).
+      const lead = w.mode === 'hitscan' ? 0 : dist / w.speed;
+      if (!turretShotBears(want, angles[i]!, dist, t, t.x + (t.vx - selfVx) * lead, t.y + (t.vy - selfVy) * lead,
+        mx, my, ang + mount.baseAngle + angles[i]!, shipShotMuzzle(kind, mount, true), 2 * dist + 1_000)) continue;
       if (!mountLineClear(kind, mount, mount.baseAngle + angles[i]!)) continue;
       // Lock-to-fire: each turret needs a completed lock on ITS own target:
       // the capital's lock for a pilot (a lock on another pilot doesn't
@@ -782,8 +771,7 @@ export class WeaponMountTicker {
       if (fired === 'killed' && ft > 0) {
         follow[i] = tick + ft;
         // Where the killing beam hit: the follow-through aims through it.
-        followPt[2 * i] = this.killAt.x;
-        followPt[2 * i + 1] = this.killAt.y;
+        followPt[2 * i] = this.killAt.x; followPt[2 * i + 1] = this.killAt.y;
         // Punch through as the target dies: the killing pulse ended at its
         // hull, so the first full-length pulse fires NEXT tick (the victim is
         // dead by then, so it can't be hit twice), then the normal cadence.

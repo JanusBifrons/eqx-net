@@ -34,7 +34,7 @@
  * candidate list is the caller's pooled array.
  */
 import { rotateMountToward } from '../../core/ai/WeaponMountController.js';
-import { barrelRayHits, leadArcBearing, mountCanEngage, onTarget, turretSettled } from '../../core/combat/mountFireControl.js';
+import { leadArcBearing, mountCanEngage, turretShotBears } from '../../core/combat/mountFireControl.js';
 import { mountPriority, type TargetClass } from '../../core/combat/mountTargeting.js';
 import { getWeapon, type WeaponDef } from '../../core/combat/WeaponCatalogue.js';
 import { newLock, stepLock, type LockEntry } from '../../core/combat/lockState.js';
@@ -242,12 +242,10 @@ export class StructureMountTicker {
       if (!engageable) continue; // held through a brief loss: aim, don't fire
       if (!locked) continue; // lock to fire: still acquiring
       if (nowMs - st.reloadMs[i]! < this.reloadMsOf(kind, def)) continue;
-      if (!onTarget(want, st.angles[i]!, dist)) continue;
-      if (!turretSettled(want, st.angles[i]!)) continue;
       const a = frame + mount.baseAngle + st.angles[i]!;
-      // ... and a ray down the barrel hits the target at its lead point.
+      // On target, settled and a barrel ray hits the target at its lead point.
       const lead = def.mode === 'projectile' ? dist / def.speed : 0;
-      if (!barrelRayHits(t, t.x + t.vx * lead, t.y + t.vy * lead, mx, my, a, reach + dist)) continue;
+      if (!turretShotBears(want, st.angles[i]!, dist, t, t.x + t.vx * lead, t.y + t.vy * lead, mx, my, a, 0, reach + dist)) continue;
       if (this.sink.fire(rec, kind, i, mount, def, -Math.sin(a), Math.cos(a), t, nowMs)) st.reloadMs[i] = nowMs;
     }
     return first;

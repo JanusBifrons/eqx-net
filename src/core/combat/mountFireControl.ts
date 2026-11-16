@@ -91,6 +91,21 @@ export function turretSettled(want: number, current: number): boolean {
 }
 
 /**
+ * The whole FIRE gate for a turret at arc-local `current` wanting `want`:
+ * on target (`onTarget`), settled (`turretSettled`) and a barrel ray from the
+ * muzzle (`muzzle` along world bearing `worldAngle` from the pivot) hits `t`
+ * at its aim point (`barrelRayHits`).
+ */
+export function turretShotBears(
+  want: number, current: number, dist: number, t: MountRangeTarget, aimX: number, aimY: number,
+  pivotX: number, pivotY: number, worldAngle: number, muzzle: number, maxDist: number,
+): boolean {
+  if (!onTarget(want, current, dist) || !turretSettled(want, current)) return false;
+  const fromX = pivotX - Math.sin(worldAngle) * muzzle, fromY = pivotY + Math.cos(worldAngle) * muzzle;
+  return barrelRayHits(t, aimX, aimY, fromX, fromY, worldAngle, maxDist);
+}
+
+/**
  * Does a thin ray from (fromX, fromY) along the barrel's world bearing
  * `worldAngle` (mount convention: 0 = +y) hit target `t` placed at its aim
  * point (aimX, aimY) (its lead point for a shell gun)? A ship is tested on its
