@@ -42,7 +42,7 @@ import {
   rayHitsConvexPolygon,
 } from '../../core/combat/Weapons.js';
 import { shipShotMuzzle, navalTurret, navalBarrelOffset } from '../../core/combat/muzzle.js';
-import { hasTurretFireControl } from '../../core/combat/mountReach.js';
+import { hasTurretFireControl, mountRangeFactor } from '../../core/combat/mountReach.js';
 import { GLOBAL_SHIP_TUNING } from '../../shared-types/shipScale/lookup.js';
 import { getWeaponObject } from '../../core/combat/weapons/index.js';
 import type { WeaponFireContext, WeaponFireSink } from '../../core/combat/weapons/Weapon.js';
@@ -229,7 +229,7 @@ export class PlayerFireResolver implements WeaponFireSink {
   /** Reused per-mount fire geometry (the resolver IS the WeaponFireSink — see
    *  `src/core/combat/weapons/`). Mutated per mount; no per-fire allocation. */
   private readonly _fireCtx: WeaponFireContext = {
-    fromX: 0, fromY: 0, dirX: 0, dirY: 0, shooterVx: 0, shooterVy: 0, mountId: '',
+    fromX: 0, fromY: 0, dirX: 0, dirY: 0, shooterVx: 0, shooterVy: 0, mountId: '', rangeMul: 1,
   };
   // Per-fire-event sink state — set in resolve() before the salvo, read by the
   // sink methods. resolve() is synchronous + single-threaded, so race-free.
@@ -559,9 +559,9 @@ export class PlayerFireResolver implements WeaponFireSink {
         },
       });
 
-      // Per-mode fire dispatch collapses to one virtual call (GEP B3): the
-      // weapon flyweight calls back the matching sink method below
-      // (hitscan / spawnProjectile / spawnMissile).
+      // Per-mode fire dispatch: one virtual call (GEP B3); the weapon calls
+      // back the matching sink method below (hitscan / spawnProjectile / spawnMissile).
+      ctx.rangeMul = mountRangeFactor(mount.weaponId, mount.size); // a mining tool's sized beam
       ctx.fromX = rayFromX;
       ctx.fromY = rayFromY;
       ctx.dirX = ndx;

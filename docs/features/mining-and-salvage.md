@@ -24,7 +24,7 @@ Cutting up what is left after a battle: capital wrecks are a resource, and salva
 | S (and unsized) | ≈ 5,455 u | ≈ 1,364 u |
 | AA | ≈ 4,364 u | ≈ 1,091 u |
 
-A mount fires only at a locked target inside its own reach (locks still work at any distance), so a small laser has to be brought in closer to a rock than a big one. The aim guide and the contact list's group reach show the same per-mount number. Tractors pull up to their reach and no further; the [size ladder](#the-size-ladder-big-lasers-feed-big-tractors-feed-small-lasers) is unchanged, because it judges a tractor at 500 u, far inside even an AA tractor's reach.
+A mount fires only at a locked target inside its own reach (locks still work at any distance), so a small laser has to be brought in closer to a rock than a big one. The beam itself ends at that reach too: a small laser that fires on something close cannot cut a rock further down its line past its own reach (the server's ray and the drawn beam both scale by `mountRangeFactor`). The aim guide and the contact list's group reach show the same per-mount number. Tractors pull up to their reach and no further; the [size ladder](#the-size-ladder-big-lasers-feed-big-tractors-feed-small-lasers) is unchanged, because it judges a tractor at 500 u, far inside even an AA tractor's reach.
 
 No ship carries it yet: the mining barge that does is a later step.
 
