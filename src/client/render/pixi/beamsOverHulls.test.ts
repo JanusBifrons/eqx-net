@@ -18,6 +18,15 @@ describe('raiseBeamsOverHulls', () => {
     expect(ships.getChildIndex(fxAfter)).toBeLessThan(ships.getChildIndex(hull));
   });
 
+  it('raises both layers of each beam pool and skips absent ones', () => {
+    const ships = new Container();
+    const pool = { container: new Container(), styledContainer: new Container() };
+    raiseBeamsOverHulls(ships, [null, undefined], [pool, null]);
+    expect(pool.container.zIndex).toBe(BEAMS_OVER_HULL_Z);
+    expect(pool.styledContainer.zIndex).toBe(BEAMS_OVER_HULL_Z);
+    expect(ships.sortableChildren).toBe(true);
+  });
+
   it('the vaporise flash stays over the beams', () => {
     expect(VAPORISE_OVER_BEAMS_Z).toBeGreaterThan(BEAMS_OVER_HULL_Z);
   });

@@ -15,8 +15,15 @@ export const BEAMS_OVER_HULL_Z = 1;
 /** zIndex of the vaporise flash: above the beams that made the kill. */
 export const VAPORISE_OVER_BEAMS_Z = 2;
 
-/** Lifts `layers` (children of `ships`) above every hull. Call once at init. */
-export function raiseBeamsOverHulls(ships: Container, layers: readonly Container[]): void {
+/** A beam sprite pool's two layers (`BeamSpritePool`). */
+interface BeamPoolLayers { readonly container: Container; readonly styledContainer: Container }
+
+/** Lifts `layers` and both layers of each of `pools` (children of `ships`;
+ *  null entries skipped) above every hull. Call once at init. */
+export function raiseBeamsOverHulls(
+  ships: Container, layers: ReadonlyArray<Container | null | undefined>, pools: ReadonlyArray<BeamPoolLayers | null | undefined> = [],
+): void {
   ships.sortableChildren = true;
-  for (const l of layers) l.zIndex = BEAMS_OVER_HULL_Z;
+  for (const l of layers) if (l) l.zIndex = BEAMS_OVER_HULL_Z;
+  for (const p of pools) if (p) { p.container.zIndex = BEAMS_OVER_HULL_Z; p.styledContainer.zIndex = BEAMS_OVER_HULL_Z; }
 }

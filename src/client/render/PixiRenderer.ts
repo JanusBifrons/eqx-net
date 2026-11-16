@@ -1159,7 +1159,7 @@ export class PixiRenderer implements IRenderer {
       this._miningBeamPool = new BeamSpritePool(MINING_BEAM_STYLE);
       this.miningBeamGfx = this._miningBeamPool.container;
       this.shipContainer.addChild(this.miningBeamGfx);
-      this._tractorBeamPool = new BeamSpritePool(TRACTOR_BEAM_STYLE); this.shipContainer.addChild(this._tractorBeamPool.container, this._tractorBeamPool.styledContainer); // faint, unfiltered
+      this._tractorBeamPool = new BeamSpritePool(TRACTOR_BEAM_STYLE); this.shipContainer.addChild(this._tractorBeamPool.container, this._tractorBeamPool.styledContainer); // look A (beamStyles.ts)
 
       this.effects = new EffectsService({
         app: this.app,
@@ -1201,13 +1201,8 @@ export class PixiRenderer implements IRenderer {
 
     // Beams leave from the turrets on top of the hull, so they draw over every
     // hull (ships spawn later and would otherwise stack above them).
-    const beamLayers: Container[] = [];
-    if (this._fxRemoteBeams) beamLayers.push(this._fxRemoteBeams.container);
-    if (this._fxLiveBeams) beamLayers.push(this._fxLiveBeams.container);
-    for (const p of [this._liveBeamPool, this._remoteBeamPool, this._miningBeamPool, this._tractorBeamPool]) {
-      if (p) beamLayers.push(p.container, p.styledContainer);
-    }
-    raiseBeamsOverHulls(this.shipContainer, beamLayers);
+    raiseBeamsOverHulls(this.shipContainer, [this._fxRemoteBeams?.container, this._fxLiveBeams?.container],
+      [this._liveBeamPool, this._remoteBeamPool, this._miningBeamPool, this._tractorBeamPool]);
     stackVaporiseOverBeams(this.shipContainer, this._fxExplosions); // the vaporise flash reads over the beams
     // Incoming-fire markers sit under the radar's edge icons.
     this.incomingFire.init(this.camera);
@@ -3035,8 +3030,7 @@ export class PixiRenderer implements IRenderer {
     if (mirror.missiles) for (const m of mirror.missiles.values()) sc.addLight(m.x, -m.y, 8, 0xffa060, 1.2, 70);
     for (let i = 0; i < this._liveBeamCacheCount; i++) this.beamLights(this._liveBeamCache[i]!);
     for (let i = 0; i < this._remoteBeamCacheCount; i++) this.beamLights(this._remoteBeamCache[i]!);
-    // Tractor beams glow blue where they hold and along them (not their pulses).
-    for (let i = 0; i < this._tractorViewCount; i++) if (this._tractorViews[i]!.style === TRACTOR_BEAM_STYLE) this.beamLights(this._tractorViews[i]!);
+    for (let i = 0; i < this._tractorViewCount; i++) this.beamLights(this._tractorViews[i]!); // tractors glow blue where they hold
   }
 
   /** A beam lights where it hits and along its length. */
