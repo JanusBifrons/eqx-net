@@ -11,7 +11,9 @@ import {
   CutFieldStreamer, cutFieldOpts, fieldRockBody, fieldRockMass, fieldRockWakes,
   FIELD_WAKES_PER_TICK, STEP_EVERY_MS,
 } from '../../core/terrain/chunkStreamer.js';
-import { SLOT_X_OFF, SLOT_Y_OFF, slotBase } from '../../shared-types/sabLayout.js';
+import { SLICED } from '../../core/terrain/fieldLayout.js';
+import { oreAt, oreSeed, type OreConc } from '../../core/terrain/fieldOre.js';
+import { SLOT_ANGLE_OFF, SLOT_X_OFF, SLOT_Y_OFF, slotBase } from '../../shared-types/sabLayout.js';
 import { SWARM_KIND_DRONE } from '../../shared-types/swarmWireFormat.js';
 import { serverLogEvent } from '../debug/ServerEventLog.js';
 import type { SwarmEntityRecord, SwarmEntityRegistry } from '../net/SwarmEntityRegistry.js';
@@ -28,6 +30,18 @@ export interface CutFieldRoomHooks {
   evict(rec: SwarmEntityRecord, broadcast: boolean): void;
 }
 
+/** World point (x, y) on a rock now at (poseX, poseY, angle) back into the
+ *  rest frame it was cut in (centre (restX, restY), angle 0), into `out`. */
+export function toRestFrame(
+  restX: number, restY: number, poseX: number, poseY: number, angle: number,
+  x: number, y: number, out: { x: number; y: number },
+): { x: number; y: number } {
+  const dx = x - poseX, dy = y - poseY, cos = Math.cos(angle), sin = Math.sin(angle);
+  out.x = restX + dx * cos + dy * sin;
+  out.y = restY - dx * sin + dy * cos;
+  return out;
+}
+
 export class CutFieldSubsystem {
   readonly streamer: CutFieldStreamer;
   /** Spread into every welcome. */
@@ -35,6 +49,9 @@ export class CutFieldSubsystem {
   private readonly timer: GameTimer;
   private wakeTick = -1;
   private wakesThisTick = 0;
+  /** The field's ore seed (`oreSeed`), as the client draws it. */
+  private readonly oreBase: number;
+  private readonly restPt = { x: 0, y: 0 };
 
   constructor(
     seed: string,
@@ -44,6 +61,7 @@ export class CutFieldSubsystem {
     private readonly hooks: CutFieldRoomHooks,
   ) {
     this.welcome = { cutField: { seed } };
+    this.oreBase = oreSeed(seed);
     this.streamer = new CutFieldStreamer(cutFieldOpts(seed), {
       // Pilots and AI hulls keep rocks loaded. Slow cadence (STEP_EVERY_MS).
       visitShips: (cb) => {
@@ -84,6 +102,21 @@ export class CutFieldSubsystem {
   private wake(id: string, otherId: string, closingSpeed: number, tick: number): void {
     if (!fieldRockWakes(this.registry.get(otherId), closingSpeed)) return;
     this.wakeRock(id, otherId, tick);
+  }
+
+  /** The field's ore where a shot hit field rock `rec` at world (x, y), into
+   *  `out` (F1b: what you cut off decides what you get). The ore is laid out
+   *  over the field as cut, so a rock that has moved (awake) maps the point
+   *  back into its rest frame first. False for anything else. No allocation. */
+  oreAtHit(rec: SwarmEntityRecord, x: number, y: number, out: OreConc): boolean {
+    if (rec.fieldRock !== true || rec.restX === undefined || rec.restY === undefined) return false;
+    const p = this.restPt;
+    if (rec.fieldAwake === true) {
+      const sab = this.hooks.sab(), b = slotBase(rec.slot);
+      toRestFrame(rec.restX, rec.restY, sab[b + SLOT_X_OFF]!, sab[b + SLOT_Y_OFF]!, sab[b + SLOT_ANGLE_OFF]!, x, y, p);
+    } else { p.x = x; p.y = y; }
+    oreAt(this.oreBase, SLICED.radius, p.x, p.y, out);
+    return true;
   }
 
   /** Wake a sleeping field rock for a reason other than a touch (a mining
