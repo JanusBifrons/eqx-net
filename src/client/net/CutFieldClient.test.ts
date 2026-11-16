@@ -176,7 +176,7 @@ describe('CutFieldClient — woken rocks (macro terrain C2)', () => {
     for (let i = 0; i < 60; i++) c.step();
     const id = [...bodies.keys()][0]!;
     const key = Number(id.slice('field:'.length));
-    const verts = c.wakeFieldRock(key);
+    const verts = c.wakeFieldRock(key)?.verts ?? null;
     expect(verts, 'the cut outline').not.toBeNull();
     expect(verts!.length).toBeGreaterThanOrEqual(3);
     expect(bodies.has(id), 'fixed body dropped on wake').toBe(false);

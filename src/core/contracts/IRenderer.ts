@@ -806,6 +806,11 @@ export interface RenderMirror {
     fromY: number;
     toX: number;
     toY: number;
+    /** A styled (heavy) beam's client ray length this frame: from the
+     *  barrel tip down the LIVE barrel to the first thing it meets (else
+     *  the weapon's range). Absent ⇒ the turret's live angle is unknown;
+     *  the renderer aims at `toX/toY` instead. */
+    dist?: number;
   }>>;
 }
 

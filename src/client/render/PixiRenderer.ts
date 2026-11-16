@@ -2376,9 +2376,9 @@ export class PixiRenderer implements IRenderer {
           const isMining = mountId === 'drill';
           // The capital heavy beam (plan beam-slices §8) draws thick and violet
           // in the SAME pool: the style comes from the mount's catalogue weapon
-          // (shooter kind + mountId), no wire field. A styled pulse also holds
-          // the line it was fired along (`remoteBeamLine`): muzzle to the
-          // server's end point, never the live barrel angle.
+          // (shooter kind + mountId), no wire field. A styled pulse runs down
+          // the live barrel to the client ray's stop (`laser.dist`), else to
+          // the server's end point (`remoteBeamLine`).
           const style = isMining ? null : remoteBeamStyleForMount(mount);
           const line = this._remoteBeamLine;
           if (shooter) {
@@ -2387,7 +2387,7 @@ export class PixiRenderer implements IRenderer {
             const muzzleD = mount ? shipShotMuzzle(shooterKind, mount) : shipTuning(shooterKind).muzzleClearance;
             remoteBeamLine(
               style !== null, shooter.angle, mount?.baseAngle ?? 0, currentMountAngle ?? 0,
-              origin.x, origin.y, muzzleD, laser.range, laser.toX, laser.toY, line,
+              origin.x, origin.y, muzzleD, laser.range, laser.toX, laser.toY, line, laser.dist,
             );
             fromX = line.fromX; fromY = line.fromY; toX = line.toX; toY = line.toY;
           } else if (swarmShooter) {
@@ -2402,7 +2402,7 @@ export class PixiRenderer implements IRenderer {
             // interest, so no `drones[].mountAngles`) aims at the wire end.
             remoteBeamLine(
               style !== null, swarmShooter.angle, mount?.baseAngle ?? 0, mount ? currentMountAngle : 0,
-              origin.x, origin.y, barrelOffset, laser.range, laser.toX, laser.toY, line,
+              origin.x, origin.y, barrelOffset, laser.range, laser.toX, laser.toY, line, laser.dist,
             );
             fromX = line.fromX; fromY = line.fromY; toX = line.toX; toY = line.toY;
           } else {
