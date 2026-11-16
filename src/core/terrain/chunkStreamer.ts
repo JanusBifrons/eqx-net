@@ -137,8 +137,10 @@ export const MAX_CHUNKS_PER_STEP = 2;
 export interface StreamedRock { key: number }
 
 export interface CutFieldHooks<R extends StreamedRock = ChunkRock> {
-  /** Visit every ship that should keep rocks loaded (pilots and AI hulls). */
-  visitShips(cb: (x: number, y: number) => void): void;
+  /** Visit every ship that should keep rocks loaded (pilots and AI hulls).
+   *  `rings` overrides `wakeChunks` for that point (the client's camera
+   *  centre, sized to the view). */
+  visitShips(cb: (x: number, y: number, rings?: number) => void): void;
   /** Spawn one rock as a fixed collider; false when no slot is free. */
   spawnRock(id: string, rock: R, cx: number, cy: number): boolean;
   /** Quietly remove one rock (no destroy event, no broadcast). */
@@ -193,8 +195,8 @@ export class CutFieldStreamer<R extends StreamedRock = ChunkRock> {
   step(): void {
     const now = this.hooks.nowMs();
     this.needed.clear();
-    const w = this.wakeChunks;
-    this.hooks.visitShips((x, y) => {
+    this.hooks.visitShips((x, y, rings) => {
+      const w = rings ?? this.wakeChunks;
       const cx = Math.floor(x / CHUNK_SIZE), cy = Math.floor(y / CHUNK_SIZE);
       // Ring by ring, so the cut budget goes to the ship's own chunk first.
       for (let r = 0; r <= w; r++) {

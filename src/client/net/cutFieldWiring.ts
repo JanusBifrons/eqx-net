@@ -30,8 +30,8 @@ export function createGameCutField(host: CutFieldHost): CutFieldClient {
     // The piloted ship, or while spectating our own parked hull (spectate
     // leaves it parked in `ships`, keyed by shipInstanceId), so the field
     // stays loaded around it.
-    // A free-flying spectator camera is not followed yet (its pose lives in
-    // the renderer).
+    // The camera centre is streamed too (`CutFieldClient.setView`, from the
+    // renderer's feedback in the RAF loop).
     localPose: () => {
       const localId = mirror.localPlayerId;
       if (!localId) return null;

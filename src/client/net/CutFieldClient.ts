@@ -25,7 +25,7 @@ import {
   fieldRockId,
   type FieldRockBody,
 } from '@core/terrain/chunkStreamer';
-import { rocksInChunk, unpackRockKey, type ChunkOpts } from '@core/terrain/fieldLayout';
+import { CHUNK_SIZE, rocksInChunk, unpackRockKey, type ChunkOpts } from '@core/terrain/fieldLayout';
 import { collapsePackedRock, packChunk, packedRockBody, type PackedChunk } from '@core/terrain/packedChunk';
 import { FieldConsumedSchema, FieldMovedSchema, type FieldRockPose } from '@shared-types/messages/snapshotMessages';
 import { wantPredBody } from '../structures/predStructureStreaming.js';
@@ -38,6 +38,19 @@ export const CLIENT_STEP_MS = 125;
 const CLIENT_CUTS_PER_STEP = 1;
 /** Chunks drawn around the ship (Chebyshev radius: 7×7 chunks ≈ 28 km). */
 const CLIENT_WAKE_CHUNKS = 3;
+/** Chunks drawn around the camera centre at most (Chebyshev radius: 13×13 =
+ *  169 chunks ≈ 53 km, ~21 s to fill at one cut a step). A capital's zoom-out
+ *  floor shows far more (a battleship on a phone: ~85 × 184 km, ~1,000
+ *  chunks); past the cap the view shows the ring's edge. */
+export const CAMERA_MAX_RINGS = 6;
+
+/** Chunk rings to load around the camera centre for a view whose larger
+ *  half-extent is `viewHalf` game units: the view plus one ring of margin
+ *  (panning), never under the ship's ring, capped. 0 ⇒ no view yet. */
+export function cameraRings(viewHalf: number): number {
+  if (!(viewHalf > 0)) return 0;
+  return Math.min(CAMERA_MAX_RINGS, Math.max(CLIENT_WAKE_CHUNKS, Math.ceil(viewHalf / CHUNK_SIZE) + 1));
+}
 const CLIENT_LINGER_MS = 5_000;
 /** Field rocks are fixed: their predWorld mass is irrelevant (locked). */
 const FIELD_ROCK_PRED_MASS = 3;
@@ -123,6 +136,11 @@ export class CutFieldClient implements FieldRockSource {
   private readonly moved = new Map<number, MovedPose>();
   /** Counters for tests and diagnostics (counts, never timings). */
   readonly stats = { predBodies: 0, awake: 0 };
+  /** The camera centre (game space) and its ring radius (`setView`); 0
+   *  rings ⇒ no view yet. */
+  private viewX = 0;
+  private viewY = 0;
+  private viewRings = 0;
 
   constructor(private readonly deps: CutFieldClientDeps) {}
 
@@ -138,6 +156,14 @@ export class CutFieldClient implements FieldRockSource {
       r.inPred = false;
     }
     return bodyOf(r);
+  }
+
+  /** The camera's centre (game space) and larger half-extent (game units),
+   *  each frame from `RendererFeedback.viewX/viewY/viewHalf`: the field is
+   *  drawn around it too (the command view panned away from the ship, a far
+   *  zoom). Three number writes, no allocation (#14). */
+  setView(x: number, y: number, viewHalf: number): void {
+    this.viewX = x; this.viewY = y; this.viewRings = cameraRings(viewHalf);
   }
 
   get loadedRocks(): number { return this.rocks.size; }
@@ -231,7 +257,13 @@ export class CutFieldClient implements FieldRockSource {
   private start(seed: string): void {
     const field = cutFieldOpts(seed);
     this.streamer = new CutFieldStreamer<PackedRock>(field, {
-      visitShips: (cb) => { const p = this.deps.localPose(); if (p) cb(p.x, p.y); },
+      // The own ship first (its collision rocks), then the camera centre with
+      // a view-sized ring (the streamer cuts ring by ring: nearest first).
+      visitShips: (cb) => {
+        const p = this.deps.localPose();
+        if (p) cb(p.x, p.y);
+        if (this.viewRings > 0) cb(this.viewX, this.viewY, this.viewRings);
+      },
       spawnRock: (id, rock) => {
         if (this.consumed.has(rock.key)) return false;
         this.rocks.set(id, { chunk: rock.chunk, i: rock.i, key: rock.key, body: null, inPred: false });

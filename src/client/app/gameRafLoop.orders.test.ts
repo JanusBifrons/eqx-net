@@ -44,6 +44,7 @@ function buildLoop(): (now: number) => void {
   const client = {
     tickPhysics: vi.fn(), tickInbound: vi.fn(), updateMirror: vi.fn(), sendClientReady: vi.fn(),
     consumePendingCameraGlide: () => null,
+    setFieldView: () => {},
     consumePendingFleetArrival: () => null,
     mirror: { localPlayerId: 'ship-1', ships: new Map(), swarm: new Map(), projectiles: new Map() },
     transitInstr: { wantsFrame: () => false },
