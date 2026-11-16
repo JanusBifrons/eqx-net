@@ -105,8 +105,11 @@ interface ResolvedOpts {
   zoomSmoothTimeMs: number;
 }
 
-/** Floor for scripted (cinematic) zoom, independent of the gameplay minScale. */
-export const DIRECTOR_MIN_SCALE = 0.01;
+/** Floor for scripted (cinematic) zoom, independent of the gameplay minScale.
+ *  Below every pilot's own gameplay floor (a battleship's is ~0.0048 on a
+ *  phone, `zoomFloorForView`), so a shot or perf scene can show any view a
+ *  player can reach. */
+export const DIRECTOR_MIN_SCALE = 0.004;
 
 /**
  * The zoom ease snaps to its target and clears once within this FRACTION of
