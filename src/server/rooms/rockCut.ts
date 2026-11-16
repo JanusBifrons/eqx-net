@@ -171,7 +171,7 @@ export class RockCutter {
     const left = rock.resources ?? src.area * ASTEROID_RESOURCES_PER_AREA;
     const ore: WreckOre = { rockId: id, resource: rock.resource, perArea: src.area > 0 ? Math.max(0, left) / src.area : 0 };
     const [wreckId, serial] = this.h.newWreck();
-    const r = spawnWreckPieces(this.d, this.h, src, { ore }, placed, rs.minAreaFrac * src.area, serial, wreckId, null, fifo);
+    const r = spawnWreckPieces(this.d, this.h, src, { ore }, placed, rs.minAreaFrac * src.area, serial, wreckId, null, fifo, id);
     if (r.ids.length === 0 && r.pods === 0) return false;
     this.rocks.delete(id);
     // TODO(macro terrain C3): record a cut-field rock as mined here with

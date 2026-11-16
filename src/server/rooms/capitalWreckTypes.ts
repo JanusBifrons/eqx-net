@@ -135,6 +135,9 @@ export interface CapitalWreckDeps {
   /** Rock cut: a live rock (kind 0) by id, or null. Absent ⇒ rocks are never
    *  cut (the mining laser only draws their ore). */
   rockOf?: (id: string) => WreckRockView | null;
+  /** Piece or rock `parentId` broke into live pieces `ids` (`masses`
+   *  parallel): the locks held on it follow them. Once per break. */
+  pieceSplit?: (parentId: string, ids: ReadonlyArray<string>, masses: ReadonlyArray<number>) => void;
 }
 
 /** How hard a hit knocks one piece (fixed at spawn; read per hit, #14). */

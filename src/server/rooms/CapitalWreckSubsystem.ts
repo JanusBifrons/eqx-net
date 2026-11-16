@@ -45,12 +45,11 @@ import type { WreckDescriptor } from '../../shared-types/messages/snapshotMessag
 import { wreckCrackTicks } from '../../shared-types/wreckTiming.js';
 import { WEAPONS, type WeaponId } from '../../core/combat/WeaponCatalogue.js';
 import { shipShapeScale } from '../../core/geometry/shipHullOutline.js';
-import { wreckPieceIntegrity, wreckSalvageQty, wreckWearFactor } from '../../core/destruction/wreckIntegrity.js';
-import { GOOD_DEFS } from '../../shared-types/goods.js';
+import { wreckPieceIntegrity, wreckWearFactor } from '../../core/destruction/wreckIntegrity.js';
 import type { BurnLines } from '../../core/destruction/burnLines.js';
 import { WreckResplitter, type WreckPiecePose } from './wreckResplit.js';
 import type { CapitalWreckDeps, LiveWreck, PieceKnock } from './capitalWreckTypes.js';
-import { forEachLineagePiece, lineageRootOf } from './wreckLineage.js';
+import { forEachLineagePiece, lineageRootOf, pieceHaulOf, pieceSalvageQtyOf } from './wreckLineage.js';
 import { burnHullHit, burnPieceHit, deathExtraCuts } from './wreckBurnHits.js';
 import { RockCutter } from './rockCut.js';
 import { shipWreckSource } from '../../core/destruction/wreckSource.js';
@@ -543,14 +542,8 @@ export class CapitalWreckSubsystem {
     this.pieceGone(id);
   }
 
-  /** A live piece's salvage if stored whole: what it would leave as a pod
-   *  when worn out (`wreckSalvageQty` of its mass). 0: not a live ship-wreck piece (rock pieces store as ore later). */
-  pieceSalvageQty(id: string): number {
-    const k = this.knock.get(id);
-    const wreckId = this.pieceWreck.get(id);
-    const w = wreckId !== undefined ? this.wrecks.get(wreckId) : undefined;
-    return k === undefined || w === undefined || w.src.rock !== null ? 0 : wreckSalvageQty(w.src, k.mass);
-  }
+  /** A live piece's salvage if stored whole (wreckLineage.ts `pieceSalvageQtyOf`). */
+  pieceSalvageQty(id: string): number { return pieceSalvageQtyOf(this.wrecks, this.pieceWreck, this.knock, id); }
 
   /** A tractored piece went whole into a hold (`LootSubsystem`'s piece
    *  store): it leaves exactly like a worn-out piece turning to salvage. */
@@ -564,16 +557,9 @@ export class CapitalWreckSubsystem {
     return this.knock.get(id)?.integrity ?? this.rockCut.integrity(id);
   }
 
-  /** A live piece's mass and the hold weight it stores as (its salvage
-   *  worth, `wreckSalvageQty`, in salvage goods): the haul test of the lock
-   *  salvage bits (lockSalvage.ts). False when `id` is not a live piece. */
+  /** A live piece's mass and stored hold weight, the lock haul test (wreckLineage.ts `pieceHaulOf`). */
   pieceHaul(id: string, out: { mass: number; holdWeight: number }): boolean {
-    const k = this.knock.get(id);
-    const w = k === undefined ? undefined : this.wrecks.get(this.pieceWreck.get(id) ?? -1);
-    if (k === undefined || w === undefined) return false;
-    out.mass = k.mass;
-    out.holdWeight = wreckSalvageQty(w.chain.root.kindId, k.mass) * GOOD_DEFS.salvage.weight;
-    return true;
+    return pieceHaulOf(this.wrecks, this.pieceWreck, this.knock, id, out);
   }
 
   /** The snapshot slice: one descriptor per live wreck (shared array, rebuilt
