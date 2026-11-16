@@ -91,24 +91,25 @@ export function pieceStoreOf(
 const _near: WreckPiecePose = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
 
 /** `CapitalWreckSubsystem.forEachPieceNear`: visit each live piece (ship
- *  wreck or rock) with a bounding radius ≤ `maxRadius` whose edge is within
- *  `reach` of (x, y), with its centre. A piece still in its crack hold (its
- *  hull only just broke, `tick < holdUntil`) is skipped. The radius test runs
- *  before the pose read, so a ship that consumes nothing small costs one pass
- *  over the radii. The visitor may remove the piece. */
+ *  wreck or rock) with a mass ≤ `maxMass` (hold size) whose edge is within
+ *  `reach` of (x, y), with its centre and radius; never a rock's piece. A piece still in its crack hold (its
+ *  hull only just broke, `tick < holdUntil`) is skipped. The mass test runs
+ *  before the pose read, so a pass with nothing at hold size costs one pass
+ *  over the masses. The visitor may remove the piece. */
 export function forEachPieceNear(
   wrecks: ReadonlyMap<number, LiveWreck>, pieceWreck: ReadonlyMap<string, number>,
   knock: ReadonlyMap<string, PieceKnock>, tick: number,
   poseInto: ((id: string, out: WreckPiecePose) => boolean) | undefined,
-  x: number, y: number, reach: number, maxRadius: number,
-  visit: (pieceId: string, px: number, py: number) => void,
+  x: number, y: number, reach: number, maxMass: number,
+  visit: (pieceId: string, px: number, py: number, pr: number) => void,
 ): void {
-  if (poseInto === undefined || !(maxRadius > 0)) return;
+  if (poseInto === undefined || !(maxMass > 0)) return;
   for (const [id, k] of knock) {
-    if (k.radius > maxRadius) continue;
+    if (!(k.mass <= maxMass)) continue;
     const w = wrecks.get(pieceWreck.get(id) ?? -1);
-    if (w === undefined || tick < w.holdUntil || !poseInto(id, _near)) continue;
+    // A rock's piece is never taken in whole (cut down to ore pods).
+    if (w === undefined || w.ore !== undefined || tick < w.holdUntil || !poseInto(id, _near)) continue;
     const dx = _near.x - x, dy = _near.y - y, r = reach + k.radius;
-    if (dx * dx + dy * dy <= r * r) visit(id, _near.x, _near.y);
+    if (dx * dx + dy * dy <= r * r) visit(id, _near.x, _near.y, k.radius);
   }
 }

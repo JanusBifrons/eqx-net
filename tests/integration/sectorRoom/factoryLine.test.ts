@@ -1,14 +1,15 @@
 /**
  * The factory line (owner 2026-11-16, plan partitioned-chasing-lark), through
- * the real room: a piece small enough for THIS ship to take in whole
- * (`salvageConsumable`: radius ≤ `SALVAGE_CONSUME_FRAC` × hull radius, fits
- * the free hold) is targeted by nothing. The lock step stamps
+ * the real room: a wreck piece small enough for THIS ship to take in whole
+ * (`salvageConsumable`: hold size, the AA tier, on a ship with a mining
+ * tool; fits the free hold) is targeted by nothing. The lock step stamps
  * `LOCK_CONSUMABLE` on the wire lock (`f`), the mining laser group's fire is
  * refused (`pickTurretLock` → `TURRET_NO_LOCK`) and the tractor group's too
  * (no lease). Fill the hold and the same piece is pulled again (the control:
  * fighter debris is AA tier, so the S tractor pulls it and the S laser leaves
- * it, the size ladder). A consumable piece near the hull goes into the hold
- * through the loot pickup's piece store, with no tractor on it.
+ * it, the size ladder). A consumable piece TOUCHING the hull (its real
+ * shape, `shipWithinHullReach`) goes into the hold through the loot
+ * pickup's piece store, with no tractor on it.
  *
  * No ship kind carries both tools yet (the barge is PR 15): a crossguard
  * (the biggest playable hull, r 213: it consumes fighter debris), its
@@ -24,6 +25,7 @@ import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import { getShipKind, type WeaponMount } from '../../../src/shared-types/shipKinds.js';
 import { getHoldStore } from '../../../src/server/db/PersistenceWorker.js';
 import { LOCK_CONSUMABLE, LOCK_SALVAGE, LOCK_TIER_MASK } from '../../../src/core/combat/turretLockPick.js';
+import { shipWithinHullReach } from '../../../src/core/combat/shipHitShape.js';
 
 interface SnapGroups { id: string; m: number; l: Array<{ t: string; s: number; p: number; f?: number }> }
 const WRECK_KIND = 4;
@@ -122,13 +124,18 @@ describe('SectorRoom integration — the factory line: nothing targets a consuma
     }
     await waitUntil(() => [...acks].some(([id, rej]) => id.startsWith('c') && !rej), 4_000, 'the tractor fires at the piece the ship can no longer take in');
 
-    // 3. Empty hold, a fighter broken beside the hull: its pieces go into the
-    //    hold whole through the loot pickup, no tractor on them.
+    // 3. Empty hold, a fighter broken against the hull's side (+x, the bolt
+    //    knocks its pieces onto it): they go into the hold whole through the
+    //    loot pickup when they touch the hull, no tractor on them.
     getHoldStore().delete(ship.shipInstanceId, false);
     // (A piece can be taken in on the tick it spawns, before the test sees it: count loads, not ids.)
     const loads0 = salvageLoads;
-    const near = await breakFighter('f2', kind.radius + 30, 0);
-    await waitUntil(() => near.every((id) => int().swarmRegistry.get(id) == null) && salvageLoads > loads0, 5_000, 'the pieces beside the hull are taken in');
+    // Its shield is up: the bubble is the surface they meet.
+    let side = 0;
+    while (shipWithinHullReach(kind.id, true, side + 2, 0, 0, 0, 0, 0)) side += 2;
+    await breakFighter('f2', side + 30, 0);
+    // (Some may glance off the bubble and drift clear: those stay out; some go in before the test sees them.)
+    await waitUntil(() => salvageLoads > loads0, 15_000, 'the pieces that touch the hull are taken in');
     expect(hold().salvage ?? 0, 'their salvage is in the hold').toBeGreaterThan(0);
     expect(int().forceFields.tractorCount, 'taken in with no tractor on them').toBe(0);
     expect(int().loot.podCount(), 'whole, no pod in between').toBe(0);

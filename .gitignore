@@ -59,6 +59,8 @@ data/
 # Claude Code session-local state
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
+# Machine-wide heavy-job queue tickets (scripts/dev/heavy-queue.mjs).
+.claude/heavy-queue/
 # Netcode-health gate worktrees — created by tests/netgate/run-netgate.ts
 # (incremental — preserved across runs to keep node_modules warm; never commit).
 .claude/worktrees/
