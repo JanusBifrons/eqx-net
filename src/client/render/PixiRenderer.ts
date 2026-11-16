@@ -18,6 +18,7 @@ import { WreckGeometryStore } from '../net/wreckGeometryStore.js';
 import { WreckArtState, WreckPieceSprite, wreckBlasts, wreckRippleCap, WRECK_BLAST_LINGER, type WreckBlast } from './pixi/wreckArt.js';
 import { deathBlastFor, dyingHullDiameter, hullDeathBlastReplaced, type DeathBlast } from './pixi/deathBlast.js';
 import { spawnVaporiseBlast, stackVaporiseOverBeams } from './pixi/vaporiseBlast.js';
+import { raiseBeamsOverHulls } from './pixi/beamsOverHulls.js';
 import { LegacyExplosionSprites } from './pixi/legacyExplosionSprites.js';
 import { ConnectorRenderer } from './pixi/ConnectorRenderer.js';
 import { updateProjectileSprites, type ProjectileSpriteCtx } from './pixi/projectileSpriteUpdater.js';
@@ -1195,6 +1196,15 @@ export class PixiRenderer implements IRenderer {
       });
     }
 
+    // Beams leave from the turrets on top of the hull, so they draw over every
+    // hull (ships spawn later and would otherwise stack above them).
+    const beamLayers: Container[] = [];
+    if (this._fxRemoteBeams) beamLayers.push(this._fxRemoteBeams.container);
+    if (this._fxLiveBeams) beamLayers.push(this._fxLiveBeams.container);
+    for (const p of [this._liveBeamPool, this._remoteBeamPool, this._miningBeamPool]) {
+      if (p) beamLayers.push(p.container, p.styledContainer);
+    }
+    raiseBeamsOverHulls(this.shipContainer, beamLayers);
     stackVaporiseOverBeams(this.shipContainer, this._fxExplosions); // the vaporise flash reads over the beams
     // Incoming-fire markers sit under the radar's edge icons.
     this.incomingFire.init(this.camera);
