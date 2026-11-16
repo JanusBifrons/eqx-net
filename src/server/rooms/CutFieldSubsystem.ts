@@ -52,6 +52,13 @@ export class CutFieldSubsystem {
   /** The field's ore seed (`oreSeed`), as the client draws it. */
   private readonly oreBase: number;
   private readonly restPt = { x: 0, y: 0 };
+  /** The field's change record (the in-memory half of the planned
+   *  `terrain_records` store, plan C4), by rock key. A rock nobody touched
+   *  has no entry. `minedPool`: what is left in a mined rock, kept while its
+   *  chunk is unloaded so a re-cut doesn't refill it. `consumed`: rocks
+   *  broken up (salvage rock cut), never cut whole again. */
+  private readonly minedPool = new Map<number, number>();
+  private readonly consumed = new Set<number>();
 
   constructor(
     seed: string,
@@ -72,13 +79,23 @@ export class CutFieldSubsystem {
         }
       },
       spawnRock: (id, rock) => {
+        // A broken-up rock is never cut whole again (counted as refused).
+        if (this.consumed.has(rock.key)) return false;
         // The same body the client builds (#15): centred on the outline.
         const b = fieldRockBody(rock);
-        return spawner.spawnAsteroid({ id, x: b.x, y: b.y, vx: 0, vy: 0, radius: b.radius, vertices: b.verts, mass: fieldRockMass(b.radius), fixed: true, fieldRock: true, fieldKey: rock.key });
+        if (!spawner.spawnAsteroid({ id, x: b.x, y: b.y, vx: 0, vy: 0, radius: b.radius, vertices: b.verts, mass: fieldRockMass(b.radius), fixed: true, fieldRock: true, fieldKey: rock.key })) return false;
+        const left = this.minedPool.get(rock.key);
+        const rec = left === undefined ? null : registry.get(id);
+        if (rec !== null && rec.resources !== undefined) rec.resources = Math.min(rec.resources, left!);
+        return true;
       },
       removeRock: (id) => {
         const rec = registry.get(id);
-        if (rec) hooks.evict(rec, rec.fieldAwake === true);
+        if (!rec) return;
+        if (rec.fieldKey !== undefined && rec.resources !== undefined && rec.resourcesMax !== undefined && rec.resources < rec.resourcesMax) {
+          this.minedPool.set(rec.fieldKey, rec.resources);
+        }
+        hooks.evict(rec, rec.fieldAwake === true);
       },
       nowMs: () => gameClock.now(),
     });
@@ -102,6 +119,18 @@ export class CutFieldSubsystem {
   private wake(id: string, otherId: string, closingSpeed: number, tick: number): void {
     if (!fieldRockWakes(this.registry.get(otherId), closingSpeed)) return;
     this.wakeRock(id, otherId, tick);
+  }
+
+  /** Rock `key` was broken up (its pieces are live wrecks now): it is never
+   *  cut whole again, here or after its chunk reloads. Server only for now:
+   *  the client's cut learns consumed keys with the plan's C3 wire. */
+  markConsumed(key: number): void {
+    this.consumed.add(key);
+    this.minedPool.delete(key);
+  }
+
+  isConsumed(key: number): boolean {
+    return this.consumed.has(key);
   }
 
   /** The field's ore where a shot hit field rock `rec` at world (x, y), into
