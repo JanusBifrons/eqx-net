@@ -1115,7 +1115,7 @@ export class SectorRoom extends Room<SectorState> {
   /** Living World P1a — loot pods, pickup, spill-on-death (see LootSubsystem). */
   private loot!: LootSubsystem;
   /** Asteroid ore: the one draw path (Miner, harvesters, mining-laser hits paid on the pulse). */
-  private readonly oreDraw = new OreDraw({ swarmRegistry: this.swarmRegistry, holderOf: (id, out) => this.oreHolderOf(id, out), sectorKey: () => this.sectorKey });
+  private readonly oreDraw = new OreDraw({ swarmRegistry: this.swarmRegistry, holderOf: (id, out) => this.oreHolderOf(id, out), sectorKey: () => this.sectorKey, oreAtHit: (r, x, y, out) => this.cutField?.oreAtHit(r, x, y, out) ?? false });
   /** Living World P1a-2 — base storage holds (deposit / refine / spill). */
   private storage!: StorageService;
   /** Economy v2 W3 — Research Lab jobs (research / copy / combine). */
@@ -2918,6 +2918,7 @@ export class SectorRoom extends Room<SectorState> {
         return p;
       },
       forEachCollector: (visit) => this.forEachLootCollector(visit),
+      inTractorHold: (c, podId, x, y) => this.forceFields.inTractorHold(c.playerId, podId, x, y), // emitter id: a pilot's playerId or an AI ship's swarm id
       onCollected: (c, moved, podId) => this.onLootCollected(c, moved, podId),
       onDropped: (podId, hold, cause) => {
         auditEvent({ event: 'loot_dropped', sector: this.sectorKey ?? undefined, podId, cause, weight: holdWeight(hold) });
@@ -2988,7 +2989,7 @@ export class SectorRoom extends Room<SectorState> {
       chargeCapacitors: (members, spare) => this.teleporters.chargeCapacitors(members, spare),
       drawAsteroidResources: (entityId, amount) => this.oreDraw.draw(entityId, amount),
       // P2c — asteroid kinds, extractor goods into network storage, nebulae.
-      asteroidYieldOf: (entityId) => ASTEROID_YIELD[this.swarmRegistry.getByEntityId(entityId)?.asteroidResource ?? 'rock'],
+      asteroidYieldOf: (entityId) => { const r = this.swarmRegistry.getByEntityId(entityId); return r ? this.oreDraw.rowOf(r) : ASTEROID_YIELD.rock; },
       depositGoods: (rec, good, n) => this.production.deposit(rec, good, n),
       canDepositGoods: (rec, goods) => this.production.canDeposit(rec, goods),
       sectorHasNebula: () => this.sectorFeatures.includes('nebula'),
@@ -5515,7 +5516,7 @@ export class SectorRoom extends Room<SectorState> {
     }
     // Phase 4 warp travel: a ship on its run is out of the world (an NPC's too, W2a).
     if (this.warpTravel.isTravelling(targetId)) return false;
-    if (weaponId !== undefined && damage > 0) this.oreDraw.onHit(targetId, shooterId, damage, weaponId);
+    if (weaponId !== undefined && damage > 0) this.oreDraw.onHit(targetId, shooterId, damage, weaponId, hitX, hitY);
     if (this.npcWarps.size > 0 && this.botWarpPhase(targetId) === 2) return false;
     // v4 A — alien gates can't be damaged; whoever hits one is disabled.
     if (this.gateGuard.gateCount > 0 && this.gateGuard.isGate(targetId)) {

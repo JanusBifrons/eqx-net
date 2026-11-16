@@ -3114,3 +3114,13 @@ Owner: "make it more like micro machines and make fights a bit longer. Also don'
 
 - **Finding:** `tests/unit/context-nudge.test.ts` collected 0 tests on Windows ("Invalid or unexpected token", at a meaningless line in the test file) but passed on CI. The test imports `scripts/dev/context-nudge.mjs`, which began with `#!/usr/bin/env node`. With `core.autocrlf=true` that line ends in `\r\n`; Vite's SSR transform only skips a hashbang matching `/^#!.*\n/`, and `.` does not match `\r`, so the imports were hoisted above the `#!` and the module no longer parsed.
 - **Rule:** a script a test imports carries no shebang; run it as `node <file>`. The error location vitest prints points at the test file, not the imported script, so check the imports' first line.
+
+## 2026-11-16 — v8 coverage slowed the art pixel tests ~6× and set the unit check's wall clock
+
+- **Finding:** the required `unit-tests` job took ~17 min, almost all of it art tests (`fields.livery.test.ts` 1016 s on CI, 131 s plain locally). v8 coverage instruments every pixel-loop iteration: `hullVents.lightCruiserC.test.ts` took 6.5 s plain and 40 s with `--coverage`.
+- **Rule:** pixel-heavy art tests (forge / bake / livery loops) match `ART_TEST_GLOBS` in `vitest.config.ts`; the main config excludes them and `vitest.art.config.ts` (`pnpm test:art`, CI job `unit-art`) runs them without coverage. `pnpm test` runs both configs. A new art test that forges or bakes pixels goes under `src/client/render/art/` (or joins the globs); measure a slow unit file with and without `--coverage` before splitting it.
+
+## 2026-11-16 — an integration duel window in wall time ran a host-load-dependent amount of game
+
+- **Finding:** `dogfight.test.ts` sampled duels for 20 s / 30 s of `Date.now()`; `harness.advance(ms)` is a real `setTimeout`, so a loaded host ran a different number of ticks and the ram counts drifted (attack-run rams 2-3 against a limit of 1).
+- **Rule:** bound integration observation windows by `room.serverTick` (60 per game second) and derive per-sample dt from the tick delta, skipping samples where no tick passed.

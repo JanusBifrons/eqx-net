@@ -93,6 +93,10 @@ export interface SwarmEntityRecord {
   /** A field rock a ship rammed: now a dynamic body, on the swarm wire
    *  (flag FIELD_ROCK + key) until its chunk unloads. Still never saved. */
   fieldAwake?: boolean;
+  /** A field rock's centre where the field cut it (angle 0): its rest frame,
+   *  where its ore is sampled once it has moved (`CutFieldSubsystem.oreAtHit`). */
+  restX?: number;
+  restY?: number;
   /** Wreck pieces (kind 4): the convex parts, body-local math-up, CCW. Weapon
    *  hits refine the bounding circle to these (the same parts the physics
    *  body is built from). */

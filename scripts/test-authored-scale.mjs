@@ -24,9 +24,10 @@ if (files.length === 0) {
   process.exit(1);
 }
 console.log(`test-authored-scale: ${files.length} file(s) at EQX_SHIP_SCALE=1 EQX_SHIP_TUNING=A`);
-const r = spawnSync('pnpm', ['exec', 'vitest', 'run', ...files], {
+// Through the `pnpm test` runner, so gated art files (vitest.art.config.ts)
+// run too, not only the ones in the main config.
+const r = spawnSync(process.execPath, ['scripts/test-unit.mjs', ...files], {
   stdio: 'inherit',
-  shell: process.platform === 'win32',
   env: { ...process.env, EQX_SHIP_SCALE: '1', EQX_SHIP_TUNING: 'A', EQX_SHIP_KIND_SCALE: '' },
 });
 process.exit(r.status ?? 1);

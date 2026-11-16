@@ -27,7 +27,7 @@ describe('ForceFieldSubsystem', () => {
 import { getWeapon } from '../../core/combat/WeaponCatalogue.js';
 import { MOUNT_SIZE_TUNING } from '../../shared-types/shipScale/tuning.js';
 import { forEachBeamLink, type BeamLinkVisitor } from '../../shared-types/beamLinksWire.js';
-import { TRACTOR_LEASE_CAP, lockKeyBodyId, type TractorDeps, type TractorPoseOut } from './ForceFieldSubsystem.js';
+import { TRACTOR_LEASE_CAP, TRACTOR_PICKUP_HOLD_MUL, lockKeyBodyId, type TractorDeps, type TractorPoseOut } from './ForceFieldSubsystem.js';
 import type { WeaponMount } from '../../shared-types/shipKinds.js';
 import type { TractorForceField } from '../../core/physics/forceFields.js';
 
@@ -100,6 +100,20 @@ describe('ForceFieldSubsystem — tractor leases', () => {
     ff.tickTractors();
     expect(ff.tractorCount).toBe(0);
     expect(posted.at(-1)).toEqual({ type: 'REMOVE_FORCE_FIELD', id: 'tractor:ship:m-S' });
+  });
+
+  it('inTractorHold: only the emitter\'s live, posed lease on that target, within TRACTOR_PICKUP_HOLD_MUL × hold of the muzzle (PR 12)', () => {
+    const { ff, st } = rig();
+    const r = spec.hold * TRACTOR_PICKUP_HOLD_MUL; // muzzle at (0, 10)
+    ff.renewTractor('ship', mount('S'), 'pod');
+    expect(ff.inTractorHold('ship', 'pod', 0, 10 + r - 1), 'not posed yet').toBe(false);
+    ff.tickTractors();
+    expect(ff.inTractorHold('ship', 'pod', 0, 10 + r - 1)).toBe(true);
+    expect(ff.inTractorHold('ship', 'pod', 0, 10 + r + 1), 'past the zone').toBe(false);
+    expect(ff.inTractorHold('other', 'pod', 0, 10 + r - 1), 'another emitter').toBe(false);
+    expect(ff.inTractorHold('ship', 'rock', 0, 10 + r - 1), 'another target').toBe(false);
+    st.tick += spec.leaseTicks;
+    expect(ff.inTractorHold('ship', 'pod', 0, 10 + r - 1), 'lapsed').toBe(false);
   });
 
   it('ends when the target is gone; no pull during a wreck crack hold', () => {

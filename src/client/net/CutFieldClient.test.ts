@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import type { PhysicsWorld } from '@core/physics/World';
-import { CHUNK_SIZE, rocksInChunk, type ChunkOpts, type ChunkRock } from '@core/terrain/fieldLayout';
+import { CHUNK_SIZE, rocksInChunk, type ChunkOpts } from '@core/terrain/fieldLayout';
+import { packChunk, type PackedChunk } from '@core/terrain/packedChunk';
 import { PREDWORLD_STRUCTURE_RADIUS, PREDWORLD_STRUCTURE_HYSTERESIS } from '../../shared-types/structureBudgets.js';
 import { CutFieldClient, FIELD_AWAKE_FORGET_MS, MAX_CUTS_IN_FLIGHT } from './CutFieldClient.js';
 
@@ -90,8 +91,8 @@ describe('CutFieldClient background cutting (phone frames stay clear)', () => {
   function heldCutter() {
     const out: Array<{ cx: number; cy: number; land: () => void; fail: () => void }> = [];
     const cutter = {
-      cutChunk: (field: ChunkOpts, cx: number, cy: number) => new Promise<ChunkRock[]>((resolve, reject) => {
-        out.push({ cx, cy, land: () => resolve(rocksInChunk(field, cx, cy)), fail: () => reject(new Error('x')) });
+      cutChunk: (field: ChunkOpts, cx: number, cy: number) => new Promise<PackedChunk>((resolve, reject) => {
+        out.push({ cx, cy, land: () => resolve(packChunk(rocksInChunk(field, cx, cy), field.seed)), fail: () => reject(new Error('x')) });
       }),
     };
     return { cutter, out };
