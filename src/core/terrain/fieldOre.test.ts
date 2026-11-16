@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { SLICED } from './fieldLayout.js';
 import {
-  hotspotConc, hotspotsInBox, ORE_CELL, ORE_EDGE_DEPTH, ORE_TABLE, oreAt, oreAtField, oreSeed, visitCellHotspots,
+  hotspotConc, hotspotsInBox, ORE_CELL, ORE_EDGE_DEPTH, ORE_TABLE, oreAt, oreAtField, oreForOutlines, oreSeed, visitCellHotspots,
   type OreConc,
 } from './fieldOre.js';
 
@@ -66,6 +66,30 @@ describe('fieldOre: the cut field\'s ore map (F1a)', () => {
     expect(rim.spots / rim.cells).toBeLessThan(core.spots / core.cells / 4);
     const pocketsRim = countHotspots('look', 0.75, 1, 0);
     expect(pocketsRim.spots / pocketsRim.cells).toBeGreaterThan(0.5);
+  });
+
+  it('oreForOutlines gives each fan vertex exactly what oreAt gives at that point', () => {
+    const base = oreSeed('look');
+    const spot = hotspotsInBox({ seed: 'look' }, -20000, -20000, 20000, 20000).find((h) => h.radius > 1000)!;
+    // Two rocks straddling the hotspot's edge: a triangle and a square.
+    const r = spot.radius;
+    const outlines = new Float32Array([
+      3, spot.x, spot.y, spot.x + 200, spot.y, spot.x, spot.y + 200,
+      4, spot.x + r * 0.8, spot.y, spot.x + r * 1.2, spot.y, spot.x + r * 1.2, spot.y + 300, spot.x + r * 0.8, spot.y + 300,
+    ]);
+    const ore = oreForOutlines(base, R, outlines);
+    expect(ore.length).toBe((4 + 5) * 2);
+    const pts: Array<[number, number]> = [
+      [spot.x + 200 / 3, spot.y + 200 / 3], [spot.x, spot.y], [spot.x + 200, spot.y], [spot.x, spot.y + 200],
+      [spot.x + r, spot.y + 150], [spot.x + r * 0.8, spot.y], [spot.x + r * 1.2, spot.y], [spot.x + r * 1.2, spot.y + 300], [spot.x + r * 0.8, spot.y + 300],
+    ];
+    const out = conc();
+    pts.forEach(([x, y], v) => {
+      oreAt(base, R, x, y, out);
+      expect(ore[v * 2]).toBeCloseTo(out.ice, 5);
+      expect(ore[v * 2 + 1]).toBeCloseTo(out.crystal, 5);
+    });
+    expect(ore[2 * 1 + (spot.resource === 'ice' ? 0 : 1)]).toBeGreaterThan(0);
   });
 
   it('most of the field is plain rock, with ice and crystal somewhere', () => {

@@ -15,6 +15,7 @@ import { capitalFleetWarp, capitalFleetArrive, capitalLineup, capitalBroadside, 
 import { machinedArt } from './shots/machinedArt.js';
 import { newEffects } from './shots/newEffects.js';
 import { crossingSector } from './shots/crossingSector.js';
+import { cutFieldLaneFighter, cutFieldLaneBattleship, cutFieldOverview, cutFieldLaneRun, cutFieldRam, cutFieldOre } from './shots/cutField.js';
 import { machinedTurrets } from './shots/machinedTurrets.js';
 import { flight } from './shots/flight.js';
 import { beamCombat } from './shots/beamCombat.js';
@@ -25,6 +26,7 @@ import { longGuns } from './shots/longGuns.js';
 import { fleetMelee } from './shots/fleetMelee.js';
 import { npcDogfight } from './shots/npcDogfight.js';
 import { timeScaleDial, timeScaleCapitals4x, capitalBreakupSlowmo, capitalBreakupFast } from './shots/timeScaleDial.js';
+import { wreckResplit } from './shots/wreckResplit.js';
 import { scrap } from './shots/scrap.js';
 import { buildBase } from './shots/buildBase.js';
 import { gridAlive } from './shots/gridAlive.js';
@@ -66,6 +68,7 @@ export const SHOTS: readonly Shot[] = [
   capitalLineup,
   capitalBroadside,
   capitalBreakup,
+  wreckResplit,
   beamSlice,
   beamVaporiseSubcap,
   railChannel,
@@ -93,6 +96,12 @@ export const SHOTS: readonly Shot[] = [
   capitalBreakupFast,
   newEffects,
   crossingSector,
+  cutFieldLaneFighter,
+  cutFieldOverview,
+  cutFieldOre,
+  cutFieldLaneBattleship,
+  cutFieldLaneRun,
+  cutFieldRam,
   machinedTurrets,
   robots,
   nexus,

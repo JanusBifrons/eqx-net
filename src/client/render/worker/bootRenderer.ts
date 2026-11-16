@@ -24,6 +24,7 @@ export function rendererArgsFromBoot(
       ...(msg.speedFxOff ? { speedFx: false } : {}),
       ...(msg.lighting ? { lighting: msg.lighting } : {}),
       ...(msg.livery ? { livery: msg.livery } : {}),
+      ...(msg.ore ? { ore: msg.ore } : {}),
     },
     msg.fxKillSwitches,
   ];

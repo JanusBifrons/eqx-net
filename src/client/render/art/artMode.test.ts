@@ -1,7 +1,7 @@
 /** `?livery=` look flag: on by default (b8), `off` turns it off, a named
  *  treatment implies Machined art; the default never changes the art mode. */
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_LIVERY, readLivery, resolveArtMode } from './artMode.js';
+import { DEFAULT_LIVERY, readLivery, readOreLook, resolveArtMode } from './artMode.js';
 
 describe('readLivery', () => {
   it('the default livery is b8', () => {
@@ -39,5 +39,15 @@ describe('readLivery', () => {
     expect(resolveArtMode('?livery=off', true, null)).toBe('classic');
     expect(resolveArtMode('?livery=off', false, 'machined')).toBe('machined');
     expect(resolveArtMode('?livery=d', true, null)).toBe('classic');
+  });
+});
+
+describe('readOreLook (cut-field ore look trial, F1c)', () => {
+  it('reads the four styles and ignores anything else', () => {
+    expect(readOreLook('?ore=tint')).toBe('tint');
+    expect(readOreLook('?room=x&ore=seams')).toBe('seams');
+    expect(readOreLook('?ore=off')).toBe('off');
+    expect(readOreLook('?ore=gold')).toBeUndefined();
+    expect(readOreLook('')).toBeUndefined();
   });
 });

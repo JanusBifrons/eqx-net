@@ -111,8 +111,13 @@ describe('SectorRoom integration — sub-capital wrecks (sub-cap break-up slice 
     // follows again (the quiet skip never freezes a woken body).
     // A real bolt (the projectile path passes the shot's direction) from the
     // left at the piece's centre; it stops on the first piece in its path.
+    // Salvage PR 5: a hit also wears the piece's hidden integrity (the laser
+    // at 0.1), and a worn-out piece splits or turns to salvage instead of
+    // being shoved, so the bolt wears it to just short of that (9 × the
+    // least integrity ⇒ 0.9 of it).
     const before = ids.map((id) => int().wreckState(id)!);
-    int().spawnTestProjectile('shooter-x', rest.x - 600, rest.y, 4000, 0, 'laser', 1e6);
+    const dmg = 9 * Math.min(...ids.map((id) => int().wreckIntegrity(id)!));
+    int().spawnTestProjectile('shooter-x', rest.x - 600, rest.y, 4000, 0, 'laser', dmg);
     await harness.advance(150);
     const woke = ids.findIndex((id, i) => int().swarmSleeping(id) === false && int().wreckState(id)!.x > before[i]!.x);
     expect(woke, 'the hit piece woke and moved along the shot').toBeGreaterThanOrEqual(0);

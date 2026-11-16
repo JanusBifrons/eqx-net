@@ -18,7 +18,7 @@ interface PostedCmd {
   slot: number; id: string; x: number; y: number; vx: number; vy: number; radius: number; mass: number;
   vertices?: ReadonlyArray<Vec2>;
   linearDamping?: number;
-  staticBody?: boolean;
+  staticBody?: boolean | 'fixed';
   collisionGroups?: number;
   angle?: number;
   shipKindId?: number;
@@ -68,6 +68,14 @@ describe('SwarmSpawner', () => {
     expect(cap.staticBody).toBe(true); // the P0 fix — structures never move
     expect(drone.staticBody).toBeFalsy(); // drones fly
     expect(rock.staticBody).toBeFalsy(); // asteroids stay dynamic / bump-able
+  });
+
+  // Cut-field rocks touch along their cuts: as locked DYNAMIC bodies the
+  // solver worked every rock–rock contact (~12 ms a step for 941 rocks while
+  // awake, 2 s after each load), so they spawn as FIXED bodies.
+  it('a cut-field rock spawns as a fixed body (never simulated)', () => {
+    spawner.spawnAsteroid({ id: 'field:1', x: 0, y: 0, vx: 0, vy: 0, radius: 30, fixed: true, fieldRock: true });
+    expect(posted.find((p) => p.id === 'field:1')!.staticBody).toBe('fixed');
   });
 
   // Macro terrain 1a: a rock's outline (collider, hit shape, art) comes from

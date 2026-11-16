@@ -36,6 +36,15 @@ export interface WreckGeometrySource {
   piece(wreckId: number, index: number): WreckPieceGeometry | null;
 }
 
+/** Cut-field rocks (macro terrain C2): an awake field rock rides the swarm
+ *  wire with its rock key; its collider is its cut outline, held by the
+ *  client's `CutFieldClient`, which also drops the rock's fixed body. */
+export interface FieldRockSource {
+  /** Mark rock `key` awake (called on spawn and every sync) and return its
+   *  centred outline, or null when this client has not cut its chunk. */
+  wakeFieldRock(key: number): ReadonlyArray<{ x: number; y: number }> | null;
+}
+
 /** The hostility-ledger surface a drone leaf touches (register / unregister). */
 export type AiLedgerHandle = Pick<AiController, 'register' | 'unregister'>;
 
@@ -52,6 +61,8 @@ export interface ClientSpawnCtx {
   aiController: AiLedgerHandle;
   /** Capital wreck geometry (the wreck leaf reads its piece from it). */
   wrecks?: WreckGeometrySource;
+  /** Cut-field rocks (the asteroid leaf reads an awake rock's outline). */
+  fieldRocks?: FieldRockSource;
   /** Numeric wire entityId. */
   entityId: number;
   /** Pre-cached `swarm-${entityId}` predWorld body key. */
