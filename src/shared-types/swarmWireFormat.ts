@@ -12,7 +12,7 @@
  * Per-entity record (36 bytes — v5):
  *   [+0]  u16  entityId      (dense 0..65535)
  *   [+2]  u8   kind          (0=asteroid, 1=drone, 2=structure, 3=scrap, 4=wreck piece)
- *   [+3]  u8   recordFlags   (bit 0 = SLEEPING, bit 1 = SHIELD_DOWN)
+ *   [+3]  u8   recordFlags   (bit 0 = SLEEPING, bit 1 = SHIELD_DOWN, bit 2 = FIELD_ROCK (v7))
  *   [+4]  f32  x
  *   [+8]  f32  y
  *   [+12] f32  vx
@@ -42,7 +42,10 @@
  * **Version contract**: a decoder that sees `version !== SWARM_WIRE_VERSION`
  * MUST drop the packet (and ideally surface a "please refresh" banner). Older
  * clients reading v5 with the v4 stride mis-attribute every byte after the
- * first record — never silently fall back. v5 had the same 36-byte stride but
+ * first record — never silently fall back. v7 adds the FIELD_ROCK record flag:
+ * an awake cut-field rock (macro terrain C3) carries its rock key in +32/+33/+34
+ * (chunk-x byte, chunk-y byte, index u16) instead of a resource and shape seed,
+ * so a v6 client would draw it as a generated rock. v5 had the same 36-byte stride but
  * its +34 u16 was 0 for asteroids; v6 carries an asteroid's shape seed there
  * (macro terrain 1a), so a v5 client would draw and collide with the wrong
  * rock outlines. v4 had a 34-byte record without the
@@ -51,7 +54,7 @@
  * angvel field; v1 had 28 bytes without shipKind.
  */
 
-export const SWARM_WIRE_VERSION = 6;
+export const SWARM_WIRE_VERSION = 7;
 
 export const SWARM_HEADER_BYTES = 8;
 export const SWARM_RECORD_BYTES = 36;
@@ -81,6 +84,19 @@ export const SWARM_RECORD_FLAG_SLEEPING = 1 << 0;
  *  Spare bit in the existing recordFlags byte: NO stride change, NO
  *  SWARM_WIRE_VERSION bump. */
 export const SWARM_RECORD_FLAG_SHIELD_DOWN = 1 << 1;
+/** v7 — an awake cut-field rock (kind 0): +32, +33 and +34 hold its rock key
+ *  (`rockKey`: chunk-x byte, chunk-y byte, index u16), not a resource byte and
+ *  shape seed. Its outline is the client's own cut of that rock (#15). */
+export const SWARM_RECORD_FLAG_FIELD_ROCK = 1 << 2;
+
+/** A rock key's three wire fields (`rockKey` packs 8 + 8 + 16 bits). */
+export function fieldRockKeyToWire(key: number): { b32: number; b33: number; u16: number } {
+  return { b32: (key >>> 24) & 0xff, b33: (key >>> 16) & 0xff, u16: key & 0xffff };
+}
+
+export function fieldRockKeyFromWire(b32: number, b33: number, u16: number): number {
+  return (((b32 & 0xff) << 24) | ((b33 & 0xff) << 16) | (u16 & 0xffff)) >>> 0;
+}
 
 export const SWARM_KIND_ASTEROID = 0;
 export const SWARM_KIND_DRONE = 1;

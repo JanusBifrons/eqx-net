@@ -36,7 +36,7 @@ value is superseded, move its row to [History](#history). Values were checked ag
 | Backpressure | `ws.bufferedAmount` > 50 KB drops the oldest queued snapshot; > 250 KB force-closes the socket | `DROP_THRESHOLD`, `CLOSE_THRESHOLD`, `src/server/net/Backpressure.ts` | A slow client's send queue | — |
 | Interest grid cell | 2048 u cells; a client gets entities in its 3×3 cell window at full fidelity | `CELL_SIZE`, `src/server/interest/SpatialGrid.ts` | Per-client snapshot size | `SpatialGrid.test.ts` |
 | Out-of-interest decimation | out-of-interest swarm entities still ship every 6 ticks | `DECIMATION_TICKS`, `src/server/net/BinarySwarmBroadcast.ts` | Far-entity bandwidth | `BinarySwarmBroadcast.test.ts` |
-| Swarm wire version | 5 (stride 36; decoder hard-fails older versions) | `SWARM_WIRE_VERSION`, `src/shared-types/swarmWireFormat.ts` | Binary swarm record layout (root invariants #11, #12) | `tests/unit/swarmWireRoundTrip.test.ts` |
+| Swarm wire version | 7 (stride 36; decoder hard-fails older versions) | `SWARM_WIRE_VERSION`, `src/shared-types/swarmWireFormat.ts` | Binary swarm record layout (root invariants #11, #12) | `tests/unit/swarmWireRoundTrip.test.ts` |
 | Spin delta trigger | `|Δω| > 0.05 rad/s` ships a fresh pose | `QUANT_ANGVEL`, `src/server/net/SwarmEntityRegistry.ts` | Spinning-but-still drones going stale | `BinarySwarmBroadcast.test.ts` |
 | Far drones' slim slice | out-of-interest drones' `hostile` / `hp` on one snapshot in 10 per recipient (2 Hz) | `FAR_DRONE_SLICE_EVERY`, `src/server/rooms/SnapshotBroadcaster.ts` | Far-tier hostility / hp bandwidth | `SnapshotBroadcaster.farDrones.test.ts`, `hostilityOnSnapshot.test.ts` |
 

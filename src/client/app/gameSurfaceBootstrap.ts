@@ -15,7 +15,7 @@
  */
 
 import { PixiRenderer } from '../render/PixiRenderer.js';
-import { loadArtPreference, loadLightingPreference, loadSpeedFxPreference, readArtDelayMs, readLivery, resolveArtMode, resolveFxMode, resolveShipLighting, resolveSpeedFx, type ArtOptions } from '../render/art/artMode.js';
+import { loadArtPreference, loadLightingPreference, loadSpeedFxPreference, readArtDelayMs, readLivery, readOreLook, resolveArtMode, resolveFxMode, resolveShipLighting, resolveSpeedFx, type ArtOptions } from '../render/art/artMode.js';
 import {
   WorkerRendererClient,
   supportsOffscreenRenderer,
@@ -69,6 +69,8 @@ export function selectRenderer(): { renderer: IRenderer; useWorker: boolean; isT
   // Ship livery: on by default (`?livery=off` = none); Machined art only.
   const livery = art.mode === 'machined' ? readLivery(search) : undefined;
   if (livery) art.livery = livery;
+  const ore = readOreLook(search); // cut-field ore look trial (F1c)
+  if (ore) art.ore = ore;
   const renderer: IRenderer = useWorker ? new WorkerRendererClient(isTouch, art) : new PixiRenderer(isTouch, art);
   // Click-to-inspect (Item B) — DEV/E2E deterministic selection hook. Only the
   // main-thread PixiRenderer exposes `devSelectAtWorld` (the worker renderer is

@@ -150,6 +150,60 @@ export function oreAtField(o: OreOpts, x: number, y: number, out: OreConc): OreC
   return oreAt(oreSeed(o.seed), o.radius ?? SLICED.radius, x, y, out);
 }
 
+/**
+ * The ore at every vertex of a chunk's packed outlines (`[n, x0, y0, …]` per
+ * rock, rest frame), in the draw order of a rock fan: the centre (the vertex
+ * mean) first, then the n outline vertices; `[ice, crystal]` per vertex. The
+ * look tints by it (F1c), so a rock shows ore where the map has it. Hotspots
+ * are gathered once for the chunk's box, then each vertex reads only those.
+ * Generation-time (a chunk load): allocates its result.
+ */
+export function oreForOutlines(base: number, fieldRadius: number, outlines: Float32Array): Float32Array {
+  let verts = 0, x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (let i = 0; i < outlines.length;) {
+    const n = outlines[i]!;
+    verts += n + 1;
+    for (let k = 0; k < n; k++) {
+      const x = outlines[i + 1 + k * 2]!, y = outlines[i + 2 + k * 2]!;
+      if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+    }
+    i += 1 + n * 2;
+  }
+  const out = new Float32Array(verts * 2);
+  if (verts === 0) return out;
+  // Every hotspot that can reach the box: x, y, radius, peak, ice (1) / crystal (0).
+  const spots: number[] = [];
+  for (let gy = Math.floor(y0 / ORE_CELL) - 1; gy <= Math.floor(y1 / ORE_CELL) + 1; gy++) {
+    for (let gx = Math.floor(x0 / ORE_CELL) - 1; gx <= Math.floor(x1 / ORE_CELL) + 1; gx++) {
+      visitCellHotspots(base, fieldRadius, gx, gy, (x, y, radius, peak, resource) => {
+        const reach = radius * (1 + ORE_EDGE_DEPTH);
+        if (x + reach < x0 || x - reach > x1 || y + reach < y0 || y - reach > y1) return;
+        spots.push(x, y, radius, peak, resource === 'ice' ? 1 : 0);
+      });
+    }
+  }
+  if (spots.length === 0) return out;
+  let v = 0;
+  const at = (x: number, y: number): void => {
+    const noise = oreEdgeNoise(base, x, y);
+    let ice = 0, crystal = 0;
+    for (let s = 0; s < spots.length; s += 5) {
+      const c = hotspotConc(x - spots[s]!, y - spots[s + 1]!, spots[s + 2]!, spots[s + 3]!, noise);
+      if (spots[s + 4] === 1) { if (c > ice) ice = c; } else if (c > crystal) crystal = c;
+    }
+    out[v * 2] = ice; out[v * 2 + 1] = crystal; v++;
+  };
+  for (let i = 0; i < outlines.length;) {
+    const n = outlines[i]!;
+    let mx = 0, my = 0;
+    for (let k = 0; k < n; k++) { mx += outlines[i + 1 + k * 2]!; my += outlines[i + 2 + k * 2]!; }
+    at(mx / n, my / n);
+    for (let k = 0; k < n; k++) at(outlines[i + 1 + k * 2]!, outlines[i + 2 + k * 2]!);
+    i += 1 + n * 2;
+  }
+  return out;
+}
+
 /** Every hotspot that reaches into the box (tests, the look's per-rock pick).
  *  Generation-time, allocates its result. */
 export function hotspotsInBox(o: OreOpts, x0: number, y0: number, x1: number, y1: number): OreHotspot[] {

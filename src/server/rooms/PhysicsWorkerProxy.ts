@@ -38,7 +38,7 @@ export type WorkerCmd =
   | { type: 'DESPAWN';        slot: number; playerId: string }
   | { type: 'REKEY_SHIP';     oldId: string; newId: string }
   | { type: 'INPUT';          slot: number; inputTick: number; thrust: boolean; turnLeft: boolean; turnRight: boolean; boost: boolean; reverse: boolean; warpX?: number; warpY?: number }
-  | { type: 'SPAWN_OBSTACLE'; slot: number; obstacleId: string; x: number; y: number; vx: number; vy: number; radius: number; mass: number; vertices?: ReadonlyArray<Vec2>; linearDamping?: number; staticBody?: boolean; collisionGroups?: number; angle?: number; parts?: ReadonlyArray<ReadonlyArray<Vec2>>; shieldKindId?: string; angvel?: number; angularDamping?: number; settleSpeed?: number; settleSpin?: number; shipKindId?: number }
+  | { type: 'SPAWN_OBSTACLE'; slot: number; obstacleId: string; x: number; y: number; vx: number; vy: number; radius: number; mass: number; vertices?: ReadonlyArray<Vec2>; linearDamping?: number; staticBody?: boolean | 'fixed'; collisionGroups?: number; angle?: number; parts?: ReadonlyArray<ReadonlyArray<Vec2>>; shieldKindId?: string; angvel?: number; angularDamping?: number; settleSpeed?: number; settleSpin?: number; shipKindId?: number }
   | { type: 'AI_INTENT';      slot: number; fx: number; fy: number; torque: number; setAngvel?: number }
   /** Pilot layer: every AI slot flown by control keys this tick, in ONE
    *  message. `slots[i]` gets packed `AiInputBits` `bits[i]` for i < `count`. */
@@ -64,6 +64,7 @@ export type WorkerCmd =
    *  despawned entities. See docs/architecture/missile-simulation.md. */
   | { type: 'MISSILE_IMPULSE'; entityId: string; fx: number; fy: number }
   | { type: 'WRECK_KICK'; entityId: string; dvx: number; dvy: number; dw: number }
+  | { type: 'UNFIX_BODY'; entityId: string }
   /** A capital wreck piece's overkill knock-back: impulse (jx, jy) at world
    *  point (px, py) via `World.applyImpulseAtPoint`. */
   | { type: 'WRECK_IMPULSE'; entityId: string; jx: number; jy: number; px: number; py: number }

@@ -23,6 +23,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { BinarySwarmBroadcast } from '../../src/server/net/BinarySwarmBroadcast.js';
 import { SwarmEntityRegistry } from '../../src/server/net/SwarmEntityRegistry.js';
 import { decodeSwarmPacket } from '../../src/client/net/BinarySwarmDecoder.js';
+import { rockKey } from '../../src/core/terrain/fieldLayout.js';
 import type { RenderMirror } from '../../src/core/contracts/IRenderer.js';
 import {
   SAB_TOTAL_BYTES,
@@ -195,7 +196,7 @@ describe('binary swarm wire — capital wreck pieces (kind 4, v5)', () => {
 
     const packet = encoder.encode(registry, f32, u32, 60);
     expect(packet, 'the wreck piece rides the wire').not.toBeNull();
-    expect(SWARM_WIRE_VERSION).toBe(6);
+    expect(SWARM_WIRE_VERSION).toBe(7);
     expect(SWARM_RECORD_BYTES).toBe(36);
     expect(packet!.byteLength).toBe(SWARM_HEADER_BYTES + 2 * SWARM_RECORD_BYTES);
     const mirror: RenderMirror = { ships: new Map(), localPlayerId: null };
@@ -231,5 +232,35 @@ describe('binary swarm wire — capital wreck pieces (kind 4, v5)', () => {
     old[0] = SWARM_WIRE_VERSION;
     decodeSwarmPacket(old, mirror);
     expect(mirror.swarm?.size ?? 0).toBe(1);
+  });
+});
+
+describe('binary swarm wire — cut-field rocks (macro terrain C2/C3)', () => {
+  it('a fixed field rock stays off the wire; once awake it rides with its rock key, not a shape seed', () => {
+    const registry = new SwarmEntityRegistry();
+    const encoder = new BinarySwarmBroadcast();
+    const { f32, u32 } = makeSab();
+    const key = rockKey(-3, 5, 300);
+    const rock = registry.register('field-rock', 3, 0, 900, 10, 20, 0);
+    rock.fieldRock = true;
+    rock.fieldKey = key;
+    setSlotPose(f32, 3, 10, 20, 0.5);
+    const plain = registry.register('plain-rock', 4, 0, 40, 100, 0, 0);
+    setSlotPose(f32, 4, 100, 0, 0);
+
+    const mirror: RenderMirror = { ships: new Map(), localPlayerId: null };
+    decodeSwarmPacket(encoder.encode(registry, f32, u32, 60)!, mirror);
+    expect(mirror.swarm!.has(rock.entityId), 'a fixed field rock is never sent').toBe(false);
+    expect(mirror.swarm!.get(plain.entityId)!.fieldKey).toBeUndefined();
+
+    rock.fieldAwake = true;
+    decodeSwarmPacket(encoder.encode(registry, f32, u32, 120)!, mirror);
+    const d = mirror.swarm!.get(rock.entityId)!;
+    expect(d, 'the awake rock is on the wire').toBeTruthy();
+    expect(d.kind).toBe(0);
+    expect(d.fieldKey).toBe(key);
+    expect(d.shapeSeed).toBeUndefined();
+    expect(d.x).toBeCloseTo(10, 1);
+    expect(mirror.swarm!.get(plain.entityId)!.fieldKey).toBeUndefined();
   });
 });
