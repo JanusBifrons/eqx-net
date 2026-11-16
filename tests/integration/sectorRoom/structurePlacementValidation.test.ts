@@ -18,6 +18,9 @@
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
+import { placementRejection } from '../../../src/core/structures/placementRules.js';
+import type { GridObstacle } from '../../../src/core/structures/Grid.js';
+import { structureHalfExtents } from '../../../src/shared-types/structureKinds.js';
 
 describe('SectorRoom integration — placement rejects asteroid overlap (C2)', () => {
   let harness: SectorTestHarness;
@@ -64,5 +67,30 @@ describe('SectorRoom integration — placement rejects asteroid overlap (C2)', (
     const placed = [...internals.structureRegistry.all()][0]!;
     expect(placed.kind).toBe('capital');
     expect(placed.x).toBe(3000);
+  }, 25_000);
+
+  it('tests a live rock by its outline at its pose: inside the circle but off the outline lands (C5b)', async () => {
+    harness = await bootSectorTestServer({
+      sectorKey: 'sol-prime', droneCount: 0, testMode: true, asteroidConfig: [],
+      scenarioAsteroids: [{ x: -3000, y: 0, radius: 600 }],
+    });
+    const room = await harness.connectAs('player-1');
+    await harness.advance(300);
+    const internals = harness.getServerRoom()!._internals;
+    const rec = [...internals.swarmRegistry.all()].find((r) => r.kind === 0)!;
+    expect(rec.vertices, 'an ordinary asteroid carries its outline').toBeDefined();
+    // Static rock: its spawn pose is its live pose.
+    const pose = rec.lastBroadcast, { hw, hh } = structureHalfExtents('connector', 0);
+    const rock: GridObstacle = { x: pose.x, y: pose.y, radius: rec.radius, angle: pose.angle, parts: [rec.vertices!] };
+    let spot: { x: number; y: number } | null = null;
+    for (let k = 0; k < 64 && spot === null; k++) {
+      const a = (k / 64) * Math.PI * 2, x = pose.x + Math.cos(a) * (rec.radius + Math.min(hw, hh) * 0.5), y = pose.y + Math.sin(a) * (rec.radius + Math.min(hw, hh) * 0.5);
+      if (placementRejection('connector', x, y, [], [rock]) === null) spot = { x, y };
+    }
+    expect(spot, 'a spot inside the circle but off the outline').not.toBeNull();
+    expect(placementRejection('connector', spot!.x, spot!.y, [], [{ x: pose.x, y: pose.y, radius: rec.radius }]), 'the circle alone refuses it').toBe('overlap-obstacle');
+    room.send('place_structure', { type: 'place_structure', kind: 'connector', x: spot!.x, y: spot!.y });
+    await harness.advance(200);
+    expect(internals.structureRegistry.size, 'connector off the outline lands').toBe(1);
   }, 25_000);
 });

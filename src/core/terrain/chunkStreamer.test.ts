@@ -74,11 +74,11 @@ describe('fieldRocksInBox (C5: placement sees rocks whose chunk is not loaded)',
   const big = members.reduce((a, b) => (b.size > a.size ? b : a));
   const body = fieldRockBody(big);
 
-  it('cuts a rock from the layout with its chunk key and body circle', () => {
+  it('cuts a rock from the layout with its chunk key, body circle and outline', () => {
     const t0 = performance.now();
     const found = fieldRocksInBox(o, body.x - 10, body.y - 10, body.x + 10, body.y + 10);
     console.log(`[C5] fieldRocksInBox: ${(performance.now() - t0).toFixed(2)} ms, ${found.length} rock(s)`);
-    expect(found).toContainEqual({ key: big.key, x: body.x, y: body.y, radius: body.radius });
+    expect(found).toContainEqual({ key: big.key, x: body.x, y: body.y, radius: body.radius, verts: big.verts });
     expect(fieldRockCircle(big)).toEqual({ x: body.x, y: body.y, radius: body.radius });
   });
 
