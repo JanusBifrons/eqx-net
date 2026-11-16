@@ -43,6 +43,7 @@ No ship carries it yet: the mining barge that does is a later step.
 - **The mining laser mines rock.** Hold it on a locked asteroid and the rock's ore goes into your hold: about 30 units a second per beam, a little faster than a base Miner's drill. Whatever comes out of the rock goes into the hold; nothing is lost on the way.
 - **Ore lands once a second.** The beam's hits add up, and the ore arrives in one batch each second, on the same beat as the base network's pulse.
 - **A full hold stops mining.** When the ore would not fit, the rock keeps it.
+- **Where you cut decides what you get.** In the cut asteroid field, the ore comes from the spot the beam is on: a blue (ice) or violet (crystal) vein pays mostly that ore, plain grey rock pays minerals. Older scattered rocks pay by their kind.
 - **Guns do not mine.** Shooting a rock with any other weapon takes nothing out of it.
 - **Rocks do not break up yet.** A mined rock only loses ore; splitting rocks comes with the new terrain.
 
