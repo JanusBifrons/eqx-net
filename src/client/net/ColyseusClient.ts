@@ -174,7 +174,7 @@ import { pickTurretLock } from '@core/combat/turretLockPick';
 import { hasTurretFireControl, mountWeaponReach, weaponIdReach, type MountRangeTarget } from '@core/combat/mountReach';
 /** No aim guides (the mirror's `localAimMountIds`): the lock rings replace them. */
 const EMPTY_AIM_IDS: readonly string[] = Object.freeze([]);
-import { getWeapon, weaponAutoFireRange, type WeaponDef, type WeaponId } from '@core/combat/WeaponCatalogue';
+import { getWeapon, isMiningTool, weaponAutoFireRange, type WeaponDef, type WeaponId } from '@core/combat/WeaponCatalogue';
 import { canAfford, spendEnergy, regenEnergyStep, resolveSlotEnergyCost, BOOST_TICK_COST } from '@core/combat/Energy';
 import { gateDisabledInput, type ControlBits } from '@core/combat/disable';
 import { DEAD_RECKON_BACK_MS, DEAD_RECKON_CAP_MS, RENDER_DUE_SLEW_MS, RENDER_DUE_SNAP_MS, slewTickDue, tickBoundaryDueMs } from './renderTickPhase';
@@ -6021,7 +6021,7 @@ export class ColyseusGameClient {
       const beamMax = beamMaxDist(wdef);
       // Remote drones/scrap are tested at their DRAWN pose (the pose the
       // turret aims at), not their predicted-timeline body.
-      const hit = skipHitscan ? null : this.displayHitscan().hitscan(fromX, fromY, fwdX, fwdY, beamMax, localId, beamHalfWidth(wdef));
+      const hit = skipHitscan ? null : this.displayHitscan().hitscan(fromX, fromY, fwdX, fwdY, beamMax, localId, beamHalfWidth(wdef), isMiningTool(mount.weaponId));
       // `?probe=ghost` diagnostic (laser "ghost at (0,0)" investigation,
       // 2026-06-03). When the beam stops on a body whose pose is within
       // ε of world origin, log the hitId — its namespace prefix names the
@@ -7225,7 +7225,7 @@ export class ColyseusGameClient {
       sink: predSink,
       world: this.displayHitscan(),
       clientShotId: shotId,
-      mode: weaponDef.mode, halfWidth: beamHalfWidth(weaponDef),
+      mode: weaponDef.mode, halfWidth: beamHalfWidth(weaponDef), passLootPods: isMiningTool(slotWeapon),
       damage: weaponDef.damage,
       mounts: mountGeom,
       maxDist: predMaxDist,

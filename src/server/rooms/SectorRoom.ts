@@ -413,7 +413,7 @@ import { tuningFor, GLOBAL_SHIP_TUNING } from '../../shared-types/shipScale/look
 import { shipRayHit, shipSweepHit } from '../../core/combat/shipHitShape.js';
 import { mayBeInReach, maxShipRangeBound, mountsReachTarget, type MountRangeTarget } from '../../core/combat/mountReach.js';
 import { CapitalWreckSubsystem, type WreckPiecePose } from './CapitalWreckSubsystem.js';
-import type { WreckRockView } from './capitalWreckTypes.js';
+import { rockViewOf } from './rockCut.js';
 import { wreckRayHit } from '../../core/destruction/wreckHits.js';
 import { isDebris, isLootPod, isWreckPiece } from '../net/SwarmEntityRegistry.js';
 import { LineOfFireGate } from './LineOfFireGate.js';
@@ -1179,8 +1179,6 @@ export class SectorRoom extends Room<SectorState> {
   private readonly _layerMul = { shield: 1, hull: 1 };
   /** Reused `WRECK_IMPULSE` command (overkill knock-back, #14). */
   private readonly _wreckPose: WreckPiecePose = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
-  /** Reused rock view (`rockOf`, per mining-laser hit, #14). */
-  private readonly _rockView: WreckRockView = { shape: 0, radius: 0, resource: 'rock', resources: undefined };
   private readonly _wreckImpulseCmd = { type: 'WRECK_IMPULSE' as const, entityId: '', jx: 0, jy: 0, px: 0, py: 0 };
   /** Reused `WRECK_RIGID_IMPULSE` command (a hit during the crack hold, #14). */
   private readonly _wreckRigidImpulseCmd: { type: 'WRECK_RIGID_IMPULSE'; entityIds: readonly string[]; jx: number; jy: number; px: number; py: number } =
@@ -1702,7 +1700,7 @@ export class SectorRoom extends Room<SectorState> {
     /** Salvage PR 5: a wreck piece's hidden integrity (undefined: none). */
     wreckIntegrity: (id: string) => number | undefined;
     /** Rock cut: the room's per-hit rock view (one reused object), or null. */
-    rockOf: (id: string) => WreckRockView | null;
+    rockOf: (id: string) => ReturnType<typeof rockViewOf>;
     /** S2a — a wreck piece's convex parts (body-local), or null. */
     wreckParts: (id: string) => ReadonlyArray<ReadonlyArray<{ x: number; y: number }>> | null;
     /** S2a — fix the fracture seed (null = per death). */
@@ -1790,7 +1788,7 @@ export class SectorRoom extends Room<SectorState> {
       damageSwarmLayered: (rec, damage) => this.damageSwarmLayered(rec, damage),
       wreckState: (id) => this.wreckPose(id),
       wreckIntegrity: (id) => this.capitalWrecks?.pieceIntegrity(id),
-      rockOf: (id) => this.rockOf(id),
+      rockOf: (id) => rockViewOf(this.swarmRegistry, id),
       wreckParts: (id) => this.swarmRegistry.get(id)?.wreckParts ?? null,
       setWreckSeed: (seed) => { if (this.capitalWrecks) this.capitalWrecks.forcedSeed = seed; },
       swarmSleeping: (id) => {
@@ -2503,7 +2501,7 @@ export class SectorRoom extends Room<SectorState> {
       swarmRegistry: this.swarmRegistry,
       lingeringSlots: this.lingeringSlots,
       lingeringShip: (sid) => this.state.ships.get(sid),
-      // Only a pilot's own shot can land on a loot pod; AI and turret bolts pass it.
+      shotHitsLootPods: (ownerId) => this.playerToSlot.has(ownerId), // only a pilot's own shot can hit a loot pod, except mining tools
       applyDamage: (targetId, shooterId, damage, hitX, hitY, dirX, dirY, weaponId) =>
         this.applyDamage(targetId, shooterId, damage, hitX, hitY, dirX, dirY, weaponId),
       wallBlocksProjectile: (x, y, sx, sy, damage) => {
@@ -5677,21 +5675,9 @@ export class SectorRoom extends Room<SectorState> {
         if (slot !== undefined) slotPoseInto(this.sabF32, slot, out);
         return slot !== undefined;
       },
-      // Rock cut: a rock's piece pods its ore through OreDraw's one cut hook.
       dropSalvage: (qty, x, y, vx, vy, ore) => { this.loot.drop({ goods: ore ? this.oreDraw.cutYield(ore.rockId, x, y, qty, ore.resource) : { salvage: qty }, blueprints: [] }, x, y, vx, vy, { cause: 'salvage' }); },
-      rockOf: (id) => this.rockOf(id),
+      rockOf: (id) => rockViewOf(this.swarmRegistry, id),
     });
-  }
-
-  /** Rock cut: a live rock as the cut code reads it, filled into one reused
-   *  view (per hit, #14), or null. No cut-field rock until terrain C3
-   *  (consumed keys on the wire), else the client draws a ghost whole rock. */
-  private rockOf(id: string): WreckRockView | null {
-    const r = this.swarmRegistry.get(id);
-    if (r?.kind !== 0 || r.shapeSeed === undefined || r.fieldRock === true) return null;
-    const v = this._rockView;
-    v.shape = r.shapeSeed; v.radius = r.radius; v.resource = r.asteroidResource ?? 'rock'; v.resources = r.resources;
-    return v;
   }
 
   /** A live wreck piece's SAB pose into `out` (#14 with a reused `out`), or null when gone. */

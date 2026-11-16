@@ -50,7 +50,7 @@ import {
   SLOT_ANGLE_OFF,
   slotBase,
 } from '../../shared-types/sabLayout.js';
-import { getWeapon, type WeaponId } from '../../core/combat/WeaponCatalogue.js';
+import { getWeapon, isMiningTool, type WeaponId } from '../../core/combat/WeaponCatalogue.js';
 import { shellBlastDamage } from '../../shared-types/shellBlast.js';
 import type { ShipState } from './schema/SectorState.js';
 import { GLOBAL_SHIP_TUNING } from '../../shared-types/shipScale/lookup.js';
@@ -142,6 +142,10 @@ export interface ProjectilePipelineDeps {
   playerToSlot: Iterable<[string, number]>;
   /** Active-ship resolver for the player-sweep branch. */
   getActiveShip: (playerId: string) => ShipState | undefined;
+  /** Whether a bolt from `ownerId` can land on a loot pod (`isLootPod`). Only a
+   *  pilot's own shot can, except mining tools (`isMiningTool`): nobody else
+   *  fights loot. Absent ⇒ every non-mining bolt can (unit harnesses). */
+  shotHitsLootPods?: (ownerId: string) => boolean;
   /** Per-tick player pose cache (top-of-update SAB read). */
   shipPoseCache: Map<string, ShipPose>;
   /** Per-ship sweep that respects shield (cheap circle) vs hull (polygon). */
@@ -505,8 +509,10 @@ export class ProjectilePipeline {
     // the lingering-hull owner skip below. Sibling structures in the line of
     // fire are still hit (realistic — place defence turrets at the perimeter).
     if (rec.id === proj.ownerId) return false;
-    // Nobody fights a loot pod (owner 2026-11-13), a pilot included: every bolt passes it.
-    if (isLootPod(rec)) return false;
+    // Nobody fights a loot pod (owner 2026-11-13): an AI or turret bolt passes it,
+    // and so does a mining tool's, a pilot's included (owner 2026-11-16).
+    if (isLootPod(rec) && (isMiningTool(proj.weaponId)
+      || (this.deps.shotHitsLootPods !== undefined && !this.deps.shotHitsLootPods(proj.ownerId)))) return false;
     // A pass-through slug ignores debris (wreck pieces) and its own victims.
     if (proj.pass === true && (rec.kind === 4 || ProjectilePipeline.passed(proj, rec.id))) return false;
     // Friendly fire (owner decision 2026-11-10): no allegiance filter. A
