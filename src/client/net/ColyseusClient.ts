@@ -317,22 +317,29 @@ const SWARM_ID_PREFIX = 'swarm-';
  * debris shows its impact spark and flash but NO floating damage number or
  * health bar, for every wreck profile, capitals included (hostile review
  * 2026-11-13: numbers coalesce by screen spot, so hits on a dead ship's
- * pieces kept climbing its floating number after the explosion). Parses the
- * id in place (no substring; called per damage event, #14).
+ * pieces kept climbing its floating number after the explosion).
  */
 export function isWreckPieceTarget(
   targetId: string, swarm: ReadonlyMap<number, Pick<SwarmRenderState, 'kind'>> | undefined,
 ): boolean {
-  if (swarm === undefined || !targetId.startsWith(SWARM_ID_PREFIX)) return false;
+  return swarmKindOfTarget(targetId, swarm) === SWARM_KIND_WRECK;
+}
+
+/** The swarm kind of a `swarm-<entityId>` target, or undefined. Parses the
+ *  id in place (no substring; called per damage event, #14). */
+function swarmKindOfTarget(
+  targetId: string, swarm: ReadonlyMap<number, Pick<SwarmRenderState, 'kind'>> | undefined,
+): number | undefined {
+  if (swarm === undefined || !targetId.startsWith(SWARM_ID_PREFIX)) return undefined;
   const n = targetId.length;
-  if (n === SWARM_ID_PREFIX.length) return false;
+  if (n === SWARM_ID_PREFIX.length) return undefined;
   let id = 0;
   for (let i = SWARM_ID_PREFIX.length; i < n; i++) {
     const c = targetId.charCodeAt(i) - 48;
-    if (c < 0 || c > 9) return false;
+    if (c < 0 || c > 9) return undefined;
     id = id * 10 + c;
   }
-  return swarm.get(id)?.kind === SWARM_KIND_WRECK;
+  return swarm.get(id)?.kind;
 }
 
 /**
@@ -344,16 +351,7 @@ export function isWreckPieceTarget(
 export function isNoDamageNumberTarget(
   targetId: string, swarm: ReadonlyMap<number, Pick<SwarmRenderState, 'kind'>> | undefined,
 ): boolean {
-  if (swarm === undefined || !targetId.startsWith(SWARM_ID_PREFIX)) return false;
-  const n = targetId.length;
-  if (n === SWARM_ID_PREFIX.length) return false;
-  let id = 0;
-  for (let i = SWARM_ID_PREFIX.length; i < n; i++) {
-    const c = targetId.charCodeAt(i) - 48;
-    if (c < 0 || c > 9) return false;
-    id = id * 10 + c;
-  }
-  const kind = swarm.get(id)?.kind;
+  const kind = swarmKindOfTarget(targetId, swarm);
   return kind === SWARM_KIND_WRECK || kind === 0;
 }
 
