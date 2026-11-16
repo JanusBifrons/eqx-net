@@ -29,7 +29,7 @@ import {
   SCAFFOLDING_HP_FRACTION,
   CAPITAL_STARTING_MINERALS,
 } from '../../core/structures/structureGridConstants.js';
-import type { GridObstacle } from '../../core/structures/Grid.js';
+import type { GridObstacle, ObstacleBox } from '../../core/structures/Grid.js';
 import { placementRejection } from '../../core/structures/placementRules.js';
 import { StructureRegistry, type StructureRecord } from './StructureRegistry.js';
 import { autoConnectStructure } from './structureGridView.js';
@@ -74,8 +74,10 @@ export interface StructurePlacementHooks {
   /** Item D — live non-structure obstacles (asteroids) that block a connection's
    *  line of sight, so a structure never auto-wires straight through a rock.
    *  Optional: when omitted, auto-connection falls back to the structures-only
-   *  LOS check (byte-identical to pre-Item-D). */
-  getObstacles?: () => readonly GridObstacle[];
+   *  LOS check (byte-identical to pre-Item-D). `near` (placement only): also
+   *  the obstacles with no body that reach that box (cut-field rocks whose
+   *  chunk is not loaded, macro terrain C5). */
+  getObstacles?: (near?: ObstacleBox) => readonly GridObstacle[];
 }
 
 export class StructurePlacementSubsystem {
@@ -107,7 +109,8 @@ export class StructurePlacementSubsystem {
     // pass is the fix for "places on an asteroid"; the same `getObstacles` hook
     // the auto-connect LOS check already uses). Shared pure predicate so the
     // client ghost can validate identically.
-    if (placementRejection(kindId, pos.x, pos.y, this.hooks.registry.all(), this.hooks.getObstacles?.(), rot) !== null) {
+    const near = { x0: pos.x - hw, y0: pos.y - hh, x1: pos.x + hw, y1: pos.y + hh };
+    if (placementRejection(kindId, pos.x, pos.y, this.hooks.registry.all(), this.hooks.getObstacles?.(near), rot) !== null) {
       return null;
     }
 
