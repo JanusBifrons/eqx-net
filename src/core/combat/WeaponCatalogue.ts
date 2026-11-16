@@ -397,6 +397,17 @@ export function isWeaponId(v: unknown): v is WeaponId {
   return typeof v === 'string' && (WEAPON_IDS as readonly string[]).includes(v);
 }
 
+/** Is `id` a MINING TOOL (read from the record: it mines rock, a 'rock'
+ *  factor above 0, or it is a tractor)? Only mining tools pass through loot
+ *  pods (owner rule): the mining laser and the tractor, never a gun. Server
+ *  shots (`ProjectilePipeline`, `PlayerFireResolver`) and the client's drawn
+ *  beam (`displayPoseHitscan`) all ask this one predicate (#15). */
+export function isMiningTool(id: WeaponId | undefined): boolean {
+  if (id === undefined) return false;
+  const def = WEAPONS.get(id);
+  return def !== undefined && (def.tractor !== undefined || weaponTargetFactor(def, 'rock') > 0);
+}
+
 /**
  * Maximum range (world units) at which auto-fire should engage a target with
  * this weapon. Per-mode so each weapon "shoots when in its own reach":

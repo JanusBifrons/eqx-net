@@ -53,6 +53,10 @@ const samples: Array<[string, unknown]> = [
   ['parent past u16', { ...good, parentWreck: WRECK_ID_END, parentPiece: 0 }],
   ['piece past u8', { ...good, parentWreck: 3, parentPiece: 256 }],
   ['fractional piece', { ...good, parentWreck: 3, parentPiece: 0.5 }],
+  // Rock cut: the rock ref, with its resource (the pieces keep the rock's look).
+  ['rock', { ...good, parentKind: 'asteroid', rock: { id: 'rock-1', shape: 7, r: 60 } }],
+  ['ice rock', { ...good, parentKind: 'asteroid', rock: { id: 'rock-1', shape: 7, r: 60, res: 'ice' } }],
+  ['unknown rock resource', { ...good, parentKind: 'asteroid', rock: { id: 'rock-1', shape: 7, r: 60, res: 'gold' } }],
   ['null', null],
 ];
 
@@ -61,6 +65,12 @@ describe('wreck wire schemas (slice 3)', () => {
     for (const [name, v] of samples) {
       expect(isWreckDescriptor(v), name).toBe(WreckDescriptorSchema.safeParse(v).success);
     }
+  });
+
+  it('a rock ref carries its resource (rock cut)', () => {
+    const ice = samples.find(([n]) => n === 'ice rock')![1];
+    expect(WreckDescriptorSchema.safeParse(ice).success).toBe(true);
+    expect(isWreckDescriptor(ice)).toBe(true);
   });
 
   it('isWreckId agrees with the removes schema', () => {
