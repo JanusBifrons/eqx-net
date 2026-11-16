@@ -364,3 +364,25 @@ describe('pickRandomShipKind — engineering kinds excluded (capture ilhqk6)', (
     expect(SHIP_KINDS.el.engineeringOnly).toBe(true);
   });
 });
+
+// Owner 2026-11-16: capital ships never have shields. A kind with no shield
+// pool spawns shield-DOWN on the wire (no aura, hits land on the hull); a
+// shielded kind still spawns shield-up.
+describe('SwarmSpawner: a shieldless kind spawns shield-down', () => {
+  it('a destroyer drone is shieldDown at spawn; a fighter is not', () => {
+    const registry = new SwarmEntityRegistry();
+    const sab = new SharedArrayBuffer(SAB_TOTAL_BYTES);
+    const slots = [1, 2];
+    const spawner = new SwarmSpawner(registry, {
+      takeSlot: () => slots.pop(),
+      postSpawnObstacle: () => {},
+      sabF32: new Float32Array(sab),
+      sabU32: new Uint32Array(sab),
+      registerLagComp: () => {},
+    });
+    expect(spawner.spawnDrone({ id: 'cap', x: 0, y: 0, kind: 'destroyer' })).toBe(true);
+    expect(spawner.spawnDrone({ id: 'fig', x: 0, y: 0, kind: 'fighter' })).toBe(true);
+    expect(registry.get('cap')!.shieldDown).toBe(true);
+    expect(registry.get('fig')!.shieldDown).toBe(false);
+  });
+});

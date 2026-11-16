@@ -17,6 +17,14 @@ Every ship — player **and** AI drone — now has two survivability layers.
   hull), the shield refills over ~2 s. Any hit — even one the hull takes —
   resets the 5 s timer. Per-ship-kind tunable (`shieldMax`,
   `shieldRegenDelayTicks`, `shieldRegenRate` in the ship catalogue).
+- **Capitals have no shield.** Every capital kind has `shieldMax` 0 and no
+  regen (`warshipDesign`), for whoever flies it. Every other ship's shield is
+  a bubble round its WHOLE hull (every hull vertex is inside it). A kind with
+  `shieldMax` 0 (`kindHasShield` false) is shield-down from spawn: no aura or
+  shield bar, every hit and collision lands on its hull (`shipHitShape.ts`
+  ignores `shieldUp` for it, `PhysicsWorld` never mounts its shield collider,
+  `SwarmSpawner` flags it `shieldDown`). Locks: `shipHitShape.test.ts`,
+  `World.shieldlessHull.test.ts`, `SwarmSpawner.test.ts`.
 
 ## Collision changes
 
@@ -120,3 +128,7 @@ Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each r
 - `feel-test-lockstep.spec.ts` is host-load sensitive — confirm on a
   quiet host/CI (it fails on pre-shield HEAD too in a loaded session;
   see docs/LESSONS.md 2026-05-16). Catalogue version bumped 1→2.
+
+## History
+
+- 2026-11-16: capitals lose their shields. Owner: "capital ships never have shields"; non-capital shields cover the whole hull. Shieldless is a property of `shieldMax` 0, not a capital branch.

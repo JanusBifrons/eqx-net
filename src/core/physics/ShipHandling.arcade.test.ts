@@ -170,7 +170,8 @@ describe.runIf(SHIP_SCALE === 2)('ship handling — arcade (Micro Machines) feel
     light: { t90: [0.25, 0.8], turn180: [0.4, 0.8], ttkMin: 3.5 },
     medium: { t90: [0.4, 0.9], turn180: [0.55, 1.0], ttkMin: 5 },
     heavy: { t90: [0.15, 1.4], turn180: [0.6, 2.0], ttkMin: 10 },
-    capital: { t90: [5, 60], turn180: [100, 220], ttkMin: 15 },
+    // Capitals have no shield (owner 2026-11-16), so their floor is hull only.
+    capital: { t90: [5, 60], turn180: [100, 220], ttkMin: 12 },
   };
 
   for (const k of TUNED) {

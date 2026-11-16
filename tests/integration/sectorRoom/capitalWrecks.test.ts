@@ -219,9 +219,8 @@ describe('SectorRoom integration — capital wrecks (S2a)', () => {
     const victim = randomUUID();
     await harness.connectActive(victim, { shipKind: 'battleship', spawnX: 8000, spawnY: 0 });
     await harness.advance(100);
-    // The shield takes the first hit whole (no spill-over); the second kills.
-    // applyDamage reports true on the killing call only.
-    expect(internal.applyDamage(victim, 'shooter-x', 1e9)).toBe(false);
+    // A capital has no shield (owner 2026-11-16): the first hit lands on the
+    // hull and kills. applyDamage reports true on the killing call only.
     expect(internal.applyDamage(victim, 'shooter-x', 1e9)).toBe(true);
     expect(wrecks(internal).length).toBeGreaterThanOrEqual(2);
     // The wreck names its pilot: the client's pieces wear the livery bake the
