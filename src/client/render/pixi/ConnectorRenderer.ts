@@ -50,7 +50,7 @@ import {
   structureMirrorToGridNode,
   ghostToGridNode,
   asteroidObstaclesFromSwarm,
-  RockObstacleShapes,
+  RockObstacleShapes, type FieldRockBodySource,
 } from '../../structures/mirrorToGridNode.js';
 
 /** A pooled, mutable stand-in for a {@link Connection} used ONLY by the placement
@@ -234,6 +234,7 @@ export class ConnectorRenderer {
   /** Each rock's convex parts for the preview's line of sight (C5c, the
    *  server's shape); its `fieldRocks` is the cut-field layer (PixiRenderer). */
   readonly rockShapes = new RockObstacleShapes();
+  constructor(fieldRocks: FieldRockBodySource | null = null) { this.rockShapes.fieldRocks = fieldRocks; }
   /** Reused ghost node (node `a` passed to `canConnect`). */
   private readonly _ghostNode: GridNode = blankGridNode();
   /** Reused node map for the LOS check (`canConnect` clips the segment against
