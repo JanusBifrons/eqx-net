@@ -25,6 +25,7 @@ import { isTouchDevice } from '../input/TouchInput.js';
 import { getSector } from '@core/galaxy/galaxy';
 import { logEvent } from '../debug/ClientLogger.js';
 import { resolveStartMode } from './startMode.js';
+import { resolveNebLook } from '../render/art/fx/nebulaLook.js';
 import type { IRenderer } from '@core/contracts/IRenderer';
 
 /**
@@ -58,6 +59,8 @@ export function selectRenderer(): { renderer: IRenderer; useWorker: boolean; isT
   };
   art.fx = resolveFxMode(search, art.mode, navigator.webdriver === true);
   art.speedFx = resolveSpeedFx(search, loadSpeedFxPreference());
+  const nebLook = resolveNebLook(search);
+  if (nebLook) art.nebLook = nebLook;
   // GPU lighting: URL > saved level > the device's default (live for players,
   // baked under automation unless the URL asks).
   const lighting = resolveShipLighting(search, art.mode, {

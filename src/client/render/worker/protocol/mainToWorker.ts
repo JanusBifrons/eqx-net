@@ -44,6 +44,8 @@ export interface BootMsg {
   fx?: boolean;
   /** Speed effects off (Settings → Graphics / `?speedfx=0`). Absent = on. */
   speedFxOff?: boolean;
+  /** Dense-nebula look R&D (`?neblook=`), "preset:seed"; absent = today's. */
+  nebLook?: string;
   /** GPU-lit art settings (`?shiplight=gpu`), plain data; absent = baked. */
   lighting?: import('../../art/lightingSettings.js').LightingSettings;
   /** Ship livery treatment (`?livery=a|b|c`); absent = today's paint. */
