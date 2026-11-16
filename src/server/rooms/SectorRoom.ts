@@ -235,6 +235,8 @@ import { ROSTER_SOFT_GUARD, type ActivatedMount } from '../playerShips/PlayerShi
 import { WeaponMountTicker } from './WeaponMountTicker.js';
 import { LockSubsystem, newLockTargetView, type LockTargetView } from './LockSubsystem.js';
 import { NpcLockSubsystem } from './NpcLockSubsystem.js';
+import { LockSalvageLookup, swarmLockId } from './lockSalvage.js';
+import { relayPieceSplit } from './lockSplit.js';
 import { fillFireTargetShape, fillRangeShape, mountFiresOn, newFireTargetShape, type FireTargetShape } from '../../core/combat/fireControlBearing.js';
 import { weaponIdReach, hasTurretFireControl } from '../../core/combat/mountReach.js';
 import { NAVAL_SHELL_WEAPON_IDS } from '../../core/combat/shellFlight.js';
@@ -413,6 +415,7 @@ import { tuningFor, GLOBAL_SHIP_TUNING } from '../../shared-types/shipScale/look
 import { shipRayHit, shipSweepHit } from '../../core/combat/shipHitShape.js';
 import { mayBeInReach, maxShipRangeBound, mountsReachTarget, type MountRangeTarget } from '../../core/combat/mountReach.js';
 import { CapitalWreckSubsystem, type WreckPiecePose } from './CapitalWreckSubsystem.js';
+import { rockViewOf } from './rockCut.js';
 import { wreckRayHit } from '../../core/destruction/wreckHits.js';
 import { isDebris, isLootPod, isWreckPiece } from '../net/SwarmEntityRegistry.js';
 import { LineOfFireGate } from './LineOfFireGate.js';
@@ -1146,7 +1149,7 @@ export class SectorRoom extends Room<SectorState> {
   private readonly forceFields = new ForceFieldSubsystem({ post: (cmd) => this.postToWorker(cmd), tractors: {
     tick: () => this.serverTick, poseOf: (id, out) => this.aiFireTargetShape(id, out), wireRef: (id) => this.swarmRegistry.get(id)?.entityId ?? id,
     lineBodies: (fx, fy, tx, ty, w, a, b, ids, cap) => this.lofGate().lineBodies(fx, fy, tx, ty, w, a, b, ids, cap),
-    inCrackHold: (id) => this.capitalWrecks?.inCrackHold(id) === true, isTerrain: (id) => isTerrainLockKind(this.swarmRegistry.get(id)?.kind ?? -1),
+    inCrackHold: (id) => this.capitalWrecks?.inCrackHold(id) === true, isTerrain: (id) => isTerrainLockKind(this.swarmRegistry.get(id)?.kind ?? -1), isWreckPiece: (id) => { const r = this.swarmRegistry.get(id); return r != null && isWreckPiece(r); },
     // Tractoring a ship is a hostile act, like a hit (weapon-mounts.md "Tractor beam"); terrain is neutral.
     onShipTractored: (e, t) => { this.noteStandingHit(t, e); if (this.playerToSlot.has(t)) this.refreshNpcAttackHostility(e, t); else if (this.swarmRegistry.get(t)?.kind === 1 && !this.isFriendlyFire(t, e)) this.aiController.markHostile(t, e, this.serverTick); },
   } });
@@ -1696,8 +1699,8 @@ export class SectorRoom extends Room<SectorState> {
     loot: LootSubsystem;
     /** S2a — a swarm entity's full SAB state (pose, velocity, spin). */
     wreckState: (id: string) => { x: number; y: number; vx: number; vy: number; angle: number; angvel: number } | null;
-    /** Salvage PR 5: a wreck piece's hidden integrity (undefined: none). */
-    wreckIntegrity: (id: string) => number | undefined;
+    /** Salvage PR 5: a wreck piece's hidden integrity (undefined: none); its whole-piece salvage (0: none); rock cut's per-hit rock view (one reused object) or null. */
+    wreckIntegrity: (id: string) => number | undefined; wreckSalvage: (id: string) => number; rockOf: (id: string) => ReturnType<typeof rockViewOf>;
     /** S2a — a wreck piece's convex parts (body-local), or null. */
     wreckParts: (id: string) => ReadonlyArray<ReadonlyArray<{ x: number; y: number }>> | null;
     /** S2a — fix the fracture seed (null = per death). */
@@ -1784,7 +1787,8 @@ export class SectorRoom extends Room<SectorState> {
       },
       damageSwarmLayered: (rec, damage) => this.damageSwarmLayered(rec, damage),
       wreckState: (id) => this.wreckPose(id),
-      wreckIntegrity: (id) => this.capitalWrecks?.pieceIntegrity(id),
+      wreckIntegrity: (id) => this.capitalWrecks?.pieceIntegrity(id), wreckSalvage: (id) => this.capitalWrecks?.pieceSalvageQty(id) ?? 0,
+      rockOf: (id) => rockViewOf(this.swarmRegistry, id),
       wreckParts: (id) => this.swarmRegistry.get(id)?.wreckParts ?? null,
       setWreckSeed: (seed) => { if (this.capitalWrecks) this.capitalWrecks.forcedSeed = seed; },
       swarmSleeping: (id) => {
@@ -2497,8 +2501,7 @@ export class SectorRoom extends Room<SectorState> {
       swarmRegistry: this.swarmRegistry,
       lingeringSlots: this.lingeringSlots,
       lingeringShip: (sid) => this.state.ships.get(sid),
-      // Only a pilot's own shot can land on a loot pod; AI and turret bolts pass it.
-      shotHitsLootPods: (ownerId) => this.playerToSlot.has(ownerId),
+      shotHitsLootPods: (ownerId) => this.playerToSlot.has(ownerId), // only a pilot's own shot can hit a loot pod, except mining tools
       applyDamage: (targetId, shooterId, damage, hitX, hitY, dirX, dirY, weaponId) =>
         this.applyDamage(targetId, shooterId, damage, hitX, hitY, dirX, dirY, weaponId),
       wallBlocksProjectile: (x, y, sx, sy, damage) => {
@@ -2918,13 +2921,12 @@ export class SectorRoom extends Room<SectorState> {
         return p;
       },
       forEachCollector: (visit) => this.forEachLootCollector(visit),
+      // Tractor hold zone (emitter id: a pilot's playerId or an AI ship's swarm id): a pod is picked up, a wreck piece stored whole.
+      inTractorHold: (c, podId, x, y) => this.forceFields.inTractorHold(c.playerId, podId, x, y),
+      heldPieces: { any: () => this.forceFields.tractorCount > 0, forEach: (c, visit) => this.forceFields.forEachHeldPiece(c.playerId, visit), salvageQty: (id) => this.capitalWrecks?.pieceSalvageQty(id) ?? 0, remove: (id) => this.capitalWrecks?.storePiece(id) },
       onCollected: (c, moved, podId) => this.onLootCollected(c, moved, podId),
-      onDropped: (podId, hold, cause) => {
-        auditEvent({ event: 'loot_dropped', sector: this.sectorKey ?? undefined, podId, cause, weight: holdWeight(hold) });
-      },
-      onDestroyed: (podId, hold, cause) => {
-        auditEvent({ event: 'loot_destroyed', sector: this.sectorKey ?? undefined, podId, cause, weight: holdWeight(hold) });
-      },
+      onDropped: (podId, hold, cause) => auditEvent({ event: 'loot_dropped', sector: this.sectorKey ?? undefined, podId, cause, weight: holdWeight(hold) }),
+      onDestroyed: (podId, hold, cause) => auditEvent({ event: 'loot_destroyed', sector: this.sectorKey ?? undefined, podId, cause, weight: holdWeight(hold) }),
     });
 
     // ── Structure placement (structures plan, Phase 2) ──────────────────
@@ -4641,6 +4643,9 @@ export class SectorRoom extends Room<SectorState> {
   private readonly _lockTarget: LockTargetView = newLockTargetView();
   /** Activated-mount geometry per player, cached by the ship's `mounts` ref. */
   private readonly _lockActivated = new Map<string, { ref: unknown; mounts: ReadonlyArray<WeaponMount> }>();
+  private readonly _lockSalvage = new LockSalvageLookup<ShipState>({ swarm: (n) => this.swarmRegistry.getByEntityId(n),
+    piece: (id, out) => this.capitalWrecks?.pieceHaul(id, out) === true, // salvage lock bits (lockSalvage.ts)
+    freeHold: (s) => this.shipCargoCapacity(s.kind, s.shipInstanceId) - this.holdWeight(s.shipInstanceId) });
 
   private buildNpcLockSubsystem(): NpcLockSubsystem {
     return new NpcLockSubsystem({
@@ -4728,6 +4733,23 @@ export class SectorRoom extends Room<SectorState> {
     return this.fleet.ownerOfAttached(id) ?? id;
   }
 
+  /** A lock machine's `shipOf`: kind + activated mounts, cached per id by the ship's `mounts` ref. */
+  private lockShipOf(id: string, ship: ShipState | undefined): { kind: ShipKind; activated: ReadonlyArray<WeaponMount> } | null {
+    if (!ship) return null;
+    const kind = getShipKind(ship.kind);
+    let c = this._lockActivated.get(id);
+    if (!c || c.ref !== ship.mounts) {
+      c = { ref: ship.mounts, mounts: this.resolveInstanceMounts(ship).slice((kind.mounts ?? []).length) };
+      this._lockActivated.set(id, c);
+    }
+    return { kind, activated: c.mounts };
+  }
+
+  /** A wingman lock machine's hull: the LINGERING (AI-flown) ship `sid`. */
+  private wingmanHull(sid: string): ShipState | undefined {
+    return this.lingeringSlots.has(sid) ? this.state.ships.get(sid) : undefined;
+  }
+
   /**
    * RTS slice 5 — the PLAYER lock machine for AI-flown hulls (same class, same
    * lock maths: owner rule "same locks as a pilot in that ship"). Keyed by the
@@ -4749,19 +4771,9 @@ export class SectorRoom extends Room<SectorState> {
         out.x = p.x; out.y = p.y; out.vx = p.vx; out.vy = p.vy; out.angle = p.angle;
         return true;
       },
-      shipOf: (sid) => {
-        const ship = this.lingeringSlots.has(sid) ? this.state.ships.get(sid) : undefined;
-        if (!ship) return null;
-        const kind = getShipKind(ship.kind);
-        let c = this._lockActivated.get(sid);
-        if (!c || c.ref !== ship.mounts) {
-          const all = this.resolveInstanceMounts(ship);
-          c = { ref: ship.mounts, mounts: all.slice((kind.mounts ?? []).length) };
-          this._lockActivated.set(sid, c);
-        }
-        return { kind, activated: c.mounts };
-      },
+      shipOf: (sid) => this.lockShipOf(sid, this.wingmanHull(sid)),
       autoPick: () => null,
+      salvageOf: (sid, key, out) => this._lockSalvage.fill(this.wingmanHull(sid), key, out),
       commitHostileAct: (sid, key) => {
         const owner = this.fleet.ownerOfAttached(sid);
         if (owner !== null) this.commitLockHostileAct(owner, key);
@@ -4776,6 +4788,7 @@ export class SectorRoom extends Room<SectorState> {
   private buildLockSubsystem(): LockSubsystem {
     return new LockSubsystem({
       resolveTarget: (pid, key, out) => this.resolveLockTarget(pid, key, out),
+      salvageOf: (pid, key, out) => this._lockSalvage.fill(this.getActiveShip(pid), key, out),
       shooterPose: (pid, out) => {
         const p = this.shipPoseCache.get(pid);
         const ship = this.getActiveShip(pid);
@@ -4783,18 +4796,7 @@ export class SectorRoom extends Room<SectorState> {
         out.x = p.x; out.y = p.y; out.vx = p.vx; out.vy = p.vy; out.angle = p.angle;
         return true;
       },
-      shipOf: (pid) => {
-        const ship = this.getActiveShip(pid);
-        if (!ship) return null;
-        const kind = getShipKind(ship.kind);
-        let c = this._lockActivated.get(pid);
-        if (!c || c.ref !== ship.mounts) {
-          const all = this.resolveInstanceMounts(ship);
-          c = { ref: ship.mounts, mounts: all.slice((kind.mounts ?? []).length) };
-          this._lockActivated.set(pid, c);
-        }
-        return { kind, activated: c.mounts };
-      },
+      shipOf: (pid) => this.lockShipOf(pid, this.getActiveShip(pid)),
       autoPick: (pid, reach, sx, sy, bears, anyTarget, size) => {
         // NPC ship already hostile to this pilot, within reach and arc: the
         // class the group's heaviest gun prefers first (`mountPriority`:
@@ -4847,7 +4849,7 @@ export class SectorRoom extends Room<SectorState> {
    *  shipInstanceId>`) to a damageable target. */
   private resolveLockTarget(pid: string, key: string, out: LockTargetView): boolean {
     if (key.startsWith('s:')) {
-      const rec = this.swarmRegistry.getByEntityId(Number(key.slice(2)));
+      const rec = this.swarmRegistry.getByEntityId(swarmLockId(key)); // no slice per call (#14)
       if (!rec || !swarmLockEligible(rec.kind, out)) return false; // terrain: never hostile
       if (rec.kind === 2) {
         // A structure outside the registry (testMode `structurePoses`
@@ -4892,7 +4894,7 @@ export class SectorRoom extends Room<SectorState> {
   private commitLockHostileAct(pid: string, key: string): void {
     const tick = this.serverTick;
     if (key.startsWith('s:')) {
-      const rec = this.swarmRegistry.getByEntityId(Number(key.slice(2)));
+      const rec = this.swarmRegistry.getByEntityId(swarmLockId(key)); // no slice per call (#14)
       if (!rec || isTerrainLockKind(rec.kind)) return; // terrain: never a hostile act (no ledger, aggro, log)
       if (rec.kind === 2) {
         const owner = this.structureRegistry.get(rec.id)?.owner;
@@ -4920,7 +4922,7 @@ export class SectorRoom extends Room<SectorState> {
    */
   private refreshLockHostility(pid: string, key: string): void {
     if (!key.startsWith('s:')) return;
-    const rec = this.swarmRegistry.getByEntityId(Number(key.slice(2)));
+    const rec = this.swarmRegistry.getByEntityId(swarmLockId(key)); // no slice per call (#14)
     if (rec?.kind !== 1) return;
     if (!this.pilotInNpcFireRange(rec.id, pid)) return;
     this.aiController.markHostile(rec.id, pid, this.serverTick);
@@ -5504,11 +5506,8 @@ export class SectorRoom extends Room<SectorState> {
     targetId: string, shooterId: string, damage: number, hitX?: number, hitY?: number, dirX?: number, dirY?: number,
     weaponId?: WeaponId,
   ): boolean {
-    // Overkill knock-back (owner request 2026-11-13): a shot landing on a
-    // capital wreck piece (immune, so the router below does nothing) shoves
-    // it along the shot from the hit point. Only hits that know their point
-    // AND direction (shells, player and NPC beams); missiles push through
-    // their own splash impulse, rams through the contact itself.
+    // A hit on a wreck piece knocks and wears it, one on a rock wears it (rock cut). Only hits
+    // that know their point AND direction; missiles push by splash, rams by contact.
     if (this.capitalWrecks !== null && damage > 0 && hitX !== undefined && hitY !== undefined
       && dirX !== undefined && dirY !== undefined) {
       this.capitalWrecks.onWreckHit(targetId, hitX, hitY, dirX, dirY, damage, weaponId, shooterId);
@@ -5578,12 +5577,7 @@ export class SectorRoom extends Room<SectorState> {
         const lastPush = this.structureAttackPushAtMs.get(targetId) ?? -Infinity;
         if (now - lastPush >= STRUCTURE_ATTACK_PUSH_WINDOW_MS) {
           this.structureAttackPushAtMs.set(targetId, now);
-          pushNotifier.onStructureAttacked(
-            s.owner,
-            s.kind,
-            classifyAttacker(shooterId),
-            this.sectorKey ?? undefined,
-          );
+          pushNotifier.onStructureAttacked(s.owner, s.kind, classifyAttacker(shooterId), this.sectorKey ?? undefined);
         }
         // R2.18 — a Shield Pylon is undamageable while its wall is up: route the
         // hit into an active wall and skip the pylon damage entirely.
@@ -5675,7 +5669,9 @@ export class SectorRoom extends Room<SectorState> {
         if (slot !== undefined) slotPoseInto(this.sabF32, slot, out);
         return slot !== undefined;
       },
-      dropSalvage: (qty, x, y, vx, vy) => { this.loot.drop({ goods: { salvage: qty }, blueprints: [] }, x, y, vx, vy, { cause: 'salvage' }); },
+      dropSalvage: (qty, x, y, vx, vy, ore) => { this.loot.drop({ goods: ore ? this.oreDraw.cutYield(ore.rockId, x, y, qty, ore.resource) : { salvage: qty }, blueprints: [] }, x, y, vx, vy, { cause: 'salvage' }); },
+      rockOf: (id) => rockViewOf(this.swarmRegistry, id),
+      pieceSplit: (from, ids, masses) => relayPieceSplit(this.swarmRegistry, from, ids, masses, this.locks, this.wingmanLocks),
     });
   }
 
@@ -5695,7 +5691,7 @@ export class SectorRoom extends Room<SectorState> {
     switch (shipTuning(getShipKind(kindId)).destruction) {
       case 'capital': return this.capitalWrecksOn;
       case 'subcap': return this.subcapWrecksOn && shipScrapGroups(kindId).length === 0;
-      case 'none': return false;
+      case 'none': case 'rock': return false;
     }
   }
 
@@ -12319,6 +12315,9 @@ export class SectorRoom extends Room<SectorState> {
         this.fleet.setMode(owner, [shipId], opts.mode);
         return true;
       },
+      // Rock-cut scene: still rocks, then each mined to a break (RockCutter.sceneCut).
+      spawnRock: (id, x, y, radius) => this.swarmSpawner.spawnAsteroid({ id, x, y, vx: 0, vy: 0, radius, mass: 1 }),
+      cutRock: (id) => this.capitalWrecks?.rockCut.sceneCut(id) ?? false,
     });
   }
 

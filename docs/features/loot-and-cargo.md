@@ -133,7 +133,8 @@ the side of the killer's line (`killPodSpot`: 1.2 hull radii plus the pod's
 radius, side seeded from the ship), so the rest of a salvo and a heavy beam's
 kill follow-through (`followThroughTicks`, which runs on down that line) pass
 it. AI and turret shots never hit a loot pod anyway (`isLootPod`); only a
-pilot's own shot can.
+pilot's own shot can, except mining tools (the mining laser and the tractor,
+`isMiningTool`), which pass it so a miner never shoots its own ore.
 
 Example, a fighter (default table, `maxHealth / 50` scale): a normal kill
 rolling 14 salvage drops 14; vaporised, 21.

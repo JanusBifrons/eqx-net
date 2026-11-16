@@ -38,11 +38,8 @@ export function isDebris(rec: { kind: number }): boolean {
   return rec.kind === SWARM_KIND_WRECK || rec.kind === 3;
 }
 
-/** A loot pod: a scrap-kind record drawn as `cargo-pod` (LootSubsystem).
- *  Loot, not a combatant: AI and turret shots pass through it. */
-export function isLootPod(rec: { kind?: number; shipKind?: string | null }): boolean {
-  return rec.kind === 3 && rec.shipKind === 'cargo-pod';
-}
+/** A loot pod (the shared predicate): nobody's shot lands on it. */
+export { isLootPod } from '../../shared-types/swarmWireFormat.js';
 
 export interface SwarmEntityRecord {
   id: string;
