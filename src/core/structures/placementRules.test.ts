@@ -61,3 +61,56 @@ describe('placementRules — canPlaceStructureAt / placementRejection (rotated f
     expect(placementRejection('capital', 0, 0, [], obstacles)).toBe('overlap-obstacle');
   });
 });
+
+// Macro terrain C5b: a big irregular rock (cut-field radius up to ~8.9 km)
+// refuses only a footprint on its real shape; the circle is the broad phase.
+describe('placementRules — obstacle convex parts (narrow phase, C5b)', () => {
+  // A long thin bar 10 km × 200 u along x, centred on the rock centre.
+  const bar = [{ x: -5000, y: -100 }, { x: 5000, y: -100 }, { x: 5000, y: 100 }, { x: -5000, y: 100 }];
+  const barRock = (angle = 0): GridObstacle => ({ x: 0, y: 0, radius: Math.hypot(5000, 100), parts: [bar], angle });
+
+  it('accepts a footprint inside the bounding circle but clear of the outline', () => {
+    // Capital half 280: at y = 1000 its box is 720 u above the bar, ~4 km inside the circle.
+    expect(placementRejection('capital', 0, 1000, [], [{ x: 0, y: 0, radius: barRock().radius }])).toBe('overlap-obstacle');
+    expect(placementRejection('capital', 0, 1000, [], [barRock()])).toBeNull();
+  });
+
+  it('refuses a footprint that overlaps a part; touching is legal', () => {
+    expect(placementRejection('capital', 0, 300, [], [barRock()])).toBe('overlap-obstacle');
+    expect(placementRejection('capital', 0, 380, [], [barRock()])).toBeNull();
+    expect(placementRejection('capital', 0, 379, [], [barRock()])).toBe('overlap-obstacle');
+  });
+
+  it('uses the pose angle: the bar turned a quarter blocks the column, not the row', () => {
+    expect(placementRejection('capital', 0, 1000, [], [barRock(Math.PI / 2)])).toBe('overlap-obstacle');
+    expect(placementRejection('capital', 1000, 0, [], [barRock(Math.PI / 2)])).toBeNull();
+  });
+
+  it('tests a slanted edge, not only the parts\' bounding box', () => {
+    // Triangle with hypotenuse x + y = 2000: the box near (1300, 1300) is
+    // inside the triangle's bounding box but beyond its slanted edge.
+    const tri: GridObstacle = { x: 0, y: 0, radius: 2000, parts: [[{ x: 0, y: 0 }, { x: 2000, y: 0 }, { x: 0, y: 2000 }]] };
+    expect(placementRejection('capital', 1300, 1300, [], [tri])).toBeNull();
+    expect(placementRejection('capital', 1200, 1200, [], [tri])).toBe('overlap-obstacle');
+  });
+
+  it('a footprint over any one of several parts is refused; between them is clear', () => {
+    const left = [{ x: -3000, y: -200 }, { x: -2000, y: -200 }, { x: -2000, y: 200 }, { x: -3000, y: 200 }];
+    const right = [{ x: 2000, y: -200 }, { x: 3000, y: -200 }, { x: 3000, y: 200 }, { x: 2000, y: 200 }];
+    const rock: GridObstacle = { x: 0, y: 0, radius: 3100, parts: [left, right] };
+    expect(placementRejection('capital', 0, 0, [], [rock])).toBeNull();
+    expect(placementRejection('capital', 2400, 0, [], [rock])).toBe('overlap-obstacle');
+    expect(placementRejection('capital', -2400, 0, [], [rock])).toBe('overlap-obstacle');
+  });
+
+  it('the circle stays the broad phase: nothing outside it is refused', () => {
+    // Parts that (wrongly) poke past the radius are cut off by the circle.
+    expect(placementRejection('capital', 4000, 0, [], [{ ...barRock(), radius: 1000 }])).toBeNull();
+  });
+
+  it('an obstacle offset from the origin places its parts relative to its centre', () => {
+    const rock: GridObstacle = { x: 10_000, y: -4000, radius: barRock().radius, parts: [bar] };
+    expect(placementRejection('capital', 10_000, -3000, [], [rock])).toBeNull();
+    expect(placementRejection('capital', 10_000, -3700, [], [rock])).toBe('overlap-obstacle');
+  });
+});

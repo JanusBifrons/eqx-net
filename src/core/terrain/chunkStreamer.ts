@@ -36,7 +36,7 @@ export function cutFieldOpts(seed: string): ChunkOpts {
 export interface FieldRockBody { x: number; y: number; radius: number; verts: { x: number; y: number }[]; parts: { x: number; y: number }[][] | null }
 
 
-export function fieldRockBody(rock: ChunkRock): FieldRockBody {
+export function fieldRockBody(rock: Pick<SlicedRock, 'verts'>): FieldRockBody {
   let mx = 0, my = 0;
   for (const v of rock.verts) { mx += v.x; my += v.y; }
   mx /= rock.verts.length; my /= rock.verts.length;
@@ -71,8 +71,9 @@ export function fieldRockCircle(rock: SlicedRock): { x: number; y: number; radiu
   return { x: mx, y: my, radius: Math.sqrt(r2) };
 }
 
-/** A field rock as cut from the layout: its key and bounding circle. */
-export interface FieldRockCircle { key: number; x: number; y: number; radius: number }
+/** A field rock as cut from the layout: its key, bounding circle and world
+ *  outline (`fieldRockBody` builds its collider parts from `verts`). */
+export interface FieldRockCircle { key: number; x: number; y: number; radius: number; verts: SlicedRock['verts'] }
 
 /**
  * Every rock of the field whose bounding circle reaches into the box, cut from
@@ -99,7 +100,7 @@ export function fieldRocksInBox(o: ChunkOpts, x0: number, y0: number, x1: number
     let members = chunks.get(ck);
     if (!members) { members = rocksInChunk(o, cx, cy); chunks.set(ck, members); }
     const m = members.find((r) => r.path === rock.path);
-    out.push({ key: m ? m.key : -1, x: c.x, y: c.y, radius: c.radius });
+    out.push({ key: m ? m.key : -1, x: c.x, y: c.y, radius: c.radius, verts: rock.verts });
   }
   return out;
 }

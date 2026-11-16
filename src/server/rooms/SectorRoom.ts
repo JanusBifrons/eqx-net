@@ -6752,12 +6752,8 @@ export class SectorRoom extends Room<SectorState> {
     const obstacles: GridObstacle[] = [];
     for (const rec of this.swarmRegistry.all()) {
       if (rec.kind !== 0) continue; // asteroids only
-      const base = slotBase(rec.slot);
-      obstacles.push({
-        x: this.sabF32[base + SLOT_X_OFF]!,
-        y: this.sabF32[base + SLOT_Y_OFF]!,
-        radius: rec.radius,
-      });
+      const b = slotBase(rec.slot), f = this.sabF32; // placement narrow phase (C5b): collider parts, else the outline, at the live pose
+      obstacles.push({ x: f[b + SLOT_X_OFF]!, y: f[b + SLOT_Y_OFF]!, radius: rec.radius, angle: f[b + SLOT_ANGLE_OFF]!, parts: rec.wreckParts ?? (rec.vertices && [rec.vertices]) });
     }
     if (near) this.cutField?.dormantObstacles(near, obstacles);
     return obstacles;

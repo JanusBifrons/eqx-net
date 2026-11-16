@@ -10,6 +10,7 @@ import { CutFieldSubsystem, toRestFrame } from './CutFieldSubsystem.js';
 import type { WorkerCmd } from './PhysicsWorkerProxy.js';
 import type { PersistOp } from '../../core/contracts/IPersistenceSink.js';
 import { FIELD_LAYOUT_VERSION, rocksInChunk } from '../../core/terrain/fieldLayout.js';
+import { convexHullCCW } from '../../core/swarm/asteroidShape.js';
 import type { TerrainRecordRow, TerrainRecordStore } from '../db/terrainSql.js';
 
 function setup(recs: Record<string, Partial<SwarmEntityRecord>>) {
@@ -230,7 +231,11 @@ describe('CutFieldSubsystem.dormantObstacles (C5: placement sees unloaded field 
   it('gives a rock with no body as an obstacle, so placement on it is refused', () => {
     const out: GridObstacle[] = [];
     sub(new Set()).dormantObstacles(box, out);
-    expect(out).toContainEqual({ x: body.x, y: body.y, radius: body.radius });
+    expect(out).toContainEqual(expect.objectContaining({ x: body.x, y: body.y, radius: body.radius }));
+    // C5b: with the collider's convex parts at rest, the narrow phase.
+    const mine = out.find((ob) => ob.x === body.x && ob.y === body.y)!;
+    expect(mine.parts).toEqual(body.parts ?? [convexHullCCW(body.verts)]);
+    expect(mine.angle).toBe(0);
     expect(placementRejection('capital', body.x, body.y, [], out)).toBe('overlap-obstacle');
   });
 
@@ -239,9 +244,9 @@ describe('CutFieldSubsystem.dormantObstacles (C5: placement sees unloaded field 
     s.markConsumed(rock.key);
     const consumed: GridObstacle[] = [];
     s.dormantObstacles(box, consumed);
-    expect(consumed).not.toContainEqual({ x: body.x, y: body.y, radius: body.radius });
+    expect(consumed).not.toContainEqual(expect.objectContaining({ x: body.x, y: body.y, radius: body.radius }));
     const live: GridObstacle[] = [];
     sub(new Set([fieldRockId(rock.key)])).dormantObstacles(box, live);
-    expect(live).not.toContainEqual({ x: body.x, y: body.y, radius: body.radius });
+    expect(live).not.toContainEqual(expect.objectContaining({ x: body.x, y: body.y, radius: body.radius }));
   });
 });

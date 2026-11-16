@@ -4,6 +4,8 @@
  * as if the rock were there. Real `place_structure` path: the room's
  * `getObstacles(near)` adds the dormant rocks cut from the layout
  * (`CutFieldSubsystem.dormantObstacles`). A broken-up rock no longer blocks.
+ * C5b: a dormant rock refuses only a footprint on its real shape (its
+ * collider parts), not anywhere in its bounding circle.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
@@ -13,6 +15,8 @@ import { cutFieldOpts, fieldRockBody, fieldRockId, fieldRocksInBox } from '../..
 import { rocksInChunk } from '../../../src/core/terrain/fieldLayout.js';
 import { structureHalfExtents } from '../../../src/shared-types/structureKinds.js';
 import { clampToSectorBounds } from '../../../src/shared-types/sectorBounds.js';
+import { placementRejection } from '../../../src/core/structures/placementRules.js';
+import { convexHullCCW } from '../../../src/core/swarm/asteroidShape.js';
 
 let harness: SectorTestHarness | undefined;
 afterEach(async () => { await harness?.cleanup(); harness = undefined; });
@@ -57,5 +61,41 @@ describe('SectorRoom integration — placement on an unloaded cut-field rock (C5
     expect(await place(0, 0), 'open space (the field core) is fine').toBe(true);
     int.cutFieldSub!.markConsumed(rock.key);
     expect(await place(body.x, body.y), 'a broken-up rock no longer blocks').toBe(true);
+  });
+
+  it('accepts a footprint inside a rock\'s bounding circle but clear of its outline (C5b)', { timeout: 60_000 }, async () => {
+    // A spot in the same far chunk that a rock's bounding circle covers but
+    // no rock's real shape (collider parts, as the server builds them) does.
+    const o = cutFieldOpts('look'), { hw, hh } = structureHalfExtents('connector', 0);
+    let spot: { x: number; y: number; key: number } | null = null;
+    for (const r of rocksInChunk(o, -8, 6)) {
+      const b = fieldRockBody(r);
+      for (let k = 0; k < 24 && spot === null; k++) {
+        const a = (k / 24) * Math.PI * 2, d = b.radius * (0.55 + 0.4 * ((k * 7) % 5) / 4);
+        const x = b.x + Math.cos(a) * d, y = b.y + Math.sin(a) * d;
+        if (clampToSectorBounds(x, y).clamped) continue;
+        const near = fieldRocksInBox(o, x - hw, y - hh, x + hw, y + hh);
+        if (!near.some((n) => n.key === r.key)) continue; // the circle reaches the footprint
+        const shaped = near.map((n) => { const nb = fieldRockBody(n); return { x: n.x, y: n.y, radius: n.radius, parts: nb.parts ?? [convexHullCCW(nb.verts)] }; });
+        if (placementRejection('connector', x, y, [], shaped) === null) spot = { x, y, key: r.key };
+      }
+      if (spot) break;
+    }
+    expect(spot, 'a spot inside a rock\'s circle but off its outline').not.toBeNull();
+    const circleOnly = fieldRocksInBox(o, spot!.x - hw, spot!.y - hh, spot!.x + hw, spot!.y + hh).map((n) => ({ x: n.x, y: n.y, radius: n.radius }));
+    expect(placementRejection('connector', spot!.x, spot!.y, [], circleOnly), 'the bounding circle alone refuses it').toBe('overlap-obstacle');
+
+    harness = await bootSectorTestServer({ sectorKey: null, cutField: { seed: 'look' }, asteroidConfig: [], defaultSpawnX: 60_000, defaultSpawnY: 0 });
+    const client = await harness.connectActive(randomUUID());
+    const int = (harness.getServerRoom() as unknown as SectorRoom)._internals;
+    expect(int.swarmRegistry.get(fieldRockId(spot!.key)), 'the rock has no body (dormant)').toBeNull();
+    const before = [...int.structureRegistry.all()].length;
+    client.send('place_structure', { type: 'place_structure', kind: 'connector', x: spot!.x, y: spot!.y });
+    let placed = false;
+    for (let i = 0; i < 20 && !placed; i++) {
+      await harness.advance(25);
+      placed = [...int.structureRegistry.all()].length > before;
+    }
+    expect(placed, 'a connector next to the dormant rock, off its outline, is placed').toBe(true);
   });
 });
