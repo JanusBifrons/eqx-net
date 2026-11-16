@@ -35,8 +35,6 @@ import type {
   WorkerToMainMsg,
   SerialisedPointerEvent,
   SerialisedWheelEvent,
-  WarpParams,
-  WarpCenter,
   TriggerEffectMsg,
   SetEffectParamsMsg,
 } from './protocol';
@@ -222,8 +220,10 @@ export class WorkerRendererClient implements IRenderer {
       ...(this._art.delayMs ? { artDelayMs: this._art.delayMs } : {}),
       ...(this._art.fx ? { fx: true } : {}),
       ...(this._art.speedFx === false ? { speedFxOff: true } : {}),
+      ...(this._art.nebLook ? { nebLook: this._art.nebLook } : {}),
       ...(this._art.lighting ? { lighting: this._art.lighting } : {}),
       ...(this._art.livery ? { livery: this._art.livery } : {}), ...(this._art.ore ? { ore: this._art.ore } : {}),
+      ...(this._art.quality ? { quality: this._art.quality } : {}),
       // The worker has no `window`: resolve `?cleanworld=1` & co. here.
       fxKillSwitches: readFxKillSwitches(),
     }, [offscreen]);
@@ -431,7 +431,6 @@ export class WorkerRendererClient implements IRenderer {
     // frame. (The 2026-05-14 damage-number boundary lesson.)
     if (mirror.pendingDamageNumberCancels) mirror.pendingDamageNumberCancels.length = 0;
     if (mirror.pendingHealthBarHits) mirror.pendingHealthBarHits.length = 0;
-    if (mirror.pendingWarpEvents) mirror.pendingWarpEvents.length = 0;
     if (mirror.pendingFieldChunks) mirror.pendingFieldChunks.length = 0;
   }
 
@@ -513,48 +512,12 @@ export class WorkerRendererClient implements IRenderer {
   }
 
   /**
-   * Warp-mode render state. See `IRenderer.setWarpMode`. Posts to the
-   * worker which forwards to its `PixiRenderer.setWarpMode`.
-   */
-  setWarpMode(active: boolean): void {
-    this.post({ type: 'SET_WARP_MODE', active });
-  }
-
-  /**
-   * Live-tune warp visual params. Sandbox-only — production code never
-   * calls this; defaults live in `PixiRenderer.DEFAULT_WARP_PARAMS`.
-   * Posts to the worker which forwards to `PixiRenderer.setWarpParams`.
-   */
-  setWarpParams(params: Partial<WarpParams>): void {
-    this.post({ type: 'SET_WARP_PARAMS', params });
-  }
-
-  /**
-   * Anchor the warp centre. World-space anchors track a world point
-   * as the camera pans; screen-space anchors are used raw (sandbox
-   * click-to-place). `null` reverts to screen centre. In production,
-   * each per-ship warp event sets its own world anchor before
-   * `setWarpMode(true)`.
-   */
-  setWarpCenter(center: WarpCenter | null): void {
-    this.post({ type: 'SET_WARP_CENTER', center });
-  }
-
-  /**
    * Sandbox-only: position the camera so a world point sits at screen
    * centre. Production code follows the local ship via the renderer's
    * built-in `Camera.follow`, not this message.
    */
   setCameraCenter(worldX: number, worldY: number): void {
     this.post({ type: 'SET_CAMERA_CENTER', worldX, worldY });
-  }
-
-  /**
-   * Fire the warp-in (arrival) companion effect at the supplied
-   * centre. Flash + single big ripple, no preceding spool/climax.
-   */
-  triggerWarpIn(center: WarpCenter | null): void {
-    this.post({ type: 'TRIGGER_WARP_IN', center });
   }
 
   /**
@@ -683,8 +646,8 @@ export class WorkerRendererClient implements IRenderer {
   }
 
   /**
-   * Sandbox-only live tune for a single effect's params. Mirrors
-   * `setWarpParams`. Production never calls this; per-effect defaults
+   * Sandbox-only live tune for a single effect's params. Production
+   * never calls this; per-effect defaults
    * live in `src/client/effects/config/effectDefaults.ts`.
    */
   setEffectParams(effect: SetEffectParamsMsg['effect'], params: Record<string, number | boolean>): void {
@@ -852,16 +815,7 @@ export class WorkerRendererClient implements IRenderer {
         // worker gates the post), so no production-path cost here.
         const m = msg.markers;
         logEvent('renderer_update', { totalMs: m.rendererUpdateMs, spriteCount: m.spriteCount });
-        logEvent('warp_tick', {
-          totalMs: m.warpTickMs,
-          filterCount: m.filterCount,
-          // Render-jitter-fix Phase 1b — the load-bearing diagnostic
-          // for the stuck-filter-chain hypothesis. `attached=true`
-          // for many frames in a row + `burstAgeMs` climbing past
-          // ~1500ms means filters are stuck on (the bug-fix-target).
-          attached: m.warpFiltersAttached,
-          burstAgeMs: m.warpBurstAgeMs,
-        });
+        logEvent('warp_tick', { totalMs: m.warpTickMs });
         logEvent('grid_update', {
           labelSpecMs: m.gridLabelSpecMs,
           textCreateMs: m.gridTextCreateMs,

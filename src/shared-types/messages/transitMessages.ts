@@ -56,13 +56,9 @@ export function parseTransitReadyShipIds(raw: unknown): string[] | undefined {
  * Server → client (broadcast): a remote ship just warped OUT of this sector.
  * Sent to every occupant of the source sector EXCEPT the leaving player
  * themselves (the local player gets their own warp visual from the
- * `transit_state` SPOOLING/IN_TRANSIT machinery). The client fires a
- * one-shot `triggerWarpIn` (flash + burst ripple) at `(x, y)` so observers
- * see where the ship vanished from.
- *
- * NOTE: the message name is `warp_out` but the client uses the same
- * `triggerWarpIn` API for both directions — the renderer's "burst+flash
- * at a world point" pulse is direction-agnostic.
+ * `transit_state` SPOOLING/IN_TRANSIT machinery). The client only logs it
+ * (`warp_event`): observers see the departure through WarpFx, driven by the
+ * ship's snapshot warp phase.
  */
 export interface WarpOutEvent {
   type: 'warp_out';
@@ -81,9 +77,8 @@ export interface WarpOutEvent {
  * Post-handshake: sent to ALL occupants of the destination sector
  * INCLUDING the joiner. The joiner uses `arrivalTick` to schedule
  * their curtain drop + local warp-in animation in sync with every
- * other observer. Observers fire `triggerWarpIn` at `arrivalTick`
- * (not on receipt) so the flash lands at the same logical instant
- * everywhere. `ARRIVAL_OFFSET_TICKS = 6` (100 ms @ 60 Hz) gives the
+ * other observer (observers see the arrival through WarpFx, driven by
+ * the snapshot warp phase). `ARRIVAL_OFFSET_TICKS = 6` (100 ms @ 60 Hz) gives the
  * broadcast time to propagate before the activation tick.
  *
  * `arrivalTick` is optional for back-compat with older servers that

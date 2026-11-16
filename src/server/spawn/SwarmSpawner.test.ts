@@ -6,7 +6,7 @@ import { SCRAP_LINEAR_DAMPING, SCRAP_DEFAULT_MASS } from '../../core/swarm/scrap
 import { SCRAP_COLLISION_GROUPS } from '../../core/physics/collisionGroups.js';
 import { SWARM_KIND_SCRAP } from '../../shared-types/swarmWireFormat.js';
 import { SHIP_KINDS, SHIP_KINDS_LIST, shipKindToIndex } from '../../shared-types/shipKinds.js';
-import { asteroidShapeSeed, generateAsteroidVertices, type Vec2 } from '../../core/swarm/asteroidShape.js';
+import { asteroidShapeSeed, convexHullCCW, generateAsteroidVertices, type Vec2 } from '../../core/swarm/asteroidShape.js';
 import {
   SAB_TOTAL_BYTES,
   slotBase,
@@ -76,6 +76,20 @@ describe('SwarmSpawner', () => {
   it('a cut-field rock spawns as a fixed body (never simulated)', () => {
     spawner.spawnAsteroid({ id: 'field:1', x: 0, y: 0, vx: 0, vy: 0, radius: 30, fixed: true, fieldRock: true });
     expect(posted.find((p) => p.id === 'field:1')!.staticBody).toBe('fixed');
+  });
+
+  // C1b: a field rock's hit shape is its collider. With no convex parts
+  // (poly-decomp failed) the collider is the outline's convex hull, so the
+  // hull is its one part; a dented raw outline must never be the hit shape.
+  it('a field rock with no convex parts gets its outline hull as its one part', () => {
+    const dented: Vec2[] = [{ x: -30, y: -30 }, { x: 30, y: -30 }, { x: 30, y: 30 }, { x: 0, y: 5 }, { x: -30, y: 30 }];
+    spawner.spawnAsteroid({ id: 'field:2', x: 0, y: 0, vx: 0, vy: 0, radius: 43, vertices: dented, fixed: true, fieldRock: true });
+    expect(registry.get('field:2')!.wreckParts).toEqual([convexHullCCW(dented)]);
+    const parts = [[{ x: -30, y: -30 }, { x: 30, y: -30 }, { x: 0, y: 5 }]];
+    spawner.spawnAsteroid({ id: 'field:3', x: 0, y: 0, vx: 0, vy: 0, radius: 43, vertices: dented, fixed: true, fieldRock: true, parts });
+    expect(registry.get('field:3')!.wreckParts).toBe(parts);
+    spawner.spawnAsteroid({ id: 'belt-9', x: 0, y: 0, vx: 0, vy: 0, radius: 30 });
+    expect(registry.get('belt-9')!.wreckParts).toBeUndefined(); // ordinary rocks keep the polygon path
   });
 
   // Macro terrain 1a: a rock's outline (collider, hit shape, art) comes from

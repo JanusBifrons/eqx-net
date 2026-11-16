@@ -2,8 +2,8 @@
  * Phase 4 travel state (plan prancy-squishing-donut, 2026-11-07): a
  * sector-to-sector trip IS the loading screen. The pilot keeps the normal view
  * (own ship flying, engines, sky) while the destination loads; the curtain
- * never rises for a transit, the old shader warp envelope and arrival flash are
- * gone (the user: "they're incredibly expensive and suck"), and the trip ends
+ * never rises for a transit, the old shader warp envelope and arrival flash were
+ * removed (the user: "they're incredibly expensive and suck"), and the trip ends
  * on the loading→ready edge (the ship drops in, drawn by WarpFx).
  *
  * The very first join (no trip under way) keeps the curtain.
@@ -19,20 +19,13 @@ import type { IRenderer } from '@core/contracts/IRenderer';
 import { useUIStore } from './state/store.js';
 import { useWarpOrchestration } from './useWarpOrchestration.js';
 
-type Call =
-  | { fn: 'setLoadCurtain'; arg: boolean }
-  | { fn: 'setWarpMode'; arg: boolean }
-  | { fn: 'setWarpCenter' }
-  | { fn: 'triggerWarpIn' };
+type Call = { fn: 'setLoadCurtain'; arg: boolean };
 
 let calls: Call[];
 
 function makeSpyRenderer(): IRenderer {
   const spy = {
     setLoadCurtain: (a: boolean) => calls.push({ fn: 'setLoadCurtain', arg: a }),
-    setWarpMode: (a: boolean) => calls.push({ fn: 'setWarpMode', arg: a }),
-    setWarpCenter: () => calls.push({ fn: 'setWarpCenter' }),
-    triggerWarpIn: () => calls.push({ fn: 'triggerWarpIn' }),
   };
   return spy as unknown as IRenderer;
 }
@@ -65,7 +58,7 @@ describe('useWarpOrchestration — the trip is the loading screen (Phase 4 trave
     settle();
   });
 
-  it('a transit never raises the curtain, never runs the old shader, and ends the trip on arrival', () => {
+  it('a transit never raises the curtain and ends the trip on arrival', () => {
     const rr: RefObject<IRenderer | null> = { current: makeSpyRenderer() };
     render(<Harness rr={rr} />);
     calls = [];
@@ -79,9 +72,8 @@ describe('useWarpOrchestration — the trip is the loading screen (Phase 4 trave
     act(() => { useUIStore.getState().setTransitState('IN_TRANSIT'); });
 
     expect(calls.some((c) => c.fn === 'setLoadCurtain' && c.arg === true)).toBe(false);
-    expect(calls.some((c) => c.fn === 'setWarpMode' && c.arg === true)).toBe(false);
 
-    // The destination is loaded: the trip ends, with no old arrival flash.
+    // The destination is loaded: the trip ends.
     act(() => {
       useUIStore.getState().setFirstSnapshotApplied(true);
       useUIStore.getState().setJoinMinimumElapsed(true);
@@ -91,7 +83,6 @@ describe('useWarpOrchestration — the trip is the loading screen (Phase 4 trave
       useUIStore.getState().setArrivalAcked(true);
       useUIStore.getState().setTransitState('DOCKED');
     });
-    expect(calls.some((c) => c.fn === 'triggerWarpIn')).toBe(false);
     expect(calls.some((c) => c.fn === 'setLoadCurtain' && c.arg === true)).toBe(false);
     expect(useUIStore.getState().travelling).toBe(false);
   });

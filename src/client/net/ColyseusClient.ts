@@ -8,7 +8,8 @@ import {
   forEachStructureMountAngles,
   type StructureStateView,
 } from '../../shared-types/structureStateWire.js';
-import { forEachBeamLink, type BeamLinkVisitor } from '../../shared-types/beamLinksWire.js';
+import type { BeamLinkVisitor } from '../../shared-types/beamLinksWire.js';
+import { TractorLinkClient } from './tractorLinks.js';
 import { Client, Room } from 'colyseus.js';
 import type { RenderMirror, ShipRenderState, StructureRenderState, SwarmRenderState } from '@core/contracts/IRenderer';
 import type { IAudio } from '@core/contracts/IAudio';
@@ -470,7 +471,6 @@ export class ColyseusGameClient {
     pendingDamageNumbers: [],
     pendingDamageNumberCancels: [],
     pendingHealthBarHits: [],
-    pendingWarpEvents: [],
     pendingMissileExplosions: [],
     pendingEffectTriggers: [],
     pendingLevelUps: [],
@@ -2277,19 +2277,14 @@ export class ColyseusGameClient {
       }
     });
 
-    // Remote-warp visual broadcasts. Both `warp_in` (a ship just arrived
-    // at this sector) and `warp_out` (a ship just left) push a single
-    // entry onto `mirror.pendingWarpEvents` with the world position; the
-    // renderer drains the array each frame and fires `triggerWarpIn`
-    // (the same direction-agnostic flash + burst ripple) at each one.
-    // Local-player events are never reflected here — the server's
-    // `except: client` filter excludes the originating connection.
+    // Warp broadcasts. `warp_in` (a ship just arrived at this sector) and
+    // `warp_out` (a ship just left) are logged for diagnostics; the local
+    // player's own `warp_in` schedules the curtain drop. No renderer visual:
+    // WarpFx draws every ship's warp from the snapshot's warp phase (#16).
     const handleWarpEvent = (msg: WarpInEvent | WarpOutEvent, kind: 'warp_in' | 'warp_out'): void => {
       // Render-jitter-fix Phase 1b (2026-05-21): log every warp event so
       // we can correlate drone-warp triggers with RAF stalls in the
-      // diag capture. PRE-FIX the handler pushed silently into
-      // `pendingWarpEvents` and the renderer drained it — invisible to
-      // diagnostics. Drone warps (Living World hunter migrations) fire
+      // diag capture. Drone warps (Living World hunter migrations) fire
       // these every few seconds; if the per-event renderer cost is what
       // builds the spiral, each event will line up with the next slow
       // RAF in the trace.
@@ -2301,8 +2296,8 @@ export class ColyseusGameClient {
         arrivalTick: typeof arrivalTick === 'number' ? arrivalTick : null,
         isLocal: msg.playerId === this.mirror.localPlayerId,
       });
-      // Plan: crispy-kazoo, Commit 9 — synchronised arrival, split
-      // curtain-drop from warp-in flash.
+      // Plan: crispy-kazoo, Commit 9 — synchronised arrival: the curtain
+      // drops just before the arrival tick.
       //
       // SEQUENCE for the joiner:
       //   T0      receive `warp_in { arrivalTick }`
@@ -2312,9 +2307,8 @@ export class ColyseusGameClient {
       //                                     → useWarpOrchestration calls
       //                                     `renderer.setLoadCurtain(false)`,
       //                                     a 380 ms fade)
-      //   T0+~600ms (= arrivalTick):       warp-in flash fires
-      //                                     (pendingWarpEvents push;
-      //                                     curtain is gone by now)
+      //   T0+~600ms (= arrivalTick):       the ship arrives (WarpFx);
+      //                                     curtain is gone by now
       //
       // The wall-clock-anchored server-tick estimate is mandatory:
       // `this.inputTick` is stuck at welcome's serverTick because
@@ -2337,7 +2331,7 @@ export class ColyseusGameClient {
         const ticksUntilArrival = Math.max(0, arrivalTick - serverTickEstimate);
         const msUntilArrival = ticksUntilArrival * (1000 / 60);
         // 450 ms before arrival → curtain fade-out starts (380 ms fade
-        // + 70 ms slack to ensure it's fully gone before the flash).
+        // + 70 ms slack to ensure it's fully gone before the arrival).
         const CURTAIN_LEAD_MS = 450;
         const msUntilCurtainDrop = Math.max(0, msUntilArrival - CURTAIN_LEAD_MS);
         setTimeout(() => {
@@ -4185,8 +4179,9 @@ export class ColyseusGameClient {
   };
 
   /** Beam links (shared-types/beamLinksWire.ts): structure turret / mining
-   *  targets onto their rows. Ship tractor links decode here and are drawn and
-   *  predicted by the tractor client slice (salvage plan PR 11b). Bound once. */
+   *  targets onto their rows; ship tractor links go to the tractor client
+   *  slice (`tractorLinks.ts`: mirror rows + predWorld fields). Bound once. */
+  private readonly _tractors = new TractorLinkClient(this.mirror, this._swarmBodyKeyCache);
   private readonly _beamLinkVisitor: BeamLinkVisitor = {
     structure: (sid, turret, mining) => {
       const row = this._structureMap?.get(sid);
@@ -4197,7 +4192,7 @@ export class ColyseusGameClient {
       else if (turret !== STRUCTURE_TARGET_NONE) row.turretTargetId = turret;
       if (mining !== STRUCTURE_TARGET_NONE) row.miningTargetId = mining;
     },
-    tractor: () => {},
+    tractor: this._tractors.add,
   };
 
   /** Coastal defences — copy one structure's server turret angles onto its
@@ -4252,9 +4247,10 @@ export class ColyseusGameClient {
         const sw = this.mirror.swarm?.get(id);
         if (sw && sw.kind === SWARM_KIND_STRUCTURE) this.mirror.swarm!.delete(id);
       }
-      if (targets) forEachBeamLink(targets, this._beamLinkVisitor);
       if (mountAngles) forEachStructureMountAngles(mountAngles, this._applyStructureMountAngles);
     }
+    // Beam links walk with or without structures: a tractor needs none.
+    this._tractors.sync(targets, this._beamLinkVisitor, this.predWorld);
     this.syncPredWalls();
     this.syncForceFields();
     this.syncMines();

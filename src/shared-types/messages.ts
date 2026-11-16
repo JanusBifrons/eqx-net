@@ -20,6 +20,7 @@ export {
   TestReloadTurretsSchema,
   TestKillCapitalsSchema,
   TestFleetWarpSchema,
+  TestTractorSchema,
   ClientReadyMessageSchema,
   PlaceStructureSchema,
   RemoveStructureSchema,

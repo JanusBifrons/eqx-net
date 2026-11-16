@@ -49,6 +49,29 @@ async function waitForShipCount(page: import('@playwright/test').Page, n = 2): P
   );
 }
 
+/** State-wait until this page's own ship holds still: the same position on
+ *  every RAF for 0.5 s. A fresh joiner is still gliding in from its warp-in
+ *  when its first position appears; on a slow GPU (CI's software GL) the
+ *  glide outlasts the join steps, so a "before" read taken then moved by tens
+ *  of units with no input (it failed 5/5 on main under SwiftShader locally). */
+async function waitForShipStill(page: import('@playwright/test').Page): Promise<void> {
+  await page.waitForFunction(
+    () => {
+      const w = window as unknown as { __shipStillProbe?: { key: string; since: number } };
+      const el = document.querySelector('[data-testid="game-surface"]');
+      const key = (el?.getAttribute('data-ship-x') ?? '') + ',' + (el?.getAttribute('data-ship-y') ?? '');
+      const now = performance.now();
+      if (w.__shipStillProbe?.key !== key) {
+        w.__shipStillProbe = { key, since: now };
+        return false;
+      }
+      return now - w.__shipStillProbe.since >= 500;
+    },
+    undefined,
+    { timeout: 20_000, polling: 'raf' },
+  );
+}
+
 function getShipPos(page: import('@playwright/test').Page): Promise<{ x: number; y: number }> {
   return page.evaluate(() => {
     const el = document.querySelector('[data-testid="game-surface"]');
@@ -161,6 +184,7 @@ test.describe('two-client isolation', () => {
 
     // Capture player 2's position before player 1 moves.
     await waitForShipPos(page2);
+    await waitForShipStill(page2);
     const p2Before = await getShipPos(page2);
 
     // Player 1 thrusts.

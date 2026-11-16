@@ -92,13 +92,6 @@
     button:active { background: rgba(0, 255, 136, 0.30); }
     button.danger { border-color: rgba(255, 100, 100, 0.45); color: #ffaaaa; }
     button.danger:hover { background: rgba(255, 100, 100, 0.18); }
-    .slider-row {
-      display: grid; grid-template-columns: 110px 1fr 60px;
-      gap: 8px; align-items: center; margin: 3px 0;
-    }
-    .slider-row label { color: #9aa0b4; font-size: 10px; }
-    .slider-row input[type="range"] { width: 100%; accent-color: #00ff88; }
-    .slider-row .value { text-align: right; color: #00ff88; font-size: 11px; }
     #status {
       color: #9aa0b4; font-size: 10px; margin-top: 12px;
       padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.08);
@@ -121,9 +114,7 @@
     </div>
     <h2>Effect</h2>
     <div id="effect-picker">
-      <input type="radio" id="effect-warp" name="effect" value="warp" checked>
-      <label for="effect-warp">Warp</label>
-      <input type="radio" id="effect-explosion" name="effect" value="explosion">
+      <input type="radio" id="effect-explosion" name="effect" value="explosion" checked>
       <label for="effect-explosion">Explosion</label>
       <input type="radio" id="effect-impact" name="effect" value="impact">
       <label for="effect-impact">Impact</label>
@@ -145,7 +136,7 @@
     <!-- Per-effect scenario panels (M10). Each ships its own data-testid
          so an E2E spec can verify the radio gating shows/hides the right
          panel + the effect runs without console errors. -->
-    <div id="explosion-panel" class="effect-panel" data-testid="explosion-panel">
+    <div id="explosion-panel" class="effect-panel active" data-testid="explosion-panel">
       <h2>Explosion (Ship Destruction)</h2>
       <div class="button-row">
         <button id="explosion-trigger" data-testid="explosion-trigger">Trigger explosion</button>
@@ -189,31 +180,9 @@
       </div>
     </div>
 
-    <div id="warp-panel" class="effect-panel active">
-      <h2>Scenario</h2>
-      <div class="button-row">
-        <button id="scenario-restart">Restart loop</button>
-        <button id="recentre">Recentre view</button>
-      </div>
-      <label style="display:flex; align-items:center; gap:6px; margin-top:6px; color:#dde; font-size:11px; cursor:pointer;">
-        <input type="checkbox" id="follow-ship" style="accent-color:#00ff88;">
-        Follow ship (camera POV)
-      </label>
-      <div id="scenario-status" style="color:#9aa0b4; font-size:10px; margin-top:4px;">
-        Looping: warp-out → travel → warp-in (round trip). Pinch / wheel to zoom.
-      </div>
-      <h2>Manual override</h2>
-      <div class="button-row">
-        <button id="warp-on">Warp ON</button>
-        <button id="warp-off">Warp OFF</button>
-        <button id="warp-in-trigger">Warp IN</button>
-      </div>
-      <h2>Parameters</h2>
-      <div id="warp-sliders"></div>
-      <div class="button-row" style="margin-top: 10px;">
-        <button id="warp-reset" class="danger">Reset defaults</button>
-        <button id="warp-copy">Copy params JSON</button>
-      </div>
+    <h2>View</h2>
+    <div class="button-row">
+      <button id="recentre">Recentre view</button>
     </div>
 
     <div id="status">Booting…</div>

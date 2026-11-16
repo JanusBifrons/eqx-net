@@ -103,8 +103,8 @@ test('join → WarpScreen visible immediately, hides when ready, ship not at (0,
   // is precisely the case where the canvas became visible BEFORE
   // those two events landed.
   // `toBeAttached` rather than `toBeVisible` — Playwright's visibility
-  // check is fragile against the Pixi-filter chain on the gameplay
-  // canvas (different rendering passes confuse the occlusion test).
+  // check is fragile against the gameplay canvas (its rendering
+  // passes confuse the occlusion test).
   // For the regression lock we only need to know the HUD is in the
   // DOM after warp hides.
   await expect(page.locator('[data-testid="hud-sector"]')).toBeAttached({
@@ -122,7 +122,6 @@ test('join → WarpScreen visible immediately, hides when ready, ship not at (0,
         'pixi_first_frame',
         'join_chain_complete',
         'renderer_init_complete',
-        'warp_mode_change',
         'load_curtain_change',
       ].includes(e.tag),
     );
@@ -160,17 +159,9 @@ test('join → WarpScreen visible immediately, hides when ready, ship not at (0,
     .toBeGreaterThan(100);
 
   // ── Orchestration regression lock (2026-05-15 mobile bug) ─────────
-  // On INITIAL JOIN (no source sector), the warp-OUT envelope
-  // (spool→climax→burst) must NOT fire — that envelope is only for
-  // the source side of an inter-sector transit. Instead, the load
-  // curtain covers the canvas and an arrival flash fires when the
-  // curtain transitions to ready. Asserts against the same `events`
+  // On INITIAL JOIN the load curtain covers the canvas, then lifts
+  // when the join is ready. Asserts against the same `events`
   // captured above (one page.evaluate, no extra cumulative wait).
-  const warpOnEvents = events.filter(
-    (e) => e.tag === 'warp_mode_change' && e.data['active'] === true,
-  );
-  expect(warpOnEvents, `warp-OUT envelope must NOT fire on initial join (tags: ${tags.join(', ')})`)
-    .toHaveLength(0);
   const curtainEvents = events.filter((e) => e.tag === 'load_curtain_change');
   expect(curtainEvents.length, `expected curtain rise + fall (events: ${JSON.stringify(curtainEvents)})`)
     .toBeGreaterThanOrEqual(2);
@@ -210,14 +201,6 @@ test('viewport rotation forwards a resize to the worker (no stretched aspect)', 
   await expect(page.locator('[data-testid="hud-sector"]')).toBeAttached({
     timeout: 5_000,
   });
-
-  // The arrival burst+flash (triggerWarpIn) fires when the curtain
-  // lifts at gameReady and runs ~1.5 s of filter passes in the worker.
-  // During that window the page is GPU-hot and `page.evaluate` can
-  // stall. Wait it out before introspecting (2026-05-15 — this test
-  // started flaking on the post-warp arrival burst introduced by the
-  // load-curtain orchestration).
-  await page.waitForTimeout(2_500);
 
   // Clear logs so we only see events fired AFTER the rotation. The
   // initial post-mount resize fires one `worker_resize` immediately

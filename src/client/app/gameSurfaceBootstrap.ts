@@ -15,6 +15,7 @@
  */
 
 import { PixiRenderer } from '../render/PixiRenderer.js';
+import { loadGraphicsQualityPreference, resolveGraphicsQuality } from '../render/graphicsQuality.js';
 import { loadArtPreference, loadLightingPreference, loadSpeedFxPreference, readArtDelayMs, readLivery, readOreLook, resolveArtMode, resolveFxMode, resolveShipLighting, resolveSpeedFx, type ArtOptions } from '../render/art/artMode.js';
 import {
   WorkerRendererClient,
@@ -24,6 +25,7 @@ import { isTouchDevice } from '../input/TouchInput.js';
 import { getSector } from '@core/galaxy/galaxy';
 import { logEvent } from '../debug/ClientLogger.js';
 import { resolveStartMode } from './startMode.js';
+import { resolveNebLook } from '../render/art/fx/nebulaLook.js';
 import type { IRenderer } from '@core/contracts/IRenderer';
 
 /**
@@ -57,6 +59,8 @@ export function selectRenderer(): { renderer: IRenderer; useWorker: boolean; isT
   };
   art.fx = resolveFxMode(search, art.mode, navigator.webdriver === true);
   art.speedFx = resolveSpeedFx(search, loadSpeedFxPreference());
+  const nebLook = resolveNebLook(search);
+  if (nebLook) art.nebLook = nebLook;
   // GPU lighting: URL > saved level > the device's default (live for players,
   // baked under automation unless the URL asks).
   const lighting = resolveShipLighting(search, art.mode, {
@@ -71,6 +75,8 @@ export function selectRenderer(): { renderer: IRenderer; useWorker: boolean; isT
   if (livery) art.livery = livery;
   const ore = readOreLook(search); // cut-field ore look trial (F1c)
   if (ore) art.ore = ore;
+  // Graphics quality (anti-aliasing study): URL > saved choice > today's look.
+  art.quality = resolveGraphicsQuality(search, loadGraphicsQualityPreference());
   const renderer: IRenderer = useWorker ? new WorkerRendererClient(isTouch, art) : new PixiRenderer(isTouch, art);
   // Click-to-inspect (Item B) — DEV/E2E deterministic selection hook. Only the
   // main-thread PixiRenderer exposes `devSelectAtWorld` (the worker renderer is
@@ -89,11 +95,6 @@ export function selectRenderer(): { renderer: IRenderer; useWorker: boolean; isT
     // hover uses.
     (window as unknown as { __eqxHoverAtWorld?: (x: number, y: number) => string | null })
       .__eqxHoverAtWorld = (x, y) => renderer.devHoverAtWorld(x, y);
-    // #7 — deterministic remote-warp-ripple gate hook: reports whether a queued
-    // remote-warp event WOULD fire its ripple given the live galaxy-map state, so
-    // a spec can assert the ripple is suppressed while the map is open.
-    (window as unknown as { __eqxRemoteWarpVisualWouldFire?: () => boolean })
-      .__eqxRemoteWarpVisualWouldFire = () => renderer.devRemoteWarpVisualWouldFire();
   }
   logEvent('renderer_path_chosen', {
     useWorker,

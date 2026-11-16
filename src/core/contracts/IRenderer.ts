@@ -1,4 +1,5 @@
 import type { CameraCue } from './cameraScript.js';
+import type { PackedChunk } from '../terrain/packedChunk.js';
 import type { WreckDescriptor } from '../../shared-types/messages/snapshotMessages.js';
 import type { RadarInsets, RadarPrefs } from '../../shared-types/settings/radar.js';
 import type { PerfProbeOp, RenderPerfReading } from './rendererPerfProbe.js';
@@ -543,6 +544,7 @@ export interface RenderMirror {
   wreckRevealFromTick?: number;
   /** Mine Layer — proximity mines, keyed by mine id (room state `mines`). */
   mines?: Map<string, MineRenderState>;
+  /** Ship tractor beams (emitter → target: a swarm entityId or a playerId), from the snapshot's beam links (client/net/tractorLinks.ts). */ tractorLinks?: Array<{ emitter: number | string; mountId: string; target: number | string }>;
   /** Structures plan, Phase 3 — connection flash windows from the discrete
    *  `grid_pulse` event. Key is the sorted entityId pair packed as
    *  `min * 65536 + max` (numeric ⇒ no per-frame string-key allocation in the
@@ -624,17 +626,14 @@ export interface RenderMirror {
      *  damage, hull hits only) — NOT on the wire. Omitted ⇒ no chip. */
     preHealthPct?: number;
   }>;
-  /** Remote warp events (`warp_in` / `warp_out` broadcasts from the
-   *  server) to play this frame. The renderer drains the array and
-   *  fires `triggerWarpIn` at each `(x, y)` — same one-shot flash +
-   *  burst ripple for both directions. Cleared + drained each frame. */
-  pendingWarpEvents?: Array<{ x: number; y: number }>;
   /** Macro terrain v2 (room flag `cutField`): cut-field chunks loaded or
    *  dropped since the last frame. `outlines` is [n, x0, y0, …, n, …] in game
-   *  space; null drops the chunk. Drained each frame, like `pendingWarpEvents`;
+   *  space; null drops the chunk. Drained each frame, like `pendingMissileExplosions`;
    *  only a chunk load or unload adds an entry, never a frame. `ore`: [ice,
-   *  crystal] per rock-fan vertex (`oreForOutlines`), for the ore look. */
-  pendingFieldChunks?: Array<{ cx: number; cy: number; outlines: Float32Array | null; ore?: Float32Array | null }>;
+   *  crystal] per rock-fan vertex (`oreForOutlines`), for the ore look.
+   *  `bodies`: the packed chunk (each rock's body and convex parts), so the
+   *  link preview tests an awake rock's real shape (C5c). */
+  pendingFieldChunks?: Array<{ cx: number; cy: number; outlines: Float32Array | null; ore?: Float32Array | null; bodies?: PackedChunk | null }>;
   /** Missile detonations to play this frame. The renderer drains the
    *  array, spawns explosion VFX at each `(x, y)`, sizes the sprite to
    *  `splashRadius`, and triggers a camera shake with magnitude inverse
@@ -1079,40 +1078,6 @@ export interface IRenderer {
    */
   setTickerMaxFPS(fps: number | null | undefined): void;
   /**
-   * Toggle the "warp mode" render state. While `active === true`, the
-   * renderer paints an over-the-top FTL-warp visual ON THE SAME canvas
-   * as gameplay — heavy blur + green color shift on the world
-   * container plus animated radial streaks drawn directly on stage.
-   *
-   * Driven by `useGameReady`: enabled the moment `renderer.init()`
-   * resolves; disabled when the player can see themselves
-   * (`rendererFirstFrameRendered` latches). The renderer animates a
-   * 500 ms fade-out internally — callers just flip the bool.
-   *
-   * Single canvas, single Pixi `Application` — no separate overlay
-   * surface. This is the "render state, not a screen" model.
-   */
-  setWarpMode(active: boolean): void;
-  /**
-   * Anchor the warp centre to a specific point so the burst + ripple
-   * + flash emanate from there instead of screen centre. World-space
-   * anchors are re-projected each frame so the centre stays glued to
-   * the world point as the camera moves; screen-space anchors are
-   * used raw. `null` reverts to screen centre.
-   *
-   * Per-event in production: the local player's own warp anchor is
-   * set to their ship's world pose; remote-warp broadcasts (other
-   * ships leaving / arriving) carry the world coord directly.
-   */
-  setWarpCenter(center: WarpCenter | null): void;
-  /**
-   * Fire the "warp-in" companion effect — a single flash + big ripple
-   * at the supplied centre, no preceding spool/climax. Used when a
-   * remote ship arrives at OR leaves the local sector (both directions
-   * use this same direction-agnostic one-shot pulse).
-   */
-  triggerWarpIn(center: WarpCenter | null): void;
-  /**
    * Show or hide the load curtain — an opaque overlay above the world
    * but below the React HUD. Hides the canvas during the join +
    * transit load periods so the player doesn't see ship-at-(0,0)
@@ -1228,35 +1193,6 @@ export interface IRenderer {
   resetEffectsForSectorHandoff(): void;
   dispose(): void;
 }
-
-/**
- * Anchor for warp filters.
- *
- * - `entity` — the renderer re-resolves the centre to the ship with
- *   `entityId`'s live sprite position EVERY FRAME. The correct anchor
- *   for ANY ship's own warp (local, remote, or bot): the effect stays
- *   glued to the ship while it keeps moving through the multi-second
- *   spool→climax→burst. A frozen `world` snapshot taken at spool-start
- *   drifts away (2026-05-15 diagnostic: ~539u over a 3.6s spool — the
- *   "did the effect where I started charging, not where I was" bug).
- *   Not local-specific — that was the architectural smell the user
- *   flagged. Sidesteps the game→Pixi Y flip too (the live sprite is
- *   already correctly placed). Falls back to screen centre if the
- *   entity has no live sprite (not spawned / despawned mid-warp).
- * - `world` — a fixed game-space point with NO live entity to track.
- *   Currently only remote warp-OUT broadcasts (`pendingWarpEvents`):
- *   the ship has already despawned, so a fixed "where it left from"
- *   point is the correct anchor. Projected each frame (camera pans).
- * - `screen` — raw screen px, used as-is (sandbox click-to-place).
- *
- * Mirrored from `src/client/render/worker/protocol.ts` so the
- * contract is self-contained and doesn't reach into a zone-specific
- * module.
- */
-export type WarpCenter =
-  | { kind: 'entity'; entityId: string }
-  | { kind: 'world'; worldX: number; worldY: number }
-  | { kind: 'screen'; screenX: number; screenY: number };
 
 /** One own ship's squad + order, as the renderer needs it (RTS slice 15a). */
 export interface FleetOverlayShip {

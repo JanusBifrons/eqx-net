@@ -53,7 +53,13 @@ handlers resolve the owner (`sessionToPlayer`) and delegate to
 (decision logic over injected hooks — spawn / health-seed / despawn / clamp / id —
 so it unit-tests like `TransitOrchestrator`):
 
-- Validate kind, clamp to `SECTOR_PLAYABLE_HALF_EXTENT`, reject footprint overlap.
+- Validate kind, clamp to `SECTOR_PLAYABLE_HALF_EXTENT`, reject footprint overlap
+  with a structure or an asteroid (`placementRejection`, obstacles from the
+  `getObstacles(near)` hook; in a cut field `near` adds the rocks with no body,
+  see [macro-terrain](macro-terrain.md) C5). An asteroid is tested by its
+  bounding circle (broad phase), then by its real shape when the obstacle
+  carries convex `parts` (collider parts or outline at the live pose; C5b):
+  a footprint inside the circle but clear of the outline is legal.
 - **Blueprint model:** every structure lands at `SCAFFOLDING_HP_FRACTION` (10 %)
   HP, `isConstructed:false`, non-operational. The **Capital** is the exception
   (`constructionCost===0` ⇒ pre-built, full HP) so the first builds have a bank
@@ -112,7 +118,21 @@ view, never the server `StructureRegistry`):
   window, `connectionLength`).
 - `Grid.ts` — `canConnect` (the hub model: hub-required / per-kind
   `maxConnections` cap / edge-to-edge `CONNECTION_MAX_RANGE` / no-self/dup /
-  line-of-sight), BFS connected components (**built-only — the dead-end rule:
+  line-of-sight: the centre-to-centre line must miss every other structure's
+  footprint box and every obstacle; an asteroid's box is the broad phase and,
+  when it carries convex `parts`, the line is blocked only if it crosses a
+  part (`segmentHitsObstacle`; macro terrain C5c), so a cable may pass a big
+  irregular rock inside its circle but clear of its outline. Both sides build
+  a rock's `parts` with the one `rockObstacleParts` (a field rock's collider
+  parts, else its outline's convex hull; an ordinary asteroid's seeded
+  outline) at its live angle: the server in `gatherStructureObstacles` and
+  `CutFieldSubsystem.dormantObstacles`, the client link preview through
+  `RockObstacleShapes` (`client/structures/mirrorToGridNode.ts`: an awake field
+  rock's body from `CutFieldLayer.rockBody`, the packed chunk the cutter
+  sends with its outlines; cached per rock key), so the preview's green/red
+  matches the link the server makes. A field rock whose chunk the client has
+  not loaded stays its box (red, never a false green); lock:
+  `rockLineOfSight.test.ts`), BFS connected components (**built-only — the dead-end rule:
   you can't relay THROUGH an unbuilt node; an unbuilt node is still a transfer
   destination, and this is load-bearing for the construction flow's outward
   expansion**), power aggregation (`powered`

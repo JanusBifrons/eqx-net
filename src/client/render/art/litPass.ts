@@ -23,6 +23,8 @@ export class LitPass {
   readonly scene = new LitScene();
   /** The settings lit art is built with; null = GPU lighting off. */
   settings: LightingSettings | null = null;
+  /** Extra mip bias for every lit mesh (graphics quality `?texsoft=`): softer far-away texture detail. */
+  texSoft = 0;
   private readonly meshes: LitShipMesh[] = [];
   private readonly occ: Array<OccluderInfo | null> = [];
   private px = new Float64Array(64);
@@ -89,7 +91,7 @@ export class LitPass {
       const mesh = this.meshes[i]!;
       if (!shownUnder(mesh, world)) { this.px[i] = NaN; continue; }
       mesh.getGlobalTransform(this.m, false);
-      mesh.setScreenScale(Math.hypot(this.m.a, this.m.b) * resolution);
+      mesh.setScreenScale(Math.hypot(this.m.a, this.m.b) * resolution, this.texSoft);
       this.r.copyFrom(this.w).append(this.m);
       const x = this.r.tx, y = this.r.ty, rot = Math.atan2(this.r.b, this.r.a);
       this.px[i] = x; this.py[i] = y; this.pr[i] = rot;

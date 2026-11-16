@@ -43,10 +43,9 @@ export function HyperspaceOverlay({ onCancel }: HyperspaceOverlayProps): JSX.Ele
   }
 
   // IN_TRANSIT and ARRIVED are now rendered directly by the gameplay
-  // PixiRenderer via `setWarpMode(true)` — single canvas, no separate
-  // React overlay needed. GameSurface drives that off transitState
-  // (see App.tsx). HyperspaceOverlay returns null for those states;
-  // the warp visual lives on the Pixi canvas.
+  // PixiRenderer (the trip is the loading screen; WarpFx draws the warp)
+  // — single canvas, no separate React overlay needed. HyperspaceOverlay
+  // returns null for those states.
   return null;
 }
 

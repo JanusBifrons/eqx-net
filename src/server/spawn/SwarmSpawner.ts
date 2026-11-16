@@ -3,7 +3,7 @@ import { SLOT_X_OFF, SLOT_Y_OFF, SLOT_VX_OFF, SLOT_VY_OFF, SLOT_ANGLE_OFF, SLOT_
 import { SwarmEntityRegistry, SWARM_KIND_WRECK, type SwarmKind } from '../net/SwarmEntityRegistry.js';
 import type { IAiBehaviour } from '../../core/contracts/IAiBehaviour.js';
 import type { SpatialGrid } from '../interest/SpatialGrid.js';
-import { generateAsteroidVertices, asteroidResources, asteroidShapeSeed, type Vec2 } from '../../core/swarm/asteroidShape.js';
+import { generateAsteroidVertices, asteroidResources, asteroidShapeSeed, convexHullCCW, type Vec2 } from '../../core/swarm/asteroidShape.js';
 import { ASTEROID_DEFAULT_MASS } from '../../core/swarm/asteroidConstants.js';
 import { STRUCTURE_DEFAULT_MASS } from '../../core/swarm/structureConstants.js';
 import { SCRAP_DEFAULT_MASS, SCRAP_LINEAR_DAMPING } from '../../core/swarm/scrapConstants.js';
@@ -39,6 +39,13 @@ export interface AsteroidSpec {
   /** Cut-field rock: its collider's convex parts (`FieldRockBody.parts`,
    *  plan C1), so it follows the rock's dents; absent ⇒ one convex hull. */
   parts?: ReadonlyArray<ReadonlyArray<Vec2>>;
+  /** Spawn angle (radians), for a field rock re-cut where it was left (C2
+   *  deep sleep). Absent ⇒ 0, as every other asteroid. */
+  angle?: number;
+  /** Cut-field rock: its rest frame (where the field cut it) when it spawns
+   *  away from it (C2 deep sleep). Absent ⇒ the spawn point. */
+  restX?: number;
+  restY?: number;
 }
 
 export interface DroneSpec {
@@ -187,7 +194,7 @@ export class SwarmSpawner {
 
   /** Spawn one asteroid. Returns true on success, false if no free slot. */
   spawnAsteroid(a: AsteroidSpec): boolean {
-    const ok = this.spawnOne(0, a, undefined, undefined, undefined, 0, a.parts);
+    const ok = this.spawnOne(0, a, undefined, undefined, undefined, a.angle ?? 0, a.parts);
     if (ok && a.resource !== undefined && a.resource !== 'rock') {
       const rec = this.registry.get(a.id);
       if (rec) rec.asteroidResource = a.resource;
@@ -372,7 +379,7 @@ export class SwarmSpawner {
     // STRUCTURES (kind 2) carry their quarter-turn rotation (phase V) the same
     // way, so the body, the SAB pose (and so the client collider + sprite) and
     // the cached hit box all agree.
-    if ((kind === SWARM_KIND_SCRAP || kind === 2) && angle !== 0) {
+    if ((kind === SWARM_KIND_SCRAP || kind === 2 || kind === 0) && angle !== 0) {
       this.hooks.sabF32[base + SLOT_ANGLE_OFF] = angle;
     }
     // Set IS_SWARM and KIND_DRONE flag bits on the SAB slot. These bits are
@@ -404,10 +411,12 @@ export class SwarmSpawner {
       // seeding by `entityId` would reshape a rock that leaves and returns.
       rec.shapeSeed = asteroidShapeSeed(a.id);
       vertices = a.vertices ?? generateAsteroidVertices(rec.shapeSeed, a.radius);
-      if (a.fieldRock) { rec.fieldRock = true; rec.restX = a.x; rec.restY = a.y; }
+      if (a.fieldRock) { rec.fieldRock = true; rec.restX = a.restX ?? a.x; rec.restY = a.restY ?? a.y; }
       if (a.fieldKey !== undefined) rec.fieldKey = a.fieldKey;
-      // A cut-field rock's convex parts are its weapon hit shape too (C1b).
-      if (a.fieldRock && structureParts !== undefined) rec.wreckParts = structureParts;
+      // A cut-field rock's convex parts are its weapon hit shape too (C1b);
+      // with none (poly-decomp failed) its collider is the outline's convex
+      // hull, so that hull is its one part (#15: one shape for hits and collision).
+      if (a.fieldRock) rec.wreckParts = structureParts ?? [convexHullCCW(vertices)];
       rec.vertices = vertices;
       mass ??= ASTEROID_DEFAULT_MASS;
       // WS-4 / R2.27 — seed the finite mineable resource pool from the
@@ -452,7 +461,8 @@ export class SwarmSpawner {
     // SCRAP (kind 3) carries its spawn angle so the worker rotates the body to
     // match the dying ship. Other kinds pass 0 (legacy axis-aligned spawn).
     // Structures (kind 2) carry their quarter-turn rotation too (phase V).
-    const spawnAngle = kind === SWARM_KIND_SCRAP || kind === 2 ? angle : 0;
+    // A field rock re-cut where it was left (kind 0) carries its angle too.
+    const spawnAngle = kind === SWARM_KIND_SCRAP || kind === 2 || kind === 0 ? angle : 0;
     // Every drone starts shield-up, so it spawns with its shield collider
     // (`shipShieldColliderDesc`: ball(radius + shieldPad), a capital's rounded
     // hull), the same one it gets back on regen (owner's rule 2026-11-10).

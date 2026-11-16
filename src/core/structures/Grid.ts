@@ -20,6 +20,8 @@
  */
 import { Connection } from './Connection.js';
 import { CONNECTION_MAX_RANGE } from './structureGridConstants.js';
+import { rayHitsConvexPolygon } from '../combat/Weapons.js';
+import { convexHullCCW } from '../swarm/asteroidShape.js';
 
 /** The grid's abstract view of a structure. The server projects each
  *  `StructureRecord` (+ its catalogue kind) into one of these. */
@@ -83,15 +85,45 @@ export interface PowerSummary {
 }
 
 /** A non-structure body that blocks a connection's line of sight (Item D —
- *  asteroids). Treated as a square AABB (half-extent = `radius`) so it reuses
- *  the same `segmentIntersectsAabb` test the structure-node LOS check uses.
- *  The server projects each swarm kind=0 record (pose from the SAB, radius from
- *  the registry) into one of these. */
+ *  asteroids). Its square AABB (half-extent = `radius`) is the broad phase,
+ *  the same `segmentIntersectsAabb` test the structure-node LOS check uses;
+ *  with `parts` the line must also cross a part (C5c). The server projects
+ *  each swarm kind=0 record (pose from the SAB, radius from the registry)
+ *  into one of these. */
 export interface GridObstacle {
   x: number;
   y: number;
   radius: number;
+  /** Narrow phase (macro terrain C5b placement, C5c line of sight): the
+   *  body's convex CCW parts, relative to (x, y) and turned by `angle` (rad),
+   *  the same parts its collider uses. Present ⇒ placement refuses only a
+   *  footprint that overlaps a part, and a connection line is blocked only
+   *  if it crosses a part (the circle / its box is the broad phase); absent
+   *  ⇒ the circle for placement, the circle's box for line of sight. */
+  parts?: ReadonlyArray<ReadonlyArray<{ readonly x: number; readonly y: number }>> | undefined;
+  angle?: number;
 }
+
+type ObstacleParts = NonNullable<GridObstacle['parts']>;
+
+/** A rock's narrow-phase `parts` (C5b/C5c), built the same way on both sides
+ *  (#15): a field rock's collider parts (`FieldRockBody.parts`), else its
+ *  outline's convex hull (a cut outline may dent; the hull is its collider);
+ *  an ordinary asteroid's outline as is (`generateAsteroidVertices` is
+ *  already convex). No outline ⇒ undefined (the box alone). Builds the hull:
+ *  call off the hot loop, or cache the result. */
+export function rockObstacleParts(
+  verts: ReadonlyArray<{ readonly x: number; readonly y: number }> | undefined,
+  parts: ObstacleParts | null | undefined,
+  fieldRock: boolean,
+): ObstacleParts | undefined {
+  if (parts) return parts;
+  if (!verts) return undefined;
+  return [fieldRock ? convexHullCCW(verts) : verts];
+}
+
+/** A world box (a placement footprint's bounds) to gather obstacles near. */
+export interface ObstacleBox { x0: number; y0: number; x1: number; y1: number }
 
 /** Edge-to-edge distance between two nodes' square AABBs (half-extent =
  *  radius). Returns 0 when the boxes overlap or touch — eqx-peri's
@@ -131,10 +163,28 @@ export function segmentIntersectsAabb(
   return t0 <= t1;
 }
 
+/** Does segment (x0,y0)-(x1,y1) cross an obstacle? Its box (half-extent =
+ *  `radius`) is the broad phase; with `parts` (C5c) the segment must also
+ *  cross one of them, so a line through the box but clear of the body's real
+ *  outline passes. Allocation-free (the reconnect sweep runs on the 1 Hz
+ *  pulse). */
+export function segmentHitsObstacle(x0: number, y0: number, x1: number, y1: number, o: GridObstacle): boolean {
+  if (!segmentIntersectsAabb(x0, y0, x1, y1, o.x - o.radius, o.y - o.radius, o.x + o.radius, o.y + o.radius)) return false;
+  const parts = o.parts;
+  if (parts === undefined) return true;
+  const dx = x1 - x0, dy = y1 - y0, len = Math.hypot(dx, dy);
+  if (len === 0) return true; // a point in the box: keep the broad-phase answer
+  const ux = dx / len, uy = dy / len, angle = o.angle ?? 0;
+  for (let p = 0; p < parts.length; p++) {
+    if (rayHitsConvexPolygon(x0, y0, ux, uy, len, o.x, o.y, angle, parts[p]!) !== null) return true;
+  }
+  return false;
+}
+
 /** True if the segment between two nodes' centres passes through any OTHER
- *  node's body, or (Item D) through any non-structure `obstacle` (asteroid).
- *  `obstacles` is OPTIONAL — omitting it is byte-identical to the structures-
- *  only behaviour, so existing callers/tests are unaffected. */
+ *  node's body, or (Item D) through any non-structure `obstacle` (asteroid;
+ *  `segmentHitsObstacle`). `obstacles` is OPTIONAL — omitting it is
+ *  byte-identical to the structures-only behaviour. */
 export function isConnectionLineBlocked(
   a: GridNode,
   b: GridNode,
@@ -154,15 +204,8 @@ export function isConnectionLineBlocked(
     }
   }
   if (obstacles) {
-    for (const o of obstacles) {
-      if (
-        segmentIntersectsAabb(
-          a.x, a.y, b.x, b.y,
-          o.x - o.radius, o.y - o.radius, o.x + o.radius, o.y + o.radius,
-        )
-      ) {
-        return true;
-      }
+    for (let i = 0; i < obstacles.length; i++) {
+      if (segmentHitsObstacle(a.x, a.y, b.x, b.y, obstacles[i]!)) return true;
     }
   }
   return false;

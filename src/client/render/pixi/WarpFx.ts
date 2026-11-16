@@ -1,6 +1,6 @@
 /**
  * Warp-to visuals (plan prancy-squishing-donut Phase 4, step 4c). Cheap
- * sprites only: the old WarpFilterChain shader effects are not used here.
+ * sprites only (the old full-screen shader warp was removed).
  *
  * Driven by each ship's warp phase on the render mirror (`ShipRenderState.warp`:
  * 1 spool, 2 run; the local ship's is its predicted phase) and the ship's

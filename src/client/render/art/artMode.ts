@@ -29,6 +29,9 @@ export interface ArtOptions {
   /** Speed effects (C3): dust streaks + a slight zoom-out when flying fast.
    *  Absent means on. Only drawn with the new backdrop (`fx`). */
   speedFx?: boolean;
+  /** Dense-nebula look R&D (`?neblook=fog|rainbow|storm&nebseed=N`): "preset:seed".
+   *  Absent = today's nebulae. */
+  nebLook?: string;
   /** GPU-lit art (plan prancy-squishing-donut R2, `?shiplight=gpu`): ships,
    *  guns, scrap (and per settings structures and rocks) lit live from maps
    *  instead of baked sun frames. Absent = today's baked art. */
@@ -38,6 +41,9 @@ export interface ArtOptions {
   livery?: LiveryTreatment;
   /** Cut-field ore look (`?ore=off|tint|veins|seams`, F1c); absent = veins (owner's pick). */
   ore?: FieldOreLook;
+  /** Graphics quality (edge smoothing, render scale, texture softening);
+   *  absent = today's look. Applies to both art modes. */
+  quality?: import('../graphicsQuality.js').GraphicsQuality;
 }
 
 export type FieldOreLook = 'off' | 'tint' | 'veins' | 'seams';

@@ -8,7 +8,9 @@ vi.mock('./fieldRockShader', () => ({
   setFieldRockView: () => {},
   setFieldOreStyle: () => {},
 }));
-import { rockKey } from '../../../core/terrain/fieldLayout';
+import { rockKey, type ChunkRock } from '../../../core/terrain/fieldLayout';
+import { packChunk } from '../../../core/terrain/packedChunk';
+import { fieldRockBody } from '../../../core/terrain/chunkStreamer';
 import { buildFieldChunkMesh, CutFieldLayer, WOKEN_ROCK_FORGET_FRAMES } from './CutFieldLayer';
 
 describe('cut-field chunk mesh (procedural rock look)', () => {
@@ -85,6 +87,24 @@ describe('CutFieldLayer — woken rocks (macro terrain C2)', () => {
     layer.setChunk(2, -1, outlines);
     const p = Array.from((layer.container.children[0] as Mesh).geometry.positions);
     expect([p[12], p[13]]).toEqual([p[10], p[11]]);
+    layer.clear();
+  });
+});
+
+describe('CutFieldLayer — rock bodies for the link preview (C5c)', () => {
+  it('gives a rock the body fieldRockBody gives it (the server\'s), from its packed chunk', () => {
+    const verts = [{ x: 0, y: 0 }, { x: 600, y: 0 }, { x: 600, y: 500 }, { x: 300, y: 150 }, { x: 0, y: 500 }];
+    const rocks: ChunkRock[] = [
+      { verts: [{ x: 5, y: 5 }, { x: 9, y: 5 }, { x: 9, y: 9 }], cx: 0, cy: 0, size: 1, path: 1, index: 0, key: rockKey(2, -1, 0) },
+      { verts, cx: 0, cy: 0, size: 1, path: 2, index: 1, key: rockKey(2, -1, 1) },
+    ];
+    const packed = packChunk(rocks, 'c5c');
+    const layer = new CutFieldLayer();
+    expect(layer.rockBody(rocks[1]!.key)).toBeNull(); // no chunk yet
+    layer.setChunk(2, -1, packed.outlines, packed.ore); // a sink that sent no bodies
+    expect(layer.rockBody(rocks[1]!.key)).toBeNull();
+    layer.setChunk(2, -1, packed.outlines, packed.ore, packed);
+    expect(layer.rockBody(rocks[1]!.key)).toEqual(fieldRockBody({ verts }));
     layer.clear();
   });
 });
