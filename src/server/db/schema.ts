@@ -204,6 +204,21 @@ CREATE TABLE IF NOT EXISTS holds (
   updated_at   INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_holds_sector ON holds(sector_key, holder_type);
+
+-- Macro terrain C4 — a cut field's change record by rock key (the in-memory
+-- record of CutFieldSubsystem, saved). A rock nobody touched has no row. Rows
+-- cut under another layout_version (FIELD_LAYOUT_VERSION) are ignored on load.
+-- pool: ore left in a mined rock (NULL: none recorded); consumed: 1 once the
+-- rock is broken up (never cut whole again). Absolute upserts, never deltas.
+CREATE TABLE IF NOT EXISTS terrain_records (
+  sector_key     TEXT NOT NULL,
+  rock_key       INTEGER NOT NULL,
+  layout_version INTEGER NOT NULL,
+  pool           REAL,
+  consumed       INTEGER NOT NULL,
+  updated_at     INTEGER NOT NULL,
+  PRIMARY KEY (sector_key, rock_key)
+);
 `;
 
 /**

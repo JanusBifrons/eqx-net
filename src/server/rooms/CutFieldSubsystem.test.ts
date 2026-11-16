@@ -6,6 +6,9 @@ import type { SwarmSpawner } from '../spawn/SwarmSpawner.js';
 import { SLOT_X_OFF, SLOT_Y_OFF, slotBase } from '../../shared-types/sabLayout.js';
 import { CutFieldSubsystem, toRestFrame } from './CutFieldSubsystem.js';
 import type { WorkerCmd } from './PhysicsWorkerProxy.js';
+import type { PersistOp } from '../../core/contracts/IPersistenceSink.js';
+import { FIELD_LAYOUT_VERSION } from '../../core/terrain/fieldLayout.js';
+import type { TerrainRecordRow, TerrainRecordStore } from '../db/terrainSql.js';
 
 function setup(recs: Record<string, Partial<SwarmEntityRecord>>) {
   const posted: WorkerCmd[] = [];
@@ -64,7 +67,7 @@ describe('toRestFrame (F1b: an awake rock samples its ore where it was cut)', ()
 describe('CutFieldSubsystem change record (mined pool, consumed rocks)', () => {
   /** A real streamer over a fake spawner: one ship in the `look` field's lane,
    *  flown away (its chunks unload after the linger) and back (they re-cut). */
-  function field() {
+  function field(store?: TerrainRecordStore) {
     let now = 0;
     const recs = new Map<string, SwarmEntityRecord>();
     const sent: number[] = [];
@@ -78,18 +81,29 @@ describe('CutFieldSubsystem change record (mined pool, consumed rocks)', () => {
       },
     } as unknown as SwarmSpawner;
     const sub = new CutFieldSubsystem('look', clock, registry, spawner, {
-      shipSlots: () => [0], sab: () => sab, post: () => {}, evict: (rec) => { recs.delete(rec.id); }, broadcast: (_t, m) => { sent.push(m.k); },
+      shipSlots: () => [0], sab: () => sab, post: () => {}, evict: (rec) => { recs.delete(rec.id); }, broadcast: (_t, m) => { sent.push(m.k); }, records: store,
     });
     const at = (x: number, y: number) => { sab[slotBase(0) + SLOT_X_OFF] = x; sab[slotBase(0) + SLOT_Y_OFF] = y; };
     const settle = () => { for (let i = 0; i < 40; i++) sub.streamer.step(); };
+    const away = () => { at(9e6, 9e6); now += 60_000; settle(); };
+    const back = () => { at(-30_120, 26_501); now += 1; settle(); };
     /** Fly away until everything unloads, then come back and re-cut. */
     const awayAndBack = () => {
-      at(9e6, 9e6); now += 60_000; settle();
+      away();
       expect(recs.size, 'all chunks unloaded').toBe(0);
-      at(-30_120, 26_501); now += 1; settle();
+      back();
     };
     at(-30_120, 26_501); settle();
-    return { sub, recs, sent, awayAndBack };
+    return { sub, recs, sent, away, back, awayAndBack, byKey: (k: number) => [...recs.values()].find((r) => r.fieldKey === k) };
+  }
+
+  /** C4 — a save (`terrain_records`) holding `rows`; records what the field
+   *  writes and warns. */
+  function store(rows: TerrainRecordRow[] = []) {
+    const puts: PersistOp[] = [];
+    const warns: unknown[] = [];
+    const s: TerrainRecordStore = { sectorKey: 'sec', load: () => rows, put: (op) => { puts.push(op); }, warn: (f) => { warns.push(f); } };
+    return { s, puts, warns };
   }
 
   it('a mined rock keeps what is left in it across an unload and re-cut', () => {
@@ -116,6 +130,60 @@ describe('CutFieldSubsystem change record (mined pool, consumed rocks)', () => {
     awayAndBack();
     expect(recs.has(gone.id)).toBe(false);
     expect(recs.size).toBe(before - 1);
+  });
+
+  it('markConsumed saves the rock once, consumed with no pool', () => {
+    const st = store();
+    const { sub, recs } = field(st.s);
+    const key = [...recs.values()][0]!.fieldKey!;
+    sub.markConsumed(key);
+    sub.markConsumed(key);
+    expect(st.puts).toEqual([{ type: 'TERRAIN_RECORD_PUT', sectorKey: 'sec', rockKey: key, layoutVersion: FIELD_LAYOUT_VERSION, pool: null, consumed: true, ts: 0 }]);
+  });
+
+  it('a mined rock is saved when its chunk unloads, and only when its pool changed', () => {
+    const st = store();
+    const { recs, away, back } = field(st.s);
+    const [mined] = [...recs.values()];
+    mined!.resources = 37;
+    away();
+    expect(st.puts).toEqual([{ type: 'TERRAIN_RECORD_PUT', sectorKey: 'sec', rockKey: mined!.fieldKey, layoutVersion: FIELD_LAYOUT_VERSION, pool: 37, consumed: false, ts: 60_000 }]);
+    back(); away(); // re-cut at 37, untouched, unloaded again: nothing new to save
+    expect(st.puts).toHaveLength(1);
+    expect(st.warns).toEqual([]);
+  });
+
+  it('a field started from a save refuses its consumed rocks and caps a mined rock (a restart)', () => {
+    const first = field();
+    const [gone, mined, other] = [...first.recs.values()];
+    first.sub.dispose();
+    const st = store([
+      { rockKey: gone!.fieldKey!, layoutVersion: FIELD_LAYOUT_VERSION, pool: null, consumed: true },
+      { rockKey: mined!.fieldKey!, layoutVersion: FIELD_LAYOUT_VERSION, pool: 12, consumed: false },
+    ]);
+    const { sub, recs, byKey } = field(st.s);
+    expect(sub.isConsumed(gone!.fieldKey!)).toBe(true);
+    expect(byKey(gone!.fieldKey!)).toBeUndefined();
+    expect(byKey(mined!.fieldKey!)!.resources).toBe(12);
+    expect(byKey(other!.fieldKey!)!.resources).toBe(100);
+    expect(recs.size).toBe(first.recs.size - 1);
+    // The loaded consumed keys reach joiners through the welcome.
+    expect(sub.welcome).toEqual({ cutField: { seed: 'look', consumed: [gone!.fieldKey] } });
+    expect(st.puts).toEqual([]);
+  });
+
+  it('rows from another field layout are ignored, with one warning', () => {
+    const first = field();
+    const [a, b] = [...first.recs.values()];
+    const st = store([
+      { rockKey: a!.fieldKey!, layoutVersion: FIELD_LAYOUT_VERSION + 1, pool: null, consumed: true },
+      { rockKey: b!.fieldKey!, layoutVersion: FIELD_LAYOUT_VERSION - 1, pool: 5, consumed: false },
+    ]);
+    const { sub, byKey } = field(st.s);
+    expect(sub.isConsumed(a!.fieldKey!)).toBe(false);
+    expect(byKey(a!.fieldKey!)).toBeDefined();
+    expect(byKey(b!.fieldKey!)!.resources).toBe(100);
+    expect(st.warns).toEqual([{ sectorKey: 'sec', stale: 2, layoutVersion: FIELD_LAYOUT_VERSION }]);
   });
 });
 
