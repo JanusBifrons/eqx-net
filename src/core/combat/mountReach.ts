@@ -30,8 +30,15 @@ export function mountWeaponReach(mount: Pick<WeaponMount, 'weaponId' | 'size'>):
  *  mount's fields, not the mount; no wrapper object per call, #14). `size`
  *  is required so a mining tool's gate can't silently drop it. */
 export function weaponIdReach(weaponId: WeaponId, size: MountSize | undefined): number {
-  const r = weaponAutoFireRange(getWeapon(weaponId));
-  return isMiningTool(weaponId) ? r * miningReachFactor(size) : r;
+  return weaponAutoFireRange(getWeapon(weaponId)) * mountRangeFactor(weaponId, size);
+}
+
+/** What a mount's size multiplies its weapon's catalogue range by: a mining
+ *  tool's `miningReachFactor`, 1 for a gun. One number for the fire gate
+ *  (`weaponIdReach`), the server's beam ray (`WeaponFireContext.rangeMul`)
+ *  and the client's drawn beam (`beamMaxDist`), so all three agree (#15). */
+export function mountRangeFactor(weaponId: WeaponId, size: MountSize | undefined): number {
+  return isMiningTool(weaponId) ? miningReachFactor(size) : 1;
 }
 
 /** A mining tool's reach factor for mount size `size` (unsized = S): its

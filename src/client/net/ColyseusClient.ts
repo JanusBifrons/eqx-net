@@ -171,7 +171,7 @@ import { tuningFor } from '@shared-types/shipScale/lookup';
 // A group fires only when a barrel bears on its lock: the shared rule (#15).
 import { fillFireTargetShape, fillRangeShape, mountFiresOn, newFireTargetShape, type FireTargetShape } from '@core/combat/fireControlBearing';
 import { FcMountPicker, fcNeedsPick, type FcMountDef } from './fcMountPick';
-import { hasTurretFireControl, mountWeaponReach, weaponIdReach, type MountRangeTarget } from '@core/combat/mountReach';
+import { hasTurretFireControl, mountRangeFactor, mountWeaponReach, weaponIdReach, type MountRangeTarget } from '@core/combat/mountReach';
 /** No aim guides (the mirror's `localAimMountIds`): the lock rings replace them. */
 const EMPTY_AIM_IDS: readonly string[] = Object.freeze([]);
 import { getWeapon, isMiningTool, type WeaponDef, type WeaponId } from '@core/combat/WeaponCatalogue';
@@ -5995,8 +5995,9 @@ export class ColyseusGameClient {
       // construction). SOLID to optimal (== the aim guide), fading to nothing
       // across optimal→max. Alloc-free: cached lookup + scalar helpers (#14).
       const wdef = getWeapon(mount.weaponId);
-      const optimalDist = beamOptimalDist(wdef);
-      const beamMax = beamMaxDist(wdef);
+      const rangeMul = mountRangeFactor(mount.weaponId, mount.size); // a mining tool's sized beam, as the server ray
+      const optimalDist = beamOptimalDist(wdef, rangeMul);
+      const beamMax = beamMaxDist(wdef, rangeMul);
       // Remote drones/scrap are tested at their DRAWN pose (the pose the
       // turret aims at), not their predicted-timeline body.
       const hit = skipHitscan ? null : this.displayHitscan().hitscan(fromX, fromY, fwdX, fwdY, beamMax, localId, beamHalfWidth(wdef), isMiningTool(mount.weaponId));

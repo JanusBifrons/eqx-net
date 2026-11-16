@@ -16,7 +16,7 @@
  * "Multi-mount fire path" section).
  */
 
-import { hasTurretFireControl, mountInReach, mountWeaponReach } from '../../core/combat/mountReach.js';
+import { hasTurretFireControl, mountInReach, mountRangeFactor, mountWeaponReach } from '../../core/combat/mountReach.js';
 import { barrelBearsOn, mountFireTolerance } from '../../core/combat/fireControlBearing.js';
 import { DEFAULT_SHIP_KIND, getShipKind, type ShipKind, type WeaponMount } from '../../shared-types/shipKinds.js';
 import {
@@ -175,7 +175,7 @@ export class AiFireResolver implements WeaponFireSink {
   /** Reused per-mount fire geometry (the resolver IS the WeaponFireSink — see
    *  `src/core/combat/weapons/`). Mutated per mount; no per-fire allocation. */
   private readonly _fireCtx: WeaponFireContext = {
-    fromX: 0, fromY: 0, dirX: 0, dirY: 0, shooterVx: 0, shooterVy: 0, mountId: '',
+    fromX: 0, fromY: 0, dirX: 0, dirY: 0, shooterVx: 0, shooterVy: 0, mountId: '', rangeMul: 1,
   };
   // Per-fire-event sink state — set in resolve() before the salvo.
   private _shooterId = '';
@@ -439,6 +439,7 @@ export class AiFireResolver implements WeaponFireSink {
       ctx.shooterVx = svx;
       ctx.shooterVy = svy;
       ctx.mountId = mount.id;
+      ctx.rangeMul = mountRangeFactor(mount.weaponId, mount.size); // a mining tool's sized beam
       this._weaponId = mount.weaponId;
       this._mount = mount;
       // A naval turret fires a full salvo: one shell per barrel, each from
