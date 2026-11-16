@@ -5578,12 +5578,7 @@ export class SectorRoom extends Room<SectorState> {
         const lastPush = this.structureAttackPushAtMs.get(targetId) ?? -Infinity;
         if (now - lastPush >= STRUCTURE_ATTACK_PUSH_WINDOW_MS) {
           this.structureAttackPushAtMs.set(targetId, now);
-          pushNotifier.onStructureAttacked(
-            s.owner,
-            s.kind,
-            classifyAttacker(shooterId),
-            this.sectorKey ?? undefined,
-          );
+          pushNotifier.onStructureAttacked(s.owner, s.kind, classifyAttacker(shooterId), this.sectorKey ?? undefined);
         }
         // R2.18 — a Shield Pylon is undamageable while its wall is up: route the
         // hit into an active wall and skip the pylon damage entirely.
@@ -12320,6 +12315,9 @@ export class SectorRoom extends Room<SectorState> {
         this.fleet.setMode(owner, [shipId], opts.mode);
         return true;
       },
+      // Rock-cut scene: still rocks, then each mined to a break (RockCutter.sceneCut).
+      spawnRock: (id, x, y, radius) => this.swarmSpawner.spawnAsteroid({ id, x, y, vx: 0, vy: 0, radius, mass: 1 }),
+      cutRock: (id) => this.capitalWrecks?.rockCut.sceneCut(id) ?? false,
     });
   }
 

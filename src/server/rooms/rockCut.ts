@@ -106,6 +106,31 @@ export class RockCutter {
     this.rocks.delete(id);
   }
 
+  /**
+   * Perf-scene seam (the `rockCut` scene step): mine rock `id` to a break
+   * with mining-laser hits (`onRockHit`, the real wear path) along one line
+   * just off its centre at an angle from its id, with a fracture seed from
+   * its id, so both arms of an A/B break the same way. True: broken.
+   * `EQX_SCENE_ROCK_CUT=0` leaves it whole (true: the A/B's intact arm).
+   */
+  sceneCut(id: string): boolean {
+    if (process.env['EQX_SCENE_ROCK_CUT'] === '0') return true;
+    const pose = this.d.piecePose?.(id) ?? null;
+    const r = this.d.rockOf?.(id)?.radius;
+    if (pose === null || r === undefined) return false;
+    const h = fnv1a32(id);
+    const a = (h % 6283) / 1000;
+    const dx = Math.cos(a), dy = Math.sin(a);
+    const hx = pose.x - dx * r - dy * r * 0.1, hy = pose.y - dy * r + dx * r * 0.1;
+    this.sceneSeed = h;
+    try {
+      for (let i = 0; i < 2000; i++) if (this.onRockHit(id, hx, hy, dx, dy, 100, 'mining_laser', 'scene')) return true;
+    } finally { this.sceneSeed = null; }
+    return false;
+  }
+
+  private sceneSeed: number | null = null;
+
   /** Test seam: a rock's hidden integrity (undefined: not worn yet). */
   integrity(id: string): number | undefined {
     return this.rocks.get(id)?.integrity;
@@ -125,7 +150,7 @@ export class RockCutter {
     // flipped; scale 1). The fracture projects it onto the outline.
     hullPointInto(pose.x, pose.y, pose.angle, 1, hitX, hitY, PT);
     const inputs: WreckFractureInputs = {
-      rock: src.rock!, seed: this.forcedSeed() ?? fnvMixU32(fnv1a32(id), tick >>> 0), killX: PT.x, killY: PT.y,
+      rock: src.rock!, seed: this.sceneSeed ?? this.forcedSeed() ?? fnvMixU32(fnv1a32(id), tick >>> 0), killX: PT.x, killY: PT.y,
       killBlowDamage: 0, recentDamageRate: 0, snapChance: src.profile.fracture!.snapChance,
     };
     const killCut = weaponId !== undefined ? WEAPONS.get(weaponId)?.killCut : undefined;

@@ -195,6 +195,14 @@ pnpm perf:scenes --scenes rts-fleet --reps 4 --base HEAD --base-env "EQX_DISABLE
 
 **First reading (desktop, RTX 5070 Ti, 4 reps, wingmen off → on):** server tick p95 0.76 → 1.15 ms (GREEN, ≈ 10 µs per wingman), p99 1.08 → 1.37 ms, worker tick p95 0.46 → 0.68 ms, contacts per tick 6.7 → 27 (hulls under way bump each other and the drones); client frame p95 unchanged at 16.7 ms; rx 379 → 479 KB/s (RED, +26 %, ≈ 2.5 KB/s per wingman: the moving hulls' poses, their shots and the wrecks they make) and display objects 4,637 → 5,243 (RED, +13 %). Re-plans 6.5 a tick (40 / 6), one owner-hostile swarm scan a tick (the per-owner cache), 19 lookups a tick. The RED rows are the price of a live fight, not a defect. Client draw calls (`perf:counts`, one run): 149 p95 baked, 240 high. Ledger: `perf/ledger/2026-11-14T13-01-30-309Z-2b116a41-desktop.json`.
 
+## The rock-cut scene (`rock-cut`)
+
+Eight still rocks (scene steps `rocks`, then `rockCut` at t = 2 s) are mined to a break through the mining laser's real wear path (`RockCutter.sceneCut`: one line per rock, angle and fracture seed from the rock id, so both arms break the same way). Their 16 wreck pieces stay on screen at the normal zoom, where each piece draws the rock's art through a polygon mask. The intact arm is the same commit with the cut switched off:
+
+```
+pnpm perf:scenes --scenes rock-cut --base HEAD --base-env EQX_SCENE_ROCK_CUT=0
+```
+
 ## Adding a scene
 
 Add one entry to `PERF_SCENES` with:
