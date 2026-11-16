@@ -59,3 +59,19 @@ describe('Camera wheel-zoom ease', () => {
     expect(target.scale.x).toBe(after);
   });
 });
+
+describe('Camera floor raised under the zoom (leaving command view)', () => {
+  it('eases back up to a raised floor, never sits below it, never snaps', () => {
+    const { cam, target } = makeCam(0.006); // zoomed far out in command view
+    cam.setMinScale(0.15); // back to flying a fighter
+    let prev = target.scale.x;
+    let maxStep = 0;
+    for (let i = 0; i < 240; i++) {
+      cam.tick(1000 / 60);
+      maxStep = Math.max(maxStep, Math.abs(Math.log(target.scale.x / prev)));
+      prev = target.scale.x;
+    }
+    expect(target.scale.x).toBeCloseTo(0.15, 6);
+    expect(maxStep).toBeLessThan(Math.log(0.15 / 0.006) / 2);
+  });
+});

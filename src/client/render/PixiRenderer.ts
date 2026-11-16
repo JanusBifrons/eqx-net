@@ -89,6 +89,7 @@ import { CutFieldLayer } from './field/CutFieldLayer';
 import { StarfieldBackground } from './StarfieldBackground';
 import { logEvent, isDiagEnabled } from '../debug/ClientLogger';
 import { getShipKind } from '../../shared-types/shipKinds';
+import { zoomFloorFor } from '../../shared-types/shipScale/commandZoom.js';
 import {
   buildGhostGfx,
   applyMountOffset,
@@ -2050,7 +2051,6 @@ export class PixiRenderer implements IRenderer {
     this._zoomKindId = id;
     const kind = getShipKind(id);
     zoomRangeForKind(kind, DEFAULT_GAMEPLAY_ZOOM, this._zoomRange, NAVAL_RANGE, this._viewW, this._viewH);
-    this.camera.setMinScale(this._zoomRange.minScale);
     this.applyZoomCap();
     const f = hullZoomFactor(kind);
     if (f !== this._zoomFactor) {
@@ -2068,14 +2068,15 @@ export class PixiRenderer implements IRenderer {
     this.camera.setScreenSize(w, h);
     if (this._zoomKindId === null) return;
     zoomRangeForKind(getShipKind(this._zoomKindId), DEFAULT_GAMEPLAY_ZOOM, this._zoomRange, NAVAL_RANGE, w, h);
-    this.camera.setMinScale(this._zoomRange.minScale);
     this.applyZoomCap();
   }
 
   /** The zoom-in cap: the hull you fly fits on screen (`zoomCeilingForView`,
    *  owner decision 2026-11-12), eased down by the Camera, never snapped.
-   *  Spectator keeps the ordinary cap (there may be no ship to fit). */
+   *  Spectator keeps the ordinary cap (there may be no ship to fit). Also the
+   *  zoom-out floor: command view reaches the widest ship floor (`zoomFloorFor`). */
   private applyZoomCap(): void {
+    if (this._zoomKindId !== null) this.camera.setMinScale(zoomFloorFor(getShipKind(this._zoomKindId), this._spectator, this._viewW, this._viewH, NAVAL_RANGE));
     this.camera.setMaxScale(this._spectator || this._zoomKindId === null ? GAMEPLAY_MAX_ZOOM : this._zoomRange.maxScale);
   }
 
