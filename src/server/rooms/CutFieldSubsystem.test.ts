@@ -112,3 +112,28 @@ describe('CutFieldSubsystem change record (mined pool, consumed rocks)', () => {
     expect(recs.size).toBe(before - 1);
   });
 });
+
+describe('CutFieldSubsystem.oreAtRest (pieces of a broken-up rock)', () => {
+  it('samples the field where the point was before the piece moved', async () => {
+    const { oreAt, oreSeed } = await import('../../core/terrain/fieldOre.js');
+    const { SLICED } = await import('../../core/terrain/fieldLayout.js');
+    const { sub } = setup({});
+    // A point that holds ore in field 't' (search the field near its centre).
+    let rx = 0, ry = 0, best = -1;
+    const c = { ice: 0, crystal: 0 };
+    for (let x = -60_000; x <= 60_000; x += 1_500) for (let y = -60_000; y <= 60_000; y += 1_500) {
+      oreAt(oreSeed('t'), SLICED.radius, x, y, c);
+      if (c.ice + c.crystal > best) { best = c.ice + c.crystal; rx = x; ry = y; }
+    }
+    expect(best).toBeGreaterThan(0.2);
+    const want = oreAt(oreSeed('t'), SLICED.radius, rx, ry, { ice: 0, crystal: 0 });
+    // The parent's rest centre sits (100, -70) from that point. It now sits at
+    // (500, 500), turned +90°, so the rest offset (-100, 70) is world (-70, -100).
+    const got = sub.oreAtRest(rx + 100, ry - 70, 500, 500, Math.PI / 2, 430, 400, { ice: 0, crystal: 0 });
+    // Unturned, the same world point samples somewhere else.
+    const wrong = sub.oreAtRest(rx + 100, ry - 70, 500, 500, 0, 430, 400, { ice: 0, crystal: 0 });
+    expect(wrong.ice + wrong.crystal).not.toBeCloseTo(best, 6);
+    expect(got.ice).toBeCloseTo(want.ice, 9);
+    expect(got.crystal).toBeCloseTo(want.crystal, 9);
+  });
+});

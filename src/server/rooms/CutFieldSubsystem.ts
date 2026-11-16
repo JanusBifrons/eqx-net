@@ -140,14 +140,20 @@ export class CutFieldSubsystem {
    *  centre. False for anything else. No allocation. */
   oreAtHit(rec: SwarmEntityRecord, x: number | undefined, y: number | undefined, out: OreConc): boolean {
     if (rec.fieldRock !== true || rec.restX === undefined || rec.restY === undefined) return false;
-    const p = this.restPt;
-    if (x === undefined || y === undefined) { p.x = rec.restX; p.y = rec.restY; }
-    else if (rec.fieldAwake === true) {
-      const sab = this.hooks.sab(), b = slotBase(rec.slot);
-      toRestFrame(rec.restX, rec.restY, sab[b + SLOT_X_OFF]!, sab[b + SLOT_Y_OFF]!, sab[b + SLOT_ANGLE_OFF]!, x, y, p);
-    } else { p.x = x; p.y = y; }
-    oreAt(this.oreBase, SLICED.radius, p.x, p.y, out);
+    if (x === undefined || y === undefined) { oreAt(this.oreBase, SLICED.radius, rec.restX, rec.restY, out); return true; }
+    if (rec.fieldAwake !== true) { oreAt(this.oreBase, SLICED.radius, x, y, out); return true; }
+    const sab = this.hooks.sab(), b = slotBase(rec.slot);
+    this.oreAtRest(rec.restX, rec.restY, sab[b + SLOT_X_OFF]!, sab[b + SLOT_Y_OFF]!, sab[b + SLOT_ANGLE_OFF]!, x, y, out);
     return true;
+  }
+
+  /** The field's ore at world (x, y) on anything cut from a field rock whose
+   *  rest centre (restX, restY) now sits at (poseX, poseY) turned by `angle`
+   *  (`toRestFrame`), into `out`. For the pieces of a broken-up rock (salvage
+   *  rock cut), which keep their parent's rest frame. No allocation. */
+  oreAtRest(restX: number, restY: number, poseX: number, poseY: number, angle: number, x: number, y: number, out: OreConc): OreConc {
+    const p = toRestFrame(restX, restY, poseX, poseY, angle, x, y, this.restPt);
+    return oreAt(this.oreBase, SLICED.radius, p.x, p.y, out);
   }
 
   /** Wake a sleeping field rock for a reason other than a touch (a mining
