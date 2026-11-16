@@ -7,7 +7,7 @@
  * bit-identical, #15). docs/architecture/macro-terrain.md.
  */
 import { fieldRockBody, type FieldRockBody } from './chunkStreamer.js';
-import { SLICED, type ChunkRock } from './fieldLayout.js';
+import { SLICED, type ChunkRock, type CoarseTile, type SlicedRock } from './fieldLayout.js';
 import { oreForOutlines, oreSeed } from './fieldOre.js';
 
 export interface PackedChunk {
@@ -30,8 +30,9 @@ export interface PackedChunk {
   parts: Float64Array;
 }
 
-/** A chunk's outlines as one flat array (cheap to post to the render worker). */
-export function packOutlines(rocks: readonly ChunkRock[]): Float32Array {
+/** A chunk's (or far-zoom tile's) outlines as one flat array (cheap to post
+ *  to the render worker). */
+export function packOutlines(rocks: readonly Pick<SlicedRock, 'verts'>[]): Float32Array {
   let len = 0;
   for (const r of rocks) len += 1 + r.verts.length * 2;
   const out = new Float32Array(len);
@@ -41,6 +42,16 @@ export function packOutlines(rocks: readonly ChunkRock[]): Float32Array {
     for (const v of r.verts) { out[i++] = v.x; out[i++] = v.y; }
   }
   return out;
+}
+
+/** A far-zoom tile packed for drawing: outlines and ore only (its pieces are
+ *  never bodies). Same layout as `PackedChunk.outlines` / `.ore`. */
+export interface PackedCoarseTile { tx: number; ty: number; outlines: Float32Array; ore: Float32Array }
+
+/** Pack a far-zoom tile (`coarseFieldTiles`). `seed` is the field seed. */
+export function packCoarseTile(tile: CoarseTile, seed: string): PackedCoarseTile {
+  const outlines = packOutlines(tile.pieces);
+  return { tx: tile.tx, ty: tile.ty, outlines, ore: oreForOutlines(oreSeed(seed), SLICED.radius, outlines) };
 }
 
 /** Pack a cut chunk (worker side). `seed` is the field seed. */

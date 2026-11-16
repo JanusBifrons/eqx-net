@@ -104,6 +104,22 @@ Ore is a map over space, not a label on a rock (owner): the piece a mining laser
 - **Consumed keys on the wire (C3):** the consumed set only grows, and breaks are rare, so it is not a snapshot delta. The welcome carries the whole set (`cutField.consumed`, capped at `MAX_WELCOME_CONSUMED_ROCKS`), and each new break sends one reliable `field_consumed {k}` to the room (`FieldConsumedSchema`). Both travel in order on the same socket, so welcome + messages = the set (#16). Moved poses travel the same way (`cutField.moved` + `field_moved`, deep sleep above). A reconnect's welcome replaces it, even with the same seed. The client (`CutFieldClient`) gives a consumed rock no body. In the draw, it flattens the rock's fan onto its centre (`collapsePackedRock`) instead of leaving it out: `CutFieldLayer` finds a rock by its index in the chunk, so the count and order must not change. A break in a loaded chunk re-sends that chunk's outlines once. Locks: `CutFieldClient.test.ts` (consumed rocks), `packedChunk.test.ts`, `tests/integration/sectorRoom/cutFieldConsumed.test.ts`.
 - **Look (F1c):** the rock surface shows the ore where the map has it. `oreForOutlines` samples `[ice, crystal]` at every fan vertex when a chunk loads (client, main thread); it rides `pendingFieldChunks[].ore` into the `aOre` attribute, and `fieldRockShader` draws it by style: `?ore=off|tint|veins|seams` (veins by default, the owner's pick; `?ore=off` shows bare rock; shot `cut-field-ore`). A woken rock keeps its own vertices' ore.
 
+### Far zoom (B4)
+
+Zoomed far out, real rocks would be a few pixels each, and a whole field is about 1.5 million of them. So the field is drawn from a coarse cut instead.
+
+- **Coarse cut (core, done):** `slicedField` with `minSize` stops cutting below that size. A piece stopped that way is a far-zoom piece, not a rock. It is kept whole: no rim drop and no street inset, so it covers the rocks it would have been cut into. It is roughened one level, not four (`roughen(…, levels)`), and bent by the same warp. Lane strips and the core hole are cut away as before. A piece that stops as a real rock (rock-sized or a rare big rock) is finished as a rock. Far-zoom pieces are never saved or keyed, so `FIELD_LAYOUT_VERSION` is unchanged and full-detail rocks are byte-identical (hash lock in `fieldCoarse.test.ts`).
+- **Tiles:** `coarseFieldTiles(opts)` cuts the whole field at `FIELD_COARSE_MIN_SIZE` (2048 u). It groups the pieces into tiles of `COARSE_TILE_CHUNKS`² (8 × 8) chunks by pre-warp centre, the same rule `rocksInChunk` uses for chunks. `packCoarseTile` (`packedChunk.ts`) packs a tile's outlines and ore with the chunk packing (`packOutlines` + `oreForOutlines`). There are no bodies, because a far-zoom piece never collides.
+- **Measured** (seed `far-zoom`, full 150 km field; coverage = drawn centres of the full-detail rocks in 6 sample chunks that lie inside a coarse piece; ms printed by the test on this box, cold, never asserted):
+
+| | coverage | pieces | points | ms |
+|---|---|---|---|---|
+| old `minSize` path (rim drop, inset, 4 rough levels) | 67.1 % (110/164) | 13,723 | 877,904 | 162 |
+| far-zoom pieces (kept whole, 1 rough level) | 95.1 % (156/164) | 22,166 | 180,852 | 63–72 |
+
+  Both lane centre lines are clear of every coarse piece. Budget: ≤ 200k points for the whole field (`fieldCoarse.test.ts`). An earlier warm measurement on other seeds gave 96–99 % coverage and 26–36 ms.
+- **The switch (client, next slice):** draw the coarse tiles instead of the rock chunks below zoom scale 0.0216, where the median rock is `FAR_ICON.fadeStartPx` across on screen. Crossfade over `FAR_ICON.hysteresis` (1.25×) so it does not flicker at the threshold. The client part (worker cut of the tiles, layer, crossfade) is not built yet.
+
 ## The core idea
 
 A rock that nobody has touched is not data. Server and client recompute it from its field's seed with shared, arithmetic-only code. Only changes become records: a moved, mined or destroyed rock, or a battle wreck piece.
