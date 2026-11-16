@@ -13,11 +13,14 @@ import { DEFAULT_BASE_URL } from './helpers/ports';
  *
  * `?galaxy=sol-prime` autojoins the core hub; `cygnus-arm` is a real graph
  * neighbour (see warp-engage-cancel.spec.ts), so it's a valid warp target.
+ * `startMode=fly`: this is the PILOT warp (the ship you fly). A galaxy room
+ * starts in Command view, where Warp here warps the selected ships and is
+ * disabled with none selected (fleet warp: rts-fleet-warp.spec.ts).
  */
 const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 
 async function bootInGame(page: Page): Promise<void> {
-  await page.goto(`${BASE_URL}/?galaxy=sol-prime`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+  await page.goto(`${BASE_URL}/?galaxy=sol-prime&startMode=fly`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
   await page.waitForSelector('[data-testid="game-surface"]', { timeout: 30_000 });
   await page.locator('[data-testid="hud-sector"]').waitFor({ timeout: 30_000 });
   await page.waitForFunction(

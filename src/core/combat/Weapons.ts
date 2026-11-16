@@ -1,10 +1,22 @@
 import type { PhysicsWorld } from '../physics/World.js';
 import type { Vec2 } from '../swarm/asteroidShape.js';
 import { getWeapon } from './WeaponCatalogue.js';
-import type { HitscanWeaponDef, ProjectileWeaponDef } from './WeaponCatalogue.js';
+import type { HitscanWeaponDef, ProjectileWeaponDef, WeaponDef } from './WeaponCatalogue.js';
 
 const _hitscan = getWeapon('hitscan') as HitscanWeaponDef;
 const _laser = getWeapon('laser') as ProjectileWeaponDef;
+
+/**
+ * Half a beam's hit width (`HitscanWeaponDef.hitWidth`; owner 2026-11-15,
+ * "Hit by its width"): a wide beam's hit test sweeps a disc of this radius
+ * down the ray (a capsule), so anything its drawn width covers is hit and it
+ * stops at the first contact of its edge. 0 for a thin beam or any non-beam.
+ * The one read of the field, on the server sinks and the client prediction
+ * alike (#15). Pure.
+ */
+export function beamHalfWidth(def: WeaponDef): number {
+  return def.mode === 'hitscan' && def.hitWidth !== undefined ? def.hitWidth / 2 : 0;
+}
 
 export const HITSCAN_DAMAGE = _hitscan.damage;
 export const PROJECTILE_DAMAGE = _laser.damage;
@@ -126,9 +138,14 @@ export function rayHitsBox(
   cx: number, cy: number,
   hw: number, hh: number,
   boxes?: Float32Array,
+  /** A wide beam's half-width (`beamHalfWidth`): the box is hit on its
+   *  outline rounded by it (exact, round corners). 0 ⇒ the thin ray. */
+  halfWidth = 0,
 ): number | null {
-  if (boxes) return rayHitsBoxParts(fromX, fromY, dirX, dirY, maxDist, cx, cy, boxes, 0);
-  return rayHitsAabb(fromX, fromY, dirX, dirY, maxDist, cx, cy, hw, hh);
+  if (boxes) return rayHitsBoxParts(fromX, fromY, dirX, dirY, maxDist, cx, cy, boxes, 0, halfWidth);
+  return halfWidth > 0
+    ? capsuleHitsAabb(fromX, fromY, dirX, dirY, maxDist, cx, cy, hw, hh, halfWidth)
+    : rayHitsAabb(fromX, fromY, dirX, dirY, maxDist, cx, cy, hw, hh);
 }
 
 /**
@@ -144,10 +161,15 @@ export function rayHitsBoxParts(
   cx: number, cy: number,
   boxes: Float32Array,
   pad: number,
+  /** A wide beam's half-width (see `rayHitsBox`); 0 ⇒ the thin ray. */
+  halfWidth = 0,
 ): number | null {
   let best: number | null = null;
   for (let i = 0; i + 3 < boxes.length; i += 4) {
-    const t = rayHitsAabb(fromX, fromY, dirX, dirY, maxDist, cx + boxes[i]!, cy + boxes[i + 1]!, boxes[i + 2]! + pad, boxes[i + 3]! + pad);
+    const bx = cx + boxes[i]!, by = cy + boxes[i + 1]!, bw = boxes[i + 2]! + pad, bh = boxes[i + 3]! + pad;
+    const t = halfWidth > 0
+      ? capsuleHitsAabb(fromX, fromY, dirX, dirY, maxDist, bx, by, bw, bh, halfWidth)
+      : rayHitsAabb(fromX, fromY, dirX, dirY, maxDist, bx, by, bw, bh);
     if (t !== null && (best === null || t < best)) best = t;
   }
   return best;
@@ -184,6 +206,107 @@ function rayHitsAabb(
     if (tMin > tMax) return null;
   }
   return tMin;
+}
+
+/**
+ * First contact of a disc of radius `r` swept from (fx, fy) along the unit
+ * ray against the circle (cx, cy, 0): the ray against a circle of radius `r`.
+ * 0 when it starts inside; null when it moves away or passes. Alloc-free.
+ */
+function discEntry(
+  fx: number, fy: number, dx: number, dy: number, maxDist: number, cx: number, cy: number, r: number,
+): number | null {
+  const ox = fx - cx;
+  const oy = fy - cy;
+  const c = ox * ox + oy * oy - r * r;
+  if (c <= 0) return 0;
+  const b = ox * dx + oy * dy;
+  if (b >= 0) return null;
+  const disc = b * b - c;
+  if (disc < 0) return null;
+  const t = -b - Math.sqrt(disc);
+  return t <= maxDist ? t : null;
+}
+
+/**
+ * A wide beam (a disc of radius `r` swept down the ray: a capsule) vs an
+ * axis-aligned box: the ray against the box's outline rounded by `r`, which
+ * is the union of the box grown by `r` in x, the box grown by `r` in y and
+ * a disc at each corner, so the first contact is the nearest entry of the
+ * six. Exact (round corners, like a Rapier ball cast). Alloc-free.
+ */
+function capsuleHitsAabb(
+  fx: number, fy: number, dx: number, dy: number, maxDist: number,
+  cx: number, cy: number, hw: number, hh: number, r: number,
+): number | null {
+  let best = rayHitsAabb(fx, fy, dx, dy, maxDist, cx, cy, hw + r, hh);
+  const t = rayHitsAabb(fx, fy, dx, dy, maxDist, cx, cy, hw, hh + r);
+  if (t !== null && (best === null || t < best)) best = t;
+  for (let k = 0; k < 4; k++) {
+    const d = discEntry(fx, fy, dx, dy, maxDist, cx + (k & 1 ? hw : -hw), cy + (k & 2 ? hh : -hh), r);
+    if (d !== null && (best === null || d < best)) best = d;
+  }
+  return best;
+}
+
+/**
+ * A wide beam vs a CCW convex polygon, in the polygon's local frame: the
+ * first `t` at which the disc of radius `r` centred on (lx, ly) + t·(ldx,
+ * ldy) touches the polygon (its outline rounded by `r`, whose boundary is the
+ * edges pushed out by `r` and a disc at each vertex). 0 when it starts in
+ * reach. Alloc-free.
+ */
+function capsuleHitsConvexLocal(
+  lx: number, ly: number, ldx: number, ldy: number, maxDist: number, r: number,
+  vertices: ReadonlyArray<Vec2>,
+): number | null {
+  const n = vertices.length;
+  // Starts within r of the polygon (or inside it) ⇒ contact at once.
+  let inside = true;
+  let near2 = Infinity;
+  for (let i = 0; i < n; i++) {
+    const a = vertices[i]!;
+    const b = vertices[i + 1 < n ? i + 1 : 0]!;
+    const ex = b.x - a.x;
+    const ey = b.y - a.y;
+    const wx = lx - a.x;
+    const wy = ly - a.y;
+    if (wx * ey - wy * ex > 0) inside = false;
+    const l2 = ex * ex + ey * ey;
+    let s = l2 > 0 ? (wx * ex + wy * ey) / l2 : 0;
+    if (s < 0) s = 0;
+    else if (s > 1) s = 1;
+    const qx = wx - ex * s;
+    const qy = wy - ey * s;
+    const d2 = qx * qx + qy * qy;
+    if (d2 < near2) near2 = d2;
+  }
+  if (inside || near2 <= r * r) return 0;
+  let best = Infinity;
+  for (let i = 0; i < n; i++) {
+    const a = vertices[i]!;
+    const b = vertices[i + 1 < n ? i + 1 : 0]!;
+    const ex = b.x - a.x;
+    const ey = b.y - a.y;
+    const len = Math.sqrt(ex * ex + ey * ey);
+    if (len > 0) {
+      // Outward unit normal of a CCW edge: (ey, −ex) / len.
+      const nx = ey / len;
+      const ny = -ex / len;
+      const denom = ldx * nx + ldy * ny;
+      if (denom < 0) {
+        // Crossing the edge line pushed out by r, within the edge's span.
+        const t = (r - ((lx - a.x) * nx + (ly - a.y) * ny)) / denom;
+        if (t >= 0 && t < best) {
+          const s = ((lx + ldx * t - a.x) * ex + (ly + ldy * t - a.y) * ey) / (len * len);
+          if (s >= 0 && s <= 1) best = t;
+        }
+      }
+    }
+    const d = discEntry(lx, ly, ldx, ldy, maxDist, a.x, a.y, r);
+    if (d !== null && d < best) best = d;
+  }
+  return best <= maxDist ? best : null;
 }
 
 /** Swept projectile (radius `projRadius`) vs a structure box: the box grown
@@ -256,6 +379,9 @@ export function rayHitsConvexPolygon(
   maxDist: number,
   cx: number, cy: number, angle: number,
   vertices: ReadonlyArray<Vec2>,
+  /** A wide beam's half-width (`beamHalfWidth`): first contact of a disc of
+   *  this radius swept down the ray (a capsule). 0 ⇒ the thin ray. */
+  halfWidth = 0,
 ): number | null {
   const n = vertices.length;
   if (n < 3) return null;
@@ -268,6 +394,7 @@ export function rayHitsConvexPolygon(
   const localY = (fromX - cx) * sinA + (fromY - cy) * cosA;
   const localDx = dirX * cosA - dirY * sinA;
   const localDy = dirX * sinA + dirY * cosA;
+  if (halfWidth > 0) return capsuleHitsConvexLocal(localX, localY, localDx, localDy, maxDist, halfWidth, vertices);
 
   // Slab clip: track entering/exiting t along the ray as we test each edge.
   let tEnter = 0;
@@ -316,10 +443,12 @@ export function rayHitsShipPolygon(
   maxDist: number,
   cx: number, cy: number, angle: number,
   triangles: ReadonlyArray<ReadonlyArray<Vec2>>,
+  /** A wide beam's half-width (see `rayHitsConvexPolygon`); 0 ⇒ thin. */
+  halfWidth = 0,
 ): number | null {
   let best: number | null = null;
   for (const tri of triangles) {
-    const d = rayHitsConvexPolygon(fromX, fromY, dirX, dirY, maxDist, cx, cy, angle, tri);
+    const d = rayHitsConvexPolygon(fromX, fromY, dirX, dirY, maxDist, cx, cy, angle, tri, halfWidth);
     if (d !== null && (best === null || d < best)) best = d;
   }
   return best;

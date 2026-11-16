@@ -1051,8 +1051,11 @@ gameServer
 // LivingWorldDirector (built from the eager `galaxy-*` map) never routes
 // hunter bots here; `droneCount: 0` + `asteroidConfig: []` keep the
 // scene deterministic for screenshots. `filterBy(['testId'])` gives
-// per-test room isolation. Snapshot persistence writes only benign
-// empty-swarm rows (droneCount 0), so no DB guard is needed.
+// per-test room isolation, so the room must not persist: every instance
+// shares the one `galaxy-test` sector snapshot, and a new test's room
+// restored the parked hulls (lingeringHulls[]) other tests left behind, an
+// extra stranger's ship in its contacts list (contacts-overview.spec.ts,
+// 2026-11-14). Same rule as `galaxy-wave-test` / the trade test room.
 gameServer
   .define('galaxy-test', SectorRoom, {
     sectorKey: 'galaxy-test',
@@ -1060,6 +1063,7 @@ gameServer
     droneCount: 0,
     asteroidConfig: [],
     maxClients: 8,
+    persistSector: false,
   })
   .filterBy(['testId']);
 // Living World showcase (plan peppy-jumping-pinwheel) — the scripted video's

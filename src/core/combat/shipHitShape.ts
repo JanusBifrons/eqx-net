@@ -76,18 +76,22 @@ export function shipSplashRadius(kindId: string | null | undefined): number {
   return getShipKind(kindId ?? null).radius;
 }
 
-/** Distance along the unit ray to the ship at (cx, cy, angle), or null. */
+/** Distance along the unit ray to the ship at (cx, cy, angle), or null.
+ *  `halfWidth` (a wide beam, `beamHalfWidth`; owner 2026-11-15 "Hit by its
+ *  width"): the first contact of a disc of that radius swept down the ray, so
+ *  the shape is hit wherever the drawn beam covers it. 0 ⇒ the thin ray. */
 export function shipRayHit(
   kindId: string | null | undefined, shieldUp: boolean,
   fx: number, fy: number, dx: number, dy: number, maxDist: number,
   cx: number, cy: number, angle: number,
+  halfWidth = 0,
 ): number | null {
   const id = getShipKind(kindId ?? null).id;
-  if (shieldUp && !isCapitalKindId(id)) return rayHitsSphere(fx, fy, dx, dy, maxDist, cx, cy, shipBubbleRadius(id));
+  if (shieldUp && !isCapitalKindId(id)) return rayHitsSphere(fx, fy, dx, dy, maxDist, cx, cy, shipBubbleRadius(id) + halfWidth);
   // "Does the ray come near?", never `rayHitsSphere`: that misses once the
   // origin is inside the circle past the centre (the far half of a hull).
-  if (!segmentNearCircle(fx, fy, dx * maxDist, dy * maxDist, cx, cy, shipHitBound(id))) return null;
-  return rayHitsShipPolygon(fx, fy, dx, dy, maxDist, cx, cy, angle, shipCollisionParts(id));
+  if (!segmentNearCircle(fx, fy, dx * maxDist, dy * maxDist, cx, cy, shipHitBound(id) + halfWidth)) return null;
+  return rayHitsShipPolygon(fx, fy, dx, dy, maxDist, cx, cy, angle, shipCollisionParts(id), halfWidth);
 }
 
 /** First contact of a projectile step with the ship at (cx, cy, angle). */

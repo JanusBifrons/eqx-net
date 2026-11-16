@@ -46,6 +46,8 @@
  *  same consume-after-render rule. */
 export interface OneFrameTriggerSurface {
   explodingShips?: Set<string>;
+  /** The vaporised subset of `explodingShips` (fracture v11), cleared with it. */
+  vaporisedShips?: Set<string>;
   /** Effects subsystem one-shot queue. Structural type (any array-shaped
    *  field); the concrete element shape is `RenderMirror.pendingEffectTriggers`
    *  in `src/core/contracts/IRenderer.ts` but this helper doesn't need to
@@ -61,6 +63,9 @@ export interface OneFrameTriggerSurface {
   /** Shells as events (slice 2b): `shell_end` impact bursts, flat triples.
    *  Same consume-after-render contract. */
   pendingShellEnds?: { length: number };
+  /** RTS Part A: ship re-keys `[from, to, ...]`. Clearing on a skip frame
+   *  would make the renderer rebuild the ship instead of moving it. */
+  pendingShipRekeys?: { length: number };
 }
 
 /**
@@ -79,6 +84,7 @@ export function consumeOneFrameTriggers(
 ): void {
   if (!didRender) return;
   mirror.explodingShips?.clear();
+  mirror.vaporisedShips?.clear();
   // pendingEffectTriggers — visual-effects subsystem one-shot queue. SAME
   // skip-frame gate discipline as explodingShips: clearing on a skip frame
   // silently drops every queued trigger (impact sparks, destruction bursts).
@@ -97,4 +103,7 @@ export function consumeOneFrameTriggers(
   // pendingShellEnds — shells as events, slice 2b: clearing on a skip frame
   // would drop a shell's only impact burst.
   if (mirror.pendingShellEnds) mirror.pendingShellEnds.length = 0;
+  // pendingShipRekeys — RTS Part A seamless take-controls: a re-key lost on a
+  // skip frame would make the renderer rebuild the ship (the flicker).
+  if (mirror.pendingShipRekeys) mirror.pendingShipRekeys.length = 0;
 }

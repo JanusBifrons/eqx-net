@@ -23,8 +23,7 @@ import { TargetAction } from './TargetAction';
  */
 function setLock(lock: { target: string; stage: number; blocked?: boolean } | null): void {
   useUIStore.setState({
-    selectedEntityKind: 'drone',
-    selectedEntityId: 'swarm-7',
+    selection: { ids: [], focusId: 'swarm-7', focusKind: 'drone' },
     activeGroupId: 'primary',
     fcGroups: [{ id: 'primary', name: 'Primary', mode: 'manual', colour: 0, capacity: 1, locks: lock ? [lock] : [] }],
   });
@@ -50,6 +49,20 @@ describe('TargetAction', () => {
     expect(btn.textContent).toBe("CAN'T TRACK");
     fireEvent.click(btn);
     expect(cancelLock).toHaveBeenCalledWith('primary', 's:7');
+  });
+
+  it('another player\'s AI-flown ship (a lingering selection) shows LOCK keyed p:<shipInstanceId>; your own does not', () => {
+    const sid = 'aaaaaaaa-0000-4000-8000-0000000000aa';
+    useUIStore.setState({
+      selection: { ids: [], focusId: sid, focusKind: 'lingering' },
+      activeGroupId: 'primary',
+      fcGroups: [{ id: 'primary', name: 'Primary', mode: 'manual', colour: 0, capacity: 1, locks: [{ target: `p:${sid}`, stage: 2 }] }],
+    });
+    const { unmount } = render(<TargetAction isOwn={false} />);
+    expect(screen.getByTestId('fc-target').getAttribute('data-state')).toBe('unlock');
+    unmount();
+    render(<TargetAction isOwn />);
+    expect(screen.queryByTestId('fc-target')).toBeNull();
   });
 
   it('shows CANCEL LOCK while a reachable lock builds', () => {

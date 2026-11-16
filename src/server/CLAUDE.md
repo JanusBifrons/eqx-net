@@ -73,7 +73,7 @@ How each subsystem works (and its history) is in the "Server notes" section of t
 **Allegiances and friendly fire** ([allegiances](../../docs/architecture/allegiances.md#server-implementation-notes)):
 - 🔴 Classify by the registry kind, never an id prefix. `isHostileToPlayer` = stance OR ledger; only a hit on a DRONE escalates the `FactionLedger`. Allegiance decides targeting, never what a shot hits.
 - 🔴 Every shot hits the first thing in its path, own side included (skips: shooter, a capital's own deck, loot pods); friendly hits never mark hostile.
-- AI pilots hold fire on a friendly line only via `LineOfFireGate`; players are never gated. Drone-brain proximity queries use `AiNeighbourGrid`.
+- AI pilots (AI-flown owned hulls too) hold fire on a friendly line only via `LineOfFireGate`; players are never gated. Drone-brain proximity queries use `AiNeighbourGrid`.
 
 **Cargo and storage** ([loot-and-cargo](../../docs/features/loot-and-cargo.md#server-implementation-notes)):
 - 🔴 Value only moves (`transferInto`), never copies; every transfer is ONE atomic `GROUP`; `HoldStore` is the authority. Every death and abandon seam spills the hold.
@@ -177,6 +177,10 @@ How each subsystem works (and its history) is in the "Server notes" section of t
 - **Adding a weapon never edits `SectorRoom.ts`**, only the catalogue. Swarm hits go through `ProjectileBroadphase` (must equal the full scan).
 - **Every cleanup path clears `playerMountAngles` and `droneMountAngles`** with `lastFireClientTick`. Drones target active hulls only.
 - Full text and locks: [sector-room-anatomy.md](../../docs/architecture/sector-room-anatomy.md#server-implementation-notes), [weapon-mounts.md](../../docs/architecture/weapon-mounts.md#server-implementation-notes).
+
+## Fleet command (RTS)
+
+- **`SectorRoom.shipKeyMoved` is THE one re-key seam** when a ship's key moves (locks, fleet orders, turret angles); never add a second. An owned hull is flown by the AI pilot brain, registered `{ hull: true }` (keys as pilot INPUT); it fires through `PlayerFireResolver` on its brain's `intent.fire`, never `AiFireResolver`; fleet commands are owner-checked per id. Detail: [fleet-command](../../docs/architecture/fleet-command.md#7-zone-rules-in-full).
 
 ## SectorRoom subsystems
 

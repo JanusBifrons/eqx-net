@@ -35,10 +35,14 @@ import { turretFireCrossesWall } from '../structures/fenceFireHint.js';
 import { commitChosenPlacement } from '../structures/structurePlacementClient.js';
 import { sendSelectEntity, sendDeselectEntity } from '../net/selectionClient.js';
 import { resetSelectionStats } from '../net/selectionStats.js';
+import { sendFleetOrder } from '../ships/shipActionsClient.js';
+import { pushFleetOverlayModelIfChanged } from '../fleet/fleetOverlayModel.js';
+import { fleetCommands } from '../fleet/fleetCommands.js';
 import type { ColyseusGameClient } from '../net/ColyseusClient.js';
-import type { IRenderer } from '@core/contracts/IRenderer';
+import type { FleetPickResultWire, IRenderer } from '@core/contracts/IRenderer';
 import { placeInspector, type InspectorAnchor } from './inspectorPlacement.js';
 import { isInspectorHeld } from './inspectorHold.js';
+import { isParkedHull, shipOwner } from '../render/shipOwnership.js';
 
 /** Reused each frame (no per-frame allocation, #14). */
 const inspectorAt: InspectorAnchor = { left: 0, top: 0 };
@@ -53,6 +57,35 @@ let _lastPublishedSelectedId: string | null = null;
 /** Helm orders (capital-ship R&D round 3 D) — last drained
  *  `feedback.helmCourseSeq`; a change is a new course tap. */
 let _lastHelmCourseSeq = 0;
+
+/** RTS command view (slice 13a) — last drained `feedback.fleetSelSeq` /
+ *  `orderSeq`. A fleet-selection change is mirrored into Zustand (ids only);
+ *  an order is only recorded for now (no network send until a later slice). */
+let _lastFleetSelSeq = 0;
+let _lastOrderSeq = 0;
+/** RTS slice 10 — last drained `feedback.takeControlsSeq` (double tap). */
+let _lastTakeControlsSeq = 0;
+/** Selection mirror held until this loop time after a double-tap take (ms),
+ *  so the fleet panel never shows the pair's first-tap narrowing on the way
+ *  to Fly. Bounded: a swap the server never answers releases it. */
+let _takeControlsHoldUntil = -Infinity;
+const TAKE_CONTROLS_SELECTION_HOLD_MS = 1500;
+/** RTS slice 14b — last drained `fleetPickPoints` / `fleetPickSeq`. */
+let _lastPickPoints = 0;
+let _lastPickSeq = 0;
+
+/** Send a finished map pick as `set_mode` for the selection (slice 14b).
+ *  One small object per pick; nothing is sent with an empty selection. */
+function sendFleetPickResult(result: FleetPickResultWire, ids: readonly string[]): void {
+  if (ids.length > 0) {
+    const c = fleetCommands();
+    if (result.kind === 'patrol') c.setMode(ids, 'patrol', { route: result.route });
+    else if (result.kind === 'escort') c.setMode(ids, 'escort', { escortId: result.escortId });
+    else if (result.x !== undefined && result.y !== undefined) c.setMode(ids, 'retreat', { x: result.x, y: result.y });
+    else c.setMode(ids, 'retreat');
+  }
+  logEvent('fleet_mode_pick', { kind: result.kind, ships: ids.length });
+}
 
 /** WS-10 (R2.5) — last drained `feedback.placementConfirmSeq`. The renderer bumps
  *  the seq on a DESKTOP mouse left-click during placement; when it changes we
@@ -129,6 +162,11 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
   let workerUpdateCounter = 0;
   let firstFramePixiLogged = false;
 
+  // RTS slice 15a: last fleet-status version pushed to THIS renderer. Starts
+  // at 0 (= no rows ever applied, nothing to push); a later loop for a fresh
+  // renderer re-pushes the current model on its first frame.
+  let lastFleetOverlayVersion = 0;
+
   const loop = (now: number): void => {
     if (isDisposed()) return;
 
@@ -198,6 +236,14 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
     // posts the GLIDE_CAMERA message promptly.
     const glide = gameClient.consumePendingCameraGlide();
     if (glide) renderer.glideCameraTo(glide.x, glide.y, PILOT_SWAP_GLIDE_MS);
+    // RTS fleet warp (S8) — a commander who followed their fleet: once the
+    // warped ships are in the new sector's mirror, select them again (the
+    // ONE selection, in the renderer) and glide the camera to them. One-shot.
+    const fleetArrival = gameClient.consumePendingFleetArrival();
+    if (fleetArrival) {
+      renderer.selectFleetShips(fleetArrival.ids);
+      renderer.glideCameraTo(fleetArrival.x, fleetArrival.y, PILOT_SWAP_GLIDE_MS);
+    }
     const renderStart = performance.now();
     const shouldRender = !useWorker || (++workerUpdateCounter % 2) === 0;
     if (shouldRender) renderer.update(gameClient.mirror);
@@ -345,11 +391,73 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
       _lastHelmCourseSeq = selFb.helmCourseSeq;
       gameClient.setHelmCourse(selFb.helmCourseX, selFb.helmCourseY);
     }
+    // THE selection (RTS Part A): the selected ships (`fleetSelIds`) and the
+    // focus (`selectedPickId/Kind`, the entity whose details panel shows) are
+    // ONE renderer-owned selection, mirrored into the ONE store shape in one
+    // write whenever either part moves (on change only).
+    // RTS slice 10: double tap / click on an own parked ship = take its
+    // controls (once per seq; the same sender as the panel's Take controls).
+    // Drained BEFORE the selection mirror: the pair's first tap may have
+    // narrowed the selection, and the fleet panel must not re-render it
+    // ("1 ship selected") on the way to Fly. While the take is pending in
+    // command view the store keeps its selection; the welcome flips to pilot
+    // (panel hidden) and the held change lands behind it. Bounded so a swap
+    // the server never answers cannot freeze the mirror.
+    if (selFb.takeControlsSeq !== _lastTakeControlsSeq) {
+      _lastTakeControlsSeq = selFb.takeControlsSeq;
+      const takeId = selFb.takeControlsId;
+      if (takeId !== null) {
+        fleetCommands().takeControls(takeId);
+        _takeControlsHoldUntil = now + TAKE_CONTROLS_SELECTION_HOLD_MS;
+        logEvent('fleet_take_controls', { via: 'double_tap' });
+      }
+    }
+    const holdSelection = now < _takeControlsHoldUntil && useUIStore.getState().pilotMode === 'spectator';
     const selId = selFb.selectedPickId;
-    if (selId !== _lastPublishedSelectedId) {
+    const focusMoved = !holdSelection && selId !== _lastPublishedSelectedId;
+    if (!holdSelection && (selFb.fleetSelSeq !== _lastFleetSelSeq || focusMoved)) {
+      _lastFleetSelSeq = selFb.fleetSelSeq;
+      useUIStore.getState().setSelection(selFb.fleetSelIds, selId, selFb.selectedPickKind);
+    }
+    // Squads + order markers for the renderer (posted only on a version move).
+    lastFleetOverlayVersion = pushFleetOverlayModelIfChanged(renderer, lastFleetOverlayVersion);
+    if (selFb.orderSeq !== _lastOrderSeq) {
+      _lastOrderSeq = selFb.orderSeq;
+      // Send the order for the current selection (one small object per
+      // order; nothing is allocated on frames where the seq is unchanged).
+      const ids = selFb.fleetSelIds;
+      if (ids.length > 0) {
+        if (selFb.orderKind === 'move') {
+          sendFleetOrder(ids.slice(), { kind: 'move', x: selFb.orderX, y: selFb.orderY });
+        } else if (selFb.orderKind === 'attack' && selFb.orderTargetId !== null) {
+          sendFleetOrder(ids.slice(), { kind: 'attack', targetId: selFb.orderTargetId });
+        }
+      }
+      logEvent('fleet_order', {
+        seq: selFb.orderSeq,
+        kind: selFb.orderKind,
+        targetId: selFb.orderTargetId,
+        ships: selFb.fleetSelIds.length,
+      });
+    }
+    // Fleet map pick (slice 14b): mirror the picked-point count (discrete),
+    // and send a finished pick once per seq as set_mode for the selection.
+    if (selFb.fleetPickPoints !== _lastPickPoints) {
+      _lastPickPoints = selFb.fleetPickPoints;
+      useUIStore.getState().setFleetPickPoints(_lastPickPoints);
+    }
+    if (selFb.fleetPickSeq !== _lastPickSeq) {
+      _lastPickSeq = selFb.fleetPickSeq;
+      const result = selFb.fleetPickResult;
+      if (result !== null) {
+        sendFleetPickResult(result, selFb.fleetSelIds);
+        useUIStore.getState().setFleetPick(null);
+      }
+    }
+    if (focusMoved) {
+      // The focus moved: run the server stats stream for the new focus.
       _lastPublishedSelectedId = selId;
       const selKind = selFb.selectedPickKind;
-      useUIStore.getState().setSelectedEntity(selId, selKind);
       resetSelectionStats(); // drop stale numbers across a selection change
       if (selId === null) {
         sendDeselectEntity();
@@ -410,25 +518,28 @@ function writeE2EDataset(
   localShip: { x: number; y: number; angle: number } | null,
 ): void {
   // Expose all ship positions for E2E cross-client position assertions.
+  // ONE pass over the one ship list (RTS Part A S3), split by the liveness
+  // predicate (#17) so both E2E attributes keep their pre-S3 contents:
+  // `data-ship-positions` = pilots' ships (playerId keys), and
+  // `data-lingering-positions` = parked / AI-flown hulls (disconnected /
+  // displaced / commanded, isActive=false), keyed by shipInstanceId with the
+  // owning playerId; the linger suite reads it to assert an observer SEES a
+  // player's parked hull.
+  const mirror = gameClient.mirror;
   const posMap: Record<string, { x: number; y: number }> = {};
-  for (const [id, s] of gameClient.mirror.ships) {
-    posMap[id] = { x: parseFloat(s.x.toFixed(3)), y: parseFloat(s.y.toFixed(3)) };
-  }
-  el.dataset['shipPositions'] = JSON.stringify(posMap);
-  // Lingering hulls (disconnected / displaced, isActive=false). These are
-  // NOT in mirror.ships (they route to mirror.lingeringShips), so the linger
-  // E2E suite reads this to assert a remote observer SEES a player's parked
-  // hull. Keyed by shipInstanceId; carries the owning playerId.
   const lingerMap: Record<string, { x: number; y: number; ownerPlayerId: string }> = {};
-  if (gameClient.mirror.lingeringShips) {
-    for (const [id, l] of gameClient.mirror.lingeringShips) {
+  for (const [id, s] of mirror.ships) {
+    if (isParkedHull(mirror, id, s)) {
       lingerMap[id] = {
-        x: parseFloat(l.x.toFixed(3)),
-        y: parseFloat(l.y.toFixed(3)),
-        ownerPlayerId: l.ownerPlayerId,
+        x: parseFloat(s.x.toFixed(3)),
+        y: parseFloat(s.y.toFixed(3)),
+        ownerPlayerId: shipOwner(id, s),
       };
+    } else {
+      posMap[id] = { x: parseFloat(s.x.toFixed(3)), y: parseFloat(s.y.toFixed(3)) };
     }
   }
+  el.dataset['shipPositions'] = JSON.stringify(posMap);
   el.dataset['lingeringPositions'] = JSON.stringify(lingerMap);
   el.dataset['localPlayerId'] = localId ?? '';
   el.dataset['predStats'] = JSON.stringify(gameClient.stats);
@@ -436,6 +547,11 @@ function writeE2EDataset(
   const uiState = useUIStore.getState();
   // Phase 4 WS-A1 — spectator/construction mode flag for the spectator E2E.
   el.dataset['pilotMode'] = uiState.pilotMode;
+  // RTS command view (slice 13a): the renderer's fleet selection + last order.
+  el.dataset['fleetSel'] = feedback.fleetSelIds.join(',');
+  el.dataset['fleetSelCount'] = String(feedback.fleetSelIds.length);
+  el.dataset['fleetOrderSeq'] = String(feedback.orderSeq);
+  el.dataset['fleetOrderKind'] = feedback.orderKind;
   el.dataset['hullPct'] = String(uiState.hullPct);
   el.dataset['shieldPct'] = String(uiState.shieldPct);
   el.dataset['sectorAlert'] = uiState.sectorAlert ?? '';

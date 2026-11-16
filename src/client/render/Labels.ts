@@ -1,5 +1,8 @@
 import { Container, Text, TextStyle } from 'pixi.js';
 import type { RenderMirror } from '@core/contracts/IRenderer';
+import { fnv1a32 } from '@core/random/rng';
+import { isOwnedByMe, isParkedHull } from './shipOwnership.js';
+import { moveKey } from './shipRekey.js';
 
 /**
  * Per-entity text label manager. One small text label appears above every
@@ -9,7 +12,9 @@ import type { RenderMirror } from '@core/contracts/IRenderer';
  *     `ShipState.displayName`, with a plain `Pilot` fallback (NEVER any part of
  *     the id — no ids in the UI) for the rare pre-sync / edge case. The local
  *     player's own ship intentionally has no label — you don't need to be told
- *     who you are.
+ *     who you are; nor does any of your own fleet (friendly ships carry no
+ *     label, RTS Part A). A ship an AI pilot flies gets the AI pilots'
+ *     callsign (`formatAiShipCallsign`), drone style.
  *   - Drones: `AI XXX` where XXX is the entityId in 3-char zero-padded
  *     uppercase hex. Stable per drone, deterministic from the wire's
  *     entityId; small numbers will look like `AI 001`, `AI 00F`, etc.
@@ -42,6 +47,13 @@ interface LabelEntry {
  *  uniform without truncating the rare high-id case. */
 export function formatDroneName(entityId: number): string {
   return `AI ${entityId.toString(16).toUpperCase().padStart(3, '0')}`;
+}
+
+/** The AI pilots' callsign for a ship an AI pilot flies (RTS Part A): the
+ *  drone form `AI XXX`, XXX a stable 3-hex hash of its key (a hull's key is a
+ *  uuid, never shown). Exported for `Labels.test.ts`. */
+export function formatAiShipCallsign(key: string): string {
+  return `AI ${(fnv1a32(key) & 0xfff).toString(16).toUpperCase().padStart(3, '0')}`;
 }
 
 /** Pick the player-facing label string for a remote ship. Exported for
@@ -97,6 +109,9 @@ export class LabelManager {
   private readonly labels = new Map<string, LabelEntry>();
   /** Reused per-frame to avoid allocating a fresh Set every update. */
   private readonly seen = new Set<string>();
+  /** `p:<key>` label keys and AI callsigns, built once per ship (#14). */
+  private readonly shipKeys = new Map<string, string>();
+  private readonly callsigns = new Map<string, string>();
 
   /**
    * @param showDroneLabels NPC callsigns (`AI 00F`). Off for showcase capture
@@ -111,19 +126,40 @@ export class LabelManager {
     parent.addChild(this.container);
   }
 
+  /** RTS Part A seamless hand-over: the ship's key changed; its label (and
+   *  glyph atlas) moves with it. A stale label under `to` is destroyed. */
+  rekey(from: string, to: string): void {
+    // Rare (a hand-over), never per frame: the two key strings are fine.
+    const stale = moveKey(this.labels, `p:${from}`, `p:${to}`);
+    stale?.text.destroy({ texture: true, textureSource: true });
+  }
+
   update(mirror: RenderMirror): void {
     this.seen.clear();
     const localId = mirror.localPlayerId;
 
-    // Players (skip self — own ship gets no label).
-    for (const [playerId, ship] of mirror.ships) {
-      if (playerId === localId) continue;
+    // Ships, ACTIVE and LINGERING (#17). RTS Part A owner decision: friendly
+    // ships carry no label: the ship you fly and your own fleet (the only
+    // ships the client can call friendly; alliances have no client carrier
+    // yet). A ship an AI pilot flies (`isParkedHull`) follows the AI pilots'
+    // rule: an `AI XXX` callsign in the drone style, off with NPC callsigns.
+    // Another pilot's ship keeps its name. TODO: labels configurable.
+    for (const [key0, ship] of mirror.ships) {
+      if (key0 === localId || isOwnedByMe(mirror, key0, ship)) continue;
       // Phase 4 warp travel: a ship on its warp run is out of the world.
       if (ship.warp === 2) continue;
-      const key = `p:${playerId}`;
+      const aiFlown = isParkedHull(mirror, key0, ship);
+      if (aiFlown && !this.showDroneLabels) continue;
+      let key = this.shipKeys.get(key0);
+      if (key === undefined) { key = `p:${key0}`; this.shipKeys.set(key0, key); }
       this.seen.add(key);
-      const value = formatPlayerLabel(playerId, ship.displayName);
-      this.upsert(key, value, ship.x, -ship.y - LABEL_OFFSET_PLAYER, 'player');
+      if (aiFlown) {
+        let callsign = this.callsigns.get(key0);
+        if (callsign === undefined) { callsign = formatAiShipCallsign(key0); this.callsigns.set(key0, callsign); }
+        this.upsert(key, callsign, ship.x, -ship.y - LABEL_OFFSET_DRONE, 'drone');
+      } else {
+        this.upsert(key, formatPlayerLabel(key0, ship.displayName), ship.x, -ship.y - LABEL_OFFSET_PLAYER, 'player');
+      }
     }
 
     // Drones — kind === 1. Asteroids skipped. A named elite (P4a) is always
@@ -144,6 +180,12 @@ export class LabelManager {
     }
 
     // Sweep: drop labels whose entity has left the frame this update.
+    for (const [id, k] of this.shipKeys) {
+      if (!this.seen.has(k)) {
+        this.shipKeys.delete(id);
+        this.callsigns.delete(id);
+      }
+    }
     for (const [k, e] of this.labels) {
       if (!this.seen.has(k)) {
         // Pixi v8 Text owns its own dynamic glyph atlas (a Texture +

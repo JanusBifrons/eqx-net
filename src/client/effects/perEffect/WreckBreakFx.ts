@@ -27,6 +27,10 @@
  * the slug's path out of the far side. Counts follow the effects tier
  * (`WRECK_ASH_DIAL`), none with particles off.
  *
+ * **Vaporise ash** (fracture v11: a cut kill burned the whole hull away,
+ * `spawnVaporAsh`): the same ash pool as a point puff over the hull, in
+ * the weapon's tint, under a second.
+ *
  * The pool (`MAX_DUST` + `MAX_SHARDS` + `MAX_FLASHES` + `MAX_ASH`) is built on the FIRST
  * break-up (never for a session without one) and reused; its container is only
  * on the stage while something is live, so an idle pool adds no display
@@ -67,6 +71,14 @@ const ASH_SPEED_MIN = 0.01;
 const ASH_SPEED_VAR = 0.04;
 const ASH_LIFE_S = 1.2;
 const ASH_LIFE_VAR_S = 1.4;
+/** A vaporise puff (`spawnVaporAsh`): size and outward speed as shares of
+ *  the HULL radius (per s), life (s): a short puff, gone in < 0.8 s. */
+const VAPOR_SIZE_MIN = 0.05;
+const VAPOR_SIZE_VAR = 0.06;
+const VAPOR_SPEED_MIN = 0.5;
+const VAPOR_SPEED_VAR = 1.0;
+const VAPOR_LIFE_S = 0.35;
+const VAPOR_LIFE_VAR_S = 0.4;
 /** Sparks out of the far side, along the slug's path (share of the radius per s). */
 const SPARK_SPEED_MIN = 0.3;
 const SPARK_SPEED_VAR = 0.5;
@@ -109,6 +121,8 @@ interface Particle {
   x: number; y: number; vx: number; vy: number;
   spin: number; size: number; grow: number;
   life: number; life0: number;
+  /** Ash colours: white-hot, then ember (channel ash; a vaporise puff tints them). */
+  hot: number; ember: number;
   /** A shard's colour as it cools: from `c0` to `c1`. */
   c0: number; c1: number;
   /** 0 dust, 1 shard, 2 flash, 3 ash. */
@@ -155,7 +169,7 @@ export class WreckBreakFx {
       }
       g.visible = false;
       this.layer.addChild(g);
-      return { gfx: g, x: 0, y: 0, vx: 0, vy: 0, spin: 0, size: 1, grow: 0, life: 0, life0: 1, c0: SHARD_HOT, c1: SHARD_COLD, kind };
+      return { gfx: g, x: 0, y: 0, vx: 0, vy: 0, spin: 0, size: 1, grow: 0, life: 0, life0: 1, c0: SHARD_HOT, c1: SHARD_COLD, kind, hot: ASH_HOT, ember: ASH_EMBER };
     };
     for (let i = 0; i < MAX_DUST; i++) this.pool.push(mk(0));
     for (let i = 0; i < MAX_SHARDS; i++) this.pool.push(mk(1));
@@ -242,6 +256,7 @@ export class WreckBreakFx {
       const vx = (-uy * side + ux * along) * sp, vy = (ux * side + uy * along) * sp;
       this.arm(p, pax + lx * t, pay + ly * t, vx, vy, 0,
         R * (ASH_SIZE_MIN + this.rnd() * ASH_SIZE_VAR), 0, ASH_LIFE_S + this.rnd() * ASH_LIFE_VAR_S);
+      p.hot = ASH_HOT; p.ember = ASH_EMBER;
     }
     for (let i = 0; i < dial.sparks; i++) {
       const p = this.take(1);
@@ -254,6 +269,35 @@ export class WreckBreakFx {
         R * (0.004 + this.rnd() * 0.006), 0, 0.5 + this.rnd() * 0.7);
       p.c0 = SHARD_HOT; p.c1 = SHARD_COLD;
       p.gfx.rotation = Math.atan2(dy, dx) + Math.PI / 2;
+    }
+  }
+
+  /**
+   * A vaporised hull's ash (fracture v11: a cut kill burned the whole ship
+   * away): a point puff on the ash pool at the hull's centre (game space, Y
+   * up), `radius` = the hull's radius. The ash starts near-white in the
+   * weapon's `tint`, glows in it, greys and is gone in under a second,
+   * spreading to about the hull's size. The tier's ash count
+   * (`WRECK_ASH_DIAL`), none with particles off.
+   */
+  spawnVaporAsh(x: number, y: number, radius: number, tint: number): void {
+    if (this.particlesDisabled) return;
+    const n = WRECK_ASH_DIAL[this.getQuality()].ash;
+    if (n === 0) return;
+    if (!this.built) this.build();
+    if (this.layer.parent === null) this.world.addChild(this.layer);
+    const R = Math.max(8, radius);
+    const px = x, py = -y; // Pixi space
+    const hot = lerpColor(0xffffff, tint, 0.4);
+    for (let i = 0; i < n; i++) {
+      const p = this.take(3);
+      if (p === null) break;
+      // Anywhere over the burned hull, drifting outward.
+      const a = this.rnd() * Math.PI * 2, j = R * 0.6 * Math.sqrt(this.rnd());
+      const sp = R * (VAPOR_SPEED_MIN + this.rnd() * VAPOR_SPEED_VAR);
+      this.arm(p, px + Math.cos(a) * j, py + Math.sin(a) * j, Math.cos(a) * sp, Math.sin(a) * sp, 0,
+        R * (VAPOR_SIZE_MIN + this.rnd() * VAPOR_SIZE_VAR), 0, VAPOR_LIFE_S + this.rnd() * VAPOR_LIFE_VAR_S);
+      p.hot = hot; p.ember = tint;
     }
   }
 
@@ -297,7 +341,7 @@ export class WreckBreakFx {
         g.tint = DUST_TINT;
       } else if (p.kind === 3) {
         // Ash: white-hot to an ember in the first third, then grey; fades out.
-        g.tint = u < 0.3 ? lerpColor(ASH_HOT, ASH_EMBER, u / 0.3) : lerpColor(ASH_EMBER, ASH_COLD, Math.min(1, (u - 0.3) / 0.5));
+        g.tint = u < 0.3 ? lerpColor(p.hot, p.ember, u / 0.3) : lerpColor(p.ember, ASH_COLD, Math.min(1, (u - 0.3) / 0.5));
         g.alpha = u < 0.6 ? 1 : (1 - u) / 0.4;
       } else {
         g.rotation += p.spin * dtSec;

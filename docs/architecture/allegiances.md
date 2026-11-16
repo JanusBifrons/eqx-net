@@ -117,19 +117,34 @@ Allegiance decides **targeting** only. It never decides what a shot hits.
   barrel from its muzzle) and `StructureGridSubsystem.fireMount` (every
   structure turret; refusing returns false so the reload is kept). All three
   call the room (`npcShipLineBlocked` / `droneLineBlocked` /
-  `structureLineBlocked`), which runs `LineOfFireGate`.
+  `structureLineBlocked`), which runs `LineOfFireGate`. An RTS **owned hull**
+  flown by the AI pilot is gated too, per barrel in
+  `PlayerFireResolver.fireHull` (`hullLineBlocked`; never on a pilot's own
+  fire).
+  **Bodies:** the swarm registry plus the players' ships (the gate's `ships`
+  input, `fillLofShips`: every ACTIVE ship in the world and every LINGERING
+  hull, as `LofShipBody` records, hit-tested with the ship's own shape).
   **What counts as friendly** mirrors `isFriendlyFire` (a hit that would be an
   accident): for an NPC ship, ships of a friendly allegiance and NPC structures
   not hostile to its side; for an NPC base turret, its own base's structures,
   its faction's other bases, and NPC ships of sides it isn't hostile to; for a
-  **player's turret**, its owner's own structures and the owner's own active
-  ship (decision 2026-11-10: a base never shoots its owner; allies' ships are
-  not protected). Hostiles, neutrals, rocks and scrap never block: the NPC
-  shoots them. **Wreck pieces** (kind 4) also hold an NPC SHIP's fire (not a
-  structure turret's): every shot would stop on the piece and its knock-back
+  **player's turret**, its owner's own structures and the owner's own ships,
+  active or parked (decision 2026-11-10: a base never shoots its owner; allies'
+  ships are not protected); for an **owned hull**, every player's ship but its
+  target, and its owner's structures. Hostiles, neutrals, rocks and scrap never
+  block: the NPC shoots them. **Wreck pieces** (kind 4) also hold an AI pilot's
+  fire (an NPC ship or an owned hull; not a structure turret's): every shot
+  would stop on the piece and its knock-back
   shove it on ahead of the shooter, a dead hull flying beside a live ship
   (take 11 "ghost ship"; lock `subcapWrecks.test.ts` "holds fire").
   shoots them. **Players are never gated**: a pilot may shoot through allies.
+  **An owned hull's line is longer and moving** (RTS Part B slice 3): a beam or
+  bolt is checked to its full reach (a miss flies on into whoever is behind the
+  target; missiles and naval shells to the target), and a bolt or missile is
+  checked as a moving shot (`blocked(…, shotSpeed, svx, svy)`: each friendly is
+  also tested where it will be, relative to the shot, when the shot is level
+  with it), so a squadmate crossing the line in flight holds it too. NPC
+  callers pass no speed and keep the static check.
   **Cost:** one `ProjectileBroadphase` grid of the swarm registry per tick,
   built lazily on the first check (none in a tick with no NPC fire), rebuilt
   only if membership changes; each check is one grid query over the segment's

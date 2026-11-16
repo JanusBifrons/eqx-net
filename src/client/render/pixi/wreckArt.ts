@@ -57,7 +57,7 @@ import type { ShipArt } from '../art/ArtService.js';
 import { sunFrameBlend, type SunBlend } from '../art/machinedShipLight.js';
 import { buildWreckPieceGfx, wreckPieceColors } from './spriteBuilders.js';
 import { isIconOnly } from './FarZoomIcons.js';
-import { getShipKind, isShipKindId } from '../../../shared-types/shipKinds.js';
+import { getShipKind } from '../../../shared-types/shipKinds.js';
 import { shipShapeScale } from '../../../core/geometry/shipHullOutline.js';
 import type { WreckPieceGeometry } from '../../../core/destruction/wreckPieces.js';
 import { EDGE_CUT } from '../../../core/destruction/fractureHull.js';
@@ -841,44 +841,6 @@ export function wreckBlasts(x: number, y: number, radius: number, seed: number, 
     b.r = R * WRECK_BLAST_SUB;
   }
   return 3;
-}
-
-/**
- * True when a dying ship's own death blast is left to the wreck break-up:
- * the room breaks capitals into wrecks (welcome `capitalWrecks`) and the
- * dying sprite is a capital. #493's hull-sized blast (radius ≈ the hull)
- * otherwise covers the whole hull exactly when it breaks (money-shot
- * review); the break-up's fireballs at the kill point replace it. With the
- * dying kind given, its destruction profile must say so too
- * (`fx.hullDeathBlastReplaced`): a sub-capital's wreck never replaces the
- * ship's normal death explosion (sub-capital break-up, slice 4).
- */
-export function hullDeathBlastReplaced(capitalWrecks: boolean | undefined, dyingIsCapital: boolean, dyingKind?: string | null): boolean {
-  if (capitalWrecks !== true || !dyingIsCapital) return false;
-  return dyingKind == null || destructionProfileOf({ type: 'ship', kindId: dyingKind }).fx.hullDeathBlastReplaced;
-}
-
-/**
- * The ship's normal death explosion, scaled by its destruction profile
- * (`fx.deathBlastScale` radius, `fx.deathBlastLinger` smoke) while the room
- * breaks that profile into wrecks: a sub-capital with welcome `subcapWrecks`
- * (owner 2026-11-13, "Shrink it": ~half size, shorter smoke, so the break-up
- * and the fight stay readable and capitals feel bigger). Everything else,
- * and every death with the flag off, is 1 / 1 (unchanged). Alloc-free.
- */
-export function deathBlastFor(
-  subcapWrecks: boolean | undefined, capitalWrecks: boolean | undefined, kind: string | null | undefined,
-  out: { scale: number; linger: number },
-): { scale: number; linger: number } {
-  out.scale = 1;
-  out.linger = 1;
-  if (typeof kind !== 'string' || !isShipKindId(kind)) return out;
-  const p = destructionProfileOf({ type: 'ship', kindId: kind });
-  const on = p.id === 'subcap' ? subcapWrecks === true : p.id === 'capital' ? capitalWrecks === true : false;
-  if (!on) return out;
-  out.scale = p.fx.deathBlastScale;
-  out.linger = p.fx.deathBlastLinger;
-  return out;
 }
 
 /** A railgun channel through a wreck, game space: from the slug's entry

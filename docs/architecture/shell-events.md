@@ -300,6 +300,22 @@ Now (`net/drawnShellTiming.ts`, `DrawnShellTiming.deferKill` / `release`):
   the hit point (both sinks' `hitscan`); `DrawnShellTiming.onBeamFired`
   releases an unmatched held hit there (`NavalHitHold.releaseHitAt`) and with
   it any death held for it, in that frame.
+- **A held death keeps its `vaporised`** (beam-vaporise-subcap film review):
+  the heavy beam vaporised the pilot's parked missile frigate, but it just
+  vanished in orange 5" smoke, with no violet flash or ash. The
+  battlecruiser's 5" secondaries fire at the same hull as its beam, so the
+  beam's killing hit lay on a live 5" path and was held by position (second
+  leg above); the `destroy` was deferred, but `handleDestroy` had already
+  put the id in the one-frame `mirror.vaporisedShips`. `laser_fired` is a
+  separate message, so a render frame can fall between it and the
+  `destroy`; that frame's `consumeOneFrameTriggers` cleared the set, and
+  the release's explosion read as an ordinary death. Now the deferral
+  record carries it (`DeferredKill.vaporised`, `deferKill(id, vaporised)`)
+  and `release` re-adds the id to `vaporisedShips` in the frame it puts it
+  in `explodingShips`; `handleDestroy` marks it at once only when the death
+  is not held. Lock: `ColyseusClient.vaporiseDeferredKill.test.ts` (failed
+  first: the four held cases, parked hull and AI ship, beam released after
+  a frame and kill released by its drawn shell, saw `vaporised` false).
 - Locks: `ColyseusClient.shellKillTiming.test.ts` (failed first: the hull was
   gone and the explosion queued on the destroy), `swarmSpriteUpdater.wreck.test.ts`
   "wreck pieces wait for a held death", `ColyseusClient.passThroughKill.test.ts`

@@ -244,6 +244,72 @@ describe('SectorPersistence — lingering hulls survive a server restart (v5)', 
     const payload = JSON.parse(readStored()!.snapshot) as SectorSnapshotPayload;
     expect(payload.lingeringHulls).toBeUndefined();
   });
+
+  // RTS slice 9 — the wingman's standing job + squads ride along (optional,
+  // additive: no schema bump).
+  it('persists the wingman fields + squads[] and hydrates squads AFTER the hulls', () => {
+    const hull = makeLingeringHull({
+      mode: 'patrol',
+      modeData: { route: [[0, 0], [500, 0]] },
+      stance: 'aggressive',
+      squadId: 'sq-3',
+    });
+    const squad = {
+      id: 'sq-3', ownerId: 'player-bob', leaderId: 'ship-abc',
+      memberIds: ['ship-abc', 'ship-def'], shape: 'line' as const, mode: 'hunt' as const,
+    };
+    const calls: string[] = [];
+    const restoreHulls = vi.fn(() => { calls.push('hulls'); });
+    const restoreSquads = vi.fn(() => { calls.push('squads'); });
+    const { deps, readStored } = makeDeps([], () => undefined, [], () => undefined, [hull], restoreHulls);
+    const persistence = new SectorPersistence({ ...deps, fleetSquads: () => [squad], restoreFleetSquads: restoreSquads });
+    persistence.persist();
+
+    const payload = JSON.parse(readStored()!.snapshot) as SectorSnapshotPayload;
+    expect(payload.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
+    expect(payload.lingeringHulls![0]).toMatchObject({
+      mode: 'patrol', modeData: { route: [[0, 0], [500, 0]] }, stance: 'aggressive', squadId: 'sq-3',
+    });
+    expect(payload.squads).toEqual([squad]);
+
+    persistence.hydrate();
+    expect(calls).toEqual(['hulls', 'squads']);
+    expect((restoreHulls.mock.calls[0] as unknown[])[0]).toEqual([expect.objectContaining({ mode: 'patrol', stance: 'aggressive' })]);
+    expect((restoreSquads.mock.calls[0] as unknown[])[0]).toEqual([squad]);
+  });
+
+  it('an OLD v7 snapshot without the wingman fields still hydrates its hulls (default brains, no squads)', () => {
+    const hull = makeLingeringHull();
+    const restoreHulls = vi.fn();
+    const restoreSquads = vi.fn();
+    const { deps } = makeDeps([], () => undefined, [], () => undefined, [], restoreHulls);
+    // A row as written before slice 9: same version, no squads[], no hull fields.
+    const old: SectorSnapshotPayload = {
+      schemaVersion: CURRENT_SCHEMA_VERSION,
+      structureCatalogueVersion: STRUCTURE_KIND_CATALOGUE_VERSION,
+      sectorKey: 'galaxy-sol',
+      savedAtMs: Date.now(),
+      swarm: [],
+      lingeringHulls: [hull],
+    };
+    const persistence = new SectorPersistence({
+      ...deps,
+      loadRow: () => ({ snapshot: JSON.stringify(old), created_at: Date.now() }),
+      restoreFleetSquads: restoreSquads,
+    });
+    persistence.hydrate();
+    expect(restoreHulls).toHaveBeenCalledTimes(1);
+    const row = (restoreHulls.mock.calls[0] as unknown[])[0] as SectorSnapshotLingeringHull[];
+    expect(row[0]!.mode).toBeUndefined();
+    expect(restoreSquads).not.toHaveBeenCalled();
+  });
+
+  it('omits squads[] when the fleet has none', () => {
+    const { deps, readStored } = makeDeps([], () => undefined, [], () => undefined, [makeLingeringHull()]);
+    new SectorPersistence({ ...deps, fleetSquads: () => [] }).persist();
+    const payload = JSON.parse(readStored()!.snapshot) as SectorSnapshotPayload;
+    expect(payload.squads).toBeUndefined();
+  });
 });
 
 describe('SectorPersistence — structure-catalogue version gate (campaign 6.2)', () => {
