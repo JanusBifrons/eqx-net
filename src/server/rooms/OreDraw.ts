@@ -43,9 +43,9 @@ export interface OreDrawDeps {
   /** Fill `out` with `shooterId`'s hold; false = it has none here (the rock keeps its ore). */
   holderOf(shooterId: string, out: OreHolder): boolean;
   sectorKey(): string | null;
-  /** The field ore at hit point (x, y) on `rock`, into `out`; false when
-   *  `rock` is not a cut-field rock (or the room has no field). */
-  oreAtHit?(rock: SwarmEntityRecord, x: number, y: number, out: { ice: number; crystal: number }): boolean;
+  /** The field ore at world point (x, y) on `rock` (undefined ⇒ the rock's
+   *  centre), into `out`; false when `rock` is not a cut-field rock. */
+  oreAtHit?(rock: SwarmEntityRecord, x: number | undefined, y: number | undefined, out: { ice: number; crystal: number }): boolean;
 }
 
 /** Ore a shooter is owed from one rock since the last pulse. `ice` and
@@ -76,6 +76,16 @@ export class OreDraw {
     return drawn;
   }
 
+  /** A rock's yield row when no hit point says otherwise (robot harvesters,
+   *  the grid Miner): a cut-field rock's ore at its centre, else its
+   *  `asteroidResource`. A field row is reused scratch: read it at once. */
+  rowOf(rock: SwarmEntityRecord): YieldRow {
+    const c = this.conc;
+    return this.d.oreAtHit?.(rock, undefined, undefined, c) === true
+      ? oreRow(c, this.rowScratch)
+      : ASTEROID_YIELD[rock.asteroidResource ?? 'rock'];
+  }
+
   /** Mine up to `maxUnits` from rock `entityId` into `holderUid`'s hold, split by
    *  the rock's yield (`yieldInto`, the one split). The draw is sized to the hold's free
    *  weight first, so no ore is burned into a full hold. One hold commit; a
@@ -89,7 +99,7 @@ export class OreDraw {
     const cur = store.get(holderUid);
     const hold = cur ? cloneHold(cur.hold) : emptyHold();
     const before = holdWeight(hold);
-    const y = row ?? ASTEROID_YIELD[rock.asteroidResource ?? 'rock'];
+    const y = row ?? this.rowOf(rock);
     const want = Math.min(maxUnits, Math.floor((capacity - before) / asteroidYieldWeightPerUnit(y)));
     if (want <= 0) return 0;
     const drawn = this.draw(entityId, want);
@@ -126,7 +136,7 @@ export class OreDraw {
     if (o === undefined) { o = { units: 0, ice: 0, crystal: 0, field: false }; byRock.set(rock.entityId, o); }
     o.units += units;
     const c = this.conc;
-    if (this.d.oreAtHit?.(rock, hitX ?? rock.restX ?? 0, hitY ?? rock.restY ?? 0, c) === true) {
+    if (this.d.oreAtHit?.(rock, hitX, hitY, c) === true) {
       o.field = true; o.ice += c.ice * units; o.crystal += c.crystal * units;
     }
   }
@@ -150,7 +160,9 @@ export class OreDraw {
         // Rock splitting hooks in here once macro terrain (#645) lands: a rock
         // the beam has worn down breaks up through the wreck split code
         // (plan partitioned-chasing-lark, "Asteroids"). Not yet: rocks only
-        // lose ore.
+        // lose ore. A split-off piece of a field rock carries its ore: it
+        // keeps the parent's rest frame, and its own row is the field ore at
+        // its centroid (`oreAtHit` at that point, as for a hit).
       }
     }
   }

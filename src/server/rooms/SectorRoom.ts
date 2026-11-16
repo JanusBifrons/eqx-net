@@ -2988,7 +2988,7 @@ export class SectorRoom extends Room<SectorState> {
       chargeCapacitors: (members, spare) => this.teleporters.chargeCapacitors(members, spare),
       drawAsteroidResources: (entityId, amount) => this.oreDraw.draw(entityId, amount),
       // P2c — asteroid kinds, extractor goods into network storage, nebulae.
-      asteroidYieldOf: (entityId) => ASTEROID_YIELD[this.swarmRegistry.getByEntityId(entityId)?.asteroidResource ?? 'rock'],
+      asteroidYieldOf: (entityId) => { const r = this.swarmRegistry.getByEntityId(entityId); return r ? this.oreDraw.rowOf(r) : ASTEROID_YIELD.rock; },
       depositGoods: (rec, good, n) => this.production.deposit(rec, good, n),
       canDepositGoods: (rec, goods) => this.production.canDeposit(rec, goods),
       sectorHasNebula: () => this.sectorFeatures.includes('nebula'),

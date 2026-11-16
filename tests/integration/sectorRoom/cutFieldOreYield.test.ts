@@ -77,5 +77,17 @@ describe('SectorRoom integration — cut-field ore by hit point (F1b)', () => {
     }
     const got = goods();
     expect((got.ice ?? 0) + (got.crystal ?? 0), 'the rich spot paid ore').toBeGreaterThan(0);
+
+    // No hit point (a robot harvester, the grid Miner): the ore at the rock's centre.
+    let core = rocks[0]!, coreOre = -1;
+    for (const r of rocks) { const c = conc(r.restX!, r.restY!); if (c.ice + c.crystal > coreOre) { core = r; coreOre = c.ice + c.crystal; } }
+    expect(coreOre, 'a rock centred on ore').toBeGreaterThan(0.2);
+    const pool0 = core.resources!;
+    room.mineAsteroid('harvester-test', core.entityId, 30, 1e6);
+    const drawn = pool0 - core.resources!;
+    expect(drawn).toBe(30);
+    const want = yieldInto(oreRow(conc(core.restX!, core.restY!), {}), drawn, {});
+    const hold = getHoldStore().get('harvester-test')?.hold.goods ?? {};
+    for (const g of ['minerals', 'ice', 'crystal'] as const) expect(hold[g] ?? 0, `harvester ${g}`).toBe(want[g] ?? 0);
   });
 });

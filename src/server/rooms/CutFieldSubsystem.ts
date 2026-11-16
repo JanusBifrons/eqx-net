@@ -107,11 +107,13 @@ export class CutFieldSubsystem {
   /** The field's ore where a shot hit field rock `rec` at world (x, y), into
    *  `out` (F1b: what you cut off decides what you get). The ore is laid out
    *  over the field as cut, so a rock that has moved (awake) maps the point
-   *  back into its rest frame first. False for anything else. No allocation. */
-  oreAtHit(rec: SwarmEntityRecord, x: number, y: number, out: OreConc): boolean {
+   *  back into its rest frame first. No point (x undefined) ⇒ the rock's
+   *  centre. False for anything else. No allocation. */
+  oreAtHit(rec: SwarmEntityRecord, x: number | undefined, y: number | undefined, out: OreConc): boolean {
     if (rec.fieldRock !== true || rec.restX === undefined || rec.restY === undefined) return false;
     const p = this.restPt;
-    if (rec.fieldAwake === true) {
+    if (x === undefined || y === undefined) { p.x = rec.restX; p.y = rec.restY; }
+    else if (rec.fieldAwake === true) {
       const sab = this.hooks.sab(), b = slotBase(rec.slot);
       toRestFrame(rec.restX, rec.restY, sab[b + SLOT_X_OFF]!, sab[b + SLOT_Y_OFF]!, sab[b + SLOT_ANGLE_OFF]!, x, y, p);
     } else { p.x = x; p.y = y; }
