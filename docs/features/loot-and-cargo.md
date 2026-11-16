@@ -351,6 +351,7 @@ Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each r
   - **Who trades with whom:** the ConvoyDirector pairs it with NPC bases only.
   - **When money moves:** it prices and clamps the order at planning. The wallet op lands in the SAME group as the goods: a credit at pickup via `extraOpsFor(taken)`, a debit at delivery with the release.
 - Lock: `tests/integration/sectorRoom/cargoAccess.test.ts`. Story: [docs/features/loot-and-cargo.md](../features/loot-and-cargo.md) Part 3.
+- **Wreck pieces into the hold (`LootSubsystem` piece store):** on each collect pass a wreck or rock piece goes WHOLE into a collector's hold when its own tractor holds it in the hold zone, or when it is consumable for that ship (`salvageConsumable`: radius ≤ 0.15 × hull radius for a kind with a mining tool, fits the free hold) and its edge is within `LOOT_PICKUP_RADIUS` of the hull's edge (`CapitalWreckSubsystem.forEachPieceNear`; pieces in a crack hold wait). One `HoldStore` commit (salvage for a ship's piece, `OreDraw.cutYield` ore for a rock's), then `CapitalWreckSubsystem.storePiece`; all or nothing, no pod. Lock: `LootSubsystem.test.ts`, `tests/integration/sectorRoom/factoryLine.test.ts`. Story: [mining-and-salvage](mining-and-salvage.md#the-factory-line-small-pieces-go-straight-into-the-hold).
 
 ### From the server Thresholds section
 
