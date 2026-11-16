@@ -22,8 +22,6 @@ cargo and live amongst the scrap. But this is scope creep I think."
   - **A cargo-container visual** that reads as cargo among the debris (crate
     or container art in the wreck's palette, sized to the hull it came out
     of), not a diamond pod.
-  - **Its pickup:** fly-over collection as today, or something that suits a
-    container (a tractor or a short dwell), and what the HUD says.
   - **Whether it lives as a wreck-like body:** a wreck piece (swarm kind 4,
     collides, drifts with the debris, rebuilt client-side from the wreck
     descriptor) or stays a pod (kind 3, its own hold row, persisted, TTL). A

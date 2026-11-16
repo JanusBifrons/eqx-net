@@ -54,8 +54,12 @@ describe('turrets track while reloading', () => {
     for (tick = 0; tick < 3000 && !xl.some((i) => firedAt.has(i)); tick++) t.tickDrone();
     const fired = xl.filter((i) => firedAt.has(i));
     expect(fired.length, 'no 16" turret fired').toBeGreaterThan(0);
-    // Through the reload, every fired turret stays on the bearing.
+    // Through the reload, every fired turret keeps closing on the bearing and
+    // then stays on it. It fired the moment its barrel ray touched the
+    // battleship's hull (~50° off its centre at 3,000 u), so it may still be
+    // turning onto the centre when the reload starts, but never turns away.
     const end = tick + cd - 1;
+    const lastOff = new Map<number, number>();
     for (; tick < end; tick++) {
       t.tickDrone();
       const angles = t.droneMountAngles.get('bs')!;
@@ -63,9 +67,12 @@ describe('turrets track while reloading', () => {
         const m = kind.mounts[i]!;
         const bearing = Math.atan2(-(pose.x - m.localX), pose.y - m.localY);
         const off = Math.abs(wrapPi(m.baseAngle + angles[i]! - bearing)) * DEG;
-        expect(off, `${m.id} left its target ${tick - firedAt.get(i)!} ticks into the reload`).toBeLessThan(2);
+        const prev = lastOff.get(i) ?? off;
+        expect(off, `${m.id} turned away from its target ${tick - firedAt.get(i)!} ticks into the reload`).toBeLessThan(Math.max(2, prev + 0.01));
+        lastOff.set(i, off);
       }
     }
+    for (const [i, off] of lastOff) expect(off, `${kind.mounts[i]!.id} ended the reload off its target`).toBeLessThan(2);
   });
 
   it('a player turret stays on its group lock target (aim never reads a reload)', () => {
