@@ -114,8 +114,8 @@ describe('dbWorker (real worker, temp file DB)', () => {
       ops: [
         { type: 'USER_REGISTER', userId: 'victim', email: 'v@t', passwordHash: null, displayName: null, ts: seedNow },
         // Macro terrain C4 — the worker's terrain_records upsert (twice: one row).
-        { type: 'TERRAIN_RECORD_PUT', sectorKey: 'sector', rockKey: 42, layoutVersion: 1, pool: 50, consumed: false, ts: seedNow },
-        { type: 'TERRAIN_RECORD_PUT', sectorKey: 'sector', rockKey: 42, layoutVersion: 1, pool: null, consumed: true, ts: seedNow },
+        { type: 'TERRAIN_RECORD_PUT', sectorKey: 'sector', rockKey: 42, layoutVersion: 1, pool: 50, consumed: false, pose: { x: 1, y: 2, angle: 0.5 }, ts: seedNow },
+        { type: 'TERRAIN_RECORD_PUT', sectorKey: 'sector', rockKey: 42, layoutVersion: 1, pool: null, consumed: true, pose: null, ts: seedNow },
       ],
     });
 
@@ -150,7 +150,8 @@ describe('dbWorker (real worker, temp file DB)', () => {
     expect(row.n).toBe(100);
     const userCount = ro.prepare('SELECT count(*) AS n FROM users').get() as { n: number };
     expect(userCount.n).toBe(2);
-    expect(ro.prepare('SELECT rock_key, pool, consumed FROM terrain_records').all()).toEqual([{ rock_key: 42, pool: null, consumed: 1 }]);
+    // The second (absolute) put cleared the first one's pose (C2 deep sleep).
+    expect(ro.prepare('SELECT rock_key, pool, consumed, pose_x FROM terrain_records').all()).toEqual([{ rock_key: 42, pool: null, consumed: 1, pose_x: null }]);
     ro.close();
   });
 

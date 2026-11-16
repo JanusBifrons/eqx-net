@@ -67,6 +67,6 @@ describe('SectorRoom integration — consumed cut-field rocks (C3)', () => {
     expect(rock?.fieldKey, 'a field rock streamed in').toBeTypeOf('number');
     int.cutFieldSub!.markConsumed(rock!.fieldKey!);
     const puts = harness.sink.ops.filter((o) => o.type === 'TERRAIN_RECORD_PUT');
-    expect(puts).toEqual([{ type: 'TERRAIN_RECORD_PUT', sectorKey: 'sol-prime|look', rockKey: rock!.fieldKey, layoutVersion: FIELD_LAYOUT_VERSION, pool: null, consumed: true, ts: expect.any(Number) }]);
+    expect(puts).toEqual([{ type: 'TERRAIN_RECORD_PUT', sectorKey: 'sol-prime|look', rockKey: rock!.fieldKey, layoutVersion: FIELD_LAYOUT_VERSION, pool: null, consumed: true, pose: null, ts: expect.any(Number) }]);
   });
 });

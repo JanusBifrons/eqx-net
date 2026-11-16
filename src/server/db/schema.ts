@@ -209,7 +209,9 @@ CREATE INDEX IF NOT EXISTS idx_holds_sector ON holds(sector_key, holder_type);
 -- record of CutFieldSubsystem, saved). A rock nobody touched has no row. Rows
 -- cut under another layout_version (FIELD_LAYOUT_VERSION) are ignored on load.
 -- pool: ore left in a mined rock (NULL: none recorded); consumed: 1 once the
--- rock is broken up (never cut whole again). Absolute upserts, never deltas.
+-- rock is broken up (never cut whole again); pose_x/pose_y/pose_angle: where a
+-- moved rock was left when its chunk unloaded (C2 deep sleep; NULL: its cut
+-- pose). Absolute upserts, never deltas.
 CREATE TABLE IF NOT EXISTS terrain_records (
   sector_key     TEXT NOT NULL,
   rock_key       INTEGER NOT NULL,
@@ -217,6 +219,9 @@ CREATE TABLE IF NOT EXISTS terrain_records (
   pool           REAL,
   consumed       INTEGER NOT NULL,
   updated_at     INTEGER NOT NULL,
+  pose_x         REAL,
+  pose_y         REAL,
+  pose_angle     REAL,
   PRIMARY KEY (sector_key, rock_key)
 );
 `;
@@ -243,4 +248,8 @@ export const PLAYER_SHIPS_MIGRATIONS: readonly string[] = [
   "ALTER TABLE player_ships ADD COLUMN mounts TEXT NOT NULL DEFAULT '[]'",
   // Economy v2 — an unpacked hull's quality (a small max-hull bonus).
   "ALTER TABLE player_ships ADD COLUMN hull_quality INTEGER NOT NULL DEFAULT 0",
+  // Macro terrain C2 (deep sleep) — a moved field rock's saved pose.
+  "ALTER TABLE terrain_records ADD COLUMN pose_x REAL",
+  "ALTER TABLE terrain_records ADD COLUMN pose_y REAL",
+  "ALTER TABLE terrain_records ADD COLUMN pose_angle REAL",
 ];
