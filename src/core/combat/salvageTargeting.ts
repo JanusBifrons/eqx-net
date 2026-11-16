@@ -9,7 +9,7 @@
  * rocks, rock pieces; class `SALVAGE_TARGET_CLASS`) instead of hostiles:
  *  1. **Haulable by me ⇒ not a target.** A laser stops cutting a piece once
  *     THIS ship could tractor it in and store it: its mass is at most
- *     `salvageHaulMass` (the ship's tractor mounts, at
+ *     `salvageHaulMass` (the ship's strongest tractor mount, at
  *     `SALVAGE_HAUL_DIST_PER_DREF` × dRef, give it at least
  *     `SALVAGE_HAUL_MIN_ACCEL`: the tractor's own fixed force and falloff,
  *     `tractorPull`, accel = F / m) AND its hold weight fits the free hold.
@@ -78,10 +78,10 @@ export function salvagePrefersBig(size: WeaponMount['size']): boolean {
 
 const haulCache = new WeakMap<ReadonlyArray<WeaponMount>, number>();
 
-/** The heaviest piece this ship's tractor mounts can haul: Σ over tractor
- *  mounts of `tractorPull(force × size power, dRef, reach, haul distance)`,
- *  over `SALVAGE_HAUL_MIN_ACCEL` (all tractors on one piece: each locks its
- *  own target, so this is the most the ship can bring to bear). 0 with no
+/** The heaviest piece this ship can haul: its STRONGEST SINGLE tractor
+ *  mount's `tractorPull(force × size power, dRef, reach, haul distance)`
+ *  over `SALVAGE_HAUL_MIN_ACCEL`. One tractor per piece, like one laser per
+ *  piece (each tractor locks its own target), so pulls never sum. 0 with no
  *  tractor. Cached per mount list. */
 export function salvageHaulMass(mounts: ReadonlyArray<WeaponMount>): number {
   const hit = haulCache.get(mounts);
@@ -91,7 +91,8 @@ export function salvageHaulMass(mounts: ReadonlyArray<WeaponMount>): number {
     const t = getWeapon(m.weaponId).tractor;
     if (t === undefined) continue;
     const power = MOUNT_SIZE_TUNING[m.size ?? 'S'].power;
-    force += tractorPull(t.force * power, t.dRef, mountWeaponReach(m), SALVAGE_HAUL_DIST_PER_DREF * t.dRef);
+    const pull = tractorPull(t.force * power, t.dRef, mountWeaponReach(m), SALVAGE_HAUL_DIST_PER_DREF * t.dRef);
+    if (pull > force) force = pull;
   }
   const mass = force / SALVAGE_HAUL_MIN_ACCEL;
   haulCache.set(mounts, mass);

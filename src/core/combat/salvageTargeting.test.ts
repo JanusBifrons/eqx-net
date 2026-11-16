@@ -37,14 +37,16 @@ describe('salvage targeting (salvage PR 16)', () => {
     }
   });
 
-  it('haul mass: the tractor record force × size power, at the haul distance falloff, over the min accel', () => {
+  it('haul mass: the strongest tractor record force × size power, at the haul distance falloff, over the min accel', () => {
     const t = TRACTOR_DEF.tractor!;
     const falloff = 1 / (SALVAGE_HAUL_DIST_PER_DREF * SALVAGE_HAUL_DIST_PER_DREF);
     expect(salvageHaulMass([mount('a', 'mining_laser', 'XL')])).toBe(0);
     expect(salvageHaulMass([mount('t', 'tractor', 'S')])).toBeCloseTo((t.force * falloff) / SALVAGE_HAUL_MIN_ACCEL);
-    const two = [mount('t1', 'tractor', 'XL'), mount('t2', 'tractor', 'AA')];
-    const want = (t.force * (MOUNT_SIZE_TUNING.XL.power + MOUNT_SIZE_TUNING.AA.power) * falloff) / SALVAGE_HAUL_MIN_ACCEL;
-    expect(salvageHaulMass(two)).toBeCloseTo(want);
+    // One tractor per piece: the strongest single mount, never the sum.
+    const mixed = [mount('t1', 'tractor', 'AA'), mount('t2', 'tractor', 'XL'), mount('t3', 'tractor', 'S')];
+    const want = (t.force * MOUNT_SIZE_TUNING.XL.power * falloff) / SALVAGE_HAUL_MIN_ACCEL;
+    expect(salvageHaulMass(mixed)).toBeCloseTo(want);
+    expect(salvageHaulMass([mount('a', 'tractor', 'XL'), mount('b', 'tractor', 'XL')])).toBeCloseTo(want);
   });
 
   it('a piece this ship can tractor AND store is no laser target', () => {
