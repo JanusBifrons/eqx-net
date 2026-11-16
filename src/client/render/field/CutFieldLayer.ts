@@ -9,9 +9,11 @@
  */
 import { Container, Mesh, MeshGeometry, Shader } from 'pixi.js';
 import type { RenderMirror } from '@core/contracts/IRenderer';
-import { unpackRockKey } from '../../../core/terrain/fieldLayout';
+import { CHUNK_SIZE, unpackRockKey } from '../../../core/terrain/fieldLayout';
 import { packedRockBody, type PackedChunk } from '../../../core/terrain/packedChunk';
 import type { FieldRockBody } from '../../../core/terrain/chunkStreamer';
+import type { ObstacleBox } from '../../../core/structures/Grid';
+import type { RestingFieldRock } from '../../structures/mirrorToGridNode';
 import { fieldRockShaderResources, fieldRockProgram, setFieldOreStyle, setFieldRockView, type FieldOreStyle } from './fieldRockShader';
 
 /** Chunk coords as one number (each fits ±32k). */
@@ -109,6 +111,20 @@ interface LoadedChunk {
   ore: Float32Array | null;
   /** The packed chunk (bodies, convex parts), when the sink sent it. */
   bodies: PackedChunk | null;
+  /** [index, x, y, angle] per moved rock (C2 deep sleep), or null. */
+  moved: Float64Array | null;
+  cx: number;
+  cy: number;
+}
+
+/** Was the rock at `s` in packed outlines flattened out of the draw
+ *  (`collapsePackedRock`: a consumed rock)? Every vertex on one point. */
+function collapsedAt(o: Float32Array, s: number): boolean {
+  const n = o[s]!;
+  if (n < 2) return false;
+  const x = o[s + 1]!, y = o[s + 2]!;
+  for (let k = 1; k < n; k++) if (o[s + 1 + k * 2] !== x || o[s + 2 + k * 2] !== y) return false;
+  return true;
 }
 
 export class CutFieldLayer {
@@ -119,6 +135,7 @@ export class CutFieldLayer {
    *  their swarm sprite, collapsed out of their chunk mesh. */
   private readonly woken = new Map<number, number>();
   private frame = 0;
+  private _version = 0;
 
   constructor() {
     this.container.eventMode = 'none';
@@ -126,6 +143,8 @@ export class CutFieldLayer {
   }
 
   get chunkCount(): number { return this.chunks.size; }
+  /** Bumped whenever a chunk is set or dropped (a cache key for its rocks). */
+  get version(): number { return this._version; }
 
   /** The ore look (`?ore=`, F1c trial): shared by every field rock. */
   setOreStyle(style: FieldOreStyle): void { setFieldOreStyle(style); }
@@ -168,6 +187,43 @@ export class CutFieldLayer {
     const c = this.chunks.get(chunkKey(k.cx, k.cy))?.bodies;
     if (!c || k.index >= c.keys.length || c.keys[k.index] !== key) return null;
     return packedRockBody(c, k.index);
+  }
+
+  /**
+   * The link preview's dormant rocks (C5h, the client twin of the server's
+   * `dormantObstacles`): every rock of a loaded chunk whose bounding circle
+   * reaches into `box`, at rest where it was cut or at its moved pose (C2); a
+   * consumed rock (flattened out of the draw) is skipped. Awake rocks are
+   * included: the caller drops those it has from the swarm wire. Fills the
+   * caller's pooled `out` in place and returns the count (allocates nothing
+   * once `out` is warm). A rock belongs to the chunk it was cut in, so chunks
+   * one past the box are scanned too, for big rocks reaching in.
+   */
+  restingRocksInBox(box: ObstacleBox, out: RestingFieldRock[]): number {
+    let n = 0;
+    for (const c of this.chunks.values()) {
+      const b = c.bodies;
+      if (!b) continue;
+      const x0 = (c.cx - 1) * CHUNK_SIZE, y0 = (c.cy - 1) * CHUNK_SIZE;
+      if (box.x1 < x0 || box.y1 < y0 || box.x0 > x0 + 3 * CHUNK_SIZE || box.y0 > y0 + 3 * CHUNK_SIZE) continue;
+      const rocks = Math.min(b.keys.length, c.starts.length);
+      const m = c.moved;
+      for (let r = 0; r < rocks; r++) {
+        let x = b.bodies[r * 3]!, y = b.bodies[r * 3 + 1]!, angle = 0;
+        const rad = b.bodies[r * 3 + 2]!;
+        if (m) for (let j = 0; j + 3 < m.length; j += 4) {
+          if (m[j] === r) { x = m[j + 1]!; y = m[j + 2]!; angle = m[j + 3]!; break; }
+        }
+        const dx = Math.max(box.x0 - x, 0, x - box.x1), dy = Math.max(box.y0 - y, 0, y - box.y1);
+        if (dx * dx + dy * dy >= rad * rad) continue;
+        if (collapsedAt(c.outlines, c.starts[r]!)) continue;
+        let e = out[n];
+        if (e === undefined) { e = { key: 0, x: 0, y: 0, angle: 0, radius: 0 }; out[n] = e; }
+        e.key = b.keys[r]!; e.x = x; e.y = y; e.angle = angle; e.radius = rad;
+        n++;
+      }
+    }
+    return n;
   }
 
   /** A woken rock's own sprite: its fan in local space (centre at 0,0, Pixi
@@ -218,6 +274,7 @@ export class CutFieldLayer {
     bodies: PackedChunk | null = null, moved: Float64Array | null = null,
   ): void {
     const key = chunkKey(cx, cy);
+    this._version++;
     this.chunks.get(key)?.mesh.destroy();
     this.chunks.delete(key);
     if (outlines === null || outlines.length === 0) return;
@@ -233,7 +290,7 @@ export class CutFieldLayer {
       if (r < rocks) placeMovedRock(data, firstVert[r]!, outlines[starts[r]!]!, bodies, r, moved[j + 1]!, moved[j + 2]!, moved[j + 3]!);
     }
     const mesh = this.meshOf(data);
-    this.chunks.set(key, { mesh, data, starts, firstVert, outlines, ore, bodies });
+    this.chunks.set(key, { mesh, data, starts, firstVert, outlines, ore, bodies, moved, cx, cy });
     this.container.addChild(mesh);
     // A rock woken before this chunk (re)arrived stays out of it.
     for (const wk of this.woken.keys()) {
@@ -246,5 +303,6 @@ export class CutFieldLayer {
     for (const c of this.chunks.values()) c.mesh.destroy();
     this.chunks.clear();
     this.woken.clear();
+    this._version++;
   }
 }

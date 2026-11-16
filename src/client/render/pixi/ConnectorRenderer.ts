@@ -38,6 +38,7 @@ import {
   edgeDistance,
   type GridNode,
   type GridObstacle,
+  type ObstacleBox,
 } from '../../../core/structures/Grid.js';
 import {
   PLACEMENT_MAX_CONNECTIONS,
@@ -50,6 +51,7 @@ import {
   structureMirrorToGridNode,
   ghostToGridNode,
   asteroidObstaclesFromSwarm,
+  linkReachBoxOf,
   RockObstacleShapes,
 } from '../../structures/mirrorToGridNode.js';
 
@@ -234,6 +236,7 @@ export class ConnectorRenderer {
   /** Each rock's convex parts for the preview's line of sight (C5c, the
    *  server's shape); its `fieldRocks` is the cut-field layer (PixiRenderer). */
   readonly rockShapes = new RockObstacleShapes();
+  private readonly _previewBox: ObstacleBox = { x0: 0, y0: 0, x1: 0, y1: 0 };
   /** Reused ghost node (node `a` passed to `canConnect`). */
   private readonly _ghostNode: GridNode = blankGridNode();
   /** Reused node map for the LOS check (`canConnect` clips the segment against
@@ -692,10 +695,9 @@ export class ConnectorRenderer {
     const ghostY = this.ghostWorldY ?? preview.y;
     const ghost = ghostToGridNode({ kind: preview.kind, x: ghostX, y: ghostY }, this._ghostNode);
 
-    // Build the obstacle list (asteroids) + the node map + adjacency for the
+    // Build the node map + adjacency + obstacle list (asteroids) for the
     // SAME canConnect the server uses, all into reused scratch.
-    const obstacles = asteroidObstaclesFromSwarm(swarm, this._previewObstacles, this.rockShapes);
-
+    let partnerExt = 0; // C5h: the widest partner, for the links' box
     const nodes = this._previewNodes;
     nodes.clear();
     const adjacency = this._previewAdjacency;
@@ -721,6 +723,7 @@ export class ConnectorRenderer {
         const sid = String(id);
         structureMirrorToGridNode(sid, st, entry, node);
         nodes.set(sid, node);
+        partnerExt = Math.max(partnerExt, node.halfW ?? node.radius, node.halfH ?? node.radius);
         // REAL adjacency: one pooled connection-like entry per `st.connTo` link,
         // carrying `aId`/`bId` so `shieldPylonRejection`'s `c.getOtherNode(...)`
         // resolves (a sparse length-only array threw on the `undefined` element —
@@ -747,6 +750,9 @@ export class ConnectorRenderer {
         poolIdx++;
       }
     }
+
+    // C5h: + the field rocks sleeping in loaded chunks over the links' box (the server's dormant rocks).
+    const obstacles = asteroidObstaclesFromSwarm(swarm, this._previewObstacles, this.rockShapes, linkReachBoxOf(ghost, partnerExt, this._previewBox));
 
     const ax = ghostX;
     const ay = -ghostY; // Pixi screen space is Y-down; world is Y-up.
