@@ -40,13 +40,16 @@ export const SHOWCASE_BARGE_THRUST_OPTS = {
 
 /**
  * The mining barge working a rock field (showcase shot `barge-mining`): the
- * pilot flies the barge (kind `barge`, parked at the origin, nose along +y),
- * with eight placed rocks of mixed sizes in a loose ring round it, all inside
- * its side mining lasers' and tractors' reach. Every rock (radius 160–480) is
+ * pilot flies the barge (kind `barge`, nose along +y), with eight placed
+ * rocks of mixed sizes in a loose ring round the origin. Every rock (radius 160–480) is
  * far too heavy for any tractor (size tier none), so the lasers must cut it
  * down the size ladder first. No other ship: nothing else fires. The barge's
  * closest zoom still fits its whole hull (~0.13 px/u at 1080p), so the rocks
- * are big enough to read there; the nearest is just off the starboard side.
+ * are big enough to read there.
+ * The barge starts bow-on to mine-rock-a (`SHOWCASE_BARGE_MINING_SPAWN`):
+ * a whole rock is size tier none, so only the bow XL lasers cut it, and from
+ * the origin the rock sits abaft their arc. Same pose as the integration take
+ * (`bargeMiningTake.test.ts`).
  * Roster-backed (a real sectorKey, NOT in the galaxy graph): the barge has a
  * hold, so the pieces it consumes go in and the ore shows in it. With no
  * roster it has no hold, takes nothing in, and its lasers cut to the floor.
@@ -61,14 +64,17 @@ export const SHOWCASE_BARGE_MINING_ROCKS = [
   { id: 'mine-rock-g', x: -1250, y: 2300, vx: 0, vy: 0, radius: 180 },
   { id: 'mine-rock-h', x: 2700, y: 2600, vx: 0, vy: 0, radius: 250 },
 ];
+/** Barge spawn astern of mine-rock-a, nose (+y) on it: the rock inside the
+ *  bow XL lasers' arc, ~600 u ahead of the bow, the hull clear of mine-rock-b. */
+export const SHOWCASE_BARGE_MINING_SPAWN = { x: 200, y: -4200 };
 export const SHOWCASE_BARGE_MINING_OPTS = {
   sectorKey: 'showcase-barge-mining',
   testMode: true,
   droneCount: 0,
   peacefulDrones: true,
   asteroidConfig: SHOWCASE_BARGE_MINING_ROCKS,
-  defaultSpawnX: 0,
-  defaultSpawnY: 0,
+  defaultSpawnX: SHOWCASE_BARGE_MINING_SPAWN.x,
+  defaultSpawnY: SHOWCASE_BARGE_MINING_SPAWN.y,
   maxClients: 4,
   /** Join `?shipKind=barge` to fly the barge. */
   pilotCapitals: true,
