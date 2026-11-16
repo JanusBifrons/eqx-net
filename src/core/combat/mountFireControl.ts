@@ -82,7 +82,7 @@ export function onTarget(want: number, current: number, dist: number): boolean {
  * Does a thin ray from (fromX, fromY) along the barrel's world bearing
  * `worldAngle` (mount convention: 0 = +y) hit target `t` placed at its aim
  * point (aimX, aimY) (its lead point for a shell gun)? A ship is tested on its
- * weapon hit shape (`shipRayHit`: bubble or hull, by kind and shield); any
+ * hull polygon (`shipRayHit` with the shield down, whatever its shield); any
  * other target on its `radius` circle. A target with no shape (no kind, no
  * radius) passes: `onTarget` alone gates it. A turret starts firing only once
  * a ray down its barrel would hit (owner: "a basic ray trace").
@@ -92,7 +92,9 @@ export function barrelRayHits(
 ): boolean {
   const ux = -Math.sin(worldAngle), uy = Math.cos(worldAngle);
   if (t.kindId != null) {
-    return shipRayHit(t.kindId, t.shieldUp ?? false, fromX, fromY, ux, uy, maxDist, aimX, aimY, t.angle ?? 0, 0) !== null;
+    // The HULL, shield or not: a ray through the edge of a small ship's
+    // shield bubble (68 u on a frigate) still drew the beam beside the ship.
+    return shipRayHit(t.kindId, false, fromX, fromY, ux, uy, maxDist, aimX, aimY, t.angle ?? 0, 0) !== null;
   }
   const r = t.radius ?? 0;
   if (r <= 0) return true;

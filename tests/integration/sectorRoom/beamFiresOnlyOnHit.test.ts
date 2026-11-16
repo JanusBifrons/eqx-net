@@ -4,13 +4,14 @@
  * and snapped ~70 px onto it a pulse later, "it should have a basic ray
  * trace which when it is angled to hit should start firing"). The old gate
  * let a barrel fire while it would still pass up to `TURRET_FIRE_MISS` (60 u)
- * from the aim point, wider than a frigate, and the wide heavy beam's EDGE
- * then grazed the shield bubble, so the first pulse drew off the ship.
+ * from the aim point, wider than a frigate's hull, and the wide heavy beam's
+ * EDGE then grazed its shield bubble (68 u), so the first pulse drew beside
+ * the ship. The ray is tested on the HULL, shield up or not.
  *
  * A lance battlecruiser trains its heavy beams onto a pilot missile frigate
  * at the REAL traverse rate (no snap). Every heavy beam that fires at the
- * pilot must have its CENTRE line (muzzle along its direction, a thin ray)
- * on the frigate's hit shape at the tick it fired.
+ * pilot (shield up, as on film) must have its CENTRE line (muzzle along its
+ * direction, a thin ray) on the frigate's HULL at the tick it fired.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
@@ -43,7 +44,7 @@ describe('SectorRoom integration — a turret fires only when its barrel ray hit
     });
     const pid = randomUUID();
     await harness.connectActive(pid, {
-      shipKind: 'missile-frigate', initialHull: 1_000_000_000, startHostile: true, instantLock: true,
+      shipKind: 'missile-frigate', initialHull: 1_000_000_000, initialShield: 1_000_000_000, startHostile: true, instantLock: true,
     });
     const room = harness.getServerRoom() as unknown as SectorRoom;
     const r = room as unknown as RoomInternals;
@@ -59,6 +60,7 @@ describe('SectorRoom integration — a turret fires only when its barrel ray hit
     // pilot's pose and shield as it fired.
     let watch = false;
     let fired = 0;
+    let shielded = 0;
     const misses: string[] = [];
     const deps = r.aiFireResolver.deps;
     const orig = deps.broadcast.bind(deps);
@@ -66,10 +68,11 @@ describe('SectorRoom integration — a turret fires only when its barrel ray hit
       if (type === 'laser_fired' && msg.shooterId === wireId && msg.mountId && beamMounts.has(msg.mountId) && msg.targetId === pid) {
         fired++;
         if (watch) {
+          if (shieldUp()) shielded++;
           const pose = room._internals.playerPose(pid)!;
           const dx = msg.toX - msg.fromX, dy = msg.toY - msg.fromY;
           const len = Math.hypot(dx, dy);
-          const hit = shipRayHit('missile-frigate', shieldUp(), msg.fromX, msg.fromY, dx / len, dy / len, len + 10_000,
+          const hit = shipRayHit('missile-frigate', false, msg.fromX, msg.fromY, dx / len, dy / len, len + 10_000,
             pose.x, pose.y, pose.angle, 0);
           if (hit === null) {
             const px = pose.x - msg.fromX, py = pose.y - msg.fromY;
@@ -88,13 +91,14 @@ describe('SectorRoom integration — a turret fires only when its barrel ray hit
     // train back onto it at their REAL rate, firing as they come on.
     r.testTraverseTicksCap = undefined;
     const p = room._internals.playerPose(pid)!;
-    room._internals.postToWorker({ type: 'SET_POSITION', entityId: pid, x: p.x, y: p.y + 500, angle: p.angle, vx: 0, vy: 0, angvel: 0 });
+    room._internals.postToWorker({ type: 'SET_POSITION', entityId: pid, x: p.x, y: p.y + 2_000, angle: p.angle, vx: 0, vy: 0, angvel: 0 });
     await harness.advance(2);
     watch = true;
     fired = 0;
     const d2 = Date.now() + 10_000;
     while (Date.now() < d2 && fired < 8) await harness.advance(10);
     expect(fired, 'the heavy beams came back onto the frigate').toBeGreaterThanOrEqual(8);
+    expect(shielded, 'the frigate shield was up for every shot (its bubble is wider than its hull)').toBe(fired);
     expect(misses, 'heavy beams fired with the centre line off the frigate').toEqual([]);
   });
 });
