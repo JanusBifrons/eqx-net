@@ -443,7 +443,7 @@ gameServer
     testMode: true,
     asteroidConfig: [],
     peacefulDrones: true,
-    capitalWrecks: true,
+    capitalWrecks: true, pilotCapitals: true, // a capital pilot may cut up the wreck
     dronePoses: [{ kind: 'battleship', x: 0, y: 2500, angle: 0 }],
     defaultSpawnX: 0,
     defaultSpawnY: -1500,

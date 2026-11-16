@@ -15,6 +15,10 @@ import { getShipKind } from '../../shared-types/shipKinds.js';
 import { shipBodyMass, shipTuning } from '../../shared-types/shipScale/tuning.js';
 import { cutDirFromAngle, CUT_ANGLE_STEPS, EDGE_CUT, FRACTURE_QUANTUM } from './fractureHull.js';
 import { HEAVY_BEAM_WIDTH } from '../combat/WeaponCatalogue.js';
+import { DESTRUCTION_PROFILES } from '../../shared-types/shipScale/destruction.js';
+
+/** The least speed every capital cut opens at (the guard floor). */
+const capitalSep = (t: { wreckSeparate: number }): number => t.wreckSeparate * DESTRUCTION_PROFILES.capital.separateScale;
 
 const shipScaleOf = (k: Parameters<typeof getShipKind>[0]): number => shipShapeScale(getShipKind(k));
 
@@ -130,19 +134,60 @@ describe('buildWreckPieces', () => {
       const kind = getShipKind(kindId);
       const t = shipTuning(kind);
       const b = buildWreckPieces(input({ kindId, killWorld: { x: pose.x + 200, y: pose.y + 100 } }));
-      let outward = 0;
+      // The blast's net momentum points away from the kill point (the crack
+      // and the guard are equal and opposite impulses: they add none).
+      let px = 0, py = 0, cx = 0, cy = 0, m = 0;
       for (const p of b.pieces) {
-        const ox = p.x - b.killWorldOnHull.x;
-        const oy = p.y - b.killWorldOnHull.y;
-        if ((p.kickVx * ox + p.kickVy * oy) > 0) outward++;
-        // Bounded: the push plus the seam-parting corrections stay slow.
-        expect(Math.hypot(p.kickVx, p.kickVy)).toBeLessThan(2 * (t.wreckPushMax * 1.25) + 4 * t.wreckSeparate);
+        px += p.mass * p.kickVx;
+        py += p.mass * p.kickVy;
+        cx += p.mass * p.x;
+        cy += p.mass * p.y;
+        m += p.mass;
+        // Bounded: a heavy wreck's pieces part slowly (0.015 × radius: a
+        // heavy cruiser's ~33 u/s, slivers included).
+        expect(Math.hypot(p.kickVx, p.kickVy)).toBeLessThan(0.015 * kind.radius);
         // Rim speed at most WRECK_SPIN_RIM_NEAR × wreckSeparate.
         const r = Math.max(p.radius, WRECK_SPIN_MIN_RADIUS_FRAC * kind.radius);
         expect(Math.abs(p.kickAngvel) * r).toBeLessThanOrEqual(WRECK_SPIN_RIM_NEAR * t.wreckSeparate + 1e-9);
         expect(Math.abs(p.kickAngvel) * r).toBeGreaterThanOrEqual(0.55 * WRECK_SPIN_RIM_FAR * t.wreckSeparate - 1e-9);
       }
-      expect(outward / b.pieces.length).toBeGreaterThan(0.8);
+      expect(px * (cx / m - b.killWorldOnHull.x) + py * (cy / m - b.killWorldOnHull.y)).toBeGreaterThan(0);
+    }
+  });
+
+  it('mass-scaled parting: a big piece parts subtly and slowly, a sliver faster (owner 2026-11-15)', () => {
+    // "the scrap/wreck should weigh A LOT ... an accurate mass value vs the
+    // forces applied": the kicks are impulses against each piece's mass. Over
+    // seeds and kill points round the hull, per capital kind: pieces with
+    // >= 30 % of the hull mass part at a median under 0.0025 × radius (heavy
+    // cruiser ~3 u/s measured; was ~28) and never over 0.004 × radius;
+    // slivers (<= 7 %) at a median over twice that (~13 u/s; was ~50).
+    for (const kindId of ['destroyer', 'heavy-cruiser', 'battleship'] as const) {
+      const kind = getShipKind(kindId);
+      const outline = shipShapeToPolygon(kind);
+      const big: number[] = [];
+      const sliver: number[] = [];
+      for (let seed = 1; seed <= 24; seed++) {
+        const v = outline[(seed * 5) % outline.length]!;
+        const b = buildWreckPieces({
+          kindId, pose: { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 }, killWorld: { x: v.x, y: v.y },
+          attackerWorld: null, seed: seed * 7919, killBlowDamage: 1.2, recentDamageRate: 1.2,
+        });
+        let m = 0;
+        for (const p of b.pieces) m += p.mass;
+        for (const p of b.pieces) {
+          const sp = Math.hypot(p.kickVx, p.kickVy);
+          if (p.mass / m >= 0.3) big.push(sp);
+          else if (p.mass / m <= 0.07) sliver.push(sp);
+        }
+      }
+      const median = (a: number[]): number => [...a].sort((x, y) => x - y)[a.length >> 1]!;
+      console.log(`[mass parting] ${kindId}: big median ${median(big).toFixed(1)} max ${Math.max(...big).toFixed(1)} u/s; sliver median ${median(sliver).toFixed(1)} max ${Math.max(...sliver).toFixed(1)} u/s`);
+      expect(big.length).toBeGreaterThan(10);
+      expect(sliver.length).toBeGreaterThan(5);
+      expect(median(big) / kind.radius, `${kindId}: big pieces' median parting, radii/s`).toBeLessThan(0.0025);
+      expect(Math.max(...big) / kind.radius, `${kindId}: big pieces' fastest parting, radii/s`).toBeLessThan(0.004);
+      expect(median(sliver), `${kindId}: slivers part faster`).toBeGreaterThan(2 * median(big));
     }
   });
 
@@ -186,8 +231,8 @@ describe('buildWreckPieces', () => {
                   const p = { x: p0.x + ux * sAt, y: p0.y + uy * sAt };
                   const rvx = (vj.x - pj.kickAngvel * (p.y - gj.cy)) - (vi.x - pi.kickAngvel * (p.y - gi.cy));
                   const rvy = (vj.y + pj.kickAngvel * (p.x - gj.cx)) - (vi.y + pi.kickAngvel * (p.x - gi.cx));
-                  // Opens at wreckSeparate or more at each end of the shared stretch.
-                  expect(rvx * nx + rvy * ny, `${kindId} seed ${seed} pieces ${i}/${j}`).toBeGreaterThan(0.99 * t.wreckSeparate);
+                  // Opens at the guard floor or more at each end of the shared stretch.
+                  expect(rvx * nx + rvy * ny, `${kindId} seed ${seed} pieces ${i}/${j}`).toBeGreaterThan(0.99 * capitalSep(t));
                 }
               }
             }
@@ -300,7 +345,7 @@ describe('railgun channel (and heavy-beam slice) banks part (fracture v9, v10)',
   // along the slug's line.
   // v10: the heavy beam's wide slice erases a strip the same way and its
   // banks part the same way (owner: the slice was too thin for the beam).
-  for (const [cutKind, W] of [['channel', 16 /* RAILGUN_BOLT_WIDTH */], ['slice', HEAVY_BEAM_WIDTH]] as const) it(`${cutKind}: the pieces either side of the strip open it at wreckSeparate or more at both ends`, () => {
+  for (const [cutKind, W] of [['channel', 16 /* RAILGUN_BOLT_WIDTH */], ['slice', HEAVY_BEAM_WIDTH]] as const) it(`${cutKind}: the pieces either side of the strip open it at the guard floor or more at both ends`, () => {
     for (const kindId of ['heavy-cruiser', 'battleship', 'destroyer'] as const) {
       const kind = getShipKind(kindId);
       const t = shipTuning(kind);
@@ -343,7 +388,7 @@ describe('railgun channel (and heavy-beam slice) banks part (fracture v9, v10)',
                   const p = { x: p0.x + ux * sAt, y: p0.y + uy * sAt };
                   const rvx = (pj.kickVx - pj.kickAngvel * (p.y - gj.cy)) - (pi.kickVx - pi.kickAngvel * (p.y - gi.cy));
                   const rvy = (pj.kickVy + pj.kickAngvel * (p.x - gj.cx)) - (pi.kickVy + pi.kickAngvel * (p.x - gi.cx));
-                  expect(rvx * nx + rvy * ny, `${kindId} seed ${seed} banks ${i}/${j}`).toBeGreaterThan(0.99 * t.wreckSeparate);
+                  expect(rvx * nx + rvy * ny, `${kindId} seed ${seed} banks ${i}/${j}`).toBeGreaterThan(0.99 * capitalSep(t));
                 }
               }
             }

@@ -12,27 +12,20 @@
  * frames and the GPU-lit maps come from the same fields, so both showed it.
  *
  * Lock: no vent slit touches a turret ring (its stamped extent, r × 1.15).
- * Kinds: the battleship from the review plus the other capitals whose slits
- * hit a ring before the fix (each forge is a few seconds at its real ppu).
+ * Kinds: the battleship from the review here, plus the other capitals whose
+ * slits hit a ring before the fix in `hullVents.battleshipC.test.ts` and
+ * `hullVents.lightCruiserC.test.ts`. Nothing is sampled or shrunk: each kind
+ * is forged at its real ppu (the slit size and placement depend on it), and
+ * one kind per FILE because vitest spreads files, not tests, over workers;
+ * one file forging all three set the unit job's wall-clock (239 s on CI with
+ * coverage, almost all of it `rasterPoly`). The check lives in
+ * `__fixtures__/hullVentsLock.ts`.
  */
 import { describe, it, expect } from 'vitest';
-import { forgeShip } from './fields.js';
-import { shipTurrets } from './turretLayout.js';
-import { shipPpu } from './bake.js';
-
-const KINDS = ['battleship', 'battleship-c', 'light-cruiser-c'];
+import { ventsTouchingRings } from './__fixtures__/hullVentsLock.js';
 
 describe('capital hull vents stay clear of turret rings', () => {
-  it.each(KINDS)('%s', (id) => {
-    const rings = shipTurrets(id).map((t) => ({ x: t.px, y: t.py, r: t.ring, id: t.mount.id }));
-    const f = forgeShip(id, { ppu: shipPpu(id), rings });
-    const hits: string[] = [];
-    for (const v of f.vents ?? []) {
-      for (const rg of rings) {
-        const dx = Math.max(0, Math.abs(rg.x - v.x) - v.hw), dy = Math.max(0, Math.abs(rg.y - v.y) - v.hh);
-        if (Math.hypot(dx, dy) < rg.r * 1.15) hits.push(`${rg.id} (vent at ${v.x.toFixed(0)}, ${v.y.toFixed(0)})`);
-      }
-    }
-    expect(hits).toEqual([]);
+  it('battleship', () => {
+    expect(ventsTouchingRings('battleship')).toEqual([]);
   }, 60_000);
 });
