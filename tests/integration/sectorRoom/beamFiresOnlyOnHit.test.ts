@@ -1,24 +1,16 @@
 /**
- * A turret fires only when a ray down its barrel hits the target (owner,
- * 2026-11-16, on film: the heavy beam first landed below a missile frigate
- * and snapped ~70 px onto it a pulse later, "it should have a basic ray
- * trace which when it is angled to hit should start firing"). The old gate
- * let a barrel fire while it would still pass up to `TURRET_FIRE_MISS` (60 u)
- * from the aim point, wider than a frigate's hull, and the wide heavy beam's
- * EDGE then grazed its shield bubble (68 u), so the first pulse drew beside
- * the ship. The ray is tested on the HULL, shield up or not.
- *
- * And it fires only once it has SETTLED on its aim point (take 14: a frigate
- * flying nose-up is ~96 u tall across a beam from the side, so the ray met
- * its tail while the turret was still turning, and the next pulse, ten ticks
- * on, landed ~50 u higher at the centre: the same jump). A still target is
- * aimed at its centre, so every pulse at it passes within a few units of it.
+ * A turret fires the moment a ray down its barrel hits the target (owner,
+ * 2026-11-16: "as the turret's turning to face the target ... it should do a
+ * simple ray trace between the barrel and the target, and the moment that
+ * that intersects with the target's shield or hull, it fires. It doesn't
+ * wait until it's like on the 0, 0 of the target").
  *
  * A lance battlecruiser trains its heavy beams onto a pilot missile frigate
- * at the REAL traverse rate (no snap). Every heavy beam that fires at the
- * pilot (shield up, as on film) must have its CENTRE line (muzzle along its
- * direction, a thin ray) on the frigate's HULL at the tick it fired, and
- * (the frigate holds still) within `SETTLED` of its centre.
+ * (shield up) at the REAL traverse rate. Every heavy beam it fires at the
+ * pilot must have its CENTRE line (muzzle along its direction, a thin ray) on
+ * the frigate's weapon hit shape (the shield bubble) at the tick it fired,
+ * AND the turrets must start firing while still turning onto the frigate's
+ * centre, not hold fire until they line up on it.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
@@ -28,9 +20,9 @@ import type { LaserFiredEvent } from '../../../src/shared-types/messages.js';
 import { getShipKind } from '../../../src/shared-types/shipKinds.js';
 import { shipRayHit } from '../../../src/core/combat/shipHitShape.js';
 
-/** How far (u) a pulse at a still target may pass from its centre: the
- *  turret has finished turning onto it (the frigate's hull is ~96 u long). */
-const SETTLED = 5;
+/** A pulse further than this (u) from the still frigate's centre was fired
+ *  before the turret lined up on the centre. */
+const CENTRED = 5;
 
 interface RoomInternals {
   aiFireResolver: { deps: { broadcast: (type: string, msg: LaserFiredEvent) => void } };
@@ -38,14 +30,14 @@ interface RoomInternals {
   testTraverseTicksCap: number | undefined;
 }
 
-describe('SectorRoom integration — a turret fires only when its barrel ray hits', () => {
+describe('SectorRoom integration — a turret fires the moment its barrel ray hits', () => {
   let harness: SectorTestHarness | undefined;
   afterEach(async () => {
     if (harness) await harness.cleanup();
     harness = undefined;
   }, 10_000);
 
-  it('every heavy beam at a frigate is fired with its centre line on the frigate, once the turret has settled', { timeout: 20_000 }, async () => {
+  it('heavy beams fire as soon as the barrel ray touches the frigate\'s shield, every one on it', { timeout: 20_000 }, async () => {
     const kind = getShipKind('battlecruiser-lance');
     const beamMounts = new Set(kind.mounts.filter((m) => m.weaponId === 'heavy_beam').map((m) => m.id));
     harness = await bootSectorTestServer({
@@ -68,12 +60,12 @@ describe('SectorRoom integration — a turret fires only when its barrel ray hit
     };
 
     // Each heavy beam at the pilot once `watch` is set, checked against the
-    // pilot's pose and shield as it fired.
+    // pilot's pose as it fired.
     let watch = false;
     let fired = 0;
     let shielded = 0;
+    let offCentre = 0;
     const misses: string[] = [];
-    const offAim: string[] = [];
     const deps = r.aiFireResolver.deps;
     const orig = deps.broadcast.bind(deps);
     deps.broadcast = (type, msg) => {
@@ -84,12 +76,12 @@ describe('SectorRoom integration — a turret fires only when its barrel ray hit
           const pose = room._internals.playerPose(pid)!;
           const dx = msg.toX - msg.fromX, dy = msg.toY - msg.fromY;
           const len = Math.hypot(dx, dy);
-          const hit = shipRayHit('missile-frigate', false, msg.fromX, msg.fromY, dx / len, dy / len, len + 10_000,
+          const hit = shipRayHit('missile-frigate', true, msg.fromX, msg.fromY, dx / len, dy / len, len + 10_000,
             pose.x, pose.y, pose.angle, 0);
           const px = pose.x - msg.fromX, py = pose.y - msg.fromY;
           const off = Math.abs((px * dy - py * dx) / len);
           if (hit === null) misses.push(`${msg.mountId}: centre line ${off.toFixed(1)} u from the frigate's centre`);
-          if (off > SETTLED) offAim.push(`${msg.mountId} at tick ${room._internals.serverTick}: ${off.toFixed(1)} u from the centre`);
+          if (off > CENTRED) offCentre++;
         }
       }
       orig(type, msg);
@@ -100,7 +92,7 @@ describe('SectorRoom integration — a turret fires only when its barrel ray hit
     while (Date.now() < d1 && fired === 0) await harness.advance(20);
     expect(fired, 'the heavy beams fired at the frigate').toBeGreaterThan(0);
     // ... then the frigate jumps sideways across the beams and the turrets
-    // train back onto it at their REAL rate, firing as they come on.
+    // train back onto it at their REAL rate, firing as their rays touch it.
     r.testTraverseTicksCap = undefined;
     const p = room._internals.playerPose(pid)!;
     room._internals.postToWorker({ type: 'SET_POSITION', entityId: pid, x: p.x, y: p.y + 2_000, angle: p.angle, vx: 0, vy: 0, angvel: 0 });
@@ -110,8 +102,8 @@ describe('SectorRoom integration — a turret fires only when its barrel ray hit
     const d2 = Date.now() + 10_000;
     while (Date.now() < d2 && fired < 8) await harness.advance(10);
     expect(fired, 'the heavy beams came back onto the frigate').toBeGreaterThanOrEqual(8);
-    expect(shielded, 'the frigate shield was up for every shot (its bubble is wider than its hull)').toBe(fired);
-    expect(misses, 'heavy beams fired with the centre line off the frigate').toEqual([]);
-    expect(offAim, 'heavy beams fired before the turret settled on the frigate (the beam then jumps)').toEqual([]);
+    expect(shielded, 'the frigate shield was up for every shot').toBe(fired);
+    expect(misses, 'heavy beams fired with the centre line off the frigate\'s shield').toEqual([]);
+    expect(offCentre, 'the turrets fired as their rays touched the frigate, before lining up on its centre').toBeGreaterThan(0);
   });
 });

@@ -10,14 +10,11 @@
  *    enough across its sights to track (`canTrack`).
  *  - LEAD: aim at the first-order intercept for the gun's shell speed, on
  *    the target's velocity relative to the shooter.
- *  - FIRE: only when the barrel would put the shot within `TURRET_FIRE_MISS`
- *    of the aim point (an angle alone is a 250 u miss at 5,000 u) AND a ray
- *    down the barrel hits the target's hit shape there (`barrelRayHits`):
- *    a miss allowance wider than a small ship let a wide beam fire beside
- *    it and graze it with its edge. And only once the turret has SETTLED on
- *    the aim point (`turretSettled`): a barrel still turning fired its
- *    first pulse at the edge of the ship it was sweeping onto and the next
- *    at its centre, a visible jump.
+ *  - FIRE: the moment a ray down the barrel, from the muzzle, hits the
+ *    target's weapon hit shape (shield bubble or hull) at its aim point
+ *    (`barrelRayHits`; owner: "the moment that that intersects with the
+ *    target's shield or hull, it fires"). It does not wait to line up on the
+ *    centre: a turret still turning fires as soon as its ray touches.
  *
  * Angles use the mount convention: a body's frame angle (game space, Y-up,
  * CCW), bearing 0 = +y, `atan2(-dx, dy)`. Pure, allocation-free.
@@ -27,8 +24,10 @@ import { canTrack } from './mountTargeting.js';
 import { mountInReach, type MountRangeTarget } from './mountReach.js';
 import { shipRayHit } from './shipHitShape.js';
 
-/** A turret fires once its barrel is within this of the lead bearing (rad)
- *  AND would pass within TURRET_FIRE_MISS (world units) of the aim point. */
+/** A barrel bears once within this of the lead bearing (rad) AND would pass
+ *  within TURRET_FIRE_MISS (world units) of the aim point: the player's
+ *  mount tolerance (`fireControlBearing`), and a turret's gate for a target
+ *  with no hit shape (`turretShotBears`). */
 export const TURRET_FIRE_TOLERANCE = 0.05;
 export const TURRET_FIRE_MISS = 60;
 
@@ -81,26 +80,17 @@ export function onTarget(want: number, current: number, dist: number): boolean {
   return Math.abs(wrapPi(want - current)) <= tol;
 }
 
-/** A turret has finished turning onto bearing `want` (arc-local): this
- *  tick's traverse reached it (a target it tracks within its turn rate stays
- *  settled every tick). Firing while still turning put the first pulse on
- *  the edge of the ship and the next on its centre. */
-export const TURRET_SETTLED = 1e-4;
-export function turretSettled(want: number, current: number): boolean {
-  return Math.abs(wrapPi(want - current)) <= TURRET_SETTLED;
-}
-
 /**
- * The whole FIRE gate for a turret at arc-local `current` wanting `want`:
- * on target (`onTarget`), settled (`turretSettled`) and a barrel ray from the
- * muzzle (`muzzle` along world bearing `worldAngle` from the pivot) hits `t`
- * at its aim point (`barrelRayHits`).
+ * The whole FIRE gate for a turret at arc-local `current` wanting `want`: a
+ * ray from the muzzle (`muzzle` along world bearing `worldAngle` from the
+ * pivot) hits `t` at its aim point (`barrelRayHits`). A target with no hit
+ * shape (no kind, no radius) falls back to `onTarget`.
  */
 export function turretShotBears(
   want: number, current: number, dist: number, t: MountRangeTarget, aimX: number, aimY: number,
   pivotX: number, pivotY: number, worldAngle: number, muzzle: number, maxDist: number,
 ): boolean {
-  if (!onTarget(want, current, dist) || !turretSettled(want, current)) return false;
+  if (t.kindId == null && !((t.radius ?? 0) > 0)) return onTarget(want, current, dist);
   const fromX = pivotX - Math.sin(worldAngle) * muzzle, fromY = pivotY + Math.cos(worldAngle) * muzzle;
   return barrelRayHits(t, aimX, aimY, fromX, fromY, worldAngle, maxDist);
 }
@@ -109,19 +99,17 @@ export function turretShotBears(
  * Does a thin ray from (fromX, fromY) along the barrel's world bearing
  * `worldAngle` (mount convention: 0 = +y) hit target `t` placed at its aim
  * point (aimX, aimY) (its lead point for a shell gun)? A ship is tested on its
- * hull polygon (`shipRayHit` with the shield down, whatever its shield); any
- * other target on its `radius` circle. A target with no shape (no kind, no
- * radius) passes: `onTarget` alone gates it. A turret starts firing only once
- * a ray down its barrel would hit (owner: "a basic ray trace").
+ * weapon hit shape (`shipRayHit`: the shield bubble while a non-capital's
+ * shield is up, else the hull), any other target on its `radius` circle; a
+ * target with no shape passes. A turret starts firing the moment a ray down
+ * its barrel would hit (owner: "a basic ray trace").
  */
 export function barrelRayHits(
   t: MountRangeTarget, aimX: number, aimY: number, fromX: number, fromY: number, worldAngle: number, maxDist: number,
 ): boolean {
   const ux = -Math.sin(worldAngle), uy = Math.cos(worldAngle);
   if (t.kindId != null) {
-    // The HULL, shield or not: a ray through the edge of a small ship's
-    // shield bubble (68 u on a frigate) still drew the beam beside the ship.
-    return shipRayHit(t.kindId, false, fromX, fromY, ux, uy, maxDist, aimX, aimY, t.angle ?? 0, 0) !== null;
+    return shipRayHit(t.kindId, t.shieldUp ?? false, fromX, fromY, ux, uy, maxDist, aimX, aimY, t.angle ?? 0, 0) !== null;
   }
   const r = t.radius ?? 0;
   if (r <= 0) return true;

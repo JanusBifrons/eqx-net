@@ -243,7 +243,7 @@ export class StructureMountTicker {
       if (!locked) continue; // lock to fire: still acquiring
       if (nowMs - st.reloadMs[i]! < this.reloadMsOf(kind, def)) continue;
       const a = frame + mount.baseAngle + st.angles[i]!;
-      // On target, settled and a barrel ray hits the target at its lead point.
+      // Fires the moment a barrel ray hits the target at its lead point.
       const lead = def.mode === 'projectile' ? dist / def.speed : 0;
       if (!turretShotBears(want, st.angles[i]!, dist, t, t.x + t.vx * lead, t.y + t.vy * lead, mx, my, a, 0, reach + dist)) continue;
       if (this.sink.fire(rec, kind, i, mount, def, -Math.sin(a), Math.cos(a), t, nowMs)) st.reloadMs[i] = nowMs;

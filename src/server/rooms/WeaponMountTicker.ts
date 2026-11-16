@@ -737,7 +737,7 @@ export class WeaponMountTicker {
       if (charging && tick - chargeStarts[i]! < this.chargeTicksOf(chargeT)) continue;
       if (!engageable) continue; // held through a brief loss: aim, don't fire
       if (!charging && tick - reload[i]! < w.cooldownTicks) continue;
-      // On target, settled and a barrel ray hits the hull (`turretShotBears`).
+      // Fires the moment a barrel ray hits its shield or hull (`turretShotBears`).
       const lead = w.mode === 'hitscan' ? 0 : dist / w.speed;
       if (!turretShotBears(want, angles[i]!, dist, t, t.x + (t.vx - selfVx) * lead, t.y + (t.vy - selfVy) * lead,
         mx, my, ang + mount.baseAngle + angles[i]!, shipShotMuzzle(kind, mount, true), 2 * dist + 1_000)) continue;
