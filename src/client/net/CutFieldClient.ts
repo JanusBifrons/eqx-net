@@ -25,8 +25,9 @@ import {
   fieldRockId,
   type FieldRockBody,
 } from '@core/terrain/chunkStreamer';
-import { rocksInChunk, type ChunkOpts } from '@core/terrain/fieldLayout';
-import { packChunk, packedRockBody, type PackedChunk } from '@core/terrain/packedChunk';
+import { rocksInChunk, unpackRockKey, type ChunkOpts } from '@core/terrain/fieldLayout';
+import { collapsePackedRock, packChunk, packedRockBody, type PackedChunk } from '@core/terrain/packedChunk';
+import { FieldConsumedSchema } from '@shared-types/messages/snapshotMessages';
 import { wantPredBody } from '../structures/predStructureStreaming.js';
 import type { FieldRockSource } from './entity/IClientEntityLeaf.js';
 
@@ -85,6 +86,7 @@ function rocksOf(chunk: PackedChunk): PackedRock[] {
 }
 
 const NO_OUTLINES = new Float32Array(0);
+const NO_KEYS: readonly number[] = [];
 
 const bodyOf = (r: LoadedRock): FieldRockBody => (r.body ??= packedRockBody(r.chunk, r.i));
 
@@ -104,6 +106,9 @@ export class CutFieldClient implements FieldRockSource {
   /** Awake rocks (rock key → game ms last seen on the swarm wire): they
    *  collide as swarm bodies, so their fixed body stays out. */
   private readonly awake = new Map<number, number>();
+  /** Broken-up rocks (C3): never a body, flattened out of their chunk's draw.
+   *  The welcome's list, then each `field_consumed` (#16). */
+  private readonly consumed = new Set<number>();
   /** Counters for tests and diagnostics (counts, never timings). */
   readonly stats = { predBodies: 0, awake: 0 };
 
@@ -111,7 +116,7 @@ export class CutFieldClient implements FieldRockSource {
 
   /** The asteroid leaf, for an awake field rock on the swarm wire: mark it
    *  awake, drop its fixed predWorld body, return its centred outline. */
-  wakeFieldRock(key: number): ReadonlyArray<{ x: number; y: number }> | null {
+  wakeFieldRock(key: number): FieldRockBody | null {
     this.awake.set(key, this.deps.gameClock.now());
     const id = fieldRockId(key);
     const r = this.rocks.get(id);
@@ -120,7 +125,7 @@ export class CutFieldClient implements FieldRockSource {
       this.deps.predWorld()?.despawnShip(id);
       r.inPred = false;
     }
-    return bodyOf(r).verts;
+    return bodyOf(r);
   }
 
   get loadedRocks(): number { return this.rocks.size; }
@@ -130,20 +135,53 @@ export class CutFieldClient implements FieldRockSource {
   }
   get chunksLoaded(): number { return this.streamer?.stats.chunksLoaded ?? 0; }
 
-  /** From the welcome: a seed turns the field on, null turns it off. */
-  setSeed(seed: string | null): void {
-    if (seed === this.seed) return;
-    this.stop();
-    this.seed = seed;
-    if (seed === null) return;
+  /** From the welcome: a seed turns the field on, null turns it off.
+   *  `consumed` is the whole consumed set, so it replaces ours. */
+  setSeed(seed: string | null, consumed: readonly number[] = NO_KEYS): void {
+    if (seed !== this.seed) {
+      this.stop();
+      this.seed = seed;
+      if (seed !== null) this.start(seed);
+    }
+    this.consumed.clear();
+    for (const k of consumed) this.consume(k);
+  }
+
+  /** `field_consumed` from the server (validated here). */
+  onConsumedMessage(raw: unknown): void {
+    const r = FieldConsumedSchema.safeParse(raw);
+    if (r.success && this.seed !== null) this.consume(r.data.k);
+  }
+
+  /** Rock `key` was broken up: drop its body and flatten it out of its
+   *  chunk's draw (re-sent once, rare). Its pieces ride the wreck wire. */
+  private consume(key: number): void {
+    if (this.consumed.has(key)) return;
+    this.consumed.add(key);
+    this.awake.delete(key);
+    const id = fieldRockId(key);
+    const r = this.rocks.get(id);
+    if (!r) return; // not loaded: its chunk skips it when cut
+    collapsePackedRock(r.chunk, r.i);
+    const { cx, cy } = unpackRockKey(key);
+    this.deps.draw.setFieldChunk(cx, cy, r.chunk.outlines, r.chunk.ore);
+    this.dropRock(id);
+  }
+
+  private start(seed: string): void {
     const field = cutFieldOpts(seed);
     this.streamer = new CutFieldStreamer<PackedRock>(field, {
       visitShips: (cb) => { const p = this.deps.localPose(); if (p) cb(p.x, p.y); },
-      spawnRock: (id, rock) => { this.rocks.set(id, { chunk: rock.chunk, i: rock.i, key: rock.key, body: null, inPred: false }); return true; },
+      spawnRock: (id, rock) => {
+        if (this.consumed.has(rock.key)) return false;
+        this.rocks.set(id, { chunk: rock.chunk, i: rock.i, key: rock.key, body: null, inPred: false });
+        return true;
+      },
       removeRock: (id) => this.dropRock(id),
       nowMs: () => this.deps.gameClock.now(),
       chunkLoaded: (cx, cy, rocks) => {
         const c = rocks[0]?.chunk; // none: an empty chunk
+        if (c && this.consumed.size > 0) for (let i = 0; i < c.keys.length; i++) if (this.consumed.has(c.keys[i]!)) collapsePackedRock(c, i);
         this.deps.draw.setFieldChunk(cx, cy, c?.outlines ?? NO_OUTLINES, c?.ore ?? NO_OUTLINES);
       },
       chunkUnloaded: (cx, cy) => this.deps.draw.setFieldChunk(cx, cy, null),
@@ -225,7 +263,7 @@ export class CutFieldClient implements FieldRockSource {
         && wantPredBody(r.inPred, Math.sqrt(dx * dx + dy * dy) - p[j + 2]!);
       if (want && !r.inPred) {
         const b = bodyOf(r);
-        pw.spawnObstacle(id, b.x, b.y, b.radius, FIELD_ROCK_PRED_MASS, b.verts);
+        pw.spawnObstacle(id, b.x, b.y, b.radius, FIELD_ROCK_PRED_MASS, b.verts, undefined, undefined, b.parts ?? undefined);
         pw.fixBody(id);
         r.inPred = true;
       } else if (!want && r.inPred) {

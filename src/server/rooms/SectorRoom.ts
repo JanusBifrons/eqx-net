@@ -1191,7 +1191,7 @@ export class SectorRoom extends Room<SectorState> {
   private readonly manualCargo = new Set<string>();
   private readonly _podPoseScratch = { x: 0, y: 0 };
   /** Reused per-collector scratch (forEachLootCollector — no per-tick alloc, #14). */
-  private readonly _collectorScratch: LootCollector = { playerId: '', shipInstanceId: '', x: 0, y: 0, capacity: 0 };
+  private readonly _collectorScratch: LootCollector = { playerId: '', shipInstanceId: '', x: 0, y: 0, capacity: 0, kind: getShipKind(null) };
   /** Placed-structure bookkeeping (structures plan, Phase 2). */
   private readonly structureRegistry = new StructureRegistry();
   /** Equinox Phase 9 (item 5) — sliding-window tally of recent destruction
@@ -1581,7 +1581,7 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   get _internals(): {
-    cutField: CutFieldSubsystem['streamer'] | undefined; serverTick: number;
+    cutField: CutFieldSubsystem['streamer'] | undefined; cutFieldSub: CutFieldSubsystem | undefined; serverTick: number;
     /** Room update() calls so far (the AI-pilot cadence; serverTick is the
      *  physics worker's step count and can drift a step or two from it). */
     roomUpdates: number;
@@ -1722,7 +1722,7 @@ export class SectorRoom extends Room<SectorState> {
   } {
     return {
       loot: this.loot,
-      cutField: this.cutField?.streamer,
+      cutField: this.cutField?.streamer, cutFieldSub: this.cutField,
       serverTick: this.serverTick,
       roomUpdates: this.roomUpdateCount,
       droppedTicks: this.sabU32[WORKER_DROPPED_TICKS_IDX] ?? 0,
@@ -2919,9 +2919,9 @@ export class SectorRoom extends Room<SectorState> {
         return p;
       },
       forEachCollector: (visit) => this.forEachLootCollector(visit),
-      // Tractor hold zone (emitter id: a pilot's playerId or an AI ship's swarm id): a pod is picked up, a wreck piece stored whole.
+      // Tractor hold zone (emitter id: a pilot's playerId or an AI ship's swarm id): a pod is picked up, a wreck piece stored whole; a consumable piece near the hull too.
       inTractorHold: (c, podId, x, y) => this.forceFields.inTractorHold(c.playerId, podId, x, y),
-      heldPieces: { any: () => this.forceFields.tractorCount > 0, forEach: (c, visit) => this.forceFields.forEachHeldPiece(c.playerId, visit), salvageQty: (id) => this.capitalWrecks?.pieceSalvageQty(id) ?? 0, remove: (id) => this.capitalWrecks?.storePiece(id) },
+      heldPieces: { any: () => this.forceFields.tractorCount > 0 || (this.capitalWrecks?.liveCount() ?? 0) > 0, forEach: (c, visit) => this.forceFields.forEachHeldPiece(c.playerId, visit), near: (x, y, reach, maxR, visit) => this.capitalWrecks?.forEachPieceNear(x, y, reach, maxR, visit), store: (id, out) => this.capitalWrecks?.pieceStore(id, out) === true, ore: (o, x, y, units) => this.oreDraw.cutYield(o.rockId, x, y, units, o.resource), remove: (id) => this.capitalWrecks?.storePiece(id) },
       onCollected: (c, moved, podId) => this.onLootCollected(c, moved, podId),
       onDropped: (podId, hold, cause) => auditEvent({ event: 'loot_dropped', sector: this.sectorKey ?? undefined, podId, cause, weight: holdWeight(hold) }),
       onDestroyed: (podId, hold, cause) => auditEvent({ event: 'loot_destroyed', sector: this.sectorKey ?? undefined, podId, cause, weight: holdWeight(hold) }),
@@ -3189,7 +3189,7 @@ export class SectorRoom extends Room<SectorState> {
     this.structureGridTimer = this.gameClock.every(pulseMs, guarded('structure-grid-tick', () => this.structureGridTick()));
     // Phase 5 — turret aim/fire on a faster cadence than the grid pulse.
     this.structureTurretTimer = this.gameClock.every(TURRET_TICK_MS, guarded('structure-turret-tick', () => this.structureTurretTick()));
-    if (roomOpts.cutField) this.cutField = new CutFieldSubsystem(roomOpts.cutField.seed, this.gameClock, this.swarmRegistry, this.swarmSpawner, { shipSlots: () => this.playerToSlot.values(), sab: () => this.sabF32, post: (cmd) => this.postToWorker(cmd), evict: (rec, broadcast) => this.evictSwarmEntity(rec, { broadcast, emitDestroyed: false }) });
+    if (roomOpts.cutField) this.cutField = new CutFieldSubsystem(roomOpts.cutField.seed, this.gameClock, this.swarmRegistry, this.swarmSpawner, { shipSlots: () => this.playerToSlot.values(), sab: () => this.sabF32, post: (cmd) => this.postToWorker(cmd), evict: (rec, broadcast) => this.evictSwarmEntity(rec, { broadcast, emitDestroyed: false }), broadcast: (type, msg) => this.broadcast(type, msg) });
 
     // Click-to-inspect live-stats channel (structures follow-up Item B5). Its
     // own ~5 Hz timer (200 ms), unref'd + OFF the snapshot/physics tick — the
@@ -4642,7 +4642,7 @@ export class SectorRoom extends Room<SectorState> {
   /** Activated-mount geometry per player, cached by the ship's `mounts` ref. */
   private readonly _lockActivated = new Map<string, { ref: unknown; mounts: ReadonlyArray<WeaponMount> }>();
   private readonly _lockSalvage = new LockSalvageLookup<ShipState>({ swarm: (n) => this.swarmRegistry.getByEntityId(n),
-    piece: (id, out) => this.capitalWrecks?.pieceHaul(id, out) === true, // salvage lock bits (lockSalvage.ts)
+    piece: (id, out) => this.capitalWrecks?.pieceStore(id, out) === true, // salvage lock bits (lockSalvage.ts)
     freeHold: (s) => this.shipCargoCapacity(s.kind, s.shipInstanceId) - this.holdWeight(s.shipInstanceId) });
 
   private buildNpcLockSubsystem(): NpcLockSubsystem {
@@ -11513,6 +11513,7 @@ export class SectorRoom extends Room<SectorState> {
       c.y = pose.y;
       // P5 — a fitted Cargo Expander raises the capacity (shared helper, #15).
       c.capacity = this.shipCargoCapacity(ship.kind, ship.shipInstanceId);
+      c.kind = getShipKind(ship.kind); // its hull radius + mounts: the pieces it consumes
       c.npc = false;
       visit(c);
     }
@@ -11529,6 +11530,7 @@ export class SectorRoom extends Room<SectorState> {
       c.x = this.sabF32[b + SLOT_X_OFF]!;
       c.y = this.sabF32[b + SLOT_Y_OFF]!;
       c.capacity = cargoCapacityForMaxHealth(kindDef);
+      c.kind = kindDef;
       c.npc = true;
       visit(c);
     }

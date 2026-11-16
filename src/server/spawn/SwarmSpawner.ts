@@ -9,7 +9,7 @@ import { STRUCTURE_DEFAULT_MASS } from '../../core/swarm/structureConstants.js';
 import { SCRAP_DEFAULT_MASS, SCRAP_LINEAR_DAMPING } from '../../core/swarm/scrapConstants.js';
 import { SCRAP_COLLISION_GROUPS, WRECK_COLLISION_GROUPS } from '../../core/physics/collisionGroups.js';
 import { SWARM_KIND_SCRAP } from '../../shared-types/swarmWireFormat.js';
-import { SHIP_KINDS_LIST, GAMEPLAY_SHIP_KINDS_LIST, shipKindToIndex, type ShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
+import { SHIP_KINDS_LIST, GAMEPLAY_SHIP_KINDS_LIST, kindHasShield, shipKindToIndex, type ShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
 import { structureHalfExtents, structureHullPoints } from '../../shared-types/structureKinds.js';
 import { gateColliderPolygons, gateWorldAxisBoxes } from '../../core/structures/gateGeometry.js';
 import { shipBodyMass } from '../../shared-types/shipScale/tuning.js';
@@ -36,6 +36,9 @@ export interface AsteroidSpec {
   fieldRock?: boolean;
   /** Its rock key (`rockKey`): an awake field rock carries it on the wire. */
   fieldKey?: number;
+  /** Cut-field rock: its collider's convex parts (`FieldRockBody.parts`,
+   *  plan C1), so it follows the rock's dents; absent ⇒ one convex hull. */
+  parts?: ReadonlyArray<ReadonlyArray<Vec2>>;
 }
 
 export interface DroneSpec {
@@ -184,7 +187,7 @@ export class SwarmSpawner {
 
   /** Spawn one asteroid. Returns true on success, false if no free slot. */
   spawnAsteroid(a: AsteroidSpec): boolean {
-    const ok = this.spawnOne(0, a, undefined);
+    const ok = this.spawnOne(0, a, undefined, undefined, undefined, 0, a.parts);
     if (ok && a.resource !== undefined && a.resource !== 'rock') {
       const rec = this.registry.get(a.id);
       if (rec) rec.asteroidResource = a.resource;
@@ -382,6 +385,10 @@ export class SwarmSpawner {
     const rec = this.registry.register(a.id, slot, kind, a.radius, a.x, a.y, 0);
     if (kind === 1 && shipKind) {
       rec.shipKind = shipKind.id;
+      // A kind with no shield (every capital) is shield-down from spawn: no
+      // aura, hits and collisions on the hull (the worker mounts the hull
+      // collider itself, `PhysicsWorld.spawnObstacle`).
+      rec.shieldDown = !kindHasShield(shipKind);
     }
 
     // Asteroids get a deterministic convex-polygon collider derived from their

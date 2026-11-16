@@ -59,9 +59,19 @@ export interface WelcomeMessage {
    *  slow `wreckSync`. Absent = none (or wrecks off). */
   wrecks?: WreckDescriptor[];
   /** Macro terrain v2 (room flag `cutField`): the field seed; the client cuts
-   *  the same rocks from it. Absent = no cut field. */
-  cutField?: { seed: string };
+   *  the same rocks from it, minus `consumed`: the keys of rocks broken up
+   *  (C3; later breaks arrive as `field_consumed`). Absent = no cut field. */
+  cutField?: { seed: string; consumed?: number[] };
 }
+
+/** Macro terrain C3: a packed field rock key (`rockKey`, u32). */
+const RockKeySchema = z.number().int().min(0).max(0xffff_ffff);
+/** Consumed rock keys a welcome carries at most (the oldest first). */
+export const MAX_WELCOME_CONSUMED_ROCKS = 16_384;
+/** `field_consumed` (server → every client, reliable): cut-field rock `k`
+ *  was broken up; never cut it whole again. Welcome + these = the set (#16). */
+export const FieldConsumedSchema = z.object({ k: RockKeySchema }).strict();
+export type FieldConsumedMessage = z.infer<typeof FieldConsumedSchema>;
 
 /** PR 3a (account-bound identity) — sent to a session immediately before the
  *  server disconnects it because the SAME account logged in from another
@@ -116,7 +126,10 @@ export const WelcomeSchema = z
     wrecks: z.array(WreckDescriptorSchema).max(MAX_WELCOME_WRECKS).optional(),
     /** Macro terrain v2 (room flag `cutField`): the field seed. The client
      *  cuts the same rocks from it; none of them ride the wire. */
-    cutField: z.object({ seed: z.string().min(1).max(64) }).strict().optional(),
+    cutField: z.object({
+      seed: z.string().min(1).max(64),
+      consumed: z.array(RockKeySchema).max(MAX_WELCOME_CONSUMED_ROCKS).optional(),
+    }).strict().optional(),
   })
   .strict();
 

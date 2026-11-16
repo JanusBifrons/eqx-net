@@ -106,7 +106,7 @@ interface GroupState {
    *  [lo0, hi0, lo1, hi1, …] (fixed guns get a small window). */
   arcs: number[];
   mountIds: Set<string>;
-  /** The group's mining mounts (`isSalvageWeapon`): only they need the pick on a single salvage lock. */
+  /** The group's mining mounts (`isSalvageWeapon`) and tractors: only they need the pick on a single salvage lock. */
   salvageMountIds: Set<string>;
   /** The group's mounts in slot order (a mount's index is its ordinal for `pickTurretLock`). */
   mounts: WeaponMount[];
@@ -338,7 +338,7 @@ export class LockSubsystem {
         size: geo.size,
         arcs: groupArcs(mounts),
         mountIds: new Set(mounts.map((m) => m.id)),
-        salvageMountIds: new Set(mounts.filter((m) => isSalvageWeapon(getWeapon(m.weaponId))).map((m) => m.id)),
+        salvageMountIds: new Set(mounts.filter((m) => { const w = getWeapon(m.weaponId); return isSalvageWeapon(w) || w.tractor !== undefined; }).map((m) => m.id)),
         mounts,
         locks: [],
         wire,
@@ -521,8 +521,9 @@ export class LockSubsystem {
         } else if (acquiring === null && e.stage === 'acquiring') acquiring = e.target;
       }
       if (first === null) return acquiring;
-      // One lock: every mount on it, except a mining laser on a salvage lock
-      // (the pick: a laser skips a haulable piece). Guns keep the fast path.
+      // One lock: every mount on it, except a mining laser or tractor on a
+      // salvage lock (the pick: a laser skips a haulable or consumable piece,
+      // a tractor a consumable one). Guns keep the fast path.
       if (n === 1 && (first.flags === 0 || !g.salvageMountIds.has(mountId))) return first.target;
       const k = this.pickLocked(playerId, g, mountId);
       return k === undefined ? first.target : k;

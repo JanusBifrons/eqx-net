@@ -1,20 +1,15 @@
 /**
- * Capital-ship R&D round 3 (plan eager-sauteeing-curry, B): shields follow the
- * hull. In round 2 the fighter fly-by stopped dead in the channel between two
- * cruisers (logged pose: stuck at y ≈ -236, ~269 u from the light cruiser's
- * centre) because every shield was a ball of half the hull's length. This
- * drives the REAL physics world: a fighter thrusts up the channel between two
- * parked capitals and must come out the far end, and the same layout with
- * ball shields must still block it (so the test proves the shape matters).
+ * Capital ships never have shields (owner 2026-11-16). Every capital has
+ * `shieldMax` 0 (`kindHasShield` false), and a capital body spawns with its
+ * hull exposed. `shieldVisualRadius` still gives a capital its half beam
+ * (read by the lock-mark `hullHalfBeam`).
  */
 import { beforeAll, describe, expect, it } from 'vitest';
 import RAPIER from '@dimforge/rapier2d-compat';
 import { PhysicsWorld } from '../../src/core/physics/World.js';
 import { shipShieldColliderDesc } from '../../src/core/physics/colliderConfig.js';
-import { getShipKind } from '../../src/shared-types/shipKinds.js';
-import { massOf } from '../../src/shared-types/shipScale/tuning.js';
-
-const up = { thrust: true, reverse: false, turnLeft: false, turnRight: false, boost: false };
+import { SHIP_KINDS_LIST, getShipKind, kindHasShield } from '../../src/shared-types/shipKinds.js';
+import { shieldVisualRadius } from '../../src/shared-types/shipScale/tuning.js';
 
 function beamOf(id: string): number {
   const hull = (getShipKind(id).shape as { hull?: ReadonlyArray<readonly [number, number]> }).hull ?? [];
@@ -23,50 +18,30 @@ function beamOf(id: string): number {
   return 2 * w;
 }
 
-describe('capital shields follow the hull', () => {
+describe('capitals have no shield', () => {
   beforeAll(async () => { await RAPIER.init(); });
 
-  it('a capital shield is a rounded convex hull, every other kind keeps its ball', () => {
-    const cap = shipShieldColliderDesc(getShipKind('light-cruiser'));
-    const fighter = shipShieldColliderDesc(getShipKind('fighter'));
-    expect(cap.shape.type).toBe(RAPIER.ShapeType.RoundConvexPolygon);
-    expect(fighter.shape.type).toBe(RAPIER.ShapeType.Ball);
+  it('every capital has shieldMax 0', () => {
+    const caps = SHIP_KINDS_LIST.filter((k) => k.sizeClass === 'capital');
+    expect(caps.length).toBeGreaterThan(0);
+    for (const k of caps) {
+      expect(k.shieldMax).toBe(0);
+      expect(kindHasShield(k)).toBe(false);
+    }
   });
 
-  const flyChannel = async (hullShields: boolean): Promise<number> => {
+  it('a capital spawns hull-exposed; a fighter keeps its shield ball', async () => {
     const world = await PhysicsWorld.create();
-    const id = 'light-cruiser';
-    const k = getShipKind(id);
-    // Two cruisers side by side, a channel of three beams between their hulls.
-    const gap = beamOf(id) * 4;
-    for (const [i, x] of [[0, -gap / 2], [1, gap / 2]] as const) {
-      world.spawnObstacle(`cap-${i}`, x, 0, k.radius, massOf(k, 3), undefined, k.linearDamping, undefined, undefined, hullShields ? k : undefined);
-    }
-    world.spawnShip('fighter', 0, -k.radius - 200, 'fighter');
-    for (let t = 0; t < 60 * 30; t++) {
-      world.applyInput('fighter', up);
-      world.tick(1 / 60);
-      if (world.getShipState('fighter')!.y > k.radius + 100) break;
-    }
-    return world.getShipState('fighter')!.y;
-  };
-
-  it('a fighter flies the channel between two parked capitals (hull-shaped shields)', async () => {
-    const k = getShipKind('light-cruiser');
-    expect(await flyChannel(true)).toBeGreaterThan(k.radius + 100);
+    world.spawnShip('cap', 0, 0, 'light-cruiser');
+    world.spawnShip('f', 50_000, 0, 'fighter');
+    expect(world.isHullExposed('cap')).toBe(true);
+    expect(world.isHullExposed('f')).toBe(false);
+    expect(shipShieldColliderDesc(getShipKind('fighter')).shape.type).toBe(RAPIER.ShapeType.Ball);
   });
 
-  it('the same channel with ball shields is walled off (the round-2 failure)', async () => {
-    expect(await flyChannel(false)).toBeLessThan(0);
-  });
-});
-
-describe('capital shield effects are sized to the hull, not its length', () => {
-  it('shieldVisualRadius: a capital uses its half beam, every other kind its radius', async () => {
-    const { shieldVisualRadius } = await import('../../src/shared-types/shipScale/tuning.js');
+  it('shieldVisualRadius: a capital uses its half beam, every other kind its radius', () => {
     const bb = getShipKind('battleship');
     expect(shieldVisualRadius(bb)).toBeCloseTo(beamOf('battleship') / 2, 6);
-    expect(shieldVisualRadius(bb)).toBeLessThan(bb.radius / 5);
     expect(shieldVisualRadius(getShipKind('fighter'))).toBe(getShipKind('fighter').radius);
   });
 });

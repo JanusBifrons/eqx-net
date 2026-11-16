@@ -341,14 +341,16 @@ export const ShipKindSchema = z
      *  => cheap circle collision; shield 0 => exact rendered polygon.
      *  Transient: always (re)spawns full, never persisted (only hull
      *  persists), so it is exempt from the catalogue-version hull-drift
-     *  clamp despite being a numeric stat. */
-    shieldMax: z.number().positive(),
+     *  clamp despite being a numeric stat. 0 => no shield at all (every
+     *  capital): the ship is always hit and collides on its hull. */
+    shieldMax: z.number().nonnegative(),
     /** Ticks of zero damage (shield OR hull) before regen begins. 60 Hz,
      *  so 300 ~= 5 s (Halo-classic). Any hit resets the timer. */
     shieldRegenDelayTicks: z.number().int().positive(),
     /** Shield HP restored per tick once regen is active. Authored as
-     *  shieldMax / 120 so a fully-broken shield refills in ~2 s at 60 Hz. */
-    shieldRegenRate: z.number().positive(),
+     *  shieldMax / 120 so a fully-broken shield refills in ~2 s at 60 Hz.
+     *  0 for a kind with no shield. */
+    shieldRegenRate: z.number().nonnegative(),
 
     // -- Energy (weapons/energy/AI overhaul, 2026-06-01) -------------------
     /** Full energy pool. ALL weapon slot triggers AND boosting drain from

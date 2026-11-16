@@ -15,7 +15,7 @@ import { FcMountPicker, fcNeedsPick, type FcMountDef, type FcWireLock } from '..
 import { getShipKind, type ShipKind, type WeaponMount } from '../../src/shared-types/shipKinds';
 import { mountWeaponReach } from '../../src/core/combat/mountReach';
 import { fillRangeShape } from '../../src/core/combat/fireControlBearing';
-import { LOCK_HAULABLE, LOCK_SALVAGE } from '../../src/core/combat/turretLockPick';
+import { LOCK_CONSUMABLE, LOCK_HAULABLE, LOCK_SALVAGE } from '../../src/core/combat/turretLockPick';
 
 /** A destroyer refitted as a salvager: `main` = 5 mining lasers, `aa` = 4 tractors. */
 function salvager(): ShipKind {
@@ -29,7 +29,8 @@ const piece = (x: number, y: number, radius: number): LockTargetView => ({
 });
 
 /** `ship`: a ship lock (not salvage); `hidden`: outside the client's mirror (AOI). */
-type Entry = { t: LockTargetView; mass: number; holdWeight: number; ship?: true; hidden?: true };
+/** `radius`: the piece's size for the consume test (absent: never consumable). */
+type Entry = { t: LockTargetView; mass: number; holdWeight: number; radius?: number; ship?: true; hidden?: true };
 
 function rig(pieces: Record<string, Entry>, free = { v: 100 }) {
   const kind = salvager();
@@ -43,7 +44,7 @@ function rig(pieces: Record<string, Entry>, free = { v: 100 }) {
     salvageOf: (_p, key, out: LockSalvageView) => {
       const e = pieces[key];
       if (!e || e.ship) return false;
-      out.mass = e.mass; out.holdWeight = e.holdWeight; out.freeHold = free.v;
+      out.mass = e.mass; out.radius = e.radius ?? Infinity; out.holdWeight = e.holdWeight; out.freeHold = free.v;
       return true;
     },
   });
@@ -125,6 +126,20 @@ describe('salvage lock pick: server LockSubsystem ⇔ client FcMountPicker', () 
     });
     for (const k of ['s:2', 'p:far']) expect(locks.forceLock('p1', k, 'main')).toBe(1);
     for (const [s, c] of aims('main')) { expect(s).toBe('p:far'); expect(c).toBe(s); }
+  });
+
+  it('a consumable piece: no laser and no tractor aims at it, on both sides; a fuller hold hands it back', () => {
+    // The salvager (a destroyer) consumes pieces up to 0.15 × its hull radius.
+    const free = { v: 100 };
+    const { locks, aims } = rig({ 's:4': { t: piece(1500, 0, 20), mass: 1, holdWeight: 5, radius: 20 } }, free);
+    locks.forceLock('p1', 's:4', 'main');
+    locks.forceLock('p1', 's:4', 'aa');
+    expect(locks.wireFor('p1')!.find((g) => g.id === 'aa')!.l[0]!.f).toBe(LOCK_SALVAGE | LOCK_HAULABLE | LOCK_CONSUMABLE);
+    for (const g of ['main', 'aa']) for (const [s, c] of aims(g)) { expect(s).toBeNull(); expect(c).toBeNull(); }
+    free.v = 2; // no room to take it in: not consumable or haulable, so the tractors pull and the lasers cut it
+    locks.step();
+    expect(locks.wireFor('p1')!.find((g) => g.id === 'aa')!.l[0]!.f).toBe(LOCK_SALVAGE);
+    for (const [s, c] of aims('aa')) { expect(s).toBe('s:4'); expect(c).toBe('s:4'); }
   });
 
   it('a cuttable piece outside the client mirror: same aim on both sides', () => {

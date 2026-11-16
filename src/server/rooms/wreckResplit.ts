@@ -316,11 +316,20 @@ export function dropPieceSalvage(
 ): void {
   if (d.dropSalvage === undefined) return;
   if (ore !== undefined) {
-    const share = area * ore.perArea;
-    if (!(share >= 1)) return; // no ore left in this sliver: no pod
-    const podMax = Math.max(1, Math.floor(SALVAGE_POD_MAX_WEIGHT / asteroidYieldWeightPerUnit(ore.resource)));
-    d.dropSalvage(Math.min(podMax, Math.round(share)), x, y, vx, vy, ore);
+    const units = pieceOreUnits(ore, area);
+    if (units > 0) d.dropSalvage(units, x, y, vx, vy, ore); // none left in this sliver: no pod
     return;
   }
   d.dropSalvage(wreckSalvageQty(src, mass), x, y, vx, vy);
+}
+
+/** A rock piece's ore units (area × `ore.perArea`, rounded, up to a pod's
+ *  size of that ore: `SALVAGE_POD_MAX_WEIGHT`); 0 under one unit. The one
+ *  rule for a worn-out rock piece's pod and a whole piece taken into a hold
+ *  (wreckLineage.ts `pieceStoreOf`). */
+export function pieceOreUnits(ore: NonNullable<LiveWreck['ore']>, area: number): number {
+  const share = area * ore.perArea;
+  if (!(share >= 1)) return 0;
+  const podMax = Math.max(1, Math.floor(SALVAGE_POD_MAX_WEIGHT / asteroidYieldWeightPerUnit(ore.resource)));
+  return Math.min(podMax, Math.round(share));
 }

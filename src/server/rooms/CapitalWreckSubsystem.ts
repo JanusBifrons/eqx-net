@@ -49,7 +49,7 @@ import { wreckPieceIntegrity, wreckWearFactor } from '../../core/destruction/wre
 import type { BurnLines } from '../../core/destruction/burnLines.js';
 import { WreckResplitter, type WreckPiecePose } from './wreckResplit.js';
 import type { CapitalWreckDeps, LiveWreck, PieceKnock } from './capitalWreckTypes.js';
-import { forEachLineagePiece, lineageRootOf, pieceHaulOf, pieceSalvageQtyOf } from './wreckLineage.js';
+import { forEachLineagePiece, forEachPieceNear, lineageRootOf, pieceSalvageQtyOf, pieceStoreOf, type PieceStoreView } from './wreckLineage.js';
 import { burnHullHit, burnPieceHit, deathExtraCuts } from './wreckBurnHits.js';
 import { RockCutter } from './rockCut.js';
 import { shipWreckSource } from '../../core/destruction/wreckSource.js';
@@ -546,8 +546,7 @@ export class CapitalWreckSubsystem {
   /** A live piece's salvage if stored whole (wreckLineage.ts `pieceSalvageQtyOf`). */
   pieceSalvageQty(id: string): number { return pieceSalvageQtyOf(this.wrecks, this.pieceWreck, this.knock, id); }
 
-  /** A tractored piece went whole into a hold (`LootSubsystem`'s piece
-   *  store): it leaves exactly like a worn-out piece turning to salvage. */
+  /** A piece went whole into a hold (`LootSubsystem`'s piece store): it leaves like a worn-out piece turning to salvage. */
   storePiece(id: string): void {
     if (!this.knock.has(id)) return;
     this.dropPiece(id, this.live.includes(id) ? this.live : this.liveSubcap);
@@ -558,10 +557,11 @@ export class CapitalWreckSubsystem {
     return this.knock.get(id)?.integrity ?? this.rockCut.integrity(id);
   }
 
-  /** A live piece's mass and stored hold weight, the lock haul test (wreckLineage.ts `pieceHaulOf`). */
-  pieceHaul(id: string, out: { mass: number; holdWeight: number }): boolean {
-    return pieceHaulOf(this.wrecks, this.pieceWreck, this.knock, id, out);
-  }
+  /** A live piece's mass, radius and whole-store worth (wreckLineage.ts `pieceStoreOf`). */
+  pieceStore(id: string, out: PieceStoreView): boolean { return pieceStoreOf(this.wrecks, this.pieceWreck, this.knock, id, out); }
+
+  /** Live pieces a ship at (x, y) could take in (wreckLineage.ts `forEachPieceNear`). */
+  forEachPieceNear(x: number, y: number, reach: number, maxRadius: number, visit: (id: string, px: number, py: number) => void): void { forEachPieceNear(this.wrecks, this.pieceWreck, this.knock, this.d.serverTick(), this.d.piecePoseInto, x, y, reach, maxRadius, visit); }
 
   /** The snapshot slice: one descriptor per live wreck (shared array, rebuilt
    *  only on change; empty when there are none). */

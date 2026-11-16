@@ -27,7 +27,10 @@
  * laser rank r takes piece rank r % k among the pieces IT can engage (reach +
  * arc, as above; none: it parks on the first cuttable piece). Haulable pieces are left to the
  * tractors (a separate group); with every piece haulable the laser has no
- * aim (`TURRET_NO_LOCK`) and does not fire.
+ * aim (`TURRET_NO_LOCK`) and does not fire. A piece flagged `LOCK_CONSUMABLE`
+ * (this ship can take it in whole, the factory line) is skipped by lasers AND
+ * tractors: a tractor whose locks are all consumable has no aim either, so
+ * its lease lapses and the loot pickup takes the piece in.
  *
  * Used by the server's turret aim + fire gate (`LockSubsystem.aimKeyFor`) and
  * the client's predicted aim + ghost gate (`ColyseusClient.fcMountAimKey`), so
@@ -47,6 +50,9 @@ export const TURRET_NO_LOCK = -1;
 export const LOCK_SALVAGE = 1;
 /** `lockFlags` bit: this ship can already tow AND store the piece (`salvageHaulable`). */
 export const LOCK_HAULABLE = 2;
+/** `lockFlags` bit: this ship can take the piece in whole (`salvageConsumable`):
+ *  no laser and no tractor aims at it; the loot pickup takes it in. */
+export const LOCK_CONSUMABLE = 4;
 /** Most locks a caller hands `pickTurretLock` (the size of both sides'
  *  per-lock scratch; well above any group's lock capacity). */
 export const TURRET_PICK_MAX = 8;
@@ -100,19 +106,30 @@ export function pickTurretLock(
   lockFlags?: ArrayLike<number>,
   groupMounts?: ArrayLike<TurretGroupMount>,
 ): number {
-  let skipSalvage = false;
-  if (lockFlags !== undefined && groupMounts !== undefined && isSalvageWeapon(getWeapon(groupMounts[ordinal]!.weaponId))) {
-    const s = pickSalvageLock(m, frameAngle, mx, my, reach, ordinal, n, tx, ty, shapes, lockFlags, groupMounts);
-    if (s !== SALVAGE_NOT_APPLICABLE) return s;
-    skipSalvage = true;
+  // Locks this mount may not aim at: a mining laser's salvage (it took the
+  // share-out above), a tractor's consumable pieces (the ship takes those in).
+  let skipBits = 0;
+  if (lockFlags !== undefined && groupMounts !== undefined) {
+    const def = getWeapon(groupMounts[ordinal]!.weaponId);
+    if (isSalvageWeapon(def)) {
+      const s = pickSalvageLock(m, frameAngle, mx, my, reach, ordinal, n, tx, ty, shapes, lockFlags, groupMounts);
+      if (s !== SALVAGE_NOT_APPLICABLE) return s;
+      skipBits = LOCK_SALVAGE;
+    } else if (def.tractor !== undefined) {
+      let open = 0;
+      for (let i = 0; i < n; i++) if ((lockFlags[i]! & LOCK_CONSUMABLE) === 0) open++;
+      if (open === 0) return TURRET_NO_LOCK;
+      if (open < n) skipBits = LOCK_CONSUMABLE;
+    }
   }
+  const skipping = skipBits !== 0;
   if (n <= 1) return 0;
   const start = ordinal % n;
   let best = -1;
   let bestPri = Infinity;
   for (let k = 0; k < n; k++) {
     const i = (start + k) % n;
-    if (skipSalvage && (lockFlags![i]! & LOCK_SALVAGE) !== 0) continue;
+    if (skipping && (lockFlags![i]! & skipBits) !== 0) continue;
     // Class first (cheap, cached per kind): skip a lock no better than the best.
     const pri = shapes === undefined ? 0 : mountPriority(m.size, targetClassOfKind(shapes[i]!.kindId));
     if (pri >= bestPri) continue;
@@ -121,8 +138,8 @@ export function pickTurretLock(
     bestPri = pri;
     if (pri === 0) break;
   }
-  if (best < 0 && skipSalvage) {
-    for (let i = 0; i < n; i++) if ((lockFlags![i]! & LOCK_SALVAGE) === 0) return i;
+  if (best < 0 && skipping) {
+    for (let i = 0; i < n; i++) if ((lockFlags![i]! & skipBits) === 0) return i;
   }
   return best < 0 ? 0 : best;
 }
@@ -159,7 +176,7 @@ function pickSalvageLock(
     const f = lockFlags[i]!;
     if ((f & LOCK_SALVAGE) === 0) continue;
     pieces++;
-    if ((f & LOCK_HAULABLE) !== 0) continue;
+    if ((f & (LOCK_HAULABLE | LOCK_CONSUMABLE)) !== 0) continue;
     if (firstCut < 0) firstCut = i;
     if (!canEngage(m, frameAngle, tx[i]! - mx, ty[i]! - my, reach, shapes?.[i])) continue;
     // Insertion by float32 radius, descending; equal radii keep lock order.
