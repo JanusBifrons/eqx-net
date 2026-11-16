@@ -30,7 +30,7 @@
  * client-ahead path (getPoseAt(future) → shipPoseCache fallback) is
  * not perturbed.
  *
- * Pure + exhaustive (the `shouldDetachWarpVisual` / `LocalBeam`
+ * Pure + exhaustive (the `spriteUpdateDecisions` / `LocalBeam`
  * precedent: the side-effecting `SectorRoom.handleFire` defers to this).
  */
 import { describe, it, expect } from 'vitest';

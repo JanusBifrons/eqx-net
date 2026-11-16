@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { curtainAlphaAt } from './WarpFilterChain';
+import { Container } from 'pixi.js';
+import { curtainAlphaAt, LoadCurtain } from './LoadCurtain';
 
 /**
  * WS-14 / R2.26-curtain — "ship-change briefly flashes the destination sector".
@@ -32,5 +33,23 @@ describe('curtainAlphaAt — instant rise, smooth fade-out (R2.26-curtain)', () 
   it('a no-op (target === from) returns the target', () => {
     expect(curtainAlphaAt(1, 1, 50)).toBe(1);
     expect(curtainAlphaAt(0, 0, 50)).toBe(0);
+  });
+});
+
+/**
+ * The curtain owns no filter. A filter on `app.stage` renders the whole frame
+ * into a non-MSAA filter texture (no antialiasing) and pays full-screen passes;
+ * the old shader warp chain that used to share this class attached one.
+ */
+describe('LoadCurtain — never attaches a stage filter', () => {
+  it('raising and lowering the curtain leaves app.stage.filters empty', () => {
+    const stage = new Container();
+    const app = { stage, ticker: { add: () => {}, remove: () => {} } };
+    const curtain = new LoadCurtain(app as never, { warpTickMs: 0 });
+    curtain.setLoadCurtain(true);
+    curtain.setLoadCurtain(false);
+    const attached = Array.isArray(stage.filters) ? stage.filters.length : stage.filters ? 1 : 0;
+    expect(attached).toBe(0);
+    expect(stage.children.length).toBe(1); // the curtain's own container
   });
 });

@@ -17,10 +17,9 @@ import { logEvent } from './debug/ClientLogger';
  *    the ship has arrived): `travelling` clears and the client stops flying
  *    the ship on its trip heading, so it drops in at its real pose (WarpFx
  *    draws the drop).
- *  - The old shader envelope (`setWarpMode`) and arrival flash
- *    (`triggerWarpIn`) are gone (the user, 2026-11-07: "they're incredibly
- *    expensive and suck"); the build-up and drop are WarpFx sprites driven by
- *    the ship's warp phase.
+ *  - The old shader warp (envelope + arrival flash) was removed (the user,
+ *    2026-11-07: "they're incredibly expensive and suck"); the build-up and
+ *    drop are WarpFx sprites driven by the ship's warp phase.
  */
 export function useWarpOrchestration(rendererRef: RefObject<IRenderer | null>): void {
   const gameReady = useGameReady();

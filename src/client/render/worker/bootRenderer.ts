@@ -26,6 +26,7 @@ export function rendererArgsFromBoot(
       ...(msg.lighting ? { lighting: msg.lighting } : {}),
       ...(msg.livery ? { livery: msg.livery } : {}),
       ...(msg.ore ? { ore: msg.ore } : {}),
+      ...(msg.quality ? { quality: msg.quality } : {}),
     },
     msg.fxKillSwitches,
   ];
