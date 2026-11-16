@@ -65,7 +65,9 @@ function expectSame(a: ShieldShape, b: ShieldShape): void {
   expect(a.restitution).toBeCloseTo(b.restitution, 6);
 }
 
-const DRONE_KINDS = ['fighter', 'interceptor', 'crossguard', 'scout', 'light-cruiser'];
+// Capitals are left out: they have no shield (owner 2026-11-16) and collide on
+// their hull from spawn (`World.shieldlessHull.test.ts`).
+const DRONE_KINDS = ['fighter', 'interceptor', 'crossguard', 'scout'];
 
 /** Server path: what SwarmSpawner posts, replayed through the worker's call. */
 function serverSpawn(world: PhysicsWorld, kindId: string): string {
