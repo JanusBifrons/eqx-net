@@ -106,6 +106,8 @@ import {
 import { recoverInputTickFromStarvation, skipStalledBacklog, stallResumeAction } from './inputTickRecovery';
 import { SnapshotCoalescer } from './SnapshotCoalescer.js';
 import { ClientEntityFactory } from './entity/ClientEntityFactory.js';
+import { createGameCutField, type CutFieldSummary } from './cutFieldWiring.js';
+import { clearMirror } from './clearMirror.js';
 import { WreckGeometryStore } from './wreckGeometryStore.js';
 import { SWARM_KIND_WRECK } from '@shared-types/swarmWireFormat';
 import type { ClientSpawnCtx } from './entity/IClientEntityLeaf.js';
@@ -310,30 +312,8 @@ const NO_LOCKED_BY: ReadonlyArray<{ t: string; s: number; p: number }> = [];
 /** A welcome from a wreck room with no live wreck (slice 3). */
 const NO_WRECK_LIST: readonly import('@shared-types/messages/snapshotMessages').WreckDescriptor[] = [];
 
-const SWARM_ID_PREFIX = 'swarm-';
-
-/**
- * Is `targetId` (`swarm-<entityId>`) a wreck piece (swarm kind 4)? A hit on
- * debris shows its impact spark and flash but NO floating damage number or
- * health bar, for every wreck profile, capitals included (hostile review
- * 2026-11-13: numbers coalesce by screen spot, so hits on a dead ship's
- * pieces kept climbing its floating number after the explosion). Parses the
- * id in place (no substring; called per damage event, #14).
- */
-export function isWreckPieceTarget(
-  targetId: string, swarm: ReadonlyMap<number, Pick<SwarmRenderState, 'kind'>> | undefined,
-): boolean {
-  if (swarm === undefined || !targetId.startsWith(SWARM_ID_PREFIX)) return false;
-  const n = targetId.length;
-  if (n === SWARM_ID_PREFIX.length) return false;
-  let id = 0;
-  for (let i = SWARM_ID_PREFIX.length; i < n; i++) {
-    const c = targetId.charCodeAt(i) - 48;
-    if (c < 0 || c > 9) return false;
-    id = id * 10 + c;
-  }
-  return swarm.get(id)?.kind === SWARM_KIND_WRECK;
-}
+export { isNoDamageNumberTarget, isWreckPieceTarget } from './damageNumberTargets.js';
+import { isNoDamageNumberTarget, isWreckPieceTarget } from './damageNumberTargets.js';
 
 export class ColyseusGameClient {
   /**
@@ -556,6 +536,7 @@ export class ColyseusGameClient {
   /** Capital destruction S2b: wreck geometry rebuilt from the snapshot's
    *  `wrecks[]` descriptors. Its `descriptors` map IS `mirror.wrecks`. */
   private readonly _wrecks = new WreckGeometryStore();
+  private readonly _cutField = createGameCutField({ gameClock: () => this.gameClock, predWorld: () => this.predWorld, mirror: this.mirror }); // macro terrain v2
   /** Reused construction context — one instance mutated in place per entity, so
    *  swarm spawn allocates nothing (invariant #14). `predWorld` / `entry` are
    *  filled per use; `aiController` is the (constant) hostility ledger. */
@@ -563,6 +544,7 @@ export class ColyseusGameClient {
     predWorld: null as unknown as ClientSpawnCtx['predWorld'],
     aiController: this._aiController,
     wrecks: this._wrecks,
+    fieldRocks: this._cutField,
     entityId: 0,
     key: '',
     entry: null as unknown as ClientSpawnCtx['entry'],
@@ -1468,6 +1450,7 @@ export class ColyseusGameClient {
   private resetPredictionState(): void {
     // S2b: wrecks belong to the old sector (clears mirror.wrecks too).
     this._wrecks.clear();
+    this._cutField.stop(); // the cut field belongs to the old sector; the next welcome re-arms it
     // Deaths held for their drawn shell belong to the old sector too.
     this._shellTiming.reset();
     // Fire control: NPC locks belong to the old sector.
@@ -1690,6 +1673,8 @@ export class ColyseusGameClient {
       this.mirror.capitalWrecks = msg.capitalWrecks === true;
       // Sub-cap wrecks on: a dying sub-cap's hull is held until its pieces draw.
       this.mirror.subcapWrecks = msg.subcapWrecks === true;
+      // Cut field on: cut the same rocks as the server from its seed (#16).
+      this._cutField.setSeed(msg.cutField?.seed ?? null);
       // Sub-capital break-up slice 3: the welcome carries the FULL live wreck
       // set (#16); snapshots then carry only adds, removes and a slow resync.
       if (msg.capitalWrecks === true || msg.subcapWrecks === true) {
@@ -2952,7 +2937,7 @@ export class ColyseusGameClient {
     // showed this number (de-dupe: exactly one number per confirmed hit).
     // Everything else in handleDamage stays unconditional — this remains
     // the SOLE HP/HUD/flash/healthbar/hostility authority.
-    if (!suppressNumber && !debris && this.mirror.pendingDamageNumbers) {
+    if (!suppressNumber && !debris && !isNoDamageNumberTarget(evt.targetId, this.mirror.swarm) && this.mirror.pendingDamageNumbers) {
       const targetShip = this.mirror.ships.get(evt.targetId);
       const x = evt.hitX ?? targetShip?.x ?? 0;
       const y = evt.hitY ?? targetShip?.y ?? 0;
@@ -7131,8 +7116,8 @@ export class ColyseusGameClient {
     const clockNow = this.clock.now();
     const predSink: PredictedFeedbackSink = {
       pushDamageNumber: (targetId, x, y, damage, tag) => {
-        // Debris: never a number (the authoritative path skips it too).
-        if (isWreckPieceTarget(targetId, this.mirror.swarm)) return;
+        // Debris and rocks: never a number (the authoritative path skips them too).
+        if (isNoDamageNumberTarget(targetId, this.mirror.swarm)) return;
         if (!isHitscan || damage <= 0) {
           this.mirror.pendingDamageNumbers?.push({ targetId, x, y, damage, tag });
           // Probe 4 (mobile-perf-investigation, 2026-05-24) — replaced the
@@ -7248,27 +7233,10 @@ export class ColyseusGameClient {
     });
   }
 
-  /**
-   * Plan: crispy-kazoo, Commit 6 — reflection-based mirror clear.
-   *
-   * Walks every property on `mirror` and clears Maps / Sets / Arrays
-   * generically. The plan's prophylactic against future mirror
-   * additions: adding a new field to `RenderMirror` does NOT require
-   * touching dispose — the walk picks it up automatically. The
-   * disposeAudit test populates every field with a sentinel value
-   * and asserts they're empty post-dispose.
-   */
-  private clearMirror(): void {
-    const m = this.mirror as unknown as Record<string, unknown>;
-    for (const k of Object.keys(m)) {
-      const v = m[k];
-      if (v instanceof Map) v.clear();
-      else if (v instanceof Set) v.clear();
-      else if (Array.isArray(v)) v.length = 0;
-    }
-  }
+  get cutFieldStats(): CutFieldSummary { return this._cutField.summary(); } // cut-field-collision.spec.ts waits on it
 
   dispose(): void {
+    this._cutField.stop();
     // Game time scale: the next session starts at 1× until its snapshots say otherwise.
     useUIStore.getState().setTimeScale(1);
     this.disposed = true;
@@ -7326,7 +7294,7 @@ export class ColyseusGameClient {
     this._scheduledDamageSpawns.length = 0;
 
     // Reflection-based clear: every Map / Set / Array on `mirror` empties.
-    this.clearMirror();
+    clearMirror(this.mirror); // ./clearMirror.ts
 
     // Stats + per-connection accumulators — reset to freshly-constructed
     // (non-nullable types) so a re-mount sees a clean baseline.

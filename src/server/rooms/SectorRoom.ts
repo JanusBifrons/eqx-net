@@ -263,6 +263,7 @@ import { EntitySyncRouter } from './EntitySyncRouter.js';
 import { isEngageablePilotHull, isLingeringHull, isPilotedActive } from '../../core/entity/shipLiveness.js';
 import { MalformedMessageTracker } from './MalformedMessageTracker.js';
 import { guarded } from './guardedLoop.js';
+import { CutFieldSubsystem } from './CutFieldSubsystem.js';
 import { SectorPersistence } from './SectorPersistence.js';
 import { LivingWorldBotHooks } from './LivingWorldBotHooks.js';
 import { SceneScriptRunner, SceneScriptSchema, type SceneStatus } from './scene/SceneScriptRunner.js';
@@ -1115,7 +1116,7 @@ export class SectorRoom extends Room<SectorState> {
   /** Living World P1a — loot pods, pickup, spill-on-death (see LootSubsystem). */
   private loot!: LootSubsystem;
   /** Asteroid ore: the one draw path (Miner, harvesters, mining-laser hits paid on the pulse). */
-  private readonly oreDraw = new OreDraw({ swarmRegistry: this.swarmRegistry, holderOf: (id, out) => this.oreHolderOf(id, out), sectorKey: () => this.sectorKey });
+  private readonly oreDraw = new OreDraw({ swarmRegistry: this.swarmRegistry, holderOf: (id, out) => this.oreHolderOf(id, out), sectorKey: () => this.sectorKey, oreAtHit: (r, x, y, out) => this.cutField?.oreAtHit(r, x, y, out) ?? false });
   /** Living World P1a-2 — base storage holds (deposit / refine / spill). */
   private storage!: StorageService;
   /** Economy v2 W3 — Research Lab jobs (research / copy / combine). */
@@ -1146,7 +1147,7 @@ export class SectorRoom extends Room<SectorState> {
   private readonly forceFields = new ForceFieldSubsystem({ post: (cmd) => this.postToWorker(cmd), tractors: {
     tick: () => this.serverTick, poseOf: (id, out) => this.aiFireTargetShape(id, out), wireRef: (id) => this.swarmRegistry.get(id)?.entityId ?? id,
     lineBodies: (fx, fy, tx, ty, w, a, b, ids, cap) => this.lofGate().lineBodies(fx, fy, tx, ty, w, a, b, ids, cap),
-    inCrackHold: (id) => this.capitalWrecks?.inCrackHold(id) === true, isTerrain: (id) => isTerrainLockKind(this.swarmRegistry.get(id)?.kind ?? -1),
+    inCrackHold: (id) => this.capitalWrecks?.inCrackHold(id) === true, isTerrain: (id) => isTerrainLockKind(this.swarmRegistry.get(id)?.kind ?? -1), isWreckPiece: (id) => { const r = this.swarmRegistry.get(id); return r != null && isWreckPiece(r); },
     // Tractoring a ship is a hostile act, like a hit (weapon-mounts.md "Tractor beam"); terrain is neutral.
     onShipTractored: (e, t) => { this.noteStandingHit(t, e); if (this.playerToSlot.has(t)) this.refreshNpcAttackHostility(e, t); else if (this.swarmRegistry.get(t)?.kind === 1 && !this.isFriendlyFire(t, e)) this.aiController.markHostile(t, e, this.serverTick); },
   } });
@@ -1270,6 +1271,7 @@ export class SectorRoom extends Room<SectorState> {
   private mineField!: MineFieldSubsystem;
   /** 1 Hz grid heartbeat timer (unref'd; off the physics tick). */
   private structureGridTimer: GameTimer | undefined;
+  private cutField: CutFieldSubsystem | undefined; // macro terrain v2 (room option `cutField`)
   /** Faster turret aim/fire timer (Phase 5; unref'd). */
   private structureTurretTimer: GameTimer | undefined;
   /** Click-to-inspect live-stats channel (structures follow-up Item B5) +
@@ -1577,7 +1579,7 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   get _internals(): {
-    serverTick: number;
+    cutField: CutFieldSubsystem['streamer'] | undefined; serverTick: number;
     /** Room update() calls so far (the AI-pilot cadence; serverTick is the
      *  physics worker's step count and can drift a step or two from it). */
     roomUpdates: number;
@@ -1695,8 +1697,8 @@ export class SectorRoom extends Room<SectorState> {
     loot: LootSubsystem;
     /** S2a — a swarm entity's full SAB state (pose, velocity, spin). */
     wreckState: (id: string) => { x: number; y: number; vx: number; vy: number; angle: number; angvel: number } | null;
-    /** Salvage PR 5: a wreck piece's hidden integrity (undefined: none). */
-    wreckIntegrity: (id: string) => number | undefined;
+    /** Salvage PR 5: a wreck piece's hidden integrity (undefined: none); its whole-piece salvage (0: none). */
+    wreckIntegrity: (id: string) => number | undefined; wreckSalvage: (id: string) => number;
     /** S2a — a wreck piece's convex parts (body-local), or null. */
     wreckParts: (id: string) => ReadonlyArray<ReadonlyArray<{ x: number; y: number }>> | null;
     /** S2a — fix the fracture seed (null = per death). */
@@ -1718,6 +1720,7 @@ export class SectorRoom extends Room<SectorState> {
   } {
     return {
       loot: this.loot,
+      cutField: this.cutField?.streamer,
       serverTick: this.serverTick,
       roomUpdates: this.roomUpdateCount,
       droppedTicks: this.sabU32[WORKER_DROPPED_TICKS_IDX] ?? 0,
@@ -1782,7 +1785,7 @@ export class SectorRoom extends Room<SectorState> {
       },
       damageSwarmLayered: (rec, damage) => this.damageSwarmLayered(rec, damage),
       wreckState: (id) => this.wreckPose(id),
-      wreckIntegrity: (id) => this.capitalWrecks?.pieceIntegrity(id),
+      wreckIntegrity: (id) => this.capitalWrecks?.pieceIntegrity(id), wreckSalvage: (id) => this.capitalWrecks?.pieceSalvageQty(id) ?? 0,
       wreckParts: (id) => this.swarmRegistry.get(id)?.wreckParts ?? null,
       setWreckSeed: (seed) => { if (this.capitalWrecks) this.capitalWrecks.forcedSeed = seed; },
       swarmSleeping: (id) => {
@@ -1904,6 +1907,7 @@ export class SectorRoom extends Room<SectorState> {
        * mix) instead of using `asteroidConfig` + `droneCount`. When set,
        * suppresses both legacy paths so we don't double-spawn.
        */
+      cutField?: { seed: string }; // macro terrain v2: test/showcase rooms only (docs/architecture/macro-terrain.md)
       swarmCount?: number;
       swarmRatio?: number; // asteroid fraction; default 0.8
       swarmRadius?: number; // spawn disc radius; default 18 000
@@ -2915,13 +2919,12 @@ export class SectorRoom extends Room<SectorState> {
         return p;
       },
       forEachCollector: (visit) => this.forEachLootCollector(visit),
+      // Tractor hold zone (emitter id: a pilot's playerId or an AI ship's swarm id): a pod is picked up, a wreck piece stored whole.
+      inTractorHold: (c, podId, x, y) => this.forceFields.inTractorHold(c.playerId, podId, x, y),
+      heldPieces: { any: () => this.forceFields.tractorCount > 0, forEach: (c, visit) => this.forceFields.forEachHeldPiece(c.playerId, visit), salvageQty: (id) => this.capitalWrecks?.pieceSalvageQty(id) ?? 0, remove: (id) => this.capitalWrecks?.storePiece(id) },
       onCollected: (c, moved, podId) => this.onLootCollected(c, moved, podId),
-      onDropped: (podId, hold, cause) => {
-        auditEvent({ event: 'loot_dropped', sector: this.sectorKey ?? undefined, podId, cause, weight: holdWeight(hold) });
-      },
-      onDestroyed: (podId, hold, cause) => {
-        auditEvent({ event: 'loot_destroyed', sector: this.sectorKey ?? undefined, podId, cause, weight: holdWeight(hold) });
-      },
+      onDropped: (podId, hold, cause) => auditEvent({ event: 'loot_dropped', sector: this.sectorKey ?? undefined, podId, cause, weight: holdWeight(hold) }),
+      onDestroyed: (podId, hold, cause) => auditEvent({ event: 'loot_destroyed', sector: this.sectorKey ?? undefined, podId, cause, weight: holdWeight(hold) }),
     });
 
     // ── Structure placement (structures plan, Phase 2) ──────────────────
@@ -2985,7 +2988,7 @@ export class SectorRoom extends Room<SectorState> {
       chargeCapacitors: (members, spare) => this.teleporters.chargeCapacitors(members, spare),
       drawAsteroidResources: (entityId, amount) => this.oreDraw.draw(entityId, amount),
       // P2c — asteroid kinds, extractor goods into network storage, nebulae.
-      asteroidYieldOf: (entityId) => ASTEROID_YIELD[this.swarmRegistry.getByEntityId(entityId)?.asteroidResource ?? 'rock'],
+      asteroidYieldOf: (entityId) => { const r = this.swarmRegistry.getByEntityId(entityId); return r ? this.oreDraw.rowOf(r) : ASTEROID_YIELD.rock; },
       depositGoods: (rec, good, n) => this.production.deposit(rec, good, n),
       canDepositGoods: (rec, goods) => this.production.canDeposit(rec, goods),
       sectorHasNebula: () => this.sectorFeatures.includes('nebula'),
@@ -3186,6 +3189,7 @@ export class SectorRoom extends Room<SectorState> {
     this.structureGridTimer = this.gameClock.every(pulseMs, guarded('structure-grid-tick', () => this.structureGridTick()));
     // Phase 5 — turret aim/fire on a faster cadence than the grid pulse.
     this.structureTurretTimer = this.gameClock.every(TURRET_TICK_MS, guarded('structure-turret-tick', () => this.structureTurretTick()));
+    if (roomOpts.cutField) this.cutField = new CutFieldSubsystem(roomOpts.cutField.seed, this.gameClock, this.swarmRegistry, this.swarmSpawner, { shipSlots: () => this.playerToSlot.values(), sab: () => this.sabF32, post: (cmd) => this.postToWorker(cmd), evict: (rec, broadcast) => this.evictSwarmEntity(rec, { broadcast, emitDestroyed: false }) });
 
     // Click-to-inspect live-stats channel (structures follow-up Item B5). Its
     // own ~5 Hz timer (200 ms), unref'd + OFF the snapshot/physics tick — the
@@ -5516,7 +5520,7 @@ export class SectorRoom extends Room<SectorState> {
     }
     // Phase 4 warp travel: a ship on its run is out of the world (an NPC's too, W2a).
     if (this.warpTravel.isTravelling(targetId)) return false;
-    if (weaponId !== undefined && damage > 0) this.oreDraw.onHit(targetId, shooterId, damage, weaponId);
+    if (weaponId !== undefined && damage > 0) this.oreDraw.onHit(targetId, shooterId, damage, weaponId, hitX, hitY);
     if (this.npcWarps.size > 0 && this.botWarpPhase(targetId) === 2) return false;
     // v4 A — alien gates can't be damaged; whoever hits one is disabled.
     if (this.gateGuard.gateCount > 0 && this.gateGuard.isGate(targetId)) {
@@ -9296,6 +9300,7 @@ export class SectorRoom extends Room<SectorState> {
             });
             continue;
           }
+          this.cutField?.onContact(p.aId, p.bId, p.normalSpeed, tick);
           this.bus.emit('COLLISION_RESOLVED', {
             type: 'COLLISION_RESOLVED',
             aId: p.aId,
@@ -9636,7 +9641,7 @@ export class SectorRoom extends Room<SectorState> {
           sectorKey: this.sectorKey,
           shipInstanceId: existingShip?.shipInstanceId ?? '',
         };
-        client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields() }));
+        client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields(), ...this.cutField?.welcome }));
 
         setSession(client.sessionId, {
           roomId: this.roomId,
@@ -10142,7 +10147,7 @@ export class SectorRoom extends Room<SectorState> {
       sectorKey: this.sectorKey,
       shipInstanceId: ship.shipInstanceId,
     };
-    client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields() }));
+    client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields(), ...this.cutField?.welcome }));
 
     // Prefer the auth-validated userId from this connect; fall back to the
     // Limbo-resumed value when this connect was anonymous (covers the
@@ -10270,7 +10275,7 @@ export class SectorRoom extends Room<SectorState> {
       shipInstanceId: '',
       spectator: true,
     };
-    client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields() }));
+    client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields(), ...this.cutField?.welcome }));
 
     setSession(client.sessionId, {
       roomId: this.roomId,
@@ -11162,7 +11167,7 @@ export class SectorRoom extends Room<SectorState> {
       sectorKey: this.sectorKey,
       shipInstanceId: shipId,
     };
-    client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields() }));
+    client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields(), ...this.cutField?.welcome }));
     this.pendingJoin.set(playerId, {
       joinTick: tick,
       watchdogTick: tick + CLIENT_READY_TIMEOUT_TICKS,
@@ -12760,6 +12765,7 @@ export class SectorRoom extends Room<SectorState> {
     this.gameClock.cancelAll();
     if (this.tradeRegisteredKey !== null) getTradeSink()?.unregisterRoom(this.tradeRegisteredKey, this);
     if (this.teleportRoom) getTeleportBroker().unregister(this.teleportRoom);
+    this.cutField?.dispose();
     // Structures plan, Phase 3 — stop the grid pulse heartbeat.
     if (this.structureGridTimer !== undefined) {
       this.structureGridTimer.cancel();

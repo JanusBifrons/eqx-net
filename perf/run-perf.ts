@@ -175,14 +175,19 @@ async function runOnce(browser: Browser, arm: Arm, scene: PerfScene, log: (m: st
       room: `perf-${scene.id}`, testId: randomUUID(), spawnX: String(scene.spawn.x), spawnY: String(scene.spawn.y),
       ...BASE_CLIENT_PARAMS,
       ...(scene.pilotKind ? { shipKind: scene.pilotKind } : {}),
+      ...(scene.pilotHold ? { initialAngle: String(scene.pilotHold.initialAngle) } : {}),
       ...arm.clientParams,
     });
     await page.goto(`${arm.servers.baseUrl}/?${p}`, { waitUntil: 'domcontentloaded', timeout: 180_000 });
     await page.waitForFunction(() => !!(globalThis as { __eqxPerf?: unknown }).__eqxPerf, null, { timeout: 120_000 });
     // The loading curtain holds while art bakes; measure only after it lifts.
     await page.waitForSelector('[data-testid="warp-screen"][data-warp-visible="0"]', { state: 'attached', timeout: 180_000 });
-    await page.evaluate((c) => (globalThis as unknown as { __eqxCinema?: { play(c: unknown[]): void } }).__eqxCinema?.play([{ atMs: 0, smoothMs: 0, shot: { kind: 'hold', x: c.x, y: c.y, zoom: c.zoom * (c.vw / 1920) } }]), { ...scene.camera, vw: phone ? PHONE_PROXY.viewport.width : 1280 });
+    if (!scene.pilotHold) await page.evaluate((c) => (globalThis as unknown as { __eqxCinema?: { play(c: unknown[]): void } }).__eqxCinema?.play([{ atMs: 0, smoothMs: 0, shot: { kind: 'hold', x: c.x, y: c.y, zoom: c.zoom * (c.vw / 1920) } }]), { ...scene.camera, vw: phone ? PHONE_PROXY.viewport.width : 1280 });
     await page.evaluate(() => (globalThis as unknown as { __eqxPerf: { reset(): Promise<void> } }).__eqxPerf.reset());
+    if (scene.pilotHold) {
+      await page.locator('[data-testid="game-surface"]').click();
+      for (const k of scene.pilotHold.keys) await page.keyboard.down(k);
+    }
     rxBytes = 0; rxSwarmBytes = 0;
     const series: SoakSample[] = [];
     let last: SampleMark = { atMs: Date.now(), rx: 0, rxSwarm: 0, work: null };
@@ -236,6 +241,14 @@ async function runOnce(browser: Browser, arm: Arm, scene: PerfScene, log: (m: st
       }
       if (Date.now() > deadline) throw new Error(`scene ${scene.id} never ended (${JSON.stringify(room?.['scene'])})`);
       await new Promise((r) => setTimeout(r, 500));
+    }
+    // The scene ended inside the profile window: keep what was recorded.
+    if (cpuProfile && profileState === 'running') {
+      const { profile } = await cdp.send('Profiler.stop');
+      profileState = 'done';
+      mkdirSync(path.dirname(cpuProfile.out), { recursive: true });
+      writeFileSync(cpuProfile.out, JSON.stringify({ profile }));
+      log(`    cpu profile written (scene ended early): ${cpuProfile.out}`);
     }
     const client = await page.evaluate(() => (globalThis as unknown as { __eqxPerf: { read(): Promise<any> } }).__eqxPerf.read());
     const s = room!;

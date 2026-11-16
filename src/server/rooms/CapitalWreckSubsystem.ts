@@ -519,6 +519,22 @@ export class CapitalWreckSubsystem {
     this.pieceGone(id);
   }
 
+  /** A live piece's salvage if stored whole: what it would leave as a pod
+   *  when worn out (`wreckSalvageQty` of its mass). 0: not a live piece. */
+  pieceSalvageQty(id: string): number {
+    const k = this.knock.get(id);
+    const wreckId = this.pieceWreck.get(id);
+    const w = wreckId !== undefined ? this.wrecks.get(wreckId) : undefined;
+    return k === undefined || w === undefined ? 0 : wreckSalvageQty(w.chain.root.kindId, k.mass);
+  }
+
+  /** A tractored piece went whole into a hold (`LootSubsystem`'s piece
+   *  store): it leaves exactly like a worn-out piece turning to salvage. */
+  storePiece(id: string): void {
+    if (!this.knock.has(id)) return;
+    this.dropPiece(id, this.live.includes(id) ? this.live : this.liveSubcap);
+  }
+
   /** Test seam: a live piece's hidden integrity (undefined: not a piece). */
   pieceIntegrity(id: string): number | undefined {
     return this.knock.get(id)?.integrity;

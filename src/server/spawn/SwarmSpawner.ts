@@ -26,6 +26,16 @@ export interface AsteroidSpec {
   mass?: number;
   /** P2c — what a Miner gets from it (absent ⇒ rock). Asteroids only. */
   resource?: AsteroidResourceId;
+  /** Cut-field rock: its outline (relative to x, y), instead of the seeded
+   *  `generateAsteroidVertices` shape. Asteroids only. */
+  vertices?: ReadonlyArray<Vec2>;
+  /** Too massive to move: a locked body, like a structure. Asteroids only. */
+  fixed?: boolean;
+  /** Cut-field rock: every client cuts it from the field seed, so it stays off
+   *  the swarm wire and out of the sector save (macro terrain plan v2). */
+  fieldRock?: boolean;
+  /** Its rock key (`rockKey`): an awake field rock carries it on the wire. */
+  fieldKey?: number;
 }
 
 export interface DroneSpec {
@@ -57,7 +67,7 @@ export interface SpawnerHooks {
    *  / undefined (legacy axis-aligned spawn). `shipKindId` (drones only) is
    *  the drone kind's catalogue index (`shipKindToIndex`): the worker flies the
    *  body as that kind when the AI drives it with control keys (AI_INPUTS). */
-  postSpawnObstacle: (slot: number, id: string, x: number, y: number, vx: number, vy: number, radius: number, mass: number, vertices?: ReadonlyArray<Vec2>, linearDamping?: number, staticBody?: boolean, collisionGroups?: number, angle?: number, parts?: ReadonlyArray<ReadonlyArray<Vec2>>, shieldKindId?: string, spin?: { angvel: number; angularDamping: number; settleSpeed?: number; settleSpin?: number }, shipKindId?: number) => void;
+  postSpawnObstacle: (slot: number, id: string, x: number, y: number, vx: number, vy: number, radius: number, mass: number, vertices?: ReadonlyArray<Vec2>, linearDamping?: number, staticBody?: boolean | 'fixed', collisionGroups?: number, angle?: number, parts?: ReadonlyArray<ReadonlyArray<Vec2>>, shieldKindId?: string, spin?: { angvel: number; angularDamping: number; settleSpeed?: number; settleSpin?: number }, shipKindId?: number) => void;
   /** Direct write into the SAB so the first update() tick reads a sane pose. */
   sabF32: Float32Array;
   sabU32: Uint32Array;
@@ -386,7 +396,9 @@ export class SwarmSpawner {
       // Shape from the STABLE id (macro terrain 1a): wire ids are reused, so
       // seeding by `entityId` would reshape a rock that leaves and returns.
       rec.shapeSeed = asteroidShapeSeed(a.id);
-      vertices = generateAsteroidVertices(rec.shapeSeed, a.radius);
+      vertices = a.vertices ?? generateAsteroidVertices(rec.shapeSeed, a.radius);
+      if (a.fieldRock) { rec.fieldRock = true; rec.restX = a.x; rec.restY = a.y; }
+      if (a.fieldKey !== undefined) rec.fieldKey = a.fieldKey;
       rec.vertices = vertices;
       mass ??= ASTEROID_DEFAULT_MASS;
       // WS-4 / R2.27 — seed the finite mineable resource pool from the
@@ -422,7 +434,8 @@ export class SwarmSpawner {
     // ram impulses (the "I hit a pylon and it MOVED" bug). Drones (1) + asteroids
     // (0) + scrap (3) stay dynamic — drones fly, asteroids are bump-able (R2.33),
     // scrap drifts.
-    const staticBody = kind === 2;
+    // Structures lock; cut-field rocks are fixed bodies (never simulated).
+    const staticBody = kind === 0 && a.fixed === true ? 'fixed' : kind === 2;
     // SCRAP (kind 3) carries a collision-group mask so scrap doesn't collide with
     // other scrap but does collide with everything else. Every other kind passes
     // undefined ⇒ Rapier's default groups (collide with all).

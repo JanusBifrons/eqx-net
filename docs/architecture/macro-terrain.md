@@ -49,7 +49,31 @@ The field is split into a fixed grid of square chunks (`CHUNK_SIZE` = 4096 u, ab
   - cutting a neighbour first changes nothing;
   - negative chunk coordinates pack correctly.
 
-Next (plan v2 stages A3–F): owner shape tuning, cross-browser parity, chunk meshes with the procedural rock shader, then wake/deep sleep, the wire and the terrain store.
+### In the game (behind the `cutField` room option)
+
+Only test and showcase rooms set `cutField: { seed }`; live sectors never do until the owner has seen a fly-through.
+
+- **Shared streamer.** `CutFieldStreamer` (`core/terrain/chunkStreamer.ts`) loads the chunks near each ship and unloads them after a linger; the server and the client both run it, so both hold the same rocks (#15). Field rocks never ride the wire; the welcome carries only the seed (#16).
+- **Server:** loaded rocks are Rapier FIXED bodies (`World.fixBody`, the worker's `staticBody: 'fixed'`), not locked dynamic ones; the wire and saves skip them. Cut pieces touch along their cuts, and as locked dynamic bodies the solver worked every rock–rock contact while they were awake (see Measurements). The streamer cuts at most 2 chunks per 250 ms step on the room's main thread.
+- **Chunk cuts** (`rocksInChunk`) pass `own` = the chunk, so pieces that can't hold a member rock are dropped before they are cut or finished; same rocks as cutting the padded view and filtering.
+- **Client:** `net/CutFieldClient.ts` loads one chunk per 125 ms (7 × 7 chunks, ~28 km). The cutting runs in the page's art bake pool (`ArtService` `pageBakeRunner().cutChunk`, `bake.worker.ts`), at most 2 cuts out at once and ahead of queued bakes; the streamer's `cutChunk` hook returns null until a cut lands, and loads it on the next step. Without workers the pool cuts inline. The worker also packs the chunk (`core/terrain/packedChunk.ts`: keys, draw outlines, ore per vertex, and each rock's `fieldRockBody` in float64) and transfers the buffers, so a landing cut costs the main thread no structured clone and no per-rock work; a rock's body is unpacked only when it gets a predWorld collider or wakes (`packedChunk.test.ts` locks it equal to the server's `fieldRockBody`, #15). On a phone the renderer shares that main thread, so a cut there dropped frames (see Measurements). The client adds predWorld bodies only near the ship, and hands chunk outlines to the renderer through `RenderMirror.pendingFieldChunks` → `render/field/CutFieldLayer.ts`: one Mesh per chunk, each rock a fan from its centre, drawn with the owner-approved procedural rock shader (`render/field/fieldRockShader.ts`, from `exp/terrain-look`: dome, fBm, craters, cracks, lit by the sector sun, detail cut at ~2 px from the camera zoom). No triangulation; the mesh is built once per chunk.
+- **Waking (C2/C3).** A ship ramming a field rock wakes it: in the contact batch, `CutFieldSubsystem.onContact` posts `UNFIX_BODY` (`World.unfixBody`: Fixed → Dynamic, awake), at most `FIELD_WAKES_PER_TICK` (4) a tick. Anything else that must wake one (a mining laser about to cut it) calls `CutFieldSubsystem.wakeRock(id, by, tick)`: same cap, false when it is hit (retry next tick). A fixed rock never wakes a fixed neighbour (the cut pieces touch); an AWAKE rock driven into a fixed one at a closing speed of at least `FIELD_CHAIN_WAKE_SPEED` (20 u/s) wakes it (chain wake, `fieldRockWakes`), so a capital ploughs on instead of pinning its first woken rock against a still-fixed wall. Mass is `fieldRockMass(radius)` = a battleship's mass × (radius / battleship radius)², so a battleship-sized rock weighs a battleship. An awake rock rides the swarm wire (v7) as an asteroid with flag `SWARM_RECORD_FLAG_FIELD_ROCK` and its rock key in bytes 32–35 (chunk x, chunk y, index) instead of the resource byte and shape seed. The client asteroid leaf spawns its body from the cut outline (`CutFieldClient.wakeFieldRock`, which also drops the fixed body; a client without that chunk falls back to a generated rock), and the sprite updater draws it with the same shader as its own Mesh (`CutFieldLayer.buildRockSprite`) while its fan in the chunk mesh collapses onto its centre. A woken rock unseen on the wire for 2 s (client) / 120 frames (renderer) counts as asleep again (its server chunk unloaded and will re-cut it in place).
+- **Spectating** streams around the own parked hull (spectate moves it to `lingeringShips`).
+- **Test room** `showcase-cut-field` (seed `look`); shots in `showcase/shots/cutField.ts`. Lane poses come from `slicedFieldLanes`.
+
+**Follow-ups:**
+- A free-flying spectator camera doesn't bring rocks with it: the camera pose lives in the renderer, and feeding it back means a new `RendererFeedback` field (phase-gate review).
+- Concave outlines use one convex hull on both sides; poly-decomp later.
+- The client draws only the loaded 7 × 7 chunks, so far zoom shows a square edge; a far-zoom view of the whole field is open.
+- Collision E2E: `tests/e2e/cut-field-collision.spec.ts` (room `cut-field-test`) rams a field rock: the server logs `field:` contacts and `field_rock_woke`, the woken rock reaches the client (`cutFieldStats.awake`), and the rendered ship stays outside the rock's collider.
+- Chain wake: `tests/integration/sectorRoom/cutFieldRam.test.ts` drives a battleship into a lane wall and waits for a rock woken by another rock.
+- A woken rock stays tied to the chunk it was cut in: it unloads with that chunk wherever it drifted, and comes back at its cut pose when the chunk reloads (the terrain store, C4, keeps moved rocks).
+- The chunk mesh uses 32-bit indices (WebGL2 or `OES_element_index_uint`); gate it if an old phone lacks both.
+- Weapons don't damage field rocks (they only block shots), so only a ram wakes one.
+- Still to measure: a valid (quiet-host) desktop run; the phone GPU's draw cost (phone-proxy throttles the CPU only).
+- Server chunk cuts still run on the room's main thread (~4 ms each, 2 per step at most); move them to a worker if a busy sector shows tick spikes.
+
+Next (plan v2 stages A3–F): owner shape tuning, cross-browser parity, deep sleep, and the terrain store (moved rocks persist).
 
 ### Ore (F1)
 
@@ -68,6 +92,8 @@ Ore is a map over space, not a label on a rock (owner): the piece a mining laser
   - `oreAt` allocates nothing, because the mining laser samples it on every hit (#14).
   - Nothing rides the wire: a joiner rebuilds the map from the welcome seed (#16).
 - **Yield:** `oreRow(conc)` (`shared-types/asteroidResources.ts`) turns concentrations into a yield row: ice and crystal take their share of every 10 units mined, minerals the rest. Every extractor splits mined units by ONE function, `yieldInto(row, drawn, out)` (the grid Miner, robot harvesters via `OreDraw.mine`, the mining laser); a scattered rock's row is `ASTEROID_YIELD[kind]`. The Miner reads a rock's row through the `asteroidYieldOf` hook.
+- **By hit point (F1b):** a mining-laser hit on a field rock samples the ore where it landed. `OreDraw.onHit` gets the hit point, and `CutFieldSubsystem.oreAtHit` maps it into the rock's rest frame (`toRestFrame`, from the record's `restX/restY` and its live SAB pose once it is awake) and calls `oreAt`. The ore owed per shooter per rock keeps the unit-weighted mean concentration; the 1 Hz pulse pays it through `mine(…, oreRow(mean))`. The pool stays size-based. Lock: `tests/integration/sectorRoom/cutFieldOreYield.test.ts` (a rich spot pays ore, a plain spot minerals).
+- **Look (F1c):** the rock surface shows the ore where the map has it. `oreForOutlines` samples `[ice, crystal]` at every fan vertex when a chunk loads (client, main thread); it rides `pendingFieldChunks[].ore` into the `aOre` attribute, and `fieldRockShader` draws it by style: `?ore=off|tint|veins|seams` (veins by default, the owner's pick; `?ore=off` shows bare rock; shot `cut-field-ore`). A woken rock keeps its own vertices' ore.
 
 ## The core idea
 
@@ -102,7 +128,32 @@ The density is one rock per ~250,000 u² (about 500 u apart).
 
 ### Measurements
 
-Pending: slice 0c fills this in from desktop and `--device phone-proxy` runs.
+Pending: slice 0c fills in the rock-field scenes from desktop and `--device phone-proxy` runs.
+
+**Cut field (2026-11-15, desktop, Ryzen 7 9800X3D; host busy, so the runner marked the runs INVALID: compare, don't quote as budgets).**
+
+| What | Before | After |
+|---|---|---|
+| Perf scene `cut-field` (941 field rocks loaded, pilot idle): physics worker step p95 | ~20 ms | ~1.0 ms |
+| Same: server tick p95 / sim ticks behind | 0.76 ms / 15 of 1,249 | 0.58 ms / 0 of 1,235 |
+| Same: client frame p95 / render p95 | 16.8 / 0.2 ms | 16.8 / 0.3 ms |
+| Physics step, 941 rocks, isolated: while awake | ~12 ms for the first 120 ticks after a load (locked dynamic) | 0.1–0.2 ms from tick 1 (fixed) |
+| Physics step, 941 rocks, isolated: asleep | 0.09 ms | 0.09 ms |
+| `rocksInChunk`, 169 chunks around lane 1 (avg 55 rocks, max 99) | p50 10.8 / p95 13.9 ms | p50 3.8 / p95 6.1 ms |
+
+**Phone-proxy, 6× CPU, flying down lane 1 (`cut-field-run`), busy host:** idle 0–6 hitches/min; flying 14–20 hitches/min (frame p99 33 ms) with the chunk cut on the main thread, and still 12–33 with it in the bake pool. So the cut is not the main per-chunk cost on a phone: the drawing of a new chunk or its predWorld bodies is the next suspect (unmeasured).
+
+**Found (2026-11-16, CPU profiles of `cut-field-run`, phone-proxy 6×, load gate off, so compare only):** the hitches are the start-up fill (13 in the first 6 s, ~0 once the 7 × 7 ring is loaded), and the main-thread cost was the cut result landing, not the cut: the structured clone of a `ChunkRock[]` (thousands of `{x, y}` objects; 98 ms of the long frames), `oreForOutlines` + `fieldRockBody` per chunk, and `syncPred`'s `Math.hypot` over every loaded rock each step (38 ms). The worker now packs and transfers the chunk (`packedChunk.ts`) and bodies unpack lazily:
+
+| `cut-field-run`, phone-proxy 6× | Before | After |
+|---|---|---|
+| Hitches in the first 6 s | 13 | 1 |
+| Main-thread busy runs over 12 ms / worst | 103 / 136 ms | 46 / 52 ms |
+| Cut-field code inside those runs | ~220 ms | ~6 ms |
+
+What is left in the long frames is garbage collection and the general frame loop. Profile with `--cpu-profile <file> --cpu-profile-ms 15000` (the scene is ~28 s and sampling starts at the first sample).
+
+Server tick, client frame and render barely notice an idle field; the cost was the physics worker solving touching locked bodies, and the chunk cut finishing rocks outside its chunk.
 
 ## Stage 1: deep sleep
 
@@ -125,5 +176,6 @@ A rock must keep its outline when it leaves the world and comes back (deep sleep
 ## History
 
 - 2026-11-15: plan approved; slice 0a adds the terrain stress scenes and the `swarmAtRest` bulk-seed option. The first desktop timing run was invalid throughout (other sessions kept the host at 30–100 % CPU); timings wait for a quiet host.
-- 2026-11-15: slice 1a, rock shapes seeded by the stable id, swarm wire v6.
+- 2026-11-15: slice 1a, rock shapes seeded by the stable id, swarm wire v6. Chain wake: a woken rock driven into a fixed one wakes it.
+- 2026-11-15: field rocks drawn with the procedural rock shader; a rammed field rock wakes and rides the swarm wire with its rock key (wire v7).
 - 2026-11-15: look tests with the owner replaced placed rocks with the cut field (plan v2); slice A1 lands the generator, A2 the chunks and rock keys.

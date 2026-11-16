@@ -1,6 +1,8 @@
 import type { CameraCue } from './cameraScript.js';
 import type { WreckDescriptor } from '../../shared-types/messages/snapshotMessages.js';
 import type { RadarInsets, RadarPrefs } from '../../shared-types/settings/radar.js';
+import type { PerfProbeOp, RenderPerfReading } from './rendererPerfProbe.js';
+export type { PerfProbeOp, PerfFrameSummary, RenderPerfReading, RenderCountReading } from './rendererPerfProbe.js';
 
 export interface ShipRenderState {
   x: number;
@@ -185,6 +187,10 @@ export interface SwarmRenderState {
   /** Asteroid (`kind === 0`, wire v6): its u16 shape seed, the one input
    *  (with `radius`) of its outline on both sides. Absent for other kinds. */
   shapeSeed?: number;
+  /** An awake cut-field rock (`kind === 0`, wire v7 flag FIELD_ROCK): its
+   *  rock key. Its outline is the client's own cut of that rock, not
+   *  `shapeSeed`'s. Absent for every other entity. */
+  fieldKey?: number;
   /** Phase: shield — true while this drone's shield is down (hull
    *  exposed). Decoded from swarm recordFlags bit 1 and kept consistent
    *  for in-interest drones by the snapshot drones[] loop. */
@@ -623,6 +629,12 @@ export interface RenderMirror {
    *  fires `triggerWarpIn` at each `(x, y)` — same one-shot flash +
    *  burst ripple for both directions. Cleared + drained each frame. */
   pendingWarpEvents?: Array<{ x: number; y: number }>;
+  /** Macro terrain v2 (room flag `cutField`): cut-field chunks loaded or
+   *  dropped since the last frame. `outlines` is [n, x0, y0, …, n, …] in game
+   *  space; null drops the chunk. Drained each frame, like `pendingWarpEvents`;
+   *  only a chunk load or unload adds an entry, never a frame. `ore`: [ice,
+   *  crystal] per rock-fan vertex (`oreForOutlines`), for the ore look. */
+  pendingFieldChunks?: Array<{ cx: number; cy: number; outlines: Float32Array | null; ore?: Float32Array | null }>;
   /** Missile detonations to play this frame. The renderer drains the
    *  array, spawns explosion VFX at each `(x, y)`, sizes the sprite to
    *  `splashRadius`, and triggers a camera shake with magnitude inverse
@@ -1022,41 +1034,6 @@ export interface RendererFeedback {
    * surface — not consumed by gameplay logic.
    */
   miningBeamCount: number;
-}
-
-/** Perf scenes (plan prancy-squishing-donut P2): a probe request. */
-export type PerfProbeOp = 'enable' | 'reset' | 'read' | 'counts';
-
-/** Frame-time percentiles (ms) over the probe window. */
-export interface PerfFrameSummary { frames: number; p50: number; p95: number; p99: number; max: number; hitches: number }
-
-/** What the renderer reports for a perf scene, on whichever thread it runs. */
-export interface RenderPerfReading {
-  /** Per-frame renderer update cost (CPU, incl. effects), not the display interval. */
-  render: PerfFrameSummary;
-  sprites: number;
-  /** Every node in the Pixi stage tree. */
-  displayObjects: number;
-  mirrorShips: number;
-  mirrorSwarm: number;
-  effectQuality: string;
-  /** Count probe (`?perfcounts=1`, op 'counts'; plan machine-independent-perf
-   *  WS3): host-independent counts over the window. Null until enabled. */
-  counts?: RenderCountReading | null;
-}
-
-/** What the count gate reads. Counts, never timings: the same scene draws the
- *  same on a fast desktop and on a software-GL CI runner (the effects tier is
- *  pinned while counting). */
-export interface RenderCountReading {
-  /** WebGL draw calls per rendered frame (`frames` = frames counted). */
-  drawCalls: { frames: number; p50: number; p95: number; max: number };
-  /** Atlas page uploads over the window, and the texels they moved. */
-  textureUploads: number;
-  uploadTexels: number;
-  /** Atlas pages live now, and the GPU bytes they hold. */
-  atlasPages: number;
-  gpuBytes: number;
 }
 
 export interface IRenderer {

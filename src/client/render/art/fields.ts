@@ -504,7 +504,7 @@ export function forgeScrap(parentKindId: string, componentIndex: number, opts: {
 }
 
 /** Rock base colours: plain, ice, crystal (the game's asteroid tints). */
-export const ROCK_COLORS: Record<string, number> = { rock: 0x7a6248, ice: 0x8fb4c8, crystal: 0x8a6fb0 };
+export const ROCK_COLORS: Record<string, number> = { rock: 0x77746f, ice: 0x8fb4c8, crystal: 0x8a6fb0 };
 
 /**
  * An asteroid: the same seeded outline the server builds its collider from
