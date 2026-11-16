@@ -24,16 +24,13 @@ Any filter on `app.stage` renders the whole frame into a filter texture without 
 
 ## Costs
 
-Not yet measured. A `pnpm perf:scenes` A/B (`--base HEAD --head-params aa=fxaa`, then `renderscale=2`, `aa=off`) on 2026-11-16 came back INVALID because the host was busy. Until there is a measurement, nothing here claims a cost. Structurally: Post adds one full-screen pass over the world; render sharpness 2 draws about four times the pixels; texture softening picks a smaller copy of an existing texture.
+Not yet measured. A `pnpm perf:scenes` A/B (`--base HEAD --head-params aa=fxaa`, then `renderscale=2`, `aa=off`) on 2026-11-16 came back INVALID because the host was busy. Until there is a measurement, nothing here claims a cost; the exact commands are on the [shelf](../SHELF.md#graphics-quality-leftovers-parked-2026-11-16). Structurally: Post adds one full-screen pass over the world; render sharpness 2 draws about four times the pixels; texture softening picks a smaller copy of an existing texture.
 
 Screen filters are switched off by default on touch devices (`fxKillSwitches`). Post is an explicit player choice and is not affected by that switch.
 
 ## Future
 
-- A one-pixel soft edge baked into the generated ship and rock art (free per frame, helps phones).
-- A minimum on-screen width for thin lines (grid, lock and aim lines).
-- Multisampling inside the destruction shockwave filter.
-- An "Auto" choice per device, once there are timings.
+Parked with what doing each properly involves: [SHELF "Graphics-quality leftovers"](../SHELF.md#graphics-quality-leftovers-parked-2026-11-16). In short: time the options, film texture softening in motion, baked soft edges, a minimum width for thin lines, multisampling in the shockwave filter, an "Auto" choice, and optional look extras.
 
 ## History
 
