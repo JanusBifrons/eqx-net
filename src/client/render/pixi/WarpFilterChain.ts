@@ -302,8 +302,13 @@ export class WarpFilterChain {
       if (Array.isArray(this.app.stage.filters) && (this.app.stage.filters as unknown[]).length > 0) {
         this.app.stage.filters = [];
       }
-    } else if (this.warpShockwaves) {
-      // Re-apply for high/medium/low so the next render uses the new chain.
+    } else if (this.warpShockwaves && Array.isArray(this.app.stage.filters) && (this.app.stage.filters as unknown[]).length > 0) {
+      // Re-apply for high/medium/low so the next render uses the new chain —
+      // only while a warp has it attached. Idle, the stage carries no filter:
+      // one would render the whole frame into a non-MSAA texture (no
+      // antialiasing) and pay full-screen passes for nothing. The load
+      // curtain builds the stage at every join, so `warpShockwaves` alone
+      // does not mean a warp is in flight.
       this.attachFilters();
     }
   }
