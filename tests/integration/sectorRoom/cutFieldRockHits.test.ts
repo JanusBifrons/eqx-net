@@ -52,3 +52,26 @@ describe('SectorRoom integration — weapon hits on cut-field rocks (C1b)', () =
     expect(hit!.dist, 'it first crosses the open dent').toBeGreaterThan(30);
   });
 });
+
+/** A rock whose outline poly-decomp cannot split (self-crossing, so no convex
+ *  parts): field:2022047761, 232 u from DENT. Its collider is the outline's
+ *  convex hull; this ray (offset from the rock's rest centre) crosses that hull
+ *  ~108 u out but passes through a dent of the raw outline. */
+const HULL_ONLY_ROCK = 'field:2022047761';
+const HULL_RAY = { ox: -97.11, oy: 266.81, dx: 0.3420201433256685, dy: -0.9396926207859084 };
+
+describe('SectorRoom integration — a field rock with no convex parts (C1b)', () => {
+  it('is hit on its convex hull (its collider), not its dented raw outline', { timeout: 60_000 }, async () => {
+    harness = await bootSectorTestServer({ sectorKey: null, cutField: { seed: 'look' }, asteroidConfig: [], defaultSpawnX: DENT.x + 3000, defaultSpawnY: DENT.y });
+    await harness.connectActive(randomUUID());
+    const int = (harness.getServerRoom() as unknown as SectorRoom)._internals;
+    let rock: { restX?: number; restY?: number; vertices?: ReadonlyArray<{ x: number; y: number }> } | undefined;
+    const deadline = Date.now() + 20_000;
+    while (!rock && Date.now() < deadline) { await harness.advance(500); rock = int.swarmRegistry.get(HULL_ONLY_ROCK); }
+    expect(rock, 'the hull-only rock streamed in').toBeDefined();
+    const fx = rock!.restX! + HULL_RAY.ox, fy = rock!.restY! + HULL_RAY.oy;
+    const hit = int.rayHit(fx, fy, HULL_RAY.dx, HULL_RAY.dy, 600, '');
+    expect(hit?.id, 'the shot stops on the rock, not through its dent').toBe(HULL_ONLY_ROCK);
+    expect(hit!.dist).toBeCloseTo(108.5, 0);
+  });
+});

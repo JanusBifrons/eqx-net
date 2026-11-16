@@ -3,7 +3,7 @@ import { SLOT_X_OFF, SLOT_Y_OFF, SLOT_VX_OFF, SLOT_VY_OFF, SLOT_ANGLE_OFF, SLOT_
 import { SwarmEntityRegistry, SWARM_KIND_WRECK, type SwarmKind } from '../net/SwarmEntityRegistry.js';
 import type { IAiBehaviour } from '../../core/contracts/IAiBehaviour.js';
 import type { SpatialGrid } from '../interest/SpatialGrid.js';
-import { generateAsteroidVertices, asteroidResources, asteroidShapeSeed, type Vec2 } from '../../core/swarm/asteroidShape.js';
+import { generateAsteroidVertices, asteroidResources, asteroidShapeSeed, convexHullCCW, type Vec2 } from '../../core/swarm/asteroidShape.js';
 import { ASTEROID_DEFAULT_MASS } from '../../core/swarm/asteroidConstants.js';
 import { STRUCTURE_DEFAULT_MASS } from '../../core/swarm/structureConstants.js';
 import { SCRAP_DEFAULT_MASS, SCRAP_LINEAR_DAMPING } from '../../core/swarm/scrapConstants.js';
@@ -402,8 +402,10 @@ export class SwarmSpawner {
       vertices = a.vertices ?? generateAsteroidVertices(rec.shapeSeed, a.radius);
       if (a.fieldRock) { rec.fieldRock = true; rec.restX = a.x; rec.restY = a.y; }
       if (a.fieldKey !== undefined) rec.fieldKey = a.fieldKey;
-      // A cut-field rock's convex parts are its weapon hit shape too (C1b).
-      if (a.fieldRock && structureParts !== undefined) rec.wreckParts = structureParts;
+      // A cut-field rock's convex parts are its weapon hit shape too (C1b);
+      // with none (poly-decomp failed) its collider is the outline's convex
+      // hull, so that hull is its one part (#15: one shape for hits and collision).
+      if (a.fieldRock) rec.wreckParts = structureParts ?? [convexHullCCW(vertices)];
       rec.vertices = vertices;
       mass ??= ASTEROID_DEFAULT_MASS;
       // WS-4 / R2.27 — seed the finite mineable resource pool from the

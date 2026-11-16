@@ -334,7 +334,6 @@ import { LootSubsystem, type LootCollector } from '../cargo/LootSubsystem.js';
 import { OreDraw, type OreHolder } from './OreDraw.js';
 import { StorageService, fittedModuleIds, isOperationalStorage, structureUid, DEPOSIT_DWELL_TICKS, DEPOSIT_RANGE, REPAIR_CREDITS_PER_HP, RESPEC_CREDIT_COST } from '../cargo/StorageService.js';
 import { SCRAP_HP } from '../../core/swarm/scrapConstants.js';
-import { convexHullCCW } from '../../core/swarm/asteroidShape.js';
 import { addPacked, cloneHold, emptyHold, extractRequested, holdWeight, isHoldEmpty, mergeInto, packedCount, takePacked, transferInto, type CargoRequest } from '../../core/cargo/hold.js';
 import type { HolderType, HoldRecord } from '../cargo/HoldStore.js';
 import { RAID_NOTICE_THROTTLE_MS, RAID_PRIORITY } from '../livingworld/RobotTerritory.js';
@@ -6752,8 +6751,8 @@ export class SectorRoom extends Room<SectorState> {
     const obstacles: GridObstacle[] = [];
     for (const rec of this.swarmRegistry.all()) {
       if (rec.kind !== 0) continue; // asteroids only
-      const b = slotBase(rec.slot), f = this.sabF32; // narrow phase (C5b/C5c): collider parts, else the convex outline (a field rock's raw outline may dent: its hull, as its collider), at the live pose
-      obstacles.push({ x: f[b + SLOT_X_OFF]!, y: f[b + SLOT_Y_OFF]!, radius: rec.radius, angle: f[b + SLOT_ANGLE_OFF]!, parts: rec.wreckParts ?? (rec.vertices && [rec.fieldRock === true ? convexHullCCW(rec.vertices) : rec.vertices]) });
+      const b = slotBase(rec.slot), f = this.sabF32; // narrow phase (C5b/C5c): collider parts (every field rock has them), else the convex outline, at the live pose
+      obstacles.push({ x: f[b + SLOT_X_OFF]!, y: f[b + SLOT_Y_OFF]!, radius: rec.radius, angle: f[b + SLOT_ANGLE_OFF]!, parts: rec.wreckParts ?? (rec.vertices && [rec.vertices]) });
     }
     if (near) this.cutField?.dormantObstacles(near, obstacles);
     return obstacles;
