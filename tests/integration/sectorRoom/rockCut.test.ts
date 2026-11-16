@@ -22,14 +22,14 @@ describe('SectorRoom integration: the mining laser cuts asteroids like wrecks', 
   let harness: SectorTestHarness;
   afterEach(async () => { if (harness) await harness.cleanup(); }, 10_000);
 
-  async function setup(radius: number): Promise<{ cr: ClientRoom<SectorState>; room: SectorRoom; pid: string; shipId: string }> {
-    harness = await bootSectorTestServer({ sectorKey: 'sol-prime', droneCount: 0, testMode: true, asteroidConfig: [] });
+  async function setup(radius: number, shipKind = 'fighter', rockY = 400): Promise<{ cr: ClientRoom<SectorState>; room: SectorRoom; pid: string; shipId: string }> {
+    harness = await bootSectorTestServer({ sectorKey: 'sol-prime', droneCount: 0, testMode: true, asteroidConfig: [], pilotCapitals: shipKind !== 'fighter' });
     const pid = randomUUID();
-    const cr = (await harness.connectActive(pid, { shipKind: 'fighter', spawnX: 0, spawnY: 0, instantLock: true })) as ClientRoom<SectorState>;
+    const cr = (await harness.connectActive(pid, { shipKind, spawnX: 0, spawnY: 0, instantLock: true })) as ClientRoom<SectorState>;
     const room = harness.getServerRoom() as unknown as SectorRoom;
     let shipId = '';
     for (const [id, s] of room.state.ships) if (s.playerId === pid && s.isActive) shipId = id;
-    expect(room._internals.spawnTestAsteroid('rock-1', 0, 400, radius)).toBe(true);
+    expect(room._internals.spawnTestAsteroid('rock-1', 0, rockY, radius)).toBe(true);
     await harness.advance(100);
     return { cr, room, pid, shipId };
   }
@@ -84,6 +84,34 @@ describe('SectorRoom integration: the mining laser cuts asteroids like wrecks', 
     const goods = int.loot.shipHold(pod)?.goods ?? {};
     expect(goods.minerals ?? 0, 'a plain rock pods minerals (asteroidYield)').toBeGreaterThan(0);
     expect(goods.salvage ?? 0, 'never salvage').toBe(0);
+  });
+
+  it('locks on a rock follow its pieces when it breaks, biggest first, still LOCKED (plan partitioned-chasing-lark)', { timeout: 30_000 }, async () => {
+    // A capital: 3 locks per group, so the lasers spread over the pieces.
+    const { room, pid } = await setup(60, 'destroyer', 1500);
+    const int = room._internals;
+    int.setWreckSeed(9);
+    const rockKey = `s:${int.swarmRegistry.get('rock-1')!.entityId}`;
+    const n = harness.lockTarget(pid, 'rock-1');
+    const held = (): Array<{ id: string; l: ReadonlyArray<{ t: string; s: number }> }> =>
+      (int.locksOf(pid) ?? []).filter((g) => g.l.length > 0).map((g) => ({ id: g.id, l: g.l }));
+    expect(held().length).toBe(n);
+    for (let i = 0; i < 200 && int.swarmRegistry.get('rock-1') !== null; i++) int.applyDamage('rock-1', pid, 120, 6, 1440, 0, 1, 'mining_laser');
+    expect(int.swarmRegistry.get('rock-1'), 'the rock broke').toBeNull();
+    const desc = int.wreckDescriptors().find((d) => d.rock?.id === 'rock-1')!;
+    const pieces = [...int.swarmRegistry.all()].filter((r) => r.kind === WRECK_KIND && r.wreckId === desc.wreckId);
+    expect(pieces.length).toBeGreaterThanOrEqual(2);
+    const keyOf = new Map(pieces.map((p) => [`s:${p.entityId}`, p.id]));
+    const biggest = pieces.reduce((a, b) => ((int.wreckIntegrity(b.id) ?? 0) > (int.wreckIntegrity(a.id) ?? 0) ? b : a));
+    const groups = held();
+    expect(groups.length, 'every group that locked the rock still holds locks').toBe(n);
+    for (const g of groups) {
+      expect(g.l.some((l) => l.t === rockKey), 'nothing left on the gone rock').toBe(false);
+      expect(g.l.every((l) => keyOf.has(l.t)), `${g.id}: only the rock's pieces`).toBe(true);
+      expect(g.l.every((l) => l.s === 2), `${g.id}: LOCKED at once, same lineage`).toBe(true);
+      expect(g.l[0]!.t, `${g.id}: the biggest piece first`).toBe(`s:${biggest.entityId}`);
+      expect(g.l.length, `${g.id}: spread over the pieces, up to capacity`).toBe(Math.min(3, pieces.length));
+    }
   });
 
   it('a worn-out rock still breaks when the piece FIFO is full: the oldest pieces go, like a ship death', { timeout: 30_000 }, async () => {

@@ -12,6 +12,7 @@
 import { LOCK_TUNING, WEAPON_LOCK_PROFILE, lockCapacityFor, sensorFor, NO_PILOT_MODS, type MountSize } from '../../shared-types/combat/lockProfile.js';
 import { lockSeconds, type LockInputs } from '../../core/combat/lockTime.js';
 import { newLock, stepLock, LOCK_STAGE_CODE, LOCK_TRACK, type LockEntry } from '../../core/combat/lockState.js';
+import { splitGroupLocks } from './lockSplit.js';
 import { lockLineHolds } from '../../core/combat/lockLine.js';
 import { LockPicker } from './lockPick.js';
 import { lockSalvageFlags, type LockSalvageDeps } from './lockSalvage.js';
@@ -294,6 +295,11 @@ export class LockSubsystem {
         if (hit) this.syncWireShape(g);
       }
     }
+  }
+
+  /** Target `fromKey` broke into `pieceKeys` (biggest first): its locks follow the pieces (`splitGroupLocks`). */
+  targetSplit(fromKey: string, pieceKeys: ReadonlyArray<string>): void {
+    for (const p of this.players.values()) for (const g of p.groups) if (splitGroupLocks(g, fromKey, pieceKeys)) this.syncWireShape(g);
   }
 
   /** (Re)build the player's groups when their ship kind or activated mounts change. */

@@ -226,7 +226,7 @@ export class WreckResplitter {
     // A rock's break always pods its slivers (rockCut.ts does the same).
     const podBelow = (plan.step.extraCuts !== undefined || src.rock !== null) && rs !== null && this.d.dropSalvage !== undefined
       ? rs.minAreaFrac * wreckHullArea(src) : 0;
-    const r = spawnWreckPieces(this.d, this.h, src, w, plan.children, podBelow, serial, childId, k, fifo);
+    const r = spawnWreckPieces(this.d, this.h, src, w, plan.children, podBelow, serial, childId, k, fifo, id);
     if (r.ids.length === 0) {
       if (r.pods === 0) return false;
       this.h.dropPiece(id, fifo);
@@ -257,15 +257,18 @@ export class WreckResplitter {
  * `wreck-<serial>-<index>`), each under `podBelow` world area dropped as a
  * pod instead (`dropPieceSalvage`). `like` seeds each per-piece entry's
  * knock numbers (null: the source's own, a rock's first break). The ONE
- * piece spawn of a re-split and of a mined-out rock (rockCut.ts).
+ * piece spawn of a re-split and of a mined-out rock (rockCut.ts), so the ONE
+ * place a parent (`parentId`) is replaced by its pieces: the locks held on
+ * it follow them (`CapitalWreckDeps.pieceSplit`).
  */
 export function spawnWreckPieces(
   d: CapitalWreckDeps, h: Pick<WreckResplitHost, 'addPiece'>, src: WreckSource, w: Pick<LiveWreck, 'ore'>,
   placed: ReadonlyArray<WreckChildSpawn>, podBelow: number, serial: number, wreckId: number,
-  like: PieceKnock | null, fifo: string[],
+  like: PieceKnock | null, fifo: string[], parentId: string,
 ): { ids: string[]; mass: number; pods: number } {
   const body = wreckBodyParams(src.ship ?? src);
   const ids: string[] = [];
+  const masses: number[] = []; // once per break, never per tick
   let mass = 0;
   let pods = 0;
   for (const c of placed) {
@@ -285,6 +288,7 @@ export function spawnWreckPieces(
     });
     if (!ok) continue;
     ids.push(cid);
+    masses.push(g.mass);
     mass += g.mass;
     const knock = like ?? { mass: 0, impulsePerDamage: 0, maxDv: 0, spin: src.profile.spinScale, wakeDv: 0 };
     h.addPiece(cid, wreckId, {
@@ -292,6 +296,7 @@ export function spawnWreckPieces(
       cx: g.cx, cy: g.cy, radius: g.radius, burn: null,
     }, fifo);
   }
+  if (ids.length > 0) d.pieceSplit?.(parentId, ids, masses);
   return { ids, mass, pods };
 }
 
