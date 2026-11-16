@@ -86,6 +86,17 @@ describe('SectorRoom integration: the mining laser cuts asteroids like wrecks', 
     expect(goods.salvage ?? 0, 'never salvage').toBe(0);
   });
 
+  it('a cut-field rock is not cut until terrain C3 (else the client draws a ghost whole rock)', { timeout: 20_000 }, async () => {
+    const { room, pid } = await setup(60);
+    const int = room._internals;
+    // Stand-in for a field rock (CutFieldSubsystem spawns these with their
+    // cut outline); the rock-cut source would rebuild the seed's outline.
+    int.swarmRegistry.get('rock-1')!.fieldRock = true;
+    for (let i = 0; i < 100; i++) int.applyDamage('rock-1', pid, 5_000, 6, 340, 0, 1, 'mining_laser');
+    expect(int.swarmRegistry.get('rock-1'), 'the field rock still stands').not.toBeNull();
+    expect(int.wreckIntegrity('rock-1'), 'no wear recorded').toBeUndefined();
+  });
+
   it('a real mining-laser fire cuts a small locked rock', { timeout: 40_000 }, async () => {
     const { cr, room, pid, shipId } = await setup(20);
     const mounts = [{ slotId: 'latent-wing-l', weaponId: 'mining_laser' as const }];

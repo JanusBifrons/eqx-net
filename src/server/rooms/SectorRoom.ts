@@ -5673,9 +5673,9 @@ export class SectorRoom extends Room<SectorState> {
       },
       // Rock cut: a rock's piece pods its ore through OreDraw's one cut hook.
       dropSalvage: (qty, x, y, vx, vy, ore) => { this.loot.drop({ goods: ore ? this.oreDraw.cutYield(ore.rockId, x, y, qty, ore.resource) : { salvage: qty }, blueprints: [] }, x, y, vx, vy, { cause: 'salvage' }); },
-      rockOf: (id) => {
+      rockOf: (id) => { // no cut-field rock until terrain C3 (consumed keys on the wire), else the client draws a ghost whole rock
         const r = this.swarmRegistry.get(id);
-        return r?.kind === 0 && r.shapeSeed !== undefined ? { shape: r.shapeSeed, radius: r.radius, resource: r.asteroidResource ?? 'rock', resources: r.resources } : null;
+        return r?.kind === 0 && r.shapeSeed !== undefined && r.fieldRock !== true ? { shape: r.shapeSeed, radius: r.radius, resource: r.asteroidResource ?? 'rock', resources: r.resources } : null;
       },
     });
   }

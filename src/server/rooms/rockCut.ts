@@ -127,10 +127,12 @@ export class RockCutter {
     const r = spawnWreckPieces(this.d, this.h, src, { ore }, placed, rs.minAreaFrac * src.area, serial, wreckId, null, fifo);
     if (r.ids.length === 0 && r.pods === 0) return false;
     this.rocks.delete(id);
-    // TODO(macro terrain): a cut-field rock must be recorded as mined here,
-    // through `CutFieldSubsystem.markConsumed` (that API does not exist yet;
-    // the macro terrain stream owns the mined-rock record), or its chunk
-    // re-cuts it on the next load. Do not keep a removed-rock list here.
+    // TODO(macro terrain C3): record a cut-field rock as mined here with
+    // `cutField?.markConsumed(rec.fieldKey)` (PR #707, not on main yet; the
+    // terrain stream owns that record, so no removed-rock list here), then
+    // drop the field-rock skip in SectorRoom's `rockOf`. Piece ore then reads
+    // the field through `oreAtRest(restX, restY, x, y, angle, out)`, the rock's
+    // rest frame copied into `ore` here and on every re-split (#706).
     // The rock leaves through the room's normal evict path.
     this.d.removePiece(id);
     if (r.ids.length > 0) {
