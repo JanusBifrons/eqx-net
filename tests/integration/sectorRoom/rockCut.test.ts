@@ -106,6 +106,21 @@ describe('SectorRoom integration: the mining laser cuts asteroids like wrecks', 
     expect(int.wreckCounts().subcap, 'live pieces stay within the cap').toBeLessThanOrEqual(cap);
   });
 
+  it('the per-hit rock view is one reused scratch object (#14)', { timeout: 20_000 }, async () => {
+    const { room } = await setup(60);
+    const int = room._internals;
+    expect(int.spawnTestAsteroid('rock-2', 0, -400, 30, 'ice')).toBe(true);
+    await harness.advance(20);
+    const a = int.rockOf('rock-1');
+    expect(a).not.toBeNull();
+    expect(a!.radius).toBe(60);
+    const b = int.rockOf('rock-2');
+    expect(b, 'no new object per hit').toBe(a);
+    expect(b!.radius).toBe(30);
+    expect(b!.resource).toBe('ice');
+    expect(int.rockOf('nope')).toBeNull();
+  });
+
   it('a cut-field rock is not cut until terrain C3 (else the client draws a ghost whole rock)', { timeout: 20_000 }, async () => {
     const { room, pid } = await setup(60);
     const int = room._internals;
