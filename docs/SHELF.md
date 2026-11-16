@@ -4,6 +4,38 @@ Design work deliberately parked, to revisit. Each entry says what we found,
 why it waits, and what doing it properly involves. Remove an entry in the PR
 that picks it up.
 
+## Weapon-cuts leftovers (parked 2026-11-16)
+
+Found while reworking heavy-beam fire and kill cuts (#698, #730, #737, #745,
+#747; [capital-destruction.md](architecture/capital-destruction.md),
+[fire-control.md](architecture/fire-control.md)). Each is its own small piece
+of work; none blocks the cuts.
+
+- **Turrets vanish on a wreck.** A capital's turrets disappear the moment it
+  breaks, so the wreck pieces look bare (owner, reviewing take 20: "the
+  turrets vanish on a wreck, which is an issue that we need to circle back
+  to"). Doing it properly: turrets stay drawn on the wreck piece their
+  mount sits on (dead, not aiming), derived client-side from the wreck
+  descriptor like the rest of the piece (#11: no geometry on the wire).
+- **Sides come from the owner, not the ship kind.** Owner: "Any faction, any
+  player can theoretically pilot any ship." Today every capital kind carries
+  an `allegiance` (all `drones`), so two AI capitals never fight each other.
+  Doing it properly: remove kind `allegiance`; a ship's side comes only from
+  its owner through `relationOf` ([relations.md](architecture/relations.md)).
+  Its own stream.
+- **An owned capital may keep a dead enemy as its target.** Seen once, not
+  verified. Check the target is dropped when the target dies, through the
+  liveness predicates (#17).
+- **Orange bolt / missile volleys keep firing at the empty kill spot** after
+  the target dies (seen 18–24 s into weapon-cuts take 15). The volley should
+  stop or retarget when its target is gone.
+- **`aiTurretFacesShot` can fail under host load** (an interceptor beam
+  0.088 rad off its drawn barrel, once). Likely the same race #745 fixed for
+  capital turrets: the shot re-reads the hull pose from shared physics
+  memory a worker step after the aim. The non-capital fire path still does;
+  the fix is to cast from the pose that was aimed with (LESSONS.md "two SAB
+  reads in one room tick can be a worker step apart").
+
 ## Cargo holds that drop as cargo among the scrap (parked 2026-11-13)
 
 **Owner (2026-11-13),** reviewing the sub-capital break-up (plan
