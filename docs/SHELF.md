@@ -33,8 +33,8 @@ of work; none blocks the cuts.
   0.088 rad off its drawn barrel, once). Likely the same race #745 fixed for
   capital turrets: the shot re-reads the hull pose from shared physics
   memory a worker step after the aim. The non-capital fire path still does;
-  the fix is to cast from the pose that was aimed with (LESSONS.md "two
-  reads of the physics memory in one room tick").
+  the fix is to cast from the pose that was aimed with (LESSONS.md "two SAB
+  reads in one room tick can be a worker step apart").
 
 ## Cargo holds that drop as cargo among the scrap (parked 2026-11-13)
 
