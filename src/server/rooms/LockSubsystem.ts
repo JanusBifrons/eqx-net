@@ -75,6 +75,9 @@ export interface LockSubsystemDeps extends LockSalvageDeps {
   refreshHostility(playerId: string, key: string): void;
 }
 
+/** What `shipOf` returns: the ship's kind and activated mounts. */
+type LockShip = NonNullable<ReturnType<LockSubsystemDeps['shipOf']>>;
+
 export type GroupMode = 'auto' | 'manual';
 
 /** One lock of a group in the own-ship snapshot (`states[].groups`). `r`: released
@@ -292,10 +295,16 @@ export class LockSubsystem {
 
   /** (Re)build the player's groups when their ship kind or activated mounts change. */
   private sync(playerId: string, p: PlayerLocks): boolean {
+    return this.syncShip(playerId, p) !== null;
+  }
+
+  /** `sync`, returning the ship it read (null: none), so a lock step asks
+   *  `shipOf` once per player, not once per group (#14). */
+  private syncShip(playerId: string, p: PlayerLocks): LockShip | null {
     const ship = this.deps.shipOf(playerId);
-    if (!ship) return false;
+    if (!ship) return null;
     const sig = ship.activated.length;
-    if (ship.kind.id === p.kindId && sig === p.activatedSig) return true;
+    if (ship.kind.id === p.kindId && sig === p.activatedSig) return ship;
     // Keep each group's mode across a rebuild of the same kind; locks reset.
     const prevModes = new Map<string, GroupMode>();
     if (ship.kind.id === p.kindId) for (const g of p.groups) prevModes.set(g.id, g.mode);
@@ -326,7 +335,7 @@ export class LockSubsystem {
       });
       p.wire.push(wire);
     }
-    return true;
+    return ship;
   }
 
   private group(p: PlayerLocks, groupId: string): GroupState | null {
@@ -582,9 +591,10 @@ export class LockSubsystem {
   /** Advance every lock by one lock step. Call every 6 server ticks. */
   step(): void {
     for (const [playerId, p] of this.players) {
-      if (!this.sync(playerId, p)) continue;
+      const ship = this.syncShip(playerId, p);
+      if (ship === null) continue;
       if (!this.deps.shooterPose(playerId, this.shooter)) continue;
-      for (const g of p.groups) this.stepGroup(playerId, p, g);
+      for (const g of p.groups) this.stepGroup(playerId, p, g, ship);
     }
   }
 
@@ -604,7 +614,7 @@ export class LockSubsystem {
     return false;
   }
 
-  private stepGroup(playerId: string, p: PlayerLocks, g: GroupState, ship = this.deps.shipOf(playerId)): void {
+  private stepGroup(playerId: string, p: PlayerLocks, g: GroupState, ship: LockShip): void {
     // Locks work at any distance (owner 2026-11-14). An AUTO group's own pick
     // is released once its target leaves the group's FIRE range (reach ×
     // `reachSlack`, the hysteresis over the in-reach pick), so AUTO re-picks
