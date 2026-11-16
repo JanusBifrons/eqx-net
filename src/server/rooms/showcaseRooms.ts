@@ -103,7 +103,7 @@ export const SHOWCASE_CAPITAL_DUEL_OPTS = {
 };
 
 /** Weapon cuts shots (beam-slice, beam-vaporise-subcap, rail-channel, beam-collateral-subcap): showcaseWeaponCutsRooms.ts. */
-export const { beamSlice: SHOWCASE_BEAM_SLICE_OPTS, railChannel: SHOWCASE_RAIL_CHANNEL_OPTS, beamCollateral: SHOWCASE_BEAM_COLLATERAL_OPTS } = weaponCutsRoomOpts(SHOWCASE_CAPITALS_COMBAT_OPTS);
+export const { beamSlice: SHOWCASE_BEAM_SLICE_OPTS, railChannel: SHOWCASE_RAIL_CHANNEL_OPTS, beamCollateral: SHOWCASE_BEAM_COLLATERAL_OPTS, beamCollateralEdge: SHOWCASE_BEAM_COLLATERAL_EDGE_OPTS } = weaponCutsRoomOpts(SHOWCASE_CAPITALS_COMBAT_OPTS);
 
 /** Real-scale ranges (docs/architecture/real-scale-ranges.md): the pilot
  *  (join `shipKind=battleship`) at the origin, nose +y, and an NPC battleship
@@ -588,6 +588,7 @@ export const SHOWCASE_ROOMS = {
   'showcase-beam-slice': SHOWCASE_BEAM_SLICE_OPTS,
   'showcase-rail-channel': SHOWCASE_RAIL_CHANNEL_OPTS,
   'showcase-beam-collateral': SHOWCASE_BEAM_COLLATERAL_OPTS,
+  'showcase-beam-collateral-edge': SHOWCASE_BEAM_COLLATERAL_EDGE_OPTS,
   'showcase-long-guns': SHOWCASE_LONG_GUNS_OPTS,
   'showcase-melee': SHOWCASE_MELEE_OPTS,
   'showcase-coastal': SHOWCASE_COASTAL_OPTS,

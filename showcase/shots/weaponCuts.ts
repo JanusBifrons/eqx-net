@@ -485,3 +485,14 @@ export const railChannel: Shot = {
     if (at >= 0) await ctx.sleep(9000);
   },
 };
+
+/** The collateral kill with only the frigate's stern in the beam: the stern
+ *  burns away and the bow is left as a dead wreck (owner, 2026-11-16). Same
+ *  run as `beamCollateralSubcap`; the room slides the frigate forward. */
+export const beamCollateralEdge: Shot = {
+  ...beamCollateralSubcap,
+  id: 'beam-collateral-edge',
+  title: 'Heavy beam clips a frigate's stern',
+  caption: 'A frigate only half in the line of fire: the beam burns its stern away and leaves the bow a dead wreck.',
+  target: { ...beamCollateralSubcap.target, room: 'showcase-beam-collateral-edge' },
+};

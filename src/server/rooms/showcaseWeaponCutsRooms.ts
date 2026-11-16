@@ -70,7 +70,16 @@ export function weaponCutsRoomOpts<T extends object>(base: T) {
     defaultSpawnX: BEAM_COLLATERAL.pilotX,
     defaultSpawnY: BEAM_COLLATERAL.pilotY,
   };
-  return { beamSlice, railChannel, beamCollateral };
+  /** The collateral room with the frigate slid forward (west, its nose) so
+   *  only its stern is in the beams' path (owner, 2026-11-16: "only the rear
+   *  end of it was within the beam ... the back end would be vaporized and
+   *  then the front would be left but destroyed"). */
+  const beamCollateralEdge = {
+    ...beamCollateral,
+    sectorKey: 'showcase-beam-collateral-edge',
+    dronePoses: beamCollateral.dronePoses.map((p) => ('path' in p && p.kind === 'missile-frigate' ? { ...p, x: BEAM_COLLATERAL.frigateEdgeX, path: { ...p.path, toX: BEAM_COLLATERAL.frigateEdgeX } } : p)),
+  };
+  return { beamSlice, railChannel, beamCollateral, beamCollateralEdge };
 }
 
 /** Where the collateral room puts things (game units). */
@@ -84,6 +93,10 @@ export const BEAM_COLLATERAL = {
    *  missed it); here they have converged on the line. 7.5 km from the enemy
    *  capital, which closes ~1 km in the window, so it never reaches it. */
   frigateY: 12_000,
+  /** The edge variant's frigate x: nose west. Your heavy beams cross y 12 km
+   *  at x ~24 and ~42 (60 u wide), so with its centre here only the stern
+   *  (44 u behind centre, ~15 u of it) is in the nearer beam. */
+  frigateEdgeX: -35,
   /** The pilot's own ship, due south behind yours, out of the enemy's reach
    *  (25.5 km). On the line, so the enemy capital, hostile to the pilot,
    *  drifts toward it along the line and not off it. */
