@@ -66,3 +66,14 @@ export function packedRockBody(c: PackedChunk, r: number): FieldRockBody {
 /** The buffers to transfer when posting a packed chunk. */
 export const packedBuffers = (c: PackedChunk): ArrayBuffer[] =>
   [c.keys, c.starts, c.bodies, c.rel, c.outlines, c.ore].map((a) => a.buffer as ArrayBuffer);
+
+/** Hide rock `r` in the chunk's draw outlines: every vertex onto their mean,
+ *  so its fan has no area. The rock count, indices and ore stay as they were
+ *  (the layer finds a rock by its index). For a broken-up rock (consumed). */
+export function collapsePackedRock(c: PackedChunk, r: number): void {
+  const o = c.outlines, s = c.starts[r]!, n = o[s]!;
+  let mx = 0, my = 0;
+  for (let k = 0; k < n; k++) { mx += o[s + 1 + k * 2]!; my += o[s + 2 + k * 2]!; }
+  mx /= n; my /= n;
+  for (let k = 0; k < n; k++) { o[s + 1 + k * 2] = mx; o[s + 2 + k * 2] = my; }
+}

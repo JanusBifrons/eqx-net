@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import type { PhysicsWorld } from '@core/physics/World';
-import { CHUNK_SIZE, rocksInChunk, type ChunkOpts } from '@core/terrain/fieldLayout';
+import { CHUNK_SIZE, rocksInChunk, unpackRockKey, type ChunkOpts } from '@core/terrain/fieldLayout';
 import { packChunk, type PackedChunk } from '@core/terrain/packedChunk';
 import { PREDWORLD_STRUCTURE_RADIUS, PREDWORLD_STRUCTURE_HYSTERESIS } from '../../shared-types/structureBudgets.js';
 import { CutFieldClient, FIELD_AWAKE_FORGET_MS, MAX_CUTS_IN_FLIGHT } from './CutFieldClient.js';
@@ -199,5 +199,57 @@ describe('CutFieldClient — woken rocks (macro terrain C2)', () => {
     live = c;
     c.setSeed('test-seed');
     expect(c.wakeFieldRock(12345)).toBeNull();
+  });
+});
+
+describe('CutFieldClient — consumed rocks (macro terrain C3)', () => {
+  /** Is rock `key`'s outline flattened to one point in its chunk's draw? */
+  function flat(drawn: Map<string, Float32Array>, key: number): boolean {
+    const { cx, cy, index } = unpackRockKey(key);
+    const o = drawn.get(`${cx},${cy}`)!;
+    let s = 0;
+    for (let r = 0; r < index; r++) s += 1 + o[s]! * 2;
+    const n = o[s]!;
+    for (let k = 1; k < n; k++) if (o[s + 1 + k * 2] !== o[s + 1] || o[s + 2 + k * 2] !== o[s + 2]) return false;
+    return true;
+  }
+
+  it('field_consumed drops the body and flattens the rock out of its loaded chunk', () => {
+    const { c, pose, bodies, drawn } = rig();
+    live = c;
+    pose.x = 60_000; pose.y = 0;
+    c.setSeed('test-seed');
+    for (let i = 0; i < 60; i++) c.step();
+    const id = [...bodies.keys()][0]!;
+    const key = Number(id.slice('field:'.length));
+    expect(flat(drawn, key)).toBe(false);
+    c.onConsumedMessage({ k: key });
+    expect(bodies.has(id)).toBe(false);
+    expect(flat(drawn, key), 'collapsed in its chunk draw').toBe(true);
+    c.step();
+    expect(bodies.has(id), 'never a body again').toBe(false);
+    c.onConsumedMessage({ k: -1 }); // malformed: dropped
+    c.onConsumedMessage({ k: key, extra: 1 });
+  });
+
+  it('a joiner gets the set from the welcome: consumed rocks never load', () => {
+    const first = rig();
+    first.pose.x = 60_000;
+    first.c.setSeed('test-seed');
+    for (let i = 0; i < 60; i++) first.c.step();
+    const key = Number([...first.bodies.keys()][0]!.slice('field:'.length));
+    first.c.stop();
+
+    const { c, pose, bodies, drawn } = rig();
+    live = c;
+    pose.x = 60_000;
+    c.setSeed('test-seed', [key]);
+    for (let i = 0; i < 60; i++) c.step();
+    expect(bodies.has(`field:${key}`)).toBe(false);
+    expect(flat(drawn, key)).toBe(true);
+    // A same-seed welcome (reconnect) still replaces the set.
+    c.setSeed('test-seed', []);
+    c.onConsumedMessage({ k: key });
+    expect(flat(drawn, key)).toBe(true);
   });
 });

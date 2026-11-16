@@ -15,6 +15,7 @@ import { SLICED } from '../../core/terrain/fieldLayout.js';
 import { oreAt, oreSeed, type OreConc } from '../../core/terrain/fieldOre.js';
 import { SLOT_ANGLE_OFF, SLOT_X_OFF, SLOT_Y_OFF, slotBase } from '../../shared-types/sabLayout.js';
 import { SWARM_KIND_DRONE } from '../../shared-types/swarmWireFormat.js';
+import { MAX_WELCOME_CONSUMED_ROCKS, type FieldConsumedMessage } from '../../shared-types/messages/snapshotMessages.js';
 import { serverLogEvent } from '../debug/ServerEventLog.js';
 import type { SwarmEntityRecord, SwarmEntityRegistry } from '../net/SwarmEntityRegistry.js';
 import type { SwarmSpawner } from '../spawn/SwarmSpawner.js';
@@ -28,6 +29,8 @@ export interface CutFieldRoomHooks {
   post(cmd: WorkerCmd): void;
   /** Remove a rock; `broadcast` when it is awake (on the wire). */
   evict(rec: SwarmEntityRecord, broadcast: boolean): void;
+  /** Send to every client in the room (reliable). */
+  broadcast(type: 'field_consumed', msg: FieldConsumedMessage): void;
 }
 
 /** World point (x, y) on a rock now at (poseX, poseY, angle) back into the
@@ -44,8 +47,6 @@ export function toRestFrame(
 
 export class CutFieldSubsystem {
   readonly streamer: CutFieldStreamer;
-  /** Spread into every welcome. */
-  readonly welcome: { cutField: { seed: string } };
   private readonly timer: GameTimer;
   private wakeTick = -1;
   private wakesThisTick = 0;
@@ -59,6 +60,7 @@ export class CutFieldSubsystem {
    *  broken up (salvage rock cut), never cut whole again. */
   private readonly minedPool = new Map<number, number>();
   private readonly consumed = new Set<number>();
+  private readonly seed: string;
 
   constructor(
     seed: string,
@@ -67,7 +69,7 @@ export class CutFieldSubsystem {
     spawner: SwarmSpawner,
     private readonly hooks: CutFieldRoomHooks,
   ) {
-    this.welcome = { cutField: { seed } };
+    this.seed = seed;
     this.oreBase = oreSeed(seed);
     this.streamer = new CutFieldStreamer(cutFieldOpts(seed), {
       // Pilots and AI hulls keep rocks loaded. Slow cadence (STEP_EVERY_MS).
@@ -125,8 +127,19 @@ export class CutFieldSubsystem {
    *  cut whole again, here or after its chunk reloads. Server only for now:
    *  the client's cut learns consumed keys with the plan's C3 wire. */
   markConsumed(key: number): void {
+    if (this.consumed.has(key)) return;
     this.consumed.add(key);
     this.minedPool.delete(key);
+    this.hooks.broadcast('field_consumed', { k: key });
+  }
+
+  /** Spread into every welcome: the seed and the consumed keys (C3, #16). A
+   *  join is rare, so the list is built per call. */
+  get welcome(): { cutField: { seed: string; consumed?: number[] } } {
+    if (this.consumed.size === 0) return { cutField: { seed: this.seed } };
+    const consumed: number[] = [];
+    for (const k of this.consumed) { if (consumed.length >= MAX_WELCOME_CONSUMED_ROCKS) break; consumed.push(k); }
+    return { cutField: { seed: this.seed, consumed } };
   }
 
   isConsumed(key: number): boolean {

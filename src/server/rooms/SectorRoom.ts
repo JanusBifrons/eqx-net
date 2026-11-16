@@ -1581,7 +1581,7 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   get _internals(): {
-    cutField: CutFieldSubsystem['streamer'] | undefined; serverTick: number;
+    cutField: CutFieldSubsystem['streamer'] | undefined; cutFieldSub: CutFieldSubsystem | undefined; serverTick: number;
     /** Room update() calls so far (the AI-pilot cadence; serverTick is the
      *  physics worker's step count and can drift a step or two from it). */
     roomUpdates: number;
@@ -1722,7 +1722,7 @@ export class SectorRoom extends Room<SectorState> {
   } {
     return {
       loot: this.loot,
-      cutField: this.cutField?.streamer,
+      cutField: this.cutField?.streamer, cutFieldSub: this.cutField,
       serverTick: this.serverTick,
       roomUpdates: this.roomUpdateCount,
       droppedTicks: this.sabU32[WORKER_DROPPED_TICKS_IDX] ?? 0,
@@ -3191,7 +3191,7 @@ export class SectorRoom extends Room<SectorState> {
     this.structureGridTimer = this.gameClock.every(pulseMs, guarded('structure-grid-tick', () => this.structureGridTick()));
     // Phase 5 — turret aim/fire on a faster cadence than the grid pulse.
     this.structureTurretTimer = this.gameClock.every(TURRET_TICK_MS, guarded('structure-turret-tick', () => this.structureTurretTick()));
-    if (roomOpts.cutField) this.cutField = new CutFieldSubsystem(roomOpts.cutField.seed, this.gameClock, this.swarmRegistry, this.swarmSpawner, { shipSlots: () => this.playerToSlot.values(), sab: () => this.sabF32, post: (cmd) => this.postToWorker(cmd), evict: (rec, broadcast) => this.evictSwarmEntity(rec, { broadcast, emitDestroyed: false }) });
+    if (roomOpts.cutField) this.cutField = new CutFieldSubsystem(roomOpts.cutField.seed, this.gameClock, this.swarmRegistry, this.swarmSpawner, { shipSlots: () => this.playerToSlot.values(), sab: () => this.sabF32, post: (cmd) => this.postToWorker(cmd), evict: (rec, broadcast) => this.evictSwarmEntity(rec, { broadcast, emitDestroyed: false }), broadcast: (type, msg) => this.broadcast(type, msg) });
 
     // Click-to-inspect live-stats channel (structures follow-up Item B5). Its
     // own ~5 Hz timer (200 ms), unref'd + OFF the snapshot/physics tick — the
