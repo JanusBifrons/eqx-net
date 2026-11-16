@@ -39,6 +39,11 @@ import { MORALE_OUTCOME } from '../../../src/core/ai/tactics/morale.js';
 const KIND_A = 'fighter';
 const KIND_B = 'patrol-fighter';
 const SAMPLE_MS = 50;
+/** The room's fixed tick rate: `serverTick` advances 60 per game second. */
+const TICK_HZ = 60;
+/** Duel windows in game ticks: 30 s for the single duel, 20 s for eight. */
+const DUEL_TICKS = 30 * TICK_HZ;
+const MULTI_DUEL_TICKS = 20 * TICK_HZ;
 
 interface Room {
   _internals: {
@@ -122,18 +127,21 @@ describe('SectorRoom integration — NPC dogfight (AI slice 4)', () => {
     let samples = 0;
     let prevA = room._internals.swarmPose(a)!;
     let prevB = room._internals.swarmPose(b)!;
-    let prevT = Date.now();
-    const t0 = prevT;
-    while (Date.now() - t0 < 30_000) {
+    // A 30 s duel in game ticks, never wall time (root CLAUDE.md: gate on
+    // counts or ticks; a loaded host runs fewer ticks per wall second).
+    const tick0 = room.serverTick;
+    let prevTick = tick0;
+    while (room.serverTick - tick0 < DUEL_TICKS) {
       await harness.advance(SAMPLE_MS);
       const pa = room._internals.swarmPose(a);
       const pb = room._internals.swarmPose(b);
       if (!pa || !pb) break;
-      const now = Date.now();
-      const dt = (now - prevT) / 1000;
+      const tick = room.serverTick;
+      if (tick === prevTick) continue; // no game time passed: no sample
+      const dt = (tick - prevTick) / TICK_HZ;
       const va = Math.hypot(pa.x - prevA.x, pa.y - prevA.y) / dt;
       const vb = Math.hypot(pb.x - prevB.x, pb.y - prevB.y) / dt;
-      prevA = pa; prevB = pb; prevT = now;
+      prevA = pa; prevB = pb; prevTick = tick;
       const d = Math.hypot(pa.x - pb.x, pa.y - pb.y);
       dists.push(d);
       speedA.push(va);
@@ -256,13 +264,17 @@ describe('SectorRoom integration — NPC dogfight (AI slice 4)', () => {
     const prev = new Map<string, { x: number; y: number }>();
     for (const r of recs) prev.set(r.id, room._internals.swarmPose(r.id)!);
     let samples = 0;
-    let prevT = Date.now();
-    const t0 = prevT;
-    while (Date.now() - t0 < 20_000) {
+    // A 20 s window in game ticks, never wall time (root CLAUDE.md: gate on
+    // counts or ticks): a wall-clock window ran a host-load-dependent amount
+    // of game, so the ram counts drifted with load.
+    const tick0 = room.serverTick;
+    let prevTick = tick0;
+    while (room.serverTick - tick0 < MULTI_DUEL_TICKS) {
       await harness.advance(SAMPLE_MS);
-      const now = Date.now();
-      const dt = (now - prevT) / 1000;
-      prevT = now;
+      const tick = room.serverTick;
+      if (tick === prevTick) continue; // no game time passed: no sample
+      const dt = (tick - prevTick) / TICK_HZ;
+      prevTick = tick;
       samples++;
       for (let k = 0; k < PAIRS; k++) {
         const { a, b } = duels[k]!;

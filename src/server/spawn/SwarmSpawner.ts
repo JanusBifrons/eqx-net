@@ -397,7 +397,7 @@ export class SwarmSpawner {
       // seeding by `entityId` would reshape a rock that leaves and returns.
       rec.shapeSeed = asteroidShapeSeed(a.id);
       vertices = a.vertices ?? generateAsteroidVertices(rec.shapeSeed, a.radius);
-      if (a.fieldRock) rec.fieldRock = true;
+      if (a.fieldRock) { rec.fieldRock = true; rec.restX = a.x; rec.restY = a.y; }
       if (a.fieldKey !== undefined) rec.fieldKey = a.fieldKey;
       rec.vertices = vertices;
       mass ??= ASTEROID_DEFAULT_MASS;

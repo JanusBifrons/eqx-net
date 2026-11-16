@@ -5,7 +5,8 @@ import path from 'node:path';
 /**
  * Vitest config — main (unit + component + scenario) suite.
  *
- * - `pnpm test`              -> this config (default `vitest.config.ts`)
+ * - `pnpm test`              -> this config, then `vitest.art.config.ts`
+ * - `pnpm test:art`          -> the art pixel tests only (ART_TEST_GLOBS)
  * - `pnpm test:integration`  -> `vitest.integration.config.ts` (Phase A1+)
  * - `pnpm bench`             -> benchmarks (.bench.ts)
  *
@@ -18,6 +19,18 @@ import path from 'node:path';
  *   - `*.test.tsx` ⇒ jsdom (component tests need a DOM)
  *   - everything else ⇒ node (server logic, schemas, helpers — fastest)
  */
+
+/**
+ * Pixel-heavy art tests (forge / bake / livery pixel loops). They run in
+ * `pnpm test:art` (vitest.art.config.ts, same setup) WITHOUT coverage: v8
+ * coverage slows their pixel loops ~6×, which set the unit CI job's wall
+ * clock. Excluded below so no test runs twice; `pnpm test` runs both configs.
+ */
+export const ART_TEST_GLOBS = [
+  'src/client/render/art/*.test.ts',
+  'tests/unit/{capitalArtTiles,machinedArt,capitalEngines}*.test.ts',
+];
+
 export default defineConfig({
   plugins: [react()],
   resolve: {
@@ -84,6 +97,8 @@ export default defineConfig({
       // live under vitest.gc.config.ts and run via `pnpm test:gc`
       // (plan: quirky-rabbit, Phase 1).
       '**/*.heapDelta.test.ts',
+      // Art pixel tests run via `pnpm test:art` (no coverage); see above.
+      ...ART_TEST_GLOBS,
     ],
     benchmark: {
       include: ['benchmarks/**/*.bench.ts'],

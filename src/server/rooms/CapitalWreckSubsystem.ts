@@ -45,10 +45,11 @@ import type { WreckDescriptor } from '../../shared-types/messages/snapshotMessag
 import { wreckCrackTicks } from '../../shared-types/wreckTiming.js';
 import { WEAPONS, type WeaponId } from '../../core/combat/WeaponCatalogue.js';
 import { shipShapeScale } from '../../core/geometry/shipHullOutline.js';
-import { wreckPieceIntegrity, wreckWearFactor } from '../../core/destruction/wreckIntegrity.js';
+import { wreckPieceIntegrity, wreckSalvageQty, wreckWearFactor } from '../../core/destruction/wreckIntegrity.js';
 import type { BurnLines } from '../../core/destruction/burnLines.js';
 import { WreckResplitter, type WreckPiecePose } from './wreckResplit.js';
 import type { CapitalWreckDeps, LiveWreck, PieceKnock } from './capitalWreckTypes.js';
+import { forEachLineagePiece, lineageRootOf } from './wreckLineage.js';
 import { burnHullHit, burnPieceHit, deathExtraCuts } from './wreckBurnHits.js';
 import { RockCutter } from './rockCut.js';
 import { shipWreckSource } from '../../core/destruction/wreckSource.js';
@@ -494,26 +495,9 @@ export class CapitalWreckSubsystem {
     }
   }
 
-  /** Visit every live piece id descended from root wreck `root` (the root's
-   *  own pieces and every re-split generation below it). Allocates nothing
-   *  (#14). Unused yet: for lasers spreading over a locked wreck's pieces. */
-  forEachLineagePiece(root: number, visit: (pieceId: string) => void): void {
-    for (const w of this.wrecks.values()) {
-      if (w.root !== root || w.pieces <= 0) continue;
-      const wreckId = w.desc.wreckId;
-      for (let i = 0; i < w.ids.length; i++) {
-        const id = w.ids[i]!;
-        if (this.pieceWreck.get(id) === wreckId) visit(id);
-      }
-    }
-  }
-
-  /** The lineage root of the live wreck piece `pieceId`, or null. */
-  lineageRootOf(pieceId: string): number | null {
-    const wreckId = this.pieceWreck.get(pieceId);
-    const w = wreckId !== undefined ? this.wrecks.get(wreckId) : undefined;
-    return w !== undefined ? w.root : null;
-  }
+  /** Lineage walks (wreckLineage.ts): every live piece under root wreck `root`; a piece's root or null. */
+  forEachLineagePiece(root: number, visit: (pieceId: string) => void): void { forEachLineagePiece(this.wrecks, this.pieceWreck, root, visit); }
+  lineageRootOf(pieceId: string): number | null { return lineageRootOf(this.wrecks, this.pieceWreck, pieceId); }
 
   private setChanged(): void {
     this.version++;
@@ -556,6 +540,22 @@ export class CapitalWreckSubsystem {
     if (i >= 0) fifo.splice(i, 1);
     if (this.d.isLive(id)) this.d.removePiece(id);
     this.pieceGone(id);
+  }
+
+  /** A live piece's salvage if stored whole: what it would leave as a pod
+   *  when worn out (`wreckSalvageQty` of its mass). 0: not a live ship-wreck piece (rock pieces store as ore later). */
+  pieceSalvageQty(id: string): number {
+    const k = this.knock.get(id);
+    const wreckId = this.pieceWreck.get(id);
+    const w = wreckId !== undefined ? this.wrecks.get(wreckId) : undefined;
+    return k === undefined || w === undefined || w.src.rock !== null ? 0 : wreckSalvageQty(w.src, k.mass);
+  }
+
+  /** A tractored piece went whole into a hold (`LootSubsystem`'s piece
+   *  store): it leaves exactly like a worn-out piece turning to salvage. */
+  storePiece(id: string): void {
+    if (!this.knock.has(id)) return;
+    this.dropPiece(id, this.live.includes(id) ? this.live : this.liveSubcap);
   }
 
   /** Test seam: a live piece's hidden integrity (undefined: not a piece). */

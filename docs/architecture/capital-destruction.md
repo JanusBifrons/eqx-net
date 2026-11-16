@@ -1044,7 +1044,7 @@ Wreck pieces now wear down and break again. Pure numbers in
   yet, so they cannot carry a test mining laser.
 - **Lineage.** Every `LiveWreck` names its root wreck (`root`): a ship's
   death or a rock's break is its own root; each re-split child copies its
-  parent's. `CapitalWreckSubsystem.forEachLineagePiece(root, visit)` walks
+  parent's. `CapitalWreckSubsystem.forEachLineagePiece(root, visit)` (wreckLineage.ts) walks
   every live piece of one lineage without allocating (#14), and
   `lineageRootOf(pieceId)` finds a piece's root. Server-only (the client
   has the same chain through `parentWreck`). Nothing reads it yet: it is
@@ -1225,6 +1225,10 @@ break-up:
   pieces kept climbing its number after the explosion. A dead NPC's name tag
   goes the frame it dies (the hold keeps the sprite, not the mirror entry
   the label reads); a tag seen on debris is a live neighbour's.
+- **No damage numbers on rocks.** A hit on a field rock (swarm kind 0) gets no
+  number either (`isNoDamageNumberTarget`, both paths): mining is not combat.
+  Rock pieces cut from a rock are wreck pieces, covered above. The spark,
+  flash and health bar stay.
 - **The dying-hull hold applies, briefly.** In a room that breaks sub-caps
   (welcome `subcapWrecks`, mirrored to `RenderMirror.subcapWrecks`; slice 2
   sets it), a dying sub-cap's sprite is held until all its pieces draw, with
