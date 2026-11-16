@@ -20,11 +20,13 @@
  *
  * Mining lasers and tractors (owner 2026-11-16, the SIZE LADDER): when the
  * mount mines (`isSalvageWeapon`) or tractors and the caller flags salvage
- * locks (`lockFlags`, a parallel array: `LOCK_SALVAGE` a wreck/rock piece,
+ * locks (`lockFlags`, a parallel array: `LOCK_SALVAGE` a wreck/rock piece or an ore pod (tier AA),
  * its size tier in `LOCK_TIER_MASK` (`salvageTier`, ship-independent),
  * `LOCK_CONSUMABLE` one this ship can take in whole), the group's mounts of
- * that tool spread over the pieces their SIZE may work: a laser on rung k
- * only pieces above k (`laserCutsTier`: a tractor its size takes the rest),
+ * that tool spread over the pieces their SIZE may work: only the matching
+ * size fires, a laser on rung k only pieces of tier k + 1, XL tier none, with
+ * the next smaller laser size in the group standing in for a missing one
+ * (`laserCutsTier` over `laserRungMask(groupMounts)`),
  * a tractor on rung k only pieces at or below k (`tractorTakesTier`, its
  * pull limit), never a consumable one. Pieces rank by radius descending
  * among those the mount can engage (reach + arc, as above; none: it parks on
@@ -43,7 +45,7 @@
 import { inMountArc, type FireControlMount } from './mountFireControl.js';
 import { mountInReach, type MountRangeTarget } from './mountReach.js';
 import { mountPriority, targetClassOfKind } from './mountTargeting.js';
-import { isSalvageWeapon, laserCutsTier, mountTier, salvagePrefersBig, tractorTakesTier } from './salvageTargeting.js';
+import { isSalvageWeapon, laserCutsTier, laserRungMask, mountTier, salvagePrefersBig, tractorTakesTier } from './salvageTargeting.js';
 import { getWeapon } from './WeaponCatalogue.js';
 import type { WeaponMount } from '../../shared-types/shipKinds/types.js';
 
@@ -181,6 +183,7 @@ function pickSalvageLock(
   const order = salvageOrder;
   const size = groupMounts[ordinal]!.size;
   const rung = mountTier(size);
+  const rungs = laser ? laserRungMask(groupMounts) : 0;
   let k = 0;
   let pieces = 0;
   let firstCut = -1;
@@ -190,7 +193,7 @@ function pickSalvageLock(
     pieces++;
     if ((f & LOCK_CONSUMABLE) !== 0) continue;
     const tier = lockTierOf(f);
-    if (laser ? !laserCutsTier(rung, tier) : !tractorTakesTier(rung, tier)) continue;
+    if (laser ? !laserCutsTier(rung, tier, rungs) : !tractorTakesTier(rung, tier)) continue;
     if (firstCut < 0) firstCut = i;
     if (!canEngage(m, frameAngle, tx[i]! - mx, ty[i]! - my, reach, shapes?.[i])) continue;
     // Insertion by float32 radius, descending; equal radii keep lock order.

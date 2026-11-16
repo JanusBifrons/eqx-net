@@ -13,18 +13,23 @@
  * its own falloff `tractorPull`) at `SALVAGE_HAUL_DIST_PER_DREF` × dRef,
  * over `SALVAGE_HAUL_MIN_ACCEL` (accel = F / m). `SALVAGE_TIER_NONE` (0) =
  * too big for any tractor. The tier depends only on the piece's mass and
- * the catalogue, never on the ship. A mining laser on rung k cuts only
- * pieces ABOVE k (`laserCutsTier`: a tractor of its size can take the
- * rest); a tractor on rung k pulls only pieces at or below k
- * (`tractorTakesTier`). So XL/L lasers slice the huge rocks, the L tractors
- * pull L-tier pieces in to the M lasers, and so on down to the small lasers,
- * which cut to hold size. The big/small split: `salvagePrefersBig`.
+ * the catalogue, never on the ship. Only the MATCHING size fires (owner
+ * 2026-11-16): a mining laser on rung k cuts only pieces of tier k + 1, the
+ * XL laser the pieces of tier none (`laserCutsTier`); with no laser of the
+ * needed size in the group (`laserRungMask`), the next smaller size it has
+ * takes them (the barge has no S laser: its AA lasers cut the M-tier
+ * pieces). A tractor on rung k pulls only pieces at or below k
+ * (`tractorTakesTier`). Nothing cuts an AA-tier piece. The last step is
+ * the ORE POD: a rock piece is never taken in whole; the lasers cut until
+ * its pieces wear out under the rock's re-split floor into ore pods, which
+ * every tractor pulls and the hull takes in on touch (LootSubsystem). The
+ * big/small split: `salvagePrefersBig`.
  *
- * **Consumable by me** (owner 2026-11-16, the factory line): a piece small
- * enough for THIS ship to take in whole: its bounding radius is at most
- * `SALVAGE_CONSUME_FRAC` × the ship's hull radius (`salvageConsumeRadius`;
- * 0 for a ship with no mining tool, which consumes nothing) AND its hold
- * weight fits the free hold (`salvageConsumable`). Nothing targets a
+ * **Consumable by me** (owner 2026-11-16, the factory line): a WRECK piece at hold
+ * size, the SMALLEST tier (AA: an AA tractor could pull it), the same on every
+ * ship (`salvageConsumeMass`: the AA tier's mass; 0 for a ship with no mining
+ * tool, which consumes nothing), AND its hold weight fits the free hold
+ * (`salvageConsumable`). So every ship works the whole ladder down to AA. Nothing targets a
  * consumable piece (no laser, no tractor: `LOCK_CONSUMABLE`); the ship takes
  * it in by proximity through the loot pickup (`LootSubsystem`).
  */
@@ -48,12 +53,6 @@ export const SALVAGE_HAUL_MIN_ACCEL = 10;
  *  already cut the pull to a quarter. Judging at full force (≤ dRef) would
  *  call pieces pullable that the beam can't start moving from range. */
 export const SALVAGE_HAUL_DIST_PER_DREF = 2;
-
-/** A piece is small enough to consume when its bounding radius is at most
- *  this share of the ship's hull radius: a fighter (r 24) consumes nothing
- *  over 3.6 u, a destroyer (r 1,220) a 183 u piece (fighter debris), a
- *  battleship (r 2,876) a 431 u one. Big ships eat the small end of the line. */
-export const SALVAGE_CONSUME_FRAC = 0.15;
 
 /** One salvage candidate (a wreck piece, a rock or a rock piece). */
 export interface SalvageCandidate {
@@ -82,7 +81,7 @@ export function salvagePrefersBig(size: WeaponMount['size']): boolean {
 /** Mount sizes in ladder order: a size's RUNG (`mountTier`) is its index + 1. */
 export const SALVAGE_TIER_SIZES: readonly MountSize[] = ['AA', 'S', 'M', 'L', 'XL'];
 /** `salvageTier` of a piece too big for any tractor (and of a field rock,
- *  mass Infinity): every mining laser may cut it, no tractor pulls it. */
+ *  mass Infinity): only an XL laser cuts it (the matching size), no tractor pulls it. */
 export const SALVAGE_TIER_NONE = 0;
 /** The top rung (XL). */
 export const SALVAGE_TIER_MAX = 5;
@@ -145,8 +144,28 @@ export function mountTier(size: WeaponMount['size']): number {
 
 /** Does a mining laser on rung `rung` cut a piece of tier `tier`? Only a
  *  piece above its rung: a tractor of its own size can take the rest. */
-export function laserCutsTier(rung: number, tier: number): boolean {
-  return tier === SALVAGE_TIER_NONE || tier > rung;
+export function laserCutsTier(rung: number, tier: number, rungs: number): boolean {
+  let need = tier === SALVAGE_TIER_NONE ? SALVAGE_TIER_MAX : tier - 1;
+  while (need >= 1 && (rungs & (1 << need)) === 0) need--;
+  return need >= 1 && need === rung;
+}
+
+const rungCache = new WeakMap<object, number>();
+
+/** Bit `1 << rung` per mining-laser size among `mounts` (a group's mounts):
+ *  the sizes `laserCutsTier` falls back over. Cached per mount list (the
+ *  server's and client's group lists are built once per kind), so the
+ *  share-out allocates nothing per tick (#14). */
+export function laserRungMask(mounts: ArrayLike<{ readonly weaponId: WeaponMount['weaponId']; readonly size?: WeaponMount['size'] }>): number {
+  const hit = rungCache.get(mounts);
+  if (hit !== undefined) return hit;
+  let mask = 0;
+  for (let i = 0; i < mounts.length; i++) {
+    const m = mounts[i]!;
+    if (isSalvageWeapon(getWeapon(m.weaponId))) mask |= 1 << mountTier(m.size);
+  }
+  rungCache.set(mounts, mask);
+  return mask;
 }
 
 /** Does a tractor on rung `rung` pull a piece of tier `tier`? Only one at or
@@ -171,16 +190,21 @@ export function hasMiningTool(mounts: ReadonlyArray<WeaponMount>): boolean {
   return yes;
 }
 
-/** The biggest piece radius this ship consumes: `SALVAGE_CONSUME_FRAC` × its
- *  hull radius, or 0 with no mining tool among its kind's mounts (a ship
- *  with no mining tools behaves as before: it never takes a piece in). */
-export function salvageConsumeRadius(kind: { readonly radius: number; readonly mounts?: ReadonlyArray<WeaponMount> }): number {
-  return kind.mounts !== undefined && hasMiningTool(kind.mounts) ? SALVAGE_CONSUME_FRAC * kind.radius : 0;
+/** The heaviest piece this ship takes in whole (hold size): the smallest
+ *  tier's mass (`salvageTierMass('AA')`), the same on every ship (owner
+ *  2026-11-16), or 0 with no mining tool among its kind's mounts (a ship with
+ *  no mining tools behaves as before: it never takes a piece in). */
+export function salvageConsumeMass(kind: { readonly mounts?: ReadonlyArray<WeaponMount> }): number {
+  return kind.mounts !== undefined && hasMiningTool(kind.mounts) ? tierMasses()[1]! : 0;
 }
 
-/** Can this ship take `c` in whole: small enough (`consumeRadius`, from
- *  `salvageConsumeRadius`) AND its hold weight fits the free hold? Then
- *  nothing targets it and the loot pickup takes it in. */
-export function salvageConsumable(c: Pick<SalvageCandidate, 'radius' | 'holdWeight'>, consumeRadius: number, freeHold: number): boolean {
-  return consumeRadius > 0 && c.radius <= consumeRadius && c.holdWeight <= freeHold;
+/** Can this ship take `c` in whole: a WRECK piece (`ore` unset: a rock
+ *  piece never is, the lasers cut it down to ore pods) at hold size (mass ≤
+ *  `consumeMass`, from `salvageConsumeMass`: the AA tier) AND its hold
+ *  weight fits the free hold? Then nothing targets it and the loot pickup
+ *  takes it in when it touches the hull. */
+export function salvageConsumable(
+  c: Pick<SalvageCandidate, 'mass' | 'holdWeight'> & { readonly ore?: unknown }, consumeMass: number, freeHold: number,
+): boolean {
+  return c.ore === undefined && consumeMass > 0 && c.mass <= consumeMass && c.holdWeight <= freeHold;
 }

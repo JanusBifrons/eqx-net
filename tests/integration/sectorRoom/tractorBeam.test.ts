@@ -22,6 +22,7 @@ import { getWeapon } from '../../../src/core/combat/WeaponCatalogue.js';
 import { MOUNT_SIZE_TUNING } from '../../../src/shared-types/shipScale/tuning.js';
 import { forEachBeamLink } from '../../../src/shared-types/beamLinksWire.js';
 import type { TractorForceField } from '../../../src/core/physics/forceFields.js';
+import { getHoldStore } from '../../../src/server/db/PersistenceWorker.js';
 
 interface SnapGroups { id: string; m: number; l: Array<{ t: string; s: number; p: number }> }
 
@@ -67,6 +68,12 @@ describe('SectorRoom integration — tractor beam weapon', () => {
     client.onMessage('swarm', () => {});
     const room = harness.getServerRoom() as unknown as SectorRoom;
     const int = (): SectorRoom['_internals'] => room._internals;
+    // A full hold: a ship with a tractor would otherwise take this crumb
+    // straight in on touch (the factory line), and nothing tows a consumable piece.
+    for (const [id, s] of room.state.ships) {
+      if (s.playerId !== pid) continue;
+      getHoldStore().put({ holderUid: id, holderType: 'ship', ownerId: pid, sectorKey: 'sol-prime', x: null, y: null, hold: { goods: { salvage: 1_000_000 }, blueprints: [] }, expiresAt: null }, false);
+    }
 
     // A wreck piece dead ahead (+y is forward: a fighter broken by a heavy bolt;
     // light enough for this ship's S tractor, the size ladder; a whole field

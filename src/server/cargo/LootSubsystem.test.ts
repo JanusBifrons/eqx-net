@@ -5,8 +5,16 @@ import type { IPersistenceSink, PersistOp } from '../../core/contracts/IPersiste
 import type { Hold } from '../../shared-types/goods.js';
 import { getShipKind, type ShipKind, type WeaponMount } from '../../shared-types/shipKinds.js';
 import { LOOT_PICKUP_RADIUS } from './LootSubsystem.js';
-import { SALVAGE_CONSUME_FRAC } from '../../core/combat/salvageTargeting.js';
+import { salvageTierMass } from '../../core/combat/salvageTargeting.js';
 import type { PieceStoreView } from '../rooms/wreckLineage.js';
+import { shipHitBound, shipWithinHullReach } from '../../core/combat/shipHitShape.js';
+
+/** Distance from a hull's centre to its bare hull edge along (ux, uy), heading 0. */
+function hullEdge(kindId: string, ux: number, uy: number): number {
+  let d = 0;
+  while (shipWithinHullReach(kindId, false, ux * (d + 2), uy * (d + 2), 0, 0, 0, 0)) d += 2;
+  return d;
+}
 
 function capture() {
   const ops: PersistOp[] = [];
@@ -46,7 +54,7 @@ function setup(opts: { sectorKey?: string | null; collectors?: LootCollector[]; 
   return { loot, store, ops, poses, despawned, collected, collectors, advance: (ms: number) => { now += ms; } };
 }
 
-const SHIP: LootCollector = { playerId: 'p1', shipInstanceId: 'ship-1', x: 0, y: 0, capacity: 300, kind: getShipKind('fighter') };
+const SHIP: LootCollector = { playerId: 'p1', shipInstanceId: 'ship-1', x: 0, y: 0, angle: 0, shieldUp: false, capacity: 300, kind: getShipKind('fighter') };
 
 describe('LootSubsystem (P1a-1)', () => {
   it('fly-over pickup moves the pod into the ship hold and deletes the pod in ONE atomic group', () => {
@@ -73,6 +81,19 @@ describe('LootSubsystem (P1a-1)', () => {
     expect(t.store.get('ship-1')!.hold.goods.salvage).toBe(4);
     expect(t.store.get(pod)!.hold.goods.salvage).toBe(6);
     expect(t.despawned).toEqual([]);
+  });
+
+  it('a pod touching a big hull goes in, far outside the centre circle; one a little off it stays', () => {
+    const barge = getShipKind('barge');
+    const edge = hullEdge(barge.id, 0, 1);
+    expect(edge, 'the barge side is far past the old centre circle').toBeGreaterThan(LOOT_PICKUP_RADIUS * 3);
+    const t = setup({ collectors: [{ ...SHIP, kind: barge, capacity: 1000 }] });
+    const touching = t.loot.drop(h({ minerals: 3 }), 0, edge + 6)!;
+    const off = t.loot.drop(h({ minerals: 4 }), 0, -(hullEdge(barge.id, 0, -1) + 120))!;
+    t.loot.collectTick();
+    expect(t.store.get('ship-1')!.hold.goods.minerals).toBe(3);
+    expect(t.store.get(touching)).toBeUndefined();
+    expect(t.store.get(off)!.hold.goods.minerals).toBe(4);
   });
 
   it('out-of-range pods are not collected', () => {
@@ -187,10 +208,10 @@ describe('LootSubsystem: tractored wreck pieces are stored whole (piece store)',
         store: (id, out) => {
           const q = pieces.get(id);
           if (q === undefined) return false;
-          out.qty = q; out.ore = undefined; out.holdWeight = q; out.mass = 1e9; out.radius = 500; // salvage weighs 1
+          out.qty = Math.abs(q); out.holdWeight = Math.abs(q); out.mass = 1e9; out.radius = 500; // salvage weighs 1
+          out.ore = q < 0 ? { rockId: 'rock-9', resource: 'rock', perArea: 1 } : undefined; // negative: a rock piece
           return true;
         },
-        ore: () => ({}),
         remove: (id) => { pieces.delete(id); removed.push(id); },
       },
     });
@@ -220,6 +241,14 @@ describe('LootSubsystem: tractored wreck pieces are stored whole (piece store)',
     expect(t.loot.podCount()).toBe(0);
   });
 
+  it('a rock piece is never stored whole: the lasers cut it down to ore pods', () => {
+    const { t, removed, pieces } = rig(300);
+    pieces.set('wreck-1', -7); // the rig's marker: a rock piece
+    t.loot.collectTick();
+    expect(removed).toEqual([]);
+    expect(t.store.get('ship-1')).toBeUndefined();
+  });
+
   it('a piece visited twice in a pass (two mounts) is stored once', () => {
     const { t, removed, held } = rig(300);
     held.push('wreck-1');
@@ -235,7 +264,10 @@ describe('LootSubsystem: consumable pieces are taken in by proximity (the factor
     const base = getShipKind('destroyer');
     return { ...base, mounts: (base.mounts ?? []).map((m): WeaponMount => ({ ...m, weaponId: 'tractor' })) };
   };
-  type P = { x: number; y: number; radius: number; qty: number; rock?: true };
+  /** `mass`: absent = 10, at hold size (the AA tier). */
+  type P = { x: number; y: number; radius: number; qty: number; mass?: number; rock?: true };
+  /** A point `gap` past the miner's hull edge along +y (its beam side). */
+  const side = (kind: ShipKind, gap: number): number => hullEdge(kind.id, 0, 1) + gap;
   function rig(kind: ShipKind, ps: Record<string, P>, capacity = 300) {
     const removed: string[] = [];
     const reach: number[] = [];
@@ -244,20 +276,19 @@ describe('LootSubsystem: consumable pieces are taken in by proximity (the factor
       heldPieces: {
         any: () => true,
         forEach: () => {},
-        near: (x, y, r, maxR, visit) => {
+        near: (x, y, r, maxM, visit) => {
           reach.push(r);
           for (const [id, p] of Object.entries(ps)) {
-            if (!removed.includes(id) && p.radius <= maxR && Math.hypot(p.x - x, p.y - y) <= r + p.radius) visit(id, p.x, p.y);
+            if (!removed.includes(id) && (p.mass ?? 10) <= maxM && Math.hypot(p.x - x, p.y - y) <= r + p.radius) visit(id, p.x, p.y, p.radius);
           }
         },
         store: (id, out: PieceStoreView) => {
           const p = ps[id];
           if (p === undefined || removed.includes(id)) return false;
-          out.radius = p.radius; out.mass = 1; out.qty = p.qty; out.holdWeight = p.qty;
+          out.radius = p.radius; out.mass = p.mass ?? 10; out.qty = p.qty; out.holdWeight = p.qty;
           out.ore = p.rock ? { rockId: 'rock-9', resource: 'rock', perArea: 1 } : undefined;
           return true;
         },
-        ore: (_o, _x, _y, units) => ({ minerals: units }),
         remove: (id) => { removed.push(id); },
       },
     });
@@ -265,32 +296,32 @@ describe('LootSubsystem: consumable pieces are taken in by proximity (the factor
     return { t, removed, reach };
   }
 
-  it('a small piece at the hull goes in whole (one commit); a big one and a far one stay', () => {
+  it('a hold-size (AA-tier) wreck piece touching the hull goes in whole (one commit); an S-tier one and one off the hull stay', () => {
     const kind = miner();
-    const small = SALVAGE_CONSUME_FRAC * kind.radius * 0.5;
+    const small = 8;
     const { t, removed, reach } = rig(kind, {
-      near: { x: kind.radius + 20, y: 0, radius: small, qty: 4 },
-      big: { x: -(kind.radius + 20), y: 0, radius: SALVAGE_CONSUME_FRAC * kind.radius * 2, qty: 4 },
-      far: { x: 0, y: kind.radius + LOOT_PICKUP_RADIUS + small + 500, radius: small, qty: 4 },
+      near: { x: 0, y: side(kind, small - 2), radius: small, qty: 4 },
+      big: { x: 0, y: -(hullEdge(kind.id, 0, -1) + 4), radius: 12, mass: salvageTierMass('AA') * 1.5, qty: 4 },
+      off: { x: 0, y: side(kind, small + 40), radius: small, qty: 4 },
     });
     t.loot.collectTick();
-    expect(reach, 'the pickup reach is the pod reach past the hull edge').toEqual([kind.radius + LOOT_PICKUP_RADIUS]);
+    expect(reach, 'pre-filter: the bounding circle of the hull').toEqual([shipHitBound(kind.id)]);
     expect(removed).toEqual(['near']);
     expect(t.store.get('ship-1')!.hold.goods.salvage).toBe(4);
     expect(t.ops, 'one persisted write').toHaveLength(1);
   });
 
-  it('a rock piece goes in as its ore (the room ore path), not salvage', () => {
+  it('a rock piece at the hull is never taken in whole (only its ore pods are)', () => {
     const kind = miner();
-    const { t, removed } = rig(kind, { r: { x: kind.radius, y: 0, radius: 10, qty: 6, rock: true } });
+    const { t, removed } = rig(kind, { r: { x: 0, y: side(kind, 4), radius: 10, qty: 6, rock: true } });
     t.loot.collectTick();
-    expect(removed).toEqual(['r']);
-    expect(t.store.get('ship-1')!.hold.goods).toEqual({ minerals: 6 });
+    expect(removed, 'never whole: the lasers cut it to ore pods').toEqual([]);
+    expect(t.store.get('ship-1')).toBeUndefined();
   });
 
   it('a hold without room for it: not consumable, the piece stays', () => {
     const kind = miner();
-    const { t, removed } = rig(kind, { p: { x: kind.radius, y: 0, radius: 10, qty: 40 } }, 30);
+    const { t, removed } = rig(kind, { p: { x: 0, y: side(kind, 4), radius: 10, qty: 40 } }, 30);
     t.loot.collectTick();
     expect(removed).toEqual([]);
     expect(t.store.get('ship-1')).toBeUndefined();

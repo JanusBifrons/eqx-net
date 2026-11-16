@@ -34,8 +34,8 @@ const piece = (x: number, y: number, radius: number): LockTargetView => ({
  *  ≤ 150 S, ≤ 375 M (the S lasers cut it, the AA tractors can't pull it). */
 const AA_TIER = LOCK_SALVAGE | lockTierBits(1);
 const M_TIER = LOCK_SALVAGE | lockTierBits(3);
-/** `radius`: the piece's size for the consume test (absent: never consumable). */
-type Entry = { t: LockTargetView; mass: number; holdWeight: number; radius?: number; ship?: true; hidden?: true };
+/** An AA-tier piece is consumable (hold size) unless its `holdWeight` exceeds the free hold (`rig`'s `free`, 100). */
+type Entry = { t: LockTargetView; mass: number; holdWeight: number; ship?: true; hidden?: true };
 
 function rig(pieces: Record<string, Entry>, free = { v: 100 }) {
   const kind = salvager();
@@ -49,7 +49,7 @@ function rig(pieces: Record<string, Entry>, free = { v: 100 }) {
     salvageOf: (_p, key, out: LockSalvageView) => {
       const e = pieces[key];
       if (!e || e.ship) return false;
-      out.mass = e.mass; out.radius = e.radius ?? Infinity; out.holdWeight = e.holdWeight; out.freeHold = free.v;
+      out.mass = e.mass; out.radius = e.t.radius; out.holdWeight = e.holdWeight; out.freeHold = free.v;
       return true;
     },
   });
@@ -82,7 +82,7 @@ describe('salvage lock pick: server LockSubsystem ⇔ client FcMountPicker', () 
   it('lasers spread over the cuttable pieces and skip the AA-tier one, the same on both sides', () => {
     const { locks, aims } = rig({
       's:1': { t: piece(1500, 0, 120), mass: 1e9, holdWeight: 500 }, // too heavy for any tractor
-      's:2': { t: piece(1500, 400, 40), mass: 1, holdWeight: 1 }, // AA tier
+      's:2': { t: piece(1500, 400, 40), mass: 1, holdWeight: 500 }, // AA tier, too heavy for the free hold (not consumable)
       's:3': { t: piece(1500, -400, 60), mass: 1e9, holdWeight: 5 },
     });
     for (const k of ['s:1', 's:2', 's:3']) expect(locks.forceLock('p1', k, 'main')).toBe(1);
@@ -96,8 +96,8 @@ describe('salvage lock pick: server LockSubsystem ⇔ client FcMountPicker', () 
 
   it('every lock AA tier: no S laser aims (so none fires), on both sides; the AA tractors still aim', () => {
     const { locks, aims } = rig({
-      's:1': { t: piece(1500, 0, 50), mass: 1, holdWeight: 1 },
-      's:2': { t: piece(1500, 300, 30), mass: 1, holdWeight: 1 },
+      's:1': { t: piece(1500, 0, 50), mass: 1, holdWeight: 500 },
+      's:2': { t: piece(1500, 300, 30), mass: 1, holdWeight: 500 },
     });
     for (const k of ['s:1', 's:2']) locks.forceLock('p1', k, 'main');
     locks.forceLock('p1', 's:1', 'aa');
@@ -106,7 +106,7 @@ describe('salvage lock pick: server LockSubsystem ⇔ client FcMountPicker', () 
   });
 
   it('ONE AA-tier lock: no one-lock shortcut on either side (no aim)', () => {
-    const { locks, aims } = rig({ 's:7': { t: piece(1500, 0, 50), mass: 1, holdWeight: 1 } });
+    const { locks, aims } = rig({ 's:7': { t: piece(1500, 0, 50), mass: 1, holdWeight: 500 } });
     locks.forceLock('p1', 's:7', 'main');
     for (const [s, c] of aims('main')) { expect(s).toBeNull(); expect(c).toBeNull(); }
   });
@@ -125,7 +125,7 @@ describe('salvage lock pick: server LockSubsystem ⇔ client FcMountPicker', () 
     // The client sees only the piece; counting salvage locks by mirror presence it
     // would think "every lock a piece left to the tractors" and give the lasers no aim.
     const { locks, aims } = rig({
-      's:2': { t: piece(1500, 0, 40), mass: 1, holdWeight: 1 },
+      's:2': { t: piece(1500, 0, 40), mass: 1, holdWeight: 500 },
       'p:far': { t: { ...piece(90000, 0, 0), ship: true, hostile: true, terrain: false }, mass: 0, holdWeight: 0, ship: true, hidden: true },
     });
     for (const k of ['s:2', 'p:far']) expect(locks.forceLock('p1', k, 'main')).toBe(1);
@@ -133,9 +133,9 @@ describe('salvage lock pick: server LockSubsystem ⇔ client FcMountPicker', () 
   });
 
   it('a consumable piece: no laser and no tractor aims at it, on both sides; a fuller hold hands it back', () => {
-    // The salvager (a destroyer) consumes pieces up to 0.15 × its hull radius.
+    // Hold size is the AA tier on every ship: this AA-tier piece fits the free hold.
     const free = { v: 100 };
-    const { locks, aims } = rig({ 's:4': { t: piece(1500, 0, 20), mass: 1, holdWeight: 5, radius: 20 } }, free);
+    const { locks, aims } = rig({ 's:4': { t: piece(1500, 0, 20), mass: 1, holdWeight: 5 } }, free);
     locks.forceLock('p1', 's:4', 'main');
     locks.forceLock('p1', 's:4', 'aa');
     expect(locks.wireFor('p1')!.find((g) => g.id === 'aa')!.l[0]!.f).toBe(AA_TIER | LOCK_CONSUMABLE);

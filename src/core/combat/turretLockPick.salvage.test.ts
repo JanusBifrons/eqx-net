@@ -29,18 +29,32 @@ function picks(
 describe('pickTurretLock: mining lasers on salvage locks', () => {
   const S = LOCK_SALVAGE;
   it('L,L,S,S on 4 pieces: each L on one of the 2 biggest, each S on a small, all distinct', () => {
-    // Pieces in lock order: small, big, smaller, biggest.
+    // Pieces in lock order: small, big, smaller, biggest. Only the matching
+    // size fires: the L lasers (the group's biggest) cut the tier-none pieces,
+    // the S lasers the M-tier ones.
     const radii = [40, 300, 20, 500];
     const group = [mount('mining_laser', 'S'), mount('mining_laser', 'L'), mount('mining_laser', 'S'), mount('mining_laser', 'L')];
-    const got = picks(group, radii, [S, S, S, S]);
+    const M = tierOf('M');
+    const got = picks(group, radii, [M, S, M, S]);
     expect(new Set(got).size).toBe(4);
     for (const o of [1, 3]) expect([1, 3]).toContain(got[o]);
     for (const o of [0, 2]) expect([0, 2]).toContain(got[o]);
   });
 
   it('two lasers on one cuttable piece: both on it (no n === 1 short-circuit miss)', () => {
-    const group = [mount('mining_laser', 'L'), mount('mining_laser', 'S')];
+    const group = [mount('mining_laser', 'L'), mount('mining_laser', 'L')];
     expect(picks(group, [200], [S])).toEqual([0, 0]);
+  });
+
+  it('only the matching size fires: the M laser cuts an L-tier piece, not the S or the XL', () => {
+    const group = [mount('mining_laser', 'XL'), mount('mining_laser', 'M'), mount('mining_laser', 'S')];
+    expect(picks(group, [200], [tierOf('L')])).toEqual([TURRET_NO_LOCK, 0, TURRET_NO_LOCK]);
+    expect(picks(group, [200], [S]), 'tier none: the XL').toEqual([0, TURRET_NO_LOCK, TURRET_NO_LOCK]);
+  });
+
+  it('no laser of the needed size: the next smaller one the group has stands in', () => {
+    const group = [mount('mining_laser', 'XL'), mount('mining_laser', 'AA')]; // no S laser
+    expect(picks(group, [200], [tierOf('M')])).toEqual([TURRET_NO_LOCK, 0]);
   });
 
   it('a piece a tractor of the lasers\' own size can take is skipped', () => {
