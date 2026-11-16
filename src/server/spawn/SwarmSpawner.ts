@@ -310,7 +310,7 @@ export class SwarmSpawner {
    *  on it and do nothing (EntityResolver treats kind 4 as immune). */
   spawnWreck(spec: {
     id: string; x: number; y: number; vx: number; vy: number; angle: number; angvel: number;
-    radius: number; mass: number; parentShipKind: ShipKindId; pieceIndex: number; wreckId: number;
+    radius: number; mass: number; parentShipKind: ShipKindId | undefined; pieceIndex: number; wreckId: number;
     parts: ReadonlyArray<ReadonlyArray<Vec2>>; colliderParts: ReadonlyArray<ReadonlyArray<Vec2>>;
     linearDamping: number; angularDamping: number;
     /** `wreckBodyParams(kind).collisionGroups`; absent ⇒ the capital groups. */

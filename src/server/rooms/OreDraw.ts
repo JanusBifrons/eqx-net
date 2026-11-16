@@ -22,7 +22,7 @@
 import { getWeapon, weaponTargetFactor, type WeaponId } from '../../core/combat/WeaponCatalogue.js';
 import { cloneHold, emptyHold, holdWeight } from '../../core/cargo/hold.js';
 import { GOOD_IDS, type GoodId } from '../../shared-types/goods.js';
-import { ASTEROID_YIELD, asteroidYieldWeightPerUnit, oreRow, yieldInto, type YieldRow } from '../../shared-types/asteroidResources.js';
+import { ASTEROID_YIELD, asteroidYield, asteroidYieldWeightPerUnit, oreRow, yieldInto, type AsteroidResourceId, type YieldRow } from '../../shared-types/asteroidResources.js';
 import { getHoldStore } from '../db/PersistenceWorker.js';
 import type { SwarmEntityRecord } from '../net/SwarmEntityRegistry.js';
 
@@ -120,6 +120,18 @@ export class OreDraw {
     return holdWeight(hold) - before;
   }
 
+  /** Rock cut: the ONE ore hook of a cut rock (rockCut.ts). A piece of rock
+   *  `rockId` (its stable id; the rock itself is gone) became an ore pod
+   *  centred at world (x, y) carrying `units` of its ore: the goods it holds,
+   *  split by the rock's yield (`asteroidYield`, as every draw is). The
+   *  rock's pool was shared out to its pieces by area when it broke, so this
+   *  draws nothing more from the registry. The point is the hook's key for
+   *  a later per-point ore tint (macro terrain). */
+  cutYield(rockId: string, x: number, y: number, units: number, resource: AsteroidResourceId): Partial<Record<GoodId, number>> {
+    void rockId; void x; void y;
+    return units > 0 ? asteroidYield(resource, Math.floor(units)) : {};
+  }
+
   /** A weapon hit landed on `targetId` (from `SectorRoom.applyDamage`). On a
    *  rock it owes the shooter ore; anything else costs one Map lookup.
    *  (`hitX`, `hitY`) is where it landed: a cut-field rock samples its ore
@@ -157,12 +169,9 @@ export class OreDraw {
           this.mine(h.uid, h.ownerId, entityId, whole, h.capacity, o.field ? oreRow(c, this.rowScratch) : undefined);
         }
         o.units = 0; o.ice = 0; o.crystal = 0; o.field = false;
-        // Rock splitting hooks in here once macro terrain (#645) lands: a rock
-        // the beam has worn down breaks up through the wreck split code
-        // (plan partitioned-chasing-lark, "Asteroids"). Not yet: rocks only
-        // lose ore. A split-off piece of a field rock carries its ore: it
-        // keeps the parent's rest frame, and its own row is the field ore at
-        // its centroid (`oreAtHit` at that point, as for a hit).
+        // A rock the beam wore out breaks through the wreck split code
+        // (rockCut.ts); its pieces' ore leaves through `cutYield`. TODO: a
+        // field-rock piece keeps the parent's rest frame (cutField.oreAtRest).
       }
     }
   }

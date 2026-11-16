@@ -32,9 +32,10 @@ import { DESTRUCTION_PROFILES } from '../../shared-types/shipScale/destruction.j
 import { Rng, fnvMixU32 } from '../random/rng.js';
 import { shipHullOutline, shipShapeScale } from '../geometry/shipHullOutline.js';
 import { getShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
-import { shipBodyMass, shipTuning } from '../../shared-types/shipScale/tuning.js';
+import { shipTuning } from '../../shared-types/shipScale/tuning.js';
 import type { Vec2 } from '../swarm/asteroidShape.js';
 import { SUBCAP_WRECK_COLLISION_GROUPS, WRECK_COLLISION_GROUPS } from '../physics/collisionGroups.js';
+import { asWreckSource, wreckSourceOf, type WreckSource } from './wreckSource.js';
 
 /** Outward push falloff radius, as a fraction of the hull radius: a piece
  *  this far from the kill point gets half the extra push. The speeds
@@ -100,23 +101,30 @@ export interface WreckBodyParams {
 const wreckBodyParamsCache = new Map<string, WreckBodyParams>();
 
 /** The body parameters of a wreck piece of `kindId` (cached per kind: read
- *  at spawn, never allocates after the first call). */
-export function wreckBodyParams(kindId: ShipKindId): WreckBodyParams {
+ *  at spawn, never allocates after the first call), or of a rock's piece
+ *  (its source: by its radius, computed per call at spawn). */
+export function wreckBodyParams(source: ShipKindId | WreckSource): WreckBodyParams {
+  if (typeof source !== 'string') return bodyParamsOf(source.profile, source.radius);
+  const kindId = source;
   let p = wreckBodyParamsCache.get(kindId);
   if (p === undefined) {
     const kind = getShipKind(kindId);
-    const prof = DESTRUCTION_PROFILES[shipTuning(kind).destruction];
-    p = {
-      collisionGroups: prof.piecesCollide ? WRECK_COLLISION_GROUPS : SUBCAP_WRECK_COLLISION_GROUPS,
-      linearDamping: WRECK_LINEAR_DAMPING * prof.dampingScale,
-      angularDamping: WRECK_ANGULAR_DAMPING * prof.dampingScale,
-      settleSpeed: prof.settlePerRadius * kind.radius,
-      settleSpin: prof.settleSpin,
-    };
+    p = bodyParamsOf(DESTRUCTION_PROFILES[shipTuning(kind).destruction], kind.radius);
     wreckBodyParamsCache.set(kindId, p);
   }
   return p;
 }
+
+function bodyParamsOf(prof: WreckSource['profile'], radius: number): WreckBodyParams {
+  return {
+    collisionGroups: prof.piecesCollide ? WRECK_COLLISION_GROUPS : SUBCAP_WRECK_COLLISION_GROUPS,
+    linearDamping: WRECK_LINEAR_DAMPING * prof.dampingScale,
+    angularDamping: WRECK_ANGULAR_DAMPING * prof.dampingScale,
+    settleSpeed: prof.settlePerRadius * radius,
+    settleSpin: prof.settleSpin,
+  };
+}
+
 /** The recent-damage window: damage over this many ticks (~3 s at 60 Hz). */
 export const WRECK_RECENT_DAMAGE_TICKS = 180;
 
@@ -231,7 +239,7 @@ function violence(kb: number, rate: number): number {
 export function wreckPieceGeometry(input: WreckFractureInputs): WreckPieceGeometry[] {
   // The raw fracture and its body-frame geometry live in wreckPieceFrame.ts,
   // shared with the child fracture (`wreckChildGeometry`).
-  return fracturePiecesToGeometry(input.kindId, wreckRootFracture(input));
+  return fracturePiecesToGeometry(wreckSourceOf(input), wreckRootFracture(input));
 }
 
 /** A shared cut between two neighbouring pieces: endpoints and the unit
@@ -389,13 +397,15 @@ function closestTouch(
  * banks part like a shared cut). Once per break (allocates).
  */
 export function wreckBreakKicks(
-  kindId: ShipKindId, geom: ReadonlyArray<WreckPieceGeometry>, kx: number, ky: number,
+  source: ShipKindId | WreckSource, geom: ReadonlyArray<WreckPieceGeometry>, kx: number, ky: number,
   harder: number, spinSeed: number, cutGap: number,
 ): { kvx: Float64Array; kvy: Float64Array; kw: Float64Array } {
-  const kind = getShipKind(kindId);
-  const tuning = shipTuning(kind);
-  const prof = DESTRUCTION_PROFILES[tuning.destruction];
-  const hullMass = Math.max(1e-3, shipBodyMass(kind));
+  // A ship's numbers or a rock's (wreckSource.ts), same model.
+  const src = asWreckSource(source);
+  const kind = src;
+  const tuning = { wreckPushMin: src.pushMin, wreckPushMax: src.pushMax, wreckSeparate: src.separate, wreckCrack: src.crack };
+  const prof = src.profile;
+  const hullMass = Math.max(1e-3, src.bodyMass);
   const pushFar = tuning.wreckPushMin * harder * prof.pushScale;
   const pushExtra = (tuning.wreckPushMax - tuning.wreckPushMin) * harder * prof.pushScale;
   const rf = WRECK_PUSH_FALLOFF_FRAC * kind.radius;

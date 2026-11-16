@@ -25,11 +25,10 @@ import type { BurnLines } from '../../core/destruction/burnLines.js';
 import { FRACTURE_ALGO_VERSION } from '../../core/destruction/fractureHull.js';
 import type { CapitalWreckDeps, LiveWreck, PieceKnock } from './capitalWreckTypes.js';
 import type { WreckPieceGeometry } from '../../core/destruction/wreckPieceFrame.js';
-import { DESTRUCTION_PROFILES } from '../../shared-types/shipScale/destruction.js';
-import { getShipKind } from '../../shared-types/shipKinds.js';
-import { shipTuning } from '../../shared-types/shipScale/tuning.js';
-import { shipShapeScale } from '../../core/geometry/shipHullOutline.js';
+import { wreckSourceOf, type WreckSource } from '../../core/destruction/wreckSource.js';
 import { WEAPONS, type WeaponId } from '../../core/combat/WeaponCatalogue.js';
+import { asteroidYieldWeightPerUnit } from '../../shared-types/asteroidResources.js';
+import { SALVAGE_POD_MAX_WEIGHT } from '../../shared-types/worldEvents.js';
 
 /** A live piece's pose and motion (world). */
 export interface WreckPiecePose {
@@ -70,8 +69,8 @@ export function planWreckResplit(
   hitX: number, hitY: number, dirX: number, dirY: number, weaponId: WeaponId | undefined,
   burn: BurnLines | null = null, tick = 0,
 ): { step: WreckChildStep; chain: WreckChildChain; children: WreckChildSpawn[] } {
-  const kind = getShipKind(chain.root.kindId);
-  const s = shipShapeScale(kind);
+  const src = wreckSourceOf(chain.root);
+  const s = src.scale;
   const c = Math.cos(pose.angle);
   const sn = Math.sin(pose.angle);
   // The dead hull's virtual origin under this piece.
@@ -94,14 +93,30 @@ export function planWreckResplit(
   }
   const next: WreckChildChain = { root: chain.root, steps: [...chain.steps, step] };
   const geom = wreckChildGeometry(next);
-  const children: WreckChildSpawn[] = [];
-  if (geom.length < 2) return { step, chain: next, children };
-  // The parting kicks: the first break-up's impulse model from the hit, at
-  // its gentlest (`harder` 0.75: wear, not a violent death).
-  const kick = wreckBreakKicks(
-    chain.root.kindId, geom, mx, my, 0.75, wreckChildSeed(chain.root.seed >>> 0, parent.index) ^ 0x3ec7,
-    step.cutW !== undefined ? step.cutW * s : 0,
+  if (geom.length < 2) return { step, chain: next, children: [] };
+  const children = placeWreckPieces(
+    src, geom, pose, ox, oy, mx, my, wreckChildSeed(chain.root.seed >>> 0, parent.index) ^ 0x3ec7, step.cutW !== undefined ? step.cutW * s : 0,
   );
+  return { step, chain: next, children };
+}
+
+/**
+ * Place freshly broken pieces `geom` (body frames over the source's scaled
+ * math-up frame) in the world: that frame's origin at world (ox, oy), turned
+ * by `pose.angle`, with the broken thing's rigid motion (v + ω × r, ω) plus
+ * the parting kicks of the first break-up's model (`wreckBreakKicks` from
+ * the break at (mx, my) in that frame) at its gentlest (`harder` 0.75: wear,
+ * not a violent death). The ONE placement of a re-split piece's children and
+ * of a mined-out rock's pieces (rockCut.ts). Once per break (allocates).
+ */
+export function placeWreckPieces(
+  src: WreckSource, geom: ReadonlyArray<WreckPieceGeometry>, pose: WreckPiecePose,
+  ox: number, oy: number, mx: number, my: number, spinSeed: number, cutGap: number,
+): WreckChildSpawn[] {
+  const c = Math.cos(pose.angle);
+  const sn = Math.sin(pose.angle);
+  const kick = wreckBreakKicks(src, geom, mx, my, 0.75, spinSeed, cutGap);
+  const children: WreckChildSpawn[] = [];
   for (let i = 0; i < geom.length; i++) {
     const g = geom[i]!;
     const wx = ox + g.cx * c - g.cy * sn;
@@ -116,7 +131,7 @@ export function planWreckResplit(
       vy: pose.vy + pose.angvel * rx + kx * sn + ky * c,
     });
   }
-  return { step, chain: next, children };
+  return children;
 }
 
 /** The wreck state `WreckResplitter` touches, owned by `CapitalWreckSubsystem`. */
@@ -128,10 +143,13 @@ export interface WreckResplitHost {
   newWreck(): [wreckId: number, serial: number];
   /** Track a spawned piece (its per-piece entry, FIFO slot and wreck). */
   addPiece(id: string, wreckId: number, entry: PieceKnock, fifo: string[]): void;
-  /** Track a child wreck (its parent's child count goes up). */
-  addWreck(w: LiveWreck, parent: LiveWreck): void;
+  /** Track a new wreck: a child (its parent's child count goes up), or a
+   *  root (`parent` null: a mined-out rock's, rockCut.ts). */
+  addWreck(w: Omit<LiveWreck, 'root'>, parent: LiveWreck | null): void;
   /** Remove a live piece (FIFO, body, its wreck's count). */
   dropPiece(id: string, fifo: string[]): void;
+  /** Evict the oldest pieces of one FIFO down to its cap (a ship death's path). */
+  enforceCap(capital: boolean): void;
 }
 
 /**
@@ -167,17 +185,17 @@ export class WreckResplitter {
     if (this.splitsThisTick >= WRECK_RESPLITS_PER_TICK) return false;
     const pose = this.d.piecePose?.(id) ?? null;
     if (pose === null) return false;
-    const kindId = w.chain.root.kindId;
+    const src = w.src;
     const parent = wreckChainPiece(w.chain, k.index);
-    const rs = wreckResplitOptions(kindId);
+    const rs = wreckResplitOptions(src);
     if (parent === undefined || rs === null) {
       k.integrity = Number.POSITIVE_INFINITY;
       return false;
     }
     this.splitsThisTick++;
-    const capital = DESTRUCTION_PROFILES[shipTuning(getShipKind(kindId)).destruction].id === 'capital';
+    const capital = src.profile.id === 'capital';
     const fifo = this.h.fifo(capital);
-    if (fifo.length - 1 + rs.fracture.maxPieces <= this.h.cap(capital) && wreckCanResplit(kindId, parent.area, parent.radius)) {
+    if (fifo.length - 1 + rs.fracture.maxPieces <= this.h.cap(capital) && wreckCanResplit(src, parent.area, parent.radius)) {
       const plan = planWreckResplit(w.chain, parent, pose, hitX, hitY, dirX, dirY, weaponId, k.burn, tick);
       // v12: several beams' cuts may leave more children than one fracture's
       // cap; the FIFO must still hold them all.
@@ -188,7 +206,7 @@ export class WreckResplitter {
       k.integrity = Number.POSITIVE_INFINITY;
       return false;
     }
-    this.d.dropSalvage(wreckSalvageQty(kindId, k.mass), pose.x, pose.y, pose.vx, pose.vy);
+    dropPieceSalvage(this.d, src, w.ore, parent.area, k.mass, pose.x, pose.y, pose.vx, pose.vy);
     this.h.dropPiece(id, fifo);
     return true;
   }
@@ -202,47 +220,23 @@ export class WreckResplitter {
     id: string, k: PieceKnock, wreckId: number, w: LiveWreck,
     plan: ReturnType<typeof planWreckResplit>, fifo: string[], tick: number,
   ): boolean {
-    const kindId = w.chain.root.kindId;
+    const src = w.src;
     const [childId, serial] = this.h.newWreck();
-    const body = wreckBodyParams(kindId);
-    const ids: string[] = [];
-    let mass = 0;
-    let pods = 0;
-    const rs = wreckResplitOptions(kindId);
-    const podBelow = plan.step.extraCuts !== undefined && rs !== null && this.d.dropSalvage !== undefined
-      ? rs.minAreaFrac * wreckHullArea(kindId) : 0;
-    for (const c of plan.children) {
-      const g = c.geom;
-      if (g.area < podBelow) {
-        this.d.dropSalvage!(wreckSalvageQty(kindId, g.mass), c.x, c.y, c.vx, c.vy);
-        pods++;
-        continue;
-      }
-      const cid = `wreck-${serial}-${g.index}`;
-      const ok = this.d.spawnPiece({
-        id: cid, x: c.x, y: c.y, vx: c.vx, vy: c.vy, angle: c.angle, angvel: c.angvel,
-        radius: g.radius, mass: g.mass, parentShipKind: kindId, pieceIndex: g.index, wreckId: childId,
-        parts: g.parts, colliderParts: g.colliderParts,
-        linearDamping: body.linearDamping, angularDamping: body.angularDamping,
-        collisionGroups: body.collisionGroups, settleSpeed: body.settleSpeed, settleSpin: body.settleSpin,
-      });
-      if (!ok) continue;
-      ids.push(cid);
-      mass += g.mass;
-      this.h.addPiece(cid, childId, {
-        ...k, mass: g.mass, index: g.index, integrity: wreckPieceIntegrity(kindId, g.mass),
-        cx: g.cx, cy: g.cy, radius: g.radius, burn: null,
-      }, fifo);
-    }
-    if (ids.length === 0) {
-      if (pods === 0) return false;
+    const rs = wreckResplitOptions(src);
+    // A rock's break always pods its slivers (rockCut.ts does the same).
+    const podBelow = (plan.step.extraCuts !== undefined || src.rock !== null) && rs !== null && this.d.dropSalvage !== undefined
+      ? rs.minAreaFrac * wreckHullArea(src) : 0;
+    const r = spawnWreckPieces(this.d, this.h, src, w, plan.children, podBelow, serial, childId, k, fifo);
+    if (r.ids.length === 0) {
+      if (r.pods === 0) return false;
       this.h.dropPiece(id, fifo);
       return true;
     }
+    const { ids, mass } = r;
     const st = plan.step;
     this.h.addWreck({
       desc: {
-        wreckId: childId, parentKind: kindId, seed: wreckChainSeed(plan.chain), killX: st.killX, killY: st.killY,
+        wreckId: childId, parentKind: w.desc.parentKind, seed: wreckChainSeed(plan.chain), killX: st.killX, killY: st.killY,
         // Not child inputs (the kind's `resplit` profile sets the fracture).
         killBlowDamage: 0, recentDamageRate: 0, snapChance: 0, algoVersion: FRACTURE_ALGO_VERSION, deathTick: tick,
         ...(st.cutKind !== undefined ? { cutKind: st.cutKind, cutAng: st.cutAng } : {}),
@@ -251,8 +245,74 @@ export class WreckResplitter {
         parentWreck: wreckId, parentPiece: k.index,
       },
       pieces: ids.length, ids, mass, holdUntil: tick, chain: plan.chain, parent: wreckId, children: 0,
+      src, ...(w.ore !== undefined ? { ore: w.ore } : {}),
     }, w);
     this.h.dropPiece(id, fifo);
     return true;
   }
+}
+
+/**
+ * Spawn placed pieces `placed` as the pieces of wreck `wreckId` (piece ids
+ * `wreck-<serial>-<index>`), each under `podBelow` world area dropped as a
+ * pod instead (`dropPieceSalvage`). `like` seeds each per-piece entry's
+ * knock numbers (null: the source's own, a rock's first break). The ONE
+ * piece spawn of a re-split and of a mined-out rock (rockCut.ts).
+ */
+export function spawnWreckPieces(
+  d: CapitalWreckDeps, h: Pick<WreckResplitHost, 'addPiece'>, src: WreckSource, w: Pick<LiveWreck, 'ore'>,
+  placed: ReadonlyArray<WreckChildSpawn>, podBelow: number, serial: number, wreckId: number,
+  like: PieceKnock | null, fifo: string[],
+): { ids: string[]; mass: number; pods: number } {
+  const body = wreckBodyParams(src.ship ?? src);
+  const ids: string[] = [];
+  let mass = 0;
+  let pods = 0;
+  for (const c of placed) {
+    const g = c.geom;
+    if (g.area < podBelow) {
+      dropPieceSalvage(d, src, w.ore, g.area, g.mass, c.x, c.y, c.vx, c.vy);
+      pods++;
+      continue;
+    }
+    const cid = `wreck-${serial}-${g.index}`;
+    const ok = d.spawnPiece({
+      id: cid, x: c.x, y: c.y, vx: c.vx, vy: c.vy, angle: c.angle, angvel: c.angvel,
+      radius: g.radius, mass: g.mass, parentShipKind: src.ship ?? undefined, pieceIndex: g.index, wreckId,
+      parts: g.parts, colliderParts: g.colliderParts,
+      linearDamping: body.linearDamping, angularDamping: body.angularDamping,
+      collisionGroups: body.collisionGroups, settleSpeed: body.settleSpeed, settleSpin: body.settleSpin,
+    });
+    if (!ok) continue;
+    ids.push(cid);
+    mass += g.mass;
+    const knock = like ?? { mass: 0, impulsePerDamage: 0, maxDv: 0, spin: src.profile.spinScale, wakeDv: 0 };
+    h.addPiece(cid, wreckId, {
+      ...knock, mass: g.mass, index: g.index, integrity: wreckPieceIntegrity(src, g.mass),
+      cx: g.cx, cy: g.cy, radius: g.radius, burn: null,
+    }, fifo);
+  }
+  return { ids, mass, pods };
+}
+
+/** A worn-out piece (or a sliver) too small to split leaves a pod: a ship
+ *  wreck's carries salvage (`wreckSalvageQty`), a rock's its share of the
+ *  rock's ore (area × `ore.perArea`) up to a pod's size
+ *  (`SALVAGE_POD_MAX_WEIGHT` of that ore; the rest of the share is never
+ *  mined, so cutting never makes ore), drawn through `OreDraw` by the room's
+ *  `dropSalvage`. A rock share under one unit (a mined-out rock: perArea 0)
+ *  drops nothing. No hook: nothing drops. */
+export function dropPieceSalvage(
+  d: CapitalWreckDeps, src: WreckSource, ore: LiveWreck['ore'],
+  area: number, mass: number, x: number, y: number, vx: number, vy: number,
+): void {
+  if (d.dropSalvage === undefined) return;
+  if (ore !== undefined) {
+    const share = area * ore.perArea;
+    if (!(share >= 1)) return; // no ore left in this sliver: no pod
+    const podMax = Math.max(1, Math.floor(SALVAGE_POD_MAX_WEIGHT / asteroidYieldWeightPerUnit(ore.resource)));
+    d.dropSalvage(Math.min(podMax, Math.round(share)), x, y, vx, vy, ore);
+    return;
+  }
+  d.dropSalvage(wreckSalvageQty(src, mass), x, y, vx, vy);
 }
