@@ -523,8 +523,9 @@ export class ProjectilePipeline {
     proj: ProjectileRecord, rec: SwarmCandidate, stepX: number, stepY: number,
     cx: number, cy: number, angle: number,
   ): SweepHit | null {
-    // Capital wreck pieces (kind 4, S2a) block shots: circle, then their parts.
-    if (rec.kind === 4) return wreckSweepHit(rec.wreckParts, rec.radius, proj.x, proj.y, stepX, stepY, proj.radius, cx, cy, angle);
+    // Capital wreck pieces (kind 4, S2a) and cut-field rocks (C1b) block
+    // shots: circle, then their parts.
+    if (rec.kind === 4 || rec.wreckParts !== undefined) return wreckSweepHit(rec.wreckParts, rec.radius, proj.x, proj.y, stepX, stepY, proj.radius, cx, cy, angle);
     return rec.halfW !== undefined && rec.halfH !== undefined
       ? projectileSweepBox(proj.x, proj.y, stepX, stepY, proj.radius, cx, cy, rec.halfW, rec.halfH, rec.boxes)
       : rec.kind === 1 && rec.shipKind

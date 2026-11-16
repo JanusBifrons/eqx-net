@@ -669,11 +669,11 @@ export class PlayerFireResolver implements WeaponFireSink {
       const cy = rewound?.y ?? d.sabF32[b + SLOT_Y_OFF]!;
       const ca = rewound?.angle ?? d.sabF32[b + SLOT_ANGLE_OFF]!;
       let dist: number | null;
-      if (rec.kind === 0 && rec.vertices) {
-        dist = rayHitsConvexPolygon(rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, ca, rec.vertices, hw);
-      } else if (rec.kind === 4) {
-        // A capital wreck piece (S2a) stops the beam: its convex parts.
+      if (rec.kind === 4 || rec.wreckParts !== undefined) {
+        // A wreck piece (S2a) or cut-field rock (C1b): its convex parts.
         dist = wreckRayHit(rec.wreckParts, rec.radius, rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, ca, hw);
+      } else if (rec.kind === 0 && rec.vertices) {
+        dist = rayHitsConvexPolygon(rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, ca, rec.vertices, hw);
       } else if (rec.halfW !== undefined && rec.halfH !== undefined) {
         // Structures (phase V): the footprint box, not the bounding circle.
         dist = rayHitsBox(rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, rec.halfW, rec.halfH, rec.boxes, hw);

@@ -402,6 +402,8 @@ export class SwarmSpawner {
       vertices = a.vertices ?? generateAsteroidVertices(rec.shapeSeed, a.radius);
       if (a.fieldRock) { rec.fieldRock = true; rec.restX = a.x; rec.restY = a.y; }
       if (a.fieldKey !== undefined) rec.fieldKey = a.fieldKey;
+      // A cut-field rock's convex parts are its weapon hit shape too (C1b).
+      if (a.fieldRock && structureParts !== undefined) rec.wreckParts = structureParts;
       rec.vertices = vertices;
       mass ??= ASTEROID_DEFAULT_MASS;
       // WS-4 / R2.27 — seed the finite mineable resource pool from the
