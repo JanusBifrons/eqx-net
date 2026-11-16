@@ -81,7 +81,7 @@ describe('cut-field moved pose: server keeps = client draws (C2, #15)', () => {
     // Layer: the rock's drawn vertices map back onto the outline the field cut.
     const layer = new CutFieldLayer();
     layer.setChunk(chunk.cx, chunk.cy, chunk.outlines, chunk.ore ?? null, chunk.bodies ?? null, chunk.moved ?? null);
-    const p = (layer.container.children[0] as Mesh).geometry.positions;
+    const p = (layer.chunkLayer.children[0] as Mesh).geometry.positions;
     const o = chunk.outlines!;
     let s = 0, v = 0;
     for (let r = 0; r < rock.index; r++) { v += o[s]! + 1; s += 1 + o[s]! * 2; }

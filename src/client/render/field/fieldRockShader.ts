@@ -5,6 +5,7 @@
  * draws a whole chunk (`CutFieldLayer`). The surface is made per pixel from
  * the offset to the rock's centre: a dome from the outline, fBm, craters and
  * cracks down to ~2 screen pixels, lit by the sector's sun. No texture.
+ * `aUV.y` > 0 (far-zoom tiles only) draws the surface see-through in patches.
  *
  * Field rocks never turn, so the sun needs no per-rock frame. Per frame only
  * `setFieldRockView` runs, a compare unless the zoom or the sun moved.
@@ -22,6 +23,7 @@ in vec2 aOre;
 out vec2 vOre;
 out vec2 vLocal;
 out float vT;
+out float vThin;
 out vec4 vRock;
 out vec2 vSunDir;
 out vec4 vColor;
@@ -41,6 +43,7 @@ void main() {
   vSunDir = vec2(dot(sunW, ax), dot(sunW, ay));
   vLocal = aLocal;
   vT = aUV.x;
+  vThin = aUV.y;
   vRock = aRock;
   vOre = aOre;
   vColor = uColor * uWorldColorAlpha;
@@ -50,6 +53,7 @@ const FRAGMENT = /* glsl */ `
 precision highp float;
 in vec2 vLocal;
 in float vT;
+in float vThin;
 in vec4 vRock;
 in vec2 vOre;
 in vec2 vSunDir;
@@ -197,7 +201,20 @@ void main() {
   if (gloss > 0.0) c += uSunColor * gloss * pow(max(0.0, dot(reflect(-L, N), vec3(0.0, 0.0, 1.0))), 24.0);
   c *= uSunLook.y;
   vec3 rgb = vec3(linToSrgb(tone(c.r)), linToSrgb(tone(c.g)), linToSrgb(tone(c.b)));
-  finalColor = vec4(rgb, 1.0) * vColor;
+  // Far-zoom tiles thin toward the field's rim (vThin = coarseFieldThin; 0
+  // on rocks): see-through in rock-sized patches. smoothstep(0.15, 0.85, n)
+  // makes this noise about uniform (measured, within ~1.3 %), so the share
+  // drawn is about 1 - vThin. Patches under ~2 px fall back to plain alpha.
+  float cover = 1.0;
+  if (vThin > 0.0) {
+    float n = 0.65 * noised(q / 1200.0 + 41.0, seed + 41.0).x + 0.35 * noised(q / 520.0 + 7.0, seed + 43.0).x;
+    float u = smoothstep(0.15, 0.85, n);
+    float w = clamp(min(vThin, 1.0 - vThin), 1e-3, 0.08);
+    float f = clamp(520.0 / px * 0.5 - 0.5, 0.0, 1.0);
+    cover = mix(1.0 - vThin, smoothstep(vThin - w, vThin + w, u), f);
+    if (cover <= 0.0) discard;
+  }
+  finalColor = vec4(rgb, 1.0) * vColor * cover;
 }`;
 
 let program: GlProgram | null = null;

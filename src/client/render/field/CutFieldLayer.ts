@@ -10,13 +10,16 @@
  * Far zoom (B4): the whole field's coarse tiles (`packCoarseTile`, one Mesh
  * per 8×8-chunk tile, same mesh path and the same shader instance) sit in
  * `coarseLayer` under `chunkLayer`. `farFieldMix` crossfades the two across
- * the switch band; outside it the hidden level is `visible = false` (no draw).
+ * the switch band: the tiles come up opaque under the chunks, then the chunks
+ * fade out over them (never both half-see-through); outside the band the
+ * hidden level is `visible = false` (no draw). Tiles thin toward the field's
+ * rim (`aUV.y` = `coarseFieldThin`, drawn see-through by the shader).
  * Tiles off the view are hidden per frame. Tiles ignore consumed and moved
  * rocks: they are approximate, and only drawn where rocks are a few px.
  */
 import { Container, Mesh, MeshGeometry, Shader } from 'pixi.js';
 import type { RenderMirror } from '@core/contracts/IRenderer';
-import { CHUNK_SIZE, unpackRockKey } from '../../../core/terrain/fieldLayout';
+import { CHUNK_SIZE, coarseFieldThin, SLICED, unpackRockKey } from '../../../core/terrain/fieldLayout';
 import { packedRockBody, type PackedChunk } from '../../../core/terrain/packedChunk';
 import type { FieldRockBody } from '../../../core/terrain/chunkStreamer';
 import type { ObstacleBox } from '../../../core/structures/Grid';
@@ -31,7 +34,7 @@ const chunkKey = (cx: number, cy: number): number => (cx + 32768) * 65536 + (cy 
  *  Pixi space out: y flips). Exported for tests. */
 export interface FieldChunkMeshData {
   positions: Float32Array; // aPosition: Pixi world
-  uvs: Float32Array; // aUV.x: 1 at the rock's centre, 0 on its outline
+  uvs: Float32Array; // aUV.x: 1 at the rock's centre, 0 on its outline; aUV.y: see-through (far-zoom tiles only, else 0)
   local: Float32Array; // aLocal: offset from the rock's centre (Pixi)
   rock: Float32Array; // aRock: radius, noise offset x/y, seed
   ore: Float32Array; // aOre: ice, crystal concentration (0..1) at the vertex
@@ -282,15 +285,17 @@ export class CutFieldLayer {
     c.mesh.geometry.getBuffer('aPosition').update();
   }
 
-  /** Far zoom (B4): crossfade chunks and tiles by `farFieldMix`; the level
-   *  at 0 is not visible (no draw). No tiles yet: the chunks stay full. Tiles
-   *  off `view` are hidden. Allocates nothing (#14). */
+  /** Far zoom (B4): crossfade chunks and tiles by `farFieldMix`. The tiles
+   *  (underneath) reach full alpha by mid-band, the chunks keep it until then,
+   *  so one level is always opaque (no washed-out double exposure); both ends
+   *  stay continuous. The level at 0 is not visible (no draw). No tiles yet:
+   *  the chunks stay full. Tiles off `view` are hidden. Allocates nothing (#14). */
   private applyLevel(cameraScale: number, view?: ArrayLike<number>): void {
     const mix = this.tiles.length > 0 ? farFieldMix(cameraScale) : 0;
     this.chunkLayer.visible = mix < 1;
-    this.chunkLayer.alpha = 1 - mix;
+    this.chunkLayer.alpha = Math.min(1, 2 * (1 - mix));
     this.coarseLayer.visible = mix > 0;
-    this.coarseLayer.alpha = mix;
+    this.coarseLayer.alpha = Math.min(1, 2 * mix);
     if (mix <= 0) return;
     for (let i = 0; i < this.tiles.length; i++) {
       const t = this.tiles[i]!;
@@ -310,6 +315,8 @@ export class CutFieldLayer {
     for (let v = 0; v < d.positions.length; v += 2) {
       const x = d.positions[v]!, y = d.positions[v + 1]!;
       if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+      // The field is centred on the sector origin; thin toward its rim.
+      d.uvs[v + 1] = coarseFieldThin(Math.sqrt(x * x + y * y) / SLICED.radius);
     }
     const mesh = this.meshOf(d, true);
     this.tiles.push({ key, mesh, x0, y0, x1, y1 });

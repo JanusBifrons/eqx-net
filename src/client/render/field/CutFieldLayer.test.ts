@@ -8,7 +8,8 @@ vi.mock('./fieldRockShader', () => ({
   setFieldRockView: () => {},
   setFieldOreStyle: () => {},
 }));
-import { rockKey, type ChunkRock } from '../../../core/terrain/fieldLayout';
+import { coarseFieldThin, rockKey, SLICED, type ChunkRock } from '../../../core/terrain/fieldLayout';
+import { FAR_FIELD_SWITCH_SCALE, FAR_ICON } from '../pixi/FarZoomIcons';
 import { packChunk } from '../../../core/terrain/packedChunk';
 import { fieldRockBody } from '../../../core/terrain/chunkStreamer';
 import { buildFieldChunkMesh, CutFieldLayer, WOKEN_ROCK_FORGET_FRAMES } from './CutFieldLayer';
@@ -174,7 +175,44 @@ describe('CutFieldLayer — far-zoom coarse tiles (B4)', () => {
     expect(layer.chunkLayer.alpha).toBe(1);
     layer.setView(0, 0.0216 * 1.12); // inside the band: crossfade
     expect([layer.chunkLayer.visible, layer.coarseLayer.visible]).toEqual([true, true]);
-    expect(layer.chunkLayer.alpha + layer.coarseLayer.alpha).toBeCloseTo(1, 9);
+    layer.clear();
+  });
+
+  it('never washes out across the band: one level is always fully opaque, and both ends are continuous', () => {
+    // Owner stills: at mid-fade (0.024) both levels at half alpha read as a
+    // double exposure. The coarse level comes up opaque under the chunks
+    // first; then the chunks fade out over it.
+    const layer = new CutFieldLayer();
+    layer.setChunk(0, 0, outlines);
+    layer.setCoarseTile(0, 0, tile);
+    const lo = FAR_FIELD_SWITCH_SCALE, hi = FAR_FIELD_SWITCH_SCALE * FAR_ICON.hysteresis;
+    for (let k = 0; k <= 40; k++) {
+      const s = lo * 0.99 + ((hi * 1.01 - lo * 0.99) * k) / 40;
+      layer.setView(0, s);
+      const c = layer.chunkLayer.visible ? layer.chunkLayer.alpha : 0, f = layer.coarseLayer.visible ? layer.coarseLayer.alpha : 0;
+      expect(Math.max(c, f), `scale ${s}`).toBe(1);
+    }
+    layer.setView(0, 0.024); // the owner's mid-fade still: tiles opaque, detail fading over them
+    expect(layer.coarseLayer.alpha).toBe(1);
+    expect(layer.chunkLayer.alpha).toBeGreaterThan(0.5);
+    layer.setView(0, hi * 0.999); // just inside the detail end: tiles barely in
+    expect(layer.coarseLayer.alpha).toBeLessThan(0.02);
+    layer.setView(0, lo * 1.001); // just inside the far end: chunks barely left
+    expect(layer.chunkLayer.alpha).toBeLessThan(0.02);
+    layer.clear();
+  });
+
+  it('thins the tiles toward the field rim (aUV.y = coarseFieldThin); chunks stay solid (0)', () => {
+    const layer = new CutFieldLayer();
+    layer.setChunk(0, 0, outlines);
+    const R = SLICED.radius;
+    layer.setCoarseTile(0, 0, tile); // 30 km out: d 0.2
+    layer.setCoarseTile(4, 0, new Float32Array([4, R * 0.95, 0, R * 0.95 + 2000, 0, R * 0.95 + 2000, 2000, R * 0.95, 2000]));
+    const thin = (m: Mesh): number[] => Array.from(m.geometry.uvs).filter((_, i) => i % 2 === 1);
+    const [near, rim] = layer.coarseLayer.children as Mesh[];
+    for (const t of thin(near!)) expect(t).toBeCloseTo(coarseFieldThin(0.2), 1);
+    for (const t of thin(rim!)) expect(t).toBeGreaterThan(0.9);
+    expect(Math.max(...thin(mesh(layer.chunkLayer)))).toBe(0);
     layer.clear();
   });
 
