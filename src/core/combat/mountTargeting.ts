@@ -22,11 +22,18 @@ import { getShipKind } from '../../shared-types/shipKinds.js';
 import { shipHullOutline } from '../geometry/shipHullOutline.js';
 import { shipMountMuzzle } from './muzzle.js';
 
-/** `structure`: a fixed, armoured target (a defence gun, a base). */
-export type TargetClass = 'small' | 'subcapital' | 'small-capital' | 'capital' | 'structure';
+/** `structure`: a fixed, armoured target (a defence gun, a base).
+ *  `salvage`: a wreck piece, rock or rock piece: only a mining mount's target
+ *  (`salvageTargeting.ts`); last choice for every other mount. */
+export type TargetClass = 'small' | 'subcapital' | 'small-capital' | 'capital' | 'structure' | 'salvage';
 
 /** The class of every structure as a target (one source for every picker). */
 export const STRUCTURE_TARGET_CLASS: TargetClass = 'structure';
+
+/** The class of every salvage candidate (wreck piece, rock, rock piece). */
+export const SALVAGE_TARGET_CLASS: TargetClass = 'salvage';
+/** `mountPriority` of a salvage target for any mount: behind every class. */
+const SALVAGE_PRIORITY = 9;
 
 /** A sub-capital is this many fighter radii across or more. */
 const SUBCAPITAL_RADII = 4;
@@ -69,6 +76,7 @@ export function targetClassOfKind(kindId: string | null | undefined): TargetClas
  *  structure turrets, a player's AUTO groups, a group's turret share-out
  *  (owner 2026-11-14). */
 export function mountPriority(size: WeaponMount['size'], cls: TargetClass): number {
+  if (cls === SALVAGE_TARGET_CLASS) return SALVAGE_PRIORITY;
   switch (size) {
     case 'AA': return cls === 'small' ? 0 : cls === 'subcapital' ? 1 : 2;
     case 'S': return cls === 'subcapital' || cls === 'small-capital' || cls === 'structure' ? 0 : cls === 'capital' ? 1 : 2;

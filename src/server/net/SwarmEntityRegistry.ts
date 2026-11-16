@@ -38,11 +38,8 @@ export function isDebris(rec: { kind: number }): boolean {
   return rec.kind === SWARM_KIND_WRECK || rec.kind === 3;
 }
 
-/** A loot pod: a scrap-kind record drawn as `cargo-pod` (LootSubsystem).
- *  Loot, not a combatant: AI and turret shots pass through it. */
-export function isLootPod(rec: { kind?: number; shipKind?: string | null }): boolean {
-  return rec.kind === 3 && rec.shipKind === 'cargo-pod';
-}
+/** A loot pod (the shared predicate): nobody's shot lands on it. */
+export { isLootPod } from '../../shared-types/swarmWireFormat.js';
 
 export interface SwarmEntityRecord {
   id: string;
@@ -93,6 +90,10 @@ export interface SwarmEntityRecord {
   /** A field rock a ship rammed: now a dynamic body, on the swarm wire
    *  (flag FIELD_ROCK + key) until its chunk unloads. Still never saved. */
   fieldAwake?: boolean;
+  /** A field rock's centre where the field cut it (angle 0): its rest frame,
+   *  where its ore is sampled once it has moved (`CutFieldSubsystem.oreAtHit`). */
+  restX?: number;
+  restY?: number;
   /** Wreck pieces (kind 4): the convex parts, body-local math-up, CCW. Weapon
    *  hits refine the bounding circle to these (the same parts the physics
    *  body is built from). */

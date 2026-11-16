@@ -125,6 +125,70 @@ function stripCollinear(poly: Vec2[]): Vec2[] {
   return pts;
 }
 
+/** Drop the vertices of closed ring `pts` that lie within `eps` of the chord
+ *  between the kept ones (Ramer–Douglas–Peucker), in place order. Split at
+ *  vertex 0 and the vertex farthest from it. Pure arithmetic: same input,
+ *  same output on every machine. */
+function simplifyRing(pts: [number, number][], eps: number): [number, number][] {
+  const n = pts.length;
+  let far = 0, fd = -1;
+  for (let i = 1; i < n; i++) {
+    const d = (pts[i]![0] - pts[0]![0]) ** 2 + (pts[i]![1] - pts[0]![1]) ** 2;
+    if (d > fd) { fd = d; far = i; }
+  }
+  const keep: boolean[] = new Array<boolean>(n).fill(false);
+  keep[0] = keep[far] = true;
+  const stack: number[] = [0, far, far, n];
+  while (stack.length > 0) {
+    const b = stack.pop()!, a = stack.pop()!;
+    const A = pts[a % n]!, B = pts[b % n]!, dx = B[0] - A[0], dy = B[1] - A[1];
+    const len = Math.hypot(dx, dy) || 1;
+    let best = -1, bd = eps;
+    for (let k = a + 1; k < b; k++) {
+      const q = pts[k % n]!;
+      const d = Math.abs((q[0] - A[0]) * dy - (q[1] - A[1]) * dx) / len;
+      if (d > bd) { bd = d; best = k; }
+    }
+    if (best >= 0) { keep[best % n] = true; stack.push(a, best, best, b); }
+  }
+  return pts.filter((_, i) => keep[i]);
+}
+
+/** Convex parts (CCW) of any simple polygon, for a collider that follows its
+ *  dents. With `simplify` > 0 the outline is first thinned (`simplifyRing`):
+ *  bumps and dents shallower than `simplify` go, which keeps the part count
+ *  small for rough outlines (cut-field rocks). Null when the outline crosses
+ *  itself or the split fails its check (every part convex, the areas adding
+ *  up): the caller keeps its single convex hull. Deterministic for the same
+ *  float64 input, so both sides of a two-sided collider build the same parts
+ *  (#15). Generation-time only (allocates). */
+export function convexParts(poly: readonly Vec2[], simplify = 0): Vec2[][] | null {
+  let pts: [number, number][] = poly.map((p) => [p.x, p.y]);
+  decomp.makeCCW(pts);
+  if (simplify > 0) pts = simplifyRing(pts, simplify);
+  if (pts.length < 3 || !decomp.isSimple(pts)) return null;
+  const whole = signedArea(pts.map(([x, y]) => ({ x, y })));
+  if (!(whole > 0)) return null;
+  const parts = decomp.quickDecomp(pts).map((part) => stripCollinear(part.map(([x, y]): Vec2 => ({ x, y }))));
+  if (parts.length === 0) return null;
+  let sum = 0;
+  for (const part of parts) {
+    if (part.length < 3 || !isConvexCcwLoose(part)) return null;
+    sum += signedArea(part);
+  }
+  return Math.abs(sum - whole) <= whole * 1e-6 ? parts : null;
+}
+
+/** Every corner turns left (or is straight), so the part is convex and CCW. */
+function isConvexCcwLoose(p: readonly Vec2[]): boolean {
+  const n = p.length;
+  for (let i = 0; i < n; i++) {
+    const a = p[i]!, b = p[(i + 1) % n]!, c = p[(i + 2) % n]!;
+    if ((b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x) < -1e-9) return false;
+  }
+  return true;
+}
+
 /** Decompose one ShipKind's scaled polygon into convex parts. Deterministic. */
 function decomposeForKind(kind: ShipKind): readonly ConvexPart[] {
   const poly = shipShapeToPolygon(kind);

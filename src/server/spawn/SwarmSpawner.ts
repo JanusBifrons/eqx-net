@@ -36,6 +36,9 @@ export interface AsteroidSpec {
   fieldRock?: boolean;
   /** Its rock key (`rockKey`): an awake field rock carries it on the wire. */
   fieldKey?: number;
+  /** Cut-field rock: its collider's convex parts (`FieldRockBody.parts`,
+   *  plan C1), so it follows the rock's dents; absent ⇒ one convex hull. */
+  parts?: ReadonlyArray<ReadonlyArray<Vec2>>;
 }
 
 export interface DroneSpec {
@@ -184,7 +187,7 @@ export class SwarmSpawner {
 
   /** Spawn one asteroid. Returns true on success, false if no free slot. */
   spawnAsteroid(a: AsteroidSpec): boolean {
-    const ok = this.spawnOne(0, a, undefined);
+    const ok = this.spawnOne(0, a, undefined, undefined, undefined, 0, a.parts);
     if (ok && a.resource !== undefined && a.resource !== 'rock') {
       const rec = this.registry.get(a.id);
       if (rec) rec.asteroidResource = a.resource;
@@ -310,7 +313,7 @@ export class SwarmSpawner {
    *  on it and do nothing (EntityResolver treats kind 4 as immune). */
   spawnWreck(spec: {
     id: string; x: number; y: number; vx: number; vy: number; angle: number; angvel: number;
-    radius: number; mass: number; parentShipKind: ShipKindId; pieceIndex: number; wreckId: number;
+    radius: number; mass: number; parentShipKind: ShipKindId | undefined; pieceIndex: number; wreckId: number;
     parts: ReadonlyArray<ReadonlyArray<Vec2>>; colliderParts: ReadonlyArray<ReadonlyArray<Vec2>>;
     linearDamping: number; angularDamping: number;
     /** `wreckBodyParams(kind).collisionGroups`; absent ⇒ the capital groups. */
@@ -397,7 +400,7 @@ export class SwarmSpawner {
       // seeding by `entityId` would reshape a rock that leaves and returns.
       rec.shapeSeed = asteroidShapeSeed(a.id);
       vertices = a.vertices ?? generateAsteroidVertices(rec.shapeSeed, a.radius);
-      if (a.fieldRock) rec.fieldRock = true;
+      if (a.fieldRock) { rec.fieldRock = true; rec.restX = a.x; rec.restY = a.y; }
       if (a.fieldKey !== undefined) rec.fieldKey = a.fieldKey;
       rec.vertices = vertices;
       mass ??= ASTEROID_DEFAULT_MASS;

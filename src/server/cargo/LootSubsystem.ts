@@ -1,5 +1,5 @@
 /**
- * LootSubsystem — loot pods + fly-over pickup + spill-on-death for ONE sector
+ * LootSubsystem — loot pods + fly-over (or tractor hold-zone) pickup, the wreck-piece store (tractored, or consumable and close) + spill-on-death for ONE sector
  * (plan peppy-jumping-pinwheel P1a-1). Decision logic over injected hooks, so it
  * is unit-testable without a room (the `TransitOrchestrator` pattern).
  *
@@ -14,8 +14,12 @@
  * the holds table — hostile-review A3).
  */
 import { randomUUID } from 'node:crypto';
-import type { Hold } from '../../shared-types/goods.js';
-import { cloneHold, holdBestTier, isHoldEmpty, mergeInto, transferInto, transferUpTo } from '../../core/cargo/hold.js';
+import type { GoodId, Hold } from '../../shared-types/goods.js';
+import type { ShipKind } from '../../shared-types/shipKinds/types.js';
+import { salvageConsumable, salvageConsumeRadius } from '../../core/combat/salvageTargeting.js';
+import type { PieceStoreView } from '../rooms/wreckLineage.js';
+import type { WreckOre } from '../rooms/capitalWreckTypes.js';
+import { cloneHold, emptyHold, holdBestTier, holdWeight, isHoldEmpty, mergeInto, transferInto, transferUpTo } from '../../core/cargo/hold.js';
 import { POD_TIER_SPILL } from '../../shared-types/shipKinds/cargoPod.js';
 import type { HoldRecord, HoldStore } from './HoldStore.js';
 import { GLOBAL_SHIP_TUNING } from '../../shared-types/shipScale/lookup.js';
@@ -42,6 +46,9 @@ export interface LootCollector {
   y: number;
   /** Cargo capacity (weight units) of the collecting hull's kind. */
   capacity: number;
+  /** The collecting hull's kind: its hull radius and mounts decide which
+   *  wreck pieces it takes in by proximity (`salvageConsumeRadius`). */
+  kind: ShipKind;
   /** Living World P3b — an NPC collector (robot harvester): its hold is an
    *  ownerless `hauler`-type record keyed by its swarm id (spilled on death by
    *  the kill path), and it gets no player popup. */
@@ -65,6 +72,32 @@ export interface LootSubsystemDeps {
    *  row (liveness #17 — lingering / dead hulls never collect; no roster row ⇒
    *  no hold ⇒ no pickup). Visitor style: no per-tick allocation (#14). */
   forEachCollector: (visit: (c: LootCollector) => void) => void;
+  /** Salvage plan PR 12, hold-zone pickup: is pod `podId` (at x, y) held by a
+   *  tractor beam of collector `c` close enough to take it
+   *  (`ForceFieldSubsystem.inTractorHold`)? Such a pod is picked up exactly as
+   *  if flown over. Absent ⇒ fly-over only. */
+  inTractorHold?: (c: LootCollector, podId: string, x: number, y: number) => boolean;
+  /** Piece store: a wreck piece goes whole into a collector's hold when its
+   *  own tractor holds it in the hold zone, or (the factory line) when it is
+   *  CONSUMABLE for that ship (`salvageConsumable`: small for its hull, fits
+   *  its free hold) and close: within `LOOT_PICKUP_RADIUS` of the hull's
+   *  edge (`kind.radius`), the pod pickup's reach. Absent ⇒ pods only. */
+  heldPieces?: {
+    /** Any tractor lease or live piece (cheap gate for the pass). */
+    any: () => boolean;
+    /** Visit the wreck pieces collector `c`'s own beams hold in the zone
+     *  (`ForceFieldSubsystem.forEachHeldPiece`). */
+    forEach: (c: LootCollector, visit: (pieceId: string) => void) => void;
+    /** Visit live pieces of radius ≤ `maxRadius` whose edge is within `reach`
+     *  of (x, y) (`CapitalWreckSubsystem.forEachPieceNear`). */
+    near: (x: number, y: number, reach: number, maxRadius: number, visit: (pieceId: string, px: number, py: number) => void) => void;
+    /** The piece's whole-store worth (`CapitalWreckSubsystem.pieceStore`); false: gone. */
+    store: (pieceId: string, out: PieceStoreView) => boolean;
+    /** A rock piece's ore goods (`OreDraw.cutYield`, the room's one ore path). */
+    ore: (ore: WreckOre, x: number, y: number, units: number) => Partial<Record<GoodId, number>>;
+    /** Remove the stored piece (`CapitalWreckSubsystem.storePiece`). */
+    remove: (pieceId: string) => void;
+  };
   /** Discrete notifications (UI accelerator + audit). */
   onCollected?: (c: LootCollector, moved: Hold, podId: string) => void;
   onDropped?: (podId: string, hold: Hold, cause: string) => void;
@@ -213,18 +246,30 @@ export class LootSubsystem {
 
   /** Fly-over pickup pass — call every few ticks from the room update. */
   collectTick(): void {
-    if (this.pods.size === 0) return;
+    if (this.pods.size === 0 && this.d.heldPieces?.any() !== true) return;
     this.d.forEachCollector(this.visitCollector);
   }
 
+  /** The collector the piece-store visit runs for (no closure per pass, #14). */
+  private pieceCollector: LootCollector | null = null;
+
   /** Bound once (no per-tick closure allocation, #14). */
   private readonly visitCollector = (c: LootCollector): void => {
+    if (this.d.heldPieces !== undefined) {
+      this.pieceCollector = c;
+      this.d.heldPieces.forEach(c, this.storeHeldPiece);
+      const maxR = salvageConsumeRadius(c.kind);
+      if (maxR > 0) this.d.heldPieces.near(c.x, c.y, c.kind.radius + LOOT_PICKUP_RADIUS, maxR, this.consumeNearPiece);
+      this.pieceCollector = null;
+    }
     for (const [podId] of this.pods) {
       const pose = this.d.podPose(podId);
       if (pose === null) continue;
       const dx = pose.x - c.x;
       const dy = pose.y - c.y;
-      if (dx * dx + dy * dy > PICKUP_R2) continue;
+      // Flown over, or held in this collector's tractor beam close enough:
+      // either way the same atomic pickup (a full hold leaves the pod).
+      if (dx * dx + dy * dy > PICKUP_R2 && this.d.inTractorHold?.(c, podId, pose.x, pose.y) !== true) continue;
       this.pickUp(c, podId);
     }
   };
@@ -242,9 +287,7 @@ export class LootSubsystem {
       ? transferUpTo(shipHold, podHold, c.capacity, DERELICT_SALVAGE_STEP)
       : transferInto(shipHold, podHold, c.capacity);
     if (isHoldEmpty(moved)) return; // hold full — the pod stays
-    const shipNext: HoldRecord = c.npc === true
-      ? { holderUid: c.shipInstanceId, holderType: 'hauler', ownerId: null, sectorKey: this.d.sectorKey(), x: null, y: null, hold: shipHold, expiresAt: null }
-      : { holderUid: c.shipInstanceId, holderType: 'ship', ownerId: c.playerId, sectorKey: null, x: null, y: null, hold: shipHold, expiresAt: null };
+    const shipNext = this.shipRecord(c, shipHold);
     if (srcEmptied) {
       // ONE atomic group: ship gains + pod row deleted.
       this.d.holdStore.commit([shipNext], [podId], this.persist());
@@ -269,7 +312,56 @@ export class LootSubsystem {
     this.d.onCollected?.(c, moved, podId);
   }
 
-  /** Derelict salvage popup accumulator: `${playerId}|${podId}` → moved so far. */
+  /** Collector `c`'s next hold record (a pilot's ship row, or an NPC's
+   *  ownerless `hauler` row). */
+  private shipRecord(c: LootCollector, hold: Hold): HoldRecord {
+    return c.npc === true
+      ? { holderUid: c.shipInstanceId, holderType: 'hauler', ownerId: null, sectorKey: this.d.sectorKey(), x: null, y: null, hold, expiresAt: null }
+      : { holderUid: c.shipInstanceId, holderType: 'ship', ownerId: c.playerId, sectorKey: null, x: null, y: null, hold, expiresAt: null };
+  }
+
+  /** Reused piece view (`heldPieces.store`, #14). */
+  private readonly pieceView: PieceStoreView = { mass: 0, radius: 0, qty: 0, ore: undefined, holdWeight: 0 };
+
+  /** A piece the collector's own tractor holds in its hold zone. Bound once. */
+  private readonly storeHeldPiece = (pieceId: string): void => {
+    const c = this.pieceCollector;
+    if (c !== null) this.storePiece(c, pieceId, c.x, c.y, false);
+  };
+
+  /** A piece close to the collector's hull (the factory line): taken in
+   *  only when consumable for this ship. Bound once. */
+  private readonly consumeNearPiece = (pieceId: string, px: number, py: number): void => {
+    const c = this.pieceCollector;
+    if (c !== null) this.storePiece(c, pieceId, px, py, true);
+  };
+
+  /**
+   * Piece store: the piece goes WHOLE into `c`'s hold, as what it would
+   * leave when worn out (`heldPieces.store`): salvage for a ship's wreck, its
+   * ore for a rock's (`heldPieces.ore`, at (x, y)). One `HoldStore` commit of
+   * the fuller ship record, then the piece leaves through the wreck system's
+   * removal path. All or nothing: a hold without room for all of it changes
+   * nothing and the piece stays (no pod). `consume`: only a piece consumable
+   * for this ship (`salvageConsumable`). The room check allocates nothing, so
+   * a full hold costs nothing per pass (#14).
+   */
+  private storePiece(c: LootCollector, pieceId: string, x: number, y: number, consume: boolean): void {
+    const hp = this.d.heldPieces;
+    const v = this.pieceView;
+    if (hp === undefined || !hp.store(pieceId, v) || v.qty <= 0) return; // gone, or worth nothing
+    const shipRec = this.d.holdStore.get(c.shipInstanceId);
+    const free = c.capacity - (shipRec !== undefined ? holdWeight(shipRec.hold) : 0) + 1e-9;
+    if (consume ? !salvageConsumable(v, salvageConsumeRadius(c.kind), free) : v.holdWeight > free) return; // no room: it stays
+    const moved: Hold = { goods: v.ore !== undefined ? hp.ore(v.ore, x, y, v.qty) : { salvage: v.qty }, blueprints: [] };
+    const shipHold = shipRec !== undefined ? cloneHold(shipRec.hold) : emptyHold();
+    mergeInto(shipHold, cloneHold(moved));
+    this.d.holdStore.commit([this.shipRecord(c, shipHold)], [], this.persist());
+    hp.remove(pieceId);
+    this.d.onCollected?.(c, moved, pieceId);
+  }
+
+  /** Derelict salvage popup accumulator:`${playerId}|${podId}` → moved so far. */
   private readonly salvageAcc = new Map<string, { hold: Hold; steps: number }>();
 
   /** A pod was destroyed by combat damage — its contents are gone. */

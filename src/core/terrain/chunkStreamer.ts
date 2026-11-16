@@ -19,7 +19,8 @@
  */
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { shipBodyMass } from '../../shared-types/shipScale/tuning.js';
-import { CHUNK_SIZE, rocksInChunk, type ChunkOpts, type ChunkRock } from './fieldLayout.js';
+import { convexParts } from '../geometry/shipHullDecomp.js';
+import { CHUNK_SIZE, FIELD_COLLIDER_SIMPLIFY, rocksInChunk, type ChunkOpts, type ChunkRock } from './fieldLayout.js';
 
 /** The cut options for a field seed: one source for both sides (#15). */
 export function cutFieldOpts(seed: string): ChunkOpts {
@@ -27,9 +28,13 @@ export function cutFieldOpts(seed: string): ChunkOpts {
 }
 
 /** A field rock as a body: centred on its outline's vertex mean, the outline
- *  relative to that centre, and its bounding radius. Both sides build the
- *  collider from this, so their rocks match (#15). Generation-time only. */
-export interface FieldRockBody { x: number; y: number; radius: number; verts: { x: number; y: number }[] }
+ *  relative to that centre, its bounding radius, and the convex parts its
+ *  collider is built from (plan C1: it follows the rock's dents). Both sides
+ *  build the collider from this, so their rocks match (#15). Generation-time
+ *  only. `parts` null ⇒ the outline's convex hull (an outline that crosses
+ *  itself). */
+export interface FieldRockBody { x: number; y: number; radius: number; verts: { x: number; y: number }[]; parts: { x: number; y: number }[][] | null }
+
 
 export function fieldRockBody(rock: ChunkRock): FieldRockBody {
   let mx = 0, my = 0;
@@ -41,7 +46,10 @@ export function fieldRockBody(rock: ChunkRock): FieldRockBody {
     r2 = Math.max(r2, dx * dx + dy * dy);
     return { x: dx, y: dy };
   });
-  return { x: mx, y: my, radius: Math.sqrt(r2), verts };
+  let area2 = 0;
+  for (let k = 0; k < verts.length; k++) { const a = verts[k]!, c = verts[(k + 1) % verts.length]!; area2 += a.x * c.y - c.x * a.y; }
+  const eqRadius = Math.sqrt(Math.abs(area2) / 2 / Math.PI);
+  return { x: mx, y: my, radius: Math.sqrt(r2), verts, parts: convexParts(verts, FIELD_COLLIDER_SIMPLIFY * eqRadius) };
 }
 
 /** A woken field rock's mass: as heavy as a battleship of its size (same
@@ -79,23 +87,27 @@ export function fieldRockWakes(other: { fieldRock?: boolean; fieldAwake?: boolea
  *  them. */
 export const MAX_CHUNKS_PER_STEP = 2;
 
-export interface CutFieldHooks {
+/** What the streamer needs of a cut rock: the server's `ChunkRock`, or the
+ *  client's handle into a worker-packed chunk (`packedChunk.ts`). */
+export interface StreamedRock { key: number }
+
+export interface CutFieldHooks<R extends StreamedRock = ChunkRock> {
   /** Visit every ship that should keep rocks loaded (pilots and AI hulls). */
   visitShips(cb: (x: number, y: number) => void): void;
   /** Spawn one rock as a fixed collider; false when no slot is free. */
-  spawnRock(id: string, rock: ChunkRock, cx: number, cy: number): boolean;
+  spawnRock(id: string, rock: R, cx: number, cy: number): boolean;
   /** Quietly remove one rock (no destroy event, no broadcast). */
   removeRock(id: string): void;
   nowMs(): number;
   /** A whole chunk was cut (after its rocks were spawned). Client drawing. */
-  chunkLoaded?(cx: number, cy: number, rocks: readonly ChunkRock[]): void;
+  chunkLoaded?(cx: number, cy: number, rocks: readonly R[]): void;
   /** A whole chunk was dropped (after its rocks were removed). */
   chunkUnloaded?(cx: number, cy: number): void;
   /** Where cut rocks come from. Omitted: `rocksInChunk` inline (server). The
    *  client cuts in a background worker: this returns the chunk once it is
    *  cut, else starts or awaits the cut and returns null (asked again next
    *  step). Same rocks either way (#15). */
-  cutChunk?(cx: number, cy: number): readonly ChunkRock[] | null;
+  cutChunk?(cx: number, cy: number): readonly R[] | null;
 }
 
 interface LoadedChunk { ids: string[]; lastNeededMs: number }
@@ -105,7 +117,7 @@ const pack = (cx: number, cy: number): number => (cx + 32768) * 65536 + (cy + 32
 const unpackX = (k: number): number => Math.floor(k / 65536) - 32768;
 const unpackY = (k: number): number => (k % 65536) - 32768;
 
-export class CutFieldStreamer {
+export class CutFieldStreamer<R extends StreamedRock = ChunkRock> {
   private readonly loaded = new Map<number, LoadedChunk>();
   private readonly needed = new Set<number>();
   /** Counters for perf scenes and tests (counts, never timings). */
@@ -113,7 +125,7 @@ export class CutFieldStreamer {
 
   constructor(
     private readonly field: ChunkOpts,
-    private readonly hooks: CutFieldHooks,
+    private readonly hooks: CutFieldHooks<R>,
     /** Chunks kept loaded around a ship (Chebyshev radius). */
     private readonly wakeChunks = 2,
     private readonly lingerMs = 10_000,
@@ -153,7 +165,8 @@ export class CutFieldStreamer {
       if (have) { have.lastNeededMs = now; continue; }
       if (this.stats.cutsThisStep >= this.maxCutsPerStep) continue;
       const cx = unpackX(key), cy = unpackY(key);
-      const rocks = this.hooks.cutChunk ? this.hooks.cutChunk(cx, cy) : rocksInChunk(this.field, cx, cy);
+      // No cut hook: the server, where R is ChunkRock.
+      const rocks = this.hooks.cutChunk ? this.hooks.cutChunk(cx, cy) : (rocksInChunk(this.field, cx, cy) as readonly StreamedRock[] as readonly R[]);
       if (rocks === null) continue; // still being cut elsewhere
       this.stats.cutsThisStep++;
       const ids: string[] = [];

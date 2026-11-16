@@ -20,6 +20,8 @@ import type { PhysicsWorld } from '@core/physics/World';
 import type { AiController } from '@core/ai/AiController';
 import type { SwarmRenderState } from '@core/contracts/IRenderer';
 import type { WreckPieceGeometry } from '@core/destruction/wreckPieces';
+import type { FieldRockBody } from '@core/terrain/chunkStreamer';
+import type { WreckRockRef } from '@shared-types/messages/wreckDescriptor';
 
 /** The exact predWorld surface a leaf touches — a structural subset of
  *  `PhysicsWorld`, so the real world satisfies it and a unit-test fake can
@@ -34,6 +36,9 @@ export type PredWorldHandle = Pick<
 export interface WreckGeometrySource {
   has(wreckId: number): boolean;
   piece(wreckId: number, index: number): WreckPieceGeometry | null;
+  /** Rock cut: the rock a wreck (or its root) was cut from, else undefined
+   *  (a ship's wreck). Optional: absent ⇒ every wreck is a ship's. */
+  rockOf?(wreckId: number): WreckRockRef | undefined;
 }
 
 /** Cut-field rocks (macro terrain C2): an awake field rock rides the swarm
@@ -41,8 +46,9 @@ export interface WreckGeometrySource {
  *  client's `CutFieldClient`, which also drops the rock's fixed body. */
 export interface FieldRockSource {
   /** Mark rock `key` awake (called on spawn and every sync) and return its
-   *  centred outline, or null when this client has not cut its chunk. */
-  wakeFieldRock(key: number): ReadonlyArray<{ x: number; y: number }> | null;
+   *  body (centred outline and collider parts), or null when this client has
+   *  not cut its chunk. */
+  wakeFieldRock(key: number): FieldRockBody | null;
 }
 
 /** The hostility-ledger surface a drone leaf touches (register / unregister). */
