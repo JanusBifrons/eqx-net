@@ -380,7 +380,7 @@ export const beamCollateralSubcap: Shot = {
       kill = frig;
       // The fight opens ~9 s after your capital arrives (its turrets lock
       // and train): close in before then.
-      if (!closed && Date.now() - t0 >= 4000) {
+      if (!closed && Date.now() - t0 >= 1500) {
         closed = true;
         // The frigate (96 u) side-on, big in the frame (a 2.4 km box hid it
         // under the 60 u beam's glow, take 17): the beams come up from your
@@ -389,7 +389,7 @@ export const beamCollateralSubcap: Shot = {
         await ctx.cinema.play([holdOnBox(ctx, {
           minX: frig.x - 300, maxX: frig.x + 300,
           minY: frig.y - 300, maxY: frig.y + 300,
-        }, 3, 2500)]);
+        }, 3, 1200)]);
       }
       await ctx.sleep(50);
     }
