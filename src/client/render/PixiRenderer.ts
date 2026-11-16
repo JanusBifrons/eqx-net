@@ -2832,7 +2832,7 @@ export class PixiRenderer implements IRenderer {
     // the multi-pass filter chain every frame → frame rate collapses
     // (the late-onset spiral pattern in captures `af742v` / `ecat41`).
     this.drainRemoteWarp(mirror);
-    this._cutField.update(mirror, this._artCtx.sunAz, this.camera.scale.x); // cut-field chunks + view
+    this._cutField.update(mirror, this._artCtx.sunAz, this.camera.scale.x, this.camera.visibleBoundsInto(this._swarmViewScratch)); // cut-field chunks + view (far-zoom tiles culled to it)
 
     // Phase 1 — name labels above remote ships and drones (skip self).
     this.labels?.update(mirror);

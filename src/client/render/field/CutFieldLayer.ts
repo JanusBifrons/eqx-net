@@ -6,6 +6,13 @@
  * noise seed) feeds `fieldRockShader.ts`. Built when the chunk arrives (no
  * triangulation: a fan per outline) and never touched per frame; per frame
  * only `setView` runs, a compare unless the camera zoom or the sun moved.
+ *
+ * Far zoom (B4): the whole field's coarse tiles (`packCoarseTile`, one Mesh
+ * per 8×8-chunk tile, same mesh path and the same shader instance) sit in
+ * `coarseLayer` under `chunkLayer`. `farFieldMix` crossfades the two across
+ * the switch band; outside it the hidden level is `visible = false` (no draw).
+ * Tiles off the view are hidden per frame. Tiles ignore consumed and moved
+ * rocks: they are approximate, and only drawn where rocks are a few px.
  */
 import { Container, Mesh, MeshGeometry, Shader } from 'pixi.js';
 import type { RenderMirror } from '@core/contracts/IRenderer';
@@ -15,6 +22,7 @@ import type { FieldRockBody } from '../../../core/terrain/chunkStreamer';
 import type { ObstacleBox } from '../../../core/structures/Grid';
 import type { RestingFieldRock } from '../../structures/mirrorToGridNode';
 import { fieldRockShaderResources, fieldRockProgram, setFieldOreStyle, setFieldRockView, type FieldOreStyle } from './fieldRockShader';
+import { farFieldMix } from '../pixi/FarZoomIcons';
 
 /** Chunk coords as one number (each fits ±32k). */
 const chunkKey = (cx: number, cy: number): number => (cx + 32768) * 65536 + (cy + 32768);
@@ -127,9 +135,18 @@ function collapsedAt(o: Float32Array, s: number): boolean {
   return true;
 }
 
+/** A far-zoom tile (B4) and its Pixi-space bounds, for view culling. */
+interface CoarseTileMesh { key: number; mesh: Mesh<MeshGeometry, Shader>; x0: number; y0: number; x1: number; y1: number }
+
 export class CutFieldLayer {
   readonly container = new Container();
+  /** The full-detail rock chunks. */
+  readonly chunkLayer = new Container();
+  /** The far-zoom coarse tiles (B4), under the chunks. */
+  readonly coarseLayer = new Container();
   private readonly chunks = new Map<number, LoadedChunk>();
+  /** Far-zoom tiles, a flat list (the per-frame cull loop allocates nothing). */
+  private readonly tiles: CoarseTileMesh[] = [];
   private shader: Shader | null = null;
   /** Woken rocks (rock key → the frame they were last seen awake): drawn by
    *  their swarm sprite, collapsed out of their chunk mesh. */
@@ -140,9 +157,13 @@ export class CutFieldLayer {
   constructor() {
     this.container.eventMode = 'none';
     this.container.label = 'cut-field';
+    this.coarseLayer.label = 'cut-field-far';
+    this.coarseLayer.visible = false;
+    this.container.addChild(this.coarseLayer, this.chunkLayer);
   }
 
   get chunkCount(): number { return this.chunks.size; }
+  get coarseCount(): number { return this.tiles.length; }
   /** Bumped whenever a chunk is set or dropped (a cache key for its rocks). */
   get version(): number { return this._version; }
 
@@ -153,18 +174,24 @@ export class CutFieldLayer {
    *  scale), so the surface detail stops at ~2 px. A compare unless moved. */
   /** Each frame: apply the chunks loaded or dropped since the last frame
    *  (`mirror.pendingFieldChunks`, rare; drained here), then `setView`. */
-  update(mirror: RenderMirror, sunAz: number, cameraScale: number): void {
+  update(mirror: RenderMirror, sunAz: number, cameraScale: number, view?: ArrayLike<number>): void {
     const chunks = mirror.pendingFieldChunks;
     if (chunks && chunks.length > 0) {
-      for (const c of chunks) this.setChunk(c.cx, c.cy, c.outlines, c.ore, c.bodies ?? null, c.moved ?? null);
+      for (const c of chunks) {
+        if (c.level === 'coarse') this.setCoarseTile(c.cx, c.cy, c.outlines, c.ore);
+        else this.setChunk(c.cx, c.cy, c.outlines, c.ore, c.bodies ?? null, c.moved ?? null);
+      }
       chunks.length = 0;
     }
-    this.setView(sunAz, cameraScale);
+    this.setView(sunAz, cameraScale, view);
   }
 
-  setView(sunAz: number, cameraScale: number): void {
+  /** Per frame. `view`: the camera's visible bounds in Pixi space [x0, y0,
+   *  x1, y1] (`Camera.visibleBoundsInto`), to hide off-view far-zoom tiles. */
+  setView(sunAz: number, cameraScale: number, view?: ArrayLike<number>): void {
     this.frame++;
-    if (this.chunks.size > 0) setFieldRockView(sunAz, cameraScale);
+    if (this.chunks.size > 0 || this.tiles.length > 0) setFieldRockView(sunAz, cameraScale);
+    this.applyLevel(cameraScale, view);
     for (const [key, seen] of this.woken) {
       if (this.frame - seen <= WOKEN_ROCK_FORGET_FRAMES) continue;
       this.woken.delete(key);
@@ -255,8 +282,43 @@ export class CutFieldLayer {
     c.mesh.geometry.getBuffer('aPosition').update();
   }
 
-  private meshOf(d: FieldChunkMeshData): Mesh<MeshGeometry, Shader> {
-    const geometry = new MeshGeometry({ positions: d.positions.slice(), uvs: d.uvs, indices: d.indices });
+  /** Far zoom (B4): crossfade chunks and tiles by `farFieldMix`; the level
+   *  at 0 is not visible (no draw). No tiles yet: the chunks stay full. Tiles
+   *  off `view` are hidden. Allocates nothing (#14). */
+  private applyLevel(cameraScale: number, view?: ArrayLike<number>): void {
+    const mix = this.tiles.length > 0 ? farFieldMix(cameraScale) : 0;
+    this.chunkLayer.visible = mix < 1;
+    this.chunkLayer.alpha = 1 - mix;
+    this.coarseLayer.visible = mix > 0;
+    this.coarseLayer.alpha = mix;
+    if (mix <= 0) return;
+    for (let i = 0; i < this.tiles.length; i++) {
+      const t = this.tiles[i]!;
+      t.mesh.visible = !view || (t.x1 >= view[0]! && t.x0 <= view[2]! && t.y1 >= view[1]! && t.y0 <= view[3]!);
+    }
+  }
+
+  /** A far-zoom tile (B4, `packCoarseTile`): game-space outlines in, drawn
+   *  with the chunk mesh path and shader; null drops it. Per tile load, rare. */
+  setCoarseTile(tx: number, ty: number, outlines: Float32Array | null, ore: Float32Array | null = null): void {
+    const key = chunkKey(tx, ty);
+    const i = this.tiles.findIndex((t) => t.key === key);
+    if (i >= 0) { this.tiles[i]!.mesh.destroy(); this.tiles.splice(i, 1); }
+    if (outlines === null || outlines.length === 0) return;
+    const d = buildFieldChunkMesh(outlines, ore);
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (let v = 0; v < d.positions.length; v += 2) {
+      const x = d.positions[v]!, y = d.positions[v + 1]!;
+      if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+    }
+    const mesh = this.meshOf(d, true);
+    this.tiles.push({ key, mesh, x0, y0, x1, y1 });
+    this.coarseLayer.addChild(mesh);
+  }
+
+  /** `own`: `d.positions` is not kept by the caller, so the mesh takes it. */
+  private meshOf(d: FieldChunkMeshData, own = false): Mesh<MeshGeometry, Shader> {
+    const geometry = new MeshGeometry({ positions: own ? d.positions : d.positions.slice(), uvs: d.uvs, indices: d.indices });
     geometry.addAttribute('aLocal', { buffer: d.local, format: 'float32x2' });
     geometry.addAttribute('aRock', { buffer: d.rock, format: 'float32x4' });
     geometry.addAttribute('aOre', { buffer: d.ore, format: 'float32x2' });
@@ -291,7 +353,7 @@ export class CutFieldLayer {
     }
     const mesh = this.meshOf(data);
     this.chunks.set(key, { mesh, data, starts, firstVert, outlines, ore, bodies, moved, cx, cy });
-    this.container.addChild(mesh);
+    this.chunkLayer.addChild(mesh);
     // A rock woken before this chunk (re)arrived stays out of it.
     for (const wk of this.woken.keys()) {
       const k = unpackRockKey(wk);
@@ -302,6 +364,9 @@ export class CutFieldLayer {
   clear(): void {
     for (const c of this.chunks.values()) c.mesh.destroy();
     this.chunks.clear();
+    for (const t of this.tiles) t.mesh.destroy();
+    this.tiles.length = 0;
+    this.coarseLayer.visible = false;
     this.woken.clear();
     this._version++;
   }
