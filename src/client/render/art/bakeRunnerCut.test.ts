@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { rocksInChunk } from '../../../core/terrain/fieldLayout.js';
 import { cutFieldOpts } from '../../../core/terrain/chunkStreamer.js';
+import { packChunk } from '../../../core/terrain/packedChunk.js';
 import { InlineBakeRunner, WorkerBakeRunner } from './ArtService.js';
 
 const field = cutFieldOpts('test-seed');
@@ -14,8 +15,8 @@ function fakeWorker(log: string[]): Worker {
     postMessage(msg: { seq: number; cut?: { cx: number; cy: number } }) {
       log.push(msg.cut ? `cut ${msg.cut.cx},${msg.cut.cy}` : 'bake');
       if (msg.cut) {
-        const rocks = rocksInChunk(field, msg.cut.cx, msg.cut.cy);
-        queueMicrotask(() => w.onmessage?.({ data: { seq: msg.seq, rocks } }));
+        const packed = packChunk(rocksInChunk(field, msg.cut.cx, msg.cut.cy), field.seed);
+        queueMicrotask(() => w.onmessage?.({ data: { seq: msg.seq, packed } }));
       }
     },
     terminate() {},
@@ -27,8 +28,8 @@ describe('the art bake pool cuts cut-field chunks (macro terrain v2)', () => {
   it('a worker cut returns the same rocks as an inline cut (#15)', async () => {
     const log: string[] = [];
     const r = new WorkerBakeRunner(1, () => fakeWorker(log));
-    const rocks = await r.cutChunk(field, CX, CY);
-    expect(rocks).toEqual(rocksInChunk(field, CX, CY));
+    const packed = await r.cutChunk(field, CX, CY);
+    expect(packed).toEqual(packChunk(rocksInChunk(field, CX, CY), field.seed));
     expect(log).toEqual([`cut ${CX},${CY}`]);
     r.destroy();
   });
@@ -43,7 +44,7 @@ describe('the art bake pool cuts cut-field chunks (macro terrain v2)', () => {
 
   it('the inline runner cuts too (no Worker on the page)', async () => {
     const r = new InlineBakeRunner();
-    expect(await r.cutChunk(field, CX, CY)).toEqual(rocksInChunk(field, CX, CY));
+    expect(await r.cutChunk(field, CX, CY)).toEqual(packChunk(rocksInChunk(field, CX, CY), field.seed));
     r.destroy();
   });
 });
