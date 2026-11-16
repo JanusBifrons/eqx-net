@@ -3135,3 +3135,8 @@ Owner: "make it more like micro machines and make fights a bit longer. Also don'
 
 - **Finding:** a capital turret was aimed from the hull pose its ticker read off the SAB, then the shot was cast from a second, later SAB read (`swarmEntitySnapshot`). The physics worker writes the SAB on its own thread, so on a loaded host the second read was a step on: a turning lance's kill follow-through left the kill line by one tick of turn and hit its own wreck (`beamFollowThrough.test.ts`, 1 run in 2 alongside other integration files).
 - **Rule:** a decision and the act it licenses use ONE pose read: pass the pose that was aimed with (or hit-tested against) down to whatever acts on it, never re-read the SAB. To test it deterministically, move the SAB between the two calls in the test (`beamKillBurnsGap.test.ts` "worker step").
+
+## 2026-11-16 — a rule that leans on another system must ask that system, not a look-alike number
+
+- **Finding:** the barge-mining showcase stalled: the lasers cut the rock into a few pieces, stopped, and the hold stayed at 0. The showcase room had no `sectorKey`, so no roster, so the loot pickup (`forEachLootCollector`) never visited the barge; but the lock step judged "consumable" from cargo capacity minus hold weight (both fine with no roster), so every laser and tractor left pieces nothing would ever take in.
+- **Rule:** when a rule hands work to another system ("nobody targets it, the pickup takes it in"), its gate asks the same predicate that system uses (`SectorRoom.hasHold`), so the two cannot disagree. A showcase or test room that films holds or cargo needs a real `sectorKey`. Lock: `tests/integration/sectorRoom/bargeMiningTake.test.ts`.
