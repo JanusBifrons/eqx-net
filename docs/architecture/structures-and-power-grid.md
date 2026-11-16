@@ -118,7 +118,11 @@ view, never the server `StructureRegistry`):
   window, `connectionLength`).
 - `Grid.ts` — `canConnect` (the hub model: hub-required / per-kind
   `maxConnections` cap / edge-to-edge `CONNECTION_MAX_RANGE` / no-self/dup /
-  line-of-sight), BFS connected components (**built-only — the dead-end rule:
+  line-of-sight: the centre-to-centre line must miss every other structure's
+  footprint box and every obstacle; an asteroid's box is the broad phase and,
+  when it carries convex `parts`, the line is blocked only if it crosses a
+  part (`segmentHitsObstacle`; macro terrain C5c), so a cable may pass a big
+  irregular rock inside its circle but clear of its outline), BFS connected components (**built-only — the dead-end rule:
   you can't relay THROUGH an unbuilt node; an unbuilt node is still a transfer
   destination, and this is load-bearing for the construction flow's outward
   expansion**), power aggregation (`powered`
