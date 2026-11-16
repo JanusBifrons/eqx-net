@@ -5632,6 +5632,8 @@ export class SectorRoom extends Room<SectorState> {
         return { x: this.sabF32[b + SLOT_X_OFF]!, y: this.sabF32[b + SLOT_Y_OFF]! };
       },
       spawnPiece: (spec) => (this.swarmRegistry.has(spec.id) ? false : this.swarmSpawner.spawnWreck(spec)),
+      beginBatch: () => this.physicsWorkerProxy.beginBatch(),
+      endBatch: () => this.physicsWorkerProxy.endBatch(),
       removePiece: (id) => {
         const rec = this.swarmRegistry.get(id);
         if (rec) this.evictSwarmEntity(rec, { broadcast: false, emitDestroyed: false });

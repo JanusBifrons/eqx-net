@@ -95,6 +95,12 @@ export interface CapitalWreckDeps {
   positionOf: (id: string) => Vec2 | null;
   /** Spawn one wreck body; false = no free slot. */
   spawnPiece: (spec: WreckPieceSpawn) => boolean;
+  /** Open / close a worker batch (`PhysicsWorkerProxy.beginBatch`): every
+   *  worker command posted between them goes in ONE message, so one wreck's
+   *  pieces (with the dead hull's despawn) spawn, and get their kicks, on
+   *  the same physics step. Optional: absent ⇒ one message per command. */
+  beginBatch?: () => void;
+  endBatch?: () => void;
   /** Quietly remove a wreck body (budget cap). */
   removePiece: (id: string) => void;
   /** Is this wreck id still live? (The FIFO skips pieces gone otherwise.) */
