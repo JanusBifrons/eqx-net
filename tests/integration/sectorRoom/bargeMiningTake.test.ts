@@ -15,9 +15,10 @@
  * aft lasers bear, and they leave a whole rock), so the barge starts at the
  * room's own spawn (`SHOWCASE_BARGE_MINING_SPAWN`, the filmed pose): the rock
  * off its port bow, in the port XL laser's arc and tractor's reach, clear of
- * the other rocks (`BOW_ON`). A group's locks end with their pieces (a laser
- * lock does not follow a piece into its pod), so the pilot locks the next
- * live piece whenever a group is left with none, as a player would.
+ * the other rocks (`BOW_ON`). The pilot locks the rock ONCE and never again:
+ * each group's lock stays on the rock's lineage (its pieces, and its pods for
+ * the tractors) until none is left (seen on film 2026-11-16: every lock was
+ * gone at ~150 s with a cut piece still drifting, and the hold stalled).
  *
  * Seen on film (2026-11-16): the lasers cut the rock into a few pieces, then
  * stopped; the pieces sat off the side and the hold stayed at 0. The room had
@@ -81,29 +82,19 @@ describe('SectorRoom integration — the barge-mining take: the rock ends up in 
     const fire = (slotId: string): void => {
       cr.send('fire', { type: 'fire', tick: int().serverTick, clientShotId: `${slotId}${shot++}`, weapon: 'hitscan', dirAngle: 0, slotId });
     };
-    let relocks = 0;
-    let lastRelock = 0;
-    /** The pilot re-locks: a group left with no lock takes the biggest live
-     *  piece; the tractors, with no piece left, a loose ore pod. */
-    const relock = (): void => {
-      if (Date.now() - lastRelock < 500) return;
-      let best: string | null = null, bestM = 0;
-      for (const id of livePieces(int)) { const m = int().wreckMass(id) ?? 0; if (m > bestM) { bestM = m; best = id; } }
-      let pod: string | null = null;
-      for (const id of int().loot.podIds()) { pod = id; break; }
-      for (const g of ['laser', 'tractor']) {
-        const target = best ?? (g === 'tractor' ? pod : null);
-        if ((locks.get(g) ?? 1) > 0 || target === null) continue;
-        harness.lockTarget(pid, target, g); relocks++; lastRelock = Date.now(); locks.set(g, 1);
-      }
+    /** Groups seen with no live lock while a piece of the rock was alive. */
+    const dropped = new Set<string>();
+    const watchLocks = (): void => {
+      if (int().swarmRegistry.get('mine-rock-a') != null || livePieces(int).length === 0) return;
+      for (const g of ['laser', 'tractor']) if ((locks.get(g) ?? 1) === 0) dropped.add(g);
     };
-    return { int, holdGoods, fire, relock, relocks: (): number => relocks };
+    return { int, holdGoods, fire, watchLocks, dropped };
   };
   const livePieces = (int: () => SectorRoom['_internals']): string[] => [...int().swarmRegistry.all()].filter((r) => r.kind === WRECK_KIND).map((r) => r.id);
   const tierName = (t: number): string => (t === 0 ? 'none' : SALVAGE_TIER_SIZES[t - 1]!);
 
   it('lasers and tractors locked on mine-rock-a: the rock is cut down to ore pods and every pod goes into the hold', { timeout: 120_000 }, async () => {
-    const { int, holdGoods, fire, relock, relocks } = await start(SHOWCASE_BARGE_MINING_OPTS, SPEED);
+    const { int, holdGoods, fire, watchLocks, dropped } = await start(SHOWCASE_BARGE_MINING_OPTS, SPEED);
     // Hold both triggers through the take (60 s wall, up to ~240 s game): until the rock is cut and no piece is left in the world.
     let cut = false;
     /** Every piece seen live, by its size tier at first sight; the cuts (wreck ids, one per split). */
@@ -123,7 +114,7 @@ describe('SectorRoom integration — the barge-mining take: the rock ends up in 
       }
       for (const id of int().loot.podIds()) pods.add(id);
       if (cut && live.length === 0 && int().loot.podCount() === 0) break;
-      relock();
+      watchLocks();
       fire('laser'); fire('tractor');
       await harness.advance(50);
     }
@@ -134,8 +125,9 @@ describe('SectorRoom integration — the barge-mining take: the rock ends up in 
       return `${id}@${p ? `${Math.round(p.x)},${Math.round(p.y)}` : '?'} r${Math.round(int().swarmRegistry.get(id)?.radius ?? -1)} ${tierName(tierOf.get(id) ?? -1)}`;
     }).join('; ');
     const sizes = [...new Set(tierOf.values())].sort((a, b) => b - a).map(tierName);
-    console.log(`[bargeMiningTake] ${gameSeconds.toFixed(1)} s game; ${splits.size} cuts; piece sizes seen: ${sizes.join(' > ')}; ${tierOf.size} pieces; ${pods.size} pods; ${relocks()} re-locks; hold ${JSON.stringify(holdGoods())}`);
+    console.log(`[bargeMiningTake] ${gameSeconds.toFixed(1)} s game; ${splits.size} cuts; piece sizes seen: ${sizes.join(' > ')}; ${tierOf.size} pieces; ${pods.size} pods; hold ${JSON.stringify(holdGoods())}`);
     expect(cut, 'the lasers cut the rock').toBe(true);
+    expect([...dropped], 'no group lost its lock while a piece of the rock was alive').toEqual([]);
     expect(stall, 'every piece cut down to ore pods').toBe('');
     expect(pods.size, 'the line ends in ore pods').toBeGreaterThan(0);
     expect(int().loot.podCount(), 'every pod taken in').toBe(0);

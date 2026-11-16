@@ -9,16 +9,91 @@
  * in a group with tractors (every tractor pulls a pod; the lasers leave
  * them). Not a hostile act: no ledger, no standing.
  * Runs only on a break, never per tick.
+ *
+ * A lock ends only with its lineage (`lineageRekey`): while any piece of the
+ * locked rock or wreck (or, for a group with tractors, any of its ore pods)
+ * is alive, a lock whose piece leaves (worn into pods this group leaves,
+ * taken in, or gone) or that it can't track moves on to another live member
+ * the group does not hold yet, one a mount of the group can work first; a
+ * group with nothing it may work idles on the lineage.
  */
-import { newLock, type LockEntry } from '../../core/combat/lockState.js';
+import { LOCK_TRACK, newLock, type LockEntry } from '../../core/combat/lockState.js';
+import { groupWorksSalvage, lockTierOf, type TurretGroupMount } from '../../core/combat/turretLockPick.js';
+import { lockSalvageFlags, type LockSalvageDeps } from './lockSalvage.js';
+import type { ShipKind, WeaponMount } from '../../shared-types/shipKinds/types.js';
+
+/** A weapon group as the lineage hand-over sees it. */
+export interface LineageGroup {
+  capacity: number;
+  locks: LockEntry[];
+  /** The group's mounts in slot order (what it can work: `groupWorksSalvage`). */
+  mounts: ReadonlyArray<TurretGroupMount>;
+  /** The group has a tractor: ore pods are members of its lineage too. */
+  tractor: boolean;
+}
+
+/** Who holds the group, for the members' salvage bits (`lockSalvageFlags`). */
+export interface LineageCtx {
+  d: LockSalvageDeps;
+  ship: { kind: ShipKind; activated: ReadonlyArray<WeaponMount> } | null;
+  playerId: string;
+}
+
+/** The one reused member list of `lineageRekey` (#14). */
+const MEMBERS: string[] = [];
+
+/** A member's rank for group `g`: one a mount of it can work first, then the bigger size tier. */
+function memberRank(g: LineageGroup, flags: number): number {
+  return (groupWorksSalvage(g.mounts, flags) ? 8 : 0) + lockTierOf(flags);
+}
+
+function holds(g: { locks: LockEntry[] }, key: string): boolean {
+  for (const e of g.locks) if (e.target === key) return true;
+  return false;
+}
+
+/**
+ * Lock `e` of group `g` is losing its target `e.target`: it left (`keep`
+ * false) or the group can't track it (`keep`: it stays unless a better
+ * member is free). Re-key it to the live member of its lineage the group
+ * does not hold that ranks highest: workable by a mount of the group
+ * (`groupWorksSalvage`) first, then the bigger size tier (stage, progress
+ * and track kept: same lineage). True when the lock lives on (re-keyed, or
+ * kept idle on the lineage); false when it should end: not a lineage lock,
+ * a released lock line still draining, or no member left. Runs only when a
+ * target leaves or can't be tracked, never per steady tick.
+ */
+export function lineageRekey(
+  d: LockSalvageDeps, ship: LineageCtx['ship'], playerId: string, g: LineageGroup, e: LockEntry, keep = false,
+): boolean {
+  const src = d.lineage;
+  if (src === undefined || (e.track === LOCK_TRACK.released && e.stage !== 'locked')) return false;
+  const root = e.root >= 0 ? e.root : src.rootOf(e.target);
+  if (root < 0) return false;
+  MEMBERS.length = 0;
+  src.keysOf(root, g.tractor, MEMBERS);
+  let best: string | null = null;
+  let bestRank = keep ? memberRank(g, e.flags) : -1;
+  for (const key of MEMBERS) {
+    if (key === e.target || holds(g, key)) continue;
+    const r = memberRank(g, lockSalvageFlags(d, ship, playerId, key));
+    if (r > bestRank) { best = key; bestRank = r; }
+  }
+  if (best === null && !keep) return false;
+  if (best !== null) e.target = best;
+  e.root = root;
+  e.lostFor = 0;
+  return true;
+}
 
 /** Re-key one group's lock on `fromKey` to the first of the first `count`
  *  piece keys it does not already lock, then add locks on the next ones up
  *  to its `capacity`. A group already locking every one (or given none)
- *  just drops the old lock. True when the group changed (the caller re-syncs
- *  its wire). */
+ *  hands the old lock to another live member of its lineage
+ *  (`lineageRekey`, with `c`), else drops it. True when the group changed
+ *  (the caller re-syncs its wire). */
 export function splitGroupLocks(
-  g: { capacity: number; locks: LockEntry[] }, fromKey: string, pieceKeys: ReadonlyArray<string>, count = pieceKeys.length,
+  g: LineageGroup, fromKey: string, pieceKeys: ReadonlyArray<string>, count = pieceKeys.length, c?: LineageCtx,
 ): boolean {
   let src: LockEntry | undefined;
   for (const e of g.locks) if (e.target === fromKey) { src = e; break; }
@@ -32,10 +107,10 @@ export function splitGroupLocks(
     if (!moved) { src.target = key; moved = true; continue; }
     if (g.locks.length >= g.capacity) break;
     const e = newLock(key, true, src.track);
-    e.stage = src.stage; e.progress = src.progress; e.lostFor = src.lostFor; e.auto = src.auto; e.flags = src.flags;
+    e.stage = src.stage; e.progress = src.progress; e.lostFor = src.lostFor; e.auto = src.auto; e.flags = src.flags; e.root = src.root;
     g.locks.push(e);
   }
-  if (!moved) g.locks.splice(g.locks.indexOf(src), 1);
+  if (!moved && (c === undefined || !lineageRekey(c.d, c.ship, c.playerId, g, src))) g.locks.splice(g.locks.indexOf(src), 1);
   return true;
 }
 

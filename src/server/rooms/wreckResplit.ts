@@ -209,7 +209,7 @@ export class WreckResplitter {
       k.integrity = Number.POSITIVE_INFINITY;
       return false;
     }
-    const pod = dropPieceSalvage(this.d, src, w.ore, parent.area, k.mass, pose.x, pose.y, pose.vx, pose.vy);
+    const pod = dropPieceSalvage(this.d, src, w.ore, parent.area, k.mass, pose.x, pose.y, pose.vx, pose.vy, w.root);
     if (pod !== null) { POD_ID[0] = pod; POD_MASS[0] = k.mass; this.d.pieceSplit?.(id, POD_ID, POD_MASS, 1); } // its locks follow the pod
     this.h.dropPiece(id, fifo);
     return true;
@@ -267,7 +267,7 @@ export class WreckResplitter {
  * after them (the tractor groups' locks).
  */
 export function spawnWreckPieces(
-  d: CapitalWreckDeps, h: Pick<WreckResplitHost, 'addPiece'>, src: WreckSource, w: Pick<LiveWreck, 'ore'>,
+  d: CapitalWreckDeps, h: Pick<WreckResplitHost, 'addPiece'>, src: WreckSource, w: Pick<LiveWreck, 'ore'> & { root?: number },
   placed: ReadonlyArray<WreckChildSpawn>, podBelow: number, serial: number, wreckId: number,
   like: PieceKnock | null, fifo: string[], parentId: string,
 ): { ids: string[]; mass: number; pods: number } {
@@ -280,7 +280,7 @@ export function spawnWreckPieces(
   for (const c of placed) {
     const g = c.geom;
     if (g.area < podBelow) {
-      const pod = dropPieceSalvage(d, src, w.ore, g.area, g.mass, c.x, c.y, c.vx, c.vy);
+      const pod = dropPieceSalvage(d, src, w.ore, g.area, g.mass, c.x, c.y, c.vx, c.vy, w.root ?? wreckId);
       if (pod !== null) (podIds ??= []).push(pod);
       pods++;
       continue;
@@ -317,15 +317,15 @@ export function spawnWreckPieces(
  *  drops nothing. No hook: nothing drops. */
 export function dropPieceSalvage(
   d: CapitalWreckDeps, src: WreckSource, ore: LiveWreck['ore'],
-  area: number, mass: number, x: number, y: number, vx: number, vy: number,
+  area: number, mass: number, x: number, y: number, vx: number, vy: number, root = -1,
 ): string | null {
   if (d.dropSalvage === undefined) return null;
   let pod: string | null | void = null;
   if (ore !== undefined) {
     const units = pieceOreUnits(ore, area);
-    if (units > 0) pod = d.dropSalvage(units, x, y, vx, vy, ore); // none left in this sliver: no pod
+    if (units > 0) pod = d.dropSalvage(units, x, y, vx, vy, ore, root); // none left in this sliver: no pod
   } else {
-    pod = d.dropSalvage(wreckSalvageQty(src, mass), x, y, vx, vy);
+    pod = d.dropSalvage(wreckSalvageQty(src, mass), x, y, vx, vy, undefined, root);
   }
   return typeof pod === 'string' ? pod : null;
 }
