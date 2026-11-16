@@ -202,17 +202,34 @@ describe('CutFieldLayer — far-zoom coarse tiles (B4)', () => {
     layer.clear();
   });
 
-  it('thins the tiles toward the field rim (aUV.y = coarseFieldThin); chunks stay solid (0)', () => {
+  it('marks tile vertices far-zoom (aUV.y = 1 + coarseFieldThin, thinning toward the rim); chunks stay 0', () => {
     const layer = new CutFieldLayer();
     layer.setChunk(0, 0, outlines);
     const R = SLICED.radius;
     layer.setCoarseTile(0, 0, tile); // 30 km out: d 0.2
     layer.setCoarseTile(4, 0, new Float32Array([4, R * 0.95, 0, R * 0.95 + 2000, 0, R * 0.95 + 2000, 2000, R * 0.95, 2000]));
+    layer.setCoarseTile(0, 1, new Float32Array([3, 0, 0, 1000, 0, 0, 1000])); // at the centre: thin 0, still marked
     const thin = (m: Mesh): number[] => Array.from(m.geometry.uvs).filter((_, i) => i % 2 === 1);
-    const [near, rim] = layer.coarseLayer.children as Mesh[];
-    for (const t of thin(near!)) expect(t).toBeCloseTo(coarseFieldThin(0.2), 1);
-    for (const t of thin(rim!)) expect(t).toBeGreaterThan(0.9);
+    const [near, rim, core] = layer.coarseLayer.children as Mesh[];
+    for (const t of thin(near!)) expect(t - 1).toBeCloseTo(coarseFieldThin(0.2), 1);
+    for (const t of thin(rim!)) expect(t - 1).toBeGreaterThan(0.9);
+    for (const t of thin(core!)) expect(t).toBeGreaterThanOrEqual(1);
     expect(Math.max(...thin(mesh(layer.chunkLayer)))).toBe(0);
+    layer.clear();
+  });
+
+  it('gives tile vertices their piece centre (Pixi world) as the noise offset, so the shader\'s rock-sized cells run on across pieces', () => {
+    // Owner film: at the switch the coarse slabs (~1.6 km, no streets) swap
+    // in for ~500 u rocks with streets. The shader draws rock-sized cells
+    // with streets on the tiles in world space (aLocal + aRock.yz).
+    const layer = new CutFieldLayer();
+    layer.setCoarseTile(0, 0, tile);
+    const g = mesh(layer.coarseLayer).geometry;
+    const pos = g.positions, local = g.getBuffer('aLocal').data as Float32Array, rock = g.getBuffer('aRock').data as Float32Array;
+    for (let v = 0; v < pos.length / 2; v++) {
+      expect(local[v * 2]! + rock[v * 4 + 1]!).toBeCloseTo(pos[v * 2]!, 3);
+      expect(local[v * 2 + 1]! + rock[v * 4 + 2]!).toBeCloseTo(pos[v * 2 + 1]!, 3);
+    }
     layer.clear();
   });
 

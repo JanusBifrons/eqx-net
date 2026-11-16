@@ -287,7 +287,7 @@ export function slicedField(o: SlicedOpts): SlicedRock[] {
       // Thin out toward the rim (smoothly), wider streets there.
       const keep = fieldRimKeep(d);
       if (rnd(path, 5) > keep) continue;
-      const street = F * S.streetFighters * (1 + (S.streetEdgeMul - 1) * d * d);
+      const street = fieldStreet(d, F);
       const v = inset(poly, street / 2);
       if (v) out.push({ verts: warpAll(roughen(v, path, rnd), base), cx: c.x, cy: c.y, size, path });
       continue;
@@ -421,6 +421,18 @@ export function coarseFieldThin(d: number): number {
   const c = Math.min(1, Math.max(0, d));
   return 1 - fieldRimKeep(c) * (1 - c * c);
 }
+
+/** The street between neighbouring rocks at `d` (0 core .. 1 rim), world u:
+ *  each rock is inset by half of it. */
+export function fieldStreet(d: number, fighterLength: number): number {
+  return fighterLength * SLICED.streetFighters * (1 + (SLICED.streetEdgeMul - 1) * d * d);
+}
+
+/** Far zoom: side (world u) of the rock-sized cells the field shader draws on
+ *  the coarse pieces, with `fieldStreet` between them, so the far level reads
+ *  as rocks at the switch. The real rocks' density near the core (one rock
+ *  per cell²; 452 u seed `look`, 538 u seed `far-zoom`; fieldCoarse.test.ts). */
+export const FIELD_FAR_ROCK_CELL = 480;
 
 export interface CoarseTile { tx: number; ty: number; pieces: SlicedRock[] }
 

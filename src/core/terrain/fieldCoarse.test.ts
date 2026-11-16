@@ -6,7 +6,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { cutFieldOpts } from './chunkStreamer.js';
-import { CHUNK_SIZE, chunkOf, coarseFieldThin, coarseFieldTiles, COARSE_TILE_CHUNKS, FIELD_COARSE_MIN_SIZE, rocksInChunk, SLICED, slicedFieldLanes, type SlicedRock } from './fieldLayout.js';
+import { CHUNK_SIZE, chunkOf, coarseFieldThin, coarseFieldTiles, COARSE_TILE_CHUNKS, FIELD_COARSE_MIN_SIZE, FIELD_FAR_ROCK_CELL, fieldStreet, rocksInChunk, SLICED, slicedFieldLanes, type SlicedRock } from './fieldLayout.js';
 import { fnvMixU32 } from '../random/rng.js';
 
 type Pt = { x: number; y: number };
@@ -85,6 +85,32 @@ describe('far-zoom coarse field (macro terrain v2, B4)', () => {
     }
     expect(coarseFieldThin(0)).toBeLessThan(0.02);
     expect(coarseFieldThin(1)).toBe(1);
+  });
+
+  it('sizes the far level\'s rock cells like the real rocks: cell² = field area per rock near the core (owner film: coarse slabs vs rocks read as a jump)', () => {
+    // At the switch a coarse piece (~1.6 km) is 2.5x a real rock, with no
+    // streets, so the crossfade swaps rocks for slabs. The shader draws
+    // rock-sized cells with streets on the coarse pieces (fieldRockShader);
+    // their size must be the real rocks' density. Chunks clear of the
+    // lanes at d 0.12-0.3, big rocks left out.
+    const area = (v: readonly Pt[]): number => { let a = 0; for (let i = 0; i < v.length; i++) { const p = v[i]!, q = v[(i + 1) % v.length]!; a += p.x * q.y - q.x * p.y; } return Math.abs(a) / 2; };
+    for (const seed of ['far-zoom', 'look']) {
+      const f = cutFieldOpts(seed), lanes = slicedFieldLanes(f);
+      let n = 0, chunks = 0, drawn = 0;
+      for (let cx = -8; cx <= 8; cx++) for (let cy = -8; cy <= 8; cy++) {
+        const x = (cx + 0.5) * CHUNK_SIZE, y = (cy + 0.5) * CHUNK_SIZE, d = Math.hypot(x, y) / SLICED.radius;
+        if (d < 0.12 || d > 0.3 || (cx + cy) % 3 !== 0) continue;
+        if (lanes.some((ln) => Math.abs((x - ln.o.x) * ln.n.x + (y - ln.o.y) * ln.n.y) < ln.half + 2 * CHUNK_SIZE)) continue;
+        const rs = rocksInChunk(f, cx, cy).filter((r) => r.size < f.battleshipLength);
+        chunks++; n += rs.length; for (const r of rs) drawn += area(r.verts);
+      }
+      const cell = Math.sqrt((chunks * CHUNK_SIZE * CHUNK_SIZE) / n);
+      const model = ((FIELD_FAR_ROCK_CELL - fieldStreet(0.2, f.fighterLength)) / FIELD_FAR_ROCK_CELL) ** 2;
+      console.log(`far rock cell ${seed}: real ${cell.toFixed(0)} u (${chunks} chunks) vs ${FIELD_FAR_ROCK_CELL}; rock share ${(drawn / (chunks * CHUNK_SIZE * CHUNK_SIZE)).toFixed(2)} vs cells ${model.toFixed(2)}`);
+      expect(chunks).toBeGreaterThan(10);
+      expect(FIELD_FAR_ROCK_CELL / cell, seed).toBeGreaterThan(0.8);
+      expect(FIELD_FAR_ROCK_CELL / cell, seed).toBeLessThan(1.2);
+    }
   });
 
   it('keeps both lanes clear: no point on a lane centre line is inside a coarse piece', () => {

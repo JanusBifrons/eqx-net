@@ -13,7 +13,8 @@
  * the switch band: the tiles come up opaque under the chunks, then the chunks
  * fade out over them (never both half-see-through); outside the band the
  * hidden level is `visible = false` (no draw). Tiles thin toward the field's
- * rim (`aUV.y` = `coarseFieldThin`, drawn see-through by the shader).
+ * rim (`aUV.y` = 1 + `coarseFieldThin`, drawn see-through by the shader)
+ * and carry rock-sized cells with streets (world space, `aRock.yz` = centre).
  * Tiles off the view are hidden per frame. Tiles ignore consumed and moved
  * rocks: they are approximate, and only drawn where rocks are a few px.
  */
@@ -34,7 +35,7 @@ const chunkKey = (cx: number, cy: number): number => (cx + 32768) * 65536 + (cy 
  *  Pixi space out: y flips). Exported for tests. */
 export interface FieldChunkMeshData {
   positions: Float32Array; // aPosition: Pixi world
-  uvs: Float32Array; // aUV.x: 1 at the rock's centre, 0 on its outline; aUV.y: see-through (far-zoom tiles only, else 0)
+  uvs: Float32Array; // aUV.x: 1 at the rock's centre, 0 on its outline; aUV.y: 0 on rocks; far-zoom tiles 1 + see-through
   local: Float32Array; // aLocal: offset from the rock's centre (Pixi)
   rock: Float32Array; // aRock: radius, noise offset x/y, seed
   ore: Float32Array; // aOre: ice, crystal concentration (0..1) at the vertex
@@ -315,8 +316,13 @@ export class CutFieldLayer {
     for (let v = 0; v < d.positions.length; v += 2) {
       const x = d.positions[v]!, y = d.positions[v + 1]!;
       if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
-      // The field is centred on the sector origin; thin toward its rim.
-      d.uvs[v + 1] = coarseFieldThin(Math.sqrt(x * x + y * y) / SLICED.radius);
+      // The field is centred on the sector origin; thin toward its rim. 1 +
+      // marks a far-zoom vertex (rocks are 0), so the shader draws rock-sized
+      // cells with streets on it, in world space: the piece's centre as its
+      // noise offset (aLocal + aRock.yz = Pixi world).
+      d.uvs[v + 1] = 1 + coarseFieldThin(Math.sqrt(x * x + y * y) / SLICED.radius);
+      d.rock[v * 2 + 1] = x - d.local[v]!;
+      d.rock[v * 2 + 2] = y - d.local[v + 1]!;
     }
     const mesh = this.meshOf(d, true);
     this.tiles.push({ key, mesh, x0, y0, x1, y1 });
