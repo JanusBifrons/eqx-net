@@ -20,7 +20,7 @@ import { isSalvageWeapon } from '../../core/combat/salvageTargeting.js';
 import { shipGroups } from './lockGroups.js';
 import { mountInReach, mountWeaponReach } from '../../core/combat/mountReach.js';
 import type { FireTargetShape } from '../../core/combat/fireControlBearing.js';
-import { getWeapon, weaponAutoFireRange } from '../../core/combat/WeaponCatalogue.js';
+import { getWeapon } from '../../core/combat/WeaponCatalogue.js';
 import type { ShipKind, WeaponMount } from '../../shared-types/shipKinds/types.js';
 
 /** A lockable target, resolved each lock step. Its `FireTargetShape` half
@@ -85,7 +85,7 @@ export type GroupMode = 'auto' | 'manual';
 /** One lock of a group in the own-ship snapshot (`states[].groups`). `r`: released
  *  (draining). `c`: can't lock right now (untrackable: too small or fast for the
  *  group's guns; locks work at any distance); the HUD shows CAN'T TRACK. `f`: salvage
- *  bits (`LOCK_SALVAGE` | `LOCK_HAULABLE`; absent = 0), the client's `pickTurretLock` input. */
+ *  bits (`LOCK_SALVAGE` | tier | `LOCK_CONSUMABLE`; absent = 0), the client's `pickTurretLock` input. */
 export interface WireLock { t: string; s: number; p: number; r?: 1; c?: 1; f?: number }
 export interface WireGroup { id: string; m: 0 | 1; l: WireLock[] }
 
@@ -106,7 +106,7 @@ interface GroupState {
    *  [lo0, hi0, lo1, hi1, …] (fixed guns get a small window). */
   arcs: number[];
   mountIds: Set<string>;
-  /** The group's mining mounts (`isSalvageWeapon`): only they need the pick on a single salvage lock. */
+  /** The group's mining mounts (`isSalvageWeapon`) and tractors: only they need the pick on a single salvage lock. */
   salvageMountIds: Set<string>;
   /** The group's mounts in slot order (a mount's index is its ordinal for `pickTurretLock`). */
   mounts: WeaponMount[];
@@ -141,7 +141,7 @@ export function groupGeometry(mounts: ReadonlyArray<WeaponMount>): {
   for (const m of mounts) {
     const s = (m.size ?? 'none') as MountSize | 'none';
     if (SIZE_RANK[s] > SIZE_RANK[size]) size = s;
-    const r = weaponAutoFireRange(getWeapon(m.weaponId));
+    const r = mountWeaponReach(m);
     if (r > reach) reach = r;
   }
   const p = WEAPON_LOCK_PROFILE[size];
@@ -338,7 +338,7 @@ export class LockSubsystem {
         size: geo.size,
         arcs: groupArcs(mounts),
         mountIds: new Set(mounts.map((m) => m.id)),
-        salvageMountIds: new Set(mounts.filter((m) => isSalvageWeapon(getWeapon(m.weaponId))).map((m) => m.id)),
+        salvageMountIds: new Set(mounts.filter((m) => { const w = getWeapon(m.weaponId); return isSalvageWeapon(w) || w.tractor !== undefined; }).map((m) => m.id)),
         mounts,
         locks: [],
         wire,
@@ -521,8 +521,9 @@ export class LockSubsystem {
         } else if (acquiring === null && e.stage === 'acquiring') acquiring = e.target;
       }
       if (first === null) return acquiring;
-      // One lock: every mount on it, except a mining laser on a salvage lock
-      // (the pick: a laser skips a haulable piece). Guns keep the fast path.
+      // One lock: every mount on it, except a mining laser or tractor on a
+      // salvage lock (the pick: a laser skips a piece its size tractor takes or a consumable one,
+      // a tractor one too big for it or consumable). Guns keep the fast path.
       if (n === 1 && (first.flags === 0 || !g.salvageMountIds.has(mountId))) return first.target;
       const k = this.pickLocked(playerId, g, mountId);
       return k === undefined ? first.target : k;

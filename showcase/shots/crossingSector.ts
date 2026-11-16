@@ -8,10 +8,11 @@ import type { Shot } from '../types.js';
  *
  * No camera script on purpose: the cinematic director is never speed-zoomed,
  * so this shot uses the normal follow camera. `test-sector` has no sector key,
- * so its sky is seeded from "none"; the run starts south of the nebula at
- * (-4408, -5105) (radius 2753, the first one `nebulaCell` finds near the
- * centre) and flies north through its middle. The capture browser is
- * automated, so the shot asks for the new look explicitly.
+ * so its sky is seeded from "none" and it is not a galaxy nebula sector
+ * (nebulae sit only on the galaxy map's nebula marks, core/galaxy/nebulaField);
+ * the shot asks for the signed-off nebula look with `neblook` (blend, seed 8),
+ * which puts the whole room inside it. The capture browser is automated, so
+ * the shot asks for the new look explicitly.
  */
 export const crossingSector: Shot = {
   id: 'crossing-sector',
@@ -24,7 +25,7 @@ export const crossingSector: Shot = {
   server: 'lean',
   target: {
     room: 'test-sector',
-    params: { shipKind: 'fighter', art: 'machined', fx: 'new', speedfx: 1, spawnX: -4408, spawnY: -8600, initialAngle: 0, zoom: 1 },
+    params: { shipKind: 'fighter', art: 'machined', fx: 'new', neblook: 'blend', nebseed: 8, speedfx: 1, spawnX: -4408, spawnY: -8600, initialAngle: 0, zoom: 1 },
   },
   hud: 'none',
   durationMs: 16_000,

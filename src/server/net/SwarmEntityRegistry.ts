@@ -32,11 +32,6 @@ export function isWreckPiece(rec: { kind: number }): boolean {
   return rec.kind === SWARM_KIND_WRECK;
 }
 
-/** Debris: a wreck piece or scrap (kind 3, loot pods included). Shots that
- *  "ignore debris" (a heavy beam's kill follow-through) pass these. */
-export function isDebris(rec: { kind: number }): boolean {
-  return rec.kind === SWARM_KIND_WRECK || rec.kind === 3;
-}
 
 /** A loot pod (the shared predicate): nobody's shot lands on it. */
 export { isLootPod } from '../../shared-types/swarmWireFormat.js';

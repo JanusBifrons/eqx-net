@@ -10,7 +10,8 @@
  * `setFieldRockView` runs, a compare unless the zoom or the sun moved.
  */
 import { GlProgram, UniformGroup } from 'pixi.js';
-import { lin, ROCK_COLORS } from '../art/fields';
+import { lin } from '../art/fields';
+import { ROCK_COLORS } from '../art/rockForge';
 import { DEFAULT_RIG } from '../art/shade';
 
 const VERTEX = /* glsl */ `

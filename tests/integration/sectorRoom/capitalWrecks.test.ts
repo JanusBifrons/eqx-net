@@ -21,6 +21,7 @@ import { wreckPieceGeometry } from '../../../src/core/destruction/wreckPieces.js
 import { shipShapeScale } from '../../../src/core/geometry/shipHullOutline.js';
 import { HEAVY_BEAM_WIDTH, WEAPONS } from '../../../src/core/combat/WeaponCatalogue.js';
 import { WRECK_CRACK_MS } from '../../../src/shared-types/wreckTiming.js';
+import { BEAM_CUT_BUFFER } from '../../../src/shared-types/shipScale/destruction.js';
 
 type V = { x: number; y: number };
 const WRECK_KIND = 4;
@@ -219,9 +220,8 @@ describe('SectorRoom integration — capital wrecks (S2a)', () => {
     const victim = randomUUID();
     await harness.connectActive(victim, { shipKind: 'battleship', spawnX: 8000, spawnY: 0 });
     await harness.advance(100);
-    // The shield takes the first hit whole (no spill-over); the second kills.
-    // applyDamage reports true on the killing call only.
-    expect(internal.applyDamage(victim, 'shooter-x', 1e9)).toBe(false);
+    // A capital has no shield (owner 2026-11-16): the first hit lands on the
+    // hull and kills. applyDamage reports true on the killing call only.
     expect(internal.applyDamage(victim, 'shooter-x', 1e9)).toBe(true);
     expect(wrecks(internal).length).toBeGreaterThanOrEqual(2);
     // The wreck names its pilot: the client's pieces wear the livery bake the
@@ -348,8 +348,8 @@ describe('SectorRoom integration — capital wrecks (S2a)', () => {
     const sliced = await killWith('bb-heavy', 'heavy_beam');
     expect(sliced.cutKind).toBe('slice');
     expect(sliced.cutAng).toBeDefined();
-    // v10: its slice erases a strip as wide as the beam (hull 1x frame).
-    expect(sliced.cutW).toBe(HEAVY_BEAM_WIDTH / shipShapeScale(getShipKind('battleship')));
+    // v13: its slice burns a gap the beam's width plus BEAM_CUT_BUFFER (hull 1x frame).
+    expect(sliced.cutW).toBe((HEAVY_BEAM_WIDTH + BEAM_CUT_BUFFER) / shipShapeScale(getShipKind('battleship')));
     for (const [id, w] of [['bb-beam', 'hitscan'], ['bb-bolt', 'laser']] as const) {
       const plain = await killWith(id, w);
       expect(plain.cutKind, w).toBeUndefined();

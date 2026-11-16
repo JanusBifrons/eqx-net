@@ -2,7 +2,7 @@
  * Depth, scale and speed (plan iridescent-seeking-rainbow v4, round 2).
  */
 import { describe, it, expect } from 'vitest';
-import { DEPTH_LADDER, hashKey, landmarkScreen, nebulaCell, nebulaDensityAt, nebulaDensityAtSeed, nebulaRegions, visitNebulae, sectorSky, skyCell, SKY_LAYERS, SPEED_FX, speedFactor, visitSkyLayer, newSpeedFxState, stepSpeedFx, speedZoomFor, speedFxFullSpeed, SOLAR_SKY_SCALE } from './depth.js';
+import { DEPTH_LADDER, hashKey, landmarkScreen, sectorSky, skyCell, SKY_LAYERS, SPEED_FX, speedFactor, visitSkyLayer, newSpeedFxState, stepSpeedFx, speedZoomFor, speedFxFullSpeed, SOLAR_SKY_SCALE } from './depth.js';
 import { getShipKind } from '../../../../shared-types/shipKinds.js';
 
 describe('depth ladder', () => {
@@ -28,26 +28,6 @@ describe('sectorSky', () => {
     landmarkScreen(planet, 0, 0, 1, 0.3, 1280, 720, a);
     landmarkScreen(planet, 12_000, 0, 1, 0.3, 1280, 720, b);
     expect(Math.abs(a.x - b.x)).toBeGreaterThan(1280);
-  });
-});
-
-describe('nebula volumes', () => {
-  it('density is 1 at a region core, 0 outside, and smooth between', () => {
-    const regs = [{ x: 0, y: 0, r: 1000, variant: 'emission' as const, seed: 1 }];
-    expect(nebulaDensityAt(0, 0, regs)).toBeCloseTo(1);
-    expect(nebulaDensityAt(1500, 0, regs)).toBe(0);
-    const mid = nebulaDensityAt(800, 0, regs);
-    expect(mid).toBeGreaterThan(0);
-    expect(mid).toBeLessThan(1);
-  });
-
-  it('every sector gets 1 to 3 regions, seeded from its key', () => {
-    for (const k of ['a', 'b', 'c', 'sol-prime']) {
-      const r = nebulaRegions(k);
-      expect(r.length).toBeGreaterThanOrEqual(1);
-      expect(r.length).toBeLessThanOrEqual(3);
-      expect(nebulaRegions(k)).toEqual(r);
-    }
   });
 });
 
@@ -92,31 +72,6 @@ describe('endless sky (sector size is arbitrary)', () => {
     const near = countAround(0), far = countAround(1_000_000);
     expect(far).toBeGreaterThan(0);
     expect(Math.abs(near - far) / Math.max(near, far)).toBeLessThan(0.35);
-  });
-});
-
-describe('endless nebula volumes (C2)', () => {
-  const region = () => ({ x: 0, y: 0, r: 0, variant: 'emission' as const, seed: 0 }) as import('./depth.js').NebulaRegion;
-  it('regions keep coming however far you fly, and a core is full density', () => {
-    const seed = hashKey('neb:any');
-    const g = region();
-    let found = 0;
-    for (let i = 0; i < 60; i++) if (nebulaCell(seed, 100 + i, -50, g)) found++;
-    expect(found).toBeGreaterThan(10); // ~40 % of cells, a million units out
-    // Find one and check its density.
-    for (let i = 0; !nebulaCell(seed, i, 3, g); i++);
-    expect(nebulaDensityAtSeed(seed, g.x, g.y, region())).toBeCloseTo(1);
-    expect(nebulaDensityAtSeed(seed, g.x + g.r * 1.05, g.y, region())).toBe(0);
-  });
-
-  it('visitNebulae finds the region you are in', () => {
-    const seed = hashKey('neb:any');
-    const g = region();
-    for (let i = 0; !nebulaCell(seed, i, 0, g); i++);
-    const cx = g.x, cy = g.y;
-    let n = 0;
-    visitNebulae(seed, cx, cy, 100, region(), () => { n++; });
-    expect(n).toBeGreaterThanOrEqual(1);
   });
 });
 

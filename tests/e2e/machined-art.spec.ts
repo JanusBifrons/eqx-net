@@ -160,60 +160,34 @@ test.describe('New backdrop (plan iridescent-seeking-rainbow v3, B2)', () => {
   });
 });
 
-test.describe('Nebulae you can fly into (plan iridescent-seeking-rainbow v5, C2)', () => {
+test.describe('Nebulae (plan nebulae-galaxy-regions): only in nebula sectors', () => {
+  // Infrastructure cost only: cold room join + first-visit backdrop bake.
   test.describe.configure({ timeout: 90_000 });
   type Bd = { backdrop?: { on: boolean; density: number } };
-  test('spawning inside a nebula reports being inside it; far away reports 0', async ({ browser }) => {
-    // Find the spots with the game's own nebula maths, loaded IN THE BROWSER
-    // through Vite. Not a Node `import()` of the .ts: on Node 22.6+ that
-    // reaches Node's strip-only TypeScript loader, which rejects the
-    // parameter properties in depth.ts's module graph (this spec failed with
-    // "TypeScript parameter property is not supported in strip-only mode",
-    // 2026-11-08, Node 24).
-    const probe = await browser.newPage();
-    await probe.goto(`${process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL}/favicon.ico`);
-    const { best, fx } = await probe.evaluate(async (modPath) => {
-      type G = { x: number; y: number; r: number; variant: 'emission'; seed: number };
-      const d = (await import(modPath)) as {
-        hashKey: (k: string) => number;
-        nebulaCell: (seed: number, ix: number, iy: number, out: G) => boolean;
-        nebulaDensityAtSeed: (seed: number, x: number, y: number, scratch: G) => number;
-      };
-      // test-sector-fast has no sector key, so its sky is seeded from 'none'.
-      const seed = d.hashKey('neb:none');
-      const g: G = { x: 0, y: 0, r: 0, variant: 'emission', seed: 0 };
-      let found: { x: number; y: number } | null = null;
-      for (let iy = -2; iy <= 1 && !found; iy++) for (let ix = -2; ix <= 1 && !found; ix++) if (d.nebulaCell(seed, ix, iy, g)) found = { x: g.x, y: g.y };
-      // Somewhere with no nebula.
-      let x = 0;
-      while (d.nebulaDensityAtSeed(seed, x, 0, { x: 0, y: 0, r: 0, variant: 'emission', seed: 0 }) > 0) x += 500;
-      return { best: found, fx: x };
-    }, '/render/art/fx/depth.ts'); // Vite's root is src/client
-    await probe.close();
-    expect(best, 'a nebula near the centre').not.toBeNull();
-    const inside = await launchTestClient(browser, {
-      spawnX: Math.round(best!.x), spawnY: Math.round(best!.y), room: 'test-sector-fast', shipKind: 'fighter',
-      extraParams: { worker: '0', art: 'machined', fx: 'new' },
+  // Which galaxy sectors hold a nebula, and how thick, is unit-locked
+  // (nebulaField.test.ts, Backdrop.sky.test.ts): E2E never joins a live
+  // galaxy room. Here the real client path: a room off the galaxy map is
+  // clear, and the look R&D override (?neblook=) draws at full depth.
+  for (const arm of [{ name: 'a sector with no nebula is clear', params: {}, inside: false },
+    { name: 'the ?neblook= override puts you deep in a nebula', params: { neblook: 'blend', nebseed: '8' }, inside: true }]) {
+    test(arm.name, async ({ browser }) => {
+      const { ctx, page } = await launchTestClient(browser, {
+        spawnX: 0, spawnY: 0, room: 'test-sector-fast', shipKind: 'fighter',
+        extraParams: { worker: '0', art: 'machined', fx: 'new', ...arm.params },
+      });
+      await page.waitForFunction(
+        () => (window as unknown as { __eqxArtStats?: () => Bd }).__eqxArtStats?.().backdrop?.on === true,
+        undefined, { timeout: 45_000 },
+      );
+      const s = await page.evaluate(() => (window as unknown as { __eqxArtStats: () => Bd }).__eqxArtStats());
+      expect(s.backdrop!.density).toBe(arm.inside ? 1 : 0);
+      if (arm.inside) {
+        mkdirSync('diag/e2e-screenshots/machined-art', { recursive: true });
+        await page.screenshot({ path: 'diag/e2e-screenshots/machined-art/inside-nebula.png' });
+      }
+      await ctx.close();
     });
-    await inside.page.waitForFunction(
-      () => ((window as unknown as { __eqxArtStats?: () => Bd }).__eqxArtStats?.().backdrop?.density ?? 0) > 0.5,
-      undefined, { timeout: 45_000 },
-    );
-    mkdirSync('diag/e2e-screenshots/machined-art', { recursive: true });
-    await inside.page.screenshot({ path: 'diag/e2e-screenshots/machined-art/inside-nebula.png' });
-    await inside.ctx.close();
-    const outside = await launchTestClient(browser, {
-      spawnX: fx, spawnY: 0, room: 'test-sector-fast', shipKind: 'fighter',
-      extraParams: { worker: '0', art: 'machined', fx: 'new' },
-    });
-    await outside.page.waitForFunction(
-      () => (window as unknown as { __eqxArtStats?: () => Bd }).__eqxArtStats?.().backdrop?.on === true,
-      undefined, { timeout: 45_000 },
-    );
-    const s = await outside.page.evaluate(() => (window as unknown as { __eqxArtStats: () => Bd }).__eqxArtStats());
-    expect(s.backdrop!.density).toBe(0);
-    await outside.ctx.close();
-  });
+  }
 });
 
 test.describe('Speed effects (plan iridescent-seeking-rainbow v5, C3)', () => {

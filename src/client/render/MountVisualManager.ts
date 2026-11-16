@@ -142,7 +142,7 @@ interface AaBarrels {
 }
 
 /** Shot / beam colour at the muzzle, per family. */
-const MUZZLE_TINT = { bolt: 0xffc060, beam: 0x6fd0ff, missile: 0xffa050, charge: 0xd890ff, rail: RAIL_FLASH_TINT } as const;
+const MUZZLE_TINT = { bolt: 0xffc060, beam: 0x6fd0ff, missile: 0xffa050, charge: 0xd890ff, rail: RAIL_FLASH_TINT, tractor: 0x9ff0d0 } as const;
 /** Railgun vent gas: spark-hot white-blue as it leaves, cooling to grey. */
 const RAIL_GAS_HOT = 0xe0ecff, RAIL_GAS = 0x9aa6b8;
 /** Hot rails after a shot (the tip glow, stretched along them). */
@@ -753,7 +753,8 @@ export class MountVisualManager {
       // the texture budget (capital R&D, measured 365 MB at the fighter ppu).
       type: 'turret', id: place.family, paint, len: Math.max(place.len, 0.1), wid: place.wid, cap: place.cap,
       // Structure naval guns (coastal defences) follow the naval rule too.
-      ppu: place.naval ? Math.min(6, 160 / (place.naval.houseL / 2 + place.len)) : structure ? 2.5 : 6,
+      // A big non-naval gun (a barge emitter) keeps its long side near 600 px.
+      ppu: place.naval ? Math.min(6, 160 / (place.naval.houseL / 2 + place.len)) : structure ? 2.5 : Math.min(6, 600 / Math.max(1, place.len + place.cap)),
       ...(place.naval ? { naval: place.naval.barrels > 1 && mount.size === 'AA' ? { ...place.naval, part: 'house' as const } : place.naval } : {}),
     });
     let aa: AaBarrels | null = null;

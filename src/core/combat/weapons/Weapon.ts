@@ -43,6 +43,9 @@ export interface WeaponFireContext {
   shooterVy: number;
   /** The firing mount's id (sink-only: the `laser_fired` mountId). */
   mountId: string;
+  /** The mount's size factor on its weapon's range (`mountRangeFactor`: a
+   *  mining tool's sized reach, 1 for a gun). A beam's ray scales by it. */
+  rangeMul: number;
 }
 
 /**

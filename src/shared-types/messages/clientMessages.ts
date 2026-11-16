@@ -205,6 +205,18 @@ export const TestFleetWarpSchema = z
   })
   .strict();
 
+/** testMode only (showcase, salvage plan PR 11b): hold a tractor beam from
+ *  the sender's first mount on swarm entity `target` for `ticks` game ticks,
+ *  as if that mount carried the tractor (no ship carries one until the
+ *  barge, PR 15), so a shot can show the beam. */
+export const TestTractorSchema = z
+  .object({
+    type: z.literal('test_tractor'),
+    target: z.number().int().nonnegative(),
+    ticks: z.number().int().min(1).max(36_000),
+  })
+  .strict();
+
 /** Client → server: cancel an in-flight spool. No effect once the server
  *  has committed (state is IN_TRANSIT or beyond). */
 export const CancelTransitSchema = z
@@ -531,6 +543,7 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
   LockTrackSchema,
   SetGroupModeSchema,
   TestFleetWarpSchema,
+  TestTractorSchema,
   ClientReadyMessageSchema,
   PlaceStructureSchema,
   RemoveStructureSchema,

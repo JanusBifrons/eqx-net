@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   HEAVY_BEAM_COLOR, HEAVY_BEAM_STYLE, MINING_BEAM_STYLE, REMOTE_BEAM_FADE_MS, REMOTE_BEAM_STYLE,
-  findMount, remoteBeamStyleForMount, MINING_LASER_STYLE, isSustainedBeamMount, isHeavyBeamMount, remoteBeamTtlMs, remoteBeamSolidLen, HEAVY_BEAM_MISS_FADE_FRAC,
+  findMount, remoteBeamStyleForMount, MINING_LASER_STYLE, MINING_LASER_CROSS_SECTION, isSustainedBeamMount, isHeavyBeamMount, remoteBeamTtlMs, remoteBeamSolidLen, HEAVY_BEAM_MISS_FADE_FRAC,
 } from './beamStyles.js';
 import { HEAVY_BEAM_WIDTH, MINING_LASER_WIDTH, getWeapon } from '../../core/combat/WeaponCatalogue.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
@@ -113,6 +113,25 @@ describe('beam styles — mining laser (plan partitioned-chasing-lark PR 7)', ()
     expect(getWeapon('mining_laser').killCut).toEqual({ kind: 'slice', width: s!.width });
     expect(s!.taper).toBe(false);
     expect(remoteBeamSolidLen(s, 100, true)).toBe(100);
+  });
+
+  it('has a beam cross-section in the Miner colours: white-hot core, Miner amber body, warm glow', () => {
+    const cs = MINING_LASER_STYLE.crossSection!;
+    expect(cs).toBe(MINING_LASER_CROSS_SECTION);
+    expect(cs.stops[0]!.color).toBe(0xffffff);
+    // The opaque body ends in the Miner beam amber at the core width.
+    const body = cs.stops.find((st) => st.color === MINING_BEAM_STYLE.tint)!;
+    expect(body.alpha).toBe(1);
+    expect(body.at).toBeLessThanOrEqual(1 / cs.span + 1e-9);
+    // Every stop is warm (red >= green >= blue) and the edge fades out.
+    for (const st of cs.stops) {
+      const r = (st.color >> 16) & 0xff, g = (st.color >> 8) & 0xff, b = st.color & 0xff;
+      expect(r).toBeGreaterThanOrEqual(g);
+      expect(g).toBeGreaterThanOrEqual(b);
+    }
+    expect(cs.stops[cs.stops.length - 1]!.alpha).toBe(0);
+    expect(MINING_LASER_STYLE.glowScale).toBeGreaterThan(1);
+    expect(MINING_LASER_STYLE.lineLight).toBeUndefined();
   });
 
   it('holds like the heavy beam (no strobe at the 10-tick cadence); fighter beams do not', () => {

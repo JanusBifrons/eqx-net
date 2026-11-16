@@ -16,6 +16,7 @@
  * Pure apart from the capital R&D switch (also import-free).
  */
 import { capitalWorkerNameSuffix } from '../shipKinds/capitals/capitalConfig.js';
+import { bargeLookWorkerNameSuffix } from '../shipKinds/capitals/bargeLookConfig.js';
 import { solarWorkerNameSuffix } from '../sectorBounds.js';
 import { navalRangeWorkerNameSuffix } from '../combat/navalRange.js';
 
@@ -116,7 +117,7 @@ export const KIND_SCALE_OVERRIDES: ReadonlyMap<string, KindScaleOverride> = pars
 
 /** The worker `name` that carries this process's config into a worker. */
 export function shipScaleWorkerName(prefix = ''): string {
-  return `${prefix}${prefix ? ';' : ''}shipScale=${SHIP_SCALE};shipTuning=${SHIP_TUNING}${SHIP_KIND_SCALE ? `;kindScale=${SHIP_KIND_SCALE}` : ''}${capitalWorkerNameSuffix()}${solarWorkerNameSuffix()}${navalRangeWorkerNameSuffix()}`;
+  return `${prefix}${prefix ? ';' : ''}shipScale=${SHIP_SCALE};shipTuning=${SHIP_TUNING}${SHIP_KIND_SCALE ? `;kindScale=${SHIP_KIND_SCALE}` : ''}${capitalWorkerNameSuffix()}${solarWorkerNameSuffix()}${navalRangeWorkerNameSuffix()}${bargeLookWorkerNameSuffix()}`;
 }
 
 /** True at the AUTHORED scale (1×, profile A, no per-kind overrides): the

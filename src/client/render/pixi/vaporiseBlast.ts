@@ -8,6 +8,7 @@ import type { Container } from 'pixi.js';
 import type { EffectsService } from '../../effects/EffectsService';
 import { blastRadiusFor, type FxExplosions } from '../art/fx/FxExplosions.js';
 import type { DeathBlast } from './deathBlast.js';
+import { VAPORISE_OVER_BEAMS_Z } from './beamsOverHulls.js';
 
 /** The smallest vaporise blast radius (world units): a fighter's still reads
  *  at fight zoom, past the 60 u heavy beam that is on it at the kill. */
@@ -36,5 +37,7 @@ export function spawnVaporiseBlast(
 /** Stacks the vaporise flash layer on top of `ships` (call once, after the
  *  beam containers are added): the beam is still on the hull at the kill. */
 export function stackVaporiseOverBeams(ships: Container, fx: FxExplosions | null): void {
-  if (fx) ships.addChild(fx.overLayer);
+  if (!fx) return;
+  ships.addChild(fx.overLayer);
+  fx.overLayer.zIndex = VAPORISE_OVER_BEAMS_Z; // beams are lifted over hulls
 }

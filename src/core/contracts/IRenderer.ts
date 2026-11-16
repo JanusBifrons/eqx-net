@@ -544,6 +544,7 @@ export interface RenderMirror {
   wreckRevealFromTick?: number;
   /** Mine Layer — proximity mines, keyed by mine id (room state `mines`). */
   mines?: Map<string, MineRenderState>;
+  /** Ship tractor beams (emitter → target: a swarm entityId or a playerId), from the snapshot's beam links (client/net/tractorLinks.ts). */ tractorLinks?: Array<{ emitter: number | string; mountId: string; target: number | string }>;
   /** Structures plan, Phase 3 — connection flash windows from the discrete
    *  `grid_pulse` event. Key is the sorted entityId pair packed as
    *  `min * 65536 + max` (numeric ⇒ no per-frame string-key allocation in the
@@ -809,6 +810,11 @@ export interface RenderMirror {
     fromY: number;
     toX: number;
     toY: number;
+    /** A styled (heavy) beam's client ray length this frame: from the
+     *  barrel tip down the LIVE barrel to the first thing it meets (else
+     *  the weapon's range). Absent ⇒ the turret's live angle is unknown;
+     *  the renderer aims at `toX/toY` instead. */
+    dist?: number;
   }>>;
 }
 

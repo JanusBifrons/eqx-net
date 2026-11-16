@@ -16,6 +16,7 @@
 
 import { exhaustTrailTex, flameTex } from './engineFx.js';
 import { muzzleFlashFlipbook } from './turretFx.js';
+import { bakeNebLook } from './nebulaLook.js';
 
 export interface Img { w: number; h: number; data: Uint8ClampedArray }
 
@@ -695,7 +696,8 @@ export type FxId =
   | 'starsFar' | 'starsMid' | 'starsNear' | 'planet' | 'nebula'
   | 'fenceStrip' | 'fenceRipple' | 'fenceContact'
   | 'flame' | 'flameCore' | 'exhaustTrail'
-  | 'muzzleFlash';
+  | 'muzzleFlash'
+  | 'nebLayer' | 'nebPuff';
 
 export interface FxSpec {
   /** Wraps (drawn as a TilingSprite): gets its own texture, not an atlas slot. */
@@ -720,6 +722,8 @@ export const FX_SPECS: Readonly<Record<FxId, FxSpec>> = {
   fenceContact: { tile: false },
   flame: { tile: false }, flameCore: { tile: false }, exhaustTrail: { tile: false },
   muzzleFlash: { tile: false, flip: { frames: 4, cols: 4, cell: 64 } },
+  // Dense-nebula look R&D (`?neblook=`): variant "preset:seed.L<n>|.P<n>|.D".
+  nebLayer: { tile: true }, nebPuff: { tile: false },
 };
 
 export function isFxId(id: string): id is FxId {
@@ -766,6 +770,7 @@ export function bakeFxImg(id: FxId, variant: string | undefined, seed: number | 
     case 'flameCore': return flameTex(128, 32, 1);
     case 'exhaustTrail': return exhaustTrailTex(128, 16);
     case 'muzzleFlash': return muzzleFlashFlipbook(4, 64).sheet;
+    case 'nebLayer': case 'nebPuff': return bakeNebLook(variant);
     case 'nebula': {
       const k: NebulaKind = variant === 'reflection' || variant === 'dark' ? variant : 'emission';
       return nebulaTex(k, 512, seed ?? 21);

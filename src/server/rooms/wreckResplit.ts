@@ -25,6 +25,7 @@ import type { BurnLines } from '../../core/destruction/burnLines.js';
 import { FRACTURE_ALGO_VERSION } from '../../core/destruction/fractureHull.js';
 import type { CapitalWreckDeps, LiveWreck, PieceKnock } from './capitalWreckTypes.js';
 import type { WreckPieceGeometry } from '../../core/destruction/wreckPieceFrame.js';
+import { killCutStripWidth } from '../../shared-types/shipScale/destruction.js';
 import { wreckSourceOf, type WreckSource } from '../../core/destruction/wreckSource.js';
 import { WEAPONS, type WeaponId } from '../../core/combat/WeaponCatalogue.js';
 import { asteroidYieldWeightPerUnit } from '../../shared-types/asteroidResources.js';
@@ -86,7 +87,7 @@ export function planWreckResplit(
   if (killCut !== undefined && (dirX !== 0 || dirY !== 0)) {
     step.cutKind = killCut.kind;
     step.cutAng = hullLocalCutAngle({ x: 0, y: 0, vx: 0, vy: 0, angle: pose.angle, angvel: 0 }, { x: dirX, y: dirY });
-    const w = killCut.width ?? 0;
+    const w = killCutStripWidth(killCut);
     if (w > 0) step.cutW = w / s;
     const extra = burn?.extraCuts(tick, step.killX, step.killY, step.cutAng, step.cutW ?? 0);
     if (extra !== undefined) step.extraCuts = extra;
@@ -96,6 +97,7 @@ export function planWreckResplit(
   if (geom.length < 2) return { step, chain: next, children: [] };
   const children = placeWreckPieces(
     src, geom, pose, ox, oy, mx, my, wreckChildSeed(chain.root.seed >>> 0, parent.index) ^ 0x3ec7, step.cutW !== undefined ? step.cutW * s : 0,
+    step.cutKind === 'slice' && step.cutAng !== undefined ? { px: mx, py: my, ang: step.cutAng } : undefined,
   );
   return { step, chain: next, children };
 }
@@ -112,10 +114,11 @@ export function planWreckResplit(
 export function placeWreckPieces(
   src: WreckSource, geom: ReadonlyArray<WreckPieceGeometry>, pose: WreckPiecePose,
   ox: number, oy: number, mx: number, my: number, spinSeed: number, cutGap: number,
+  slice?: { px: number; py: number; ang: number },
 ): WreckChildSpawn[] {
   const c = Math.cos(pose.angle);
   const sn = Math.sin(pose.angle);
-  const kick = wreckBreakKicks(src, geom, mx, my, 0.75, spinSeed, cutGap);
+  const kick = wreckBreakKicks(src, geom, mx, my, 0.75, spinSeed, cutGap, slice);
   const children: WreckChildSpawn[] = [];
   for (let i = 0; i < geom.length; i++) {
     const g = geom[i]!;
@@ -313,11 +316,20 @@ export function dropPieceSalvage(
 ): void {
   if (d.dropSalvage === undefined) return;
   if (ore !== undefined) {
-    const share = area * ore.perArea;
-    if (!(share >= 1)) return; // no ore left in this sliver: no pod
-    const podMax = Math.max(1, Math.floor(SALVAGE_POD_MAX_WEIGHT / asteroidYieldWeightPerUnit(ore.resource)));
-    d.dropSalvage(Math.min(podMax, Math.round(share)), x, y, vx, vy, ore);
+    const units = pieceOreUnits(ore, area);
+    if (units > 0) d.dropSalvage(units, x, y, vx, vy, ore); // none left in this sliver: no pod
     return;
   }
   d.dropSalvage(wreckSalvageQty(src, mass), x, y, vx, vy);
+}
+
+/** A rock piece's ore units (area × `ore.perArea`, rounded, up to a pod's
+ *  size of that ore: `SALVAGE_POD_MAX_WEIGHT`); 0 under one unit. The one
+ *  rule for a worn-out rock piece's pod and a whole piece taken into a hold
+ *  (wreckLineage.ts `pieceStoreOf`). */
+export function pieceOreUnits(ore: NonNullable<LiveWreck['ore']>, area: number): number {
+  const share = area * ore.perArea;
+  if (!(share >= 1)) return 0;
+  const podMax = Math.max(1, Math.floor(SALVAGE_POD_MAX_WEIGHT / asteroidYieldWeightPerUnit(ore.resource)));
+  return Math.min(podMax, Math.round(share));
 }

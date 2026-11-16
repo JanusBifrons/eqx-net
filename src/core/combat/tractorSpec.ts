@@ -12,7 +12,8 @@ export interface TractorSpec {
   readonly force: number;
   /** Full force inside this distance from the muzzle; inverse square past it. */
   readonly dRef: number;
-  /** Cushion radius: inside it the target hovers on a damped spring. */
+  /** Cushion radius: inside it the target hovers on a damped spring. A big
+   *  hull raises it past its own side for the load (`setTractorHold`). */
   readonly hold: number;
   /** Half-width of the beam line; bodies within it feel `lineFrac` × F(d). */
   readonly lineHalfWidth: number;
