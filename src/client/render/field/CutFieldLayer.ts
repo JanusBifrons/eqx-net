@@ -16,6 +16,9 @@
  * rim (`aUV.y` = `coarseFieldThin`, drawn see-through by the shader).
  * Tiles off the view are hidden per frame. Tiles ignore consumed and moved
  * rocks: they are approximate, and only drawn where rocks are a few px.
+ *
+ * Placed rocks and their cut pieces (`placedRockMesh.ts`) draw on the same
+ * shader instance through `buildRockMesh`.
  */
 import { Container, Mesh, MeshGeometry, Shader } from 'pixi.js';
 import type { RenderMirror } from '@core/contracts/IRenderer';
@@ -48,7 +51,10 @@ function rockSeed(x: number, y: number): number {
   return (h ^ (h >>> 13)) >>> 0;
 }
 
-export function buildFieldChunkMesh(outlines: Float32Array, ore?: Float32Array | null): FieldChunkMeshData {
+/** `seed`: one surface seed for every rock in `outlines` (a placed rock's,
+ *  from its shape seed: its outline sits at the origin); default: each
+ *  rock's from its centre. */
+export function buildFieldChunkMesh(outlines: Float32Array, ore?: Float32Array | null, seed?: number): FieldChunkMeshData {
   let verts = 0, tris = 0, i = 0;
   while (i < outlines.length) { const n = outlines[i]!; verts += n + 1; tris += n; i += 1 + n * 2; }
   const positions = new Float32Array(verts * 2), uvs = new Float32Array(verts * 2);
@@ -66,8 +72,8 @@ export function buildFieldChunkMesh(outlines: Float32Array, ore?: Float32Array |
       const dx = outlines[i + k * 2]! - mx, dy = outlines[i + k * 2 + 1]! - my;
       r2 = Math.max(r2, dx * dx + dy * dy);
     }
-    const h = rockSeed(mx, my);
-    const radius = Math.sqrt(r2), ox = ((h & 0xffff) / 65536) * 9000, oy = ((h >>> 16) / 65536) * 9000, seed = h & 0xffff;
+    const h = seed ?? rockSeed(mx, my);
+    const radius = Math.sqrt(r2), ox = ((h & 0xffff) / 65536) * 9000, oy = ((h >>> 16) / 65536) * 9000, s = h & 0xffff;
     const c = v;
     // Centre (vT 1), then the outline (vT 0); Pixi y = -game y.
     for (let k = -1; k < n; k++) {
@@ -75,7 +81,7 @@ export function buildFieldChunkMesh(outlines: Float32Array, ore?: Float32Array |
       positions[v * 2] = gx; positions[v * 2 + 1] = -gy;
       local[v * 2] = gx - mx; local[v * 2 + 1] = -(gy - my);
       uvs[v * 2] = k < 0 ? 1 : 0;
-      rock[v * 4] = radius; rock[v * 4 + 1] = ox; rock[v * 4 + 2] = oy; rock[v * 4 + 3] = seed;
+      rock[v * 4] = radius; rock[v * 4 + 1] = ox; rock[v * 4 + 2] = oy; rock[v * 4 + 3] = s;
       v++;
     }
     for (let k = 0; k < n; k++) {
@@ -138,6 +144,15 @@ function collapsedAt(o: Float32Array, s: number): boolean {
   return true;
 }
 
+/** Every mesh drawn with the field rock shader (weak: dies with the mesh). */
+const fieldRockMeshes = new WeakSet<object>();
+
+/** Is this sprite a field-rock-shader mesh? Its colour is the shader's (the
+ *  classic rock tint must not touch it). */
+export function isFieldRockMesh(sprite: object): boolean {
+  return fieldRockMeshes.has(sprite);
+}
+
 /** A far-zoom tile (B4) and its Pixi-space bounds, for view culling. */
 interface CoarseTileMesh { key: number; mesh: Mesh<MeshGeometry, Shader>; x0: number; y0: number; x1: number; y1: number }
 
@@ -193,7 +208,8 @@ export class CutFieldLayer {
    *  x1, y1] (`Camera.visibleBoundsInto`), to hide off-view far-zoom tiles. */
   setView(sunAz: number, cameraScale: number, view?: ArrayLike<number>): void {
     this.frame++;
-    if (this.chunks.size > 0 || this.tiles.length > 0) setFieldRockView(sunAz, cameraScale);
+    // Once any rock mesh exists (chunks, tiles, placed rocks and pieces).
+    if (this.shader !== null) setFieldRockView(sunAz, cameraScale);
     this.applyLevel(cameraScale, view);
     for (const [key, seen] of this.woken) {
       if (this.frame - seen <= WOKEN_ROCK_FORGET_FRAMES) continue;
@@ -269,6 +285,12 @@ export class CutFieldLayer {
     return this.meshOf(d);
   }
 
+  /** A placed rock's or a cut piece's sprite (`placedRockMesh.ts` data), on
+   *  the one field rock shader. The mesh takes the data's arrays. */
+  buildRockMesh(d: FieldChunkMeshData): Mesh<MeshGeometry, Shader> {
+    return this.meshOf(d, true);
+  }
+
   /** Collapse a rock's fan onto its centre (hide) or restore it (show). */
   private showInChunk(key: number, show: boolean): void {
     const k = unpackRockKey(key);
@@ -331,6 +353,7 @@ export class CutFieldLayer {
     geometry.addAttribute('aOre', { buffer: d.ore, format: 'float32x2' });
     this.shader ??= new Shader({ glProgram: fieldRockProgram(), resources: fieldRockShaderResources() });
     const mesh = new Mesh({ geometry, shader: this.shader });
+    fieldRockMeshes.add(mesh);
     mesh.once('destroyed', () => geometry.destroy());
     return mesh;
   }
