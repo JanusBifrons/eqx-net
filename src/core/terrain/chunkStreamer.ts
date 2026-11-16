@@ -52,12 +52,16 @@ export function fieldRockBody(rock: Pick<SlicedRock, 'verts'>): FieldRockBody {
   return { x: mx, y: my, radius: Math.sqrt(r2), verts, parts: convexParts(verts, FIELD_COLLIDER_SIMPLIFY * eqRadius) };
 }
 
-/** A woken field rock's mass: as heavy as a battleship of its size (same
- *  mass per area), so fighters bounce off big rocks and capitals shove them.
- *  From the live kind (#18). */
+/** A battleship-sized field rock weighs this many battleships (owner: a rock
+ *  is a solid mountain, a hull a thin shell). Mass goes with area, so a rock
+ *  a tenth of a battleship's radius weighs one battleship. */
+export const FIELD_ROCK_BATTLESHIP_MASSES = 100;
+
+/** A field rock's mass: `FIELD_ROCK_BATTLESHIP_MASSES` battleships at a
+ *  battleship's size, scaling with area. From the live kind (#18). */
 export function fieldRockMass(radius: number): number {
   const bs = getShipKind('battleship');
-  return shipBodyMass(bs) * (radius / bs.radius) ** 2;
+  return FIELD_ROCK_BATTLESHIP_MASSES * shipBodyMass(bs) * (radius / bs.radius) ** 2;
 }
 
 /** A field rock's bounding circle: the x, y and radius `fieldRockBody` gives
@@ -117,12 +121,17 @@ export const FIELD_WAKES_PER_TICK = 4;
  *  against each other sit far below it. */
 export const FIELD_CHAIN_WAKE_SPEED = 20;
 
-/** Does a contact with `other` wake a fixed field rock? Anything that is not
- *  a field rock (a ship, a drone, scrap) wakes it on touch; another field rock
- *  only when it is awake and was driven in at least `FIELD_CHAIN_WAKE_SPEED`,
- *  so a capital's shove spreads through the pile but resting neighbours never
- *  wake each other. */
-export function fieldRockWakes(other: { fieldRock?: boolean; fieldAwake?: boolean } | null | undefined, closingSpeed: number): boolean {
+/** Does a contact with `other` (mass `otherMass`, undefined when unknown)
+ *  wake a fixed field rock of mass `rockMass`? Only a body at least as heavy
+ *  as the rock wakes it: a fighter never moves a rock, a battleship shoves
+ *  only rocks up to its own mass (a tenth of its radius), never one its own
+ *  size; a body of unknown mass never wakes one. Another field rock must also
+ *  be awake and driven in at least `FIELD_CHAIN_WAKE_SPEED`, so a shove
+ *  spreads through the pile but resting neighbours never wake each other. */
+export function fieldRockWakes(
+  rockMass: number, other: { fieldRock?: boolean; fieldAwake?: boolean } | null | undefined, otherMass: number | undefined, closingSpeed: number,
+): boolean {
+  if (otherMass === undefined || otherMass < rockMass) return false;
   if (other?.fieldRock !== true) return true;
   return other.fieldAwake === true && closingSpeed >= FIELD_CHAIN_WAKE_SPEED;
 }

@@ -7,9 +7,10 @@
  * be blocked on BOTH sides:
  *   1. SERVER: a `collision_resolved` involving a `field:` body lands in
  *      `/dev/events`.
- *   2. WAKE (plan C2/C3): the rammed rock turns into a moving body
- *      (`field_rock_woke`) and rides the swarm wire with its rock key, so the
- *      client swaps its fixed body for the moving one (`cutFieldStats.awake`).
+ *   2. NO WAKE (rock mass, owner 2026-11-16): a rock wakes only to a body at
+ *      least as heavy as itself (`fieldRockWakes`), and the fighter is far
+ *      lighter than any field rock, so no `field_rock_woke` is logged and the
+ *      rock stays FIXED on both sides (`cutFieldStats.awake` stays 0).
  *   3. CLIENT: the rendered local ship's centre never gets inside any field
  *      rock's drawn outline (built from the same seed here) by more than the
  *      collider's smoothing (`FIELD_COLLIDER_SIMPLIFY`, plan C1: the collider
@@ -143,11 +144,7 @@ test('ship ramming a cut-field rock is blocked on server and client', async ({ b
 
   const events = ((await (await fetch(`${SERVER_URL}/dev/events?limit=500`)).json()) as { events: ServerLogEntry[] }).events;
   const woke = events.filter((e) => e.tag === 'field_rock_woke');
-  const awakeOnClient = await page.waitForFunction(
-    () => ((window as unknown as EqxWindow).__eqxClient?.cutFieldStats?.awake ?? 0) > 0,
-    undefined,
-    { timeout: 5_000 },
-  ).then(() => true, () => false);
+  const awakeOnClient = await page.evaluate(() => (window as unknown as EqxWindow).__eqxClient?.cutFieldStats?.awake ?? 0);
   const fieldContacts = events.filter((e) => e.tag === 'collision_resolved'
     && (String(e.data['aId']).startsWith('field:') || String(e.data['bId']).startsWith('field:')));
 
@@ -156,9 +153,8 @@ test('ship ramming a cut-field rock is blocked on server and client', async ({ b
 
   expect(peak, 'the ship must reach the rock (else the ram proves nothing)').toBeGreaterThan(GAP - 150);
   expect(fieldContacts.length, 'server must log a collision_resolved with a field: rock').toBeGreaterThan(0);
-  expect(woke.length, 'the rammed field rock must wake on the server').toBeGreaterThan(0);
-  expect(String(woke[0]!.data['id']).startsWith('field:')).toBe(true);
-  expect(awakeOnClient, 'the woken rock must reach the client on the swarm wire').toBe(true);
+  expect(woke.length, 'a fighter never wakes a field rock (rock mass)').toBe(0);
+  expect(awakeOnClient, 'no field rock is awake on the client').toBe(0);
   expect(deepest, `rendered ship must never go inside a field rock past its collider smoothing (deepest ${deepest.toFixed(0)} u < ${MAX_DEPTH})`).toBeLessThan(MAX_DEPTH);
 
   await ctx.close();
