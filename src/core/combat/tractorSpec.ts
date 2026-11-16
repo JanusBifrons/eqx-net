@@ -37,3 +37,13 @@ export const TRACTOR_DEF: HitscanWeaponDef = {
   damage: 0, cooldownTicks: 10, range: 3000, energyCost: 4,
   tractor: { force: 6000, dRef: 250, hold: 250, lineHalfWidth: 40, lineFrac: 0.25, leaseTicks: 12 },
 };
+
+/** A tractor's pull (force units) at distance `d` from its muzzle:
+ *  F(d) = force × min(1, (dRef / d)²), 0 at or beyond `reach` (and at d ≤ 0).
+ *  The one falloff rule: `tractorImpulse` pulls by it, the salvage picker
+ *  (`salvageTargeting.ts`) judges what a ship can haul by it. Pure. */
+export function tractorPull(force: number, dRef: number, reach: number, d: number): number {
+  if (d >= reach || d <= 0 || force <= 0) return 0;
+  const r = dRef / d;
+  return force * Math.min(1, r * r);
+}

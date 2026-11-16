@@ -27,7 +27,7 @@ describe('ForceFieldSubsystem', () => {
 import { getWeapon } from '../../core/combat/WeaponCatalogue.js';
 import { MOUNT_SIZE_TUNING } from '../../shared-types/shipScale/tuning.js';
 import { forEachBeamLink, type BeamLinkVisitor } from '../../shared-types/beamLinksWire.js';
-import { TRACTOR_LEASE_CAP, lockKeyBodyId, type TractorDeps, type TractorPoseOut } from './ForceFieldSubsystem.js';
+import { TRACTOR_LEASE_CAP, TRACTOR_PICKUP_HOLD_MUL, lockKeyBodyId, type TractorDeps, type TractorPoseOut } from './ForceFieldSubsystem.js';
 import type { WeaponMount } from '../../shared-types/shipKinds.js';
 import type { TractorForceField } from '../../core/physics/forceFields.js';
 
@@ -100,6 +100,56 @@ describe('ForceFieldSubsystem — tractor leases', () => {
     ff.tickTractors();
     expect(ff.tractorCount).toBe(0);
     expect(posted.at(-1)).toEqual({ type: 'REMOVE_FORCE_FIELD', id: 'tractor:ship:m-S' });
+  });
+
+  it('inTractorHold: only the emitter\'s live, posed lease on that target, within TRACTOR_PICKUP_HOLD_MUL × hold of the muzzle (PR 12)', () => {
+    const { ff, st } = rig();
+    const r = spec.hold * TRACTOR_PICKUP_HOLD_MUL; // muzzle at (0, 10)
+    ff.renewTractor('ship', mount('S'), 'pod');
+    expect(ff.inTractorHold('ship', 'pod', 0, 10 + r - 1), 'not posed yet').toBe(false);
+    ff.tickTractors();
+    expect(ff.inTractorHold('ship', 'pod', 0, 10 + r - 1)).toBe(true);
+    expect(ff.inTractorHold('ship', 'pod', 0, 10 + r + 1), 'past the zone').toBe(false);
+    expect(ff.inTractorHold('other', 'pod', 0, 10 + r - 1), 'another emitter').toBe(false);
+    expect(ff.inTractorHold('ship', 'rock', 0, 10 + r - 1), 'another target').toBe(false);
+    st.tick += spec.leaseTicks;
+    expect(ff.inTractorHold('ship', 'pod', 0, 10 + r - 1), 'lapsed').toBe(false);
+  });
+
+  it('forEachHeldPiece: only the emitter\'s live, posed leases on WRECK PIECES inside the hold zone (piece store)', () => {
+    const r = spec.hold * TRACTOR_PICKUP_HOLD_MUL; // muzzle at (0, 10)
+    const { ff, st } = rig({ isWreckPiece: (id) => id.startsWith('wreck') });
+    st.poses.set('wreck-a', { x: 0, y: 10 + r - 1, angle: 0 });
+    st.poses.set('wreck-far', { x: 0, y: 10 + r + 1, angle: 0 });
+    st.poses.set('pod', { x: 0, y: 10 + r - 1, angle: 0 });
+    const seen: string[] = [];
+    const visit = (id: string): void => { seen.push(id); };
+    ff.renewTractor('ship', mount('S'), 'wreck-a');
+    ff.renewTractor('ship', mount('M'), 'wreck-far');
+    ff.renewTractor('ship', mount('L'), 'pod');
+    ff.forEachHeldPiece('ship', visit);
+    expect(seen, 'not posed yet').toEqual([]);
+    ff.tickTractors();
+    ff.forEachHeldPiece('ship', visit);
+    expect(seen, 'in the zone and a wreck piece; not past the zone, not a pod').toEqual(['wreck-a']);
+    seen.length = 0;
+    ff.forEachHeldPiece('other', visit);
+    expect(seen, 'another emitter holds nothing').toEqual([]);
+    st.hold = true; // crack hold: the beam holds on but does not pull
+    ff.tickTractors();
+    ff.forEachHeldPiece('ship', visit);
+    expect(seen, 'crack hold').toEqual([]);
+    st.hold = false;
+    ff.tickTractors();
+    st.tick += spec.leaseTicks;
+    ff.forEachHeldPiece('ship', visit);
+    expect(seen, 'lapsed').toEqual([]);
+    const plain = rig(); // no isWreckPiece hook: inert
+    plain.st.poses.set('wreck-a', { x: 0, y: 10, angle: 0 });
+    plain.ff.renewTractor('ship', mount('S'), 'wreck-a');
+    plain.ff.tickTractors();
+    plain.ff.forEachHeldPiece('ship', visit);
+    expect(seen).toEqual([]);
   });
 
   it('ends when the target is gone; no pull during a wreck crack hold', () => {

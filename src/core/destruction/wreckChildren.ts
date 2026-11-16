@@ -20,9 +20,9 @@
  */
 import { fractureHull, FRACTURE_QUANTUM, EDGE_HULL, type FracturePiece } from './fractureHull.js';
 import { fnvMixU32 } from '../random/rng.js';
-import { DESTRUCTION_PROFILES, type DestructionResplit } from '../../shared-types/shipScale/destruction.js';
-import { getShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
-import { shipTuning } from '../../shared-types/shipScale/tuning.js';
+import type { DestructionResplit } from '../../shared-types/shipScale/destruction.js';
+import type { ShipKindId } from '../../shared-types/shipKinds.js';
+import { asWreckSource, wreckSourceOf, type WreckSource } from './wreckSource.js';
 import { fracturePiecesToGeometry, wreckFractureCut, wreckFractureExtraCuts, wreckRootFracture } from './wreckPieceFrame.js';
 import type { WreckExtraCut } from '../../shared-types/messages/wreckDescriptor.js';
 import type { WreckFractureInputs, WreckPieceGeometry } from './wreckPieces.js';
@@ -57,9 +57,10 @@ export function wreckChildSeed(parentSeed: number, pieceIndex: number): number {
   return fnvMixU32(parentSeed >>> 0, pieceIndex >>> 0);
 }
 
-/** The kind's re-split options (null: its pieces never break again). */
-export function wreckResplitOptions(kindId: ShipKindId): DestructionResplit | null {
-  return DESTRUCTION_PROFILES[shipTuning(getShipKind(kindId)).destruction].resplit;
+/** The kind's (or source's) re-split options (null: its pieces never
+ *  break again). */
+export function wreckResplitOptions(source: ShipKindId | WreckSource): DestructionResplit | null {
+  return asWreckSource(source).profile.resplit;
 }
 
 /**
@@ -70,7 +71,7 @@ export function wreckResplitOptions(kindId: ShipKindId): DestructionResplit | nu
 export function wreckChainFracture(chain: WreckChildChain): FracturePiece[] {
   let pieces = wreckRootFracture(chain.root);
   if (chain.steps.length === 0) return pieces;
-  const rs = wreckResplitOptions(chain.root.kindId);
+  const rs = wreckResplitOptions(wreckSourceOf(chain.root));
   if (rs === null) return [];
   const o = rs.fracture;
   let seed = chain.root.seed >>> 0;
@@ -105,7 +106,7 @@ export function wreckChainFracture(chain: WreckChildChain): FracturePiece[] {
 /** The chain's last generation as wreck-piece geometry, in the same shape
  *  and frame as `wreckPieceGeometry` (mass from area at the kind's density). */
 export function wreckChildGeometry(chain: WreckChildChain): WreckPieceGeometry[] {
-  return fracturePiecesToGeometry(chain.root.kindId, wreckChainFracture(chain));
+  return fracturePiecesToGeometry(wreckSourceOf(chain.root), wreckChainFracture(chain));
 }
 
 /** Largest distance (1× frame) of a child vertex off its parent's edge that

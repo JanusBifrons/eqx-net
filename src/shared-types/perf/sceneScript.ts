@@ -46,12 +46,34 @@ const FleetStep = z.object({
   health: z.number().positive().max(10_000_000).optional(),
 }).strict();
 
+/** Rock cut perf (salvage stream): `count` still rocks of `radius` in a disc,
+ *  ids `scene-<tag>-<i>` (`rocks`); a later `rockCut` mines the first `count`
+ *  rocks of a tag to a break with the mining laser (the real wear path), so
+ *  their wreck pieces are on screen. */
+const RocksStep = z.object({
+  atMs: z.number().min(0).max(600_000),
+  action: z.literal('rocks'),
+  tag: z.string().min(1).max(16).regex(/^[a-z0-9-]+$/),
+  count: z.number().int().min(1).max(SCENE_MAX_SPAWN),
+  x: z.number().finite(),
+  y: z.number().finite(),
+  spread: z.number().min(0).max(20_000).optional(),
+  radius: z.number().min(10).max(400),
+}).strict();
+
+const RockCutStep = z.object({
+  atMs: z.number().min(0).max(600_000),
+  action: z.literal('rockCut'),
+  tag: z.string().min(1).max(16).regex(/^[a-z0-9-]+$/),
+  count: z.number().int().min(1).max(SCENE_MAX_SPAWN),
+}).strict();
+
 const EndStep = z.object({
   atMs: z.number().min(0).max(600_000),
   action: z.literal('end'),
 }).strict();
 
-export const SceneStepSchema = z.discriminatedUnion('action', [SpawnStep, FleetStep, EndStep]);
+export const SceneStepSchema = z.discriminatedUnion('action', [SpawnStep, FleetStep, RocksStep, RockCutStep, EndStep]);
 export const SceneScriptSchema = z.array(SceneStepSchema).min(1).max(64);
 export type SceneStep = z.infer<typeof SceneStepSchema>;
 
