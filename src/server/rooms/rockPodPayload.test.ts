@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { dropPieceSalvage } from './wreckResplit.js';
-import { rockWreckSource } from '../../core/destruction/wreckSource.js';
+import { rockWreckSource, shipWreckSource } from '../../core/destruction/wreckSource.js';
 import { asteroidYield, type AsteroidResourceId } from '../../shared-types/asteroidResources.js';
 import { holdWeight } from '../../core/cargo/hold.js';
 import { SALVAGE_POD_MAX_WEIGHT } from '../../shared-types/worldEvents.js';
@@ -35,6 +35,18 @@ describe('a rock pod carries a pod-sized payload', () => {
 
   it('a small share is paid as it is (never more than the piece held)', () => {
     expect(podUnits(10, 2, 'rock')).toBe(20);
-    expect(podUnits(0.1, 0.5, 'rock')).toBe(1);
+  });
+
+  it('a mined-out rock sliver drops no ore pod (no ore left to pay)', () => {
+    expect(podUnits(500, 0, 'rock'), 'exhausted rock: nothing dropped').toBe(-1);
+    expect(podUnits(0.1, 0.5, 'rock'), 'under one unit: nothing dropped').toBe(-1);
+    expect(podUnits(2, 0.5, 'rock'), 'one whole unit is paid').toBe(1);
+  });
+
+  it('a ship wreck sliver still drops its salvage', () => {
+    let qty = -1;
+    const d = { dropSalvage: (q: number) => { qty = q; } } as unknown as CapitalWreckDeps;
+    dropPieceSalvage(d, shipWreckSource('fighter'), undefined, 1, 1, 0, 0, 0, 0);
+    expect(qty).toBeGreaterThanOrEqual(1);
   });
 });

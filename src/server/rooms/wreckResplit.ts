@@ -297,18 +297,21 @@ export function spawnWreckPieces(
 
 /** A worn-out piece (or a sliver) too small to split leaves a pod: a ship
  *  wreck's carries salvage (`wreckSalvageQty`), a rock's its share of the
- *  rock's ore (area × `ore.perArea`, at least 1) up to a pod's size
+ *  rock's ore (area × `ore.perArea`) up to a pod's size
  *  (`SALVAGE_POD_MAX_WEIGHT` of that ore; the rest of the share is never
  *  mined, so cutting never makes ore), drawn through `OreDraw` by the room's
- *  `dropSalvage`. No hook: nothing drops. */
+ *  `dropSalvage`. A rock share under one unit (a mined-out rock: perArea 0)
+ *  drops nothing. No hook: nothing drops. */
 export function dropPieceSalvage(
   d: CapitalWreckDeps, src: WreckSource, ore: LiveWreck['ore'],
   area: number, mass: number, x: number, y: number, vx: number, vy: number,
 ): void {
   if (d.dropSalvage === undefined) return;
   if (ore !== undefined) {
+    const share = area * ore.perArea;
+    if (!(share >= 1)) return; // no ore left in this sliver: no pod
     const podMax = Math.max(1, Math.floor(SALVAGE_POD_MAX_WEIGHT / asteroidYieldWeightPerUnit(ore.resource)));
-    d.dropSalvage(Math.min(podMax, Math.max(1, Math.round(area * ore.perArea))), x, y, vx, vy, ore);
+    d.dropSalvage(Math.min(podMax, Math.round(share)), x, y, vx, vy, ore);
     return;
   }
   d.dropSalvage(wreckSalvageQty(src, mass), x, y, vx, vy);
