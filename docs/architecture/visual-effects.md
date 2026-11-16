@@ -58,10 +58,10 @@ interface IEffectsBudget {
 interface IEffects extends IParticleEffects, IFilterEffects, IEffectsBudget {}
 ```
 
-**Warp methods stay on `IRenderer`** — one ownership site per state
-surface (Invariant #12). `EffectsBudget` holds a direct reference to
-`WarpFilterChain` for tier-driven attach/detach. No facade, no parallel
-path.
+**The load curtain stays on `IRenderer`** — one ownership site per state
+surface (Invariant #12). (The old shader warp chain, `WarpFilterChain`, that
+`EffectsBudget` used to dial was removed 2026-11-16; see
+[warp-visual](warp-visual.md).)
 
 ### Construction site
 
@@ -83,7 +83,6 @@ destruction + flames.
 
 | Module | Responsibility | Tier dial (high → minimal) |
 |---|---|---|
-| `WarpFilterChain` (existing) | spool/climax/burst/flash | full chain → drop bloom → drop zoom-blur → detach all |
 | `DestructionFx` | radial particle burst + ShockwaveFilter | 40 particles + shock → 20 + shock → 10 no shock → legacy `buildExplosionGfx` |
 | `EngineEmitter` | per-ship continuous particle trails | thrust + boost emitters → thrust only → thrust half-rate → off (legacy Graphics flames carry) |
 | `LaserGlow` | GlowFilter on liveBeamGfx + remoteBeamGfx | both attached q=0.2 → both q=0.1 → live only → both detached |
@@ -275,7 +274,7 @@ E2E (Playwright) — deferred to a follow-up:
 
 Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each rule and points here.
 
-- **Game-space coords handed to the renderer scene graph MUST flip Y (2026-05-15).** Game space is Y-up; the Pixi `world` container is Y-down. Every sprite/beam/mount/halo obeys `pixiY = -gameY` (`sprite.y = -ship.y`). The warp world-anchor (`{kind:'world'}`, game-space from `mirror.ships`) broke this — it projected `+worldY` through `world.toGlobal` and the ripple appeared at the ship's *vertical mirror* (off-screen at non-zero spawn Y; "bottom right" smoke report). Fix: the pure `resolveWarpFilterCenter` helper (exported from `PixiRenderer.ts`, locked by `PixiRenderer.warpCenter.test.ts`) negates Y for the world branch; `screen`/`null` anchors pass through. **A superseded fix multiplied the filter centre by `renderer.resolution` (HiDPI `uInputSize` theory) — that was WRONG; do not re-add it.** On-device evidence is decisive: the sandbox screen-centre warp was confirmed pixel-correct on a DPR-3 phone with no scaling, so the renderer screen frame already matches the filter `uInputSize` frame. Heuristic correction: a renderer bug that "only happens on the phone" is NOT automatically a missing `× resolution` — a game/Pixi frame mismatch (Y-flip, origin offset) produces the identical on-device-only symptom because the error is invisible at spawn-origin and only grows as you move. Prefer fixes derived from on-device observations over engine-internals theory. See `docs/LESSONS.md` 2026-05-15. **The opposite mistake is flipping twice:** `FxExplosions.spawn` (and the other `art/fx` APIs that say "game space") flip Y themselves, so hand them GAME coords. The naval-shell burst stored `-p.y` and burst at the shell's Y mirror (2026-11-10, ~380 px above the fighter it hit); it now lives in `art/fx/navalShellBursts.ts`, locked by `navalShellBursts.test.ts` (burst lands on the drawn shell sprite).
+- **Game-space coords handed to the renderer scene graph MUST flip Y (2026-05-15).** Game space is Y-up; the Pixi `world` container is Y-down. Every sprite/beam/mount/halo obeys `pixiY = -gameY` (`sprite.y = -ship.y`). The warp world-anchor (`{kind:'world'}`, game-space from `mirror.ships`) broke this — it projected `+worldY` through `world.toGlobal` and the ripple appeared at the ship's *vertical mirror* (off-screen at non-zero spawn Y; "bottom right" smoke report). Fix: the pure `resolveWarpFilterCenter` helper negated Y for the world branch (helper and shader warp removed 2026-11-16). **A superseded fix multiplied the filter centre by `renderer.resolution` (HiDPI `uInputSize` theory) — that was WRONG; do not re-add it.** On-device evidence is decisive: the sandbox screen-centre warp was confirmed pixel-correct on a DPR-3 phone with no scaling, so the renderer screen frame already matches the filter `uInputSize` frame. Heuristic correction: a renderer bug that "only happens on the phone" is NOT automatically a missing `× resolution` — a game/Pixi frame mismatch (Y-flip, origin offset) produces the identical on-device-only symptom because the error is invisible at spawn-origin and only grows as you move. Prefer fixes derived from on-device observations over engine-internals theory. See `docs/LESSONS.md` 2026-05-15. **The opposite mistake is flipping twice:** `FxExplosions.spawn` (and the other `art/fx` APIs that say "game space") flip Y themselves, so hand them GAME coords. The naval-shell burst stored `-p.y` and burst at the shell's Y mirror (2026-11-10, ~380 px above the fighter it hit); it now lives in `art/fx/navalShellBursts.ts`, locked by `navalShellBursts.test.ts` (burst lands on the drawn shell sprite).
 
 ### Damage numbers and health bars
 
@@ -289,7 +288,7 @@ A first-class visual-effects subsystem lives under `src/client/effects/`. Contra
 
 **Ownership rules (Invariant #12 — one ownership site per state surface):**
 
-- **Warp methods stay on `IRenderer`.** `setWarpMode` / `triggerWarpIn` / `setWarpCenter` / `setLoadCurtain` are NOT duplicated on `IFilterEffects`. `EffectsBudget` controls warp filter detach/attach by holding a direct reference to `WarpFilterChain` and calling its `applyQuality(level)` method (added in M3). No facade, no parallel path.
+- **The load curtain stays on `IRenderer`.** `setLoadCurtain` is NOT duplicated on `IFilterEffects`. No facade, no parallel path. (The old shader warp methods and `WarpFilterChain.applyQuality` were removed 2026-11-16.)
 - **`EffectsService` is constructed inside `PixiRenderer.init`** — one construction site per renderer instance, covers both the OffscreenCanvas worker path and the touch-device main-thread fallback.
 - **`ColyseusClient` never imports `EffectsService`.** Effect triggers flow through `RenderMirror.pendingEffectTriggers` (added in M2), drained by `PixiRenderer.update(mirror)` on `shouldRender` (worker every-other-RAF). Same gating pattern as `explodingShips` — extending `perFrameTriggers.ts` is mandatory for any new one-shot mirror queue.
 - **`EffectsService.tick(now, dt)` runs INSIDE `PixiRenderer.update(mirror)` at the tail, AFTER `updateSwarmSprites`** — guarantees one-pose-per-frame (the rule under "Drones are PURE snapshot-interpolated"). NEVER call `tick` from a separate Pixi ticker callback; that would resolve poses at a divergent `now` and reintroduce the 2026-05-19 jitter bug class.

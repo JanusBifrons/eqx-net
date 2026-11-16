@@ -1,6 +1,6 @@
 /**
  * Fire-claim temporal resolution (pure; `SectorRoom.handleFire` defers to
- * this — the `shouldDetachWarpVisual` precedent).
+ * this — the `spriteUpdateDecisions` precedent).
  *
  * Background: see `fireTemporal.test.ts` and diagnostic capture
  * `2026-05-19T11-22-22-628Z-uf0o8g`. The old temporal guard HARD-REJECTED

@@ -5,10 +5,9 @@ import { Slot } from '../layout/Slot';
 import { logEvent } from '../debug/ClientLogger';
 
 /**
- * Thin in-game-language HUD over the warping Pixi canvas. NOT an
- * overlay screen — the warp visual itself is a render state of the
- * gameplay `PixiRenderer` (`setWarpMode(true)`), painted on the same
- * canvas as gameplay.
+ * Thin in-game-language HUD over the Pixi canvas. NOT an overlay
+ * screen — the dark cover is the gameplay `PixiRenderer`'s load curtain
+ * (`setLoadCurtain`), painted on the same canvas as gameplay.
  *
  * Visible when `useIsLoadingActive()` is true (curtain up — initial
  * join / respawn / transit arrival). Shows a single short status

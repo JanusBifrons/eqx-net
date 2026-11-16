@@ -21,7 +21,7 @@
  *
  * WHY THIS LEVEL: which intersections get a label and what number each
  * shows is pure logic with no Pixi/worker seam — exactly the
- * `spriteUpdateDecisions` / `shouldDetachWarpVisual` extraction
+ * `spriteUpdateDecisions` / `LocalBeam` extraction
  * pattern. `computeGridLabels` owns it; `BackgroundGrid` only turns
  * the specs into `Text` nodes.
  *

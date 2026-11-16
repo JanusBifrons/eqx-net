@@ -7,16 +7,6 @@
  * Plan: `~/.claude/plans/i-d-like-you-to-wiggly-puppy.md` §"Sandbox extension".
  */
 
-/** Tuned in M3 — Warp re-enable. */
-export const DEFAULT_WARP_TONING = {
-  spoolCount: 2, // was 4 pre-disable
-  spoolAmplitude: 12, // was 24
-  spoolBrightness: 1.06, // was 1.15
-  climaxAmplitude: 40, // Phase 3 #10 "subtler ripple" (was 70, was 120) — tracks DEFAULT_WARP_PARAMS
-  // bloom removed entirely in WS-14/R2.9 ("remove warp glow")
-  flashAlphaMax: 0.35, // Phase 3 #10 "subtler ripple" (was 0.55, was 0.9) — tracks DEFAULT_WARP_PARAMS
-} as const;
-
 /** Tuned in M4 — Ship destruction. */
 export const DEFAULT_DESTRUCTION_PARAMS = {
   particles: 35,

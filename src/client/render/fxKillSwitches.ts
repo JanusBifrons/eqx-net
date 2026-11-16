@@ -7,8 +7,8 @@
  * FX subsystem against the pre-existing heap leak surfaced in capture
  * `wb1al4` (heap 50→95 MB across 5 min, RAF cascade at ~120 s).
  *
- * - `?nofilters=1` detaches all GPU filters (WarpFilterChain → minimal,
- *   LaserGlow / ShieldAura / DestructionFx skip their filter attaches).
+ * - `?nofilters=1` skips every GPU filter attach (LaserGlow / ShieldAura /
+ *   DestructionFx).
  *   Particles still spawn.
  * - `?noparticles=1` bypasses all particle spawn paths (EngineEmitter,
  *   ImpactSparks, DestructionFx particles). Filters still attach.
