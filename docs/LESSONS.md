@@ -3135,3 +3135,18 @@ Owner: "make it more like micro machines and make fights a bit longer. Also don'
 
 - **Finding:** a capital turret was aimed from the hull pose its ticker read off the SAB, then the shot was cast from a second, later SAB read (`swarmEntitySnapshot`). The physics worker writes the SAB on its own thread, so on a loaded host the second read was a step on: a turning lance's kill follow-through left the kill line by one tick of turn and hit its own wreck (`beamFollowThrough.test.ts`, 1 run in 2 alongside other integration files).
 - **Rule:** a decision and the act it licenses use ONE pose read: pass the pose that was aimed with (or hit-tested against) down to whatever acts on it, never re-read the SAB. To test it deterministically, move the SAB between the two calls in the test (`beamKillBurnsGap.test.ts` "worker step").
+
+## 2026-11-16 — an idle stage filter silently turns off edge smoothing
+
+- **Finding:** desktop frames had no MSAA although the canvas asked for it. The old shader warp chain stayed on `app.stage` after the join curtain; any filter on the stage renders the whole frame into a non-multisampled filter texture, so `antialias: true` did nothing (and the frame paid four invisible passes).
+- **Rule:** nothing idle attaches a filter to `app.stage`. A probe that reads `gl.getParameter(gl.SAMPLES)` and the stage's filter list catches it.
+
+## 2026-11-16 — Pixi v8 filterArea follows the container's transform
+
+- **Finding:** the FXAA pass on `world` did nothing. `filterArea` is in the container's local space and mapped through its `worldTransform`; the camera moves and scales `world`, so `app.screen` landed off screen and Pixi skipped the pass.
+- **Rule:** a screen-space pass over a camera-moved container goes on an unmoved host container around it.
+
+## 2026-11-16 — a uniform's precision must match across shader stages
+
+- **Finding:** with the FXAA filter on, the whole world vanished. Pixi's `defaultFilterVert` declares `uInputSize` with no qualifier (highp in a vertex shader); the fragment shader's default mediump made the program fail to link ("Could not initialize shader").
+- **Rule:** a filter fragment shader declares every uniform it shares with the vertex shader as `highp`. Lock: `render/pixi/FxaaFilter.test.ts`.
