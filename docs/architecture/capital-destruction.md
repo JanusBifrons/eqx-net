@@ -1229,6 +1229,13 @@ break-up:
   number either (`isNoDamageNumberTarget`, both paths): mining is not combat.
   Rock pieces cut from a rock are wreck pieces, covered above. The spark,
   flash and health bar stay.
+- **No damage numbers on swarm targets the client never saw.** A worn-out
+  piece inside a beam turns to a salvage pod on its own spot, and the beam's
+  next pulse kills the pod before any snapshot lists it, so the client cannot
+  tell it was a pod and nothing is drawn there (stern-clip take: a lone "260"
+  in empty space). A hit on a `swarm-<id>` with no swarm-mirror entry (and
+  no ships-mirror entry) gets no number (`isUnseenSwarmTarget`); the spark
+  and flash stay.
 - **The dying-hull hold applies, briefly.** In a room that breaks sub-caps
   (welcome `subcapWrecks`, mirrored to `RenderMirror.subcapWrecks`; slice 2
   sets it), a dying sub-cap's sprite is held until all its pieces draw, with

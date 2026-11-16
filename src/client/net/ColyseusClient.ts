@@ -312,8 +312,8 @@ const NO_LOCKED_BY: ReadonlyArray<{ t: string; s: number; p: number }> = [];
 /** A welcome from a wreck room with no live wreck (slice 3). */
 const NO_WRECK_LIST: readonly import('@shared-types/messages/snapshotMessages').WreckDescriptor[] = [];
 
-export { isNoDamageNumberTarget, isWreckPieceTarget } from './damageNumberTargets.js';
-import { isNoDamageNumberTarget, isWreckPieceTarget } from './damageNumberTargets.js';
+export { isNoDamageNumberTarget, isUnseenSwarmTarget, isWreckPieceTarget } from './damageNumberTargets.js';
+import { isNoDamageNumberTarget, isUnseenSwarmTarget, isWreckPieceTarget } from './damageNumberTargets.js';
 
 export class ColyseusGameClient {
   /**
@@ -2937,8 +2937,12 @@ export class ColyseusGameClient {
     // showed this number (de-dupe: exactly one number per confirmed hit).
     // Everything else in handleDamage stays unconditional — this remains
     // the SOLE HP/HUD/flash/healthbar/hostility authority.
-    if (!suppressNumber && !debris && !isNoDamageNumberTarget(evt.targetId, this.mirror.swarm) && this.mirror.pendingDamageNumbers) {
-      const targetShip = this.mirror.ships.get(evt.targetId);
+    // A swarm target the client never drew (spawned and killed between two
+    // snapshots: the salvage pod a beam wore out of a wreck piece and burned
+    // with its next pulse) gets no number: it would float over empty space.
+    const targetShip = this.mirror.ships.get(evt.targetId);
+    const unseen = targetShip === undefined && isUnseenSwarmTarget(evt.targetId, this.mirror.swarm);
+    if (!suppressNumber && !debris && !unseen && !isNoDamageNumberTarget(evt.targetId, this.mirror.swarm) && this.mirror.pendingDamageNumbers) {
       const x = evt.hitX ?? targetShip?.x ?? 0;
       const y = evt.hitY ?? targetShip?.y ?? 0;
       this.mirror.pendingDamageNumbers.push({ targetId: evt.targetId, x, y, damage: evt.damage });
