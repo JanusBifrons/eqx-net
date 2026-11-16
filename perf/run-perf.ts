@@ -242,6 +242,14 @@ async function runOnce(browser: Browser, arm: Arm, scene: PerfScene, log: (m: st
       if (Date.now() > deadline) throw new Error(`scene ${scene.id} never ended (${JSON.stringify(room?.['scene'])})`);
       await new Promise((r) => setTimeout(r, 500));
     }
+    // The scene ended inside the profile window: keep what was recorded.
+    if (cpuProfile && profileState === 'running') {
+      const { profile } = await cdp.send('Profiler.stop');
+      profileState = 'done';
+      mkdirSync(path.dirname(cpuProfile.out), { recursive: true });
+      writeFileSync(cpuProfile.out, JSON.stringify({ profile }));
+      log(`    cpu profile written (scene ended early): ${cpuProfile.out}`);
+    }
     const client = await page.evaluate(() => (globalThis as unknown as { __eqxPerf: { read(): Promise<any> } }).__eqxPerf.read());
     const s = room!;
     const minutes = Math.max(1e-3, client.elapsedMs / 60_000);

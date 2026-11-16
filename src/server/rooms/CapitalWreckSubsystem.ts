@@ -45,7 +45,7 @@ import type { WreckDescriptor } from '../../shared-types/messages/snapshotMessag
 import { wreckCrackTicks } from '../../shared-types/wreckTiming.js';
 import { WEAPONS, type WeaponId } from '../../core/combat/WeaponCatalogue.js';
 import { shipShapeScale } from '../../core/geometry/shipHullOutline.js';
-import { wreckPieceIntegrity, wreckWearFactor } from '../../core/destruction/wreckIntegrity.js';
+import { wreckPieceIntegrity, wreckSalvageQty, wreckWearFactor } from '../../core/destruction/wreckIntegrity.js';
 import type { BurnLines } from '../../core/destruction/burnLines.js';
 import { WreckResplitter, type WreckPiecePose } from './wreckResplit.js';
 import type { CapitalWreckDeps, LiveWreck, PieceKnock } from './capitalWreckTypes.js';
@@ -516,6 +516,22 @@ export class CapitalWreckSubsystem {
     if (i >= 0) fifo.splice(i, 1);
     if (this.d.isLive(id)) this.d.removePiece(id);
     this.pieceGone(id);
+  }
+
+  /** A live piece's salvage if stored whole: what it would leave as a pod
+   *  when worn out (`wreckSalvageQty` of its mass). 0: not a live piece. */
+  pieceSalvageQty(id: string): number {
+    const k = this.knock.get(id);
+    const wreckId = this.pieceWreck.get(id);
+    const w = wreckId !== undefined ? this.wrecks.get(wreckId) : undefined;
+    return k === undefined || w === undefined ? 0 : wreckSalvageQty(w.chain.root.kindId, k.mass);
+  }
+
+  /** A tractored piece went whole into a hold (`LootSubsystem`'s piece
+   *  store): it leaves exactly like a worn-out piece turning to salvage. */
+  storePiece(id: string): void {
+    if (!this.knock.has(id)) return;
+    this.dropPiece(id, this.live.includes(id) ? this.live : this.liveSubcap);
   }
 
   /** Test seam: a live piece's hidden integrity (undefined: not a piece). */

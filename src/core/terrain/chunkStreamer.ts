@@ -79,23 +79,27 @@ export function fieldRockWakes(other: { fieldRock?: boolean; fieldAwake?: boolea
  *  them. */
 export const MAX_CHUNKS_PER_STEP = 2;
 
-export interface CutFieldHooks {
+/** What the streamer needs of a cut rock: the server's `ChunkRock`, or the
+ *  client's handle into a worker-packed chunk (`packedChunk.ts`). */
+export interface StreamedRock { key: number }
+
+export interface CutFieldHooks<R extends StreamedRock = ChunkRock> {
   /** Visit every ship that should keep rocks loaded (pilots and AI hulls). */
   visitShips(cb: (x: number, y: number) => void): void;
   /** Spawn one rock as a fixed collider; false when no slot is free. */
-  spawnRock(id: string, rock: ChunkRock, cx: number, cy: number): boolean;
+  spawnRock(id: string, rock: R, cx: number, cy: number): boolean;
   /** Quietly remove one rock (no destroy event, no broadcast). */
   removeRock(id: string): void;
   nowMs(): number;
   /** A whole chunk was cut (after its rocks were spawned). Client drawing. */
-  chunkLoaded?(cx: number, cy: number, rocks: readonly ChunkRock[]): void;
+  chunkLoaded?(cx: number, cy: number, rocks: readonly R[]): void;
   /** A whole chunk was dropped (after its rocks were removed). */
   chunkUnloaded?(cx: number, cy: number): void;
   /** Where cut rocks come from. Omitted: `rocksInChunk` inline (server). The
    *  client cuts in a background worker: this returns the chunk once it is
    *  cut, else starts or awaits the cut and returns null (asked again next
    *  step). Same rocks either way (#15). */
-  cutChunk?(cx: number, cy: number): readonly ChunkRock[] | null;
+  cutChunk?(cx: number, cy: number): readonly R[] | null;
 }
 
 interface LoadedChunk { ids: string[]; lastNeededMs: number }
@@ -105,7 +109,7 @@ const pack = (cx: number, cy: number): number => (cx + 32768) * 65536 + (cy + 32
 const unpackX = (k: number): number => Math.floor(k / 65536) - 32768;
 const unpackY = (k: number): number => (k % 65536) - 32768;
 
-export class CutFieldStreamer {
+export class CutFieldStreamer<R extends StreamedRock = ChunkRock> {
   private readonly loaded = new Map<number, LoadedChunk>();
   private readonly needed = new Set<number>();
   /** Counters for perf scenes and tests (counts, never timings). */
@@ -113,7 +117,7 @@ export class CutFieldStreamer {
 
   constructor(
     private readonly field: ChunkOpts,
-    private readonly hooks: CutFieldHooks,
+    private readonly hooks: CutFieldHooks<R>,
     /** Chunks kept loaded around a ship (Chebyshev radius). */
     private readonly wakeChunks = 2,
     private readonly lingerMs = 10_000,
@@ -153,7 +157,8 @@ export class CutFieldStreamer {
       if (have) { have.lastNeededMs = now; continue; }
       if (this.stats.cutsThisStep >= this.maxCutsPerStep) continue;
       const cx = unpackX(key), cy = unpackY(key);
-      const rocks = this.hooks.cutChunk ? this.hooks.cutChunk(cx, cy) : rocksInChunk(this.field, cx, cy);
+      // No cut hook: the server, where R is ChunkRock.
+      const rocks = this.hooks.cutChunk ? this.hooks.cutChunk(cx, cy) : (rocksInChunk(this.field, cx, cy) as readonly StreamedRock[] as readonly R[]);
       if (rocks === null) continue; // still being cut elsewhere
       this.stats.cutsThisStep++;
       const ids: string[] = [];
