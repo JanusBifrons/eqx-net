@@ -12,6 +12,12 @@
  */
 export const FEATURE_TRIGGERS = [
   {
+    // Macro terrain v2: the cut field (flag cutField), both sides cut the same rocks.
+    area: 'cut field',
+    paths: ['src/core/terrain/', 'src/client/net/CutFieldClient', 'src/client/render/field/'],
+    specs: ['cut-field-collision'],
+  },
+  {
     // RTS Part A S1: remote ships' input bits + offsets (held bits every snapshot, absent = idle).
     area: 'remote ship prediction',
     paths: ['src/client/net/snapshotRemoteSync', 'src/client/net/remoteLerpOffsets', 'src/server/net/snapshotScheduler',

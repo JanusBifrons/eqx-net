@@ -721,6 +721,11 @@ gameServer
     maxClients: 4,
   })
   .filterBy(['testId']);
+// Cut field `?room=cut-field-test`: 700 u off a rock (vertex -30120, 26501), facing it at `?initialAngle=2.972` (cut-field-collision.spec).
+gameServer.define('cut-field-test', SectorRoom, {
+  testMode: true, cutField: { seed: 'look' }, asteroidConfig: [], droneCount: 0,
+  defaultSpawnX: -30_002, defaultSpawnY: 27_191, maxClients: 4,
+}).filterBy(['testId']);
 // Gates (plan soft-leaping-truffle v2, phase V) — two powered Shield Gates:
 // west opens for anyone not hostile, east is owner-only (owner `scenario`).
 // Spawn south of a gate with ?spawnX=±400&spawnY=-1300 and fly north.

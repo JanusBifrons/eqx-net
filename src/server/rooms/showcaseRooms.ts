@@ -7,6 +7,7 @@
  * integration test boots EXACTLY the options the server registers.
  */
 import { SCENARIO, STRUCTURE_SCENARIO_PREBUILT } from './scenarioLayouts.js';
+import { CUT_FIELD_LOOK_SEED, SHOWCASE_CUT_FIELD_OPTS } from './showcaseCutFieldRooms.js';
 import { weaponCutsRoomOpts } from './showcaseWeaponCutsRooms.js';
 
 /**
@@ -565,8 +566,12 @@ export const SHOWCASE_HUB_OPTS = {
   maxClients: 4,
 };
 
+/** Cut-field shots: showcaseCutFieldRooms.ts. */
+export { CUT_FIELD_LOOK_SEED, SHOWCASE_CUT_FIELD_OPTS };
+
 /** Room name → options, registered in `index.ts`. */
 export const SHOWCASE_ROOMS = {
+  'showcase-cut-field': SHOWCASE_CUT_FIELD_OPTS,
   'showcase-ship-gallery': SHOWCASE_SHIP_GALLERY_OPTS,
   'showcase-base': SHOWCASE_BASE_OPTS,
   'showcase-defence': SHOWCASE_DEFENCE_OPTS,
