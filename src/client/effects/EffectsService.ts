@@ -44,8 +44,7 @@ import type { Application, Container } from 'pixi.js';
  * service stays Pixi-handle-free at the type level (`unknown` would be too
  * lossy; concrete Pixi types live where the renderer does).
  *
- * M1: shape only; M3 wires `warpChain` and the per-effect modules consume
- * the rest.
+ * The per-effect modules consume these.
  */
 export interface EffectStageRefs {
   /** Pixi v8 `Application`. Used by one-shot filters that attach to app.stage. */
@@ -56,9 +55,6 @@ export interface EffectStageRefs {
   stage: Container;
   /** Camera surface — distance-cull math reads `center` + screen size. */
   camera: unknown;
-  /** Optional direct reference to `WarpFilterChain` so the budget can call
-   *  its `applyQuality(level)` method on tier transitions (added in M3). */
-  warpChain?: { applyQuality: (level: EffectQuality) => void };
   /** Per-frame ship-pose lookup (game-space, Y-up — emitter Y-flips on
    *  write). Returns null if the entity is not in any mirror map. Used
    *  by EngineEmitter to position trails at the ship's stern each tick.
@@ -231,13 +227,12 @@ export class EffectsService implements IEffects {
     // tests that don't supply a metric don't trigger spurious downshifts.
     this.budget.sample({ rendererUpdateMs: rendererUpdateMs ?? 1, dtMs });
 
-    // Propagate tier-change to per-effect dials (warp via warpChain
-    // applyQuality, laser glow via LaserGlow.applyQuality, shield aura
+    // Propagate tier-change to per-effect dials (laser glow via
+    // LaserGlow.applyQuality, shield aura
     // attach/detach). Only fires on actual tier transition.
     const tier = this.getQuality();
     if (tier !== this.lastAppliedTier) {
       this.lastAppliedTier = tier;
-      this.refs.warpChain?.applyQuality(tier);
       this.laserGlow?.applyQuality(tier);
       this.shieldAura.applyQuality(tier);
     }

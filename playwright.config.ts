@@ -85,7 +85,6 @@ const FEATURE_SPECS: string[] = [
   '**/time-scale-chip.spec.ts',
   // Contacts overview: lock far targets from an EVE-style list (O / CONTACTS tab).
   '**/contacts-overview.spec.ts',
-  '**/galaxy-map-no-warp-ripple.spec.ts',
   '**/galaxy-sector-badge-icon-label.spec.ts',
   '**/galaxy-sector-transit-adjacency.spec.ts',
   '**/hover-outline.spec.ts',

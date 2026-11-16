@@ -470,7 +470,6 @@ export class ColyseusGameClient {
     pendingDamageNumbers: [],
     pendingDamageNumberCancels: [],
     pendingHealthBarHits: [],
-    pendingWarpEvents: [],
     pendingMissileExplosions: [],
     pendingEffectTriggers: [],
     pendingLevelUps: [],
@@ -2277,19 +2276,14 @@ export class ColyseusGameClient {
       }
     });
 
-    // Remote-warp visual broadcasts. Both `warp_in` (a ship just arrived
-    // at this sector) and `warp_out` (a ship just left) push a single
-    // entry onto `mirror.pendingWarpEvents` with the world position; the
-    // renderer drains the array each frame and fires `triggerWarpIn`
-    // (the same direction-agnostic flash + burst ripple) at each one.
-    // Local-player events are never reflected here — the server's
-    // `except: client` filter excludes the originating connection.
+    // Warp broadcasts. `warp_in` (a ship just arrived at this sector) and
+    // `warp_out` (a ship just left) are logged for diagnostics; the local
+    // player's own `warp_in` schedules the curtain drop. No renderer visual:
+    // WarpFx draws every ship's warp from the snapshot's warp phase (#16).
     const handleWarpEvent = (msg: WarpInEvent | WarpOutEvent, kind: 'warp_in' | 'warp_out'): void => {
       // Render-jitter-fix Phase 1b (2026-05-21): log every warp event so
       // we can correlate drone-warp triggers with RAF stalls in the
-      // diag capture. PRE-FIX the handler pushed silently into
-      // `pendingWarpEvents` and the renderer drained it — invisible to
-      // diagnostics. Drone warps (Living World hunter migrations) fire
+      // diag capture. Drone warps (Living World hunter migrations) fire
       // these every few seconds; if the per-event renderer cost is what
       // builds the spiral, each event will line up with the next slow
       // RAF in the trace.
@@ -2301,8 +2295,8 @@ export class ColyseusGameClient {
         arrivalTick: typeof arrivalTick === 'number' ? arrivalTick : null,
         isLocal: msg.playerId === this.mirror.localPlayerId,
       });
-      // Plan: crispy-kazoo, Commit 9 — synchronised arrival, split
-      // curtain-drop from warp-in flash.
+      // Plan: crispy-kazoo, Commit 9 — synchronised arrival: the curtain
+      // drops just before the arrival tick.
       //
       // SEQUENCE for the joiner:
       //   T0      receive `warp_in { arrivalTick }`
@@ -2312,9 +2306,8 @@ export class ColyseusGameClient {
       //                                     → useWarpOrchestration calls
       //                                     `renderer.setLoadCurtain(false)`,
       //                                     a 380 ms fade)
-      //   T0+~600ms (= arrivalTick):       warp-in flash fires
-      //                                     (pendingWarpEvents push;
-      //                                     curtain is gone by now)
+      //   T0+~600ms (= arrivalTick):       the ship arrives (WarpFx);
+      //                                     curtain is gone by now
       //
       // The wall-clock-anchored server-tick estimate is mandatory:
       // `this.inputTick` is stuck at welcome's serverTick because
@@ -2337,7 +2330,7 @@ export class ColyseusGameClient {
         const ticksUntilArrival = Math.max(0, arrivalTick - serverTickEstimate);
         const msUntilArrival = ticksUntilArrival * (1000 / 60);
         // 450 ms before arrival → curtain fade-out starts (380 ms fade
-        // + 70 ms slack to ensure it's fully gone before the flash).
+        // + 70 ms slack to ensure it's fully gone before the arrival).
         const CURTAIN_LEAD_MS = 450;
         const msUntilCurtainDrop = Math.max(0, msUntilArrival - CURTAIN_LEAD_MS);
         setTimeout(() => {

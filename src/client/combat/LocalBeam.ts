@@ -1,7 +1,7 @@
 /**
  * Local-player hitscan beam visual decision (pure; the side-effecting
  * `ColyseusClient.sendFire` / renderer defer to these — the
- * `shouldDetachWarpVisual` precedent).
+ * `spriteUpdateDecisions` precedent).
  *
  * Background: see `LocalBeam.test.ts` and diagnostic capture
  * `2026-05-19T10-55-36-274Z-pe6rdt`. The local hitscan beam used to be

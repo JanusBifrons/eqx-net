@@ -96,7 +96,7 @@ export const FEATURE_TRIGGERS = [
     paths: ['src/client/render/galaxy/', 'src/client/components/Galaxy', 'src/client/components/SectorInfoDrawer', 'src/client/app/galaxyOverlay',
       'src/client/app/useGalaxy'],
     specs: ['galaxy-sector-drawer', 'galaxy-map-pan-zoom', 'galaxy-hover-tooltip', 'galaxy-living-map', 'galaxy-landing-reveal',
-      'galaxy-sector-badge-icon-label', 'galaxy-sector-transit-adjacency', 'galaxy-map-no-warp-ripple'],
+      'galaxy-sector-badge-icon-label', 'galaxy-sector-transit-adjacency'],
   },
   {
     area: 'off-screen radar',

@@ -9,12 +9,8 @@
  * need.
  *
  * Ownership note (Invariant #12 — one ownership site per state surface):
- * warp methods (`setWarpMode`, `triggerWarpIn`, `setWarpCenter`,
- * `setLoadCurtain`) live ONLY on `IRenderer`. They are deliberately NOT
- * duplicated on `IFilterEffects`. The `EffectsBudget` controls warp filter
- * detach/attach by holding a direct reference to `WarpFilterChain` and
- * calling its `applyQuality(level)` method (added in M3). One ownership
- * site; no parallel facade.
+ * the load curtain (`setLoadCurtain`) lives ONLY on `IRenderer`; it is
+ * deliberately NOT duplicated on `IFilterEffects`.
  */
 
 /** Quality tier resolved by `EffectsBudget`. Lower tier = more restrictive. */
@@ -138,8 +134,8 @@ export interface IParticleEffects {
 
 /**
  * Filter-side effects: brief Shockwave / flash overlays attached at a world
- * point. Warp is NOT here — warp methods stay on `IRenderer` (one ownership
- * site).
+ * point. The load curtain is NOT here — it stays on `IRenderer` (one
+ * ownership site).
  */
 export interface IFilterEffects {
   /**

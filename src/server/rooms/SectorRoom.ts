@@ -772,7 +772,7 @@ const JOIN_BROADCAST_GRACE_TICKS = 300;
  * 36 ticks @ 60 Hz = 600 ms. Budget breakdown for the joiner:
  *   - ~50 ms broadcast propagation
  *   - ~150 ms loading-active "world emerges" window (curtain held)
- *   - 380 ms curtain fade-out (`WarpFilterChain.setLoadCurtain(false)`)
+ *   - 380 ms curtain fade-out (`LoadCurtain.setLoadCurtain(false)`)
  *   - 20 ms safety
  *   = curtain visibly drops → user sees the world → warp-in flash
  *

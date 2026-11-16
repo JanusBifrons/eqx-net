@@ -5,9 +5,8 @@ import { FxaaFilter } from './pixi/FxaaFilter';
 import type { FleetOverlayModel, FleetOverlayShip, FleetPickKindWire, IRenderer, RenderMirror, RendererFeedback } from '@core/contracts/IRenderer';
 import { GameClock } from '@core/clock/GameClock';
 import { GalaxyMapLayer } from './galaxy/GalaxyMapLayer';
-import { type WarpParams, type WarpCenter, type FrameMarkers } from './worker/protocol';
-import { WarpFilterChain } from './pixi/WarpFilterChain.js';
-import { shouldFireRemoteWarpVisual, remoteWarpEventFires } from './pixi/warpHelpers.js';
+import { type FrameMarkers } from './worker/protocol';
+import { LoadCurtain } from './pixi/LoadCurtain.js';
 import { fillHitTargetSets } from './pixi/hitTargetSets.js';
 import { updateShipSprites, shipSpriteKinds, type ShipSpriteCtx } from './pixi/shipSpriteUpdater.js';
 import { entityPoseFromSprite, type EntityPose } from './pixi/entityPoseFromSprite.js';
@@ -130,22 +129,6 @@ const DEFAULT_GAMEPLAY_ZOOM = 0.5;
 // + width are passed at pool construct time; see `init()`.
 
 /**
- * Load-curtain tween constants. The curtain rises quickly (so the
- * canvas doesn't briefly leak through during the transition into
- * loading) and fades over the same window as `flashDurationMs` so the
- * arrival flash can hide the curtain fade.
- */
-// CURTAIN_* + warp helpers now used inside WarpFilterChain.ts.
-// Re-exported here so existing test imports keep working.
-export {
-  shouldDetachWarpVisual,
-  warpEventFiresBurst,
-  resolveWarpFilterCenter,
-  type WarpBurstEvent,
-} from './pixi/warpHelpers.js';
-// `shouldFireRemoteWarpVisual` is imported above for in-module use (#7); the
-// test imports it directly from `./pixi/warpHelpers`.
-export { shouldFireRemoteWarpVisual };
 
 
 // Sprite/Graphics builders moved to ./pixi/spriteBuilders.ts — pure
@@ -278,38 +261,11 @@ export class PixiRenderer implements IRenderer {
   private connectorRenderer!: ConnectorRenderer;
   /** A3 — visible rect for culling structure sprites (reused per frame). */
   private readonly _swarmViewScratch = new Float64Array(4);
-  /**
-   * Warp-mode render state — the "loading screen" rendered ON the same
-   * canvas as gameplay (no separate Pixi Application). When `warpActive`
-   * is true the renderer attaches a stack of `ShockwaveFilter` instances
-   * to `app.stage`. Each filter advances its `time` uniform on a phase
-   * offset so multiple concentric ripples expand from screen centre
-   * simultaneously, growing in amplitude as warp progress ramps up.
-   *
-   * `warpIntensity` ∈ [0, 1] is the **fade-out scalar** — 1 while warp
-   * is armed and steady, ramping to 0 over `fadeOutMs` after
-   * `setWarpMode(false)`. The amplitude **ramp-up** is separately driven
-   * by `warpStartedAt` over `warpParams.rampMs`.
-   *
-   * Filter array is built lazily on first `setWarpMode(true)` and
-   * preserved across re-entry. Tunable params live in `warpParams`
-   * (defaults from `DEFAULT_WARP_PARAMS`); the visual-effects sandbox
-   * spike posts `SET_WARP_PARAMS` to mutate them live for iteration.
-   *
-   * Why ShockwaveFilter-only: prior 3-filter chain (OldFilm + Shockwave
-   * + RGBSplit) was expensive on mobile because OldFilm regenerates
-   * procedural noise + scratches per-frame. ShockwaveFilter is a single
-   * radial-displacement pass (cheap), so stacking 4 of them costs less
-   * than the prior chain while producing the rippling effect more
-   * directly. GlitchFilter remains unusable in worker context — see
-   * `WarpParams` doc in `worker/protocol.ts`.
-   */
-  /** Warp visual chain (shockwave + bloom + flash + load curtain).
-   *  Extracted to `pixi/WarpFilterChain.ts`. Constructed in `init()`. */
-  private warp!: WarpFilterChain;
+  /** Load curtain (full-canvas dark overlay at join). Constructed in `init()`. */
+  private curtain!: LoadCurtain;
   /** Effects subsystem (plan `wiggly-puppy`). Owns destruction particles,
    *  engine emitters, shield aura, impact sparks, etc. Constructed in
-   *  `init()` AFTER `app`, `world`, `shipContainer`, and `warp` exist.
+   *  `init()` AFTER `app`, `world`, `shipContainer`, and `curtain` exist.
    *  `null` when `?effects=0` escape hatch is active — destruction +
    *  flames then fall back to today's inline Graphics paths. */
   private effects: EffectsService | null = null;
@@ -394,13 +350,6 @@ export class PixiRenderer implements IRenderer {
    *  pointer/wheel handlers route to ITS camera (free pan/zoom of the
    *  galaxy) instead of the world camera. Restored 2026-06-06. */
   private _galaxyLayer: GalaxyMapLayer | null = null;
-  /** #7 — observable outcome of the `pendingWarpEvents` drain, so a test can
-   *  lock the ACTUAL wiring (not just the pure helper): incremented in
-   *  `drainRemoteWarp` when a queued remote-warp event FIRES its ripple
-   *  (`triggerWarpIn`) vs is SUPPRESSED (galaxy map open / burst in flight).
-   *  Exposed via the test seam `debugRemoteWarpCounts()`. */
-  private _remoteWarpFiredCount = 0;
-  private _remoteWarpSuppressedCount = 0;
   private _liveBeamPool: BeamSpritePool | null = null;
   private _remoteBeamPool: BeamSpritePool | null = null;
   /** WS-4 Phase 4 (R2.27) — dedicated pool for the Miner's mining beam
@@ -676,9 +625,9 @@ export class PixiRenderer implements IRenderer {
    * Mutated in place at the tail of `update()` (no per-frame alloc); the
    * worker reads it via `getFrameMarkers()` after `update()` returns and
    * posts a `FRAME_MARKERS` message ONLY when diagnostics are enabled.
-   * `warpTickMs` / `filterCount` are written by the `tickWarpShockwaves`
-   * ticker callback (a separate Pixi ticker, not part of `update()`), so
-   * each `FRAME_MARKERS` carries the most recent warp-tick cost.
+   * `warpTickMs` is written by the `LoadCurtain` ticker callback (a
+   * separate Pixi ticker, not part of `update()`), so each
+   * `FRAME_MARKERS` carries the most recent curtain-tick cost.
    *
    * This is deliberately NOT on `RendererFeedback` — that's a
    * phase-gated closed-set DI contract (see `IRenderer.ts` /
@@ -689,9 +638,6 @@ export class PixiRenderer implements IRenderer {
     rendererUpdateMs: 0,
     spriteCount: 0,
     warpTickMs: 0,
-    filterCount: 0,
-    warpFiltersAttached: false,
-    warpBurstAgeMs: -1,
     gridLabelSpecMs: 0,
     gridTextCreateMs: 0,
     gridCleanupMs: 0,
@@ -891,7 +837,7 @@ export class PixiRenderer implements IRenderer {
     this.world.eventMode = 'none';
     this.app.stage.addChild(this.world);
     // Graphics quality `?aa=fxaa|max`: one FXAA pass over the world (not the
-    // stage, whose filters the warp and destruction effects own). The filter
+    // stage, whose filters the destruction effects own). The filter
     // area is the screen, so Pixi never measures the world's bounds.
     if (this.quality.aa === 'fxaa' || this.quality.aa === 'max') {
       this.world.filters = [new FxaaFilter(this.quality.aa === 'max')];
@@ -919,7 +865,7 @@ export class PixiRenderer implements IRenderer {
     this.setViewSize(initialW, initialH);
 
     // Read the bisected FX kill switches once at init. Threaded into the
-    // warp chain (forceDisable) + EffectsService refs (per-effect bypasses).
+    // EffectsService refs (per-effect bypasses).
     // Plan: melodic-engelbart Step 2.
     // Worker path: the switches arrive on BOOT (no `window` here).
     const fxKillSwitches = this._fxKillSwitches ?? readFxKillSwitches();
@@ -993,21 +939,8 @@ export class PixiRenderer implements IRenderer {
       });
     }
 
-    // Warp visual chain — extracted to `pixi/WarpFilterChain.ts`.
-    // Lazy-builds its stage on first setWarpMode/triggerWarpIn/setLoadCurtain.
-    this.warp = new WarpFilterChain(
-      this.app,
-      this.world,
-      this.camera,
-      (entityId) => {
-        const s = this.sprites.get(entityId);
-        return s ? { x: s.x, y: s.y } : undefined;
-      },
-      this.frameMarkers,
-    );
-    if (fxKillSwitches.filtersDisabled) {
-      this.warp.forceDisable();
-    }
+    // Load curtain — lazy-builds its stage on the first setLoadCurtain.
+    this.curtain = new LoadCurtain(this.app, this.frameMarkers);
 
     // `?cleanworld=1` (showcase capture) drops debug-flavoured world overlays:
     // the spatial grid, turret aim-guides and NPC callsign labels.
@@ -1183,7 +1116,6 @@ export class PixiRenderer implements IRenderer {
         world: this.world,
         stage: this.app.stage,
         camera: this.camera,
-        warpChain: this.warp,
         ...(this._artOpts.fx === true && this._artCtx.art ? { fxGlow: this.fxGlowTexture() } : {}),
         // Per-frame pose lookup. Reads the RENDERED sprite position so
         // it stays in lockstep with whatever frame the engine emitter
@@ -1974,66 +1906,6 @@ export class PixiRenderer implements IRenderer {
     const hit = pickEntityAt(gameX, gameY, this._lastMirror);
     this._hoveredId = hit?.id ?? null;
     return this._hoveredId;
-  }
-
-  /**
-   * #7 — the SINGLE-OWNER drain for `pendingWarpEvents` (remote warp_in/out
-   * broadcasts from the server). Extracted from `update()` so the actual wiring
-   * is unit-lockable headlessly (it needs only `_galaxyLayer`, `warp`,
-   * `triggerWarpIn`, and the counters — no WebGL).
-   *
-   * The WarpFilterChain lives on the shared `app.stage`, and the GalaxyMapLayer
-   * is a child of that same stage, so a remote-warp ripple bleeds across the
-   * galaxy overlay the player is reading. Skip the cosmetic visual entirely
-   * while the map is open (the gameplay scene isn't the focus anyway). Still
-   * drain the queue so it doesn't back up. The fire/skip decision is the shared
-   * pure `remoteWarpEventFires` (galaxy-map gate AND burst-in-flight gate) — the
-   * same function the DEV hook reads, so the hook cannot drift from this drain.
-   */
-  private drainRemoteWarp(mirror: RenderMirror): void {
-    if (!mirror.pendingWarpEvents || mirror.pendingWarpEvents.length === 0) return;
-    const galaxyMapOpen = this._galaxyLayer?.visible === true;
-    const burstInFlight = this.warp.isBurstInFlight();
-    if (remoteWarpEventFires({ galaxyMapOpen, burstInFlight })) {
-      // Fire ONLY the first queued event this frame. Subsequent events get
-      // visually skipped — at 1-2 warps/sec from drones plus a 1.5 s burst
-      // window, the visible duty cycle is close to 100 % anyway, so dropping
-      // 1-2 visuals is invisible to the player but bounds GPU cost.
-      const first = mirror.pendingWarpEvents[0]!;
-      this.triggerWarpIn({ kind: 'world', worldX: first.x, worldY: first.y });
-      this._remoteWarpFiredCount++;
-    } else {
-      this._remoteWarpSuppressedCount++;
-    }
-    mirror.pendingWarpEvents.length = 0;
-  }
-
-  /**
-   * DEV/E2E + test-only (#7): the observable outcome of the `pendingWarpEvents`
-   * drain. `fired` counts events that fired their ripple (`triggerWarpIn`);
-   * `suppressed` counts events skipped (galaxy map open / burst in flight). The
-   * lock that the drain ACTUALLY honours the galaxy-map gate reads these after
-   * driving `drainRemoteWarp` — reverting the gate moves the counter the wrong
-   * way (see `PixiRenderer.warpGalaxyGate.test.ts`).
-   */
-  debugRemoteWarpCounts(): { fired: number; suppressed: number } {
-    return { fired: this._remoteWarpFiredCount, suppressed: this._remoteWarpSuppressedCount };
-  }
-
-  /**
-   * DEV/E2E-only (#7): would a queued REMOTE-warp event fire its ripple right
-   * now, given the live galaxy-map state? Returns the EXACT gate the
-   * `pendingWarpEvents` drain applies (`shouldFireRemoteWarpVisual` against
-   * `_galaxyLayer.visible`), so a spec can assert the warp ripple is suppressed
-   * while the galaxy map is open without injecting a server warp broadcast. This
-   * is the galaxy-map gate ONLY (it ignores the transient burst-in-flight gate)
-   * — it answers "is the map suppressing the ripple", which is what the E2E
-   * checks; it reads the SAME `shouldFireRemoteWarpVisual` the drain composes
-   * into `remoteWarpEventFires`.
-   */
-  devRemoteWarpVisualWouldFire(): boolean {
-    const galaxyMapOpen = this._galaxyLayer?.visible === true;
-    return shouldFireRemoteWarpVisual({ galaxyMapOpen });
   }
 
   /** True while the galaxy layer should swallow gameplay taps — either the
@@ -2834,24 +2706,6 @@ export class PixiRenderer implements IRenderer {
       this.feedback.selectionScreenY = null;
     }
 
-    // Drain remote-warp events (warp_in / warp_out broadcasts from the
-    // server). Each entry fires the same direction-agnostic one-shot
-    // flash + burst ripple at the world point so observers see where
-    // the remote ship arrived / departed. Local-player warps are never
-    // here (server filters with `except: client`).
-    //
-    // Render-jitter-fix Phase 1b (2026-05-21) — only fire ONE warp
-    // visual per RAF, AND only when a burst is not already in flight.
-    // Each `triggerWarpIn` attaches the warp filter chain (shockwave +
-    // bloom + zoom-blur) to `app.stage.filters` and resets
-    // `warpBurstStartedAt`. The 1.5 s burst duration only tears those
-    // filters down via `shouldDetachWarpVisual` IF `warpBurstStartedAt`
-    // ages past `burstDurationMs`. Without this guard, Living World
-    // bot migrations push 1-2 warp events per second; each restarts
-    // the burst timer; filters stay attached indefinitely; GPU runs
-    // the multi-pass filter chain every frame → frame rate collapses
-    // (the late-onset spiral pattern in captures `af742v` / `ecat41`).
-    this.drainRemoteWarp(mirror);
     this._cutField.update(mirror, this._artCtx.sunAz, this.camera.scale.x); // cut-field chunks + view
 
     // Phase 1 — name labels above remote ships and drones (skip self).
@@ -2919,10 +2773,9 @@ export class PixiRenderer implements IRenderer {
     // ---------- F1 frame markers (end-of-frame, worker→main diag) ----------
     // Fold in the grid label-churn split that `BackgroundGrid.update()`
     // recorded earlier this frame (called at ~L1310 via
-    // `this.backgroundGrid?.update(this.camera)`). `warpTickMs` /
-    // `filterCount` are written by the separate `tickWarpShockwaves`
-    // ticker callback. `rendererUpdateMs` closes the bracket opened at
-    // method entry. The worker posts these only when diagnostics are on.
+    // `this.backgroundGrid?.update(this.camera)`). `warpTickMs` is
+    // written by the separate `LoadCurtain` ticker callback. `rendererUpdateMs`
+    // closes the bracket opened at method entry. The worker posts these only when diagnostics are on.
     const grid = this.backgroundGrid?.lastFrameMarkers;
     if (grid) {
       this.frameMarkers.gridLabelSpecMs = grid.labelSpecMs;
@@ -3396,44 +3249,9 @@ export class PixiRenderer implements IRenderer {
     this.app.ticker.maxFPS = fps ?? 0;
   }
 
-  /**
-   * Toggle warp-mode render state. See `IRenderer.setWarpMode`.
-   *
-   * On `active === true`: lazily build a stack of `ShockwaveFilter`
-   * instances and attach to `app.stage`. Records `warpStartedAt` so
-   * the per-frame tick can ramp amplitude from `amplitudeMin` →
-   * `amplitudeMax` over `warpParams.rampMs`. Snaps `warpIntensity` to
-   * 1 (the fade-out scalar).
-   *
-   * On `active === false`: starts the fade-out — `warpIntensity` ramps
-   * to 0 over `warpParams.fadeOutMs`, scaling every filter's amplitude
-   * down in lockstep. When intensity hits 0, filters are detached and
-   * the warp stage hidden (kept around for re-entry).
-   *
-   * Cheap re-entry: subsequent `setWarpMode(true)` calls reuse the
-   * same `ShockwaveFilter` instances.
-   */
-  setWarpMode(active: boolean): void {
-    if (!this.initialized) return;
-    this.warp.setMode(active);
-  }
-
-  triggerWarpIn(center: WarpCenter | null): void {
-    if (!this.initialized) return;
-    this.warp.triggerWarpIn(center);
-  }
-
-  setWarpParams(partial: Partial<WarpParams>): void {
-    this.warp.setWarpParams(partial);
-  }
-
-  setWarpCenter(center: WarpCenter | null): void {
-    this.warp.setWarpCenter(center);
-  }
-
   setLoadCurtain(active: boolean): void {
     if (!this.initialized) return;
-    this.warp.setLoadCurtain(active);
+    this.curtain.setLoadCurtain(active);
   }
 
   /**
@@ -3930,7 +3748,7 @@ export class PixiRenderer implements IRenderer {
     // could land post-destroy and read a null renderer.
     this.initialized = false;
     // Tear down the warp filter chain (removes its ticker handler).
-    this.warp.destroy();
+    this.curtain.destroy();
     // Wipe effects subsystem pools (particles, shock filters, etc.).
     if (this.effects) {
       this.effects.resetForSectorHandoff();
