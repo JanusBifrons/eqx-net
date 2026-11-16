@@ -1,7 +1,9 @@
 /**
- * The dense-nebula volume (look R&D, `?neblook=`): part of `Backdrop`, drawn
- * into its existing nebula containers (behind and in front of the world), in
- * place of the C2 wisp regions while the flag is on. Not a second renderer.
+ * The dense-nebula volume: part of `Backdrop`, drawn into its nebula
+ * containers (behind and in front of the world) in the galaxy's nebula
+ * sectors (`core/galaxy/nebulaField.ts`), faded by how deep in the cloud the
+ * camera is. `?neblook=` forces a look everywhere (look R&D). Not a second
+ * renderer.
  *
  * Depth comes from many layers at different parallax:
  *  - cloud layers behind the world (tiling, additive), far = big and slow,
@@ -106,9 +108,21 @@ export class NebulaVolume {
     return { minView, rot: (order + 1) * 0.9, s, h: art.fx('nebLayer', variant, undefined, false), parallax, zoomPow, texScale, alpha, dvx, dvy, order };
   }
 
-  /** Draw for a camera at Pixi-space (cx, cy). `t` is effects time (s). */
-  update(cx: number, cy: number, zoom: number, W: number, H: number, t: number, q: string): void {
+  /** Remove every sprite (the sector changed). */
+  destroy(): void {
+    for (const l of this.layers) l.s.destroy();
+    for (const n of this.knots) { n.halo.destroy(); n.core.destroy(); }
+    for (const s of this.flashes) s.destroy();
+    for (const p of this.puffs) p.s.destroy();
+    this.layers.length = 0; this.knots.length = 0; this.flashes.length = 0; this.puffs.length = 0;
+  }
+
+  /** Draw for a camera at Pixi-space (cx, cy). `t` is effects time (s);
+   *  `amount` (0..1) is how deep in the cloud the camera is. */
+  update(cx: number, cy: number, zoom: number, W: number, H: number, t: number, q: string, amount = 1): void {
     const st = this.style;
+    const a = Math.max(0, Math.min(1, amount));
+    if (a < 0.01) q = 'off';
     const L = st.layers;
     const maxLayers = q === 'high' ? L : q === 'medium' ? Math.max(2, L - 2) : q === 'low' ? 2 : 1;
     // Keep the nearest glow layers when dropping (they carry the depth cue).
@@ -116,7 +130,7 @@ export class NebulaVolume {
     for (let i = 0; i < this.layers.length; i++) {
       const l = this.layers[i]!;
       const tex = ready(l.h);
-      const on = l.order < 0 ? q !== 'minimal' : l.order >= firstOn;
+      const on = q !== 'off' && (l.order < 0 ? q !== 'minimal' : l.order >= firstOn);
       if (!tex || !on) { l.s.visible = false; continue; }
       if (l.s.texture !== tex) l.s.texture = tex;
       l.s.visible = true;
@@ -129,11 +143,11 @@ export class NebulaVolume {
       l.s.tileScale.set(ts);
       l.s.tileRotation = l.rot;
       l.s.tilePosition.set(wrap(this.xf.x + l.dvx * t * ts, tex.width * ts), wrap(this.xf.y + l.dvy * t * ts, tex.height * ts));
-      l.s.alpha = l.alpha;
+      l.s.alpha = l.alpha * a;
     }
     // Knots: wrap round the camera at mid depth.
     const glow = ready(this.glow), spike = ready(this.spike);
-    const kn = q === 'low' || q === 'minimal' ? this.knots.length >> 1 : this.knots.length;
+    const kn = q === 'off' ? 0 : q === 'low' || q === 'minimal' ? this.knots.length >> 1 : this.knots.length;
     const ks = Math.pow(Math.max(1e-3, zoom), 0.5);
     const KP = (Math.max(W, H) * 1.6) / ks;
     for (let k = 0; k < this.knots.length; k++) {
@@ -147,15 +161,15 @@ export class NebulaVolume {
       if (n.core.texture !== spike) n.core.texture = spike!;
       const hs = (180 + 420 * n.size) * ks;
       n.halo.position.set(x, y); n.halo.scale.set(hs / glow!.width);
-      n.halo.alpha = 0.32 + 0.08 * Math.sin(t * (0.7 + k * 0.13) + k);
+      n.halo.alpha = (0.32 + 0.08 * Math.sin(t * (0.7 + k * 0.13) + k)) * a;
       n.core.position.set(x, y); n.core.scale.set(((14 + 22 * n.size) * Math.max(0.6, ks)) / spike!.width);
-      n.core.alpha = 0.85 + 0.15 * Math.sin(t * (2.1 + k * 0.37) + k * 1.7);
+      n.core.alpha = (0.85 + 0.15 * Math.sin(t * (2.1 + k * 0.37) + k * 1.7)) * a;
     }
     // Lightning: each slot flashes at a seeded rhythm, flickering a few times.
     const rate = st.lightning;
     for (let j = 0; j < this.flashes.length; j++) {
       const s = this.flashes[j]!;
-      if (!(rate > 0) || !glow || q === 'minimal') { s.visible = false; continue; }
+      if (!(rate > 0) || !glow || q === 'minimal' || q === 'off') { s.visible = false; continue; }
       const period = (60 / rate) * this.flashes.length;
       const ph = t + h01(j, st.seed + 900) * period;
       const n = Math.floor(ph / period);
@@ -167,7 +181,7 @@ export class NebulaVolume {
       s.visible = true;
       s.position.set(W * (0.1 + 0.8 * h01(n, st.seed + 902 + j)), H * (0.1 + 0.8 * h01(n, st.seed + 903 + j)));
       s.scale.set((Math.max(W, H) * (0.5 + 0.5 * h01(n, st.seed + 904))) / glow.width);
-      s.alpha = 0.55 * env;
+      s.alpha = 0.55 * env * a;
     }
     // Front puffs, faded round the screen centre (where your ship is).
     const slices = q === 'high' ? st.frontSlices : q === 'medium' ? Math.min(1, st.frontSlices) : 0;
@@ -189,7 +203,7 @@ export class NebulaVolume {
       const rr = Math.hypot(x - W / 2, y - H / 2);
       const k = Math.min(1, Math.max(0, (rr - hole0) / (hole1 - hole0)));
       // Owner (2026-11-16): "more in front": you fly THROUGH it, clear round your ship.
-      pf.s.alpha = (0.38 + 0.32 * st.thickness) * k * k * (3 - 2 * k);
+      pf.s.alpha = (0.38 + 0.32 * st.thickness) * k * k * (3 - 2 * k) * a;
     }
   }
 }
