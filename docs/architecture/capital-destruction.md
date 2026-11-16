@@ -2662,6 +2662,16 @@ may drift back into the beam and take it: that is fine.
   turned or moved the hull under the strip, and a follow-through pulse at
   kill + 1 hit a piece inside the gap (`beamFollowThrough.test.ts` under
   load, about 2 runs in 3).
+- **The pose the shot is cast from.** The same race on the shooter's side:
+  `WeaponMountTicker` aims a capital's mounts from the hull pose it read off
+  the SAB at the start of its tick, and `AiFireResolver.fireMount` casts the
+  shot from that same pose (`fireDroneMount`'s `from`), never a fresh SAB
+  read. The worker steps on its own thread, so a fresh read could be a step
+  on: a turning lance's follow-through left its kill line by one tick of
+  turn (~1.5 u at 4.6 km, past the 1.5 u buffer each side) and stopped on
+  the wreck, 1 run in 2 when other integration files shared the host. Lock:
+  `beamKillBurnsGap.test.ts` "worker step" (the SAB turns between each
+  pulse's aim and its shot).
 - **The banks part.** `wreckBreakKicks` takes the slice line and, in the
   same Gauss–Seidel passes as the seam guard (`partGap`), makes every outline
   point within a strip's width of the line move straight away from it, on
