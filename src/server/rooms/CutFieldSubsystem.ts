@@ -19,6 +19,8 @@ import { rockObstacleParts, type GridObstacle, type ObstacleBox } from '../../co
 import { oreAt, oreSeed, type OreConc } from '../../core/terrain/fieldOre.js';
 import { SLOT_ANGLE_OFF, SLOT_X_OFF, SLOT_Y_OFF, slotBase } from '../../shared-types/sabLayout.js';
 import { SWARM_KIND_DRONE } from '../../shared-types/swarmWireFormat.js';
+import { getShipKind } from '../../shared-types/shipKinds.js';
+import { shipBodyMass } from '../../shared-types/shipScale/tuning.js';
 import {
   MAX_WELCOME_CONSUMED_ROCKS, MAX_WELCOME_MOVED_ROCKS, type FieldConsumedMessage, type FieldMovedMessage, type FieldRockPose,
 } from '../../shared-types/messages/snapshotMessages.js';
@@ -38,6 +40,10 @@ export interface CutFieldRoomHooks {
   evict(rec: SwarmEntityRecord, broadcast: boolean): void;
   /** Send to every client in the room (reliable). */
   broadcast(type: 'field_consumed' | 'field_moved', msg: FieldConsumedMessage | FieldMovedMessage): void;
+  /** The body mass of the pilot ship a contact names (contacts name a
+   *  pilot's hull by playerId); undefined for anything else. A rock wakes
+   *  only to a body at least as heavy (`fieldRockWakes`). */
+  shipMass?(id: string): number | undefined;
   /** The change record's save (C4): a room that persists its sector passes
    *  one; engineering and test rooms without a saved sector pass none. */
   records?: TerrainRecordStore;
@@ -178,13 +184,28 @@ export class CutFieldSubsystem {
     this.hooks.broadcast('field_moved', p ? { k: key, x: p.x, y: p.y, a: p.angle } : { k: key, clear: true });
   }
 
-  /** A fixed field rock wakes when a ship touches it, or when an awake rock
-   *  is driven into it (`fieldRockWakes`); at most `FIELD_WAKES_PER_TICK` a
+  /** A fixed field rock wakes when something at least as heavy touches it
+   *  (a capital on a small rock), or when an awake rock at least as heavy is
+   *  driven into it (`fieldRockWakes`); at most `FIELD_WAKES_PER_TICK` a
    *  tick. Its body turns dynamic and it rides the swarm wire by its rock key
    *  until its chunk unloads. */
   private wake(id: string, otherId: string, closingSpeed: number, tick: number): void {
-    if (!fieldRockWakes(this.registry.get(otherId), closingSpeed)) return;
+    const rec = this.registry.get(id);
+    if (rec?.fieldRock !== true || rec.fieldAwake === true) return;
+    const other = this.registry.get(otherId);
+    if (!fieldRockWakes(fieldRockMass(rec.radius), other, this.massOf(otherId, other), closingSpeed)) return;
     this.wakeRock(id, otherId, tick);
+  }
+
+  /** The body mass of contact party `id` (registry record `rec`, if any): a
+   *  field rock's `fieldRockMass`, an AI hull's or a pilot ship's
+   *  `shipBodyMass`; undefined for anything else (asteroid, scrap, wreck,
+   *  structure), which then never wakes a rock. No allocation. */
+  private massOf(id: string, rec: SwarmEntityRecord | null | undefined): number | undefined {
+    if (rec?.fieldRock === true) return fieldRockMass(rec.radius);
+    if (rec?.kind === SWARM_KIND_DRONE) return shipBodyMass(getShipKind(rec.shipKind ?? null));
+    if (rec) return undefined;
+    return this.hooks.shipMass?.(id);
   }
 
   /** Rock `key` was broken up (its pieces are live wrecks now): it is never
