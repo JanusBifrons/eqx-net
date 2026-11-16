@@ -1696,7 +1696,7 @@ export class ColyseusGameClient {
       // Sub-cap wrecks on: a dying sub-cap's hull is held until its pieces draw.
       this.mirror.subcapWrecks = msg.subcapWrecks === true;
       // Cut field on: cut the same rocks as the server from its seed (#16).
-      this._cutField.setSeed(msg.cutField?.seed ?? null);
+      this._cutField.setSeed(msg.cutField?.seed ?? null, msg.cutField?.consumed);
       // Sub-capital break-up slice 3: the welcome carries the FULL live wreck
       // set (#16); snapshots then carry only adds, removes and a slow resync.
       if (msg.capitalWrecks === true || msg.subcapWrecks === true) {
@@ -2252,6 +2252,7 @@ export class ColyseusGameClient {
     // Coastal defences — a siege shell burst: the same explosion visual, at
     // the size of its blast (the damage arrives as damage events).
     // Shells as events (shell-events.md slice 2a): salvo + hit records.
+    room.onMessage('field_consumed', (raw: unknown) => this._cutField.onConsumedMessage(raw)); // macro terrain C3
     room.onMessage('shell_salvo', (raw: unknown) => {
       if (!this._shellEvents) return;
       const r = ShellSalvoSchema.safeParse(raw);
