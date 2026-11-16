@@ -382,12 +382,13 @@ export const beamCollateralSubcap: Shot = {
       // and train): close in before then.
       if (!closed && Date.now() - t0 >= 4000) {
         closed = true;
-        // The frigate, side-on across the frame: the beams come up from your
+        // The frigate (96 u) side-on, big in the frame (a 2.4 km box hid it
+        // under the 60 u beam's glow, take 17): the beams come up from your
         // capital (off the bottom of the frame), through it, on toward the
         // enemy capital (off the top).
         await ctx.cinema.play([holdOnBox(ctx, {
-          minX: frig.x - 1200, maxX: frig.x + 1200,
-          minY: frig.y - 1500, maxY: frig.y + 1500,
+          minX: frig.x - 300, maxX: frig.x + 300,
+          minY: frig.y - 300, maxY: frig.y + 300,
         }, 3, 2500)]);
       }
       await ctx.sleep(50);
