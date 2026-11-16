@@ -52,17 +52,26 @@ export class FcMountPicker {
   ) {}
 
   /** The lock key mount `def` aims at from ship pose (sx, sy, sAngle), or
-   *  null for no aim; `fallback` when no LOCKED target is visible. */
+   *  null for no aim; `fallback` when the group has no LOCKED target. */
   pick(locks: ReadonlyArray<FcWireLock>, def: FcMountDef, sx: number, sy: number, sAngle: number, fallback: string | null): string | null {
     const keys = this.keys;
     keys.length = 0;
+    // Every LOCKED lock, seen or not, as the server's `pickLocked` (#15): the
+    // salvage decision and piece count read the wire bits, never mirror
+    // presence. A lock outside the mirror gets a NaN pose (never engageable).
     for (const l of locks) {
       if (l.s !== LOCKED || keys.length >= TURRET_PICK_MAX) continue;
-      if (!this.targetPose(l.t, this.pose)) continue;
-      this.x[keys.length] = this.pose.x;
-      this.y[keys.length] = this.pose.y;
+      const sh = this.shapes[keys.length]!;
+      if (this.targetPose(l.t, this.pose)) {
+        this.x[keys.length] = this.pose.x;
+        this.y[keys.length] = this.pose.y;
+        this.targetShape(l.t, sh);
+      } else {
+        this.x[keys.length] = NaN;
+        this.y[keys.length] = NaN;
+        sh.kindId = null; sh.angle = 0; sh.shieldUp = false; sh.radius = 0;
+      }
       this.flags[keys.length] = l.f ?? 0;
-      this.targetShape(l.t, this.shapes[keys.length]!);
       keys.push(l.t);
     }
     if (keys.length === 0) return fallback;

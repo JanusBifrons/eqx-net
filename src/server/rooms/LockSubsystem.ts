@@ -531,17 +531,25 @@ export class LockSubsystem {
     if (ordinal < 0 || !this.deps.shooterPose(playerId, this.shooter)) return undefined;
     const keys = this.pickKeys;
     keys.length = 0;
+    // Every LOCKED lock, as the client's `FcMountPicker` lists the wire locks
+    // (#15): one it can't resolve gets a NaN pose (never engageable), as the
+    // client does for a lock outside its mirror.
     for (const e of g.locks) {
       if (e.stage !== 'locked' || keys.length >= this.pickX.length) continue;
-      if (!this.deps.resolveTarget(playerId, e.target, this.target)) continue;
       this.pickFlags[keys.length] = e.flags;
-      this.pickX[keys.length] = this.target.x;
-      this.pickY[keys.length] = this.target.y;
       const sh = this.pickShapes[keys.length]!;
-      sh.kindId = this.target.ship ? this.target.kindId : null;
-      sh.angle = this.target.angle;
-      sh.shieldUp = this.target.shieldUp;
-      sh.radius = this.target.ship ? 0 : this.target.radius;
+      if (this.deps.resolveTarget(playerId, e.target, this.target)) {
+        this.pickX[keys.length] = this.target.x;
+        this.pickY[keys.length] = this.target.y;
+        sh.kindId = this.target.ship ? this.target.kindId : null;
+        sh.angle = this.target.angle;
+        sh.shieldUp = this.target.shieldUp;
+        sh.radius = this.target.ship ? 0 : this.target.radius;
+      } else {
+        this.pickX[keys.length] = NaN;
+        this.pickY[keys.length] = NaN;
+        sh.kindId = null; sh.angle = 0; sh.shieldUp = false; sh.radius = 0;
+      }
       keys.push(e.target);
     }
     if (keys.length === 0) return undefined;
