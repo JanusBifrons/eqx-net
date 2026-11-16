@@ -9,13 +9,14 @@
  * display pose (`resolveEntityDisplayPose`), anything else interpolated like
  * its sprite. Allocation-free once `out` has grown (#14).
  */
-import type { RenderMirror, SwarmRenderState } from '../../core/contracts/IRenderer.js';
+import type { RenderMirror, ShipRenderState, SwarmRenderState } from '../../core/contracts/IRenderer.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
+import { resolveInstanceMounts } from '../../shared-types/shipKinds/slots.js';
 import { shipShotMuzzle } from '../../core/combat/muzzle.js';
 import { interpolateSwarmPose, type InterpolatedPose } from '../net/swarmInterpolation.js';
 import { resolveEntityDisplayPose } from '../net/swarmDisplayPose.js';
 import type { BeamView } from './BeamSpritePool.js';
-import { TRACTOR_BEAM_STYLE, findMount } from './beamStyles.js';
+import { TRACTOR_BEAM_STYLE } from './beamStyles.js';
 
 const _e: InterpolatedPose = { x: 0, y: 0, angle: 0 };
 const _t: InterpolatedPose = { x: 0, y: 0, angle: 0 };
@@ -27,18 +28,26 @@ function swarmPose(sw: SwarmRenderState, nowMs: number, out: InterpolatedPose): 
 /** A wire ref's drawn pose into `out`, and its ship kind id (undefined: none
  *  known); false when it is not in the mirror. */
 let _kindId: string | undefined;
+/** The emitter's activated latent mounts and DRAWN mount angles (what
+ *  `applyMountAngles` turns the guns by; instance/catalogue order). */
+let _activated: ShipRenderState['activatedMounts'];
+let _angles: readonly number[] | undefined;
 function poseOf(m: Pick<RenderMirror, 'ships' | 'swarm'>, ref: number | string, nowMs: number, out: InterpolatedPose): boolean {
   if (typeof ref === 'number') {
     const sw = m.swarm?.get(ref);
     if (sw === undefined) return false;
     swarmPose(sw, nowMs, out);
     _kindId = sw.shipKind;
+    _activated = undefined;
+    _angles = sw.displayMountAngles ?? sw.mountAngles;
     return true;
   }
   const s = m.ships.get(ref);
   if (s === undefined) return false;
   out.x = s.x; out.y = s.y; out.angle = s.angle;
   _kindId = s.kind;
+  _activated = s.activatedMounts;
+  _angles = s.mountAngles;
   return true;
 }
 
@@ -67,21 +76,28 @@ export function fillTractorBeams(
     if (!poseOf(m, link.target, nowMs, _t)) continue;
     if (!poseOf(m, link.emitter, nowMs, _e)) continue;
     const kind = getShipKind(_kindId ?? null);
-    const mount = findMount(kind.mounts, link.mountId);
-    // The mount's pivot on the drawn hull (no mount: the hull centre).
-    let px = _e.x, py = _e.y;
-    if (mount !== null) {
+    // The same mount list and index the drawn guns use (shipSpriteUpdater /
+    // swarmSpriteUpdater -> applyMountAngles): base mounts, then activated
+    // latent ones. Allocates only on the rare activated path (as the sprite
+    // updater does).
+    const mounts = resolveInstanceMounts(kind, _activated);
+    let mi = -1;
+    for (let i = 0; i < mounts.length; i++) if (mounts[i]!.id === link.mountId) { mi = i; break; }
+    // From the DRAWN barrel tip: the mount's pivot, the gun's own angle and
+    // the shared muzzle (core/combat/muzzle.ts). No mount: the hull centre.
+    let fx = _e.x, fy = _e.y;
+    if (mi >= 0) {
+      const mount = mounts[mi]!;
       const c = Math.cos(_e.angle), s = Math.sin(_e.angle);
-      px += mount.localX * c - mount.localY * s;
-      py += mount.localX * s + mount.localY * c;
+      const px = fx + mount.localX * c - mount.localY * s;
+      const py = fy + mount.localX * s + mount.localY * c;
+      const a = _e.angle + mount.baseAngle + (_angles?.[mi] ?? 0);
+      const muzzle = shipShotMuzzle(kind, mount, typeof link.emitter === 'number');
+      fx = px - Math.sin(a) * muzzle;
+      fy = py + Math.cos(a) * muzzle;
     }
-    let dx = _t.x - px, dy = _t.y - py;
-    const dist = Math.hypot(dx, dy);
-    // Out of the barrel toward the target (the turret is locked on it).
-    const muzzle = mount !== null ? shipShotMuzzle(kind, mount, typeof link.emitter === 'number') : 0;
-    if (dist <= muzzle) continue; // target inside the barrel: nothing to draw
-    dx /= dist; dy /= dist;
-    const fx = px + dx * muzzle, fy = py + dy * muzzle;
+    const dx = _t.x - fx, dy = _t.y - fy;
+    if (!(dx * dx + dy * dy > 0)) continue;
     const line = slot(out, n++);
     line.fromX = fx; line.fromY = fy; line.toX = _t.x; line.toY = _t.y;
     line.style = TRACTOR_BEAM_STYLE; line.alphaMul = 1; line.solidLen = undefined;
