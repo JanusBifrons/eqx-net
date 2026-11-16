@@ -2536,7 +2536,11 @@ line; a railgun kill erases a straight channel as wide as the bolt.
   - **Client.** `destroy` parses through `parseDestroy` (the strict schema;
     malformed dropped with a sampled `destroy_malformed_dropped` log, #3).
     A vaporised death adds its id to `mirror.vaporisedShips` (the same key
-    as `explodingShips`, a one-frame trigger cleared with it). The renderer
+    as `explodingShips`, a one-frame trigger cleared with it). A death held
+    for its drawn shell (`DrawnShellTiming.deferKill`, shell-events.md
+    "Kills wait for the drawn shell") carries `vaporised` on its record and
+    is marked in the frame it is released, never on the deferred destroy
+    (`ColyseusClient.vaporiseDeferredKill.test.ts`). The renderer
     then (a) holds no dying hull for it (`noteDyingHulls` skips it: the
     sub-cap hold used to wait 250 ms for pieces that never come), (b) never
     hands its blast to a wreck break-up (`hullDeathBlastReplaced`), and
