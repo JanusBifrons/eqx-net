@@ -330,15 +330,15 @@ const CACHE = new WeakMap<object, ShipTuning>();
 
 /** Wreck push at the kill point / far from it, per unit of hull radius per
  *  second (`wreckPushMax` / `wreckPushMin`). */
-const WRECK_PUSH_MAX_PER_RADIUS = 0.01;
-const WRECK_PUSH_MIN_PER_RADIUS = 0.004;
+export const WRECK_PUSH_MAX_PER_RADIUS = 0.01;
+export const WRECK_PUSH_MIN_PER_RADIUS = 0.004;
 /** Least parting speed of two neighbouring wreck pieces, per unit of hull
  *  radius per second (`wreckSeparate`). */
-const WRECK_SEPARATE_PER_RADIUS = 0.014;
+export const WRECK_SEPARATE_PER_RADIUS = 0.014;
 /** Wreck crack impulse speed, per unit of hull radius per second (`wreckCrack`). */
-const WRECK_CRACK_PER_RADIUS = 0.0016;
+export const WRECK_CRACK_PER_RADIUS = 0.0016;
 /** Wreck collider inset, per unit of hull radius (`wreckColliderInset`). */
-const WRECK_COLLIDER_INSET_PER_RADIUS = 0.0005;
+export const WRECK_COLLIDER_INSET_PER_RADIUS = 0.0005;
 /** Wreck overkill knock speed / per-hit speed ceiling, per unit of hull
  *  radius per second (`wreckKnockSpeed` / `wreckKnockMax`). */
 const WRECK_KNOCK_PER_RADIUS = 0.012;
