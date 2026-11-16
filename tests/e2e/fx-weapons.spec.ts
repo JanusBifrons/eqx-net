@@ -21,14 +21,17 @@ type Stats = { fxBeam?: boolean; fxProjectiles?: number; fxReady?: number; faile
 // effect textures on the worker pool.
 test.describe.configure({ timeout: 90_000 });
 
-async function join(browser: Browser, shipKind: string, fx: boolean) {
+/** The hostile fighter 150 u ahead (it shoots back, hence the high hull). */
+const AUTO_FIRE_ROOM = { room: 'auto-fire-test', startHostile: '1', initialHull: '5000' };
+
+async function join(browser: Browser, shipKind: string, fx: boolean, room: Record<string, string> = AUTO_FIRE_ROOM) {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
   const page = await ctx.newPage();
   const params = new URLSearchParams({
-    room: 'auto-fire-test', shipKind, initialHull: '5000', testId: randomUUID(),
+    ...room, shipKind, testId: randomUUID(),
     // Lock-to-fire (2026-11-09): AUTO groups fire only at a completed lock;
-    // instantLock makes the lock on the hostile drone complete in ≤ 100 ms.
-    startHostile: '1', instantLock: '1', worker: '0', art: 'machined', zoom: '2',
+    // instantLock makes the lock on the drone complete in ≤ 100 ms.
+    instantLock: '1', worker: '0', art: 'machined', zoom: '2',
   });
   if (fx) params.set('fx', 'new');
   await page.goto(`${BASE_URL}?${params}`);
@@ -83,9 +86,14 @@ test('a beam gets the new glow layer with ?fx=new', async ({ browser }) => {
 });
 
 test('a destroyed drone goes up in the new explosion with ?fx=new (B4)', async ({ browser }) => {
-  const { ctx, page } = await join(browser, 'fighter', true);
-  // The parked drone is hull-exposed; auto-fire kills it. Its death must
-  // play a new explosion, not today's particle burst.
+  // A peaceful hull-exposed heavy 200 u ahead at 1x game speed (the room
+  // drone-destruction.spec uses); `anyTarget` lets AUTO pick it and the
+  // interceptor's beam kills it. Not auto-fire-test: its 10x physics clock
+  // turns the drone's 5 s shield-regen delay into 0.5 s of wall time, so on
+  // a software-GL CI client any fire gap over 0.5 s brings the shield back
+  // and the kill can miss the window (CI 2026-11-15, all three tries).
+  const { ctx, page } = await join(browser, 'interceptor', true, { room: 'combat-drone-test', anyTarget: '1' });
+  // Its death must play a new explosion, not today's particle burst.
   await page.waitForFunction(
     () => ((window as unknown as { __eqxArtStats?: () => { fxExplosions?: number } }).__eqxArtStats?.().fxExplosions ?? 0) > 0,
     undefined, { timeout: 60_000 },

@@ -453,6 +453,19 @@ describe('LockSubsystem', () => {
       expect(h.commits).toEqual([]);
     });
 
+    it('testMode instantLock: a requested lock is LOCKED on the wire at once, never one step at LOCKING 0%', () => {
+      // Showcase review (wreck-resplit take 5): moving the lock to a new wreck
+      // piece flashed a red "LOCKING 0%" ring for the ~0.1 s until the next
+      // lock step, though `instantLock` locks complete at once.
+      const h = harness();
+      h.locks.enable('p1', true);
+      h.targets.set('s:43', rock(200));
+      h.locks.requestLock('p1', 'primary', 's:43');
+      expect(h.locks.wireFor('p1')![0]!.l[0]!.s).toBe(2);
+      expect(h.locks.hasLocked('p1', 'primary')).toBe(true);
+      expect(h.commits).toEqual([]);
+    });
+
     it('a held lock-line terrain lock builds with no failsafe and no hostile act', () => {
       const h = harness();
       h.targets.set('s:42', { ...rock(0), y: 200 });

@@ -126,12 +126,16 @@ export class DisplayPoseHitscan implements PredHitscanWorld {
       bestDist = h.dist;
     }
     const swarm = this.swarm;
-    if (swarm !== undefined && this.movingKeys.size > 0) {
+    if (swarm !== undefined) {
       for (const [entityId, e] of swarm) {
         if (e.kind !== SWARM_KIND_DRONE && e.kind !== SWARM_KIND_SCRAP && e.kind !== SWARM_KIND_WRECK) continue;
         const key = this.keyCache.get(entityId);
-        // Only entities that have a collision body count (as before).
-        if (key === undefined || key === excludeId || !this.movingKeys.has(key)) continue;
+        if (key === undefined || key === excludeId) continue;
+        // Drones and scrap count when they have a collision body (as before).
+        // A wreck piece always does: pieces stream into the predWorld only
+        // near the local ship, but a far one still stops the server's shots
+        // ("wrecks block shots"), so the drawn beam ends on it too.
+        if (e.kind !== SWARM_KIND_WRECK && !this.movingKeys.has(key)) continue;
         const d = rayHitsDrawnSwarmEntity(e, fromX, fromY, dirX, dirY, bestDist, this.wrecks, halfWidth);
         if (d !== null && (bestId === null || d < bestDist)) {
           bestDist = d;

@@ -8,7 +8,7 @@
  * mounts that pass, so both sides use this one function (invariant #15).
  * Pure and allocation-free.
  */
-import { NAVAL_SHELL_WEAPON_IDS } from './shellFlight.js';
+import { isCapitalTurretWeapon } from './WeaponCatalogue.js';
 import { TURRET_FIRE_MISS, TURRET_FIRE_TOLERANCE } from './mountFireControl.js';
 import { mountInReach, type MountRangeTarget } from './mountReach.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
@@ -17,15 +17,18 @@ export const FC_MOUNT_FIRE_TOLERANCE = 0.2;
 
 /**
  * The bearing window for a player mount firing `weaponId` at a target `dist`
- * away. Naval shell guns use the turret rule every NPC capital and coastal gun
- * uses (`mountFireControl`): within TURRET_FIRE_TOLERANCE AND a shot passing
- * within TURRET_FIRE_MISS of the target. A flat 0.2 rad let a player's 16"
+ * away. Capital turret weapons (`isCapitalTurretWeapon`: the naval guns, the
+ * railgun, the heavy beam and the mining laser) use the turret rule every NPC
+ * capital and coastal gun uses (`mountFireControl`): within
+ * TURRET_FIRE_TOLERANCE AND a shot passing within TURRET_FIRE_MISS of the
+ * target's centre (not its hit radius). A flat 0.2 rad let a player's 16"
  * turret fire while still training, ~6 km wide at 30 km (owner, 2026-11-12:
- * "the rear cannons missing by miles"). Everything else keeps
+ * "the rear cannons missing by miles"), and a heavy beam fire 1-3 degrees off
+ * a small wreck piece, its beam running past it. Every other weapon keeps
  * FC_MOUNT_FIRE_TOLERANCE (a fighter's fixed guns fire inside their nose cone).
  */
 export function mountFireTolerance(weaponId: string, dist: number): number {
-  if (!NAVAL_SHELL_WEAPON_IDS.has(weaponId)) return FC_MOUNT_FIRE_TOLERANCE;
+  if (!isCapitalTurretWeapon(weaponId)) return FC_MOUNT_FIRE_TOLERANCE;
   return Math.min(TURRET_FIRE_TOLERANCE, Math.atan2(TURRET_FIRE_MISS, dist));
 }
 

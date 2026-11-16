@@ -14,15 +14,17 @@
  *    derives each piece's inertia from its parts at that density;
  *  - velocity is the rigid-body velocity of the hull at that point
  *    (v + ω × r) and spin is the ship's ω: the pieces hold the hull's shape
- *    for `WRECK_CRACK_MS`. Then the server adds each piece's `kick` (a slow
- *    push away from the kill point, a slow seeded spin, and the least
- *    impulses that make every pair of neighbours part along their shared
- *    cut; owner review 2026-11-13: heavy, and neighbours never overlap or
- *    hinge).
+ *    for `WRECK_CRACK_MS`. Then the server adds each piece's `kick`
+ *    (`wreckBreakKicks`: impulses against the piece's own mass, so a big
+ *    piece parts subtly and a sliver faster, a slow seeded spin, and the
+ *    least impulses that keep every shared cut opening; owner reviews
+ *    2026-11-13 / 2026-11-15: heavy, and neighbours never overlap or hinge).
  *
  * Runs once per death (not hot-loop code); allocates freely.
  */
-import { projectToOutline, CUT_ANGLE_STEPS, FRACTURE_SNAP_CHANCE, EDGE_CUT } from './fractureHull.js';
+import { projectToOutline, FRACTURE_SNAP_CHANCE, EDGE_CUT } from './fractureHull.js';
+import { hullCutAngleOf } from './burnLines.js';
+import type { WreckExtraCut } from '../../shared-types/messages/wreckDescriptor.js';
 import { fracturePiecesToGeometry, wreckRootFracture } from './wreckPieceFrame.js';
 import type { WreckFractureInputs, WreckPieceGeometry } from './wreckPieceFrame.js';
 export type { WreckFractureInputs, WreckPieceGeometry } from './wreckPieceFrame.js';
@@ -30,7 +32,7 @@ import { DESTRUCTION_PROFILES } from '../../shared-types/shipScale/destruction.j
 import { Rng, fnvMixU32 } from '../random/rng.js';
 import { shipHullOutline, shipShapeScale } from '../geometry/shipHullOutline.js';
 import { getShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
-import { shipTuning } from '../../shared-types/shipScale/tuning.js';
+import { shipBodyMass, shipTuning } from '../../shared-types/shipScale/tuning.js';
 import type { Vec2 } from '../swarm/asteroidShape.js';
 import { SUBCAP_WRECK_COLLISION_GROUPS, WRECK_COLLISION_GROUPS } from '../physics/collisionGroups.js';
 
@@ -145,10 +147,17 @@ export interface WreckBuildInput {
   cutKind?: 'slice' | 'channel';
   cutAng?: number;
   cutW?: number;
+  /** v12 multi-cut: the other cutting beams' lines (`BurnLines.extraCuts`),
+   *  copied into the fracture inputs as they are (only with a cut). */
+  extraCuts?: ReadonlyArray<WreckExtraCut>;
 }
 
 export interface WreckPieceSpec {
   index: number;
+  /** Centroid in the ship's scaled math-up frame (the geometry's `cx`,
+   *  `cy`): where the hull's frame sits under the piece. */
+  cx: number;
+  cy: number;
   x: number;
   y: number;
   /** Spawn velocity: the dead hull's rigid motion at this point (v + ω × r),
@@ -203,13 +212,7 @@ export function hullLocalKillPoint(kindId: ShipKindId, pose: WreckDeathPose, wor
  *  integer it returns reaches the fracture, so its trig never has to agree
  *  across engines. */
 export function hullLocalCutAngle(pose: WreckDeathPose, dirWorld: Vec2): number {
-  const c = Math.cos(pose.angle);
-  const sn = Math.sin(pose.angle);
-  const mx = dirWorld.x * c + dirWorld.y * sn;
-  const my = -dirWorld.x * sn + dirWorld.y * c;
-  // Math-up → Pixi-up flips y.
-  const t = Math.atan2(-my, mx) / (2 * Math.PI);
-  return ((Math.round(t * CUT_ANGLE_STEPS) % CUT_ANGLE_STEPS) + CUT_ANGLE_STEPS) % CUT_ANGLE_STEPS;
+  return hullCutAngleOf(pose.angle, dirWorld.x, dirWorld.y);
 }
 
 /** Saturating 0..1 "how violent" from the two damage inputs. */
@@ -358,80 +361,60 @@ function closestTouch(
   return best;
 }
 
-export function buildWreckPieces(input: WreckBuildInput): WreckBuild {
-  const kind = getShipKind(input.kindId);
-  const s = shipShapeScale(kind);
-  const { pose } = input;
-  const c = Math.cos(pose.angle);
-  const sn = Math.sin(pose.angle);
-  const toWorld = (lx: number, ly: number): Vec2 => {
-    // Pixi-up 1× → math-up scaled → world.
-    const mx = lx * s;
-    const my = -ly * s;
-    return { x: pose.x + mx * c - my * sn, y: pose.y + mx * sn + my * c };
-  };
-
-  const target = input.killWorld ?? input.attackerWorld ?? { x: pose.x, y: pose.y };
-  const killLocal = hullLocalKillPoint(input.kindId, pose, target);
-  const killWorldOnHull = toWorld(killLocal.x, killLocal.y);
-
-  const fracture: WreckFractureInputs = {
-    kindId: input.kindId,
-    seed: input.seed >>> 0,
-    killX: killLocal.x,
-    killY: killLocal.y,
-    killBlowDamage: input.killBlowDamage,
-    recentDamageRate: input.recentDamageRate,
-    snapChance: DESTRUCTION_PROFILES[shipTuning(kind).destruction].fracture?.snapChance ?? FRACTURE_SNAP_CHANCE,
-  };
-  // Only a cut kill carries the cut fields (an un-cut wreck's inputs keep
-  // their old shape).
-  if (input.cutKind !== undefined && input.cutAng !== undefined) {
-    fracture.cutKind = input.cutKind;
-    fracture.cutAng = input.cutAng;
-    if (input.cutW !== undefined) fracture.cutW = input.cutW;
-  }
-  const geom = wreckPieceGeometry(fracture);
-
-  // Outward push away from the kill point: fastest there, falling off with
-  // distance, scaled by hull size (#18) and by how violent the death was.
+/**
+ * The break-up kicks of pieces `geom` of one `kindId` hull (dv, dω per piece,
+ * in the ship's scaled math-up frame), for a break at (kx, ky) in that frame.
+ * The ONE break-up kick model: the first break-up (`buildWreckPieces`) and a
+ * worn-out piece's re-split (`planWreckResplit`) both call it.
+ *
+ * Every linear kick is an impulse against the piece's real mass (its share
+ * of `shipBodyMass`, the mass its body gets), like the overkill knock (owner
+ * 2026-11-15: "the scrap/wreck should weigh A LOT ... an accurate mass value
+ * vs the forces applied"), so a heavy piece parts subtly and a sliver faster:
+ *  - the blast: an impulse away from the break point of hull mass ×
+ *    `wreckPushMin/Max` (falling off with distance, × `harder`) × √(the
+ *    piece's mass share). The impulse grows with the piece's size (√area),
+ *    its mass with its area, so dv = push ÷ √share;
+ *  - the crack: an equal and opposite impulse along each shared cut's
+ *    normal of hull mass × `wreckCrack` × (cut length ÷ hull radius), the
+ *    force acting on the cut faces;
+ *  - the guard: the least impulses (mass-weighted, momentum kept) that make
+ *    every cut open at `wreckSeparate` × the profile's `separateScale` or
+ *    more along all of it (spin included), so no seam hinges, slides shut or
+ *    overlaps (owner review 2026-11-13). Gauss–Seidel over the seams; a
+ *    uniform expansion satisfies every seam at once, so the passes converge.
+ * The spin is a slow seeded rim speed (`wreckSeparate` × the rim fractions,
+ * so a big piece turns slower) × the profile's `spinScale`.
+ * `cutGap`: a channel's (or a wide slice's) width, scaled frame (its two
+ * banks part like a shared cut). Once per break (allocates).
+ */
+export function wreckBreakKicks(
+  kindId: ShipKindId, geom: ReadonlyArray<WreckPieceGeometry>, kx: number, ky: number,
+  harder: number, spinSeed: number, cutGap: number,
+): { kvx: Float64Array; kvy: Float64Array; kw: Float64Array } {
+  const kind = getShipKind(kindId);
   const tuning = shipTuning(kind);
-  const harder = 0.75 + 0.5 * violence(input.killBlowDamage, input.recentDamageRate);
-  // The profile's push scale (capital 1: byte-identical; sub-cap gentle).
-  const pushScale = DESTRUCTION_PROFILES[tuning.destruction].pushScale;
-  const pushFar = tuning.wreckPushMin * harder * pushScale;
-  const pushExtra = (tuning.wreckPushMax - tuning.wreckPushMin) * harder * pushScale;
+  const prof = DESTRUCTION_PROFILES[tuning.destruction];
+  const hullMass = Math.max(1e-3, shipBodyMass(kind));
+  const pushFar = tuning.wreckPushMin * harder * prof.pushScale;
+  const pushExtra = (tuning.wreckPushMax - tuning.wreckPushMin) * harder * prof.pushScale;
   const rf = WRECK_PUSH_FALLOFF_FRAC * kind.radius;
   const rf2 = rf * rf;
-  const spinRng = new Rng(fnvMixU32((input.seed >>> 0) ^ 0x3ec7, 0x5));
+  const spinRng = new Rng(spinSeed >>> 0);
   const spinMinR = WRECK_SPIN_MIN_RADIUS_FRAC * kind.radius;
-  // The profile's spin scale (capital 1: byte-identical; a sub-cap's pieces
-  // keep only a lazy tumble, owner on the v5 film 2026-11-13: "they spin too
-  // much when destroyed"). It scales the kick spin below (so the seam pass
-  // sees it) and the dying hull's ω the pieces inherit, with its ω × r.
-  const spinScale = DESTRUCTION_PROFILES[tuning.destruction].spinScale;
-  const hullW = pose.angvel * spinScale;
-
-  // The kicks are built in the ship's scaled math-up frame (the frame the
-  // geometry is in), then turned into the world by the ship's angle. The
-  // pieces' rigid motion (v + ω × r, ω) moves them as one body, so only the
-  // kicks change how neighbours move relative to each other.
-  const kx = killLocal.x * s;
-  const ky = -killLocal.y * s;
   const n = geom.length;
   const kvx = new Float64Array(n);
   const kvy = new Float64Array(n);
   const kw = new Float64Array(n);
   for (let i = 0; i < n; i++) {
     const g = geom[i]!;
-    // Push away from the kill point: fastest there, falling off with
-    // distance, scaled by hull size (#18) and how violent the death was.
     let ox = g.cx - kx;
     let oy = g.cy - ky;
     const ol2 = ox * ox + oy * oy;
     const ol = Math.sqrt(ol2);
-    const near = rf2 / (rf2 + ol2); // 1 at the kill point → 0 far away
-    const push = pushFar + pushExtra * near;
+    const near = rf2 / (rf2 + ol2); // 1 at the break point → 0 far away
+    // Impulse hullMass × push × √share over mass share × hullMass.
+    const push = (pushFar + pushExtra * near) / Math.sqrt(Math.min(1, g.mass / hullMass));
     if (ol > 1e-6) {
       ox /= ol;
       oy /= ol;
@@ -441,30 +424,33 @@ export function buildWreckPieces(input: WreckBuildInput): WreckBuild {
     }
     kvx[i] = ox * push;
     kvy[i] = oy * push;
-    // Spin: a slow rim speed, fastest near the kill point, seeded size
+    // Spin: a slow rim speed, fastest near the break point, seeded size
     // (0.55–1×) and direction; a bigger piece turns slower.
     const u = spinRng.u32() / 4294967296;
     const rim = tuning.wreckSeparate * (WRECK_SPIN_RIM_FAR + (WRECK_SPIN_RIM_NEAR - WRECK_SPIN_RIM_FAR) * near) * (0.55 + 0.9 * Math.abs(u - 0.5));
-    const mag = (rim / Math.max(g.radius, spinMinR)) * spinScale;
+    const mag = (rim / Math.max(g.radius, spinMinR)) * prof.spinScale;
     kw[i] = u < 0.5 ? -mag : mag;
   }
 
-  // Part every pair of neighbours. The push is fastest at the kill point, so
-  // a piece nearer it chases the slower neighbour beyond it along the same
-  // line, and the spins turn long pieces into each other (owner review
-  // 2026-11-13: pieces "slide over each other", a "V" hinge at a stern seam).
-  // Each shared cut must open at `wreckSeparate` or more at BOTH ends (so
-  // along all of it, spin included); where it doesn't, an equal and opposite
-  // push along the cut's normal (momentum kept) makes up the difference.
-  // Gauss–Seidel over the seams; a uniform expansion satisfies every seam at
-  // once, so the passes converge.
-  // The profile's seam scale (capital 1: byte-identical; a sub-cap's cracks
-  // open wide enough to read at fleet zoom). The spin above keeps the raw
-  // `wreckSeparate`.
-  const sep = tuning.wreckSeparate * DESTRUCTION_PROFILES[tuning.destruction].separateScale;
-  // A channel's (or a wide slice's) two banks part like a shared cut (its
-  // width, scaled frame).
-  const seams = findSeams(geom, fracture.cutKind !== undefined ? (fracture.cutW ?? 0) * s : 0);
+  const seams = findSeams(geom, cutGap);
+  // The crack: each shared cut throws its two faces apart.
+  const crackPerLength = (hullMass * tuning.wreckCrack * prof.crackScale) / kind.radius;
+  for (const sm of seams) {
+    const len = Math.sqrt((sm.bx - sm.ax) ** 2 + (sm.by - sm.ay) ** 2);
+    const imp = crackPerLength * len;
+    const wi = 1 / geom[sm.i]!.mass;
+    const wj = 1 / geom[sm.j]!.mass;
+    kvx[sm.i] = kvx[sm.i]! - sm.nx * imp * wi;
+    kvy[sm.i] = kvy[sm.i]! - sm.ny * imp * wi;
+    kvx[sm.j] = kvx[sm.j]! + sm.nx * imp * wj;
+    kvy[sm.j] = kvy[sm.j]! + sm.ny * imp * wj;
+  }
+
+  // The guard. The push is fastest at the break point, so a piece nearer it
+  // chases the slower neighbour beyond it along the same line, and the spins
+  // turn long pieces into each other (owner review 2026-11-13: pieces "slide
+  // over each other", a "V" hinge at a stern seam).
+  const sep = tuning.wreckSeparate * prof.separateScale;
   for (let it = 0; it < SEPARATE_ITERATIONS; it++) {
     let worst = 0;
     for (const sm of seams) {
@@ -509,6 +495,56 @@ export function buildWreckPieces(input: WreckBuildInput): WreckBuild {
     }
     if (worst === 0) break;
   }
+  return { kvx, kvy, kw };
+}
+
+export function buildWreckPieces(input: WreckBuildInput): WreckBuild {
+  const kind = getShipKind(input.kindId);
+  const s = shipShapeScale(kind);
+  const { pose } = input;
+  const c = Math.cos(pose.angle);
+  const sn = Math.sin(pose.angle);
+  const toWorld = (lx: number, ly: number): Vec2 => {
+    // Pixi-up 1× → math-up scaled → world.
+    const mx = lx * s;
+    const my = -ly * s;
+    return { x: pose.x + mx * c - my * sn, y: pose.y + mx * sn + my * c };
+  };
+
+  const target = input.killWorld ?? input.attackerWorld ?? { x: pose.x, y: pose.y };
+  const killLocal = hullLocalKillPoint(input.kindId, pose, target);
+  const killWorldOnHull = toWorld(killLocal.x, killLocal.y);
+
+  const fracture: WreckFractureInputs = {
+    kindId: input.kindId,
+    seed: input.seed >>> 0,
+    killX: killLocal.x,
+    killY: killLocal.y,
+    killBlowDamage: input.killBlowDamage,
+    recentDamageRate: input.recentDamageRate,
+    snapChance: DESTRUCTION_PROFILES[shipTuning(kind).destruction].fracture?.snapChance ?? FRACTURE_SNAP_CHANCE,
+  };
+  // Only a cut kill carries the cut fields (an un-cut wreck's inputs keep
+  // their old shape).
+  if (input.cutKind !== undefined && input.cutAng !== undefined) {
+    fracture.cutKind = input.cutKind;
+    fracture.cutAng = input.cutAng;
+    if (input.cutW !== undefined) fracture.cutW = input.cutW;
+    if (input.extraCuts !== undefined && input.extraCuts.length > 0) fracture.extraCuts = input.extraCuts;
+  }
+  const geom = wreckPieceGeometry(fracture);
+
+  // The parting kicks: impulses against each piece's own mass
+  // (`wreckBreakKicks`), harder for a more violent death.
+  const harder = 0.75 + 0.5 * violence(input.killBlowDamage, input.recentDamageRate);
+  // The profile's spin scale also takes the dying hull's ω the pieces inherit.
+  const hullW = pose.angvel * DESTRUCTION_PROFILES[shipTuning(kind).destruction].spinScale;
+  const n = geom.length;
+  const { kvx, kvy, kw } = wreckBreakKicks(
+    input.kindId, geom, killLocal.x * s, -killLocal.y * s, harder,
+    fnvMixU32((input.seed >>> 0) ^ 0x3ec7, 0x5),
+    fracture.cutKind !== undefined ? (fracture.cutW ?? 0) * s : 0,
+  );
 
   const pieces: WreckPieceSpec[] = [];
   for (let i = 0; i < n; i++) {
@@ -519,6 +555,8 @@ export function buildWreckPieces(input: WreckBuildInput): WreckBuild {
     const ry = centre.y - pose.y;
     pieces.push({
       index: g.index,
+      cx: g.cx,
+      cy: g.cy,
       x: centre.x,
       y: centre.y,
       vx: pose.vx - hullW * ry,
