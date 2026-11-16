@@ -22,6 +22,7 @@ import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import { getShipKind, type WeaponMount } from '../../../src/shared-types/shipKinds.js';
 import { LOCK_SALVAGE, lockTierBits } from '../../../src/core/combat/turretLockPick.js';
 import { mountTier } from '../../../src/core/combat/salvageTargeting.js';
+import { getHoldStore } from '../../../src/server/db/PersistenceWorker.js';
 
 interface SnapGroups { id: string; m: number; l: Array<{ t: string; s: number; p: number; f?: number }> }
 const WRECK_KIND = 4;
@@ -65,6 +66,12 @@ describe('SectorRoom integration — salvage lock bits gate the mining laser', (
     for (const t of ['damage', 'laser_fired', 'swarm', 'destroy']) client.onMessage(t, () => {});
     const room = harness.getServerRoom() as unknown as SectorRoom;
     const int = (): SectorRoom['_internals'] => room._internals;
+    // A full hold: a ship with a mining tool would otherwise take this AA-size
+    // crumb straight in on touch (the factory line: consumable, nothing aims at it).
+    for (const [id, s] of room.state.ships) {
+      if (s.playerId !== pid) continue;
+      getHoldStore().put({ holderUid: id, holderType: 'ship', ownerId: pid, sectorKey: 'sol-prime', x: null, y: null, hold: { goods: { salvage: 1_000_000 }, blueprints: [] }, expiresAt: null }, false);
+    }
 
     // A fighter dead ahead (+y forward) broken into wreck pieces by a heavy bolt.
     expect(int().spawnTestDrone('f1', 0, 700, 'fighter')).toBe(true);

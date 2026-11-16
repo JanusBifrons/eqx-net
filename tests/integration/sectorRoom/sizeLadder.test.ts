@@ -2,11 +2,14 @@
  * The size ladder (owner 2026-11-16, plan partitioned-chasing-lark), through
  * the real room: every salvage piece carries its size tier on the wire lock
  * (`f`, `lockTierOf`: the smallest mount size whose tractor pulls it, from
- * its mass alone), and a mining laser cuts only pieces ABOVE its own size. Two
- * laser sizes on one ship, both groups locked on one rock: the XL laser cuts
- * the whole rock (no tractor pulls it), the locks follow its pieces, and
- * those pieces (light enough for a tractor, heavier than an AA one pulls)
- * the XL laser leaves while the AA laser cuts them.
+ * its mass alone), and a mining laser fires only at the MATCHING size (owner
+ * 2026-11-16): a size-k laser cuts tier k+1 pieces, an XL laser a whole
+ * rock (tier none), and when the ship has no laser of the size a piece
+ * needs, its next smaller laser stands in. Two laser sizes on one ship, both
+ * groups locked on one rock: the XL laser cuts the whole rock (no tractor
+ * pulls it), the locks follow its pieces, and those pieces (light enough for
+ * a tractor, heavier than an AA one pulls) the XL laser leaves while the AA
+ * laser, standing in for the S/M/L sizes the ship lacks, cuts them.
  *
  * No ship kind carries mining lasers of two sizes yet (the barge): a gunship
  * with its `forward` gun swapped to an XL mining laser and its `rear` gun to
@@ -107,7 +110,7 @@ describe('SectorRoom integration — the size ladder: laser sizes work pieces by
     expect([...acks].filter(([id, rej]) => id.startsWith('x') && !rej), 'the XL laser leaves tractor-sized pieces').toEqual([]);
     expect(wear(), 'no wear from the XL laser').toBe(wear0);
 
-    // 3. The AA laser, on the same pieces, cuts them.
+    // 3. The AA laser (the ship's next smaller size), on the same pieces, cuts them.
     for (let i = 0; i < 12 && wear() === wear0; i++) { fire(`a${i}`, 'aft'); await new Promise((r) => setTimeout(r, 120)); }
     await waitUntil(() => wear() !== wear0, 4_000, 'the AA laser cuts a piece');
     expect([...acks].some(([id, rej]) => id.startsWith('a') && !rej), 'the AA laser fires').toBe(true);

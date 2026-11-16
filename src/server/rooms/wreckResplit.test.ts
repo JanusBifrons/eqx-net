@@ -18,6 +18,7 @@ function make(kind: ShipKindId = 'battleship') {
   const spawned = new Map<string, WreckPieceSpawn>();
   const live = new Set<string>();
   const drops: Array<{ qty: number; x: number; y: number }> = [];
+  const splits: Array<{ from: string; ids: string[]; pods: number }> = [];
   const sys = new CapitalWreckSubsystem({
     serverTick: () => tick,
     wreckKindOf: (id) => (id === 'cap' ? kind : null),
@@ -32,7 +33,8 @@ function make(kind: ShipKindId = 'battleship') {
       const s = spawned.get(id);
       return s !== undefined && live.has(id) ? { x: s.x, y: s.y, vx: s.vx, vy: s.vy, angle: s.angle, angvel: s.angvel } : null;
     },
-    dropSalvage: (qty, x, y) => { drops.push({ qty, x, y }); },
+    dropSalvage: (qty, x, y) => { drops.push({ qty, x, y }); return `pod-${drops.length}`; },
+    pieceSplit: (from, ids, _m, pods) => { splits.push({ from, ids: [...ids], pods: pods ?? 0 }); },
   });
   sys.forcedSeed = 11;
   const pose = { x: 1000, y: -500, vx: 3, vy: 1, angle: 0.7, angvel: 0.01 };
@@ -40,7 +42,7 @@ function make(kind: ShipKindId = 'battleship') {
   // Past any crack hold.
   tick += 10_000;
   return {
-    sys, spawned, live, drops,
+    sys, spawned, live, drops, splits,
     nextTick: () => { tick++; },
     livePieces: () => [...live],
     biggest: () => [...live].reduce((a, b) => (spawned.get(b)!.mass > spawned.get(a)!.mass ? b : a)),
@@ -186,5 +188,13 @@ describe('wreck re-split (server)', () => {
     expect(a.live.has(id)).toBe(false);
     expect(a.drops.length).toBe(1);
     expect(a.sys.descriptors().every((d) => d.parentWreck === undefined)).toBe(true);
+  });
+
+  it('a piece worn out into a pod hands its locks on to the pod (lineage: the tractors follow it)', () => {
+    const a = make('fighter');
+    const id = a.biggest();
+    a.sys.subcapCapOverride = a.sys.liveSubcapCount();
+    asMiner(() => hit(a.sys, a.spawned.get(id)!, a.sys.pieceIntegrity(id)! + 1));
+    expect(a.splits).toEqual([{ from: id, ids: ['pod-1'], pods: 1 }]);
   });
 });

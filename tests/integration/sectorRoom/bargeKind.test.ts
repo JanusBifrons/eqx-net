@@ -40,8 +40,9 @@ describe('SectorRoom integration — the mining barge kind', () => {
     for (const [id, s] of room.state.ships) if (s.playerId === pid && s.isActive) { shipId = id; expect(s.kind).toBe('barge'); }
     expect(shipId).not.toBe('');
 
-    // A rock abeam each side for the lasers, clear of the hull, inside every
-    // laser's reach; and a wreck piece abeam each side for the tractors (a
+    // A rock off each bow for the lasers, clear of the hull, inside the bow
+    // XL lasers' arc and reach (a whole field rock is tier none: only the
+    // matching size, XL, cuts it); and a wreck piece abeam each side for the tractors (a
     // fighter broken by a heavy bolt: light enough for any tractor on the
     // size ladder; a whole field rock is never towed).
     const kind = getShipKind('barge');
@@ -50,7 +51,7 @@ describe('SectorRoom integration — the mining barge kind', () => {
     let rockId = '';
     for (const side of [1, -1]) {
       const id = `rock-${side > 0 ? 'p' : 'n'}`;
-      expect(int().spawnTestAsteroid(id, side * (edge + 700), 1500, 60)).toBe(true);
+      expect(int().spawnTestAsteroid(id, side * (edge + 700), 4000, 60)).toBe(true);
       rockId ||= id;
       expect(int().spawnTestDrone(`f-${id}`, side * (edge + 700), 0, 'fighter')).toBe(true);
     }
@@ -104,8 +105,8 @@ describe('SectorRoom integration — the mining barge kind', () => {
     const rock = int().swarmRegistry.get(rockId)!;
     const pool0 = rock.resources!;
     harness.lockTarget(pid, rockId, 'laser');
-    for (let i = 0; i < 10; i++) { fire('laser'); await harness.advance(100); }
-    int().pulseStructureGrid();
+    // The XL lasers slew slowly (0.18 rad/s) onto it: fire until the pulse draws ore.
+    for (let i = 0; i < 80; i++) { fire('laser'); await harness.advance(100); int().pulseStructureGrid(); if (rock.resources! < pool0) break; }
     const drawn = pool0 - rock.resources!;
     expect(drawn, 'the mining lasers hit the rock').toBeGreaterThan(0);
     expect(getHoldStore().get(shipId)?.hold.goods.minerals ?? 0).toBe(drawn);

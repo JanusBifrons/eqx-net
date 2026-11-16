@@ -9,7 +9,10 @@
  * Piece store: a wreck piece the beam pulls into the same zone goes WHOLE into
  * the emitter's hold as the salvage it would leave when worn out (one
  * `HoldStore` commit), and leaves through the wreck system's removal path; a
- * hold without room for all of it leaves the piece in the beam, no pod.
+ * hold without room for all of it leaves the piece in the beam, no pod. A
+ * crumb the ship could take in whole is never towed (the factory line:
+ * nothing targets a consumable piece), so the piece is hauled into the zone
+ * with a full hold, and goes in once room frees up while the beam holds it.
  *
  * No ship kind carries a tractor yet (the barge is PR 15), so the test swaps
  * the interceptor's mounts to `tractor` in-process and restores them after
@@ -171,14 +174,25 @@ describe('SectorRoom integration — tractor hold-zone pickup', () => {
   }
 
   it('a wreck piece tractored into the hold zone is stored whole: hold gains its salvage in one commit, the piece is gone', async () => {
-    const s = await setup();
+    const cap = cargoCapacityForMaxHealth(getShipKind('interceptor'));
+    const s = await setup({ goods: { salvage: cap }, blueprints: [] }); // full: the crumb is not consumable, so the beam tows it
     const id = s.shipId();
     const piece = await smallPiece(s);
     const qty = s.int().wreckSalvage(piece);
     expect(qty, 'the piece is worth salvage').toBeGreaterThan(0);
+    let inZone = false;
+    await tractorUntil(s, piece, () => {
+      const w = s.int().wreckState(piece);
+      const me = s.int().playerPose(s.pid);
+      inZone = w !== null && me !== null && me !== undefined && Math.hypot(w.x - me.x, w.y - me.y) < HOLD * TRACTOR_PICKUP_HOLD_MUL - 40;
+      return inZone;
+    }, 6_000);
+    expect(inZone, 'the beam pulled the piece into the hold zone').toBe(true);
+    // Room frees up while the beam holds it there.
+    getHoldStore().put({ holderUid: id, holderType: 'ship', ownerId: s.pid, sectorKey: 'sol-prime', x: null, y: null, hold: { goods: {}, blueprints: [] }, expiresAt: null }, false);
     const commits = countCommits(id);
     try {
-      const stored = await tractorUntil(s, piece, () => s.int().swarmRegistry.get(piece) == null, 8_000);
+      const stored = await until(() => s.int().swarmRegistry.get(piece) == null, 3_000);
       expect(stored, 'the tractored piece reached the hold zone and was stored').toBe(true);
       expect(getHoldStore().get(id)?.hold.goods.salvage).toBe(qty);
       expect(commits.n, 'one atomic commit into the hold').toBe(1);
