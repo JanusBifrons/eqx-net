@@ -31,6 +31,7 @@ import { GalaxyMapLayer } from '../galaxy/GalaxyMapLayer';
 import type { MainToWorkerMsg, WorkerToMainMsg } from './protocol';
 import { rendererArgsFromBoot } from './bootRenderer';
 import { SwarmMirrorReplica } from './swarmMirrorDelta';
+import { setBeamLooks } from '../beamStyles';
 
 function post(msg: WorkerToMainMsg, transfer?: Transferable[]): void {
   // `self` is typed as Window here (DOM lib); the worker overload takes a
@@ -72,6 +73,7 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
   try {
     switch (msg.type) {
       case 'BOOT': {
+        if (msg.beamLooks !== undefined) setBeamLooks(msg.beamLooks);
         renderer = new PixiRenderer(...rendererArgsFromBoot(msg));
         await renderer.init({
           canvas: msg.canvas,

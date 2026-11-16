@@ -137,29 +137,108 @@ export const HEAVY_BEAM_STYLE: BeamSpriteStyle = {
  *  thinner than the heavy beam's 12, still visible at capital zoom. */
 export const MINING_LASER_MIN_SCREEN_PX = 5;
 
+/** The mining laser's deep orange: its glowing edge, and the colour look B
+ *  lights the rock with (`MINING_LASER_LINE_LIGHT`). */
+export const MINING_LASER_DEEP_COLOR = 0xff8a1e;
+
+/**
+ * The mining laser across its width, in the Miner's drill-beam colours
+ * (`MINING_BEAM_STYLE`'s amber): a white-hot core, through pale gold, to the
+ * Miner amber body, opaque out to the core width (`at` 1 / span), then a soft
+ * deep-orange glow fading to nothing. The heavy beam's recipe, in amber.
+ */
+export const MINING_LASER_CROSS_SECTION: BeamCrossSection = {
+  span: 1.8,
+  stops: [
+    { at: 0, color: 0xffffff, alpha: 1 },
+    { at: 0.12, color: 0xfff4d6, alpha: 1 },
+    { at: 0.3, color: 0xffd27a, alpha: 1 },
+    { at: 0.5, color: MINING_BEAM_STYLE.tint, alpha: 1 },
+    { at: 0.56, color: MINING_LASER_DEEP_COLOR, alpha: 0.9 },
+    { at: 0.78, color: 0xff7414, alpha: 0.35 },
+    { at: 1, color: 0xe05a10, alpha: 0 },
+  ],
+};
+
+/** Mining laser look B (`?minerBeam=b`): it also lights the rock and the
+ *  barge's hull along its length, like the heavy beam but smaller, in amber. */
+export const MINING_LASER_LINE_LIGHT: BeamLineLight = {
+  color: MINING_LASER_DEEP_COLOR, hitIntensity: 3, hitReach: 300, hitZ: 80,
+  intensity: 1.5, spacing: 600, reach: 650, z: 250,
+};
+
 /** The mining laser (`mining_laser` mounts; plan partitioned-chasing-lark
  *  PR 7): the Miner's drill-beam colours (`MINING_BEAM_STYLE`, so a player
  *  reads "mining", not "attack") at capital scale: core `MINING_LASER_WIDTH`
- *  wide, the strip its slice erases. Solid to the hit point (no taper), drawn
- *  by the same remote pool as every other beam (a per-beam style). */
+ *  wide, the strip its slice erases, drawn with `MINING_LASER_CROSS_SECTION`
+ *  (`tint` colours the `?fx=new` glow). Solid to the hit point (no taper),
+ *  drawn by the same remote pool as every other beam (a per-beam style).
+ *  Look A (default): the default beam lights (a hit spot, a soft middle). */
 export const MINING_LASER_STYLE: BeamSpriteStyle = {
-  ...MINING_BEAM_STYLE, width: MINING_LASER_WIDTH, taper: false, minScreenPx: MINING_LASER_MIN_SCREEN_PX,
+  ...MINING_BEAM_STYLE, width: MINING_LASER_WIDTH, taper: false, glowScale: 1.5,
+  minScreenPx: MINING_LASER_MIN_SCREEN_PX, crossSection: MINING_LASER_CROSS_SECTION,
 };
+
+/** Mining laser look B (`?minerBeam=b`): look A that lights along its length. */
+export const MINING_LASER_LIT_STYLE: BeamSpriteStyle = { ...MINING_LASER_STYLE, lineLight: MINING_LASER_LINE_LIGHT };
 
 /** The tractor beam's pale blue (salvage plan PR 11b). */
 export const TRACTOR_BEAM_COLOR = 0xa8d4ff;
 
-/** The tractor beam's line (owner 2026-11-15: "a faint, thin, pale-blue line
- *  from the barrel to the target … subtle, not a weapon beam"): flat (no
- *  taper: it holds its target, it does not fade out at range), low alpha,
- *  a hair wide at any zoom. Drawn by its own `BeamSpritePool`, unfiltered
- *  (no glow, no lights): `render/tractorBeams.ts`. */
-export const TRACTOR_BEAM_STYLE: BeamSpriteStyle = { tint: TRACTOR_BEAM_COLOR, width: 1, alpha: 0.3, minScreenPx: 1.25 };
+/** The tractor beam's core width (world u): two thirds of the mining laser's,
+ *  so it reads as a beam, lighter than the cutting beam beside it. */
+export const TRACTOR_BEAM_WIDTH = MINING_LASER_WIDTH * (2 / 3);
 
-/** The soft rings travelling along a tractor line toward its emitter (the
- *  direction of pull): short bars across the line, a little brighter than
- *  the line, faded in and out along it (`BeamView.alphaMul`). */
-export const TRACTOR_PULSE_STYLE: BeamSpriteStyle = { tint: 0xd2e8ff, width: 1, alpha: 0.55, minScreenPx: 2 };
+/**
+ * The tractor beam across its width (owner 2026-11-16: "style it like a beam
+ * weapon, just with a blue glow"): a white core through the tractor's pale
+ * blue to a wide, soft blue glow (`span` 2.4: more glow than body, where the
+ * mining laser is mostly body).
+ */
+export const TRACTOR_BEAM_CROSS_SECTION: BeamCrossSection = {
+  span: 2.4,
+  stops: [
+    { at: 0, color: 0xffffff, alpha: 1 },
+    { at: 0.14, color: 0xe4f2ff, alpha: 1 },
+    { at: 0.32, color: TRACTOR_BEAM_COLOR, alpha: 0.95 },
+    { at: 0.42, color: 0x6cb4ff, alpha: 0.75 },
+    { at: 0.65, color: 0x3d8cff, alpha: 0.3 },
+    { at: 1, color: 0x2a6cf0, alpha: 0 },
+  ],
+};
+
+/** The tractor beam: drawn like a beam weapon (a baked cross-section, solid
+ *  from the barrel to the target, no taper: it holds its target), in blue,
+ *  by its own `BeamSpritePool`, unfiltered: `render/tractorBeams.ts`. It
+ *  lights where it holds and softly along it (`addBeamLights`, blue). */
+export const TRACTOR_BEAM_STYLE: BeamSpriteStyle = {
+  tint: TRACTOR_BEAM_COLOR, width: TRACTOR_BEAM_WIDTH, alpha: 0.85, taper: false, minScreenPx: 4,
+  crossSection: TRACTOR_BEAM_CROSS_SECTION,
+};
+
+/** Tractor look B (`?tractorLook=b`): bright pulses running ALONG the beam
+ *  toward the emitter (the direction of pull), in the beam's own
+ *  cross-section, a little wider, faded in and out along it (`alphaMul`). */
+export const TRACTOR_PULSE_STYLE: BeamSpriteStyle = {
+  tint: 0xd2e8ff, width: TRACTOR_BEAM_WIDTH * 1.5, alpha: 1, taper: false, minScreenPx: 6,
+  crossSection: TRACTOR_BEAM_CROSS_SECTION,
+};
+
+/** The two looks on offer per beam (an owner taste call). */
+export type BeamLookVariant = 'a' | 'b';
+let _minerLook: BeamLookVariant = 'a';
+let _tractorLook: BeamLookVariant = 'a';
+
+/** Pick the beam looks from URL switches (`?minerBeam=a|b`,
+ *  `?tractorLook=a|b`); anything else is look A. Renderer init calls it. */
+export function setBeamLooks(search: string): void {
+  const q = new URLSearchParams(search);
+  _minerLook = q.get('minerBeam') === 'b' ? 'b' : 'a';
+  _tractorLook = q.get('tractorLook') === 'b' ? 'b' : 'a';
+}
+
+/** The tractor look in use (`setBeamLooks`). */
+export function tractorLook(): BeamLookVariant { return _tractorLook; }
 
 /** A heavy beam that MISSES fades over this last share of its drawn length
  *  (to its max range); one that hits is solid to the hit point. */
@@ -222,7 +301,8 @@ export function remoteBeamStyleForMount(
   mount: { readonly weaponId: string } | null | undefined,
 ): BeamSpriteStyle | null {
   if (isHeavyBeamMount(mount)) return HEAVY_BEAM_STYLE;
-  return mount?.weaponId === 'mining_laser' ? MINING_LASER_STYLE : null;
+  if (mount?.weaponId !== 'mining_laser') return null;
+  return _minerLook === 'b' ? MINING_LASER_LIT_STYLE : MINING_LASER_STYLE;
 }
 
 /** The mount `mountId` on a ship kind's catalogue `mounts` (alloc-free loop;

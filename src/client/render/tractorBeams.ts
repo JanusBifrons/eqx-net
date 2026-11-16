@@ -2,17 +2,17 @@
  * Tractor beams on screen (salvage plan PR 11b): each `mirror.tractorLinks`
  * row becomes beam views for the tractor's `BeamSpritePool`, the same pool
  * every beam draws with (styles in `beamStyles.ts`):
- * - the LINE, from the emitter mount's barrel tip to the target's centre
- *   (`TRACTOR_BEAM_STYLE`: faint, thin, pale blue);
- * - soft RINGS travelling along it toward the emitter, so the direction of
- *   pull reads (`TRACTOR_PULSE_STYLE`): short bars across the line, spaced
- *   and sized in SCREEN px (the same look at any zoom), each fading in near
- *   the target and out near the barrel.
+ * - the BEAM, from the emitter mount's barrel tip to the target's centre
+ *   (`TRACTOR_BEAM_STYLE`: drawn like a beam weapon, with a blue glow);
+ * - look B only (`?tractorLook=b`): bright PULSES running along it toward
+ *   the emitter, so the direction of pull reads (`TRACTOR_PULSE_STYLE`),
+ *   spaced and sized in SCREEN px (the same look at any zoom), each fading
+ *   in near the target and out near the barrel.
  *
  * Poses are the drawn ones: a pilot's mirror pose, a drone's resolved
  * display pose (`resolveEntityDisplayPose`), anything else interpolated like
  * its sprite. Allocation-free once `out` has grown (#14). Time is game time
- * (`fxNow()`), so the rings slow with the sector.
+ * (`fxNow()`), so the pulses slow with the sector.
  */
 import type { RenderMirror, SwarmRenderState } from '../../core/contracts/IRenderer.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
@@ -20,15 +20,15 @@ import { shipShotMuzzle } from '../../core/combat/muzzle.js';
 import { interpolateSwarmPose, type InterpolatedPose } from '../net/swarmInterpolation.js';
 import { resolveEntityDisplayPose } from '../net/swarmDisplayPose.js';
 import type { BeamView } from './BeamSpritePool.js';
-import { TRACTOR_PULSE_STYLE, findMount } from './beamStyles.js';
+import { TRACTOR_BEAM_STYLE, TRACTOR_PULSE_STYLE, findMount, tractorLook } from './beamStyles.js';
 
-/** Screen px between rings. */
+/** Screen px between pulses. */
 export const TRACTOR_PULSE_SPACING_PX = 64;
-/** Screen px a ring travels per second (game time). */
+/** Screen px a pulse travels per second (game time). */
 export const TRACTOR_PULSE_SPEED_PX_S = 80;
-/** A ring's length across the line, screen px. */
-export const TRACTOR_RING_PX = 11;
-/** Most rings on one beam (a long beam spaces them wider). */
+/** A pulse's length along the beam, screen px. */
+export const TRACTOR_PULSE_PX = 24;
+/** Most pulses on one beam (a long beam spaces them wider). */
 export const TRACTOR_MAX_PULSES = 12;
 
 const _e: InterpolatedPose = { x: 0, y: 0, angle: 0 };
@@ -99,25 +99,26 @@ export function fillTractorBeams(
     const len = dist - muzzle;
     const line = slot(out, n++);
     line.fromX = fx; line.fromY = fy; line.toX = _t.x; line.toY = _t.y;
-    line.style = null; line.alphaMul = 1; line.solidLen = undefined;
+    line.style = TRACTOR_BEAM_STYLE; line.alphaMul = 1; line.solidLen = undefined;
+    if (tractorLook() !== 'b') continue;
 
-    // Rings: spaced in screen px (wider on a long beam), moving toward the
-    // emitter: a ring at d from the barrel shrinks d as time runs.
+    // Pulses (look B): spaced in screen px (wider on a long beam), moving
+    // toward the emitter: a pulse at d from the barrel shrinks d as time runs.
     const pxToWorld = 1 / cameraScale;
     const spacing = Math.max(TRACTOR_PULSE_SPACING_PX * pxToWorld, len / TRACTOR_MAX_PULSES);
     const speed = TRACTOR_PULSE_SPEED_PX_S * pxToWorld;
     const phase = ((nowMs / 1000) * speed) % spacing; // 0..spacing
-    const half = (TRACTOR_RING_PX * pxToWorld) / 2;
+    const half = Math.min((TRACTOR_PULSE_PX * pxToWorld) / 2, spacing / 4);
     for (let d = spacing - phase; d < len; d += spacing) {
       const u = d / len;
       const fade = Math.sin(Math.PI * u); // 0 at the barrel and at the target
       if (fade <= 0.02) continue;
       const cx = fx + dx * d, cy = fy + dy * d;
-      const ring = slot(out, n++);
-      // Across the line (the perpendicular of (dx, dy)).
-      ring.fromX = cx + dy * half; ring.fromY = cy - dx * half;
-      ring.toX = cx - dy * half; ring.toY = cy + dx * half;
-      ring.style = TRACTOR_PULSE_STYLE; ring.alphaMul = fade; ring.solidLen = undefined;
+      const pulse = slot(out, n++);
+      // Along the beam, centred on d.
+      pulse.fromX = cx - dx * half; pulse.fromY = cy - dy * half;
+      pulse.toX = cx + dx * half; pulse.toY = cy + dy * half;
+      pulse.style = TRACTOR_PULSE_STYLE; pulse.alphaMul = fade; pulse.solidLen = undefined;
     }
   }
   return n;

@@ -218,6 +218,7 @@ export class WorkerRendererClient implements IRenderer {
       dpr,
       isTouch: this._isTouch,
       ...(zoom !== undefined ? { zoom } : {}),
+      beamLooks: window.location.search,
       artMode: this._art.mode,
       ...(this._art.delayMs ? { artDelayMs: this._art.delayMs } : {}),
       ...(this._art.fx ? { fx: true } : {}),
