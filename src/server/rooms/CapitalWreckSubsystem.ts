@@ -557,7 +557,7 @@ export class CapitalWreckSubsystem {
   pieceStore(id: string, out: PieceStoreView): boolean { return pieceStoreOf(this.wrecks, this.pieceWreck, this.knock, id, out); }
 
   /** Live pieces a ship at (x, y) could take in (wreckLineage.ts `forEachPieceNear`). */
-  forEachPieceNear(x: number, y: number, reach: number, maxRadius: number, visit: (id: string, px: number, py: number) => void): void { forEachPieceNear(this.wrecks, this.pieceWreck, this.knock, this.d.serverTick(), this.d.piecePoseInto, x, y, reach, maxRadius, visit); }
+  forEachPieceNear(x: number, y: number, reach: number, maxMass: number, visit: (id: string, px: number, py: number, pr: number) => void): void { forEachPieceNear(this.wrecks, this.pieceWreck, this.knock, this.d.serverTick(), this.d.piecePoseInto, x, y, reach, maxMass, visit); }
 
   /** The snapshot slice: one descriptor per live wreck (shared array, rebuilt
    *  only on change; empty when there are none). */

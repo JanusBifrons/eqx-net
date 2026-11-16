@@ -1191,7 +1191,7 @@ export class SectorRoom extends Room<SectorState> {
   private readonly manualCargo = new Set<string>();
   private readonly _podPoseScratch = { x: 0, y: 0 };
   /** Reused per-collector scratch (forEachLootCollector — no per-tick alloc, #14). */
-  private readonly _collectorScratch: LootCollector = { playerId: '', shipInstanceId: '', x: 0, y: 0, capacity: 0, kind: getShipKind(null) };
+  private readonly _collectorScratch: LootCollector = { playerId: '', shipInstanceId: '', x: 0, y: 0, angle: 0, shieldUp: false, capacity: 0, kind: getShipKind(null) };
   /** Placed-structure bookkeeping (structures plan, Phase 2). */
   private readonly structureRegistry = new StructureRegistry();
   /** Equinox Phase 9 (item 5) — sliding-window tally of recent destruction
@@ -1699,8 +1699,8 @@ export class SectorRoom extends Room<SectorState> {
     loot: LootSubsystem;
     /** S2a — a swarm entity's full SAB state (pose, velocity, spin). */
     wreckState: (id: string) => { x: number; y: number; vx: number; vy: number; angle: number; angvel: number } | null;
-    /** Salvage PR 5: a wreck piece's hidden integrity (undefined: none); its whole-piece salvage (0: none); rock cut's per-hit rock view (one reused object) or null. */
-    wreckIntegrity: (id: string) => number | undefined; wreckSalvage: (id: string) => number; rockOf: (id: string) => ReturnType<typeof rockViewOf>;
+    /** Salvage PR 5: a wreck piece's hidden integrity (undefined: none); its whole-piece salvage (0: none); its mass (undefined: not a live piece); rock cut's per-hit rock view (one reused object) or null. */
+    wreckIntegrity: (id: string) => number | undefined; wreckSalvage: (id: string) => number; wreckMass: (id: string) => number | undefined; rockOf: (id: string) => ReturnType<typeof rockViewOf>;
     /** S2a — a wreck piece's convex parts (body-local), or null. */
     wreckParts: (id: string) => ReadonlyArray<ReadonlyArray<{ x: number; y: number }>> | null;
     /** S2a — fix the fracture seed (null = per death). */
@@ -1787,7 +1787,7 @@ export class SectorRoom extends Room<SectorState> {
       },
       damageSwarmLayered: (rec, damage) => this.damageSwarmLayered(rec, damage),
       wreckState: (id) => this.wreckPose(id),
-      wreckIntegrity: (id) => this.capitalWrecks?.pieceIntegrity(id), wreckSalvage: (id) => this.capitalWrecks?.pieceSalvageQty(id) ?? 0,
+      wreckIntegrity: (id) => this.capitalWrecks?.pieceIntegrity(id), wreckSalvage: (id) => this.capitalWrecks?.pieceSalvageQty(id) ?? 0, wreckMass: (id) => { const v = { mass: 0, radius: 0, qty: 0, ore: undefined, holdWeight: 0 }; return this.capitalWrecks?.pieceStore(id, v) === true ? v.mass : undefined; },
       rockOf: (id) => rockViewOf(this.swarmRegistry, id),
       wreckParts: (id) => this.swarmRegistry.get(id)?.wreckParts ?? null,
       setWreckSeed: (seed) => { if (this.capitalWrecks) this.capitalWrecks.forcedSeed = seed; },
@@ -2921,7 +2921,7 @@ export class SectorRoom extends Room<SectorState> {
       forEachCollector: (visit) => this.forEachLootCollector(visit),
       // Tractor hold zone (emitter id: a pilot's playerId or an AI ship's swarm id): a pod is picked up, a wreck piece stored whole; a consumable piece near the hull too.
       inTractorHold: (c, podId, x, y) => this.forceFields.inTractorHold(c.playerId, podId, x, y),
-      heldPieces: { any: () => this.forceFields.tractorCount > 0 || (this.capitalWrecks?.liveCount() ?? 0) > 0, forEach: (c, visit) => this.forceFields.forEachHeldPiece(c.playerId, visit), near: (x, y, reach, maxR, visit) => this.capitalWrecks?.forEachPieceNear(x, y, reach, maxR, visit), store: (id, out) => this.capitalWrecks?.pieceStore(id, out) === true, ore: (o, x, y, units) => this.oreDraw.cutYield(o.rockId, x, y, units, o.resource), remove: (id) => this.capitalWrecks?.storePiece(id) },
+      heldPieces: { any: () => this.forceFields.tractorCount > 0 || (this.capitalWrecks?.liveCount() ?? 0) > 0, forEach: (c, visit) => this.forceFields.forEachHeldPiece(c.playerId, visit), near: (x, y, reach, maxM, visit) => this.capitalWrecks?.forEachPieceNear(x, y, reach, maxM, visit), store: (id, out) => this.capitalWrecks?.pieceStore(id, out) === true, remove: (id) => this.capitalWrecks?.storePiece(id) },
       onCollected: (c, moved, podId) => this.onLootCollected(c, moved, podId),
       onDropped: (podId, hold, cause) => auditEvent({ event: 'loot_dropped', sector: this.sectorKey ?? undefined, podId, cause, weight: holdWeight(hold) }),
       onDestroyed: (podId, hold, cause) => auditEvent({ event: 'loot_destroyed', sector: this.sectorKey ?? undefined, podId, cause, weight: holdWeight(hold) }),
@@ -5670,9 +5670,9 @@ export class SectorRoom extends Room<SectorState> {
         if (slot !== undefined) slotPoseInto(this.sabF32, slot, out);
         return slot !== undefined;
       },
-      dropSalvage: (qty, x, y, vx, vy, ore) => { this.loot.drop({ goods: ore ? this.oreDraw.cutYield(ore.rockId, x, y, qty, ore.resource) : { salvage: qty }, blueprints: [] }, x, y, vx, vy, { cause: 'salvage' }); },
+      dropSalvage: (qty, x, y, vx, vy, ore) => this.loot.drop({ goods: ore ? this.oreDraw.cutYield(ore.rockId, x, y, qty, ore.resource) : { salvage: qty }, blueprints: [] }, x, y, vx, vy, { cause: 'salvage' }),
       rockOf: (id) => rockViewOf(this.swarmRegistry, id),
-      pieceSplit: (from, ids, masses) => relayPieceSplit(this.swarmRegistry, from, ids, masses, this.locks, this.wingmanLocks),
+      pieceSplit: (from, ids, masses, pods) => relayPieceSplit(this.swarmRegistry, from, ids, masses, this.locks, this.wingmanLocks, pods),
     });
   }
 
@@ -11515,7 +11515,7 @@ export class SectorRoom extends Room<SectorState> {
       c.playerId = pid;
       c.shipInstanceId = ship.shipInstanceId;
       c.x = pose.x;
-      c.y = pose.y;
+      c.y = pose.y; c.angle = pose.angle; c.shieldUp = ship.shield > 0; // the hull-touch pickup's shape
       // P5 — a fitted Cargo Expander raises the capacity (shared helper, #15).
       c.capacity = this.shipCargoCapacity(ship.kind, ship.shipInstanceId);
       c.kind = getShipKind(ship.kind); // its hull radius + mounts: the pieces it consumes
@@ -11533,7 +11533,7 @@ export class SectorRoom extends Room<SectorState> {
       c.playerId = rec.id;
       c.shipInstanceId = rec.id;
       c.x = this.sabF32[b + SLOT_X_OFF]!;
-      c.y = this.sabF32[b + SLOT_Y_OFF]!;
+      c.y = this.sabF32[b + SLOT_Y_OFF]!; c.angle = this.sabF32[b + SLOT_ANGLE_OFF]!; c.shieldUp = !rec.shieldDown;
       c.capacity = cargoCapacityForMaxHealth(kindDef);
       c.kind = kindDef;
       c.npc = true;

@@ -209,7 +209,8 @@ export class WreckResplitter {
       k.integrity = Number.POSITIVE_INFINITY;
       return false;
     }
-    dropPieceSalvage(this.d, src, w.ore, parent.area, k.mass, pose.x, pose.y, pose.vx, pose.vy);
+    const pod = dropPieceSalvage(this.d, src, w.ore, parent.area, k.mass, pose.x, pose.y, pose.vx, pose.vy);
+    if (pod !== null) { POD_ID[0] = pod; POD_MASS[0] = k.mass; this.d.pieceSplit?.(id, POD_ID, POD_MASS, 1); } // its locks follow the pod
     this.h.dropPiece(id, fifo);
     return true;
   }
@@ -262,7 +263,8 @@ export class WreckResplitter {
  * knock numbers (null: the source's own, a rock's first break). The ONE
  * piece spawn of a re-split and of a mined-out rock (rockCut.ts), so the ONE
  * place a parent (`parentId`) is replaced by its pieces: the locks held on
- * it follow them (`CapitalWreckDeps.pieceSplit`).
+ * it follow them (`CapitalWreckDeps.pieceSplit`), and its slivers' pods
+ * after them (the tractor groups' locks).
  */
 export function spawnWreckPieces(
   d: CapitalWreckDeps, h: Pick<WreckResplitHost, 'addPiece'>, src: WreckSource, w: Pick<LiveWreck, 'ore'>,
@@ -272,12 +274,14 @@ export function spawnWreckPieces(
   const body = wreckBodyParams(src.ship ?? src);
   const ids: string[] = [];
   const masses: number[] = []; // once per break, never per tick
+  let podIds: string[] | null = null;
   let mass = 0;
   let pods = 0;
   for (const c of placed) {
     const g = c.geom;
     if (g.area < podBelow) {
-      dropPieceSalvage(d, src, w.ore, g.area, g.mass, c.x, c.y, c.vx, c.vy);
+      const pod = dropPieceSalvage(d, src, w.ore, g.area, g.mass, c.x, c.y, c.vx, c.vy);
+      if (pod !== null) (podIds ??= []).push(pod);
       pods++;
       continue;
     }
@@ -299,7 +303,8 @@ export function spawnWreckPieces(
       cx: g.cx, cy: g.cy, radius: g.radius, burn: null,
     }, fifo);
   }
-  if (ids.length > 0) d.pieceSplit?.(parentId, ids, masses);
+  if (podIds !== null) d.pieceSplit?.(parentId, ids.concat(podIds), masses, podIds.length);
+  else if (ids.length > 0) d.pieceSplit?.(parentId, ids, masses);
   return { ids, mass, pods };
 }
 
@@ -313,15 +318,21 @@ export function spawnWreckPieces(
 export function dropPieceSalvage(
   d: CapitalWreckDeps, src: WreckSource, ore: LiveWreck['ore'],
   area: number, mass: number, x: number, y: number, vx: number, vy: number,
-): void {
-  if (d.dropSalvage === undefined) return;
+): string | null {
+  if (d.dropSalvage === undefined) return null;
+  let pod: string | null | void = null;
   if (ore !== undefined) {
     const units = pieceOreUnits(ore, area);
-    if (units > 0) d.dropSalvage(units, x, y, vx, vy, ore); // none left in this sliver: no pod
-    return;
+    if (units > 0) pod = d.dropSalvage(units, x, y, vx, vy, ore); // none left in this sliver: no pod
+  } else {
+    pod = d.dropSalvage(wreckSalvageQty(src, mass), x, y, vx, vy);
   }
-  d.dropSalvage(wreckSalvageQty(src, mass), x, y, vx, vy);
+  return typeof pod === 'string' ? pod : null;
 }
+
+/** The one-pod list a worn-out piece hands its locks on with (`pieceSplit`, #14). */
+const POD_ID: string[] = [''];
+const POD_MASS: number[] = [0];
 
 /** A rock piece's ore units (area × `ore.perArea`, rounded, up to a pod's
  *  size of that ore: `SALVAGE_POD_MAX_WEIGHT`); 0 under one unit. The one

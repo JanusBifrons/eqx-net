@@ -4,23 +4,28 @@
  * biggest first, so every mining-laser mount keeps working and the lasers
  * spread over the pieces. Same lineage, so a LOCKED target's pieces are
  * LOCKED at once (stage, progress, track and salvage bits copied; the lock
- * step refreshes the bits). Not a hostile act: no ledger, no standing.
+ * step refreshes the bits). A piece that wears out into an ore pod (and a
+ * break's slivers that pod) passes its locks on to the pods too, but only
+ * in a group with tractors (every tractor pulls a pod; the lasers leave
+ * them). Not a hostile act: no ledger, no standing.
  * Runs only on a break, never per tick.
  */
 import { newLock, type LockEntry } from '../../core/combat/lockState.js';
 
-/** Re-key one group's lock on `fromKey` to the first piece key it does not
- *  already lock, then add locks on the next ones up to its `capacity`. A
- *  group already locking every piece just drops the old lock. True when the
- *  group changed (the caller re-syncs its wire). */
+/** Re-key one group's lock on `fromKey` to the first of the first `count`
+ *  piece keys it does not already lock, then add locks on the next ones up
+ *  to its `capacity`. A group already locking every one (or given none)
+ *  just drops the old lock. True when the group changed (the caller re-syncs
+ *  its wire). */
 export function splitGroupLocks(
-  g: { capacity: number; locks: LockEntry[] }, fromKey: string, pieceKeys: ReadonlyArray<string>,
+  g: { capacity: number; locks: LockEntry[] }, fromKey: string, pieceKeys: ReadonlyArray<string>, count = pieceKeys.length,
 ): boolean {
   let src: LockEntry | undefined;
   for (const e of g.locks) if (e.target === fromKey) { src = e; break; }
   if (src === undefined) return false;
   let moved = false;
-  for (const key of pieceKeys) {
+  for (let i = 0; i < count; i++) {
+    const key = pieceKeys[i]!;
     let held = false;
     for (const e of g.locks) if (e.target === key) { held = true; break; }
     if (held) continue;
@@ -41,19 +46,22 @@ const ORDER: number[] = [];
 /**
  * SectorRoom's `CapitalWreckDeps.pieceSplit`: map the parent and its piece
  * ids (parallel `masses`) to swarm lock keys (`s:<entityId>`), biggest piece
- * first, and hand them to every lock machine (`targetSplit`). Ids not in the
+ * first, then its last `pods` ids (ore pods, in order, after the pieces),
+ * and hand them to every lock machine (`targetSplit`). Ids not in the
  * registry are skipped.
  */
 export function relayPieceSplit(
   reg: { get(id: string): { entityId: number } | null | undefined },
   parentId: string, ids: ReadonlyArray<string>, masses: ReadonlyArray<number>,
-  a: { targetSplit(from: string, keys: ReadonlyArray<string>): void },
-  b: { targetSplit(from: string, keys: ReadonlyArray<string>): void } | undefined,
+  a: { targetSplit(from: string, keys: ReadonlyArray<string>, pods: number): void },
+  b: { targetSplit(from: string, keys: ReadonlyArray<string>, pods: number): void } | undefined,
+  pods = 0,
 ): void {
   const parent = reg.get(parentId);
   if (parent == null) return;
   ORDER.length = 0;
-  for (let i = 0; i < ids.length; i++) {
+  const pieces = ids.length - pods;
+  for (let i = 0; i < pieces; i++) {
     let j = ORDER.length;
     while (j > 0 && (masses[ORDER[j - 1]!] ?? 0) < (masses[i] ?? 0)) j--;
     ORDER.splice(j, 0, i);
@@ -63,8 +71,13 @@ export function relayPieceSplit(
     const rec = reg.get(ids[i]!);
     if (rec != null) KEYS.push(`s:${rec.entityId}`);
   }
+  const before = KEYS.length;
+  for (let i = pieces; i < ids.length; i++) {
+    const rec = reg.get(ids[i]!);
+    if (rec != null && KEYS.indexOf(`s:${rec.entityId}`) < 0) KEYS.push(`s:${rec.entityId}`); // two slivers may merge into one pod
+  }
   if (KEYS.length === 0) return;
   const from = `s:${parent.entityId}`;
-  a.targetSplit(from, KEYS);
-  if (b !== undefined && b !== a) b.targetSplit(from, KEYS);
+  a.targetSplit(from, KEYS, KEYS.length - before);
+  if (b !== undefined && b !== a) b.targetSplit(from, KEYS, KEYS.length - before);
 }
