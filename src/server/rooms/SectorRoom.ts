@@ -6162,6 +6162,7 @@ export class SectorRoom extends Room<SectorState> {
       registry: this.structureRegistry,
       place: (owner, kind, x, y, rot) => this.structurePlacement.place(owner, kind, x, y, { skipAutoConnect: true, rot }),
       setHealth: (id, hp) => this.swarmHealth.set(id, hp),
+      getObstacles: (near) => this.gatherStructureObstacles(near),
     });
     const seededBases: SiteBox[] = [];
     const plans = galaxyBasePlan(sectorKey);
@@ -6256,6 +6257,7 @@ export class SectorRoom extends Room<SectorState> {
       registry: this.structureRegistry,
       place: (owner, kind, x, y, rot) => this.structurePlacement.place(owner, kind, x, y, { skipAutoConnect: true, rot }),
       setHealth: (id, hp) => this.swarmHealth.set(id, hp),
+      getObstacles: (near) => this.gatherStructureObstacles(near),
     });
     for (const spec of specs.slice(0, 8)) {
       const r = sub.seed(spec);

@@ -32,6 +32,7 @@ import { usesAmmo } from '../../shared-types/ammo.js';
 import type { FactionId } from '../../shared-types/factions.js';
 import { gateTypeOf } from '../../core/structures/gateGeometry.js';
 import { buildGridNodes, connectExplicit } from '../structures/structureGridView.js';
+import type { GridObstacle, ObstacleBox } from '../../core/structures/Grid.js';
 import type { StructureRecord, StructureRegistry } from '../structures/StructureRegistry.js';
 
 export interface NpcBaseSpec {
@@ -58,6 +59,10 @@ export interface NpcBaseHooks {
   /** `StructurePlacementSubsystem.place(owner, kind, x, y, { skipAutoConnect: true, rot })`. */
   place(owner: string, kind: StructureKindId, x: number, y: number, rot: number): string | null;
   setHealth(id: string, hp: number): void;
+  /** The room's `getObstacles(near)`: asteroids plus the dormant cut-field
+   *  rocks reaching `near` (macro terrain C5g). A generated edge whose line
+   *  crosses one is rejected, as a player's link is. */
+  getObstacles?(near: ObstacleBox): readonly GridObstacle[];
 }
 
 export interface SeededNpcBase {
@@ -158,10 +163,23 @@ export class NpcBaseSubsystem {
     }
 
     const nodes = buildGridNodes(this.h.registry);
+    // One obstacle query over the placed centres: every edge runs centre to
+    // centre inside this box, so any rock that can cut one reaches it.
+    let obstacles: readonly GridObstacle[] | undefined;
+    if (this.h.getObstacles) {
+      const box: ObstacleBox = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
+      for (const id of ids) {
+        const r = id ? this.h.registry.get(id) : undefined;
+        if (!r) continue;
+        box.x0 = Math.min(box.x0, r.x); box.y0 = Math.min(box.y0, r.y);
+        box.x1 = Math.max(box.x1, r.x); box.y1 = Math.max(box.y1, r.y);
+      }
+      if (box.x0 <= box.x1) obstacles = this.h.getObstacles(box);
+    }
     let rejectedEdge = 0;
     for (const [a, b] of grown.edges) {
       const ia = ids[a], ib = ids[b];
-      if (!ia || !ib || !connectExplicit(this.h.registry, ia, ib, nodes)) rejectedEdge++;
+      if (!ia || !ib || !connectExplicit(this.h.registry, ia, ib, nodes, obstacles)) rejectedEdge++;
     }
     this.h.registry.topologyDirty = true;
     this.stock(ids.filter((i): i is string => i !== null).map((i) => this.h.registry.get(i)!));
