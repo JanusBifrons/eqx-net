@@ -148,22 +148,20 @@ export class CapitalWreckSubsystem {
   readonly rockCut: RockCutter;
 
   constructor(private readonly d: CapitalWreckDeps) {
+    const capOf = (capital: boolean): number => (capital ? MAX_LIVE_WRECK_PIECES : (this.subcapCapOverride ?? MAX_LIVE_SUBCAP_WRECK_PIECES));
     const host = {
       fifo: (capital: boolean) => (capital ? this.live : this.liveSubcap),
-      cap: (capital: boolean) => (capital ? MAX_LIVE_WRECK_PIECES : (this.subcapCapOverride ?? MAX_LIVE_SUBCAP_WRECK_PIECES)),
+      cap: capOf,
       newWreck: (): [number, number] => [this.allocWreckId(), this.deaths++],
       addPiece: (id: string, wreckId: number, entry: PieceKnock, fifo: string[]) => { this.knock.set(id, entry); fifo.push(id); this.pieceWreck.set(id, wreckId); },
       addWreck: (nw: Omit<LiveWreck, 'root'>, parent: LiveWreck | null) => {
         // Lineage: a root (rock break) is its own root; a child inherits its parent's.
-        const w = nw as LiveWreck;
-        w.root = parent !== null ? parent.root : w.desc.wreckId;
-        this.wrecks.set(w.desc.wreckId, w);
-        if (parent !== null) parent.children++;
+        const w = nw as LiveWreck; w.root = parent !== null ? parent.root : w.desc.wreckId;
+        this.wrecks.set(w.desc.wreckId, w); if (parent !== null) parent.children++;
         this.setChanged();
       },
       dropPiece: (id: string, fifo: string[]) => this.dropPiece(id, fifo),
-      enforceCap: (capital: boolean) => this.enforceCap(
-        capital ? this.live : this.liveSubcap, capital ? MAX_LIVE_WRECK_PIECES : MAX_LIVE_SUBCAP_WRECK_PIECES),
+      enforceCap: (capital: boolean) => this.enforceCap(capital ? this.live : this.liveSubcap, capOf(capital)),
     };
     this.resplit = new WreckResplitter(d, host);
     this.rockCut = new RockCutter(d, host, () => this.forcedSeed);

@@ -33,11 +33,27 @@ import { rockWreckSource, ROCK_WRECK_PARENT_KIND, type WreckSource } from '../..
 import { wreckPieceIntegrity, wreckWearFactor } from '../../core/destruction/wreckIntegrity.js';
 import { FRACTURE_ALGO_VERSION } from '../../core/destruction/fractureHull.js';
 import { ASTEROID_RESOURCES_PER_AREA } from '../../core/swarm/asteroidShape.js';
+import type { SwarmEntityRecord } from '../net/SwarmEntityRegistry.js';
 import { burnPieceHit } from './wreckBurnHits.js';
 import { placeWreckPieces, spawnWreckPieces, type WreckResplitHost } from './wreckResplit.js';
 import type { CapitalWreckDeps, PieceKnock, WreckOre, WreckRockView } from './capitalWreckTypes.js';
 
 const PT = { x: 0, y: 0 };
+
+/** The one reused rock view (`rockViewOf`, per mining-laser hit, #14). */
+const ROCK_VIEW: WreckRockView = { shape: 0, radius: 0, resource: 'rock', resources: undefined };
+
+/** A live rock as the cut code reads it (the room's `rockOf`), filled into
+ *  one reused view (read it before the next call), or null. No cut-field
+ *  rock until terrain C3 (consumed keys on the wire), else the client draws
+ *  a ghost whole rock. */
+export function rockViewOf(reg: { get(id: string): SwarmEntityRecord | null }, id: string): WreckRockView | null {
+  const r = reg.get(id);
+  if (r?.kind !== 0 || r.shapeSeed === undefined || r.fieldRock === true) return null;
+  const v = ROCK_VIEW;
+  v.shape = r.shapeSeed; v.radius = r.radius; v.resource = r.asteroidResource ?? 'rock'; v.resources = r.resources;
+  return v;
+}
 
 /** A rock being worn: its knock entry plus its wreck source. */
 type RockWear = PieceKnock & { src: WreckSource };
