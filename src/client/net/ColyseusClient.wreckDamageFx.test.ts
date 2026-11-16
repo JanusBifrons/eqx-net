@@ -19,7 +19,7 @@ import type { DamageEvent } from '../../shared-types/messages.js';
 
 interface MirrorSubset {
   ships: Map<string, { x: number; y: number; vx: number; vy: number; angle: number }>;
-  swarm?: Map<number, { kind: number; x: number; y: number }>;
+  swarm?: Map<number, { kind: number; x: number; y: number; shipKind?: string }>;
   localPlayerId: string | null;
   pendingDamageNumbers?: Array<{ targetId: string }>;
   pendingHealthBarHits?: Array<{ entityId: string }>;
@@ -48,6 +48,7 @@ describe('a hit on a wreck piece: spark only, no damage number or health bar', (
       [102, { kind: 1, x: 9, y: 9 }], // a live drone
       [103, { kind: 3, x: 1, y: 1 }], // scrap (unchanged: still numbered)
       [104, { kind: 0, x: 2, y: 2 }], // a field rock (mining is not combat: no number)
+      [105, { kind: 3, x: 3, y: 3, shipKind: 'cargo-pod' }], // an ore/loot pod (salvage: no number)
     ]);
     internals.mirror.pendingDamageNumbers = [];
     internals.mirror.pendingHealthBarHits = [];
@@ -119,6 +120,11 @@ it('a field rock (kind 0): no number; health bar and flash stay; a ship still ge
     expect(isNoDamageNumberTarget('swarm-102', swarm)).toBe(false);
     expect(isNoDamageNumberTarget('swarm-103', swarm)).toBe(false);
     expect(isNoDamageNumberTarget('swarm-999', swarm)).toBe(false);
+    // An ore pod (a cut rock's sliver, barge-mining take 2026-11-16): the
+    // mining lasers and tractored pieces hit it; it is salvage, not a foe.
+    expect(isNoDamageNumberTarget('swarm-105', swarm)).toBe(true);
+    internals.handleDamage(hit('swarm-105'));
+    expect(internals.mirror.pendingDamageNumbers).toHaveLength(0);
     expect(isNoDamageNumberTarget('player-104', swarm)).toBe(false);
   });
 });

@@ -107,7 +107,7 @@ import { recoverInputTickFromStarvation, skipStalledBacklog, stallResumeAction }
 import { SnapshotCoalescer } from './SnapshotCoalescer.js';
 import { ClientEntityFactory } from './entity/ClientEntityFactory.js';
 import { WreckGeometryStore } from './wreckGeometryStore.js';
-import { SWARM_KIND_WRECK } from '@shared-types/swarmWireFormat';
+import { SWARM_KIND_SCRAP, SWARM_KIND_WRECK } from '@shared-types/swarmWireFormat';
 import type { ClientSpawnCtx } from './entity/IClientEntityLeaf.js';
 import { DataChannelTransport } from './dataChannelTransport.js';
 import { webrtcEnabledFromSearch } from './webrtcEnable.js';
@@ -325,11 +325,16 @@ export function isWreckPieceTarget(
   return swarmKindOfTarget(targetId, swarm) === SWARM_KIND_WRECK;
 }
 
-/** The swarm kind of a `swarm-<entityId>` target, or undefined. Parses the
- *  id in place (no substring; called per damage event, #14). */
+/** The swarm kind of a `swarm-<entityId>` target, or undefined. */
 function swarmKindOfTarget(
   targetId: string, swarm: ReadonlyMap<number, Pick<SwarmRenderState, 'kind'>> | undefined,
 ): number | undefined {
+  return swarmEntryOfTarget(targetId, swarm)?.kind;
+}
+
+/** The swarm entry of a `swarm-<entityId>` target, or undefined. Parses the
+ *  id in place (no substring; called per damage event, #14). */
+function swarmEntryOfTarget<E>(targetId: string, swarm: ReadonlyMap<number, E> | undefined): E | undefined {
   if (swarm === undefined || !targetId.startsWith(SWARM_ID_PREFIX)) return undefined;
   const n = targetId.length;
   if (n === SWARM_ID_PREFIX.length) return undefined;
@@ -339,20 +344,24 @@ function swarmKindOfTarget(
     if (c < 0 || c > 9) return undefined;
     id = id * 10 + c;
   }
-  return swarm.get(id)?.kind;
+  return swarm.get(id);
 }
 
 /**
  * Does a hit on `targetId` get NO floating damage number? Wreck pieces
- * (`isWreckPieceTarget`, which also covers pieces cut from a rock) and field
- * rocks (swarm kind 0): mining is not combat (owner note 2026-11-16). Rocks
- * keep their spark, flash and health bar; only the number goes.
+ * (`isWreckPieceTarget`, which also covers pieces cut from a rock), field
+ * rocks (swarm kind 0) and ore/loot pods (scrap kind, `shipKind`
+ * 'cargo-pod': a cut rock's slivers drop as pods, which the mining lasers
+ * and tractored pieces then hit): mining and salvage are not combat (owner
+ * note 2026-11-16). They keep their spark, flash and health bar; only the
+ * number goes.
  */
 export function isNoDamageNumberTarget(
-  targetId: string, swarm: ReadonlyMap<number, Pick<SwarmRenderState, 'kind'>> | undefined,
+  targetId: string, swarm: ReadonlyMap<number, Pick<SwarmRenderState, 'kind' | 'shipKind'>> | undefined,
 ): boolean {
-  const kind = swarmKindOfTarget(targetId, swarm);
-  return kind === SWARM_KIND_WRECK || kind === 0;
+  const e = swarmEntryOfTarget(targetId, swarm);
+  if (e === undefined) return false;
+  return e.kind === SWARM_KIND_WRECK || e.kind === 0 || (e.kind === SWARM_KIND_SCRAP && e.shipKind === 'cargo-pod');
 }
 
 export class ColyseusGameClient {
