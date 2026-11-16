@@ -119,6 +119,7 @@ describe('mountFireTolerance', () => {
   it('a naval gun must pass within TURRET_FIRE_MISS of the target; other guns keep the flat window', () => {
     expect(mountFireTolerance('naval_xl', 30_000)).toBeCloseTo(Math.atan2(TURRET_FIRE_MISS, 30_000), 9);
     expect(mountFireTolerance('naval_xl', 300)).toBe(TURRET_FIRE_TOLERANCE);
+    expect(mountFireTolerance('railgun', 30_000)).toBeCloseTo(Math.atan2(TURRET_FIRE_MISS, 30_000), 9);
     expect(mountFireTolerance('laser', 30_000)).toBe(FC_MOUNT_FIRE_TOLERANCE);
     expect(mountFireTolerance('autocannon', 100)).toBe(FC_MOUNT_FIRE_TOLERANCE);
   });
@@ -129,5 +130,22 @@ describe('mountFireTolerance', () => {
     expect(mountBearsOn('naval_xl', 0, 0, 0, 0, 30_000)).toBe(true);
     // The old flat window would have accepted it.
     expect(barrelBearsOn(0, 0, three, 0, 30_000)).toBe(true);
+  });
+
+  it('a heavy-beam turret 2° off a target 5 km away does not bear; dead on, it does', () => {
+    const two = (2 * Math.PI) / 180;
+    expect(mountBearsOn('heavy_beam', 0, 0, two, 0, 5_000)).toBe(false);
+    expect(mountBearsOn('heavy_beam', 0, 0, 0, 0, 5_000)).toBe(true);
+    expect(mountFireTolerance('heavy_beam', 5_000)).toBeCloseTo(Math.atan2(TURRET_FIRE_MISS, 5_000), 9);
+    // The mining laser is a capital turret beam too.
+    expect(mountBearsOn('mining_laser', 0, 0, two, 0, 5_000)).toBe(false);
+  });
+
+  it("a fighter's fixed gun 5° off still bears (its 0.2 rad nose cone)", () => {
+    const five = (5 * Math.PI) / 180;
+    for (const id of ['hitscan', 'laser', 'autocannon']) {
+      expect(mountBearsOn(id, 0, 0, five, 0, 5_000)).toBe(true);
+      expect(mountFireTolerance(id, 5_000)).toBe(FC_MOUNT_FIRE_TOLERANCE);
+    }
   });
 });

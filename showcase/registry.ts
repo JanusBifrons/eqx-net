@@ -25,6 +25,7 @@ import { longGuns } from './shots/longGuns.js';
 import { fleetMelee } from './shots/fleetMelee.js';
 import { npcDogfight } from './shots/npcDogfight.js';
 import { timeScaleDial, timeScaleCapitals4x, capitalBreakupSlowmo, capitalBreakupFast } from './shots/timeScaleDial.js';
+import { wreckResplit } from './shots/wreckResplit.js';
 import { scrap } from './shots/scrap.js';
 import { buildBase } from './shots/buildBase.js';
 import { gridAlive } from './shots/gridAlive.js';
@@ -66,6 +67,7 @@ export const SHOTS: readonly Shot[] = [
   capitalLineup,
   capitalBroadside,
   capitalBreakup,
+  wreckResplit,
   beamSlice,
   beamVaporiseSubcap,
   railChannel,
