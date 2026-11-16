@@ -135,11 +135,10 @@ export interface AiFireResolverDeps {
    *  shooter). Returns a reused scratch (read it before the next call) or null.
    *  Absent ⇒ the beam tests players only (unit harnesses). Replaced the
    *  hostile-structure + other-allegiance passes, which let a beam pass through
-   *  its own side. `passDebris`: wreck pieces and scrap don't stop the ray
-   *  (a heavy beam's kill follow-through, `fireMount`). */
+   *  its own side. `halfWidth`: a wide beam's (`beamHalfWidth`). */
   nonPlayerRayHit?: (
     fromX: number, fromY: number, dirX: number, dirY: number, maxDist: number, skipId: string,
-    passDebris?: boolean, halfWidth?: number,
+    halfWidth?: number,
   ) => { id: string; wireId: string; dist: number } | null;
   /** Shield-fence plan — if an ACTIVE shield wall lies along the beam within
    *  `maxDist`, absorb the shot (apply the wall's grid-power damage model) and
@@ -189,8 +188,6 @@ export class AiFireResolver implements WeaponFireSink {
   /** Where the killing beam hit (valid while `_shotKilled`). */
   private _killX = 0;
   private _killY = 0;
-  /** The shot now resolving passes debris (set by `fireMount`). */
-  private _passDebris = false;
   /** The target of the shot now resolving ('' = none) and the mount firing
    *  (a tractor's lease needs both). */
   private _targetId = '';
@@ -324,12 +321,10 @@ export class AiFireResolver implements WeaponFireSink {
    *  when refused (no pose, or the pool can't pay) so the caller keeps the
    *  reload; 'killed' when it fired and one of its beams destroyed what it hit
    *  (the caller's follow-through, `WeaponDefBase.followThroughTicks`); else
-   *  true. `passDebris`: the beam passes wreck pieces and scrap (no hit, no
-   *  knock-back) and runs on to a ship, structure, rock or its full range
-   *  (the kill follow-through: "cut right through"). On 'killed', `killAt`
-   *  (caller-owned scratch, #14) gets the point the killing beam hit. */
+   *  true. On 'killed', `killAt` (caller-owned scratch, #14) gets the point
+   *  the killing beam hit. */
   fireMount(
-    shooterId: string, mountIdx: number, passDebris = false, targetId = '', killAt?: { x: number; y: number },
+    shooterId: string, mountIdx: number, targetId = '', killAt?: { x: number; y: number },
   ): boolean | 'killed' {
     const d = this.deps;
     const self = d.swarmEntitySnapshot(shooterId);
@@ -340,10 +335,8 @@ export class AiFireResolver implements WeaponFireSink {
       if (n > 0 && !d.trySpendEnergy(shooterId, resolveSlotEnergyCost(kind) / n)) return false;
     }
     this._shotKilled = false;
-    this._passDebris = passDebris;
     this._targetId = targetId;
     this.fireNow(shooterId, mountIdx);
-    this._passDebris = false;
     this._targetId = '';
     if (!this._shotKilled) return true;
     if (killAt !== undefined) { killAt.x = this._killX; killAt.y = this._killY; }
@@ -503,7 +496,7 @@ export class AiFireResolver implements WeaponFireSink {
     // Friendly fire (owner decision 2026-11-10): everything else in the path,
     // whatever its side — drones, structures, rocks, scrap, parked hulls.
     // Closest-of-both wins, so an ally in front of the target takes the beam.
-    const other = d.nonPlayerRayHit?.(rayFromX, rayFromY, ndx, ndy, Math.min(rayRange, hitDist), this._shooterId, this._passDebris, hw) ?? null;
+    const other = d.nonPlayerRayHit?.(rayFromX, rayFromY, ndx, ndy, Math.min(rayRange, hitDist), this._shooterId, hw) ?? null;
     if (other !== null && other.dist < hitDist) {
       hitDist = other.dist;
       hitId = other.id;

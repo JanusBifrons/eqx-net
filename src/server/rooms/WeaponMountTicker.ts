@@ -141,10 +141,9 @@ export interface WeaponMountTickerDeps {
    *  and reloaded. Returns false when the shot was refused (the ship's energy
    *  pool can't pay): the reload is then not spent. 'killed' = it fired and
    *  destroyed what it hit (starts the weapon's `followThroughTicks`; the hit
-   *  point is written to `killAt`). `passDebris`: the shot passes wreck pieces
-   *  and scrap (the follow-through). */
+   *  point is written to `killAt`). */
   fireDroneMount?: (
-    droneId: string, mountIdx: number, passDebris?: boolean, targetId?: string, killAt?: { x: number; y: number },
+    droneId: string, mountIdx: number, targetId?: string, killAt?: { x: number; y: number },
   ) => boolean | 'killed' | void;
   /** Fire control (PR 1d slice 2): true ⇒ the capital holds no COMPLETED
    *  lock on this mount's target (a pilot), so the mount aims but holds fire
@@ -153,12 +152,9 @@ export interface WeaponMountTickerDeps {
   /** NPC line of fire (friendly fire slice 2): true ⇒ a FRIENDLY body lies on
    *  this turret's shot from its muzzle (fx, fy) along unit (dx, dy) for
    *  `maxDist` (to the target), so it holds fire this tick: it keeps aiming,
-   *  the lock stays and the reload is not spent. Absent ⇒ never blocked.
-   *  `passWrecks`: wreck pieces don't hold it (a kill follow-through burns on
-   *  through its own victim's wreck; friendlies still do). */
+   *  the lock stays and the reload is not spent. Absent ⇒ never blocked. */
   lineOfFireBlocked?: (
     droneId: string, targetId: string, fx: number, fy: number, dx: number, dy: number, maxDist: number,
-    passWrecks?: boolean,
   ) => boolean;
   /** Structures hostile to the drones this tick (the AI's structure target
    *  set, built once per tick by the room). Capital turrets engage them too,
@@ -760,7 +756,7 @@ export class WeaponMountTicker {
       if (chargeStarts !== null && !charging) { chargeStarts[i] = tick; continue; }
       // Energy refused (a player capital's rule): keep the reload (and a
       // completed charge), retry next tick.
-      const fired = d.fireDroneMount!(droneId, i, false, t.id, this.killAt);
+      const fired = d.fireDroneMount!(droneId, i, t.id, this.killAt);
       if (fired === false) continue;
       if (chargeStarts !== null) chargeStarts[i] = NOT_CHARGING;
       reload[i] = tick;
@@ -809,14 +805,15 @@ export class WeaponMountTicker {
    * hold swung it with the hull), training through the one rotation
    * primitive (#12), so its arc and traverse rate bind as always. A pivot
    * within the muzzle length of the point holds the current angle. It fires
-   * at its weapon's cadence with no target: the shot
-   * passes debris (wreck pieces, scrap: no hit, no knock-back) and hits the
-   * first ship, structure or rock on the line, else runs its full range, so
-   * the beam shows full length through the cut. No lock
-   * or bearing gate (#19: those license acquiring a target, and this shot
-   * aims at none, like a completed 'locked-direction' charge); the hull's own
-   * deck (`mountLineClear`) and a FRIENDLY on the line of fire still hold it,
-   * a wreck piece does not.
+   * at its weapon's cadence with no target: an ordinary shot that hits the
+   * first thing on its line, else runs its full range. The kill burned a gap
+   * the beam's width through the victim (its `killCut` strip,
+   * capital-destruction.md "Burned gap"), so down an unmoved line the beam
+   * shines through the cut at full length; a piece that drifts back into the
+   * line is treated like anything else. No lock or bearing gate (#19: those
+   * license acquiring a target, and this shot aims at none, like a completed
+   * 'locked-direction' charge); the hull's own deck (`mountLineClear`) and
+   * the line-of-fire gate still hold it.
    */
   private followThrough(
     droneId: string, kind: ShipKind, mount: WeaponMount, i: number, angles: Float32Array, reload: Int32Array,
@@ -835,9 +832,9 @@ export class WeaponMountTicker {
     if (d.lineOfFireBlocked !== undefined) {
       const a = ang + local;
       const ndx = -Math.sin(a), ndy = Math.cos(a);
-      if (d.lineOfFireBlocked(droneId, '', mx + ndx * muzzle, my + ndy * muzzle, ndx, ndy, reach - muzzle, true)) return;
+      if (d.lineOfFireBlocked(droneId, '', mx + ndx * muzzle, my + ndy * muzzle, ndx, ndy, reach - muzzle)) return;
     }
-    if (d.fireDroneMount!(droneId, i, true) === false) return;
+    if (d.fireDroneMount!(droneId, i) === false) return;
     reload[i] = tick;
   }
 

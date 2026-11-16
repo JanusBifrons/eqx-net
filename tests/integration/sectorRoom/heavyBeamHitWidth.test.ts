@@ -98,7 +98,7 @@ describe('SectorRoom integration — the heavy beam hits by its width (owner 202
       hits.length = 0;
       const sink = sinkName === 'ai' ? r.aiFireResolver : r.playerFireResolver;
       if (sinkName === 'ai') {
-        Object.assign(sink, { _shooterId: lanceId, _wireShooterId: lanceWire, _weaponId: weapon, _passDebris: false, _shotKilled: false });
+        Object.assign(sink, { _shooterId: lanceId, _wireShooterId: lanceWire, _weaponId: weapon, _shotKilled: false });
       } else {
         Object.assign(sink, {
           _shooterId: pid, _effTick: room._internals.serverTick, _weaponId: weapon, _damageMul: 1,

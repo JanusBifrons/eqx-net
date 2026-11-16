@@ -58,3 +58,17 @@ export function isNoDamageNumberTarget(
   if (e === undefined) return false;
   return e.kind === SWARM_KIND_WRECK || e.kind === 0 || (e.kind === SWARM_KIND_SCRAP && e.shipKind === 'cargo-pod');
 }
+
+/**
+ * Is `targetId` a `swarm-<id>` the swarm mirror has no entry for? Such a
+ * target was never drawn: an entity spawned and killed between two
+ * snapshots (the salvage pod a worn-out wreck piece turns into inside a
+ * beam, killed by the beam's next pulse). Its hit gets no floating number:
+ * the number would hang over empty space, and the client cannot tell what
+ * kind it was (a pod gets none). The caller also checks `mirror.ships`.
+ */
+export function isUnseenSwarmTarget(
+  targetId: string, swarm: ReadonlyMap<number, unknown> | undefined,
+): boolean {
+  return targetId.startsWith(SWARM_ID_PREFIX) && swarmEntryOfTarget(targetId, swarm) === undefined;
+}
