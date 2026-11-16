@@ -86,6 +86,26 @@ describe('SectorRoom integration: the mining laser cuts asteroids like wrecks', 
     expect(goods.salvage ?? 0, 'never salvage').toBe(0);
   });
 
+  it('a worn-out rock still breaks when the piece FIFO is full: the oldest pieces go, like a ship death', { timeout: 30_000 }, async () => {
+    const { room, pid } = await setup(60);
+    const int = room._internals;
+    int.setWreckSeed(9);
+    const mine = (id: string): void => {
+      for (let i = 0; i < 200 && int.swarmRegistry.get(id) !== null; i++) int.applyDamage(id, pid, 120, 6, 340, 0, 1, 'mining_laser');
+    };
+    mine('rock-1');
+    expect(int.swarmRegistry.get('rock-1')).toBeNull();
+    const cap = int.wreckCounts().subcap;
+    expect(cap).toBeGreaterThanOrEqual(2);
+    int.setSubcapWreckCap(cap); // the FIFO is full now
+    expect(int.spawnTestAsteroid('rock-2', 0, 400, 60)).toBe(true);
+    await harness.advance(50);
+    mine('rock-2');
+    expect(int.swarmRegistry.get('rock-2'), 'the worn-out rock broke').toBeNull();
+    expect(int.wreckDescriptors().some((d) => d.rock?.id === 'rock-2'), 'into pieces').toBe(true);
+    expect(int.wreckCounts().subcap, 'live pieces stay within the cap').toBeLessThanOrEqual(cap);
+  });
+
   it('a cut-field rock is not cut until terrain C3 (else the client draws a ghost whole rock)', { timeout: 20_000 }, async () => {
     const { room, pid } = await setup(60);
     const int = room._internals;

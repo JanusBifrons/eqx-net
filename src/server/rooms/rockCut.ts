@@ -29,7 +29,7 @@ import { WEAPONS, type WeaponId } from '../../core/combat/WeaponCatalogue.js';
 import { hullPointInto } from '../../core/destruction/burnLines.js';
 import { hullLocalCutAngle, wreckPieceGeometry } from '../../core/destruction/wreckPieces.js';
 import type { WreckFractureInputs } from '../../core/destruction/wreckPieceFrame.js';
-import { rockWreckSource, ROCK_WRECK_PARENT_KIND } from '../../core/destruction/wreckSource.js';
+import { rockWreckSource, ROCK_WRECK_PARENT_KIND, type WreckSource } from '../../core/destruction/wreckSource.js';
 import { wreckPieceIntegrity, wreckWearFactor } from '../../core/destruction/wreckIntegrity.js';
 import { FRACTURE_ALGO_VERSION } from '../../core/destruction/fractureHull.js';
 import { ASTEROID_RESOURCES_PER_AREA } from '../../core/swarm/asteroidShape.js';
@@ -39,9 +39,13 @@ import type { CapitalWreckDeps, PieceKnock, WreckOre, WreckRockView } from './ca
 
 const PT = { x: 0, y: 0 };
 
+/** A rock being worn: its knock entry plus its wreck source. */
+type RockWear = PieceKnock & { src: WreckSource };
+
 export class RockCutter {
-  /** Per rock being worn: its hidden integrity and burn lines. */
-  private readonly rocks = new Map<string, PieceKnock>();
+  /** Per rock being worn: its hidden integrity and burn lines, and its
+   *  source (built once, on its first wearing hit). */
+  private readonly rocks = new Map<string, RockWear>();
   /** `forcedSeed`: the subsystem's test seam (a fixed fracture seed). */
   constructor(
     private readonly d: CapitalWreckDeps, private readonly h: WreckResplitHost,
@@ -52,9 +56,10 @@ export class RockCutter {
    * A weapon hit `damage` on `id` at world (hitX, hitY) along (dirX, dirY).
    * Not a rock, or a weapon that does not wear rock: false, nothing done.
    * Wears the rock; worn out, it breaks (true: the rock is gone, its pieces
-   * are wreck pieces now). A break that cannot happen yet (no pose, the
-   * piece FIFO full, fewer than two pieces) leaves it worn out (false): the
-   * next hit tries again.
+   * are wreck pieces now). A full piece FIFO never stops a break: the oldest
+   * pieces go, as after a ship death (`enforceCap`). A break that cannot
+   * happen yet (no pose, fewer than two pieces) leaves it worn out (false):
+   * the next hit tries again.
    */
   onRockHit(
     id: string, hitX: number, hitY: number, dirX: number, dirY: number, damage: number,
@@ -70,7 +75,7 @@ export class RockCutter {
       const src = rockWreckSource({ id, shape: rock.shape, r: rock.radius });
       k = {
         mass: src.bodyMass, impulsePerDamage: 0, maxDv: 0, spin: 1, wakeDv: 0,
-        index: 0, integrity: wreckPieceIntegrity(src, src.bodyMass), cx: 0, cy: 0, radius: rock.radius, burn: null,
+        index: 0, integrity: wreckPieceIntegrity(src, src.bodyMass), cx: 0, cy: 0, radius: rock.radius, burn: null, src,
       };
       this.rocks.set(id, k); // once per rock mined
     }
@@ -91,13 +96,14 @@ export class RockCutter {
   }
 
   private breakRock(
-    id: string, rock: WreckRockView, k: PieceKnock,
+    id: string, rock: WreckRockView, k: RockWear,
     hitX: number, hitY: number, dirX: number, dirY: number, weaponId: WeaponId | undefined,
   ): boolean {
+    // The cheap check before any fracture work: no pose, no break.
     const pose = this.d.piecePose?.(id) ?? null;
     if (pose === null) return false;
     const tick = this.d.serverTick();
-    const src = rockWreckSource({ id, shape: rock.shape, r: rock.radius });
+    const src = k.src;
     const rs = src.profile.resplit!;
     // The breaking hit in the rock's 1× Pixi-up frame (its rest frame, y
     // flipped; scale 1). The fracture projects it onto the outline.
@@ -115,8 +121,8 @@ export class RockCutter {
       if (extra !== undefined) inputs.extraCuts = extra;
     }
     const geom = wreckPieceGeometry(inputs);
+    if (geom.length < 2) return false;
     const fifo = this.h.fifo(false);
-    if (geom.length < 2 || fifo.length + geom.length > this.h.cap(false)) return false;
     const placed = placeWreckPieces(
       src, geom, pose, pose.x, pose.y, inputs.killX, -inputs.killY, inputs.seed ^ 0x3ec7, inputs.cutW ?? 0,
     );
@@ -150,6 +156,8 @@ export class RockCutter {
         chain: { root: inputs, steps: [] }, parent: 0, children: 0, src, ore,
       }, null);
     }
+    // Over the cap: the oldest pieces go, exactly as after a ship death.
+    this.h.enforceCap(false);
     return true;
   }
 }

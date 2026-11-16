@@ -148,6 +148,8 @@ export interface WreckResplitHost {
   addWreck(w: Omit<LiveWreck, 'root'>, parent: LiveWreck | null): void;
   /** Remove a live piece (FIFO, body, its wreck's count). */
   dropPiece(id: string, fifo: string[]): void;
+  /** Evict the oldest pieces of one FIFO down to its cap (a ship death's path). */
+  enforceCap(capital: boolean): void;
 }
 
 /**

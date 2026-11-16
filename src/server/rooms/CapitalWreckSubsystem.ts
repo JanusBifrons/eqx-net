@@ -162,6 +162,8 @@ export class CapitalWreckSubsystem {
         this.setChanged();
       },
       dropPiece: (id: string, fifo: string[]) => this.dropPiece(id, fifo),
+      enforceCap: (capital: boolean) => this.enforceCap(
+        capital ? this.live : this.liveSubcap, capital ? MAX_LIVE_WRECK_PIECES : MAX_LIVE_SUBCAP_WRECK_PIECES),
     };
     this.resplit = new WreckResplitter(d, host);
     this.rockCut = new RockCutter(d, host, () => this.forcedSeed);
