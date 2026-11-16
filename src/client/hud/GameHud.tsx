@@ -3,8 +3,9 @@
  * in-game overlay (prompts, toasts, helm, inspector, drawer, warp map, cargo)
  * is mounted by App directly.
  *
- *  - Status capsule (shield/hull rings, energy, credits): bottom-centre,
- *    stacked above the build palette / fleet panel when those show.
+ *  - Status capsule (shield/hull rings, energy, credits): bottom-centre on
+ *    desktop and landscape touch (above the build palette / fleet panel when
+ *    those show); top-centre on portrait touch, where the thumbs fill the bottom.
  *  - Top: lock status band (top-centre), sector chip (top-left), speed dial
  *    (top-right), weapon strip (right edge, one chip per weapon group).
  *  - Desktop: hold LMB on a ship to lock it (MouseLock.ts), RMB boost, the
@@ -26,7 +27,7 @@ import { FloatingStick } from './FloatingStick';
 import type { StickVec } from './floatingStickMath';
 import { RollingCounter } from './RollingCounter';
 import { HUD, hullColor } from './tokens';
-import { hudScale, useHudSize } from './useHudScale';
+import { hudScale, useHudSize, useIsLandscape } from './useHudScale';
 import { WeaponStrip } from './WeaponStrip';
 import { LockStatusBand } from './LockStatusBand';
 import { ContactsOverview } from '../components/ContactsOverview';
@@ -47,6 +48,7 @@ export function GameHud({ touchInput }: Props): JSX.Element | null {
   const isDead = useUIStore((s) => s.isDead);
   const size = useHudSize();
   const scale = hudScale(size);
+  const landscape = useIsLandscape();
   useFakeCredits();
   useEffect(() => {
     document.documentElement.classList.add('eqx-game-hud');
@@ -68,9 +70,13 @@ export function GameHud({ touchInput }: Props): JSX.Element | null {
       <Slot anchor="top-right" order={2}><SpeedDialMenu direction="down" /></Slot>
 
       {/* ── Bottom ──────────────────────────────────────────────────────────── */}
-      {/* Status capsule: bottom-centre. order 3 stacks it ABOVE the palette (1) and
-          fleet panel (2) — bottom-* hosts are column-reverse — so it never shifts them. */}
-      <Slot anchor="bottom-center" order={3}><StatusCapsule scale={scale} /></Slot>
+      {/* Status capsule: bottom-centre on desktop and landscape touch; order 3 stacks it
+          ABOVE the palette (1) and fleet panel (2) — bottom-* hosts are column-reverse — so
+          it never shifts them. Portrait touch keeps it top-centre: there the thumb sticks
+          fill the bottom edge. */}
+      {touch && !landscape
+        ? <Slot anchor="top-center" order={0}><StatusCapsule scale={scale} /></Slot>
+        : <Slot anchor="bottom-center" order={3}><StatusCapsule scale={scale} /></Slot>}
 
       {/* ── Desktop ─────────────────────────────────────────────────────── */}
       {/* The build palette while spectating (the weapon strip replaces the old weapon-slot bar). */}

@@ -50,6 +50,11 @@ test('shield+hull HUD wiring is live end-to-end on join', async ({ browser }) =>
     // The GameHud status capsule (the only HUD since 2026-11-09) draws the
     // segmented shield + hull rings.
     await expect(page.locator('[data-testid="hud-status"]')).toBeVisible();
+    // Desktop: the capsule sits bottom-centre (portrait touch keeps it top-centre).
+    const box = await page.locator('[data-testid="hud-status"]').boundingBox();
+    const vp = page.viewportSize();
+    expect(box && vp && box.y + box.height / 2 > vp.height / 2).toBe(true);
+    expect(box && vp && Math.abs(box.x + box.width / 2 - vp.width / 2) < 4).toBe(true);
     await expect(page.locator('[data-testid="hud-shield"]')).toBeAttached();
     await expect(page.locator('[data-testid="hud-hull"]')).toBeAttached();
 
