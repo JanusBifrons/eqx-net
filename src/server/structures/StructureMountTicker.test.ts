@@ -13,7 +13,7 @@ import type { StructureRecord } from './StructureRegistry.js';
 import type { TargetClass } from '../../core/combat/mountTargeting.js';
 
 /** Lock signatures (hull radius, u) by class, like the ship catalogue's. */
-const SIG: Record<TargetClass, number> = { small: 10, subcapital: 30, 'small-capital': 55, capital: 200, structure: 80 };
+const SIG: Record<TargetClass, number> = { small: 10, subcapital: 30, 'small-capital': 55, capital: 200, structure: 80, salvage: 50 };
 
 interface Shot { mountIdx: number; ndx: number; ndy: number; target: string }
 
