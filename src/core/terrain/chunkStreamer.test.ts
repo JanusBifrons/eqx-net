@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { CutFieldStreamer, MAX_CHUNKS_PER_STEP, FIELD_CHAIN_WAKE_SPEED, cutFieldOpts, fieldRockBody, fieldRockCircle, fieldRocksInBox, fieldRockWakes } from './chunkStreamer.js';
+import { CutFieldStreamer, MAX_CHUNKS_PER_STEP, FIELD_CHAIN_WAKE_SPEED, cutFieldOpts, fieldRockBody, fieldRockCircle, fieldRocksInBox, fieldRockWakes, fieldRockMass, FIELD_ROCK_BATTLESHIP_MASSES } from './chunkStreamer.js';
+import { getShipKind } from '../../shared-types/shipKinds.js';
+import { shipBodyMass } from '../../shared-types/shipScale/tuning.js';
 import { CHUNK_SIZE, rocksInChunk } from './fieldLayout.js';
 import { placementRejection } from '../structures/placementRules.js';
 
@@ -53,17 +55,44 @@ describe('CutFieldStreamer (macro terrain v2, cut-field slice 1)', () => {
   });
 });
 
-describe('fieldRockWakes (ramming, plan v2 C2)', () => {
-  it('a ship (or anything not a field rock) wakes a rock on touch', () => {
-    expect(fieldRockWakes(undefined, 0)).toBe(true);
-    expect(fieldRockWakes({}, 0)).toBe(true);
+describe('fieldRockWakes (ramming, plan v2 C2; rock mass, owner 2026-11-16)', () => {
+  const bs = getShipKind('battleship'), fighter = getShipKind('fighter'), destroyer = getShipKind('destroyer');
+  const bsMass = shipBodyMass(bs), fMass = shipBodyMass(fighter);
+  // The field's rocks run from about 60 (smallest cut piece) to over 10 000.
+  const smallest = fieldRockMass(60), median = fieldRockMass(326), bsSized = fieldRockMass(bs.radius);
+  it('a battleship-sized rock weighs a hundred battleships, scaling with area', () => {
+    expect(bsSized / bsMass).toBeCloseTo(FIELD_ROCK_BATTLESHIP_MASSES, 6);
+    expect(fieldRockMass(bs.radius / 10)).toBeCloseTo(bsMass, 6);
+    expect(fieldRockMass(2 * 300) / fieldRockMass(300)).toBeCloseTo(4, 9);
+  });
+  it('a fighter never wakes a rock, not even the smallest, however fast', () => {
+    expect(smallest).toBeGreaterThan(fMass * 10);
+    expect(fieldRockWakes(smallest, undefined, fMass, 10_000)).toBe(false);
+    expect(fieldRockWakes(median, {}, fMass, 10_000)).toBe(false);
+  });
+  it('a battleship wakes a much smaller rock, never one its own size', () => {
+    expect(fieldRockWakes(smallest, undefined, bsMass, 0)).toBe(true);
+    expect(fieldRockWakes(fieldRockMass(bs.radius / 10 * 0.999), undefined, bsMass, 0)).toBe(true); // up to its own mass
+    expect(fieldRockWakes(fieldRockMass(bs.radius / 9), undefined, bsMass, 0)).toBe(false);
+    expect(fieldRockWakes(bsSized, undefined, bsMass, 1_000)).toBe(false);
+  });
+  it('the rule scales with the ship: a destroyer only nudges the smallest pieces', () => {
+    const reach = bs.radius * Math.sqrt(shipBodyMass(destroyer) / (FIELD_ROCK_BATTLESHIP_MASSES * bsMass));
+    expect(fieldRockWakes(fieldRockMass(reach * 0.99), undefined, shipBodyMass(destroyer), 0)).toBe(true);
+    expect(fieldRockWakes(fieldRockMass(reach * 1.01), undefined, shipBodyMass(destroyer), 0)).toBe(false);
+  });
+  it('a body of unknown mass never wakes a rock', () => {
+    expect(fieldRockWakes(smallest, {}, undefined, 1_000)).toBe(false);
   });
   it('a fixed neighbour never wakes it, however hard the contact', () => {
-    expect(fieldRockWakes({ fieldRock: true }, 1_000)).toBe(false);
+    expect(fieldRockWakes(smallest, { fieldRock: true }, median, 1_000)).toBe(false);
   });
-  it('an awake rock wakes it only when driven in fast enough', () => {
-    expect(fieldRockWakes({ fieldRock: true, fieldAwake: true }, FIELD_CHAIN_WAKE_SPEED - 1)).toBe(false);
-    expect(fieldRockWakes({ fieldRock: true, fieldAwake: true }, FIELD_CHAIN_WAKE_SPEED)).toBe(true);
+  it('an awake rock wakes one no heavier than itself, only when driven in fast enough', () => {
+    const awake = { fieldRock: true, fieldAwake: true };
+    expect(fieldRockWakes(smallest, awake, median, FIELD_CHAIN_WAKE_SPEED - 1)).toBe(false);
+    expect(fieldRockWakes(smallest, awake, median, FIELD_CHAIN_WAKE_SPEED)).toBe(true);
+    expect(fieldRockWakes(median, awake, median, FIELD_CHAIN_WAKE_SPEED)).toBe(true);
+    expect(fieldRockWakes(median, awake, smallest, 1_000)).toBe(false);
   });
 });
 
