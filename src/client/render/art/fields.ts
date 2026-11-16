@@ -14,7 +14,6 @@ import { getStructureKind, isStructureKindId } from '../../../shared-types/struc
 import { boxBlur, distanceInside, gridFor, hashStr, insidePoly, rasterPoly, rng, type Poly } from './raster.js';
 import { shipScrapGroups } from '../../../core/geometry/shipScrapGroups.js';
 import { shipShapeScale } from '../../../core/geometry/shipHullOutline.js';
-import { generateAsteroidVertices } from '../../../core/swarm/asteroidShape.js';
 import { NAVAL_BARREL_SPAN } from '../../../core/combat/muzzle.js';
 import { planBowFeatures, type BowFeature } from './bowDetail.js';
 import { sizeClassOf } from '../../../shared-types/shipScale/tuning.js';
@@ -37,6 +36,15 @@ function archetypeOf(id: string): Archetype {
   if (id === 'trader-hauler' || id === 'cargo-pod') return 'freighter';
   return 'fighter';
 }
+
+/** Composite part roles that keep their own paint in the forge (no hull
+ *  metal bands or panel grooves across them): a mining barge's cargo, hold,
+ *  deck and stern gear. Warship roles (hull, deck, superstructure, …) are not
+ *  in it, so their bakes are unchanged. */
+export const OWN_PAINT_ROLES: ReadonlySet<string> = new Set([
+  'cargo', 'hold', 'coaming', 'weather-deck', 'deckhouse', 'window', 'bridge-wing', 'mast',
+  'housing', 'radiator', 'pipe', 'gantry', 'intake',
+]);
 
 
 
@@ -114,9 +122,11 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
   // Union coverage + per-part layer index (top-most part wins).
   const layer = new Int8Array(n).fill(-1);
   const partCols: number[] = [];
+  const ownPaint: boolean[] = [];
   parts.forEach((p, idx) => {
     const c = rasterPoly(g, p.pts);
     partCols.push(livery ? liveryHullGrey(p.color, livery, kindId) : p.color);
+    ownPaint.push(OWN_PAINT_ROLES.has((p as { role?: string }).role ?? ''));
     for (let i = 0; i < n; i++) {
       if (c[i]! > f.cov[i]!) f.cov[i] = c[i]!;
       if (c[i]! > 0.5) layer[i] = idx;
@@ -185,11 +195,15 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
       const band = Math.floor(du / spacing);
       let seg = 0;
       for (let ci = 0; ci < cuts.length; ci++) if (wy > cuts[ci]! + (hash01(band * 7 + ci, noiseSeed) - 0.5) * len * 0.12) seg++;
-      const inner = du > spacing * 0.6;
+      // A fitted part (cargo, deckhouse, engine gear) keeps its own paint: the
+      // hull's bare-metal bands and panel grooves follow the hull outline and
+      // would cut across it.
+      const own = layer[i]! >= 0 && ownPaint[layer[i]!] === true;
+      const inner = !own && du > spacing * 0.6;
       const inGroove = (inner && (du % spacing) < grooveW)
         || (inner && cuts.some((c, ci) => hash01(band * 13 + ci, panelSeed) > 0.35 && Math.abs(wy - c - (hash01(band * 7 + ci, noiseSeed) - 0.5) * len * 0.12) < grooveW * 0.5))
         || (arch === 'robot' && du > bw && Math.abs(Math.atan2(wy, wx) % (Math.PI / 3)) < grooveW / Math.max(1, Math.hypot(wx, wy)));
-      if (!paintBands[Math.min(band, paintBands.length - 1)]) mat = MAT.METAL;
+      if (!own && !paintBands[Math.min(band, paintBands.length - 1)]) mat = MAT.METAL;
       const pv = 0.88 + 0.2 * hash01(band * 31 + seg * 7, panelSeed);
       const nz = valueNoise(wx * 0.35, wy * 0.35, noiseSeed);
       const colHex = parts.length > 1 && layer[i]! >= 0 ? paintOf(partCols[layer[i]!]!) : f.paint;
@@ -402,7 +416,9 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
     // A full-thrust flame is ~8.4 nozzle radii (engineFx flameShape): right for a
     // fighter, a sliver on a capital. Kinds with authored thrusters stretch it to
     // about an eighth of the hull length so the exhaust still reads zoomed out.
-    const plume = t ? Math.max(1, (0.24 * kind.radius) / (8.4 * nr)) : 1;
+    // An authored `plume` sets the full-thrust flame as a fraction of the hull
+    // length (2 × radius) instead: a barge's giant bells need a longer one.
+    const plume = t ? (t.plume !== undefined ? (t.plume * 2 * kind.radius) / (8.4 * nr) : Math.max(1, (0.24 * kind.radius) / (8.4 * nr))) : 1;
     const eng = lin(PALETTE.engine);
     sternLine = ny - nr * 0.85;
     // Treatment 'c': the nozzle's bevel ring is a team collar, widened to
@@ -410,6 +426,27 @@ export function forgeShip(kindId: string, opts: ShipForgeOpts): Fields {
     const collarBev = treatC ? Math.max(0.35, Math.min(0.6, 2.2 / (g.ppu * Math.max(0.25, nr * 0.85 * 0.5)))) : 0;
     for (const nx of xs) {
       f.nozzles.push(plume > 1 ? { x: nx, y: ny + nr * 0.6, r: nr, len: plume } : { x: nx, y: ny + nr * 0.6, r: nr });
+      if (t?.bell) {
+        // A round bell seen from astern-above: a bevelled worn rim, a dark
+        // throat and a hot core filling its middle.
+        put(nx, ny, nr, nr, (i, k) => {
+          const rr = Math.sqrt(k);
+          f.mat[i] = MAT.NOZZLE;
+          f.key[i] = PALETTE.nozzle;
+          if (rr > 0.78) {
+            setAlbedo(f, i, lin(rr > 0.92 ? PALETTE.metal : PALETTE.metalWorn), rr > 0.92 ? 0.7 : 1);
+            f.height[i] = f.height[i]! + Hmax * 0.12 * (1 - Math.abs(rr - 0.88) / 0.12);
+          } else {
+            setAlbedo(f, i, lin(PALETTE.nozzle), 0.45);
+            f.height[i] = f.height[i]! - nr * 0.4 * (1 - rr);
+            if (rr < 0.5) {
+              const e = 1.8 * (1 - rr / 0.5) + 0.4;
+              f.emis[i * 3] = eng[0] * e; f.emis[i * 3 + 1] = eng[1] * e; f.emis[i * 3 + 2] = eng[2] * e;
+            }
+          }
+        });
+        continue;
+      }
       putRect(nx, ny, nr, nr * 0.85, (i, bev) => {
         if (livery && bev < collarBev) {
           paintLivery(f, i, livery.team, 0.85);
@@ -503,60 +540,6 @@ export function forgeScrap(parentKindId: string, componentIndex: number, opts: {
   return forgeShip(parentKindId, { ppu: opts.ppu, parts, seedKey: `${parentKindId}#${componentIndex}`, scrap: true });
 }
 
-/** Rock base colours: plain, ice, crystal (the game's asteroid tints). */
-export const ROCK_COLORS: Record<string, number> = { rock: 0x77746f, ice: 0x8fb4c8, crystal: 0x8a6fb0 };
-
-/**
- * An asteroid: the same seeded outline the server builds its collider from
- * (`generateAsteroidVertices`, drawn with y flipped like `buildAsteroidGfx`).
- * A rounded, lumpy body with craters; matte rock, no paint or lights.
- */
-export function forgeRock(shapeSeed: number, radius: number, resource: string | undefined, opts: { ppu: number }): Fields {
-  const outline: Poly = generateAsteroidVertices(shapeSeed, radius).map((v) => [v.x, -v.y] as const);
-  const g = gridFor([outline], opts.ppu, 2);
-  const base = ROCK_COLORS[resource ?? 'rock'] ?? ROCK_COLORS['rock']!;
-  const f = newFields(g, base);
-  const n = g.w * g.h;
-  const cov = rasterPoly(g, outline);
-  for (let i = 0; i < n; i++) f.cov[i] = cov[i]!;
-  const dist = distanceInside(f.cov, g.w, g.h);
-  let maxD = 0;
-  for (let i = 0; i < n; i++) if (dist[i]! > maxD) maxD = dist[i]!;
-  const maxDu = Math.max(0.5, maxD / g.ppu);
-  const seed = hashStr(`rock:${shapeSeed}`);
-  const R = rng(seed);
-  // A few craters, each a shallow bowl with a raised rim.
-  const craters: Array<{ x: number; y: number; r: number }> = [];
-  const nCr = 2 + Math.floor(R() * 4);
-  for (let k = 0; k < nCr; k++) {
-    const a = R() * Math.PI * 2, d = R() * radius * 0.55;
-    craters.push({ x: Math.cos(a) * d, y: Math.sin(a) * d, r: radius * (0.12 + R() * 0.18) });
-  }
-  const col = lin(base);
-  for (let ty = 0; ty < g.h; ty++) {
-    for (let tx = 0; tx < g.w; tx++) {
-      const i = ty * g.w + tx;
-      if (f.cov[i]! <= 0) continue;
-      const wx = (tx + 0.5 - g.ox) / g.ppu, wy = (ty + 0.5 - g.oy) / g.ppu;
-      const t = Math.min(1, dist[i]! / g.ppu / maxDu);
-      // Rounded dome, roughened by two octaves of noise.
-      let h = maxDu * 0.6 * Math.sqrt(t * (2 - t));
-      const nz = valueNoise(wx * 0.12, wy * 0.12, seed) * 0.6 + valueNoise(wx * 0.35, wy * 0.35, seed + 7) * 0.4;
-      h += (nz - 0.5) * maxDu * 0.35 * t;
-      let shade = 0.85 + 0.3 * nz;
-      for (const c of craters) {
-        const dd = Math.hypot(wx - c.x, wy - c.y) / c.r;
-        if (dd < 1) { h -= (1 - dd * dd) * c.r * 0.35; shade *= 0.82 + 0.18 * dd; }
-        else if (dd < 1.3) h += (1.3 - dd) * c.r * 0.25;
-      }
-      f.height[i] = h;
-      f.mat[i] = MAT.ROCK;
-      f.key[i] = base;
-      setAlbedo(f, i, col, shade);
-    }
-  }
-  return f;
-}
 
 
 export interface StructureForgeOpts {
@@ -867,7 +850,7 @@ function stampBowFeatures(f: Fields, features: readonly BowFeature[], b: number)
   }
 }
 
-export type GunFamily = 'bolt' | 'beam' | 'missile' | 'charge' | 'rail';
+export type GunFamily = 'bolt' | 'beam' | 'missile' | 'charge' | 'rail' | 'tractor';
 
 export interface TurretGunSpec {
   family: GunFamily;

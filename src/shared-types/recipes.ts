@@ -79,6 +79,8 @@ export const RECIPE_IDS = [
   'pack_coastal_barbette_16in',
   'pack_coastal_lindemann',
   'pack_siege_gun_80cm',
+  // Salvage stream — the mining barge (an owned ship: the Shipyard builds it).
+  'build_barge',
 ] as const;
 export type RecipeId = (typeof RECIPE_IDS)[number];
 
@@ -413,6 +415,12 @@ export const RECIPES: Readonly<Record<RecipeId, RecipeDef>> = Object.freeze({
     id: 'pack_tower_module', displayName: packName('tower_module'),
     inputs: { alloy: 20, polymer: 8, components: 4, electronics: 2 }, outputs: [{ packed: 'tower_module' }],
     cyclePulses: 30, processors: ['fabricator'], blueprintRequired: true,
+  }),
+  // A capital hull: the bill of a dozen frigates, built over many minutes.
+  build_barge: r({
+    id: 'build_barge', displayName: buildName('barge'),
+    inputs: { alloy: 400, components: 80, electronics: 40, machinery: 40, core: 12 }, outputs: [{ hull: 'barge' }],
+    cyclePulses: 600, processors: ['shipyard'], blueprintRequired: true,
   }),
 });
 

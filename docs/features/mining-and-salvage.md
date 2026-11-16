@@ -26,7 +26,7 @@ Cutting up what is left after a battle: capital wrecks are a resource, and salva
 
 A mount fires only at a locked target inside its own reach (locks still work at any distance), so a small laser has to be brought in closer to a rock than a big one. The beam itself ends at that reach too: a small laser that fires on something close cannot cut a rock further down its line past its own reach (the server's ray and the drawn beam both scale by `mountRangeFactor`). The aim guide and the contact list's group reach show the same per-mount number. Tractors pull up to their reach and no further; the [size ladder](#the-size-ladder-big-lasers-feed-big-tractors-feed-small-lasers) is unchanged, because it judges a tractor at 500 u, far inside even an AA tractor's reach.
 
-No ship carries it yet: the mining barge that does is a later step.
+The mining barge carries it (below).
 
 ## Wrecks wear down
 
@@ -108,9 +108,37 @@ One wreck system cuts ships and rocks; nothing about a rock is a parallel path.
 - **Locks:** `src/core/destruction/rockWreck.test.ts` (determinism, parent-frame tiling, slice line, mass, wear factor), `tests/integration/wire/rockWreckParity.test.ts` (server bodies = client rebuild, descriptor schema), `tests/integration/sectorRoom/rockCut.test.ts` (the real room: wear, split along the beam, other weapons don't, an ore pod; a real fire cuts a rock), `src/client/render/pixi/swarmSpriteUpdater.rockWreck.test.ts`, `src/client/render/pixi/rockPieceArt.test.ts` (art, tint, speck).
 - **Not yet:** a rock piece hit by the mining laser wears but does not pay ore per hit (only its pod does). Rock cutting needs the wreck system on (`capitalWrecks`, on by default). Cut-field rocks (macro terrain) are not cut yet: `rockOf` refuses a `fieldRock` record until the field's consumed keys ride the wire (terrain C3), else a client would still draw the whole rock from its chunk; their outline is also the field cut, not `generateAsteroidVertices(shapeSeed, radius)`. The break point leaves a TODO to record the rock as mined (`cutField?.markConsumed(rec.fieldKey)`) and to read piece ore from the field (`oreAtRest`).
 
+## The mining barge
+
+The owner picked look A, the container ship. It is the ship kind `barge`, the last kind in the catalogue:
+
+- **Anyone can own one.** A player can fly it; it is not tied to any side. Its side is its owner's, never the ship kind's, so it has no allegiance, and it never spawns at random (`randomSpawn: false`): a barge exists only because someone owns it. Its AI pilot uses the civilian role.
+- **A huge hold.** About 105,000 units, several times a battleship's (`cargoCapacity`, read by `cargoCapacityForMaxHealth` on the server and the client alike).
+- **26 mounts, all on the hull's drawn dishes.** Mining lasers (weapon group "Mining lasers"): 2 XL at the bow corners angled forward, 2 L at the aft corners, and 4 M and 4 AA in the side rows. Tractors (group "Tractors") mirror the lasers for the size ladder: in each side row an XL dish at the forward end (by the XL lasers), an L dish at the aft end (by the L lasers), 2 M, 2 AA and 1 S dish; 2 XL, 2 L, 4 M, 4 AA and 2 S in all. Reach, beam size and tractor pull scale with the mount size (`MOUNT_SIZE_TUNING`).
+- **On film:** showcase shot `barge-mining` (room `showcase-barge-mining`, eight placed rocks too heavy for any tractor round a parked barge): the pilot locks the nearest rock with the mining lasers (key 1) and the tractors (key 2), then holds position; the size ladder does the rest.
+
+### Look options
+
+The barge is a container ship for salvage: about 1.3 times a battleship's length (7,480 u), twice its beam, a deck of container stacks, a few big mining lasers at the bow corners and rows of tractor dishes down both sides so it can strip-mine a field, and a stern engine module wider than the hull (1.4 beams) with three or four round bell nozzles, each about a quarter of the beam across, whose plume at full thrust is 30 % of the hull's length. It has no side of its own: whoever owns it decides that.
+
+Three hull looks are on the table for the owner to pick (`bargeDesign` in `shared-types/shipKinds/capitals/bargeDesign.ts`, built from the warship generator's parts):
+
+- **A, container ship:** blunt bow, one long container deck, bridge aft, four bells.
+- **B, twin hull:** two pontoons with blunt bows round a mouth (tractor dishes on its inner faces, a laser and an intake slot at its back) and a central hold of containers, four bells. The least cargo of the three.
+- **C, ore carrier:** a forward mining "jaw" of big lasers with a tractor at the back of the mouth, hatch covers over the hold, three bells.
+
+How they are drawn, all through the ordinary ship art:
+- **Paint:** the warships' steel, so the barge sits in the same light as the fleet. Fitted parts (cargo, deckhouse, stern gear) carry part roles the forge paints as their own (`OWN_PAINT_ROLES` in `client/render/art/fields.ts`), so the hull's bare-metal bands and panel seams never cut across them.
+- **Engines:** `thrusters.bell` draws round bells (rim, dark throat, hot core) instead of block nozzles; `thrusters.plume` sets the full-thrust flame length as a fraction of the hull length, read by the forge into the engine FX.
+- **Mounts:** a mining laser on a capital mount draws as a round emitter with a lens barrel, and a tractor as a dish, sized by its mount class (`turretLayout.ts`), not as a naval gunhouse.
+
+Tractor mounts (`tractor-*`) carry the `tractor` weapon and draw as dishes.
+
+To see one in the game, start the server with `EQX_BARGE_LOOK=A` (or B, C) and open the page with `?room=showcase-barge-look&bargeLook=A`: the barge parks beside a battleship and a few small ships. Room `showcase-barge-thrust` has one barge under way at full thrust. Showcase shots `barge-look`, `barge-stern` and `barge-thrust` film them. The switch is for this look review only. Unset, the catalogue is unchanged. Set, the look is added at the very end of the catalogue as kind `barge-look`, and it never spawns at random. Set it on both the server and the page. It stays for comparing looks B and C with the real barge (look A).
+
 ## Coming next
 
-- **The mining barge:** the salvage ship that carries the mining laser.
+- **The barge's AI pilot:** its turrets pick salvage targets and it strip-mines a wreck field, banking at its owner's base.
 - **Tractor beam on screen:** the client draws the beam and predicts the pull from the snapshot's beam links (with an e2e test and a showcase shot).
 
 ## Under the hood

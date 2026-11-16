@@ -11,8 +11,9 @@ import type { Img } from './fxTextures.js';
 import type { EffectQuality } from '@core/contracts/IEffects';
 
 /** How a turret draws. 'rail' is the railgun: a ringed breech and one
- *  split-rail barrel (`railGeom`), not a powder gunhouse. */
-export type TurretFamily = 'bolt' | 'beam' | 'missile' | 'charge' | 'rail';
+ *  split-rail barrel (`railGeom`), not a powder gunhouse. 'tractor' is a
+ *  tractor emitter: a dish with no barrel (`turretLayout.familyOf`). */
+export type TurretFamily = 'bolt' | 'beam' | 'missile' | 'charge' | 'rail' | 'tractor';
 
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
 

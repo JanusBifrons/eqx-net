@@ -114,7 +114,9 @@ describe.each(SCALES)('ship scale %ix — geometry and tuning follow the hull', 
 
   it('a playable ship\'s shield fits through a gate and an airlock (at the scales we ship)', () => {
     if (s > 2) return; // 4× is a stress sweep, not a shipping scale
-    for (const k of kinds.filter((x) => !x.npcOnly && !x.engineeringOnly && x.id !== 'test-capital')) {
+    // A pilotable capital (the mining barge) is far wider than a gate: it
+    // stays outside a base's walls.
+    for (const k of kinds.filter((x) => !x.npcOnly && !x.engineeringOnly && x.id !== 'test-capital' && x.sizeClass !== 'capital')) {
       const shield = 2 * (k.radius + shipTuning(k).shieldPad);
       expect(shield, `${k.id} vs gate`).toBeLessThan(GATE_GAP);
       expect(shield, `${k.id} vs airlock`).toBeLessThan(AIRLOCK_GAP);
