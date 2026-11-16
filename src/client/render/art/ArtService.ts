@@ -22,7 +22,7 @@ import { loadBakes, saveBakes, storeKey } from './bakeStore.js';
 import type { Frame, LightRig } from './shade.js';
 import { sunRigForSector } from './sunRig.js';
 import { shipScaleWorkerName } from '../../../shared-types/shipScale/config.js';
-import { ChunkCutJobs, cutInline, type ChunkOpts, type ChunkRock } from './chunkCutJobs.js';
+import { ChunkCutJobs, cutInline, type ChunkOpts, type PackedChunk } from './chunkCutJobs.js';
 
 export type ArtState = 'pending' | 'ready' | 'failed';
 
@@ -116,7 +116,7 @@ export interface BakeRunner {
   run(job: BakeJob, rig: LightRig, urgent?: boolean): Promise<Baked>;
   /** Move a queued (not yet started) job to the front. */
   promote?(job: BakeJob): void;
-  cutChunk?(field: ChunkOpts, cx: number, cy: number): Promise<ChunkRock[]>; // cut-field chunks, off the frame (chunkCutJobs.ts)
+  cutChunk?(field: ChunkOpts, cx: number, cy: number): Promise<PackedChunk>; // cut-field chunks, off the frame (chunkCutJobs.ts)
   readonly workers: number;
   destroy(): void;
 }
@@ -666,7 +666,7 @@ export class WorkerBakeRunner implements BakeRunner {
     if (i > 0) this.queue.unshift(this.queue.splice(i, 1)[0]!);
   }
 
-  cutChunk(field: ChunkOpts, cx: number, cy: number): Promise<ChunkRock[]> { const p = this.cuts.add(field, cx, cy); this.pump(); return p; }
+  cutChunk(field: ChunkOpts, cx: number, cy: number): Promise<PackedChunk> { const p = this.cuts.add(field, cx, cy); this.pump(); return p; }
   private pump(): void {
     this.cuts.drain(this.idle, () => this.seq++, (w) => { this.idle.push(w); this.pump(); });
     while (this.idle.length > 0 && this.queue.length > 0) {
@@ -711,7 +711,7 @@ export class InlineBakeRunner implements BakeRunner {
     this.chain = p.catch(() => undefined);
     return p;
   }
-  cutChunk(field: ChunkOpts, cx: number, cy: number): Promise<ChunkRock[]> { return cutInline(field, cx, cy, () => this.stopped); }
+  cutChunk(field: ChunkOpts, cx: number, cy: number): Promise<PackedChunk> { return cutInline(field, cx, cy, () => this.stopped); }
   destroy(): void { this.stopped = true; }
 }
 
