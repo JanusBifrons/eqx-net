@@ -10,11 +10,9 @@
  * freely.
  */
 import { fractureHull, cutDirFromAngle, EDGE_HULL, type FractureEdgeKind, type FractureExtraCut, type FractureKillCut, type FracturePiece } from './fractureHull.js';
-import { DESTRUCTION_PROFILES } from '../../shared-types/shipScale/destruction.js';
 import type { WreckExtraCut } from '../../shared-types/messages/wreckDescriptor.js';
-import { shipHullOutline, shipShapeScale } from '../geometry/shipHullOutline.js';
-import { getShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
-import { shipBodyMass, shipTuning } from '../../shared-types/shipScale/tuning.js';
+import type { ShipKindId } from '../../shared-types/shipKinds.js';
+import { asWreckSource, wreckSourceOf, type WreckRockSource, type WreckSource } from './wreckSource.js';
 import type { Vec2 } from '../swarm/asteroidShape.js';
 
 /**
@@ -23,7 +21,11 @@ import type { Vec2 } from '../swarm/asteroidShape.js';
  * client rebuilds the same pieces the server spawned (no vertex on the wire).
  */
 export interface WreckFractureInputs {
-  kindId: ShipKindId;
+  /** The dead hull's ship kind; absent for a rock's wreck (`rock`). */
+  kindId?: ShipKindId;
+  /** Rock cut: the rock this wreck was cut from (its outline is the
+   *  fracture's input; `wreckSource.ts`). Exactly one of `kindId` / `rock`. */
+  rock?: WreckRockSource;
   seed: number;
   /** Kill point in the hull's 1× Pixi-up frame, already on the outline. */
   killX: number;
@@ -93,20 +95,22 @@ export function wreckFractureExtraCuts(input: { cutKind?: 'slice' | 'channel'; c
   });
 }
 
-/** The raw fracture of a wreck (hull 1× Pixi-up frame). The kind's
+/** The raw fracture of a wreck (hull 1× Pixi-up frame). The source's
  *  destruction profile picks the options (a capital's are the fracture
- *  defaults); `none` leaves no pieces. */
+ *  defaults); `none` leaves no pieces. A rock breaks in fixed-count mode (no
+ *  damage inputs: the profile's cap is the target), like a re-split. */
 export function wreckRootFracture(input: WreckFractureInputs): FracturePiece[] {
-  const kind = getShipKind(input.kindId);
-  const opts = DESTRUCTION_PROFILES[shipTuning(kind).destruction].fracture;
+  const src = wreckSourceOf(input);
+  const opts = src.profile.fracture;
   if (opts === null) return [];
+  const rock = src.rock !== null;
   return fractureHull({
-    hull: shipHullOutline(kind),
+    hull: src.outline,
     seed: input.seed >>> 0,
     killPoint: { x: input.killX, y: input.killY },
     maxPieces: opts.maxPieces,
-    killBlowDamage: input.killBlowDamage,
-    recentDamageRate: input.recentDamageRate,
+    killBlowDamage: rock ? undefined : input.killBlowDamage,
+    recentDamageRate: rock ? undefined : input.recentDamageRate,
     // The descriptor's snap chance (what the server used) wins.
     snapChance: input.snapChance,
     fanCracks: opts.fanCracks,
@@ -122,28 +126,18 @@ export function wreckRootFracture(input: WreckFractureInputs): FracturePiece[] {
   });
 }
 
-function ringArea(r: ReadonlyArray<readonly [number, number]>): number {
-  let a = 0;
-  for (let i = 0; i < r.length; i++) {
-    const p = r[i]!;
-    const q = r[(i + 1) % r.length]!;
-    a += p[0] * q[1] - q[0] * p[1];
-  }
-  return Math.abs(a) / 2;
-}
-
 /**
- * Raw fracture pieces of a `kindId` wreck (hull 1× Pixi-up frame) → body-frame
- * geometry: centroid in the ship's scaled math-up frame, parts and outline
- * recentred there (the Y flip reverses each ring, so walk it backwards to
- * stay CCW), mass from area at the kind's density (hull mass / hull area).
+ * Raw fracture pieces of a wreck (hull 1× Pixi-up frame) → body-frame
+ * geometry: centroid in the source's scaled math-up frame (a rock's: its own
+ * rest frame), parts and outline recentred there (the Y flip reverses each
+ * ring, so walk it backwards to stay CCW), mass from area at the source's
+ * density (a ship's hull mass / hull area; a rock's `ROCK_WRECK_DENSITY`).
  */
-export function fracturePiecesToGeometry(kindId: ShipKindId, fractured: ReadonlyArray<FracturePiece>): WreckPieceGeometry[] {
-  const kind = getShipKind(kindId);
-  const s = shipShapeScale(kind);
-  const hullAreaWorld = ringArea(shipHullOutline(kind)) * s * s;
-  const density = hullAreaWorld > 0 ? shipBodyMass(kind) / hullAreaWorld : 0;
-  const inset = shipTuning(kind).wreckColliderInset;
+export function fracturePiecesToGeometry(source: ShipKindId | WreckSource, fractured: ReadonlyArray<FracturePiece>): WreckPieceGeometry[] {
+  const src = asWreckSource(source);
+  const s = src.scale;
+  const density = src.area > 0 ? src.bodyMass / src.area : 0;
+  const inset = src.inset;
   const out: WreckPieceGeometry[] = [];
   for (let i = 0; i < fractured.length; i++) {
     const p = fractured[i]!;
