@@ -4731,6 +4731,23 @@ export class SectorRoom extends Room<SectorState> {
     return this.fleet.ownerOfAttached(id) ?? id;
   }
 
+  /** A lock machine's `shipOf`: kind + activated mounts, cached per id by the ship's `mounts` ref. */
+  private lockShipOf(id: string, ship: ShipState | undefined): { kind: ShipKind; activated: ReadonlyArray<WeaponMount> } | null {
+    if (!ship) return null;
+    const kind = getShipKind(ship.kind);
+    let c = this._lockActivated.get(id);
+    if (!c || c.ref !== ship.mounts) {
+      c = { ref: ship.mounts, mounts: this.resolveInstanceMounts(ship).slice((kind.mounts ?? []).length) };
+      this._lockActivated.set(id, c);
+    }
+    return { kind, activated: c.mounts };
+  }
+
+  /** A wingman lock machine's hull: the LINGERING (AI-flown) ship `sid`. */
+  private wingmanHull(sid: string): ShipState | undefined {
+    return this.lingeringSlots.has(sid) ? this.state.ships.get(sid) : undefined;
+  }
+
   /**
    * RTS slice 5 — the PLAYER lock machine for AI-flown hulls (same class, same
    * lock maths: owner rule "same locks as a pilot in that ship"). Keyed by the
@@ -4752,20 +4769,9 @@ export class SectorRoom extends Room<SectorState> {
         out.x = p.x; out.y = p.y; out.vx = p.vx; out.vy = p.vy; out.angle = p.angle;
         return true;
       },
-      shipOf: (sid) => {
-        const ship = this.lingeringSlots.has(sid) ? this.state.ships.get(sid) : undefined;
-        if (!ship) return null;
-        const kind = getShipKind(ship.kind);
-        let c = this._lockActivated.get(sid);
-        if (!c || c.ref !== ship.mounts) {
-          const all = this.resolveInstanceMounts(ship);
-          c = { ref: ship.mounts, mounts: all.slice((kind.mounts ?? []).length) };
-          this._lockActivated.set(sid, c);
-        }
-        return { kind, activated: c.mounts };
-      },
+      shipOf: (sid) => this.lockShipOf(sid, this.wingmanHull(sid)),
       autoPick: () => null,
-      salvageOf: (sid, key, out) => this._lockSalvage.fill(this.lingeringSlots.has(sid) ? this.state.ships.get(sid) : undefined, key, out),
+      salvageOf: (sid, key, out) => this._lockSalvage.fill(this.wingmanHull(sid), key, out),
       commitHostileAct: (sid, key) => {
         const owner = this.fleet.ownerOfAttached(sid);
         if (owner !== null) this.commitLockHostileAct(owner, key);
@@ -4788,18 +4794,7 @@ export class SectorRoom extends Room<SectorState> {
         out.x = p.x; out.y = p.y; out.vx = p.vx; out.vy = p.vy; out.angle = p.angle;
         return true;
       },
-      shipOf: (pid) => {
-        const ship = this.getActiveShip(pid);
-        if (!ship) return null;
-        const kind = getShipKind(ship.kind);
-        let c = this._lockActivated.get(pid);
-        if (!c || c.ref !== ship.mounts) {
-          const all = this.resolveInstanceMounts(ship);
-          c = { ref: ship.mounts, mounts: all.slice((kind.mounts ?? []).length) };
-          this._lockActivated.set(pid, c);
-        }
-        return { kind, activated: c.mounts };
-      },
+      shipOf: (pid) => this.lockShipOf(pid, this.getActiveShip(pid)),
       autoPick: (pid, reach, sx, sy, bears, anyTarget, size) => {
         // NPC ship already hostile to this pilot, within reach and arc: the
         // class the group's heaviest gun prefers first (`mountPriority`:
