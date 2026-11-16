@@ -21,7 +21,7 @@ import { backdropXf, type TileXf } from './fxMath.js';
 import { h01 } from './fxTextures.js';
 import { hueTint, type NebulaStyle } from './nebulaLook.js';
 
-interface Layer { s: TilingSprite; h: ArtHandle; parallax: number; zoomPow: number; texScale: number; alpha: number; dvx: number; dvy: number; order: number }
+interface Layer { rot: number; s: TilingSprite; h: ArtHandle; parallax: number; zoomPow: number; texScale: number; alpha: number; dvx: number; dvy: number; order: number }
 interface Puff { s: Sprite; slice: number; lx: number; ly: number; size: number; rot: number }
 interface Knot { halo: Sprite; core: Sprite; lx: number; ly: number; size: number }
 
@@ -65,7 +65,7 @@ export class NebulaVolume {
       const a = h01(li, style.seed * 13 + 3) * Math.PI * 2;
       const speed = 3 + 7 * f;
       this.layers.push(this.makeLayer(art, `${look}.L${li}`, back, 'add', p, 0.3 + 0.6 * f, 4.2 - 2.2 * f,
-        (0.5 + 0.4 * f) * (0.7 + 0.3 * style.thickness), Math.cos(a) * speed, Math.sin(a) * speed, li));
+        (0.3 + 0.25 * f) * (0.7 + 0.3 * style.thickness), Math.cos(a) * speed, Math.sin(a) * speed, li));
       if (li === dustAt && style.dust > 0.05) {
         // Dust sits between the layers, nearer than most of the glow.
         this.layers.push(this.makeLayer(art, `${look}.D`, back, 'normal', p + 0.04, 0.32 + 0.6 * f, 3.4, 0.95 * style.dust, -Math.cos(a) * 2, -Math.sin(a) * 2, -1));
@@ -103,7 +103,7 @@ export class NebulaVolume {
     const s = new TilingSprite({ width: 1, height: 1 });
     s.blendMode = blend; s.visible = false;
     parent.addChild(s);
-    return { s, h: art.fx('nebLayer', variant, undefined, false), parallax, zoomPow, texScale, alpha, dvx, dvy, order };
+    return { rot: (order + 1) * 0.9, s, h: art.fx('nebLayer', variant, undefined, false), parallax, zoomPow, texScale, alpha, dvx, dvy, order };
   }
 
   /** Draw for a camera at Pixi-space (cx, cy). `t` is effects time (s). */
@@ -125,6 +125,7 @@ export class NebulaVolume {
       backdropXf(cx, cy, zoom, l.parallax, l.zoomPow, W, H, this.xf);
       const ts = this.xf.scale * l.texScale;
       l.s.tileScale.set(ts);
+      l.s.tileRotation = l.rot;
       l.s.tilePosition.set(wrap(this.xf.x + l.dvx * t * ts, tex.width * ts), wrap(this.xf.y + l.dvy * t * ts, tex.height * ts));
       l.s.alpha = l.alpha;
     }

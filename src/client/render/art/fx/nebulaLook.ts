@@ -26,6 +26,8 @@ export interface NebulaStyle {
   sat: number;
   /** Cloud cover and opacity (0..1). */
   thickness: number;
+  /** How bright the hot cores and filaments burn (lit from inside). */
+  glow: number;
   /** Turbulence: how folded and stringy the gas is (0..1). */
   turbulence: number;
   /** Cloud layers behind the world (depths), at high quality. */
@@ -57,7 +59,7 @@ export function nebulaStyle(preset: NebLookPreset, seed: number): NebulaStyle {
       const hueA = r(1);
       return {
         preset, seed, hueA, hueB: frac(hueA + 0.06 + 0.08 * r(2)), rainbow: 0.04, sat: lerp(0.55, 0.8, r(3)),
-        thickness: lerp(0.8, 0.95, r(4)), turbulence: 0.35, layers: 6, frontSlices: 3,
+        thickness: lerp(0.8, 0.95, r(4)), glow: 0.6, turbulence: 0.35, layers: 6, frontSlices: 3,
         dust: 0.45, knots: 5, lightning: 0, dim: 0.85, grade: 0.11,
       };
     }
@@ -65,7 +67,7 @@ export function nebulaStyle(preset: NebLookPreset, seed: number): NebulaStyle {
       // The whole wheel across the cloud, bright filaments, sparkle.
       return {
         preset, seed, hueA: r(1), hueB: frac(r(1) + 0.5), rainbow: lerp(0.8, 1, r(2)), sat: lerp(0.75, 0.95, r(3)),
-        thickness: lerp(0.6, 0.75, r(4)), turbulence: 0.6, layers: 5, frontSlices: 2,
+        thickness: lerp(0.78, 0.88, r(4)), glow: 1.1, turbulence: 0.6, layers: 5, frontSlices: 2,
         dust: 0.12, knots: 14, lightning: 0, dim: 0.6, grade: 0.05,
       };
     }
@@ -74,7 +76,7 @@ export function nebulaStyle(preset: NebLookPreset, seed: number): NebulaStyle {
       const hueA = frac(0.94 + 0.12 * r(1));
       return {
         preset, seed, hueA, hueB: lerp(0.55, 0.66, r(2)), rainbow: 0.12, sat: lerp(0.7, 0.9, r(3)),
-        thickness: lerp(0.7, 0.85, r(4)), turbulence: 0.85, layers: 5, frontSlices: 3,
+        thickness: lerp(0.82, 0.92, r(4)), glow: 1.5, turbulence: 0.85, layers: 5, frontSlices: 3,
         dust: 0.9, knots: 8, lightning: lerp(8, 14, r(5)), dim: 0.75, grade: 0.08,
       };
     }
@@ -141,18 +143,18 @@ function gasAt(st: NebulaStyle, u: number, v: number, base: number, seed: number
   const wu = u + (qx - 0.5) * warp, wv = v + (qy - 0.5) * warp;
   const d = pfbm(wu, wv, base + 1, 6, seed + 40);
   // Ridged noise = bright filaments along folds (stronger with turbulence).
-  const ridge = 1 - Math.abs(2 * pfbm(wu * 2, wv * 2, (base + 1) * 2, 4, seed + 60) - 1);
-  const fil = Math.pow(ridge, 3) * st.turbulence;
-  const t0 = 0.56 - 0.26 * st.thickness;
-  const m = smooth(t0, t0 + 0.32, d);
+  const ridge = 1 - Math.abs(2 * pfbm(wu, wv, base + 1, 4, seed + 60) - 1);
+  const fil = Math.pow(ridge, 8) * st.turbulence;
+  const t0 = 0.6 - 0.22 * st.thickness;
+  const m = smooth(t0, t0 + 0.3, d);
   const hot = smooth(0.62, 0.95, d * 0.65 + fil * 0.55) * m;
   // Hue: dominant -> secondary by a slow field, plus the rainbow sweep.
   const mixT = smooth(0.3, 0.7, pfbm(u, v, 2, 3, seed + 90));
   const sweep = pfbm(u, v, 1, 3, seed + 120) * 2.4;
   const hue = frac(lerp(st.hueA, st.hueA + (frac(st.hueB - st.hueA + 0.5) - 0.5), mixT) + st.rainbow * sweep);
   // Hot cores whiten and brighten (gas lit from inside).
-  hsvLinear(hue, st.sat * (1 - 0.55 * hot), 0.5 + 0.5 * m + 0.8 * hot, out);
-  return clamp01(m * (0.4 + 0.45 * st.thickness) + hot * 0.45 + fil * m * 0.3);
+  hsvLinear(hue, st.sat * (1 - 0.45 * hot), 0.3 + 0.35 * m + 0.6 * hot * st.glow + 0.3 * fil * m * st.glow, out);
+  return clamp01(m * (0.22 + 0.3 * st.thickness) + hot * 0.3 * st.glow + fil * m * 0.25);
 }
 
 /** One tileable cloud layer (depth `layer` of the style's layers). */
