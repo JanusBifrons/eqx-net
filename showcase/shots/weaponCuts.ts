@@ -492,7 +492,7 @@ export const railChannel: Shot = {
 export const beamCollateralEdge: Shot = {
   ...beamCollateralSubcap,
   id: 'beam-collateral-edge',
-  title: 'Heavy beam clips a frigate's stern',
+  title: "Heavy beam clips a frigate's stern",
   caption: 'A frigate only half in the line of fire: the beam burns its stern away and leaves the bow a dead wreck.',
   target: { ...beamCollateralSubcap.target, room: 'showcase-beam-collateral-edge' },
 };
