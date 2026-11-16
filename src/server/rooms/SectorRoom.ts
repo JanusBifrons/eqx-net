@@ -2961,7 +2961,7 @@ export class SectorRoom extends Room<SectorState> {
       registry: this.structureRegistry,
       // Asteroids (swarm kind=0) block placement and a connector's line of sight
       // (Item D); shared with the grid-pulse reconnect sweep. Placement also
-      // passes `near` for unloaded cut-field rocks (C5). Off the hot loop.
+      // passes `near` for unloaded cut-field rocks (C5, links C5g). Off the hot loop.
       getObstacles: (near) => this.gatherStructureObstacles(near),
       // Economy v2 W4b — a player's non-starter structure is placed from a
       // PACKED item (now buyable from traders, and lootable). Consumed only
@@ -3030,8 +3030,8 @@ export class SectorRoom extends Room<SectorState> {
       // turret's pstruct- id, which isMissileTargetHostile restricts to drones).
       spawnMissile: (shooterId, x, y, dx, dy, def) =>
         this.spawnServerMissile(shooterId, x, y, dx, dy, def),
-      // Reconnect sweep honours current asteroid LOS (playtest 2026-06-10 Issue 2).
-      getObstacles: () => this.gatherStructureObstacles(),
+      // Reconnect sweep honours current asteroid LOS (Issue 2), unloaded rocks in `near` too (C5g).
+      getObstacles: (near) => this.gatherStructureObstacles(near),
       // Gameplay audit — a blueprint finished construction (1 Hz pulse, off-tick).
       // Campaign 6.3 — completion is durable state (isConstructed + full HP);
       // persist event-driven so a crash keeps the built structure built.

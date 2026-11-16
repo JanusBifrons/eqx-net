@@ -34,7 +34,7 @@ import {
 } from '../../core/leveling/structureLevel.js';
 import { isWeaponId, type WeaponDef, type WeaponId, type MissileWeaponDef } from '../../core/combat/WeaponCatalogue.js';
 import { MINING_BEAM_PLAYER_DPS, resolveMiningBeamEndpoint, type MiningBeamObstacle } from '../../core/combat/miningBeamHazard.js';
-import { Grid, type GridObstacle } from '../../core/structures/Grid.js';
+import { Grid, type GridObstacle, type ObstacleBox } from '../../core/structures/Grid.js';
 import { chargeStep, dischargeStep, drainPower } from '../../core/structures/batteryPower.js';
 import type { Connection, FlowMaterial } from '../../core/structures/Connection.js';
 import {
@@ -48,7 +48,7 @@ import {
   TRANSFER_PULSE_MS,
   TURRET_TICK_MS,
 } from '../../core/structures/structureGridConstants.js';
-import { autoConnectStructure, buildGridNodes } from './structureGridView.js';
+import { autoConnectStructure, buildGridNodes, linkReachBox } from './structureGridView.js';
 import { structureMountMuzzle, structureNavalTurret, navalBarrelOffset } from '../../core/combat/muzzle.js';
 import type { WeaponMount } from '../../shared-types/shipKinds.js';
 import type { StructureKind } from '../../shared-types/structureKinds.js';
@@ -185,9 +185,10 @@ export interface StructureGridHooks {
   damagePlayersInBeam?(minerId: string, fromX: number, fromY: number, toX: number, toY: number, perHitDamage: number): void;
   /** Live non-structure obstacles (asteroids) that block a connection's line of
    *  sight — same source the placement subsystem passes to autoConnectStructure.
-   *  Used by the reconnect sweep so a retry honours current asteroid geometry.
+   *  Used by the reconnect sweep so a retry honours current asteroid geometry;
+   *  `near` (the links' `linkReachBox`) adds the rocks there with no body.
    *  Optional: omitted ⇒ structures-only LOS (byte-identical). */
-  getObstacles?: () => readonly GridObstacle[];
+  getObstacles?: (near?: ObstacleBox) => readonly GridObstacle[];
   /** Gameplay audit — a blueprint finished construction this pulse. The room
    *  supplies the closure (it owns the sectorKey). Off the 60 Hz loop (1 Hz
    *  pulse). Optional ⇒ no-op in the unit harness. */
@@ -228,6 +229,8 @@ export class StructureGridSubsystem {
   private turretTicks = 0;
   /** Fallback candidate for rooms without `turretTargets` (unit harnesses). */
   private readonly nearestView: TurretTargetView = { id: '', entityId: -1, x: 0, y: 0, vx: 0, vy: 0, cls: 'small', signature: FALLBACK_TARGET_SIGNATURE };
+  /** Scratch for `linkReachBox` (the reconnect `near` box). */
+  private readonly linkBox: ObstacleBox = { x0: 0, y0: 0, x1: 0, y1: 0 };
 
   constructor(private readonly hooks: StructureGridHooks) {
     this.mounts = new StructureMountTicker({
@@ -503,10 +506,12 @@ export class StructureGridSubsystem {
    * asteroid that has since drifted out of the connecting segment. Capped per
    * pulse. Permanently-blocked geometry (collinear leaves) simply keeps
    * returning null cheaply. `autoConnectStructure` dirties topology on success.
+   * Obstacles are gathered per attempt over the box its links may run in
+   * (`linkReachBox`, so unloaded cut-field rocks block too), and only when
+   * something is in range: a pulse with nothing stranded gathers nothing.
    */
   private processReconnect(): void {
     const registry = this.hooks.registry;
-    const obstacles = this.hooks.getObstacles?.();
     let attempts = 0;
     for (const rec of registry.all()) {
       if (attempts >= MAX_RECONNECT_ATTEMPTS_PER_PULSE) break;
@@ -518,7 +523,8 @@ export class StructureGridSubsystem {
       // connected placements (temporal strandings, Issue 2) auto-connect here.
       if (registry.hasEverConnected(rec.id)) continue;
       attempts++;
-      autoConnectStructure(registry, rec.id, obstacles);
+      if (!linkReachBox(registry, rec.id, this.linkBox)) continue;
+      autoConnectStructure(registry, rec.id, this.hooks.getObstacles?.(this.linkBox));
     }
   }
 
@@ -871,7 +877,9 @@ export class StructureGridSubsystem {
    */
   reconnect(id: string): boolean {
     if (!this.hooks.registry.get(id)) return false;
-    autoConnectStructure(this.hooks.registry, id, this.hooks.getObstacles?.());
+    if (linkReachBox(this.hooks.registry, id, this.linkBox)) {
+      autoConnectStructure(this.hooks.registry, id, this.hooks.getObstacles?.(this.linkBox));
+    }
     return true;
   }
 
