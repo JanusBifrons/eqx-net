@@ -1,15 +1,14 @@
 /**
- * Rock cut (salvage stream): a rock's wreck piece draws the existing asteroid
- * art of its whole parent rock, offset to the piece and clipped to its
- * outline (`rockPieceArt.ts`), inside a `WreckPieceSprite` (cut-edge glow,
- * hit flash). A rock's parent kind is `WRECK_ROCK_PARENT_KIND` ('asteroid'),
- * not a ship kind, and its wire shipKind byte decodes to an arbitrary ship
- * kind: neither may reach a ship-art or ship-kind lookup (only the rock's
+ * Rock cut (salvage stream): a rock's wreck piece draws its own stretch of
+ * its parent rock's asteroid art, unmasked (`rockPieceArt.ts`), inside a
+ * `WreckPieceSprite` (cut-edge glow, hit flash). A rock's parent kind is
+ * `WRECK_ROCK_PARENT_KIND` ('asteroid'), not a ship kind, and its wire
+ * shipKind byte decodes to an arbitrary ship kind: neither may reach a
+ * ship-art or ship-kind lookup (only the rock's
  * own bake, the art the uncut rock drew).
  */
 import { describe, it, expect, vi } from 'vitest';
-import { Container, Graphics, Texture } from 'pixi.js';
-import { MachinedFlatSprite } from '../art/MachinedFlatSprite.js';
+import { Container, Graphics, Mesh, Texture } from 'pixi.js';
 import { updateSwarmSprites, type SwarmSpriteCtx } from './swarmSpriteUpdater.js';
 import { MountVisualManager } from '../MountVisualManager.js';
 import { WreckGeometryStore, rebuildWreckPieces } from '../../net/wreckGeometryStore.js';
@@ -110,19 +109,15 @@ describe('rock wreck pieces draw the asteroid art (rock cut)', () => {
       expect(new Set(touched), 'only the rock bake').toEqual(new Set(['rock']));
       const ps = pieces(ctx);
       expect(ps.length).toBe(mirror.swarm!.size);
-      const geom = rebuildWreckPieces(d);
       for (const p of ps) {
         expect(p.info.profile).toBe('rock');
         expect(p.artMode()).toBe('plain'); // no ship art
-        // The rock art: the whole rock's asteroid gfx at the rock's centre in
-        // the piece frame (pixi y down), clipped by the piece-outline mask.
+        // The rock art: the piece outline in the plain rock look, no mask (a
+        // stencil mask per piece breaks the batch).
         const holder = p.children[0] as Container;
-        const [art, mask] = holder.children as [Graphics, Graphics];
-        expect(art).toBeInstanceOf(Graphics);
-        expect(art.mask).toBe(mask);
-        const g = geom[p.pieceIndex]!;
-        expect(art.position.x).toBeCloseTo(-g.cx);
-        expect(art.position.y).toBeCloseTo(g.cy);
+        expect(holder.children.length).toBe(1);
+        expect(holder.children[0]).toBeInstanceOf(Graphics);
+        for (const o of [holder, ...holder.children] as Container[]) expect(o.mask ?? null).toBeNull();
       }
       // The cut edges keep the wreck glow (a slice burns the full style).
       expect(ps.some((p) => p.glowSegments() > 0)).toBe(true);
@@ -149,7 +144,7 @@ describe('rock wreck pieces draw the asteroid art (rock cut)', () => {
     expect(ps.length).toBe(mirror.swarm!.size);
     for (const p of ps) {
       expect(p.rockArt!.struct).toBe(struct);
-      expect(p.rockArt!.children[0]).toBeInstanceOf(MachinedFlatSprite);
+      expect(p.rockArt!.children[0]).toBeInstanceOf(Mesh);
     }
   });
 

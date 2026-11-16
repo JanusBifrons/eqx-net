@@ -1473,8 +1473,8 @@ export class WreckPieceSprite extends Container {
    * only on a change.
    */
   setFarZoom(scale: number, layer: RenderLayer | null = null): void {
-    // A rock piece always takes the speck: its art is masked (a stencil
-    // mask per piece never batches), lit or not.
+    // A rock piece always takes the speck: as the rock does at far zoom,
+    // lit or not (one batched speck instead of the piece mesh).
     if (this.litMeshes === 0 && this.rockArt === null) return;
     const lod = wreckPieceFarLod(this.shipRadius, scale, this.farLod);
     if (lod === this.farLod) return;

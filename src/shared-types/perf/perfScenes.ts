@@ -304,8 +304,8 @@ export const PERF_SCENES: readonly PerfScene[] = [
   {
     // Rock cut (salvage stream, docs/features/mining-and-salvage.md): eight
     // rocks mined to a break at t = 2 s, their wreck pieces on screen at the
-    // normal zoom, where each piece draws the rock's art through a polygon
-    // mask. The intact arm: `--base HEAD --base-env EQX_SCENE_ROCK_CUT=0`
+    // normal zoom, where each piece draws its stretch of the rock's art as one
+    // batched mesh. The intact arm: `--base HEAD --base-env EQX_SCENE_ROCK_CUT=0`
     // (the same rocks left whole).
     id: 'rock-cut',
     title: 'Eight rocks mined into wreck pieces, seen at the normal zoom',
