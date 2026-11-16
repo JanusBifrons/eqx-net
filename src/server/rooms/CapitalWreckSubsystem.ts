@@ -277,8 +277,7 @@ export class CapitalWreckSubsystem {
       const w = killCutStripWidth(killCut);
       if (w > 0) cutW = w / shipShapeScale(getShipKind(kindId));
     }
-    // Fracture v12 multi-cut: every other beam on the hull in the last moment cuts too (an overlapping
-    // heavy beam widens the main strip `strip` and moves `killWorld` instead; "Burned gap").
+    // Multi-cut: each beam on the hull cuts too; an overlapping one widens `strip`, moves `killWorld`.
     const killWorld = e !== undefined && e.hasPoint ? { x: e.x, y: e.y } : null, strip = { w: cutW ?? 0 };
     const extraCuts = e !== undefined && killWorld !== null && cutAng !== undefined && e.burn !== null
       ? deathExtraCuts(e.burn, pose, kindId, killWorld, tick, cutAng, strip) : undefined;
