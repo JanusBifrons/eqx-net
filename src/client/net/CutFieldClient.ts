@@ -59,8 +59,9 @@ export interface ChunkCutter {
 export interface CutFieldDrawSink {
   /** Draw one chunk: `outlines` is [n, x0, y0, …, x(n-1), y(n-1), n, …] in
    *  game space; null drops the chunk. `ore`: [ice, crystal] per fan vertex
-   *  (`oreForOutlines`), so the look shows where the ore is (F1c). */
-  setFieldChunk(cx: number, cy: number, outlines: Float32Array | null, ore?: Float32Array | null): void;
+   *  (`oreForOutlines`), so the look shows where the ore is (F1c). `bodies`:
+   *  the packed chunk, for the link preview's rock shapes (C5c). */
+  setFieldChunk(cx: number, cy: number, outlines: Float32Array | null, ore?: Float32Array | null, bodies?: PackedChunk | null): void;
 }
 
 export interface CutFieldClientDeps {
@@ -164,7 +165,7 @@ export class CutFieldClient implements FieldRockSource {
     if (!r) return; // not loaded: its chunk skips it when cut
     collapsePackedRock(r.chunk, r.i);
     const { cx, cy } = unpackRockKey(key);
-    this.deps.draw.setFieldChunk(cx, cy, r.chunk.outlines, r.chunk.ore);
+    this.deps.draw.setFieldChunk(cx, cy, r.chunk.outlines, r.chunk.ore, r.chunk);
     this.dropRock(id);
   }
 
@@ -182,7 +183,7 @@ export class CutFieldClient implements FieldRockSource {
       chunkLoaded: (cx, cy, rocks) => {
         const c = rocks[0]?.chunk; // none: an empty chunk
         if (c && this.consumed.size > 0) for (let i = 0; i < c.keys.length; i++) if (this.consumed.has(c.keys[i]!)) collapsePackedRock(c, i);
-        this.deps.draw.setFieldChunk(cx, cy, c?.outlines ?? NO_OUTLINES, c?.ore ?? NO_OUTLINES);
+        this.deps.draw.setFieldChunk(cx, cy, c?.outlines ?? NO_OUTLINES, c?.ore ?? NO_OUTLINES, c ?? null);
       },
       chunkUnloaded: (cx, cy) => this.deps.draw.setFieldChunk(cx, cy, null),
       cutChunk: (cx, cy) => this.cutChunk(field, cx, cy),

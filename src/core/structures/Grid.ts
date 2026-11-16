@@ -21,6 +21,7 @@
 import { Connection } from './Connection.js';
 import { CONNECTION_MAX_RANGE } from './structureGridConstants.js';
 import { rayHitsConvexPolygon } from '../combat/Weapons.js';
+import { convexHullCCW } from '../swarm/asteroidShape.js';
 
 /** The grid's abstract view of a structure. The server projects each
  *  `StructureRecord` (+ its catalogue kind) into one of these. */
@@ -101,6 +102,24 @@ export interface GridObstacle {
    *  ⇒ the circle for placement, the circle's box for line of sight. */
   parts?: ReadonlyArray<ReadonlyArray<{ readonly x: number; readonly y: number }>> | undefined;
   angle?: number;
+}
+
+type ObstacleParts = NonNullable<GridObstacle['parts']>;
+
+/** A rock's narrow-phase `parts` (C5b/C5c), built the same way on both sides
+ *  (#15): a field rock's collider parts (`FieldRockBody.parts`), else its
+ *  outline's convex hull (a cut outline may dent; the hull is its collider);
+ *  an ordinary asteroid's outline as is (`generateAsteroidVertices` is
+ *  already convex). No outline ⇒ undefined (the box alone). Builds the hull:
+ *  call off the hot loop, or cache the result. */
+export function rockObstacleParts(
+  verts: ReadonlyArray<{ readonly x: number; readonly y: number }> | undefined,
+  parts: ObstacleParts | null | undefined,
+  fieldRock: boolean,
+): ObstacleParts | undefined {
+  if (parts) return parts;
+  if (!verts) return undefined;
+  return [fieldRock ? convexHullCCW(verts) : verts];
 }
 
 /** A world box (a placement footprint's bounds) to gather obstacles near. */

@@ -10,6 +10,8 @@
 import { Container, Mesh, MeshGeometry, Shader } from 'pixi.js';
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import { unpackRockKey } from '../../../core/terrain/fieldLayout';
+import { packedRockBody, type PackedChunk } from '../../../core/terrain/packedChunk';
+import type { FieldRockBody } from '../../../core/terrain/chunkStreamer';
 import { fieldRockShaderResources, fieldRockProgram, setFieldOreStyle, setFieldRockView, type FieldOreStyle } from './fieldRockShader';
 
 /** Chunk coords as one number (each fits ±32k). */
@@ -85,6 +87,8 @@ interface LoadedChunk {
   firstVert: Int32Array;
   outlines: Float32Array;
   ore: Float32Array | null;
+  /** The packed chunk (bodies, convex parts), when the sink sent it. */
+  bodies: PackedChunk | null;
 }
 
 export class CutFieldLayer {
@@ -113,7 +117,7 @@ export class CutFieldLayer {
   update(mirror: RenderMirror, sunAz: number, cameraScale: number): void {
     const chunks = mirror.pendingFieldChunks;
     if (chunks && chunks.length > 0) {
-      for (const c of chunks) this.setChunk(c.cx, c.cy, c.outlines, c.ore);
+      for (const c of chunks) this.setChunk(c.cx, c.cy, c.outlines, c.ore, c.bodies ?? null);
       chunks.length = 0;
     }
     this.setView(sunAz, cameraScale);
@@ -134,6 +138,16 @@ export class CutFieldLayer {
     const had = this.woken.has(key);
     this.woken.set(key, this.frame);
     if (!had) this.showInChunk(key, false);
+  }
+
+  /** Rock `key`'s body (centred outline, convex parts: `fieldRockBody`, the
+   *  server's own), unpacked from its chunk; null when its chunk or its bodies
+   *  aren't here. Builds new arrays: the caller caches (`RockObstacleShapes`). */
+  rockBody(key: number): FieldRockBody | null {
+    const k = unpackRockKey(key);
+    const c = this.chunks.get(chunkKey(k.cx, k.cy))?.bodies;
+    if (!c || k.index >= c.keys.length || c.keys[k.index] !== key) return null;
+    return packedRockBody(c, k.index);
   }
 
   /** A woken rock's own sprite: its fan in local space (centre at 0,0, Pixi
@@ -177,7 +191,7 @@ export class CutFieldLayer {
   }
 
   /** See `IRenderer.setFieldChunk`. Game space in, Pixi space out (y flips). */
-  setChunk(cx: number, cy: number, outlines: Float32Array | null, ore: Float32Array | null = null): void {
+  setChunk(cx: number, cy: number, outlines: Float32Array | null, ore: Float32Array | null = null, bodies: PackedChunk | null = null): void {
     const key = chunkKey(cx, cy);
     this.chunks.get(key)?.mesh.destroy();
     this.chunks.delete(key);
@@ -190,7 +204,7 @@ export class CutFieldLayer {
       starts[r] = i; firstVert[r] = v; v += outlines[i]! + 1;
     }
     const mesh = this.meshOf(data);
-    this.chunks.set(key, { mesh, data, starts, firstVert, outlines, ore });
+    this.chunks.set(key, { mesh, data, starts, firstVert, outlines, ore, bodies });
     this.container.addChild(mesh);
     // A rock woken before this chunk (re)arrived stays out of it.
     for (const wk of this.woken.keys()) {

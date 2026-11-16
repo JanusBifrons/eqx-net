@@ -14,9 +14,8 @@ import {
   FIELD_WAKES_PER_TICK, STEP_EVERY_MS,
 } from '../../core/terrain/chunkStreamer.js';
 import { FIELD_LAYOUT_VERSION, SLICED, type ChunkOpts } from '../../core/terrain/fieldLayout.js';
-import type { GridObstacle, ObstacleBox } from '../../core/structures/Grid.js';
+import { rockObstacleParts, type GridObstacle, type ObstacleBox } from '../../core/structures/Grid.js';
 import { oreAt, oreSeed, type OreConc } from '../../core/terrain/fieldOre.js';
-import { convexHullCCW } from '../../core/swarm/asteroidShape.js';
 import { SLOT_ANGLE_OFF, SLOT_X_OFF, SLOT_Y_OFF, slotBase } from '../../shared-types/sabLayout.js';
 import { SWARM_KIND_DRONE } from '../../shared-types/swarmWireFormat.js';
 import { MAX_WELCOME_CONSUMED_ROCKS, type FieldConsumedMessage } from '../../shared-types/messages/snapshotMessages.js';
@@ -195,7 +194,7 @@ export class CutFieldSubsystem {
     for (const r of fieldRocksInBox(this.opts, box.x0, box.y0, box.x1, box.y1)) {
       if (this.consumed.has(r.key) || this.registry.get(fieldRockId(r.key))) continue;
       const b = fieldRockBody(r);
-      out.push({ x: r.x, y: r.y, radius: r.radius, angle: 0, parts: b.parts ?? [convexHullCCW(b.verts)] });
+      out.push({ x: r.x, y: r.y, radius: r.radius, angle: 0, parts: rockObstacleParts(b.verts, b.parts, true) });
     }
   }
 

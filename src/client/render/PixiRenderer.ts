@@ -1009,6 +1009,7 @@ export class PixiRenderer implements IRenderer {
     // Structures plan, Phase 3 — the grid connector web. Added FIRST so the
     // lines render BEHIND the structure/ship sprites added later.
     this.connectorRenderer = new ConnectorRenderer();
+    this.connectorRenderer.rockShapes.fieldRocks = this._cutField;
     this.connectorRenderer.setTurretOverlaysVisible(this._lockMarksVisible);
     // A3 — the static layer (idle web, range rings, wall rails) sits behind the
     // per-frame layer.

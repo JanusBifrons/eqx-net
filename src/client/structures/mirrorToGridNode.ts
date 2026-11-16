@@ -26,11 +26,60 @@ import {
 } from '../../shared-types/structureKinds.js';
 import { effectiveStructureMaxConnections } from '../../core/leveling/structureLevel.js';
 import { isShieldEmitterKind } from '../../core/structures/gateGeometry.js';
-import type { GridNode, GridObstacle } from '../../core/structures/Grid.js';
+import { rockObstacleParts, type GridNode, type GridObstacle } from '../../core/structures/Grid.js';
 import type {
   StructureRenderState,
   SwarmRenderState,
 } from '../../core/contracts/IRenderer.js';
+import { generateAsteroidVertices } from '../../core/swarm/asteroidShape.js';
+import type { FieldRockBody } from '../../core/terrain/chunkStreamer.js';
+
+type ObstacleParts = NonNullable<GridObstacle['parts']>;
+
+/** Where an awake cut-field rock's body comes from (the renderer's
+ *  `CutFieldLayer`, from its loaded chunks); null ⇒ not loaded here. */
+export interface FieldRockBodySource {
+  rockBody(key: number): FieldRockBody | null;
+}
+
+/** Most rocks a shape cache holds before it starts over (bounds memory). */
+const ROCK_SHAPE_CACHE_MAX = 4096;
+
+/**
+ * The client's rock shapes for the link preview's line of sight (C5c, #15):
+ * per swarm asteroid, the `parts` the server's obstacle has, built once per
+ * rock with the shared `rockObstacleParts` from what the client already holds
+ * (an awake field rock's cut body by its `fieldKey`; an ordinary asteroid's
+ * outline from `shapeSeed` + `radius`, as its predWorld body and sprite).
+ * Cached by those keys, not the entry (the worker's mirror is a fresh clone
+ * each frame), so the per-frame preview allocates only for a rock it has not
+ * seen (#14).
+ */
+export class RockObstacleShapes {
+  fieldRocks: FieldRockBodySource | null = null;
+  private readonly field = new Map<number, ObstacleParts>();
+  private readonly seeded = new Map<number, { radius: number; parts: ObstacleParts }>();
+
+  partsFor(e: SwarmRenderState): ObstacleParts | undefined {
+    if (e.fieldKey !== undefined) {
+      const hit = this.field.get(e.fieldKey);
+      if (hit !== undefined) return hit;
+      const body = this.fieldRocks?.rockBody(e.fieldKey) ?? null;
+      if (body === null) return undefined; // not cut here yet: the box
+      const parts = rockObstacleParts(body.verts, body.parts, true)!;
+      if (this.field.size >= ROCK_SHAPE_CACHE_MAX) this.field.clear();
+      this.field.set(e.fieldKey, parts);
+      return parts;
+    }
+    if (e.shapeSeed === undefined) return undefined;
+    const hit = this.seeded.get(e.shapeSeed);
+    if (hit !== undefined && hit.radius === e.radius) return hit.parts;
+    const parts = rockObstacleParts(generateAsteroidVertices(e.shapeSeed, e.radius), undefined, false)!;
+    if (this.seeded.size >= ROCK_SHAPE_CACHE_MAX) this.seeded.clear();
+    this.seeded.set(e.shapeSeed, { radius: e.radius, parts });
+    return parts;
+  }
+}
 
 /** 0 = asteroid in the swarm-channel `kind` byte (drone=1, structure=2). */
 const SWARM_KIND_ASTEROID = 0;
@@ -124,13 +173,17 @@ export function ghostToGridNode(
  * array and reuses it every frame; never allocates). The obstacle objects
  * themselves are pooled in `out` across frames — only their fields are rewritten.
  *
- * Mirrors the server's asteroid → `GridObstacle` projection ({ x, y, radius }
- * square AABB) that `isConnectionLineBlocked` clips the connection segment
- * against. Returns the same `out` for chaining.
+ * Mirrors the server's asteroid → `GridObstacle` projection
+ * (`SectorRoom.gatherStructureObstacles`): the square box as broad phase, and
+ * with `shapes` the rock's convex `parts` at its `angle` (C5c), the same
+ * `rockObstacleParts` the server builds. Without `shapes` (or a rock whose
+ * shape this client lacks) the box alone: never a false green. Returns the
+ * same `out` for chaining.
  */
 export function asteroidObstaclesFromSwarm(
   swarm: ReadonlyMap<number, SwarmRenderState>,
   out: GridObstacle[],
+  shapes?: RockObstacleShapes,
 ): GridObstacle[] {
   let n = 0;
   for (const entry of swarm.values()) {
@@ -143,6 +196,8 @@ export function asteroidObstaclesFromSwarm(
     o.x = entry.x;
     o.y = entry.y;
     o.radius = entry.radius;
+    o.angle = entry.angle;
+    o.parts = shapes?.partsFor(entry);
     n++;
   }
   // Trim any stale obstacles from a previous (denser) frame without releasing

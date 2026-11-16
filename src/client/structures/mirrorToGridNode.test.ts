@@ -3,7 +3,7 @@
  * follow-up Item C). `structureMirrorToGridNode` / `ghostToGridNode` must map
  * the catalogue facts (isHub / maxConnections / isCapital / radius /
  * isConstructed) and pose correctly; `asteroidObstaclesFromSwarm` must yield
- * only the kind===0 {x,y,radius} list INTO A REUSED scratch array (invariant
+ * only the kind===0 {x,y,radius,angle} list INTO A REUSED scratch array (invariant
  * #14 — no fresh array per call).
  *
  * These are the side-neutral building blocks the renderer's preview pass feeds
@@ -159,7 +159,7 @@ describe('ghostToGridNode', () => {
 });
 
 describe('asteroidObstaclesFromSwarm', () => {
-  it('yields one {x,y,radius} per kind===0 asteroid, skipping drones + structures', () => {
+  it('yields one {x,y,radius,angle} per kind===0 asteroid, skipping drones + structures', () => {
     const swarm = new Map<number, SwarmRenderState>([
       [1, asteroidEntry(100, 200, 40)],
       [2, structureEntry('capital', 0, 0)], // kind 2 — skipped
@@ -175,8 +175,8 @@ describe('asteroidObstaclesFromSwarm', () => {
     expect(out).toBe(scratch); // same array returned
     expect(out.length).toBe(2);
     expect(out).toEqual([
-      { x: 100, y: 200, radius: 40 },
-      { x: -10, y: -20, radius: 25 },
+      { x: 100, y: 200, radius: 40, angle: 0 }, // no shapes given: no parts (the box)
+      { x: -10, y: -20, radius: 25, angle: 0 },
     ]);
   });
 
@@ -197,7 +197,7 @@ describe('asteroidObstaclesFromSwarm', () => {
     asteroidObstaclesFromSwarm(swarmB, scratch);
     expect(scratch.length).toBe(1);
     expect(scratch[0]).toBe(firstObj); // same pooled object, rewritten
-    expect(scratch[0]).toEqual({ x: 9, y: 9, radius: 99 });
+    expect(scratch[0]).toEqual({ x: 9, y: 9, radius: 99, angle: 0 });
   });
 
   it('empty swarm → empty list', () => {
