@@ -21,7 +21,7 @@ import { backdropXf, type TileXf } from './fxMath.js';
 import { h01 } from './fxTextures.js';
 import { hueTint, type NebulaStyle } from './nebulaLook.js';
 
-interface Layer { rot: number; s: TilingSprite; h: ArtHandle; parallax: number; zoomPow: number; texScale: number; alpha: number; dvx: number; dvy: number; order: number }
+interface Layer { minView: number; rot: number; s: TilingSprite; h: ArtHandle; parallax: number; zoomPow: number; texScale: number; alpha: number; dvx: number; dvy: number; order: number }
 interface Puff { s: Sprite; slice: number; lx: number; ly: number; size: number; rot: number }
 interface Knot { halo: Sprite; core: Sprite; lx: number; ly: number; size: number }
 
@@ -65,10 +65,10 @@ export class NebulaVolume {
       const a = h01(li, style.seed * 13 + 3) * Math.PI * 2;
       const speed = 3 + 7 * f;
       this.layers.push(this.makeLayer(art, `${look}.L${li}`, back, 'add', p, 0.3 + 0.6 * f, 4.2 - 2.2 * f,
-        (0.3 + 0.25 * f) * (0.7 + 0.3 * style.thickness), Math.cos(a) * speed, Math.sin(a) * speed, li));
+        (0.3 + 0.25 * f) * (0.7 + 0.3 * style.thickness), Math.cos(a) * speed, Math.sin(a) * speed, li, 1.6 - 0.6 * f));
       if (li === dustAt && style.dust > 0.05) {
         // Dust sits between the layers, nearer than most of the glow.
-        this.layers.push(this.makeLayer(art, `${look}.D`, back, 'normal', p + 0.04, 0.32 + 0.6 * f, 3.4, 0.95 * style.dust, -Math.cos(a) * 2, -Math.sin(a) * 2, -1));
+        this.layers.push(this.makeLayer(art, `${look}.D`, back, 'normal', p + 0.04, 0.32 + 0.6 * f, 3.4, 0.95 * style.dust, -Math.cos(a) * 2, -Math.sin(a) * 2, -1, 1.2));
       }
     }
     // Knots and flashes sit over the far layers (they light the gas).
@@ -99,11 +99,11 @@ export class NebulaVolume {
   }
 
   private makeLayer(art: ArtService, variant: string, parent: Container, blend: 'add' | 'normal', parallax: number,
-    zoomPow: number, texScale: number, alpha: number, dvx: number, dvy: number, order: number): Layer {
+    zoomPow: number, texScale: number, alpha: number, dvx: number, dvy: number, order: number, minView: number): Layer {
     const s = new TilingSprite({ width: 1, height: 1 });
     s.blendMode = blend; s.visible = false;
     parent.addChild(s);
-    return { rot: (order + 1) * 0.9, s, h: art.fx('nebLayer', variant, undefined, false), parallax, zoomPow, texScale, alpha, dvx, dvy, order };
+    return { minView, rot: (order + 1) * 0.9, s, h: art.fx('nebLayer', variant, undefined, false), parallax, zoomPow, texScale, alpha, dvx, dvy, order };
   }
 
   /** Draw for a camera at Pixi-space (cx, cy). `t` is effects time (s). */
@@ -123,7 +123,9 @@ export class NebulaVolume {
       if (l.s.width !== W) l.s.width = W;
       if (l.s.height !== H) l.s.height = H;
       backdropXf(cx, cy, zoom, l.parallax, l.zoomPow, W, H, this.xf);
-      const ts = this.xf.scale * l.texScale;
+      // Zoomed out (a capital's view) the layer would shrink to a small repeating
+      // wallpaper: never let one tile be smaller on screen than minView screens.
+      const ts = Math.max(this.xf.scale * l.texScale, (l.minView * Math.max(W, H)) / tex.width);
       l.s.tileScale.set(ts);
       l.s.tileRotation = l.rot;
       l.s.tilePosition.set(wrap(this.xf.x + l.dvx * t * ts, tex.width * ts), wrap(this.xf.y + l.dvy * t * ts, tex.height * ts));
