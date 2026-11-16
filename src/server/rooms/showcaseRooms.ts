@@ -7,6 +7,7 @@
  * integration test boots EXACTLY the options the server registers.
  */
 import { SCENARIO, STRUCTURE_SCENARIO_PREBUILT } from './scenarioLayouts.js';
+import { CUT_FIELD_LOOK_SEED, SHOWCASE_CUT_FIELD_OPTS } from './showcaseCutFieldRooms.js';
 
 /**
  * The pilot identity base shots join as (anonymous join, seeded `eqxPlayerId`).
@@ -561,13 +562,8 @@ export const SHOWCASE_HUB_OPTS = {
   maxClients: 4,
 };
 
-/** Cut-field test room (macro-terrain.md): seed `look`'s whole field, no other
- *  rocks or drones; shots set the pose from `slicedFieldLanes`. */
-export const CUT_FIELD_LOOK_SEED = 'look';
-export const SHOWCASE_CUT_FIELD_OPTS = {
-  testMode: true, cutField: { seed: CUT_FIELD_LOOK_SEED }, asteroidConfig: [], droneCount: 0,
-  defaultSpawnX: 0, defaultSpawnY: 0, maxClients: 4, pilotCapitals: true,
-};
+/** Cut-field shots: showcaseCutFieldRooms.ts. */
+export { CUT_FIELD_LOOK_SEED, SHOWCASE_CUT_FIELD_OPTS };
 
 /** Room name → options, registered in `index.ts`. */
 export const SHOWCASE_ROOMS = {
