@@ -80,7 +80,9 @@ describe('the catalogue capitals', () => {
     // The five classes, then (W2b) each class's style B and C hulls, then
     // (plan section 9) the fitted variants.
     const variants = [...CAPITAL_CLASS_IDS.flatMap((id) => [`${id}-b`, `${id}-c`]), 'battleship-rail', 'heavy-cruiser-beam', 'battlecruiser-lance'];
-    expect(ids.slice(-18)).toEqual([...CAPITAL_CLASS_IDS, ...variants]);
+    // The mining barge (salvage PR 15) follows them; it is no warship.
+    const warships = ids.filter((id) => id !== 'barge' && id !== 'barge-look');
+    expect(warships.slice(-18)).toEqual([...CAPITAL_CLASS_IDS, ...variants]);
     for (const id of [...CAPITAL_CLASS_IDS, ...variants]) expect(isPlayableShipKindId(id)).toBe(false);
   });
 

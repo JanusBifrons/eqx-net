@@ -318,6 +318,15 @@ export function slicedField(o: SlicedOpts): SlicedRock[] {
 
 /** Chunk side in world units (~4 km). Part of the layout: changing it renames
  *  every rock, so bump FIELD_LAYOUT_VERSION with it. */
+/** How far a rock's collider may stray from its drawn outline, as a share of
+ *  the radius of a circle with the rock's area (not its bounding radius, which
+ *  a long thin rock inflates): bumps and dents shallower than this are
+ *  smoothed over before the outline is split into convex parts
+ *  (`convexParts`). Keeps a rock at about 4.5 parts (at most 9) instead of
+ *  about 25, area within 4.8 % (measured on 644 rocks, two seeds).
+ *  docs/architecture/macro-terrain.md. */
+export const FIELD_COLLIDER_SIMPLIFY = 0.06;
+
 export const CHUNK_SIZE = 4096;
 /** Chunk coordinates fit a signed byte: ±128 chunks = ±524 km, past any sector. */
 const CHUNK_COORD_BIAS = 128;

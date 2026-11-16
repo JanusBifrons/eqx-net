@@ -3125,3 +3125,13 @@ Owner: "make it more like micro machines and make fights a bit longer. Also don'
 - **Finding:** `dogfight.test.ts` sampled duels for 20 s / 30 s of `Date.now()`; `harness.advance(ms)` is a real `setTimeout`, so a loaded host ran a different number of ticks and the ram counts drifted (attack-run rams 2-3 against a limit of 1).
 - **Rule:** bound integration observation windows by `room.serverTick` (60 per game second) and derive per-sample dt from the tick delta, skipping samples where no tick passed.
 - **Follow-up:** with the window on ticks, CI still gave the same 3 attack-run rams on one branch every time and 0 on main: the physics worker's thread timing shifts a near-miss into a contact. A ram count from a thread-timed sim is a measurement, not a gate. The owner signed off the dogfight look; ram counts are printed, never asserted, and the AI is never tuned to chase them.
+
+## 2026-11-16 — the physics worker can step between two of your messages
+
+- **Finding:** `subcapWrecks.test.ts` "missile-frigate's pieces stand clearly apart" failed only beside other integration files (1.34 vs 1.5 hull radii). Each wreck piece was its own `SPAWN_OBSTACLE` `postMessage`; the worker thread handles each message as its own task with its step timer between, so on a loaded host one piece of a ship killed at speed started a step ahead of its neighbour and the wreck parted differently each run.
+- **Rule:** commands that must land on the same physics step go in ONE message: wrap them in `PhysicsWorkerProxy.beginBatch()` / `endBatch()` (a `BATCH { cmds }`). Order inside one message is kept; order across messages is not "same step". Lock: `tests/integration/sectorRoom/wreckSpawnOneMessage.test.ts`.
+
+## 2026-11-16 — two SAB reads in one room tick can be a worker step apart
+
+- **Finding:** a capital turret was aimed from the hull pose its ticker read off the SAB, then the shot was cast from a second, later SAB read (`swarmEntitySnapshot`). The physics worker writes the SAB on its own thread, so on a loaded host the second read was a step on: a turning lance's kill follow-through left the kill line by one tick of turn and hit its own wreck (`beamFollowThrough.test.ts`, 1 run in 2 alongside other integration files).
+- **Rule:** a decision and the act it licenses use ONE pose read: pass the pose that was aimed with (or hit-tested against) down to whatever acts on it, never re-read the SAB. To test it deterministically, move the SAB between the two calls in the test (`beamKillBurnsGap.test.ts` "worker step").

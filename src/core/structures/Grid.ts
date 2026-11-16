@@ -91,7 +91,17 @@ export interface GridObstacle {
   x: number;
   y: number;
   radius: number;
+  /** Placement narrow phase (macro terrain C5b): the body's convex parts,
+   *  relative to (x, y) and turned by `angle` (rad), the same parts its
+   *  collider uses. Present ⇒ placement refuses only a footprint that
+   *  overlaps a part (the circle is the broad phase); absent ⇒ the circle.
+   *  Line of sight still uses the circle's box. */
+  parts?: ReadonlyArray<ReadonlyArray<{ readonly x: number; readonly y: number }>> | undefined;
+  angle?: number;
 }
+
+/** A world box (a placement footprint's bounds) to gather obstacles near. */
+export interface ObstacleBox { x0: number; y0: number; x1: number; y1: number }
 
 /** Edge-to-edge distance between two nodes' square AABBs (half-extent =
  *  radius). Returns 0 when the boxes overlap or touch — eqx-peri's

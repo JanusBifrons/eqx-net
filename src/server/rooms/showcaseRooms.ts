@@ -22,8 +22,8 @@ import { grownExtent } from '../../core/bases/baseSite.js';
 import { linkId } from '../../core/bases/transitNetwork.js';
 import { HEART_SUPER_GUNS, heartSuperGunFunds } from '../../core/bases/galaxyBases.js';
 import { getStructureKind, type StructureKindId } from '../../shared-types/structureKinds.js';
-
 import { getShipKind } from '../../shared-types/shipKinds.js';
+import { SHOWCASE_BARGE_ROOMS } from './showcaseBargeRooms.js';
 
 export const SHOWCASE_PILOT_ID = '5ca5e000-0000-4000-8000-000000000001';
 
@@ -102,8 +102,8 @@ export const SHOWCASE_CAPITAL_DUEL_OPTS = {
   defaultSpawnY: 0,
 };
 
-/** Weapon cuts shots (beam-slice, beam-vaporise-subcap, rail-channel): showcaseWeaponCutsRooms.ts. */
-export const { beamSlice: SHOWCASE_BEAM_SLICE_OPTS, railChannel: SHOWCASE_RAIL_CHANNEL_OPTS } = weaponCutsRoomOpts(SHOWCASE_CAPITALS_COMBAT_OPTS);
+/** Weapon cuts shots (beam-slice, beam-vaporise-subcap, rail-channel, beam-collateral-subcap): showcaseWeaponCutsRooms.ts. */
+export const { beamSlice: SHOWCASE_BEAM_SLICE_OPTS, railChannel: SHOWCASE_RAIL_CHANNEL_OPTS, beamCollateral: SHOWCASE_BEAM_COLLATERAL_OPTS, beamCollateralEdge: SHOWCASE_BEAM_COLLATERAL_EDGE_OPTS } = weaponCutsRoomOpts(SHOWCASE_CAPITALS_COMBAT_OPTS);
 
 /** Real-scale ranges (docs/architecture/real-scale-ranges.md): the pilot
  *  (join `shipKind=battleship`) at the origin, nose +y, and an NPC battleship
@@ -379,7 +379,6 @@ export const SHOWCASE_TELEPORT_OPTS = {
 } as const;
 
 // ── Coastal defences (plan coastal-defences) ───────────────────────────────
-
 /** The power plant + magazine every coastal showcase battery runs on: the
  *  Capital with a Reactor on each flank (fuel and munitions stocked). */
 const COASTAL_PLANT: ReadonlyArray<{ kind: StructureKindId; x: number; y: number }> = [
@@ -587,11 +586,14 @@ export const SHOWCASE_ROOMS = {
   'showcase-capital-duel': SHOWCASE_CAPITAL_DUEL_OPTS,
   'showcase-beam-slice': SHOWCASE_BEAM_SLICE_OPTS,
   'showcase-rail-channel': SHOWCASE_RAIL_CHANNEL_OPTS,
+  'showcase-beam-collateral': SHOWCASE_BEAM_COLLATERAL_OPTS,
+  'showcase-beam-collateral-edge': SHOWCASE_BEAM_COLLATERAL_EDGE_OPTS,
   'showcase-long-guns': SHOWCASE_LONG_GUNS_OPTS,
   'showcase-melee': SHOWCASE_MELEE_OPTS,
   'showcase-coastal': SHOWCASE_COASTAL_OPTS,
   'showcase-coastal-aa': SHOWCASE_COASTAL_AA_OPTS,
   'showcase-coastal-duel': SHOWCASE_COASTAL_DUEL_OPTS,
   'showcase-fleet-warp': SHOWCASE_FLEET_WARP_OPTS,
+  ...SHOWCASE_BARGE_ROOMS,
   'showcase-rts': SHOWCASE_RTS_OPTS,
 } as const;

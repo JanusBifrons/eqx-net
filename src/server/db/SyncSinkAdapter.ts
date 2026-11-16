@@ -1,6 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type { IPersistenceSink, PersistOp } from '../../core/contracts/IPersistenceSink.js';
 import { HOLD_PUT_SQL, HOLD_DELETE_SQL, holdPutArgs, applyGroupAtomically } from './holdsSql.js';
+import { TERRAIN_RECORD_PUT_SQL, terrainRecordPutArgs } from './terrainSql.js';
 import { applyEconomyOp, prepareEconomyStatements, type EconomyStatements } from './economySql.js';
 
 /**
@@ -32,6 +33,7 @@ export class SyncSinkAdapter implements IPersistenceSink {
     PLAYER_ALIAS_PUT: ReturnType<DatabaseSync['prepare']>;
     HOLD_PUT: ReturnType<DatabaseSync['prepare']>;
     HOLD_DELETE: ReturnType<DatabaseSync['prepare']>;
+    TERRAIN_RECORD_PUT: ReturnType<DatabaseSync['prepare']>;
   };
   /** A5 — atomic groups that rolled back (test observability). */
   groupFailures = 0;
@@ -42,6 +44,7 @@ export class SyncSinkAdapter implements IPersistenceSink {
     this.stmts = {
       HOLD_PUT: db.prepare(HOLD_PUT_SQL),
       HOLD_DELETE: db.prepare(HOLD_DELETE_SQL),
+      TERRAIN_RECORD_PUT: db.prepare(TERRAIN_RECORD_PUT_SQL),
       KILL: db.prepare(
         'INSERT INTO player_kills (killer_user_id, victim_user_id, weapon, sector_id, created_at) VALUES (?, ?, ?, ?, ?)',
       ),
@@ -263,6 +266,10 @@ export class SyncSinkAdapter implements IPersistenceSink {
       }
       case 'HOLD_DELETE': {
         this.stmts.HOLD_DELETE.run(op.holderUid);
+        return {};
+      }
+      case 'TERRAIN_RECORD_PUT': {
+        this.stmts.TERRAIN_RECORD_PUT.run(...terrainRecordPutArgs(op));
         return {};
       }
       case 'GROUP': {

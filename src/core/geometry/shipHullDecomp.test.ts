@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   signedArea,
+  convexParts,
   shipShapeToPolygon,
   shipCollisionParts,
   SHIP_KIND_COLLISION_PARTS,
@@ -157,5 +158,33 @@ describe('determinism + lookup behaviour', () => {
         expect(Object.isFrozen(part), `${kind.id} part frozen`).toBe(true);
       }
     }
+  });
+});
+
+describe('convexParts (cut-field rock colliders, macro terrain C1)', () => {
+  const L: Vec2[] = [{ x: 0, y: 0 }, { x: 40, y: 0 }, { x: 40, y: 10 }, { x: 10, y: 10 }, { x: 10, y: 40 }, { x: 0, y: 40 }];
+
+  it('splits a concave outline into convex CCW parts with the same area', () => {
+    const parts = convexParts(L)!;
+    expect(parts.length).toBeGreaterThanOrEqual(2);
+    let sum = 0;
+    for (const p of parts) { expect(isConvexCcw(p)).toBe(true); sum += signedArea(p); }
+    expect(sum).toBeCloseTo(polygonArea(L), 6);
+  });
+
+  it('is deterministic and ignores the input winding', () => {
+    expect(convexParts(L)).toEqual(convexParts(L));
+    expect(convexParts([...L].reverse())!.reduce((s, p) => s + signedArea(p), 0)).toBeCloseTo(polygonArea(L), 6);
+  });
+
+  it('returns null for an outline that crosses itself (the caller keeps its hull)', () => {
+    expect(convexParts([{ x: 0, y: 0 }, { x: 10, y: 10 }, { x: 10, y: 0 }, { x: 0, y: 10 }])).toBeNull();
+  });
+
+  it('smooths dents shallower than `simplify` away', () => {
+    // A square with a 1-unit notch in its top edge: kept at 0, gone at 2.
+    const notched: Vec2[] = [{ x: 0, y: 0 }, { x: 40, y: 0 }, { x: 40, y: 40 }, { x: 21, y: 40 }, { x: 20, y: 39 }, { x: 19, y: 40 }, { x: 0, y: 40 }];
+    expect(convexParts(notched)!.length).toBeGreaterThanOrEqual(2);
+    expect(convexParts(notched, 2)).toHaveLength(1);
   });
 });

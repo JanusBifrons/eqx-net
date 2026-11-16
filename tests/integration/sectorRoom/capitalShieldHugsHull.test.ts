@@ -16,6 +16,9 @@
  * `capitalHits.ts`). The first hit took the shield to 0 (no spillover), the
  * hull became the shape, so the next shell flew through the old circle and hit
  * the hull: the "shell through the explosion" was a second shell of the salvo.
+ *
+ * 2026-11-16: capitals have no shield at all (owner: "capital ships never have
+ * shields"), so the first shell lands on the hull's side.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
@@ -25,7 +28,7 @@ import type { SectorState } from '../../../src/server/rooms/schema/SectorState.j
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import type { DamageEvent } from '../../../src/shared-types/messages.js';
 import { getShipKind } from '../../../src/shared-types/shipKinds.js';
-import { shieldVisualRadius, shipTuning } from '../../../src/shared-types/shipScale/tuning.js';
+import { shieldVisualRadius } from '../../../src/shared-types/shipScale/tuning.js';
 
 async function waitUntil(pred: () => boolean, ms: number, what: string): Promise<void> {
   const deadline = Date.now() + ms;
@@ -37,13 +40,13 @@ async function waitUntil(pred: () => boolean, ms: number, what: string): Promise
 }
 
 const HC = getShipKind('heavy-cruiser');
-/** Half the cruiser's beam plus its shield pad: the farthest off the keel a
- *  broadside hit on the designed (hull-hugging) shield can land. */
-const SHIELD_REACH = shieldVisualRadius(HC) + shipTuning(HC).shieldPad;
+/** Half the cruiser's beam: the farthest off the keel a broadside hit on its
+ *  hull can land. */
+const HULL_REACH = shieldVisualRadius(HC);
 /** Shell start: well outside even the old 2,204 u circle. */
 const STANDOFF = HC.radius + 1500;
 
-describe('SectorRoom integration — a shell hits a capital pilot\'s shield at the hull, not in empty space', () => {
+describe('SectorRoom integration — a shell hits a capital pilot\'s hull at its side, not in empty space', () => {
   let harness: SectorTestHarness;
   beforeEach(async () => {
     harness = await bootSectorTestServer({
@@ -55,7 +58,7 @@ describe('SectorRoom integration — a shell hits a capital pilot\'s shield at t
   }, 10_000);
 
   for (const parked of [true, false]) {
-    it(`a broadside shell on a ${parked ? 'parked' : 'flown'} shield-up heavy cruiser lands at its side`, { timeout: 30_000 }, async () => {
+    it(`a broadside shell on a ${parked ? 'parked' : 'flown'} heavy cruiser lands on its hull side`, { timeout: 30_000 }, async () => {
       const pid = randomUUID();
       const cr = (await harness.connectActive(pid, {
         shipKind: 'heavy-cruiser', spawnX: 0, spawnY: 0, initialHull: 1_000_000,
@@ -64,7 +67,8 @@ describe('SectorRoom integration — a shell hits a capital pilot\'s shield at t
       let shipId = '';
       for (const [, s] of server.state.ships) if (s.playerId === pid && s.isActive) shipId = s.shipInstanceId;
       expect(shipId).not.toBe('');
-      expect(server.state.ships.get(shipId)!.shield).toBeGreaterThan(0);
+      // Capitals have no shield (owner 2026-11-16): the hull is the shape.
+      expect(server.state.ships.get(shipId)!.shield).toBe(0);
       const hits: DamageEvent[] = [];
       cr.onMessage('damage', (e: DamageEvent) => { if (e.targetId === pid || e.targetId === shipId) hits.push(e); });
 
@@ -88,11 +92,11 @@ describe('SectorRoom integration — a shell hits a capital pilot\'s shield at t
       server._internals.spawnTestProjectile('test-shooter', pose.x - bx * STANDOFF, pose.y - by * STANDOFF, bx * speed, by * speed, 'laser', 50);
       await waitUntil(() => hits.length > 0, 5000, 'the shell hits the cruiser');
       const h = hits[0]!;
-      expect(h.hitLayer).toBe('shield');
+      expect(h.hitLayer).toBe('hull');
       // Distance of the impact from the keel, measured across the beam.
       const across = Math.abs(((h.hitX ?? NaN) - pose.x) * bx + ((h.hitY ?? NaN) - pose.y) * by);
-      expect(across, `impact ${across.toFixed(0)} u off the keel; the hull's side is ${SHIELD_REACH.toFixed(0)} u`)
-        .toBeLessThanOrEqual(SHIELD_REACH + 10);
+      expect(across, `impact ${across.toFixed(0)} u off the keel; the hull's side is ${HULL_REACH.toFixed(0)} u`)
+        .toBeLessThanOrEqual(HULL_REACH + 10);
     });
   }
 });

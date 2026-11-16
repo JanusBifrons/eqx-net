@@ -53,7 +53,9 @@ import { alienGate, garrisonPatrol, teleporterRide, transitHub } from './shots/v
 import { tradeDeal, tradeRaid } from './shots/trade.js';
 import { cockpitBounty, cockpitHaul, cockpitRobots, cockpitStronghold } from './shots/cockpit.js';
 import { fireControlShots } from './shots/fireControl.js';
-import { beamSlice, beamVaporiseSubcap, railChannel } from './shots/weaponCuts.js';
+import { bargeLook, bargeStern, bargeThrust } from './shots/bargeLook.js';
+import { bargeMining } from './shots/bargeMining.js';
+import { beamSlice, beamVaporiseSubcap, beamCollateralSubcap, beamCollateralEdge, railChannel } from './shots/weaponCuts.js';
 
 /** Every shot, in reel order. Catalogue = all of them; reel = `reel: true`. */
 export const SHOTS: readonly Shot[] = [
@@ -66,11 +68,17 @@ export const SHOTS: readonly Shot[] = [
   joinSector,
   shipGallery,
   capitalLineup,
+  bargeLook,
+  bargeStern,
+  bargeThrust,
+  bargeMining,
   capitalBroadside,
   capitalBreakup,
   wreckResplit,
   beamSlice,
   beamVaporiseSubcap,
+  beamCollateralSubcap,
+  beamCollateralEdge,
   railChannel,
   capitalFleetWarp,
   capitalFleetArrive,
@@ -212,6 +220,4 @@ export const SHOWCASE_PENDING: Record<string, string> = {
     'Blueprints drop at random from elites/events and install at a signed-in base; needs a staged loot→install room for the P5 showcase.',
   'research-lab':
     'Lab jobs run for minutes on the 1 Hz grid pulse; needs a staged base with blueprints + a fast-pulse room before it can be filmed.',
-  'mining-and-salvage':
-    'No ship carries the mining laser or the tractor yet, and the tractor beam is not drawn until PR 11b: the shot lands with the mining barge (plan partitioned-chasing-lark), a barge cutting up and hauling a capital wreck, and a barge lasering a cut-field ore lode (macro terrain F1d: ice/crystal veins pay that ore).',
 };

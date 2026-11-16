@@ -32,11 +32,6 @@ export function isWreckPiece(rec: { kind: number }): boolean {
   return rec.kind === SWARM_KIND_WRECK;
 }
 
-/** Debris: a wreck piece or scrap (kind 3, loot pods included). Shots that
- *  "ignore debris" (a heavy beam's kill follow-through) pass these. */
-export function isDebris(rec: { kind: number }): boolean {
-  return rec.kind === SWARM_KIND_WRECK || rec.kind === 3;
-}
 
 /** A loot pod (the shared predicate): nobody's shot lands on it. */
 export { isLootPod } from '../../shared-types/swarmWireFormat.js';
@@ -94,9 +89,10 @@ export interface SwarmEntityRecord {
    *  where its ore is sampled once it has moved (`CutFieldSubsystem.oreAtHit`). */
   restX?: number;
   restY?: number;
-  /** Wreck pieces (kind 4): the convex parts, body-local math-up, CCW. Weapon
+  /** Wreck pieces (kind 4) and cut-field rocks (kind 0, `fieldRock`, when
+   *  their outline split): the convex parts, body-local math-up, CCW. Weapon
    *  hits refine the bounding circle to these (the same parts the physics
-   *  body is built from). */
+   *  body is built from). Wreck-only rules test `isWreckPiece`, never this. */
   wreckParts?: ReadonlyArray<ReadonlyArray<Vec2>>;
   /** Finite mineable resource pool (WS-4 / R2.27), only set for `kind === 0`
    *  asteroids — seeded from the silhouette area at spawn (`asteroidResources`).

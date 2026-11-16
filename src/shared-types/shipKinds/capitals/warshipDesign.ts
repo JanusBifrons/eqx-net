@@ -24,7 +24,7 @@ import {
 import { CAPITAL_TURRETS, DESTROYER_S_SCALE } from '../../shipScale/capitalTurrets.js';
 import type { CapitalMap, CapitalStyle } from './capitalConfig.js';
 
-type Pt = [number, number];
+export type Pt = [number, number];
 
 /** Half-breadth (× max beam) at t = 0, 0.05 … 1 (bow → stern), measured off
  *  the user's reference plan view (diag/_measure-hull.mjs). */
@@ -115,7 +115,7 @@ const CLASS_NAMES: Readonly<Record<CapitalClassId, string>> = {
 };
 
 /** Hull half-width at t (0 bow … 1 stern) for a style, in beam units (0..0.5). */
-export function hullHalfWidth(s: StyleParams, t: number): number {
+export function hullHalfWidth(s: Pick<StyleParams, 'plan'>, t: number): number {
   const p = s.plan, n = p.length - 1;
   const x = Math.max(0, Math.min(1, t)) * n, i = Math.min(n - 1, Math.floor(x)), f = x - i;
   return 0.5 * (p[i]! * (1 - f) + p[i + 1]! * f);
@@ -156,13 +156,13 @@ export function spaceStations(raw: readonly number[], gap: number): number[] {
   for (let k = aft.length - 2; k >= 0; k--) out[aft[k]!] = Math.min(out[aft[k]!]!, out[aft[k + 1]!]! - gap);
   return out;
 }
-function rect(cx: number, cy: number, w: number, h: number, chamfer = 0.18): Pt[] {
+export function rect(cx: number, cy: number, w: number, h: number, chamfer = 0.18): Pt[] {
   const c = Math.min(w, h) * chamfer;
   const x0 = cx - w / 2, x1 = cx + w / 2, y0 = cy - h / 2, y1 = cy + h / 2;
   return [[x0 + c, y0], [x1 - c, y0], [x1, y0 + c], [x1, y1 - c], [x1 - c, y1], [x0 + c, y1], [x0, y1 - c], [x0, y0 + c]];
 }
 
-function circle(cx: number, cy: number, r: number, n = 14): Pt[] {
+export function circle(cx: number, cy: number, r: number, n = 14): Pt[] {
   const out: Pt[] = [];
   for (let i = 0; i < n; i++) {
     const a = (i / n) * Math.PI * 2;
@@ -172,7 +172,7 @@ function circle(cx: number, cy: number, r: number, n = 14): Pt[] {
 }
 
 /** Convex hull (monotone chain) — the single collider over all parts. */
-function convexHull(points: Pt[]): Pt[] {
+export function convexHull(points: Pt[]): Pt[] {
   const p = [...points].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
   const cross = (o: Pt, a: Pt, b: Pt): number => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
   const lower: Pt[] = [], upper: Pt[] = [];
@@ -312,9 +312,11 @@ export function warshipDesign(id: CapitalClassId, style: CapitalStyle, map: Capi
     mass: p.mass,
     thrusters: { count: engines, size: B * 0.07 },
     maxHealth: health,
-    shieldMax: Math.round(health * 0.5),
+    // Capitals have no shield (owner 2026-11-16: "capital ships never have
+    // shields"): every hit lands on the hull.
+    shieldMax: 0,
     shieldRegenDelayTicks: 600,
-    shieldRegenRate: (health * 0.5) / 600,
+    shieldRegenRate: 0,
     energyMax: 600,
     energyRegenRate: 2,
     ai: { thrust: p.thrustImpulse },

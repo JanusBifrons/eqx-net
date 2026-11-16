@@ -40,7 +40,9 @@ enumerates every shape that can hit disk. Adding a new op is a code-review
 event — bump the version in `dbWorker.ts`'s prepared-statement table and
 the `applyOp` switch. Sub-phase B adds `LIMBO_PUT` / `LIMBO_DELETE` /
 `LIMBO_GET` here; Phase 2 adds `PLAYER_SHIP_PUT` / `PLAYER_SHIP_DELETE`; Phase 5
-adds `DIRECTOR_STATE_PUT` (the Director-state lane below).
+adds `DIRECTOR_STATE_PUT` (the Director-state lane below); macro terrain C4 adds
+`TERRAIN_RECORD_PUT` (a cut field's change record in `terrain_records`, see
+[macro-terrain](macro-terrain.md)).
 
 ## Phase 8 sub-phase A: sector snapshots
 

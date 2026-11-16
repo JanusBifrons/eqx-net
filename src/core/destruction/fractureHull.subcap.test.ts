@@ -9,7 +9,7 @@
  * simple outlines, convex parts, no slivers.
  */
 import { describe, expect, it } from 'vitest';
-import { fractureHull, fracturePlan, FRACTURE_QUANTUM, type FractureInput, type FracturePiece } from './fractureHull.js';
+import { fractureHull, fracturePlan, projectToOutline, FRACTURE_QUANTUM, type FractureInput, type FracturePiece } from './fractureHull.js';
 import { wreckPieceGeometry } from './wreckPieces.js';
 import { SHIP_KINDS, SHIP_KINDS_LIST } from '../../shared-types/shipKinds.js';
 import { shipTuning } from '../../shared-types/shipScale/tuning.js';
@@ -300,7 +300,10 @@ describe('sub-capital kill cuts (fracture v9)', () => {
   function cutInput(hull: ReadonlyArray<readonly [number, number]>, seed: number, v: number, kind: 'slice' | 'channel', width: number): FractureInput {
     const base = { ...subcapInput(hull, seed, v), soundMinShare: SUB.soundMinShare };
     const ang = Math.atan2(-base.killPoint.y, -base.killPoint.x) + (((seed * 37) % 81) - 40) * (Math.PI / 180);
-    return { ...base, cut: { kind, dirX: Math.cos(ang), dirY: Math.sin(ang), width } };
+    // v13: a wide slice's line runs through the kill point as given (the
+    // beam's axis), so the shot's point is where it meets the hull.
+    const killPoint = kind === 'slice' && width > 0 ? projectToOutline(hull, base.killPoint) : base.killPoint;
+    return { ...base, killPoint, cut: { kind, dirX: Math.cos(ang), dirY: Math.sin(ang), width } };
   }
 
   for (const kind of SUBCAP_KINDS) {

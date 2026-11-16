@@ -273,8 +273,15 @@ export const ShipKindSchema = z
     /** Thrusters (ship scale infrastructure — motion model): how many main
      *  engines and their nozzle radius at 1× (world units). Thrust comes from
      *  total nozzle area, so more or bigger engines push a heavy hull harder.
-     *  Absent ⇒ one nozzle of the default size for its radius. */
-    thrusters: z.object({ count: z.number().int().min(1), size: z.number().positive() }).strict().optional(),
+     *  Absent ⇒ one nozzle of the default size for its radius.
+     *  Art only (the forge and engine FX; physics reads count and size):
+     *  `bell` draws round bell nozzles (rim, dark throat, hot core) instead of
+     *  the default block nozzle; `plume` is the full-thrust flame length as a
+     *  fraction of the hull length (absent ⇒ the forge's default for its class). */
+    thrusters: z.object({
+      count: z.number().int().min(1), size: z.number().positive(),
+      bell: z.boolean().optional(), plume: z.number().positive().max(1).optional(),
+    }).strict().optional(),
     /** Per-kind scale on top of the global ship scale (tuning one hull). */
     sizeScale: z.number().positive().optional(),
     /** Set by the catalogue: the total factor this kind was scaled by. Never
@@ -341,14 +348,16 @@ export const ShipKindSchema = z
      *  => cheap circle collision; shield 0 => exact rendered polygon.
      *  Transient: always (re)spawns full, never persisted (only hull
      *  persists), so it is exempt from the catalogue-version hull-drift
-     *  clamp despite being a numeric stat. */
-    shieldMax: z.number().positive(),
+     *  clamp despite being a numeric stat. 0 => no shield at all (every
+     *  capital): the ship is always hit and collides on its hull. */
+    shieldMax: z.number().nonnegative(),
     /** Ticks of zero damage (shield OR hull) before regen begins. 60 Hz,
      *  so 300 ~= 5 s (Halo-classic). Any hit resets the timer. */
     shieldRegenDelayTicks: z.number().int().positive(),
     /** Shield HP restored per tick once regen is active. Authored as
-     *  shieldMax / 120 so a fully-broken shield refills in ~2 s at 60 Hz. */
-    shieldRegenRate: z.number().positive(),
+     *  shieldMax / 120 so a fully-broken shield refills in ~2 s at 60 Hz.
+     *  0 for a kind with no shield. */
+    shieldRegenRate: z.number().nonnegative(),
 
     // -- Energy (weapons/energy/AI overhaul, 2026-06-01) -------------------
     /** Full energy pool. ALL weapon slot triggers AND boosting drain from

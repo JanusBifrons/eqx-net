@@ -53,7 +53,13 @@ handlers resolve the owner (`sessionToPlayer`) and delegate to
 (decision logic over injected hooks — spawn / health-seed / despawn / clamp / id —
 so it unit-tests like `TransitOrchestrator`):
 
-- Validate kind, clamp to `SECTOR_PLAYABLE_HALF_EXTENT`, reject footprint overlap.
+- Validate kind, clamp to `SECTOR_PLAYABLE_HALF_EXTENT`, reject footprint overlap
+  with a structure or an asteroid (`placementRejection`, obstacles from the
+  `getObstacles(near)` hook; in a cut field `near` adds the rocks with no body,
+  see [macro-terrain](macro-terrain.md) C5). An asteroid is tested by its
+  bounding circle (broad phase), then by its real shape when the obstacle
+  carries convex `parts` (collider parts or outline at the live pose; C5b):
+  a footprint inside the circle but clear of the outline is legal.
 - **Blueprint model:** every structure lands at `SCAFFOLDING_HP_FRACTION` (10 %)
   HP, `isConstructed:false`, non-operational. The **Capital** is the exception
   (`constructionCost===0` ⇒ pre-built, full HP) so the first builds have a bank

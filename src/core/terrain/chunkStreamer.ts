@@ -19,7 +19,8 @@
  */
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { shipBodyMass } from '../../shared-types/shipScale/tuning.js';
-import { CHUNK_SIZE, rocksInChunk, type ChunkOpts, type ChunkRock } from './fieldLayout.js';
+import { convexParts } from '../geometry/shipHullDecomp.js';
+import { CHUNK_SIZE, FIELD_COLLIDER_SIMPLIFY, rocksInChunk, slicedField, type ChunkOpts, type ChunkRock, type SlicedRock } from './fieldLayout.js';
 
 /** The cut options for a field seed: one source for both sides (#15). */
 export function cutFieldOpts(seed: string): ChunkOpts {
@@ -27,11 +28,15 @@ export function cutFieldOpts(seed: string): ChunkOpts {
 }
 
 /** A field rock as a body: centred on its outline's vertex mean, the outline
- *  relative to that centre, and its bounding radius. Both sides build the
- *  collider from this, so their rocks match (#15). Generation-time only. */
-export interface FieldRockBody { x: number; y: number; radius: number; verts: { x: number; y: number }[] }
+ *  relative to that centre, its bounding radius, and the convex parts its
+ *  collider is built from (plan C1: it follows the rock's dents). Both sides
+ *  build the collider from this, so their rocks match (#15). Generation-time
+ *  only. `parts` null ⇒ the outline's convex hull (an outline that crosses
+ *  itself). */
+export interface FieldRockBody { x: number; y: number; radius: number; verts: { x: number; y: number }[]; parts: { x: number; y: number }[][] | null }
 
-export function fieldRockBody(rock: ChunkRock): FieldRockBody {
+
+export function fieldRockBody(rock: Pick<SlicedRock, 'verts'>): FieldRockBody {
   let mx = 0, my = 0;
   for (const v of rock.verts) { mx += v.x; my += v.y; }
   mx /= rock.verts.length; my /= rock.verts.length;
@@ -41,7 +46,10 @@ export function fieldRockBody(rock: ChunkRock): FieldRockBody {
     r2 = Math.max(r2, dx * dx + dy * dy);
     return { x: dx, y: dy };
   });
-  return { x: mx, y: my, radius: Math.sqrt(r2), verts };
+  let area2 = 0;
+  for (let k = 0; k < verts.length; k++) { const a = verts[k]!, c = verts[(k + 1) % verts.length]!; area2 += a.x * c.y - c.x * a.y; }
+  const eqRadius = Math.sqrt(Math.abs(area2) / 2 / Math.PI);
+  return { x: mx, y: my, radius: Math.sqrt(r2), verts, parts: convexParts(verts, FIELD_COLLIDER_SIMPLIFY * eqRadius) };
 }
 
 /** A woken field rock's mass: as heavy as a battleship of its size (same
@@ -50,6 +58,51 @@ export function fieldRockBody(rock: ChunkRock): FieldRockBody {
 export function fieldRockMass(radius: number): number {
   const bs = getShipKind('battleship');
   return shipBodyMass(bs) * (radius / bs.radius) ** 2;
+}
+
+/** A field rock's bounding circle: the x, y and radius `fieldRockBody` gives
+ *  it (same arithmetic), without building the collider. */
+export function fieldRockCircle(rock: SlicedRock): { x: number; y: number; radius: number } {
+  let mx = 0, my = 0;
+  for (const v of rock.verts) { mx += v.x; my += v.y; }
+  mx /= rock.verts.length; my /= rock.verts.length;
+  let r2 = 0;
+  for (const v of rock.verts) { const dx = v.x - mx, dy = v.y - my; r2 = Math.max(r2, dx * dx + dy * dy); }
+  return { x: mx, y: my, radius: Math.sqrt(r2) };
+}
+
+/** A field rock as cut from the layout: its key, bounding circle and world
+ *  outline (`fieldRockBody` builds its collider parts from `verts`). */
+export interface FieldRockCircle { key: number; x: number; y: number; radius: number; verts: SlicedRock['verts'] }
+
+/**
+ * Every rock of the field whose bounding circle reaches into the box, cut from
+ * the layout whether or not its chunk is loaded (C5: placement refuses a
+ * structure on a rock nobody is near). Cuts only the pieces near the box
+ * (`slicedField`'s view), so a big rock owned by a far chunk that reaches in is
+ * found too; then, per rock found, its owning chunk (`rocksInChunk`) for its
+ * key. A discrete action's cost (about a millisecond), never per tick or frame.
+ * Key -1: no member of its chunk matched (should not happen; still a rock).
+ */
+export function fieldRocksInBox(o: ChunkOpts, x0: number, y0: number, x1: number, y1: number): FieldRockCircle[] {
+  const cut = slicedField({
+    seed: o.seed, battleshipLength: o.battleshipLength, fighterLength: o.fighterLength,
+    view: { x0, y0, x1, y1 }, ...(o.radius !== undefined ? { radius: o.radius } : {}),
+  });
+  const out: FieldRockCircle[] = [];
+  let chunks: Map<string, ChunkRock[]> | null = null;
+  for (const rock of cut) {
+    const c = fieldRockCircle(rock);
+    const dx = Math.max(x0 - c.x, 0, c.x - x1), dy = Math.max(y0 - c.y, 0, c.y - y1);
+    if (dx * dx + dy * dy >= c.radius * c.radius) continue;
+    const cx = Math.floor(rock.cx / CHUNK_SIZE), cy = Math.floor(rock.cy / CHUNK_SIZE), ck = `${cx},${cy}`;
+    chunks ??= new Map();
+    let members = chunks.get(ck);
+    if (!members) { members = rocksInChunk(o, cx, cy); chunks.set(ck, members); }
+    const m = members.find((r) => r.path === rock.path);
+    out.push({ key: m ? m.key : -1, x: c.x, y: c.y, radius: c.radius, verts: rock.verts });
+  }
+  return out;
 }
 
 /** The id both sides give a field rock (server registry, client predWorld). */
