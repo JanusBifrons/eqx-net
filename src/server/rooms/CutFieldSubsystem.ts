@@ -19,7 +19,9 @@ import { rockObstacleParts, type GridObstacle, type ObstacleBox } from '../../co
 import { oreAt, oreSeed, type OreConc } from '../../core/terrain/fieldOre.js';
 import { SLOT_ANGLE_OFF, SLOT_X_OFF, SLOT_Y_OFF, slotBase } from '../../shared-types/sabLayout.js';
 import { SWARM_KIND_DRONE } from '../../shared-types/swarmWireFormat.js';
-import { MAX_WELCOME_CONSUMED_ROCKS, type FieldConsumedMessage } from '../../shared-types/messages/snapshotMessages.js';
+import {
+  MAX_WELCOME_CONSUMED_ROCKS, MAX_WELCOME_MOVED_ROCKS, type FieldConsumedMessage, type FieldMovedMessage, type FieldRockPose,
+} from '../../shared-types/messages/snapshotMessages.js';
 import { serverLogEvent } from '../debug/ServerEventLog.js';
 import { fieldRockOnWire, type SwarmEntityRecord, type SwarmEntityRegistry } from '../net/SwarmEntityRegistry.js';
 import type { SwarmSpawner } from '../spawn/SwarmSpawner.js';
@@ -35,7 +37,7 @@ export interface CutFieldRoomHooks {
   /** Remove a rock; `broadcast` when it is awake (on the wire). */
   evict(rec: SwarmEntityRecord, broadcast: boolean): void;
   /** Send to every client in the room (reliable). */
-  broadcast(type: 'field_consumed', msg: FieldConsumedMessage): void;
+  broadcast(type: 'field_consumed' | 'field_moved', msg: FieldConsumedMessage | FieldMovedMessage): void;
   /** The change record's save (C4): a room that persists its sector passes
    *  one; engineering and test rooms without a saved sector pass none. */
   records?: TerrainRecordStore;
@@ -132,8 +134,9 @@ export class CutFieldSubsystem {
             this.minedPool.set(rec.fieldKey, rec.resources);
             changed = true;
           }
-          if (rec.fieldAwake === true && this.notePose(rec, rec.fieldKey)) changed = true;
-          if (changed) this.save(rec.fieldKey);
+          const moved = rec.fieldAwake === true && this.notePose(rec, rec.fieldKey);
+          if (moved || changed) this.save(rec.fieldKey);
+          if (moved) this.sendPose(rec.fieldKey);
         }
         hooks.evict(rec, fieldRockOnWire(rec));
       },
@@ -168,6 +171,13 @@ export class CutFieldSubsystem {
     return true;
   }
 
+  /** Tell the room rock `key`'s kept pose (`field_moved`), or that it has
+   *  none any more (`clear: true`: back at its cut pose). A chunk event. */
+  private sendPose(key: number): void {
+    const p = this.movedPose.get(key);
+    this.hooks.broadcast('field_moved', p ? { k: key, x: p.x, y: p.y, a: p.angle } : { k: key, clear: true });
+  }
+
   /** A fixed field rock wakes when a ship touches it, or when an awake rock
    *  is driven into it (`fieldRockWakes`); at most `FIELD_WAKES_PER_TICK` a
    *  tick. Its body turns dynamic and it rides the swarm wire by its rock key
@@ -178,8 +188,8 @@ export class CutFieldSubsystem {
   }
 
   /** Rock `key` was broken up (its pieces are live wrecks now): it is never
-   *  cut whole again, here or after its chunk reloads. Server only for now:
-   *  the client's cut learns consumed keys with the plan's C3 wire. */
+   *  cut whole again, here or after its chunk reloads. `field_consumed` tells
+   *  the room (C3); it also clears any moved pose the clients hold. */
   markConsumed(key: number): void {
     if (this.consumed.has(key)) return;
     this.consumed.add(key);
@@ -218,13 +228,20 @@ export class CutFieldSubsystem {
     if (stale > 0) store.warn({ sectorKey: store.sectorKey, stale, layoutVersion: FIELD_LAYOUT_VERSION }, 'terrain_records: rows from another field layout ignored');
   }
 
-  /** Spread into every welcome: the seed and the consumed keys (C3, #16). A
-   *  join is rare, so the list is built per call. */
-  get welcome(): { cutField: { seed: string; consumed?: number[] } } {
-    if (this.consumed.size === 0) return { cutField: { seed: this.seed } };
-    const consumed: number[] = [];
-    for (const k of this.consumed) { if (consumed.length >= MAX_WELCOME_CONSUMED_ROCKS) break; consumed.push(k); }
-    return { cutField: { seed: this.seed, consumed } };
+  /** Spread into every welcome: the seed, the consumed keys (C3) and the
+   *  moved rocks' poses (C2), #16. A join is rare, so the lists are built
+   *  per call. */
+  get welcome(): { cutField: { seed: string; consumed?: number[]; moved?: FieldRockPose[] } } {
+    const cutField: { seed: string; consumed?: number[]; moved?: FieldRockPose[] } = { seed: this.seed };
+    if (this.consumed.size > 0) {
+      const consumed: number[] = cutField.consumed = [];
+      for (const k of this.consumed) { if (consumed.length >= MAX_WELCOME_CONSUMED_ROCKS) break; consumed.push(k); }
+    }
+    if (this.movedPose.size > 0) {
+      const moved: FieldRockPose[] = cutField.moved = [];
+      for (const [k, p] of this.movedPose) { if (moved.length >= MAX_WELCOME_MOVED_ROCKS) break; moved.push({ k, x: p.x, y: p.y, a: p.angle }); }
+    }
+    return { cutField };
   }
 
   isConsumed(key: number): boolean {

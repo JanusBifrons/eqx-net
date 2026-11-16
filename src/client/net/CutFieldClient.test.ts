@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import type { PhysicsWorld } from '@core/physics/World';
-import { CHUNK_SIZE, rocksInChunk, unpackRockKey, type ChunkOpts } from '@core/terrain/fieldLayout';
+import { CHUNK_SIZE, rockKey, rocksInChunk, unpackRockKey, type ChunkOpts } from '@core/terrain/fieldLayout';
 import { packChunk, type PackedChunk } from '@core/terrain/packedChunk';
 import { PREDWORLD_STRUCTURE_RADIUS, PREDWORLD_STRUCTURE_HYSTERESIS } from '../../shared-types/structureBudgets.js';
 import { CutFieldClient, FIELD_AWAKE_FORGET_MS, MAX_CUTS_IN_FLIGHT } from './CutFieldClient.js';
@@ -251,5 +251,70 @@ describe('CutFieldClient — consumed rocks (macro terrain C3)', () => {
     c.setSeed('test-seed', []);
     c.onConsumedMessage({ k: key });
     expect(flat(drawn, key)).toBe(true);
+  });
+});
+
+describe('CutFieldClient — moved rocks (C2 deep sleep, field_moved)', () => {
+  function movedRig() {
+    const bodies = new Map<string, { x: number; y: number; angle: number }>();
+    const pw = {
+      spawnObstacle: (id: string, x: number, y: number) => { bodies.set(id, { x, y, angle: 0 }); },
+      fixBody: () => {},
+      setShipStateAsleep: (id: string, s: { x: number; y: number; angle: number }) => { bodies.set(id, { x: s.x, y: s.y, angle: s.angle }); },
+      despawnShip: (id: string) => { bodies.delete(id); },
+    } as unknown as PhysicsWorld;
+    const pose = { x: 60_000, y: 0 };
+    const sent: Array<{ cx: number; cy: number; moved: Float64Array | null }> = [];
+    const c = new CutFieldClient({
+      gameClock: { now: () => 0 }, predWorld: () => pw, localPose: () => pose,
+      draw: { setFieldChunk: (cx, cy, o, _ore, _b, moved = null) => { if (o) sent.push({ cx, cy, moved }); } },
+    });
+    return { c, bodies, sent };
+  }
+
+  it('re-sends a loaded chunk with the pose, moves the body there; clear puts it back; a consumed rock ignores it', () => {
+    const { c, bodies, sent } = movedRig();
+    live = c;
+    c.setSeed('test-seed');
+    c.step(); c.step();
+    const id = [...bodies.keys()][0]!;
+    const key = Number(id.slice('field:'.length));
+    const { cx, cy, index } = unpackRockKey(key);
+    const cut = { ...bodies.get(id)! };
+    sent.length = 0;
+
+    c.onMovedMessage({ k: key, x: cut.x + 50, y: cut.y - 20, a: 0.3 });
+    expect(sent).toHaveLength(1);
+    expect([sent[0]!.cx, sent[0]!.cy]).toEqual([cx, cy]);
+    expect(Array.from(sent[0]!.moved!)).toEqual([index, cut.x + 50, cut.y - 20, 0.3]);
+    expect(bodies.has(id), 'old body dropped at once').toBe(false);
+    c.step();
+    expect(bodies.get(id)).toEqual({ x: cut.x + 50, y: cut.y - 20, angle: 0.3 });
+
+    const before = sent.length;
+    c.onMovedMessage({ k: key, clear: true });
+    expect(sent).toHaveLength(before + 1);
+    expect([sent[before]!.cx, sent[before]!.cy, sent[before]!.moved]).toEqual([cx, cy, null]);
+    c.step();
+    expect(bodies.get(id)).toEqual(cut);
+    const n0 = sent.length; // (the step may have cut another chunk)
+    c.onMovedMessage({ k: key, clear: true }); // nothing kept: nothing to re-send
+    c.onMovedMessage({ k: key, x: 1, y: 2 }); // malformed: dropped
+    expect(sent).toHaveLength(n0);
+
+    c.onConsumedMessage({ k: key });
+    const n = sent.length;
+    c.onMovedMessage({ k: key, x: 1, y: 2, a: 0 });
+    expect(sent).toHaveLength(n);
+  });
+
+  it('a welcome pose for a rock not cut yet rides its chunk when it is cut', () => {
+    const { c, sent } = movedRig();
+    live = c;
+    const key = rockKey(Math.floor(60_000 / CHUNK_SIZE), 0, 0);
+    c.setSeed('test-seed', [], [{ k: key, x: 1, y: 2, a: 3 }]);
+    expect(sent).toHaveLength(0);
+    c.step();
+    expect(Array.from(sent[0]!.moved!)).toEqual([0, 1, 2, 3]);
   });
 });

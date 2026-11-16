@@ -108,3 +108,39 @@ describe('CutFieldLayer — rock bodies for the link preview (C5c)', () => {
     layer.clear();
   });
 });
+
+describe('CutFieldLayer — moved rocks (C2 deep sleep)', () => {
+  // The square (centre 5,5) and the triangle; the triangle was moved.
+  const outlines = new Float32Array([4, 0, 0, 10, 0, 10, 10, 0, 10, 3, 100, 100, 130, 100, 100, 130]);
+  const key = rockKey(2, -1, 1);
+  const pos = (layer: CutFieldLayer): number[] => Array.from((layer.container.children[0] as Mesh).geometry.positions);
+
+  it('draws a moved rock at its pose (not where it was cut), hides it while the wire draws it, and brings it back there', () => {
+    const plain = new CutFieldLayer();
+    plain.setChunk(2, -1, outlines);
+    const cut = pos(plain);
+    plain.clear();
+    const layer = new CutFieldLayer();
+    // Moved by (+1000, -500), a quarter turn, about the fan centre (no bodies sent).
+    layer.setChunk(2, -1, outlines, null, null, new Float64Array([1, 1110, -390, Math.PI / 2]));
+    const at = pos(layer);
+    expect(at.slice(0, 10), 'the square is untouched').toEqual(cut.slice(0, 10));
+    // Centre (vertex 5) at the pose, Pixi y flipped.
+    expect(at[10]).toBeCloseTo(1110, 3);
+    expect(at[11]).toBeCloseTo(390, 3);
+    // Vertex 6 (100,100) is (-10,-10) off centre (110,110): turned 90° ⇒ (10,-10).
+    expect(at[12]).toBeCloseTo(1120, 3);
+    expect(at[13]).toBeCloseTo(400, 3);
+    // Nothing is left at the layout pose.
+    for (let v = 5; v < 9; v++) expect(Math.hypot(at[v * 2]! - cut[v * 2]!, at[v * 2 + 1]! - cut[v * 2 + 1]!)).toBeGreaterThan(500);
+
+    // On the wire: its swarm sprite draws it, the chunk copy collapses (no double draw).
+    layer.noteAwake(key);
+    const hidden = pos(layer);
+    for (let v = 6; v < 9; v++) expect([hidden[v * 2], hidden[v * 2 + 1]]).toEqual([hidden[10], hidden[11]]);
+    // Off the wire: back at the moved pose, not the layout one.
+    for (let f = 0; f <= WOKEN_ROCK_FORGET_FRAMES + 1; f++) layer.setView(0, 1);
+    expect(pos(layer)).toEqual(at);
+    layer.clear();
+  });
+});

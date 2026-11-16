@@ -74,6 +74,26 @@ export function buildFieldChunkMesh(outlines: Float32Array, ore?: Float32Array |
   return { positions, uvs, local, rock, ore: oreOut, indices };
 }
 
+/** Move rock `r`'s fan in `d` (first vertex `v0`, the centre, then `n`
+ *  outline vertices) from where it was cut to body pose (x, y, angle), game
+ *  space: each vertex keeps its offset from the body centre (`bodies`, the
+ *  server's `fieldRockBody` centre; else the fan centre), turned by `angle`.
+ *  `aLocal` stays in the rock's own frame, as on its woken sprite. Exported
+ *  for the contract test. */
+export function placeMovedRock(
+  d: FieldChunkMeshData, v0: number, n: number, bodies: PackedChunk | null, r: number, x: number, y: number, angle: number,
+): void {
+  const p = d.positions;
+  const bx = bodies && r * 3 + 1 < bodies.bodies.length ? bodies.bodies[r * 3]! : p[v0 * 2]!;
+  const by = bodies && r * 3 + 1 < bodies.bodies.length ? bodies.bodies[r * 3 + 1]! : -p[v0 * 2 + 1]!;
+  const cos = Math.cos(angle), sin = Math.sin(angle);
+  for (let v = v0; v <= v0 + n; v++) {
+    const dx = p[v * 2]! - bx, dy = -p[v * 2 + 1]! - by; // Pixi y flips back to game
+    p[v * 2] = x + dx * cos - dy * sin;
+    p[v * 2 + 1] = -(y + dx * sin + dy * cos);
+  }
+}
+
 /** Frames a woken rock may go unseen on the swarm wire before it shows in its
  *  chunk again (its server chunk unloaded and will re-cut it in place). */
 export const WOKEN_ROCK_FORGET_FRAMES = 120;
@@ -117,7 +137,7 @@ export class CutFieldLayer {
   update(mirror: RenderMirror, sunAz: number, cameraScale: number): void {
     const chunks = mirror.pendingFieldChunks;
     if (chunks && chunks.length > 0) {
-      for (const c of chunks) this.setChunk(c.cx, c.cy, c.outlines, c.ore, c.bodies ?? null);
+      for (const c of chunks) this.setChunk(c.cx, c.cy, c.outlines, c.ore, c.bodies ?? null, c.moved ?? null);
       chunks.length = 0;
     }
     this.setView(sunAz, cameraScale);
@@ -190,8 +210,13 @@ export class CutFieldLayer {
     return mesh;
   }
 
-  /** See `IRenderer.setFieldChunk`. Game space in, Pixi space out (y flips). */
-  setChunk(cx: number, cy: number, outlines: Float32Array | null, ore: Float32Array | null = null, bodies: PackedChunk | null = null): void {
+  /** See `IRenderer.setFieldChunk`. Game space in, Pixi space out (y flips).
+   *  `moved`: [index, x, y, angle] per moved rock (C2 deep sleep): its fan is
+   *  drawn turned and moved to that body pose instead of where it was cut. */
+  setChunk(
+    cx: number, cy: number, outlines: Float32Array | null, ore: Float32Array | null = null,
+    bodies: PackedChunk | null = null, moved: Float64Array | null = null,
+  ): void {
     const key = chunkKey(cx, cy);
     this.chunks.get(key)?.mesh.destroy();
     this.chunks.delete(key);
@@ -202,6 +227,10 @@ export class CutFieldLayer {
     const starts = new Int32Array(rocks), firstVert = new Int32Array(rocks);
     for (let i = 0, r = 0, v = 0; i < outlines.length; i += 1 + outlines[i]! * 2, r++) {
       starts[r] = i; firstVert[r] = v; v += outlines[i]! + 1;
+    }
+    if (moved) for (let j = 0; j + 3 < moved.length; j += 4) {
+      const r = moved[j]!;
+      if (r < rocks) placeMovedRock(data, firstVert[r]!, outlines[starts[r]!]!, bodies, r, moved[j + 1]!, moved[j + 2]!, moved[j + 3]!);
     }
     const mesh = this.meshOf(data);
     this.chunks.set(key, { mesh, data, starts, firstVert, outlines, ore, bodies });

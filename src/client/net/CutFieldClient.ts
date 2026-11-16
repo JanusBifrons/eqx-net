@@ -18,7 +18,7 @@
  * (packed in float64, unpacked only for rocks that get a collider or wake).
  */
 
-import type { PhysicsWorld } from '@core/physics/World';
+import type { PhysicsWorld, ShipPhysicsState } from '@core/physics/World';
 import {
   CutFieldStreamer,
   cutFieldOpts,
@@ -27,7 +27,7 @@ import {
 } from '@core/terrain/chunkStreamer';
 import { rocksInChunk, unpackRockKey, type ChunkOpts } from '@core/terrain/fieldLayout';
 import { collapsePackedRock, packChunk, packedRockBody, type PackedChunk } from '@core/terrain/packedChunk';
-import { FieldConsumedSchema } from '@shared-types/messages/snapshotMessages';
+import { FieldConsumedSchema, FieldMovedSchema, type FieldRockPose } from '@shared-types/messages/snapshotMessages';
 import { wantPredBody } from '../structures/predStructureStreaming.js';
 import type { FieldRockSource } from './entity/IClientEntityLeaf.js';
 
@@ -60,8 +60,10 @@ export interface CutFieldDrawSink {
   /** Draw one chunk: `outlines` is [n, x0, y0, …, x(n-1), y(n-1), n, …] in
    *  game space; null drops the chunk. `ore`: [ice, crystal] per fan vertex
    *  (`oreForOutlines`), so the look shows where the ore is (F1c). `bodies`:
-   *  the packed chunk, for the link preview's rock shapes (C5c). */
-  setFieldChunk(cx: number, cy: number, outlines: Float32Array | null, ore?: Float32Array | null, bodies?: PackedChunk | null): void;
+   *  the packed chunk, for the link preview's rock shapes (C5c). `moved`:
+   *  [index, x, y, angle] per moved rock in the chunk (`movedInChunk`, C2
+   *  deep sleep): drawn at that pose, not where the field cut it. */
+  setFieldChunk(cx: number, cy: number, outlines: Float32Array | null, ore?: Float32Array | null, bodies?: PackedChunk | null, moved?: Float64Array | null): void;
 }
 
 export interface CutFieldClientDeps {
@@ -88,6 +90,11 @@ function rocksOf(chunk: PackedChunk): PackedRock[] {
 
 const NO_OUTLINES = new Float32Array(0);
 const NO_KEYS: readonly number[] = [];
+const NO_POSES: readonly FieldRockPose[] = [];
+/** Where a moved rock was left (C2 deep sleep), as the server saved it. */
+interface MovedPose { x: number; y: number; a: number }
+/** Placing a moved rock's predWorld body (a spawn, never per frame). */
+const movedState: ShipPhysicsState = { x: 0, y: 0, angle: 0, vx: 0, vy: 0, angvel: 0 };
 
 const bodyOf = (r: LoadedRock): FieldRockBody => (r.body ??= packedRockBody(r.chunk, r.i));
 
@@ -110,6 +117,10 @@ export class CutFieldClient implements FieldRockSource {
   /** Broken-up rocks (C3): never a body, flattened out of their chunk's draw.
    *  The welcome's list, then each `field_consumed` (#16). */
   private readonly consumed = new Set<number>();
+  /** Moved rocks (C2 deep sleep, rock key → pose): drawn and given a body at
+   *  that pose. The welcome's list, then each `field_moved` (#16). While one
+   *  rides the swarm wire, the wire draws it (the layer's woken path). */
+  private readonly moved = new Map<number, MovedPose>();
   /** Counters for tests and diagnostics (counts, never timings). */
   readonly stats = { predBodies: 0, awake: 0 };
 
@@ -137,8 +148,9 @@ export class CutFieldClient implements FieldRockSource {
   get chunksLoaded(): number { return this.streamer?.stats.chunksLoaded ?? 0; }
 
   /** From the welcome: a seed turns the field on, null turns it off.
-   *  `consumed` is the whole consumed set, so it replaces ours. */
-  setSeed(seed: string | null, consumed: readonly number[] = NO_KEYS): void {
+   *  `consumed` is the whole consumed set and `moved` every moved rock's
+   *  pose, so they replace ours. */
+  setSeed(seed: string | null, consumed: readonly number[] = NO_KEYS, moved: readonly FieldRockPose[] = NO_POSES): void {
     if (seed !== this.seed) {
       this.stop();
       this.seed = seed;
@@ -146,6 +158,52 @@ export class CutFieldClient implements FieldRockSource {
     }
     this.consumed.clear();
     for (const k of consumed) this.consume(k);
+    const was = [...this.moved.keys()];
+    this.moved.clear();
+    for (const p of moved) this.moved.set(p.k, { x: p.x, y: p.y, a: p.a });
+    for (const k of was) if (!this.moved.has(k)) this.reposed(k);
+    for (const k of this.moved.keys()) this.reposed(k);
+  }
+
+  /** `field_moved` from the server (validated here): a moved rock's new pose,
+   *  or `clear` (back at its cut pose). */
+  onMovedMessage(raw: unknown): void {
+    const r = FieldMovedSchema.safeParse(raw);
+    if (!r.success || this.seed === null) return;
+    const m = r.data;
+    if (this.consumed.has(m.k)) return;
+    if ('clear' in m) { if (!this.moved.delete(m.k)) return; }
+    else this.moved.set(m.k, { x: m.x, y: m.y, a: m.a });
+    this.reposed(m.k);
+  }
+
+  /** Rock `key`'s pose changed: re-send its chunk's draw (rare) and drop its
+   *  predWorld body, so the next step builds it at the new pose. */
+  private reposed(key: number): void {
+    const id = fieldRockId(key);
+    const r = this.rocks.get(id);
+    if (!r) return; // not loaded: its chunk is drawn with the pose when cut
+    if (r.inPred) { this.deps.predWorld()?.despawnShip(id); r.inPred = false; }
+    const { cx, cy } = unpackRockKey(key);
+    this.deps.draw.setFieldChunk(cx, cy, r.chunk.outlines, r.chunk.ore, r.chunk, this.movedInChunk(r.chunk));
+  }
+
+  /** [index, x, y, angle] per moved rock in `chunk`, or null for none. Per
+   *  chunk load or move, never per frame. */
+  private movedInChunk(chunk: PackedChunk): Float64Array | null {
+    if (this.moved.size === 0 || chunk.keys.length === 0) return null;
+    const { cx, cy } = unpackRockKey(chunk.keys[0]!);
+    let n = 0;
+    for (const k of this.moved.keys()) { const u = unpackRockKey(k); if (u.cx === cx && u.cy === cy && chunk.keys[u.index] === k) n++; }
+    if (n === 0) return null;
+    const out = new Float64Array(n * 4);
+    let j = 0;
+    for (const [k, p] of this.moved) {
+      const u = unpackRockKey(k);
+      if (u.cx !== cx || u.cy !== cy || chunk.keys[u.index] !== k) continue;
+      out[j++] = u.index; out[j++] = p.x; out[j++] = p.y; out[j++] = p.a;
+    }
+    return out;
   }
 
   /** `field_consumed` from the server (validated here). */
@@ -160,12 +218,13 @@ export class CutFieldClient implements FieldRockSource {
     if (this.consumed.has(key)) return;
     this.consumed.add(key);
     this.awake.delete(key);
+    this.moved.delete(key); // gone: no pose to keep
     const id = fieldRockId(key);
     const r = this.rocks.get(id);
     if (!r) return; // not loaded: its chunk skips it when cut
     collapsePackedRock(r.chunk, r.i);
     const { cx, cy } = unpackRockKey(key);
-    this.deps.draw.setFieldChunk(cx, cy, r.chunk.outlines, r.chunk.ore, r.chunk);
+    this.deps.draw.setFieldChunk(cx, cy, r.chunk.outlines, r.chunk.ore, r.chunk, this.movedInChunk(r.chunk));
     this.dropRock(id);
   }
 
@@ -183,7 +242,7 @@ export class CutFieldClient implements FieldRockSource {
       chunkLoaded: (cx, cy, rocks) => {
         const c = rocks[0]?.chunk; // none: an empty chunk
         if (c && this.consumed.size > 0) for (let i = 0; i < c.keys.length; i++) if (this.consumed.has(c.keys[i]!)) collapsePackedRock(c, i);
-        this.deps.draw.setFieldChunk(cx, cy, c?.outlines ?? NO_OUTLINES, c?.ore ?? NO_OUTLINES, c ?? null);
+        this.deps.draw.setFieldChunk(cx, cy, c?.outlines ?? NO_OUTLINES, c?.ore ?? NO_OUTLINES, c ?? null, c ? this.movedInChunk(c) : null);
       },
       chunkUnloaded: (cx, cy) => this.deps.draw.setFieldChunk(cx, cy, null),
       cutChunk: (cx, cy) => this.cutChunk(field, cx, cy),
@@ -258,7 +317,8 @@ export class CutFieldClient implements FieldRockSource {
     let n = 0;
     for (const [id, r] of this.rocks) {
       const p = r.chunk.bodies, j = r.i * 3; // x, y, radius
-      const dx = p[j]! - (me?.x ?? 0), dy = p[j + 1]! - (me?.y ?? 0);
+      const at = this.moved.size > 0 ? this.moved.get(r.key) : undefined; // C2: where it was left
+      const dx = (at?.x ?? p[j]!) - (me?.x ?? 0), dy = (at?.y ?? p[j + 1]!) - (me?.y ?? 0);
       // sqrt, not Math.hypot: this runs over every loaded rock (thousands) a step.
       const want = pw !== null && me !== null && !this.awake.has(r.key)
         && wantPredBody(r.inPred, Math.sqrt(dx * dx + dy * dy) - p[j + 2]!);
@@ -266,6 +326,7 @@ export class CutFieldClient implements FieldRockSource {
         const b = bodyOf(r);
         pw.spawnObstacle(id, b.x, b.y, b.radius, FIELD_ROCK_PRED_MASS, b.verts, undefined, undefined, b.parts ?? undefined);
         pw.fixBody(id);
+        if (at) { movedState.x = at.x; movedState.y = at.y; movedState.angle = at.a; pw.setShipStateAsleep(id, movedState); }
         r.inPred = true;
       } else if (!want && r.inPred) {
         if (pw) pw.despawnShip(id);
