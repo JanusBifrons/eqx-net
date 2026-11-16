@@ -124,13 +124,15 @@ jobs:
 
   # Unit + component + scenario suite (`vitest.config.ts`). Pure logic,
   # schemas, React components, replay/scenario fixtures — no real Colyseus
-  # server. Its own required status check so a unit regression is
-  # distinguishable at a glance from an integration one.
-  unit-tests:
+  # server. Split across two runners: `unit-coverage` (main config, with the
+  # coverage floor) and `unit-art` (the pixel-heavy art tests,
+  # vitest.art.config.ts, WITHOUT coverage: v8 slowed their pixel loops ~6×
+  # and set this check's wall clock at ~17 min). Every test runs in exactly
+  # one of the two. The required check is the `unit-tests` summary job below,
+  # so the ruleset is unchanged.
+  unit-coverage:
     needs: changes
     runs-on: ubuntu-latest
-    # 30: the suite passes but reached 17-20+ min after the capital art tests
-    # (~6 min alone); runs were cancelled at 20. Infrastructure limit.
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -155,9 +157,63 @@ jobs:
         run: pnpm run coverage
       # Ships default to 2× B; tests that lock the AUTHORED 1× catalogue numbers
       # skip at that scale, so run them here at 1×, profile A (ship-scale.md).
+      # Runs the gated files of BOTH configs (main + art).
       - name: Authored-scale (1×) locks
         if: needs.changes.outputs.code == 'true'
         run: pnpm test:authored-scale
+
+  # The art pixel tests (ART_TEST_GLOBS in vitest.config.ts), no coverage.
+  unit-art:
+    needs: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        if: needs.changes.outputs.code == 'true'
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v4
+        if: needs.changes.outputs.code == 'true'
+        with:
+          node-version: '22.x'
+          cache: 'pnpm'
+      - name: Install dependencies
+        if: needs.changes.outputs.code == 'true'
+        run: pnpm install --frozen-lockfile
+      - name: Art tests (no coverage)
+        if: needs.changes.outputs.code == 'true'
+        run: pnpm run test:art
+
+  # The REQUIRED `unit-tests` check: passes only if both unit jobs passed (a
+  # docs-only PR's jobs succeed after skipping their steps). Fail-closed on
+  # any failure, cancellation or skip, like `integration-tests`.
+  unit-tests:
+    needs: [changes, unit-coverage, unit-art]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Resolve unit result
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          COVERAGE_RESULT: ${{ needs.unit-coverage.result }}
+          ART_RESULT: ${{ needs.unit-art.result }}
+        run: |
+          set -euo pipefail
+          if [ "$CHANGES_RESULT" != "success" ]; then
+            echo "unit-tests FAILED: the changes filter broke (result=$CHANGES_RESULT)"
+            exit 1
+          fi
+          if [ "$COVERAGE_RESULT" != "success" ]; then
+            echo "unit-tests FAILED: unit-coverage result=$COVERAGE_RESULT (see the unit-coverage job)"
+            exit 1
+          fi
+          if [ "$ART_RESULT" != "success" ]; then
+            echo "unit-tests FAILED: unit-art result=$ART_RESULT (see the unit-art job)"
+            exit 1
+          fi
+          echo "unit-tests PASS (unit-coverage + unit-art)"
 
   # Integration suite (`vitest.integration.config.ts`). Boots a real
   # Colyseus Server + SectorRoom + physics worker + WebSocket transport per

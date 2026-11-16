@@ -186,6 +186,9 @@ export class AiFireResolver implements WeaponFireSink {
   /** Set by the hitscan sink when a beam of the shot now resolving destroyed
    *  what it hit (`fireMount` reports it: the heavy beam's follow-through). */
   private _shotKilled = false;
+  /** Where the killing beam hit (valid while `_shotKilled`). */
+  private _killX = 0;
+  private _killY = 0;
   /** The shot now resolving passes debris (set by `fireMount`). */
   private _passDebris = false;
   /** The target of the shot now resolving ('' = none) and the mount firing
@@ -323,8 +326,11 @@ export class AiFireResolver implements WeaponFireSink {
    *  (the caller's follow-through, `WeaponDefBase.followThroughTicks`); else
    *  true. `passDebris`: the beam passes wreck pieces and scrap (no hit, no
    *  knock-back) and runs on to a ship, structure, rock or its full range
-   *  (the kill follow-through: "cut right through"). */
-  fireMount(shooterId: string, mountIdx: number, passDebris = false, targetId = ''): boolean | 'killed' {
+   *  (the kill follow-through: "cut right through"). On 'killed', `killAt`
+   *  (caller-owned scratch, #14) gets the point the killing beam hit. */
+  fireMount(
+    shooterId: string, mountIdx: number, passDebris = false, targetId = '', killAt?: { x: number; y: number },
+  ): boolean | 'killed' {
     const d = this.deps;
     const self = d.swarmEntitySnapshot(shooterId);
     if (!self) return false;
@@ -339,7 +345,9 @@ export class AiFireResolver implements WeaponFireSink {
     this.fireNow(shooterId, mountIdx);
     this._passDebris = false;
     this._targetId = '';
-    return this._shotKilled ? 'killed' : true;
+    if (!this._shotKilled) return true;
+    if (killAt !== undefined) { killAt.x = this._killX; killAt.y = this._killY; }
+    return 'killed';
   }
   /** Quad AA: the next barrel to fire, per shooter and mount index. */
   private readonly aaBarrel = new Map<string, Uint8Array>();
@@ -517,6 +525,8 @@ export class AiFireResolver implements WeaponFireSink {
       // tracker, knock-back; the damage event reports the true impact point).
       if (d.applyDamage(hitId, this._shooterId, effDamage, rayFromX + ndx * hitDist, rayFromY + ndy * hitDist, ndx, ndy, this._weaponId) === true) {
         this._shotKilled = true;
+        this._killX = rayFromX + ndx * hitDist;
+        this._killY = rayFromY + ndy * hitDist;
       }
     }
 
