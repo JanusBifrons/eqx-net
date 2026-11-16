@@ -47,6 +47,9 @@ export const SHOWCASE_BARGE_THRUST_OPTS = {
  * down the size ladder first. No other ship: nothing else fires. The barge's
  * closest zoom still fits its whole hull (~0.13 px/u at 1080p), so the rocks
  * are big enough to read there; the nearest is just off the starboard side.
+ * Roster-backed (a real sectorKey, NOT in the galaxy graph): the barge has a
+ * hold, so the pieces it consumes go in and the ore shows in it. With no
+ * roster it has no hold, takes nothing in, and its lasers cut to the floor.
  */
 export const SHOWCASE_BARGE_MINING_ROCKS = [
   { id: 'mine-rock-a', x: 1150, y: 400, vx: 0, vy: 0, radius: 260 },
@@ -59,6 +62,7 @@ export const SHOWCASE_BARGE_MINING_ROCKS = [
   { id: 'mine-rock-h', x: 2700, y: 2600, vx: 0, vy: 0, radius: 250 },
 ];
 export const SHOWCASE_BARGE_MINING_OPTS = {
+  sectorKey: 'showcase-barge-mining',
   testMode: true,
   droneCount: 0,
   peacefulDrones: true,

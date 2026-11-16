@@ -3150,3 +3150,8 @@ Owner: "make it more like micro machines and make fights a bit longer. Also don'
 
 - **Finding:** with the FXAA filter on, the whole world vanished. Pixi's `defaultFilterVert` declares `uInputSize` with no qualifier (highp in a vertex shader); the fragment shader's default mediump made the program fail to link ("Could not initialize shader").
 - **Rule:** a filter fragment shader declares every uniform it shares with the vertex shader as `highp`. Lock: `render/pixi/FxaaFilter.test.ts`.
+
+## 2026-11-16 — a rule that leans on another system must ask that system, not a look-alike number
+
+- **Finding:** the barge-mining showcase stalled: the lasers cut the rock into a few pieces, stopped, and the hold stayed at 0. The showcase room had no `sectorKey`, so no roster, so the loot pickup (`forEachLootCollector`) never visited the barge; but the lock step judged "consumable" from cargo capacity minus hold weight (both fine with no roster), so every laser and tractor left pieces nothing would ever take in.
+- **Rule:** when a rule hands work to another system ("nobody targets it, the pickup takes it in"), its gate asks the same predicate that system uses (`SectorRoom.hasHold`), so the two cannot disagree. A showcase or test room that films holds or cargo needs a real `sectorKey`. Lock: `tests/integration/sectorRoom/bargeMiningTake.test.ts`.

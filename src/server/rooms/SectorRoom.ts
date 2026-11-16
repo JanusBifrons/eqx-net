@@ -4642,7 +4642,8 @@ export class SectorRoom extends Room<SectorState> {
   private readonly _lockActivated = new Map<string, { ref: unknown; mounts: ReadonlyArray<WeaponMount> }>();
   private readonly _lockSalvage = new LockSalvageLookup<ShipState>({ swarm: (n) => this.swarmRegistry.getByEntityId(n),
     piece: (id, out) => this.capitalWrecks?.pieceStore(id, out) === true, // salvage lock bits (lockSalvage.ts)
-    freeHold: (s) => this.shipCargoCapacity(s.kind, s.shipInstanceId) - this.holdWeight(s.shipInstanceId) });
+    // No hold (no roster row, e.g. a showcase room with no sectorKey): it takes nothing in, so nothing is consumable.
+    freeHold: (s) => (this.hasHold(s.shipInstanceId) ? this.shipCargoCapacity(s.kind, s.shipInstanceId) - this.holdWeight(s.shipInstanceId) : 0) });
 
   private buildNpcLockSubsystem(): NpcLockSubsystem {
     return new NpcLockSubsystem({
@@ -11488,6 +11489,10 @@ export class SectorRoom extends Room<SectorState> {
     return { type: 'cargo_state', entityId, open: true, hold: stock, used: 0, capacity: 0, ship, shipCapacity: access.capacity, market, ...(verdict ?? {}) };
   }
 
+  /** Does pilot ship `shipInstanceId` have a hold: a roster row in a roster-backed room (the loot pickup's gate; the lock's free hold). */
+  private hasHold(shipInstanceId: string): boolean {
+    return this.sectorKey !== null && shipInstanceId !== '' && getPlayerShipStore().get(shipInstanceId) !== null;
+  }
   /**
    * Visit every hull allowed to collect loot this tick (#17 liveness: ACTIVE +
    * alive hulls only — lingering and dead hulls never collect; and only hulls
@@ -11496,12 +11501,10 @@ export class SectorRoom extends Room<SectorState> {
    */
   private forEachLootCollector(visit: (c: LootCollector) => void): void {
     if (this.sectorKey === null) return; // engineering rooms: no roster ⇒ no holds
-    const store = getPlayerShipStore();
     const c = this._collectorScratch;
     for (const [pid] of this.playerToSlot) {
       const ship = this.getActiveShip(pid);
-      if (!ship?.alive || !ship.isActive || ship.shipInstanceId === '') continue;
-      if (store.get(ship.shipInstanceId) === null) continue;
+      if (!ship?.alive || !ship.isActive || !this.hasHold(ship.shipInstanceId)) continue;
       const pose = this.shipPoseCache.get(pid);
       if (!pose) continue;
       c.playerId = pid;
