@@ -13,11 +13,11 @@ import { LOCK_TUNING, WEAPON_LOCK_PROFILE, lockCapacityFor, sensorFor, NO_PILOT_
 import { lockSeconds, type LockInputs } from '../../core/combat/lockTime.js';
 import { newLock, stepLock, LOCK_STAGE_CODE, LOCK_TRACK, type LockEntry } from '../../core/combat/lockState.js';
 import { lockLineHolds } from '../../core/combat/lockLine.js';
-import { pickTurretLock, TURRET_NO_LOCK, TURRET_PICK_MAX } from '../../core/combat/turretLockPick.js';
+import { LockPicker } from './lockPick.js';
 import { lockSalvageFlags, type LockSalvageDeps } from './lockSalvage.js';
 import { isSalvageWeapon } from '../../core/combat/salvageTargeting.js';
 import { shipGroups } from './lockGroups.js';
-import { mountInReach, mountWeaponReach, type MountRangeTarget } from '../../core/combat/mountReach.js';
+import { mountInReach, mountWeaponReach } from '../../core/combat/mountReach.js';
 import type { FireTargetShape } from '../../core/combat/fireControlBearing.js';
 import { getWeapon, weaponAutoFireRange } from '../../core/combat/WeaponCatalogue.js';
 import type { ShipKind, WeaponMount } from '../../shared-types/shipKinds/types.js';
@@ -524,57 +524,19 @@ export class LockSubsystem {
     return null;
   }
 
-  private readonly pickX = new Float64Array(TURRET_PICK_MAX);
-  private readonly pickY = new Float64Array(TURRET_PICK_MAX);
-  private readonly pickFlags = new Uint8Array(TURRET_PICK_MAX);
-  private readonly pickKeys: string[] = [];
-  /** Per-lock hit shapes for `pickTurretLock`'s hull range gate (reused, #14). */
-  private readonly pickShapes: { -readonly [K in keyof MountRangeTarget]: MountRangeTarget[K] }[] =
-    Array.from({ length: TURRET_PICK_MAX }, () => ({ kindId: null, angle: 0, shieldUp: false, radius: 0 }));
+  private readonly picker = new LockPicker();
 
   /**
-   * Which LOCKED target this turret takes (shared `pickTurretLock` with the
-   * locks' salvage bits, the same rule as the client's predicted aim, #15).
-   * Null = no aim (`TURRET_NO_LOCK`: a mining laser whose locks are all
-   * haulable); undefined when the ship pose or the mount can't be resolved
-   * (the caller falls back to the first lock).
+   * Which LOCKED target this turret takes (`LockPicker`: shared
+   * `pickTurretLock` with the salvage bits, as the client's aim, #15). Null =
+   * no aim; undefined when the ship pose or the mount can't be resolved (the
+   * caller falls back to the first lock).
    */
   private pickLocked(playerId: string, g: GroupState, mountId: string): string | null | undefined {
     let ordinal = -1;
     for (let i = 0; i < g.mounts.length; i++) if (g.mounts[i]!.id === mountId) { ordinal = i; break; }
     if (ordinal < 0 || !this.deps.shooterPose(playerId, this.shooter)) return undefined;
-    const keys = this.pickKeys;
-    keys.length = 0;
-    // Every LOCKED lock, as the client's `FcMountPicker` lists the wire locks
-    // (#15): one it can't resolve gets a NaN pose (never engageable), as the
-    // client does for a lock outside its mirror.
-    for (const e of g.locks) {
-      if (e.stage !== 'locked' || keys.length >= this.pickX.length) continue;
-      this.pickFlags[keys.length] = e.flags;
-      const sh = this.pickShapes[keys.length]!;
-      if (this.deps.resolveTarget(playerId, e.target, this.target)) {
-        this.pickX[keys.length] = this.target.x;
-        this.pickY[keys.length] = this.target.y;
-        sh.kindId = this.target.ship ? this.target.kindId : null;
-        sh.angle = this.target.angle;
-        sh.shieldUp = this.target.shieldUp;
-        sh.radius = this.target.ship ? 0 : this.target.radius;
-      } else {
-        this.pickX[keys.length] = NaN;
-        this.pickY[keys.length] = NaN;
-        sh.kindId = null; sh.angle = 0; sh.shieldUp = false; sh.radius = 0;
-      }
-      keys.push(e.target);
-    }
-    if (keys.length === 0) return undefined;
-    const m = g.mounts[ordinal]!;
-    const s = this.shooter;
-    const cosA = Math.cos(s.angle);
-    const sinA = Math.sin(s.angle);
-    const mx = s.x + (m.localX * cosA - m.localY * sinA);
-    const my = s.y + (m.localX * sinA + m.localY * cosA);
-    const i = pickTurretLock(m, s.angle, mx, my, mountWeaponReach(m), ordinal, keys.length, this.pickX, this.pickY, this.pickShapes, this.pickFlags, g.mounts);
-    return i === TURRET_NO_LOCK ? null : keys[i]!;
+    return this.picker.pick(this.deps, playerId, g.locks, g.mounts, ordinal, this.shooter, this.target);
   }
 
   /** Build the tracked id's groups now (they are otherwise built lazily by the

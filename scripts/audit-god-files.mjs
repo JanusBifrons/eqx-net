@@ -105,7 +105,7 @@ const ALLOWLIST = {
   'src/server/economy/TradeDirector.ts': { cap: 891, target: 600, reason: RATCHET_ONLY },
   'src/server/index.ts': { cap: 1699, target: 600, reason: RATCHET_ONLY },
   'src/server/livingworld/LivingWorldDirector.ts': { cap: 1575, target: 600, reason: RATCHET_ONLY },
-  'src/server/rooms/LockSubsystem.ts': { cap: 700, target: 600, reason: RATCHET_ONLY },
+  'src/server/rooms/LockSubsystem.ts': { cap: 684, target: 600, reason: RATCHET_ONLY },
   'src/server/rooms/MissileSimulation.ts': { cap: 946, target: 600, reason: RATCHET_ONLY },
   'src/server/rooms/PlayerFireResolver.ts': { cap: 766, target: 600, reason: RATCHET_ONLY },
   'src/server/rooms/SectorRoom.ts': {
