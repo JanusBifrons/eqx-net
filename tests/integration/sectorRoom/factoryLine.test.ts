@@ -61,7 +61,9 @@ describe('SectorRoom integration — the factory line: nothing targets a consuma
     });
     const acks = new Map<string, boolean>(); // clientShotId → rejected
     client.onMessage('hit_ack', (m: { clientShotId: string; rejected?: boolean }) => acks.set(m.clientShotId, m.rejected === true));
-    for (const t of ['damage', 'laser_fired', 'swarm', 'destroy', 'loot_collected']) client.onMessage(t, () => {});
+    for (const t of ['damage', 'laser_fired', 'swarm', 'destroy']) client.onMessage(t, () => {});
+    let salvageLoads = 0; // loot_collected popups carrying salvage
+    client.onMessage('loot_collected', (m: { goods?: Record<string, number> }) => { if ((m.goods?.salvage ?? 0) > 0) salvageLoads++; });
     const room = harness.getServerRoom() as unknown as SectorRoom;
     const int = (): SectorRoom['_internals'] => room._internals;
     const ship = [...room.state.ships.values()].find((s) => s.playerId === pid)!;
@@ -122,9 +124,10 @@ describe('SectorRoom integration — the factory line: nothing targets a consuma
     // 3. Empty hold, a fighter broken beside the hull: its pieces go into the
     //    hold whole through the loot pickup, no tractor on them.
     getHoldStore().delete(ship.shipInstanceId, false);
+    // (A piece can be taken in on the tick it spawns, before the test sees it: count loads, not ids.)
+    const loads0 = salvageLoads;
     const near = await breakFighter('f2', kind.radius + 30, 0);
-    expect(near.length, 'the second fighter broke too').toBeGreaterThan(0);
-    await waitUntil(() => near.every((id) => int().swarmRegistry.get(id) == null), 5_000, 'the pieces beside the hull are taken in');
+    await waitUntil(() => near.every((id) => int().swarmRegistry.get(id) == null) && salvageLoads > loads0, 5_000, 'the pieces beside the hull are taken in');
     expect(hold().salvage ?? 0, 'their salvage is in the hold').toBeGreaterThan(0);
     expect(int().forceFields.tractorCount, 'taken in with no tractor on them').toBe(0);
     expect(int().loot.podCount(), 'whole, no pod in between').toBe(0);
