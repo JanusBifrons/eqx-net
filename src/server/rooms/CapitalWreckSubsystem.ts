@@ -52,6 +52,7 @@ import type { CapitalWreckDeps, LiveWreck, PieceKnock } from './capitalWreckType
 import { forEachLineagePiece, forEachPieceNear, lineageRootOf, pieceSalvageQtyOf, pieceStoreOf, type PieceStoreView } from './wreckLineage.js';
 import { burnHullHit, burnPieceHit, deathExtraCuts } from './wreckBurnHits.js';
 import { RockCutter } from './rockCut.js';
+import { WreckKickQueue } from './wreckKicks.js';
 import { shipWreckSource } from '../../core/destruction/wreckSource.js';
 export type { WreckPiecePose };
 export type { CapitalWreckDeps, LiveWreck, PieceKnock, WreckPieceSpawn } from './capitalWreckTypes.js';
@@ -107,20 +108,9 @@ const VAPORISED: WreckDeathOutcome = { pieces: 0, vaporised: true };
 /** Scratch for a piece's centre in `onWreckHit` (#14). */
 const CENTRE_SCRATCH: WreckPiecePose = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
 
-/** A piece's separating kick, held until the wreck's crack delay ends. */
-interface PendingKick {
-  id: string;
-  dueTick: number;
-  /** Kick in the world frame at the death angle. */
-  vx: number;
-  vy: number;
-  w: number;
-  angle0: number;
-}
-
 export class CapitalWreckSubsystem {
-  /** Kicks waiting for `WRECK_CRACK_MS` (oldest first; compacted in place). */
-  private readonly kicks: PendingKick[] = [];
+  /** Kicks waiting for `WRECK_CRACK_MS` (`wreckKicks.ts`). */
+  private readonly kicks: WreckKickQueue;
   private readonly entries = new Map<string, HitEntry>();
   private readonly pool: HitEntry[] = [];
   /** Live capital wreck piece ids, oldest first (budget FIFO). */
@@ -149,6 +139,7 @@ export class CapitalWreckSubsystem {
   readonly rockCut: RockCutter;
 
   constructor(private readonly d: CapitalWreckDeps) {
+    this.kicks = new WreckKickQueue(d);
     const capOf = (capital: boolean): number => (capital ? MAX_LIVE_WRECK_PIECES : (this.subcapCapOverride ?? MAX_LIVE_SUBCAP_WRECK_PIECES));
     const host = {
       fifo: (capital: boolean) => (capital ? this.live : this.liveSubcap),
@@ -247,9 +238,21 @@ export class CapitalWreckSubsystem {
    * own message and can step between two of them, so a despawn posted after
    * the spawns left the pieces inside the old hull for a step, and the
    * push-out shoved them (2026-11-14: a sub-cap piece stopped dead and its
-   * cut barely opened; `subcapWrecks.test.ts` "loot pod").
+   * cut barely opened; `subcapWrecks.test.ts` "loot pod"). For the same
+   * reason the despawn and every piece spawn go in ONE worker message
+   * (`beginBatch`): one message per piece let a loaded worker step between
+   * two pieces, so one started a step ahead (`wreckSpawnOneMessage.test.ts`).
    */
   onDeath(targetId: string, kindId: ShipKindId, pose: WreckDeathPose, maxHull: number, despawnDyingBody?: () => void): WreckDeathOutcome {
+    this.d.beginBatch?.();
+    try {
+      return this.breakUp(targetId, kindId, pose, maxHull, despawnDyingBody);
+    } finally {
+      this.d.endBatch?.();
+    }
+  }
+
+  private breakUp(targetId: string, kindId: ShipKindId, pose: WreckDeathPose, maxHull: number, despawnDyingBody?: () => void): WreckDeathOutcome {
     // Two lethal hits in one tick can report the same death twice
     // (the 2026-06-19 double SHIP_DESTROYED): break the hull once.
     const tick = this.d.serverTick();
@@ -336,7 +339,7 @@ export class CapitalWreckSubsystem {
         cx: p.cx, cy: p.cy, radius: p.radius, burn: null,
       });
       // The hull holds together for the crack delay, then parts (game ticks).
-      if (held) this.kicks.push({ id, dueTick: tick + crackTicks, vx: p.kickVx, vy: p.kickVy, w: p.kickAngvel, angle0: pose.angle });
+      if (held) this.kicks.push(id, tick + crackTicks, p.kickVx, p.kickVy, p.kickAngvel, pose.angle);
       fifo.push(id);
       this.pieceWreck.set(id, wreckId);
     }
@@ -370,31 +373,9 @@ export class CapitalWreckSubsystem {
     return { pieces: spawned, vaporised: false };
   }
 
-  /**
-   * Per server tick: give each piece whose wreck's crack delay is over its
-   * separating kick. The kick was built at the death angle; the piece has
-   * turned with the hull since, so it is turned by the same amount. Kicks for
-   * pieces already gone are dropped. Alloc-free (#14): compacts in place.
-   */
+  /** Per server tick: due separating kicks (`WreckKickQueue.tick`). */
   tick(): void {
-    const k = this.kicks;
-    if (k.length === 0) return;
-    const now = this.d.serverTick();
-    let w = 0;
-    for (let r = 0; r < k.length; r++) {
-      const e = k[r]!;
-      if (e.dueTick > now) {
-        k[w++] = e;
-        continue;
-      }
-      const angle = this.d.pieceAngle(e.id);
-      if (angle === null) continue;
-      const da = angle - e.angle0;
-      const c = Math.cos(da);
-      const s = Math.sin(da);
-      this.d.kickPiece(e.id, e.vx * c - e.vy * s, e.vx * s + e.vy * c, e.w);
-    }
-    k.length = w;
+    this.kicks.tick();
   }
 
   /**
@@ -429,7 +410,15 @@ export class CapitalWreckSubsystem {
   ): boolean {
     const k = this.knock.get(id);
     // Rock cut: a hit on a rock (not a piece) wears it (rockCut.ts).
-    if (k === undefined) return this.rockCut.onRockHit(id, hitX, hitY, dirX, dirY, damage, weaponId, shooterId);
+    if (k === undefined) {
+      // A mined-out rock's pieces spawn in one worker message, as a death's.
+      this.d.beginBatch?.();
+      try {
+        return this.rockCut.onRockHit(id, hitX, hitY, dirX, dirY, damage, weaponId, shooterId);
+      } finally {
+        this.d.endBatch?.();
+      }
+    }
     if (this.d.impulsePiece === undefined || !(damage > 0)) return false;
     const len = Math.hypot(dirX, dirY);
     if (!(len > 1e-9) || !Number.isFinite(hitX) || !Number.isFinite(hitY)) return false;
@@ -443,8 +432,15 @@ export class CapitalWreckSubsystem {
     // being shoved.
     // A rock's pieces wear by the weapon's 'rock' factor (the mining laser).
     if (k.integrity > 0) k.integrity -= damage * wreckWearFactor(weaponId, w !== undefined && w.src.rock !== null);
-    if (k.integrity <= 0 && w !== undefined && wreckId !== undefined && this.d.serverTick() >= w.holdUntil
-      && this.resplit.wornOut(id, k, wreckId, w, hitX, hitY, dirX, dirY, weaponId)) return true;
+    if (k.integrity <= 0 && w !== undefined && wreckId !== undefined && this.d.serverTick() >= w.holdUntil) {
+      // The re-split's pieces spawn in one worker message, as a death's.
+      this.d.beginBatch?.();
+      try {
+        if (this.resplit.wornOut(id, k, wreckId, w, hitX, hitY, dirX, dirY, weaponId)) return true;
+      } finally {
+        this.d.endBatch?.();
+      }
+    }
     // A beam carries no momentum: the shot stops on the piece, no shove.
     if (weaponId !== undefined && WEAPONS.get(weaponId)?.mode === 'hitscan') return true;
     if (w !== undefined && this.d.impulseWreck !== undefined && this.d.serverTick() < w.holdUntil) {
