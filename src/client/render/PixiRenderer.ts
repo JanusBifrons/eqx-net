@@ -1,11 +1,12 @@
 import { Application, Graphics, Container, RenderLayer, type Texture } from 'pixi.js';
 import { Camera } from './worker/Camera';
+import { DEFAULT_GRAPHICS_QUALITY, renderResolution, type GraphicsQuality } from './graphicsQuality';
+import { FxaaFilter } from './pixi/FxaaFilter';
 import type { FleetOverlayModel, FleetOverlayShip, FleetPickKindWire, IRenderer, RenderMirror, RendererFeedback } from '@core/contracts/IRenderer';
 import { GameClock } from '@core/clock/GameClock';
 import { GalaxyMapLayer } from './galaxy/GalaxyMapLayer';
-import { type WarpParams, type WarpCenter, type FrameMarkers } from './worker/protocol';
-import { WarpFilterChain } from './pixi/WarpFilterChain.js';
-import { shouldFireRemoteWarpVisual, remoteWarpEventFires } from './pixi/warpHelpers.js';
+import { type FrameMarkers } from './worker/protocol';
+import { LoadCurtain } from './pixi/LoadCurtain.js';
 import { fillHitTargetSets } from './pixi/hitTargetSets.js';
 import { updateShipSprites, shipSpriteKinds, type ShipSpriteCtx } from './pixi/shipSpriteUpdater.js';
 import { entityPoseFromSprite, type EntityPose } from './pixi/entityPoseFromSprite.js';
@@ -18,6 +19,7 @@ import { WreckGeometryStore } from '../net/wreckGeometryStore.js';
 import { WreckArtState, WreckPieceSprite, wreckBlasts, wreckRippleCap, WRECK_BLAST_LINGER, type WreckBlast } from './pixi/wreckArt.js';
 import { deathBlastFor, dyingHullDiameter, hullDeathBlastReplaced, type DeathBlast } from './pixi/deathBlast.js';
 import { spawnVaporiseBlast, stackVaporiseOverBeams } from './pixi/vaporiseBlast.js';
+import { raiseBeamsOverHulls } from './pixi/beamsOverHulls.js';
 import { LegacyExplosionSprites } from './pixi/legacyExplosionSprites.js';
 import { ConnectorRenderer } from './pixi/ConnectorRenderer.js';
 import { updateProjectileSprites, type ProjectileSpriteCtx } from './pixi/projectileSpriteUpdater.js';
@@ -82,7 +84,8 @@ import {
 import { newSpeedFxSample, speedFxSampleInto } from './camera/speedFxSample';
 import { GroupBoundsScanner } from './camera/groupBounds';
 import type { CameraCue, CameraGroup } from '@core/contracts/cameraScript';
-import { REMOTE_BEAM_STYLE, LIVE_BEAM_STYLE, liveBeamLook, liveBeamLine,MINING_BEAM_STYLE, remoteBeamStyleForMount, remoteBeamLine, remoteBeamSolidLen, addBeamLights, beamLightBudget, BeamHitMemory, type RemoteBeamLine } from './beamStyles';
+import { fillTractorBeams } from './tractorBeams';
+import { REMOTE_BEAM_STYLE, LIVE_BEAM_STYLE, TRACTOR_BEAM_STYLE, liveBeamLook, liveBeamLine,MINING_BEAM_STYLE, remoteBeamStyleForMount, remoteBeamLine, remoteBeamSolidLen, addBeamLights, beamLightBudget, BeamHitMemory, type RemoteBeamLine } from './beamStyles';
 import { MountVisualManager } from './MountVisualManager';
 import { BackgroundGrid } from './BackgroundGrid';
 import { CutFieldLayer } from './field/CutFieldLayer';
@@ -128,22 +131,6 @@ const DEFAULT_GAMEPLAY_ZOOM = 0.5;
 // + width are passed at pool construct time; see `init()`.
 
 /**
- * Load-curtain tween constants. The curtain rises quickly (so the
- * canvas doesn't briefly leak through during the transition into
- * loading) and fades over the same window as `flashDurationMs` so the
- * arrival flash can hide the curtain fade.
- */
-// CURTAIN_* + warp helpers now used inside WarpFilterChain.ts.
-// Re-exported here so existing test imports keep working.
-export {
-  shouldDetachWarpVisual,
-  warpEventFiresBurst,
-  resolveWarpFilterCenter,
-  type WarpBurstEvent,
-} from './pixi/warpHelpers.js';
-// `shouldFireRemoteWarpVisual` is imported above for in-module use (#7); the
-// test imports it directly from `./pixi/warpHelpers`.
-export { shouldFireRemoteWarpVisual };
 
 
 // Sprite/Graphics builders moved to ./pixi/spriteBuilders.ts — pure
@@ -184,8 +171,17 @@ export class PixiRenderer implements IRenderer {
   constructor(isTouch = false, art: ArtOptions = ART_OFF, fxKillSwitches?: FxKillSwitches) {
     this._isTouch = isTouch;
     this._artOpts = art; this._cutField.setOreStyle(art.ore ?? 'veins');
+    this.quality = art.quality ?? DEFAULT_GRAPHICS_QUALITY;
     this._fxKillSwitches = fxKillSwitches;
     this.halo = new HaloRadar(isTouch);
+  }
+
+  /** Graphics quality (edge smoothing, render scale, texture softening). */
+  private readonly quality: GraphicsQuality;
+
+  /** The renderer resolution for a screen at `dpr`: its density × the render scale. */
+  private resolutionFor(dpr: number, w: number, h: number): number {
+    return renderResolution(dpr, this.quality.renderScale, w, h);
   }
 
   private app!: Application;
@@ -196,6 +192,9 @@ export class PixiRenderer implements IRenderer {
    * driven by the `Camera` controller below.
    */
   private world!: Container;
+  /** The world's node on the stage: `world` itself, or the unmoved host
+   *  that carries the FXAA pass (graphics quality `?aa=fxaa|max`). */
+  private worldHost!: Container;
   /** Camera controller — owns world's transform via pointer/wheel events. */
   private camera!: Camera;
   private shipContainer!: Container;
@@ -267,38 +266,11 @@ export class PixiRenderer implements IRenderer {
   private connectorRenderer!: ConnectorRenderer;
   /** A3 — visible rect for culling structure sprites (reused per frame). */
   private readonly _swarmViewScratch = new Float64Array(4);
-  /**
-   * Warp-mode render state — the "loading screen" rendered ON the same
-   * canvas as gameplay (no separate Pixi Application). When `warpActive`
-   * is true the renderer attaches a stack of `ShockwaveFilter` instances
-   * to `app.stage`. Each filter advances its `time` uniform on a phase
-   * offset so multiple concentric ripples expand from screen centre
-   * simultaneously, growing in amplitude as warp progress ramps up.
-   *
-   * `warpIntensity` ∈ [0, 1] is the **fade-out scalar** — 1 while warp
-   * is armed and steady, ramping to 0 over `fadeOutMs` after
-   * `setWarpMode(false)`. The amplitude **ramp-up** is separately driven
-   * by `warpStartedAt` over `warpParams.rampMs`.
-   *
-   * Filter array is built lazily on first `setWarpMode(true)` and
-   * preserved across re-entry. Tunable params live in `warpParams`
-   * (defaults from `DEFAULT_WARP_PARAMS`); the visual-effects sandbox
-   * spike posts `SET_WARP_PARAMS` to mutate them live for iteration.
-   *
-   * Why ShockwaveFilter-only: prior 3-filter chain (OldFilm + Shockwave
-   * + RGBSplit) was expensive on mobile because OldFilm regenerates
-   * procedural noise + scratches per-frame. ShockwaveFilter is a single
-   * radial-displacement pass (cheap), so stacking 4 of them costs less
-   * than the prior chain while producing the rippling effect more
-   * directly. GlitchFilter remains unusable in worker context — see
-   * `WarpParams` doc in `worker/protocol.ts`.
-   */
-  /** Warp visual chain (shockwave + bloom + flash + load curtain).
-   *  Extracted to `pixi/WarpFilterChain.ts`. Constructed in `init()`. */
-  private warp!: WarpFilterChain;
+  /** Load curtain (full-canvas dark overlay at join). Constructed in `init()`. */
+  private curtain!: LoadCurtain;
   /** Effects subsystem (plan `wiggly-puppy`). Owns destruction particles,
    *  engine emitters, shield aura, impact sparks, etc. Constructed in
-   *  `init()` AFTER `app`, `world`, `shipContainer`, and `warp` exist.
+   *  `init()` AFTER `app`, `world`, `shipContainer`, and `curtain` exist.
    *  `null` when `?effects=0` escape hatch is active — destruction +
    *  flames then fall back to today's inline Graphics paths. */
   private effects: EffectsService | null = null;
@@ -383,13 +355,6 @@ export class PixiRenderer implements IRenderer {
    *  pointer/wheel handlers route to ITS camera (free pan/zoom of the
    *  galaxy) instead of the world camera. Restored 2026-06-06. */
   private _galaxyLayer: GalaxyMapLayer | null = null;
-  /** #7 — observable outcome of the `pendingWarpEvents` drain, so a test can
-   *  lock the ACTUAL wiring (not just the pure helper): incremented in
-   *  `drainRemoteWarp` when a queued remote-warp event FIRES its ripple
-   *  (`triggerWarpIn`) vs is SUPPRESSED (galaxy map open / burst in flight).
-   *  Exposed via the test seam `debugRemoteWarpCounts()`. */
-  private _remoteWarpFiredCount = 0;
-  private _remoteWarpSuppressedCount = 0;
   private _liveBeamPool: BeamSpritePool | null = null;
   private _remoteBeamPool: BeamSpritePool | null = null;
   /** WS-4 Phase 4 (R2.27) — dedicated pool for the Miner's mining beam
@@ -398,6 +363,7 @@ export class PixiRenderer implements IRenderer {
    *  `liveCount` (the shared remote pool can't tell a drill beam from a combat
    *  laser). The faint always-on link hint stays in `ConnectorRenderer`. */
   private _miningBeamPool: BeamSpritePool | null = null;
+  private _tractorBeamPool: BeamSpritePool | null = null; private readonly _tractorViews: BeamView[] = []; private _tractorViewCount = 0; // salvage PR 11b (tractorBeams.ts)
   private miningBeamGfx: Container | null = null;
   /**
    * Plan: combat-fx-hunt (2026-05-31) — beam endpoint cache for the
@@ -665,9 +631,9 @@ export class PixiRenderer implements IRenderer {
    * Mutated in place at the tail of `update()` (no per-frame alloc); the
    * worker reads it via `getFrameMarkers()` after `update()` returns and
    * posts a `FRAME_MARKERS` message ONLY when diagnostics are enabled.
-   * `warpTickMs` / `filterCount` are written by the `tickWarpShockwaves`
-   * ticker callback (a separate Pixi ticker, not part of `update()`), so
-   * each `FRAME_MARKERS` carries the most recent warp-tick cost.
+   * `warpTickMs` is written by the `LoadCurtain` ticker callback (a
+   * separate Pixi ticker, not part of `update()`), so each
+   * `FRAME_MARKERS` carries the most recent curtain-tick cost.
    *
    * This is deliberately NOT on `RendererFeedback` — that's a
    * phase-gated closed-set DI contract (see `IRenderer.ts` /
@@ -678,9 +644,6 @@ export class PixiRenderer implements IRenderer {
     rendererUpdateMs: 0,
     spriteCount: 0,
     warpTickMs: 0,
-    filterCount: 0,
-    warpFiltersAttached: false,
-    warpBurstAgeMs: -1,
     gridLabelSpecMs: 0,
     gridTextCreateMs: 0,
     gridCleanupMs: 0,
@@ -841,8 +804,10 @@ export class PixiRenderer implements IRenderer {
       width: initialW,
       height: initialH,
       background: BACKGROUND_COLOR,
-      antialias: true,
-      resolution: initialDpr,
+      // Graphics quality: `fxaa` swaps multisampling for the post pass on
+      // the world; `off` is neither (graphicsQuality.ts).
+      antialias: this.quality.aa === 'msaa' || this.quality.aa === 'max',
+      resolution: this.resolutionFor(initialDpr, initialW, initialH),
       autoDensity: isDom,
       // Pin WebGL: Pixi v8.1+ already defaults autoDetect to WebGL, but
       // pinning guarantees the worker can never silently select WebGPU
@@ -876,7 +841,21 @@ export class PixiRenderer implements IRenderer {
     // into), not Pixi's event system.
     this.world = new Container();
     this.world.eventMode = 'none';
-    this.app.stage.addChild(this.world);
+    // Graphics quality `?aa=fxaa|max`: one FXAA pass over the world (not the
+    // stage, whose filters the destruction effects own). It sits on an unmoved
+    // host: Pixi maps `filterArea` through the container's own transform, and
+    // the camera moves and scales `world`, so on `world` itself the screen
+    // rect lands off screen and the pass is skipped. The area is the screen,
+    // so Pixi never measures the world's bounds.
+    this.worldHost = this.world;
+    if (this.quality.aa === 'fxaa' || this.quality.aa === 'max') {
+      this.worldHost = new Container();
+      this.worldHost.eventMode = 'none';
+      this.worldHost.addChild(this.world);
+      this.worldHost.filters = [new FxaaFilter(this.quality.aa === 'max')];
+      this.worldHost.filterArea = this.app.screen;
+    }
+    this.app.stage.addChild(this.worldHost);
 
     // followLerpFactor=1 → instant follow each Pixi tick (60 Hz). This
     // matches pre-migration pixi-viewport's `viewport.moveCenter(x, y)`
@@ -899,7 +878,7 @@ export class PixiRenderer implements IRenderer {
     this.setViewSize(initialW, initialH);
 
     // Read the bisected FX kill switches once at init. Threaded into the
-    // warp chain (forceDisable) + EffectsService refs (per-effect bypasses).
+    // EffectsService refs (per-effect bypasses).
     // Plan: melodic-engelbart Step 2.
     // Worker path: the switches arrive on BOOT (no `window` here).
     const fxKillSwitches = this._fxKillSwitches ?? readFxKillSwitches();
@@ -912,6 +891,7 @@ export class PixiRenderer implements IRenderer {
       this._artCtx.sunAz = art.lightRig.sunAz;
       // GPU-lit art (`?shiplight=gpu`): lit meshes are built with these.
       litPass.settings = this._artOpts.lighting ?? null;
+      litPass.texSoft = this.quality.texSoft;
       // Machined turrets ride the new effects (rings in the bakes, baked guns).
       this._artCtx.turrets = this._artOpts.fx === true;
       if (this._artOpts.livery) this._artCtx.livery = this._artOpts.livery;
@@ -922,8 +902,8 @@ export class PixiRenderer implements IRenderer {
       // New backdrop (B2): behind the world, with dust in front of it. Until
       // its star tiles are baked, today's starfield keeps drawing.
       if (this._artOpts.fx === true) {
-        const bd = new Backdrop(art, () => this.effects?.getQuality() ?? 'medium', this._artOpts.speedFx === false ? 'off' : 'large');
-        const wi = this.app.stage.getChildIndex(this.world);
+        const bd = new Backdrop(art, () => this.effects?.getQuality() ?? 'medium', this._artOpts.speedFx === false ? 'off' : 'large', this._artOpts.nebLook);
+        const wi = this.app.stage.getChildIndex(this.worldHost);
         this.app.stage.addChildAt(bd.sky, wi);
         this.app.stage.addChildAt(bd.fore, wi + 2);
         bd.setSector(this._sectorKey);
@@ -972,21 +952,8 @@ export class PixiRenderer implements IRenderer {
       });
     }
 
-    // Warp visual chain — extracted to `pixi/WarpFilterChain.ts`.
-    // Lazy-builds its stage on first setWarpMode/triggerWarpIn/setLoadCurtain.
-    this.warp = new WarpFilterChain(
-      this.app,
-      this.world,
-      this.camera,
-      (entityId) => {
-        const s = this.sprites.get(entityId);
-        return s ? { x: s.x, y: s.y } : undefined;
-      },
-      this.frameMarkers,
-    );
-    if (fxKillSwitches.filtersDisabled) {
-      this.warp.forceDisable();
-    }
+    // Load curtain — lazy-builds its stage on the first setLoadCurtain.
+    this.curtain = new LoadCurtain(this.app, this.frameMarkers);
 
     // `?cleanworld=1` (showcase capture) drops debug-flavoured world overlays:
     // the spatial grid, turret aim-guides and NPC callsign labels.
@@ -1000,16 +967,14 @@ export class PixiRenderer implements IRenderer {
     this.camera.addChild(this._cutField.container); // cut-field rocks: under everything that moves
     this.shipContainer = new Container();
     this.camera.addChild(this.shipContainer);
-    // Far-zoom wreck specks (wreckArt.ts `setFarZoom`): drawn together as one
-    // batch, under the ship icons.
+    // Far-zoom wreck specks (wreckArt.ts `setFarZoom`): one batch, under the ship icons.
     this.camera.addChild(this._wreckFarLayer);
     // Far-zoom ship icons above the ships they stand in for (FarZoomIcons.ts).
     this.camera.addChild(this._farIcons.container);
 
     // Structures plan, Phase 3 — the grid connector web. Added FIRST so the
     // lines render BEHIND the structure/ship sprites added later.
-    this.connectorRenderer = new ConnectorRenderer();
-    this.connectorRenderer.rockShapes.fieldRocks = this._cutField;
+    this.connectorRenderer = new ConnectorRenderer(this._cutField);
     this.connectorRenderer.setTurretOverlaysVisible(this._lockMarksVisible);
     // A3 — the static layer (idle web, range rings, wall rails) sits behind the
     // per-frame layer.
@@ -1157,13 +1122,13 @@ export class PixiRenderer implements IRenderer {
       this._miningBeamPool = new BeamSpritePool(MINING_BEAM_STYLE);
       this.miningBeamGfx = this._miningBeamPool.container;
       this.shipContainer.addChild(this.miningBeamGfx);
+      this._tractorBeamPool = new BeamSpritePool(TRACTOR_BEAM_STYLE); this.shipContainer.addChild(this._tractorBeamPool.container, this._tractorBeamPool.styledContainer); // look A (beamStyles.ts)
 
       this.effects = new EffectsService({
         app: this.app,
         world: this.world,
         stage: this.app.stage,
         camera: this.camera,
-        warpChain: this.warp,
         ...(this._artOpts.fx === true && this._artCtx.art ? { fxGlow: this.fxGlowTexture() } : {}),
         // Per-frame pose lookup. Reads the RENDERED sprite position so
         // it stays in lockstep with whatever frame the engine emitter
@@ -1196,6 +1161,10 @@ export class PixiRenderer implements IRenderer {
       });
     }
 
+    // Beams leave from the turrets on top of the hull, so they draw over every
+    // hull (ships spawn later and would otherwise stack above them).
+    raiseBeamsOverHulls(this.shipContainer, [this._fxRemoteBeams?.container, this._fxLiveBeams?.container],
+      [this._liveBeamPool, this._remoteBeamPool, this._miningBeamPool, this._tractorBeamPool]);
     stackVaporiseOverBeams(this.shipContainer, this._fxExplosions); // the vaporise flash reads over the beams
     // Incoming-fire markers sit under the radar's edge icons.
     this.incomingFire.init(this.camera);
@@ -1266,7 +1235,7 @@ export class PixiRenderer implements IRenderer {
         // Re-apply DPR so browser-zoom / monitor-move updates resolution
         // on the main-thread path too (parity with the worker resize).
         const dpr = window.devicePixelRatio ?? 1;
-        this.app.renderer.resize(w, h, dpr);
+        this.app.renderer.resize(w, h, this.resolutionFor(dpr, w, h));
         this.setViewSize(w, h);
         this.starfield?.resize(w, h);
       };
@@ -1298,7 +1267,7 @@ export class PixiRenderer implements IRenderer {
     // zoom / some rotations) re-derives the backing buffer. Omitting it
     // (the old behaviour) kept the stale init resolution → blur after
     // such a change. `width`/`height` are LOGICAL (CSS) px.
-    this.app.renderer.resize(width, height, dpr ?? this.app.renderer.resolution);
+    this.app.renderer.resize(width, height, dpr !== undefined ? this.resolutionFor(dpr, width, height) : this.app.renderer.resolution);
     this.setViewSize(width, height);
     this.starfield?.resize(width, height);
     if (isDiagEnabled()) {
@@ -1956,66 +1925,6 @@ export class PixiRenderer implements IRenderer {
     return this._hoveredId;
   }
 
-  /**
-   * #7 — the SINGLE-OWNER drain for `pendingWarpEvents` (remote warp_in/out
-   * broadcasts from the server). Extracted from `update()` so the actual wiring
-   * is unit-lockable headlessly (it needs only `_galaxyLayer`, `warp`,
-   * `triggerWarpIn`, and the counters — no WebGL).
-   *
-   * The WarpFilterChain lives on the shared `app.stage`, and the GalaxyMapLayer
-   * is a child of that same stage, so a remote-warp ripple bleeds across the
-   * galaxy overlay the player is reading. Skip the cosmetic visual entirely
-   * while the map is open (the gameplay scene isn't the focus anyway). Still
-   * drain the queue so it doesn't back up. The fire/skip decision is the shared
-   * pure `remoteWarpEventFires` (galaxy-map gate AND burst-in-flight gate) — the
-   * same function the DEV hook reads, so the hook cannot drift from this drain.
-   */
-  private drainRemoteWarp(mirror: RenderMirror): void {
-    if (!mirror.pendingWarpEvents || mirror.pendingWarpEvents.length === 0) return;
-    const galaxyMapOpen = this._galaxyLayer?.visible === true;
-    const burstInFlight = this.warp.isBurstInFlight();
-    if (remoteWarpEventFires({ galaxyMapOpen, burstInFlight })) {
-      // Fire ONLY the first queued event this frame. Subsequent events get
-      // visually skipped — at 1-2 warps/sec from drones plus a 1.5 s burst
-      // window, the visible duty cycle is close to 100 % anyway, so dropping
-      // 1-2 visuals is invisible to the player but bounds GPU cost.
-      const first = mirror.pendingWarpEvents[0]!;
-      this.triggerWarpIn({ kind: 'world', worldX: first.x, worldY: first.y });
-      this._remoteWarpFiredCount++;
-    } else {
-      this._remoteWarpSuppressedCount++;
-    }
-    mirror.pendingWarpEvents.length = 0;
-  }
-
-  /**
-   * DEV/E2E + test-only (#7): the observable outcome of the `pendingWarpEvents`
-   * drain. `fired` counts events that fired their ripple (`triggerWarpIn`);
-   * `suppressed` counts events skipped (galaxy map open / burst in flight). The
-   * lock that the drain ACTUALLY honours the galaxy-map gate reads these after
-   * driving `drainRemoteWarp` — reverting the gate moves the counter the wrong
-   * way (see `PixiRenderer.warpGalaxyGate.test.ts`).
-   */
-  debugRemoteWarpCounts(): { fired: number; suppressed: number } {
-    return { fired: this._remoteWarpFiredCount, suppressed: this._remoteWarpSuppressedCount };
-  }
-
-  /**
-   * DEV/E2E-only (#7): would a queued REMOTE-warp event fire its ripple right
-   * now, given the live galaxy-map state? Returns the EXACT gate the
-   * `pendingWarpEvents` drain applies (`shouldFireRemoteWarpVisual` against
-   * `_galaxyLayer.visible`), so a spec can assert the warp ripple is suppressed
-   * while the galaxy map is open without injecting a server warp broadcast. This
-   * is the galaxy-map gate ONLY (it ignores the transient burst-in-flight gate)
-   * — it answers "is the map suppressing the ripple", which is what the E2E
-   * checks; it reads the SAME `shouldFireRemoteWarpVisual` the drain composes
-   * into `remoteWarpEventFires`.
-   */
-  devRemoteWarpVisualWouldFire(): boolean {
-    const galaxyMapOpen = this._galaxyLayer?.visible === true;
-    return shouldFireRemoteWarpVisual({ galaxyMapOpen });
-  }
-
   /** True while the galaxy layer should swallow gameplay taps — either the
    *  full-screen selector (pan/zoom active) OR the in-game additive overlay is
    *  up (a tap there warps to a neighbour). Selection must not fire in either. */
@@ -2283,6 +2192,8 @@ export class PixiRenderer implements IRenderer {
     // the shield sync closes it.
     this._fxShieldsOn = this._fxShields !== null && this._fxShields.ready();
     if (this._fxShieldsOn) this._fxShields!.begin();
+    this._tractorViewCount = this._beamsDisabled || !this._tractorBeamPool ? 0 : fillTractorBeams(mirror, this.fxNow(), this.world.scale.x, this._tractorViews);
+    this._tractorBeamPool?.setBeams(this._tractorViews, this._tractorViewCount, this.world.scale.x);
     if (!this._beamsDisabled && mirror.remoteLasers && mirror.remoteLasers.size > 0 && this._remoteBeamPool) {
 
       // Origin tracking: the shooter pose moves every frame (drones each
@@ -2377,9 +2288,9 @@ export class PixiRenderer implements IRenderer {
           const isMining = mountId === 'drill';
           // The capital heavy beam (plan beam-slices §8) draws thick and violet
           // in the SAME pool: the style comes from the mount's catalogue weapon
-          // (shooter kind + mountId), no wire field. A styled pulse also holds
-          // the line it was fired along (`remoteBeamLine`): muzzle to the
-          // server's end point, never the live barrel angle.
+          // (shooter kind + mountId), no wire field. A styled pulse runs down
+          // the live barrel to the client ray's stop (`laser.dist`), else to
+          // the server's end point (`remoteBeamLine`).
           const style = isMining ? null : remoteBeamStyleForMount(mount);
           const line = this._remoteBeamLine;
           if (shooter) {
@@ -2388,7 +2299,7 @@ export class PixiRenderer implements IRenderer {
             const muzzleD = mount ? shipShotMuzzle(shooterKind, mount) : shipTuning(shooterKind).muzzleClearance;
             remoteBeamLine(
               style !== null, shooter.angle, mount?.baseAngle ?? 0, currentMountAngle ?? 0,
-              origin.x, origin.y, muzzleD, laser.range, laser.toX, laser.toY, line,
+              origin.x, origin.y, muzzleD, laser.range, laser.toX, laser.toY, line, laser.dist,
             );
             fromX = line.fromX; fromY = line.fromY; toX = line.toX; toY = line.toY;
           } else if (swarmShooter) {
@@ -2403,7 +2314,7 @@ export class PixiRenderer implements IRenderer {
             // interest, so no `drones[].mountAngles`) aims at the wire end.
             remoteBeamLine(
               style !== null, swarmShooter.angle, mount?.baseAngle ?? 0, mount ? currentMountAngle : 0,
-              origin.x, origin.y, barrelOffset, laser.range, laser.toX, laser.toY, line,
+              origin.x, origin.y, barrelOffset, laser.range, laser.toX, laser.toY, line, laser.dist,
             );
             fromX = line.fromX; fromY = line.fromY; toX = line.toX; toY = line.toY;
           } else {
@@ -2814,24 +2725,6 @@ export class PixiRenderer implements IRenderer {
       this.feedback.selectionScreenY = null;
     }
 
-    // Drain remote-warp events (warp_in / warp_out broadcasts from the
-    // server). Each entry fires the same direction-agnostic one-shot
-    // flash + burst ripple at the world point so observers see where
-    // the remote ship arrived / departed. Local-player warps are never
-    // here (server filters with `except: client`).
-    //
-    // Render-jitter-fix Phase 1b (2026-05-21) — only fire ONE warp
-    // visual per RAF, AND only when a burst is not already in flight.
-    // Each `triggerWarpIn` attaches the warp filter chain (shockwave +
-    // bloom + zoom-blur) to `app.stage.filters` and resets
-    // `warpBurstStartedAt`. The 1.5 s burst duration only tears those
-    // filters down via `shouldDetachWarpVisual` IF `warpBurstStartedAt`
-    // ages past `burstDurationMs`. Without this guard, Living World
-    // bot migrations push 1-2 warp events per second; each restarts
-    // the burst timer; filters stay attached indefinitely; GPU runs
-    // the multi-pass filter chain every frame → frame rate collapses
-    // (the late-onset spiral pattern in captures `af742v` / `ecat41`).
-    this.drainRemoteWarp(mirror);
     this._cutField.update(mirror, this._artCtx.sunAz, this.camera.scale.x); // cut-field chunks + view
 
     // Phase 1 — name labels above remote ships and drones (skip self).
@@ -2899,10 +2792,9 @@ export class PixiRenderer implements IRenderer {
     // ---------- F1 frame markers (end-of-frame, worker→main diag) ----------
     // Fold in the grid label-churn split that `BackgroundGrid.update()`
     // recorded earlier this frame (called at ~L1310 via
-    // `this.backgroundGrid?.update(this.camera)`). `warpTickMs` /
-    // `filterCount` are written by the separate `tickWarpShockwaves`
-    // ticker callback. `rendererUpdateMs` closes the bracket opened at
-    // method entry. The worker posts these only when diagnostics are on.
+    // `this.backgroundGrid?.update(this.camera)`). `warpTickMs` is
+    // written by the separate `LoadCurtain` ticker callback. `rendererUpdateMs`
+    // closes the bracket opened at method entry. The worker posts these only when diagnostics are on.
     const grid = this.backgroundGrid?.lastFrameMarkers;
     if (grid) {
       this.frameMarkers.gridLabelSpecMs = grid.labelSpecMs;
@@ -3021,6 +2913,7 @@ export class PixiRenderer implements IRenderer {
     if (mirror.missiles) for (const m of mirror.missiles.values()) sc.addLight(m.x, -m.y, 8, 0xffa060, 1.2, 70);
     for (let i = 0; i < this._liveBeamCacheCount; i++) this.beamLights(this._liveBeamCache[i]!);
     for (let i = 0; i < this._remoteBeamCacheCount; i++) this.beamLights(this._remoteBeamCache[i]!);
+    for (let i = 0; i < this._tractorViewCount; i++) this.beamLights(this._tractorViews[i]!); // tractors glow blue where they hold
   }
 
   /** A beam lights where it hits and along its length. */
@@ -3376,44 +3269,9 @@ export class PixiRenderer implements IRenderer {
     this.app.ticker.maxFPS = fps ?? 0;
   }
 
-  /**
-   * Toggle warp-mode render state. See `IRenderer.setWarpMode`.
-   *
-   * On `active === true`: lazily build a stack of `ShockwaveFilter`
-   * instances and attach to `app.stage`. Records `warpStartedAt` so
-   * the per-frame tick can ramp amplitude from `amplitudeMin` →
-   * `amplitudeMax` over `warpParams.rampMs`. Snaps `warpIntensity` to
-   * 1 (the fade-out scalar).
-   *
-   * On `active === false`: starts the fade-out — `warpIntensity` ramps
-   * to 0 over `warpParams.fadeOutMs`, scaling every filter's amplitude
-   * down in lockstep. When intensity hits 0, filters are detached and
-   * the warp stage hidden (kept around for re-entry).
-   *
-   * Cheap re-entry: subsequent `setWarpMode(true)` calls reuse the
-   * same `ShockwaveFilter` instances.
-   */
-  setWarpMode(active: boolean): void {
-    if (!this.initialized) return;
-    this.warp.setMode(active);
-  }
-
-  triggerWarpIn(center: WarpCenter | null): void {
-    if (!this.initialized) return;
-    this.warp.triggerWarpIn(center);
-  }
-
-  setWarpParams(partial: Partial<WarpParams>): void {
-    this.warp.setWarpParams(partial);
-  }
-
-  setWarpCenter(center: WarpCenter | null): void {
-    this.warp.setWarpCenter(center);
-  }
-
   setLoadCurtain(active: boolean): void {
     if (!this.initialized) return;
-    this.warp.setLoadCurtain(active);
+    this.curtain.setLoadCurtain(active);
   }
 
   /**
@@ -3910,7 +3768,7 @@ export class PixiRenderer implements IRenderer {
     // could land post-destroy and read a null renderer.
     this.initialized = false;
     // Tear down the warp filter chain (removes its ticker handler).
-    this.warp.destroy();
+    this.curtain.destroy();
     // Wipe effects subsystem pools (particles, shock filters, etc.).
     if (this.effects) {
       this.effects.resetForSectorHandoff();

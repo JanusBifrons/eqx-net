@@ -2,7 +2,7 @@
  * Physics worker — runs Rapier at 60 Hz in a dedicated worker_threads thread.
  *
  * Communication contract with the main thread (SectorRoom):
- *   Main → Worker  postMessage commands: SPAWN | DESPAWN | INPUT | SPAWN_OBSTACLE | AI_INTENT | AI_INPUTS | CLOCK_RATE | SET_POSITION | REKEY_SHIP | SET_HULL_EXPOSED
+ *   Main → Worker  postMessage commands: SPAWN | DESPAWN | INPUT | SPAWN_OBSTACLE | AI_INTENT | AI_INPUTS | CLOCK_RATE | SET_POSITION | REKEY_SHIP | SET_HULL_EXPOSED | BATCH
  *   Worker → Main  postMessage events:   READY | SLEEP_TRANSITION
  *   Shared memory  SharedArrayBuffer (see sabLayout.ts) — written here under seqlock,
  *                  read by main thread between writes.
@@ -23,8 +23,7 @@
  *   - CLOCK_RATE command carries a TiDi rate (0.7..1.0). The worker writes it
  *     to the SAB header (CLOCK_RATE_IDX) and uses it to scale the accumulator
  *     input on each step: physics.tick(FIXED_DT * rate). Rapier's per-step dt
- *     stays fixed — only how much wall-clock time accumulates per step is
- *     scaled. This preserves deterministic collision behaviour at all rates.
+ *     stays fixed (only wall-clock accrual per step scales): deterministic.
  */
 import { parentPort, workerData } from 'node:worker_threads';
 import RAPIER from '@dimforge/rapier2d-compat';
@@ -144,7 +143,8 @@ interface RemoveWallCmd     { type: 'REMOVE_WALL';     id: string }
 /** Force fields (teleporter pad push today; PhysicsWorld.setForceField, forceFields.ts). */
 interface SetForceFieldCmd    { type: 'SET_FORCE_FIELD';    id: string; field: ForceField }
 interface RemoveForceFieldCmd { type: 'REMOVE_FORCE_FIELD'; id: string }
-type WorkerCommand = SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiIntentCmd | AiInputsCmd | ClockRateCmd | SetPositionCmd | WarpRetargetCmd | RekeyShipCmd | SetHullExposedCmd | SetStatMulCmd | MissileImpulseCmd | WreckKickCmd | UnfixBodyCmd | WreckImpulseCmd | WreckRigidImpulseCmd | SpawnWallCmd | SetWallActiveCmd | RemoveWallCmd | SetForceFieldCmd | RemoveForceFieldCmd | BotWarpCmd | SetTimeScaleCmd;
+interface BatchCmd { type: 'BATCH'; cmds: WorkerCommand[] } // in order, no step between (one wreck's pieces)
+type WorkerCommand = SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiIntentCmd | AiInputsCmd | ClockRateCmd | SetPositionCmd | WarpRetargetCmd | RekeyShipCmd | SetHullExposedCmd | SetStatMulCmd | MissileImpulseCmd | WreckKickCmd | UnfixBodyCmd | WreckImpulseCmd | WreckRigidImpulseCmd | SpawnWallCmd | SetWallActiveCmd | RemoveWallCmd | SetForceFieldCmd | RemoveForceFieldCmd | BotWarpCmd | SetTimeScaleCmd | BatchCmd;
 
 /** Pool commands (main → pooled worker): host / free one sector's world. */
 interface AddWorldCmd    { type: 'ADD_WORLD'; worldId: number; sab: SharedArrayBuffer }
@@ -423,6 +423,7 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
         physics.unfixBody(cmd.entityId);
         break;
       }
+      case 'BATCH': for (let i = 0; i < cmd.cmds.length; i++) handle(cmd.cmds[i]!); break;
       case 'WRECK_KICK': {
         physics.addVelocity(cmd.entityId, cmd.dvx, cmd.dvy, cmd.dw);
         wakeCensus?.noteImpulse(cmd.entityId, 'kick');

@@ -56,6 +56,9 @@ export interface BeamView {
    * Absent/null: the pool's style. The texture stays the pool's.
    */
   style?: BeamSpriteStyle | null;
+  /** Multiplies the style's alpha for this beam only (the tractor's pulses
+   *  fade in and out along the line). Absent: 1. */
+  alphaMul?: number;
   /** Where a no-hit pulse crosses what its mount last hit on this line (the
    *  heavy beam's kill follow-through burning through the wreck), set by
    *  `BeamHitMemory.track`; the hit spot lights there. NaN/absent: none. */
@@ -324,7 +327,8 @@ export class BeamSpritePool {
       const xs = st.crossSection ? crossSectionTextures(st.crossSection) : null;
       const tint = xs ? 0xffffff : st.tint;
       sprite.tint = tint;
-      sprite.alpha = st.alpha;
+      const alpha = st.alpha * (b.alphaMul ?? 1);
+      sprite.alpha = alpha;
       const coreW = beamCoreWidth(st, cameraScale);
       this._coreWOf[i] = coreW;
       const drawnW = xs ? coreW * st.crossSection!.span : coreW;
@@ -372,7 +376,7 @@ export class BeamSpritePool {
           fade.texture = fadeTex!;
           fade.visible = true;
           fade.tint = tint;
-          fade.alpha = st.alpha;
+          fade.alpha = alpha;
           fade.x = b.fromX + Math.cos(rot) * solidLen;
           fade.y = -b.fromY + Math.sin(rot) * solidLen;
           fade.rotation = rot;
@@ -457,9 +461,9 @@ export class BeamSpritePool {
    *  opaque body), the whole sprite's WORLD width (`drawnWidth` = scale.y ×
    *  texture height; wider than `width` by a cross-section's `span`), the
    *  container it sits in and its texture — or null. */
-  coreAt(i: number): { tint: number; width: number; drawnWidth: number; parent: Container | null; texture: Texture } | null {
+  coreAt(i: number): { tint: number; width: number; drawnWidth: number; parent: Container | null; texture: Texture; alpha: number } | null {
     const s = i < this._liveCount ? this._coreOf[i] : undefined;
     if (!s || !s.visible) return null;
-    return { tint: s.tint, width: this._coreWOf[i]!, drawnWidth: s.scale.y * s.texture.height, parent: s.parent, texture: s.texture };
+    return { tint: s.tint, width: this._coreWOf[i]!, drawnWidth: s.scale.y * s.texture.height, parent: s.parent, texture: s.texture, alpha: s.alpha };
   }
 }

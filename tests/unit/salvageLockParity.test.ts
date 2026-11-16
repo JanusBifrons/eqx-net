@@ -3,9 +3,10 @@
  * `LockSubsystem.aimKeyFor` (lock entries' salvage bits from its
  * `salvageOf` dep) and the client's `FcMountPicker` (the same bits read off
  * the own-ship wire lock `f`) must pick the same aim key per mount, and
- * both must give NO aim when every lock is a piece this ship can already
- * tow and store (owner: lasers leave those to the tractors, a separate
- * group). Fails when either side drops the bits or keeps the one-lock
+ * both must give NO aim when every lock is a piece a tractor of the
+ * laser's own size can take (the size ladder: lasers leave those to the
+ * tractors, a separate group), and a tractor none for a piece too big for
+ * its size. Fails when either side drops the bits or keeps the one-lock
  * shortcut for a salvage lock.
  */
 import { describe, it, expect } from 'vitest';
@@ -15,9 +16,9 @@ import { FcMountPicker, fcNeedsPick, type FcMountDef, type FcWireLock } from '..
 import { getShipKind, type ShipKind, type WeaponMount } from '../../src/shared-types/shipKinds';
 import { mountWeaponReach } from '../../src/core/combat/mountReach';
 import { fillRangeShape } from '../../src/core/combat/fireControlBearing';
-import { LOCK_HAULABLE, LOCK_SALVAGE } from '../../src/core/combat/turretLockPick';
+import { LOCK_CONSUMABLE, LOCK_SALVAGE, lockTierBits } from '../../src/core/combat/turretLockPick';
 
-/** A destroyer refitted as a salvager: `main` = 5 mining lasers, `aa` = 4 tractors. */
+/** A destroyer refitted as a salvager: `main` = 5 S mining lasers, `aa` = 4 AA tractors. */
 function salvager(): ShipKind {
   const base = getShipKind('destroyer');
   const mounts: WeaponMount[] = (base.mounts ?? []).map((m) => ({ ...m, weaponId: m.id.startsWith('main') ? 'mining_laser' : 'tractor' }));
@@ -28,8 +29,13 @@ const piece = (x: number, y: number, radius: number): LockTargetView => ({
   x, y, vx: 0, vy: 0, angle: 0, ship: false, kindId: null, shieldUp: false, radius, hostile: false, terrain: true,
 });
 
-/** `ship`: a ship lock (not salvage); `hidden`: outside the client's mirror (AOI). */
-type Entry = { t: LockTargetView; mass: number; holdWeight: number; ship?: true; hidden?: true };
+/** `ship`: a ship lock (not salvage); `hidden`: outside the client's mirror (AOI).
+ *  Tiers by mass: ≤ 60 AA (the AA tractors take it, the S lasers leave it),
+ *  ≤ 150 S, ≤ 375 M (the S lasers cut it, the AA tractors can't pull it). */
+const AA_TIER = LOCK_SALVAGE | lockTierBits(1);
+const M_TIER = LOCK_SALVAGE | lockTierBits(3);
+/** `radius`: the piece's size for the consume test (absent: never consumable). */
+type Entry = { t: LockTargetView; mass: number; holdWeight: number; radius?: number; ship?: true; hidden?: true };
 
 function rig(pieces: Record<string, Entry>, free = { v: 100 }) {
   const kind = salvager();
@@ -43,7 +49,7 @@ function rig(pieces: Record<string, Entry>, free = { v: 100 }) {
     salvageOf: (_p, key, out: LockSalvageView) => {
       const e = pieces[key];
       if (!e || e.ship) return false;
-      out.mass = e.mass; out.holdWeight = e.holdWeight; out.freeHold = free.v;
+      out.mass = e.mass; out.radius = e.radius ?? Infinity; out.holdWeight = e.holdWeight; out.freeHold = free.v;
       return true;
     },
   });
@@ -73,21 +79,22 @@ function rig(pieces: Record<string, Entry>, free = { v: 100 }) {
 }
 
 describe('salvage lock pick: server LockSubsystem ⇔ client FcMountPicker', () => {
-  it('lasers spread over the cuttable pieces and skip the haulable one, the same on both sides', () => {
+  it('lasers spread over the cuttable pieces and skip the AA-tier one, the same on both sides', () => {
     const { locks, aims } = rig({
-      's:1': { t: piece(1500, 0, 120), mass: 1e9, holdWeight: 500 }, // too heavy to tow
-      's:2': { t: piece(1500, 400, 40), mass: 1, holdWeight: 1 }, // haulable
+      's:1': { t: piece(1500, 0, 120), mass: 1e9, holdWeight: 500 }, // too heavy for any tractor
+      's:2': { t: piece(1500, 400, 40), mass: 1, holdWeight: 1 }, // AA tier
       's:3': { t: piece(1500, -400, 60), mass: 1e9, holdWeight: 5 },
     });
     for (const k of ['s:1', 's:2', 's:3']) expect(locks.forceLock('p1', k, 'main')).toBe(1);
     const wire = locks.wireFor('p1')!.find((g) => g.id === 'main')!.l;
-    expect(wire.map((l) => l.f)).toEqual([LOCK_SALVAGE, LOCK_SALVAGE | LOCK_HAULABLE, LOCK_SALVAGE]);
+    expect(wire.map((l) => l.f)).toEqual([LOCK_SALVAGE, AA_TIER, LOCK_SALVAGE]);
     const a = aims('main');
     for (const [s, c] of a) expect(c).toBe(s);
-    expect(a.map(([s]) => s)).toEqual(['s:1', 's:3', 's:1', 's:3', 's:1']);
+    // S lasers prefer small pieces: they share out from the small end.
+    expect(a.map(([s]) => s)).toEqual(['s:3', 's:1', 's:3', 's:1', 's:3']);
   });
 
-  it('every lock haulable: no laser aims (so none fires), on both sides; the tractors still aim', () => {
+  it('every lock AA tier: no S laser aims (so none fires), on both sides; the AA tractors still aim', () => {
     const { locks, aims } = rig({
       's:1': { t: piece(1500, 0, 50), mass: 1, holdWeight: 1 },
       's:2': { t: piece(1500, 300, 30), mass: 1, holdWeight: 1 },
@@ -98,33 +105,45 @@ describe('salvage lock pick: server LockSubsystem ⇔ client FcMountPicker', () 
     for (const [s, c] of aims('aa')) { expect(s).toBe('s:1'); expect(c).toBe('s:1'); }
   });
 
-  it('ONE haulable lock: no one-lock shortcut on either side (no aim)', () => {
+  it('ONE AA-tier lock: no one-lock shortcut on either side (no aim)', () => {
     const { locks, aims } = rig({ 's:7': { t: piece(1500, 0, 50), mass: 1, holdWeight: 1 } });
     locks.forceLock('p1', 's:7', 'main');
     for (const [s, c] of aims('main')) { expect(s).toBeNull(); expect(c).toBeNull(); }
   });
 
-  it('a fuller hold makes the same piece cuttable again (the bits refresh each lock step)', () => {
-    const free = { v: 100 };
-    const { locks, aims } = rig({ 's:7': { t: piece(1500, 0, 50), mass: 1, holdWeight: 50 } }, free);
+  it('an M-tier piece: the S lasers cut it and the AA tractors leave it, on both sides', () => {
+    const { locks, aims } = rig({ 's:7': { t: piece(1500, 0, 50), mass: 300, holdWeight: 50 } });
     locks.forceLock('p1', 's:7', 'main');
-    for (const [s, c] of aims('main')) { expect(s).toBeNull(); expect(c).toBeNull(); }
-    free.v = 10; // the hold filled: the piece no longer fits, the lasers cut it
-    locks.step();
-    expect(locks.wireFor('p1')!.find((g) => g.id === 'main')!.l[0]!.f).toBe(LOCK_SALVAGE);
+    locks.forceLock('p1', 's:7', 'aa');
+    expect(locks.wireFor('p1')!.find((g) => g.id === 'main')!.l[0]!.f).toBe(M_TIER);
     for (const [s, c] of aims('main')) { expect(s).toBe('s:7'); expect(c).toBe('s:7'); }
+    for (const [s, c] of aims('aa')) { expect(s).toBeNull(); expect(c).toBeNull(); }
   });
 
-  it('a ship lock outside the client mirror beside a haulable piece: both sides aim at the ship', () => {
-    // Server: one haulable piece + a combat lock, so the ordinary pick takes the ship.
+  it('a ship lock outside the client mirror beside an AA-tier piece: both sides aim at the ship', () => {
+    // Server: one AA-tier piece + a combat lock, so the ordinary pick takes the ship.
     // The client sees only the piece; counting salvage locks by mirror presence it
-    // would think "every lock a haulable piece" and give the lasers no aim.
+    // would think "every lock a piece left to the tractors" and give the lasers no aim.
     const { locks, aims } = rig({
       's:2': { t: piece(1500, 0, 40), mass: 1, holdWeight: 1 },
       'p:far': { t: { ...piece(90000, 0, 0), ship: true, hostile: true, terrain: false }, mass: 0, holdWeight: 0, ship: true, hidden: true },
     });
     for (const k of ['s:2', 'p:far']) expect(locks.forceLock('p1', k, 'main')).toBe(1);
     for (const [s, c] of aims('main')) { expect(s).toBe('p:far'); expect(c).toBe(s); }
+  });
+
+  it('a consumable piece: no laser and no tractor aims at it, on both sides; a fuller hold hands it back', () => {
+    // The salvager (a destroyer) consumes pieces up to 0.15 × its hull radius.
+    const free = { v: 100 };
+    const { locks, aims } = rig({ 's:4': { t: piece(1500, 0, 20), mass: 1, holdWeight: 5, radius: 20 } }, free);
+    locks.forceLock('p1', 's:4', 'main');
+    locks.forceLock('p1', 's:4', 'aa');
+    expect(locks.wireFor('p1')!.find((g) => g.id === 'aa')!.l[0]!.f).toBe(AA_TIER | LOCK_CONSUMABLE);
+    for (const g of ['main', 'aa']) for (const [s, c] of aims(g)) { expect(s).toBeNull(); expect(c).toBeNull(); }
+    free.v = 2; // no room to take it in: not consumable, so the AA tractors pull it (its tier is AA)
+    locks.step();
+    expect(locks.wireFor('p1')!.find((g) => g.id === 'aa')!.l[0]!.f).toBe(AA_TIER);
+    for (const [s, c] of aims('aa')) { expect(s).toBe('s:4'); expect(c).toBe('s:4'); }
   });
 
   it('a cuttable piece outside the client mirror: same aim on both sides', () => {

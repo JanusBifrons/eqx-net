@@ -31,9 +31,12 @@ import type { ArtHandle, ArtService } from '../ArtService.js';
 import { hashStr } from '../raster.js';
 import { backdropXf, zoomWindow, type TileXf } from './fxMath.js';
 import { SOLAR_SECTORS } from '../../../../shared-types/sectorBounds.js';
-import { hashKey, landmarkScreen, SOLAR_SKY_SCALE, nebulaDensityAtSeed, newSpeedFxState, sectorSky, SKY_LAYERS, SPEED_FX, speedZoomFor, stepSpeedFx, visitNebulae, visitSkyLayer, type Landmark, type NebulaRegion, type SpeedFxLevel } from './depth.js';
+import { hashKey, landmarkScreen, SOLAR_SKY_SCALE, newSpeedFxState, sectorSky, SKY_LAYERS, SPEED_FX, speedZoomFor, stepSpeedFx, visitSkyLayer, type Landmark, type SpeedFxLevel } from './depth.js';
+import { nebulaDensity, sectorNebulaPeak } from '../../../../core/galaxy/nebulaField.js';
 import { h01 } from './fxTextures.js';
 import type { SpeedFxSample } from '../../camera/speedFxSample.js';
+import { nebulaStyle, parseNebLook, type NebulaStyle } from './nebulaLook.js';
+import { NebulaVolume } from './nebulaVolume.js';
 
 export interface BackdropCamera {
   readonly center: { x: number; y: number };
@@ -69,13 +72,6 @@ const VARIANTS = [4, 6, 5, 5, 3];
 const NEAR_MOTES = 60;
 const FORE_MOTES = 26;
 
-/** Nebula slices: parallax, in front of the world?, wisps per region. */
-const SLICES: ReadonlyArray<readonly [number, boolean, number]> = [[0.6, false, 9], [0.85, false, 9], [1.2, true, 7], [1.5, true, 5]];
-/** Most regions drawn at once. */
-const NEB_SLOTS = 3;
-const REGION_TINT: Record<NebulaRegion['variant'], number> = { emission: 0xff6a9a, reflection: 0x6fa8ff, dark: 0x3a3048 };
-
-interface Wisp { s: Sprite; slice: number; i: number }
 
 interface Tile {
   s: TilingSprite; h: ArtHandle | null; star?: boolean;
@@ -149,8 +145,8 @@ export class Backdrop {
   private readonly xf: TileXf = { scale: 1, x: 0, y: 0 };
   private readonly lp = { x: 0, y: 0, scale: 1 };
   private nebulaFor = '\u0000';
-  /** Nebula volumes (C2). */
-  private nebSeed = 0;
+  /** The sector whose nebula is drawn ('' = none). */
+  private nebKey = '';
   private readonly nebBack = new Container();
   private readonly nebFront = new Container();
   /** Phase 4 travel state: 0 = this sector's full sky, 1 = deep space between
@@ -211,54 +207,18 @@ export class Backdrop {
   }
   /** Current deep-space fade, 0..1 (diagnostic / tests). */
   deepSpace(): number { return this.deep; }
-  private readonly wisps: Wisp[][] = [];
   private readonly grade = new Sprite();
-  private readonly scratchR: NebulaRegion = { x: 0, y: 0, r: 0, variant: 'emission', seed: 0 };
-  private nebSlot = 0;
-  private nebQ = 'high';
-  private nebGradeTint = 0xffffff;
   /** How deep in a nebula the camera is (0..1, stats). */
   density = 0;
   /** Eased camera motion for the speed effects. */
   readonly speed = newSpeedFxState();
   /** Source of the last speed sample (pose clock or renderer clock). */
   private speedFromPose: boolean | null = null;
-  private readonly visitNebula = (g: NebulaRegion): void => {
-    if (this.nebSlot >= NEB_SLOTS) return;
-    const slot = this.wisps[this.nebSlot++]!;
-    const handles = this.pools[1]!.handles; // the wisp textures (nebula patches)
-    const W = this.vW, H = this.vH, cx = this.vCx, cy = this.vCy, zoom = this.vZoom;
-    const hole0 = Math.min(W, H) * 0.16, hole1 = Math.min(W, H) * 0.46;
-    if (Math.hypot(cx - g.x, -cy - g.y) < g.r) this.nebGradeTint = REGION_TINT[g.variant];
-    for (let k = 0; k < slot.length; k++) {
-      const w = slot[k]!;
-      const [parallax, front] = SLICES[w.slice]!;
-      const on = this.nebQ === 'high' || (this.nebQ === 'medium' ? w.slice !== 3 : !front);
-      const tex = readyTex(handles[(g.seed + w.i) % handles.length]!);
-      if (!on || !tex) { w.s.visible = false; continue; }
-      const a = h01(w.i, g.seed * 31 + w.slice * 10) * Math.PI * 2;
-      const d = Math.sqrt(h01(w.i, g.seed * 17 + w.slice * 10)) * g.r * 0.85;
-      const sc = Math.pow(Math.max(1e-3, zoom), parallax);
-      const x = W / 2 + (g.x + Math.cos(a) * d - cx) * parallax * sc;
-      const y = H / 2 + (-(g.y + Math.sin(a) * d) - cy) * parallax * sc;
-      const size = g.r * (front ? 0.55 : 0.8) * sc;
-      if (x < -size || x > W + size || y < -size || y > H + size) { w.s.visible = false; continue; }
-      w.s.visible = true;
-      if (w.s.texture !== tex) w.s.texture = tex;
-      w.s.position.set(x, y); w.s.scale.set(size / tex.width); w.s.rotation = a * 3;
-      w.s.tint = REGION_TINT[g.variant];
-      w.s.blendMode = g.variant === 'dark' ? 'normal' : 'add';
-      let alpha = front ? 0.16 : 0.22;
-      if (front) {
-        // A clear hole round the ship (the camera keeps it at the centre).
-        const rr = Math.hypot(x - W / 2, y - H / 2);
-        const t = Math.min(1, Math.max(0, (rr - hole0) / (hole1 - hole0)));
-        alpha *= t * t * (3 - 2 * t);
-      }
-      w.s.alpha = alpha;
-    }
-  };
   private t = 0;
+  /** This sector's nebula (null = clear sector). */
+  private vol: NebulaVolume | null = null;
+  /** `?neblook=` look R&D: this look everywhere, at full depth. */
+  private readonly forcedLook: NebulaStyle | null;
   /** Landmarks drawn last frame (stats). */
   visibleLandmarks = 0;
   /** This sector's sky, e.g. "planet@1200,-800 moon@..." (stats / E2E). */
@@ -266,7 +226,9 @@ export class Backdrop {
 
   constructor(private readonly art: ArtService, private readonly getQuality: () => string,
     /** Speed effects strength ('off' turns them off: Settings → Graphics). */
-    readonly speedLevel: SpeedFxLevel = 'large') {
+    readonly speedLevel: SpeedFxLevel = 'large',
+    /** Dense-nebula look R&D (`?neblook=`): "preset:seed", forced everywhere; absent = the galaxy's nebulae. */
+    nebLook?: string) {
     this.sky.eventMode = 'none';
     this.fore.eventMode = 'none';
     this.fore.blendMode = 'add';
@@ -311,20 +273,9 @@ export class Backdrop {
     for (let i = 0; i < NEAR_MOTES; i++) this.nearMotes.push(this.mote(this.sky, i, 61, 2, 0.18, 0xcfdcff));
     this.fore.addChild(this.nebFront);
     for (let i = 0; i < FORE_MOTES; i++) this.foreMotes.push(this.mote(this.fore, i, 71, 3, 0.22, 0xe6eeff));
-    for (let j = 0; j < NEB_SLOTS; j++) {
-      const slot: Wisp[] = [];
-      for (let si = 0; si < SLICES.length; si++) {
-        const [, front, count] = SLICES[si]!;
-        for (let i = 0; i < count; i++) {
-          const sp = new Sprite(); sp.anchor.set(0.5); sp.visible = false;
-          (front ? this.nebFront : this.nebBack).addChild(sp);
-          slot.push({ s: sp, slice: si, i });
-        }
-      }
-      this.wisps.push(slot);
-    }
     // The colour grade while inside a nebula (a faint full-screen tint).
     this.grade.texture = Texture.WHITE; this.grade.blendMode = 'add'; this.grade.alpha = 0;
+    this.forcedLook = parseNebLook(nebLook);
     this.fore.addChild(this.grade);
     this.setSector(null);
   }
@@ -352,7 +303,13 @@ export class Backdrop {
     this.lanes.h = lanes > 0 ? this.art.fx('nebula', 'dark', n.seed + 40) : null;
     this.lanes.alpha = lanes;
     this.lanes.s.visible = false;
-    this.nebSeed = hashKey(`neb:${sectorKey ?? 'none'}`);
+    // The nebula: in the galaxy's nebula sectors (core/galaxy/nebulaField),
+    // its look seeded per sector, so it changes across a big nebula.
+    this.vol?.destroy();
+    this.vol = null;
+    this.nebKey = sectorKey !== null && sectorNebulaPeak(sectorKey) > 0 ? sectorKey : '';
+    const style = this.forcedLook ?? (this.nebKey ? nebulaStyle('blend', hashKey(`nebula:${this.nebKey}`)) : null);
+    if (style) this.vol = new NebulaVolume(this.art, style, this.nebBack, this.nebFront);
     // Landmarks come from the sector seed, cell by cell, as you fly.
     this.skySeed = hashKey(`sky:${sectorKey ?? 'none'}`);
     // A sample around the centre, for stats (once per sector change).
@@ -402,12 +359,15 @@ export class Backdrop {
     if (speedSample) stepSpeedFx(this.speed, speedSample.x, speedSample.y, speedSample.t, fullSpeed);
     else stepSpeedFx(this.speed, cx, cy, nowMs, fullSpeed);
     // Nebulae live in GAME space (Y up); the camera centre is Pixi space (Y down).
-    const d = nebulaDensityAtSeed(this.nebSeed, cx, -cy, this.scratchR);
+    const d = this.forcedLook ? 1 : this.nebKey ? nebulaDensity(this.nebKey, cx, -cy) : 0;
+    const dim = this.vol ? this.vol.style.dim : 0;
     this.density = d;
     for (let i = 0; i < this.tiles.length; i++) {
       const tl = this.tiles[i]!;
       const tex = readyTex(tl.h);
-      if (!tex) { tl.s.visible = false; continue; }
+      // The far haze tile gives way to the nebula as you go deeper.
+      const far = tl === this.nebula || tl === this.lanes;
+      if (!tex || (far && d > 0.99)) { tl.s.visible = false; continue; }
       if (tl.s.texture !== tex) tl.s.texture = tex;
       tl.s.visible = true;
       if (tl.s.width !== W) tl.s.width = W;
@@ -420,7 +380,7 @@ export class Backdrop {
       // and phone GPUs sampling at half precision make the stars jump there
       // (phone run 2026-11-07, "jerky/jumpy stars").
       tl.s.tilePosition.set(wrapTile(this.xf.x, tex.width * ts), wrapTile(this.xf.y, tex.height * ts));
-      tl.s.alpha = tl.alpha * (tl.win ? zoomWindow(zoom, tl.win[0], tl.win[1], tl.win[2], tl.win[3]) : 1) * (tl.star ? 1 - 0.55 * d : skyKeep);
+      tl.s.alpha = tl.alpha * (tl.win ? zoomWindow(zoom, tl.win[0], tl.win[1], tl.win[2], tl.win[3]) : 1) * (tl.star ? 1 - dim * d : skyKeep) * (far ? 1 - d : 1);
     }
     for (let i = 0; i < this.sprites.length; i++) {
       const ss = this.sprites[i]!;
@@ -445,22 +405,17 @@ export class Backdrop {
       shown += pool.used;
     }
     this.visibleLandmarks = shown;
-    // Nebula volumes near the camera (none at minimal).
-    this.nebSlot = 0; this.nebQ = q; this.nebGradeTint = 0xffffff;
-    if (q !== 'minimal') {
-      const reach = Math.max(W, H) / 2 / (0.6 * Math.pow(Math.max(1e-3, zoom), 0.6));
-      visitNebulae(this.nebSeed, cx, -cy, reach, this.scratchR, this.visitNebula);
-    }
-    for (let j = this.nebSlot; j < NEB_SLOTS; j++) for (const w of this.wisps[j]!) w.s.visible = false;
-    this.grade.tint = this.nebGradeTint;
+    // The nebula round the camera, as thick as the cloud is here.
+    if (this.vol) this.vol.update(cx, cy, zoom, W, H, this.t, q, d);
+    this.grade.tint = this.vol ? this.vol.gradeTint : 0xffffff;
     this.grade.width = W; this.grade.height = H;
-    this.grade.alpha = 0.045 * d;
-    this.grade.visible = d > 0;
+    this.grade.alpha = (this.vol ? this.vol.style.grade : 0) * d;
+    this.grade.visible = d > 0 && this.vol !== null;
     // Dust motes (none on low; fewer on medium).
     const glow = readyTex(this.glow);
     const nearN = !glow || q === 'low' || q === 'minimal' ? 0 : q === 'medium' ? 40 : NEAR_MOTES;
     const foreN = !glow || q === 'low' || q === 'minimal' ? 0 : q === 'medium' ? 16 : FORE_MOTES;
-    this.fore.visible = foreN > 0 || this.nebSlot > 0;
+    this.fore.visible = foreN > 0 || (this.vol !== null && d > 0.01);
     this.layoutMotes(this.nearMotes, nearN, glow, 0.4, 0.7, 0.4, cx, cy, zoom, W, H);
     this.layoutMotes(this.foreMotes, foreN, glow, 1.3, 1.1, 1, cx, cy, zoom, W, H);
     return true;

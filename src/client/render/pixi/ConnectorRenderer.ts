@@ -52,7 +52,7 @@ import {
   ghostToGridNode,
   asteroidObstaclesFromSwarm,
   linkReachBoxOf,
-  RockObstacleShapes,
+  RockObstacleShapes, type FieldRockBodySource,
 } from '../../structures/mirrorToGridNode.js';
 
 /** A pooled, mutable stand-in for a {@link Connection} used ONLY by the placement
@@ -237,11 +237,10 @@ export class ConnectorRenderer {
    *  server's shape); its `fieldRocks` is the cut-field layer (PixiRenderer). */
   readonly rockShapes = new RockObstacleShapes();
   private readonly _previewBox: ObstacleBox = { x0: 0, y0: 0, x1: 0, y1: 0 };
+  constructor(fieldRocks: FieldRockBodySource | null = null) { this.rockShapes.fieldRocks = fieldRocks; }
   /** Reused ghost node (node `a` passed to `canConnect`). */
   private readonly _ghostNode: GridNode = blankGridNode();
-  /** Reused node map for the LOS check (`canConnect` clips the segment against
-   *  every OTHER node) — `.clear()`ed + repopulated each preview frame from a
-   *  growable pool of node objects. */
+  /** Reused LOS node map (`canConnect` clips against every OTHER node), refilled each preview frame from a pool. */
   private readonly _previewNodes = new Map<string, GridNode>();
   /** Growable pool backing `_previewNodes` — never shrinks; objects are
    *  rewritten in place by `structureMirrorToGridNode`. */

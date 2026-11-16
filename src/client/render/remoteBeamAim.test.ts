@@ -61,23 +61,26 @@ describe('remote beam aim (heavy beam, out-of-interest capital)', () => {
 });
 
 /**
- * Regression lock — a heavy-beam pulse stays on the line it was fired along.
+ * Regression lock — a heavy-beam pulse follows the LIVE barrel and stops
+ * where the client ray stops (owner's model: "the laser beam should just
+ * extend from the tip of the barrel the full length that it should fire,
+ * unless it intercepts with something").
  *
- * Film review (2026-11-15, beam-slice v3): after a kill the server holds the
- * turret's world line for the follow-through, fires its last pulse, then the
- * turret retargets. Each remote heavy pulse is drawn for `HEAVY_BEAM_TTL_MS`
- * (450 ms), and it was drawn down the LIVE barrel (snapshot `mountAngles`):
- * when the turret began to slew, the last still-visible pulse swung with it
- * (~1.9° in 0.33 s, landing below the cut, then sweeping past the wreck).
- * Before a kill, while the turret was still swinging onto the frigate, the
- * pulse ran down the barrel for its full length, straight through the intact
- * hull to the screen edge.
+ * Film review (2026-11-16, PR #698 "still jumps"): a remote heavy beam fires
+ * a pulse every 10 ticks and each pulse was drawn FROZEN on the line it was
+ * fired along (muzzle to `laser_fired.to`) for its 450 ms life. While the
+ * turret was still turning, pulse 1 sat on one line and pulse 2 on another:
+ * the beam jumped ~50 px between them.
  *
- * Fix: a styled (held-line) pulse is drawn from the live muzzle to the
- * server's end point (`laser_fired.to`) for its whole life.
+ * Fix: `ColyseusClient` ray-traces each styled remote pulse every frame down
+ * the live barrel (`combat/remoteBeamRay.ts`, the local beam's own hitscan)
+ * and writes the stop distance onto the entry (`dist`); the pulse is drawn
+ * down the live barrel for that distance. With no live turret angle (out of
+ * the viewer's interest) or no client distance it still aims at the wire end.
  */
-describe('remote beam line (heavy pulse holds its fired line)', () => {
+describe('remote beam line (heavy pulse follows the live barrel to the client ray stop)', () => {
   const mount = findMount(getShipKind('battlecruiser-lance').mounts, 'main-1')!;
+  const base = mount.baseAngle ?? 0;
   const muzzle = 60;
   const out = { fromX: 0, fromY: 0, toX: 0, toY: 0 };
   /** Angle of a drawn line (game-space forward = (-sin a, cos a)). */
@@ -88,45 +91,49 @@ describe('remote beam line (heavy pulse holds its fired line)', () => {
   const fired = 0.3;
   const hit = { x: -Math.sin(fired) * 8000, y: Math.cos(fired) * 8000 };
 
-  it('after laser_fired the turret slews away; the drawn heavy pulse stays on the fired line for its TTL', () => {
-    remoteBeamLine(true, 0, mount.baseAngle ?? 0, fired - (mount.baseAngle ?? 0), 0, 0, muzzle, 8000, hit.x, hit.y, out);
-    const a0 = lineAngle(out);
-    expect(a0).toBeCloseTo(fired, 6);
-    // The turret retargets: 1.9° (the filmed swing) and then a full 20°.
-    for (const slew of [0.033, 0.35]) {
-      remoteBeamLine(true, 0, mount.baseAngle ?? 0, fired + slew - (mount.baseAngle ?? 0), 0, 0, muzzle, 8000, hit.x, hit.y, out);
-      expect(lineAngle(out)).toBeCloseTo(a0, 6);
-      // ... and it ends ON the hit, not past it.
-      expect(out.toX).toBe(hit.x);
-      expect(out.toY).toBe(hit.y);
+  it('as the turret turns between frames, the drawn pulse turns with the barrel (no frozen line)', () => {
+    remoteBeamLine(true, 0, base, fired - base, 0, 0, muzzle, 8000, hit.x, hit.y, out, 7900);
+    expect(lineAngle(out)).toBeCloseTo(fired, 6);
+    for (const slew of [0.005, 0.033, 0.35]) {
+      remoteBeamLine(true, 0, base, fired + slew - base, 0, 0, muzzle, 8000, hit.x, hit.y, out, 7900);
+      expect(lineAngle(out)).toBeCloseTo(fired + slew, 6);
     }
   });
 
-  it('the origin follows the moving muzzle while the far end stays on the hit', () => {
-    remoteBeamLine(true, 0, 0, 0.9, 40, -25, muzzle, 8000, hit.x, hit.y, out);
-    const d = Math.hypot(out.fromX - 40, out.fromY + 25);
-    expect(d).toBeCloseTo(muzzle, 6);
+  it('the pulse leaves the barrel tip and stops at the client ray distance, not at full range', () => {
+    remoteBeamLine(true, 0, base, 0.9 - base, 40, -25, muzzle, 20_000, hit.x, hit.y, out, 3000);
+    expect(Math.hypot(out.fromX - 40, out.fromY + 25)).toBeCloseTo(muzzle, 6);
+    expect(Math.hypot(out.toX - out.fromX, out.toY - out.fromY)).toBeCloseTo(3000, 6);
+    expect(lineAngle(out)).toBeCloseTo(0.9, 6);
+  });
+
+  it('with no live turret angle, the pulse still aims at the wire end point and stops there', () => {
+    remoteBeamLine(true, 0, base, undefined, 0, 0, muzzle, 8000, hit.x, hit.y, out, 2000);
+    expect(lineAngle(out)).toBeCloseTo(fired, 6);
     expect(out.toX).toBe(hit.x);
     expect(out.toY).toBe(hit.y);
   });
 
-  it('a pulse fired while the turret swings on never runs past where the server stopped it', () => {
-    // The frigate's hull stopped the ray 3 km out; the barrel is still 15°
-    // off. The drawn beam must not cross the frigate to the full 20 km range.
+  it('with no client distance, the pulse falls back to the wire end point', () => {
+    remoteBeamLine(true, 0, base, fired + 0.35 - base, 0, 0, muzzle, 8000, hit.x, hit.y, out);
+    expect(out.toX).toBe(hit.x);
+    expect(out.toY).toBe(hit.y);
+  });
+
+  it('a fallback pulse never runs past where the server stopped it', () => {
     const end = { x: -Math.sin(fired) * 3000, y: Math.cos(fired) * 3000 };
-    remoteBeamLine(true, 0, 0, fired + 0.26, 0, 0, muzzle, 3000, end.x, end.y, out);
-    expect(Math.hypot(out.toX, out.toY)).toBeCloseTo(3000, 6);
+    remoteBeamLine(true, 0, 0, undefined, 0, 0, muzzle, 3000, end.x, end.y, out);
     expect(Math.hypot(out.toX - end.x, out.toY - end.y)).toBe(0);
   });
 
-  it('fighter beams (not held) keep leaving down the live barrel for their range', () => {
+  it('fighter beams (not styled) keep leaving down the live barrel for their range', () => {
     remoteBeamLine(false, 0.2, 0, 0.1, 0, 0, 10, 500, 999, 999, out);
     expect(lineAngle(out)).toBeCloseTo(0.3, 9);
     expect(Math.hypot(out.toX - out.fromX, out.toY - out.fromY)).toBeCloseTo(500, 6);
   });
 
-  it('a point-blank end point inside the barrel draws nothing, never backwards', () => {
-    remoteBeamLine(true, 0, 0, 0, 0, 0, muzzle, 20, 0, 20, out);
+  it('a point-blank fallback end point inside the barrel draws nothing, never backwards', () => {
+    remoteBeamLine(true, 0, 0, undefined, 0, 0, muzzle, 20, 0, 20, out);
     expect(out.toX).toBe(out.fromX);
     expect(out.toY).toBe(out.fromY);
   });

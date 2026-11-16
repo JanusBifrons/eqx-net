@@ -22,9 +22,11 @@ export function rendererArgsFromBoot(
       ...(msg.artDelayMs ? { delayMs: msg.artDelayMs } : {}),
       ...(msg.fx ? { fx: true } : {}),
       ...(msg.speedFxOff ? { speedFx: false } : {}),
+      ...(msg.nebLook ? { nebLook: msg.nebLook } : {}),
       ...(msg.lighting ? { lighting: msg.lighting } : {}),
       ...(msg.livery ? { livery: msg.livery } : {}),
       ...(msg.ore ? { ore: msg.ore } : {}),
+      ...(msg.quality ? { quality: msg.quality } : {}),
     },
     msg.fxKillSwitches,
   ];

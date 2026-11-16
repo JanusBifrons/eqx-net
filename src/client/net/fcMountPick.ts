@@ -2,9 +2,9 @@
  * The client's per-mount lock pick (fire control): which of its group's
  * LOCKED targets one mount aims and fires at, by the shared
  * `pickTurretLock` with the wire locks' salvage bits (`f`: `LOCK_SALVAGE` |
- * `LOCK_HAULABLE`), the same inputs as the server's
- * `LockSubsystem.aimKeyFor` (#15). `TURRET_NO_LOCK` (a mining laser whose
- * locks are all haulable pieces) means no aim, so no fire. Split out of
+ * the size-ladder tier bits | `LOCK_CONSUMABLE`), the same inputs as the server's
+ * `LockSubsystem.aimKeyFor` (#15). `TURRET_NO_LOCK` (a mining laser or
+ * tractor with no piece its size may work) means no aim, so no fire. Split out of
  * ColyseusClient.ts (god-file cap). Allocation-free (#14): class scratch.
  */
 import { pickTurretLock, TURRET_NO_LOCK, TURRET_PICK_MAX } from '@core/combat/turretLockPick';

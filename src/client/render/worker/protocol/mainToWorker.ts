@@ -4,10 +4,9 @@
  * no class instances). Locked by `protocol.test.ts`.
  */
 
-import type { FleetOverlayModel, FleetPickKindWire, RenderMirror, SwarmRenderState, WarpCenter } from '@core/contracts/IRenderer';
+import type { FleetOverlayModel, FleetPickKindWire, RenderMirror, SwarmRenderState } from '@core/contracts/IRenderer';
 import type { EffectQuality } from '@core/contracts/IEffects';
 import type { CameraCue } from '@core/contracts/cameraScript';
-import type { WarpParams } from './warpParams.js';
 import type { SerialisedPointerEvent, SerialisedWheelEvent } from './serialisedEvents.js';
 import type { SectorLiveState } from '../../../../shared-types/galaxySnapshot.js';
 import type { SectorPresence } from '../../../../shared-types/galaxyPresence.js';
@@ -45,12 +44,16 @@ export interface BootMsg {
   fx?: boolean;
   /** Speed effects off (Settings → Graphics / `?speedfx=0`). Absent = on. */
   speedFxOff?: boolean;
+  /** Dense-nebula look R&D (`?neblook=`), "preset:seed"; absent = today's. */
+  nebLook?: string;
   /** GPU-lit art settings (`?shiplight=gpu`), plain data; absent = baked. */
   lighting?: import('../../art/lightingSettings.js').LightingSettings;
   /** Ship livery treatment (`?livery=a|b|c`); absent = today's paint. */
   livery?: import('../../art/artMode.js').LiveryTreatment;
   /** Cut-field ore look (`?ore=`, F1c trial); absent = off. */
   ore?: import('../../art/artMode.js').FieldOreLook;
+  /** Graphics quality (`?aa=` / `?renderscale=` / `?texsoft=`), plain data; absent = today's look. */
+  quality?: import('../../graphicsQuality.js').GraphicsQuality;
   /**
    * FX kill switches (`?cleanworld=1`, `?nofilters=1`, …) resolved on the
    * main thread by `readFxKillSwitches()`. The worker has no `window`, so
@@ -166,28 +169,6 @@ export interface SetTickerFpsMsg {
 }
 
 /**
- * Warp-mode render state toggle. See `IRenderer.setWarpMode`. The
- * worker forwards to its `PixiRenderer.setWarpMode(active)` which
- * applies the filter chain + animates streaks on the same Pixi stage
- * as gameplay — no second canvas.
- */
-export interface SetWarpModeMsg {
-  type: 'SET_WARP_MODE';
-  active: boolean;
-}
-
-/** Sandbox-only: live-tune the active warp params. Production code never posts this. */
-export interface SetWarpParamsMsg {
-  type: 'SET_WARP_PARAMS';
-  params: Partial<WarpParams>;
-}
-
-export interface SetWarpCenterMsg {
-  type: 'SET_WARP_CENTER';
-  center: WarpCenter | null;
-}
-
-/**
  * Sandbox-only: position the camera so a given world point sits at
  * screen centre. Used by the visual-effects sandbox to anchor world
  * (0, 0) at screen centre WITHOUT needing a local player ship to
@@ -201,26 +182,13 @@ export interface SetCameraCenterMsg {
 }
 
 /**
- * Fire the "warp-in" companion effect — a flash + single big ripple at
- * the supplied centre, no preceding spool/climax. Used when a ship
- * arrives at a sector (the receiving end of a warp). `setWarpMode(false)`
- * fires the same flash+ripple at the moment of departure (the exit
- * burst). Production: per-ship-per-event, fired by the join/transit
- * flow with the ship's spawn world position.
- */
-export interface TriggerWarpInMsg {
-  type: 'TRIGGER_WARP_IN';
-  center: WarpCenter | null;
-}
-
-/**
  * Show or hide the load curtain — an opaque overlay that hides the
  * canvas during the join + transit load periods. Driven by App.tsx
  * orchestration: visible while connecting, while waiting for the
  * first snapshot + readiness gates, and during the IN_TRANSIT /
  * ARRIVED travel window of inter-sector transit. The renderer alpha-
- * tweens between target states (200 ms rise, 380 ms fade — see
- * `CURTAIN_*_MS` in `PixiRenderer.ts`).
+ * tweens between target states (instant rise, 380 ms fade — see
+ * `curtainAlphaAt` in `pixi/LoadCurtain.ts`).
  */
 export interface SetLoadCurtainMsg {
   type: 'SET_LOAD_CURTAIN';
@@ -414,8 +382,7 @@ export interface SetEffectQualityMsg {
 /**
  * Sandbox-only: live-tune a single effect's params. Production code never
  * posts this; per-effect defaults live in
- * `src/client/effects/config/effectDefaults.ts`. Mirrors the
- * `SET_WARP_PARAMS` pattern.
+ * `src/client/effects/config/effectDefaults.ts`.
  */
 export interface SetEffectParamsMsg {
   type: 'SET_EFFECT_PARAMS';
@@ -448,11 +415,7 @@ export type MainToWorkerMsg =
   | ResizeMsg
   | SetTickerFpsMsg
   | PerfProbeMsg
-  | SetWarpModeMsg
-  | SetWarpParamsMsg
-  | SetWarpCenterMsg
   | SetCameraCenterMsg
-  | TriggerWarpInMsg
   | SetLoadCurtainMsg
   | SetSpectatorMsg
   | SetFleetOrderModeMsg

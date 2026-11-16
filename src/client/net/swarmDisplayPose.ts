@@ -33,7 +33,7 @@
  * the "read the resolved pose, never re-interpolate" contract is
  * explicit, greppable, and unit-lockable (the
  * `tests/unit/swarmPoseConsistency.test.ts` canary) — the
- * `shouldDetachWarpVisual` / `LocalBeam` / `fireTemporal`
+ * `spriteUpdateDecisions` / `LocalBeam` / `fireTemporal`
  * extract-the-decision precedent. Asteroids (kind=0) are NOT covered:
  * they keep render-now interpolation off the poseRing (they are
  * locked/static server-side and were never the jitter complaint).

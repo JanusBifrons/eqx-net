@@ -417,7 +417,7 @@ import { mayBeInReach, maxShipRangeBound, mountsReachTarget, type MountRangeTarg
 import { CapitalWreckSubsystem, type WreckPiecePose } from './CapitalWreckSubsystem.js';
 import { rockViewOf } from './rockCut.js';
 import { wreckRayHit } from '../../core/destruction/wreckHits.js';
-import { isDebris, isLootPod, isWreckPiece } from '../net/SwarmEntityRegistry.js';
+import { isLootPod, isWreckPiece } from '../net/SwarmEntityRegistry.js';
 import { LineOfFireGate } from './LineOfFireGate.js';
 import { stampShipScale } from '../../shared-types/shipScale/welcomeScale.js';
 import { stampNavalRange } from '../../shared-types/combat/navalRange.js';
@@ -772,7 +772,7 @@ const JOIN_BROADCAST_GRACE_TICKS = 300;
  * 36 ticks @ 60 Hz = 600 ms. Budget breakdown for the joiner:
  *   - ~50 ms broadcast propagation
  *   - ~150 ms loading-active "world emerges" window (curtain held)
- *   - 380 ms curtain fade-out (`WarpFilterChain.setLoadCurtain(false)`)
+ *   - 380 ms curtain fade-out (`LoadCurtain.setLoadCurtain(false)`)
  *   - 20 ms safety
  *   = curtain visibly drops → user sees the world → warp-in flash
  *
@@ -1191,7 +1191,7 @@ export class SectorRoom extends Room<SectorState> {
   private readonly manualCargo = new Set<string>();
   private readonly _podPoseScratch = { x: 0, y: 0 };
   /** Reused per-collector scratch (forEachLootCollector — no per-tick alloc, #14). */
-  private readonly _collectorScratch: LootCollector = { playerId: '', shipInstanceId: '', x: 0, y: 0, capacity: 0 };
+  private readonly _collectorScratch: LootCollector = { playerId: '', shipInstanceId: '', x: 0, y: 0, capacity: 0, kind: getShipKind(null) };
   /** Placed-structure bookkeeping (structures plan, Phase 2). */
   private readonly structureRegistry = new StructureRegistry();
   /** Equinox Phase 9 (item 5) — sliding-window tally of recent destruction
@@ -2272,11 +2272,10 @@ export class SectorRoom extends Room<SectorState> {
       resolveInstanceFireMounts: (ship) => this.resolveInstanceFireMounts(ship),
       // Capital turret fire control (the resolver is built later; resolve lazily).
       currentTick: () => this.serverTick,
-      fireDroneMount: (id, i, passDebris, target, killAt) => this.aiFireResolver.fireMount(id, i, passDebris, target, killAt),
+      fireDroneMount: (id, i, target, killAt, from) => this.aiFireResolver.fireMount(id, i, target, killAt, from),
       fireBlocked: (id, targetId) => this.npcLocks.fireBlocked(id, targetId),
       // Friendly fire slice 2: a turret holds while an escort is on its line.
-      lineOfFireBlocked: (id, targetId, fx, fy, dx, dy, max, passWrecks) =>
-        this.npcShipLineBlocked(id, targetId, fx, fy, dx, dy, max, passWrecks),
+      lineOfFireBlocked: (id, targetId, fx, fy, dx, dy, max) => this.npcShipLineBlocked(id, targetId, fx, fy, dx, dy, max),
       // Capital turrets engage hostile structures too (the AI's per-tick set).
       hostileStructures: () => this.hostileStructureCircles,
       lockTimeCapS: () => this.testLockTimeCapS,
@@ -2325,8 +2324,8 @@ export class SectorRoom extends Room<SectorState> {
       malformed: this.malformed,
       // RTS slice 5: a wingman's hull (shipInstanceId) gates on its own locks.
       fireAllowed: (pid, slotId) => this.locksFor(pid).hasLocked(pid, slotId),
-      mountBearsOnLock: (pid, mountId, ox, oy, angle, weaponId) => this.mountBearsOnLock(pid, mountId, ox, oy, angle, weaponId),
-      hullLineBlocked: (sid, fx, fy, dx, dy, weaponId, svx, svy) => this.hullLineBlocked(sid, fx, fy, dx, dy, weaponId, svx, svy),
+      mountBearsOnLock: (pid, mountId, ox, oy, angle, weaponId, size) => this.mountBearsOnLock(pid, mountId, ox, oy, angle, weaponId, size),
+      hullLineBlocked: (sid, fx, fy, dx, dy, weaponId, svx, svy, size) => this.hullLineBlocked(sid, fx, fy, dx, dy, weaponId, svx, svy, size),
       fireTractor: (pid, m) => this.forceFields.renewTractor(pid, m, lockKeyBodyId(this.locks.aimKeyFor(pid, m.id), this.swarmRegistry)),
     });
 
@@ -2359,8 +2358,7 @@ export class SectorRoom extends Room<SectorState> {
         this.applyDamage(targetId, shooterId, damage, hitX, hitY, dirX, dirY, weaponId),
       // Friendly fire (owner decision 2026-11-10): the beam meets whatever is
       // in its path, its own side and neutral structures included.
-      nonPlayerRayHit: (fx, fy, dx, dy, maxDist, skipId, passDebris, hw) =>
-        this.nonPlayerRayHit(fx, fy, dx, dy, maxDist, skipId, passDebris, hw),
+      nonPlayerRayHit: (fx, fy, dx, dy, maxDist, skipId, hw) => this.nonPlayerRayHit(fx, fy, dx, dy, maxDist, skipId, hw),
       blockBeamAtWall: (fx, fy, dx, dy, maxDist, damage) =>
         this.blockShotAtWall(fx, fy, dx, dy, maxDist, damage),
       broadcast: (type, msg) => this.broadcast(type, msg),
@@ -2921,9 +2919,9 @@ export class SectorRoom extends Room<SectorState> {
         return p;
       },
       forEachCollector: (visit) => this.forEachLootCollector(visit),
-      // Tractor hold zone (emitter id: a pilot's playerId or an AI ship's swarm id): a pod is picked up, a wreck piece stored whole.
+      // Tractor hold zone (emitter id: a pilot's playerId or an AI ship's swarm id): a pod is picked up, a wreck piece stored whole; a consumable piece near the hull too.
       inTractorHold: (c, podId, x, y) => this.forceFields.inTractorHold(c.playerId, podId, x, y),
-      heldPieces: { any: () => this.forceFields.tractorCount > 0, forEach: (c, visit) => this.forceFields.forEachHeldPiece(c.playerId, visit), salvageQty: (id) => this.capitalWrecks?.pieceSalvageQty(id) ?? 0, remove: (id) => this.capitalWrecks?.storePiece(id) },
+      heldPieces: { any: () => this.forceFields.tractorCount > 0 || (this.capitalWrecks?.liveCount() ?? 0) > 0, forEach: (c, visit) => this.forceFields.forEachHeldPiece(c.playerId, visit), near: (x, y, reach, maxR, visit) => this.capitalWrecks?.forEachPieceNear(x, y, reach, maxR, visit), store: (id, out) => this.capitalWrecks?.pieceStore(id, out) === true, ore: (o, x, y, units) => this.oreDraw.cutYield(o.rockId, x, y, units, o.resource), remove: (id) => this.capitalWrecks?.storePiece(id) },
       onCollected: (c, moved, podId) => this.onLootCollected(c, moved, podId),
       onDropped: (podId, hold, cause) => auditEvent({ event: 'loot_dropped', sector: this.sectorKey ?? undefined, podId, cause, weight: holdWeight(hold) }),
       onDestroyed: (podId, hold, cause) => auditEvent({ event: 'loot_destroyed', sector: this.sectorKey ?? undefined, podId, cause, weight: holdWeight(hold) }),
@@ -3561,7 +3559,12 @@ export class SectorRoom extends Room<SectorState> {
       applyDamage: (id, shooter, dmg, x, y) => { this.applyDamage(id, shooter, dmg, x, y); },
       warpBot: (id, x, y) => { this.warpBot(id, x, y); },
       setBotMoveTarget: (id, x, y) => this.setBotMoveTarget(id, x, y),
+      testTractor: (pid, entityId, ticks) => {
+        const m = getShipKind(this.getActiveShip(pid)?.kind ?? null).mounts?.[0], t = this.swarmRegistry.getByEntityId(entityId);
+        if (m && t) this.forceFields.renewTractor(pid, { ...m, weaponId: 'tractor' }, t.id, ticks);
+      },
     });
+    this.onMessage('test_tractor', (client: Client, raw: unknown) => testHandlers.tractor(client, raw));
     this.onMessage('test_aggro', (client: Client, raw: unknown) => testHandlers.aggro(client, raw));
     this.onMessage('test_reload_turrets', (client: Client, raw: unknown) => testHandlers.reloadTurrets(client, raw));
     this.onMessage('test_kill_capitals', (client: Client, raw: unknown) => testHandlers.killCapitals(client, raw));
@@ -4642,8 +4645,9 @@ export class SectorRoom extends Room<SectorState> {
   /** Activated-mount geometry per player, cached by the ship's `mounts` ref. */
   private readonly _lockActivated = new Map<string, { ref: unknown; mounts: ReadonlyArray<WeaponMount> }>();
   private readonly _lockSalvage = new LockSalvageLookup<ShipState>({ swarm: (n) => this.swarmRegistry.getByEntityId(n),
-    piece: (id, out) => this.capitalWrecks?.pieceHaul(id, out) === true, // salvage lock bits (lockSalvage.ts)
-    freeHold: (s) => this.shipCargoCapacity(s.kind, s.shipInstanceId) - this.holdWeight(s.shipInstanceId) });
+    piece: (id, out) => this.capitalWrecks?.pieceStore(id, out) === true, // salvage lock bits (lockSalvage.ts)
+    // No hold (no roster row, e.g. a showcase room with no sectorKey): it takes nothing in, so nothing is consumable.
+    freeHold: (s) => (this.hasHold(s.shipInstanceId) ? this.shipCargoCapacity(s.kind, s.shipInstanceId) - this.holdWeight(s.shipInstanceId) : 0) });
 
   private buildNpcLockSubsystem(): NpcLockSubsystem {
     return new NpcLockSubsystem({
@@ -4948,13 +4952,13 @@ export class SectorRoom extends Room<SectorState> {
    * target's hit shape is within the mount's own weapon reach, measured from
    * the mount, and its barrel bears on it (shared `mountFiresOn`, the same
    * call as the client's fire passes, #15). A turret clamped at its arc
-   * limit with the target outside the arc fails, so it can't fire.
+   * limit with the target outside the arc fails, so it can't fire. `size`: the mount's (mining reach, `weaponIdReach`).
    */
-  private mountBearsOnLock(pid: string, mountId: string, ox: number, oy: number, angle: number, weaponId: WeaponId): boolean {
+  private mountBearsOnLock(pid: string, mountId: string, ox: number, oy: number, angle: number, weaponId: WeaponId, size: WeaponMount['size']): boolean {
     // A wingman's locks live in `wingmanLocks` and resolve as its owner (RTS).
     const key = this.locksFor(pid).aimKeyFor(pid, mountId);
     if (key === null || !this.resolveLockTarget(this.lockOwner(pid), key, this._lockTarget)) return false;
-    return mountFiresOn(weaponId, weaponIdReach(weaponId), ox, oy, angle, this._lockTarget);
+    return mountFiresOn(weaponId, weaponIdReach(weaponId, size), ox, oy, angle, this._lockTarget);
   }
 
   /** Turret aim: the pose of the mount's group lock target (false = none). */
@@ -5632,6 +5636,8 @@ export class SectorRoom extends Room<SectorState> {
         return { x: this.sabF32[b + SLOT_X_OFF]!, y: this.sabF32[b + SLOT_Y_OFF]! };
       },
       spawnPiece: (spec) => (this.swarmRegistry.has(spec.id) ? false : this.swarmSpawner.spawnWreck(spec)),
+      beginBatch: () => this.physicsWorkerProxy.beginBatch(),
+      endBatch: () => this.physicsWorkerProxy.endBatch(),
       removePiece: (id) => {
         const rec = this.swarmRegistry.get(id);
         if (rec) this.evictSwarmEntity(rec, { broadcast: false, emitDestroyed: false });
@@ -5703,7 +5709,11 @@ export class SectorRoom extends Room<SectorState> {
     const activeHull = this.getActiveShip(playerId);
     const slot = this.playerToSlot.get(playerId);
     if (activeHull === undefined || slot === undefined || activeHull.alive !== false || this.capitalWrecks === null || !this.wreckKindAllowed(activeHull.kind)) return false;
-    const vaporised = this.spawnCapitalWreck(playerId, activeHull.kind, slotPoseInto(this.sabF32, slot, { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 }),
+    // The pose every hit test this tick used (`shipPoseCache`), so a kill
+    // cut lands where the killing shot hit (the burned gap stays on the
+    // beam's line even when the worker stepped on since); the SAB otherwise.
+    const pose = this.shipPoseCache.get(playerId) ?? slotPoseInto(this.sabF32, slot, { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 });
+    const vaporised = this.spawnCapitalWreck(playerId, activeHull.kind, pose,
       activeHull.maxHealth > 0 ? activeHull.maxHealth : getShipKind(activeHull.kind).maxHealth, slot, playerId);
     if (vaporised) this.vaporisedActiveDeath = playerId;
     return vaporised;
@@ -8849,12 +8859,10 @@ export class SectorRoom extends Room<SectorState> {
    * shooter). Live SAB poses, the same shapes as the player beam
    * (`PlayerFireResolver.hitscan`). Used by the NPC beam and the structure
    * turret beam. Returns the reused `_rayHit` or null. Alloc-free.
-   * `passDebris`: wreck pieces and scrap don't stop it (`isDebris`; a heavy
-   * beam's kill follow-through runs on through the cut at full length).
    * `halfWidth`: a wide beam hits by its width (`beamHalfWidth`); 0 ⇒ thin.
    */
   private nonPlayerRayHit(
-    fx: number, fy: number, dx: number, dy: number, maxDist: number, skipId: string, passDebris = false, halfWidth = 0,
+    fx: number, fy: number, dx: number, dy: number, maxDist: number, skipId: string, halfWidth = 0,
   ): { id: string; wireId: string; dist: number } | null {
     let best = maxDist;
     let bestId: string | null = null;
@@ -8873,7 +8881,6 @@ export class SectorRoom extends Room<SectorState> {
       if (rec.id === skipId) continue;
       // Nobody fights a loot pod (owner 2026-11-13): AI and turret beams pass it.
       if (isLootPod(rec)) continue;
-      if (passDebris && isDebris(rec)) continue;
       const b = slotBase(rec.slot);
       const d = this.swarmRayHit(
         rec, fx, fy, dx, dy, best,
@@ -8930,8 +8937,6 @@ export class SectorRoom extends Room<SectorState> {
   private lofSide: NpcAllegianceId = 'drones';
   private lofOwner = '';
   private lofOwnerIsNpc = false;
-  /** This check lets wreck pieces pass (a capital turret's kill follow-through). */
-  private lofPassWrecks = false;
   /** Pre-bound predicate for the gate (made once, #14). */
   private readonly lofFriendly = (rec: LofBody): boolean => {
     if (rec instanceof LofShipBody) {
@@ -8945,8 +8950,7 @@ export class SectorRoom extends Room<SectorState> {
     // wreck piece on its line: each shot would stop on it and its knock-back
     // shove it on ahead of the shooter, a dead hull flying beside a live
     // ship (take 11 "ghost ship").
-    // A capital turret's kill follow-through lets them pass (`lofPassWrecks`).
-    if (isWreckPiece(rec)) return this.lofShooterKind !== 2 && !this.lofPassWrecks;
+    if (isWreckPiece(rec)) return this.lofShooterKind !== 2;
     if (rec.kind === SWARM_KIND_DRONE) {
       if (this.lofShooterKind === 1) return isFriendly(this.lofSide, allegianceOfKind(rec.shipKind));
       return this.lofOwnerIsNpc
@@ -9022,17 +9026,14 @@ export class SectorRoom extends Room<SectorState> {
   /** An NPC ship's line of fire (drone slot or capital turret). */
   private npcShipLineBlocked(
     shooterId: string, targetId: string, fx: number, fy: number, dx: number, dy: number, maxDist: number,
-    passWrecks = false,
   ): boolean {
     if (!this.npcLineOfFire) return false;
     const rec = this.swarmRegistry.get(shooterId);
     if (rec == null || rec.kind !== SWARM_KIND_DRONE) return false;
     this.lofShooterKind = 1;
     this.lofSide = allegianceOfKind(rec.shipKind);
-    this.lofPassWrecks = passWrecks;
     const gate = this.lofGate();
     const blocked = gate.blocked(fx, fy, dx, dy, maxDist, shooterId, targetId, this.lofFriendly);
-    this.lofPassWrecks = false;
     if (!blocked) return false;
     // Line-of-fire feedback: tell the brain which ally held its shot (drone
     // slots via AiFireResolver AND capital turret barrels via the mount ticker
@@ -9100,7 +9101,7 @@ export class SectorRoom extends Room<SectorState> {
    * holds it too). A pilot's own fire never comes here.
    */
   private hullLineBlocked(
-    sid: string, fx: number, fy: number, dx: number, dy: number, weaponId: WeaponId, svx: number, svy: number,
+    sid: string, fx: number, fy: number, dx: number, dy: number, weaponId: WeaponId, svx: number, svy: number, size: WeaponMount['size'],
   ): boolean {
     if (!this.npcLineOfFire) return false;
     const targetId = this.hullTrigger.get(sid) ?? this.wingmanFireKeys.get(sid)?.id;
@@ -9116,7 +9117,7 @@ export class SectorRoom extends Room<SectorState> {
     const dist = Math.hypot(p.x - fx, p.y - fy);
     // A beam or bolt that misses flies on to its reach; a missile homes and a
     // naval shell's line is checked to its target (as an AI capital's turret).
-    const reach = w.mode === 'missile' || NAVAL_SHELL_WEAPON_IDS.has(weaponId) ? 0 : weaponIdReach(weaponId);
+    const reach = w.mode === 'missile' || NAVAL_SHELL_WEAPON_IDS.has(weaponId) ? 0 : weaponIdReach(weaponId, size);
     const shotSpeed = w.mode === 'hitscan' ? 0 : w.speed;
     if (!gate.blocked(fx, fy, dx, dy, reach > dist ? reach : dist, sid, targetId, this.lofFriendly, shotSpeed, svx, svy)) return false;
     this.aiController.noteBlocked(sid, this.serverTick, gate.lastBlockerX, gate.lastBlockerY);
@@ -11494,6 +11495,10 @@ export class SectorRoom extends Room<SectorState> {
     return { type: 'cargo_state', entityId, open: true, hold: stock, used: 0, capacity: 0, ship, shipCapacity: access.capacity, market, ...(verdict ?? {}) };
   }
 
+  /** Does pilot ship `shipInstanceId` have a hold: a roster row in a roster-backed room (the loot pickup's gate; the lock's free hold). */
+  private hasHold(shipInstanceId: string): boolean {
+    return this.sectorKey !== null && shipInstanceId !== '' && getPlayerShipStore().get(shipInstanceId) !== null;
+  }
   /**
    * Visit every hull allowed to collect loot this tick (#17 liveness: ACTIVE +
    * alive hulls only — lingering and dead hulls never collect; and only hulls
@@ -11502,12 +11507,10 @@ export class SectorRoom extends Room<SectorState> {
    */
   private forEachLootCollector(visit: (c: LootCollector) => void): void {
     if (this.sectorKey === null) return; // engineering rooms: no roster ⇒ no holds
-    const store = getPlayerShipStore();
     const c = this._collectorScratch;
     for (const [pid] of this.playerToSlot) {
       const ship = this.getActiveShip(pid);
-      if (!ship?.alive || !ship.isActive || ship.shipInstanceId === '') continue;
-      if (store.get(ship.shipInstanceId) === null) continue;
+      if (!ship?.alive || !ship.isActive || !this.hasHold(ship.shipInstanceId)) continue;
       const pose = this.shipPoseCache.get(pid);
       if (!pose) continue;
       c.playerId = pid;
@@ -11516,6 +11519,7 @@ export class SectorRoom extends Room<SectorState> {
       c.y = pose.y;
       // P5 — a fitted Cargo Expander raises the capacity (shared helper, #15).
       c.capacity = this.shipCargoCapacity(ship.kind, ship.shipInstanceId);
+      c.kind = getShipKind(ship.kind); // its hull radius + mounts: the pieces it consumes
       c.npc = false;
       visit(c);
     }
@@ -11532,6 +11536,7 @@ export class SectorRoom extends Room<SectorState> {
       c.x = this.sabF32[b + SLOT_X_OFF]!;
       c.y = this.sabF32[b + SLOT_Y_OFF]!;
       c.capacity = cargoCapacityForMaxHealth(kindDef);
+      c.kind = kindDef;
       c.npc = true;
       visit(c);
     }

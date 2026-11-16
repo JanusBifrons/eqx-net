@@ -21,11 +21,11 @@ const art = { fx: (): ArtHandle => ({ key: 'k', job: { type: 'fx', id: 'x' }, ri
 describe('backdrop heap-delta', () => {
   it('50 000 frames of flying across a sector grow the heap < 200 KB', () => {
     const b = new Backdrop(art, () => 'high');
-    b.setSector('emerald-span');
+    b.setSector('cygnus-arm'); // a nebula sector (core/galaxy/nebulaField)
     const cam = { center: { x: 0, y: 0 }, scale: { x: 1 }, screenWidth: 1280, screenHeight: 720 };
     const frame = (f: number): void => {
-      cam.center.x = ((f * 12) % 60_000) - 30_000; // crosses many 9000 u nebula cells
-      cam.center.y = Math.sin(f * 0.001) * 20_000;
+      cam.center.x = ((f * 40) % 360_000) - 180_000; // deep core out to the thin edge
+      cam.center.y = Math.sin(f * 0.001) * 150_000;
       cam.scale.x = 0.5 + (f % 200) / 100;
       b.update(cam, f * 16);
       if (b.density > 0) inNebula++;
@@ -35,7 +35,25 @@ describe('backdrop heap-delta', () => {
     const before = postGcHeap();
     for (let f = 0; f < 50_000; f++) frame(f);
     expect(postGcHeap() - before).toBeLessThan(200 * 1024);
-    // The run must fly through nebulae (C2), so their drawing path is covered.
+    // The run must fly through the nebula, so its drawing path is covered.
     expect(inNebula).toBeGreaterThan(1000);
+  });
+  it('the dense-nebula look (?neblook=) allocates nothing per frame either', () => {
+    for (const look of ['fog:1', 'rainbow:2', 'storm:3', 'blend:5']) {
+      const b = new Backdrop(art, () => 'high', 'large', look);
+      b.setSector('emerald-span');
+      const cam = { center: { x: 0, y: 0 }, scale: { x: 1 }, screenWidth: 1280, screenHeight: 720 };
+      const frame = (f: number): void => {
+        cam.center.x = ((f * 12) % 60_000) - 30_000;
+        cam.center.y = Math.sin(f * 0.001) * 20_000;
+        cam.scale.x = 0.5 + (f % 200) / 100;
+        b.update(cam, f * 16);
+      };
+      for (let f = 0; f < 3000; f++) frame(f);
+      const before = postGcHeap();
+      for (let f = 0; f < 20_000; f++) frame(f);
+      expect(postGcHeap() - before, look).toBeLessThan(200 * 1024);
+      expect(b.density).toBe(1);
+    }
   });
 });

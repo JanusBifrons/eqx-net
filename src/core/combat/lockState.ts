@@ -71,7 +71,7 @@ export interface LockEntry {
   track: LockTrack;
   /** AUTO picked this target itself; switching the group to MAN cancels it if not yet locked. */
   auto: boolean;
-  /** Salvage bits of the target (`LOCK_SALVAGE` | `LOCK_HAULABLE`, turretLockPick.ts),
+  /** Salvage bits of the target (`LOCK_SALVAGE` | tier | `LOCK_CONSUMABLE`, turretLockPick.ts),
    *  refreshed by the server's lock step; 0 for any other target. */
   flags: number;
 }

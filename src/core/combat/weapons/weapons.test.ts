@@ -22,7 +22,7 @@ import {
 } from '../WeaponCatalogue.js';
 
 function makeCtx(over: Partial<WeaponFireContext> = {}): WeaponFireContext {
-  return { fromX: 10, fromY: 20, dirX: 0.6, dirY: 0.8, shooterVx: 5, shooterVy: -3, mountId: 'm0', ...over };
+  return { fromX: 10, fromY: 20, dirX: 0.6, dirY: 0.8, shooterVx: 5, shooterVy: -3, mountId: 'm0', rangeMul: 1, ...over };
 }
 
 class RecordingSink implements WeaponFireSink {

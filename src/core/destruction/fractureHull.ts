@@ -79,10 +79,11 @@ import {
  *  `cutBurnMinShare`: a cut kill burns away pieces too small (none left =
  *  vaporised); v12 multi-cut (`extraCuts`: every other beam that burned the
  *  hull in the last moment cuts its own straight line too, owner
- *  2026-11-15 "one cut per beam"). Each is byte-identical without a cut
- *  (v12: without `extraCuts`); detail and history in capital-destruction.md
- *  "Kill cuts" and its version trail. */
-export const FRACTURE_ALGO_VERSION = 12;
+ *  2026-11-15 "one cut per beam"); v13 burned gap (a wide slice runs through
+ *  the kill point as given). Each is byte-identical without a cut (v12:
+ *  without `extraCuts`; v13: without a wide slice); detail and history in
+ *  capital-destruction.md "Kill cuts", "Burned gap" and its version trail. */
+export const FRACTURE_ALGO_VERSION = 13;
 /** v12: most `extraCuts` a fracture applies (more are ignored): with the
  *  main cut, four beams' lines at most. */
 export const FRACTURE_MAX_EXTRA_CUTS = 3;
@@ -284,7 +285,7 @@ export interface FractureInput {
    *  runs through the kill point along (dirX, dirY) in the hull's frame (any
    *  length but zero; a zero direction means no cut). `slice`: that line is
    *  the primary crack, dead straight (v10: with a `width` over 0, the strip
-   *  that wide is erased, like a channel). `channel`: the strip `width` wide
+   *  that wide is erased, like a channel; v13: through the kill point as given). `channel`: the strip `width` wide
    *  centred on it is erased. The secondary cracks and the piece count are
    *  the same as without a cut. */
   readonly cut?: FractureKillCut;
@@ -593,7 +594,11 @@ function planFor(input: FractureInput, hull: P[]): InternalPlan {
     if (cl > 0) {
       const dir = { x: ic.dirX / cl, y: ic.dirY / cl };
       cut = { kind: ic.kind, width: ic.width > 0 ? ic.width : 0 };
-      primary = { point: ic.kind === 'slice' ? slicePoint(hull, kill, dir, cutMinShare(input)) : kill, dir };
+      // v13 burned gap: a wide slice runs down the beam's axis (the kill point as given).
+      const point = ic.kind !== 'slice' ? kill
+        : cut.width > 0 ? { x: q(input.killPoint.x), y: q(input.killPoint.y) }
+        : slicePoint(hull, kill, dir, cutMinShare(input));
+      primary = { point, dir };
     }
   }
 

@@ -51,7 +51,9 @@ export const hex3 = (c: number): [number, number, number] => [(c >> 16) & 255, (
 export const linToSrgb8 = (v: number): number => Math.round(255 * Math.min(1, Math.max(0, v <= 0.0031308 ? v * 12.92 : 1.055 * Math.pow(v, 1 / 2.4) - 0.055)));
 
 export const SUBCAPS = SHIP_KINDS_LIST.filter((k) => k.sizeClass !== 'capital').map((k) => k.id);
-export const CAPITALS = SHIP_KINDS_LIST.filter((k) => k.sizeClass === 'capital').map((k) => k.id);
+// The warships: the mining barge's livery (container deck, no clear sigil
+// field) is not tuned yet, so the warship livery locks leave it out.
+export const CAPITALS = SHIP_KINDS_LIST.filter((k) => k.sizeClass === 'capital' && k.id !== 'barge').map((k) => k.id);
 /** One capital per extreme and per hull family: the smallest (destroyer), the
  *  largest with the most turrets (battleship), a '-b' and a '-c' hull. */
 export const CAPITAL_SAMPLE = ['destroyer', 'battleship', 'light-cruiser-b', 'heavy-cruiser-c'];

@@ -10,6 +10,32 @@ the CLAUDE.md files; gotchas live in `docs/LESSONS.md`; this captures the
 
 ---
 
+## 0. Current state (read first)
+
+The shader warp described in §1–§3 and §5 (the `ShockwaveFilter` ripple
+stack, zoom-blur, burst ripple and white arrival flash on `app.stage`) is
+**removed**. What is left:
+
+- **Warp visual:** `WarpFx` + `WarpSpoolFx` (`src/client/render/pixi/`),
+  cheap sprites driven by each ship's snapshot warp phase
+  (`ShipRenderState.warp`, drones' `warp`), drawn by
+  `PixiRenderer.drawWarpFx`, gated by `warpFxGate.ts`. Own ship, remote
+  players and AI pilots all go through it; there is no per-event visual.
+- **Load curtain:** `LoadCurtain` (`render/pixi/LoadCurtain.ts`), the
+  full-canvas dark overlay raised at every first join
+  (`IRenderer.setLoadCurtain`, driven by `useWarpOrchestration` and
+  `gameSurfaceConnectFlow`). INSTANT rise, 380 ms fade (`curtainAlphaAt`).
+  It owns **no filter** and never touches `app.stage.filters` (a stage
+  filter renders the frame into a non-MSAA texture: no antialiasing).
+  Locked by `LoadCurtain.test.ts`.
+- **`warp_in` / `warp_out` broadcasts** still arrive; the client only logs
+  them (`warp_event`) and uses the local player's own `warp_in.arrivalTick`
+  to schedule the curtain drop. Sector trips raise no curtain at all
+  (see [travel-state](travel-state.md)).
+
+The sections below are kept as the history of how the old effect was
+built and why.
+
 ## 1. What the player sees
 
 On entering a sector — fresh join or inter-sector transit — the gameplay
@@ -206,8 +232,7 @@ the markers to confirm, not a license to lighten the chain blind.
 
 | Surface | Lock |
 |---|---|
-| Anchor projection / Y-flip | `PixiRenderer.warpCenter.test.ts` |
-| Filter detach/teardown | `PixiRenderer.warpDetach.test.ts` |
+| Load curtain: instant rise, 380 ms fade, no stage filter | `src/client/render/pixi/LoadCurtain.test.ts` |
 | Grid labels | `BackgroundGrid.labels.test.ts` |
 | Join-grace force-broadcast | `tests/integration/sectorRoom/joinBroadcastGrace.test.ts` |
 | warp_in/out broadcasts | `tests/integration/sectorRoom/warpBroadcasts.test.ts` |
@@ -216,8 +241,7 @@ the markers to confirm, not a license to lighten the chain blind.
 | Transit join-readiness re-arm (Phase G) | `src/client/state/store.rearmJoinReadiness.test.ts` |
 | WarpScreen re-show on consecutive transits (Phase G) | `src/client/components/WarpScreen.transit.test.tsx` |
 | Transit reset group: prediction + UI (Phase G) | `src/client/net/ColyseusClient.transitRearmReadiness.test.ts` |
-| Single arrival flash / orchestration call-ordering (Phase G) | `src/client/App.warpOrchestration.test.tsx` |
-| Warp burst policy — only the arrival reveal bursts (Phase G3) | `src/client/render/PixiRenderer.warpBurst.test.ts` |
+| Orchestration: a trip raises no curtain, first join does | `src/client/App.warpOrchestration.test.tsx` |
 | Warp-screen lifecycle (E2E) | `tests/e2e/join-warp-screen.spec.ts` |
 
 ## 10. See also
@@ -237,23 +261,15 @@ the markers to confirm, not a license to lighten the chain blind.
 
 Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each rule and points here.
 
-- **Warp burst fires on arrival ONLY — single-flash policy (2026-05-16, Phase G3).** Exactly one warp flash per inter-sector transit: the arrival reveal (`triggerWarpIn`). `setWarpMode(false)` (spool exit) fades the filter chain out but does NOT burst, and `setWarpMode(true)` (spool start) ramps amplitude (no pulse). Both `fireBurst()` call-sites defer to the pure `warpEventFiresBurst(event)` policy (exported from `PixiRenderer.ts` beside `shouldDetachWarpVisual`, locked by `PixiRenderer.warpBurst.test.ts`). Why: post-Phase-G the load curtain is always raised at `transit_ready` (before SPOOLING→IN_TRANSIT), so a spool-exit burst is permanently occluded yet bleeds through the ~200 ms curtain-rise — a leaky reordered double-flash (on-device 2026-05-16). The earlier theoretical "keep the climax, mask it" was falsified on-device; do not re-introduce a warp-out / spool-start burst. See `docs/LESSONS.md` 2026-05-16 Phase-G3 entry.
+- **Load curtain (WS-14/R2.26-curtain):** `setLoadCurtain(active)` drives the dark overlay via the pure `curtainAlphaAt` — the RISE is INSTANT (opaque before the destination sector renders, so it never flashes through) while the FADE-OUT (arrival reveal) keeps the 380 ms tween. `LoadCurtain` owns no filter; never attach one to `app.stage` for it.
 
-- `DEFAULT_WARP_PARAMS` (in `worker/protocol/warpParams.ts`) toned down: `spoolCount` 4→2 (half the shader passes), `spoolAmplitude` 18→10, `climaxAmplitude` 220→70 (third), `flashAlphaMax` 0.85→0.55. (`bloomStrengthMax` removed in R2.9.) **Phase 3 (#10) "subtler ripple":** `climaxAmplitude` 70→40, `burstAmplitude` 220→140, `flashAlphaMax` 0.55→0.35, and the `climaxDurationMs`/`burstDurationMs` +50% (1100→1650 / 1500→2250) so the same envelope reads as a gentler wave spread over a longer distance. Locked by `warpParams.test.ts`. (On-device sign-off is a follow-up.)
-- `WarpFilterChain.applyQuality(level)` is the budget hook (ONE ownership site for warp filter attach/detach — `IFilterEffects` deliberately does NOT duplicate the surface, per Invariant #12). Dials (post-R2.9, no bloom):
-  - `high`    : full chain (shockwaves + zoom-blur + burst)
-  - `medium`  : same as high (bloom — the former high-only pass — removed)
-  - `low`     : drop zoom-blur (shockwaves + burst only)
-  - `minimal` : detach all filters (matches the 2026-05-21 safe state)
 - **Touch-device default is `medium`** (pinned in M9 alongside the `PerfMonitor` wiring). EffectsBudget can still drop to `low`/`minimal` on EMA pressure.
-- **Load curtain (WS-14/R2.26-curtain):** `setLoadCurtain(active)` drives the dark overlay via the pure `curtainAlphaAt` — the RISE is now INSTANT (opaque before the destination sector renders, so it never flashes through) while the FADE-OUT (arrival reveal) keeps the 380 ms tween.
-- The single-flash arrival-only policy (2026-05-16 Phase G3) is unchanged. The `pendingWarpEvents` drain still calls `renderer.triggerWarpIn`. M3 only changes the FILTERS attached during the active warp envelope; it does NOT change which events fire bursts.
 
 - **A ship killed mid-spool draws no departure.** `WarpFx` reads "a spooling ship left the mirror" as a warp-out to another sector; a death also removes it. `drawWarpFx` calls `WarpFx.died(id)` for every `mirror.explodingShips` id before `endFrame`, so a death never leaves burning warp trails over the wreck (take 12 fleet-melee). Lock: `PixiRenderer.warpDeath.test.ts`.
 
-**Do not re-disable the chain wholesale** if a mobile regression appears post-M3 — first instrument the budget to confirm which tier is active during the regression, and dial `minimal` per-device if needed via the touch-default pin. The 2026-05-21 disable was a hammer; the budget tier dial is the surgical replacement.
-
 ## History
+
+**Old shader warp removed (2026-11-16, branch `exp/antialias-old-warp`).** `WarpFilterChain` shrank to the curtain-only `LoadCurtain`; `setWarpMode`, `triggerWarpIn`, `setWarpParams`, `setWarpCenter`, `WarpParams`, the worker messages, `warpHelpers.ts`, the dead remote-warp queue (`pendingWarpEvents`, never filled since Phase 4) and the sandbox warp panel are gone, with their tests and the `galaxy-map-no-warp-ripple` E2E. The `warp_tick` frame marker now times the curtain tick only. Why: the chain was unused in play (own-ship use went in Phase 4, 2026-11-07) yet the curtain built it at every join, and a stage filter disables MSAA.
 
 **Warp re-enable (M3, 2026-05-27) — supersedes 2026-05-21 disable.** The warp filter chain at `pixi/WarpFilterChain.ts` was disabled on 2026-05-21 ("Render-jitter-fix Phase 1b" — captures confirmed filters were not load-bearing for playability; the disable avoided duty-cycle cost on mobile). M3 re-enables it WITH a budget tier dial. **(WS-14/R2.9, 2026-06-13: the BLOOM/glow pass was removed ENTIRELY — "remove warp glow" — so `bloomStrengthMax`, the `warpBloom` filter, and `qualityIncludesBloom` are gone; the single subtle white arrival flash (`warpFlash`, fired by `triggerWarpIn`) is the only reveal. The tier notes below are historical — there is no bloom to drop now, so `high` == `medium`.)**
 ## Server implementation notes

@@ -125,6 +125,21 @@ describe('BurnLines: the one burn-line tracker', () => {
     expect(b.liveCount(101)).toBe(2);
   });
 
+  it('two turrets of one ship on overlapping wide lines: two slots, and the break\'s main strip widens to cover both', () => {
+    const b = new BurnLines(5);
+    // Parallel along +y, 18 u apart, 63 u strips (heavy beam + buffer).
+    rec(b, 'lance', 100, 0, 0, 0, 1, 63);
+    rec(b, 'lance', 100, 18, 0, 0, 1, 63);
+    rec(b, 'lance', 110, 0, 0, 0, 1, 63);
+    expect(b.liveCount(110)).toBe(2);
+    const main = { off: 0, w: 0 };
+    // The main cut: the killing turret's line (x = 0, along y).
+    const ang = CUT_ANGLE_STEPS * 0.75;
+    expect(b.extraCuts(110, 0, 0, ang, 63, main)).toBeUndefined();
+    expect(main.w).toBeCloseTo(81, 6);
+    expect(Math.abs(main.off)).toBeCloseTo(9, 6);
+  });
+
   it('two ships firing together both contribute lines (any shooter)', () => {
     const b = new BurnLines(5);
     rec(b, 'shipA', 100, 0, 0, 0, 1);

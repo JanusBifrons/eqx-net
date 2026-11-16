@@ -392,11 +392,13 @@ export class LitShipMesh extends Mesh<Geometry, Shader> {
   /**
    * The mesh is drawn at `pxPerUnit` screen pixels per world unit: hold its
    * mip level at LIT_MAX_LOD or below (further, the slices blur together).
+   * `soften` (graphics quality `?texsoft=`) biases toward the next, softer
+   * mip so fine panel lines stop crawling; still capped at LIT_MAX_LOD.
    */
-  setScreenScale(pxPerUnit: number): void {
+  setScreenScale(pxPerUnit: number, soften = 0): void {
     this.texelsPerPx = this.tile.ppu / Math.max(1e-6, pxPerUnit);
     const level = Math.log2(this.texelsPerPx);
-    (this.uni.uniforms as Record<string, number>)['uLodBias'] = Math.min(0, LIT_MAX_LOD - level);
+    (this.uni.uniforms as Record<string, number>)['uLodBias'] = Math.min(soften, LIT_MAX_LOD - level);
   }
 
   /** Light for this frame: the sector's sun, the hull's world pose (Pixi

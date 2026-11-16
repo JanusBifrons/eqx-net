@@ -237,7 +237,7 @@ export default [
     files: ['src/client/render/**/*.ts', 'src/client/effects/**/*.ts'],
     ignores: [
       '**/*.test.ts', 'src/client/render/worker/**', 'src/client/render/art/**',
-      'src/client/render/pixi/WarpFilterChain.ts', 'src/client/render/HaloRadar.ts',
+      'src/client/render/pixi/LoadCurtain.ts', 'src/client/render/HaloRadar.ts',
       'src/client/render/AimFeedbackRenderer.ts', 'src/client/render/HealthBars.ts',
       'src/client/render/SelectionBracket.ts', 'src/client/render/HoverBracket.ts',
       'src/client/render/pixi/swarmSpriteUpdater.ts',

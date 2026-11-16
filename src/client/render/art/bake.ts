@@ -5,7 +5,9 @@
  * in the bake workers (`bake.worker.ts`). A bake is a list of RGBA frames plus
  * the few facts the runtime needs (size, density, light and nozzle spots).
  */
-import { forgeRock, forgeScrap, forgeShip, forgeStructure, forgeTurretGun, shipExtent, TURRET_COVER_REACH, type Fields, type GunFamily, type Livery } from './fields.js';
+import { forgeScrap, forgeShip, forgeStructure, forgeTurretGun, shipExtent, TURRET_COVER_REACH, type Fields, type GunFamily, type Livery } from './fields.js';
+import { forgeRock } from './rockForge.js';
+import { forgeTractorDish } from './tractorDish.js';
 import { shipTurrets, structureTurrets } from './turretLayout.js';
 import { bakeFxImg, FX_VERSION, isFxId } from './fx/fxTextures.js';
 import { litFrame, type Frame, type LightRig } from './shade.js';
@@ -217,7 +219,8 @@ export function runBake(j: BakeJob, rig: LightRig): Baked {
     return { frames: [litFrame(f, rig, rig.sunAz - turn), albedoHalf(f)], w: f.g.w, h: f.g.h, density: f.g.ppu, nozzles: [], navLights: [] };
   }
   if (j.type === 'turret') {
-    const f = forgeTurretGun({ family: j.id, paint: j.paint, len: j.len, wid: j.wid, cap: j.cap, ppu: j.ppu, ...(j.naval ? { naval: j.naval } : {}) });
+    const spec = { family: j.id, paint: j.paint, len: j.len, wid: j.wid, cap: j.cap, ppu: j.ppu, ...(j.naval ? { naval: j.naval } : {}) };
+    const f = j.id === 'tractor' ? forgeTractorDish(spec) : forgeTurretGun(spec);
     if (j.lit) return litBaked(f, Infinity);
     const frames: Frame[] = [];
     for (let k = 0; k < SUN_STEPS; k++) frames.push(litFrame(f, rig, (k / SUN_STEPS) * Math.PI * 2));

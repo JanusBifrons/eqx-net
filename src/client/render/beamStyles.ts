@@ -137,13 +137,73 @@ export const HEAVY_BEAM_STYLE: BeamSpriteStyle = {
  *  thinner than the heavy beam's 12, still visible at capital zoom. */
 export const MINING_LASER_MIN_SCREEN_PX = 5;
 
+/** The mining laser's deep orange: its glowing edge. */
+export const MINING_LASER_DEEP_COLOR = 0xff8a1e;
+
+/**
+ * The mining laser across its width, in the Miner's drill-beam colours
+ * (`MINING_BEAM_STYLE`'s amber): a white-hot core, through pale gold, to the
+ * Miner amber body, opaque out to the core width (`at` 1 / span), then a soft
+ * deep-orange glow fading to nothing. The heavy beam's recipe, in amber.
+ */
+export const MINING_LASER_CROSS_SECTION: BeamCrossSection = {
+  span: 1.8,
+  stops: [
+    { at: 0, color: 0xffffff, alpha: 1 },
+    { at: 0.12, color: 0xfff4d6, alpha: 1 },
+    { at: 0.3, color: 0xffd27a, alpha: 1 },
+    { at: 0.5, color: MINING_BEAM_STYLE.tint, alpha: 1 },
+    { at: 0.56, color: MINING_LASER_DEEP_COLOR, alpha: 0.9 },
+    { at: 0.78, color: 0xff7414, alpha: 0.35 },
+    { at: 1, color: 0xe05a10, alpha: 0 },
+  ],
+};
+
 /** The mining laser (`mining_laser` mounts; plan partitioned-chasing-lark
  *  PR 7): the Miner's drill-beam colours (`MINING_BEAM_STYLE`, so a player
  *  reads "mining", not "attack") at capital scale: core `MINING_LASER_WIDTH`
- *  wide, the strip its slice erases. Solid to the hit point (no taper), drawn
- *  by the same remote pool as every other beam (a per-beam style). */
+ *  wide, the strip its slice erases, drawn with `MINING_LASER_CROSS_SECTION`
+ *  (`tint` colours the `?fx=new` glow). Solid to the hit point (no taper),
+ *  drawn by the same remote pool as every other beam (a per-beam style).
+ *  The default beam lights (a hit spot, a soft middle). Owner OK 2026-11-16. */
 export const MINING_LASER_STYLE: BeamSpriteStyle = {
-  ...MINING_BEAM_STYLE, width: MINING_LASER_WIDTH, taper: false, minScreenPx: MINING_LASER_MIN_SCREEN_PX,
+  ...MINING_BEAM_STYLE, width: MINING_LASER_WIDTH, taper: false, glowScale: 1.5,
+  minScreenPx: MINING_LASER_MIN_SCREEN_PX, crossSection: MINING_LASER_CROSS_SECTION,
+};
+
+/** The tractor beam's pale blue (salvage plan PR 11b). */
+export const TRACTOR_BEAM_COLOR = 0xa8d4ff;
+
+/** The tractor beam's core width (world u): two thirds of the mining laser's,
+ *  so it reads as a beam, lighter than the cutting beam beside it. */
+export const TRACTOR_BEAM_WIDTH = MINING_LASER_WIDTH * (2 / 3);
+
+/**
+ * The tractor beam across its width (owner 2026-11-16: "style it like a beam
+ * weapon, just with a blue glow"): a white core through the tractor's pale
+ * blue to a wide, soft blue glow (`span` 2.4: more glow than body, where the
+ * mining laser is mostly body).
+ */
+export const TRACTOR_BEAM_CROSS_SECTION: BeamCrossSection = {
+  span: 2.4,
+  stops: [
+    { at: 0, color: 0xffffff, alpha: 1 },
+    { at: 0.14, color: 0xe4f2ff, alpha: 1 },
+    { at: 0.32, color: TRACTOR_BEAM_COLOR, alpha: 0.95 },
+    { at: 0.42, color: 0x6cb4ff, alpha: 0.75 },
+    { at: 0.65, color: 0x3d8cff, alpha: 0.3 },
+    { at: 1, color: 0x2a6cf0, alpha: 0 },
+  ],
+};
+
+/** The tractor beam: drawn like a beam weapon (a baked cross-section, solid
+ *  from the barrel to the target, no taper: it holds its target), in blue,
+ *  by its own `BeamSpritePool`, unfiltered: `render/tractorBeams.ts`. It
+ *  lights where it holds and softly along it (`addBeamLights`, blue).
+ *  Owner OK 2026-11-16. */
+export const TRACTOR_BEAM_STYLE: BeamSpriteStyle = {
+  tint: TRACTOR_BEAM_COLOR, width: TRACTOR_BEAM_WIDTH, alpha: 0.85, taper: false, minScreenPx: 4,
+  crossSection: TRACTOR_BEAM_CROSS_SECTION,
 };
 
 /** A heavy beam that MISSES fades over this last share of its drawn length
@@ -207,7 +267,8 @@ export function remoteBeamStyleForMount(
   mount: { readonly weaponId: string } | null | undefined,
 ): BeamSpriteStyle | null {
   if (isHeavyBeamMount(mount)) return HEAVY_BEAM_STYLE;
-  return mount?.weaponId === 'mining_laser' ? MINING_LASER_STYLE : null;
+  if (mount?.weaponId !== 'mining_laser') return null;
+  return MINING_LASER_STYLE;
 }
 
 /** The mount `mountId` on a ship kind's catalogue `mounts` (alloc-free loop;
@@ -279,37 +340,65 @@ export interface RemoteBeamLine { fromX: number; fromY: number; toX: number; toY
  * cooldown, so a fresh pulse redraws the line every shot; a nose gun's beam
  * that stayed put while the fighter turned would leave its nose.
  *
- * `holdLine` true (a styled beam: the capital heavy beam): a pulse stays on
- * the line it was fired along for its whole `HEAVY_BEAM_TTL_MS` life. Its
- * origin follows the muzzle (the ship moves under it), but it aims at the
- * wire end point and stops THERE: never the live mount angle. A heavy pulse
- * outlives a cooldown by ~280 ms, so drawing it down the live barrel swung
- * the last pulse with the turret after the kill follow-through (filmed: ~1.9°
- * off the cut in 0.33 s, then sweeping past the wreck) and, while the turret
- * was still swinging onto a target, ran the beam through the intact hull to
- * its full range.
+ * `holdLine` true (a styled beam: the capital heavy beam) with the turret's
+ * live angle AND the client ray's length `dist` (traced each frame by
+ * `combat/remoteBeamRay.ts`): the beam leaves the barrel tip down the LIVE
+ * barrel and stops at `dist` (the first shield, hull, asteroid or wreck the
+ * client ray meets), so it sweeps with the turret and never jumps between
+ * pulses, nor runs through an intact hull to its full range.
+ *
+ * `holdLine` true without one of them (turret out of this viewer's interest,
+ * or no client ray): it aims at the wire end point and stops THERE.
  */
 export function remoteBeamLine(
   holdLine: boolean, poseAngle: number, baseAngle: number, mountAngle: number | undefined,
   pivotX: number, pivotY: number, muzzleD: number, range: number,
-  wireToX: number, wireToY: number, out: RemoteBeamLine,
+  wireToX: number, wireToY: number, out: RemoteBeamLine, dist?: number,
 ): RemoteBeamLine {
-  const a = remoteBeamFireAngle(poseAngle, baseAngle, holdLine ? undefined : mountAngle, pivotX, pivotY, wireToX, wireToY);
+  const live = !holdLine || (mountAngle !== undefined && dist !== undefined);
+  const a = remoteBeamFireAngle(poseAngle, baseAngle, live ? mountAngle : undefined, pivotX, pivotY, wireToX, wireToY);
   const fx = -Math.sin(a), fy = Math.cos(a);
   out.fromX = pivotX + fx * muzzleD;
   out.fromY = pivotY + fy * muzzleD;
-  if (holdLine) {
+  if (!live) {
     // The end point is the server's: a hit stays on the hit. An end point
     // inside the barrel (point blank) draws nothing rather than backwards.
     const behind = (wireToX - pivotX) * fx + (wireToY - pivotY) * fy <= muzzleD;
     out.toX = behind ? out.fromX : wireToX;
     out.toY = behind ? out.fromY : wireToY;
   } else {
-    out.toX = out.fromX + fx * range;
-    out.toY = out.fromY + fy * range;
+    const len = holdLine && dist !== undefined ? dist : range;
+    out.toX = out.fromX + fx * len;
+    out.toY = out.fromY + fy * len;
   }
   return out;
 }
+
+/** A mount's fire ray this frame: its barrel tip and unit fire direction. */
+export interface MuzzleRay { fromX: number; fromY: number; fwdX: number; fwdY: number }
+
+/**
+ * The fire ray of `mount` on a hull drawn at `ship*`, the turret slewed to
+ * `mountAngle` and the barrel `muzzleD` long, into `out` (no allocation, #14).
+ * The ONE place the client turns a mount pose into muzzle + direction: the
+ * local beam's ray (`ColyseusClient.updateLiveBeam`), the remote heavy beam's
+ * ray (`combat/remoteBeamRay.ts`) and the drawn local beam (`liveBeamLine`).
+ */
+export function mountMuzzleRay(
+  shipX: number, shipY: number, shipAngle: number, mount: WeaponMount | undefined,
+  mountAngle: number, muzzleD: number, out: MuzzleRay,
+): MuzzleRay {
+  const c = Math.cos(shipAngle), s = Math.sin(shipAngle);
+  const lx = mount?.localX ?? 0, ly = mount?.localY ?? 0;
+  const a = shipAngle + (mount?.baseAngle ?? 0) + mountAngle;
+  out.fwdX = -Math.sin(a);
+  out.fwdY = Math.cos(a);
+  out.fromX = shipX + lx * c - ly * s + out.fwdX * muzzleD;
+  out.fromY = shipY + lx * s + ly * c + out.fwdY * muzzleD;
+  return out;
+}
+
+const liveRayScratch: MuzzleRay = { fromX: 0, fromY: 0, fwdX: 0, fwdY: 0 };
 
 /**
  * The line the pilot's OWN beam from `mount` is drawn along this frame (game
@@ -322,17 +411,14 @@ export function liveBeamLine(
   shipX: number, shipY: number, shipAngle: number, mountAngle: number,
   dist: number, out: RemoteBeamLine,
 ): RemoteBeamLine {
-  const c = Math.cos(shipAngle), s = Math.sin(shipAngle);
-  const lx = mount?.localX ?? 0, ly = mount?.localY ?? 0;
-  const a = shipAngle + (mount?.baseAngle ?? 0) + mountAngle;
-  const fx = -Math.sin(a), fy = Math.cos(a);
   // The barrel tip: the point the client ray (`ColyseusClient.updateLiveBeam`)
   // and the server's fire ray leave (core/combat/muzzle.ts, #15).
   const muzzleD = mount ? shipShotMuzzle(kind, mount) : shipTuning(kind).muzzleClearance;
-  out.fromX = shipX + lx * c - ly * s + fx * muzzleD;
-  out.fromY = shipY + lx * s + ly * c + fy * muzzleD;
-  out.toX = out.fromX + fx * dist;
-  out.toY = out.fromY + fy * dist;
+  const r = mountMuzzleRay(shipX, shipY, shipAngle, mount, mountAngle, muzzleD, liveRayScratch);
+  out.fromX = r.fromX;
+  out.fromY = r.fromY;
+  out.toX = r.fromX + r.fwdX * dist;
+  out.toY = r.fromY + r.fwdY * dist;
   return out;
 }
 

@@ -30,20 +30,21 @@ import { HITSCAN_RANGE } from '../../core/combat/Weapons.js';
  *  long visual fade to nothing at MAX range. Visual-only (never damage). */
 export const VISUAL_BEAM_SOLID_FRAC = 0.4;
 
-/** The full-strength band — `wdef.range` for hitscan (== the aim guide);
- *  the legacy `HITSCAN_RANGE` fallback for non-hitscan defs. */
-export function beamOptimalDist(wdef: WeaponDef): number {
-  return wdef.mode === 'hitscan' ? wdef.range : HITSCAN_RANGE;
+/** The full-strength band — `wdef.range` for hitscan (== the aim guide),
+ *  × the mount's `rangeMul` (`mountRangeFactor`: a mining tool's sized
+ *  reach); the legacy `HITSCAN_RANGE` fallback for non-hitscan defs. */
+export function beamOptimalDist(wdef: WeaponDef, rangeMul = 1): number {
+  return wdef.mode === 'hitscan' ? wdef.range * rangeMul : HITSCAN_RANGE;
 }
 
 /** How far the beam reaches — `range × falloff.maxRangeMul` when the def
  *  carries a beyond-optimal fringe, else the optimal range. The SAME numbers
  *  the server's damage falloff reads, so the visible taper == the damage band
- *  by construction. */
-export function beamMaxDist(wdef: WeaponDef): number {
-  const optimal = beamOptimalDist(wdef);
+ *  by construction (the server ray scales by the same `rangeMul`). */
+export function beamMaxDist(wdef: WeaponDef, rangeMul = 1): number {
+  const optimal = beamOptimalDist(wdef, rangeMul);
   if (wdef.mode === 'hitscan' && wdef.falloff?.maxRangeMul && wdef.falloff.maxRangeMul > 1) {
-    return wdef.range * wdef.falloff.maxRangeMul;
+    return optimal * wdef.falloff.maxRangeMul;
   }
   return optimal;
 }
