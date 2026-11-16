@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { WeaponMount } from '../../shared-types/shipKinds/types.js';
-import { LOCK_HAULABLE, LOCK_SALVAGE, TURRET_NO_LOCK, pickTurretLock } from './turretLockPick.js';
+import { LOCK_CONSUMABLE, LOCK_HAULABLE, LOCK_SALVAGE, TURRET_NO_LOCK, pickTurretLock } from './turretLockPick.js';
 
 // Salvage share-out (owner 2026-11-16): a group's mining lasers spread over
 // the locked pieces, big lasers on big pieces, skipping pieces the ship can
@@ -123,5 +123,27 @@ describe('pickTurretLock: piece size order is float32-stable (#15)', () => {
     const server = picks(group, [a, b], [LOCK_SALVAGE, LOCK_SALVAGE]);
     const client = picks(group, [Math.fround(a), Math.fround(b)], [LOCK_SALVAGE, LOCK_SALVAGE]);
     expect(server).toEqual(client);
+  });
+});
+
+describe('pickTurretLock: consumable pieces (the factory line)', () => {
+  const S = LOCK_SALVAGE;
+  const C = LOCK_SALVAGE | LOCK_CONSUMABLE;
+  it('no laser aims at a consumable piece: it cuts the others, or has no aim', () => {
+    const group = [mount('mining_laser', 'L'), mount('mining_laser', 'S')];
+    for (const p of picks(group, [100, 30, 200], [S, C, S])) expect(p).not.toBe(1);
+    expect(picks(group, [30], [C])).toEqual([TURRET_NO_LOCK, TURRET_NO_LOCK]);
+  });
+
+  it('a tractor skips a consumable piece and has no aim when every lock is one', () => {
+    const group = [mount('tractor', 'L'), mount('tractor', 'S')];
+    expect(picks(group, [30], [C])).toEqual([TURRET_NO_LOCK, TURRET_NO_LOCK]);
+    expect(picks(group, [30, 400], [C, S])).toEqual([1, 1]);
+  });
+
+  it('a tractor keeps pulling a non-consumable piece, haulable or not (unchanged)', () => {
+    const group = [mount('tractor', 'M')];
+    expect(picks(group, [400], [S])).toEqual([0]);
+    expect(picks(group, [400], [S | LOCK_HAULABLE])).toEqual([0]);
   });
 });

@@ -13,6 +13,14 @@
  * at least `SALVAGE_HAUL_MIN_ACCEL`: the tractor's own fixed force and
  * falloff, `tractorPull`, accel = F / m) AND its hold weight fits the free
  * hold; and the big/small split (`salvagePrefersBig`).
+ *
+ * **Consumable by me** (owner 2026-11-16, the factory line): a piece small
+ * enough for THIS ship to take in whole: its bounding radius is at most
+ * `SALVAGE_CONSUME_FRAC` × the ship's hull radius (`salvageConsumeRadius`;
+ * 0 for a ship with no mining tool, which consumes nothing) AND its hold
+ * weight fits the free hold (`salvageConsumable`). Nothing targets a
+ * consumable piece (no laser, no tractor: `LOCK_CONSUMABLE`); the ship takes
+ * it in by proximity through the loot pickup (`LootSubsystem`).
  */
 import type { WeaponMount } from '../../shared-types/shipKinds/types.js';
 import { MOUNT_SIZE_TUNING } from '../../shared-types/shipScale/tuning.js';
@@ -34,6 +42,12 @@ export const SALVAGE_HAUL_MIN_ACCEL = 10;
  *  already cut the pull to a quarter. Judging at full force (≤ dRef) would
  *  call pieces haulable that the beam can't start moving from range. */
 export const SALVAGE_HAUL_DIST_PER_DREF = 2;
+
+/** A piece is small enough to consume when its bounding radius is at most
+ *  this share of the ship's hull radius: a fighter (r 24) consumes nothing
+ *  over 3.6 u, a destroyer (r 1,220) a 183 u piece (fighter debris), a
+ *  battleship (r 2,876) a 431 u one. Big ships eat the small end of the line. */
+export const SALVAGE_CONSUME_FRAC = 0.15;
 
 /** One salvage candidate (a wreck piece, a rock or a rock piece). */
 export interface SalvageCandidate {
@@ -85,4 +99,34 @@ export function salvageHaulMass(mounts: ReadonlyArray<WeaponMount>): number {
 /** Could this ship tractor `c` in and store it? Then no laser cuts it. */
 export function salvageHaulable(c: Pick<SalvageCandidate, 'mass' | 'holdWeight'>, haulMass: number, freeHold: number): boolean {
   return c.mass <= haulMass && c.holdWeight <= freeHold;
+}
+
+const toolCache = new WeakMap<ReadonlyArray<WeaponMount>, boolean>();
+
+/** Does this mount list carry a mining tool (a mining laser or a tractor)?
+ *  Cached per mount list. */
+export function hasMiningTool(mounts: ReadonlyArray<WeaponMount>): boolean {
+  const hit = toolCache.get(mounts);
+  if (hit !== undefined) return hit;
+  let yes = false;
+  for (const m of mounts) {
+    const def = getWeapon(m.weaponId);
+    if (def.tractor !== undefined || isSalvageWeapon(def)) { yes = true; break; }
+  }
+  toolCache.set(mounts, yes);
+  return yes;
+}
+
+/** The biggest piece radius this ship consumes: `SALVAGE_CONSUME_FRAC` × its
+ *  hull radius, or 0 with no mining tool among its kind's mounts (a ship
+ *  with no mining tools behaves as before: it never takes a piece in). */
+export function salvageConsumeRadius(kind: { readonly radius: number; readonly mounts?: ReadonlyArray<WeaponMount> }): number {
+  return kind.mounts !== undefined && hasMiningTool(kind.mounts) ? SALVAGE_CONSUME_FRAC * kind.radius : 0;
+}
+
+/** Can this ship take `c` in whole: small enough (`consumeRadius`, from
+ *  `salvageConsumeRadius`) AND its hold weight fits the free hold? Then
+ *  nothing targets it and the loot pickup takes it in. */
+export function salvageConsumable(c: Pick<SalvageCandidate, 'radius' | 'holdWeight'>, consumeRadius: number, freeHold: number): boolean {
+  return consumeRadius > 0 && c.radius <= consumeRadius && c.holdWeight <= freeHold;
 }
