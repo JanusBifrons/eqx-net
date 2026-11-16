@@ -3220,16 +3220,14 @@ export class ColyseusGameClient {
   }
 
   private handleDestroy(evt: DestroyEvent): void {
+    const vaporised = evt.vaporised === true;
+    // Held for its drawn shell: the release marks it vaporised in its frame.
+    if (this._shellTiming.deferKill(evt.targetId, vaporised)) return;
     // A cut kill that left no wreck piece (fracture v11): the renderer plays
     // the vaporise blast and holds no dying hull. Same key as explodingShips.
-    if (evt.vaporised === true) this.mirror.vaporisedShips?.add(evt.targetId);
-    if (evt.targetId.startsWith('swarm-')) {
-      if (this._shellTiming.deferKill(evt.targetId)) return;
-      this.killSwarmEntity(evt.targetId);
-      return;
-    }
-    if (this._shellTiming.deferKill(evt.targetId)) return;
-    this.killEntity(evt.targetId);
+    if (vaporised) this.mirror.vaporisedShips?.add(evt.targetId);
+    if (evt.targetId.startsWith('swarm-')) this.killSwarmEntity(evt.targetId);
+    else this.killEntity(evt.targetId);
   }
 
   /**

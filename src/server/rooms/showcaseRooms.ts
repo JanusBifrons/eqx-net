@@ -8,6 +8,7 @@
  */
 import { SCENARIO, STRUCTURE_SCENARIO_PREBUILT } from './scenarioLayouts.js';
 import { CUT_FIELD_LOOK_SEED, SHOWCASE_CUT_FIELD_OPTS } from './showcaseCutFieldRooms.js';
+import { weaponCutsRoomOpts } from './showcaseWeaponCutsRooms.js';
 
 /**
  * The pilot identity base shots join as (anonymous join, seeded `eqxPlayerId`).
@@ -100,6 +101,9 @@ export const SHOWCASE_CAPITAL_DUEL_OPTS = {
   defaultSpawnX: 4000,
   defaultSpawnY: 0,
 };
+
+/** Weapon cuts shots (beam-slice, beam-vaporise-subcap, rail-channel): showcaseWeaponCutsRooms.ts. */
+export const { beamSlice: SHOWCASE_BEAM_SLICE_OPTS, railChannel: SHOWCASE_RAIL_CHANNEL_OPTS } = weaponCutsRoomOpts(SHOWCASE_CAPITALS_COMBAT_OPTS);
 
 /** Real-scale ranges (docs/architecture/real-scale-ranges.md): the pilot
  *  (join `shipKind=battleship`) at the origin, nose +y, and an NPC battleship
@@ -581,6 +585,8 @@ export const SHOWCASE_ROOMS = {
   'showcase-capitals': SHOWCASE_CAPITALS_OPTS,
   'showcase-capitals-combat': SHOWCASE_CAPITALS_COMBAT_OPTS,
   'showcase-capital-duel': SHOWCASE_CAPITAL_DUEL_OPTS,
+  'showcase-beam-slice': SHOWCASE_BEAM_SLICE_OPTS,
+  'showcase-rail-channel': SHOWCASE_RAIL_CHANNEL_OPTS,
   'showcase-long-guns': SHOWCASE_LONG_GUNS_OPTS,
   'showcase-melee': SHOWCASE_MELEE_OPTS,
   'showcase-coastal': SHOWCASE_COASTAL_OPTS,

@@ -314,7 +314,57 @@ player-flown (active or parked), breaks it into wreck bodies on the server.
     16" shell (1400) is J ≈ 21,000, so its biggest piece (~640–715 mass)
     moves ~30–33 u/s and turns ~3°/s on a hit 0.3 radius off centre, a
     mid-size piece (~80) hits the cap, and a 10-damage bolt moves the big
-    piece ~0.2 u/s (a sliver can still reach the cap: it is tiny).
+    piece ~0.2 u/s (a sliver can still reach the cap: it is tiny). Those
+    were the numbers before the owner's re-split clip review (2026-11-15:
+    "It's also pushing the scrap away ... scrap should weigh a lot and be
+    very resistant to sliding at this sort of size and scale"): the capital
+    profile now has `knockScale` 0.003 and `knockMaxScale` 0.1, so
+    `wreckKnockSpeed` is 0.000036 and `wreckKnockMax` 0.0025 × hull radius
+    per second (heavy cruiser ≈ 0.08 u/s / 5.5 u/s; the 16" shell above
+    moves its biggest piece ~0.1 u/s). Measured
+    (`wreckMainBatteryWear.test.ts`): 10 s of a lance battlecruiser's main
+    battery on a battleship's biggest piece from rest leaves it creeping
+    ~0.5 u/s with no measurable spin (was ~109 u/s over 8 s). The
+    pieces' damping is unchanged (it also sets how far the death parting
+    carries them).
+    - **Beams never shove debris (owner 2026-11-15: "lasers shouldn't move
+      the scrap").** A `hitscan`-mode weapon (beam, charge laser, heavy
+      beam, mining laser) is light, not an impact: `onWreckHit` lets it
+      wear the piece (and split it) and stops the shot, but posts no
+      impulse, in the crack hold or after. Shells, slugs and projectile
+      bolts still knock by mass; rams push through the contact. Measured
+      (`wreckMainBatteryWear.test.ts`): 10 s of the lance main battery
+      leaves the battleship's biggest piece at 0.00 u/s (was ~0.46).
+    - **Mass-scaled break-up (owner 2026-11-15: "the scrap/wreck should
+      weigh A LOT ... a subtle much slower movement, presumably by just
+      giving it an accurate mass value vs the forces applied").** Every
+      cut used to open at a SET speed (`wreckSeparate`, ~31 u/s for a heavy
+      cruiser) whatever the pieces weighed, so the biggest piece slid off
+      at ~15–70 u/s. `wreckBreakKicks` now gives each piece impulses
+      against its real mass (its share of `shipBodyMass`, the mass its body
+      gets): the blast away from the kill point is hull mass × push ×
+      √share (dv = push ÷ √share; capital `pushScale` 0.08), each shared
+      cut throws its faces apart with hull mass × `wreckCrack` (0.0016 ×
+      radius/s) × cut length ÷ radius (capital `crackScale` 1), and the
+      seam guard (capital `separateScale` 0.05, ~1.5 u/s heavy cruiser)
+      only keeps every cut from closing. The re-split (`planWreckResplit`)
+      uses the same function. Measured over 24 seeds × kill points
+      (`wreckPieces.test.ts` "mass-scaled parting"; median / max u/s):
+
+      | Kind | Big pieces (≥ 30 %) before → after | Slivers (≤ 7 %) before → after |
+      |---|---|---|
+      | destroyer | 18.8 / 39.7 → 2.1 / 4.3 | 35.4 / 54.2 → 5.9 / 14.4 |
+      | heavy cruiser | 27.7 / 70.5 → 3.2 / 7.6 | 50.6 / 93.7 → 12.7 / 25.6 |
+      | battleship | 30.8 / 66.7 → 4.3 / 6.4 | 72.1 / 121.8 → 17.2 / 26.8 |
+
+      On the real server (`wreckMassParting.test.ts`, heavy cruiser, a 16"
+      kill): the 55 % piece parts at 4.6 u/s (was 42.4), a 6.6 % sliver at
+      11.9 (was 27.0). The narrowest neighbour gap is now ~1.6 u 1 s after
+      the kick and ~10–15 u after 8 s (was ~31 / ~170 u): two big
+      neighbours part subtly. Sub-caps break into 2–3 near-equal chunks, so
+      mass barely changes their parting: they keep the reviewed seam floor
+      (`separateScale` 240, `crackScale` 0) with the push at ×20 ÷ √share
+      (≈ the old ×30 on a half).
     - **During the crack hold the whole wreck takes the hit (owner review
       2026-11-13).** A battleship salvo lands over ~0.5 s: the first shell
       breaks the hull and the rest arrive during the `WRECK_CRACK_MS` hold.
@@ -919,6 +969,86 @@ fracture); the server sends 0.
   child chains" (server `wreckChildGeometry` == the client's resolve, bit for
   bit, depth 1 and 2, child before parent, parent removed and recycled,
   renderer path, `WreckWireDeltas` pass-through, malformed links).
+
+#### Re-split on the server: integrity, split, salvage (salvage stream PRs 5-6, 2026-11-15)
+
+Wreck pieces now wear down and break again. Pure numbers in
+`src/core/destruction/wreckIntegrity.ts`; the per-piece state in
+`CapitalWreckSubsystem`'s piece entry; the split itself in
+`src/server/rooms/wreckResplit.ts` (`WreckResplitter`, `planWreckResplit`).
+
+- **Hidden integrity.** Each piece gets `I_max = clamp01(m_piece /
+  shipBodyMass) × maxHull × integrityMul`, at least `integrityMinFrac ×
+  maxHull` (`wreckPieceIntegrity`), at spawn, root and child alike. It lives
+  on the server only: never on the wire, never shown. A kind with no
+  `resplit` gets an infinite pool (never wears).
+- **Wear.** `SectorRoom.applyDamage` hands the weapon to `onWreckHit`; each
+  hit wears `damage × weaponTargetFactor(def, 'wreck')` (`wreckWearFactor`).
+  The default wreck factor is `WRECK_DEFAULT_TARGET_FACTOR` 0.1, the mining
+  laser's 1, so ordinary guns wear a wreck ten times slower (owner). An
+  untagged hit (no weapon id) wears at 0.1. Only hits that reach
+  `onWreckHit` wear: the existing `damage > 0` gate, and a hit point AND
+  direction are needed, so splash and missile hits (no direction) and rams do
+  not wear a wreck (they push it through their own impulse paths).
+- **At 0.** Past the crack hold, the piece splits when its area is at least
+  `minAreaFrac` × the hull's area (`wreckHullArea`), its radius at least
+  `WRECK_RESPLIT_MIN_RADIUS_PER_RADIUS` (0.05) × the kind's radius (#18), and
+  its FIFO (`MAX_LIVE_WRECK_PIECES` / the sub-cap one) has room for a whole
+  child fracture (`resplit.fracture.maxPieces`). The split is a child wreck:
+  a new `wreckId` whose descriptor is one chain step (`parentWreck`,
+  `parentPiece`, `seed = wreckChildSeed(parent.seed, piece)`, the hit as the
+  kill point in the hull's 1× frame, the weapon's `killCut`: heavy beam,
+  railgun and mining laser cut their own line), its pieces spawned through
+  the same `spawnPiece` as a death, the parent piece removed.
+- **Placement.** Every piece's body frame is the dead hull's scaled frame
+  translated to its centroid (never turned), so the server finds the dead
+  hull's virtual origin under the live piece (`O = P − R(θ)·(cx, cy)`), maps
+  the hit into the 1× frame through it and spawns each child at `O +
+  R(θ)·(ccx, ccy)`, angle θ, with the parent's rigid motion (`v + ω × r`, ω)
+  plus the parting kicks of `wreckBreakKicks` from the hit (impulses against
+  each child's mass, at the gentlest `harder` 0.75; "Mass-scaled break-up").
+  The children tile the parent: their mass centre is where it was
+  (`wreckResplit.test.ts`).
+- **Too small, or cap full: salvage** (PR 6). The piece leaves
+  (`removePiece` → `pieceGone`) and a `LootSubsystem.drop` pod of the
+  `salvage` good takes its place, moving with it: `max(1, round(m_piece /
+  shipBodyMass × salvagePerHull))` units (`wreckSalvageQty`).
+- **Refcount.** A wreck's descriptor leaves only when it has no live pieces
+  AND no live child wrecks; then each ancestor left with neither leaves too
+  (`retire`). This is the PR 4 wire contract.
+- **Rate limit.** At most `WRECK_RESPLITS_PER_TICK` (2) worn-out pieces are
+  handled per tick (each runs a fracture and spawns bodies); a piece over
+  budget stays at 0 and goes on its next hit.
+- **Numbers** (capital `integrityMul` 0.62, `integrityMinFrac` 0.09 since
+  the owner's re-split clip review, 2026-11-15: "It's splitting stuff like
+  almost instantly ... no time for me to understand"; it was 0.5 / 0.01). A
+  battleship (max hull 11,328) whose biggest piece is 47 % of the hull:
+  I_max ~3,300, about 4.6 s of one mining laser (120 per 10 ticks), ~33,000
+  damage from ordinary guns; the floor is ~1,020 for any battleship piece. A
+  heavy cruiser's biggest piece: ~1,180, floor ~360. Measured
+  (`wreckMainBatteryWear.test.ts`, a lance battlecruiser's main battery
+  sustaining ~2,800 heavy-beam damage/s, ~280/s of wear): the biggest piece
+  of a battleship (~40 % of its hull, I_max 2,814) cracks after ~10.2 s
+  (was ~8.3 s), its smallest child (I_max 1,258) after ~4.5 s (the old
+  floor was ~0.4 s of the same fire). Guns still wear ten times slower than
+  the mining laser.
+- **Filming.** `wreck-test` allows capital pilots: a lance battlecruiser
+  (heavy-beam main battery) off the battleship's beam, `test_kill_capitals`,
+  then lock a piece with every group and its AUTO turrets cut it up
+  (`tests/e2e/capital-wreck-render.spec.ts` "re-splits"). The showcase shot
+  `wreck-resplit` keeps working one piece as a player would: when it splits,
+  it locks the cut child nearest where it was. The main battery traverses
+  ~15 s to the beam, so the take starts once its beams are on the piece. No ship carries the mining laser yet, so the film shows
+  ordinary beams at 0.1. Activated latent mounts (the fighter's wing
+  hardpoints) form a `wing` group the client fire control does not fire
+  yet, so they cannot carry a test mining laser.
+- **Locks:** `wreckIntegrity.test.ts`, `wreckResplit.test.ts` (wear 10×,
+  split + descriptor + determinism + placement + refcount, salvage, rate
+  limit, cap full), `tests/integration/sectorRoom/wreckResplit.test.ts` (a
+  real room: wear, split, child bodies == chain geometry, salvage pod),
+  `tests/integration/sectorRoom/wreckMainBatteryWear.test.ts` (a lance main
+  battery: ~10 s to crack the biggest battleship piece, a child >= ~3 s,
+  drift < 1.5 u/s).
 
 ### Later: wrecks as terrain and salvage
 
@@ -2406,7 +2536,11 @@ line; a railgun kill erases a straight channel as wide as the bolt.
   - **Client.** `destroy` parses through `parseDestroy` (the strict schema;
     malformed dropped with a sampled `destroy_malformed_dropped` log, #3).
     A vaporised death adds its id to `mirror.vaporisedShips` (the same key
-    as `explodingShips`, a one-frame trigger cleared with it). The renderer
+    as `explodingShips`, a one-frame trigger cleared with it). A death held
+    for its drawn shell (`DrawnShellTiming.deferKill`, shell-events.md
+    "Kills wait for the drawn shell") carries `vaporised` on its record and
+    is marked in the frame it is released, never on the deferred destroy
+    (`ColyseusClient.vaporiseDeferredKill.test.ts`). The renderer
     then (a) holds no dying hull for it (`noteDyingHulls` skips it: the
     sub-cap hold used to wait 250 ms for pieces that never come), (b) never
     hands its blast to a wreck break-up (`hullDeathBlastReplaced`), and
@@ -2471,6 +2605,76 @@ line; a railgun kill erases a straight channel as wide as the bolt.
   `wreckPieces.test.ts` "kill-cut direction";
   `tests/integration/wire/wreckGeometryParity.test.ts` (cut descriptors
   rebuild bit for bit); `wreckWire.test.ts`.
+
+#### Multi-cut: one cut per beam (fracture v12, 2026-11-15)
+
+Owner: three main turrets burn a wreck piece at slightly different points
+and angles, but when its integrity ran out it split along only ONE beam's
+line, so two beams looked like they did nothing. Decision, "one cut per
+beam": each cutting beam burns its own line, and when the piece gives way
+it breaks along EVERY line that burned it. Then (owner, same day): the same
+rule for a live ship's kill split, and for several capitals firing together.
+
+- **Burn lines** (`core/destruction/burnLines.ts`, `BurnLines`): the ONE
+  tracker for both breaks. The server keeps one per tracked hull (the hit
+  entry in `CapitalWreckSubsystem.noteHit`) and one per wreck piece (its
+  per-piece entry beside the integrity, `onWreckHit`). Only weapons with a
+  `killCut` burn lines (heavy beam, railgun, mining laser); any shooter's
+  (two ships firing together both count). A line is the hit point and the
+  shot's direction in the hull's 1× Pixi-up frame, mapped with the target's
+  pose AT THE HIT (`hullPoseInto` / `piecePoseInto`), so it stays put while
+  the target moves and turns; its width is the weapon's cut width.
+- **Slots, no mount id:** `BURN_LINE_SLOTS` 4 typed slots, no allocation
+  per hit (#14). A shooter's next hit on (nearly) the same line overwrites
+  its slot (a sweeping beam keeps one slot); a new line takes a free or
+  stale slot, else the oldest. Lines older than `BURN_LINE_WINDOW_TICKS`
+  (60 ticks, ~1 s of game time) are gone.
+- **Merge:** two lines are one (`sameBurnLine`) when under ~5° apart
+  (`BURN_LINE_MERGE_COS`) AND the gap between their strips is under
+  `BURN_LINE_MERGE_GAP_PER_RADIUS` (0.08) × the cut thing's radius (the
+  hull's, or the piece's own; #18). So near-parallel beams never leave a
+  sliver between them. A lance firing bow-on lines its three turrets up
+  along the keel: their beams run down one line, one cut. Broadside, they
+  converge from ~10° apart: three cuts.
+- **The break:** the killing (or breaking) shot is the main cut as before
+  (`cutKind` / `cutAng` / `cutW`); `BurnLines.extraCuts` returns every other
+  live line that is not a near-duplicate of it or of a line already taken,
+  newest first, at most `FRACTURE_MAX_EXTRA_CUTS` 3. `fractureHull`'s
+  `extraCuts` then splits every part each line crosses (a wide one erases
+  its strip through the channel code, `cutStrip`, with the same sliver
+  erase), after the main cut's strip and before the cracks; like the main
+  cut they are never dropped for the piece cap. The burn-away share (v11)
+  applies to what is left after ALL of them, so several beams can still
+  vaporise a small ship. Without `extraCuts` the output is v11's.
+- **Re-split children under the floor are salvage pods:** on a multi-cut
+  re-split (the step has `extraCuts`), a child under the kind's
+  `resplit.minAreaFrac` of the hull turns into a salvage pod (the worn-out
+  tiny-piece path, `wreckSalvageQty` of its mass) instead of a body; all
+  children pods: the parent just leaves. The FIFO check uses the real child
+  count (several cuts can give more than one fracture's cap). A kill split
+  keeps its pieces as they are (the burn-away share handles a sub-cap).
+- **Wire (#15, #16):** the descriptor's optional `extraCuts` (at most
+  `MAX_WRECK_EXTRA_CUTS` 3 of `{ x, y, ang, w? }`, hull 1× frame, `ang` a u16
+  decoded by the shared trig-free `cutDirFromAngle`; only with a `cutKind`),
+  on a root (kill split) and on a child step (re-split). The client's
+  `WreckGeometryStore` feeds them into the same fracture, so a late joiner
+  rebuilds the same pieces from the snapshot alone. `FRACTURE_ALGO_VERSION`
+  12: an older client drops such a wreck instead of guessing.
+- **Glow:** every extra line's edges are `EDGE_CUT`, so the existing cut
+  glow draws one glow per cut edge; the look and timing are unchanged.
+- Locks: `fractureHull.multiCut.test.ts` (three lines on a box give every
+  cell, `EDGE_CUT` edges, the wide strip, burn-away after all cuts, v11
+  byte-identical without them, the cap; a re-split chain; `BurnLines`:
+  per-beam slots, two shooters, the window, the merge, the bound);
+  `src/server/rooms/wreckMultiCut.test.ts` (two ships' kill split; old,
+  gun and own lines add nothing; three beams on a piece: two further lines,
+  the children, pods under the floor);
+  `tests/integration/wire/wreckGeometryParity.test.ts` "v12" (the real
+  subsystem vs the real store, kill split and re-split, a late joiner,
+  malformed lines refused both ways);
+  `tests/integration/sectorRoom/wreckMultiCut.test.ts` (a broadside lance
+  main battery cracks a battleship piece along its turrets' lines, every
+  child rebuilt by the client store).
 
 #### Sub-cap cut kills (beam take 7 review, 2026-11-15)
 
@@ -2628,9 +2832,9 @@ Every client must produce the same pieces as the server, bit for bit, from
 - **Player capitals break up exactly like NPC capitals.** Anyone may salvage
   the wreck, including the former owner.
 - **Wreck pieces don't break further** ("No for now"). Shooting a piece never
-  re-fractures it. *Lifted 2026-11-15 (salvage stream): the core child
-  fracture and its wire contract exist (§S4 "Re-split", "Re-split on the
-  wire"); server spawning follows.*
+  re-fractures it. *Reversed 2026-11-15 (salvage stream): pieces wear down
+  under fire (ordinary guns 10× slower than the mining laser), split again
+  and end as salvage (§S4 "Re-split on the server").*
 - **Smaller ships break up this way too** ("Yes"). Fighters, frigates and
   cruisers fracture dynamically like capitals, replacing today's hand-made
   scrap. This is a later slice, after the capital path works.
@@ -2665,7 +2869,7 @@ Moved from `src/core/CLAUDE.md` (section "Capital fracture").
 - **Concave hulls go through `splitByLine`,** which traces each disjoint part separately. Plain Sutherland–Hodgman bridges them; the U-hull test catches that.
 - **Jagged Voronoi cut edges** are seeded from the edge's own quantised endpoints, so both neighbours share the line. Section cuts and kill cuts (`EDGE_CUT`) stay straight.
 - **Kill cuts (v9).** `FractureInput.cut` (`slice` | `channel`, a direction in the hull frame, a channel width) is optional and changes nothing when absent; v9 adds no seeded draw, and v10's capital splinters draw from their own stream. A cut's direction crosses the wire as a u16 angle and is decoded only by `cutDirFromAngle` (arithmetic, no trig) on both sides. Detail: "Kill cuts" above.
-- **Wreck pieces collide with each other, and neighbours always part (owner review 2026-11-13: heavy, no overlap, no hinge).** `WRECK_COLLISION_GROUPS` (0x0004FFFF, server spawn and client twin) lets pieces bump. Their collider is `WreckPieceGeometry.colliderParts` (each part inset by `shipTuning(kind).wreckColliderInset`, so neighbours spawn a hair apart); drawing and weapon hits keep `parts`. `buildWreckPieces` gives each piece a slow kick (push `wreckPushMax/Min`, rim-speed spin) and then the least momentum-conserving pushes that open every shared cut (collinear cut edges, or cut edges that only touch at a T-junction) at `wreckSeparate` or more at both ends, spin included (#18 for all three). Tuned 2026-11-13 so the break is SEEN but heavy: `wreckSeparate` 0.014 × radius/s (~31 u/s heavy cruiser), push 0.010 / 0.004; the narrowest cut is ~31 u open 1 s after the kick, no piece over ~75 u/s (`wreckPiecesSeparate.test.ts`). The separation multiplies along chains of neighbours, so it assumes v7's few chunks. The kick is applied after `WRECK_CRACK_MS` (`shared-types/wreckTiming.ts`, game ticks; a cut kill: at once, "Kill cuts"); until then the pieces move with the dead hull. Never give pieces a velocity field that lets a neighbour close on another along their cut.
+- **Wreck pieces collide with each other, and neighbours always part (owner review 2026-11-13: heavy, no overlap, no hinge).** `WRECK_COLLISION_GROUPS` (0x0004FFFF, server spawn and client twin) lets pieces bump. Their collider is `WreckPieceGeometry.colliderParts` (each part inset by `shipTuning(kind).wreckColliderInset`, so neighbours spawn a hair apart); drawing and weapon hits keep `parts`. `wreckBreakKicks` (the ONE break-up kick model, first break and re-split) gives each piece impulses against its own mass: the blast away from the break point (`wreckPushMax/Min` ÷ √mass share), the crack along each shared cut (`wreckCrack` × cut length), a rim-speed spin, then the guard: the least momentum-conserving pushes that open every shared cut (collinear cut edges, or cut edges that only touch at a T-junction) at `wreckSeparate × separateScale` or more at both ends, spin included (#18 for all; profile scales in `DESTRUCTION_PROFILES`). Capital since 2026-11-15 ("Mass-scaled break-up"): a heavy cruiser's big pieces part at ~3 u/s, slivers ~13 u/s, guard ~1.5 u/s (`wreckMassParting.test.ts`, `wreckPiecesSeparate.test.ts`). The separation multiplies along chains of neighbours, so it assumes v7's few chunks. The kick is applied after `WRECK_CRACK_MS` (`shared-types/wreckTiming.ts`, game ticks; a cut kill: at once, "Kill cuts"); until then the pieces move with the dead hull. Never give pieces a velocity field that lets a neighbour close on another along their cut.
 - **S2a: `wreckPieces.ts` / `wreckHits.ts`.** `buildWreckPieces` turns a death (kind, pose, kill point, damage inputs, seed) into rigid-body specs: the fracture on the 1× Pixi-up outline, pieces mapped like `shipShapeToPolygon` (x·s, −y·s, rings reversed to stay CCW), mass ∝ area, v + ω × r plus an outward push. `wreckRayHit` / `wreckSweepHit` are the one weapon-vs-wreck test (circle, then convex parts). The circle gate is `segmentNearCircle`, never `rayHitsSphere` (that returns null once the origin is inside the circle and past the centre, so shells passed through a long piece's far half; lock `wreckHits.test.ts`).
 - **S2b: `wreckPieceGeometry(WreckFractureInputs)` is the one source of a piece's shape** (body-local parts, outline, cut flags, mass, radius). The server's `buildWreckPieces` places its output and the client rebuilds it from the `wrecks[]` descriptor; never compute a piece's shape another way (#15, locked bit for bit by `tests/integration/wire/wreckGeometryParity.test.ts`). `World.spawnObstacle` skips a part Rapier cannot hull (a < 1 u sliver threw inside the worker; `World.slivers.test.ts`).
 - **Sub-capital profile (2026-11-13).** How a ship breaks up is `shipTuning(kind).destruction` / `destructionProfile({ type, kindId })` (`capital` | `subcap` | `none`), and every per-profile number lives in `DESTRUCTION_PROFILES` (`shared-types/shipScale/destruction.ts`), never in a branch. `wreckPieceGeometry` takes its fracture options from it; the sub-cap options (≤ 3 pieces, no fans or far crack, `chunkyPieces`: a sound primary + one extra chunk, gentle jag) must never change a capital's output: new `fractureHull` options default to the old behaviour. Lock: `fractureHull.subcap.test.ts`.
@@ -2690,6 +2894,7 @@ Moved from `src/core/CLAUDE.md` (2026-11-14); kept for the record.
 - **v8: sub-capital pieces are never nearly the whole hull** (take 9 review 2026-11-14). The `soundMinShare` option (default 0.15); the sub-cap profile sets 0.43 (0.33 before take 10). Capital output unchanged. Lock: `wreckPieces.subcapParting.test.ts` "read as broken".
 - **v10: a wide heavy-beam slice** (2026-11-15). A slice with a width erases a strip that wide like a channel; the heavy beam's is `HEAVY_BEAM_WIDTH` 60 u, its drawn core the same.
 - **v11: a cut kill burns away pieces too small** (2026-11-15). The optional `cutBurnMinShare` (sub-capital profile 0.2): on a heavy-beam slice or railgun channel kill every piece under that share of the hull burns away, a crack that would leave one is dropped; none left = vaporised (`DestroyEvent.vaporised`). Capital and un-cut output unchanged. Lock: `fractureHull.cutBurn.test.ts`; detail: "Kill cuts", "Burn-away".
+- **v12: one cut per beam** (2026-11-15). The optional `extraCuts`: the other cutting beams that burned the hull or piece in the last ~1 s each cut their own straight `EDGE_CUT` line (a wide one its strip), never dropped for the cap; the burn-away share applies after all of them. Without them the output is v11's (same golden hashes). Lock: `fractureHull.multiCut.test.ts`; detail: "Multi-cut".
 - **v10: splinters off a capital cut kill** (2026-11-15). The secondary cracks of a capital slice or channel kill branch off the cut at 40–58° and jag harder, instead of running parallel to it (film review: one shot read as three cuts). Count still from the violence table. Output without a cut unchanged. Lock: `fractureHull.cutSplinters.test.ts`, "golden: v9 kill cuts" (capital side-shot hashes).
 - **v9: kill cuts** (2026-11-14). The optional `cut`: a heavy-beam `slice` is a dead-straight primary along the shot through the kill point (`EDGE_CUT`, never jagged; slid toward the centroid only off a sliver); a railgun `channel` erases a strip as wide as the bolt. Output without a cut unchanged (same golden hashes). Locks: "golden: v9 kill cuts", the "fracture v9" describe in `fractureHull.killFocus.test.ts`.
 ## Server implementation notes
@@ -2736,7 +2941,7 @@ Moved from `src/core/CLAUDE.md` (section "Capital fracture").
 - **Concave hulls go through `splitByLine`,** which traces each disjoint part separately. Plain Sutherland–Hodgman bridges them; the U-hull test catches that.
 - **Jagged Voronoi cut edges** are seeded from the edge's own quantised endpoints, so both neighbours share the line. Section cuts and kill cuts (`EDGE_CUT`) stay straight.
 - **Kill cuts (v9).** `FractureInput.cut` (`slice` | `channel`, a direction in the hull frame, a channel width) is optional and changes nothing when absent; v9 adds no seeded draw, and v10's capital splinters draw from their own stream. A cut's direction crosses the wire as a u16 angle and is decoded only by `cutDirFromAngle` (arithmetic, no trig) on both sides. Detail: "Kill cuts" above.
-- **Wreck pieces collide with each other, and neighbours always part (owner review 2026-11-13: heavy, no overlap, no hinge).** `WRECK_COLLISION_GROUPS` (0x0004FFFF, server spawn and client twin) lets pieces bump. Their collider is `WreckPieceGeometry.colliderParts` (each part inset by `shipTuning(kind).wreckColliderInset`, so neighbours spawn a hair apart); drawing and weapon hits keep `parts`. `buildWreckPieces` gives each piece a slow kick (push `wreckPushMax/Min`, rim-speed spin) and then the least momentum-conserving pushes that open every shared cut (collinear cut edges, or cut edges that only touch at a T-junction) at `wreckSeparate` or more at both ends, spin included (#18 for all three). Tuned 2026-11-13 so the break is SEEN but heavy: `wreckSeparate` 0.014 × radius/s (~31 u/s heavy cruiser), push 0.010 / 0.004; the narrowest cut is ~31 u open 1 s after the kick, no piece over ~75 u/s (`wreckPiecesSeparate.test.ts`). The separation multiplies along chains of neighbours, so it assumes v7's few chunks. The kick is applied after `WRECK_CRACK_MS` (`shared-types/wreckTiming.ts`, game ticks); until then the pieces move with the dead hull. Never give pieces a velocity field that lets a neighbour close on another along their cut.
+- **Wreck pieces collide with each other, and neighbours always part (owner review 2026-11-13: heavy, no overlap, no hinge).** `WRECK_COLLISION_GROUPS` (0x0004FFFF, server spawn and client twin) lets pieces bump. Their collider is `WreckPieceGeometry.colliderParts` (each part inset by `shipTuning(kind).wreckColliderInset`, so neighbours spawn a hair apart); drawing and weapon hits keep `parts`. `wreckBreakKicks` (the ONE break-up kick model, first break and re-split) gives each piece impulses against its own mass: the blast away from the break point (`wreckPushMax/Min` ÷ √mass share), the crack along each shared cut (`wreckCrack` × cut length), a rim-speed spin, then the guard: the least momentum-conserving pushes that open every shared cut (collinear cut edges, or cut edges that only touch at a T-junction) at `wreckSeparate × separateScale` or more at both ends, spin included (#18 for all; profile scales in `DESTRUCTION_PROFILES`). Capital since 2026-11-15 ("Mass-scaled break-up"): a heavy cruiser's big pieces part at ~3 u/s, slivers ~13 u/s, guard ~1.5 u/s (`wreckMassParting.test.ts`, `wreckPiecesSeparate.test.ts`). The separation multiplies along chains of neighbours, so it assumes v7's few chunks. The kick is applied after `WRECK_CRACK_MS` (`shared-types/wreckTiming.ts`, game ticks); until then the pieces move with the dead hull. Never give pieces a velocity field that lets a neighbour close on another along their cut.
 - **S2a: `wreckPieces.ts` / `wreckHits.ts`.** `buildWreckPieces` turns a death (kind, pose, kill point, damage inputs, seed) into rigid-body specs: the fracture on the 1× Pixi-up outline, pieces mapped like `shipShapeToPolygon` (x·s, −y·s, rings reversed to stay CCW), mass ∝ area, v + ω × r plus an outward push. `wreckRayHit` / `wreckSweepHit` are the one weapon-vs-wreck test (circle, then convex parts). The circle gate is `segmentNearCircle`, never `rayHitsSphere` (that returns null once the origin is inside the circle and past the centre, so shells passed through a long piece's far half; lock `wreckHits.test.ts`).
 - **S2b: `wreckPieceGeometry(WreckFractureInputs)` is the one source of a piece's shape** (body-local parts, outline, cut flags, mass, radius). The server's `buildWreckPieces` places its output and the client rebuilds it from the `wrecks[]` descriptor; never compute a piece's shape another way (#15, locked bit for bit by `tests/integration/wire/wreckGeometryParity.test.ts`). `World.spawnObstacle` skips a part Rapier cannot hull (a < 1 u sliver threw inside the worker; `World.slivers.test.ts`).
 - **Sub-capital profile (2026-11-13).** How a ship breaks up is `shipTuning(kind).destruction` / `destructionProfile({ type, kindId })` (`capital` | `subcap` | `none`), and every per-profile number lives in `DESTRUCTION_PROFILES` (`shared-types/shipScale/destruction.ts`), never in a branch. `wreckPieceGeometry` takes its fracture options from it; the sub-cap options (≤ 3 pieces, no fans or far crack, `chunkyPieces`: a sound primary + one extra chunk, gentle jag) must never change a capital's output: new `fractureHull` options default to the old behaviour. Lock: `fractureHull.subcap.test.ts`.

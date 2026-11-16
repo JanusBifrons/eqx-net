@@ -27,6 +27,8 @@ import {
   SHOWCASE_HUB_OPTS,
   SHOWCASE_PORT_PAD,
   SHOWCASE_RTS_OPTS,
+  SHOWCASE_BEAM_SLICE_OPTS,
+  SHOWCASE_RAIL_CHANNEL_OPTS,
 } from '../../../src/server/rooms/showcaseRooms.js';
 
 function roomOf(roomId: string): SectorRoom {
@@ -241,4 +243,28 @@ describe('Showcase rooms', () => {
     expect(robots.length).toBe(3);
     await harness.disconnectClient(room);
   });
+  // Weapon cuts, beam slice: the lance battlecruiser is the room's only NPC,
+  // so nothing but the pilot's own hull sits on the beams' line.
+  it('beam-slice: the lance battlecruiser is the only NPC', () => {
+    expect(SHOWCASE_BEAM_SLICE_OPTS.dronePoses.map((d) => d.kind)).toEqual(['battlecruiser-lance']);
+  });
+
+  // Weapon cuts, rail channel: the bystander behind the pilot (a light
+  // cruiser) holds its spot through the aggro cue, so the fight plays out on
+  // the line the shot frames.
+  for (const [name, o, kind, at] of [
+    ['rail-channel', SHOWCASE_RAIL_CHANNEL_OPTS, 'heavy-cruiser', { x: 10_000, y: 0 }],
+  ] as const) {
+    it(`${name}: the bystander on the fire line holds station after the aggro cue`, { timeout: 30_000 }, async () => {
+      harness = await bootSectorTestServer(opts(o));
+      const cr = await harness.connectActive(randomUUID(), { shipKind: kind });
+      const internals = roomOf(cr.roomId)._internals;
+      const bystander = [...internals.swarmRegistry.all()].find((r) => r.id === 'pose-drone-1')!;
+      expect(bystander).toBeDefined();
+      cr.send('test_aggro', { type: 'test_aggro' });
+      await harness.advance(3000);
+      const p = internals.swarmPose(bystander.id)!;
+      expect(Math.hypot(p.x - at.x, p.y - at.y)).toBeLessThan(40);
+    });
+  }
 });

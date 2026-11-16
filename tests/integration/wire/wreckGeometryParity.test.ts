@@ -360,3 +360,138 @@ describe('wreck child chains: server chain geometry == client resolve (salvage)'
     expect(isWreckDescriptor(ok)).toBe(true);
   });
 });
+
+/**
+ * Fracture v12 multi-cut (owner 2026-11-15, "one cut per beam";
+ * capital-destruction.md "Multi-cut"): a hull or piece burned by several
+ * cutting beams breaks along every line, and the descriptor carries the
+ * further lines (`extraCuts`). The real `CapitalWreckSubsystem` (its burn
+ * lines, two ships firing together) against the real `WreckGeometryStore`,
+ * after a serialise round trip: the bodies and the client's pieces agree bit
+ * for bit, for the kill split and the re-split, a late joiner included (#15,
+ * #16).
+ */
+describe('wreck geometry with multi-cut lines: server bodies == client rebuild (v12)', () => {
+  function multiCutServer() {
+    const spawned: WreckPieceSpawn[] = [];
+    const live = new Set<string>();
+    let tick = 5000;
+    const pose = (id: string) => {
+      const s = spawned.find((p) => p.id === id);
+      return s === undefined || !live.has(id) ? null : { x: s.x, y: s.y, vx: 0, vy: 0, angle: 0.7, angvel: 0 };
+    };
+    const sys = new CapitalWreckSubsystem({
+      serverTick: () => tick,
+      wreckKindOf: (id) => (id === 'cap' ? 'battleship' : null),
+      positionOf: () => null,
+      spawnPiece: (s) => { spawned.push(s); live.add(s.id); return true; },
+      removePiece: (id) => { live.delete(id); },
+      isLive: (id) => live.has(id),
+      pieceAngle: () => 0.7,
+      kickPiece: () => {},
+      impulsePiece: () => {},
+      piecePose: pose,
+      piecePoseInto: (id, out) => { const p = pose(id); if (p === null) return false; Object.assign(out, p); return true; },
+      hullPoseInto: (id, out) => { if (id !== 'cap') return false; out.x = 1234.5; out.y = -987.25; out.angle = 0.7; return true; },
+      dropSalvage: () => {},
+    });
+    sys.forcedSeed = 7;
+    return { sys, spawned, setTick: (t: number) => { tick = t; } };
+  }
+
+  function expectBodies(store: WreckGeometryStore, wreckId: number, bodies: WreckPieceSpawn[]): void {
+    expect(bodies.length).toBeGreaterThan(0);
+    for (const s of bodies) {
+      const g = store.piece(wreckId, s.pieceIndex);
+      expect(g, `wreck ${wreckId} piece ${s.pieceIndex}`).not.toBeNull();
+      expect(g!.parts).toStrictEqual(s.parts);
+      expect(g!.colliderParts).toStrictEqual(s.colliderParts);
+      expect(Object.is(g!.mass, s.mass)).toBe(true);
+      expect(Object.is(g!.radius, s.radius)).toBe(true);
+    }
+  }
+
+  /** Two ships' heavy beams cross a battleship; the second kills it. */
+  function killSplit() {
+    const m = multiCutServer();
+    const pose = { x: 1234.5, y: -987.25, vx: 3, vy: -2, angle: 0.7, angvel: 0.01 };
+    m.sys.noteHit('cap', 'shipB', 100, 1234.5, -987.25, Math.cos(0.7), Math.sin(0.7), 'heavy_beam');
+    m.sys.noteHit('cap', 'shipA', 100, 1234.5 - 2000, -987.25, 1, 0, 'heavy_beam');
+    m.sys.onDeath('cap', 'battleship', pose, 1e6);
+    return m;
+  }
+
+  it('kill split by two ships: the descriptor carries the second line; the client rebuilds every body', () => {
+    const { sys, spawned } = killSplit();
+    const wire = JSON.parse(JSON.stringify(sys.descriptors())) as WreckDescriptor[];
+    expect(wire).toHaveLength(1);
+    expect(wire[0]!.extraCuts).toHaveLength(1);
+    expect(WreckDescriptorSchema.safeParse(wire[0]).success).toBe(true);
+    expect(isWreckDescriptor(wire[0])).toBe(true);
+    const store = new WreckGeometryStore();
+    store.apply(wire);
+    expectBodies(store, wire[0]!.wreckId, spawned);
+    expect(store.piece(wire[0]!.wreckId, wreckPieceGeometry({ ...rootInputs(wire[0]!) }).length)).toBeNull();
+  });
+
+  it('re-split by three beams: the child carries two further lines; every child body rebuilds, a late joiner too', () => {
+    const { sys, spawned, setTick } = killSplit();
+    setTick(5000 + 10);
+    const before = spawned.length;
+    const piece = spawned.reduce((a, b) => (b.mass > a.mass ? b : a));
+    const c = Math.cos(0.7), s = Math.sin(0.7);
+    // Three beams through the piece's centre, 60° apart; the last wears it out.
+    expect(sys.onWreckHit(piece.id, piece.x, piece.y, c, s, 1, 'heavy_beam', 'lance')).toBe(true);
+    expect(sys.onWreckHit(piece.id, piece.x, piece.y, c * 0.5 - s * 0.866, s * 0.5 + c * 0.866, 1, 'mining_laser', 'miner')).toBe(true);
+    expect(sys.onWreckHit(piece.id, piece.x, piece.y, -c * 0.5 - s * 0.866, -s * 0.5 + c * 0.866, 1e12, 'heavy_beam', 'lance2')).toBe(true);
+    const wire = JSON.parse(JSON.stringify(sys.descriptors())) as WreckDescriptor[];
+    const child = wire.find((d) => d.parentWreck !== undefined)!;
+    expect(child, 'the piece broke into a child wreck').toBeDefined();
+    expect(child.extraCuts).toHaveLength(2);
+    for (const d of wire) {
+      expect(WreckDescriptorSchema.safeParse(d).success).toBe(true);
+      expect(isWreckDescriptor(d)).toBe(true);
+    }
+    const kids = spawned.slice(before);
+    const store = new WreckGeometryStore();
+    store.apply(wire);
+    expectBodies(store, child.wreckId, kids);
+    // A late joiner: the child first (a snapshot add), its root on a resync.
+    const late = new WreckGeometryStore();
+    late.add([child]);
+    late.resync({ lo: 1, hi: child.wreckId, d: wire.filter((d) => d.wreckId !== child.wreckId) });
+    expectBodies(late, child.wreckId, kids);
+  });
+
+  it('a recycled wreck id whose only change is the further lines is rebuilt; malformed lines are refused both ways', () => {
+    const { sys } = killSplit();
+    const d = JSON.parse(JSON.stringify(sys.descriptors()[0])) as WreckDescriptor;
+    const store = new WreckGeometryStore();
+    store.apply([d]);
+    const first = store.piece(d.wreckId, 0);
+    store.apply([{ ...d, extraCuts: [{ ...d.extraCuts![0]!, ang: (d.extraCuts![0]!.ang + 9000) % 65536 }] }]);
+    expect(store.piece(d.wreckId, 0)).not.toBe(first);
+    const line = { x: 1, y: 2, ang: 3 };
+    for (const bad of [
+      { extraCuts: [] },
+      { extraCuts: [line, line, line, line] },
+      { extraCuts: [{ ...line, ang: 70000 }] },
+      { extraCuts: [{ ...line, ang: 1.5 }] },
+      { extraCuts: [{ ...line, w: -1 }] },
+      { extraCuts: [{ ...line, x: Number.NaN }] },
+      { extraCuts: [line], cutKind: undefined, cutAng: undefined, cutW: undefined },
+    ]) {
+      const m = { ...d, ...bad };
+      expect(WreckDescriptorSchema.safeParse(m).success, JSON.stringify(bad)).toBe(false);
+      expect(isWreckDescriptor(JSON.parse(JSON.stringify(m))), JSON.stringify(bad)).toBe(false);
+    }
+  });
+});
+
+function rootInputs(d: WreckDescriptor): WreckFractureInputs {
+  return {
+    kindId: d.parentKind as 'battleship', seed: d.seed, killX: d.killX, killY: d.killY, killBlowDamage: d.killBlowDamage,
+    recentDamageRate: d.recentDamageRate, snapChance: d.snapChance, cutKind: d.cutKind, cutAng: d.cutAng, cutW: d.cutW,
+    extraCuts: d.extraCuts,
+  };
+}
