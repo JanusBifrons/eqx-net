@@ -14,19 +14,24 @@
  * in the hull's 1× Pixi-up frame (the frame the fracture and the wire use),
  * mapped from the hit's world point with the target's pose AT THE HIT, so
  * the line stays put while the target moves and turns. A beam's next hit
- * from the same shooter on (nearly) the same line overwrites its slot, so a
- * sweeping beam keeps one slot without knowing its mount; a new line takes
- * a free or stale slot, else the oldest. Lines older than
- * `BURN_LINE_WINDOW_TICKS` (~1 s of game time) are gone.
+ * from the same shooter on the same line (centre lines within half of
+ * `BEAM_CUT_BUFFER`, at most `mergeGap`) overwrites its slot, so a beam keeps one slot without knowing its mount;
+ * a new line (another turret of the same ship included) takes a free or
+ * stale slot, else the oldest. Lines older than `BURN_LINE_WINDOW_TICKS`
+ * (~1 s of game time) are gone.
  *
- * Near-duplicates merge (`sameBurnLine`: under ~5° apart and a gap under
- * `mergeGap` between their strips), so near-parallel beams never leave a
- * sliver between them. Fixed typed slots, no allocation per hit (#14);
+ * At a break, near-duplicates merge (`sameBurnLine`: under ~5° apart and a
+ * gap under `mergeGap` between their strips), so near-parallel beams never
+ * leave a sliver between them; two wide strips that merge become ONE strip
+ * covering both (`extraCuts`' `main`), so every heavy beam on the hull at
+ * its death still shines through its own gap (capital-destruction.md
+ * "Burned gap"). Fixed typed slots, no allocation per hit (#14);
  * `extraCuts` allocates its short result once per break.
  */
 import { unitDirFromSteps } from '../geometry/unitDir.js';
 import { CUT_ANGLE_STEPS, FRACTURE_MAX_EXTRA_CUTS } from './fractureHull.js';
 import type { WreckExtraCut } from '../../shared-types/messages/wreckDescriptor.js';
+import { BEAM_CUT_BUFFER } from '../../shared-types/shipScale/destruction.js';
 
 /** Lines one hull or piece remembers (the main cut and three more). */
 export const BURN_LINE_SLOTS = FRACTURE_MAX_EXTRA_CUTS + 1;
@@ -123,13 +128,19 @@ export class BurnLines {
     const ang = hullCutAngleOf(angle, dirX, dirY);
     const d = unitDirFromSteps(ang, DIR);
     const lw = width > 0 ? width / scale : 0;
+    // Half a burned gap's buffer (never more than the merge gap): a pulse
+    // that close to the last still runs inside the last one's strip.
+    const same = Math.min(this.mergeGap, BEAM_CUT_BUFFER / 2 / scale);
     let slot = -1;
     let oldest = 0;
     for (let i = 0; i < BURN_LINE_SLOTS; i++) {
       const t = this.tick[i]!;
       const live = t >= 0 && tick - t < BURN_LINE_WINDOW_TICKS;
       if (live && this.shooter[i] === shooter
-        && sameBurnLine(this.x[i]!, this.y[i]!, this.dx[i]!, this.dy[i]!, this.w[i]!, lx, ly, d.x, d.y, lw, this.mergeGap)) {
+        // The same beam again: its centre line within `same` (widths not
+        // added), so a second turret of the same ship on an overlapping but
+        // different line keeps its own slot, and gets its own gap.
+        && sameBurnLine(this.x[i]!, this.y[i]!, this.dx[i]!, this.dy[i]!, 0, lx, ly, d.x, d.y, 0, same)) {
         slot = i;
         break;
       }
@@ -161,11 +172,19 @@ export class BurnLines {
    * point (x, y) at u16 angle `ang`, strip `w` (1× frame): every live line
    * that is not a near-duplicate of the main cut nor of a line already
    * taken, newest first, at most `FRACTURE_MAX_EXTRA_CUTS`; undefined when
-   * none. Once per break (allocates its result).
+   * none. A near-duplicate wide strip of a wide cut is not dropped: that
+   * cut's strip widens to cover both (so both beams pass through; a burned
+   * gap per beam). The main cut's widened strip goes to `main` when given
+   * (`off`: its centre's shift along the main cut's normal (-dir.y, dir.x),
+   * `w`: its width; unchanged = 0 and `w`). Once per break (allocates).
    */
-  extraCuts(tick: number, x: number, y: number, ang: number, w: number): WreckExtraCut[] | undefined {
+  extraCuts(
+    tick: number, x: number, y: number, ang: number, w: number, main?: { off: number; w: number },
+  ): WreckExtraCut[] | undefined {
     const pd = unitDirFromSteps(ang, { x: 0, y: 0 });
-    const taken: number[] = [];
+    // The main strip, widened as near-duplicate wide strips join it.
+    const strip = { x, y, w };
+    const taken: Array<{ x: number; y: number; dx: number; dy: number; w: number }> = [];
     const out: WreckExtraCut[] = [];
     const used = new Uint8Array(BURN_LINE_SLOTS);
     while (out.length < FRACTURE_MAX_EXTRA_CUTS) {
@@ -179,18 +198,48 @@ export class BurnLines {
       if (best < 0) break;
       used[best] = 1;
       const bx = this.x[best]!, by = this.y[best]!, bdx = this.dx[best]!, bdy = this.dy[best]!, bw = this.w[best]!;
-      if (sameBurnLine(x, y, pd.x, pd.y, w, bx, by, bdx, bdy, bw, this.mergeGap)) continue;
+      if (sameBurnLine(strip.x, strip.y, pd.x, pd.y, strip.w, bx, by, bdx, bdy, bw, this.mergeGap)) {
+        if (strip.w > 0 && bw > 0) coverStrip(strip, pd.x, pd.y, bx, by, bw);
+        continue;
+      }
       let dup = false;
-      for (const j of taken) {
-        if (sameBurnLine(this.x[j]!, this.y[j]!, this.dx[j]!, this.dy[j]!, this.w[j]!, bx, by, bdx, bdy, bw, this.mergeGap)) {
+      for (let k = 0; k < taken.length; k++) {
+        const c = taken[k]!;
+        if (sameBurnLine(c.x, c.y, c.dx, c.dy, c.w, bx, by, bdx, bdy, bw, this.mergeGap)) {
+          if (c.w > 0 && bw > 0) {
+            coverStrip(c, c.dx, c.dy, bx, by, bw);
+            const o = out[k]!;
+            o.x = c.x;
+            o.y = c.y;
+            o.w = c.w;
+          }
           dup = true;
           break;
         }
       }
       if (dup) continue;
-      taken.push(best);
+      taken.push({ x: bx, y: by, dx: bdx, dy: bdy, w: bw });
       out.push(bw > 0 ? { x: bx, y: by, ang: this.ang[best]!, w: bw } : { x: bx, y: by, ang: this.ang[best]! });
+    }
+    if (main !== undefined) {
+      main.off = (strip.x - x) * -pd.y + (strip.y - y) * pd.x;
+      main.w = strip.w;
     }
     return out.length > 0 ? out : undefined;
   }
+}
+
+/** Widen strip `s` (centre line through (s.x, s.y) along unit (dx, dy),
+ *  width s.w) to the least strip along the same line that also covers a
+ *  strip `bw` wide through (bx, by) (measured at that point). In place. */
+function coverStrip(s: { x: number; y: number; w: number }, dx: number, dy: number, bx: number, by: number, bw: number): void {
+  const nx = -dy;
+  const ny = dx;
+  const off = (bx - s.x) * nx + (by - s.y) * ny;
+  const lo = Math.min(-s.w / 2, off - bw / 2);
+  const hi = Math.max(s.w / 2, off + bw / 2);
+  const mid = (lo + hi) / 2;
+  s.x += nx * mid;
+  s.y += ny * mid;
+  s.w = hi - lo;
 }

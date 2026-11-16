@@ -2674,6 +2674,25 @@ may drift back into the beam and take it: that is fine.
   removed: a follow-through pulse is an ordinary shot and shows full length
   only because nothing is left in its line. Wreck pieces block every weapon
   but the railgun slug.
+- **Every heavy beam on the hull at its death cuts its own gap.** Two
+  turrets of one ship pulse together on lines a few units apart (a lance
+  battlecruiser's main-1 and main-2, ~18 u apart on a frigate): their 63 u
+  strips overlap, so the multi-cut merge (`sameBurnLine`) used to treat the
+  second as a near-duplicate of the killing beam and drop it, and the slot
+  merge in `BurnLines.record` (same shooter, overlapping strips) let each
+  turret overwrite the other's line. The second beam then hit the wreck for
+  ~1 s, wore a piece out and killed a fragment. Now `record` keeps a
+  shooter's slot only for the same beam again (centre lines within half of
+  `BEAM_CUT_BUFFER`, at most `mergeGap`), and at the break a wide strip that
+  merges with the main cut (or a taken extra cut) widens that strip to cover
+  both (`coverStrip`) instead of vanishing. For the kill cut,
+  `deathExtraCuts` hands the widened width back as `cutW` and moves the kill
+  point onto the widened strip's centre line, so the descriptor carries one
+  strip covering both beams and the client rebuilds it from the descriptor
+  as before (no fracture change, no version bump). Strips under ~5° apart
+  are covered where the other beam hit; a converging pair far down the hull
+  may graze. Lock: `wreckMultiCut.test.ts` "every heavy beam on the hull at
+  its death burns its own gap".
 - Locks: `wreckPieces.burnedGap.test.ts` (no piece vertex within the beam's
   half-width + buffer of its axis, no piece straddles it, every bank point
   moves away at `cutPartSpeed` or more), `beamKillBurnsGap.test.ts` (two
@@ -2971,6 +2990,7 @@ Moved from `src/core/CLAUDE.md` (2026-11-14); kept for the record.
 - **v11: a cut kill burns away pieces too small** (2026-11-15). The optional `cutBurnMinShare` (sub-capital profile 0.2): on a heavy-beam slice or railgun channel kill every piece under that share of the hull burns away, a crack that would leave one is dropped; none left = vaporised (`DestroyEvent.vaporised`). Capital and un-cut output unchanged. Lock: `fractureHull.cutBurn.test.ts`; detail: "Kill cuts", "Burn-away".
 - **v12: one cut per beam** (2026-11-15). The optional `extraCuts`: the other cutting beams that burned the hull or piece in the last ~1 s each cut their own straight `EDGE_CUT` line (a wide one its strip), never dropped for the cap; the burn-away share applies after all of them. Without them the output is v11's (same golden hashes). Lock: `fractureHull.multiCut.test.ts`; detail: "Multi-cut".
 - **v13: a heavy-beam kill burns a gap the beam shines through** (2026-11-16; owner: "it burns a perfect hole like a lightsaber directly through ... so it should shine out the other side"). A wide slice's strip runs through the kill point as given (the beam's axis), never projected onto the outline nor slid off a sliver, and is `BEAM_CUT_BUFFER` (3 u) wider than the beam; its banks part at `cutPartSpeed`. The follow-through's debris pass is gone. Lock: `wreckPieces.burnedGap.test.ts`, `beamKillBurnsGap.test.ts`; detail: "Burned gap".
+- **Every heavy beam on the hull at its death cuts its own gap** (2026-11-16, no version bump: the server's descriptor inputs change, the fracture does not). Two turrets of one ship on overlapping lines each keep a burn line, and a wide strip that merges with the kill cut widens it to cover both (kill point moved onto the widened strip's centre) instead of being dropped; diagnostic: a lance battlecruiser's main-2 hit the frigate's wreck for 1.3 s after main-1 killed it. Lock: `wreckMultiCut.test.ts`; detail: "Burned gap".
 - **v10: splinters off a capital cut kill** (2026-11-15). The secondary cracks of a capital slice or channel kill branch off the cut at 40–58° and jag harder, instead of running parallel to it (film review: one shot read as three cuts). Count still from the violence table. Output without a cut unchanged. Lock: `fractureHull.cutSplinters.test.ts`, "golden: v9 kill cuts" (capital side-shot hashes).
 - **v9: kill cuts** (2026-11-14). The optional `cut`: a heavy-beam `slice` is a dead-straight primary along the shot through the kill point (`EDGE_CUT`, never jagged; slid toward the centroid only off a sliver); a railgun `channel` erases a strip as wide as the bolt. Output without a cut unchanged (same golden hashes). Locks: "golden: v9 kill cuts", the "fracture v9" describe in `fractureHull.killFocus.test.ts`.
 ## Server implementation notes

@@ -258,7 +258,6 @@ export class CapitalWreckSubsystem {
     this.lastDeathTick.set(targetId, tick);
     const e = this.entries.get(targetId);
     const hull = maxHull > 0 ? maxHull : 1;
-    const killWorld = e !== undefined && e.hasPoint ? { x: e.x, y: e.y } : null;
     const attackerWorld = e !== undefined && e.shooterId !== '' ? this.d.positionOf(e.shooterId) : null;
     const killBlowDamage = e !== undefined ? e.lastDamage / hull : 0;
     const recentDamageRate = e !== undefined ? this.recentDamage(e) / hull : 0;
@@ -278,10 +277,11 @@ export class CapitalWreckSubsystem {
       const w = killCutStripWidth(killCut);
       if (w > 0) cutW = w / shipShapeScale(getShipKind(kindId));
     }
-    // Fracture v12 multi-cut: the other beams that burned the hull in the
-    // last moment cut their own lines too (the killing shot's is the main cut).
-    const extraCuts = e !== undefined && cutAng !== undefined && e.hasPoint && e.burn !== null
-      ? deathExtraCuts(e.burn, pose, kindId, e.x, e.y, tick, cutAng, cutW ?? 0) : undefined;
+    // Multi-cut: each beam on the hull cuts too; an overlapping one widens `strip`, moves `killWorld`.
+    const killWorld = e !== undefined && e.hasPoint ? { x: e.x, y: e.y } : null, strip = { w: cutW ?? 0 };
+    const extraCuts = e !== undefined && killWorld !== null && cutAng !== undefined && e.burn !== null
+      ? deathExtraCuts(e.burn, pose, kindId, killWorld, tick, cutAng, strip) : undefined;
+    if (cutW !== undefined) cutW = strip.w;
     this.forget(targetId);
     const seed = this.forcedSeed ?? fnvMixU32(fnv1a32(targetId), this.d.serverTick() >>> 0);
     const { pieces, fracture } = buildWreckPieces({
