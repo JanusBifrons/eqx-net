@@ -12,10 +12,10 @@
 import { LOCK_TUNING, WEAPON_LOCK_PROFILE, lockCapacityFor, sensorFor, NO_PILOT_MODS, type MountSize } from '../../shared-types/combat/lockProfile.js';
 import { lockSeconds, type LockInputs } from '../../core/combat/lockTime.js';
 import { newLock, stepLock, LOCK_STAGE_CODE, LOCK_TRACK, type LockEntry } from '../../core/combat/lockState.js';
-import { splitGroupLocks } from './lockSplit.js';
+import { lineageRekey, splitGroupLocks } from './lockSplit.js';
 import { lockLineHolds } from '../../core/combat/lockLine.js';
 import { LockPicker } from './lockPick.js';
-import { lockSalvageFlags, type LockSalvageDeps } from './lockSalvage.js';
+import { lockSalvageFlags, refreshLockSalvage, type LockSalvageDeps } from './lockSalvage.js';
 import { isSalvageWeapon } from '../../core/combat/salvageTargeting.js';
 import { shipGroups } from './lockGroups.js';
 import { mountInReach, mountWeaponReach } from '../../core/combat/mountReach.js';
@@ -298,9 +298,9 @@ export class LockSubsystem {
     }
   }
 
-  /** Target `fromKey` broke into `pieceKeys` (biggest first; the last `pods` its ore pods, which only a group with a `tractor` takes): its locks follow (`splitGroupLocks`). */
+  /** Target `fromKey` broke into `pieceKeys` (biggest first; the last `pods` its ore pods, which only a group with a `tractor` takes): its locks follow (`splitGroupLocks`), a lock given none to its lineage's next live piece. */
   targetSplit(fromKey: string, pieceKeys: ReadonlyArray<string>, pods = 0): void {
-    for (const p of this.players.values()) for (const g of p.groups) if (splitGroupLocks(g, fromKey, pieceKeys, pieceKeys.length - (g.tractor ? 0 : pods))) this.syncWireShape(g);
+    for (const [playerId, p] of this.players) { const c = { d: this.deps, ship: this.deps.shipOf(playerId), playerId }; for (const g of p.groups) if (splitGroupLocks(g, fromKey, pieceKeys, pieceKeys.length - (g.tractor ? 0 : pods), c)) this.syncWireShape(g); }
   }
 
   /** (Re)build the player's groups when their ship kind or activated mounts change. */
@@ -623,10 +623,10 @@ export class LockSubsystem {
       let secs = Infinity;
       if (this.deps.resolveTarget(playerId, e.target, this.target)) {
         secs = this.lockSecsNow(p, g);
-        e.flags = lockSalvageFlags(this.deps, ship, playerId, e.target); // hold fills, pieces split: per step
+        refreshLockSalvage(this.deps, ship, playerId, e); // bits + lineage: hold fills, pieces split: per step
       } else {
-        // Gone (destroyed / left): drop now, no grace.
-        g.locks.splice(i, 1);
+        // Gone (destroyed / left): the lineage's next live piece takes the lock (lockSplit.ts), else drop now, no grace.
+        if (!lineageRekey(this.deps, ship, playerId, g, e)) g.locks.splice(i, 1);
         removed = true;
         continue;
       }
@@ -646,7 +646,7 @@ export class LockSubsystem {
         && (e.track !== LOCK_TRACK.released || e.stage === 'locked')) {
         this.deps.refreshHostility(playerId, e.target);
       }
-      if (ev === 'dropped') {
+      if (ev === 'dropped' && !lineageRekey(this.deps, ship, playerId, g, e, true)) { // a lineage lock it can't track idles on its lineage
         g.locks.splice(i, 1);
         removed = true;
       }

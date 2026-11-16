@@ -191,9 +191,7 @@ function pickSalvageLock(
     const f = lockFlags[i]!;
     if ((f & LOCK_SALVAGE) === 0) continue;
     pieces++;
-    if ((f & LOCK_CONSUMABLE) !== 0) continue;
-    const tier = lockTierOf(f);
-    if (laser ? !laserCutsTier(rung, tier, rungs) : !tractorTakesTier(rung, tier)) continue;
+    if (!mountWorks(laser, rung, rungs, f)) continue;
     if (firstCut < 0) firstCut = i;
     if (!canEngage(m, frameAngle, tx[i]! - mx, ty[i]! - my, reach, shapes?.[i])) continue;
     // Insertion by float32 radius, descending; equal radii keep lock order.
@@ -207,6 +205,29 @@ function pickSalvageLock(
   if (k === 0) return firstCut;
   const r = peerRank(groupMounts, ordinal, laser) % k;
   return order[!laser || salvagePrefersBig(size) ? r : k - 1 - r]!;
+}
+
+/** Does a mining laser (`laser`, on rung `rung` of its group's laser
+ *  `rungs`) or a tractor on rung `rung` work a salvage lock with bits `f`:
+ *  not consumable, its tier on this mount's side of the size ladder. */
+function mountWorks(laser: boolean, rung: number, rungs: number, f: number): boolean {
+  if ((f & LOCK_SALVAGE) === 0 || (f & LOCK_CONSUMABLE) !== 0) return false;
+  const tier = lockTierOf(f);
+  return laser ? laserCutsTier(rung, tier, rungs) : tractorTakesTier(rung, tier);
+}
+
+/** Does some mining laser or tractor of `groupMounts` (a group's mounts)
+ *  work a salvage lock with bits `flags` (the share-out's own test)? The
+ *  server's lineage hand-over (lockSplit.ts) re-keys a lock to a piece its
+ *  group can work first. Allocates nothing. */
+export function groupWorksSalvage(groupMounts: ArrayLike<TurretGroupMount>, flags: number): boolean {
+  const rungs = laserRungMask(groupMounts);
+  for (let j = 0; j < groupMounts.length; j++) {
+    const def = getWeapon(groupMounts[j]!.weaponId);
+    const laser = isSalvageWeapon(def);
+    if ((laser || def.tractor !== undefined) && mountWorks(laser, mountTier(groupMounts[j]!.size), rungs, flags)) return true;
+  }
+  return false;
 }
 
 /** Mount `ordinal`'s rank among its group's peers of the same tool: lasers

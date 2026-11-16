@@ -18,6 +18,7 @@ import { LOCK_CONSUMABLE, LOCK_SALVAGE, lockTierBits } from '../../core/combat/t
 import { mountTier, salvageConsumable, salvageConsumeMass, salvageTier } from '../../core/combat/salvageTargeting.js';
 import { SWARM_KIND_ASTEROID, SWARM_KIND_WRECK, isLootPod } from '../../shared-types/swarmWireFormat.js';
 import type { ShipKind, WeaponMount } from '../../shared-types/shipKinds/types.js';
+import type { LockEntry } from '../../core/combat/lockState.js';
 import type { PieceStoreView } from './wreckLineage.js';
 
 /** What `salvageOf` fills for a salvage lock: the piece's `pieceStoreOf`
@@ -37,6 +38,20 @@ export interface LockSalvageDeps {
    *  piece or a field rock); false for anything else. Absent: no salvage
    *  bits (every lock is 0, the pick exactly as before). */
   salvageOf?(playerId: string, key: string, out: LockSalvageView): boolean;
+  /** Wreck lineage of lock keys (lockSplit.ts `lineageRekey`): a lock on a
+   *  rock's or wreck's piece moves on to the next live piece of it. Absent:
+   *  a lock ends with its target. */
+  lineage?: LockLineageSource;
+}
+
+/** Which lineage a lock key belongs to, and its live members. */
+export interface LockLineageSource {
+  /** The lineage root (`LiveWreck.root`) of lock key `key`: a live rock or
+   *  wreck piece, or an ore pod cut from one; -1 for anything else. */
+  rootOf(key: string): number;
+  /** Push the lock keys of lineage `root`'s live pieces (then, `pods`, its
+   *  live ore pods) onto `out`. Runs only when a lock's target leaves. */
+  keysOf(root: number, pods: boolean, out: string[]): void;
 }
 
 const view: LockSalvageView = { mass: 0, radius: 0, qty: 0, ore: undefined, holdWeight: 0, freeHold: 0, pod: false };
@@ -56,6 +71,16 @@ export function lockSalvageFlags(
   const f = LOCK_SALVAGE | lockTierBits(salvageTier(view.mass));
   if (ship === null) return f;
   return salvageConsumable(view, salvageConsumeMass(ship.kind), view.freeHold) ? f | LOCK_CONSUMABLE : f;
+}
+
+/** The lock step's salvage refresh of lock `e`: its bits
+ *  (`lockSalvageFlags`), and its lineage root once its target is a piece
+ *  of one (a rock's first cut names it; kept through cuts and pods). */
+export function refreshLockSalvage(
+  d: LockSalvageDeps, ship: { kind: ShipKind; activated: ReadonlyArray<WeaponMount> } | null, playerId: string, e: LockEntry,
+): void {
+  e.flags = lockSalvageFlags(d, ship, playerId, e.target);
+  if (e.root < 0 && e.flags !== 0 && d.lineage !== undefined) e.root = d.lineage.rootOf(e.target);
 }
 
 /** The swarm entity id of an `s:<n>` lock key, or -1 (no string slicing, #14). */
@@ -78,13 +103,41 @@ export interface LockSalvageRoom<S> {
   piece(id: string, out: LockSalvageView): boolean;
   /** Free hold weight of ship `ship`. */
   freeHold(ship: S): number;
+  /** The live wreck lineages (CapitalWreckSubsystem), when the room has any. */
+  wrecks?(): { lineageRootOf(id: string): number | null; forEachLineagePiece(root: number, visit: (id: string) => void): void } | null | undefined;
+  /** The ore pods (LootSubsystem), each with the lineage it was cut from. */
+  pods?(): { podIds(): Iterable<string>; podRoot(id: string): number } | undefined;
+  /** The swarm entity id of live record `id`, or -1. */
+  entity?(id: string): number;
 }
 
 /** SectorRoom's `salvageOf`: a wreck piece (swarm kind 4) is salvage with its
  *  own mass and stored weight; a field rock (kind 0) is salvage the lasers
  *  mine in place, never towed; an ore pod (`isLootPod`) is `pod`. */
-export class LockSalvageLookup<S> {
+export class LockSalvageLookup<S> implements LockLineageSource {
   constructor(private readonly r: LockSalvageRoom<S>) {}
+
+  rootOf(key: string): number {
+    const n = swarmLockId(key);
+    const rec = n < 0 ? null : this.r.swarm(n);
+    if (rec == null) return -1;
+    if (isLootPod(rec)) return this.r.pods?.()?.podRoot(rec.id) ?? -1;
+    return this.r.wrecks?.()?.lineageRootOf(rec.id) ?? -1;
+  }
+
+  keysOf(root: number, pods: boolean, out: string[]): void {
+    this.out = out;
+    this.r.wrecks?.()?.forEachLineagePiece(root, this.push);
+    const p = pods ? this.r.pods?.() : undefined;
+    if (p !== undefined) for (const id of p.podIds()) if (p.podRoot(id) === root) this.push(id);
+  }
+
+  private out: string[] = [];
+  /** `keysOf`'s visitor (bound once): a live record id as its lock key. */
+  private readonly push = (id: string): void => {
+    const n = this.r.entity?.(id) ?? -1;
+    if (n >= 0) this.out.push(`s:${n}`);
+  };
 
   fill(ship: S | undefined, key: string, out: LockSalvageView): boolean {
     out.pod = false;

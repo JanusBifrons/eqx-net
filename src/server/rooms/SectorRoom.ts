@@ -4646,6 +4646,7 @@ export class SectorRoom extends Room<SectorState> {
   private readonly _lockActivated = new Map<string, { ref: unknown; mounts: ReadonlyArray<WeaponMount> }>();
   private readonly _lockSalvage = new LockSalvageLookup<ShipState>({ swarm: (n) => this.swarmRegistry.getByEntityId(n),
     piece: (id, out) => this.capitalWrecks?.pieceStore(id, out) === true, // salvage lock bits (lockSalvage.ts)
+    wrecks: () => this.capitalWrecks, pods: () => this.loot, entity: (id) => this.swarmRegistry.get(id)?.entityId ?? -1, // lock lineage (lockSplit.ts)
     // No hold (no roster row, e.g. a showcase room with no sectorKey): it takes nothing in, so nothing is consumable.
     freeHold: (s) => (this.hasHold(s.shipInstanceId) ? this.shipCargoCapacity(s.kind, s.shipInstanceId) - this.holdWeight(s.shipInstanceId) : 0) });
 
@@ -4775,7 +4776,7 @@ export class SectorRoom extends Room<SectorState> {
       },
       shipOf: (sid) => this.lockShipOf(sid, this.wingmanHull(sid)),
       autoPick: () => null,
-      salvageOf: (sid, key, out) => this._lockSalvage.fill(this.wingmanHull(sid), key, out),
+      salvageOf: (sid, key, out) => this._lockSalvage.fill(this.wingmanHull(sid), key, out), lineage: this._lockSalvage,
       commitHostileAct: (sid, key) => {
         const owner = this.fleet.ownerOfAttached(sid);
         if (owner !== null) this.commitLockHostileAct(owner, key);
@@ -4790,7 +4791,7 @@ export class SectorRoom extends Room<SectorState> {
   private buildLockSubsystem(): LockSubsystem {
     return new LockSubsystem({
       resolveTarget: (pid, key, out) => this.resolveLockTarget(pid, key, out),
-      salvageOf: (pid, key, out) => this._lockSalvage.fill(this.getActiveShip(pid), key, out),
+      salvageOf: (pid, key, out) => this._lockSalvage.fill(this.getActiveShip(pid), key, out), lineage: this._lockSalvage,
       shooterPose: (pid, out) => {
         const p = this.shipPoseCache.get(pid);
         const ship = this.getActiveShip(pid);
@@ -5673,7 +5674,7 @@ export class SectorRoom extends Room<SectorState> {
         if (slot !== undefined) slotPoseInto(this.sabF32, slot, out);
         return slot !== undefined;
       },
-      dropSalvage: (qty, x, y, vx, vy, ore) => this.loot.drop({ goods: ore ? this.oreDraw.cutYield(ore.rockId, x, y, qty, ore.resource) : { salvage: qty }, blueprints: [] }, x, y, vx, vy, { cause: 'salvage' }),
+      dropSalvage: (qty, x, y, vx, vy, ore, root) => this.loot.drop({ goods: ore ? this.oreDraw.cutYield(ore.rockId, x, y, qty, ore.resource) : { salvage: qty }, blueprints: [] }, x, y, vx, vy, { cause: 'salvage', root }),
       rockOf: (id) => rockViewOf(this.swarmRegistry, id),
       pieceSplit: (from, ids, masses, pods) => relayPieceSplit(this.swarmRegistry, from, ids, masses, this.locks, this.wingmanLocks, pods),
     });
