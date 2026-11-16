@@ -225,7 +225,7 @@ import { convoyHaulerFactions } from '../economy/convoyCarriers.js';
 import { ALIEN_GATE_OWNER, alienGateCandidates, alienGateSites, type AlienGateSite } from '../../core/galaxy/alienGates.js';
 import { effectiveStructureMaxHealth } from '../../core/leveling/structureLevel.js';
 import { TRANSFER_PULSE_MS, TURRET_TICK_MS } from '../../core/structures/structureGridConstants.js';
-import type { GridObstacle } from '../../core/structures/Grid.js';
+import type { GridObstacle, ObstacleBox } from '../../core/structures/Grid.js';
 import { clampToSectorBounds } from '../../shared-types/sectorBounds.js';
 import type { SnapshotMessage, TimeScaleKeyframe } from '../../shared-types/messages.js';
 // Mount/slot geometry helpers moved to ./mountGeometry.ts.
@@ -2957,12 +2957,10 @@ export class SectorRoom extends Room<SectorState> {
       // Living World P1a-2 — stable uid (keys the structure's holds row).
       structureUid: (owner, kind, x, y) => structureUid(this.sectorKey, owner, kind, x, y),
       registry: this.structureRegistry,
-      // Item D — asteroids (swarm kind=0) block a connector's line of sight, so
-      // a structure never auto-wires straight through a rock. Shared with the
-      // grid-pulse reconnect sweep (playtest 2026-06-10 Issue 2) via
-      // `gatherStructureObstacles`. Off the 60 Hz hot loop (placement + 1 Hz
-      // pulse only), so the array build is fine.
-      getObstacles: () => this.gatherStructureObstacles(),
+      // Asteroids (swarm kind=0) block placement and a connector's line of sight
+      // (Item D); shared with the grid-pulse reconnect sweep. Placement also
+      // passes `near` for unloaded cut-field rocks (C5). Off the hot loop.
+      getObstacles: (near) => this.gatherStructureObstacles(near),
       // Economy v2 W4b — a player's non-starter structure is placed from a
       // PACKED item (now buyable from traders, and lootable). Consumed only
       // after the structure registers; its build then costs only time.
@@ -6750,7 +6748,7 @@ export class SectorRoom extends Room<SectorState> {
    *  from the SAB. Shared by structure placement (Item D) and the grid-pulse
    *  reconnect sweep (playtest 2026-06-10 Issue 2). Off the 60 Hz hot loop
    *  (placement + 1 Hz pulse only), so the array build is acceptable. */
-  private gatherStructureObstacles(): GridObstacle[] {
+  private gatherStructureObstacles(near?: ObstacleBox): GridObstacle[] {
     const obstacles: GridObstacle[] = [];
     for (const rec of this.swarmRegistry.all()) {
       if (rec.kind !== 0) continue; // asteroids only
@@ -6761,6 +6759,7 @@ export class SectorRoom extends Room<SectorState> {
         radius: rec.radius,
       });
     }
+    if (near) this.cutField?.dormantObstacles(near, obstacles);
     return obstacles;
   }
 

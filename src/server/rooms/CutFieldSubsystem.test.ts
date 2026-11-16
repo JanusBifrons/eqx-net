@@ -1,13 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import type { GameClock } from '../../core/clock/GameClock.js';
-import { FIELD_WAKES_PER_TICK } from '../../core/terrain/chunkStreamer.js';
+import { FIELD_WAKES_PER_TICK, cutFieldOpts, fieldRockBody, fieldRockId } from '../../core/terrain/chunkStreamer.js';
+import { placementRejection } from '../../core/structures/placementRules.js';
+import type { GridObstacle } from '../../core/structures/Grid.js';
 import type { SwarmEntityRecord, SwarmEntityRegistry } from '../net/SwarmEntityRegistry.js';
 import type { SwarmSpawner } from '../spawn/SwarmSpawner.js';
 import { SLOT_X_OFF, SLOT_Y_OFF, slotBase } from '../../shared-types/sabLayout.js';
 import { CutFieldSubsystem, toRestFrame } from './CutFieldSubsystem.js';
 import type { WorkerCmd } from './PhysicsWorkerProxy.js';
 import type { PersistOp } from '../../core/contracts/IPersistenceSink.js';
-import { FIELD_LAYOUT_VERSION } from '../../core/terrain/fieldLayout.js';
+import { FIELD_LAYOUT_VERSION, rocksInChunk } from '../../core/terrain/fieldLayout.js';
 import type { TerrainRecordRow, TerrainRecordStore } from '../db/terrainSql.js';
 
 function setup(recs: Record<string, Partial<SwarmEntityRecord>>) {
@@ -209,5 +211,37 @@ describe('CutFieldSubsystem.oreAtRest (pieces of a broken-up rock)', () => {
     expect(wrong.ice + wrong.crystal).not.toBeCloseTo(best, 6);
     expect(got.ice).toBeCloseTo(want.ice, 9);
     expect(got.crystal).toBeCloseTo(want.crystal, 9);
+  });
+});
+
+describe('CutFieldSubsystem.dormantObstacles (C5: placement sees unloaded field rocks)', () => {
+  const o = cutFieldOpts('look');
+  const rock = rocksInChunk(o, -8, 6).reduce((a, b) => (b.size > a.size ? b : a));
+  const body = fieldRockBody(rock);
+  const box = { x0: body.x - 100, y0: body.y - 100, x1: body.x + 100, y1: body.y + 100 };
+  function sub(live: Set<string>) {
+    const clock = { now: () => 0, every: () => ({ cancel: () => {} }) } as unknown as GameClock;
+    const registry = { get: (id: string) => (live.has(id) ? ({ id } as SwarmEntityRecord) : null), all: () => [] } as unknown as SwarmEntityRegistry;
+    return new CutFieldSubsystem('look', clock, registry, {} as SwarmSpawner, {
+      shipSlots: () => [], sab: () => new Float32Array(0), post: () => {}, evict: () => {}, broadcast: () => {},
+    });
+  }
+
+  it('gives a rock with no body as an obstacle, so placement on it is refused', () => {
+    const out: GridObstacle[] = [];
+    sub(new Set()).dormantObstacles(box, out);
+    expect(out).toContainEqual({ x: body.x, y: body.y, radius: body.radius });
+    expect(placementRejection('capital', body.x, body.y, [], out)).toBe('overlap-obstacle');
+  });
+
+  it('skips a broken-up rock and a live one (the registry already gives it)', () => {
+    const s = sub(new Set());
+    s.markConsumed(rock.key);
+    const consumed: GridObstacle[] = [];
+    s.dormantObstacles(box, consumed);
+    expect(consumed).not.toContainEqual({ x: body.x, y: body.y, radius: body.radius });
+    const live: GridObstacle[] = [];
+    sub(new Set([fieldRockId(rock.key)])).dormantObstacles(box, live);
+    expect(live).not.toContainEqual({ x: body.x, y: body.y, radius: body.radius });
   });
 });

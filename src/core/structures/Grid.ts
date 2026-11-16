@@ -93,6 +93,9 @@ export interface GridObstacle {
   radius: number;
 }
 
+/** A world box (a placement footprint's bounds) to gather obstacles near. */
+export interface ObstacleBox { x0: number; y0: number; x1: number; y1: number }
+
 /** Edge-to-edge distance between two nodes' square AABBs (half-extent =
  *  radius). Returns 0 when the boxes overlap or touch — eqx-peri's
  *  `edgeDistance`. */

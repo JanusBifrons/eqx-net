@@ -10,10 +10,11 @@
  */
 import type { GameClock, GameTimer } from '../../core/clock/GameClock.js';
 import {
-  CutFieldStreamer, cutFieldOpts, fieldRockBody, fieldRockMass, fieldRockWakes,
+  CutFieldStreamer, cutFieldOpts, fieldRockBody, fieldRockId, fieldRockMass, fieldRocksInBox, fieldRockWakes,
   FIELD_WAKES_PER_TICK, STEP_EVERY_MS,
 } from '../../core/terrain/chunkStreamer.js';
-import { FIELD_LAYOUT_VERSION, SLICED } from '../../core/terrain/fieldLayout.js';
+import { FIELD_LAYOUT_VERSION, SLICED, type ChunkOpts } from '../../core/terrain/fieldLayout.js';
+import type { GridObstacle, ObstacleBox } from '../../core/structures/Grid.js';
 import { oreAt, oreSeed, type OreConc } from '../../core/terrain/fieldOre.js';
 import { SLOT_ANGLE_OFF, SLOT_X_OFF, SLOT_Y_OFF, slotBase } from '../../shared-types/sabLayout.js';
 import { SWARM_KIND_DRONE } from '../../shared-types/swarmWireFormat.js';
@@ -68,6 +69,7 @@ export class CutFieldSubsystem {
   private readonly consumed = new Set<number>();
   private readonly seed: string;
   private readonly gameClock: GameClock;
+  private readonly opts: ChunkOpts;
 
   constructor(
     seed: string,
@@ -80,7 +82,8 @@ export class CutFieldSubsystem {
     this.gameClock = gameClock;
     this.oreBase = oreSeed(seed);
     this.loadRecords();
-    this.streamer = new CutFieldStreamer(cutFieldOpts(seed), {
+    this.opts = cutFieldOpts(seed);
+    this.streamer = new CutFieldStreamer(this.opts, {
       // Pilots and AI hulls keep rocks loaded. Slow cadence (STEP_EVERY_MS).
       visitShips: (cb) => {
         const sab = hooks.sab();
@@ -178,6 +181,18 @@ export class CutFieldSubsystem {
 
   isConsumed(key: number): boolean {
     return this.consumed.has(key);
+  }
+
+  /** Placement (C5): push onto `out` the field rocks reaching into `box` that
+   *  have no body right now (their chunk is not loaded), cut from the layout
+   *  (`fieldRocksInBox`), as their bounding circles: the same obstacle a live
+   *  rock gives. A broken-up rock is gone; a live one is already in `out`
+   *  from the registry. A discrete player action, never per tick. */
+  dormantObstacles(box: ObstacleBox, out: GridObstacle[]): void {
+    for (const r of fieldRocksInBox(this.opts, box.x0, box.y0, box.x1, box.y1)) {
+      if (this.consumed.has(r.key) || this.registry.get(fieldRockId(r.key))) continue;
+      out.push({ x: r.x, y: r.y, radius: r.radius });
+    }
   }
 
   /** The field's ore where a shot hit field rock `rec` at world (x, y), into
