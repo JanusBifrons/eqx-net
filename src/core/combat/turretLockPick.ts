@@ -46,13 +46,16 @@ export const TURRET_NO_LOCK = -1;
 export const LOCK_SALVAGE = 1;
 /** `lockFlags` bit: this ship can already tow AND store the piece (`salvageHaulable`). */
 export const LOCK_HAULABLE = 2;
+/** Most locks a caller hands `pickTurretLock` (the size of both sides'
+ *  per-lock scratch; well above any group's lock capacity). */
+export const TURRET_PICK_MAX = 8;
 
 /** A group mount as the salvage share-out reads it. */
 export type TurretGroupMount = { readonly weaponId: WeaponMount['weaponId']; readonly size?: WeaponMount['size'] };
 
 /** Cuttable salvage lock indices, biggest first (module scratch, #14; grows
  *  only past its size, never at the 8-lock group cap). */
-let salvageOrder = new Int32Array(8);
+let salvageOrder = new Int32Array(TURRET_PICK_MAX);
 
 /** Half-width (rad) a fixed gun (arcMin === arcMax) counts as covering. */
 const FIXED_GUN_HALF_ARC = 0.3;

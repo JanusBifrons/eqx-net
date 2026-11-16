@@ -83,6 +83,6 @@ export function salvageHaulMass(mounts: ReadonlyArray<WeaponMount>): number {
 }
 
 /** Could this ship tractor `c` in and store it? Then no laser cuts it. */
-export function salvageHaulable(c: SalvageCandidate, haulMass: number, freeHold: number): boolean {
+export function salvageHaulable(c: Pick<SalvageCandidate, 'mass' | 'holdWeight'>, haulMass: number, freeHold: number): boolean {
   return c.mass <= haulMass && c.holdWeight <= freeHold;
 }
