@@ -1199,7 +1199,7 @@ export class PixiRenderer implements IRenderer {
     const beamLayers: Container[] = [];
     if (this._fxRemoteBeams) beamLayers.push(this._fxRemoteBeams.container);
     if (this._fxLiveBeams) beamLayers.push(this._fxLiveBeams.container);
-    for (const p of [this._liveBeamPool, this._remoteBeamPool, this._miningBeamPool]) {
+    for (const p of [this._liveBeamPool, this._remoteBeamPool, this._miningBeamPool, this._tractorBeamPool]) {
       if (p) beamLayers.push(p.container, p.styledContainer);
     }
     raiseBeamsOverHulls(this.shipContainer, beamLayers);
