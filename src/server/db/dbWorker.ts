@@ -20,6 +20,7 @@ import { SCHEMA_SQL, PLAYER_SHIPS_MIGRATIONS } from './schema.js';
 import type { PersistOp } from '../../core/contracts/IPersistenceSink.js';
 import type { WorkerInbound, WorkerOutbound } from './workerProtocol.js';
 import { HOLD_PUT_SQL, HOLD_DELETE_SQL, holdPutArgs, applyGroupAtomically } from './holdsSql.js';
+import { TERRAIN_RECORD_PUT_SQL, terrainRecordPutArgs } from './terrainSql.js';
 import { applyEconomyOp, prepareEconomyStatements } from './economySql.js';
 
 interface WorkerData {
@@ -122,6 +123,7 @@ const stmts = {
   ),
   HOLD_PUT: db.prepare(HOLD_PUT_SQL),
   HOLD_DELETE: db.prepare(HOLD_DELETE_SQL),
+  TERRAIN_RECORD_PUT: db.prepare(TERRAIN_RECORD_PUT_SQL),
   PLAYER_ALIAS_PUT: db.prepare(
     'INSERT INTO player_aliases (alias_player_id, canonical_player_id, user_id, created_at) VALUES (?, ?, ?, ?) ' +
     'ON CONFLICT(alias_player_id) DO UPDATE SET canonical_player_id=excluded.canonical_player_id, user_id=excluded.user_id',
@@ -256,6 +258,10 @@ function applyOp(op: PersistOp): { rowId?: number } {
     }
     case 'HOLD_DELETE': {
       stmts.HOLD_DELETE.run(op.holderUid);
+      return {};
+    }
+    case 'TERRAIN_RECORD_PUT': {
+      stmts.TERRAIN_RECORD_PUT.run(...terrainRecordPutArgs(op));
       return {};
     }
     case 'GROUP': {

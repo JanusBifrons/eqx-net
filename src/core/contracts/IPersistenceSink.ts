@@ -103,6 +103,11 @@ export type PersistOp =
       ts: number;
     }
   | { type: 'HOLD_DELETE'; holderUid: string; ts: number }
+  // Macro terrain C4 — a cut field's change record, one row per touched rock
+  // (`terrain_records`, UPSERT on (sectorKey, rockKey)). `pool`: ore left in a
+  // mined rock (null when none recorded); `consumed`: broken up, never cut whole
+  // again. `layoutVersion` is the FIELD_LAYOUT_VERSION the rock key was cut under.
+  | { type: 'TERRAIN_RECORD_PUT'; sectorKey: string; rockKey: number; layoutVersion: number; pool: number | null; consumed: boolean; ts: number }
   // Hostile-review A5 — an ATOMIC group. Enqueued as ONE op so the write-ahead
   // buffer can never split it across two flushes; applied inside a SAVEPOINT so
   // a failing group rolls back alone (other ops in the batch still commit).
