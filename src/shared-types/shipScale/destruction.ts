@@ -31,8 +31,8 @@
  */
 import type { ShipKind } from '../shipKinds/types.js';
 
-export type DestructionProfileId = 'capital' | 'subcap' | 'none';
-export const DESTRUCTION_PROFILE_IDS: readonly DestructionProfileId[] = ['capital', 'subcap', 'none'];
+export type DestructionProfileId = 'capital' | 'subcap' | 'none' | 'rock';
+export const DESTRUCTION_PROFILE_IDS: readonly DestructionProfileId[] = ['capital', 'subcap', 'none', 'rock'];
 
 /** The options `fractureHull` takes from a profile (same field names as its
  *  `FractureInput`; an absent field means the fracture default). */
@@ -442,10 +442,43 @@ const NONE: DestructionProfile = {
   },
 };
 
+/** A rock the mining laser wore out (salvage stream, rock cut;
+ *  mining-and-salvage.md "Mining asteroids"). Never a ship's profile: a
+ *  rock's wreck source (`rockWreckSource`) names it. It breaks like a
+ *  sub-capital re-split, 2-3 chunky pieces along its burn lines, again and
+ *  again; a worn-out piece under 6 % of the rock turns into an ore pod.
+ *  Integrity per area is `ROCK_INTEGRITY_PER_AREA` (× `integrityMul` 1).
+ *  Pieces part gently, collide with each other and settle like sub-cap
+ *  debris; shots never shove them. `salvagePerHull` is unused: a rock's
+ *  pods carry its ore. */
+const ROCK_FRACTURE: DestructionFractureOptions = {
+  maxPieces: 3, snapChance: 0.2, fanCracks: false, farCrack: false, chunkyPieces: true,
+  chunkyMinWidthBeams: 0.36, soundMinShare: 0.3, extraChunkChance: 0.4, jag: { depth: 1, roughness: 0.12 },
+};
+const ROCK: DestructionProfile = {
+  id: 'rock',
+  fracture: ROCK_FRACTURE,
+  resplit: { minAreaFrac: 0.06, integrityMul: 1, integrityMinFrac: 0.03, salvagePerHull: 0, fracture: ROCK_FRACTURE },
+  holdMs: 0,
+  pushScale: 2,
+  separateScale: 20,
+  crackScale: 0,
+  spinScale: 0.3,
+  dampingScale: 10,
+  knockScale: 0,
+  knockMaxScale: 0,
+  knockWakeScale: 0,
+  settlePerRadius: 0.125,
+  settleSpin: 0.3,
+  piecesCollide: true,
+  fx: { ...NONE.fx, glowStyle: 'simple', glowSeconds: 1, cutGlowStyle: 'full' },
+};
+
 export const DESTRUCTION_PROFILES: Readonly<Record<DestructionProfileId, DestructionProfile>> = {
   capital: CAPITAL,
   subcap: SUBCAP,
   none: NONE,
+  rock: ROCK,
 };
 
 /** The cargo pod leaves its glowing scrap, not wreck pieces. */

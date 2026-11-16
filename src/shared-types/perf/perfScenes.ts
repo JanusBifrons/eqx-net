@@ -302,6 +302,28 @@ export const PERF_SCENES: readonly PerfScene[] = [
     minSwarm: 10,
   },
   {
+    // Rock cut (salvage stream, docs/features/mining-and-salvage.md): eight
+    // rocks mined to a break at t = 2 s, their wreck pieces on screen at the
+    // normal zoom, where each piece draws its stretch of the rock's art as one
+    // batched mesh. The intact arm: `--base HEAD --base-env EQX_SCENE_ROCK_CUT=0`
+    // (the same rocks left whole).
+    id: 'rock-cut',
+    title: 'Eight rocks mined into wreck pieces, seen at the normal zoom',
+    room: {
+      droneCount: 0,
+      asteroidConfig: [],
+      sceneScript: [
+        { atMs: 0, action: 'rocks', tag: 'rock', count: 8, x: 0, y: 0, spread: 700, radius: 90 },
+        { atMs: 2000, action: 'rockCut', tag: 'rock', count: 8 },
+        { atMs: 20_000, action: 'end' },
+      ],
+    },
+    spawn: { x: 0, y: -1100 },
+    camera: { x: 0, y: 0, zoom: 0.6 },
+    durationMs: 20_000,
+    minSwarm: 8,
+  },
+  {
     // Macro-terrain Stage 0: what a still field costs at a modest count.
     id: 'rock-field-1k',
     title: '1,000 still rocks in a 9 km disc, pilot idle in the middle',

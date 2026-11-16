@@ -50,7 +50,7 @@ value is superseded, move its row to [History](#history). Values were checked ag
 | Capital turret tick | budget 10 µs per capital; measured ≈ 2.4 µs per battleship per tick (8 battleships × 4 pilots = 0.02 ms) | `benchmarks/capital-mounts.bench.ts` | Capital mount cost | `capital-mounts.bench.ts` |
 | Capital broadside stand-off | 0.75 of main reach | `BROADSIDE_STANDOFF`, `src/core/ai/HostileDroneBehaviour.ts` | Unposted capital range keeping | `capitalClosesRange.test.ts` |
 | Capital turret fire tolerance | barrel within 0.05 rad of the lead bearing (AI drone mount path) | `TURRET_FIRE_TOLERANCE`, `src/core/combat/mountFireControl.ts` | When a capital mount may fire | `tests/unit/capitalCombat.test.ts` |
-| Turret fire miss distance | fires only within 60 u of the aim point | `TURRET_FIRE_MISS`, `src/core/combat/mountFireControl.ts` | Naval turret fire and player naval guns (#19) | `tests/unit/capitalCombat.test.ts` |
+| Turret fire miss distance | a barrel bears within 60 u of the aim point (player mounts; a turret only for a target with no hit shape: NPC capital and structure turrets otherwise fire the moment the barrel ray hits, `barrelRayHits`) | `TURRET_FIRE_MISS`, `src/core/combat/mountFireControl.ts` | Naval turret fire and player naval guns (#19) | `tests/unit/capitalCombat.test.ts` |
 | Capital turret retarget | search every 30 ticks (staggered); hold a lost target 60 ticks | `RETARGET_TICKS`, `TARGET_HOLD_TICKS`, `src/server/rooms/WeaponMountTicker.ts` | Per-turret target churn | `capitalEngagement.test.ts` |
 | Capital turret tracking | `canTrack`: bearing rate ≤ 0.8 × traverse | `src/core/combat/mountTargeting.ts` | Slow guns chasing fast craft | `tests/unit/capitalCombat.test.ts` |
 | Naval barrel span | 0.62 (shared with the bake) | `NAVAL_BARREL_SPAN`, `src/core/combat/muzzle.ts` | Per-barrel shell origin (#15) | — |
@@ -132,6 +132,7 @@ value is superseded, move its row to [History](#history). Values were checked ag
 | Loot pods per sector | 64 (merge, never evict value; merge radius 60) | `MAX_LIVE_LOOT_PER_SECTOR`, `LOOT_MERGE_RADIUS`, `src/server/cargo/LootSubsystem.ts` | Live pods | `LootSubsystem.test.ts` |
 | Loot pod TTL | 15 min | `LOOT_POD_TTL_MS`, `src/server/cargo/LootSubsystem.ts` | Pod lifetime | `LootSubsystem.test.ts` |
 | Loot pickup radius | 80 u at 1× (scales with ship size, #18) | `LOOT_PICKUP_RADIUS` (`shipTuning.lootPickup`), `src/server/cargo/LootSubsystem.ts` | Pickup reach; collect every 6 ticks, sweep ~1 Hz | `LootSubsystem.test.ts` |
+| Tractor hold-zone pickup | 1.2 × the tractor's `hold` (300 u today) from the beam's muzzle | `TRACTOR_PICKUP_HOLD_MUL`, `src/server/rooms/ForceFieldSubsystem.ts` | A pod held in the collector's own tractor beam is picked up as if flown over | `tractorPickup.test.ts`, `ForceFieldSubsystem.test.ts` |
 | Derelict TTL | 1 h | `DERELICT_TTL_MS`, `src/server/cargo/LootSubsystem.ts` | Abandoned-hull pods | `LootSubsystem.test.ts` |
 | Storage capacity | Capital 5000, Cargo Bay 2000 (others per kind) | `StructureKind.holdCapacity`, `src/shared-types/structureKinds.ts` | Base storage | `StorageService.test.ts` |
 | Auto-deposit | within 400 u for 120 ticks | `DEPOSIT_RANGE`, `DEPOSIT_DWELL_TICKS`, `src/server/cargo/StorageService.ts` | When cargo deposits itself | `tests/integration/sectorRoom/storageDeposit.test.ts` |
