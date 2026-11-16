@@ -27,14 +27,39 @@ interface Layer { minView: number; rot: number; s: TilingSprite; h: ArtHandle; p
 interface Puff { s: Sprite; slice: number; lx: number; ly: number; size: number; rot: number }
 interface Knot { halo: Sprite; core: Sprite; lx: number; ly: number; size: number }
 
-/** Front puff slices: parallax (and zoom growth). */
-const FRONT = [1.18, 1.45, 1.8];
+/** Something on screen is waiting for these the moment a nebula sector is
+ *  entered (owner 2026-11-16: "a delay before the nebula showed in"). */
+const URGENT = true;
+/** Front puff slices: how much faster than the world each one slides past
+ *  (1 = moves with the world). The ratio is the same at every zoom
+ *  (`frontPuffShift`), so pulling out to the command view never makes the
+ *  near cloud sweep across the screen (owner 2026-11-16: "near-field
+ *  parallaxing was too extreme, particularly on command mode"). */
+export const FRONT = [1.06, 1.12, 1.2];
 const PUFFS_PER_SLICE = 8;
 const PUFF_VARIANTS = 4;
 const FLASHES = 2;
 
 function ready(h: ArtHandle | null): Texture | null {
   return h && h.state === 'ready' && h.fx ? h.fx.tex : null;
+}
+
+/** The far cloud never slides past faster than this share of the world. */
+export const BACK_MAX_SPEED = 0.9;
+/** A back layer's parallax at this zoom: as authored, but capped so its
+ *  screen speed (`parallax * zoom^zoomPow`) stays below the world's
+ *  (`zoom`). Zoomed far out the `zoomPow` growth would otherwise make the
+ *  "far" gas outrun the ships (the command view). */
+export function backLayerParallax(parallax: number, zoomPow: number, zoom: number): number {
+  const z = Math.max(1e-3, zoom);
+  return Math.min(parallax, (BACK_MAX_SPEED * z) / Math.pow(z, zoomPow));
+}
+
+/** Screen offset from the centre of a front puff (one axis): `l` its 0..1
+ *  slot, `cam` the camera, `p` its slice parallax, `P` the wrap period in
+ *  layer units. Moves `p * zoom` pixels per camera unit, the world `zoom`. */
+export function frontPuffShift(l: number, cam: number, p: number, zoom: number, P: number): number {
+  return (wrap(l * P - cam * p, P) - P / 2) * zoom;
 }
 
 function wrap(v: number, p: number): number {
@@ -57,8 +82,8 @@ export class NebulaVolume {
   constructor(art: ArtService, readonly style: NebulaStyle, back: Container, front: Container) {
     const look = `${style.preset}:${style.seed}`;
     const L = style.layers;
-    this.glow = art.fx('glow', undefined, undefined, false);
-    this.spike = art.fx('spikeStar', undefined, undefined, false);
+    this.glow = art.fx('glow', undefined, undefined, URGENT);
+    this.spike = art.fx('spikeStar', undefined, undefined, URGENT);
     this.gradeTint = hueTint(style.hueA, 0.55);
     const dustAt = Math.floor(L * 0.6);
     for (let li = 0; li < L; li++) {
@@ -89,7 +114,7 @@ export class NebulaVolume {
       back.addChild(s);
       this.flashes.push(s);
     }
-    for (let v = 0; v < PUFF_VARIANTS; v++) this.puffHandles.push(art.fx('nebPuff', `${look}.P${v}`, undefined, false));
+    for (let v = 0; v < PUFF_VARIANTS; v++) this.puffHandles.push(art.fx('nebPuff', `${look}.P${v}`, undefined, URGENT));
     for (let si = 0; si < style.frontSlices; si++) {
       for (let i = 0; i < PUFFS_PER_SLICE; i++) {
         const s = new Sprite(); s.anchor.set(0.5); s.blendMode = 'add'; s.visible = false;
@@ -105,7 +130,7 @@ export class NebulaVolume {
     const s = new TilingSprite({ width: 1, height: 1 });
     s.blendMode = blend; s.visible = false;
     parent.addChild(s);
-    return { minView, rot: (order + 1) * 0.9, s, h: art.fx('nebLayer', variant, undefined, false), parallax, zoomPow, texScale, alpha, dvx, dvy, order };
+    return { minView, rot: (order + 1) * 0.9, s, h: art.fx('nebLayer', variant, undefined, URGENT), parallax, zoomPow, texScale, alpha, dvx, dvy, order };
   }
 
   /** Remove every sprite (the sector changed). */
@@ -136,7 +161,7 @@ export class NebulaVolume {
       l.s.visible = true;
       if (l.s.width !== W) l.s.width = W;
       if (l.s.height !== H) l.s.height = H;
-      backdropXf(cx, cy, zoom, l.parallax, l.zoomPow, W, H, this.xf);
+      backdropXf(cx, cy, zoom, backLayerParallax(l.parallax, l.zoomPow, zoom), l.zoomPow, W, H, this.xf);
       // Zoomed out (a capital's view) the layer would shrink to a small repeating
       // wallpaper: never let one tile be smaller on screen than minView screens.
       const ts = Math.max(this.xf.scale * l.texScale, (l.minView * Math.max(W, H)) / tex.width);
@@ -150,13 +175,14 @@ export class NebulaVolume {
     const kn = q === 'off' ? 0 : q === 'low' || q === 'minimal' ? this.knots.length >> 1 : this.knots.length;
     const ks = Math.pow(Math.max(1e-3, zoom), 0.5);
     const KP = (Math.max(W, H) * 1.6) / ks;
+    const kp = backLayerParallax(0.5, 0.5, zoom);
     for (let k = 0; k < this.knots.length; k++) {
       const n = this.knots[k]!;
       const on = k < kn && glow !== null && spike !== null;
       n.halo.visible = on; n.core.visible = on;
       if (!on) continue;
-      const x = W / 2 + (wrap(n.lx * KP - cx * 0.5, KP) - KP / 2) * ks;
-      const y = H / 2 + (wrap(n.ly * KP - cy * 0.5, KP) - KP / 2) * ks;
+      const x = W / 2 + (wrap(n.lx * KP - cx * kp, KP) - KP / 2) * ks;
+      const y = H / 2 + (wrap(n.ly * KP - cy * kp, KP) - KP / 2) * ks;
       if (n.halo.texture !== glow) n.halo.texture = glow!;
       if (n.core.texture !== spike) n.core.texture = spike!;
       const hs = (180 + 420 * n.size) * ks;
@@ -191,10 +217,10 @@ export class NebulaVolume {
       const tex = ready(this.puffHandles[i % PUFF_VARIANTS]!);
       if (!tex || pf.slice >= slices) { pf.s.visible = false; continue; }
       const p = FRONT[pf.slice]!;
-      const s = Math.pow(Math.max(1e-3, zoom), p * 0.6);
-      const P = (Math.max(W, H) * 2.2) / s;
-      const x = W / 2 + (wrap(pf.lx * P - cx * p, P) - P / 2) * s;
-      const y = H / 2 + (wrap(pf.ly * P - cy * p, P) - P / 2) * s;
+      const z = Math.max(1e-3, zoom);
+      const P = (Math.max(W, H) * 2.2) / z;
+      const x = W / 2 + frontPuffShift(pf.lx, cx, p, z, P);
+      const y = H / 2 + frontPuffShift(pf.ly, cy, p, z, P);
       const size = Math.max(W, H) * pf.size;
       if (x < -size || x > W + size || y < -size || y > H + size) { pf.s.visible = false; continue; }
       if (pf.s.texture !== tex) pf.s.texture = tex;

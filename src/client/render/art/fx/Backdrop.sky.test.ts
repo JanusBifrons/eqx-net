@@ -67,6 +67,22 @@ describe('Backdrop sky is endless (C1)', () => {
 });
 
 describe('Backdrop nebulae from the galaxy map (nebula sectors only)', () => {
+  it('asks for its cloud art ahead of the queue (owner: "a delay before the nebula showed in")', () => {
+    const asked: { id: string; variant?: string; urgent?: boolean }[] = [];
+    const art = fakeArt();
+    const fx = art.fx.bind(art);
+    (art as { fx: ArtService['fx'] }).fx = (id, variant, seed, urgent) => {
+      asked.push({ id, variant, urgent });
+      return fx(id, variant, seed, urgent);
+    };
+    const b = new Backdrop(art, () => 'high');
+    asked.length = 0;
+    b.setSector('bloomgate');
+    const cloud = asked.filter((r) => r.id === 'nebLayer' || r.id === 'nebPuff');
+    expect(cloud.length).toBeGreaterThan(0);
+    for (const r of cloud) expect(r.urgent, `${r.id} ${r.variant}`).toBe(true);
+  });
+
   type Inner = { nebBack: Container; nebFront: Container };
   const shown = (c: Container): number => c.children.filter((k) => k.visible && k.alpha > 0.01).length;
 
