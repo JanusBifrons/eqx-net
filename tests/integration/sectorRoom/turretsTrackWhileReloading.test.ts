@@ -37,8 +37,14 @@ import { SLOT_X_OFF, SLOT_Y_OFF, SLOT_ANGLE_OFF, slotBase } from '../../../src/s
 
 /** How far a fired 16" barrel may sit from the bearing to its target while it
  *  reloads. The aim is the shell's lead point, a few degrees off the bearing
- *  at most; a turret homing at 4°/s leaves this band in a few seconds. */
+ *  at most; a turret homing at 4°/s leaves this band in a few seconds. A
+ *  turret fires the moment its barrel ray touches the target's hull, which
+ *  on a km-long cruiser can be ~25° off its centre, so a fired turret may
+ *  still be closing on the bearing: it must end the sampling inside this
+ *  band and, outside it, never turn AWAY by more than `MAX_TURN_AWAY_DEG` a
+ *  sample. */
 const MAX_OFF_BEARING_DEG = 10;
+const MAX_TURN_AWAY_DEG = 1;
 
 interface RoomPeek {
   mountTicker: { droneMountAngles: Map<string, Float32Array>; droneMountReload: Map<string, Int32Array> };
@@ -102,6 +108,7 @@ describe('SectorRoom integration — capital turrets track while reloading', () 
     const sampleUntil = firstSalvoAt + reloadMs - 3000; // inside the reload
     const b = slotBase(npc.slot);
     let samples = 0;
+    const lastOff = new Map<number, number>();
     while (Date.now() < sampleUntil) {
       await new Promise((r) => setTimeout(r, 500));
       // Premise: still hostile, still locked (else homing is correct).
@@ -121,13 +128,18 @@ describe('SectorRoom integration — capital turrets track while reloading', () 
         const bearing = Math.atan2(-(pilot.x - mx), pilot.y - my);
         const barrel = ha + m.baseAngle + angles[i]!;
         const off = (Math.abs(wrapPi(barrel - bearing)) * 180) / Math.PI;
-        expect(off, `${m.id} slewed ${off.toFixed(1)}° off its target ${((Date.now() - firstSalvoAt) / 1000).toFixed(1)} s into the reload`)
-          .toBeLessThanOrEqual(MAX_OFF_BEARING_DEG);
+        const prev = lastOff.get(i);
+        expect(off, `${m.id} turned away to ${off.toFixed(1)}° off its target ${((Date.now() - firstSalvoAt) / 1000).toFixed(1)} s into the reload`)
+          .toBeLessThanOrEqual(Math.max(MAX_OFF_BEARING_DEG, (prev ?? off) + MAX_TURN_AWAY_DEG));
+        lastOff.set(i, off);
         checked++;
       }
       expect(checked, 'no fired 16" turret to check').toBeGreaterThan(0);
       samples++;
     }
     expect(samples).toBeGreaterThan(20);
+    for (const [i, off] of lastOff) {
+      expect(off, `${mounts[i]!.id} ended the reload ${off.toFixed(1)}° off its target`).toBeLessThanOrEqual(MAX_OFF_BEARING_DEG);
+    }
   });
 });

@@ -37,6 +37,8 @@ export interface PredHitscanWorld {
     excludeId: string,
     /** A wide beam's half-width (`beamHalfWidth`); 0 / absent ⇒ thin. */
     halfWidth?: number,
+    /** A mining tool's beam passes loot pods (`isMiningTool`, #15). */
+    passLootPods?: boolean,
   ): { hitId: string; dist: number } | null;
 }
 
@@ -82,10 +84,12 @@ export function resolveClosestPredictedHit(
   excludeId: string,
   /** The weapon's beam half-width (the heavy beam hits by its width, #15). */
   halfWidth = 0,
+  /** A mining tool's shot passes loot pods (`isMiningTool`, #15). */
+  passLootPods = false,
 ): ClosestHit | null {
   let best: ClosestHit | null = null;
   for (const m of mounts) {
-    const h = world.hitscan(m.fromX, m.fromY, m.fwdX, m.fwdY, maxDist, excludeId, halfWidth);
+    const h = world.hitscan(m.fromX, m.fromY, m.fwdX, m.fwdY, maxDist, excludeId, halfWidth, passLootPods);
     if (h && (best === null || h.dist < best.dist)) {
       best = {
         hitId: h.hitId,
@@ -113,6 +117,8 @@ export interface PredictShotParams {
   nowMs: number;
   /** `beamHalfWidth(weaponDef)`: a wide beam's hit test (absent ⇒ thin). */
   halfWidth?: number;
+  /** `isMiningTool(weaponId)`: the shot passes loot pods, as on the server. */
+  passLootPods?: boolean;
 }
 
 /**
@@ -125,7 +131,7 @@ export interface PredictShotParams {
  * `sink`/`ledger`.
  */
 export function predictShotOutcome(p: PredictShotParams): string | null {
-  const hit = resolveClosestPredictedHit(p.world, p.mounts, p.maxDist, p.excludeId, p.halfWidth);
+  const hit = resolveClosestPredictedHit(p.world, p.mounts, p.maxDist, p.excludeId, p.halfWidth, p.passLootPods);
   const targetId = hit ? hit.hitId : null;
   p.ledger.predict(p.clientShotId, p.mode, targetId, p.damage, p.nowMs);
   if (hit) {

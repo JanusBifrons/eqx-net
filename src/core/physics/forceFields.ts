@@ -17,6 +17,7 @@
  */
 import type RAPIER from '@dimforge/rapier2d-compat';
 import { PAD_PUSH_ACCEL, padPushDir } from '../../shared-types/teleport.js';
+import { tractorPull } from '../combat/tractorSpec.js';
 
 /** v4 T2 — a teleporter pad's closing-iris push: every dynamic body
  *  straddling the pad edge (square, half-size `half`, centred on cx, cy) is
@@ -145,8 +146,7 @@ export function tractorImpulse(
   const ux = dx / d;
   const uy = dy / d;
   if (line || d > f.hold) {
-    const r = f.dRef / d;
-    const pull = f.force * Math.min(1, r * r) * (line ? f.lineFrac : 1);
+    const pull = tractorPull(f.force, f.dRef, f.reach, d) * (line ? f.lineFrac : 1);
     out.x = ux * pull * dt;
     out.y = uy * pull * dt;
     return pull > 0;
