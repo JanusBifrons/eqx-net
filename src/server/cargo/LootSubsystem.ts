@@ -1,5 +1,5 @@
 /**
- * LootSubsystem — loot pods + fly-over pickup + spill-on-death for ONE sector
+ * LootSubsystem — loot pods + fly-over (or tractor hold-zone) pickup + spill-on-death for ONE sector
  * (plan peppy-jumping-pinwheel P1a-1). Decision logic over injected hooks, so it
  * is unit-testable without a room (the `TransitOrchestrator` pattern).
  *
@@ -65,6 +65,11 @@ export interface LootSubsystemDeps {
    *  row (liveness #17 — lingering / dead hulls never collect; no roster row ⇒
    *  no hold ⇒ no pickup). Visitor style: no per-tick allocation (#14). */
   forEachCollector: (visit: (c: LootCollector) => void) => void;
+  /** Salvage plan PR 12, hold-zone pickup: is pod `podId` (at x, y) held by a
+   *  tractor beam of collector `c` close enough to take it
+   *  (`ForceFieldSubsystem.inTractorHold`)? Such a pod is picked up exactly as
+   *  if flown over. Absent ⇒ fly-over only. */
+  inTractorHold?: (c: LootCollector, podId: string, x: number, y: number) => boolean;
   /** Discrete notifications (UI accelerator + audit). */
   onCollected?: (c: LootCollector, moved: Hold, podId: string) => void;
   onDropped?: (podId: string, hold: Hold, cause: string) => void;
@@ -224,7 +229,9 @@ export class LootSubsystem {
       if (pose === null) continue;
       const dx = pose.x - c.x;
       const dy = pose.y - c.y;
-      if (dx * dx + dy * dy > PICKUP_R2) continue;
+      // Flown over, or held in this collector's tractor beam close enough:
+      // either way the same atomic pickup (a full hold leaves the pod).
+      if (dx * dx + dy * dy > PICKUP_R2 && this.d.inTractorHold?.(c, podId, pose.x, pose.y) !== true) continue;
       this.pickUp(c, podId);
     }
   };

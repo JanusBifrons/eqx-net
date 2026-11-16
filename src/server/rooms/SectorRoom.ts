@@ -2918,6 +2918,7 @@ export class SectorRoom extends Room<SectorState> {
         return p;
       },
       forEachCollector: (visit) => this.forEachLootCollector(visit),
+      inTractorHold: (c, podId, x, y) => this.forceFields.inTractorHold(c.playerId, podId, x, y), // emitter id: a pilot's playerId or an AI ship's swarm id
       onCollected: (c, moved, podId) => this.onLootCollected(c, moved, podId),
       onDropped: (podId, hold, cause) => {
         auditEvent({ event: 'loot_dropped', sector: this.sectorKey ?? undefined, podId, cause, weight: holdWeight(hold) });
