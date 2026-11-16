@@ -22,7 +22,7 @@
  *    (`thrusters.plume`), both read by the forge and the engine FX.
  *  - Mounts: three size classes. A few big mining lasers (round emitter with a
  *    lens barrel, `turretLayout`) at the bow corners angled forward; rows of
- *    small tractor dishes down the sides.
+ *    tractor dishes down the sides (look A: AA to XL, the size ladder).
  *  - Paint: the warships' cool steel, so the barge reads as lit by the same
  *    sun; fitted parts (cargo, deckhouse, stern gear) use roles the forge
  *    paints as their own (`OWN_PAINT_ROLES`), so no hull metal band crosses
@@ -56,7 +56,7 @@ export const BARGE_KIND_ID = 'barge';
 export const BARGE_PICK: BargeLook = 'A';
 
 /** Mount width in world units per size class at 1× (a battleship's 16"
- *  house is ~320): XL / L / M / AA mining lasers, M / S / AA tractor dishes.
+ *  house is ~320): mining lasers and tractor dishes alike.
  *  The catalogue scales it with the hull (`defineCapitalShipKind`); reach,
  *  beam radius and tractor power come from the mount size
  *  (`MOUNT_SIZE_TUNING`, #18). */
@@ -133,10 +133,11 @@ const area = (pts: readonly Pt[]): number => {
 };
 
 /** Pattern letter → mount: upper case a mining laser, lower case a tractor
- *  dish; `a`/`A` is the AA size, the rest their own size letter. */
+ *  dish; `a`/`A` is the AA size, `x`/`X` the XL size, the rest their own
+ *  size letter. */
 const patternMount = (ch: string): { kind: 'laser' | 'tractor'; size: MountSize } => {
   const up = ch.toUpperCase();
-  return { kind: ch === up ? 'laser' : 'tractor', size: up === 'A' ? 'AA' : (up as CapitalMountSize) };
+  return { kind: ch === up ? 'laser' : 'tractor', size: up === 'A' ? 'AA' : up === 'X' ? 'XL' : (up as CapitalMountSize) };
 };
 
 /** `kindId`: `BARGE_LOOK_KIND_ID` (default) builds the R&D look kind
@@ -249,8 +250,11 @@ export function bargeDesign(look: BargeLook, map: CapitalMap = 'C', kindId: stri
     containerDeck(0.17, 0.75, B * 0.66, 13, 6);
     deckhouse(0.77, 0.85, [0.84, 0.6, 0.36], B * 0.47);
     const edge = (t: number): number => hullHalfWidth(s, t) * B;
-    // S and AA tractor dishes, an M tractor amidships, M and AA lasers.
-    sideRows('sasMAmAMsas', 0.18, 0.74, edge);
+    // The size ladder down each side (owner: "barge gets L/XL tractors"): an
+    // XL tractor dish at the forward end, nearest the bow XL lasers, takes the
+    // big pieces they cut; an L dish at the aft end, nearest the L lasers; an
+    // M dish forward and one amidships; one S dish; AA dishes and lasers between.
+    sideRows('xamMAmAMsal', 0.18, 0.74, edge);
     // Big lasers: the bow corners angled forward, the aft corners outboard-forward.
     mount('laser', 'XL', B * 0.25, hy(0.1), -0.3, 1.9);
     mount('laser', 'XL', -B * 0.25, hy(0.1), 0.3, 1.9);

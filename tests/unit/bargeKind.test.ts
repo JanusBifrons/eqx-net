@@ -6,8 +6,9 @@
  *  - it has no allegiance (its side comes from its owner), the civilian AI
  *    role, and a large hold honoured by `cargoCapacityForMaxHealth`;
  *  - its mounts parse, carry only the mining laser and the tractor, span the
- *    sizes AA to XL down both sides, and each sits on one of look A's drawn
- *    dishes (a `housing` plate centred on the mount).
+ *    sizes AA to XL down both sides (tractors mirroring the lasers: the size
+ *    ladder), and each sits on one of look A's drawn dishes (a `housing`
+ *    plate centred on the mount).
  */
 import { describe, expect, it } from 'vitest';
 import { cargoCapacityForMaxHealth } from '../../src/shared-types/goods.js';
@@ -68,7 +69,12 @@ describe('the mining barge kind', () => {
     }
     const sizes = (w: string): Set<string | undefined> => new Set(m.filter((x) => x.weaponId === w).map((x) => x.size));
     expect([...sizes('mining_laser')].sort()).toEqual(['AA', 'L', 'M', 'XL']);
-    expect([...sizes('tractor')].sort()).toEqual(['AA', 'M', 'S']);
+    expect([...sizes('tractor')].sort()).toEqual(['AA', 'L', 'M', 'S', 'XL']);
+    // The size ladder (owner: "barge gets L/XL tractors"): the tractors
+    // mirror the lasers, XL2 L2 M4 AA4, plus two S dishes.
+    const d = bargeDesign(BARGE_PICK, CAPITAL_MAP, BARGE_KIND_ID);
+    expect(d.lasers).toEqual({ AA: 4, S: 0, M: 4, L: 2, XL: 2 });
+    expect(d.tractors).toEqual({ AA: 4, S: 2, M: 4, L: 2, XL: 2 });
     expect(m.filter((x) => x.localX > 0).length).toBe(m.filter((x) => x.localX < 0).length);
     // Two weapon groups: lasers and tractors.
     expect((barge.slots ?? []).map((s) => s.id)).toEqual(['laser', 'tractor']);

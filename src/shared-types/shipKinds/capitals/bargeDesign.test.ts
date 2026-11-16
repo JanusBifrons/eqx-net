@@ -47,7 +47,7 @@ describe.each(BARGE_LOOKS)('barge look %s', (look) => {
     const m = kind.mounts ?? [];
     expect(m.every((x) => [String('mining_laser'), TRACTOR_WEAPON].includes(x.weaponId))).toBe(true);
     // Three or more visible size classes; a few big lasers (XL) at the bow
-    // angled forward; tractors are the small dishes.
+    // angled forward; tractor dishes in two or more sizes.
     expect(new Set(m.map((x) => x.size)).size).toBeGreaterThanOrEqual(3);
     const xl = m.filter((x) => x.size === 'XL' && x.id.startsWith('laser-'));
     expect(xl.length).toBeGreaterThanOrEqual(2);
@@ -57,7 +57,7 @@ describe.each(BARGE_LOOKS)('barge look %s', (look) => {
     }
     const tr = m.filter((x) => x.id.startsWith('tractor-'));
     expect(tr.length).toBeGreaterThanOrEqual(6);
-    expect(tr.filter((x) => x.size === 'S').length).toBeGreaterThanOrEqual(4);
+    expect(new Set(tr.map((x) => x.size)).size).toBeGreaterThanOrEqual(2);
     expect(m.filter((x) => x.localX > 0).length).toBe(m.filter((x) => x.localX < 0).length);
     expect(new Set(m.map((x) => x.id)).size).toBe(m.length);
     expect(d.lasers.AA + d.tractors.AA + d.lasers.S + d.lasers.M + d.lasers.L + d.lasers.XL + d.tractors.S + d.tractors.M + d.tractors.L + d.tractors.XL).toBe(m.length);
