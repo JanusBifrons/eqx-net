@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { bakeNebLook, hueTint, nebulaStyle, NEB_LOOK_PRESETS, parseNebLook, resolveNebLook } from './nebulaLook.js';
+import { bakeNebLook, blendWeights, hueTint, nebulaStyle, NEB_LOOK_PRESETS, parseNebLook, resolveNebLook } from './nebulaLook.js';
 
 describe('dense-nebula look R&D (?neblook=)', () => {
   it('reads the flag: preset and seed, absent = off', () => {
@@ -37,6 +37,23 @@ describe('dense-nebula look R&D (?neblook=)', () => {
       expect(lit / n, part).toBeGreaterThan(0.05);
       expect(clear / n, part).toBeGreaterThan(0.02);
     }
+  });
+
+  it('blend: the seed picks the mix, mostly fog, brightness at fog level', () => {
+    expect(resolveNebLook('?neblook=blend&nebseed=5')).toBe('blend:5');
+    let stormy = 0, rainbowy = 0;
+    for (let n = 1; n <= 40; n++) {
+      const w = blendWeights(n);
+      expect(w.fog + w.rainbow + w.storm).toBeCloseTo(1, 6);
+      expect(w.fog).toBeGreaterThan(0.4);
+      const st = nebulaStyle('blend', n);
+      expect(st.glow).toBeLessThanOrEqual(0.75);
+      if (st.lightning > 0) stormy++;
+      if (st.rainbow > 0.2) rainbowy++;
+    }
+    // Some lean stormy, some lean rainbow, not all of either.
+    expect(stormy).toBeGreaterThan(4); expect(stormy).toBeLessThan(36);
+    expect(rainbowy).toBeGreaterThan(4); expect(rainbowy).toBeLessThan(36);
   });
 
   it('hueTint: red at 0, full saturation', () => {

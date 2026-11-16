@@ -11,7 +11,7 @@
  */
 import { h01, pfbm, type Img } from './fxTextures.js';
 
-export const NEB_LOOK_PRESETS = ['fog', 'rainbow', 'storm'] as const;
+export const NEB_LOOK_PRESETS = ['fog', 'rainbow', 'storm', 'blend'] as const;
 export type NebLookPreset = (typeof NEB_LOOK_PRESETS)[number];
 
 export interface NebulaStyle {
@@ -54,6 +54,7 @@ const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
 export function nebulaStyle(preset: NebLookPreset, seed: number): NebulaStyle {
   const r = (k: number): number => h01(seed * 7919 + k, 0x6e6562);
   switch (preset) {
+    case 'blend': return blendStyle(seed);
     case 'fog': {
       // One dominant colour, thick, many layers: you're IN it.
       const hueA = r(1);
@@ -83,9 +84,39 @@ export function nebulaStyle(preset: NebLookPreset, seed: number): NebulaStyle {
   }
 }
 
-/** `?neblook=fog|rainbow|storm[&nebseed=N]` → "preset:seed", or undefined. */
+/** How the seed mixes the three looks (owner, 2026-11-16: "blend: seed picks
+ *  the mix"): mostly Fog, sometimes leaning rainbow or stormy. Weights sum to 1. */
+export function blendWeights(seed: number): { fog: number; rainbow: number; storm: number } {
+  const r = (k: number): number => h01(seed * 7919 + k, 0x626c6e);
+  // Fog is the base; each other look is added at a random strength, often none.
+  const rb = Math.max(0, r(1) * 1.6 - 0.6), sm = Math.max(0, r(2) * 1.6 - 0.6);
+  const fog = 1.2 + r(3) * 0.6;
+  const sum = fog + rb + sm;
+  return { fog: fog / sum, rainbow: rb / sum, storm: sm / sum };
+}
+
+function blendStyle(seed: number): NebulaStyle {
+  const w = blendWeights(seed);
+  const f = nebulaStyle('fog', seed), rb = nebulaStyle('rainbow', seed), sm = nebulaStyle('storm', seed);
+  const mix = (k: 'sat' | 'thickness' | 'glow' | 'turbulence' | 'dust' | 'knots' | 'dim' | 'grade'): number =>
+    f[k] * w.fog + rb[k] * w.rainbow + sm[k] * w.storm;
+  // A strongly stormy mix takes storm's warm/cold pair; otherwise fog's hue.
+  const stormy = w.storm > w.rainbow && w.storm > 0.25;
+  return {
+    preset: 'blend', seed, hueA: stormy ? sm.hueA : f.hueA, hueB: stormy ? sm.hueB : f.hueB,
+    rainbow: f.rainbow * w.fog + rb.rainbow * w.rainbow + sm.rainbow * w.storm,
+    sat: mix('sat'), thickness: mix('thickness'),
+    // Brightness held at Fog's level (owner): the cloud never outshines a fight.
+    glow: Math.min(0.75, mix('glow')), turbulence: mix('turbulence'),
+    layers: 6, frontSlices: 3, dust: mix('dust'), knots: Math.round(mix('knots')),
+    lightning: w.storm > 0.2 ? sm.lightning * Math.min(1, w.storm * 2) : 0,
+    dim: mix('dim'), grade: Math.min(0.11, mix('grade')),
+  };
+}
+
+/** `?neblook=fog|rainbow|storm|blend[&nebseed=N]` → "preset:seed", or undefined. */
 export function resolveNebLook(search: string): string | undefined {
-  const m = /[?&]neblook=(fog|rainbow|storm)\b/.exec(search);
+  const m = /[?&]neblook=(fog|rainbow|storm|blend)\b/.exec(search);
   if (!m) return undefined;
   const s = /[?&]nebseed=(\d{1,6})\b/.exec(search);
   return `${m[1]}:${s ? Number(s[1]) : 1}`;

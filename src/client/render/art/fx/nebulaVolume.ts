@@ -27,7 +27,7 @@ interface Knot { halo: Sprite; core: Sprite; lx: number; ly: number; size: numbe
 
 /** Front puff slices: parallax (and zoom growth). */
 const FRONT = [1.18, 1.45, 1.8];
-const PUFFS_PER_SLICE = 6;
+const PUFFS_PER_SLICE = 8;
 const PUFF_VARIANTS = 4;
 const FLASHES = 2;
 
@@ -93,7 +93,7 @@ export class NebulaVolume {
         const s = new Sprite(); s.anchor.set(0.5); s.blendMode = 'add'; s.visible = false;
         front.addChild(s);
         const k = si * 31 + i;
-        this.puffs.push({ s, slice: si, lx: h01(k, style.seed + 401), ly: h01(k, style.seed + 402), size: 0.55 + 0.6 * h01(k, style.seed + 403), rot: h01(k, style.seed + 404) * Math.PI * 2 });
+        this.puffs.push({ s, slice: si, lx: h01(k, style.seed + 401), ly: h01(k, style.seed + 402), size: 0.7 + 0.7 * h01(k, style.seed + 403), rot: h01(k, style.seed + 404) * Math.PI * 2 });
       }
     }
   }
@@ -188,7 +188,8 @@ export class NebulaVolume {
       pf.s.position.set(x, y); pf.s.scale.set(size / tex.width); pf.s.rotation = pf.rot + t * 0.01 * (pf.slice + 1);
       const rr = Math.hypot(x - W / 2, y - H / 2);
       const k = Math.min(1, Math.max(0, (rr - hole0) / (hole1 - hole0)));
-      pf.s.alpha = (0.22 + 0.25 * st.thickness) * k * k * (3 - 2 * k);
+      // Owner (2026-11-16): "more in front": you fly THROUGH it, clear round your ship.
+      pf.s.alpha = (0.38 + 0.32 * st.thickness) * k * k * (3 - 2 * k);
     }
   }
 }

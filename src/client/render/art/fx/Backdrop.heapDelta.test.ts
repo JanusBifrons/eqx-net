@@ -39,7 +39,7 @@ describe('backdrop heap-delta', () => {
     expect(inNebula).toBeGreaterThan(1000);
   });
   it('the dense-nebula look (?neblook=) allocates nothing per frame either', () => {
-    for (const look of ['fog:1', 'rainbow:2', 'storm:3']) {
+    for (const look of ['fog:1', 'rainbow:2', 'storm:3', 'blend:5']) {
       const b = new Backdrop(art, () => 'high', 'large', look);
       b.setSector('emerald-span');
       const cam = { center: { x: 0, y: 0 }, scale: { x: 1 }, screenWidth: 1280, screenHeight: 720 };
