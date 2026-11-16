@@ -67,7 +67,7 @@ describe('pickTurretLock parity with mixed-class locks (#15, owner 2026-11-14)',
 
 describe('pickTurretLock parity (#15)', () => {
   it('the server lock aim and the client predicted aim both call it', () => {
-    const server = readFileSync('src/server/rooms/LockSubsystem.ts', 'utf8');
+    const server = readFileSync('src/server/rooms/lockPick.ts', 'utf8'); // LockSubsystem.pickLocked's picker
     const client = readFileSync('src/client/net/fcMountPick.ts', 'utf8');
     expect(server).toMatch(/pickTurretLock\(/);
     expect(client).toMatch(/pickTurretLock\(/);

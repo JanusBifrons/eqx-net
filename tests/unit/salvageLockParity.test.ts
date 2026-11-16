@@ -28,7 +28,10 @@ const piece = (x: number, y: number, radius: number): LockTargetView => ({
   x, y, vx: 0, vy: 0, angle: 0, ship: false, kindId: null, shieldUp: false, radius, hostile: false, terrain: true,
 });
 
-function rig(pieces: Record<string, { t: LockTargetView; mass: number; holdWeight: number }>, free = { v: 100 }) {
+/** `ship`: a ship lock (not salvage); `hidden`: outside the client's mirror (AOI). */
+type Entry = { t: LockTargetView; mass: number; holdWeight: number; ship?: true; hidden?: true };
+
+function rig(pieces: Record<string, Entry>, free = { v: 100 }) {
   const kind = salvager();
   const locks = new LockSubsystem({
     resolveTarget: (_p, key, out) => { const e = pieces[key]; if (!e) return false; Object.assign(out, e.t); return true; },
@@ -39,14 +42,14 @@ function rig(pieces: Record<string, { t: LockTargetView; mass: number; holdWeigh
     refreshHostility: () => {},
     salvageOf: (_p, key, out: LockSalvageView) => {
       const e = pieces[key];
-      if (!e) return false;
+      if (!e || e.ship) return false;
       out.mass = e.mass; out.holdWeight = e.holdWeight; out.freeHold = free.v;
       return true;
     },
   });
   locks.enable('p1', false, 'manual');
   const client = new FcMountPicker(
-    (key, out) => { const e = pieces[key]; if (!e) return false; Object.assign(out, e.t); return true; },
+    (key, out) => { const e = pieces[key]; if (!e || e.hidden) return false; Object.assign(out, e.t); return true; },
     (key, out) => { const t = pieces[key]!.t; fillRangeShape(out, 0, false, null, false, t.radius); },
   );
   const defs = new Map<string, { def: FcMountDef; group: string }>();
@@ -110,5 +113,26 @@ describe('salvage lock pick: server LockSubsystem ⇔ client FcMountPicker', () 
     locks.step();
     expect(locks.wireFor('p1')!.find((g) => g.id === 'main')!.l[0]!.f).toBe(LOCK_SALVAGE);
     for (const [s, c] of aims('main')) { expect(s).toBe('s:7'); expect(c).toBe('s:7'); }
+  });
+
+  it('a ship lock outside the client mirror beside a haulable piece: both sides aim at the ship', () => {
+    // Server: one haulable piece + a combat lock, so the ordinary pick takes the ship.
+    // The client sees only the piece; counting salvage locks by mirror presence it
+    // would think "every lock a haulable piece" and give the lasers no aim.
+    const { locks, aims } = rig({
+      's:2': { t: piece(1500, 0, 40), mass: 1, holdWeight: 1 },
+      'p:far': { t: { ...piece(90000, 0, 0), ship: true, hostile: true, terrain: false }, mass: 0, holdWeight: 0, ship: true, hidden: true },
+    });
+    for (const k of ['s:2', 'p:far']) expect(locks.forceLock('p1', k, 'main')).toBe(1);
+    for (const [s, c] of aims('main')) { expect(s).toBe('p:far'); expect(c).toBe(s); }
+  });
+
+  it('a cuttable piece outside the client mirror: same aim on both sides', () => {
+    const { locks, aims } = rig({
+      's:1': { t: piece(1500, 0, 120), mass: 1e9, holdWeight: 500 },
+      's:9': { t: piece(90000, 0, 900), mass: 1e9, holdWeight: 500, hidden: true },
+    });
+    for (const k of ['s:9', 's:1']) expect(locks.forceLock('p1', k, 'main')).toBe(1);
+    for (const [s, c] of aims('main')) { expect(s).toBe('s:1'); expect(c).toBe(s); }
   });
 });

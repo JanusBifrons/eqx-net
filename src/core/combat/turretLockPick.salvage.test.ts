@@ -76,3 +76,52 @@ describe('pickTurretLock: mining lasers on salvage locks', () => {
     expect(picks(group, [10, 20], [0, 0])).toEqual([0, 1]);
   });
 });
+
+describe('pickTurretLock: mining lasers only take pieces they can engage', () => {
+  const S = LOCK_SALVAGE;
+  /** An arc-limited laser facing `base` (rad; -π/2 faces +x, +π/2 faces -x). */
+  const sided = (base: number) =>
+    ({ baseAngle: base, arcMin: -0.5, arcMax: 0.5, rotationSpeed: 1, weaponId: 'mining_laser' as const, size: 'L' as const });
+  const run = (group: ReadonlyArray<ReturnType<typeof sided>>, xs: number[], radii: number[], flags: number[]) =>
+    group.map((m, o) => pickTurretLock(m, 0, 0, 0, REACH, o, xs.length, xs, xs.map(() => 0), radii.map(piece), flags, group));
+
+  it('port and starboard lasers on rocks either side: each takes the rock in its own arc', () => {
+    // Laser 0 faces port (-x), laser 1 starboard (+x); the BIG rock is to starboard.
+    const group = [sided(Math.PI / 2), sided(-Math.PI / 2)];
+    expect(run(group, [1000, -1000], [500, 100], [S, S])).toEqual([1, 0]);
+  });
+
+  it('a big piece out of reach: both lasers cut the small piece in reach', () => {
+    const group = [mount('mining_laser', 'L'), mount('mining_laser', 'L')];
+    const got = group.map((m, o) =>
+      pickTurretLock(m, 0, 0, 0, REACH, o, 2, [REACH * 3, 1000], [0, 0], [piece(900), piece(50)], [S, S], group));
+    expect(got).toEqual([1, 1]);
+  });
+
+  it('no piece engageable: the laser parks on the first cuttable piece (as the ordinary pick parks)', () => {
+    const group = [mount('mining_laser', 'L'), mount('mining_laser', 'L')];
+    const far = REACH * 3;
+    const got = group.map((m, o) =>
+      pickTurretLock(m, 0, 0, 0, REACH, o, 3, [far, far, far], [0, 1, 2], [piece(10), piece(900), piece(50)], [S | LOCK_HAULABLE, S, S], group));
+    expect(got).toEqual([1, 1]);
+  });
+
+  it('an unknown pose (NaN, the client has no mirror entry) is never engageable', () => {
+    const group = [mount('mining_laser', 'L'), mount('mining_laser', 'L')];
+    const got = group.map((m, o) =>
+      pickTurretLock(m, 0, 0, 0, REACH, o, 2, [NaN, 1000], [NaN, 0], [piece(900), piece(50)], [S, S], group));
+    expect(got).toEqual([1, 1]);
+  });
+});
+
+describe('pickTurretLock: piece size order is float32-stable (#15)', () => {
+  it('server float64 radii and client float32 wire radii rank sibling pieces the same', () => {
+    const a = 100.000001;
+    const b = 100.000002;
+    expect(Math.fround(a)).toBe(Math.fround(b)); // the wire can't tell them apart
+    const group = [mount('mining_laser', 'L'), mount('mining_laser', 'S')];
+    const server = picks(group, [a, b], [LOCK_SALVAGE, LOCK_SALVAGE]);
+    const client = picks(group, [Math.fround(a), Math.fround(b)], [LOCK_SALVAGE, LOCK_SALVAGE]);
+    expect(server).toEqual(client);
+  });
+});

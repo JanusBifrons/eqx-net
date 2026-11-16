@@ -15,14 +15,21 @@ function harness(kindId = 'fighter'): {
   setAuto: (key: string | null) => void;
   /** The `anyTarget` flag of every `autoPick` call, in order. */
   anyTargetArgs: boolean[];
+  /** Dep call counts (`shipOf`, `resolveTarget`). */
+  calls: { shipOf: number; resolve: number };
+  /** Keys `salvageOf` calls salvage (never haulable). */
+  salvage: Set<string>;
 } {
   const targets = new Map<string, LockTargetView>();
   const commits: string[] = [];
   const refreshes: string[] = [];
   let auto: string | null = null;
   const anyTargetArgs: boolean[] = [];
+  const calls = { shipOf: 0, resolve: 0 };
+  const salvage = new Set<string>();
   const deps: LockSubsystemDeps = {
     resolveTarget: (_p, key, out) => {
+      calls.resolve++;
       const t = targets.get(key);
       if (!t) return false;
       Object.assign(out, t);
@@ -32,7 +39,12 @@ function harness(kindId = 'fighter'): {
       out.x = 0; out.y = 0; out.vx = 0; out.vy = 0; out.angle = 0;
       return true;
     },
-    shipOf: () => ({ kind: getShipKind(kindId), activated: [] }),
+    shipOf: () => { calls.shipOf++; return { kind: getShipKind(kindId), activated: [] }; },
+    salvageOf: (_p, key, out) => {
+      if (!salvage.has(key)) return false;
+      out.mass = Infinity; out.holdWeight = Infinity; out.freeHold = 0;
+      return true;
+    },
     autoPick: (_p, _r, _x, _y, bears, anyTarget) => {
       anyTargetArgs.push(anyTarget);
       if (auto === null) return null;
@@ -44,7 +56,7 @@ function harness(kindId = 'fighter'): {
   };
   const locks = new LockSubsystem(deps);
   locks.enable('p1');
-  return { locks, targets, commits, refreshes, setAuto: (k) => { auto = k; }, anyTargetArgs };
+  return { locks, targets, commits, refreshes, setAuto: (k) => { auto = k; }, anyTargetArgs, calls, salvage };
 }
 
 const still = (x: number, hostile: boolean): LockTargetView => ({ x, y: 0, vx: 0, vy: 0, angle: 0, ship: false, kindId: null, shieldUp: false, radius: 30, hostile, terrain: false });
@@ -515,5 +527,26 @@ describe('LockSubsystem capital turret split (PR 1d slice 4)', () => {
     h.targets.set('s:1', { ...still(1500, true), y: 0 });
     h.locks.forceLock('p1', 's:1', 'main');
     for (const m of ['main-1', 'main-2', 'main-3', 'main-4', 'main-5']) expect(h.locks.aimKeyFor('p1', m)).toBe('s:1');
+  });
+});
+
+describe('LockSubsystem hot-path cost (salvage PR 16 review, #14)', () => {
+  it('one lock step asks for the ship once per player, not once per group', () => {
+    const h = harness('destroyer');
+    h.targets.set('s:1', { ...still(1500, true), y: 0 });
+    h.locks.forceLock('p1', 's:1');
+    h.calls.shipOf = 0;
+    h.locks.step();
+    expect(h.calls.shipOf).toBe(1);
+  });
+
+  it('a plain gun on one salvage lock keeps the one-lock fast path (no per-mount target resolve)', () => {
+    const h = harness('destroyer');
+    h.targets.set('s:1', { ...rock(1500), y: 0 });
+    h.salvage.add('s:1');
+    h.locks.forceLock('p1', 's:1', 'main');
+    h.calls.resolve = 0;
+    for (const m of ['main-1', 'main-2', 'main-3']) expect(h.locks.aimKeyFor('p1', m)).toBe('s:1');
+    expect(h.calls.resolve).toBe(0);
   });
 });

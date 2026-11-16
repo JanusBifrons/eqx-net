@@ -13,10 +13,11 @@ import { LOCK_TUNING, WEAPON_LOCK_PROFILE, lockCapacityFor, sensorFor, NO_PILOT_
 import { lockSeconds, type LockInputs } from '../../core/combat/lockTime.js';
 import { newLock, stepLock, LOCK_STAGE_CODE, LOCK_TRACK, type LockEntry } from '../../core/combat/lockState.js';
 import { lockLineHolds } from '../../core/combat/lockLine.js';
-import { pickTurretLock, TURRET_NO_LOCK, TURRET_PICK_MAX } from '../../core/combat/turretLockPick.js';
+import { LockPicker } from './lockPick.js';
 import { lockSalvageFlags, type LockSalvageDeps } from './lockSalvage.js';
+import { isSalvageWeapon } from '../../core/combat/salvageTargeting.js';
 import { shipGroups } from './lockGroups.js';
-import { mountInReach, mountWeaponReach, type MountRangeTarget } from '../../core/combat/mountReach.js';
+import { mountInReach, mountWeaponReach } from '../../core/combat/mountReach.js';
 import type { FireTargetShape } from '../../core/combat/fireControlBearing.js';
 import { getWeapon, weaponAutoFireRange } from '../../core/combat/WeaponCatalogue.js';
 import type { ShipKind, WeaponMount } from '../../shared-types/shipKinds/types.js';
@@ -75,6 +76,9 @@ export interface LockSubsystemDeps extends LockSalvageDeps {
   refreshHostility(playerId: string, key: string): void;
 }
 
+/** What `shipOf` returns: the ship's kind and activated mounts. */
+type LockShip = NonNullable<ReturnType<LockSubsystemDeps['shipOf']>>;
+
 export type GroupMode = 'auto' | 'manual';
 
 /** One lock of a group in the own-ship snapshot (`states[].groups`). `r`: released
@@ -101,6 +105,8 @@ interface GroupState {
    *  [lo0, hi0, lo1, hi1, …] (fixed guns get a small window). */
   arcs: number[];
   mountIds: Set<string>;
+  /** The group's mining mounts (`isSalvageWeapon`): only they need the pick on a single salvage lock. */
+  salvageMountIds: Set<string>;
   /** The group's mounts in slot order (a mount's index is its ordinal for `pickTurretLock`). */
   mounts: WeaponMount[];
   locks: LockEntry[];
@@ -292,10 +298,16 @@ export class LockSubsystem {
 
   /** (Re)build the player's groups when their ship kind or activated mounts change. */
   private sync(playerId: string, p: PlayerLocks): boolean {
+    return this.syncShip(playerId, p) !== null;
+  }
+
+  /** `sync`, returning the ship it read (null: none), so a lock step asks
+   *  `shipOf` once per player, not once per group (#14). */
+  private syncShip(playerId: string, p: PlayerLocks): LockShip | null {
     const ship = this.deps.shipOf(playerId);
-    if (!ship) return false;
+    if (!ship) return null;
     const sig = ship.activated.length;
-    if (ship.kind.id === p.kindId && sig === p.activatedSig) return true;
+    if (ship.kind.id === p.kindId && sig === p.activatedSig) return ship;
     // Keep each group's mode across a rebuild of the same kind; locks reset.
     const prevModes = new Map<string, GroupMode>();
     if (ship.kind.id === p.kindId) for (const g of p.groups) prevModes.set(g.id, g.mode);
@@ -320,13 +332,14 @@ export class LockSubsystem {
         size: geo.size,
         arcs: groupArcs(mounts),
         mountIds: new Set(mounts.map((m) => m.id)),
+        salvageMountIds: new Set(mounts.filter((m) => isSalvageWeapon(getWeapon(m.weaponId))).map((m) => m.id)),
         mounts,
         locks: [],
         wire,
       });
       p.wire.push(wire);
     }
-    return true;
+    return ship;
   }
 
   private group(p: PlayerLocks, groupId: string): GroupState | null {
@@ -502,57 +515,28 @@ export class LockSubsystem {
         } else if (acquiring === null && e.stage === 'acquiring') acquiring = e.target;
       }
       if (first === null) return acquiring;
-      // One plain lock: every mount on it. A salvage lock goes through the pick (a laser skips a haulable piece).
-      if (n === 1 && first.flags === 0) return first.target;
+      // One lock: every mount on it, except a mining laser on a salvage lock
+      // (the pick: a laser skips a haulable piece). Guns keep the fast path.
+      if (n === 1 && (first.flags === 0 || !g.salvageMountIds.has(mountId))) return first.target;
       const k = this.pickLocked(playerId, g, mountId);
       return k === undefined ? first.target : k;
     }
     return null;
   }
 
-  private readonly pickX = new Float64Array(TURRET_PICK_MAX);
-  private readonly pickY = new Float64Array(TURRET_PICK_MAX);
-  private readonly pickFlags = new Uint8Array(TURRET_PICK_MAX);
-  private readonly pickKeys: string[] = [];
-  /** Per-lock hit shapes for `pickTurretLock`'s hull range gate (reused, #14). */
-  private readonly pickShapes: { -readonly [K in keyof MountRangeTarget]: MountRangeTarget[K] }[] =
-    Array.from({ length: TURRET_PICK_MAX }, () => ({ kindId: null, angle: 0, shieldUp: false, radius: 0 }));
+  private readonly picker = new LockPicker();
 
   /**
-   * Which LOCKED target this turret takes (shared `pickTurretLock` with the
-   * locks' salvage bits, the same rule as the client's predicted aim, #15).
-   * Null = no aim (`TURRET_NO_LOCK`: a mining laser whose locks are all
-   * haulable); undefined when the ship pose or the mount can't be resolved
-   * (the caller falls back to the first lock).
+   * Which LOCKED target this turret takes (`LockPicker`: shared
+   * `pickTurretLock` with the salvage bits, as the client's aim, #15). Null =
+   * no aim; undefined when the ship pose or the mount can't be resolved (the
+   * caller falls back to the first lock).
    */
   private pickLocked(playerId: string, g: GroupState, mountId: string): string | null | undefined {
     let ordinal = -1;
     for (let i = 0; i < g.mounts.length; i++) if (g.mounts[i]!.id === mountId) { ordinal = i; break; }
     if (ordinal < 0 || !this.deps.shooterPose(playerId, this.shooter)) return undefined;
-    const keys = this.pickKeys;
-    keys.length = 0;
-    for (const e of g.locks) {
-      if (e.stage !== 'locked' || keys.length >= this.pickX.length) continue;
-      if (!this.deps.resolveTarget(playerId, e.target, this.target)) continue;
-      this.pickFlags[keys.length] = e.flags;
-      this.pickX[keys.length] = this.target.x;
-      this.pickY[keys.length] = this.target.y;
-      const sh = this.pickShapes[keys.length]!;
-      sh.kindId = this.target.ship ? this.target.kindId : null;
-      sh.angle = this.target.angle;
-      sh.shieldUp = this.target.shieldUp;
-      sh.radius = this.target.ship ? 0 : this.target.radius;
-      keys.push(e.target);
-    }
-    if (keys.length === 0) return undefined;
-    const m = g.mounts[ordinal]!;
-    const s = this.shooter;
-    const cosA = Math.cos(s.angle);
-    const sinA = Math.sin(s.angle);
-    const mx = s.x + (m.localX * cosA - m.localY * sinA);
-    const my = s.y + (m.localX * sinA + m.localY * cosA);
-    const i = pickTurretLock(m, s.angle, mx, my, mountWeaponReach(m), ordinal, keys.length, this.pickX, this.pickY, this.pickShapes, this.pickFlags, g.mounts);
-    return i === TURRET_NO_LOCK ? null : keys[i]!;
+    return this.picker.pick(this.deps, playerId, g.locks, g.mounts, ordinal, this.shooter, this.target);
   }
 
   /** Build the tracked id's groups now (they are otherwise built lazily by the
@@ -574,9 +558,10 @@ export class LockSubsystem {
   /** Advance every lock by one lock step. Call every 6 server ticks. */
   step(): void {
     for (const [playerId, p] of this.players) {
-      if (!this.sync(playerId, p)) continue;
+      const ship = this.syncShip(playerId, p);
+      if (ship === null) continue;
       if (!this.deps.shooterPose(playerId, this.shooter)) continue;
-      for (const g of p.groups) this.stepGroup(playerId, p, g);
+      for (const g of p.groups) this.stepGroup(playerId, p, g, ship);
     }
   }
 
@@ -596,7 +581,7 @@ export class LockSubsystem {
     return false;
   }
 
-  private stepGroup(playerId: string, p: PlayerLocks, g: GroupState, ship = this.deps.shipOf(playerId)): void {
+  private stepGroup(playerId: string, p: PlayerLocks, g: GroupState, ship: LockShip): void {
     // Locks work at any distance (owner 2026-11-14). An AUTO group's own pick
     // is released once its target leaves the group's FIRE range (reach ×
     // `reachSlack`, the hysteresis over the in-reach pick), so AUTO re-picks
