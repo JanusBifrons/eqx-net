@@ -4,6 +4,41 @@ Design work deliberately parked, to revisit. Each entry says what we found,
 why it waits, and what doing it properly involves. Remove an entry in the PR
 that picks it up.
 
+## Graphics-quality leftovers (parked 2026-11-16)
+
+Found while adding the edge-smoothing, render-sharpness and texture-softening
+settings (#754; [graphics-quality.md](features/graphics-quality.md)). Every
+item stays optional and cosmetic, like the settings themselves.
+
+- **Time the options.** No cost is measured yet: the `perf:scenes` A/B on
+  2026-11-16 came back INVALID because other sessions' servers kept the host
+  busy. Doing it properly, on a quiet host (no foreign game server or Vite,
+  ≥ 4 GB free): `pnpm perf:scenes --scenes fleet-fight --reps 4 --base HEAD
+  --head-params aa=fxaa`, then the same with `renderscale=2` and `aa=off`;
+  repeat with `--device phone-proxy --cpu-rate 2`. Put the verdicts in the
+  guide's "Costs" section. Until then, nothing claims a cost.
+- **Show texture softening in motion.** It only changes lit hulls as they
+  turn, so stills cannot show it. Film one short clip of a small ship turning
+  at `?texsoft=0` and `?texsoft=1`, same run.
+- **Softer baked edges.** Bake a one-pixel fade into the edges of the
+  generated ship and rock art. Free per frame and helps phones, where screen
+  filters are off. Bump `FORGE_VERSION`; Baked mode must stay byte-identical
+  when it is off.
+- **Minimum line width for thin lines** (grid, lock and aim lines), so they
+  don't break into dashes when zoomed out.
+- **Smoothing inside the destruction shockwave.** `DestructionFx`'s filter
+  draws without multisampling while it runs; give it `antialias: 'inherit'`
+  (or 'on') and check the cost.
+- **An "Auto" edge-smoothing choice** that picks Standard or Post per device
+  from measured frame times. Needs the timings first.
+- **Look extras** (bloom on engines and lasers, a soft vignette, film grain).
+  Taste calls: stills to the owner first, behind a setting.
+
+Not ours, seen on the way: CI `perf-counts` was red on several unrelated
+branches the same day (`fleet-fight/high` draw-call p95 about 325 against a
+230 budget; `wide-view/high` 34–38 against 32). It needs a new measurement
+(budgets are raised only on one), not a wider budget.
+
 ## Weapon-cuts leftovers (parked 2026-11-16)
 
 Found while reworking heavy-beam fire and kill cuts (#698, #730, #737, #745,
