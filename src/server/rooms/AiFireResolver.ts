@@ -322,9 +322,12 @@ export class AiFireResolver implements WeaponFireSink {
    *  reload; 'killed' when it fired and one of its beams destroyed what it hit
    *  (the caller's follow-through, `WeaponDefBase.followThroughTicks`); else
    *  true. On 'killed', `killAt` (caller-owned scratch, #14) gets the point
-   *  the killing beam hit. */
+   *  the killing beam hit. `from`: the hull pose the caller aimed the mount
+   *  from (its x, y, angle); the shot is cast from it, so it leaves down the
+   *  aimed line even when the worker has stepped the hull since. */
   fireMount(
     shooterId: string, mountIdx: number, targetId = '', killAt?: { x: number; y: number },
+    from?: { readonly x: number; readonly y: number; readonly angle: number },
   ): boolean | 'killed' {
     const d = this.deps;
     const self = d.swarmEntitySnapshot(shooterId);
@@ -336,7 +339,7 @@ export class AiFireResolver implements WeaponFireSink {
     }
     this._shotKilled = false;
     this._targetId = targetId;
-    this.fireNow(shooterId, mountIdx);
+    this.fireNow(shooterId, mountIdx, -1, from);
     this._targetId = '';
     if (!this._shotKilled) return true;
     if (killAt !== undefined) { killAt.x = this._killX; killAt.y = this._killY; }
@@ -378,8 +381,11 @@ export class AiFireResolver implements WeaponFireSink {
   }
 
   /** Fire the shooter's active slot now, each mount down its own barrel.
-   *  `onlyMount` ≥ 0 fires that mount alone; `mask` picks mounts by bit. */
-  private fireNow(shooterId: string, onlyMount = -1, mask = -1): void {
+   *  `onlyMount` ≥ 0 fires that mount alone; `mask` picks mounts by bit.
+   *  `from`: the pose the shot was aimed from (`fireMount`), else the live SAB. */
+  private fireNow(
+    shooterId: string, onlyMount = -1, mask = -1, from?: { readonly x: number; readonly y: number; readonly angle: number },
+  ): void {
     const d = this.deps;
     const self = d.swarmEntitySnapshot(shooterId);
     if (!self) return;
@@ -387,7 +393,11 @@ export class AiFireResolver implements WeaponFireSink {
     // mount loop looks up other ships through it, and the next barrel then
     // fired from the target's pose and angle (a twin turret's second beam
     // left far off its drawn barrel; aiTurretFacesShot integration test).
-    const sx = self.x, sy = self.y, sAngle = self.angle, svx = self.vx, svy = self.vy;
+    // One frame for aim and shot: the physics worker steps the SAB on its own
+    // thread, so this read can be a step past the pose the caller aimed from
+    // (a turning lance's follow-through left its kill line and stopped on
+    // its own wreck; beamKillBurnsGap.test.ts "worker step").
+    const sx = from?.x ?? self.x, sy = from?.y ?? self.y, sAngle = from?.angle ?? self.angle, svx = self.vx, svy = self.vy;
     const shooterRec = d.swarmRegistry.get(shooterId);
     const droneKindId = shooterRec?.shipKind ?? DEFAULT_SHIP_KIND;
     const droneKind = getShipKind(droneKindId);
