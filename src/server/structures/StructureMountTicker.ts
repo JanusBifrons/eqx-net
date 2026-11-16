@@ -34,7 +34,7 @@
  * candidate list is the caller's pooled array.
  */
 import { rotateMountToward } from '../../core/ai/WeaponMountController.js';
-import { barrelRayHits, leadArcBearing, mountCanEngage, onTarget } from '../../core/combat/mountFireControl.js';
+import { barrelRayHits, leadArcBearing, mountCanEngage, onTarget, turretSettled } from '../../core/combat/mountFireControl.js';
 import { mountPriority, type TargetClass } from '../../core/combat/mountTargeting.js';
 import { getWeapon, type WeaponDef } from '../../core/combat/WeaponCatalogue.js';
 import { newLock, stepLock, type LockEntry } from '../../core/combat/lockState.js';
@@ -243,6 +243,7 @@ export class StructureMountTicker {
       if (!locked) continue; // lock to fire: still acquiring
       if (nowMs - st.reloadMs[i]! < this.reloadMsOf(kind, def)) continue;
       if (!onTarget(want, st.angles[i]!, dist)) continue;
+      if (!turretSettled(want, st.angles[i]!)) continue;
       const a = frame + mount.baseAngle + st.angles[i]!;
       // ... and a ray down the barrel hits the target at its lead point.
       const lead = def.mode === 'projectile' ? dist / def.speed : 0;

@@ -8,10 +8,17 @@
  * EDGE then grazed its shield bubble (68 u), so the first pulse drew beside
  * the ship. The ray is tested on the HULL, shield up or not.
  *
+ * And it fires only once it has SETTLED on its aim point (take 14: a frigate
+ * flying nose-up is ~96 u tall across a beam from the side, so the ray met
+ * its tail while the turret was still turning, and the next pulse, ten ticks
+ * on, landed ~50 u higher at the centre: the same jump). A still target is
+ * aimed at its centre, so every pulse at it passes within a few units of it.
+ *
  * A lance battlecruiser trains its heavy beams onto a pilot missile frigate
  * at the REAL traverse rate (no snap). Every heavy beam that fires at the
  * pilot (shield up, as on film) must have its CENTRE line (muzzle along its
- * direction, a thin ray) on the frigate's HULL at the tick it fired.
+ * direction, a thin ray) on the frigate's HULL at the tick it fired, and
+ * (the frigate holds still) within `SETTLED` of its centre.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
@@ -20,6 +27,10 @@ import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import type { LaserFiredEvent } from '../../../src/shared-types/messages.js';
 import { getShipKind } from '../../../src/shared-types/shipKinds.js';
 import { shipRayHit } from '../../../src/core/combat/shipHitShape.js';
+
+/** How far (u) a pulse at a still target may pass from its centre: the
+ *  turret has finished turning onto it (the frigate's hull is ~96 u long). */
+const SETTLED = 5;
 
 interface RoomInternals {
   aiFireResolver: { deps: { broadcast: (type: string, msg: LaserFiredEvent) => void } };
@@ -34,7 +45,7 @@ describe('SectorRoom integration — a turret fires only when its barrel ray hit
     harness = undefined;
   }, 10_000);
 
-  it('every heavy beam at a frigate is fired with its centre line on the frigate', { timeout: 20_000 }, async () => {
+  it('every heavy beam at a frigate is fired with its centre line on the frigate, once the turret has settled', { timeout: 20_000 }, async () => {
     const kind = getShipKind('battlecruiser-lance');
     const beamMounts = new Set(kind.mounts.filter((m) => m.weaponId === 'heavy_beam').map((m) => m.id));
     harness = await bootSectorTestServer({
@@ -62,6 +73,7 @@ describe('SectorRoom integration — a turret fires only when its barrel ray hit
     let fired = 0;
     let shielded = 0;
     const misses: string[] = [];
+    const offAim: string[] = [];
     const deps = r.aiFireResolver.deps;
     const orig = deps.broadcast.bind(deps);
     deps.broadcast = (type, msg) => {
@@ -74,10 +86,10 @@ describe('SectorRoom integration — a turret fires only when its barrel ray hit
           const len = Math.hypot(dx, dy);
           const hit = shipRayHit('missile-frigate', false, msg.fromX, msg.fromY, dx / len, dy / len, len + 10_000,
             pose.x, pose.y, pose.angle, 0);
-          if (hit === null) {
-            const px = pose.x - msg.fromX, py = pose.y - msg.fromY;
-            misses.push(`${msg.mountId}: centre line ${Math.abs((px * dy - py * dx) / len).toFixed(1)} u from the frigate's centre`);
-          }
+          const px = pose.x - msg.fromX, py = pose.y - msg.fromY;
+          const off = Math.abs((px * dy - py * dx) / len);
+          if (hit === null) misses.push(`${msg.mountId}: centre line ${off.toFixed(1)} u from the frigate's centre`);
+          if (off > SETTLED) offAim.push(`${msg.mountId} at tick ${room._internals.serverTick}: ${off.toFixed(1)} u from the centre`);
         }
       }
       orig(type, msg);
@@ -100,5 +112,6 @@ describe('SectorRoom integration — a turret fires only when its barrel ray hit
     expect(fired, 'the heavy beams came back onto the frigate').toBeGreaterThanOrEqual(8);
     expect(shielded, 'the frigate shield was up for every shot (its bubble is wider than its hull)').toBe(fired);
     expect(misses, 'heavy beams fired with the centre line off the frigate').toEqual([]);
+    expect(offAim, 'heavy beams fired before the turret settled on the frigate (the beam then jumps)').toEqual([]);
   });
 });

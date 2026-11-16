@@ -14,7 +14,10 @@
  *    of the aim point (an angle alone is a 250 u miss at 5,000 u) AND a ray
  *    down the barrel hits the target's hit shape there (`barrelRayHits`):
  *    a miss allowance wider than a small ship let a wide beam fire beside
- *    it and graze it with its edge.
+ *    it and graze it with its edge. And only once the turret has SETTLED on
+ *    the aim point (`turretSettled`): a barrel still turning fired its
+ *    first pulse at the edge of the ship it was sweeping onto and the next
+ *    at its centre, a visible jump.
  *
  * Angles use the mount convention: a body's frame angle (game space, Y-up,
  * CCW), bearing 0 = +y, `atan2(-dx, dy)`. Pure, allocation-free.
@@ -76,6 +79,15 @@ export function leadArcBearing(
 export function onTarget(want: number, current: number, dist: number): boolean {
   const tol = Math.min(TURRET_FIRE_TOLERANCE, Math.atan2(TURRET_FIRE_MISS, Math.max(1, dist)));
   return Math.abs(wrapPi(want - current)) <= tol;
+}
+
+/** A turret has finished turning onto bearing `want` (arc-local): this
+ *  tick's traverse reached it (a target it tracks within its turn rate stays
+ *  settled every tick). Firing while still turning put the first pulse on
+ *  the edge of the ship and the next on its centre. */
+export const TURRET_SETTLED = 1e-4;
+export function turretSettled(want: number, current: number): boolean {
+  return Math.abs(wrapPi(want - current)) <= TURRET_SETTLED;
 }
 
 /**

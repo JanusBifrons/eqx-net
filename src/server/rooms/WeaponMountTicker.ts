@@ -31,7 +31,7 @@ import {
 
 import { mountTargetReach, mountWeaponReach, hasTurretFireControl } from '../../core/combat/mountReach.js';
 import { mountLineClear, mountPriority, targetClass, STRUCTURE_TARGET_CLASS, type TargetClass } from '../../core/combat/mountTargeting.js';
-import { barrelRayHits, leadArcBearing, mountCanEngage, onTarget } from '../../core/combat/mountFireControl.js';
+import { barrelRayHits, turretSettled, leadArcBearing, mountCanEngage, onTarget } from '../../core/combat/mountFireControl.js';
 import { getWeapon } from '../../core/combat/WeaponCatalogue.js';
 import { shipShotMuzzle } from '../../core/combat/muzzle.js';
 import { newLock, stepLock, type LockEntry } from '../../core/combat/lockState.js';
@@ -741,6 +741,8 @@ export class WeaponMountTicker {
       // On target = the shot would pass within TURRET_FIRE_MISS of the aim
       // point (an angle alone is a 250 u miss at 5,000 u).
       if (!onTarget(want, angles[i]!, dist)) continue;
+      // ... the turret has finished turning onto it (`turretSettled`) ...
+      if (!turretSettled(want, angles[i]!)) continue;
       // ... and a ray down the barrel, from the muzzle, hits the target at
       // the aim point (a beam fired beside a frigate grazed it with its edge).
       {
