@@ -279,37 +279,65 @@ export interface RemoteBeamLine { fromX: number; fromY: number; toX: number; toY
  * cooldown, so a fresh pulse redraws the line every shot; a nose gun's beam
  * that stayed put while the fighter turned would leave its nose.
  *
- * `holdLine` true (a styled beam: the capital heavy beam): a pulse stays on
- * the line it was fired along for its whole `HEAVY_BEAM_TTL_MS` life. Its
- * origin follows the muzzle (the ship moves under it), but it aims at the
- * wire end point and stops THERE: never the live mount angle. A heavy pulse
- * outlives a cooldown by ~280 ms, so drawing it down the live barrel swung
- * the last pulse with the turret after the kill follow-through (filmed: ~1.9°
- * off the cut in 0.33 s, then sweeping past the wreck) and, while the turret
- * was still swinging onto a target, ran the beam through the intact hull to
- * its full range.
+ * `holdLine` true (a styled beam: the capital heavy beam) with the turret's
+ * live angle AND the client ray's length `dist` (traced each frame by
+ * `combat/remoteBeamRay.ts`): the beam leaves the barrel tip down the LIVE
+ * barrel and stops at `dist` (the first shield, hull, asteroid or wreck the
+ * client ray meets), so it sweeps with the turret and never jumps between
+ * pulses, nor runs through an intact hull to its full range.
+ *
+ * `holdLine` true without one of them (turret out of this viewer's interest,
+ * or no client ray): it aims at the wire end point and stops THERE.
  */
 export function remoteBeamLine(
   holdLine: boolean, poseAngle: number, baseAngle: number, mountAngle: number | undefined,
   pivotX: number, pivotY: number, muzzleD: number, range: number,
-  wireToX: number, wireToY: number, out: RemoteBeamLine,
+  wireToX: number, wireToY: number, out: RemoteBeamLine, dist?: number,
 ): RemoteBeamLine {
-  const a = remoteBeamFireAngle(poseAngle, baseAngle, holdLine ? undefined : mountAngle, pivotX, pivotY, wireToX, wireToY);
+  const live = !holdLine || (mountAngle !== undefined && dist !== undefined);
+  const a = remoteBeamFireAngle(poseAngle, baseAngle, live ? mountAngle : undefined, pivotX, pivotY, wireToX, wireToY);
   const fx = -Math.sin(a), fy = Math.cos(a);
   out.fromX = pivotX + fx * muzzleD;
   out.fromY = pivotY + fy * muzzleD;
-  if (holdLine) {
+  if (!live) {
     // The end point is the server's: a hit stays on the hit. An end point
     // inside the barrel (point blank) draws nothing rather than backwards.
     const behind = (wireToX - pivotX) * fx + (wireToY - pivotY) * fy <= muzzleD;
     out.toX = behind ? out.fromX : wireToX;
     out.toY = behind ? out.fromY : wireToY;
   } else {
-    out.toX = out.fromX + fx * range;
-    out.toY = out.fromY + fy * range;
+    const len = holdLine && dist !== undefined ? dist : range;
+    out.toX = out.fromX + fx * len;
+    out.toY = out.fromY + fy * len;
   }
   return out;
 }
+
+/** A mount's fire ray this frame: its barrel tip and unit fire direction. */
+export interface MuzzleRay { fromX: number; fromY: number; fwdX: number; fwdY: number }
+
+/**
+ * The fire ray of `mount` on a hull drawn at `ship*`, the turret slewed to
+ * `mountAngle` and the barrel `muzzleD` long, into `out` (no allocation, #14).
+ * The ONE place the client turns a mount pose into muzzle + direction: the
+ * local beam's ray (`ColyseusClient.updateLiveBeam`), the remote heavy beam's
+ * ray (`combat/remoteBeamRay.ts`) and the drawn local beam (`liveBeamLine`).
+ */
+export function mountMuzzleRay(
+  shipX: number, shipY: number, shipAngle: number, mount: WeaponMount | undefined,
+  mountAngle: number, muzzleD: number, out: MuzzleRay,
+): MuzzleRay {
+  const c = Math.cos(shipAngle), s = Math.sin(shipAngle);
+  const lx = mount?.localX ?? 0, ly = mount?.localY ?? 0;
+  const a = shipAngle + (mount?.baseAngle ?? 0) + mountAngle;
+  out.fwdX = -Math.sin(a);
+  out.fwdY = Math.cos(a);
+  out.fromX = shipX + lx * c - ly * s + out.fwdX * muzzleD;
+  out.fromY = shipY + lx * s + ly * c + out.fwdY * muzzleD;
+  return out;
+}
+
+const liveRayScratch: MuzzleRay = { fromX: 0, fromY: 0, fwdX: 0, fwdY: 0 };
 
 /**
  * The line the pilot's OWN beam from `mount` is drawn along this frame (game
@@ -322,17 +350,14 @@ export function liveBeamLine(
   shipX: number, shipY: number, shipAngle: number, mountAngle: number,
   dist: number, out: RemoteBeamLine,
 ): RemoteBeamLine {
-  const c = Math.cos(shipAngle), s = Math.sin(shipAngle);
-  const lx = mount?.localX ?? 0, ly = mount?.localY ?? 0;
-  const a = shipAngle + (mount?.baseAngle ?? 0) + mountAngle;
-  const fx = -Math.sin(a), fy = Math.cos(a);
   // The barrel tip: the point the client ray (`ColyseusClient.updateLiveBeam`)
   // and the server's fire ray leave (core/combat/muzzle.ts, #15).
   const muzzleD = mount ? shipShotMuzzle(kind, mount) : shipTuning(kind).muzzleClearance;
-  out.fromX = shipX + lx * c - ly * s + fx * muzzleD;
-  out.fromY = shipY + lx * s + ly * c + fy * muzzleD;
-  out.toX = out.fromX + fx * dist;
-  out.toY = out.fromY + fy * dist;
+  const r = mountMuzzleRay(shipX, shipY, shipAngle, mount, mountAngle, muzzleD, liveRayScratch);
+  out.fromX = r.fromX;
+  out.fromY = r.fromY;
+  out.toX = r.fromX + r.fwdX * dist;
+  out.toY = r.fromY + r.fwdY * dist;
   return out;
 }
 

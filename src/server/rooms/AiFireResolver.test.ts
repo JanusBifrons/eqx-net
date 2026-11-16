@@ -4,7 +4,8 @@ import type { WeaponFireContext } from '../../core/combat/weapons/Weapon.js';
 import type { ShipState } from './schema/SectorState.js';
 import type { LaserFiredEvent } from '../../shared-types/messages.js';
 import { mountWorldOrigin } from './mountGeometry.js';
-import { rayHitsSphere } from '../../core/combat/Weapons.js';
+import { beamHalfWidth, rayHitsSphere } from '../../core/combat/Weapons.js';
+import { getWeapon } from '../../core/combat/WeaponCatalogue.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { resolveSlotEnergyCost } from '../../core/combat/Energy.js';
 
@@ -195,9 +196,9 @@ describe('AiFireResolver — energy gate', () => {
     const spends: number[] = [];
     let spawned = 0;
     const lastFire = new Map<string, number>();
-    const passDebris: Array<boolean | undefined> = [];
+    const rayHalfWidths: Array<number | undefined> = [];
     const deps: AiFireResolverDeps = {
-      nonPlayerRayHit: (_fx, _fy, _dx, _dy, _max, _skip, pass) => { passDebris.push(pass); return null; },
+      nonPlayerRayHit: (_fx, _fy, _dx, _dy, _max, _skip, hw) => { rayHalfWidths.push(hw); return null; },
       trySpendEnergy: (_id, cost) => {
         spends.push(cost);
         if (pool.e + 1e-6 < cost) return false;
@@ -219,7 +220,7 @@ describe('AiFireResolver — energy gate', () => {
       spawnServerProjectile: () => { spawned++; },
       spawnServerMissile: () => { spawned++; return 1; },
     };
-    return { resolver: new AiFireResolver(deps), spends, lastFire, kind, spawned: () => spawned, passDebris };
+    return { resolver: new AiFireResolver(deps), spends, lastFire, kind, spawned: () => spawned, rayHalfWidths };
   }
 
   it('a fighter trigger spends the slot cost; an empty pool refuses without spending the cooldown', () => {
@@ -247,13 +248,17 @@ describe('AiFireResolver — energy gate', () => {
     expect(resolver.fireMount('n', 0)).toBe(false);
   });
 
-  it('a kill follow-through beam asks the room to pass debris; a normal shot does not', () => {
-    const { resolver, kind, passDebris } = energyResolver('battlecruiser-lance', { e: 1e9 });
+  // No shot passes debris: a heavy beam after a kill shines through the gap
+  // its kill burned (capital-destruction.md "Burned gap"), not through an
+  // exception. Every capital beam asks the room's ray test by its own width.
+  it('every capital beam tests the room by its width, with no debris pass', () => {
+    const { resolver, kind, rayHalfWidths } = energyResolver('battlecruiser-lance', { e: 1e9 });
     const i = kind.mounts.findIndex((m) => m.weaponId === 'heavy_beam');
     expect(i).toBeGreaterThanOrEqual(0);
     resolver.fireMount('n', i);
-    resolver.fireMount('n', i, true);
-    resolver.fireMount('n', i);
-    expect(passDebris).toEqual([false, true, false]);
+    resolver.fireMount('n', i, 'someone');
+    const hw = beamHalfWidth(getWeapon('heavy_beam'));
+    expect(hw).toBeGreaterThan(0);
+    expect(rayHalfWidths).toEqual([hw, hw]);
   });
 });

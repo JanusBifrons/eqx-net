@@ -12,7 +12,7 @@ function setup(recs: Record<string, Partial<SwarmEntityRecord>>) {
   const clock = { now: () => 0, every: () => ({ cancel: () => {} }) } as unknown as GameClock;
   const registry = { get: (id: string) => (recs[id] as SwarmEntityRecord | undefined) ?? null, all: () => [] } as unknown as SwarmEntityRegistry;
   const sub = new CutFieldSubsystem('t', clock, registry, {} as SwarmSpawner, {
-    shipSlots: () => [], sab: () => new Float32Array(0), post: (c) => posted.push(c), evict: () => {},
+    shipSlots: () => [], sab: () => new Float32Array(0), post: (c) => posted.push(c), evict: () => {}, broadcast: () => {},
   });
   return { sub, posted };
 }
@@ -67,6 +67,7 @@ describe('CutFieldSubsystem change record (mined pool, consumed rocks)', () => {
   function field() {
     let now = 0;
     const recs = new Map<string, SwarmEntityRecord>();
+    const sent: number[] = [];
     const sab = new Float32Array(slotBase(1));
     const clock = { now: () => now, every: () => ({ cancel: () => {} }) } as unknown as GameClock;
     const registry = { get: (id: string) => recs.get(id) ?? null, all: () => [] } as unknown as SwarmEntityRegistry;
@@ -77,7 +78,7 @@ describe('CutFieldSubsystem change record (mined pool, consumed rocks)', () => {
       },
     } as unknown as SwarmSpawner;
     const sub = new CutFieldSubsystem('look', clock, registry, spawner, {
-      shipSlots: () => [0], sab: () => sab, post: () => {}, evict: (rec) => { recs.delete(rec.id); },
+      shipSlots: () => [0], sab: () => sab, post: () => {}, evict: (rec) => { recs.delete(rec.id); }, broadcast: (_t, m) => { sent.push(m.k); },
     });
     const at = (x: number, y: number) => { sab[slotBase(0) + SLOT_X_OFF] = x; sab[slotBase(0) + SLOT_Y_OFF] = y; };
     const settle = () => { for (let i = 0; i < 40; i++) sub.streamer.step(); };
@@ -88,7 +89,7 @@ describe('CutFieldSubsystem change record (mined pool, consumed rocks)', () => {
       at(-30_120, 26_501); now += 1; settle();
     };
     at(-30_120, 26_501); settle();
-    return { sub, recs, awayAndBack };
+    return { sub, recs, sent, awayAndBack };
   }
 
   it('a mined rock keeps what is left in it across an unload and re-cut', () => {
@@ -102,10 +103,15 @@ describe('CutFieldSubsystem change record (mined pool, consumed rocks)', () => {
   });
 
   it('a consumed rock is never cut whole again', () => {
-    const { sub, recs, awayAndBack } = field();
+    const { sub, recs, sent, awayAndBack } = field();
     const gone = [...recs.values()][0]!;
+    expect(sub.welcome).toEqual({ cutField: { seed: 'look' } });
+    sub.markConsumed(gone.fieldKey!);
     sub.markConsumed(gone.fieldKey!);
     expect(sub.isConsumed(gone.fieldKey!)).toBe(true);
+    // Clients hear it once now (field_consumed), and a joiner from the welcome (#16).
+    expect(sent).toEqual([gone.fieldKey]);
+    expect(sub.welcome).toEqual({ cutField: { seed: 'look', consumed: [gone.fieldKey] } });
     const before = recs.size;
     awayAndBack();
     expect(recs.has(gone.id)).toBe(false);

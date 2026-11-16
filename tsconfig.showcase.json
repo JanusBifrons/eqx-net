@@ -16,5 +16,5 @@
       "@shared-types/*": ["./src/shared-types/*"]
     }
   },
-  "include": ["showcase/**/*.ts", "perf/**/*.ts"]
+  "include": ["showcase/**/*.ts", "perf/**/*.ts", "src/core/geometry/poly-decomp.d.ts"]
 }

@@ -22,9 +22,11 @@
  *
  * Full length (owner: "its full length is cut short by the ship it's hitting
  * and once it's destroyed it returns to its full length for 0.75 s ... to
- * show it's cut right through"): a follow-through beam passes debris (the
- * victim's wreck pieces, scrap), so on an empty line it ends at the weapon's
- * full range, and no wreck piece takes damage from it.
+ * show it's cut right through"): the kill burns a gap the beam's width plus
+ * a hair through the victim (fracture v13, capital-destruction.md "Burned
+ * gap"), so a follow-through beam down the kill line hits no wreck piece,
+ * with no exception for it: on an empty line it ends at the weapon's full
+ * range. beamKillBurnsGap.test.ts locks the gap with both ships still.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
@@ -158,17 +160,6 @@ describe('SectorRoom integration — heavy-beam follow-through after a kill', ()
       const pilotAlive = [...room.state.ships.values()].some((s) => s.playerId === pid && s.isActive && s.alive);
       if (killMount === '' && !pilotAlive && last !== undefined) {
         killTick = last.tick; killMount = last.mountId;
-        // A piece of the victim drifts across the cut: the largest wreck piece
-        // is set at rest on the kill line, past where the victim was.
-        let piece: { id: string; radius: number } | undefined;
-        for (const rec of r.swarmRegistry.all()) if (rec.kind === 4 && (piece === undefined || rec.radius > piece.radius)) piece = rec;
-        expect(piece, 'the kill left wreck pieces').toBeDefined();
-        const along = last.len + 2_500;
-        const ux = -Math.sin(last.dir), uy = Math.cos(last.dir);
-        room._internals.postToWorker({
-          type: 'SET_POSITION', entityId: piece!.id, x: last.fromX + ux * along, y: last.fromY + uy * along,
-          angle: 0, vx: 0, vy: 0, angvel: 0,
-        });
       }
       if (killMount !== '') {
         const i = kind.mounts.findIndex((m) => m.id === killMount);
@@ -222,7 +213,7 @@ describe('SectorRoom integration — heavy-beam follow-through after a kill', ()
         expect(Math.abs(wrapPi(w - killShot.dir)), `turret world bearing at kill+${t - killTick}`).toBeLessThan(0.002);
       }
     }
-    // ... at full length: it passes the victim's wreck (no piece takes a hit)
+    // ... at full length: it runs through the burned gap (no piece takes a hit)
     // and nothing else is on the line, so each beam runs to the weapon's range.
     expect(beam.falloff, 'heavy beam: range is its full reach').toBeUndefined();
     for (const s of window) {
