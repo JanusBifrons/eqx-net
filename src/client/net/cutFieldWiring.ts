@@ -41,8 +41,8 @@ export function createGameCutField(host: CutFieldHost): CutFieldClient {
       return null;
     },
     draw: {
-      setFieldChunk: (cx, cy, outlines, ore = null, bodies = null) => {
-        (mirror.pendingFieldChunks ??= []).push({ cx, cy, outlines, ore, bodies });
+      setFieldChunk: (cx, cy, outlines, ore = null, bodies = null, moved = null) => {
+        (mirror.pendingFieldChunks ??= []).push({ cx, cy, outlines, ore, bodies, moved });
       },
     },
     cutter: () => cutter,

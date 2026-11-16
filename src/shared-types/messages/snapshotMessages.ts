@@ -60,8 +60,10 @@ export interface WelcomeMessage {
   wrecks?: WreckDescriptor[];
   /** Macro terrain v2 (room flag `cutField`): the field seed; the client cuts
    *  the same rocks from it, minus `consumed`: the keys of rocks broken up
-   *  (C3; later breaks arrive as `field_consumed`). Absent = no cut field. */
-  cutField?: { seed: string; consumed?: number[] };
+   *  (C3; later breaks arrive as `field_consumed`), and `moved`: where each
+   *  moved rock was left (C2 deep sleep; later moves arrive as `field_moved`).
+   *  Absent = no cut field. */
+  cutField?: { seed: string; consumed?: number[]; moved?: FieldRockPose[] };
 }
 
 /** Macro terrain C3: a packed field rock key (`rockKey`, u32). */
@@ -72,6 +74,23 @@ export const MAX_WELCOME_CONSUMED_ROCKS = 16_384;
  *  was broken up; never cut it whole again. Welcome + these = the set (#16). */
 export const FieldConsumedSchema = z.object({ k: RockKeySchema }).strict();
 export type FieldConsumedMessage = z.infer<typeof FieldConsumedSchema>;
+/** Moved rock poses a welcome carries at most. */
+export const MAX_WELCOME_MOVED_ROCKS = 16_384;
+/** C2 deep sleep: where moved cut-field rock `k` was left: its body centre
+ *  (x, y, game space) and angle `a` (rad), the numbers the server saved. */
+export interface FieldRockPose { k: number; x: number; y: number; a: number }
+export const FieldRockPoseSchema = z.object({
+  k: RockKeySchema, x: z.number().finite(), y: z.number().finite(), a: z.number().finite(),
+}).strict();
+/** `field_moved` (server → every client, reliable): moved rock `k` was saved
+ *  at a new pose, or (`clear: true`) has none any more: it is back at its cut
+ *  pose. A broken-up rock sends `field_consumed` instead, which clears it too.
+ *  Welcome `cutField.moved` + these = the moved poses (#16). */
+export const FieldMovedSchema = z.union([
+  FieldRockPoseSchema,
+  z.object({ k: RockKeySchema, clear: z.literal(true) }).strict(),
+]);
+export type FieldMovedMessage = z.infer<typeof FieldMovedSchema>;
 
 /** PR 3a (account-bound identity) — sent to a session immediately before the
  *  server disconnects it because the SAME account logged in from another
@@ -129,6 +148,7 @@ export const WelcomeSchema = z
     cutField: z.object({
       seed: z.string().min(1).max(64),
       consumed: z.array(RockKeySchema).max(MAX_WELCOME_CONSUMED_ROCKS).optional(),
+      moved: z.array(FieldRockPoseSchema).max(MAX_WELCOME_MOVED_ROCKS).optional(),
     }).strict().optional(),
   })
   .strict();

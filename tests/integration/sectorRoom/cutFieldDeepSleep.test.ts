@@ -13,6 +13,7 @@ import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import { decodeSwarmPacket } from '../../../src/client/net/BinarySwarmDecoder.js';
 import type { RenderMirror } from '../../../src/core/contracts/IRenderer.js';
+import { FieldMovedSchema, WelcomeSchema } from '../../../src/shared-types/messages/snapshotMessages.js';
 
 let harness: SectorTestHarness | undefined;
 afterEach(async () => { await harness?.cleanup(); harness = undefined; });
@@ -27,6 +28,8 @@ describe('SectorRoom integration — cut-field deep sleep (C2)', () => {
     const client = await harness.connectAs(pid);
     const mirror: RenderMirror = { ships: new Map(), localPlayerId: null };
     client.onMessage('swarm', (buf: Uint8Array) => decodeSwarmPacket(buf, mirror));
+    const heard: unknown[] = [];
+    client.onMessage('field_moved', (m: unknown) => { heard.push(m); });
     client.send('client_ready', { type: 'client_ready' });
     const int = (harness.getServerRoom() as unknown as SectorRoom)._internals;
     const sub = int.cutFieldSub!;
@@ -60,6 +63,28 @@ describe('SectorRoom integration — cut-field deep sleep (C2)', () => {
     }
     expect(int.swarmRegistry.get(id), 'its chunk unloaded').toBeFalsy();
     expect(Math.hypot(last.x - rest.x, last.y - rest.y) + Math.abs(last.angle), 'it had moved off its cut pose').toBeGreaterThan(5);
+    // Where no chunk is loaded the saved pose itself travels (#16): the room
+    // hears it once, with the numbers the server keeps (#15). (The shove may
+    // have pushed a neighbour too: it gets its own message.)
+    await harness.advance(200);
+    for (const m of heard) expect(FieldMovedSchema.safeParse(m).success).toBe(true);
+    const mine = heard.filter((m) => (m as { k: number }).k === key);
+    expect(mine).toHaveLength(1);
+    const moved = mine[0] as { k: number; x: number; y: number; a: number };
+    expect(moved.x).toBeCloseTo(last.x, 0);
+    expect(moved.y).toBeCloseTo(last.y, 0);
+    expect(moved.a).toBeCloseTo(last.angle, 2);
+    // A joiner gets it in the welcome, which passes the client schema.
+    const joiner = await harness.connectAs(randomUUID());
+    let welcome: unknown;
+    joiner.onMessage('welcome', (m: unknown) => { welcome = m; });
+    joiner.send('client_ready', { type: 'client_ready' });
+    const until = Date.now() + 10_000;
+    while (welcome === undefined && Date.now() < until) await harness.advance(100);
+    expect(WelcomeSchema.safeParse(welcome).success, 'the welcome passes the client schema').toBe(true);
+    expect((welcome as { cutField?: { moved?: unknown[] } }).cutField?.moved).toContainEqual(moved);
+    await joiner.leave();
+
     // Forget what the client saw while it was awake: only the reloaded rock counts.
     for (const [k, e] of mirror.swarm ?? []) if (e.fieldKey === key) mirror.swarm!.delete(k);
 
