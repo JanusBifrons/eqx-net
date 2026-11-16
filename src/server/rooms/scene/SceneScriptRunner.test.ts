@@ -121,4 +121,24 @@ describe('SceneScriptRunner', () => {
     expect(soak.soak).toBe(true);
     expect(soak.room['subcapWrecks']).toBe(true);
   });
+
+  it('rock-cut steps: spawn the rocks, then cut each by id; a failed cut is refused', () => {
+    const rocks: string[] = [], cut: string[] = [];
+    const hooks: SceneHooks = {
+      ...harness().hooks,
+      spawnRock: (id) => { rocks.push(id); return true; },
+      cutRock: (id) => { cut.push(id); return id !== 'scene-r-1'; },
+    };
+    const r = new SceneScriptRunner(SceneScriptSchema.parse([
+      { atMs: 0, action: 'rocks', tag: 'r', count: 3, x: 0, y: 0, spread: 500, radius: 90 },
+      { atMs: 2000, action: 'rockCut', tag: 'r', count: 3 },
+    ]), hooks);
+    r.start(0);
+    r.tick(1);
+    expect(rocks).toEqual(['scene-r-0', 'scene-r-1', 'scene-r-2']);
+    expect(cut).toHaveLength(0);
+    r.tick(ticksFor(2000));
+    expect(cut).toEqual(rocks);
+    expect(r.getStatus()).toMatchObject({ spawned: 5, refused: 1 });
+  });
 });
