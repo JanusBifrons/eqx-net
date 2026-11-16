@@ -286,7 +286,7 @@ export interface SnapshotMessage {
        *  id, mode (m: 0 auto / 1 manual) and lock queue (t: target key,
        *  s: stage 0 failsafe / 1 acquiring / 2 locked, p: progress 0..100).
        *  Absent ⇒ not a fire-control pilot (or no groups). */
-      groups?: Array<{ id: string; m: 0 | 1; l: Array<{ t: string; s: number; p: number; r?: 1; c?: 1 }> }>;
+      groups?: Array<{ id: string; m: 0 | 1; l: Array<{ t: string; s: number; p: number; r?: 1; c?: 1; f?: number }> }>;
       /** Fire control — NPCs locking this pilot: `t` = `s:<entityId>`,
        *  `s` 1 acquiring / 2 locked, `p` 0..100. Own pilot only; absent ⇒ none.
        *  At most `LOCKED_BY_WIRE_ROWS` rows: completed locks first, then nearest. */

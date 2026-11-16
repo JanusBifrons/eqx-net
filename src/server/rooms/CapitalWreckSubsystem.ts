@@ -45,7 +45,8 @@ import type { WreckDescriptor } from '../../shared-types/messages/snapshotMessag
 import { wreckCrackTicks } from '../../shared-types/wreckTiming.js';
 import { WEAPONS, type WeaponId } from '../../core/combat/WeaponCatalogue.js';
 import { shipShapeScale } from '../../core/geometry/shipHullOutline.js';
-import { wreckPieceIntegrity, wreckWearFactor } from '../../core/destruction/wreckIntegrity.js';
+import { wreckPieceIntegrity, wreckSalvageQty, wreckWearFactor } from '../../core/destruction/wreckIntegrity.js';
+import { GOOD_DEFS } from '../../shared-types/goods.js';
 import type { BurnLines } from '../../core/destruction/burnLines.js';
 import { WreckResplitter, type WreckPiecePose } from './wreckResplit.js';
 import type { CapitalWreckDeps, LiveWreck, PieceKnock } from './capitalWreckTypes.js';
@@ -521,6 +522,18 @@ export class CapitalWreckSubsystem {
   /** Test seam: a live piece's hidden integrity (undefined: not a piece). */
   pieceIntegrity(id: string): number | undefined {
     return this.knock.get(id)?.integrity;
+  }
+
+  /** A live piece's mass and the hold weight it stores as (its salvage
+   *  worth, `wreckSalvageQty`, in salvage goods): the haul test of the lock
+   *  salvage bits (lockSalvage.ts). False when `id` is not a live piece. */
+  pieceHaul(id: string, out: { mass: number; holdWeight: number }): boolean {
+    const k = this.knock.get(id);
+    const w = k === undefined ? undefined : this.wrecks.get(this.pieceWreck.get(id) ?? -1);
+    if (k === undefined || w === undefined) return false;
+    out.mass = k.mass;
+    out.holdWeight = wreckSalvageQty(w.chain.root.kindId, k.mass) * GOOD_DEFS.salvage.weight;
+    return true;
   }
 
   /** The snapshot slice: one descriptor per live wreck (shared array, rebuilt

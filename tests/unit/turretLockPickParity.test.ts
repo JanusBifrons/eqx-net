@@ -12,7 +12,7 @@ import { LockSubsystem, type LockTargetView } from '../../src/server/rooms/LockS
 import { ColyseusGameClient } from '../../src/client/net/ColyseusClient.js';
 import { getShipKind } from '../../src/shared-types/shipKinds.js';
 import { mountWeaponReach } from '../../src/core/combat/mountReach.js';
-import { newFireTargetShape } from '../../src/core/combat/fireControlBearing.js';
+import { FcMountPicker } from '../../src/client/net/fcMountPick.js';
 
 describe('pickTurretLock parity with mixed-class locks (#15, owner 2026-11-14)', () => {
   it('server aimKeyFor and client fcMountAimKey pick the same lock per turret', () => {
@@ -49,10 +49,11 @@ describe('pickTurretLock parity with mixed-class locks (#15, owner 2026-11-14)',
       mirror: { ships: new Map(), swarm },
       _fcGroups: locks.wireFor('p1'),
       _fcMountGroup: new Map([...mains.map((m) => [m.id, 'main'] as const), ...aas.map((m) => [m.id, 'aa'] as const)]),
-      _fcMountDef: new Map([...mains.map((m, i) => [m.id, { mount: m, ordinal: i, reach: mountWeaponReach(m) }] as const)]),
-      _fcPickX: new Float64Array(8), _fcPickY: new Float64Array(8), _fcPickKeys: [],
-      _fcPickShapes: Array.from({ length: 8 }, () => ({ kindId: null, angle: 0, shieldUp: false, radius: 0 })),
-      _fcPickPose: newFireTargetShape(), _fcKeys: new Map(),
+      _fcMountDef: new Map([...mains.map((m, i) => [m.id, { mount: m, ordinal: i, reach: mountWeaponReach(m), group: mains }] as const)]),
+      _fcKeys: new Map(),
+    });
+    Object.assign(client, {
+      _fcPicker: new FcMountPicker((k, o) => (client['fcTargetPose'] as (k: string, o: unknown) => boolean).call(client, k, o), (k, o) => (client['fcTargetShape'] as (k: string, o: unknown) => void).call(client, k, o)),
     });
     const clientAim = (client['fcMountAimKey'] as (id: string, x: number, y: number, a: number) => string | null).bind(client);
 
@@ -67,7 +68,7 @@ describe('pickTurretLock parity with mixed-class locks (#15, owner 2026-11-14)',
 describe('pickTurretLock parity (#15)', () => {
   it('the server lock aim and the client predicted aim both call it', () => {
     const server = readFileSync('src/server/rooms/LockSubsystem.ts', 'utf8');
-    const client = readFileSync('src/client/net/ColyseusClient.ts', 'utf8');
+    const client = readFileSync('src/client/net/fcMountPick.ts', 'utf8');
     expect(server).toMatch(/pickTurretLock\(/);
     expect(client).toMatch(/pickTurretLock\(/);
   });

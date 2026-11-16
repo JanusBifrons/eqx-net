@@ -13,11 +13,13 @@ import { LOCK_TUNING, WEAPON_LOCK_PROFILE, lockCapacityFor, sensorFor, NO_PILOT_
 import { lockSeconds, type LockInputs } from '../../core/combat/lockTime.js';
 import { newLock, stepLock, LOCK_STAGE_CODE, LOCK_TRACK, type LockEntry } from '../../core/combat/lockState.js';
 import { lockLineHolds } from '../../core/combat/lockLine.js';
-import { pickTurretLock } from '../../core/combat/turretLockPick.js';
+import { pickTurretLock, TURRET_NO_LOCK, TURRET_PICK_MAX } from '../../core/combat/turretLockPick.js';
+import { lockSalvageFlags, type LockSalvageDeps } from './lockSalvage.js';
+import { shipGroups } from './lockGroups.js';
 import { mountInReach, mountWeaponReach, type MountRangeTarget } from '../../core/combat/mountReach.js';
 import type { FireTargetShape } from '../../core/combat/fireControlBearing.js';
 import { getWeapon, weaponAutoFireRange } from '../../core/combat/WeaponCatalogue.js';
-import type { ShipKind, WeaponMount, WeaponSlot } from '../../shared-types/shipKinds/types.js';
+import type { ShipKind, WeaponMount } from '../../shared-types/shipKinds/types.js';
 
 /** A lockable target, resolved each lock step. Its `FireTargetShape` half
  *  (pose, heading, hit shape; `radius` = lock signature, u) is what the
@@ -47,7 +49,7 @@ export interface LockShooterView {
   angle: number;
 }
 
-export interface LockSubsystemDeps {
+export interface LockSubsystemDeps extends LockSalvageDeps {
   /** Fill `out` with the target's pose; false when it is gone or can't be damaged. */
   resolveTarget(playerId: string, key: string, out: LockTargetView): boolean;
   /** Fill `out` with the player's active ship pose; false when they have none. */
@@ -75,11 +77,11 @@ export interface LockSubsystemDeps {
 
 export type GroupMode = 'auto' | 'manual';
 
-/** Wire shape of one group in the own-ship snapshot (`states[].groups`).
- *  `r: 1` = released (draining back to 0); absent otherwise. */
-/** `r`: released (draining). `c`: can't lock right now (untrackable: too small
- *  or fast for the group's guns; locks work at any distance); the HUD shows CAN'T TRACK. */
-export interface WireLock { t: string; s: number; p: number; r?: 1; c?: 1 }
+/** One lock of a group in the own-ship snapshot (`states[].groups`). `r`: released
+ *  (draining). `c`: can't lock right now (untrackable: too small or fast for the
+ *  group's guns; locks work at any distance); the HUD shows CAN'T TRACK. `f`: salvage
+ *  bits (`LOCK_SALVAGE` | `LOCK_HAULABLE`; absent = 0), the client's `pickTurretLock` input. */
+export interface WireLock { t: string; s: number; p: number; r?: 1; c?: 1; f?: number }
 export interface WireGroup { id: string; m: 0 | 1; l: WireLock[] }
 
 interface GroupState {
@@ -148,28 +150,6 @@ export function groupArcs(mounts: ReadonlyArray<WeaponMount>): number[] {
   for (const m of mounts) {
     const fixed = m.arcMin === m.arcMax;
     out.push(m.baseAngle + (fixed ? -FIXED_BEAR : m.arcMin), m.baseAngle + (fixed ? FIXED_BEAR : m.arcMax));
-  }
-  return out;
-}
-
-/** Weapon groups of a ship: its slots, with activated latent mounts as their own 'wing' group. */
-export function shipGroups(
-  kind: ShipKind,
-  activated: ReadonlyArray<WeaponMount>,
-): Array<{ slot: WeaponSlot; mounts: WeaponMount[] }> {
-  const out: Array<{ slot: WeaponSlot; mounts: WeaponMount[] }> = [];
-  const byId = new Map<string, WeaponMount>();
-  for (const m of kind.mounts ?? []) byId.set(m.id, m);
-  for (const slot of kind.slots ?? []) {
-    const mounts: WeaponMount[] = [];
-    for (const id of slot.mountIds) {
-      const m = byId.get(id);
-      if (m) mounts.push(m);
-    }
-    if (mounts.length > 0) out.push({ slot, mounts });
-  }
-  if (activated.length > 0) {
-    out.push({ slot: { id: 'wing', displayName: 'Wing', mountIds: activated.map((m) => m.id) }, mounts: [...activated] });
   }
   return out;
 }
@@ -368,6 +348,7 @@ export class LockSubsystem {
     }
     if (!this.deps.resolveTarget(playerId, key, this.target)) return false;
     const entry = newLock(key, this.target.hostile || this.target.terrain);
+    entry.flags = lockSalvageFlags(this.deps, this.deps.shipOf(playerId), playerId, key);
     // testMode `instantLock`: complete it here, not at the next lock step, so
     // the wire never shows it one step at LOCKING 0% (a red ring flash).
     if (p.instant && this.deps.shooterPose(playerId, this.shooter) && Number.isFinite(this.lockSecsNow(p, g))) {
@@ -443,6 +424,7 @@ export class LockSubsystem {
       e.stage = 'locked';
       e.progress = 1;
       e.lostFor = 0;
+      e.flags = lockSalvageFlags(this.deps, this.deps.shipOf(playerId), playerId, key);
       this.syncWireShape(g);
       n++;
     }
@@ -520,33 +502,39 @@ export class LockSubsystem {
         } else if (acquiring === null && e.stage === 'acquiring') acquiring = e.target;
       }
       if (first === null) return acquiring;
-      if (n === 1) return first.target;
-      return this.pickLocked(playerId, g, mountId) ?? first.target;
+      // One plain lock: every mount on it. A salvage lock goes through the pick (a laser skips a haulable piece).
+      if (n === 1 && first.flags === 0) return first.target;
+      const k = this.pickLocked(playerId, g, mountId);
+      return k === undefined ? first.target : k;
     }
     return null;
   }
 
-  private readonly pickX = new Float64Array(8);
-  private readonly pickY = new Float64Array(8);
+  private readonly pickX = new Float64Array(TURRET_PICK_MAX);
+  private readonly pickY = new Float64Array(TURRET_PICK_MAX);
+  private readonly pickFlags = new Uint8Array(TURRET_PICK_MAX);
   private readonly pickKeys: string[] = [];
   /** Per-lock hit shapes for `pickTurretLock`'s hull range gate (reused, #14). */
   private readonly pickShapes: { -readonly [K in keyof MountRangeTarget]: MountRangeTarget[K] }[] =
-    Array.from({ length: 8 }, () => ({ kindId: null, angle: 0, shieldUp: false, radius: 0 }));
+    Array.from({ length: TURRET_PICK_MAX }, () => ({ kindId: null, angle: 0, shieldUp: false, radius: 0 }));
 
   /**
-   * Several locks: which one this turret takes (shared `pickTurretLock`, the
-   * same rule as the client's predicted aim, #15). Null when the ship pose or
-   * the mount can't be resolved (the caller falls back to the first lock).
+   * Which LOCKED target this turret takes (shared `pickTurretLock` with the
+   * locks' salvage bits, the same rule as the client's predicted aim, #15).
+   * Null = no aim (`TURRET_NO_LOCK`: a mining laser whose locks are all
+   * haulable); undefined when the ship pose or the mount can't be resolved
+   * (the caller falls back to the first lock).
    */
-  private pickLocked(playerId: string, g: GroupState, mountId: string): string | null {
+  private pickLocked(playerId: string, g: GroupState, mountId: string): string | null | undefined {
     let ordinal = -1;
     for (let i = 0; i < g.mounts.length; i++) if (g.mounts[i]!.id === mountId) { ordinal = i; break; }
-    if (ordinal < 0 || !this.deps.shooterPose(playerId, this.shooter)) return null;
+    if (ordinal < 0 || !this.deps.shooterPose(playerId, this.shooter)) return undefined;
     const keys = this.pickKeys;
     keys.length = 0;
     for (const e of g.locks) {
       if (e.stage !== 'locked' || keys.length >= this.pickX.length) continue;
       if (!this.deps.resolveTarget(playerId, e.target, this.target)) continue;
+      this.pickFlags[keys.length] = e.flags;
       this.pickX[keys.length] = this.target.x;
       this.pickY[keys.length] = this.target.y;
       const sh = this.pickShapes[keys.length]!;
@@ -556,15 +544,15 @@ export class LockSubsystem {
       sh.radius = this.target.ship ? 0 : this.target.radius;
       keys.push(e.target);
     }
-    if (keys.length === 0) return null;
+    if (keys.length === 0) return undefined;
     const m = g.mounts[ordinal]!;
     const s = this.shooter;
     const cosA = Math.cos(s.angle);
     const sinA = Math.sin(s.angle);
     const mx = s.x + (m.localX * cosA - m.localY * sinA);
     const my = s.y + (m.localX * sinA + m.localY * cosA);
-    const i = pickTurretLock(m, s.angle, mx, my, mountWeaponReach(m), ordinal, keys.length, this.pickX, this.pickY, this.pickShapes);
-    return keys[i]!;
+    const i = pickTurretLock(m, s.angle, mx, my, mountWeaponReach(m), ordinal, keys.length, this.pickX, this.pickY, this.pickShapes, this.pickFlags, g.mounts);
+    return i === TURRET_NO_LOCK ? null : keys[i]!;
   }
 
   /** Build the tracked id's groups now (they are otherwise built lazily by the
@@ -608,7 +596,7 @@ export class LockSubsystem {
     return false;
   }
 
-  private stepGroup(playerId: string, p: PlayerLocks, g: GroupState): void {
+  private stepGroup(playerId: string, p: PlayerLocks, g: GroupState, ship = this.deps.shipOf(playerId)): void {
     // Locks work at any distance (owner 2026-11-14). An AUTO group's own pick
     // is released once its target leaves the group's FIRE range (reach ×
     // `reachSlack`, the hysteresis over the in-reach pick), so AUTO re-picks
@@ -641,6 +629,7 @@ export class LockSubsystem {
       let secs = Infinity;
       if (this.deps.resolveTarget(playerId, e.target, this.target)) {
         secs = this.lockSecsNow(p, g);
+        e.flags = lockSalvageFlags(this.deps, ship, playerId, e.target); // hold fills, pieces split: per step
       } else {
         // Gone (destroyed / left): drop now, no grace.
         g.locks.splice(i, 1);
@@ -696,6 +685,8 @@ export class LockSubsystem {
     else if (w.r !== undefined) delete w.r;
     if (e.lostFor > 0) w.c = 1;
     else if (w.c !== undefined) delete w.c;
+    if (e.flags !== 0) w.f = e.flags;
+    else if (w.f !== undefined) delete w.f;
   }
 
   /** Re-shape a group's wire list to match its locks (only on add/remove). */
