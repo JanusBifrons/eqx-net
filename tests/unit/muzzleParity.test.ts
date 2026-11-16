@@ -12,7 +12,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { SHIP_KINDS_LIST } from '../../src/shared-types/shipKinds.js';
 import { STRUCTURE_KINDS_LIST } from '../../src/shared-types/structureKinds.js';
-import { isChinMount, shipMountMuzzle, structureMountMuzzle } from '../../src/core/combat/muzzle.js';
+import { isChinMount, navalTurret, shipMountMuzzle, structureMountMuzzle } from '../../src/core/combat/muzzle.js';
 import { shipTuning } from '../../src/shared-types/shipScale/tuning.js';
 import { muzzleReach, shipTurrets, structureTurrets } from '../../src/client/render/art/turretLayout.js';
 
@@ -28,8 +28,9 @@ describe('muzzle parity (turrets T3, #15)', () => {
           expect(-t.py + muzzleReach(t), `${kind.id}/${m.id}`).toBeCloseTo(shipTuning(kind).muzzleClearance, 6);
         } else {
           expect(muzzleReach(t), `${kind.id}/${m.id}`).toBeCloseTo(shipMountMuzzle(kind, m)!, 6);
-          if (t.naval) {
-            // Capital naval turrets are sized by calibre to the hull beam
+          if (t.naval || navalTurret(kind, m) !== null) {
+            // Capital naval turrets (and a barge's sized mining lasers and
+            // tractor dishes) are sized by class to the hull beam
             // (CAPITAL_TURRETS): the barrel tip stays within one beam of the pivot.
             const hull = (kind.shape as { hull: Array<[number, number]> }).hull;
             let beam = 0;

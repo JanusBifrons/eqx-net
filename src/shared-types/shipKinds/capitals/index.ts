@@ -9,6 +9,8 @@ import type { ShipKind } from '../types.js';
 import { CAPITAL_MAP, CAPITAL_STYLE } from './capitalConfig.js';
 import type { CapitalStyle } from './capitalConfig.js';
 import { NAVAL_FIT, warshipDesign, type CapitalFit } from './warshipDesign.js';
+import { BARGE_KIND_ID, BARGE_PICK, bargeDesign } from './bargeDesign.js';
+import { BARGE_LOOK } from './bargeLookConfig.js';
 
 const build = (id: Parameters<typeof warshipDesign>[0]): ShipKind =>
   defineCapitalShipKind(warshipDesign(id, CAPITAL_STYLE, CAPITAL_MAP).record);
@@ -76,3 +78,17 @@ export const CAPITAL_STYLE_VARIANTS: Readonly<Record<string, readonly string[]>>
   battlecruiser: ['battlecruiser', 'battlecruiser-b', 'battlecruiser-c', 'battlecruiser-lance'],
   battleship: ['battleship', 'battleship-b', 'battleship-c', 'battleship-rail'],
 };
+
+/**
+ * The mining barge (plan partitioned-chasing-lark PR 15): the owner's pick of
+ * the look options (A, a container ship) as a real, pilotable kind. No
+ * allegiance (its side comes from its owner) and never in a random spawn pool.
+ */
+export const BARGE: ShipKind = defineCapitalShipKind(bargeDesign(BARGE_PICK, CAPITAL_MAP, BARGE_KIND_ID).record);
+
+/**
+ * Mining-barge look R&D (plan partitioned-chasing-lark, PR 14): the look the
+ * dev switch `?bargeLook=` / `EQX_BARGE_LOOK` picks, or null when it is off
+ * (the default). `catalogueOrder.ts` appends it at the very end only when set.
+ */
+export const BARGE_LOOK_KIND: ShipKind | null = BARGE_LOOK ? defineCapitalShipKind(bargeDesign(BARGE_LOOK, CAPITAL_MAP).record) : null;

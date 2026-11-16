@@ -225,7 +225,7 @@ import { convoyHaulerFactions } from '../economy/convoyCarriers.js';
 import { ALIEN_GATE_OWNER, alienGateCandidates, alienGateSites, type AlienGateSite } from '../../core/galaxy/alienGates.js';
 import { effectiveStructureMaxHealth } from '../../core/leveling/structureLevel.js';
 import { TRANSFER_PULSE_MS, TURRET_TICK_MS } from '../../core/structures/structureGridConstants.js';
-import type { GridObstacle } from '../../core/structures/Grid.js';
+import type { GridObstacle, ObstacleBox } from '../../core/structures/Grid.js';
 import { clampToSectorBounds } from '../../shared-types/sectorBounds.js';
 import type { SnapshotMessage, TimeScaleKeyframe } from '../../shared-types/messages.js';
 // Mount/slot geometry helpers moved to ./mountGeometry.ts.
@@ -326,7 +326,7 @@ import type {
   SectorSnapshotLingeringHull,
 } from './SectorSnapshot.js';
 import { scrapColliderFor } from '../../core/geometry/scrapCollider.js';
-import { getPlayerShipStore, getHoldStore, getWallet, getLabBoard } from '../db/PersistenceWorker.js';
+import { getPlayerShipStore, getHoldStore, getWallet, getLabBoard, terrainRecordStoreFor } from '../db/PersistenceWorker.js';
 import { ResearchLabSubsystem } from '../structures/ResearchLabSubsystem.js';
 import { PackedStockQuerySchema, type PackedStock } from '../../shared-types/packedStock.js';
 import { BpBuySchema, BpMarketQuerySchema, BpSellSchema, type BpListing, type BpMarketState } from '../../shared-types/blueprintMarket.js';
@@ -2957,12 +2957,10 @@ export class SectorRoom extends Room<SectorState> {
       // Living World P1a-2 — stable uid (keys the structure's holds row).
       structureUid: (owner, kind, x, y) => structureUid(this.sectorKey, owner, kind, x, y),
       registry: this.structureRegistry,
-      // Item D — asteroids (swarm kind=0) block a connector's line of sight, so
-      // a structure never auto-wires straight through a rock. Shared with the
-      // grid-pulse reconnect sweep (playtest 2026-06-10 Issue 2) via
-      // `gatherStructureObstacles`. Off the 60 Hz hot loop (placement + 1 Hz
-      // pulse only), so the array build is fine.
-      getObstacles: () => this.gatherStructureObstacles(),
+      // Asteroids (swarm kind=0) block placement and a connector's line of sight
+      // (Item D); shared with the grid-pulse reconnect sweep. Placement also
+      // passes `near` for unloaded cut-field rocks (C5). Off the hot loop.
+      getObstacles: (near) => this.gatherStructureObstacles(near),
       // Economy v2 W4b — a player's non-starter structure is placed from a
       // PACKED item (now buyable from traders, and lootable). Consumed only
       // after the structure registers; its build then costs only time.
@@ -3189,7 +3187,6 @@ export class SectorRoom extends Room<SectorState> {
     this.structureGridTimer = this.gameClock.every(pulseMs, guarded('structure-grid-tick', () => this.structureGridTick()));
     // Phase 5 — turret aim/fire on a faster cadence than the grid pulse.
     this.structureTurretTimer = this.gameClock.every(TURRET_TICK_MS, guarded('structure-turret-tick', () => this.structureTurretTick()));
-    if (roomOpts.cutField) this.cutField = new CutFieldSubsystem(roomOpts.cutField.seed, this.gameClock, this.swarmRegistry, this.swarmSpawner, { shipSlots: () => this.playerToSlot.values(), sab: () => this.sabF32, post: (cmd) => this.postToWorker(cmd), evict: (rec, broadcast) => this.evictSwarmEntity(rec, { broadcast, emitDestroyed: false }), broadcast: (type, msg) => this.broadcast(type, msg) });
 
     // Click-to-inspect live-stats channel (structures follow-up Item B5). Its
     // own ~5 Hz timer (200 ms), unref'd + OFF the snapshot/physics tick — the
@@ -3260,6 +3257,7 @@ export class SectorRoom extends Room<SectorState> {
       if (twa && Number.isFinite(twa.x) && Number.isFinite(twa.y)) this.testWaveArrivalPose = { x: twa.x, y: twa.y };
       this.waveNeedsOwner = roomOpts.waveNeedsOwner === true;
     }
+    if (roomOpts.cutField) this.cutField = new CutFieldSubsystem(roomOpts.cutField.seed, this.gameClock, this.swarmRegistry, this.swarmSpawner, { shipSlots: () => this.playerToSlot.values(), sab: () => this.sabF32, post: (cmd) => this.postToWorker(cmd), evict: (rec, broadcast) => this.evictSwarmEntity(rec, { broadcast, emitDestroyed: false }), broadcast: (type, msg) => this.broadcast(type, msg), records: this.persistSector && this.sectorKey !== null ? terrainRecordStoreFor(`${this.sectorKey}|${roomOpts.cutField.seed}`) : undefined });
     // Phase-1 issue 5 — scrap-stress seed: a dense corridor of free-floating
     // scrap ahead of spawn for the fly-through reconciliation E2E.
     if (this.testMode && (roomOpts.scenarioScrapCount ?? 0) > 0) {
@@ -5632,6 +5630,8 @@ export class SectorRoom extends Room<SectorState> {
         return { x: this.sabF32[b + SLOT_X_OFF]!, y: this.sabF32[b + SLOT_Y_OFF]! };
       },
       spawnPiece: (spec) => (this.swarmRegistry.has(spec.id) ? false : this.swarmSpawner.spawnWreck(spec)),
+      beginBatch: () => this.physicsWorkerProxy.beginBatch(),
+      endBatch: () => this.physicsWorkerProxy.endBatch(),
       removePiece: (id) => {
         const rec = this.swarmRegistry.get(id);
         if (rec) this.evictSwarmEntity(rec, { broadcast: false, emitDestroyed: false });
@@ -6748,17 +6748,14 @@ export class SectorRoom extends Room<SectorState> {
    *  from the SAB. Shared by structure placement (Item D) and the grid-pulse
    *  reconnect sweep (playtest 2026-06-10 Issue 2). Off the 60 Hz hot loop
    *  (placement + 1 Hz pulse only), so the array build is acceptable. */
-  private gatherStructureObstacles(): GridObstacle[] {
+  private gatherStructureObstacles(near?: ObstacleBox): GridObstacle[] {
     const obstacles: GridObstacle[] = [];
     for (const rec of this.swarmRegistry.all()) {
       if (rec.kind !== 0) continue; // asteroids only
-      const base = slotBase(rec.slot);
-      obstacles.push({
-        x: this.sabF32[base + SLOT_X_OFF]!,
-        y: this.sabF32[base + SLOT_Y_OFF]!,
-        radius: rec.radius,
-      });
+      const b = slotBase(rec.slot), f = this.sabF32; // placement narrow phase (C5b): collider parts, else the outline, at the live pose
+      obstacles.push({ x: f[b + SLOT_X_OFF]!, y: f[b + SLOT_Y_OFF]!, radius: rec.radius, angle: f[b + SLOT_ANGLE_OFF]!, parts: rec.wreckParts ?? (rec.vertices && [rec.vertices]) });
     }
+    if (near) this.cutField?.dormantObstacles(near, obstacles);
     return obstacles;
   }
 
@@ -8900,8 +8897,8 @@ export class SectorRoom extends Room<SectorState> {
     rec: SwarmEntityRecord, fx: number, fy: number, dx: number, dy: number, maxDist: number,
     cx: number, cy: number, ca: number, hw = 0,
   ): number | null {
+    if (isWreckPiece(rec) || rec.wreckParts !== undefined) return wreckRayHit(rec.wreckParts, rec.radius, fx, fy, dx, dy, maxDist, cx, cy, ca, hw); // wreck piece or cut-field rock (C1b)
     if (rec.kind === 0 && rec.vertices) return rayHitsConvexPolygon(fx, fy, dx, dy, maxDist, cx, cy, ca, rec.vertices, hw);
-    if (isWreckPiece(rec)) return wreckRayHit(rec.wreckParts, rec.radius, fx, fy, dx, dy, maxDist, cx, cy, ca, hw);
     if (rec.halfW !== undefined && rec.halfH !== undefined) return rayHitsBox(fx, fy, dx, dy, maxDist, cx, cy, rec.halfW, rec.halfH, rec.boxes, hw);
     // A ship: the same shape as if a player flew it (`shipHitShape.ts`).
     if (rec.kind === 1 && rec.shipKind) return shipRayHit(rec.shipKind, !rec.shieldDown, fx, fy, dx, dy, maxDist, cx, cy, ca, hw);

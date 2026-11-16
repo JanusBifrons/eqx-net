@@ -42,10 +42,61 @@ function boxOverlapsCircle(bx: number, by: number, hw: number, hh: number, cx: n
   return dx * dx + dy * dy < r * r;
 }
 
+/** Does the axis-aligned box (bx, by, ±hw, ±hh) overlap a convex polygon
+ *  given relative to (ox, oy) and turned by (cos, sin)? Separating-axis test
+ *  on the box's two axes and every polygon edge normal; touching is legal (as
+ *  for boxes). A non-convex outline tests as at least its convex hull (its
+ *  projections are the hull's), so it can only refuse more, never less.
+ *  Allocation-free. */
+function boxOverlapsPolygon(
+  bx: number, by: number, hw: number, hh: number,
+  poly: ReadonlyArray<{ readonly x: number; readonly y: number }>, ox: number, oy: number, cos: number, sin: number,
+): boolean {
+  const n = poly.length;
+  if (n < 3) return false;
+  // Box axes: the polygon's world extent along x and y.
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  for (let i = 0; i < n; i++) {
+    const v = poly[i]!;
+    const wx = ox + v.x * cos - v.y * sin, wy = oy + v.x * sin + v.y * cos;
+    x0 = Math.min(x0, wx); x1 = Math.max(x1, wx); y0 = Math.min(y0, wy); y1 = Math.max(y1, wy);
+  }
+  if (x0 >= bx + hw || x1 <= bx - hw || y0 >= by + hh || y1 <= by - hh) return false;
+  // Polygon edge normals (world frame; unnormalised: both intervals scale alike).
+  for (let i = 0; i < n; i++) {
+    const a = poly[i]!, b = poly[i + 1 < n ? i + 1 : 0]!;
+    const lx = b.x - a.x, ly = b.y - a.y;
+    const ax = -(lx * sin + ly * cos), ay = lx * cos - ly * sin;
+    let p0 = Infinity, p1 = -Infinity;
+    for (let k = 0; k < n; k++) {
+      const v = poly[k]!;
+      const d = (ox + v.x * cos - v.y * sin) * ax + (oy + v.x * sin + v.y * cos) * ay;
+      p0 = Math.min(p0, d); p1 = Math.max(p1, d);
+    }
+    const c = bx * ax + by * ay, r = hw * Math.abs(ax) + hh * Math.abs(ay);
+    if (p0 >= c + r || p1 <= c - r) return false;
+  }
+  return true;
+}
+
+/** A box vs an obstacle: its bounding circle (broad phase), then, when it
+ *  carries `parts`, the parts themselves (narrow phase, macro terrain C5b). */
+function boxOverlapsObstacle(bx: number, by: number, hw: number, hh: number, o: GridObstacle): boolean {
+  if (!boxOverlapsCircle(bx, by, hw, hh, o.x, o.y, o.radius)) return false;
+  const parts = o.parts;
+  if (parts === undefined) return true;
+  const a = o.angle ?? 0, cos = Math.cos(a), sin = Math.sin(a);
+  for (let p = 0; p < parts.length; p++) {
+    if (boxOverlapsPolygon(bx, by, hw, hh, parts[p]!, o.x, o.y, cos, sin)) return true;
+  }
+  return false;
+}
+
 /**
  * The reason a `kindId` footprint at (x, y) cannot be placed, or `null` when it
  * is legal. Tests the sum-of-radii overlap against every `structures` entry and
- * every `obstacles` entry (asteroids). `obstacles` omitted/empty ⇒ structures-only
+ * every `obstacles` entry (asteroids: bounding circle, then the convex `parts`
+ * when the obstacle has them). `obstacles` omitted/empty ⇒ structures-only
  * (byte-identical to the legacy server check).
  */
 export function placementRejection(
@@ -63,7 +114,7 @@ export function placementRejection(
   if (obstacles) {
     for (let i = 0; i < obstacles.length; i++) {
       const o = obstacles[i]!;
-      if (boxOverlapsCircle(x, y, hw, hh, o.x, o.y, o.radius)) return 'overlap-obstacle';
+      if (boxOverlapsObstacle(x, y, hw, hh, o)) return 'overlap-obstacle';
     }
   }
   return null;

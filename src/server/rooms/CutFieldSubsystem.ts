@@ -3,22 +3,27 @@
  * Streams the chunks near ships in as fixed rock colliders on the streamer's
  * own game-clock timer (never the room tick, #14), wakes the rocks a ram
  * touches (C2), and carries the seed for the welcome (#16: a joiner cuts the
- * same rocks). Field rocks stay off the swarm wire and the save until woken.
+ * same rocks). Field rocks stay off the swarm wire and the sector snapshot;
+ * what changed on them (ore mined, broken up) is saved by rock key in
+ * `terrain_records` (C4) and loaded when the field starts.
  * How it works: docs/architecture/macro-terrain.md.
  */
 import type { GameClock, GameTimer } from '../../core/clock/GameClock.js';
 import {
-  CutFieldStreamer, cutFieldOpts, fieldRockBody, fieldRockMass, fieldRockWakes,
+  CutFieldStreamer, cutFieldOpts, fieldRockBody, fieldRockId, fieldRockMass, fieldRocksInBox, fieldRockWakes,
   FIELD_WAKES_PER_TICK, STEP_EVERY_MS,
 } from '../../core/terrain/chunkStreamer.js';
-import { SLICED } from '../../core/terrain/fieldLayout.js';
+import { FIELD_LAYOUT_VERSION, SLICED, type ChunkOpts } from '../../core/terrain/fieldLayout.js';
+import type { GridObstacle, ObstacleBox } from '../../core/structures/Grid.js';
 import { oreAt, oreSeed, type OreConc } from '../../core/terrain/fieldOre.js';
+import { convexHullCCW } from '../../core/swarm/asteroidShape.js';
 import { SLOT_ANGLE_OFF, SLOT_X_OFF, SLOT_Y_OFF, slotBase } from '../../shared-types/sabLayout.js';
 import { SWARM_KIND_DRONE } from '../../shared-types/swarmWireFormat.js';
 import { MAX_WELCOME_CONSUMED_ROCKS, type FieldConsumedMessage } from '../../shared-types/messages/snapshotMessages.js';
 import { serverLogEvent } from '../debug/ServerEventLog.js';
 import type { SwarmEntityRecord, SwarmEntityRegistry } from '../net/SwarmEntityRegistry.js';
 import type { SwarmSpawner } from '../spawn/SwarmSpawner.js';
+import type { TerrainRecordStore } from '../db/terrainSql.js';
 import { guarded } from './guardedLoop.js';
 import type { WorkerCmd } from './PhysicsWorkerProxy.js';
 
@@ -31,6 +36,9 @@ export interface CutFieldRoomHooks {
   evict(rec: SwarmEntityRecord, broadcast: boolean): void;
   /** Send to every client in the room (reliable). */
   broadcast(type: 'field_consumed', msg: FieldConsumedMessage): void;
+  /** The change record's save (C4): a room that persists its sector passes
+   *  one; engineering and test rooms without a saved sector pass none. */
+  records?: TerrainRecordStore;
 }
 
 /** World point (x, y) on a rock now at (poseX, poseY, angle) back into the
@@ -53,14 +61,16 @@ export class CutFieldSubsystem {
   /** The field's ore seed (`oreSeed`), as the client draws it. */
   private readonly oreBase: number;
   private readonly restPt = { x: 0, y: 0 };
-  /** The field's change record (the in-memory half of the planned
-   *  `terrain_records` store, plan C4), by rock key. A rock nobody touched
+  /** The field's change record by rock key, saved in `terrain_records`
+   *  (C4: written on each change, loaded at start). A rock nobody touched
    *  has no entry. `minedPool`: what is left in a mined rock, kept while its
    *  chunk is unloaded so a re-cut doesn't refill it. `consumed`: rocks
    *  broken up (salvage rock cut), never cut whole again. */
   private readonly minedPool = new Map<number, number>();
   private readonly consumed = new Set<number>();
   private readonly seed: string;
+  private readonly gameClock: GameClock;
+  private readonly opts: ChunkOpts;
 
   constructor(
     seed: string,
@@ -70,8 +80,11 @@ export class CutFieldSubsystem {
     private readonly hooks: CutFieldRoomHooks,
   ) {
     this.seed = seed;
+    this.gameClock = gameClock;
     this.oreBase = oreSeed(seed);
-    this.streamer = new CutFieldStreamer(cutFieldOpts(seed), {
+    this.loadRecords();
+    this.opts = cutFieldOpts(seed);
+    this.streamer = new CutFieldStreamer(this.opts, {
       // Pilots and AI hulls keep rocks loaded. Slow cadence (STEP_EVERY_MS).
       visitShips: (cb) => {
         const sab = hooks.sab();
@@ -94,8 +107,10 @@ export class CutFieldSubsystem {
       removeRock: (id) => {
         const rec = registry.get(id);
         if (!rec) return;
-        if (rec.fieldKey !== undefined && rec.resources !== undefined && rec.resourcesMax !== undefined && rec.resources < rec.resourcesMax) {
+        if (rec.fieldKey !== undefined && rec.resources !== undefined && rec.resourcesMax !== undefined && rec.resources < rec.resourcesMax
+          && this.minedPool.get(rec.fieldKey) !== rec.resources) {
           this.minedPool.set(rec.fieldKey, rec.resources);
+          this.save(rec.fieldKey, rec.resources, false);
         }
         hooks.evict(rec, rec.fieldAwake === true);
       },
@@ -130,7 +145,30 @@ export class CutFieldSubsystem {
     if (this.consumed.has(key)) return;
     this.consumed.add(key);
     this.minedPool.delete(key);
+    this.save(key, null, true);
     this.hooks.broadcast('field_consumed', { k: key });
+  }
+
+  /** One rock's record to the save (a discrete event, never per tick). */
+  private save(rockKey: number, pool: number | null, consumed: boolean): void {
+    const store = this.hooks.records;
+    if (!store) return;
+    store.put({ type: 'TERRAIN_RECORD_PUT', sectorKey: store.sectorKey, rockKey, layoutVersion: FIELD_LAYOUT_VERSION, pool, consumed, ts: this.gameClock.now() });
+  }
+
+  /** The saved record, once at start. Rows cut under another
+   *  FIELD_LAYOUT_VERSION name other rocks: ignored (one warning), and
+   *  overwritten if their key is written again. */
+  private loadRecords(): void {
+    const store = this.hooks.records;
+    if (!store) return;
+    let stale = 0;
+    for (const r of store.load()) {
+      if (r.layoutVersion !== FIELD_LAYOUT_VERSION) { stale++; continue; }
+      if (r.consumed) this.consumed.add(r.rockKey);
+      else if (r.pool !== null) this.minedPool.set(r.rockKey, r.pool);
+    }
+    if (stale > 0) store.warn({ sectorKey: store.sectorKey, stale, layoutVersion: FIELD_LAYOUT_VERSION }, 'terrain_records: rows from another field layout ignored');
   }
 
   /** Spread into every welcome: the seed and the consumed keys (C3, #16). A
@@ -144,6 +182,21 @@ export class CutFieldSubsystem {
 
   isConsumed(key: number): boolean {
     return this.consumed.has(key);
+  }
+
+  /** Placement (C5): push onto `out` the field rocks reaching into `box` that
+   *  have no body right now (their chunk is not loaded), cut from the layout
+   *  (`fieldRocksInBox`), as their bounding circle plus the convex parts their
+   *  collider would have (`fieldRockBody`; none ⇒ the outline's convex hull,
+   *  as the collider), at rest: the same obstacle a live rock gives (C5b). A
+   *  broken-up rock is gone; a live one is already in `out` from the registry.
+   *  A discrete player action, never per tick. */
+  dormantObstacles(box: ObstacleBox, out: GridObstacle[]): void {
+    for (const r of fieldRocksInBox(this.opts, box.x0, box.y0, box.x1, box.y1)) {
+      if (this.consumed.has(r.key) || this.registry.get(fieldRockId(r.key))) continue;
+      const b = fieldRockBody(r);
+      out.push({ x: r.x, y: r.y, radius: r.radius, angle: 0, parts: b.parts ?? [convexHullCCW(b.verts)] });
+    }
   }
 
   /** The field's ore where a shot hit field rock `rec` at world (x, y), into

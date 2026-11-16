@@ -767,7 +767,7 @@ export class MissileSimulation {
       const b = slotBase(rec.slot);
       const cx = this.deps.sabF32[b + SLOT_X_OFF]!;
       const cy = this.deps.sabF32[b + SLOT_Y_OFF]!;
-      const sweep = rec.kind === 4
+      const sweep = rec.kind === 4 || rec.wreckParts !== undefined
         ? wreckSweepHit(rec.wreckParts, rec.radius, m.x, m.y, stepX, stepY, mr, cx, cy, this.deps.sabF32[b + SLOT_ANGLE_OFF]!)
         : rec.halfW !== undefined && rec.halfH !== undefined
           ? projectileSweepBox(m.x, m.y, stepX, stepY, mr, cx, cy, rec.halfW, rec.halfH, rec.boxes)

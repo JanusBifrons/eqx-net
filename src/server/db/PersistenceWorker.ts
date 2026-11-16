@@ -21,6 +21,7 @@ type LegacyLimboPayload = {
 };
 import { SHIP_KIND_CATALOGUE_VERSION } from '../../shared-types/shipKinds.js';
 import { db } from './Database.js';
+import { terrainRecordStore, type TerrainRecordStore } from './terrainSql.js';
 import {
   canonicalPlayerId,
   getAccountPlayerRegistry,
@@ -196,6 +197,13 @@ export function initLabBoard(): { jobs: number } {
   }
   getLabBoard().hydrate(row?.payload_json);
   return { jobs: getLabBoard().all().length };
+}
+
+/** Macro terrain C4 — a sector's cut-field change record (`terrain_records`):
+ *  read once by `CutFieldSubsystem` at start on the read-only main-thread
+ *  connection, written on the CRITICAL lane. */
+export function terrainRecordStoreFor(sectorKey: string): TerrainRecordStore {
+  return terrainRecordStore(sectorKey, db, persistence, _hydrateLogger);
 }
 
 /** Boot hydrate of the unified `holds` table (read-only main-thread connection). */

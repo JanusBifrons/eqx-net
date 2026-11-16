@@ -43,6 +43,8 @@ export interface TurretPlace {
 }
 
 function familyOf(m: WeaponMount): TurretFamily {
+  // A tractor emitter draws as a dish (no barrel).
+  if (m.weaponId === 'tractor') return 'tractor';
   const w = getWeapon(m.weaponId as WeaponId);
   return familyFor(m.weaponId, w.mode, (w.chargeTicks ?? 0) > 0);
 }
@@ -68,6 +70,13 @@ export function shipTurrets(kindId: string): TurretPlace[] {
     const wid = shipBarrelWidth(k, m);
     const cap = shipCapRadius(k, false, m);
     const nt = navalTurret(k, m);
+    // A sized mining laser or tractor is a round emitter, not a gunhouse: a
+    // disc cap the width of its class's house, with a lens barrel to the
+    // shared muzzle (laser) or no barrel (tractor dish).
+    if (nt !== null && (family === 'tractor' || m.weaponId === 'mining_laser')) {
+      const cap = nt.houseW / 2;
+      return { mount: m, family, px: m.localX, py: -m.localY, len: family === 'tractor' ? 0 : muzzle, wid: cap * 0.42, cap, ring: cap * 1.2, chin: false, muzzle };
+    }
     if (nt !== null) {
       return { mount: m, family, px: m.localX, py: -m.localY, len: nt.len, wid, cap, ring: nt.barbette, chin: false, muzzle, naval: { barrels: nt.barrels, houseW: nt.houseW, houseL: nt.houseL } };
     }

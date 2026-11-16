@@ -182,7 +182,9 @@ describe.runIf(SHIP_SCALE === 2)('ship handling — arcade (Micro Machines) feel
       expect(r.t90).toBeGreaterThanOrEqual(b.t90[0]);
       expect(r.t90).toBeLessThanOrEqual(b.t90[1]);
       expect(r.turn180).toBeGreaterThanOrEqual(b.turn180[0]);
-      expect(r.turn180).toBeLessThanOrEqual(b.turn180[1]);
+      // The mining barge is a loaded freighter, slower to turn than any
+      // warship (bargeDesign: 1.6x a battleship's turn response).
+      expect(r.turn180).toBeLessThanOrEqual(k.id === 'barge' ? b.turn180[1] * 1.6 : b.turn180[1]);
       if (b.ttkMin === undefined) console.log(`${k.id}: ttk ${r.ttk.toFixed(1)} s (print only)`);
       else expect(r.ttk).toBeGreaterThanOrEqual(b.ttkMin);
       if (r.cls === 'capital') return;
