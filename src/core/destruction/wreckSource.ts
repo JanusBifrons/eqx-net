@@ -17,7 +17,7 @@
  *    pieces and barely a big one.
  *
  * Not hot-loop code: read at a break or a spawn; a rock source allocates once
- * per (shape, radius) on first use.
+ * per rock (shape, radius, id) on first use.
  */
 import { DESTRUCTION_PROFILES, type DestructionProfile } from '../../shared-types/shipScale/destruction.js';
 import { getShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
@@ -105,7 +105,8 @@ const rockCache = new Map<string, WreckSource>();
 /** Rock sources kept (a cut field is a few hundred rocks at most). */
 const ROCK_CACHE_MAX = 512;
 
-/** A rock's source (memoised by shape and radius; the id rides along). */
+/** A rock's source, memoised per rock (shape, radius and id: the id rides
+ *  on the source, so two rocks of one shape and radius keep their own). */
 export function rockWreckSource(rock: WreckRockSource): WreckSource {
   const key = `${rock.shape}:${rock.r}:${rock.id}`;
   let s = rockCache.get(key);
