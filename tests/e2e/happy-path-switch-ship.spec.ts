@@ -67,7 +67,7 @@ test('switch-ship dispatch keeps the local ship rendered', async ({ page }) => {
   page.on('pageerror', (err) => errors.push(`PAGEERROR: ${err.message}`));
 
   // Step 1: auto-join galaxy-sol-prime via URL escape hatch.
-  await page.goto(`${BASE_URL}/?galaxy=sol-prime`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+  await page.goto(`${BASE_URL}/?galaxy=sol-prime&startMode=fly`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
 
   // Step 2: wait for first spawn — local ship visible.
   await waitForLocalShip(page);

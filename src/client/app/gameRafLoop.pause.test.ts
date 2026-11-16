@@ -38,7 +38,7 @@ const storeState = vi.hoisted(() => ({
   localPoseResolved: true,
   arrivalTickFromServer: 123 as number | null,
   arrivalAcked: true,
-  setSelectedEntity: vi.fn(),
+  setSelection: vi.fn(),
 }));
 
 vi.mock('../state/store.js', () => ({
@@ -105,6 +105,7 @@ function buildLoop(fake: Fake): { loop: (now: number) => void; animFrameRef: { c
     updateMirror: fake.updateMirror,
     sendClientReady: fake.sendClientReady,
     consumePendingCameraGlide: () => null,
+    consumePendingFleetArrival: () => null,
     mirror: {
       localPlayerId: 'ship-1',
       ships: new Map(),
@@ -116,7 +117,7 @@ function buildLoop(fake: Fake): { loop: (now: number) => void; animFrameRef: { c
   const mockRenderer = {
     update: fake.rendererUpdate,
     glideCameraTo: vi.fn(),
-    getFeedback: () => ({ firstFrameRendered: false, artReady: fakeArtReady.value, mountCounts: new Map(), haloArrowCount: 0, selectedPickId: null, selectedPickKind: null, helmCourseSeq: 0, helmCourseX: 0, helmCourseY: 0 }),
+    getFeedback: () => ({ firstFrameRendered: false, artReady: fakeArtReady.value, mountCounts: new Map(), haloArrowCount: 0, selectedPickId: null, selectedPickKind: null, helmCourseSeq: 0, helmCourseX: 0, helmCourseY: 0, fleetSelSeq: 0, fleetSelIds: [], orderSeq: 0, orderKind: 'move', orderX: 0, orderY: 0, orderTargetId: null, takeControlsSeq: 0, takeControlsId: null, fleetPickPoints: 0, fleetPickSeq: 0, fleetPickResult: null }),
   } as unknown as IRenderer;
   const el = document.createElement('div');
   const animFrameRef = { current: 0 };

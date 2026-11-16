@@ -83,7 +83,7 @@ export async function lockOn(page: Page, target: LockTarget, opts: { timeoutMs?:
   const sel = await page.waitForFunction(
     (t) => {
       const w = window as unknown as {
-        __eqxStore?: { getState(): { setSelectedEntity(id: string | null, kind: string | null): void } };
+        __eqxStore?: { getState(): { setSelection(ids: readonly string[], id: string | null, kind: string | null): void } };
         __eqxClient?: { mirror?: { swarm?: Map<number, { kind: number }>; ships?: Map<string, unknown> } };
       };
       const store = w.__eqxStore?.getState();
@@ -100,7 +100,7 @@ export async function lockOn(page: Page, target: LockTarget, opts: { timeoutMs?:
         kind = t.kind;
       }
       if (id === null) return null;
-      store.setSelectedEntity(id, kind);
+      store.setSelection([], id, kind);
       return id;
     },
     target,

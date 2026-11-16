@@ -19,7 +19,7 @@ function fakeRoom() {
   const bots = new Map<string, Bot>();
   const warps: Array<{ id: string; x: number; y: number }> = [];
   const stations = new Map<string, { x: number; y: number }>();
-  const guards = new Map<string, { x: number; y: number; r: number }>();
+  const guards = new Map<string, { x: number; y: number; r: number; anchor?: string }>();
   const room = {
     bots, warps, stations, guards, bus,
     eventBus: () => bus,
@@ -30,7 +30,7 @@ function fakeRoom() {
     setBotFlockFollow: () => {},
     setBotFlockLeaderCourse: () => {},
     setBotMoveTarget: (id: string, x: number, y: number) => { stations.set(id, { x, y }); },
-    setBotGuardPost: (id: string, x: number, y: number, r: number) => { guards.set(id, { x, y, r }); },
+    setBotGuardPost: (id: string, x: number, y: number, r: number, anchor?: string) => { guards.set(id, anchor === undefined ? { x, y, r } : { x, y, r, anchor }); },
     getBotPose: (id: string) => { const b = bots.get(id); return b ? { x: b.x, y: b.y, angle: 0 } : null; },
     warpBot: (id: string, x: number, y: number) => { warps.push({ id, x, y }); const b = bots.get(id); if (b) { b.x = x; b.y = y; } return true; },
     botWarpPhase: () => 0 as const,
@@ -73,9 +73,10 @@ describe('FlagshipDirector', () => {
     expect(d.sectorCapital('vega-reach')).toBeNull();
   });
 
-  it('posts the whole fleet on the pocket it holds, and moves the post when it warps', () => {
+  it('posts the flagship on the pocket it holds (moved when it warps); escorts guard round the flagship', () => {
     // Owner 2026-11-11: a defender "should stay close to the thing it's
-    // defending" — the fleet's capitals fight from their pocket.
+    // defending" — the flagship fights from its pocket. Owner 2026-11-15:
+    // the escorts' zone follows the flagship (a post anchored to it).
     const room = fakeRoom();
     const { d, clock, now } = director(new Map([[A, room]]));
     d.start();
@@ -85,7 +86,14 @@ describe('FlagshipDirector', () => {
     const expectPosted = (siteId: string): void => {
       const site = sectorSites(A).find((s) => s.id === siteId)!;
       expect(room.guards.size).toBe(1 + FLEET_ESCORT_KINDS.length);
-      for (const id of room.bots.keys()) expect(room.guards.get(id), id).toEqual({ x: site.x, y: site.y, r: site.r });
+      const leadId = [...room.bots.keys()].find((id) => id.endsWith('-lead'))!;
+      const lead = room.bots.get(leadId)!;
+      expect(room.guards.get(leadId)).toEqual({ x: site.x, y: site.y, r: site.r });
+      for (const [id, b] of room.bots) {
+        if (id === leadId) continue;
+        const ring = escortRing(lead.kind as ShipKindId, b.kind as ShipKindId);
+        expect(room.guards.get(id), id).toEqual({ x: lead.x, y: lead.y, r: ring + site.r, anchor: leadId });
+      }
     };
     const first = pocket();
     expectPosted(first);

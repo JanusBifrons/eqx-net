@@ -7,6 +7,7 @@
  * integration test boots EXACTLY the options the server registers.
  */
 import { SCENARIO, STRUCTURE_SCENARIO_PREBUILT } from './scenarioLayouts.js';
+import { weaponCutsRoomOpts } from './showcaseWeaponCutsRooms.js';
 
 /**
  * The pilot identity base shots join as (anonymous join, seeded `eqxPlayerId`).
@@ -100,6 +101,9 @@ export const SHOWCASE_CAPITAL_DUEL_OPTS = {
   defaultSpawnY: 0,
 };
 
+/** Weapon cuts shots (beam-slice, beam-vaporise-subcap, rail-channel): showcaseWeaponCutsRooms.ts. */
+export const { beamSlice: SHOWCASE_BEAM_SLICE_OPTS, railChannel: SHOWCASE_RAIL_CHANNEL_OPTS } = weaponCutsRoomOpts(SHOWCASE_CAPITALS_COMBAT_OPTS);
+
 /** Real-scale ranges (docs/architecture/real-scale-ranges.md): the pilot
  *  (join `shipKind=battleship`) at the origin, nose +y, and an NPC battleship
  *  30 km off its starboard beam with a live brain. Needs a server and a page at
@@ -145,6 +149,35 @@ export const SHOWCASE_MELEE_OPTS = {
   ],
   defaultSpawnX: 0,
   defaultSpawnY: -1100,
+  maxClients: 4,
+};
+
+/**
+ * RTS command layer sign-off film: the pilot owns five fighters (its own hull
+ * plus four more), all parked and AI-flown, with three robot cubes (the
+ * weakest robot) holding position ~2 km north, just outside either side's
+ * 1.6 km on-sight range of the parked fleet. Robots are hostile to players on
+ * sight (allegiance stance, no 30 s decay), so a fleet sent a few hundred
+ * units north and set to Hunt finds them. Roster-backed (real sectorKey,
+ * outside the galaxy graph) because a Command-view join and parked hulls need
+ * one. The four extra hulls come from the scene script's `fleet` step when
+ * the pilot is ready; join with `startMode=command`.
+ */
+export const SHOWCASE_RTS_OPTS = {
+  sectorKey: 'showcase-rts',
+  testMode: true,
+  droneCount: 0,
+  asteroidConfig: [],
+  dronePoses: [
+    { kind: 'robot-square', x: 150, y: 2000, angle: Math.PI },
+    { kind: 'robot-square', x: 350, y: 2050, angle: Math.PI },
+    { kind: 'robot-square', x: 250, y: 2200, angle: Math.PI },
+  ],
+  sceneScript: [
+    { atMs: 0, action: 'fleet', tag: 'wing', kind: 'fighter', count: 4, x: 0, y: 0, spread: 360 },
+  ],
+  defaultSpawnX: 0,
+  defaultSpawnY: 0,
   maxClients: 4,
 };
 
@@ -547,10 +580,13 @@ export const SHOWCASE_ROOMS = {
   'showcase-capitals': SHOWCASE_CAPITALS_OPTS,
   'showcase-capitals-combat': SHOWCASE_CAPITALS_COMBAT_OPTS,
   'showcase-capital-duel': SHOWCASE_CAPITAL_DUEL_OPTS,
+  'showcase-beam-slice': SHOWCASE_BEAM_SLICE_OPTS,
+  'showcase-rail-channel': SHOWCASE_RAIL_CHANNEL_OPTS,
   'showcase-long-guns': SHOWCASE_LONG_GUNS_OPTS,
   'showcase-melee': SHOWCASE_MELEE_OPTS,
   'showcase-coastal': SHOWCASE_COASTAL_OPTS,
   'showcase-coastal-aa': SHOWCASE_COASTAL_AA_OPTS,
   'showcase-coastal-duel': SHOWCASE_COASTAL_DUEL_OPTS,
   'showcase-fleet-warp': SHOWCASE_FLEET_WARP_OPTS,
+  'showcase-rts': SHOWCASE_RTS_OPTS,
 } as const;

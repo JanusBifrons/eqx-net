@@ -10,11 +10,13 @@
  * fresh-spawns from config. See docs/architecture/persistence-and-migrations.md.
  */
 
+import type { FleetSavedModeData, FleetSavedShip, FleetSavedSquad } from '../fleet/fleetPersistence.js';
+
 // v3 (Phase 5 2026-06-14): structures FULLY persisted + reconstructed.
 // v4 (Phase 5 2026-06-14): SCRAP persists too.
 // v5 (Phase 5 2026-06-14): LINGERING HULLS persist too — a disconnected /
 // displaced ship reappears in its sector "where you left it" after a restart
-// (visible to others, reclaimable by the owner). The 10-ship roster cap stays;
+// (visible to others, reclaimable by the owner). Rosters are unlimited (200 anti-abuse guard);
 // ships persist once spawned until abandoned (→ scrap). Bumping discards every
 // older snapshot and reseeds all sectors.
 // v6 (Phase 4 leveling/XP, WS-0): structures[] gain a `level` (default 1) — the
@@ -26,6 +28,12 @@
 // structures[] portion (asteroid health / scrap / lingering hulls are not
 // structure-catalogue-coupled and still restore). Tear-down on the bump itself:
 // every v6 snapshot is discarded and all sectors fresh-spawn.
+// RTS slice 9 (2026-11-14): lingeringHulls[] gain OPTIONAL wingman fields
+// (mode / modeData / stance / squadId) and the payload an optional squads[].
+// Additive + optional like structures[].rot / recipe / teleport before them, so
+// NO bump (a bump would discard every saved sector, players' structures too):
+// a v7 snapshot without them hydrates with default brains, and the new fields
+// are validated where they are read.
 export const CURRENT_SCHEMA_VERSION = 7;
 
 /** Maximum age of a hydrated snapshot before it's discarded (24 h). */
@@ -138,6 +146,16 @@ export interface SectorSnapshotLingeringHull {
   health: number;
   /** True if the shield was down at persist time (hull exposed). */
   shieldDown: boolean;
+  /** RTS slice 9 — the wingman's standing job (optional, additive: absent on
+   *  snapshots written before it ⇒ the default Defend-here / Defensive brain).
+   *  Validated on hydrate (`fleet/fleetPersistence.ts`); an invalid part is
+   *  dropped. Direct orders are never persisted. */
+  mode?: FleetSavedShip['mode'];
+  modeData?: FleetSavedModeData;
+  stance?: FleetSavedShip['stance'];
+  /** The squad it was in (informational; `SectorSnapshotPayload.squads` is
+   *  the authority). */
+  squadId?: string;
 }
 
 export interface SectorSnapshotPayload {
@@ -162,6 +180,10 @@ export interface SectorSnapshotPayload {
   /** Lingering hulls (Phase 5 v5 — "lingers forever where you left it"). Absent
    *  when none. */
   lingeringHulls?: SectorSnapshotLingeringHull[];
+  /** RTS slice 9 — wingman squads (members are lingering hulls' ids).
+   *  Optional, additive (no version bump); re-validated on hydrate (schema,
+   *  owner, membership, escort target). Absent when none. */
+  squads?: FleetSavedSquad[];
 }
 
 /**

@@ -334,6 +334,58 @@ reach is refused with no energy spent), `src/client/net/ColyseusClient.fireRange
 parity), `tests/unit/fireControlBearingParity.test.ts` (both sides call
 `mountFiresOn` + `fillFireTargetShape`, never a bare `mountBearsOn`).
 
+### The heavy beam hits by its width (owner 2026-11-15)
+
+The capital heavy beam is drawn `HEAVY_BEAM_WIDTH` (60 u) wide, but it was
+hit-tested as its thin centre line, so a near miss visibly covered a small ship
+and passed through it. Owner: "Hit by its width": anything the drawn beam covers
+is hit, and the beam stops on it.
+
+- **Data, not a branch.** `HitscanWeaponDef.hitWidth` (the heavy beam:
+  `HEAVY_BEAM_WIDTH`; every other beam unset = the thin ray, bit-identical) is
+  read only through `beamHalfWidth(def)` (`combat/Weapons.ts`). The
+  `HitscanWeapon` flyweight hands it to `WeaponFireSink.hitscan` as `halfWidth`.
+- **One capsule test, every shape.** The existing hit helpers take an optional
+  trailing `halfWidth` and sweep a disc of that radius down the ray (a capsule):
+  `shipRayHit` (shield bubble grown by it; hull polygon by the exact
+  capsule-vs-convex-polygon first contact), `wreckRayHit` (pieces),
+  `rayHitsConvexPolygon` (rocks, scrap), `rayHitsBox` (structure footprints and
+  gate parts: the box's outline rounded by the half-width, round corners), and
+  `rayHitsSphere(r + halfWidth)` for plain circles. 0 takes the old code path.
+- **Server.** `PlayerFireResolver.hitscan` and `AiFireResolver.hitscan` pass the
+  width into every candidate test: `SectorRoom.playerHitscanDist`,
+  `nonPlayerRayHit` → `swarmRayHit`, lingering hulls, and the player sink's
+  swarm pass. The hit distance is the first contact of the beam's edge; the hit
+  point and `laser_fired`'s end are the centre line at that distance, so the
+  drawn beam stops where its edge meets the target. Follow-through
+  `passDebris` is unchanged.
+- **Client (#15).** The pilot's own live beam and predicted hit
+  (`DisplayPoseHitscan.hitscan(…, halfWidth)`, `predictShotOutcome({ halfWidth })`,
+  `shieldEdgeDist`) use the same helpers: drawn drones, scrap and wreck pieces
+  through `rayHitsDrawnSwarmEntity`; predWorld bodies through
+  `PhysicsWorld.hitscan(…, halfWidth)` → `castHitscanDisc`
+  (`physics/hitscanRay.ts`), which asks Rapier only for the colliders overlapping
+  the box the swept disc covers and runs the same core capsule maths on each
+  collider's own shape and pose. Rapier's shape cast is NOT used: in 0.14 a ball
+  cast against a polygon or triangle missed 1–4 % of hits outright at offsets a
+  thin ray hit. Lock: `tests/integration/sectorRoom/heavyBeamWidthParity.test.ts`.
+- **Unchanged.** The lock and bearing gates (#19), fire range (`mountFiresOn`),
+  and shield walls: a wall stops a beam where its centre line crosses (server
+  `blockBeamAtWall`; the client's width query skips walls, the thin ray still
+  stops on them). The NPC line-of-fire gate (`LineOfFireGate`) still checks the
+  centre line, so an AI heavy beam may clip a friendly within 30 u of its line.
+- **Kill cut** (not changed here): a kill still slices along the beam's centre
+  line through the hit point, which for a grazing kill lies beside the hull.
+
+Locks: `src/core/combat/beamHitWidth.test.ts` (each shape hit inside the
+half-width at the brute-force first contact, missed outside it; half-width 0 is
+bit-identical), `tests/integration/sectorRoom/heavyBeamHitWidth.test.ts` (through
+a real room, both sinks: a heavy beam whose centre misses a frigate's bubble by
+20 u hits it and `laser_fired` ends at the first contact; a fighter beam on the
+same line misses), `heavyBeamWidthParity.test.ts` (client vs server, ships shield
+up/down, drawn drones, a rock, a structure box), `weapons.test.ts`,
+`HitPrediction.client.test.ts`.
+
 ## Server
 
 | Piece | File | Role |
@@ -351,7 +403,42 @@ parity), `tests/unit/fireControlBearingParity.test.ts` (both sides call
 (commit), `lock_track {groupId, target | null, b?}` (the held line and its
 bearing; sent only when its target changes), `lock_cancel {groupId, target?}`,
 `set_group_mode`.
-Target keys: `s:<entityId>` (swarm) or `p:<playerId>`.
+Target keys: `s:<entityId>` (swarm) or `p:<id>`, a player's ship: an ACTIVE
+ship by its pilot's playerId, or a parked hull flown by an AI pilot by its
+shipInstanceId (owner: "lock it like any player's ship"). The `p:` id is the
+ship's key in the client's one ship list, so the lock line, contacts,
+`lockSelected`, `TargetAction` and every mark resolve it through
+`mirror.ships.get` with no second lookup. `SectorRoom.resolveLockTarget` is the
+one resolver for both (hull: `lingeringSlots` + `isLingeringHull`, pose from
+`lingeringPoseCache`); the rules are the same (another player's ship runs the
+failsafe and commits a hostile act; your own ship, active or parked, never
+resolves, so neither you nor your AI pilots can lock your own fleet; AUTO never
+picks a player ship). A wingman's attack order or retaliation on another
+player's hull locks it the same way (`wingmanLockKey`). The key names the
+SHIP's current role: when the owner takes the controls the hull becomes their
+active ship (`p:<playerId>`), and the reverse when they park it. It is the same
+ship, so its locks follow it through ONE "ship key moved" op at the server's
+re-key sites (`displaceActiveHullToLingering`, `reclaimLingeringHull` →
+`SectorRoom.shipKeyMoved` → `LockSubsystem.shipKeyMoved`; the same op also
+moves fleet attack orders / chases / retaliation targets naming the ship,
+`FleetCommandSubsystem.shipKeyMoved`, and its turret angles,
+`WeaponMountTicker.shipKeyMoved`, so AI pilots keep attacking it and its
+turrets never snap home): every lock held on
+it in both player lock machines is re-keyed `p:<from>` → `p:<to>` (stage and
+progress kept), and the ship's own groups move between the pilot's `locks` and
+the AI pilots' `wingmanLocks` (an AI pilot flies them in MAN; a pilot gets the
+slots' start modes back). `wingmanLockKey` maps an order target named by a
+shipInstanceId its owner now flies to `p:<playerId>`. The client follows in
+`rekeyShip` (`rekeyLockState`: own groups' lock targets, lock-line candidate,
+last `lock_track` sent) until the next `groups` slice, which the server already
+re-keyed (#16). NPC locks on a pilot stay keyed by the pilot
+(`engageablePilotHull`: active, Spectate-parked, or a parked hull they are
+taking back while its join handshake runs); they drop only when the pilot moves
+to a DIFFERENT ship. `lockedBy` still rides the own ACTIVE ship only, so no
+threat ring is drawn round a parked hull.
+Locks: `tests/integration/sectorRoom/lockAiFlownHull.test.ts`,
+`tests/integration/sectorRoom/lockFollowsShipKey.test.ts`,
+`LockSubsystem.test.ts` "shipKeyMoved", `ColyseusClient.lockRekey.test.ts`.
 
 **Snapshot (#16), own active pilot only, shared refs mutated in place:**
 - `states[].groups`: `[{id, m: 0 auto | 1 manual, l: [{t, s: 0 failsafe | 1 acquiring | 2 locked, p: 0..100, r?: 1 released}]}]`
@@ -448,9 +535,10 @@ Full story: [docs/architecture/fire-control.md](fire-control.md). There is ONE H
 ### Fire control: lock-to-fire is universal (root invariant #19)
 
 - **Every player is tracked** by `LockSubsystem` from `onJoin` (`locks.enable`) and forgotten on leave (`LeaveHandler.forgetLocks` → `locks.forget` + `npcLocks.forget`). `hasLocked()` is false for an untracked player. Never reintroduce a pass-through (`isEnabled`-style "legacy rules").
-- **The fire gate** (`PlayerFireResolver` deps `fireAllowed` + `mountBearsOnLock`): a group fires only with a LOCKED target, and only the mounts that reach its hit shape from where they sit (own weapon reach, `mountReachesTarget`; see "Range to the hull") and whose barrel bears on it per the shared `mountBearsOn(weaponId, …)` (both: `mountFiresOn`) (`core/combat/fireControlBearing.ts`; the client's ghost pass calls the same, #15): naval shell guns must put the shot within `TURRET_FIRE_MISS` (60 u) of the target, the rule every NPC capital and coastal gun uses, and other guns keep `FC_MOUNT_FIRE_TOLERANCE` (0.2 rad). A flat 0.2 rad let a player's 16" turret fire while still training, ~6 km wide at 30 km (owner 2026-11-12, "missing by miles"; lock `playerNavalFireTolerance.test.ts`). (Separate turrets fire independently when each is on target and share the group's target; a multi-barrel turret fires all its barrels together); none bearing ⇒ `hit_ack { rejected }` with no cooldown or energy spent.
+- **The fire gate** (`PlayerFireResolver` deps `fireAllowed` + `mountBearsOnLock`): a group fires only with a LOCKED target, and only the mounts that reach its hit shape from where they sit (own weapon reach, `mountReachesTarget`; see "Range to the hull") and whose barrel bears on it per the shared `mountBearsOn(weaponId, …)` (both: `mountFiresOn`) (`core/combat/fireControlBearing.ts`; the client's ghost pass calls the same, #15): capital turret weapons (`isCapitalTurretWeapon` in `WeaponCatalogue.ts`: the absolute, never-`profiled` weapons, i.e. the naval guns, railgun, heavy beam and mining laser) must put the shot within `TURRET_FIRE_MISS` (60 u) of the target's centre (its hit radius is not counted), the rule every NPC capital and coastal gun uses, and other guns (a fighter's fixed nose guns) keep `FC_MOUNT_FIRE_TOLERANCE` (0.2 rad). A flat 0.2 rad let a player's 16" turret fire while still training, ~6 km wide at 30 km (owner 2026-11-12, "missing by miles"; lock `playerNavalFireTolerance.test.ts`), and a heavy beam fire 1-3° off a small locked wreck piece, its beam running past it (2026-11-15; lock `fireControlBearingParity.test.ts`). (Separate turrets fire independently when each is on target and share the group's target; a multi-barrel turret fires all its barrels together); none bearing ⇒ `hit_ack { rejected }` with no cooldown or energy spent.
 - **Turret aim:** `WeaponMountTicker.tickPlayer` aims each mount at its group's lock (locked, else acquiring) and homes it otherwise. A capital group with several locks shares them out per turret (`LockSubsystem.aimKeyFor` → shared `pickTurretLock`, same call as the client's `fcMountAimKey`, #15), and `mountBearsOnLock` tests each mount against ITS pick. Capital turrets fire on their own reload (`PlayerFireResolver` per-mount ledger, partial salvo pays its share of the energy); other ships keep the group cooldown. There is no player auto-target or manual-aim mount path.
 - **Ship heavy guns lock small targets slowly, never impossibly, whoever flies the ship** (owner 2026-11-10: "10 minutes or an hour … working as intended"; owner 2026-11-13: "Same rule as players — an NPC's heavy gun locks a small fast ship slowly, but always gets there in the end. It's the same ship and the same gun, so it gets the same lock."): `lockSeconds` skips the `maxSeconds` gate for any heavy (M/L/XL, `absRange`) gun under ship tuning (`LOCK_TUNING`, no `clampAtMax`), so it keeps the finite size × tracking × absolute-distance time (no `c: 1` can't-lock flag, no drop). Player (`LockSubsystem`) and NPC (`NpcLockSubsystem`, `WeaponMountTicker` capital turret on a structure) take that ONE path; there is no per-pilot flag (the player-only `neverImpossible` is gone). Never add one back: a pilot difference is a bug. Sub-capital guns keep the `maxSeconds` rule; structures keep `clampAtMax` (fixed batteries are not ships, own tuning). Locks: `tests/unit/npcLockParity.test.ts` (NPC battleship 16" locks a fighter in the player time, then fires), `lockTime.test.ts`, `fireControlLocks.test.ts` "player heavy gun on a small target".
+- **A player's ship is lockable whoever flies it:** `p:<id>` is a pilot's ACTIVE ship by playerId or another player's parked (AI-flown) hull by shipInstanceId, both resolved in the ONE `resolveLockTarget` with the same rules (failsafe first; never your own ship or fleet). Never add a third key family for ships. When a hull is re-keyed (take / let go of the controls), call `SectorRoom.shipKeyMoved` beside the re-key: the ONE op that moves everything naming the ship by its key (locks on it and its own groups' locks, fleet attack orders / chases / retaliation targets, turret angles); never let a key change drop any of them, and extend that op rather than adding a second re-key path. Locks: `tests/integration/sectorRoom/lockAiFlownHull.test.ts`, `lockFollowsShipKey.test.ts`, `handOverKeepsFleetState.test.ts`.
 - **`lock_track` is verified**, not trusted: it carries the line bearing `b`; `LockSubsystem.trackLock` holds the target only when the shared `lockLineHolds` (`core/combat/lockLine.ts`, sticky cone, the client's own pick rule) accepts it. A failing claim (or no `b`) counts as "on nothing" and releases the held lock. Lock: `LockSubsystem.test.ts` "lock_track is verified".
 - **Snapshot slices (#16):** own active pilot only, shared refs mutated in place: `states[].groups` (`LockSubsystem.wireFor`) and `states[].lockedBy` (`NpcLockSubsystem.wireFor`). Every pilot now gets them.
 - **Test triggers:** testMode join options `instantLock` (every lock completes next step) and `anyTarget` (AUTO also picks non-hostile NPCs and non-own structures), `groupMode: 'manual'` (every group starts in MAN; `LockSubsystem.enable`) and `_internals.forceLock(pid, key, groupId?)` (integration `harness.lockTarget`). Use them; never add a test-only fire bypass. NON-player locks have the room option `lockTimeCapS` (testMode, zod-checked in `onCreate`, also a join option): `NpcLockSubsystem`, `WeaponMountTicker` (capital turret on a structure) and `StructureMountTicker` pass every lock time through `capLockSeconds`, so none takes longer than N s at any distance (0 = the first step). Lock: `tests/integration/sectorRoom/lockTimeCap.test.ts`.
@@ -459,7 +547,7 @@ Full story: [docs/architecture/fire-control.md](fire-control.md). There is ONE H
 - **Structure turrets lock too** (PR 1d slice 3): see "Defence fire control" below.
 - **NPC drones fire only with a completed lock on their target** (PR 1d slice 1): `HostileDroneBehaviour` puts its AI target on `intent.fire.targetId`, threaded `AiFireRequest` → `handleAiFire` → `AiFireResolver.resolve` → `NpcLockSubsystem.fireBlocked(npcId, targetId)`. A pilot target needs that drone's completed lock (acquiring is not enough; a lock on another pilot doesn't count); non-pilot targets (NPCs, structures, displaced hulls) are not gated. Lock: `NpcLockSubsystem.test.ts`.
 - **An AI pilot's shot leaves down its drawn barrel, and only a barrel that bears fires** (owner 2026-11-14, fight clips: "The turrets also aren't turning to shoot the direction they do"). `AiFireResolver.fireNow` fires EVERY mount at hull + `baseAngle` + its slewed `droneMountAngles` angle (0 for a fixed nose gun), the angle the client draws the gun and the remote beam at; `resolve` first builds a bearing mask (`barrelBearsOn` with `mountFireTolerance`, the player rule #19) and holds, spending no cooldown, when no barrel bears (a turret still training). A charge weapon fires the mounts that bore at the trigger pull, down their barrels at release. `HostileDroneBehaviour` pulls a fixed gun's trigger only inside `FC_MOUNT_FIRE_TOLERANCE` (turret kinds keep the wide cone + arc request) and exposes `aimPoint(out)`, its combat lead point this tick; `WeaponMountTicker.tickDrone` trains a non-capital drone's turrets on that point first (any target: a pilot, another faction's ship, a structure), falling back to the hostile-pilot pick. Before, turrets trained only on hostile pilots, so in ship-vs-ship fights they sat at rest while the pilot fired. **`swarmEntitySnapshot` fills ONE shared scratch**: copy the fields you need before any other lookup (a hit test inside the mount loop overwrote the shooter's pose, so a twin turret's second beam left from the target's pose). Locks: `tests/unit/aiTurretFacesShot.test.ts`, `tests/integration/sectorRoom/aiTurretFacesShot.test.ts`, client `tests/unit/aiTurretDrawnFollowsSnapshot.test.ts`.
-- **Spectating doesn't dodge a fight** (owner 2026-11-12): the `spectate` handler records the parked hull in `spectateParkedHull` (cleared on reclaim, a new active hull, or leave). `engageablePilotHull(pid)` (predicate `isEngageablePilotHull`, `shipLiveness.ts`) resolves it for the NPC lock step (`pilotPose`), the drone/capital turret candidates (`visitParkedPilotHulls`), and the structure-turret pilot scans, all under the PILOT's id, so locks, `hostileTo` and `fireBlocked` keep working. A projectile sweeps a lingering hull with the same per-kind shape as an active ship (`ProjectilePipeline` `lingeringShip`), not the fighter `hitRadius`. A pilot CAPITAL (active or parked) is hit on its hull outline even with its shield up, like an NPC capital: its circle is half the hull's length, so shells used to burst ~2,000 u off a heavy cruiser's beam (lock `capitalShieldHugsHull.test.ts`). The parked hull itself stays passive: no active hull ⇒ `LockSubsystem.step` skips the pilot and fire messages have no shooter. Lock: `tests/integration/sectorRoom/spectateStillTargeted.test.ts`.
+- **Spectating doesn't dodge a fight** (owner 2026-11-12): the `spectate` handler records the parked hull in `spectateParkedHull` (cleared on reclaim, a new active hull, or leave). `engageablePilotHull(pid)` (predicate `isEngageablePilotHull`, `src/core/entity/shipLiveness.ts`) resolves it for the NPC lock step (`pilotPose`), the drone/capital turret candidates (`visitParkedPilotHulls`), and the structure-turret pilot scans, all under the PILOT's id, so locks, `hostileTo` and `fireBlocked` keep working. A projectile sweeps a lingering hull with the same per-kind shape as an active ship (`ProjectilePipeline` `lingeringShip`), not the fighter `hitRadius`. A pilot CAPITAL (active or parked) is hit on its hull outline even with its shield up, like an NPC capital: its circle is half the hull's length, so shells used to burst ~2,000 u off a heavy cruiser's beam (lock `capitalShieldHugsHull.test.ts`). The parked hull itself stays passive: no active hull ⇒ `LockSubsystem.step` skips the pilot and fire messages have no shooter. Lock: `tests/integration/sectorRoom/spectateStillTargeted.test.ts`.
 - **NPC capital turrets fire only with a completed lock on their own target** (PR 1d slice 2): `WeaponMountTicker.tickCapitalMounts` calls the `fireBlocked(droneId, mountTargetId)` dep (→ `NpcLockSubsystem.fireBlocked`) last, before spending the reload; a blocked turret keeps aiming. A capital holds one lock per pilot (entries are per pilot × NPC), and its lock time is the FASTEST over one profile per mount size (`geos`) that may reach the pilot (none in reach: the longest-reach profile), so AA locks a fighter fast while a 16" gun alone locks it slowly (~38 s at 5 km, the same as a player battleship). testMode `instantLock` on a pilot also completes every NPC lock on them at any distance (`NpcLockDeps.instantLock` → `LockSubsystem.isInstant`); capital integration tests use it. Lock: `tests/unit/capitalLockGate.test.ts`.
 - **Kill follow-through** (heavy beam, `followThroughTicks`; [weapon-mounts](weapon-mounts.md) "Heavy beam follow-through"): after a turret's shot kills its target, that turret keeps firing down the same world line (the kill's bearing, held while the hull turns) for the window with NO target, so neither the lock gate nor the bearing gate applies. This is not a new way to fire without a lock (#19): the lock and bearing gates license ACQUIRING and engaging a target, and they passed for the killing shot; the follow-through is that same trigger pull continuing on the dead target's line, aimed at nothing new, like a completed `'locked-direction'` charge that fires down its barrel target or not. It can't pick, train on or lead anything; it ends after the window and the turret goes back through the normal gates. The deck (`mountLineClear`) and a friendly on the line still hold it (wreck pieces pass), and its beams pass debris (wreck pieces, scrap: no hit) so they show full length through the cut; a ship, structure or rock still stops them. Lock: `tests/integration/sectorRoom/beamFollowThrough.test.ts`.
 - **NPC capital turrets engage hostile STRUCTURES too** (2026-11-10): the candidates are the pilots plus the room's per-tick hostile-structure set (`hostileStructures` dep → `hostileStructureCircles`, built by `fillStructureTargets`), still filtered by the drone's `hostileTo`. A structure target is gated by the TURRET's own lock (`droneMountLocks`, `stepLock` per tick with that mount size's `WEAPON_LOCK_PROFILE`, its gun's reach, the hull's `sensorFor`, the structure's radius as signature; uncapped: a heavy gun locks a small structure slowly, a sub-capital gun past `maxSeconds` skips it in its search). Before this a capital could not fire at a structure at all (it never fires as a hull). Locks: `capitalLockGate.test.ts`, `tests/integration/sectorRoom/coastalDuel.test.ts`.
@@ -468,7 +556,7 @@ Full story: [docs/architecture/fire-control.md](fire-control.md). There is ONE H
 
 ### AI pilot weapon energy
 
-Owner rule 2026-11-13: "Ships turning, acceleration, weapons, everything is related to the ship, regardless of pilot." An AI pilot's ship pays a player's energy for boost AND weapons from ONE server-only pool on its brain (`HostileDroneBehaviour`: the kind's `energyMax ?? 100` / `energyRegenRate ?? 0.25`, the numbers a player's ship of that kind has; an authored `energyMax` is already doubled by `ENERGY_POOL_MUL`). `IAiBehaviour.trySpendEnergy(cost)` is the one spend seam; `getEnergyFrac()` is for the brain's tactics.
+Owner rule 2026-11-13: "Ships turning, acceleration, weapons, everything is related to the ship, regardless of pilot." An AI pilot's ship pays a player's energy for boost AND weapons from ONE server-only pool on its brain (`HostileDroneBehaviour`: the kind's `energyMax ?? 100` / `energyRegenRate ?? 0.25`, the numbers a player's ship of that kind has; an authored `energyMax` is already doubled by `ENERGY_POOL_MUL`). `IAiBehaviour.trySpendEnergy(cost)` is the one spend seam; `getEnergyFrac()` is for the brain's tactics. A ship whose pool lives on its hull record hands it in (`HostileDroneBehaviourOptions.energyPool`); the brain reads and spends it the same way, so there is still one pool ([ai-pilots](ai-pilots.md#player-owned-ships-players-side)).
 
 - **Sub-capitals** (`AiFireResolver.resolve`): the slot trigger pays `resolveSlotEnergyCost` once, after every fire gate (lock, line of fire, a barrel that bears inside the pilot's hull cone `AiIntent.fire.cone`, cooldown), so energy is spent only by a shot that actually fires. A short pool refuses the shot and spends no cooldown, as `PlayerFireResolver` does.
 - **Capital turrets** (`fireMount`): each mount pays the player capital's per-mount share (slot cost / mounts); a refusal returns false and `WeaponMountTicker` keeps the reload.
@@ -504,6 +592,7 @@ The zone `CLAUDE.md` keeps a condensed form of these rules; this is the full wor
 
 ## History
 
+- **2026-11-15, the heavy beam hits by its width.** Owner decision ("Hit by its width"): the 60 u heavy beam hit-tested as a thin line, so a near miss drew over a small ship and passed through it. Now its hit test is a capsule of its drawn width on both sides (#15). See "The heavy beam hits by its width" above.
 - **2026-11-14, `lockedBy` capped to the nearest 8.** Owner decision: with locks at any distance every hostile in a sector could lock a pilot, and the own-ship `lockedBy` slice grew to ~20 rows in `capital-fleet` (+~4 KB/s per pilot, growing with sector size). The slice now carries only the 8 top lockers (completed first, then nearest) plus `lockedByN`, the total, so its cost is flat however many enemies lock on.
 
 - **2026-11-14, locks at any distance.** Owner decision: players, NPC ships and structures lock at any distance; distance only makes a lock slower; only firing is range-limited (per-turret fire range to the hull, the sibling fire-range changes). Lead calls in the same change: NPC hostility is refreshed by a lock only inside that NPC's fire range (before: "out of reach ⇒ lock drops ⇒ forgets 30 s later"; now "out of fire range ⇒ no refresh ⇒ forgets 30 s later"); AUTO groups release their own pick once it leaves fire range and re-pick, manual locks persist; AUTO's pick stays limited to what it could fire at. The wire `c` flag and the HUD now say CAN'T TRACK instead of OUT OF RANGE. See "Locks work at any distance" above.

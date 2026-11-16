@@ -25,6 +25,7 @@ import { longGuns } from './shots/longGuns.js';
 import { fleetMelee } from './shots/fleetMelee.js';
 import { npcDogfight } from './shots/npcDogfight.js';
 import { timeScaleDial, timeScaleCapitals4x, capitalBreakupSlowmo, capitalBreakupFast } from './shots/timeScaleDial.js';
+import { wreckResplit } from './shots/wreckResplit.js';
 import { scrap } from './shots/scrap.js';
 import { buildBase } from './shots/buildBase.js';
 import { gridAlive } from './shots/gridAlive.js';
@@ -33,6 +34,7 @@ import { coastalCatalogue, coastalAa, coastalDuel, coastalSuperGuns, garrisonDef
 import { waveAttack } from './shots/waveAttack.js';
 import { levelUp } from './shots/levelUp.js';
 import { spectator } from './shots/spectator.js';
+import { rtsCommand } from './shots/rtsCommand.js';
 import { warp } from './shots/warp.js';
 import { scale } from './shots/scale.js';
 import { mobile } from './shots/mobile.js';
@@ -50,6 +52,7 @@ import { alienGate, garrisonPatrol, teleporterRide, transitHub } from './shots/v
 import { tradeDeal, tradeRaid } from './shots/trade.js';
 import { cockpitBounty, cockpitHaul, cockpitRobots, cockpitStronghold } from './shots/cockpit.js';
 import { fireControlShots } from './shots/fireControl.js';
+import { beamSlice, beamVaporiseSubcap, railChannel } from './shots/weaponCuts.js';
 
 /** Every shot, in reel order. Catalogue = all of them; reel = `reel: true`. */
 export const SHOTS: readonly Shot[] = [
@@ -64,6 +67,10 @@ export const SHOTS: readonly Shot[] = [
   capitalLineup,
   capitalBroadside,
   capitalBreakup,
+  wreckResplit,
+  beamSlice,
+  beamVaporiseSubcap,
+  railChannel,
   capitalFleetWarp,
   capitalFleetArrive,
   capitalFlyby,
@@ -112,6 +119,7 @@ export const SHOTS: readonly Shot[] = [
   waveAttack,
   levelUp,
   spectator,
+  rtsCommand,
   radar,
   warp,
   scale,

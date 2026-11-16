@@ -6,20 +6,17 @@
  *
  *   server sends snapshot with `state.isActive === false` entries
  *     ↓
- *   `ColyseusGameClient.handleSnapshot` (private) routes them to
- *   `mirror.lingeringShips: Map<shipInstanceId, ...>` rather than
- *   `mirror.ships` (which is playerId-keyed and would collide with the
- *   active hull for the same player)
+ *   `ColyseusGameClient.handleSnapshot` (private) keys them in the ONE
+ *   ship list `mirror.ships` by shipInstanceId (RTS Part A S3), never by
+ *   the playerId (which would collide with the same player's active hull)
  *     ↓
- *   `mirror.lingeringShips` carries pose + ownerPlayerId; identity
+ *   the entry carries pose + ownerPlayerId + `isActive: false`; identity
  *   (kind, displayName) arrives separately via the Colyseus state diff
- *   handled by `syncMirror`, which writes to the same map keyed by
- *   shipInstanceId
+ *   handled by `syncMirror`, which writes to the same entry
  *     ↓
- *   `PixiRenderer.updateLingeringShips` reads the map and draws each
- *   entry. Sprite caching is per-shipInstanceId; if `ship.kind` changes
- *   after the sprite is built (e.g. the schema diff arrives after the
- *   first snapshot), the renderer rebuilds the sprite
+ *   the ONE ship sprite path (`shipSpriteUpdater`) draws it. Sprite
+ *   caching is per key; if `ship.kind` changes after the sprite is built
+ *   (the schema diff arrives after the first snapshot), it rebuilds
  *
  * The bug at first iteration: `if (!ship.kind) continue;` in the
  * renderer caused lingering hulls to be permanently invisible whenever
@@ -30,19 +27,17 @@
  *
  * The bug at second iteration (this regression lock targets it): same
  * symptom from a different cause — if the snapshot's `isActive=false`
- * entry isn't routed to `mirror.lingeringShips` at all (or is removed
- * by an over-aggressive cleanup pass), the user sees nothing.
+ * entry isn't routed into the mirror at all (or is removed by an
+ * over-aggressive cleanup pass), the user sees nothing.
  *
  * We test the routing in isolation by invoking the private handler via
  * a narrow structural cast. The harness covers:
- *   - First snapshot with a lingering hull → mirror.lingeringShips
- *     populated with pose + ownerPlayerId, no kind yet
- *   - Subsequent snapshot → mirror entry pose updated, ownerPlayerId
- *     preserved
- *   - Lingering hull disappears from the snapshot → mirror entry
- *     removed
- *   - Active hull for the SAME playerId co-exists → routed to
- *     mirror.ships (not lingeringShips)
+ *   - First snapshot with a lingering hull → a `mirror.ships` entry under
+ *     its shipInstanceId with pose + ownerPlayerId, no kind yet
+ *   - Subsequent snapshot → pose updated (no body yet: snapshot pose),
+ *     ownerPlayerId + kind preserved
+ *   - Lingering hull disappears from the snapshot → entry removed
+ *   - Active hull for the SAME playerId co-exists → never keyed as a hull
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { ColyseusGameClient } from './ColyseusClient.js';
@@ -54,6 +49,13 @@ type Internals = {
 
 function asInternals(c: ColyseusGameClient): Internals {
   return c as unknown as Internals;
+}
+
+/** Parked hulls in the one ship list (`isActive: false`). */
+function hullCount(c: ColyseusGameClient): number {
+  let n = 0;
+  for (const s of c.mirror.ships.values()) if (s.isActive === false) n++;
+  return n;
 }
 
 function makeSnapshot(states: SnapshotMessage['states']): SnapshotMessage {
@@ -95,13 +97,13 @@ describe('ColyseusClient.handleSnapshot — Phase 6b lingering routing', () => {
     (client.mirror as { localPlayerId: string | null }).localPlayerId = 'local-player';
   });
 
-  it('routes an isActive=false entry into mirror.lingeringShips keyed by shipInstanceId', () => {
+  it('routes an isActive=false entry into the one ship list keyed by shipInstanceId', () => {
     asInternals(client).handleSnapshot(makeSnapshot({
       'ship-uuid-LINGER': lingeringEntry('player-A'),
     }));
-    expect(client.mirror.lingeringShips).toBeDefined();
-    expect(client.mirror.lingeringShips!.size).toBe(1);
-    const entry = client.mirror.lingeringShips!.get('ship-uuid-LINGER');
+    expect(client.mirror.ships).toBeDefined();
+    expect(hullCount(client)).toBe(1);
+    const entry = client.mirror.ships.get('ship-uuid-LINGER');
     expect(entry).toBeDefined();
     expect(entry!.x).toBe(100);
     expect(entry!.y).toBe(-200);
@@ -109,13 +111,13 @@ describe('ColyseusClient.handleSnapshot — Phase 6b lingering routing', () => {
     expect(entry!.ownerPlayerId).toBe('player-A');
   });
 
-  it('does NOT add the lingering entry to mirror.ships (playerId-keyed map for active hulls)', () => {
+  it('never keys the parked hull by its owner playerId', () => {
     asInternals(client).handleSnapshot(makeSnapshot({
       'ship-uuid-LINGER': lingeringEntry('player-A'),
     }));
     // mirror.ships shouldn't have a player-A entry — the only ship for
-    // player-A in this snapshot is lingering, and lingering hulls live
-    // in a separate map.
+    // player-A in this snapshot is parked, and a parked hull is keyed by
+    // its shipInstanceId.
     expect(client.mirror.ships.get('player-A')).toBeUndefined();
   });
 
@@ -124,7 +126,7 @@ describe('ColyseusClient.handleSnapshot — Phase 6b lingering routing', () => {
       'ship-uuid-LINGER': lingeringEntry('player-A'),
     }));
     // Simulate the schema-diff path having populated kind.
-    const first = client.mirror.lingeringShips!.get('ship-uuid-LINGER')!;
+    const first = client.mirror.ships.get('ship-uuid-LINGER')!;
     (first as { kind?: string }).kind = 'interceptor';
 
     // Next snapshot with new pose, same id.
@@ -134,7 +136,7 @@ describe('ColyseusClient.handleSnapshot — Phase 6b lingering routing', () => {
         x: 999, y: 999,
       },
     }));
-    const second = client.mirror.lingeringShips!.get('ship-uuid-LINGER')!;
+    const second = client.mirror.ships.get('ship-uuid-LINGER')!;
     expect(second.x).toBe(999);
     expect(second.y).toBe(999);
     expect(second.ownerPlayerId).toBe('player-A');
@@ -145,42 +147,42 @@ describe('ColyseusClient.handleSnapshot — Phase 6b lingering routing', () => {
     asInternals(client).handleSnapshot(makeSnapshot({
       'ship-uuid-LINGER': lingeringEntry('player-A'),
     }));
-    expect(client.mirror.lingeringShips!.size).toBe(1);
+    expect(hullCount(client)).toBe(1);
     // Snapshot without the lingering hull (server evicted it).
     asInternals(client).handleSnapshot(makeSnapshot({}));
-    expect(client.mirror.lingeringShips!.size).toBe(0);
+    expect(hullCount(client)).toBe(0);
   });
 
-  it('active + lingering for the same playerId: lingering routed to lingeringShips, active NOT added to lingeringShips', () => {
+  it('active + lingering for the same playerId: the hull keys by shipInstanceId, the active ship never does', () => {
     // Note: handleSnapshot does NOT itself populate mirror.ships — that
     // is `syncMirror`'s job (from the Colyseus state diff). What we
     // verify here is that the snapshot's `isActive=false` routing only
-    // touches `mirror.lingeringShips` and never accidentally puts an
-    // active hull there.
+    // keys parked hulls by shipInstanceId and never accidentally keys an
+    // active hull that way.
     asInternals(client).handleSnapshot(makeSnapshot({
       'ship-uuid-LINGER':   lingeringEntry('player-A'),
       'ship-uuid-FRESH':    activeEntry('player-A'),
     }));
-    // Lingering goes to mirror.lingeringShips keyed by shipInstanceId.
-    expect(client.mirror.lingeringShips!.get('ship-uuid-LINGER')).toBeDefined();
-    // Active does NOT pollute mirror.lingeringShips.
-    expect(client.mirror.lingeringShips!.get('ship-uuid-FRESH')).toBeUndefined();
-    expect(client.mirror.lingeringShips!.size).toBe(1);
+    // The parked hull keys by its shipInstanceId.
+    expect(client.mirror.ships.get('ship-uuid-LINGER')).toBeDefined();
+    // The active hull is never keyed by its shipInstanceId.
+    expect(client.mirror.ships.get('ship-uuid-FRESH')).toBeUndefined();
+    expect(hullCount(client)).toBe(1);
   });
 
   it('handles multiple lingering hulls for the same player simultaneously', () => {
     // Phase 6b's whole point: a player can have N lingering hulls in
-    // the same sector. mirror.lingeringShips is keyed by shipInstanceId
+    // the same sector. Parked hulls are keyed by shipInstanceId
     // so they don't overwrite each other.
     asInternals(client).handleSnapshot(makeSnapshot({
       'ship-uuid-LINGER-1': lingeringEntry('player-A'),
       'ship-uuid-LINGER-2': { ...lingeringEntry('player-A'), x: 200 },
       'ship-uuid-LINGER-3': { ...lingeringEntry('player-A'), x: 300 },
     }));
-    expect(client.mirror.lingeringShips!.size).toBe(3);
-    expect(client.mirror.lingeringShips!.get('ship-uuid-LINGER-1')!.x).toBe(100);
-    expect(client.mirror.lingeringShips!.get('ship-uuid-LINGER-2')!.x).toBe(200);
-    expect(client.mirror.lingeringShips!.get('ship-uuid-LINGER-3')!.x).toBe(300);
+    expect(hullCount(client)).toBe(3);
+    expect(client.mirror.ships.get('ship-uuid-LINGER-1')!.x).toBe(100);
+    expect(client.mirror.ships.get('ship-uuid-LINGER-2')!.x).toBe(200);
+    expect(client.mirror.ships.get('ship-uuid-LINGER-3')!.x).toBe(300);
   });
 
   it('regression: lingering hull stays visible across many follow-up snapshots (the original bug)', () => {
@@ -196,8 +198,8 @@ describe('ColyseusClient.handleSnapshot — Phase 6b lingering routing', () => {
         },
       }));
     }
-    expect(client.mirror.lingeringShips!.size).toBe(1);
-    const entry = client.mirror.lingeringShips!.get('ship-uuid-LINGER')!;
+    expect(hullCount(client)).toBe(1);
+    const entry = client.mirror.ships.get('ship-uuid-LINGER')!;
     expect(entry.x).toBe(90);  // last snapshot's pose
     expect(entry.ownerPlayerId).toBe('player-A');
   });

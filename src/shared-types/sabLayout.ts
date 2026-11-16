@@ -102,3 +102,14 @@ export const SAB_TOTAL_BYTES = (HEADER_WORDS + MAX_ENTITIES * SLOT_WORDS) * 4;
 export function slotBase(n: number): number {
   return HEADER_WORDS + n * SLOT_WORDS;
 }
+
+/** A slot's pose and motion, read off the SAB's f32 view into `out` (#14:
+ *  pass a reused `out`); returns `out`. */
+export function slotPoseInto<T extends { x: number; y: number; vx: number; vy: number; angle: number; angvel: number }>(
+  f: Float32Array, slot: number, out: T,
+): T {
+  const b = slotBase(slot);
+  out.x = f[b + SLOT_X_OFF]!; out.y = f[b + SLOT_Y_OFF]!; out.vx = f[b + SLOT_VX_OFF]!; out.vy = f[b + SLOT_VY_OFF]!;
+  out.angle = f[b + SLOT_ANGLE_OFF]!; out.angvel = f[b + SLOT_ANGVEL_OFF]!;
+  return out;
+}

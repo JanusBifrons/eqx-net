@@ -25,9 +25,10 @@
  *
  * 2026-11-08: the check is now MOUNT-aware. `data-beam-from-x/y` is the
  * ship NOSE (centre + 20 u), but the drawn beam starts at the first live
- * mount's barrel (wing mount pivot + 20 u along the slewing turret angle),
- * so comparing to the nose read a constant ~16 u "detach" on a correct
- * build. We now check the drawn origin lies 20 u from that mount's pivot,
+ * mount's barrel (wing mount pivot + its barrel tip, `shipShotMuzzle`, along
+ * the slewing turret angle), so comparing to the nose read a constant
+ * "detach" on a correct build. We check the drawn origin lies one muzzle from
+ * that mount's pivot,
  * using the ship pose from the SAME dataset write (a pose read from the live
  * mirror is a frame or two newer and read up to ~13 u off while coasting).
  * And the spec joined the live `sector` room, whose drones killed the
@@ -59,6 +60,7 @@ import { test, expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { getShipKind } from '../../../src/shared-types/shipKinds';
+import { shipShotMuzzle } from '../../../src/core/combat/muzzle';
 import { DEFAULT_BASE_URL } from '../helpers/ports';
 
 const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
@@ -85,16 +87,16 @@ async function joinSector(page: Page): Promise<void> {
 }
 
 interface Sample {
-  /** | |drawn origin − first live mount's pivot| − 20 |, from ONE frame's dataset. */
+  /** | |drawn origin − first live mount's pivot| − its muzzle |, from ONE frame's dataset. */
   detach: number | null;
   shipX: number;
   shipY: number;
   beamActive: boolean;
 }
 
-type MountGeom = { id: string; localX: number; localY: number };
+type MountGeom = { id: string; localX: number; localY: number; muzzle: number };
 const INTERCEPTOR_MOUNTS: MountGeom[] = getShipKind('interceptor').mounts.map((m) => ({
-  id: m.id, localX: m.localX, localY: m.localY,
+  id: m.id, localX: m.localX, localY: m.localY, muzzle: shipShotMuzzle(getShipKind('interceptor'), m),
 }));
 
 /** Take `n` samples `everyMs` apart INSIDE the page: one round-trip, not two
@@ -112,10 +114,10 @@ async function sampleMany(page: Page, n: number, everyMs: number): Promise<Sampl
     const shipAngle = parseFloat(ds['shipAngle'] ?? 'NaN');
     const drawnX = num(ds['beamRenderedFromX']);
     const drawnY = num(ds['beamRenderedFromY']);
-    // The renderer draws a live beam from its MOUNT pivot + 20 u along the
-    // mount's (slewing) fire angle; the pool's rendered origin is slot 0 =
-    // the first live beam. So the drawn origin sits exactly 20 u from that
-    // mount's pivot whatever the turret angle. Every pose here comes from the
+    // The renderer draws a live beam from its MOUNT pivot + the shared muzzle
+    // (the barrel tip) along the mount's (slewing) fire angle; the pool's
+    // rendered origin is slot 0 = the first live beam. So the drawn origin
+    // sits exactly one muzzle from that mount's pivot whatever the turret angle. Every pose here comes from the
     // SAME dataset write as the drawn origin (one frame, no publish lag).
     type C = { mirror: { liveBeams?: Map<string, unknown> } };
     const firstMountId = (window as unknown as { __eqxClient?: C }).__eqxClient?.mirror.liveBeams?.keys().next().value as string | undefined;
@@ -126,7 +128,7 @@ async function sampleMany(page: Page, n: number, everyMs: number): Promise<Sampl
       const sinA = Math.sin(shipAngle);
       const px = shipX + (m.localX * cosA - m.localY * sinA);
       const py = shipY + (m.localX * sinA + m.localY * cosA);
-      detach = Math.abs(Math.hypot(drawnX - px, drawnY - py) - 20);
+      detach = Math.abs(Math.hypot(drawnX - px, drawnY - py) - m.muzzle);
     }
     return { detach, shipX, shipY, beamActive: ds['beamActive'] === '1' };
   };
@@ -173,7 +175,7 @@ test('drawn beam origin tracks the ship while coasting (no render-cache freeze)'
     // the beam IS drawn, so judge those: enough of them to exercise it.
     expect(active.length, 'beam should be active for a stretch of the coast').toBeGreaterThanOrEqual(10);
 
-    // The DRAWN beam origin must sit on its mount's 20 u muzzle circle every
+    // The DRAWN beam origin must sit on its mount's muzzle circle every
     // frame. A few units of tolerance covers the toFixed rounding; the bug
     // detaches by tens of units as the ship glides away from the frozen
     // drawn beam.

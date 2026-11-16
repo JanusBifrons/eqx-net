@@ -21,6 +21,7 @@ import {
 import { isCapitalKindId } from '../../core/combat/capitalHits.js';
 import type { SwarmEntityRegistry } from '../net/SwarmEntityRegistry.js';
 import type { MalformedMessageTracker } from './MalformedMessageTracker.js';
+import { fleetArrivalPoses, type FleetArrivalPose, type FleetHullPose } from '../transit/fleetArrivalPoses.js';
 
 export interface TestMessageHandlersDeps {
   testMode: boolean;
@@ -82,8 +83,8 @@ export class TestMessageHandlers {
     }
   }
 
-  /** W2c showcase — `test_fleet_warp`: warp the room's ships to (x, y), keeping
-   *  the formation (offsets from the biggest ship, the flagship). */
+  /** W2c showcase — `test_fleet_warp`: warp the room's ships to (x, y), by the
+   *  fleet warp's arrival rule (`fleetArrivalPoses`). */
   fleetWarp(client: Client, raw: unknown): void {
     const d = this.deps;
     if (!(d.testMode || d.allowDevOverrides)) return;
@@ -92,17 +93,21 @@ export class TestMessageHandlers {
       d.malformed.record(client.sessionId, 'test_fleet_warp');
       return;
     }
-    let lead: { id: string; slot: number; radius: number } | null = null;
-    for (const rec of d.swarmRegistry.all()) if (rec.kind === 1 && (lead === null || rec.radius > lead.radius)) lead = rec;
-    if (lead === null) return;
-    const lb = slotBase(lead.slot);
-    const lx = d.sabF32[lb + SLOT_X_OFF]!, ly = d.sabF32[lb + SLOT_Y_OFF]!;
-    for (const rec of [...d.swarmRegistry.all()]) { // TODO: alloc-debt (test cue only)
+    // The fleet warp's arrival rule (`fleetArrivalPoses`), on the room's ships.
+    const ids: string[] = []; // TODO: alloc-debt (test cue only)
+    const hulls: FleetHullPose[] = [];
+    for (const rec of d.swarmRegistry.all()) {
       if (rec.kind !== 1) continue;
       const b = slotBase(rec.slot);
-      const tx = parsed.data.x + d.sabF32[b + SLOT_X_OFF]! - lx, ty = parsed.data.y + d.sabF32[b + SLOT_Y_OFF]! - ly;
-      d.warpBot(rec.id, tx, ty);
-      d.setBotMoveTarget(rec.id, tx, ty); // hold there after the drop
+      ids.push(rec.id);
+      hulls.push({ x: d.sabF32[b + SLOT_X_OFF]!, y: d.sabF32[b + SLOT_Y_OFF]!, radius: rec.radius });
+    }
+    const poses: FleetArrivalPose[] = [];
+    if (fleetArrivalPoses(hulls, parsed.data, poses) === -1) return;
+    for (let i = 0; i < ids.length; i++) {
+      const tx = poses[i]!.x, ty = poses[i]!.y;
+      d.warpBot(ids[i]!, tx, ty);
+      d.setBotMoveTarget(ids[i]!, tx, ty); // hold there after the drop
     }
   }
 }

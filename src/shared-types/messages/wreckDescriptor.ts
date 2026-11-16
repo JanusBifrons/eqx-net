@@ -14,6 +14,30 @@ export const MAX_WELCOME_WRECKS = WRECK_ID_END - 1;
 /** Longest wreck `owner` id (a playerId or a faction id). */
 export const MAX_WRECK_OWNER_LEN = 128;
 
+/** Most further cut lines a descriptor carries (`extraCuts`; fracture v12
+ *  multi-cut). Equals `FRACTURE_MAX_EXTRA_CUTS` (`wreckMultiCut.test.ts`). */
+export const MAX_WRECK_EXTRA_CUTS = 3;
+
+/** Fracture v12 multi-cut: one further beam's cut line, hull 1× Pixi-up
+ *  frame: the line through (x, y) along the u16 angle `ang` (decoded by the
+ *  shared `cutDirFromAngle`), `w` its strip width (absent = a zero-width
+ *  line). Also the fracture input's shape (`WreckFractureInputs.extraCuts`). */
+export interface WreckExtraCut {
+  x: number;
+  y: number;
+  ang: number;
+  w?: number;
+}
+
+export const WreckExtraCutSchema = z
+  .object({
+    x: z.number().finite(),
+    y: z.number().finite(),
+    ang: z.number().int().min(0).max(0xffff),
+    w: z.number().finite().min(0).optional(),
+  })
+  .strict();
+
 /** Sub-capital break-up slice 3 (#3) — one wreck's fracture inputs. Mirrors
  *  `WreckDescriptor`; the bidirectional assignability lock in
  *  `messages.test.ts` fails typecheck if they drift. */
@@ -32,13 +56,16 @@ export const WreckDescriptorSchema = z
     cutKind: z.enum(['slice', 'channel']).optional(),
     cutAng: z.number().int().min(0).max(0xffff).optional(),
     cutW: z.number().finite().min(0).optional(),
+    extraCuts: z.array(WreckExtraCutSchema).min(1).max(MAX_WRECK_EXTRA_CUTS).optional(),
     parentWreck: z.number().int().min(1).max(WRECK_ID_END - 1).optional(),
     parentPiece: z.number().int().min(0).max(MAX_WRECK_PIECE_INDEX).optional(),
     owner: z.string().min(1).max(MAX_WRECK_OWNER_LEN).optional(),
   })
   .strict()
-  // A child names its parent wreck AND piece, or neither (a root); never itself.
-  .refine((d) => (d.parentWreck === undefined) === (d.parentPiece === undefined) && d.parentWreck !== d.wreckId);
+  // A child names its parent wreck AND piece, or neither (a root); never
+  // itself. Further cuts ride only with a main cut.
+  .refine((d) => (d.parentWreck === undefined) === (d.parentPiece === undefined) && d.parentWreck !== d.wreckId
+    && (d.extraCuts === undefined || d.cutKind !== undefined));
 
 /** The snapshot's wreck fields (#3). The snapshot as a whole is the
  *  documented high-cadence carve-out (not zod-parsed on ingest); the client
@@ -56,6 +83,21 @@ export const WreckSyncSchema = z
 
 function finite(v: unknown): boolean {
   return typeof v === 'number' && Number.isFinite(v);
+}
+
+/** Alloc-free twin of `extraCuts` in `WreckDescriptorSchema` (shape only). */
+function isExtraCuts(v: unknown): boolean {
+  if (!Array.isArray(v) || v.length < 1 || v.length > MAX_WRECK_EXTRA_CUTS) return false;
+  for (let i = 0; i < v.length; i++) {
+    const c = v[i] as unknown;
+    if (typeof c !== 'object' || c === null) return false;
+    const e = c as Record<string, unknown>;
+    if (!finite(e['x']) || !finite(e['y'])) return false;
+    const a = e['ang'];
+    if (typeof a !== 'number' || !Number.isInteger(a) || a < 0 || a > 0xffff) return false;
+    if (e['w'] !== undefined && !(finite(e['w']) && (e['w'] as number) >= 0)) return false;
+  }
+  return true;
 }
 
 /** Alloc-free twin of `WreckRemovesSchema`'s element check. */
@@ -79,6 +121,7 @@ export function isWreckDescriptor(v: unknown): v is WreckDescriptor {
     && (d['cutKind'] === undefined || d['cutKind'] === 'slice' || d['cutKind'] === 'channel')
     && (d['cutAng'] === undefined || (typeof d['cutAng'] === 'number' && Number.isInteger(d['cutAng']) && d['cutAng'] >= 0 && d['cutAng'] <= 0xffff))
     && (d['cutW'] === undefined || (finite(d['cutW']) && (d['cutW'] as number) >= 0))
+    && (d['extraCuts'] === undefined || (d['cutKind'] !== undefined && isExtraCuts(d['extraCuts'])))
     && (d['owner'] === undefined || (typeof d['owner'] === 'string' && d['owner'].length > 0 && d['owner'].length <= MAX_WRECK_OWNER_LEN))
     && (d['parentWreck'] === undefined
       ? d['parentPiece'] === undefined
@@ -122,6 +165,12 @@ export interface WreckDescriptor {
   /** The cut's strip width (a channel, or a wide slice) in the hull's 1×
    *  frame; absent = a zero-width slice. */
   cutW?: number;
+  /** Fracture v12 multi-cut (owner 2026-11-15, "one cut per beam"): the
+   *  further cut lines of the other cutting beams that burned the hull (a
+   *  root) or the piece (a child) in the last moment, besides the main cut
+   *  above; at most `MAX_WRECK_EXTRA_CUTS`, only with a `cutKind`. Absent =
+   *  the main cut alone. A fracture input like the cut fields. */
+  extraCuts?: WreckExtraCut[];
   /** Salvage stream: a CHILD wreck, one piece of `parentWreck` broken again
    *  (capital-destruction.md §S4 "Re-split"). A child descriptor is ONE step
    *  of a `WreckChildChain`: `parentPiece` is the piece that broke,

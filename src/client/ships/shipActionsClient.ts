@@ -7,6 +7,8 @@
  * prediction). This is the thin UI→client bridge.
  */
 import { getGameClient } from '../net/clientSingleton.js';
+import type { FleetCommandMessage } from '../net/ColyseusClient.js';
+import type { FleetMode, FleetOrder, FleetStance } from '@shared-types/messages/fleetStatusMessages';
 
 /**
  * Pilot the OWNED in-sector ship with shipInstanceId `shipId` — a same-sector
@@ -20,14 +22,75 @@ export function sendPilotShip(shipId: string): boolean {
 }
 
 /**
- * STOP PILOTING → spectate (Equinox Phase-5 audit). The inverse of
- * {@link sendPilotShip}: tell the server to displace our active hull into a
- * lingering hull so it parks in-world AND appears in our own `lingeringShips`
- * for the Pilot dropdown. No-op server-side when we have no active hull
- * (death-spectator / join-as-spectator). Returns true when dispatched.
+ * STOP PILOTING → command view (RTS slice 10; was `sendSpectate`). The inverse
+ * of {@link sendPilotShip}: tell the server to park our active hull as an
+ * AI-flown lingering hull (`command`, an alias of `spectate`) so it stays
+ * in-world AND appears in our own parked hulls for the Fly menu. No-op
+ * server-side when we have no active hull (death / command-view join).
+ * Returns true when dispatched.
  */
-export function sendSpectate(): boolean {
+export function sendCommand(): boolean {
   const client = getGameClient();
   if (!client) return false;
-  return client.sendSpectate();
+  return client.sendCommand();
+}
+
+// ── RTS command layer (slice 6a): fleet command senders ──────────────────
+// Thin UI→client bridges over `ColyseusGameClient.sendFleetCommand`. Each
+// returns true when dispatched (false with no live room). Owner-gating and
+// validation of the ship ids happen server-side.
+
+function dispatchFleet(msg: FleetCommandMessage): boolean {
+  const client = getGameClient();
+  if (!client) return false;
+  return client.sendFleetCommand(msg);
+}
+
+/** One-off order: `move` to (x, y), `attack` targetId, or `stop`. */
+export function sendFleetOrder(shipIds: string[], order: FleetOrder): boolean {
+  if (order.kind === 'move') {
+    return dispatchFleet({ type: 'fleet_order', shipIds, kind: 'move', x: order.x, y: order.y });
+  }
+  if (order.kind === 'attack') {
+    return dispatchFleet({ type: 'fleet_order', shipIds, kind: 'attack', targetId: order.targetId });
+  }
+  return dispatchFleet({ type: 'fleet_order', shipIds, kind: 'stop' });
+}
+
+/** Optional per-mode parameters for {@link sendSetMode}. */
+export interface SetModeParams {
+  route?: [number, number][];
+  guardRadius?: number;
+  escortId?: string;
+  /** Retreat point, game space (sent only when both are set). */
+  x?: number;
+  y?: number;
+}
+
+/** Set the standing wingman mode for the given ships. */
+export function sendSetMode(shipIds: string[], mode: FleetMode, params: SetModeParams = {}): boolean {
+  return dispatchFleet({
+    type: 'set_mode',
+    shipIds,
+    mode,
+    ...(params.route !== undefined ? { route: params.route } : {}),
+    ...(params.guardRadius !== undefined ? { guardRadius: params.guardRadius } : {}),
+    ...(params.escortId !== undefined ? { escortId: params.escortId } : {}),
+    ...(params.x !== undefined && params.y !== undefined ? { x: params.x, y: params.y } : {}),
+  });
+}
+
+/** Set the fire stance for the given ships. */
+export function sendSetStance(shipIds: string[], stance: FleetStance): boolean {
+  return dispatchFleet({ type: 'set_stance', shipIds, stance });
+}
+
+/** Group 2..24 owned ships into a squad. */
+export function sendFormSquad(shipIds: string[]): boolean {
+  return dispatchFleet({ type: 'form_squad', shipIds });
+}
+
+/** Break up a squad. */
+export function sendDisbandSquad(squadId: string): boolean {
+  return dispatchFleet({ type: 'disband_squad', squadId });
 }

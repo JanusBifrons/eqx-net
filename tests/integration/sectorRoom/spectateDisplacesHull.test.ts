@@ -5,13 +5,13 @@
  *
  * Root cause: toggling Spectate was a pure CLIENT flip (`pilotMode='spectator'`).
  * The active hull stayed `isActive=true` on the server, so it lived in
- * `mirror.ships` (active), NEVER `mirror.lingeringShips` — and the in-world Pilot
+ * `mirror.ships` (active), NEVER a parked hull — and the in-world Pilot
  * dropdown lists ONLY lingering hulls. So the dropdown was always empty.
  *
  * Fix: the Spectate toggle now sends `spectate`, and the server DISPLACES the
  * caller's active hull into a lingering hull (the inverse of `pilot_ship`). The
  * just-left ship then parks in-world AND surfaces in the player's own
- * `lingeringShips` → the dropdown lists it → `pilot_ship` re-boards it.
+ * a parked hull → the dropdown lists it → `pilot_ship` re-boards it.
  *
  * Failing-first (Invariant #13): on pre-fix code there is no `spectate` handler,
  * so the hull stays ACTIVE and is never in `lingeringSlots` — this test's
@@ -55,7 +55,7 @@ describe('SectorRoom integration — spectate displaces the active hull to linge
 
     // THE LOCK: the hull is now a LINGERING hull (parked), owned by the player,
     // and the player has NO active hull. This is exactly what the Pilot dropdown
-    // (mirror.lingeringShips filtered by ownerPlayerId) needs to list it.
+    // (own parked hulls in mirror.ships) needs to list it.
     expect(internals.lingeringSlots.has(shipId), 'just-left hull is now a lingering slot').toBe(true);
     const ship = state.ships.get(shipId)!;
     expect(ship.playerId).toBe(pid);

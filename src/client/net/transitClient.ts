@@ -20,18 +20,24 @@ export function engageTransit(
   targetSectorKey: string,
   arrival?: { x: number; y: number },
   shipId?: string,
+  /** RTS fleet warp — the selected ships warp together (Command view). An
+   *  empty list is omitted. Never sent together with `shipId` (the server
+   *  rejects both); when both are given, `shipIds` wins. */
+  shipIds?: readonly string[],
 ): void {
   const msg: {
     type: 'engage_transit';
     targetSectorKey: string;
     arrival?: { x: number; y: number };
     shipId?: string;
+    shipIds?: string[];
   } = {
     type: 'engage_transit',
     targetSectorKey,
   };
   if (arrival) msg.arrival = { x: arrival.x, y: arrival.y };
-  if (shipId) msg.shipId = shipId;
+  if (shipIds && shipIds.length > 0) msg.shipIds = [...shipIds];
+  else if (shipId) msg.shipId = shipId;
   room.send('engage_transit', msg);
 }
 

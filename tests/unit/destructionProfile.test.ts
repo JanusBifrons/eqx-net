@@ -99,8 +99,9 @@ describe('DESTRUCTION_PROFILES', () => {
       // Not flung across the fight: the fastest piece drifts under ~1.5 radii in all.
       expect((t.wreckPushMax * s.pushScale * 1.25) / d / kind.radius, `${kind.id}: total drift`).toBeLessThan(1.5);
     }
-    // Capitals keep the capital seam speed (byte-identical kicks).
-    expect(DESTRUCTION_PROFILES.capital.separateScale).toBe(1);
+    // A capital's guard is only a floor (its pieces part by their mass,
+    // `wreckBreakKicks`); a sub-cap's opens the cuts.
+    expect(DESTRUCTION_PROFILES.capital.separateScale).toBeLessThan(0.1);
     expect(s.separateScale).toBeGreaterThan(1);
     // Speed under 1 % of the kick by 20 s; still visibly moving at 1 s.
     expect(Math.exp(-d * 20)).toBeLessThan(0.01);
@@ -117,7 +118,7 @@ describe('DESTRUCTION_PROFILES', () => {
    * .onWreckHit`): J = damage × hull mass × wreckKnockSpeed ÷ max hull,
    * Δv = min(J ÷ piece mass, wreckKnockMax). Capitals unchanged.
    */
-  it('a small-arms hit visibly shoves a sub-cap wreck piece; capitals unchanged', () => {
+  it('a small-arms hit visibly shoves a sub-cap wreck piece; capitals barely move (owner 2026-11-15: scrap weighs a lot)', () => {
     const SMALL_ARMS = 12;
     for (const id of ['fighter', 'scout', 'interceptor', 'heavy', 'gunship', 'robot-square', 'robot-circle', 'patrol-fighter']) {
       const kind = SHIP_KINDS_LIST.find((k) => k.id === id)!;
@@ -129,10 +130,10 @@ describe('DESTRUCTION_PROFILES', () => {
       expect(t.wreckKnockMax, `${id}: the per-hit ceiling (a naval shell)`).toBeLessThanOrEqual(25);
     }
     const c = DESTRUCTION_PROFILES.capital;
-    expect([c.knockScale, c.knockMaxScale]).toEqual([1, 1]);
+    expect([c.knockScale, c.knockMaxScale]).toEqual([0.003, 0.1]);
     for (const kind of SHIP_KINDS_LIST.filter((k) => shipTuning(k).destruction === 'capital')) {
-      expect(shipTuning(kind).wreckKnockMax).toBeCloseTo(0.025 * kind.radius, 9);
-      expect(shipTuning(kind).wreckKnockSpeed).toBeCloseTo(0.012 * kind.radius, 9);
+      expect(shipTuning(kind).wreckKnockMax).toBeCloseTo(0.025 * 0.1 * kind.radius, 9);
+      expect(shipTuning(kind).wreckKnockSpeed).toBeCloseTo(0.012 * 0.003 * kind.radius, 9);
     }
   });
 

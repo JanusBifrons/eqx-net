@@ -100,7 +100,7 @@ export type AuditEvent =
   // RAM ring (`bot_transit_commit`); this is the durable, queryable record.
   | (AuditEventBase & {
       event: 'sector_change';
-      entityKind: 'player' | 'drone';
+      entityKind: 'player' | 'drone' | 'hull';
       id: string;
       from?: string;
       to: string;

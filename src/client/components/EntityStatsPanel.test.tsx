@@ -5,7 +5,7 @@
  *   - renders the name + a hull bar when an entity is selected AND its stats
  *     are present in the `selectionStats` module singleton
  *   - renders a shield bar for ships, none for structures
- *   - is HIDDEN when `selectedEntityId` is null
+ *   - is HIDDEN when `selection.focusId` is null
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { Profiler } from 'react';
@@ -23,14 +23,14 @@ vi.mock('../ships/shipActionsClient.js', () => ({
 }));
 
 /** Flexible fake client — seed any mirror maps the panel reads (swarm /
- *  lingeringShips / structures). */
+ *  ships / structures). */
 function fakeClient(mirror: Record<string, unknown>): ColyseusGameClient {
   return { mirror } as unknown as ColyseusGameClient;
 }
 
 describe('EntityStatsPanel', () => {
   beforeEach(() => {
-    useUIStore.setState({ selectedEntityId: null, selectedEntityKind: null });
+    useUIStore.setState({ selection: { ids: [], focusId: null, focusKind: null } });
     resetSelectionStats();
   });
   afterEach(() => {
@@ -44,7 +44,7 @@ describe('EntityStatsPanel', () => {
 
   it('renders name + hull bar for a selected ship with stats present', () => {
     applySelectionStats({ id: 'p1', name: 'Ada', hp: 75, hpMax: 100, shield: 30, shieldMax: 60 });
-    useUIStore.setState({ selectedEntityId: 'p1', selectedEntityKind: 'ship' });
+    useUIStore.setState({ selection: { ids: [], focusId: 'p1', focusKind: 'ship' } });
     render(<EntityStatsPanel />);
     const panel = screen.getByTestId('entity-stats-panel');
     expect(panel).toBeInTheDocument();
@@ -55,7 +55,7 @@ describe('EntityStatsPanel', () => {
   it('renders a shield bar for a ship and none for a structure', () => {
     // Ship: shield present.
     applySelectionStats({ id: 'p1', name: 'Ada', hp: 75, hpMax: 100, shield: 30, shieldMax: 60 });
-    useUIStore.setState({ selectedEntityId: 'p1', selectedEntityKind: 'ship' });
+    useUIStore.setState({ selection: { ids: [], focusId: 'p1', focusKind: 'ship' } });
     const { unmount } = render(<EntityStatsPanel />);
     // Two bar tracks (shield + hull) → look for the SHLD cap.
     expect(screen.getByText('SHLD')).toBeInTheDocument();
@@ -64,7 +64,7 @@ describe('EntityStatsPanel', () => {
     // Structure: no shield.
     resetSelectionStats();
     applySelectionStats({ id: '42', name: 'Turret', hp: 600, hpMax: 600 });
-    useUIStore.setState({ selectedEntityId: '42', selectedEntityKind: 'structure' });
+    useUIStore.setState({ selection: { ids: [], focusId: '42', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
     expect(screen.getByTestId('entity-stats-name')).toHaveTextContent('Turret');
     expect(screen.queryByText('SHLD')).toBeNull();
@@ -73,7 +73,7 @@ describe('EntityStatsPanel', () => {
   it('shows a placeholder name until the matching stats packet arrives', () => {
     // Selected, but the singleton still holds the PREVIOUS entity's id.
     selectionStats.id = 'other';
-    useUIStore.setState({ selectedEntityId: 'p1', selectedEntityKind: 'ship' });
+    useUIStore.setState({ selection: { ids: [], focusId: 'p1', focusKind: 'ship' } });
     render(<EntityStatsPanel />);
     // Visible (selected) but name falls back to the kind label, not stale data.
     expect(screen.getByTestId('entity-stats-panel')).toBeInTheDocument();
@@ -88,7 +88,7 @@ describe('EntityStatsPanel', () => {
   // compares against the WIRE id (toSelectWire), the single mapping site.
   it('shows structure hull from the WIRE id even though the selection holds the swarm- mirror id', () => {
     applySelectionStats({ id: '42', name: 'Capital', hp: 1200, hpMax: 1500 });
-    useUIStore.setState({ selectedEntityId: 'swarm-42', selectedEntityKind: 'structure' });
+    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-42', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
     // Fails on the pre-fix code: '42' !== 'swarm-42' → placeholder "Structure", hp 0.
     expect(screen.getByTestId('entity-stats-name')).toHaveTextContent('Capital');
@@ -105,7 +105,7 @@ describe('EntityStatsPanel', () => {
       }),
     );
     applySelectionStats({ id: '7', name: 'Solar', hp: 300, hpMax: 300 });
-    useUIStore.setState({ selectedEntityId: 'swarm-7', selectedEntityKind: 'structure' });
+    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-7', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
     const panel = screen.getByTestId('entity-stats-panel');
     expect(panel).toHaveAttribute('data-build-pct', '50');
@@ -129,7 +129,7 @@ describe('EntityStatsPanel', () => {
       }),
     );
     applySelectionStats({ id: '9', name: 'Turret', hp: 600, hpMax: 600 });
-    useUIStore.setState({ selectedEntityId: 'swarm-9', selectedEntityKind: 'structure' });
+    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-9', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
     expect(screen.getByTestId('entity-stats-power')).toHaveTextContent('PWR -15');
     expect(screen.getByTestId('entity-stats-panel')).toHaveAttribute('data-self-power', '-15');
@@ -143,7 +143,7 @@ describe('EntityStatsPanel', () => {
       }),
     );
     applySelectionStats({ id: '9', name: 'Turret', hp: 600, hpMax: 600 });
-    useUIStore.setState({ selectedEntityId: 'swarm-9', selectedEntityKind: 'structure' });
+    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-9', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
     expect(screen.getByTestId('entity-stats-power')).toHaveTextContent('PWR -3');
   });
@@ -159,7 +159,7 @@ describe('EntityStatsPanel', () => {
       }),
     );
     applySelectionStats({ id: '7', name: 'Solar', hp: 300, hpMax: 300 });
-    useUIStore.setState({ selectedEntityId: 'swarm-7', selectedEntityKind: 'structure' });
+    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-7', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
     expect(screen.getByTestId('entity-stats-power')).toHaveTextContent('PWR +30');
     expect(screen.getByTestId('entity-stats-power')).not.toHaveTextContent('UNPOWERED');
@@ -175,7 +175,7 @@ describe('EntityStatsPanel', () => {
       }),
     );
     applySelectionStats({ id: '7', name: 'Connector', hp: 200, hpMax: 200 });
-    useUIStore.setState({ selectedEntityId: 'swarm-7', selectedEntityKind: 'structure' });
+    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-7', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
     expect(screen.queryByTestId('entity-stats-power')).toBeNull();
   });
@@ -188,7 +188,7 @@ describe('EntityStatsPanel', () => {
       }),
     );
     applySelectionStats({ id: '1', name: 'Capital', hp: 5000, hpMax: 5000 });
-    useUIStore.setState({ selectedEntityId: 'swarm-1', selectedEntityKind: 'structure' });
+    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-1', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
     expect(screen.getByTestId('entity-stats-power')).toHaveTextContent('PWR +50');
   });
@@ -204,7 +204,7 @@ describe('EntityStatsPanel', () => {
     );
     // NO matching stats packet — the singleton holds a different id.
     selectionStats.id = 'nomatch';
-    useUIStore.setState({ selectedEntityId: 'swarm-7', selectedEntityKind: 'structure' });
+    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-7', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
     const panel = screen.getByTestId('entity-stats-panel');
     expect(panel).toHaveAttribute('data-build-pct', '50'); // instant from the slice
@@ -232,7 +232,7 @@ describe('EntityStatsPanel', () => {
     );
     // NO matching stats packet (the singleton holds a different id).
     selectionStats.id = 'nomatch';
-    useUIStore.setState({ selectedEntityId: 'swarm-7', selectedEntityKind: 'structure' });
+    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-7', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
     const panel = screen.getByTestId('entity-stats-panel');
     expect(panel).toHaveAttribute('data-hull-pct', '80'); // instant from the slice
@@ -256,7 +256,7 @@ describe('EntityStatsPanel', () => {
       }),
     );
     applySelectionStats({ id: '7', name: 'Connector', hp: 200, hpMax: 200 });
-    useUIStore.setState({ selectedEntityId: 'swarm-7', selectedEntityKind: 'structure' });
+    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-7', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
     const conn = screen.getByTestId('entity-stats-conn');
     expect(conn).toHaveTextContent('CONN 2 / 6');
@@ -273,7 +273,7 @@ describe('EntityStatsPanel', () => {
       }),
     );
     applySelectionStats({ id: '8', name: 'Solar Panel', hp: 300, hpMax: 300 });
-    useUIStore.setState({ selectedEntityId: 'swarm-8', selectedEntityKind: 'structure' });
+    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-8', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
     expect(screen.queryByTestId('entity-stats-conn')).toBeNull();
     expect(screen.getByTestId('entity-stats-panel')).not.toHaveAttribute('data-conn-count');
@@ -289,7 +289,7 @@ describe('EntityStatsPanel', () => {
       }),
     );
     applySelectionStats({ id: '8', name: '16" Barbette', hp: 6000, hpMax: 6000 });
-    useUIStore.setState({ selectedEntityId: 'swarm-8', selectedEntityKind: 'structure' });
+    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-8', focusKind: 'structure' } });
     const { unmount } = render(<EntityStatsPanel />);
     expect(screen.getByTestId('entity-stats-guns')).toHaveTextContent('16" ×2 · reload 30 s · arc 144°');
     unmount();
@@ -301,7 +301,7 @@ describe('EntityStatsPanel', () => {
         swarm: new Map([[9, { kind: 2, shipKind: 'solar', radius: 40, x: 0, y: 0 }]]),
       }),
     );
-    useUIStore.setState({ selectedEntityId: 'swarm-9', selectedEntityKind: 'structure' });
+    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-9', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
     expect(screen.queryByTestId('entity-stats-guns')).toBeNull();
   });
@@ -317,13 +317,13 @@ describe('EntityStatsPanel', () => {
     ]);
     setGameClient(fakeClient({ structures, swarm }));
     applySelectionStats({ id: '8', name: 'Cargo Bay', hp: 300, hpMax: 300 });
-    useUIStore.setState({ selectedEntityId: 'swarm-8', selectedEntityKind: 'structure' });
+    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-8', focusKind: 'structure' } });
     const { unmount } = render(<EntityStatsPanel />);
     expect(screen.getByTestId('cargo-open-toggle')).toBeInTheDocument();
     unmount();
     resetSelectionStats();
     applySelectionStats({ id: '9', name: 'Solar Panel', hp: 300, hpMax: 300 });
-    useUIStore.setState({ selectedEntityId: 'swarm-9', selectedEntityKind: 'structure' });
+    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-9', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
     expect(screen.queryByTestId('cargo-open-toggle')).toBeNull();
   });
@@ -332,7 +332,7 @@ describe('EntityStatsPanel', () => {
   // mirror (no server channel), with no hull bar. ──
   it('an asteroid shows a SIZE readout (untouched rock), no hull bar (R2.23)', () => {
     setGameClient(fakeClient({ swarm: new Map([[5, { kind: 0, radius: 48, x: 0, y: 0 }]]) }));
-    useUIStore.setState({ selectedEntityId: 'swarm-5', selectedEntityKind: 'asteroid' });
+    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-5', focusKind: 'asteroid' } });
     render(<EntityStatsPanel />);
     expect(screen.getByTestId('entity-stats-name')).toHaveTextContent('Asteroid');
     expect(screen.getByTestId('entity-stats-info')).toHaveTextContent('SIZE 48');
@@ -341,14 +341,14 @@ describe('EntityStatsPanel', () => {
 
   it('a MINED asteroid shows its resources (R2.23)', () => {
     setGameClient(fakeClient({ swarm: new Map([[5, { kind: 0, radius: 48, resources: 300, resourcesMax: 1000, x: 0, y: 0 }]]) }));
-    useUIStore.setState({ selectedEntityId: 'swarm-5', selectedEntityKind: 'asteroid' });
+    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-5', focusKind: 'asteroid' } });
     render(<EntityStatsPanel />);
     expect(screen.getByTestId('entity-stats-info')).toHaveTextContent('RES 300 / 1000');
   });
 
   it('a lingering hull shows WHOSE it is, no hull bar (R2.23)', () => {
-    setGameClient(fakeClient({ lingeringShips: new Map([['linger-9', { ownerPlayerId: 'player-abc', displayName: 'Nova', kind: 'heavy', x: 0, y: 0 }]]) }));
-    useUIStore.setState({ selectedEntityId: 'linger-9', selectedEntityKind: 'lingering' });
+    setGameClient(fakeClient({ ships: new Map([['linger-9', { isActive: false, ownerPlayerId: 'player-abc', displayName: 'Nova', kind: 'heavy', x: 0, y: 0 }]]) }));
+    useUIStore.setState({ selection: { ids: [], focusId: 'linger-9', focusKind: 'lingering' } });
     render(<EntityStatsPanel />);
     expect(screen.getByTestId('entity-stats-name')).toHaveTextContent('Nova');
     expect(screen.getByTestId('entity-stats-info')).toHaveTextContent('heavy');
@@ -361,15 +361,15 @@ describe('EntityStatsPanel', () => {
     setGameClient(
       fakeClient({
         localPlayerId: 'me',
-        lingeringShips: new Map([['ship-mine', { ownerPlayerId: 'me', displayName: 'My Hull', kind: 'fighter', x: 0, y: 0 }]]),
+        ships: new Map([['ship-mine', { isActive: false, ownerPlayerId: 'me', displayName: 'My Hull', kind: 'fighter', x: 0, y: 0 }]]),
       }),
     );
-    useUIStore.setState({ selectedEntityId: 'ship-mine', selectedEntityKind: 'lingering' });
+    useUIStore.setState({ selection: { ids: [], focusId: 'ship-mine', focusKind: 'lingering' } });
     render(<EntityStatsPanel />);
     const btn = screen.getByTestId('ship-action-pilot');
     expect(btn).toBeInTheDocument();
     fireEvent.click(btn);
-    // The selection id IS the shipInstanceId (the lingeringShips map key).
+    // The selection id IS the shipInstanceId (its `mirror.ships` key).
     expect(sendPilotShip).toHaveBeenCalledWith('ship-mine');
   });
 
@@ -377,10 +377,10 @@ describe('EntityStatsPanel', () => {
     setGameClient(
       fakeClient({
         localPlayerId: 'me',
-        lingeringShips: new Map([['ship-theirs', { ownerPlayerId: 'someone-else', displayName: 'Their Hull', kind: 'fighter', x: 0, y: 0 }]]),
+        ships: new Map([['ship-theirs', { isActive: false, ownerPlayerId: 'someone-else', displayName: 'Their Hull', kind: 'fighter', x: 0, y: 0 }]]),
       }),
     );
-    useUIStore.setState({ selectedEntityId: 'ship-theirs', selectedEntityKind: 'lingering' });
+    useUIStore.setState({ selection: { ids: [], focusId: 'ship-theirs', focusKind: 'lingering' } });
     render(<EntityStatsPanel />);
     expect(screen.queryByTestId('ship-action-pilot')).toBeNull();
   });
@@ -400,7 +400,7 @@ describe('EntityStatsPanel', () => {
       }),
     );
     applySelectionStats({ id: '7', name: 'Capital', hp: 5000, hpMax: 5000 });
-    useUIStore.setState({ selectedEntityId: 'swarm-7', selectedEntityKind: 'structure' });
+    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-7', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
     const owner = screen.getByTestId('entity-stats-owner');
     expect(owner).toHaveTextContent('OWNER Nova'); // the player's display name
@@ -422,7 +422,7 @@ describe('EntityStatsPanel', () => {
       }),
     );
     applySelectionStats({ id: '7', name: 'Capital', hp: 5000, hpMax: 5000 });
-    useUIStore.setState({ selectedEntityId: 'swarm-7', selectedEntityKind: 'structure' });
+    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-7', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
     expect(screen.getByTestId('entity-stats-owner')).toHaveTextContent('OWNER Unknown');
   });
@@ -438,7 +438,7 @@ describe('EntityStatsPanel', () => {
       }),
     );
     applySelectionStats({ id: '8', name: 'Capital', hp: 5000, hpMax: 5000 });
-    useUIStore.setState({ selectedEntityId: 'swarm-8', selectedEntityKind: 'structure' });
+    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-8', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
     expect(screen.getByTestId('entity-stats-owner')).toHaveTextContent('OWNER you');
   });
@@ -456,7 +456,7 @@ describe('EntityStatsPanel', () => {
       }),
     );
     applySelectionStats({ id: '8', name: 'Solar', hp: 300, hpMax: 300 });
-    useUIStore.setState({ selectedEntityId: 'swarm-8', selectedEntityKind: 'structure' });
+    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-8', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
     expect(screen.getByTestId('structure-action-deconstruct')).toBeInTheDocument();
     expect(screen.getByTestId('structure-action-reconnect')).toBeInTheDocument();
@@ -474,7 +474,7 @@ describe('EntityStatsPanel', () => {
       }),
     );
     applySelectionStats({ id: '7', name: 'Connector', hp: 200, hpMax: 200 });
-    useUIStore.setState({ selectedEntityId: 'swarm-7', selectedEntityKind: 'structure' });
+    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-7', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
     expect(screen.getByTestId('structure-action-clear')).toBeInTheDocument();
   });
@@ -490,7 +490,7 @@ describe('EntityStatsPanel', () => {
       }),
     );
     applySelectionStats({ id: '7', name: 'Connector', hp: 200, hpMax: 200 });
-    useUIStore.setState({ selectedEntityId: 'swarm-7', selectedEntityKind: 'structure' });
+    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-7', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
     expect(screen.queryByTestId('entity-stats-actions')).toBeNull();
   });
@@ -511,7 +511,7 @@ describe('EntityStatsPanel', () => {
       }),
     );
     applySelectionStats({ id: '9', name: 'Missile Turret', hp: 900, hpMax: 900 });
-    useUIStore.setState({ selectedEntityId: 'swarm-9', selectedEntityKind: 'structure' });
+    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-9', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
     expect(screen.getByTestId('entity-stats-no-ammo')).toHaveTextContent('NO MUNITIONS');
   });
@@ -527,7 +527,7 @@ describe('EntityStatsPanel', () => {
       }),
     );
     applySelectionStats({ id: '9', name: 'Smelter', hp: 1800, hpMax: 1800 });
-    useUIStore.setState({ selectedEntityId: 'swarm-9', selectedEntityKind: 'structure' });
+    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-9', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
     expect(screen.getByTestId('entity-stats-recipe')).toHaveTextContent('MAKES Smelt alloy · Waiting for Minerals');
     // A smelter has one recipe: no change-recipe button.
@@ -547,7 +547,7 @@ describe('EntityStatsPanel', () => {
       getRoom: () => ({ send: sendSpy }),
     } as unknown as ColyseusGameClient);
     applySelectionStats({ id: '9', name: 'Refinery', hp: 1800, hpMax: 1800 });
-    useUIStore.setState({ selectedEntityId: 'swarm-9', selectedEntityKind: 'structure' });
+    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-9', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
     expect(screen.getByTestId('entity-stats-recipe')).toHaveAttribute('data-recipe', 'refine_ice_fuel');
     fireEvent.click(screen.getByTestId('structure-action-recipe'));
@@ -565,7 +565,7 @@ describe('EntityStatsPanel', () => {
       }),
     );
     applySelectionStats({ id: '9', name: 'Turret', hp: 600, hpMax: 600 });
-    useUIStore.setState({ selectedEntityId: 'swarm-9', selectedEntityKind: 'structure' });
+    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-9', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
     expect(screen.getByTestId('entity-stats-level')).toHaveTextContent('LVL 3');
     expect(screen.getByTestId('entity-stats-panel')).toHaveAttribute('data-structure-level', '3');
@@ -582,7 +582,7 @@ describe('EntityStatsPanel', () => {
       }),
     );
     applySelectionStats({ id: '9', name: 'Turret', hp: 600, hpMax: 600 });
-    useUIStore.setState({ selectedEntityId: 'swarm-9', selectedEntityKind: 'structure' });
+    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-9', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
     expect(screen.queryByTestId('entity-stats-level')).toBeNull();
   });
@@ -600,7 +600,7 @@ describe('EntityStatsPanel', () => {
       getRoom: () => ({ send: sendSpy }),
     } as unknown as ColyseusGameClient);
     applySelectionStats({ id: '9', name: 'Turret', hp: 600, hpMax: 600 });
-    useUIStore.setState({ selectedEntityId: 'swarm-9', selectedEntityKind: 'structure' });
+    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-9', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
     const btn = screen.getByTestId('structure-action-upgrade');
     fireEvent.click(btn);
@@ -621,7 +621,7 @@ describe('EntityStatsPanel', () => {
       }),
     );
     applySelectionStats({ id: '9', name: 'Turret', hp: 600, hpMax: 600 });
-    useUIStore.setState({ selectedEntityId: 'swarm-9', selectedEntityKind: 'structure' });
+    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-9', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
     expect(screen.queryByTestId('structure-action-upgrade')).toBeNull();
   });
@@ -638,7 +638,7 @@ describe('EntityStatsPanel', () => {
       }),
     );
     applySelectionStats({ id: '9', name: 'Turret', hp: 600, hpMax: 600 });
-    useUIStore.setState({ selectedEntityId: 'swarm-9', selectedEntityKind: 'structure' });
+    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-9', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
     expect(screen.getByTestId('entity-stats-level')).toHaveTextContent('LVL 5');
     expect(screen.queryByTestId('structure-action-upgrade')).toBeNull();
@@ -655,7 +655,7 @@ describe('EntityStatsPanel', () => {
       }),
     );
     applySelectionStats({ id: '9', name: 'Turret', hp: 600, hpMax: 600 });
-    useUIStore.setState({ selectedEntityId: 'swarm-9', selectedEntityKind: 'structure' });
+    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-9', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
     expect(screen.queryByTestId('structure-action-upgrade')).toBeNull();
   });
@@ -673,7 +673,7 @@ describe('EntityStatsPanel', () => {
       getRoom: () => ({ send: sendSpy }),
     } as unknown as ColyseusGameClient);
     applySelectionStats({ id: '8', name: 'Solar', hp: 300, hpMax: 300 });
-    useUIStore.setState({ selectedEntityId: 'swarm-8', selectedEntityKind: 'structure' });
+    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-8', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
     const btn = screen.getByTestId('structure-action-deconstruct');
     expect(btn).toHaveAttribute('data-active', '1'); // already deconstructing → Cancel state
@@ -697,7 +697,7 @@ describe('EntityStatsPanel', () => {
 
     it('does not commit new renders across poll ticks when stats are unchanged', () => {
       applySelectionStats({ id: 'p1', name: 'Ada', hp: 75, hpMax: 100, shield: 30, shieldMax: 60 });
-      useUIStore.setState({ selectedEntityId: 'p1', selectedEntityKind: 'ship' });
+      useUIStore.setState({ selection: { ids: [], focusId: 'p1', focusKind: 'ship' } });
       const onRender = vi.fn();
       render(
         <Profiler id="esp" onRender={onRender}>
@@ -719,7 +719,7 @@ describe('EntityStatsPanel', () => {
 
     it('still re-renders when the polled stats actually change', () => {
       applySelectionStats({ id: 'p1', name: 'Ada', hp: 75, hpMax: 100, shield: 30, shieldMax: 60 });
-      useUIStore.setState({ selectedEntityId: 'p1', selectedEntityKind: 'ship' });
+      useUIStore.setState({ selection: { ids: [], focusId: 'p1', focusKind: 'ship' } });
       render(<EntityStatsPanel />);
       expect(screen.getByTestId('entity-stats-panel')).toHaveAttribute('data-hull-pct', '75');
       // A fresh server packet lands between polls → the next tick must surface it.

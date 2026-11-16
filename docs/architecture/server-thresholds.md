@@ -24,6 +24,7 @@ value is superseded, move its row to [History](#history). Values were checked ag
 | JWT secret | production throws at boot on a missing / placeholder `JWT_SECRET` | auth boot | Fail-closed auth | — |
 | Input rate limit | max 3 inputs per entity per tick in `onMessage`; excess silently dropped | `MAX_INPUTS_PER_TICK`, `src/server/rooms/SectorRoom.ts` (applied in `InputHandler.ts`) | Input flooding | — |
 | Lock message cap | max 3 per session per tick for `lock_request` / `lock_track` / `lock_cancel` / `set_group_mode` together (`lockMsgAllowed`, cleared at the top of `update()`); excess silently dropped | `MAX_LOCK_MSGS_PER_TICK`, `src/server/rooms/SectorRoom.ts` | Fire-control message flooding | `LockSubsystem.test.ts` |
+| RTS fleet command cap | max 4 per session per tick for `fleet_order` / `set_mode` / `set_stance` / `form_squad` / `disband_squad` together (`fleetMsgAllowed`, cleared at the top of `update()`); excess silently dropped | `MAX_FLEET_MSGS_PER_TICK`, `src/server/rooms/SectorRoom.ts` | Fleet command flooding ([fleet-command](fleet-command.md)) | — |
 
 ### Snapshot, interest and network ([snapshot-cadence](snapshot-cadence.md))
 
@@ -79,7 +80,7 @@ value is superseded, move its row to [History](#history). Values were checked ag
 | Sector snapshot staleness | rows older than 24 h are discarded | `SNAPSHOT_STALENESS_MS`, `src/server/rooms/SectorSnapshot.ts` | Restoring a very old world | `SectorSnapshot.test.ts` |
 | Sector snapshot schema | 7 (a bump tears down all sectors and reseeds) | `CURRENT_SCHEMA_VERSION`, `src/server/rooms/SectorSnapshot.ts` | Snapshot shape | `SectorSnapshot.test.ts` |
 | Structure persist coalesce | 2 s | `STRUCTURE_PERSIST_COALESCE_MS`, `src/server/rooms/SectorPersistence.ts` | Structure write rate | `SectorPersistence.structures.test.ts` |
-| Ship roster cap | 10 ships per player | `ROSTER_CAP`, `src/client/components/rosterConstants.ts` (server: `PlayerShipStore`) | Persistent ships per player | `PlayerShipStore.test.ts` |
+| Ship roster soft guard | 200 ships per player (anti-abuse only; no gameplay cap since RTS, rosters are unlimited) | `ROSTER_SOFT_GUARD`, `src/server/playerShips/PlayerShipStore.ts` | Persistent ships per player | `PlayerShipStore.test.ts` |
 | Ship-kind catalogue version | 25 | `SHIP_KIND_CATALOGUE_VERSION`, `src/shared-types/shipKinds.ts` | Hydrate-time drift clamp of stored ships | `tests/unit/shipKinds.test.ts` |
 | Structure-kind catalogue version | 10 | `STRUCTURE_KIND_CATALOGUE_VERSION`, `src/shared-types/structureKinds.ts` | Saved structures (a bump discards them) | — |
 | Director state | version 1; 24 h staleness; persisted every 60 s from the control loop and at shutdown | `DIRECTOR_STATE_VERSION`, `DIRECTOR_STATE_STALENESS_MS`, `src/server/livingworld/DirectorPersistence.ts`; `DIRECTOR_PERSIST_INTERVAL_MS`, `LivingWorldDirector.ts` | Director restart continuity | `DirectorPersistence.test.ts` |
@@ -145,7 +146,7 @@ Superseded values and the stories behind them, moved verbatim from `src/server/C
 (2026-11-14). Links are rewritten for this folder. Other history stays with its subsystem, in the
 "Server implementation notes" section of the guides linked above.
 
-  - **LimboStore cap** (S8): RETIRED with the `LimboStore` (Phase 5/WS-B, 2026-06-14). The roster (`PlayerShipStore`) is the in-memory ship store now, bounded by the per-player 10-ship `ROSTER_CAP` rather than a global entry cap.
+  - **LimboStore cap** (S8): RETIRED with the `LimboStore` (Phase 5/WS-B, 2026-06-14). The roster (`PlayerShipStore`) is the in-memory ship store now, bounded per player only by the 200-ship anti-abuse `ROSTER_SOFT_GUARD` (no gameplay cap) rather than a global entry cap.
 
 - **Phase 4 — temporal plausibility**: fire claims older than `LAG_COMP_WINDOW` (12 ticks, ~200 ms) are **clamped** to the window floor and resolved against the oldest SnapshotRing pose — NOT rejected (changed 2026-05-19, capture `uf0o8g`: hard-rejecting dropped ~37% of a laggy client's shots when its wall-clock-anchored `inputTick` fell behind `serverTick` after a stall). Rewind stays bounded by `LAG_COMP_WINDOW` (no abuse advantage); the per-shooter cooldown is the separate, unchanged anti-rapid-fire guard. Pure helper: `clampFireTick` (`src/core/combat/fireTemporal.ts`).
 

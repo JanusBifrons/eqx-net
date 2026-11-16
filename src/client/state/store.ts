@@ -10,9 +10,11 @@ import type {
   RosterEntry,
   TransitState,
   PilotMode,
+  ControlMode,
   Phase,
   DevData,
   UIStore,
+  UISelection,
 } from './storeTypes.js';
 
 // Re-export the type surface so existing import sites (40+ files using
@@ -25,16 +27,32 @@ export type {
   RosterEntry,
   TransitState,
   PilotMode,
+  ControlMode,
   Phase,
   DevData,
   UIStore,
+  UISelection,
 };
+export type { SelectionFocusKind } from './storeTypes.js';
 
 // The store is constructed before auth resolves, so we hydrate from the
 // anonymous slot first. `applyUserPrefs(userId)` is called from App.tsx once
 // `useAuthStore.user` is known and re-reads from the per-user slot. If you
 // log in for the first time on a device, the legacy `eqxSettings` global key
 // migrates into the per-user slot on that re-read (see `userPrefs.ts`).
+/**
+ * RTS command layer (slice 10) — the player-facing control mode derived from
+ * the stored `pilotMode` (see `ControlMode`). A pure selector, so there is ONE
+ * stored field and the two names can never drift.
+ */
+export function selectControlMode(s: Pick<UIStore, 'pilotMode'>): ControlMode {
+  return s.pilotMode === 'spectator' ? 'command' : 'fly';
+}
+
+const EMPTY_IDS: readonly string[] = Object.freeze([]);
+/** Nothing selected (one shared object, so an empty selection never re-renders). */
+export const EMPTY_SELECTION: UISelection = Object.freeze({ ids: EMPTY_IDS, focusId: null, focusKind: null });
+
 /** Living World P1a — monotonic id for pickup popups. */
 let lootFeedSeq = 0;
 const initialPersisted     = loadSettings(null);
@@ -153,8 +171,9 @@ export const useUIStore = create<UIStore>((set, get) => ({
   warpPickerOpen: false,
   contactsOpen: false,
   warpHeldTo: null,
-  selectedEntityId: null,
-  selectedEntityKind: null,
+  selection: EMPTY_SELECTION,
+  fleetOrderMode: 'move',
+  fleetPick: null,
   helmAvailable: false,
   helmActive: false,
   helmSpeed: 3,
@@ -272,7 +291,21 @@ export const useUIStore = create<UIStore>((set, get) => ({
   setWarpPickerOpen: (open) => set({ warpPickerOpen: open }),
   setContactsOpen: (open) => set({ contactsOpen: open }),
   setWarpHeldTo: (label) => set({ warpHeldTo: label }),
-  setSelectedEntity: (id, kind) => set({ selectedEntityId: id, selectedEntityKind: kind }),
+  // No ships left to command ⇒ nothing to pick a target for (slice 14b).
+  setSelection: (ids, focusId, focusKind) => {
+    const selection: UISelection = ids.length === 0 && focusId === null
+      ? EMPTY_SELECTION
+      : { ids: ids.length === 0 ? EMPTY_IDS : [...ids], focusId, focusKind: focusId === null ? null : focusKind };
+    set(ids.length === 0 ? { selection, fleetPick: null } : { selection });
+  },
+  setFleetOrderMode: (mode) => set({ fleetOrderMode: mode }),
+  setFleetPick: (kind) => set({ fleetPick: kind === null ? null : { kind, points: 0, doneSeq: 0 } }),
+  setFleetPickPoints: (points) => set((s) => (
+    s.fleetPick === null || s.fleetPick.points === points ? {} : { fleetPick: { ...s.fleetPick, points } }
+  )),
+  requestFleetPickDone: () => set((s) => (
+    s.fleetPick === null ? {} : { fleetPick: { ...s.fleetPick, doneSeq: s.fleetPick.doneSeq + 1 } }
+  )),
   setEnergyMax: (max) => set({ energyMax: max }),
   setHelmState: (available, active, speed) => set({ helmAvailable: available, helmActive: active, helmSpeed: speed }),
   setCargo: (cargo, capacity) => set({ cargo, cargoCapacity: capacity }),

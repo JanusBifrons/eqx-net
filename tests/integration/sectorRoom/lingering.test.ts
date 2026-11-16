@@ -10,7 +10,7 @@
  *   2. Server: snapshot broadcast iterates BOTH `playerToSlot` (active) AND
  *      `lingeringSlots` (lingering).
  *   3. Client: snapshot's `isActive=false` entries route to
- *      `mirror.lingeringShips` rather than overwriting active mirror entries.
+ *      parked hulls (shipInstanceId keys) rather than overwriting active entries.
  *
  * Item (3) is covered by `src/client/net/ColyseusClient.lingeringRouting.test.ts`.
  * This integration test covers items (1) and (2) end-to-end against a

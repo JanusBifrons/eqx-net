@@ -171,6 +171,8 @@ export class EffectsService implements IEffects {
       this.impactSparks.spawnBurst(worldX, worldY, opts);
     } else if (kind === 'wreck-break') {
       this.wreckBreak.spawnBurst(worldX, worldY, opts);
+    } else if (kind === 'wreck-ash' && opts?.lineToX === undefined) {
+      this.wreckBreak.spawnVaporAsh(worldX, worldY, opts?.radius ?? 40, opts?.tint ?? 0xffffff);
     } else if (kind === 'wreck-ash') {
       this.wreckBreak.spawnChannelAsh(worldX, worldY, opts?.lineToX ?? worldX, opts?.lineToY ?? worldY, opts?.radius ?? 200);
     }
