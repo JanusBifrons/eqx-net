@@ -10,11 +10,35 @@ import type { WreckDescriptor } from '../../shared-types/messages/snapshotMessag
 import type { WreckChildChain } from '../../core/destruction/wreckChildren.js';
 import type { BurnLines } from '../../core/destruction/burnLines.js';
 import type { WreckPiecePose } from './wreckResplit.js';
+import type { WreckSource } from '../../core/destruction/wreckSource.js';
+import type { AsteroidResourceId } from '../../shared-types/asteroidResources.js';
+
+/** Rock cut: the ore a rock's wreck carries. Every piece holds its area's
+ *  share of what the rock had left when it broke (`perArea`); a pod made
+ *  from one draws that through `OreDraw.cutYield` (the rock's resource). */
+export interface WreckOre {
+  /** The parent rock's stable id. */
+  rockId: string;
+  resource: AsteroidResourceId;
+  /** Ore units per world unit² of piece. */
+  perArea: number;
+}
+
+/** Rock cut: a live rock as the cut code reads it (`CapitalWreckDeps.rockOf`). */
+export interface WreckRockView {
+  /** u16 shape seed and radius (its outline: `generateAsteroidVertices`). */
+  shape: number;
+  radius: number;
+  resource: AsteroidResourceId;
+  /** Ore left in it (undefined: an un-seeded, endless rock). */
+  resources: number | undefined;
+}
 
 export interface WreckPieceSpawn {
   id: string;
   x: number; y: number; vx: number; vy: number; angle: number; angvel: number;
-  radius: number; mass: number; parentShipKind: ShipKindId; pieceIndex: number;
+  /** The dead hull's kind; absent for a rock's piece (no ship byte). */
+  radius: number; mass: number; parentShipKind: ShipKindId | undefined; pieceIndex: number;
   /** S2b: the wreck this piece belongs to (u16, on the binary wire). */
   wreckId: number;
   parts: ReadonlyArray<ReadonlyArray<Vec2>>;
@@ -44,6 +68,15 @@ export interface LiveWreck {
   chain: WreckChildChain;
   parent: number;
   children: number;
+  /** Lineage: the wreckId of the root wreck (a ship death or a rock break)
+   *  every re-split of this chain descends from; a root holds its own id.
+   *  Set by `addWreck` / the death path, copied down on every re-split. */
+  root: number;
+  /** What the chain was cut from (its root's `wreckSourceOf`, kept so a
+   *  hit never rebuilds it). */
+  src: WreckSource;
+  /** Rock cut: the rock's ore its pieces carry (absent: a ship's wreck). */
+  ore?: WreckOre;
 }
 
 export interface CapitalWreckDeps {
@@ -95,9 +128,13 @@ export interface CapitalWreckDeps {
    *  on a hull burns no line (its kill split cuts along the killing shot
    *  only). Fracture v12 multi-cut. */
   hullPoseInto?: (id: string, out: WreckPiecePose) => boolean;
-  /** Drop a `qty`-unit salvage pod (a worn-out piece too small to split).
-   *  Absent ⇒ such a piece just stops wearing. */
-  dropSalvage?: (qty: number, x: number, y: number, vx: number, vy: number) => void;
+  /** Drop a `qty`-unit salvage pod (a worn-out piece too small to split);
+   *  with `ore` (a rock's piece) a pod of `qty` units of that rock's ore
+   *  instead. Absent ⇒ such a piece just stops wearing. */
+  dropSalvage?: (qty: number, x: number, y: number, vx: number, vy: number, ore?: WreckOre) => void;
+  /** Rock cut: a live rock (kind 0) by id, or null. Absent ⇒ rocks are never
+   *  cut (the mining laser only draws their ore). */
+  rockOf?: (id: string) => WreckRockView | null;
 }
 
 /** How hard a hit knocks one piece (fixed at spawn; read per hit, #14). */

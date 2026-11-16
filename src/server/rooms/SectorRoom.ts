@@ -414,6 +414,7 @@ import { tuningFor, GLOBAL_SHIP_TUNING } from '../../shared-types/shipScale/look
 import { shipRayHit, shipSweepHit } from '../../core/combat/shipHitShape.js';
 import { mayBeInReach, maxShipRangeBound, mountsReachTarget, type MountRangeTarget } from '../../core/combat/mountReach.js';
 import { CapitalWreckSubsystem, type WreckPiecePose } from './CapitalWreckSubsystem.js';
+import { rockViewOf } from './rockCut.js';
 import { wreckRayHit } from '../../core/destruction/wreckHits.js';
 import { isDebris, isLootPod, isWreckPiece } from '../net/SwarmEntityRegistry.js';
 import { LineOfFireGate } from './LineOfFireGate.js';
@@ -1697,8 +1698,8 @@ export class SectorRoom extends Room<SectorState> {
     loot: LootSubsystem;
     /** S2a — a swarm entity's full SAB state (pose, velocity, spin). */
     wreckState: (id: string) => { x: number; y: number; vx: number; vy: number; angle: number; angvel: number } | null;
-    /** Salvage PR 5: a wreck piece's hidden integrity (undefined: none); its whole-piece salvage (0: none). */
-    wreckIntegrity: (id: string) => number | undefined; wreckSalvage: (id: string) => number;
+    /** Salvage PR 5: a wreck piece's hidden integrity (undefined: none); its whole-piece salvage (0: none); rock cut's per-hit rock view (one reused object) or null. */
+    wreckIntegrity: (id: string) => number | undefined; wreckSalvage: (id: string) => number; rockOf: (id: string) => ReturnType<typeof rockViewOf>;
     /** S2a — a wreck piece's convex parts (body-local), or null. */
     wreckParts: (id: string) => ReadonlyArray<ReadonlyArray<{ x: number; y: number }>> | null;
     /** S2a — fix the fracture seed (null = per death). */
@@ -1786,6 +1787,7 @@ export class SectorRoom extends Room<SectorState> {
       damageSwarmLayered: (rec, damage) => this.damageSwarmLayered(rec, damage),
       wreckState: (id) => this.wreckPose(id),
       wreckIntegrity: (id) => this.capitalWrecks?.pieceIntegrity(id), wreckSalvage: (id) => this.capitalWrecks?.pieceSalvageQty(id) ?? 0,
+      rockOf: (id) => rockViewOf(this.swarmRegistry, id),
       wreckParts: (id) => this.swarmRegistry.get(id)?.wreckParts ?? null,
       setWreckSeed: (seed) => { if (this.capitalWrecks) this.capitalWrecks.forcedSeed = seed; },
       swarmSleeping: (id) => {
@@ -2498,8 +2500,7 @@ export class SectorRoom extends Room<SectorState> {
       swarmRegistry: this.swarmRegistry,
       lingeringSlots: this.lingeringSlots,
       lingeringShip: (sid) => this.state.ships.get(sid),
-      // Only a pilot's own shot can land on a loot pod; AI and turret bolts pass it.
-      shotHitsLootPods: (ownerId) => this.playerToSlot.has(ownerId),
+      shotHitsLootPods: (ownerId) => this.playerToSlot.has(ownerId), // only a pilot's own shot can hit a loot pod, except mining tools
       applyDamage: (targetId, shooterId, damage, hitX, hitY, dirX, dirY, weaponId) =>
         this.applyDamage(targetId, shooterId, damage, hitX, hitY, dirX, dirY, weaponId),
       wallBlocksProjectile: (x, y, sx, sy, damage) => {
@@ -5504,11 +5505,8 @@ export class SectorRoom extends Room<SectorState> {
     targetId: string, shooterId: string, damage: number, hitX?: number, hitY?: number, dirX?: number, dirY?: number,
     weaponId?: WeaponId,
   ): boolean {
-    // Overkill knock-back (owner request 2026-11-13): a shot landing on a
-    // capital wreck piece (immune, so the router below does nothing) shoves
-    // it along the shot from the hit point. Only hits that know their point
-    // AND direction (shells, player and NPC beams); missiles push through
-    // their own splash impulse, rams through the contact itself.
+    // A hit on a wreck piece knocks and wears it, one on a rock wears it (rock cut). Only hits
+    // that know their point AND direction; missiles push by splash, rams by contact.
     if (this.capitalWrecks !== null && damage > 0 && hitX !== undefined && hitY !== undefined
       && dirX !== undefined && dirY !== undefined) {
       this.capitalWrecks.onWreckHit(targetId, hitX, hitY, dirX, dirY, damage, weaponId, shooterId);
@@ -5578,12 +5576,7 @@ export class SectorRoom extends Room<SectorState> {
         const lastPush = this.structureAttackPushAtMs.get(targetId) ?? -Infinity;
         if (now - lastPush >= STRUCTURE_ATTACK_PUSH_WINDOW_MS) {
           this.structureAttackPushAtMs.set(targetId, now);
-          pushNotifier.onStructureAttacked(
-            s.owner,
-            s.kind,
-            classifyAttacker(shooterId),
-            this.sectorKey ?? undefined,
-          );
+          pushNotifier.onStructureAttacked(s.owner, s.kind, classifyAttacker(shooterId), this.sectorKey ?? undefined);
         }
         // R2.18 — a Shield Pylon is undamageable while its wall is up: route the
         // hit into an active wall and skip the pylon damage entirely.
@@ -5675,7 +5668,8 @@ export class SectorRoom extends Room<SectorState> {
         if (slot !== undefined) slotPoseInto(this.sabF32, slot, out);
         return slot !== undefined;
       },
-      dropSalvage: (qty, x, y, vx, vy) => { this.loot.drop({ goods: { salvage: qty }, blueprints: [] }, x, y, vx, vy, { cause: 'salvage' }); },
+      dropSalvage: (qty, x, y, vx, vy, ore) => { this.loot.drop({ goods: ore ? this.oreDraw.cutYield(ore.rockId, x, y, qty, ore.resource) : { salvage: qty }, blueprints: [] }, x, y, vx, vy, { cause: 'salvage' }); },
+      rockOf: (id) => rockViewOf(this.swarmRegistry, id),
     });
   }
 
@@ -5695,7 +5689,7 @@ export class SectorRoom extends Room<SectorState> {
     switch (shipTuning(getShipKind(kindId)).destruction) {
       case 'capital': return this.capitalWrecksOn;
       case 'subcap': return this.subcapWrecksOn && shipScrapGroups(kindId).length === 0;
-      case 'none': return false;
+      case 'none': case 'rock': return false;
     }
   }
 
@@ -12319,6 +12313,9 @@ export class SectorRoom extends Room<SectorState> {
         this.fleet.setMode(owner, [shipId], opts.mode);
         return true;
       },
+      // Rock-cut scene: still rocks, then each mined to a break (RockCutter.sceneCut).
+      spawnRock: (id, x, y, radius) => this.swarmSpawner.spawnAsteroid({ id, x, y, vx: 0, vy: 0, radius, mass: 1 }),
+      cutRock: (id) => this.capitalWrecks?.rockCut.sceneCut(id) ?? false,
     });
   }
 

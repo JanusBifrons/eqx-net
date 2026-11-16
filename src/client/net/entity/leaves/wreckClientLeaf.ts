@@ -19,6 +19,7 @@ import { ClientEntityLeafBase } from '../ClientEntityLeafBase.js';
 import type { ClientSpawnCtx, ClientSyncCtx } from '../IClientEntityLeaf.js';
 import { wreckBodyParams } from '@core/destruction/wreckPieces';
 import { getShipKind } from '@shared-types/shipKinds';
+import { rockWreckSource } from '@core/destruction/wreckSource';
 
 export class WreckClientLeaf extends ClientEntityLeafBase {
   constructor() {
@@ -34,7 +35,9 @@ export class WreckClientLeaf extends ClientEntityLeafBase {
     // The parent kind's profile picks the groups and damping, the same
     // `wreckBodyParams` the server body uses (#15): a sub-capital's pieces
     // don't collide with each other and settle faster.
-    const body = wreckBodyParams(getShipKind(e.shipKind ?? null).id);
+    // A rock's piece (rock cut) takes its rock's numbers, as the server does.
+    const rock = e.wreckId !== undefined ? ctx.wrecks?.rockOf?.(e.wreckId) : undefined;
+    const body = wreckBodyParams(rock !== undefined ? rockWreckSource(rock) : getShipKind(e.shipKind ?? null).id);
     ctx.predWorld.spawnObstacle(ctx.key, e.x, e.y, g.radius, g.mass, undefined, body.linearDamping, body.collisionGroups, g.colliderParts);
     ctx.predWorld.setAngularDamping(ctx.key, body.angularDamping);
     // The same settle-to-sleep rule as the server body (#15).
