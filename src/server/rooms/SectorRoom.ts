@@ -235,6 +235,7 @@ import { ROSTER_SOFT_GUARD, type ActivatedMount } from '../playerShips/PlayerShi
 import { WeaponMountTicker } from './WeaponMountTicker.js';
 import { LockSubsystem, newLockTargetView, type LockTargetView } from './LockSubsystem.js';
 import { NpcLockSubsystem } from './NpcLockSubsystem.js';
+import { LockSalvageLookup, swarmLockId } from './lockSalvage.js';
 import { fillFireTargetShape, fillRangeShape, mountFiresOn, newFireTargetShape, type FireTargetShape } from '../../core/combat/fireControlBearing.js';
 import { weaponIdReach, hasTurretFireControl } from '../../core/combat/mountReach.js';
 import { NAVAL_SHELL_WEAPON_IDS } from '../../core/combat/shellFlight.js';
@@ -4640,6 +4641,9 @@ export class SectorRoom extends Room<SectorState> {
   private readonly _lockTarget: LockTargetView = newLockTargetView();
   /** Activated-mount geometry per player, cached by the ship's `mounts` ref. */
   private readonly _lockActivated = new Map<string, { ref: unknown; mounts: ReadonlyArray<WeaponMount> }>();
+  private readonly _lockSalvage = new LockSalvageLookup<ShipState>({ swarm: (n) => this.swarmRegistry.getByEntityId(n),
+    piece: (id, out) => this.capitalWrecks?.pieceHaul(id, out) === true, // salvage lock bits (lockSalvage.ts)
+    freeHold: (s) => this.shipCargoCapacity(s.kind, s.shipInstanceId) - this.holdWeight(s.shipInstanceId) });
 
   private buildNpcLockSubsystem(): NpcLockSubsystem {
     return new NpcLockSubsystem({
@@ -4727,6 +4731,23 @@ export class SectorRoom extends Room<SectorState> {
     return this.fleet.ownerOfAttached(id) ?? id;
   }
 
+  /** A lock machine's `shipOf`: kind + activated mounts, cached per id by the ship's `mounts` ref. */
+  private lockShipOf(id: string, ship: ShipState | undefined): { kind: ShipKind; activated: ReadonlyArray<WeaponMount> } | null {
+    if (!ship) return null;
+    const kind = getShipKind(ship.kind);
+    let c = this._lockActivated.get(id);
+    if (!c || c.ref !== ship.mounts) {
+      c = { ref: ship.mounts, mounts: this.resolveInstanceMounts(ship).slice((kind.mounts ?? []).length) };
+      this._lockActivated.set(id, c);
+    }
+    return { kind, activated: c.mounts };
+  }
+
+  /** A wingman lock machine's hull: the LINGERING (AI-flown) ship `sid`. */
+  private wingmanHull(sid: string): ShipState | undefined {
+    return this.lingeringSlots.has(sid) ? this.state.ships.get(sid) : undefined;
+  }
+
   /**
    * RTS slice 5 — the PLAYER lock machine for AI-flown hulls (same class, same
    * lock maths: owner rule "same locks as a pilot in that ship"). Keyed by the
@@ -4748,19 +4769,9 @@ export class SectorRoom extends Room<SectorState> {
         out.x = p.x; out.y = p.y; out.vx = p.vx; out.vy = p.vy; out.angle = p.angle;
         return true;
       },
-      shipOf: (sid) => {
-        const ship = this.lingeringSlots.has(sid) ? this.state.ships.get(sid) : undefined;
-        if (!ship) return null;
-        const kind = getShipKind(ship.kind);
-        let c = this._lockActivated.get(sid);
-        if (!c || c.ref !== ship.mounts) {
-          const all = this.resolveInstanceMounts(ship);
-          c = { ref: ship.mounts, mounts: all.slice((kind.mounts ?? []).length) };
-          this._lockActivated.set(sid, c);
-        }
-        return { kind, activated: c.mounts };
-      },
+      shipOf: (sid) => this.lockShipOf(sid, this.wingmanHull(sid)),
       autoPick: () => null,
+      salvageOf: (sid, key, out) => this._lockSalvage.fill(this.wingmanHull(sid), key, out),
       commitHostileAct: (sid, key) => {
         const owner = this.fleet.ownerOfAttached(sid);
         if (owner !== null) this.commitLockHostileAct(owner, key);
@@ -4775,6 +4786,7 @@ export class SectorRoom extends Room<SectorState> {
   private buildLockSubsystem(): LockSubsystem {
     return new LockSubsystem({
       resolveTarget: (pid, key, out) => this.resolveLockTarget(pid, key, out),
+      salvageOf: (pid, key, out) => this._lockSalvage.fill(this.getActiveShip(pid), key, out),
       shooterPose: (pid, out) => {
         const p = this.shipPoseCache.get(pid);
         const ship = this.getActiveShip(pid);
@@ -4782,18 +4794,7 @@ export class SectorRoom extends Room<SectorState> {
         out.x = p.x; out.y = p.y; out.vx = p.vx; out.vy = p.vy; out.angle = p.angle;
         return true;
       },
-      shipOf: (pid) => {
-        const ship = this.getActiveShip(pid);
-        if (!ship) return null;
-        const kind = getShipKind(ship.kind);
-        let c = this._lockActivated.get(pid);
-        if (!c || c.ref !== ship.mounts) {
-          const all = this.resolveInstanceMounts(ship);
-          c = { ref: ship.mounts, mounts: all.slice((kind.mounts ?? []).length) };
-          this._lockActivated.set(pid, c);
-        }
-        return { kind, activated: c.mounts };
-      },
+      shipOf: (pid) => this.lockShipOf(pid, this.getActiveShip(pid)),
       autoPick: (pid, reach, sx, sy, bears, anyTarget, size) => {
         // NPC ship already hostile to this pilot, within reach and arc: the
         // class the group's heaviest gun prefers first (`mountPriority`:
@@ -4846,7 +4847,7 @@ export class SectorRoom extends Room<SectorState> {
    *  shipInstanceId>`) to a damageable target. */
   private resolveLockTarget(pid: string, key: string, out: LockTargetView): boolean {
     if (key.startsWith('s:')) {
-      const rec = this.swarmRegistry.getByEntityId(Number(key.slice(2)));
+      const rec = this.swarmRegistry.getByEntityId(swarmLockId(key)); // no slice per call (#14)
       if (!rec || !swarmLockEligible(rec.kind, out)) return false; // terrain: never hostile
       if (rec.kind === 2) {
         // A structure outside the registry (testMode `structurePoses`
@@ -4891,7 +4892,7 @@ export class SectorRoom extends Room<SectorState> {
   private commitLockHostileAct(pid: string, key: string): void {
     const tick = this.serverTick;
     if (key.startsWith('s:')) {
-      const rec = this.swarmRegistry.getByEntityId(Number(key.slice(2)));
+      const rec = this.swarmRegistry.getByEntityId(swarmLockId(key)); // no slice per call (#14)
       if (!rec || isTerrainLockKind(rec.kind)) return; // terrain: never a hostile act (no ledger, aggro, log)
       if (rec.kind === 2) {
         const owner = this.structureRegistry.get(rec.id)?.owner;
@@ -4919,7 +4920,7 @@ export class SectorRoom extends Room<SectorState> {
    */
   private refreshLockHostility(pid: string, key: string): void {
     if (!key.startsWith('s:')) return;
-    const rec = this.swarmRegistry.getByEntityId(Number(key.slice(2)));
+    const rec = this.swarmRegistry.getByEntityId(swarmLockId(key)); // no slice per call (#14)
     if (rec?.kind !== 1) return;
     if (!this.pilotInNpcFireRange(rec.id, pid)) return;
     this.aiController.markHostile(rec.id, pid, this.serverTick);
