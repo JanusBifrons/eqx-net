@@ -5,7 +5,7 @@ Picks up from [HANDOFF-2026-11-11.md](HANDOFF-2026-11-11.md). This session ran t
 ## Owner decisions made today (all recorded in the docs they affect)
 
 - **Clips:** every reviewed clip goes to the owner straight away. A clip that passes review is presented as finished; one that fails is shared as WIP with its caveats (CLAUDE.md, hostile reviewer rule).
-- **Recording coordination:** the recording lock is retired. Before a take or a heavy run, check for at least 4 GB free RAM.
+- **Recording coordination:** the recording lock and the bare 4 GB RAM check are retired; heavy runs go through the heavy-job queue (docs/ops/agent-workflow.md "Heavy-job queue").
 - **Capitals UI:**
   - a green RTS move marker at the helm course;
   - small ships get a constant-size icon at far zoom;
