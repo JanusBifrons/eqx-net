@@ -115,6 +115,7 @@ The owner picked look A, the container ship. It is the ship kind `barge`, the la
 - **Anyone can own one.** A player can fly it; it is not tied to any side. Its side is its owner's, never the ship kind's, so it has no allegiance, and it never spawns at random (`randomSpawn: false`): a barge exists only because someone owns it. Its AI pilot uses the civilian role.
 - **A huge hold.** About 105,000 units, several times a battleship's (`cargoCapacity`, read by `cargoCapacityForMaxHealth` on the server and the client alike).
 - **26 mounts, all on the hull's drawn dishes.** Mining lasers (weapon group "Mining lasers"): 2 XL at the bow corners angled forward, 2 L at the aft corners, and 4 M and 4 AA in the side rows. Tractors (group "Tractors") mirror the lasers for the size ladder: in each side row an XL dish at the forward end (by the XL lasers), an L dish at the aft end (by the L lasers), 2 M, 2 AA and 1 S dish; 2 XL, 2 L, 4 M, 4 AA and 2 S in all. Reach, beam size and tractor pull scale with the mount size (`MOUNT_SIZE_TUNING`).
+- **On film:** showcase shot `barge-mining` (room `showcase-barge-mining`, eight placed rocks too heavy for any tractor round a parked barge): the pilot locks the nearest rock with the mining lasers (key 1) and the tractors (key 2), then holds position; the size ladder does the rest.
 
 ### Look options
 
