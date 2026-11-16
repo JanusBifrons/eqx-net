@@ -334,6 +334,7 @@ import { LootSubsystem, type LootCollector } from '../cargo/LootSubsystem.js';
 import { OreDraw, type OreHolder } from './OreDraw.js';
 import { StorageService, fittedModuleIds, isOperationalStorage, structureUid, DEPOSIT_DWELL_TICKS, DEPOSIT_RANGE, REPAIR_CREDITS_PER_HP, RESPEC_CREDIT_COST } from '../cargo/StorageService.js';
 import { SCRAP_HP } from '../../core/swarm/scrapConstants.js';
+import { convexHullCCW } from '../../core/swarm/asteroidShape.js';
 import { addPacked, cloneHold, emptyHold, extractRequested, holdWeight, isHoldEmpty, mergeInto, packedCount, takePacked, transferInto, type CargoRequest } from '../../core/cargo/hold.js';
 import type { HolderType, HoldRecord } from '../cargo/HoldStore.js';
 import { RAID_NOTICE_THROTTLE_MS, RAID_PRIORITY } from '../livingworld/RobotTerritory.js';
@@ -6744,16 +6745,15 @@ export class SectorRoom extends Room<SectorState> {
     return this.shieldWalls.blockShot(fromX, fromY, dirX, dirY, maxDist, damage, this.gameClock.now());
   }
 
-  /** Live asteroid obstacles (swarm kind=0) for connection line-of-sight, read
-   *  from the SAB. Shared by structure placement (Item D) and the grid-pulse
-   *  reconnect sweep (playtest 2026-06-10 Issue 2). Off the 60 Hz hot loop
-   *  (placement + 1 Hz pulse only), so the array build is acceptable. */
+  /** Live asteroids (swarm kind=0, SAB pose) blocking structure placement (Item D) and connection
+   *  line of sight, incl. the grid-pulse reconnect sweep (playtest 2026-06-10 Issue 2). Off the
+   *  60 Hz hot loop (placement + 1 Hz pulse only), so the array build is acceptable. */
   private gatherStructureObstacles(near?: ObstacleBox): GridObstacle[] {
     const obstacles: GridObstacle[] = [];
     for (const rec of this.swarmRegistry.all()) {
       if (rec.kind !== 0) continue; // asteroids only
-      const b = slotBase(rec.slot), f = this.sabF32; // placement narrow phase (C5b): collider parts, else the outline, at the live pose
-      obstacles.push({ x: f[b + SLOT_X_OFF]!, y: f[b + SLOT_Y_OFF]!, radius: rec.radius, angle: f[b + SLOT_ANGLE_OFF]!, parts: rec.wreckParts ?? (rec.vertices && [rec.vertices]) });
+      const b = slotBase(rec.slot), f = this.sabF32; // narrow phase (C5b/C5c): collider parts, else the convex outline (a field rock's raw outline may dent: its hull, as its collider), at the live pose
+      obstacles.push({ x: f[b + SLOT_X_OFF]!, y: f[b + SLOT_Y_OFF]!, radius: rec.radius, angle: f[b + SLOT_ANGLE_OFF]!, parts: rec.wreckParts ?? (rec.vertices && [rec.fieldRock === true ? convexHullCCW(rec.vertices) : rec.vertices]) });
     }
     if (near) this.cutField?.dormantObstacles(near, obstacles);
     return obstacles;

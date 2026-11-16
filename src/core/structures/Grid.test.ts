@@ -5,6 +5,7 @@ import {
   edgeDistance,
   segmentIntersectsAabb,
   isConnectionLineBlocked,
+  segmentHitsObstacle,
   type GridNode,
   type GridObstacle,
 } from './Grid.js';
@@ -276,6 +277,50 @@ describe('canConnect / isConnectionLineBlocked — obstacle blocking (Item D)', 
     const b = connector('b', 300, 0);
     const nodes = new Map([['a', a], ['b', b]]);
     expect(canConnect(a, b, new Map(), nodes)).toEqual({ ok: true });
+  });
+});
+
+// ── C5c — line of sight tests an obstacle's real shape (its convex parts) ──
+describe('isConnectionLineBlocked — obstacle parts narrow phase (macro terrain C5c)', () => {
+  // A big rock (radius 300) whose real shape is a thin bar along x
+  // (|x| ≤ 250, |y| ≤ 40), CCW. Its circle and box reach y = ±300.
+  const bar = [{ x: -250, y: -40 }, { x: 250, y: -40 }, { x: 250, y: 40 }, { x: -250, y: 40 }];
+  const a = node('a', { x: -500, y: 150 });
+  const b = node('b', { x: 500, y: 150 });
+  const nodes = new Map([['a', a], ['b', b]]);
+
+  it('a line through the circle but clear of the parts is NOT blocked', () => {
+    expect(isConnectionLineBlocked(a, b, nodes, [{ x: 0, y: 0, radius: 300, parts: [bar] }])).toBe(false);
+    expect(segmentHitsObstacle(-500, 150, 500, 150, { x: 0, y: 0, radius: 300, parts: [bar] })).toBe(false);
+  });
+
+  it('a line crossing a part IS blocked', () => {
+    const c = node('c', { x: -500, y: 20 });
+    const d = node('d', { x: 500, y: 20 });
+    expect(isConnectionLineBlocked(c, d, new Map([['c', c], ['d', d]]), [{ x: 0, y: 0, radius: 300, parts: [bar] }])).toBe(true);
+    // A second part elsewhere catches the line too (any part blocks).
+    const knob = [{ x: -30, y: 120 }, { x: 30, y: 120 }, { x: 30, y: 180 }, { x: -30, y: 180 }];
+    expect(isConnectionLineBlocked(a, b, nodes, [{ x: 0, y: 0, radius: 300, parts: [bar, knob] }])).toBe(true);
+  });
+
+  it('the parts turn with `angle`', () => {
+    // Turned 90°, the bar stands along y (|y| ≤ 250) and crosses y = 150.
+    expect(isConnectionLineBlocked(a, b, nodes, [{ x: 0, y: 0, radius: 300, angle: Math.PI / 2, parts: [bar] }])).toBe(true);
+    // A vertical line at x = 150 misses the turned bar (|x| ≤ 40) …
+    expect(segmentHitsObstacle(150, -500, 150, 500, { x: 0, y: 0, radius: 300, angle: Math.PI / 2, parts: [bar] })).toBe(false);
+    // … but crosses the unturned one.
+    expect(segmentHitsObstacle(150, -500, 150, 500, { x: 0, y: 0, radius: 300, parts: [bar] })).toBe(true);
+  });
+
+  it('a no-parts obstacle behaves exactly as before (its box blocks)', () => {
+    expect(isConnectionLineBlocked(a, b, nodes, [{ x: 0, y: 0, radius: 300 }])).toBe(true);
+    // Through the box corner, outside the circle: still blocked (box broad phase).
+    expect(segmentHitsObstacle(280, -500, 280, 500, { x: 0, y: 0, radius: 300 })).toBe(true);
+    expect(segmentHitsObstacle(-500, 350, 500, 350, { x: 0, y: 0, radius: 300 })).toBe(false);
+  });
+
+  it('a segment outside the box never reaches the parts', () => {
+    expect(segmentHitsObstacle(-500, 350, 500, 350, { x: 0, y: 0, radius: 300, parts: [bar] })).toBe(false);
   });
 });
 
