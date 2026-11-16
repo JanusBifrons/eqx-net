@@ -12,6 +12,7 @@ import { DESTRUCTION_PROFILES } from '../../shared-types/shipScale/destruction.j
 import { wreckCrackTicks } from '../../shared-types/wreckTiming.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { shipTuning } from '../../shared-types/shipScale/tuning.js';
+import { wreckSalvageQty } from '../../core/destruction/wreckIntegrity.js';
 
 function make(kinds: Record<string, string> = { cap: 'battleship' }, withRigid = false, owners: Record<string, string> = {}) {
   const rigid: Array<{ ids: readonly string[]; jx: number; jy: number; px: number; py: number }> = [];
@@ -422,5 +423,28 @@ describe('CapitalWreckSubsystem: a cut kill that burns every piece away (fractur
     expect(out.vaporised).toBe(false);
     expect(out.pieces).toBeGreaterThanOrEqual(2);
     expect(spawned.length).toBe(out.pieces);
+  });
+});
+
+describe('CapitalWreckSubsystem: a tractored piece stored whole (piece store)', () => {
+  it('pieceSalvageQty is the worn-out pod\'s wreckSalvageQty; storePiece removes it through the wreck path', () => {
+    for (const [id, kind] of [['f', 'fighter'], ['cap', 'battleship']] as const) {
+      const { sys, spawned, removed, live } = make({ [id]: kind });
+      sys.forcedSeed = 9;
+      sys.onDeath(id, kind, pose, 10_000);
+      expect(spawned.length).toBeGreaterThanOrEqual(2);
+      const p = spawned[0]!;
+      expect(sys.pieceSalvageQty(p.id)).toBe(wreckSalvageQty(kind, p.mass));
+      expect(sys.pieceSalvageQty(p.id)).toBeGreaterThan(0);
+      expect(sys.pieceSalvageQty('nope')).toBe(0);
+      const before = sys.liveCount();
+      sys.storePiece(p.id);
+      expect(removed).toEqual([p.id]);
+      expect(live.has(p.id)).toBe(false);
+      expect(sys.liveCount()).toBe(before - 1);
+      expect(sys.pieceSalvageQty(p.id), 'gone: nothing to store twice').toBe(0);
+      sys.storePiece(p.id); // a second mount on the same piece: a no-op
+      expect(removed).toEqual([p.id]);
+    }
   });
 });
