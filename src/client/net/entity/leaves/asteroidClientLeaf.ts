@@ -24,8 +24,8 @@ export class AsteroidClientLeaf extends ClientEntityLeafBase {
     // the same verts the server's body has (#15); a client that has not cut
     // that chunk yet falls back to a generated rock of the same radius.
     const fk = ctx.entry.fieldKey;
-    const verts = (fk !== undefined ? ctx.fieldRocks?.wakeFieldRock(fk) : null)
-      ?? generateAsteroidVertices(ctx.entry.shapeSeed ?? 0, ctx.entry.radius);
+    const field = fk !== undefined ? ctx.fieldRocks?.wakeFieldRock(fk) ?? null : null;
+    const verts = field?.verts ?? generateAsteroidVertices(ctx.entry.shapeSeed ?? 0, ctx.entry.radius);
     ctx.predWorld.spawnObstacle(
       ctx.key,
       ctx.entry.x,
@@ -33,6 +33,9 @@ export class AsteroidClientLeaf extends ClientEntityLeafBase {
       ctx.entry.radius,
       ASTEROID_MASS,
       verts,
+      undefined,
+      undefined,
+      field?.parts ?? undefined, // its convex parts (plan C1), like the server's body
     );
     ctx.predWorld.lockBody(ctx.key); // static server-side
   }
