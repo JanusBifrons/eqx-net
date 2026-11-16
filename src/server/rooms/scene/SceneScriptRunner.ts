@@ -17,6 +17,8 @@
  *  - `fleet`: `count` PARKED hulls owned by the first pilot (roster rows +
  *    lingering hulls), each flown by its wingman brain in `mode` / `stance`
  *    (the RTS fleet scene). Refused without a pilot.
+ *  - `rocks` / `rockCut`: still rocks `scene-<tag>-<i>`, then each mined to
+ *    a break through the mining laser's real wear path (rock-cut scene).
  *  - `end`: the scene is over (the measurement window closes).
  */
 import type { ShipKindId } from '../../../shared-types/shipKinds.js';
@@ -31,6 +33,10 @@ export interface SceneHooks {
   /** `fleet` step: one PARKED hull owned by the first pilot, AI-flown by its
    *  wingman brain. False = refused (no pilot, roster full, no slot). */
   ownedHull?(kind: ShipKindId, x: number, y: number, opts: SceneFleetOpts): boolean;
+  /** `rocks` step: one still rock. False = refused (no slot). */
+  spawnRock?(id: string, x: number, y: number, radius: number): boolean;
+  /** `rockCut` step: mine rock `id` to a break. False = no break (refused). */
+  cutRock?(id: string): boolean;
 }
 
 export interface SceneFleetOpts {
@@ -112,7 +118,21 @@ export class SceneScriptRunner {
 
   private play(step: SceneStep): void {
     if (step.action === 'end') { this.status.ended = true; return; }
+    if (step.action === 'rockCut') {
+      for (let i = 0; i < step.count; i++) {
+        if (this.hooks.cutRock?.(`scene-${step.tag}-${i}`) ?? false) this.status.spawned++; else this.status.refused++;
+      }
+      return;
+    }
     const spread = step.spread ?? 0;
+    if (step.action === 'rocks') {
+      for (let i = 0; i < step.count; i++) {
+        scenePoint(i, step.count, spread, this.pt);
+        const ok = this.hooks.spawnRock?.(`scene-${step.tag}-${i}`, step.x + this.pt.x, step.y + this.pt.y, step.radius) ?? false;
+        if (ok) this.status.spawned++; else this.status.refused++;
+      }
+      return;
+    }
     if (step.action === 'fleet') {
       const opts: SceneFleetOpts = { mode: step.mode ?? 'defend', stance: step.stance ?? 'defensive', health: step.health ?? null };
       for (let i = 0; i < step.count; i++) {

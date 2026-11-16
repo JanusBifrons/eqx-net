@@ -6,6 +6,11 @@
  * beam on it stays put (it is outside the fly-over radius), and a full hold
  * leaves the tractored pod hovering.
  *
+ * Piece store: a wreck piece the beam pulls into the same zone goes WHOLE into
+ * the emitter's hold as the salvage it would leave when worn out (one
+ * `HoldStore` commit), and leaves through the wreck system's removal path; a
+ * hold without room for all of it leaves the piece in the beam, no pod.
+ *
  * No ship kind carries a tractor yet (the barge is PR 15), so the test swaps
  * the interceptor's mounts to `tractor` in-process and restores them after
  * (the tractorBeam.test.ts pattern).
@@ -37,6 +42,9 @@ async function until(pred: () => boolean, ms: number): Promise<boolean> {
 const HOLD = getWeapon('tractor').tractor!.hold;
 /** Inside the hold zone, outside the fly-over radius. */
 const POD_DIST = HOLD * 1.1;
+/** A fighter killed here leaves pieces outside the zone, inside the reach. */
+const PIECE_DIST = HOLD * 1.6;
+const WRECK_KIND = 4;
 
 describe('SectorRoom integration — tractor hold-zone pickup', () => {
   let harness: SectorTestHarness;
@@ -53,7 +61,7 @@ describe('SectorRoom integration — tractor hold-zone pickup', () => {
   }> {
     for (const m of mounts) m.weaponId = 'tractor';
     harness = await bootSectorTestServer({
-      sectorKey: 'sol-prime', droneCount: 0, testMode: true, peacefulDrones: true, asteroidConfig: [],
+      sectorKey: 'sol-prime', droneCount: 0, testMode: true, peacefulDrones: true, asteroidConfig: [], subcapWrecks: true,
     });
     const pid = randomUUID();
     const client = (await harness.connectActive(pid, {
@@ -132,5 +140,69 @@ describe('SectorRoom integration — tractor hold-zone pickup', () => {
     expect(s.int().loot.isPod(podId), 'a full hold leaves the pod in the world').toBe(true);
     expect(getHoldStore().get(podId)?.hold.goods.salvage).toBe(5);
     expect(getHoldStore().get(id)?.hold.goods.salvage).toBe(cap);
+  }, 30_000);
+
+  /** A fighter killed beyond the hold zone (a real bolt, the subcapWrecks
+   *  test's pattern); returns its wreck piece nearest the emitter. */
+  async function smallPiece(s: Awaited<ReturnType<typeof setup>>): Promise<string> {
+    expect(s.int().spawnTestDrone('f1', 0, PIECE_DIST, 'fighter')).toBe(true);
+    await harness.advance(100);
+    const at = s.int().wreckState('f1')!;
+    s.int().spawnTestProjectile('shooter-x', at.x - 600, at.y, 4000, 0, 'laser', 1e6);
+    for (let t = 0; t < 40 && s.int().swarmRegistry.get('f1'); t++) await harness.advance(50);
+    const pieces = [...s.int().swarmRegistry.all()].filter((r) => r.kind === WRECK_KIND);
+    expect(pieces.length, 'the fighter broke into wreck pieces').toBeGreaterThanOrEqual(2);
+    // Its own loot drop is not under test: clear it so only the piece can fill the hold.
+    for (const pod of [...s.int().loot.podIds()]) s.int().loot.onPodDestroyed(pod);
+    const d = (id: string): number => { const w = s.int().wreckState(id)!; return Math.hypot(w.x, w.y); };
+    return pieces.map((r) => r.id).reduce((a, b) => (d(b) < d(a) ? b : a));
+  }
+
+  /** Count HoldStore commits that write hold `uid`. */
+  function countCommits(uid: string): { n: number; restore: () => void } {
+    const store = getHoldStore();
+    const orig = store.commit.bind(store);
+    const out = { n: 0, restore: () => { store.commit = orig; } };
+    store.commit = (puts, deletes, persist, extra) => {
+      if (puts.some((r) => r.holderUid === uid)) out.n++;
+      orig(puts, deletes, persist, extra);
+    };
+    return out;
+  }
+
+  it('a wreck piece tractored into the hold zone is stored whole: hold gains its salvage in one commit, the piece is gone', async () => {
+    const s = await setup();
+    const id = s.shipId();
+    const piece = await smallPiece(s);
+    const qty = s.int().wreckSalvage(piece);
+    expect(qty, 'the piece is worth salvage').toBeGreaterThan(0);
+    const commits = countCommits(id);
+    try {
+      const stored = await tractorUntil(s, piece, () => s.int().swarmRegistry.get(piece) == null, 8_000);
+      expect(stored, 'the tractored piece reached the hold zone and was stored').toBe(true);
+      expect(getHoldStore().get(id)?.hold.goods.salvage).toBe(qty);
+      expect(commits.n, 'one atomic commit into the hold').toBe(1);
+      expect(s.int().wreckSalvage(piece), 'the wreck system dropped it').toBe(0);
+      expect(s.int().loot.podCount(), 'no pod in between').toBe(0);
+    } finally { commits.restore(); }
+  }, 30_000);
+
+  it('a hold without room leaves the tractored piece in the beam: hold unchanged, no pod', async () => {
+    const cap = cargoCapacityForMaxHealth(getShipKind('interceptor'));
+    const s = await setup({ goods: { salvage: cap }, blueprints: [] });
+    const id = s.shipId();
+    const piece = await smallPiece(s);
+    let inZone = false;
+    await tractorUntil(s, piece, () => {
+      const w = s.int().wreckState(piece);
+      const me = s.int().playerPose(s.pid); // the ship drifts (the wake-up thrust)
+      if (w !== null && me && Math.hypot(w.x - me.x, w.y - me.y) < HOLD * TRACTOR_PICKUP_HOLD_MUL - 40) inZone = true;
+      return false;
+    }, 4_000);
+    expect(inZone, 'the beam pulled the piece into the hold zone').toBe(true);
+    expect(s.int().swarmRegistry.get(piece)?.kind, 'the piece stays').toBe(WRECK_KIND);
+    expect(s.int().wreckSalvage(piece)).toBeGreaterThan(0);
+    expect(getHoldStore().get(id)?.hold.goods.salvage).toBe(cap);
+    expect(s.int().loot.podCount(), 'no pod spam').toBe(0);
   }, 30_000);
 });

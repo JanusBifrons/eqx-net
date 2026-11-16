@@ -48,17 +48,19 @@ export function burnHullHit(
   return burn;
 }
 
-/** A hit on a live wreck piece (`onWreckHit`) of a wreck rooted in a
- *  `rootKindId` hull: a cutting beam burns its line into the piece (the dead
- *  hull's frame under it, at its pose now), so when it gives way it breaks
- *  along every beam that burned it in the last moment. */
+/** A hit on a live wreck piece (`onWreckHit`) of a wreck whose source
+ *  (`WreckSource`) has `scale` world units per 1× unit: a cutting beam burns
+ *  its line into the piece (the source's frame under it, at its pose now),
+ *  so when it gives way it breaks along every beam that burned it in the
+ *  last moment. An uncut rock is a "piece" at its own centre (cx = cy = 0,
+ *  scale 1; rockCut.ts). */
 export function burnPieceHit(
-  k: PieceKnock, d: Pick<CapitalWreckDeps, 'piecePoseInto' | 'serverTick'>, id: string, rootKindId: ShipKindId,
+  k: PieceKnock, d: Pick<CapitalWreckDeps, 'piecePoseInto' | 'serverTick'>, id: string, scale: number,
   shooterId: string, hitX: number, hitY: number, dirX: number, dirY: number, weaponId?: WeaponId,
 ): void {
   const cw = cutWidthOf(weaponId);
   if (cw < 0 || d.piecePoseInto?.(id, BURN_POSE) !== true) return;
-  const s = shipShapeScale(getShipKind(rootKindId));
+  const s = scale;
   const gap = (BURN_LINE_MERGE_GAP_PER_RADIUS * k.radius) / s;
   if (k.burn === null) k.burn = new BurnLines(gap); // once per piece, on its first cutting hit
   const c = Math.cos(BURN_POSE.angle);
