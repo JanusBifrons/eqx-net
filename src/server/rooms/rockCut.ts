@@ -150,7 +150,8 @@ export class RockCutter {
           ...(inputs.cutKind !== undefined ? { cutKind: inputs.cutKind, cutAng: inputs.cutAng } : {}),
           ...(inputs.cutW !== undefined ? { cutW: inputs.cutW } : {}),
           ...(inputs.extraCuts !== undefined ? { extraCuts: inputs.extraCuts.slice() } : {}),
-          rock: { id, shape: rock.shape, r: rock.radius },
+          // Its resource rides too (emit-when-not-plain) so the pieces keep the rock's look (#16).
+          rock: { id, shape: rock.shape, r: rock.radius, ...(rock.resource !== 'rock' ? { res: rock.resource } : {}) },
         },
         pieces: r.ids.length, ids: r.ids, mass: r.mass, holdUntil: tick,
         chain: { root: inputs, steps: [] }, parent: 0, children: 0, src, ore,

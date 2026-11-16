@@ -2,6 +2,7 @@
  *  stream): the descriptor shape, its zod schemas and the alloc-free guards.
  *  Split out of `snapshotMessages.ts`, which re-exports all of it. */
 import { z } from 'zod';
+import { ASTEROID_RESOURCE_IDS, type AsteroidResourceId } from '../asteroidResources.js';
 
 /** Wreck ids are u16, never 0; a resync range's `hi` may be one past the end. */
 export const WRECK_ID_END = 0x10000;
@@ -37,12 +38,15 @@ export const WRECK_ROCK_PARENT_KIND = 'asteroid';
 /** Rock cut (mining-and-salvage.md "Mining asteroids"): the rock a root
  *  wreck was cut from. Its outline is `generateAsteroidVertices(shape, r)`
  *  (the one it collided and drew with), the fracture's input on both sides
- *  (#15); `id` its stable id (ore, a later tint). Also
+ *  (#15); `id` its stable id (ore, a later tint); `res` its resource when
+ *  not plain rock (absent = plain), so its pieces draw the uncut rock's
+ *  art and colour, late joiners included (#16). Also
  *  `WreckFractureInputs.rock`. */
 export interface WreckRockRef {
   id: string;
   shape: number;
   r: number;
+  res?: AsteroidResourceId;
 }
 
 export const WreckRockRefSchema = z
@@ -50,6 +54,7 @@ export const WreckRockRefSchema = z
     id: z.string().min(1).max(MAX_WRECK_ROCK_ID_LEN),
     shape: z.number().int().min(0).max(0xffff),
     r: z.number().finite().positive(),
+    res: z.enum(ASTEROID_RESOURCE_IDS).optional(),
   })
   .strict();
 
@@ -135,7 +140,8 @@ function isRockRef(v: unknown): boolean {
   const shape = r['shape'];
   return typeof id === 'string' && id.length > 0 && id.length <= MAX_WRECK_ROCK_ID_LEN
     && typeof shape === 'number' && Number.isInteger(shape) && shape >= 0 && shape <= 0xffff
-    && finite(r['r']) && (r['r'] as number) > 0;
+    && finite(r['r']) && (r['r'] as number) > 0
+    && (r['res'] === undefined || (ASTEROID_RESOURCE_IDS as readonly unknown[]).includes(r['res']));
 }
 
 /** Alloc-free twin of `WreckRemovesSchema`'s element check. */

@@ -28,7 +28,7 @@ import { buildStructureVisual } from './structureVisuals.js';
 export const SHIP_HITBOX_RADIUS = 12; // must match World.ts SHIP_RADIUS
 export const HITBOX_COLOR = 0xff0066;
 export const SERVER_GHOST_COLOR = 0xff4400;
-const ASTEROID_COLOR = 0x886644;
+export const ASTEROID_COLOR = 0x886644;
 const ASTEROID_OUTLINE = 0xbb9966;
 const DRONE_FILL_COLOR = 0xff3366;
 const DRONE_OUTLINE_COLOR = 0xffaacc;

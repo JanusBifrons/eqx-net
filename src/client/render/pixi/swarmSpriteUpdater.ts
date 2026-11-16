@@ -63,7 +63,7 @@ import {
 } from '../../net/swarmInterpolation';
 import { resolveEntityDisplayPose } from '../../net/swarmDisplayPose';
 import { WreckPieceSprite, coolWreckInfo } from './wreckArt.js';
-import { buildRockPieceArt, isRockWreck } from './rockPieceArt.js';
+import { buildRockPieceArt, classicRockTint, isRockWreck, rockPieceLook } from './rockPieceArt.js';
 
 /** S2b: an empty wreck map for frames whose mirror carries none. */
 const NO_WRECKS: ReadonlyMap<number, unknown> = new Map();
@@ -118,12 +118,9 @@ export function scrapHeatTint(ageMs: number): number | undefined {
   return (0xff << 16) | (g << 8) | b;
 }
 
-/** Classic-look rocks: ice and crystal-veined ones read apart from plain rock
- *  (a Machined rock bakes its resource colour instead). W3: this used to be
- *  set once at build, and the reset below wiped it every frame. */
-function classicRockTint(resource: string | undefined): number | undefined {
-  return resource === 'ice' ? 0xa8dcff : resource === 'crystal' ? 0xd2a8ff : undefined;
-}
+// Classic-look rocks: `classicRockTint` (rockPieceArt.ts, shared with a cut
+// rock's pieces). W3: it used to be set once at build, and the reset below
+// wiped it every frame.
 
 export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): void {
   if (!mirror.swarm) return;
@@ -204,9 +201,21 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     const wreckArtHandle = wreckDesc !== undefined && ctx.art.art && !wreckRock
       ? wreckArtHandleFor(ctx.art, spriteKey, wreckParent, wreckDesc.owner ?? entry.faction, wreckDeadArtFor(wreckParent))
       : null;
+    // A rock's piece draws the uncut rock's art: its Machined rock handle
+    // (the same bake key the rock used: shape, radius, resource), swapped in
+    // once ready, as a rock's own sprite is.
+    const pieceRock = wreckRock ? ctx.wrecks!.rockOf(entry.wreckId!) : undefined;
+    const rockPieceHandle = pieceRock !== undefined && ctx.art.art
+      ? rockHandleFor(ctx.art, spriteKey, pieceRock.shape, pieceRock.r, rockPieceLook(pieceRock).resource, -entry.angle)
+      : null;
     if (
-      sprite instanceof WreckPieceSprite && wreckArtHandle !== null &&
-      wreckArtHandle.state === 'ready' && wreckArtHandle.ship !== null && sprite.art !== wreckArtHandle.ship
+      sprite instanceof WreckPieceSprite && ((
+        wreckArtHandle !== null &&
+        wreckArtHandle.state === 'ready' && wreckArtHandle.ship !== null && sprite.art !== wreckArtHandle.ship
+      ) || (
+        rockPieceHandle !== null && rockPieceHandle.state === 'ready' && rockPieceHandle.struct !== null
+        && sprite.rockArt !== null && sprite.rockArt.struct !== rockPieceHandle.struct
+      ))
     ) {
       ctx.shipContainer.removeChild(sprite);
       ctx.spriteBuildSigs.delete(spriteKey);
@@ -286,9 +295,10 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
           ? ctx.wreckArt.infoFor(desc, pieces, index, pose, entry.lastUpdateTick, fxNow)
           : coolWreckInfo(desc);
         const shipArt = wreckArtHandle !== null && wreckArtHandle.state === 'ready' ? wreckArtHandle.ship : null;
-        const rock = wreckRock ? ctx.wrecks!.rockOf(entry.wreckId!) : undefined;
-        if (wreckRock && rock === undefined) continue; // rock piece without its rock: not drawn
-        sprite = new WreckPieceSprite(g, wreckParent, shipArt, info, index, rock !== undefined ? buildRockPieceArt(g, rock) : null);
+        if (wreckRock && pieceRock === undefined) continue; // rock piece without its rock: not drawn
+        sprite = new WreckPieceSprite(
+          g, wreckParent, shipArt, info, index, pieceRock !== undefined ? buildRockPieceArt(g, pieceRock, rockPieceHandle) : null,
+        );
       } else {
         const rockRadius = entry.radius;
         // An awake cut-field rock keeps its cut shape and rock surface.

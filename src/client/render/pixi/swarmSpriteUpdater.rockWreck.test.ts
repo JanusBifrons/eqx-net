@@ -4,15 +4,17 @@
  * outline (`rockPieceArt.ts`), inside a `WreckPieceSprite` (cut-edge glow,
  * hit flash). A rock's parent kind is `WRECK_ROCK_PARENT_KIND` ('asteroid'),
  * not a ship kind, and its wire shipKind byte decodes to an arbitrary ship
- * kind: neither may reach a ship-art or ship-kind lookup.
+ * kind: neither may reach a ship-art or ship-kind lookup (only the rock's
+ * own bake, the art the uncut rock drew).
  */
 import { describe, it, expect, vi } from 'vitest';
-import { Container, Graphics } from 'pixi.js';
+import { Container, Graphics, Texture } from 'pixi.js';
+import { MachinedFlatSprite } from '../art/MachinedFlatSprite.js';
 import { updateSwarmSprites, type SwarmSpriteCtx } from './swarmSpriteUpdater.js';
 import { MountVisualManager } from '../MountVisualManager.js';
 import { WreckGeometryStore, rebuildWreckPieces } from '../../net/wreckGeometryStore.js';
 import { WreckArtState, WreckPieceSprite } from './wreckArt.js';
-import type { ArtService } from '../art/ArtService.js';
+import type { ArtService, StructArt } from '../art/ArtService.js';
 import type { RenderMirror, SwarmRenderState, PoseRingEntry } from '../../../core/contracts/IRenderer.js';
 import { POSE_RING_DEPTH } from '../../../core/contracts/IRenderer.js';
 import { FRACTURE_ALGO_VERSION } from '../../../core/destruction/fractureHull.js';
@@ -36,10 +38,15 @@ function emptyPoseRing(): PoseRingEntry[] {
   return ring;
 }
 
-/** An art service that fails the test on ANY use (no ship art for rocks). */
+/** An art service that fails the test on any use but the rock bake (a rock
+ *  piece draws the uncut rock's art, never ship art). */
 function poisonArt(touched: string[]): ArtService {
   return new Proxy({}, {
-    get(_t, p) { touched.push(String(p)); throw new Error(`art service touched: ${String(p)}`); },
+    get(_t, p) {
+      touched.push(String(p));
+      if (p === 'rock') return () => ({ state: 'pending', ship: null, struct: null, job: { type: 'rock' } });
+      throw new Error(`art service touched: ${String(p)}`);
+    },
   }) as ArtService;
 }
 
@@ -100,7 +107,7 @@ describe('rock wreck pieces draw the asteroid art (rock cut)', () => {
       const mirror = mirrorFor(d, DEATH_TICK + 1);
       expect(mirror.swarm!.size).toBeGreaterThan(1);
       expect(() => { updateSwarmSprites(mirror, ctx); updateSwarmSprites(mirror, ctx); }).not.toThrow();
-      expect(touched).toEqual([]);
+      expect(new Set(touched), 'only the rock bake').toEqual(new Set(['rock']));
       const ps = pieces(ctx);
       expect(ps.length).toBe(mirror.swarm!.size);
       const geom = rebuildWreckPieces(d);
@@ -121,6 +128,30 @@ describe('rock wreck pieces draw the asteroid art (rock cut)', () => {
       expect(ps.some((p) => p.glowSegments() > 0)).toBe(true);
     });
   }
+
+  it('a piece swaps to the rock\'s Machined bake once it is ready (the uncut rock\'s art and resource)', () => {
+    const asked: Array<[number, number, string | undefined]> = [];
+    const handle = { state: 'pending' as string, ship: null, struct: null as StructArt | null, job: { type: 'rock' } };
+    const art = {
+      rock: (shape: number, r: number, res: string | undefined) => { asked.push([shape, r, res]); return handle; },
+    } as unknown as ArtService;
+    const ctx = makeCtx(art);
+    const d: WreckDescriptor = { ...rockDesc('slice'), rock: { ...ROCK, res: 'ice' } };
+    const mirror = mirrorFor(d, DEATH_TICK + 1);
+    updateSwarmSprites(mirror, ctx);
+    expect(asked[0]).toEqual([ROCK.shape, ROCK.r, 'ice']);
+    for (const p of pieces(ctx)) expect(p.rockArt!.struct).toBeNull();
+    const struct: StructArt = { tex: Texture.WHITE, albedo: Texture.WHITE, w: 32, h: 32, density: 2, navLights: [] };
+    handle.state = 'ready';
+    handle.struct = struct;
+    updateSwarmSprites(mirror, ctx);
+    const ps = pieces(ctx);
+    expect(ps.length).toBe(mirror.swarm!.size);
+    for (const p of ps) {
+      expect(p.rockArt!.struct).toBe(struct);
+      expect(p.rockArt!.children[0]).toBeInstanceOf(MachinedFlatSprite);
+    }
+  });
 
   it('a rock piece whose rock cannot be resolved is not drawn (never a ship fallback)', () => {
     const ctx = makeCtx(null);

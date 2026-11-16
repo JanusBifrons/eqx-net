@@ -57,6 +57,7 @@ import type { ShipArt } from '../art/ArtService.js';
 import { sunFrameBlend, type SunBlend } from '../art/machinedShipLight.js';
 import { buildWreckPieceGfx, wreckPieceColors } from './spriteBuilders.js';
 import { isIconOnly } from './FarZoomIcons.js';
+import { rockPieceSpeckColor, type RockPieceArt } from './rockPieceArt.js';
 import { getShipKind } from '../../../shared-types/shipKinds.js';
 import { shipShapeScale } from '../../../core/geometry/shipHullOutline.js';
 import type { WreckPieceGeometry } from '../../../core/destruction/wreckPieces.js';
@@ -1112,12 +1113,13 @@ export class WreckPieceSprite extends Container {
   constructor(
     piece: WreckPieceGeometry, parentKind: string, readonly art: ShipArt | null, readonly info: WreckInfo,
     /** This piece's index in its wreck (its ripples); a rock piece's art (`buildRockPieceArt`, no ship lookups). */
-    readonly pieceIndex = 0, rockArt: Container | null = null,
+    readonly pieceIndex = 0, readonly rockArt: RockPieceArt | null = null,
   ) {
     super();
     this.piece = piece;
     this.parentKind = parentKind;
-    this.shipRadius = rockArt !== null ? 0 : getShipKind(parentKind).radius;
+    // A rock piece's LOD switches on its parent rock's size (no ship kind).
+    this.shipRadius = rockArt !== null ? rockArt.rock.r : getShipKind(parentKind).radius;
     const settings = litPass.settings;
     if (rockArt !== null) this.artParts.push(this.addChild(rockArt));
     else if (art !== null && art.lit !== undefined && settings !== null) {
@@ -1471,7 +1473,9 @@ export class WreckPieceSprite extends Container {
    * only on a change.
    */
   setFarZoom(scale: number, layer: RenderLayer | null = null): void {
-    if (this.litMeshes === 0) return;
+    // A rock piece always takes the speck: its art is masked (a stencil
+    // mask per piece never batches), lit or not.
+    if (this.litMeshes === 0 && this.rockArt === null) return;
     const lod = wreckPieceFarLod(this.shipRadius, scale, this.farLod);
     if (lod === this.farLod) return;
     this.farLod = lod;
@@ -1488,7 +1492,7 @@ export class WreckPieceSprite extends Container {
       g.position.set((x0 + x1) / 2, -(y0 + y1) / 2); // pixiY = -gameY
       g.width = Math.max(1e-3, x1 - x0);
       g.height = Math.max(1e-3, y1 - y0);
-      const fill = wreckPieceColors(this.parentKind).fill;
+      const fill = this.rockArt !== null ? rockPieceSpeckColor(this.rockArt.rock) : wreckPieceColors(this.parentKind).fill;
       g.tint = this.info.fx.burntArt ? mulColor(fill, burntTint(this.piece, this.info)) : mulColor(fill, this.artTint);
       this.addChildAt(g, 0); // under the glow
       this.farGfx = g;

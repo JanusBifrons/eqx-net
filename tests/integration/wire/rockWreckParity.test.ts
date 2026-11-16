@@ -64,7 +64,7 @@ describe('rock cut: server bodies == client rebuild (#15, #16)', () => {
     expect(descs).toHaveLength(1);
     const d = descs[0]!;
     expect(d.parentKind).toBe(WRECK_ROCK_PARENT_KIND);
-    expect(d.rock).toEqual({ id: ROCK_ID, shape: asteroidShapeSeed(ROCK_ID), r: R });
+    expect(d.rock).toEqual({ id: ROCK_ID, shape: asteroidShapeSeed(ROCK_ID), r: R, res: 'ice' }); // an ice rock: its resource rides (the pieces keep its look)
     expect(d.cutKind).toBe('slice');
     expect(WreckDescriptorSchema.safeParse(d).success).toBe(true);
     expect(isWreckDescriptor(d)).toBe(true);

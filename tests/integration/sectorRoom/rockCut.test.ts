@@ -106,6 +106,20 @@ describe('SectorRoom integration: the mining laser cuts asteroids like wrecks', 
     expect(int.wreckCounts().subcap, 'live pieces stay within the cap').toBeLessThanOrEqual(cap);
   });
 
+  it('a coloured rock\'s descriptor carries its resource (its pieces keep the look, #16)', { timeout: 20_000 }, async () => {
+    const { room, pid } = await setup(60);
+    const int = room._internals;
+    expect(int.spawnTestAsteroid('rock-ice', 0, -400, 40, 'ice')).toBe(true);
+    await harness.advance(20);
+    for (let i = 0; i < 200 && int.swarmRegistry.get('rock-ice') !== null; i++) int.applyDamage('rock-ice', pid, 120, 6, -340, 0, -1, 'mining_laser');
+    for (let i = 0; i < 200 && int.swarmRegistry.get('rock-1') !== null; i++) int.applyDamage('rock-1', pid, 120, 6, 340, 0, 1, 'mining_laser');
+    const descs = int.wreckDescriptors();
+    expect(descs.find((d) => d.rock?.id === 'rock-ice')?.rock?.res).toBe('ice');
+    const plain = descs.find((d) => d.rock?.id === 'rock-1');
+    expect(plain).toBeDefined();
+    expect(plain!.rock!.res, 'plain rock: emit-when-not-plain').toBeUndefined();
+  });
+
   it('the per-hit rock view is one reused scratch object (#14)', { timeout: 20_000 }, async () => {
     const { room } = await setup(60);
     const int = room._internals;
