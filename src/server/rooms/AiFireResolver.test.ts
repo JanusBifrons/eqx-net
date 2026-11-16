@@ -75,7 +75,7 @@ function makeResolver(opts: {
 
 /** A forward ray from the origin pointing +x. */
 function ray(): WeaponFireContext {
-  return { fromX: 0, fromY: 0, dirX: 1, dirY: 0, shooterVx: 0, shooterVy: 0, mountId: 'm0' };
+  return { fromX: 0, fromY: 0, dirX: 1, dirY: 0, shooterVx: 0, shooterVy: 0, mountId: 'm0', rangeMul: 1 };
 }
 
 describe('AiFireResolver.hitscan — first thing in the path', () => {

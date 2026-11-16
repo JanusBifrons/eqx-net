@@ -171,10 +171,10 @@ import { tuningFor } from '@shared-types/shipScale/lookup';
 // A group fires only when a barrel bears on its lock: the shared rule (#15).
 import { fillFireTargetShape, fillRangeShape, mountFiresOn, newFireTargetShape, type FireTargetShape } from '@core/combat/fireControlBearing';
 import { FcMountPicker, fcNeedsPick, type FcMountDef } from './fcMountPick';
-import { hasTurretFireControl, mountWeaponReach, weaponIdReach, type MountRangeTarget } from '@core/combat/mountReach';
+import { hasTurretFireControl, mountRangeFactor, mountWeaponReach, weaponIdReach, type MountRangeTarget } from '@core/combat/mountReach';
 /** No aim guides (the mirror's `localAimMountIds`): the lock rings replace them. */
 const EMPTY_AIM_IDS: readonly string[] = Object.freeze([]);
-import { getWeapon, isMiningTool, weaponAutoFireRange, type WeaponDef, type WeaponId } from '@core/combat/WeaponCatalogue';
+import { getWeapon, isMiningTool, type WeaponDef, type WeaponId } from '@core/combat/WeaponCatalogue';
 import { canAfford, spendEnergy, regenEnergyStep, resolveSlotEnergyCost, BOOST_TICK_COST } from '@core/combat/Energy';
 import { gateDisabledInput, type ControlBits } from '@core/combat/disable';
 import { DEAD_RECKON_BACK_MS, DEAD_RECKON_CAP_MS, RENDER_DUE_SLEW_MS, RENDER_DUE_SNAP_MS, slewTickDue, tickBoundaryDueMs } from './renderTickPhase';
@@ -5997,8 +5997,9 @@ export class ColyseusGameClient {
       // construction). SOLID to optimal (== the aim guide), fading to nothing
       // across optimal→max. Alloc-free: cached lookup + scalar helpers (#14).
       const wdef = getWeapon(mount.weaponId);
-      const optimalDist = beamOptimalDist(wdef);
-      const beamMax = beamMaxDist(wdef);
+      const rangeMul = mountRangeFactor(mount.weaponId, mount.size); // a mining tool's sized beam, as the server ray
+      const optimalDist = beamOptimalDist(wdef, rangeMul);
+      const beamMax = beamMaxDist(wdef, rangeMul);
       // Remote drones/scrap are tested at their DRAWN pose (the pose the
       // turret aims at), not their predicted-timeline body.
       const hit = skipHitscan ? null : this.displayHitscan().hitscan(fromX, fromY, fwdX, fwdY, beamMax, localId, beamHalfWidth(wdef), isMiningTool(mount.weaponId));
@@ -6130,7 +6131,7 @@ export class ColyseusGameClient {
   }
 
   /** A weapon group's lock-reach basis (u, before `LOCK_TUNING.reachSlack`) for the local
-   *  ship: the same `weaponAutoFireRange` max the server's `groupGeometry` uses. 0 = unknown.
+   *  ship: the same `mountWeaponReach` max the server's `groupGeometry` uses. 0 = unknown.
    *  Read by the contacts overview at 4 Hz, never per frame. */
   fcGroupReach(groupId: string): number {
     const id = this.mirror.localPlayerId;
@@ -6323,10 +6324,10 @@ export class ColyseusGameClient {
         const m = mounts[mi]!;
         const w = getWeapon(m.weaponId);
         if (w.cooldownTicks > cd) cd = w.cooldownTicks;
-        const r = weaponAutoFireRange(w);
+        const r = mountWeaponReach(m);
         if (r > reach) reach = r;
         this._fcMountGroup.set(m.id, slot.id);
-        this._fcMountDef.set(m.id, { mount: m, ordinal: mi, reach: mountWeaponReach(m), group: mounts });
+        this._fcMountDef.set(m.id, { mount: m, ordinal: mi, reach: r, group: mounts });
       }
       this._fcInfo.set(slot.id, {
         cooldownMs: (cd * 1000) / 60,
@@ -6509,15 +6510,16 @@ export class ColyseusGameClient {
     return false;
   }
 
-  /** May this one mount (world origin + barrel angle) fire at its group's aim target (`mountFiresOn`)? */
-  private fcMountBears(mountId: string, weaponId: WeaponId, ox: number, oy: number, angle: number): boolean {
+  /** May this one mount (world origin + barrel angle) fire at its group's aim target (`mountFiresOn`)?
+   *  `size`: the mount's (a mining tool's reach scales with it, `weaponIdReach`). */
+  private fcMountBears(mountId: string, weaponId: WeaponId, size: WeaponMount['size'], ox: number, oy: number, angle: number): boolean {
     // Capitals fire one turret at a time: only the mounts in this salvo.
     if (this._fcSalvo.size > 0 && !this._fcSalvo.has(mountId)) return false;
     const localId = this.mirror.localPlayerId;
     const ship = localId ? this.mirror.ships.get(localId) : undefined;
     const key = this.fcMountAimKey(mountId, ship?.x ?? ox, ship?.y ?? oy, ship?.angle ?? 0);
     if (key === null || !this.fcTargetPose(key, this._fcBearPose)) return false;
-    return mountFiresOn(weaponId, weaponIdReach(weaponId), ox, oy, angle, this._fcBearPose);
+    return mountFiresOn(weaponId, weaponIdReach(weaponId, size), ox, oy, angle, this._fcBearPose);
   }
   private readonly _fcBearPose: FireTargetShape = newFireTargetShape();
 
@@ -7021,7 +7023,7 @@ export class ColyseusGameClient {
         // Fire control: the server fires only mounts that bear on their lock,
         // so a mount that doesn't gets no predicted bolt (the "ghost bolts"
         // from capital turrets still slewing). Same rule, shared (#15).
-        if (this._fireSlotOverride !== null && !this.fcMountBears(mount.id, mount.weaponId, mountWorldX, mountWorldY, mountFireAngle)) continue;
+        if (this._fireSlotOverride !== null && !this.fcMountBears(mount.id, mount.weaponId, mount.size, mountWorldX, mountWorldY, mountFireAngle)) continue;
         const fwdX = -Math.sin(mountFireAngle);
         const fwdY = Math.cos(mountFireAngle);
         const muzzleD = this.localMuzzle(mount);

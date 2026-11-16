@@ -1,16 +1,17 @@
 /**
- * Mining lasers leave a piece this ship can tow AND store to its tractors
- * (owner 2026-11-16; salvage plan PR 16 wiring), through the real room:
- * the lock step stamps each lock's salvage bits (`LockSubsystem` via the
- * room's `salvageOf`: wreck piece mass + stored weight vs the ship's
- * strongest tractor and free hold), the own-ship wire lock carries them
- * (`f`), and the fire gate (`aimKeyFor` → `pickTurretLock` →
- * `TURRET_NO_LOCK`) refuses the laser's shots at a haulable piece. Fill the
- * hold and the same piece is no longer haulable: the laser cuts it.
+ * Mining lasers leave a piece a tractor of their own size can pull to the
+ * tractors (owner 2026-11-16, the size ladder; salvage plan PR 16 wiring),
+ * through the real room: the lock step stamps each lock's salvage bits
+ * (`LockSubsystem` via the room's `salvageOf`: the wreck piece's mass gives
+ * its size tier, `salvageTier`), the own-ship wire lock carries them (`f`),
+ * and the fire gate (`aimKeyFor` → `pickTurretLock` → `TURRET_NO_LOCK`)
+ * refuses the (S) laser's shots at an AA-tier piece, while the (S) tractor
+ * locked on the same piece pulls it.
  *
  * No ship kind carries both yet (the barge is PR 15): a "barge-like"
  * gunship, its Fore turret swapped to a mining laser and its Aft turret to
- * a tractor (separate groups) in-process, restored after.
+ * a tractor (separate groups, both slewing all round) in-process, restored
+ * after.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
@@ -19,8 +20,8 @@ import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import type { SectorState } from '../../../src/server/rooms/schema/SectorState.js';
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import { getShipKind, type WeaponMount } from '../../../src/shared-types/shipKinds.js';
-import { getHoldStore } from '../../../src/server/db/PersistenceWorker.js';
-import { LOCK_HAULABLE, LOCK_SALVAGE } from '../../../src/core/combat/turretLockPick.js';
+import { LOCK_SALVAGE, lockTierBits } from '../../../src/core/combat/turretLockPick.js';
+import { mountTier } from '../../../src/core/combat/salvageTargeting.js';
 
 interface SnapGroups { id: string; m: number; l: Array<{ t: string; s: number; p: number; f?: number }> }
 const WRECK_KIND = 4;
@@ -37,14 +38,17 @@ async function waitUntil(predicate: () => boolean, timeoutMs: number, label: str
 describe('SectorRoom integration — salvage lock bits gate the mining laser', () => {
   let harness: SectorTestHarness;
   const mounts = getShipKind('gunship').mounts as WeaponMount[];
-  const saved = mounts.map((m) => m.weaponId);
+  const saved = mounts.map((m) => ({ weaponId: m.weaponId, arcMin: m.arcMin, arcMax: m.arcMax }));
   afterEach(async () => {
-    mounts.forEach((m, i) => { m.weaponId = saved[i]!; });
+    mounts.forEach((m, i) => { m.weaponId = saved[i]!.weaponId; m.arcMin = saved[i]!.arcMin; m.arcMax = saved[i]!.arcMax; });
     if (harness) await harness.cleanup();
   }, 10_000);
 
-  it('a laser locked on a piece its ship can tow and store does not fire; with a full hold it does', async () => {
-    for (const m of mounts) m.weaponId = m.id === 'forward' ? 'mining_laser' : 'tractor';
+  it('a laser locked on a piece a tractor its size can pull does not fire; the tractor does', async () => {
+    for (const m of mounts) {
+      m.weaponId = m.id === 'forward' ? 'mining_laser' : 'tractor';
+      m.arcMin = -Math.PI; m.arcMax = Math.PI; // the aft tractor bears on the piece ahead too
+    }
     harness = await bootSectorTestServer({
       sectorKey: 'sol-prime', droneCount: 0, testMode: true, peacefulDrones: true, asteroidConfig: [], subcapWrecks: true,
     });
@@ -74,27 +78,29 @@ describe('SectorRoom integration — salvage lock bits gate the mining laser', (
     const key = `s:${piece.entityId}`;
 
     harness.lockTarget(pid, piece.id, 'fore');
-    const foreLock = (): SnapGroups['l'][number] | undefined => groups?.find((g) => g.id === 'fore')?.l.find((l) => l.t === key);
-    await waitUntil(() => foreLock()?.s === 2 && foreLock()?.f !== undefined, 5_000, 'fore lock with salvage bits on the wire');
-    expect(foreLock()!.f, 'a light piece, an empty hold and a tractor: haulable').toBe(LOCK_SALVAGE | LOCK_HAULABLE);
+    harness.lockTarget(pid, piece.id, 'aft');
+    const lockOf = (g: string): SnapGroups['l'][number] | undefined => groups?.find((x) => x.id === g)?.l.find((l) => l.t === key);
+    const foreLock = (): SnapGroups['l'][number] | undefined => lockOf('fore');
+    await waitUntil(() => foreLock()?.s === 2 && foreLock()?.f !== undefined && lockOf('aft')?.s === 2, 5_000, 'locks with salvage bits on the wire');
+    expect(foreLock()!.f, 'fighter debris: an AA tractor pulls it').toBe(LOCK_SALVAGE | lockTierBits(mountTier('AA')));
 
     const fire = (id: string): void => {
       client.send('fire', { type: 'fire', tick: int().serverTick, clientShotId: id, weapon: 'hitscan', dirAngle: 0, slotId: 'fore' });
     };
     const integrity0 = int().wreckIntegrity(piece.id);
     for (let i = 0; i < 8; i++) { fire(`h${i}`); await new Promise((r) => setTimeout(r, 120)); }
-    await waitUntil(() => [...acks.keys()].filter((k) => k.startsWith('h')).length >= 8, 4_000, 'acks (haulable)');
-    expect([...acks].filter(([id, rej]) => id.startsWith('h') && !rej), 'the laser leaves a haulable piece to the tractors').toEqual([]);
+    await waitUntil(() => [...acks.keys()].filter((k) => k.startsWith('h')).length >= 8, 4_000, 'acks (laser)');
+    expect([...acks].filter(([id, rej]) => id.startsWith('h') && !rej), 'the S laser leaves an AA-tier piece to the tractors').toEqual([]);
     expect(int().wreckIntegrity(piece.id)).toBe(integrity0);
 
-    // Fill the hold: the piece can't be stored any more, so the laser cuts it.
-    const ship = [...room.state.ships.values()].find((s) => s.playerId === pid)!;
-    getHoldStore().put({
-      holderUid: ship.shipInstanceId, holderType: 'ship', ownerId: pid, sectorKey: 'sol-prime', x: null, y: null,
-      hold: { goods: { salvage: 1_000_000 }, blueprints: [] }, expiresAt: null,
-    }, false);
-    await waitUntil(() => foreLock()?.f === LOCK_SALVAGE, 5_000, 'piece no longer haulable');
-    for (let i = 0; i < 12; i++) { fire(`c${i}`); await new Promise((r) => setTimeout(r, 120)); }
-    await waitUntil(() => [...acks].some(([id, rej]) => id.startsWith('c') && !rej), 4_000, 'the laser fires at the cuttable piece');
+    // The S tractor on the same piece: its fire is taken, a beam lease pulls it.
+    let leased = false;
+    for (let i = 0; i < 6; i++) {
+      client.send('fire', { type: 'fire', tick: int().serverTick, clientShotId: `t${i}`, weapon: 'hitscan', dirAngle: 0, slotId: 'aft' });
+      await new Promise((r) => setTimeout(r, 120));
+      leased ||= int().forceFields.tractorCount > 0;
+    }
+    await waitUntil(() => [...acks].some(([id, rej]) => id.startsWith('t') && !rej), 4_000, 'the tractor fires at the piece');
+    expect(leased, 'a tractor lease on it').toBe(true);
   }, 40_000);
 });

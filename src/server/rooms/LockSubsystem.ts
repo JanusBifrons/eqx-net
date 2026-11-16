@@ -20,7 +20,7 @@ import { isSalvageWeapon } from '../../core/combat/salvageTargeting.js';
 import { shipGroups } from './lockGroups.js';
 import { mountInReach, mountWeaponReach } from '../../core/combat/mountReach.js';
 import type { FireTargetShape } from '../../core/combat/fireControlBearing.js';
-import { getWeapon, weaponAutoFireRange } from '../../core/combat/WeaponCatalogue.js';
+import { getWeapon } from '../../core/combat/WeaponCatalogue.js';
 import type { ShipKind, WeaponMount } from '../../shared-types/shipKinds/types.js';
 
 /** A lockable target, resolved each lock step. Its `FireTargetShape` half
@@ -85,7 +85,7 @@ export type GroupMode = 'auto' | 'manual';
 /** One lock of a group in the own-ship snapshot (`states[].groups`). `r`: released
  *  (draining). `c`: can't lock right now (untrackable: too small or fast for the
  *  group's guns; locks work at any distance); the HUD shows CAN'T TRACK. `f`: salvage
- *  bits (`LOCK_SALVAGE` | `LOCK_HAULABLE`; absent = 0), the client's `pickTurretLock` input. */
+ *  bits (`LOCK_SALVAGE` | tier | `LOCK_CONSUMABLE`; absent = 0), the client's `pickTurretLock` input. */
 export interface WireLock { t: string; s: number; p: number; r?: 1; c?: 1; f?: number }
 export interface WireGroup { id: string; m: 0 | 1; l: WireLock[] }
 
@@ -141,7 +141,7 @@ export function groupGeometry(mounts: ReadonlyArray<WeaponMount>): {
   for (const m of mounts) {
     const s = (m.size ?? 'none') as MountSize | 'none';
     if (SIZE_RANK[s] > SIZE_RANK[size]) size = s;
-    const r = weaponAutoFireRange(getWeapon(m.weaponId));
+    const r = mountWeaponReach(m);
     if (r > reach) reach = r;
   }
   const p = WEAPON_LOCK_PROFILE[size];
@@ -522,8 +522,8 @@ export class LockSubsystem {
       }
       if (first === null) return acquiring;
       // One lock: every mount on it, except a mining laser or tractor on a
-      // salvage lock (the pick: a laser skips a haulable or consumable piece,
-      // a tractor a consumable one). Guns keep the fast path.
+      // salvage lock (the pick: a laser skips a piece its size tractor takes or a consumable one,
+      // a tractor one too big for it or consumable). Guns keep the fast path.
       if (n === 1 && (first.flags === 0 || !g.salvageMountIds.has(mountId))) return first.target;
       const k = this.pickLocked(playerId, g, mountId);
       return k === undefined ? first.target : k;

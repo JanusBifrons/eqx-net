@@ -7,16 +7,14 @@ import { mountPriority } from './mountTargeting.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import {
   SALVAGE_HAUL_DIST_PER_DREF, SALVAGE_HAUL_MIN_ACCEL, SALVAGE_TARGET_CLASS,
-  SALVAGE_CONSUME_FRAC, hasMiningTool, isSalvageWeapon, salvageConsumable, salvageConsumeRadius, salvageHaulMass, salvageHaulable, salvagePrefersBig,
-  type SalvageCandidate,
+  SALVAGE_CONSUME_FRAC, SALVAGE_TIER_NONE, SALVAGE_TIER_SIZES, hasMiningTool, isSalvageWeapon, laserCutsTier, mountTier,
+  salvageConsumable, salvageConsumeRadius, salvagePrefersBig, salvageTier, salvageTierMass, tractorTakesTier,
 } from './salvageTargeting.js';
 
 const mount = (id: string, weaponId: WeaponMount['weaponId'], size?: WeaponMount['size']): WeaponMount => ({
   id, localX: 0, localY: 0, baseAngle: 0, arcMin: -Math.PI, arcMax: Math.PI, rotationSpeed: 1, weaponId,
   ...(size !== undefined ? { size } : {}),
 });
-const piece = (id: string, x: number, mass: number, holdWeight = 1, radius = 10): SalvageCandidate =>
-  ({ id, x, y: 0, radius, mass, holdWeight });
 
 describe('salvage targeting (salvage PR 16)', () => {
   it('only a mining weapon picks salvage (its rock factor, not its id)', () => {
@@ -34,27 +32,39 @@ describe('salvage targeting (salvage PR 16)', () => {
     }
   });
 
-  it('haul mass: the strongest tractor record force × size power, at the haul distance falloff, over the min accel', () => {
+  it('tier mass per size: the tractor record force × size power, at the haul distance falloff, over the min accel', () => {
     const t = TRACTOR_DEF.tractor!;
     const falloff = 1 / (SALVAGE_HAUL_DIST_PER_DREF * SALVAGE_HAUL_DIST_PER_DREF);
-    expect(salvageHaulMass([mount('a', 'mining_laser', 'XL')])).toBe(0);
-    expect(salvageHaulMass([mount('t', 'tractor', 'S')])).toBeCloseTo((t.force * falloff) / SALVAGE_HAUL_MIN_ACCEL);
-    // One tractor per piece: the strongest single mount, never the sum.
-    const mixed = [mount('t1', 'tractor', 'AA'), mount('t2', 'tractor', 'XL'), mount('t3', 'tractor', 'S')];
-    const want = (t.force * MOUNT_SIZE_TUNING.XL.power * falloff) / SALVAGE_HAUL_MIN_ACCEL;
-    expect(salvageHaulMass(mixed)).toBeCloseTo(want);
-    expect(salvageHaulMass([mount('a', 'tractor', 'XL'), mount('b', 'tractor', 'XL')])).toBeCloseTo(want);
+    for (const size of SALVAGE_TIER_SIZES) {
+      expect(salvageTierMass(size)).toBeCloseTo((t.force * MOUNT_SIZE_TUNING[size].power * falloff) / SALVAGE_HAUL_MIN_ACCEL);
+    }
+    // Today's numbers (the docs quote them).
+    expect(SALVAGE_TIER_SIZES.map((z) => Math.round(salvageTierMass(z)))).toEqual([60, 150, 375, 900, 2250]);
   });
 
-  it('a piece this ship can tractor AND store is haulable (no laser target)', () => {
-    const light = piece('light', 100, 50, 5);
-    const heavy = piece('heavy', 200, 5000, 5);
-    expect(salvageHaulable(light, 150, 100)).toBe(true);
-    expect(salvageHaulable(heavy, 150, 100)).toBe(false);
-    // Hold full: the light piece can't be stored, so the laser cuts it.
-    expect(salvageHaulable(light, 150, 2)).toBe(false);
-    // No tractor (haul mass 0): every piece is cut.
-    expect(salvageHaulable(light, 0, 100)).toBe(false);
+  it('a piece\'s tier is the smallest size whose tractor pulls it, at every size boundary', () => {
+    expect(salvageTier(0)).toBe(1);
+    SALVAGE_TIER_SIZES.forEach((size, i) => {
+      const lim = salvageTierMass(size);
+      expect(salvageTier(lim), `${size} limit itself`).toBe(i + 1);
+      expect(salvageTier(lim * 1.0001), `just past ${size}`).toBe(i + 2 > SALVAGE_TIER_SIZES.length ? SALVAGE_TIER_NONE : i + 2);
+      expect(mountTier(size)).toBe(i + 1);
+    });
+    expect(salvageTier(1e9)).toBe(SALVAGE_TIER_NONE);
+    expect(salvageTier(Infinity), 'a field rock').toBe(SALVAGE_TIER_NONE);
+    expect(salvageTier(NaN)).toBe(SALVAGE_TIER_NONE);
+    expect(mountTier(undefined), 'unsized = S (the tractor power rule)').toBe(mountTier('S'));
+  });
+
+  it('the ladder: a laser cuts only pieces above its size, a tractor pulls only pieces at or below it', () => {
+    const L = mountTier('L');
+    expect(laserCutsTier(mountTier('XL'), L), 'an XL laser leaves an L-tier piece').toBe(false);
+    expect(laserCutsTier(mountTier('S'), L), 'an S laser cuts it').toBe(true);
+    expect(laserCutsTier(L, L)).toBe(false);
+    expect(laserCutsTier(mountTier('XL'), SALVAGE_TIER_NONE), 'every laser cuts a piece no tractor pulls').toBe(true);
+    expect(tractorTakesTier(L, L), 'an L tractor takes an L-tier piece').toBe(true);
+    expect(tractorTakesTier(mountTier('S'), L), 'an S tractor ignores it').toBe(false);
+    expect(tractorTakesTier(mountTier('XL'), SALVAGE_TIER_NONE), 'no tractor pulls a piece too big for all').toBe(false);
   });
 
   it('heavy mounts (M/L/XL) prefer big pieces, light ones (AA/S/unsized) small', () => {

@@ -1,25 +1,26 @@
 /**
  * Salvage bits of a weapon-group lock (salvage plan PR 16, wiring): which
- * locks are salvage (a wreck piece or a field rock) and which of those this
- * ship can already tow AND store (`salvageHaulable`), and which it can take in
- * whole (`salvageConsumable`: the factory line). `LockSubsystem` keeps
- * them on each lock entry (refreshed every lock step), hands them to the
- * shared `pickTurretLock` (mining lasers leave a haulable piece to the
- * tractors, a separate group) and puts them on the own-ship wire lock (`f`),
- * so the client's predicted aim and fire gate pick the same (#15, #16).
+ * locks are salvage (a wreck piece or a field rock), each piece's size tier
+ * (`salvageTier`, the size ladder: from its mass alone), and which it can
+ * take in whole (`salvageConsumable`: the factory line). `LockSubsystem`
+ * keeps them on each lock entry (refreshed every lock step), hands them to
+ * the shared `pickTurretLock` (a laser cuts only pieces above its size's
+ * tractor, a tractor pulls only pieces within its size's pull) and puts them
+ * on the own-ship wire lock (`f`), so the client's predicted aim and fire
+ * gate pick the same (#15, #16).
  *
  * Two halves: `lockSalvageFlags` (LockSubsystem side, pure over its deps)
  * and `LockSalvageLookup` (SectorRoom side: the room's registries behind
  * three narrow callbacks). Allocation-free (#14): module scratch.
  */
-import { LOCK_CONSUMABLE, LOCK_HAULABLE, LOCK_SALVAGE } from '../../core/combat/turretLockPick.js';
-import { salvageConsumable, salvageConsumeRadius, salvageHaulable, salvageHaulMass } from '../../core/combat/salvageTargeting.js';
+import { LOCK_CONSUMABLE, LOCK_SALVAGE, lockTierBits } from '../../core/combat/turretLockPick.js';
+import { salvageConsumable, salvageConsumeRadius, salvageTier } from '../../core/combat/salvageTargeting.js';
 import { SWARM_KIND_ASTEROID, SWARM_KIND_WRECK } from '../../shared-types/swarmWireFormat.js';
 import type { ShipKind, WeaponMount } from '../../shared-types/shipKinds/types.js';
 import type { PieceStoreView } from './wreckLineage.js';
 
 /** What `salvageOf` fills for a salvage lock: the piece's `pieceStoreOf`
- *  view (mass: the tractor accelerates it by F / mass; radius: the consume
+ *  view (mass: its size tier, a tractor accelerates it by F / mass; radius: the consume
  *  size test; holdWeight: what it stores as; each Infinity for a field rock,
  *  never towed, taken in or stored) and the ship's free hold. */
 export interface LockSalvageView extends PieceStoreView {
@@ -36,20 +37,17 @@ export interface LockSalvageDeps {
 }
 
 const view: LockSalvageView = { mass: 0, radius: 0, qty: 0, ore: undefined, holdWeight: 0, freeHold: 0 };
-const NO_MOUNTS: ReadonlyArray<WeaponMount> = [];
-
-/** `LOCK_SALVAGE` (| `LOCK_HAULABLE` | `LOCK_CONSUMABLE`) for lock `key` of
- *  `playerId`'s ship (`ship`: its kind + activated mounts, the strongest
- *  single tractor of either judging the haul; the kind's hull radius and
- *  mining tools judging consumption, as the loot pickup does), or 0 when it
- *  is not salvage. */
+/** `LOCK_SALVAGE` | the piece's tier bits (`lockTierBits(salvageTier(mass))`,
+ *  ship-independent; a field rock's Infinity mass is tier 0, none)
+ *  (| `LOCK_CONSUMABLE`) for lock `key` of `playerId`'s ship (`ship`: its
+ *  kind, whose hull radius and mining tools judge consumption, as the loot
+ *  pickup does), or 0 when it is not salvage. */
 export function lockSalvageFlags(
   d: LockSalvageDeps, ship: { kind: ShipKind; activated: ReadonlyArray<WeaponMount> } | null, playerId: string, key: string,
 ): number {
   if (d.salvageOf === undefined || !d.salvageOf(playerId, key, view)) return 0;
-  if (ship === null) return LOCK_SALVAGE;
-  const haul = Math.max(salvageHaulMass(ship.kind.mounts ?? NO_MOUNTS), salvageHaulMass(ship.activated));
-  const f = salvageHaulable(view, haul, view.freeHold) ? LOCK_SALVAGE | LOCK_HAULABLE : LOCK_SALVAGE;
+  const f = LOCK_SALVAGE | lockTierBits(salvageTier(view.mass));
+  if (ship === null) return f;
   return salvageConsumable(view, salvageConsumeRadius(ship.kind), view.freeHold) ? f | LOCK_CONSUMABLE : f;
 }
 

@@ -93,7 +93,7 @@ describe('SectorRoom integration — the heavy beam hits by its width (owner 202
      *  `lateral` u off its centre (read per shot, so its drift doesn't matter). */
     const fire = (sinkName: 'ai' | 'player', weapon: WeaponId, lateral: number) => {
       const p = poseFor(sinkName);
-      const ctx: WeaponFireContext = { fromX: p.x - 300, fromY: p.y + lateral, dirX: 1, dirY: 0, shooterVx: 0, shooterVy: 0, mountId: 'test' };
+      const ctx: WeaponFireContext = { fromX: p.x - 300, fromY: p.y + lateral, dirX: 1, dirY: 0, shooterVx: 0, shooterVy: 0, mountId: 'test', rangeMul: 1 };
       fired.length = 0;
       hits.length = 0;
       const sink = sinkName === 'ai' ? r.aiFireResolver : r.playerFireResolver;

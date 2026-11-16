@@ -42,7 +42,7 @@ import {
   rayHitsConvexPolygon,
 } from '../../core/combat/Weapons.js';
 import { shipShotMuzzle, navalTurret, navalBarrelOffset } from '../../core/combat/muzzle.js';
-import { hasTurretFireControl } from '../../core/combat/mountReach.js';
+import { hasTurretFireControl, mountRangeFactor } from '../../core/combat/mountReach.js';
 import { GLOBAL_SHIP_TUNING } from '../../shared-types/shipScale/lookup.js';
 import { getWeaponObject } from '../../core/combat/weapons/index.js';
 import type { WeaponFireContext, WeaponFireSink } from '../../core/combat/weapons/Weapon.js';
@@ -127,16 +127,16 @@ export interface PlayerFireResolverDeps {
   fireAllowed?: (playerId: string, slotId: string | undefined) => boolean;
   /** Fire control: does this mount's barrel (world origin + world angle) bear on
    *  its group's lock target? A turret parked at its arc limit never does, so it
-   *  never fires out of its arc. Absent only in resolver unit harnesses. */
-  mountBearsOnLock?: (playerId: string, mountId: string, ox: number, oy: number, angle: number, weaponId: WeaponId) => boolean;
+   *  never fires out of its arc (`size`: the mount's, mining reach). Absent only in resolver unit harnesses. */
+  mountBearsOnLock?: (playerId: string, mountId: string, ox: number, oy: number, angle: number, weaponId: WeaponId, size: WeaponMount['size']) => boolean;
   /** RTS Part B: the AI pilot's line of fire for a `fireHull` shot only (the
    *  room's one `LineOfFireGate`): true holds this barrel's `weaponId`
-   *  shot, from its muzzle (fx, fy) along unit (dx, dy), fired from a hull
-   *  moving at (svx, svy), because a friendly body is (or will be) on its
-   *  line. A pilot's own fire is never gated. */
+   *  shot (mount size `size`), from its muzzle (fx, fy) along unit (dx, dy),
+   *  fired from a hull moving at (svx, svy), because a friendly body is (or
+   *  will be) on its line. A pilot's own fire is never gated. */
   hullLineBlocked?: (
     shipInstanceId: string, fx: number, fy: number, dx: number, dy: number,
-    weaponId: WeaponId, svx: number, svy: number,
+    weaponId: WeaponId, svx: number, svy: number, size: WeaponMount['size'],
   ) => boolean;
   /** Tractor fire: renew `mount`'s lease on its group lock (as the AI's). */
   fireTractor?: (playerId: string, mount: WeaponMount) => void;
@@ -229,7 +229,7 @@ export class PlayerFireResolver implements WeaponFireSink {
   /** Reused per-mount fire geometry (the resolver IS the WeaponFireSink — see
    *  `src/core/combat/weapons/`). Mutated per mount; no per-fire allocation. */
   private readonly _fireCtx: WeaponFireContext = {
-    fromX: 0, fromY: 0, dirX: 0, dirY: 0, shooterVx: 0, shooterVy: 0, mountId: '',
+    fromX: 0, fromY: 0, dirX: 0, dirY: 0, shooterVx: 0, shooterVy: 0, mountId: '', rangeMul: 1,
   };
   // Per-fire-event sink state — set in resolve() before the salvo, read by the
   // sink methods. resolve() is synchronous + single-threaded, so race-free.
@@ -394,13 +394,13 @@ export class PlayerFireResolver implements WeaponFireSink {
           const a = pose.angle + mount.baseAngle + (angles?.[k] ?? 0);
           const o = d.mountWorldOrigin(pose.x, pose.y, pose.angle, mount);
           const ox = o.x, oy = o.y;
-          if (!d.mountBearsOnLock(shooterId, mount.id, ox, oy, a, mount.weaponId)) continue;
+          if (!d.mountBearsOnLock(shooterId, mount.id, ox, oy, a, mount.weaponId, mount.size)) continue;
           // An AI-flown hull's barrel holds while a friendly is on its line
           // (the AI pilots' one line-of-fire gate); a pilot's never does.
           if (this._hullShot && d.hullLineBlocked) {
             const dx = -Math.sin(a), dy = Math.cos(a);
             const mz = shipShotMuzzle(shipKind, mount);
-            if (d.hullLineBlocked(shooterId, ox + dx * mz, oy + dy * mz, dx, dy, mount.weaponId, pose.vx, pose.vy)) continue;
+            if (d.hullLineBlocked(shooterId, ox + dx * mz, oy + dy * mz, dx, dy, mount.weaponId, pose.vx, pose.vy, mount.size)) continue;
           }
           bearMask |= 1 << mIdx;
         }
@@ -559,9 +559,9 @@ export class PlayerFireResolver implements WeaponFireSink {
         },
       });
 
-      // Per-mode fire dispatch collapses to one virtual call (GEP B3): the
-      // weapon flyweight calls back the matching sink method below
-      // (hitscan / spawnProjectile / spawnMissile).
+      // Per-mode fire dispatch: one virtual call (GEP B3); the weapon calls
+      // back the matching sink method below (hitscan / spawnProjectile / spawnMissile).
+      ctx.rangeMul = mountRangeFactor(mount.weaponId, mount.size); // a mining tool's sized beam
       ctx.fromX = rayFromX;
       ctx.fromY = rayFromY;
       ctx.dirX = ndx;
