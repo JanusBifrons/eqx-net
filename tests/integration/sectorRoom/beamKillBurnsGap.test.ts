@@ -12,6 +12,16 @@
  * same line (its kill follow-through aim) and are ordinary shots: no
  * exception lets them pass debris, yet nothing is in the gap, so each one
  * runs its full range and no wreck piece is hit.
+ *
+ * Worker step (found under host load, 1 run in 2 with other integration
+ * files sharing the host): the physics worker steps the SAB on its own
+ * thread, so it can move the firing hull between the moment its turret
+ * ticker aims (reading the hull's pose) and the moment the shot's ray is
+ * cast. A shot cast from the newer pose left the aimed line (a turning
+ * lance: one tick of turn, ~1.5 u off the kill point at 4.6 km, past the
+ * gap's buffer) and stopped on a wreck piece. The second test makes that
+ * step happen on every follow-through pulse; the beam must still run down
+ * the line it was aimed along.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
@@ -21,6 +31,7 @@ import type { LaserFiredEvent } from '../../../src/shared-types/messages.js';
 import { getWeapon } from '../../../src/core/combat/WeaponCatalogue.js';
 import { getShipKind } from '../../../src/shared-types/shipKinds.js';
 import { wrapPi } from '../../../src/core/ai/WeaponMountController.js';
+import { SLOT_ANGLE_OFF, slotBase } from '../../../src/shared-types/sabLayout.js';
 
 interface IntentSink {
   postIntent: (slot: number, fx: number, fy: number, torque: number, setAngvel?: number) => void;
@@ -36,6 +47,8 @@ interface RoomInternals {
     get: (id: string) => { kind: number } | undefined;
   };
   aiController: { sink: IntentSink };
+  mountTicker: { deps: { fireDroneMount?: (droneId: string, mountIdx: number, ...rest: unknown[]) => boolean | 'killed' | void } };
+  sabF32: Float32Array;
 }
 
 interface Shot { tick: number; mountId: string; dir: number; len: number; targetId?: string }
@@ -49,7 +62,10 @@ describe('SectorRoom integration — a heavy-beam kill burns a gap the beam shin
     harness = undefined;
   }, 10_000);
 
-  it('both ships stationary: the pulses after the kill pass through the wreck at full length', { timeout: 15_000 }, async () => {
+  /** `stepRad` ≠ 0: the worker "steps" the lance's hull this far round
+   *  between each follow-through pulse's aim and its shot (its SAB angle,
+   *  restored right after the shot). */
+  async function stationaryKill(stepRad: number): Promise<void> {
     const beam = getWeapon('heavy_beam');
     const follow = beam.followThroughTicks ?? 0;
     expect(follow).toBeGreaterThan(0);
@@ -94,6 +110,18 @@ describe('SectorRoom integration — a heavy-beam kill burns a gap the beam shin
       }
       orig(type, msg);
     };
+    if (stepRad !== 0) {
+      const td = r.mountTicker.deps;
+      const origFire = td.fireDroneMount!.bind(td);
+      td.fireDroneMount = (droneId, mountIdx, ...rest) => {
+        // A follow-through pulse has no target (rest[0]).
+        if (!hold || droneId !== lanceId || rest[0] !== undefined) return origFire(droneId, mountIdx, ...rest);
+        const a = slotBase(lanceSlot) + SLOT_ANGLE_OFF;
+        const before = r.sabF32[a]!;
+        r.sabF32[a] = before + stepRad;
+        try { return origFire(droneId, mountIdx, ...rest); } finally { r.sabF32[a] = before; }
+      };
+    }
     const wreckHitTicks: number[] = [];
     const origDamage = deps.applyDamage.bind(deps);
     deps.applyDamage = (targetId, shooterId, ...rest) => {
@@ -136,5 +164,14 @@ describe('SectorRoom integration — a heavy-beam kill burns a gap the beam shin
       expect(s.len, `beam at ${at} shines out the other side at full length`).toBeGreaterThan(beam.range - 1);
     }
     expect(wreckHitTicks.filter((t) => t > killTick && t < killTick + follow), 'no wreck piece took a beam').toEqual([]);
+  }
+
+  it('both ships stationary: the pulses after the kill pass through the wreck at full length', { timeout: 15_000 }, async () => {
+    await stationaryKill(0);
+  });
+
+  // 1 mrad: ~4.6 u at the kill point, 3x the gap's buffer each side.
+  it('a worker step between a pulse\'s aim and its shot: the beam still runs down the aimed line, through the gap', { timeout: 15_000 }, async () => {
+    await stationaryKill(0.001);
   });
 });

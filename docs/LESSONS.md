@@ -3125,3 +3125,8 @@ Owner: "make it more like micro machines and make fights a bit longer. Also don'
 - **Finding:** `dogfight.test.ts` sampled duels for 20 s / 30 s of `Date.now()`; `harness.advance(ms)` is a real `setTimeout`, so a loaded host ran a different number of ticks and the ram counts drifted (attack-run rams 2-3 against a limit of 1).
 - **Rule:** bound integration observation windows by `room.serverTick` (60 per game second) and derive per-sample dt from the tick delta, skipping samples where no tick passed.
 - **Follow-up:** with the window on ticks, CI still gave the same 3 attack-run rams on one branch every time and 0 on main: the physics worker's thread timing shifts a near-miss into a contact. A ram count from a thread-timed sim is a measurement, not a gate. The owner signed off the dogfight look; ram counts are printed, never asserted, and the AI is never tuned to chase them.
+
+## 2026-11-16 — two SAB reads in one room tick can be a worker step apart
+
+- **Finding:** a capital turret was aimed from the hull pose its ticker read off the SAB, then the shot was cast from a second, later SAB read (`swarmEntitySnapshot`). The physics worker writes the SAB on its own thread, so on a loaded host the second read was a step on: a turning lance's kill follow-through left the kill line by one tick of turn and hit its own wreck (`beamFollowThrough.test.ts`, 1 run in 2 alongside other integration files).
+- **Rule:** a decision and the act it licenses use ONE pose read: pass the pose that was aimed with (or hit-tested against) down to whatever acts on it, never re-read the SAB. To test it deterministically, move the SAB between the two calls in the test (`beamKillBurnsGap.test.ts` "worker step").

@@ -141,9 +141,9 @@ export interface WeaponMountTickerDeps {
    *  and reloaded. Returns false when the shot was refused (the ship's energy
    *  pool can't pay): the reload is then not spent. 'killed' = it fired and
    *  destroyed what it hit (starts the weapon's `followThroughTicks`; the hit
-   *  point is written to `killAt`). */
+   *  point is written to `killAt`). `from`: the hull pose it was aimed from (`AiFireResolver.fireMount`). */
   fireDroneMount?: (
-    droneId: string, mountIdx: number, targetId?: string, killAt?: { x: number; y: number },
+    droneId: string, mountIdx: number, targetId?: string, killAt?: { x: number; y: number }, from?: { x: number; y: number; angle: number },
   ) => boolean | 'killed' | void;
   /** Fire control (PR 1d slice 2): true ⇒ the capital holds no COMPLETED
    *  lock on this mount's target (a pilot), so the mount aims but holds fire
@@ -298,6 +298,8 @@ export class WeaponMountTicker {
   readonly droneMountFollowPoint = new Map<string, Float64Array>();
   /** `fireDroneMount`'s kill-point scratch (#14). */
   private readonly killAt = { x: 0, y: 0 };
+  /** The hull pose a capital's mounts aim from this tick: every shot leaves from it (#14). */
+  private readonly shotFrom = { x: 0, y: 0, angle: 0 };
 
   /** tickDrone's candidate count while the parked-hull visitor appends. */
   private targetCount = 0;
@@ -636,6 +638,7 @@ export class WeaponMountTicker {
     const tick = d.currentTick!();
     const selfVx = d.sabF32[b + SLOT_VX_OFF]!, selfVy = d.sabF32[b + SLOT_VY_OFF]!;
     const cosA = Math.cos(ang), sinA = Math.sin(ang);
+    const from = this.shotFrom; from.x = x; from.y = y; from.angle = ang;
     const cls = this.capTargetCls;
     const sig = this.capTargetSig;
     for (let i = 0; i < n; i++) {
@@ -756,7 +759,7 @@ export class WeaponMountTicker {
       if (chargeStarts !== null && !charging) { chargeStarts[i] = tick; continue; }
       // Energy refused (a player capital's rule): keep the reload (and a
       // completed charge), retry next tick.
-      const fired = d.fireDroneMount!(droneId, i, t.id, this.killAt);
+      const fired = d.fireDroneMount!(droneId, i, t.id, this.killAt, from);
       if (fired === false) continue;
       if (chargeStarts !== null) chargeStarts[i] = NOT_CHARGING;
       reload[i] = tick;
@@ -834,7 +837,7 @@ export class WeaponMountTicker {
       const ndx = -Math.sin(a), ndy = Math.cos(a);
       if (d.lineOfFireBlocked(droneId, '', mx + ndx * muzzle, my + ndy * muzzle, ndx, ndy, reach - muzzle)) return;
     }
-    if (d.fireDroneMount!(droneId, i) === false) return;
+    if (d.fireDroneMount!(droneId, i, undefined, undefined, this.shotFrom) === false) return;
     reload[i] = tick;
   }
 
@@ -851,7 +854,7 @@ export class WeaponMountTicker {
     if (tick - starts[i]! < this.chargeTicksOf(w.chargeTicks ?? 0)) return true;
     starts[i] = NOT_CHARGING;
     reload[i] = tick;
-    this.deps.fireDroneMount!(droneId, i);
+    this.deps.fireDroneMount!(droneId, i, undefined, undefined, this.shotFrom);
     return true;
   }
 
