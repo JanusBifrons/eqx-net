@@ -13,7 +13,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { StructureRegistry, type StructureRecord } from './StructureRegistry.js';
-import { autoConnectStructure, structureToGridNode } from './structureGridView.js';
+import { autoConnectStructure, linkReachBox, structureToGridNode } from './structureGridView.js';
 import { getStructureKind, type StructureKindId } from '../../shared-types/structureKinds.js';
 
 const OWNER = 'owner-1';
@@ -148,5 +148,19 @@ describe('structureToGridNode — mid-upgrade Capital stays operational (must-fi
     const node = structureToGridNode(turret);
 
     expect(node.isConstructed).toBe(false);
+  });
+});
+
+describe('linkReachBox — the box auto-connect asks obstacles over (macro terrain C5g)', () => {
+  it('bounds the centres of same-owner structures in link range; false when none', () => {
+    const registry = new StructureRegistry();
+    registry.add(record('a', 'connector', 0, 0));
+    const box = { x0: 0, y0: 0, x1: 0, y1: 0 };
+    expect(linkReachBox(registry, 'a', box), 'nothing else ⇒ no link to make').toBe(false);
+    registry.add(record('near', 'connector', 400, -100));
+    registry.add(record('far', 'connector', -5_000, 0)); // out of range
+    registry.add({ ...record('foreign', 'connector', 0, 300), owner: 'owner-2' }); // another grid
+    expect(linkReachBox(registry, 'a', box)).toBe(true);
+    expect(box).toEqual({ x0: 0, y0: -100, x1: 400, y1: 0 });
   });
 });

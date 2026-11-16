@@ -52,6 +52,16 @@ describe('SectorRoom integration — cut-field deep sleep (C2)', () => {
     await harness.advance(100);
     int.postToWorker({ type: 'SET_POSITION', entityId: id, x: rest.x + 120, y: rest.y - 80, angle: 0.4, vx: 0, vy: 0, angvel: 0 });
     await harness.advance(500);
+    // Let it come to rest: set down overlapping a fixed neighbour it is too
+    // light to wake (rock mass), it eases out for a while, and the pose
+    // sampled below must be the one its chunk unloads with.
+    const settle = Date.now() + 10_000;
+    for (let p = int.swarmPose(id)!; Date.now() < settle;) {
+      await harness.advance(250);
+      const q = int.swarmPose(id)!;
+      if (Math.hypot(q.x - p.x, q.y - p.y) < 0.05 && Math.abs(q.angle - p.angle) < 1e-4) break;
+      p = q;
+    }
 
     // Every ship goes away; follow the rock's last pose until its chunk unloads.
     int.postToWorker({ type: 'SET_POSITION', entityId: pid, x: AWAY.x, y: AWAY.y, angle: 0, vx: 0, vy: 0, angvel: 0 });

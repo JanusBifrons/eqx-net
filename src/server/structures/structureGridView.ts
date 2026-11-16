@@ -16,8 +16,10 @@ import {
   edgeDistance,
   type GridNode,
   type GridObstacle,
+  type ObstacleBox,
 } from '../../core/structures/Grid.js';
 import {
+  CONNECTION_MAX_RANGE,
   CONNECTION_THROUGHPUT,
   PLACEMENT_MAX_CONNECTIONS,
 } from '../../core/structures/structureGridConstants.js';
@@ -147,6 +149,34 @@ export function autoConnectStructure(
     if (firstConnected === null) firstConnected = cand.id;
   }
   return firstConnected;
+}
+
+/**
+ * The world box every link `autoConnectStructure` could make from `id` lies
+ * in: the bounds of its centre and the centres of the same-owner structures
+ * within link range (`CONNECTION_MAX_RANGE`, edge to edge, as `canConnect`).
+ * A link runs centre to centre, so an obstacle that can block one reaches
+ * this box: the `near` box for `getObstacles`, so rocks with no body (an
+ * unloaded cut-field chunk, macro terrain C5) block links too. False when
+ * nothing is in range: there is no link to make. Writes `out`; no allocation.
+ */
+export function linkReachBox(registry: StructureRegistry, id: string, out: ObstacleBox): boolean {
+  const rec = registry.get(id);
+  if (!rec) return false;
+  out.x0 = out.x1 = rec.x;
+  out.y0 = out.y1 = rec.y;
+  const rw = rec.halfW ?? rec.radius, rh = rec.halfH ?? rec.radius;
+  let found = false;
+  for (const o of registry.all()) {
+    if (o.id === id || o.owner !== rec.owner) continue;
+    const dx = Math.max(0, Math.abs(o.x - rec.x) - (rw + (o.halfW ?? o.radius)));
+    const dy = Math.max(0, Math.abs(o.y - rec.y) - (rh + (o.halfH ?? o.radius)));
+    if (dx * dx + dy * dy > CONNECTION_MAX_RANGE * CONNECTION_MAX_RANGE) continue;
+    found = true;
+    if (o.x < out.x0) out.x0 = o.x; else if (o.x > out.x1) out.x1 = o.x;
+    if (o.y < out.y0) out.y0 = o.y; else if (o.y > out.y1) out.y1 = o.y;
+  }
+  return found;
 }
 
 /**

@@ -2959,7 +2959,7 @@ export class SectorRoom extends Room<SectorState> {
       registry: this.structureRegistry,
       // Asteroids (swarm kind=0) block placement and a connector's line of sight
       // (Item D); shared with the grid-pulse reconnect sweep. Placement also
-      // passes `near` for unloaded cut-field rocks (C5). Off the hot loop.
+      // passes `near` for unloaded cut-field rocks (C5, links C5g). Off the hot loop.
       getObstacles: (near) => this.gatherStructureObstacles(near),
       // Economy v2 W4b — a player's non-starter structure is placed from a
       // PACKED item (now buyable from traders, and lootable). Consumed only
@@ -3028,8 +3028,8 @@ export class SectorRoom extends Room<SectorState> {
       // turret's pstruct- id, which isMissileTargetHostile restricts to drones).
       spawnMissile: (shooterId, x, y, dx, dy, def) =>
         this.spawnServerMissile(shooterId, x, y, dx, dy, def),
-      // Reconnect sweep honours current asteroid LOS (playtest 2026-06-10 Issue 2).
-      getObstacles: () => this.gatherStructureObstacles(),
+      // Reconnect sweep honours current asteroid LOS (Issue 2), unloaded rocks in `near` too (C5g).
+      getObstacles: (near) => this.gatherStructureObstacles(near),
       // Gameplay audit — a blueprint finished construction (1 Hz pulse, off-tick).
       // Campaign 6.3 — completion is durable state (isConstructed + full HP);
       // persist event-driven so a crash keeps the built structure built.
@@ -3228,6 +3228,8 @@ export class SectorRoom extends Room<SectorState> {
     }), SELECTION_STATS_INTERVAL_MS);
     this.selectionStatsTimer.unref?.();
 
+    if (this.testMode) this.persistSector = roomOpts.persistSector !== false; // cut field before any seeding: placement sees its rocks (C5)
+    if (roomOpts.cutField) this.cutField = new CutFieldSubsystem(roomOpts.cutField.seed, this.gameClock, this.swarmRegistry, this.swarmSpawner, { shipSlots: () => this.playerToSlot.values(), sab: () => this.sabF32, post: (cmd) => this.postToWorker(cmd), evict: (rec, broadcast) => this.evictSwarmEntity(rec, { broadcast, emitDestroyed: false }), broadcast: (type, msg) => this.broadcast(type, msg), shipMass: (id) => { const s = this.getActiveShip(id); return s ? shipBodyMass(getShipKind(s.kind)) : undefined; }, records: this.persistSector && this.sectorKey !== null ? terrainRecordStoreFor(`${this.sectorKey}|${roomOpts.cutField.seed}`) : undefined });
     // Structures plan (Phase 3-5) — testMode scenario seeding: a pre-built,
     // powered grid + drones/asteroids, for deterministic E2E (no place-ahead
     // overlap, no construction wait).
@@ -3252,12 +3254,10 @@ export class SectorRoom extends Room<SectorState> {
       this.testHaulerRaiders = Math.max(0, Math.min(6, Math.floor(roomOpts.haulerRaiders ?? 0)));
       if (roomOpts.sceneScript !== undefined) this.initSceneScript(roomOpts.sceneScript);
       this.perfFixedLoad = roomOpts.perfFixedLoad === true;
-      this.persistSector = roomOpts.persistSector !== false;
       const twa = roomOpts.testWaveArrival;
       if (twa && Number.isFinite(twa.x) && Number.isFinite(twa.y)) this.testWaveArrivalPose = { x: twa.x, y: twa.y };
       this.waveNeedsOwner = roomOpts.waveNeedsOwner === true;
     }
-    if (roomOpts.cutField) this.cutField = new CutFieldSubsystem(roomOpts.cutField.seed, this.gameClock, this.swarmRegistry, this.swarmSpawner, { shipSlots: () => this.playerToSlot.values(), sab: () => this.sabF32, post: (cmd) => this.postToWorker(cmd), evict: (rec, broadcast) => this.evictSwarmEntity(rec, { broadcast, emitDestroyed: false }), broadcast: (type, msg) => this.broadcast(type, msg), records: this.persistSector && this.sectorKey !== null ? terrainRecordStoreFor(`${this.sectorKey}|${roomOpts.cutField.seed}`) : undefined });
     // Phase-1 issue 5 — scrap-stress seed: a dense corridor of free-floating
     // scrap ahead of spawn for the fly-through reconciliation E2E.
     if (this.testMode && (roomOpts.scenarioScrapCount ?? 0) > 0) {
@@ -6172,6 +6172,7 @@ export class SectorRoom extends Room<SectorState> {
       registry: this.structureRegistry,
       place: (owner, kind, x, y, rot) => this.structurePlacement.place(owner, kind, x, y, { skipAutoConnect: true, rot }),
       setHealth: (id, hp) => this.swarmHealth.set(id, hp),
+      getObstacles: (near) => this.gatherStructureObstacles(near),
     });
     const seededBases: SiteBox[] = [];
     const plans = galaxyBasePlan(sectorKey);
@@ -6266,6 +6267,7 @@ export class SectorRoom extends Room<SectorState> {
       registry: this.structureRegistry,
       place: (owner, kind, x, y, rot) => this.structurePlacement.place(owner, kind, x, y, { skipAutoConnect: true, rot }),
       setHealth: (id, hp) => this.swarmHealth.set(id, hp),
+      getObstacles: (near) => this.gatherStructureObstacles(near),
     });
     for (const spec of specs.slice(0, 8)) {
       const r = sub.seed(spec);

@@ -32,7 +32,7 @@ import {
 import type { GridObstacle, ObstacleBox } from '../../core/structures/Grid.js';
 import { placementRejection } from '../../core/structures/placementRules.js';
 import { StructureRegistry, type StructureRecord } from './StructureRegistry.js';
-import { autoConnectStructure } from './structureGridView.js';
+import { autoConnectStructure, linkReachBox } from './structureGridView.js';
 import { STARTER_STRUCTURE_KINDS } from '../../shared-types/blueprints.js';
 
 /** A packed-structure check for one placement (Living World W4). `ok` false
@@ -74,13 +74,17 @@ export interface StructurePlacementHooks {
   /** Item D — live non-structure obstacles (asteroids) that block a connection's
    *  line of sight, so a structure never auto-wires straight through a rock.
    *  Optional: when omitted, auto-connection falls back to the structures-only
-   *  LOS check (byte-identical to pre-Item-D). `near` (placement only): also
-   *  the obstacles with no body that reach that box (cut-field rocks whose
-   *  chunk is not loaded, macro terrain C5). */
+   *  LOS check (byte-identical to pre-Item-D). `near` (the footprint, or the
+   *  box the new links may run in, `linkReachBox`): also the obstacles with
+   *  no body that reach that box (cut-field rocks whose chunk is not loaded,
+   *  macro terrain C5). */
   getObstacles?: (near?: ObstacleBox) => readonly GridObstacle[];
 }
 
 export class StructurePlacementSubsystem {
+  /** Scratch for `linkReachBox` (auto-connect's `near` box). */
+  private readonly linkBox: ObstacleBox = { x0: 0, y0: 0, x1: 0, y1: 0 };
+
   constructor(private readonly hooks: StructurePlacementHooks) {}
 
   /**
@@ -175,9 +179,11 @@ export class StructurePlacementSubsystem {
     // Economy v2 — remember the crate's quality so taking it down REPACKS it.
     if (packedQuality !== null) rec.packedQuality = packedQuality;
     // Auto-wire into the owner's grid: nearest in-range hub with a free slot
-    // whose connecting segment isn't blocked by another structure OR an asteroid.
-    if (opts?.skipAutoConnect !== true) {
-      autoConnectStructure(this.hooks.registry, id, this.hooks.getObstacles?.());
+    // whose connecting segment isn't blocked by another structure OR an asteroid
+    // (incl. one with no body, over the box the links may run in). Nothing in
+    // range ⇒ nothing to link.
+    if (opts?.skipAutoConnect !== true && linkReachBox(this.hooks.registry, id, this.linkBox)) {
+      autoConnectStructure(this.hooks.registry, id, this.hooks.getObstacles?.(this.linkBox));
     }
     return id;
   }

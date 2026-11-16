@@ -122,7 +122,11 @@ view, never the server `StructureRegistry`):
   footprint box and every obstacle; an asteroid's box is the broad phase and,
   when it carries convex `parts`, the line is blocked only if it crosses a
   part (`segmentHitsObstacle`; macro terrain C5c), so a cable may pass a big
-  irregular rock inside its circle but clear of its outline. Both sides build
+  irregular rock inside its circle but clear of its outline. The server's
+  obstacles include rocks with no body (an unloaded cut-field chunk): every
+  auto-connect (placement, reconnect sweep, player reconnect) asks
+  `getObstacles(near)` with `linkReachBox`, the box its links may run in
+  (macro terrain C5g). Both sides build
   a rock's `parts` with the one `rockObstacleParts` (a field rock's collider
   parts, else its outline's convex hull; an ordinary asteroid's seeded
   outline) at its live angle: the server in `gatherStructureObstacles` and
