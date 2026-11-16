@@ -11,7 +11,7 @@ import {
 import type { HitscanWeaponDef, ProjectileWeaponDef, WeaponDef } from './WeaponCatalogue.js';
 
 /** The heavy beam's width (world units): the strip its slice erases on a
- *  kill (`killCut`) and the client's drawn core width (`HEAVY_BEAM_STYLE`),
+ *  kill (`killCut`), the client's drawn core width (`HEAVY_BEAM_STYLE`) and what it hits by (`hitWidth`),
  *  so the gap and the beam that made it match (owner 2026-11-15: "the slice
  *  is too thin compared to the width of the beam"). */
 export const HEAVY_BEAM_WIDTH = 60;
@@ -123,7 +123,7 @@ const RAILGUN_DEF: ProjectileWeaponDef = {
 const HEAVY_BEAM_DEF: HitscanWeaponDef = {
   id: 'heavy_beam', displayName: 'Heavy beam', mode: 'hitscan',
   damage: 260, cooldownTicks: 10, range: 20_000, energyCost: 45,
-  killCut: { kind: 'slice', width: HEAVY_BEAM_WIDTH },
+  killCut: { kind: 'slice', width: HEAVY_BEAM_WIDTH }, hitWidth: HEAVY_BEAM_WIDTH,
   // Owner (game feel): "the beam should not turn after the kill and show for
   // half a second or one second through the clean cut": 0.75 s.
   followThroughTicks: 45,
