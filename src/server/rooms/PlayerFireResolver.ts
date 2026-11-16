@@ -27,13 +27,14 @@
 
 import { shipRayHit } from '../../core/combat/shipHitShape.js';
 import { wreckRayHit } from '../../core/destruction/wreckHits.js';
+import { isLootPod } from '../net/SwarmEntityRegistry.js';
 import type { Client } from 'colyseus';
 import type { Logger } from 'pino';
 import {
   MissileWeaponDef,
   WeaponId,
   getWeapon,
-  hitscanFalloffFrac,
+  hitscanFalloffFrac, isMiningTool,
 } from '../../core/combat/WeaponCatalogue.js';
 import {
   rayHitsSphere,
@@ -663,19 +664,18 @@ export class PlayerFireResolver implements WeaponFireSink {
 
     // 3. Swarm (drones + asteroids).
     for (const rec of d.swarmRegistry.all()) {
+      if (isLootPod(rec) && isMiningTool(this._weaponId)) continue; // only a mining tool passes a loot pod (#15: displayPoseHitscan)
       const rewound = d.snapshotRing.getPoseAt(rec.id, effTick);
       const b = slotBase(rec.slot);
       const cx = rewound?.x ?? d.sabF32[b + SLOT_X_OFF]!;
       const cy = rewound?.y ?? d.sabF32[b + SLOT_Y_OFF]!;
       const ca = rewound?.angle ?? d.sabF32[b + SLOT_ANGLE_OFF]!;
       let dist: number | null;
-      if (rec.kind === 4 || rec.wreckParts !== undefined) {
-        // A wreck piece (S2a) or cut-field rock (C1b): its convex parts.
+      if (rec.kind === 4 || rec.wreckParts !== undefined) { // a wreck piece (S2a) or cut-field rock (C1b): its convex parts
         dist = wreckRayHit(rec.wreckParts, rec.radius, rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, ca, hw);
       } else if (rec.kind === 0 && rec.vertices) {
         dist = rayHitsConvexPolygon(rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, ca, rec.vertices, hw);
-      } else if (rec.halfW !== undefined && rec.halfH !== undefined) {
-        // Structures (phase V): the footprint box, not the bounding circle.
+      } else if (rec.halfW !== undefined && rec.halfH !== undefined) { // structures: the footprint box
         dist = rayHitsBox(rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, rec.halfW, rec.halfH, rec.boxes, hw);
       } else if (rec.kind === 1 && rec.shipKind) {
         // A ship: the same shape as if a player flew it (`shipHitShape.ts`,
