@@ -14,7 +14,7 @@
  * naval-hit hold release go through (the predicted path shares the guard).
  */
 import { describe, it, expect, beforeEach } from 'vitest';
-import { ColyseusGameClient, isWreckPieceTarget } from './ColyseusClient.js';
+import { ColyseusGameClient, isNoDamageNumberTarget, isWreckPieceTarget } from './ColyseusClient.js';
 import type { DamageEvent } from '../../shared-types/messages.js';
 
 interface MirrorSubset {
@@ -47,6 +47,7 @@ describe('a hit on a wreck piece: spark only, no damage number or health bar', (
       [101, { kind: 4, x: 5, y: 6 }], // a wreck piece (sub-cap or capital alike)
       [102, { kind: 1, x: 9, y: 9 }], // a live drone
       [103, { kind: 3, x: 1, y: 1 }], // scrap (unchanged: still numbered)
+      [104, { kind: 0, x: 2, y: 2 }], // a field rock (mining is not combat: no number)
     ]);
     internals.mirror.pendingDamageNumbers = [];
     internals.mirror.pendingHealthBarHits = [];
@@ -101,4 +102,24 @@ describe('a hit on a wreck piece: spark only, no damage number or health bar', (
     expect(isWreckPieceTarget('player-101', swarm)).toBe(false);
     expect(isWreckPieceTarget('swarm-101', undefined)).toBe(false);
   });
+it('a field rock (kind 0): no number; health bar and flash stay; a ship still gets one', () => {
+    internals.mirror.ships.set('player-7', { x: 0, y: 0, vx: 0, vy: 0, angle: 0 });
+    internals.handleDamage(hit('swarm-104'));
+    expect(internals.mirror.pendingDamageNumbers).toHaveLength(0);
+    expect(internals.mirror.pendingHealthBarHits).toHaveLength(1);
+    expect(internals._damageFlashFrames.has('swarm-104')).toBe(true);
+    internals.handleDamage(hit('player-7'));
+    expect(internals.mirror.pendingDamageNumbers!.map((d) => d.targetId)).toEqual(['player-7']);
+  });
+
+  it('isNoDamageNumberTarget: rocks and wreck pieces (incl. rock pieces) only', () => {
+    const swarm = internals.mirror.swarm as unknown as Parameters<typeof isNoDamageNumberTarget>[1];
+    expect(isNoDamageNumberTarget('swarm-104', swarm)).toBe(true);
+    expect(isNoDamageNumberTarget('swarm-101', swarm)).toBe(true);
+    expect(isNoDamageNumberTarget('swarm-102', swarm)).toBe(false);
+    expect(isNoDamageNumberTarget('swarm-103', swarm)).toBe(false);
+    expect(isNoDamageNumberTarget('swarm-999', swarm)).toBe(false);
+    expect(isNoDamageNumberTarget('player-104', swarm)).toBe(false);
+  });
 });
+

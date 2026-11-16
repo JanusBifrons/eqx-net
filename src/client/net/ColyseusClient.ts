@@ -335,6 +335,28 @@ export function isWreckPieceTarget(
   return swarm.get(id)?.kind === SWARM_KIND_WRECK;
 }
 
+/**
+ * Does a hit on `targetId` get NO floating damage number? Wreck pieces
+ * (`isWreckPieceTarget`, which also covers pieces cut from a rock) and field
+ * rocks (swarm kind 0): mining is not combat (owner note 2026-11-16). Rocks
+ * keep their spark, flash and health bar; only the number goes.
+ */
+export function isNoDamageNumberTarget(
+  targetId: string, swarm: ReadonlyMap<number, Pick<SwarmRenderState, 'kind'>> | undefined,
+): boolean {
+  if (swarm === undefined || !targetId.startsWith(SWARM_ID_PREFIX)) return false;
+  const n = targetId.length;
+  if (n === SWARM_ID_PREFIX.length) return false;
+  let id = 0;
+  for (let i = SWARM_ID_PREFIX.length; i < n; i++) {
+    const c = targetId.charCodeAt(i) - 48;
+    if (c < 0 || c > 9) return false;
+    id = id * 10 + c;
+  }
+  const kind = swarm.get(id)?.kind;
+  return kind === SWARM_KIND_WRECK || kind === 0;
+}
+
 export class ColyseusGameClient {
   /**
    * Plan: crispy-kazoo, Commit 6 — live-instance counter. Bumped in
@@ -2952,7 +2974,7 @@ export class ColyseusGameClient {
     // showed this number (de-dupe: exactly one number per confirmed hit).
     // Everything else in handleDamage stays unconditional — this remains
     // the SOLE HP/HUD/flash/healthbar/hostility authority.
-    if (!suppressNumber && !debris && this.mirror.pendingDamageNumbers) {
+    if (!suppressNumber && !debris && !isNoDamageNumberTarget(evt.targetId, this.mirror.swarm) && this.mirror.pendingDamageNumbers) {
       const targetShip = this.mirror.ships.get(evt.targetId);
       const x = evt.hitX ?? targetShip?.x ?? 0;
       const y = evt.hitY ?? targetShip?.y ?? 0;
@@ -7152,8 +7174,8 @@ export class ColyseusGameClient {
     const clockNow = this.clock.now();
     const predSink: PredictedFeedbackSink = {
       pushDamageNumber: (targetId, x, y, damage, tag) => {
-        // Debris: never a number (the authoritative path skips it too).
-        if (isWreckPieceTarget(targetId, this.mirror.swarm)) return;
+        // Debris and rocks: never a number (the authoritative path skips them too).
+        if (isNoDamageNumberTarget(targetId, this.mirror.swarm)) return;
         if (!isHitscan || damage <= 0) {
           this.mirror.pendingDamageNumbers?.push({ targetId, x, y, damage, tag });
           // Probe 4 (mobile-perf-investigation, 2026-05-24) — replaced the
