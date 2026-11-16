@@ -1,13 +1,13 @@
 /**
  * Tractor beams on screen (salvage plan PR 11b): `fillTractorBeams` turns
- * `mirror.tractorLinks` into the tractor pool's beam views (a faint line from
- * the barrel tip to the target, rings travelling toward the emitter), and the
+ * `mirror.tractorLinks` into the tractor pool's beam views (one glowing beam
+ * from the barrel tip to the target), and the
  * decode → draw path from the snapshot's beam links to drawn sprites.
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { fillTractorBeams, TRACTOR_MAX_PULSES, TRACTOR_PULSE_SPACING_PX } from './tractorBeams.js';
+import { describe, expect, it } from 'vitest';
+import { fillTractorBeams } from './tractorBeams.js';
 import { BeamSpritePool, type BeamView } from './BeamSpritePool.js';
-import { TRACTOR_BEAM_STYLE, TRACTOR_PULSE_STYLE, TRACTOR_BEAM_COLOR, TRACTOR_BEAM_CROSS_SECTION, MINING_LASER_STYLE, setBeamLooks } from './beamStyles.js';
+import { TRACTOR_BEAM_STYLE, TRACTOR_BEAM_COLOR, TRACTOR_BEAM_CROSS_SECTION, MINING_LASER_STYLE } from './beamStyles.js';
 import { MINING_LASER_WIDTH } from '../../core/combat/WeaponCatalogue.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { shipShotMuzzle } from '../../core/combat/muzzle.js';
@@ -32,14 +32,10 @@ function mirror(over: Partial<RenderMirror> = {}): Pick<RenderMirror, 'ships' | 
 const views = (): BeamView[] => [];
 
 describe('fillTractorBeams', () => {
-  // Look B (`?tractorLook=b`) draws the pulses; look A only the beam.
-  beforeEach(() => setBeamLooks('?tractorLook=b'));
-  afterEach(() => setBeamLooks(''));
-
   it('draws the beam from the mount barrel tip to the target centre, in the tractor beam style', () => {
     const out = views();
     const n = fillTractorBeams(mirror(), 0, SCALE, out);
-    expect(n).toBeGreaterThan(1);
+    expect(n).toBe(1);
     const line = out[0]!;
     expect(line.style).toBe(TRACTOR_BEAM_STYLE);
     const pivotX = MOUNT.localX, pivotY = MOUNT.localY; // angle 0
@@ -51,42 +47,10 @@ describe('fillTractorBeams', () => {
     expect(line.toY).toBe(1500);
   });
 
-  it('look A (default) draws the beam alone, no pulses', () => {
-    setBeamLooks('');
+  it('draws the beam alone (no pulses or rings)', () => {
     const out = views();
     expect(fillTractorBeams(mirror(), 1234, SCALE, out)).toBe(1);
     expect(out[0]!.style).toBe(TRACTOR_BEAM_STYLE);
-  });
-
-  it('look B pulses travel along the beam TOWARD the emitter as game time runs', () => {
-    const m = mirror();
-    const a = views(), b = views();
-    fillTractorBeams(m, 10_000, SCALE, a);
-    fillTractorBeams(m, 10_100, SCALE, b); // 100 ms later
-    const ringY = (v: BeamView) => (v.fromY + v.toY) / 2;
-    // The same (first) ring, 100 ms on: closer to the emitter (y 0).
-    expect(a[1]!.style).toBe(TRACTOR_PULSE_STYLE);
-    expect(ringY(b[1]!)).toBeLessThan(ringY(a[1]!));
-    // Along the beam: a pulse is parallel to it.
-    const l = a[0]!, ring = a[1]!;
-    expect((ring.toX - ring.fromX) * (l.toY - l.fromY) - (ring.toY - ring.fromY) * (l.toX - l.fromX)).toBeCloseTo(0, 3);
-    expect(Math.hypot(ring.toX - ring.fromX, ring.toY - ring.fromY)).toBeGreaterThan(0);
-  });
-
-  it('pulses fade in at the target and out at the barrel; spacing is in screen px; capped per beam', () => {
-    const out = views();
-    const n = fillTractorBeams(mirror(), 1234, SCALE, out);
-    for (let i = 1; i < n; i++) {
-      expect(out[i]!.alphaMul).toBeGreaterThan(0);
-      expect(out[i]!.alphaMul).toBeLessThanOrEqual(1);
-    }
-    const mid = (v: BeamView) => [(v.fromX + v.toX) / 2, (v.fromY + v.toY) / 2] as const;
-    const gap = Math.hypot(mid(out[2]!)[0] - mid(out[1]!)[0], mid(out[2]!)[1] - mid(out[1]!)[1]);
-    expect(gap).toBeCloseTo(TRACTOR_PULSE_SPACING_PX / SCALE, 6);
-    // A very long beam at a far zoom: never more than the cap.
-    const far = mirror();
-    far.swarm!.get(42)!.y = 200_000;
-    expect(fillTractorBeams(far, 0, 2, views()) - 1).toBeLessThanOrEqual(TRACTOR_MAX_PULSES);
   });
 
   it('draws nothing when the emitter or the target is not in the mirror (or no links)', () => {
@@ -124,8 +88,7 @@ describe('tractor look (owner: "like a beam weapon, just with a blue glow")', ()
 });
 
 describe('decode → draw (snapshot beam links to tractor sprites)', () => {
-  it('a snapshot tractor link becomes a glowing beam plus pulses in the tractor pool', () => {
-    setBeamLooks('?tractorLook=b');
+  it('a snapshot tractor link becomes a glowing beam in the tractor pool', () => {
     const m = mirror({ tractorLinks: undefined });
     const client = new TractorLinkClient(m as never, new Map());
     const flat: BeamLinks = [];
@@ -140,13 +103,9 @@ describe('decode → draw (snapshot beam links to tractor sprites)', () => {
     expect(line.parent).toBe(pool.styledContainer);
     expect(line.tint).toBe(0xffffff); // the cross-section carries the colours
     expect(line.alpha).toBeCloseTo(TRACTOR_BEAM_STYLE.alpha, 6);
-    const ring = pool.coreAt(1)!;
-    expect(ring.parent).toBe(pool.styledContainer);
-    expect(ring.alpha).toBeCloseTo(TRACTOR_PULSE_STYLE.alpha * out[1]!.alphaMul!, 6);
     // The lease ends: nothing drawn.
     client.sync(undefined, { structure: () => {}, tractor: client.add }, null);
     pool.setBeams(out, fillTractorBeams(m, 516, SCALE, out), SCALE);
     expect(pool.liveCount).toBe(0);
-    setBeamLooks('');
   });
 });

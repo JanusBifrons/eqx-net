@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   HEAVY_BEAM_COLOR, HEAVY_BEAM_STYLE, MINING_BEAM_STYLE, REMOTE_BEAM_FADE_MS, REMOTE_BEAM_STYLE,
-  findMount, remoteBeamStyleForMount, MINING_LASER_STYLE, MINING_LASER_LIT_STYLE, MINING_LASER_CROSS_SECTION, setBeamLooks, isSustainedBeamMount, isHeavyBeamMount, remoteBeamTtlMs, remoteBeamSolidLen, HEAVY_BEAM_MISS_FADE_FRAC,
+  findMount, remoteBeamStyleForMount, MINING_LASER_STYLE, MINING_LASER_CROSS_SECTION, isSustainedBeamMount, isHeavyBeamMount, remoteBeamTtlMs, remoteBeamSolidLen, HEAVY_BEAM_MISS_FADE_FRAC,
 } from './beamStyles.js';
 import { HEAVY_BEAM_WIDTH, MINING_LASER_WIDTH, getWeapon } from '../../core/combat/WeaponCatalogue.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
@@ -132,18 +132,6 @@ describe('beam styles — mining laser (plan partitioned-chasing-lark PR 7)', ()
     expect(cs.stops[cs.stops.length - 1]!.alpha).toBe(0);
     expect(MINING_LASER_STYLE.glowScale).toBeGreaterThan(1);
     expect(MINING_LASER_STYLE.lineLight).toBeUndefined();
-  });
-
-  it('?minerBeam=b picks the look that lights along its length; anything else look A', () => {
-    const m = findMount(mounts, 'mine-0');
-    try {
-      setBeamLooks('?minerBeam=b');
-      expect(remoteBeamStyleForMount(m)).toBe(MINING_LASER_LIT_STYLE);
-      expect(MINING_LASER_LIT_STYLE.lineLight).toBeDefined();
-      expect(remoteBeamStyleForMount(findMount(mounts, 'main-0'))).toBe(HEAVY_BEAM_STYLE);
-      setBeamLooks('?minerBeam=zz');
-      expect(remoteBeamStyleForMount(m)).toBe(MINING_LASER_STYLE);
-    } finally { setBeamLooks(''); }
   });
 
   it('holds like the heavy beam (no strobe at the 10-tick cadence); fighter beams do not', () => {

@@ -84,7 +84,7 @@ import { newSpeedFxSample, speedFxSampleInto } from './camera/speedFxSample';
 import { GroupBoundsScanner } from './camera/groupBounds';
 import type { CameraCue, CameraGroup } from '@core/contracts/cameraScript';
 import { fillTractorBeams } from './tractorBeams';
-import { REMOTE_BEAM_STYLE, LIVE_BEAM_STYLE, TRACTOR_BEAM_STYLE, setBeamLooks, liveBeamLook, liveBeamLine,MINING_BEAM_STYLE, remoteBeamStyleForMount, remoteBeamLine, remoteBeamSolidLen, addBeamLights, beamLightBudget, BeamHitMemory, type RemoteBeamLine } from './beamStyles';
+import { REMOTE_BEAM_STYLE, LIVE_BEAM_STYLE, TRACTOR_BEAM_STYLE, liveBeamLook, liveBeamLine,MINING_BEAM_STYLE, remoteBeamStyleForMount, remoteBeamLine, remoteBeamSolidLen, addBeamLights, beamLightBudget, BeamHitMemory, type RemoteBeamLine } from './beamStyles';
 import { MountVisualManager } from './MountVisualManager';
 import { BackgroundGrid } from './BackgroundGrid';
 import { StarfieldBackground } from './StarfieldBackground';
@@ -823,7 +823,6 @@ export class PixiRenderer implements IRenderer {
       initialDpr = window.devicePixelRatio ?? 1;
       const z = new URLSearchParams(window.location.search).get('zoom');
       if (z !== null) zoom = parseFloat(z);
-      setBeamLooks(window.location.search); // ?minerBeam= / ?tractorLook= (owner look pick)
       // No `canvas:` option — Pixi creates one and we append it.
     } else {
       const bag = rawContainer as {

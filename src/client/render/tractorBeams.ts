@@ -1,18 +1,13 @@
 /**
  * Tractor beams on screen (salvage plan PR 11b): each `mirror.tractorLinks`
- * row becomes beam views for the tractor's `BeamSpritePool`, the same pool
- * every beam draws with (styles in `beamStyles.ts`):
- * - the BEAM, from the emitter mount's barrel tip to the target's centre
- *   (`TRACTOR_BEAM_STYLE`: drawn like a beam weapon, with a blue glow);
- * - look B only (`?tractorLook=b`): bright PULSES running along it toward
- *   the emitter, so the direction of pull reads (`TRACTOR_PULSE_STYLE`),
- *   spaced and sized in SCREEN px (the same look at any zoom), each fading
- *   in near the target and out near the barrel.
+ * row becomes a beam view for the tractor's `BeamSpritePool`, the same pool
+ * every beam draws with (styles in `beamStyles.ts`): the BEAM, from the
+ * emitter mount's barrel tip to the target's centre (`TRACTOR_BEAM_STYLE`:
+ * drawn like a beam weapon, with a blue glow).
  *
  * Poses are the drawn ones: a pilot's mirror pose, a drone's resolved
  * display pose (`resolveEntityDisplayPose`), anything else interpolated like
- * its sprite. Allocation-free once `out` has grown (#14). Time is game time
- * (`fxNow()`), so the pulses slow with the sector.
+ * its sprite. Allocation-free once `out` has grown (#14).
  */
 import type { RenderMirror, SwarmRenderState } from '../../core/contracts/IRenderer.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
@@ -20,16 +15,7 @@ import { shipShotMuzzle } from '../../core/combat/muzzle.js';
 import { interpolateSwarmPose, type InterpolatedPose } from '../net/swarmInterpolation.js';
 import { resolveEntityDisplayPose } from '../net/swarmDisplayPose.js';
 import type { BeamView } from './BeamSpritePool.js';
-import { TRACTOR_BEAM_STYLE, TRACTOR_PULSE_STYLE, findMount, tractorLook } from './beamStyles.js';
-
-/** Screen px between pulses. */
-export const TRACTOR_PULSE_SPACING_PX = 64;
-/** Screen px a pulse travels per second (game time). */
-export const TRACTOR_PULSE_SPEED_PX_S = 80;
-/** A pulse's length along the beam, screen px. */
-export const TRACTOR_PULSE_PX = 24;
-/** Most pulses on one beam (a long beam spaces them wider). */
-export const TRACTOR_MAX_PULSES = 12;
+import { TRACTOR_BEAM_STYLE, findMount } from './beamStyles.js';
 
 const _e: InterpolatedPose = { x: 0, y: 0, angle: 0 };
 const _t: InterpolatedPose = { x: 0, y: 0, angle: 0 };
@@ -66,7 +52,7 @@ function slot(out: BeamView[], i: number): BeamView {
 }
 
 /**
- * Fill `out` with this frame's tractor views (lines and rings) and return how
+ * Fill `out` with this frame's tractor views (one beam per link) and return how
  * many. `cameraScale`: screen px per world unit. A link whose emitter or
  * target is not in the mirror draws nothing.
  */
@@ -96,30 +82,9 @@ export function fillTractorBeams(
     if (dist <= muzzle) continue; // target inside the barrel: nothing to draw
     dx /= dist; dy /= dist;
     const fx = px + dx * muzzle, fy = py + dy * muzzle;
-    const len = dist - muzzle;
     const line = slot(out, n++);
     line.fromX = fx; line.fromY = fy; line.toX = _t.x; line.toY = _t.y;
     line.style = TRACTOR_BEAM_STYLE; line.alphaMul = 1; line.solidLen = undefined;
-    if (tractorLook() !== 'b') continue;
-
-    // Pulses (look B): spaced in screen px (wider on a long beam), moving
-    // toward the emitter: a pulse at d from the barrel shrinks d as time runs.
-    const pxToWorld = 1 / cameraScale;
-    const spacing = Math.max(TRACTOR_PULSE_SPACING_PX * pxToWorld, len / TRACTOR_MAX_PULSES);
-    const speed = TRACTOR_PULSE_SPEED_PX_S * pxToWorld;
-    const phase = ((nowMs / 1000) * speed) % spacing; // 0..spacing
-    const half = Math.min((TRACTOR_PULSE_PX * pxToWorld) / 2, spacing / 4);
-    for (let d = spacing - phase; d < len; d += spacing) {
-      const u = d / len;
-      const fade = Math.sin(Math.PI * u); // 0 at the barrel and at the target
-      if (fade <= 0.02) continue;
-      const cx = fx + dx * d, cy = fy + dy * d;
-      const pulse = slot(out, n++);
-      // Along the beam, centred on d.
-      pulse.fromX = cx - dx * half; pulse.fromY = cy - dy * half;
-      pulse.toX = cx + dx * half; pulse.toY = cy + dy * half;
-      pulse.style = TRACTOR_PULSE_STYLE; pulse.alphaMul = fade; pulse.solidLen = undefined;
-    }
   }
   return n;
 }
