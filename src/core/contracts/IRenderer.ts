@@ -543,6 +543,7 @@ export interface RenderMirror {
   wreckRevealFromTick?: number;
   /** Mine Layer — proximity mines, keyed by mine id (room state `mines`). */
   mines?: Map<string, MineRenderState>;
+  /** Ship tractor beams (emitter → target: a swarm entityId or a playerId), from the snapshot's beam links (client/net/tractorLinks.ts). */ tractorLinks?: Array<{ emitter: number | string; mountId: string; target: number | string }>;
   /** Structures plan, Phase 3 — connection flash windows from the discrete
    *  `grid_pulse` event. Key is the sorted entityId pair packed as
    *  `min * 65536 + max` (numeric ⇒ no per-frame string-key allocation in the

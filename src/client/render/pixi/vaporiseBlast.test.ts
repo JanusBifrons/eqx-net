@@ -15,6 +15,7 @@ import { FxExplosions } from '../art/fx/FxExplosions.js';
 import { shipExtent } from '../art/fields.js';
 import { deathBlastFor, dyingHullDiameter, type DeathBlast } from './deathBlast.js';
 import { spawnVaporiseBlast, stackVaporiseOverBeams, VAPORISE_MIN_RADIUS } from './vaporiseBlast.js';
+import { raiseBeamsOverHulls } from './beamsOverHulls.js';
 
 function fakeArt(): ArtService {
   const h = (): ArtHandle => ({ key: 'k', job: { type: 'fx', id: 'x' }, rig: undefined as never, state: 'ready', ship: null, struct: null,
@@ -76,5 +77,11 @@ describe('stackVaporiseOverBeams', () => {
     stackVaporiseOverBeams(ships, fx);
     const at = ships.getChildIndex(fx.overLayer);
     for (const b of beams) expect(at).toBeGreaterThan(ships.getChildIndex(b));
+    // and still over them once the beams are lifted over hulls
+    raiseBeamsOverHulls(ships, beams);
+    ships.addChild(new Container());
+    ships.sortChildren();
+    const top = ships.getChildIndex(fx.overLayer);
+    for (const b of beams) expect(top).toBeGreaterThan(ships.getChildIndex(b));
   });
 });
