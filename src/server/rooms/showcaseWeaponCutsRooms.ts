@@ -49,8 +49,8 @@ export function weaponCutsRoomOpts<T extends object>(base: T) {
    *  that line, ahead of the enemy capital. Nobody locks or aims at it; your
    *  capital's heavy beams, laid on the enemy capital, burn through it on the
    *  way. The capitals start past the 5" secondaries' reach, so only the
-   *  heavy beams can fire at first. The pilot's own ship parks far west, out
-   *  of both capitals' reach, and the shot spectates. Roster-backed (a real
+   *  heavy beams can fire at first. The pilot's own ship parks due south,
+   *  behind yours and out of the enemy's reach, and the shot spectates. Roster-backed (a real
    *  `sectorKey` outside the galaxy graph) because the `fleet` step needs a
    *  roster. */
   const beamCollateral = {
