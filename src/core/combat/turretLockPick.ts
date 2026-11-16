@@ -138,7 +138,8 @@ const SALVAGE_NOT_APPLICABLE = -2;
  * ordinary pick. Mount rank: the group's mining mounts, big
  * (`salvagePrefersBig`) before small, slot order within each. Lock rank: the
  * cuttable pieces THIS mount can engage (`canEngage`, the ordinary pick's
- * reach + arc test) by `shapes[i].radius` descending (ties by lock order).
+ * reach + arc test) by `Math.fround(shapes[i].radius)` descending (ties by
+ * lock order; float32 so both sides' radii rank alike).
  * Mount rank r takes lock rank r % k; with none engageable the laser parks
  * on the first cuttable piece, as the ordinary pick parks on the first lock.
  * Linear in the group's mounts, an insertion sort over its few (at most 8)
@@ -161,10 +162,11 @@ function pickSalvageLock(
     if ((f & LOCK_HAULABLE) !== 0) continue;
     if (firstCut < 0) firstCut = i;
     if (!canEngage(m, frameAngle, tx[i]! - mx, ty[i]! - my, reach, shapes?.[i])) continue;
-    // Insertion by radius, descending; equal radii keep lock order.
-    const r = shapes?.[i]?.radius ?? 0;
+    // Insertion by float32 radius, descending; equal radii keep lock order.
+    // float32: the server's float64 radius and the client's wire radius rank alike (#15).
+    const r = Math.fround(shapes?.[i]?.radius ?? 0);
     let p = k++;
-    while (p > 0 && (shapes?.[order[p - 1]!]?.radius ?? 0) < r) { order[p] = order[p - 1]!; p--; }
+    while (p > 0 && Math.fround(shapes?.[order[p - 1]!]?.radius ?? 0) < r) { order[p] = order[p - 1]!; p--; }
     order[p] = i;
   }
   if (firstCut < 0) return pieces > 0 && pieces === n ? TURRET_NO_LOCK : SALVAGE_NOT_APPLICABLE;

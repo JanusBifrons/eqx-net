@@ -113,3 +113,15 @@ describe('pickTurretLock: mining lasers only take pieces they can engage', () =>
     expect(got).toEqual([1, 1]);
   });
 });
+
+describe('pickTurretLock: piece size order is float32-stable (#15)', () => {
+  it('server float64 radii and client float32 wire radii rank sibling pieces the same', () => {
+    const a = 100.000001;
+    const b = 100.000002;
+    expect(Math.fround(a)).toBe(Math.fround(b)); // the wire can't tell them apart
+    const group = [mount('mining_laser', 'L'), mount('mining_laser', 'S')];
+    const server = picks(group, [a, b], [LOCK_SALVAGE, LOCK_SALVAGE]);
+    const client = picks(group, [Math.fround(a), Math.fround(b)], [LOCK_SALVAGE, LOCK_SALVAGE]);
+    expect(server).toEqual(client);
+  });
+});
