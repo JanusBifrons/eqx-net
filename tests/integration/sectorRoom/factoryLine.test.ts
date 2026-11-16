@@ -5,8 +5,9 @@
  * the free hold) is targeted by nothing. The lock step stamps
  * `LOCK_CONSUMABLE` on the wire lock (`f`), the mining laser group's fire is
  * refused (`pickTurretLock` → `TURRET_NO_LOCK`) and the tractor group's too
- * (no lease). Fill the hold and the same piece is cut again (the control:
- * it is in range). A consumable piece near the hull goes into the hold
+ * (no lease). Fill the hold and the same piece is pulled again (the control:
+ * fighter debris is AA tier, so the S tractor pulls it and the S laser leaves
+ * it, the size ladder). A consumable piece near the hull goes into the hold
  * through the loot pickup's piece store, with no tractor on it.
  *
  * No ship kind carries both tools yet (the barge is PR 15): a crossguard
@@ -22,7 +23,7 @@ import type { SectorState } from '../../../src/server/rooms/schema/SectorState.j
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import { getShipKind, type WeaponMount } from '../../../src/shared-types/shipKinds.js';
 import { getHoldStore } from '../../../src/server/db/PersistenceWorker.js';
-import { LOCK_CONSUMABLE, LOCK_SALVAGE } from '../../../src/core/combat/turretLockPick.js';
+import { LOCK_CONSUMABLE, LOCK_SALVAGE, LOCK_TIER_MASK } from '../../../src/core/combat/turretLockPick.js';
 
 interface SnapGroups { id: string; m: number; l: Array<{ t: string; s: number; p: number; f?: number }> }
 const WRECK_KIND = 4;
@@ -46,7 +47,7 @@ describe('SectorRoom integration — the factory line: nothing targets a consuma
     if (harness) await harness.cleanup();
   }, 10_000);
 
-  it('laser and tractor leave a consumable piece; a full hold hands it back to the laser; one at the hull goes into the hold', async () => {
+  it('laser and tractor leave a consumable piece; a full hold hands it back to the tractor; one at the hull goes into the hold', async () => {
     for (const m of mounts) m.weaponId = m.id === 'cross-l' ? 'mining_laser' : 'tractor';
     harness = await bootSectorTestServer({
       sectorKey: 'sol-prime', droneCount: 0, testMode: true, peacefulDrones: true, asteroidConfig: [], subcapWrecks: true,
@@ -110,16 +111,16 @@ describe('SectorRoom integration — the factory line: nothing targets a consuma
     expect(int().forceFields.tractorCount, 'no tractor lease on it').toBe(0);
     expect(int().swarmRegistry.get(piece), 'beyond the pickup reach it stays in the world').toBeTruthy();
 
-    // 2. Control: fill the hold, the piece is no longer consumable, and the laser cuts it (it is in range).
+    // 2. Control: fill the hold, the piece is no longer consumable, and the tractor pulls it (it is in range).
     getHoldStore().put({
       holderUid: ship.shipInstanceId, holderType: 'ship', ownerId: pid, sectorKey: 'sol-prime', x: null, y: null,
       hold: { goods: { salvage: 1_000_000 }, blueprints: [] }, expiresAt: null,
     }, false);
-    await waitUntil(() => lockOf('port')?.f === LOCK_SALVAGE, 5_000, 'piece no longer consumable');
+    await waitUntil(() => ((lockOf('port')?.f ?? 0) & ~LOCK_TIER_MASK) === LOCK_SALVAGE, 5_000, 'piece no longer consumable');
     for (let i = 0; i < 12 && ![...acks].some(([id, rej]) => id.startsWith('c') && !rej); i++) {
-      fire(`c${i}`, 'port'); await new Promise((r) => setTimeout(r, 120));
+      fire(`c${i}`, 'starboard'); await new Promise((r) => setTimeout(r, 120));
     }
-    await waitUntil(() => [...acks].some(([id, rej]) => id.startsWith('c') && !rej), 4_000, 'the laser fires at the piece it can no longer take in');
+    await waitUntil(() => [...acks].some(([id, rej]) => id.startsWith('c') && !rej), 4_000, 'the tractor fires at the piece the ship can no longer take in');
 
     // 3. Empty hold, a fighter broken beside the hull: its pieces go into the
     //    hold whole through the loot pickup, no tractor on them.

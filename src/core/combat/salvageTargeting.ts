@@ -5,14 +5,20 @@
  * A mount whose weapon MINES (`isSalvageWeapon`: a 'rock' target factor
  * above 0, the mining laser) aims at the salvage pieces its group LOCKED
  * (wreck pieces, rocks, rock pieces; class `SALVAGE_TARGET_CLASS`). Which
- * piece each laser takes is the group share-out `pickTurretLock`
- * (`turretLockPick.ts`): lasers spread ~1 per piece, big on big, and skip
- * a piece flagged `LOCK_HAULABLE`. This module answers that flag:
- * **haulable by me** = its mass is at most `salvageHaulMass` (the ship's
- * strongest tractor mount, at `SALVAGE_HAUL_DIST_PER_DREF` × dRef, gives it
- * at least `SALVAGE_HAUL_MIN_ACCEL`: the tractor's own fixed force and
- * falloff, `tractorPull`, accel = F / m) AND its hold weight fits the free
- * hold; and the big/small split (`salvagePrefersBig`).
+ * piece each mount takes is the group share-out `pickTurretLock`
+ * (`turretLockPick.ts`), by the SIZE LADDER (owner 2026-11-16): every piece
+ * has a size TIER (`salvageTier`), the rung of the smallest mount size whose
+ * tractor can pull it: its mass is at most `salvageTierMass(size)` = the
+ * catalogue's strongest tractor at that size (force × the size's `power`,
+ * its own falloff `tractorPull`) at `SALVAGE_HAUL_DIST_PER_DREF` × dRef,
+ * over `SALVAGE_HAUL_MIN_ACCEL` (accel = F / m). `SALVAGE_TIER_NONE` (0) =
+ * too big for any tractor. The tier depends only on the piece's mass and
+ * the catalogue, never on the ship. A mining laser on rung k cuts only
+ * pieces ABOVE k (`laserCutsTier`: a tractor of its size can take the
+ * rest); a tractor on rung k pulls only pieces at or below k
+ * (`tractorTakesTier`). So XL/L lasers slice the huge rocks, the L tractors
+ * pull L-tier pieces in to the M lasers, and so on down to the small lasers,
+ * which cut to hold size. The big/small split: `salvagePrefersBig`.
  *
  * **Consumable by me** (owner 2026-11-16, the factory line): a piece small
  * enough for THIS ship to take in whole: its bounding radius is at most
@@ -23,15 +29,14 @@
  * it in by proximity through the loot pickup (`LootSubsystem`).
  */
 import type { WeaponMount } from '../../shared-types/shipKinds/types.js';
-import { MOUNT_SIZE_TUNING } from '../../shared-types/shipScale/tuning.js';
-import { getWeapon, weaponTargetFactor, type WeaponDef } from './WeaponCatalogue.js';
-import { mountWeaponReach } from './mountReach.js';
+import { MOUNT_SIZE_TUNING, type MountSize } from '../../shared-types/shipScale/tuning.js';
+import { WEAPON_IDS, getWeapon, weaponAutoFireRange, weaponTargetFactor, type WeaponDef } from './WeaponCatalogue.js';
 import { tractorPull } from './tractorSpec.js';
 import { SALVAGE_TARGET_CLASS } from './mountTargeting.js';
 
 export { SALVAGE_TARGET_CLASS };
 
-/** A tractor is judged able to haul a piece when it can accelerate it at
+/** A tractor is judged able to pull a piece when it can accelerate it at
  *  least this much (u/s²) at the haul distance. 10 u/s² brings a piece in
  *  from 500 u in about 10 s; the tractor record's own example ("a 2,000-mass
  *  one at 3 u/s²") is the "barely moves" case this rules out. */
@@ -40,7 +45,7 @@ export const SALVAGE_HAUL_MIN_ACCEL = 10;
 /** The haul distance, in multiples of the tractor's `dRef`: a piece just
  *  outside the cushion being drawn in, where the inverse-square falloff has
  *  already cut the pull to a quarter. Judging at full force (≤ dRef) would
- *  call pieces haulable that the beam can't start moving from range. */
+ *  call pieces pullable that the beam can't start moving from range. */
 export const SALVAGE_HAUL_DIST_PER_DREF = 2;
 
 /** A piece is small enough to consume when its bounding radius is at most
@@ -73,32 +78,77 @@ export function salvagePrefersBig(size: WeaponMount['size']): boolean {
   return size === 'M' || size === 'L' || size === 'XL';
 }
 
-const haulCache = new WeakMap<ReadonlyArray<WeaponMount>, number>();
+/** Mount sizes in ladder order: a size's RUNG (`mountTier`) is its index + 1. */
+export const SALVAGE_TIER_SIZES: readonly MountSize[] = ['AA', 'S', 'M', 'L', 'XL'];
+/** `salvageTier` of a piece too big for any tractor (and of a field rock,
+ *  mass Infinity): every mining laser may cut it, no tractor pulls it. */
+export const SALVAGE_TIER_NONE = 0;
+/** The top rung (XL). */
+export const SALVAGE_TIER_MAX = 5;
 
-/** The heaviest piece this ship can haul: its STRONGEST SINGLE tractor
- *  mount's `tractorPull(force × size power, dRef, reach, haul distance)`
- *  over `SALVAGE_HAUL_MIN_ACCEL`. One tractor per piece, like one laser per
- *  piece (each tractor locks its own target), so pulls never sum. 0 with no
- *  tractor. Cached per mount list. */
-export function salvageHaulMass(mounts: ReadonlyArray<WeaponMount>): number {
-  const hit = haulCache.get(mounts);
-  if (hit !== undefined) return hit;
-  let force = 0;
-  for (const m of mounts) {
-    const t = getWeapon(m.weaponId).tractor;
-    if (t === undefined) continue;
-    const power = MOUNT_SIZE_TUNING[m.size ?? 'S'].power;
-    const pull = tractorPull(t.force * power, t.dRef, mountWeaponReach(m), SALVAGE_HAUL_DIST_PER_DREF * t.dRef);
-    if (pull > force) force = pull;
+/** Heaviest pullable mass per rung (index = rung; [0] unused). Built once
+ *  from the catalogue. */
+let tierMass: Float64Array | null = null;
+
+function tierMasses(): Float64Array {
+  if (tierMass !== null) return tierMass;
+  const out = new Float64Array(SALVAGE_TIER_MAX + 1);
+  for (let t = 1; t <= SALVAGE_TIER_MAX; t++) {
+    const power = MOUNT_SIZE_TUNING[SALVAGE_TIER_SIZES[t - 1]!].power;
+    let force = 0;
+    for (const id of WEAPON_IDS) {
+      const def = getWeapon(id);
+      const tr = def.tractor;
+      if (tr === undefined) continue;
+      // The beam's own reach (`mountWeaponReach`, as `renewTractor` sets it).
+      const pull = tractorPull(tr.force * power, tr.dRef, weaponAutoFireRange(def), SALVAGE_HAUL_DIST_PER_DREF * tr.dRef);
+      if (pull > force) force = pull;
+    }
+    out[t] = force / SALVAGE_HAUL_MIN_ACCEL;
   }
-  const mass = force / SALVAGE_HAUL_MIN_ACCEL;
-  haulCache.set(mounts, mass);
-  return mass;
+  tierMass = out;
+  return out;
 }
 
-/** Could this ship tractor `c` in and store it? Then no laser cuts it. */
-export function salvageHaulable(c: Pick<SalvageCandidate, 'mass' | 'holdWeight'>, haulMass: number, freeHold: number): boolean {
-  return c.mass <= haulMass && c.holdWeight <= freeHold;
+/** The heaviest piece a tractor of mount size `size` can pull: the
+ *  catalogue's strongest tractor at that size (force × `power`) at the haul
+ *  distance, over `SALVAGE_HAUL_MIN_ACCEL` (AA 60, S 150, M 375, L 900,
+ *  XL 2,250 with today's tractor). */
+export function salvageTierMass(size: MountSize): number {
+  return tierMasses()[mountTier(size)]!;
+}
+
+/** A piece's size TIER: the rung (1 AA … 5 XL) of the smallest mount size
+ *  whose tractor can pull a body of `mass`, or `SALVAGE_TIER_NONE` (0) when
+ *  none can (also NaN / Infinity). Ship-independent. Pure, allocation-free. */
+export function salvageTier(mass: number): number {
+  const lim = tierMasses();
+  for (let t = 1; t <= SALVAGE_TIER_MAX; t++) if (mass <= lim[t]!) return t;
+  return SALVAGE_TIER_NONE;
+}
+
+/** A mount's rung on the ladder: 1 AA … 5 XL; unsized counts as S (the
+ *  tractor's own `size ?? 'S'` power rule). */
+export function mountTier(size: WeaponMount['size']): number {
+  switch (size) {
+    case 'AA': return 1;
+    case 'M': return 3;
+    case 'L': return 4;
+    case 'XL': return 5;
+    default: return 2;
+  }
+}
+
+/** Does a mining laser on rung `rung` cut a piece of tier `tier`? Only a
+ *  piece above its rung: a tractor of its own size can take the rest. */
+export function laserCutsTier(rung: number, tier: number): boolean {
+  return tier === SALVAGE_TIER_NONE || tier > rung;
+}
+
+/** Does a tractor on rung `rung` pull a piece of tier `tier`? Only one at or
+ *  below its rung (its pull limit). */
+export function tractorTakesTier(rung: number, tier: number): boolean {
+  return tier !== SALVAGE_TIER_NONE && tier <= rung;
 }
 
 const toolCache = new WeakMap<ReadonlyArray<WeaponMount>, boolean>();

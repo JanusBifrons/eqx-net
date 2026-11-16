@@ -24,7 +24,7 @@ No ship carries it yet: the mining barge that does is a later step.
 
 ## Tractor beam
 
-**What it does (owner decisions 2026-11-15).** A tractor mount locks ONE target, like any weapon (a completed lock, #19): any ship (players included), a wreck piece, a loot pod or a rock. While it fires it pulls that target toward the mount, and gives a weaker tug to anything crossing the line between the mount and the target. It is a physics contest, not a fixed hold:
+**What it does (owner decisions 2026-11-15).** A tractor mount locks ONE target, like any weapon (a completed lock, #19): any ship (players included), a wreck piece, a loot pod or a rock piece. Among salvage it only pulls a piece light enough for its own mount size ([the size ladder](#the-size-ladder-big-lasers-feed-big-tractors-feed-small-lasers)); a whole field rock is never towed. While it fires it pulls that target toward the mount, and gives a weaker tug to anything crossing the line between the mount and the target. It is a physics contest, not a fixed hold:
 
 - **A fixed force; mass matters.** A small mount barely moves a big chunk and a giant rock does not budge, which is why lasers break wrecks down before tractors haul them. Bigger mounts pull harder (`MOUNT_SIZE_TUNING.power`: AA 0.4, S 1, M 2.5, L 6, XL 15).
 - **Only the target moves.** The ship doing the pulling feels nothing.
@@ -50,9 +50,25 @@ No ship carries it yet: the mining barge that does is a later step.
 - **Full hold: back to work.** A piece only counts as small enough while it fits. Fill your hold and your lasers go back to cutting it.
 - **Only mining ships.** Only a ship that carries a mining laser or a tractor takes pieces in this way. Other ships still pick up pods by flying over them, as before.
 
-**Coming next: the size ladder.** Long-range big lasers will cut a huge rock until a large tractor can pull it to the medium lasers, and so on down to the small lasers and the hold. Today each tractor's pull limit is still "the ship's strongest tractor".
 
 **How it runs.** The rule is `salvageConsumable` / `salvageConsumeRadius` (`core/combat/salvageTargeting.ts`). The lock step stamps `LOCK_CONSUMABLE` on the wire lock (`lockSalvageFlags`, `server/rooms/lockSalvage.ts`, from `CapitalWreckSubsystem.pieceStore`), and the shared `pickTurretLock` skips it for lasers and tractors on both sides. The pickup is the loot collect pass (`LootSubsystem.visitCollector`): `CapitalWreckSubsystem.forEachPieceNear` lists close pieces, and the same piece store as a tractored piece (one `HoldStore` commit, then `storePiece`) takes them in; a rock piece's ore comes from `OreDraw.cutYield`. Locks: `salvageTargeting.test.ts`, `turretLockPick.salvage.test.ts`, `LootSubsystem.test.ts`, `tests/unit/salvageLockParity.test.ts`, `tests/integration/sectorRoom/factoryLine.test.ts`.
+
+## The size ladder: big lasers feed big tractors feed small lasers
+
+**What happens (owner 2026-11-16).** A big mining ship works a huge rock in steps, by mount size:
+
+1. Its long-range **XL and L lasers** slice the huge rock in two, then four, then eight, until a piece is light enough for a **large tractor** to pull.
+2. The **large tractor** pulls that piece in towards the ship, where the **medium lasers** cut it until a **medium tractor** can pull the pieces.
+3. The **medium tractor** pulls them in to the **small lasers**, which cut them down to hold size.
+4. A hold-size piece is [taken in whole](#the-factory-line-small-pieces-go-straight-into-the-hold): nothing aims at it.
+
+**The rule.** Every piece has a **size**: the smallest tractor that can pull it (AA, S, M, L, XL, or "too big for any tractor"). It comes from the piece's weight alone, not from which ship is looking at it. A **laser** only cuts pieces bigger than its own size: a tractor of its size can already take the rest, so it leaves those to the tractors and the smaller lasers. A **tractor** only pulls pieces of its own size or smaller, the biggest it can first. Among the pieces a laser may cut, big lasers (M, L, XL) take the biggest and small lasers (AA, S) the smallest.
+
+**Today's sizes** (a piece's weight; a rough cut-rock radius at the rock density 0.25, taking a piece as a disc): AA up to 60 (about 9 u), S up to 150 (about 14 u), M up to 375 (about 22 u), L up to 900 (about 34 u), XL up to 2,250 (about 54 u); anything heavier, and every whole field rock, is too big for any tractor. Fighter debris is AA size, so on a ship whose lasers are all S or bigger the tractors take it.
+
+**Where pieces end up.** A tractor holds its piece on a cushion 250 u from its mount (every size). Every mining laser reaches 12,000 u, so the held piece is well inside the reach of every laser on the same ship (even a barge is ~7,500 u long).
+
+**How it runs.** `salvageTier` / `salvageTierMass` / `mountTier` (`core/combat/salvageTargeting.ts`) give the sizes; the lock step stamps each piece's size on its lock (`lockSalvageFlags`, `server/rooms/lockSalvage.ts`), it rides to the pilot's client on the wire lock, and the shared `pickTurretLock` (`laserCutsTier` / `tractorTakesTier`) makes the same choice on both sides. Locks: `salvageTargeting.test.ts`, `turretLockPick.salvage.test.ts`, `tests/unit/salvageLockParity.test.ts`, `tests/integration/sectorRoom/sizeLadder.test.ts`, `salvageLockFlags.test.ts`.
 
 ## Mining asteroids
 
@@ -64,7 +80,7 @@ No ship carries it yet: the mining barge that does is a later step.
 - **The mining laser cuts rock, exactly like a wreck.** Keep the beam on a rock and it wears down (hidden, like a wreck piece's wear). Worn out, it breaks along the line of every beam that burned it in the last moment, into two or three chunks. Only the mining laser wears rock: guns, the heavy beam and the railgun never do.
 - **The chunks are loose rock.** Each piece drifts and tumbles like wreck debris and can be cut again the same way. A piece is as heavy as its size (area × the rock density), so a tractor hauls small pieces easily and barely moves a big one.
 - **The last of it is ore.** A worn-out piece too small to split (under 6 % of the rock it came from) turns into a loot pod holding its share of the rock's ore, split like any ore from that rock (a plain rock gives minerals, ice gives ice, and so on), up to a pod's size: no more cargo weight than a salvage-field pod (`SALVAGE_POD_MAX_WEIGHT`, 61), so a sliver of a big rock is still a pod a ship can haul. Pick it up like any pod. The rock's ore is shared out by area when it breaks: cutting never makes more ore than the rock had (a share over the pod size stays unmined).
-- **Locks follow the pieces.** When a rock or wreck piece you have locked breaks, your locks carry over to its pieces, biggest first. A ship that holds several locks per weapon group locks several pieces at once, already locked (no new lock time), so each mining laser keeps working and the lasers spread over the pieces. Lasers still leave a piece your tractors can haul and store.
+- **Locks follow the pieces.** When a rock or wreck piece you have locked breaks, your locks carry over to its pieces, biggest first. A ship that holds several locks per weapon group locks several pieces at once, already locked (no new lock time), so each mining laser keeps working and the lasers spread over the pieces. Lasers still leave a piece a tractor of their own size can pull ([the size ladder](#the-size-ladder-big-lasers-feed-big-tractors-feed-small-lasers)).
 
 ### How rock cutting works
 
@@ -82,7 +98,6 @@ One wreck system cuts ships and rocks; nothing about a rock is a parallel path.
 
 - **The mining barge:** the salvage ship that carries the mining laser.
 - **Tractor beam on screen:** the client draws the beam and predicts the pull from the snapshot's beam links (with an e2e test and a showcase shot).
-- **The size ladder:** each tractor's pull limit by its own mount size, and lasers handing pieces down from big guns to small ones.
 
 ## Under the hood
 
