@@ -38,6 +38,13 @@ export function isDebris(rec: { kind: number }): boolean {
   return rec.kind === SWARM_KIND_WRECK || rec.kind === 3;
 }
 
+/** A cut-field rock the clients cannot draw from the seed alone, so it rides
+ *  the swarm wire by its key: awake (moving), or re-cut off its cut pose (C2
+ *  deep sleep). Every other field rock stays off the wire. */
+export function fieldRockOnWire(rec: { fieldAwake?: boolean; fieldMoved?: boolean }): boolean {
+  return rec.fieldAwake === true || rec.fieldMoved === true;
+}
+
 /** A loot pod: a scrap-kind record drawn as `cargo-pod` (LootSubsystem).
  *  Loot, not a combatant: AI and turret shots pass through it. */
 export function isLootPod(rec: { kind?: number; shipKind?: string | null }): boolean {
@@ -93,6 +100,10 @@ export interface SwarmEntityRecord {
   /** A field rock a ship rammed: now a dynamic body, on the swarm wire
    *  (flag FIELD_ROCK + key) until its chunk unloads. Still never saved. */
   fieldAwake?: boolean;
+  /** A field rock re-cut where it was left, off its cut pose (C2 deep sleep):
+   *  a fixed body, but on the swarm wire by its key like an awake one, since
+   *  every client cuts it at its cut pose (`fieldRockOnWire`). */
+  fieldMoved?: boolean;
   /** A field rock's centre where the field cut it (angle 0): its rest frame,
    *  where its ore is sampled once it has moved (`CutFieldSubsystem.oreAtHit`). */
   restX?: number;

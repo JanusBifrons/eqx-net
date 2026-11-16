@@ -33,7 +33,7 @@ import { shipKindToIndex, isShipKindId } from '../../shared-types/shipKinds.js';
 import { asteroidResourceIndex } from '../../shared-types/asteroidResources.js';
 import { structureKindToIndex, isStructureKindId } from '../../shared-types/structureKinds.js';
 import { SWARM_KIND_DRONE, SWARM_KIND_STRUCTURE, SWARM_KIND_SCRAP, SWARM_KIND_WRECK } from '../../shared-types/swarmWireFormat.js';
-import { SwarmEntityRegistry, type SwarmEntityRecord } from './SwarmEntityRegistry.js';
+import { SwarmEntityRegistry, fieldRockOnWire, type SwarmEntityRecord } from './SwarmEntityRegistry.js';
 import { STRUCTURE_OUT_OF_INTEREST_FULL_EVERY } from '../../shared-types/structureStateWire.js';
 
 /** Tick cadence at which a full snapshot is forced regardless of changes. */
@@ -112,9 +112,10 @@ export class BinarySwarmBroadcast {
 
     for (const rec of registry.all()) {
       // Cut-field rocks: every client cuts them from the field seed itself;
-      // only an awake one (rammed, now moving) rides the wire, by its key.
-      if (rec.fieldRock === true && rec.fieldAwake !== true) continue;
-      const fieldKey = rec.fieldAwake === true && rec.fieldKey !== undefined ? rec.fieldKey : -1;
+      // only one they can't (awake, or left off its cut pose) rides the wire,
+      // by its key.
+      if (rec.fieldRock === true && !fieldRockOnWire(rec)) continue;
+      const fieldKey = rec.fieldRock === true && rec.fieldKey !== undefined ? rec.fieldKey : -1;
       const base = slotBase(rec.slot);
       const x = sabF32[base + SLOT_X_OFF]!;
       const y = sabF32[base + SLOT_Y_OFF]!;

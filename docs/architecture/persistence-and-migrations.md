@@ -42,7 +42,10 @@ the `applyOp` switch. Sub-phase B adds `LIMBO_PUT` / `LIMBO_DELETE` /
 `LIMBO_GET` here; Phase 2 adds `PLAYER_SHIP_PUT` / `PLAYER_SHIP_DELETE`; Phase 5
 adds `DIRECTOR_STATE_PUT` (the Director-state lane below); macro terrain C4 adds
 `TERRAIN_RECORD_PUT` (a cut field's change record in `terrain_records`, see
-[macro-terrain](macro-terrain.md)).
+[macro-terrain](macro-terrain.md)); terrain C2 (deep sleep) adds its `pose`
+(columns `pose_x` / `pose_y` / `pose_angle`, NULL for a rock at its cut pose),
+which older tables gain through `ALTER`s appended to `PLAYER_SHIPS_MIGRATIONS`
+(the one idempotent column-migration list the DB worker runs at boot).
 
 ## Phase 8 sub-phase A: sector snapshots
 

@@ -5,7 +5,7 @@ import { placementRejection } from '../../core/structures/placementRules.js';
 import type { GridObstacle } from '../../core/structures/Grid.js';
 import type { SwarmEntityRecord, SwarmEntityRegistry } from '../net/SwarmEntityRegistry.js';
 import type { SwarmSpawner } from '../spawn/SwarmSpawner.js';
-import { SLOT_X_OFF, SLOT_Y_OFF, slotBase } from '../../shared-types/sabLayout.js';
+import { SLOT_ANGLE_OFF, SLOT_X_OFF, SLOT_Y_OFF, slotBase } from '../../shared-types/sabLayout.js';
 import { CutFieldSubsystem, toRestFrame } from './CutFieldSubsystem.js';
 import type { WorkerCmd } from './PhysicsWorkerProxy.js';
 import type { PersistOp } from '../../core/contracts/IPersistenceSink.js';
@@ -74,12 +74,14 @@ describe('CutFieldSubsystem change record (mined pool, consumed rocks)', () => {
     let now = 0;
     const recs = new Map<string, SwarmEntityRecord>();
     const sent: number[] = [];
-    const sab = new Float32Array(slotBase(1));
+    const sab = new Float32Array(slotBase(2)); // slot 0: the ship; slot 1: every rock (one is moved at a time)
+    const spawned = new Map<number, { x: number; y: number; angle?: number; restX?: number; restY?: number }>();
     const clock = { now: () => now, every: () => ({ cancel: () => {} }) } as unknown as GameClock;
     const registry = { get: (id: string) => recs.get(id) ?? null, all: () => [] } as unknown as SwarmEntityRegistry;
     const spawner = {
-      spawnAsteroid: (a: { id: string; fieldKey: number }) => {
-        recs.set(a.id, { id: a.id, fieldRock: true, fieldKey: a.fieldKey, resources: 100, resourcesMax: 100 } as SwarmEntityRecord);
+      spawnAsteroid: (a: { id: string; fieldKey: number; x: number; y: number; angle?: number; restX?: number; restY?: number }) => {
+        spawned.set(a.fieldKey, { x: a.x, y: a.y, angle: a.angle, restX: a.restX, restY: a.restY });
+        recs.set(a.id, { id: a.id, slot: 1, fieldRock: true, fieldKey: a.fieldKey, restX: a.restX ?? a.x, restY: a.restY ?? a.y, resources: 100, resourcesMax: 100 } as SwarmEntityRecord);
         return true;
       },
     } as unknown as SwarmSpawner;
@@ -97,7 +99,12 @@ describe('CutFieldSubsystem change record (mined pool, consumed rocks)', () => {
       back();
     };
     at(-30_120, 26_501); settle();
-    return { sub, recs, sent, away, back, awayAndBack, byKey: (k: number) => [...recs.values()].find((r) => r.fieldKey === k) };
+    /** Wake `rec` and put it at (x, y, angle) (its SAB pose). */
+    const move = (rec: SwarmEntityRecord, x: number, y: number, angle: number) => {
+      rec.fieldAwake = true;
+      sab[slotBase(1) + SLOT_X_OFF] = x; sab[slotBase(1) + SLOT_Y_OFF] = y; sab[slotBase(1) + SLOT_ANGLE_OFF] = angle;
+    };
+    return { sub, recs, sent, spawned, away, back, awayAndBack, move, byKey: (k: number) => [...recs.values()].find((r) => r.fieldKey === k) };
   }
 
   /** C4 — a save (`terrain_records`) holding `rows`; records what the field
@@ -141,7 +148,7 @@ describe('CutFieldSubsystem change record (mined pool, consumed rocks)', () => {
     const key = [...recs.values()][0]!.fieldKey!;
     sub.markConsumed(key);
     sub.markConsumed(key);
-    expect(st.puts).toEqual([{ type: 'TERRAIN_RECORD_PUT', sectorKey: 'sec', rockKey: key, layoutVersion: FIELD_LAYOUT_VERSION, pool: null, consumed: true, ts: 0 }]);
+    expect(st.puts).toEqual([{ type: 'TERRAIN_RECORD_PUT', sectorKey: 'sec', rockKey: key, layoutVersion: FIELD_LAYOUT_VERSION, pool: null, consumed: true, pose: null, ts: 0 }]);
   });
 
   it('a mined rock is saved when its chunk unloads, and only when its pool changed', () => {
@@ -150,7 +157,7 @@ describe('CutFieldSubsystem change record (mined pool, consumed rocks)', () => {
     const [mined] = [...recs.values()];
     mined!.resources = 37;
     away();
-    expect(st.puts).toEqual([{ type: 'TERRAIN_RECORD_PUT', sectorKey: 'sec', rockKey: mined!.fieldKey, layoutVersion: FIELD_LAYOUT_VERSION, pool: 37, consumed: false, ts: 60_000 }]);
+    expect(st.puts).toEqual([{ type: 'TERRAIN_RECORD_PUT', sectorKey: 'sec', rockKey: mined!.fieldKey, layoutVersion: FIELD_LAYOUT_VERSION, pool: 37, consumed: false, pose: null, ts: 60_000 }]);
     back(); away(); // re-cut at 37, untouched, unloaded again: nothing new to save
     expect(st.puts).toHaveLength(1);
     expect(st.warns).toEqual([]);
@@ -161,8 +168,8 @@ describe('CutFieldSubsystem change record (mined pool, consumed rocks)', () => {
     const [gone, mined, other] = [...first.recs.values()];
     first.sub.dispose();
     const st = store([
-      { rockKey: gone!.fieldKey!, layoutVersion: FIELD_LAYOUT_VERSION, pool: null, consumed: true },
-      { rockKey: mined!.fieldKey!, layoutVersion: FIELD_LAYOUT_VERSION, pool: 12, consumed: false },
+      { rockKey: gone!.fieldKey!, layoutVersion: FIELD_LAYOUT_VERSION, pool: null, consumed: true, pose: null },
+      { rockKey: mined!.fieldKey!, layoutVersion: FIELD_LAYOUT_VERSION, pool: 12, consumed: false, pose: null },
     ]);
     const { sub, recs, byKey } = field(st.s);
     expect(sub.isConsumed(gone!.fieldKey!)).toBe(true);
@@ -179,14 +186,66 @@ describe('CutFieldSubsystem change record (mined pool, consumed rocks)', () => {
     const first = field();
     const [a, b] = [...first.recs.values()];
     const st = store([
-      { rockKey: a!.fieldKey!, layoutVersion: FIELD_LAYOUT_VERSION + 1, pool: null, consumed: true },
-      { rockKey: b!.fieldKey!, layoutVersion: FIELD_LAYOUT_VERSION - 1, pool: 5, consumed: false },
+      { rockKey: a!.fieldKey!, layoutVersion: FIELD_LAYOUT_VERSION + 1, pool: null, consumed: true, pose: null },
+      { rockKey: b!.fieldKey!, layoutVersion: FIELD_LAYOUT_VERSION - 1, pool: 5, consumed: false, pose: null },
     ]);
     const { sub, byKey } = field(st.s);
     expect(sub.isConsumed(a!.fieldKey!)).toBe(false);
     expect(byKey(a!.fieldKey!)).toBeDefined();
     expect(byKey(b!.fieldKey!)!.resources).toBe(100);
     expect(st.warns).toEqual([{ sectorKey: 'sec', stale: 2, layoutVersion: FIELD_LAYOUT_VERSION }]);
+  });
+
+  it('deep sleep (C2): a moved rock is saved where it was left and re-cut there, fixed, on the wire', () => {
+    const st = store();
+    const { recs, spawned, away, back, move, byKey } = field(st.s);
+    const [rock, other] = [...recs.values()];
+    const key = rock!.fieldKey!, rest = { x: rock!.restX!, y: rock!.restY! };
+    move(rock!, rest.x + 40, rest.y - 25, 0.5);
+    away();
+    expect(st.puts).toEqual([{
+      type: 'TERRAIN_RECORD_PUT', sectorKey: 'sec', rockKey: key, layoutVersion: FIELD_LAYOUT_VERSION, pool: null, consumed: false,
+      pose: { x: Math.fround(rest.x + 40), y: Math.fround(rest.y - 25), angle: Math.fround(0.5) }, ts: 60_000,
+    }]);
+    back();
+    expect(spawned.get(key)).toEqual({ x: Math.fround(rest.x + 40), y: Math.fround(rest.y - 25), angle: Math.fround(0.5), restX: rest.x, restY: rest.y });
+    expect(byKey(key)!.fieldMoved).toBe(true);
+    expect(byKey(key)!.restX).toBe(rest.x); // its ore stays where it was cut
+    expect(byKey(other!.fieldKey!)!.fieldMoved).toBeUndefined();
+    expect(spawned.get(other!.fieldKey!)!.angle).toBeUndefined();
+    away(); // re-cut there and never woken: nothing new to save
+    expect(st.puts).toHaveLength(1);
+  });
+
+  it('deep sleep (C2): a woken rock left on its cut pose saves nothing; one put back clears its pose', () => {
+    const st = store();
+    const { recs, away, back, move, byKey, spawned } = field(st.s);
+    const rock = [...recs.values()][0]!;
+    const key = rock.fieldKey!, rest = { x: rock.restX!, y: rock.restY! };
+    move(rock, rest.x, rest.y, 0);
+    away();
+    expect(st.puts).toEqual([]);
+    back();
+    move(byKey(key)!, rest.x + 300, rest.y, 0);
+    away(); back();
+    move(byKey(key)!, rest.x, rest.y, 0);
+    away();
+    expect(st.puts.map((p) => (p as { pose: unknown }).pose)).toEqual([{ x: Math.fround(rest.x + 300), y: Math.fround(rest.y), angle: 0 }, null]);
+    back();
+    expect(spawned.get(key)!.angle).toBeUndefined();
+    expect(byKey(key)!.fieldMoved).toBeUndefined();
+  });
+
+  it('deep sleep (C2): a field started from a save re-cuts a moved rock where it was left', () => {
+    const first = field();
+    const rock = [...first.recs.values()][0]!;
+    first.sub.dispose();
+    const pose = { x: rock.restX! + 10, y: rock.restY! + 20, angle: -0.25 };
+    const st = store([{ rockKey: rock.fieldKey!, layoutVersion: FIELD_LAYOUT_VERSION, pool: 40, consumed: false, pose }]);
+    const { spawned, byKey } = field(st.s);
+    expect(spawned.get(rock.fieldKey!)).toEqual({ ...pose, restX: rock.restX, restY: rock.restY });
+    expect(byKey(rock.fieldKey!)!.resources).toBe(40);
+    expect(byKey(rock.fieldKey!)!.fieldMoved).toBe(true);
   });
 });
 

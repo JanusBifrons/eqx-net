@@ -3,8 +3,9 @@
  * Streams the chunks near ships in as fixed rock colliders on the streamer's
  * own game-clock timer (never the room tick, #14), wakes the rocks a ram
  * touches (C2), and carries the seed for the welcome (#16: a joiner cuts the
- * same rocks). Field rocks stay off the swarm wire and the sector snapshot;
- * what changed on them (ore mined, broken up) is saved by rock key in
+ * same rocks). Field rocks stay off the swarm wire (unless awake or moved) and
+ * the sector snapshot; what changed on them (ore mined, broken up, where a
+ * moved rock was left: deep sleep, C2) is saved by rock key in
  * `terrain_records` (C4) and loaded when the field starts.
  * How it works: docs/architecture/macro-terrain.md.
  */
@@ -20,7 +21,7 @@ import { SLOT_ANGLE_OFF, SLOT_X_OFF, SLOT_Y_OFF, slotBase } from '../../shared-t
 import { SWARM_KIND_DRONE } from '../../shared-types/swarmWireFormat.js';
 import { MAX_WELCOME_CONSUMED_ROCKS, type FieldConsumedMessage } from '../../shared-types/messages/snapshotMessages.js';
 import { serverLogEvent } from '../debug/ServerEventLog.js';
-import type { SwarmEntityRecord, SwarmEntityRegistry } from '../net/SwarmEntityRegistry.js';
+import { fieldRockOnWire, type SwarmEntityRecord, type SwarmEntityRegistry } from '../net/SwarmEntityRegistry.js';
 import type { SwarmSpawner } from '../spawn/SwarmSpawner.js';
 import type { TerrainRecordStore } from '../db/terrainSql.js';
 import { guarded } from './guardedLoop.js';
@@ -52,6 +53,14 @@ export function toRestFrame(
   return out;
 }
 
+/** A woken rock left closer than this to its cut pose (world units / radians)
+ *  counts as unmoved: it goes back to having no pose record. */
+const MOVED_EPS = 0.5;
+const MOVED_EPS_ANGLE = 1e-3;
+
+/** Where a moved rock was left (C2 deep sleep): its body centre and angle. */
+interface RockPose { x: number; y: number; angle: number }
+
 export class CutFieldSubsystem {
   readonly streamer: CutFieldStreamer;
   private readonly timer: GameTimer;
@@ -64,9 +73,12 @@ export class CutFieldSubsystem {
    *  (C4: written on each change, loaded at start). A rock nobody touched
    *  has no entry. `minedPool`: what is left in a mined rock, kept while its
    *  chunk is unloaded so a re-cut doesn't refill it. `consumed`: rocks
-   *  broken up (salvage rock cut), never cut whole again. */
+   *  broken up (salvage rock cut), never cut whole again. `movedPose`: where
+   *  a woken rock was left when its chunk unloaded (deep sleep, C2); the
+   *  re-cut spawns it there, fixed, instead of at its cut pose. */
   private readonly minedPool = new Map<number, number>();
   private readonly consumed = new Set<number>();
+  private readonly movedPose = new Map<number, RockPose>();
   private readonly seed: string;
   private readonly gameClock: GameClock;
   private readonly opts: ChunkOpts;
@@ -97,21 +109,33 @@ export class CutFieldSubsystem {
         if (this.consumed.has(rock.key)) return false;
         // The same body the client builds (#15): centred on the outline.
         const b = fieldRockBody(rock);
-        if (!spawner.spawnAsteroid({ id, x: b.x, y: b.y, vx: 0, vy: 0, radius: b.radius, vertices: b.verts, mass: fieldRockMass(b.radius), fixed: true, fieldRock: true, fieldKey: rock.key, parts: b.parts ?? undefined })) return false;
+        // A moved rock comes back where it was left (deep sleep, C2), still
+        // fixed, its rest frame (ore) where the field cut it.
+        const at = this.movedPose.get(rock.key);
+        if (!spawner.spawnAsteroid({
+          id, x: at?.x ?? b.x, y: at?.y ?? b.y, vx: 0, vy: 0, radius: b.radius, vertices: b.verts, mass: fieldRockMass(b.radius),
+          fixed: true, fieldRock: true, fieldKey: rock.key, parts: b.parts ?? undefined, angle: at?.angle, restX: b.x, restY: b.y,
+        })) return false;
+        const rec = registry.get(id);
+        if (rec && at) rec.fieldMoved = true; // on the wire: the clients cut it at its cut pose
         const left = this.minedPool.get(rock.key);
-        const rec = left === undefined ? null : registry.get(id);
-        if (rec !== null && rec.resources !== undefined) rec.resources = Math.min(rec.resources, left!);
+        if (rec && left !== undefined && rec.resources !== undefined) rec.resources = Math.min(rec.resources, left);
         return true;
       },
       removeRock: (id) => {
         const rec = registry.get(id);
         if (!rec) return;
-        if (rec.fieldKey !== undefined && rec.resources !== undefined && rec.resourcesMax !== undefined && rec.resources < rec.resourcesMax
-          && this.minedPool.get(rec.fieldKey) !== rec.resources) {
-          this.minedPool.set(rec.fieldKey, rec.resources);
-          this.save(rec.fieldKey, rec.resources, false);
+        if (rec.fieldKey !== undefined) {
+          let changed = false;
+          if (rec.resources !== undefined && rec.resourcesMax !== undefined && rec.resources < rec.resourcesMax
+            && this.minedPool.get(rec.fieldKey) !== rec.resources) {
+            this.minedPool.set(rec.fieldKey, rec.resources);
+            changed = true;
+          }
+          if (rec.fieldAwake === true && this.notePose(rec, rec.fieldKey)) changed = true;
+          if (changed) this.save(rec.fieldKey);
         }
-        hooks.evict(rec, rec.fieldAwake === true);
+        hooks.evict(rec, fieldRockOnWire(rec));
       },
       nowMs: () => gameClock.now(),
     });
@@ -126,6 +150,22 @@ export class CutFieldSubsystem {
 
   dispose(): void {
     this.timer.cancel();
+  }
+
+  /** An awake rock's chunk is unloading: keep where it was left (its live SAB
+   *  pose) when that is off its cut pose, else forget any pose kept for it.
+   *  True when the kept pose changed. A chunk event, never per tick. */
+  private notePose(rec: SwarmEntityRecord, key: number): boolean {
+    if (rec.restX === undefined || rec.restY === undefined) return false;
+    const sab = this.hooks.sab(), base = slotBase(rec.slot);
+    const x = sab[base + SLOT_X_OFF]!, y = sab[base + SLOT_Y_OFF]!, angle = sab[base + SLOT_ANGLE_OFF]!;
+    const kept = this.movedPose.get(key);
+    if (Math.hypot(x - rec.restX, y - rec.restY) < MOVED_EPS && Math.abs(angle) < MOVED_EPS_ANGLE) {
+      return this.movedPose.delete(key);
+    }
+    if (kept && kept.x === x && kept.y === y && kept.angle === angle) return false;
+    if (kept) { kept.x = x; kept.y = y; kept.angle = angle; } else this.movedPose.set(key, { x, y, angle });
+    return true;
   }
 
   /** A fixed field rock wakes when a ship touches it, or when an awake rock
@@ -144,15 +184,22 @@ export class CutFieldSubsystem {
     if (this.consumed.has(key)) return;
     this.consumed.add(key);
     this.minedPool.delete(key);
-    this.save(key, null, true);
+    this.movedPose.delete(key);
+    this.save(key);
     this.hooks.broadcast('field_consumed', { k: key });
   }
 
-  /** One rock's record to the save (a discrete event, never per tick). */
-  private save(rockKey: number, pool: number | null, consumed: boolean): void {
+  /** One rock's whole record to the save, an absolute upsert (a discrete
+   *  event, never per tick). */
+  private save(rockKey: number): void {
     const store = this.hooks.records;
     if (!store) return;
-    store.put({ type: 'TERRAIN_RECORD_PUT', sectorKey: store.sectorKey, rockKey, layoutVersion: FIELD_LAYOUT_VERSION, pool, consumed, ts: this.gameClock.now() });
+    const p = this.movedPose.get(rockKey);
+    store.put({
+      type: 'TERRAIN_RECORD_PUT', sectorKey: store.sectorKey, rockKey, layoutVersion: FIELD_LAYOUT_VERSION,
+      pool: this.minedPool.get(rockKey) ?? null, consumed: this.consumed.has(rockKey),
+      pose: p ? { x: p.x, y: p.y, angle: p.angle } : null, ts: this.gameClock.now(),
+    });
   }
 
   /** The saved record, once at start. Rows cut under another
@@ -164,8 +211,9 @@ export class CutFieldSubsystem {
     let stale = 0;
     for (const r of store.load()) {
       if (r.layoutVersion !== FIELD_LAYOUT_VERSION) { stale++; continue; }
-      if (r.consumed) this.consumed.add(r.rockKey);
-      else if (r.pool !== null) this.minedPool.set(r.rockKey, r.pool);
+      if (r.consumed) { this.consumed.add(r.rockKey); continue; }
+      if (r.pool !== null) this.minedPool.set(r.rockKey, r.pool);
+      if (r.pose !== null) this.movedPose.set(r.rockKey, { x: r.pose.x, y: r.pose.y, angle: r.pose.angle });
     }
     if (stale > 0) store.warn({ sectorKey: store.sectorKey, stale, layoutVersion: FIELD_LAYOUT_VERSION }, 'terrain_records: rows from another field layout ignored');
   }
@@ -194,7 +242,8 @@ export class CutFieldSubsystem {
     for (const r of fieldRocksInBox(this.opts, box.x0, box.y0, box.x1, box.y1)) {
       if (this.consumed.has(r.key) || this.registry.get(fieldRockId(r.key))) continue;
       const b = fieldRockBody(r);
-      out.push({ x: r.x, y: r.y, radius: r.radius, angle: 0, parts: rockObstacleParts(b.verts, b.parts, true) });
+      const at = this.movedPose.get(r.key); // a moved rock, where it was left (C2)
+      out.push({ x: at?.x ?? r.x, y: at?.y ?? r.y, radius: r.radius, angle: at?.angle ?? 0, parts: rockObstacleParts(b.verts, b.parts, true) });
     }
   }
 
@@ -206,7 +255,7 @@ export class CutFieldSubsystem {
   oreAtHit(rec: SwarmEntityRecord, x: number | undefined, y: number | undefined, out: OreConc): boolean {
     if (rec.fieldRock !== true || rec.restX === undefined || rec.restY === undefined) return false;
     if (x === undefined || y === undefined) { oreAt(this.oreBase, SLICED.radius, rec.restX, rec.restY, out); return true; }
-    if (rec.fieldAwake !== true) { oreAt(this.oreBase, SLICED.radius, x, y, out); return true; }
+    if (!fieldRockOnWire(rec)) { oreAt(this.oreBase, SLICED.radius, x, y, out); return true; }
     const sab = this.hooks.sab(), b = slotBase(rec.slot);
     this.oreAtRest(rec.restX, rec.restY, sab[b + SLOT_X_OFF]!, sab[b + SLOT_Y_OFF]!, sab[b + SLOT_ANGLE_OFF]!, x, y, out);
     return true;
