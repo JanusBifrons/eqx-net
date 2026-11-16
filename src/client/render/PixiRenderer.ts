@@ -1,5 +1,7 @@
 import { Application, Graphics, Container, RenderLayer, type Texture } from 'pixi.js';
 import { Camera } from './worker/Camera';
+import { DEFAULT_GRAPHICS_QUALITY, renderResolution, type GraphicsQuality } from './graphicsQuality';
+import { FxaaFilter } from './pixi/FxaaFilter';
 import type { FleetOverlayModel, FleetOverlayShip, FleetPickKindWire, IRenderer, RenderMirror, RendererFeedback } from '@core/contracts/IRenderer';
 import { GameClock } from '@core/clock/GameClock';
 import { GalaxyMapLayer } from './galaxy/GalaxyMapLayer';
@@ -184,8 +186,17 @@ export class PixiRenderer implements IRenderer {
   constructor(isTouch = false, art: ArtOptions = ART_OFF, fxKillSwitches?: FxKillSwitches) {
     this._isTouch = isTouch;
     this._artOpts = art; this._cutField.setOreStyle(art.ore ?? 'veins');
+    this.quality = art.quality ?? DEFAULT_GRAPHICS_QUALITY;
     this._fxKillSwitches = fxKillSwitches;
     this.halo = new HaloRadar(isTouch);
+  }
+
+  /** Graphics quality (edge smoothing, render scale, texture softening). */
+  private readonly quality: GraphicsQuality;
+
+  /** The renderer resolution for a screen at `dpr`: its density × the render scale. */
+  private resolutionFor(dpr: number, w: number, h: number): number {
+    return renderResolution(dpr, this.quality.renderScale, w, h);
   }
 
   private app!: Application;
@@ -841,8 +852,10 @@ export class PixiRenderer implements IRenderer {
       width: initialW,
       height: initialH,
       background: BACKGROUND_COLOR,
-      antialias: true,
-      resolution: initialDpr,
+      // Graphics quality: `fxaa` swaps multisampling for the post pass on
+      // the world; `off` is neither (graphicsQuality.ts).
+      antialias: this.quality.aa === 'msaa' || this.quality.aa === 'max',
+      resolution: this.resolutionFor(initialDpr, initialW, initialH),
       autoDensity: isDom,
       // Pin WebGL: Pixi v8.1+ already defaults autoDetect to WebGL, but
       // pinning guarantees the worker can never silently select WebGPU
@@ -877,6 +890,13 @@ export class PixiRenderer implements IRenderer {
     this.world = new Container();
     this.world.eventMode = 'none';
     this.app.stage.addChild(this.world);
+    // Graphics quality `?aa=fxaa|max`: one FXAA pass over the world (not the
+    // stage, whose filters the warp and destruction effects own). The filter
+    // area is the screen, so Pixi never measures the world's bounds.
+    if (this.quality.aa === 'fxaa' || this.quality.aa === 'max') {
+      this.world.filters = [new FxaaFilter(this.quality.aa === 'max')];
+      this.world.filterArea = this.app.screen;
+    }
 
     // followLerpFactor=1 → instant follow each Pixi tick (60 Hz). This
     // matches pre-migration pixi-viewport's `viewport.moveCenter(x, y)`
@@ -912,6 +932,7 @@ export class PixiRenderer implements IRenderer {
       this._artCtx.sunAz = art.lightRig.sunAz;
       // GPU-lit art (`?shiplight=gpu`): lit meshes are built with these.
       litPass.settings = this._artOpts.lighting ?? null;
+      litPass.texSoft = this.quality.texSoft;
       // Machined turrets ride the new effects (rings in the bakes, baked guns).
       this._artCtx.turrets = this._artOpts.fx === true;
       if (this._artOpts.livery) this._artCtx.livery = this._artOpts.livery;
@@ -1265,7 +1286,7 @@ export class PixiRenderer implements IRenderer {
         // Re-apply DPR so browser-zoom / monitor-move updates resolution
         // on the main-thread path too (parity with the worker resize).
         const dpr = window.devicePixelRatio ?? 1;
-        this.app.renderer.resize(w, h, dpr);
+        this.app.renderer.resize(w, h, this.resolutionFor(dpr, w, h));
         this.setViewSize(w, h);
         this.starfield?.resize(w, h);
       };
@@ -1297,7 +1318,7 @@ export class PixiRenderer implements IRenderer {
     // zoom / some rotations) re-derives the backing buffer. Omitting it
     // (the old behaviour) kept the stale init resolution → blur after
     // such a change. `width`/`height` are LOGICAL (CSS) px.
-    this.app.renderer.resize(width, height, dpr ?? this.app.renderer.resolution);
+    this.app.renderer.resize(width, height, dpr !== undefined ? this.resolutionFor(dpr, width, height) : this.app.renderer.resolution);
     this.setViewSize(width, height);
     this.starfield?.resize(width, height);
     if (isDiagEnabled()) {

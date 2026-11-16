@@ -51,6 +51,8 @@ export interface BootMsg {
   livery?: import('../../art/artMode.js').LiveryTreatment;
   /** Cut-field ore look (`?ore=`, F1c trial); absent = off. */
   ore?: import('../../art/artMode.js').FieldOreLook;
+  /** Graphics quality (`?aa=` / `?renderscale=` / `?texsoft=`), plain data; absent = today's look. */
+  quality?: import('../../graphicsQuality.js').GraphicsQuality;
   /**
    * FX kill switches (`?cleanworld=1`, `?nofilters=1`, …) resolved on the
    * main thread by `readFxKillSwitches()`. The worker has no `window`, so
