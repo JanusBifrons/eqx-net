@@ -46,10 +46,10 @@ export const SHOWCASE_BARGE_THRUST_OPTS = {
  * down the size ladder first. No other ship: nothing else fires. The barge's
  * closest zoom still fits its whole hull (~0.13 px/u at 1080p), so the rocks
  * are big enough to read there.
- * The barge starts bow-on to mine-rock-a (`SHOWCASE_BARGE_MINING_SPAWN`):
- * a whole rock is size tier none, so only the bow XL lasers cut it, and from
- * the origin the rock sits abaft their arc. Same pose as the integration take
- * (`bargeMiningTake.test.ts`).
+ * The barge starts with mine-rock-a off its port bow
+ * (`SHOWCASE_BARGE_MINING_SPAWN`, also the integration take's pose,
+ * `bargeMiningTake.test.ts`): a whole rock is size tier none, so only the bow
+ * XL lasers cut it, and from the origin the rock sat abaft their arc.
  * Roster-backed (a real sectorKey, NOT in the galaxy graph): the barge has a
  * hold, so the pieces it consumes go in and the ore shows in it. With no
  * roster it has no hold, takes nothing in, and its lasers cut to the floor.
@@ -64,9 +64,12 @@ export const SHOWCASE_BARGE_MINING_ROCKS = [
   { id: 'mine-rock-g', x: -1250, y: 2300, vx: 0, vy: 0, radius: 180 },
   { id: 'mine-rock-h', x: 2700, y: 2600, vx: 0, vy: 0, radius: 250 },
 ];
-/** Barge spawn astern of mine-rock-a, nose (+y) on it: the rock inside the
- *  bow XL lasers' arc, ~600 u ahead of the bow, the hull clear of mine-rock-b. */
-export const SHOWCASE_BARGE_MINING_SPAWN = { x: 200, y: -4200 };
+/** Barge spawn (nose +y) with mine-rock-a off its port bow: inside the port
+ *  XL laser's arc and the port XL tractor's reach, and on screen at the
+ *  barge's closest zoom (upper left, clear of the HUD) where a rock dead
+ *  ahead of the bow sits under the top bar (the follow camera centres the
+ *  hull and has no look-ahead). The hull is clear of every other rock. */
+export const SHOWCASE_BARGE_MINING_SPAWN = { x: 4150, y: -1800 };
 export const SHOWCASE_BARGE_MINING_OPTS = {
   sectorKey: 'showcase-barge-mining',
   testMode: true,

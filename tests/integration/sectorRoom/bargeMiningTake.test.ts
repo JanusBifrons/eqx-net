@@ -12,9 +12,10 @@
  *
  * A whole rock is tier none: only the XL lasers (the bow corners) cut it.
  * Parked at the origin, mine-rock-a sits abaft their arc (only the side and
- * aft lasers bear, and they leave a whole rock), so the pilot brings the bow
- * on: the barge starts astern of the rock, nose (+y) on it, clear of the
- * other rocks (`BOW_ON`). A group's locks end with their pieces (a laser
+ * aft lasers bear, and they leave a whole rock), so the barge starts at the
+ * room's own spawn (`SHOWCASE_BARGE_MINING_SPAWN`, the filmed pose): the rock
+ * off its port bow, in the port XL laser's arc and tractor's reach, clear of
+ * the other rocks (`BOW_ON`). A group's locks end with their pieces (a laser
  * lock does not follow a piece into its pod), so the pilot locks the next
  * live piece whenever a group is left with none, as a player would.
  *
@@ -38,16 +39,15 @@ import type { Room as ClientRoom } from 'colyseus.js';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import type { SectorState } from '../../../src/server/rooms/schema/SectorState.js';
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
-import { SHOWCASE_BARGE_MINING_OPTS } from '../../../src/server/rooms/showcaseBargeRooms.js';
+import { SHOWCASE_BARGE_MINING_OPTS, SHOWCASE_BARGE_MINING_SPAWN } from '../../../src/server/rooms/showcaseBargeRooms.js';
 import { getHoldStore } from '../../../src/server/db/PersistenceWorker.js';
 import { SALVAGE_TIER_SIZES, salvageTier } from '../../../src/core/combat/salvageTargeting.js';
 
 const WRECK_KIND = 4;
 /** Game speed for the take (the sector time scale's top, 4×; the game time is reported). */
 const SPEED = 4;
-/** Barge spawn with mine-rock-a (1150, 400) inside the bow XL lasers' arc,
- *  ~600 u ahead of the bow, the hull clear of mine-rock-b (1250, -1200). */
-const BOW_ON = { spawnX: 200, spawnY: -4200 };
+/** Barge spawn: the room's own (the filmed pose), mine-rock-a off the port bow. */
+const BOW_ON = { spawnX: SHOWCASE_BARGE_MINING_SPAWN.x, spawnY: SHOWCASE_BARGE_MINING_SPAWN.y };
 
 describe('SectorRoom integration — the barge-mining take: the rock ends up in the hold', () => {
   let harness: SectorTestHarness;

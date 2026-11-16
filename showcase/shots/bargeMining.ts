@@ -6,19 +6,20 @@ import { SHOWCASE_BARGE_MINING_ROCKS } from '../../src/server/rooms/showcaseBarg
 const LASER_KEY = 'Digit1';
 const TRACTOR_KEY = 'Digit2';
 
-/** The rock the pilot works: the one the barge starts bow-on to. */
+/** The rock the pilot works: the one off the barge's port bow at its spawn. */
 const ROCK = SHOWCASE_BARGE_MINING_ROCKS.find((r) => r.id === 'mine-rock-a')!;
 
-/** The take: the integration take (`bargeMiningTake.test.ts`) needs ~86 s of
- *  game time from the locks to the last pod in the hold; trimmed later. */
-const TAKE_MS = 92_000;
+/** The take: the integration take (`bargeMiningTake.test.ts`, same pose)
+ *  needs ~174 s of game time from the locks to the last pod in the hold (one
+ *  XL laser bears on the whole rock); trimmed later. */
+const TAKE_MS = 180_000;
 
 /**
  * Lock mine-rock-a with the ACTIVE weapon group, as a player does: select it
  * (what a click on it does) and press LOCK (the info box's action). The rock
  * is found in the mirror as the one nearest its placed position (from the
- * bow-on spawn the nearest rock to the hull is mine-rock-b, not the one in
- * the bow lasers' arc). Returns its swarm id, or null with no rock.
+ * spawn the nearest rock to the hull is mine-rock-d, not the one in the bow
+ * lasers' arc). Returns its swarm id, or null with no rock.
  * No named helper in the callback (tsx's `__name`, docs/LESSONS.md).
  */
 async function lockRock(ctx: ShotContext): Promise<number | null> {
@@ -64,8 +65,8 @@ async function zoomToCap(ctx: ShotContext): Promise<void> {
  * Salvage stream: the mining barge works a rock. The pilot flies the barge
  * (`showcase-barge-mining`: eight placed rocks of mixed sizes in a loose ring,
  * every one too heavy for any tractor, nothing else in the sector), starting
- * bow-on to mine-rock-a (the room's spawn: only the bow XL lasers cut a whole
- * rock), and does what a player does: selects the "Mining lasers" group
+ * with mine-rock-a off the port bow (the room's spawn: only the bow XL lasers
+ * cut a whole rock, and there the rock is on screen), and does what a player does: selects the "Mining lasers" group
  * (key 1) and locks mine-rock-a, selects the "Tractors" group (key 2) and
  * locks the same rock, then holds position. Everything after that is the game's own
  * size ladder (`turretLockPick.ts`, `salvageTargeting.ts`): the lasers cut the
