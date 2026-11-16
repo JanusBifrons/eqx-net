@@ -12,19 +12,33 @@
 import type { ShipKind, WeaponMount } from '../../shared-types/shipKinds.js';
 import { SHIP_KINDS_LIST } from '../../shared-types/shipKinds.js';
 import { HITSCAN_RANGE } from './Weapons.js';
-import { getWeapon, weaponAutoFireRange, type WeaponId } from './WeaponCatalogue.js';
+import { getWeapon, isMiningTool, weaponAutoFireRange, type WeaponId } from './WeaponCatalogue.js';
+import { MOUNT_SIZE_TUNING, type MountSize } from '../../shared-types/shipScale/tuning.js';
 import { shipBubbleRadius, shipHitBound, shipWithinHullReach } from './shipHitShape.js';
 import { isCapitalKindId } from './capitalHits.js';
 
-/** Engage range of one mount's weapon, from the mount. */
-export function mountWeaponReach(mount: Pick<WeaponMount, 'weaponId'>): number {
-  return weaponIdReach(mount.weaponId);
+/** Engage range of one mount's weapon, from the mount. A MINING TOOL's
+ *  (`isMiningTool`: the mining laser, the tractor) scales with the mount's
+ *  size (owner 2026-11-16: catalogue range × `MOUNT_SIZE_TUNING[size].reach`
+ *  / the XL reach, so XL keeps the catalogue range; unsized counts as S).
+ *  Guns keep their catalogue reach at every size. */
+export function mountWeaponReach(mount: Pick<WeaponMount, 'weaponId' | 'size'>): number {
+  return weaponIdReach(mount.weaponId, mount.size);
 }
 
-/** `mountWeaponReach` by weapon id (fire gates holding only the id; no
- *  wrapper object per call, #14). */
-export function weaponIdReach(weaponId: WeaponId): number {
-  return weaponAutoFireRange(getWeapon(weaponId));
+/** `mountWeaponReach` by weapon id and mount size (fire gates holding the
+ *  mount's fields, not the mount; no wrapper object per call, #14). `size`
+ *  is required so a mining tool's gate can't silently drop it. */
+export function weaponIdReach(weaponId: WeaponId, size: MountSize | undefined): number {
+  const r = weaponAutoFireRange(getWeapon(weaponId));
+  return isMiningTool(weaponId) ? r * miningReachFactor(size) : r;
+}
+
+/** A mining tool's reach factor for mount size `size` (unsized = S): its
+ *  `MOUNT_SIZE_TUNING` reach over the XL one (XL 1, L ≈ 0.727, M ≈ 0.568,
+ *  S ≈ 0.455, AA ≈ 0.364). */
+export function miningReachFactor(size: MountSize | undefined): number {
+  return MOUNT_SIZE_TUNING[size ?? 'S'].reach / MOUNT_SIZE_TUNING.XL.reach;
 }
 
 const cache = new Map<string, number>();

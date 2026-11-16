@@ -30,7 +30,8 @@
  */
 import type { WeaponMount } from '../../shared-types/shipKinds/types.js';
 import { MOUNT_SIZE_TUNING, type MountSize } from '../../shared-types/shipScale/tuning.js';
-import { WEAPON_IDS, getWeapon, weaponAutoFireRange, weaponTargetFactor, type WeaponDef } from './WeaponCatalogue.js';
+import { WEAPON_IDS, getWeapon, weaponTargetFactor, type WeaponDef } from './WeaponCatalogue.js';
+import { weaponIdReach } from './mountReach.js';
 import { tractorPull } from './tractorSpec.js';
 import { SALVAGE_TARGET_CLASS } from './mountTargeting.js';
 
@@ -94,14 +95,17 @@ function tierMasses(): Float64Array {
   if (tierMass !== null) return tierMass;
   const out = new Float64Array(SALVAGE_TIER_MAX + 1);
   for (let t = 1; t <= SALVAGE_TIER_MAX; t++) {
-    const power = MOUNT_SIZE_TUNING[SALVAGE_TIER_SIZES[t - 1]!].power;
+    const size = SALVAGE_TIER_SIZES[t - 1]!;
+    const power = MOUNT_SIZE_TUNING[size].power;
     let force = 0;
     for (const id of WEAPON_IDS) {
       const def = getWeapon(id);
       const tr = def.tractor;
       if (tr === undefined) continue;
-      // The beam's own reach (`mountWeaponReach`, as `renewTractor` sets it).
-      const pull = tractorPull(tr.force * power, tr.dRef, weaponAutoFireRange(def), SALVAGE_HAUL_DIST_PER_DREF * tr.dRef);
+      // The beam's own reach at this size (`weaponIdReach`, as `renewTractor`
+      // sets it). The haul distance (2 × dRef = 500 u) sits far inside every
+      // size's reach (AA ≈ 1,091 u), so the range gradient leaves the tiers as they were.
+      const pull = tractorPull(tr.force * power, tr.dRef, weaponIdReach(id, size), SALVAGE_HAUL_DIST_PER_DREF * tr.dRef);
       if (pull > force) force = pull;
     }
     out[t] = force / SALVAGE_HAUL_MIN_ACCEL;
