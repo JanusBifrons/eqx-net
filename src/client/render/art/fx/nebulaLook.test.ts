@@ -39,21 +39,26 @@ describe('dense-nebula look R&D (?neblook=)', () => {
     }
   });
 
-  it('blend: the seed picks the mix, mostly fog, brightness at fog level', () => {
+  it('blend: most nebulae are almost entirely one look, each look leads some', () => {
     expect(resolveNebLook('?neblook=blend&nebseed=5')).toBe('blend:5');
-    let stormy = 0, rainbowy = 0;
-    for (let n = 1; n <= 40; n++) {
+    let pure = 0; const lead = { fog: 0, rainbow: 0, storm: 0 };
+    const N = 200;
+    for (let n = 1; n <= N; n++) {
       const w = blendWeights(n);
       expect(w.fog + w.rainbow + w.storm).toBeCloseTo(1, 6);
-      expect(w.fog).toBeGreaterThan(0.4);
+      const top = Math.max(w.fog, w.rainbow, w.storm);
+      expect(top).toBeGreaterThanOrEqual(0.55);
+      if (top >= 0.85) pure++;
+      lead[w.fog === top ? 'fog' : w.rainbow === top ? 'rainbow' : 'storm']++;
       const st = nebulaStyle('blend', n);
       expect(st.glow).toBeLessThanOrEqual(0.75);
-      if (st.lightning > 0) stormy++;
-      if (st.rainbow > 0.2) rainbowy++;
+      if (w.storm >= 0.85) expect(st.lightning).toBeGreaterThan(0);
+      if (w.fog >= 0.85) expect(st.lightning).toBe(0);
     }
-    // Some lean stormy, some lean rainbow, not all of either.
-    expect(stormy).toBeGreaterThan(4); expect(stormy).toBeLessThan(36);
-    expect(rainbowy).toBeGreaterThan(4); expect(rainbowy).toBeLessThan(36);
+    expect(pure / N).toBeGreaterThan(0.6);
+    expect(lead.fog).toBeGreaterThan(lead.rainbow);
+    expect(lead.rainbow).toBeGreaterThan(N * 0.1);
+    expect(lead.storm).toBeGreaterThan(N * 0.1);
   });
 
   it('hueTint: red at 0, full saturation', () => {
