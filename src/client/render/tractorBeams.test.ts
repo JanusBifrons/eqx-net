@@ -39,9 +39,9 @@ describe('fillTractorBeams', () => {
     expect(line.style).toBeNull(); // the tractor pool's own style: TRACTOR_BEAM_STYLE
     const pivotX = MOUNT.localX, pivotY = MOUNT.localY; // angle 0
     const muzzle = shipShotMuzzle(KIND, MOUNT);
-    const d = Math.hypot(0 - pivotX, 1500 - pivotY);
-    expect(line.fromX).toBeCloseTo(pivotX + ((0 - pivotX) / d) * muzzle, 6);
-    expect(line.fromY).toBeCloseTo(pivotY + ((1500 - pivotY) / d) * muzzle, 6);
+    // Mount at rest (no angles): the barrel points along baseAngle.
+    expect(line.fromX).toBeCloseTo(pivotX - Math.sin(MOUNT.baseAngle) * muzzle, 6);
+    expect(line.fromY).toBeCloseTo(pivotY + Math.cos(MOUNT.baseAngle) * muzzle, 6);
     expect(line.toX).toBe(0);
     expect(line.toY).toBe(1500);
   });
@@ -130,5 +130,49 @@ describe('decode → draw (snapshot beam links to tractor sprites)', () => {
     client.sync(undefined, { structure: () => {}, tractor: client.add }, null);
     pool.setBeams(out, fillTractorBeams(m, 516, SCALE, out), SCALE);
     expect(pool.liveCount).toBe(0);
+  });
+});
+
+describe('fillTractorBeams: the beam leaves the drawn dish (owner bug: beams between the dishes)', () => {
+  // The drawn gun turns by `mountAngles[i]` (applyMountAngles); its tip is
+  // pivot + forward(ship.angle + baseAngle + angle) * the shared muzzle.
+  function tip(kind: ReturnType<typeof getShipKind>, m: typeof MOUNT, shipAngle: number, mountAngle: number): { x: number; y: number } {
+    const c = Math.cos(shipAngle), s = Math.sin(shipAngle);
+    const px = m.localX * c - m.localY * s, py = m.localX * s + m.localY * c;
+    const a = shipAngle + m.baseAngle + mountAngle;
+    const mz = shipShotMuzzle(kind, m);
+    return { x: px - Math.sin(a) * mz, y: py + Math.cos(a) * mz };
+  }
+
+  it('starts at the drawn barrel tip, not the point toward the target, when the turret is turned', () => {
+    const m = mirror();
+    const ship = m.ships.get('me')!;
+    ship.mountAngles = KIND.mounts!.map(() => 0);
+    ship.mountAngles[0] = 0.6; // barrel turned off the target line
+    const out = views();
+    fillTractorBeams(m, 0, SCALE, out);
+    const t = tip(KIND, MOUNT, 0, 0.6);
+    expect(out[0]!.fromX).toBeCloseTo(t.x, 6);
+    expect(out[0]!.fromY).toBeCloseTo(t.y, 6);
+  });
+
+  it('finds an activated (latent) tractor mount and starts at its dish', () => {
+    const fighter = getShipKind('fighter');
+    const latent = fighter.latentMounts![0]!;
+    const ships = new Map<string, ShipRenderState>([
+      ['me', {
+        x: 0, y: 0, angle: 0, vx: 0, vy: 0, kind: 'fighter',
+        activatedMounts: [{ slotId: latent.id, weaponId: 'tractor' }],
+      } as ShipRenderState],
+    ]);
+    const n = (fighter.mounts ?? []).length;
+    ships.get('me')!.mountAngles = new Array<number>(n + 1).fill(0);
+    ships.get('me')!.mountAngles![n] = -0.4; // catalogue/instance order: latent after base
+    const m = mirror({ ships, tractorLinks: [{ emitter: 'me', mountId: latent.id, target: 42 }] });
+    const out = views();
+    fillTractorBeams(m, 0, SCALE, out);
+    const t = tip(fighter, { ...latent, weaponId: 'tractor' } as typeof MOUNT, 0, -0.4);
+    expect(out[0]!.fromX).toBeCloseTo(t.x, 6);
+    expect(out[0]!.fromY).toBeCloseTo(t.y, 6);
   });
 });
