@@ -15,6 +15,7 @@ import { newLock, stepLock, LOCK_STAGE_CODE, LOCK_TRACK, type LockEntry } from '
 import { lockLineHolds } from '../../core/combat/lockLine.js';
 import { pickTurretLock, TURRET_NO_LOCK, TURRET_PICK_MAX } from '../../core/combat/turretLockPick.js';
 import { lockSalvageFlags, type LockSalvageDeps } from './lockSalvage.js';
+import { isSalvageWeapon } from '../../core/combat/salvageTargeting.js';
 import { shipGroups } from './lockGroups.js';
 import { mountInReach, mountWeaponReach, type MountRangeTarget } from '../../core/combat/mountReach.js';
 import type { FireTargetShape } from '../../core/combat/fireControlBearing.js';
@@ -104,6 +105,8 @@ interface GroupState {
    *  [lo0, hi0, lo1, hi1, …] (fixed guns get a small window). */
   arcs: number[];
   mountIds: Set<string>;
+  /** The group's mining mounts (`isSalvageWeapon`): only they need the pick on a single salvage lock. */
+  salvageMountIds: Set<string>;
   /** The group's mounts in slot order (a mount's index is its ordinal for `pickTurretLock`). */
   mounts: WeaponMount[];
   locks: LockEntry[];
@@ -329,6 +332,7 @@ export class LockSubsystem {
         size: geo.size,
         arcs: groupArcs(mounts),
         mountIds: new Set(mounts.map((m) => m.id)),
+        salvageMountIds: new Set(mounts.filter((m) => isSalvageWeapon(getWeapon(m.weaponId))).map((m) => m.id)),
         mounts,
         locks: [],
         wire,
@@ -511,8 +515,9 @@ export class LockSubsystem {
         } else if (acquiring === null && e.stage === 'acquiring') acquiring = e.target;
       }
       if (first === null) return acquiring;
-      // One plain lock: every mount on it. A salvage lock goes through the pick (a laser skips a haulable piece).
-      if (n === 1 && first.flags === 0) return first.target;
+      // One lock: every mount on it, except a mining laser on a salvage lock
+      // (the pick: a laser skips a haulable piece). Guns keep the fast path.
+      if (n === 1 && (first.flags === 0 || !g.salvageMountIds.has(mountId))) return first.target;
       const k = this.pickLocked(playerId, g, mountId);
       return k === undefined ? first.target : k;
     }

@@ -539,4 +539,14 @@ describe('LockSubsystem hot-path cost (salvage PR 16 review, #14)', () => {
     h.locks.step();
     expect(h.calls.shipOf).toBe(1);
   });
+
+  it('a plain gun on one salvage lock keeps the one-lock fast path (no per-mount target resolve)', () => {
+    const h = harness('destroyer');
+    h.targets.set('s:1', { ...rock(1500), y: 0 });
+    h.salvage.add('s:1');
+    h.locks.forceLock('p1', 's:1', 'main');
+    h.calls.resolve = 0;
+    for (const m of ['main-1', 'main-2', 'main-3']) expect(h.locks.aimKeyFor('p1', m)).toBe('s:1');
+    expect(h.calls.resolve).toBe(0);
+  });
 });

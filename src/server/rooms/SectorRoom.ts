@@ -235,7 +235,7 @@ import { ROSTER_SOFT_GUARD, type ActivatedMount } from '../playerShips/PlayerShi
 import { WeaponMountTicker } from './WeaponMountTicker.js';
 import { LockSubsystem, newLockTargetView, type LockTargetView } from './LockSubsystem.js';
 import { NpcLockSubsystem } from './NpcLockSubsystem.js';
-import { LockSalvageLookup } from './lockSalvage.js';
+import { LockSalvageLookup, swarmLockId } from './lockSalvage.js';
 import { fillFireTargetShape, fillRangeShape, mountFiresOn, newFireTargetShape, type FireTargetShape } from '../../core/combat/fireControlBearing.js';
 import { weaponIdReach, hasTurretFireControl } from '../../core/combat/mountReach.js';
 import { NAVAL_SHELL_WEAPON_IDS } from '../../core/combat/shellFlight.js';
@@ -4848,7 +4848,7 @@ export class SectorRoom extends Room<SectorState> {
    *  shipInstanceId>`) to a damageable target. */
   private resolveLockTarget(pid: string, key: string, out: LockTargetView): boolean {
     if (key.startsWith('s:')) {
-      const rec = this.swarmRegistry.getByEntityId(Number(key.slice(2)));
+      const rec = this.swarmRegistry.getByEntityId(swarmLockId(key)); // no slice per call (#14)
       if (!rec || !swarmLockEligible(rec.kind, out)) return false; // terrain: never hostile
       if (rec.kind === 2) {
         // A structure outside the registry (testMode `structurePoses`
@@ -4893,7 +4893,7 @@ export class SectorRoom extends Room<SectorState> {
   private commitLockHostileAct(pid: string, key: string): void {
     const tick = this.serverTick;
     if (key.startsWith('s:')) {
-      const rec = this.swarmRegistry.getByEntityId(Number(key.slice(2)));
+      const rec = this.swarmRegistry.getByEntityId(swarmLockId(key)); // no slice per call (#14)
       if (!rec || isTerrainLockKind(rec.kind)) return; // terrain: never a hostile act (no ledger, aggro, log)
       if (rec.kind === 2) {
         const owner = this.structureRegistry.get(rec.id)?.owner;
@@ -4921,7 +4921,7 @@ export class SectorRoom extends Room<SectorState> {
    */
   private refreshLockHostility(pid: string, key: string): void {
     if (!key.startsWith('s:')) return;
-    const rec = this.swarmRegistry.getByEntityId(Number(key.slice(2)));
+    const rec = this.swarmRegistry.getByEntityId(swarmLockId(key)); // no slice per call (#14)
     if (rec?.kind !== 1) return;
     if (!this.pilotInNpcFireRange(rec.id, pid)) return;
     this.aiController.markHostile(rec.id, pid, this.serverTick);
