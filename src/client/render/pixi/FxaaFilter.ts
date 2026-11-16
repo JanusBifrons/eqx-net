@@ -12,13 +12,15 @@
  */
 import { defaultFilterVert, Filter, GlProgram } from 'pixi.js';
 
-const FRAGMENT = /* glsl */ `
+export const FXAA_FRAGMENT = /* glsl */ `
 in vec2 vTextureCoord;
 out vec4 finalColor;
 
 uniform sampler2D uTexture;
-uniform vec4 uInputSize;
-uniform vec4 uInputClamp;
+// highp: the default filter vertex shader declares these highp, and a
+// precision mismatch between stages fails the link (nothing draws).
+uniform highp vec4 uInputSize;
+uniform highp vec4 uInputClamp;
 
 #define FXAA_REDUCE_MIN (1.0 / 128.0)
 #define FXAA_REDUCE_MUL (1.0 / 8.0)
@@ -55,7 +57,7 @@ export class FxaaFilter extends Filter {
   /** `msaa`: also multisample the filter's own texture (`?aa=max`). */
   constructor(msaa: boolean) {
     super({
-      glProgram: GlProgram.from({ vertex: defaultFilterVert, fragment: FRAGMENT, name: 'fxaa-filter' }),
+      glProgram: GlProgram.from({ vertex: defaultFilterVert, fragment: FXAA_FRAGMENT, name: 'fxaa-filter' }),
       resources: {},
       // Full screen density: the default (1) would render the world at CSS
       // px and blur it on every high-DPR screen.

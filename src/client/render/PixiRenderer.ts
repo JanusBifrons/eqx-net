@@ -207,6 +207,9 @@ export class PixiRenderer implements IRenderer {
    * driven by the `Camera` controller below.
    */
   private world!: Container;
+  /** The world's node on the stage: `world` itself, or the unmoved host
+   *  that carries the FXAA pass (graphics quality `?aa=fxaa|max`). */
+  private worldHost!: Container;
   /** Camera controller — owns world's transform via pointer/wheel events. */
   private camera!: Camera;
   private shipContainer!: Container;
@@ -889,14 +892,21 @@ export class PixiRenderer implements IRenderer {
     // into), not Pixi's event system.
     this.world = new Container();
     this.world.eventMode = 'none';
-    this.app.stage.addChild(this.world);
     // Graphics quality `?aa=fxaa|max`: one FXAA pass over the world (not the
-    // stage, whose filters the warp and destruction effects own). The filter
-    // area is the screen, so Pixi never measures the world's bounds.
+    // stage, whose filters the destruction effects own). It sits on an unmoved
+    // host: Pixi maps `filterArea` through the container's own transform, and
+    // the camera moves and scales `world`, so on `world` itself the screen
+    // rect lands off screen and the pass is skipped. The area is the screen,
+    // so Pixi never measures the world's bounds.
+    this.worldHost = this.world;
     if (this.quality.aa === 'fxaa' || this.quality.aa === 'max') {
-      this.world.filters = [new FxaaFilter(this.quality.aa === 'max')];
-      this.world.filterArea = this.app.screen;
+      this.worldHost = new Container();
+      this.worldHost.eventMode = 'none';
+      this.worldHost.addChild(this.world);
+      this.worldHost.filters = [new FxaaFilter(this.quality.aa === 'max')];
+      this.worldHost.filterArea = this.app.screen;
     }
+    this.app.stage.addChild(this.worldHost);
 
     // followLerpFactor=1 → instant follow each Pixi tick (60 Hz). This
     // matches pre-migration pixi-viewport's `viewport.moveCenter(x, y)`
@@ -944,7 +954,7 @@ export class PixiRenderer implements IRenderer {
       // its star tiles are baked, today's starfield keeps drawing.
       if (this._artOpts.fx === true) {
         const bd = new Backdrop(art, () => this.effects?.getQuality() ?? 'medium', this._artOpts.speedFx === false ? 'off' : 'large');
-        const wi = this.app.stage.getChildIndex(this.world);
+        const wi = this.app.stage.getChildIndex(this.worldHost);
         this.app.stage.addChildAt(bd.sky, wi);
         this.app.stage.addChildAt(bd.fore, wi + 2);
         bd.setSector(this._sectorKey);
