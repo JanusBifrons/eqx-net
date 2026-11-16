@@ -10,6 +10,7 @@ import { BurnLines, BURN_LINE_MERGE_GAP_PER_RADIUS, hullPointInto } from '../../
 import { WEAPONS, type WeaponId } from '../../core/combat/WeaponCatalogue.js';
 import { shipShapeScale } from '../../core/geometry/shipHullOutline.js';
 import { getShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
+import { killCutStripWidth } from '../../shared-types/shipScale/destruction.js';
 import type { WreckDeathPose } from '../../core/destruction/wreckPieces.js';
 import type { CapitalWreckDeps, PieceKnock } from './capitalWreckTypes.js';
 import type { WreckPiecePose } from './wreckResplit.js';
@@ -18,12 +19,13 @@ import type { WreckPiecePose } from './wreckResplit.js';
 const BURN_POSE: WreckPiecePose = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
 const BURN_PT = { x: 0, y: 0 };
 
-/** The world width of a weapon's cut, or -1 when it does not cut (no
- *  `killCut`): only cutting beams burn lines. */
+/** The world width of a weapon's cut strip (`killCutStripWidth`: a wide
+ *  slice's burned gap), or -1 when it does not cut (no `killCut`): only
+ *  cutting beams burn lines. */
 function cutWidthOf(weaponId: WeaponId | null | undefined): number {
   if (weaponId === undefined || weaponId === null) return -1;
   const kc = WEAPONS.get(weaponId)?.killCut;
-  return kc === undefined ? -1 : (kc.width ?? 0);
+  return kc === undefined ? -1 : killCutStripWidth(kc);
 }
 
 /** A hit on a live hull (`noteHit`): a cutting beam burns its line into the

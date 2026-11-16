@@ -36,7 +36,7 @@
  * Hand-rolled-mock testable: everything room-shaped comes in as hooks.
  */
 import { buildWreckPieces, hullLocalCutAngle, MAX_LIVE_SUBCAP_WRECK_PIECES, MAX_LIVE_WRECK_PIECES, WRECK_RECENT_DAMAGE_TICKS, wreckBodyParams, type WreckDeathPose } from '../../core/destruction/wreckPieces.js';
-import { DESTRUCTION_PROFILES } from '../../shared-types/shipScale/destruction.js';
+import { DESTRUCTION_PROFILES, killCutStripWidth } from '../../shared-types/shipScale/destruction.js';
 import { fnv1a32, fnvMixU32 } from '../../core/random/rng.js';
 import { getShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
 import { shipTuning } from '../../shared-types/shipScale/tuning.js';
@@ -258,8 +258,9 @@ export class CapitalWreckSubsystem {
       cutKind = killCut.kind;
       cutAng = hullLocalCutAngle(pose, { x: e.dirX, y: e.dirY });
       // The wire width is in the hull's 1× frame.
-      // A channel's strip, or a wide slice's (the heavy beam, fracture v10).
-      const w = killCut.width ?? 0;
+      // A channel's strip, or a wide slice's burned gap (the heavy beam:
+      // its width plus a hair, fracture v13).
+      const w = killCutStripWidth(killCut);
       if (w > 0) cutW = w / shipShapeScale(getShipKind(kindId));
     }
     // Fracture v12 multi-cut: the other beams that burned the hull in the

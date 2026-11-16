@@ -23,6 +23,7 @@
  * Runs once per death (not hot-loop code); allocates freely.
  */
 import { projectToOutline, FRACTURE_SNAP_CHANCE, EDGE_CUT } from './fractureHull.js';
+import { gapLine, partGap } from './wreckBurnedGap.js';
 import { hullCutAngleOf } from './burnLines.js';
 import type { WreckExtraCut } from '../../shared-types/messages/wreckDescriptor.js';
 import { fracturePiecesToGeometry, wreckRootFracture } from './wreckPieceFrame.js';
@@ -188,7 +189,8 @@ export interface WreckBuild {
   /** The inputs the pieces were fractured from (the S2b descriptor). */
   fracture: WreckFractureInputs;
   /** The kill point in the hull's 1× Pixi-up frame, on the outline (the
-   *  S2b descriptor's killX/killY). */
+   *  S2b descriptor's killX/killY, except a v13 burned gap's: there the
+   *  descriptor carries the hit point as it is, on the beam's axis). */
   killLocal: Vec2;
   /** The kill point in world space (on the hull). */
   killWorldOnHull: Vec2;
@@ -196,15 +198,19 @@ export interface WreckBuild {
 
 /** World point → the hull's 1× Pixi-up frame, projected onto the outline. */
 export function hullLocalKillPoint(kindId: ShipKindId, pose: WreckDeathPose, world: Vec2): Vec2 {
-  const kind = getShipKind(kindId);
-  const s = shipShapeScale(kind);
+  return projectToOutline(shipHullOutline(getShipKind(kindId)), hullLocalPoint(kindId, pose, world));
+}
+
+/** World point → the hull's 1× Pixi-up frame, as it is (not projected). */
+function hullLocalPoint(kindId: ShipKindId, pose: WreckDeathPose, world: Vec2): Vec2 {
+  const s = shipShapeScale(getShipKind(kindId));
   const c = Math.cos(pose.angle);
   const sn = Math.sin(pose.angle);
   const dx = world.x - pose.x;
   const dy = world.y - pose.y;
   const mx = dx * c + dy * sn;
   const my = -dx * sn + dy * c;
-  return projectToOutline(shipHullOutline(kind), { x: mx / s, y: -my / s });
+  return { x: mx / s, y: -my / s };
 }
 
 /** A world direction → the u16 cut angle in the hull's 1× Pixi-up frame
@@ -386,11 +392,15 @@ function closestTouch(
  * The spin is a slow seeded rim speed (`wreckSeparate` × the rim fractions,
  * so a big piece turns slower) × the profile's `spinScale`.
  * `cutGap`: a channel's (or a wide slice's) width, scaled frame (its two
- * banks part like a shared cut). Once per break (allocates).
+ * banks part like a shared cut). `slice`: a wide slice's line (a point in
+ * the scaled math-up frame, the u16 hull-frame cut angle): with a `cutGap`,
+ * the guard also makes every bank point of the strip move straight away
+ * from the line at the profile's `cutPartSpeed` or more, spin included
+ * (`partGap`; fracture v13 burned gap). Once per break (allocates).
  */
 export function wreckBreakKicks(
   kindId: ShipKindId, geom: ReadonlyArray<WreckPieceGeometry>, kx: number, ky: number,
-  harder: number, spinSeed: number, cutGap: number,
+  harder: number, spinSeed: number, cutGap: number, slice?: { px: number; py: number; ang: number },
 ): { kvx: Float64Array; kvy: Float64Array; kw: Float64Array } {
   const kind = getShipKind(kindId);
   const tuning = shipTuning(kind);
@@ -451,6 +461,8 @@ export function wreckBreakKicks(
   // turn long pieces into each other (owner review 2026-11-13: pieces "slide
   // over each other", a "V" hinge at a stern seam).
   const sep = tuning.wreckSeparate * prof.separateScale;
+  // Fracture v13 burned gap: its banks part too, in the same passes.
+  const gap = slice !== undefined && cutGap > 0 && prof.cutPartSpeed > 0 ? gapLine(geom, slice, cutGap, prof.cutPartSpeed) : null;
   for (let it = 0; it < SEPARATE_ITERATIONS; it++) {
     let worst = 0;
     for (const sm of seams) {
@@ -493,6 +505,7 @@ export function wreckBreakKicks(
       kvx[sm.j] = kvx[sm.j]! + dx * imp * wj;
       kvy[sm.j] = kvy[sm.j]! + dy * imp * wj;
     }
+    if (gap !== null) worst = Math.max(worst, partGap(gap, geom, kvx, kvy, kw, SEPARATE_AIM));
     if (worst === 0) break;
   }
   return { kvx, kvy, kw };
@@ -514,12 +527,19 @@ export function buildWreckPieces(input: WreckBuildInput): WreckBuild {
   const target = input.killWorld ?? input.attackerWorld ?? { x: pose.x, y: pose.y };
   const killLocal = hullLocalKillPoint(input.kindId, pose, target);
   const killWorldOnHull = toWorld(killLocal.x, killLocal.y);
+  // v13 burned gap: a wide slice's line runs through the beam's own axis, so
+  // the descriptor carries the hit point as it is (the beam's axis at its
+  // first contact, which a wide beam makes with its edge, off the outline).
+  // Projecting it onto the outline would slide the strip off the beam.
+  const burnedGap = input.cutKind === 'slice' && input.cutAng !== undefined && input.cutW !== undefined && input.cutW > 0
+    && input.killWorld !== null;
+  const cutPoint = burnedGap ? hullLocalPoint(input.kindId, pose, target) : killLocal;
 
   const fracture: WreckFractureInputs = {
     kindId: input.kindId,
     seed: input.seed >>> 0,
-    killX: killLocal.x,
-    killY: killLocal.y,
+    killX: cutPoint.x,
+    killY: cutPoint.y,
     killBlowDamage: input.killBlowDamage,
     recentDamageRate: input.recentDamageRate,
     snapChance: DESTRUCTION_PROFILES[shipTuning(kind).destruction].fracture?.snapChance ?? FRACTURE_SNAP_CHANCE,
@@ -544,6 +564,7 @@ export function buildWreckPieces(input: WreckBuildInput): WreckBuild {
     input.kindId, geom, killLocal.x * s, -killLocal.y * s, harder,
     fnvMixU32((input.seed >>> 0) ^ 0x3ec7, 0x5),
     fracture.cutKind !== undefined ? (fracture.cutW ?? 0) * s : 0,
+    burnedGap ? { px: cutPoint.x * s, py: -cutPoint.y * s, ang: input.cutAng! } : undefined,
   );
 
   const pieces: WreckPieceSpec[] = [];

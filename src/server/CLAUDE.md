@@ -229,7 +229,7 @@ How each subsystem works (and its history) is in the "Server notes" section of t
 ## Capital wrecks
 
 - **Break-up is ON by default** (`wreckSwitchOn`; a room opts out, `EQX_*_WRECKS=0` forces off); one death effect per ship.
-- **Wreck pieces (kind 4) block every weapon but the railgun slug and heavy-beam follow-through**: a new hit path handles kind 4. Snapshots carry wreck deltas only.
+- **Wreck pieces (kind 4) block every weapon but the railgun slug**: a new hit path handles kind 4. Snapshots carry wreck deltas only.
 - Full text and locks: [capital-destruction.md](../../docs/architecture/capital-destruction.md#server-implementation-notes).
 
 ## Solar-system sectors

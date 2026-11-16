@@ -155,6 +155,24 @@ export interface DestructionFx {
  *  burned white-hot), shared by every profile. */
 export const VAPORISE_TINT = 0xd0b0ff;
 
+/** A beam's burned gap (fracture v13; capital-destruction.md "Burned gap"):
+ *  a slice kill cut with a width erases a strip this much wider than the
+ *  beam (world u, absolute like the beam's width), so the beam that cut it
+ *  shines through without touching either bank. Owner 2026-11-16: "the gap
+ *  is exactly the width of the laser. Maybe make it like 2 or 3 pixels
+ *  wider ... just to give it a very tiny buffer". */
+export const BEAM_CUT_BUFFER = 3;
+
+/** The world width of the strip a weapon's kill cut erases (`killCut`): a
+ *  slice with a width is the beam's width plus `BEAM_CUT_BUFFER`, a channel
+ *  its own width, a thin slice 0 (a zero-width line). The ONE source for
+ *  every cut width the server puts in a descriptor or a burn line (#15). */
+export function killCutStripWidth(cut: { readonly kind: 'slice' | 'channel'; readonly width?: number }): number {
+  const w = cut.width ?? 0;
+  if (!(w > 0)) return 0;
+  return cut.kind === 'slice' ? w + BEAM_CUT_BUFFER : w;
+}
+
 export interface DestructionProfile {
   readonly id: DestructionProfileId;
   /** Null: the entity leaves no wreck pieces. */
@@ -167,6 +185,12 @@ export interface DestructionProfile {
    *  away from the break point (`wreckBreakKicks`; a piece's kick is the
    *  push ÷ √its mass share). */
   readonly pushScale: number;
+  /** A beam's burned gap (fracture v13): each piece of a break along a
+   *  wide slice gets this extra speed (u/s) straight away from the burned
+   *  strip, on its own side, on top of everything else it inherits (owner
+   *  2026-11-16: "a very slight force pushing those parts apart"). Never
+   *  toward the strip, so it never closes the cut. */
+  readonly cutPartSpeed: number;
   /** Multiplier on `shipTuning(kind).wreckSeparate`, the guard: the least
    *  speed at which every shared cut opens (`wreckBreakKicks`' seam pass,
    *  mass-weighted impulses), so no cut closes, hinges or overlaps. */
@@ -239,6 +263,7 @@ const CAPITAL: DestructionProfile = {
   // every cut's speed). Locks: `wreckPiecesSeparate.test.ts`,
   // `wreckPieces.test.ts` "mass-scaled parting".
   pushScale: 0.08,
+  cutPartSpeed: 3,
   separateScale: 0.05,
   crackScale: 1,
   spinScale: 1,
@@ -331,6 +356,7 @@ const SUBCAP: DestructionProfile = {
   // wreck off the kill point; damping ×10 (slice 2's measured value: linear 0.6/s, sleep in ~14 game s) brings it to
   // rest; no piece drifts over ~1.5 radii. Lock: `destructionProfile.test.ts`.
   pushScale: 20,
+  cutPartSpeed: 3,
   // That push runs away from the kill point, so on a hit at one end every
   // piece goes the SAME way: ×50 alone left the cracks shut (round-2 review:
   // robot pieces still touching ~1 s after the break; the seam pass opened
@@ -411,6 +437,7 @@ const NONE: DestructionProfile = {
   resplit: null,
   holdMs: 0,
   pushScale: 0,
+  cutPartSpeed: 0,
   separateScale: 1,
   crackScale: 0,
   spinScale: 1,

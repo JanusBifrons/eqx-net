@@ -131,8 +131,8 @@ vaporised)`, an active hull through `spawnActiveHullWreck` noting
 **Placement.** Every kill pod (AI or player) spawns beside the dead hull, to
 the side of the killer's line (`killPodSpot`: 1.2 hull radii plus the pod's
 radius, side seeded from the ship), so the rest of a salvo and a heavy beam's
-kill follow-through (`followThroughTicks`, which runs on down that line) pass
-it. AI and turret shots never hit a loot pod anyway (`isLootPod`); only a
+kill follow-through (`followThroughTicks`, which runs on down that line, through
+the gap the kill burned) pass it. AI and turret shots never hit a loot pod anyway (`isLootPod`); only a
 pilot's own shot can.
 
 Example, a fighter (default table, `maxHealth / 50` scale): a normal kill

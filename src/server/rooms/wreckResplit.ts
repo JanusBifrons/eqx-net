@@ -25,7 +25,7 @@ import type { BurnLines } from '../../core/destruction/burnLines.js';
 import { FRACTURE_ALGO_VERSION } from '../../core/destruction/fractureHull.js';
 import type { CapitalWreckDeps, LiveWreck, PieceKnock } from './capitalWreckTypes.js';
 import type { WreckPieceGeometry } from '../../core/destruction/wreckPieceFrame.js';
-import { DESTRUCTION_PROFILES } from '../../shared-types/shipScale/destruction.js';
+import { DESTRUCTION_PROFILES, killCutStripWidth } from '../../shared-types/shipScale/destruction.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { shipTuning } from '../../shared-types/shipScale/tuning.js';
 import { shipShapeScale } from '../../core/geometry/shipHullOutline.js';
@@ -87,7 +87,7 @@ export function planWreckResplit(
   if (killCut !== undefined && (dirX !== 0 || dirY !== 0)) {
     step.cutKind = killCut.kind;
     step.cutAng = hullLocalCutAngle({ x: 0, y: 0, vx: 0, vy: 0, angle: pose.angle, angvel: 0 }, { x: dirX, y: dirY });
-    const w = killCut.width ?? 0;
+    const w = killCutStripWidth(killCut);
     if (w > 0) step.cutW = w / s;
     const extra = burn?.extraCuts(tick, step.killX, step.killY, step.cutAng, step.cutW ?? 0);
     if (extra !== undefined) step.extraCuts = extra;
@@ -101,6 +101,7 @@ export function planWreckResplit(
   const kick = wreckBreakKicks(
     chain.root.kindId, geom, mx, my, 0.75, wreckChildSeed(chain.root.seed >>> 0, parent.index) ^ 0x3ec7,
     step.cutW !== undefined ? step.cutW * s : 0,
+    step.cutKind === 'slice' && step.cutAng !== undefined ? { px: mx, py: my, ang: step.cutAng } : undefined,
   );
   for (let i = 0; i < geom.length; i++) {
     const g = geom[i]!;
