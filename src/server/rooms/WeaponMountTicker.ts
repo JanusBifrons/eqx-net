@@ -31,7 +31,7 @@ import {
 
 import { mountTargetReach, mountWeaponReach, hasTurretFireControl } from '../../core/combat/mountReach.js';
 import { mountLineClear, mountPriority, targetClass, STRUCTURE_TARGET_CLASS, type TargetClass } from '../../core/combat/mountTargeting.js';
-import { leadArcBearing, mountCanEngage, onTarget } from '../../core/combat/mountFireControl.js';
+import { barrelRayHits, leadArcBearing, mountCanEngage, onTarget } from '../../core/combat/mountFireControl.js';
 import { getWeapon } from '../../core/combat/WeaponCatalogue.js';
 import { shipShotMuzzle } from '../../core/combat/muzzle.js';
 import { newLock, stepLock, type LockEntry } from '../../core/combat/lockState.js';
@@ -741,6 +741,15 @@ export class WeaponMountTicker {
       // On target = the shot would pass within TURRET_FIRE_MISS of the aim
       // point (an angle alone is a 250 u miss at 5,000 u).
       if (!onTarget(want, angles[i]!, dist)) continue;
+      // ... and a ray down the barrel, from the muzzle, hits the target at
+      // the aim point (a beam fired beside a frigate grazed it with its edge).
+      {
+        const a = ang + mount.baseAngle + angles[i]!;
+        const muzzle = shipShotMuzzle(kind, mount, true);
+        const lead = w.mode === 'hitscan' ? 0 : dist / w.speed;
+        if (!barrelRayHits(t, t.x + (t.vx - selfVx) * lead, t.y + (t.vy - selfVy) * lead,
+          mx - Math.sin(a) * muzzle, my + Math.cos(a) * muzzle, a, 2 * dist + 1_000)) continue;
+      }
       if (!mountLineClear(kind, mount, mount.baseAngle + angles[i]!)) continue;
       // Lock-to-fire: each turret needs a completed lock on ITS own target:
       // the capital's lock for a pilot (a lock on another pilot doesn't

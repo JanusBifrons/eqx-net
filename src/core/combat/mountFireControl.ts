@@ -11,7 +11,10 @@
  *  - LEAD: aim at the first-order intercept for the gun's shell speed, on
  *    the target's velocity relative to the shooter.
  *  - FIRE: only when the barrel would put the shot within `TURRET_FIRE_MISS`
- *    of the aim point (an angle alone is a 250 u miss at 5,000 u).
+ *    of the aim point (an angle alone is a 250 u miss at 5,000 u) AND a ray
+ *    down the barrel hits the target's hit shape there (`barrelRayHits`):
+ *    a miss allowance wider than a small ship let a wide beam fire beside
+ *    it and graze it with its edge.
  *
  * Angles use the mount convention: a body's frame angle (game space, Y-up,
  * CCW), bearing 0 = +y, `atan2(-dx, dy)`. Pure, allocation-free.
@@ -19,6 +22,7 @@
 import { wrapPi } from '../ai/WeaponMountController.js';
 import { canTrack } from './mountTargeting.js';
 import { mountInReach, type MountRangeTarget } from './mountReach.js';
+import { shipRayHit } from './shipHitShape.js';
 
 /** A turret fires once its barrel is within this of the lead bearing (rad)
  *  AND would pass within TURRET_FIRE_MISS (world units) of the aim point. */
@@ -72,4 +76,28 @@ export function leadArcBearing(
 export function onTarget(want: number, current: number, dist: number): boolean {
   const tol = Math.min(TURRET_FIRE_TOLERANCE, Math.atan2(TURRET_FIRE_MISS, Math.max(1, dist)));
   return Math.abs(wrapPi(want - current)) <= tol;
+}
+
+/**
+ * Does a thin ray from (fromX, fromY) along the barrel's world bearing
+ * `worldAngle` (mount convention: 0 = +y) hit target `t` placed at its aim
+ * point (aimX, aimY) (its lead point for a shell gun)? A ship is tested on its
+ * weapon hit shape (`shipRayHit`: bubble or hull, by kind and shield); any
+ * other target on its `radius` circle. A target with no shape (no kind, no
+ * radius) passes: `onTarget` alone gates it. A turret starts firing only once
+ * a ray down its barrel would hit (owner: "a basic ray trace").
+ */
+export function barrelRayHits(
+  t: MountRangeTarget, aimX: number, aimY: number, fromX: number, fromY: number, worldAngle: number, maxDist: number,
+): boolean {
+  const ux = -Math.sin(worldAngle), uy = Math.cos(worldAngle);
+  if (t.kindId != null) {
+    return shipRayHit(t.kindId, t.shieldUp ?? false, fromX, fromY, ux, uy, maxDist, aimX, aimY, t.angle ?? 0, 0) !== null;
+  }
+  const r = t.radius ?? 0;
+  if (r <= 0) return true;
+  const px = aimX - fromX, py = aimY - fromY;
+  const along = px * ux + py * uy;
+  if (along < -r || along > maxDist + r) return false;
+  return Math.abs(px * uy - py * ux) <= r;
 }
