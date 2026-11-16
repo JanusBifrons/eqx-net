@@ -2272,7 +2272,7 @@ export class SectorRoom extends Room<SectorState> {
       resolveInstanceFireMounts: (ship) => this.resolveInstanceFireMounts(ship),
       // Capital turret fire control (the resolver is built later; resolve lazily).
       currentTick: () => this.serverTick,
-      fireDroneMount: (id, i, passDebris, target) => this.aiFireResolver.fireMount(id, i, passDebris, target),
+      fireDroneMount: (id, i, passDebris, target, killAt) => this.aiFireResolver.fireMount(id, i, passDebris, target, killAt),
       fireBlocked: (id, targetId) => this.npcLocks.fireBlocked(id, targetId),
       // Friendly fire slice 2: a turret holds while an escort is on its line.
       lineOfFireBlocked: (id, targetId, fx, fy, dx, dy, max, passWrecks) =>
