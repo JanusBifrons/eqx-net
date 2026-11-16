@@ -3,9 +3,10 @@
  * in-game overlay (prompts, toasts, helm, inspector, drawer, warp map, cargo)
  * is mounted by App directly.
  *
- *  - Top: status capsule (shield/hull rings, energy, credits) + the lock
- *    status band (top-centre), sector chip (top-left), speed dial (top-right),
- *    weapon strip (right edge, one chip per weapon group).
+ *  - Status capsule (shield/hull rings, energy, credits): bottom-centre,
+ *    stacked above the build palette / fleet panel when those show.
+ *  - Top: lock status band (top-centre), sector chip (top-left), speed dial
+ *    (top-right), weapon strip (right edge, one chip per weapon group).
  *  - Desktop: hold LMB on a ship to lock it (MouseLock.ts), RMB boost, the
  *    build palette (BottomControlPanel) while spectating, and a key hint.
  *  - Touch: floating move stick (left thumb), lock-line stick + BOOST (right).
@@ -59,13 +60,17 @@ export function GameHud({ touchInput }: Props): JSX.Element | null {
   return (
     <>
       {/* ── Top ─────────────────────────────────────────────────────────── */}
-      <Slot anchor="top-center" order={0}><StatusCapsule scale={scale} /></Slot>
       {flying && <Slot anchor="top-center" order={1}><LockStatusBand scale={scale} /></Slot>}
       <Slot anchor="top-left" order={1}><SectorChip size={Math.round(9 * scale)} /></Slot>
       {flying && <FcStripDock scale={scale} />}
       {/* Contacts overview (lock list): left edge, the strip's mirror. */}
       {flying && <ContactsOverview />}
       <Slot anchor="top-right" order={2}><SpeedDialMenu direction="down" /></Slot>
+
+      {/* ── Bottom ──────────────────────────────────────────────────────────── */}
+      {/* Status capsule: bottom-centre. order 3 stacks it ABOVE the palette (1) and
+          fleet panel (2) — bottom-* hosts are column-reverse — so it never shifts them. */}
+      <Slot anchor="bottom-center" order={3}><StatusCapsule scale={scale} /></Slot>
 
       {/* ── Desktop ─────────────────────────────────────────────────────── */}
       {/* The build palette while spectating (the weapon strip replaces the old weapon-slot bar). */}

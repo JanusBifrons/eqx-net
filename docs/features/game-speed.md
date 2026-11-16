@@ -9,7 +9,7 @@ Each sector of the galaxy runs at its own **game speed**, normally 1×.
 ## What the player sees
 
 - **Everything in the sector moves together.** Ships, shots, drones, timers, reloads, spools, explosions, beams and shields all run at the sector's speed, so slow motion looks like slow motion and not like lag.
-- **A small chip in the status capsule** (top centre, beside energy and credits) shows the speed while it isn't 1×. It is amber for slower ("the server is busy, not your connection") and cyan for faster. At 1× there is no chip.
+- **A small chip in the status capsule** (bottom centre, beside energy and credits) shows the speed while it isn't 1×. It is amber for slower ("the server is busy, not your connection") and cyan for faster. At 1× there is no chip.
 - **The interface keeps real time.** Menus, the camera, the warp curtain and lock marks don't slow down.
 
 ## Setting it (dev, tests, video)
