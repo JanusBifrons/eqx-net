@@ -28,6 +28,7 @@ import { npcDogfight } from './shots/npcDogfight.js';
 import { timeScaleDial, timeScaleCapitals4x, capitalBreakupSlowmo, capitalBreakupFast } from './shots/timeScaleDial.js';
 import { wreckResplit } from './shots/wreckResplit.js';
 import { scrap } from './shots/scrap.js';
+import { tractorBeam } from './shots/tractorBeam.js';
 import { buildBase } from './shots/buildBase.js';
 import { gridAlive } from './shots/gridAlive.js';
 import { defence } from './shots/defence.js';
@@ -114,6 +115,7 @@ export const SHOTS: readonly Shot[] = [
   robots,
   nexus,
   scrap,
+  tractorBeam,
   loot,
   cockpitHaul,
   cockpitBounty,

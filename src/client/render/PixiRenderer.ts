@@ -83,7 +83,8 @@ import {
 import { newSpeedFxSample, speedFxSampleInto } from './camera/speedFxSample';
 import { GroupBoundsScanner } from './camera/groupBounds';
 import type { CameraCue, CameraGroup } from '@core/contracts/cameraScript';
-import { REMOTE_BEAM_STYLE, LIVE_BEAM_STYLE, liveBeamLook, liveBeamLine,MINING_BEAM_STYLE, remoteBeamStyleForMount, remoteBeamLine, remoteBeamSolidLen, addBeamLights, beamLightBudget, BeamHitMemory, type RemoteBeamLine } from './beamStyles';
+import { fillTractorBeams } from './tractorBeams';
+import { REMOTE_BEAM_STYLE, LIVE_BEAM_STYLE, TRACTOR_BEAM_STYLE, liveBeamLook, liveBeamLine,MINING_BEAM_STYLE, remoteBeamStyleForMount, remoteBeamLine, remoteBeamSolidLen, addBeamLights, beamLightBudget, BeamHitMemory, type RemoteBeamLine } from './beamStyles';
 import { MountVisualManager } from './MountVisualManager';
 import { BackgroundGrid } from './BackgroundGrid';
 import { CutFieldLayer } from './field/CutFieldLayer';
@@ -399,6 +400,7 @@ export class PixiRenderer implements IRenderer {
    *  `liveCount` (the shared remote pool can't tell a drill beam from a combat
    *  laser). The faint always-on link hint stays in `ConnectorRenderer`. */
   private _miningBeamPool: BeamSpritePool | null = null;
+  private _tractorBeamPool: BeamSpritePool | null = null; private readonly _tractorViews: BeamView[] = []; private _tractorViewCount = 0; // salvage PR 11b (tractorBeams.ts)
   private miningBeamGfx: Container | null = null;
   /**
    * Plan: combat-fx-hunt (2026-05-31) — beam endpoint cache for the
@@ -1157,6 +1159,7 @@ export class PixiRenderer implements IRenderer {
       this._miningBeamPool = new BeamSpritePool(MINING_BEAM_STYLE);
       this.miningBeamGfx = this._miningBeamPool.container;
       this.shipContainer.addChild(this.miningBeamGfx);
+      this._tractorBeamPool = new BeamSpritePool(TRACTOR_BEAM_STYLE); this.shipContainer.addChild(this._tractorBeamPool.container, this._tractorBeamPool.styledContainer); // faint, unfiltered
 
       this.effects = new EffectsService({
         app: this.app,
@@ -1201,7 +1204,7 @@ export class PixiRenderer implements IRenderer {
     const beamLayers: Container[] = [];
     if (this._fxRemoteBeams) beamLayers.push(this._fxRemoteBeams.container);
     if (this._fxLiveBeams) beamLayers.push(this._fxLiveBeams.container);
-    for (const p of [this._liveBeamPool, this._remoteBeamPool, this._miningBeamPool]) {
+    for (const p of [this._liveBeamPool, this._remoteBeamPool, this._miningBeamPool, this._tractorBeamPool]) {
       if (p) beamLayers.push(p.container, p.styledContainer);
     }
     raiseBeamsOverHulls(this.shipContainer, beamLayers);
@@ -2292,6 +2295,8 @@ export class PixiRenderer implements IRenderer {
     // the shield sync closes it.
     this._fxShieldsOn = this._fxShields !== null && this._fxShields.ready();
     if (this._fxShieldsOn) this._fxShields!.begin();
+    this._tractorViewCount = this._beamsDisabled || !this._tractorBeamPool ? 0 : fillTractorBeams(mirror, this.fxNow(), this.world.scale.x, this._tractorViews);
+    this._tractorBeamPool?.setBeams(this._tractorViews, this._tractorViewCount, this.world.scale.x);
     if (!this._beamsDisabled && mirror.remoteLasers && mirror.remoteLasers.size > 0 && this._remoteBeamPool) {
 
       // Origin tracking: the shooter pose moves every frame (drones each
@@ -3030,6 +3035,8 @@ export class PixiRenderer implements IRenderer {
     if (mirror.missiles) for (const m of mirror.missiles.values()) sc.addLight(m.x, -m.y, 8, 0xffa060, 1.2, 70);
     for (let i = 0; i < this._liveBeamCacheCount; i++) this.beamLights(this._liveBeamCache[i]!);
     for (let i = 0; i < this._remoteBeamCacheCount; i++) this.beamLights(this._remoteBeamCache[i]!);
+    // Tractor beams glow blue where they hold and along them (not their pulses).
+    for (let i = 0; i < this._tractorViewCount; i++) if (this._tractorViews[i]!.style === TRACTOR_BEAM_STYLE) this.beamLights(this._tractorViews[i]!);
   }
 
   /** A beam lights where it hits and along its length. */

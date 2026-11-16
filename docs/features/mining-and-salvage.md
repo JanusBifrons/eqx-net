@@ -42,7 +42,7 @@ The mining barge carries it (below).
 
 - **A fixed force; mass matters.** A small mount barely moves a big chunk and a giant rock does not budge, which is why lasers break wrecks down before tractors haul them. Bigger mounts pull harder (`MOUNT_SIZE_TUNING.power`: AA 0.4, S 1, M 2.5, L 6, XL 15).
 - **Only the target moves.** The ship doing the pulling feels nothing.
-- **It cushions.** Inside a hold distance the pull turns into a soft spring, so the load hovers near the mount instead of slamming into the hull.
+- **It cushions.** Inside a hold distance the pull turns into a soft spring, so the load hovers near the mount instead of slamming into the hull. On a big ship the hold distance grows so the load always hovers clear of the hull, however far the mount sits from the ship's edge.
 - **Thrust escapes it.** A ship that thrusts away harder than the pull gets away.
 - **No damage.** A tractor never hits, never cuts, never sends a damage number.
 - **It hauls loot in.** A loot pod (salvage pods included) that your tractor pulls to within about 1.2 × the hold distance of the beam's mount goes straight into your hold, exactly as if you had flown over it: same pickup, same popup. A pod nobody is tractoring at that distance stays where it is (fly-over range is much shorter), and if your hold is full the pod just keeps hovering in the beam.
@@ -83,6 +83,8 @@ The mining barge carries it (below).
 **Where pieces end up.** A tractor holds its piece on a cushion 250 u from its mount (every size). A mining laser reaches 4,364 u (AA) to 12,000 u (XL) ([range by mount size](#range-by-mount-size)), so the held piece is inside the reach of every laser near that tractor; on a long hull (a barge is ~7,500 u long) a small laser at the far end may not reach it, so small lasers sit near the tractors that feed them.
 
 **How it runs.** `salvageTier` / `salvageTierMass` / `mountTier` (`core/combat/salvageTargeting.ts`) give the sizes; the lock step stamps each piece's size on its lock (`lockSalvageFlags`, `server/rooms/lockSalvage.ts`), it rides to the pilot's client on the wire lock, and the shared `pickTurretLock` (`laserCutsTier` / `tractorTakesTier`) makes the same choice on both sides. Locks: `salvageTargeting.test.ts`, `turretLockPick.salvage.test.ts`, `tests/unit/salvageLockParity.test.ts`, `tests/integration/sectorRoom/sizeLadder.test.ts`, `salvageLockFlags.test.ts`.
+
+**What you see.** A pale-blue beam with a white core and a soft blue glow, from the tip of the mount's dish to the target, drawn above the ship that fires it. It is lit blue where it holds. Your own game predicts the pull, so a ship being pulled moves smoothly, and a player who joins late sees a held beam straight away.
 
 ## Mining asteroids
 
@@ -139,7 +141,6 @@ To see one in the game, start the server with `EQX_BARGE_LOOK=A` (or B, C) and o
 ## Coming next
 
 - **The barge's AI pilot:** its turrets pick salvage targets and it strip-mines a wreck field, banking at its owner's base.
-- **Tractor beam on screen:** the client draws the beam and predicts the pull from the snapshot's beam links (with an e2e test and a showcase shot).
 
 ## Under the hood
 
