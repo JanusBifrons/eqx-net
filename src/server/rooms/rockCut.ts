@@ -127,6 +127,10 @@ export class RockCutter {
     const r = spawnWreckPieces(this.d, this.h, src, { ore }, placed, rs.minAreaFrac * src.area, serial, wreckId, null, fifo);
     if (r.ids.length === 0 && r.pods === 0) return false;
     this.rocks.delete(id);
+    // TODO(macro terrain): a cut-field rock must be recorded as mined here,
+    // through `CutFieldSubsystem.markConsumed` (that API does not exist yet;
+    // the macro terrain stream owns the mined-rock record), or its chunk
+    // re-cuts it on the next load. Do not keep a removed-rock list here.
     // The rock leaves through the room's normal evict path.
     this.d.removePiece(id);
     if (r.ids.length > 0) {

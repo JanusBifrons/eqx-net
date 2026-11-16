@@ -153,7 +153,14 @@ export class CapitalWreckSubsystem {
       cap: (capital: boolean) => (capital ? MAX_LIVE_WRECK_PIECES : (this.subcapCapOverride ?? MAX_LIVE_SUBCAP_WRECK_PIECES)),
       newWreck: (): [number, number] => [this.allocWreckId(), this.deaths++],
       addPiece: (id: string, wreckId: number, entry: PieceKnock, fifo: string[]) => { this.knock.set(id, entry); fifo.push(id); this.pieceWreck.set(id, wreckId); },
-      addWreck: (w: LiveWreck, parent: LiveWreck | null) => { this.wrecks.set(w.desc.wreckId, w); if (parent !== null) parent.children++; this.setChanged(); },
+      addWreck: (nw: Omit<LiveWreck, 'root'>, parent: LiveWreck | null) => {
+        // Lineage: a root (rock break) is its own root; a child inherits its parent's.
+        const w = nw as LiveWreck;
+        w.root = parent !== null ? parent.root : w.desc.wreckId;
+        this.wrecks.set(w.desc.wreckId, w);
+        if (parent !== null) parent.children++;
+        this.setChanged();
+      },
       dropPiece: (id: string, fifo: string[]) => this.dropPiece(id, fifo),
     };
     this.resplit = new WreckResplitter(d, host);
@@ -352,6 +359,7 @@ export class CapitalWreckSubsystem {
         chain: { root: fracture, steps: [] },
         parent: 0,
         children: 0,
+        root: wreckId,
         src: shipWreckSource(kindId),
       });
       this.setChanged();
@@ -484,6 +492,27 @@ export class CapitalWreckSubsystem {
       this.nextWreckId = id >= 0xffff ? 1 : id + 1;
       if (!this.wrecks.has(id)) return id;
     }
+  }
+
+  /** Visit every live piece id descended from root wreck `root` (the root's
+   *  own pieces and every re-split generation below it). Allocates nothing
+   *  (#14). Unused yet: for lasers spreading over a locked wreck's pieces. */
+  forEachLineagePiece(root: number, visit: (pieceId: string) => void): void {
+    for (const w of this.wrecks.values()) {
+      if (w.root !== root || w.pieces <= 0) continue;
+      const wreckId = w.desc.wreckId;
+      for (let i = 0; i < w.ids.length; i++) {
+        const id = w.ids[i]!;
+        if (this.pieceWreck.get(id) === wreckId) visit(id);
+      }
+    }
+  }
+
+  /** The lineage root of the live wreck piece `pieceId`, or null. */
+  lineageRootOf(pieceId: string): number | null {
+    const wreckId = this.pieceWreck.get(pieceId);
+    const w = wreckId !== undefined ? this.wrecks.get(wreckId) : undefined;
+    return w !== undefined ? w.root : null;
   }
 
   private setChanged(): void {

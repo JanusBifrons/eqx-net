@@ -68,6 +68,10 @@ export interface LiveWreck {
   chain: WreckChildChain;
   parent: number;
   children: number;
+  /** Lineage: the wreckId of the root wreck (a ship death or a rock break)
+   *  every re-split of this chain descends from; a root holds its own id.
+   *  Set by `addWreck` / the death path, copied down on every re-split. */
+  root: number;
   /** What the chain was cut from (its root's `wreckSourceOf`, kept so a
    *  hit never rebuilds it). */
   src: WreckSource;

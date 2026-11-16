@@ -145,7 +145,7 @@ export interface WreckResplitHost {
   addPiece(id: string, wreckId: number, entry: PieceKnock, fifo: string[]): void;
   /** Track a new wreck: a child (its parent's child count goes up), or a
    *  root (`parent` null: a mined-out rock's, rockCut.ts). */
-  addWreck(w: LiveWreck, parent: LiveWreck | null): void;
+  addWreck(w: Omit<LiveWreck, 'root'>, parent: LiveWreck | null): void;
   /** Remove a live piece (FIFO, body, its wreck's count). */
   dropPiece(id: string, fifo: string[]): void;
 }

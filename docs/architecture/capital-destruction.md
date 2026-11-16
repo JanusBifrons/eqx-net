@@ -1042,6 +1042,15 @@ Wreck pieces now wear down and break again. Pure numbers in
   ordinary beams at 0.1. Activated latent mounts (the fighter's wing
   hardpoints) form a `wing` group the client fire control does not fire
   yet, so they cannot carry a test mining laser.
+- **Lineage.** Every `LiveWreck` names its root wreck (`root`): a ship's
+  death or a rock's break is its own root; each re-split child copies its
+  parent's. `CapitalWreckSubsystem.forEachLineagePiece(root, visit)` walks
+  every live piece of one lineage without allocating (#14), and
+  `lineageRootOf(pieceId)` finds a piece's root. Server-only (the client
+  has the same chain through `parentWreck`). Nothing reads it yet: it is
+  the seam for lasers spreading over a locked wreck's or rock's pieces.
+  Lock: `src/server/rooms/wreckLineage.test.ts` (grandchildren report the
+  root, ship and rock).
 - **Locks:** `wreckIntegrity.test.ts`, `wreckResplit.test.ts` (wear 10×,
   split + descriptor + determinism + placement + refcount, salvage, rate
   limit, cap full), `tests/integration/sectorRoom/wreckResplit.test.ts` (a
