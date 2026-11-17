@@ -20,7 +20,14 @@ export interface ScriptedPath {
   speed: number;
   /** Ping-pong between the waypoints forever (default true). */
   loop?: boolean;
+  /** Turn the nose toward the direction of travel at up to this rate (rad/s);
+   *  stopped, it holds its heading. Unset = never turns (the radar sandbox's
+   *  contacts). The articulation sandbox's hauler flies nose-first. */
+  faceTurnRate?: number;
 }
+
+/** Heading gain: angular velocity (rad/s) per radian of heading error. */
+const FACE_GAIN = 3;
 
 /** Fraction of the velocity error corrected per tick. */
 const VELOCITY_GAIN = 0.25;
@@ -56,6 +63,14 @@ export class ScriptedPathBehaviour implements IAiBehaviour {
     this.intent.fx = this.mass * (vxDes - self.vx) * VELOCITY_GAIN;
     this.intent.fy = this.mass * (vyDes - self.vy) * VELOCITY_GAIN;
     this.intent.torque = 0;
+    const turn = this.path.faceTurnRate;
+    if (turn !== undefined) {
+      // A ship's nose is (-sin θ, cos θ) (`applyShipInput`): θ = heading − π/2.
+      let err = d > 0 ? Math.atan2(dy, dx) - Math.PI / 2 - self.angle : 0;
+      err = Math.atan2(Math.sin(err), Math.cos(err));
+      const w = err * FACE_GAIN;
+      this.intent.setAngvel = w > turn ? turn : w < -turn ? -turn : w;
+    }
     return this.intent;
   }
 }

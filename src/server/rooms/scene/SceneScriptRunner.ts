@@ -19,6 +19,8 @@
  *    (the RTS fleet scene). Refused without a pilot.
  *  - `rocks` / `rockCut`: still rocks `scene-<tag>-<i>`, then each mined to
  *    a break through the mining laser's real wear path (rock-cut scene).
+ *  - `move`: fly a scene ship nose-first to a point and stop there.
+ *  - `rigClip`: start a rig clip on a structure (articulation sandbox).
  *  - `end`: the scene is over (the measurement window closes).
  */
 import type { ShipKindId } from '../../../shared-types/shipKinds.js';
@@ -37,7 +39,20 @@ export interface SceneHooks {
   spawnRock?(id: string, x: number, y: number, radius: number): boolean;
   /** `rockCut` step: mine rock `id` to a break. False = no break (refused). */
   cutRock?(id: string): boolean;
+  /** `move` step: fly ship `id` to (x, y) at `speed`, nose first, then stop.
+   *  False = no such ship. */
+  moveShip?(id: string, x: number, y: number, speed: number): boolean;
+  /** `rigClip` step: start `clip` (null = rest) on the first structure of
+   *  `kind`. False = refused (no such structure / clip / target). */
+  rigClip?(kind: string, clip: string | null, target: SceneRigTarget): boolean;
 }
+
+/** Where a `rigClip` step's target comes from (see `SceneStep` rigClip). */
+export type SceneRigTarget =
+  | { readonly from: 'none' }
+  | { readonly from: 'ship'; readonly id: string }
+  | { readonly from: 'keep' }
+  | { readonly from: 'tip' };
 
 export interface SceneFleetOpts {
   mode: 'defend' | 'hunt';
@@ -118,6 +133,18 @@ export class SceneScriptRunner {
 
   private play(step: SceneStep): void {
     if (step.action === 'end') { this.status.ended = true; return; }
+    if (step.action === 'move') {
+      const ok = this.hooks.moveShip?.(`scene-${step.tag}-${step.index ?? 0}`, step.x, step.y, step.speed) ?? false;
+      if (ok) this.status.spawned++; else this.status.refused++;
+      return;
+    }
+    if (step.action === 'rigClip') {
+      const target: SceneRigTarget = step.targetShip !== undefined ? { from: 'ship', id: `scene-${step.targetShip}-0` }
+        : step.keepTarget === true ? { from: 'keep' }
+          : step.fromTip === true ? { from: 'tip' } : { from: 'none' };
+      if (this.hooks.rigClip?.(step.structure, step.clip, target) ?? false) this.status.spawned++; else this.status.refused++;
+      return;
+    }
     if (step.action === 'rockCut') {
       for (let i = 0; i < step.count; i++) {
         if (this.hooks.cutRock?.(`scene-${step.tag}-${i}`) ?? false) this.status.spawned++; else this.status.refused++;

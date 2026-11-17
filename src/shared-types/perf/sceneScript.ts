@@ -68,12 +68,42 @@ const RockCutStep = z.object({
   count: z.number().int().min(1).max(SCENE_MAX_SPAWN),
 }).strict();
 
+/** Fly scene ship `scene-<tag>-<i>` (i = `index`, default 0) in a straight
+ *  line from where it is to (x, y) at `speed` u/s, nose first, and stop there
+ *  (`ScriptedPathBehaviour`, no combat brain). The articulation sandbox's
+ *  hauler: in, park on the pad, out. */
+const MoveStep = z.object({
+  atMs: z.number().min(0).max(600_000),
+  action: z.literal('move'),
+  tag: z.string().min(1).max(16).regex(/^[a-z0-9-]+$/),
+  index: z.number().int().min(0).max(SCENE_MAX_SPAWN - 1).optional(),
+  x: z.number().finite(),
+  y: z.number().finite(),
+  speed: z.number().min(1).max(2000),
+}).strict();
+
+/** Start rig clip `clip` (null = rest) on the first structure of `structure`
+ *  kind (structure-restyle 2f sandbox, `SectorRoom.startStructureRigClip`).
+ *  Target (host frame) is one of: `targetShip` (scene ship
+ *  `scene-<tag>-0`'s position now), `keepTarget` (the clip now playing's
+ *  target) or `fromTip` (where the targeted chain's tip is now: an early
+ *  retract starts from the pose the rig is in). */
+const RigClipStep = z.object({
+  atMs: z.number().min(0).max(600_000),
+  action: z.literal('rigClip'),
+  structure: z.string().min(1).max(32).regex(/^[a-z0-9_]+$/),
+  clip: z.string().min(1).max(32).nullable(),
+  targetShip: z.string().min(1).max(16).regex(/^[a-z0-9-]+$/).optional(),
+  keepTarget: z.boolean().optional(),
+  fromTip: z.boolean().optional(),
+}).strict();
+
 const EndStep = z.object({
   atMs: z.number().min(0).max(600_000),
   action: z.literal('end'),
 }).strict();
 
-export const SceneStepSchema = z.discriminatedUnion('action', [SpawnStep, FleetStep, RocksStep, RockCutStep, EndStep]);
+export const SceneStepSchema = z.discriminatedUnion('action', [SpawnStep, FleetStep, RocksStep, RockCutStep, MoveStep, RigClipStep, EndStep]);
 export const SceneScriptSchema = z.array(SceneStepSchema).min(1).max(64);
 export type SceneStep = z.infer<typeof SceneStepSchema>;
 

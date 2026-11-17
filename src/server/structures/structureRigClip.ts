@@ -12,6 +12,8 @@
  *
  * Entry point: `SectorRoom.startStructureRigClip` (tests, a sceneScript).
  */
+import { createRigPose, evaluateRig } from '../../core/articulation/evaluate.js';
+import { twoBoneIkSolve } from '../../core/articulation/ikAdapter.js';
 import { rigClipIndex } from '../../core/articulation/rig.js';
 import { rigForStructureKind } from '../../core/articulation/rigCatalogue.js';
 import { encodeRigClip, STRUCTURE_DEFAULTS as SD } from '../../shared-types/structureStateWire.js';
@@ -76,4 +78,38 @@ export function writeRigClipRow(rec: StructureRecord, st: StructureState): void 
     if ((st.rigTx ?? SD.rigTx) !== p.target.x) st.rigTx = p.target.x;
     if ((st.rigTy ?? SD.rigTy) !== p.target.y) st.rigTy = p.target.y;
   }
+}
+
+/** World point (wx, wy) in `rec`'s host frame (its centre, turned by `rot`
+ *  degrees CCW): what a targeted clip takes. Scene / test entry points only. */
+export function worldToRigHost(rec: StructureRecord, wx: number, wy: number): { x: number; y: number } {
+  const a = ((rec.rot ?? 0) * Math.PI) / 180;
+  const dx = wx - rec.x;
+  const dy = wy - rec.y;
+  const c = Math.cos(a);
+  const s = Math.sin(a);
+  return { x: dx * c + dy * s, y: -dx * s + dy * c };
+}
+
+/**
+ * Where the playing targeted clip's chain tip is at `nowTick` (host frame),
+ * or null with no targeted clip. An early retract (`arm-retract` keyed from
+ * its target at tick 0) started at this point begins from the pose the rig
+ * is in, so an aborted reach reverses without a jump: the 2-bone solve of a
+ * point the chain already reaches returns the same joint angles. Scene /
+ * test entry points only (allocates).
+ */
+export function rigClipTip(rec: StructureRecord, nowTick: number): { x: number; y: number } | null {
+  const rig = rigForStructureKind(rec.kind);
+  const p = rec.rigClip ?? null;
+  if (rig === null || p === null || p.target === undefined) return null;
+  const ci = rigClipIndex(rig, p.clipId);
+  const clip = ci >= 0 ? rig.clips[ci]! : null;
+  if (clip === null || clip.chain.length === 0) return null;
+  const pose = evaluateRig(rig, p, nowTick, createRigPose(rig), twoBoneIkSolve);
+  const tip = clip.chain[clip.chain.length - 1]!;
+  return {
+    x: pose.x[tip]! + clip.tipX * pose.cos[tip]! - clip.tipY * pose.sin[tip]!,
+    y: pose.y[tip]! + clip.tipX * pose.sin[tip]! + clip.tipY * pose.cos[tip]!,
+  };
 }
