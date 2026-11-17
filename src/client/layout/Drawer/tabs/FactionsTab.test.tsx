@@ -60,4 +60,10 @@ describe('FactionsTab (v4 F3)', () => {
     render(<FactionsTab />);
     expect(fetch).not.toHaveBeenCalled();
   });
+
+  it('the ship-look picker is not in this tab (it has its own)', async () => {
+    render(<FactionsTab />);
+    await waitFor(() => expect(screen.getAllByTestId('faction-row')).toHaveLength(3));
+    expect(screen.queryByTestId('faction-look-picker')).toBeNull();
+  });
 });

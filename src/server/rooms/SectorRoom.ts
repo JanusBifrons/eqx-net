@@ -203,11 +203,12 @@ import {
   STANDING_HIT_WINDOW_MS,
   defaultFactionPolicy,
   factionDisplayName,
+  factionLooksWelcomeField,
   isNpcFactionId,
   policyActsOnStanding,
   type FactionPolicy,
 } from '../../shared-types/factions.js';
-import { SetFactionPolicySchema } from '../../shared-types/messages/factionMessages.js';
+import { ClaimFactionLookSchema, SetFactionPolicySchema, claimFactionLookResult, type FactionLookClaimed } from '../../shared-types/messages/factionMessages.js';
 import { encodePlayerTurretTarget, encodeStructureMountAngles } from '../../shared-types/structureStateWire.js';
 
 /** B2 — the party string of each roaming NPC side (`npc:<allegiance>`), built
@@ -3832,6 +3833,20 @@ export class SectorRoom extends Room<SectorState> {
       const owner = this.sessionToPlayer.get(client.sessionId);
       if (!owner) return;
       getTradeSink()?.setPlayerPolicy?.(owner, parsed.data.policy);
+    });
+
+    // A player claims a unique ship look for their faction; the claimant gets
+    // the verdict, every room gets a success (`broadcastFactionLook`).
+    this.onMessage('claim_faction_look', (client: Client, raw: unknown) => {
+      const parsed = ClaimFactionLookSchema.safeParse(raw);
+      if (!parsed.success) {
+        this.malformed.record(client.sessionId, 'claim_faction_look');
+        return;
+      }
+      const owner = this.sessionToPlayer.get(client.sessionId);
+      if (!owner) return;
+      const claim = getTradeSink()?.claimFactionLook?.(owner, parsed.data.colorSlot, parsed.data.sigil);
+      if (claim) try { client.send('claim_faction_look_result', claimFactionLookResult(claim)); } catch { /* closing */ }
     });
 
     this.onMessage('set_gate_access', (client: Client, raw: unknown) => {
@@ -8358,6 +8373,10 @@ export class SectorRoom extends Room<SectorState> {
     this.broadcast('world_notice', notice);
   }
 
+  broadcastFactionLook(msg: FactionLookClaimed): void {
+    this.broadcast('faction_look_claimed', msg);
+  }
+
   markElite(botId: string, name: string, healthMul = ELITE_HEALTH_MUL, bounty = ELITE_BOUNTY_CREDITS): boolean {
     const rec = this.swarmRegistry.get(botId);
     if (rec == null || rec.kind !== SWARM_KIND_DRONE) return false;
@@ -9626,7 +9645,7 @@ export class SectorRoom extends Room<SectorState> {
           sectorKey: this.sectorKey,
           shipInstanceId: existingShip?.shipInstanceId ?? '',
         };
-        client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields(), ...this.cutField?.welcome }));
+        client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields(), ...this.cutField?.welcome, ...factionLooksWelcomeField() }));
 
         setSession(client.sessionId, {
           roomId: this.roomId,
@@ -10132,7 +10151,7 @@ export class SectorRoom extends Room<SectorState> {
       sectorKey: this.sectorKey,
       shipInstanceId: ship.shipInstanceId,
     };
-    client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields(), ...this.cutField?.welcome }));
+    client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields(), ...this.cutField?.welcome, ...factionLooksWelcomeField() }));
 
     // Prefer the auth-validated userId from this connect; fall back to the
     // Limbo-resumed value when this connect was anonymous (covers the
@@ -10260,7 +10279,7 @@ export class SectorRoom extends Room<SectorState> {
       shipInstanceId: '',
       spectator: true,
     };
-    client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields(), ...this.cutField?.welcome }));
+    client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields(), ...this.cutField?.welcome, ...factionLooksWelcomeField() }));
 
     setSession(client.sessionId, {
       roomId: this.roomId,
@@ -10316,6 +10335,8 @@ export class SectorRoom extends Room<SectorState> {
     this.fleetStatus?.clearSession(client.sessionId);
     this.fleetStatusSoon.clear(client.sessionId);
     this.fleetMsgCountThisTick.delete(client.sessionId);
+    // Interest window + scratch set of a gone connection.
+    this.snapshotBroadcaster.forgetInterestWindow(client.sessionId);
 
     // Campaign 1.3 — forget this connection's malformed-packet counter.
     this.malformed.clear(client.sessionId);
@@ -11152,7 +11173,7 @@ export class SectorRoom extends Room<SectorState> {
       sectorKey: this.sectorKey,
       shipInstanceId: shipId,
     };
-    client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields(), ...this.cutField?.welcome }));
+    client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields(), ...this.cutField?.welcome, ...factionLooksWelcomeField() }));
     this.pendingJoin.set(playerId, {
       joinTick: tick,
       watchdogTick: tick + CLIENT_READY_TIMEOUT_TICKS,

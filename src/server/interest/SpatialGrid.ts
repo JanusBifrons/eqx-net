@@ -28,7 +28,7 @@ function cellKey(cx: number, cy: number): number {
 }
 
 /** Cell of a coordinate, clamped into the packed range (never wraps). */
-function coordToCell(coord: number): number {
+export function coordToCell(coord: number): number {
   const c = coord > SPATIAL_COORD_LIMIT ? SPATIAL_COORD_LIMIT : coord < -SPATIAL_COORD_LIMIT ? -SPATIAL_COORD_LIMIT : coord;
   return Math.floor(c / CELL_SIZE);
 }
