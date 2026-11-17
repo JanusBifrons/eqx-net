@@ -51,7 +51,17 @@ export interface WreckPieceSpawn {
   /** Settle-to-sleep thresholds from the profile (`wreckBodyParams`); 0 = off. */
   settleSpeed: number;
   settleSpin: number;
+  /** Spawn the body asleep (`SwarmSpawner.spawnWreck` `sleeping`): a piece
+   *  laid out at rest (a restored battle piece, a field hull). */
+  sleeping?: boolean;
 }
+
+/** Where a wreck lineage came from (wreck fields plan, review 3): a ship
+ *  death, rock cut or restored battle (`battle`), or an old battlefield
+ *  streamed in by chunk (`field`). Set on the lineage root; every re-split
+ *  child takes its root's (`addWreck`). It picks the FIFO host list
+ *  (`WreckFifos`). */
+export type WreckOrigin = 'battle' | 'field';
 
 export interface LiveWreck {
   desc: WreckDescriptor;
@@ -73,6 +83,8 @@ export interface LiveWreck {
    *  every re-split of this chain descends from; a root holds its own id.
    *  Set by `addWreck` / the death path, copied down on every re-split. */
   root: number;
+  /** The lineage's origin (its root's; `WreckOrigin`). */
+  origin: WreckOrigin;
   /** What the chain was cut from (its root's `wreckSourceOf`, kept so a
    *  hit never rebuilds it). */
   src: WreckSource;
@@ -204,9 +216,13 @@ export interface HitEntry {
  *  delay, then get their separating kick (else the kick is in the spawn
  *  motion). `deathTick` (default now): the descriptor's death tick and the
  *  start of the hold. `poses`: by piece index, an exact spawn pose (no
- *  kick). `skipPieces`: piece indices left out. */
+ *  kick). `skipPieces`: piece indices left out. `origin` (default
+ *  `battle`): the lineage's origin, its FIFO list. `sleeping`: every piece
+ *  spawns asleep (laid out at rest). */
 export interface SpawnWreckOpts {
   readonly held: boolean;
+  readonly origin?: WreckOrigin;
+  readonly sleeping?: boolean;
   readonly deathTick?: number;
   readonly poses?: ReadonlyMap<number, WreckPiecePose>;
   readonly skipPieces?: ReadonlySet<number>;

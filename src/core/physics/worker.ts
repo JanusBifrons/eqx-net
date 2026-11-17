@@ -81,7 +81,7 @@ const CONTACT_FORCE_FLOOR = 200;
 interface SpawnCmd         { type: 'SPAWN';          slot: number; playerId: string; x: number; y: number; kindId?: string }
 interface DespawnCmd       { type: 'DESPAWN';        slot: number; playerId: string }
 interface InputCmd         { type: 'INPUT';          slot: number; inputTick: number; thrust: boolean; turnLeft: boolean; turnRight: boolean; boost: boolean; reverse: boolean; warpX?: number; warpY?: number }
-interface SpawnObstacleCmd { type: 'SPAWN_OBSTACLE'; slot: number; obstacleId: string; x: number; y: number; vx: number; vy: number; radius: number; mass: number; vertices?: ReadonlyArray<Vec2>; linearDamping?: number; staticBody?: boolean | 'fixed'; collisionGroups?: number; angle?: number; parts?: ReadonlyArray<ReadonlyArray<Vec2>>; shieldKindId?: string; angvel?: number; angularDamping?: number; settleSpeed?: number; settleSpin?: number; shipKindId?: number }
+interface SpawnObstacleCmd { type: 'SPAWN_OBSTACLE'; slot: number; obstacleId: string; x: number; y: number; vx: number; vy: number; radius: number; mass: number; vertices?: ReadonlyArray<Vec2>; linearDamping?: number; staticBody?: boolean | 'fixed'; collisionGroups?: number; angle?: number; parts?: ReadonlyArray<ReadonlyArray<Vec2>>; shieldKindId?: string; angvel?: number; angularDamping?: number; settleSpeed?: number; settleSpin?: number; shipKindId?: number; sleeping?: boolean }
 interface AiIntentCmd      { type: 'AI_INTENT';      slot: number; fx: number; fy: number; torque: number; setAngvel?: number }
 /** Pilot layer: every AI slot driven by control keys this tick, in ONE message
  *  (replaces a post per drone). `slots[i]` flies with keys `bits[i]` (packed
@@ -333,6 +333,15 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
         if (cmd.shipKindId !== undefined) physics.setPilotKind(cmd.obstacleId, getShipKind(shipKindFromIndex(cmd.shipKindId)));
         playerToSlot.set(cmd.obstacleId, cmd.slot);
         slotToPlayer.set(cmd.slot, cmd.obstacleId);
+        // Wreck fields: a piece laid out at rest (a field hull, a restored
+        // battle piece) spawns ASLEEP, so the settle / wakeDv rules govern
+        // from the first step. The counter is seeded one short of the
+        // hysteresis: the first step reports it asleep, sets FLAG_SLEEPING
+        // and posts SLEEP_TRANSITION (no 12-tick awake window).
+        if (cmd.sleeping === true) {
+          physics.setShipStateAsleep(cmd.obstacleId, { x: cmd.x, y: cmd.y, angle: cmd.angle ?? 0, vx: 0, vy: 0, angvel: 0 });
+          sleepCount.set(cmd.slot, SLEEP_HYSTERESIS_TICKS - 1);
+        }
         break;
       }
       case 'BOT_WARP': {

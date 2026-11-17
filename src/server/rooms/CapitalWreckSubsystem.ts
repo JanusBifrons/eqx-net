@@ -35,7 +35,7 @@
  *
  * Hand-rolled-mock testable: everything room-shaped comes in as hooks.
  */
-import { buildWreckPieces, hullLocalCutAngle, type WreckFractureInputs, type WreckPieceSpec, MAX_LIVE_SUBCAP_WRECK_PIECES, MAX_LIVE_WRECK_PIECES, WRECK_RECENT_DAMAGE_TICKS, wreckBodyParams, type WreckDeathPose } from '../../core/destruction/wreckPieces.js';
+import { buildWreckPieces, hullLocalCutAngle, type WreckFractureInputs, type WreckPieceSpec, WRECK_RECENT_DAMAGE_TICKS, wreckBodyParams, type WreckDeathPose } from '../../core/destruction/wreckPieces.js';
 import { DESTRUCTION_PROFILES, killCutStripWidth } from '../../shared-types/shipScale/destruction.js';
 import { fnv1a32, fnvMixU32 } from '../../core/random/rng.js';
 import { getShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
@@ -47,7 +47,8 @@ import { WEAPONS, type WeaponId } from '../../core/combat/WeaponCatalogue.js';
 import { shipShapeScale } from '../../core/geometry/shipHullOutline.js';
 import { wreckPieceIntegrity, wreckWearFactor } from '../../core/destruction/wreckIntegrity.js';
 import { WreckResplitter, type WreckPiecePose, type WreckResplitHost } from './wreckResplit.js';
-import type { CapitalWreckDeps, HitEntry, LiveWreck, PieceKnock, SpawnWreckOpts } from './capitalWreckTypes.js';
+import type { CapitalWreckDeps, HitEntry, LiveWreck, PieceKnock, SpawnWreckOpts, WreckOrigin } from './capitalWreckTypes.js';
+import { WreckFifos } from './wreckFifos.js';
 import { forEachLineagePiece, forEachPieceNear, lineageRootOf, pieceSalvageQtyOf, pieceStoreOf, type PieceStoreView } from './wreckLineage.js';
 import { burnHullHit, burnPieceHit, deathExtraCuts } from './wreckBurnHits.js';
 import { RockCutter } from './rockCut.js';
@@ -55,7 +56,7 @@ import type { WreckLineageState } from './wreckLineageSaves.js';
 import { WreckKickQueue } from './wreckKicks.js';
 import { shipWreckSource } from '../../core/destruction/wreckSource.js';
 export type { WreckPiecePose };
-export type { CapitalWreckDeps, LiveWreck, PieceKnock, SpawnWreckOpts, WreckPieceSpawn } from './capitalWreckTypes.js';
+export type { CapitalWreckDeps, LiveWreck, PieceKnock, SpawnWreckOpts, WreckOrigin, WreckPieceSpawn } from './capitalWreckTypes.js';
 
 const BUCKETS = 6;
 const BUCKET_TICKS = WRECK_RECENT_DAMAGE_TICKS / BUCKETS;
@@ -97,11 +98,10 @@ export class CapitalWreckSubsystem {
   private readonly kicks: WreckKickQueue;
   private readonly entries = new Map<string, HitEntry>();
   private readonly pool: HitEntry[] = [];
-  /** Live capital wreck piece ids, oldest first (budget FIFO). */
-  private readonly live: string[] = [];
-  /** Live sub-capital wreck piece ids, oldest first: a separate FIFO, so
-   *  sub-cap debris never evicts a capital piece. */
-  private readonly liveSubcap: string[] = [];
+  /** Live piece ids per origin and class (wreckFifos.ts): battle FIFOs evict, the field list never does. */
+  private readonly fifos = new WreckFifos();
+  /** Battle eviction of one piece (made once, #14). */
+  private readonly evict = (id: string): void => { if (this.d.isLive(id)) this.d.removePiece(id); this.pieceGone(id); };
   private deaths = 0;
   private readonly lastDeathTick = new Map<string, number>();
   /** S2b: live wrecks by wreckId, and the snapshot slice (one descriptor per
@@ -125,20 +125,21 @@ export class CapitalWreckSubsystem {
 
   constructor(private readonly d: CapitalWreckDeps) {
     this.kicks = new WreckKickQueue(d);
-    const capOf = (capital: boolean): number => (capital ? MAX_LIVE_WRECK_PIECES : (this.subcapCapOverride ?? MAX_LIVE_SUBCAP_WRECK_PIECES));
+    const f = this.fifos;
     const host = this.host = {
-      fifo: (capital: boolean) => (capital ? this.live : this.liveSubcap),
-      cap: capOf,
+      fifo: (capital: boolean, origin: WreckOrigin) => f.list(capital, origin),
+      cap: (capital: boolean, origin: WreckOrigin) => f.cap(capital, origin),
       newWreck: (): [number, number] => [this.allocWreckId(), this.deaths++],
       addPiece: (id: string, wreckId: number, entry: PieceKnock, fifo: string[]) => { this.knock.set(id, entry); fifo.push(id); this.pieceWreck.set(id, wreckId); },
-      addWreck: (nw: Omit<LiveWreck, 'root'>, parent: LiveWreck | null) => {
-        // Lineage: a root (rock break) is its own root; a child inherits its parent's.
+      addWreck: (nw: Omit<LiveWreck, 'root' | 'origin'> & { origin?: WreckOrigin }, parent: LiveWreck | null) => {
+        // Lineage: a root (rock break) is its own root; a child inherits its parent's root and origin.
         const w = nw as LiveWreck; w.root = parent !== null ? parent.root : w.desc.wreckId;
+        w.origin = parent !== null ? parent.origin : (nw.origin ?? 'battle');
         this.wrecks.set(w.desc.wreckId, w); if (parent !== null) parent.children++;
         this.setChanged(); this.d.lineageTouched?.(w.root);
       },
       dropPiece: (id: string, fifo: string[]) => this.dropPiece(id, fifo),
-      enforceCap: (capital: boolean) => this.enforceCap(capital ? this.live : this.liveSubcap, capOf(capital)),
+      enforceCap: (capital: boolean) => f.enforce(capital, this.evict),
     };
     this.resplit = new WreckResplitter(d, host);
     this.rockCut = new RockCutter(d, host, () => this.forcedSeed);
@@ -297,6 +298,7 @@ export class CapitalWreckSubsystem {
     hull: number, deathAngle: number, opts: SpawnWreckOpts,
   ): number {
     const { held, poses, skipPieces } = opts;
+    const origin = opts.origin ?? 'battle';
     const at = opts.deathTick ?? this.d.serverTick();
     const n = this.deaths++;
     const wreckId = this.allocWreckId();
@@ -306,7 +308,7 @@ export class CapitalWreckSubsystem {
     const profile = DESTRUCTION_PROFILES[tuning.destruction];
     const crackTicks = held ? wreckCrackTicks() : 0;
     const body = wreckBodyParams(kindId);
-    const fifo = profile.id === 'capital' ? this.live : this.liveSubcap;
+    const fifo = this.fifos.list(profile.id === 'capital', origin);
     let hullMass = 0;
     for (const p of pieces) hullMass += p.mass;
     const impulsePerDamage = (hullMass * tuning.wreckKnockSpeed) / hull;
@@ -330,6 +332,7 @@ export class CapitalWreckSubsystem {
         linearDamping: body.linearDamping, angularDamping: body.angularDamping,
         collisionGroups: body.collisionGroups,
         settleSpeed: body.settleSpeed, settleSpin: body.settleSpin,
+        ...(opts.sleeping === true ? { sleeping: true } : {}),
       });
       if (!ok) continue;
       spawned++;
@@ -367,11 +370,12 @@ export class CapitalWreckSubsystem {
         parent: 0,
         children: 0,
         root: wreckId,
+        origin,
         src: shipWreckSource(kindId),
       });
       this.setChanged(); this.d.lineageTouched?.(wreckId);
     }
-    this.enforceCap(fifo, profile.id === 'capital' ? MAX_LIVE_WRECK_PIECES : MAX_LIVE_SUBCAP_WRECK_PIECES);
+    if (origin === 'battle') this.fifos.enforce(profile.id === 'capital', this.evict);
     return spawned;
   }
 
@@ -513,6 +517,7 @@ export class CapitalWreckSubsystem {
     const w = this.wrecks.get(wreckId);
     if (w === undefined) return;
     w.pieces--; this.d.lineageTouched?.(w.root);
+    if (w.origin === 'field') this.fifos.forgetField(id); // the non-evicting list keeps no stale id
     this.retire(wreckId, w);
   }
 
@@ -549,7 +554,7 @@ export class CapitalWreckSubsystem {
   /** A piece went whole into a hold (`LootSubsystem`'s piece store): it leaves like a worn-out piece turning to salvage. */
   storePiece(id: string): void {
     if (!this.knock.has(id)) return;
-    this.dropPiece(id, this.live.includes(id) ? this.live : this.liveSubcap);
+    this.dropPiece(id, this.fifos.holding(id) ?? this.fifos.capital);
   }
 
   /** Test seam: a live piece's hidden integrity (undefined: not a piece). */
@@ -569,29 +574,19 @@ export class CapitalWreckSubsystem {
     return this.slice;
   }
 
-  /** Live wreck pieces this subsystem tracks (capital and sub-capital). */
-  liveCount(): number {
-    return this.live.length + this.liveSubcap.length;
-  }
+  /** Live wreck pieces this subsystem tracks, every origin and class. */
+  liveCount(): number { return this.fifos.count(); }
+  /** Live battle sub-capital wreck pieces (their own FIFO). */
+  liveSubcapCount(): number { return this.fifos.subcap.length; }
+  /** Live battle pieces (both FIFOs) / live field pieces (wreckFifos.ts). */
+  liveBattleCount(): number { return this.fifos.battleCount(); }
+  liveFieldCount(): number { return this.fifos.fieldCount(); }
 
-  /** Live sub-capital wreck pieces (their own FIFO). */
-  liveSubcapCount(): number {
-    return this.liveSubcap.length;
-  }
-
-  /** Test seam: a smaller sub-cap cap (null ⇒ `MAX_LIVE_SUBCAP_WRECK_PIECES`). */
-  subcapCapOverride: number | null = null;
-
-  /** Evict the oldest pieces of ONE FIFO down to its cap. A capital FIFO
-   *  never touches the sub-cap one and vice versa. */
-  private enforceCap(fifo: string[], cap: number): void {
-    const max = fifo === this.liveSubcap && this.subcapCapOverride !== null ? this.subcapCapOverride : cap;
-    while (fifo.length > max) {
-      const id = fifo.shift()!;
-      if (this.d.isLive(id)) this.d.removePiece(id);
-      this.pieceGone(id);
-    }
-  }
+  /** Test seams: a smaller sub-cap cap / field cap (null ⇒ the constants). */
+  get subcapCapOverride(): number | null { return this.fifos.subcapCapOverride; }
+  set subcapCapOverride(v: number | null) { this.fifos.subcapCapOverride = v; }
+  get fieldCapOverride(): number | null { return this.fifos.fieldCapOverride; }
+  set fieldCapOverride(v: number | null) { this.fifos.fieldCapOverride = v; }
 }
 
 /** The generalised name (sub-capital break-up slice 2): one wreck system for
