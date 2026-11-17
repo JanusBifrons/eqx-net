@@ -105,11 +105,29 @@ export function galaxyBasePlan(sectorKey: string): GalaxyBasePlan[] {
     });
   }
   addMilitaryBase(sectorKey, out);
+  addHeartLock(sectorKey, out);
   for (const b of out) {
     const mine = net.links.filter((l) => (l.a.sector === sectorKey && l.a.baseId === b.baseId) || (l.b.sector === sectorKey && l.b.baseId === b.baseId));
     if (mine.length > 0) b.profile = { ...b.profile, links: mine.map((l) => l.id) };
   }
   return out;
+}
+
+/**
+ * Sector control (owner 2026-11-17: "NPC powers have locks? Yes, at their
+ * hearts") — a region power's heart starts locked for it: one of the power's
+ * own bases there (its garrison, else the first it owns) builds a real
+ * Territory Lock, so the heart holds until that structure is destroyed, like
+ * any player's lock. Other sectors (and the Traders, who have no heart) get
+ * none. In place.
+ */
+function addHeartLock(sectorKey: string, out: GalaxyBasePlan[]): void {
+  const region = getSector(sectorKey)?.region;
+  const controller = sectorController(sectorKey);
+  if (region === undefined || controller === null || regionHeart(region) !== sectorKey) return;
+  const base = out.find((b) => b.baseId === MILITARY_BASE_ID && b.profile.ownerFaction === controller)
+    ?? out.find((b) => b.profile.ownerFaction === controller);
+  if (base !== undefined) base.profile = { ...base.profile, territoryLock: true };
 }
 
 /** v4 H2 — route length between two sectors riding the transit links

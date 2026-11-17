@@ -3,13 +3,10 @@ import {
   CLAIM_AT,
   RELEASE_AT,
   challengerOf,
-  freshControl,
   freshMultiControl,
   holderTrend,
   isMultiContested,
-  stepControl,
   stepMultiControl,
-  targetPressure,
   targetShare,
   type MultiControlState,
   type OpposesFn,
@@ -33,34 +30,27 @@ function run(s: MultiControlState, p: SectorPresence, op: OpposesFn, seconds: nu
 }
 
 describe('sector control for every side', () => {
-  it('parity: robots vs players hits the same target as the robot meter', () => {
+  it('robots vs players: robots push up, players and their bases push back', () => {
     for (const [robots, nexus, structures, ships] of [
       [4, false, 0, 0], [6, true, 3, 2], [1, false, 6, 1], [0, true, 0, 5], [100, true, 0, 0],
     ] as const) {
-      const old = targetPressure({ robots, nexus, playerStructures: structures, players: ships });
+      const want = Math.max(0, Math.min(100, robots * 12 + (nexus ? 80 : 0) - structures * 6 - ships * 15));
       const p = presence({ robots: { robots, nexus }, alice: { ships, structures } });
-      expect(targetShare('robots', p, ALL_HOSTILE)).toBe(Math.max(0, old));
+      expect(targetShare('robots', p, ALL_HOSTILE)).toBe(want);
     }
   });
 
-  it('parity: robots claim and release on the same ticks as the robot meter', () => {
-    const old = freshControl();
-    const neo = freshMultiControl();
-    const phases: [number, Parameters<typeof stepControl>[1]][] = [
-      [120, { robots: 2, nexus: true, playerStructures: 0, players: 0 }],
-      [60, { robots: 2, nexus: true, playerStructures: 0, players: 2 }],
-      [120, { robots: 0, nexus: false, playerStructures: 4, players: 3 }],
-    ];
-    for (const [secs, i] of phases) {
-      const p = presence({ robots: { robots: i.robots, nexus: i.nexus }, alice: { ships: i.players, structures: i.playerStructures } });
-      for (let t = 0; t < secs; t++) {
-        const a = stepControl(old, i, 1000);
-        const b = stepMultiControl(neo, p, ALL_HOSTILE, 1000).flipped;
-        // Robot gain/loss matches the old meter while its pressure is ≥ 0.
-        if (old.pressure >= 0) expect(b && neo.holder !== 'alice').toBe(a);
-        if (old.pressure >= 0) expect(neo.shares.get('robots') ?? 0).toBeCloseTo(old.pressure, 6);
-      }
-    }
+  it('robots claim a nexus sector, hold it through a dip, and lose it to players + bases', () => {
+    const s = freshMultiControl();
+    expect(run(s, presence({ robots: { robots: 2, nexus: true } }), ALL_HOSTILE, 120)).toBe(1);
+    expect(s.holder).toBe('robots');
+    // Players push back a little: the share falls but stays above RELEASE_AT.
+    expect(run(s, presence({ robots: { robots: 2, nexus: true }, alice: { ships: 2 } }), ALL_HOSTILE, 60)).toBe(0);
+    expect(s.shares.get('robots')!).toBeGreaterThan(RELEASE_AT);
+    expect(isMultiContested(s, presence({ robots: { nexus: true }, alice: { ships: 1 } }), ALL_HOSTILE)).toBe(true);
+    expect(isMultiContested(s, presence({ robots: { nexus: true } }), ALL_HOSTILE)).toBe(false);
+    run(s, presence({ alice: { ships: 3, structures: 4 } }), ALL_HOSTILE, 120);
+    expect(s.holder).not.toBe('robots');
   });
 
   it('any side can claim neutral ground — not only robots', () => {
@@ -133,5 +123,65 @@ describe('sector control for every side', () => {
     run(s, presence({ alice: { ships: 1 } }), ALL_HOSTILE, 10);
     run(s, presence({ bob: { ships: 4 } }), ALL_HOSTILE, 30);
     expect(s.shares.has('alice')).toBe(false);
+  });
+});
+
+describe('sector lock (frozen until destroyed)', () => {
+  const ROBOT_LOCK: ReadonlySet<string> = new Set(['robots']);
+  const siege = presence({ robots: { nexus: true }, alice: { ships: 20, structures: 10 } });
+  const runLocked = (s: MultiControlState, p: SectorPresence, seconds: number, locks: ReadonlySet<string> | null): number => {
+    let flips = 0;
+    for (let t = 0; t < seconds; t++) if (stepMultiControl(s, p, ALL_HOSTILE, 1000, locks).flipped) flips++;
+    return flips;
+  };
+
+  it('a locked holder survives an overwhelming challenger', () => {
+    const s = freshMultiControl('robots');
+    expect(runLocked(s, siege, 600, ROBOT_LOCK)).toBe(0);
+    expect(s.holder).toBe('robots');
+  });
+
+  it('shares, challenger, trend and contested still move while locked', () => {
+    const s = freshMultiControl('robots');
+    runLocked(s, siege, 120, ROBOT_LOCK);
+    expect(s.shares.get('robots')!).toBeLessThan(RELEASE_AT);
+    expect(s.shares.get('alice')!).toBeGreaterThan(CLAIM_AT);
+    expect(challengerOf(s, ALL_HOSTILE)).toEqual({ factionId: 'alice', share: s.shares.get('alice') });
+    expect(isMultiContested(s, siege, ALL_HOSTILE)).toBe(true);
+    // The robots' share is pinned at 0 here (target 0), so the trend is steady;
+    // part-way down it reads as losing ground.
+    const mid = freshMultiControl('robots');
+    runLocked(mid, siege, 5, ROBOT_LOCK);
+    expect(holderTrend(mid, siege, ALL_HOSTILE)).toBe(-1);
+  });
+
+  it('once the lock is gone, the normal release happens on the next step', () => {
+    const s = freshMultiControl('robots');
+    runLocked(s, siege, 120, ROBOT_LOCK);
+    expect(s.holder).toBe('robots');
+    const after = presence({ alice: { ships: 20, structures: 10 } });
+    const r = stepMultiControl(s, after, ALL_HOSTILE, 1000, null);
+    expect(r).toEqual({ flipped: true, previousHolder: 'robots' });
+    expect(s.holder).toBe('alice');
+  });
+
+  it('a lock the holder does not own does nothing', () => {
+    const s = freshMultiControl('robots');
+    const flips = runLocked(s, siege, 120, new Set(['alice']));
+    expect(flips).toBe(1);
+    expect(s.holder).toBe('alice');
+    // …and a lock held by nobody present on neutral ground doesn't stop a claim.
+    const n = freshMultiControl();
+    runLocked(n, presence({ bob: { ships: 6 } }), 60, ROBOT_LOCK);
+    expect(n.holder).toBe('bob');
+  });
+
+  it('no lock argument = the unlocked meter (parity)', () => {
+    const a = freshMultiControl('robots');
+    const b = freshMultiControl('robots');
+    for (let t = 0; t < 120; t++) {
+      expect(stepMultiControl(a, siege, ALL_HOSTILE, 1000)).toEqual(stepMultiControl(b, siege, ALL_HOSTILE, 1000, new Set()));
+    }
+    expect(a).toEqual(b);
   });
 });

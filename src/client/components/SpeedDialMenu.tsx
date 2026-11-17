@@ -48,6 +48,7 @@ import AdjustIcon from '@mui/icons-material/Adjust';
 import AnchorIcon from '@mui/icons-material/Anchor';
 import CastleIcon from '@mui/icons-material/Castle';
 import TrainIcon from '@mui/icons-material/Train';
+import LockIcon from '@mui/icons-material/Lock';
 import { useUIStore, useShouldRenderHud } from '../state/store';
 import { getShipKind } from '@shared-types/shipKinds';
 import { type StructureKindId } from '@shared-types/structureKinds';
@@ -448,6 +449,7 @@ export const BUILD_ICONS: Record<StructureKindId, ReactNode> = {
   coastal_turret_11in: <AdjustIcon />,
   coastal_barbette_16in: <AnchorIcon />,
   coastal_lindemann: <CastleIcon />,
+  territory_lock: <LockIcon />, // sector control
   siege_gun_80cm: <TrainIcon />,
 };
 

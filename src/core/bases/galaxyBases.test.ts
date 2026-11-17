@@ -38,7 +38,7 @@ describe('galaxyBasePlan', () => {
       // Only the owner (F2), its transit links (v4 H) and — for a big base
       // holding a region heart alone — the region's super-guns with their own
       // funding (coastal defences) are added on top of the original profile.
-      const { links: _links, superGuns, ...rest } = b0!.profile;
+      const { links: _links, superGuns, territoryLock: _lock, ...rest } = b0!.profile;
       if (superGuns !== undefined) {
         expect(superGuns).toEqual(HEART_SUPER_GUNS);
         expect(regionHeart(s.region)).toBe(s.key);
@@ -60,6 +60,36 @@ describe('galaxyBasePlan', () => {
     for (const s of GALAXY_SECTORS) {
       if (regionHeart(s.region) === s.key) continue;
       expect(galaxyBasePlan(s.key).some((b) => b.profile.superGuns !== undefined), s.key).toBe(false);
+    }
+  });
+
+  it("every region power's heart builds one Territory Lock, owned by that power (sector control)", () => {
+    const regions = [...new Set(GALAXY_SECTORS.map((s) => s.region))];
+    let hearts = 0;
+    for (const region of regions) {
+      const heart = regionHeart(region);
+      const plan = galaxyBasePlan(heart);
+      const locked = plan.filter((b) => b.profile.territoryLock === true);
+      // A heart held alone by a big Traders' hub has no base of the power's
+      // to carry the lock (today: the Crimson Expanse) — no lock there.
+      if (!plan.some((b) => b.profile.ownerFaction === sectorController(heart))) {
+        expect(locked, region).toHaveLength(0);
+        continue;
+      }
+      hearts++;
+      expect(locked, region).toHaveLength(1);
+      expect(locked[0]!.profile.ownerFaction, region).toBe(sectorController(heart));
+      const kinds = growBase(locked[0]!.profile, locked[0]!.seed, getSector(heart)!.features).placements.map((p) => p.kind);
+      expect(kinds.filter((k) => k === 'territory_lock'), region).toHaveLength(1);
+    }
+    expect(hearts).toBeGreaterThanOrEqual(3);
+    // Nowhere else, held or neutral (the rest of the core included).
+    for (const s of GALAXY_SECTORS) {
+      if (regionHeart(s.region) === s.key) continue;
+      for (const b of galaxyBasePlan(s.key)) {
+        expect(b.profile.territoryLock, s.key).toBeUndefined();
+        expect(growBase(b.profile, b.seed, s.features).placements.some((p) => p.kind === 'territory_lock'), s.key).toBe(false);
+      }
     }
   });
 
