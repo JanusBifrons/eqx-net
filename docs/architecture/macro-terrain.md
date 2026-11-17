@@ -127,7 +127,13 @@ Zoomed far out, real rocks would be a few pixels each, and a whole field is abou
 - **What the far level shows (stills checked against a raster of the cut, seed `look`, battleship floor):** the ~10–15 smooth light slabs are the field's rare big rocks (`bigChance`, 1–2 battleship lengths). They are real rocks, cut and drawn exactly as in the full-detail chunks, and drawn once (the chunk layer is hidden there; nothing else draws rocks at that zoom). The 30–60 px black polygons are true voids: big-rock pieces dropped by the rim thinning (each void's area is in the big-rock size range, and a full-detail cut of each holds no rock). The thin dark creases are the slivers between neighbouring coarse pieces, each roughened on its own.
 - **Memory (measured, seeds `far-zoom` and `test-seed`):** 87–88 tiles, ~205k fan vertices (≤ 3.7k a tile), ~12 MB of mesh arrays kept on the CPU and the same again in GPU buffers. The packed tiles (~3.2 MB) cross from the worker once per sector. Cut 49–75 ms in the worker (this box, cold).
 - **Draw calls (count gate, estimated):** one per visible tile. A tile is 8 × 4,096 u ≈ 32.8 km on a side, so a battleship's phone floor (~85 × 184 km) meets at most 4 × 7 = 28 tiles, fewer at the field's edge and over the core hole. Below the switch the chunk meshes cost none. Inside the band both levels draw.
-- **Not measured yet:** frame time and GPU cost of the tiles on a phone (perf scene owed), and how the tiles look (stills owed). The camera streaming ring is unchanged: it still cuts up to 13 × 13 chunks around the camera when zoomed far out, though they are hidden there. Not streaming them below the switch is a later saving.
+- **Measured (phone-proxy, 2026-11-17):** scene `cut-field-far` A/B GREEN: frame p95 16.7 → 16.7 ms, render p95 0.9 → 0.9 ms, display objects 1,381 → 1,470. The owner approved the look from stills (rock-size shards, thinned rim). The camera streaming ring is unchanged: it still cuts up to 13 × 13 chunks around the camera when zoomed far out, though they are hidden there.
+
+### Parked follow-ups (owner, 2026-11-17: noted, not scheduled)
+
+- **Self-crossing cut outlines.** About 5–10 % of cut rocks have an outline that crosses itself (`roughen` in `fieldLayout.ts`), so the collider falls back to one convex hull. Fixing the cut changes how those rocks look: stills to the owner first.
+- **A pushed rock pops out of view.** A rock shoved out of its home chunk is drawn only while that home chunk is loaded on the client (see Deep sleep above).
+- **Hidden chunks at far zoom.** Below `FAR_FIELD_SWITCH_SCALE` the camera ring still cuts and draws full-detail chunks under the tiles. Not streaming them there saves phone work; it needs a `cut-field-far` perf A/B.
 
 ## The core idea
 
