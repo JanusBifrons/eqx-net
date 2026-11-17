@@ -61,7 +61,7 @@ describe('SectorRoom integration — ship cargo (C3)', () => {
     const thiefShip = shipIdOf(state, thief);
 
     const locked = await ask(cr, replies, 'cargo_query', { ship: victim });
-    expect(locked.open).toBe(false);
+    expect(locked.takeable, 'look only (cargo-pods slice 13)').toBe(false);
     expect(locked.targetShip).toBe(victim);
     expect(locked.breakIn).toEqual({ pct: null, durationMs: 500 });
 
@@ -97,7 +97,7 @@ describe('SectorRoom integration — ship cargo (C3)', () => {
     getHoldStore().put({ holderUid: 'mob-1', holderType: 'hauler', ownerId: null, sectorKey: 'sol-prime', x: null, y: null, hold: { goods: { alloy: 5 }, blueprints: [] }, expiresAt: null }, false);
 
     const locked = await ask(cr, replies, 'cargo_query', { entityId: rec.entityId });
-    expect(locked.open).toBe(false);
+    expect(locked.takeable).toBe(false);
     cr.send('break_in', { type: 'break_in', entityId: rec.entityId });
     expect(await until(() => notices.some((n) => n.tone === 'good'), 5_000), 'the break-in succeeds: ' + JSON.stringify(notices)).toBe(true);
     const open = await ask(cr, replies, 'cargo_query', { entityId: rec.entityId });

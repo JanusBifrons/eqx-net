@@ -45,7 +45,8 @@ function Pane({ title, rows, verb, testPrefix, onMove, prices }: {
   rows: CargoRow[];
   verb: 'Take' | 'Put' | 'Buy' | 'Sell';
   testPrefix: 'here' | 'aboard';
-  onMove: (items: CargoItems) => void;
+  /** Absent = view only (a peek: cargo-pods slice 13). */
+  onMove?: (items: CargoItems) => void;
   /** T4 — a market: per-unit prices by good; only goods trade. */
   prices?: Partial<Record<string, number>>;
 }): JSX.Element {
@@ -64,10 +65,10 @@ function Pane({ title, rows, verb, testPrefix, onMove, prices }: {
         {rows.map((r) => (
           <Box key={r.key} sx={ROW_SX} data-testid={`cargo-${testPrefix}-row`} data-key={r.key} data-count={r.count}>
             <Box sx={LABEL_SX}>{r.label}{r.count > 1 ? ` ×${r.count}` : ''}</Box>
-            {tradable(r) && r.count > 1 && (
+            {onMove !== undefined && tradable(r) && r.count > 1 && (
               <Box sx={BTN_SX} data-testid={`cargo-${v}-one`} onClick={() => onMove(r.one)}>{verb} 1{priceOf(r, 1)}</Box>
             )}
-            {tradable(r) && (
+            {onMove !== undefined && tradable(r) && (
               <Box sx={BTN_SX} data-testid={`cargo-${v}-all`} onClick={() => onMove(r.all)}>{r.count > 1 ? `${verb} all` : verb}{priceOf(r, r.count)}</Box>
             )}
           </Box>
@@ -156,15 +157,18 @@ export const CargoPanel = memo(function CargoPanel({ entityId, ship }: CargoPane
   const here = cargoRows(state?.hold ?? null);
   const aboard = cargoRows(state?.ship ?? null);
   const market = state?.market;
+  // Slice 13: a peek (living stranger's cargo) is open to look, never to move.
+  const peek = state?.open === true && state.takeable === false;
+  const locked = state !== null && (!state.open || peek);
 
   return (
-    <Box sx={ROOT_SX} data-testid="cargo-panel" data-open={state?.open === true ? '1' : '0'} data-market={market ? '1' : '0'}>
+    <Box sx={ROOT_SX} data-testid="cargo-panel" data-open={state?.open === true && !peek ? '1' : '0'} data-peek={peek ? '1' : '0'} data-market={market ? '1' : '0'}>
       <Box sx={TITLE_SX}>
         {market ? 'Market' : 'Cargo'}{state?.open === true && !market ? ` · ${Math.round(state.used)}/${state.capacity}` : ''}
       </Box>
       {state === null && <Box>Opening…</Box>}
-      {state !== null && !state.open && <Box sx={WARN_SX} data-testid="cargo-locked">{state.message ?? 'Locked.'}</Box>}
-      {state !== null && !state.open && state.breakIn !== undefined && (
+      {state !== null && locked && <Box sx={WARN_SX} data-testid="cargo-locked">{state.message ?? 'Locked.'}</Box>}
+      {state !== null && locked && state.breakIn !== undefined && (
         // C2 — breaking in is a hostile act: the owner's turrets will engage you.
         state.breakIn.pct === null ? (
           <Box sx={{ display: 'flex', gap: '3px', alignItems: 'center', mt: '3px' }}>
@@ -183,7 +187,8 @@ export const CargoPanel = memo(function CargoPanel({ entityId, ship }: CargoPane
           </Box>
         )
       )}
-      {state?.open === true && (
+      {peek && <Pane title="Here (look only)" rows={here} verb="Take" testPrefix="here" />}
+      {state?.open === true && !peek && (
         <>
           <Pane
             title={market ? 'For sale' : 'Here'} rows={here} verb={market ? 'Buy' : 'Take'} testPrefix="here"
@@ -194,6 +199,9 @@ export const CargoPanel = memo(function CargoPanel({ entityId, ship }: CargoPane
             onMove={(items) => sendCargoMove(target, 'put', items)} prices={market?.sell}
           />
         </>
+      )}
+      {state?.open === true && state.hidden !== undefined && (
+        <Box sx={EMPTY_SX} data-testid="cargo-hidden" data-hidden={state.hidden}>Searching… {state.hidden} more</Box>
       )}
       {state?.open === true && state.orders !== undefined && entityId !== undefined && <FreightOrders entityId={entityId} orders={state.orders} />}
       {notice !== null && (

@@ -112,6 +112,9 @@ export const CargoStateSchema = z
      *  stacks found so far; `hidden` more are still "?" tiles, the next shows
      *  in `revealInMs` of searching (ask again then). Absent = all shown. */
     hidden: z.number().int().nonnegative().max(1024).optional(),
+    /** Slice 13: false = a peek (a living stranger's cargo): `open` to look
+     *  while close, never to move. Absent = takeable. */
+    takeable: z.boolean().optional(),
     revealInMs: z.number().int().nonnegative().max(60_000).optional(),
     ok: z.boolean().optional(),
   })

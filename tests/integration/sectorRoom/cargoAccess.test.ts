@@ -106,8 +106,11 @@ describe('SectorRoom integration — cargo access (C1)', () => {
     const entityId = internal.swarmRegistry.get(cap.id)!.entityId;
 
     const stranger = await ask(crVisitor, replies, 'cargo_query', { entityId });
-    expect(stranger.open).toBe(false);
-    expect(stranger.hold).toBeNull();
+    // cargo-pods slice 13: close by, a stranger may look (searched), never take.
+    expect(stranger.open).toBe(true);
+    expect(stranger.takeable).toBe(false);
+    expect(stranger.hold?.goods, 'nothing found yet').toEqual({});
+    expect(stranger.hidden).toBe(1);
     expect(stranger.message).toMatch(/Locked/);
     const grab = await ask(crVisitor, replies, 'cargo_move', { entityId, dir: 'take', items: { goods: { alloy: 10 } } });
     expect(grab.ok).toBe(false);
@@ -116,7 +119,7 @@ describe('SectorRoom integration — cargo access (C1)', () => {
     // An NPC trader base is neutral: locked too (a break-in is C2).
     cap.owner = 'npc:traders:test';
     const npc = await ask(crOwner, ownerReplies, 'cargo_query', { entityId });
-    expect(npc.open).toBe(false);
+    expect(npc.takeable).toBe(false);
     expect(npc.message).toMatch(/Locked/);
     cap.owner = owner;
 

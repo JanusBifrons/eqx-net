@@ -104,6 +104,20 @@ describe('CargoPanel (C1)', () => {
     expect(send).toHaveBeenLastCalledWith('break_in_cancel', { type: 'break_in_cancel' });
   });
 
+  it('cargo-pods slice 13: a peek lists found stacks with no Take, keeps Break in, shows the search', () => {
+    render(<CargoPanel entityId={9} />);
+    act(() => useUIStore.getState().setCargoState(state({
+      takeable: false, ship: null, message: 'Locked. That cargo is not yours. You can only look.',
+      hidden: 2, revealInMs: 900, breakIn: { pct: null, durationMs: 12_000 },
+    })));
+    expect(screen.getAllByTestId('cargo-here-row')).toHaveLength(1);
+    expect(screen.queryByTestId('cargo-take-all')).toBeNull();
+    expect(screen.queryByTestId('cargo-aboard-row')).toBeNull();
+    expect(screen.getByTestId('cargo-locked').textContent).toContain('only look');
+    expect(screen.getByTestId('cargo-break-in')).toBeTruthy();
+    expect(screen.getByTestId('cargo-hidden').getAttribute('data-hidden')).toBe('2');
+  });
+
   it('ignores a reply for a different structure', () => {
     render(<CargoPanel entityId={9} />);
     act(() => useUIStore.getState().setCargoState(state({ entityId: 10 })));

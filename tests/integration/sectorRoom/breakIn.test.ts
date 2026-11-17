@@ -60,7 +60,7 @@ describe('SectorRoom integration — break-ins (C2)', () => {
     const entityId = internal.swarmRegistry.get(cap.id)!.entityId;
 
     const locked = await ask(cr, replies, 'cargo_query', { entityId });
-    expect(locked.open).toBe(false);
+    expect(locked.takeable, 'a stranger may look, not take (cargo-pods slice 13)').toBe(false);
     expect(locked.breakIn).toEqual({ pct: null, durationMs: 600 });
 
     cr.send('break_in', { type: 'break_in', entityId });

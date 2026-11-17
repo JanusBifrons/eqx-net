@@ -4073,6 +4073,11 @@ export class SectorRoom extends Room<SectorState> {
       if (!access.ok) {
         const lr = access.locked;
         const breakIn = lr ? { pct: this.breakIns.progress(playerId, lr.id), durationMs: this.breakInMsFor(lr) } : undefined;
+        // Slice 13: close to someone else's storage you may look, not take.
+        if (lr && this.sectorKey !== null && this.pilotNear(playerId, lr)) {
+          send(this.peekState(playerId, lr.id, this.storage.cargoView(lr).hold, { entityId }, move !== null, access.message + ' You can only look.', breakIn));
+          return;
+        }
         send({ type: 'cargo_state', entityId, open: false, hold: null, used: 0, capacity: 0, ship: null, shipCapacity: 0, message: access.message, ...(breakIn ? { breakIn } : {}), ...(move ? { ok: false } : {}) });
         return;
       }
@@ -12586,9 +12591,15 @@ export class SectorRoom extends Room<SectorState> {
       return closed('You need a ship to move cargo.');
     }
     if (t.holdUid === mine.shipInstanceId) return closed('That is the ship you are flying.');
-    if (!this.pilotNearPoint(playerId, t.x, t.y, t.radius)) return closed('Fly closer to open its cargo.');
+    if (!this.pilotNearPoint(playerId, t.x, t.y, t.radius)) {
+      this.lootSearch.advance(playerId, t.id, this.gameClock.now(), false);
+      return closed('Fly closer to open its cargo.');
+    }
     if (!cargoOpensFor(relationOf(playerId, t.owner, this.relationCtx), false) && !this.breakIns.hasGrant(playerId, t.id)) {
-      return closed(`Locked. That ${t.label} is not yours.`, { pct: this.breakIns.progress(playerId, t.id), durationMs: this.breakInMsForShip(t) });
+      // Slice 13: look, don't take (break-in rules unchanged).
+      if (t.npc) this.npcHold(t.npc);
+      return this.peekState(playerId, t.id, getHoldStore().get(t.holdUid)?.hold ?? emptyHold(), echo, move !== null,
+        `Locked. That ${t.label} is not yours: you can only look.`, { pct: this.breakIns.progress(playerId, t.id), durationMs: this.breakInMsForShip(t) });
     }
     if (t.npc) this.npcHold(t.npc); // roll its loot (once) before anyone looks in
     const myCap = this.shipCargoCapacity(mine.kind, mine.shipInstanceId);
@@ -12608,6 +12619,24 @@ export class SectorRoom extends Room<SectorState> {
     return {
       type: 'cargo_state', ...echo, open: true, hold: theirs, used: holdWeight(theirs), capacity: Number.isFinite(t.capacity) ? t.capacity : 0,
       ship: getHoldStore().get(mine.shipInstanceId)?.hold ?? emptyHold(), shipCapacity: myCap, ...(verdict ?? {}),
+    };
+  }
+
+  /**
+   * Plan cargo-pods slice 13: a peek at a living stranger's cargo. Open to
+   * look (searched like a pod, per viewer), never to move: a move gets
+   * `ok:false`. Callers have already checked the pilot is close.
+   */
+  private peekState(
+    playerId: string, containerId: string, hold: Hold, echo: { entityId: number } | { targetShip: string },
+    isMove: boolean, message: string, breakIn?: CargoState['breakIn'],
+  ): CargoState {
+    const seen = searchView(hold, this.lootSearch.advance(playerId, containerId, this.gameClock.now(), true));
+    return {
+      type: 'cargo_state', ...echo, open: true, takeable: false, hold: seen.revealed, used: holdWeight(seen.revealed), capacity: 0,
+      ship: null, shipCapacity: 0, message,
+      ...(seen.hidden > 0 ? { hidden: seen.hidden, revealInMs: Math.ceil(seen.nextInMs) } : {}),
+      ...(breakIn ? { breakIn } : {}), ...(isMove ? { ok: false } : {}),
     };
   }
 
