@@ -125,3 +125,63 @@ describe('sector control for every side', () => {
     expect(s.shares.has('alice')).toBe(false);
   });
 });
+
+describe('sector lock (frozen until destroyed)', () => {
+  const ROBOT_LOCK: ReadonlySet<string> = new Set(['robots']);
+  const siege = presence({ robots: { nexus: true }, alice: { ships: 20, structures: 10 } });
+  const runLocked = (s: MultiControlState, p: SectorPresence, seconds: number, locks: ReadonlySet<string> | null): number => {
+    let flips = 0;
+    for (let t = 0; t < seconds; t++) if (stepMultiControl(s, p, ALL_HOSTILE, 1000, locks).flipped) flips++;
+    return flips;
+  };
+
+  it('a locked holder survives an overwhelming challenger', () => {
+    const s = freshMultiControl('robots');
+    expect(runLocked(s, siege, 600, ROBOT_LOCK)).toBe(0);
+    expect(s.holder).toBe('robots');
+  });
+
+  it('shares, challenger, trend and contested still move while locked', () => {
+    const s = freshMultiControl('robots');
+    runLocked(s, siege, 120, ROBOT_LOCK);
+    expect(s.shares.get('robots')!).toBeLessThan(RELEASE_AT);
+    expect(s.shares.get('alice')!).toBeGreaterThan(CLAIM_AT);
+    expect(challengerOf(s, ALL_HOSTILE)).toEqual({ factionId: 'alice', share: s.shares.get('alice') });
+    expect(isMultiContested(s, siege, ALL_HOSTILE)).toBe(true);
+    // The robots' share is pinned at 0 here (target 0), so the trend is steady;
+    // part-way down it reads as losing ground.
+    const mid = freshMultiControl('robots');
+    runLocked(mid, siege, 5, ROBOT_LOCK);
+    expect(holderTrend(mid, siege, ALL_HOSTILE)).toBe(-1);
+  });
+
+  it('once the lock is gone, the normal release happens on the next step', () => {
+    const s = freshMultiControl('robots');
+    runLocked(s, siege, 120, ROBOT_LOCK);
+    expect(s.holder).toBe('robots');
+    const after = presence({ alice: { ships: 20, structures: 10 } });
+    const r = stepMultiControl(s, after, ALL_HOSTILE, 1000, null);
+    expect(r).toEqual({ flipped: true, previousHolder: 'robots' });
+    expect(s.holder).toBe('alice');
+  });
+
+  it('a lock the holder does not own does nothing', () => {
+    const s = freshMultiControl('robots');
+    const flips = runLocked(s, siege, 120, new Set(['alice']));
+    expect(flips).toBe(1);
+    expect(s.holder).toBe('alice');
+    // …and a lock held by nobody present on neutral ground doesn't stop a claim.
+    const n = freshMultiControl();
+    runLocked(n, presence({ bob: { ships: 6 } }), 60, ROBOT_LOCK);
+    expect(n.holder).toBe('bob');
+  });
+
+  it('no lock argument = the unlocked meter (parity)', () => {
+    const a = freshMultiControl('robots');
+    const b = freshMultiControl('robots');
+    for (let t = 0; t < 120; t++) {
+      expect(stepMultiControl(a, siege, ALL_HOSTILE, 1000)).toEqual(stepMultiControl(b, siege, ALL_HOSTILE, 1000, new Set()));
+    }
+    expect(a).toEqual(b);
+  });
+});

@@ -13,7 +13,8 @@
  *
  * Each sector starts held by its static controller (`core/galaxy/control`:
  * Sol holds the core, each power its region heart); the rest start neutral.
- * An empty sector keeps its holder.
+ * An empty sector keeps its holder. A living nexus LOCKS a robot-held sector:
+ * nobody can flip it until the nexus dies (`stepMultiControl` `lockedBy`).
  *
  * The nexus is a single `robot-nexus` swarm entity (`rbot-nexus`, so it is an
  * NPC id and the robot director's own pool ignores it). It lives in an ENTRY
@@ -115,6 +116,8 @@ export class RobotTerritory {
   /** One sector's presence (reused; the meter reads it synchronously). */
   private readonly presence = new Map<string, SidePresence>();
   private readonly presencePool: SidePresence[] = [];
+  /** One sector's live locks (reused; see `locksFor`). */
+  private readonly locks = new Set<string>();
   /** P3b — harvester id → where it lives + when it may respawn. */
   private readonly harvesters = new Map<string, { alive: boolean; sectorKey: string | null; respawnAtMs: number; mining: boolean }>();
   private readonly harvesterRespawnMs: number;
@@ -182,7 +185,7 @@ export class RobotTerritory {
     for (const key of this.rooms.keys()) {
       let s = this.control.get(key);
       if (!s) { s = freshMultiControl(sectorController(key)); this.control.set(key, s); }
-      const r = stepMultiControl(s, this.presenceFor(key), controlOpposes, dt);
+      const r = stepMultiControl(s, this.presenceFor(key), controlOpposes, dt, this.locksFor(key));
       if (r.flipped) serverLogEvent('sector_control_changed', { sectorKey: key, from: r.previousHolder, to: s.holder });
     }
   }
@@ -249,6 +252,16 @@ export class RobotTerritory {
     const nexus = this.nexus !== null && this.nexus.alive && this.nexus.sectorKey === sectorKey;
     fillSectorPresence(this.presence, this.presencePool, counts?.byFaction, robots, nexus);
     return this.presence;
+  }
+
+  /** The sides with a live lock in a sector (reused set). The robots' living
+   *  nexus is the robots' lock: a robot-held nexus sector can't be taken until
+   *  the nexus dies (the stepper ignores a lock its side doesn't hold). */
+  private locksFor(sectorKey: string): ReadonlySet<string> {
+    this.locks.clear();
+    const n = this.nexus;
+    if (n !== null && n.alive && n.sectorKey === sectorKey) this.locks.add(ROBOT_SIDE);
+    return this.locks;
   }
 
   private pickNexusSector(avoid: string | null): string {

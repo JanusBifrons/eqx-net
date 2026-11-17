@@ -118,3 +118,38 @@ describe('fillSectorPresence', () => {
     expect(pool.length).toBe(2);
   });
 });
+
+describe('RobotTerritory — the nexus locks a robot-held sector', () => {
+  it('a big player fleet cannot flip a robot sector with a live nexus; it flips once the nexus dies', () => {
+    const bus = new Bus();
+    const fleet: FactionPresenceMap = new Map();
+    const room = {
+      eventBus: () => bus,
+      playerCount: () => 0,
+      hasFreeSlot: () => true,
+      spawnLivingWorldBot: (o: { botId: string }) => o.botId === 'rbot-nexus', // no harvesters
+      liveCounts: (): SectorLiveCounts => ({ players: 0, enemies: 0, neutrals: 0, structures: 0, byFaction: fleet }),
+    } as unknown as LivingWorldRoom;
+    const clock = { now: 0 };
+    const t = new RobotTerritory(new Map([['orion-belt', room]]), () => new Map(), {
+      nowMs: () => clock.now,
+      nexusSector: 'orion-belt',
+    });
+    t.start();
+    const run = (seconds: number): void => {
+      for (let i = 0; i < seconds; i++) { clock.now += 1000; t.tick(clock.now); }
+    };
+    run(60); // the nexus alone claims its sector
+    expect(t.sectorOwner('orion-belt')).toEqual({ factionId: 'robots', contested: false });
+
+    fleet.set('alice', { ships: 30, structures: 10 });
+    run(600);
+    expect(t.sectorOwner('orion-belt')).toEqual({ factionId: 'robots', contested: true });
+    expect(t.controlState('orion-belt')!.shares.get('alice')).toBe(100);
+
+    bus.emit('ENTITY_DESTROYED', { type: 'ENTITY_DESTROYED', entityId: 'rbot-nexus' });
+    run(1);
+    expect(t.sectorOwner('orion-belt')).toEqual({ factionId: 'alice', contested: false });
+    t.stop();
+  });
+});
