@@ -46,11 +46,12 @@ import { wreckCrackTicks } from '../../shared-types/wreckTiming.js';
 import { WEAPONS, type WeaponId } from '../../core/combat/WeaponCatalogue.js';
 import { shipShapeScale } from '../../core/geometry/shipHullOutline.js';
 import { wreckPieceIntegrity, wreckWearFactor } from '../../core/destruction/wreckIntegrity.js';
-import { WreckResplitter, type WreckPiecePose } from './wreckResplit.js';
+import { WreckResplitter, type WreckPiecePose, type WreckResplitHost } from './wreckResplit.js';
 import type { CapitalWreckDeps, HitEntry, LiveWreck, PieceKnock, SpawnWreckOpts } from './capitalWreckTypes.js';
 import { forEachLineagePiece, forEachPieceNear, lineageRootOf, pieceSalvageQtyOf, pieceStoreOf, type PieceStoreView } from './wreckLineage.js';
 import { burnHullHit, burnPieceHit, deathExtraCuts } from './wreckBurnHits.js';
 import { RockCutter } from './rockCut.js';
+import type { WreckLineageState } from './wreckLineageSaves.js';
 import { WreckKickQueue } from './wreckKicks.js';
 import { shipWreckSource } from '../../core/destruction/wreckSource.js';
 export type { WreckPiecePose };
@@ -118,13 +119,14 @@ export class CapitalWreckSubsystem {
 
   /** Worn-out pieces split or turn to salvage (§S4, wreckResplit.ts). */
   private readonly resplit: WreckResplitter;
+  private readonly host: WreckResplitHost;
   /** Rock cut: mined-out rocks break into wreck pieces (rockCut.ts). */
   readonly rockCut: RockCutter;
 
   constructor(private readonly d: CapitalWreckDeps) {
     this.kicks = new WreckKickQueue(d);
     const capOf = (capital: boolean): number => (capital ? MAX_LIVE_WRECK_PIECES : (this.subcapCapOverride ?? MAX_LIVE_SUBCAP_WRECK_PIECES));
-    const host = {
+    const host = this.host = {
       fifo: (capital: boolean) => (capital ? this.live : this.liveSubcap),
       cap: capOf,
       newWreck: (): [number, number] => [this.allocWreckId(), this.deaths++],
@@ -133,7 +135,7 @@ export class CapitalWreckSubsystem {
         // Lineage: a root (rock break) is its own root; a child inherits its parent's.
         const w = nw as LiveWreck; w.root = parent !== null ? parent.root : w.desc.wreckId;
         this.wrecks.set(w.desc.wreckId, w); if (parent !== null) parent.children++;
-        this.setChanged();
+        this.setChanged(); this.d.lineageTouched?.(w.root);
       },
       dropPiece: (id: string, fifo: string[]) => this.dropPiece(id, fifo),
       enforceCap: (capital: boolean) => this.enforceCap(capital ? this.live : this.liveSubcap, capOf(capital)),
@@ -367,7 +369,7 @@ export class CapitalWreckSubsystem {
         root: wreckId,
         src: shipWreckSource(kindId),
       });
-      this.setChanged();
+      this.setChanged(); this.d.lineageTouched?.(wreckId);
     }
     this.enforceCap(fifo, profile.id === 'capital' ? MAX_LIVE_WRECK_PIECES : MAX_LIVE_SUBCAP_WRECK_PIECES);
     return spawned;
@@ -426,7 +428,7 @@ export class CapitalWreckSubsystem {
     const wreckId = this.pieceWreck.get(id);
     const w = wreckId !== undefined ? this.wrecks.get(wreckId) : undefined;
     // Fracture v12 multi-cut: a cutting beam burns its line into the piece.
-    if (w !== undefined) burnPieceHit(k, this.d, id, w.src.scale, shooterId, hitX, hitY, dirX, dirY, weaponId);
+    if (w !== undefined) { burnPieceHit(k, this.d, id, w.src.scale, shooterId, hitX, hitY, dirX, dirY, weaponId); this.d.lineageTouched?.(w.root); }
     // Re-split (§S4): the hit wears the piece's hidden integrity; worn out
     // (and past the crack hold) it splits or turns to salvage instead of
     // being shoved.
@@ -510,7 +512,7 @@ export class CapitalWreckSubsystem {
     this.pieceWreck.delete(id);
     const w = this.wrecks.get(wreckId);
     if (w === undefined) return;
-    w.pieces--;
+    w.pieces--; this.d.lineageTouched?.(w.root);
     this.retire(wreckId, w);
   }
 
@@ -538,6 +540,8 @@ export class CapitalWreckSubsystem {
     if (this.d.isLive(id)) this.d.removePiece(id);
     this.pieceGone(id);
   }
+  /** Battle-wreck save/restore (wreckLineageSaves.ts): the maps it reads, the spawn host it restores through. */
+  lineageState(): WreckLineageState { return { wrecks: this.wrecks, pieceWreck: this.pieceWreck, knock: this.knock, host: this.host, d: this.d }; }
 
   /** A live piece's salvage if stored whole (wreckLineage.ts `pieceSalvageQtyOf`). */
   pieceSalvageQty(id: string): number { return pieceSalvageQtyOf(this.wrecks, this.pieceWreck, this.knock, id); }

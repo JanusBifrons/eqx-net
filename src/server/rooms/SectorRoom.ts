@@ -265,6 +265,7 @@ import { EntitySyncRouter } from './EntitySyncRouter.js';
 import { isEngageablePilotHull, isLingeringHull, isPilotedActive } from '../../core/entity/shipLiveness.js';
 import { MalformedMessageTracker } from './MalformedMessageTracker.js';
 import { guarded } from './guardedLoop.js';
+import { BattleWreckSaves, battleWreckStore, WRECK_LINEAGE_FLUSH_MS } from './wreckLineageSaves.js';
 import { CutFieldSubsystem } from './CutFieldSubsystem.js';
 import { SectorPersistence } from './SectorPersistence.js';
 import { LivingWorldBotHooks } from './LivingWorldBotHooks.js';
@@ -1170,6 +1171,8 @@ export class SectorRoom extends Room<SectorState> {
    *  in-flight descriptor-transport slice. */
   private capitalWrecks: CapitalWreckSubsystem | null = null;
   private capitalWrecksOn = false;
+  /** Wreck fields 0a2c: battle wrecks survive a restart (wreckLineageSaves.ts). */
+  private wreckSaves: BattleWreckSaves | null = null;
   private subcapWrecksOn = false;
   /** Reused per-hit weapon layer multiplier (`applyDamage`, #14). */
   private readonly _layerMul = { shield: 1, hull: 1 };
@@ -1720,6 +1723,8 @@ export class SectorRoom extends Room<SectorState> {
     setSubcapWreckCap: (cap: number | null) => void;
     /** S2b — the live wreck descriptors (the snapshot's `wrecks[]`). */
     wreckDescriptors: () => readonly import('../../shared-types/messages.js').WreckDescriptor[];
+    /** Wreck fields 0a2c — write the battle-wreck lineage rows now. */
+    flushWreckSaves: (all: boolean) => void;
     /** Slice 3 — remove a swarm entity the normal way (a wreck piece reaches
      *  `pieceGone`, so its wreck's descriptor retires once all are gone). */
     evictSwarm: (id: string) => void;
@@ -1805,6 +1810,7 @@ export class SectorRoom extends Room<SectorState> {
       wreckCounts: () => ({ total: this.capitalWrecks?.liveCount() ?? 0, subcap: this.capitalWrecks?.liveSubcapCount() ?? 0 }),
       setSubcapWreckCap: (cap) => { if (this.capitalWrecks) this.capitalWrecks.subcapCapOverride = cap; },
       wreckDescriptors: () => this.capitalWrecks?.descriptors() ?? [],
+      flushWreckSaves: (all) => this.wreckSaves?.flush(all),
       evictSwarm: (id) => {
         const rec = this.swarmRegistry.get(id);
         if (rec) this.evictSwarmEntity(rec, { broadcast: true, emitDestroyed: false });
@@ -3465,6 +3471,11 @@ export class SectorRoom extends Room<SectorState> {
     this.capitalWrecksOn = wreckSwitchOn(process.env['EQX_CAPITAL_WRECKS'], roomOpts.capitalWrecks);
     this.subcapWrecksOn = wreckSwitchOn(process.env['EQX_SUBCAP_WRECKS'], roomOpts.subcapWrecks);
     if (this.capitalWrecksOn || this.subcapWrecksOn) this.initCapitalWrecks();
+    if (this.capitalWrecks !== null && this.persistSector && this.sectorKey !== null) {
+      this.wreckSaves = new BattleWreckSaves(this.capitalWrecks.lineageState(), battleWreckStore(this.sectorKey));
+      this.wreckSaves.restoreAll();
+      this.gameClock.every(WRECK_LINEAGE_FLUSH_MS, guarded('wreck-lineage-flush', () => this.wreckSaves?.flush(false)));
+    }
     // T1 (plan soft-leaping-truffle v3) — the sector's NPC base, after restore.
     if (roomOpts.galaxyBases === true && this.sectorKey !== null && getSector(this.sectorKey) && !isNpcBasesDisabled()) {
       this.seedGalaxyBase(this.sectorKey);
@@ -5694,6 +5705,7 @@ export class SectorRoom extends Room<SectorState> {
       dropSalvage: (qty, x, y, vx, vy, ore, root) => this.loot.drop({ goods: ore ? this.oreDraw.cutYield(ore.rockId, x, y, qty, ore.resource) : { salvage: qty }, blueprints: [] }, x, y, vx, vy, { cause: 'salvage', root }),
       rockOf: (id) => rockViewOf(this.swarmRegistry, id),
       pieceSplit: (from, ids, masses, pods) => relayPieceSplit(this.swarmRegistry, from, ids, masses, this.locks, this.wingmanLocks, pods),
+      lineageTouched: (root) => this.wreckSaves?.touch(root),
     });
   }
 
@@ -12736,6 +12748,7 @@ export class SectorRoom extends Room<SectorState> {
     // supersedes it, and a fire-after-teardown would read torn-down state.
     this.sectorPersistence.dispose();
     if (this.sectorKey !== null) {
+      try { this.wreckSaves?.flush(true); } catch { /* non-critical */ }
       try { this.persistSectorSnapshot(); } catch { /* non-critical */ }
     }
     // Phase 1 swift-otter — close every PeerConnection so the libdatachannel

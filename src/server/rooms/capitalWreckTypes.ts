@@ -148,6 +148,10 @@ export interface CapitalWreckDeps {
    *  parallel), the last `pods` of them ore pods (a worn-out piece: only
    *  its pod): the locks held on it follow them. Once per break. */
   pieceSplit?: (parentId: string, ids: ReadonlyArray<string>, masses: ReadonlyArray<number>, pods?: number) => void;
+  /** Wreck fields 0a2c: lineage `root` changed (a wreck spawned, re-split or
+   *  lost a piece, or a piece was hit). The battle-wreck save marks it dirty
+   *  (`BattleWreckSaves.touch`, no allocation). Absent ⇒ nothing is saved. */
+  lineageTouched?: (root: number) => void;
 }
 
 /** How hard a hit knocks one piece (fixed at spawn; read per hit, #14). */

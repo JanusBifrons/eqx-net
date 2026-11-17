@@ -224,7 +224,7 @@ How each subsystem works (and its history) is in the "Server notes" section of t
 
 ## Scrap-on-death
 
-- **Every death path spawns scrap BEFORE the slot is freed**; a dying scrap piece never re-shatters. Scrap is transient (not persisted) and FIFO-capped; wire changes need the netgate. Locks: `ScrapSpawner.test.ts`, `scrapOnDeath.test.ts`, `lingeringScrapOnDeath.test.ts`. Detail: [composite-ships-and-scrap.md](../../docs/architecture/composite-ships-and-scrap.md#server-implementation-notes).
+- **Every death path spawns scrap BEFORE the slot is freed**; a dying scrap piece never re-shatters. Scrap is saved in the sector snapshot and FIFO-capped; battle wrecks are saved as lineage rows (`wreckLineageSaves.ts`), never in the snapshot; wire changes need the netgate. Locks: `ScrapSpawner.test.ts`, `scrapOnDeath.test.ts`, `lingeringScrapOnDeath.test.ts`. Detail: [composite-ships-and-scrap.md](../../docs/architecture/composite-ships-and-scrap.md#server-implementation-notes).
 
 ## Capital wrecks
 
