@@ -247,3 +247,19 @@ describe('refreshAutoCaptureLatch() — re-activates after a fresh login', () =>
     expect(w.__eqxAutoCaptureEnabled).toBe(true); // window mirror refreshed
   });
 });
+
+describe('isAutoCaptureEnabled() — phone-lane build streams every session', () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it('VITE_PHONE_LANE=1 → on for any account (a phone freeze leaves a capture)', async () => {
+    vi.stubEnv('VITE_PHONE_LANE', '1');
+    const mod = await freshModuleWithEmail({ webdriver: false, search: '', email: null });
+    expect(mod.isAutoCaptureEnabled()).toBe(true);
+  });
+
+  it('VITE_PHONE_LANE=1 still honours ?autocapture=0 and never auto-streams under automation', async () => {
+    vi.stubEnv('VITE_PHONE_LANE', '1');
+    expect((await freshModuleWithEmail({ webdriver: false, search: '?autocapture=0', email: null })).isAutoCaptureEnabled()).toBe(false);
+    expect((await freshModuleWithEmail({ webdriver: true, search: '', email: null })).isAutoCaptureEnabled()).toBe(false);
+  });
+});

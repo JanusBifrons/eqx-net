@@ -396,6 +396,8 @@ export function isAutoCaptureEnabled(): boolean {
       enabled = true; // explicit opt-in (any session, incl. E2E streaming specs)
     } else if (typeof navigator !== 'undefined' && navigator.webdriver === true) {
       enabled = false; // automation never auto-streams via the account gate
+    } else if (import.meta.env['VITE_PHONE_LANE'] === '1') {
+      enabled = true; // phone-lane build: every phone session streams (docs/ops/phone-link.md)
     } else {
       const email = loadEmail();
       enabled = email !== null && AUTOCAPTURE_ACCOUNT_EMAILS.includes(email.trim().toLowerCase());
