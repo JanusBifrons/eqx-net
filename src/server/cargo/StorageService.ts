@@ -98,6 +98,20 @@ function intakeRequest(h: Hold, intake: ReadonlySet<GoodId>): Partial<Record<Goo
   return out;
 }
 
+/** Weight a `deposit(…, intake)` would take off `h` (storage room aside):
+ *  the whole hold with no filter, else just the intake goods (alloc-free). */
+export function holdIntakeWeight(h: Hold, intake: ReadonlySet<GoodId> | undefined): number {
+  if (intake === undefined) return holdWeight(h);
+  let w = 0;
+  for (const g of intake) w += (h.goods[g] ?? 0) * GOOD_DEFS[g].weight;
+  return w;
+}
+
+/** A structure's own units of `good` (goods hold, plus a bank's minerals). */
+function stockOf(r: StructureRecord, good: GoodId): number {
+  return (r.hold?.goods[good] ?? 0) + (good === 'minerals' ? r.minerals : 0);
+}
+
 /** True when a `deposit(…, intake)` could move something from `h`: any cargo
  *  with no filter, else any good the intake names (alloc-free). */
 export function holdHasIntake(h: Hold, intake: ReadonlySet<GoodId> | undefined): boolean {
@@ -812,14 +826,50 @@ export class StorageService {
   // wallet op; each trade is ONE atomic group: ship row + touched storage +
   // the wallet op.
 
-  /** Units of `good` the dock's whole storage network holds (incl. banks). */
+  /** Units of `good` the dock's whole storage network holds (incl. banks).
+   *  Walks `network(dock)` without building it: the outlet check (3d) runs
+   *  on the deposit pass (#14). */
   networkStock(dock: StructureRecord, good: GoodId): number {
-    let n = 0;
-    for (const r of this.network(dock)) {
-      n += r.hold?.goods[good] ?? 0;
-      if (good === 'minerals') n += r.minerals;
+    let n = stockOf(dock, good);
+    for (const id of this.d.componentOf(dock.id)) {
+      if (id === dock.id) continue;
+      const r = this.d.registry.get(id);
+      if (r && r.owner === dock.owner && isOperationalStorage(r)) n += stockOf(r, good);
     }
     return n;
+  }
+
+  /**
+   * structure-restyle 3d — an OUTLET dock (export orders) loads a parked ship
+   * from its storage network: each export good, in order-list order, down to
+   * (never below) its order's `level` (an export offers only what is ABOVE
+   * the level, as for the convoys), up to `freeWeight` of hold room. Moves via
+   * `marketBuy` with no wallet op (the owner's own stock). Returns what moved.
+   */
+  loadOutlet(shipInstanceId: string, shipOwner: string, dock: StructureRecord, freeWeight: number): Hold {
+    const moved = emptyHold();
+    this.outletPass(dock, freeWeight, shipInstanceId, shipOwner, moved);
+    return moved;
+  }
+
+  /** Weight `loadOutlet` would move now (plan only; allocation-free, #14). */
+  outletLoadWeight(dock: StructureRecord, freeWeight: number): number {
+    return this.outletPass(dock, freeWeight, null, '', null);
+  }
+
+  private outletPass(dock: StructureRecord, freeWeight: number, shipId: string | null, owner: string, out: Hold | null): number {
+    let weight = 0;
+    for (const o of dock.freightOrders ?? []) {
+      if (o.mode !== 'export') continue;
+      const w = GOOD_DEFS[o.good].weight;
+      let n = Math.min(this.networkStock(dock, o.good) - o.level, Math.floor((freeWeight - weight + 1e-9) / Math.max(1e-9, w)));
+      if (!(n > 0)) continue;
+      if (shipId !== null) n = this.marketBuy(shipId, owner, dock, o.good, n, []);
+      if (n <= 0) continue;
+      if (out !== null) out.goods[o.good] = (out.goods[o.good] ?? 0) + n;
+      weight += n * w;
+    }
+    return weight;
   }
 
   /** Free goods-hold weight in the dock itself (sold goods land there). */

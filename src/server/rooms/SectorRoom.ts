@@ -337,7 +337,7 @@ import { LabCancelSchema, LabQuerySchema, LabStartSchema, type LabStart, type La
 import { LootSubsystem, type LootCollector } from '../cargo/LootSubsystem.js';
 import { LootCollectors } from '../cargo/LootCollectors.js';
 import { OreDraw } from './OreDraw.js';
-import { StorageService, fittedModuleIds, holdHasIntake, isOperationalStorage, structureUid, DEPOSIT_DWELL_TICKS, depositRangeOf, REPAIR_CREDITS_PER_HP, RESPEC_CREDIT_COST } from '../cargo/StorageService.js';
+import { StorageService, fittedModuleIds, holdHasIntake, holdIntakeWeight, isOperationalStorage, structureUid, DEPOSIT_DWELL_TICKS, depositRangeOf, REPAIR_CREDITS_PER_HP, RESPEC_CREDIT_COST } from '../cargo/StorageService.js';
 import { SCRAP_HP } from '../../core/swarm/scrapConstants.js';
 import { addPacked, cloneHold, emptyHold, extractRequested, holdWeight, isHoldEmpty, mergeInto, packedCount, takePacked, transferInto, type CargoRequest } from '../../core/cargo/hold.js';
 import type { HolderType, HoldRecord } from '../cargo/HoldStore.js';
@@ -11801,7 +11801,9 @@ export class SectorRoom extends Room<SectorState> {
    * centre is on the bay (`inDockBay`) and still (`isStillForDock`) settles
    * for `DOCK_SETTLE_TICKS`; then the crane reaches for it (`arm-reach`),
    * clamps on (`arm-hold`) for `dockUnloadHoldTicks(load, capacity)`, banks
-   * the dock's intake (`dockIntakeGoods`) at hold END, and retracts. Moving or
+   * the dock's intake (`dockIntakeGoods`) at hold END, then (3d) loads its
+   * export goods from base storage (`StorageService.loadOutlet`), and
+   * retracts: one cycle serves a mixed dock, unload first. Moving or
    * leaving during reach / hold aborts: the arm retracts from where it is and
    * nothing is banked. One ship per crane, first come first served: a second
    * settled ship waits (progress 0) until the arm is back at rest.
@@ -11823,18 +11825,23 @@ export class SectorRoom extends Room<SectorState> {
       }
       if (tick - d.clipTick! < d.holdTicks!) { this.setDockProgress(d, tick); return; }
       const moved = this.storage.deposit(c.shipInstanceId, c.playerId, dock, dockIntakeGoods(dock));
+      const after = this.loot.shipHold(c.shipInstanceId);
+      const loaded = this.storage.loadOutlet(c.shipInstanceId, c.playerId, dock, c.capacity - (after ? holdWeight(after) : 0));
       this.startStructureRigClip(dock.id, 'arm-retract', dock.rigClip?.target);
       d.phase = 'done';
       this.depositProgress.delete(c.shipInstanceId);
       this.noteDeposited(c, dock, moved);
+      this.noteDeposited(c, dock, loaded, true);
       return;
     }
-    // No crane yet. Nothing the dock takes in ⇒ no dwell at all (no bar that
-    // restarts forever): an outlet, or a hold with none of the import goods.
-    if (!still || hold === undefined || !holdHasIntake(hold, dockIntakeGoods(dock))) {
-      this.dropDepositDwell(c.playerId);
-      return;
-    }
+    // No crane yet. Nothing to unload AND nothing to load ⇒ no dwell at all
+    // (no bar that restarts forever): a hold with none of the import goods
+    // and no room for (or no spare) export goods.
+    if (!still) { this.dropDepositDwell(c.playerId); return; }
+    const intake = hold !== undefined ? dockIntakeGoods(dock) : undefined;
+    const unloadW = hold !== undefined && holdHasIntake(hold, intake) ? holdIntakeWeight(hold, intake) : -1;
+    const loadW = this.storage.outletLoadWeight(dock, c.capacity - (hold ? holdWeight(hold) : 0) + Math.max(0, unloadW));
+    if (unloadW < 0 && !(loadW > 0)) { this.dropDepositDwell(c.playerId); return; }
     if (d === undefined) {
       this.depositDwell.set(c.playerId, { targetId: dock.id, sinceTick: tick, shipId: c.shipInstanceId, phase: 'settle' });
       this.depositProgress.set(c.shipInstanceId, 0);
@@ -11846,7 +11853,7 @@ export class SectorRoom extends Room<SectorState> {
     d.phase = 'reach';
     d.clipTick = tick;
     d.seenTick = tick;
-    d.holdTicks = dockUnloadHoldTicks(holdWeight(hold), c.capacity);
+    d.holdTicks = dockUnloadHoldTicks(Math.max(0, unloadW) + loadW, c.capacity);
   }
 
   /** Crane-cycle progress 0..99 over reach + hold (own-ship readout). */
@@ -11897,16 +11904,18 @@ export class SectorRoom extends Room<SectorState> {
     return null;
   }
 
-  /** Tell the depositing pilot what moved, and audit it (nothing moved ⇒ silent). */
-  private noteDeposited(c: LootCollector, target: StructureRecord, moved: Hold): void {
+  /** Tell the depositing pilot what moved, and audit it (nothing moved ⇒ silent).
+   *  `loaded` (3d outlet): goods came ABOARD, so the pickup popup. */
+  private noteDeposited(c: LootCollector, target: StructureRecord, moved: Hold, loaded = false): void {
     if (isHoldEmpty(moved)) return; // storage full — nothing moved
     const sessionId = this.playerToSession.get(c.playerId);
     const client = sessionId !== undefined ? this.clients.find((cl) => cl.sessionId === sessionId) : undefined;
+    const type = loaded ? 'loot_collected' : 'cargo_deposited';
     try {
-      client?.send('cargo_deposited', { type: 'cargo_deposited', goods: moved.goods, blueprints: moved.blueprints.length, ...packedProducts(moved) });
+      client?.send(type, { type, goods: moved.goods, blueprints: moved.blueprints.length, ...packedProducts(moved) });
     } catch { /* socket closing */ }
     auditEvent({
-      event: 'cargo_deposited', sector: this.sectorKey ?? undefined, playerId: c.playerId,
+      event: loaded ? 'cargo_loaded' : 'cargo_deposited', sector: this.sectorKey ?? undefined, playerId: c.playerId,
       shipInstanceId: c.shipInstanceId, structureKind: target.kind, weight: holdWeight(moved),
     });
   }

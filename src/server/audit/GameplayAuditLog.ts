@@ -114,7 +114,7 @@ export type AuditEvent =
   | (AuditEventBase & { event: 'loot_collected'; podId: string; playerId: string; shipInstanceId: string; weight: number })
   | (AuditEventBase & { event: 'loot_destroyed'; podId: string; cause: string; weight: number })
   | (AuditEventBase & { event: 'cargo_lost'; playerId?: string; shipInstanceId: string; cause: string })
-  | (AuditEventBase & { event: 'cargo_deposited'; playerId: string; shipInstanceId: string; structureKind: string; weight: number })
+  | (AuditEventBase & { event: 'cargo_deposited' | 'cargo_loaded'; playerId: string; shipInstanceId: string; structureKind: string; weight: number })
   | (AuditEventBase & { event: 'salvage_refined'; owner: string; salvage: number })
   // C2 — a break-in started, succeeded, or was interrupted.
   | (AuditEventBase & { event: 'break_in'; playerId: string; owner: string; structureKind: string; outcome: 'started' | 'success' | 'interrupted' })
