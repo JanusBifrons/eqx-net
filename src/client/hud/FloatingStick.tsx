@@ -75,6 +75,7 @@ export function FloatingStick(props: FloatingStickProps): JSX.Element {
   } = props;
   const baseRef = useRef<HTMLDivElement | null>(null);
   const knobRef = useRef<HTMLDivElement | null>(null);
+  const backRef = useRef<HTMLDivElement | null>(null);
   const zoneRef = useRef<HTMLDivElement | null>(null);
   // Latest callbacks without re-binding listeners.
   const cb = useRef(props);
@@ -109,6 +110,11 @@ export function FloatingStick(props: FloatingStickProps): JSX.Element {
     const placeBase = (x: number, y: number, glide: boolean): void => {
       base.style.transition = glide ? GLIDE : 'none';
       base.style.transform = `translate3d(${x - radius}px, ${y - radius}px, 0)`;
+      const back = backRef.current;
+      if (back) {
+        back.style.transition = base.style.transition;
+        back.style.transform = base.style.transform;
+      }
     };
     const placeKnob = (dx: number, dy: number, glide: boolean): void => {
       knobEl.style.transition = glide ? GLIDE : 'none';
@@ -258,6 +264,24 @@ export function FloatingStick(props: FloatingStickProps): JSX.Element {
           }}
         />
       )}
+      {/* A dark wash under the ring, NOT faded with the resting stick, keeps it
+          readable over bright rock; over empty space it is dark on dark. */}
+      <div
+        ref={backRef}
+        data-testid={`${id}-backing`}
+        style={{
+          position: 'fixed',
+          left: 0,
+          top: 0,
+          width: d,
+          height: d,
+          zIndex,
+          borderRadius: '50%',
+          pointerEvents: 'none',
+          background: 'radial-gradient(circle, rgba(4,8,16,0.55) 0%, rgba(4,8,16,0.45) 64%, rgba(4,8,16,0.2) 72%, transparent 76%)',
+          willChange: 'transform',
+        }}
+      />
       <div
         ref={baseRef}
         data-testid={`${id}-home`}
@@ -275,10 +299,8 @@ export function FloatingStick(props: FloatingStickProps): JSX.Element {
           pointerEvents: floating ? 'none' : 'auto',
           touchAction: 'none',
           border: `1.5px solid ${color}`,
-          // A dark wash under the tint keeps the ring readable over bright rock;
-          // over empty space it is dark on dark, so it looks the same.
-          background: `radial-gradient(circle, ${color}22 0%, ${color}0d 55%, transparent 72%), radial-gradient(circle, rgba(4,8,16,0.95) 0%, rgba(4,8,16,0.85) 62%, rgba(4,8,16,0.4) 70%, transparent 74%)`,
-          boxShadow: `0 0 0 2px rgba(4,8,16,0.85), inset 0 0 0 2px rgba(4,8,16,0.6), 0 0 14px ${color}33, inset 0 0 10px ${color}22`,
+          background: `radial-gradient(circle, ${color}22 0%, ${color}0d 55%, transparent 72%)`,
+          boxShadow: `0 0 14px ${color}33, inset 0 0 10px ${color}22`,
           willChange: 'transform',
           userSelect: 'none',
           WebkitUserSelect: 'none',

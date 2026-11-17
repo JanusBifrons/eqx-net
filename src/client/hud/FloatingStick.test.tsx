@@ -188,3 +188,35 @@ describe('FloatingStick tap passes through to the world', () => {
     expect(s.canvasEvents).toEqual([]);
   });
 });
+
+describe('FloatingStick dark backing (readable over bright rock)', () => {
+  beforeEach(() => {
+    now = 1000;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    resetStickPinch();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    document.body.innerHTML = '';
+  });
+
+  it('the backing is not faded with the resting ring and follows it everywhere', () => {
+    const s = setup();
+    const home = document.querySelector<HTMLElement>('[data-testid="l-home"]')!;
+    const back = document.querySelector<HTMLElement>('[data-testid="l-backing"]')!;
+    // At rest the ring fades; the backing under it does not, or bright rock washes it out.
+    expect(Number(home.style.opacity)).toBeLessThan(1);
+    expect(back.style.opacity).toBe('');
+    expect(back.style.transform).toBe(home.style.transform);
+    act(() => {
+      down(s.left, 1, 200, 400);
+      move(s.left, 1, 230, 400);
+    });
+    expect(back.style.transform).toBe(home.style.transform);
+    act(() => {
+      now += 500;
+      up(s.left, 1, 230, 400);
+    });
+    expect(back.style.transform).toBe(home.style.transform);
+  });
+});
