@@ -8,9 +8,9 @@ import { DEFAULT_BASE_URL } from './helpers/ports';
  *  1. The post-auth Galaxy Map screen (`galaxy-map-screen`) is NOT the
  *     marketing landing — no "Equinox" banner / hero copy. That belongs
  *     to `MetaLandingScreen`, which is unmounted by phase='galaxy-map'.
- *  2. `FullscreenCTA` is NOT rendered inside the galaxy map. Today the
- *     component exists but has zero JSX call-sites; this lock catches a
- *     well-meaning future re-introduction inside the spawn picker.
+ *  (The former FullscreenCTA lock was retired when the component was
+ *   deleted: full screen is offered only by FullscreenToggle, whose
+ *   "Tap for full screen" label shows briefly when a phone turns sideways.)
  *
  * (The former "default zoom is 0.7 via data-galaxy-zoom" lock was
  *  retired with the single-canvas refactor: the spawn picker now renders
@@ -20,7 +20,6 @@ import { DEFAULT_BASE_URL } from './helpers/ports';
  *
  * WHAT CHANGING WOULD RE-FAIL THIS:
  *  - Putting the marketing banner back on the post-auth landing.
- *  - Adding `<FullscreenCTA />` JSX inside the spawn-mode branch.
  *
  * This is a UNCOVERED→COVERED test: there is no user bug report behind
  * it. Smoke-testing the marketing-text-on-spawn case would feel obvious
@@ -60,18 +59,4 @@ test('galaxy-map-screen: no Equinox banner inside the spawn-mode landing', async
     'Galaxy-map-screen body must not contain "multiplayer space combat" tagline. ' +
       'Source of regression: meta-landing tagline copied into spawn mode.',
   ).not.toContain('multiplayer space combat');
-});
-
-test('galaxy-map-screen: FullscreenCTA is not rendered in the spawn-mode landing', async ({ page }) => {
-  test.setTimeout(20_000);
-  await goToGalaxyMap(page);
-
-  const screen = page.locator('[data-testid="galaxy-map-screen"]');
-  await expect(
-    screen.locator('[data-testid="fullscreen-cta"]'),
-    'FullscreenCTA must not be rendered inside the galaxy-map screen. ' +
-      'If this fails, someone has reintroduced <FullscreenCTA /> JSX — ' +
-      'fullscreen is owned by the FullscreenToggle in the layout slot ' +
-      'system, not a standalone CTA in the spawn landing.',
-  ).toHaveCount(0);
 });

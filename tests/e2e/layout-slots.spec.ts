@@ -98,11 +98,12 @@ test.describe('layout-slots', () => {
     await ctx.close();
   });
 
-  test('portrait orientation does not block input — joystick is interactive', async ({ browser }) => {
-    // Portrait used to render a "rotate to landscape" overlay that intercepted
-    // every pointer event. That's gone — portrait is now a first-class
-    // orientation, and the player can keep playing while holding the phone
-    // upright. Landscape is opt-in via the FullscreenToggle.
+  test('upright phone shows the turn-sideways screen; sideways shows the game and the full-screen label', async ({ browser }) => {
+    // Phones play sideways. Upright, a full-screen picture asks the player to
+    // turn the phone and covers (and blocks) the controls; turned sideways it
+    // goes away and the full-screen chip briefly reads 'Tap for full screen'
+    // without entering full screen. Guide: docs/features/mobile-layout.md
+    // "Orientation policy".
     const iPhone = devices['iPhone SE'];
     const ctx = await browser.newContext({
       ...iPhone,
@@ -111,14 +112,25 @@ test.describe('layout-slots', () => {
     const page = await ctx.newPage();
     await bootGame(page);
 
-    await expect(page.locator('[data-testid="portrait-block-overlay"]')).toHaveCount(0);
-    await expect(page.locator('[data-testid="hud-move-home"]')).toBeVisible();
+    await expect(page.locator('[data-testid="rotate-phone-overlay"]')).toBeVisible();
+    await expect(page.locator('[data-testid="rotate-phone-overlay"]')).toContainText('Turn your phone sideways');
 
-    // Rotate to landscape — joystick stays interactive, still no overlay.
     await page.setViewportSize({ width: 667, height: 375 });
-    await expect(page.locator('[data-testid="portrait-block-overlay"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="rotate-phone-overlay"]')).toHaveCount(0);
     await expect(page.locator('[data-testid="hud-move-home"]')).toBeVisible();
+    const chip = page.locator('[data-testid="fullscreen-toggle"]');
+    await expect(chip).toHaveAttribute('data-hint', '1');
+    await expect(chip).toContainText('Tap for full screen');
+    await expect(chip).toHaveAttribute('data-fullscreen', '0');
 
+    await ctx.close();
+  });
+
+  test('desktop never shows the turn-sideways screen, even in a tall window', async ({ browser }) => {
+    const ctx = await browser.newContext({ viewport: { width: 700, height: 1000 } });
+    const page = await ctx.newPage();
+    await bootGame(page);
+    await expect(page.locator('[data-testid="rotate-phone-overlay"]')).toHaveCount(0);
     await ctx.close();
   });
 

@@ -74,7 +74,7 @@ test('dial opens and the map toggles via a SECOND touch while the joystick is he
   const ctx = await browser.newContext({
     hasTouch: true,
     isMobile: true,
-    viewport: { width: 390, height: 844 },
+    viewport: { width: 844, height: 390 },
   });
   const page = await ctx.newPage();
   try {

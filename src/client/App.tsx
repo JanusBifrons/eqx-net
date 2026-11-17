@@ -45,6 +45,7 @@ import { ErrorBoundary } from './components/ErrorOverlay';
 import { HyperspaceOverlay } from './components/HyperspaceOverlay';
 import { WarpScreen } from './components/WarpScreen';
 import { LostConnectionOverlay } from './components/LostConnectionOverlay';
+import { RotatePhoneOverlay, useNeedsRotate } from './layout/RotatePhoneOverlay';
 import { cancelTransit } from './net/transitClient';
 import { fleetWarpRequest, sendWarpHere } from './app/fleetWarp';
 import { isSpectating } from './spectator/spectatorMode';
@@ -232,11 +233,14 @@ function GameSurface({
   // the CAMERA via the renderer's pointer/wheel path (untouched by this gate),
   // so disabling Keyboard/TouchInput swaps "thrust/fire" for "pan/zoom only".
   const spectating = isSpectating(pilotMode);
+  // An upright phone shows the turn-sideways picture over the game; controls
+  // are off underneath it (held input zeroed), but audio keeps playing.
+  const needsRotate = useNeedsRotate();
   useEffect(() => {
     const audio = audioRef.current;
     const keyboard = keyboardRef.current;
     const touch = touchInputRef.current;
-    const inputBlocked = isLoadingActive || spectating;
+    const inputBlocked = isLoadingActive || spectating || needsRotate;
     if (inputBlocked) {
       if (isLoadingActive) audio?.suspendAll();
       keyboard?.setEnabled(false);
@@ -252,7 +256,7 @@ function GameSurface({
     // it ONLY while spectating + not loading + not touch (mobile pans by drag);
     // disabling it emits a (0,0) stop so the camera doesn't keep drifting.
     spectatorPanRef.current?.setEnabled(spectating && !isLoadingActive && !isTouchRef.current);
-  }, [isLoadingActive, spectating]);
+  }, [isLoadingActive, spectating, needsRotate]);
 
   // Phase 4 WS-A1 — drive the renderer's free-roam camera off `pilotMode`.
   // `setSpectator(true)` detaches `Camera.follow` (and `update()` stops
@@ -1164,6 +1168,7 @@ export function App(): JSX.Element {
   return (
     <ErrorBoundary>
       <LayoutProvider>
+        <RotatePhoneOverlay />
         <PhaseRouter
           phase={phase}
           user={user}

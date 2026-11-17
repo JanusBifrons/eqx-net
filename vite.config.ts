@@ -177,7 +177,7 @@ export default defineConfig({
         // app has its own cookie jar, so Safari's cookie never reaches it).
         start_url: PHONE_KEY ? `/?k=${PHONE_KEY}` : '/',
         display: 'fullscreen',
-        orientation: 'any',
+        orientation: 'landscape',
         background_color: '#05070f',
         theme_color: '#05070f',
         icons: [
