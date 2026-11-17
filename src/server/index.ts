@@ -9,7 +9,7 @@ import { createServer } from 'node:http';
 import { pino } from 'pino';
 import { SectorRoom } from './rooms/SectorRoom.js';
 import { galaxySectorsToBoot } from './rooms/galaxyBoot.js';
-import { GATE_TEST_PREBUILT, RIG_SANDBOX_E2E_SCENE, RIG_SANDBOX_PREBUILT, rigSandboxScene, SCENARIO, STRUCTURE_SCENARIO_PREBUILT } from './rooms/scenarioLayouts.js';
+import { GATE_TEST_PREBUILT, RIG_SANDBOX_E2E_SCENE, RIG_SANDBOX_PREBUILT, RIG_UNLOAD, rigSandboxScene, SCENARIO, STRUCTURE_SCENARIO_PREBUILT } from './rooms/scenarioLayouts.js';
 import { SHOWCASE_PILOT_ID, SHOWCASE_ROOMS } from './rooms/showcaseRooms.js';
 import { getRecentEvents, getRecentEventsByTag, clearEvents } from './debug/ServerEventLog.js';
 import { installGcMonitor } from './debug/GcMonitor.js';
@@ -745,7 +745,13 @@ gameServer
 // owned by the showcase pilot; a scripted hauler parks on the pad and the
 // crane reaches for it, then the turret opens and deploys (scenarioLayouts
 // RIG_SANDBOX). Draw the rigs with ?rigs=1. The e2e room reaches at once.
-for (const [name, sceneScript] of [['rig-sandbox', rigSandboxScene(4000)], ['rig-sandbox-e2e', RIG_SANDBOX_E2E_SCENE]] as const) {
+// `rig-unload` has no script: the pilot flies onto their own dock's pad and
+// the real bay dwell unloads them (RIG_UNLOAD).
+for (const [name, extra] of [
+  ['rig-sandbox', { sceneScript: rigSandboxScene(4000) }],
+  ['rig-sandbox-e2e', { sceneScript: RIG_SANDBOX_E2E_SCENE }],
+  ['rig-unload', RIG_UNLOAD],
+] as const) {
   gameServer.define(name, SectorRoom, {
     testMode: true,
     asteroidConfig: [],
@@ -753,10 +759,10 @@ for (const [name, sceneScript] of [['rig-sandbox', rigSandboxScene(4000)], ['rig
     structureGridPulseMs: 100,
     prebuiltStructuresOwner: SHOWCASE_PILOT_ID,
     prebuiltStructures: RIG_SANDBOX_PREBUILT.map((p) => ({ ...p })),
-    sceneScript,
     defaultSpawnX: -1800,
     defaultSpawnY: -900,
     maxClients: 4,
+    ...extra,
   }).filterBy(['testId']);
 }
 // Structures plan (Phase 3-5) — a fully-built, POWERED grid scenario for the

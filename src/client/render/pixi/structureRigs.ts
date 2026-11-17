@@ -7,10 +7,13 @@
  * Not a renderer of its own: the parts hang off the structure's existing
  * sprite and the existing `shipContainer` (plan §8: zIndex bands, the
  * `beamsOverHulls.ts` pattern, no new layer containers in the scene):
- *  - `under` (dock lip) and `plane` (doors, turret slide) parts are children
- *    of the structure sprite, inserted BELOW its mount cluster: they draw with
- *    the structure body (zIndex 0, above the connector lines, below ships
- *    added after it, like the body itself), under the gun;
+ *  - `under` parts (the dock's landing apron, a deck ships park ON) sit in one
+ *    small per-structure container on `shipContainer` at `RIG_UNDER_Z`:
+ *    below every hull (0) whatever order the sprites were added in. It copies
+ *    the host sprite's transform each frame, like `over`;
+ *  - `plane` (doors, turret slide) parts are children of the structure
+ *    sprite, inserted BELOW its mount cluster: they draw with the structure
+ *    body (zIndex 0, above the connector lines), under the gun;
  *  - `over` parts (crane) sit in one small per-structure container on
  *    `shipContainer` at `RIG_OVER_Z`: above every hull (0), below the beams
  *    (`BEAMS_OVER_HULL_Z`). It copies the host sprite's transform each frame,
@@ -61,10 +64,14 @@ export interface StructureRigInput {
 /** zIndex of the over band: above every hull (0), below the beams. */
 export const RIG_OVER_Z = BEAMS_OVER_HULL_Z / 2;
 
-/** The zIndex band a draw layer lands in on `shipContainer`. `under` and
- *  `plane` ride the host sprite (its band, 0); `over` is lifted. */
+/** zIndex of the under band (pad decks): below every hull and structure (0),
+ *  so a ship parked on a pad is never hidden by it. */
+export const RIG_UNDER_Z = -1;
+
+/** The zIndex band a draw layer lands in on `shipContainer`. `plane` rides
+ *  the host sprite (its band, 0); `over` is lifted, `under` sunk. */
 export function rigLayerZ(layer: DrawLayer): number {
-  return layer === 'over' ? RIG_OVER_Z : 0;
+  return layer === 'over' ? RIG_OVER_Z : layer === 'under' ? RIG_UNDER_Z : 0;
 }
 
 /** Game ticks per second (the server sim rate). */
@@ -551,6 +558,7 @@ export class StructureRigView {
     this.plane.label = 'rig-plane';
     this.over.label = 'rig-over';
     this.over.zIndex = RIG_OVER_Z;
+    this.under.zIndex = RIG_UNDER_Z;
     let shadowsOver = 0, shadowsPlane = 0;
     for (let i = 0; i < rig.partCount; i++) {
       const part = rig.parts[i]!;
@@ -675,7 +683,7 @@ export class StructureRigView {
 
 interface GameRigEntry {
   view: StructureRigView;
-  /** The sprite the under/plane groups hang off (rebuilt sprite ⇒ re-hang). */
+  /** The sprite the plane group hangs off (rebuilt sprite ⇒ re-hang). */
   host: Container | null;
   stamp: number;
 }
@@ -725,7 +733,7 @@ export class StructureRigs {
       if (rig === null) return null;
       const view = new StructureRigView(rig);
       this.shipContainer.sortableChildren = true;
-      this.shipContainer.addChild(view.over);
+      this.shipContainer.addChild(view.under, view.over);
       e = { view, host: null, stamp: 0 };
       this.entries.set(spriteKey, e);
     } else if (e.view.rig !== (kindId !== undefined ? rigForStructureKind(kindId) : null)) {
@@ -737,22 +745,17 @@ export class StructureRigs {
     const view = e.view;
     if (e.host !== sprite) {
       // A new (or rebuilt) host sprite: its old children went with it.
-      if (view.under.destroyed || view.plane.destroyed) {
+      if (view.plane.destroyed) {
         // Rebuilt sprite destroyed our groups with it: rebuild the view.
         this.drop(spriteKey, e);
         return this.update(spriteKey, kindId, sprite, hx, hy, ha, clip, nowTick);
       }
-      // Under and plane sit just above the body art and below the world
-      // texts and the mount cluster (both added after the body): before the
-      // build-ETA text every structure sprite carries, else on top.
+      // Plane sits just above the body art and below the world texts and
+      // the mount cluster (both added after the body): before the build-ETA
+      // text every structure sprite carries, else on top.
       const eta = sprite.getChildByLabel('buildEta');
-      if (eta !== null && eta.parent === sprite) {
-        const at = sprite.getChildIndex(eta);
-        sprite.addChildAt(view.plane, at);
-        sprite.addChildAt(view.under, at);
-      } else {
-        sprite.addChild(view.under, view.plane);
-      }
+      if (eta !== null && eta.parent === sprite) sprite.addChildAt(view.plane, sprite.getChildIndex(eta));
+      else sprite.addChild(view.plane);
       e.host = sprite;
     }
     let input: StructureRigInput | null = null;
@@ -771,19 +774,16 @@ export class StructureRigs {
       }
     }
     view.update(input, nowTick, hx, hy, ha, 1);
-    const over = view.over;
-    over.position.copyFrom(sprite.position);
-    over.rotation = sprite.rotation;
-    over.visible = sprite.visible;
-    over.alpha = sprite.alpha;
+    followHost(view.over, sprite);
+    followHost(view.under, sprite);
     return view;
   }
 
-  /** Hide the over group of a structure that was not posed this frame
-   *  (off screen: its sprite is hidden). */
+  /** Hide the lifted and sunk groups of a structure that was not posed this
+   *  frame (off screen: its sprite is hidden). */
   hide(spriteKey: string): void {
     const e = this.entries.get(spriteKey);
-    if (e !== undefined) { e.stamp = this.stamp; e.view.over.visible = false; }
+    if (e !== undefined) { e.stamp = this.stamp; e.view.over.visible = false; e.view.under.visible = false; }
   }
 
   /** End a frame: free the views of structures not seen this frame. */
@@ -792,11 +792,25 @@ export class StructureRigs {
   }
 
   private drop(key: string, e: GameRigEntry): void {
-    e.view.over.parent?.removeChild(e.view.over);
-    if (!e.view.under.destroyed) e.view.under.parent?.removeChild(e.view.under);
-    if (!e.view.plane.destroyed) e.view.plane.parent?.removeChild(e.view.plane);
-    if (!e.view.under.destroyed) e.view.destroy();
-    else if (!e.view.over.destroyed) e.view.over.destroy({ children: true });
+    const v = e.view;
+    v.over.parent?.removeChild(v.over);
+    v.under.parent?.removeChild(v.under);
+    if (!v.plane.destroyed) {
+      v.plane.parent?.removeChild(v.plane);
+      v.destroy();
+    } else {
+      // A rebuilt host sprite took the plane group with it.
+      if (!v.over.destroyed) v.over.destroy({ children: true });
+      if (!v.under.destroyed) v.under.destroy({ children: true });
+    }
     this.entries.delete(key);
   }
+}
+
+/** A `shipContainer`-level rig group follows its host sprite (alloc-free). */
+function followHost(g: Container, sprite: Container): void {
+  g.position.copyFrom(sprite.position);
+  g.rotation = sprite.rotation;
+  g.visible = sprite.visible;
+  g.alpha = sprite.alpha;
 }

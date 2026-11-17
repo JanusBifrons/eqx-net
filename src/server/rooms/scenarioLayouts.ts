@@ -144,6 +144,18 @@ export function rigSandboxScene(lead: number): unknown[] {
   ];
 }
 
+/**
+ * structure-restyle 3b film: the same outpost with NO script. The player owns
+ * the dock (`prebuiltStructuresOwner`); a film joins south of the pad, nose to
+ * the dock (`?spawnX=0&spawnY=1500&initialAngle=3.1416`), with a load aboard (`?initialCargo=`; the hold
+ * needs a roster-bound hull, hence the `sectorKey`). Flying onto the bay and
+ * stopping is all it takes: the real bay dwell (`SectorRoom.dockDwell`) runs
+ * the crane and banks the load.
+ */
+export const RIG_UNLOAD = {
+  sectorKey: 'showcase-rig-unload',
+} as const;
+
 /** E2E: the hauler is already on the pad and the crane reaches at once. */
 export const RIG_SANDBOX_E2E_SCENE: unknown[] = [
   { atMs: 0, action: 'spawn', tag: 'hauler', kind: 'trader-hauler', count: 1, ...RIG_SANDBOX.pad },

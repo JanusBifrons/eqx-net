@@ -8,7 +8,7 @@ import { describe, it, expect } from 'vitest';
 import { Container } from 'pixi.js';
 import type { Graphics } from 'pixi.js';
 import {
-  readRigsFlag, rigLayerZ, rigPartRole, RIG_OVER_Z, partLocalTransform, worldToHost,
+  readRigsFlag, rigLayerZ, rigPartRole, RIG_OVER_Z, RIG_UNDER_Z, partLocalTransform, worldToHost,
   StructureRigView, StructureRigs, RIG_LOOK_C, type PixiXform,
 } from './structureRigs.js';
 import { BEAMS_OVER_HULL_Z } from './beamsOverHulls.js';
@@ -88,8 +88,9 @@ describe('readRigsFlag', () => {
 });
 
 describe('layer bands', () => {
-  it('over sits above hulls (0) and below the beams band; under/plane ride the body', () => {
-    expect(rigLayerZ('under')).toBe(0);
+  it('over sits above hulls (0) and below the beams band; the pad deck below hulls; plane rides the body', () => {
+    expect(rigLayerZ('under')).toBe(RIG_UNDER_Z);
+    expect(RIG_UNDER_Z).toBeLessThan(0);
     expect(rigLayerZ('plane')).toBe(0);
     expect(rigLayerZ('over')).toBe(RIG_OVER_Z);
     expect(RIG_OVER_Z).toBeGreaterThan(0);
@@ -170,7 +171,7 @@ describe('updateSwarmSprites with rigs', () => {
     expect(ctx.shipContainer.sortableChildren).toBe(false);
   });
 
-  it('flag on: a dock gets under/plane on its sprite and over on shipContainer; sweep drops them', () => {
+  it('flag on: a dock gets plane on its sprite, under and over on shipContainer; sweep drops them', () => {
     const ctx = makeCtx();
     const rigs = new StructureRigs(ctx.shipContainer);
     ctx.structureRigs = rigs;
@@ -178,18 +179,43 @@ describe('updateSwarmSprites with rigs', () => {
     expect(rigs.size).toBe(1);
     const view = rigs.viewFor('swarm-7')!;
     const sprite = ctx.sprites.get('swarm-7')!;
-    expect(view.under.parent).toBe(sprite);
     expect(view.plane.parent).toBe(sprite);
-    expect(view.over.parent).toBe(ctx.shipContainer);
-    expect(view.over.zIndex).toBe(RIG_OVER_Z);
-    expect(view.over.x).toBe(sprite.x);
-    expect(view.over.y).toBe(sprite.y);
-    expect(view.over.rotation).toBe(sprite.rotation);
+    for (const [g, z] of [[view.under, RIG_UNDER_Z], [view.over, RIG_OVER_Z]] as const) {
+      expect(g.parent).toBe(ctx.shipContainer);
+      expect(g.zIndex).toBe(z);
+      expect(g.x).toBe(sprite.x);
+      expect(g.y).toBe(sprite.y);
+      expect(g.rotation).toBe(sprite.rotation);
+    }
     expect(ctx.shipContainer.sortableChildren).toBe(true);
     // The dock leaves: its view goes with it.
     updateSwarmSprites(mirrorOf([[9, structureEntry('cargo_bay', -400, 0, 0)]]), ctx);
     expect(rigs.size).toBe(0);
     expect(labelsUnder(ctx.shipContainer).some((l) => l.startsWith('rig-'))).toBe(false);
+  });
+
+  it('a ship on the pad draws over the pad deck, whichever sprite was added first', () => {
+    // Film unload-1: the player's hull (added at join) vanished under the
+    // dock's landing apron once it parked on the pad. Pixi draws
+    // `shipContainer` children by zIndex, then insertion order.
+    const ctx = makeCtx();
+    ctx.shipContainer.sortableChildren = true; // as raiseBeamsOverHulls leaves it
+    const hull = new Container();
+    hull.label = 'hull';
+    ctx.shipContainer.addChild(hull); // the player's ship, before the dock
+    const rigs = new StructureRigs(ctx.shipContainer);
+    ctx.structureRigs = rigs;
+    updateSwarmSprites(mirrorOf([[7, structureEntry('freight_dock', 0, 0, 0)]]), ctx);
+    const view = rigs.viewFor('swarm-7')!;
+    /** Draw rank of `c` in shipContainer (its top-level ancestor's slot). */
+    const rank = (c: Container): [number, number] => {
+      let top = c;
+      while (top.parent !== ctx.shipContainer) top = top.parent as Container;
+      return [top.zIndex, ctx.shipContainer.getChildIndex(top)];
+    };
+    const [hz, hi] = rank(hull);
+    const [uz, ui] = rank(view.under);
+    expect(uz < hz || (uz === hz && ui < hi), 'the apron draws below the hull').toBe(true);
   });
 
   it('turret-deploy pops the mount cluster up in place (scale, no slide); the barrel angle is untouched', () => {
