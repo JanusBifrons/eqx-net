@@ -214,6 +214,8 @@ export async function bootSectorTestServer(opts: {
   teleportFullCharge?: boolean;
   /** Drones never attack (the room option). */
   peacefulDrones?: boolean;
+  /** Deaths keep every stack (no coin flip): the room option. */
+  keepAllOnDeath?: boolean;
   /** Pilots may join flying a capital (`shipKind: 'battleship'`, …): the room option. */
   pilotCapitals?: boolean;
   /** Capital destruction S2a: a dying capital breaks into wreck bodies. */
@@ -308,6 +310,7 @@ export async function bootSectorTestServer(opts: {
     teleportShipBoards: opts.teleportShipBoards,
     teleportFullCharge: opts.teleportFullCharge,
     peacefulDrones: opts.peacefulDrones,
+    keepAllOnDeath: opts.keepAllOnDeath,
     pilotCapitals: opts.pilotCapitals,
     capitalWrecks: opts.capitalWrecks,
     subcapWrecks: opts.subcapWrecks,

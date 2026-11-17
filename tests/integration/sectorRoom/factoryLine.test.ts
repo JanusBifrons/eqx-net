@@ -52,7 +52,7 @@ describe('SectorRoom integration — the factory line: nothing targets a consuma
   it('laser and tractor leave a consumable piece; a full hold hands it back to the tractor; one at the hull goes into the hold', async () => {
     for (const m of mounts) m.weaponId = m.id === 'cross-l' ? 'mining_laser' : 'tractor';
     harness = await bootSectorTestServer({
-      sectorKey: 'sol-prime', droneCount: 0, testMode: true, peacefulDrones: true, asteroidConfig: [], subcapWrecks: true,
+      sectorKey: 'sol-prime', droneCount: 0, testMode: true, peacefulDrones: true, asteroidConfig: [], subcapWrecks: true, keepAllOnDeath: true,
     });
     const pid = randomUUID();
     const client = (await harness.connectActive(pid, {

@@ -18,28 +18,18 @@ import type { Hold } from '../../shared-types/goods.js';
 import type { ShipKind } from '../../shared-types/shipKinds/types.js';
 import { salvageConsumable, salvageConsumeMass } from '../../core/combat/salvageTargeting.js';
 import type { PieceStoreView } from '../rooms/wreckLineage.js';
-import { cloneHold, emptyHold, extractRequested, holdBestTier, holdWeight, isHoldEmpty, mergeInto, rollDeathLoss, transferInto, transferUpTo, type CargoRequest } from '../../core/cargo/hold.js';
+import { cloneHold, emptyHold, extractRequested, holdBestTier, holdWeight, isHoldEmpty, mergeInto, rollDeathLoss, transferInto, type CargoRequest } from '../../core/cargo/hold.js';
 import { stream } from '../../core/random/rng.js';
 import { hashString } from '../../core/bases/baseProfile.js';
 import { POD_TIER_SPILL, podComponentIndex } from '../../shared-types/shipKinds/cargoPod.js';
 import type { HoldRecord, HoldStore } from './HoldStore.js';
-import { GLOBAL_SHIP_TUNING, LOOT_OPEN_REACH } from '../../shared-types/shipScale/lookup.js';
+import { LOOT_OPEN_REACH } from '../../shared-types/shipScale/lookup.js';
 import { shipHitBound, shipWithinHullReach } from '../../core/combat/shipHitShape.js';
-import { getShipKind } from '../../shared-types/shipKinds.js';
 
 /** Max live loot pods per sector — a separate budget from `MAX_LIVE_SCRAP`. */
 export const MAX_LIVE_LOOT_PER_SECTOR = 64;
 /** A new drop within this distance of an existing pod MERGES into it. */
 export const LOOT_MERGE_RADIUS = 60;
-/** Fly-over pickup radius (pod centre to ship centre). */
-/** Pickup radius: the ship scale's (shipScale/tuning: 80 u at 1×). */
-export const LOOT_PICKUP_RADIUS = GLOBAL_SHIP_TUNING.lootPickup;
-const PICKUP_R2 = LOOT_PICKUP_RADIUS * LOOT_PICKUP_RADIUS;
-/** A pod TOUCHING the hull goes in too (owner 2026-11-16: a capital's hull
- *  reaches far past the centre circle): its centre within this of the
- *  ship's outer surface (`shipWithinHullReach`): the pod's radius, doubled for its biggest
- *  glow tier's collider and contact slop. */
-export const LOOT_TOUCH_REACH = getShipKind('cargo-pod').radius * 2;
 /** Pods expire (value destroyed) after this long untouched. */
 export const LOOT_POD_TTL_MS = 15 * 60_000;
 /** Re-persist a pod's drifted pose when it moved further than this. */
@@ -75,6 +65,9 @@ export interface LootSubsystemDeps {
   holdStore: HoldStore;
   /** Persistent sector identity (null ⇒ engineering room: memory-only holds). */
   sectorKey: () => string | null;
+  /** Test rooms only: a death keeps every stack (no coin flip), for tests
+   *  that pin exact pod contents rather than the death loss. */
+  keepAllOnDeath?: boolean;
   now: () => number;
   /** Spawn the pod's swarm entity at a pose; `tier` is its `componentIndex`
    *  (size class and glow tier, `podComponentIndex`). */
@@ -92,8 +85,8 @@ export interface LootSubsystemDeps {
   forEachCollector: (visit: (c: LootCollector) => void) => void;
   /** Salvage plan PR 12, hold-zone pickup: is pod `podId` (at x, y) held by a
    *  tractor beam of collector `c` close enough to take it
-   *  (`ForceFieldSubsystem.inTractorHold`)? Such a pod is picked up exactly as
-   *  if flown over. Absent ⇒ fly-over only. */
+   *  (`ForceFieldSubsystem.inTractorHold`)? Such a pod is loaded whole (until
+   *  plan cargo-pods F ends ore pods: then a tractor only moves a pod). */
   inTractorHold?: (c: LootCollector, podId: string, x: number, y: number) => boolean;
   /** Piece store: a WRECK piece goes whole into a collector's hold when its
    *  own tractor holds it in the hold zone, or (the factory line) when it is
@@ -139,10 +132,6 @@ interface LivePod {
 
 /** Derelict hulks last an hour (a normal pod: 15 min). */
 export const DERELICT_TTL_MS = 60 * 60_000;
-/** Salvage-over-time: cargo weight transferred per collect step (~10 Hz). */
-export const DERELICT_SALVAGE_STEP = 15;
-/** Throttle derelict pickup popups to one per this many steps. */
-const DERELICT_NOTIFY_STEPS = 10;
 
 export class LootSubsystem {
   private readonly pods = new Map<string, LivePod>();
@@ -267,7 +256,7 @@ export class LootSubsystem {
     if (rec === undefined && opts.extra === undefined) return null;
     let hold = rec !== undefined ? cloneHold(rec.hold) : emptyHold();
     if (opts.extra !== undefined) mergeInto(hold, opts.extra);
-    if (opts.deathLoss !== undefined) hold = rollDeathLoss(hold, stream(hashString(opts.deathLoss), 'death-loss'));
+    if (opts.deathLoss !== undefined && this.d.keepAllOnDeath !== true) hold = rollDeathLoss(hold, stream(hashString(opts.deathLoss), 'death-loss'));
     const alone = opts.deathLoss !== undefined;
     const size = opts.size ?? 0;
     if (rec === undefined) return this.drop(hold, x, y, vx, vy, { cause, alone, size });
@@ -298,48 +287,16 @@ export class LootSubsystem {
       if (maxM > 0) this.d.heldPieces.near(c.x, c.y, shipHitBound(c.kind.id), maxM, this.consumeNearPiece);
       this.pieceCollector = null;
     }
+    // Plan cargo-pods slice 14: no fly-over or touch pickup; a pilot opens a
+    // pod (`take`). An AI harvester has no window: it takes all within the
+    // same reach. A pod in the collector's own tractor hold zone loads whole.
     for (const [podId] of this.pods) {
       const pose = this.d.podPose(podId);
       if (pose === null) continue;
-      const dx = pose.x - c.x;
-      const dy = pose.y - c.y;
-      // Flown over, touching the hull, or held in this collector's tractor
-      // beam close enough: the same atomic pickup (a full hold leaves the pod).
-      if (dx * dx + dy * dy > PICKUP_R2 && !shipWithinHullReach(c.kind.id, c.shieldUp, pose.x, pose.y, c.x, c.y, c.angle, LOOT_TOUCH_REACH)
-        && this.d.inTractorHold?.(c, podId, pose.x, pose.y) !== true) continue;
-      this.pickUp(c, podId);
+      if (c.npc === true && this.inOpenReach(c, podId)) this.moveOut(c, podId, null);
+      else if (this.d.inTractorHold?.(c, podId, pose.x, pose.y) === true) this.moveOut(c, podId, null);
     }
   };
-
-  private pickUp(c: LootCollector, podId: string): void {
-    const podRec = this.d.holdStore.get(podId);
-    if (podRec === undefined) return;
-    const shipRec = this.d.holdStore.get(c.shipInstanceId);
-    const shipHold = shipRec ? cloneHold(shipRec.hold) : { goods: {}, blueprints: [] };
-    const podHold = cloneHold(podRec.hold);
-    // A DERELICT is salvaged over time — a bounded weight per step, so two ships
-    // alongside it genuinely contest the haul. A normal pod is taken at once.
-    const live = this.pods.get(podId);
-    const { moved, srcEmptied } = live?.derelict
-      ? transferUpTo(shipHold, podHold, c.capacity, DERELICT_SALVAGE_STEP)
-      : transferInto(shipHold, podHold, c.capacity);
-    if (isHoldEmpty(moved)) return; // hold full — the pod stays
-    this.commitMove(c, podId, podRec, shipHold, podHold, srcEmptied);
-    if (live?.derelict) {
-      // Throttle salvage popups: accumulate, notify on empty or every N steps.
-      const key = `${c.playerId}|${podId}`;
-      let acc = this.salvageAcc.get(key);
-      if (acc === undefined) { acc = { hold: { goods: {}, blueprints: [] }, steps: 0 }; this.salvageAcc.set(key, acc); }
-      transferInto(acc.hold, moved, Infinity);
-      acc.steps++;
-      if (srcEmptied || acc.steps >= DERELICT_NOTIFY_STEPS) {
-        this.d.onCollected?.(c, acc.hold, podId);
-        this.salvageAcc.delete(key);
-      }
-      return;
-    }
-    this.d.onCollected?.(c, moved, podId);
-  }
 
   /**
    * Take from an opened pod (the loot window, plan cargo-pods slice 10):
@@ -352,7 +309,15 @@ export class LootSubsystem {
     const podRec = this.d.holdStore.get(podId);
     const pose = this.d.podPose(podId);
     if (!this.pods.has(podId) || podRec === undefined || pose === null) return { ok: false, reason: 'gone' };
-    if (!shipWithinHullReach(c.kind.id, c.shieldUp, pose.x, pose.y, c.x, c.y, c.angle, LOOT_OPEN_REACH)) return { ok: false, reason: 'out_of_reach' };
+    if (!this.inOpenReach(c, podId)) return { ok: false, reason: 'out_of_reach' };
+    return this.moveOut(c, podId, want);
+  }
+
+  /** Move `want` (null = everything) from pod `podId` into `c`'s hold, as
+   *  much as its weight allows: the one pod → ship move (no reach check). */
+  private moveOut(c: LootCollector, podId: string, want: CargoRequest | null): TakeResult {
+    const podRec = this.d.holdStore.get(podId);
+    if (podRec === undefined) return { ok: false, reason: 'gone' };
     const shipRec = this.d.holdStore.get(c.shipInstanceId);
     const shipHold = shipRec ? cloneHold(shipRec.hold) : emptyHold();
     const podHold = cloneHold(podRec.hold);
@@ -363,6 +328,12 @@ export class LootSubsystem {
     this.commitMove(c, podId, podRec, shipHold, podHold, isHoldEmpty(podHold));
     this.d.onCollected?.(c, moved, podId);
     return { ok: true, moved };
+  }
+
+  /** Is pod `podId` within `LOOT_OPEN_REACH` of `c`'s hull (the loot window's open rule)? */
+  inOpenReach(c: LootCollector, podId: string): boolean {
+    const pose = this.d.podPose(podId);
+    return pose !== null && shipWithinHullReach(c.kind.id, c.shieldUp, pose.x, pose.y, c.x, c.y, c.angle, LOOT_OPEN_REACH);
   }
 
   /** Commit one pod → ship move as ONE atomic group; an emptied pod's row is
@@ -426,9 +397,6 @@ export class LootSubsystem {
     hp.remove(pieceId);
     this.d.onCollected?.(c, moved, pieceId);
   }
-
-  /** Derelict salvage popup accumulator:`${playerId}|${podId}` → moved so far. */
-  private readonly salvageAcc = new Map<string, { hold: Hold; steps: number }>();
 
   /** Expire a pod now, as its TTL would: contents gone, entity despawned.
    *  Pods are indestructible (owner 2026-11-17), so this is the only way a

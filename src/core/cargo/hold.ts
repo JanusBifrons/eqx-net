@@ -152,13 +152,6 @@ export function transferInto(dst: Hold, src: Hold, dstCapacity: number): Transfe
   return { moved, srcEmptied: isHoldEmpty(src) };
 }
 
-/** Move a bounded AMOUNT of weight (salvage-over-time, P1a-2). Same rules as
- *  `transferInto` with the per-step budget as the capacity limit. */
-export function transferUpTo(dst: Hold, src: Hold, dstCapacity: number, stepWeight: number): TransferResult {
-  const cap = Math.min(dstCapacity, holdWeight(dst) + stepWeight);
-  return transferInto(dst, src, cap);
-}
-
 /** Merge `src` entirely into `dst` (no capacity — pods merging at the cap). */
 export function mergeInto(dst: Hold, src: Hold): void {
   transferInto(dst, src, Infinity);

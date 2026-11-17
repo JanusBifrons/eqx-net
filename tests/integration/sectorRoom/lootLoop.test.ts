@@ -3,8 +3,9 @@
  * through a real SectorRoom:
  *
  *  1. a combat-killed drone drops a loot pod where it died;
- *  2. flying over a pod moves its contents into the ship's hold, and the hold
- *     reaches the client on the OWN-ship snapshot slice (invariant #16);
+ *  2. opening a pod (the loot window's `cargo_move` take) moves its contents
+ *     into the ship's hold, and the hold reaches the client on the OWN-ship
+ *     snapshot slice (invariant #16);
  *  3. hardcore: when that ship dies, its hold spills as a pod and the ship hold
  *     is gone (no duplication).
  *
@@ -26,6 +27,12 @@ function room(id: string): SectorRoom {
   return matchMaker.getLocalRoomById(id) as unknown as SectorRoom;
 }
 
+/** Take `items` out of pod `podId` over the real loot-window message. */
+function takeFromPod(r: SectorRoom, cr: { send: (t: string, m: object) => void }, podId: string, items: object): void {
+  const entityId = r._internals.swarmRegistry.get(podId)!.entityId;
+  cr.send('cargo_move', { type: 'cargo_move', entityId, dir: 'take', items });
+}
+
 async function until(pred: () => boolean, ms: number): Promise<boolean> {
   const end = Date.now() + ms;
   while (Date.now() < end) {
@@ -38,13 +45,13 @@ async function until(pred: () => boolean, ms: number): Promise<boolean> {
 describe('SectorRoom integration — loot loop (P1a-1)', () => {
   let harness: SectorTestHarness;
   beforeEach(async () => {
-    harness = await bootSectorTestServer({ sectorKey: 'sol-prime', droneCount: 0, testMode: true });
+    harness = await bootSectorTestServer({ sectorKey: 'sol-prime', droneCount: 0, testMode: true, keepAllOnDeath: true });
   }, 15_000);
   afterEach(async () => {
     if (harness) await harness.cleanup();
   }, 10_000);
 
-  it('a killed drone drops a pod; flying over it fills the hold (seen in the own-ship snapshot)', { timeout: 40_000 }, async () => {
+  it('a killed drone drops a pod; taking from it fills the hold (seen in the own-ship snapshot)', { timeout: 40_000 }, async () => {
     const pid = randomUUID();
     const cr = await harness.connectActive(pid, { spawnX: 0, spawnY: 0 });
     const r = room(cr.roomId);
@@ -58,14 +65,15 @@ describe('SectorRoom integration — loot loop (P1a-1)', () => {
     expect(internal.swarmRegistry.get('loot-drone') ?? null).toBeNull();
     expect(internal.loot.podCount(), 'a combat kill must drop a loot pod').toBe(1);
 
-    // 2) Seed a pod right next to the ship → the collector picks it up.
-    internal.loot.drop({ goods: { salvage: 7 }, blueprints: [] }, 20, 0);
+    // 2) Seed a pod right next to the ship → the loot window takes it.
+    const podId = internal.loot.drop({ goods: { salvage: 7 }, blueprints: [] }, 20, 0)!;
     const state = r.state as SectorState;
     let shipId = '';
     for (const [, s] of state.ships) if (s.playerId === pid && s.isActive) shipId = s.shipInstanceId;
     expect(shipId).not.toBe('');
+    takeFromPod(r, cr, podId, { goods: { salvage: 7 } });
     const picked = await until(() => (getHoldStore().get(shipId)?.hold.goods.salvage ?? 0) >= 7, 5_000);
-    expect(picked, 'flying over a pod must move it into the ship hold').toBe(true);
+    expect(picked, 'taking from a pod must move it into the ship hold').toBe(true);
 
     // The own-ship snapshot slice carries the authoritative cargo (#16).
     harness.sendThrust(cr);
@@ -213,7 +221,8 @@ describe('SectorRoom integration — packed loot (economy v2 W4a)', () => {
     let shipId = '';
     for (const [, s] of state.ships) if (s.playerId === pid && s.isActive) shipId = s.shipInstanceId;
 
-    internal.loot.drop({ goods: {}, blueprints: [], packed: [{ product: 'structure:smelter', quality: 42 }] }, 20, 0);
+    const podId = internal.loot.drop({ goods: {}, blueprints: [], packed: [{ product: 'structure:smelter', quality: 42 }] }, 20, 0)!;
+    takeFromPod(r, cr, podId, { packed: ['structure:smelter'] });
     const picked = await until(() => (getHoldStore().get(shipId)?.hold.packed?.length ?? 0) === 1, 5_000);
     expect(picked, 'the packed structure must move into the ship hold').toBe(true);
     let sawPacked = false;

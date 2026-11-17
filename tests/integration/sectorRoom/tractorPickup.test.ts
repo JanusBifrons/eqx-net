@@ -27,7 +27,6 @@ import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import { getShipKind, type WeaponMount } from '../../../src/shared-types/shipKinds.js';
 import { cargoCapacityForMaxHealth } from '../../../src/shared-types/goods.js';
 import { getWeapon } from '../../../src/core/combat/WeaponCatalogue.js';
-import { LOOT_PICKUP_RADIUS } from '../../../src/server/cargo/LootSubsystem.js';
 import { TRACTOR_PICKUP_HOLD_MUL } from '../../../src/server/rooms/ForceFieldSubsystem.js';
 import { getHoldStore } from '../../../src/server/db/PersistenceWorker.js';
 
@@ -105,7 +104,6 @@ describe('SectorRoom integration — tractor hold-zone pickup', () => {
   }
 
   it('a tractored pod near the emitter is picked up; the same pod untractored at that distance is not', async () => {
-    expect(POD_DIST, 'test geometry: the pod sits outside the fly-over radius').toBeGreaterThan(LOOT_PICKUP_RADIUS + 20);
     expect(POD_DIST).toBeLessThan(HOLD * TRACTOR_PICKUP_HOLD_MUL);
     const s = await setup();
     const podId = s.int().loot.drop({ goods: { salvage: 7 }, blueprints: [] }, 0, POD_DIST);

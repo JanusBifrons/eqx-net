@@ -1,11 +1,10 @@
 import { podSizeOf } from '../../shared-types/shipKinds/cargoPod.js';
 import { describe, expect, it } from 'vitest';
-import { LootSubsystem, LOOT_POD_TTL_MS, MAX_LIVE_LOOT_PER_SECTOR, DERELICT_SALVAGE_STEP, type LootCollector, type LootSubsystemDeps } from './LootSubsystem.js';
+import { LootSubsystem, LOOT_POD_TTL_MS, MAX_LIVE_LOOT_PER_SECTOR, type LootCollector, type LootSubsystemDeps } from './LootSubsystem.js';
 import { HoldStore } from './HoldStore.js';
 import type { IPersistenceSink, PersistOp } from '../../core/contracts/IPersistenceSink.js';
 import type { Hold } from '../../shared-types/goods.js';
 import { getShipKind, type ShipKind, type WeaponMount } from '../../shared-types/shipKinds.js';
-import { LOOT_PICKUP_RADIUS } from './LootSubsystem.js';
 import { salvageTierMass } from '../../core/combat/salvageTargeting.js';
 import type { PieceStoreView } from '../rooms/wreckLineage.js';
 import { shipHitBound, shipWithinHullReach } from '../../core/combat/shipHitShape.js';
@@ -59,50 +58,25 @@ function setup(opts: { sectorKey?: string | null; collectors?: LootCollector[]; 
 const SHIP: LootCollector = { playerId: 'p1', shipInstanceId: 'ship-1', x: 0, y: 0, angle: 0, shieldUp: false, capacity: 300, kind: getShipKind('fighter') };
 
 describe('LootSubsystem (P1a-1)', () => {
-  it('fly-over pickup moves the pod into the ship hold and deletes the pod in ONE atomic group', () => {
+  it('a pilot flying over or touching a pod no longer loads it: pods open in the loot window (plan cargo-pods slice 14)', () => {
     const t = setup({ collectors: [{ ...SHIP }] });
-    const pod = t.loot.drop(h({ salvage: 10 }), 30, 0)!;
-    t.ops.length = 0;
+    const over = t.loot.drop(h({ salvage: 10 }), 0, 0, 0, 0, { alone: true })!;
+    const touching = t.loot.drop(h({ alloy: 2 }), hullEdge('fighter', 1, 0) + 4, 0, 0, 0, { alone: true })!;
     t.loot.collectTick();
-    expect(t.store.get('ship-1')!.hold.goods.salvage).toBe(10);
-    expect(t.store.get(pod)).toBeUndefined();
-    expect(t.despawned).toEqual([pod]);
-    // Exactly one persisted op, and it is an atomic GROUP (ship put + pod delete).
-    expect(t.ops).toHaveLength(1);
-    const g = t.ops[0]!;
-    expect(g.type).toBe('GROUP');
-    if (g.type === 'GROUP') {
-      expect(g.ops.map((o) => o.type).sort()).toEqual(['HOLD_DELETE', 'HOLD_PUT']);
-    }
-  });
-
-  it('a full hold takes what fits; the rest stays in the pod', () => {
-    const t = setup({ collectors: [{ ...SHIP, capacity: 4 }] });
-    const pod = t.loot.drop(h({ salvage: 10 }), 0, 0)!;
-    t.loot.collectTick();
-    expect(t.store.get('ship-1')!.hold.goods.salvage).toBe(4);
-    expect(t.store.get(pod)!.hold.goods.salvage).toBe(6);
+    expect(t.store.get('ship-1')).toBeUndefined();
+    expect(t.store.get(over)!.hold.goods.salvage).toBe(10);
+    expect(t.store.get(touching)!.hold.goods.alloy).toBe(2);
     expect(t.despawned).toEqual([]);
   });
 
-  it('a pod touching a big hull goes in, far outside the centre circle; one a little off it stays', () => {
-    const barge = getShipKind('barge');
-    const edge = hullEdge(barge.id, 0, 1);
-    expect(edge, 'the barge side is far past the old centre circle').toBeGreaterThan(LOOT_PICKUP_RADIUS * 3);
-    const t = setup({ collectors: [{ ...SHIP, kind: barge, capacity: 1000 }] });
-    const touching = t.loot.drop(h({ minerals: 3 }), 0, edge + 6)!;
-    const off = t.loot.drop(h({ minerals: 4 }), 0, -(hullEdge(barge.id, 0, -1) + 120))!;
+  it('an AI harvester (no window) takes a whole pod within the open reach; one further off stays', () => {
+    const t = setup({ collectors: [{ ...SHIP, npc: true }] });
+    const near = t.loot.drop(h({ minerals: 3 }), 60, 0, 0, 0, { alone: true })!;
+    const far = t.loot.drop(h({ minerals: 4 }), 2_000, 0, 0, 0, { alone: true })!;
     t.loot.collectTick();
     expect(t.store.get('ship-1')!.hold.goods.minerals).toBe(3);
-    expect(t.store.get(touching)).toBeUndefined();
-    expect(t.store.get(off)!.hold.goods.minerals).toBe(4);
-  });
-
-  it('out-of-range pods are not collected', () => {
-    const t = setup({ collectors: [{ ...SHIP }] });
-    t.loot.drop(h({ salvage: 3 }), 500, 0);
-    t.loot.collectTick();
-    expect(t.store.get('ship-1')).toBeUndefined();
+    expect(t.store.get(near)).toBeUndefined();
+    expect(t.store.get(far)!.hold.goods.minerals).toBe(4);
   });
 
   it('a nearby drop merges into an existing pod instead of spawning', () => {
@@ -224,8 +198,8 @@ describe('LootSubsystem (P1a-1)', () => {
     expect(t.loot.isPod('pod-b')).toBe(false);
   });
 
-  it('a DERELICT is salvaged over time (bounded per step), never merged into, and persisted as derelict', () => {
-    const t = setup({ collectors: [{ ...SHIP, capacity: 1000 }] });
+  it('a DERELICT opens like any pod: taken at once (no trickle), never merged into, persisted as derelict', () => {
+    const t = setup();
     t.store.put({ holderUid: 'ship-9', holderType: 'ship', ownerId: 'p9', sectorKey: null, x: null, y: null, hold: h({ salvage: 40 }), expiresAt: null });
     const hulk = t.loot.spillShipHold('ship-9', 10, 0, 0, 0, 'abandoned', { player: true, derelict: true })!;
     expect(t.loot.isDerelict(hulk)).toBe(true);
@@ -233,12 +207,7 @@ describe('LootSubsystem (P1a-1)', () => {
     // A normal drop beside it does NOT merge into the hulk.
     const other = t.loot.drop(h({ alloy: 1 }), 20, 0)!;
     expect(other).not.toBe(hulk);
-    // One collect step moves at most DERELICT_SALVAGE_STEP weight from the hulk.
-    t.loot.collectTick();
-    const after1 = t.store.get(hulk)!.hold.goods.salvage!;
-    expect(after1).toBe(40 - DERELICT_SALVAGE_STEP);
-    // Keep salvaging until the hulk is empty, then it's gone.
-    for (let i = 0; i < 10 && t.store.get(hulk); i++) t.loot.collectTick();
+    expect(t.loot.take({ ...SHIP, capacity: 1000 }, hulk, null).ok).toBe(true);
     expect(t.store.get(hulk)).toBeUndefined();
     expect(t.store.get('ship-1')!.hold.goods.salvage).toBe(40);
   });

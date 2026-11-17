@@ -39,7 +39,7 @@ describe('SectorRoom integration — vaporised salvage, every ship (owner 2026-1
   async function boot(): Promise<{ int: Internals; destroys: DestroyEvent[] }> {
     harness = await bootSectorTestServer({
       sectorKey: 'sol-prime', droneCount: 0, testMode: true, peacefulDrones: true, asteroidConfig: [],
-      capitalWrecks: true, subcapWrecks: true,
+      capitalWrecks: true, subcapWrecks: true, keepAllOnDeath: true,
     });
     const observer = await harness.connectActive(randomUUID(), { shipKind: 'fighter', spawnX: -40_000, spawnY: -40_000 });
     const destroys: DestroyEvent[] = [];
@@ -147,7 +147,7 @@ describe('SectorRoom integration — vaporised salvage, every ship (owner 2026-1
     expect(follow).toBeGreaterThan(0);
     harness = await bootSectorTestServer({
       sectorKey: 'sol-prime', droneCount: 0, testMode: true, asteroidConfig: [], pilotCapitals: true,
-      capitalWrecks: true, subcapWrecks: true, traverseTicksCap: 0, lockTimeCapS: 0,
+      capitalWrecks: true, subcapWrecks: true, traverseTicksCap: 0, lockTimeCapS: 0, keepAllOnDeath: true,
       // Heading π: starboard faces −x, at the pilot (the beamFits setup).
       dronePoses: [{ kind: 'heavy-cruiser-beam', x: 5000, y: 0, angle: Math.PI }],
     });

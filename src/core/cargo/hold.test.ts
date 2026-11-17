@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addPacked, emptyHold, rollDeathLoss, extractRequested, holdBestTier, holdWeight, isHoldEmpty, mergeInto, packedCount, packedWeightOf, takePacked, transferInto, transferUpTo } from './hold.js';
+import { addPacked, emptyHold, rollDeathLoss, extractRequested, holdBestTier, holdWeight, isHoldEmpty, mergeInto, packedCount, packedWeightOf, takePacked, transferInto } from './hold.js';
 import { legacyHoldCredits, parseHoldJson, type Hold } from '../../shared-types/goods.js';
 import { legacyBlueprintItem } from '../../shared-types/items.js';
 import { rollKillBounty, rollLoot } from '../../shared-types/lootTables.js';
@@ -66,13 +66,6 @@ describe('hold arithmetic (P1a-1)', () => {
     expect(takePacked(dst, 'structure:smelter')!.quality).toBe(30);
     expect(takePacked(dst, 'structure:smelter')).toBeNull();
     expect(dst.packed).toBeUndefined();
-  });
-
-  it('transferUpTo bounds a single step', () => {
-    const dst = emptyHold();
-    const src = h({ salvage: 100 });
-    transferUpTo(dst, src, 1000, 7);
-    expect(dst.goods.salvage).toBe(7);
   });
 
   it('mergeInto empties the source', () => {

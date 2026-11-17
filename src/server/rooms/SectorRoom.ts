@@ -1934,6 +1934,9 @@ export class SectorRoom extends Room<SectorState> {
        * normally; only the COMBAT state transition (pursuit + fire)
        * is suppressed. */
       peacefulDrones?: boolean;
+      /** Test mode only: deaths keep every stack (no EVE coin flip), for
+       *  tests that pin exact pod contents. */
+      keepAllOnDeath?: boolean;
       /**
        * Phase 5e sleep handshake test mode. Spawns exactly one stationary
        * asteroid at a known position so the test can observe its sleep
@@ -2885,6 +2888,7 @@ export class SectorRoom extends Room<SectorState> {
     this.loot = new LootSubsystem({
       holdStore: getHoldStore(),
       sectorKey: () => this.sectorKey,
+      ...(roomOpts.testMode === true && roomOpts.keepAllOnDeath === true ? { keepAllOnDeath: true } : {}),
       now: () => this.gameClock.now(),
       spawnPodEntity: (id, x, y, vx, vy, tier) => {
         if (this.swarmRegistry.has(id)) return false;
@@ -3564,12 +3568,14 @@ export class SectorRoom extends Room<SectorState> {
         if (!p) return;
         // Sizes 0..3 left to right, beacons grey, blue, gold, magenta (spill).
         const holds: Array<Partial<Record<'salvage' | 'alloy' | 'core', number>>> = [{ salvage: 4 }, { alloy: 4 }, { core: 2 }, { salvage: 9 }];
-        let x = p.x + 120;
+        // One row centred under the ship, so every size is in shot.
+        const GAP = 24;
+        const halves = holds.map((_, size) => scrapColliderFor('cargo-pod', podComponentIndex(size, 0))?.radius ?? 20);
+        let x = p.x - (halves.reduce((s, r) => s + 2 * r, 0) + GAP * (holds.length - 1)) / 2;
         for (let size = 0; size < holds.length; size++) {
-          const half = scrapColliderFor('cargo-pod', podComponentIndex(size, 0))?.radius ?? 20;
-          x += half;
-          this.loot.drop({ goods: holds[size]!, blueprints: [] }, x, p.y - 160, 0, 0, { size, alone: true, spill: size === 3 });
-          x += half + 40;
+          x += halves[size]!;
+          this.loot.drop({ goods: holds[size]!, blueprints: [] }, x, p.y - 130, 0, 0, { size, alone: true, spill: size === 3 });
+          x += halves[size]! + GAP;
         }
       },
     });
@@ -4056,6 +4062,9 @@ export class SectorRoom extends Room<SectorState> {
         return;
       }
       const entityId = ref.entityId!;
+      // Plan cargo-pods — a loot pod opens in the loot window.
+      const podId = this.swarmRegistry.getByEntityId(entityId)?.id;
+      if (podId !== undefined && this.loot.isPod(podId)) { send(this.podCargo(playerId, entityId, podId, move)); return; }
       const access = this.cargoAccess(playerId, entityId);
       if (!access.ok) {
         const lr = access.locked;
@@ -11520,19 +11529,7 @@ export class SectorRoom extends Room<SectorState> {
     if (this.sectorKey === null) return; // engineering rooms: no roster ⇒ no holds
     const c = this._collectorScratch;
     for (const [pid] of this.playerToSlot) {
-      const ship = this.getActiveShip(pid);
-      if (!ship?.alive || !ship.isActive || !this.hasHold(ship.shipInstanceId)) continue;
-      const pose = this.shipPoseCache.get(pid);
-      if (!pose) continue;
-      c.playerId = pid;
-      c.shipInstanceId = ship.shipInstanceId;
-      c.x = pose.x;
-      c.y = pose.y; c.angle = pose.angle; c.shieldUp = ship.shield > 0; // the hull-touch pickup's shape
-      // P5 — a fitted Cargo Expander raises the capacity (shared helper, #15).
-      c.capacity = this.shipCargoCapacity(ship.kind, ship.shipInstanceId);
-      c.kind = getShipKind(ship.kind); // its hull radius + mounts: the pieces it consumes
-      c.npc = false;
-      visit(c);
+      if (this.pilotCollector(pid) !== null) visit(c);
     }
     // NPC loot collectors (the `collectsLoot` kind trait, e.g. robot
     // harvesters) collect too (#17: a live swarm entity, kind 1; its hold is
@@ -11551,6 +11548,49 @@ export class SectorRoom extends Room<SectorState> {
       c.npc = true;
       visit(c);
     }
+  }
+
+  /** Pilot `pid`'s active hull as a loot collector (the reused scratch),
+   *  or null with no live hold-carrying hull (#17: ACTIVE + alive only). */
+  private pilotCollector(pid: string): LootCollector | null {
+    const ship = this.getActiveShip(pid);
+    if (!ship?.alive || !ship.isActive || !this.hasHold(ship.shipInstanceId)) return null;
+    const pose = this.shipPoseCache.get(pid);
+    if (!pose) return null;
+    const c = this._collectorScratch;
+    c.playerId = pid;
+    c.shipInstanceId = ship.shipInstanceId;
+    c.x = pose.x;
+    c.y = pose.y; c.angle = pose.angle; c.shieldUp = ship.shield > 0; // the hull-touch pickup's shape
+    // P5 — a fitted Cargo Expander raises the capacity (shared helper, #15).
+    c.capacity = this.shipCargoCapacity(ship.kind, ship.shipInstanceId);
+    c.kind = getShipKind(ship.kind); // its hull radius + mounts: the pieces it consumes
+    c.npc = false;
+    return c;
+  }
+
+  /** A loot pod opened in the loot window (plan cargo-pods slice 11): free
+   *  for all within `LOOT_OPEN_REACH`; `take` only (a pod is never filled). */
+  private podCargo(playerId: string, entityId: number, podId: string, move: { dir: 'take' | 'put'; items: CargoRequest } | null): CargoState {
+    const closed = (message: string): CargoState => ({
+      type: 'cargo_state', entityId, open: false, hold: null, used: 0, capacity: 0, ship: null, shipCapacity: 0, message, ...(move ? { ok: false } : {}),
+    });
+    const c = this.pilotCollector(playerId);
+    if (c === null) return closed('You need a ship to take loot.');
+    let verdict: { ok: boolean; message: string } | undefined;
+    if (move !== null) {
+      if (move.dir === 'put') verdict = { ok: false, message: 'A cargo pod only gives.' };
+      else {
+        const r = this.loot.take(c, podId, move.items);
+        verdict = r.ok ? { ok: true, message: 'Loaded aboard.' }
+          : { ok: false, message: r.reason === 'hold_full' ? 'No room aboard for that.' : r.reason === 'out_of_reach' ? 'Fly closer to open it.' : 'It is empty.' };
+      }
+    }
+    const pod = getHoldStore().get(podId)?.hold;
+    const shipHold = getHoldStore().get(c.shipInstanceId)?.hold ?? emptyHold();
+    if (pod === undefined) return { type: 'cargo_state', entityId, open: false, hold: null, used: 0, capacity: 0, ship: shipHold, shipCapacity: c.capacity, message: 'It is empty.', ...(verdict ? { ok: verdict.ok } : {}) };
+    if (!this.loot.inOpenReach(c, podId)) return closed('Fly closer to open it.');
+    return { type: 'cargo_state', entityId, open: true, hold: pod, used: holdWeight(pod), capacity: 0, ship: shipHold, shipCapacity: c.capacity, ...(verdict ?? {}) };
   }
 
   /** A pickup landed: tell the collector (UI accelerator — the authoritative
