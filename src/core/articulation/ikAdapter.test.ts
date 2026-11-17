@@ -109,3 +109,53 @@ describe('twoBoneIkSolve through evaluateRig (structure-restyle 2b+)', () => {
     expect([...p3.value]).toEqual([1, 0.5]);
   });
 });
+
+describe('swing side and whole-turn joints (structure-restyle 2g)', () => {
+  // Root at the origin facing +x; bones 10 + 10. Elbow free over a full turn
+  // [0, 2π], resting folded CCW at 3.0.
+  const def: RigDef = {
+    id: 'swing-arm',
+    parts: [
+      { id: 'a', parent: null, anchorX: 0, anchorY: 0, joint: { type: 'hinge', min: -Math.PI, max: Math.PI }, rest: 0, layer: 'over', kind: 'cosmetic' },
+      { id: 'b', parent: 'a', anchorX: 10, anchorY: 0, joint: { type: 'hinge', min: 0, max: 2 * Math.PI }, rest: 3, layer: 'over', kind: 'cosmetic' },
+    ],
+    clips: [
+      { id: 'side', ik: { chain: ['a', 'b'], tipX: 10, tipY: 0, swingSide: { x: 0, y: 1 } }, tracks: [
+        { part: 'a', keys: [{ tick: 10, fromTarget: true }] },
+        { part: 'b', keys: [{ tick: 10, fromTarget: true }] },
+      ] },
+      { id: 'fixed', ik: { chain: ['a', 'b'], tipX: 10, tipY: 0, bend: 1 }, tracks: [
+        { part: 'a', keys: [{ tick: 10, fromTarget: true }] },
+        { part: 'b', keys: [{ tick: 10, fromTarget: true }] },
+      ] },
+    ],
+  };
+  const r = buildRig(def);
+  const p = createRigPose(r);
+  const b = rigPartIndex(r, 'b');
+
+  it('the elbow takes the fold on the swing side, whichever side the target is', () => {
+    for (const target of [{ x: 12, y: 0.5 }, { x: -12, y: 0.5 }, { x: 5, y: 3 }, { x: -5, y: 3 }]) {
+      evaluateRig(r, play('side', 0, target), 10, p, twoBoneIkSolve);
+      expect(p.ikReached).toBe(true);
+      expect(p.y[b]!, `elbow above for (${target.x}, ${target.y})`).toBeGreaterThan(target.y / 2);
+      const t = tipOf(p, b, 10, 0);
+      expect(Math.hypot(t.x - target.x, t.y - target.y)).toBeLessThan(1e-6);
+    }
+    // A fixed CCW fold puts the elbow below the line for a target on the right.
+    evaluateRig(r, play('fixed', 0, { x: 12, y: 0.5 }), 10, p, twoBoneIkSolve);
+    expect(p.y[b]!).toBeLessThan(0);
+  });
+
+  it('a clockwise solution on a [0, 2π] joint blends the short way, over the fold, not out straight', () => {
+    const target = { x: 12, y: 0.5 }; // CW fold on the swing side: IK elbow < 0
+    evaluateRig(r, play('side', 0, target), 10, p, twoBoneIkSolve);
+    const end = p.value[b]!;
+    expect(end).toBeGreaterThan(Math.PI); // the 2π copy of a negative elbow
+    expect(end).toBeLessThanOrEqual(2 * Math.PI);
+    for (let t = 0; t <= 10; t += 0.5) {
+      evaluateRig(r, play('side', 0, target), t, p, twoBoneIkSolve);
+      expect(p.value[b]!).toBeGreaterThanOrEqual(3 - 1e-12); // never unfolds through 0 (straight)
+    }
+  });
+});
