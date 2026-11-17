@@ -15,7 +15,7 @@
  *
  * Dev-only page: /__art-lab__/index.html?style=…&scene=…&zoom=…
  */
-import { Application, CanvasSource, Container, Graphics, RenderTexture, Sprite, Texture, TilingSprite } from 'pixi.js';
+import { Application, CanvasSource, Container, Graphics, RenderTexture, Sprite, Text, Texture, TilingSprite } from 'pixi.js';
 import { FxEngines } from '../render/art/fx/FxEngines.js';
 import { bakeFxImg, type FxId, type Img } from '../render/art/fx/fxTextures.js';
 import type { ArtService } from '../render/art/ArtService.js';
@@ -23,7 +23,10 @@ import { getShipKind } from '../../shared-types/shipKinds.js';
 import { shipTuning } from '../../shared-types/shipScale/tuning.js';
 import { buildShipGfxFromShape, buildStructureGfx, shapeForKind } from '../render/pixi/spriteBuilders.js';
 import { ArtCache, PIXEL_ROT_STEPS, SUN_STEPS, type PixelSettings, type ShipArt, type StructArt } from './assets.js';
-import { buildScene, SCENE_IDS, type Cam, type Pose, type Scene, type SceneId, type ShipE, type Shot } from './scenes.js';
+import { buildScene, parseStructStyle, SCENE_IDS, structFootprint, structScale, type Cam, type Pose, type Scene, type SceneId, type ShipE, type Shot } from './scenes.js';
+import { ConnectorRenderer } from '../render/pixi/ConnectorRenderer.js';
+import { getStructureKind } from '../../shared-types/structureKinds.js';
+import type { RenderMirror, StructureRenderState, SwarmRenderState } from '../../core/contracts/IRenderer.js';
 import { hash01, valueNoise } from '../render/art/fields.js';
 import { seedVariant, type BakeJob } from '../render/art/bake.js';
 import { LitScene, LitShipMesh, litTileFromMaps } from '../render/art/litShipShader.js';
@@ -44,6 +47,9 @@ const litScene = new LitScene();
 /** A capital is this many times taller than its baked relief (towering hulls). */
 const CAPITAL_HEIGHT_FRAC = 0.12;
 const SCENE = ((SCENE_IDS as readonly string[]).includes(qs.get('scene') ?? '') ? qs.get('scene') : 'ships') as SceneId;
+/** Structure style direction (restyle §4), `?restyle=current` (only arm so far).
+ *  Not `?style=`: that already picks the lab's render arm (current/machined/…). */
+const RESTYLE = parseStructStyle(qs.get('restyle'));
 const ZOOM = qs.has('zoom') ? Number(qs.get('zoom')) : undefined;
 const BENCH_N = qs.has('n') ? Number(qs.get('n')) : 40;
 const PX_OVERRIDE = qs.has('px') ? Number(qs.get('px')) : 0;
@@ -140,6 +146,8 @@ interface ShipView {
   a: Sprite;
   b: Sprite;
   gfx: Graphics | null;
+  /** Machined capital: one sprite per baked row strip (art.tiles). */
+  tileSpr?: Sprite[];
   /** `lit` style: the GPU-lit hull. */
   lit?: LitShipMesh;
   /** `lit` style: a big hull that shades others (box half size, height). */
@@ -221,7 +229,7 @@ async function main(): Promise<void> {
   });
   host.appendChild(app.canvas);
 
-  const scene: Scene = buildScene(SCENE, ZOOM, BENCH_N);
+  const scene: Scene = buildScene(SCENE, ZOOM, BENCH_N, { w: W, h: H });
   const cache = new ArtCache();
   const t0Bake = performance.now();
   // Machined: bake everything the scene needs on worker threads first
@@ -241,7 +249,12 @@ async function main(): Promise<void> {
   const structL = new Container(), litL = new Container(), trailL = new Container();
   const shipL = new Container(), glowL = new Container(), fxL = new Container();
   for (const l of [litL, trailL, glowL, fxL]) l.blendMode = 'add';
-  world.addChild(structL, litL, trailL, shipL, glowL, fxL);
+  // Grid lines (scene.edges) under the structures, drawn by the game's own
+  // ConnectorRenderer from a minimal render mirror.
+  const lineL = new Container();
+  world.addChild(lineL, structL, litL, trailL, shipL, glowL, fxL);
+  const labelL = new Container();
+  world.addChild(labelL);
   // The game's exhaust (flame + ribbon per nozzle, PR #288), not the lab's
   // old dots, on the art styles. `?oldengines=1` restores the dots.
   const fxEng = (STYLE === 'machined' || STYLE === 'lit') && qs.get('oldengines') !== '1'
@@ -291,9 +304,18 @@ async function main(): Promise<void> {
   // ---- structures
   const structs: StructView[] = scene.structs.map((st) => {
     const v: StructView = { x: st.x, y: st.y, sprite: null, gfx: null, lit: null, rot: st.rot, lamps: [], lampXY: [], art: null, bandArt: [], id: st.id, seed: st.seed, radius: 100 };
+    // Art-lab size override (st.size): today's art, scaled.
+    const k = structScale(st);
+    if (st.label) {
+      const tx = new Text({ text: st.label, style: { fill: 0xd8e4ff, fontFamily: 'sans-serif', fontWeight: 'bold', fontSize: 96, letterSpacing: 8 } });
+      tx.anchor.set(0.5, 0);
+      tx.position.set(st.x, st.y + (structFootprint(st.id).h / 2) * k + 24);
+      labelL.addChild(tx);
+    }
     if (STYLE === 'current') {
       v.gfx = buildStructureGfx(st.id, undefined, st.seed);
       v.gfx.position.set(st.x, st.y);
+      v.gfx.scale.set(k);
       structL.addChild(v.gfx);
       v.radius = Math.max(v.gfx.width, v.gfx.height) / 2;
       return v;
@@ -302,7 +324,7 @@ async function main(): Promise<void> {
     if (MACHINED) {
       art = cache.machinedStruct(st.id, st.seed);
       v.lit = new Sprite(art.albedo!);
-      v.lit.anchor.set(0.5); v.lit.scale.set(2 / art.density); // half-res albedo v.lit.position.set(st.x, st.y);
+      v.lit.anchor.set(0.5); v.lit.scale.set((2 * k) / art.density); // half-res albedo v.lit.position.set(st.x, st.y);
       v.lit.alpha = 0; v.lit.tint = 0xffb070;
       litL.addChild(v.lit);
     } else {
@@ -312,14 +334,15 @@ async function main(): Promise<void> {
     v.art = art;
     v.sprite = new Sprite(art.tex);
     v.sprite.anchor.set(0.5);
-    v.sprite.scale.set(1 / art.density);
+    v.sprite.scale.set(k / art.density);
     v.sprite.position.set(st.x, st.y);
     structL.addChildAt(v.sprite, 0);
-    v.radius = Math.max(art.w, art.h) / art.density / 2;
+    v.radius = (Math.max(art.w, art.h) / art.density / 2) * k;
     if (STYLE === 'lit' && LIGHTING.litStructures) {
       const l = cache.litStruct(st.id, st.seed);
       v.litMesh = new LitShipMesh(litTileFromMaps(l.maps, l.tex), LIGHTING);
       v.litMesh.position.set(st.x, st.y);
+      v.litMesh.scale.set(k);
       v.litMesh.rotation = st.rot;
       v.sprite.visible = false;
       if (v.lit) v.lit.visible = false;
@@ -327,10 +350,33 @@ async function main(): Promise<void> {
     }
     for (const l of art.navLights) {
       v.lamps.push(glow(glowL, l.color));
-      v.lampXY.push({ x: st.x + l.x, y: st.y + l.y });
+      v.lampXY.push({ x: st.x + l.x * k, y: st.y + l.y * k });
     }
     return v;
   });
+
+  // ---- grid lines: the game's ConnectorRenderer over a minimal mirror
+  // (game space is y-up, so y flips; entity ids are struct index + 1).
+  let lines: { r: ConnectorRenderer; mirror: RenderMirror } | null = null;
+  if (scene.edges && scene.edges.length > 0) {
+    const swarm = new Map<number, SwarmRenderState>();
+    const structures = new Map<number, StructureRenderState>();
+    scene.structs.forEach((st, i) => {
+      swarm.set(i + 1, {
+        x: st.x, y: -st.y, vx: 0, vy: 0, angle: -st.rot, angvel: 0,
+        prevX: st.x, prevY: -st.y, prevAngle: 0, prevArrivalMs: 0, latestArrivalMs: 0, poseRing: [], ringHead: 0,
+        radius: getStructureKind(st.id).radius * structScale(st), kind: 2, shipKind: st.id, sleeping: true, lastUpdateTick: 0,
+      } as unknown as SwarmRenderState);
+      structures.set(i + 1, { powered: true, netPower: 50, connTo: [], built: true, buildPct: 1, deconstructPct: 0, wallActive: true } as unknown as StructureRenderState);
+    });
+    for (const [a, b] of scene.edges) {
+      structures.get(a + 1)!.connTo.push(b + 1);
+      structures.get(b + 1)!.connTo.push(a + 1);
+    }
+    const r = new ConnectorRenderer();
+    lineL.addChild(r.staticGfx, r.gfx);
+    lines = { r, mirror: { swarm, structures } as unknown as RenderMirror };
+  }
 
   // ---- ships
   const ships: ShipView[] = scene.ships.map((e, i) => {
@@ -360,7 +406,16 @@ async function main(): Promise<void> {
     } else if (STYLE === 'machined') {
       v.art = cache.machinedShip(e.id, e.paint);
       v.a.scale.set(1 / v.art.density); v.b.scale.set(1 / v.art.density);
-      shipL.addChild(v.a, v.b);
+      if (v.art.tiles && v.art.tiles > 1) {
+        // A capital: its bake is split into row strips (bake.ts splitRows).
+        v.tileSpr = [];
+        for (let i = 0; i < v.art.tiles; i++) {
+          const s = new Sprite(v.art.frames[i]!);
+          s.anchor.set(0.5, 0); s.scale.set(1 / v.art.density);
+          v.tileSpr.push(s);
+          shipL.addChild(s);
+        }
+      } else shipL.addChild(v.a, v.b);
     } else {
       for (const b of bands) v.bandArt[b + BAND_OFFSET] = cache.pixelShip(e.id, Math.pow(2, b / 4), PIX, e.paint);
       v.art = v.bandArt[[...bands][0]! + BAND_OFFSET]!;
@@ -462,6 +517,18 @@ async function main(): Promise<void> {
         // Lit in the final pass, once every light of this frame is known.
         v.lit.position.set(p.x, p.y); v.lit.rotation = p.rot;
         if (v.occ) litScene.addOccluder(v.lit.occluderId, p.x, p.y, p.rot, v.occ.hx, v.occ.hy, v.occ.h, v.occ.color, 0.8);
+      } else if (v.tileSpr) {
+        // Capital strips: nearest of CAPITAL_SUN_STEPS, each strip offset
+        // down the hull (local y) by its row.
+        const n = art.tiles!, steps = art.frames.length / n;
+        let k = Math.round(((cache.rig.sunAz - p.rot) / (Math.PI * 2)) * steps);
+        k = ((k % steps) + steps) % steps;
+        for (let i = 0; i < n; i++) {
+          const s = v.tileSpr[i]!;
+          s.texture = art.frames[k * n + i]!;
+          local(p, 0, (-art.h / 2 + i * art.tileH!) / art.density, pt);
+          s.position.set(pt.x, pt.y); s.rotation = p.rot;
+        }
       } else if (STYLE === 'machined') {
         const localAz = cache.rig.sunAz - p.rot;
         let u = (localAz / (Math.PI * 2)) * SUN_STEPS;
@@ -519,6 +586,7 @@ async function main(): Promise<void> {
       }
     }
     fxEng?.endFrame();
+    lines?.r.update(lines.mirror, zoom, t * 1000);
 
     // Structure lamps: a slow, offset pulse.
     for (const v of structs) {
@@ -649,12 +717,14 @@ async function main(): Promise<void> {
   const api = {
     ready,
     style: STYLE,
+    restyle: RESTYLE,
     scene: SCENE,
     duration: scene.duration,
     seek(ms: number): void { update(ms / 1000); },
     stats() {
       return {
-        style: STYLE, scene: SCENE, bakeMs, t: curT,
+        style: STYLE, restyle: RESTYLE, scene: SCENE, bakeMs, t: curT,
+        lines: lines ? lines.r.staticRebuilds : 0,
         ships: ships.length, structures: structs.length,
         art: cache.stats(),
         sprites: countSprites(app.stage),

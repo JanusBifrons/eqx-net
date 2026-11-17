@@ -33,6 +33,10 @@ export interface ShipArt {
   density: number;
   nozzles: Fields['nozzles'];
   navLights: Fields['navLights'];
+  /** A capital's bake split into `tiles` row strips `tileH` texels tall
+   *  (frames = sun step × tile); absent for one-frame hulls. */
+  tiles?: number;
+  tileH?: number;
 }
 
 export interface StructArt {
@@ -201,7 +205,7 @@ export class ArtCache {
     const frames: Texture[] = [];
     for (let j = 0; j < b.frames.length; j++) this.smooth.add(b.frames[j]!, frames, j);
     this.smooth.commit();
-    const art: ShipArt = { frames, w: b.w, h: b.h, density: b.density, nozzles: b.nozzles, navLights: b.navLights };
+    const art: ShipArt = { frames, w: b.w, h: b.h, density: b.density, nozzles: b.nozzles, navLights: b.navLights, ...(b.tiles ? { tiles: b.tiles, tileH: b.tileH } : {}) };
     this.ships.set(key, art);
     this.bakeMs.ships += performance.now() - t0;
     return art;
