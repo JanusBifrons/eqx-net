@@ -30,9 +30,13 @@ Callers keep one goal object and mutate it between searches instead of passing a
 | Caller | Graph | Goal |
 |---|---|---|
 | `server/livingworld/heldSectorRoutes.ts` | sectors with a room, gate edges | nearest sector a power holds |
+| `core/galaxy/gateHops.ts` (`gateFirstHop`, `gateHops`; behind `population.nextHopToward` / `hopDistance` and migration ranking) | whole galaxy, gate edges | one sector |
+| `core/bases/transitNetwork.routeHops` | gate edges (1) + transit links (`LINK_HOP_COST`), one graph per network | one sector (weighted cost) |
 
-Slices still to move here: `transitNetwork.routeHops`, `population` hop BFS, `Grid.bfsTree`.
+Still to move here: `Grid.bfsTree` (power grid).
 
 ## History
 - 2026-11-17: plan approved (wide lane by default, no-route ⇒ nearest spot and wait, whole route line,
   squads single file). Slice 1a: `GraphSearch` lands; `HeldSectorRoutes` moves onto it.
+  Slice 1b: galaxy gate hops (`gateHops.ts`) and `routeHops` move onto it; answers unchanged for
+  every sector pair.
