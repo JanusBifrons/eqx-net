@@ -3246,7 +3246,7 @@ export class SectorRoom extends Room<SectorState> {
     // The chunk-streaming host exists when the sector has ANY chunk source: the field's rocks today; wreck-field sources join `chunkSources` (wreck fields R7).
     const fieldSeed = roomOpts.cutField?.seed ?? null, chunkSources: ChunkSource[] = [];
     if (fieldSeed !== null || chunkSources.length > 0) this.cutField = new CutFieldSubsystem(fieldSeed, this.gameClock, this.swarmRegistry, this.swarmSpawner, { shipSlots: () => this.playerToSlot.values(), sab: () => this.sabF32, post: (cmd) => this.postToWorker(cmd), evict: (rec, broadcast) => this.evictSwarmEntity(rec, { broadcast, emitDestroyed: false }), broadcast: (type, msg) => this.broadcast(type, msg), shipMass: (id) => { const s = this.getActiveShip(id); return s ? shipBodyMass(getShipKind(s.kind)) : undefined; }, records: this.persistSector && this.sectorKey !== null && fieldSeed !== null ? terrainRecordStoreFor(`${this.sectorKey}|${fieldSeed}`) : undefined }, roomOpts.cutField?.clearings, chunkSources);
-    if (this.cutField?.navOpts) this.hostNavField(this.cutField.navOpts);
+    if (this.cutField?.navOpts) this.hostNavField(this.cutField, this.cutField.navOpts);
     // Structures plan (Phase 3-5) — testMode scenario seeding: a pre-built,
     // powered grid + drones/asteroids, for deterministic E2E (no place-ahead
     // overlap, no construction wait).
@@ -12700,13 +12700,19 @@ export class SectorRoom extends Room<SectorState> {
     });
   }
 
-  /** Builds the cut field's nav maps in the nav worker (navigation slice 4b; print-only size + ms). */
-  private hostNavField(opts: ChunkOpts): void {
-    getNavWorker(logger).addField(opts).then((field) => {
-      if (this.simLoopStopped) { field.detach(); return; }
-      this.navField = field;
-      logger.info({ sectorKey: this.sectorKey, cols: field.built.cols, rows: field.built.rows, kb: Math.round(field.built.bytes / 1024), ms: Math.round(field.built.ms * 10) / 10 }, 'nav coarse layer built');
-    }, (err: unknown) => logger.error({ err, sectorKey: this.sectorKey }, 'nav field build failed'));
+  /** Hosts the cut field's nav maps in the nav worker; chunk loads and rock
+   *  changes stream to it from here on (navigation slices 4b–5; print-only size + ms). */
+  private hostNavField(cutField: CutFieldSubsystem, opts: ChunkOpts): void {
+    let field: NavField | undefined;
+    const known = cutField.attachNav({
+      chunk: (cx, cy, loaded) => field?.chunk(cx, cy, loaded),
+      rockGone: (key) => field?.rockGone(key),
+      rockMoved: (key, pose) => field?.rockMoved(key, pose),
+    });
+    field = this.navField = getNavWorker(logger).addField(opts, known.gone, known.moved);
+    field.built.then((b) => {
+      logger.info({ sectorKey: this.sectorKey, cols: b.cols, rows: b.rows, kb: Math.round(b.bytes / 1024), ms: Math.round(b.ms * 10) / 10 }, 'nav coarse layer built');
+    }, (err: unknown) => { if (!this.simLoopStopped) logger.error({ err, sectorKey: this.sectorKey }, 'nav field build failed'); });
   }
 
   override onDispose(): void {
