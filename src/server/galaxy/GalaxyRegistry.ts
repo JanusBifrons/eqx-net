@@ -10,6 +10,7 @@ import { sectorSites, sectorCutField } from '../../core/galaxy/sectorSites.js';
 import type { SectorCutField } from '../../core/galaxy/sectorSites.js';
 import { GALAXY_SECTORS, getSector } from '../../core/galaxy/galaxy.js';
 import type { GalaxySector } from '../../core/galaxy/galaxy.js';
+import type { WreckFieldOpts } from '../../core/terrain/wreckFieldLayout.js';
 import { ASTEROID_CONFIGS } from './asteroidConfigs.js';
 import type { AsteroidSpec } from '../spawn/SwarmSpawner.js';
 
@@ -34,6 +35,12 @@ export interface ResolvedSectorConfig {
    * base and battle pocket. Absent = no field. Becomes `roomOpts.cutField`.
    */
   cutField?: SectorCutField;
+  /**
+   * Wreck fields 3b: an old battlefield streamed in by chunk. No galaxy
+   * sector sets it yet (dev room `wreck-field-test` only); becomes
+   * `roomOpts.wreckField`.
+   */
+  wreckField?: Pick<WreckFieldOpts, 'seed' | 'x' | 'y' | 'sides'>;
 }
 
 export function resolveSectorConfig(key: string): ResolvedSectorConfig {

@@ -222,6 +222,19 @@ export class ForceFieldSubsystem {
     }
   }
 
+  /** Is `targetId` on any live tractor lease (towed or held)? A wreck field
+   *  never retires a hull a tractor has (wreck fields 3b). A chunk event, not
+   *  per tick. Allocation-free. */
+  isTractored(targetId: string): boolean {
+    const t = this.d.tractors;
+    if (t === undefined || this.leaseCount === 0) return false;
+    const tick = t.tick();
+    for (const byMount of this.leases.values()) {
+      for (const lease of byMount.values()) if (lease.target === targetId && tick < lease.endTick) return true;
+    }
+    return false;
+  }
+
   /**
    * Once per server tick: expire lapsed leases (REMOVE_FORCE_FIELD) and
    * re-pose each live one (SET_FORCE_FIELD): muzzle at the mount's world
