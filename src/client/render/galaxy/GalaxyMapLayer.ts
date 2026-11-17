@@ -1007,7 +1007,7 @@ export class GalaxyMapLayer extends Container {
 
   private readonly tick = (): void => {
     if (!this.visible) return;
-    if (this.mode === 'selector') this.panZoomCamera.tick();
+    if (this.mode === 'selector') this.panZoomCamera.tick(Ticker.shared.deltaMS);
 
     // Equinox Phase 9 (item 3) — redraw the zoom-aware starfield against the live
     // clusterRoot transform (full-page mode only; no-op otherwise).
