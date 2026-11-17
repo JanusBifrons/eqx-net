@@ -42,6 +42,18 @@ describe('ScriptedPathBehaviour', () => {
     expect(Math.abs(s.vx)).toBeLessThan(20);
   });
 
+  it('turns its nose toward travel only when asked (faceTurnRate)', () => {
+    const self = { id: 'd', x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
+    // Heading -y: the nose (-sin θ, cos θ) points down at θ = π, so it turns.
+    const facing = new ScriptedPathBehaviour({ from: { x: 0, y: 0 }, to: { x: 0, y: -500 }, speed: 100, faceTurnRate: 2 }, 2);
+    expect(Math.abs(facing.tick(self, VIEW).setAngvel!)).toBeCloseTo(2);
+    // Heading +y: already nose-first at θ = 0.
+    const ahead = new ScriptedPathBehaviour({ from: { x: 0, y: 0 }, to: { x: 0, y: 500 }, speed: 100, faceTurnRate: 2 }, 2);
+    expect(ahead.tick(self, VIEW).setAngvel).toBeCloseTo(0);
+    const plain = new ScriptedPathBehaviour({ from: { x: 0, y: 0 }, to: { x: 0, y: -500 }, speed: 100 }, 2);
+    expect(plain.tick(self, VIEW).setAngvel).toBeUndefined();
+  });
+
   it('never fires', () => {
     const b = new ScriptedPathBehaviour({ from: { x: 0, y: 0 }, to: { x: 100, y: 0 }, speed: 100 }, 2);
     expect(b.tick({ id: 'd', x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 }, VIEW).fire).toBeUndefined();

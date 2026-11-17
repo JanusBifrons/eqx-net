@@ -9,8 +9,8 @@ import { createServer } from 'node:http';
 import { pino } from 'pino';
 import { SectorRoom } from './rooms/SectorRoom.js';
 import { galaxySectorsToBoot } from './rooms/galaxyBoot.js';
-import { GATE_TEST_PREBUILT, SCENARIO, STRUCTURE_SCENARIO_PREBUILT } from './rooms/scenarioLayouts.js';
-import { SHOWCASE_ROOMS } from './rooms/showcaseRooms.js';
+import { GATE_TEST_PREBUILT, RIG_SANDBOX_E2E_SCENE, RIG_SANDBOX_PREBUILT, rigSandboxScene, SCENARIO, STRUCTURE_SCENARIO_PREBUILT } from './rooms/scenarioLayouts.js';
+import { SHOWCASE_PILOT_ID, SHOWCASE_ROOMS } from './rooms/showcaseRooms.js';
 import { getRecentEvents, getRecentEventsByTag, clearEvents } from './debug/ServerEventLog.js';
 import { installGcMonitor } from './debug/GcMonitor.js';
 import { authRouter } from './routes/authRouter.js';
@@ -741,6 +741,24 @@ gameServer
     maxClients: 4,
   })
   .filterBy(['testId']);
+// Articulation sandbox (structure-restyle 2f) — a freight dock and a turret
+// owned by the showcase pilot; a scripted hauler parks on the pad and the
+// crane reaches for it, then the turret opens and deploys (scenarioLayouts
+// RIG_SANDBOX). Draw the rigs with ?rigs=1. The e2e room reaches at once.
+for (const [name, sceneScript] of [['rig-sandbox', rigSandboxScene(4000)], ['rig-sandbox-e2e', RIG_SANDBOX_E2E_SCENE]] as const) {
+  gameServer.define(name, SectorRoom, {
+    testMode: true,
+    asteroidConfig: [],
+    peacefulDrones: true,
+    structureGridPulseMs: 100,
+    prebuiltStructuresOwner: SHOWCASE_PILOT_ID,
+    prebuiltStructures: RIG_SANDBOX_PREBUILT.map((p) => ({ ...p })),
+    sceneScript,
+    defaultSpawnX: -1800,
+    defaultSpawnY: -900,
+    maxClients: 4,
+  }).filterBy(['testId']);
+}
 // Structures plan (Phase 3-5) — a fully-built, POWERED grid scenario for the
 // client-half E2Es. Pre-built (no construction wait) + auto-connected: a Capital
 // + 2 Solar (power), a Miner next to an asteroid (mining → mineral bank), and a

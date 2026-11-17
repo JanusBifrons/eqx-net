@@ -197,6 +197,8 @@ const FEATURE_SPECS: string[] = [
   '**/cut-field-collision.spec.ts',
   // Phase V gates — fly through an open gate, stopped by a locked one.
   '**/gate-fly-through.spec.ts',
+  // Structure-restyle 2f: the crane clip reaches a late joiner (wire row).
+  '**/structure-rig-sandbox.spec.ts',
   '**/ramming-probe-armpit.spec.ts',
   '**/scrap-collision-stress.spec.ts',
   // WS7.1 — melee contact corrections (remote-entity collision paradigm).

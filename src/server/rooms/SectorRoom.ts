@@ -102,7 +102,7 @@ import type { BotCarry } from '../livingworld/botTypes.js';
 import { droneMaxHealthOf, getDroneMaxHealth, getDroneShieldMax } from './droneKindHelpers.js';
 import { STRUCTURE_DEFAULT_HEALTH } from '../../core/swarm/structureConstants.js';
 import { StructureRegistry, type StructureRecord } from '../structures/StructureRegistry.js';
-import { startStructureRigClip, writeRigClipRow } from '../structures/structureRigClip.js';
+import { rigClipTip, startStructureRigClip, worldToRigHost, writeRigClipRow } from '../structures/structureRigClip.js';
 import { FactionLedger } from '../faction/FactionLedger.js';
 import { isBaseReady } from '../../core/faction/Faction.js';
 import type { FactionBaseReadiness, SectorLiveCounts } from '../livingworld/LivingWorldRoom.js';
@@ -12279,6 +12279,38 @@ export class SectorRoom extends Room<SectorState> {
       // Rock-cut scene: still rocks, then each mined to a break (RockCutter.sceneCut).
       spawnRock: (id, x, y, radius) => this.swarmSpawner.spawnAsteroid({ id, x, y, vx: 0, vy: 0, radius, mass: 1 }),
       cutRock: (id) => this.capitalWrecks?.rockCut.sceneCut(id) ?? false,
+      // Articulation sandbox (structure-restyle 2f): the radar sandbox's
+      // scripted mover, re-aimed from where the ship is now, nose first.
+      moveShip: (id, x, y, speed) => {
+        const rec = this.swarmRegistry.get(id);
+        if (!rec) return false;
+        const b = slotBase(rec.slot);
+        this.aiController.register(id, rec.slot, new ScriptedPathBehaviour({
+          from: { x: this.sabF32[b + SLOT_X_OFF]!, y: this.sabF32[b + SLOT_Y_OFF]! },
+          to: { x, y }, speed, loop: false, faceTurnRate: 1.5,
+        }, shipBodyMass(getShipKind(rec.shipKind))));
+        return true;
+      },
+      // Scripted stand-in for the bay trigger: Stage 3 starts the crane from
+      // the deposit dwell (`autoDepositTick`) retargeted to the dock's bay.
+      rigClip: (kind, clip, target) => {
+        let host: StructureRecord | undefined;
+        for (const r of this.structureRegistry.all()) if (r.kind === kind) { host = r; break; }
+        if (!host) return false;
+        let t: { x: number; y: number } | undefined;
+        if (target.from === 'ship') {
+          const ship = this.swarmRegistry.get(target.id);
+          if (!ship) return false;
+          const b = slotBase(ship.slot);
+          t = worldToRigHost(host, this.sabF32[b + SLOT_X_OFF]!, this.sabF32[b + SLOT_Y_OFF]!);
+        } else if (target.from === 'keep') {
+          t = host.rigClip?.target;
+        } else if (target.from === 'tip') {
+          t = rigClipTip(host, this.serverTick) ?? undefined;
+        }
+        if (target.from !== 'none' && t === undefined) return false;
+        return this.startStructureRigClip(host.id, clip, t);
+      },
     });
   }
 

@@ -142,3 +142,35 @@ describe('SceneScriptRunner', () => {
     expect(r.getStatus()).toMatchObject({ spawned: 5, refused: 1 });
   });
 });
+
+describe('SceneScriptRunner — articulation sandbox steps (structure-restyle 2f)', () => {
+  it('moves a scene ship and starts rig clips with the asked target source', () => {
+    const moves: Array<[string, number, number, number]> = [];
+    const clips: Array<[string, string | null, unknown]> = [];
+    const r = new SceneScriptRunner(SceneScriptSchema.parse([
+      { atMs: 0, action: 'move', tag: 'hauler', x: 0, y: 460, speed: 320 },
+      { atMs: 0, action: 'rigClip', structure: 'freight_dock', clip: 'arm-reach', targetShip: 'hauler' },
+      { atMs: 0, action: 'rigClip', structure: 'freight_dock', clip: 'arm-hold', keepTarget: true },
+      { atMs: 0, action: 'rigClip', structure: 'freight_dock', clip: 'arm-retract', fromTip: true },
+      { atMs: 0, action: 'rigClip', structure: 'turret', clip: 'door-open' },
+      { atMs: 0, action: 'rigClip', structure: 'turret', clip: 'nope' },
+    ]), {
+      spawn: () => true, markHostileToAll: () => {},
+      moveShip: (id, x, y, s) => { moves.push([id, x, y, s]); return true; },
+      rigClip: (k, c, t) => { clips.push([k, c, t]); return c !== 'nope'; },
+    });
+    r.start(0);
+    r.tick(0);
+    expect(moves).toEqual([['scene-hauler-0', 0, 460, 320]]);
+    expect(clips.map((c) => c[2])).toEqual([
+      { from: 'ship', id: 'scene-hauler-0' }, { from: 'keep' }, { from: 'tip' }, { from: 'none' }, { from: 'none' },
+    ]);
+    expect(r.getStatus().refused).toBe(1);
+  });
+
+  it('the filmed sandbox scene parses', async () => {
+    const { rigSandboxScene, RIG_SANDBOX_E2E_SCENE } = await import('../scenarioLayouts.js');
+    expect(SceneScriptSchema.safeParse(rigSandboxScene(4000)).success).toBe(true);
+    expect(SceneScriptSchema.safeParse(RIG_SANDBOX_E2E_SCENE).success).toBe(true);
+  });
+});
