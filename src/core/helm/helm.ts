@@ -40,6 +40,8 @@ export interface HelmKind {
   maxSpeed: number;
   linearDamping: number;
   angularDamping: number;
+  /** Top turn rate (rad/s): with speed it sets the turning circle. */
+  maxAngvel: number;
 }
 
 export interface HelmOutput {
@@ -71,6 +73,25 @@ function wrapPi(a: number): number {
   if (a > Math.PI) a -= Math.PI * 2;
   else if (a < -Math.PI) a += Math.PI * 2;
   return a;
+}
+
+/**
+ * Is the course point inside the circle the ship sweeps turning towards it at
+ * full rate and its current speed (radius speed / maxAngvel)? Then thrusting
+ * only orbits it: a battleship (1.2°/s) at full speed sweeps ~8 km, so a tap
+ * beside it on screen was never reached (showcase player-capital-sector
+ * 2026-11-17). The helm coasts instead until the circle shrinks past it.
+ */
+export function insideTurnCircle(
+  pose: HelmPose, fx: number, fy: number, speed: number, err: number, tx: number, ty: number, maxAngvel: number,
+): boolean {
+  if (maxAngvel <= 0 || err === 0) return false;
+  const r = speed / maxAngvel;
+  // Left of forward (-sin, cos) is (-cos, -sin) = (-fy, fx); err > 0 turns left.
+  const side = err > 0 ? 1 : -1;
+  const cx = pose.x - fy * r * side, cy = pose.y + fx * r * side;
+  const ex = tx - cx, ey = ty - cy;
+  return ex * ex + ey * ey < r * r;
 }
 
 /**
@@ -112,6 +133,7 @@ export function helmStep(order: HelmOrder, pose: HelmPose, kind: HelmKind, out: 
   // radius rather than on its rim.
   const braking = dist <= coastDist;
   const threshold = wasThrusting ? set : set * HELM_SPEED_HYSTERESIS;
-  out.thrust = set > 0 && !braking && Math.abs(err) < HELM_THRUST_CONE && vFwd < threshold;
+  out.thrust = set > 0 && !braking && Math.abs(err) < HELM_THRUST_CONE && vFwd < threshold
+    && !insideTurnCircle(pose, fx, fy, speed, err, order.tx, order.ty, kind.maxAngvel);
   return out;
 }
