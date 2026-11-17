@@ -16,6 +16,7 @@
  */
 import { getStructureKind, isStructureKindId } from '../../../shared-types/structureKinds.js';
 import { PAD_SPECS, padPostCenters } from '../../../shared-types/teleport.js';
+import { drawTerritoryLock, LOCK_LOOK } from './territoryLockLook.js';
 
 /** A filled rectangle (pixi space). */
 export interface RectOp { x: number; y: number; w: number; h: number; color: number; alpha: number }
@@ -683,9 +684,14 @@ export function buildStructureVisual(kindId: string, opts: StructureVisualOpts):
       lit(x0 + W - 24, y0 + H - 24, 10, RED);
       break;
     }
-    // Placeholder: the Territory Lock wears the Research Lab's look until the
-    // owner picks its art (same 400×300 footprint).
     case 'territory_lock':
+      // Look R&D: three options behind `?lockLook=a|b|c` (territoryLockLook.ts).
+      drawTerritoryLock({
+        box: (x, y, w, h, c, a) => box(rects, x, y, w, h, c, a),
+        slab: (x, y, w, h, c, r) => slab(rects, x, y, w, h, c, r),
+        lit, mix: mixColor,
+      }, LOCK_LOOK, W, H, accent, live, { steel: STEEL, dark: STEEL_DARK, light: STEEL_LIGHT, deck: DECK, red: RED, hazard: 0xe8c547 });
+      break;
     case 'research_lab': {
       // Research lab: a glass-roofed hall around a central test chamber, with
       // two instrument racks either side.

@@ -45,6 +45,7 @@ import { logEvent, isDiagEnabled, isAutoCaptureEnabled } from '../../debug/Clien
 import { serialisePointerEvent, serialiseWheelEvent } from './eventSerialisation.js';
 import { setCanvasPointerCapture } from '../pointerCapture.js';
 import { shipScaleWorkerName } from '../../../shared-types/shipScale/config.js';
+import { lockLookWorkerNameSuffix } from '../pixi/territoryLockLook.js';
 
 /** Callback invoked when the worker emits OVERLAY_TAPPED. Equinox Phase 9:
  *  `sectorKey: null` = an empty-space tap → blur/deselect (close the drawer). */
@@ -192,7 +193,7 @@ export class WorkerRendererClient implements IRenderer {
     this.worker = new Worker(new URL('./renderer.worker.ts', import.meta.url), {
       type: 'module',
       // Carries the ship scale into the worker (read at its module load).
-      name: shipScaleWorkerName('renderer'),
+      name: shipScaleWorkerName('renderer') + lockLookWorkerNameSuffix(),
     });
     this.worker.onmessage = (e: MessageEvent<WorkerToMainMsg>): void => {
       this.handleWorkerMessage(e.data);
