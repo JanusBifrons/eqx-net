@@ -1283,6 +1283,11 @@ for (const scene of PERF_SCENES) {
       // Fixed work: no TiDi, no load shedding (they hide an overload).
       perfFixedLoad: true,
       ...scene.room,
+      // A real galaxy sector's field (F4); `EQX_SCENE_GALAXY_FIELD=0` is the
+      // A/B's no-field arm.
+      ...(scene.galaxyField !== undefined && process.env['EQX_SCENE_GALAXY_FIELD'] !== '0'
+        ? { cutField: resolveSectorConfig(scene.galaxyField).cutField }
+        : {}),
     })
     .filterBy(['testId']);
 }
