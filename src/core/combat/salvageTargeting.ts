@@ -22,7 +22,10 @@
  * (`tractorTakesTier`). Nothing cuts an AA-tier piece. A rock piece of any
  * size goes into a hold whole as one rock chunk when it touches the hull
  * and its weight fits (`rockChunkWeight`; owner 2026-11-17: mined rock is
- * never a pod). The big/small split: `salvagePrefersBig`.
+ * never a pod). A rock piece one of the ship's tractors can pull and whose
+ * chunk fits the free hold is HAULED (`rockHaulable`): the lasers leave it
+ * whole and the tractors drag it to the hull; a bigger one is cut on. The
+ * big/small split: `salvagePrefersBig`.
  *
  * **Consumable by me** (owner 2026-11-16, the factory line): a WRECK piece at hold
  * size, the SMALLEST tier (AA: an AA tractor could pull it), the same on every
@@ -209,6 +212,30 @@ export function salvageConsumable(
 ): boolean {
   if (!(consumeMass > 0) || !(c.holdWeight <= freeHold)) return false;
   return c.ore !== undefined || c.mass <= consumeMass;
+}
+
+const tractorRungCache = new WeakMap<ReadonlyArray<WeaponMount>, number>();
+
+/** The highest rung among this mount list's tractors (`mountTier`), 0 with
+ *  none. Cached per mount list. */
+export function tractorRungOf(mounts: ReadonlyArray<WeaponMount>): number {
+  const hit = tractorRungCache.get(mounts);
+  if (hit !== undefined) return hit;
+  let rung = 0;
+  for (const m of mounts) if (getWeapon(m.weaponId).tractor !== undefined) rung = Math.max(rung, mountTier(m.size));
+  tractorRungCache.set(mounts, rung);
+  return rung;
+}
+
+/** Does a ship whose biggest tractor is on rung `tractorRung` haul ROCK
+ *  piece `c` (`ore` set) in whole: a tractor can pull its tier and its
+ *  chunk weight fits the free hold. Then the lasers leave it uncut and the
+ *  tractors bring it to the hull (owner 2026-11-17); otherwise the lasers cut
+ *  it on (a piece no tractor moves would never reach the hull). Pure. */
+export function rockHaulable(
+  c: Pick<SalvageCandidate, 'mass' | 'holdWeight'> & { readonly ore?: unknown }, tractorRung: number, freeHold: number,
+): boolean {
+  return c.ore !== undefined && c.holdWeight <= freeHold && tractorTakesTier(tractorRung, salvageTier(c.mass));
 }
 
 /** The lightest rock chunk (owner 2026-11-17: a scout carries 1, a fighter 2). */

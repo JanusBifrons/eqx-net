@@ -134,9 +134,6 @@ interface LivePod {
    *  time (rate-limited per collect step, contestable), never merged into, and
    *  longer-lived than a normal pod. */
   derelict: boolean;
-  /** The wreck lineage (`LiveWreck.root`) a rock's or wreck's worn-out
-   *  piece dropped it from (a tractor's lock moves on through it); -1 none. */
-  root: number;
 }
 
 /** Derelict hulks last an hour (a normal pod: 15 min). */
@@ -159,10 +156,6 @@ export class LootSubsystem {
     return this.pods.keys();
   }
 
-  /** The wreck lineage pod `id` was dropped from, or -1. */
-  podRoot(id: string): number {
-    return this.pods.get(id)?.root ?? -1;
-  }
 
   private persist(): boolean {
     return this.d.sectorKey() !== null;
@@ -183,7 +176,7 @@ export class LootSubsystem {
   drop(
     hold: Hold,
     x: number, y: number, vx = 0, vy = 0,
-    opts: { spill?: boolean; derelict?: boolean; alone?: boolean; size?: number; cause?: string; extraDeletes?: readonly string[]; root?: number } = {},
+    opts: { spill?: boolean; derelict?: boolean; alone?: boolean; size?: number; cause?: string; extraDeletes?: readonly string[] } = {},
   ): string | null {
     const extraDeletes = opts.extraDeletes ?? [];
     if (isHoldEmpty(hold)) {
@@ -205,7 +198,6 @@ export class LootSubsystem {
       this.d.holdStore.commit([merged], extraDeletes, this.persist());
       // A player spill stays the bright "scramble" tier once merged into.
       const live = this.pods.get(target)!;
-      if (live.root < 0 && opts.root !== undefined) live.root = opts.root;
       const tier = opts.spill || live.tier === POD_TIER_SPILL ? POD_TIER_SPILL : holdBestTier(merged.hold);
       if (tier !== live.tier) {
         live.tier = tier;
@@ -224,7 +216,7 @@ export class LootSubsystem {
       if (nearest !== null) return this.forceMerge(nearest, hold, extraDeletes, opts.cause);
       return null;
     }
-    this.pods.set(id, { tier, size, savedX: x, savedY: y, derelict, root: opts.root ?? -1 });
+    this.pods.set(id, { tier, size, savedX: x, savedY: y, derelict });
     this.d.holdStore.commit(
       [{
         holderUid: id, holderType: derelict ? 'derelict' : 'pod', ownerId: null, sectorKey: this.d.sectorKey(),
@@ -478,7 +470,7 @@ export class LootSubsystem {
         const tier = derelict ? POD_TIER_SPILL : holdBestTier(rec.hold);
         if (!this.d.spawnPodEntity(rec.holderUid, rec.x, rec.y, 0, 0, tier)) continue;
         // Size is not persisted: a restored pod comes back at size 0.
-        this.pods.set(rec.holderUid, { tier, size: 0, savedX: rec.x, savedY: rec.y, derelict, root: -1 });
+        this.pods.set(rec.holderUid, { tier, size: 0, savedX: rec.x, savedY: rec.y, derelict });
         n++;
       }
     }

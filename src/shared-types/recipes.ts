@@ -19,6 +19,7 @@ import type { GoodId } from './goods.js';
 import { getStructureKind, type StructureKindId } from './structureKinds.js';
 import { BASE_PRICES } from './economy.js';
 import { getShipKind, type ShipKindId } from './shipKinds.js';
+import { ROCK_CHUNK_PRODUCT } from './items.js';
 
 export const RECIPE_IDS = [
   'smelt_alloy',
@@ -81,6 +82,8 @@ export const RECIPE_IDS = [
   'pack_siege_gun_80cm',
   // Salvage stream — the mining barge (an owned ship: the Shipyard builds it).
   'build_barge',
+  // Cargo pods stream (owner 2026-11-17) — a refinery breaks a rock chunk into its ore.
+  'refine_rock_chunk',
 ] as const;
 export type RecipeId = (typeof RECIPE_IDS)[number];
 
@@ -131,7 +134,17 @@ export interface RecipeDef {
    *  the blueprint model; \`applyBlueprint\` scales inputs, outputs and time).
    *  Extraction and simple refining are free; components and up need one. */
   readonly blueprintRequired: boolean;
+  /** A one-of-a-kind packed item this recipe breaks down (a rock chunk,
+   *  `ROCK_CHUNK_PRODUCT`) instead of goods: a run takes ONE such item from
+   *  the network and its outputs are the item's own hidden `ore`, paid out
+   *  `CHUNK_REFINE_BATCH` units per cycle until it is empty. `inputs` and
+   *  `outputs` stay empty. */
+  readonly chunkInput?: string;
 }
+
+/** Ore units one cycle of a chunk recipe pays out (a big chunk takes many
+ *  cycles; each batch is all-or-nothing like any output). */
+export const CHUNK_REFINE_BATCH = 5_000;
 
 function r(def: RecipeDef): RecipeDef {
   return def;
@@ -421,6 +434,13 @@ export const RECIPES: Readonly<Record<RecipeId, RecipeDef>> = Object.freeze({
     id: 'build_barge', displayName: buildName('barge'),
     inputs: { alloy: 400, components: 80, electronics: 40, machinery: 40, core: 12 }, outputs: [{ hull: 'barge' }],
     cyclePulses: 600, processors: ['shipyard'], blueprintRequired: true,
+  }),
+  // Owner 2026-11-17: a mined rock chunk stays a chunk in the hold; a
+  // refinery breaks it into the ore it hides (OreDraw.chunkYield).
+  refine_rock_chunk: r({
+    id: 'refine_rock_chunk', displayName: 'Break down rock chunks',
+    inputs: {}, outputs: [], chunkInput: ROCK_CHUNK_PRODUCT,
+    cyclePulses: 10, processors: ['refinery'], blueprintRequired: false,
   }),
 });
 

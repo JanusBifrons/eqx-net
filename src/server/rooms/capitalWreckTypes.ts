@@ -137,17 +137,15 @@ export interface CapitalWreckDeps {
   hullPoseInto?: (id: string, out: WreckPiecePose) => boolean;
   /** Drop a `qty`-unit salvage pod (a worn-out piece too small to split);
    *  with `ore` (a rock's piece) a pod of `qty` units of that rock's ore
-   *  instead. Absent ⇒ such a piece just stops wearing. Returns the pod's id
-   *  (the piece's locks follow it: `pieceSplit`), when it has one. `root`:
-   *  the piece's lineage (`LiveWreck.root`), kept on the pod. */
-  dropSalvage?: (qty: number, x: number, y: number, vx: number, vy: number, root?: number) => string | null | void;
+   *  instead. Absent ⇒ such a piece just stops wearing. Returns the pod's id,
+   *  when it has one (a pod is never in a lock lineage). */
+  dropSalvage?: (qty: number, x: number, y: number, vx: number, vy: number) => string | null | void;
   /** Rock cut: a live rock (kind 0) by id, or null. Absent ⇒ rocks are never
    *  cut (the mining laser only draws their ore). */
   rockOf?: (id: string) => WreckRockView | null;
   /** Piece or rock `parentId` broke into live pieces `ids` (`masses`
-   *  parallel), the last `pods` of them ore pods (a worn-out piece: only
-   *  its pod): the locks held on it follow them. Once per break. */
-  pieceSplit?: (parentId: string, ids: ReadonlyArray<string>, masses: ReadonlyArray<number>, pods?: number) => void;
+   *  parallel; never a pod): the locks held on it follow them. Once per break. */
+  pieceSplit?: (parentId: string, ids: ReadonlyArray<string>, masses: ReadonlyArray<number>) => void;
 }
 
 /** How hard a hit knocks one piece (fixed at spawn; read per hit, #14). */

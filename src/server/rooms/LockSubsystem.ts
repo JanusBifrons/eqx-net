@@ -108,7 +108,6 @@ interface GroupState {
   mountIds: Set<string>;
   /** The group's mining mounts (`isSalvageWeapon`) and tractors: only they need the pick on a single salvage lock. */
   salvageMountIds: Set<string>;
-  /** The group has a tractor: a worn-out piece's ore pods take its locks (`targetSplit`). */ tractor: boolean;
   /** The group's mounts in slot order (a mount's index is its ordinal for `pickTurretLock`). */
   mounts: WeaponMount[];
   locks: LockEntry[];
@@ -298,9 +297,9 @@ export class LockSubsystem {
     }
   }
 
-  /** Target `fromKey` broke into `pieceKeys` (biggest first; the last `pods` its ore pods, which only a group with a `tractor` takes): its locks follow (`splitGroupLocks`), a lock given none to its lineage's next live piece. */
-  targetSplit(fromKey: string, pieceKeys: ReadonlyArray<string>, pods = 0): void {
-    for (const [playerId, p] of this.players) { const c = { d: this.deps, ship: this.deps.shipOf(playerId), playerId }; for (const g of p.groups) if (splitGroupLocks(g, fromKey, pieceKeys, pieceKeys.length - (g.tractor ? 0 : pods), c)) this.syncWireShape(g); }
+  /** Target `fromKey` broke into `pieceKeys` (biggest first): its locks follow (`splitGroupLocks`), a lock given none to its lineage's next live piece. */
+  targetSplit(fromKey: string, pieceKeys: ReadonlyArray<string>): void {
+    for (const [playerId, p] of this.players) { const c = { d: this.deps, ship: this.deps.shipOf(playerId), playerId }; for (const g of p.groups) if (splitGroupLocks(g, fromKey, pieceKeys, pieceKeys.length, c)) this.syncWireShape(g); }
   }
 
   /** (Re)build the player's groups when their ship kind or activated mounts change. */
@@ -340,7 +339,6 @@ export class LockSubsystem {
         arcs: groupArcs(mounts),
         mountIds: new Set(mounts.map((m) => m.id)),
         salvageMountIds: new Set(mounts.filter((m) => { const w = getWeapon(m.weaponId); return isSalvageWeapon(w) || w.tractor !== undefined; }).map((m) => m.id)),
-        tractor: mounts.some((m) => getWeapon(m.weaponId).tractor !== undefined),
         mounts,
         locks: [],
         wire,

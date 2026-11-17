@@ -4,16 +4,15 @@
  * biggest first, so every mining-laser mount keeps working and the lasers
  * spread over the pieces. Same lineage, so a LOCKED target's pieces are
  * LOCKED at once (stage, progress, track and salvage bits copied; the lock
- * step refreshes the bits). A piece that wears out into an ore pod (and a
- * break's slivers that pod) passes its locks on to the pods too, but only
- * in a group with tractors (every tractor pulls a pod; the lasers leave
- * them). Not a hostile act: no ledger, no standing.
+ * step refreshes the bits). A pod is never a lineage member: a piece worn
+ * into a pod leaves, and its locks move on like any other leaving piece
+ * (cargo pods, owner 2026-11-17: no weapon works a pod; a tractor moves one
+ * only on its own lock). Not a hostile act: no ledger, no standing.
  * Runs only on a break, never per tick.
  *
  * A lock ends only with its lineage (`lineageRekey`): while any piece of the
- * locked rock or wreck (or, for a group with tractors, any of its ore pods)
- * is alive, a lock whose piece leaves (worn into pods this group leaves,
- * taken in, or gone) or that it can't track moves on to another live member
+ * locked rock or wreck is alive, a lock whose piece leaves (worn into a
+ * pod, taken in, or gone) or that it can't track moves on to another live member
  * the group does not hold yet, one a mount of the group can work first; a
  * group with nothing it may work idles on the lineage.
  */
@@ -28,8 +27,6 @@ export interface LineageGroup {
   locks: LockEntry[];
   /** The group's mounts in slot order (what it can work: `groupWorksSalvage`). */
   mounts: ReadonlyArray<TurretGroupMount>;
-  /** The group has a tractor: ore pods are members of its lineage too. */
-  tractor: boolean;
 }
 
 /** Who holds the group, for the members' salvage bits (`lockSalvageFlags`). */
@@ -71,7 +68,7 @@ export function lineageRekey(
   const root = e.root >= 0 ? e.root : src.rootOf(e.target);
   if (root < 0) return false;
   MEMBERS.length = 0;
-  src.keysOf(root, g.tractor, MEMBERS);
+  src.keysOf(root, MEMBERS);
   let best: string | null = null;
   let bestRank = keep ? memberRank(g, e.flags) : -1;
   for (const key of MEMBERS) {
@@ -121,22 +118,19 @@ const ORDER: number[] = [];
 /**
  * SectorRoom's `CapitalWreckDeps.pieceSplit`: map the parent and its piece
  * ids (parallel `masses`) to swarm lock keys (`s:<entityId>`), biggest piece
- * first, then its last `pods` ids (ore pods, in order, after the pieces),
- * and hand them to every lock machine (`targetSplit`). Ids not in the
+ * first, and hand them to every lock machine (`targetSplit`). Ids not in the
  * registry are skipped.
  */
 export function relayPieceSplit(
   reg: { get(id: string): { entityId: number } | null | undefined },
   parentId: string, ids: ReadonlyArray<string>, masses: ReadonlyArray<number>,
-  a: { targetSplit(from: string, keys: ReadonlyArray<string>, pods: number): void },
-  b: { targetSplit(from: string, keys: ReadonlyArray<string>, pods: number): void } | undefined,
-  pods = 0,
+  a: { targetSplit(from: string, keys: ReadonlyArray<string>): void },
+  b: { targetSplit(from: string, keys: ReadonlyArray<string>): void } | undefined,
 ): void {
   const parent = reg.get(parentId);
   if (parent == null) return;
   ORDER.length = 0;
-  const pieces = ids.length - pods;
-  for (let i = 0; i < pieces; i++) {
+  for (let i = 0; i < ids.length; i++) {
     let j = ORDER.length;
     while (j > 0 && (masses[ORDER[j - 1]!] ?? 0) < (masses[i] ?? 0)) j--;
     ORDER.splice(j, 0, i);
@@ -146,13 +140,8 @@ export function relayPieceSplit(
     const rec = reg.get(ids[i]!);
     if (rec != null) KEYS.push(`s:${rec.entityId}`);
   }
-  const before = KEYS.length;
-  for (let i = pieces; i < ids.length; i++) {
-    const rec = reg.get(ids[i]!);
-    if (rec != null && KEYS.indexOf(`s:${rec.entityId}`) < 0) KEYS.push(`s:${rec.entityId}`); // two slivers may merge into one pod
-  }
   if (KEYS.length === 0) return;
   const from = `s:${parent.entityId}`;
-  a.targetSplit(from, KEYS, KEYS.length - before);
-  if (b !== undefined && b !== a) b.targetSplit(from, KEYS, KEYS.length - before);
+  a.targetSplit(from, KEYS);
+  if (b !== undefined && b !== a) b.targetSplit(from, KEYS);
 }

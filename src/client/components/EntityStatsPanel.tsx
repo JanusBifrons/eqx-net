@@ -615,7 +615,7 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
       if (subtype !== undefined && isProcessorKind(subtype)) {
         // P2b — what it makes and how it's going.
         data.recipe = effectiveRecipe(subtype, st.recipe);
-        data.prodStatus = prodStatusLine((st.prodState ?? 0) as ProdState, decodeGood(st.prodMissing));
+        data.prodStatus = prodStatusLine((st.prodState ?? 0) as ProdState, decodeGood(st.prodMissing), data.recipe);
         data.canChangeRecipe = recipesFor(subtype).length > 1;
         data.needsBlueprint = RECIPES[data.recipe].blueprintRequired;
         if (st.bpRuns !== undefined) {

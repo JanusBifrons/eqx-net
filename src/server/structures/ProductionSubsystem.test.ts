@@ -7,9 +7,9 @@
 import { describe, expect, it } from 'vitest';
 import { ProductionSubsystem, type ProductionDeps } from './ProductionSubsystem.js';
 import type { StructureRecord, StructureRegistry } from './StructureRegistry.js';
-import { PROD_STATE } from '../../shared-types/production.js';
-import { RECIPES } from '../../shared-types/recipes.js';
-import type { BlueprintItem } from '../../shared-types/items.js';
+import { PROD_STATE, prodStatusLine } from '../../shared-types/production.js';
+import { CHUNK_REFINE_BATCH, RECIPES } from '../../shared-types/recipes.js';
+import { ROCK_CHUNK_PRODUCT, type BlueprintItem } from '../../shared-types/items.js';
 
 function bp(product: string, over: Partial<BlueprintItem> = {}): BlueprintItem {
   return { uid: 'bp1', product, kind: 'bpc', runs: 10, material: 0, output: 0, research: 0, ...over };
@@ -292,5 +292,69 @@ describe('ProductionSubsystem — habitation (D3)', () => {
     expect(hab.prodState).toBe(PROD_STATE.starved);
     expect(hab.prodMissing).toBe('consumer_goods');
     expect(paid).toEqual([]);
+  });
+});
+
+describe('ProductionSubsystem — rock chunks (owner 2026-11-17)', () => {
+  const CHUNK = RECIPES.refine_rock_chunk.cyclePulses;
+  const chunk = (uid: string, ore: Record<string, number>, weight = 250) =>
+    ({ product: ROCK_CHUNK_PRODUCT, quality: 0, uid, weight, ore });
+
+  it('a refinery takes one chunk and pays its hidden ore out a batch per cycle until it is empty', () => {
+    const bay = rec('bay', 'cargo_bay', { hold: { goods: {}, blueprints: [], packed: [chunk('rc-1', { minerals: 12_000 })] } });
+    const ref = rec('r', 'refinery', { recipe: 'refine_rock_chunk' });
+    const { run } = world([bay, ref]);
+    run(CHUNK);
+    expect(bay.hold!.packed).toBeUndefined(); // the chunk left the bay whole
+    expect(bay.hold!.goods.minerals).toBe(CHUNK_REFINE_BATCH);
+    expect(ref.prodChunk?.ore).toEqual({ minerals: 12_000 - CHUNK_REFINE_BATCH });
+    run(CHUNK * 2);
+    expect(bay.hold!.goods.minerals).toBe(12_000); // every unit, none minted
+    expect(ref.prodChunk).toBeUndefined();
+    expect(ref.prodLoaded).toBe(false);
+  });
+
+  it('with no chunk in the network it is starved and takes no other packed item', () => {
+    const bay = rec('bay', 'cargo_bay', { hold: { goods: { ice: 50 }, blueprints: [], packed: [{ product: 'structure:smelter', quality: 0 }] } });
+    const ref = rec('r', 'refinery', { recipe: 'refine_rock_chunk' });
+    const { run } = world([bay, ref]);
+    run(CHUNK);
+    expect(ref.prodState).toBe(PROD_STATE.starved);
+    expect(ref.prodMissing).toBeUndefined();
+    expect(bay.hold!.packed).toHaveLength(1);
+    expect(bay.hold!.goods.ice).toBe(50);
+  });
+
+  it('blocks on a full store with the chunk kept loaded, then carries on', () => {
+    // 1745 + a 250 chunk = 1995 of 2000: once the chunk is loaded the bay has
+    // 255 free, too little for a 5000-mineral batch (500 weight).
+    const bay = rec('bay', 'cargo_bay', { hold: { goods: { salvage: 1745 }, blueprints: [], packed: [chunk('rc-1', { minerals: 6_000 })] } });
+    const ref = rec('r', 'refinery', { recipe: 'refine_rock_chunk' });
+    const { run } = world([bay, ref]);
+    run(CHUNK + 2);
+    expect(ref.prodState).toBe(PROD_STATE.blocked);
+    expect(ref.prodChunk?.ore).toEqual({ minerals: 6_000 });
+    bay.hold!.goods.salvage = 0;
+    run(1);
+    expect(ref.prodState).toBe(PROD_STATE.running);
+    expect(bay.hold!.goods.minerals).toBe(CHUNK_REFINE_BATCH);
+  });
+
+  it('changing recipe mid-chunk hands the chunk back whole with the ore it has left', () => {
+    const bay = rec('bay', 'cargo_bay', { hold: { goods: {}, blueprints: [], packed: [chunk('rc-1', { minerals: 7_000, ice: 100 })] } });
+    const ref = rec('r', 'refinery', { recipe: 'refine_rock_chunk' });
+    const { prod, run } = world([bay, ref]);
+    run(CHUNK);
+    expect(prod.setRecipe(ref, 'refine_ice_fuel')).toBe(true);
+    expect(ref.prodChunk).toBeUndefined();
+    expect(bay.hold!.packed).toEqual([chunk('rc-1', { minerals: 7_000 - CHUNK_REFINE_BATCH, ice: 100 })]);
+    expect(bay.hold!.goods).toEqual({ minerals: CHUNK_REFINE_BATCH });
+  });
+});
+
+describe('prodStatusLine — chunk recipes', () => {
+  it('a starved chunk refinery says it is waiting for a rock chunk', () => {
+    expect(prodStatusLine(PROD_STATE.starved, undefined, 'refine_rock_chunk')).toBe('Waiting for a rock chunk');
+    expect(prodStatusLine(PROD_STATE.starved, 'ice', 'refine_ice_fuel')).toBe('Waiting for Ice');
   });
 });

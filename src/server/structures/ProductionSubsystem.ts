@@ -25,16 +25,23 @@
  * same pulse. A cycle's inputs are consumed when it starts, so a processor never
  * makes value from nothing.
  *
+ * **Rock chunks** (owner 2026-11-17). A recipe with `chunkInput` takes ONE
+ * such packed item (by its `uid`) from the network instead of goods and keeps
+ * it on the processor (`rec.prodChunk`, persisted). Each cycle pays out up to
+ * `CHUNK_REFINE_BATCH` units of the chunk's hidden ore, all or nothing; the
+ * chunk stays loaded until it is empty, so a huge chunk drains steadily rather
+ * than jamming on a full store.
+ *
  * Allocation: the processor and network lists are reused arrays and blueprint
  * effects are cached per slot; steady-state pulses allocate nothing (#14).
  */
 import { GOOD_DEFS, GOOD_IDS, type GoodId } from '../../shared-types/goods.js';
-import { RECIPES, blueprintProductFor, type RecipeId, type RecipeOutput } from '../../shared-types/recipes.js';
+import { CHUNK_REFINE_BATCH, RECIPES, blueprintProductFor, type RecipeId, type RecipeOutput } from '../../shared-types/recipes.js';
 import { PROD_STATE, defaultRecipeFor, isProcessorKind } from '../../shared-types/production.js';
 import { getStructureKind, type StructureKindId } from '../../shared-types/structureKinds.js';
 import { applyBlueprint, isBlueprintUsedUp, spendBlueprintRun, type AppliedRecipe } from '../../shared-types/blueprints.js';
-import type { BlueprintItem } from '../../shared-types/items.js';
-import { addPacked, holdWeight, packedWeightOf } from '../../core/cargo/hold.js';
+import type { BlueprintItem, PackedItem } from '../../shared-types/items.js';
+import { addPacked, holdWeight, packedItemWeight, packedWeightOf, takePacked } from '../../core/cargo/hold.js';
 import { holdCapacityOf, isOperationalStorage } from '../cargo/StorageService.js';
 import type { StructureRecord, StructureRegistry } from './StructureRegistry.js';
 
@@ -197,6 +204,13 @@ export class ProductionSubsystem {
     this.netComponent = null;
     this.collectNetwork(rec);
     const id = this.recipeOf(rec);
+    if (rec.prodChunk !== undefined) {
+      if (!this.putItem(rec.prodChunk)) return false;
+      rec.prodChunk = undefined;
+      rec.prodLoaded = false;
+      rec.prodProgress = 0;
+      return true;
+    }
     const eff = this.effective(rec, id) ?? baseEffect(id);
     if (!this.put(inputsAsOutputs(eff), 0, 0)) return false;
     rec.prodLoaded = false;
@@ -270,6 +284,11 @@ export class ProductionSubsystem {
       return;
     }
     this.collectNetwork(rec);
+    const chunkKey = RECIPES[id].chunkInput;
+    if (chunkKey !== undefined) {
+      this.stepChunk(rec, chunkKey, eff.cyclePulses);
+      return;
+    }
     if (!loaded) {
       const missing = this.firstMissing(eff.inputs);
       if (missing !== undefined) {
@@ -309,6 +328,98 @@ export class ProductionSubsystem {
       for (const o of eff.outputs) if ('credits' in o) this.d.payCredits?.(rec, o.credits);
     }
     rec.prodState = PROD_STATE.running;
+  }
+
+  /**
+   * A chunk recipe's pulse: load one chunk (by uid) from the network, then
+   * pay out its ore one batch per completed cycle until it is empty. A batch
+   * that doesn't fit leaves the processor blocked, nothing lost.
+   */
+  private stepChunk(rec: StructureRecord, key: string, cyclePulses: number): void {
+    if (rec.prodLoaded !== true || rec.prodChunk === undefined) {
+      const item = this.takeItem(key);
+      if (item === null) {
+        rec.prodLoaded = false;
+        rec.prodState = PROD_STATE.starved;
+        rec.prodMissing = undefined;
+        return;
+      }
+      rec.prodChunk = item;
+      rec.prodLoaded = true;
+      rec.prodProgress = 0;
+    }
+    rec.prodMissing = undefined;
+    const progress = rec.prodProgress ?? 0;
+    if (progress < cyclePulses) rec.prodProgress = progress + 1;
+    if ((rec.prodProgress ?? 0) >= cyclePulses) {
+      const ore = (rec.prodChunk.ore ??= {});
+      const batch = this.chunkBatch(ore);
+      if (!this.put(batch, 0, 0)) {
+        rec.prodState = PROD_STATE.blocked;
+        return;
+      }
+      for (const o of batch) {
+        if (!('good' in o)) continue;
+        const left = (ore[o.good] ?? 0) - o.n;
+        if (left > 0) ore[o.good] = left;
+        else delete ore[o.good];
+      }
+      rec.prodProgress = 0;
+      rec.prodCycles = (rec.prodCycles ?? 0) + 1;
+      this.cyclesCompleted++;
+      if (!this.hasOre(ore)) {
+        rec.prodChunk = undefined;
+        rec.prodLoaded = false;
+      }
+    }
+    rec.prodState = PROD_STATE.running;
+  }
+
+  /** Up to `CHUNK_REFINE_BATCH` units of `ore`, goods in `GOOD_IDS` order
+   *  (reused scratch; unknown keys are ignored). */
+  private chunkBatch(ore: Record<string, number>): readonly RecipeOutput[] {
+    const list = this.multiList;
+    list.length = 0;
+    let room = CHUNK_REFINE_BATCH;
+    for (let i = 0; i < GOOD_IDS.length && room > 0; i++) {
+      const have = Math.floor(ore[GOOD_IDS[i]!] ?? 0);
+      if (have <= 0) continue;
+      const o = this.multiScratch[i]!;
+      o.n = Math.min(have, room);
+      room -= o.n;
+      list.push(o);
+    }
+    return list;
+  }
+
+  private hasOre(ore: Record<string, number>): boolean {
+    for (const g of GOOD_IDS) if ((ore[g] ?? 0) >= 1) return true;
+    return false;
+  }
+
+  /** Take the first one-of-a-kind packed item of `product` from the network
+   *  (by its uid); null when there is none. */
+  private takeItem(product: string): PackedItem | null {
+    for (const s of this.net) {
+      const list = s.hold?.packed;
+      if (!list) continue;
+      for (const p of list) {
+        if (p.product === product && p.uid !== undefined) return takePacked(s.hold!, p.uid);
+      }
+    }
+    return null;
+  }
+
+  /** Put one packed item back into the network whole (by weight); false,
+   *  changing nothing, if no storage has room. */
+  private putItem(item: PackedItem): boolean {
+    const w = packedItemWeight(item);
+    for (const s of this.net) {
+      if (holdCapacityOf(s) - holdWeight(s.hold ?? EMPTY) + 1e-9 < w) continue;
+      ((s.hold ??= { goods: {}, blueprints: [] }).packed ??= []).push(item);
+      return true;
+    }
+    return false;
   }
 
   /** Base effect, or the slot blueprint's (cached); null when a needed

@@ -6,8 +6,8 @@
  * the hold stalled. A laser lock on a piece that wore out into a pod ended
  * (the lasers leave pods) and a tractor lock on a pod taken in ended, though
  * the group never held the piece's live siblings (its lock capacity). While
- * any piece (or, for tractors, any pod) of the locked rock is alive, each
- * group stays locked on it.
+ * any piece of the locked rock is alive, each group stays locked on it. A
+ * pod is never a member (cargo pods, owner 2026-11-17: no weapon works a pod).
  */
 import { describe, it, expect } from 'vitest';
 import { LockSubsystem, type LockSubsystemDeps, type LockTargetView } from './LockSubsystem.js';
@@ -16,7 +16,7 @@ import { getShipKind } from '../../shared-types/shipKinds.js';
 const ROOT = 7;
 
 /** One pilot 'p1' in a barge (or `kindId`) at the origin, MAN groups. `targets`: live keys;
- *  `root`: each live member's lineage root; `pods`: which are ore pods. */
+ *  `root`: each live member's lineage root; `pods`: which are pods (never members). */
 function harness(kindId = 'barge') {
   const targets = new Map<string, LockTargetView>();
   const root = new Map<string, number>();
@@ -38,8 +38,8 @@ function harness(kindId = 'barge') {
     },
     lineage: {
       rootOf: (key) => (targets.has(key) ? root.get(key) ?? -1 : -1),
-      keysOf: (r, withPods, out) => {
-        for (const k of targets.keys()) if (root.get(k) === r && (withPods || !pods.has(k))) out.push(k);
+      keysOf: (r, out) => {
+        for (const k of targets.keys()) if (root.get(k) === r && !pods.has(k)) out.push(k);
       },
     },
     autoPick: () => null,
@@ -73,7 +73,7 @@ describe('a salvage lock ends with its lineage, not its piece', () => {
     return { h, pieces };
   };
 
-  it('pieces wearing out into pods one by one: the lasers move on to the pieces they never held, the tractors to the pods; both end only when the rock is gone', () => {
+  it('pieces wearing out into pods one by one: both groups move on to the pieces they never held, never to a pod; both end only when the last piece is gone', () => {
     const { h, pieces } = cut();
     const laserCap = h.keys('laser').length;
     expect(laserCap, 'the lasers hold fewer than the pieces (so siblings go unheld)').toBeLessThan(pieces.length);
@@ -85,26 +85,18 @@ describe('a salvage lock ends with its lineage, not its piece', () => {
       expect(live.has(k), `the lasers hold a live piece (${k})`).toBe(true);
       const pod = `s:${100 + n++}`;
       h.add(pod, true);
-      h.locks.targetSplit(k, [pod], 1);
       h.targets.delete(k); live.delete(k);
       h.locks.step();
       if (live.size > 0) {
         expect(h.keys('laser').length, `lasers still locked with ${live.size} pieces left`).toBe(Math.min(laserCap, live.size));
         for (const l of h.locks.wireFor('p1')!.find((g) => g.id === 'laser')!.l) expect(l.s, `${l.t} stays LOCKED`).toBe(2);
       }
-      expect(h.keys('tractor').length, 'the tractors stay locked').toBeGreaterThan(0);
+      for (const t of h.keys('tractor')) expect(live.has(t), `the tractors never lock a pod (${t})`).toBe(true);
+      if (live.size > 0) expect(h.keys('tractor').length, 'the tractors stay locked').toBeGreaterThan(0);
     }
+    expect(h.targets.size, 'the pods are still there').toBe(pieces.length);
     expect(h.keys('laser'), 'no piece left: the lasers end').toEqual([]);
-    // The pods are taken in one by one: the tractors move on through them.
-    const podKeys = [...h.targets.keys()];
-    expect(podKeys.length).toBe(pieces.length);
-    for (let i = 0; i < podKeys.length; i++) {
-      h.targets.delete(h.keys('tractor')[0]!);
-      h.locks.step();
-      const left = podKeys.length - 1 - i;
-      if (left > 0) expect(h.keys('tractor').length, `tractors still locked with ${left} pods left`).toBeGreaterThan(0);
-    }
-    expect(h.keys('tractor'), 'the lineage is gone: the tractors end').toEqual([]);
+    expect(h.keys('tractor'), 'no piece left: the tractors end (pods are not the lineage)').toEqual([]);
   });
 
   it('a held piece leaving with no split (taken in, or gone): the group moves on to a sibling it did not hold', () => {

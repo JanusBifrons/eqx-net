@@ -391,20 +391,6 @@ describe('LockSubsystem', () => {
       expect(keys(h, gid)).toEqual(['s:9']);
     });
 
-    it('ore pods (the tail, `pods`) follow only a group with tractors: the lasers leave them', () => {
-      const h = harness('barge');
-      for (const k of ['s:1', 's:11', 's:20', 's:21']) h.targets.set(k, rock(200));
-      for (const gid of ['laser', 'tractor']) expect(h.locks.forceLock('p1', 's:1', gid), gid).toBeGreaterThan(0);
-      h.locks.targetSplit('s:1', ['s:11', 's:20', 's:21'], 2);
-      expect(keys(h, 'laser'), 'the lasers: the piece only').toEqual(['s:11']);
-      expect(keys(h, 'tractor'), 'the tractors: the piece, then its pods').toEqual(['s:11', 's:20', 's:21']);
-      // A worn-out piece leaving only a pod: the lasers drop it, the tractors follow it.
-      h.locks.targetSplit('s:11', ['s:30'], 1);
-      h.targets.set('s:30', rock(200));
-      expect(keys(h, 'laser')).toEqual([]);
-      expect(keys(h, 'tractor')).toEqual(['s:30', 's:20', 's:21']);
-    });
-
     it('a piece the group already locks is not doubled', () => {
       const { h, gid } = setup();
       h.locks.cancelLock('p1', gid);

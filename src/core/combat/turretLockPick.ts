@@ -28,7 +28,7 @@
  * the next smaller laser size in the group standing in for a missing one
  * (`laserCutsTier` over `laserRungMask(groupMounts)`),
  * a tractor on rung k only pieces at or below k (`tractorTakesTier`, its
- * pull limit), never a consumable one. Pieces rank by radius descending
+ * pull limit), never a consumable one; a `LOCK_HAUL` rock piece no laser cuts. Pieces rank by radius descending
  * among those the mount can engage (reach + arc, as above; none: it parks on
  * the first workable piece). Big-preferring lasers (`salvagePrefersBig`) and
  * all tractors take from the big end, rank r → piece r % k; small lasers
@@ -53,11 +53,14 @@ import type { WeaponMount } from '../../shared-types/shipKinds/types.js';
 export const TURRET_NO_LOCK = -1;
 /** `lockFlags` bit: the lock is a salvage piece (wreck piece, rock, rock piece). */
 export const LOCK_SALVAGE = 1;
+/** `lockFlags` bit: a ROCK piece this ship hauls in whole (`rockHaulable`):
+ *  no laser cuts it; the tractors still pull it to the hull. */
+export const LOCK_HAUL = 2;
 /** `lockFlags` bit: this ship can take the piece in whole (`salvageConsumable`):
  *  no laser and no tractor aims at it; the loot pickup takes it in. */
 export const LOCK_CONSUMABLE = 4;
 /** `lockFlags` bits 3..5: the piece's size tier (`salvageTier`: 0 none,
- *  1 AA … 5 XL). Bit 1 is free (it was the retired per-ship "haulable"). */
+ *  1 AA … 5 XL). */
 export const LOCK_TIER_SHIFT = 3;
 export const LOCK_TIER_MASK = 7 << LOCK_TIER_SHIFT;
 /** The tier bits of a salvage lock. */
@@ -213,7 +216,8 @@ function pickSalvageLock(
 function mountWorks(laser: boolean, rung: number, rungs: number, f: number): boolean {
   if ((f & LOCK_SALVAGE) === 0 || (f & LOCK_CONSUMABLE) !== 0) return false;
   const tier = lockTierOf(f);
-  return laser ? laserCutsTier(rung, tier, rungs) : tractorTakesTier(rung, tier);
+  if (laser) return (f & LOCK_HAUL) === 0 && laserCutsTier(rung, tier, rungs);
+  return tractorTakesTier(rung, tier);
 }
 
 /** Does some mining laser or tractor of `groupMounts` (a group's mounts)

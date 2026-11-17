@@ -343,6 +343,7 @@ import { addPacked, cloneHold, emptyHold, extractRequested, holdWeight, isHoldEm
 import type { HolderType, HoldRecord } from '../cargo/HoldStore.js';
 import { RAID_NOTICE_THROTTLE_MS, RAID_PRIORITY } from '../livingworld/RobotTerritory.js';
 import { cargoCapacityForMaxHealth, GOOD_DEFS, GOOD_IDS, HoldSchema, type Hold } from '../../shared-types/goods.js';
+import { PackedItemSchema } from '../../shared-types/items.js';
 import { rollKillBounty } from '../../shared-types/lootTables.js';
 import { DEATH_POD_PUSH, deathHullLoot, killPodSpot, rollHullLoot, vaporisedSalvageExtra } from '../cargo/hullLoot.js';
 import { ELITE_HEALTH_MUL } from '../../shared-types/elites.js';
@@ -4705,7 +4706,7 @@ export class SectorRoom extends Room<SectorState> {
   private readonly _lockActivated = new Map<string, { ref: unknown; mounts: ReadonlyArray<WeaponMount> }>();
   private readonly _lockSalvage = new LockSalvageLookup<ShipState>({ swarm: (n) => this.swarmRegistry.getByEntityId(n),
     piece: (id, out) => this.capitalWrecks?.pieceStore(id, out) === true, // salvage lock bits (lockSalvage.ts)
-    wrecks: () => this.capitalWrecks, pods: () => this.loot, entity: (id) => this.swarmRegistry.get(id)?.entityId ?? -1, // lock lineage (lockSplit.ts)
+    wrecks: () => this.capitalWrecks, entity: (id) => this.swarmRegistry.get(id)?.entityId ?? -1, // lock lineage (lockSplit.ts)
     // No hold (no roster row, e.g. a showcase room with no sectorKey): it takes nothing in, so nothing is consumable.
     freeHold: (s) => (this.hasHold(s.shipInstanceId) ? this.shipCargoCapacity(s.kind, s.shipInstanceId) - this.holdWeight(s.shipInstanceId) : 0) });
 
@@ -5732,9 +5733,9 @@ export class SectorRoom extends Room<SectorState> {
         if (slot !== undefined) slotPoseInto(this.sabF32, slot, out);
         return slot !== undefined;
       },
-      dropSalvage: (qty, x, y, vx, vy, root) => this.loot.drop({ goods: { salvage: qty }, blueprints: [] }, x, y, vx, vy, { cause: 'salvage', root }),
+      dropSalvage: (qty, x, y, vx, vy) => this.loot.drop({ goods: { salvage: qty }, blueprints: [] }, x, y, vx, vy, { cause: 'salvage' }),
       rockOf: (id) => rockViewOf(this.swarmRegistry, id),
-      pieceSplit: (from, ids, masses, pods) => relayPieceSplit(this.swarmRegistry, from, ids, masses, this.locks, this.wingmanLocks, pods),
+      pieceSplit: (from, ids, masses) => relayPieceSplit(this.swarmRegistry, from, ids, masses, this.locks, this.wingmanLocks),
     });
   }
 
@@ -6489,6 +6490,7 @@ export class SectorRoom extends Room<SectorState> {
         if (r.prodLoaded === true) {
           rec.prodLoaded = true;
           rec.prodProgress = r.prodProgress ?? 0;
+          if (r.prodChunk) { const c = PackedItemSchema.safeParse(r.prodChunk); if (c.success) rec.prodChunk = c.data; }
         }
         // Living World P1a-2 — overlay the fresher holds-table payload (bank +
         // deposited goods) keyed by the structure's stable uid.

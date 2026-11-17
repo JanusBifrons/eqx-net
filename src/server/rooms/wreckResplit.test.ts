@@ -18,7 +18,7 @@ function make(kind: ShipKindId = 'battleship') {
   const spawned = new Map<string, WreckPieceSpawn>();
   const live = new Set<string>();
   const drops: Array<{ qty: number; x: number; y: number }> = [];
-  const splits: Array<{ from: string; ids: string[]; pods: number }> = [];
+  const splits: Array<{ from: string; ids: string[] }> = [];
   const sys = new CapitalWreckSubsystem({
     serverTick: () => tick,
     wreckKindOf: (id) => (id === 'cap' ? kind : null),
@@ -34,7 +34,7 @@ function make(kind: ShipKindId = 'battleship') {
       return s !== undefined && live.has(id) ? { x: s.x, y: s.y, vx: s.vx, vy: s.vy, angle: s.angle, angvel: s.angvel } : null;
     },
     dropSalvage: (qty, x, y) => { drops.push({ qty, x, y }); return `pod-${drops.length}`; },
-    pieceSplit: (from, ids, _m, pods) => { splits.push({ from, ids: [...ids], pods: pods ?? 0 }); },
+    pieceSplit: (from, ids) => { splits.push({ from, ids: [...ids] }); },
   });
   sys.forcedSeed = 11;
   const pose = { x: 1000, y: -500, vx: 3, vy: 1, angle: 0.7, angvel: 0.01 };
@@ -190,11 +190,12 @@ describe('wreck re-split (server)', () => {
     expect(a.sys.descriptors().every((d) => d.parentWreck === undefined)).toBe(true);
   });
 
-  it('a piece worn out into a pod hands its locks on to the pod (lineage: the tractors follow it)', () => {
+  it('a piece worn out into a pod hands no lock to the pod (a pod is never a lineage member: owner 2026-11-17)', () => {
     const a = make('fighter');
     const id = a.biggest();
     a.sys.subcapCapOverride = a.sys.liveSubcapCount();
     asMiner(() => hit(a.sys, a.spawned.get(id)!, a.sys.pieceIntegrity(id)! + 1));
-    expect(a.splits).toEqual([{ from: id, ids: ['pod-1'], pods: 1 }]);
+    expect(a.drops.length, 'the piece wore out into a pod').toBe(1);
+    expect(a.splits, 'no split names the pod: the locks move on through the lineage').toEqual([]);
   });
 });
