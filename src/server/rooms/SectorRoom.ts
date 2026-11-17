@@ -7580,14 +7580,19 @@ export class SectorRoom extends Room<SectorState> {
     }
   }
 
-  /** C2 — does `playerId` fly a live ship (#17) within cargo range of `rec`? */
+  /** C2 — does `playerId` fly a live ship (#17) within cargo range of `rec`?
+   *  In range = within CARGO_ACCESS_RANGE of its footprint edge, or inside its
+   *  deposit circle (`depositRangeOf`): a freight dock's circle covers its
+   *  whole landing pad, which reaches past the edge range. */
   private pilotNear(playerId: string, rec: StructureRecord): boolean {
     const ship = this.getActiveShip(playerId);
     const pose = this.shipPoseCache.get(playerId);
     if (!ship?.alive || !ship.isActive || !pose) return false;
     const dx = Math.max(Math.abs(pose.x - rec.x) - (rec.halfW ?? rec.radius), 0);
     const dy = Math.max(Math.abs(pose.y - rec.y) - (rec.halfH ?? rec.radius), 0);
-    return dx * dx + dy * dy <= CARGO_ACCESS_RANGE * CARGO_ACCESS_RANGE;
+    if (dx * dx + dy * dy <= CARGO_ACCESS_RANGE * CARGO_ACCESS_RANGE) return true;
+    const pad = depositRangeOf(rec.kind);
+    return (pose.x - rec.x) ** 2 + (pose.y - rec.y) ** 2 <= pad * pad;
   }
 
   /**
@@ -11406,11 +11411,7 @@ export class SectorRoom extends Room<SectorState> {
     if (!ship?.alive || !ship.isActive || ship.shipInstanceId === '' || getPlayerShipStore().get(ship.shipInstanceId) === null || !pose) {
       return { ok: false, message: 'You need a ship to move cargo.' };
     }
-    const dx = Math.max(Math.abs(pose.x - rec.x) - (rec.halfW ?? rec.radius), 0);
-    const dy = Math.max(Math.abs(pose.y - rec.y) - (rec.halfH ?? rec.radius), 0);
-    if (dx * dx + dy * dy > CARGO_ACCESS_RANGE * CARGO_ACCESS_RANGE) {
-      return { ok: false, message: 'Fly closer to open its cargo.' };
-    }
+    if (!this.pilotNear(playerId, rec)) return { ok: false, message: 'Fly closer to open its cargo.' };
     return { ok: true, rec, shipInstanceId: ship.shipInstanceId, capacity: this.shipCargoCapacity(ship.kind, ship.shipInstanceId), market };
   }
 
