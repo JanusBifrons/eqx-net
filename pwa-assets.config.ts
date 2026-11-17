@@ -1,5 +1,5 @@
 /**
- * PWA icon set from public/pwa-icon.svg (`pnpm gen:pwa-assets`).
+ * PWA icon set from public/pwa-icon.png (`pnpm gen:pwa-assets`).
  * Guide: docs/architecture/web-push.md. The maskable and Apple icons are
  * full-bleed (no padding, background colour fill): the phone crops them to its
  * own shape, so any padding shows as a square inside the circle.
@@ -14,5 +14,5 @@ export default defineConfig({
     maskable: { ...minimal2023Preset.maskable, padding: 0, resizeOptions: { background: BG } },
     apple: { ...minimal2023Preset.apple, padding: 0, resizeOptions: { background: BG } },
   },
-  images: ['public/pwa-icon.svg'],
+  images: ['public/pwa-icon.png'],
 });
