@@ -40,7 +40,8 @@ import {
   FLAG_WARP_CRUISE,
   slotBase,
 } from '../../shared-types/sabLayout.js';
-import { CELL_SIZE } from '../interest/SpatialGrid.js';
+import { CELL_SIZE, coordToCell } from '../interest/SpatialGrid.js';
+import { getShipKind } from '../../shared-types/shipKinds.js';
 import { SWARM_KIND_STRUCTURE } from '../../shared-types/swarmWireFormat.js';
 import {
   shouldBroadcastFar,
@@ -425,6 +426,23 @@ export class SnapshotBroadcaster {
   /** Per-session 9-cell drone interest sets (populated by the room's
    *  swarm-broadcast block earlier in update()). */
   readonly interestScratch = new Map<string, Set<number>>();
+  /** Per-session interest window (centre cell + reach in cells), recorded by
+   *  the swarm broadcast beside `interestScratch`. Pilot hulls are not grid
+   *  entities, so the wide-owner rule tests their cell against this window. */
+  private readonly interestWindows = new Map<string, { cx: number; cy: number; reach: number }>();
+
+  /** The swarm broadcast's per-tick record of a viewer's window (reused entry). */
+  noteInterestWindow(sessionId: string, cx: number, cy: number, reach: number): void {
+    const w = this.interestWindows.get(sessionId);
+    if (w === undefined) { this.interestWindows.set(sessionId, { cx, cy, reach }); return; }
+    w.cx = cx; w.cy = cy; w.reach = reach;
+  }
+
+  /** Forget a departed session's window and interest set. */
+  forgetInterestWindow(sessionId: string): void {
+    this.interestWindows.delete(sessionId);
+    this.interestScratch.delete(sessionId);
+  }
 
   // === Per-broadcast scratch (plan: quirky-rabbit, Phase 2 — invariant
   // #14). Built ONCE before the per-recipient loop, referenced
@@ -502,8 +520,28 @@ export class SnapshotBroadcaster {
    */
   ownerWideInInterest(ownerId: string, sessionId: string): boolean {
     const owner = this.deps.swarmRegistry.get?.(ownerId);
-    if (!owner || (owner.radius <= CELL_SIZE / 2 && owner.kind !== SWARM_KIND_STRUCTURE)) return false;
+    if (owner === undefined || owner === null) return this.pilotHullWideInWindow(ownerId, sessionId);
+    if (owner.radius <= CELL_SIZE / 2 && owner.kind !== SWARM_KIND_STRUCTURE) return false;
     return this.interestScratch.get(sessionId)?.has(owner.entityId) === true;
+  }
+
+  /** The same rule for a PILOT hull (ship parity: a capital's shots are seen
+   *  whoever flies it). `ownerId` is the pilot's playerId (active hull) or a
+   *  hull's shipInstanceId (AI-flown / lingering). In the window when its cell
+   *  is within the viewer's reach plus its own, exactly as `SpatialGrid`
+   *  admits a wide swarm entity. Alloc-free (hot: per far shot per viewer). */
+  private pilotHullWideInWindow(ownerId: string, sessionId: string): boolean {
+    const w = this.interestWindows.get(sessionId);
+    if (w === undefined) return false;
+    const d = this.deps;
+    const ship = d.getActiveShip(ownerId) ?? d.shipsMap.get(ownerId);
+    if (ship === undefined) return false;
+    const radius = getShipKind(ship.kind).radius;
+    if (radius <= CELL_SIZE / 2) return false;
+    const pose = d.shipPoseCache.get(ownerId) ?? d.lingeringPoseCache.get(ownerId);
+    if (pose === undefined) return false;
+    const reach = w.reach + Math.ceil(radius / CELL_SIZE);
+    return Math.abs(coordToCell(pose.x) - w.cx) <= reach && Math.abs(coordToCell(pose.y) - w.cy) <= reach;
   }
   private readonly _shellKeyScratch: ShellKeyRecord[] = [];
   private readonly _missilesScratch: MutableMissileEntry[] = [];
@@ -879,8 +917,6 @@ export class SnapshotBroadcaster {
       wreckWire.step(this.broadcastCounter, liveWrecks, d.wrecksVersion?.() ?? 0);
     }
 
-    // 3×3 cell window radius for projectile interest.
-    const interestRadius = CELL_SIZE * 1.5;
     let anySnapshotSent = false;
 
     for (const client of d.clients) {
@@ -900,6 +936,11 @@ export class SnapshotBroadcaster {
 
       const recipientPose = d.shipPoseCache.get(recipientPlayerId);
       if (!recipientPose) continue;
+
+      // Projectile/missile interest box: the viewer's cell window half-width
+      // (reach cells + half the centre cell). Reach 1 (every small hull) is
+      // the 3×3 window, 1.5 cells; a capital's window grows with its hull.
+      const interestRadius = CELL_SIZE * ((this.interestWindows.get(client.sessionId)?.reach ?? 1) + 0.5);
 
       // Build per-recipient states map. The Record itself MUST be
       // freshly allocated (notepack.io would encode stale keys from a

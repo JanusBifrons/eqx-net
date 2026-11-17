@@ -77,11 +77,11 @@ A viewer gets a salvo if any of these holds, decided per shell, at fire time:
 
 1. **The flight crosses the viewer's view.** The segment origin → fall point meets the square of half-extent `shellViewHalfExtent(viewer kind)` (a new shared `shellSegmentInView`, slab test, alloc-free). This replaces today's "shell or fall point in view", which misses a shell that crosses the view mid-path.
 2. **The viewer fired it, or is its target** (`g` is the viewer's ship).
-3. **The owner is a wide entity in the viewer's interest** (today's rule, so a capital's broadside is seen leaving the barrels).
+3. **The owner is a wide entity in the viewer's interest** (today's rule, so a capital's broadside is seen leaving the barrels). The rule covers every owner, whoever flies the hull: a swarm capital by its registry entity in `interestScratch`; a player capital (owner = playerId, or its shipInstanceId while AI-flown or lingering) by its hull cell against the viewer's window (`SnapshotBroadcaster.noteInterestWindow`, recorded by the swarm broadcast): in view when the Chebyshev cell distance is at most viewer reach + `ceil(hull radius / CELL_SIZE)`, the same test `SpatialGrid` uses for a wide swarm entity. Lock: `SnapshotBroadcaster.pilotCapitalShots.test.ts`.
 
 The viewer moves during a 35 s flight, so the server keeps, per recipient, a stamp of which live shells it has sent (generation counter on a pooled per-client slot, #14). On the 1 Hz keyframe tick (§5) it re-tests unsent live shells against the viewer's current pose and sends any that now qualify as a `shell_salvo` holding just those shells. `shell_end` goes to every recipient whose stamp says it has the shell.
 
-When the flag is on, naval shells leave the per-tick `projectiles[]` loop for event-capable clients (the `NAVAL_SHELL_IDS` branch skips them). Sub-capital bolts are unchanged: their flights are short and the ±3,072 u box already bounds them.
+When the flag is on, naval shells leave the per-tick `projectiles[]` loop for event-capable clients (the `NAVAL_SHELL_IDS` branch skips them). Sub-capital bolts are unchanged: their flights are short and the ±3,072 u box already bounds them. That box is the viewer's cell window half-width, `CELL_SIZE × (reach + 0.5)`: ±3,072 u (1.5 cells) for every small hull, wider for a viewer flying a capital, whose window grows with its hull.
 
 ## 4. Drawing the flight
 

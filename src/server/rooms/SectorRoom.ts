@@ -10314,6 +10314,8 @@ export class SectorRoom extends Room<SectorState> {
     this.fleetStatus?.clearSession(client.sessionId);
     this.fleetStatusSoon.clear(client.sessionId);
     this.fleetMsgCountThisTick.delete(client.sessionId);
+    // Interest window + scratch set of a gone connection.
+    this.snapshotBroadcaster.forgetInterestWindow(client.sessionId);
 
     // Campaign 1.3 — forget this connection's malformed-packet counter.
     this.malformed.clear(client.sessionId);
