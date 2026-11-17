@@ -117,7 +117,7 @@ import { buildGridNodes, connectExplicit } from '../structures/structureGridView
 import { buildStructureLattice } from '../../core/structures/structureLattice.js';
 import { NearestPointGrid } from '../../core/spatial/NearestPointGrid.js';
 import { cargoOpensFor, createRelationContext, isNpcOwner, npcOwner, parseOwner, relationOf, type StandingQuery } from '../../shared-types/relations.js';
-import { BreakInCancelSchema, BreakInSchema, CARGO_ACCESS_RANGE, CargoMoveSchema, CargoQuerySchema, MAX_FREIGHT_ORDERS, SetFreightOrdersSchema, type BreakInNotice, type CargoState } from '../../shared-types/messages/cargoMessages.js';
+import { BreakInCancelSchema, BreakInSchema, CARGO_ACCESS_RANGE, CargoMoveSchema, CargoQuerySchema, MAX_FREIGHT_ORDERS, SetAutoUnloadSchema, SetFreightOrdersSchema, type BreakInNotice, type CargoState } from '../../shared-types/messages/cargoMessages.js';
 import { breakInDurationMs } from '../../shared-types/breakIn.js';
 import { BreakInSubsystem } from './BreakInSubsystem.js';
 import { ForceFieldSubsystem, lockKeyBodyId } from './ForceFieldSubsystem.js';
@@ -4103,10 +4103,12 @@ export class SectorRoom extends Room<SectorState> {
       const view = this.storage.cargoView(access.rec);
       const shipHold = getHoldStore().get(access.shipInstanceId)?.hold ?? emptyHold();
       const own = access.rec.owner === playerId && access.rec.kind === 'freight_dock';
+      const ownStorage = access.rec.owner === playerId && isOperationalStorage(access.rec);
       send({
         type: 'cargo_state', entityId, open: true, hold: view.hold, used: view.used, capacity: view.capacity,
         ship: shipHold, shipCapacity: access.capacity,
         ...(own ? { orders: (access.rec.freightOrders ?? []).map((o) => ({ ...o })) } : {}),
+        ...(ownStorage ? { autoUnload: getPlayerShipStore().get(access.shipInstanceId)?.autoUnload !== false, acceptAutoUnload: access.rec.acceptAutoUnload !== false } : {}),
         ...(verdict ?? {}),
       });
     };
@@ -4154,6 +4156,26 @@ export class SectorRoom extends Room<SectorState> {
       rec.freightOrders = [...byGood.values()].slice(0, MAX_FREIGHT_ORDERS);
       if (rec.freightOrders.length === 0) delete rec.freightOrders;
       auditEvent({ event: 'freight_orders_set', sector: this.sectorKey ?? undefined, playerId: owner, orders: rec.freightOrders?.length ?? 0 });
+    });
+    // Cargo pods 14c — auto-unload on/off, the ship end or the storage end.
+    this.onMessage('set_auto_unload', (client: Client, raw: unknown) => {
+      const p = SetAutoUnloadSchema.safeParse(raw);
+      if (!p.success) { this.malformed.record(client.sessionId, 'set_auto_unload'); return; }
+      const owner = this.sessionToPlayer.get(client.sessionId);
+      if (!owner) return;
+      if (p.data.side === 'ship') {
+        const shipId = this.resolveActiveShipKey(owner);
+        const rec = shipId !== undefined ? getPlayerShipStore().get(shipId) : null;
+        if (!rec || rec.playerId !== owner || (rec.autoUnload !== false) === p.data.on) return;
+        const next = { ...rec };
+        if (p.data.on) delete next.autoUnload; else next.autoUnload = false;
+        getPlayerShipStore().put(next);
+        return;
+      }
+      const swarmRec = this.swarmRegistry.getByEntityId(p.data.entityId!);
+      const rec = swarmRec ? this.structureRegistry.get(swarmRec.id) : undefined;
+      if (!rec || rec.owner !== owner || !isOperationalStorage(rec)) return;
+      if (p.data.on) delete rec.acceptAutoUnload; else rec.acceptAutoUnload = false;
     });
     this.onMessage('cargo_query', (client: Client, raw: unknown) => cargoRequest(client, 'cargo_query', raw));
     this.onMessage('cargo_move', (client: Client, raw: unknown) => cargoRequest(client, 'cargo_move', raw));
@@ -6455,6 +6477,7 @@ export class SectorRoom extends Room<SectorState> {
           const ok = r.freightOrders.filter((o) => (GOOD_IDS as readonly string[]).includes(o.good) && (o.mode === 'import' || o.mode === 'export') && o.level > 0);
           if (ok.length > 0) rec.freightOrders = ok.map((o) => ({ good: o.good as GoodId, mode: o.mode, level: Math.floor(o.level) })).slice(0, MAX_FREIGHT_ORDERS);
         }
+        if (r.acceptAutoUnload === false) rec.acceptAutoUnload = false; // cargo pods 14c
         if (typeof r.packedQuality === 'number') rec.packedQuality = r.packedQuality;
         if (r.prodLoaded === true) {
           rec.prodLoaded = true;
@@ -11845,8 +11868,9 @@ export class SectorRoom extends Room<SectorState> {
       return;
     }
     const hold = this.loot.shipHold(c.shipInstanceId);
-    const target = hold !== undefined && !isHoldEmpty(hold)
-      ? this.storage.nearestOwnStorage(c.playerId, c.x, c.y)
+    // Cargo pods 14c: both ends must agree (the ship's switch, the storage's accept).
+    const target = hold !== undefined && !isHoldEmpty(hold) && getPlayerShipStore().get(c.shipInstanceId)?.autoUnload !== false
+      ? this.storage.nearestOwnStorage(c.playerId, c.x, c.y, DEPOSIT_RANGE, true)
       : null;
     if (target === null) {
       if (this.depositDwell.delete(c.playerId)) this.depositProgress.delete(c.shipInstanceId);

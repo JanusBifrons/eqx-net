@@ -169,6 +169,8 @@ export interface StructureRecord {
   prodCycles?: number;
   /** T4b — standing import/export orders on a player's Freight Dock. */
   freightOrders?: Array<{ good: GoodId; mode: 'import' | 'export'; level: number }>;
+  /** Cargo pods 14c — false: this storage refuses auto-unload (absent ⇒ accepts). */
+  acceptAutoUnload?: boolean;
   /** Active power — drawing full consumption this pulse (else the idle trickle). */
   drawFull?: boolean;
   /** D1 — a Reactor has fuel burning (its output counts). Rides room state as

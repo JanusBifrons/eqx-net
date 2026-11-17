@@ -107,6 +107,9 @@ export interface PlayerShipRecord {
   /** Economy v2 — the packed hull's quality if this ship was unpacked from a
    *  crate (0 otherwise): a small max-hull bonus (`qualityHullFactor`). */
   hullQuality: number;
+  /** Cargo pods 14c — false: never auto-unload at the owner's storage
+   *  (absent ⇒ on, the default). */
+  autoUnload?: boolean;
   createdAt: number;
   updatedAt: number;
 }
@@ -225,6 +228,7 @@ export class PlayerShipStore {
       statAllocJson: JSON.stringify(stamped.statAlloc),
       mountsJson: JSON.stringify(stamped.mounts),
       hullQuality: stamped.hullQuality,
+      ...(stamped.autoUnload === false ? { autoUnload: false } : {}),
       ts: now,
     });
   }

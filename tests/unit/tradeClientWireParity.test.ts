@@ -27,7 +27,7 @@ import { PackedStockQuerySchema } from '../../src/shared-types/packedStock';
 import { PlaceBountySchema } from '../../src/shared-types/contracts';
 import { LabCancelSchema, LabQuerySchema, LabStartSchema } from '../../src/shared-types/messages/labMessages';
 import { SetFactionPolicySchema } from '../../src/shared-types/messages/factionMessages';
-import { BreakInCancelSchema, BreakInSchema, CargoMoveSchema, CargoQuerySchema, SetFreightOrdersSchema } from '../../src/shared-types/messages/cargoMessages';
+import { BreakInCancelSchema, BreakInSchema, CargoMoveSchema, CargoQuerySchema, SetAutoUnloadSchema, SetFreightOrdersSchema } from '../../src/shared-types/messages/cargoMessages';
 
 function lastAccepted(schema: ZodType, wireType: string): void {
   const m = sent[sent.length - 1]!;
@@ -84,6 +84,13 @@ describe('tradeClient senders match the server schemas', () => {
     lastAccepted(CargoMoveSchema, 'cargo_move');
     client.sendSetFreightOrders(9, [{ good: 'alloy', mode: 'import', level: 200 }, { good: 'fuel', mode: 'export', level: 50 }]);
     lastAccepted(SetFreightOrdersSchema, 'set_freight_orders');
+    // Cargo pods 14c — auto-unload on both ends.
+    client.sendSetAutoUnload('ship', false);
+    lastAccepted(SetAutoUnloadSchema, 'set_auto_unload');
+    client.sendSetAutoUnload('storage', true, 9);
+    lastAccepted(SetAutoUnloadSchema, 'set_auto_unload');
+    expect(SetAutoUnloadSchema.safeParse({ type: 'set_auto_unload', side: 'storage', on: true }).success, 'storage needs its entity').toBe(false);
+    expect(SetAutoUnloadSchema.safeParse({ type: 'set_auto_unload', side: 'ship', on: true, entityId: 9 }).success, 'ship side takes no entity').toBe(false);
     client.sendBreakIn(9);
     lastAccepted(BreakInSchema, 'break_in');
     // F3 — the player's own faction policy.

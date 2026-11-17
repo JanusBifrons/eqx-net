@@ -93,6 +93,7 @@ CREATE TABLE IF NOT EXISTS player_ships (
   stat_alloc            TEXT NOT NULL DEFAULT '{}',
   mounts                TEXT NOT NULL DEFAULT '[]',
   hull_quality          INTEGER NOT NULL DEFAULT 0,
+  auto_unload           INTEGER NOT NULL DEFAULT 1,
   created_at            INTEGER NOT NULL,
   updated_at            INTEGER NOT NULL
 );
@@ -248,6 +249,8 @@ export const PLAYER_SHIPS_MIGRATIONS: readonly string[] = [
   "ALTER TABLE player_ships ADD COLUMN mounts TEXT NOT NULL DEFAULT '[]'",
   // Economy v2 — an unpacked hull's quality (a small max-hull bonus).
   "ALTER TABLE player_ships ADD COLUMN hull_quality INTEGER NOT NULL DEFAULT 0",
+  // Cargo pods 14c — the ship auto-unloads at its owner's storage (1) or not (0).
+  "ALTER TABLE player_ships ADD COLUMN auto_unload INTEGER NOT NULL DEFAULT 1",
   // Macro terrain C2 (deep sleep) — a moved field rock's saved pose.
   "ALTER TABLE terrain_records ADD COLUMN pose_x REAL",
   "ALTER TABLE terrain_records ADD COLUMN pose_y REAL",

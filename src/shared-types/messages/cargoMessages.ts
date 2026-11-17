@@ -49,6 +49,16 @@ export const SetFreightOrdersSchema = z
   .strict();
 export type SetFreightOrders = z.infer<typeof SetFreightOrdersSchema>;
 
+/** Cargo pods 14c — auto-unload, configurable on both ends (owner
+ *  2026-11-17): `ship` = your active ship unloads at your storage or not;
+ *  `storage` = your storage `entityId` accepts auto-unload or not. Owner-gated;
+ *  anything else is a silent no-op. */
+export const SetAutoUnloadSchema = z
+  .object({ type: z.literal('set_auto_unload'), side: z.enum(['ship', 'storage']), on: z.boolean(), entityId: entityId.optional() })
+  .strict()
+  .refine((m) => (m.side === 'storage') === (m.entityId !== undefined), { message: 'entityId with side storage only' });
+export type SetAutoUnload = z.infer<typeof SetAutoUnloadSchema>;
+
 /** C3 — a cargo target: a swarm `entityId` (a structure, or an NPC ship) OR
  *  `ship` (another player's ship by playerId, or a parked hull by its
  *  shipInstanceId). Exactly one. */
@@ -116,6 +126,10 @@ export const CargoStateSchema = z
      *  while close, never to move. Absent = takeable. */
     takeable: z.boolean().optional(),
     revealInMs: z.number().int().nonnegative().max(60_000).optional(),
+    /** 14c — your own storage open: does your ship auto-unload here, and
+     *  does this storage accept auto-unload? */
+    autoUnload: z.boolean().optional(),
+    acceptAutoUnload: z.boolean().optional(),
     ok: z.boolean().optional(),
   })
   .strict();
