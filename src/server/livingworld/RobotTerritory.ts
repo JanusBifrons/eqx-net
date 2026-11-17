@@ -40,7 +40,7 @@ import {
   type SidePresence,
 } from '../../core/territory/sectorControl.js';
 import { sectorController } from '../../core/galaxy/control.js';
-import { controlOpposes, fillSectorPresence, ROBOT_SIDE } from './factionPresence.js';
+import { controlOpposes, countsForControl, fillSectorPresence, ROBOT_SIDE } from './factionPresence.js';
 import { liveEntrySectors, type Rng } from './population.js';
 import { serverLogEvent } from '../debug/ServerEventLog.js';
 import type { LivingWorldRoom, SectorLiveCounts } from './LivingWorldRoom.js';
@@ -293,13 +293,17 @@ export class RobotTerritory {
   }
 
   /** Overlay saved control onto the seeds (`restoreSectorControl` hook). A
-   *  sector not in this galaxy is ignored; a sector not saved keeps its seed. */
+   *  sector not in this galaxy is ignored; a sector not saved keeps its seed.
+   *  A side that no longer counts for control (the Ancients) is dropped. */
   restoreControl(entries: readonly PersistedSectorControl[]): void {
     for (const e of entries) {
       if (!this.rooms.has(e.sectorKey)) continue;
       const shares = new Map<string, number>();
-      for (const [side, v] of e.shares) shares.set(side, Math.min(CONTROL_MAX, Math.max(0, v)));
-      this.control.set(e.sectorKey, { shares, holder: e.holder });
+      for (const [side, v] of e.shares) {
+        if (countsForControl(side)) shares.set(side, Math.min(CONTROL_MAX, Math.max(0, v)));
+      }
+      const holder = e.holder && countsForControl(e.holder) ? e.holder : null;
+      this.control.set(e.sectorKey, { shares, holder });
     }
   }
 
