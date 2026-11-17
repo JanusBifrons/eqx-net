@@ -11,7 +11,7 @@ import type { WorkerCmd } from './PhysicsWorkerProxy.js';
 import type { PersistOp } from '../../core/contracts/IPersistenceSink.js';
 import { FIELD_LAYOUT_VERSION, rocksInChunk } from '../../core/terrain/fieldLayout.js';
 import { convexHullCCW } from '../../core/swarm/asteroidShape.js';
-import type { TerrainRecordRow, TerrainRecordStore } from '../db/terrainSql.js';
+import type { TerrainRecordRow, RockRecordStore } from '../db/terrainSql.js';
 
 function setup(recs: Record<string, Partial<SwarmEntityRecord>>) {
   const posted: WorkerCmd[] = [];
@@ -70,7 +70,7 @@ describe('toRestFrame (F1b: an awake rock samples its ore where it was cut)', ()
 describe('CutFieldSubsystem change record (mined pool, consumed rocks)', () => {
   /** A real streamer over a fake spawner: one ship in the `look` field's lane,
    *  flown away (its chunks unload after the linger) and back (they re-cut). */
-  function field(store?: TerrainRecordStore) {
+  function field(store?: RockRecordStore) {
     let now = 0;
     const recs = new Map<string, SwarmEntityRecord>();
     const sent: number[] = [];
@@ -112,7 +112,7 @@ describe('CutFieldSubsystem change record (mined pool, consumed rocks)', () => {
   function store(rows: TerrainRecordRow[] = []) {
     const puts: PersistOp[] = [];
     const warns: unknown[] = [];
-    const s: TerrainRecordStore = { sectorKey: 'sec', load: () => rows, put: (op) => { puts.push(op); }, warn: (f) => { warns.push(f); } };
+    const s: RockRecordStore = { sectorKey: 'sec', load: () => rows, put: (op) => { puts.push(op); }, warn: (f) => { warns.push(f); } };
     return { s, puts, warns };
   }
 
@@ -168,8 +168,8 @@ describe('CutFieldSubsystem change record (mined pool, consumed rocks)', () => {
     const [gone, mined, other] = [...first.recs.values()];
     first.sub.dispose();
     const st = store([
-      { rockKey: gone!.fieldKey!, layoutVersion: FIELD_LAYOUT_VERSION, pool: null, consumed: true, pose: null },
-      { rockKey: mined!.fieldKey!, layoutVersion: FIELD_LAYOUT_VERSION, pool: 12, consumed: false, pose: null },
+      { rockKey: gone!.fieldKey!, layoutVersion: FIELD_LAYOUT_VERSION, pool: null, consumed: true, pose: null, lineage: null },
+      { rockKey: mined!.fieldKey!, layoutVersion: FIELD_LAYOUT_VERSION, pool: 12, consumed: false, pose: null, lineage: null },
     ]);
     const { sub, recs, byKey } = field(st.s);
     expect(sub.isConsumed(gone!.fieldKey!)).toBe(true);
@@ -186,8 +186,8 @@ describe('CutFieldSubsystem change record (mined pool, consumed rocks)', () => {
     const first = field();
     const [a, b] = [...first.recs.values()];
     const st = store([
-      { rockKey: a!.fieldKey!, layoutVersion: FIELD_LAYOUT_VERSION + 1, pool: null, consumed: true, pose: null },
-      { rockKey: b!.fieldKey!, layoutVersion: FIELD_LAYOUT_VERSION - 1, pool: 5, consumed: false, pose: null },
+      { rockKey: a!.fieldKey!, layoutVersion: FIELD_LAYOUT_VERSION + 1, pool: null, consumed: true, pose: null, lineage: null },
+      { rockKey: b!.fieldKey!, layoutVersion: FIELD_LAYOUT_VERSION - 1, pool: 5, consumed: false, pose: null, lineage: null },
     ]);
     const { sub, byKey } = field(st.s);
     expect(sub.isConsumed(a!.fieldKey!)).toBe(false);
@@ -241,7 +241,7 @@ describe('CutFieldSubsystem change record (mined pool, consumed rocks)', () => {
     const rock = [...first.recs.values()][0]!;
     first.sub.dispose();
     const pose = { x: rock.restX! + 10, y: rock.restY! + 20, angle: -0.25 };
-    const st = store([{ rockKey: rock.fieldKey!, layoutVersion: FIELD_LAYOUT_VERSION, pool: 40, consumed: false, pose }]);
+    const st = store([{ rockKey: rock.fieldKey!, layoutVersion: FIELD_LAYOUT_VERSION, pool: 40, consumed: false, pose, lineage: null }]);
     const { spawned, byKey } = field(st.s);
     expect(spawned.get(rock.fieldKey!)).toEqual({ ...pose, restX: rock.restX, restY: rock.restY });
     expect(byKey(rock.fieldKey!)!.resources).toBe(40);
