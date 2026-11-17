@@ -110,6 +110,15 @@ export const StructureKindSchema = z
      *  placement overlap, connection edge distance and line-of-sight box
      *  (phase V, plan soft-leaping-truffle v2). Rotated in 90° steps. */
     footprint: z.object({ w: z.number().positive(), h: z.number().positive() }).strict(),
+    /** Optional KEEP-CLEAR box beside the footprint, in the kind's local frame
+     *  at rotation 0 (centre `cx, cy`, size `w × h`; turns with the
+     *  structure). No other solid structure may overlap it, and the kind may
+     *  not be placed with it over one (`placementRules`, so player placement
+     *  and `growBase` both obey it). Links and cables may cross it. Today only
+     *  the Freight Dock has one: its landing pad. ABSENT ⇒ nothing reserved. */
+    keepClear: z.object({
+      cx: z.number(), cy: z.number(), w: z.number().positive(), h: z.number().positive(),
+    }).strict().optional(),
     /** Full hull pool (and `swarmHealth` seed once built). */
     maxHealth: z.number().positive(),
 
@@ -659,6 +668,10 @@ export const FREIGHT_DOCK: StructureKind = {
   description: 'Where trade convoys dock; holds cargo and sets import and export orders. A leaf node.',
   radius: 539, // bounding circle of the 1000×400 footprint (Ladder A medium)
   footprint: { w: 1000, h: 400 },
+  // The landing pad: 900 × 500 past the open (+y) edge with a 10 u gap
+  // (y 210..710), centre (0, 460). The ONE definition: `DOCK_BAY_*`
+  // (rigCatalogue) derive from it.
+  keepClear: { cx: 0, cy: 460, w: 900, h: 500 },
   maxHealth: 2500,
   maxConnections: 1,
   isHub: false,
@@ -1268,8 +1281,10 @@ export const STRUCTURE_KINDS: Record<StructureKindId, StructureKind> = Object.fr
  *  9→10 (P2e, plan soft-leaping-truffle v3): mining + bank retuned to the goods
  *  scale (Miner 1000→20 a pulse, Capital bank 2M→50k, Deep Core Rig 6000→120).
  *  10→11 (structure-restyle 2c++): FREIGHT_DOCK grown to the medium size,
- *  520×240 → 1000×400 (radius 287→539): an old dock could overlap on restore. */
-export const STRUCTURE_KIND_CATALOGUE_VERSION = 11;
+ *  520×240 → 1000×400 (radius 287→539): an old dock could overlap on restore.
+ *  11→12 (structure-restyle): FREIGHT_DOCK gains its `keepClear` landing pad;
+ *  a saved structure could sit on a restored dock's pad. */
+export const STRUCTURE_KIND_CATALOGUE_VERSION = 12;
 // Gates (SHIELD_GATE, SHIELD_AIRLOCK) were APPENDED without a bump: a bump
 // discards every saved structure on the next boot (SectorPersistence's version
 // gate), and appending a kind leaves every existing record — and so every saved

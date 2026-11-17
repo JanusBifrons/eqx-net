@@ -12,7 +12,7 @@
  * iterables are caller-owned, so it's safe to call from the per-frame ghost
  * preview (invariant #14). `null` means legal.
  */
-import { structureHalfExtents } from '../../shared-types/structureKinds.js';
+import { getStructureKind, isStructureKindId, normaliseStructureRotation, structureHalfExtents } from '../../shared-types/structureKinds.js';
 import type { GridObstacle } from './Grid.js';
 
 /** A circular footprint to test against (a placed structure or the ghost). */
@@ -23,10 +23,41 @@ export interface PlacementFootprint {
   /** Footprint half extents (phase V). ABSENT ⇒ a square of `radius`. */
   halfW?: number;
   halfH?: number;
+  /** Its kind and rotation (degrees). Present ⇒ its kind's `keepClear` box
+   *  (a dock's landing pad) is reserved too. ABSENT ⇒ the footprint only. */
+  kind?: string;
+  rot?: number;
 }
 
 /** Why a placement is illegal. `null` (from {@link placementRejection}) = legal. */
-export type PlacementRejection = 'overlap-structure' | 'overlap-obstacle';
+export type PlacementRejection = 'overlap-structure' | 'overlap-obstacle' | 'overlap-pad';
+
+/** Plain player-facing text for each rejection. */
+export const PLACEMENT_REJECTION_TEXT: Readonly<Record<PlacementRejection, string>> = Object.freeze({
+  'overlap-structure': 'Too close to another structure',
+  'overlap-obstacle': 'Blocked by an asteroid',
+  'overlap-pad': "Keep the dock's landing pad clear",
+});
+
+/** Scratch for {@link keepClearBox} (alloc-free: the ghost preview calls this per frame). */
+const padBox = { x: 0, y: 0, hw: 0, hh: 0 };
+
+/** The world box of a kind's `keepClear` area (a dock's landing pad) for a
+ *  structure at (x, y) turned `rotDeg` (90° steps, game space y-up, CCW), or
+ *  `null` when the kind reserves nothing. Returns shared scratch: read it
+ *  before the next call. */
+export function keepClearBox(kindId: string | undefined, x: number, y: number, rotDeg: number | undefined): { readonly x: number; readonly y: number; readonly hw: number; readonly hh: number } | null {
+  if (kindId === undefined || !isStructureKindId(kindId)) return null;
+  const kc = getStructureKind(kindId).keepClear;
+  if (kc === undefined) return null;
+  const r = normaliseStructureRotation(rotDeg);
+  const cos = r === 0 ? 1 : r === 180 ? -1 : 0, sin = r === 90 ? 1 : r === 270 ? -1 : 0;
+  padBox.x = x + kc.cx * cos - kc.cy * sin;
+  padBox.y = y + kc.cx * sin + kc.cy * cos;
+  padBox.hw = (sin === 0 ? kc.w : kc.h) / 2;
+  padBox.hh = (sin === 0 ? kc.h : kc.w) / 2;
+  return padBox;
+}
 
 /** Two axis-aligned boxes (structure footprints, rotations are 90° steps)
  *  overlap when they intersect on BOTH axes. Touching edges are legal. */
@@ -94,7 +125,11 @@ function boxOverlapsObstacle(bx: number, by: number, hw: number, hh: number, o: 
 
 /**
  * The reason a `kindId` footprint at (x, y) cannot be placed, or `null` when it
- * is legal. Tests the sum-of-radii overlap against every `structures` entry and
+ * is legal. A kind's `keepClear` box (a dock's landing pad) counts as
+ * reserved: the new footprint may not overlap an existing entry's pad (entries
+ * that carry `kind`), nor may the new kind's pad overlap an existing
+ * footprint (`overlap-pad`). Links are not structures, so they may cross a
+ * pad. Tests the sum-of-radii overlap against every `structures` entry and
  * every `obstacles` entry (asteroids: bounding circle, then the convex `parts`
  * when the obstacle has them). `obstacles` omitted/empty ⇒ structures-only
  * (byte-identical to the legacy server check).
@@ -109,7 +144,12 @@ export function placementRejection(
 ): PlacementRejection | null {
   const { hw, hh } = structureHalfExtents(kindId, rotDeg);
   for (const s of structures) {
-    if (boxesOverlap(s.x, s.y, s.halfW ?? s.radius, s.halfH ?? s.radius, x, y, hw, hh)) return 'overlap-structure';
+    const shw = s.halfW ?? s.radius, shh = s.halfH ?? s.radius;
+    if (boxesOverlap(s.x, s.y, shw, shh, x, y, hw, hh)) return 'overlap-structure';
+    const theirs = keepClearBox(s.kind, s.x, s.y, s.rot);
+    if (theirs !== null && boxesOverlap(theirs.x, theirs.y, theirs.hw, theirs.hh, x, y, hw, hh)) return 'overlap-pad';
+    const mine = keepClearBox(kindId, x, y, rotDeg);
+    if (mine !== null && boxesOverlap(mine.x, mine.y, mine.hw, mine.hh, s.x, s.y, shw, shh)) return 'overlap-pad';
   }
   if (obstacles) {
     for (let i = 0; i < obstacles.length; i++) {

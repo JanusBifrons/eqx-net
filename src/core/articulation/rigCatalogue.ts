@@ -71,14 +71,18 @@ export const DOCK_CRANE_PIVOT_X = 0;
 export const DOCK_CRANE_PIVOT_Y = FREIGHT_DOCK_HALF_H - DOCK_CRANE_TOWER_INSET;
 export const DOCK_CRANE_BOOM = 390;
 export const DOCK_CRANE_JIB = 390;
-/** Pad half-extents the crane is sized to reach (±45 % of the dock width × 250). */
-export const DOCK_BAY_HALF_W = 0.45 * 2 * FREIGHT_DOCK_HALF_W;
-export const DOCK_BAY_HALF_H = 250;
-/** Gap between the dock's open (+y) edge and the bay's near edge. */
-const DOCK_BAY_GAP = 10;
+/** The pad comes from the kind catalogue (`FREIGHT_DOCK.keepClear`, the dock's
+ *  reserved landing pad, which placement keeps clear of other structures):
+ *  ONE definition, so the crane, the bay rule and placement agree. */
+const DOCK_PAD = FREIGHT_DOCK.keepClear!;
+/** Pad half-extents the crane is sized to reach (450 × 250). */
+export const DOCK_BAY_HALF_W = DOCK_PAD.w / 2;
+export const DOCK_BAY_HALF_H = DOCK_PAD.h / 2;
 /** Bay centre in the dock's host frame (game units, y-up): outside the open edge. */
-export const DOCK_BAY_CX = 0;
-export const DOCK_BAY_CY = FREIGHT_DOCK_HALF_H + DOCK_BAY_GAP + DOCK_BAY_HALF_H;
+export const DOCK_BAY_CX = DOCK_PAD.cx;
+export const DOCK_BAY_CY = DOCK_PAD.cy;
+/** Gap between the dock's open (+y) edge and the bay's near edge (10). */
+const DOCK_BAY_GAP = DOCK_BAY_CY - DOCK_BAY_HALF_H - FREIGHT_DOCK_HALF_H;
 /** Clip reach / retract time: ~1 s of game time. */
 export const DOCK_CRANE_REACH_TICKS = 60;
 

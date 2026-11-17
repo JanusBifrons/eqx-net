@@ -28,7 +28,7 @@ import { BASE_PRICES } from '../../shared-types/economy.js';
 import { IDLE_DRAW_FRAC } from '../../shared-types/structurePower.js';
 import { canConnect, segmentIntersectsAabb, type GridNode } from '../structures/Grid.js';
 import { Connection } from '../structures/Connection.js';
-import { placementRejection } from '../structures/placementRules.js';
+import { keepClearBox, placementRejection } from '../structures/placementRules.js';
 import { isShieldEmitterKind } from '../structures/gateGeometry.js';
 import { seededRandom, type BaseProfile, type BaseTier } from './baseProfile.js';
 import type { SectorFeature } from '../galaxy/galaxy.js';
@@ -40,8 +40,10 @@ import type { GoodId } from '../../shared-types/goods.js';
  *  (AA, 5" mounts, coastal guns, region-heart super-guns) from their own
  *  random stream; casemates face outward.
  *  10→11 (structure-restyle 2c++): the freight dock grew to 1000×400, so
- *  every base with a dock lays out wider. */
-export const BASE_GROWTH_VERSION = 11;
+ *  every base with a dock lays out wider.
+ *  11→12 (structure-restyle): a dock's landing pad (`keepClear`) is kept
+ *  clear of other structures, and a dock faces its pad away from its row. */
+export const BASE_GROWTH_VERSION = 12;
 
 /**
  * Most structures a base of each tier may have (fence included). Measured
@@ -344,7 +346,7 @@ interface Node extends GridNode {
 class Builder {
   readonly placements: GrownPlacement[] = [];
   readonly edges: Array<readonly [number, number]> = [];
-  readonly placed: Array<{ x: number; y: number; radius: number; halfW: number; halfH: number }> = [];
+  readonly placed: Array<{ x: number; y: number; radius: number; halfW: number; halfH: number; kind: StructureKindId; rot: number }> = [];
   readonly nodes = new Map<string, Node>();
   readonly adj = new Map<string, Connection[]>();
   private cid = 0;
@@ -362,7 +364,7 @@ class Builder {
     }
     const i = this.placements.length;
     this.placements.push(p);
-    this.placed.push({ x: p.x, y: p.y, radius: k.radius, halfW: hw, halfH: hh });
+    this.placed.push({ x: p.x, y: p.y, radius: k.radius, halfW: hw, halfH: hh, kind: p.kind, rot });
     this.nodes.set(`s${i}`, {
       id: `s${i}`, kind: p.kind, x: p.x, y: p.y, radius: k.radius, halfW: hw, halfH: hh,
       isHub: k.isHub, isCapital: p.kind === 'capital', isConnector: p.kind === 'connector',
@@ -469,15 +471,33 @@ function growOnce(profile: BaseProfile, seed: number, features: readonly SectorF
 
   // Rows grow outward: 0, 1, -1, 2, -2, …
   const rowOrder: number[] = [0];
+  const rowY = new Map<number, number>([[0, 0]]);
+  /** Where row j (one step out from row `from`) goes: a pitch out, or
+   *  further when a keep-clear apron (a dock's landing pad, turned away from
+   *  its row) already reaches into that gap: the new row's connectors clear
+   *  it, or the row would break off at the pad. Only gaps with a pad grow. */
+  const nextRowY = (from: number, dir: number): number => {
+    const fy = rowY.get(from)!;
+    let need = pitchY;
+    for (const q of B.placed) {
+      const pad = keepClearBox(q.kind, q.x, q.y, q.rot);
+      if (pad === null) continue;
+      const far = dir > 0 ? pad.y + pad.hh - fy : fy - (pad.y - pad.hh);
+      const near = dir > 0 ? pad.y - pad.hh - fy : fy - (pad.y + pad.hh);
+      if (near >= 0) need = Math.max(need, far + CONN_HALF);
+    }
+    return fy + dir * need;
+  };
   const addRow = (j: number): boolean => {
     if (rowConn.has(j)) return true;
-    const y = j * pitchY;
+    const from = j - Math.sign(j);
+    const y = rowY.get(j) ?? nextRowY(from, Math.sign(j));
+    rowY.set(j, y);
     let spine = spineAt.get(j);
     if (spine === undefined) {
       // Spine connector at (0, y), reached through relays from the row nearer 0.
-      const from = j - Math.sign(j);
       let prev = spineAt.get(from)!;
-      const prevY = from * pitchY;
+      const prevY = rowY.get(from)!;
       const span = Math.abs(y - prevY);
       const relays = Math.max(0, Math.ceil((span - 2 * CONN_HALF) / 560) - 1);
       for (let r = 1; r <= relays; r++) {
@@ -525,6 +545,9 @@ function growOnce(profile: BaseProfile, seed: number, features: readonly SectorF
             const p: GrownPlacement = { kind: w.kind, x: conn.x, y: conn.y + side * (CONN_HALF + GAP + fp.h / 2) };
             // An arc-limited gun (unfenced base) faces away from the Capital.
             if (ARC_LIMITED.has(w.kind)) p.rot = p.y + side >= 0 ? 0 : 180;
+            // A kind with a keep-clear apron (a dock's landing pad, on its +y
+            // side) turns it away from its row, out over open space.
+            else if (getStructureKind(w.kind).keepClear !== undefined && side < 0) p.rot = 180;
             if (w.recipe) p.recipe = w.recipe;
             if (w.link) p.link = w.link;
             const li = B.tryPlace(p);
@@ -588,6 +611,12 @@ function growOnce(profile: BaseProfile, seed: number, features: readonly SectorF
     for (const q of B.placed) {
       fx = Math.max(fx, Math.abs(q.x) + q.halfW);
       fy = Math.max(fy, Math.abs(q.y) + q.halfH);
+      // A dock's landing pad is inside the fence too (the fence may not cross it).
+      const pad = keepClearBox(q.kind, q.x, q.y, q.rot);
+      if (pad !== null) {
+        fx = Math.max(fx, Math.abs(pad.x) + pad.hw);
+        fy = Math.max(fy, Math.abs(pad.y) + pad.hh);
+      }
     }
     fx = Math.ceil((fx + FENCE_MARGIN) / 10) * 10;
     fy = Math.ceil((fy + FENCE_MARGIN) / 10) * 10;

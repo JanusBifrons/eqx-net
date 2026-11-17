@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { getStructureKind, structureHalfExtents } from '../../shared-types/structureKinds.js';
 import { canConnect, type GridNode } from '../structures/Grid.js';
 import { Connection } from '../structures/Connection.js';
-import { placementRejection } from '../structures/placementRules.js';
+import { keepClearBox, placementRejection } from '../structures/placementRules.js';
 import { isShieldEmitterKind } from '../structures/gateGeometry.js';
 import { GALAXY_SECTORS } from '../galaxy/galaxy.js';
 import { BASE_ROLES, baseProfileFor, contextForSector, type BaseProfile, type BaseRole, type BaseTier } from './baseProfile.js';
@@ -28,11 +28,11 @@ function node(id: string, kind: string, x: number, y: number, rot = 0): GridNode
 /** Re-check a generated base against the real rules, independently. */
 function verify(b: GrownBase): { reached: number } {
   const nodes = new Map<string, GridNode>();
-  const placed: Array<{ x: number; y: number; radius: number; halfW: number; halfH: number }> = [];
+  const placed: Array<{ x: number; y: number; radius: number; halfW: number; halfH: number; kind: string; rot: number }> = [];
   b.placements.forEach((p, i) => {
     expect(placementRejection(p.kind, p.x, p.y, placed, null, p.rot ?? 0), `placement ${i} ${p.kind}`).toBeNull();
     const nd = node('s' + i, p.kind, p.x, p.y, p.rot ?? 0);
-    placed.push({ x: p.x, y: p.y, radius: nd.radius, halfW: nd.halfW!, halfH: nd.halfH! });
+    placed.push({ x: p.x, y: p.y, radius: nd.radius, halfW: nd.halfW!, halfH: nd.halfH!, kind: p.kind, rot: p.rot ?? 0 });
     nodes.set(nd.id, nd);
   });
   const adj = new Map<string, Connection[]>();
@@ -147,6 +147,29 @@ describe('growBase — valid under the real building rules', () => {
       if (p.kind === 'habitat_module') expect(p.recipe).toBe('habitat_upkeep');
       if (p.kind === 'tower_module') expect(p.recipe).toBe('tower_upkeep');
     }
+  });
+
+  it("no structure stands on a freight dock's landing pad, across many seeds", () => {
+    let docks = 0;
+    for (const tier of ['outpost', 'settlement', 'stronghold', 'citadel'] as const) {
+      for (const role of ['trade', 'mining', 'refinery', 'colony', 'transit'] as const) {
+        for (let seed = 1; seed <= 12; seed++) {
+          const b = growBase(profile(tier, role, seed % 2 === 0), seed * 977 + 13, ['asteroid', 'nebula', 'minerals']);
+          b.placements.forEach((d, di) => {
+            if (d.kind !== 'freight_dock') return;
+            docks++;
+            const pad = { ...keepClearBox(d.kind, d.x, d.y, d.rot ?? 0)! };
+            b.placements.forEach((o, oi) => {
+              if (oi === di) return;
+              const { hw, hh } = structureHalfExtents(o.kind, o.rot ?? 0);
+              const hit = Math.abs(o.x - pad.x) < hw + pad.hw && Math.abs(o.y - pad.y) < hh + pad.hh;
+              expect(hit, `${tier} ${role} seed ${seed}: ${o.kind} #${oi} on dock #${di} pad`).toBe(false);
+            });
+          });
+        }
+      }
+    }
+    expect(docks).toBeGreaterThan(50);
   });
 
   it('every galaxy sector grows a valid base (sweep)', () => {
