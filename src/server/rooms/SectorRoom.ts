@@ -9356,8 +9356,8 @@ export class SectorRoom extends Room<SectorState> {
               damageB,
               tick,
             });
-            if (damageA > 0) this.applyDamage(p.aId, p.bId, damageA);
-            if (damageB > 0) this.applyDamage(p.bId, p.aId, damageB);
+            if (damageA > 0 && !this.podHitsShip(p.aId, p.bId)) this.applyDamage(p.aId, p.bId, damageA);
+            if (damageB > 0 && !this.podHitsShip(p.bId, p.aId)) this.applyDamage(p.bId, p.aId, damageB);
           }
         }
       },
@@ -11509,38 +11509,63 @@ export class SectorRoom extends Room<SectorState> {
   private forEachLootCollector(visit: (c: LootCollector) => void): void {
     if (this.sectorKey === null) return; // engineering rooms: no roster ⇒ no holds
     const c = this._collectorScratch;
-    for (const [pid] of this.playerToSlot) {
-      const ship = this.getActiveShip(pid);
-      if (!ship?.alive || !ship.isActive || !this.hasHold(ship.shipInstanceId)) continue;
-      const pose = this.shipPoseCache.get(pid);
-      if (!pose) continue;
-      c.playerId = pid;
-      c.shipInstanceId = ship.shipInstanceId;
-      c.x = pose.x;
-      c.y = pose.y; c.angle = pose.angle; c.shieldUp = ship.shield > 0; // the hull-touch pickup's shape
-      // P5 — a fitted Cargo Expander raises the capacity (shared helper, #15).
-      c.capacity = this.shipCargoCapacity(ship.kind, ship.shipInstanceId);
-      c.kind = getShipKind(ship.kind); // its hull radius + mounts: the pieces it consumes
-      c.npc = false;
-      visit(c);
-    }
+    for (const [pid] of this.playerToSlot) if (this.pilotCollector(pid, c)) visit(c);
     // NPC loot collectors (the `collectsLoot` kind trait, e.g. robot
     // harvesters) collect too (#17: a live swarm entity, kind 1; its hold is
     // keyed by its swarm id). Capacity is the kind's cargo capacity.
-    for (const rec of this.swarmRegistry.all()) {
-      if (rec.kind !== 1) continue;
-      const kindDef = getShipKind(rec.shipKind);
-      if (kindDef.collectsLoot !== true) continue;
-      const b = slotBase(rec.slot);
-      c.playerId = rec.id;
-      c.shipInstanceId = rec.id;
-      c.x = this.sabF32[b + SLOT_X_OFF]!;
-      c.y = this.sabF32[b + SLOT_Y_OFF]!; c.angle = this.sabF32[b + SLOT_ANGLE_OFF]!; c.shieldUp = !rec.shieldDown;
-      c.capacity = cargoCapacityForMaxHealth(kindDef);
-      c.kind = kindDef;
-      c.npc = true;
-      visit(c);
+    for (const rec of this.swarmRegistry.all()) if (this.npcCollector(rec, c)) visit(c);
+  }
+
+  /** Fill `c` with pilot `pid`'s collector; false = none (#17: a live ACTIVE hull with a hold). */
+  private pilotCollector(pid: string, c: LootCollector): boolean {
+    const ship = this.getActiveShip(pid);
+    if (!ship?.alive || !ship.isActive || !this.hasHold(ship.shipInstanceId)) return false;
+    const pose = this.shipPoseCache.get(pid);
+    if (!pose) return false;
+    c.playerId = pid;
+    c.shipInstanceId = ship.shipInstanceId;
+    c.x = pose.x;
+    c.y = pose.y; c.angle = pose.angle; c.shieldUp = ship.shield > 0; // the hull-touch pickup's shape
+    // P5 — a fitted Cargo Expander raises the capacity (shared helper, #15).
+    c.capacity = this.shipCargoCapacity(ship.kind, ship.shipInstanceId);
+    c.kind = getShipKind(ship.kind); // its hull radius + mounts: the pieces it consumes
+    c.npc = false;
+    return true;
+  }
+
+  /** Fill `c` with swarm entity `rec`'s collector; false = not a `collectsLoot` AI ship (kind 1). */
+  private npcCollector(rec: SwarmEntityRecord, c: LootCollector): boolean {
+    if (rec.kind !== 1) return false;
+    const kindDef = getShipKind(rec.shipKind);
+    if (kindDef.collectsLoot !== true) return false;
+    const b = slotBase(rec.slot);
+    c.playerId = rec.id;
+    c.shipInstanceId = rec.id;
+    c.x = this.sabF32[b + SLOT_X_OFF]!;
+    c.y = this.sabF32[b + SLOT_Y_OFF]!; c.angle = this.sabF32[b + SLOT_ANGLE_OFF]!; c.shieldUp = !rec.shieldDown;
+    c.capacity = cargoCapacityForMaxHealth(kindDef);
+    c.kind = kindDef;
+    c.npc = true;
+    return true;
+  }
+
+  /** A physics contact between `podId` and `otherId`. When `podId` is a loot
+   *  pod and `otherId` a ship (a pilot, or an AI ship, kind 1), the pod has
+   *  touched that hull: a collector takes it in now, through the same atomic
+   *  pickup as the ~10 Hz pass, and the bump never destroys the pod (true:
+   *  skip its ram damage; a full hold leaves it). A tractored pod slams in
+   *  fast enough to die to its ram damage before the pass sees it touch. */
+  private podHitsShip(podId: string, otherId: string): boolean {
+    if (!this.loot.isPod(podId)) return false;
+    const c = this._collectorScratch;
+    if (this.playerToSlot.has(otherId)) {
+      if (this.sectorKey !== null && this.pilotCollector(otherId, c)) this.loot.touch(c, podId);
+      return true;
     }
+    const rec = this.swarmRegistry.get(otherId);
+    if (rec === null || rec.kind !== 1) return false;
+    if (this.sectorKey !== null && this.npcCollector(rec, c)) this.loot.touch(c, podId);
+    return true;
   }
 
   /** A pickup landed: tell the collector (UI accelerator — the authoritative

@@ -294,6 +294,12 @@ export class LootSubsystem {
     }
   };
 
+  /** Pod `podId` hit `c`'s hull (a physics contact): it touched the hull,
+   *  so it goes in through the same atomic pickup (a full hold leaves it). */
+  touch(c: LootCollector, podId: string): void {
+    if (this.pods.has(podId)) this.pickUp(c, podId);
+  }
+
   private pickUp(c: LootCollector, podId: string): void {
     const podRec = this.d.holdStore.get(podId);
     if (podRec === undefined) return;
