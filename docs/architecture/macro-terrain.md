@@ -137,7 +137,8 @@ Every sector the galaxy map marks `asteroid` has ONE cut field, the field as bui
 - **Seed:** `galaxy:<sectorKey>:v<SECTOR_FIELD_VERSION>`. Bump the version whenever the derived field changes (clearings, seed rule). Saved rock changes are keyed `<sectorKey>|<seed>`, so old records never land on different rocks.
 - **Clearings:** every pocket the field reaches (belts, the outer base, the battle zone; home is in the core; gates at 170 km are outside) is a `FieldClearing` of radius `site.r + FIELD_CLEARING_MARGIN`. `slicedField` drops a piece whose centre lies inside once it is smaller than the clearing, which is the open core's rule. The edge is ragged out to about twice the radius, and rocks elsewhere are unchanged.
 - **Arrival:** a warp to a pocket drops on its rim (`warpDropPoint`, `site.r`), so the ship lands in open space at the clearing edge, looking at the rocks (`sectorSites.test.ts` checks this against the real field).
-- Off with solar-system sectors off. Turning it on in rooms (welcome `cutField.clearings`, the belt rings it replaces) is the next slice. The small starter rocks near home stay (owner).
+- **Welcome:** the room option `cutField: { seed, clearings? }` feeds `CutFieldSubsystem`, whose welcome sends `cutField.clearings` when there are any (at most `MAX_WELCOME_CLEARINGS`; the server refuses more); the client cuts with `cutFieldOpts(seed, clearings)` and re-cuts when they change (`tests/unit/cutFieldClearingsContract.test.ts`). Test and showcase rooms send none and cut as before.
+- Off with solar-system sectors off. Turning it on in galaxy rooms (the belt rings it replaces) is the next slice. The small starter rocks near home stay (owner).
 
 ### Parked follow-ups (owner, 2026-11-17: noted, not scheduled)
 
