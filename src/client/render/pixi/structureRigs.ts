@@ -129,6 +129,17 @@ export interface RigPartLook {
   shadowOver: number;
   shadowPlane: number;
   shadowAlpha: number;
+  /** Pop-up lift (2g): riser + gun scale at rest (sunk in its socket) and
+   *  fully risen, the extra host-frame shadow offset at full lift, and the
+   *  shadow alpha at rest / full lift. Seen top-down, a lift reads only as
+   *  growth and a widening shadow. */
+  liftScaleRest: number;
+  liftScaleUp: number;
+  liftShadow: number;
+  liftShadowAlphaRest: number;
+  liftShadowAlphaUp: number;
+  /** Hatch slot under the door leaves (seen as they part). */
+  slot: number;
 }
 
 export const RIG_LOOK_C: RigPartLook = {
@@ -136,6 +147,8 @@ export const RIG_LOOK_C: RigPartLook = {
   hazard: 0xd9a92a, pad: 0x1c1e21, mark: 0xb9b4a2, rim: 0x98a5b1, weight: 0x2c3035,
   lamp: 0xffa030, boomW: 28, jibW: 22, headScale: 1.6,
   shadowOver: 11, shadowPlane: 6, shadowAlpha: 0.5,
+  liftScaleRest: 0.88, liftScaleUp: 1.14, liftShadow: 12, liftShadowAlphaRest: 0.2, liftShadowAlphaUp: 0.6,
+  slot: 0x020304,
 };
 
 /** What a part is drawn as, read from the rig's shape (layer, joint,
@@ -382,19 +395,55 @@ function drawLeaf(ctx: GraphicsContext, part: PartDef, look: RigPartLook): void 
       const d = ((a[0] + z[0]) / 2 - c[0]) * ax + ((a[1] + z[1]) / 2 - c[1]) * ay;
       if (d < bestDot) { bestDot = d; best = k; }
     }
-    hazardEdge(ctx, pts[best]!, pts[(best + 1) % pts.length]!, c, 4.5, look);
+    const a = pts[best]!, z = pts[(best + 1) % pts.length]!;
+    hazardEdge(ctx, a, z, c, 4.5, look);
+    // The meeting edge: a black seam with a bright machined lip behind it,
+    // so the split reads at a filmed zoom the moment the leaves part.
+    const nx = c[0] - (a[0] + z[0]) / 2, ny = c[1] - (a[1] + z[1]) / 2, nd = Math.hypot(nx, ny) || 1;
+    const ox = (nx / nd) * 5.6, oy = (ny / nd) * 5.6;
+    ctx.moveTo(a[0] + ox, a[1] + oy).lineTo(z[0] + ox, z[1] + oy).stroke({ color: look.rim, width: 1.6 });
+    ctx.moveTo(a[0], a[1]).lineTo(z[0], z[1]).stroke({ color: look.edge, width: 3.2 });
   }
   const b = polyBounds(pts);
   for (let k = 1; k < 3; k++) {
     if (b.w >= b.h) ctx.moveTo(b.x + (b.w * k) / 3, b.y + 1).lineTo(b.x + (b.w * k) / 3, b.y + b.h - 1);
     else ctx.moveTo(b.x + 1, b.y + (b.h * k) / 3).lineTo(b.x + b.w - 1, b.y + (b.h * k) / 3);
   }
-  ctx.stroke({ color: look.edge, width: 1, alpha: 0.7 });
-  ctx.poly(flat(pts), true).stroke({ color: look.edge, width: 2 });
+  ctx.stroke({ color: look.edge, width: 1.8 });
+  ctx.poly(flat(pts), true).stroke({ color: look.edge, width: 2.6 });
   for (const p of pts) {
     const dx = c[0] - p[0], dy = c[1] - p[1], d = Math.hypot(dx, dy) || 1;
-    ctx.circle(p[0] + (dx / d) * 3.2, p[1] + (dy / d) * 3.2, 1.2).fill({ color: look.rivet });
+    ctx.circle(p[0] + (dx / d) * 3.2, p[1] + (dy / d) * 3.2, 1.3).fill({ color: look.rivet });
   }
+}
+
+const slotContexts = new Map<string, GraphicsContext | null>();
+
+/** The hatch slot under a rig's door leaves (2g): the union of the root
+ *  leaves' rest outlines as a black slot with a machined rim. The leaves
+ *  cover it shut; it shows as a dark gap as they part. Null without leaves. */
+export function rigSlotContext(rig: Rig, look: RigPartLook = RIG_LOOK_C): GraphicsContext | null {
+  const hit = slotContexts.get(rig.id);
+  if (hit !== undefined) return hit;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (let i = 0; i < rig.partCount; i++) {
+    const part = rig.parts[i]!;
+    if (rig.parent[i]! >= 0 || part.outline === undefined || rigPartRole(rig, i) !== 'leaf') continue;
+    const b = outlineBounds(part.outline);
+    // Pixi frame (y-down) at the leaf's rest anchor.
+    x0 = Math.min(x0, part.anchorX + b.x0); x1 = Math.max(x1, part.anchorX + b.x1);
+    y0 = Math.min(y0, -part.anchorY + b.y0); y1 = Math.max(y1, -part.anchorY + b.y1);
+  }
+  let ctx: GraphicsContext | null = null;
+  if (x0 < x1) {
+    ctx = new GraphicsContext();
+    ctx.rect(x0 - 1.5, y0 - 1.5, x1 - x0 + 3, y1 - y0 + 3).fill({ color: look.rim });
+    ctx.rect(x0, y0, x1 - x0, y1 - y0).fill({ color: look.slot });
+    // Shaft walls falling away into the dark.
+    ctx.rect(x0 + 2.5, y0 + 2.5, x1 - x0 - 5, y1 - y0 - 5).stroke({ color: look.soot, width: 2 });
+  }
+  slotContexts.set(rig.id, ctx);
+  return ctx;
 }
 
 /** The pop-up riser: a bright machined rim round a dark edge, a plated top
@@ -481,6 +530,14 @@ export class StructureRigView {
   private readonly shadowOff: number[] = [];
   /** Rig part carrying the kind's weapon mount, or -1. */
   readonly mountPart: number;
+  /** The pop-up riser (a root slide drawn as a lift, 2g), or -1. Its slide
+   *  progress drives the lift: it stays over its socket (its rest spot) and
+   *  only grows, with a widening shadow; the mount cluster rides the same. */
+  readonly riserPart: number;
+  /** Riser lift scale this frame (1 without a riser). */
+  liftScale = 1;
+  /** Hatch slot under the door leaves, or null. */
+  readonly slot: Graphics | null;
   private readonly playing: MutablePlaying = { clipId: '', startTick: 0, target: undefined };
   private readonly targetScratch = { x: 0, y: 0 };
   private readonly xf: PixiXform = { x: 0, y: 0, rotation: 0 };
@@ -515,6 +572,27 @@ export class StructureRigView {
       group.addChild(g);
     }
     this.mountPart = rig.id === 'sandbox-door-turret' ? rigPartIndex(rig, DOOR_TURRET_MOUNT.partId) : -1;
+    let riser = -1;
+    for (let i = 0; i < rig.partCount; i++) if (rig.parent[i]! < 0 && rigPartRole(rig, i) === 'riser') riser = i;
+    this.riserPart = riser;
+    const slotCtx = rigSlotContext(rig);
+    this.slot = slotCtx !== null ? new Graphics(slotCtx) : null;
+    if (this.slot !== null) {
+      this.slot.label = 'rig-slot';
+      this.plane.addChildAt(this.slot, 0); // under every plane shadow and part
+    }
+  }
+
+  /** Part `i`'s local transform, the riser held over its socket (its slide
+   *  travel is drawn as lift, not as in-plane motion). Allocation-free. */
+  private partXform(i: number, xf: PixiXform): PixiXform {
+    partLocalTransform(this.pose, i, xf);
+    if (i === this.riserPart) {
+      const r = this.rig, d = this.pose.value[i]! - r.rest[i]!;
+      xf.x -= r.axisX[i]! * d;
+      xf.y += r.axisY[i]! * d;
+    }
+    return xf;
   }
 
   groupOf(layer: DrawLayer): Container {
@@ -542,13 +620,27 @@ export class StructureRigView {
     }
     evaluateRig(this.rig, playing, nowTick, this.pose, twoBoneIkSolve);
     const xf = this.xf;
+    const ri = this.riserPart, look = RIG_LOOK_C;
+    let lift = 0;
+    if (ri >= 0) {
+      const span = this.rig.max[ri]! - this.rig.rest[ri]!;
+      lift = span > 0 ? Math.min(1, Math.max(0, (this.pose.value[ri]! - this.rig.rest[ri]!) / span)) : 0;
+      this.liftScale = look.liftScaleRest + (look.liftScaleUp - look.liftScaleRest) * lift;
+    }
     for (let i = 0; i < this.parts.length; i++) {
-      partLocalTransform(this.pose, i, xf);
+      this.partXform(i, xf);
       const g = this.parts[i]!;
       g.position.set(xf.x, xf.y);
       g.rotation = xf.rotation;
       const sh = this.shadows[i]!;
-      if (sh !== null) {
+      if (i === ri && sh !== null) {
+        g.scale.set(this.liftScale);
+        const d = this.shadowOff[i]! + look.liftShadow * lift;
+        sh.position.set(xf.x + d, xf.y + d);
+        sh.rotation = xf.rotation;
+        sh.scale.set(this.liftScale * (1 + 0.08 * lift));
+        sh.alpha = look.liftShadowAlphaRest + (look.liftShadowAlphaUp - look.liftShadowAlphaRest) * lift;
+      } else if (sh !== null) {
         const d = this.shadowOff[i]!;
         sh.position.set(xf.x + d, xf.y + d);
         sh.rotation = xf.rotation;
@@ -557,14 +649,16 @@ export class StructureRigView {
   }
 
   /** Ride a mount cluster (children laid out in the host frame) on the
-   *  mount part: the cluster moves into the part's frame. The mount ANGLE is
+   *  mount part: the cluster moves into the part's frame (on a pop-up riser:
+   *  held over the socket, scaled with the lift). The mount ANGLE is
    *  untouched (still `applyMountAngles`, #12). No-op without a mount part. */
   placeMount(cluster: Container): void {
     const i = this.mountPart;
     if (i < 0) return;
-    partLocalTransform(this.pose, i, this.xf);
+    this.partXform(i, this.xf);
     cluster.position.set(this.xf.x, this.xf.y);
     cluster.rotation = this.xf.rotation;
+    cluster.scale.set(i === this.riserPart ? this.liftScale : 1);
   }
 
   destroy(): void {
