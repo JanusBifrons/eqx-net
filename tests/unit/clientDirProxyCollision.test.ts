@@ -31,7 +31,10 @@ const BYPASS_PROXY_PREFIXES = ['auth'];
 
 function parseProxyKeys(): string[] {
   const src = readFileSync(path.join(ROOT, 'vite.config.ts'), 'utf8');
-  const proxyStart = src.indexOf('proxy:');
+  // The proxy table is the shared `API_PROXY` constant (dev server and preview
+  // both use it); fall back to an inline `proxy: {` block.
+  const named = src.indexOf('const API_PROXY');
+  const proxyStart = named > -1 ? named : src.indexOf('proxy:');
   expect(proxyStart, 'vite.config.ts should declare server.proxy').toBeGreaterThan(-1);
   const block = src.slice(proxyStart);
   // Proxy keys are the only `'/word': {` string keys in the config (aliases use
