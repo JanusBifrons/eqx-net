@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { nearestClearPoint } from './baseSite';
-import { landingReach } from '../../shared-types/shipScale/landingReach';
-import { tuningFor } from '../../shared-types/shipScale/lookup';
+import { nearestClearPoint } from './baseSite.js';
+import { landingReach } from '../../shared-types/shipScale/landingReach.js';
+import { tuningFor } from '../../shared-types/shipScale/lookup.js';
 
 describe('landingReach', () => {
   it('a battleship landing beside a parked battleship finds the gap, not the overlapping point', () => {
