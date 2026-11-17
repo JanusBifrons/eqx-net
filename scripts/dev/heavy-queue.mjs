@@ -15,7 +15,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import {
-  KINDS, decide, fmtDur, formatStatus, newTicketId, readRunning, readTickets,
+  KINDS, adoptOrphan, decide, isOrphaned, fmtDur, formatStatus, newTicketId, readRunning, readTickets,
   releaseRunning, removeTicket, resolveQueueDir, snapshot, sweepStale, tryClaim, writeTicket,
 } from './heavy-queue-core.mjs';
 
@@ -26,6 +26,13 @@ const MIN_GB = process.env.HEAVY_QUEUE_MIN_GB != null && process.env.HEAVY_QUEUE
   ? Number(process.env.HEAVY_QUEUE_MIN_GB) : 4;
 
 const log = (msg) => process.stderr.write(`[heavy-queue] ${msg}\n`);
+
+function logSweep(changed) {
+  for (const s of changed) {
+    const what = s.orphaned ? 'orphaned' : s.expired ? 'expired orphan' : 'removed stale';
+    log(`${what} ${s.where} ticket ${s.who ?? s.id} (pid ${s.pid ?? '?'} gone)`);
+  }
+}
 
 function usage(code = 2) {
   log('usage: heavy-queue.mjs run --kind <' + KINDS.join('|') + '> [--priority 1-5] [--minutes N] [--who label] -- <command...>');
@@ -107,19 +114,23 @@ async function cmdRun(argv) {
   }
   process.on('uncaughtException', (e) => { log(`crash: ${e && e.stack || e}`); killChild(); cleanup(); process.exit(1); });
 
+  logSweep(sweepStale(dir));
+  const adopted = adoptOrphan(dir, ticket, now);
   writeTicket(dir, ticket);
+  if (adopted) log(`rejoined as ${ticket.who}, kept place (joined ${fmtDur(now - ticket.joinedAtMs)} ago)`);
   log(`joined queue as ${ticket.who} [${ticket.kind}] p${ticket.priority} (${dir})`);
 
   let freeGb = null;
   let ramAt = 0;
   let statusAt = Date.now();
   for (;;) {
-    for (const s of sweepStale(dir)) log(`removed stale ${s.where} ticket ${s.who ?? s.id} (pid ${s.pid ?? '?'} gone)`);
+    logSweep(sweepStale(dir));
     const t = Date.now();
     let tickets = readTickets(dir);
-    if (!tickets.some((x) => x.id === ticket.id)) { // someone wiped it: rejoin, keep age
+    const mine = tickets.find((x) => x.id === ticket.id);
+    if (!mine || isOrphaned(mine)) { // wiped or wrongly orphaned: rejoin, keep age
       writeTicket(dir, ticket);
-      tickets = [...tickets, ticket];
+      tickets = [...tickets.filter((x) => x.id !== ticket.id), ticket];
     }
     const running = readRunning(dir, t);
     const state = { meId: ticket.id, tickets, running, minGb: MIN_GB, now: t };
@@ -139,7 +150,7 @@ async function cmdRun(argv) {
       statusAt = t;
       const who = running ? (running.garbled ? '(claiming)' : `${running.who} [${running.kind}] ${fmtDur(t - running.startedAtMs)}`) : 'none';
       const ram = freeGb == null ? '?' : `${freeGb.toFixed(1)} GB`;
-      log(`waiting ${fmtDur(t - ticket.joinedAtMs)} · #${d.position}/${tickets.length} · running: ${who} · free RAM ${ram}${d.reason === 'low-ram' ? ` < ${MIN_GB} GB` : ''}`);
+      log(`waiting ${fmtDur(t - ticket.joinedAtMs)} · #${d.position}/${tickets.filter((x) => !isOrphaned(x)).length} · running: ${who} · free RAM ${ram}${d.reason === 'low-ram' ? ` < ${MIN_GB} GB` : ''}`);
     }
     await new Promise((r) => setTimeout(r, POLL_MS));
   }
