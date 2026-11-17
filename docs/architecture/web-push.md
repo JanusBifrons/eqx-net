@@ -22,9 +22,12 @@ All driven by **`vite-plugin-pwa`** (config in `vite.config.ts`):
   `<link rel="manifest" href="/manifest.webmanifest">`.
 - **Icons** are generated from one source SVG, `public/pwa-icon.svg` (the in-game
   FIGHTER silhouette in brand green `#00ff88` on `#05070f`), via
-  `@vite-pwa/assets-generator`: run `pnpm gen:pwa-assets` to (re)emit
+  `@vite-pwa/assets-generator` (`pwa-assets.config.ts`): run `pnpm gen:pwa-assets` to (re)emit
   `pwa-192x192.png`, `pwa-512x512.png`, `maskable-icon-512x512.png`,
   `apple-touch-icon-180x180.png`, `favicon.ico` into `public/`. These are committed.
+  The source is full-bleed (square corners) and the maskable and Apple icons have
+  no padding: the phone crops them to its own shape, so padding would show as a
+  square inside the circle. Keep the ship within 40% of the size from the centre.
 - **Service worker** is Workbox `generateSW`, registered explicitly in
   `src/client/main.tsx` (`registerSW({ immediate: true })`, gated on
   `import.meta.env.PROD`).

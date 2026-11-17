@@ -54,7 +54,7 @@
     "dev:client": "vite",
     "format": "prettier --write .",
     "mutation": "stryker run",
-    "gen:pwa-assets": "pwa-assets-generator --preset minimal-2023 public/pwa-icon.svg",
+    "gen:pwa-assets": "pwa-assets-generator",
     "storybook": "storybook dev -p 6006",
     "build-storybook": "storybook build"
   },
