@@ -454,6 +454,15 @@ export function factionLooksWire(): FactionLookWire[] {
   return out;
 }
 
+/** The welcome's `factionLooks` field: present ONLY when a look is claimed,
+ *  like `cutField` and the wreck set. The welcome schema is strict, so an
+ *  older client (still open across a deploy) would reject a welcome carrying
+ *  an unknown key and never start playing; while nobody has claimed a look the
+ *  welcome is byte-identical to before. */
+export function factionLooksWelcomeField(): { factionLooks?: FactionLookWire[] } {
+  return FACTION_LOOKS.size > 0 ? { factionLooks: factionLooksWire() } : {};
+}
+
 /** Replace every claim (server hydrate, client apply). Entries that are out of
  *  range, NPC, or clash with an earlier entry are skipped. No-op (no version
  *  bump) when the set is unchanged, so a poller can apply every reply. */
