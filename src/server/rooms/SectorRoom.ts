@@ -11189,6 +11189,10 @@ export class SectorRoom extends Room<SectorState> {
       vy:    this.sabF32[b + SLOT_VY_OFF]!,
       angle: this.sabF32[b + SLOT_ANGLE_OFF]!,
     };
+    // Player capitals: an abandoned capital breaks into a wreck like its death
+    // (its body despawned first; the DESPAWN below is then a no-op).
+    this.spawnCapitalWreck(playerId, ship.kind, pose,
+      ship.maxHealth > 0 ? ship.maxHealth : getShipKind(ship.kind).maxHealth, slot, playerId);
     this.spawnHullScrap(ship.kind as ShipKindId, pose, shipInstanceId);
     // Living World P1a — an abandoned hull's hold spills where it sat (P1a-2
     // turns this into a salvageable hulk).
@@ -11253,6 +11257,8 @@ export class SectorRoom extends Room<SectorState> {
       vy:    this.sabF32[b + SLOT_VY_OFF]!,
       angle: this.sabF32[b + SLOT_ANGLE_OFF]!,
     };
+    this.spawnCapitalWreck(shipInstanceId, ship.kind, pose,
+      ship.maxHealth > 0 ? ship.maxHealth : getShipKind(ship.kind).maxHealth, slot, `linger-${shipInstanceId}`);
     this.spawnHullScrap(ship.kind as ShipKindId, pose, shipInstanceId);
     this.spillOrLoseShipHold(shipInstanceId, ship.playerId, pose, 'abandoned');
 
