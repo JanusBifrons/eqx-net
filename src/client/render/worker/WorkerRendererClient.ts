@@ -17,6 +17,7 @@
  * See `~/.claude/plans/humble-strolling-coral.md` Phase 3 / 4.
  */
 
+import { prefersReducedMotion } from '../galaxy/galaxyMapMotion';
 import { ART_OFF, type ArtOptions } from '../art/artMode.js';
 import { readFxKillSwitches } from '../fxKillSwitches.js';
 import type {
@@ -219,6 +220,7 @@ export class WorkerRendererClient implements IRenderer {
       height: cssH,
       dpr,
       isTouch: this._isTouch,
+      reducedMotion: prefersReducedMotion(),
       ...(zoom !== undefined ? { zoom } : {}),
       artMode: this._art.mode,
       ...(this._art.delayMs ? { artDelayMs: this._art.delayMs } : {}),

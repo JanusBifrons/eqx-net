@@ -521,13 +521,25 @@ The full-page map draws each sector as an opaque hex tinted by its owner. Decisi
 
 - **Owner tint.** The fill is the owner's ship colour (`teamColorOf`, no galaxy-only palette), lifted toward violet in a nebula sector; neutral ground is grey; drone ground carries a hatch.
 - **Seams.** Each territory draws an inset perimeter in its owner's border colour: thin on the map edge, bold on a front. Both sides of a front draw their own line, so a front reads as a two-colour seam.
-- **Split hex.** A contested sector splits down the middle, holder left, challenger right (`splitChallenger`). An owned sector splits as soon as a challenger has any share. A sector nobody owns splits grey / leader only once the leader holds at least 40% (`UNOWNED_SPLIT_MIN_SHARE`). The Ancients never count for capture, so the map never splits for them.
+- **Split hex.** A contested sector splits holder left, challenger right (`splitChallenger`); the split line sits at the holder's share against the challenger (`splitFraction`, each side kept to at least 18%), and on nobody's ground at what the leader has not yet taken. An owned sector splits as soon as a challenger has any share. A sector nobody owns splits grey / leader only once the leader holds at least 40% (`UNOWNED_SPLIT_MIN_SHARE`). The Ancients never count for capture, so the map never splits for them.
 - **Owner sigil.** A held sector shows its owner's sigil, the same emblem its ships wear (`teamSigilOf`), bottom-centre in the owner's border colour; one texture per owner, baked once. Neutral sectors have none.
 - **Threat brackets.** Amber corner brackets grow with threat 1-3 (more corners, longer arms, thicker).
 - **Lock and trend.** A locked sector shows a lock glyph top-right; a split sector shows a trend arrow top-left (up in the holder's colour, down in the challenger's).
-- **Flip ring.** A dashed ring in the new owner's colour marks a flip the client saw change between two polls, fading over 30 s (`FLIP_RING_MS`); the first poll never rings.
+- **Flip ring.** A dashed ring in the new owner's colour marks a flip the client saw change between two polls, fading over 30 s (`FLIP_RING_MS`); the first poll never rings. It starts once the flip wipe ends.
 - **Names.** A sector name shrinks to fit inside its hex (no smaller than 0.8x), else wraps to two lines (`labelFit`).
-- **Nebula backdrop.** The shared `nebulaField` is sampled once into a coarse, blurred alpha grid that fades to zero at its border, and shown as one linear-filtered sprite behind the cluster: soft cloud, no per-frame cost.
+- **Nebula backdrop.** The shared `nebulaField` is sampled once into a coarse, blurred alpha grid that fades to zero at its border, and shown as one linear-filtered sprite behind the cluster: soft cloud, never re-baked.
+
+### Motion between polls
+
+The feed changes every 10 s; the map stays alive in between, driven by the existing `GalaxyMapLayer` ticker (no second loop). Decisions are pure in `galaxyMapMotion.ts` (`GalaxyMotion`, typed-array state per sector in `GALAXY_SECTORS` order); `galaxyMapFx.ts` is the Pixi side.
+
+- **Split ease.** A changed share eases the split line to its new place over 1 s (`SPLIT_EASE_MS`); a challenger arriving slides in from the edge, one leaving slides out.
+- **Flip wipe.** A flip wipes the new owner's colour across the hex in 0.9 s (`FLIP_WIPE_MS`) with a bold seam in their border colour, then the split eases in and the flip ring shows.
+- **Fighting flare.** A sector that just gained fighting (threat rose, or `recentCombat` newly set) gets a 1.4 s orange ring flare; the first poll never flares.
+- **Hot front.** A sector at threat 2+ wears an amber glow, drawn at feed cadence and pulsed by alpha only (2.6 s period).
+- **Nebula drift.** The full-page map slowly drifts, scales (about 2.5%) and fades the baked nebula sprite; it is never re-baked.
+- **Cost.** Idle hexes do no per-frame work; only hexes mid-tween are repainted, each into its own split buffers (Pixi keeps the points array until render), with no per-frame allocation in our code.
+- **Reduced motion.** `prefers-reduced-motion` (read on the main thread, sent to the worker in `BOOT`) snaps splits, skips wipes, flares and drift, and holds the hot glow steady.
 
 ## Client rules in detail
 

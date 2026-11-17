@@ -29,6 +29,7 @@ import { GalaxyMapLayer } from '../render/galaxy/GalaxyMapLayer';
 import type { GalaxyLayerMode } from '../render/galaxy/galaxyLayerDecisions';
 import { WorkerRendererClient } from '../render/worker/WorkerRendererClient';
 import { isTouchDevice } from '../input/TouchInput';
+import { prefersReducedMotion } from '../render/galaxy/galaxyMapMotion';
 import { useUIStore } from '../state/store';
 import { logEvent } from '../debug/ClientLogger';
 import type { IRenderer } from '@core/contracts/IRenderer';
@@ -156,6 +157,7 @@ export function installGalaxyOverlay(opts: InstallGalaxyOverlayOpts): GalaxyMapL
   }
   const galaxyLayer = new GalaxyMapLayer({
     isTouch: isTouchDevice(),
+    reducedMotion: prefersReducedMotion(),
     onSelect: (key) => onTap(key),
     onDeselect: () => onTap(null),
     onHover,

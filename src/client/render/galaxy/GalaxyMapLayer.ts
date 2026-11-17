@@ -18,9 +18,6 @@ import {
   factionBorderColor,
   ownerHatched,
   mixColor,
-  splitChallenger,
-  flipRingStrength,
-  isNewFlip,
   type Territory,
 } from './galaxyTerritories';
 import { sectorNebulaPeak } from '@core/galaxy/nebulaField';
@@ -29,13 +26,15 @@ import {
   drawHexFill,
   drawHatch,
   drawSectorControl,
-  drawFlipRing,
+  hexFlat,
   makeNebulaSprite, ownerSigilSprite, fitSectorLabel,
   drawGalaxyStarfield,
   drawFeatureGlyphs,
   drawTerritoryBorder,
 } from './galaxyHexDraw';
-import { resolveSectorOwner } from './sectorOwnership';
+import { resolveSectorOwner, ownershipSignature } from './sectorOwnership';
+import { GalaxyMapFx } from './galaxyMapFx';
+import type { HexLook } from './galaxyMapMotion';
 import {
   ENTITY_VISUALS,
   ENTITY_KIND_ORDER,
@@ -162,9 +161,25 @@ interface HexEntry {
   territoryIndex: number;
   /** The sector's owner (its territory's owner id). */
   ownerId: string;
+  /** Paint state set by repaint (feed / hover cadence) and reused by the
+   *  per-frame tween repaint: owner-tint weight, nebula lift, border stroke. */
+  weight: number;
+  nebulaLift: number;
+  stroke: HexStroke;
+  /** This hex's own split-polygon buffers (see drawHexFill). */
+  cutL: number[];
+  cutR: number[];
 }
 
+interface HexStroke { readonly color: number; readonly width: number; readonly alpha: number }
+const STROKE_HIGHLIGHT: HexStroke = { color: COLOR_HIGHLIGHT, width: 2.5, alpha: 1 };
+const STROKE_HOVER: HexStroke = { color: COLOR_HIGHLIGHT, width: 2, alpha: 1 };
+const STROKE_WARPABLE: HexStroke = { color: COLOR_WARPABLE, width: 2, alpha: 1 };
+const STROKE_SELECTABLE: HexStroke = { color: COLOR_SELECTABLE_STROKE, width: 1.2, alpha: 1 };
+const STROKE_LOCKED: HexStroke = { color: COLOR_LOCKED_STROKE, width: 1, alpha: 1 };
+
 const HEX_VERTS_BASE = hexVertices(HEX_SIZE_BASE);
+const HEX_FLAT_BASE = hexFlat(HEX_SIZE_BASE);
 /** Widest a sector name draws (map px): hex width inside the inset border, less a margin. */
 const LABEL_MAX_WIDTH = HEX_SIZE_BASE * Math.sqrt(3) * BORDER_INSET - 14;
 
@@ -197,17 +212,15 @@ export class GalaxyMapLayer extends Container {
   /** Per-territory control overlay (threat brackets, trend arrows, lock
    *  glyphs), above the outline. Redrawn only when the feed changes. */
   private readonly territoryOverlays: Graphics[] = [];
-  /** Per-territory dashed "just flipped" rings. Drawn on a flip, faded by
-   *  alpha in the ticker (no per-frame redraw). */
-  private readonly territoryFlipRings: Graphics[] = [];
   /** Static nebula clouds behind the hexes (`nebulaField`), one baked soft sprite, full-page only. */
   private readonly nebulaBackdrop: Sprite;
   /** Owner sigil textures (the ships' `teamSigilOf` emblem), one per owner. */
   private readonly sigilTextures = new Map<string, Texture>();
-  /** Last `control.flippedAtMs` per sector (undefined before the first poll). */
-  private readonly lastFlippedAt = new Map<string, number | null>();
-  /** Layer UI clock (ms) at which the client saw each sector's latest flip. */
-  private readonly flipSeenAt = new Map<string, number>();
+  /** Motion between feed polls: split ease, flip wipe + ring, flares, hot
+   *  pulse, nebula drift (`galaxyMapFx.ts`). */
+  private readonly fx: GalaxyMapFx;
+  private readonly hexLook: HexLook = { left: '', right: null, frac: 1, wiping: false };
+  private readonly paintAt = (i: number): void => this.paintHex(i);
   /** Layer UI clock: summed ticker deltas while the map is visible. */
   private uiClockMs = 0;
   private readonly _edgeScratch: number[] = [];
@@ -264,6 +277,8 @@ export class GalaxyMapLayer extends Container {
     onHover?: (ev: GalaxyHoverEvent) => void;
     onDeselect?: () => void;
     isTouch?: boolean;
+    /** prefers-reduced-motion: no tweens, pulses or drift. */
+    reducedMotion?: boolean;
   }) {
     super();
     this.onSelect = opts.onSelect;
@@ -279,6 +294,7 @@ export class GalaxyMapLayer extends Container {
     this.addChild(this.starfield);
     this.nebulaBackdrop = makeNebulaSprite(HEX_SIZE_BASE, COLOR_NEBULA);
     this.clusterRoot.addChild(this.nebulaBackdrop);
+    this.fx = new GalaxyMapFx(opts.reducedMotion ?? false, this.nebulaBackdrop);
     this.clusterRoot.addChild(this.hexLayer);
     this.addChild(this.clusterRoot);
     this.panZoomCamera = new Camera(this.clusterRoot, { minScale: 0.12, maxScale: 4 });
@@ -402,11 +418,7 @@ export class GalaxyMapLayer extends Container {
     // rebuild preserves per-entry presence counts; the loop below then applies
     // this push's enemy/neutral counts to the fresh entries.
     this.liveStateByKey = byKey;
-    for (const s of GALAXY_SECTORS) {
-      const next = byKey.get(s.key)?.control?.flippedAtMs ?? null;
-      if (isNewFlip(this.lastFlippedAt.get(s.key), next)) this.flipSeenAt.set(s.key, this.uiClockMs);
-      this.lastFlippedAt.set(s.key, next);
-    }
+    this.fx.onFeed(byKey, GALAXY_SECTORS, this.uiClockMs);
     const sig = ownershipSignature(byKey);
     if (sig !== this.ownershipSig) {
       this.ownershipSig = sig;
@@ -837,7 +849,8 @@ export class GalaxyMapLayer extends Container {
       combatIcon.visible = false;
       container.addChild(combatIcon);
 
-      this.entries.push({ sector: s, x: pos.x, y: pos.y, hex, label, countSegs, counts: [0, 0, 0, 0], combatIcon, territoryIndex: ti, ownerId: this.territories[ti]?.ownerId ?? '' });
+      this.entries.push({ sector: s, x: pos.x, y: pos.y, hex, label, countSegs, counts: [0, 0, 0, 0], combatIcon, territoryIndex: ti, ownerId: this.territories[ti]?.ownerId ?? '',
+        weight: 0, nebulaLift: Math.min(0.5, sectorNebulaPeak(s.key) * 0.35), stroke: STROKE_LOCKED, cutL: [], cutR: [] });
     }
     this.buildTerritoryOutlines();
     this.repaint();
@@ -860,7 +873,7 @@ export class GalaxyMapLayer extends Container {
     this.territoryContainers.length = 0;
     this.territoryOutlines.length = 0;
     this.territoryOverlays.length = 0;
-    this.territoryFlipRings.length = 0;
+    this.fx.resetTerritories();
     this.territories = [];
     this.territoryScale.length = 0;
     this.territoryTarget.length = 0;
@@ -892,12 +905,10 @@ export class GalaxyMapLayer extends Container {
       const g = new Graphics();
       drawTerritoryBorder(g, verts, t.sectorKeys, t.ownerId, HEX_SIZE_BASE, container.x, container.y, ownerAt, this._edgeScratch);
       const overlay = new Graphics();
-      const ring = new Graphics();
-      ring.visible = false;
-      container.addChild(g, overlay, ring);
+      container.addChild(g, overlay);
+      this.fx.addTerritory(container);
       this.territoryOutlines.push(g);
       this.territoryOverlays.push(overlay);
-      this.territoryFlipRings.push(ring);
     }
   }
 
@@ -916,25 +927,7 @@ export class GalaxyMapLayer extends Container {
       if (!g || !container || !c) continue;
       drawSectorControl(g, HEX_VERTS_BASE, HEX_SIZE_BASE, entry.x - container.x, entry.y - container.y, c, entry.ownerId);
     }
-    this.drawFlipRings();
-  }
-
-  /** Dashed rings round recently flipped sectors, in the new owner's border
-   *  colour. Redrawn only when a flip appears or expires; the ticker fades
-   *  them by alpha. */
-  private drawFlipRings(): void {
-    for (const g of this.territoryFlipRings) {
-      g.clear();
-      g.visible = false;
-    }
-    for (const entry of this.entries) {
-      if (!this.flipSeenAt.has(entry.sector.key)) continue;
-      const g = this.territoryFlipRings[entry.territoryIndex];
-      const container = this.territoryContainers[entry.territoryIndex];
-      if (!g || !container) continue;
-      drawFlipRing(g, entry.x - container.x, entry.y - container.y, HEX_SIZE_BASE * 0.78, factionBorderColor(entry.ownerId));
-      g.visible = true;
-    }
+    this.fx.redraw(this.entries, this.territoryContainers, HEX_SIZE_BASE, HEX_FLAT_BASE);
   }
 
   /** Redraw the LOD starfield against the live cluster transform (full-page
@@ -952,64 +945,51 @@ export class GalaxyMapLayer extends Container {
   }
 
   private repaint(): void {
-    for (const entry of this.entries) {
+    for (let i = 0; i < this.entries.length; i++) {
+      const entry = this.entries[i]!;
       const { sector, hex, label } = entry;
       const highlighted = sector.key === this.currentSectorKey;
       const selectable = this.isSelectable(sector);
-      // Living Galaxy Phase 6 — subtle lighter tint + brighter ring on the
-      // hovered hex (the "this is clickable" affordance the bug doc asked for).
+      // Living Galaxy Phase 6 — the hovered hex gets a lighter tint + ring.
       const hovered = sector.key === this.hoveredSectorKey;
       // Equinox Phase 7 (Item 1) — a WARPABLE (docked neighbour) sector on the
-      // in-game warp map: bright cyan ring + lifted fill so the warp targets
-      // read at a glance. No-op on the landing map (no current sector).
+      // in-game warp map: bright cyan ring + lifted fill. No-op on the landing map.
       const warpable = isSectorWarpable({
         docked: this.isDocked,
         currentSectorKey: this.currentSectorKey,
         sectorKey: sector.key,
       });
-      const verts = hexVertices(this.hexSize);
-
-      hex.clear();
-      // 1) Neutral sector fill — OPAQUE in EVERY mode (user directive: a sector
-      //    hex is NEVER see-through; the old "transparent in-game overlay" rule
-      //    is dropped). The opaque colour is the neutral tint alpha-blended over
-      //    the backdrop, varied by state (current / warpable / selectable /
-      //    hover) for the affordance. In overlay mode there's no full-screen
-      //    backdrop, so only the hexes are solid — the gaps still show gameplay.
+      // Fills are OPAQUE in every mode (a hex is never see-through): the owner
+      // tint over the backdrop, weighted by state (current / warpable /
+      // selectable / hover). Borders are solid; state reads via colour + width.
       const tint = highlighted ? 0.62 : warpable ? 0.58 : selectable ? 0.5 : 0.42;
-      const weight = Math.min(1, hovered ? tint + 0.16 : tint) * OWNER_TINT;
-      // Owner tint (the ships' colour), lifted toward violet in a nebula. A
-      // contested sector splits down the middle: holder left, challenger right.
-      const nebulaLift = Math.min(0.5, sectorNebulaPeak(sector.key) * 0.35);
-      const ownerFill = mixColor(COLOR_BACKDROP, mixColor(factionColor(entry.ownerId), COLOR_NEBULA, nebulaLift), weight);
-      const challenger = splitChallenger(this.liveStateByKey?.get(sector.key)?.control, entry.ownerId);
-      const challengerFill = challenger === null ? null
-        : mixColor(COLOR_BACKDROP, mixColor(factionColor(challenger), COLOR_NEBULA, nebulaLift), weight);
-      drawHexFill(hex, verts, ownerFill, challengerFill, COLOR_BACKDROP);
-      if (ownerHatched(entry.ownerId)) drawHatch(hex, this.hexSize, mixColor(ownerFill, 0x000000, 0.5));
-      // 2) Faint inner per-hex border for cell separation (under the bold
-      //    faction outer-territory outline drawn in buildHexes); the current
-      //    sector keeps a brighter ring as the "you are here" marker; a warpable
-      //    neighbour gets a bright cyan ring; a hovered hex gets a lighter ring.
-      hex.poly(verts);
-      // Per-hex borders are SOLID (alpha 1) — state reads via colour + width, not
-      // transparency (the user's "the border on the sectors isn't solid").
-      if (highlighted) {
-        hex.stroke({ color: COLOR_HIGHLIGHT, width: 2.5, alpha: 1 });
-      } else if (hovered) {
-        hex.stroke({ color: COLOR_HIGHLIGHT, width: 2, alpha: 1 });
-      } else if (warpable) {
-        hex.stroke({ color: COLOR_WARPABLE, width: 2, alpha: 1 });
-      } else if (selectable) {
-        hex.stroke({ color: COLOR_SELECTABLE_STROKE, width: 1.2, alpha: 1 });
-      } else {
-        hex.stroke({ color: COLOR_LOCKED_STROKE, width: 1, alpha: 1 });
-      }
-
+      entry.weight = Math.min(1, hovered ? tint + 0.16 : tint) * OWNER_TINT;
+      entry.stroke = highlighted ? STROKE_HIGHLIGHT : hovered ? STROKE_HOVER
+        : warpable ? STROKE_WARPABLE : selectable ? STROKE_SELECTABLE : STROKE_LOCKED;
+      this.paintHex(i);
       hex.eventMode = this.mode === 'overlay' && selectable ? 'static' : 'none';
       hex.cursor = selectable ? 'pointer' : 'default';
       label.alpha = highlighted ? 0.95 : selectable ? 0.85 : 0.5;
     }
+  }
+
+  /** Draw one hex's fill + border from its cached paint state and its motion
+   *  look (split share, flip wipe). Runs per frame for a moving hex only, so
+   *  it allocates nothing of ours. Owner tint is the ships' colour, lifted
+   *  toward violet in a nebula; a split is holder left, challenger right. */
+  private paintHex(i: number): void {
+    const entry = this.entries[i]!;
+    const hex = entry.hex;
+    const look = this.hexLook;
+    this.fx.motion.look(i, entry.ownerId, this.uiClockMs, look);
+    const leftFill = mixColor(COLOR_BACKDROP, mixColor(factionColor(look.left), COLOR_NEBULA, entry.nebulaLift), entry.weight);
+    const rightFill = look.right === null ? null
+      : mixColor(COLOR_BACKDROP, mixColor(factionColor(look.right), COLOR_NEBULA, entry.nebulaLift), entry.weight);
+    hex.clear();
+    const seam = look.wiping ? factionBorderColor(look.left) : COLOR_BACKDROP;
+    drawHexFill(hex, HEX_FLAT_BASE, leftFill, rightFill, look.frac, seam, look.wiping, entry.cutL, entry.cutR);
+    if (ownerHatched(entry.ownerId)) drawHatch(hex, this.hexSize, mixColor(leftFill, 0x000000, 0.5));
+    hex.poly(HEX_FLAT_BASE).stroke(entry.stroke);
   }
 
   /** The territory index of the current "you are here" sector, or -1. */
@@ -1055,36 +1035,9 @@ export class GalaxyMapLayer extends Container {
       entry.hex.alpha = entry.sector.key === this.currentSectorKey ? pulse : 1;
     }
 
-    // Flip rings: fade by alpha; redraw only when one expires.
+    // Motion between polls: flip rings, hot pulse, flares, nebula drift, and
+    // a repaint of only the hexes whose split or wipe is moving.
     this.uiClockMs += Ticker.shared.deltaMS;
-    if (this.flipSeenAt.size > 0) {
-      let expired = false;
-      for (let i = 0; i < this.territoryFlipRings.length; i++) this.territoryFlipRings[i]!.alpha = 0;
-      for (const entry of this.entries) {
-        const seen = this.flipSeenAt.get(entry.sector.key);
-        if (seen === undefined) continue;
-        const strength = flipRingStrength(this.uiClockMs - seen);
-        if (strength <= 0) {
-          this.flipSeenAt.delete(entry.sector.key);
-          expired = true;
-          continue;
-        }
-        const ring = this.territoryFlipRings[entry.territoryIndex];
-        if (ring) ring.alpha = Math.max(ring.alpha, strength * pulse);
-      }
-      if (expired) this.drawFlipRings();
-    }
+    this.fx.tick(this.entries, this.territoryContainers, this.uiClockMs, pulse, HEX_SIZE_BASE, this.paintAt, this.mode === 'selector');
   };
-}
-
-/** Campaign 4.4 — a stable fingerprint of per-sector ownership, so
- *  `setGalaxyStats` re-groups territories ONLY on a real ownership change.
- *  Iterates the static galaxy order (stable) — poll cadence, tiny alloc. */
-function ownershipSignature(liveStateByKey: ReadonlyMap<string, SectorLiveState>): string {
-  let sig = '';
-  for (const s of GALAXY_SECTORS) {
-    sig += resolveSectorOwner(s.key, liveStateByKey);
-    sig += '|';
-  }
-  return sig;
 }
