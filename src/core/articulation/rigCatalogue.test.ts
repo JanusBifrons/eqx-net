@@ -6,8 +6,8 @@ import { createRigPose, evaluateRig, type PlayingClip } from './evaluate.js';
 import { twoBoneIkSolve } from './ikAdapter.js';
 import {
   DOCK_BAY_CX, DOCK_BAY_CY, DOCK_BAY_HALF_H, DOCK_BAY_HALF_W, DOCK_CRANE_BOOM, DOCK_CRANE_JIB, DOCK_CRANE_PIVOT_X, DOCK_CRANE_PIVOT_Y, DOCK_CRANE_REACH_TICKS,
-  DOCK_DEPOSIT_RANGE, DOOR_TURRET_LIFT, DOOR_TURRET_MOUNT, FREIGHT_DOCK_HALF_H, FREIGHT_DOCK_HALF_W,
-  RIG_DEFS, rigById, rigForStructureKind,
+  DOCK_BAY_INSET, DOCK_DEPOSIT_RANGE, DOCK_STILL_SPEED, DOCK_UNLOAD_HOLD_LOAD_TICKS, DOCK_UNLOAD_HOLD_MIN_TICKS, DOOR_TURRET_LIFT, DOOR_TURRET_MOUNT, FREIGHT_DOCK_HALF_H, FREIGHT_DOCK_HALF_W,
+  RIG_DEFS, dockUnloadHoldTicks, inDockBay, isStillForDock, rigById, rigForStructureKind,
 } from './rigCatalogue.js';
 
 const play = (clipId: string, startTick: number, target?: { x: number; y: number }): PlayingClip =>
@@ -295,5 +295,88 @@ describe('sandbox-door-turret', () => {
     expect(pose.x[P('door-right')]!).toBeGreaterThan(40); // still open as it sinks
     evaluateRig(rig, play('turret-retract', 0), 100, pose);
     expect(pose.x[P('door-right')]).toBeCloseTo(12, 9);
+  });
+});
+
+describe('dock bay service rule (structure-restyle 3a)', () => {
+  const x0 = DOCK_BAY_CX - DOCK_BAY_HALF_W, x1 = DOCK_BAY_CX + DOCK_BAY_HALF_W;
+  const y0 = DOCK_BAY_CY - DOCK_BAY_HALF_H, y1 = DOCK_BAY_CY + DOCK_BAY_HALF_H;
+  const e = 1e-6;
+
+  it('the bay is the 900 x 500 pad past the open (+y) edge', () => {
+    expect([x0, x1, y0, y1]).toEqual([-450, 450, 210, 710]);
+  });
+
+  it('centre and inset edges are in; the outer inset band is out', () => {
+    expect(inDockBay(DOCK_BAY_CX, DOCK_BAY_CY)).toBe(true);
+    const ix0 = x0 + DOCK_BAY_INSET, ix1 = x1 - DOCK_BAY_INSET, iy0 = y0 + DOCK_BAY_INSET, iy1 = y1 - DOCK_BAY_INSET;
+    for (const [x, y] of [[ix0, iy0], [ix1, iy0], [ix0, iy1], [ix1, iy1], [0, iy0], [0, iy1], [ix0, DOCK_BAY_CY], [ix1, DOCK_BAY_CY]] as const) {
+      expect(inDockBay(x, y)).toBe(true);
+    }
+    for (const [x, y] of [[ix0 - e, DOCK_BAY_CY], [ix1 + e, DOCK_BAY_CY], [0, iy0 - e], [0, iy1 + e]] as const) {
+      expect(inDockBay(x, y)).toBe(false);
+    }
+    // The raw pad edge is inside the inset band: a centre there is not parked.
+    expect(inDockBay(x0, DOCK_BAY_CY)).toBe(false);
+    expect(inDockBay(0, y0)).toBe(false);
+    expect(inDockBay(0, y1)).toBe(false);
+  });
+
+  it('nothing inside the dock building or the gap counts', () => {
+    expect(inDockBay(0, 0)).toBe(false);
+    expect(inDockBay(0, FREIGHT_DOCK_HALF_H)).toBe(false);
+    expect(inDockBay(0, FREIGHT_DOCK_HALF_H + 5)).toBe(false);
+    expect(inDockBay(DOCK_CRANE_PIVOT_X, DOCK_CRANE_PIVOT_Y)).toBe(false);
+    expect(inDockBay(-FREIGHT_DOCK_HALF_W, -FREIGHT_DOCK_HALF_H)).toBe(false);
+  });
+
+  it('points outside the pad are out (behind, beyond, to each side)', () => {
+    for (const [x, y] of [[0, -400], [0, 900], [-600, DOCK_BAY_CY], [600, DOCK_BAY_CY], [2000, 2000]] as const) {
+      expect(inDockBay(x, y)).toBe(false);
+    }
+  });
+
+  it('a hauler-sized hull (80 wide) parked with its centre in the bay is mostly on the pad', () => {
+    expect(DOCK_BAY_INSET).toBeGreaterThanOrEqual(40);
+    // Three haulers side by side still fit inside the inset zone.
+    expect(2 * (DOCK_BAY_HALF_W - DOCK_BAY_INSET)).toBeGreaterThan(3 * 80);
+  });
+
+  it('stillness: strictly below DOCK_STILL_SPEED in any direction', () => {
+    expect(isStillForDock(0, 0)).toBe(true);
+    expect(isStillForDock(DOCK_STILL_SPEED - e, 0)).toBe(true);
+    expect(isStillForDock(0, -(DOCK_STILL_SPEED - e))).toBe(true);
+    expect(isStillForDock(DOCK_STILL_SPEED, 0)).toBe(false);
+    const d = DOCK_STILL_SPEED / Math.SQRT2;
+    expect(isStillForDock(d * 0.99, d * 0.99)).toBe(true);
+    expect(isStillForDock(d * 1.01, -d * 1.01)).toBe(false);
+    // A slow pass across the pad (50 u/s, 10 s to cross) is not still.
+    expect(isStillForDock(50, 0)).toBe(false);
+  });
+
+  it('hold time: 3 s empty, 10 s full, linear between, clamped', () => {
+    expect(DOCK_UNLOAD_HOLD_MIN_TICKS).toBe(180);
+    expect(DOCK_UNLOAD_HOLD_MIN_TICKS + DOCK_UNLOAD_HOLD_LOAD_TICKS).toBe(600);
+    expect(dockUnloadHoldTicks(0, 100)).toBe(180);
+    expect(dockUnloadHoldTicks(100, 100)).toBe(600);
+    expect(dockUnloadHoldTicks(50, 100)).toBe(390);
+    expect(dockUnloadHoldTicks(1, 3)).toBe(320);
+    expect(dockUnloadHoldTicks(500, 100)).toBe(600);
+    expect(dockUnloadHoldTicks(-5, 100)).toBe(180);
+    expect(dockUnloadHoldTicks(10, 0)).toBe(180);
+    expect(dockUnloadHoldTicks(10, -1)).toBe(180);
+    expect(dockUnloadHoldTicks(NaN, 100)).toBe(180);
+    expect(dockUnloadHoldTicks(10, Infinity)).toBe(180);
+    expect(dockUnloadHoldTicks(Infinity, 100)).toBe(600);
+  });
+
+  it('hold time is monotonic in load and always a whole tick in [180, 600]', () => {
+    fc.assert(fc.property(fc.double({ min: -1e6, max: 1e6, noNaN: true }), fc.double({ min: 1e-3, max: 1e6, noNaN: true }), (load, cap) => {
+      const t = dockUnloadHoldTicks(load, cap);
+      expect(Number.isInteger(t)).toBe(true);
+      expect(t).toBeGreaterThanOrEqual(180);
+      expect(t).toBeLessThanOrEqual(600);
+      expect(dockUnloadHoldTicks(load + cap / 10, cap)).toBeGreaterThanOrEqual(t);
+    }));
   });
 });
