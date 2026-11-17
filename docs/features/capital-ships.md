@@ -28,7 +28,7 @@ Any player can fly a capital in a real galaxy sector (owner, 2026-11-17). The fi
 
 - **Records:** `capitals/index.ts` marks the base classes and the fits `npcOnly: false, randomSpawn: false` (pilotable, never a random drone). The join path takes them through the ordinary `isPlayableShipKindId` rule; there is no test switch.
 - **In play:** a player capital uses the same turrets, range rules, helm, zoom floor, warp, locks and fire control as an AI-flown one. Death and abandoning it both break it into a wreck (`spawnCapitalWreck`); a disconnect lingers like any ship.
-- **Locks:** `capitalShips.test.ts` (which kinds are pilotable), `shipKindTraits.test.ts` (random-spawn opt-outs), `abandonCapitalToWreck.test.ts`, `capitalWrecks.test.ts` (a player capital's death fractures).
+- **Locks:** `capitalShips.test.ts` (which kinds are pilotable), `shipKindTraits.test.ts` (random-spawn opt-outs), `abandonCapitalToWreck.test.ts`, `capitalWrecks.test.ts` (a player capital's death fractures), `ownedShipsAttackOrder.test.ts` (an owned battleship takes an RTS attack order), e2e `player-capital-galaxy.spec.ts` (a fresh player spawns a battleship in a galaxy room and the helm flies it).
 
 ## Hull styles (wrap-up W2b)
 
