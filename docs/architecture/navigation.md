@@ -54,6 +54,20 @@ it. The field-layout cut behind dormant rocks still allocates; every caller is a
 a tick. Ship and wall sources reach it as visitors (`HullSink`, `WallSink`;
 `ShieldWallManager.forEachBlockingWall`), and `nearestClearPoint` keeps a body clear of wall segments.
 
+## The free-space map (`core/nav/clearance.ts`)
+`ClearanceGrid` turns a patch of sector into square cells and stores, per cell, how far its centre is
+from the nearest blocked cell's centre (world units). It is an exact Euclidean distance transform
+(Felzenszwalb–Huttenlocher, columns then rows on squared distances), checked against brute force on
+random layouts, so a lane between two walls reads exactly its half-width at the middle.
+- A cell is blocked when its centre is inside an obstacle: inside one of its convex `parts` (turned by
+  `angle`) when it has them, else inside its circle. Input is `GridObstacle[]`, the same records
+  `SectorObstacles.rocks` fills, so the map sees what placement and line of sight see.
+- A hull with clearance `c` fits at a cell reading `>= c`, to within one cell. `at(x, y)` reads the cell
+  (clamped to the edge).
+- Allocation-free once warm; arrays grow only for a bigger grid.
+- Cost (print-only, desktop): one fine chunk (4 096 u at 64 u cells, 64×64) with 120 rocks builds in
+  ~0.14 ms. Phone timing comes with the perf scene (slice 16).
+
 ## History
 - 2026-11-17: plan approved (wide lane by default, no-route ⇒ nearest spot and wait, whole route line,
   squads single file). Slice 1a: `GraphSearch` lands; `HeldSectorRoutes` moves onto it.
@@ -62,3 +76,4 @@ a tick. Ship and wall sources reach it as visitors (`HullSink`, `WallSink`;
   random grids. Slice 2: one obstacle gatherer (`SectorObstacles`) for placement, line of sight,
   landing and spawns. Landing now also avoids field rocks whose chunk is not loaded and blocking shield
   walls (before, a warp could land inside either).
+  Slice 3: the free-space map (`ClearanceGrid`), an exact distance transform; ~0.14 ms per 64×64 chunk.
