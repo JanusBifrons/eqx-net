@@ -113,3 +113,46 @@ describe('style A', () => {
     }
   });
 });
+
+describe('style C (shipyard brutalist, 1f)', () => {
+  it('is registered, parses, and has a drawer for every outpost kind', () => {
+    expect(STRUCTURE_STYLE_IDS).toContain('c');
+    expect(parseStructureStyle('c')).toBe('c');
+    expect(readStructStyle('?restyle=c')).toBe('c');
+    expect(Object.keys(STRUCTURE_STYLES.c.kinds).sort()).toEqual([...OUTPOST].sort());
+    for (const id of OUTPOST) expect(typeof structureStyleDrawer('c', id), id).toBe('function');
+  });
+  it('bake key differs from today and from style A', () => {
+    const job: BakeJob = { type: 'struct', id: 'capital', seed: 1, rot: 0 };
+    expect(bakeKey({ ...job, style: 'c' })).toBe('m:capital:1::Sc');
+    expect(bakeKey({ ...job, style: 'c' })).not.toBe(bakeKey(job));
+    expect(bakeKey({ ...job, style: 'c' })).not.toBe(bakeKey({ ...job, style: 'a' }));
+  });
+  it('draws inside the outline, with livery bands, and differs from style A', () => {
+    for (const id of OUTPOST) {
+      const v = buildStructureVisual(id, { accent: 0x66ccaa, style: 'c', livery: true });
+      const a = buildStructureVisual(id, { accent: 0x66ccaa, style: 'a', livery: true });
+      expect(v.polys!.length, id).toBeGreaterThan(3);
+      expect(v.rects, id).toEqual([]);
+      expect(v.polys, id).not.toEqual(a.polys);
+      const out = outlinePx(id, 'c');
+      for (const p of v.polys!) for (const [x, y] of p.pts) expect(polyEdgeDist(out, x, y), `${id} ${x},${y}`).toBeGreaterThan(-0.5);
+      for (const l of v.lights) expect(insidePoly(out, l.x, l.y), id).toBe(true);
+      for (const s of v.sigils ?? []) expect(polyEdgeDist(out, s.x, s.y), id).toBeGreaterThan(s.r);
+      expect(v.bands!.length, id).toBeGreaterThan(0);
+    }
+    const cap = buildStructureVisual('capital', { accent: 0, style: 'c', livery: true }).sigils!;
+    expect(cap.find((s) => s.screen === true)).toMatchObject({ x: 0, y: 0 });
+  });
+  it('forge: bakes differently from today and from style A', () => {
+    for (const id of OUTPOST) {
+      const livery = { team: 0x3a7bff, sigil: 0xffd23a };
+      const c = forgeStructure(id, { ppu: 0.5, seed: 1, style: 'c', livery });
+      const a = forgeStructure(id, { ppu: 0.5, seed: 1, style: 'a', livery });
+      const today = forgeStructure(id, { ppu: 0.5, seed: 1 });
+      expect(Buffer.from(c.albedo.buffer).equals(Buffer.from(today.albedo.buffer)), id).toBe(false);
+      expect(Buffer.from(c.albedo.buffer).equals(Buffer.from(a.albedo.buffer)), id).toBe(false);
+      expect(c.mat.some((m) => m === MAT.WINDOW), id).toBe(true);
+    }
+  });
+});
