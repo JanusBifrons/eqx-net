@@ -85,7 +85,7 @@ describe('structureOutline', () => {
 
   it('every style variant keeps the same guarantees', () => {
     for (const id of KIND_IDS) {
-      for (const style of ['a', 'b', 'heavy']) {
+      for (const style of ['a', 'b', 'c', 'heavy']) {
         const poly = structureOutline(id, style);
         expect(poly.length).toBeGreaterThanOrEqual(5);
         expect(signedArea(poly)).toBeGreaterThan(0);
@@ -129,5 +129,33 @@ describe('structureOutline', () => {
       { x: w / 2, y: h / 2 },
       { x: -w / 2, y: h / 2 },
     ]);
+  });
+
+  it('style c: ordered outlines (convex, symmetric about both axes, ≥5 vertices, hex nodes)', () => {
+    for (const id of KIND_IDS) {
+      const poly = structureOutline(id, 'c');
+      const { w, h } = getStructureKind(id).footprint;
+      expect(poly.length, id).toBeGreaterThanOrEqual(5);
+      // Convex: every turn is a left turn (CCW).
+      for (let i = 0; i < poly.length; i++) {
+        expect(cross(poly[i]!, poly[(i + 1) % poly.length]!, poly[(i + 2) % poly.length]!), id).toBeGreaterThan(0);
+      }
+      // Symmetric: the mirror of every vertex (in x, and in y) is a vertex.
+      const has = (x: number, y: number): boolean => poly.some((q) => Math.abs(q.x - x) < 1e-9 && Math.abs(q.y - y) < 1e-9);
+      for (const p of poly) expect(has(-p.x, p.y) && has(p.x, -p.y), id).toBe(true);
+      // No footprint corner survives (chamfered, never square); fills the box.
+      for (const p of poly) expect(Math.abs(p.x) > w / 2 - 1e-6 && Math.abs(p.y) > h / 2 - 1e-6, id).toBe(false);
+      if (STRUCTURE_OUTLINE_FAMILY[id] === 'hex') expect(poly, id).toEqual(structureOutline(id));
+    }
+  });
+
+  it('style c leaves every other style outline unchanged (hash pinned before 1i)', () => {
+    const json = JSON.stringify(KIND_IDS.map((id) => [undefined, 'a', 'b'].map((st) => structureOutline(id, st))));
+    let hh = 0x811c9dc5;
+    for (let i = 0; i < json.length; i++) {
+      hh ^= json.charCodeAt(i);
+      hh = Math.imul(hh, 0x01000193) >>> 0;
+    }
+    expect(hh.toString(16)).toBe('19c521cb');
   });
 });

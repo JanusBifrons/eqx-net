@@ -1469,12 +1469,32 @@ function clusterOutline(hw: number, hh: number, rand: () => number): OutlinePoin
   return pts;
 }
 
+/** Style C ("shipyard brutalist", restyle 1i): ORDER, not chaos. The footprint
+ *  box with all four corners cut by the SAME amount, so the outline is convex
+ *  and symmetric about both axes (8 vertices, CCW). Cluster-family kinds get a
+ *  deeper cut (a near-regular octagon) instead of a lumpy blob. */
+function symmetricChamferOutline(hw: number, hh: number, deep: boolean): OutlinePoint[] {
+  const c = Math.min(hw, hh) * (deep ? 0.36 : 0.22);
+  return [
+    { x: hw - c, y: -hh },
+    { x: hw, y: -hh + c },
+    { x: hw, y: hh - c },
+    { x: hw - c, y: hh },
+    { x: -hw + c, y: hh },
+    { x: -hw, y: hh - c },
+    { x: -hw, y: -hh + c },
+    { x: -hw + c, y: -hh },
+  ];
+}
+
 /**
  * The structure's OUTLINE: a deterministic polygon in local GAME space (Y-up,
  * centred on the structure, unrotated), CCW (positive shoelace area), simple,
  * at least 5 vertices, never an axis-aligned rectangle, and inside the kind's
  * footprint box. `styleId` (optional) re-seeds the irregular details (chamfer
  * cuts, cluster facets) so a style can vary its look; the family is per kind.
+ * Style `c` is the exception: clean symmetric chamfers (hex stays the hex),
+ * never seeded or lumpy (`symmetricChamferOutline`).
  * Unknown kind ⇒ the Capital's outline, the same forgiving stance as
  * `getStructureKind`. Returns a FRESH array (callers may mutate it). Called at
  * sprite-create / entity-spawn, never in a hot loop.
@@ -1487,8 +1507,10 @@ export function structureOutline(
   const { w, h } = getStructureKind(id).footprint;
   const hw = w / 2;
   const hh = h / 2;
+  const family = STRUCTURE_OUTLINE_FAMILY[id];
+  if (styleId === 'c' && family !== 'hex') return symmetricChamferOutline(hw, hh, family === 'cluster');
   const rand = outlineRng(outlineSeed(`${id}/${styleId ?? ''}`));
-  switch (STRUCTURE_OUTLINE_FAMILY[id]) {
+  switch (family) {
     case 'hex':
       return hexOutline(hw, hh);
     case 'chamfer':
