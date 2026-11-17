@@ -4,7 +4,8 @@
  */
 import { describe, it, expect } from 'vitest';
 import { GALAXY_SECTORS, getNeighbours, getSector, axialToPixel } from './galaxy.js';
-import { sectorSites, nearestSite, SOLAR_HALF_EXTENT, POCKET_MIN_GAP, POCKET_MAX_GAP, pocketPadPair, POCKET_PAD_CHANCE } from './sectorSites.js';
+import { sectorSites, nearestSite, SOLAR_HALF_EXTENT, POCKET_MIN_GAP, POCKET_MAX_GAP, pocketPadPair, POCKET_PAD_CHANCE, sectorCutField, warpDropPoint, FIELD_CLEARING_MARGIN } from './sectorSites.js';
+import { cutFieldOpts, fieldRocksInBox } from '../terrain/chunkStreamer.js';
 
 describe('sectorSites', () => {
   it('is deterministic per sector key', () => {
@@ -98,4 +99,56 @@ describe('pocketPadPair (wrap-up W1b: rare transit pads)', () => {
     expect(withPads).toBeLessThan(GALAXY_SECTORS.length);
     expect(withPads / GALAXY_SECTORS.length).toBeLessThanOrEqual(POCKET_PAD_CHANCE + 0.25);
   });
+});
+
+describe('sectorCutField (macro terrain F4)', () => {
+  const marked = GALAXY_SECTORS.filter((s) => s.features.includes('asteroid'));
+  const clear = GALAXY_SECTORS.filter((s) => !s.features.includes('asteroid'));
+
+  it('every asteroid-marked sector has one field; no other sector has one', () => {
+    expect(marked.length).toBeGreaterThan(0);
+    for (const s of marked) expect(sectorCutField(s.key, true), s.key).not.toBeNull();
+    for (const s of clear) expect(sectorCutField(s.key, true), s.key).toBeNull();
+    expect(sectorCutField('no-such-sector', true)).toBeNull();
+  });
+
+  it('is off with solar-system sectors off', () => {
+    for (const s of marked) expect(sectorCutField(s.key, false)).toBeNull();
+  });
+
+  it('is stable per sector and has a distinct versioned seed', () => {
+    const seeds = new Set<string>();
+    for (const s of marked) {
+      const f = sectorCutField(s.key, true)!;
+      expect(sectorCutField(s.key, true)).toEqual(f);
+      expect(f.seed).toMatch(/^galaxy:.+:v[0-9]+$/);
+      expect(f.seed.length).toBeLessThanOrEqual(64); // welcome schema cap
+      seeds.add(f.seed);
+    }
+    expect(seeds.size).toBe(marked.length);
+  });
+
+  it('clears every belt, base and battle pocket; gates are outside the field', () => {
+    for (const s of marked) {
+      const f = sectorCutField(s.key, true)!;
+      for (const site of sectorSites(s.key)) {
+        const has = f.clearings.some((c) => c.x === site.x && c.y === site.y && c.r === site.r + FIELD_CLEARING_MARGIN);
+        if (site.kind === 'gate') expect(has, site.id).toBe(false);
+        else expect(has, `${s.key} ${site.id}`).toBe(true);
+      }
+    }
+  });
+
+  it('a warp to a pocket drops you in open space at the clearing edge (real field)', () => {
+    const s = marked[0]!;
+    const f = sectorCutField(s.key, true)!;
+    const opts = { ...cutFieldOpts(f.seed), clearings: f.clearings };
+    for (const site of sectorSites(s.key).filter((p) => p.kind !== 'gate' && p.kind !== 'home')) {
+      // Arrive from the home side, as a warp from home would.
+      const drop = warpDropPoint(site, 0, 0);
+      const near = fieldRocksInBox(opts, drop.x - 600, drop.y - 600, drop.x + 600, drop.y + 600)
+        .filter((r) => Math.hypot(r.x - drop.x, r.y - drop.y) < r.radius + 300);
+      expect(near, `${site.id}`).toEqual([]);
+    }
+  }, 60_000);
 });
