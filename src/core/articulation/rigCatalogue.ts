@@ -81,6 +81,57 @@ export const DOCK_BAY_CX = 0;
 export const DOCK_BAY_CY = FREIGHT_DOCK_HALF_H + DOCK_BAY_GAP + DOCK_BAY_HALF_H;
 /** Clip reach / retract time: ~1 s of game time. */
 export const DOCK_CRANE_REACH_TICKS = 60;
+
+// ── Bay service rule: "stop = go" (structure-restyle 3a) ─────────────────────
+//
+// A ship is served when its centre is on the pad and it has come to rest.
+// These are pure host-frame helpers; the server (3b) transforms the ship into
+// the dock's frame and calls them.
+
+/** Inset from the pad edge a ship's centre must clear to count as parked.
+ *  40 = half a trader-hauler's beam (≈ 80 wide): a centre that far in puts
+ *  most of the hull on the pad, so a ship nosing the edge or drifting off it
+ *  is not served, while the pad still holds three haulers side by side. */
+export const DOCK_BAY_INSET = 40;
+
+/** True when host-frame point (lx, ly) is on the landing bay, at least
+ *  `DOCK_BAY_INSET` inside its edges. The dock body (y ≤ 200) and the 10 u
+ *  gap are never in the bay. A plain box test: the bay is axis-aligned in the
+ *  host frame. */
+export function inDockBay(lx: number, ly: number): boolean {
+  return Math.abs(lx - DOCK_BAY_CX) <= DOCK_BAY_HALF_W - DOCK_BAY_INSET
+    && Math.abs(ly - DOCK_BAY_CY) <= DOCK_BAY_HALF_H - DOCK_BAY_INSET;
+}
+
+/** Speed (game units / s) below which a ship on the bay counts as stopped.
+ *  Ship top speeds run 420 (trader-hauler) .. 950; the helm's own "arrived"
+ *  gate is 5 % of top speed (21 .. 48). 25 is met by a ship hovering on the
+ *  pad (linear damping 0.45 takes a hauler from full speed to 25 in ≈ 6 s
+ *  hands-off, faster on reverse thrust), but a ship crossing the 500-deep pad
+ *  at 25 would take 20 s: nothing flying through qualifies. Fixed, the same
+ *  for every ship. */
+export const DOCK_STILL_SPEED = 25;
+
+/** True when velocity (vx, vy) is below `DOCK_STILL_SPEED` (strict). */
+export function isStillForDock(vx: number, vy: number): boolean {
+  return vx * vx + vy * vy < DOCK_STILL_SPEED * DOCK_STILL_SPEED;
+}
+
+/** Unload hold base: 3 s of game time (60 ticks / s). */
+export const DOCK_UNLOAD_HOLD_MIN_TICKS = 3 * 60;
+/** Extra hold for a full hold: +7 s (so 3 .. 10 s). */
+export const DOCK_UNLOAD_HOLD_LOAD_TICKS = 7 * 60;
+
+/** Ticks the crane holds at the ship before retracting (owner: "slow, scales
+ *  with load"): 3 s + 7 s × clamp(load / capacity, 0, 1), rounded to a whole
+ *  tick. A non-positive or non-finite capacity, or a non-finite load, counts
+ *  as empty (3 s). The full cycle is reach (~1 s) + this + retract (~1 s). */
+export function dockUnloadHoldTicks(load: number, capacity: number): number {
+  let f = capacity > 0 && Number.isFinite(capacity) ? load / capacity : 0;
+  if (!(f > 0)) f = 0; // NaN, negatives
+  else if (f > 1) f = 1;
+  return Math.round(DOCK_UNLOAD_HOLD_MIN_TICKS + DOCK_UNLOAD_HOLD_LOAD_TICKS * f);
+}
 const BOOM_REST = Math.PI / 2;
 const JIB_FOLD = 3.0;
 const APRON_MARGIN = 12;
