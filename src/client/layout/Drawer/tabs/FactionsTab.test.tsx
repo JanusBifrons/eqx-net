@@ -15,19 +15,14 @@ const VIEW = {
 };
 
 const sent = vi.hoisted(() => [] as unknown[]);
-const claims = vi.hoisted(() => [] as Array<{ colorSlot: number; sigil: number }>);
 vi.mock('../../../net/tradeClient', () => ({
   sendSetFactionPolicy: (p: unknown) => { sent.push(p); return true; },
-  sendClaimFactionLook: (colorSlot: number, sigil: number) => { claims.push({ colorSlot, sigil }); return true; },
 }));
-// jsdom has no 2D canvas: the forge-backed pictures are stubbed.
-vi.mock('../../../render/art/shipLookPreview', () => ({ drawShipLook: () => undefined, drawSigilTile: () => undefined }));
 vi.mock('../../../identity/token', () => ({ loadStoredPlayerId: () => PLAYER }));
 
 describe('FactionsTab (v4 F3)', () => {
   beforeEach(() => {
     sent.length = 0;
-    claims.length = 0;
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => VIEW })));
     useUIStore.getState().setDrawerTab('factions');
     useUIStore.getState().setDrawerOpen(true);
@@ -66,20 +61,9 @@ describe('FactionsTab (v4 F3)', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it('the ship-look picker lists free sigils, marks the current look and claims a picked one', async () => {
+  it('the ship-look picker is not in this tab (it has its own)', async () => {
     render(<FactionsTab />);
     await waitFor(() => expect(screen.getAllByTestId('faction-row')).toHaveLength(3));
-    expect(screen.getAllByTestId('faction-look-colour')).toHaveLength(12);
-    const tiles = screen.getAllByTestId('faction-look-sigil');
-    expect(tiles.length).toBeGreaterThan(20);
-    expect(tiles.filter((t) => t.getAttribute('data-current') === 'true')).toHaveLength(1);
-    const claim = screen.getByTestId('faction-look-claim') as HTMLButtonElement;
-    expect(claim.disabled, 'nothing picked yet').toBe(true);
-    const other = tiles.find((t) => t.getAttribute('data-current') !== 'true')!;
-    fireEvent.click(other);
-    expect(claim.disabled).toBe(false);
-    fireEvent.click(claim);
-    expect(claims).toHaveLength(1);
-    expect(claims[0]!.sigil).toBe(Number(other.getAttribute('data-sigil')));
+    expect(screen.queryByTestId('faction-look-picker')).toBeNull();
   });
 });
