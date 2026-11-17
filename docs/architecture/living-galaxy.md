@@ -557,7 +557,7 @@ The galaxy map is the site homepage, so every viewer reads ONE shared feed that 
 
 **Client.** `useGalaxyStats` and `useGalaxyPresence` both poll on `GALAXY_FEED_INTERVAL_MS` (10 s). Presence (`/galaxy/presence`) is per player and not memoised, so pilot counts stay exact.
 
-**Wire note.** `SectorLiveStateSchema` is `.strict()`, so a client built before `control` existed rejects the whole snapshot (its map shows no counts) until it reloads. Client and server ship together, so only a tab left open across a deploy is affected.
+**Wire note.** The snapshot and history response schemas (`galaxySnapshot.ts`, and `WorldEventViewSchema` inside it) use zod's default strip, not `.strict()`: a client ignores fields added after it was built, so an old tab left open across a deploy keeps its map and simply skips new fields. The first deploy of `control` is the exception: clients built before this change still parse strictly and show no counts until they reload. Keep these response schemas non-strict; `.strict()` stays on schemas that guard server INPUT.
 
 ## Server implementation notes
 
