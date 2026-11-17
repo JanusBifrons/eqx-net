@@ -3570,15 +3570,17 @@ export class SectorRoom extends Room<SectorState> {
       dropTestPods: (pid) => {
         const p = this.shipPoseCache.get(pid);
         if (!p) return;
-        // Sizes 0..3 left to right, beacons grey, blue, gold, magenta (spill).
-        const holds: Array<Partial<Record<'salvage' | 'alloy' | 'core', number>>> = [{ salvage: 4 }, { alloy: 4 }, { core: 2 }, { salvage: 9 }];
-        // One row centred under the ship, so every size is in shot.
+        // Sizes 0..3 left to right, beacons grey, blue, gold, magenta (spill);
+        // the huge one holds a mix, so its loot window shows a few tiles.
+        const holds: Array<Partial<Record<'salvage' | 'alloy' | 'core', number>>> = [{ salvage: 4 }, { alloy: 4 }, { core: 2 }, { salvage: 9, alloy: 3, core: 1 }];
+        // One row ending with the huge pod right under the ship (inside the
+        // loot open reach, so the stills can open its window).
         const GAP = 24;
         const halves = holds.map((_, size) => scrapColliderFor('cargo-pod', podComponentIndex(size, 0))?.radius ?? 20);
-        let x = p.x - (halves.reduce((s, r) => s + 2 * r, 0) + GAP * (holds.length - 1)) / 2;
+        let x = p.x + halves[3]! - (halves.reduce((s, r) => s + 2 * r, 0) + GAP * (holds.length - 1));
         for (let size = 0; size < holds.length; size++) {
           x += halves[size]!;
-          this.loot.drop({ goods: holds[size]!, blueprints: [] }, x, p.y - 130, 0, 0, { size, alone: true, spill: size === 3 });
+          this.loot.drop({ goods: holds[size]!, blueprints: [] }, x, p.y - 100, 0, 0, { size, alone: true, spill: size === 3 });
           x += halves[size]! + GAP;
         }
       },

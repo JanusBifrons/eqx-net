@@ -40,7 +40,7 @@ import { pushFleetOverlayModelIfChanged } from '../fleet/fleetOverlayModel.js';
 import { fleetCommands } from '../fleet/fleetCommands.js';
 import type { ColyseusGameClient } from '../net/ColyseusClient.js';
 import type { FleetPickResultWire, IRenderer } from '@core/contracts/IRenderer';
-import { placeInspector, type InspectorAnchor } from './inspectorPlacement.js';
+import { placeInspector, reclampHeldInspector, type InspectorAnchor } from './inspectorPlacement.js';
 import { isInspectorHeld } from './inspectorHold.js';
 import { isParkedHull, shipOwner } from '../render/shipOwnership.js';
 
@@ -477,14 +477,23 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
     const ssy = selFb.selectionScreenY;
     if (typeof ssx === 'number' && typeof ssy === 'number') {
       const panel = document.querySelector('[data-testid="entity-stats-panel"]') as HTMLElement | null;
-      // Hold still while a pointer is on it, so taps land (inspectorHold.ts).
-      if (panel && !isInspectorHeld(panel)) {
+      if (panel) {
         // The panel is centred ABOVE its anchor, so the anchor is clamped by
         // the panel's size and the whole panel stays on screen, below the
         // header (inspectorPlacement.ts). Read the size before writing.
-        const at = placeInspector(ssx, ssy, panel.offsetWidth, panel.offsetHeight, window.innerWidth, window.innerHeight, inspectorAt);
-        panel.style.left = `${at.left}px`;
-        panel.style.top = `${at.top}px`;
+        // While a pointer is on it, it holds its spot so taps land
+        // (inspectorHold.ts), but a panel that grows (a loot window opening)
+        // is still clamped back on screen.
+        const held = isInspectorHeld(panel);
+        const w = panel.offsetWidth, h = panel.offsetHeight, vw = window.innerWidth, vh = window.innerHeight;
+        const move = held
+          ? reclampHeldInspector(parseFloat(panel.style.left), parseFloat(panel.style.top), w, h, vw, vh, inspectorAt)
+          : (placeInspector(ssx, ssy, w, h, vw, vh, inspectorAt), true);
+        if (move) {
+          const at = inspectorAt;
+          panel.style.left = `${at.left}px`;
+          panel.style.top = `${at.top}px`;
+        }
       }
       if (writeE2E) {
         el.dataset['selectionScreenX'] = ssx.toFixed(1);

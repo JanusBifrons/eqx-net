@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { INSPECTOR_EDGE, INSPECTOR_TOP_MIN, placeInspector } from './inspectorPlacement';
+import { INSPECTOR_EDGE, INSPECTOR_TOP_MIN, placeInspector, reclampHeldInspector } from './inspectorPlacement';
 
 const out = { left: 0, top: 0 };
 const W = 200;
@@ -29,5 +29,22 @@ describe('placeInspector', () => {
   it('a panel taller than the room keeps its bottom (the actions) on screen', () => {
     placeInspector(640, 100, W, 900, VW, VH, out);
     expect(out.top).toBe(VH - INSPECTOR_EDGE);
+  });
+});
+
+// Cargo pods slice 17 stills: a held inspector (pointer on it) that grows when
+// the loot window opens was left half off screen.
+describe('reclampHeldInspector', () => {
+  it('a held panel that still fits stays exactly where it is', () => {
+    expect(reclampHeldInspector(640, 400, W, H, VW, VH, out)).toBe(false);
+  });
+  it('a held panel that grew past the left edge comes back on screen', () => {
+    expect(reclampHeldInspector(60, 400, 300, H, VW, VH, out)).toBe(true);
+    expect(out.left).toBe(INSPECTOR_EDGE + 150);
+    expect(out.top).toBe(400);
+  });
+  it('a held panel that grew under the header comes back down', () => {
+    expect(reclampHeldInspector(640, 120, W, 300, VW, VH, out)).toBe(true);
+    expect(out.top).toBe(INSPECTOR_TOP_MIN + 300);
   });
 });

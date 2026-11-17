@@ -4,7 +4,12 @@
 // an offset lane, mints a dev token, joins `sector` as a Pixel 7 with the
 // machined art, sends `test_drop_pods` and screenshots two zooms.
 //
-//   node scripts/showcase/cargo-pod-stills.mjs [outDir] [--offset N]
+// --window (slice 17): also select the huge pod, open its loot window and
+// shoot it searching, all found, and after one tile is tapped aboard.
+//
+//   node scripts/showcase/cargo-pod-stills.mjs [outDir] [--offset N] [--window] [--room R]
+// --room: the room to join (default sector; trade-test is a quiet galaxy room
+// with no AI, so nothing kills the ship while the window is open).
 // Run through the heavy queue: pnpm heavy run --kind film -- node scripts/showcase/cargo-pod-stills.mjs
 import { chromium, devices } from '@playwright/test';
 import { spawn, spawnSync } from 'node:child_process';
@@ -14,7 +19,10 @@ import { randomUUID } from 'node:crypto';
 const args = process.argv.slice(2);
 const oi = args.indexOf('--offset');
 const OFFSET = oi >= 0 ? Number(args[oi + 1]) : 37;
-const out = args.find((a, i) => !a.startsWith('--') && args[i - 1] !== '--offset') ?? 'diag/showcase/cargo-pods';
+const ri = args.indexOf('--room');
+const ROOM = ri >= 0 ? args[ri + 1] : 'sector';
+const out = args.find((a, i) => !a.startsWith('--') && args[i - 1] !== '--offset' && args[i - 1] !== '--room') ?? 'diag/showcase/cargo-pods';
+const WINDOW = args.includes('--window');
 const SERVER = 2567 + OFFSET, CLIENT = 5173 + OFFSET, HMR = 24678 + OFFSET;
 mkdirSync(out, { recursive: true });
 
@@ -49,11 +57,11 @@ try {
   const browser = await chromium.launch({
     args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--enable-webgl'],
   });
-  for (const [name, zoom] of [['wide', '0.45'], ['close', '1.1']]) {
+  for (const [name, zoom] of WINDOW ? [['close', '1.1']] : [['wide', '0.45'], ['close', '1.1']]) {
     const ctx = await browser.newContext({ ...devices['Pixel 7'] });
     await ctx.addInitScript((t) => { localStorage.setItem('eqxAuthToken', t); }, tok.token);
     const page = await ctx.newPage();
-    const q = new URLSearchParams({ room: 'sector', testId: randomUUID(), worker: '0', diag: '0', art: 'machined', fx: 'new', zoom });
+    const q = new URLSearchParams({ room: ROOM, testId: randomUUID(), worker: '0', diag: '0', art: 'machined', fx: 'new', zoom });
     await page.goto(`http://localhost:${CLIENT}/?${q}`, { waitUntil: 'domcontentloaded', timeout: 120_000 });
     await page.waitForFunction(
       () => parseInt(document.querySelector('[data-testid="ship-count"]')?.textContent?.replace('Ships: ', '') ?? '0', 10) > 0,
@@ -65,6 +73,31 @@ try {
     await page.waitForTimeout(3000); // pods spawn + art warms
     await page.screenshot({ path: `${out}/pods-${name}.png` });
     console.log('shot', name);
+    if (WINDOW) {
+      // The huge pod is the rightmost of the row.
+      const at = await page.evaluate(() => {
+        let best = null;
+        for (const [, s] of globalThis.__eqxClient.mirror.swarm) {
+          if (s.kind === 3 && s.shipKind === 'cargo-pod' && (best === null || s.x > best.x)) best = { x: s.x, y: s.y };
+        }
+        return best;
+      });
+      if (at === null) throw new Error('no pod in the mirror');
+      await page.evaluate(([x, y]) => globalThis.__eqxSelectAtWorld(x, y), [at.x, at.y]);
+      await page.getByTestId('pod-open').waitFor({ timeout: 5_000 });
+      console.log('pod in reach:', await page.getByTestId('pod-open').getAttribute('data-in-reach'));
+      await page.getByTestId('pod-open').click();
+      await page.getByTestId('cargo-panel').waitFor({ timeout: 5_000 });
+      await page.waitForTimeout(400);
+      await page.screenshot({ path: `${out}/window-searching.png` });
+      await page.getByTestId('cargo-unknown-tile').first().waitFor({ state: 'detached', timeout: 15_000 });
+      await page.waitForTimeout(300);
+      await page.screenshot({ path: `${out}/window-found.png` });
+      await page.getByTestId('cargo-here-row').first().click(); // one stack aboard; the pod stays
+      await page.waitForTimeout(1500);
+      await page.screenshot({ path: `${out}/window-taken.png` });
+      console.log('shot window');
+    }
     await ctx.close();
   }
   await browser.close();

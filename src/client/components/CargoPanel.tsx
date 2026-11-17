@@ -268,7 +268,8 @@ export const CargoPanel = memo(function CargoPanel({ entityId, ship }: CargoPane
   return (
     <Box sx={ROOT_SX} data-testid="cargo-panel" data-open={state?.open === true && !peek ? '1' : '0'} data-peek={peek ? '1' : '0'} data-market={market ? '1' : '0'}>
       <Box sx={TITLE_SX}>
-        {market ? 'Market' : 'Cargo'}{state?.open === true && !market ? ` · ${Math.round(state.used)}/${state.capacity}` : ''}
+        {/* A pod has no capacity (0): show only the weight inside, never "/0". */}
+        {market ? 'Market' : 'Cargo'}{state?.open === true && !market ? ` · ${Math.round(state.used)}${state.capacity > 0 ? `/${state.capacity}` : ''}` : ''}
       </Box>
       {state === null && <Box>Opening…</Box>}
       {state !== null && locked && <Box sx={WARN_SX} data-testid="cargo-locked">{state.message ?? 'Locked.'}</Box>}
