@@ -78,6 +78,27 @@ describe('SectorRoom integration — ship cargo (C3)', () => {
     expect(getHoldStore().get(thiefShip)?.hold.goods.alloy).toBe(4);
   });
 
+  it('your own ship opens as "your hold": everything visible, look only, with your auto-unload', { timeout: 40_000 }, async () => {
+    harness = await bootSectorTestServer({ sectorKey: 'sol-prime', droneCount: 0, testMode: true, asteroidConfig: [] });
+    const me = randomUUID();
+    const cr = await harness.connectActive(me, { spawnX: 0, spawnY: 0, initialCargo: { goods: { alloy: 6, ice: 2 }, blueprints: [] } });
+    const replies: CargoState[] = [];
+    cr.onMessage('cargo_state', (m: CargoState) => replies.push(m));
+
+    const own = await ask(cr, replies, 'cargo_query', { ship: me });
+    expect(own.open, own.message).toBe(true);
+    expect(own.targetShip).toBe(me);
+    expect(own.hold?.goods).toEqual({ alloy: 6, ice: 2 });
+    expect(own.hidden, 'no search on your own ship').toBeUndefined();
+    expect(own.capacity).toBeGreaterThan(0);
+    expect(own.ship, 'one hold, not two').toBeNull();
+    expect(own.autoUnload).toBe(true);
+    const moved = await ask(cr, replies, 'cargo_move', { ship: me, dir: 'take', items: { goods: { alloy: 1 } } });
+    expect(moved.ok).toBe(false);
+    const state = harness.getServerRoom()!.state as SectorState;
+    expect(getHoldStore().get(shipIdOf(state, me))?.hold.goods.alloy).toBe(6);
+  });
+
   it('an NPC ship drops only what is left in its hold — what a break-in took never drops again', { timeout: 40_000 }, async () => {
     // Peaceful drones: the break-in turns its side hostile, and a shot at the
     // thief would (correctly) interrupt it — this test is about the hold.

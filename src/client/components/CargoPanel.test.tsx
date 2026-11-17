@@ -82,11 +82,11 @@ describe('CargoPanel (C1)', () => {
     expect(bar.getAttribute('data-capacity')).toBe('80');
   });
 
-  it('a pod has no capacity: its title shows the weight inside, never "/0"', () => {
+  it('a pod has no capacity: its pane shows the weight inside, never "/0"', () => {
     render(<CargoPanel entityId={9} />);
     act(() => useUIStore.getState().setCargoState(state({ used: 20, capacity: 0 })));
-    expect(screen.getByTestId('cargo-panel').textContent).toContain('Cargo · 20');
-    expect(screen.getByTestId('cargo-panel').textContent).not.toContain('20/0');
+    expect(screen.getByTestId('cargo-here-weight').textContent).toBe('20');
+    expect(screen.getByTestId('cargo-panel').textContent).not.toContain('/ 0');
   });
 
   it('slice 17: your own storage shows both auto-unload switches', () => {

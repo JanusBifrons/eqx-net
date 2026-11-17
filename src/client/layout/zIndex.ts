@@ -6,7 +6,10 @@
  * z-index from this table once; widgets do not set their own.
  *
  * Tier ordering (lowest → highest):
- *   canvas  < hud < mobileControls < drawer < appBar < overlay < transit
+ *   canvas  < hud < mobileControls < drawer < appBar < overlay < modal < transit
+ *
+ * `modal`: a game Dialog opened from an overlay (the loot window over the
+ * world inspector); the drag ghost (`transit`) still draws above it.
  */
 export const Z = {
   canvas: 0,
@@ -15,6 +18,7 @@ export const Z = {
   drawer: 1200,
   appBar: 1300,
   overlay: 1400,
+  modal: 1450,
   transit: 1500,
 } as const;
 

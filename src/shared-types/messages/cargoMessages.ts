@@ -125,6 +125,9 @@ export const CargoStateSchema = z
     /** Slice 13: false = a peek (a living stranger's cargo): `open` to look
      *  while close, never to move. Absent = takeable. */
     takeable: z.boolean().optional(),
+    /** Slice 19: your own ship's hold ("your hold" from the HUD cargo chip):
+     *  `hold` is your ship's, all visible; `ship` is null. */
+    own: z.boolean().optional(),
     revealInMs: z.number().int().nonnegative().max(60_000).optional(),
     /** 14c — your own storage open: does your ship auto-unload here, and
      *  does this storage accept auto-unload? */

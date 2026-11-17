@@ -20,6 +20,8 @@ interface Drag {
   y0: number;
   dragging: boolean;
   ghost: HTMLElement | null;
+  /** Half the ghost's size: it hangs centred under the pointer. */
+  half: number;
 }
 
 export interface TileDrag {
@@ -51,8 +53,8 @@ export function useTileDrag(onDrop: (from: TileSide, key: string) => void): Tile
         drag.dragging = true;
       }
       if (drag.ghost) {
-        drag.ghost.style.left = `${e.clientX - 22}px`;
-        drag.ghost.style.top = `${e.clientY - 22}px`;
+        drag.ghost.style.left = `${e.clientX - drag.half}px`;
+        drag.ghost.style.top = `${e.clientY - drag.half}px`;
       }
     };
     const end = (): void => {
@@ -74,18 +76,21 @@ export function useTileDrag(onDrop: (from: TileSide, key: string) => void): Tile
       end();
       dropped = false;
       let ghost: HTMLElement | null = null;
+      let half = 22;
       if (e.currentTarget instanceof HTMLElement) {
         // Ignores the pointer, so the drop test sees the grid under it.
+        // The tile itself, lifted and tilted, at its own size.
+        half = Math.max(22, e.currentTarget.getBoundingClientRect().width / 2);
         ghost = e.currentTarget.cloneNode(true) as HTMLElement;
         ghost.removeAttribute('data-testid');
         ghost.setAttribute('data-drag-ghost', '1');
         Object.assign(ghost.style, {
-          position: 'fixed', left: '-100px', top: '-100px', width: '44px', height: '44px',
-          pointerEvents: 'none', opacity: '0.85', zIndex: String(Z.transit),
+          position: 'fixed', left: '-100px', top: '-100px', width: `${half * 2}px`, height: `${half * 2}px`,
+          pointerEvents: 'none', opacity: '0.95', transform: 'rotate(-6deg)', boxShadow: '0 6px 18px rgba(0,0,0,0.8)', zIndex: String(Z.transit),
         });
         document.body.appendChild(ghost);
       }
-      drag = { side, key, x0: e.clientX, y0: e.clientY, dragging: false, ghost };
+      drag = { side, key, x0: e.clientX, y0: e.clientY, dragging: false, ghost, half };
       window.addEventListener('pointermove', move);
       window.addEventListener('pointerup', up);
       window.addEventListener('pointercancel', end);

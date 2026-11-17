@@ -12616,7 +12616,17 @@ export class SectorRoom extends Room<SectorState> {
     if (!mine?.alive || !mine.isActive || mine.shipInstanceId === '' || getPlayerShipStore().get(mine.shipInstanceId) === null) {
       return closed('You need a ship to move cargo.');
     }
-    if (t.holdUid === mine.shipInstanceId) return closed('That is the ship you are flying.');
+    if (t.holdUid === mine.shipInstanceId) {
+      // Cargo pods slice 19: "your hold" from the HUD cargo chip. One hold,
+      // all visible (no search on your own ship), nothing to take.
+      const own = getHoldStore().get(mine.shipInstanceId)?.hold ?? emptyHold();
+      return {
+        type: 'cargo_state', ...echo, open: true, own: true, takeable: false, hold: own, used: holdWeight(own),
+        capacity: this.shipCargoCapacity(mine.kind, mine.shipInstanceId), ship: null, shipCapacity: 0,
+        autoUnload: getPlayerShipStore().get(mine.shipInstanceId)?.autoUnload !== false,
+        ...(move ? { ok: false, message: 'That is already aboard.' } : {}),
+      };
+    }
     if (!this.pilotNearPoint(playerId, t.x, t.y, t.radius)) {
       this.lootSearch.advance(playerId, t.id, this.gameClock.now(), false);
       return closed('Fly closer to open its cargo.');

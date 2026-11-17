@@ -74,11 +74,16 @@ try {
     await page.screenshot({ path: `${out}/pods-${name}.png` });
     console.log('shot', name);
     if (WINDOW) {
-      // The huge pod is the rightmost of the row.
+      // The huge pod nearest the ship (size 3: componentIndex = size*4 + tier).
+      // The room keeps pods from earlier runs, so never "the rightmost".
       const at = await page.evaluate(() => {
-        let best = null;
-        for (const [, s] of globalThis.__eqxClient.mirror.swarm) {
-          if (s.kind === 3 && s.shipKind === 'cargo-pod' && (best === null || s.x > best.x)) best = { x: s.x, y: s.y };
+        const c = globalThis.__eqxClient.mirror;
+        const me = c.ships.get(c.localPlayerId);
+        let best = null, bestD = Infinity;
+        for (const [, s] of c.swarm) {
+          if (s.kind !== 3 || s.shipKind !== 'cargo-pod' || Math.floor((s.componentIndex ?? 0) / 4) !== 3) continue;
+          const d = Math.hypot(s.x - me.x, s.y - me.y);
+          if (d < bestD) { bestD = d; best = { x: s.x, y: s.y }; }
         }
         return best;
       });
@@ -96,6 +101,14 @@ try {
       await page.getByTestId('cargo-here-row').first().click(); // one stack aboard; the pod stays
       await page.waitForTimeout(1500);
       await page.screenshot({ path: `${out}/window-taken.png` });
+      // Slice 19: close it, then "your hold" from the HUD cargo chip.
+      await page.getByTestId('loot-window-close').click();
+      await page.getByTestId('loot-window').waitFor({ state: 'detached', timeout: 5_000 });
+      await page.getByTestId('cargo-chip').click();
+      await page.getByTestId('cargo-selected').waitFor({ timeout: 5_000 });
+      await page.getByTestId('cargo-here-row').first().click();
+      await page.waitForTimeout(300);
+      await page.screenshot({ path: `${out}/window-own.png` });
       console.log('shot window');
     }
     await ctx.close();

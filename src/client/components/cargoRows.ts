@@ -65,3 +65,15 @@ export function allOf(rows: readonly CargoRow[]): CargoItems {
   if (blueprints.length > 0) out.blueprints = blueprints;
   return out;
 }
+
+/** Slice 19: just one row's stack of a hold (for its weight). */
+export function rowHold(hold: Hold, row: CargoRow): Hold {
+  const goods = row.all.goods ?? {};
+  const packed = row.all.packed !== undefined ? (hold.packed ?? []).filter((p) => p.product === row.all.packed![0]) : [];
+  const uids = row.all.blueprints ?? [];
+  return {
+    goods: { ...goods },
+    blueprints: hold.blueprints.filter((b) => uids.includes(b.uid)),
+    ...(packed.length > 0 ? { packed } : {}),
+  };
+}

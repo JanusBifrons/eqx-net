@@ -26,7 +26,7 @@ import { sendPilotShip } from '../ships/shipActionsClient';
 import { BountyAction } from './BountyAction';
 import { BlueprintInstall } from './BlueprintInstall';
 import { ResearchLabPanel } from './ResearchLabPanel';
-import { CargoAction, PodOpen } from './CargoPanel';
+import { CargoAction, PodOpen } from './LootWindow';
 import { isLootPod } from '@shared-types/swarmWireFormat';
 import { podSizeOf } from '@shared-types/shipKinds/cargoPod';
 import { withinLootOpenReach } from '@core/cargo/lootReach';
@@ -479,9 +479,9 @@ export function EntityStatsPanel(): JSX.Element | null {
       {data.isLab === true && data.entityId !== undefined && <ResearchLabPanel entityId={data.entityId} />}
       {data.isTeleporter === true && data.entityId !== undefined && <TeleporterPanel key={data.entityId} entityId={data.entityId} />}
       {data.isForeignTeleporter === true && data.entityId !== undefined && <ForeignTeleporterPanel key={data.entityId} entityId={data.entityId} />}
-      {data.hasCargo === true && data.entityId !== undefined && <CargoAction key={data.entityId} entityId={data.entityId} />}
-      {data.cargoShip !== undefined && <CargoAction key={data.cargoShip} ship={data.cargoShip} />}
-      {data.podOpen !== undefined && data.entityId !== undefined && <PodOpen key={data.entityId} entityId={data.entityId} inReach={data.podOpen} />}
+      {data.hasCargo === true && data.entityId !== undefined && <CargoAction key={data.entityId} entityId={data.entityId} title={data.name} />}
+      {data.cargoShip !== undefined && <CargoAction key={data.cargoShip} ship={data.cargoShip} title={data.name} />}
+      {data.podOpen !== undefined && data.entityId !== undefined && <PodOpen key={data.entityId} entityId={data.entityId} inReach={data.podOpen} {...(data.infoLine !== undefined ? { subtitle: data.infoLine } : {})} />}
       <TargetAction isOwn={data.isOwn === true || data.pilotShipId !== undefined} />
       {data.pilotShipId !== undefined && (
         // Phase 4 WS-A2 — in-world Pilot action on the local player's OWN

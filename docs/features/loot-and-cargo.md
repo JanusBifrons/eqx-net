@@ -314,7 +314,7 @@ Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each r
 
 - The local ship's hold is decoded ONLY from the authoritative own-ship `SnapshotMessage.states[].cargo` slice (`ColyseusClient.applyLocalCargo`, invariant #16). It writes the discrete Zustand `cargo`/`cargoCapacity` ONLY when the contents changed (`net/lootView.ts` `cargoChanged`, field-by-field, alloc-free), so a steady hold costs zero React renders.
 - `loot_collected` (zod-validated) only pushes a short-lived popup line (`lootFeed`, capped at 4, `LOOT_FEED_TTL_MS`). Never derive cargo from it.
-- `CargoChip` lives in the `top-left` slot at `order={3}` (under the sector chip). Testids: `cargo-chip` (`data-cargo-weight/capacity/fill`), `cargo-breakdown`, `loot-feed-line`. It shows NO credits.
+- `CargoChip` lives in the `top-left` slot at `order={3}` (under the sector chip). Testids: `cargo-chip` (`data-cargo-weight/capacity/fill`), `loot-feed-line`. It shows NO credits. A tap opens "your hold": the loot window on your own ship (`cargo_query { ship: <your playerId> }` answers `own: true`, one grid, all visible, a "Selected" pane, the ship-side auto-unload switch; nothing moves).
 
 - Loot pods render through the EXISTING scrap path (`parentShipKind 'cargo-pod'`, `componentIndex` = tier colour). There's no separate pod renderer.
 
