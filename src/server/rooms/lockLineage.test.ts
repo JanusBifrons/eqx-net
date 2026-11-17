@@ -16,11 +16,13 @@ import { getShipKind } from '../../shared-types/shipKinds.js';
 const ROOT = 7;
 
 /** One pilot 'p1' in a barge (or `kindId`) at the origin, MAN groups. `targets`: live keys;
- *  `root`: each live member's lineage root; `pods`: which are pods (never members). */
+ *  `root`: each live member's lineage root; `pods`: which are pods (never members);
+ *  `masses`: rock pieces with a mass (a free hold; others are field-rock sized). */
 function harness(kindId = 'barge') {
   const targets = new Map<string, LockTargetView>();
   const root = new Map<string, number>();
   const pods = new Set<string>();
+  const masses = new Map<string, number>();
   const deps: LockSubsystemDeps = {
     resolveTarget: (_p, key, out) => {
       const t = targets.get(key);
@@ -33,7 +35,10 @@ function harness(kindId = 'barge') {
     salvageOf: (_p, key, out) => {
       if (!targets.has(key)) return false;
       out.pod = pods.has(key);
-      out.mass = Infinity; out.holdWeight = Infinity; out.freeHold = 0;
+      const m = masses.get(key);
+      if (m === undefined) { out.mass = Infinity; out.holdWeight = Infinity; out.freeHold = 0; out.ore = undefined; return true; }
+      out.mass = m; out.holdWeight = 500; out.freeHold = 1e9; out.qty = 1;
+      out.ore = { rockId: 'r', resource: 'minerals' } as unknown as typeof out.ore;
       return true;
     },
     lineage: {
@@ -53,7 +58,7 @@ function harness(kindId = 'barge') {
     if (pod) pods.add(key);
   };
   const keys = (gid: string): string[] => locks.wireFor('p1')!.find((g) => g.id === gid)!.l.map((l) => l.t);
-  return { locks, targets, add, keys };
+  return { locks, targets, add, keys, masses };
 }
 
 const rock = (): LockTargetView => ({ x: 600, y: 0, vx: 0, vy: 0, angle: 0, ship: false, kindId: null, shieldUp: false, radius: 60, hostile: false, terrain: true });
@@ -109,6 +114,26 @@ describe('a salvage lock ends with its lineage, not its piece', () => {
     expect(after.length).toBe(before.length);
     expect(after).not.toContain(gone);
     expect(after.filter((k) => !before.includes(k)).length, 'one sibling it never held').toBe(1);
+  });
+
+  it('a cut that hands a group pieces it can not work: its locks move to free pieces it can (the tractors never idle on pieces too heavy to pull)', () => {
+    // Seen in the barge-mining take (2026-11-17): the locks followed the biggest
+    // pieces, so the tractor group held the uncut tier-none pieces and only one
+    // haulable piece while five others sat unheld: one beam, the rest asleep.
+    const h = harness();
+    h.targets.set('s:1', rock());
+    for (const g of ['laser', 'tractor']) expect(h.locks.forceLock('p1', 's:1', g), g).toBeGreaterThan(0);
+    h.locks.step();
+    const big = ['s:11', 's:12'];
+    const haul = ['s:13', 's:14', 's:15', 's:16', 's:17', 's:18'];
+    for (const k of big) { h.add(k); h.masses.set(k, 20_000); }
+    for (const k of haul) { h.add(k); h.masses.set(k, 1_500); }
+    h.locks.targetSplit('s:1', [...big, ...haul]); // biggest first
+    h.targets.delete('s:1');
+    h.locks.step();
+    const held = h.keys('tractor');
+    expect(held.length, 'the tractors hold fewer than the haulable pieces').toBeLessThan(haul.length);
+    expect(held.filter((k) => big.includes(k)), 'no tractor lock on a piece too heavy to pull').toEqual([]);
   });
 
   it('a lineage piece it can not track (crossing too fast): the lock idles on the lineage instead of dropping', () => {

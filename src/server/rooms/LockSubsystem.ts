@@ -12,7 +12,7 @@
 import { LOCK_TUNING, WEAPON_LOCK_PROFILE, lockCapacityFor, sensorFor, NO_PILOT_MODS, type MountSize } from '../../shared-types/combat/lockProfile.js';
 import { lockSeconds, type LockInputs } from '../../core/combat/lockTime.js';
 import { newLock, stepLock, LOCK_STAGE_CODE, LOCK_TRACK, type LockEntry } from '../../core/combat/lockState.js';
-import { lineageRekey, splitGroupLocks } from './lockSplit.js';
+import { lineageRekey, rekeyUnworkable, splitGroupLocks } from './lockSplit.js';
 import { lockLineHolds } from '../../core/combat/lockLine.js';
 import { LockPicker } from './lockPick.js';
 import { lockSalvageFlags, refreshLockSalvage, type LockSalvageDeps } from './lockSalvage.js';
@@ -297,9 +297,16 @@ export class LockSubsystem {
     }
   }
 
-  /** Target `fromKey` broke into `pieceKeys` (biggest first): its locks follow (`splitGroupLocks`), a lock given none to its lineage's next live piece. */
+  /** Target `fromKey` broke into `pieceKeys` (biggest first): its locks follow (`splitGroupLocks`), a lock given none to its lineage's next live piece;
+   *  then a salvage group's lineage lock it can't work moves to a free piece it can (`rekeyUnworkable`). */
   targetSplit(fromKey: string, pieceKeys: ReadonlyArray<string>): void {
-    for (const [playerId, p] of this.players) { const c = { d: this.deps, ship: this.deps.shipOf(playerId), playerId }; for (const g of p.groups) if (splitGroupLocks(g, fromKey, pieceKeys, pieceKeys.length, c)) this.syncWireShape(g); }
+    for (const [playerId, p] of this.players) {
+      const c = { d: this.deps, ship: this.deps.shipOf(playerId), playerId };
+      for (const g of p.groups) {
+        const split = splitGroupLocks(g, fromKey, pieceKeys, pieceKeys.length, c);
+        if (rekeyUnworkable(g, c) || split) this.syncWireShape(g);
+      }
+    }
   }
 
   /** (Re)build the player's groups when their ship kind or activated mounts change. */

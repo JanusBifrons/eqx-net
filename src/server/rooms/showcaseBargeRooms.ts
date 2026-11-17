@@ -58,7 +58,7 @@ export const SHOWCASE_BARGE_MINING_ROCKS = [
   { id: 'mine-rock-a', x: 1150, y: 400, vx: 0, vy: 0, radius: 260 },
   { id: 'mine-rock-b', x: 1250, y: -1200, vx: 0, vy: 0, radius: 200 },
   { id: 'mine-rock-c', x: 1300, y: 2000, vx: 0, vy: 0, radius: 160 },
-  { id: 'mine-rock-d', x: 2000, y: -2700, vx: 0, vy: 0, radius: 380 },
+  { id: 'mine-rock-d', x: 400, y: -3300, vx: 0, vy: 0, radius: 380 },
   { id: 'mine-rock-e', x: -1200, y: 700, vx: 0, vy: 0, radius: 200 },
   { id: 'mine-rock-f', x: -2100, y: -1600, vx: 0, vy: 0, radius: 480 },
   { id: 'mine-rock-g', x: -1250, y: 2300, vx: 0, vy: 0, radius: 180 },
@@ -68,8 +68,11 @@ export const SHOWCASE_BARGE_MINING_ROCKS = [
  *  XL laser's arc and the port XL tractor's reach, and on screen at the
  *  barge's closest zoom (upper left, clear of the HUD) where a rock dead
  *  ahead of the bow sits under the top bar (the follow camera centres the
- *  hull and has no look-ahead). The hull is clear of every other rock. */
-export const SHOWCASE_BARGE_MINING_SPAWN = { x: 4150, y: -1800 };
+ *  hull and has no look-ahead). The hull is clear of every other rock.
+ *  Close in (the port XL tractor ~1,000 u from the rock): only that one dish
+ *  bears, and its pull falls with the square of the range, so from ~2,500 u
+ *  each piece took ~2.5 game minutes to reel in. */
+export const SHOWCASE_BARGE_MINING_SPAWN = { x: 2600, y: -1800 };
 export const SHOWCASE_BARGE_MINING_OPTS = {
   sectorKey: 'showcase-barge-mining',
   testMode: true,

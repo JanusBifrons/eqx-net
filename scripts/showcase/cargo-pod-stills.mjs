@@ -98,7 +98,7 @@ try {
       await page.getByTestId('cargo-unknown-tile').first().waitFor({ state: 'detached', timeout: 15_000 });
       await page.waitForTimeout(300);
       await page.screenshot({ path: `${out}/window-found.png` });
-      await page.getByTestId('cargo-here-row').first().click(); // one stack aboard; the pod stays
+      await page.locator('[data-testid="cargo-here-row"][data-key^="u:"]').first().click(); // the rock chunk aboard; the pod stays
       await page.waitForTimeout(1500);
       await page.screenshot({ path: `${out}/window-taken.png` });
       // Slice 19: close it, then "your hold" from the HUD cargo chip.

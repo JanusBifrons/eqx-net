@@ -343,7 +343,7 @@ import { addPacked, cloneHold, emptyHold, extractRequested, holdWeight, isHoldEm
 import type { HolderType, HoldRecord } from '../cargo/HoldStore.js';
 import { RAID_NOTICE_THROTTLE_MS, RAID_PRIORITY } from '../livingworld/RobotTerritory.js';
 import { cargoCapacityForMaxHealth, GOOD_DEFS, GOOD_IDS, HoldSchema, type Hold } from '../../shared-types/goods.js';
-import { PackedItemSchema } from '../../shared-types/items.js';
+import { PackedItemSchema, ROCK_CHUNK_PRODUCT } from '../../shared-types/items.js';
 import { rollKillBounty } from '../../shared-types/lootTables.js';
 import { DEATH_POD_PUSH, deathHullLoot, killPodSpot, rollHullLoot, vaporisedSalvageExtra } from '../cargo/hullLoot.js';
 import { ELITE_HEALTH_MUL } from '../../shared-types/elites.js';
@@ -3583,7 +3583,10 @@ export class SectorRoom extends Room<SectorState> {
         let x = p.x + halves[3]! - (halves.reduce((s, r) => s + 2 * r, 0) + GAP * (holds.length - 1));
         for (let size = 0; size < holds.length; size++) {
           x += halves[size]!;
-          this.loot.drop({ goods: holds[size]!, blueprints: [] }, x, p.y - 100, 0, 0, { size, alone: true, spill: size === 3 });
+          // The huge one also holds a rock chunk (a ship's spilled hold can),
+          // so the stills show its tile in the window and then in the hold.
+          const packed = size === 3 ? [{ product: ROCK_CHUNK_PRODUCT, quality: 0, uid: `rc-${randomUUID()}`, weight: 400, ore: {} }] : undefined;
+          this.loot.drop({ goods: holds[size]!, blueprints: [], ...(packed && { packed }) }, x, p.y - 100, 0, 0, { size, alone: true, spill: size === 3 });
           x += halves[size]! + GAP;
         }
       },

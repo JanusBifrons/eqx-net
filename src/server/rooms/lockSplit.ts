@@ -14,11 +14,17 @@
  * locked rock or wreck is alive, a lock whose piece leaves (worn into a
  * pod, taken in, or gone) or that it can't track moves on to another live member
  * the group does not hold yet, one a mount of the group can work first; a
- * group with nothing it may work idles on the lineage.
+ * group with nothing it may work idles on the lineage. After every break a
+ * salvage group's lineage lock it can't work moves to a free member it can
+ * (`rekeyUnworkable`): the pieces are handed out biggest first, so without
+ * it a tractor group held the uncut pieces too heavy to pull while the
+ * haulable ones went unheld (barge-mining take, 2026-11-17).
  */
 import { LOCK_TRACK, newLock, type LockEntry } from '../../core/combat/lockState.js';
 import { groupWorksSalvage, lockTierOf, type TurretGroupMount } from '../../core/combat/turretLockPick.js';
-import { lockSalvageFlags, type LockSalvageDeps } from './lockSalvage.js';
+import { isSalvageWeapon } from '../../core/combat/salvageTargeting.js';
+import { getWeapon } from '../../core/combat/WeaponCatalogue.js';
+import { lockSalvageFlags, refreshLockSalvage, type LockSalvageDeps } from './lockSalvage.js';
 import type { ShipKind, WeaponMount } from '../../shared-types/shipKinds/types.js';
 
 /** A weapon group as the lineage hand-over sees it. */
@@ -81,6 +87,36 @@ export function lineageRekey(
   e.root = root;
   e.lostFor = 0;
   return true;
+}
+
+/** Does group `g` carry a mining laser or a tractor (a salvage group)? */
+function salvageGroup(g: LineageGroup): boolean {
+  for (let i = 0; i < g.mounts.length; i++) {
+    const w = getWeapon(g.mounts[i]!.weaponId);
+    if (isSalvageWeapon(w) || w.tractor !== undefined) return true;
+  }
+  return false;
+}
+
+/**
+ * After a break: each lineage lock of salvage group `g` that no mount of it
+ * can work (bits refreshed now) moves to the free member of its lineage it
+ * can (`lineageRekey` with `keep`: it stays when none is free). True when
+ * a lock moved (the caller re-syncs its wire). Runs only on a break.
+ */
+export function rekeyUnworkable(g: LineageGroup, c: LineageCtx): boolean {
+  if (c.d.lineage === undefined || !salvageGroup(g)) return false;
+  let moved = false;
+  for (const e of g.locks) {
+    refreshLockSalvage(c.d, c.ship, c.playerId, e);
+    if (e.root < 0 || e.flags === 0 || groupWorksSalvage(g.mounts, e.flags)) continue;
+    const was = e.target;
+    if (lineageRekey(c.d, c.ship, c.playerId, g, e, true) && e.target !== was) {
+      refreshLockSalvage(c.d, c.ship, c.playerId, e);
+      moved = true;
+    }
+  }
+  return moved;
 }
 
 /** Re-key one group's lock on `fromKey` to the first of the first `count`
