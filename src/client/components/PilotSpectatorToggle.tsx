@@ -31,7 +31,7 @@ import { isOwnedByMe, isParkedHull } from '../render/shipOwnership';
  */
 
 const GROUP_SX = {
-  bgcolor: 'rgba(8,12,22,0.6)',
+  bgcolor: 'rgba(8,12,22,0.72)',
   borderRadius: 1,
   '& .MuiToggleButton-root': {
     px: { xs: 0.75, sm: 1.25 },
