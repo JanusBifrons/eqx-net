@@ -1,3 +1,4 @@
+import { podSizeOf } from '../../shared-types/shipKinds/cargoPod.js';
 import { describe, expect, it } from 'vitest';
 import { LootSubsystem, LOOT_POD_TTL_MS, MAX_LIVE_LOOT_PER_SECTOR, DERELICT_SALVAGE_STEP, type LootCollector, type LootSubsystemDeps } from './LootSubsystem.js';
 import { HoldStore } from './HoldStore.js';
@@ -37,21 +38,22 @@ function setup(opts: { sectorKey?: string | null; collectors?: LootCollector[]; 
   const store = new HoldStore({ persistence: () => sink, now: () => now });
   const poses = new Map<string, { x: number; y: number }>();
   const despawned: string[] = [];
+  const indexes = new Map<string, number>();
   const collected: Array<{ moved: Hold; podId: string }> = [];
   const collectors = opts.collectors ?? [];
   const loot = new LootSubsystem({
     holdStore: store,
     sectorKey: () => (opts.sectorKey === undefined ? 'sol-prime' : opts.sectorKey),
     now: () => now,
-    spawnPodEntity: (id, x, y) => { poses.set(id, { x, y }); return true; },
+    spawnPodEntity: (id, x, y, _vx, _vy, index) => { poses.set(id, { x, y }); indexes.set(id, index); return true; },
     despawnPodEntity: (id) => { despawned.push(id); poses.delete(id); },
-    setPodTier: () => {},
+    setPodTier: (id, index) => { indexes.set(id, index); },
     podPose: (id) => poses.get(id) ?? null,
     forEachCollector: (visit) => { for (const c of collectors) visit(c); },
     onCollected: (_c, moved, podId) => { collected.push({ moved, podId }); },
     ...(opts.heldPieces ? { heldPieces: opts.heldPieces } : {}),
   });
-  return { loot, store, ops, poses, despawned, collected, collectors, advance: (ms: number) => { now += ms; } };
+  return { loot, store, ops, poses, indexes, despawned, collected, collectors, advance: (ms: number) => { now += ms; } };
 }
 
 const SHIP: LootCollector = { playerId: 'p1', shipInstanceId: 'ship-1', x: 0, y: 0, angle: 0, shieldUp: false, capacity: 300, kind: getShipKind('fighter') };
@@ -134,6 +136,65 @@ describe('LootSubsystem (P1a-1)', () => {
     expect(t.ops[0]!.type).toBe('GROUP');
   });
 
+  it('a death flips each stack (EVE): survivors whole, the rest gone; extra included', () => {
+    const goods = { alloy: 2, salvage: 30, minerals: 9, core: 1, munitions: 40, ice: 5 };
+    let sawLoss = false;
+    let sawKeep = false;
+    for (let i = 0; i < 20; i++) {
+      const t = setup();
+      t.store.put({ holderUid: 'ship-9', holderType: 'ship', ownerId: 'p9', sectorKey: null, x: null, y: null, hold: h(goods), expiresAt: null });
+      const pod = t.loot.spillShipHold('ship-9', 100, 100, 0, 0, 'death', { player: true, extra: h({ fuel: 7 }), deathLoss: 'ship-9:' + i });
+      expect(t.store.get('ship-9'), 'the ship hold is gone either way').toBeUndefined();
+      const out = pod === null ? {} : t.store.get(pod)!.hold.goods;
+      const all: Record<string, number> = { ...goods, fuel: 7 };
+      for (const [id, n] of Object.entries(out)) expect(n, id).toBe(all[id]);
+      const kept = Object.keys(out).length;
+      if (kept < Object.keys(all).length) sawLoss = true;
+      if (kept > 0) sawKeep = true;
+    }
+    expect(sawLoss && sawKeep).toBe(true);
+  });
+
+  it('two deaths side by side leave two pods, one per ship (never merged)', () => {
+    const t = setup();
+    let pods = 0;
+    for (const id of ['ship-a', 'ship-b']) {
+      t.store.put({ holderUid: id, holderType: 'ship', ownerId: 'p', sectorKey: null, x: null, y: null, hold: h({ alloy: 2, salvage: 3, minerals: 4, core: 1, ice: 6, fuel: 2, munitions: 9 }), expiresAt: null });
+      if (t.loot.spillShipHold(id, 100, 100, 0, 0, 'death', { player: true, deathLoss: id + ':x' }) !== null) pods++;
+    }
+    expect(t.loot.podCount()).toBe(pods);
+    expect(pods).toBe(2);
+  });
+
+  it('a death that loses every stack leaves no pod (owner 2026-11-17)', () => {
+    let seen = false;
+    for (let i = 0; i < 200 && !seen; i++) {
+      const t = setup();
+      t.store.put({ holderUid: 'ship-9', holderType: 'ship', ownerId: 'p9', sectorKey: null, x: null, y: null, hold: h({ alloy: 2 }), expiresAt: null });
+      const pod = t.loot.spillShipHold('ship-9', 100, 100, 0, 0, 'death', { player: true, deathLoss: 'one:' + i });
+      if (pod !== null) continue;
+      seen = true;
+      expect(t.loot.podCount()).toBe(0);
+      expect(t.store.get('ship-9')).toBeUndefined();
+    }
+    expect(seen, 'some seed lost the only stack').toBe(true);
+  });
+
+  it('a death pod is sized to the dead ship', () => {
+    const t = setup();
+    t.store.put({ holderUid: 'ship-9', holderType: 'ship', ownerId: 'p9', sectorKey: null, x: null, y: null, hold: h({ fuel: 4 }), expiresAt: null });
+    let pod: string | null = null;
+    for (let i = 0; i < 50 && pod === null; i++) {
+      t.store.put({ holderUid: 'ship-9', holderType: 'ship', ownerId: 'p9', sectorKey: null, x: null, y: null, hold: h({ fuel: 4 }), expiresAt: null });
+      pod = t.loot.spillShipHold('ship-9', 100, 100, 0, 0, 'death', { player: false, deathLoss: 'size:' + i, size: 3 });
+    }
+    expect(pod).not.toBeNull();
+    expect(podSizeOf(t.indexes.get(pod!)!)).toBe(3);
+    // Any other drop (a cut rock, a test drop) stays size 0.
+    const small = t.loot.drop(h({ salvage: 1 }), 5_000, 5_000)!;
+    expect(podSizeOf(t.indexes.get(small)!)).toBe(0);
+  });
+
   it('pods expire after the TTL and their value is removed', () => {
     const t = setup();
     const pod = t.loot.drop(h({ salvage: 2 }), 0, 0)!;
@@ -143,11 +204,13 @@ describe('LootSubsystem (P1a-1)', () => {
     expect(t.loot.podCount()).toBe(0);
   });
 
-  it('a destroyed pod deletes its contents', () => {
+  it('expireNow drops a pod and its contents, as its TTL would', () => {
     const t = setup();
     const pod = t.loot.drop(h({ core: 1 }), 0, 0)!;
-    t.loot.onPodDestroyed(pod);
+    t.loot.expireNow(pod);
     expect(t.store.get(pod)).toBeUndefined();
+    expect(t.despawned).toEqual([pod]);
+    expect(t.loot.isPod(pod)).toBe(false);
   });
 
   it('restore() respawns persisted pods for this sector only', () => {

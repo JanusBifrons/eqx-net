@@ -205,7 +205,8 @@ export const SHIP_KINDS: typeof CATALOGUE_KINDS = BARGE_LOOK_KIND
 // the harvester's cargoCapacity 400 equals its old collector capacity and it is
 // npcOnly (never a stored player ship), so no stored stat changes.
 // 27 → 28 (2026-11-15): the mining barge kind appended (salvage PR 15).
-export const SHIP_KIND_CATALOGUE_VERSION = 28;
+// 28 → 29 (2026-11-17): cargo-pod gains size classes (16 parts: size × tier).
+export const SHIP_KIND_CATALOGUE_VERSION = 29;
 
 // The shield bubble pad is `shipTuning(kind).shieldPad` (shipScale/tuning.ts),
 // and the bubble radius is `shieldBubbleRadius(kind)`. The fixed

@@ -12,7 +12,6 @@ import { PhysicsWorld } from '../../core/physics/World.js';
 import type { SwarmRenderState } from '../../core/contracts/IRenderer.js';
 import { DisplayPoseHitscan, rayHitsDrawnSwarmEntity } from './displayPoseHitscan.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
-import { isMiningTool } from '../../core/combat/WeaponCatalogue.js';
 
 beforeAll(async () => {
   await RAPIER.init();
@@ -83,16 +82,14 @@ describe('DisplayPoseHitscan', () => {
     w.dispose();
   });
 
-  // Only a mining tool's beam passes a loot pod (the server's skip, #15); a gun's drawn beam ends on it.
-  it('a loot pod stops a gun\'s drawn beam but not a mining tool\'s; other scrap stops both', () => {
+  // No weapon touches a loot pod (owner 2026-11-17): the drawn beam never ends
+  // on one, as the server's shots pass it (shared `isLootPod`, #15).
+  it('no drawn beam ends on a loot pod; other scrap still stops it', () => {
     const pod = { ...drone(0, 100, false), kind: 3, radius: 9, shipKind: 'cargo-pod' } as SwarmRenderState;
-    expect(rayHitsDrawnSwarmEntity(pod, 0, 0, 0, 1, 400)).not.toBeNull();
-    expect(rayHitsDrawnSwarmEntity(pod, 0, 0, 0, 1, 400, undefined, 0, isMiningTool('laser'))).not.toBeNull();
-    expect(rayHitsDrawnSwarmEntity(pod, 0, 0, 0, 1, 400, undefined, 0, isMiningTool('mining_laser'))).toBeNull();
-    expect(rayHitsDrawnSwarmEntity(pod, 0, 0, 0, 1, 400, undefined, 0, isMiningTool('tractor'))).toBeNull();
+    expect(rayHitsDrawnSwarmEntity(pod, 0, 0, 0, 1, 400)).toBeNull();
+    expect(rayHitsDrawnSwarmEntity(pod, 0, 0, 0, 1, 400, undefined, 12)).toBeNull();
     const scrap = { ...pod, shipKind: undefined } as SwarmRenderState;
     expect(rayHitsDrawnSwarmEntity(scrap, 0, 0, 0, 1, 400)).not.toBeNull();
-    expect(rayHitsDrawnSwarmEntity(scrap, 0, 0, 0, 1, 400, undefined, 0, true)).not.toBeNull();
   });
 
   // 2026-11-13: the circle gate was `rayHitsSphere`, null once the ray starts

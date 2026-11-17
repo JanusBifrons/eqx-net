@@ -87,7 +87,7 @@ describe('SectorRoom integration — the factory line: nothing targets a consuma
       look();
       expect(int().swarmRegistry.get(id) ?? null, `${id} died`).toBeNull();
       const ids = [...seen].filter((p) => !before.has(p));
-      for (const pod of [...int().loot.podIds()]) int().loot.onPodDestroyed(pod); // its loot drop is not under test
+      for (const pod of [...int().loot.podIds()]) int().loot.expireNow(pod); // its loot drop is not under test
       return ids;
     };
 

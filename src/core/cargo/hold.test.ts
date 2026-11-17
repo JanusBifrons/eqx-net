@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { addPacked, emptyHold, extractRequested, holdBestTier, holdWeight, isHoldEmpty, mergeInto, packedCount, packedWeightOf, takePacked, transferInto, transferUpTo } from './hold.js';
+import { addPacked, emptyHold, rollDeathLoss, extractRequested, holdBestTier, holdWeight, isHoldEmpty, mergeInto, packedCount, packedWeightOf, takePacked, transferInto, transferUpTo } from './hold.js';
 import { legacyHoldCredits, parseHoldJson, type Hold } from '../../shared-types/goods.js';
 import { legacyBlueprintItem } from '../../shared-types/items.js';
 import { rollKillBounty, rollLoot } from '../../shared-types/lootTables.js';
+import { stream } from '../random/rng.js';
 
 function h(goods: Hold['goods'], blueprints: string[] = []): Hold {
   return { goods: { ...goods }, blueprints: blueprints.map(legacyBlueprintItem) };
@@ -156,5 +157,44 @@ describe('extractRequested (C1 cargo transfer)', () => {
     const out = extractRequested(src, { goods: { alloy: 0, ice: -2 } });
     expect(isHoldEmpty(out)).toBe(true);
     expect(extractRequested(src, { goods: { alloy: 2.9 } }).goods).toEqual({ alloy: 2 });
+  });
+});
+
+describe('rollDeathLoss (owner 2026-11-17: coin flip per stack, EVE)', () => {
+  // Built once: blueprint / packed items carry their own instance ids.
+  const FULL = h({ salvage: 40, minerals: 12, core: 3, munitions: 50 }, ['bp-a', 'bp-b']);
+  addPacked(FULL, 'fighter', 2);
+  const full = (): Hold => JSON.parse(JSON.stringify(FULL)) as Hold;
+
+  it('each stack survives whole or is gone whole, never split', () => {
+    const src = full();
+    for (let seed = 1; seed <= 50; seed++) {
+      const out = rollDeathLoss(src, stream(seed, 'death-loss'));
+      for (const [id, n] of Object.entries(out.goods)) expect(n).toBe(src.goods[id as keyof Hold['goods']]);
+      for (const b of out.blueprints) expect(src.blueprints.map((s) => s.uid)).toContain(b.uid);
+      expect(out.packed?.length ?? 0).toBeLessThanOrEqual(1);
+    }
+    expect(src).toEqual(full()); // the source hold is untouched
+  });
+
+  it('the same seed gives the same survivors', () => {
+    expect(rollDeathLoss(full(), stream(7, 'death-loss'))).toEqual(rollDeathLoss(full(), stream(7, 'death-loss')));
+  });
+
+  it('a fair coin: about half the stacks survive over many deaths', () => {
+    let kept = 0;
+    let stacks = 0;
+    for (let seed = 1; seed <= 400; seed++) {
+      const out = rollDeathLoss(full(), stream(seed, 'death-loss'));
+      kept += Object.keys(out.goods).length + out.blueprints.length + (out.packed?.length ?? 0);
+      stacks += 7;
+    }
+    expect(kept / stacks).toBeGreaterThan(0.45);
+    expect(kept / stacks).toBeLessThan(0.55);
+  });
+
+  it('all heads keeps everything, all tails loses everything', () => {
+    expect(rollDeathLoss(full(), { chance: () => true })).toEqual(full());
+    expect(isHoldEmpty(rollDeathLoss(full(), { chance: () => false }))).toBe(true);
   });
 });

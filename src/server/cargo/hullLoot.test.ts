@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { deathHullLoot, killPodSpot, rollHullLoot, vaporisedSalvageExtra } from './hullLoot.js';
+import { SCRAP_BURST_SPEED } from '../../core/swarm/scrapConstants.js';
+import { DEATH_POD_PUSH, deathHullLoot, killPodSpot, rollHullLoot, vaporisedSalvageExtra } from './hullLoot.js';
 import { VAPORISE_SALVAGE_MUL, vaporiseSalvageBonus } from '../../shared-types/lootTables.js';
 
 describe('hull loot (every ship) and vaporised salvage', () => {
@@ -28,9 +29,21 @@ describe('hull loot (every ship) and vaporised salvage', () => {
   });
 
   it('the pod spot is off the killer\'s line, beyond the hull', () => {
-    const out = { x: 0, y: 0 };
+    const out = { x: 0, y: 0, ux: 0, uy: 0 };
     killPodSpot(out, 2, 0, 1000, 50, 0, 0); // killer due south: line along +y
     expect(Math.abs(out.x)).toBeGreaterThan(50);
     expect(out.y).toBeCloseTo(1000);
+  });
+
+  it('the push points away from the wreck, gently (under a scrap burst)', () => {
+    const out = { x: 0, y: 0, ux: 0, uy: 0 };
+    for (const [seed, sx, sy] of [[2, 0, 0], [3, 0, 0], [77, Number.NaN, Number.NaN]] as const) {
+      killPodSpot(out, seed, 0, 1000, 50, sx, sy);
+      expect(Math.hypot(out.ux, out.uy)).toBeCloseTo(1);
+      // Same side as the spot: the pod moves away from the hull, never back in.
+      expect(out.ux * (out.x - 0) + out.uy * (out.y - 1000)).toBeGreaterThan(0);
+    }
+    expect(DEATH_POD_PUSH).toBeGreaterThan(0);
+    expect(DEATH_POD_PUSH).toBeLessThanOrEqual(SCRAP_BURST_SPEED);
   });
 });

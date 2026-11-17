@@ -231,6 +231,7 @@ import type { SnapshotMessage, TimeScaleKeyframe } from '../../shared-types/mess
 // Mount/slot geometry helpers moved to ./mountGeometry.ts.
 import { resolveSlotMounts, mountWorldOrigin } from './mountGeometry.js';
 import { isLatentSlot, resolveInstanceMounts, resolveInstanceFireMounts } from '../../shared-types/shipKinds/slots.js';
+import { podSizeClass } from '../../shared-types/shipKinds/cargoPod.js';
 import { ROSTER_SOFT_GUARD, type ActivatedMount } from '../playerShips/PlayerShipStore.js';
 import { WeaponMountTicker } from './WeaponMountTicker.js';
 import { LockSubsystem, newLockTargetView, type LockTargetView } from './LockSubsystem.js';
@@ -335,13 +336,12 @@ import { LabCancelSchema, LabQuerySchema, LabStartSchema, type LabStart, type La
 import { LootSubsystem, type LootCollector } from '../cargo/LootSubsystem.js';
 import { OreDraw, type OreHolder } from './OreDraw.js';
 import { StorageService, fittedModuleIds, isOperationalStorage, structureUid, DEPOSIT_DWELL_TICKS, DEPOSIT_RANGE, REPAIR_CREDITS_PER_HP, RESPEC_CREDIT_COST } from '../cargo/StorageService.js';
-import { SCRAP_HP } from '../../core/swarm/scrapConstants.js';
 import { addPacked, cloneHold, emptyHold, extractRequested, holdWeight, isHoldEmpty, mergeInto, packedCount, takePacked, transferInto, type CargoRequest } from '../../core/cargo/hold.js';
 import type { HolderType, HoldRecord } from '../cargo/HoldStore.js';
 import { RAID_NOTICE_THROTTLE_MS, RAID_PRIORITY } from '../livingworld/RobotTerritory.js';
 import { cargoCapacityForMaxHealth, GOOD_DEFS, GOOD_IDS, HoldSchema, type Hold } from '../../shared-types/goods.js';
 import { rollKillBounty } from '../../shared-types/lootTables.js';
-import { deathHullLoot, killPodSpot, rollHullLoot, vaporisedSalvageExtra } from '../cargo/hullLoot.js';
+import { DEATH_POD_PUSH, deathHullLoot, killPodSpot, rollHullLoot, vaporisedSalvageExtra } from '../cargo/hullLoot.js';
 import { ELITE_HEALTH_MUL } from '../../shared-types/elites.js';
 import { ELITE_BOUNTY_CREDITS, PlaceBountySchema, type BountyResult } from '../../shared-types/contracts.js';
 import {
@@ -2499,7 +2499,6 @@ export class SectorRoom extends Room<SectorState> {
       swarmRegistry: this.swarmRegistry,
       lingeringSlots: this.lingeringSlots,
       lingeringShip: (sid) => this.state.ships.get(sid),
-      shotHitsLootPods: (ownerId) => this.playerToSlot.has(ownerId), // only a pilot's own shot can hit a loot pod, except mining tools
       applyDamage: (targetId, shooterId, damage, hitX, hitY, dirX, dirY, weaponId) =>
         this.applyDamage(targetId, shooterId, damage, hitX, hitY, dirX, dirY, weaponId),
       wallBlocksProjectile: (x, y, sx, sy, damage) => {
@@ -2891,15 +2890,12 @@ export class SectorRoom extends Room<SectorState> {
         if (this.swarmRegistry.has(id)) return false;
         const geom = scrapColliderFor('cargo-pod', tier);
         if (geom === null) return false;
-        const ok = this.swarmSpawner.spawnScrap({
+        // No health entry: a pod is immune to damage, like an asteroid
+        // (`swarmHealthBinding` → `applied: false`; owner 2026-11-17).
+        return this.swarmSpawner.spawnScrap({
           id, x, y, vx, vy, angle: 0, radius: geom.radius,
           parentShipKind: 'cargo-pod', componentIndex: tier, vertices: geom.vertices,
         });
-        if (ok) {
-          this.swarmHealth.set(id, SCRAP_HP);
-          this.swarmShield.set(id, 0);
-        }
-        return ok;
       },
       despawnPodEntity: (id) => {
         const rec = this.swarmRegistry.get(id);
@@ -5903,9 +5899,9 @@ export class SectorRoom extends Room<SectorState> {
     // so the global cap accounting stays correct. Harmless no-op when this
     // eviction IS the FIFO path (the id was already shifted off the list).
     // Living World P1a — a combat-killed NPC drops its loot where it died (the
-    // SAB pose is still live here; the evictor below frees the slot). A pod
-    // destroyed in combat loses its contents. A pod the LootSubsystem despawns
-    // itself (pickup / TTL) is already off its books, so `isPod` is false then.
+    // SAB pose is still live here; the evictor below frees the slot). A cargo
+    // pod has no health, so combat never evicts one: only the LootSubsystem
+    // despawns pods (emptied / TTL).
     if (opts.emitDestroyed && rec.kind === SWARM_KIND_DRONE) {
       this.dropKillLoot(rec, opts.shooterId, opts.vaporised === true);
     }
@@ -5915,9 +5911,6 @@ export class SectorRoom extends Room<SectorState> {
       getHoldStore().delete(rec.id, false);
     }
     if (rec.kind === SWARM_KIND_DRONE) this.npcLootRolled.delete(`${rec.id}:${rec.entityId}`);
-    if (rec.kind === SWARM_KIND_SCRAP && this.loot.isPod(rec.id) && opts.emitDestroyed) {
-      this.loot.onPodDestroyed(rec.id);
-    }
     if (rec.kind === SWARM_KIND_SCRAP) {
       this.scrapSpawner.notifyRemoved(rec.id);
     }
@@ -11352,7 +11345,10 @@ export class SectorRoom extends Room<SectorState> {
       if (death !== undefined) {
         const hull = deathHullLoot(shipInstanceId, death.kind, death.vaporised);
         const spot = this.podSpot(hashString(shipInstanceId), pose.x, pose.y, getShipKind(death.kind).radius, death.shooterId);
-        this.loot.spillShipHold(shipInstanceId, spot.x, spot.y, pose.vx, pose.vy, cause, { player: true, extra: hull });
+        this.loot.spillShipHold(shipInstanceId, spot.x, spot.y, pose.vx + spot.ux * DEATH_POD_PUSH, pose.vy + spot.uy * DEATH_POD_PUSH, cause, {
+          player: true, extra: hull, deathLoss: `${shipInstanceId}:${this.gameClock.now()}`,
+          size: podSizeClass(getShipKind(death.kind).radius),
+        });
       } else {
         // Living World P1a-2 — an ABANDONED hull becomes a salvageable derelict
         // (fly alongside to salvage over time).
@@ -12349,16 +12345,17 @@ export class SectorRoom extends Room<SectorState> {
       // Vaporised (owner 2026-11-15): its hull salvage still aboard × 1.5.
       const extra = vaporised ? vaporisedSalvageExtra(key, rec.shipKind, rec.elite !== undefined, hold.goods.salvage ?? 0) : undefined;
       const spot = this.podSpot(hashString(key), this.sabF32[b + SLOT_X_OFF]!, this.sabF32[b + SLOT_Y_OFF]!, rec.radius, shooterId);
-      // The pod keeps the ship's velocity, so it drifts with the wreck.
-      this.loot.spillShipHold(rec.id, spot.x, spot.y, this.sabF32[b + SLOT_VX_OFF]!, this.sabF32[b + SLOT_VY_OFF]!,
-        isHaulerId(rec.id) ? 'hauler-raided' : 'kill', extra !== undefined ? { player: false, extra } : { player: false });
+      // The pod keeps the ship's velocity plus a gentle push clear of the wreck.
+      this.loot.spillShipHold(rec.id, spot.x, spot.y,
+        this.sabF32[b + SLOT_VX_OFF]! + spot.ux * DEATH_POD_PUSH, this.sabF32[b + SLOT_VY_OFF]! + spot.uy * DEATH_POD_PUSH,
+        isHaulerId(rec.id) ? 'hauler-raided' : 'kill', { player: false, deathLoss: key, size: podSizeClass(rec.radius), ...(extra !== undefined ? { extra } : {}) });
     }
     else getHoldStore().delete(rec.id, false);
   }
 
   /** `killPodSpot` for a dead ship at (cx, cy), the killer's live pose looked
    *  up by id (pilot, parked hull or swarm ship). Returns the reused `_podSpot`. */
-  private podSpot(seed: number, cx: number, cy: number, hullRadius: number, shooterId?: string): { x: number; y: number } {
+  private podSpot(seed: number, cx: number, cy: number, hullRadius: number, shooterId?: string): { x: number; y: number; ux: number; uy: number } {
     let sx = Number.NaN;
     let sy = Number.NaN;
     if (shooterId !== undefined && shooterId !== '') {
@@ -12369,7 +12366,7 @@ export class SectorRoom extends Room<SectorState> {
     }
     return killPodSpot(this._podSpot, seed, cx, cy, hullRadius, sx, sy);
   }
-  private readonly _podSpot = { x: 0, y: 0 };
+  private readonly _podSpot = { x: 0, y: 0, ux: 0, uy: 0 };
 
   /**
    * C3 — an NPC ship's hold: a trade hauler's real cargo, or (any other NPC)

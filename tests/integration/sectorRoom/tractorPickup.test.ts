@@ -156,7 +156,7 @@ describe('SectorRoom integration — tractor hold-zone pickup', () => {
     const pieces = [...s.int().swarmRegistry.all()].filter((r) => r.kind === WRECK_KIND);
     expect(pieces.length, 'the fighter broke into wreck pieces').toBeGreaterThanOrEqual(2);
     // Its own loot drop is not under test: clear it so only the piece can fill the hold.
-    for (const pod of [...s.int().loot.podIds()]) s.int().loot.onPodDestroyed(pod);
+    for (const pod of [...s.int().loot.podIds()]) s.int().loot.expireNow(pod);
     const d = (id: string): number => { const w = s.int().wreckState(id)!; return Math.hypot(w.x, w.y); };
     return pieces.map((r) => r.id).reduce((a, b) => (d(b) < d(a) ? b : a));
   }

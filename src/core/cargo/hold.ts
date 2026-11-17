@@ -208,3 +208,32 @@ export function extractRequested(src: Hold, want: CargoRequest): Hold {
   }
   return out;
 }
+
+/** Anything with a fair coin (`Rng.chance`), so the roll stays seedable. */
+export interface CoinFlipper {
+  chance(num: number, den: number): boolean;
+}
+
+/**
+ * Death loss, EVE style (owner 2026-11-17): every STACK of a dead ship's hold
+ * is a fair coin flip, kept whole or destroyed whole. A stack is one good id,
+ * one blueprint, or one packed item. Flips run in a fixed order (goods in
+ * `GOOD_IDS` order, then blueprints, then packed) so a seeded `rng` gives the
+ * same survivors every time. Returns the survivors as a new hold; `hold` is
+ * not touched.
+ */
+export function rollDeathLoss(hold: Hold, rng: CoinFlipper): Hold {
+  const out = emptyHold();
+  for (const id of GOOD_IDS) {
+    const n = hold.goods[id] ?? 0;
+    if (n > 0 && rng.chance(1, 2)) out.goods[id] = n;
+  }
+  for (const b of hold.blueprints) if (rng.chance(1, 2)) out.blueprints.push({ ...b });
+  if (hold.packed !== undefined) {
+    for (const p of hold.packed) {
+      if (!rng.chance(1, 2)) continue;
+      (out.packed ??= []).push({ ...p });
+    }
+  }
+  return out;
+}

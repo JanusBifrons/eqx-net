@@ -18,8 +18,10 @@ import type { Hold } from '../../shared-types/goods.js';
 import type { ShipKind } from '../../shared-types/shipKinds/types.js';
 import { salvageConsumable, salvageConsumeMass } from '../../core/combat/salvageTargeting.js';
 import type { PieceStoreView } from '../rooms/wreckLineage.js';
-import { cloneHold, emptyHold, holdBestTier, holdWeight, isHoldEmpty, mergeInto, transferInto, transferUpTo } from '../../core/cargo/hold.js';
-import { POD_TIER_SPILL } from '../../shared-types/shipKinds/cargoPod.js';
+import { cloneHold, emptyHold, holdBestTier, holdWeight, isHoldEmpty, mergeInto, rollDeathLoss, transferInto, transferUpTo } from '../../core/cargo/hold.js';
+import { stream } from '../../core/random/rng.js';
+import { hashString } from '../../core/bases/baseProfile.js';
+import { POD_TIER_SPILL, podComponentIndex } from '../../shared-types/shipKinds/cargoPod.js';
 import type { HoldRecord, HoldStore } from './HoldStore.js';
 import { GLOBAL_SHIP_TUNING } from '../../shared-types/shipScale/lookup.js';
 import { shipHitBound, shipWithinHullReach } from '../../core/combat/shipHitShape.js';
@@ -71,11 +73,13 @@ export interface LootSubsystemDeps {
   /** Persistent sector identity (null ⇒ engineering room: memory-only holds). */
   sectorKey: () => string | null;
   now: () => number;
-  /** Spawn the pod's swarm entity at a pose with a glow tier. */
+  /** Spawn the pod's swarm entity at a pose; `tier` is its `componentIndex`
+   *  (size class and glow tier, `podComponentIndex`). */
   spawnPodEntity: (id: string, x: number, y: number, vx: number, vy: number, tier: number) => boolean;
   /** Remove a pod's swarm entity (pickup emptied it / TTL). Not a combat death. */
   despawnPodEntity: (id: string) => void;
-  /** Re-tint a live pod (its contents' best tier changed after a merge). */
+  /** Re-tint a live pod (its contents' best tier changed after a merge);
+   *  `tier` is the new `componentIndex` (same size class). */
   setPodTier: (id: string, tier: number) => void;
   /** Live pose of a pod entity (null if gone). */
   podPose: (id: string) => PodPose | null;
@@ -111,11 +115,13 @@ export interface LootSubsystemDeps {
   /** Discrete notifications (UI accelerator + audit). */
   onCollected?: (c: LootCollector, moved: Hold, podId: string) => void;
   onDropped?: (podId: string, hold: Hold, cause: string) => void;
-  onDestroyed?: (podId: string, hold: Hold, cause: 'destroyed' | 'expired') => void;
+  onDestroyed?: (podId: string, hold: Hold, cause: 'expired') => void;
 }
 
 interface LivePod {
   tier: number;
+  /** Size class (`podSizeClass` of the dead ship; 0 for any other drop). */
+  size: number;
   /** Last persisted pose (for the drift re-save). */
   savedX: number;
   savedY: number;
@@ -176,17 +182,19 @@ export class LootSubsystem {
   drop(
     hold: Hold,
     x: number, y: number, vx = 0, vy = 0,
-    opts: { spill?: boolean; derelict?: boolean; cause?: string; extraDeletes?: readonly string[]; root?: number } = {},
+    opts: { spill?: boolean; derelict?: boolean; alone?: boolean; size?: number; cause?: string; extraDeletes?: readonly string[]; root?: number } = {},
   ): string | null {
     const extraDeletes = opts.extraDeletes ?? [];
     if (isHoldEmpty(hold)) {
       if (extraDeletes.length > 0) this.d.holdStore.commit([], extraDeletes, this.persist());
       return null;
     }
-    // A derelict is its own hulk — never merged into a nearby pod (only at the
-    // hard cap, where value must still never be evicted).
+    // A derelict is its own hulk, and a death pod is its ship's own black box
+    // (`alone`, owner 2026-11-17: one pod per destroyed ship): never merged
+    // into a nearby pod, only at the hard cap, where value must still never be
+    // evicted.
     const derelict = opts.derelict === true;
-    const target = derelict
+    const target = derelict || opts.alone === true
       ? (this.pods.size >= MAX_LIVE_LOOT_PER_SECTOR ? this.nearestPod(x, y) : null)
       : this.findMergeTarget(x, y);
     if (target !== null) {
@@ -200,21 +208,22 @@ export class LootSubsystem {
       const tier = opts.spill || live.tier === POD_TIER_SPILL ? POD_TIER_SPILL : holdBestTier(merged.hold);
       if (tier !== live.tier) {
         live.tier = tier;
-        this.d.setPodTier(target, tier);
+        this.d.setPodTier(target, podComponentIndex(live.size, tier));
       }
       this.d.onDropped?.(target, hold, opts.cause ?? 'drop');
       return target;
     }
     const id = `pod-${randomUUID().slice(0, 12)}`;
     const tier = opts.spill || derelict ? POD_TIER_SPILL : holdBestTier(hold);
-    if (!this.d.spawnPodEntity(id, x, y, vx, vy, tier)) {
+    const size = opts.size ?? 0;
+    if (!this.d.spawnPodEntity(id, x, y, vx, vy, podComponentIndex(size, tier))) {
       // Slot pool exhausted: never silently destroy value — fold into the
       // nearest pod if any, else leave it with its source (no delete).
       const nearest = this.nearestPod(x, y);
       if (nearest !== null) return this.forceMerge(nearest, hold, extraDeletes, opts.cause);
       return null;
     }
-    this.pods.set(id, { tier, savedX: x, savedY: y, derelict, root: opts.root ?? -1 });
+    this.pods.set(id, { tier, size, savedX: x, savedY: y, derelict, root: opts.root ?? -1 });
     this.d.holdStore.commit(
       [{
         holderUid: id, holderType: derelict ? 'derelict' : 'pod', ownerId: null, sectorKey: this.d.sectorKey(),
@@ -243,19 +252,24 @@ export class LootSubsystem {
    *  (owner 2026-11-13: bright NPC pods read as live ships among the wreckage).
    *  `extra`: value the death adds to the same pod (a player hull's salvage
    *  roll, a vaporised ship's bonus salvage), in the same group; with no
-   *  ship hold, `extra` alone drops as an ordinary pod. */
+   *  ship hold, `extra` alone drops as an ordinary pod.
+   *  `deathLoss`: a DEATH (not an abandon) seeds this key into the EVE coin
+   *  flip (`rollDeathLoss`, owner 2026-11-17): every stack, `extra`
+   *  included, survives whole or is destroyed whole; nothing left ⇒ no pod. */
   spillShipHold(
     shipInstanceId: string, x: number, y: number, vx: number, vy: number, cause: string,
-    opts: { player: boolean; derelict?: boolean; extra?: Hold },
+    opts: { player: boolean; derelict?: boolean; extra?: Hold; deathLoss?: string; size?: number },
   ): string | null {
     const rec = this.d.holdStore.get(shipInstanceId);
-    if (rec === undefined) {
-      return opts.extra !== undefined ? this.drop(opts.extra, x, y, vx, vy, { cause }) : null;
-    }
-    const hold = cloneHold(rec.hold);
+    if (rec === undefined && opts.extra === undefined) return null;
+    let hold = rec !== undefined ? cloneHold(rec.hold) : emptyHold();
     if (opts.extra !== undefined) mergeInto(hold, opts.extra);
+    if (opts.deathLoss !== undefined) hold = rollDeathLoss(hold, stream(hashString(opts.deathLoss), 'death-loss'));
+    const alone = opts.deathLoss !== undefined;
+    const size = opts.size ?? 0;
+    if (rec === undefined) return this.drop(hold, x, y, vx, vy, { cause, alone, size });
     return this.drop(hold, x, y, vx, vy, {
-      spill: opts.player && !isHoldEmpty(rec.hold), derelict: opts.derelict === true, cause, extraDeletes: [shipInstanceId],
+      spill: opts.player && !isHoldEmpty(rec.hold), derelict: opts.derelict === true, alone, size, cause, extraDeletes: [shipInstanceId],
     });
   }
 
@@ -384,12 +398,20 @@ export class LootSubsystem {
   /** Derelict salvage popup accumulator:`${playerId}|${podId}` → moved so far. */
   private readonly salvageAcc = new Map<string, { hold: Hold; steps: number }>();
 
-  /** A pod was destroyed by combat damage — its contents are gone. */
-  onPodDestroyed(podId: string): void {
-    if (!this.pods.delete(podId)) return;
+  /** Expire a pod now, as its TTL would: contents gone, entity despawned.
+   *  Pods are indestructible (owner 2026-11-17), so this is the only way a
+   *  full pod leaves early (tests clearing a kill's loot). */
+  expireNow(podId: string): void {
     const rec = this.d.holdStore.get(podId);
+    if (!this.pods.has(podId) || rec === undefined) return;
+    this.expire(podId, rec.hold);
+  }
+
+  private expire(podId: string, hold: Hold): void {
+    this.pods.delete(podId);
     this.d.holdStore.delete(podId, this.persist());
-    if (rec) this.d.onDestroyed?.(podId, rec.hold, 'destroyed');
+    this.d.despawnPodEntity(podId);
+    this.d.onDestroyed?.(podId, hold, 'expired');
   }
 
   /** ~1 Hz housekeeping: TTL expiry + drifted-pose re-save. */
@@ -403,10 +425,7 @@ export class LootSubsystem {
         continue;
       }
       if (rec.expiresAt !== null && now >= rec.expiresAt) {
-        this.pods.delete(podId);
-        this.d.holdStore.delete(podId, this.persist());
-        this.d.despawnPodEntity(podId);
-        this.d.onDestroyed?.(podId, rec.hold, 'expired');
+        this.expire(podId, rec.hold);
         continue;
       }
       const pose = this.d.podPose(podId);
@@ -430,7 +449,8 @@ export class LootSubsystem {
         if (rec.x === null || rec.y === null) continue;
         const tier = derelict ? POD_TIER_SPILL : holdBestTier(rec.hold);
         if (!this.d.spawnPodEntity(rec.holderUid, rec.x, rec.y, 0, 0, tier)) continue;
-        this.pods.set(rec.holderUid, { tier, savedX: rec.x, savedY: rec.y, derelict, root: -1 });
+        // Size is not persisted: a restored pod comes back at size 0.
+        this.pods.set(rec.holderUid, { tier, size: 0, savedX: rec.x, savedY: rec.y, derelict, root: -1 });
         n++;
       }
     }
