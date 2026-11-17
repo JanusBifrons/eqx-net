@@ -18,6 +18,8 @@ import { setTradeSink } from '../../../src/server/economy/tradeSink.js';
 import { getHoldStore, getPersistence, getWallet } from '../../../src/server/db/PersistenceWorker.js';
 import { MINOR_FACTIONS, STANDING_HIT_DELTA, factionLookOf, setFactionLooks, teamSigilOf } from '../../../src/shared-types/factions.js';
 import { clearConvoyHaulers, registerConvoyHauler } from '../../../src/server/economy/convoyCarriers.js';
+import { ClaimFactionLookResultSchema } from '../../../src/shared-types/messages/factionMessages.js';
+import { WelcomeSchema } from '../../../src/shared-types/messages/snapshotMessages.js';
 
 const OWNER = '6a7e0000-0000-4000-8000-0000000000a1';
 const LAYOUT = [
@@ -144,5 +146,39 @@ describe('SectorRoom integration — faction standing and policy (F3)', () => {
     cb.send('claim_faction_look', { type: 'claim_faction_look', colorSlot: 3, sigil: 8 }); // free
     await harness.advance(200);
     expect(factionLookOf(b)).toEqual({ colorSlot: 3, sigil: 8 });
+  });
+
+  it('a claim: the claimant gets the verdict, every room the broadcast, a joiner the welcome', async () => {
+    const { store } = await boot(OWNER);
+    const room = harness.getServerRoom()!;
+    setTradeSink(new TradeDirector(new Map([['sol-prime', room as unknown as TradeRoom]]), store, getHoldStore(), { wallet: getWallet() }));
+    const a = randomUUID();
+    const b = randomUUID();
+    const ca = await harness.connectActive(a);
+    const cb = await harness.connectActive(b);
+    const verdicts: Record<string, unknown[]> = { a: [], b: [] };
+    const heard: unknown[] = [];
+    ca.onMessage('claim_faction_look_result', (m: unknown) => { verdicts.a!.push(m); });
+    cb.onMessage('claim_faction_look_result', (m: unknown) => { verdicts.b!.push(m); });
+    ca.onMessage('faction_look_claimed', () => {});
+    cb.onMessage('faction_look_claimed', (m: unknown) => { heard.push(m); });
+    ca.send('claim_faction_look', { type: 'claim_faction_look', colorSlot: 3, sigil: 7 });
+    await harness.advance(150);
+    cb.send('claim_faction_look', { type: 'claim_faction_look', colorSlot: 3, sigil: 7 }); // taken
+    await harness.advance(200);
+    expect(verdicts.a!.map((m) => ClaimFactionLookResultSchema.parse(m))).toMatchObject([{ ok: true }]);
+    expect(verdicts.b!.map((m) => ClaimFactionLookResultSchema.parse(m))).toMatchObject([{ ok: false, reason: 'taken' }]);
+    expect(heard, 'B hears only the successful claim').toEqual([
+      { type: 'faction_look_claimed', look: { factionId: a, colorSlot: 3, sigil: 7 } },
+    ]);
+
+    const joiner = await harness.connectAs(randomUUID());
+    let welcome: unknown;
+    joiner.onMessage('welcome', (m: unknown) => { welcome = m; });
+    joiner.send('client_ready', { type: 'client_ready' });
+    const until = Date.now() + 10_000;
+    while (welcome === undefined && Date.now() < until) await harness.advance(100);
+    const parsed = WelcomeSchema.parse(welcome);
+    expect(parsed.factionLooks, 'a late joiner converges from the welcome (#16)').toEqual([{ factionId: a, colorSlot: 3, sigil: 7 }]);
   });
 });

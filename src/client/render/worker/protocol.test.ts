@@ -158,6 +158,10 @@ describe('renderer-worker protocol', () => {
           ],
         },
       },
+      {
+        name: 'SET_FACTION_LOOKS',
+        msg: { type: 'SET_FACTION_LOOKS', looks: [{ factionId: 'player-a', colorSlot: 3, sigil: 0x2a }] },
+      },
       { name: 'RESIZE', msg: { type: 'RESIZE', width: 1024, height: 768, dpr: 1.5 } },
       { name: 'SET_TICKER_FPS number', msg: { type: 'SET_TICKER_FPS', fps: 30 } },
       { name: 'SET_TICKER_FPS null', msg: { type: 'SET_TICKER_FPS', fps: null } },
@@ -330,6 +334,7 @@ describe('renderer-worker protocol', () => {
           case 'SET_TRANSIT_DOCKED':
           case 'SET_OVERLAY_MODE':
           case 'SET_GALAXY_STATS':
+          case 'SET_FACTION_LOOKS':
           case 'RESIZE':
           case 'SET_TICKER_FPS':
           case 'PERF_PROBE':
