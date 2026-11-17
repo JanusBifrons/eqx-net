@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { PERF_SCENES } from '../shared-types/perf/perfScenes.js';
+import { definePerfRooms } from './rooms/perfRooms.js';
 import { scenePerfViews, recordClientReading, clientPerfReadings } from './rooms/scene/scenePerfRegistry.js';
 import { Server, matchMaker } from 'colyseus';
 import { WebSocketTransport } from '@colyseus/ws-transport';
@@ -1269,28 +1269,8 @@ gameServer.define('swarm-tidi-burn', SectorRoom, {
   tickBurnMs: 16,
   maxClients: 4,
 });
-// Perf scenes (plan prancy-squishing-donut P1): one room per catalogue
-// entry, `perf-<id>`. Played by `pnpm perf:scenes`.
-for (const scene of PERF_SCENES) {
-  gameServer
-    .define(`perf-${scene.id}`, SectorRoom, {
-      testMode: true,
-      defaultSpawnX: scene.spawn.x,
-      defaultSpawnY: scene.spawn.y,
-      maxClients: 4,
-      // Fault injection for the runner's self-test: burn N ms of every tick.
-      tickBurnMs: Number(process.env['EQX_PERF_BURN_MS'] ?? 0),
-      // Fixed work: no TiDi, no load shedding (they hide an overload).
-      perfFixedLoad: true,
-      ...scene.room,
-      // A real galaxy sector's field (F4); `EQX_SCENE_GALAXY_FIELD=0` is the
-      // A/B's no-field arm.
-      ...(scene.galaxyField !== undefined && process.env['EQX_SCENE_GALAXY_FIELD'] !== '0'
-        ? { cutField: resolveSectorConfig(scene.galaxyField).cutField }
-        : {}),
-    })
-    .filterBy(['testId']);
-}
+// Perf scenes: one `perf-<id>` room per catalogue entry.
+definePerfRooms(gameServer, SectorRoom);
 } // end shouldRegisterTestRooms() gate (S6)
 
 // A6 (S6): warn loudly if the dev-override bypass is armed in production. It's
