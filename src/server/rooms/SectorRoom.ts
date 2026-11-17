@@ -205,7 +205,7 @@ import {
   policyActsOnStanding,
   type FactionPolicy,
 } from '../../shared-types/factions.js';
-import { SetFactionPolicySchema } from '../../shared-types/messages/factionMessages.js';
+import { ClaimFactionLookSchema, SetFactionPolicySchema } from '../../shared-types/messages/factionMessages.js';
 import { encodePlayerTurretTarget, encodeStructureMountAngles } from '../../shared-types/structureStateWire.js';
 
 /** B2 — the party string of each roaming NPC side (`npc:<allegiance>`), built
@@ -3829,6 +3829,19 @@ export class SectorRoom extends Room<SectorState> {
       const owner = this.sessionToPlayer.get(client.sessionId);
       if (!owner) return;
       getTradeSink()?.setPlayerPolicy?.(owner, parsed.data.policy);
+    });
+
+    // A player claims a unique ship look for their faction; a taken pair is a
+    // silent no-op (the Factions reply carries every claim).
+    this.onMessage('claim_faction_look', (client: Client, raw: unknown) => {
+      const parsed = ClaimFactionLookSchema.safeParse(raw);
+      if (!parsed.success) {
+        this.malformed.record(client.sessionId, 'claim_faction_look');
+        return;
+      }
+      const owner = this.sessionToPlayer.get(client.sessionId);
+      if (!owner) return;
+      getTradeSink()?.claimFactionLook?.(owner, parsed.data.colorSlot, parsed.data.sigil);
     });
 
     this.onMessage('set_gate_access', (client: Client, raw: unknown) => {

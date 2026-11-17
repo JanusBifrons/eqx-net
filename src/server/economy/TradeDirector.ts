@@ -69,7 +69,7 @@ import type { EconomyStore } from './EconomyStore.js';
 import type { AcceptOfferMsg, SendGiftMsg, TradeSink, TradeVerdict } from './tradeSink.js';
 import type { Wallet } from './Wallet.js';
 import type { PersistOp } from '../../core/contracts/IPersistenceSink.js';
-import type { FactionPolicy, PlayerPolicyWire } from '../../shared-types/factions.js';
+import type { FactionLookClaim, FactionPolicy, PlayerPolicyWire } from '../../shared-types/factions.js';
 import { gameNow, gameSetInterval, gameClearTimer, type GameTimer } from '../time/gameTime.js';
 
 /** The room surface the trade director drives (SectorRoom implements it). */
@@ -523,9 +523,8 @@ export class TradeDirector implements TradeSink {
     return this.store.policyOf(faction);
   }
 
-  setPlayerPolicy(playerId: string, policy: PlayerPolicyWire): void {
-    this.store.setPlayerPolicy(playerId, policy);
-  }
+  setPlayerPolicy(playerId: string, policy: PlayerPolicyWire): void { this.store.setPlayerPolicy(playerId, policy); }
+  claimFactionLook(playerId: string, colorSlot: number, sigil: number): FactionLookClaim { return this.store.claimLook(playerId, colorSlot, sigil); }
 
   tollPref(playerId: string, faction: string): 'always' | 'never' | undefined {
     return this.store.tollPref(playerId, faction);

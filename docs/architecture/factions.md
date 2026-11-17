@@ -117,6 +117,18 @@ The policy is stored on the player's economy row and resolved once into a cached
 
 **Locks:** `EconomyStore.test.ts` (policy cache and persistence, view rows), `tests/integration/sectorRoom/factionStanding.test.ts` (hit once per window, player vs player, a policy makes a turret fire and stop, the message sets the sender's policy only), `FactionsTab.test.tsx`, `tests/e2e/factions-tab.spec.ts`, `tradeClientWireParity.test.ts`.
 
+## Claimed ship looks (galaxy map step 0a)
+
+A player may claim a unique **look**: a palette colour slot (`PLAYER_LIVERY`, 12) plus a sigil (0..4095). Two factions never share a pair. A player who hasn't claimed keeps the hashed default.
+
+- **One system.** The claims live in `shared-types/factions.ts` beside `NPC_FACTIONS`, and `teamColorOf` / `teamSigilOf` / `teamEdgeOf` read them first (one Map lookup). The sigil seed is `slot << 12 | sigil`, the hash default's layout; the edge comes from the claimed sigil. Ships, and anything else, take a faction's colours only from those three helpers.
+- **Reserved.** NPC factions can't claim, and no claim may take an NPC faction's own sigil seed.
+- **Server.** `claim_faction_look` (strict zod: slot and sigil in range) → `TradeSink.claimFactionLook` → `EconomyStore.claimLook`, which claims in the registry and, on success only, persists the pair on the player's economy row (`look`). Boot hydrate rebuilds the registry from the rows. A taken pair is a silent no-op.
+- **Client.** The `GET /trade/factions` reply carries `looks` (every claim); `fetchFactions` applies it with `setFactionLooks`. `ownerLivery` drops its per-owner cache when `factionLookVersion()` changes, so a claim repaints that faction's ships.
+- **Picker:** next step (`freeSigilsFor(slot)` lists the free sigils).
+
+**Locks:** `factions.livery.test.ts` (registry), `factionMessages.test.ts` (schema), `EconomyStore.test.ts` (persist + hydrate), `factionStanding.test.ts` (a taken pair is refused), `shipSpriteUpdater.livery.test.ts` (a claim repaints a cached owner).
+
 ## Next
 
 - **Military bases (M):** these fill in power and militia patrols.

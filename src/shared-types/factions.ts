@@ -326,12 +326,6 @@ export const FactionRowSchema = z.object({
 });
 export type FactionRow = z.infer<typeof FactionRowSchema>;
 
-export const PlayerFactionsViewSchema = z.object({
-  rows: z.array(FactionRowSchema),
-  policy: PlayerPolicyWireSchema,
-});
-export type PlayerFactionsView = z.infer<typeof PlayerFactionsViewSchema>;
-
 // ── Ship liveries ───────────────────────────────────────────────────────────
 
 /** FNV-1a 32-bit of a string (unsigned). Local copy: shared-types stays free of core. */
@@ -356,25 +350,149 @@ function liverySlot(id: FactionId): number {
   return fnv1a(id) % PLAYER_LIVERY.length;
 }
 
+// ── Claimed looks (colour + sigil pairs) ────────────────────────────────────
+//
+// A player may claim a unique (palette slot, sigil) pair; the ship sigil seed
+// is then `slot << 12 | sigil`, the same 16-bit layout as the hash default,
+// so a claim changes nothing downstream but the numbers. Unclaimed players
+// keep the hash default. NPC factions never claim, and no claim may take an
+// NPC faction's own sigil seed. Module state like `NPC_FACTIONS`: the server
+// fills it from the economy store, the client from the Factions reply.
+
+/** Sigils per colour slot (the low 12 bits of the sigil seed). */
+export const SIGIL_COUNT = 0x1000;
+
+export interface FactionLook {
+  readonly colorSlot: number;
+  readonly sigil: number;
+}
+
+export const FactionLookWireSchema = z.object({
+  factionId: z.string().min(1).max(64),
+  colorSlot: z.number().int().min(0).max(PLAYER_LIVERY.length - 1),
+  sigil: z.number().int().min(0).max(SIGIL_COUNT - 1),
+});
+export type FactionLookWire = z.infer<typeof FactionLookWireSchema>;
+
+/** The Factions tab reply (`GET /trade/factions`); `looks` is every claimed
+ *  look (all players), so every client paints the same pairs. */
+export const PlayerFactionsViewSchema = z.object({
+  rows: z.array(FactionRowSchema),
+  policy: PlayerPolicyWireSchema,
+  looks: z.array(FactionLookWireSchema).default([]),
+});
+export type PlayerFactionsView = z.infer<typeof PlayerFactionsViewSchema>;
+
+/** Why a claim failed, or 'ok'. */
+export type FactionLookClaim = 'ok' | 'npc' | 'range' | 'taken';
+
+const FACTION_LOOKS = new Map<FactionId, FactionLook>();
+/** Packed pair (`slot << 12 | sigil`) → the faction holding it. */
+const LOOK_HOLDERS = new Map<number, FactionId>();
+let lookVersion = 0;
+
+function packLook(colorSlot: number, sigil: number): number {
+  return (colorSlot << 12) | sigil;
+}
+
+export function isLookInRange(colorSlot: number, sigil: number): boolean {
+  return Number.isInteger(colorSlot) && colorSlot >= 0 && colorSlot < PLAYER_LIVERY.length
+    && Number.isInteger(sigil) && sigil >= 0 && sigil < SIGIL_COUNT;
+}
+
+/** True when some NPC faction's own sigil seed is this pair. */
+function npcHoldsLook(packed: number): boolean {
+  for (const id of NPC_FACTIONS.keys()) if ((fnv1a(id) & 0xffff) === packed) return true;
+  return false;
+}
+
+/** Is this pair free for `forFaction` (its own current claim counts as free)? */
+export function isLookFree(colorSlot: number, sigil: number, forFaction?: FactionId): boolean {
+  if (!isLookInRange(colorSlot, sigil)) return false;
+  const packed = packLook(colorSlot, sigil);
+  const holder = LOOK_HOLDERS.get(packed);
+  if (holder !== undefined && holder !== forFaction) return false;
+  return !npcHoldsLook(packed);
+}
+
+/** Claim a pair for a (player) faction; a new claim releases its old pair. */
+export function claimFactionLook(id: FactionId, colorSlot: number, sigil: number): FactionLookClaim {
+  if (NPC_FACTIONS.has(id)) return 'npc';
+  if (!isLookInRange(colorSlot, sigil)) return 'range';
+  if (!isLookFree(colorSlot, sigil, id)) return 'taken';
+  const old = FACTION_LOOKS.get(id);
+  if (old) LOOK_HOLDERS.delete(packLook(old.colorSlot, old.sigil));
+  FACTION_LOOKS.set(id, Object.freeze({ colorSlot, sigil }));
+  LOOK_HOLDERS.set(packLook(colorSlot, sigil), id);
+  lookVersion++;
+  return 'ok';
+}
+
+/** A faction's claimed look, if it has one. */
+export function factionLookOf(id: FactionId): FactionLook | undefined {
+  return FACTION_LOOKS.get(id);
+}
+
+/** Every claim, for the wire (`PlayerFactionsView.looks`). */
+export function factionLooksWire(): FactionLookWire[] {
+  const out: FactionLookWire[] = [];
+  for (const [factionId, l] of FACTION_LOOKS) out.push({ factionId, colorSlot: l.colorSlot, sigil: l.sigil });
+  return out;
+}
+
+/** Replace every claim (server hydrate, client apply). Entries that are out of
+ *  range, NPC, or clash with an earlier entry are skipped. No-op (no version
+ *  bump) when the set is unchanged, so a poller can apply every reply. */
+export function setFactionLooks(entries: readonly FactionLookWire[]): void {
+  if (entries.length === FACTION_LOOKS.size && entries.every((e) => {
+    const l = FACTION_LOOKS.get(e.factionId);
+    return l !== undefined && l.colorSlot === e.colorSlot && l.sigil === e.sigil;
+  })) return;
+  FACTION_LOOKS.clear();
+  LOOK_HOLDERS.clear();
+  for (const e of entries) claimFactionLook(e.factionId, e.colorSlot, e.sigil);
+  lookVersion++;
+}
+
+/** Bumped on every change to the claims (render caches key on it). */
+export function factionLookVersion(): number {
+  return lookVersion;
+}
+
+/** The free sigils in a colour slot (for the picker; allocates). */
+export function freeSigilsFor(colorSlot: number, forFaction?: FactionId): number[] {
+  const out: number[] = [];
+  for (let s = 0; s < SIGIL_COUNT; s++) if (isLookFree(colorSlot, s, forFaction)) out.push(s);
+  return out;
+}
+
 /** The single colour authority for a faction's ships: an NPC faction's own
- *  colour (drones, robots, traders included), else a player's palette slot. */
+ *  colour (drones, robots, traders included), else a player's claimed palette
+ *  slot, else their hashed slot. */
 export function teamColorOf(id: FactionId): number {
   const def = NPC_FACTIONS.get(id);
   if (def) return def.color;
-  return PLAYER_LIVERY[liverySlot(id)]!;
+  const look = FACTION_LOOKS.get(id);
+  return PLAYER_LIVERY[look ? look.colorSlot : liverySlot(id)]!;
 }
 
-/** A deterministic 16-bit sigil seed for a faction's ship markings. */
+/** A 16-bit sigil seed for a faction's ship markings: a player's claimed pair,
+ *  else a deterministic hash. */
 export function teamSigilOf(id: FactionId): number {
   const h = fnv1a(id);
   if (NPC_FACTIONS.has(id)) return h & 0xffff;
+  const look = FACTION_LOOKS.get(id);
+  if (look) return packLook(look.colorSlot, look.sigil);
   return ((liverySlot(id) << 12) | ((h >>> 16) & 0x0fff)) & 0xffff;
 }
 
 /** A faction's painted-section edge shape (livery 'b8'): an NPC faction's
- *  own, else a stable hash of the id over `LIVERY_EDGES`. */
+ *  own, else one derived from a player's claimed sigil, else a stable hash of
+ *  the id over `LIVERY_EDGES`. */
 export function teamEdgeOf(id: FactionId): LiveryEdge {
   const own = NPC_FACTIONS.get(id)?.liveryEdge;
   if (own) return own;
+  const look = FACTION_LOOKS.get(id);
+  if (look) return LIVERY_EDGES[look.sigil % LIVERY_EDGES.length]!;
   return LIVERY_EDGES[(fnv1a(id) >>> 8) % LIVERY_EDGES.length]!;
 }

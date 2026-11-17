@@ -8,7 +8,7 @@ import type { z } from 'zod';
 import type { AcceptOfferSchema, SendGiftSchema } from '../../shared-types/economy.js';
 import type { GoodId } from '../../shared-types/goods.js';
 import type { TradeRoom } from './TradeDirector.js';
-import type { FactionPolicy, PlayerPolicyWire } from '../../shared-types/factions.js';
+import type { FactionLookClaim, FactionPolicy, PlayerPolicyWire } from '../../shared-types/factions.js';
 
 export type AcceptOfferMsg = z.infer<typeof AcceptOfferSchema>;
 export type SendGiftMsg = z.infer<typeof SendGiftSchema>;
@@ -43,6 +43,8 @@ export interface TradeSink {
   policyOf?(faction: string): FactionPolicy;
   /** F3 — a player edits their own faction's policy. */
   setPlayerPolicy?(playerId: string, policy: PlayerPolicyWire): void;
+  /** A player claims a unique ship look (colour slot + sigil); persisted on success. */
+  claimFactionLook?(playerId: string, colorSlot: number, sigil: number): FactionLookClaim;
   /** T4 — remembered teleporter-toll answers, by owner faction. */
   tollPref?(playerId: string, faction: string): 'always' | 'never' | undefined;
   setTollPref?(playerId: string, faction: string, pref: 'always' | 'never'): void;

@@ -3,7 +3,8 @@
  *  - a hit lowers the victim faction's view of the attacker, once per window;
  *  - a player's own policy makes their turret fire on a pilot they rate low,
  *    and does nothing while it's off;
- *  - `set_faction_policy` sets the policy for the sending player only.
+ *  - `set_faction_policy` sets the policy for the sending player only;
+ *  - `claim_faction_look` claims a free colour + sigil pair; a taken one is refused.
  *
  * Layout (as npcOwnership.test.ts): Capital (0,0) → Connector (0,-350) →
  * Turret (0,-650); pilots spawn at (0,-1000), inside the turret's range.
@@ -15,7 +16,7 @@ import { EconomyStore } from '../../../src/server/economy/EconomyStore.js';
 import { TradeDirector, type TradeRoom } from '../../../src/server/economy/TradeDirector.js';
 import { setTradeSink } from '../../../src/server/economy/tradeSink.js';
 import { getHoldStore, getPersistence, getWallet } from '../../../src/server/db/PersistenceWorker.js';
-import { MINOR_FACTIONS, STANDING_HIT_DELTA } from '../../../src/shared-types/factions.js';
+import { MINOR_FACTIONS, STANDING_HIT_DELTA, factionLookOf, setFactionLooks, teamSigilOf } from '../../../src/shared-types/factions.js';
 import { clearConvoyHaulers, registerConvoyHauler } from '../../../src/server/economy/convoyCarriers.js';
 
 const OWNER = '6a7e0000-0000-4000-8000-0000000000a1';
@@ -29,6 +30,7 @@ describe('SectorRoom integration — faction standing and policy (F3)', () => {
   let harness: SectorTestHarness;
   afterEach(async () => {
     setTradeSink(null);
+    setFactionLooks([]);
     if (harness) await harness.cleanup();
   });
 
@@ -122,5 +124,25 @@ describe('SectorRoom integration — faction standing and policy (F3)', () => {
     expect(store.playerPolicy(me)).toEqual({ hostileBelow: -50, alliedAbove: 75 });
     expect(store.policyOf(me).hostileBelow).toBe(-50);
     expect(store.playerPolicy(OWNER), 'nobody else’s').toEqual({ hostileBelow: null, alliedAbove: null });
+  });
+
+  it('claim_faction_look takes a free pair and refuses one already taken', async () => {
+    const { store } = await boot(OWNER);
+    const a = randomUUID();
+    const b = randomUUID();
+    const ca = await harness.connectActive(a);
+    const cb = await harness.connectActive(b);
+    ca.send('claim_faction_look', { type: 'claim_faction_look', colorSlot: 3, sigil: 7 });
+    await harness.advance(100);
+    cb.send('claim_faction_look', { type: 'claim_faction_look', colorSlot: 3, sigil: 7 }); // taken
+    cb.send('claim_faction_look', { type: 'claim_faction_look', colorSlot: 12, sigil: 7 }); // out of range: malformed
+    await harness.advance(200);
+    expect(factionLookOf(a)).toEqual({ colorSlot: 3, sigil: 7 });
+    expect(teamSigilOf(a)).toBe((3 << 12) | 7);
+    expect(factionLookOf(b), 'the taken pair was refused').toBeUndefined();
+    expect(store.factionsView(b, () => 'x').looks).toEqual([{ factionId: a, colorSlot: 3, sigil: 7 }]);
+    cb.send('claim_faction_look', { type: 'claim_faction_look', colorSlot: 3, sigil: 8 }); // free
+    await harness.advance(200);
+    expect(factionLookOf(b)).toEqual({ colorSlot: 3, sigil: 8 });
   });
 });
