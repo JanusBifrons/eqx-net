@@ -192,3 +192,37 @@ export interface StructureStyleDef {
   label: string;
   kinds: Readonly<Partial<Record<string, StyleDrawer>>>;
 }
+
+// ── Shared engineered parts (style C trusses; reused by the rig parts) ─────
+
+/** Where a part helper puts each polygon: a style pushes it into its plan
+ *  (clipped to the outline), the rig parts paint it flat (`structureRigs`). */
+export type PolySink = (pts: Pts, color: number, mat: PolyMat, lift: number, bevel: number) => void;
+
+/** An exposed lattice girder from `a` to `b`, `w` deep: two chords, a post
+ *  at every bay and X-bracing across each bay (laces first, then posts,
+ *  then the chords on top). */
+export function trussPolys(sink: PolySink, a: Pt, b: Pt, w: number, color: number, lift: number): void {
+  const dx = b[0] - a[0], dy = b[1] - a[1], L = Math.hypot(dx, dy) || 1;
+  const nx = (-dy / L) * (w / 2), ny = (dx / L) * (w / 2);
+  const at = (t: number, s: number): Pt => [a[0] + dx * t + nx * s, a[1] + dy * t + ny * s];
+  const chord = Math.max(1.6, w * 0.14);
+  const n = Math.max(1, Math.round(L / w));
+  const lace = mixColor(color, 0x000000, 0.28);
+  for (let i = 0; i < n; i++) {
+    sink(strip(at(i / n, 0.85), at((i + 1) / n, -0.85), chord * 0.6), lace, 'metal', lift * 0.5, chord * 0.3);
+    sink(strip(at(i / n, -0.85), at((i + 1) / n, 0.85), chord * 0.6), lace, 'metal', lift * 0.5, chord * 0.3);
+  }
+  for (let i = 0; i <= n; i++) sink(strip(at(i / n, 1), at(i / n, -1), chord * 0.8), color, 'metal', lift * 0.7, chord * 0.4);
+  sink(strip(at(0, 1), at(1, 1), chord), color, 'metal', lift * 0.8, chord * 0.5);
+  sink(strip(at(0, -1), at(1, -1), chord), color, 'metal', lift * 0.8, chord * 0.5);
+}
+
+/** A row of rivet heads from `a` to `b`. */
+export function rivetPolys(sink: PolySink, a: Pt, b: Pt, step: number, r: number, color: number): void {
+  const L = Math.hypot(b[0] - a[0], b[1] - a[1]), n = Math.max(1, Math.floor(L / step));
+  for (let i = 0; i <= n; i++) {
+    const t = i / n;
+    sink(ngon(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, r, 6), color, 'metal', 1, 0.6);
+  }
+}
