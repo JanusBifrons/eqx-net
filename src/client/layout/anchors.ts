@@ -22,7 +22,8 @@ export type AnchorName =
   | 'bottom-center'
   | 'bottom-right'
   | 'fullscreen'
-  | 'transit';
+  | 'transit'
+  | 'rotate';
 
 export const ANCHOR_NAMES: readonly AnchorName[] = [
   'top-left',
@@ -36,6 +37,7 @@ export const ANCHOR_NAMES: readonly AnchorName[] = [
   'bottom-right',
   'fullscreen',
   'transit',
+  'rotate',
 ] as const;
 
 const SAFE_TOP = 'calc(env(safe-area-inset-top, 0px) + var(--app-bar-h, 48px) + 16px)';
@@ -179,6 +181,14 @@ export const ANCHOR_STYLES: Record<AnchorName, CSSProperties> = {
     position: 'fixed',
     inset: 0,
     zIndex: Z.transit,
+    pointerEvents: 'none',
+  },
+  // Turn-your-phone-sideways picture (RotatePhoneOverlay): over everything
+  // but the lost-connection and error overlays.
+  rotate: {
+    position: 'fixed',
+    inset: 0,
+    zIndex: Z.rotatePrompt,
     pointerEvents: 'none',
   },
 };

@@ -21,8 +21,15 @@ import { apiGetMe, exchangeAuthCode } from './auth/authApi';
 // next full launch, never forcing a mid-session reload (no onNeedRefresh UI by
 // design; see vite.config.ts + docs/architecture/web-push.md). The SW is what
 // enables installability + Web Push (push events are delivered to the SW).
+// The phone lane (`VITE_PHONE_LANE=1`, docs/ops/phone-link.md) is the one
+// exception: its build is swapped under the installed app, and the swap has
+// already restarted the game server, so it applies a new build at once.
 if (import.meta.env.PROD) {
-  registerSW({ immediate: true });
+  const phoneLane = import.meta.env['VITE_PHONE_LANE'] === '1';
+  const updateSW = registerSW({
+    immediate: true,
+    onNeedRefresh: phoneLane ? () => { void updateSW(true); } : undefined,
+  });
 }
 
 // Expose the Zustand store on window for E2E tests + interactive

@@ -130,7 +130,7 @@ function writePidFile(body: string): void {
  *  killed a live perf run's servers). */
 interface TrackedPid { pid: number; image: string; owner?: number; ownerImage?: string }
 
-function imageOf(pid: number): string | null {
+export function imageOf(pid: number): string | null {
   if (process.platform === 'win32') {
     const out = spawnSync('tasklist', ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], { encoding: 'utf8' }).stdout ?? '';
     const m = /^"([^"]+)"/.exec(out.trim());

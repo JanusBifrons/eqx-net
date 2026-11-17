@@ -153,7 +153,8 @@ test.describe('radar sandbox — desktop WORKER render path', () => {
 
 test.describe('radar sandbox — mobile (touch defaults + HUD avoidance)', () => {
   const { viewport, deviceScaleFactor, isMobile, hasTouch, userAgent } = devices['Pixel 5'];
-  test.use({ viewport, deviceScaleFactor, isMobile, hasTouch, userAgent });
+  // Phones play sideways (an upright phone shows the turn-sideways screen).
+  test.use({ viewport: { width: viewport.height, height: viewport.width }, deviceScaleFactor, isMobile, hasTouch, userAgent });
 
   test('touch icons are smaller and never under the HUD', async ({ page }) => {
     test.setTimeout(60_000);
@@ -164,7 +165,7 @@ test.describe('radar sandbox — mobile (touch defaults + HUD avoidance)', () =>
       const out: Array<{ x: number; y: number; w: number; h: number }> = [];
       for (const host of Array.from(document.querySelectorAll('[data-anchor]'))) {
         const a = host.getAttribute('data-anchor');
-        if (a === 'fullscreen' || a === 'transit') continue;
+        if (a === 'fullscreen' || a === 'transit' || a === 'rotate') continue;
         for (const child of Array.from(host.children)) {
           const r = child.getBoundingClientRect();
           if (r.width >= 1 && r.height >= 1) out.push({ x: r.left - surface.left, y: r.top - surface.top, w: r.width, h: r.height });
