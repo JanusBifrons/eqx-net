@@ -277,8 +277,8 @@ export function FloatingStick(props: FloatingStickProps): JSX.Element {
           border: `1.5px solid ${color}`,
           // A dark wash under the tint keeps the ring readable over bright rock;
           // over empty space it is dark on dark, so it looks the same.
-          background: `radial-gradient(circle, ${color}22 0%, ${color}0d 55%, transparent 72%), radial-gradient(circle, rgba(4,8,16,0.7) 0%, rgba(4,8,16,0.55) 60%, transparent 74%)`,
-          boxShadow: `0 0 14px ${color}33, inset 0 0 10px ${color}22`,
+          background: `radial-gradient(circle, ${color}22 0%, ${color}0d 55%, transparent 72%), radial-gradient(circle, rgba(4,8,16,0.95) 0%, rgba(4,8,16,0.85) 62%, rgba(4,8,16,0.4) 70%, transparent 74%)`,
+          boxShadow: `0 0 0 2px rgba(4,8,16,0.85), inset 0 0 0 2px rgba(4,8,16,0.6), 0 0 14px ${color}33, inset 0 0 10px ${color}22`,
           willChange: 'transform',
           userSelect: 'none',
           WebkitUserSelect: 'none',
