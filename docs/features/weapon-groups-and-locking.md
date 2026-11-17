@@ -91,6 +91,10 @@ Two fingers placed together (within 150 ms, `PINCH_WINDOW_MS` in
 locks, and both fingers go to the camera's own pinch-zoom. A thumb added
 later (fly, then lock) still drives its stick.
 
+A quick tap on a stick zone (under 260 ms, under 10 px, `isTap`) is a tap on
+the world, not a stick nudge: `forwardTapToWorld` hands it to the canvas, so
+"tap a ship" and a capital's "tap to set course" work anywhere on screen.
+
 ## Try it
 
 `/?room=fc-duel&startHostile=1&shipKind=gunship` is a 1v3: two fighters and a
