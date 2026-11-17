@@ -12,16 +12,25 @@ import { fileURLToPath } from 'node:url';
 import type { Logger } from 'pino';
 import type { ChunkOpts } from '../../core/terrain/fieldLayout.js';
 import type { NavCommand, NavFieldBuiltMsg, NavReply } from '../../core/nav/navHost.js';
+import type { NavRockPose } from '../../core/nav/fineField.js';
 import { bundleWorker } from '../workers/bundleWorker.js';
 
 const NAV_WORKER_TS_PATH = fileURLToPath(new URL('./navWorkerEntry.ts', import.meta.url));
 
-/** One sector room's field hosted in the nav worker. */
+/** One sector room's field hosted in the nav worker. Every call posts in
+ *  order behind the worker's start, so a room streams chunk and rock events
+ *  from the moment it adds its field. Discrete events only, never per tick. */
 export interface NavField {
   readonly worldId: number;
   /** What the build reported (size, print-only time). */
-  readonly built: NavFieldBuiltMsg;
-  /** Free it (on room dispose). */
+  readonly built: Promise<NavFieldBuiltMsg>;
+  /** A field chunk was loaded or dropped by the room's streamer. */
+  chunk(cx: number, cy: number, loaded: boolean): void;
+  /** A rock was broken up. */
+  rockGone(key: number): void;
+  /** A rock rests somewhere new (null: back at its cut pose). */
+  rockMoved(key: number, pose: { x: number; y: number; angle: number } | null): void;
+  /** Free it (on room dispose); later calls do nothing. */
   detach(): void;
 }
 
@@ -32,28 +41,38 @@ export class NavWorker {
 
   constructor(private readonly logger: Logger, private readonly entryPath = NAV_WORKER_TS_PATH) {}
 
-  /** Builds `opts`' nav maps in the worker; resolves once built. */
-  async addField(opts: ChunkOpts): Promise<NavField> {
-    const worker = await this.start();
+  /** Hosts a field's nav maps; `gone` / `moved`: rocks already broken up or
+   *  left elsewhere (saved records). */
+  addField(opts: ChunkOpts, gone: number[] = [], moved: NavRockPose[] = []): NavField {
     const worldId = this.nextWorldId++;
-    const built = await new Promise<NavFieldBuiltMsg>((resolve, reject) => {
-      // eslint-disable-next-line no-restricted-globals -- real time: a build watchdog, not game time
-      const timer = setTimeout(() => { this.waiting.delete(worldId); reject(new Error(`nav field ${worldId} not built within 10 s`)); }, 10_000);
-      this.waiting.set(worldId, (msg) => { clearTimeout(timer); this.waiting.delete(worldId); resolve(msg); });
-      this.post(worker, { type: 'ADD_FIELD', worldId, opts });
-    });
+    const started = this.start();
     let attached = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const post = (cmd: NavCommand): void => {
+      if (attached) void started.then((w) => w.postMessage(cmd), () => undefined);
+    };
+    const built = new Promise<NavFieldBuiltMsg>((resolve, reject) => {
+      // eslint-disable-next-line no-restricted-globals -- real time: a build watchdog, not game time
+      timer = setTimeout(() => { this.waiting.delete(worldId); reject(new Error(`nav field ${worldId} not built within 30 s`)); }, 30_000);
+      timer.unref();
+      this.waiting.set(worldId, (msg) => { clearTimeout(timer); this.waiting.delete(worldId); resolve(msg); });
+      started.catch((err: unknown) => { clearTimeout(timer); this.waiting.delete(worldId); reject(err); });
+    });
+    post({ type: 'ADD_FIELD', worldId, opts, gone, moved });
     return {
       worldId, built,
+      chunk: (cx, cy, loaded) => post({ type: 'CHUNK', worldId, cx, cy, loaded }),
+      rockGone: (key) => post({ type: 'ROCK', worldId, key, gone: true }),
+      rockMoved: (key, pose) => post({ type: 'ROCK', worldId, key, pose }),
       detach: () => {
         if (!attached) return;
+        post({ type: 'REMOVE_FIELD', worldId });
         attached = false;
-        this.post(worker, { type: 'REMOVE_FIELD', worldId });
+        clearTimeout(timer);
+        this.waiting.delete(worldId);
       },
     };
   }
-
-  private post(worker: Worker, cmd: NavCommand): void { worker.postMessage(cmd); }
 
   private start(): Promise<Worker> {
     this.worker ??= (async () => {

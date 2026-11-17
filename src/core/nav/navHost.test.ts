@@ -32,4 +32,19 @@ describe('NavHost (nav worker commands)', () => {
     expect(host.coarse(1)).toBeUndefined();
     expect(host.fieldCount).toBe(0);
   });
+
+  it('CHUNK and ROCK reach the fine layer; unknown worlds are ignored', () => {
+    const host = new NavHost(() => 0);
+    host.handle({ type: 'ADD_FIELD', worldId: 1, opts: opts('look'), gone: [5] });
+    const fine = host.fine(1)!;
+    expect(host.handle({ type: 'CHUNK', worldId: 1, cx: 10, cy: 3, loaded: true })).toBeNull();
+    expect(fine.liveCount).toBe(1);
+    const cells = fine.cellsRebuilt;
+    host.handle({ type: 'ROCK', worldId: 1, key: 5, gone: true }); // already gone: no work
+    expect(fine.cellsRebuilt).toBe(cells);
+    host.handle({ type: 'CHUNK', worldId: 1, cx: 10, cy: 3, loaded: false });
+    expect(fine.liveCount).toBe(0);
+    expect(host.handle({ type: 'CHUNK', worldId: 99, cx: 0, cy: 0, loaded: true })).toBeNull();
+    expect(host.handle({ type: 'ROCK', worldId: 99, key: 1, pose: null })).toBeNull();
+  });
 });

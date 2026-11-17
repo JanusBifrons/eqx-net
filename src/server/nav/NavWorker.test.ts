@@ -17,17 +17,21 @@ const opts = (seed: string): ChunkOpts => ({
 describe('NavWorker', () => {
   it('builds each sector field in the worker and prints size + build ms', async () => {
     const nav = new NavWorker(pino({ level: 'silent' }));
-    const [a, b] = await Promise.all([nav.addField(opts('look')), nav.addField(opts('far-zoom'))]);
+    const a = nav.addField(opts('look')), b = nav.addField(opts('far-zoom'));
     expect(a.worldId).not.toBe(b.worldId);
+    // Chunk and rock events posted before the build replies queue in order behind it.
+    a.chunk(10, 3, true); a.rockGone(123); a.rockMoved(456, null); a.chunk(10, 3, false);
+    const [ab, bb] = await Promise.all([a.built, b.built]);
     const direct = new CoarseFieldMap();
     direct.build(opts('look'));
-    expect(a.built).toMatchObject({ type: 'FIELD_BUILT', worldId: a.worldId, cols: direct.cols, rows: direct.rows, bytes: direct.room.byteLength * 3 });
-    expect(b.built.worldId).toBe(b.worldId);
-    console.log(`[nav worker] coarse ${a.built.cols}x${a.built.rows}, ${(a.built.bytes / 1024).toFixed(0)} KB, built in ${a.built.ms.toFixed(1)} ms (worker)`);
+    expect(ab).toMatchObject({ type: 'FIELD_BUILT', worldId: a.worldId, cols: direct.cols, rows: direct.rows, bytes: direct.room.byteLength * 3 });
+    expect(bb.worldId).toBe(b.worldId);
+    console.log(`[nav worker] coarse ${ab.cols}x${ab.rows}, ${(ab.bytes / 1024).toFixed(0)} KB, built in ${ab.ms.toFixed(1)} ms (worker)`);
     a.detach();
     a.detach(); // idempotent
-    const c = await nav.addField(opts('nav-a')); // still serving after a detach
-    expect(c.built.worldId).toBe(c.worldId);
+    a.chunk(1, 1, true); // after detach: nothing posted
+    const c = nav.addField(opts('nav-a')); // still serving after a detach
+    expect((await c.built).worldId).toBe(c.worldId);
     b.detach(); c.detach();
   }, 30_000);
 });

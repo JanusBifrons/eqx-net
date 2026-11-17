@@ -87,6 +87,21 @@ same functions the cut uses, #15). No rock geometry is read.
 - Measured (desktop, print-only): 156×156 cells, 285 KB, built in ~4 ms. Across the field a battleship
   routes 448 km (round or along lanes), a fighter 325 km through streets (314 km straight).
 
+## The fine layer (`core/nav/fineField.ts`)
+One free-space map (`ClearanceGrid`) of 64 u cells per **loaded** field chunk, built from the chunk's real
+rocks. The worker cuts them itself with the same pure `rocksInChunk` + `fieldRockBody` the room and the
+client use (#15), so no rock shape crosses a thread; only "chunk loaded / dropped" and "rock broken up /
+left somewhere else" do.
+- Each chunk's grid reaches 1024 u past the chunk on every side (96×96 cells, 36 KB), so a rock over
+  the border counts. Clearance reads are capped at that reach (past it the coarse layer decides) and read
+  -1 where the chunk is not loaded.
+- A broken-up or moved rock rebuilds only the loaded chunks its circle reaches (counted in
+  `cellsRebuilt`; a rock deep inside a chunk rebuilds one chunk, not nine). Rocks already gone or left
+  elsewhere when the room started come from the saved records (`CutFieldSubsystem.attachNav`).
+- Awake rocks drifting between rests are not tracked: ships dodge moving bodies with local avoidance
+  (slice 8). Wreck-field chunk sources are not in it yet.
+- Measured (desktop, print-only): ~16–19 ms per chunk including cutting its 3×3 block of rocks.
+
 ## The nav worker (`server/nav/NavWorker.ts`)
 Navigation maps are CPU-heavy, so they live on a worker (server threading rule), built like the physics
 pool: the entry (`navWorkerEntry.ts`) is bundled once with `bundleWorker`, started with `eval` and
@@ -94,10 +109,11 @@ pool: the entry (`navWorkerEntry.ts`) is bundled once with `bundleWorker`, start
 tagged with it.
 - What the worker does with each message is `core/nav/navHost.ts` (`NavHost`), pure and tested
   directly: `ADD_FIELD {worldId, opts}` builds the coarse layer and replies `FIELD_BUILT` (cells, bytes,
-  build ms); `REMOVE_FIELD` frees it.
+  build ms); `REMOVE_FIELD` frees it; `CHUNK` and `ROCK` drive the fine layer.
 - `SectorRoom` sends its cut field's own layout options (`CutFieldSubsystem.navOpts`, the same
   `ChunkOpts` the cut uses, #15) when the field is created, logs `nav coarse layer built`, and detaches
-  on dispose. Rooms without a cut field never start the worker.
+  on dispose. `NavWorker.addField` returns at once: chunk and rock events posted before the build replies
+  queue in order behind it, so the field attaches before the streamer's first step and needs no replay. Rooms without a cut field never start the worker.
 - Measured (desktop, print-only): a field with a clearing builds in ~8 ms in the worker, 285 KB.
 
 ## History
@@ -112,3 +128,4 @@ tagged with it.
   Slice 4a: the coarse layer (`CoarseFieldMap`) from the field layout maths; a battleship fits every lane,
   streets are closed to capitals.
   Slice 4b: the nav worker builds the coarse layer for every cut-field sector room.
+  Slice 5: the fine layer, per loaded chunk from the cut rocks, kept current as rocks break up or move.
