@@ -66,7 +66,12 @@ import { EscalatingWavePattern } from './director/WavePattern.js';
 import { WaveDirector, type WaveStep } from './director/WaveDirector.js';
 import { IncomingRegistry } from './IncomingRegistry.js';
 import type { WarpDisposition, WarpWarningEvent } from '../../shared-types/messages.js';
-import { DIRECTOR_STATE_VERSION, type DirectorPersistence } from './DirectorPersistence.js';
+import {
+  DIRECTOR_STATE_VERSION,
+  type DirectorPersistence,
+  type DirectorStatePayload,
+  type PersistedSectorControl,
+} from './DirectorPersistence.js';
 import { gameNow, gameSetInterval, gameClearTimer, type GameTimer } from '../time/gameTime.js';
 
 // Re-export the room type so existing imports from this module keep working.
@@ -259,6 +264,13 @@ export interface LivingWorldHooks {
    *  every side (`RobotTerritory`): the holding side, or null for neutral
    *  ground. Undefined (or no hook) ⇒ the sector's static controller. */
   sectorOwner?: (sectorKey: string) => SectorOwner | null | undefined;
+  /** Step 1c — the sector-control entries saved WITH this director's state row
+   *  (`RobotTerritory.saveControl`); called on every persist. */
+  saveSectorControl?: () => PersistedSectorControl[];
+  /** Step 1c — hand restored control entries back (`RobotTerritory.restoreControl`).
+   *  Called from `start()` when the hydrated row carries them, so the hook must
+   *  be set at construction (`options.hooks`), not via a later `setHooks`. */
+  restoreSectorControl?: (entries: readonly PersistedSectorControl[]) => void;
   /** P4a — the name of a named elite roaming a sector (galaxy snapshot), or null. */
   sectorElite?: (sectorKey: string) => string | null;
   /** W2a — a flagship fleet in a sector (galaxy snapshot), or null. */
@@ -660,7 +672,8 @@ export class LivingWorldDirector {
       waveCount: p.waveCount.map(([k, v]) => [canonicalPlayerId(k), v] as [string, number]),
       lastDispatchAtMs: p.lastDispatchAtMs.map(([k, v]) => [canonicalPlayerId(k), v] as [string, number]),
     });
-    serverLogEvent('director_state_restored', { squads: p.squads.length });
+    if (p.sectorControl !== undefined) this.hooks.restoreSectorControl?.(p.sectorControl);
+    serverLogEvent('director_state_restored', { squads: p.squads.length, sectorControl: p.sectorControl?.length ?? 0 });
   }
 
   /**
@@ -672,13 +685,16 @@ export class LivingWorldDirector {
     const dp = this.directorPersistence;
     if (!dp) return;
     const wave = this.waveDirector.serialize();
-    dp.persist({
+    const payload: DirectorStatePayload = {
       version: DIRECTOR_STATE_VERSION,
       savedAtMs: this.nowMs(),
       squads: this.squadPool.serialize(),
       waveCount: wave.waveCount,
       lastDispatchAtMs: wave.lastDispatchAtMs,
-    });
+    };
+    const control = this.hooks.saveSectorControl?.();
+    if (control !== undefined) payload.sectorControl = control;
+    dp.persist(payload);
   }
 
   /**

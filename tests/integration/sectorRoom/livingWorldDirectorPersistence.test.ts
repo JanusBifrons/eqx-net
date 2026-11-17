@@ -23,6 +23,9 @@ import {
   type DirectorStatePayload,
 } from '../../../src/server/livingworld/DirectorPersistence.js';
 import { isEntrySector } from '../../../src/core/galaxy/galaxy.js';
+import { RobotTerritory } from '../../../src/server/livingworld/RobotTerritory.js';
+import type { LivingWorldHooks } from '../../../src/server/livingworld/LivingWorldDirector.js';
+import type { LivingWorldRoom } from '../../../src/server/livingworld/LivingWorldRoom.js';
 
 const noopLogger = { info: () => undefined, warn: () => undefined } as unknown as Logger;
 
@@ -89,6 +92,47 @@ describe('LivingWorldDirector — state persistence across a restart (Phase 5)',
       expect(isEntrySector(e.data['sectorKey'] as string)).toBe(true);
     }
   }, 45_000);
+
+  it('sector control rides the director row and is restored inside start() (Step 1c)', async () => {
+    let row: { payload_json: string; created_at: number } | undefined;
+    const dp = new DirectorPersistence({
+      saveRow: (p) => {
+        row = { payload_json: JSON.stringify(p), created_at: Date.now() };
+      },
+      loadRow: () => row,
+      logger: noopLogger,
+    });
+    // Wired exactly as index.ts wires the robot director's territory.
+    let territory: RobotTerritory | undefined;
+    const directorHooks = (rooms: ReadonlyMap<string, LivingWorldRoom>): LivingWorldHooks => {
+      const t = new RobotTerritory(rooms, () => h?.director.activeBotCountsBySector() ?? new Map(), { nexusSector: '__none__' });
+      territory = t;
+      return {
+        onTick: (now) => t.tick(now),
+        saveSectorControl: () => t.saveControl(),
+        restoreSectorControl: (entries) => t.restoreControl(entries),
+      };
+    };
+    const sectors = ['greenfall', 'emerald-span'];
+
+    // Boot #1: emerald-span is held by alice (the meter's capture itself is
+    // locked in RobotTerritory.control.test.ts); the director persists it.
+    h = await bootLivingWorldTestServer({ sectors, botCount: 0, directorPersistence: dp, directorHooks });
+    expect(territory!.sectorOwner('emerald-span')).toBeNull();
+    territory!.restoreControl([{ sectorKey: 'emerald-span', holder: 'alice', shares: [['alice', 92.5]] }]);
+    h.director.persistState();
+    const saved = JSON.parse(row!.payload_json) as DirectorStatePayload;
+    expect(saved.sectorControl).toEqual([{ sectorKey: 'emerald-span', holder: 'alice', shares: [['alice', 92.5]] }]);
+    await h.cleanup();
+    h = undefined;
+    territory = undefined;
+
+    // Boot #2: a FRESH director + territory — alice still holds it.
+    h = await bootLivingWorldTestServer({ sectors, botCount: 0, directorPersistence: dp, directorHooks });
+    expect(territory!.sectorOwner('emerald-span')?.factionId).toBe('alice');
+    expect(territory!.controlState('emerald-span')?.shares.get('alice')).toBe(92.5);
+    expect(territory!.sectorOwner('greenfall')).toBeNull();
+  }, 30_000);
 
   it('a fresh director with no persisted row falls back to a clean seed (no resume)', async () => {
     // The null-hydrate path: an empty DirectorPersistence must NOT change today's
