@@ -25,8 +25,8 @@ import {
   fieldRockId,
   type FieldRockBody,
 } from '@core/terrain/chunkStreamer';
-import { CHUNK_SIZE, rocksInChunk, unpackRockKey, type ChunkOpts } from '@core/terrain/fieldLayout';
-import { collapsePackedRock, packChunk, packedRockBody, type PackedChunk } from '@core/terrain/packedChunk';
+import { CHUNK_SIZE, coarseFieldTiles, rocksInChunk, unpackRockKey, type ChunkOpts } from '@core/terrain/fieldLayout';
+import { collapsePackedRock, packChunk, packCoarseTile, packedRockBody, type PackedChunk, type PackedCoarseTile } from '@core/terrain/packedChunk';
 import { FieldConsumedSchema, FieldMovedSchema, type FieldRockPose } from '@shared-types/messages/snapshotMessages';
 import { wantPredBody } from '../structures/predStructureStreaming.js';
 import type { FieldRockSource } from './entity/IClientEntityLeaf.js';
@@ -63,9 +63,11 @@ const MAX_READY_CUTS = 16;
  *  asleep again: its chunk went away on the server and will re-cut fixed. */
 export const FIELD_AWAKE_FORGET_MS = 2_000;
 
-/** Cuts a chunk off the main thread (the art bake pool's `cutChunk`). */
+/** Cuts a chunk off the main thread (the art bake pool's `cutChunk`), and
+ *  the whole field's far-zoom tiles once per sector (`cutCoarseField`, B4). */
 export interface ChunkCutter {
   cutChunk?(field: ChunkOpts, cx: number, cy: number): Promise<PackedChunk>;
+  cutCoarseField?(field: ChunkOpts): Promise<PackedCoarseTile[]>;
 }
 
 /** Where chunk outlines go (ColyseusClient: the mirror's drain queue). */
@@ -77,6 +79,9 @@ export interface CutFieldDrawSink {
    *  [index, x, y, angle] per moved rock in the chunk (`movedInChunk`, C2
    *  deep sleep): drawn at that pose, not where the field cut it. */
   setFieldChunk(cx: number, cy: number, outlines: Float32Array | null, ore?: Float32Array | null, bodies?: PackedChunk | null, moved?: Float64Array | null): void;
+  /** Draw one far-zoom tile (B4: `packCoarseTile`, tile coords); null drops
+   *  it. Omitted: no far-zoom field. */
+  setCoarseTile?(tx: number, ty: number, outlines: Float32Array | null, ore?: Float32Array | null): void;
 }
 
 export interface CutFieldClientDeps {
@@ -141,6 +146,12 @@ export class CutFieldClient implements FieldRockSource {
   private viewX = 0;
   private viewY = 0;
   private viewRings = 0;
+  /** The far-zoom coarse field (B4): asked once per seed, after the first
+   *  chunk lands. 'none' → 'asked' → 'done'; reset on stop. */
+  private coarse: 'none' | 'asked' | 'done' = 'none';
+  /** Tile coords drawn (tx, ty pairs), so stop can drop them. */
+  private readonly coarseDrawn: number[] = [];
+  private field: ChunkOpts | null = null;
 
   constructor(private readonly deps: CutFieldClientDeps) {}
 
@@ -256,6 +267,7 @@ export class CutFieldClient implements FieldRockSource {
 
   private start(seed: string): void {
     const field = cutFieldOpts(seed);
+    this.field = field;
     this.streamer = new CutFieldStreamer<PackedRock>(field, {
       // The own ship first (its collision rocks), then the camera centre with
       // a view-sized ring (the streamer cuts ring by ring: nearest first).
@@ -287,6 +299,27 @@ export class CutFieldClient implements FieldRockSource {
     if (!this.streamer) return;
     this.streamer.step();
     this.syncPred();
+    if (this.coarse === 'none' && this.chunksLoaded > 0) this.askCoarse();
+  }
+
+  /** Far zoom (B4): ask the pool for the whole field's coarse tiles, once per
+   *  seed. Waits while the pool is still loading; a failed pool job is cut
+   *  inline once (same tiles, #15). A result after stop is dropped (gen). */
+  private askCoarse(): void {
+    const field = this.field, draw = this.deps.draw;
+    if (!field || !draw.setCoarseTile) return;
+    const cutter = this.deps.cutter?.() ?? null;
+    if (!cutter?.cutCoarseField) return; // the pool loads lazily: next step
+    this.coarse = 'asked';
+    const gen = this.gen;
+    const land = (tiles: readonly PackedCoarseTile[]): void => {
+      if (gen !== this.gen) return;
+      this.coarse = 'done';
+      for (const t of tiles) { this.coarseDrawn.push(t.tx, t.ty); draw.setCoarseTile!(t.tx, t.ty, t.outlines, t.ore); }
+    };
+    cutter.cutCoarseField(field).then(land, () => {
+      setTimeout(() => { if (gen === this.gen) land(coarseFieldTiles(field).map((t) => packCoarseTile(t, field.seed))); }, 0);
+    });
   }
 
   /** Sector change or disconnect: drop every chunk and body. */
@@ -295,6 +328,10 @@ export class CutFieldClient implements FieldRockSource {
     this.timer = null;
     this.streamer?.clear();
     this.streamer = null;
+    for (let i = 0; i + 1 < this.coarseDrawn.length; i += 2) this.deps.draw.setCoarseTile?.(this.coarseDrawn[i]!, this.coarseDrawn[i + 1]!, null);
+    this.coarseDrawn.length = 0;
+    this.coarse = 'none';
+    this.field = null;
     this.seed = null;
     this.cuts.clear();
     this.awake.clear();

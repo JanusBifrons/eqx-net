@@ -6,7 +6,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { cutFieldOpts } from './chunkStreamer.js';
-import { CHUNK_SIZE, chunkOf, coarseFieldTiles, COARSE_TILE_CHUNKS, FIELD_COARSE_MIN_SIZE, rocksInChunk, SLICED, slicedFieldLanes, type SlicedRock } from './fieldLayout.js';
+import { CHUNK_SIZE, chunkOf, coarseFieldThin, coarseFieldTiles, COARSE_TILE_CHUNKS, FIELD_COARSE_MIN_SIZE, FIELD_FAR_ROCK_CELL, fieldStreet, rocksInChunk, SLICED, slicedFieldLanes, type SlicedRock } from './fieldLayout.js';
 import { fnvMixU32 } from '../random/rng.js';
 
 type Pt = { x: number; y: number };
@@ -47,6 +47,70 @@ describe('far-zoom coarse field (macro terrain v2, B4)', () => {
     console.log(`coarse coverage ${hit}/${n} = ${((100 * hit) / n).toFixed(1)} %`);
     expect(n).toBeGreaterThan(100);
     expect(hit / n).toBeGreaterThanOrEqual(0.9);
+  });
+
+  it('draws the edge as thin as the real rocks there: drawn share (coarse area x (1 - thin)) tracks the rocks, relative to the core', () => {
+    // The real field thins toward its rim (fewer rocks kept, wider streets);
+    // the coarse pieces are kept whole, so the shader draws them see-through
+    // by `coarseFieldThin`. Per distance band: rock area / drawn coarse area,
+    // over 3x3-chunk blocks clear of the lanes, divided by the same ratio at
+    // the core (the coarse level stands in for the core's rocks as solid).
+    const area = (v: readonly Pt[]): number => { let a = 0; for (let i = 0; i < v.length; i++) { const p = v[i]!, q = v[(i + 1) % v.length]!; a += p.x * q.y - q.x * p.y; } return Math.abs(a) / 2; };
+    const band = (f: typeof field, ps: readonly SlicedRock[], d: number): number => {
+      const lanes = slicedFieldLanes(f);
+      let real = 0, drawn = 0;
+      for (let ang = 0.3; ang < 6.28; ang += 0.45) {
+        const x = Math.cos(ang) * d * SLICED.radius, y = Math.sin(ang) * d * SLICED.radius;
+        if (lanes.some((ln) => Math.abs((x - ln.o.x) * ln.n.x + (y - ln.o.y) * ln.n.y) < ln.half + 3 * CHUNK_SIZE)) continue;
+        const cx = Math.floor(x / CHUNK_SIZE), cy = Math.floor(y / CHUNK_SIZE);
+        for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (const r of rocksInChunk(f, cx + i, cy + j)) real += area(r.verts);
+        const x0 = (cx - 1) * CHUNK_SIZE, y0 = (cy - 1) * CHUNK_SIZE, x1 = x0 + 3 * CHUNK_SIZE, y1 = y0 + 3 * CHUNK_SIZE;
+        for (const p of ps) if (p.cx >= x0 && p.cx < x1 && p.cy >= y0 && p.cy < y1) {
+          drawn += area(p.verts) * (1 - coarseFieldThin(Math.hypot(p.cx, p.cy) / SLICED.radius));
+        }
+      }
+      return real / drawn;
+    };
+    // Two seeds (this file's and the test room's); seeds vary by ~±40 %, a
+    // solid coarse level is off by 3-40x at d >= 0.7.
+    const look = cutFieldOpts('look');
+    for (const [f, ps] of [[field, pieces], [look, coarseFieldTiles(look).flatMap((t) => t.pieces)]] as const) {
+      const core = band(f, ps, 0.15);
+      for (const d of [0.45, 0.6, 0.7, 0.8, 0.88, 0.95]) {
+        const r = band(f, ps, d) / core;
+        console.log(`edge thinning ${f.seed} d ${d}: real / drawn vs core ${r.toFixed(2)}`);
+        expect(r, `${f.seed} d ${d}`).toBeGreaterThan(0.5);
+        expect(r, `${f.seed} d ${d}`).toBeLessThan(2);
+      }
+    }
+    expect(coarseFieldThin(0)).toBeLessThan(0.02);
+    expect(coarseFieldThin(1)).toBe(1);
+  });
+
+  it('sizes the far level\'s rock cells like the real rocks: cell² = field area per rock near the core (owner film: coarse slabs vs rocks read as a jump)', () => {
+    // At the switch a coarse piece (~1.6 km) is 2.5x a real rock, with no
+    // streets, so the crossfade swaps rocks for slabs. The shader draws
+    // rock-sized cells with streets on the coarse pieces (fieldRockShader);
+    // their size must be the real rocks' density. Chunks clear of the
+    // lanes at d 0.12-0.3, big rocks left out.
+    const area = (v: readonly Pt[]): number => { let a = 0; for (let i = 0; i < v.length; i++) { const p = v[i]!, q = v[(i + 1) % v.length]!; a += p.x * q.y - q.x * p.y; } return Math.abs(a) / 2; };
+    for (const seed of ['far-zoom', 'look']) {
+      const f = cutFieldOpts(seed), lanes = slicedFieldLanes(f);
+      let n = 0, chunks = 0, drawn = 0;
+      for (let cx = -8; cx <= 8; cx++) for (let cy = -8; cy <= 8; cy++) {
+        const x = (cx + 0.5) * CHUNK_SIZE, y = (cy + 0.5) * CHUNK_SIZE, d = Math.hypot(x, y) / SLICED.radius;
+        if (d < 0.12 || d > 0.3 || (cx + cy) % 3 !== 0) continue;
+        if (lanes.some((ln) => Math.abs((x - ln.o.x) * ln.n.x + (y - ln.o.y) * ln.n.y) < ln.half + 2 * CHUNK_SIZE)) continue;
+        const rs = rocksInChunk(f, cx, cy).filter((r) => r.size < f.battleshipLength);
+        chunks++; n += rs.length; for (const r of rs) drawn += area(r.verts);
+      }
+      const cell = Math.sqrt((chunks * CHUNK_SIZE * CHUNK_SIZE) / n);
+      const model = ((FIELD_FAR_ROCK_CELL - fieldStreet(0.2, f.fighterLength)) / FIELD_FAR_ROCK_CELL) ** 2;
+      console.log(`far rock cell ${seed}: real ${cell.toFixed(0)} u (${chunks} chunks) vs ${FIELD_FAR_ROCK_CELL}; rock share ${(drawn / (chunks * CHUNK_SIZE * CHUNK_SIZE)).toFixed(2)} vs cells ${model.toFixed(2)}`);
+      expect(chunks).toBeGreaterThan(10);
+      expect(FIELD_FAR_ROCK_CELL / cell, seed).toBeGreaterThan(0.8);
+      expect(FIELD_FAR_ROCK_CELL / cell, seed).toBeLessThan(1.2);
+    }
   });
 
   it('keeps both lanes clear: no point on a lane centre line is inside a coarse piece', () => {

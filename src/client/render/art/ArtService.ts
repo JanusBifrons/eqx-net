@@ -22,7 +22,7 @@ import { loadBakes, saveBakes, storeKey } from './bakeStore.js';
 import type { Frame, LightRig } from './shade.js';
 import { sunRigForSector } from './sunRig.js';
 import { shipScaleWorkerName } from '../../../shared-types/shipScale/config.js';
-import { ChunkCutJobs, cutInline, type ChunkOpts, type PackedChunk } from './chunkCutJobs.js';
+import { ChunkCutJobs, cutCoarseInline, cutInline, type ChunkOpts, type PackedChunk, type PackedCoarseTile } from './chunkCutJobs.js';
 
 export type ArtState = 'pending' | 'ready' | 'failed';
 
@@ -117,6 +117,7 @@ export interface BakeRunner {
   /** Move a queued (not yet started) job to the front. */
   promote?(job: BakeJob): void;
   cutChunk?(field: ChunkOpts, cx: number, cy: number): Promise<PackedChunk>; // cut-field chunks, off the frame (chunkCutJobs.ts)
+  cutCoarseField?(field: ChunkOpts): Promise<PackedCoarseTile[]>; // the far-zoom tiles (B4), once per sector
   readonly workers: number;
   destroy(): void;
 }
@@ -625,7 +626,6 @@ export class ArtService {
     this.handles.clear();
     this.toPack.length = 0;
   }
-
 }
 
 function rigTag(r: LightRig): string {
@@ -649,9 +649,7 @@ export class WorkerBakeRunner implements BakeRunner {
       this.idle.push(w);
     }
   }
-
   get workers(): number { return this.pool.length; }
-
   run(job: BakeJob, rig: LightRig, urgent = true): Promise<Baked> {
     return new Promise((resolve, reject) => {
       const item = { job, rig, resolve, reject };
@@ -667,6 +665,7 @@ export class WorkerBakeRunner implements BakeRunner {
   }
 
   cutChunk(field: ChunkOpts, cx: number, cy: number): Promise<PackedChunk> { const p = this.cuts.add(field, cx, cy); this.pump(); return p; }
+  cutCoarseField(field: ChunkOpts): Promise<PackedCoarseTile[]> { const p = this.cuts.addCoarse(field); this.pump(); return p; }
   private pump(): void {
     this.cuts.drain(this.idle, () => this.seq++, (w) => { this.idle.push(w); this.pump(); });
     while (this.idle.length > 0 && this.queue.length > 0) {
@@ -712,6 +711,7 @@ export class InlineBakeRunner implements BakeRunner {
     return p;
   }
   cutChunk(field: ChunkOpts, cx: number, cy: number): Promise<PackedChunk> { return cutInline(field, cx, cy, () => this.stopped); }
+  cutCoarseField(field: ChunkOpts): Promise<PackedCoarseTile[]> { return cutCoarseInline(field, () => this.stopped); }
   destroy(): void { this.stopped = true; }
 }
 

@@ -182,7 +182,10 @@ async function runOnce(browser: Browser, arm: Arm, scene: PerfScene, log: (m: st
     await page.waitForFunction(() => !!(globalThis as { __eqxPerf?: unknown }).__eqxPerf, null, { timeout: 120_000 });
     // The loading curtain holds while art bakes; measure only after it lifts.
     await page.waitForSelector('[data-testid="warp-screen"][data-warp-visible="0"]', { state: 'attached', timeout: 180_000 });
-    if (!scene.pilotHold) await page.evaluate((c) => (globalThis as unknown as { __eqxCinema?: { play(c: unknown[]): void } }).__eqxCinema?.play([{ atMs: 0, smoothMs: 0, shot: { kind: 'hold', x: c.x, y: c.y, zoom: c.zoom * (c.vw / 1920) } }]), { ...scene.camera, vw: phone ? PHONE_PROXY.viewport.width : 1280 });
+    if (scene.cameraPath) {
+      const cues = scene.cameraPath.map((c) => ({ atMs: c.atMs, smoothMs: c.smoothMs, shot: { kind: 'hold', x: c.x, y: c.y, zoom: c.scale } }));
+      await page.evaluate((c) => (globalThis as unknown as { __eqxCinema?: { play(c: unknown[]): void } }).__eqxCinema?.play(c), cues);
+    } else if (!scene.pilotHold) await page.evaluate((c) => (globalThis as unknown as { __eqxCinema?: { play(c: unknown[]): void } }).__eqxCinema?.play([{ atMs: 0, smoothMs: 0, shot: { kind: 'hold', x: c.x, y: c.y, zoom: c.zoom * (c.vw / 1920) } }]), { ...scene.camera, vw: phone ? PHONE_PROXY.viewport.width : 1280 });
     await page.evaluate(() => (globalThis as unknown as { __eqxPerf: { reset(): Promise<void> } }).__eqxPerf.reset());
     if (scene.pilotHold) {
       await page.locator('[data-testid="game-surface"]').click();

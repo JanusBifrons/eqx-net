@@ -44,6 +44,10 @@ export function createGameCutField(host: CutFieldHost): CutFieldClient {
       setFieldChunk: (cx, cy, outlines, ore = null, bodies = null, moved = null) => {
         (mirror.pendingFieldChunks ??= []).push({ cx, cy, outlines, ore, bodies, moved });
       },
+      // Far-zoom tiles (B4) ride the same drain queue, tagged.
+      setCoarseTile: (tx, ty, outlines, ore = null) => {
+        (mirror.pendingFieldChunks ??= []).push({ cx: tx, cy: ty, outlines, ore, level: 'coarse' });
+      },
     },
     cutter: () => cutter,
   });
