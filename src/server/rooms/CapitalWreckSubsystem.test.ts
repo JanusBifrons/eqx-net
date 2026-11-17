@@ -446,5 +446,35 @@ describe('CapitalWreckSubsystem: a tractored piece stored whole (piece store)', 
       sys.storePiece(p.id); // a second mount on the same piece: a no-op
       expect(removed).toEqual([p.id]);
     }
+  });});
+
+describe('CapitalWreckSubsystem.spawnWreck', () => {
+  it('spawnWreck (the one wreck spawn path) places posed pieces exactly, leaves skipped ones out, and stamps the given death tick', () => {
+    const { sys, spawned, setTick } = make();
+    setTick(5000);
+    const { pieces, fracture } = buildWreckPieces({
+      kindId: 'battleship', pose, killWorld: { x: 120, y: 40 }, attackerWorld: { x: 5000, y: 0 },
+      seed: 9, killBlowDamage: 0.2, recentDamageRate: 0.2,
+    });
+    expect(pieces.length).toBeGreaterThanOrEqual(2);
+    const skip = pieces[0]!.index;
+    const moved = pieces[1]!;
+    const at = { x: 777, y: -333, vx: 0, vy: 0, angle: 1.25, angvel: 0 };
+    const n = sys.spawnWreck('battleship', 'cap', pieces, fracture, 10_000, 0, {
+      held: false, deathTick: 100, poses: new Map([[moved.index, at]]), skipPieces: new Set([skip]),
+    });
+    expect(n).toBe(pieces.length - 1);
+    expect(spawned.map((s) => s.pieceIndex)).toEqual(pieces.slice(1).map((p) => p.index));
+    expect(spawned.some((s) => s.pieceIndex === skip)).toBe(false);
+    const posed = spawned.find((s) => s.pieceIndex === moved.index)!;
+    expect([posed.x, posed.y, posed.vx, posed.vy, posed.angle, posed.angvel]).toEqual([777, -333, 0, 0, 1.25, 0]);
+    expect(sys.pendingKicks()).toBe(0);
+    const d = sys.descriptors()[0]!;
+    expect(d.deathTick).toBe(100);
+    expect(d.wreckId).toBe(posed.wreckId);
+    // No options but held: false ⇒ each piece at its fractured place, the kick in its spawn motion.
+    spawned.length = 0;
+    sys.spawnWreck('battleship', 'cap', pieces, fracture, 10_000, 0, { held: false });
+    expect(spawned.map((s) => [s.x, s.y, s.vx])).toEqual(pieces.map((p) => [p.x, p.y, p.vx + p.kickVx]));
   });
 });
