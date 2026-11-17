@@ -17,6 +17,11 @@
  * and carry rock-sized cells with streets (world space, `aRock.yz` = centre).
  * Tiles off the view are hidden per frame. Tiles ignore consumed and moved
  * rocks: they are approximate, and only drawn where rocks are a few px.
+ *
+ * Placed rocks and their cut pieces (`placedRockMesh.ts`) draw the same rock
+ * shader in ONE mesh, `rockBatch` (`rockBatch.ts`), added where they draw by
+ * the renderer: `buildRockMesh` hands out a member per rock or piece, so the
+ * draw calls do not grow with their count.
  */
 import { Container, Mesh, MeshGeometry, Shader } from 'pixi.js';
 import type { RenderMirror } from '@core/contracts/IRenderer';
@@ -25,8 +30,9 @@ import { packedRockBody, type PackedChunk } from '../../../core/terrain/packedCh
 import type { FieldRockBody } from '../../../core/terrain/chunkStreamer';
 import type { ObstacleBox } from '../../../core/structures/Grid';
 import type { RestingFieldRock } from '../../structures/mirrorToGridNode';
-import { fieldRockShaderResources, fieldRockProgram, setFieldOreStyle, setFieldRockView, type FieldOreStyle } from './fieldRockShader';
+import { fieldRockBatchProgram, fieldRockShaderResources, fieldRockProgram, setFieldOreStyle, setFieldRockView, type FieldOreStyle } from './fieldRockShader';
 import { farFieldMix } from '../pixi/FarZoomIcons';
+import { RockBatch, type RockBatchMember } from './rockBatch';
 
 /** Chunk coords as one number (each fits ±32k). */
 const chunkKey = (cx: number, cy: number): number => (cx + 32768) * 65536 + (cy + 32768);
@@ -49,7 +55,10 @@ function rockSeed(x: number, y: number): number {
   return (h ^ (h >>> 13)) >>> 0;
 }
 
-export function buildFieldChunkMesh(outlines: Float32Array, ore?: Float32Array | null): FieldChunkMeshData {
+/** `seed`: one surface seed for every rock in `outlines` (a placed rock's,
+ *  from its shape seed: its outline sits at the origin); default: each
+ *  rock's from its centre. */
+export function buildFieldChunkMesh(outlines: Float32Array, ore?: Float32Array | null, seed?: number): FieldChunkMeshData {
   let verts = 0, tris = 0, i = 0;
   while (i < outlines.length) { const n = outlines[i]!; verts += n + 1; tris += n; i += 1 + n * 2; }
   const positions = new Float32Array(verts * 2), uvs = new Float32Array(verts * 2);
@@ -67,8 +76,8 @@ export function buildFieldChunkMesh(outlines: Float32Array, ore?: Float32Array |
       const dx = outlines[i + k * 2]! - mx, dy = outlines[i + k * 2 + 1]! - my;
       r2 = Math.max(r2, dx * dx + dy * dy);
     }
-    const h = rockSeed(mx, my);
-    const radius = Math.sqrt(r2), ox = ((h & 0xffff) / 65536) * 9000, oy = ((h >>> 16) / 65536) * 9000, seed = h & 0xffff;
+    const h = seed ?? rockSeed(mx, my);
+    const radius = Math.sqrt(r2), ox = ((h & 0xffff) / 65536) * 9000, oy = ((h >>> 16) / 65536) * 9000, s = h & 0xffff;
     const c = v;
     // Centre (vT 1), then the outline (vT 0); Pixi y = -game y.
     for (let k = -1; k < n; k++) {
@@ -76,7 +85,7 @@ export function buildFieldChunkMesh(outlines: Float32Array, ore?: Float32Array |
       positions[v * 2] = gx; positions[v * 2 + 1] = -gy;
       local[v * 2] = gx - mx; local[v * 2 + 1] = -(gy - my);
       uvs[v * 2] = k < 0 ? 1 : 0;
-      rock[v * 4] = radius; rock[v * 4 + 1] = ox; rock[v * 4 + 2] = oy; rock[v * 4 + 3] = seed;
+      rock[v * 4] = radius; rock[v * 4 + 1] = ox; rock[v * 4 + 2] = oy; rock[v * 4 + 3] = s;
       v++;
     }
     for (let k = 0; k < n; k++) {
@@ -139,6 +148,15 @@ function collapsedAt(o: Float32Array, s: number): boolean {
   return true;
 }
 
+/** Every mesh (or batch member) drawn with the field rock shader (weak: dies with it). */
+const fieldRockMeshes = new WeakSet<object>();
+
+/** Is this sprite a field-rock-shader mesh? Its colour is the shader's (the
+ *  classic rock tint must not touch it). */
+export function isFieldRockMesh(sprite: object): boolean {
+  return fieldRockMeshes.has(sprite);
+}
+
 /** A far-zoom tile (B4) and its Pixi-space bounds, for view culling. */
 interface CoarseTileMesh { key: number; mesh: Mesh<MeshGeometry, Shader>; x0: number; y0: number; x1: number; y1: number }
 
@@ -152,6 +170,7 @@ export class CutFieldLayer {
   /** Far-zoom tiles, a flat list (the per-frame cull loop allocates nothing). */
   private readonly tiles: CoarseTileMesh[] = [];
   private shader: Shader | null = null;
+  private _rockBatch: RockBatch | null = null;
   /** Woken rocks (rock key → the frame they were last seen awake): drawn by
    *  their swarm sprite, collapsed out of their chunk mesh. */
   private readonly woken = new Map<number, number>();
@@ -194,7 +213,8 @@ export class CutFieldLayer {
    *  x1, y1] (`Camera.visibleBoundsInto`), to hide off-view far-zoom tiles. */
   setView(sunAz: number, cameraScale: number, view?: ArrayLike<number>): void {
     this.frame++;
-    if (this.chunks.size > 0 || this.tiles.length > 0) setFieldRockView(sunAz, cameraScale);
+    // Once any rock mesh exists (chunks, tiles, placed rocks and pieces).
+    if (this.shader !== null) setFieldRockView(sunAz, cameraScale);
     this.applyLevel(cameraScale, view);
     for (const [key, seen] of this.woken) {
       if (this.frame - seen <= WOKEN_ROCK_FORGET_FRAMES) continue;
@@ -270,6 +290,24 @@ export class CutFieldLayer {
     return this.meshOf(d);
   }
 
+  /** The one mesh every placed rock and cut piece draws in (made on first
+   *  use; the renderer adds `rockBatch.layer` where they draw). */
+  get rockBatch(): RockBatch {
+    if (this._rockBatch === null) {
+      this.shaderOf();
+      this._rockBatch = new RockBatch(new Shader({ glProgram: fieldRockBatchProgram(), resources: fieldRockShaderResources() }));
+    }
+    return this._rockBatch;
+  }
+
+  /** A placed rock's or a cut piece's sprite (`placedRockMesh.ts` data): a
+   *  member of `rockBatch`, which draws it (it keeps the data's arrays). */
+  buildRockMesh(d: FieldChunkMeshData): RockBatchMember {
+    const m = this.rockBatch.add(d);
+    fieldRockMeshes.add(m);
+    return m;
+  }
+
   /** Collapse a rock's fan onto its centre (hide) or restore it (show). */
   private showInChunk(key: number, show: boolean): void {
     const k = unpackRockKey(key);
@@ -335,10 +373,17 @@ export class CutFieldLayer {
     geometry.addAttribute('aLocal', { buffer: d.local, format: 'float32x2' });
     geometry.addAttribute('aRock', { buffer: d.rock, format: 'float32x4' });
     geometry.addAttribute('aOre', { buffer: d.ore, format: 'float32x2' });
-    this.shader ??= new Shader({ glProgram: fieldRockProgram(), resources: fieldRockShaderResources() });
-    const mesh = new Mesh({ geometry, shader: this.shader });
+    const mesh = new Mesh({ geometry, shader: this.shaderOf() });
+    fieldRockMeshes.add(mesh);
     mesh.once('destroyed', () => geometry.destroy());
     return mesh;
+  }
+
+  /** The lone-mesh rock shader (its `shader` also marks that rocks exist, so
+   *  `setView` keeps the shared view uniforms current). */
+  private shaderOf(): Shader {
+    this.shader ??= new Shader({ glProgram: fieldRockProgram(), resources: fieldRockShaderResources() });
+    return this.shader;
   }
 
   /** See `IRenderer.setFieldChunk`. Game space in, Pixi space out (y flips).
