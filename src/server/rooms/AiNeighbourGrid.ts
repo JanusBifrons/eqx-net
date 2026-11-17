@@ -63,7 +63,7 @@ export class AiNeighbourGrid implements IAiNeighbourQuery {
   private vys = new Float64Array(64);
   private radii = new Float64Array(64);
   private side = new Uint8Array(64);
-  /** 1 = a capital-role NPC (slice 6b: what a damaged ship falls back on). */
+  /** 1 = a capital-role NPC or a pilot's capital (slice 6b: what a damaged ship falls back on). */
   private capital = new Uint8Array(64);
   private cellX = new Int32Array(64);
   private cellY = new Int32Array(64);
@@ -90,9 +90,10 @@ export class AiNeighbourGrid implements IAiNeighbourQuery {
     this.queriesThisTick = 0;
   }
 
-  /** Add a pilot hull. */
-  addPilot(id: string, x: number, y: number, vx: number, vy: number, radius: number): void {
-    this.add(id, x, y, vx, vy, radius, 0, false);
+  /** Add a pilot hull; `capital` marks a capital-class hull (a player's
+   *  capital anchors friendly AI morale like an AI-flown one). */
+  addPilot(id: string, x: number, y: number, vx: number, vy: number, radius: number, capital = false): void {
+    this.add(id, x, y, vx, vy, radius, 0, capital);
   }
 
   /** Add a combat drone of `allegiance` (an `NpcAllegianceId`); `capital`

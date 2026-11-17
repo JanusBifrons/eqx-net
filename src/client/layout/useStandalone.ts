@@ -8,16 +8,18 @@ import { useEffect, useState } from 'react';
  *   query matches when launched from a home-screen icon with the manifest's
  *   `display: fullscreen` / `standalone` setting.
  */
+export function isStandaloneNow(): boolean {
+  if (typeof window === 'undefined') return false;
+  const iosStandalone =
+    (window.navigator as Navigator & { standalone?: boolean }).standalone === true;
+  const cssStandalone =
+    window.matchMedia('(display-mode: standalone)').matches ||
+    window.matchMedia('(display-mode: fullscreen)').matches;
+  return iosStandalone || cssStandalone;
+}
+
 export function useStandalone(): boolean {
-  const [standalone, setStandalone] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return false;
-    const iosStandalone =
-      (window.navigator as Navigator & { standalone?: boolean }).standalone === true;
-    const cssStandalone =
-      window.matchMedia('(display-mode: standalone)').matches ||
-      window.matchMedia('(display-mode: fullscreen)').matches;
-    return iosStandalone || cssStandalone;
-  });
+  const [standalone, setStandalone] = useState<boolean>(isStandaloneNow);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;

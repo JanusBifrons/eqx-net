@@ -203,11 +203,12 @@ import {
   STANDING_HIT_WINDOW_MS,
   defaultFactionPolicy,
   factionDisplayName,
+  factionLooksWelcomeField,
   isNpcFactionId,
   policyActsOnStanding,
   type FactionPolicy,
 } from '../../shared-types/factions.js';
-import { SetFactionPolicySchema } from '../../shared-types/messages/factionMessages.js';
+import { ClaimFactionLookSchema, SetFactionPolicySchema, claimFactionLookResult, type FactionLookClaimed } from '../../shared-types/messages/factionMessages.js';
 import { encodePlayerTurretTarget, encodeStructureMountAngles } from '../../shared-types/structureStateWire.js';
 
 /** B2 — the party string of each roaming NPC side (`npc:<allegiance>`), built
@@ -416,6 +417,7 @@ import { shipBodyMass, shellViewHalfExtent } from '../../shared-types/shipScale/
 import { ShellEventHub, type ShellViewer } from './ShellEventHub.js';
 import { type ShellSalvo } from '../../shared-types/messages/shellEvents.js';
 import { tuningFor, GLOBAL_SHIP_TUNING } from '../../shared-types/shipScale/lookup.js';
+import { landingReach } from '../../shared-types/shipScale/landingReach.js';
 import { shipRayHit, shipSweepHit } from '../../core/combat/shipHitShape.js';
 import { mayBeInReach, maxShipRangeBound, mountsReachTarget, type MountRangeTarget } from '../../core/combat/mountReach.js';
 import { CapitalWreckSubsystem, type WreckPiecePose } from './CapitalWreckSubsystem.js';
@@ -1168,8 +1170,6 @@ export class SectorRoom extends Room<SectorState> {
   /** Bespoke test/recording trigger (testMode `traverseTicksCap`): the longest
    *  a capital turret takes to train a full turn, in ticks. Undefined = off. */
   private testTraverseTicksCap: number | undefined = undefined;
-  /** Round 3 D test switch (testMode `pilotCapitals`). */
-  private testPilotCapitals = false;
   /** Capital destruction S2a (`capitalWrecks` room option / EQX_CAPITAL_WRECKS):
    *  a dying capital breaks into wreck bodies. On by default since 2026-11-14
    *  (`wreckSwitchOn`); null = both switches off.
@@ -2108,9 +2108,6 @@ export class SectorRoom extends Room<SectorState> {
       /** testMode: run the automatic slowdown here too (on by default only in
        *  real sectors). */
       autoTimeScale?: boolean;
-      /** Capital-ship R&D (round 3 D): a player may join flying a capital
-       *  (capitals stay npcOnly everywhere else). testMode-only. */
-      pilotCapitals?: boolean;
       /** Capital destruction: a dying capital breaks into wreck bodies. ON
        *  by default (owner 2026-11-14); `false` opts this room out.
        *  `EQX_CAPITAL_WRECKS=0|1` forces it for every room (`wreckSwitchOn`). */
@@ -3459,7 +3456,6 @@ export class SectorRoom extends Room<SectorState> {
     } else if (ENV_TIME_SCALE !== null) {
       this.setTimeScale(ENV_TIME_SCALE);
     }
-    this.testPilotCapitals = this.testMode && roomOpts.pilotCapitals === true;
     // Break-up is ON by default in every room (owner decision 2026-11-14:
     // "land it switched on"). A room opts out with `capitalWrecks: false` /
     // `subcapWrecks: false`; the env switch wins over the room either way:
@@ -3834,6 +3830,20 @@ export class SectorRoom extends Room<SectorState> {
       const owner = this.sessionToPlayer.get(client.sessionId);
       if (!owner) return;
       getTradeSink()?.setPlayerPolicy?.(owner, parsed.data.policy);
+    });
+
+    // A player claims a unique ship look for their faction; the claimant gets
+    // the verdict, every room gets a success (`broadcastFactionLook`).
+    this.onMessage('claim_faction_look', (client: Client, raw: unknown) => {
+      const parsed = ClaimFactionLookSchema.safeParse(raw);
+      if (!parsed.success) {
+        this.malformed.record(client.sessionId, 'claim_faction_look');
+        return;
+      }
+      const owner = this.sessionToPlayer.get(client.sessionId);
+      if (!owner) return;
+      const claim = getTradeSink()?.claimFactionLook?.(owner, parsed.data.colorSlot, parsed.data.sigil);
+      if (claim) try { client.send('claim_faction_look_result', claimFactionLookResult(claim)); } catch { /* closing */ }
     });
 
     this.onMessage('set_gate_access', (client: Client, raw: unknown) => {
@@ -8362,6 +8372,10 @@ export class SectorRoom extends Room<SectorState> {
     this.broadcast('world_notice', notice);
   }
 
+  broadcastFactionLook(msg: FactionLookClaimed): void {
+    this.broadcast('faction_look_claimed', msg);
+  }
+
   markElite(botId: string, name: string, healthMul = ELITE_HEALTH_MUL, bounty = ELITE_BOUNTY_CREDITS): boolean {
     const rec = this.swarmRegistry.get(botId);
     if (rec == null || rec.kind !== SWARM_KIND_DRONE) return false;
@@ -9434,9 +9448,7 @@ export class SectorRoom extends Room<SectorState> {
     // swap kind by reconnecting — the existing ShipState.kind is preserved).
     const requestedKind = parsed.success
         && typeof parsed.data.shipKind === 'string'
-        && (isPlayableShipKindId(parsed.data.shipKind)
-          || (this.testPilotCapitals && isShipKindId(parsed.data.shipKind)
-            && getShipKind(parsed.data.shipKind).sizeClass === 'capital'))
+        && isPlayableShipKindId(parsed.data.shipKind)
       ? parsed.data.shipKind
       : DEFAULT_SHIP_KIND;
 
@@ -9630,7 +9642,7 @@ export class SectorRoom extends Room<SectorState> {
           sectorKey: this.sectorKey,
           shipInstanceId: existingShip?.shipInstanceId ?? '',
         };
-        client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields(), ...this.cutField?.welcome }));
+        client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields(), ...this.cutField?.welcome, ...factionLooksWelcomeField() }));
 
         setSession(client.sessionId, {
           roomId: this.roomId,
@@ -10136,7 +10148,7 @@ export class SectorRoom extends Room<SectorState> {
       sectorKey: this.sectorKey,
       shipInstanceId: ship.shipInstanceId,
     };
-    client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields(), ...this.cutField?.welcome }));
+    client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields(), ...this.cutField?.welcome, ...factionLooksWelcomeField() }));
 
     // Prefer the auth-validated userId from this connect; fall back to the
     // Limbo-resumed value when this connect was anonymous (covers the
@@ -10264,7 +10276,7 @@ export class SectorRoom extends Room<SectorState> {
       shipInstanceId: '',
       spectator: true,
     };
-    client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields(), ...this.cutField?.welcome }));
+    client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields(), ...this.cutField?.welcome, ...factionLooksWelcomeField() }));
 
     setSession(client.sessionId, {
       roomId: this.roomId,
@@ -10320,6 +10332,8 @@ export class SectorRoom extends Room<SectorState> {
     this.fleetStatus?.clearSession(client.sessionId);
     this.fleetStatusSoon.clear(client.sessionId);
     this.fleetMsgCountThisTick.delete(client.sessionId);
+    // Interest window + scratch set of a gone connection.
+    this.snapshotBroadcaster.forgetInterestWindow(client.sessionId);
 
     // Campaign 1.3 — forget this connection's malformed-packet counter.
     this.malformed.clear(client.sessionId);
@@ -11156,7 +11170,7 @@ export class SectorRoom extends Room<SectorState> {
       sectorKey: this.sectorKey,
       shipInstanceId: shipId,
     };
-    client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields(), ...this.cutField?.welcome }));
+    client.send('welcome', withShipScale({ ...welcome, ...this.shellWelcomeFields(client, playerId), ...this.wreckWelcomeFields(), ...this.cutField?.welcome, ...factionLooksWelcomeField() }));
     this.pendingJoin.set(playerId, {
       joinTick: tick,
       watchdogTick: tick + CLIENT_READY_TIMEOUT_TICKS,
@@ -12057,7 +12071,8 @@ export class SectorRoom extends Room<SectorState> {
     playerId: string, x: number, y: number, kind: string | undefined, onlySkipShipId?: string,
   ): { x: number; y: number } {
     const skipOwn = onlySkipShipId === undefined;
-    const near = 8000;
+    const ownClear = kind ? tuningFor(kind).spawnClearance : 60;
+    const { near, maxDistance } = landingReach(ownClear);
     const boxes: SiteBox[] = [];
     for (const r of this.structureRegistry.all()) pushSolidBoxes(r, boxes);
     const circles: Array<{ x: number; y: number; r: number }> = [];
@@ -12078,7 +12093,7 @@ export class SectorRoom extends Room<SectorState> {
       if (skipOwn && hull?.playerId === playerId) continue;
       circles.push({ x: pose.x, y: pose.y, r: hull?.kind ? tuningFor(hull.kind).spawnClearance : 60 });
     }
-    return nearestClearPoint(x, y, boxes, kind ? tuningFor(kind).spawnClearance : 60, 6000, circles);
+    return nearestClearPoint(x, y, boxes, ownClear, maxDistance, circles);
   }
 
   /** Every other hull in the sector as a circle of its own extent (hull

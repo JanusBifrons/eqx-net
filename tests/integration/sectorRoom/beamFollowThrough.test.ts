@@ -74,7 +74,7 @@ describe('SectorRoom integration — heavy-beam follow-through after a kill', ()
     const kind = getShipKind('battlecruiser-lance');
     const beamMounts = new Set(kind.mounts.filter((m) => m.weaponId === 'heavy_beam').map((m) => m.id));
     harness = await bootSectorTestServer({
-      sectorKey: null, droneCount: 0, testMode: true, asteroidConfig: [], pilotCapitals: true, capitalWrecks: true,
+      sectorKey: null, droneCount: 0, testMode: true, asteroidConfig: [], capitalWrecks: true,
       lockTimeCapS: 0, traverseTicksCap: 0,
       dronePoses: [{ kind: 'battlecruiser-lance', x: 5000, y: 0, angle: Math.PI }],
     });
@@ -239,7 +239,7 @@ describe('SectorRoom integration — heavy-beam follow-through after a kill', ()
     const kind = getShipKind('battlecruiser-lance');
     const beamMounts = new Set(kind.mounts.filter((m) => m.weaponId === 'heavy_beam').map((m) => m.id));
     harness = await bootSectorTestServer({
-      sectorKey: null, droneCount: 0, testMode: true, asteroidConfig: [], pilotCapitals: true, capitalWrecks: true,
+      sectorKey: null, droneCount: 0, testMode: true, asteroidConfig: [], capitalWrecks: true,
       lockTimeCapS: 0, traverseTicksCap: 0,
       dronePoses: [{ kind: 'battlecruiser-lance', x: 5000, y: 0, angle: Math.PI }],
     });

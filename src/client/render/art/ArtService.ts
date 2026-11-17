@@ -22,7 +22,6 @@ import { loadBakes, saveBakes, storeKey } from './bakeStore.js';
 import type { Frame, LightRig } from './shade.js';
 import { sunRigForSector } from './sunRig.js';
 import { shipScaleWorkerName } from '../../../shared-types/shipScale/config.js';
-import { lockLookWorkerNameSuffix } from '../pixi/territoryLockLook.js';
 import { ChunkCutJobs, cutCoarseInline, cutInline, type ChunkOpts, type PackedChunk, type PackedCoarseTile } from './chunkCutJobs.js';
 
 export type ArtState = 'pending' | 'ready' | 'failed';
@@ -743,7 +742,7 @@ function pageRunner(o: CreateArtServiceOpts): BakeRunner {
   const n = Math.max(1, Math.min(o.maxWorkers ?? 4, cores - 1));
   try {
     if (typeof Worker === 'undefined') throw new Error('no Worker');
-    sharedRunner = new WorkerBakeRunner(n, () => new Worker(new URL('./bake.worker.ts', import.meta.url), { type: 'module', name: shipScaleWorkerName('bake') + lockLookWorkerNameSuffix() }), o.delayMs ?? 0);
+    sharedRunner = new WorkerBakeRunner(n, () => new Worker(new URL('./bake.worker.ts', import.meta.url), { type: 'module', name: shipScaleWorkerName('bake') }), o.delayMs ?? 0);
   } catch {
     sharedRunner = new InlineBakeRunner(o.delayMs ?? 0);
   }

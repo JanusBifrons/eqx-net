@@ -1,6 +1,6 @@
 # Capital ships
 
-Capital ships are the galaxy's warships: destroyers, light and heavy cruisers, battlecruisers and battleships, kilometres long, with turreted naval guns. They are NPC-only (`npcOnly`); players fight them and their escorts. The design, hull styles and combat rules are in `docs/architecture/` (capital-ship R&D); this page is the player-facing story and grows as wrap-up step W2 lands.
+Capital ships are the galaxy's warships: destroyers, light and heavy cruisers, battlecruisers and battleships, kilometres long, with turreted naval guns. Players fight them and their escorts, and can fly one too (see "Flying a capital"). The design, hull styles and combat rules are in `docs/architecture/` (capital-ship R&D); this page is the player-facing story and grows as wrap-up step W2 lands.
 
 ## Flagship fleets (wrap-up W2a)
 
@@ -21,6 +21,14 @@ Somewhere in the galaxy there is always a **flagship fleet**: one capital ship w
 - The map reads `SectorLiveState.capital` (snapshot, #16); notices are accelerators.
 - Persisted in `allegiance_director_state`, row `flagships`. Kill switch: `EQX_DISABLE_FLAGSHIPS=1`.
 - Locks: `FlagshipDirector.test.ts`, `LoadShedder.test.ts`, `tests/integration/sectorRoom/flagshipFleet.test.ts`, `galaxyTooltip.test.ts`.
+
+## Flying a capital
+
+Any player can fly a capital in a real galaxy sector (owner, 2026-11-17). The five classes and the three fits (rail battleship, beam cruiser, lance battlecruiser) are free on the ship screen, like the scout and fighter: they are in `STARTER_HULL_KINDS` (`src/shared-types/blueprints.ts`), so the hull gate lets them through without a packed hull and they never appear as a blueprint, trader offer or loot. Only the roster cap limits how many you own. The B and C hull styles stay NPC-only.
+
+- **Records:** `capitals/index.ts` marks the base classes and the fits `npcOnly: false, randomSpawn: false` (pilotable, never a random drone). The join path takes them through the ordinary `isPlayableShipKindId` rule; there is no test switch.
+- **In play:** a player capital uses the same turrets, range rules, helm, zoom floor, warp, locks and fire control as an AI-flown one. Death and abandoning it both break it into a wreck (`spawnCapitalWreck`); a disconnect lingers like any ship.
+- **Locks:** `capitalShips.test.ts` (which kinds are pilotable), `shipKindTraits.test.ts` (random-spawn opt-outs), `abandonCapitalToWreck.test.ts`, `capitalWrecks.test.ts` (a player capital's death fractures).
 
 ## Hull styles (wrap-up W2b)
 

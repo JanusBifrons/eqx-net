@@ -66,8 +66,10 @@ lock locks; it has normal hull (4,000) and dies like any structure, which lifts
 the lock. There is no separate tracker: the room's `liveCounts` reports the
 sides with a built lock (`lockSides`) and `locksFor` adds them. A lock whose
 side has lost the sector does nothing; if that side retakes the sector, the
-standing lock locks it again. Its look is a placeholder (the Research Lab's)
-pending the owner's pick.
+standing lock locks it again. It looks like a broadcast spire: a spine across
+its width, a lit lantern tower in the middle and three pairs of antenna fins
+either side (`render/pixi/territoryLockLook.ts`). Owner colour is not applied
+yet (no structure takes owner colour).
 
 **Power hearts start locked.** Each region power's heart (`regionHeart`, the
 sector its static control seeds it with; `core/galaxy/control.ts`) starts

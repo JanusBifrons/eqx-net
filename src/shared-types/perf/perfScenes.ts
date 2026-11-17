@@ -295,7 +295,6 @@ export const PERF_SCENES: readonly PerfScene[] = [
       droneCount: 0,
       asteroidConfig: [],
       lockTimeCapS: 2,
-      pilotCapitals: true,
       sceneScript: [
         { atMs: 0, action: 'spawn', tag: 'battleline', kind: 'battleship', count: 10, x: 0, y: 0, spread: 6000, hostile: true },
         { atMs: 30_000, action: 'end' },
@@ -408,7 +407,7 @@ export const PERF_SCENES: readonly PerfScene[] = [
     // the same zooms. Runs on a build without the far view too (fair A/B).
     id: 'cut-field-far',
     title: 'The cut field from far out: battleship floor zoom, then just past the far switch, panning',
-    room: { droneCount: 0, asteroidConfig: [], cutField: { seed: 'look' }, pilotCapitals: true, sceneScript: [{ atMs: 30_000, action: 'end' }] },
+    room: { droneCount: 0, asteroidConfig: [], cutField: { seed: 'look' }, sceneScript: [{ atMs: 30_000, action: 'end' }] },
     spawn: { x: -11_147, y: 20_249 },
     pilotKind: 'battleship',
     camera: { x: -11_147, y: 20_249, zoom: 0.02 },

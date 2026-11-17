@@ -83,6 +83,7 @@ export class SwarmBroadcaster {
         const reach = d.viewerRadius !== undefined && playerId !== undefined
           ? SpatialGrid.viewerReachFor(d.viewerRadius(playerId)) : 1;
         d.interestGrid.query9(cx, cy, scratch, reach);
+        d.snapshotBroadcaster.interestWindows.note(client.sessionId, cx, cy, reach);
         inInterest = scratch;
       }
       // The packet names the tick its poses stand for, read right before the

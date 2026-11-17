@@ -114,6 +114,17 @@ describe('AiNeighbourGrid', () => {
     expect(g.count).toBe(200);
   });
 
+  it("flags a pilot's capital hull like an NPC capital", () => {
+    const g = new AiNeighbourGrid();
+    g.begin();
+    g.addPilot('fighter-pilot', 0, 0, 0, 0, 10);
+    g.addPilot('capital-pilot', 50, 0, 0, 0, 300, true);
+    g.addDrone('npc-cap', 100, 0, 0, 0, 300, 'drones', true);
+    g.end();
+    expect([g.isCapitalAt(0), g.isCapitalAt(1), g.isCapitalAt(2)]).toEqual([false, true, true]);
+    expect(g.isPilotAt(1)).toBe(true);
+  });
+
   it('counts queries per rebuild window', () => {
     const g = new AiNeighbourGrid();
     build(g, [{ x: 0, y: 0 }]);

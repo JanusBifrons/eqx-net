@@ -10,12 +10,16 @@ import Typography from '@mui/material/Typography';
 import Divider from '@mui/material/Divider';
 import Alert from '@mui/material/Alert';
 import { useAuthStore } from '../auth/authStore.js';
-import { apiLogin, apiRegister } from '../auth/authApi.js';
+import { apiLogin, apiRegister, apiTestSignIn } from '../auth/authApi.js';
 
 interface Props {
   onSuccess: () => void;
   onSkip?: () => void;
 }
+
+/** Test builds (dev server, phone lane) offer one-tap sign-in to the owner's
+ *  account; the server gates the route the same way (testSignInEnabled). */
+const TEST_SIGNIN = import.meta.env.DEV || import.meta.env['VITE_PHONE_LANE'] === '1';
 
 export function LoginPage({ onSuccess, onSkip }: Props) {
   const { setAuth } = useAuthStore();
@@ -44,6 +48,20 @@ export function LoginPage({ onSuccess, onSkip }: Props) {
         setAuth(token, user);
         onSuccess();
       }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'An error occurred');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleTestSignIn() {
+    setError(null);
+    setLoading(true);
+    try {
+      const { token, user } = await apiTestSignIn();
+      setAuth(token, user);
+      onSuccess();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
@@ -138,6 +156,19 @@ export function LoginPage({ onSuccess, onSkip }: Props) {
             >
               Continue with Google
             </Button>
+
+            {TEST_SIGNIN && (
+              <Button
+                variant="contained"
+                color="secondary"
+                fullWidth
+                disabled={loading}
+                data-testid="test-signin"
+                onClick={() => { void handleTestSignIn(); }}
+              >
+                Sign in as me (test build)
+              </Button>
+            )}
 
             {onSkip && (
               <Button size="small" color="inherit" sx={{ opacity: 0.45, mt: 1 }} onClick={onSkip}>

@@ -10,6 +10,7 @@ import type { CameraCue } from '@core/contracts/cameraScript';
 import type { SerialisedPointerEvent, SerialisedWheelEvent } from './serialisedEvents.js';
 import type { SectorLiveState } from '../../../../shared-types/galaxySnapshot.js';
 import type { SectorPresence } from '../../../../shared-types/galaxyPresence.js';
+import type { FactionLookWire } from '../../../../shared-types/factions.js';
 import type { RadarInsets, RadarPrefs } from '../../../../shared-types/settings/radar.js';
 
 /**
@@ -137,6 +138,13 @@ export interface SetGalaxyStatsMsg { type: 'SET_GALAXY_STATS'; stats: SectorLive
  * thread (roster + GET /galaxy/presence) and pushed here.
  */
 export interface SetPlayerPresenceMsg { type: 'SET_PLAYER_PRESENCE'; presence: SectorPresence[] }
+
+/**
+ * Every claimed faction ship look (the main thread's registry, posted when its
+ * version changes). The worker's own copy of `shared-types/factions` applies
+ * it, so `teamColorOf` / `teamSigilOf` / `teamEdgeOf` agree on both threads.
+ */
+export interface SetFactionLooksMsg { type: 'SET_FACTION_LOOKS'; looks: FactionLookWire[] }
 
 /**
  * Canvas resize. Width/height in LOGICAL (CSS) px; `dpr` carries the
@@ -412,6 +420,7 @@ export type MainToWorkerMsg =
   | SetOverlayModeMsg
   | SetGalaxyStatsMsg
   | SetPlayerPresenceMsg
+  | SetFactionLooksMsg
   | ResizeMsg
   | SetTickerFpsMsg
   | PerfProbeMsg

@@ -16,7 +16,6 @@ import { linToSrgb } from './color.js';
 import { getShipKind } from '../../../shared-types/shipKinds.js';
 import { shipTuning } from '../../../shared-types/shipScale/tuning.js';
 import { SHIP_SCALE } from '../../../shared-types/shipScale/config.js';
-import { LOCK_LOOK } from '../pixi/territoryLockLook.js';
 
 /** Machined ships keep this many sun azimuths and cross-fade between two. */
 export const SUN_STEPS = 16;
@@ -98,9 +97,7 @@ export function bakeKey(j: BakeJob): string {
   if (j.type === 'fx') return `x:${FX_VERSION}:${j.id}:${j.variant ?? ''}:${j.seed ?? ''}`;
   if (j.type === 'rock') return `r:${j.shapeSeed}:${j.radius}:${j.resource ?? ''}:${quarterTurnsFine(j.rot ?? 0)}`;
   const q = quarterTurns(j.rot ?? 0);
-  // The Territory Lock look option (`?lockLook=`) is part of its art.
-  const look = j.id === 'territory_lock' ? `:k${LOCK_LOOK}` : '';
-  return `m:${j.id}:${j.seed}:${j.accent ?? ''}${q ? `:r${q}` : ''}${j.rings ? ':R' : ''}${look}`;
+  return `m:${j.id}:${j.seed}:${j.accent ?? ''}${q ? `:r${q}` : ''}${j.rings ? ':R' : ''}`;
 }
 
 /** A kind's turret bases (pivot + 1.4 x the larger of ring and cap): what a
@@ -116,7 +113,7 @@ function liveryTag(l: Livery): string { return `:L${l.treatment}${l.team.toStrin
 /** A lit job's key (prefixed `L` by bakeKey): no sun, and no turn for
  *  structures and rocks (the mesh turns; the maps don't change). */
 function litKeyBody(j: Exclude<BakeJob, { type: 'fx' }>): string {
-  if (j.type === 'struct') return `m:${j.id}:${j.seed}:${j.accent ?? ''}${j.rings ? ':R' : ''}${j.id === 'territory_lock' ? `:k${LOCK_LOOK}` : ''}`;
+  if (j.type === 'struct') return `m:${j.id}:${j.seed}:${j.accent ?? ''}${j.rings ? ':R' : ''}`;
   if (j.type === 'rock') return `r:${j.shapeSeed}:${j.radius}:${j.resource ?? ''}`;
   return bakeKey({ ...j, lit: false });
 }
