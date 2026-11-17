@@ -45,6 +45,7 @@ import { logEvent, isDiagEnabled, isAutoCaptureEnabled } from '../../debug/Clien
 import { serialisePointerEvent, serialiseWheelEvent } from './eventSerialisation.js';
 import { setCanvasPointerCapture } from '../pointerCapture.js';
 import { shipScaleWorkerName } from '../../../shared-types/shipScale/config.js';
+import { factionLookVersion, factionLooksWire } from '../../../shared-types/factions.js';
 
 /** Callback invoked when the worker emits OVERLAY_TAPPED. Equinox Phase 9:
  *  `sectorKey: null` = an empty-space tap → blur/deselect (close the drawer). */
@@ -119,6 +120,8 @@ export class WorkerRendererClient implements IRenderer {
   }
 
   private worker: Worker | null = null;
+  /** The registry version last posted as SET_FACTION_LOOKS (-1 = never). */
+  private _postedLookVersion = -1;
   private canvas: HTMLCanvasElement | null = null;
   /** Mirrors the worker renderer's `_placementActive` (set each `update()` from
    *  the RenderMirror) so the main-thread pointer listeners can capture the
@@ -414,7 +417,11 @@ export class WorkerRendererClient implements IRenderer {
     // `SwarmMirrorReplica` keeps the full copy. `swarm` is detached from the
     // mirror for the (synchronous) clone and put straight back. No worker ⇒
     // nothing is encoded (the encoder's shadow must match what was SENT).
-    if (this.worker) this.postMirror(mirror);
+    if (this.worker) {
+      // Claimed faction looks first, so this frame's liveries already match.
+      if (factionLookVersion() !== this._postedLookVersion) this.setLayerFactionLooks();
+      this.postMirror(mirror);
+    }
     // Per-frame drain queues: `pendingDamageNumbers` and
     // `pendingHealthBarHits` are mutated in place by the consumer
     // (`PixiRenderer.update`) in the main-thread path. In the worker
@@ -695,6 +702,12 @@ export class WorkerRendererClient implements IRenderer {
     presence: import('../../../shared-types/galaxyPresence.js').SectorPresence[],
   ): void {
     this.post({ type: 'SET_PLAYER_PRESENCE', presence });
+  }
+  /** Push every claimed faction look to the worker's registry copy (sent by
+   *  `update` whenever the main thread's registry version moves). */
+  setLayerFactionLooks(): void {
+    this._postedLookVersion = factionLookVersion();
+    this.post({ type: 'SET_FACTION_LOOKS', looks: factionLooksWire() });
   }
 
   /** Notify the worker of a canvas-host resize. */

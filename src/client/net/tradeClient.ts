@@ -125,3 +125,8 @@ export function sendGift(args: {
 export function sendSetFactionPolicy(policy: PlayerPolicyWire): boolean {
   return send('set_faction_policy', { policy });
 }
+
+/** Claim a ship look (verdict: `claim_faction_look_result` toast). */
+export function sendClaimFactionLook(colorSlot: number, sigil: number): boolean {
+  return send('claim_faction_look', { colorSlot, sigil });
+}
