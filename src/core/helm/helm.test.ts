@@ -48,6 +48,15 @@ describe('helm', () => {
     expect(r.endDist).toBeLessThanOrEqual(helmArriveRadius(r.kind) * 1.2);
   }, 60_000);
 
+  // A tap beside a capital on a phone is inside the circle it sweeps at full
+  // speed (battleship ~8 km): thrusting through the turn only orbited the
+  // point and never arrived (showcase player-capital-sector 2026-11-17).
+  it.each([[3000, 0], [-3000, 0], [1500, 1500]])('a battleship reaches a near point off its beam (%i, %i) instead of orbiting it', async (tx, ty) => {
+    const r = await fly('battleship', tx, ty, 3, 240);
+    expect(r.arrivedAt).toBeGreaterThan(0);
+    expect(r.endDist).toBeLessThanOrEqual(helmArriveRadius(r.kind) * 1.2);
+  }, 60_000);
+
   it('the speed setting caps the cruise speed (1/3 stays near a third)', async () => {
     const r = await fly('battleship', 0, 30000, 1, 200);
     expect(r.peakSpeed).toBeLessThanOrEqual(r.kind.maxSpeed / 3 * 1.08);
