@@ -74,7 +74,11 @@ A quick tunnel is a public address: anyone who guesses it reaches the gate.
 ## Known limits
 
 - **Google sign-in does not work** on a tunnel address (Google only accepts the
-  registered redirect address). Use email sign-in or *Continue as guest*.
+  registered redirect address). Use **Sign in as me (test build)** instead: one
+  tap, no password, signs into the owner account (`owner@eqx.test`, "Owner").
+  Route `POST /auth/test-signin`, on when `NODE_ENV` is not `production` or the
+  lane sets `EQX_TEST_SIGNIN=1`; the button shows on dev and phone-lane builds.
+  Each build keeps its own save file, so ships and progress start fresh per build.
 - **A new address per tunnel**, so a reinstall after each tunnel restart.
 - iPhone Safari has no fullscreen API; installed from the home screen the app
   runs fullscreen.

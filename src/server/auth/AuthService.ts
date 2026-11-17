@@ -97,9 +97,24 @@ export function updateDisplayName(userId: string, displayName: string): AuthUser
  * Dev/E2E helper: idempotently mint a JWT for a fixed test user. Creates the
  * row on first call, returns a fresh token on every call. Has no password —
  * the user can never log in via /auth/login. Only callable from the dev-only
- * /auth/dev/test-token route, which is itself NODE_ENV-gated.
+ * /auth/dev/test-token route (NODE_ENV-gated) and the test-build
+ * /auth/test-signin route (testSignInEnabled).
  */
-export async function findOrCreateTestUser(email: string): Promise<{ token: string; user: AuthUser }> {
+export interface TestUserOpts {
+  /** Name a new row gets. Default 'E2E Tester'. */
+  displayName?: string;
+  /** Exempt from the one-account-one-player binding (a shared E2E fixture
+   *  login stands in for many players). Default true; the owner's test
+   *  sign-in is one real player, so it passes false. */
+  exempt?: boolean;
+}
+
+export async function findOrCreateTestUser(
+  email: string,
+  opts: TestUserOpts = {},
+): Promise<{ token: string; user: AuthUser }> {
+  const exempt = opts.exempt ?? true;
+  const displayName = opts.displayName ?? 'E2E Tester';
   const existing = db
     .prepare('SELECT id, email, display_name FROM users WHERE email = ?')
     .get(email.toLowerCase()) as Pick<UserRow, 'id' | 'email' | 'display_name'> | undefined;
@@ -107,20 +122,20 @@ export async function findOrCreateTestUser(email: string): Promise<{ token: stri
   if (existing) {
     // PR 3a — a shared E2E fixture login stands in for many independent
     // players; it keeps per-browser identities (see AccountPlayerRegistry).
-    getAccountPlayerRegistry().markExempt(existing.id);
+    if (exempt) getAccountPlayerRegistry().markExempt(existing.id);
     const token = await signToken(existing.id);
     return { token, user: { id: existing.id, email: existing.email, displayName: existing.display_name } };
   }
 
   const id = randomUUID();
-  getAccountPlayerRegistry().markExempt(id);
+  if (exempt) getAccountPlayerRegistry().markExempt(id);
   const now = Date.now();
   await persistence.enqueueCriticalAwaitable({
     type: 'USER_REGISTER',
     userId: id,
     email: email.toLowerCase(),
     passwordHash: null,
-    displayName: 'E2E Tester',
+    displayName,
     ts: now,
   });
   persistence.enqueueCritical({
@@ -132,7 +147,7 @@ export async function findOrCreateTestUser(email: string): Promise<{ token: stri
   });
 
   const token = await signToken(id);
-  return { token, user: { id, email: email.toLowerCase(), displayName: 'E2E Tester' } };
+  return { token, user: { id, email: email.toLowerCase(), displayName } };
 }
 
 export async function findOrCreateGoogleUser(profile: GoogleProfile): Promise<{ token: string; user: AuthUser }> {
