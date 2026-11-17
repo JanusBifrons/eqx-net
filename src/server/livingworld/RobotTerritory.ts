@@ -40,9 +40,22 @@ import { sectorController } from '../../core/galaxy/control.js';
 import { controlOpposes, fillSectorPresence, ROBOT_SIDE } from './factionPresence.js';
 import { liveEntrySectors, type Rng } from './population.js';
 import { serverLogEvent } from '../debug/ServerEventLog.js';
-import type { LivingWorldRoom } from './LivingWorldRoom.js';
+import type { LivingWorldRoom, SectorLiveCounts } from './LivingWorldRoom.js';
 import { gameNow } from '../time/gameTime.js';
 import type { PersistedSectorControl } from './DirectorPersistence.js';
+
+/** The running meter, so a room can ask who holds its sector (the Territory
+ *  Lock placement rule) without a director reference. Set in `start()`. */
+let activeTerritory: RobotTerritory | null = null;
+function setActiveTerritory(t: RobotTerritory | null): void {
+  activeTerritory = t;
+}
+
+/** The live holder of `sectorKey` (null = neutral), or undefined when no
+ *  control meter is running (tests, robots off). Placement cadence. */
+export function liveSectorHolder(sectorKey: string): string | null | undefined {
+  return activeTerritory?.controlState(sectorKey)?.holder;
+}
 
 /** Saved shares below this are dropped (keeps the persisted row small). */
 const SAVE_MIN_SHARE = 0.5;
@@ -149,11 +162,13 @@ export class RobotTerritory {
       this.subs.push({ bus, fn });
     }
     this.placeNexus(this.opts.nexusSector ?? this.pickNexusSector(null));
+    setActiveTerritory(this);
   }
 
   stop(): void {
     for (const s of this.subs) s.bus.off('ENTITY_DESTROYED', s.fn);
     this.subs.length = 0;
+    if (activeTerritory === this) setActiveTerritory(null);
   }
 
   // ── Hooks ───────────────────────────────────────────────────────────────
@@ -185,7 +200,8 @@ export class RobotTerritory {
     for (const key of this.rooms.keys()) {
       let s = this.control.get(key);
       if (!s) { s = freshMultiControl(sectorController(key)); this.control.set(key, s); }
-      const r = stepMultiControl(s, this.presenceFor(key), controlOpposes, dt, this.locksFor(key));
+      const counts = this.rooms.get(key)?.liveCounts?.();
+      const r = stepMultiControl(s, this.presenceOf(key, counts), controlOpposes, dt, this.locksFor(key, counts?.lockSides));
       if (r.flipped) serverLogEvent('sector_control_changed', { sectorKey: key, from: r.previousHolder, to: s.holder });
     }
   }
@@ -247,7 +263,10 @@ export class RobotTerritory {
   /** Every side's presence in a sector: the room's per-faction ships and
    *  structures, with the robots from the robot director's count + the nexus. */
   private presenceFor(sectorKey: string): ReadonlyMap<string, SidePresence> {
-    const counts = this.rooms.get(sectorKey)?.liveCounts?.();
+    return this.presenceOf(sectorKey, this.rooms.get(sectorKey)?.liveCounts?.());
+  }
+
+  private presenceOf(sectorKey: string, counts: SectorLiveCounts | undefined): ReadonlyMap<string, SidePresence> {
     const robots = this.robotCounts().get(sectorKey) ?? 0;
     const nexus = this.nexus !== null && this.nexus.alive && this.nexus.sectorKey === sectorKey;
     fillSectorPresence(this.presence, this.presencePool, counts?.byFaction, robots, nexus);
@@ -255,10 +274,13 @@ export class RobotTerritory {
   }
 
   /** The sides with a live lock in a sector (reused set). The robots' living
-   *  nexus is the robots' lock: a robot-held nexus sector can't be taken until
-   *  the nexus dies (the stepper ignores a lock its side doesn't hold). */
-  private locksFor(sectorKey: string): ReadonlySet<string> {
+   *  nexus is the robots' lock; a built Territory Lock structure is its owner
+   *  side's lock (`lockSides` from the room's `liveCounts`). A locked sector
+   *  can't be taken until the lock dies (the stepper ignores a lock its side
+   *  doesn't hold). */
+  private locksFor(sectorKey: string, lockSides: readonly string[] | undefined): ReadonlySet<string> {
     this.locks.clear();
+    if (lockSides) for (const side of lockSides) this.locks.add(side);
     const n = this.nexus;
     if (n !== null && n.alive && n.sectorKey === sectorKey) this.locks.add(ROBOT_SIDE);
     return this.locks;

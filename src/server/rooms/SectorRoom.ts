@@ -341,7 +341,8 @@ import { StorageService, fittedModuleIds, isOperationalStorage, structureUid, DE
 import { SCRAP_HP } from '../../core/swarm/scrapConstants.js';
 import { addPacked, cloneHold, emptyHold, extractRequested, holdWeight, isHoldEmpty, mergeInto, packedCount, takePacked, transferInto, type CargoRequest } from '../../core/cargo/hold.js';
 import type { HolderType, HoldRecord } from '../cargo/HoldStore.js';
-import { RAID_NOTICE_THROTTLE_MS, RAID_PRIORITY } from '../livingworld/RobotTerritory.js';
+import { RAID_NOTICE_THROTTLE_MS, RAID_PRIORITY, liveSectorHolder } from '../livingworld/RobotTerritory.js';
+import { isLiveTerritoryLock, territoryLockRefusal } from '../structures/territoryLockRules.js';
 import { cargoCapacityForMaxHealth, GOOD_DEFS, GOOD_IDS, HoldSchema, type Hold } from '../../shared-types/goods.js';
 import { rollKillBounty } from '../../shared-types/lootTables.js';
 import { deathHullLoot, killPodSpot, rollHullLoot, vaporisedSalvageExtra } from '../cargo/hullLoot.js';
@@ -2969,6 +2970,7 @@ export class SectorRoom extends Room<SectorState> {
       // after the structure registers; its build then costs only time.
       sectorKey: () => this.sectorKey,
       packedGateForBuild: (owner, kindId) => this.packedGateForBuild(owner, kindId),
+      placementRefusal: (owner, kindId) => territoryLockRefusal(owner, kindId, this.sectorKey ?? '', liveSectorHolder(this.sectorKey ?? ''), this.structureRegistry.all()),
     });
 
     // ── Structure grid pulse (structures plan, Phase 3) ─────────────────
@@ -3648,7 +3650,8 @@ export class SectorRoom extends Room<SectorState> {
         logger.warn({ sessionId: client.sessionId, kind: parsed.data.kind }, 'place_structure rejected');
         // Economy v2 W4b — say why when it was the packed item that was missing.
         const kindId = parsed.data.kind;
-        if (!STARTER_STRUCTURE_KINDS.includes(kindId) && this.findPacked(owner, `structure:${kindId}`) === null) {
+        if (this.structurePlacement.lastRefusal !== null) this.sendNotice(client, this.structurePlacement.lastRefusal);
+        else if (!STARTER_STRUCTURE_KINDS.includes(kindId) && this.findPacked(owner, `structure:${kindId}`) === null) {
           this.sendNotice(client, `You need a Packed ${productName(`structure:${kindId}`)}: buy one on the Trade tab, or loot one.`);
         }
       } else {
@@ -8197,12 +8200,14 @@ export class SectorRoom extends Room<SectorState> {
       else neutrals++;
     }
     let playerStructures = 0;
+    let lockSides: string[] | undefined;
     for (const rec of this.structureRegistry.all()) {
       const o = parseOwner(rec.owner);
       if (o.kind === 'player') playerStructures++;
       tallyFaction(byFaction, o.faction, 'structures');
+      if (isLiveTerritoryLock(rec)) (lockSides ??= []).push(o.faction);
     }
-    return { players: present.length, enemies, neutrals, structures: this.structureRegistry.size, playerStructures, byFaction };
+    return { players: present.length, enemies, neutrals, structures: this.structureRegistry.size, playerStructures, byFaction, lockSides };
   }
 
   /** Equinox Phase 9 (item 5) — recent-combat tally for `/galaxy/snapshot` (the

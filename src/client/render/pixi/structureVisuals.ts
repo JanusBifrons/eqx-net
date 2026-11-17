@@ -683,6 +683,9 @@ export function buildStructureVisual(kindId: string, opts: StructureVisualOpts):
       lit(x0 + W - 24, y0 + H - 24, 10, RED);
       break;
     }
+    // Placeholder: the Territory Lock wears the Research Lab's look until the
+    // owner picks its art (same 400×300 footprint).
+    case 'territory_lock':
     case 'research_lab': {
       // Research lab: a glass-roofed hall around a central test chamber, with
       // two instrument racks either side.

@@ -34,6 +34,8 @@
 import { z } from 'zod';
 import { WeaponMountSchema } from './shipKinds/types.js';
 import { navalGunEngageReach } from './combat/navalGuns.js';
+import { TERRITORY_LOCK } from './territoryLock.js';
+export { TERRITORY_LOCK, TERRITORY_LOCK_COST } from './territoryLock.js';
 
 export const StructureKindIdSchema = z.enum([
   'capital',
@@ -92,6 +94,8 @@ export const StructureKindIdSchema = z.enum([
   'coastal_barbette_16in',
   'coastal_lindemann',
   'siege_gun_80cm',
+  // Sector control lock (galaxy-map plan) — APPEND ONLY.
+  'territory_lock',
 ]);
 export type StructureKindId = z.infer<typeof StructureKindIdSchema>;
 
@@ -1246,6 +1250,8 @@ export const STRUCTURE_KINDS_LIST: readonly StructureKind[] = Object.freeze([
   COASTAL_BARBETTE_16IN,
   COASTAL_LINDEMANN,
   SIEGE_GUN_80CM,
+  // Sector control — APPENDED. Never reorder.
+  TERRITORY_LOCK,
 ]);
 
 /** Id-keyed lookup, derived from the canonical list (the list is the source of
@@ -1376,6 +1382,7 @@ export const STRUCTURE_SIDES: Record<StructureKindId, number> = {
   coastal_barbette_16in: 4,
   coastal_lindemann: 4,
   siege_gun_80cm: 4,
+  territory_lock: 4,
 };
 
 /**
