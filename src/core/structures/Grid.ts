@@ -22,6 +22,7 @@ import { Connection } from './Connection.js';
 import { CONNECTION_MAX_RANGE } from './structureGridConstants.js';
 import { rayHitsConvexPolygon } from '../combat/Weapons.js';
 import { convexHullCCW } from '../swarm/asteroidShape.js';
+import { GraphSearch, type SearchGoal, type SearchGraph } from '../nav/search.js';
 
 /** The grid's abstract view of a structure. The server projects each
  *  `StructureRecord` (+ its catalogue kind) into one of these. */
@@ -317,6 +318,41 @@ interface ComponentInfo {
   members: number;
 }
 
+/** The power grid as a {@link SearchGraph} for the shared searcher: nodes by
+ *  index, unit hops. An unbuilt node is reachable but never expanded (the
+ *  dead-end rule); the search start is always expanded. Built once per
+ *  topology rebuild, on the first route query. */
+class PowerGridGraph implements SearchGraph {
+  readonly ids: string[] = [];
+  readonly index = new Map<string, number>();
+  private readonly adj: number[][] = [];
+  private readonly built: boolean[] = [];
+  start = -1;
+  constructor(nodes: ReadonlyMap<string, GridNode>, adjacency: ReadonlyMap<string, readonly Connection[]>) {
+    for (const n of nodes.values()) {
+      this.index.set(n.id, this.ids.length);
+      this.ids.push(n.id);
+      this.built.push(n.isConstructed);
+    }
+    for (const id of this.ids) {
+      const out: number[] = [];
+      for (const c of adjacency.get(id) ?? []) {
+        const other = c.getOtherNode(id);
+        const j = other === null ? undefined : this.index.get(other);
+        if (j !== undefined) out.push(j);
+      }
+      this.adj.push(out);
+    }
+  }
+  get nodeCount(): number { return this.ids.length; }
+  edgeCount(i: number): number { return this.built[i] || i === this.start ? this.adj[i]!.length : 0; }
+  edgeTo(i: number, k: number): number { return this.adj[i]![k]!; }
+  edgeCost(): number { return 1; }
+}
+
+/** A goal nothing meets: the search visits everything reachable (a full tree). */
+const WHOLE_TREE: SearchGoal = { isGoal: () => false, heuristic: () => 0 };
+
 /** Shared empty member list so `componentMembers` never allocates on a miss. */
 const NO_MEMBERS: readonly string[] = Object.freeze([]);
 
@@ -332,6 +368,9 @@ export class Grid {
   /** source id → BFS parent map (A1): one O(V+E) search per source per
    *  topology change answers every route from that source. */
   private readonly treeCache = new Map<string, ReadonlyMap<string, string>>();
+  /** The grid as a search graph (built lazily after each rebuild). */
+  private searchGraph: PowerGridGraph | null = null;
+  private readonly search = new GraphSearch();
 
   /**
    * Recompute connected components over the BUILT subgraph (unbuilt nodes are
@@ -349,6 +388,7 @@ export class Grid {
     this.componentMembersMap.clear();
     this.routeCache.clear();
     this.treeCache.clear();
+    this.searchGraph = null;
 
     let nextComp = 0;
     for (const node of nodes.values()) {
@@ -461,24 +501,21 @@ export class Grid {
    * citadel scale, re-run for every route after each topology change). Same
    * rules as the old search: paths step THROUGH built nodes only; an unbuilt
    * node is reachable as a destination but never expanded (dead-end rule).
-   * Hop count is the metric, so BFS is exact. Cached until the next rebuild.
+   * Hop count is the metric, so BFS is exact (the shared searcher with unit
+   * costs and no goal). Cached until the next rebuild.
    */
   private bfsTree(sourceId: string): ReadonlyMap<string, string> {
     const cached = this.treeCache.get(sourceId);
     if (cached) return cached;
+    const graph = (this.searchGraph ??= new PowerGridGraph(this.nodes, this.adjacency));
     const parent = new Map<string, string>();
-    const seen = new Set<string>([sourceId]);
-    const queue: string[] = [sourceId];
-    for (let head = 0; head < queue.length; head++) {
-      const cur = queue[head]!;
-      for (const c of this.adjacency.get(cur) ?? []) {
-        const next = c.getOtherNode(cur);
-        if (next === null || seen.has(next)) continue;
-        const nn = this.nodes.get(next);
-        if (!nn) continue;
-        seen.add(next);
-        parent.set(next, cur);
-        if (nn.isConstructed) queue.push(next);
+    const from = graph.index.get(sourceId);
+    if (from !== undefined) {
+      graph.start = from;
+      this.search.search(graph, from, WHOLE_TREE);
+      for (let i = 0; i < graph.nodeCount; i++) {
+        if (i === from || !this.search.reached(i)) continue;
+        parent.set(graph.ids[i]!, graph.ids[this.search.prev(i)]!);
       }
     }
     this.treeCache.set(sourceId, parent);
