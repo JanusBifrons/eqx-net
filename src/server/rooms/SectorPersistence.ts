@@ -171,7 +171,7 @@ export class SectorPersistence {
       if (rec.kind === 1) continue;
       if (rec.kind === SWARM_KIND_SCRAP) continue;
       if (rec.kind === 2) continue;
-      // Capital wreck pieces (S2a): persisted as a descriptor in S2b, not here.
+      // Wreck pieces: saved per lineage (wreckLineageSaves.ts), never here.
       if (rec.kind === 4) continue;
       // Cut-field rocks are cut from the field seed; untouched ones need no save.
       if (rec.fieldRock === true) continue;
