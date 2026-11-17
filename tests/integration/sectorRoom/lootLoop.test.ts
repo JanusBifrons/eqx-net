@@ -19,6 +19,7 @@ import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import type { SectorState } from '../../../src/server/rooms/schema/SectorState.js';
 import type { SnapshotMessage } from '../../../src/shared-types/messages/snapshotMessages.js';
+import type { CargoState } from '../../../src/shared-types/messages/cargoMessages.js';
 import { getHoldStore, getPlayerShipStore, getWallet } from '../../../src/server/db/PersistenceWorker.js';
 import { POD_TIER_SPILL } from '../../../src/shared-types/shipKinds/cargoPod.js';
 import { rollHullLoot } from '../../../src/server/cargo/hullLoot.js';
@@ -27,9 +28,24 @@ function room(id: string): SectorRoom {
   return matchMaker.getLocalRoomById(id) as unknown as SectorRoom;
 }
 
-/** Take `items` out of pod `podId` over the real loot-window message. */
-function takeFromPod(r: SectorRoom, cr: { send: (t: string, m: object) => void }, podId: string, items: object): void {
+type Asker = { send: (t: string, m: object) => void; onMessage: (t: string, cb: (m: CargoState) => void) => unknown };
+const lastState = new WeakMap<object, CargoState>();
+
+/** Open pod `podId` in the loot window, keep it open until the search has
+ *  found everything (cargo-pods slice 12), then take `items`. */
+async function takeFromPod(r: SectorRoom, cr: Asker, podId: string, items: object): Promise<void> {
+  if (!lastState.has(cr)) {
+    lastState.set(cr, { type: 'cargo_state', open: false, hold: null, used: 0, capacity: 0, ship: null, shipCapacity: 0 });
+    cr.onMessage('cargo_state', (m) => lastState.set(cr, m));
+  }
   const entityId = r._internals.swarmRegistry.get(podId)!.entityId;
+  const end = Date.now() + 8_000;
+  for (;;) {
+    cr.send('cargo_query', { type: 'cargo_query', entityId });
+    await new Promise((res) => setTimeout(res, 250));
+    const st = lastState.get(cr)!;
+    if ((st.open && st.hidden === undefined) || Date.now() > end) break;
+  }
   cr.send('cargo_move', { type: 'cargo_move', entityId, dir: 'take', items });
 }
 
@@ -71,7 +87,7 @@ describe('SectorRoom integration — loot loop (P1a-1)', () => {
     let shipId = '';
     for (const [, s] of state.ships) if (s.playerId === pid && s.isActive) shipId = s.shipInstanceId;
     expect(shipId).not.toBe('');
-    takeFromPod(r, cr, podId, { goods: { salvage: 7 } });
+    await takeFromPod(r, cr, podId, { goods: { salvage: 7 } });
     const picked = await until(() => (getHoldStore().get(shipId)?.hold.goods.salvage ?? 0) >= 7, 5_000);
     expect(picked, 'taking from a pod must move it into the ship hold').toBe(true);
 
@@ -222,7 +238,7 @@ describe('SectorRoom integration — packed loot (economy v2 W4a)', () => {
     for (const [, s] of state.ships) if (s.playerId === pid && s.isActive) shipId = s.shipInstanceId;
 
     const podId = internal.loot.drop({ goods: {}, blueprints: [], packed: [{ product: 'structure:smelter', quality: 42 }] }, 20, 0)!;
-    takeFromPod(r, cr, podId, { packed: ['structure:smelter'] });
+    await takeFromPod(r, cr, podId, { packed: ['structure:smelter'] });
     const picked = await until(() => (getHoldStore().get(shipId)?.hold.packed?.length ?? 0) === 1, 5_000);
     expect(picked, 'the packed structure must move into the ship hold').toBe(true);
     let sawPacked = false;

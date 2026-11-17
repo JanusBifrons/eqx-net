@@ -2,7 +2,9 @@
  * Cargo pods, plan cargo-pods slices 11 + 14: a pod is looted through the
  * loot window (`cargo_query` / `cargo_move` on its entity id), never by flying
  * over it. Owner 2026-11-17: "cargo pods are open a window and drag or click
- * to loot"; open range is about a ship length; a pod only gives.
+ * to loot"; open range is about a ship length; a pod only gives. Slice 12:
+ * stacks show as "?" until searched; only found stacks can be taken. The
+ * room runs at 4× game speed so the search takes a fraction of a second.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
@@ -39,7 +41,7 @@ function ask(cr: Room, replies: CargoState[], type: 'cargo_query' | 'cargo_move'
 describe('SectorRoom integration: the cargo pod loot window', () => {
   let harness: SectorTestHarness;
   beforeEach(async () => {
-    harness = await bootSectorTestServer({ sectorKey: 'sol-prime', droneCount: 0, testMode: true, asteroidConfig: [] });
+    harness = await bootSectorTestServer({ sectorKey: 'sol-prime', droneCount: 0, testMode: true, asteroidConfig: [], timeScale: 4 });
   }, 15_000);
   afterEach(async () => {
     if (harness) await harness.cleanup();
@@ -57,6 +59,17 @@ describe('SectorRoom integration: the cargo pod loot window', () => {
     return { cr, r, shipId, replies };
   }
 
+  /** Keep the window open (re-ask at each reveal) until nothing is hidden. */
+  async function searchAll(cr: Room, replies: CargoState[], entityId: number): Promise<CargoState> {
+    const end = Date.now() + 6_000;
+    let st = await ask(cr, replies, 'cargo_query', { entityId });
+    while (st.hidden !== undefined && Date.now() < end) {
+      await harness.advance(100);
+      st = await ask(cr, replies, 'cargo_query', { entityId });
+    }
+    return st;
+  }
+
   it('a pod beside the ship opens, a take moves one stack aboard, a put is refused', { timeout: 30_000 }, async () => {
     const { cr, r, shipId, replies } = await setup();
     const podId = r._internals.loot.drop({ goods: { salvage: 5, alloy: 3 }, blueprints: [] }, 20, 0, 0, 0, { alone: true })!;
@@ -66,8 +79,17 @@ describe('SectorRoom integration: the cargo pod loot window', () => {
     await harness.advance(500);
     expect(getHoldStore().get(shipId)?.hold.goods.salvage ?? 0, 'flying over a pod loads nothing').toBe(0);
 
-    const view = await ask(cr, replies, 'cargo_query', { entityId });
-    expect(view.open).toBe(true);
+    // Search: at first every stack is a "?" tile and nothing can be taken.
+    const first = await ask(cr, replies, 'cargo_query', { entityId });
+    expect(first.open).toBe(true);
+    expect(first.hold?.goods, 'unsearched stacks never reach the client').toEqual({});
+    expect(first.hidden).toBe(2);
+    expect(first.revealInMs).toBeGreaterThan(0);
+    const early = await ask(cr, replies, 'cargo_move', { entityId, dir: 'take', items: { goods: { alloy: 3 } } });
+    expect(early.message).toBe('Still searching.');
+
+    const view = await searchAll(cr, replies, entityId);
+    expect(view.hidden, 'everything found').toBeUndefined();
     expect(view.hold?.goods).toEqual({ salvage: 5, alloy: 3 });
 
     const took = await ask(cr, replies, 'cargo_move', { entityId, dir: 'take', items: { goods: { alloy: 3 } } });

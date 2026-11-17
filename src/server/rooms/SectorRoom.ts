@@ -334,6 +334,8 @@ import { BpBuySchema, BpMarketQuerySchema, BpSellSchema, type BpListing, type Bp
 import { bpBuyPrice, bpSellPrice, getBlueprintMarket, listing as bpListing } from '../economy/BlueprintMarket.js';
 import { LabCancelSchema, LabQuerySchema, LabStartSchema, type LabStart, type LabState } from '../../shared-types/messages/labMessages.js';
 import { LootSubsystem, type LootCollector } from '../cargo/LootSubsystem.js';
+import { LootSearch } from '../cargo/LootSearch.js';
+import { clampRequest, isRequestEmpty, searchView } from '../../core/cargo/lootSearch.js';
 import { OreDraw, type OreHolder } from './OreDraw.js';
 import { StorageService, fittedModuleIds, isOperationalStorage, structureUid, DEPOSIT_DWELL_TICKS, DEPOSIT_RANGE, REPAIR_CREDITS_PER_HP, RESPEC_CREDIT_COST } from '../cargo/StorageService.js';
 import { addPacked, cloneHold, emptyHold, extractRequested, holdWeight, isHoldEmpty, mergeInto, packedCount, takePacked, transferInto, type CargoRequest } from '../../core/cargo/hold.js';
@@ -1117,6 +1119,8 @@ export class SectorRoom extends Room<SectorState> {
   private scrapSpawner!: ScrapSpawner;
   /** Living World P1a — loot pods, pickup, spill-on-death (see LootSubsystem). */
   private loot!: LootSubsystem;
+  /** Loot window search time per (viewer, pod) (cargo-pods slice 12). */
+  private readonly lootSearch = new LootSearch();
   /** Asteroid ore: the one draw path (Miner, harvesters, mining-laser hits paid on the pulse). */
   private readonly oreDraw = new OreDraw({ swarmRegistry: this.swarmRegistry, holderOf: (id, out) => this.oreHolderOf(id, out), sectorKey: () => this.sectorKey, oreAtHit: (r, x, y, out) => this.cutField?.oreAtHit(r, x, y, out) ?? false });
   /** Living World P1a-2 — base storage holds (deposit / refine / spill). */
@@ -11577,20 +11581,34 @@ export class SectorRoom extends Room<SectorState> {
     });
     const c = this.pilotCollector(playerId);
     if (c === null) return closed('You need a ship to take loot.');
+    const inReach = this.loot.inOpenReach(c, podId);
+    const elapsed = this.lootSearch.advance(playerId, podId, this.gameClock.now(), inReach);
     let verdict: { ok: boolean; message: string } | undefined;
     if (move !== null) {
       if (move.dir === 'put') verdict = { ok: false, message: 'A cargo pod only gives.' };
       else {
-        const r = this.loot.take(c, podId, move.items);
+        // Only found stacks can be taken (slice 12).
+        const before = getHoldStore().get(podId)?.hold;
+        const want = before === undefined ? move.items : clampRequest(searchView(before, elapsed).revealed, move.items);
+        const r = before !== undefined && inReach && isRequestEmpty(want) ? { ok: false as const, reason: 'unfound' as const } : this.loot.take(c, podId, want);
         verdict = r.ok ? { ok: true, message: 'Loaded aboard.' }
+          : r.reason === 'unfound' ? { ok: false, message: 'Still searching.' }
           : { ok: false, message: r.reason === 'hold_full' ? 'No room aboard for that.' : r.reason === 'out_of_reach' ? 'Fly closer to open it.' : 'It is empty.' };
       }
     }
     const pod = getHoldStore().get(podId)?.hold;
     const shipHold = getHoldStore().get(c.shipInstanceId)?.hold ?? emptyHold();
-    if (pod === undefined) return { type: 'cargo_state', entityId, open: false, hold: null, used: 0, capacity: 0, ship: shipHold, shipCapacity: c.capacity, message: 'It is empty.', ...(verdict ? { ok: verdict.ok } : {}) };
-    if (!this.loot.inOpenReach(c, podId)) return closed('Fly closer to open it.');
-    return { type: 'cargo_state', entityId, open: true, hold: pod, used: holdWeight(pod), capacity: 0, ship: shipHold, shipCapacity: c.capacity, ...(verdict ?? {}) };
+    if (pod === undefined) {
+      this.lootSearch.forgetContainer(podId);
+      return { type: 'cargo_state', entityId, open: false, hold: null, used: 0, capacity: 0, ship: shipHold, shipCapacity: c.capacity, message: 'It is empty.', ...(verdict ? { ok: verdict.ok } : {}) };
+    }
+    if (!inReach) return closed('Fly closer to open it.');
+    const seen = searchView(pod, elapsed);
+    return {
+      type: 'cargo_state', entityId, open: true, hold: seen.revealed, used: holdWeight(seen.revealed), capacity: 0, ship: shipHold, shipCapacity: c.capacity,
+      ...(seen.hidden > 0 ? { hidden: seen.hidden, revealInMs: Math.ceil(seen.nextInMs) } : {}),
+      ...(verdict ?? {}),
+    };
   }
 
   /** A pickup landed: tell the collector (UI accelerator — the authoritative

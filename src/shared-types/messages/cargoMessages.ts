@@ -108,6 +108,11 @@ export const CargoStateSchema = z
       .optional(),
     /** The verdict of the action this replies to, or why it's locked. */
     message: z.string().max(200).optional(),
+    /** Loot window search (cargo-pods slice 12): `hold` carries only the
+     *  stacks found so far; `hidden` more are still "?" tiles, the next shows
+     *  in `revealInMs` of searching (ask again then). Absent = all shown. */
+    hidden: z.number().int().nonnegative().max(1024).optional(),
+    revealInMs: z.number().int().nonnegative().max(60_000).optional(),
     ok: z.boolean().optional(),
   })
   .strict();
