@@ -38,6 +38,12 @@ structure +6, each robot +12, a living nexus +80; sides that oppose it push
 it down. Robots oppose everyone; a player opposes every other side
 (`controlOpposes` in `livingworld/factionPresence.ts`).
 
+The Ancients (the alien-gate owners) don't count for capture: their gates
+and ships push no share, so they never claim a sector, never show as the
+challenger and never push another side down. They are left out of the
+presence tally at one place (`countsForControl` in `fillSectorPresence`); a
+saved meter that still holds an Ancients share or hold drops it on restore.
+
 Shares move at 1.5 per second, so a squad passing through does not flip a
 sector. A side **claims** a sector at 60 and only **loses** it at 20
 (hysteresis), so a contested frontier doesn't flicker on the map. An empty

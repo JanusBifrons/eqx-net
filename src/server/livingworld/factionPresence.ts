@@ -9,9 +9,10 @@
  *  - an NPC hull → its patrol faction, else its kind's allegiance;
  *  - a structure → its owner's faction (`parseOwner(owner).faction`).
  *
- * Who works against whom on the meter is `controlOpposes` below.
+ * Who works against whom on the meter is `controlOpposes` below. The
+ * Ancients never count (`countsForControl`).
  */
-import { defaultFactionPolicy, isNpcFactionId } from '../../shared-types/factions.js';
+import { defaultFactionPolicy, isNpcFactionId, npcFactionDef } from '../../shared-types/factions.js';
 import { createRelationContext, npcOwner, relationOf } from '../../shared-types/relations.js';
 import type { SidePresence } from '../../core/territory/sectorControl.js';
 import { getTradeSink } from '../economy/tradeSink.js';
@@ -56,6 +57,15 @@ export function controlOpposes(a: string, b: string): boolean {
   return relationOf(oa, ob, CONTROL_RELATIONS) === 'hostile' || relationOf(ob, oa, CONTROL_RELATIONS) === 'hostile';
 }
 
+/**
+ * True when `faction` takes part in sector control. The Ancients (kind
+ * `ancient`, the alien-gate owners) don't count for capture: the one choke
+ * point is `fillSectorPresence`; a restored share of theirs is dropped too.
+ */
+export function countsForControl(faction: string): boolean {
+  return npcFactionDef(faction)?.kind !== 'ancient';
+}
+
 /** The robots' side id on the meter (the `robots` NPC faction). */
 export const ROBOT_SIDE = 'robots';
 
@@ -81,6 +91,7 @@ export function fillSectorPresence(
   };
   if (byFaction) {
     for (const [faction, c] of byFaction) {
+      if (!countsForControl(faction)) continue;
       const ships = faction === ROBOT_SIDE ? 0 : c.ships;
       if (ships === 0 && c.structures === 0) continue;
       const p = take();
