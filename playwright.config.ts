@@ -106,6 +106,7 @@ const FEATURE_SPECS: string[] = [
   '**/nose-turret-drawn.spec.ts',
   // Capital-ship R&D round 3 D — helm orders (tap a course, speed, WASD override).
   '**/capital-helm.spec.ts',
+  '**/player-capital-galaxy.spec.ts',
   '**/fleet-warp-client.spec.ts',
   // Capital destruction S2b: a killed capital's wreck pieces reach the client and are drawn.
   '**/capital-wreck-render.spec.ts',
