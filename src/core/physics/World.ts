@@ -10,13 +10,7 @@ import {
 } from '../../shared-types/shipKinds.js';
 import { configureShipCollider, shipShieldColliderDesc } from './colliderConfig.js';
 import { applyShipInput, type ShipInputArgs, type ShipInputMultipliers } from './applyShipInput.js';
-import { newWarpState, stepWarp, WARP_ALIGN_GAIN, WARP_EXIT_SPEED, WARP_SPEED, WARP_SPOOL_TICKS, type WarpPhase, type WarpState } from './warpDrive.js';
-/** Warp-to (pilot and NPC alike): a ship engages only once within this of
- *  facing its target (rad). */
-const WARP_ALIGN_RAD = 0.06;
-/** Warp-to: the slowest a spooling ship turns to face its jump (rad/s; 9°/s,
- *  so a battleship comes about in ~20 s instead of 2.5 min at its 1.2°/s helm). */
-const WARP_MIN_TURN = Math.PI / 20;
+import { newWarpState, spoolHeldForAlign, stepWarp, WARP_ALIGN_GAIN, WARP_EXIT_SPEED, WARP_MIN_TURN, WARP_SPEED, type WarpPhase, type WarpState } from './warpDrive.js';
 import { castHitscan } from './hitscanRay.js';
 import { wallGeometry } from '../structures/ShieldWall.js';
 import { applyForceFields, storeForceField, type ForceField } from './forceFields.js';
@@ -589,9 +583,9 @@ export class PhysicsWorld {
       const body = rec.body;
       const t = body.translation();
       const w = rec.warp;
-      // A slow-turning hull keeps spooling until it faces the jump (the same
-      // hold as `botWarp`): engaging early snapped it round in one tick.
-      if (hasReq && this.spoolHeldForAlign(rec, w, this._warpReq.x, this._warpReq.y)) {
+      // A slow hull keeps spooling until it faces the (unchanged) jump, as in `botWarp`.
+      const q = this._warpReq;
+      if (hasReq && q.x === w.tx && q.y === w.ty && spoolHeldForAlign(w, t.x, t.y, body.rotation(), q.x, q.y)) {
         const s = this._spoolInput;
         s.thrust = input.thrust; s.boost = input.boost; s.reverse = input.reverse;
         applyShipInput(body, rec.kind, s, rec.statMul);
@@ -634,20 +628,6 @@ export class PhysicsWorld {
     this.alignToWarp(rec, rec.warp!, WARP_MIN_TURN);
   }
 
-  /** True while a spool that has run its time must keep going because the
-   *  hull is still more than `WARP_ALIGN_RAD` off the jump (target unchanged:
-   *  a retarget restarts the spool in `stepWarp`). The pilot's form of the
-   *  hold `botWarp` runs inline (same `WARP_ALIGN_RAD` / `WARP_MIN_TURN`). */
-  private spoolHeldForAlign(rec: ShipBody, w: WarpState, tx: number, ty: number): boolean {
-    if (w.phase !== 'spool' || w.ticks < WARP_SPOOL_TICKS - 1) return false;
-    if (tx !== w.tx || ty !== w.ty) return false;
-    const body = rec.body;
-    const t = body.translation();
-    const want = Math.atan2(-(tx - t.x), ty - t.y);
-    const d = Math.atan2(Math.sin(want - body.rotation()), Math.cos(want - body.rotation()));
-    return Math.abs(d) > WARP_ALIGN_RAD;
-  }
-
   /**
    * NPC warp-to (wrap-up W2a, flagship fleets): the same spool → run → drop
    * machine as a pilot's (`stepWarp`), driven by a held target instead of the
@@ -676,16 +656,12 @@ export class PhysicsWorld {
     // A slow-turning ship (a capital) keeps spooling until it faces its
     // target: engaging early snapped the hull round in one frame (first fleet
     // film). This is what makes a capital's spool the long one.
-    if (target !== null && w.phase === 'spool' && w.ticks >= WARP_SPOOL_TICKS - 1) {
-      const want = Math.atan2(-(target.x - t.x), target.y - t.y);
-      const d = Math.atan2(Math.sin(want - body.rotation()), Math.cos(want - body.rotation()));
-      if (Math.abs(d) > WARP_ALIGN_RAD) {
-        w.tx = target.x; w.ty = target.y;
-        const v = body.linvel(); // TODO: alloc-debt (Rapier returns a fresh vector)
-        this.setBotVel(body, v.x * 0.9, v.y * 0.9);
-        this.alignToWarp(rec, w, WARP_MIN_TURN);
-        return true;
-      }
+    if (target !== null && spoolHeldForAlign(w, t.x, t.y, body.rotation(), target.x, target.y)) {
+      w.tx = target.x; w.ty = target.y;
+      const v = body.linvel(); // TODO: alloc-debt (Rapier returns a fresh vector)
+      this.setBotVel(body, v.x * 0.9, v.y * 0.9);
+      this.alignToWarp(rec, w, WARP_MIN_TURN);
+      return true;
     }
     const act = stepWarp(w, target, t.x, t.y, 1 / 60);
     if (act === 'engage') {

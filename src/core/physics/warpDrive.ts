@@ -29,6 +29,22 @@ export const WARP_EXIT_SPEED = 150;
  *  radian off, capped at the kind's turn rate (World.alignToWarp). */
 export const WARP_ALIGN_GAIN = 8;
 
+/** A ship engages only once within this of facing its target (rad), pilot
+ *  and NPC alike. */
+export const WARP_ALIGN_RAD = 0.06;
+/** The slowest a spooling ship turns to face its jump (rad/s; 9°/s, so a
+ *  battleship comes about in ~20 s instead of 2.5 min at its 1.2°/s helm). */
+export const WARP_MIN_TURN = Math.PI / 20;
+
+/** Has a spool run its time with the hull still more than `WARP_ALIGN_RAD`
+ *  off (tx, ty)? Then it keeps spooling: engaging early snapped a slow hull
+ *  round in one tick. Nose = (-sin θ, cos θ). Pure; World pilot + bot paths. */
+export function spoolHeldForAlign(s: WarpState, x: number, y: number, rot: number, tx: number, ty: number): boolean {
+  if (s.phase !== 'spool' || s.ticks < WARP_SPOOL_TICKS - 1) return false;
+  const off = Math.atan2(-(tx - x), ty - y) - rot;
+  return Math.abs(Math.atan2(Math.sin(off), Math.cos(off))) > WARP_ALIGN_RAD;
+}
+
 export type WarpPhase = 'idle' | 'spool' | 'cruise';
 
 export interface WarpState {
