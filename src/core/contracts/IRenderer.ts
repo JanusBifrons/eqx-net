@@ -350,6 +350,10 @@ export interface StructureRenderState {
   /** The slot blueprint (P2b): runs (BP_RUNS_ORIGINAL = original) + quality. */
   bpRuns?: number;
   bpQuality?: number;
+  /** Structure-restyle 2e: the rig clip playing on this structure, from its
+   *  room-state row (late-join safe). `startTick` is a server tick; the
+   *  target is in the HOST frame (y-up, unscaled). Absent: the rig rests. */
+  rigClip?: { clipId: string; startTick: number; targetX?: number; targetY?: number };
   /** v4 T1 — a teleporter: present only for teleporter kinds. */
   teleport?: {
     phase: number;
@@ -477,6 +481,11 @@ export interface ShellSalvoRenderInfo {
 }
 
 export interface RenderMirror {
+  /** Structure-restyle 2e: the client's tick clock for rig clips, in game
+   *  ticks plus the fraction since the last one. It is the predicted tick
+   *  predWorld's `stepRigs` last posed, advanced by game time since that tick
+   *  was due. Absent (tests, before welcome): the renderer's fx clock. */
+  rigTick?: number;
   /** The sector's game speed (time scale stream), from the snapshot keyframe.
    *  Absent = 1×. Renderers read it for the display-delay window and the
    *  presentation frame dt, so every effect follows the speed on its own. */

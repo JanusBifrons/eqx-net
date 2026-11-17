@@ -102,7 +102,7 @@ import type { BotCarry } from '../livingworld/botTypes.js';
 import { droneMaxHealthOf, getDroneMaxHealth, getDroneShieldMax } from './droneKindHelpers.js';
 import { STRUCTURE_DEFAULT_HEALTH } from '../../core/swarm/structureConstants.js';
 import { StructureRegistry, type StructureRecord } from '../structures/StructureRegistry.js';
-import { startStructureRigClip } from '../structures/structureRigClip.js';
+import { startStructureRigClip, writeRigClipRow } from '../structures/structureRigClip.js';
 import { FactionLedger } from '../faction/FactionLedger.js';
 import { isBaseReady } from '../../core/faction/Faction.js';
 import type { FactionBaseReadiness, SectorLiveCounts } from '../livingworld/LivingWorldRoom.js';
@@ -1447,11 +1447,15 @@ export class SectorRoom extends Room<SectorState> {
    *  structure `id` from this tick, with an optional target in the
    *  structure's frame. Records `StructureRecord.rigClip` and moves the rig's
    *  solid parts in the physics worker. False when the structure, its rig or
-   *  the clip is unknown. Not on the wire until slice 2e. */
+   *  the clip is unknown. Writes the structure's room-state row now (2e), so
+   *  the clip reaches clients in the next patch, not the next pulse. */
   startStructureRigClip(id: string, clipId: string | null, target?: { readonly x: number; readonly y: number }): boolean {
     const rec = this.structureRegistry.get(id);
     if (!rec) return false;
-    return startStructureRigClip(rec, clipId, this.serverTick, (cmd) => this.postToWorker(cmd), target);
+    if (!startStructureRigClip(rec, clipId, this.serverTick, (cmd) => this.postToWorker(cmd), target)) return false;
+    const st = rec.stateKey !== undefined ? (this.state as SectorState).structures.get(rec.stateKey) : undefined;
+    if (st) writeRigClipRow(rec, st);
+    return true;
   }
   /** Pre-Stage-5: gated the 20 Hz broadcast — fired every 3 update() calls.
    *  Stage 5 replaces this with per-client {@link shouldBroadcastFar} /
@@ -7920,6 +7924,7 @@ export class SectorRoom extends Room<SectorState> {
         if ((st.bpQuality ?? SD.bpQuality) !== bq) st.bpQuality = bq;
       }
       if (isTeleporterKind(rec.kind)) this.syncTeleporterState(rec, st);
+      if (rec.rigClip !== undefined) writeRigClipRow(rec, st); // restyle 2e (late-join safe, #16)
       this.syncConnTo(rec.id, st);
       // Fast cosmetics stay on the snapshot (only structures with a target).
       if (

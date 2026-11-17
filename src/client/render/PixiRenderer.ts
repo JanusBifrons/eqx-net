@@ -440,8 +440,8 @@ export class PixiRenderer implements IRenderer {
   /** Dying capitals drawn at their last pose until their wreck pieces are
    *  (capital-breakup take B, 2026-11-13: the hull vanished ~0.5 s first). */
   private readonly _dyingHulls = new DyingHullHold();
-  /** Structure restyle 2c (`?rigs=1`, main thread): rig views + their per-structure
-   *  clip inputs (`structureRigs.inputs`). Null with the flag off. */
+  /** Structure restyle 2c (`?rigs=1`, main thread): rig views, posed from each
+   *  structure row's `rigClip` (2e). Null with the flag off. */
   structureRigs: StructureRigs | null = null;
   /** Sprite key → the ship kind it was built for (every ship, swarm).
    *  Bound once (no per-frame closure, #14). */

@@ -584,10 +584,15 @@ export class PhysicsWorld {
   /** Start (or, with `clipId` null, clear) the clip playing on `hostId`'s rig:
    *  the `PlayingClip` record `{clipId, startTick, target?}` (game ticks;
    *  target in the host frame). Copied: no reference is kept. No-op for a
-   *  host without a rig. */
+   *  host without a rig, and for the record already playing (the client
+   *  re-applies its room-state record every snapshot). */
   setRigClip(hostId: string, clipId: string | null, startTick = 0, targetX?: number, targetY?: number): void {
     const r = this.rigs.get(hostId);
     if (!r) return;
+    if (clipId === null ? !r.hasClip : r.hasClip && r.playing.clipId === clipId && r.playing.startTick === startTick
+      && (targetX !== undefined && targetY !== undefined
+        ? r.playing.target !== undefined && r.playing.target.x === targetX && r.playing.target.y === targetY
+        : r.playing.target === undefined)) return;
     r.hasClip = clipId !== null;
     r.playing.clipId = clipId ?? '';
     r.playing.startTick = startTick;

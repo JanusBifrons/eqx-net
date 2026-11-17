@@ -18,8 +18,11 @@ import {
   STRUCTURE_FLAG_DRAW_FULL,
   STRUCTURE_FLAG_BREACH,
   STRUCTURE_DEFAULTS as D,
+  STRUCTURE_RIG_CLIP_TARGET,
+  decodeRigClipIndex,
   type StructureStateView,
 } from '../../shared-types/structureStateWire.js';
+import { rigForStructureKind } from '../../core/articulation/rigCatalogue.js';
 
 export function emptyStructureRow(): StructureRenderState {
   return { powered: false, netPower: 0, connTo: [], built: false, buildPct: 0, deconstructPct: 0 };
@@ -32,7 +35,12 @@ export interface StructureOwnerTables {
   names: readonly string[];
 }
 
-export function decodeStructureState(v: StructureStateView, owners: StructureOwnerTables, out: StructureRenderState): void {
+/** `rigKind` is the structure kind (its swarm entry `shipKind`), which maps
+ *  the wire clip index to its id; unknown (no pose yet) ⇒ no `rigClip` until
+ *  a later decode knows it. */
+export function decodeStructureState(
+  v: StructureStateView, owners: StructureOwnerTables, out: StructureRenderState, rigKind?: string,
+): void {
   const flags = v.flags ?? D.flags;
   const built = (flags & STRUCTURE_FLAG_BUILT) !== 0;
   out.powered = (flags & STRUCTURE_FLAG_POWERED) !== 0;
@@ -91,6 +99,7 @@ export function decodeStructureState(v: StructureStateView, owners: StructureOwn
     t.padWeight = v.padWeight ?? D.padWeight;
     t.toll = v.tpToll ?? D.tpToll;
   }
+  decodeRigClip(v, out, rigKind);
   const oi = v.ownerIdx ?? D.ownerIdx;
   out.owner = owners.ids[oi] ?? '';
   const name = owners.names[oi] ?? '';
@@ -100,4 +109,26 @@ export function decodeStructureState(v: StructureStateView, owners: StructureOwn
   const conn = out.connTo;
   conn.length = 0;
   for (let i = 0; i < v.connTo.length; i++) conn.push(v.connTo.at(i)!);
+}
+
+/** Structure-restyle 2e: the row's rig clip onto `out.rigClip` (reused in
+ *  place while a clip plays; allocates only when a clip starts after none). */
+function decodeRigClip(v: StructureStateView, out: StructureRenderState, rigKind: string | undefined): void {
+  const code = v.rigClip ?? D.rigClip;
+  const rig = code !== 0 && rigKind !== undefined ? rigForStructureKind(rigKind) : null;
+  const clip = rig !== null ? rig.clips[decodeRigClipIndex(code)] : undefined;
+  if (clip === undefined) {
+    out.rigClip = undefined;
+    return;
+  }
+  const r = (out.rigClip ??= { clipId: '', startTick: 0 });
+  r.clipId = clip.id;
+  r.startTick = v.rigStart ?? D.rigStart;
+  if ((code & STRUCTURE_RIG_CLIP_TARGET) !== 0) {
+    r.targetX = v.rigTx ?? D.rigTx;
+    r.targetY = v.rigTy ?? D.rigTy;
+  } else {
+    r.targetX = undefined;
+    r.targetY = undefined;
+  }
 }

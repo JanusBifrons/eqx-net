@@ -4173,7 +4173,8 @@ export class ColyseusGameClient {
       row = emptyStructureRow();
       map.set(id, row);
     }
-    decodeStructureState(v, this._structureOwners, row);
+    // The kind (from the swarm pose) maps the wire rig clip index to its id.
+    decodeStructureState(v, this._structureOwners, row, this.mirror.swarm?.get(id)?.shipKind);
     row.turretTargetId = undefined;
     row.turretTargetPlayerId = undefined;
     row.miningTargetId = undefined;
@@ -4257,6 +4258,7 @@ export class ColyseusGameClient {
     this._tractors.sync(targets, this._beamLinkVisitor, this.predWorld);
     this.syncPredWalls();
     this.syncForceFields();
+    this.syncRigClips();
     this.syncMines();
   }
 
@@ -4265,6 +4267,24 @@ export class ColyseusGameClient {
 
   /** v4 T2 — each teleporter's closing push in the prediction world, from the
    *  room-state phase (the server worker runs the same field, #15). */
+  /** Structure-restyle 2e: each structure's rig clip (room state, decoded
+   *  onto its row) into predWorld, so its solid rig parts replay the server's
+   *  clip on the same tick numbering (`stepRigs`). Snapshot cadence. */
+  private syncRigClips(): void {
+    const world = this.predWorld;
+    const structures = this.mirror.structures;
+    if (!world || !structures) return;
+    for (const [id, st] of structures) {
+      const key = this._swarmBodyKeyCache.get(id);
+      if (key === undefined) continue;
+      const c = st.rigClip;
+      // Idempotent: an unchanged record (or a host with no rig) is a no-op,
+      // and a rig attached after the row arrived (streamed in) picks it up.
+      if (c === undefined) world.setRigClip(key, null);
+      else world.setRigClip(key, c.clipId, c.startTick, c.targetX, c.targetY);
+    }
+  }
+
   private syncForceFields(): void {
     const world = this.predWorld;
     const structures = this.mirror.structures;
@@ -4511,6 +4531,22 @@ export class ColyseusGameClient {
   /** `frameNowMs`: the frame's own timestamp (the RAF time), so the local ship
    *  is drawn where it is at the moment the frame stands for, not wherever the
    *  clock had got to after this frame's snapshot work. Absent ⇒ the clock. */
+  /**
+   * Structure-restyle 2e: the rig clip clock (`RenderMirror.rigTick`), in
+   * server tick numbering. It is the predicted tick predWorld's `stepRigs`
+   * last posed (`inputTick`) plus the game time since that tick was due, in
+   * ticks (capped like the local ship's dead-reckon), so the drawn rig and its
+   * predWorld colliders follow the same timeline, and a clip that started
+   * before this client joined is drawn mid-way (or at its end pose), never
+   * restarted. Undefined before welcome.
+   */
+  private rigClockTick(frameNowMs?: number): number | undefined {
+    if (this.welcomePerfNow === 0) return undefined;
+    if (this._lastLocalTickAtMs < 0) return this.inputTick;
+    const ms = this.gameClock.at(frameNowMs ?? this.clock.now()) - this._lastLocalTickAtMs;
+    return this.inputTick + Math.max(-DEAD_RECKON_BACK_MS, Math.min(DEAD_RECKON_CAP_MS, ms)) / (1000 / 60);
+  }
+
   updateMirror(frameNowMs?: number): void {
     this.mirror.frameTimeMs = frameNowMs ?? this.clock.now();
     // step 10: 1Hz HUD dispatcher — drains pending hull/shield pct to
@@ -4528,6 +4564,7 @@ export class ColyseusGameClient {
     // the tail `logEvent` is skipped.
     const mirrorRebuildStart = isDiagEnabled() ? this.clock.now() : -1;
     const localId = this.mirror.localPlayerId;
+    this.mirror.rigTick = this.rigClockTick(frameNowMs);
 
     // Smooth-beam (2026-05-22): drain scheduled visual damage-number
     // spawns whose time has come. See `_scheduledDamageSpawns` field

@@ -23,7 +23,12 @@ import {
   STRUCTURE_FLAG_DECONSTRUCTING,
   STRUCTURE_FLAG_POWERED,
   STRUCTURE_FLAG_WALL_ACTIVE,
+  STRUCTURE_RIG_CLIP_TARGET,
+  encodeRigClip,
+  decodeRigClipIndex,
 } from '../../../src/shared-types/structureStateWire.js';
+import { writeRigClipRow } from '../../../src/server/structures/structureRigClip.js';
+import type { StructureRecord } from '../../../src/server/structures/StructureRegistry.js';
 
 function row(fields: Partial<StructureState> & { connTo?: number[] }): StructureState {
   const st = new StructureState();
@@ -109,5 +114,53 @@ describe('structure room-state wire — server row → client mirror row', () =>
     expect(out.storedPower).toBeUndefined();
     expect(out.shieldWallTo).toBeUndefined();
     expect(out.connTo).toEqual([]);
+  });
+});
+
+describe('structure rig clip on the wire (restyle 2e, late-join safe)', () => {
+  function rigRec(clip: StructureRecord['rigClip']): StructureRecord {
+    return { id: 's-1', kind: 'freight_dock', rigClip: clip } as unknown as StructureRecord;
+  }
+
+  it('a playing clip with a target round-trips to the same clip, start tick and target', () => {
+    const st = new StructureState();
+    const tx = Math.fround(12.3), ty = Math.fround(-45.6);
+    writeRigClipRow(rigRec({ clipId: 'arm-reach', startTick: 123456, target: { x: tx, y: ty } }), st);
+    const c = roundTrip({ '5': st });
+    const out = emptyStructureRow();
+    decodeStructureState(c.structures.get('5')!, OWNERS, out, 'freight_dock');
+    expect(out.rigClip).toEqual({ clipId: 'arm-reach', startTick: 123456, targetX: tx, targetY: ty });
+  });
+
+  it('a clip without a target carries no target; clear and unknown kind decode to no clip', () => {
+    const st = new StructureState();
+    const rec = rigRec({ clipId: 'arm-retract', startTick: 9 });
+    writeRigClipRow(rec, st);
+    let out = emptyStructureRow();
+    decodeStructureState(roundTrip({ '5': st }).structures.get('5')!, OWNERS, out, 'freight_dock');
+    expect(out.rigClip).toEqual({ clipId: 'arm-retract', startTick: 9, targetX: undefined, targetY: undefined });
+
+    const st2 = new StructureState();
+    writeRigClipRow(rec, st2);
+    out = emptyStructureRow();
+    decodeStructureState(roundTrip({ '5': st2 }).structures.get('5')!, OWNERS, out);
+    expect(out.rigClip).toBeUndefined();
+
+    const st3 = new StructureState();
+    writeRigClipRow(rec, st3);
+    rec.rigClip = null;
+    writeRigClipRow(rec, st3);
+    expect(st3.rigClip).toBe(0);
+    out = emptyStructureRow();
+    decodeStructureState(roundTrip({ '5': st3 }).structures.get('5')!, OWNERS, out, 'freight_dock');
+    expect(out.rigClip).toBeUndefined();
+  });
+
+  it('the clip code packs index + 1 with a target bit', () => {
+    expect(encodeRigClip(0, false)).toBe(1);
+    expect(encodeRigClip(2, true)).toBe(3 | STRUCTURE_RIG_CLIP_TARGET);
+    expect(decodeRigClipIndex(encodeRigClip(2, true))).toBe(2);
+    expect(decodeRigClipIndex(0)).toBe(-1);
+    expect(() => encodeRigClip(127, false)).toThrow();
   });
 });
