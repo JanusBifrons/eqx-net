@@ -91,4 +91,66 @@ describe('ConnectorRenderer line looks (structure restyle 1g)', () => {
       expect(instructions(idle.staticGfx).length).toBeGreaterThan(0);
     });
   }
+
+  /** Stroke-sequence digest of one look's static body + flow (idle and flowing). */
+  function digest(look: 'pipe' | 'conduit'): string {
+    const out: string[] = [];
+    for (const [flowing, scale] of [[false, 0.5], [true, 0.5], [false, 0.05]] as const) {
+      const r = new ConnectorRenderer();
+      r.lineLook = look;
+      r.update(row(flowing), scale, 100);
+      for (const g of [r.staticGfx, r.gfx]) {
+        for (const i of instructions(g)) {
+          if (i.action !== 'stroke') continue;
+          const s = i.data.style;
+          out.push(`${s.color.toString(16)}/${s.alpha.toFixed(4)}/${s.width.toFixed(4)}`);
+        }
+      }
+    }
+    return out.join(' ');
+  }
+
+  it('pipe and conduit strokes are unchanged by the cable upgrade (1i)', () => {
+    expect(digest('pipe')).toMatchSnapshot();
+    expect(digest('conduit')).toMatchSnapshot();
+  });
+});
+
+describe('cable look upgrade (structure restyle 1i)', () => {
+  it('builds at every zoom: shadow, cradles, strands, lashings, collars, flow', () => {
+    for (const scale of [0.02, 0.05, 0.2, 0.5, 1, 2]) {
+      const r = new ConnectorRenderer();
+      r.lineLook = 'cable';
+      expect(() => r.update(row(true), scale, 100)).not.toThrow();
+      const body = instructions(r.staticGfx).filter((i) => i.action === 'stroke');
+      for (const s of body) {
+        expect(Number.isFinite(s.data.style.width) && s.data.style.width > 0).toBe(true);
+        expect(Number.isFinite(s.data.style.alpha)).toBe(true);
+      }
+      const flow = instructions(r.gfx).filter((i) => i.action === 'stroke');
+      expect(flow.length).toBeGreaterThanOrEqual(3); // bleed, lit core, band
+    }
+  });
+
+  it('a long run gets cradles, lashings and collars; the body is much heavier than the old 7 strokes', () => {
+    const r = new ConnectorRenderer();
+    r.lineLook = 'cable';
+    r.update(row(false), 0.5, 0);
+    const perEdge = instructions(r.staticGfx).filter((i) => i.action === 'stroke').length / 2;
+    // 2 shadows + 6 cradle + 9 strand + 2 lashing + 4 clamp + 4 collar.
+    expect(perEdge).toBe(27);
+    // The bundle is wider on screen than the old cable (~12 world units).
+    const widest = Math.max(...instructions(r.staticGfx).filter((i) => i.action === 'stroke').map((i) => i.data.style.width));
+    expect(widest).toBeGreaterThan(16);
+  });
+
+  it('a run too short for stations still draws strands, no stations', () => {
+    const mirror = row(false);
+    for (const [id, s] of (mirror.swarm as Map<number, SwarmRenderState>)) (s as { x: number }).x = (id - 2) * 30;
+    const r = new ConnectorRenderer();
+    r.lineLook = 'cable';
+    r.update(mirror, 0.5, 0);
+    const perEdge = instructions(r.staticGfx).filter((i) => i.action === 'stroke').length / 2;
+    expect(perEdge).toBe(1 + 9);
+  });
 });
