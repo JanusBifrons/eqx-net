@@ -3,6 +3,8 @@ import type { SectorFeature } from '../../core/galaxy/galaxy';
 import type { SectorLiveState } from '../../shared-types/galaxySnapshot.js';
 import type { RosterEntry } from '../state/storeTypes';
 import { factionDisplayName } from '../../shared-types/factions.js';
+import { splitChallenger } from '../render/galaxy/galaxyTerritories';
+import { NEUTRAL_OWNER } from '../render/galaxy/sectorOwnership';
 
 /**
  * Living Galaxy Phase 6 — the content of the galaxy-map sector tooltip, derived
@@ -16,6 +18,8 @@ export interface SectorTooltipData {
   /** Readable region/faction label (title-cased), never a raw id. */
   faction: string;
   status: 'Neutral' | 'Held' | 'Contested';
+  /** The power pushing in (the hex's split, `splitChallenger`), by name, or null. */
+  challenger: string | null;
   features: readonly SectorFeature[];
   players: number;
   enemies: number;
@@ -36,9 +40,28 @@ export interface SectorTooltipData {
  * sectors are neutral ground (the region is geography only).
  */
 function factionLabel(owner: string | null, region: string): string {
-  if (owner === 'robots') return 'Robot Dominion';
-  if (owner !== null) return factionDisplayName(owner) ?? titleCase(owner);
+  if (owner !== null) return powerName(owner);
   return `Neutral ground, ${titleCase(region)}`;
+}
+
+function powerName(id: string): string {
+  if (id === 'robots') return 'Robot Dominion';
+  return factionDisplayName(id) ?? titleCase(id);
+}
+
+/**
+ * The owner line under a sector name (panel header, desktop tooltip). Reads
+ * the same feed fields the hex draws from: `owner` for the holder and
+ * `control` (via `splitChallenger`) for the split, so text and hex agree.
+ */
+export function ownerLine(tip: Pick<SectorTooltipData, 'faction' | 'status' | 'challenger'>): string {
+  const holder = tip.status === 'Neutral' ? 'Neutral' : tip.faction;
+  return tip.challenger !== null ? `${holder} · contested by ${tip.challenger}` : holder;
+}
+
+function challengerName(live: SectorLiveState | null): string | null {
+  const c = splitChallenger(live?.control, live?.owner?.factionId ?? NEUTRAL_OWNER);
+  return c !== null ? powerName(c) : null;
 }
 
 function titleCase(s: string): string {
@@ -72,6 +95,7 @@ export function buildSectorTooltip(
     name: sector.name,
     faction: factionLabel(live?.owner?.factionId ?? null, sector.region),
     status,
+    challenger: challengerName(live),
     features: sector.features,
     players: live?.players ?? 0,
     enemies: live?.enemies ?? 0,

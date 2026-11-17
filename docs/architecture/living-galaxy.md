@@ -543,16 +543,18 @@ The feed changes every 10 s; the map stays alive in between, driven by the exist
 
 ### Focus view (tap a sector)
 
-Tapping a sector on the full-page map opens a focus view. The pure decisions are in `render/galaxy/galaxyFocus.ts` (state machine, door layout, framing, tap result, panel dock); `galaxyFocusView.ts` is the Pixi side, owned by `GalaxyMapLayer`.
+Tapping a sector on the full-page map opens a focus view. The pure decisions are in `render/galaxy/galaxyFocus.ts` (state machine, framing, hop arrows, tap and hover rules, panel dock); `galaxyFocusView.ts` is the Pixi side, owned by `GalaxyMapLayer`.
 
 - **Driven by the selection.** The sector the info drawer shows (`GalaxyPickerChrome` `selectedSectorKey`) is the focus: `onFocusChange` → `syncGalaxyFocus` → `layer.setFocus` on the DOM path, `SET_GALAXY_FOCUS` to the worker. Closing the drawer (✕, swipe, Join/Warp/Spawn) backs out.
 - **Camera.** The layer's existing pan/zoom `Camera` glides there: `glideTo(x, y, ms, scale)` eases the centre and, when given a scale, the zoom (geometric) over 650 ms (`FOCUS_GLIDE_MS`). Backing out glides to the view you had before the first tap; a hop between sectors keeps that home. A drag or pinch mid-glide stops the glide where it is. Reduced motion snaps.
-- **Framing.** The sector and its doors fill 92% of the screen the panel leaves free (`focusPanelInsets`), capped at the camera's 4x.
-- **Veil and doors.** A veil in the backdrop colour covers the rest of the map with a hole for the focused hex. Each linked neighbour is a small door hex on a ring round it, in that neighbour's direction (spread so none overlap), tinted by its live owner with a chevron pointing out. Tapping a door hops the focus there; tapping the focused hex does nothing; any other tap backs out. Hover-shrink is off while focused.
-- **Panel dock.** `focusPanelDock` is shared with `SectorInfoDrawer`: a landscape desktop docks the panel right (296 px); a phone (touch) or any portrait screen uses a bottom sheet (40% of the height in portrait, 50% sideways, at most 340 px). The landing buttons bottom-right already hide while a sector is selected.
+- **Framing.** The focused hex fills 92% of the height (or width) of the screen the panel leaves free (`focusPanelInsets`), centred in it, capped at the camera's 4x. Neighbours show round it, partly cut by the screen edge on a sideways phone.
+- **Veil and hop targets.** A veil in the backdrop colour covers every sector except the focused one and its linked neighbours (one hex per veiled sector, drawn on a focus change). The neighbours are the REAL hexes: each gets a bright edge in its owner's border colour and a small arrow on the edge it shares with the focused hex, pointing into the neighbour (`hopArrow`; it stays in the rim band, clear of the neighbour's name). Tapping a lit neighbour hops the focus there; tapping the focused hex does nothing; any other tap backs out (on a phone every hex round the focus is a neighbour, so the panel's ✕ is the way out). Hover-shrink is off while focused.
+- **Hover tooltip.** Hidden while the camera glides and over the focused hex (`focusHidesHover`); lit neighbours keep theirs.
+- **Owner line.** The panel header and the desktop tooltip read `ownerLine`: the feed's `owner` for the holder and `control` through `splitChallenger` for "contested by", the same fields the hex draws its split from.
+- **Panel dock.** `focusPanelDock` is shared with `SectorInfoDrawer`: any landscape screen docks the panel right (296 px on desktop; on a phone 30% of the width, 200 to 296 px, starting 56 px down so the top-right full-screen chip stays clear); an upright screen uses a bottom sheet (40% of the height, at most 340 px). The landing buttons bottom-right already hide while a sector is selected.
 - **History.** The drawer shows control over the last hour (`SectorHistorySparkline`): one `GET /galaxy/sector/:key/history` fetch per sector opened, zod-checked, no polling. Line height is the holder's share; dashed ticks mark a change of hands (`sectorSparkline.ts`).
 - **Cost.** Drawing happens on a focus change only; the per-frame tick fades the veil and waits for the glide to land, and does nothing while idle.
-- **E2E hook.** `__eqxGalaxyFocus()` (DOM path) returns the phase, sector and door keys.
+- **E2E hook.** `__eqxGalaxyFocus()` (DOM path) returns the phase, sector and lit neighbour keys.
 
 ## Client rules in detail
 

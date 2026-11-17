@@ -21,7 +21,7 @@ import { fleetWarpRequest } from '../app/fleetWarp';
 import type { ShipKindId } from '../../shared-types/shipKinds';
 import { logEvent } from '../debug/ClientLogger';
 import { useMountLog } from '../debug/useMountLog';
-import { buildSectorTooltip, shipsInSector } from './galaxyTooltip';
+import { buildSectorTooltip, ownerLine, shipsInSector } from './galaxyTooltip';
 import { SectorInfoDrawer } from './SectorInfoDrawer';
 import { isSectorWarpable } from '../render/galaxy/galaxyLayerDecisions';
 import { isTouchDevice } from '../input/TouchInput';
@@ -499,7 +499,7 @@ export function GalaxyPickerChrome({
             {sectorTip.name}
           </Typography>
           <Typography sx={{ color: '#8fe9c0', fontSize: 9, letterSpacing: 0.5, textTransform: 'uppercase' }}>
-            Neutral
+            {ownerLine(sectorTip)}
           </Typography>
           <Box sx={{ display: 'flex', gap: 0.75, mt: 0.5, flexWrap: 'wrap' }}>
             {sectorTip.players > 0 && (
