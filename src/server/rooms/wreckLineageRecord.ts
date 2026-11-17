@@ -26,6 +26,10 @@ import type { LiveWreck } from './capitalWreckTypes.js';
 /** Bump on any change to the record's shape. */
 export const WRECK_LINEAGE_RECORD_VERSION = 1;
 
+/** A piece's stored `integrity` when it is infinite (never wears out):
+ *  restore maps it back to `Number.POSITIVE_INFINITY`. */
+export const WRECK_LINEAGE_UNBREAKABLE = -1;
+
 const u16 = z.number().int().min(0).max(0xffff);
 const pieceIndex = z.number().int().min(0).max(MAX_WRECK_PIECE_INDEX);
 const cutKind = z.enum(['slice', 'channel']);
@@ -86,7 +90,10 @@ const NodeSchema = z
   })
   .strict();
 
-/** A live piece at rest: its node, its index in that node's pieces, pose. */
+/** A live piece at rest: its node, its index in that node's pieces, pose,
+ *  and its remaining integrity (`PieceKnock.integrity`, so a worn piece
+ *  stays worn): `WRECK_LINEAGE_UNBREAKABLE` (-1) for an infinite one (a
+ *  kind whose pieces never split; JSON has no Infinity), else finite ≥ 0. */
 const PieceSchema = z
   .object({
     node: z.number().int().min(0),
@@ -94,6 +101,7 @@ const PieceSchema = z
     x: z.number().finite(),
     y: z.number().finite(),
     angle: z.number().finite(),
+    integrity: z.union([z.literal(WRECK_LINEAGE_UNBREAKABLE), z.number().finite().min(0)]),
   })
   .strict();
 
@@ -138,8 +146,9 @@ export interface WreckLineageDeps {
   /** Visit every live wreck (dead ancestors with live children included). */
   forEachWreck(visit: (w: WreckLineageView) => void): void;
   /** Visit each live piece of wreck `wreckId` with its index in that wreck's
-   *  pieces (the swarm record's `componentIndex`) and its pose. */
-  forEachLivePiece(wreckId: number, visit: (pieceIndex: number, x: number, y: number, angle: number) => void): void;
+   *  pieces (the swarm record's `componentIndex`), its pose and its remaining
+   *  integrity (`PieceKnock.integrity`; may be infinite). */
+  forEachLivePiece(wreckId: number, visit: (pieceIndex: number, x: number, y: number, angle: number, integrity: number) => void): void;
 }
 
 function copyCuts(cuts: ReadonlyArray<WreckExtraCut>): WreckExtraCut[] {
@@ -194,7 +203,9 @@ export function collectLineage(rootId: number, deps: WreckLineageDeps): WreckLin
   }
   const pieces: WreckLineagePiece[] = [];
   for (let i = 0; i < order.length; i++) {
-    deps.forEachLivePiece(order[i]!.desc.wreckId, (piece, x, y, angle) => { pieces.push({ node: i, piece, x, y, angle }); });
+    deps.forEachLivePiece(order[i]!.desc.wreckId, (piece, x, y, angle, integrity) => {
+      pieces.push({ node: i, piece, x, y, angle, integrity: Number.isFinite(integrity) ? Math.max(0, integrity) : WRECK_LINEAGE_UNBREAKABLE });
+    });
   }
   return { version: WRECK_LINEAGE_RECORD_VERSION, fractureAlgo: FRACTURE_ALGO_VERSION, nodes, pieces };
 }

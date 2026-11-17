@@ -9,12 +9,12 @@ import { FRACTURE_ALGO_VERSION } from '../../core/destruction/fractureHull.js';
 import type { WreckChildStep } from '../../core/destruction/wreckChildren.js';
 import type { WreckDescriptor } from '../../shared-types/messages/wreckDescriptor.js';
 import {
-  collectLineage, parseLineageRecord, WRECK_LINEAGE_RECORD_VERSION,
+  collectLineage, parseLineageRecord, WRECK_LINEAGE_RECORD_VERSION, WRECK_LINEAGE_UNBREAKABLE,
   type WreckLineageDeps, type WreckLineageView,
 } from './wreckLineageRecord.js';
 import type { WreckOre } from './capitalWreckTypes.js';
 
-interface FakePiece { wreckId: number; index: number; x: number; y: number; angle: number; vx: number }
+interface FakePiece { wreckId: number; index: number; x: number; y: number; angle: number; vx: number; integrity: number }
 
 function view(desc: WreckDescriptor, parent: number, root: number, steps: WreckChildStep[], ore?: WreckOre): WreckLineageView {
   return { desc, parent, root, chain: { root: { seed: desc.seed, killX: 0, killY: 0, killBlowDamage: 0, recentDamageRate: 0, snapChance: 0 }, steps }, ...(ore !== undefined ? { ore } : {}) };
@@ -24,7 +24,7 @@ function deps(wrecks: WreckLineageView[], pieces: FakePiece[]): WreckLineageDeps
   return {
     forEachWreck: (visit) => { for (const w of wrecks) visit(w); },
     forEachLivePiece: (wreckId, visit) => {
-      for (const p of pieces) if (p.wreckId === wreckId) visit(p.index, p.x, p.y, p.angle);
+      for (const p of pieces) if (p.wreckId === wreckId) visit(p.index, p.x, p.y, p.angle, p.integrity);
     },
   };
 }
@@ -47,11 +47,11 @@ function shipLineage() {
   const foreign = view({ ...base, wreckId: 9, parentKind: 'frigate', seed: 1, killX: 0, killY: 0 }, 0, 9, []);
   const wrecks = [grand, foreign, sibling, dead, root];
   const pieces: FakePiece[] = [
-    { wreckId: 40, index: 0, x: 100, y: 200, angle: 0.5, vx: 3 },
-    { wreckId: 40, index: 3, x: 110, y: 190, angle: -1, vx: 0 },
-    { wreckId: 300, index: 1, x: 120.25, y: 205, angle: 2, vx: 1 },
-    { wreckId: 41, index: 0, x: 90, y: 210, angle: 0, vx: 0 },
-    { wreckId: 9, index: 0, x: 0, y: 0, angle: 0, vx: 0 },
+    { wreckId: 40, index: 0, x: 100, y: 200, angle: 0.5, vx: 3, integrity: 12.5 },
+    { wreckId: 40, index: 3, x: 110, y: 190, angle: -1, vx: 0, integrity: Number.POSITIVE_INFINITY },
+    { wreckId: 300, index: 1, x: 120.25, y: 205, angle: 2, vx: 1, integrity: 0 },
+    { wreckId: 41, index: 0, x: 90, y: 210, angle: 0, vx: 0, integrity: 300 },
+    { wreckId: 9, index: 0, x: 0, y: 0, angle: 0, vx: 0, integrity: 1 },
   ];
   return deps(wrecks, pieces);
 }
@@ -83,7 +83,10 @@ describe('wreck lineage record', () => {
     expect(rec!.nodes[0]!.desc.owner).toBe('player-1');
     // Pieces: pose only, no velocity; the foreign wreck's piece is not here.
     expect(rec!.pieces).toHaveLength(4);
-    expect(rec!.pieces).toContainEqual({ node: grandIdx, piece: 1, x: 120.25, y: 205, angle: 2 });
+    expect(rec!.pieces).toContainEqual({ node: grandIdx, piece: 1, x: 120.25, y: 205, angle: 2, integrity: 0 });
+    // Wear survives: a worn piece keeps its integrity; an infinite one is -1 (JSON has no Infinity).
+    expect(rec!.pieces).toContainEqual({ node: 0, piece: 0, x: 100, y: 200, angle: 0.5, integrity: 12.5 });
+    expect(rec!.pieces).toContainEqual({ node: 0, piece: 3, x: 110, y: 190, angle: -1, integrity: WRECK_LINEAGE_UNBREAKABLE });
     expect(parseLineageRecord(roundTrip(rec))).toEqual(rec);
   });
 
@@ -91,7 +94,7 @@ describe('wreck lineage record', () => {
     const ore: WreckOre = { rockId: 'rock-1', resource: 'ice', perArea: 0.125 };
     const root = view({ ...base, wreckId: 5, parentKind: 'asteroid', seed: 77, killX: 1, killY: 2, rock: { id: 'rock-1', shape: 4242, r: 400, res: 'ice' } }, 0, 5, [], ore);
     const child = view({ ...base, wreckId: 6, parentKind: 'asteroid', seed: 78, killX: 0, killY: 1, parentWreck: 5, parentPiece: 3 }, 5, 5, [{ pieceIndex: 3, killX: 0, killY: 1 }], ore);
-    const rec = collectLineage(5, deps([child, root], [{ wreckId: 6, index: 2, x: 1, y: 2, angle: 3, vx: 0 }]));
+    const rec = collectLineage(5, deps([child, root], [{ wreckId: 6, index: 2, x: 1, y: 2, angle: 3, vx: 0, integrity: 7.25 }]));
     expect(rec!.nodes.map((n) => n.ore)).toEqual([ore, ore]);
     expect(rec!.nodes[0]!.desc.rock).toEqual({ id: 'rock-1', shape: 4242, r: 400, res: 'ice' });
     expect(parseLineageRecord(roundTrip(rec))).toEqual(rec);
@@ -122,8 +125,12 @@ describe('wreck lineage record', () => {
     // A child listed before its parent.
     expect(parseLineageRecord({ ...rec, nodes: [rec.nodes[1], rec.nodes[0], ...rec.nodes.slice(2)] })).toBeNull();
     // A piece on a node that does not exist; a non-finite pose; an unknown key.
-    expect(parseLineageRecord({ ...rec, pieces: [{ node: 99, piece: 0, x: 0, y: 0, angle: 0 }] })).toBeNull();
-    expect(parseLineageRecord({ ...rec, pieces: [{ node: 0, piece: 0, x: 'a', y: 0, angle: 0 }] })).toBeNull();
+    expect(parseLineageRecord({ ...rec, pieces: [{ node: 99, piece: 0, x: 0, y: 0, angle: 0, integrity: 1 }] })).toBeNull();
+    expect(parseLineageRecord({ ...rec, pieces: [{ node: 0, piece: 0, x: 'a', y: 0, angle: 0, integrity: 1 }] })).toBeNull();
+    // Integrity: missing, negative other than -1, or null (JSON's Infinity).
+    expect(parseLineageRecord({ ...rec, pieces: [{ node: 0, piece: 0, x: 0, y: 0, angle: 0 }] })).toBeNull();
+    expect(parseLineageRecord({ ...rec, pieces: [{ node: 0, piece: 0, x: 0, y: 0, angle: 0, integrity: -2 }] })).toBeNull();
+    expect(parseLineageRecord({ ...rec, pieces: [{ node: 0, piece: 0, x: 0, y: 0, angle: 0, integrity: null }] })).toBeNull();
     expect(parseLineageRecord({ ...rec, extra: 1 })).toBeNull();
   });
 });
