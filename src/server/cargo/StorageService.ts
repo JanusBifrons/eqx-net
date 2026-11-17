@@ -98,6 +98,14 @@ function intakeRequest(h: Hold, intake: ReadonlySet<GoodId>): Partial<Record<Goo
   return out;
 }
 
+/** True when a `deposit(…, intake)` could move something from `h`: any cargo
+ *  with no filter, else any good the intake names (alloc-free). */
+export function holdHasIntake(h: Hold, intake: ReadonlySet<GoodId> | undefined): boolean {
+  if (intake === undefined) return !isHoldEmpty(h);
+  for (const g of intake) if ((h.goods[g] ?? 0) > 0) return true;
+  return false;
+}
+
 export function holdCapacityOf(rec: StructureRecord): number {
   return getStructureKind(rec.kind).holdCapacity ?? 0;
 }

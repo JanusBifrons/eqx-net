@@ -117,6 +117,10 @@ export function isStillForDock(vx: number, vy: number): boolean {
   return vx * vx + vy * vy < DOCK_STILL_SPEED * DOCK_STILL_SPEED;
 }
 
+/** Settle before the crane reaches: a ship must sit still on the bay this
+ *  long (0.75 s of game time) first, so a ship braking through doesn't. */
+export const DOCK_SETTLE_TICKS = 45;
+
 /** Unload hold base: 3 s of game time (60 ticks / s). */
 export const DOCK_UNLOAD_HOLD_MIN_TICKS = 3 * 60;
 /** Extra hold for a full hold: +7 s (so 3 .. 10 s). */

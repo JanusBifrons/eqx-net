@@ -86,8 +86,8 @@ describe('StorageService (P1a-2)', () => {
     const dock = rec('d', 'freight_dock', 0, 0, { freightOrders: [{ good: 'alloy', mode: 'export', level: 3 }] });
     t.registry.add(dock);
     t.ship({ alloy: 4, salvage: 7 });
-    expect(dockIntakeGoods(dock).size).toBe(0);
-    expect(dockIntakeGoods(rec('e', 'freight_dock', 50, 0)).size).toBe(0);
+    expect(dockIntakeGoods(dock)!.size).toBe(0);
+    expect(dockIntakeGoods(rec('e', 'freight_dock', 50, 0)), 'no orders at all = no filter').toBeUndefined();
     t.ops.length = 0;
     const none = t.svc.deposit('ship-1', 'p1', dock, dockIntakeGoods(dock));
     expect(none.goods).toEqual({});

@@ -101,7 +101,8 @@ import type { BotCarry } from '../livingworld/botTypes.js';
 // Drone-kind catalogue helpers moved to ./droneKindHelpers.ts.
 import { droneMaxHealthOf, getDroneMaxHealth, getDroneShieldMax } from './droneKindHelpers.js';
 import { STRUCTURE_DEFAULT_HEALTH } from '../../core/swarm/structureConstants.js';
-import { StructureRegistry, type StructureRecord } from '../structures/StructureRegistry.js';
+import { StructureRegistry, dockIntakeGoods, type StructureRecord } from '../structures/StructureRegistry.js';
+import { DOCK_CRANE_REACH_TICKS, DOCK_SETTLE_TICKS, dockUnloadHoldTicks, inDockBay, isStillForDock } from '../../core/articulation/rigCatalogue.js';
 import { rigClipTip, startStructureRigClip, worldToRigHost, writeRigClipRow } from '../structures/structureRigClip.js';
 import { FactionLedger } from '../faction/FactionLedger.js';
 import { isBaseReady } from '../../core/faction/Faction.js';
@@ -336,7 +337,7 @@ import { LabCancelSchema, LabQuerySchema, LabStartSchema, type LabStart, type La
 import { LootSubsystem, type LootCollector } from '../cargo/LootSubsystem.js';
 import { LootCollectors } from '../cargo/LootCollectors.js';
 import { OreDraw } from './OreDraw.js';
-import { StorageService, fittedModuleIds, isOperationalStorage, structureUid, DEPOSIT_DWELL_TICKS, depositRangeOf, REPAIR_CREDITS_PER_HP, RESPEC_CREDIT_COST } from '../cargo/StorageService.js';
+import { StorageService, fittedModuleIds, holdHasIntake, isOperationalStorage, structureUid, DEPOSIT_DWELL_TICKS, depositRangeOf, REPAIR_CREDITS_PER_HP, RESPEC_CREDIT_COST } from '../cargo/StorageService.js';
 import { SCRAP_HP } from '../../core/swarm/scrapConstants.js';
 import { addPacked, cloneHold, emptyHold, extractRequested, holdWeight, isHoldEmpty, mergeInto, packedCount, takePacked, transferInto, type CargoRequest } from '../../core/cargo/hold.js';
 import type { HolderType, HoldRecord } from '../cargo/HoldStore.js';
@@ -435,6 +436,22 @@ import { advanceSchedule, tickPeriodMs, type CatchUpResult } from '../../core/ph
 const withShipScale = (w: WelcomeMessage): WelcomeMessage => stampNavalRange(stampShipScale(w));
 
 /** One parked hull for `handOffHullsTo`: where it lands in the far sector. */
+/** One auto-deposit dwell (`SectorRoom.depositDwell`). `phase` is set only on
+ *  a freight dock's bay (structure-restyle 3b); absent = the plain hover dwell. */
+interface DepositDwell {
+  targetId: string;
+  sinceTick: number;
+  shipId: string;
+  phase?: 'settle' | 'reach' | 'hold' | 'done';
+  /** Tick the current crane clip (reach / hold) started. */
+  clipTick?: number;
+  /** Clamp hold length (`dockUnloadHoldTicks`), fixed at reach start. */
+  holdTicks?: number;
+  /** Last autoDepositTick this ship was visited: a crane claim whose ship
+   *  vanished (left, died) is released by the sweep. */
+  seenTick?: number;
+}
+
 interface HullMove {
   shipInstanceId: string;
   x: number; y: number; vx: number; vy: number; angle: number; angvel: number;
@@ -1126,7 +1143,10 @@ export class SectorRoom extends Room<SectorState> {
   /** Economy v2 W3 — Research Lab jobs (research / copy / combine). */
   private researchLabs!: ResearchLabSubsystem;
   /** Auto-deposit dwell: playerId → (target structure id, first in-range tick). */
-  private readonly depositDwell = new Map<string, { targetId: string; sinceTick: number }>();
+  /*  A freight dock's bay (structure-restyle 3b) adds the crane phases: settle
+   *  (still on the bay) → reach → hold → done (retracting or served; kept
+   *  until the ship leaves the bay, so it is not served twice). */
+  private readonly depositDwell = new Map<string, DepositDwell>();
   /** Auto-deposit progress 0..100 by shipInstanceId (own-ship snapshot ring). */
   private readonly depositProgress = new Map<string, number>();
   /** This sector's game clock (game speed is per sector, time scale stream).
@@ -11722,27 +11742,46 @@ export class SectorRoom extends Room<SectorState> {
       return;
     }
     this.lootCollectors.forEach(this.visitDepositor);
+    // 3b: a crane claim whose ship was not visited this pass (left the room,
+    // died, swapped hulls) retracts the arm and frees the dock.
+    if (this.depositDwell.size > 0) this.depositDwell.forEach(this.sweepDepositDwell);
   }
+
+  /** Bound once (no per-tick closure allocation, #14). */
+  private readonly sweepDepositDwell = (d: DepositDwell, pid: string): void => {
+    if ((d.phase === 'reach' || d.phase === 'hold') && d.seenTick !== this.serverTick) {
+      const dock = this.structureRegistry.get(d.targetId);
+      if (dock) this.retractDockCrane(dock);
+      this.depositDwell.delete(pid);
+      this.depositProgress.delete(d.shipId);
+    }
+  };
 
   /** Bound once (no per-tick closure allocation, #14). */
   private readonly visitDepositor = (c: LootCollector): void => {
     if (this.manualCargo.has(c.playerId)) {
       // Moved cargo by hand: no auto-deposit until they leave their storage.
       if (this.storage.nearestOwnStorage(c.playerId, c.x, c.y) === null) this.manualCargo.delete(c.playerId);
-      if (this.depositDwell.delete(c.playerId)) this.depositProgress.delete(c.shipInstanceId);
+      this.dropDepositDwell(c.playerId);
       return;
     }
     const hold = this.loot.shipHold(c.shipInstanceId);
+    // 3b: a ship on its own freight dock's bay belongs to that dock, ahead of
+    // the nearest-centre pick (a Capital nearer the ship never steals it).
+    const bayDock = this.ownDockBayAt(c.playerId, c.x, c.y);
+    if (bayDock !== null) { this.dockDwell(c, bayDock, hold); return; }
     const target = hold !== undefined && !isHoldEmpty(hold)
       ? this.storage.nearestOwnStorage(c.playerId, c.x, c.y)
       : null;
-    if (target === null) {
-      if (this.depositDwell.delete(c.playerId)) this.depositProgress.delete(c.shipInstanceId);
+    // A freight dock serves only a ship parked on its bay (stop = go).
+    if (target === null || target.kind === 'freight_dock') {
+      this.dropDepositDwell(c.playerId);
       return;
     }
     const dwell = this.depositDwell.get(c.playerId);
-    if (dwell === undefined || dwell.targetId !== target.id) {
-      this.depositDwell.set(c.playerId, { targetId: target.id, sinceTick: this.serverTick });
+    if (dwell === undefined || dwell.targetId !== target.id || dwell.phase !== undefined) {
+      this.dropDepositDwell(c.playerId);
+      this.depositDwell.set(c.playerId, { targetId: target.id, sinceTick: this.serverTick, shipId: c.shipInstanceId });
       this.depositProgress.set(c.shipInstanceId, 0);
       return;
     }
@@ -11754,6 +11793,112 @@ export class SectorRoom extends Room<SectorState> {
     const moved = this.storage.deposit(c.shipInstanceId, c.playerId, target);
     this.depositDwell.delete(c.playerId);
     this.depositProgress.delete(c.shipInstanceId);
+    this.noteDeposited(c, target, moved);
+  };
+
+  /**
+   * structure-restyle 3b — "stop = go" on a freight dock's bay. A ship whose
+   * centre is on the bay (`inDockBay`) and still (`isStillForDock`) settles
+   * for `DOCK_SETTLE_TICKS`; then the crane reaches for it (`arm-reach`),
+   * clamps on (`arm-hold`) for `dockUnloadHoldTicks(load, capacity)`, banks
+   * the dock's intake (`dockIntakeGoods`) at hold END, and retracts. Moving or
+   * leaving during reach / hold aborts: the arm retracts from where it is and
+   * nothing is banked. One ship per crane, first come first served: a second
+   * settled ship waits (progress 0) until the arm is back at rest.
+   */
+  private dockDwell(c: LootCollector, dock: StructureRecord, hold: Hold | undefined): void {
+    const tick = this.serverTick;
+    let d = this.depositDwell.get(c.playerId);
+    if (d !== undefined && d.targetId !== dock.id) { this.dropDepositDwell(c.playerId); d = undefined; }
+    const still = isStillForDock(c.vx, c.vy);
+    if (d?.phase === 'done') return; // served: nothing more until it leaves the bay
+    if (d?.phase === 'reach' || d?.phase === 'hold') {
+      d.seenTick = tick;
+      if (!still) { this.dropDepositDwell(c.playerId); return; }
+      if (d.phase === 'reach') {
+        if (tick - d.clipTick! < DOCK_CRANE_REACH_TICKS) { this.setDockProgress(d, tick); return; }
+        d.phase = 'hold';
+        d.clipTick = tick;
+        this.startStructureRigClip(dock.id, 'arm-hold', dock.rigClip?.target);
+      }
+      if (tick - d.clipTick! < d.holdTicks!) { this.setDockProgress(d, tick); return; }
+      const moved = this.storage.deposit(c.shipInstanceId, c.playerId, dock, dockIntakeGoods(dock));
+      this.startStructureRigClip(dock.id, 'arm-retract', dock.rigClip?.target);
+      d.phase = 'done';
+      this.depositProgress.delete(c.shipInstanceId);
+      this.noteDeposited(c, dock, moved);
+      return;
+    }
+    // No crane yet. Nothing the dock takes in ⇒ no dwell at all (no bar that
+    // restarts forever): an outlet, or a hold with none of the import goods.
+    if (!still || hold === undefined || !holdHasIntake(hold, dockIntakeGoods(dock))) {
+      this.dropDepositDwell(c.playerId);
+      return;
+    }
+    if (d === undefined) {
+      this.depositDwell.set(c.playerId, { targetId: dock.id, sinceTick: tick, shipId: c.shipInstanceId, phase: 'settle' });
+      this.depositProgress.set(c.shipInstanceId, 0);
+      return;
+    }
+    // Settling, or waiting for the crane (another ship's cycle): progress 0.
+    if (tick - d.sinceTick < DOCK_SETTLE_TICKS || this.dockCraneBusy(dock)) return;
+    if (!this.startStructureRigClip(dock.id, 'arm-reach', worldToRigHost(dock, c.x, c.y))) return;
+    d.phase = 'reach';
+    d.clipTick = tick;
+    d.seenTick = tick;
+    d.holdTicks = dockUnloadHoldTicks(holdWeight(hold), c.capacity);
+  }
+
+  /** Crane-cycle progress 0..99 over reach + hold (own-ship readout). */
+  private setDockProgress(d: DepositDwell, tick: number): void {
+    const total = DOCK_CRANE_REACH_TICKS + d.holdTicks!;
+    const done = d.phase === 'reach' ? tick - d.clipTick! : DOCK_CRANE_REACH_TICKS + tick - d.clipTick!;
+    this.depositProgress.set(d.shipId, Math.min(99, Math.floor((done / total) * 100)));
+  }
+
+  /** The arm is out (reaching, holding, or still retracting). */
+  private dockCraneBusy(dock: StructureRecord): boolean {
+    const p = dock.rigClip;
+    if (p === undefined || p === null) return false;
+    return p.clipId !== 'arm-retract' || this.serverTick - p.startTick < DOCK_CRANE_REACH_TICKS;
+  }
+
+  /** Abort: retract from the arm's current tip (mid-reach) or its target (holding). */
+  private retractDockCrane(dock: StructureRecord): void {
+    const p = dock.rigClip;
+    if (p === undefined || p === null || p.clipId === 'arm-retract') return;
+    this.startStructureRigClip(dock.id, 'arm-retract', rigClipTip(dock, this.serverTick) ?? p.target);
+  }
+
+  /** End `playerId`'s dwell; a live crane claim retracts the arm (abort). */
+  private dropDepositDwell(playerId: string): void {
+    const d = this.depositDwell.get(playerId);
+    if (d === undefined) return;
+    if (d.phase === 'reach' || d.phase === 'hold') {
+      const dock = this.structureRegistry.get(d.targetId);
+      if (dock) this.retractDockCrane(dock);
+    }
+    this.depositDwell.delete(playerId);
+    this.depositProgress.delete(d.shipId);
+  }
+
+  /** `owner`'s operational freight dock whose bay holds world point (x, y),
+   *  or null. The host-frame transform is `worldToRigHost`, inline (alloc-free). */
+  private ownDockBayAt(owner: string, x: number, y: number): StructureRecord | null {
+    for (const rec of this.structureRegistry.all()) {
+      if (rec.kind !== 'freight_dock' || rec.owner !== owner || !isOperationalStorage(rec)) continue;
+      const a = ((rec.rot ?? 0) * Math.PI) / 180;
+      const dx = x - rec.x;
+      const dy = y - rec.y;
+      const cs = Math.cos(a);
+      const sn = Math.sin(a);
+      if (inDockBay(dx * cs + dy * sn, -dx * sn + dy * cs)) return rec;
+    }
+    return null;
+  }
+
+  /** Tell the depositing pilot what moved, and audit it (nothing moved ⇒ silent). */
+  private noteDeposited(c: LootCollector, target: StructureRecord, moved: Hold): void {
     if (isHoldEmpty(moved)) return; // storage full — nothing moved
     const sessionId = this.playerToSession.get(c.playerId);
     const client = sessionId !== undefined ? this.clients.find((cl) => cl.sessionId === sessionId) : undefined;
@@ -11764,7 +11909,7 @@ export class SectorRoom extends Room<SectorState> {
       event: 'cargo_deposited', sector: this.sectorKey ?? undefined, playerId: c.playerId,
       shipInstanceId: c.shipInstanceId, structureKind: target.kind, weight: holdWeight(moved),
     });
-  };
+  }
 
   /**
    * Living World P2 — economy side of a hit: a player (or their turret) hitting
@@ -12293,8 +12438,9 @@ export class SectorRoom extends Room<SectorState> {
         }, shipBodyMass(getShipKind(rec.shipKind))));
         return true;
       },
-      // Scripted stand-in for the bay trigger: Stage 3 starts the crane from
-      // the deposit dwell (`autoDepositTick`) retargeted to the dock's bay.
+      // Scripted crane for the sandbox film: its hauler is an unowned swarm
+      // ship, which the bay dwell (`dockDwell`, owner's ships only) never
+      // serves. A pilot parking on the dock drives the real dwell.
       rigClip: (kind, clip, target) => {
         let host: StructureRecord | undefined;
         for (const r of this.structureRegistry.all()) if (r.kind === kind) { host = r; break; }

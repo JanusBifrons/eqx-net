@@ -84,8 +84,8 @@ export const READY_BASE_PREBUILT = STRUCTURE_SCENARIO_PREBUILT;
  * Connector between them (the Capital links only to Connectors) feed the dock
  * (15) and the turret (15), so nothing shows the unpowered marker and the
  * turret deploys powered. A scripted trader hauler flies onto the pad and the crane reaches
- * for it (`rigClip` scene steps; Stage 3 starts the crane from the deposit
- * dwell instead). Times are ms after the first pilot is ready; the scene
+ * for it (`rigClip` scene steps: the swarm hauler has no owner, so the bay
+ * dwell, `SectorRoom.dockDwell`, does not serve it). Times are ms after the first pilot is ready; the scene
  * starts after `lead` so a take can be rolling first.
  */
 export const RIG_SANDBOX = {

@@ -7,7 +7,7 @@
  */
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { cargoCapacityForMaxHealth } from '../../shared-types/goods.js';
-import { SLOT_ANGLE_OFF, SLOT_X_OFF, SLOT_Y_OFF, slotBase } from '../../shared-types/sabLayout.js';
+import { SLOT_ANGLE_OFF, SLOT_VX_OFF, SLOT_VY_OFF, SLOT_X_OFF, SLOT_Y_OFF, slotBase } from '../../shared-types/sabLayout.js';
 import type { SwarmEntityRecord } from '../net/SwarmEntityRegistry.js';
 import type { LootCollector } from './LootSubsystem.js';
 
@@ -21,7 +21,7 @@ export interface LootCollectorsDeps {
   pilots: ReadonlyMap<string, unknown>;
   activeShip: (pid: string) => PilotHull | undefined;
   hasHold: (shipInstanceId: string) => boolean;
-  pilotPose: (pid: string) => { x: number; y: number; angle: number } | undefined;
+  pilotPose: (pid: string) => { x: number; y: number; angle: number; vx: number; vy: number } | undefined;
   /** A fitted Cargo Expander raises the capacity (shared helper, #15). */
   cargoCapacity: (kind: string, shipInstanceId: string) => number;
   swarm: { all: () => Iterable<SwarmEntityRecord>; get: (id: string) => SwarmEntityRecord | null };
@@ -29,7 +29,7 @@ export interface LootCollectorsDeps {
 }
 
 export class LootCollectors {
-  private readonly c: LootCollector = { playerId: '', shipInstanceId: '', x: 0, y: 0, angle: 0, shieldUp: false, capacity: 0, kind: getShipKind(null) };
+  private readonly c: LootCollector = { playerId: '', shipInstanceId: '', x: 0, y: 0, angle: 0, vx: 0, vy: 0, shieldUp: false, capacity: 0, kind: getShipKind(null) };
 
   constructor(private readonly d: LootCollectorsDeps) {}
 
@@ -67,7 +67,7 @@ export class LootCollectors {
     c.playerId = pid;
     c.shipInstanceId = ship.shipInstanceId;
     c.x = pose.x;
-    c.y = pose.y; c.angle = pose.angle; c.shieldUp = ship.shield > 0; // the hull-touch pickup's shape
+    c.y = pose.y; c.angle = pose.angle; c.vx = pose.vx; c.vy = pose.vy; c.shieldUp = ship.shield > 0; // the hull-touch pickup's shape
     c.capacity = this.d.cargoCapacity(ship.kind, ship.shipInstanceId);
     c.kind = getShipKind(ship.kind); // its hull radius + mounts: the pieces it consumes
     c.npc = false;
@@ -84,7 +84,7 @@ export class LootCollectors {
     c.playerId = rec.id;
     c.shipInstanceId = rec.id;
     c.x = sab[b + SLOT_X_OFF]!;
-    c.y = sab[b + SLOT_Y_OFF]!; c.angle = sab[b + SLOT_ANGLE_OFF]!; c.shieldUp = !rec.shieldDown;
+    c.y = sab[b + SLOT_Y_OFF]!; c.angle = sab[b + SLOT_ANGLE_OFF]!; c.vx = sab[b + SLOT_VX_OFF]!; c.vy = sab[b + SLOT_VY_OFF]!; c.shieldUp = !rec.shieldDown;
     c.capacity = cargoCapacityForMaxHealth(kindDef);
     c.kind = kindDef;
     c.npc = true;
