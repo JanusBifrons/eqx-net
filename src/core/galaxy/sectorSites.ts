@@ -204,16 +204,25 @@ export function isWarpDropPoint(sectorKey: string, x: number, y: number, enabled
   return false;
 }
 
-/** Rock-free room round a pocket inside a cut field, beyond its rim (u):
- *  covers a rock's size plus the warp, so a warp drop on the rim (site.r)
- *  lands in open space looking at the rocks (owner 2026-11-17: arrive at the
- *  edge). */
+/** Rock-free room round a base or battle pocket inside a cut field, beyond
+ *  its rim (u): room for the base's outer structures. */
 export const FIELD_CLEARING_MARGIN = 2500;
+
+/** Rock-free room round a belt pocket beyond its rim (u). Clearings are
+ *  exact (`slicedField`), so a warp drop on the rim (site.r) lands this far
+ *  from the rock wall: in open space and in view of the rocks on a phone
+ *  (owner 2026-11-17: arrive at the edge and look in at the rock wall). */
+export const BELT_CLEARING_MARGIN = 900;
+
+/** A pocket's clearing radius inside a cut field. */
+export function fieldClearingRadius(site: Pick<SectorSite, 'kind' | 'r'>): number {
+  return site.r + (site.kind === 'belt' ? BELT_CLEARING_MARGIN : FIELD_CLEARING_MARGIN);
+}
 
 /** Bumped when the field a sector derives changes (clearings, seed rule):
  *  the seed carries it, so rock changes saved under the old field (C4,
  *  keyed `<sectorKey>|<seed>`) are never applied to different rocks. */
-export const SECTOR_FIELD_VERSION = 1;
+export const SECTOR_FIELD_VERSION = 2;
 
 export interface SectorCutField {
   /** The field's seed (the welcome's `cutField.seed`). */
@@ -237,7 +246,7 @@ export function sectorCutField(sectorKey: string, enabled: boolean): SectorCutFi
   const reach = SLICED.radius + cutFieldPad();
   const clearings: FieldClearing[] = [];
   for (const site of sectorSites(sectorKey)) {
-    const r = site.r + FIELD_CLEARING_MARGIN;
+    const r = fieldClearingRadius(site);
     if (Math.hypot(site.x, site.y) - r < reach) clearings.push({ x: site.x, y: site.y, r });
   }
   return { seed: `galaxy:${sectorKey}:v${SECTOR_FIELD_VERSION}`, clearings };

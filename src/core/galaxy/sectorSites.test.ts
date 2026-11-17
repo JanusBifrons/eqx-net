@@ -4,8 +4,9 @@
  */
 import { describe, it, expect } from 'vitest';
 import { GALAXY_SECTORS, getNeighbours, getSector, axialToPixel } from './galaxy.js';
-import { sectorSites, nearestSite, SOLAR_HALF_EXTENT, POCKET_MIN_GAP, POCKET_MAX_GAP, pocketPadPair, POCKET_PAD_CHANCE, sectorCutField, warpDropPoint, FIELD_CLEARING_MARGIN } from './sectorSites.js';
+import { sectorSites, nearestSite, SOLAR_HALF_EXTENT, POCKET_MIN_GAP, POCKET_MAX_GAP, pocketPadPair, POCKET_PAD_CHANCE, sectorCutField, warpDropPoint, FIELD_CLEARING_MARGIN, BELT_CLEARING_MARGIN, fieldClearingRadius } from './sectorSites.js';
 import { cutFieldOpts, fieldRocksInBox } from '../terrain/chunkStreamer.js';
+import { slicedFieldLanes } from '../terrain/fieldLayout.js';
 
 describe('sectorSites', () => {
   it('is deterministic per sector key', () => {
@@ -132,23 +133,38 @@ describe('sectorCutField (macro terrain F4)', () => {
     for (const s of marked) {
       const f = sectorCutField(s.key, true)!;
       for (const site of sectorSites(s.key)) {
-        const has = f.clearings.some((c) => c.x === site.x && c.y === site.y && c.r === site.r + FIELD_CLEARING_MARGIN);
+        const has = f.clearings.some((c) => c.x === site.x && c.y === site.y && c.r === fieldClearingRadius(site));
         if (site.kind === 'gate') expect(has, site.id).toBe(false);
         else expect(has, `${s.key} ${site.id}`).toBe(true);
       }
     }
   });
 
-  it('a warp to a pocket drops you in open space at the clearing edge (real field)', () => {
-    const s = marked[0]!;
-    const f = sectorCutField(s.key, true)!;
-    const opts = { ...cutFieldOpts(f.seed), clearings: f.clearings };
-    for (const site of sectorSites(s.key).filter((p) => p.kind !== 'gate' && p.kind !== 'home')) {
-      // Arrive from the home side, as a warp from home would.
-      const drop = warpDropPoint(site, 0, 0);
-      const near = fieldRocksInBox(opts, drop.x - 600, drop.y - 600, drop.x + 600, drop.y + 600)
-        .filter((r) => Math.hypot(r.x - drop.x, r.y - drop.y) < r.radius + 300);
-      expect(near, `${site.id}`).toEqual([]);
+  it('belts clear by BELT_CLEARING_MARGIN, bases and battle zones by FIELD_CLEARING_MARGIN', () => {
+    expect(fieldClearingRadius({ kind: 'belt', r: 4000 })).toBe(4000 + BELT_CLEARING_MARGIN);
+    expect(fieldClearingRadius({ kind: 'base', r: 4000 })).toBe(4000 + FIELD_CLEARING_MARGIN);
+  });
+
+  // The phone's view round a ship at the closest zoom-out is about ±3 km by
+  // ±1.4 km: the wall must be in it, the ship must not be in a rock.
+  it('every warp to a pocket, in every field, drops you in open space; at a belt, in sight of the rock wall', () => {
+    const bad: string[] = [];
+    for (const s of marked) {
+      const f = sectorCutField(s.key, true)!;
+      const opts = { ...cutFieldOpts(f.seed), clearings: f.clearings };
+      for (const site of sectorSites(s.key).filter((p) => p.kind !== 'gate' && p.kind !== 'home')) {
+        // Arrive from the home side, as a warp from home would.
+        const drop = warpDropPoint(site, 0, 0);
+        const rocks = fieldRocksInBox(opts, drop.x - 8000, drop.y - 8000, drop.x + 8000, drop.y + 8000);
+        const gap = Math.min(Infinity, ...rocks.map((r) => Math.hypot(r.x - drop.x, r.y - drop.y) - r.radius));
+        if (gap < 200) bad.push(`${s.key} ${site.id}: rock ${Math.round(gap)} u from the drop`);
+        // A belt in a lane looks down the lane: its walls are half a lane off.
+        const lane = slicedFieldLanes({ seed: opts.seed, battleshipLength: opts.battleshipLength })
+          .find((ln) => Math.abs((drop.x - ln.o.x) * ln.n.x + (drop.y - ln.o.y) * ln.n.y) < ln.half);
+        const view = lane ? lane.half : 3000;
+        if (site.kind === 'belt' && !(gap < view)) bad.push(`${s.key} ${site.id}: no rock in view (${Math.round(gap)} u)`);
+      }
     }
-  }, 60_000);
+    expect(bad).toEqual([]);
+  }, 180_000);
 });
