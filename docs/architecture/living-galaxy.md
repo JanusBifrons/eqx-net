@@ -541,6 +541,19 @@ The feed changes every 10 s; the map stays alive in between, driven by the exist
 - **Cost.** Idle hexes do no per-frame work; only hexes mid-tween are repainted, each into its own split buffers (Pixi keeps the points array until render), with no per-frame allocation in our code.
 - **Reduced motion.** `prefers-reduced-motion` (read on the main thread, sent to the worker in `BOOT`) snaps splits, skips wipes, flares and drift, and holds the hot glow steady.
 
+### Focus view (tap a sector)
+
+Tapping a sector on the full-page map opens a focus view. The pure decisions are in `render/galaxy/galaxyFocus.ts` (state machine, door layout, framing, tap result, panel dock); `galaxyFocusView.ts` is the Pixi side, owned by `GalaxyMapLayer`.
+
+- **Driven by the selection.** The sector the info drawer shows (`GalaxyPickerChrome` `selectedSectorKey`) is the focus: `onFocusChange` → `syncGalaxyFocus` → `layer.setFocus` on the DOM path, `SET_GALAXY_FOCUS` to the worker. Closing the drawer (✕, swipe, Join/Warp/Spawn) backs out.
+- **Camera.** The layer's existing pan/zoom `Camera` glides there: `glideTo(x, y, ms, scale)` eases the centre and, when given a scale, the zoom (geometric) over 650 ms (`FOCUS_GLIDE_MS`). Backing out glides to the view you had before the first tap; a hop between sectors keeps that home. A drag or pinch mid-glide stops the glide where it is. Reduced motion snaps.
+- **Framing.** The sector and its doors fill 92% of the screen the panel leaves free (`focusPanelInsets`), capped at the camera's 4x.
+- **Veil and doors.** A veil in the backdrop colour covers the rest of the map with a hole for the focused hex. Each linked neighbour is a small door hex on a ring round it, in that neighbour's direction (spread so none overlap), tinted by its live owner with a chevron pointing out. Tapping a door hops the focus there; tapping the focused hex does nothing; any other tap backs out. Hover-shrink is off while focused.
+- **Panel dock.** `focusPanelDock` is shared with `SectorInfoDrawer`: a landscape desktop docks the panel right (296 px); a phone (touch) or any portrait screen uses a bottom sheet (40% of the height in portrait, 50% sideways, at most 340 px). The landing buttons bottom-right already hide while a sector is selected.
+- **History.** The drawer shows control over the last hour (`SectorHistorySparkline`): one `GET /galaxy/sector/:key/history` fetch per sector opened, zod-checked, no polling. Line height is the holder's share; dashed ticks mark a change of hands (`sectorSparkline.ts`).
+- **Cost.** Drawing happens on a focus change only; the per-frame tick fades the veil and waits for the glide to land, and does nothing while idle.
+- **E2E hook.** `__eqxGalaxyFocus()` (DOM path) returns the phase, sector and door keys.
+
 ## Client rules in detail
 
 Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each rule and points here.
