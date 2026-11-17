@@ -393,12 +393,16 @@ export function fractureHull(input: FractureInput): FracturePiece[] {
   // v10: a capital cut kill's splinters jag harder (the cut stays straight).
   const splinterKill = cutKind !== null && !chunkyOnly;
   const jagRoughness = splinterKill ? SPLINTER_ROUGHNESS : (input.jag?.roughness ?? JAG_ROUGHNESS);
+  // A chunky profile's cut kill (a sub-cap's, a rock's re-split) keeps the
+  // beam's line when it leaves sound pieces, else moves like a crack does:
+  // a fixed-angle laser would otherwise halve a rock the long way each time.
   const primary = plan.primary
-    ? cutKind !== null
-      ? primaryCut(plan.primary, EDGE_CUT)
-      : chunkyOnly
-      ? soundPrimary(hull, plan.primary, keel, hullArea, minArea, beam, chunkyWidth, input.soundMinShare ?? SOUND_MIN_SHARE)
-      : primaryCut(plan.primary)
+    ? chunkyOnly
+      ? soundPrimary(
+        hull, plan.primary, keel, hullArea, minArea, beam, chunkyWidth, input.soundMinShare ?? SOUND_MIN_SHARE,
+        cutKind !== null ? EDGE_CUT : EDGE_PRIMARY,
+      )
+      : primaryCut(plan.primary, cutKind !== null ? EDGE_CUT : EDGE_PRIMARY)
     : null;
   // v9 channel: the strip either side of the cut line is erased first; the
   // other cracks then split what is left. A sliver beside the channel
@@ -748,13 +752,15 @@ function primaryCut(p: NonNullable<FracturePlan['primary']>, kind = EDGE_PRIMARY
  * each. A line across a small concave hull clips wingtips and tail fins off
  * as slivers (or cuts four pieces, which the cap then drops whole), so the
  * line moves toward the centroid in `SOUND_SHIFTS` steps, same direction;
- * the last resort is square across the keel through the centroid.
+ * the last resort is square across the keel through the centroid. A cut
+ * kill (`kind` EDGE_CUT) also tries square across the keel before giving up
+ * on chunky pieces, so a strip breaks across, not into thinner strips.
  */
 function soundPrimary(
   hull: P[], p: NonNullable<FracturePlan['primary']>, keel: Vec2, hullArea: number, minArea: number,
-  beam: number, minWidthBeams: number, minShare: number,
+  beam: number, minWidthBeams: number, minShare: number, kind = EDGE_PRIMARY,
 ): FractureLine {
-  const base = primaryCut(p);
+  const base = primaryCut(p, kind);
   const cen = ringCentroid(hull);
   const sound = (l: FractureLine, strict: boolean): boolean => {
     const parts = quantiseRings(splitBoth([hull], l), minArea);
@@ -771,7 +777,7 @@ function soundPrimary(
     for (const f of SOUND_SHIFTS) {
       const x = p.point.x + (cen.x - p.point.x) * f;
       const y = p.point.y + (cen.y - p.point.y) * f;
-      const l: FractureLine = { nx: base.nx, ny: base.ny, c: base.nx * x + base.ny * y, kind: EDGE_PRIMARY };
+      const l: FractureLine = { nx: base.nx, ny: base.ny, c: base.nx * x + base.ny * y, kind };
       if (sound(l, pass === 0)) return l;
     }
     if (pass === 0) {
@@ -782,16 +788,17 @@ function soundPrimary(
       const ax = -keel.y;
       const ay = keel.x;
       const dirs = [ax + keel.x, ay + keel.y, ax - keel.x, ay - keel.y, keel.x, keel.y];
+      if (kind === EDGE_CUT) dirs.push(ax, ay);
       for (let i = 0; i < dirs.length; i += 2) {
         const nx = -dirs[i + 1]!;
         const ny = dirs[i]!;
-        const l: FractureLine = { nx, ny, c: nx * cen.x + ny * cen.y, kind: EDGE_PRIMARY };
+        const l: FractureLine = { nx, ny, c: nx * cen.x + ny * cen.y, kind };
         if (sound(l, true)) return l;
       }
     }
   }
   const sq = crackLine(cen.x, cen.y, 0, keel);
-  return { nx: sq.nx, ny: sq.ny, c: sq.c, kind: EDGE_PRIMARY };
+  return { nx: sq.nx, ny: sq.ny, c: sq.c, kind };
 }
 
 /**
