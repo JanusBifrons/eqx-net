@@ -84,6 +84,10 @@ export interface IkChainDef {
   /** End effector in the tip part's frame. */
   readonly tipX: number;
   readonly tipY: number;
+  /** Which way a 2-bone chain folds: +1 bends the second joint
+   *  counter-clockwise (positive), -1 clockwise. Fixed per clip so an arm
+   *  always folds the same way. Default +1. */
+  readonly bend?: 1 | -1;
 }
 
 export interface ClipDef {
@@ -125,6 +129,8 @@ export interface CompiledClip {
   readonly chain: Int16Array;
   readonly tipX: number;
   readonly tipY: number;
+  /** IK fold direction (see `IkChainDef.bend`). */
+  readonly bend: 1 | -1;
 }
 
 /** A built rig. Parts are in topological order (every parent before its
@@ -268,7 +274,7 @@ export function buildRig(def: RigDef): Rig {
       if (prev > endTick) endTick = prev;
       return { part: pi, ticks, values, ease, fromTarget, chainSlot };
     });
-    return { id: c.id, tracks, trackOfPart, endTick, chain, tipX: c.ik?.tipX ?? 0, tipY: c.ik?.tipY ?? 0 };
+    return { id: c.id, tracks, trackOfPart, endTick, chain, tipX: c.ik?.tipX ?? 0, tipY: c.ik?.tipY ?? 0, bend: c.ik?.bend ?? 1 };
   });
 
   return {
