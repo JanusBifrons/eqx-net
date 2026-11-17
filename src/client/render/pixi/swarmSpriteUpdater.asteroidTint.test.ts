@@ -11,6 +11,7 @@ import { describe, it, expect, vi } from 'vitest';
 // A GL program needs a canvas; node has none (the look is checked in stills).
 vi.mock('../field/fieldRockShader', () => ({
   fieldRockProgram: () => ({}),
+  fieldRockBatchProgram: () => ({}),
   fieldRockShaderResources: () => ({}),
   setFieldRockView: () => {},
   setFieldOreStyle: () => {},

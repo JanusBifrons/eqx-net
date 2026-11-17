@@ -7,7 +7,8 @@
  * rest frame, so every piece of a rock (and of its re-cuts) tiles the original
  * exactly and the surface does not swim when the rock splits.
  *
- * One `Mesh` per piece on the cut-field layer's one shader (no mask). Without
+ * Each piece is a member of the cut-field layer's rock batch (`rockBatch.ts`:
+ * every placed rock and piece in one mesh, one draw; no mask). Without
  * the field layer (headless tests) the piece outline is filled in the classic
  * asteroid colour and resource tint, with the rock's outline stroke on its
  * hull edges.
@@ -79,8 +80,8 @@ function plainPieceGfx(g: Pick<WreckPieceGeometry, 'outline' | 'cutEdges'>): Gra
 }
 
 /** The art of a rock's wreck piece `g`, cut from `rock`: a container (piece
- *  body frame, Pixi-down) holding one mesh of the piece's stretch of the
- *  rock's surface. `field`: the cut-field layer (its one rock shader). */
+ *  body frame, Pixi-down) holding the piece's stretch of the rock's surface
+ *  (a rock batch member). `field`: the cut-field layer (its rock batch). */
 export function buildRockPieceArt(
   g: Pick<WreckPieceGeometry, 'cx' | 'cy' | 'outline' | 'parts' | 'cutEdges'>, rock: WreckRockRef,
   field: Pick<CutFieldLayer, 'buildRockMesh'> | null = null,

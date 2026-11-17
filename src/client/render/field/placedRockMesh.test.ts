@@ -10,6 +10,7 @@ import { describe, expect, it, vi } from 'vitest';
 // A GL program needs a canvas; node has none (the look is checked in stills).
 vi.mock('./fieldRockShader', () => ({
   fieldRockProgram: () => ({}),
+  fieldRockBatchProgram: () => ({}),
   fieldRockShaderResources: () => ({}),
   setFieldRockView: () => {},
   setFieldOreStyle: () => {},
@@ -116,14 +117,14 @@ describe('placed rocks draw with the field rock shader', () => {
     });
   }
 
-  it('the layer builds them on its one shader, marked as field rock meshes', () => {
+  it('the layer puts them in its one rock batch, marked as field rock meshes', () => {
     const layer = new CutFieldLayer();
     const a = layer.buildRockMesh(placedRockMeshData(LOOK));
     const b = layer.buildRockMesh(rockPieceMeshData(rebuildWreckPieces(desc())[0]!, LOOK));
-    expect(a.shader).toBe(b.shader);
+    expect(layer.rockBatch.count).toBe(2);
     expect(isFieldRockMesh(a) && isFieldRockMesh(b)).toBe(true);
-    expect(a.geometry.getBuffer('aLocal')).toBeDefined();
     a.destroy();
     b.destroy();
+    expect(layer.rockBatch.count).toBe(0);
   });
 });

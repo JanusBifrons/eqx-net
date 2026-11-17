@@ -4,6 +4,7 @@ import type { Mesh } from 'pixi.js';
 // A GL program needs a canvas; node has none (the look is checked in stills).
 vi.mock('./fieldRockShader', () => ({
   fieldRockProgram: () => ({}),
+  fieldRockBatchProgram: () => ({}),
   fieldRockShaderResources: () => ({}),
   setFieldRockView: () => {},
   setFieldOreStyle: () => {},

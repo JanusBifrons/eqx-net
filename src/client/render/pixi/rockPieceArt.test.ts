@@ -11,17 +11,19 @@ import { describe, expect, it, vi } from 'vitest';
 // A GL program needs a canvas; node has none (the look is checked in stills).
 vi.mock('../field/fieldRockShader', () => ({
   fieldRockProgram: () => ({}),
+  fieldRockBatchProgram: () => ({}),
   fieldRockShaderResources: () => ({}),
   setFieldRockView: () => {},
   setFieldOreStyle: () => {},
 }));
-import { Container, Graphics, Mesh } from 'pixi.js';
+import { Container, Graphics } from 'pixi.js';
 import { buildRockPieceArt, classicRockTint, rockPieceLook, rockPieceSpeckColor } from './rockPieceArt.js';
 import { WreckPieceSprite, coolWreckInfo } from './wreckArt.js';
 import { rebuildWreckPieces } from '../../net/wreckGeometryStore.js';
 import { FRACTURE_ALGO_VERSION } from '../../../core/destruction/fractureHull.js';
 import { WRECK_ROCK_PARENT_KIND, type WreckDescriptor, type WreckRockRef } from '../../../shared-types/messages/wreckDescriptor.js';
 import { CutFieldLayer, isFieldRockMesh } from '../field/CutFieldLayer.js';
+import { RockBatchMember } from '../field/rockBatch.js';
 
 const PLAIN: WreckRockRef = { id: 'rock-17', shape: 4242, r: 60 };
 const ICE: WreckRockRef = { ...PLAIN, res: 'ice' };
@@ -52,20 +54,19 @@ describe('a cut rock piece keeps the rock look (rock cut)', () => {
     expect(buildRockPieceArt(g, PLAIN).children[0]!.tint).toBe(0xffffff);
   });
 
-  it('with the field layer, each piece is one field rock mesh, no mask, freed with the piece', () => {
+  it('with the field layer, each piece is one member of the rock batch, no mask, freed with the piece', () => {
     const layer = new CutFieldLayer();
     for (const g of rebuildWreckPieces(desc(CRYSTAL))) {
       const c = buildRockPieceArt(g, CRYSTAL, layer);
       expect(c.shaded).toBe(true);
       expect(c.children.length).toBe(1);
-      const mesh = c.children[0] as Mesh;
-      expect(mesh).toBeInstanceOf(Mesh);
-      expect(isFieldRockMesh(mesh)).toBe(true);
+      const member = c.children[0]!;
+      expect(member).toBeInstanceOf(RockBatchMember);
+      expect(isFieldRockMesh(member)).toBe(true);
       for (const o of [c, ...c.children] as Container[]) expect(o.mask ?? null).toBeNull();
-      let freed = false;
-      mesh.geometry.once('destroy', () => { freed = true; });
+      const n = layer.rockBatch.count;
       c.destroy({ children: true });
-      expect(freed).toBe(true);
+      expect(layer.rockBatch.count).toBe(n - 1);
     }
   });
 

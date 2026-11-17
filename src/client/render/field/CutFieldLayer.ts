@@ -17,8 +17,10 @@
  * Tiles off the view are hidden per frame. Tiles ignore consumed and moved
  * rocks: they are approximate, and only drawn where rocks are a few px.
  *
- * Placed rocks and their cut pieces (`placedRockMesh.ts`) draw on the same
- * shader instance through `buildRockMesh`.
+ * Placed rocks and their cut pieces (`placedRockMesh.ts`) draw the same rock
+ * shader in ONE mesh, `rockBatch` (`rockBatch.ts`), added where they draw by
+ * the renderer: `buildRockMesh` hands out a member per rock or piece, so the
+ * draw calls do not grow with their count.
  */
 import { Container, Mesh, MeshGeometry, Shader } from 'pixi.js';
 import type { RenderMirror } from '@core/contracts/IRenderer';
@@ -27,8 +29,9 @@ import { packedRockBody, type PackedChunk } from '../../../core/terrain/packedCh
 import type { FieldRockBody } from '../../../core/terrain/chunkStreamer';
 import type { ObstacleBox } from '../../../core/structures/Grid';
 import type { RestingFieldRock } from '../../structures/mirrorToGridNode';
-import { fieldRockShaderResources, fieldRockProgram, setFieldOreStyle, setFieldRockView, type FieldOreStyle } from './fieldRockShader';
+import { fieldRockBatchProgram, fieldRockShaderResources, fieldRockProgram, setFieldOreStyle, setFieldRockView, type FieldOreStyle } from './fieldRockShader';
 import { farFieldMix } from '../pixi/FarZoomIcons';
+import { RockBatch, type RockBatchMember } from './rockBatch';
 
 /** Chunk coords as one number (each fits ±32k). */
 const chunkKey = (cx: number, cy: number): number => (cx + 32768) * 65536 + (cy + 32768);
@@ -144,7 +147,7 @@ function collapsedAt(o: Float32Array, s: number): boolean {
   return true;
 }
 
-/** Every mesh drawn with the field rock shader (weak: dies with the mesh). */
+/** Every mesh (or batch member) drawn with the field rock shader (weak: dies with it). */
 const fieldRockMeshes = new WeakSet<object>();
 
 /** Is this sprite a field-rock-shader mesh? Its colour is the shader's (the
@@ -166,6 +169,7 @@ export class CutFieldLayer {
   /** Far-zoom tiles, a flat list (the per-frame cull loop allocates nothing). */
   private readonly tiles: CoarseTileMesh[] = [];
   private shader: Shader | null = null;
+  private _rockBatch: RockBatch | null = null;
   /** Woken rocks (rock key → the frame they were last seen awake): drawn by
    *  their swarm sprite, collapsed out of their chunk mesh. */
   private readonly woken = new Map<number, number>();
@@ -285,10 +289,22 @@ export class CutFieldLayer {
     return this.meshOf(d);
   }
 
-  /** A placed rock's or a cut piece's sprite (`placedRockMesh.ts` data), on
-   *  the one field rock shader. The mesh takes the data's arrays. */
-  buildRockMesh(d: FieldChunkMeshData): Mesh<MeshGeometry, Shader> {
-    return this.meshOf(d, true);
+  /** The one mesh every placed rock and cut piece draws in (made on first
+   *  use; the renderer adds `rockBatch.layer` where they draw). */
+  get rockBatch(): RockBatch {
+    if (this._rockBatch === null) {
+      this.shaderOf();
+      this._rockBatch = new RockBatch(new Shader({ glProgram: fieldRockBatchProgram(), resources: fieldRockShaderResources() }));
+    }
+    return this._rockBatch;
+  }
+
+  /** A placed rock's or a cut piece's sprite (`placedRockMesh.ts` data): a
+   *  member of `rockBatch`, which draws it (it keeps the data's arrays). */
+  buildRockMesh(d: FieldChunkMeshData): RockBatchMember {
+    const m = this.rockBatch.add(d);
+    fieldRockMeshes.add(m);
+    return m;
   }
 
   /** Collapse a rock's fan onto its centre (hide) or restore it (show). */
@@ -351,11 +367,17 @@ export class CutFieldLayer {
     geometry.addAttribute('aLocal', { buffer: d.local, format: 'float32x2' });
     geometry.addAttribute('aRock', { buffer: d.rock, format: 'float32x4' });
     geometry.addAttribute('aOre', { buffer: d.ore, format: 'float32x2' });
-    this.shader ??= new Shader({ glProgram: fieldRockProgram(), resources: fieldRockShaderResources() });
-    const mesh = new Mesh({ geometry, shader: this.shader });
+    const mesh = new Mesh({ geometry, shader: this.shaderOf() });
     fieldRockMeshes.add(mesh);
     mesh.once('destroyed', () => geometry.destroy());
     return mesh;
+  }
+
+  /** The lone-mesh rock shader (its `shader` also marks that rocks exist, so
+   *  `setView` keeps the shared view uniforms current). */
+  private shaderOf(): Shader {
+    this.shader ??= new Shader({ glProgram: fieldRockProgram(), resources: fieldRockShaderResources() });
+    return this.shader;
   }
 
   /** See `IRenderer.setFieldChunk`. Game space in, Pixi space out (y flips).

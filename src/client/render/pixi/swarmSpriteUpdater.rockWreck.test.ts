@@ -7,13 +7,14 @@
  * arbitrary ship kind: neither may reach the art service or a ship-kind lookup.
  */
 import { describe, it, expect, vi } from 'vitest';
-import { Container, Graphics, Mesh } from 'pixi.js';
+import { Container, Graphics } from 'pixi.js';
 import { updateSwarmSprites, type SwarmSpriteCtx } from './swarmSpriteUpdater.js';
 import { MountVisualManager } from '../MountVisualManager.js';
 import { WreckGeometryStore, rebuildWreckPieces } from '../../net/wreckGeometryStore.js';
 import { WreckArtState, WreckPieceSprite } from './wreckArt.js';
 import type { ArtService } from '../art/ArtService.js';
 import { CutFieldLayer, isFieldRockMesh } from '../field/CutFieldLayer.js';
+import { RockBatchMember } from '../field/rockBatch.js';
 import type { RenderMirror, SwarmRenderState, PoseRingEntry } from '../../../core/contracts/IRenderer.js';
 import { POSE_RING_DEPTH } from '../../../core/contracts/IRenderer.js';
 import { FRACTURE_ALGO_VERSION } from '../../../core/destruction/fractureHull.js';
@@ -23,6 +24,7 @@ import { WRECK_ROCK_PARENT_KIND, type WreckDescriptor } from '../../../shared-ty
 // A GL program needs a canvas; node has none (the look is checked in stills).
 vi.mock('../field/fieldRockShader', () => ({
   fieldRockProgram: () => ({}),
+  fieldRockBatchProgram: () => ({}),
   fieldRockShaderResources: () => ({}),
   setFieldRockView: () => {},
   setFieldOreStyle: () => {},
@@ -141,7 +143,7 @@ describe('rock wreck pieces draw the asteroid art (rock cut)', () => {
     expect(first.length).toBe(mirror.swarm!.size);
     for (const p of first) {
       expect(p.rockArt!.shaded).toBe(true);
-      expect(p.rockArt!.children[0]).toBeInstanceOf(Mesh);
+      expect(p.rockArt!.children[0]).toBeInstanceOf(RockBatchMember);
       expect(isFieldRockMesh(p.rockArt!.children[0]!)).toBe(true);
     }
     updateSwarmSprites(mirror, ctx);
