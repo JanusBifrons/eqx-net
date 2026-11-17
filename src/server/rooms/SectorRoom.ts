@@ -12140,10 +12140,21 @@ export class SectorRoom extends Room<SectorState> {
    *  or one of its structures was hit in the last 60 s. */
   tradeBaseUnderAttack(ownerId: string): boolean {
     if (this.factionLedger.get(ownerId)?.underWave === true) return true;
+    return this.structureHitWithin(60_000, ownerId, false);
+  }
+
+  /** Galaxy feed — a structure of control side `side` was hit within `windowMs` (game time). */
+  sideStructuresHitWithin(side: string, windowMs: number): boolean {
+    return this.structureHitWithin(windowMs, side, true);
+  }
+
+  /** A structure owned by `who` (an owner id, or a control side when `bySide`) was hit within `windowMs`. */
+  private structureHitWithin(windowMs: number, who: string, bySide: boolean): boolean {
     const now = this.gameClock.now();
     for (const [sid, at] of this.structureAttackAuditAtMs) {
-      if (now - at > 60_000) continue;
-      if (this.structureRegistry.get(sid)?.owner === ownerId) return true;
+      if (now - at > windowMs) continue;
+      const owner = this.structureRegistry.get(sid)?.owner;
+      if (owner !== undefined && (bySide ? parseOwner(owner).faction : owner) === who) return true;
     }
     return false;
   }

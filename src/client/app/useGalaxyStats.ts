@@ -1,10 +1,10 @@
 import { useEffect } from 'react';
 import { useUIStore } from '../state/store';
-import { GalaxySnapshotResponseSchema } from '../../shared-types/galaxySnapshot.js';
+import { GALAXY_FEED_INTERVAL_MS, GalaxySnapshotResponseSchema } from '../../shared-types/galaxySnapshot.js';
 
-/** Galaxy snapshot poll cadence (ms). "Alive via a few-second refresh", not
- *  sub-second — see docs/architecture/living-galaxy.md. */
-const POLL_MS = 4000;
+/** Poll cadence (ms): the ONE shared galaxy-feed interval (the server rebuilds
+ *  the snapshot this often) — see docs/architecture/living-galaxy.md. */
+const POLL_MS = GALAXY_FEED_INTERVAL_MS;
 
 /**
  * Polls `GET /galaxy/snapshot` while a galaxy map is on screen and writes the

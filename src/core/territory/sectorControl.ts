@@ -180,3 +180,27 @@ export function isMultiContested(s: MultiControlState, presence: SectorPresence,
   }
   return false;
 }
+
+/** A holder at or under this share is close to release (RELEASE_AT): a threat escalates. */
+export const THREAT_LOW_SHARE = 40;
+
+/**
+ * Galaxy-feed threat level for a sector's holder, 0 (calm) … 3 (about to fall).
+ * The holder is threatened when its share is falling (`trend` −1) OR its
+ * structures were damaged recently; each sign counts 1. A threatened holder
+ * gains 1 more for fighting in the sector (`recentCombat`) or a share at or
+ * under THREAT_LOW_SHARE. Neutral ground (no holder) is never threatened.
+ */
+export function controlThreat(
+  hasHolder: boolean,
+  trend: -1 | 0 | 1,
+  holderShare: number,
+  structuresHit: boolean,
+  recentCombat: boolean,
+): 0 | 1 | 2 | 3 {
+  if (!hasHolder) return 0;
+  const signs = (trend < 0 ? 1 : 0) + (structuresHit ? 1 : 0);
+  if (signs === 0) return 0;
+  const boost = recentCombat || holderShare <= THREAT_LOW_SHARE ? 1 : 0;
+  return (signs + boost) as 1 | 2 | 3;
+}
