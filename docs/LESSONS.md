@@ -3165,3 +3165,8 @@ Owner: "make it more like micro machines and make fights a bit longer. Also don'
 
 - **Finding (design):** switching the manifest to `orientation: 'landscape'` does not lock an already-installed Android app at once: Chrome refreshes an installed app's manifest lazily (it can take days), and iOS ignores manifest orientation entirely. An upright-phone screen is still needed for the iPhone app and the browser.
 - **Rule:** never rely on the manifest alone to keep a phone sideways; the in-page turn-sideways screen covers every case, and a manifest change is verified on a fresh install. Guide: [mobile-layout](features/mobile-layout.md#orientation-policy).
+
+## 2026-11-17 — a cut field's keep-out test must use the rock's final outline
+
+- **Finding (bug):** galaxy field clearings dropped only pieces whose pre-warp centre was inside and that were smaller than the clearing. Large pieces and the field warp (up to ~1.1 km) reached across, so belt warps in three sectors dropped ships inside rock. One test checked one sector, so it missed them.
+- **Rule:** a keep-out area in a generated field is tested on the rock's final, warped outline (or a pre-warp reach padded by `cutFieldPad()`), and its test covers every seed that ships, not a sample. Guide: [macro-terrain](architecture/macro-terrain.md#galaxy-sectors-f4).
