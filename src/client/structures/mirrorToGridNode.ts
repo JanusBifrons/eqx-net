@@ -236,7 +236,7 @@ export function linkReachBoxOf(ghost: GridNode, partnerExt: number, out: Obstacl
  * themselves are pooled in `out` across frames — only their fields are rewritten.
  *
  * Mirrors the server's asteroid → `GridObstacle` projection
- * (`SectorRoom.gatherStructureObstacles`): the square box as broad phase, and
+ * (`SectorObstacles.rocks`): the square box as broad phase, and
  * with `shapes` the rock's convex `parts` at its `angle` (C5c), the same
  * `rockObstacleParts` the server builds. Without `shapes` (or a rock whose
  * shape this client lacks) the box alone: never a false green.

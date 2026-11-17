@@ -37,9 +37,28 @@ Callers keep one goal object and mutate it between searches instead of passing a
 Not a search, so not here: `Grid.rebuild`'s connected-component flood fill (it labels groups, it
 does not look for a route).
 
+## The one obstacle gatherer (`server/rooms/SectorObstacles.ts`)
+Every "what solid things are near here?" question in a sector room reads `SectorObstacles`, the
+room's `obstacles` field. It replaced four hand-written gathers in `SectorRoom` that each saw a
+different subset.
+| Call | Sees | Used by |
+|---|---|---|
+| `rocks(near?)` | live rocks (swarm kind 0, SAB pose, collider parts); with `near`, field rocks with no body (`CutFieldSubsystem.dormantObstacles`) | structure placement, connection line of sight, NPC base links (`getObstacles`) |
+| `structureBoxes()` | structure solid boxes (a teleporter pad is open, only its posts) | join spawn, convoy spawn (`clearPointNear`) |
+| `landing(...)` | structure boxes, every swarm body within reach (rocks, drones, scrap, wreck pieces, pods), field rocks with no body, other pilots' ships and parked hulls (own skipped, or only `onlySkipShipId`), blocking shield walls and closed gate spans | `landingPoint` (warp, sector trip, fleet and bot warps) |
+| `hullCircles(playerId)` | AI ships and other pilots' hulls by extent (pilots still joining skipped) | join spawn spacing |
+
+Outputs are scratch: each call refills the same arrays with the same pooled records (and a rock's
+parts are built once per outline), so a caller uses the result before the next call and never keeps
+it. The field-layout cut behind dormant rocks still allocates; every caller is a discrete action, never
+a tick. Ship and wall sources reach it as visitors (`HullSink`, `WallSink`;
+`ShieldWallManager.forEachBlockingWall`), and `nearestClearPoint` keeps a body clear of wall segments.
+
 ## History
 - 2026-11-17: plan approved (wide lane by default, no-route ⇒ nearest spot and wait, whole route line,
   squads single file). Slice 1a: `GraphSearch` lands; `HeldSectorRoutes` moves onto it.
   Slice 1b: galaxy gate hops (`gateHops.ts`) and `routeHops` move onto it; answers unchanged for
   every sector pair. Slice 1c: the power grid's route tree moves onto it; routes unchanged on
-  random grids.
+  random grids. Slice 2: one obstacle gatherer (`SectorObstacles`) for placement, line of sight,
+  landing and spawns. Landing now also avoids field rocks whose chunk is not loaded and blocking shield
+  walls (before, a warp could land inside either).
