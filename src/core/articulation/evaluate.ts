@@ -16,7 +16,7 @@
  *  - every value is clamped to its joint limits.
  *
  * Targeted clips: keys marked `fromTarget` take their value from an injected
- * IK solver (`IkSolve`, the 2b solver lives in `ik.ts`). With no target or no
+ * IK solver (`IkSolve`; the real 2-bone one is `twoBoneIkSolve` in `ikAdapter.ts`). With no target or no
  * solver those keys fall back to rest.
  */
 import { applyEase } from './easing.js';
@@ -44,6 +44,8 @@ export interface IkRequest {
   /** End effector in the tip part's frame. */
   tipX: number;
   tipY: number;
+  /** Fold direction of a 2-bone chain (+1 counter-clockwise, -1 clockwise). */
+  bend: 1 | -1;
   /** Target in the host frame. */
   targetX: number;
   targetY: number;
@@ -84,7 +86,7 @@ export function createRigPose(rig: Rig): RigPose {
     ikOut: new Float64Array(rig.maxChain),
     ikReq: {
       rig, chain: new Int16Array(0), originX: 0, originY: 0, originAngle: 0,
-      tipX: 0, tipY: 0, targetX: 0, targetY: 0,
+      tipX: 0, tipY: 0, bend: 1, targetX: 0, targetY: 0,
     },
     ikReached: true,
   };
@@ -156,7 +158,7 @@ export function evaluateRig(
       req.rig = rig;
       req.chain = clip!.chain;
       req.originX = pX; req.originY = pY; req.originAngle = pA;
-      req.tipX = clip!.tipX; req.tipY = clip!.tipY;
+      req.tipX = clip!.tipX; req.tipY = clip!.tipY; req.bend = clip!.bend;
       req.targetX = target!.x; req.targetY = target!.y;
       out.ikReached = ik!(req, ikOut);
       ikDone = true;
