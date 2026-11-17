@@ -5,14 +5,15 @@
  */
 import { describe, expect, it } from 'vitest';
 import { EventEmitter } from 'eventemitter3';
-import { escortRing, FlagshipDirector, FLEET_ESCORT_KINDS, fleetCapitalKind, classOf, styledKind } from './FlagshipDirector.js';
+import { escortRing, FlagshipDirector, FLEET_ESCORT_KINDS, powerCapitalKind, classOf, styledKind } from './FlagshipDirector.js';
 import type { ShipKindId } from '../../shared-types/shipKinds.js';
 import type { LivingWorldRoom } from './LivingWorldRoom.js';
 import { sectorSites } from '../../core/galaxy/sectorSites.js';
-import { sectorController } from '../../core/galaxy/control.js';
-import { GALAXY_SECTORS, getNeighbours } from '../../core/galaxy/galaxy.js';
+import { regionHeart } from '../../core/galaxy/control.js';
+import { getNeighbours, isNeighbour } from '../../core/galaxy/galaxy.js';
+import { REGION_POWER_IDS } from '../../shared-types/factions.js';
 
-interface Bot { kind: string; x: number; y: number; elite?: string }
+interface Bot { kind: string; x: number; y: number; elite?: string; factionId?: string }
 
 function fakeRoom() {
   const bus = new EventEmitter();
@@ -24,7 +25,7 @@ function fakeRoom() {
     bots, warps, stations, guards, bus,
     eventBus: () => bus,
     hasFreeSlot: () => true,
-    spawnLivingWorldBot: (s: { botId: string; kind: string; x: number; y: number }) => { bots.set(s.botId, { kind: s.kind, x: s.x, y: s.y }); return true; },
+    spawnLivingWorldBot: (s: { botId: string; kind: string; x: number; y: number; factionId?: string }) => { bots.set(s.botId, { kind: s.kind, x: s.x, y: s.y, factionId: s.factionId }); return true; },
     despawnLivingWorldBot: (id: string) => { const b = bots.get(id); bots.delete(id); return b ? { kind: b.kind, health: 1 } : null; },
     markElite: (id: string, name: string) => { const b = bots.get(id); if (!b) return false; b.elite = name; return true; },
     setBotFlockFollow: () => {},
@@ -44,7 +45,7 @@ const A = 'sol-prime';
 function director(rooms: Map<string, FakeRoom>, extra: Partial<ConstructorParameters<typeof FlagshipDirector>[1]> = {}) {
   let t = 1_000_000;
   const clock = { advance: (ms: number) => { t += ms; } };
-  const d = new FlagshipDirector(rooms as unknown as Map<string, LivingWorldRoom>, { rng: () => 0.3, nowMs: () => t, firstSector: A, dwellMs: 1000, respawnMs: 5000, ...extra });
+  const d = new FlagshipDirector(rooms as unknown as Map<string, LivingWorldRoom>, { rng: () => 0.3, nowMs: () => t, powers: ['core'], holderOf: () => 'core', dwellMs: 1000, respawnMs: 5000, ...extra });
   return { d, clock, now: () => t };
 }
 
@@ -196,7 +197,7 @@ describe('FlagshipDirector', () => {
     const saved = first.d.state();
     expect(saved.fleets).toHaveLength(1);
     const room2 = fakeRoom();
-    const second = director(new Map([[A, room2]]), { restore: saved, firstSector: undefined });
+    const second = director(new Map([[A, room2]]), { restore: saved });
     second.d.start();
     const [f] = second.d.fleetsView();
     expect(f?.name).toBe(saved.fleets[0]!.name);
@@ -206,13 +207,123 @@ describe('FlagshipDirector', () => {
     expect(Math.hypot(lead.x - pocket.x, lead.y - pocket.y)).toBeLessThan(pocket.r + 1);
   });
 
-  it('fields battleships in a power\'s heartland and cruisers on neutral ground', () => {
-    const held = GALAXY_SECTORS.find((s) => sectorController(s.key) !== null)!.key;
-    const neutral = GALAXY_SECTORS.find((s) => sectorController(s.key) === null)!.key;
-    for (const r of [0, 0.6, 0.99]) {
-      expect(['battleship', 'battlecruiser']).toContain(fleetCapitalKind(held, () => r));
-      expect(['light-cruiser', 'heavy-cruiser']).toContain(fleetCapitalKind(neutral, () => r));
+  it('the Sol Dominion fields a battleship, each frontier power a battlecruiser', () => {
+    expect(powerCapitalKind('core')).toBe('battleship');
+    for (const p of ['verdant-reach', 'crimson-expanse', 'azure-deep']) expect(powerCapitalKind(p)).toBe('battlecruiser');
+  });
+});
+
+describe('FlagshipDirector — one fleet per power (owner 2026-11-17)', () => {
+  /** A neighbour M of `from` with a neighbour X that is neither `from` nor adjacent to it. */
+  function twoHops(from: string): { m: string; x: string } {
+    for (const m of getNeighbours(from)) {
+      for (const x of getNeighbours(m.key)) {
+        if (x.key !== from && !isNeighbour(from, x.key)) return { m: m.key, x: x.key };
+      }
     }
+    throw new Error('no two-hop path');
+  }
+  const run = (d: FlagshipDirector, clock: { advance: (ms: number) => void }, now: () => number, steps: number, until?: () => boolean): void => {
+    for (let i = 0; i < steps && !(until?.() ?? false); i++) { clock.advance(30_000); d.tick(now()); }
+  };
+
+  it('fields exactly one fleet per power, each at its heart, its ships flying for it', () => {
+    const rooms = new Map(REGION_POWER_IDS.map((p) => [regionHeart(p), fakeRoom()] as const));
+    // Default holders: no control meter runs here, so the static seed (each
+    // power holds its heart).
+    const { d } = director(rooms, { powers: undefined, holderOf: undefined });
+    d.start();
+    const fleets = d.fleetsView();
+    expect(fleets.map((f) => f.factionId).sort()).toEqual([...REGION_POWER_IDS].sort());
+    for (const f of fleets) {
+      expect(f.sectorKey).toBe(regionHeart(f.factionId));
+      const room = rooms.get(f.sectorKey)!;
+      expect(room.bots.size).toBe(1 + FLEET_ESCORT_KINDS.length);
+      for (const b of room.bots.values()) expect(b.factionId).toBe(f.factionId);
+    }
+    expect(d.state().fleets.every((s) => REGION_POWER_IDS.includes(s.factionId!))).toBe(true);
+  });
+
+  it('spawns at the nearest sector its power holds when the heart is lost', () => {
+    const heart = regionHeart('verdant-reach');
+    const { m, x } = twoHops(heart);
+    const rooms = new Map([[heart, fakeRoom()], [m, fakeRoom()], [x, fakeRoom()]]);
+    const { d } = director(rooms, { powers: ['verdant-reach'], holderOf: (k) => (k === x ? 'verdant-reach' : 'robots') });
+    d.start();
+    expect(d.fleetsView()[0]?.sectorKey).toBe(x);
+  });
+
+  it('roams only into neighbours its power holds', () => {
+    const [n1, n2] = getNeighbours(A).map((s) => s.key);
+    const rooms = new Map([[A, fakeRoom()], [n1!, fakeRoom()], [n2!, fakeRoom()]]);
+    // rng 0 would pick the first neighbour if any were allowed.
+    const { d, clock, now } = director(rooms, { rng: () => 0, holderOf: (k) => (k === n1 ? 'robots' : 'core') });
+    d.start();
+    run(d, clock, now, 12, () => d.fleetsView()[0]?.sectorKey !== A);
+    expect(d.fleetsView()[0]?.sectorKey).toBe(n2);
+    expect(rooms.get(n1!)!.bots.size).toBe(0);
+  });
+
+  it('heads home hop by hop toward the nearest held sector once its sector flips', () => {
+    const { m, x } = twoHops(A);
+    const rooms = new Map([[A, fakeRoom()], [m, fakeRoom()], [x, fakeRoom()]]);
+    const holders = new Map<string, string>([[A, 'core'], [m, 'robots'], [x, 'robots']]);
+    const { d, clock, now } = director(rooms, { dwellMs: 600_000, holderOf: (k) => holders.get(k) ?? null });
+    d.start();
+    run(d, clock, now, 3);
+    expect(d.fleetsView()[0]?.sectorKey).toBe(A); // held: dwells
+    // A falls; only X (two hops away) is still the power's.
+    holders.set(A, 'robots');
+    holders.set(x, 'core');
+    const seen: string[] = [A];
+    for (let i = 0; i < 12 && d.fleetsView()[0]?.sectorKey !== x; i++) {
+      clock.advance(10_000);
+      d.tick(now());
+      const k = d.fleetsView()[0]?.sectorKey;
+      if (k !== undefined && seen[seen.length - 1] !== k) seen.push(k);
+    }
+    expect(seen).toEqual([A, m, x]); // through M, without a full dwell anywhere
+    expect(rooms.get(x)!.bots.size).toBe(1 + FLEET_ESCORT_KINDS.length);
+  });
+
+  it('holding nothing, it stays where it is and fights (no wandering off)', () => {
+    const [n1] = getNeighbours(A).map((s) => s.key);
+    const rooms = new Map([[A, fakeRoom()], [n1!, fakeRoom()]]);
+    const { d, clock, now } = director(rooms, { holderOf: () => 'robots' });
+    d.start();
+    // Spawned at its heart all the same, to fight for it.
+    expect(d.fleetsView()[0]?.sectorKey).toBe(A);
+    run(d, clock, now, 20);
+    expect(d.fleetsView()[0]?.sectorKey).toBe(A);
+    expect(rooms.get(n1!)!.bots.size).toBe(0);
+  });
+
+  it('respawns a destroyed fleet at its heart', () => {
+    const [n1] = getNeighbours(A).map((s) => s.key);
+    const rooms = new Map([[A, fakeRoom()], [n1!, fakeRoom()]]);
+    const { d, clock, now } = director(rooms, { rng: () => 0 });
+    d.start();
+    run(d, clock, now, 12, () => d.fleetsView()[0]?.sectorKey === n1);
+    expect(d.fleetsView()[0]?.sectorKey).toBe(n1);
+    const room = rooms.get(n1!)!;
+    const leadId = [...room.bots.keys()].find((id) => id.endsWith('-lead'))!;
+    room.bots.delete(leadId);
+    room.bus.emit('ENTITY_DESTROYED', { type: 'ENTITY_DESTROYED', entityId: leadId });
+    expect(d.fleetsView()).toHaveLength(0);
+    clock.advance(6000);
+    d.tick(now());
+    expect(d.fleetsView()[0]?.sectorKey).toBe(A);
+  });
+
+  it('drops a fleet from an old save without a power; each power spawns fresh at home', () => {
+    const room = fakeRoom();
+    const old = { version: 1, fleets: [{ sectorKey: A, pocketId: 'nope', kind: 'heavy-cruiser', name: 'Cruiser Old', moves: 2, escorts: ['gunship'] }] };
+    const { d } = director(new Map([[A, room]]), { restore: old as never });
+    d.start();
+    const [f] = d.fleetsView();
+    expect(f?.name).not.toBe('Cruiser Old');
+    expect(f?.kind.startsWith('battleship')).toBe(true);
+    expect(f?.escorts).toBe(FLEET_ESCORT_KINDS.length);
   });
 });
 

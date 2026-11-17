@@ -4,13 +4,14 @@ Capital ships are the galaxy's warships: destroyers, light and heavy cruisers, b
 
 ## Flagship fleets (wrap-up W2a)
 
-Somewhere in the galaxy there is always a **flagship fleet**: one capital ship with an escort of two destroyers and four gunships.
+Each of the four powers has its own **flagship fleet** (owner 2026-11-17: "One flagship fleet per power"): one capital ship with an escort of two destroyers and four gunships, flying for that power.
 
 - **Where it is.** The galaxy map shows it: hovering a system or opening its drawer reads "⚓ Capital sighted: the Battleship Warspite". A notice goes out when a new fleet arrives and when a flagship is destroyed.
+- **Where it goes.** A fleet roams only sectors its power holds. It starts at the power's heart, or at the nearest sector the power still holds if the heart has fallen. When the sector it is in stops being its power's, it heads home at once, gate by gate, toward the nearest sector its power still holds, settling only briefly on the way. A power that holds nothing keeps its fleet where it is, fighting.
 - **How it moves.** It holds a pocket of a solar-system sector for a few minutes, then the whole fleet spools up and warps to another pocket together, the capital's slow turn making its spool the long one. Every third move it heads for a gate and crosses into a neighbouring system, arriving at that system's gate facing back. A fleet always arrives in a new system through a gate.
-- **How strong it is.** The capital's class follows the sector's power: a power's heartland fields battleships and battlecruisers, neutral ground cruisers. The flagship is named, carries half again its class's hull, and a bounty for whoever sinks it.
-- **Escorts** hold stations round the flagship, outside its hull, turning with its heading. When the flagship is destroyed the escorts break off and jump out, and a new fleet arrives elsewhere about fifteen minutes later.
-- **It's neutral until provoked**, like other drone-side ships: fire on it and it fights back.
+- **How strong it is.** The capital's class follows the power: the Sol Dominion fields a battleship, each frontier power a battlecruiser. The flagship is named, carries half again its class's hull, and a bounty for whoever sinks it.
+- **Escorts** hold stations round the flagship, outside its hull, turning with its heading. When the flagship is destroyed the escorts break off and jump out, and about fifteen minutes later the power fields a new fleet at its heart (or its nearest held sector).
+- **It fights for its power.** Every ship of the fleet counts for its power on the sector control meter, and it engages pilots that power is hostile to (the same rule as the power's patrols). It does not yet pick fights with other powers' AI ships: NPC-vs-NPC targeting still follows the hull kind.
 - **Never load-shed.** The flagship is an elite and the escorts are exempt, so a busy server never quietly removes them.
 - **It survives a restart**, at the pocket it was in, with the same name and class.
 
@@ -18,9 +19,11 @@ Somewhere in the galaxy there is always a **flagship fleet**: one capital ship w
 
 - `FlagshipDirector` (`src/server/livingworld/`) runs on the drone director's control tick (~1.5 s), never the 60 Hz loop.
 - Ids start `flagship-` (`isDirectorBotId`). Moves use the NPC warp (`SectorRoom.warpBot`, see [warp-to](warp-to.md)), which lands clear of rocks and ships. Escort stations are `escortRing(capital, escort)`: both hulls' radii plus a fifth of the capital's.
+- Attribution is the room's patrol attribution: `spawnLivingWorldBot({ factionId })` → `PatrolSubsystem.attachShip`, so `factionOf` feeds the control-meter tally, the snapshot tint and the wreck livery. An attached ship engages hostile pilots within `ATTACHED_ENGAGE_RANGE` (3000 u) and is forgotten once gone.
+- A sector's holder is the live control meter (`liveSectorHolder`), else the static seed. Re-homing is a BFS over the gate graph with preallocated scratch (`HeldSectorRoutes`, `heldSectorRoutes.ts`).
 - The map reads `SectorLiveState.capital` (snapshot, #16); notices are accelerators.
-- Persisted in `allegiance_director_state`, row `flagships`. Kill switch: `EQX_DISABLE_FLAGSHIPS=1`.
-- Locks: `FlagshipDirector.test.ts`, `LoadShedder.test.ts`, `tests/integration/sectorRoom/flagshipFleet.test.ts`, `galaxyTooltip.test.ts`.
+- Persisted in `allegiance_director_state`, row `flagships` (zod-parsed; each fleet records `factionId`; a fleet from an older save without one is dropped and its power fields a fresh one). Kill switch: `EQX_DISABLE_FLAGSHIPS=1`.
+- Locks: `FlagshipDirector.test.ts`, `PatrolSubsystem.test.ts`, `LoadShedder.test.ts`, `tests/integration/sectorRoom/flagshipFleet.test.ts`, `galaxyTooltip.test.ts`.
 
 ## Flying a capital
 
@@ -56,7 +59,7 @@ Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each r
 
 ### Flagship fleets (wrap-up W2a, 2026-11-08)
 
-- **`FlagshipDirector`** (`livingworld/`) is ticked on the drone director's `onTick`. It keeps `FLEET_COUNT` capital fleets: an elite-marked flagship plus escorts with `flagship-` ids, which `LoadShedder` never sheds.
+- **`FlagshipDirector`** (`livingworld/`) is ticked on the drone director's `onTick`. It keeps one capital fleet per power (`REGION_POWER_IDS`; 2026-11-17, was `FLEET_COUNT` unowned fleets): an elite-marked flagship plus escorts with `flagship-` ids, which `LoadShedder` never sheds.
 - **Moving.** Fleets move pocket to pocket with `SectorRoom.warpBot`, the NPC warp: `World.botWarp` → `BOT_WARP` → `drones[].warp`. They cross systems by gate.
 - **Escort stations come from hull radii** (`escortRing`), never a flock distance: fighter-scale flocking rammed escorts into a battleship's hull.
 - **`warpBot` lands at `landingPoint`.** A drop inside a belt rock killed an escort, so the bot lands at the nearest clear spot, like a pilot.

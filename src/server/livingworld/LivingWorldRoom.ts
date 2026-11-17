@@ -134,6 +134,10 @@ export interface LivingWorldRoom {
      *  doesn't render NEUTRAL until the next control-tick pulse. Resolve via
      *  {@link factionHostility}. */
     hostileToFaction?: { playerId: string; structureIds: readonly string[] };
+    /** The power (or other faction) that owns the bot: attributed through the
+     *  room's patrol attribution (`PatrolSubsystem.attachShip`), so it counts
+     *  for that side on the control meter and engages pilots hostile to it. */
+    factionId?: string;
   }): boolean;
   despawnLivingWorldBot(botId: string): BotCarry | null;
   markBotHostile(botId: string): void;
