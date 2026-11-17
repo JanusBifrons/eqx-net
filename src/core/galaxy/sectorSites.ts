@@ -17,6 +17,7 @@
  */
 import { getNeighbours, getSector, axialToPixel, type GalaxySector } from './galaxy.js';
 import { SOLAR_SECTOR_HALF_EXTENT } from '../../shared-types/sectorBounds.js';
+import { cutFieldPad, SLICED, type FieldClearing } from '../terrain/fieldLayout.js';
 
 /** Half extent of a solar-system sector (world units). */
 export const SOLAR_HALF_EXTENT = SOLAR_SECTOR_HALF_EXTENT;
@@ -201,4 +202,43 @@ export function isWarpDropPoint(sectorKey: string, x: number, y: number, enabled
     if (Math.abs(Math.hypot(x - s.x, y - s.y) - s.r) <= WARP_DROP_TOLERANCE) return true;
   }
   return false;
+}
+
+/** Rock-free room round a pocket inside a cut field, beyond its rim (u):
+ *  covers a rock's size plus the warp, so a warp drop on the rim (site.r)
+ *  lands in open space looking at the rocks (owner 2026-11-17: arrive at the
+ *  edge). */
+export const FIELD_CLEARING_MARGIN = 2500;
+
+/** Bumped when the field a sector derives changes (clearings, seed rule):
+ *  the seed carries it, so rock changes saved under the old field (C4,
+ *  keyed `<sectorKey>|<seed>`) are never applied to different rocks. */
+export const SECTOR_FIELD_VERSION = 1;
+
+export interface SectorCutField {
+  /** The field's seed (the welcome's `cutField.seed`). */
+  seed: string;
+  /** Every pocket the field would cover, kept open (F4). */
+  clearings: FieldClearing[];
+}
+
+/**
+ * Macro terrain F4: the cut field of a sector the galaxy map marks
+ * `asteroid`, or null. Owner 2026-11-17: ONE field per such sector, as built
+ * (300 km across, centred on home, which sits in its open core); every other
+ * pocket inside it (belts, base, battle zone) is a clearing. Pure and
+ * deterministic per sector key, like the pockets. Off with solar-system
+ * sectors off (a ±5 km sector sits inside the open core).
+ */
+export function sectorCutField(sectorKey: string, enabled: boolean): SectorCutField | null {
+  if (!enabled) return null;
+  const sector = getSector(sectorKey);
+  if (!sector || !sector.features.includes('asteroid')) return null;
+  const reach = SLICED.radius + cutFieldPad();
+  const clearings: FieldClearing[] = [];
+  for (const site of sectorSites(sectorKey)) {
+    const r = site.r + FIELD_CLEARING_MARGIN;
+    if (Math.hypot(site.x, site.y) - r < reach) clearings.push({ x: site.x, y: site.y, r });
+  }
+  return { seed: `galaxy:${sectorKey}:v${SECTOR_FIELD_VERSION}`, clearings };
 }

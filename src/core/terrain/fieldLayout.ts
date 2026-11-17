@@ -171,6 +171,9 @@ export interface SlicedOpts {
   minSize?: number;
   /** Field radius override (tests); default `SLICED.radius`. */
   radius?: number;
+  /** Open clearings cut out of the field, like the core (galaxy sectors:
+   *  the pockets inside the field, F4). */
+  clearings?: readonly FieldClearing[];
   /** Only rocks whose pre-warp centre is in this half-open box (a chunk).
    *  Same rocks as cutting everything and filtering, much less work: a cut
    *  child lies inside its parent, so a piece whose box misses `own` holds no
@@ -178,6 +181,15 @@ export interface SlicedOpts {
   own?: { x0: number; y0: number; x1: number; y1: number };
 }
 
+/** An open clearing (F4): a circle, before the warp, with no rocks in it.
+ *  The rule is the core's: a piece whose centre is inside is dropped once it
+ *  is smaller than the clearing; a bigger one is cut further first. */
+export interface FieldClearing { x: number; y: number; r: number }
+
+/** Pass a field's radius override and clearings on to `slicedField`. */
+export function fieldShape(o: ChunkOpts): Pick<SlicedOpts, 'radius' | 'clearings'> {
+  return { ...(o.radius !== undefined ? { radius: o.radius } : {}), ...(o.clearings?.length ? { clearings: o.clearings } : {}) };
+}
 /** A child's path in the cut tree: the parent's hash mixed with the depth and
  *  the side, so paths never collide the way `path * 31 + k` did. */
 function childPath(path: number, depth: number, k: number): number {
@@ -258,6 +270,14 @@ export function slicedField(o: SlicedOpts): SlicedRock[] {
     }
     stack.length = 0; stack.push(...next);
   }
+  const clearings = o.clearings ?? [];
+  const inClearing = (c: Pt, size: number): boolean => {
+    for (let i = 0; i < clearings.length; i++) {
+      const k = clearings[i]!, dx = c.x - k.x, dy = c.y - k.y;
+      if (size < k.r && dx * dx + dy * dy < k.r * k.r) return true;
+    }
+    return false;
+  };
   const own = o.own;
   const missesOwn = (poly: Pt[]): boolean => {
     if (!own) return false;
@@ -273,6 +293,7 @@ export function slicedField(o: SlicedOpts): SlicedRock[] {
     const size = Math.sqrt(areaOf(poly));
     const d = Math.sqrt(c.x * c.x + c.y * c.y) / R; // 0 core .. ~1 rim
     if (d < S.holeShare && size < R * 0.2) continue; // the open core
+    if (inClearing(c, size)) continue;
     const small = F * (S.smallMinF + (S.smallMaxF - S.smallMinF) * rnd(path, 3));
     const bigStop = size <= 2 * B && size >= B && rnd(path, 4) < S.bigChance;
     const lodStop = o.minSize !== undefined && size < o.minSize;
@@ -369,6 +390,8 @@ export interface ChunkOpts {
   fighterLength: number;
   /** Field radius override (tests); default `SLICED.radius`. */
   radius?: number;
+  /** Open clearings (F4, galaxy sectors); none in test rooms. */
+  clearings?: readonly FieldClearing[];
 }
 
 /**
@@ -382,7 +405,7 @@ export function rocksInChunk(o: ChunkOpts, cx: number, cy: number): ChunkRock[] 
     seed: o.seed, battleshipLength: o.battleshipLength, fighterLength: o.fighterLength,
     view: { x0, y0, x1: x0 + CHUNK_SIZE, y1: y0 + CHUNK_SIZE },
     own: { x0, y0, x1: x0 + CHUNK_SIZE, y1: y0 + CHUNK_SIZE },
-    ...(o.radius !== undefined ? { radius: o.radius } : {}),
+    ...fieldShape(o),
   });
   // Members: pre-warp centre inside this chunk (half-open, so each rock has
   // exactly one chunk). Neighbours' rocks that reach in belong to them.
@@ -443,7 +466,7 @@ export function coarseFieldTiles(o: ChunkOpts): CoarseTile[] {
   const pieces = slicedField({
     seed: o.seed, battleshipLength: o.battleshipLength, fighterLength: o.fighterLength,
     view: { x0: -R, y0: -R, x1: R, y1: R }, minSize: FIELD_COARSE_MIN_SIZE,
-    ...(o.radius !== undefined ? { radius: o.radius } : {}),
+    ...fieldShape(o),
   });
   const byTile = new Map<string, CoarseTile>();
   for (const p of pieces) {
