@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import type { IPersistenceSink, PersistOp } from '../../core/contracts/IPersistenceSink.js';
 import { EconomyStore, STANDING_SCALE_VERSION } from './EconomyStore.js';
-import { factionLookOf, setFactionLooks } from '../../shared-types/factions.js';
+import { factionLookOf, setFactionLooks, teamSigilOf } from '../../shared-types/factions.js';
 
 const P = '6a7e0000-0000-4000-8000-0000000000a1';
 const Q = '6a7e0000-0000-4000-8000-0000000000b2';
@@ -126,6 +126,17 @@ describe('EconomyStore claimed ship looks', () => {
     s2.hydrate({ players: [{ player_id: P, payload_json: op.payloadJson }], deals: [], market: null });
     expect(factionLookOf(P)).toEqual({ colorSlot: 2, sigil: 99 });
     expect(s2.claimLook(Q, 2, 99)).toBe('taken');
+    setFactionLooks([]);
+  });
+
+  it('another known player’s unclaimed default pair counts as taken', () => {
+    const { s } = store();
+    s.player(Q); // Q has an economy row but no claim: Q wears its hash default.
+    const q = teamSigilOf(Q);
+    expect(s.claimLook(P, q >>> 12, q & 0xfff)).toBe('taken');
+    // Q may claim its own default; once Q holds another pair, the old one is free.
+    expect(s.claimLook(Q, q >>> 12, (q & 0xfff) ^ 1)).toBe('ok');
+    expect(s.claimLook(P, q >>> 12, q & 0xfff)).toBe('ok');
     setFactionLooks([]);
   });
 });

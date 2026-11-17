@@ -32,9 +32,12 @@ import {
   factionLooksWire,
   FactionLookWireSchema,
   setFactionLooks,
+  isLookInRange,
   isNpcFactionId,
   npcFactions,
+  packLook,
   policyFromWire,
+  teamSigilOf,
   type FactionLookClaim,
   type FactionLookWire,
   type FactionPolicy,
@@ -242,8 +245,15 @@ export class EconomyStore {
     this.touchPlayer(playerId);
   }
 
-  /** Claim a unique ship look for a player; persisted only when it succeeds. */
+  /** Claim a unique ship look for a player; persisted only when it succeeds.
+   *  Another known player's unclaimed (hash-default) pair counts as taken: two
+   *  players would otherwise wear the same look. Claims are rare, so the scan
+   *  over every player row is cheap. */
   claimLook(playerId: string, colorSlot: number, sigil: number): FactionLookClaim {
+    if (isLookInRange(colorSlot, sigil) && !isNpcFactionId(playerId)) {
+      const packed = packLook(colorSlot, sigil);
+      for (const id of this.players.keys()) if (id !== playerId && teamSigilOf(id) === packed) return 'taken';
+    }
     const result = claimFactionLook(playerId, colorSlot, sigil);
     if (result !== 'ok') return result;
     this.player(playerId).look = { colorSlot, sigil };
