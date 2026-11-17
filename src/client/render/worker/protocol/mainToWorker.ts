@@ -68,6 +68,9 @@ export interface BootMsg {
    * screen-centre on touch. Absent ⇒ desktop (ahead-of-ship + hover-follow).
    */
   isTouch?: boolean;
+  /** prefers-reduced-motion, read on the main thread (no matchMedia in a
+   *  worker): the galaxy map then skips its tweens, pulses and drift. */
+  reducedMotion?: boolean;
 }
 
 /**

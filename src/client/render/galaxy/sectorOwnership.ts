@@ -1,4 +1,5 @@
 import type { SectorLiveState } from '../../../shared-types/galaxySnapshot.js';
+import { GALAXY_SECTORS } from '@core/galaxy/galaxy';
 
 /**
  * Sector OWNERSHIP seam (Equinox Phase 9, item 1) — the single extension point
@@ -47,4 +48,16 @@ export function resolveSectorOwner(
 ): OwnerId {
   const owner = liveStateByKey?.get(sectorKey)?.owner;
   return owner ? owner.factionId : NEUTRAL_OWNER;
+}
+
+/** A stable fingerprint of per-sector ownership, so `GalaxyMapLayer` re-groups
+ *  territories ONLY on a real ownership change. Iterates the static galaxy
+ *  order (stable); poll cadence, tiny alloc. */
+export function ownershipSignature(liveStateByKey: ReadonlyMap<string, SectorLiveState>): string {
+  let sig = '';
+  for (const s of GALAXY_SECTORS) {
+    sig += resolveSectorOwner(s.key, liveStateByKey);
+    sig += '|';
+  }
+  return sig;
 }
