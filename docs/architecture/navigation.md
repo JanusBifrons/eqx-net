@@ -32,11 +32,14 @@ Callers keep one goal object and mutate it between searches instead of passing a
 | `server/livingworld/heldSectorRoutes.ts` | sectors with a room, gate edges | nearest sector a power holds |
 | `core/galaxy/gateHops.ts` (`gateFirstHop`, `gateHops`; behind `population.nextHopToward` / `hopDistance` and migration ranking) | whole galaxy, gate edges | one sector |
 | `core/bases/transitNetwork.routeHops` | gate edges (1) + transit links (`LINK_HOP_COST`), one graph per network | one sector (weighted cost) |
+| `core/structures/Grid` route tree (`bfsTree`) | power grid; unbuilt nodes reachable, never expanded (dead-end rule) | none: the whole reachable tree, cached per source |
 
-Still to move here: `Grid.bfsTree` (power grid).
+Not a search, so not here: `Grid.rebuild`'s connected-component flood fill (it labels groups, it
+does not look for a route).
 
 ## History
 - 2026-11-17: plan approved (wide lane by default, no-route ⇒ nearest spot and wait, whole route line,
   squads single file). Slice 1a: `GraphSearch` lands; `HeldSectorRoutes` moves onto it.
   Slice 1b: galaxy gate hops (`gateHops.ts`) and `routeHops` move onto it; answers unchanged for
-  every sector pair.
+  every sector pair. Slice 1c: the power grid's route tree moves onto it; routes unchanged on
+  random grids.
