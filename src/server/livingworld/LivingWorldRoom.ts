@@ -82,6 +82,9 @@ export interface LivingWorldRoom {
    *  when quiet. OPTIONAL: a mock room may omit it → the director sends null. Off
    *  the 60 Hz tick (read on the ~1.5 s control tick). */
   recentCombat?(): RecentCombat | null;
+  /** Galaxy feed — a structure of control side `side` was hit within `windowMs`
+   *  (the threat signal). OPTIONAL: a mock room may omit it (no hits). Feed cadence. */
+  sideStructuresHitWithin?(side: string, windowMs: number): boolean;
   /** Equinox Phase 7 — count of structures in this room owned by `playerId`
    *  (the galaxy-map per-player "my structures" overlay; `GET /galaxy/presence`).
    *  OPTIONAL: a mock room may omit it → the director counts 0 for this sector.

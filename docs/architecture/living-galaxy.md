@@ -543,6 +543,31 @@ The drawer's Galaxy tab ([layout/Drawer/tabs/GalaxyTab.tsx](../../src/client/lay
 `RosterCountBadge` ([components/RosterCountBadge.tsx](../../src/client/components/RosterCountBadge.tsx)) lives next to `DrawerToggle` and reads the roster count from a Zustand singleton. Visual states via `data-state` attribute: `empty` (muted grey), `normal` (default green). Shows the bare owned-ship count (rosters are unlimited; no `/10`). Test lock: [components/RosterCountBadge.test.tsx](../../src/client/components/RosterCountBadge.test.tsx).
 
 **Roster source-of-truth is the Zustand singleton** (`shipRoster: RosterEntry[]` in `state/store.ts`). `ShipRosterPanel` owns the `/dev/player-ships` poll loop but writes results into `setShipRoster`, so multiple panel mounts (galaxy-map landing + drawer Galaxy tab) keep `RosterCountBadge` and any other consumer in lockstep without each mount running its own consumer-local state. One refcounted poller (`components/rosterPoller.ts`) serves every panel, and it **skips the store write when the reply is unchanged** (same text, and the store still holds the array it wrote). `App.tsx` subscribes to `shipRoster`, so a fresh array every 3 s re-rendered the whole app and cost a 33 ms frame per poll on a 90 Hz phone (phone run 2026-11-04). Any new poller feeding a widely-subscribed store field needs the same skip.
+## The shared galaxy feed (homepage map)
+
+The galaxy map is the site homepage, so every viewer reads ONE shared feed that a CDN can cache. It is never real-time.
+
+**One route, one body.** `GET /galaxy/snapshot` stays the only snapshot route. [`galaxyFeed.ts`](../../src/server/livingworld/galaxyFeed.ts) takes the director's existing `galaxyStatsCache` (via `buildGalaxySnapshot`; the director still recomputes it every ~1.5 s on its control tick), adds each sector's `control` object, serializes it once and memoises the string for `GALAXY_FEED_INTERVAL_MS` = **10 s** (real time: it is an HTTP cache lifetime). Every request in the window gets the same bytes; the first request after the window rebuilds it (lazily: no timer, nothing on any tick). The route sends `Cache-Control: public, max-age=10`. The route needs no login (the `/galaxy` router has no auth middleware).
+
+**`control` (optional, per sector; omitted when no control meter runs).** Read from the live meter (`RobotTerritory.sectorControl`, over `MultiControlState` in [sectorControl.ts](../../src/core/territory/sectorControl.ts)):
+
+| Field | Meaning |
+|---|---|
+| `holderShare` | The holder's share, 0–100 (0 when neutral), 1 decimal. |
+| `challenger`, `challengerShare` | The strongest side working against the holder (`challengerOf`; the leader on neutral ground), or null / 0. |
+| `trend` | −1 holder losing ground, 0 steady, +1 gaining (`holderTrend`). |
+| `threat` | 0–3, below. |
+| `flippedAtMs` | Game-time ms of the last holder change this process saw (not persisted: null after a restart until the next flip). |
+| `locked` | The holder has a live lock here (a Territory Lock structure, or the robots' nexus): `RobotTerritory.locksFor`. |
+
+**Threat** (`controlThreat`, pure, in sectorControl.ts). The holder is threatened when its share is falling (`trend` −1) OR one of its structures was hit within **3 min** of game time (`THREAT_STRUCTURE_HIT_WINDOW_MS`; `SectorRoom.sideStructuresHitWithin`, the per-side generalisation of `tradeBaseUnderAttack` over the same `structureAttackAuditAtMs` throttle map, so a hit registers at most once per 15 s per structure). Each sign counts 1. A threatened holder gains 1 more when the sector has `recentCombat` or its share is at or under **40** (`THREAT_LOW_SHARE`; release is at 20). Neutral ground is 0.
+
+**History.** `GET /galaxy/sector/:key/history` returns `{ key, samples: [{ atMs, holder, holderShare }] }`, oldest first: one sample a minute (game time), **60 samples** (an hour) per sector, in a ring preallocated per sector ([sectorControlHistory.ts](../../src/server/livingworld/sectorControlHistory.ts)) and written from the control tick without allocating. `:key` must be a known sector (else 404). Not persisted: the ring refills after a restart. Same `Cache-Control` as the snapshot.
+
+**Client.** `useGalaxyStats` and `useGalaxyPresence` both poll on `GALAXY_FEED_INTERVAL_MS` (10 s). Presence (`/galaxy/presence`) is per player and not memoised, so pilot counts stay exact.
+
+**Wire note.** The snapshot and history response schemas (`galaxySnapshot.ts`, and `WorldEventViewSchema` inside it) use zod's default strip, not `.strict()`: a client ignores fields added after it was built, so an old tab left open across a deploy keeps its map and simply skips new fields. The first deploy of `control` is the exception: clients built before this change still parse strictly and show no counts until they reload. Keep these response schemas non-strict; `.strict()` stays on schemas that guard server INPUT.
+
 ## Server implementation notes
 
 > Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.

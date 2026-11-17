@@ -24,12 +24,15 @@
  * this module itself; the nexus rides the existing swarm wire.
  */
 import { sectorSpace } from '../../shared-types/sectorBounds.js';
-import type { SectorOwner } from '../../shared-types/galaxySnapshot.js';
+import type { SectorControl, SectorHistorySample, SectorOwner } from '../../shared-types/galaxySnapshot.js';
 import { cargoCapacityForMaxHealth, type GoodId } from '../../shared-types/goods.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import type { Bus } from '../../core/events/Bus.js';
 import {
   CONTROL_MAX,
+  challengerOf,
+  controlThreat,
+  holderTrend,
   freshMultiControl,
   isMultiContested,
   stepMultiControl,
@@ -43,6 +46,7 @@ import { serverLogEvent } from '../debug/ServerEventLog.js';
 import type { LivingWorldRoom, SectorLiveCounts } from './LivingWorldRoom.js';
 import { gameNow } from '../time/gameTime.js';
 import type { PersistedSectorControl } from './DirectorPersistence.js';
+import { SectorControlHistory } from './sectorControlHistory.js';
 
 /** The running meter, so a room can ask who holds its sector (the Territory
  *  Lock placement rule) without a director reference. Set in `start()`. */
@@ -56,6 +60,19 @@ function setActiveTerritory(t: RobotTerritory | null): void {
 export function liveSectorHolder(sectorKey: string): string | null | undefined {
   return activeTerritory?.controlState(sectorKey)?.holder;
 }
+
+/** Galaxy feed — the live control view of `sectorKey`, or null with no meter running. Feed cadence. */
+export function liveSectorControl(sectorKey: string): SectorControl | null {
+  return activeTerritory?.sectorControl(sectorKey) ?? null;
+}
+
+/** Galaxy feed — a sector's control history (oldest first); null with no meter or an unknown sector. */
+export function liveSectorHistory(sectorKey: string): SectorHistorySample[] | null {
+  return activeTerritory?.history(sectorKey) ?? null;
+}
+
+/** Galaxy feed — the holder's structures hit within this much game time count as a threat. */
+export const THREAT_STRUCTURE_HIT_WINDOW_MS = 3 * 60_000;
 
 /** Saved shares below this are dropped (keeps the persisted row small). */
 const SAVE_MIN_SHARE = 0.5;
@@ -134,6 +151,10 @@ export class RobotTerritory {
   /** P3b — harvester id → where it lives + when it may respawn. */
   private readonly harvesters = new Map<string, { alive: boolean; sectorKey: string | null; respawnAtMs: number; mining: boolean }>();
   private readonly harvesterRespawnMs: number;
+  /** Galaxy feed — last holder change per sector (game ms; this process only). */
+  private readonly flippedAtMs = new Map<string, number>();
+  /** Galaxy feed — an hour of control per sector, one sample a minute. */
+  private readonly controlHistory: SectorControlHistory;
 
   constructor(
     private readonly rooms: ReadonlyMap<string, LivingWorldRoom>,
@@ -145,6 +166,7 @@ export class RobotTerritory {
     this.nexusRespawnMs = opts.nexusRespawnMs ?? NEXUS_RESPAWN_MS;
     this.harvesterRespawnMs = opts.harvesterRespawnMs ?? HARVESTER_RESPAWN_MS;
     this.lastTickMs = this.now();
+    this.controlHistory = new SectorControlHistory(rooms.keys());
     for (const key of rooms.keys()) this.control.set(key, freshMultiControl(sectorController(key)));
     for (let i = 0; i < HARVESTERS_PER_NEXUS; i++) {
       this.harvesters.set(`${HARVESTER_ID_PREFIX}${i}`, { alive: false, sectorKey: null, respawnAtMs: 0, mining: false });
@@ -185,6 +207,40 @@ export class RobotTerritory {
     return { factionId: s.holder, contested: isMultiContested(s, this.presenceFor(sectorKey), controlOpposes) };
   }
 
+  /**
+   * Galaxy feed — a sector's live control view (`/galaxy/snapshot` `control`):
+   * shares, challenger, trend, threat (`controlThreat` over the falling share,
+   * the holder's structures hit within THREAT_STRUCTURE_HIT_WINDOW_MS and the
+   * room's recent-combat window), last flip and lock. Feed cadence (~10 s);
+   * allocation fine.
+   */
+  sectorControl(sectorKey: string): SectorControl | null {
+    const s = this.control.get(sectorKey);
+    if (!s) return null;
+    const room = this.rooms.get(sectorKey);
+    const counts = room?.liveCounts?.();
+    const presence = this.presenceOf(sectorKey, counts);
+    const holderShare = s.holder ? (s.shares.get(s.holder) ?? 0) : 0;
+    const trend = holderTrend(s, presence, controlOpposes);
+    const ch = challengerOf(s, controlOpposes);
+    const hit = s.holder !== null && (room?.sideStructuresHitWithin?.(s.holder, THREAT_STRUCTURE_HIT_WINDOW_MS) ?? false);
+    const combat = (room?.recentCombat?.() ?? null) !== null;
+    return {
+      holderShare: Math.round(holderShare * 10) / 10,
+      challenger: ch?.factionId ?? null,
+      challengerShare: ch ? Math.round(ch.share * 10) / 10 : 0,
+      trend,
+      threat: controlThreat(s.holder !== null, trend, holderShare, hit, combat),
+      flippedAtMs: this.flippedAtMs.get(sectorKey) ?? null,
+      locked: s.holder !== null && this.locksFor(sectorKey, counts?.lockSides).has(s.holder),
+    };
+  }
+
+  /** Galaxy feed — a sector's control history, oldest first (null = unknown sector). */
+  history(sectorKey: string): SectorHistorySample[] | null {
+    return this.controlHistory.samples(sectorKey);
+  }
+
   /** Control-tick step (robot director `onTick`). */
   tick(nowMs: number): void {
     const n = this.nexus;
@@ -202,7 +258,14 @@ export class RobotTerritory {
       if (!s) { s = freshMultiControl(sectorController(key)); this.control.set(key, s); }
       const counts = this.rooms.get(key)?.liveCounts?.();
       const r = stepMultiControl(s, this.presenceOf(key, counts), controlOpposes, dt, this.locksFor(key, counts?.lockSides));
-      if (r.flipped) serverLogEvent('sector_control_changed', { sectorKey: key, from: r.previousHolder, to: s.holder });
+      if (r.flipped) {
+        this.flippedAtMs.set(key, nowMs);
+        serverLogEvent('sector_control_changed', { sectorKey: key, from: r.previousHolder, to: s.holder });
+      }
+    }
+    if (this.controlHistory.due(nowMs)) {
+      for (const [key, s] of this.control) this.controlHistory.record(key, nowMs, s.holder, s.holder ? (s.shares.get(s.holder) ?? 0) : 0);
+      this.controlHistory.commit(nowMs);
     }
   }
 
