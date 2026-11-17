@@ -33,7 +33,7 @@ describe('SectorRoom integration — capital beam fits (plan section 9)', () => 
     expect([...beamMounts].every((id) => id.startsWith('sec-'))).toBe(true);
     const beam = getWeapon('heavy_beam');
     harness = await bootSectorTestServer({
-      sectorKey: null, droneCount: 0, testMode: true, asteroidConfig: [], pilotCapitals: true, capitalWrecks: true, traverseTicksCap: 0,
+      sectorKey: null, droneCount: 0, testMode: true, asteroidConfig: [], capitalWrecks: true, traverseTicksCap: 0,
       // Heading π: bow along −y, starboard (+x mount side) faces −x, at the pilot.
       dronePoses: [{ kind: 'heavy-cruiser-beam', x: 5000, y: 0, angle: Math.PI }],
     });
@@ -75,7 +75,7 @@ describe('SectorRoom integration — capital beam fits (plan section 9)', () => 
     expect(beamMounts.size).toBeGreaterThan(0);
     expect([...beamMounts].every((id) => id.startsWith('main-'))).toBe(true);
     harness = await bootSectorTestServer({
-      sectorKey: null, droneCount: 0, testMode: true, asteroidConfig: [], pilotCapitals: true, lockTimeCapS: 0, traverseTicksCap: 0,
+      sectorKey: null, droneCount: 0, testMode: true, asteroidConfig: [], lockTimeCapS: 0, traverseTicksCap: 0,
       // Heading π: broadside to the pilot. traverseTicksCap: 0 snaps the
       // main turrets onto their bearing (real 16" training takes ~10 s).
       dronePoses: [{ kind: 'battlecruiser-lance', x: 5000, y: 0, angle: Math.PI }],
@@ -103,7 +103,7 @@ describe('SectorRoom integration — capital beam fits (plan section 9)', () => 
     const mains = kind.mounts.filter((m) => m.weaponId === 'heavy_beam').map((m) => m.id);
     expect(mains).toEqual(['main-1', 'main-2', 'main-3']);
     harness = await bootSectorTestServer({
-      sectorKey: null, droneCount: 0, testMode: true, asteroidConfig: [], pilotCapitals: true, lockTimeCapS: 0, traverseTicksCap: 0,
+      sectorKey: null, droneCount: 0, testMode: true, asteroidConfig: [], lockTimeCapS: 0, traverseTicksCap: 0,
       // Heading π, the pilot square off the starboard beam abreast the ship's
       // middle: all three main turrets (arc ±135°) bear on it.
       dronePoses: [{ kind: 'battlecruiser-lance', x: 5000, y: 0, angle: Math.PI }],

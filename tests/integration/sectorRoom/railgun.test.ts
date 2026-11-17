@@ -100,7 +100,7 @@ describe('SectorRoom integration — railgun', () => {
     expect(rails.length, 'battleship-rail carries railgun main turrets').toBeGreaterThan(0);
     const CAP = 30;
     harness = await bootSectorTestServer({
-      sectorKey: null, droneCount: 0, testMode: true, asteroidConfig: [], pilotCapitals: true,
+      sectorKey: null, droneCount: 0, testMode: true, asteroidConfig: [],
       chargeTicksCap: CAP, lockTimeCapS: 0, traverseTicksCap: 0,
       dronePoses: [{ kind: 'battleship-rail', x: 5000, y: 0, angle: (50 * Math.PI) / 180 }],
     });
@@ -124,7 +124,7 @@ describe('SectorRoom integration — railgun', () => {
 
   it("a battleship-rail AI's slug kills a ship in its line, flies on and stops in its target", { timeout: 15_000 }, async () => {
     harness = await bootSectorTestServer({
-      sectorKey: null, droneCount: 0, testMode: true, asteroidConfig: [], pilotCapitals: true,
+      sectorKey: null, droneCount: 0, testMode: true, asteroidConfig: [],
       chargeTicksCap: 30, lockTimeCapS: 0, traverseTicksCap: 0,
       dronePoses: [{ kind: 'battleship-rail', x: 9000, y: 0, angle: Math.PI }],
     });

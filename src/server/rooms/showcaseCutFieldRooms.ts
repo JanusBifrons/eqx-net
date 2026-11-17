@@ -8,5 +8,5 @@
 export const CUT_FIELD_LOOK_SEED = 'look';
 export const SHOWCASE_CUT_FIELD_OPTS = {
   testMode: true, cutField: { seed: CUT_FIELD_LOOK_SEED }, asteroidConfig: [], droneCount: 0,
-  defaultSpawnX: 0, defaultSpawnY: 0, maxClients: 4, pilotCapitals: true,
+  defaultSpawnX: 0, defaultSpawnY: 0, maxClients: 4,
 };

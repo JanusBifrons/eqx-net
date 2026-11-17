@@ -81,10 +81,14 @@ describe('randomSpawn: false opt-out', () => {
     expect(ShipKindSchema.safeParse({ ...raw, randomSpawn: true }).success).toBe(false);
   });
 
-  it('only the mining barge opts out — the rest of the gameplay pool is unchanged', () => {
-    expect(SHIP_KINDS_LIST.filter((k) => k.randomSpawn === false && k.id !== 'barge-look').map((k) => k.id)).toEqual(['barge']);
+  it('only the player capitals and the mining barge opt out — the rest of the gameplay pool is unchanged', () => {
+    const optOut = SHIP_KINDS_LIST.filter((k) => k.randomSpawn === false && k.id !== 'barge-look').map((k) => k.id);
+    expect(optOut).toEqual([
+      'destroyer', 'light-cruiser', 'heavy-cruiser', 'battlecruiser', 'battleship',
+      'battleship-rail', 'heavy-cruiser-beam', 'battlecruiser-lance', 'barge',
+    ]);
     expect(GAMEPLAY_SHIP_KINDS_LIST.map((k) => k.id)).toEqual(
-      SHIP_KINDS_LIST.filter((k) => !k.engineeringOnly && !k.npcOnly && k.id !== 'barge').map((k) => k.id),
+      SHIP_KINDS_LIST.filter((k) => !k.engineeringOnly && !k.npcOnly && !optOut.includes(k.id)).map((k) => k.id),
     );
     for (const k of GAMEPLAY_SHIP_KINDS_LIST) expect(PLAYABLE_SHIP_KINDS_LIST).toContain(k);
   });

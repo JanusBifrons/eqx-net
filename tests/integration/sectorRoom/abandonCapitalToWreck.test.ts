@@ -38,7 +38,7 @@ describe('SectorRoom integration — an abandoned capital breaks into a wreck', 
 
   beforeEach(async () => {
     harness = await bootSectorTestServer({
-      sectorKey: 'sol-prime', droneCount: 0, testMode: true, pilotCapitals: true, capitalWrecks: true, asteroidConfig: [],
+      sectorKey: 'sol-prime', droneCount: 0, testMode: true, capitalWrecks: true, asteroidConfig: [],
     });
   }, 15_000);
 

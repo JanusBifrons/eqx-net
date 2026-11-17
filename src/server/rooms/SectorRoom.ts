@@ -1168,8 +1168,6 @@ export class SectorRoom extends Room<SectorState> {
   /** Bespoke test/recording trigger (testMode `traverseTicksCap`): the longest
    *  a capital turret takes to train a full turn, in ticks. Undefined = off. */
   private testTraverseTicksCap: number | undefined = undefined;
-  /** Round 3 D test switch (testMode `pilotCapitals`). */
-  private testPilotCapitals = false;
   /** Capital destruction S2a (`capitalWrecks` room option / EQX_CAPITAL_WRECKS):
    *  a dying capital breaks into wreck bodies. On by default since 2026-11-14
    *  (`wreckSwitchOn`); null = both switches off.
@@ -2108,9 +2106,6 @@ export class SectorRoom extends Room<SectorState> {
       /** testMode: run the automatic slowdown here too (on by default only in
        *  real sectors). */
       autoTimeScale?: boolean;
-      /** Capital-ship R&D (round 3 D): a player may join flying a capital
-       *  (capitals stay npcOnly everywhere else). testMode-only. */
-      pilotCapitals?: boolean;
       /** Capital destruction: a dying capital breaks into wreck bodies. ON
        *  by default (owner 2026-11-14); `false` opts this room out.
        *  `EQX_CAPITAL_WRECKS=0|1` forces it for every room (`wreckSwitchOn`). */
@@ -3458,7 +3453,6 @@ export class SectorRoom extends Room<SectorState> {
     } else if (ENV_TIME_SCALE !== null) {
       this.setTimeScale(ENV_TIME_SCALE);
     }
-    this.testPilotCapitals = this.testMode && roomOpts.pilotCapitals === true;
     // Break-up is ON by default in every room (owner decision 2026-11-14:
     // "land it switched on"). A room opts out with `capitalWrecks: false` /
     // `subcapWrecks: false`; the env switch wins over the room either way:
@@ -9448,9 +9442,7 @@ export class SectorRoom extends Room<SectorState> {
     // swap kind by reconnecting — the existing ShipState.kind is preserved).
     const requestedKind = parsed.success
         && typeof parsed.data.shipKind === 'string'
-        && (isPlayableShipKindId(parsed.data.shipKind)
-          || (this.testPilotCapitals && isShipKindId(parsed.data.shipKind)
-            && getShipKind(parsed.data.shipKind).sizeClass === 'capital'))
+        && isPlayableShipKindId(parsed.data.shipKind)
       ? parsed.data.shipKind
       : DEFAULT_SHIP_KIND;
 

@@ -177,7 +177,7 @@ describe('SectorRoom integration — player heavy gun on a small target', () => 
   let harness: SectorTestHarness;
   beforeEach(async () => {
     harness = await bootSectorTestServer({
-      sectorKey: 'sol-prime', droneCount: 0, testMode: true, peacefulDrones: true, pilotCapitals: true,
+      sectorKey: 'sol-prime', droneCount: 0, testMode: true, peacefulDrones: true,
       asteroidConfig: [],
       dronePoses: [{ kind: 'fighter', x: 0, y: 1_500, angle: 0 }],
     });

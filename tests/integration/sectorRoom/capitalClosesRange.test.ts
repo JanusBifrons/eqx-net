@@ -41,7 +41,7 @@ describe('SectorRoom integration — hostile capital closes the range', () => {
 
   async function boot(dronePose: { x: number; y: number; angle: number; vx?: number; vy?: number }): Promise<void> {
     harness = await bootSectorTestServer({
-      sectorKey: null, droneCount: 0, testMode: true, asteroidConfig: [], pilotCapitals: true,
+      sectorKey: null, droneCount: 0, testMode: true, asteroidConfig: [],
       dronePoses: [{ kind: 'battleship', ...dronePose }],
     });
   }

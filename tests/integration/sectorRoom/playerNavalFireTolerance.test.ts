@@ -35,7 +35,7 @@ describe('SectorRoom integration — player naval turrets fire only on target', 
   let harness: SectorTestHarness;
   beforeEach(async () => {
     harness = await bootSectorTestServer({
-      sectorKey: 'sol-prime', droneCount: 0, testMode: true, peacefulDrones: true, pilotCapitals: true, asteroidConfig: [],
+      sectorKey: 'sol-prime', droneCount: 0, testMode: true, peacefulDrones: true, asteroidConfig: [],
       dronePoses: [{ kind: 'battleship', x: TX, y: TY, angle: Math.PI / 2 }],
     });
   }, 15_000);

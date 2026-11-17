@@ -58,7 +58,7 @@ describe.runIf(NAVAL_RANGE === 'real')('real naval ranges — a player battleshi
     expect(weaponAutoFireRange(xl), 'the switch is on: the 16" reaches 38.7 km').toBeGreaterThan(38_000);
 
     harness = await bootSectorTestServer({
-      sectorKey: 'sol-prime', droneCount: 0, testMode: true, peacefulDrones: true, pilotCapitals: true,
+      sectorKey: 'sol-prime', droneCount: 0, testMode: true, peacefulDrones: true,
       asteroidConfig: [],
       dronePoses: [
         { kind: 'battleship', x: 0, y: RANGE, angle: Math.PI / 2 },
