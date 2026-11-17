@@ -82,6 +82,11 @@ export interface BaseProfile {
    *  (a region heart's garrison: the 80 cm siege gun and the 40.6 cm super
    *  battery; `galaxyBases.addMilitaryBase`). Absent ⇒ none. */
   superGuns?: readonly StructureKindId[];
+  /** Sector control — the base builds a Territory Lock (outside its budget,
+   *  like a transit teleporter): a region power's heart garrison, so the
+   *  power's heart holds until the lock is destroyed (`galaxyBasePlan`).
+   *  Absent ⇒ none. */
+  territoryLock?: boolean;
 }
 
 /** Wealth range per tier (minerals-equivalent spend). */

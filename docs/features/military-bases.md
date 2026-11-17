@@ -15,6 +15,7 @@ Military bases are placed by their own deterministic pass (`militarySites`, `gal
 - **Fenced, every time,** with its gates set to **owner + allies**. Anyone else stays outside.
 - **Turret-heavy.** Its production list is every kind of gun (laser, bolt, autocannon, missile, and the coastal batteries up to the 11" triple turret — [coastal-defences.md](coastal-defences.md)), repeated while its wealth lasts. Garrisons are funded at twice their tier's top wealth.
 - **A heart garrison mounts the region's super-guns**: the 80 cm siege gun and the 40.6 cm Lindemann battery, funded on top.
+- **A heart garrison builds a Territory Lock** (sector control), outside its budget: the power's heart can't be taken until that structure is destroyed ([robot-territory](robot-territory.md) "Power hearts start locked"). With no garrison, the power's first base at the heart carries it.
 - **Guns outside the fence.** A fence stops its owner's own shots, so every gun sits on a bastion outside it. A garrison gets a bastion row for every six guns it buys (`growOnce`, military only).
 - **One more mine layer** than a trading base of its size.
 - **No freight dock.** It trades nothing: its cargo bay holds the munitions and fuel it's stocked with.

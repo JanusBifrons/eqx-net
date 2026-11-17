@@ -67,7 +67,18 @@ the lock. There is no separate tracker: the room's `liveCounts` reports the
 sides with a built lock (`lockSides`) and `locksFor` adds them. A lock whose
 side has lost the sector does nothing; if that side retakes the sector, the
 standing lock locks it again. Its look is a placeholder (the Research Lab's)
-pending the owner's pick. Locks at the power hearts come later.
+pending the owner's pick.
+
+**Power hearts start locked.** Each region power's heart (`regionHeart`, the
+sector its static control seeds it with; `core/galaxy/control.ts`) starts
+locked for that power: the power's own base there (its heart garrison, else
+the first base it owns) builds a real Territory Lock as part of its generated
+layout (`BaseProfile.territoryLock`, set by `galaxyBasePlan`). It is the same
+structure as a player's, so destroying it lifts the lock. NPC bases are not
+persisted, so a destroyed heart lock comes back when the server restarts. The
+Traders have no heart and get none. Today the Crimson Expanse heart
+(andromeda-rim) is held alone by a big Traders' trade hub, so the power owns
+no base there and its heart is not locked.
 
 ## Internals
 
@@ -95,6 +106,11 @@ pending the owner's pick. Locks at the power hearts come later.
 - `tests/integration/sectorRoom/territoryLock.test.ts` — a real room: refused
   when not held, a second refused, the cost drains, a built lock holds against
   30 robots and the sector falls once it is destroyed.
+- `tests/integration/sectorRoom/heartLock.test.ts` — a real heart room: the
+  garrison's lock is built and the power's, the heart holds against a robot
+  horde until it is destroyed; a held non-heart sector has none and falls.
+- `src/core/bases/galaxyBases.test.ts` — every heart the power owns a base in
+  grows exactly one lock, owned by the power; no other sector grows one.
 - `tests/integration/sectorRoom/robotTerritory.test.ts` — real rooms: the nexus
   spawns; a killed robot reinforces at the nexus; a destroyed nexus drops cores
   and returns; the nexus sector is claimed.
