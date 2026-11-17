@@ -76,9 +76,10 @@ the first base it owns) builds a real Territory Lock as part of its generated
 layout (`BaseProfile.territoryLock`, set by `galaxyBasePlan`). It is the same
 structure as a player's, so destroying it lifts the lock. NPC bases are not
 persisted, so a destroyed heart lock comes back when the server restarts. The
-Traders have no heart and get none. Today the Crimson Expanse heart
-(andromeda-rim) is held alone by a big Traders' trade hub, so the power owns
-no base there and its heart is not locked.
+Traders have no heart and get none. A power's heart base is always the
+power's, never the Traders' (`heartOwner`), so every heart has a base to
+carry the lock: the Crimson Expanse heart (andromeda-rim), held alone by a big
+trade-hub stronghold, is Crimson's hub and carries Crimson's lock.
 
 ## Internals
 
