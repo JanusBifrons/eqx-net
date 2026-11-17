@@ -7,7 +7,7 @@
  * what it was built from changes (rare), so the per-frame check is a map
  * lookup and a few compares (invariant #14).
  */
-import { npcFactionDef, teamColorOf, teamEdgeOf, teamSigilOf, type LiveryEdge } from '../../../shared-types/factions.js';
+import { factionLookVersion, npcFactionDef, teamColorOf, teamEdgeOf, teamSigilOf, type LiveryEdge } from '../../../shared-types/factions.js';
 import { allegianceOfKind } from '../../../shared-types/shipKinds.js';
 import type { Container } from 'pixi.js';
 import { decideArtSwap, type ArtSwap } from '../spriteUpdateDecisions.js';
@@ -111,10 +111,14 @@ export function updateArtShipLight(actx: ShipArtCtx, sprite: Container): void {
 
 /** A faction's livery (team colour, sigil seed, section-edge shape), cached
  *  per owner id so the frame loop never re-hashes; the entry is allocated
- *  once on first sight. */
+ *  once on first sight. A change to the claimed looks (`factionLookVersion`)
+ *  drops the cache, so a claim repaints that faction's ships. */
 export interface OwnerLivery { team: number; sigil: number; edge: LiveryEdge }
 const ownerLiveries = new Map<string, OwnerLivery>();
+let ownerLiveriesVersion = factionLookVersion();
 export function ownerLivery(owner: string): OwnerLivery {
+  const v = factionLookVersion();
+  if (v !== ownerLiveriesVersion) { ownerLiveries.clear(); ownerLiveriesVersion = v; }
   let l = ownerLiveries.get(owner);
   if (!l) { l = { team: teamColorOf(owner), sigil: teamSigilOf(owner), edge: teamEdgeOf(owner) }; ownerLiveries.set(owner, l); }
   return l;

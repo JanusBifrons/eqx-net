@@ -35,7 +35,7 @@ function awakeFieldRocks(int: SectorRoom['_internals']): { id: string; radius: n
 
 describe('SectorRoom integration — cut-field ramming', () => {
   it('a ramming battleship wakes no rock heavier than itself', { timeout: 60_000 }, async () => {
-    harness = await bootSectorTestServer({ sectorKey: null, testMode: true, pilotCapitals: true, cutField: { seed: 'look' }, asteroidConfig: [], droneCount: 0 });
+    harness = await bootSectorTestServer({ sectorKey: null, testMode: true, cutField: { seed: 'look' }, asteroidConfig: [], droneCount: 0 });
     const pid = randomUUID();
     const client = await harness.connectActive(pid, {
       shipKind: 'battleship', initialHull: 1_000_000, initialAngle: 2.972,

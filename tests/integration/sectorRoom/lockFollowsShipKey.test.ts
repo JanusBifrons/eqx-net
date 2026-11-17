@@ -158,7 +158,6 @@ describe('SectorRoom integration — an AI pilot\'s lock on a pilot holds while 
       testMode: true,
       asteroidConfig: [],
       peacefulDrones: d.peacefulDrones,
-      pilotCapitals: d.pilotCapitals,
       prebuiltStructures: d.prebuiltStructures,
       defaultSpawnX: d.defaultSpawnX,
       defaultSpawnY: d.defaultSpawnY,

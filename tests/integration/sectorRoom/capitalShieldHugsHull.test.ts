@@ -50,7 +50,7 @@ describe('SectorRoom integration — a shell hits a capital pilot\'s hull at its
   let harness: SectorTestHarness;
   beforeEach(async () => {
     harness = await bootSectorTestServer({
-      sectorKey: 'sol-prime', droneCount: 0, testMode: true, asteroidConfig: [], pilotCapitals: true,
+      sectorKey: 'sol-prime', droneCount: 0, testMode: true, asteroidConfig: [],
     });
   }, 15_000);
   afterEach(async () => {

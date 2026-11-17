@@ -1,8 +1,13 @@
 /**
  * The capital class (R&D, plan eager-sauteeing-curry): five WW2-grounded
- * warships, NPC-only. Built by `warshipDesign` for the current R&D arm
+ * warships. Built by `warshipDesign` for the current R&D arm
  * (`capitalConfig.ts`: style A|B|C, size mapping A|B). Appended to the
  * catalogue (invariant 11: append-only).
+ *
+ * Player capitals (owner 2026-11-17): the five classes and the three fits
+ * (rail battleship, beam cruiser, lance battlecruiser) are pilotable and free
+ * on the ship screen (`STARTER_HULL_KINDS`), never in a random spawn pool
+ * (owned only, `randomSpawn: false`). The -b / -c hull styles stay NPC-only.
  */
 import { defineCapitalShipKind } from '../../shipScale/defineShipKind.js';
 import type { ShipKind } from '../types.js';
@@ -12,8 +17,11 @@ import { NAVAL_FIT, warshipDesign, type CapitalFit } from './warshipDesign.js';
 import { BARGE_KIND_ID, BARGE_PICK, bargeDesign } from './bargeDesign.js';
 import { BARGE_LOOK } from './bargeLookConfig.js';
 
+/** A player-pilotable capital: in the picker, never in a random spawn pool. */
+const PILOTABLE = { npcOnly: false, randomSpawn: false } as const;
+
 const build = (id: Parameters<typeof warshipDesign>[0]): ShipKind =>
-  defineCapitalShipKind(warshipDesign(id, CAPITAL_STYLE, CAPITAL_MAP).record);
+  defineCapitalShipKind({ ...warshipDesign(id, CAPITAL_STYLE, CAPITAL_MAP).record, ...PILOTABLE });
 
 export const DESTROYER: ShipKind = build('destroyer');
 export const LIGHT_CRUISER: ShipKind = build('light-cruiser');
@@ -36,7 +44,8 @@ const MAIN_FIT_SUFFIX: Readonly<Record<CapitalFit['main'], string>> = { naval: '
  * (or as well as) a hull style. A fitted kind's id ends in the fit's suffix
  * after any style suffix: the main battery's (`-rail` railguns, `-lance` heavy
  * beams), then the secondaries' (`-beam` heavy beams). A fitted kind on the
- * base hull (`style` omitted) takes the R&D switch's style like the base kind.
+ * base hull (`style` omitted) takes the R&D switch's style like the base kind,
+ * and is pilotable like it; a styled hull stays NPC-only.
  */
 const variant = (
   id: Parameters<typeof warshipDesign>[0], style: Exclude<CapitalStyle, 'A'> | null,
@@ -46,6 +55,7 @@ const variant = (
   const fitSuffix = MAIN_FIT_SUFFIX[fit.main] + (fit.secondary === 'beam' ? '-beam' : '');
   return defineCapitalShipKind({
     ...warshipDesign(id, style ?? CAPITAL_STYLE, CAPITAL_MAP, fit).record, id: `${id}${styleSuffix}${fitSuffix}`,
+    ...(style === null ? PILOTABLE : {}),
   });
 };
 

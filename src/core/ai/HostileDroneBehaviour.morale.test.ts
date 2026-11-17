@@ -8,6 +8,7 @@
 import { describe, it, expect } from 'vitest';
 import { HostileDroneBehaviour } from './HostileDroneBehaviour.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
+import { PLAYERS_SIDE } from '../../shared-types/allegiances.js';
 import type { AiEntity, AiSwarmView, AiWorldView, IAiNeighbourQuery } from '../contracts/IAiBehaviour.js';
 import { MANOEUVRE_FALL_BACK, MANOEUVRE_FLEE } from './tactics/manoeuvre.js';
 import { MORALE_LOCK_TICKS, MORALE_OUTCOME, type MoraleInputs, type MoraleOutcome } from './tactics/morale.js';
@@ -15,7 +16,7 @@ import { FLEE_MAX_TICKS } from './tactics/stanceManoeuvres.js';
 
 const K = getShipKind('fighter');
 
-interface Entry { id: string; x: number; y: number; side: string; capital?: boolean; radius?: number }
+interface Entry { id: string; x: number; y: number; side: string; capital?: boolean; radius?: number; pilot?: boolean }
 
 /** A brute-force neighbour index over a fixed list. */
 function grid(list: Entry[]): IAiNeighbourQuery {
@@ -37,7 +38,7 @@ function grid(list: Entry[]): IAiNeighbourQuery {
     vyAt: () => 0,
     radiusAt: (i) => list[i]!.radius ?? 20,
     sideAt: (i) => list[i]!.side,
-    isPilotAt: () => false,
+    isPilotAt: (i) => list[i]!.pilot === true,
     isCapitalAt: (i) => list[i]!.capital === true,
   };
 }
@@ -125,6 +126,22 @@ describe('HostileDroneBehaviour — morale wiring (slice 6b)', () => {
   it('a friendly capital in sensors is reported to the roll', () => {
     const { b, seen, view } = setup([{ id: 'cap', x: -1500, y: 0, side: 'drones', capital: true, radius: 300 }], MORALE_OUTCOME.FallBack);
     for (let t = 1; t <= 60; t++) b.tick(self(0.2 * K.maxHealth), view(t));
+    expect(seen[0]!.isCapitalNearbyFriendly).toBe(true);
+  });
+
+  it("a pilot's capital counts as the friendly capital for a ship friendly to pilots", () => {
+    const b = new HostileDroneBehaviour(K, { side: PLAYERS_SIDE });
+    const seen: MoraleInputs[] = [];
+    b.setMoraleRoll((inputs) => { seen.push({ ...inputs }); return MORALE_OUTCOME.FallBack; });
+    b.markHostile('enemy', 0);
+    const swarms: AiSwarmView[] = [{ id: 'enemy', x: 0, y: 600, vx: 0, vy: 0, allegiance: 'drones' }];
+    const nb = grid([
+      { id: 'me', x: 0, y: 0, side: PLAYERS_SIDE },
+      { id: 'enemy', x: 0, y: 600, side: 'drones' },
+      { id: 'player-cap', x: -1500, y: 0, side: '', pilot: true, capital: true, radius: 300 },
+    ]);
+    for (let t = 1; t <= 60; t++) b.tick(self(0.2 * K.maxHealth), { players: [], tick: t, dtSec: 1 / 60, swarms, neighbours: nb });
+    expect(seen.length).toBeGreaterThan(0);
     expect(seen[0]!.isCapitalNearbyFriendly).toBe(true);
   });
 

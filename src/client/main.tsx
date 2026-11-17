@@ -14,6 +14,8 @@ import '@fontsource/jetbrains-mono/500.css';
 import '@fontsource/jetbrains-mono/700.css';
 import { HUD } from './hud/tokens';
 import { apiGetMe, exchangeAuthCode } from './auth/authApi';
+import { lockLandscape } from './layout/useFullscreen';
+import { isStandaloneNow } from './layout/useStandalone';
 
 // PWA service worker. Production-only (the plugin emits no SW under `vite dev`,
 // so this is a no-op in dev / Playwright / netgate). `registerType: 'prompt'`
@@ -31,6 +33,11 @@ if (import.meta.env.PROD) {
     onNeedRefresh: phoneLane ? () => { void updateSW(true); } : undefined,
   });
 }
+
+// The installed app plays sideways from launch. The manifest says
+// `orientation: 'landscape'`, but Android bakes the manifest in at install and
+// refreshes it late, so lock at runtime too (no-op on iOS, which has no lock).
+if (isStandaloneNow()) lockLandscape();
 
 // Expose the Zustand store on window for E2E tests + interactive
 // debugging. Read-only by convention (tests use `getState()` to read +

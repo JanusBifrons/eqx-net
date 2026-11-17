@@ -67,7 +67,6 @@ describe('SectorRoom integration — an attacking NPC stays hostile', () => {
       testMode: true,
       asteroidConfig: [],
       peacefulDrones: d.peacefulDrones,
-      pilotCapitals: d.pilotCapitals,
       prebuiltStructures: d.prebuiltStructures,
       defaultSpawnX: d.defaultSpawnX,
       defaultSpawnY: d.defaultSpawnY,

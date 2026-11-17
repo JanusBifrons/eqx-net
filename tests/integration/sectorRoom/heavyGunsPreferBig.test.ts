@@ -36,7 +36,7 @@ describe('SectorRoom integration — heavy guns prefer big targets (player AUTO)
     groups: () => SnapGroups[] | undefined; idOf: (kind: string) => string;
   }> {
     harness = await bootSectorTestServer({
-      sectorKey: null, droneCount: 0, testMode: true, asteroidConfig: [], pilotCapitals: true, dronePoses,
+      sectorKey: null, droneCount: 0, testMode: true, asteroidConfig: [], dronePoses,
     });
     const pid = randomUUID();
     const cr = await harness.connectActive(pid, {

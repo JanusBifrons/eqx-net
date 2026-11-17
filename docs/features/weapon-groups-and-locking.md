@@ -84,6 +84,12 @@ nose on the target.
 | Fire a MAN group | Hold its chip | Hold its chip |
 | Drop a group's locks | × beside the chip | **X** |
 | Boost | BOOST | RMB |
+| Zoom | Pinch anywhere, even on the sticks | Mouse wheel |
+
+Two fingers placed together (within 150 ms, `PINCH_WINDOW_MS` in
+`hud/stickPinch.ts`) are a pinch, not two sticks: neither stick moves or
+locks, and both fingers go to the camera's own pinch-zoom. A thumb added
+later (fly, then lock) still drives its stick.
 
 ## Try it
 
