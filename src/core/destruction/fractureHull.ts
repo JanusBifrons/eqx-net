@@ -275,6 +275,9 @@ export interface FractureInput {
    *  sound primary crack must hold (default `SOUND_MIN_SHARE`, 0.15).
    *  Sub-capitals raise it so no piece is nearly the whole hull. */
   readonly soundMinShare?: number;
+  /** With `chunkyPieces` (rocks): a cut kill moves like the sound primary
+   *  (across a long piece), unburned: no strip. */
+  readonly sweepCuts?: boolean;
   /** Jagged cut edges: most midpoint-subdivision levels per edge and the
    *  displacement per level as a fraction of the sub-segment (defaults
    *  `JAG_MAX_DEPTH` 4, `JAG_ROUGHNESS` 0.22). Sub-capitals use a shorter,
@@ -378,7 +381,7 @@ export function fractureHull(input: FractureInput): FracturePiece[] {
   const cutKind = plan.cut === null ? null : plan.cut.kind;
   // A channel, or (v10) a slice with a width (the heavy beam): a strip
   // erased between two straight cuts at +-width/2.
-  const strip = plan.cut !== null && (plan.cut.kind === 'channel' || plan.cut.width > 0);
+  const strip = plan.cut !== null && (plan.cut.kind === 'channel' || plan.cut.width > 0) && input.sweepCuts !== true;
   const cap = plan.snap ? clampCap(input.maxPieces) : plan.targetPieces;
   const hullArea = ringArea(hull);
   const scale = Math.sqrt(hullArea);
@@ -393,15 +396,11 @@ export function fractureHull(input: FractureInput): FracturePiece[] {
   // v10: a capital cut kill's splinters jag harder (the cut stays straight).
   const splinterKill = cutKind !== null && !chunkyOnly;
   const jagRoughness = splinterKill ? SPLINTER_ROUGHNESS : (input.jag?.roughness ?? JAG_ROUGHNESS);
-  // A chunky profile's cut kill (a sub-cap's, a rock's re-split) keeps the
-  // beam's line when it leaves sound pieces, else moves like a crack does:
-  // a fixed-angle laser would otherwise halve a rock the long way each time.
+  // `sweepCuts` (rocks): the cut moves like a sound crack, unburned.
+  const sweep = chunkyOnly && cutKind !== null && input.sweepCuts === true;
   const primary = plan.primary
-    ? chunkyOnly
-      ? soundPrimary(
-        hull, plan.primary, keel, hullArea, minArea, beam, chunkyWidth, input.soundMinShare ?? SOUND_MIN_SHARE,
-        cutKind !== null ? EDGE_CUT : EDGE_PRIMARY,
-      )
+    ? (cutKind === null || sweep) && chunkyOnly
+      ? soundPrimary(hull, plan.primary, keel, hullArea, minArea, beam, chunkyWidth, input.soundMinShare ?? SOUND_MIN_SHARE, sweep ? EDGE_CUT : EDGE_PRIMARY)
       : primaryCut(plan.primary, cutKind !== null ? EDGE_CUT : EDGE_PRIMARY)
     : null;
   // v9 channel: the strip either side of the cut line is erased first; the
@@ -752,9 +751,8 @@ function primaryCut(p: NonNullable<FracturePlan['primary']>, kind = EDGE_PRIMARY
  * each. A line across a small concave hull clips wingtips and tail fins off
  * as slivers (or cuts four pieces, which the cap then drops whole), so the
  * line moves toward the centroid in `SOUND_SHIFTS` steps, same direction;
- * the last resort is square across the keel through the centroid. A cut
- * kill (`kind` EDGE_CUT) also tries square across the keel before giving up
- * on chunky pieces, so a strip breaks across, not into thinner strips.
+ * the last resort is square across the keel through the centroid. A swept
+ * cut (EDGE_CUT) also tries square across, so a strip breaks across.
  */
 function soundPrimary(
   hull: P[], p: NonNullable<FracturePlan['primary']>, keel: Vec2, hullArea: number, minArea: number,
