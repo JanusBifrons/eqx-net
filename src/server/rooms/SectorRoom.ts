@@ -105,6 +105,7 @@ import { StructureRegistry, type StructureRecord } from '../structures/Structure
 import { FactionLedger } from '../faction/FactionLedger.js';
 import { isBaseReady } from '../../core/faction/Faction.js';
 import type { FactionBaseReadiness, SectorLiveCounts } from '../livingworld/LivingWorldRoom.js';
+import { tallyFaction, type FactionPresenceMap } from '../livingworld/factionPresence.js';
 import { RecentCombatLog } from './RecentCombatLog.js';
 import type { RecentCombat } from '../../shared-types/galaxySnapshot.js';
 import { StructurePlacementSubsystem, type PackedGateResult } from '../structures/StructurePlacementSubsystem.js';
@@ -8177,10 +8178,13 @@ export class SectorRoom extends Room<SectorState> {
       const ship = this.getActiveShip(pid);
       if (ship?.alive && ship.isActive) present.push(pid);
     }
+    const byFaction: FactionPresenceMap = new Map();
+    for (const pid of present) tallyFaction(byFaction, pid, 'ships');
     let enemies = 0;
     let neutrals = 0;
     for (const rec of this.swarmRegistry.all()) {
       if (rec.kind !== SWARM_KIND_DRONE) continue;
+      tallyFaction(byFaction, (this.patrols.count > 0 ? this.patrols.factionOf(rec.id) : undefined) ?? allegianceOfKind(rec.shipKind), 'ships');
       let hostile = false;
       for (const pid of present) {
         if (this.npcHostileTo(rec.id, pid)) {
@@ -8191,7 +8195,13 @@ export class SectorRoom extends Room<SectorState> {
       if (hostile) enemies++;
       else neutrals++;
     }
-    return { players: present.length, enemies, neutrals, structures: this.structureRegistry.size };
+    let playerStructures = 0;
+    for (const rec of this.structureRegistry.all()) {
+      const o = parseOwner(rec.owner);
+      if (o.kind === 'player') playerStructures++;
+      tallyFaction(byFaction, o.faction, 'structures');
+    }
+    return { players: present.length, enemies, neutrals, structures: this.structureRegistry.size, playerStructures, byFaction };
   }
 
   /** Equinox Phase 9 (item 5) — recent-combat tally for `/galaxy/snapshot` (the

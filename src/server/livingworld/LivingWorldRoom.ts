@@ -14,6 +14,7 @@ import type { RecentCombat } from '../../shared-types/galaxySnapshot.js';
 import type { BotCarry } from './botTypes.js';
 import type { WorldNotice } from '../../shared-types/worldNotice.js';
 import type { Hold } from '../../shared-types/goods.js';
+import type { FactionPresenceMap } from './factionPresence.js';
 
 /**
  * Per-(owner, sector) faction base summary the `WaveDirector` polls (wave-system
@@ -61,6 +62,10 @@ export interface SectorLiveCounts {
   neutrals: number;
   /** Placed structures (StructureRegistry size). */
   structures: number;
+  /** Placed structures owned by a PLAYER (NPC base parts excluded). */
+  playerStructures?: number;
+  /** Ships + structures per side, for the control meter for every side. */
+  byFaction?: FactionPresenceMap;
 }
 
 export interface LivingWorldRoom {
