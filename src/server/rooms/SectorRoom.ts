@@ -1913,7 +1913,7 @@ export class SectorRoom extends Room<SectorState> {
        * mix) instead of using `asteroidConfig` + `droneCount`. When set,
        * suppresses both legacy paths so we don't double-spawn.
        */
-      cutField?: { seed: string; clearings?: FieldClearing[] }; // macro terrain v2 (clearings: galaxy sectors, F4): test/showcase rooms only (docs/architecture/macro-terrain.md)
+      cutField?: { seed: string; clearings?: FieldClearing[] }; // macro terrain v2: test/showcase rooms, and every asteroid-marked galaxy sector via resolveSectorConfig (F4, with pocket clearings; docs/architecture/macro-terrain.md)
       swarmCount?: number;
       swarmRatio?: number; // asteroid fraction; default 0.8
       swarmRadius?: number; // spawn disc radius; default 18 000

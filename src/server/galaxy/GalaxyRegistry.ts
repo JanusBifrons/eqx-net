@@ -6,7 +6,8 @@
  * See docs/architecture/galaxy-graph.md for the walkthrough.
  */
 import { sectorSpace, SOLAR_SECTORS } from '../../shared-types/sectorBounds.js';
-import { sectorSites } from '../../core/galaxy/sectorSites.js';
+import { sectorSites, sectorCutField } from '../../core/galaxy/sectorSites.js';
+import type { SectorCutField } from '../../core/galaxy/sectorSites.js';
 import { GALAXY_SECTORS, getSector } from '../../core/galaxy/galaxy.js';
 import type { GalaxySector } from '../../core/galaxy/galaxy.js';
 import { ASTEROID_CONFIGS } from './asteroidConfigs.js';
@@ -27,6 +28,12 @@ export interface ResolvedSectorConfig {
   galaxyBases: boolean;
   /** v4 A — seed the Ancients' border gates (`SectorRoom.seedAlienGates`). */
   alienGates: boolean;
+  /**
+   * Macro terrain F4: an `asteroid`-marked sector gets ONE cut field centred
+   * on home (home in its open core), with a clearing carved at every belt,
+   * base and battle pocket. Absent = no field. Becomes `roomOpts.cutField`.
+   */
+  cutField?: SectorCutField;
 }
 
 export function resolveSectorConfig(key: string): ResolvedSectorConfig {
@@ -34,13 +41,17 @@ export function resolveSectorConfig(key: string): ResolvedSectorConfig {
   if (!sector) {
     throw new Error(`resolveSectorConfig: unknown galaxy sector key '${key}'`);
   }
+  const cutField = sectorCutField(sector.key, SOLAR_SECTORS);
   return {
     sectorKey: sector.key,
-    // Fields spread with the sector space; rock sizes stay (round 3 C).
+    // Fields spread with the sector space; rock sizes stay (round 3 C). In a
+    // field sector the home starter rocks stay (they sit in the open core) and
+    // the belt rings are replaced by the field (owner, 2026-11-17).
     asteroidConfig: [
       ...ASTEROID_CONFIGS[sector.asteroidConfigKey].map((a) => ({ ...a, x: sectorSpace(a.x), y: sectorSpace(a.y) })),
-      ...(SOLAR_SECTORS ? beltPocketAsteroids(sector.key) : []),
+      ...(SOLAR_SECTORS && !cutField ? beltPocketAsteroids(sector.key) : []),
     ],
+    ...(cutField ? { cutField } : {}),
     droneCount: sector.droneCount,
     maxClients: DEFAULT_MAX_CLIENTS,
     galaxyBases: true,
