@@ -34,11 +34,20 @@ describe('SectorRoom integration — flagship fleets (W2a)', () => {
     ]);
     const room = rooms.get(A)!;
     const clock = { now: 1_000_000 };
-    d = new FlagshipDirector(rooms, { firstSector: A, rng: () => 0.42, nowMs: () => clock.now, dwellMs: 60_000 });
+    d = new FlagshipDirector(rooms, { powers: ['core'], holderOf: () => 'core', rng: () => 0.42, nowMs: () => clock.now, dwellMs: 60_000 });
+    const coreBefore = room.liveCounts?.().byFaction?.get('core')?.ships ?? 0;
+    const dronesBefore = room.liveCounts?.().byFaction?.get('drones')?.ships ?? 0;
     d.start();
     const [fleet] = d.fleetsView();
     expect(fleet?.sectorKey).toBe(A);
     expect(fleet?.escorts).toBe(FLEET_ESCORT_KINDS.length);
+    expect(fleet?.factionId).toBe('core');
+    // Owned or scrap: every ship of the fleet counts for its power on the
+    // control meter (the room's patrol attribution), none as drones.
+    const counts = room.liveCounts?.().byFaction;
+    expect(counts?.get('core')?.ships).toBe(coreBefore + 1 + FLEET_ESCORT_KINDS.length);
+    expect(counts?.get('drones')?.ships ?? 0).toBe(dronesBefore);
+
     const lead = 'flagship-0-lead';
     const start = poseOf(room, lead);
     const gate = sectorSites(A).filter((s) => s.kind === 'gate').sort((a, b) => Math.hypot(start.x - a.x, start.y - a.y) - Math.hypot(start.x - b.x, start.y - b.y))[0]!;
@@ -80,7 +89,7 @@ describe('SectorRoom integration — flagship fleets (W2a)', () => {
     d.stop();
     room.despawnLivingWorldBot(lead);
     for (let i = 0; i < FLEET_ESCORT_KINDS.length; i++) room.despawnLivingWorldBot(`flagship-0-e${i}`);
-    d = new FlagshipDirector(rooms, { restore: saved, rng: () => 0.42, nowMs: () => clock.now });
+    d = new FlagshipDirector(rooms, { restore: saved, powers: ['core'], holderOf: () => 'core', rng: () => 0.42, nowMs: () => clock.now });
     d.start();
     const [again] = d.fleetsView();
     expect(again?.name).toBe(fleet!.name);

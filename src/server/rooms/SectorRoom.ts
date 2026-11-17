@@ -8272,8 +8272,10 @@ export class SectorRoom extends Room<SectorState> {
     vy?: number;
     health?: number;
     hostileToFaction?: { playerId: string; structureIds: readonly string[] };
+    factionId?: FactionId;
   }): boolean {
     const ok = this.livingWorldBotHooks.spawnBot(spec);
+    if (ok && spec.factionId !== undefined) this.patrols.attachShip(spec.botId, spec.factionId, npcOwner(spec.factionId));
     // P2 bespoke trigger (testMode): robot raiders meet an incoming hauler
     // ~45 % of the way from its entry point to the sector centre.
     if (ok && this.testHaulerRaiders > 0 && isHaulerId(spec.botId)) {

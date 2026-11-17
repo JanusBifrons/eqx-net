@@ -41,7 +41,7 @@ describe('SectorRoom integration — flagship escorts guard round the moving fla
     const room = sector as unknown as LivingWorldRoom;
     const rooms = new Map<string, LivingWorldRoom>([[A, room]]);
     const clock = { now: 1_000_000 };
-    d = new FlagshipDirector(rooms, { firstSector: A, rng: () => 0.42, nowMs: () => clock.now, dwellMs: 600_000 });
+    d = new FlagshipDirector(rooms, { powers: ['core'], holderOf: () => 'core', rng: () => 0.42, nowMs: () => clock.now, dwellMs: 600_000 });
     d.start();
     // Small clock steps: the director re-posts and re-stations every control
     // tick but never wanders the flagship (45 s) or moves the fleet.
