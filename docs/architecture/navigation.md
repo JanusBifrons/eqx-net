@@ -68,6 +68,25 @@ random layouts, so a lane between two walls reads exactly its half-width at the 
 - Cost (print-only, desktop): one fine chunk (4 096 u at 64 u cells, 64×64) with 120 rocks builds in
   ~0.14 ms. Phone timing comes with the perf scene (slice 16).
 
+## The coarse layer (`core/nav/coarseField.ts`)
+`CoarseFieldMap` covers a whole cut field (plus room to go round it) with 2 048 u cells, from the
+field's layout maths alone: `slicedFieldLanes`, `fieldStreet`, the open core and `FieldClearing` (the
+same functions the cut uses, #15). No rock geometry is read.
+- Each cell stores its **best point** (the most open spot in it) and the **room** there: the biggest
+  hull clearance (hull radius) that fits. Not the centre: a lane is only ~560 u wider than a
+  battleship (lane half-width 4 602 u, walls bend up to ~1.1 km, battleship radius 2 876 u), so a cell
+  the lane's centre line crosses is judged on that line.
+- Room at a point is the best of: past the rim (less the warp pad), the open core (less the pad and one
+  piece), a clearing (exact), a lane (to its nearer wall, less the pad), and inside the field half the
+  street there. Streets top out at 288 u at the rim, so every capital (destroyer radius 1 220 u and
+  up) is kept to lanes, the core, clearings and the outside; fighters may use streets.
+- It is a `SearchGraph` (8 neighbours; a cell is open when its room >= `clearance`; edge cost = the
+  distance between best points), searched by the one `GraphSearch`.
+- Not yet built in a worker or used by any ship: the nav worker (slice 4b) hosts it, and the route
+  planner (slice 6) searches it.
+- Measured (desktop, print-only): 156×156 cells, 285 KB, built in ~4 ms. Across the field a battleship
+  routes 448 km (round or along lanes), a fighter 325 km through streets (314 km straight).
+
 ## History
 - 2026-11-17: plan approved (wide lane by default, no-route ⇒ nearest spot and wait, whole route line,
   squads single file). Slice 1a: `GraphSearch` lands; `HeldSectorRoutes` moves onto it.
@@ -77,3 +96,5 @@ random layouts, so a lane between two walls reads exactly its half-width at the 
   landing and spawns. Landing now also avoids field rocks whose chunk is not loaded and blocking shield
   walls (before, a warp could land inside either).
   Slice 3: the free-space map (`ClearanceGrid`), an exact distance transform; ~0.14 ms per 64×64 chunk.
+  Slice 4a: the coarse layer (`CoarseFieldMap`) from the field layout maths; a battleship fits every lane,
+  streets are closed to capitals.
