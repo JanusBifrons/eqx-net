@@ -30,7 +30,7 @@ interface Props {
 }
 
 /** Anchors whose contents should fill the entire host (vs. flex-stack). */
-const FILL_ANCHORS = new Set<AnchorName>(['fullscreen', 'transit']);
+const FILL_ANCHORS = new Set<AnchorName>(['fullscreen', 'transit', 'rotate']);
 
 /**
  * Portals its children into the host element registered for `anchor` by

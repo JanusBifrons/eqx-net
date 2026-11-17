@@ -75,7 +75,7 @@ test("a weapon group's AUTO/MAN switch flips via a SECOND touch while the joysti
   const ctx = await browser.newContext({
     hasTouch: true,
     isMobile: true,
-    viewport: { width: 390, height: 844 },
+    viewport: { width: 844, height: 390 },
   });
   const page = await ctx.newPage();
   try {

@@ -7,6 +7,8 @@
  *
  * Tier ordering (lowest → highest):
  *   canvas  < hud < mobileControls < drawer < appBar < overlay < transit
+ *   < rotatePrompt (above the galaxy map chrome at 2000, below the
+ *   lost-connection and error overlays at 9999)
  */
 export const Z = {
   canvas: 0,
@@ -16,6 +18,7 @@ export const Z = {
   appBar: 1300,
   overlay: 1400,
   transit: 1500,
+  rotatePrompt: 5000,
 } as const;
 
 export type ZTier = keyof typeof Z;

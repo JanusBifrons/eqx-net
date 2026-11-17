@@ -3160,3 +3160,8 @@ Owner: "make it more like micro machines and make fights a bit longer. Also don'
 
 - **Finding (design):** behind a cookie gate, a page that works in Safari would open to "forbidden" once added to the home screen: the installed app does not share Safari's cookies, and the browser fetches the manifest without credentials by default.
 - **Rule:** behind a gate, the manifest's `start_url` carries the key and the manifest link uses credentials (VitePWA `useCredentials`). Guide: [phone-link](ops/phone-link.md).
+
+## 2026-11-17 — an installed app picks up a manifest orientation change late
+
+- **Finding (design):** switching the manifest to `orientation: 'landscape'` does not lock an already-installed Android app at once: Chrome refreshes an installed app's manifest lazily (it can take days), and iOS ignores manifest orientation entirely. An upright-phone screen is still needed for the iPhone app and the browser.
+- **Rule:** never rely on the manifest alone to keep a phone sideways; the in-page turn-sideways screen covers every case, and a manifest change is verified on a fresh install. Guide: [mobile-layout](features/mobile-layout.md#orientation-policy).

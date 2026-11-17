@@ -48,7 +48,7 @@ test('mobile (touch) ring renders smaller glyphs', async ({ browser }) => {
   // halo so glyphs scale to ~0.65x. The visual diff is for human review; the
   // hard assertion is the ring still draws (touch flag didn't zero it out).
   const ctx = await browser.newContext({
-    viewport: { width: 390, height: 844 },
+    viewport: { width: 844, height: 390 },
     hasTouch: true,
     isMobile: true,
   });
