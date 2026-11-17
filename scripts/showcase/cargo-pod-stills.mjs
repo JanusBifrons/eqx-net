@@ -1,7 +1,7 @@
 // In-game stills of the cargo pod look (plan cargo-pods, slice 9 look gate):
 // the red box at its four sizes beside the player's ship, each with a
 // different beacon (grey, blue, gold, magenta). Boots its own server + Vite on
-// an offset lane, mints a dev token, joins `sector` as a Pixel 7 with the
+// an offset lane, mints a dev token, joins `sector` as a sideways Pixel 7 with the
 // machined art, sends `test_drop_pods` and screenshots two zooms.
 //
 // --window (slice 17): also select the huge pod, open its loot window and
@@ -58,7 +58,7 @@ try {
     args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--enable-webgl'],
   });
   for (const [name, zoom] of WINDOW ? [['close', '1.1']] : [['wide', '0.45'], ['close', '1.1']]) {
-    const ctx = await browser.newContext({ ...devices['Pixel 7'] });
+    const ctx = await browser.newContext({ ...devices['Pixel 7 landscape'] });
     await ctx.addInitScript((t) => { localStorage.setItem('eqxAuthToken', t); }, tok.token);
     const page = await ctx.newPage();
     const q = new URLSearchParams({ room: ROOM, testId: randomUUID(), worker: '0', diag: '0', art: 'machined', fx: 'new', zoom });
@@ -98,6 +98,15 @@ try {
       await page.getByTestId('cargo-unknown-tile').first().waitFor({ state: 'detached', timeout: 15_000 });
       await page.waitForTimeout(300);
       await page.screenshot({ path: `${out}/window-found.png` });
+      // The footer (Close, Take all) must show whole inside the window on a sideways
+      // phone, not hidden under the window's scroll edge.
+      const frame = await page.locator('[data-testid="loot-window"] .MuiDialog-paper').boundingBox();
+      const foot = await page.getByTestId('loot-window-close').boundingBox();
+      const vh = page.viewportSize().height;
+      const bottom = foot === null ? Infinity : foot.y + foot.height;
+      const edge = Math.min(vh, frame === null ? vh : frame.y + frame.height);
+      if (bottom > edge) throw new Error(`loot window footer cut off: its bottom ${Math.round(bottom)} > the window's ${Math.round(edge)}`);
+      console.log('footer bottom', Math.round(bottom), '/', Math.round(edge));
       await page.locator('[data-testid="cargo-here-row"][data-key^="u:"]').first().click(); // the rock chunk aboard; the pod stays
       await page.waitForTimeout(1500);
       await page.screenshot({ path: `${out}/window-taken.png` });

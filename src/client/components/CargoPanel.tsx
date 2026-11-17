@@ -28,9 +28,9 @@ const C = HUD.color;
 const EDGE = `1px solid ${C.panelEdge}`;
 const ROOT_SX = {
   pointerEvents: 'auto' as const, display: 'flex', flexDirection: 'column' as const, color: C.ink,
-  fontFamily: HUD.font.label, fontSize: 12,
+  fontFamily: HUD.font.label, fontSize: 12, flex: '1 1 auto', minHeight: 0,
 };
-const HEAD_SX = { display: 'flex', alignItems: 'center', gap: 1.25, px: 1.5, py: 1, borderBottom: EDGE, minHeight: 52, flexWrap: 'wrap' as const };
+const HEAD_SX = { flex: 'none', display: 'flex', alignItems: 'center', gap: 1.25, px: 1.5, py: 1, borderBottom: EDGE, minHeight: 52, flexWrap: 'wrap' as const };
 const HEAD_TITLE_SX = { fontWeight: 700, fontSize: 15, letterSpacing: 0.5 };
 const CHIP_SX = {
   fontSize: 10, px: '7px', py: '2px', borderRadius: '9px', border: '1px solid', fontWeight: 600, letterSpacing: 0.5,
@@ -43,6 +43,8 @@ const X_SX = {
 const BODY_SX = {
   display: 'flex', flexDirection: { xs: 'column', sm: 'row' } as const, gap: { xs: 1.5, sm: 2 }, px: 1.5, py: 1.25,
   justifyContent: 'center', alignItems: { xs: 'center', sm: 'flex-start' } as const,
+  // A short screen (a sideways phone) scrolls the grids, never the header or footer.
+  flex: '1 1 auto', minHeight: 0, overflowY: 'auto' as const,
 };
 const SIDE_HEAD_SX = {
   display: 'flex', alignItems: 'center', gap: '6px', mb: '6px', fontSize: 11, fontWeight: 600, color: C.inkDim,
@@ -50,7 +52,7 @@ const SIDE_HEAD_SX = {
 };
 const NUM_SX = { ml: 'auto', fontFamily: HUD.font.num, fontSize: 11, color: C.ink, textTransform: 'none' as const, letterSpacing: 0 };
 const FOOT_SX = {
-  display: 'flex', alignItems: 'center', gap: 1, px: 1.5, py: 1, borderTop: EDGE, minHeight: 58, fontSize: 11, color: C.inkDim,
+  flex: 'none', display: 'flex', alignItems: 'center', gap: 1, px: 1.5, py: 1, borderTop: EDGE, minHeight: 58, fontSize: 11, color: C.inkDim,
 };
 const BTN_BASE = {
   height: 38, px: 2, borderRadius: '6px', display: 'grid', placeItems: 'center', fontWeight: 700, fontSize: 13,
@@ -87,17 +89,22 @@ export const GRID_SLOTS = GRID_COLS * 3;
 /** Tile edge (px): a touch smaller on a phone so six fit across. */
 const TILE = { xs: 50, sm: 58 } as const;
 const GAP_PX = 5;
+/** A sideways phone is wide (`sm`) but short: it takes the phone tile too. */
+const SHORT = '@media (max-height: 480px)';
+const gridWidth = (tile: number): number => tile * GRID_COLS + GAP_PX * (GRID_COLS - 1);
 const GRID_SX = {
   display: 'grid', gap: `${GAP_PX}px`, alignContent: 'start', overflowY: 'auto' as const,
   gridTemplateColumns: { xs: `repeat(${GRID_COLS}, ${TILE.xs}px)`, sm: `repeat(${GRID_COLS}, ${TILE.sm}px)` },
   gridAutoRows: { xs: `${TILE.xs}px`, sm: `${TILE.sm}px` },
   height: { xs: TILE.xs * 3 + GAP_PX * 2, sm: TILE.sm * 3 + GAP_PX * 2 },
+  [SHORT]: { gridTemplateColumns: `repeat(${GRID_COLS}, ${TILE.xs}px)`, gridAutoRows: `${TILE.xs}px`, height: TILE.xs * 3 + GAP_PX * 2 },
 };
 /** A side is exactly as wide as its grid, so its header and bar line up. */
 const SIDE_SX = {
   display: 'flex', flexDirection: 'column' as const, flex: '0 0 auto',
-  width: { xs: TILE.xs * GRID_COLS + GAP_PX * (GRID_COLS - 1), sm: TILE.sm * GRID_COLS + GAP_PX * (GRID_COLS - 1) },
+  width: { xs: gridWidth(TILE.xs), sm: gridWidth(TILE.sm) },
   maxWidth: '100%',
+  [SHORT]: { width: gridWidth(TILE.xs) },
 };
 const CELL_SX = {
   position: 'relative' as const, boxSizing: 'border-box' as const, borderRadius: '5px', overflow: 'hidden',
