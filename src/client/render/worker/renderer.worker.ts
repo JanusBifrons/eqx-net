@@ -31,6 +31,7 @@ import { GalaxyMapLayer } from '../galaxy/GalaxyMapLayer';
 import type { MainToWorkerMsg, WorkerToMainMsg } from './protocol';
 import { rendererArgsFromBoot } from './bootRenderer';
 import { SwarmMirrorReplica } from './swarmMirrorDelta';
+import { setFactionLooks } from '../../../shared-types/factions.js';
 
 function post(msg: WorkerToMainMsg, transfer?: Transferable[]): void {
   // `self` is typed as Window here (DOM lib); the worker overload takes a
@@ -327,6 +328,11 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
       }
       case 'SET_GALAXY_STATS': {
         galaxyLayer?.setGalaxyStats(msg.stats);
+        break;
+      }
+      case 'SET_FACTION_LOOKS': {
+        // This thread's own registry copy; the version bump repaints liveries.
+        setFactionLooks(msg.looks);
         break;
       }
       case 'SET_PLAYER_PRESENCE': {

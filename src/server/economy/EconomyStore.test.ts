@@ -6,6 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import type { IPersistenceSink, PersistOp } from '../../core/contracts/IPersistenceSink.js';
 import { EconomyStore, STANDING_SCALE_VERSION } from './EconomyStore.js';
+import { factionLookOf, setFactionLooks, teamSigilOf } from '../../shared-types/factions.js';
 
 const P = '6a7e0000-0000-4000-8000-0000000000a1';
 const Q = '6a7e0000-0000-4000-8000-0000000000b2';
@@ -110,6 +111,33 @@ describe('EconomyStore policies and the Factions view (F3)', () => {
     expect(quinn).toMatchObject({ name: 'Quinn', kind: 'player', theirView: -30, yourView: 0 });
     expect(v.rows[0]!.factionId, 'strongest feelings first').toBe(Q);
     expect(v.policy).toEqual({ hostileBelow: null, alliedAbove: null });
+  });
+});
+
+describe('EconomyStore claimed ship looks', () => {
+  it('a claim persists on the player row, hydrates back, and a taken pair is refused', () => {
+    const { s } = store();
+    expect(s.claimLook(P, 2, 99)).toBe('ok');
+    expect(s.claimLook(Q, 2, 99)).toBe('taken');
+    expect(s.factionsView(Q, () => 'x').looks).toEqual([{ factionId: P, colorSlot: 2, sigil: 99 }]);
+    const op = s.playerOp(P) as Extract<PersistOp, { type: 'ECON_PLAYER_PUT' }>;
+    setFactionLooks([]);
+    const { s: s2 } = store();
+    s2.hydrate({ players: [{ player_id: P, payload_json: op.payloadJson }], deals: [], market: null });
+    expect(factionLookOf(P)).toEqual({ colorSlot: 2, sigil: 99 });
+    expect(s2.claimLook(Q, 2, 99)).toBe('taken');
+    setFactionLooks([]);
+  });
+
+  it('another known player’s unclaimed default pair counts as taken', () => {
+    const { s } = store();
+    s.player(Q); // Q has an economy row but no claim: Q wears its hash default.
+    const q = teamSigilOf(Q);
+    expect(s.claimLook(P, q >>> 12, q & 0xfff)).toBe('taken');
+    // Q may claim its own default; once Q holds another pair, the old one is free.
+    expect(s.claimLook(Q, q >>> 12, (q & 0xfff) ^ 1)).toBe('ok');
+    expect(s.claimLook(P, q >>> 12, q & 0xfff)).toBe('ok');
+    setFactionLooks([]);
   });
 });
 
