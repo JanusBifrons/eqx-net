@@ -32,6 +32,7 @@ import {
   type ShieldWallVisual,
   type PreviewLineKind,
 } from './connectorVisual.js';
+import { drawLineLookBody, drawLineLookFlow, type LineLook } from './connectorLineLooks.js';
 import { getStructureKind, isStructureKindId } from '../../../shared-types/structureKinds.js';
 import {
   canConnect,
@@ -287,7 +288,8 @@ export class ConnectorRenderer {
    *  turret per frame (invariant #14: was a fresh object literal per turret). */
   private readonly _builtRangeVisual: RingVisual = { color: 0, alpha: 0, width: 0 };
 
-  /** Redraw the web for this frame. `scale` is the viewport zoom. */
+  /** Structure restyle 1g: `?lineLook=` line look (connectorLineLooks.ts); null = today's line. Set before the first update. */
+  lineLook: LineLook | null = null;
   /** Per-frame inputs for the wall visitor (set before each walk). */
   private _wallNow = 0;
   private _wallScale = 1;
@@ -447,8 +449,8 @@ export class ConnectorRenderer {
         if (id > otherId) continue; // each undirected edge once
         const b = swarm.get(otherId);
         if (!b) continue;
-        g.moveTo(ax, ay);
-        g.lineTo(b.x, -b.y);
+        if (this.lineLook) { drawLineLookBody(g, this.lineLook, ax, ay, b.x, -b.y, scale); continue; }
+        g.moveTo(ax, ay).lineTo(b.x, -b.y);
         g.stroke({ color: idle.color, alpha: idle.alpha, width: idle.width });
       }
     }
@@ -527,14 +529,13 @@ export class ConnectorRenderer {
         if (!v.pulseActive) continue; // idle: drawn on the static layer
         const bx = b.x;
         const by = -b.y;
+        if (this.lineLook) { drawLineLookFlow(g, this.lineLook, v, this._comet, src === undefined || src === id, ax, ay, bx, by, scale); continue; }
         // Glow underlay first (so the core line sits on top).
         if (v.glowAlpha > 0) {
-          g.moveTo(ax, ay);
-          g.lineTo(bx, by);
+          g.moveTo(ax, ay).lineTo(bx, by);
           g.stroke({ color: v.color, alpha: v.glowAlpha, width: v.glowWidth });
         }
-        g.moveTo(ax, ay);
-        g.lineTo(bx, by);
+        g.moveTo(ax, ay).lineTo(bx, by);
         g.stroke({ color: v.color, alpha: v.alpha, width: v.width });
         // R2.2 — the travelling-comet flow pulse (always runs source→dest).
         // sourceIsLo ⇒ the flow source is the lower-id endpoint (id = the (ax,ay)
