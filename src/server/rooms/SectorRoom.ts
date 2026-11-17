@@ -102,6 +102,7 @@ import type { BotCarry } from '../livingworld/botTypes.js';
 import { droneMaxHealthOf, getDroneMaxHealth, getDroneShieldMax } from './droneKindHelpers.js';
 import { STRUCTURE_DEFAULT_HEALTH } from '../../core/swarm/structureConstants.js';
 import { StructureRegistry, type StructureRecord } from '../structures/StructureRegistry.js';
+import { startStructureRigClip } from '../structures/structureRigClip.js';
 import { FactionLedger } from '../faction/FactionLedger.js';
 import { isBaseReady } from '../../core/faction/Faction.js';
 import type { FactionBaseReadiness, SectorLiveCounts } from '../livingworld/LivingWorldRoom.js';
@@ -1441,6 +1442,17 @@ export class SectorRoom extends Room<SectorState> {
    *  removed on player leave. */
   private readonly shipPoseCache = new Map<string, ShipPhysicsState>();
   private serverTick = 0;
+
+  /** Structure-restyle 2d: start (or, with null, clear) rig clip `clipId` on
+   *  structure `id` from this tick, with an optional target in the
+   *  structure's frame. Records `StructureRecord.rigClip` and moves the rig's
+   *  solid parts in the physics worker. False when the structure, its rig or
+   *  the clip is unknown. Not on the wire until slice 2e. */
+  startStructureRigClip(id: string, clipId: string | null, target?: { readonly x: number; readonly y: number }): boolean {
+    const rec = this.structureRegistry.get(id);
+    if (!rec) return false;
+    return startStructureRigClip(rec, clipId, this.serverTick, (cmd) => this.postToWorker(cmd), target);
+  }
   /** Pre-Stage-5: gated the 20 Hz broadcast — fired every 3 update() calls.
    *  Stage 5 replaces this with per-client {@link shouldBroadcastFar} /
    *  {@link shouldBroadcastClose} predicates. Field retained for the
@@ -2829,6 +2841,7 @@ export class SectorRoom extends Room<SectorState> {
       takeSlot: () => this.freeSlots.pop(),
       postSpawnObstacle: (slot, id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups, angle, parts, shieldKindId, spin, shipKindId) =>
         this.postToWorker({ type: 'SPAWN_OBSTACLE', slot, obstacleId: id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups, angle, parts, ...(shieldKindId ? { shieldKindId } : {}), ...(spin ? { angvel: spin.angvel, angularDamping: spin.angularDamping } : {}), ...(spin?.settleSpeed ? { settleSpeed: spin.settleSpeed, settleSpin: spin.settleSpin ?? 0 } : {}), ...(shipKindId !== undefined ? { shipKindId } : {}) }),
+      postRigAttach: (id, rigId) => this.postToWorker({ type: 'RIG_ATTACH', id, rigId }),
       sabF32: this.sabF32,
       sabU32: this.sabU32,
       registerAi: (id, slot, behaviour) => this.aiController.register(id, slot, behaviour),

@@ -12,6 +12,7 @@ import { ClientEntityLeafBase } from '../ClientEntityLeafBase.js';
 import type { ClientSpawnCtx, ClientSyncCtx } from '../IClientEntityLeaf.js';
 import { structureHullPoints } from '../../../../shared-types/structureKinds.js';
 import { gateColliderPolygons } from '../../../../core/structures/gateGeometry.js';
+import { rigForStructureKind } from '../../../../core/articulation/rigCatalogue.js';
 
 /** Structure predWorld mass — matches the pre-refactor hardcoded `3` for any
  *  non-drone kind. */
@@ -42,6 +43,11 @@ export class StructureClientLeaf extends ClientEntityLeafBase {
       parts,
     );
     ctx.predWorld.lockBody(ctx.key); // static server-side
+    // Rig solid parts (structure-restyle 2d): the same `attachRig` the server
+    // worker runs on RIG_ATTACH, so predWorld has the same kinematic bodies
+    // (#15). They rest until a clip is set (slice 2e wires the clip record).
+    const rig = ctx.entry.shipKind ? rigForStructureKind(ctx.entry.shipKind) : null;
+    if (rig) ctx.predWorld.attachRig(ctx.key, rig);
   }
 
   onSync(ctx: ClientSyncCtx): void {

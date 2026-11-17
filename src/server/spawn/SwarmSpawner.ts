@@ -13,6 +13,7 @@ import { SHIP_KINDS_LIST, GAMEPLAY_SHIP_KINDS_LIST, kindHasShield, shipKindToInd
 import { structureHalfExtents, structureHullPoints } from '../../shared-types/structureKinds.js';
 import { gateColliderPolygons, gateWorldAxisBoxes } from '../../core/structures/gateGeometry.js';
 import { shipBodyMass } from '../../shared-types/shipScale/tuning.js';
+import { rigForStructureKind } from '../../core/articulation/rigCatalogue.js';
 
 export interface AsteroidSpec {
   id: string;
@@ -78,6 +79,11 @@ export interface SpawnerHooks {
    *  the drone kind's catalogue index (`shipKindToIndex`): the worker flies the
    *  body as that kind when the AI drives it with control keys (AI_INPUTS). */
   postSpawnObstacle: (slot: number, id: string, x: number, y: number, vx: number, vy: number, radius: number, mass: number, vertices?: ReadonlyArray<Vec2>, linearDamping?: number, staticBody?: boolean | 'fixed', collisionGroups?: number, angle?: number, parts?: ReadonlyArray<ReadonlyArray<Vec2>>, shieldKindId?: string, spin?: { angvel: number; angularDamping: number; settleSpeed?: number; settleSpin?: number }, shipKindId?: number) => void;
+  /** Structure-restyle 2d: give a just-spawned structure body its rig's
+   *  solid (plane-layer) parts in the worker (`RIG_ATTACH`). Posted right
+   *  after the structure's SPAWN_OBSTACLE, so the host body exists. Optional:
+   *  test fixtures without a worker omit it. */
+  postRigAttach?: (id: string, rigId: string) => void;
   /** Direct write into the SAB so the first update() tick reads a sane pose. */
   sabF32: Float32Array;
   sabU32: Uint32Array;
@@ -262,6 +268,12 @@ export class SwarmSpawner {
         rec.halfW = s.radius;
         rec.halfH = s.radius;
       }
+    }
+    // A kind with a rig (rigCatalogue.ts) gets its solid parts as kinematic
+    // bodies tied to this body; DESPAWN removes them with it.
+    if (ok && s.shipKind && this.hooks.postRigAttach) {
+      const rig = rigForStructureKind(s.shipKind);
+      if (rig) this.hooks.postRigAttach(s.id, rig.id);
     }
     return ok;
   }
