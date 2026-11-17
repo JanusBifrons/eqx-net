@@ -13,6 +13,30 @@ function inside(site: { x: number; y: number }, ext: BaseExtent, half: number): 
 }
 
 describe('chooseBaseSite (T1)', () => {
+  it('packs flush: finds a slot between two blockers narrower than the grid can hit, and the high sector edges', () => {
+    // A 3530 band across the sector; the base fits only for a Capital y in
+    // -15..15, which no 250 grid row hits; the flush sites do.
+    const hard = [
+      { x: 0, y: 3000, hw: 6000, hh: 1235 }, // bottom edge 1765
+      { x: 0, y: -3000, hw: 6000, hh: 1235 }, // top edge -1765
+    ];
+    const band = { x0: -1000, x1: 1000, y0: -1550, y1: 1550 }; // 3100 + 400 margin into a 3530 band
+    const site = chooseBaseSite(band, hard, [], OPTS);
+    expect(site).not.toBeNull();
+    expect(site!.y + band.y0 - OPTS.margin).toBeGreaterThanOrEqual(-1765 - 1e-6);
+    expect(site!.y + band.y1 + OPTS.margin).toBeLessThanOrEqual(1765 + 1e-6);
+    // The high x edge is reachable exactly (the grid alone stops short).
+    const free = chooseBaseSite(SMALL, [{ x: -3000, y: 0, hw: 2000, hh: 6000 }], [], { ...OPTS, step: 333 });
+    expect(free!.x + SMALL.x1).toBeCloseTo(5000 - OPTS.margin, 6);
+  });
+
+  it('counts a dock\x27s landing pad in the grown extent', () => {
+    const e = grownExtent([{ kind: 'freight_dock', x: 0, y: 0 }]);
+    expect(e).toEqual({ x0: -500, x1: 500, y0: -200, y1: 710 });
+    const flipped = grownExtent([{ kind: 'freight_dock', x: 0, y: 0, rot: 180 }]);
+    expect(flipped).toEqual({ x0: -500, x1: 500, y0: -710, y1: 200 });
+  });
+
   it('fits the base inside the sector, as far from the origin (spawn) as it can', () => {
     const site = chooseBaseSite(SMALL, [], [], OPTS)!;
     expect(inside(site, SMALL, 5000 - 200)).toBe(true);

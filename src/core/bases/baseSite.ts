@@ -11,6 +11,7 @@
  * tie-break so a sector's base is stable across restarts.
  */
 import { structureHalfExtents } from '../../shared-types/structureKinds.js';
+import { keepClearBox } from '../structures/placementRules.js';
 import { seededRandom } from './baseProfile.js';
 import type { GrownPlacement } from './growBase.js';
 
@@ -21,13 +22,20 @@ export interface SiteCircle { x: number; y: number; r: number }
 /** A base's extent relative to its Capital. */
 export interface BaseExtent { x0: number; x1: number; y0: number; y1: number }
 
-/** The box around every structure of a grown base (relative to its Capital). */
+/** The box around every structure of a grown base, and every dock's landing
+ *  pad (relative to its Capital). */
 export function grownExtent(placements: readonly GrownPlacement[]): BaseExtent {
   let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
   for (const p of placements) {
     const { hw, hh } = structureHalfExtents(p.kind, p.rot ?? 0);
     x0 = Math.min(x0, p.x - hw); x1 = Math.max(x1, p.x + hw);
     y0 = Math.min(y0, p.y - hh); y1 = Math.max(y1, p.y + hh);
+    // A dock's landing pad is part of the base: it needs the space too.
+    const pad = keepClearBox(p.kind, p.x, p.y, p.rot ?? 0);
+    if (pad !== null) {
+      x0 = Math.min(x0, pad.x - pad.hw); x1 = Math.max(x1, pad.x + pad.hw);
+      y0 = Math.min(y0, pad.y - pad.hh); y1 = Math.max(y1, pad.y + pad.hh);
+    }
   }
   return placements.length === 0 ? { x0: 0, x1: 0, y0: 0, y1: 0 } : { x0, x1, y0, y1 };
 }
@@ -78,23 +86,52 @@ export function chooseBaseSite(
   const cyMin = oy - lim - ext.y0, cyMax = oy + lim - ext.y1;
   if (cxMin > cxMax || cyMin > cyMax) return null;
   const rnd = seededRandom(o.seed);
-  let best: { x: number; y: number; soft: number; score: number } | null = null;
-  for (let cx = cxMin; cx <= cxMax + 1e-6; cx += o.step) {
-    for (let cy = cyMin; cy <= cyMax + 1e-6; cy += o.step) {
-      const x0 = cx + ext.x0 - o.margin, x1 = cx + ext.x1 + o.margin;
-      const y0 = cy + ext.y0 - o.margin, y1 = cy + ext.y1 + o.margin;
-      let blocked = false;
-      for (const b of hard) if (boxHitsBox(x0, x1, y0, y1, b)) { blocked = true; break; }
-      if (blocked) continue;
-      let n = 0;
-      for (const c of soft) if (boxHitsCircle(x0, x1, y0, y1, c)) n++;
-      // Fewest asteroids first, then farthest from the origin (spawn), then a
-      // small seeded jitter so equal sites don't all pick the same corner.
-      const score = Math.hypot(cx - ox, cy - oy) + rnd() * o.step * 0.5;
-      if (best === null || n < best.soft || (n === best.soft && score > best.score)) {
-        best = { x: cx, y: cy, soft: n, score };
-      }
+  type Best = { x: number; y: number; soft: number; score: number };
+  let best: Best | null = null as Best | null;
+  const consider = (cx: number, cy: number): void => {
+    const x0 = cx + ext.x0 - o.margin, x1 = cx + ext.x1 + o.margin;
+    const y0 = cy + ext.y0 - o.margin, y1 = cy + ext.y1 + o.margin;
+    let blocked = false;
+    for (const b of hard) if (boxHitsBox(x0, x1, y0, y1, b)) { blocked = true; break; }
+    if (blocked) return;
+    let n = 0;
+    for (const c of soft) if (boxHitsCircle(x0, x1, y0, y1, c)) n++;
+    // Fewest asteroids first, then farthest from the origin (spawn), then a
+    // small seeded jitter so equal sites don't all pick the same corner.
+    const score = Math.hypot(cx - ox, cy - oy) + rnd() * o.step * 0.5;
+    if (best === null || n < best.soft || (n === best.soft && score > best.score)) {
+      best = { x: cx, y: cy, soft: n, score };
     }
+  };
+  for (let cx = cxMin; cx <= cxMax + 1e-6; cx += o.step) {
+    for (let cy = cyMin; cy <= cyMax + 1e-6; cy += o.step) consider(cx, cy);
+  }
+  // Flush sites: the grid starts flush with the low sector edges but stops
+  // short of the high ones (by up to a step), and it rarely lands flush
+  // against a placed base. Also try the sites flush with the high edges and
+  // with every hard box's sides, so bases pack tight and leave the room
+  // between them whole for the next one. Tried AFTER the grid, so the grid's
+  // seeded jitter (and every site the grid already wins) is unchanged.
+  const ex: number[] = [], ey: number[] = [];
+  const onGrid = (v: number, lo: number): boolean => Math.abs((v - lo) / o.step - Math.round((v - lo) / o.step)) < 1e-6;
+  const addX = (v: number): void => { if (v >= cxMin - 1e-6 && v <= cxMax + 1e-6 && !onGrid(v, cxMin) && !ex.includes(v)) ex.push(v); };
+  const addY = (v: number): void => { if (v >= cyMin - 1e-6 && v <= cyMax + 1e-6 && !onGrid(v, cyMin) && !ey.includes(v)) ey.push(v); };
+  addX(cxMax); addY(cyMax);
+  for (const b of hard) {
+    // A box inside another (a seeded base's own structures, inside its gap
+    // box) adds nothing: bases pack against the outer box.
+    let inside = false;
+    for (const c of hard) {
+      if (c !== b && b.x - b.hw >= c.x - c.hw && b.x + b.hw <= c.x + c.hw && b.y - b.hh >= c.y - c.hh && b.y + b.hh <= c.y + c.hh) { inside = true; break; }
+    }
+    if (inside) continue;
+    addX(b.x + b.hw - ext.x0 + o.margin); addX(b.x - b.hw - ext.x1 - o.margin);
+    addY(b.y + b.hh - ext.y0 + o.margin); addY(b.y - b.hh - ext.y1 - o.margin);
+  }
+  for (let cx = cxMin; cx <= cxMax + 1e-6; cx += o.step) for (const cy of ey) consider(cx, cy);
+  for (const cx of ex) {
+    for (let cy = cyMin; cy <= cyMax + 1e-6; cy += o.step) consider(cx, cy);
+    for (const cy of ey) consider(cx, cy);
   }
   if (best === null) return null;
   const x0 = best.x + ext.x0 - o.margin, x1 = best.x + ext.x1 + o.margin;
