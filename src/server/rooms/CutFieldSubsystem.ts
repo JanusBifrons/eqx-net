@@ -27,7 +27,7 @@ import {
 import { serverLogEvent } from '../debug/ServerEventLog.js';
 import { fieldRockOnWire, type SwarmEntityRecord, type SwarmEntityRegistry } from '../net/SwarmEntityRegistry.js';
 import type { SwarmSpawner } from '../spawn/SwarmSpawner.js';
-import type { TerrainRecordStore } from '../db/terrainSql.js';
+import type { RockRecordStore } from '../db/terrainSql.js';
 import { guarded } from './guardedLoop.js';
 import type { WorkerCmd } from './PhysicsWorkerProxy.js';
 
@@ -46,7 +46,7 @@ export interface CutFieldRoomHooks {
   shipMass?(id: string): number | undefined;
   /** The change record's save (C4): a room that persists its sector passes
    *  one; engineering and test rooms without a saved sector pass none. */
-  records?: TerrainRecordStore;
+  records?: RockRecordStore;
 }
 
 /** World point (x, y) on a rock now at (poseX, poseY, angle) back into the

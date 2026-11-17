@@ -1066,6 +1066,9 @@ Wreck pieces now wear down and break again. Pure numbers in
 - **Salvage.** Ties into the scrap economy.
 - **Lifetime.** A per-sector cap instead of today's global `MAX_LIVE_SCRAP`
   FIFO.
+- **Saved across restarts (wreck fields).** A battle wreck's lineage record is
+  stored as a lineage row of `terrain_records`, beside the field's rocks: see
+  [macro-terrain](macro-terrain.md) (the save, battle-wreck lineage rows).
 
 ### Sub-capital profile (sub-capital break-up, slice 1, 2026-11-13)
 

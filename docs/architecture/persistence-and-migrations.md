@@ -45,7 +45,8 @@ adds `DIRECTOR_STATE_PUT` (the Director-state lane below); macro terrain C4 adds
 [macro-terrain](macro-terrain.md)); terrain C2 (deep sleep) adds its `pose`
 (columns `pose_x` / `pose_y` / `pose_angle`, NULL for a rock at its cut pose),
 which older tables gain through `ALTER`s appended to `PLAYER_SHIPS_MIGRATIONS`
-(the one idempotent column-migration list the DB worker runs at boot).
+(the one idempotent column-migration list the DB worker runs at boot); wreck
+fields add its optional `lineage` (column `lineage`) and `TERRAIN_RECORD_DELETE`.
 
 ## Phase 8 sub-phase A: sector snapshots
 
