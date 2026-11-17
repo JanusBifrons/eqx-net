@@ -1450,10 +1450,8 @@ async function main(): Promise<void> {
             .get() as { payload_json: string; created_at: number } | undefined,
         logger,
       });
-      // Living World P3 — robot territory + the nexus (reinforcements spawn at
-      // it; every side's sector control shows on the galaxy map). Built before
-      // the director so its control meter rides the director's state row: the
-      // director restores it inside start() and saves it on every persist.
+      // Living World P3 — robot territory + nexus + every side's sector control.
+      // Built first so its meter rides the director's state row (restored in start()).
       const territory = new RobotTerritory(galaxyRooms, () => robotDirector?.activeBotCountsBySector() ?? EMPTY_COUNTS);
       robotDirector = new LivingWorldDirector(galaxyRooms, {
         ...directorOpts,
@@ -1482,8 +1480,7 @@ async function main(): Promise<void> {
         // Robots are hostile to every player on sight: the robot director's bots
         // AND an active incursion's raiders both show as enemies on the map.
         extraEnemyCounts: () => sumCounts(robotDirector?.activeBotCountsBySector() ?? EMPTY_COUNTS, eventDirector?.hostileCountsBySector() ?? EMPTY_COUNTS),
-        // The control meter for every side: whichever side holds the sector
-        // (null = neutral). Without the meter, the static controller shows.
+        // The control meter's holder for every side (null = neutral).
         sectorOwner: (key) => (robotTerritory ? robotTerritory.sectorOwner(key) : undefined),
         // P4a — named elites: ticked on the drone director's control loop and
         // marked on the galaxy map.

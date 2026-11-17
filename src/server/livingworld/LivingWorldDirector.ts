@@ -66,12 +66,7 @@ import { EscalatingWavePattern } from './director/WavePattern.js';
 import { WaveDirector, type WaveStep } from './director/WaveDirector.js';
 import { IncomingRegistry } from './IncomingRegistry.js';
 import type { WarpDisposition, WarpWarningEvent } from '../../shared-types/messages.js';
-import {
-  DIRECTOR_STATE_VERSION,
-  type DirectorPersistence,
-  type DirectorStatePayload,
-  type PersistedSectorControl,
-} from './DirectorPersistence.js';
+import { DIRECTOR_STATE_VERSION, type DirectorPersistence, type PersistedSectorControl } from './DirectorPersistence.js';
 import { gameNow, gameSetInterval, gameClearTimer, type GameTimer } from '../time/gameTime.js';
 
 // Re-export the room type so existing imports from this module keep working.
@@ -260,12 +255,9 @@ export interface LivingWorldHooks {
   respawnAnchor?: () => { sectorKey: string; x: number; y: number } | null;
   /** P3 — called at the tail of every control tick (robot territory). */
   onTick?: (nowMs: number) => void;
-  /** A sector's live owner for `/galaxy/snapshot` from the control meter for
-   *  every side (`RobotTerritory`): the holding side, or null for neutral
-   *  ground. Undefined (or no hook) ⇒ the sector's static controller. */
+  /** Live owner from the control meter (`RobotTerritory`); null = neutral, undefined ⇒ static controller. */
   sectorOwner?: (sectorKey: string) => SectorOwner | null | undefined;
-  /** Step 1c — the sector-control entries saved WITH this director's state row
-   *  (`RobotTerritory.saveControl`); called on every persist. */
+  /** Step 1c — control entries saved WITH this director's state row, on every persist. */
   saveSectorControl?: () => PersistedSectorControl[];
   /** Step 1c — hand restored control entries back (`RobotTerritory.restoreControl`).
    *  Called from `start()` when the hydrated row carries them, so the hook must
@@ -685,16 +677,15 @@ export class LivingWorldDirector {
     const dp = this.directorPersistence;
     if (!dp) return;
     const wave = this.waveDirector.serialize();
-    const payload: DirectorStatePayload = {
+    const control = this.hooks.saveSectorControl?.();
+    dp.persist({
       version: DIRECTOR_STATE_VERSION,
       savedAtMs: this.nowMs(),
       squads: this.squadPool.serialize(),
       waveCount: wave.waveCount,
       lastDispatchAtMs: wave.lastDispatchAtMs,
-    };
-    const control = this.hooks.saveSectorControl?.();
-    if (control !== undefined) payload.sectorControl = control;
-    dp.persist(payload);
+      ...(control !== undefined ? { sectorControl: control } : {}),
+    });
   }
 
   /**
@@ -802,8 +793,7 @@ export class LivingWorldDirector {
         enemies,
         neutrals,
         structures: counts.structures,
-        // The live control meter's holder (any side; null = neutral ground).
-        // With no meter: the static controlling power, or null.
+        // The control meter's holder (null = neutral); with no meter, the static controller.
         owner: liveOwner !== undefined ? liveOwner : (controller ? { factionId: controller, contested: false } : null),
         // Equinox Phase 9 (item 5) — recent-combat tally (null when quiet); the
         // room owns the sliding window, the director just forwards it.
