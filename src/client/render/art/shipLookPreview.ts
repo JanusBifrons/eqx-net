@@ -10,7 +10,7 @@
 import { forgeShip, shipExtent } from './fields.js';
 import { turretCoverOf } from './bake.js';
 import { DEFAULT_RIG, litFrame } from './shade.js';
-import { sigilCoverage, sigilDesign } from './sigil.js';
+import { sigilRgba } from './sigil.js';
 import { DEFAULT_LIVERY, readLivery } from './artMode.js';
 import { lookLivery } from '../../../shared-types/factions.js';
 
@@ -46,17 +46,7 @@ export function drawSigilTile(canvas: HTMLCanvasElement, packed: number, color: 
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
   const n = canvas.width;
-  const d = sigilDesign(packed);
   const img = ctx.createImageData(n, n);
-  const r = (color >> 16) & 255, g = (color >> 8) & 255, b = color & 255;
-  const px = 2 / n;
-  for (let y = 0; y < n; y++) {
-    for (let x = 0; x < n; x++) {
-      const c = sigilCoverage(d, ((x + 0.5) / n) * 2 - 1, 1 - ((y + 0.5) / n) * 2, px);
-      if (c <= 0) continue;
-      const o = (y * n + x) * 4;
-      img.data[o] = r; img.data[o + 1] = g; img.data[o + 2] = b; img.data[o + 3] = Math.round(c * 255);
-    }
-  }
+  img.data.set(sigilRgba(packed, color, n));
   ctx.putImageData(img, 0, 0);
 }
