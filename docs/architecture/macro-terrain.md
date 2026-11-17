@@ -130,6 +130,15 @@ Zoomed far out, real rocks would be a few pixels each, and a whole field is abou
 - **Draw calls (count gate, estimated):** one per visible tile. A tile is 8 × 4,096 u ≈ 32.8 km on a side, so a battleship's phone floor (~85 × 184 km) meets at most 4 × 7 = 28 tiles, fewer at the field's edge and over the core hole. Below the switch the chunk meshes cost none. Inside the band both levels draw.
 - **Measured (phone-proxy, 2026-11-17):** scene `cut-field-far` A/B GREEN: frame p95 16.7 → 16.7 ms, render p95 0.9 → 0.9 ms, display objects 1,381 → 1,470. The owner approved the look from stills (rock-size shards, thinned rim). The camera streaming ring is unchanged: it still cuts up to 13 × 13 chunks around the camera when zoomed far out, though they are hidden there.
 
+### Galaxy sectors (F4)
+
+Every sector the galaxy map marks `asteroid` has ONE cut field, the field as built (300 km across, centred on home, which sits in the open core). Owner, 2026-11-17. `sectorCutField(sectorKey, solar)` in `core/galaxy/sectorSites.ts` derives it from the sector key, so every side agrees:
+
+- **Seed:** `galaxy:<sectorKey>:v<SECTOR_FIELD_VERSION>`. Bump the version whenever the derived field changes (clearings, seed rule). Saved rock changes are keyed `<sectorKey>|<seed>`, so old records never land on different rocks.
+- **Clearings:** every pocket the field reaches (belts, the outer base, the battle zone; home is in the core; gates at 170 km are outside) is a `FieldClearing` of radius `site.r + FIELD_CLEARING_MARGIN`. `slicedField` drops a piece whose centre lies inside once it is smaller than the clearing, which is the open core's rule. The edge is ragged out to about twice the radius, and rocks elsewhere are unchanged.
+- **Arrival:** a warp to a pocket drops on its rim (`warpDropPoint`, `site.r`), so the ship lands in open space at the clearing edge, looking at the rocks (`sectorSites.test.ts` checks this against the real field).
+- Off with solar-system sectors off. Turning it on in rooms (welcome `cutField.clearings`, the belt rings it replaces) is the next slice. The small starter rocks near home stay (owner).
+
 ### Parked follow-ups (owner, 2026-11-17: noted, not scheduled)
 
 - **Self-crossing cut outlines.** About 5–10 % of cut rocks have an outline that crosses itself (`roughen` in `fieldLayout.ts`), so the collider falls back to one convex hull. Fixing the cut changes how those rocks look: stills to the owner first.
