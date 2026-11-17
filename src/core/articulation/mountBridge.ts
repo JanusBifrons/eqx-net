@@ -1,7 +1,7 @@
 /**
  * Mount bridge (structure-restyle 2a, plan §5): a weapon mount riding on a
- * rig part, e.g. a pop-up turret = a deploy slide part carrying the existing
- * mount.
+ * rig part, e.g. a pop-up turret = a lift part (no in-plane motion) carrying
+ * the existing mount, or a deploy slide part that moves it out.
  *
  * The bridge only supplies the mount's PARENT FRAME: the part's pose composed
  * with the host's world pose. Existing mount maths that takes a host pose

@@ -79,7 +79,11 @@ export const READY_BASE_PREBUILT = STRUCTURE_SCENARIO_PREBUILT;
  * Articulation sandbox (structure-restyle 2f, plan §5): a small outpost, a
  * freight dock (its crane rig and loading pad, open side +y) and a turret
  * (its hatch + pop-up rig) beside it, both at rot 0 so host frame = world
- * offset. A scripted trader hauler flies onto the pad and the crane reaches
+ * offset. Power: a Capital (50; a grid is powered only with a Capital in it)
+ * south-east of the turret, away from the pad and out of the wide shot, and a
+ * Connector between them (the Capital links only to Connectors) feed the dock
+ * (15) and the turret (15), so nothing shows the unpowered marker and the
+ * turret deploys powered. A scripted trader hauler flies onto the pad and the crane reaches
  * for it (`rigClip` scene steps; Stage 3 starts the crane from the deposit
  * dwell instead). Times are ms after the first pilot is ready; the scene
  * starts after `lead` so a take can be rolling first.
@@ -91,10 +95,17 @@ export const RIG_SANDBOX = {
   /** The pad's far west corner, the hauler's off-centre berth. */
   padCorner: { x: -380, y: 640 },
   turret: { x: 720, y: 0 },
+  /** Grid hub just south of the turret (its top edge in the turret close-up). */
+  connector: { x: 720, y: -160 },
+  /** The power source, south-east of the connector, clear of the wide shot. */
+  capital: { x: 800, y: -560 },
   haulerEntry: { x: 0, y: 1700 },
 } as const;
 
+/** Hubs first, so the leaves auto-connect to them. */
 export const RIG_SANDBOX_PREBUILT = [
+  { kind: 'capital', ...RIG_SANDBOX.capital },
+  { kind: 'connector', ...RIG_SANDBOX.connector },
   { kind: 'freight_dock', ...RIG_SANDBOX.dock },
   { kind: 'turret', ...RIG_SANDBOX.turret },
 ] as const;

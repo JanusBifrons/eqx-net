@@ -6,7 +6,7 @@
  * run in this environment).
  */
 import { describe, it, expect, afterEach } from 'vitest';
-import { SCENARIO, STRUCTURE_SCENARIO_PREBUILT } from '../../../src/server/rooms/scenarioLayouts.js';
+import { RIG_SANDBOX_PREBUILT, SCENARIO, STRUCTURE_SCENARIO_PREBUILT } from '../../../src/server/rooms/scenarioLayouts.js';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 
 describe('SectorRoom integration — structure scenario seeding (Phase 3-5)', () => {
@@ -67,5 +67,23 @@ describe('SectorRoom integration — structure scenario seeding (Phase 3-5)', ()
       expect(internals.swarmRegistry.get(droneId) ?? null).toBeNull(); // overkilled
     }
     expect(turret.turretTargetEntityId).toBeDefined();
+  }, 25_000);
+
+  it('the articulation sandbox is wired and powered: its turret and dock show no unpowered marker', async () => {
+    harness = await bootSectorTestServer({
+      asteroidConfig: [],
+      prebuiltStructures: RIG_SANDBOX_PREBUILT.map((p) => ({ ...p })),
+    });
+    await harness.connectAs('player-1');
+    const internals = harness.getServerRoom()!._internals;
+    for (let i = 0; i < 3; i++) internals.pulseStructureGrid();
+    internals.rebuildStructuresSlice();
+    const structures = [...internals.structureRegistry.all()];
+    expect(structures.map((r) => r.kind).sort()).toEqual(['capital', 'connector', 'freight_dock', 'turret']);
+    const adj = internals.structureRegistry.adjacencyMap();
+    for (const r of structures) expect((adj.get(r.id) ?? []).length, `${r.kind} linked`).toBeGreaterThan(0);
+    const rows = internals.getStructuresSlice() ?? [];
+    expect(rows.length).toBe(4);
+    for (const r of rows) expect(r.powered, `structure ${r.id} powered`).toBe(true);
   }, 25_000);
 });

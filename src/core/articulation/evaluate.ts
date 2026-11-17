@@ -13,7 +13,8 @@
  *  - a part without a track in the clip stays at rest;
  *  - a track's first key after tick 0 eases from rest at tick 0;
  *  - after a track's last key it holds that key;
- *  - every value is clamped to its joint limits.
+ *  - every value is clamped to its joint limits;
+ *  - a lift joint moves nothing in the plane (only `value` changes).
  *
  * Targeted clips: keys marked `fromTarget` take their value from an injected
  * IK solver (`IkSolve`; the real 2-bone one is `twoBoneIkSolve` in `ikAdapter.ts`). With no target or no
@@ -22,7 +23,7 @@
  * (`nearestTurn`), so the blend goes the short way round.
  */
 import { applyEase } from './easing.js';
-import { JOINT_HINGE, type Rig } from './rig.js';
+import { JOINT_HINGE, JOINT_SLIDE, type Rig } from './rig.js';
 
 /** A clip playing on a rig: the whole wire record (2e). */
 export interface PlayingClip {
@@ -218,7 +219,7 @@ export function evaluateRig(
     let a = pA + baseAngle[i]!;
     if (jointType[i] === JOINT_HINGE) {
       a += v;
-    } else {
+    } else if (jointType[i] === JOINT_SLIDE) {
       const c0 = Math.cos(a), s0 = Math.sin(a);
       const lx = axisX[i]! * v, ly = axisY[i]! * v;
       px += lx * c0 - ly * s0;

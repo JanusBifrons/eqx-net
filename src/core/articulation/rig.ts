@@ -4,7 +4,11 @@
  * A rig is a tree of PARTS attached to a host entity (a structure or a ship;
  * nothing here knows which). Each part has one joint:
  *  - hinge: an angle (rad) about the part's anchor, within [min, max];
- *  - slide: an offset (world units) along a local axis, within [min, max].
+ *  - slide: an offset (world units) along a local axis, within [min, max];
+ *  - lift: a height out of the plane, within [min, max]. It has NO in-plane
+ *    transform: the part stays on its anchor (a physical part's collider
+ *    never moves) and renderers draw the rise from `liftProgress` (a pop-up
+ *    turret, a ship's pop-out weapon).
  *
  * CLIPS are keyframed joint targets over GAME ticks. A clip only drives
  * clip-owned joints (deploy slides, door hinges, arm segments); a weapon
@@ -39,7 +43,14 @@ export interface SlideJointDef {
   readonly max: number;
 }
 
-export type JointDef = HingeJointDef | SlideJointDef;
+export interface LiftJointDef {
+  readonly type: 'lift';
+  /** Height limits (any unit: renderers use only the progress min -> max). */
+  readonly min: number;
+  readonly max: number;
+}
+
+export type JointDef = HingeJointDef | SlideJointDef | LiftJointDef;
 
 export interface PartDef {
   readonly id: string;
@@ -111,6 +122,7 @@ export interface RigDef {
 
 export const JOINT_HINGE = 0;
 export const JOINT_SLIDE = 1;
+export const JOINT_LIFT = 2;
 
 /** A compiled track: flat key arrays, read-only after build. */
 export interface CompiledTrack {
@@ -224,6 +236,8 @@ export function buildRig(def: RigDef): Rig {
     rest[i] = p.rest;
     if (j.type === 'hinge') {
       jointType[i] = JOINT_HINGE;
+    } else if (j.type === 'lift') {
+      jointType[i] = JOINT_LIFT;
     } else {
       jointType[i] = JOINT_SLIDE;
       const ax = j.axisX ?? 1;
@@ -294,6 +308,15 @@ export function buildRig(def: RigDef): Rig {
     parent, jointType, anchorX, anchorY, baseAngle, axisX, axisY, min, max, rest,
     clips, maxChain,
   };
+}
+
+/** A lift part's progress, 0 (min, sunk) .. 1 (max, fully risen), at joint
+ *  value `v`; 0 for a zero-span lift. Allocation-free. */
+export function liftProgress(rig: Rig, i: number, v: number): number {
+  const lo = rig.min[i]!, span = rig.max[i]! - lo;
+  if (!(span > 0)) return 0;
+  const f = (v - lo) / span;
+  return f < 0 ? 0 : f > 1 ? 1 : f;
 }
 
 /** Index of part `id` in rig order, or -1. Build/setup time only. */
