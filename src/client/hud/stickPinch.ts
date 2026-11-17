@@ -85,3 +85,13 @@ export function forwardPinchPointer(type: string, pointerId: number, clientX: nu
     }),
   );
 }
+
+/**
+ * A quick tap in a stick zone is a tap on the world (select a ship, set a
+ * capital's helm course): hand it to the canvas as one finger down + up at
+ * the touch point, so the renderer's own tap rules decide what it means.
+ */
+export function forwardTapToWorld(pointerId: number, clientX: number, clientY: number): void {
+  forwardPinchPointer('pointerdown', pointerId, clientX, clientY);
+  forwardPinchPointer('pointerup', pointerId, clientX, clientY);
+}
