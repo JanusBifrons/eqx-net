@@ -440,3 +440,55 @@ describe('Grid — components, power, routing, dead-end', () => {
     expect(grid.route('cap', 'con')).toBeNull();
   });
 });
+
+// ── Route tree on the shared searcher (navigation slice 1c) ────────────────
+describe('Grid.route on the shared graph searcher', () => {
+  /** The hand-written BFS tree `Grid.bfsTree` used before the move. */
+  function referenceRoute(
+    nodes: Map<string, GridNode>, adj: Map<string, Connection[]>, from: string, to: string,
+  ): string[] | null {
+    if (from === to) return [from];
+    if (!nodes.get(from)!.isConstructed) return null;
+    const parent = new Map<string, string>();
+    const seen = new Set<string>([from]);
+    const queue: string[] = [from];
+    for (let head = 0; head < queue.length; head++) {
+      const cur = queue[head]!;
+      for (const c of adj.get(cur) ?? []) {
+        const next = c.getOtherNode(cur);
+        if (next === null || seen.has(next)) continue;
+        const nn = nodes.get(next);
+        if (!nn) continue;
+        seen.add(next);
+        parent.set(next, cur);
+        if (nn.isConstructed) queue.push(next);
+      }
+    }
+    if (!parent.has(to)) return null;
+    const path = [to];
+    for (let c = parent.get(to); c !== undefined; c = parent.get(c)) path.unshift(c);
+    return path;
+  }
+
+  it('gives the same routes as the old BFS on random grids (unbuilt dead-ends included)', () => {
+    let seed = 99;
+    const r = (): number => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+    for (let trial = 0; trial < 60; trial++) {
+      const n = 4 + Math.floor(r() * 25);
+      const nodes = new Map<string, GridNode>();
+      for (let i = 0; i < n; i++) nodes.set(`n${i}`, node(`n${i}`, { isConstructed: r() > 0.25 }));
+      const conns: Connection[] = [];
+      for (let k = 0; k < n * 1.5; k++) {
+        const a = Math.floor(r() * n), b = Math.floor(r() * n);
+        if (a !== b) conns.push(new Connection(k, `n${a}`, `n${b}`, CONNECTION_THROUGHPUT));
+      }
+      const adj = adjacencyFrom(conns);
+      const grid = new Grid();
+      grid.rebuild(nodes, adj);
+      for (let k = 0; k < 15; k++) {
+        const from = `n${Math.floor(r() * n)}`, to = `n${Math.floor(r() * n)}`;
+        expect(grid.route(from, to)).toEqual(referenceRoute(nodes, adj, from, to));
+      }
+    }
+  });
+});

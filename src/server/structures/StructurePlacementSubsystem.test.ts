@@ -33,7 +33,7 @@ function makeHarness(
     nextId: () => `pstruct-${counter++}`,
     registry,
     // Phase-4 C2 — asteroid/obstacle poses, the same hook the room populates from
-    // `gatherStructureObstacles()`. Absent ⇒ legacy structures-only validation.
+    // `SectorObstacles.rocks()`. Absent ⇒ legacy structures-only validation.
     ...(opts.obstacles ? { getObstacles: () => opts.obstacles! } : {}),
   };
   const sub = new StructurePlacementSubsystem(hooks);

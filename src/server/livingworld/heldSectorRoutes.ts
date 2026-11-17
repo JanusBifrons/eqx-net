@@ -5,19 +5,31 @@
  * Split out of `FlagshipDirector.ts` (god-file cap). The gate graph is the
  * galaxy's (`GalaxySector.neighbours`), restricted to the sectors that have a
  * room in this process, built once. Queries run on the director's control
- * tick and allocate nothing: the BFS uses preallocated scratch. Same BFS idea
- * as `population.nextHopToward`, but the goal is "the nearest sector this
- * power holds", not one fixed key, so it can't reuse that helper.
+ * tick and allocate nothing: the search is the game's one graph searcher
+ * (`core/nav/search.ts`) with a reused goal ("the nearest sector this power
+ * holds").
  */
 import { getSector } from '../../core/galaxy/galaxy.js';
+import { GraphSearch, UnitGraph, type SearchGoal } from '../../core/nav/search.js';
+
+/** "Nearest sector held by `factionId`" (mutated per query, never reallocated). */
+class HeldGoal implements SearchGoal {
+  factionId = '';
+  constructor(
+    private readonly keys: readonly string[],
+    private readonly holderOf: (sectorKey: string) => string | null,
+  ) {}
+  isGoal(i: number): boolean { return this.holderOf(this.keys[i]!) === this.factionId; }
+  heuristic(): number { return 0; }
+}
 
 export class HeldSectorRoutes {
   private readonly keys: string[] = [];
   private readonly idx = new Map<string, number>();
   private readonly adj: number[][] = [];
-  private readonly queue: Int32Array;
-  private readonly prev: Int32Array;
-  private readonly seen: Uint8Array;
+  private readonly graph: UnitGraph;
+  private readonly search = new GraphSearch();
+  private readonly goal: HeldGoal;
 
   constructor(
     sectorKeys: Iterable<string>,
@@ -37,10 +49,8 @@ export class HeldSectorRoutes {
       }
       this.adj.push(out);
     }
-    const nn = Math.max(1, this.keys.length);
-    this.queue = new Int32Array(nn);
-    this.prev = new Int32Array(nn);
-    this.seen = new Uint8Array(nn);
+    this.graph = new UnitGraph(this.adj);
+    this.goal = new HeldGoal(this.keys, holderOf);
   }
 
   /** Where a power's fleet (re)spawns: `heart` while it holds it, else the
@@ -63,10 +73,9 @@ export class HeldSectorRoutes {
   rehomeHop(from: string | null, factionId: string): string | null {
     const i = from !== null ? this.idx.get(from) : undefined;
     if (i === undefined) return null;
-    let t = this.nearestHeld(i, factionId);
+    const t = this.nearestHeld(i, factionId);
     if (t < 0 || t === i) return null;
-    while (this.prev[t] !== i) t = this.prev[t]!;
-    return this.keys[t]!;
+    return this.keys[this.search.firstHop(i, t)]!;
   }
 
   /** A random neighbour of `from` that `factionId` holds, or null. */
@@ -85,27 +94,10 @@ export class HeldSectorRoutes {
     return null;
   }
 
-  /** BFS from node `from` to the nearest sector held by `factionId` (`from`
-   *  itself when held). Its node index, or -1; `prev` then holds the path. */
+  /** Nearest sector held by `factionId` from node `from` (`from` itself
+   *  when held), in gate hops: its node index, or -1. */
   private nearestHeld(from: number, factionId: string): number {
-    const q = this.queue, prev = this.prev, seen = this.seen;
-    seen.fill(0);
-    let head = 0, tail = 0;
-    q[tail++] = from;
-    seen[from] = 1;
-    prev[from] = -1;
-    while (head < tail) {
-      const i = q[head++]!;
-      if (this.holderOf(this.keys[i]!) === factionId) return i;
-      const ns = this.adj[i]!;
-      for (let k = 0; k < ns.length; k++) {
-        const j = ns[k]!;
-        if (seen[j] === 1) continue;
-        seen[j] = 1;
-        prev[j] = i;
-        q[tail++] = j;
-      }
-    }
-    return -1;
+    this.goal.factionId = factionId;
+    return this.search.search(this.graph, from, this.goal);
   }
 }

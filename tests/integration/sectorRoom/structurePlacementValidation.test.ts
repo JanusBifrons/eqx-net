@@ -6,7 +6,7 @@
  * User report: "it places [a capital] on an asteroid". The server's placement
  * overlap check iterated PLACED STRUCTURES only — never asteroids — so a Capital
  * dropped on a rock landed. The room already wires
- * `getObstacles: () => gatherStructureObstacles()` (asteroid poses from the SAB)
+ * `getObstacles: () => SectorObstacles.rocks()` (asteroid poses from the SAB)
  * for the auto-connect LOS check; the fix routes the placement check through the
  * SAME hook via the shared `placementRejection` predicate. This test drives a
  * `place_structure` message end-to-end and asserts:
@@ -46,7 +46,7 @@ describe('SectorRoom integration — placement rejects asteroid overlap (C2)', (
     // this also dodges the host-load-sensitive isActive wait.
     const room = await harness.connectAs('player-1');
     // Let the worker process the asteroid spawn so its pose lands in the SAB
-    // (gatherStructureObstacles reads SAB x/y).
+    // (SectorObstacles.rocks reads SAB x/y).
     await harness.advance(300);
 
     const internals = harness.getServerRoom()!._internals;
