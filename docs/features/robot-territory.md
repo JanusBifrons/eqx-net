@@ -38,6 +38,12 @@ structure +6, each robot +12, a living nexus +80; sides that oppose it push
 it down. Robots oppose everyone; a player opposes every other side
 (`controlOpposes` in `livingworld/factionPresence.ts`).
 
+The Ancients (the alien-gate owners) don't count for capture: their gates
+and ships push no share, so they never claim a sector, never show as the
+challenger and never push another side down. They are left out of the
+presence tally at one place (`countsForControl` in `fillSectorPresence`); a
+saved meter that still holds an Ancients share or hold drops it on restore.
+
 Shares move at 1.5 per second, so a squad passing through does not flip a
 sector. A side **claims** a sector at 60 and only **loses** it at 20
 (hysteresis), so a contested frontier doesn't flicker on the map. An empty
@@ -66,8 +72,10 @@ lock locks; it has normal hull (4,000) and dies like any structure, which lifts
 the lock. There is no separate tracker: the room's `liveCounts` reports the
 sides with a built lock (`lockSides`) and `locksFor` adds them. A lock whose
 side has lost the sector does nothing; if that side retakes the sector, the
-standing lock locks it again. Its look is a placeholder (the Research Lab's)
-pending the owner's pick.
+standing lock locks it again. It looks like a broadcast spire: a spine across
+its width, a lit lantern tower in the middle and three pairs of antenna fins
+either side (`render/pixi/territoryLockLook.ts`). Owner colour is not applied
+yet (no structure takes owner colour).
 
 **Power hearts start locked.** Each region power's heart (`regionHeart`, the
 sector its static control seeds it with; `core/galaxy/control.ts`) starts
@@ -76,9 +84,10 @@ the first base it owns) builds a real Territory Lock as part of its generated
 layout (`BaseProfile.territoryLock`, set by `galaxyBasePlan`). It is the same
 structure as a player's, so destroying it lifts the lock. NPC bases are not
 persisted, so a destroyed heart lock comes back when the server restarts. The
-Traders have no heart and get none. Today the Crimson Expanse heart
-(andromeda-rim) is held alone by a big Traders' trade hub, so the power owns
-no base there and its heart is not locked.
+Traders have no heart and get none. A power's heart base is always the
+power's, never the Traders' (`heartOwner`), so every heart has a base to
+carry the lock: the Crimson Expanse heart (andromeda-rim), held alone by a big
+trade-hub stronghold, is Crimson's hub and carries Crimson's lock.
 
 ## Internals
 

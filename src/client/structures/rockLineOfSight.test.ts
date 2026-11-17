@@ -84,7 +84,7 @@ describe('client link preview vs a rock (C5c, #15)', () => {
 describe('client rock obstacle == server rock obstacle (contract, #15)', () => {
   // The server's record fields as `SwarmSpawner.spawnAsteroid` sets them
   // (`vertices`, `wreckParts` = the field body's parts, `fieldRock`) and as
-  // `SectorRoom.gatherStructureObstacles` reads them (x/y/angle from the SAB).
+  // `SectorObstacles.rocks` reads them (x/y/angle from the SAB).
   const serverObstacle = (
     rec: { vertices?: { x: number; y: number }[]; wreckParts?: { x: number; y: number }[][]; fieldRock?: boolean },
     x: number, y: number, radius: number, angle: number,

@@ -157,4 +157,13 @@ describe('RobotTerritory — sector control persists across a restart', () => {
     expect(t.saveControl()).toEqual([]);
     t.stop();
   });
+
+  it('a saved Ancients share or hold is dropped on restore (they never count for control)', () => {
+    const { t } = build();
+    t.restoreControl([{ sectorKey: 'bloomgate', holder: 'ancients', shares: [['ancients', 70], ['alice', 30]] }]);
+    const s = t.controlState('bloomgate')!;
+    expect(s.holder).toBeNull();
+    expect([...s.shares.keys()]).toEqual(['alice']);
+    t.stop();
+  });
 });

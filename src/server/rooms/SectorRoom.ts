@@ -143,7 +143,6 @@ import {
   type TollPrompt,
   onPad,
   padIrisSpanLocal,
-  padPostCenters,
   type TeleporterKind,
   TP_PARTNER_REMOTE,
   TeleportRulesSchema,
@@ -228,7 +227,6 @@ import { convoyHaulerFactions } from '../economy/convoyCarriers.js';
 import { ALIEN_GATE_OWNER, alienGateCandidates, alienGateSites, type AlienGateSite } from '../../core/galaxy/alienGates.js';
 import { effectiveStructureMaxHealth } from '../../core/leveling/structureLevel.js';
 import { TRANSFER_PULSE_MS, TURRET_TICK_MS } from '../../core/structures/structureGridConstants.js';
-import { rockObstacleParts, type GridObstacle, type ObstacleBox } from '../../core/structures/Grid.js';
 import { clampToSectorBounds } from '../../shared-types/sectorBounds.js';
 import type { SnapshotMessage, TimeScaleKeyframe } from '../../shared-types/messages.js';
 // Mount/slot geometry helpers moved to ./mountGeometry.ts.
@@ -293,6 +291,7 @@ import {
 } from './sectorIdleEvaluator.js';
 import { runAiTick } from './aiTickRunner.js';
 import { AiNeighbourGrid } from './AiNeighbourGrid.js';
+import { SectorObstacles } from './SectorObstacles.js';
 import { makeInputHandler } from './InputHandler.js';
 import {
   TICK_IDX,
@@ -467,16 +466,7 @@ const NPC_HOLD_CAPACITY = 1000;
 /** T2 — an NPC ammo turret's assumed munitions use (it fires only when attacked). */
 const NPC_TURRET_MUNITIONS_PER_MIN = 0.2;
 /** T4b — the level of `good`'s order on a dock (0 when none). */
-/** The solid boxes of a structure for spawn clearance: a teleporter's pad is
- *  open (only its posts are solid, v4 T2), everything else is its footprint. */
-function pushSolidBoxes(r: StructureRecord, out: SiteBox[]): void {
-  if (isTeleporterKind(r.kind)) {
-    const h = PAD_SPECS[r.kind].post / 2;
-    for (const [cx, cy] of padPostCenters(r.kind)) out.push({ x: r.x + cx, y: r.y + cy, hw: h, hh: h });
-    return;
-  }
-  out.push({ x: r.x, y: r.y, hw: r.halfW ?? r.radius, hh: r.halfH ?? r.radius });
-}
+const NO_SITE_CIRCLES: readonly SiteCircle[] = [];
 
 /** A hull's extent for spawn clearance against other hulls: its radius plus
  *  its shield pad (#18, both from the kind's size). */
@@ -1443,6 +1433,18 @@ export class SectorRoom extends Room<SectorState> {
    *  per tick to avoid GC churn. Entries are added on spawn/respawn and
    *  removed on player leave. */
   private readonly shipPoseCache = new Map<string, ShipPhysicsState>();
+  /** The one obstacle gatherer (placement, line of sight, landing, spawns). */
+  private readonly obstacles = new SectorObstacles({
+    structures: this.structureRegistry, swarm: this.swarmRegistry, sab: () => this.sabF32,
+    dormantRocks: (box, out) => this.cutField?.dormantObstacles(box, out),
+    forEachHull: (sink) => {
+      for (const [pid, pose] of this.shipPoseCache) sink.hull(pose.x, pose.y, this.getActiveShip(pid)?.kind, pid, undefined, this.pendingJoin.has(pid));
+      for (const [shipId, pose] of this.lingeringPoseCache) { const h = this.state.ships.get(shipId); sink.hull(pose.x, pose.y, h?.kind || undefined, h?.playerId, shipId, false); }
+    },
+    forEachWall: (sink) => this.shieldWalls?.forEachBlockingWall(this.gameClock.now(), sink),
+    clearanceOf: (kind) => (kind ? tuningFor(kind).spawnClearance : 60),
+    extentOf: (kind) => (isShipKindId(kind) ? hullExtent(kind) : undefined),
+  });
   private serverTick = 0;
   /** Pre-Stage-5: gated the 20 Hz broadcast — fired every 3 update() calls.
    *  Stage 5 replaces this with per-client {@link shouldBroadcastFar} /
@@ -2961,7 +2963,7 @@ export class SectorRoom extends Room<SectorState> {
       // Asteroids (swarm kind=0) block placement and a connector's line of sight
       // (Item D); shared with the grid-pulse reconnect sweep. Placement also
       // passes `near` for unloaded cut-field rocks (C5, links C5g). Off the hot loop.
-      getObstacles: (near) => this.gatherStructureObstacles(near),
+      getObstacles: (near) => this.obstacles.rocks(near),
       // Economy v2 W4b — a player's non-starter structure is placed from a
       // PACKED item (now buyable from traders, and lootable). Consumed only
       // after the structure registers; its build then costs only time.
@@ -3031,7 +3033,7 @@ export class SectorRoom extends Room<SectorState> {
       spawnMissile: (shooterId, x, y, dx, dy, def) =>
         this.spawnServerMissile(shooterId, x, y, dx, dy, def),
       // Reconnect sweep honours current asteroid LOS (Issue 2), unloaded rocks in `near` too (C5g).
-      getObstacles: (near) => this.gatherStructureObstacles(near),
+      getObstacles: (near) => this.obstacles.rocks(near),
       // Gameplay audit — a blueprint finished construction (1 Hz pulse, off-tick).
       // Campaign 6.3 — completion is durable state (isConstructed + full HP);
       // persist event-driven so a crash keeps the built structure built.
@@ -6187,7 +6189,7 @@ export class SectorRoom extends Room<SectorState> {
       registry: this.structureRegistry,
       place: (owner, kind, x, y, rot) => this.structurePlacement.place(owner, kind, x, y, { skipAutoConnect: true, rot }),
       setHealth: (id, hp) => this.swarmHealth.set(id, hp),
-      getObstacles: (near) => this.gatherStructureObstacles(near),
+      getObstacles: (near) => this.obstacles.rocks(near),
     });
     const seededBases: SiteBox[] = [];
     const plans = galaxyBasePlan(sectorKey);
@@ -6282,7 +6284,7 @@ export class SectorRoom extends Room<SectorState> {
       registry: this.structureRegistry,
       place: (owner, kind, x, y, rot) => this.structurePlacement.place(owner, kind, x, y, { skipAutoConnect: true, rot }),
       setHealth: (id, hp) => this.swarmHealth.set(id, hp),
-      getObstacles: (near) => this.gatherStructureObstacles(near),
+      getObstacles: (near) => this.obstacles.rocks(near),
     });
     for (const spec of specs.slice(0, 8)) {
       const r = sub.seed(spec);
@@ -6765,20 +6767,6 @@ export class SectorRoom extends Room<SectorState> {
     fromX: number, fromY: number, dirX: number, dirY: number, maxDist: number, damage: number,
   ): number | null {
     return this.shieldWalls.blockShot(fromX, fromY, dirX, dirY, maxDist, damage, this.gameClock.now());
-  }
-
-  /** Live asteroids (swarm kind=0, SAB pose) blocking structure placement (Item D) and connection
-   *  line of sight, incl. the grid-pulse reconnect sweep (playtest 2026-06-10 Issue 2). Off the
-   *  60 Hz hot loop (placement + 1 Hz pulse only), so the array build is acceptable. */
-  private gatherStructureObstacles(near?: ObstacleBox): GridObstacle[] {
-    const obstacles: GridObstacle[] = [];
-    for (const rec of this.swarmRegistry.all()) {
-      if (rec.kind !== 0) continue; // asteroids only
-      const b = slotBase(rec.slot), f = this.sabF32; // narrow phase (C5b/C5c): collider parts, else the convex outline (a field rock's raw outline may dent: its hull, as its collider), at the live pose
-      obstacles.push({ x: f[b + SLOT_X_OFF]!, y: f[b + SLOT_Y_OFF]!, radius: rec.radius, angle: f[b + SLOT_ANGLE_OFF]!, parts: rockObstacleParts(rec.vertices, rec.wreckParts, rec.fieldRock === true) });
-    }
-    if (near) this.cutField?.dormantObstacles(near, obstacles);
-    return obstacles;
   }
 
   /** Phase 4 — nearest mineable asteroid (swarm kind 0) within `range` of
@@ -8272,8 +8260,10 @@ export class SectorRoom extends Room<SectorState> {
     vy?: number;
     health?: number;
     hostileToFaction?: { playerId: string; structureIds: readonly string[] };
+    factionId?: FactionId;
   }): boolean {
     const ok = this.livingWorldBotHooks.spawnBot(spec);
+    if (ok && spec.factionId !== undefined) this.patrols.attachShip(spec.botId, spec.factionId, npcOwner(spec.factionId));
     // P2 bespoke trigger (testMode): robot raiders meet an incoming hauler
     // ~45 % of the way from its entry point to the sector centre.
     if (ok && this.testHaulerRaiders > 0 && isHaulerId(spec.botId)) {
@@ -9857,10 +9847,9 @@ export class SectorRoom extends Room<SectorState> {
       // their exact placement (tests set up collisions on purpose), and a
       // resumed hull comes back where it really is.
       const explicit = parsed.success && (parsed.data.spawnX !== undefined || parsed.data.spawnY !== undefined);
-      const hulls = explicit || resumedFromStore ? [] : this.spawnHullCircles(playerId);
+      const hulls = explicit || resumedFromStore ? NO_SITE_CIRCLES : this.obstacles.hullCircles(playerId);
       if (this.structureRegistry.size > 0 || hulls.length > 0) {
-        const boxes: SiteBox[] = [];
-        for (const r of this.structureRegistry.all()) pushSolidBoxes(r, boxes);
+        const boxes = this.obstacles.structureBoxes();
         const clear = nearestClearPoint(spawnX, spawnY, boxes, tuningFor(chosenKind).spawnClearance, 6000, hulls, hullExtent(chosenKind));
         spawnX = clear.x;
         spawnY = clear.y;
@@ -12063,71 +12052,25 @@ export class SectorRoom extends Room<SectorState> {
     return this.landingPoint(playerId, x, y, this.getActiveShip(playerId)?.kind);
   }
 
-  /** The nearest spot to (x, y) clear of structures, swarm entities, and other
-   *  players' ships and parked hulls (the pilot's own are not obstacles).
+  /** The nearest spot to (x, y) clear of structures, swarm entities, field
+   *  rocks with no body, blocking walls, and other players' ships and parked
+   *  hulls (the pilot's own are not obstacles; `SectorObstacles.landing`).
    *  With `onlySkipShipId` (a fleet warp placing one of its hulls) the
    *  owner's own ships and hulls ARE obstacles; only that ship is skipped. */
   private landingPoint(
     playerId: string, x: number, y: number, kind: string | undefined, onlySkipShipId?: string,
   ): { x: number; y: number } {
-    const skipOwn = onlySkipShipId === undefined;
     const ownClear = kind ? tuningFor(kind).spawnClearance : 60;
     const { near, maxDistance } = landingReach(ownClear);
-    const boxes: SiteBox[] = [];
-    for (const r of this.structureRegistry.all()) pushSolidBoxes(r, boxes);
-    const circles: Array<{ x: number; y: number; r: number }> = [];
-    for (const rec of this.swarmRegistry.all()) {
-      const b = slotBase(rec.slot);
-      const ex = this.sabF32[b + SLOT_X_OFF]!, ey = this.sabF32[b + SLOT_Y_OFF]!;
-      if (Math.abs(ex - x) > near || Math.abs(ey - y) > near) continue;
-      circles.push({ x: ex, y: ey, r: rec.radius });
-    }
-    for (const [pid, pose] of this.shipPoseCache) {
-      if ((skipOwn && pid === playerId) || Math.abs(pose.x - x) > near || Math.abs(pose.y - y) > near) continue;
-      const kind = this.getActiveShip(pid)?.kind;
-      circles.push({ x: pose.x, y: pose.y, r: kind ? tuningFor(kind).spawnClearance : 60 });
-    }
-    for (const [shipId, pose] of this.lingeringPoseCache) {
-      if (shipId === onlySkipShipId || Math.abs(pose.x - x) > near || Math.abs(pose.y - y) > near) continue;
-      const hull = this.state.ships.get(shipId);
-      if (skipOwn && hull?.playerId === playerId) continue;
-      circles.push({ x: pose.x, y: pose.y, r: hull?.kind ? tuningFor(hull.kind).spawnClearance : 60 });
-    }
-    return nearestClearPoint(x, y, boxes, ownClear, maxDistance, circles);
-  }
-
-  /** Every other hull in the sector as a circle of its own extent (hull
-   *  radius + shield pad, `hullExtent`): NPC ships, other pilots' ships and
-   *  parked hulls. The joining pilot's own hulls and pilots still joining
-   *  (not in the world yet) are not obstacles. Join path
-   *  only (allocates). */
-  private spawnHullCircles(playerId: string): SiteCircle[] {
-    const circles: SiteCircle[] = [];
-    for (const rec of this.swarmRegistry.all()) {
-      if (rec.kind !== 1) continue;
-      const b = slotBase(rec.slot);
-      const r = rec.shipKind && isShipKindId(rec.shipKind) ? hullExtent(rec.shipKind) : rec.radius;
-      circles.push({ x: this.sabF32[b + SLOT_X_OFF]!, y: this.sabF32[b + SLOT_Y_OFF]!, r });
-    }
-    for (const [pid, pose] of this.shipPoseCache) {
-      if (pid === playerId || this.pendingJoin.has(pid)) continue;
-      const kind = this.getActiveShip(pid)?.kind;
-      if (kind) circles.push({ x: pose.x, y: pose.y, r: hullExtent(kind) });
-    }
-    for (const [shipId, pose] of this.lingeringPoseCache) {
-      const hull = this.state.ships.get(shipId);
-      if (!hull?.kind || hull.playerId === playerId) continue;
-      circles.push({ x: pose.x, y: pose.y, r: hullExtent(hull.kind) });
-    }
-    return circles;
+    const o = this.obstacles;
+    o.landing(playerId, x, y, near, onlySkipShipId);
+    return nearestClearPoint(x, y, o.boxes, ownClear, maxDistance, o.circles, ownClear, o.walls);
   }
 
   /** T2 — the nearest point clear of every structure (convoy hauler spawns). */
   clearPointNear(x: number, y: number): { x: number; y: number } {
     if (this.structureRegistry.size === 0) return { x, y };
-    const boxes: SiteBox[] = [];
-    for (const r of this.structureRegistry.all()) pushSolidBoxes(r, boxes);
-    return nearestClearPoint(x, y, boxes, 150);
+    return nearestClearPoint(x, y, this.obstacles.structureBoxes(), 150);
   }
 
   tradeTransfer(ownerId: string, networkUid: string, spec: TradeTransferSpec): TradeTransferResult | null {

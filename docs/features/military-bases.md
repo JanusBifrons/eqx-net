@@ -6,7 +6,7 @@ Plan `soft-leaping-truffle` v4, phase M. The one base role the production chains
 
 Military bases are placed by their own deterministic pass (`militarySites`, `galaxyBases.ts`), never rolled. Every other base rolls exactly as before.
 
-- **The heart garrison.** Each region's heart holds its power's garrison, unless the heart's own base is already a stronghold or citadel (that base garrisons itself). It is a stronghold beside a small base, else a settlement, sized so it always fits.
+- **The heart garrison.** Each region's heart holds its power's garrison, unless the heart's own base is already a stronghold or citadel (that base garrisons itself, and it is the power's whatever its role: a big trade hub at a heart belongs to the power, not the Traders, and keeps its role, tier and layout). It is a stronghold beside a small base, else a settlement, sized so it always fits.
 - **The edge outpost.** Each region's first neutral entry sector (by key) gets a settlement-sized outpost. The galaxy's edge is where raiders warp in. The region's militia company owns it; if the region has none, its power does. It never shares the region's transit-hub sector.
 - **Room in the sector.** A garrison makes room under the sector's structure budget by dropping extra bases (never base 0 or a hub).
 

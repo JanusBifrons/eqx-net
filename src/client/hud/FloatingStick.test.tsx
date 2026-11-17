@@ -133,3 +133,58 @@ describe('FloatingStick two-finger pinch', () => {
     expect(s.leftMove).toHaveBeenCalled();
   });
 });
+
+/**
+ * A quick tap in a thumb zone is a tap on the world, not a stick nudge: the
+ * zones cover most of a phone screen, so a capital's "tap to set course" and
+ * "tap a ship" must still reach the canvas there (showcase
+ * player-capital-sector 2026-11-17: the course tap lit the lock stick instead).
+ */
+describe('FloatingStick tap passes through to the world', () => {
+  beforeEach(() => {
+    now = 1000;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    resetStickPinch();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    document.body.innerHTML = '';
+  });
+
+  it('a quick tap in a stick zone reaches the canvas as a tap at the touch point', () => {
+    const s = setup();
+    const seen: string[] = [];
+    const canvas = document.querySelector('canvas')!;
+    canvas.addEventListener('pointerup', (e) => seen.push(`${e.clientX},${e.clientY}`));
+    act(() => {
+      down(s.right, 1, 700, 300);
+      now += 80;
+      up(s.right, 1, 702, 301);
+    });
+    expect(s.canvasEvents).toEqual(['pointerdown:1', 'pointerup:1']);
+    expect(seen).toEqual(['700,300']);
+    expect(s.rightEnd).toHaveBeenCalledWith(true);
+  });
+
+  it('a drag drives the stick and never reaches the canvas', () => {
+    const s = setup();
+    act(() => {
+      down(s.right, 1, 700, 300);
+      move(s.right, 1, 740, 300);
+      now += 80;
+      up(s.right, 1, 740, 300);
+    });
+    expect(s.canvasEvents).toEqual([]);
+    expect(s.rightEnd).toHaveBeenCalledWith(false);
+  });
+
+  it('a long press without moving is not a tap', () => {
+    const s = setup();
+    act(() => {
+      down(s.left, 1, 100, 400);
+      now += 600;
+      up(s.left, 1, 100, 400);
+    });
+    expect(s.canvasEvents).toEqual([]);
+  });
+});

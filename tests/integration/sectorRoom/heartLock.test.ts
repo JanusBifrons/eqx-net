@@ -6,7 +6,9 @@
  *  2. an overwhelming robot force can't take the heart while it stands;
  *  3. destroy the lock and the robots take it;
  *  4. a held sector that is not a heart (the rest of the core) has no lock and
- *     falls to the same force.
+ *     falls to the same force;
+ *  5. the Crimson Expanse heart, held alone by a big trade hub, is the power's
+ *     hub (owner: "hand hub to Crimson"), so it carries Crimson's lock.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
@@ -70,6 +72,17 @@ describe('SectorRoom integration — a power heart is locked (sector control)', 
     expect(locks()).toHaveLength(0);
     run(300);
     expect(territory!.sectorOwner(HEART)?.factionId).toBe('robots');
+  }, 60_000);
+
+  it("the Crimson Expanse heart's trade hub is Crimson's and builds its lock", async () => {
+    const heart = regionHeart('crimson-expanse');
+    const { internals, locks } = await boot(heart);
+    expect(locks()).toHaveLength(1);
+    expect(locks()[0]!.isConstructed).toBe(true);
+    expect(parseOwner(locks()[0]!.owner).faction).toBe('crimson-expanse');
+    const owners = new Set([...internals.structureRegistry.all()].map((s) => parseOwner(s.owner).faction));
+    expect(owners.has('traders'), 'no Traders base in the heart').toBe(false);
+    expect(territory!.controlState(heart)!.holder).toBe('crimson-expanse');
   }, 60_000);
 
   it('a held sector that is not a heart has no lock and falls to the same horde', async () => {

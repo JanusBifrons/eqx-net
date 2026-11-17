@@ -3170,3 +3170,8 @@ Owner: "make it more like micro machines and make fights a bit longer. Also don'
 
 - **Finding (bug):** galaxy field clearings dropped only pieces whose pre-warp centre was inside and that were smaller than the clearing. Large pieces and the field warp (up to ~1.1 km) reached across, so belt warps in three sectors dropped ships inside rock. One test checked one sector, so it missed them.
 - **Rule:** a keep-out area in a generated field is tested on the rock's final, warped outline (or a pre-warp reach padded by `cutFieldPad()`), and its test covers every seed that ships, not a sample. Guide: [macro-terrain](architecture/macro-terrain.md#galaxy-sectors-f4).
+
+## 2026-11-17 — a galaxy showcase shot's retakes film the earlier takes' ships
+
+- **Finding:** a showcase shot targeting a real galaxy sector keeps one server for every take. Each take's player disconnects at the end and its ship lingers, and the next take's player lands at the same home-pocket spot, so take 3 filmed three battleships side by side. A galaxy join also lands in Command view, so a course tap before Fly (and picking the ship from its menu) steers nothing.
+- **Rule:** film a galaxy-sector shot that spawns a ship with `EQX_SHOWCASE_TAKES=1` (a restart keeps the DB, so it keeps the ships), and have the shot tap Fly and pick the ship the way a player does.

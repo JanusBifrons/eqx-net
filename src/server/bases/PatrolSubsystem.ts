@@ -17,7 +17,16 @@
  *    gates open only for pilots, so a patrol born inside could never leave.
  *
  * The owner's faction rides the snapshot as `drones[].fac` (`factionOf`), so
- * clients tint patrols in their faction's colour. Not persisted: NPC bases
+ * clients tint patrols in their faction's colour; the same attribution counts
+ * the ship for its faction on the sector control meter (`liveCounts`).
+ *
+ *  - ATTACHED SHIPS: a ship another owner spawns and flies (a power's flagship
+ *    fleet, `attachShip`) joins the attribution and the ENGAGE rule (pilots
+ *    within `ATTACHED_ENGAGE_RANGE` of the ship who are hostile to its owner),
+ *    but is never spawned, moved or respawned here. Forgotten once it is gone
+ *    from the room.
+ *
+ * Not persisted: NPC bases
  * regenerate on boot, and so do their patrols. Room-owned, ticked from the
  * 1 Hz structure pulse; steady state allocates nothing.
  */
@@ -32,6 +41,8 @@ export const PATROL_RESPAWN_MS = 60_000;
 export const PATROL_WAYPOINT_MARGIN = 500;
 /** A patrol ship this close to its waypoint moves on to the next. */
 export const PATROL_ARRIVE = 300;
+/** Pilots this close to an attached ship (centre to pose) can draw it. */
+export const ATTACHED_ENGAGE_RANGE = 3000;
 
 export interface PatrolHooks {
   spawn(botId: string, x: number, y: number): boolean;
@@ -72,6 +83,10 @@ export class PatrolSubsystem {
   private readonly factionById = new Map<string, FactionId>();
   private readonly scratch = { x: 0, y: 0 };
   private currentPatrol: Patrol | null = null;
+  /** Attached ships (flown by another owner): id → owner party. */
+  private readonly attached = new Map<string, string>();
+  private currentAttachedId = '';
+  private currentAttachedOwner = '';
 
   constructor(private readonly h: PatrolHooks) {}
 
@@ -92,8 +107,19 @@ export class PatrolSubsystem {
     this.patrols.push(p);
   }
 
+  /** Garrison patrols plus attached ships (the room's gate for `tick` / `factionOf`). */
   get count(): number {
-    return this.patrols.length;
+    return this.patrols.length + this.attached.size;
+  }
+
+  /**
+   * Attribute a ship flown by another owner to `faction` (a power's flagship
+   * fleet). `owner` is the party a pilot's hostility is judged against
+   * (`npcOwner(faction)`). No spawning, roaming or respawn here.
+   */
+  attachShip(botId: string, faction: FactionId, owner: string): void {
+    this.attached.set(botId, owner);
+    this.factionById.set(botId, faction);
   }
 
   /** The faction a patrol ship flies for (undefined if it isn't one). */
@@ -132,7 +158,29 @@ export class PatrolSubsystem {
       this.h.forEachPilot(this.engagePilot);
     }
     this.currentPatrol = null;
+    for (const [id, owner] of this.attached) {
+      if (!this.h.poseOf(id, this.scratch)) {
+        // Gone (destroyed, or moved on under a fresh id): forget it. Deleting
+        // the current entry while iterating a Map is safe.
+        this.attached.delete(id);
+        this.factionById.delete(id);
+        continue;
+      }
+      this.currentAttachedId = id;
+      this.currentAttachedOwner = owner;
+      this.h.forEachPilot(this.engageAttached);
+    }
+    this.currentAttachedId = '';
   }
+
+  /** Bound once: mark a hostile pilot near the current attached ship
+   *  (its pose is in `scratch`). */
+  private readonly engageAttached = (playerId: string, x: number, y: number): void => {
+    const dx = x - this.scratch.x, dy = y - this.scratch.y;
+    if (dx * dx + dy * dy > ATTACHED_ENGAGE_RANGE * ATTACHED_ENGAGE_RANGE) return;
+    if (!this.h.isHostileToOwner(playerId, this.currentAttachedOwner)) return;
+    this.h.markHostile(this.currentAttachedId, playerId);
+  };
 
   /** Bound once (no per-tick closure): mark a hostile pilot near the base. */
   private readonly engagePilot = (playerId: string, x: number, y: number): void => {

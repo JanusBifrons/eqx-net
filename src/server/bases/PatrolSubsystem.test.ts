@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PATROL_ENGAGE_MARGIN, PATROL_RESPAWN_MS, PATROL_WAYPOINT_MARGIN, PatrolSubsystem } from './PatrolSubsystem.js';
+import { ATTACHED_ENGAGE_RANGE, PATROL_ENGAGE_MARGIN, PATROL_RESPAWN_MS, PATROL_WAYPOINT_MARGIN, PatrolSubsystem } from './PatrolSubsystem.js';
 
 const BOX = { x0: -500, x1: 500, y0: -400, y1: 400 };
 
@@ -83,5 +83,27 @@ describe('PatrolSubsystem (v4 M2)', () => {
     expect(poses.has(id)).toBe(false);
     sub.tick(1000 + PATROL_RESPAWN_MS);
     expect(poses.has(id)).toBe(true);
+  });
+});
+
+describe('PatrolSubsystem — attached ships (a power flagship fleet)', () => {
+  it('attributes an attached ship to its power, engages hostile pilots near it, and forgets it once gone', () => {
+    const { sub, poses, hostile, pilots } = rig();
+    const before = sub.count;
+    poses.set('flagship-0-lead', { x: 50_000, y: 0 });
+    sub.attachShip('flagship-0-lead', 'verdant-reach', 'npc:verdant-reach');
+    expect(sub.count).toBe(before + 1);
+    expect(sub.factionOf('flagship-0-lead')).toBe('verdant-reach');
+    // Never spawned, moved or respawned by the patrol subsystem.
+    pilots.push({ id: 'near', x: 50_000 + ATTACHED_ENGAGE_RANGE - 10, y: 0, hostile: true });
+    pilots.push({ id: 'far', x: 50_000 + ATTACHED_ENGAGE_RANGE + 10, y: 0, hostile: true });
+    pilots.push({ id: 'friend', x: 50_000, y: 10, hostile: false });
+    sub.tick(1000);
+    expect(hostile.filter(([id]) => id === 'flagship-0-lead')).toEqual([['flagship-0-lead', 'near']]);
+    poses.delete('flagship-0-lead');
+    sub.tick(2000);
+    expect(sub.factionOf('flagship-0-lead')).toBeUndefined();
+    expect(sub.count).toBe(before);
+    expect(poses.has('flagship-0-lead')).toBe(false);
   });
 });
