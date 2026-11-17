@@ -197,9 +197,16 @@ const DOCK_CRANE_PARTS: readonly PartDef[] = [
 //  - a READY waypoint halfway: the boom first swings up from the roof to +y
 //    with the jib still folded, then reaches. A straight blend from the stow
 //    unfolded the jib while the boom swung, so the jib swept down through the
-//    dock house (the far-corner bug). The jib eases 'out' into the reach (and
-//    'in' back to ready on retract, the same curve), so it clears the edge
-//    before the boom leans over and its tip never swings past the apron.
+//    dock house (the far-corner bug). From READY the jib unfolds linearly
+//    while the boom leans on a cubic 'in' (boom ∝ jib travel³), so the jib
+//    clears the edge before the boom leans over;
+//  - retract is the exact reverse (boom 'out', jib linear back to READY).
+//    Because boom ∝ jib³ is a power law, a retract started from ANY mid-reach
+//    pose (an aborted reach retracts from its current tip) retraces the same
+//    joint path back to READY. The old jib 'out' / boom 'inOut' pair was not
+//    scale-invariant: retracting from a mid-reach pose rotated the
+//    near-straight arm about the pivot first and lifted the clamp past the
+//    apron's far edge (pad corner (-445, 710) aborted at tick 53 → y 722.0).
 //  holds the zone property for reach, retract and abort.
 const CRANE_IK = {
   chain: ['boom', 'jib'], tipX: DOCK_CRANE_JIB, tipY: 0, bend: 1, swingSide: { x: 0, y: 1 },
@@ -214,8 +221,8 @@ export const DOCK_CRANE_DEF: RigDef = {
     {
       id: 'arm-reach', ik: CRANE_IK,
       tracks: [
-        { part: 'boom', keys: [{ tick: READY, value: BOOM_READY }, { tick: DOCK_CRANE_REACH_TICKS, fromTarget: true }] },
-        { part: 'jib', keys: [{ tick: READY, value: JIB_FOLD }, { tick: DOCK_CRANE_REACH_TICKS, fromTarget: true, ease: 'out' }] },
+        { part: 'boom', keys: [{ tick: READY, value: BOOM_READY }, { tick: DOCK_CRANE_REACH_TICKS, fromTarget: true, ease: 'in' }] },
+        { part: 'jib', keys: [{ tick: READY, value: JIB_FOLD }, { tick: DOCK_CRANE_REACH_TICKS, fromTarget: true, ease: 'linear' }] },
       ],
     },
     {
@@ -228,8 +235,8 @@ export const DOCK_CRANE_DEF: RigDef = {
     {
       id: 'arm-retract', ik: CRANE_IK,
       tracks: [
-        { part: 'boom', keys: [{ tick: 0, fromTarget: true }, { tick: READY, value: BOOM_READY }, { tick: DOCK_CRANE_REACH_TICKS, value: BOOM_REST }] },
-        { part: 'jib', keys: [{ tick: 0, fromTarget: true }, { tick: READY, value: JIB_FOLD, ease: 'in' }, { tick: DOCK_CRANE_REACH_TICKS, value: JIB_FOLD }] },
+        { part: 'boom', keys: [{ tick: 0, fromTarget: true }, { tick: READY, value: BOOM_READY, ease: 'out' }, { tick: DOCK_CRANE_REACH_TICKS, value: BOOM_REST }] },
+        { part: 'jib', keys: [{ tick: 0, fromTarget: true }, { tick: READY, value: JIB_FOLD, ease: 'linear' }, { tick: DOCK_CRANE_REACH_TICKS, value: JIB_FOLD }] },
       ],
     },
   ],
