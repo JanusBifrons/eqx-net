@@ -11,7 +11,7 @@
  * draw plan with the shared kit; the forge bakes it, exactly like style A.
  */
 import {
-  chamferBox, chevron, mixColor, ngon, outlinePx, polyBounds, polyEdgeDist, scalePts, strip,
+  chamferBox, chevron, mixColor, ngon, outlinePx, polyBounds, polyEdgeDist, rivetPolys, scalePts, strip, trussPolys,
   type PolyOp, type Pt, type Pts, type StructureStyleDef, type StyleCtx,
 } from './structureStyleKit.js';
 
@@ -100,22 +100,9 @@ function core(c: StyleCtx, pts: Pts, color = SLAB, lift = 20, seamAngle = 0): Pt
   return pts;
 }
 
-/** An exposed lattice girder from `a` to `b`, `w` deep: two chords, a post
- *  at every bay and X-bracing across each bay. */
+/** An exposed lattice girder from `a` to `b`, `w` deep (`trussPolys`). */
 function truss(c: StyleCtx, a: Pt, b: Pt, w: number, color = STEEL, lift = 8): void {
-  const dx = b[0] - a[0], dy = b[1] - a[1], L = Math.hypot(dx, dy) || 1;
-  const nx = (-dy / L) * (w / 2), ny = (dx / L) * (w / 2);
-  const at = (t: number, s: number): Pt => [a[0] + dx * t + nx * s, a[1] + dy * t + ny * s];
-  const chord = Math.max(1.6, w * 0.14);
-  const n = Math.max(1, Math.round(L / w));
-  const lace = mixColor(color, 0x000000, 0.28);
-  for (let i = 0; i < n; i++) {
-    poly(c, strip(at(i / n, 0.85), at((i + 1) / n, -0.85), chord * 0.6), lace, 'metal', lift * 0.5, chord * 0.3);
-    poly(c, strip(at(i / n, -0.85), at((i + 1) / n, 0.85), chord * 0.6), lace, 'metal', lift * 0.5, chord * 0.3);
-  }
-  for (let i = 0; i <= n; i++) poly(c, strip(at(i / n, 1), at(i / n, -1), chord * 0.8), color, 'metal', lift * 0.7, chord * 0.4);
-  poly(c, strip(at(0, 1), at(1, 1), chord), color, 'metal', lift * 0.8, chord * 0.5);
-  poly(c, strip(at(0, -1), at(1, -1), chord), color, 'metal', lift * 0.8, chord * 0.5);
+  trussPolys((pts, col, mat, l, bv) => poly(c, pts, col, mat, l, bv), a, b, w, color, lift);
 }
 
 /** A strut connector where two modules join: a bar with clamp collars. */
@@ -150,13 +137,9 @@ function scaffold(c: StyleCtx, x: number, y: number, w: number, h: number, step:
   for (let j = 0; j <= ny; j++) poly(c, strip([x, y + j * sy], [x + w, y + j * sy], 1.8), STEEL, 'metal', lift * 0.6, 0.9);
 }
 
-/** A row of rivet heads from `a` to `b`. */
+/** A row of rivet heads from `a` to `b` (`rivetPolys`). */
 function rivets(c: StyleCtx, a: Pt, b: Pt, step = 12, r = 2.2): void {
-  const L = Math.hypot(b[0] - a[0], b[1] - a[1]), n = Math.max(1, Math.floor(L / step));
-  for (let i = 0; i <= n; i++) {
-    const t = i / n;
-    poly(c, ngon(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, r, 6), RIVET, 'metal', 1, 0.6);
-  }
+  rivetPolys((pts, col, mat, l, bv) => poly(c, pts, col, mat, l, bv), a, b, step, r, RIVET);
 }
 
 /** A weld seam (a raised bead) from `a` to `b`. */

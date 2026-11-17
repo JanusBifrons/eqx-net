@@ -8,7 +8,7 @@ import { describe, it, expect } from 'vitest';
 import { Container } from 'pixi.js';
 import type { Graphics } from 'pixi.js';
 import {
-  readRigsFlag, rigLayerZ, RIG_OVER_Z, partLocalTransform, worldToHost,
+  readRigsFlag, rigLayerZ, rigPartRole, RIG_OVER_Z, partLocalTransform, worldToHost,
   StructureRigView, StructureRigs, type PixiXform,
 } from './structureRigs.js';
 import { BEAMS_OVER_HULL_Z } from './beamsOverHulls.js';
@@ -233,5 +233,35 @@ describe('updateSwarmSprites with rigs', () => {
     expect(rigs.viewFor('swarm-7')).toBe(view);
     expect(view.pose.x).toBe(xArr);
     expect(labelsUnder(ctx.shipContainer).length).toBe(count);
+  });
+});
+
+describe('rig part look (2c+)', () => {
+  it('reads each part role from the rig shape', () => {
+    const crane = rigForStructureKind('freight_dock')!;
+    const roles = crane.parts.map((_, i) => `${crane.parts[i]!.id}:${rigPartRole(crane, i)}`);
+    expect(roles).toEqual(expect.arrayContaining(['lip:pad', 'plinth:base', 'boom:beam', 'jib:beam', 'clamp:head']));
+    const turret = rigForStructureKind('turret')!;
+    const t = turret.parts.map((_, i) => `${turret.parts[i]!.id}:${rigPartRole(turret, i)}`);
+    expect(t).toEqual(expect.arrayContaining(['door-left:leaf', 'door-right:leaf', 'turret-slide:riser']));
+  });
+
+  it('shares one art context per part and gives lifted parts a shadow on it', () => {
+    const rig = rigForStructureKind('freight_dock')!;
+    const a = new StructureRigView(rig), b = new StructureRigView(rig);
+    for (let i = 0; i < rig.partCount; i++) {
+      expect(a.parts[i]!.context).toBe(b.parts[i]!.context);
+      const sh = a.shadows[i];
+      if (rig.parts[i]!.layer === 'under') expect(sh).toBeNull();
+      else {
+        expect(sh!.context).toBe(a.parts[i]!.context);
+        expect(sh!.parent).toBe(a.parts[i]!.parent);
+        expect(sh!.parent!.getChildIndex(sh!)).toBeLessThan(a.parts[i]!.parent!.getChildIndex(a.parts[i]!));
+      }
+    }
+    a.update(null, 0, 0, 0, 0);
+    const boom = rig.parts.findIndex((p) => p.id === 'boom');
+    expect(a.shadows[boom]!.x).toBeGreaterThan(a.parts[boom]!.x);
+    expect(a.shadows[boom]!.rotation).toBe(a.parts[boom]!.rotation);
   });
 });

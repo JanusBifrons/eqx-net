@@ -27,7 +27,7 @@ import { buildScene, parseStructStyle, SCENE_IDS, structFootprint, structScale, 
 import { ConnectorRenderer } from '../render/pixi/ConnectorRenderer.js';
 import { readLineLook } from '../render/pixi/connectorLineLooks.js';
 import { readRigsFlag, StructureRigView, type StructureRigInput } from '../render/pixi/structureRigs.js';
-import { rigForStructureKind } from '../../core/articulation/rigCatalogue.js';
+import { DOCK_BAY_CX, DOCK_BAY_CY, rigForStructureKind } from '../../core/articulation/rigCatalogue.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import type { RenderMirror, StructureRenderState, SwarmRenderState } from '../../core/contracts/IRenderer.js';
 import { hash01, valueNoise } from '../render/art/fields.js';
@@ -780,15 +780,24 @@ async function main(): Promise<void> {
     seek(ms: number): void { update(ms / 1000); },
     /** Restyle 2c (`?rigs=1`): play `clipId` on a structure's rig from the
      *  current time. `kindOrIndex` = a structure kind id (its first one) or
-     *  a scene structure index. A targeted clip with no target reaches the
-     *  structure's centre (a dock's bay). Target = world point, y-down lab
-     *  coords (as the scene). Returns the structure index, or -1. */
+     *  a scene structure index. A targeted clip with no target reaches a
+     *  dock's bay centre (`DOCK_BAY_CX/CY`), else the structure's centre.
+     *  Target = world point, y-down lab coords (as the scene). Returns the structure index, or -1. */
     playRig(kindOrIndex: string | number, clipId: string, targetX?: number, targetY?: number): number {
       const i = typeof kindOrIndex === 'number' ? kindOrIndex : scene.structs.findIndex((st) => st.id === kindOrIndex);
       const r = rigs.find((x) => x.i === i);
       if (r === undefined) return -1;
       const st = scene.structs[i]!;
-      r.input = { clipId, startTick: curT * 60, targetX: targetX ?? st.x, targetY: -(targetY ?? st.y) };
+      // Default target: a dock's parking-bay centre (`DOCK_BAY_CX/CY`, host
+      // frame, y-up), else the structure centre.
+      let dx = st.x, dy = st.y;
+      if (st.id === 'freight_dock') {
+        const k = structScale(st), c = Math.cos(st.rot), s = Math.sin(st.rot);
+        const lx = DOCK_BAY_CX * k, ly = -DOCK_BAY_CY * k;
+        dx = st.x + lx * c - ly * s;
+        dy = st.y + lx * s + ly * c;
+      }
+      r.input = { clipId, startTick: curT * 60, targetX: targetX ?? dx, targetY: -(targetY ?? dy) };
       update(curT);
       return i;
     },
