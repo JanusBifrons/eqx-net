@@ -65,7 +65,7 @@ describe('SectorRoom integration — mining-laser ore arrives only as ore pods',
     expect(holdTotal(shipId), 'no ore per hit').toBe(0);
   });
 
-  it('cut to the last sliver: nothing reaches the hold on the way, and every pod is a full pod', { timeout: 40_000 }, async () => {
+  it('cut to the last sliver: nothing reaches the hold on the way, and every sliver drops a full pod', { timeout: 40_000 }, async () => {
     const { room, pid, shipId, rockId } = await setup(60);
     const int = room._internals;
     int.setWreckSeed(9);
@@ -98,8 +98,11 @@ describe('SectorRoom integration — mining-laser ore arrives only as ore pods',
     console.log(`[oreDraw] rock pool ${pool0}; ${pods} pods carry ${podOre}`);
     expect(pods).toBeGreaterThan(0);
     // The pool was whole at the break, so every sliver's share is far over a
-    // pod's size: each pod is a FULL pod (none shrunk by a per-hit draw).
+    // pod's size: each sliver drops a FULL pod (none shrunk by a per-hit
+    // draw). Nearby drops merge into one pod, so the total is a whole number
+    // of full pods. The rest of the pool stays unmined (the pod cap).
     const podMax = Math.floor(SALVAGE_POD_MAX_WEIGHT / asteroidYieldWeightPerUnit('rock'));
-    expect(podOre, 'every pod full').toBe(pods * podMax);
+    expect(podOre % podMax, 'every sliver dropped a full pod').toBe(0);
+    expect(podOre).toBeGreaterThanOrEqual(pods * podMax);
   });
 });
