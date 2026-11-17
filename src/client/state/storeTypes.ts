@@ -43,6 +43,8 @@ export interface CargoView {
   blueprints: number;
   /** Economy v2 W2 — packed structures / hulls carried (count). */
   packed?: number;
+  /** Their total weight (a rock chunk weighs hundreds): the chip counts it. */
+  packedWeight?: number;
 }
 
 export interface WarpWarning {

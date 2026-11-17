@@ -57,7 +57,7 @@ import { LootCollectedEventSchema, CargoDepositedEventSchema, NoticeEventSchema 
 import { ControlModeMessageSchema } from '@shared-types/messages/snapshotMessages';
 import { parseTransitReadyShipIds } from '@shared-types/messages';
 import { isCommanderFleetFollow, transitStartsLocalTrip, stepFleetArrival, type FleetArrival, type FleetArrivalWatch } from './fleetWarpFollow';
-import { formatLootPickup, LOOT_FEED_TTL_MS, cargoChanged } from './lootView';
+import { formatLootPickup, LOOT_FEED_TTL_MS, cargoChanged, cargoViewOf, type WireCargo } from './lootView';
 import { toastForNotice } from './tradeView';
 import { TradeNoticeSchema } from '../../shared-types/economy.js';
 import { WorldNoticeSchema } from '../../shared-types/worldNotice.js';
@@ -6884,7 +6884,7 @@ export class ColyseusGameClient {
    */
   private applyLocalCargo(
     localId: string,
-    cargo: { goods: Partial<Record<string, number>>; blueprints: readonly unknown[]; packed?: readonly unknown[] } | undefined,
+    cargo: WireCargo | undefined,
     fitted?: string[],
   ): void {
     const s = useUIStore.getState();
@@ -6896,7 +6896,7 @@ export class ColyseusGameClient {
     );
     if (!cargoChanged(s.cargo, cargo) && s.cargoCapacity === capacity) return;
     s.setCargo(
-      cargo === undefined ? null : { goods: { ...cargo.goods }, blueprints: cargo.blueprints.length, packed: cargo.packed?.length ?? 0 },
+      cargo === undefined ? null : cargoViewOf(cargo),
       capacity,
     );
   }

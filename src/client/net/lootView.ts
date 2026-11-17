@@ -4,8 +4,24 @@
  */
 import { GOOD_DEFS, GOOD_IDS } from '../../shared-types/goods';
 import { productName } from '../../shared-types/blueprints';
-import { ROCK_CHUNK_PRODUCT } from '../../shared-types/items';
+import { ROCK_CHUNK_PRODUCT, type PackedItem } from '../../shared-types/items';
+import { packedItemWeight } from '../../core/cargo/hold';
 import type { CargoView } from '../state/storeTypes';
+
+/** The own-ship snapshot's hold slice, as the client reads it. */
+export interface WireCargo { goods: Partial<Record<string, number>>; blueprints: readonly unknown[]; packed?: readonly PackedItem[] }
+
+/** Total weight of the packed items (alloc-free). */
+function packedWeightOf(packed: readonly PackedItem[] | undefined): number {
+  let w = 0;
+  if (packed) for (let i = 0; i < packed.length; i++) w += packedItemWeight(packed[i]!);
+  return w;
+}
+
+/** The HUD view of a wire hold (written to the store only on change). */
+export function cargoViewOf(c: WireCargo): CargoView {
+  return { goods: { ...c.goods }, blueprints: c.blueprints.length, packed: c.packed?.length ?? 0, packedWeight: packedWeightOf(c.packed) };
+}
 
 /** How long a pickup popup stays on screen. */
 export const LOOT_FEED_TTL_MS = 2_500;
@@ -29,20 +45,22 @@ export function formatLootPickup(e: { goods: Partial<Record<string, number>>; bl
  *  alloc-free, so the per-snapshot call is cheap (#14). */
 export function cargoChanged(
   prev: CargoView | null,
-  next: { goods: Partial<Record<string, number>>; blueprints: readonly unknown[]; packed?: readonly unknown[] } | undefined,
+  next: WireCargo | undefined,
 ): boolean {
   if (prev === null || next === undefined) return (prev === null) !== (next === undefined);
   if (prev.blueprints !== next.blueprints.length || (prev.packed ?? 0) !== (next.packed?.length ?? 0)) return true;
+  if ((prev.packedWeight ?? 0) !== packedWeightOf(next.packed)) return true;
   for (const id of GOOD_IDS) {
     if ((prev.goods[id] ?? 0) !== (next.goods[id] ?? 0)) return true;
   }
   return false;
 }
 
-/** Cargo weight of the HUD view (blueprints are weightless). */
+/** Cargo weight of the HUD view (blueprints are weightless; packed items,
+ *  rock chunks included, count their weight). */
 export function cargoWeight(c: CargoView | null): number {
   if (c === null) return 0;
-  let w = 0;
+  let w = c.packedWeight ?? 0;
   for (const id of GOOD_IDS) w += (c.goods[id] ?? 0) * GOOD_DEFS[id].weight;
   return w;
 }
