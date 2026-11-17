@@ -336,7 +336,7 @@ import { LabCancelSchema, LabQuerySchema, LabStartSchema, type LabStart, type La
 import { LootSubsystem, type LootCollector } from '../cargo/LootSubsystem.js';
 import { LootCollectors } from '../cargo/LootCollectors.js';
 import { OreDraw } from './OreDraw.js';
-import { StorageService, fittedModuleIds, isOperationalStorage, structureUid, DEPOSIT_DWELL_TICKS, DEPOSIT_RANGE, REPAIR_CREDITS_PER_HP, RESPEC_CREDIT_COST } from '../cargo/StorageService.js';
+import { StorageService, fittedModuleIds, isOperationalStorage, structureUid, DEPOSIT_DWELL_TICKS, depositRangeOf, REPAIR_CREDITS_PER_HP, RESPEC_CREDIT_COST } from '../cargo/StorageService.js';
 import { SCRAP_HP } from '../../core/swarm/scrapConstants.js';
 import { addPacked, cloneHold, emptyHold, extractRequested, holdWeight, isHoldEmpty, mergeInto, packedCount, takePacked, transferInto, type CargoRequest } from '../../core/cargo/hold.js';
 import type { HolderType, HoldRecord } from '../cargo/HoldStore.js';
@@ -3953,7 +3953,7 @@ export class SectorRoom extends Room<SectorState> {
       const s = rec ? this.structureRegistry.get(rec.id) : undefined;
       if (s === undefined || s.owner !== playerId || s.uid === undefined) { reply(false, 'Pick one of your storage structures.'); return; }
       const pose = this.shipPoseCache.get(playerId);
-      if (!pose || Math.hypot(pose.x - s.x, pose.y - s.y) > DEPOSIT_RANGE) { reply(false, 'Fly your ship next to that storage to install.'); return; }
+      if (!pose || Math.hypot(pose.x - s.x, pose.y - s.y) > depositRangeOf(s.kind)) { reply(false, 'Fly your ship next to that storage to install.'); return; }
       const id = p.data.blueprintId;
       if (this.fittedOf(shipId).includes(id)) { reply(false, 'This ship already has that blueprint.'); return; }
       const fitted = this.storage.installBlueprint(playerId, s.uid, id, shipId);
@@ -4322,7 +4322,7 @@ export class SectorRoom extends Room<SectorState> {
 
     // ── Living World P1a-2 — instant repair at your own storage (credit sink) ──
     // Repairs the sender's ACTIVE hull to full while it sits within
-    // DEPOSIT_RANGE of its own operational storage; costs REPAIR_CREDITS_PER_HP
+    // deposit range (`depositRangeOf`) of its own operational storage; costs REPAIR_CREDITS_PER_HP
     // per missing hull point from the credits banked in this sector.
     this.onMessage('repair_ship', (client: Client, raw: unknown) => {
       const parsed = RepairShipSchema.safeParse(raw);
@@ -11703,7 +11703,7 @@ export class SectorRoom extends Room<SectorState> {
    *  included, user decision 6). Reads the live SAB pose (still allocated). */
   /**
    * Living World P1a-2 — AUTO-DEPOSIT. A collector (#17: active + alive + roster
-   * row) carrying cargo that stays within `DEPOSIT_RANGE` of its OWN operational
+   * row) carrying cargo that stays within deposit range (`depositRangeOf`) of its OWN operational
    * storage for `DEPOSIT_DWELL_TICKS` (2 s) deposits its whole hold into that
    * storage network. Progress (0..100) rides the own-ship snapshot slice. Runs
    * every 6 ticks; early-outs when the sector has no structures.

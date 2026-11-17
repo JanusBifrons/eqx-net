@@ -657,8 +657,8 @@ export const FREIGHT_DOCK: StructureKind = {
   id: 'freight_dock',
   displayName: 'Freight Dock',
   description: 'Where trade convoys dock; holds cargo and sets import and export orders. A leaf node.',
-  radius: 287, // bounding circle of the 520×240 footprint
-  footprint: { w: 520, h: 240 },
+  radius: 539, // bounding circle of the 1000×400 footprint (Ladder A medium)
+  footprint: { w: 1000, h: 400 },
   maxHealth: 2500,
   maxConnections: 1,
   isHub: false,
@@ -1266,8 +1266,10 @@ export const STRUCTURE_KINDS: Record<StructureKindId, StructureKind> = Object.fr
  *  5→6 (WS-8): appended LASER_BOLT_TURRET + MISSILE_TURRET defence kinds (R2.15).
  *  6→7 (P3.2): removed CAPITAL.connectionRange — uniform connection range.
  *  9→10 (P2e, plan soft-leaping-truffle v3): mining + bank retuned to the goods
- *  scale (Miner 1000→20 a pulse, Capital bank 2M→50k, Deep Core Rig 6000→120). */
-export const STRUCTURE_KIND_CATALOGUE_VERSION = 10;
+ *  scale (Miner 1000→20 a pulse, Capital bank 2M→50k, Deep Core Rig 6000→120).
+ *  10→11 (structure-restyle 2c++): FREIGHT_DOCK grown to the medium size,
+ *  520×240 → 1000×400 (radius 287→539): an old dock could overlap on restore. */
+export const STRUCTURE_KIND_CATALOGUE_VERSION = 11;
 // Gates (SHIELD_GATE, SHIELD_AIRLOCK) were APPENDED without a bump: a bump
 // discards every saved structure on the next boot (SectorPersistence's version
 // gate), and appending a kind leaves every existing record — and so every saved

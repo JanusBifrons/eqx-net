@@ -14,6 +14,7 @@ import {
   chamferBox, chevron, mixColor, ngon, outlinePx, polyBounds, polyEdgeDist, rivetPolys, scalePts, strip, trussPolys,
   type PolyOp, type Pt, type Pts, type StructureStyleDef, type StyleCtx,
 } from './structureStyleKit.js';
+import { DOCK_CRANE_PIVOT_X, DOCK_CRANE_PIVOT_Y } from '../../../core/articulation/rigCatalogue.js';
 
 // Palette: soot, gunmetal, oxidised steel. Nothing pastel.
 const DECK = 0x0d0e0f;
@@ -27,7 +28,6 @@ const RIVET = 0x55565a;
 const WELD = 0x4c4f53;
 const STENCIL = 0x8f8a7a; // worn off-white paint
 const HAZARD = 0x9c7c2c; // dull, dirty hazard yellow
-const CHEVRON = 0x8d6420;
 const CRANE = 0x7a6026; // weathered crane yellow
 const LAMP_AMBER = 0xffa030;
 const LAMP_WHITE = 0xfff1d6;
@@ -272,53 +272,87 @@ function hexNode(c: StyleCtx): void {
   c.lit(0, 0, 3, LAMP_AMBER);
 }
 
-/** Medium dock (`freight_dock` evolved): a dull hazard lip on the -y side
- *  with chevrons running in, an X-braced truss gantry across the bay mouth,
- *  the slab dock house with a lit sign, and the truss-boom gantry crane
- *  folded along the roof. */
+/** Medium dock (`freight_dock`, 1000 × 400): the loading pad is OUTSIDE the
+ *  building (the rig's `lip` apron, past the open -y edge, pixi), so the
+ *  building itself is solid: one thin hazard edge along the open side, a
+ *  plated crane apron deck behind it, and on that deck the raised crane
+ *  tower (centred on the rig crane's pivot) the slewing crane is seated on,
+ *  braced by truss legs into the hull. Behind the bay-mouth gantry truss:
+ *  the slab dock house with a lit sign, a container stack on the roof, and
+ *  the small truss-boom roof crane folded along it. */
 function dock(c: StyleCtx): void {
   const out = deck(c);
-  const hh = c.H / 2;
-  const lipY = -hh + c.H * 0.4;
-  // Lip: hazard apron (scuffed), dark bay floor, chevrons pointing in.
-  poly(c, clipHalf(scalePts(out, 0.97), 0, 1, lipY - 4), HAZARD, 'hazard', 1.5, 1);
-  poly(c, chamferBox(-206, -hh + 20, 412, c.H * 0.4 - 44, 12), 0x16171a, 'mark', 0.5, 1);
-  const r = rng(c.seed * 13 + 5);
-  for (let k = 0; k < 10; k++) {
-    const x = -240 + r() * 480, y = -hh + 6 + r() * (c.H * 0.4 - 12), s = 3 + r() * 6;
-    poly(c, [[x, y], [x + s, y + s * 0.3], [x + s * 0.7, y + s], [x - s * 0.2, y + s * 0.6]], SOOT, 'mark', 0.3, 0.3);
-  }
-  for (const lx of [-120, 0, 120]) {
-    for (let k = 0; k < 2; k++) poly(c, chevron(lx, -hh + 38 + k * 26, 60, 18, 8, 1), CHEVRON, 'paint', 1, 0.5);
-  }
-  truss(c, [-236, lipY], [236, lipY], 18, STEEL, 12);
+  const hw = c.W / 2, hh = c.H / 2;
+  const lipY = -hh + 120;
+  // Open edge: a single thin hazard strip (the pad itself is the rig's apron).
+  poly(c, clipHalf(scalePts(out, 0.985), 0, 1, -hh + 12), HAZARD, 'hazard', 1.5, 1);
+  // Crane apron deck: plated building along the open edge.
+  const apron = core(c, chamferBox(-hw + 34, -hh + 16, 2 * hw - 68, lipY - (-hh + 16) - 8, 14), SLAB_DARK, 10, 0);
+  grime(c, -hw + 40, -hh + 18, 2 * hw - 80, lipY + hh - 30, 14, 7);
+  for (const x of [-300, -150, 150, 300]) weld(c, [x, -hh + 22], [x, lipY - 14]);
+  rivets(c, [-hw + 50, -hh + 24], [-90, -hh + 24], 16);
+  rivets(c, [90, -hh + 24], [hw - 50, -hh + 24], 16);
+  for (const s of [-1, 1]) wornStripe(c, apron, 0, s * (hw - 60), 12, 70 + s);
+  truss(c, [-hw + 40, lipY], [hw - 40, lipY], 22, STEEL, 12);
   // Dock house: one symmetric slab, rivet rows, weld seams, grime.
-  const house = core(c, chamferBox(-236, lipY + 10, 472, hh - lipY - 34, 18), SLAB, 18, Math.PI / 2);
-  grime(c, -230, lipY + 12, 460, hh - lipY - 38, 16, 2);
-  rivets(c, [-220, lipY + 16], [220, lipY + 16], 14);
-  for (const x of [-80, 80]) weld(c, [x, lipY + 20], [x, hh - 30]);
-  for (const s of [-1, 1]) wornStripe(c, house, 0, s * 222, 12, 20 + s);
-  walkway(c, [-220, hh - 14], [220, hh - 14], 12);
+  const house = core(c, chamferBox(-hw + 36, lipY + 12, 2 * hw - 72, hh - lipY - 52, 22), SLAB, 18, Math.PI / 2);
+  grime(c, -hw + 42, lipY + 14, 2 * hw - 84, hh - lipY - 56, 22, 2);
+  rivets(c, [-hw + 56, lipY + 20], [hw - 56, lipY + 20], 14);
+  for (const x of [-210, 210]) weld(c, [x, lipY + 24], [x, hh - 46]);
+  for (const s of [-1, 1]) wornStripe(c, house, 0, s * (hw - 52), 14, 20 + s);
+  walkway(c, [-hw + 56, hh - 18], [hw - 56, hh - 18], 14);
   // The lit sign: heavy frame, dark glass, an amber "in" arrow, a crate icon.
-  const sy = lipY + 24, sh = 52;
-  poly(c, chamferBox(-206, sy - 6, 178, sh + 12, 12), SLAB_LIGHT, 'metal', 6, 2);
-  glow(c, chamferBox(-200, sy, 166, sh, 9), SIGN_GLASS, 1);
-  glow(c, chevron(-160, sy + sh / 2, 44, 34, 11, -1), LAMP_AMBER, 1.1);
-  glow(c, chamferBox(-108, sy + sh / 2 - 16, 40, 32, 6), LAMP_WHITE, 0.9);
-  glow(c, chamferBox(-98, sy + sh / 2 - 7, 20, 14, 3), SIGN_GLASS, 1);
-  stencil(c, '12', -196, sy + sh + 12, 26);
-  // Folded gantry crane: a pivot tower, a truss boom laid back along the
-  // roof, a trolley and hook block parked near the tip.
-  const py = lipY + 46;
-  poly(c, chamferBox(176, py - 26, 52, 52, 12), SLAB_LIGHT, 'metal', 30, 5, { roof: [3, 10] });
-  poly(c, chamferBox(186, py - 16, 32, 32, 8), SLAB_DARK, 'metal', 2, 1);
-  truss(c, [180, py], [10, py], 26, CRANE, 34);
-  poly(c, chamferBox(48, py - 15, 24, 30, 5), mixColor(CRANE, SLAB_DARK, 0.4), 'metal', 6, 1.5);
-  poly(c, chamferBox(20, py - 8, 16, 16, 4), SLAB_LIGHT, 'metal', 4, 1);
-  scaffold(c, 30, py + 22, 120, hh - py - 46, 20, 8);
-  lamp(c, 202, py, 4, LAMP_AMBER);
-  if (c.livery) c.sigils.push({ x: 196, y: hh - 52, r: 18 });
-  for (const s of [-1, 1]) lamp(c, s * 226, -hh + 22, 4, LAMP_WHITE);
+  const sx0 = -hw + 56, sy = lipY + 34, sh = 60;
+  poly(c, chamferBox(sx0 - 6, sy - 6, 206, sh + 12, 12), SLAB_LIGHT, 'metal', 6, 2);
+  glow(c, chamferBox(sx0, sy, 194, sh, 9), SIGN_GLASS, 1);
+  glow(c, chevron(sx0 + 46, sy + sh / 2, 50, 38, 12, -1), LAMP_AMBER, 1.1);
+  glow(c, chamferBox(sx0 + 104, sy + sh / 2 - 18, 46, 36, 6), LAMP_WHITE, 0.9);
+  glow(c, chamferBox(sx0 + 116, sy + sh / 2 - 8, 22, 16, 3), SIGN_GLASS, 1);
+  stencil(c, '12', sx0 + 4, sy + sh + 14, 30);
+  // Container stack on the roof (2 × 3), muted shipping colours.
+  let k = 0;
+  for (const cy of [lipY + 58, lipY + 130]) {
+    for (const cx of [-130, -10, 110]) {
+      const box = chamferBox(cx - 54, cy - 28, 108, 56, 6);
+      poly(c, box, CONTAINERS[(c.seed + k++) % 4]!, 'paint', 14, 3, { roof: [2, 8] });
+      for (let x = cx - 46; x <= cx + 46; x += 8) poly(c, stripe(box, 0, x, 2), mixColor(SLAB_DARK, 0x000000, 0.3), 'metal', 1, 0.5);
+    }
+  }
+  // Folded roof crane: a pivot tower, a truss boom laid back along the roof,
+  // a trolley and hook block parked near the tip.
+  const rx = hw - 90, py = lipY + 92;
+  poly(c, chamferBox(rx - 28, py - 28, 56, 56, 12), SLAB_LIGHT, 'metal', 30, 5, { roof: [3, 10] });
+  poly(c, chamferBox(rx - 17, py - 17, 34, 34, 8), SLAB_DARK, 'metal', 2, 1);
+  truss(c, [rx - 6, py], [rx - 230, py], 28, CRANE, 34);
+  poly(c, chamferBox(rx - 190, py - 16, 26, 32, 5), mixColor(CRANE, SLAB_DARK, 0.4), 'metal', 6, 1.5);
+  poly(c, chamferBox(rx - 224, py - 9, 18, 18, 4), SLAB_LIGHT, 'metal', 4, 1);
+  scaffold(c, rx - 220, py + 30, 160, hh - py - 64, 20, 8);
+  lamp(c, rx, py, 4, LAMP_AMBER);
+  // Crane tower: the raised superstructure the slewing crane is seated on,
+  // centred on the rig crane's pivot. A soot shadow cast inward, truss legs
+  // braced down into the hull, a tall plated block, the slew-seat top plate
+  // (the rig's plinth sits on it) with a bolt ring.
+  const tx = DOCK_CRANE_PIVOT_X, ty = -DOCK_CRANE_PIVOT_Y;
+  const TW = 204, TH = 116;
+  poly(c, chamferBox(tx - TW / 2 + 12, ty - TH / 2 + 16, TW, TH, 20), SOOT, 'mark', 0.4, 1, { alpha: 0.85 });
+  for (const s of [-1, 1]) {
+    truss(c, [tx + s * (TW / 2 + 8), ty - TH / 2 + 10], [tx + s * (TW / 2 + 8), ty + TH / 2 + 14], 16, STEEL, 26);
+    strut(c, [tx + s * (TW / 2 - 6), ty + TH / 2 - 10], [tx + s * (TW / 2 + 46), ty + TH / 2 + 28], 10, 22);
+    strut(c, [tx + s * (TW / 2 - 6), ty - TH / 2 + 14], [tx + s * (TW / 2 + 46), ty - TH / 2 + 4], 10, 22);
+  }
+  poly(c, chamferBox(tx - TW / 2 - 5, ty - TH / 2 - 3, TW + 10, TH + 8, 22), 0x0a0c0e, 'metal', 44, 2);
+  const tower = core(c, chamferBox(tx - TW / 2, ty - TH / 2, TW, TH, 20), SLAB_LIGHT, 48, Math.PI / 2);
+  // Hazard bands on the tower's flanks, rivet rows along its long faces.
+  for (const s of [-1, 1]) poly(c, stripe(tower, 0, tx + s * (TW / 2 - 16), 12), HAZARD, 'hazard', 1, 0.6);
+  for (const s of [-1, 1]) rivets(c, [tx - TW / 2 + 30, ty + s * (TH / 2 - 7)], [tx + TW / 2 - 30, ty + s * (TH / 2 - 7)], 12);
+  poly(c, chamferBox(tx - 52, ty - 52, 104, 104, 18), 0x2c3035, 'metal', 4, 2);
+  for (let i = 0; i < 16; i++) {
+    const a = (i / 16) * Math.PI * 2;
+    poly(c, ngon(tx + Math.cos(a) * 47, ty + Math.sin(a) * 47, 2.2, 6), RIVET, 'metal', 1, 0.6);
+  }
+  for (const [ex, ey] of [[-1, -1], [1, -1], [1, 1], [-1, 1]] as const) lamp(c, tx + ex * (TW / 2 - 10), ty + ey * (TH / 2 - 10), 3.5, LAMP_AMBER);
+  if (c.livery) c.sigils.push({ x: hw - 70, y: hh - 64, r: 22 });
+  for (const s of [-1, 1]) lamp(c, s * (hw - 34), -hh + 24, 4, LAMP_WHITE);
 }
 
 /** Power station (`reactor`): an octagonal containment keep with a deep pit
