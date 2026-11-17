@@ -3155,3 +3155,8 @@ Owner: "make it more like micro machines and make fights a bit longer. Also don'
 
 - **Finding:** the barge-mining showcase stalled: the lasers cut the rock into a few pieces, stopped, and the hold stayed at 0. The showcase room had no `sectorKey`, so no roster, so the loot pickup (`forEachLootCollector`) never visited the barge; but the lock step judged "consumable" from cargo capacity minus hold weight (both fine with no roster), so every laser and tractor left pieces nothing would ever take in.
 - **Rule:** when a rule hands work to another system ("nobody targets it, the pickup takes it in"), its gate asks the same predicate that system uses (`SectorRoom.hasHold`), so the two cannot disagree. A showcase or test room that films holds or cargo needs a real `sectorKey`. Lock: `tests/integration/sectorRoom/bargeMiningTake.test.ts`.
+
+## 2026-11-17 — an installed iPhone web app has its own cookie jar
+
+- **Finding (design):** behind a cookie gate, a page that works in Safari would open to "forbidden" once added to the home screen: the installed app does not share Safari's cookies, and the browser fetches the manifest without credentials by default.
+- **Rule:** behind a gate, the manifest's `start_url` carries the key and the manifest link uses credentials (VitePWA `useCredentials`). Guide: [phone-link](ops/phone-link.md).

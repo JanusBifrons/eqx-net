@@ -33,6 +33,9 @@ All driven by **`vite-plugin-pwa`** (config in `vite.config.ts`):
     code-split chunks (incl. the Pixi render worker) that mismatch the running app.
     `prompt` leaves the new SW *waiting*; with no prompt UI it activates on the next
     full launch. → "auto-update, apply on next launch", no mid-combat disruption.
+    Exception: a phone-lane build (`VITE_PHONE_LANE=1`) applies a waiting SW at once
+    (`onNeedRefresh` → `updateSW(true)`); a lane swap has already restarted the game
+    server, so there is no session to protect ([phone-link](../ops/phone-link.md)).
   - **`devOptions.enabled: false`** — the SW exists only in production builds. Both
     Playwright and the netgate run against `vite dev`, so they never see it (no
     precache vs wire-format desync during tests).

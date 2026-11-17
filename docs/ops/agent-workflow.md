@@ -99,6 +99,8 @@ Several Claude sessions run on this machine at once. So:
 - **Before starting, using or opening any port, check who owns it** (`netstat -ano | findstr LISTENING | findstr ":<port>"`, then the PID's command line). Stop only processes your session started (match the worktree path in the command line); another session's server is never yours to kill, even on the canonical ports.
 - **Check immediately before launching, not in parallel with the launch.** When another session is active, prefer offset ports (`EQX_E2E_PORT_OFFSET`, `EQX_SHOWCASE_PORT_OFFSET`, `NETGATE_PORT_OFFSET`, or `PORT=` + `EQX_SERVER_PORT=` + `vite --port … --strictPort`).
 
+- **The phone lane** (2590 / 8090 / 20590) belongs to `pnpm phone`, never to a session: leave it alone unless the owner asks for the phone build; then `pnpm phone up` replaces it ([phone-link](phone-link.md)).
+
 ## Stale dev servers cause "phantom" E2E failures
 
 - Playwright reuses whatever listens on 2567/5173 (`reuseExistingServer: true`), and a stale server runs old code: a flood of `boot.spec.ts` timeouts means a stale server, not a broken spec.
