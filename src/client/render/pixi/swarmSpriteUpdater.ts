@@ -80,6 +80,7 @@ function wreckDeadArtFor(kindId: string): boolean {
 }
 
 import type { SpriteBuildSig, SwarmSpriteCtx } from './swarmSpriteCtx.js';
+import type { StructureRigView } from './structureRigs.js';
 export type { SpriteBuildSig, SwarmSpriteCtx };
 
 /** Module-scope scratch for a structure's per-mount arc-local angles passed
@@ -130,6 +131,8 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
   const wreckDescs = mirror.wrecks;
   ctx.wrecks?.retain(wreckDescs ?? NO_WRECKS);
   ctx.wreckArt?.retain(wreckDescs ?? NO_WRECKS);
+  const rigs = ctx.structureRigs; // restyle 2c (`?rigs=1`); undefined = flag off
+  rigs?.begin();
   for (const [entityId, entry] of mirror.swarm) {
     // S2b: a wreck piece is drawn only once its wreck's descriptor is known
     // (its geometry comes from it); until then it has no sprite at all.
@@ -387,6 +390,13 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         ctx.mountVisuals.applyMountAngles(spriteKey, swarmMounts, entry.displayMountAngles ?? entry.mountAngles);
       }
     } else if (entry.kind === 2) {
+      // Restyle 2c: pose the structure's rig (visible structures only); its
+      // parts hang off this sprite and `shipContainer` (structureRigs.ts).
+      let rigView: StructureRigView | null = null;
+      if (rigs !== undefined) {
+        if (sprite.visible) rigView = rigs.update(spriteKey, entityId, entry.shipKind, sprite, lerped.x, lerped.y, lerped.angle, fxNow);
+        else rigs.hide(spriteKey);
+      }
       // Structures (turret 'barrel' / miner 'drill') carry a mounts entry in
       // the catalogue but NO mountAngles on any wire — the snapshot
       // `structures[]` slice ships only turretTargetId / miningTargetId. So
@@ -395,7 +405,9 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
       // Y-flip the player/drone mounts use (Invariant #12 consistency).
       const sk = getStructureKind(entry.shipKind);
       const structMounts = sk.mounts ?? EMPTY_MOUNTS;
-      ctx.mountVisuals.ensureForMounts(spriteKey, sk.id, structMounts, sk.color, sprite);
+      const mountCluster = ctx.mountVisuals.ensureForMounts(spriteKey, sk.id, structMounts, sk.color, sprite);
+      // A pop-up turret's mount rides its rig's slide part (angle unchanged, #12).
+      if (rigView !== null) rigView.placeMount(mountCluster);
       if (structMounts.length > 0) {
         const st = mirror.structures?.get(entityId);
         const targetId = st?.turretTargetId ?? st?.miningTargetId;
@@ -533,4 +545,5 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     // Sleeping entries stop interpolating; their pose is whatever the
     // server last shipped.
   }
+  rigs?.sweep(); // free the rigs of structures gone this frame
 }
