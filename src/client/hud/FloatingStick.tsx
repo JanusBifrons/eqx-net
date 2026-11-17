@@ -18,7 +18,7 @@
  */
 import { useEffect, useRef, type CSSProperties, type ReactNode } from 'react';
 import { clampStickOrigin, isTap, leashOrigin, stickVector, type StickVec } from './floatingStickMath';
-import { forwardPinchPointer, stickTouchDown, stickTouchUp, type PinchableStick } from './stickPinch';
+import { forwardPinchPointer, forwardTapToWorld, stickTouchDown, stickTouchUp, type PinchableStick } from './stickPinch';
 
 export interface StickHome {
   /** Distance from the left edge to the ring's edge (px). Use left OR right. */
@@ -212,6 +212,8 @@ export function FloatingStick(props: FloatingStickProps): JSX.Element {
       const tapped = isTap(performance.now() - downAt, travel);
       release();
       cb.current.onEnd(tapped);
+      // The zones cover most of a phone screen: a tap there is a tap on the world.
+      if (tapped && floating && e.type === 'pointerup') forwardTapToWorld(e.pointerId, downX, downY);
     };
     const onResize = (): void => {
       computeHome();
