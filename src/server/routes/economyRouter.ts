@@ -14,7 +14,7 @@
  */
 import { Router, type Request, type Response, type Router as ExpressRouter } from 'express';
 import type { PlayerEconomyView, TradeOffer } from '../../shared-types/economy.js';
-import { PLAYER_POLICY_OFF, type PlayerFactionsView } from '../../shared-types/factions.js';
+import { PLAYER_POLICY_OFF, factionLooksWire, type PlayerFactionsView } from '../../shared-types/factions.js';
 
 export interface EconomyRouteProvider {
   offersFor(playerId: string, sectorKey?: string | null): TradeOffer[];
@@ -57,7 +57,7 @@ economyRouter.get('/economy', (req: Request, res: Response) => {
 economyRouter.get('/factions', (req: Request, res: Response) => {
   const pid = playerIdOf(req);
   if (!pid || !_provider?.factions) {
-    res.json({ rows: [], policy: PLAYER_POLICY_OFF } satisfies PlayerFactionsView);
+    res.json({ rows: [], policy: PLAYER_POLICY_OFF, looks: factionLooksWire() } satisfies PlayerFactionsView);
     return;
   }
   res.json(_provider.factions(pid));

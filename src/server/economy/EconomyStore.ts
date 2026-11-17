@@ -26,11 +26,20 @@ import {
   PLAYER_POLICY_OFF,
   PlayerPolicyWireSchema,
   STANDING_MAX,
+  claimFactionLook,
   clampStanding,
   defaultFactionPolicy,
+  factionLooksWire,
+  FactionLookWireSchema,
+  setFactionLooks,
+  isLookInRange,
   isNpcFactionId,
   npcFactions,
+  packLook,
   policyFromWire,
+  teamSigilOf,
+  type FactionLookClaim,
+  type FactionLookWire,
   type FactionPolicy,
   type PlayerFactionsView,
   type PlayerPolicyWire,
@@ -55,6 +64,8 @@ export interface PlayerEconomy {
   standingScale: number;
   /** The player's own faction policy (F3); absent = all off. */
   policy?: PlayerPolicyWire;
+  /** The player's claimed ship look (colour slot + sigil); absent = hash default. */
+  look?: { colorSlot: number; sigil: number };
   /** T4 — remembered teleporter-toll answers, by owner faction. */
   tollPrefs?: Record<string, 'always' | 'never'>;
   history: TradeHistoryEntry[];
@@ -122,14 +133,19 @@ export class EconomyStore {
     }
     let p = 0;
     let d = 0;
+    const looks: FactionLookWire[] = [];
     for (const r of rows.players) {
       const pe = parsePlayer(r.payload_json);
       if (pe) {
         this.players.set(r.player_id, pe);
         if (pe.policy) this.cachePolicy(r.player_id, pe.policy);
+        if (pe.look) looks.push({ factionId: r.player_id, ...pe.look });
         p++;
       }
     }
+    // The claimed-look registry is process-wide (one galaxy); a clash in old
+    // rows keeps the first claim and drops the rest from the registry.
+    setFactionLooks(looks);
     for (const r of rows.deals) {
       try {
         const deal = JSON.parse(r.payload_json) as TradeDeal;
@@ -229,6 +245,22 @@ export class EconomyStore {
     this.touchPlayer(playerId);
   }
 
+  /** Claim a unique ship look for a player; persisted only when it succeeds.
+   *  Another known player's unclaimed (hash-default) pair counts as taken: two
+   *  players would otherwise wear the same look. Claims are rare, so the scan
+   *  over every player row is cheap. */
+  claimLook(playerId: string, colorSlot: number, sigil: number): FactionLookClaim {
+    if (isLookInRange(colorSlot, sigil) && !isNpcFactionId(playerId)) {
+      const packed = packLook(colorSlot, sigil);
+      for (const id of this.players.keys()) if (id !== playerId && teamSigilOf(id) === packed) return 'taken';
+    }
+    const result = claimFactionLook(playerId, colorSlot, sigil);
+    if (result !== 'ok') return result;
+    this.player(playerId).look = { colorSlot, sigil };
+    this.touchPlayer(playerId);
+    return result;
+  }
+
   private cachePolicy(playerId: string, wire: PlayerPolicyWire): void {
     if (wire.hostileBelow === null && wire.alliedAbove === null) this.policyCache.delete(playerId);
     else this.policyCache.set(playerId, policyFromWire(wire));
@@ -259,7 +291,7 @@ export class EconomyStore {
       });
     }
     rows.sort((a, b) => Math.abs(b.theirView) + Math.abs(b.yourView) - (Math.abs(a.theirView) + Math.abs(a.yourView)));
-    return { rows, policy: this.playerPolicy(playerId) };
+    return { rows, policy: this.playerPolicy(playerId), looks: factionLooksWire() };
   }
 
   // ── Teleporter tolls (T4) ───────────────────────────────────────────────
@@ -461,6 +493,10 @@ function parsePlayer(json: string): PlayerEconomy | null {
     if (raw.policy) {
       const parsed = PlayerPolicyWireSchema.safeParse(raw.policy);
       if (parsed.success) pe.policy = parsed.data;
+    }
+    if (raw.look) {
+      const parsed = FactionLookWireSchema.pick({ colorSlot: true, sigil: true }).safeParse(raw.look);
+      if (parsed.success) pe.look = parsed.data;
     }
     if (raw.tollPrefs && typeof raw.tollPrefs === 'object') {
       for (const [f, v] of Object.entries(raw.tollPrefs)) {

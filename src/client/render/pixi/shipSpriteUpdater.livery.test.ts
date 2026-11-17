@@ -3,12 +3,12 @@
  * its owner's team colour + sigil (the mirror key is the player's faction
  * id); with the flag off the request is unchanged.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { Container } from 'pixi.js';
 import { updateShipSprites, type ShipSpriteCtx } from './shipSpriteUpdater.js';
 import { MountVisualManager } from '../MountVisualManager.js';
 import type { ArtHandle, ArtService } from '../art/ArtService.js';
-import { teamColorOf, teamEdgeOf, teamSigilOf } from '../../../shared-types/factions.js';
+import { LIVERY_EDGES, PLAYER_LIVERY, claimFactionLook, setFactionLooks, teamColorOf, teamEdgeOf, teamSigilOf } from '../../../shared-types/factions.js';
 import type { RenderMirror } from '../../../core/contracts/IRenderer.js';
 
 function run(livery: 'b' | undefined): Array<unknown[]> {
@@ -44,5 +44,16 @@ describe('updateShipSprites — livery', () => {
 
   it('with the livery unset, the request is exactly as before', () => {
     expect(run(undefined)).toEqual([['fighter', undefined, true, false, false, undefined]]);
+  });
+
+  describe('a claimed look', () => {
+    afterEach(() => setFactionLooks([]));
+    it('repaints the owner with the claimed slot, sigil and edge, even after the livery was cached', () => {
+      run('b'); // caches player-abc's hash livery in ownerLivery
+      expect(claimFactionLook('player-abc', 7, 0x2a5)).toBe('ok');
+      expect(run('b')[0]![5]).toEqual({
+        treatment: 'b', team: PLAYER_LIVERY[7], sigil: (7 << 12) | 0x2a5, edge: LIVERY_EDGES[0x2a5 % LIVERY_EDGES.length],
+      });
+    });
   });
 });
