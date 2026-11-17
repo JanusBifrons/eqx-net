@@ -2,6 +2,7 @@ import { BufferImageSource, Sprite, Texture, type Graphics, type Text } from 'pi
 import { teamSigilOf } from '../../../shared-types/factions.js';
 import { sigilRgba } from '../art/sigil.js';
 import { labelFit } from './galaxyLayerDecisions';
+import { clipPolyAtX } from './galaxyMapMotion';
 import { NEUTRAL_OWNER } from './sectorOwnership';
 import { GALAXY_SECTORS, axialToPixel, getSector, type SectorFeature } from '@core/galaxy/galaxy';
 import { galaxyNebula, NEBULA_SECTOR_SPACING } from '@core/galaxy/nebulaField';
@@ -72,16 +73,52 @@ export function drawTerritoryBorder(
   }
 }
 
-/** A hex fill, or (with a challenger fill) a hex split down the middle:
- *  holder on the left, challenger on the right, with a thin dark seam. */
-export function drawHexFill(g: Graphics, v: Verts, fill: number, challengerFill: number | null, seam: number): void {
-  if (challengerFill === null) {
-    g.poly(v as Array<{ x: number; y: number }>).fill({ color: fill, alpha: 1 });
+/** Flat `x,y,…` corners of a pointy-top hex (same order as {@link hexVertices}). */
+export function hexFlat(size: number): number[] {
+  const out: number[] = [];
+  for (const p of hexVertices(size)) out.push(p.x, p.y);
+  return out;
+}
+
+/** Reused seam style (Pixi copies a style on stroke). */
+const SEAM = { color: 0, width: 1.5, alpha: 0.8 };
+
+/**
+ * A hex fill (`flat` corners), or (with a right fill) a hex cut by a vertical
+ * line at `frac` of its width: left side `fill`, right side `rightFill`, with
+ * a seam: thin and dark normally, bold in `seam` colour while a flip wipes
+ * across. `left` / `right` are the hex's own reused point buffers: Pixi keeps
+ * a reference to a polygon's points until it renders, so each hex needs its
+ * own. Allocation-free on our side (per-frame safe).
+ */
+export function drawHexFill(
+  g: Graphics, flat: number[], fill: number, rightFill: number | null, frac: number,
+  seam: number, bold: boolean, left: number[], right: number[],
+): void {
+  if (rightFill === null || frac >= 1) {
+    g.poly(flat).fill(fill);
     return;
   }
-  g.poly([v[1]!.x, v[1]!.y, v[2]!.x, v[2]!.y, v[3]!.x, v[3]!.y, v[4]!.x, v[4]!.y]).fill({ color: fill, alpha: 1 });
-  g.poly([v[4]!.x, v[4]!.y, v[5]!.x, v[5]!.y, v[0]!.x, v[0]!.y, v[1]!.x, v[1]!.y]).fill({ color: challengerFill, alpha: 1 });
-  g.moveTo(v[4]!.x, v[4]!.y).lineTo(v[1]!.x, v[1]!.y).stroke({ color: seam, width: 1.5, alpha: 0.8 });
+  let minX = Infinity, maxX = -Infinity;
+  for (let k = 0; k < flat.length; k += 2) {
+    if (flat[k]! < minX) minX = flat[k]!;
+    if (flat[k]! > maxX) maxX = flat[k]!;
+  }
+  const cut = minX + (maxX - minX) * Math.max(0, frac);
+  clipPolyAtX(flat, cut, left, right);
+  if (left.length >= 6) g.poly(left).fill(fill);
+  if (right.length >= 6) g.poly(right).fill(rightFill);
+  let top = Infinity, bottom = -Infinity;
+  for (let k = 0; k < left.length; k += 2) {
+    if (left[k] !== cut) continue;
+    if (left[k + 1]! < top) top = left[k + 1]!;
+    if (left[k + 1]! > bottom) bottom = left[k + 1]!;
+  }
+  if (top >= bottom) return;
+  SEAM.color = seam;
+  SEAM.width = bold ? 3 : 1.5;
+  SEAM.alpha = bold ? 1 : 0.8;
+  g.moveTo(cut, top).lineTo(cut, bottom).stroke(SEAM);
 }
 
 /** Diagonal hatch over a hex fill (drone ground), clipped to the inscribed
