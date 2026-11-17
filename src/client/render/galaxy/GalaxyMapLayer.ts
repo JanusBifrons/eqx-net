@@ -33,6 +33,7 @@ import {
   drawTerritoryBorder,
 } from './galaxyHexDraw';
 import { resolveSectorOwner, ownershipSignature } from './sectorOwnership';
+import { GalaxyFocusView } from './galaxyFocusView';
 import { GalaxyMapFx } from './galaxyMapFx';
 import type { HexLook } from './galaxyMapMotion';
 import {
@@ -265,6 +266,7 @@ export class GalaxyMapLayer extends Container {
    * pointer/wheel events here when {@link isPanZoomActive}.
    */
   private readonly panZoomCamera: Camera;
+  private readonly focus: GalaxyFocusView;
   private _seedW = 0;
   private _seedH = 0;
   /** Touch device? Disables the territory hover-shrink — there's no true hover on
@@ -298,6 +300,7 @@ export class GalaxyMapLayer extends Container {
     this.clusterRoot.addChild(this.hexLayer);
     this.addChild(this.clusterRoot);
     this.panZoomCamera = new Camera(this.clusterRoot, { minScale: 0.12, maxScale: 4 });
+    this.focus = new GalaxyFocusView(this.panZoomCamera, this.clusterRoot, HEX_SIZE_BASE, opts.reducedMotion ?? false, (k) => resolveSectorOwner(k, this.liveStateByKey));
     this.buildHexes();
     Ticker.shared.add(this.tick);
   }
@@ -310,6 +313,7 @@ export class GalaxyMapLayer extends Container {
 
   // ── Pan/zoom + hover input (routed from the renderer's canvas listeners). ──
   onPointerDown(pointerId: number, screenX: number, screenY: number, stamp: number): void {
+    this.focus.onPointerDown();
     this.panZoomCamera.onPointerDown(pointerId, screenX, screenY, stamp);
     // Hover-shrink is DESKTOP-ONLY — on touch a press/drag is not a hover.
     if (!this.isTouch) this.hoveredTerritory = this.territoryIndexAtScreen(screenX, screenY);
@@ -324,10 +328,11 @@ export class GalaxyMapLayer extends Container {
   onPointerUp(pointerId: number, screenX: number, screenY: number, stamp: number): boolean {
     const result = this.panZoomCamera.onPointerUp(pointerId, screenX, screenY, stamp);
     if (result.wasTap) {
-      const key = this.hitTest(screenX, screenY);
-      if (key !== null) this.onSelect(key);
-      // A confirmed tap that hit no hex = blur/deselect (close the drawer).
-      else this.onDeselect?.();
+      // Plain map: a hex selects, empty space deselects (closes the drawer). In
+      // focus: a door hops, the focused hex is a no-op, anything else backs out.
+      const t = this.focus.tap(screenX, screenY, this.hitTest(screenX, screenY));
+      if (t.kind === 'select') this.onSelect(t.key);
+      else if (t.kind === 'deselect') this.onDeselect?.();
     }
     // Release → fall back to the current-sector territory (touch has no hover).
     this.hoveredTerritory = -1;
@@ -341,16 +346,20 @@ export class GalaxyMapLayer extends Container {
     this.panZoomCamera.onWheel(deltaY, screenX, screenY);
   }
 
-  /** Live `clusterRoot` transform — the REAL drawn pan/zoom state. DEV
-   *  `__eqxGalaxyTransform` E2E hook. */
+  /** Drawn `clusterRoot` pan/zoom (DEV `__eqxGalaxyTransform` E2E hook). */
   getDebugTransform(): { x: number; y: number; scale: number } {
     return { x: this.clusterRoot.x, y: this.clusterRoot.y, scale: this.clusterRoot.scale.x };
   }
+  /** DEV `__eqxGalaxyFocus` E2E hook: focus phase, sector, door keys. */
+  getDebugFocus(): { phase: string; key: string | null; doors: string[] } { return this.focus.debug(); }
 
-  /** Number of VISIBLE count badges drawn for a sector — the REAL drawn badge
-   *  state, for the `__eqxGalaxyBadgeCount` E2E hook. Lets a spec assert the count
-   *  icons are present the moment the map reveals (the 2026-06-19 pop-in lock:
-   *  hexes + icons together), without flaky pixel screenshots. */
+  /** Focus the selected sector (the info panel's), or back out on null. */
+  setFocus(key: string | null): void {
+    if (this.mode === 'selector' && this.visible) this.focus.set(key, this.screenW, this.screenH, this.isTouch);
+  }
+
+  /** VISIBLE count badges drawn for a sector (`__eqxGalaxyBadgeCount` E2E hook:
+   *  icons present the moment the map reveals, no pixel screenshots). */
   getDebugBadgeCount(sectorKey: string): number {
     const entry = this.entries.find((e) => e.sector.key === sectorKey);
     if (!entry) return 0;
@@ -359,9 +368,7 @@ export class GalaxyMapLayer extends Container {
     return n;
   }
 
-  /** Live territory shrink scales — the REAL drawn per-territory scale, keyed by
-   *  OWNER id (NEUTRAL_OWNER today). DEV `__eqxGalaxyTerritoryScale` E2E hook
-   *  (asserts the whole contiguous region scales as one unit on hover). */
+  /** Drawn per-territory shrink scale by OWNER id (`__eqxGalaxyTerritoryScale`). */
   getDebugTerritoryScales(): Record<string, number> {
     const out: Record<string, number> = {};
     for (let i = 0; i < this.territories.length; i++) {
@@ -375,10 +382,10 @@ export class GalaxyMapLayer extends Container {
     this.visible = open;
     if (!open) {
       this.clearHover();
+      this.focus.reset();
       return;
     }
-    // Equinox Phase 7 (Item 1) — re-frame on (re)open so the in-game warp map
-    // auto-zooms to the current sector + its neighbours each time it's shown.
+    // Re-frame on (re)open: the warp map zooms to the current sector + links.
     if (!wasVisible && this.screenW > 0 && this.screenH > 0) {
       this._seedW = 0;
       this._seedH = 0;
@@ -423,6 +430,7 @@ export class GalaxyMapLayer extends Container {
     if (sig !== this.ownershipSig) {
       this.ownershipSig = sig;
       this.rebuildTerritoryGrouping();
+      this.focus.refresh();
     } else {
       // Control (split, threat, lock, trend) can change without an owner flip.
       this.repaint();
@@ -523,6 +531,7 @@ export class GalaxyMapLayer extends Container {
     this._seedH = 0;
     this.hoveredTerritory = -1;
     this.clearHover();
+    this.focus.reset();
     this.repaint();
     if (this.screenW > 0 && this.screenH > 0) this.resize(this.screenW, this.screenH);
   }
@@ -598,10 +607,8 @@ export class GalaxyMapLayer extends Container {
     if (key === this.hoveredSectorKey) return;
     this.hoveredSectorKey = key;
     this.repaint();
-    // Equinox Phase 9 — anchor the DESKTOP tooltip ABOVE the hovered hex's CENTRE
-    // (not down-right of the pointer). Emit the hex's TOP-centre in screen space
-    // (clusterRoot transform ∘ the BASE hex position, invariant under the
-    // hover-shrink), so the React tooltip floats centred just above the sector.
+    // Anchor the desktop tooltip above the hovered hex: its TOP-centre in screen
+    // space (clusterRoot ∘ BASE hex position, so hover-shrink can't move it).
     // Runs only on hover CHANGE (deduped above), never per-frame — `.find` is fine.
     // Off-map (key === null, a clear) falls back to the raw pointer coords.
     if (key === null) {
@@ -667,15 +674,14 @@ export class GalaxyMapLayer extends Container {
     if (this.mode === 'selector') {
       this.panZoomCamera.setScreenSize(screenW, screenH);
       if (screenW !== this._seedW || screenH !== this._seedH) {
-        // Equinox Phase 7 (Item 1) — when the player IS in a sector (the in-game
-        // warp map), auto-zoom to frame the current sector + its neighbours (the
-        // warp targets); on the landing map (no current sector) frame the whole
-        // galaxy.
+        // In a sector (the warp map) frame it + its warp targets; on the
+        // landing map frame the whole galaxy.
         const frame = this.warpFrame(screenW, screenH);
         this.panZoomCamera.setZoom(frame ? frame.scale : scale);
         this.panZoomCamera.moveCenter(frame ? frame.cx : focalX, frame ? frame.cy : focalY);
         this._seedW = screenW;
         this._seedH = screenH;
+        this.focus.onResize(screenW, screenH);
       }
       return;
     }
@@ -768,9 +774,7 @@ export class GalaxyMapLayer extends Container {
       });
       container.addChild(hex);
 
-      // The bold contiguous-territory outline is drawn per-territory in
-      // buildTerritoryOutlines (Equinox Phase 9 item 4 — applies to neutral
-      // territories too), not per-hex here.
+      // The territory outline is drawn per-territory (buildTerritoryOutlines).
 
       const label = new Text({
         text: s.name,
@@ -1013,7 +1017,9 @@ export class GalaxyMapLayer extends Container {
     // The active territory (pointer-hovered, else the current sector's) eases
     // toward HOVER_SHRINK_SCALE; every other eases back to 1.0. Lerping ALL of them
     // each frame IS the smooth incoming/outgoing transition.
-    const active = this.hoveredTerritory >= 0 ? this.hoveredTerritory : this.currentTerritoryIndex();
+    this.focus.tick(Ticker.shared.deltaMS);
+    // No shrink in focus: the veil's hole is cut at the unshrunk hex.
+    const active = this.focus.key !== null ? -1 : this.hoveredTerritory >= 0 ? this.hoveredTerritory : this.currentTerritoryIndex();
     const territoryCount = this.territoryContainers.length;
     for (let i = 0; i < territoryCount; i++) {
       // #1 — never shrink when the whole galaxy is ONE territory (all-neutral):

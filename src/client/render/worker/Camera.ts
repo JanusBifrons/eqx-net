@@ -181,13 +181,12 @@ export class Camera {
   // Follow state
   private followTarget: { x: number; y: number } | null = null;
 
-  // One-shot glide state (Phase 4 WS-A2 smooth ship-switch). When active, the
-  // camera centre eases from `glideFromX/Y` to `glideToX/Y` over `glideDurMs`,
-  // OVERRIDING the follow target each tick so a high-`followLerpFactor` follow
-  // (production gameplay = 1, i.e. instant snap) cannot yank the view to the new
-  // ship mid-transition. It is driven by `glideElapsedMs` (NOT pose
-  // interpolation), so it never trips the snapshot teleport guard (Risk #4).
+  // One-shot glide (WS-A2): the centre eases from glideFrom to glideTo over
+  // glideDurMs, overriding follow; driven by elapsed ms, never pose
+  // interpolation. glideToScale > 0 also eases the zoom (galaxy focus view).
   private gliding = false;
+  private glideFromScale = 1;
+  private glideToScale = 0;
   private glideFromX = 0;
   private glideFromY = 0;
   private glideToX = 0;
@@ -299,16 +298,18 @@ export class Camera {
 
   /**
    * Phase 4 WS-A2 — kick off a ONE-SHOT eased camera glide from the current
-   * screen-centre world point to `(worldX, worldY)` over `durationMs`. Used by
-   * the smooth ship-switch: the camera lerps from the old view to the new ship
-   * instead of snapping. While gliding, `tick()` ignores the follow target (so a
-   * `followLerpFactor: 1` follow can't snap mid-glide) and drives the centre by
-   * the eased fraction. It is driven by elapsed wall-clock ms — INDEPENDENT of
-   * pose interpolation — so it never trips the snapshot teleport guard. Caller
+   * screen-centre world point to `(worldX, worldY)` over `durationMs` (the
+   * smooth ship-switch, the galaxy focus view). While gliding, `tick()` ignores the follow target and
+   * drives the centre by the eased fraction of elapsed wall ms (never pose
+   * interpolation, so it never trips the snapshot teleport guard). Caller
    * passes the destination in the camera's own (pixi-down) world space.
+   * `toScale` > 0 also eases the zoom there (log space, clamped).
    */
-  glideTo(worldX: number, worldY: number, durationMs: number): void {
+  glideTo(worldX: number, worldY: number, durationMs: number, toScale = 0): void {
     const c = this.center;
+    this.glideFromScale = this.target.scale.x;
+    this.glideToScale = toScale > 0 ? this.clampScale(toScale) : 0;
+    if (this.glideToScale > 0) { this.targetScale = this.glideToScale; this.hasZoomTarget = false; }
     this.glideFromX = c.x;
     this.glideFromY = c.y;
     this.glideToX = worldX;
@@ -566,14 +567,13 @@ export class Camera {
       this.momentum.step(this.target);
     }
 
-    // One-shot glide (WS-A2) — OVERRIDES follow while active. Eased (ease-in-out
-    // cubic) fraction from the captured start point to the destination, driven
-    // by elapsed ms (framerate-independent). On completion it snaps exactly to
-    // the destination and clears, handing the camera back to follow.
+    // One-shot glide (WS-A2) — OVERRIDES follow while active; eased by elapsed
+    // ms, it snaps exactly to the destination at the end, then clears.
     if (this.gliding && this.screenW > 0 && this.screenH > 0) {
       this.glideElapsedMs += dtMs;
       const t = Math.min(1, this.glideElapsedMs / this.glideDurMs);
       const e = glideEase(t); // ease-in-out cubic
+      if (this.glideToScale > 0) this.target.scale.set(this.glideFromScale * Math.pow(this.glideToScale / this.glideFromScale, e));
       // Glide to the LIVE follow target when there is one (the ship you just
       // took keeps flying during the glide): a fixed end point left the camera
       // that far behind, and the follow snapped it on at the end (a jump the
