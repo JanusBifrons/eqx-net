@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   FIXED_FACTIONS, LIVERY_EDGES, MINOR_FACTIONS, PLAYER_LIVERY, REGION_POWER_IDS, SIGIL_COUNT,
-  claimFactionLook, factionLookOf, factionLookVersion, factionLooksWire, freeSigilsFor, isLookFree, setFactionLooks,
+  claimFactionLook, factionLookOf, factionLookVersion, factionLooksWire, factionLooksWelcomeField, freeSigilsFor, isLookFree, setFactionLooks,
   teamColorOf, teamEdgeOf, teamSigilOf,
 } from './factions.js';
 
@@ -119,6 +119,14 @@ describe('claimed looks (unique colour + sigil pairs)', () => {
     expect(freeSigilsFor(5)).not.toContain(42);
     expect(freeSigilsFor(5)).toHaveLength(all - 1);
     expect(freeSigilsFor(5, 'player-a')).toContain(42);
+  });
+
+  it('the welcome carries factionLooks only once a look is claimed (older strict clients keep joining)', () => {
+    setFactionLooks([]);
+    expect(factionLooksWelcomeField()).toEqual({});
+    expect('factionLooks' in factionLooksWelcomeField()).toBe(false);
+    setFactionLooks([{ factionId: 'player-a', colorSlot: 1, sigil: 1 }]);
+    expect(factionLooksWelcomeField()).toEqual({ factionLooks: [{ factionId: 'player-a', colorSlot: 1, sigil: 1 }] });
   });
 
   it('setFactionLooks replaces the set, skips clashes, and bumps the version only on change', () => {
