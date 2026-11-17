@@ -8,9 +8,11 @@
  */
 import type { StructureStyleDef, StyleDrawer } from './structureStyleKit.js';
 import { STYLE_A } from './structureStyleA.js';
+import { STYLE_B } from './structureStyleB.js';
 
 export const STRUCTURE_STYLES = {
   a: STYLE_A,
+  b: STYLE_B,
 } as const satisfies Record<string, StructureStyleDef>;
 
 export type StructureStyleId = 'current' | keyof typeof STRUCTURE_STYLES;
