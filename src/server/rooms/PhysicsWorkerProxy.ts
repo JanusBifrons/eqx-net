@@ -81,6 +81,11 @@ export type WorkerCmd =
    *  `ForceFieldSubsystem`; nothing else posts these. */
   | { type: 'SET_FORCE_FIELD';    id: string; field: ForceField }
   | { type: 'REMOVE_FORCE_FIELD'; id: string }
+  /** Structure-restyle 2d: attach a structure's rig solid parts
+   *  (`World.attachRig`), and start / clear the clip on it (`World.setRigClip`;
+   *  `startTick` in game ticks, target in the structure's frame). */
+  | { type: 'RIG_ATTACH'; id: string; rigId: string }
+  | { type: 'RIG_CLIP';   id: string; clipId: string | null; startTick: number; targetX?: number; targetY?: number }
   /** Several commands in ONE message, handled in order with no physics step
    *  between them (`beginBatch` / `endBatch`): one wreck's piece spawns and
    *  kicks, so every piece starts on the same step. */

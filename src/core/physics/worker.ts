@@ -35,6 +35,7 @@ import { tickInputQueue, type QueuedInput } from './inputQueue.js';
 import { drainContacts } from './contactDrain.js';
 import { advanceSchedule, tickPeriodMs, type CatchUpResult } from './catchUp.js';
 import { WakeCensus, WAKE_CENSUS_EVERY_TICKS } from './wakeCensus.js';
+import { rigById } from '../articulation/rigCatalogue.js';
 import type { Vec2 } from '../swarm/asteroidShape.js';
 import {
   SEQLOCK_IDX,
@@ -143,8 +144,13 @@ interface RemoveWallCmd     { type: 'REMOVE_WALL';     id: string }
 /** Force fields (teleporter pad push today; PhysicsWorld.setForceField, forceFields.ts). */
 interface SetForceFieldCmd    { type: 'SET_FORCE_FIELD';    id: string; field: ForceField }
 interface RemoveForceFieldCmd { type: 'REMOVE_FORCE_FIELD'; id: string }
+/** Structure-restyle 2d: give a structure body its rig's solid parts
+ *  (`PhysicsWorld.attachRig`, rig from `rigById`), and start / clear the clip
+ *  playing on it (`setRigClip`; game ticks, target in the host frame). */
+interface RigAttachCmd { type: 'RIG_ATTACH'; id: string; rigId: string }
+interface RigClipCmd   { type: 'RIG_CLIP';   id: string; clipId: string | null; startTick: number; targetX?: number; targetY?: number }
 interface BatchCmd { type: 'BATCH'; cmds: WorkerCommand[] } // in order, no step between (one wreck's pieces)
-type WorkerCommand = SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiIntentCmd | AiInputsCmd | ClockRateCmd | SetPositionCmd | WarpRetargetCmd | RekeyShipCmd | SetHullExposedCmd | SetStatMulCmd | MissileImpulseCmd | WreckKickCmd | UnfixBodyCmd | WreckImpulseCmd | WreckRigidImpulseCmd | SpawnWallCmd | SetWallActiveCmd | RemoveWallCmd | SetForceFieldCmd | RemoveForceFieldCmd | BotWarpCmd | SetTimeScaleCmd | BatchCmd;
+type WorkerCommand = SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiIntentCmd | AiInputsCmd | ClockRateCmd | SetPositionCmd | WarpRetargetCmd | RekeyShipCmd | SetHullExposedCmd | SetStatMulCmd | MissileImpulseCmd | WreckKickCmd | UnfixBodyCmd | WreckImpulseCmd | WreckRigidImpulseCmd | SpawnWallCmd | SetWallActiveCmd | RemoveWallCmd | SetForceFieldCmd | RemoveForceFieldCmd | RigAttachCmd | RigClipCmd | BotWarpCmd | SetTimeScaleCmd | BatchCmd;
 
 /** Pool commands (main → pooled worker): host / free one sector's world. */
 interface AddWorldCmd    { type: 'ADD_WORLD'; worldId: number; sab: SharedArrayBuffer }
@@ -459,6 +465,15 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
         physics.removeForceField(cmd.id);
         break;
       }
+      case 'RIG_ATTACH': {
+        const rig = rigById(cmd.rigId);
+        if (rig) physics.attachRig(cmd.id, rig);
+        break;
+      }
+      case 'RIG_CLIP': {
+        physics.setRigClip(cmd.id, cmd.clipId, cmd.startTick, cmd.targetX, cmd.targetY);
+        break;
+      }
     }
   };
 
@@ -559,6 +574,9 @@ async function createWorld(sab: SharedArrayBuffer, post: (msg: { type: string; [
     // without changing Rapier's per-step dt.
     const rawRate = u32[CLOCK_RATE_IDX] ?? 0;
     const clockRate = rawRate === 0 ? 1.0 : rawRate / CLOCK_RATE_SCALE;
+    // Rig parts (structure-restyle 2d): their pose at the tick this step
+    // produces (snapshot serverTick = tick + 1) is the next kinematic target.
+    physics.stepRigs(tick + 1);
     physics.tick((TICK_MS / 1000) * clockRate, eventQueue);
     tick++;
 

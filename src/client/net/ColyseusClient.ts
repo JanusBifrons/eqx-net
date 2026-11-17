@@ -3810,7 +3810,10 @@ export class ColyseusGameClient {
         snap.serverTick,
         this.inputTick,
         ackedTick,
-        () => {
+        (t) => {
+          // Structure rig parts (structure-restyle 2d) replay on the same
+          // tick numbering as the live loop below.
+          this.predWorld?.stepRigs(t + 1);
           // Remote-ship Stage-3 forward-prediction only. Drones carry no
           // client brain post-pivot — they are interpolated from the wire,
           // never re-simmed in replay. One path: interpolation (the
@@ -5584,6 +5587,9 @@ export class ColyseusGameClient {
       // applyInput, to match the server's "post-step state → AI" ordering.)
       // Always advance physics — remote ships and obstacles must keep moving even while dead.
       if (this.predWorld) {
+        // Structure rig parts (structure-restyle 2d): pose for the tick this
+        // step produces, as the server worker does (`stepRigs(tick + 1)`).
+        this.predWorld.stepRigs(tick + 1);
         this.predWorld.tick(1 / 60);
         // Stamp the wall-clock time this state STANDS FOR (when its tick
         // boundary was due), so `updateMirror`'s dead-reckon is measured

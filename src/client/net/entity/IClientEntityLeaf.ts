@@ -28,7 +28,7 @@ import type { WreckRockRef } from '@shared-types/messages/wreckDescriptor';
  *  record calls without a Rapier world. */
 export type PredWorldHandle = Pick<
   PhysicsWorld,
-  'hasShip' | 'spawnObstacle' | 'lockBody' | 'setHullExposed' | 'setShipState' | 'setAngularDamping' | 'setSleepSettle'
+  'hasShip' | 'spawnObstacle' | 'lockBody' | 'setHullExposed' | 'setShipState' | 'setAngularDamping' | 'setSleepSettle' | 'attachRig'
 >;
 
 /** Capital wreck geometry (S2b): the pieces rebuilt from the `wrecks[]`

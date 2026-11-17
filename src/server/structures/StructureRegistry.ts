@@ -14,6 +14,7 @@ import type { Hold } from '../../shared-types/goods.js';
 import type { StructureKindId } from '../../shared-types/structureKinds.js';
 import type { TeleportPartner, TeleportRules, TeleportToll, TpPhase } from '../../shared-types/teleport.js';
 import { Connection } from '../../core/structures/Connection.js';
+import type { PlayingClip } from '../../core/articulation/evaluate.js';
 
 export interface StructureRecord {
   /** Swarm entity id (also the binary-wire id). */
@@ -90,6 +91,14 @@ export interface StructureRecord {
    *  component `powered` through a deficit, and is drained first by shield-wall
    *  hits. 0 on every non-battery kind (they have no `powerStorageCapacity`). */
   storedPower: number;
+  /** Structure-restyle 2d: the rig clip playing on this structure (kinds with
+   *  a rig, `rigForStructureKind`), the whole deterministic record
+   *  `{clipId, startTick, target?}` (`PlayingClip`; game ticks, target in
+   *  the structure's frame). Set ONLY by `startStructureRigClip`
+   *  (structureRigClip.ts), which also tells the physics worker. Absent / null
+   *  ⇒ the rig rests. Not on the wire yet: slice 2e adds it to the
+   *  `structureStateWire.ts` row (late join, invariant #16). */
+  rigClip?: PlayingClip | null;
   /** Gates: who the gate opens for (GATE_ACCESS_IDS index; absent ⇒ default). */
   gateAccess?: number;
   /** Phase 4 (Leveling & XP, WS-B4) — structure level (≥ 1). A fresh structure

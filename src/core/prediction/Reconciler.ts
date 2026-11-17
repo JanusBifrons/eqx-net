@@ -219,13 +219,15 @@ export class Reconciler {
    *                        apply remote-ship `lastInput` values from the
    *                        snapshot, advancing remote bodies in lockstep with
    *                        the local replay (forward-prediction).
+   *                        Gets the replayed input tick `t` (structure rig
+   *                        parts are posed for `t + 1`, as in the live loop).
    */
   reconcile(
     serverState: ShipPhysicsState,
     serverTick: number,
     currentTick: number,
     ackedTick: number,
-    perReplayTick?: () => void,
+    perReplayTick?: (t: number) => void,
   ): void {
     const before = this.world.getShipState(this.playerId);
     if (!before) return;
@@ -285,7 +287,7 @@ export class Reconciler {
       // Stage 3 — orchestrator's chance to apply remote-ship `lastInput`
       // before this tick advances. Bodies that don't receive input
       // integrate with damping only (pre-Stage-3 behaviour).
-      if (perReplayTick) perReplayTick();
+      if (perReplayTick) perReplayTick(t);
       this.world.tick(1 / 60);
     }
 
