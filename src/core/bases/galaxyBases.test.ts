@@ -7,7 +7,7 @@ import { regionHeart, sectorController } from '../galaxy/control.js';
 import { isNpcFactionId, npcFactionDef } from '../../shared-types/factions.js';
 import { NPC_STRUCTURES_PER_SECTOR_MAX } from '../../shared-types/structureBudgets.js';
 import { baseProfileFor, contextForSector, hashString } from './baseProfile.js';
-import { HEART_SUPER_GUNS, galaxyBasePlan, heartSuperGunFunds } from './galaxyBases.js';
+import { HEART_SUPER_GUNS, galaxyBasePlan, heartOwner, heartSuperGunFunds } from './galaxyBases.js';
 import { TIER_MAX_STRUCTURES, growBase } from './growBase.js';
 import { chooseBaseSite, grownExtent, type SiteBox } from './baseSite.js';
 import { getSector } from '../galaxy/galaxy.js';
@@ -70,19 +70,15 @@ describe('galaxyBasePlan', () => {
       const heart = regionHeart(region);
       const plan = galaxyBasePlan(heart);
       const locked = plan.filter((b) => b.profile.territoryLock === true);
-      // A heart held alone by a big Traders' hub has no base of the power's
-      // to carry the lock (today: the Crimson Expanse) — no lock there.
-      if (!plan.some((b) => b.profile.ownerFaction === sectorController(heart))) {
-        expect(locked, region).toHaveLength(0);
-        continue;
-      }
+      // Every power heart, the Crimson Expanse's (held alone by a big trade
+      // hub) included: its heart base is the power's, so it carries the lock.
       hearts++;
       expect(locked, region).toHaveLength(1);
       expect(locked[0]!.profile.ownerFaction, region).toBe(sectorController(heart));
       const kinds = growBase(locked[0]!.profile, locked[0]!.seed, getSector(heart)!.features).placements.map((p) => p.kind);
       expect(kinds.filter((k) => k === 'territory_lock'), region).toHaveLength(1);
     }
-    expect(hearts).toBeGreaterThanOrEqual(3);
+    expect(hearts).toBe(regions.length);
     // Nowhere else, held or neutral (the rest of the core included).
     for (const s of GALAXY_SECTORS) {
       if (regionHeart(s.region) === s.key) continue;
@@ -130,14 +126,35 @@ describe('galaxyBasePlan', () => {
 });
 
 describe('galaxy base owners (v4 F2)', () => {
-  it('a controlled sector is its power’s; the Traders run its trade and transit hubs', () => {
+  it('a controlled sector is its power’s; the Traders run its trade and transit hubs, except at its heart', () => {
+    let traderHubs = 0;
     for (const s of GALAXY_SECTORS) {
       const controller = sectorController(s.key);
       if (controller === null) continue;
+      const heart = regionHeart(s.region) === s.key;
       for (const b of galaxyBasePlan(s.key)) {
-        expect(b.profile.ownerFaction, s.key).toBe(b.profile.role === 'trade' || b.profile.role === 'transit' ? 'traders' : controller);
+        const hub = !heart && (b.profile.role === 'trade' || b.profile.role === 'transit');
+        if (hub) traderHubs++;
+        expect(b.profile.ownerFaction, s.key).toBe(hub ? 'traders' : controller);
       }
     }
+    expect(traderHubs, 'the Traders keep their hubs in the other held sectors').toBeGreaterThan(0);
+  });
+
+  it("a power's heart base is always the power's, never the Traders' (owner: hand hub to Crimson)", () => {
+    const regions = [...new Set(GALAXY_SECTORS.map((s) => s.region))];
+    for (const region of regions) {
+      const heart = regionHeart(region);
+      const power = sectorController(heart)!;
+      expect(heartOwner(heart), region).toBe(power);
+      for (const b of galaxyBasePlan(heart)) expect(b.profile.ownerFaction, `${region}/${b.baseId}`).toBe(power);
+    }
+    // The Crimson Expanse heart: its big trade hub stays a trade-hub stronghold
+    // holding the sector alone, with the super-guns — only the owner changed.
+    const crimson = galaxyBasePlan(regionHeart('crimson-expanse'));
+    expect(crimson).toHaveLength(1);
+    const original = baseProfileFor(contextForSector(regionHeart('crimson-expanse')), crimson[0]!.seed);
+    expect(crimson[0]!.profile).toMatchObject({ tier: original.tier, role: original.role, ownerFaction: 'crimson-expanse', superGuns: HEART_SUPER_GUNS, territoryLock: true });
   });
 
   it('neutral ground is shared by minor factions, powers and the Traders', () => {
