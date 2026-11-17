@@ -896,6 +896,7 @@ export class PixiRenderer implements IRenderer {
       // Machined turrets ride the new effects (rings in the bakes, baked guns).
       this._artCtx.turrets = this._artOpts.fx === true;
       if (this._artOpts.livery) this._artCtx.livery = this._artOpts.livery;
+      if (this._artOpts.structLivery) this._artCtx.structLivery = true;
       this.mountVisuals.setArt(this._artCtx);
       // Warm-up: bake the likely art now (this runs on the galaxy map /
       // warp screen), behind anything that appears on screen meanwhile.

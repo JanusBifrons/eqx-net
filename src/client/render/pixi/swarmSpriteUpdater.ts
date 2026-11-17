@@ -183,7 +183,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
       : entry.kind === 1 && entry.shipKind
         ? shipArtHandleForEntity(ctx.art, spriteKey, entry.shipKind, entry.faction)
         : entry.kind === 2 && entry.shipKind
-          ? structHandleFor(ctx.art, spriteKey, entry.shipKind, -entry.angle)
+          ? structHandleFor(ctx.art, spriteKey, entry.shipKind, -entry.angle, ctx.art.structLivery === true ? mirror.structures?.get(entityId)?.owner : undefined)
           : entry.kind === 3 && entry.shipKind
             ? scrapHandleFor(ctx.art, spriteKey, entry.shipKind, entry.componentIndex ?? 0)
             : entry.kind === 0 && entry.fieldKey === undefined

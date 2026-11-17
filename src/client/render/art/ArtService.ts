@@ -15,7 +15,7 @@
 import { Rectangle, Texture } from 'pixi.js';
 import { FX_SPECS, isFxId, type FxId, type FxSpec } from './fx/fxTextures.js';
 import { Atlas, PageBudget, type AtlasOpts } from './atlas.js';
-import type { Livery } from './fields.js';
+import type { Livery, StructLivery } from './fields.js';
 import { bakeKey, runBake, seedVariant, type Baked, type BakeJob, type LitMeta } from './bake.js';
 import type { LightingSettings } from './lightingSettings.js';
 import { loadBakes, saveBakes, storeKey } from './bakeStore.js';
@@ -364,10 +364,13 @@ export class ArtService {
     return this.acquire({ type: 'ship', id, paint, ...(rings ? { rings } : {}), ...(dead ? { dead } : {}), ...(livery ? { livery } : {}) }, urgent);
   }
 
-  struct(id: string, seed: number, rot = 0, accent?: number, urgent = true, rings = false): ArtHandle {
-    return this.acquire(rings
+  /** `livery`: the owner's colours and sigil (`?structLivery=1`); its tag
+   *  joins the bake key. Absent = today's job, exactly. */
+  struct(id: string, seed: number, rot = 0, accent?: number, urgent = true, rings = false, livery?: StructLivery): ArtHandle {
+    const job: BakeJob = rings
       ? { type: 'struct', id, seed: seedVariant(seed), rot, accent, rings }
-      : { type: 'struct', id, seed: seedVariant(seed), rot, accent }, urgent);
+      : { type: 'struct', id, seed: seedVariant(seed), rot, accent };
+    return this.acquire(livery ? { ...job, livery } : job, urgent);
   }
 
   /** Queue background bakes for art the player is likely to see soon (see

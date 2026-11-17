@@ -18,12 +18,12 @@ import { NAVAL_BARREL_SPAN } from '../../../core/combat/muzzle.js';
 import { planBowFeatures, type BowFeature } from './bowDetail.js';
 import { sizeClassOf } from '../../../shared-types/shipScale/tuning.js';
 import { railGeom, RAIL_VENTS } from './fx/turretFx.js';
-import { hash01, lin, MAT, newFields, paintOf, PALETTE, setAlbedo, valueNoise, type Fields, type Livery } from './fieldsCore.js';
-import { stampSigils } from './sigil.js';
+import { hash01, lin, MAT, newFields, paintOf, PALETTE, setAlbedo, valueNoise, type Fields, type Livery, type StructLivery } from './fieldsCore.js';
+import { stampSigils, stampSigilSlot } from './sigil.js';
 import { liveryHullGrey, liveryLayout, liveryPaint, paintEnamel, paintLivery, weatherLivery } from './liveryForge.js';
 
 // Primitives and livery live in their own modules; re-exported so callers keep one import.
-export { hash01, lin, MAT, paintOf, PALETTE, valueNoise, type Fields, type Livery, type LiveryEdge, type LiveryTreatment } from './fieldsCore.js';
+export { hash01, lin, MAT, paintOf, PALETTE, valueNoise, type Fields, type Livery, type LiveryEdge, type LiveryTreatment, type StructLivery } from './fieldsCore.js';
 export {
   LIVERY_SHADES, liveryGrey, liveryHullGrey, liveryPaint, liveryShade, paintLivery, TURRET_COVER_REACH, type LiveryShade,
 } from './liveryForge.js';
@@ -552,6 +552,9 @@ export interface StructureForgeOpts {
   accent?: number;
   /** Turret rings to cut into the deck (local world units, Pixi-up), R&D. */
   rings?: ReadonlyArray<{ x: number; y: number; r: number }>;
+  /** The owner's livery (`?structLivery=1`): paints the plan's livery bands
+   *  and stamps the owner's sigil into its slots. Absent = today's bake. */
+  livery?: StructLivery;
 }
 
 const DECK_HEX = 0x1d2433;
@@ -578,7 +581,7 @@ function lum(hex: number): number {
  */
 export function forgeStructure(kindId: string, opts: StructureForgeOpts): Fields {
   const accent = opts.accent ?? (isStructureKindId(kindId) ? getStructureKind(kindId).color : 0x66ccaa);
-  const plan = buildStructureVisual(kindId, { accent, seed: opts.seed ?? 1, omitSpans: true });
+  const plan = buildStructureVisual(kindId, { accent, seed: opts.seed ?? 1, omitSpans: true, ...(opts.livery ? { livery: true } : {}) });
   const fp = plan.footprint;
   const box: Poly = [[-fp.w / 2, -fp.h / 2], [fp.w / 2, -fp.h / 2], [fp.w / 2, fp.h / 2], [-fp.w / 2, fp.h / 2]];
   const side = Math.max(fp.w, fp.h) + 4;
@@ -648,6 +651,23 @@ export function forgeStructure(kindId: string, opts: StructureForgeOpts): Fields
       }
     }
   });
+  // Owner livery (`?structLivery=1`): bands in the owner's enamel, then the
+  // owner's sigil in each slot, before the grime so they weather with the
+  // plating (the beacon's screen is glass: grime skips it).
+  if (opts.livery) {
+    const teamPaint = liveryPaint(opts.livery.team);
+    for (const b of plan.bands ?? []) {
+      const bx0 = Math.max(0, Math.floor(b.x * g.ppu + g.ox)), bx1 = Math.min(g.w - 1, Math.ceil((b.x + b.w) * g.ppu + g.ox) - 1);
+      const by0 = Math.max(0, Math.floor(b.y * g.ppu + g.oy)), by1 = Math.min(g.h - 1, Math.ceil((b.y + b.h) * g.ppu + g.oy) - 1);
+      for (let ty = by0; ty <= by1; ty++) {
+        for (let tx = bx0; tx <= bx1; tx++) {
+          const i = ty * g.w + tx;
+          if (f.cov[i]! > 0.5 && f.mat[i] !== MAT.WINDOW) paintEnamel(f, i, teamPaint, 1);
+        }
+      }
+    }
+    for (const s of plan.sigils ?? []) stampSigilSlot(f, opts.livery.sigil, teamPaint, s.x, s.y, s.r, s.screen === true);
+  }
   // Grime: one low-frequency noise pass over everything but windows.
   for (let ty = 0; ty < g.h; ty++) {
     for (let tx = 0; tx < g.w; tx++) {
