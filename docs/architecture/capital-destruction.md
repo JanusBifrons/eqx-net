@@ -1546,6 +1546,12 @@ before):
     worker and the client predWorld twin run the same rule (#15).
   - A contact or a heavy hit still wakes the piece. It then re-settles in
     a few seconds instead of ~9.
+  - A piece an active tractor field targets never settles: a heavy tow
+    runs far below the settle speed, and sleep zeroes its velocity. While
+    held, its linear damping is capped at `BEAMED_LINEAR_DAMPING` (plain
+    debris drag, 0.06/s = `WRECK_LINEAR_DAMPING`), so a rock piece's 10×
+    drag does not stall the tow; released, its own damping returns (owner
+    2026-11-17). Same `World` pass on the server worker and predWorld (#15).
 - No damping change and no shorter lifetime.
 
 Locks:

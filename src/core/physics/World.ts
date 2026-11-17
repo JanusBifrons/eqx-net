@@ -50,6 +50,12 @@ export const SOFT_CCD_PREDICTION = 48;
  *  is 2 s, at a 0.4 u/s threshold). */
 export const WRECK_SETTLE_STEPS = 30;
 
+/** Linear damping cap while a tractor beam holds a settle body: plain debris
+ *  drag (= `WRECK_LINEAR_DAMPING`, asserted by World.sleepSettle.test.ts), so
+ *  a 10× rock drag does not stall a tow. Released, the body's own damping
+ *  returns. */
+export const BEAMED_LINEAR_DAMPING = 0.06;
+
 export interface ShipPhysicsState {
   x: number;
   y: number;
@@ -974,25 +980,45 @@ export class PhysicsWorld {
    * still wakes on a contact or impulse like any other. Deterministic (pure
    * function of the body's state per step), so the server worker and the
    * client predWorld twin run the same rule from `wreckBodyParams` (#15).
+   * A body that an active tractor field targets never settles: a heavy tow
+   * runs far below the settle speed, and sleep zeroes its velocity
+   * (`tractorHolds`); while held its linear damping is capped at
+   * `BEAMED_LINEAR_DAMPING` (plain debris drag), restored on release.
    * `speed <= 0` removes it. Unknown id ⇒ no-op.
    */
   setSleepSettle(id: string, speed: number, spin: number): void {
     const rec = this.bodies.get(id);
     if (!rec) return;
-    if (!(speed > 0)) { this.settle.delete(id); return; }
+    if (!(speed > 0)) {
+      const old = this.settle.get(id);
+      if (old?.held) rec.body.setLinearDamping(old.base);
+      this.settle.delete(id);
+      return;
+    }
     const s = this.settle.get(id);
     if (s) { s.speed2 = speed * speed; s.spin = spin; s.count = 0; return; }
-    this.settle.set(id, { body: rec.body, speed2: speed * speed, spin, count: 0 });
+    this.settle.set(id, { id, body: rec.body, speed2: speed * speed, spin, count: 0, base: rec.body.linearDamping(), held: false });
   }
 
-  private readonly settle = new Map<string, { body: RAPIER.RigidBody; speed2: number; spin: number; count: number }>();
+  private readonly settle = new Map<string, { id: string; body: RAPIER.RigidBody; speed2: number; spin: number; count: number; base: number; held: boolean }>();
+
+  /** Does an active tractor field target body `id`? (Settle skips it.) */
+  private tractorHolds(id: string): boolean {
+    for (const f of this.forceFields.values()) if (f.kind === 'tractor' && f.active && f.target === id) return true;
+    return false;
+  }
 
   /** One settle pass after a fixed step (alloc-free apart from Rapier's own
    *  `linvel()` getter, as in `getAllShipStates`). */
   private settleStep(): void {
     for (const s of this.settle.values()) {
       const b = s.body;
-      if (b.isSleeping()) { s.count = 0; continue; }
+      const held = this.forceFields.size > 0 && this.tractorHolds(s.id);
+      if (held !== s.held) {
+        s.held = held;
+        b.setLinearDamping(held ? Math.min(s.base, BEAMED_LINEAR_DAMPING) : s.base);
+      }
+      if (held || b.isSleeping()) { s.count = 0; continue; }
       const v = b.linvel();
       if (v.x * v.x + v.y * v.y < s.speed2 && Math.abs(b.angvel()) < s.spin) {
         if (++s.count >= WRECK_SETTLE_STEPS) { b.sleep(); s.count = 0; }

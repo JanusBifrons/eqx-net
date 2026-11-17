@@ -3155,3 +3155,8 @@ Owner: "make it more like micro machines and make fights a bit longer. Also don'
 
 - **Finding:** the barge-mining showcase stalled: the lasers cut the rock into a few pieces, stopped, and the hold stayed at 0. The showcase room had no `sectorKey`, so no roster, so the loot pickup (`forEachLootCollector`) never visited the barge; but the lock step judged "consumable" from cargo capacity minus hold weight (both fine with no roster), so every laser and tractor left pieces nothing would ever take in.
 - **Rule:** when a rule hands work to another system ("nobody targets it, the pickup takes it in"), its gate asks the same predicate that system uses (`SectorRoom.hasHold`), so the two cannot disagree. A showcase or test room that films holds or cargo needs a real `sectorKey`. Lock: `tests/integration/sectorRoom/bargeMiningTake.test.ts`.
+
+## 2026-11-17 — settle-to-sleep zeroes velocity, so a slow tow never arrived
+
+- **Finding:** in the barge mining test, heavy rock pieces under a tractor beam crept ~10 u a minute and never reached the hull. The beam's pull (inverse-square, not mass-scaled) kept a 2,000-mass piece far below its settle speed, so `World.settleStep` put it to sleep every 30 steps, and sleep zeroes the velocity the beam had built up; 10× rock drag ate the rest.
+- **Rule:** a per-body rule that stops bodies (settle, sleep, clamp) must exempt bodies another force is deliberately moving, and drag tuned for loose debris must not apply to a body being hauled. `World.settleStep` skips a tractor-held body and caps its damping at `BEAMED_LINEAR_DAMPING`. Lock: `World.sleepSettle.test.ts` (tow keeps its speed; beamed piece has plain drag), `tests/integration/sectorRoom/bargeMiningTake.test.ts`.
