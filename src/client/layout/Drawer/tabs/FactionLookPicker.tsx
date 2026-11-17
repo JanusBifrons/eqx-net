@@ -1,8 +1,9 @@
 /**
  * Galaxy map 0c — the ship-look picker (the Ship look drawer tab). Pick a
- * colour, then one of the free sigils in it; the preview is the player's own
- * hull forged in that pair by the real livery path (`shipLookPreview.ts`)
- * beside a large copy of the sigil in that colour, and
+ * colour, then one of the free sigils in it; the preview is a few hulls (the
+ * player's own kind plus a small-to-large ladder) forged in that pair by the
+ * real livery path (`shipLookPreview.ts`) beside a large copy of the sigil in
+ * that colour, and
  * "Wear this look" sends `claim_faction_look` (the verdict is a toast).
  *
  * Only free choices show: an emblem another player or faction already wears
@@ -14,6 +15,7 @@ import { useUIStore } from '../../../state/store';
 import { sendClaimFactionLook } from '../../../net/tradeClient';
 import { LOOK_SLOTS, lookChoices, type LookChoice } from '../../../render/art/sigilChoices';
 import { PLAYER_LIVERY, factionLookVersion, packLook, teamSigilOf } from '../../../../shared-types/factions';
+import { getShipKind, isPlayableShipKindId } from '../../../../shared-types/shipKinds';
 import { DETAIL_SX, hex } from './factionsTabStyles';
 
 type Preview = typeof import('../../../render/art/shipLookPreview');
@@ -22,7 +24,19 @@ const TILE = 30;
 const PREVIEW_H = 76;
 const FRAME = { display: 'block', borderRadius: 4, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', boxSizing: 'border-box' } as const;
 const PREVIEW_ROW_SX = { display: 'flex', gap: '4px' } as const;
-const SHIP_STYLE = { ...FRAME, flex: 1, minWidth: 0, height: PREVIEW_H } as const;
+/** Ships the preview shows, small to large, besides the player's own kind. */
+const PREVIEW_LADDER = ['fighter', 'gunship', 'missile-frigate', 'crossguard'] as const;
+const PREVIEW_SHIPS = 4;
+const SHIP_GRID_SX = { flex: 1, minWidth: 0, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px' } as const;
+const SHIP_H = (PREVIEW_H - 4) / 2;
+const SHIP_STYLE = { ...FRAME, width: '100%', height: SHIP_H } as const;
+
+/** The player's own kind plus the ladder, `PREVIEW_SHIPS` of them, small to large. */
+export function previewKinds(own: string): string[] {
+  const out: string[] = isPlayableShipKindId(own) ? [own] : [];
+  for (const k of PREVIEW_LADDER) if (out.length < PREVIEW_SHIPS && !out.includes(k)) out.push(k);
+  return out.sort((a, b) => getShipKind(a).radius - getShipKind(b).radius);
+}
 const SIGIL_STYLE = { ...FRAME, width: PREVIEW_H, height: PREVIEW_H, flexShrink: 0, padding: 6 } as const;
 const SWATCH_ROW_SX = { display: 'flex', flexWrap: 'wrap', gap: '4px', my: 0.75 } as const;
 const GRID_SX = { display: 'grid', gridTemplateColumns: `repeat(auto-fill, ${TILE}px)`, gap: '4px', maxHeight: 4 * (TILE + 4), overflowY: 'auto', py: 0.25 } as const;
@@ -78,6 +92,17 @@ const SigilTile = memo(function SigilTile({ preview, choice, selected, onPick }:
   );
 });
 
+const ShipCell = memo(function ShipCell({ preview, kind, packed }: { preview: Preview | null; kind: string; packed: number | null }): JSX.Element {
+  const ref = useDrawn(preview, (p, c) => {
+    if (packed === null) return;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    c.width = Math.max(1, Math.round(c.clientWidth * dpr));
+    c.height = Math.round(SHIP_H * dpr);
+    p.drawShipLook(c, kind, packed >>> 12, packed & 0xfff);
+  }, [kind, packed]);
+  return <canvas ref={ref} style={SHIP_STYLE} title={getShipKind(kind).displayName} data-testid="faction-look-preview" data-kind={kind} />;
+});
+
 export const FactionLookPicker = memo(function FactionLookPicker({ playerId, knownPlayerIds, onClaimed }: {
   playerId: string | null; knownPlayerIds: readonly string[]; onClaimed: () => void;
 }): JSX.Element {
@@ -103,13 +128,8 @@ export const FactionLookPicker = memo(function FactionLookPicker({ playerId, kno
   const current = choices.find((c) => c.current) ?? null;
   const shown = picked && picked.colorSlot === slot ? picked : current;
 
-  const previewRef = useDrawn(preview, (p, c) => {
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
-    c.width = Math.max(1, Math.round(c.clientWidth * dpr));
-    c.height = Math.round(PREVIEW_H * dpr);
-    if (shown) p.drawShipLook(c, kind, shown.colorSlot, shown.sigil);
-    else if (mine !== null) p.drawShipLook(c, kind, mine >>> 12, mine & 0xfff);
-  }, [kind, shown?.colorSlot, shown?.sigil, mine]);
+  const kinds = useMemo(() => previewKinds(kind), [kind]);
+  const shownPacked = shown ? packLook(shown.colorSlot, shown.sigil) : mine;
   // The big sigil: the same generator as the tiles, in the pair's colour.
   const bigSigilRef = useDrawn(preview, (p, c) => {
     const packed = shown ? packLook(shown.colorSlot, shown.sigil) : mine;
@@ -130,7 +150,9 @@ export const FactionLookPicker = memo(function FactionLookPicker({ playerId, kno
   return (
     <Box data-testid="faction-look-picker">
       <Box sx={PREVIEW_ROW_SX}>
-        <canvas ref={previewRef} style={SHIP_STYLE} data-testid="faction-look-preview" />
+        <Box sx={SHIP_GRID_SX}>
+          {kinds.map((k) => <ShipCell key={k} preview={preview} kind={k} packed={shownPacked} />)}
+        </Box>
         <canvas ref={bigSigilRef} style={SIGIL_STYLE} data-testid="faction-look-sigil-preview" />
       </Box>
       <Box sx={SWATCH_ROW_SX}>

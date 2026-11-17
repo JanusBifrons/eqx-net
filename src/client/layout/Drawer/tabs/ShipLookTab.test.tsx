@@ -18,12 +18,17 @@ vi.mock('../../../net/tradeClient', () => ({
   sendClaimFactionLook: (colorSlot: number, sigil: number) => { claims.push({ colorSlot, sigil }); return true; },
 }));
 // jsdom has no 2D canvas: the forge-backed pictures are stubbed.
-vi.mock('../../../render/art/shipLookPreview', () => ({ drawShipLook: () => undefined, drawSigilTile: () => undefined }));
+const drawn = vi.hoisted(() => [] as Array<{ kind: string; colorSlot: number; sigil: number }>);
+vi.mock('../../../render/art/shipLookPreview', () => ({
+  drawShipLook: (_c: unknown, kind: string, colorSlot: number, sigil: number) => { drawn.push({ kind, colorSlot, sigil }); },
+  drawSigilTile: () => undefined,
+}));
 vi.mock('../../../identity/token', () => ({ loadStoredPlayerId: () => PLAYER }));
 
 describe('ShipLookTab (galaxy map 0c)', () => {
   beforeEach(() => {
     claims.length = 0;
+    drawn.length = 0;
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => VIEW })));
     useUIStore.getState().setDrawerTab('look');
     useUIStore.getState().setDrawerOpen(true);
@@ -36,7 +41,15 @@ describe('ShipLookTab (galaxy map 0c)', () => {
   it('lists free sigils, marks the current look, shows ship and big sigil, and claims a picked one', async () => {
     render(<ShipLookTab />);
     await waitFor(() => expect(fetch).toHaveBeenCalledWith(`/trade/factions?playerId=${PLAYER}`));
-    expect(screen.getByTestId('faction-look-preview')).toBeTruthy();
+    // A few hulls, small to large, each forged in the shown pair.
+    await waitFor(() => expect(drawn.length).toBeGreaterThanOrEqual(3));
+    const ships = screen.getAllByTestId('faction-look-preview').map((c) => c.getAttribute('data-kind'));
+    expect(ships.length).toBeGreaterThanOrEqual(3);
+    expect(ships.length).toBeLessThanOrEqual(4);
+    expect(new Set(ships).size).toBe(ships.length);
+    expect(ships).toContain(useUIStore.getState().selectedShipKind);
+    expect(new Set(drawn.map((d) => d.kind))).toEqual(new Set(ships));
+    expect(new Set(drawn.map((d) => `${d.colorSlot}:${d.sigil}`)).size, 'all in one pair').toBe(1);
     expect(screen.getByTestId('faction-look-sigil-preview')).toBeTruthy();
     expect(screen.getAllByTestId('faction-look-colour')).toHaveLength(12);
     const tiles = screen.getAllByTestId('faction-look-sigil');
