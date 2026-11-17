@@ -75,7 +75,7 @@ describe('warshipDesign fit (plan section 9)', () => {
 });
 
 describe('the catalogue capitals', () => {
-  it('are appended after every existing kind, NPC-only, not pilotable', () => {
+  it('are appended after every existing kind; the classes and fits are pilotable, the styles NPC-only', () => {
     const ids = SHIP_KINDS_LIST.map((k) => k.id);
     // The five classes, then (W2b) each class's style B and C hulls, then
     // (plan section 9) the fitted variants.
@@ -83,7 +83,14 @@ describe('the catalogue capitals', () => {
     // The mining barge (salvage PR 15) follows them; it is no warship.
     const warships = ids.filter((id) => id !== 'barge' && id !== 'barge-look');
     expect(warships.slice(-18)).toEqual([...CAPITAL_CLASS_IDS, ...variants]);
-    for (const id of [...CAPITAL_CLASS_IDS, ...variants]) expect(isPlayableShipKindId(id)).toBe(false);
+    // Player capitals (owner 2026-11-17): the five classes and three fits are
+    // pilotable but owned only (never a random spawn); the -b/-c styles are not.
+    const fits = ['battleship-rail', 'heavy-cruiser-beam', 'battlecruiser-lance'];
+    for (const id of [...CAPITAL_CLASS_IDS, ...fits]) {
+      expect(isPlayableShipKindId(id), id).toBe(true);
+      expect(getShipKind(id).randomSpawn, id).toBe(false);
+    }
+    for (const id of CAPITAL_CLASS_IDS.flatMap((c) => [`${c}-b`, `${c}-c`])) expect(isPlayableShipKindId(id), id).toBe(false);
   });
 
   it('W2b: a style variant is its class in another hull style (same class, size within a few percent)', () => {

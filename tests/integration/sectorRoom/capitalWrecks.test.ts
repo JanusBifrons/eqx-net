@@ -216,7 +216,7 @@ describe('SectorRoom integration — capital wrecks (S2a)', () => {
   }, 25_000);
 
   it("a player capital's death also fractures", async () => {
-    const internal = await boot(true, { pilotCapitals: true });
+    const internal = await boot(true);
     const victim = randomUUID();
     await harness.connectActive(victim, { shipKind: 'battleship', spawnX: 8000, spawnY: 0 });
     await harness.advance(100);

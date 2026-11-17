@@ -84,8 +84,6 @@ export const SHOWCASE_CAPITALS_OPTS = {
   defaultSpawnX: 0,
   defaultSpawnY: Math.round(CAPITAL_CLEAR_Y - 1200),
   maxClients: 4,
-  /** Round 3 D: join `?shipKind=battleship` to fly a capital with helm orders. */
-  pilotCapitals: true,
 };
 
 /** Capitals Phase 3: the same line-up with live drone brains, so a join with

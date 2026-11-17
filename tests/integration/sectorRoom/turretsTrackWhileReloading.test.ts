@@ -66,7 +66,6 @@ describe('SectorRoom integration — capital turrets track while reloading', () 
       testMode: true,
       asteroidConfig: [],
       peacefulDrones: d.peacefulDrones,
-      pilotCapitals: d.pilotCapitals,
       prebuiltStructures: d.prebuiltStructures,
       defaultSpawnX: d.defaultSpawnX,
       defaultSpawnY: d.defaultSpawnY,
