@@ -37,6 +37,12 @@ export const PRESSURE_PER_SHIP = 15;
 //    ≥ CLAIM_AT.
 //  - An EMPTY sector (no raw pressure from anyone) keeps its state, so held
 //    ground stays held until someone turns up to contest it.
+//  - LOCK (owner rule "frozen until destroyed"): while the HOLDER has a live
+//    lock in the sector (`lockedBy` contains it), the holder is never released
+//    and nobody else can claim. Shares still move, so the siege still shows
+//    (challenger, trend, contested). Once the lock is gone the normal rules
+//    resume on the next step. A lock owned by a non-holder does nothing. The
+//    robots' nexus is the robots' lock.
 // ---------------------------------------------------------------------------
 
 /** One side's presence in a sector. */
@@ -108,13 +114,15 @@ function totalRaw(presence: SectorPresence): number {
 
 /**
  * Advance one sector by `dtMs`. Mutates `s`. Deterministic: ties between
- * would-be claimants break by factionId order.
+ * would-be claimants break by factionId order. `lockedBy` = the sides with a
+ * live lock in this sector; only the holder's lock counts (see LOCK above).
  */
 export function stepMultiControl(
   s: MultiControlState,
   presence: SectorPresence,
   opposes: OpposesFn,
   dtMs: number,
+  lockedBy: ReadonlySet<string> | null = null,
 ): ControlStepResult {
   const previousHolder = s.holder;
   if (totalRaw(presence) <= 0) return { flipped: false, previousHolder };
@@ -130,6 +138,8 @@ export function stepMultiControl(
     else s.shares.set(side, next);
   }
 
+  // A locked holder is frozen: never released, so nobody else can claim.
+  if (s.holder && lockedBy?.has(s.holder)) return { flipped: false, previousHolder };
   if (s.holder && (s.shares.get(s.holder) ?? 0) <= RELEASE_AT) s.holder = null;
   if (!s.holder) {
     let best: string | null = null;

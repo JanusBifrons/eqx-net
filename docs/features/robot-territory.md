@@ -45,6 +45,17 @@ sector keeps its holder: a sector the robots took stays robot-held after they
 leave, until someone comes to contest it. Sol starts holding the core and
 each power its region heart; the rest start neutral.
 
+**Locks — frozen until destroyed.** A side that holds a sector can lock it
+down: while the holder has a live lock there, nobody can flip it, however
+many ships they bring. The shares still move, so the map still shows the
+siege (challenger, trend, Contested). Kill the lock and the normal tug of war
+resumes on the next control tick: if the holder's share has already fallen to
+20 or below, it loses the sector at once. A lock only counts for the side
+holding the sector. The robots' living nexus IS the robots' lock: a
+robot-held nexus sector can't be taken until the nexus dies
+(`stepMultiControl(…, lockedBy)`, fed by `RobotTerritory.locksFor`). Player
+lock structures and locks at the power hearts come later.
+
 ## Internals
 
 - `RobotTerritory` (`src/server/livingworld/RobotTerritory.ts`) owns the nexus
@@ -60,9 +71,11 @@ each power its region heart; the rest start neutral.
 ## Tests
 
 - `src/core/territory/sectorControl.multi.test.ts` — targets, bounded rate,
-  claim / hold-through-a-dip / release, contested.
+  claim / hold-through-a-dip / release, contested; a locked holder
+  survives any siege and is released once the lock goes.
 - `src/server/livingworld/RobotTerritory.control.test.ts` — seeding, any side
-  claims, empty sectors keep their holder, who opposes whom.
+  claims, empty sectors keep their holder, who opposes whom; a live nexus
+  locks a robot sector against a big fleet until it dies.
 - `tests/integration/sectorRoom/robotTerritory.test.ts` — real rooms: the nexus
   spawns; a killed robot reinforces at the nexus; a destroyed nexus drops cores
   and returns; the nexus sector is claimed.
