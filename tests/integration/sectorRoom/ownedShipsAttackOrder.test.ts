@@ -86,4 +86,39 @@ describe('SectorRoom integration — the Attack order (RTS Part B slice 8)', () 
     expect(back, 'back at its post').toBeLessThan(R * 0.5);
     await harness.disconnectClient(client);
   }, 60_000);
+
+  // Player capitals: an owned battleship takes the same order. Its turrets
+  // fire on the ordered target, a neutral drone it would otherwise leave alone.
+  it('an owned battleship ordered onto a neutral drone damages it', async () => {
+    const pid = randomUUID();
+    const client = await harness.connectActive(pid, { shipKind: 'battleship', spawnX: 0, spawnY: 0, instantLock: true });
+    const room = harness.getServerRoom()! as unknown as SectorRoom;
+    const state = room.state as SectorState;
+    const internals = room._internals;
+    let sid = '';
+    for (const [, s] of state.ships) if (s.playerId === pid && s.isActive) sid = s.shipInstanceId;
+    client.send('spectate', { type: 'spectate' });
+    await harness.advance(300);
+    expect(internals.fleet.isAttached(sid)).toBe(true);
+    const post = { ...internals.lingeringPoseCache.get(sid)! };
+
+    const R = shipTuning(getShipKind('battleship')).guardRadiusMin;
+    expect(internals.spawnTestDrone('d', post.x, post.y + R * 1.5, 'fighter')).toBe(true);
+    const start = internals.swarmHealth.get('d')!;
+    await harness.advance(1000);
+    expect(internals.swarmHealth.get('d'), 'Defensive: the neutral drone is left alone').toBe(start);
+
+    client.send('fleet_order', { type: 'fleet_order', shipIds: [sid], kind: 'attack', targetId: 'd' });
+    let hit = false;
+    for (let i = 0; i < 120 && !hit; i++) {
+      await harness.advance(250);
+      const h = internals.swarmHealth.get('d');
+      hit = h === undefined || h < start;
+    }
+    expect(hit, 'the ordered battleship damaged the neutral drone').toBe(true);
+    // A battleship broadside can kill a fighter outright (the order then
+    // completes); while it lives, the brain is on the ordered target.
+    if (internals.swarmHealth.has('d')) expect(internals.aiBrainOf(sid)?.getTargetId?.()).toBe('d');
+    await harness.disconnectClient(client);
+  }, 60_000);
 });

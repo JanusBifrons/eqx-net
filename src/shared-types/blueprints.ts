@@ -126,9 +126,17 @@ export function fittedHullMul(fitted: readonly string[]): number {
  *  (agreed with the structures agent; shield_gate so a fenced base can open). */
 export const STARTER_STRUCTURE_KINDS: readonly string[] = [
   'capital', 'connector', 'solar', 'battery', 'miner', 'cargo_bay', 'turret', 'shield_pylon', 'shield_gate',
+  // Sector control: a lock builds from minerals (its 20k cost), never packed.
+  'territory_lock',
 ];
-/** Hulls anyone can fly without building one. */
-export const STARTER_HULL_KINDS: readonly string[] = ['scout', 'fighter'];
+/** Hulls anyone can fly without building one: the starters and the player
+ *  capitals (owner 2026-11-17: free on the ship screen; the -b/-c hull styles
+ *  stay NPC-only). */
+export const STARTER_HULL_KINDS: readonly string[] = [
+  'scout', 'fighter',
+  'destroyer', 'light-cruiser', 'heavy-cruiser', 'battlecruiser', 'battleship',
+  'battleship-rail', 'heavy-cruiser-beam', 'battlecruiser-lance',
+];
 
 export function moduleProduct(id: string): string {
   return `module:${id}`;

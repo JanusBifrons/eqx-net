@@ -995,6 +995,9 @@ export class PixiRenderer implements IRenderer {
     this.shipContainer.addChild(this._warpFx.layer);
     // Warp spool-up: the engines overcharge (glow + sparks, under the hulls).
     this.shipContainer.addChild(this._spoolFx.layer);
+    // Placed rocks and cut rock pieces: one mesh for all of them (rockBatch.ts),
+    // under the hulls and the wreck pieces' cut-edge glow.
+    this.shipContainer.addChild(this._cutField.rockBatch.layer);
 
     // 2026-05-26 heap-growth gate step 12 — pool ctx objects for the
     // per-frame sprite updaters. All fields are permanent references;

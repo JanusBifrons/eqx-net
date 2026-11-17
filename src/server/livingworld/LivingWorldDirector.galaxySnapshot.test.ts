@@ -45,20 +45,25 @@ const OPTS: Partial<LivingWorldOptions> & { rng: () => number; nowMs: () => numb
 };
 
 describe('LivingWorldDirector.galaxySnapshot', () => {
-  it('P3 — a robot-held sector reports the robots as owner; others their controller (F2)', () => {
+  it('the control meter owner wins; undefined falls back to the static controller, null is neutral', () => {
     const rooms = new Map<string, LivingWorldRoom>([
       ['orion-belt', withCounts({ players: 1, enemies: 0, neutrals: 3, structures: 0 })],
       ['sol-prime', withCounts({ players: 0, enemies: 0, neutrals: 0, structures: 0 })],
+      ['vega-reach', withCounts({ players: 0, enemies: 0, neutrals: 0, structures: 0 })],
     ]);
     const director = new LivingWorldDirector(rooms, {
       ...OPTS,
-      hooks: { sectorOwner: (k) => (k === 'orion-belt' ? { factionId: 'robots', contested: true } : null) },
+      hooks: {
+        sectorOwner: (k) => (k === 'orion-belt' ? { factionId: 'robots', contested: true } : k === 'vega-reach' ? null : undefined),
+      },
     });
     director.start();
     try {
       const snap = director.galaxySnapshot();
       expect(snap.find((s) => s.key === 'orion-belt')!.owner).toEqual({ factionId: 'robots', contested: true });
       expect(snap.find((s) => s.key === 'sol-prime')!.owner!.factionId).toBe(getSector('sol-prime')!.region); // core: held
+      // A core sector the meter says nobody holds any more shows as neutral.
+      expect(snap.find((s) => s.key === 'vega-reach')!.owner).toBeNull();
     } finally {
       director.stop();
     }

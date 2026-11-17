@@ -1,7 +1,8 @@
 /**
  * Flagship fleets (wrap-up plan W2a, capitals Phase 5).
  *
- * Keeps `fleetCount` (default 1) capital fleets alive across the galaxy. A
+ * Keeps ONE capital fleet alive per region power (owner 2026-11-17: "one
+ * flagship fleet per power"). A
  * fleet is one capital ship (the flagship, named and never load-shed: it is
  * marked an elite) plus escorts that flock round it. It roams a solar-system
  * sector pocket to pocket: the whole fleet spools and warps together (the NPC
@@ -9,8 +10,21 @@
  * the long one. Every few moves it heads for a gate pocket and crosses into
  * the neighbouring system, arriving at that system's gate facing back.
  *
- * The capital's class follows the sector's power: a power's heartland fields
- * battleships and battlecruisers, neutral ground cruisers.
+ * Owned or scrap: every ship of a fleet is spawned with its power's
+ * `factionId` (`spawnLivingWorldBot`), which the room attributes through its
+ * patrol attribution (`PatrolSubsystem.attachShip`): the ships count for the
+ * power on the sector control meter and engage pilots hostile to it.
+ *
+ * Territory: a fleet spawns at its power's heart (`regionHeart`), or the
+ * nearest sector the power still holds when the heart is lost. It roams only
+ * the sectors its power HOLDS (the live control meter, `liveSectorHolder`;
+ * the static seed when no meter runs). When the sector it is in is no longer
+ * held, it heads home hop by hop toward the nearest held sector (BFS on the
+ * gate graph, preallocated scratch). A power that holds nothing keeps its
+ * fleet where it is, fighting to retake the sector.
+ *
+ * The capital's class follows the power (`powerCapitalKind`): the Sol
+ * Dominion fields a battleship, each frontier power a battlecruiser.
  *
  * Driven by the drone director's `onTick` (control cadence, ~1.5 s), so
  * allocation here is fine. The galaxy map learns of a fleet from the galaxy
@@ -19,11 +33,15 @@
  * `flagships`) so a restart resumes each fleet where it was.
  */
 import { sectorSites, warpDropPoint, type SectorSite } from '../../core/galaxy/sectorSites.js';
-import { sectorController } from '../../core/galaxy/control.js';
-import { getNeighbours, getSector } from '../../core/galaxy/galaxy.js';
+import { z } from 'zod';
+import { regionHeart, sectorController } from '../../core/galaxy/control.js';
+import { GALAXY_FACTIONS, getFaction } from '../../core/galaxy/galaxy.js';
+import { HeldSectorRoutes } from './heldSectorRoutes.js';
+import { REGION_POWER_IDS } from '../../shared-types/factions.js';
+import { liveSectorHolder } from './RobotTerritory.js';
 import type { Bus, BusEventPayloads } from '../../core/events/Bus.js';
 import type { ShipKindId } from '../../shared-types/shipKinds.js';
-import { getShipKind } from '../../shared-types/shipKinds.js';
+import { getShipKind, isShipKindId } from '../../shared-types/shipKinds.js';
 import { CAPITAL_STYLE_VARIANTS } from '../../shared-types/shipKinds/capitals/index.js';
 import type { WorldNotice } from '../../shared-types/worldNotice.js';
 import { serverLogEvent } from '../debug/ServerEventLog.js';
@@ -32,8 +50,8 @@ import type { LivingWorldRoom } from './LivingWorldRoom.js';
 import type { Rng } from './population.js';
 import { gameNow } from '../time/gameTime.js';
 
-export const FLEET_COUNT = 1;
-/** A destroyed fleet's replacement arrives this long after, elsewhere. */
+/** A destroyed fleet's replacement arrives this long after, at its power's
+ *  heart (or the nearest sector the power still holds). */
 export const FLEET_RESPAWN_MS = 15 * 60_000;
 /** Time a fleet holds a pocket before it moves on. */
 export const FLEET_DWELL_MS = 4 * 60_000;
@@ -65,12 +83,22 @@ const ESCORT_SPOOL_LEAD_S = 4.5;
 
 const HULL_NAMES = ['Resolute', 'Indomitable', 'Vanguard', 'Sovereign', 'Tempest', 'Warspite', 'Valiant', 'Dauntless', 'Implacable', 'Majestic', 'Thunderer', 'Formidable'];
 
-/** The capital class for a fleet in `sectorKey` (pure; tests). */
-export function fleetCapitalKind(sectorKey: string, rng: Rng): ShipKindId {
-  const held = sectorController(sectorKey) !== null;
-  const pool: ShipKindId[] = held ? ['battleship', 'battlecruiser'] : ['light-cruiser', 'heavy-cruiser'];
-  return pool[Math.floor(rng() * pool.length) % pool.length]!;
+/** The capital class a power fields (pure; tests): the Sol Dominion, the
+ *  biggest power, a battleship; each frontier power a battlecruiser. Fixed per
+ *  power so a power's flagship is recognisable; its hull style still varies
+ *  per ship (`styledKind`). */
+export function powerCapitalKind(factionId: string): ShipKindId {
+  return factionId === 'core' ? 'battleship' : 'battlecruiser';
 }
+
+/** Default holder lookup: the live control meter, else the static seed. */
+function defaultHolderOf(sectorKey: string): string | null {
+  const live = liveSectorHolder(sectorKey);
+  return live === undefined ? sectorController(sectorKey) : live;
+}
+
+/** Region ids (a power's heart is its region's). */
+const REGION_IDS: ReadonlySet<string> = new Set(GALAXY_FACTIONS.map((f) => f.id));
 
 /**
  * W2b — a capital's hull style (A, B or C), seeded from the ship's own id so
@@ -99,13 +127,16 @@ const CLASS_PREFIX: Partial<Record<string, string>> = {
 };
 
 export interface FleetSummary {
+  factionId: string;
   name: string;
   kind: ShipKindId;
   sectorKey: string;
   escorts: number;
 }
 
-/** One fleet as persisted (abstract: no poses, no ids). */
+/** One fleet as persisted (abstract: no poses, no ids). `factionId` was
+ *  appended with per-power fleets: an older save has none, and its fleet is
+ *  dropped (each power spawns fresh at home). */
 export interface FleetState {
   sectorKey: string;
   pocketId: string;
@@ -113,18 +144,41 @@ export interface FleetState {
   name: string;
   moves: number;
   escorts: ShipKindId[];
+  factionId?: string;
 }
 export interface FlagshipStatePayload { version: number; fleets: FleetState[] }
 export const FLAGSHIP_STATE_VERSION = 1;
 
+const ShipKindSchema = z.string().refine(isShipKindId).transform((k) => k as ShipKindId);
+/** The persisted row (tolerant: unknown keys pass, `factionId` optional). */
+const FlagshipStateSchema = z.object({
+  version: z.number(),
+  fleets: z.array(z.object({
+    sectorKey: z.string(),
+    pocketId: z.string(),
+    kind: ShipKindSchema,
+    name: z.string(),
+    moves: z.number(),
+    escorts: z.array(ShipKindSchema),
+    factionId: z.string().optional(),
+  })),
+});
+
+/** Validate a persisted payload; null when malformed or another version. */
+export function parseFlagshipState(raw: unknown): FlagshipStatePayload | null {
+  const r = FlagshipStateSchema.safeParse(raw);
+  return r.success && r.data.version === FLAGSHIP_STATE_VERSION ? r.data : null;
+}
+
 export interface FlagshipDirectorOptions {
   rng?: Rng;
   nowMs?: () => number;
-  fleetCount?: number;
+  /** The powers that field a fleet (default: the four region powers). */
+  powers?: readonly string[];
+  /** Who holds a sector (default: the live control meter, else the seed). */
+  holderOf?: (sectorKey: string) => string | null;
   respawnMs?: number;
   dwellMs?: number;
-  /** Restrict the first spawn to this sector (tests). */
-  firstSector?: string;
   /** Persisted state to resume (null ⇒ fresh). */
   restore?: FlagshipStatePayload | null;
   /** Write the state (throttled by the caller's cadence: every `persistMs`). */
@@ -133,6 +187,8 @@ export interface FlagshipDirectorOptions {
 }
 
 interface Fleet {
+  /** The power the fleet flies for (owned or scrap). */
+  factionId: string;
   alive: boolean;
   sectorKey: string | null;
   pocketId: string;
@@ -143,6 +199,8 @@ interface Fleet {
   moves: number;
   respawnAtMs: number;
   nextMoveAtMs: number;
+  /** No early re-home decision before this (a move or crossing settling). */
+  settleUntilMs: number;
   nextWanderAtMs: number;
   /** Set while heading for a gate to leave the system: the neighbour. */
   leavingFor: string | null;
@@ -171,6 +229,8 @@ export class FlagshipDirector {
   }> = [];
   private generation = 0;
   private nextPersistAtMs = 0;
+  private readonly holderOf: (sectorKey: string) => string | null;
+  private readonly routes: HeldSectorRoutes;
 
   constructor(
     private readonly rooms: ReadonlyMap<string, LivingWorldRoom>,
@@ -180,12 +240,14 @@ export class FlagshipDirector {
     this.now = opts.nowMs ?? gameNow;
     this.respawnMs = opts.respawnMs ?? FLEET_RESPAWN_MS;
     this.dwellMs = opts.dwellMs ?? FLEET_DWELL_MS;
-    const n = opts.fleetCount ?? FLEET_COUNT;
-    const restored = opts.restore?.version === FLAGSHIP_STATE_VERSION ? opts.restore.fleets : [];
-    for (let i = 0; i < n; i++) {
+    this.holderOf = opts.holderOf ?? defaultHolderOf;
+    this.routes = new HeldSectorRoutes(rooms.keys(), this.holderOf);
+    const restored = parseFlagshipState(opts.restore)?.fleets ?? [];
+    for (const factionId of opts.powers ?? REGION_POWER_IDS) {
       this.fleets.push({
-        alive: false, sectorKey: null, pocketId: '', leadId: '', escorts: [], kind: 'light-cruiser', name: '',
-        moves: 0, respawnAtMs: 0, nextMoveAtMs: 0, nextWanderAtMs: 0, leavingFor: null, resume: restored[i] ?? null, escortDrop: null,
+        factionId, alive: false, sectorKey: null, pocketId: '', leadId: '', escorts: [], kind: 'light-cruiser', name: '',
+        moves: 0, respawnAtMs: 0, nextMoveAtMs: 0, settleUntilMs: 0, nextWanderAtMs: 0, leavingFor: null,
+        resume: restored.find((r) => r.factionId === factionId) ?? null, escortDrop: null,
       });
     }
   }
@@ -236,7 +298,7 @@ export class FlagshipDirector {
   fleetsView(): FleetSummary[] {
     const out: FleetSummary[] = [];
     for (const f of this.fleets) {
-      if (f.alive && f.sectorKey !== null) out.push({ name: f.name, kind: f.kind, sectorKey: f.sectorKey, escorts: f.escorts.length });
+      if (f.alive && f.sectorKey !== null) out.push({ factionId: f.factionId, name: f.name, kind: f.kind, sectorKey: f.sectorKey, escorts: f.escorts.length });
     }
     return out;
   }
@@ -252,7 +314,7 @@ export class FlagshipDirector {
     const fleets: FleetState[] = [];
     for (const f of this.fleets) {
       if (!f.alive || f.sectorKey === null) continue;
-      fleets.push({ sectorKey: f.sectorKey, pocketId: f.pocketId, kind: f.kind, name: f.name, moves: f.moves, escorts: f.escorts.map((e) => e.kind) });
+      fleets.push({ sectorKey: f.sectorKey, pocketId: f.pocketId, kind: f.kind, name: f.name, moves: f.moves, escorts: f.escorts.map((e) => e.kind), factionId: f.factionId });
     }
     return { version: FLAGSHIP_STATE_VERSION, fleets };
   }
@@ -266,7 +328,7 @@ export class FlagshipDirector {
   private spawn(f: Fleet, nowMs: number): void {
     const resume = f.resume;
     f.resume = null;
-    const sectorKey = resume && this.rooms.has(resume.sectorKey) ? resume.sectorKey : this.pickSector();
+    const sectorKey = resume && this.rooms.has(resume.sectorKey) ? resume.sectorKey : this.routes.homeSector(REGION_IDS.has(f.factionId) ? regionHeart(f.factionId) : null, f.factionId);
     if (sectorKey === null) return;
     const sites = sectorSites(sectorKey);
     // A fleet arrives through a gate (fresh) or where it was (restored).
@@ -277,15 +339,17 @@ export class FlagshipDirector {
     const escorts = resume?.escorts ?? [...FLEET_ESCORT_KINDS];
     this.assignIds(f, escorts);
     // Each capital in the fleet takes its own hull style (W2b).
-    const kind = resume?.kind ?? styledKind(fleetCapitalKind(sectorKey, this.rng), f.leadId);
+    const kind = resume?.kind ?? styledKind(powerCapitalKind(f.factionId), f.leadId);
     if (!resume) for (const e of f.escorts) e.kind = styledKind(e.kind, e.id);
     const name = resume?.name ?? `${CLASS_PREFIX[classOf(kind)] ?? 'Capital'} ${this.pick(HULL_NAMES) ?? 'Resolute'}`;
     if (!this.spawnFleetAt(f, sectorKey, site, kind, name)) return;
     Object.assign(f, { alive: true, sectorKey, pocketId: site.id, kind, name, moves: resume?.moves ?? 0, leavingFor: null });
     f.nextMoveAtMs = nowMs + this.dwellMs;
+    f.settleUntilMs = nowMs + MOVE_SETTLE_MS;
     f.nextWanderAtMs = nowMs;
-    serverLogEvent('flagship_spawned', { name, kind, sectorKey, pocket: site.id, escorts: f.escorts.length });
-    if (!resume) this.announce({ type: 'world_notice', kind: 'elite_spawned', message: `Capital ship sighted: the ${name}!` });
+    serverLogEvent('flagship_spawned', { factionId: f.factionId, name, kind, sectorKey, pocket: site.id, escorts: f.escorts.length });
+    const power = getFaction(f.factionId)?.displayName ?? f.factionId;
+    if (!resume) this.announce({ type: 'world_notice', kind: 'elite_spawned', message: `${power} capital sighted: the ${name}!` });
   }
 
   /** Spawn the flagship on `site`'s rim and the escorts round it. False when
@@ -295,7 +359,7 @@ export class FlagshipDirector {
     if (!room || !room.hasFreeSlot()) return false;
     const a = this.rng() * Math.PI * 2;
     const x = site.x + Math.cos(a) * site.r, y = site.y + Math.sin(a) * site.r;
-    if (!room.spawnLivingWorldBot({ botId: f.leadId, kind, x, y })) return false;
+    if (!room.spawnLivingWorldBot({ botId: f.leadId, kind, x, y, factionId: f.factionId })) return false;
     if (room.markElite?.(f.leadId, name, FLAGSHIP_HEALTH_MUL, FLAGSHIP_BOUNTY) !== true) {
       room.despawnLivingWorldBot(f.leadId);
       return false;
@@ -305,7 +369,7 @@ export class FlagshipDirector {
       const e = f.escorts[i]!;
       const ea = (i / f.escorts.length) * Math.PI * 2;
       const ring = escortRing(kind, e.kind);
-      if (room.spawnLivingWorldBot({ botId: e.id, kind: e.kind, x: x + Math.cos(ea) * ring, y: y + Math.sin(ea) * ring })) kept.push(e);
+      if (room.spawnLivingWorldBot({ botId: e.id, kind: e.kind, x: x + Math.cos(ea) * ring, y: y + Math.sin(ea) * ring, factionId: f.factionId })) kept.push(e);
     }
     f.escorts = kept;
     f.kind = kind;
@@ -333,15 +397,6 @@ export class FlagshipDirector {
     f.escorts = escorts.map((kind, i) => ({ id: `${FLAGSHIP_BOT_ID_PREFIX}${gen}-e${i}`, kind }));
   }
 
-  private pickSector(): string | null {
-    const keys = [...this.rooms.keys()].filter((k) => getSector(k) !== undefined && sectorSites(k).length > 1);
-    if (this.opts.firstSector !== undefined && this.rooms.has(this.opts.firstSector) && this.generation === 0) return this.opts.firstSector;
-    const taken = new Set<string>();
-    for (const f of this.fleets) if (f.alive && f.sectorKey !== null) taken.add(f.sectorKey);
-    const free = keys.filter((k) => !taken.has(k));
-    return this.pick(free.length > 0 ? free : keys) ?? null;
-  }
-
   private pick<T>(xs: readonly T[]): T | undefined {
     return xs.length === 0 ? undefined : xs[Math.floor(this.rng() * xs.length) % xs.length];
   }
@@ -363,6 +418,12 @@ export class FlagshipDirector {
     if (f.escortDrop !== null && (ph !== 1 || this.flagshipNearlyAligned(f, lead))) this.sendEscorts(f, room);
     if (ph === 1 || ph === 2) return;
     this.formUp(room, f);
+    // Its sector is no longer its power's: head home now (the move picks the
+    // hop), not after a full dwell. Holding nothing, it stays and fights.
+    if (f.leavingFor === null && nowMs < f.nextMoveAtMs && nowMs >= f.settleUntilMs
+      && this.holderOf(f.sectorKey!) !== f.factionId && this.routes.rehomeHop(f.sectorKey, f.factionId) !== null) {
+      f.nextMoveAtMs = nowMs;
+    }
     // Leaving the system: once at the gate, cross.
     if (f.leavingFor !== null && nowMs >= f.nextMoveAtMs) {
       this.crossTo(f, room, f.leavingFor, nowMs);
@@ -411,13 +472,12 @@ export class FlagshipDirector {
     const sites = sectorSites(f.sectorKey!);
     const hop = (f.moves + 1) % FLEET_SECTOR_HOP_EVERY === 0;
     let dest: SectorSite | undefined;
-    if (hop) {
-      const neighbours = getNeighbours(f.sectorKey!).filter((n) => this.rooms.has(n.key));
-      const to = this.pick(neighbours);
-      if (to) {
-        dest = sites.find((s) => s.id === `gate:${to.key}`);
-        if (dest) f.leavingFor = to.key;
-      }
+    // Home first (its sector was lost); else, on a hop move, a neighbour its
+    // power holds. Never into a sector another side holds.
+    const to = this.routes.rehomeHop(f.sectorKey, f.factionId) ?? (hop ? this.routes.heldNeighbour(f.sectorKey, f.factionId, this.rng) : null);
+    if (to !== null) {
+      dest = sites.find((s) => s.id === `gate:${to}`);
+      if (dest) f.leavingFor = to;
     }
     dest ??= this.pick(sites.filter((s) => s.id !== f.pocketId && s.kind !== 'gate'));
     if (!dest) return;
@@ -433,6 +493,7 @@ export class FlagshipDirector {
     // A gate is a short stop before crossing; a pocket is a full dwell.
     f.nextMoveAtMs = nowMs + (f.leavingFor !== null ? MOVE_SETTLE_MS : this.dwellMs + MOVE_SETTLE_MS);
     f.nextWanderAtMs = nowMs + MOVE_SETTLE_MS;
+    f.settleUntilMs = nowMs + MOVE_SETTLE_MS;
     serverLogEvent('flagship_warp', { name: f.name, sectorKey: f.sectorKey, to: dest.id });
   }
 
@@ -477,13 +538,16 @@ export class FlagshipDirector {
       // Destination full after all: the fleet comes back where it was next tick.
       f.alive = false;
       f.respawnAtMs = nowMs;
-      f.resume = { sectorKey: fromKey, pocketId: f.pocketId, kind: f.kind, name: f.name, moves: f.moves, escorts };
+      f.resume = { sectorKey: fromKey, pocketId: f.pocketId, kind: f.kind, name: f.name, moves: f.moves, escorts, factionId: f.factionId };
       return;
     }
     f.sectorKey = toKey;
     f.pocketId = arrival.id;
-    f.nextMoveAtMs = nowMs + this.dwellMs;
+    // Passing through a sector its power doesn't hold (heading home): only a
+    // short stop before the next hop.
+    f.nextMoveAtMs = nowMs + (this.holderOf(toKey) === f.factionId ? this.dwellMs : MOVE_SETTLE_MS);
     f.nextWanderAtMs = nowMs + MOVE_SETTLE_MS;
+    f.settleUntilMs = nowMs + MOVE_SETTLE_MS;
     serverLogEvent('flagship_crossed', { name: f.name, from: fromKey, to: toKey });
   }
 

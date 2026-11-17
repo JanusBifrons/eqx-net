@@ -20,11 +20,14 @@
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { shipBodyMass } from '../../shared-types/shipScale/tuning.js';
 import { convexParts } from '../geometry/shipHullDecomp.js';
-import { CHUNK_SIZE, FIELD_COLLIDER_SIMPLIFY, rocksInChunk, slicedField, type ChunkOpts, type ChunkRock, type SlicedRock } from './fieldLayout.js';
+import { CHUNK_SIZE, FIELD_COLLIDER_SIMPLIFY, fieldShape, rocksInChunk, slicedField, type ChunkOpts, type ChunkRock, type FieldClearing, type SlicedRock } from './fieldLayout.js';
 
-/** The cut options for a field seed: one source for both sides (#15). */
-export function cutFieldOpts(seed: string): ChunkOpts {
-  return { seed, battleshipLength: getShipKind('battleship').radius * 2, fighterLength: getShipKind('fighter').radius * 2 };
+/** The cut options for a field seed and its clearings (galaxy sectors, F4;
+ *  none in test rooms): one source for both sides (#15). */
+export function cutFieldOpts(seed: string, clearings?: readonly FieldClearing[]): ChunkOpts {
+  const o: ChunkOpts = { seed, battleshipLength: getShipKind('battleship').radius * 2, fighterLength: getShipKind('fighter').radius * 2 };
+  if (clearings?.length) o.clearings = clearings;
+  return o;
 }
 
 /** A field rock as a body: centred on its outline's vertex mean, the outline
@@ -91,7 +94,7 @@ export interface FieldRockCircle { key: number; x: number; y: number; radius: nu
 export function fieldRocksInBox(o: ChunkOpts, x0: number, y0: number, x1: number, y1: number): FieldRockCircle[] {
   const cut = slicedField({
     seed: o.seed, battleshipLength: o.battleshipLength, fighterLength: o.fighterLength,
-    view: { x0, y0, x1, y1 }, ...(o.radius !== undefined ? { radius: o.radius } : {}),
+    view: { x0, y0, x1, y1 }, ...fieldShape(o),
   });
   const out: FieldRockCircle[] = [];
   let chunks: Map<string, ChunkRock[]> | null = null;
@@ -166,84 +169,171 @@ export interface CutFieldHooks<R extends StreamedRock = ChunkRock> {
   cutChunk?(cx: number, cy: number): readonly R[] | null;
 }
 
+/**
+ * Something streamed in by chunk beside the field's rocks (wreck fields R7:
+ * one streamer, several sources). Every source shares the streamer's ONE
+ * timer, ONE ship scan and ONE per-step work budget; never a second streamer.
+ * The rocks are the first source (built in when the streamer has a field);
+ * the room's other sources run after them, in the order given.
+ */
+export interface ChunkSource {
+  /**
+   * One streamer step. `needed`: the chunk keys (`chunkKey`) within reach of
+   * a ship this step, the first ship's nearest ring first. Read-only: a
+   * source decides what to load or retire from it, never edits it.
+   * `budget`: work units left this step (one unit = one rock chunk cut).
+   * Returns the units spent (at most `budget`). Unloading costs nothing.
+   */
+  step(needed: ReadonlySet<number>, budget: number, nowMs: number): number;
+  /** Drop everything (client sector change). */
+  clear?(): void;
+}
+
 interface LoadedChunk { ids: string[]; lastNeededMs: number }
 
-/** Chunk coords as one number (each fits ±32k). */
-const pack = (cx: number, cy: number): number => (cx + 32768) * 65536 + (cy + 32768);
-const unpackX = (k: number): number => Math.floor(k / 65536) - 32768;
-const unpackY = (k: number): number => (k % 65536) - 32768;
+/** Chunk coords as one number (each fits ±32k): the keys of `needed`. */
+export const chunkKey = (cx: number, cy: number): number => (cx + 32768) * 65536 + (cy + 32768);
+export const chunkKeyX = (k: number): number => Math.floor(k / 65536) - 32768;
+export const chunkKeyY = (k: number): number => (k % 65536) - 32768;
 
-export class CutFieldStreamer<R extends StreamedRock = ChunkRock> {
+/** Counters for perf scenes and tests (counts, never timings). */
+export interface CutFieldStats {
+  chunksLoaded: number; rocksLoaded: number; cutsThisStep: number; refusedRocks: number;
+  /** Work units every source spent this step (the shared budget). */
+  workThisStep: number;
+  /** Loaded-chunk records ever made: records are reused, so this stops
+   *  growing once the streamer has cycled (no allocation per step, #14). */
+  chunkRecordsMade: number;
+}
+
+/** The field's rocks as a chunk source: cuts each needed chunk (nearest
+ *  first, within the budget) and drops chunks no ship has needed for
+ *  `lingerMs`. */
+class RockChunkSource<R extends StreamedRock> implements ChunkSource {
   private readonly loaded = new Map<number, LoadedChunk>();
-  private readonly needed = new Set<number>();
-  /** Counters for perf scenes and tests (counts, never timings). */
-  readonly stats = { chunksLoaded: 0, rocksLoaded: 0, cutsThisStep: 0, refusedRocks: 0 };
+  /** Unloaded chunk records, reused by the next cut. */
+  private readonly free: LoadedChunk[] = [];
 
   constructor(
     private readonly field: ChunkOpts,
     private readonly hooks: CutFieldHooks<R>,
-    /** Chunks kept loaded around a ship (Chebyshev radius). */
-    private readonly wakeChunks = 2,
-    private readonly lingerMs = 10_000,
-    /** Chunk cuts per `step` (a cut is ~1–15 ms on a desktop). */
-    private readonly maxCutsPerStep = MAX_CHUNKS_PER_STEP,
+    private readonly lingerMs: number,
+    private readonly stats: CutFieldStats,
   ) {}
 
-  /** Drop everything (client sector change). */
   clear(): void {
     for (const [key, chunk] of this.loaded) {
       for (const id of chunk.ids) this.hooks.removeRock(id);
-      this.hooks.chunkUnloaded?.(unpackX(key), unpackY(key));
+      this.hooks.chunkUnloaded?.(chunkKeyX(key), chunkKeyY(key));
+      this.free.push(chunk);
     }
     this.loaded.clear();
     this.stats.chunksLoaded = 0;
     this.stats.rocksLoaded = 0;
   }
 
-  /** Run on the room's slow cadence. Generation-time work, bounded per call. */
-  step(): void {
-    const now = this.hooks.nowMs();
-    this.needed.clear();
-    this.hooks.visitShips((x, y, rings) => {
-      const w = rings ?? this.wakeChunks;
-      const cx = Math.floor(x / CHUNK_SIZE), cy = Math.floor(y / CHUNK_SIZE);
-      // Ring by ring, so the cut budget goes to the ship's own chunk first.
-      for (let r = 0; r <= w; r++) {
-        for (let dx = -r; dx <= r; dx++) for (let dy = -r; dy <= r; dy++) {
-          if (Math.max(Math.abs(dx), Math.abs(dy)) === r) this.needed.add(pack(cx + dx, cy + dy));
-        }
-      }
-    });
+  step(needed: ReadonlySet<number>, budget: number, now: number): number {
     // Load missing chunks, nearest ring first (the first ship's, then the next).
-    this.stats.cutsThisStep = 0;
-    for (const key of this.needed) {
+    let cuts = 0;
+    for (const key of needed) {
       const have = this.loaded.get(key);
       if (have) { have.lastNeededMs = now; continue; }
-      if (this.stats.cutsThisStep >= this.maxCutsPerStep) continue;
-      const cx = unpackX(key), cy = unpackY(key);
+      if (cuts >= budget) continue;
+      const cx = chunkKeyX(key), cy = chunkKeyY(key);
       // No cut hook: the server, where R is ChunkRock.
       const rocks = this.hooks.cutChunk ? this.hooks.cutChunk(cx, cy) : (rocksInChunk(this.field, cx, cy) as readonly StreamedRock[] as readonly R[]);
       if (rocks === null) continue; // still being cut elsewhere
-      this.stats.cutsThisStep++;
-      const ids: string[] = [];
+      cuts++;
+      const chunk = this.free.pop() ?? this.newChunk();
+      chunk.ids.length = 0;
+      chunk.lastNeededMs = now;
       for (const rock of rocks) {
         const id = fieldRockId(rock.key);
-        if (this.hooks.spawnRock(id, rock, cx, cy)) ids.push(id);
+        if (this.hooks.spawnRock(id, rock, cx, cy)) chunk.ids.push(id);
         else this.stats.refusedRocks++;
       }
-      this.loaded.set(key, { ids, lastNeededMs: now });
+      this.loaded.set(key, chunk);
       this.hooks.chunkLoaded?.(cx, cy, rocks);
     }
     // Unload chunks nobody has needed for a while.
     for (const [key, chunk] of this.loaded) {
-      if (this.needed.has(key) || now - chunk.lastNeededMs < this.lingerMs) continue;
+      if (needed.has(key) || now - chunk.lastNeededMs < this.lingerMs) continue;
       for (const id of chunk.ids) this.hooks.removeRock(id);
       this.loaded.delete(key);
-      this.hooks.chunkUnloaded?.(unpackX(key), unpackY(key));
+      this.free.push(chunk);
+      this.hooks.chunkUnloaded?.(chunkKeyX(key), chunkKeyY(key));
     }
-    let rocks = 0;
-    for (const c of this.loaded.values()) rocks += c.ids.length;
+    let count = 0;
+    for (const c of this.loaded.values()) count += c.ids.length;
+    this.stats.cutsThisStep = cuts;
     this.stats.chunksLoaded = this.loaded.size;
-    this.stats.rocksLoaded = rocks;
+    this.stats.rocksLoaded = count;
+    return cuts;
+  }
+
+  private newChunk(): LoadedChunk {
+    this.stats.chunkRecordsMade++;
+    return { ids: [], lastNeededMs: 0 };
+  }
+}
+
+/**
+ * The one chunk streamer of a side: one ship scan builds the `needed` chunk
+ * set, then each source (the field's rocks first, then the room's others)
+ * spends from one shared `maxCutsPerStep` budget. `field` null: no rocks (a
+ * sector streaming only other sources); the rock hooks then go unused.
+ */
+export class CutFieldStreamer<R extends StreamedRock = ChunkRock> {
+  private readonly needed = new Set<number>();
+  private readonly sources: ChunkSource[] = [];
+  /** Counters for perf scenes and tests (counts, never timings). */
+  readonly stats: CutFieldStats = { chunksLoaded: 0, rocksLoaded: 0, cutsThisStep: 0, refusedRocks: 0, workThisStep: 0, chunkRecordsMade: 0 };
+  /** The ship-scan callback, made once (no closure per step, #14). */
+  private readonly addShip = (x: number, y: number, rings?: number): void => {
+    const w = rings ?? this.wakeChunks;
+    const cx = Math.floor(x / CHUNK_SIZE), cy = Math.floor(y / CHUNK_SIZE);
+    // Ring by ring, so the cut budget goes to the ship's own chunk first.
+    for (let r = 0; r <= w; r++) {
+      for (let dx = -r; dx <= r; dx++) for (let dy = -r; dy <= r; dy++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) === r) this.needed.add(chunkKey(cx + dx, cy + dy));
+      }
+    }
+  };
+
+  constructor(
+    field: ChunkOpts | null,
+    private readonly hooks: CutFieldHooks<R>,
+    /** Chunks kept loaded around a ship (Chebyshev radius). */
+    private readonly wakeChunks = 2,
+    lingerMs = 10_000,
+    /** Work units per `step`, shared by every source (a rock chunk cut is
+     *  one unit, ~1–15 ms on a desktop). */
+    private readonly maxCutsPerStep = MAX_CHUNKS_PER_STEP,
+    /** The room's other chunk sources (wreck fields), run after the rocks. */
+    sources: readonly ChunkSource[] = [],
+  ) {
+    if (field) this.sources.push(new RockChunkSource(field, hooks, lingerMs, this.stats));
+    for (const s of sources) this.sources.push(s);
+  }
+
+  /** The chunks ships need as of the last step (`chunkKey` keys, nearest
+   *  ring first). Read-only for the room's other sources. */
+  get neededChunks(): ReadonlySet<number> { return this.needed; }
+
+  /** Drop everything (client sector change). */
+  clear(): void {
+    for (let i = 0; i < this.sources.length; i++) this.sources[i]!.clear?.();
+  }
+
+  /** Run on the room's slow cadence. Generation-time work, bounded per call. */
+  step(): void {
+    const now = this.hooks.nowMs();
+    this.needed.clear();
+    this.hooks.visitShips(this.addShip);
+    let left = this.maxCutsPerStep;
+    for (let i = 0; i < this.sources.length; i++) {
+      left -= Math.min(left, Math.max(0, this.sources[i]!.step(this.needed, left, now)));
+    }
+    this.stats.workThisStep = this.maxCutsPerStep - left;
   }
 }

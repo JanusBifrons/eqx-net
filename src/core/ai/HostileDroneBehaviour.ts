@@ -2035,7 +2035,8 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       if (pilot ? this.friendlyToPilots : side === this.allegiance) {
         allies++;
         ax += x; ay += y;
-        if (!pilot && nb.isCapitalAt(i)) {
+        // A friendly capital anchors morale whoever flies it (a pilot's too).
+        if (nb.isCapitalAt(i)) {
           const d2 = (x - self.x) * (x - self.x) + (y - self.y) * (y - self.y);
           if (d2 < capD2) { capD2 = d2; capX = x; capY = y; }
         }

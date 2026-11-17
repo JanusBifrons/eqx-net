@@ -151,6 +151,28 @@ if (process.env['NODE_ENV'] !== 'production') {
   });
 }
 
+/** Test builds only (the dev server and the phone lane): one-tap sign-in to
+ *  the owner's account, no password and no Google (docs/ops/phone-link.md).
+ *  Each build keeps its own save file, so the account is created on first
+ *  use. Never on in production unless EQX_TEST_SIGNIN=1 is set explicitly. */
+export function testSignInEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env['EQX_TEST_SIGNIN'] === '1' || env['NODE_ENV'] !== 'production';
+}
+export const TEST_SIGNIN_EMAIL = 'owner@eqx.test';
+
+if (testSignInEnabled()) {
+  authRouter.post('/test-signin', authWriteLimiter, async (_req: Request, res: Response) => {
+    try {
+      const { token, user } = await findOrCreateTestUser(TEST_SIGNIN_EMAIL, { displayName: 'Owner', exempt: false });
+      res.json({ token, user: withPlayerId(user) });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'unknown';
+      authLogger.error({ msg }, 'test sign-in failed');
+      res.status(500).json({ error: 'test sign-in failed' });
+    }
+  });
+}
+
 authRouter.get('/google', oauthLimiter, (_req: Request, res: Response) => {
   const state = createOAuthState(oauthStateSecret);
   res.redirect(authorizationUrl(state));

@@ -7,7 +7,7 @@
  * what it was built from changes (rare), so the per-frame check is a map
  * lookup and a few compares (invariant #14).
  */
-import { npcFactionDef, teamColorOf, teamEdgeOf, teamSigilOf, type LiveryEdge } from '../../../shared-types/factions.js';
+import { factionLookVersion, npcFactionDef, teamColorOf, teamEdgeOf, teamSigilOf, type LiveryEdge } from '../../../shared-types/factions.js';
 import { allegianceOfKind } from '../../../shared-types/shipKinds.js';
 import type { Container } from 'pixi.js';
 import { decideArtSwap, type ArtSwap } from '../spriteUpdateDecisions.js';
@@ -92,20 +92,6 @@ export function scrapHandleFor(actx: ShipArtCtx, key: string, parentKind: string
   return h;
 }
 
-/** An asteroid's handle. Its turn is taken once, when first seen: a slowly
- *  turning rock keeps that lighting rather than re-baking as it turns. */
-export function rockHandleFor(
-  actx: ShipArtCtx, key: string, shapeSeed: number, radius: number, resource: string | undefined, rot: number,
-): ArtHandle | null {
-  if (!actx.art) return null;
-  let h = actx.handles.get(key);
-  if (!h || h.stale === true || h.job.type !== 'rock' || h.job.shapeSeed !== shapeSeed || h.job.radius !== radius || h.job.resource !== resource) {
-    h = actx.art.rock(shapeSeed, radius, resource, rot);
-    actx.handles.set(key, h);
-  }
-  return h;
-}
-
 /** True when the sprite already shows this handle's art. */
 function showsArt(sprite: Container | undefined, h: ArtHandle | null): boolean {
   if (sprite instanceof MachinedShipSprite) return h === null || sprite.art === h.ship;
@@ -139,10 +125,14 @@ export function updateArtShipLight(actx: ShipArtCtx, sprite: Container): void {
 
 /** A faction's livery (team colour, sigil seed, section-edge shape), cached
  *  per owner id so the frame loop never re-hashes; the entry is allocated
- *  once on first sight. */
+ *  once on first sight. A change to the claimed looks (`factionLookVersion`)
+ *  drops the cache, so a claim repaints that faction's ships. */
 export interface OwnerLivery { team: number; sigil: number; edge: LiveryEdge }
 const ownerLiveries = new Map<string, OwnerLivery>();
+let ownerLiveriesVersion = factionLookVersion();
 export function ownerLivery(owner: string): OwnerLivery {
+  const v = factionLookVersion();
+  if (v !== ownerLiveriesVersion) { ownerLiveries.clear(); ownerLiveriesVersion = v; }
   let l = ownerLiveries.get(owner);
   if (!l) { l = { team: teamColorOf(owner), sigil: teamSigilOf(owner), edge: teamEdgeOf(owner) }; ownerLiveries.set(owner, l); }
   return l;

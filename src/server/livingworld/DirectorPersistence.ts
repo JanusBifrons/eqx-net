@@ -23,6 +23,7 @@
  */
 
 import type { Logger } from 'pino';
+import { z } from 'zod';
 
 /**
  * Bump to discard every persisted director-state row and fall back to a clean
@@ -56,6 +57,36 @@ export interface DirectorStatePayload {
   waveCount: Array<[string, number]>;
   /** WaveDirector `lastDispatchAtMs` map as entry pairs. */
   lastDispatchAtMs: Array<[string, number]>;
+  /** Step 1c — the control meter of each sector whose state differs from its
+   *  static seed (robot director only; `RobotTerritory`). Absent in older rows
+   *  and on the drone director: every sector then starts from its seed. */
+  sectorControl?: PersistedSectorControl[];
+}
+
+/** One sector's saved control meter: the holder (null = neutral) and each
+ *  side's share as `[factionId, share]` (0..100, rounded, tiny shares dropped). */
+export interface PersistedSectorControl {
+  sectorKey: string;
+  holder: string | null;
+  shares: Array<[string, number]>;
+}
+
+const PersistedSectorControlSchema = z.object({
+  sectorKey: z.string().min(1),
+  holder: z.string().min(1).nullable(),
+  shares: z.array(z.tuple([z.string().min(1), z.number().finite().min(0).max(100)])),
+});
+
+/** Parse-and-drop the saved control entries: a missing or non-array field is
+ *  no entries (older rows), and a malformed entry is skipped, never thrown. */
+export function parseSectorControl(raw: unknown): PersistedSectorControl[] {
+  if (!Array.isArray(raw)) return [];
+  const out: PersistedSectorControl[] = [];
+  for (const e of raw) {
+    const r = PersistedSectorControlSchema.safeParse(e);
+    if (r.success) out.push(r.data);
+  }
+  return out;
 }
 
 export interface DirectorPersistenceDeps {
@@ -86,8 +117,11 @@ export function parseDirectorState(raw: unknown): DirectorStatePayload {
       `director-state version ${v} != current ${DIRECTOR_STATE_VERSION} — discard + fresh seed`,
     );
   }
-  // Trust the shape past this point — sole writer is this codebase.
-  return obj as unknown as DirectorStatePayload;
+  // Trust the squad/wave shape past this point — sole writer is this codebase.
+  // Control entries are checked one by one (a bad one is dropped, not fatal).
+  const payload = obj as unknown as DirectorStatePayload;
+  if (obj['sectorControl'] !== undefined) payload.sectorControl = parseSectorControl(obj['sectorControl']);
+  return payload;
 }
 
 export class DirectorPersistence {

@@ -21,6 +21,8 @@ interface LiveCounts {
   enemies: number;
   neutrals: number;
   structures: number;
+  playerStructures?: number;
+  byFaction?: Map<string, { ships: number; structures: number }>;
 }
 const liveCountsOf = (h: SectorTestHarness): LiveCounts =>
   (h.getServerRoom() as unknown as { liveCounts(): LiveCounts }).liveCounts();
@@ -79,5 +81,27 @@ describe('SectorRoom integration — liveCounts (Living Galaxy Phase 3)', () => 
     expect(counts.neutrals).toBe(1);
     expect(counts.enemies).toBe(0);
     expect(counts.players).toBe(0);
+    // Per side: the scenario owner (a player id) holds the 3 parts; the drone
+    // counts for its kind's allegiance.
+    expect(counts.playerStructures).toBe(3);
+    expect(counts.byFaction?.get('scenario')).toEqual({ ships: 0, structures: 3 });
+    expect([...(counts.byFaction?.values() ?? [])].reduce((n, c) => n + c.ships, 0)).toBe(1);
+  }, 20_000);
+
+  it('counts NPC base parts for their faction, not as player structures', async () => {
+    harness = await bootSectorTestServer({
+      sectorKey: 'sol-prime',
+      testMode: true,
+      asteroidConfig: [],
+      prebuiltStructures: [{ kind: 'capital', x: 0, y: 0 }, { kind: 'solar', ...SCENARIO.solarNE }],
+      prebuiltStructuresOwner: 'npc:core:lc-base',
+    });
+    const pid = randomUUID();
+    await harness.connectActive(pid, { shipKind: 'fighter', spawnX: 0, spawnY: 600 });
+    const counts = liveCountsOf(harness);
+    expect(counts.structures).toBe(2);
+    expect(counts.playerStructures).toBe(0);
+    expect(counts.byFaction?.get('core')).toEqual({ ships: 0, structures: 2 });
+    expect(counts.byFaction?.get(pid)).toEqual({ ships: 1, structures: 0 });
   }, 20_000);
 });

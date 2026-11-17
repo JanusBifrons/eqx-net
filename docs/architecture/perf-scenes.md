@@ -197,11 +197,21 @@ pnpm perf:scenes --scenes rts-fleet --reps 4 --base HEAD --base-env "EQX_DISABLE
 
 ## The rock-cut scene (`rock-cut`)
 
-Eight still rocks (scene steps `rocks`, then `rockCut` at t = 2 s) are mined to a break through the mining laser's real wear path (`RockCutter.sceneCut`: one line per rock, angle and fracture seed from the rock id, so both arms break the same way). Their 16 wreck pieces stay on screen at the normal zoom, where each piece draws its stretch of the rock's art as one batched mesh (no mask). Client draw calls (`perf:counts`, SwiftShader, baked): 12 p95 broken = 12 whole (a per-piece polygon mask cost 60). The intact arm is the same commit with the cut switched off:
+Eight still rocks (scene steps `rocks`, then `rockCut` at t = 2 s) are mined to a break through the mining laser's real wear path (`RockCutter.sceneCut`: one line per rock, angle and fracture seed from the rock id, so both arms break the same way). Their 16 wreck pieces stay on screen at the normal zoom, where each piece draws its stretch of the rock's surface with the field rock shader, all rocks and pieces in one mesh (`rockBatch.ts`; no mask; before the field shader it was one batched mesh of the rock's bake). Client draw calls (`perf:counts`, SwiftShader, baked): 12 p95 broken = 12 whole (a per-piece polygon mask cost 60). The intact arm is the same commit with the cut switched off:
 
 ```
 pnpm perf:scenes --scenes rock-cut --base HEAD --base-env EQX_SCENE_ROCK_CUT=0
 ```
+
+## The galaxy field scene (`galaxy-field`)
+
+A real asteroid-marked galaxy sector's cut field (sol-prime: seed and pocket clearings exactly as `resolveSectorConfig` boots the live sector), the pilot idle at the belt warp drop on the belt clearing's edge, camera pulled out. The room options come from `src/server/rooms/perfRooms.ts` (`galaxyField` on the scene). The no-field arm is the same commit with the field off:
+
+```
+pnpm perf:scenes --scenes galaxy-field --device phone-proxy --cpu-rate 2 --base HEAD --base-env EQX_SCENE_GALAXY_FIELD=0
+```
+
+First reading: [macro-terrain](macro-terrain.md) (Galaxy sectors, phone cost).
 
 ## Adding a scene
 

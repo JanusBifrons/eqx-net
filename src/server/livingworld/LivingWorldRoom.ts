@@ -14,6 +14,7 @@ import type { RecentCombat } from '../../shared-types/galaxySnapshot.js';
 import type { BotCarry } from './botTypes.js';
 import type { WorldNotice } from '../../shared-types/worldNotice.js';
 import type { Hold } from '../../shared-types/goods.js';
+import type { FactionPresenceMap } from './factionPresence.js';
 
 /**
  * Per-(owner, sector) faction base summary the `WaveDirector` polls (wave-system
@@ -61,6 +62,13 @@ export interface SectorLiveCounts {
   neutrals: number;
   /** Placed structures (StructureRegistry size). */
   structures: number;
+  /** Placed structures owned by a PLAYER (NPC base parts excluded). */
+  playerStructures?: number;
+  /** Ships + structures per side, for the control meter for every side. */
+  byFaction?: FactionPresenceMap;
+  /** Sides with a BUILT Territory Lock structure here (control meter lock);
+   *  absent when there is none. */
+  lockSides?: readonly string[];
 }
 
 export interface LivingWorldRoom {
@@ -74,6 +82,9 @@ export interface LivingWorldRoom {
    *  when quiet. OPTIONAL: a mock room may omit it → the director sends null. Off
    *  the 60 Hz tick (read on the ~1.5 s control tick). */
   recentCombat?(): RecentCombat | null;
+  /** Galaxy feed — a structure of control side `side` was hit within `windowMs`
+   *  (the threat signal). OPTIONAL: a mock room may omit it (no hits). Feed cadence. */
+  sideStructuresHitWithin?(side: string, windowMs: number): boolean;
   /** Equinox Phase 7 — count of structures in this room owned by `playerId`
    *  (the galaxy-map per-player "my structures" overlay; `GET /galaxy/presence`).
    *  OPTIONAL: a mock room may omit it → the director counts 0 for this sector.
@@ -123,6 +134,10 @@ export interface LivingWorldRoom {
      *  doesn't render NEUTRAL until the next control-tick pulse. Resolve via
      *  {@link factionHostility}. */
     hostileToFaction?: { playerId: string; structureIds: readonly string[] };
+    /** The power (or other faction) that owns the bot: attributed through the
+     *  room's patrol attribution (`PatrolSubsystem.attachShip`), so it counts
+     *  for that side on the control meter and engages pilots hostile to it. */
+    factionId?: string;
   }): boolean;
   despawnLivingWorldBot(botId: string): BotCarry | null;
   markBotHostile(botId: string): void;

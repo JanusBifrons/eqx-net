@@ -83,7 +83,7 @@ export function MetaLandingScreen({ onJoin, onSelectLocal }: Props): JSX.Element
             fontSize: { xs: '2.4rem', sm: '3.4rem' },
           }}
         >
-          EQX Peri
+          Equinox
         </Typography>
         <Typography variant="caption" sx={{ color: '#888', letterSpacing: 3, textTransform: 'uppercase' }}>
           Multiplayer space combat

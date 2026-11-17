@@ -30,7 +30,7 @@ describe('SectorRoom integration: a lance main battery splits a wreck piece alon
   it('three main turrets on one piece: on the crack ≥ 2 cut lines apply, and the client rebuilds every child', async () => {
     harness = await bootSectorTestServer({
       sectorKey: null, droneCount: 0, testMode: true, peacefulDrones: true, asteroidConfig: [],
-      capitalWrecks: true, pilotCapitals: true, traverseTicksCap: 0, lockTimeCapS: 0,
+      capitalWrecks: true, traverseTicksCap: 0, lockTimeCapS: 0,
       dronePoses: [{ kind: 'battleship', x: 0, y: 2500, angle: 0 }],
     });
     const pid = randomUUID();

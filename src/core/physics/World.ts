@@ -10,12 +10,7 @@ import {
 } from '../../shared-types/shipKinds.js';
 import { configureShipCollider, shipShieldColliderDesc } from './colliderConfig.js';
 import { applyShipInput, type ShipInputArgs, type ShipInputMultipliers } from './applyShipInput.js';
-import { newWarpState, stepWarp, WARP_ALIGN_GAIN, WARP_EXIT_SPEED, WARP_SPEED, WARP_SPOOL_TICKS, type WarpPhase, type WarpState } from './warpDrive.js';
-/** NPC warp-to: a bot engages only once within this of facing its target (rad). */
-const BOT_WARP_ALIGN_RAD = 0.06;
-/** NPC warp-to: the slowest a bot turns to face its jump (rad/s; 9°/s, so a
- *  battleship comes about in ~20 s instead of 2.5 min at its 1.2°/s helm). */
-const BOT_WARP_MIN_TURN = Math.PI / 20;
+import { newWarpState, spoolHeldForAlign, stepWarp, WARP_ALIGN_GAIN, WARP_EXIT_SPEED, WARP_MIN_TURN, WARP_SPEED, type WarpPhase, type WarpState } from './warpDrive.js';
 import { castHitscan } from './hitscanRay.js';
 import { wallGeometry } from '../structures/ShieldWall.js';
 import { applyForceFields, storeForceField, type ForceField } from './forceFields.js';
@@ -799,6 +794,15 @@ export class PhysicsWorld {
       const body = rec.body;
       const t = body.translation();
       const w = rec.warp;
+      // A slow hull keeps spooling until it faces the (unchanged) jump, as in `botWarp`.
+      const q = this._warpReq;
+      if (hasReq && q.x === w.tx && q.y === w.ty && spoolHeldForAlign(w, t.x, t.y, body.rotation(), q.x, q.y)) {
+        const s = this._spoolInput;
+        s.thrust = input.thrust; s.boost = input.boost; s.reverse = input.reverse;
+        applyShipInput(body, rec.kind, s, rec.statMul);
+        this.alignToWarp(rec, w, WARP_MIN_TURN);
+        return;
+      }
       const act = stepWarp(w, hasReq ? this._warpReq : null, t.x, t.y, 1 / 60);
       if (act === 'engage') {
         // Face the run (nose = (-sin θ, cos θ)), go, and stop colliding: at
@@ -832,7 +836,7 @@ export class PhysicsWorld {
     const s = this._spoolInput;
     s.thrust = input.thrust; s.boost = input.boost; s.reverse = input.reverse;
     applyShipInput(rec.body, rec.kind, s, rec.statMul);
-    this.alignToWarp(rec, rec.warp!);
+    this.alignToWarp(rec, rec.warp!, WARP_MIN_TURN);
   }
 
   /**
@@ -863,16 +867,12 @@ export class PhysicsWorld {
     // A slow-turning ship (a capital) keeps spooling until it faces its
     // target: engaging early snapped the hull round in one frame (first fleet
     // film). This is what makes a capital's spool the long one.
-    if (target !== null && w.phase === 'spool' && w.ticks >= WARP_SPOOL_TICKS - 1) {
-      const want = Math.atan2(-(target.x - t.x), target.y - t.y);
-      const d = Math.atan2(Math.sin(want - body.rotation()), Math.cos(want - body.rotation()));
-      if (Math.abs(d) > BOT_WARP_ALIGN_RAD) {
-        w.tx = target.x; w.ty = target.y;
-        const v = body.linvel(); // TODO: alloc-debt (Rapier returns a fresh vector)
-        this.setBotVel(body, v.x * 0.9, v.y * 0.9);
-        this.alignToWarp(rec, w, BOT_WARP_MIN_TURN);
-        return true;
-      }
+    if (target !== null && spoolHeldForAlign(w, t.x, t.y, body.rotation(), target.x, target.y)) {
+      w.tx = target.x; w.ty = target.y;
+      const v = body.linvel(); // TODO: alloc-debt (Rapier returns a fresh vector)
+      this.setBotVel(body, v.x * 0.9, v.y * 0.9);
+      this.alignToWarp(rec, w, WARP_MIN_TURN);
+      return true;
     }
     const act = stepWarp(w, target, t.x, t.y, 1 / 60);
     if (act === 'engage') {
@@ -904,14 +904,14 @@ export class PhysicsWorld {
           s.thrust = keys.thrust; s.boost = keys.boost; s.reverse = keys.reverse;
           applyShipInput(body, rec.pilotKind ?? rec.kind, s, rec.statMul);
         }
-        this.alignToWarp(rec, w, BOT_WARP_MIN_TURN);
+        this.alignToWarp(rec, w, WARP_MIN_TURN);
         return true;
       }
       // Hold position and face the target (a capital turns slowly: its own
       // turn rate caps the align, so a long spool is part of the look).
       const v = body.linvel(); // TODO: alloc-debt (Rapier returns a fresh vector)
       this.setBotVel(body, v.x * 0.9, v.y * 0.9);
-      this.alignToWarp(rec, w, BOT_WARP_MIN_TURN);
+      this.alignToWarp(rec, w, WARP_MIN_TURN);
       return true;
     }
     return false;

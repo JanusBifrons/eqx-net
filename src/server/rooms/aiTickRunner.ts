@@ -107,19 +107,19 @@ export function runAiTick(ctx: AiTickCtx): void {
       truce: ctx.hasTruce?.(pid) === true,
     });
     // Same liveness set as the AI target view (#17: `isAiTargetableHull`).
-    grid?.addPilot(pid, pose.x, pose.y, pose.vx, pose.vy, getShipKind(ship.kind ?? null).radius);
+    const k = getShipKind(ship.kind ?? null);
+    grid?.addPilot(pid, pose.x, pose.y, pose.vx, pose.vy, k.radius, k.sizeClass === 'capital');
   }
   const activePilots = ctx.aiPlayerScratch.length;
   // Displaced lingering hulls (keyed by shipInstanceId, owner on `ownerId`) are
   // also fair game (decision 7). Visitor fills the scratch directly.
   ctx.visitLingeringTargets?.(ctx.aiPlayerScratch);
   if (grid) {
-    // Lingering hulls carry no kind on the view: the default kind's radius
-    // stands in (TODO: thread the hull kind when a slice reads radiusAt).
-    const lingerR = getShipKind(null).radius;
+    // Lingering hulls by their own kind (radius and capital flag).
     for (let i = activePilots; i < ctx.aiPlayerScratch.length; i++) {
       const p = ctx.aiPlayerScratch[i]!;
-      grid.addPilot(p.id, p.x, p.y, p.vx, p.vy, lingerR);
+      const k = getShipKind(p.kindId);
+      grid.addPilot(p.id, p.x, p.y, p.vx, p.vy, k.radius, k.sizeClass === 'capital');
     }
     ctx.visitAiNeighbourDrones?.(grid);
     grid.end();

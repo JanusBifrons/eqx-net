@@ -14,6 +14,8 @@ import '@fontsource/jetbrains-mono/500.css';
 import '@fontsource/jetbrains-mono/700.css';
 import { HUD } from './hud/tokens';
 import { apiGetMe, exchangeAuthCode } from './auth/authApi';
+import { lockLandscape } from './layout/useFullscreen';
+import { isStandaloneNow } from './layout/useStandalone';
 
 // PWA service worker. Production-only (the plugin emits no SW under `vite dev`,
 // so this is a no-op in dev / Playwright / netgate). `registerType: 'prompt'`
@@ -21,9 +23,21 @@ import { apiGetMe, exchangeAuthCode } from './auth/authApi';
 // next full launch, never forcing a mid-session reload (no onNeedRefresh UI by
 // design; see vite.config.ts + docs/architecture/web-push.md). The SW is what
 // enables installability + Web Push (push events are delivered to the SW).
+// The phone lane (`VITE_PHONE_LANE=1`, docs/ops/phone-link.md) is the one
+// exception: its build is swapped under the installed app, and the swap has
+// already restarted the game server, so it applies a new build at once.
 if (import.meta.env.PROD) {
-  registerSW({ immediate: true });
+  const phoneLane = import.meta.env['VITE_PHONE_LANE'] === '1';
+  const updateSW = registerSW({
+    immediate: true,
+    onNeedRefresh: phoneLane ? () => { void updateSW(true); } : undefined,
+  });
 }
+
+// The installed app plays sideways from launch. The manifest says
+// `orientation: 'landscape'`, but Android bakes the manifest in at install and
+// refreshes it late, so lock at runtime too (no-op on iOS, which has no lock).
+if (isStandaloneNow()) lockLandscape();
 
 // Expose the Zustand store on window for E2E tests + interactive
 // debugging. Read-only by convention (tests use `getState()` to read +

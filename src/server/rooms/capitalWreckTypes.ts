@@ -12,6 +12,7 @@ import type { BurnLines } from '../../core/destruction/burnLines.js';
 import type { WreckPiecePose } from './wreckResplit.js';
 import type { WreckSource } from '../../core/destruction/wreckSource.js';
 import type { AsteroidResourceId } from '../../shared-types/asteroidResources.js';
+import type { WeaponId } from '../../core/combat/WeaponCatalogue.js';
 
 /** Rock cut: the ore a rock's wreck carries. Every piece holds its area's
  *  share of what the rock had left when it broke (`perArea`); a pod made
@@ -147,6 +148,10 @@ export interface CapitalWreckDeps {
    *  parallel), the last `pods` of them ore pods (a worn-out piece: only
    *  its pod): the locks held on it follow them. Once per break. */
   pieceSplit?: (parentId: string, ids: ReadonlyArray<string>, masses: ReadonlyArray<number>, pods?: number) => void;
+  /** Wreck fields 0a2c: lineage `root` changed (a wreck spawned, re-split or
+   *  lost a piece, or a piece was hit). The battle-wreck save marks it dirty
+   *  (`BattleWreckSaves.touch`, no allocation). Absent ⇒ nothing is saved. */
+  lineageTouched?: (root: number) => void;
 }
 
 /** How hard a hit knocks one piece (fixed at spawn; read per hit, #14). */
@@ -174,4 +179,35 @@ export interface PieceKnock {
   cy: number;
   radius: number;
   burn: BurnLines | null;
+}
+
+/** A tracked hull's hit record (`CapitalWreckSubsystem.noteHit`, pooled). */
+export interface HitEntry {
+  hasPoint: boolean;
+  x: number;
+  y: number;
+  hasDir: boolean;
+  dirX: number;
+  dirY: number;
+  weaponId: WeaponId | null;
+  lastDamage: number;
+  shooterId: string;
+  /** Damage per bucket; `stamp[i]` is the bucket index it holds. */
+  dmg: Float64Array;
+  stamp: Int32Array;
+  /** Fracture v12 multi-cut: the hull's recent cutting-beam lines (null
+   *  until its first cutting hit; cleared when the entry is reused). */
+  burn: BurnLines | null;
+}
+
+/** `spawnWreck` options. `held`: the pieces hold together for the crack
+ *  delay, then get their separating kick (else the kick is in the spawn
+ *  motion). `deathTick` (default now): the descriptor's death tick and the
+ *  start of the hold. `poses`: by piece index, an exact spawn pose (no
+ *  kick). `skipPieces`: piece indices left out. */
+export interface SpawnWreckOpts {
+  readonly held: boolean;
+  readonly deathTick?: number;
+  readonly poses?: ReadonlyMap<number, WreckPiecePose>;
+  readonly skipPieces?: ReadonlySet<number>;
 }

@@ -38,7 +38,6 @@ describe('SectorRoom integration — capital main battery (Phase 3)', () => {
       droneCount: 0,
       testMode: true,
       asteroidConfig: [],
-      pilotCapitals: true,
       // The pilot (origin) 40° off the battleship's bow: clear of the hull
       // (guns never fire along their own deck), and only a ~10 s swing at the
       // real 4°/s traverse.

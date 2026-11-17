@@ -43,7 +43,6 @@ describe('SectorRoom integration — capital turret charge-up', () => {
       droneCount: 0,
       testMode: true,
       asteroidConfig: [],
-      pilotCapitals: true,
       // The pilot (origin) 40° off the battleship's bow, as capitalEngagement.
       dronePoses: [{ kind: 'battleship', x: 5000, y: 0, angle: (50 * Math.PI) / 180 }],
     });

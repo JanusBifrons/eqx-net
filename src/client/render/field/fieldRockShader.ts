@@ -25,12 +25,16 @@ import { FIELD_FAR_ROCK_CELL, fieldStreet, SLICED } from '../../../core/terrain/
 const FIELD_F = cutFieldOpts('').fighterLength;
 const glf = (x: number): string => x.toFixed(3);
 
-const VERTEX = /* glsl */ `
+/** The vertex stage. `batched` (`RockBatch`): many rocks in one mesh, each
+ *  vertex carrying its rock's own axes (`aXf`, the rock's linear transform in
+ *  the mesh's frame) and colour (`aTint`, premultiplied), which a lone mesh
+ *  takes from its transform and `uColor`. Same maths either way. */
+const vertexSource = (batched: boolean): string => /* glsl */ `
 in vec2 aPosition;
 in vec2 aUV;
 in vec2 aLocal;
 in vec4 aRock;
-in vec2 aOre;
+in vec2 aOre;${batched ? '\nin vec4 aXf;\nin vec4 aTint;' : ''}
 out vec2 vOre;
 out vec2 vLocal;
 out float vT;
@@ -50,14 +54,16 @@ void main() {
   // The sun into the mesh's own axes, so a woken (spinning) rock keeps its
   // light where the sun is; a chunk mesh is unrotated, so this is identity.
   vec2 sunW = vec2(cos(uSunLook.z), sin(uSunLook.z));
-  vec2 ax = normalize(model[0].xy), ay = normalize(model[1].xy);
+  ${batched
+    ? 'vec2 ax = normalize((model * vec3(aXf.xy, 0.0)).xy), ay = normalize((model * vec3(aXf.zw, 0.0)).xy);'
+    : 'vec2 ax = normalize(model[0].xy), ay = normalize(model[1].xy);'}
   vSunDir = vec2(dot(sunW, ax), dot(sunW, ay));
   vLocal = aLocal;
   vT = aUV.x;
   vThin = aUV.y;
   vRock = aRock;
   vOre = aOre;
-  vColor = uColor * uWorldColorAlpha;
+  vColor = uColor * uWorldColorAlpha${batched ? ' * aTint' : ''};
 }`;
 
 const FRAGMENT = /* glsl */ `
@@ -271,6 +277,7 @@ void main() {
 }`;
 
 let program: GlProgram | null = null;
+let batchProgram: GlProgram | null = null;
 let view: UniformGroup | null = null;
 let rockLook: UniformGroup | null = null;
 let sunAzSet = NaN;
@@ -289,8 +296,14 @@ export function setFieldOreStyle(style: FieldOreStyle): void {
 }
 
 export function fieldRockProgram(): GlProgram {
-  program ??= GlProgram.from({ vertex: VERTEX, fragment: FRAGMENT, name: 'field-rock-proc' });
+  program ??= GlProgram.from({ vertex: vertexSource(false), fragment: FRAGMENT, name: 'field-rock-proc' });
   return program;
+}
+
+/** The same rock shader for `RockBatch` (per-vertex axes and colour). */
+export function fieldRockBatchProgram(): GlProgram {
+  batchProgram ??= GlProgram.from({ vertex: vertexSource(true), fragment: FRAGMENT, name: 'field-rock-proc-batch' });
+  return batchProgram;
 }
 
 /** The shared uniforms: the sun and zoom (`fieldRockView`), the rock colour. */

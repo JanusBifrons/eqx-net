@@ -62,6 +62,9 @@ import { toastForNotice } from './tradeView';
 import { TradeNoticeSchema } from '../../shared-types/economy.js';
 import { WorldNoticeSchema } from '../../shared-types/worldNotice.js';
 import { BountyResultSchema } from '../../shared-types/contracts.js';
+import { setFactionLooks } from '../../shared-types/factions.js';
+import { ClaimFactionLookResultSchema } from '../../shared-types/messages/factionMessages.js';
+import { onFactionLookClaimed } from './factionLookSync.js';
 import { LabStateSchema } from '../../shared-types/messages/labMessages.js';
 import { BreakInNoticeSchema, CargoStateSchema } from '../../shared-types/messages/cargoMessages.js';
 import { BpMarketStateSchema } from '../../shared-types/blueprintMarket.js';
@@ -1675,7 +1678,7 @@ export class ColyseusGameClient {
       // Sub-cap wrecks on: a dying sub-cap's hull is held until its pieces draw.
       this.mirror.subcapWrecks = msg.subcapWrecks === true;
       // Cut field on: cut the same rocks as the server from its seed (#16).
-      this._cutField.setSeed(msg.cutField?.seed ?? null, msg.cutField?.consumed, msg.cutField?.moved);
+      this._cutField.setSeed(msg.cutField?.seed ?? null, msg.cutField?.consumed, msg.cutField?.moved, msg.cutField?.clearings);
       // Sub-capital break-up slice 3: the welcome carries the FULL live wreck
       // set (#16); snapshots then carry only adds, removes and a slow resync.
       if (msg.capitalWrecks === true || msg.subcapWrecks === true) {
@@ -1683,6 +1686,8 @@ export class ColyseusGameClient {
         this.mirror.wrecks = this._wrecks.descriptors;
       }
       this._shellTiming.onWelcome(this._shellEvents, msg.shellsInFlight);
+      // Every claimed faction ship look (#16); later claims: faction_look_claimed.
+      if (msg.factionLooks) setFactionLooks(msg.factionLooks);
       const idChanged = storedPlayerId && msg.playerId !== storedPlayerId;
       logEvent('cc_welcome', {
         playerId: msg.playerId,
@@ -2414,6 +2419,15 @@ export class ColyseusGameClient {
       const id = useUIStore.getState().pushTradeToast(parsed.data.message, parsed.data.ok ? 'good' : 'danger', false);
       setTimeout(() => useUIStore.getState().expireTradeToast(id), TRADE_TOAST_TTL_MS);
     });
+    // A faction ship-look claim verdict (accelerator only).
+    room.onMessage('claim_faction_look_result', (raw: unknown) => {
+      const parsed = ClaimFactionLookResultSchema.safeParse(raw);
+      if (!parsed.success) return;
+      const id = useUIStore.getState().pushTradeToast(parsed.data.message, parsed.data.ok ? 'good' : 'danger', false);
+      setTimeout(() => useUIStore.getState().expireTradeToast(id), TRADE_TOAST_TTL_MS);
+    });
+    // Someone claimed a ship look (accelerator; the welcome carries them all).
+    room.onMessage('faction_look_claimed', onFactionLookClaimed);
     // Economy v2 W3 — the Research Lab panel's view (a reply to lab_query /
     // lab_start / lab_cancel; the panel is rebuilt from it alone).
     // C1 — a structure's cargo (and our hold) for the cargo panel (#16).

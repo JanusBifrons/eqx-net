@@ -19,6 +19,8 @@ import type { GrownPlacement } from './growBase.js';
 export interface SiteBox { x: number; y: number; hw: number; hh: number }
 /** A circle (an asteroid). */
 export interface SiteCircle { x: number; y: number; r: number }
+/** A thick segment (a shield wall): ends + half thickness. */
+export interface SiteSegment { ax: number; ay: number; bx: number; by: number; r: number }
 /** A base's extent relative to its Capital. */
 export interface BaseExtent { x0: number; x1: number; y0: number; y1: number }
 
@@ -148,11 +150,12 @@ export function chooseBaseSite(
  * original point if nothing within `maxDistance` is clear.
  * `circleRadius` (default `radius`) is the body's own extent against
  * `circles`: a structure keeps a wide berth, but two hulls only need their
- * own extents apart (a spawn beside a parked ship is fine).
+ * own extents apart (a spawn beside a parked ship is fine). `segments`
+ * (walls) are kept `circleRadius` clear too.
  */
 export function nearestClearPoint(
   x: number, y: number, boxes: readonly SiteBox[], radius: number, maxDistance = 6000,
-  circles: readonly SiteCircle[] = [], circleRadius = radius,
+  circles: readonly SiteCircle[] = [], circleRadius = radius, segments: readonly SiteSegment[] = [],
 ): { x: number; y: number } {
   const clear = (px: number, py: number): boolean => {
     for (const b of boxes) {
@@ -161,6 +164,12 @@ export function nearestClearPoint(
     for (const c of circles) {
       const rr = c.r + circleRadius;
       if ((c.x - px) * (c.x - px) + (c.y - py) * (c.y - py) < rr * rr) return false;
+    }
+    for (const s of segments) {
+      const dx = s.bx - s.ax, dy = s.by - s.ay, len2 = dx * dx + dy * dy;
+      const t = len2 > 0 ? Math.max(0, Math.min(1, ((px - s.ax) * dx + (py - s.ay) * dy) / len2)) : 0;
+      const qx = s.ax + t * dx - px, qy = s.ay + t * dy - py, rr = s.r + circleRadius;
+      if (qx * qx + qy * qy < rr * rr) return false;
     }
     return true;
   };

@@ -114,6 +114,8 @@ export interface GalaxyPickerChromeProps {
   onWarp?: (sectorKey: string) => void;
   /** Close the in-game warp map (warp context only). */
   onClose?: () => void;
+  /** The selected sector changed: the host drives the map's focus view. */
+  onFocusChange?: (sectorKey: string | null) => void;
 }
 
 /**
@@ -142,20 +144,19 @@ export function GalaxyPickerChrome({
   context = 'landing',
   onWarp,
   onClose,
+  onFocusChange,
 }: GalaxyPickerChromeProps): JSX.Element {
   useMountLog('GalaxyPickerChrome', { context });
   const isWarp = context === 'warp';
   const selectedShipKindId = useUIStore((s) => s.selectedShipKind);
   const setSelectedShipKind = useUIStore((s) => s.setSelectedShipKind);
-  // Living Galaxy P5 — folded MetaLandingScreen bits (server health + live
-  // player count), surfaced over the map now that it's the landing screen.
+  // Server health + live player count, surfaced over the landing map.
   const serverHealth = useUIStore((s) => s.serverHealth);
   const playersOnline = useUIStore((s) => s.playersOnline);
   // Living Galaxy Phase 6 — hovered sector + live stats drive the tooltip.
   const galaxyHover = useUIStore((s) => s.galaxyHover);
   const galaxyStats = useUIStore((s) => s.galaxyStats);
-  // Phase 2 #2 — false until the first /galaxy/snapshot poll resolves; drives the
-  // one-shot loading spinner so the map's live counts don't pop in out of sync.
+  // False until the first /galaxy/snapshot poll resolves (one-shot spinner).
   const galaxyStatsLoaded = useUIStore((s) => s.galaxyStatsLoaded);
   // 2026-06-19 pop-in fix — the badges come from THREE async sources: global
   // hostile/neutral counts (/galaxy/snapshot → galaxyStatsLoaded), the player's
@@ -195,6 +196,7 @@ export function GalaxyPickerChrome({
   // SectorInfoDrawer (replaces the old fixed popover; the desktop hover tooltip is
   // separate + kept). The drawer reads this key; ✕ / swipe deselects.
   const [selectedSectorKey, setSelectedSectorKey] = useState<string | null>(null);
+  useEffect(() => onFocusChange?.(selectedSectorKey), [selectedSectorKey, onFocusChange]);
 
   // Keep the roster polled while the picker is mounted (the popover sub-list +
   // RosterCountBadge consume store.shipRoster). Refcounted — safe alongside the

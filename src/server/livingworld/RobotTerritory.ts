@@ -5,9 +5,16 @@
  *   - `respawnAnchor` — while the nexus lives, killed robots respawn AT it (the
  *     robots-only ingress exception) instead of entering from the galaxy edge;
  *   - `onTick`        — each control tick: respawn a destroyed nexus when due,
- *     then step every sector's control pressure (`core/territory/sectorControl`);
+ *     then step every sector's control meter for EVERY side
+ *     (`core/territory/sectorControl` `stepMultiControl`): robots are one side
+ *     among the players, the powers, the Traders, the drones and the rest;
  *   - `sectorOwner`   — handed to the DRONE director (the `/galaxy/snapshot`
- *     provider) so robot-held sectors show the robots as owner on the map.
+ *     provider) so the map shows whichever side holds each sector.
+ *
+ * Each sector starts held by its static controller (`core/galaxy/control`:
+ * Sol holds the core, each power its region heart); the rest start neutral.
+ * An empty sector keeps its holder. A living nexus LOCKS a robot-held sector:
+ * nobody can flip it until the nexus dies (`stepMultiControl` `lockedBy`).
  *
  * The nexus is a single `robot-nexus` swarm entity (`rbot-nexus`, so it is an
  * NPC id and the robot director's own pool ignores it). It lives in an ENTRY
@@ -17,28 +24,73 @@
  * this module itself; the nexus rides the existing swarm wire.
  */
 import { sectorSpace } from '../../shared-types/sectorBounds.js';
-import type { SectorOwner } from '../../shared-types/galaxySnapshot.js';
+import type { SectorControl, SectorHistorySample, SectorOwner } from '../../shared-types/galaxySnapshot.js';
 import { cargoCapacityForMaxHealth, type GoodId } from '../../shared-types/goods.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import type { Bus } from '../../core/events/Bus.js';
 import {
-  freshControl,
-  isContested,
-  stepControl,
-  type ControlInputs,
-  type SectorControlState,
+  CONTROL_MAX,
+  challengerOf,
+  controlThreat,
+  holderTrend,
+  freshMultiControl,
+  isMultiContested,
+  stepMultiControl,
+  type MultiControlState,
+  type SidePresence,
 } from '../../core/territory/sectorControl.js';
+import { sectorController } from '../../core/galaxy/control.js';
+import { controlOpposes, countsForControl, fillSectorPresence, ROBOT_SIDE } from './factionPresence.js';
 import { liveEntrySectors, type Rng } from './population.js';
 import { serverLogEvent } from '../debug/ServerEventLog.js';
-import type { LivingWorldRoom } from './LivingWorldRoom.js';
+import type { LivingWorldRoom, SectorLiveCounts } from './LivingWorldRoom.js';
 import { gameNow } from '../time/gameTime.js';
+import type { PersistedSectorControl } from './DirectorPersistence.js';
+import { SectorControlHistory } from './sectorControlHistory.js';
+
+/** The running meter, so a room can ask who holds its sector (the Territory
+ *  Lock placement rule) without a director reference. Set in `start()`. */
+let activeTerritory: RobotTerritory | null = null;
+function setActiveTerritory(t: RobotTerritory | null): void {
+  activeTerritory = t;
+}
+
+/** The live holder of `sectorKey` (null = neutral), or undefined when no
+ *  control meter is running (tests, robots off). Placement cadence. */
+export function liveSectorHolder(sectorKey: string): string | null | undefined {
+  return activeTerritory?.controlState(sectorKey)?.holder;
+}
+
+/** Galaxy feed — the live control view of `sectorKey`, or null with no meter running. Feed cadence. */
+export function liveSectorControl(sectorKey: string): SectorControl | null {
+  return activeTerritory?.sectorControl(sectorKey) ?? null;
+}
+
+/** Galaxy feed — a sector's control history (oldest first); null with no meter or an unknown sector. */
+export function liveSectorHistory(sectorKey: string): SectorHistorySample[] | null {
+  return activeTerritory?.history(sectorKey) ?? null;
+}
+
+/** Galaxy feed — the holder's structures hit within this much game time count as a threat. */
+export const THREAT_STRUCTURE_HIT_WINDOW_MS = 3 * 60_000;
+
+/** Saved shares below this are dropped (keeps the persisted row small). */
+const SAVE_MIN_SHARE = 0.5;
+
+/** True when rounded `shares` + `holder` equal the sector's static seed. */
+function isSeedState(sectorKey: string, holder: string | null, shares: ReadonlyArray<[string, number]>): boolean {
+  const seed = sectorController(sectorKey);
+  if (holder !== seed) return false;
+  if (seed === null) return shares.length === 0;
+  return shares.length === 1 && shares[0]![0] === seed && shares[0]![1] === CONTROL_MAX;
+}
 
 export const NEXUS_ID = 'rbot-nexus';
 /** A destroyed nexus returns after this long (a real win for the players). */
 export const NEXUS_RESPAWN_MS = 20 * 60_000;
 /** Distance of the nexus from its sector centre (clear of the central spawn). */
 export const NEXUS_RADIUS = sectorSpace(2400);
-export const ROBOT_FACTION_ID = 'robots';
+export const ROBOT_FACTION_ID = ROBOT_SIDE;
 
 /** P3b — harvesters: robot scavengers that bank loot into the nexus. */
 export const HARVESTERS_PER_NEXUS = 2;
@@ -84,17 +136,25 @@ export interface RobotTerritoryOptions {
 }
 
 export class RobotTerritory {
-  private readonly control = new Map<string, SectorControlState>();
+  private readonly control = new Map<string, MultiControlState>();
   private readonly rng: Rng;
   private readonly now: () => number;
   private readonly nexusRespawnMs: number;
   private nexus: { sectorKey: string; x: number; y: number; alive: boolean; respawnAtMs: number } | null = null;
   private lastTickMs: number;
   private readonly subs: Array<{ bus: Bus; fn: (e: { type: 'ENTITY_DESTROYED'; entityId: string }) => void }> = [];
-  private readonly scratch: ControlInputs = { robots: 0, nexus: false, playerStructures: 0, players: 0 };
+  /** One sector's presence (reused; the meter reads it synchronously). */
+  private readonly presence = new Map<string, SidePresence>();
+  private readonly presencePool: SidePresence[] = [];
+  /** One sector's live locks (reused; see `locksFor`). */
+  private readonly locks = new Set<string>();
   /** P3b — harvester id → where it lives + when it may respawn. */
   private readonly harvesters = new Map<string, { alive: boolean; sectorKey: string | null; respawnAtMs: number; mining: boolean }>();
   private readonly harvesterRespawnMs: number;
+  /** Galaxy feed — last holder change per sector (game ms; this process only). */
+  private readonly flippedAtMs = new Map<string, number>();
+  /** Galaxy feed — an hour of control per sector, one sample a minute. */
+  private readonly controlHistory: SectorControlHistory;
 
   constructor(
     private readonly rooms: ReadonlyMap<string, LivingWorldRoom>,
@@ -106,6 +166,8 @@ export class RobotTerritory {
     this.nexusRespawnMs = opts.nexusRespawnMs ?? NEXUS_RESPAWN_MS;
     this.harvesterRespawnMs = opts.harvesterRespawnMs ?? HARVESTER_RESPAWN_MS;
     this.lastTickMs = this.now();
+    this.controlHistory = new SectorControlHistory(rooms.keys());
+    for (const key of rooms.keys()) this.control.set(key, freshMultiControl(sectorController(key)));
     for (let i = 0; i < HARVESTERS_PER_NEXUS; i++) {
       this.harvesters.set(`${HARVESTER_ID_PREFIX}${i}`, { alive: false, sectorKey: null, respawnAtMs: 0, mining: false });
     }
@@ -122,11 +184,13 @@ export class RobotTerritory {
       this.subs.push({ bus, fn });
     }
     this.placeNexus(this.opts.nexusSector ?? this.pickNexusSector(null));
+    setActiveTerritory(this);
   }
 
   stop(): void {
     for (const s of this.subs) s.bus.off('ENTITY_DESTROYED', s.fn);
     this.subs.length = 0;
+    if (activeTerritory === this) setActiveTerritory(null);
   }
 
   // ── Hooks ───────────────────────────────────────────────────────────────
@@ -136,10 +200,45 @@ export class RobotTerritory {
     return n && n.alive ? { sectorKey: n.sectorKey, x: n.x, y: n.y } : null;
   }
 
+  /** The side holding a sector (any side), or null for neutral ground. */
   sectorOwner(sectorKey: string): SectorOwner | null {
     const s = this.control.get(sectorKey);
-    if (!s || !s.robotHeld) return null;
-    return { factionId: ROBOT_FACTION_ID, contested: isContested(s, this.inputsFor(sectorKey)) };
+    if (!s || s.holder === null) return null;
+    return { factionId: s.holder, contested: isMultiContested(s, this.presenceFor(sectorKey), controlOpposes) };
+  }
+
+  /**
+   * Galaxy feed — a sector's live control view (`/galaxy/snapshot` `control`):
+   * shares, challenger, trend, threat (`controlThreat` over the falling share,
+   * the holder's structures hit within THREAT_STRUCTURE_HIT_WINDOW_MS and the
+   * room's recent-combat window), last flip and lock. Feed cadence (~10 s);
+   * allocation fine.
+   */
+  sectorControl(sectorKey: string): SectorControl | null {
+    const s = this.control.get(sectorKey);
+    if (!s) return null;
+    const room = this.rooms.get(sectorKey);
+    const counts = room?.liveCounts?.();
+    const presence = this.presenceOf(sectorKey, counts);
+    const holderShare = s.holder ? (s.shares.get(s.holder) ?? 0) : 0;
+    const trend = holderTrend(s, presence, controlOpposes);
+    const ch = challengerOf(s, controlOpposes);
+    const hit = s.holder !== null && (room?.sideStructuresHitWithin?.(s.holder, THREAT_STRUCTURE_HIT_WINDOW_MS) ?? false);
+    const combat = (room?.recentCombat?.() ?? null) !== null;
+    return {
+      holderShare: Math.round(holderShare * 10) / 10,
+      challenger: ch?.factionId ?? null,
+      challengerShare: ch ? Math.round(ch.share * 10) / 10 : 0,
+      trend,
+      threat: controlThreat(s.holder !== null, trend, holderShare, hit, combat),
+      flippedAtMs: this.flippedAtMs.get(sectorKey) ?? null,
+      locked: s.holder !== null && this.locksFor(sectorKey, counts?.lockSides).has(s.holder),
+    };
+  }
+
+  /** Galaxy feed — a sector's control history, oldest first (null = unknown sector). */
+  history(sectorKey: string): SectorHistorySample[] | null {
+    return this.controlHistory.samples(sectorKey);
   }
 
   /** Control-tick step (robot director `onTick`). */
@@ -156,11 +255,61 @@ export class RobotTerritory {
     this.lastTickMs = nowMs;
     for (const key of this.rooms.keys()) {
       let s = this.control.get(key);
-      if (!s) { s = freshControl(); this.control.set(key, s); }
-      if (stepControl(s, this.inputsFor(key), dt)) {
-        serverLogEvent(s.robotHeld ? 'robot_sector_claimed' : 'robot_sector_released', { sectorKey: key });
+      if (!s) { s = freshMultiControl(sectorController(key)); this.control.set(key, s); }
+      const counts = this.rooms.get(key)?.liveCounts?.();
+      const r = stepMultiControl(s, this.presenceOf(key, counts), controlOpposes, dt, this.locksFor(key, counts?.lockSides));
+      if (r.flipped) {
+        this.flippedAtMs.set(key, nowMs);
+        serverLogEvent('sector_control_changed', { sectorKey: key, from: r.previousHolder, to: s.holder });
       }
     }
+    if (this.controlHistory.due(nowMs)) {
+      for (const [key, s] of this.control) this.controlHistory.record(key, nowMs, s.holder, s.holder ? (s.shares.get(s.holder) ?? 0) : 0);
+      this.controlHistory.commit(nowMs);
+    }
+  }
+
+  // ── Persistence (rides the robot director's state row) ──────────────────
+
+  /**
+   * Each sector's control meter that differs from its static seed, for the
+   * robot director's persisted state (`saveSectorControl` hook). Shares are
+   * rounded to 1 decimal and shares under 0.5 are dropped, so a sector the meter
+   * has drifted back to its seed is not saved. Persist cadence; allocation fine.
+   */
+  saveControl(): PersistedSectorControl[] {
+    const out: PersistedSectorControl[] = [];
+    for (const [sectorKey, s] of this.control) {
+      const shares: Array<[string, number]> = [];
+      for (const [side, v] of s.shares) {
+        const r = Math.round(v * 10) / 10;
+        if (r >= SAVE_MIN_SHARE) shares.push([side, r]);
+      }
+      shares.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+      if (isSeedState(sectorKey, s.holder, shares)) continue;
+      out.push({ sectorKey, holder: s.holder, shares });
+    }
+    return out;
+  }
+
+  /** Overlay saved control onto the seeds (`restoreSectorControl` hook). A
+   *  sector not in this galaxy is ignored; a sector not saved keeps its seed.
+   *  A side that no longer counts for control (the Ancients) is dropped. */
+  restoreControl(entries: readonly PersistedSectorControl[]): void {
+    for (const e of entries) {
+      if (!this.rooms.has(e.sectorKey)) continue;
+      const shares = new Map<string, number>();
+      for (const [side, v] of e.shares) {
+        if (countsForControl(side)) shares.set(side, Math.min(CONTROL_MAX, Math.max(0, v)));
+      }
+      const holder = e.holder && countsForControl(e.holder) ? e.holder : null;
+      this.control.set(e.sectorKey, { shares, holder });
+    }
+  }
+
+  /** A sector's live control meter (tests / dev). */
+  controlState(sectorKey: string): Readonly<MultiControlState> | undefined {
+    return this.control.get(sectorKey);
   }
 
   // ── Introspection (tests / dev) ─────────────────────────────────────────
@@ -169,23 +318,39 @@ export class RobotTerritory {
     return this.nexus ? { sectorKey: this.nexus.sectorKey, alive: this.nexus.alive } : null;
   }
 
-  heldSectors(): string[] {
+  /** Sectors held by `side` (default: the robots). */
+  heldSectors(side: string = ROBOT_SIDE): string[] {
     const out: string[] = [];
-    for (const [k, s] of this.control) if (s.robotHeld) out.push(k);
+    for (const [k, s] of this.control) if (s.holder === side) out.push(k);
     return out;
   }
 
   // ── Internals ───────────────────────────────────────────────────────────
 
-  private inputsFor(sectorKey: string): ControlInputs {
-    const i = this.scratch;
-    const room = this.rooms.get(sectorKey);
-    const counts = room?.liveCounts?.();
-    i.robots = this.robotCounts().get(sectorKey) ?? 0;
-    i.nexus = this.nexus !== null && this.nexus.alive && this.nexus.sectorKey === sectorKey;
-    i.players = counts?.players ?? room?.playerCount() ?? 0;
-    i.playerStructures = counts?.structures ?? 0;
-    return i;
+  /** Every side's presence in a sector: the room's per-faction ships and
+   *  structures, with the robots from the robot director's count + the nexus. */
+  private presenceFor(sectorKey: string): ReadonlyMap<string, SidePresence> {
+    return this.presenceOf(sectorKey, this.rooms.get(sectorKey)?.liveCounts?.());
+  }
+
+  private presenceOf(sectorKey: string, counts: SectorLiveCounts | undefined): ReadonlyMap<string, SidePresence> {
+    const robots = this.robotCounts().get(sectorKey) ?? 0;
+    const nexus = this.nexus !== null && this.nexus.alive && this.nexus.sectorKey === sectorKey;
+    fillSectorPresence(this.presence, this.presencePool, counts?.byFaction, robots, nexus);
+    return this.presence;
+  }
+
+  /** The sides with a live lock in a sector (reused set). The robots' living
+   *  nexus is the robots' lock; a built Territory Lock structure is its owner
+   *  side's lock (`lockSides` from the room's `liveCounts`). A locked sector
+   *  can't be taken until the lock dies (the stepper ignores a lock its side
+   *  doesn't hold). */
+  private locksFor(sectorKey: string, lockSides: readonly string[] | undefined): ReadonlySet<string> {
+    this.locks.clear();
+    if (lockSides) for (const side of lockSides) this.locks.add(side);
+    const n = this.nexus;
+    if (n !== null && n.alive && n.sectorKey === sectorKey) this.locks.add(ROBOT_SIDE);
+    return this.locks;
   }
 
   private pickNexusSector(avoid: string | null): string {

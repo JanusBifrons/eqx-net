@@ -9,7 +9,7 @@ import {
   type TradeOffer,
 } from '../../shared-types/economy.js';
 
-import { PlayerFactionsViewSchema, type PlayerFactionsView } from '../../shared-types/factions.js';
+import { PlayerFactionsViewSchema, setFactionLooks, type PlayerFactionsView } from '../../shared-types/factions.js';
 
 export async function fetchEconomy(playerId: string): Promise<PlayerEconomyView | null> {
   try {
@@ -53,13 +53,17 @@ export function saveTradeLastSeen(ms: number): void {
   } catch { /* storage blocked — the summary just shows again */ }
 }
 
-/** F3 — the Factions tab: standings both ways, plus this player's policy. */
+/** F3 — the Factions tab: standings both ways, plus this player's policy.
+ *  Also applies every claimed ship look to the shared registry, so the
+ *  livery helpers (`teamColorOf`/`teamSigilOf`/`teamEdgeOf`) paint them. */
 export async function fetchFactions(playerId: string): Promise<PlayerFactionsView | null> {
   try {
     const res = await fetch(`/trade/factions?playerId=${encodeURIComponent(playerId)}`);
     if (!res.ok) return null;
     const parsed = PlayerFactionsViewSchema.safeParse(await res.json());
-    return parsed.success ? parsed.data : null;
+    if (!parsed.success) return null;
+    setFactionLooks(parsed.data.looks);
+    return parsed.data;
   } catch {
     return null;
   }

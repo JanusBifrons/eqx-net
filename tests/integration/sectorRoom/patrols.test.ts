@@ -39,11 +39,16 @@ describe('SectorRoom integration — garrison patrols (v4 M2)', () => {
     const patrolIds = [...internal.swarmRegistry.all()].map((r) => r.id).filter((id) => id.startsWith('patrol-'));
     expect(patrolIds.length, 'the garrison flies a patrol').toBeGreaterThanOrEqual(3);
 
-    // A pilot parks just outside the garrison.
+    // A pilot parks just outside the garrison, a little beyond a patrol ship
+    // (in its interest cells whatever the base's size).
     const cx = garrison.reduce((n, r) => n + r.x, 0) / garrison.length;
     const cy = garrison.reduce((n, r) => n + r.y, 0) / garrison.length;
+    const ship = (room as unknown as { getBotPose(id: string): { x: number; y: number } | null }).getBotPose(patrolIds[0]!)!;
+    const out = Math.hypot(ship.x - cx, ship.y - cy) || 1;
     const pilot = randomUUID();
-    const client = await harness.connectActive(pilot, { spawnX: Math.round(cx), spawnY: Math.round(cy + 2600) });
+    const client = await harness.connectActive(pilot, {
+      spawnX: Math.round(ship.x + ((ship.x - cx) / out) * 600), spawnY: Math.round(ship.y + ((ship.y - cy) / out) * 600),
+    });
     const facs = new Set<string>();
     client.onMessage('snapshot', (snap: { drones?: Array<{ fac?: string }> }) => {
       for (const d of snap.drones ?? []) if (d.fac !== undefined) facs.add(d.fac);

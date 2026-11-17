@@ -194,6 +194,15 @@ export class ShieldWallManager {
     }
   }
 
+  /** Visit every wall that blocks right now (up, and a gate span closed), as
+   *  its world ends and half thickness: the room's obstacle gatherer. */
+  forEachBlockingWall(nowMs: number, sink: { wall(ax: number, ay: number, bx: number, by: number, halfThickness: number): void }): void {
+    for (const w of this.walls.values()) {
+      if (!this.blocks(w, nowMs)) continue;
+      sink.wall(w.ax, w.ay, w.bx, w.by, (w.span < 0 ? SHIELD_WALL_THICKNESS : GATE_SPAN_THICKNESS) / 2);
+    }
+  }
+
   /**
    * Resolve a weapon hit on the wall with body id `wallId`. Returns true if the
    * shot was ABSORBED (the wall was blocking). Drains batteries for the excess

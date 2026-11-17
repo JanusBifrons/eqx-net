@@ -164,3 +164,23 @@ describe('authRouter — rate limiting (A2)', () => {
     expect(res.status).toBe(200);
   });
 });
+
+describe('authRouter — test-build one-tap sign-in (docs/ops/phone-link.md)', () => {
+  it('POST /auth/test-signin signs into the owner account as one real player', async () => {
+    const res = await post('/auth/test-signin', {});
+    expect(res.status).toBe(200);
+    const body = await res.json() as { token: string; user: { email: string } };
+    expect(body.token).toBe('tok-test');
+    expect(authServiceMock.findOrCreateTestUser).toHaveBeenLastCalledWith(
+      'owner@eqx.test',
+      { displayName: 'Owner', exempt: false },
+    );
+  });
+
+  it('is on for the dev server and the phone lane, off in production', async () => {
+    const { testSignInEnabled } = await import('./authRouter.js');
+    expect(testSignInEnabled({ NODE_ENV: 'development' })).toBe(true);
+    expect(testSignInEnabled({ NODE_ENV: 'production', EQX_TEST_SIGNIN: '1' })).toBe(true);
+    expect(testSignInEnabled({ NODE_ENV: 'production' })).toBe(false);
+  });
+});

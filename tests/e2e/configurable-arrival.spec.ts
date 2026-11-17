@@ -39,7 +39,7 @@ async function openGalaxyTab(page: import('@playwright/test').Page): Promise<voi
 test.describe('configurable-arrival picker', () => {
   test('mobile: picker renders with three modes and defaults to "same"', async ({ browser }) => {
     const iPhone = devices['iPhone SE'];
-    const ctx = await browser.newContext({ ...iPhone, viewport: { width: 375, height: 667 } });
+    const ctx = await browser.newContext({ ...iPhone, viewport: { width: 667, height: 375 } });
     const page = await ctx.newPage();
     await bootGame(page);
     await openGalaxyTab(page);
@@ -61,7 +61,7 @@ test.describe('configurable-arrival picker', () => {
 
   test('mobile: switching to X/Y enables the inputs; switching to Home disables them and shows 0/0', async ({ browser }) => {
     const iPhone = devices['iPhone SE'];
-    const ctx = await browser.newContext({ ...iPhone, viewport: { width: 375, height: 667 } });
+    const ctx = await browser.newContext({ ...iPhone, viewport: { width: 667, height: 375 } });
     const page = await ctx.newPage();
     await bootGame(page);
     await openGalaxyTab(page);
@@ -85,7 +85,7 @@ test.describe('configurable-arrival picker', () => {
 
   test('mobile: out-of-bounds X/Y blurs to clamped value and shows the toast', async ({ browser }) => {
     const iPhone = devices['iPhone SE'];
-    const ctx = await browser.newContext({ ...iPhone, viewport: { width: 375, height: 667 } });
+    const ctx = await browser.newContext({ ...iPhone, viewport: { width: 667, height: 375 } });
     const page = await ctx.newPage();
     await bootGame(page);
     await openGalaxyTab(page);
@@ -109,7 +109,7 @@ test.describe('configurable-arrival picker', () => {
 
   test('mobile: in-bounds X/Y is preserved on blur (no toast)', async ({ browser }) => {
     const iPhone = devices['iPhone SE'];
-    const ctx = await browser.newContext({ ...iPhone, viewport: { width: 375, height: 667 } });
+    const ctx = await browser.newContext({ ...iPhone, viewport: { width: 667, height: 375 } });
     const page = await ctx.newPage();
     await bootGame(page);
     await openGalaxyTab(page);
@@ -130,7 +130,7 @@ test.describe('configurable-arrival picker', () => {
 
   test('mobile: arrival mode + X/Y values persist across reload (per-user localStorage)', async ({ browser }) => {
     const iPhone = devices['iPhone SE'];
-    const ctx = await browser.newContext({ ...iPhone, viewport: { width: 375, height: 667 } });
+    const ctx = await browser.newContext({ ...iPhone, viewport: { width: 667, height: 375 } });
     const page = await ctx.newPage();
     await bootGame(page);
     await openGalaxyTab(page);

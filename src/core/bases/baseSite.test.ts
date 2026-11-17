@@ -98,6 +98,13 @@ describe('nearestClearPoint (T1 spawn clearance)', () => {
     expect(Math.hypot(dx, dy)).toBeGreaterThanOrEqual(60);
     expect(Math.hypot(p.x, p.y)).toBeLessThan(600);
   });
+
+  it('keeps a body its own extent clear of a wall segment (navigation slice 2)', () => {
+    const wall = [{ ax: -2000, ay: 0, bx: 2000, by: 0, r: 20 }];
+    expect(nearestClearPoint(0, 500, [], 60, 6000, [], 60, wall)).toEqual({ x: 0, y: 500 });
+    const p = nearestClearPoint(0, 10, [], 60, 6000, [], 60, wall);
+    expect(Math.abs(p.y)).toBeGreaterThanOrEqual(80);
+  });
 });
 
 describe('chooseBaseSite centred on a solar-system pocket (Phase 4)', () => {

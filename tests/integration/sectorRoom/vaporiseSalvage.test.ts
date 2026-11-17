@@ -146,7 +146,7 @@ describe('SectorRoom integration — vaporised salvage, every ship (owner 2026-1
     const follow = beam.followThroughTicks ?? 0;
     expect(follow).toBeGreaterThan(0);
     harness = await bootSectorTestServer({
-      sectorKey: 'sol-prime', droneCount: 0, testMode: true, asteroidConfig: [], pilotCapitals: true,
+      sectorKey: 'sol-prime', droneCount: 0, testMode: true, asteroidConfig: [],
       capitalWrecks: true, subcapWrecks: true, traverseTicksCap: 0, lockTimeCapS: 0,
       // Heading π: starboard faces −x, at the pilot (the beamFits setup).
       dronePoses: [{ kind: 'heavy-cruiser-beam', x: 5000, y: 0, angle: Math.PI }],

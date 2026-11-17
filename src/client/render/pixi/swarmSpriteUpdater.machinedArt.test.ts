@@ -141,7 +141,7 @@ describe('updateSwarmSprites — Machined art', () => {
     expect(ctx.sprites.get('swarm-3')).toBeInstanceOf(Graphics);
   });
 
-  it('structures, scrap and asteroids swap too, with structures baked at their quarter turn', () => {
+  it('structures and scrap swap too, with structures baked at their quarter turn; rocks never bake (field rock shader)', () => {
     const { svc, handles, makeReady } = stubArt();
     const ctx = makeCtx(svc);
     const base = drone('fighter');
@@ -151,13 +151,13 @@ describe('updateSwarmSprites — Machined art', () => {
     const mirror = { swarm: new Map([[10, st], [11, scrap], [12, rock]]) } as unknown as RenderMirror;
     updateSwarmSprites(mirror, ctx);
     expect([...ctx.sprites.values()].every((s) => s instanceof Graphics)).toBe(true);
-    expect(handles.map((h) => h.job.type).sort()).toEqual(['rock', 'scrap', 'struct']);
+    expect(handles.map((h) => h.job.type).sort()).toEqual(['scrap', 'struct']);
     expect(handles.find((h) => h.job.type === 'struct')!.job).toMatchObject({ id: 'turret', rot: -Math.PI / 2 });
     makeReady();
     updateSwarmSprites(mirror, ctx);
     expect(ctx.sprites.get('swarm-10')).toBeInstanceOf(MachinedFlatSprite);
     expect(ctx.sprites.get('swarm-11')).toBeInstanceOf(MachinedShipSprite);
-    expect(ctx.sprites.get('swarm-12')).toBeInstanceOf(MachinedFlatSprite);
+    expect(ctx.sprites.get('swarm-12')).toBeInstanceOf(Graphics); // no field layer here: the plain polygon
     // The structure's readouts (ETA text etc.) were rebuilt onto the new sprite.
     expect(ctx.sprites.get('swarm-10')!.children.length).toBeGreaterThan(1);
   });

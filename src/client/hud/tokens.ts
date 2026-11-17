@@ -19,7 +19,7 @@ export const HUD = {
     ink: '#dfe8f5',
     inkDim: 'rgba(223,232,245,0.55)',
     inkFaint: 'rgba(223,232,245,0.32)',
-    panel: 'rgba(6,10,20,0.55)',
+    panel: 'rgba(6,10,20,0.72)',
     panelEdge: 'rgba(160,200,255,0.16)',
     auto: '#34d8ff',
     autoGlow: 'rgba(52,216,255,0.45)',

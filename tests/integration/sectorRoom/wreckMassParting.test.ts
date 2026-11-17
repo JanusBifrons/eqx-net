@@ -44,7 +44,7 @@ describe('SectorRoom integration: capital wreck pieces part by their mass', () =
 
     harness = await bootSectorTestServer({
       sectorKey: 'sol-prime', droneCount: 0, testMode: true, peacefulDrones: true, asteroidConfig: [],
-      capitalWrecks: true, pilotCapitals: true,
+      capitalWrecks: true,
     });
     const victim = randomUUID();
     await harness.connectActive(victim, { shipKind: KIND, spawnX: 8000, spawnY: 0, initialHull: 1, initialShield: 0 });

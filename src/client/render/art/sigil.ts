@@ -309,6 +309,24 @@ export function sigilCoverage(d: SigilDesign, u: number, v: number, px: number):
   return cover(sigilDistance(d, u, v), r, px);
 }
 
+/** One sigil (16-bit seed) in `color` as an `n` x `n` RGBA tile (straight
+ *  alpha): the picker tiles and the galaxy map's held-sector marks. */
+export function sigilRgba(packed: number, color: number, n: number): Uint8ClampedArray {
+  const d = sigilDesign(packed);
+  const out = new Uint8ClampedArray(n * n * 4);
+  const r = (color >> 16) & 255, g = (color >> 8) & 255, b = color & 255;
+  const px = 2 / n;
+  for (let y = 0; y < n; y++) {
+    for (let x = 0; x < n; x++) {
+      const c = sigilCoverage(d, ((x + 0.5) / n) * 2 - 1, 1 - ((y + 0.5) / n) * 2, px);
+      if (c <= 0) continue;
+      const o = (y * n + x) * 4;
+      out[o] = r; out[o + 1] = g; out[o + 2] = b; out[o + 3] = Math.round(c * 255);
+    }
+  }
+  return out;
+}
+
 /** Fallback mark for tiny hulls: one bold chevron pointing at the nose. */
 export function sigilChevron(u: number, v: number, px: number): number {
   const r = Math.hypot(u, v);

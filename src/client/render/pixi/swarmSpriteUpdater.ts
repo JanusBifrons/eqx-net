@@ -54,7 +54,7 @@ import { buildChargeTelegraph, updateChargeTelegraph, type ChargeTelegraph } fro
 import type { Text } from 'pixi.js';
 import { minerRangeForKind } from '../minerRangeRing.js';
 import {
-  buildArtShipSprite, isMachinedSprite, rockHandleFor, scrapHandleFor, shipArtSwap, structHandleFor,
+  buildArtShipSprite, isMachinedSprite, scrapHandleFor, shipArtSwap, structHandleFor,
   updateArtShipLight, shipArtHandleForEntity, wreckArtHandleFor,
 } from '../art/shipArtSprites.js';
 import { MachinedShipSprite } from '../art/MachinedShipSprite.js';
@@ -63,7 +63,9 @@ import {
 } from '../../net/swarmInterpolation';
 import { resolveEntityDisplayPose } from '../../net/swarmDisplayPose';
 import { WreckPieceSprite, coolWreckInfo } from './wreckArt.js';
-import { buildRockPieceArt, classicRockTint, isRockWreck, rockPieceLook } from './rockPieceArt.js';
+import { buildRockPieceArt, classicRockTint, isRockWreck } from './rockPieceArt.js';
+import { isFieldRockMesh } from '../field/CutFieldLayer.js';
+import { placedRockMeshData } from '../field/placedRockMesh.js';
 
 /** S2b: an empty wreck map for frames whose mirror carries none. */
 const NO_WRECKS: ReadonlyMap<number, unknown> = new Map();
@@ -181,9 +183,9 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
       sprite = undefined;
     }
     // Machined art: each kind swaps to its Machined sprite once the art is
-    // ready (A3 drones, A4 structures / scrap / asteroids). A patrol bakes in
-    // its faction's paint (tinting a lit sprite would muddy it); structures
-    // and asteroids bake their turn so the sun stays put.
+    // ready (A3 drones, A4 structures / scrap). A patrol bakes in its
+    // faction's paint (tinting a lit sprite would muddy it); structures bake
+    // their turn so the sun stays put. Rocks draw the field rock shader.
     const artHandle = !ctx.art.art
       ? null
       : entry.kind === 1 && entry.shipKind
@@ -192,9 +194,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
           ? structHandleFor(ctx.art, spriteKey, entry.shipKind, -entry.angle, ctx.art.structLivery === true ? mirror.structures?.get(entityId)?.owner : undefined)
           : entry.kind === 3 && entry.shipKind
             ? scrapHandleFor(ctx.art, spriteKey, entry.shipKind, entry.componentIndex ?? 0)
-            : entry.kind === 0 && entry.fieldKey === undefined
-              ? rockHandleFor(ctx.art, spriteKey, entry.shapeSeed ?? 0, entry.radius, entry.asteroidResource, -entry.angle)
-              : null;
+            : null;
     // S3: a wreck piece draws its PARENT kind's baked art. A capital's is the
     // handle the live hull used (no re-bake); a sub-cap's is the parent's DEAD
     // bake (`fx.deadArt`: no glowing robot core, canopy, engines or running
@@ -207,21 +207,13 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     const wreckArtHandle = wreckDesc !== undefined && ctx.art.art && !wreckRock
       ? wreckArtHandleFor(ctx.art, spriteKey, wreckParent, wreckDesc.owner ?? entry.faction, wreckDeadArtFor(wreckParent))
       : null;
-    // A rock's piece draws the uncut rock's art: its Machined rock handle
-    // (the same bake key the rock used: shape, radius, resource), swapped in
-    // once ready, as a rock's own sprite is.
+    // A rock's piece draws the uncut rock's surface (the field rock shader,
+    // in the root rock's rest frame); built once, no bake to wait for.
     const pieceRock = wreckRock ? ctx.wrecks!.rockOf(entry.wreckId!) : undefined;
-    const rockPieceHandle = pieceRock !== undefined && ctx.art.art
-      ? rockHandleFor(ctx.art, spriteKey, pieceRock.shape, pieceRock.r, rockPieceLook(pieceRock).resource, -entry.angle)
-      : null;
     if (
-      sprite instanceof WreckPieceSprite && ((
-        wreckArtHandle !== null &&
-        wreckArtHandle.state === 'ready' && wreckArtHandle.ship !== null && sprite.art !== wreckArtHandle.ship
-      ) || (
-        rockPieceHandle !== null && rockPieceHandle.state === 'ready' && rockPieceHandle.struct !== null
-        && sprite.rockArt !== null && sprite.rockArt.struct !== rockPieceHandle.struct
-      ))
+      sprite instanceof WreckPieceSprite &&
+      wreckArtHandle !== null &&
+      wreckArtHandle.state === 'ready' && wreckArtHandle.ship !== null && sprite.art !== wreckArtHandle.ship
     ) {
       ctx.shipContainer.removeChild(sprite);
       ctx.spriteBuildSigs.delete(spriteKey);
@@ -303,17 +295,18 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         const shipArt = wreckArtHandle !== null && wreckArtHandle.state === 'ready' ? wreckArtHandle.ship : null;
         if (wreckRock && pieceRock === undefined) continue; // rock piece without its rock: not drawn
         sprite = new WreckPieceSprite(
-          g, wreckParent, shipArt, info, index, pieceRock !== undefined ? buildRockPieceArt(g, pieceRock, rockPieceHandle) : null,
+          g, wreckParent, shipArt, info, index, pieceRock !== undefined ? buildRockPieceArt(g, pieceRock, ctx.fieldRocks ?? null) : null,
         );
       } else {
-        const rockRadius = entry.radius;
-        // An awake cut-field rock keeps its cut shape and rock surface.
-        const field = entry.fieldKey !== undefined ? ctx.fieldRocks?.buildRockSprite(entry.fieldKey) ?? null : null;
-        if (field !== null) sprite = field;
-        else sprite = buildArtShipSprite(artHandle, () => buildAsteroidGfx(entry.shapeSeed ?? 0, rockRadius));
-        // P2c — ice and crystal-veined rocks read apart from plain rock (the
-        // Machined rock bakes its resource colour instead).
-        // (Applied in the per-frame tint block below, the one tint site.)
+        // An awake cut-field rock keeps its cut shape and rock surface; a
+        // placed rock draws the same field rock shader from its own outline.
+        const fr = ctx.fieldRocks;
+        const field = fr === undefined ? null
+          : entry.fieldKey !== undefined ? fr.buildRockSprite(entry.fieldKey)
+          : fr.buildRockMesh(placedRockMeshData({ shape: entry.shapeSeed ?? 0, r: entry.radius, res: entry.asteroidResource }));
+        // No field layer (headless tests) or no chunk: the plain polygon,
+        // resource-tinted in the per-frame tint block below (the one tint site).
+        sprite = field ?? buildAsteroidGfx(entry.shapeSeed ?? 0, entry.radius);
       }
       ctx.shipContainer.addChild(sprite);
       ctx.sprites.set(spriteKey, sprite);
@@ -503,7 +496,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
       // A Machined patrol has its faction paint baked in, so it stays untinted.
       const fc = entry.kind === 1 && entry.faction !== undefined && !(sprite instanceof MachinedShipSprite)
         ? npcFactionDef(entry.faction)?.color
-        : entry.kind === 0 && !isMachinedSprite(sprite)
+        : entry.kind === 0 && !isMachinedSprite(sprite) && !isFieldRockMesh(sprite)
           ? classicRockTint(entry.asteroidResource)
           : entry.kind === 3
             ? scrapHeatTint(now - (scrapBorn.get(sprite) ?? -Infinity))

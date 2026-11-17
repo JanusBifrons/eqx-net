@@ -41,6 +41,8 @@ import {
   slotBase,
 } from '../../shared-types/sabLayout.js';
 import { CELL_SIZE } from '../interest/SpatialGrid.js';
+import { ViewerInterestWindows } from '../interest/ViewerInterestWindows.js';
+import { getShipKind } from '../../shared-types/shipKinds.js';
 import { SWARM_KIND_STRUCTURE } from '../../shared-types/swarmWireFormat.js';
 import {
   shouldBroadcastFar,
@@ -425,6 +427,9 @@ export class SnapshotBroadcaster {
   /** Per-session 9-cell drone interest sets (populated by the room's
    *  swarm-broadcast block earlier in update()). */
   readonly interestScratch = new Map<string, Set<number>>();
+  /** Per-session window (centre + reach), noted by the swarm broadcast. */
+  readonly interestWindows = new ViewerInterestWindows();
+  forgetInterestWindow(sessionId: string): void { this.interestWindows.forget(sessionId); this.interestScratch.delete(sessionId); }
 
   // === Per-broadcast scratch (plan: quirky-rabbit, Phase 2 — invariant
   // #14). Built ONCE before the per-recipient loop, referenced
@@ -502,7 +507,11 @@ export class SnapshotBroadcaster {
    */
   ownerWideInInterest(ownerId: string, sessionId: string): boolean {
     const owner = this.deps.swarmRegistry.get?.(ownerId);
-    if (!owner || (owner.radius <= CELL_SIZE / 2 && owner.kind !== SWARM_KIND_STRUCTURE)) return false;
+    if (owner === undefined || owner === null) { // a PILOT hull (playerId, or shipInstanceId while AI-flown / lingering)
+      const d = this.deps, ship = d.getActiveShip(ownerId) ?? d.shipsMap.get(ownerId), pose = d.shipPoseCache.get(ownerId) ?? d.lingeringPoseCache.get(ownerId);
+      return ship !== undefined && pose !== undefined && this.interestWindows.wideHullIn(sessionId, pose.x, pose.y, getShipKind(ship.kind).radius);
+    }
+    if (owner.radius <= CELL_SIZE / 2 && owner.kind !== SWARM_KIND_STRUCTURE) return false;
     return this.interestScratch.get(sessionId)?.has(owner.entityId) === true;
   }
   private readonly _shellKeyScratch: ShellKeyRecord[] = [];
@@ -879,8 +888,6 @@ export class SnapshotBroadcaster {
       wreckWire.step(this.broadcastCounter, liveWrecks, d.wrecksVersion?.() ?? 0);
     }
 
-    // 3×3 cell window radius for projectile interest.
-    const interestRadius = CELL_SIZE * 1.5;
     let anySnapshotSent = false;
 
     for (const client of d.clients) {
@@ -901,6 +908,8 @@ export class SnapshotBroadcaster {
       const recipientPose = d.shipPoseCache.get(recipientPlayerId);
       if (!recipientPose) continue;
 
+      // Projectile interest box = the cell window's half-width (reach 1 ⇒ 3×3, 1.5 cells).
+      const interestRadius = CELL_SIZE * (this.interestWindows.reachOf(client.sessionId) + 0.5);
       // Build per-recipient states map. The Record itself MUST be
       // freshly allocated (notepack.io would encode stale keys from a
       // reused Record). The VALUES inside are pooled in

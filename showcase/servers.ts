@@ -4,7 +4,7 @@
  * per-run temp DB so the dev database is never written.
  */
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { openSync, closeSync } from 'node:fs';
+import { openSync, closeSync, appendFileSync } from 'node:fs';
 import path from 'node:path';
 import type { ServerProfile } from './types.js';
 import { killPort, trackPid, waitForHttp } from './tools.js';
@@ -67,18 +67,36 @@ function killTree(child: ChildProcess | null): void {
   }
 }
 
-function startLogged(cmd: string, cwd: string, env: Record<string, string>, logFile: string): ChildProcess {
+/** `outlive`: the process keeps running after this CLI exits (the phone lane:
+ *  `pnpm phone up` returns while the game stays up). */
+function startLogged(cmd: string, cwd: string, env: Record<string, string>, logFile: string, outlive = false): ChildProcess {
   const fd = openSync(logFile, 'a');
   const child = spawn(cmd, {
     cwd,
     shell: true,
-    detached: process.platform !== 'win32',
+    detached: outlive || process.platform !== 'win32',
+    windowsHide: true,
     stdio: ['ignore', fd, fd],
     env: { ...process.env, ...env },
   });
   closeSync(fd);
   trackPid(child.pid);
+  if (outlive) child.unref();
   return child;
+}
+
+/**
+ * How the client is served. `dev` (default): `vite` dev server, as every
+ * capture uses. `preview`: a production `vite build` into `outDir`, then
+ * `vite preview` (the phone lane: installable PWA + service worker, which only
+ * exist in a build). `env` reaches both the build and the preview server.
+ */
+export type ViteMode = { mode: 'dev' } | { mode: 'preview'; outDir: string; env: Record<string, string> };
+
+export interface CaptureServersOptions {
+  vite?: ViteMode;
+  /** Children outlive this process (see `startLogged`). */
+  outlive?: boolean;
 }
 
 export class CaptureServers {
@@ -93,6 +111,7 @@ export class CaptureServers {
     private readonly ports: ServerPorts = DEFAULT_PORTS,
     /** Extra server env (the perf runner's fault injection). */
     private readonly extraEnv: Record<string, string> = {},
+    private readonly opts: CaptureServersOptions = {},
   ) {}
 
   get baseUrl(): string {
@@ -136,6 +155,7 @@ export class CaptureServers {
         ...this.extraEnv,
       },
       path.join(this.runDir, 'server.log'),
+      this.opts.outlive,
     );
     this.profile = profile;
     await waitForHttp(`${this.serverUrl}/healthz`, 120_000);
@@ -152,13 +172,22 @@ export class CaptureServers {
 
   private async startVite(): Promise<void> {
     killPort(this.ports.vite);
-    this.vite = startLogged(
-      `pnpm exec vite --port ${this.ports.vite} --strictPort`,
-      this.appDir,
-      { EQX_SERVER_PORT: String(this.ports.server), VITE_HMR_PORT: 'off' },
-      path.join(this.runDir, 'vite.log'),
-    );
-    await waitForHttp(`${this.baseUrl}/`, 120_000);
+    const vite = this.opts.vite ?? { mode: 'dev' };
+    const env = { EQX_SERVER_PORT: String(this.ports.server), VITE_HMR_PORT: 'off', ...(vite.mode === 'preview' ? vite.env : {}) };
+    const logFile = path.join(this.runDir, 'vite.log');
+    let cmd = `pnpm exec vite --port ${this.ports.vite} --strictPort`;
+    if (vite.mode === 'preview') {
+      const outDir = JSON.stringify(vite.outDir);
+      const build = spawnSync(`pnpm exec vite build --outDir ${outDir} --emptyOutDir`, {
+        cwd: this.appDir, shell: true, windowsHide: true, encoding: 'utf8', env: { ...process.env, ...env },
+      });
+      appendFileSync(logFile, `${build.stdout ?? ''}${build.stderr ?? ''}`);
+      if (build.status !== 0) throw new Error(`vite build failed (exit ${build.status}); see ${logFile}`);
+      cmd = `pnpm exec vite preview --outDir ${outDir} --port ${this.ports.vite} --strictPort`;
+    }
+    this.vite = startLogged(cmd, this.appDir, env, logFile, this.opts.outlive);
+    // The phone gate refuses `/` without its key; the favicon is exempt.
+    await waitForHttp(`${this.baseUrl}/${vite.mode === 'preview' ? 'favicon.ico' : ''}`, 120_000);
   }
 
   stop(): void {

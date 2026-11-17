@@ -58,8 +58,7 @@ export const WorldEventViewSchema = z
     kind: z.enum(WORLD_EVENT_KINDS),
     title: z.string().max(60),
     endsAtMs: z.number().nonnegative(),
-  })
-  .strict();
+  }); // strip, not strict: rides the galaxy snapshot response
 
 function randInt(rng: () => number, min: number, max: number): number {
   return min + Math.floor(rng() * (max - min + 1));

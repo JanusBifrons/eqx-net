@@ -79,6 +79,12 @@ so it unit-tests like `TransitOrchestrator`):
 - Record ownership + construction state in
   [`StructureRegistry`](../../src/server/structures/StructureRegistry.ts).
   `remove` is owner-gated (anti-grief).
+- **Kind rules** (`placementRefusal` hook, player placements only): a kind may
+  carry its own rule; the refusal text is kept on `lastRefusal` and the room
+  sends it as a `notice`. Today only the **Territory Lock** has one
+  (`structures/territoryLockRules.ts`): the builder's side must hold the sector
+  on the control meter, and one per sector. See
+  [robot-territory](../features/robot-territory.md).
 
 `SectorRoom._internals` exposes `structureRegistry` + the swarm record's
 `shipKind` for the integration test.
@@ -129,7 +135,7 @@ view, never the server `StructureRegistry`):
   (macro terrain C5g). Both sides build
   a rock's `parts` with the one `rockObstacleParts` (a field rock's collider
   parts, else its outline's convex hull; an ordinary asteroid's seeded
-  outline) at its live angle: the server in `gatherStructureObstacles` and
+  outline) at its live angle: the server in `SectorObstacles.rocks` and
   `CutFieldSubsystem.dormantObstacles`, the client link preview through
   `RockObstacleShapes` (`client/structures/mirrorToGridNode.ts`: an awake field
   rock's body from `CutFieldLayer.rockBody`, the packed chunk the cutter
@@ -556,7 +562,7 @@ can be placed with an empty bank and waits. The structure subtype rides the
 PLACED STRUCTURES only, so a Capital dropped on a rock LANDED ("places on an
 asteroid"). It now routes BOTH the structure AND the asteroid check through the
 shared pure [`canPlaceStructureAt`/`placementRejection`](../../src/core/structures/placementRules.ts)
-(sum-of-radii circle, the same `getObstacles` → `gatherStructureObstacles` hook
+(sum-of-radii circle, the same `getObstacles` → `SectorObstacles.rocks` hook
 the auto-connect LOS already used). Low-frequency message path — no wire change,
 NO netgate. The client ghost can call the SAME predicate for a red-invalid tint
 (deferred). Locks: `placementRules.test.ts` (pure), `StructurePlacementSubsystem.test.ts`

@@ -150,7 +150,10 @@ describe('structureOutline', () => {
   });
 
   it('style c leaves every other style outline unchanged (hash pinned before 1i)', () => {
-    const json = JSON.stringify(KIND_IDS.map((id) => [undefined, 'a', 'b'].map((st) => structureOutline(id, st))));
+    // Kinds appended after the pin (the Territory Lock) are left out, so the
+    // pin still guards every outline it covered.
+    const pinned = KIND_IDS.filter((id) => id !== 'territory_lock');
+    const json = JSON.stringify(pinned.map((id) => [undefined, 'a', 'b'].map((st) => structureOutline(id, st))));
     let hh = 0x811c9dc5;
     for (let i = 0; i < json.length; i++) {
       hh ^= json.charCodeAt(i);

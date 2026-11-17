@@ -22,6 +22,7 @@ import { PhaseRouter } from './app/PhaseRouter';
 import {
   syncGalaxyVisibility,
   syncGalaxyCurrentSector,
+  syncGalaxyFocus,
   syncGalaxyTransitDocked,
   syncGalaxyStats,
   syncGalaxyPresence,
@@ -45,6 +46,7 @@ import { ErrorBoundary } from './components/ErrorOverlay';
 import { HyperspaceOverlay } from './components/HyperspaceOverlay';
 import { WarpScreen } from './components/WarpScreen';
 import { LostConnectionOverlay } from './components/LostConnectionOverlay';
+import { RotatePhoneOverlay, useNeedsRotate } from './layout/RotatePhoneOverlay';
 import { cancelTransit } from './net/transitClient';
 import { fleetWarpRequest, sendWarpHere } from './app/fleetWarp';
 import { isSpectating } from './spectator/spectatorMode';
@@ -180,6 +182,7 @@ function GameSurface({
   const clientRef = useRef<ColyseusGameClient | null>(null);
   const rendererRef = useRef<IRenderer | null>(null);
   const galaxyLayerRef = useRef<GalaxyMapLayer | null>(null);
+  const onGalaxyFocus = useCallback((k: string | null) => syncGalaxyFocus(galaxyLayerRef.current, rendererRef.current, k), []);
   const keyboardRef = useRef<Keyboard | null>(null);
   // Phase 5 — WASD free-pan for spectator (desktop). Separate from the gameplay
   // Keyboard (which is disabled in spectator) so W pans the camera but never
@@ -232,11 +235,14 @@ function GameSurface({
   // the CAMERA via the renderer's pointer/wheel path (untouched by this gate),
   // so disabling Keyboard/TouchInput swaps "thrust/fire" for "pan/zoom only".
   const spectating = isSpectating(pilotMode);
+  // An upright phone shows the turn-sideways picture over the game; controls
+  // are off underneath it (held input zeroed), but audio keeps playing.
+  const needsRotate = useNeedsRotate();
   useEffect(() => {
     const audio = audioRef.current;
     const keyboard = keyboardRef.current;
     const touch = touchInputRef.current;
-    const inputBlocked = isLoadingActive || spectating;
+    const inputBlocked = isLoadingActive || spectating || needsRotate;
     if (inputBlocked) {
       if (isLoadingActive) audio?.suspendAll();
       keyboard?.setEnabled(false);
@@ -252,7 +258,7 @@ function GameSurface({
     // it ONLY while spectating + not loading + not touch (mobile pans by drag);
     // disabling it emits a (0,0) stop so the camera doesn't keep drifting.
     spectatorPanRef.current?.setEnabled(spectating && !isLoadingActive && !isTouchRef.current);
-  }, [isLoadingActive, spectating]);
+  }, [isLoadingActive, spectating, needsRotate]);
 
   // Phase 4 WS-A1 — drive the renderer's free-roam camera off `pilotMode`.
   // `setSpectator(true)` detaches `Camera.follow` (and `update()` stops
@@ -931,6 +937,7 @@ function GameSurface({
       {idle ? (
         <GalaxyPickerChrome
           apiRef={pickerApiRef}
+          onFocusChange={onGalaxyFocus}
           onSelectRoom={onSelectRoom}
           onSpawnExistingShip={onSpawnExistingShip}
           onSpawnNewShip={onSpawnNewShip}
@@ -1000,6 +1007,7 @@ function GameSurface({
         <GalaxyPickerChrome
           context="warp"
           apiRef={pickerApiRef}
+          onFocusChange={onGalaxyFocus}
           onClose={() => useUIStore.getState().setGalaxyMapOpen(false)}
           onWarp={(sectorKey) => {
             handleEngageTransit(sectorKey);
@@ -1164,6 +1172,7 @@ export function App(): JSX.Element {
   return (
     <ErrorBoundary>
       <LayoutProvider>
+        <RotatePhoneOverlay />
         <PhaseRouter
           phase={phase}
           user={user}

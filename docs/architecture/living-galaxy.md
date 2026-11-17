@@ -357,14 +357,23 @@ The cosmetic v1 must not box us in. The expansion ladder, in order:
 
 1. **v1 (this roadmap):** static per-region faction tint; counts live; ownership
    model present but `owner.factionId` = static, `contested` = false.
-2. **Derived ownership:** compute `owner` from `StructureRegistry` (dominant Capital
-   holder); set `contested` when multiple base owners coexist. Reuses the existing
-   [`FactionLedger`](../../src/server/faction/FactionLedger.ts) /
-   [`Faction.ts`](../../src/core/faction/Faction.ts) system — no new wire.
+2. **Derived ownership (built: the live control meter).** `owner` comes from the
+   control meter for every side (`core/territory/sectorControl.ts`
+   `stepMultiControl`, stepped by `RobotTerritory` on the control tick from each
+   side's ships, structures and robots), read through `RobotTerritory.sectorOwner`
+   into the snapshot; `contested` is set while a challenger is pushing. The static
+   controllers (`core/galaxy/control.ts` `sectorController`, the region hearts) are
+   only the seed. No new wire. Story: [robot-territory](../features/robot-territory.md).
 3. **Named NPC factions:** introduce 2-3 named factions that own/contest territory
    (eqx-peri empires) — a net-new faction-membership model.
-4. **Sector conquest:** capture objectives/timers (eqx-peri's Territory Control
-   Unit) flip ownership — its own multi-phase effort.
+4. **Sector conquest (built: presence flips, locks hold).** A sector flips when a
+   side's share on the meter claims it (claim 60, release 20); an empty sector
+   keeps its holder. Territory locks freeze the holder until the lock dies
+   (`stepMultiControl(…, lockedBy)`, fed by `RobotTerritory.locksFor`): the robots'
+   living nexus, a built Territory Lock (`territory_lock`, reported as the room's
+   `lockSides`), and each power's heart, which starts locked by the power's own base there.
+   Bases keep their owner after a flip and must be fought. Detail:
+   [robot-territory](../features/robot-territory.md#how-territory-works).
 
 The `SectorLiveState.owner` shape is the stable seam across all four.
 
@@ -506,6 +515,45 @@ and *dynamic*, and give the sector UI a proper home on mobile + desktop.
 Everything is client-render or off-tick HTTP, so **no netgate** is required; PR CI
 runs the full suite + netgate as the backstop.
 
+## Map look (territory hexes)
+
+The full-page map draws each sector as an opaque hex tinted by its owner. Decisions are pure and unit-tested in `render/galaxy/galaxyTerritories.ts` and `galaxyLayerDecisions.ts`; `galaxyHexDraw.ts` turns them into Pixi calls; `GalaxyMapLayer` composes them.
+
+- **Owner tint.** The fill is the owner's ship colour (`teamColorOf`, no galaxy-only palette), lifted toward violet in a nebula sector; neutral ground is grey; drone ground carries a hatch.
+- **Seams.** Each territory draws an inset perimeter in its owner's border colour: thin on the map edge, bold on a front. Both sides of a front draw their own line, so a front reads as a two-colour seam.
+- **Split hex.** A contested sector splits holder left, challenger right (`splitChallenger`); the split line sits at the holder's share against the challenger (`splitFraction`, each side kept to at least 18%), and on nobody's ground at what the leader has not yet taken. An owned sector splits as soon as a challenger has any share. A sector nobody owns splits grey / leader only once the leader holds at least 40% (`UNOWNED_SPLIT_MIN_SHARE`). The Ancients never count for capture, so the map never splits for them.
+- **Owner sigil.** A held sector shows its owner's sigil, the same emblem its ships wear (`teamSigilOf`), bottom-centre in the owner's border colour; one texture per owner, baked once. Neutral sectors have none.
+- **Threat brackets.** Amber corner brackets grow with threat 1-3 (more corners, longer arms, thicker).
+- **Lock and trend.** A locked sector shows a lock glyph top-right; a split sector shows a trend arrow top-left (up in the holder's colour, down in the challenger's).
+- **Flip ring.** A dashed ring in the new owner's colour marks a flip the client saw change between two polls, fading over 30 s (`FLIP_RING_MS`); the first poll never rings. It starts once the flip wipe ends.
+- **Names.** A sector name shrinks to fit inside its hex (no smaller than 0.8x), else wraps to two lines (`labelFit`).
+- **Nebula backdrop.** The shared `nebulaField` is sampled once into a coarse, blurred alpha grid that fades to zero at its border, and shown as one linear-filtered sprite behind the cluster: soft cloud, never re-baked.
+
+### Motion between polls
+
+The feed changes every 10 s; the map stays alive in between, driven by the existing `GalaxyMapLayer` ticker (no second loop). Decisions are pure in `galaxyMapMotion.ts` (`GalaxyMotion`, typed-array state per sector in `GALAXY_SECTORS` order); `galaxyMapFx.ts` is the Pixi side.
+
+- **Split ease.** A changed share eases the split line to its new place over 1 s (`SPLIT_EASE_MS`); a challenger arriving slides in from the edge, one leaving slides out.
+- **Flip wipe.** A flip wipes the new owner's colour across the hex in 0.9 s (`FLIP_WIPE_MS`) with a bold seam in their border colour, then the split eases in and the flip ring shows.
+- **Fighting flare.** A sector that just gained fighting (threat rose, or `recentCombat` newly set) gets a 1.4 s orange ring flare; the first poll never flares.
+- **Hot front.** A sector at threat 2+ wears an amber glow, drawn at feed cadence and pulsed by alpha only (2.6 s period).
+- **Nebula drift.** The full-page map slowly drifts, scales (about 2.5%) and fades the baked nebula sprite; it is never re-baked.
+- **Cost.** Idle hexes do no per-frame work; only hexes mid-tween are repainted, each into its own split buffers (Pixi keeps the points array until render), with no per-frame allocation in our code.
+- **Reduced motion.** `prefers-reduced-motion` (read on the main thread, sent to the worker in `BOOT`) snaps splits, skips wipes, flares and drift, and holds the hot glow steady.
+
+### Focus view (tap a sector)
+
+Tapping a sector on the full-page map opens a focus view. The pure decisions are in `render/galaxy/galaxyFocus.ts` (state machine, door layout, framing, tap result, panel dock); `galaxyFocusView.ts` is the Pixi side, owned by `GalaxyMapLayer`.
+
+- **Driven by the selection.** The sector the info drawer shows (`GalaxyPickerChrome` `selectedSectorKey`) is the focus: `onFocusChange` → `syncGalaxyFocus` → `layer.setFocus` on the DOM path, `SET_GALAXY_FOCUS` to the worker. Closing the drawer (✕, swipe, Join/Warp/Spawn) backs out.
+- **Camera.** The layer's existing pan/zoom `Camera` glides there: `glideTo(x, y, ms, scale)` eases the centre and, when given a scale, the zoom (geometric) over 650 ms (`FOCUS_GLIDE_MS`). Backing out glides to the view you had before the first tap; a hop between sectors keeps that home. A drag or pinch mid-glide stops the glide where it is. Reduced motion snaps.
+- **Framing.** The sector and its doors fill 92% of the screen the panel leaves free (`focusPanelInsets`), capped at the camera's 4x.
+- **Veil and doors.** A veil in the backdrop colour covers the rest of the map with a hole for the focused hex. Each linked neighbour is a small door hex on a ring round it, in that neighbour's direction (spread so none overlap), tinted by its live owner with a chevron pointing out. Tapping a door hops the focus there; tapping the focused hex does nothing; any other tap backs out. Hover-shrink is off while focused.
+- **Panel dock.** `focusPanelDock` is shared with `SectorInfoDrawer`: a landscape desktop docks the panel right (296 px); a phone (touch) or any portrait screen uses a bottom sheet (40% of the height in portrait, 50% sideways, at most 340 px). The landing buttons bottom-right already hide while a sector is selected.
+- **History.** The drawer shows control over the last hour (`SectorHistorySparkline`): one `GET /galaxy/sector/:key/history` fetch per sector opened, zod-checked, no polling. Line height is the holder's share; dashed ticks mark a change of hands (`sectorSparkline.ts`).
+- **Cost.** Drawing happens on a focus change only; the per-frame tick fades the veil and waits for the glide to land, and does nothing while idle.
+- **E2E hook.** `__eqxGalaxyFocus()` (DOM path) returns the phase, sector and door keys.
+
 ## Client rules in detail
 
 Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each rule and points here.
@@ -534,6 +582,31 @@ The drawer's Galaxy tab ([layout/Drawer/tabs/GalaxyTab.tsx](../../src/client/lay
 `RosterCountBadge` ([components/RosterCountBadge.tsx](../../src/client/components/RosterCountBadge.tsx)) lives next to `DrawerToggle` and reads the roster count from a Zustand singleton. Visual states via `data-state` attribute: `empty` (muted grey), `normal` (default green). Shows the bare owned-ship count (rosters are unlimited; no `/10`). Test lock: [components/RosterCountBadge.test.tsx](../../src/client/components/RosterCountBadge.test.tsx).
 
 **Roster source-of-truth is the Zustand singleton** (`shipRoster: RosterEntry[]` in `state/store.ts`). `ShipRosterPanel` owns the `/dev/player-ships` poll loop but writes results into `setShipRoster`, so multiple panel mounts (galaxy-map landing + drawer Galaxy tab) keep `RosterCountBadge` and any other consumer in lockstep without each mount running its own consumer-local state. One refcounted poller (`components/rosterPoller.ts`) serves every panel, and it **skips the store write when the reply is unchanged** (same text, and the store still holds the array it wrote). `App.tsx` subscribes to `shipRoster`, so a fresh array every 3 s re-rendered the whole app and cost a 33 ms frame per poll on a 90 Hz phone (phone run 2026-11-04). Any new poller feeding a widely-subscribed store field needs the same skip.
+## The shared galaxy feed (homepage map)
+
+The galaxy map is the site homepage, so every viewer reads ONE shared feed that a CDN can cache. It is never real-time.
+
+**One route, one body.** `GET /galaxy/snapshot` stays the only snapshot route. [`galaxyFeed.ts`](../../src/server/livingworld/galaxyFeed.ts) takes the director's existing `galaxyStatsCache` (via `buildGalaxySnapshot`; the director still recomputes it every ~1.5 s on its control tick), adds each sector's `control` object, serializes it once and memoises the string for `GALAXY_FEED_INTERVAL_MS` = **10 s** (real time: it is an HTTP cache lifetime). Every request in the window gets the same bytes; the first request after the window rebuilds it (lazily: no timer, nothing on any tick). The route sends `Cache-Control: public, max-age=10`. The route needs no login (the `/galaxy` router has no auth middleware).
+
+**`control` (optional, per sector; omitted when no control meter runs).** Read from the live meter (`RobotTerritory.sectorControl`, over `MultiControlState` in [sectorControl.ts](../../src/core/territory/sectorControl.ts)):
+
+| Field | Meaning |
+|---|---|
+| `holderShare` | The holder's share, 0–100 (0 when neutral), 1 decimal. |
+| `challenger`, `challengerShare` | The strongest side working against the holder (`challengerOf`; the leader on neutral ground), or null / 0. |
+| `trend` | −1 holder losing ground, 0 steady, +1 gaining (`holderTrend`). |
+| `threat` | 0–3, below. |
+| `flippedAtMs` | Game-time ms of the last holder change this process saw (not persisted: null after a restart until the next flip). |
+| `locked` | The holder has a live lock here (a Territory Lock structure, or the robots' nexus): `RobotTerritory.locksFor`. |
+
+**Threat** (`controlThreat`, pure, in sectorControl.ts). The holder is threatened when its share is falling (`trend` −1) OR one of its structures was hit within **3 min** of game time (`THREAT_STRUCTURE_HIT_WINDOW_MS`; `SectorRoom.sideStructuresHitWithin`, the per-side generalisation of `tradeBaseUnderAttack` over the same `structureAttackAuditAtMs` throttle map, so a hit registers at most once per 15 s per structure). Each sign counts 1. A threatened holder gains 1 more when the sector has `recentCombat` or its share is at or under **40** (`THREAT_LOW_SHARE`; release is at 20). Neutral ground is 0.
+
+**History.** `GET /galaxy/sector/:key/history` returns `{ key, samples: [{ atMs, holder, holderShare }] }`, oldest first: one sample a minute (game time), **60 samples** (an hour) per sector, in a ring preallocated per sector ([sectorControlHistory.ts](../../src/server/livingworld/sectorControlHistory.ts)) and written from the control tick without allocating. `:key` must be a known sector (else 404). Not persisted: the ring refills after a restart. Same `Cache-Control` as the snapshot.
+
+**Client.** `useGalaxyStats` and `useGalaxyPresence` both poll on `GALAXY_FEED_INTERVAL_MS` (10 s). Presence (`/galaxy/presence`) is per player and not memoised, so pilot counts stay exact.
+
+**Wire note.** The snapshot and history response schemas (`galaxySnapshot.ts`, and `WorldEventViewSchema` inside it) use zod's default strip, not `.strict()`: a client ignores fields added after it was built, so an old tab left open across a deploy keeps its map and simply skips new fields. The first deploy of `control` is the exception: clients built before this change still parse strictly and show no counts until they reload. Keep these response schemas non-strict; `.strict()` stays on schemas that guard server INPUT.
+
 ## Server implementation notes
 
 > Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.

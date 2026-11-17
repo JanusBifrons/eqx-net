@@ -86,8 +86,9 @@ player and ALL automation stay at zero cost. Precedence in
 1. `?autocapture=0` — explicit opt-out, wins over everything (the kill-switch).
 2. `?autocapture=1` — explicit opt-in on any session/device (E2E streaming specs).
 3. `navigator.webdriver` — automation never auto-streams via the account gate.
-4. persisted account email ∈ `AUTOCAPTURE_ACCOUNT_EMAILS` → on.
-5. otherwise off.
+4. phone-lane build (`VITE_PHONE_LANE=1`, [phone-link](../ops/phone-link.md)) → on: every phone session streams, so a freeze on the phone leaves a capture.
+5. persisted account email ∈ `AUTOCAPTURE_ACCOUNT_EMAILS` → on.
+6. otherwise off.
 
 How the boot-time decision reads the email: `authStore.setAuth` persists the
 logged-in email to `localStorage` (`auth/emailStorage.ts`), because

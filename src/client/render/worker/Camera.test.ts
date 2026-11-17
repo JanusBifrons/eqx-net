@@ -389,6 +389,34 @@ describe('Camera — one-shot glide (Phase 4 WS-A2 smooth ship-switch)', () => {
     expect(cam.isGliding()).toBe(false);
   });
 
+  it('glideTo with a scale eases the zoom too and lands on both (galaxy focus view)', () => {
+    const target = makeTarget();
+    const cam = new Camera(target, { minScale: 0.12, maxScale: 4 });
+    cam.setScreenSize(800, 600);
+    cam.setZoom(0.5);
+    cam.moveCenter(0, 0);
+    cam.glideTo(200, 100, 200, 2);
+    cam.tick(100);
+    expect(target.scale.x).toBeGreaterThan(0.5);
+    expect(target.scale.x).toBeLessThan(2);
+    cam.tick(100);
+    cam.tick(16);
+    expect(cam.isGliding()).toBe(false);
+    for (let i = 0; i < 30; i++) cam.tick(16);
+    expect(target.scale.x).toBeCloseTo(2, 3);
+    expect(cam.center.x).toBeCloseTo(200, 2);
+    expect(cam.center.y).toBeCloseTo(100, 2);
+  });
+
+  it('a zoom glide clamps to the camera range', () => {
+    const target = makeTarget();
+    const cam = new Camera(target, { minScale: 0.12, maxScale: 4 });
+    cam.setScreenSize(800, 600);
+    cam.glideTo(0, 0, 100, 50);
+    for (let i = 0; i < 20; i++) cam.tick(16);
+    expect(target.scale.x).toBeCloseTo(4, 5);
+  });
+
   it('the glide curve is ease-in-out: zero slope at both ends, symmetric, monotonic', () => {
     expect(glideEase(0)).toBe(0);
     expect(glideEase(1)).toBe(1);

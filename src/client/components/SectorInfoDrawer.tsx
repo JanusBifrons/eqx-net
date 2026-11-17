@@ -9,11 +9,15 @@ import { entityLabel, type EntityKind } from '../render/entityVisuals';
 import { Z } from '../layout/zIndex';
 import type { SectorTooltipData, SectorShipEntry } from './galaxyTooltip';
 import type { RecentCombat } from '../../shared-types/galaxySnapshot';
+import { isTouchDevice } from '../input/TouchInput';
+import { focusPanelDock, SHEET_FRAC_LANDSCAPE, SHEET_FRAC_PORTRAIT, SHEET_MAX_H } from '../render/galaxy/galaxyFocus';
+import { SectorHistorySparkline } from './SectorHistorySparkline';
 
 /**
  * Equinox Phase 9 (item 2) — the sector info DRAWER. Replaces the old fixed
- * popover (the desktop hover tooltip is separate + kept). Docks BOTTOM in
- * portrait and RIGHT in landscape (desktop is landscape → right), OVERLAYS the
+ * popover (the desktop hover tooltip is separate + kept). Docks RIGHT on a
+ * landscape desktop and as a BOTTOM sheet on a phone or in portrait (the map's
+ * focus view frames the sector in the space left: `focusPanelDock`). OVERLAYS the
  * map without a scrim (MUI `persistent` variant — NOT a `temporary`/Modal
  * drawer, so the map behind stays interactive + re-selectable, and there are no
  * global touch listeners → the SwipeableDrawer RTT regression is avoided). A
@@ -64,10 +68,13 @@ const PAPER_BOTTOM = {
   // 28% pass ("too small"). dvh (dynamic viewport height) shrinks as the mobile
   // address bar shows, so the fixed action bar is never clipped below the fold
   // when NOT in fullscreen; the body scrolls on overflow.
-  height: 'min(40dvh, 340px)',
+  height: `min(${SHEET_FRAC_PORTRAIT * 100}dvh, ${SHEET_MAX_H}px)`,
   maxHeight: 'calc(100dvh - 8px)',
   borderRadius: '10px 10px 0 0',
 } as const;
+
+/** Phone held sideways: the sheet takes half the (short) height. */
+const PAPER_SHEET_LANDSCAPE = { ...PAPER_BOTTOM, height: `min(${SHEET_FRAC_LANDSCAPE * 100}dvh, ${SHEET_MAX_H}px)` } as const;
 
 const HEADER_SX = {
   display: 'flex',
@@ -210,7 +217,7 @@ export function SectorInfoDrawer({
   warpBlockedHint = null,
 }: SectorInfoDrawerProps): JSX.Element {
   const portrait = useMediaQuery('(orientation: portrait)');
-  const anchor: 'bottom' | 'right' = portrait ? 'bottom' : 'right';
+  const anchor = focusPanelDock(portrait, isTouchDevice());
   const isWarp = context === 'warp';
 
   // Scoped swipe-to-close on the grab handle (no global listeners — avoids the
@@ -272,7 +279,7 @@ export function SectorInfoDrawer({
       data-testid="sector-info-drawer"
       PaperProps={{
         ref: paperRef,
-        sx: anchor === 'right' ? PAPER_RIGHT : PAPER_BOTTOM,
+        sx: anchor === 'right' ? PAPER_RIGHT : portrait ? PAPER_BOTTOM : PAPER_SHEET_LANDSCAPE,
         // E2E hook for the live selection.
         ['data-drawer-sector' as string]: sectorKey ?? '',
       }}
@@ -368,6 +375,8 @@ export function SectorInfoDrawer({
                 {tip.features.join(' · ')}
               </Typography>
             )}
+
+            <SectorHistorySparkline sectorKey={sectorKey} />
 
             {/* Recent events (Equinox Phase 9 item 5) — same entity badges + labels. */}
             <Typography sx={SECTION_LABEL_SX}>Recent activity</Typography>

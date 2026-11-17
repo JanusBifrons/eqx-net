@@ -77,8 +77,9 @@ export interface SwarmSpriteCtx {
   wreckArt?: WreckArtState;
   /** Macro terrain C2: the cut-field layer. An awake field rock (an asteroid
    *  with `fieldKey`) draws its own cut outline and leaves its chunk mesh.
-   *  Absent ⇒ it draws as a plain asteroid. */
-  fieldRocks?: Pick<CutFieldLayer, 'noteAwake' | 'buildRockSprite'>;
+   *  A placed rock and a cut rock's pieces draw its rock shader too
+   *  (`buildRockMesh`). Absent ⇒ they draw as plain asteroids. */
+  fieldRocks?: Pick<CutFieldLayer, 'noteAwake' | 'buildRockSprite' | 'buildRockMesh'>;
   /** The renderer's presentation clock (fxNow, ms), which follows the game
    *  speed: wreck death clocks and the cut-edge glow age on it, so they slow
    *  down in slow motion and speed up at 4x. Absent: the wall `now` (tests).

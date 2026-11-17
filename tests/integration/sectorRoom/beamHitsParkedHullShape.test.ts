@@ -53,7 +53,6 @@ describe('SectorRoom integration — a player beam hits a parked hull by its rea
   beforeEach(async () => {
     harness = await bootSectorTestServer({
       sectorKey: 'sol-prime', droneCount: 0, testMode: true, asteroidConfig: [],
-      pilotCapitals: true, peacefulDrones: true,
       dronePoses: [{ kind: 'fighter', x: 0, y: DRONE_Y, angle: 0 }],
     });
   }, 15_000);

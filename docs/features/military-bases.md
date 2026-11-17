@@ -6,7 +6,7 @@ Plan `soft-leaping-truffle` v4, phase M. The one base role the production chains
 
 Military bases are placed by their own deterministic pass (`militarySites`, `galaxyBases.ts`), never rolled. Every other base rolls exactly as before.
 
-- **The heart garrison.** Each region's heart holds its power's garrison, unless the heart's own base is already a stronghold or citadel (that base garrisons itself). It is a stronghold beside a small base, else a settlement, sized so it always fits.
+- **The heart garrison.** Each region's heart holds its power's garrison, unless the heart's own base is already a stronghold or citadel (that base garrisons itself, and it is the power's whatever its role: a big trade hub at a heart belongs to the power, not the Traders, and keeps its role, tier and layout). It is a stronghold beside a small base, else a settlement, sized so it always fits.
 - **The edge outpost.** Each region's first neutral entry sector (by key) gets a settlement-sized outpost. The galaxy's edge is where raiders warp in. The region's militia company owns it; if the region has none, its power does. It never shares the region's transit-hub sector.
 - **Room in the sector.** A garrison makes room under the sector's structure budget by dropping extra bases (never base 0 or a hub).
 
@@ -15,6 +15,7 @@ Military bases are placed by their own deterministic pass (`militarySites`, `gal
 - **Fenced, every time,** with its gates set to **owner + allies**. Anyone else stays outside.
 - **Turret-heavy.** Its production list is every kind of gun (laser, bolt, autocannon, missile, and the coastal batteries up to the 11" triple turret — [coastal-defences.md](coastal-defences.md)), repeated while its wealth lasts. Garrisons are funded at twice their tier's top wealth.
 - **A heart garrison mounts the region's super-guns**: the 80 cm siege gun and the 40.6 cm Lindemann battery, funded on top.
+- **A heart garrison builds a Territory Lock** (sector control), outside its budget: the power's heart can't be taken until that structure is destroyed ([robot-territory](robot-territory.md) "Power hearts start locked"). With no garrison, the power's first base at the heart carries it.
 - **Guns outside the fence.** A fence stops its owner's own shots, so every gun sits on a bastion outside it. A garrison gets a bastion row for every six guns it buys (`growOnce`, military only).
 - **One more mine layer** than a trading base of its size.
 - **No freight dock.** It trades nothing: its cargo bay holds the munitions and fuel it's stocked with.

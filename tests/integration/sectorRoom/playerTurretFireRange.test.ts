@@ -79,7 +79,7 @@ describe('SectorRoom integration — a player turret fires by its own range to t
 
   it('the AA fires at a battleship alongside (hull in reach, centres 1.7 km apart)', async () => {
     harness = await bootSectorTestServer({
-      sectorKey: 'sol-prime', droneCount: 0, testMode: true, peacefulDrones: true, pilotCapitals: true, asteroidConfig: [],
+      sectorKey: 'sol-prime', droneCount: 0, testMode: true, peacefulDrones: true, asteroidConfig: [],
       dronePoses: [{ kind: 'battleship', x: 1_700, y: 0, angle: 0 }],
     });
     const r = await fireAa(harness, 'battleship');
@@ -88,7 +88,7 @@ describe('SectorRoom integration — a player turret fires by its own range to t
 
   it('the AA is refused at a drone out of every AA mount\'s reach, spending no energy', async () => {
     harness = await bootSectorTestServer({
-      sectorKey: 'sol-prime', droneCount: 0, testMode: true, peacefulDrones: true, pilotCapitals: true, asteroidConfig: [],
+      sectorKey: 'sol-prime', droneCount: 0, testMode: true, peacefulDrones: true, asteroidConfig: [],
       dronePoses: [{ kind: 'heavy', x: 1_550, y: 0, angle: 0 }],
     });
     const r = await fireAa(harness, 'heavy');

@@ -49,6 +49,7 @@ import { createServerEventsApi, type ServerEventsApi } from './serverEvents.js';
 import { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import {
   LivingWorldDirector,
+  type LivingWorldHooks,
   type LivingWorldOptions,
 } from '../../../src/server/livingworld/LivingWorldDirector.js';
 import type { DirectorPersistence } from '../../../src/server/livingworld/DirectorPersistence.js';
@@ -214,8 +215,6 @@ export async function bootSectorTestServer(opts: {
   teleportFullCharge?: boolean;
   /** Drones never attack (the room option). */
   peacefulDrones?: boolean;
-  /** Pilots may join flying a capital (`shipKind: 'battleship'`, …): the room option. */
-  pilotCapitals?: boolean;
   /** Capital destruction S2a: a dying capital breaks into wreck bodies. */
   capitalWrecks?: boolean;
   subcapWrecks?: boolean;
@@ -308,7 +307,6 @@ export async function bootSectorTestServer(opts: {
     teleportShipBoards: opts.teleportShipBoards,
     teleportFullCharge: opts.teleportFullCharge,
     peacefulDrones: opts.peacefulDrones,
-    pilotCapitals: opts.pilotCapitals,
     capitalWrecks: opts.capitalWrecks,
     subcapWrecks: opts.subcapWrecks,
     tradeEnabled: opts.tradeEnabled,
@@ -504,6 +502,9 @@ export async function bootLivingWorldTestServer(opts: {
   /** Phase 5 — inject to exercise director-state persist/restore across a
    *  (two-boot) "restart". Omit ⇒ stateless director (today's fresh seed). */
   directorPersistence?: DirectorPersistence;
+  /** Cross-director hooks given at construction (so a restore hook runs
+   *  inside `start()`), built from the live rooms (e.g. a `RobotTerritory`). */
+  directorHooks?: (rooms: ReadonlyMap<string, SectorRoom>) => LivingWorldHooks;
   /** Seed a PRE-BUILT, powered base in one or more sectors (the
    *  `prebuiltStructures` scenario path). A ready base (Capital + Miner + Solar
    *  + Turret) makes the WaveDirector dispatch a wave at it — `owner` is the
@@ -607,6 +608,7 @@ export async function bootLivingWorldTestServer(opts: {
     dispatchIntervalMs: 500,
     ...opts.director,
     ...(opts.directorPersistence ? { directorPersistence: opts.directorPersistence } : {}),
+    ...(opts.directorHooks ? { hooks: opts.directorHooks(roomsByKey) } : {}),
   });
   director.start();
 

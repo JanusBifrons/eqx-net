@@ -105,11 +105,29 @@ export function galaxyBasePlan(sectorKey: string): GalaxyBasePlan[] {
     });
   }
   addMilitaryBase(sectorKey, out);
+  addHeartLock(sectorKey, out);
   for (const b of out) {
     const mine = net.links.filter((l) => (l.a.sector === sectorKey && l.a.baseId === b.baseId) || (l.b.sector === sectorKey && l.b.baseId === b.baseId));
     if (mine.length > 0) b.profile = { ...b.profile, links: mine.map((l) => l.id) };
   }
   return out;
+}
+
+/**
+ * Sector control (owner 2026-11-17: "NPC powers have locks? Yes, at their
+ * hearts") — a region power's heart starts locked for it: one of the power's
+ * own bases there (its garrison, else the first it owns) builds a real
+ * Territory Lock, so the heart holds until that structure is destroyed, like
+ * any player's lock. Other sectors (and the Traders, who have no heart) get
+ * none. In place.
+ */
+function addHeartLock(sectorKey: string, out: GalaxyBasePlan[]): void {
+  const region = getSector(sectorKey)?.region;
+  const controller = sectorController(sectorKey);
+  if (region === undefined || controller === null || regionHeart(region) !== sectorKey) return;
+  const base = out.find((b) => b.baseId === MILITARY_BASE_ID && b.profile.ownerFaction === controller)
+    ?? out.find((b) => b.profile.ownerFaction === controller);
+  if (base !== undefined) base.profile = { ...base.profile, territoryLock: true };
 }
 
 /** v4 H2 — route length between two sectors riding the transit links
@@ -151,15 +169,26 @@ export function militarySites(): ReadonlyMap<string, 'heart' | 'edge'> {
 }
 let MILITARY: Map<string, 'heart' | 'edge'> | null = null;
 
+/** A region heart's garrison owner: the power holding it (else the region's
+ *  own faction). A power's heart base is always the power's, never the
+ *  Traders' — the one exception to "the Traders run trade hubs in controlled
+ *  sectors" (owner 2026-11-17: "hand hub to Crimson"). */
+export function heartOwner(sectorKey: string): FactionId {
+  return sectorController(sectorKey) ?? getSector(sectorKey)!.region;
+}
+
 /** Add the sector's military base, if it has one (in place). A heart's is
  *  the region power's; an edge outpost is a militia's (else the power's). */
 function addMilitaryBase(sectorKey: string, out: GalaxyBasePlan[]): void {
   const site = militarySites().get(sectorKey);
   if (site === undefined) return;
   // A stronghold or citadel holds its sector alone (it garrisons itself), so
-  // at a heart it mounts the region's super-guns itself.
+  // at a heart it mounts the region's super-guns itself — and, like any
+  // garrison there, it is the power's (never the Traders', even as a trade
+  // hub), so the power has a base of its own to carry the heart's lock. Only
+  // the owner changes: role, tier, size and layout stay as rolled.
   if (BIG.has(out[0]!.profile.tier)) {
-    if (site === 'heart') out[0] = { ...out[0]!, profile: withSuperGuns(out[0]!.profile) };
+    if (site === 'heart') out[0] = { ...out[0]!, profile: { ...withSuperGuns(out[0]!.profile), ownerFaction: heartOwner(sectorKey) } };
     return;
   }
   // A fence alone is ~20 structures, so a garrison needs room for its guns:
@@ -174,9 +203,8 @@ function addMilitaryBase(sectorKey: string, out: GalaxyBasePlan[]): void {
   }
   if (used + TIER_MAX_STRUCTURES[tier] > NPC_STRUCTURES_PER_SECTOR_MAX) return;
   const region = getSector(sectorKey)!.region;
-  const controller = sectorController(sectorKey);
   const militia = minorFactionsOf(region).find((m) => m.specialty === 'militia')?.id;
-  const owner: FactionId = site === 'heart' ? (controller ?? region) : (militia ?? region);
+  const owner: FactionId = site === 'heart' ? heartOwner(sectorKey) : (militia ?? region);
   const seed = hashString(`${sectorKey}#${MILITARY_BASE_ID}`);
   const w1 = TIER_WEALTH[tier][1];
   const profile: BaseProfile = {

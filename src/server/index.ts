@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { PERF_SCENES } from '../shared-types/perf/perfScenes.js';
+import { definePerfRooms } from './rooms/perfRooms.js';
 import { scenePerfViews, recordClientReading, clientPerfReadings } from './rooms/scene/scenePerfRegistry.js';
 import { Server, matchMaker } from 'colyseus';
 import { WebSocketTransport } from '@colyseus/ws-transport';
@@ -443,7 +443,7 @@ gameServer
     testMode: true,
     asteroidConfig: [],
     peacefulDrones: true,
-    capitalWrecks: true, pilotCapitals: true, // a capital pilot may cut up the wreck
+    capitalWrecks: true, // a capital pilot may cut up the wreck
     dronePoses: [{ kind: 'battleship', x: 0, y: 2500, angle: 0 }],
     defaultSpawnX: 0,
     defaultSpawnY: -1500,
@@ -1293,23 +1293,8 @@ gameServer.define('swarm-tidi-burn', SectorRoom, {
   tickBurnMs: 16,
   maxClients: 4,
 });
-// Perf scenes (plan prancy-squishing-donut P1): one room per catalogue
-// entry, `perf-<id>`. Played by `pnpm perf:scenes`.
-for (const scene of PERF_SCENES) {
-  gameServer
-    .define(`perf-${scene.id}`, SectorRoom, {
-      testMode: true,
-      defaultSpawnX: scene.spawn.x,
-      defaultSpawnY: scene.spawn.y,
-      maxClients: 4,
-      // Fault injection for the runner's self-test: burn N ms of every tick.
-      tickBurnMs: Number(process.env['EQX_PERF_BURN_MS'] ?? 0),
-      // Fixed work: no TiDi, no load shedding (they hide an overload).
-      perfFixedLoad: true,
-      ...scene.room,
-    })
-    .filterBy(['testId']);
-}
+// Perf scenes: one `perf-<id>` room per catalogue entry.
+definePerfRooms(gameServer, SectorRoom);
 } // end shouldRegisterTestRooms() gate (S6)
 
 // A6 (S6): warn loudly if the dev-override bypass is armed in production. It's
@@ -1474,23 +1459,24 @@ async function main(): Promise<void> {
             .get() as { payload_json: string; created_at: number } | undefined,
         logger,
       });
+      // Living World P3 — robot territory + nexus + every side's sector control.
+      // Built first so its meter rides the director's state row (restored in start()).
+      const territory = new RobotTerritory(galaxyRooms, () => robotDirector?.activeBotCountsBySector() ?? EMPTY_COUNTS);
       robotDirector = new LivingWorldDirector(galaxyRooms, {
         ...directorOpts,
         ...ROBOT_DIRECTOR_OPTIONS,
         directorPersistence: robotPersistence,
+        hooks: {
+          respawnAnchor: () => territory.respawnAnchor(),
+          onTick: (now) => territory.tick(now),
+          saveSectorControl: () => territory.saveControl(),
+          restoreSectorControl: (entries) => territory.restoreControl(entries),
+        },
       });
       robotDirector.start();
       // v4 T3 — teleporters carry robot bots across sectors.
       const rdMover = robotDirector;
       getTeleportBroker().addBotMover((id, from, to, x, y) => rdMover.teleportBot(id, from, to, x, y));
-      // Living World P3 — robot territory + the nexus (reinforcements spawn at
-      // it; robot-held sectors show on the galaxy map).
-      const rd = robotDirector;
-      const territory = new RobotTerritory(galaxyRooms, () => rd.activeBotCountsBySector());
-      rd.setHooks({
-        respawnAnchor: () => territory.respawnAnchor(),
-        onTick: (now) => territory.tick(now),
-      });
       territory.start();
       robotTerritory = territory;
       logger.info({ bots: ROBOT_BOT_COUNT, nexus: territory.nexusState() }, 'robot director started');
@@ -1503,8 +1489,8 @@ async function main(): Promise<void> {
         // Robots are hostile to every player on sight: the robot director's bots
         // AND an active incursion's raiders both show as enemies on the map.
         extraEnemyCounts: () => sumCounts(robotDirector?.activeBotCountsBySector() ?? EMPTY_COUNTS, eventDirector?.hostileCountsBySector() ?? EMPTY_COUNTS),
-        // P3 — robot-held sectors show the robots as owner on the galaxy map.
-        sectorOwner: (key) => robotTerritory?.sectorOwner(key) ?? null,
+        // The control meter's holder for every side (null = neutral).
+        sectorOwner: (key) => (robotTerritory ? robotTerritory.sectorOwner(key) : undefined),
         // P4a — named elites: ticked on the drone director's control loop and
         // marked on the galaxy map.
         onTick: (now) => {

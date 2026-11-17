@@ -32,7 +32,6 @@ describe('SectorRoom integration — naval shells as events (slice 1)', () => {
       // Same layout as capitalEngagement: the pilot 40° off the bow, 5,000 u,
       // flying a heavy cruiser (a fighter's hit circle slips the 60 u turret
       // fire tolerance at real-range shell speeds; see there).
-      pilotCapitals: true,
       dronePoses: [{ kind: 'battleship', x: 5000, y: 0, angle: (50 * Math.PI) / 180 }],
     });
     const pid = randomUUID();
