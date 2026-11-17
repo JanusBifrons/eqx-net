@@ -249,6 +249,24 @@ describe('StorageService NPC dock market (T4)', () => {
     expect(JSON.stringify(t.ops[0])).toContain('WALLET_PUT');
   });
 
+  it('loadOutlet (3d) takes export goods from the network down to each level, by weight, in order-list order', () => {
+    const dock = rec('d', 'freight_dock', 0, 0, {
+      freightOrders: [{ good: 'alloy', mode: 'export', level: 2 }, { good: 'salvage', mode: 'import', level: 9 }, { good: 'ice', mode: 'export', level: 1 }],
+      hold: { goods: { alloy: 5, salvage: 7, ice: 40 }, blueprints: [] },
+    });
+    const bay = rec('b', 'cargo_bay', 400, 0, { hold: { goods: { alloy: 4 }, blueprints: [] } });
+    const t = setup(['d', 'b']);
+    t.registry.add(dock);
+    t.registry.add(bay);
+    // 7 spare alloy (14 weight) then ice (0.25 each) into the last 6 weight.
+    expect(t.svc.outletLoadWeight(dock, 20)).toBe(20);
+    expect(t.svc.outletLoadWeight(dock, 1.5)).toBe(1.5); // no whole alloy fits: 6 ice
+    expect(t.svc.loadOutlet('ship-9', 'p1', dock, 20).goods).toEqual({ alloy: 7, ice: 24 });
+    expect(t.svc.networkStock(dock, 'alloy')).toBe(2);
+    expect(dock.hold!.goods.salvage, 'import goods are never loaded').toBe(7);
+    expect(t.svc.outletLoadWeight(dock, 100), 'alloy at its level; ice above it').toBe((40 - 24 - 1) * 0.25);
+  });
+
   it('marketSell moves ship goods into the dock, with the wallet op in the SAME group', () => {
     const dock = rec('d', 'freight_dock', 0, 0, { owner: 'npc:traders:b' });
     const t = setup();
