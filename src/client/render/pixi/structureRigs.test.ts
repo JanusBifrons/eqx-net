@@ -204,9 +204,9 @@ describe('updateSwarmSprites with rigs', () => {
     const clusterC = (ctx.mountVisuals as unknown as { clusters: Map<string, { container: Container }> })
       .clusters.get('swarm-5')!.container;
     const restY = clusterC.y;
-    rigs.inputs.set(5, { clipId: 'turret-deploy', startTick: 0 });
+    mirror.structures!.get(5)!.rigClip = { clipId: 'turret-deploy', startTick: 0 };
     ctx.fxNowMs = 0;
-    updateSwarmSprites(mirror, ctx); // latch
+    updateSwarmSprites(mirror, ctx);
     ctx.fxNowMs = 2000; // 120 ticks: past the 60-tick deploy
     updateSwarmSprites(mirror, ctx);
     // Slide +y (game) = -y (Pixi) by the full travel.
@@ -219,8 +219,8 @@ describe('updateSwarmSprites with rigs', () => {
     const rigs = new StructureRigs(ctx.shipContainer);
     ctx.structureRigs = rigs;
     const mirror = mirrorOf([[7, structureEntry('freight_dock', 0, 0, 0)], [5, structureEntry('turret', 600, 0, 0)]]);
-    rigs.inputs.set(7, { clipId: 'arm-reach', startTick: 0, targetX: 10, targetY: -20 });
-    rigs.inputs.set(5, { clipId: 'turret-deploy', startTick: 0 });
+    mirror.structures!.get(7)!.rigClip = { clipId: 'arm-reach', startTick: 0, targetX: 10, targetY: -20 };
+    mirror.structures!.get(5)!.rigClip = { clipId: 'turret-deploy', startTick: 0 };
     ctx.fxNowMs = 0;
     updateSwarmSprites(mirror, ctx);
     const view = rigs.viewFor('swarm-7')!;
@@ -233,6 +233,56 @@ describe('updateSwarmSprites with rigs', () => {
     expect(rigs.viewFor('swarm-7')).toBe(view);
     expect(view.pose.x).toBe(xArr);
     expect(labelsUnder(ctx.shipContainer).length).toBe(count);
+  });
+});
+
+describe('rig clip clock (2e): wire start tick vs the client tick clock', () => {
+  /** The pose a fresh view evaluates at `tick` (the reference). */
+  function poseAt(kind: string, clip: { clipId: string; startTick: number; targetX?: number; targetY?: number },
+    hx: number, hy: number, ha: number, tick: number): number[] {
+    const view = new StructureRigView(rigForStructureKind(kind)!);
+    const c = Math.cos(ha), s = Math.sin(ha);
+    const world = clip.targetX !== undefined && clip.targetY !== undefined
+      ? { clipId: clip.clipId, startTick: clip.startTick, targetX: hx + clip.targetX * c - clip.targetY * s, targetY: hy + clip.targetX * s + clip.targetY * c }
+      : clip;
+    view.update(world, tick, hx, hy, ha, 1);
+    return [...view.pose.x, ...view.pose.y, ...view.pose.angle];
+  }
+
+  it('a late joiner sees the clip mid-way on its very first frame (no restart)', () => {
+    const ctx = makeCtx();
+    const rigs = new StructureRigs(ctx.shipContainer);
+    ctx.structureRigs = rigs;
+    const mirror = mirrorOf([[7, structureEntry('freight_dock', 100, 50, 0.2)]]);
+    const clip = { clipId: 'arm-reach', startTick: 5000, targetX: 30, targetY: -40 };
+    mirror.structures!.get(7)!.rigClip = clip;
+    const mid = 5000 + DOCK_CRANE_REACH_TICKS / 2 + 0.25;
+    mirror.rigTick = mid; // joined long after the start
+    updateSwarmSprites(mirror, ctx);
+    const view = rigs.viewFor('swarm-7')!;
+    const got = [...view.pose.x, ...view.pose.y, ...view.pose.angle];
+    const want = poseAt('freight_dock', clip, 100, 50, 0.2, mid);
+    for (let i = 0; i < want.length; i++) expect(got[i]).toBeCloseTo(want[i]!, 6);
+    // ...and it is really mid-clip: neither the rest pose nor the start pose.
+    const rest = poseAt('freight_dock', clip, 100, 50, 0.2, 5000);
+    expect(got.some((v, i) => Math.abs(v - rest[i]!) > 1e-3)).toBe(true);
+  });
+
+  it('a clip that finished before the join shows its end pose', () => {
+    const ctx = makeCtx();
+    const rigs = new StructureRigs(ctx.shipContainer);
+    ctx.structureRigs = rigs;
+    const mirror = mirrorOf([[5, structureEntry('turret', 0, 0, 0)]]);
+    mirror.structures!.get(5)!.rigClip = { clipId: 'turret-deploy', startTick: 100 };
+    mirror.rigTick = 100_000;
+    updateSwarmSprites(mirror, ctx);
+    const clusterC = (ctx.mountVisuals as unknown as { clusters: Map<string, { container: Container }> })
+      .clusters.get('swarm-5')!.container;
+    const deployedY = clusterC.y;
+    // Same structure seen with no clip: the rest pose.
+    mirror.structures!.get(5)!.rigClip = undefined;
+    updateSwarmSprites(mirror, ctx);
+    expect(deployedY - clusterC.y).toBeCloseTo(-DOOR_TURRET_SLIDE_TRAVEL, 3);
   });
 });
 

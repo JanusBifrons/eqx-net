@@ -148,4 +148,60 @@ describe('PhysicsWorld rig parts (structure-restyle 2d)', () => {
     w.tick(1 / 60);
     expect(w.rigPartPose('host', 'slab')!.x).toBeCloseTo(1000, 3);
   });
+
+  it('2e: re-applying the playing record is a no-op (the client re-applies it every snapshot)', async () => {
+    const w = await PhysicsWorld.create();
+    spawnHost(w);
+    w.attachRig('host', slabDoorRig());
+    w.setRigClip('host', 'open', 0);
+    for (let t = 0; t < 25; t++) {
+      w.stepRigs(t + 1);
+      w.tick(1 / 60);
+    }
+    // Finished and idle: the same record again must not re-pose it at an
+    // older tick (it would if it marked the rig dirty).
+    w.setRigClip('host', 'open', 0);
+    w.stepRigs(5);
+    w.tick(1 / 60);
+    expect(w.rigPartPose('host', 'slab')!.x).toBeCloseTo(1000, 3);
+    // A different start tick is a new record: it re-poses.
+    w.setRigClip('host', 'open', 100);
+    w.stepRigs(110);
+    w.tick(1 / 60);
+    expect(w.rigPartPose('host', 'slab')!.x).toBeCloseTo(500, 3);
+  });
+});
+
+describe('rig clip tick numbering (2e): live, late join and reconcile replay agree', () => {
+  /** Step `w` over ticks [from, to) the way the client loop and the
+   *  Reconciler's per-replay-tick hook both do: `stepRigs(t + 1)` then a step. */
+  function run(w: PhysicsWorld, from: number, to: number): void {
+    for (let t = from; t < to; t++) {
+      w.stepRigs(t + 1);
+      w.tick(1 / 60);
+    }
+  }
+
+  it('a client that attaches mid-clip, and a replay over the window, land on the live pose', async () => {
+    const START = 1000;
+    // The live client: saw the clip from its start.
+    const live = await PhysicsWorld.create();
+    spawnHost(live);
+    live.attachRig('host', slabDoorRig());
+    live.setRigClip('host', 'open', START);
+    run(live, START, START + 12);
+    // The late joiner: attaches at START + 8 from the room-state record.
+    const late = await PhysicsWorld.create();
+    spawnHost(late);
+    late.attachRig('host', slabDoorRig());
+    late.setRigClip('host', 'open', START);
+    run(late, START + 8, START + 12);
+    const want = live.rigPartPose('host', 'slab')!.x;
+    expect(want).toBeGreaterThan(100); // mid-clip: neither rest nor fully open
+    expect(want).toBeLessThan(900);
+    expect(late.rigPartPose('host', 'slab')!.x).toBeCloseTo(want, 3);
+    // A reconcile replays [acked, input) with the same hook: same end pose.
+    run(live, START + 6, START + 12);
+    expect(live.rigPartPose('host', 'slab')!.x).toBeCloseTo(want, 3);
+  });
 });

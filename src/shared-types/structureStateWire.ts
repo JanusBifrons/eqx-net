@@ -126,7 +126,34 @@ export const STRUCTURE_DEFAULTS = {
   tpKeepQty: 0,
   padWeight: 0,
   tpToll: 0,
+  rigClip: 0,
+  rigStart: 0,
+  rigTx: 0,
+  rigTy: 0,
 } as const;
+
+/**
+ * Structure-restyle 2e — the rig clip playing on a structure rides its
+ * room-state row (late-join safe, invariant #16). `rigClip` packs the clip as
+ * its index in the rig's clip list + 1 (0 = no clip: the rig rests) in the low
+ * 7 bits, plus `STRUCTURE_RIG_CLIP_TARGET` when `rigTx` / `rigTy` (float32,
+ * host frame) carry a target. `rigStart` is the server tick the clip started
+ * on. Both sides use these helpers (#15).
+ */
+export const STRUCTURE_RIG_CLIP_TARGET = 0x80;
+const RIG_CLIP_INDEX_MASK = 0x7f;
+
+/** The `rigClip` byte for clip index `clipIndex` (-1 = none). */
+export function encodeRigClip(clipIndex: number, hasTarget: boolean): number {
+  if (clipIndex < 0) return 0;
+  if (clipIndex >= RIG_CLIP_INDEX_MASK) throw new Error(`rig clip index ${clipIndex} does not fit the wire byte`);
+  return (clipIndex + 1) | (hasTarget ? STRUCTURE_RIG_CLIP_TARGET : 0);
+}
+
+/** The clip index a `rigClip` byte names, or -1 (no clip). */
+export function decodeRigClipIndex(v: number): number {
+  return (v & RIG_CLIP_INDEX_MASK) - 1;
+}
 
 /** The fields the client reads from a room-state structure row (absent ⇒
  *  STRUCTURE_DEFAULTS). */
@@ -166,5 +193,11 @@ export interface StructureStateView {
   tpKeepQty?: number;
   padWeight?: number;
   tpToll?: number;
+  /** Structure-restyle 2e — the playing rig clip (`encodeRigClip`), its start
+   *  tick and its host-frame target. */
+  rigClip?: number;
+  rigStart?: number;
+  rigTx?: number;
+  rigTy?: number;
   connTo: { readonly length: number; at(i: number): number | undefined };
 }

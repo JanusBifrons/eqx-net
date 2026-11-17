@@ -80,7 +80,7 @@ function wreckDeadArtFor(kindId: string): boolean {
 }
 
 import type { SpriteBuildSig, SwarmSpriteCtx } from './swarmSpriteCtx.js';
-import type { StructureRigView } from './structureRigs.js';
+import { RIG_TICKS_PER_SEC, type StructureRigView } from './structureRigs.js';
 export type { SpriteBuildSig, SwarmSpriteCtx };
 
 /** Module-scope scratch for a structure's per-mount arc-local angles passed
@@ -133,6 +133,9 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
   ctx.wreckArt?.retain(wreckDescs ?? NO_WRECKS);
   const rigs = ctx.structureRigs; // restyle 2c (`?rigs=1`); undefined = flag off
   rigs?.begin();
+  // Restyle 2e: rig clips run on the client tick clock against their server
+  // start tick (no clock in tests / before welcome: the fx clock, in ticks).
+  const rigTick = mirror.rigTick ?? fxNow / (1000 / RIG_TICKS_PER_SEC);
   for (const [entityId, entry] of mirror.swarm) {
     // S2b: a wreck piece is drawn only once its wreck's descriptor is known
     // (its geometry comes from it); until then it has no sprite at all.
@@ -394,8 +397,10 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
       // parts hang off this sprite and `shipContainer` (structureRigs.ts).
       let rigView: StructureRigView | null = null;
       if (rigs !== undefined) {
-        if (sprite.visible) rigView = rigs.update(spriteKey, entityId, entry.shipKind, sprite, lerped.x, lerped.y, lerped.angle, fxNow);
-        else rigs.hide(spriteKey);
+        if (sprite.visible) {
+          const clip = mirror.structures?.get(entityId)?.rigClip;
+          rigView = rigs.update(spriteKey, entry.shipKind, sprite, lerped.x, lerped.y, lerped.angle, clip, rigTick);
+        } else rigs.hide(spriteKey);
       }
       // Structures (turret 'barrel' / miner 'drill') carry a mounts entry in
       // the catalogue but NO mountAngles on any wire — the snapshot

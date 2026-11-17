@@ -33,6 +33,7 @@ import { createRigPose, evaluateRig, type PlayingClip, type RigPose } from '../.
 import { twoBoneIkSolve } from '../../../core/articulation/ikAdapter.js';
 import { rigPartIndex, type DrawLayer, type PartDef, type Rig } from '../../../core/articulation/rig.js';
 import { DOOR_TURRET_MOUNT, rigForStructureKind } from '../../../core/articulation/rigCatalogue.js';
+import type { StructureRenderState } from '../../../core/contracts/IRenderer.js';
 import { BEAMS_OVER_HULL_Z } from './beamsOverHulls.js';
 import {
   centroid, chamferBox, chevron, ngon, polyBounds, rivetPolys, scalePts, trussPolys,
@@ -45,9 +46,9 @@ export function readRigsFlag(search: string): boolean {
 }
 
 /**
- * The per-structure clip input the renderer polls each frame (null = no clip:
- * every part at rest). Slice 2e fills it from room state; until then only the
- * art lab sets it. `targetX/Y` are WORLD game coordinates (Y-up) of a
+ * A clip input to `StructureRigView.update` (null = no clip:
+ * every part at rest). The game fills it from the structure row's `rigClip`
+ * (`StructureRigs.update`); the art lab sets its own. `targetX/Y` are WORLD game coordinates (Y-up) of a
  * targeted clip's goal (e.g. the parked ship's hold).
  */
 export interface StructureRigInput {
@@ -68,7 +69,6 @@ export function rigLayerZ(layer: DrawLayer): number {
 
 /** Game ticks per second (the server sim rate). */
 export const RIG_TICKS_PER_SEC = 60;
-const TICK_MS = 1000 / RIG_TICKS_PER_SEC;
 
 /** A Pixi local transform (caller-owned scratch). */
 export interface PixiXform { x: number; y: number; rotation: number }
@@ -581,10 +581,6 @@ interface GameRigEntry {
   view: StructureRigView;
   /** The sprite the under/plane groups hang off (rebuilt sprite ⇒ re-hang). */
   host: Container | null;
-  /** Clip latch: the input it was seen with and the fx time it was seen. */
-  latchClip: string;
-  latchStart: number;
-  latchFxMs: number;
   stamp: number;
 }
 
@@ -594,9 +590,8 @@ interface GameRigEntry {
  * `update` per visible structure and `sweep` once per frame.
  */
 export class StructureRigs {
-  /** Per-structure clip input keyed by structure entityId (see
-   *  `StructureRigInput`). The renderer polls it; 2e fills it. */
-  readonly inputs = new Map<number, StructureRigInput>();
+  /** Scratch: the row's clip with its host-frame target moved to world. */
+  private readonly worldInput: StructureRigInput = { clipId: '', startTick: 0 };
   private readonly entries = new Map<string, GameRigEntry>();
   private stamp = 0;
   private readonly sweepFn = (e: GameRigEntry, key: string): void => {
@@ -618,12 +613,15 @@ export class StructureRigs {
 
   /**
    * Pose `sprite`'s rig for this frame (game pose hx, hy, ha). Returns the
-   * view, or null when the kind has no rig. `fxNowMs` is the renderer's
-   * game-time clock: a clip's ticks run from when its input was first seen.
+   * view, or null when the kind has no rig. `clip` is the structure row's
+   * `rigClip` (room state; target in the host frame) and `nowTick` the
+   * client's tick clock (`RenderMirror.rigTick`, fractional), so the clip
+   * plays from its server start tick: a late joiner sees it mid-way or at
+   * its end pose, never restarted.
    */
   update(
-    spriteKey: string, entityId: number, kindId: string | undefined, sprite: Container,
-    hx: number, hy: number, ha: number, fxNowMs: number,
+    spriteKey: string, kindId: string | undefined, sprite: Container,
+    hx: number, hy: number, ha: number, clip: StructureRenderState['rigClip'], nowTick: number,
   ): StructureRigView | null {
     let e = this.entries.get(spriteKey);
     if (e === undefined) {
@@ -632,12 +630,12 @@ export class StructureRigs {
       const view = new StructureRigView(rig);
       this.shipContainer.sortableChildren = true;
       this.shipContainer.addChild(view.over);
-      e = { view, host: null, latchClip: '', latchStart: Number.NaN, latchFxMs: 0, stamp: 0 };
+      e = { view, host: null, stamp: 0 };
       this.entries.set(spriteKey, e);
     } else if (e.view.rig !== (kindId !== undefined ? rigForStructureKind(kindId) : null)) {
       // A recycled id with another kind: rebuild from scratch next frame.
       this.drop(spriteKey, e);
-      return this.update(spriteKey, entityId, kindId, sprite, hx, hy, ha, fxNowMs);
+      return this.update(spriteKey, kindId, sprite, hx, hy, ha, clip, nowTick);
     }
     e.stamp = this.stamp;
     const view = e.view;
@@ -646,7 +644,7 @@ export class StructureRigs {
       if (view.under.destroyed || view.plane.destroyed) {
         // Rebuilt sprite destroyed our groups with it: rebuild the view.
         this.drop(spriteKey, e);
-        return this.update(spriteKey, entityId, kindId, sprite, hx, hy, ha, fxNowMs);
+        return this.update(spriteKey, kindId, sprite, hx, hy, ha, clip, nowTick);
       }
       // Under and plane sit just above the body art and below the world
       // texts and the mount cluster (both added after the body): before the
@@ -661,15 +659,20 @@ export class StructureRigs {
       }
       e.host = sprite;
     }
-    const input = this.inputs.get(entityId) ?? null;
-    let nowTick = 0;
-    if (input !== null) {
-      if (input.clipId !== e.latchClip || input.startTick !== e.latchStart) {
-        e.latchClip = input.clipId;
-        e.latchStart = input.startTick;
-        e.latchFxMs = fxNowMs;
+    let input: StructureRigInput | null = null;
+    if (clip !== undefined) {
+      input = this.worldInput;
+      input.clipId = clip.clipId;
+      input.startTick = clip.startTick;
+      if (clip.targetX !== undefined && clip.targetY !== undefined) {
+        // Host frame → world game coords (the view takes a world target).
+        const c = Math.cos(ha), s = Math.sin(ha);
+        input.targetX = hx + clip.targetX * c - clip.targetY * s;
+        input.targetY = hy + clip.targetX * s + clip.targetY * c;
+      } else {
+        input.targetX = undefined;
+        input.targetY = undefined;
       }
-      nowTick = input.startTick + (fxNowMs - e.latchFxMs) / TICK_MS;
     }
     view.update(input, nowTick, hx, hy, ha, 1);
     const over = view.over;
