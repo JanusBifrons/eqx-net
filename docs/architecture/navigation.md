@@ -82,10 +82,23 @@ same functions the cut uses, #15). No rock geometry is read.
   up) is kept to lanes, the core, clearings and the outside; fighters may use streets.
 - It is a `SearchGraph` (8 neighbours; a cell is open when its room >= `clearance`; edge cost = the
   distance between best points), searched by the one `GraphSearch`.
-- Not yet built in a worker or used by any ship: the nav worker (slice 4b) hosts it, and the route
+- Built in the nav worker for every cut-field sector room (below); not yet used by any ship: the route
   planner (slice 6) searches it.
 - Measured (desktop, print-only): 156×156 cells, 285 KB, built in ~4 ms. Across the field a battleship
   routes 448 km (round or along lanes), a fighter 325 km through streets (314 km straight).
+
+## The nav worker (`server/nav/NavWorker.ts`)
+Navigation maps are CPU-heavy, so they live on a worker (server threading rule), built like the physics
+pool: the entry (`navWorkerEntry.ts`) is bundled once with `bundleWorker`, started with `eval` and
+`unref()`'d. One worker per process hosts every sector: each room gets a `worldId`, replies come back
+tagged with it.
+- What the worker does with each message is `core/nav/navHost.ts` (`NavHost`), pure and tested
+  directly: `ADD_FIELD {worldId, opts}` builds the coarse layer and replies `FIELD_BUILT` (cells, bytes,
+  build ms); `REMOVE_FIELD` frees it.
+- `SectorRoom` sends its cut field's own layout options (`CutFieldSubsystem.navOpts`, the same
+  `ChunkOpts` the cut uses, #15) when the field is created, logs `nav coarse layer built`, and detaches
+  on dispose. Rooms without a cut field never start the worker.
+- Measured (desktop, print-only): a field with a clearing builds in ~8 ms in the worker, 285 KB.
 
 ## History
 - 2026-11-17: plan approved (wide lane by default, no-route ⇒ nearest spot and wait, whole route line,
@@ -98,3 +111,4 @@ same functions the cut uses, #15). No rock geometry is read.
   Slice 3: the free-space map (`ClearanceGrid`), an exact distance transform; ~0.14 ms per 64×64 chunk.
   Slice 4a: the coarse layer (`CoarseFieldMap`) from the field layout maths; a battleship fits every lane,
   streets are closed to capitals.
+  Slice 4b: the nav worker builds the coarse layer for every cut-field sector room.

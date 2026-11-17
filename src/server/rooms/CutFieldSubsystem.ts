@@ -257,6 +257,9 @@ export class CutFieldSubsystem {
   /** Spread into every welcome: the seed, the clearings (F4, when any), the
    *  consumed keys (C3) and the moved rocks' poses (C2), #16. A join is
    *  rare, so the lists are built per call. */
+  /** The field's layout options (the nav maps are built from them, #15). */
+  get navOpts(): ChunkOpts { return this.opts; }
+
   get welcome(): { cutField: CutFieldWelcome } {
     const cutField: CutFieldWelcome = { seed: this.seed };
     const clearings = this.opts.clearings;
