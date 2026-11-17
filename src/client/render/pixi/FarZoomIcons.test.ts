@@ -17,6 +17,9 @@ import {
   isIconOnly,
   DEFAULT_FAR_ICON_COLOURS,
   FAR_ICON_SELF_COLOUR,
+  FAR_FIELD_SWITCH_SCALE,
+  FIELD_MEDIAN_ROCK_U,
+  farFieldMix,
 } from './FarZoomIcons.js';
 import type { RenderMirror } from '../../../core/contracts/IRenderer.js';
 import { getShipKind } from '../../../shared-types/shipKinds.js';
@@ -200,5 +203,42 @@ describe('FarZoomIcons (renderer)', () => {
     expect(s.get('their-hull')!.renderable).toBe(false);
     expect(iconOf(icons, 200, 0).tint).toBe(FAR_ICON_SELF_COLOUR);
     expect(iconOf(icons, 300, 0).tint).toBe(DEFAULT_FAR_ICON_COLOURS.friendly);
+  });
+});
+
+describe('far-zoom field switch (macro terrain B4): rock chunks vs coarse tiles', () => {
+  it('switches where the median rock is fadeStartPx across, crossfading over the hysteresis band', () => {
+    expect(FAR_FIELD_SWITCH_SCALE).toBeCloseTo(FAR_ICON.fadeStartPx / FIELD_MEDIAN_ROCK_U, 9);
+    expect(FAR_FIELD_SWITCH_SCALE).toBeCloseTo(0.02154, 5); // 14 px / 650 u
+  });
+
+  it('the fighter floor (0.15) draws full detail only', () => {
+    expect(farFieldMix(0.15)).toBe(0);
+  });
+
+  it('a capital floor (0.0112, 0.00484) draws the coarse tiles only', () => {
+    expect(farFieldMix(0.0112)).toBe(1);
+    expect(farFieldMix(0.00484)).toBe(1);
+  });
+
+  it('inside the band both levels show, crossfading linearly', () => {
+    const lo = FAR_FIELD_SWITCH_SCALE, hi = FAR_FIELD_SWITCH_SCALE * FAR_ICON.hysteresis;
+    expect(farFieldMix(lo)).toBe(1);
+    expect(farFieldMix(hi)).toBe(0);
+    const mid = farFieldMix((lo + hi) / 2);
+    expect(mid).toBeGreaterThan(0.45);
+    expect(mid).toBeLessThan(0.55);
+  });
+
+  it('does not flicker: jitter around either band edge moves the mix by no more than the jitter', () => {
+    for (const edge of [FAR_FIELD_SWITCH_SCALE, FAR_FIELD_SWITCH_SCALE * FAR_ICON.hysteresis]) {
+      let prev = farFieldMix(edge);
+      for (let i = 0; i < 200; i++) {
+        const s = edge * (1 + (i % 2 === 0 ? 1e-4 : -1e-4));
+        const m = farFieldMix(s);
+        expect(Math.abs(m - prev)).toBeLessThan(0.01);
+        prev = m;
+      }
+    }
   });
 });

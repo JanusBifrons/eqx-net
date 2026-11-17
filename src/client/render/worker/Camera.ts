@@ -105,8 +105,11 @@ interface ResolvedOpts {
   zoomSmoothTimeMs: number;
 }
 
-/** Floor for scripted (cinematic) zoom, independent of the gameplay minScale. */
-export const DIRECTOR_MIN_SCALE = 0.01;
+/** Floor for scripted (cinematic) zoom, independent of the gameplay minScale.
+ *  Below every pilot's own gameplay floor (a battleship's is ~0.0048 on a
+ *  phone, `zoomFloorForView`), so a shot or perf scene can show any view a
+ *  player can reach. */
+export const DIRECTOR_MIN_SCALE = 0.004;
 
 /**
  * The zoom ease snaps to its target and clears once within this FRACTION of
@@ -548,7 +551,9 @@ export class Camera {
     if (this.hasZoomTarget) {
       const current = this.target.scale.x;
       const k = 1 - Math.exp(-dtMs / this.opts.zoomSmoothTimeMs);
-      let next = current + (this.targetScale - current) * k;
+      // In log space: a 25x change (leaving command view) eases as smoothly as
+      // one wheel notch, which is the same as before to within a pixel.
+      let next = current * Math.pow(this.targetScale / current, k);
       if (Math.abs(this.targetScale - next) < ZOOM_SNAP_FRACTION * this.targetScale) {
         next = this.targetScale;
         this.hasZoomTarget = false;
@@ -830,6 +835,7 @@ export class Camera {
   /** The zoom-out floor (it follows the ship you fly: capital-ship round 3 D). */
   setMinScale(min: number): void {
     this.opts.minScale = min;
+    this.easeUnderCap();
   }
 
   /**
@@ -844,11 +850,15 @@ export class Camera {
     this.easeUnderCap();
   }
 
-  /** Player zoom (or its pending ease target) past the cap ⇒ ease it to the
+  /** Player zoom (or its pending ease target) past the cap or under the floor ⇒ ease it to the
    *  cap round the screen centre. Alloc-free. */
   private easeUnderCap(): void {
     if (this.directed) return;
     const max = this.opts.maxScale;
+    const min = this.opts.minScale; // a raised floor (leaving command view) eases up the same way
+    if ((this.hasZoomTarget ? this.targetScale : this.playerScale()) < min) {
+      this.targetScale = min; this.zoomAnchorX = this.screenW / 2; this.zoomAnchorY = this.screenH / 2; this.hasZoomTarget = true; return;
+    }
     if (this.targetScale > max) {
       this.targetScale = max;
       this.zoomAnchorX = this.screenW / 2;

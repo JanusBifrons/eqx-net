@@ -4,14 +4,17 @@ import type { Mesh } from 'pixi.js';
 // A GL program needs a canvas; node has none (the look is checked in stills).
 vi.mock('./fieldRockShader', () => ({
   fieldRockProgram: () => ({}),
+  fieldRockBatchProgram: () => ({}),
   fieldRockShaderResources: () => ({}),
   setFieldRockView: () => {},
   setFieldOreStyle: () => {},
 }));
-import { rockKey, type ChunkRock } from '../../../core/terrain/fieldLayout';
+import { coarseFieldThin, rockKey, SLICED, type ChunkRock } from '../../../core/terrain/fieldLayout';
+import { FAR_FIELD_SWITCH_SCALE, FAR_ICON } from '../pixi/FarZoomIcons';
 import { packChunk } from '../../../core/terrain/packedChunk';
 import { fieldRockBody } from '../../../core/terrain/chunkStreamer';
 import { buildFieldChunkMesh, CutFieldLayer, WOKEN_ROCK_FORGET_FRAMES } from './CutFieldLayer';
+import type { RenderMirror } from '@core/contracts/IRenderer';
 
 describe('cut-field chunk mesh (procedural rock look)', () => {
   // Two rocks: a square and a triangle, packed as [n, x0, y0, ...].
@@ -52,7 +55,7 @@ describe('CutFieldLayer — woken rocks (macro terrain C2)', () => {
   it('collapses a woken rock in its chunk, builds it centred, and restores it once unseen', () => {
     const layer = new CutFieldLayer();
     layer.setChunk(2, -1, outlines);
-    const pos = (): number[] => Array.from((layer.container.children[0] as Mesh).geometry.positions);
+    const pos = (): number[] => Array.from((layer.chunkLayer.children[0] as Mesh).geometry.positions);
     const before = pos();
     layer.noteAwake(key);
     const hidden = pos();
@@ -85,7 +88,7 @@ describe('CutFieldLayer — woken rocks (macro terrain C2)', () => {
     expect(layer.buildRockSprite(key)).toBeNull();
     layer.noteAwake(key);
     layer.setChunk(2, -1, outlines);
-    const p = Array.from((layer.container.children[0] as Mesh).geometry.positions);
+    const p = Array.from((layer.chunkLayer.children[0] as Mesh).geometry.positions);
     expect([p[12], p[13]]).toEqual([p[10], p[11]]);
     layer.clear();
   });
@@ -113,7 +116,7 @@ describe('CutFieldLayer — moved rocks (C2 deep sleep)', () => {
   // The square (centre 5,5) and the triangle; the triangle was moved.
   const outlines = new Float32Array([4, 0, 0, 10, 0, 10, 10, 0, 10, 3, 100, 100, 130, 100, 100, 130]);
   const key = rockKey(2, -1, 1);
-  const pos = (layer: CutFieldLayer): number[] => Array.from((layer.container.children[0] as Mesh).geometry.positions);
+  const pos = (layer: CutFieldLayer): number[] => Array.from((layer.chunkLayer.children[0] as Mesh).geometry.positions);
 
   it('draws a moved rock at its pose (not where it was cut), hides it while the wire draws it, and brings it back there', () => {
     const plain = new CutFieldLayer();
@@ -142,5 +145,128 @@ describe('CutFieldLayer — moved rocks (C2 deep sleep)', () => {
     for (let f = 0; f <= WOKEN_ROCK_FORGET_FRAMES + 1; f++) layer.setView(0, 1);
     expect(pos(layer)).toEqual(at);
     layer.clear();
+  });
+});
+
+describe('CutFieldLayer — far-zoom coarse tiles (B4)', () => {
+  const outlines = new Float32Array([4, 0, 0, 10, 0, 10, 10, 0, 10, 3, 100, 100, 130, 100, 100, 130]);
+  // A coarse tile: one big piece, 30 km out (game space).
+  const tile = new Float32Array([4, 30_000, 0, 32_000, 0, 32_000, 2_000, 30_000, 2_000]);
+  const mesh = (c: { children: unknown[] }): Mesh => c.children[0] as Mesh;
+
+  it('builds tiles with the chunk mesh path and the same shader instance (one program)', () => {
+    const layer = new CutFieldLayer();
+    layer.setChunk(0, 0, outlines);
+    layer.setCoarseTile(0, 0, tile);
+    expect(layer.coarseCount).toBe(1);
+    expect(mesh(layer.coarseLayer).shader).toBe(mesh(layer.chunkLayer).shader);
+    expect(Array.from(mesh(layer.coarseLayer).geometry.positions)).toEqual(Array.from(buildFieldChunkMesh(tile).positions));
+    layer.clear();
+  });
+
+  it('below the switch shows only the tiles, above it only the chunks; the hidden level is not visible', () => {
+    const layer = new CutFieldLayer();
+    layer.setChunk(0, 0, outlines);
+    layer.setCoarseTile(0, 0, tile);
+    layer.setView(0, 0.005);
+    expect([layer.chunkLayer.visible, layer.coarseLayer.visible]).toEqual([false, true]);
+    expect(layer.coarseLayer.alpha).toBe(1);
+    layer.setView(0, 0.15);
+    expect([layer.chunkLayer.visible, layer.coarseLayer.visible]).toEqual([true, false]);
+    expect(layer.chunkLayer.alpha).toBe(1);
+    layer.setView(0, 0.0216 * 1.12); // inside the band: crossfade
+    expect([layer.chunkLayer.visible, layer.coarseLayer.visible]).toEqual([true, true]);
+    layer.clear();
+  });
+
+  it('never washes out across the band: one level is always fully opaque, and both ends are continuous', () => {
+    // Owner stills: at mid-fade (0.024) both levels at half alpha read as a
+    // double exposure. The coarse level comes up opaque under the chunks
+    // first; then the chunks fade out over it.
+    const layer = new CutFieldLayer();
+    layer.setChunk(0, 0, outlines);
+    layer.setCoarseTile(0, 0, tile);
+    const lo = FAR_FIELD_SWITCH_SCALE, hi = FAR_FIELD_SWITCH_SCALE * FAR_ICON.hysteresis;
+    for (let k = 0; k <= 40; k++) {
+      const s = lo * 0.99 + ((hi * 1.01 - lo * 0.99) * k) / 40;
+      layer.setView(0, s);
+      const c = layer.chunkLayer.visible ? layer.chunkLayer.alpha : 0, f = layer.coarseLayer.visible ? layer.coarseLayer.alpha : 0;
+      expect(Math.max(c, f), `scale ${s}`).toBe(1);
+    }
+    layer.setView(0, 0.024); // the owner's mid-fade still: tiles opaque, detail fading over them
+    expect(layer.coarseLayer.alpha).toBe(1);
+    expect(layer.chunkLayer.alpha).toBeGreaterThan(0.5);
+    layer.setView(0, hi * 0.999); // just inside the detail end: tiles barely in
+    expect(layer.coarseLayer.alpha).toBeLessThan(0.02);
+    layer.setView(0, lo * 1.001); // just inside the far end: chunks barely left
+    expect(layer.chunkLayer.alpha).toBeLessThan(0.02);
+    layer.clear();
+  });
+
+  it('marks tile vertices far-zoom (aUV.y = 1 + coarseFieldThin, thinning toward the rim); chunks stay 0', () => {
+    const layer = new CutFieldLayer();
+    layer.setChunk(0, 0, outlines);
+    const R = SLICED.radius;
+    layer.setCoarseTile(0, 0, tile); // 30 km out: d 0.2
+    layer.setCoarseTile(4, 0, new Float32Array([4, R * 0.95, 0, R * 0.95 + 2000, 0, R * 0.95 + 2000, 2000, R * 0.95, 2000]));
+    layer.setCoarseTile(0, 1, new Float32Array([3, 0, 0, 1000, 0, 0, 1000])); // at the centre: thin 0, still marked
+    const thin = (m: Mesh): number[] => Array.from(m.geometry.uvs).filter((_, i) => i % 2 === 1);
+    const [near, rim, core] = layer.coarseLayer.children as Mesh[];
+    for (const t of thin(near!)) expect(t - 1).toBeCloseTo(coarseFieldThin(0.2), 1);
+    for (const t of thin(rim!)) expect(t - 1).toBeGreaterThan(0.9);
+    for (const t of thin(core!)) expect(t).toBeGreaterThanOrEqual(1);
+    expect(Math.max(...thin(mesh(layer.chunkLayer)))).toBe(0);
+    layer.clear();
+  });
+
+  it('gives tile vertices their piece centre (Pixi world) as the noise offset, so the shader\'s rock-sized cells run on across pieces', () => {
+    // Owner film: at the switch the coarse slabs (~1.6 km, no streets) swap
+    // in for ~500 u rocks with streets. The shader draws rock-sized cells
+    // with streets on the tiles in world space (aLocal + aRock.yz).
+    const layer = new CutFieldLayer();
+    layer.setCoarseTile(0, 0, tile);
+    const g = mesh(layer.coarseLayer).geometry;
+    const pos = g.positions, local = g.getBuffer('aLocal').data as Float32Array, rock = g.getBuffer('aRock').data as Float32Array;
+    for (let v = 0; v < pos.length / 2; v++) {
+      expect(local[v * 2]! + rock[v * 4 + 1]!).toBeCloseTo(pos[v * 2]!, 3);
+      expect(local[v * 2 + 1]! + rock[v * 4 + 2]!).toBeCloseTo(pos[v * 2 + 1]!, 3);
+    }
+    layer.clear();
+  });
+
+  it('a far view with no tiles yet keeps drawing the chunks', () => {
+    const layer = new CutFieldLayer();
+    layer.setChunk(0, 0, outlines);
+    layer.setView(0, 0.005);
+    expect(layer.chunkLayer.visible).toBe(true);
+    expect(layer.chunkLayer.alpha).toBe(1);
+    layer.clear();
+  });
+
+  it('hides a tile outside the view bounds (Pixi space x0, y0, x1, y1)', () => {
+    const layer = new CutFieldLayer();
+    layer.setCoarseTile(0, 0, tile);
+    layer.setView(0, 0.005, [-10_000, -10_000, 10_000, 10_000]);
+    expect(mesh(layer.coarseLayer).visible).toBe(false);
+    layer.setView(0, 0.005, [25_000, -5_000, 40_000, 5_000]);
+    expect(mesh(layer.coarseLayer).visible).toBe(true);
+    layer.clear();
+  });
+
+  it('drains level-tagged tiles from the mirror queue; null drops one; clear drops them all', () => {
+    const layer = new CutFieldLayer();
+    const mirror = { pendingFieldChunks: [
+      { cx: 0, cy: 0, outlines: tile, level: 'coarse' as const },
+      { cx: 1, cy: 0, outlines: tile, level: 'coarse' as const },
+      { cx: 0, cy: 0, outlines },
+    ] } as unknown as RenderMirror;
+    layer.update(mirror, 0, 0.005);
+    expect([layer.coarseCount, layer.chunkCount]).toEqual([2, 1]);
+    mirror.pendingFieldChunks!.push({ cx: 1, cy: 0, outlines: null, level: 'coarse' });
+    layer.update(mirror, 0, 0.005);
+    expect(layer.coarseCount).toBe(1);
+    layer.clear();
+    expect(layer.coarseCount).toBe(0);
+    expect(layer.coarseLayer.children.length).toBe(0);
   });
 });

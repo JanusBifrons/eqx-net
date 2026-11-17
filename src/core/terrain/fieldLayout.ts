@@ -134,11 +134,12 @@ function warpAll(pts: Pt[], seed: number): Pt[] {
 }
 
 /** Break each edge into wobbly segments (midpoint displacement), pushed mostly
- *  inward so streets stay open: irregular, possibly concave rock outlines. */
-function roughen(poly: Pt[], path: number, rnd: (path: number, k: number) => number): Pt[] {
+ *  inward so streets stay open: irregular, possibly concave rock outlines.
+ *  `levels` halvings (rocks: `SLICED.roughLevels`; far-zoom pieces: 1). */
+function roughen(poly: Pt[], path: number, rnd: (path: number, k: number) => number, levels: number = SLICED.roughLevels): Pt[] {
   let pts = poly;
   const c = centroidOf(poly);
-  for (let lvl = 0; lvl < SLICED.roughLevels; lvl++) {
+  for (let lvl = 0; lvl < levels; lvl++) {
     const next: Pt[] = [];
     for (let i = 0; i < pts.length; i++) {
       const p = pts[i]!, q = pts[(i + 1) % pts.length]!;
@@ -164,7 +165,9 @@ export interface SlicedOpts {
   fighterLength: number;
   /** Only pieces touching this box are cut down to rocks (lazy); others stop. */
   view: { x0: number; y0: number; x1: number; y1: number };
-  /** Pieces smaller than this are not cut further (preview level of detail). */
+  /** Pieces smaller than this are not cut further (far-zoom level of detail):
+   *  such a piece is kept whole (no rim drop, no street inset) and roughened
+   *  one level, so it covers where its rocks are. Never saved or keyed. */
   minSize?: number;
   /** Field radius override (tests); default `SLICED.radius`. */
   radius?: number;
@@ -276,10 +279,15 @@ export function slicedField(o: SlicedOpts): SlicedRock[] {
     if (size <= small || bigStop || lodStop || depth > 40 || !touchesView(poly)) {
       if (!touchesView(poly)) continue;
       if (own && !(c.x >= own.x0 && c.x < own.x1 && c.y >= own.y0 && c.y < own.y1)) continue;
+      if (lodStop && size > small && !bigStop) {
+        // A far-zoom piece, not a rock: kept whole so it covers its rocks.
+        out.push({ verts: warpAll(roughen(poly, path, rnd, 1), base), cx: c.x, cy: c.y, size, path });
+        continue;
+      }
       // Thin out toward the rim (smoothly), wider streets there.
-      const keep = S.rimKeep + (1 - S.rimKeep) * (1 - d * d);
+      const keep = fieldRimKeep(d);
       if (rnd(path, 5) > keep) continue;
-      const street = F * S.streetFighters * (1 + (S.streetEdgeMul - 1) * d * d);
+      const street = fieldStreet(d, F);
       const v = inset(poly, street / 2);
       if (v) out.push({ verts: warpAll(roughen(v, path, rnd), base), cx: c.x, cy: c.y, size, path });
       continue;
@@ -382,4 +390,71 @@ export function rocksInChunk(o: ChunkOpts, cx: number, cy: number): ChunkRock[] 
   mine.sort((a, b) => (a.path >>> 0) - (b.path >>> 0));
   if (mine.length > MAX_ROCKS_PER_CHUNK) throw new Error(`chunk ${cx},${cy} holds ${mine.length} rocks (max ${MAX_ROCKS_PER_CHUNK})`);
   return mine.map((r, index) => ({ ...r, index, key: rockKey(cx, cy, index) }));
+}
+
+// --------------------------------------------------------------- far zoom ---
+/*
+ * Far zoom (plan v2, B4): the whole field cut only down to
+ * `FIELD_COARSE_MIN_SIZE`, grouped into tiles of `COARSE_TILE_CHUNKS` x
+ * `COARSE_TILE_CHUNKS` chunks by pre-warp centre (as `rocksInChunk` assigns
+ * rocks to chunks). Drawn instead of the rocks when they are a few pixels
+ * across. docs/architecture/macro-terrain.md#far-zoom-b4.
+ */
+
+/** Far-zoom piece size (world u): pieces below it are not cut further. */
+export const FIELD_COARSE_MIN_SIZE = 2048;
+/** A far-zoom tile is this many chunks on a side. */
+export const COARSE_TILE_CHUNKS = 8;
+
+/** Share of rock-sized pieces kept at `d` (0 core .. 1 rim): the field
+ *  thins smoothly toward its rim. */
+export function fieldRimKeep(d: number): number {
+  return SLICED.rimKeep + (1 - SLICED.rimKeep) * (1 - d * d);
+}
+
+/** How see-through the far-zoom level is drawn at `d` (0 core .. 1 rim): 0
+ *  solid, 1 gone. Coarse pieces are kept whole, but toward the rim fewer
+ *  rocks are kept (`fieldRimKeep`) and their streets widen (×(1 − d²),
+ *  a fit to the measured rock area: docs/architecture/macro-terrain.md), so
+ *  the coarse level is drawn as thin as the rocks it stands in for. */
+export function coarseFieldThin(d: number): number {
+  const c = Math.min(1, Math.max(0, d));
+  return 1 - fieldRimKeep(c) * (1 - c * c);
+}
+
+/** The street between neighbouring rocks at `d` (0 core .. 1 rim), world u:
+ *  each rock is inset by half of it. */
+export function fieldStreet(d: number, fighterLength: number): number {
+  return fighterLength * SLICED.streetFighters * (1 + (SLICED.streetEdgeMul - 1) * d * d);
+}
+
+/** Far zoom: side (world u) of the rock-sized cells the field shader draws on
+ *  the coarse pieces, with `fieldStreet` between them, so the far level reads
+ *  as rocks at the switch. The real rocks' density near the core (one rock
+ *  per cell²; 452 u seed `look`, 538 u seed `far-zoom`; fieldCoarse.test.ts). */
+export const FIELD_FAR_ROCK_CELL = 480;
+
+export interface CoarseTile { tx: number; ty: number; pieces: SlicedRock[] }
+
+/** The whole field's far-zoom pieces by tile (tiles in (ty, tx) order, pieces
+ *  by cut path). Generation-time code, not a hot path. */
+export function coarseFieldTiles(o: ChunkOpts): CoarseTile[] {
+  const R = (o.radius ?? SLICED.radius) + cutFieldPad();
+  const pieces = slicedField({
+    seed: o.seed, battleshipLength: o.battleshipLength, fighterLength: o.fighterLength,
+    view: { x0: -R, y0: -R, x1: R, y1: R }, minSize: FIELD_COARSE_MIN_SIZE,
+    ...(o.radius !== undefined ? { radius: o.radius } : {}),
+  });
+  const byTile = new Map<string, CoarseTile>();
+  for (const p of pieces) {
+    const c = chunkOf(p.cx, p.cy);
+    const tx = Math.floor(c.cx / COARSE_TILE_CHUNKS), ty = Math.floor(c.cy / COARSE_TILE_CHUNKS);
+    const k = `${tx},${ty}`;
+    let t = byTile.get(k);
+    if (!t) { t = { tx, ty, pieces: [] }; byTile.set(k, t); }
+    t.pieces.push(p);
+  }
+  const tiles = [...byTile.values()].sort((a, b) => a.ty - b.ty || a.tx - b.tx);
+  for (const t of tiles) t.pieces.sort((a, b) => (a.path >>> 0) - (b.path >>> 0));
+  return tiles;
 }

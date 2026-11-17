@@ -5,6 +5,10 @@
  * draws a whole chunk (`CutFieldLayer`). The surface is made per pixel from
  * the offset to the rock's centre: a dome from the outline, fBm, craters and
  * cracks down to ~2 screen pixels, lit by the sector's sun. No texture.
+ * `aUV.y` >= 1 marks a far-zoom tile vertex (1 + see-through share): there the
+ * surface is drawn as rock-sized cells with streets (`FIELD_FAR_ROCK_CELL`,
+ * `fieldStreet`), in world space, so the far level reads as the rocks it
+ * stands for at the switch; the cells fade out below ~4 px.
  *
  * Field rocks never turn, so the sun needs no per-rock frame. Per frame only
  * `setFieldRockView` runs, a compare unless the zoom or the sun moved.
@@ -13,16 +17,28 @@ import { GlProgram, UniformGroup } from 'pixi.js';
 import { lin } from '../art/fields';
 import { ROCK_COLORS } from '../art/rockForge';
 import { DEFAULT_RIG } from '../art/shade';
+import { cutFieldOpts } from '../../../core/terrain/chunkStreamer';
+import { FIELD_FAR_ROCK_CELL, fieldStreet, SLICED } from '../../../core/terrain/fieldLayout';
 
-const VERTEX = /* glsl */ `
+/** Far-zoom cells (B4): cell side, half street at the core, street growth
+ *  toward the rim, field radius (all world u), as GLSL literals. */
+const FIELD_F = cutFieldOpts('').fighterLength;
+const glf = (x: number): string => x.toFixed(3);
+
+/** The vertex stage. `batched` (`RockBatch`): many rocks in one mesh, each
+ *  vertex carrying its rock's own axes (`aXf`, the rock's linear transform in
+ *  the mesh's frame) and colour (`aTint`, premultiplied), which a lone mesh
+ *  takes from its transform and `uColor`. Same maths either way. */
+const vertexSource = (batched: boolean): string => /* glsl */ `
 in vec2 aPosition;
 in vec2 aUV;
 in vec2 aLocal;
 in vec4 aRock;
-in vec2 aOre;
+in vec2 aOre;${batched ? '\nin vec4 aXf;\nin vec4 aTint;' : ''}
 out vec2 vOre;
 out vec2 vLocal;
 out float vT;
+out float vThin;
 out vec4 vRock;
 out vec2 vSunDir;
 out vec4 vColor;
@@ -38,19 +54,23 @@ void main() {
   // The sun into the mesh's own axes, so a woken (spinning) rock keeps its
   // light where the sun is; a chunk mesh is unrotated, so this is identity.
   vec2 sunW = vec2(cos(uSunLook.z), sin(uSunLook.z));
-  vec2 ax = normalize(model[0].xy), ay = normalize(model[1].xy);
+  ${batched
+    ? 'vec2 ax = normalize((model * vec3(aXf.xy, 0.0)).xy), ay = normalize((model * vec3(aXf.zw, 0.0)).xy);'
+    : 'vec2 ax = normalize(model[0].xy), ay = normalize(model[1].xy);'}
   vSunDir = vec2(dot(sunW, ax), dot(sunW, ay));
   vLocal = aLocal;
   vT = aUV.x;
+  vThin = aUV.y;
   vRock = aRock;
   vOre = aOre;
-  vColor = uColor * uWorldColorAlpha;
+  vColor = uColor * uWorldColorAlpha${batched ? ' * aTint' : ''};
 }`;
 
 const FRAGMENT = /* glsl */ `
 precision highp float;
 in vec2 vLocal;
 in float vT;
+in float vThin;
 in vec4 vRock;
 in vec2 vOre;
 in vec2 vSunDir;
@@ -65,6 +85,10 @@ uniform vec3 uCrystalAlbedo;
 uniform vec4 uSunLook;
 uniform vec3 uSunColor;
 uniform vec3 uAmbient;
+#define FAR_CELL ${glf(FIELD_FAR_ROCK_CELL)}
+#define FAR_HALF_STREET ${glf(fieldStreet(0, FIELD_F) / 2)}
+#define FAR_STREET_EDGE ${glf(SLICED.streetEdgeMul - 1)}
+#define FIELD_R ${glf(SLICED.radius)}
 
 float linToSrgb(float c) { return c <= 0.0031308 ? c * 12.92 : 1.055 * pow(c, 1.0 / 2.4) - 0.055; }
 float tone(float x) { return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); }
@@ -103,6 +127,45 @@ void main() {
   float rl = length(p);
   vec2 dir = rl > 1e-3 ? p / rl : vec2(0.0);
   vec2 G = -dir * (0.8 * e / sqrt(max(0.03, 1.0 - e * e)));
+
+  // Far-zoom tiles (aUV.y = 1 + thin): each coarse piece is cut on down to
+  // rock size here, as the field cuts it (macro-terrain.md "Far zoom"): a few
+  // straight seeded cuts, each roughly across the one before, the pixel's
+  // side picking the next region. Each sub-piece is inset by half the field's
+  // street and shaded as a faceted roof (slope away from its nearest edge),
+  // so the coarse pieces read as the rocks they stand for at the switch.
+  // Full at >= 8 px a rock, gone at 4 px (the plain pieces).
+  bool coarse = vThin >= 0.5;
+  float thin = coarse ? vThin - 1.0 : 0.0;
+  float street = 1.0;
+  float cellFade = coarse ? clamp(FAR_CELL / px / 4.0 - 1.0, 0.0, 1.0) : 0.0;
+  if (cellFade > 0.0) {
+    // The piece's own outline: distance along this ray (vT linear on it).
+    float dmin = rl * clamp(vT, 0.0, 1.0) / max(1e-3, 1.0 - clamp(vT, 0.0, 0.999));
+    vec2 nmin = -dir;
+    vec2 c = vec2(0.0);
+    float r = R * 0.7;
+    float path = fract(seed * 0.000123 + 0.31) * 977.0;
+    float ang = 6.2832 * h01(vec2(path, 3.0), 13.0);
+    for (int k = 0; k < 6; k++) {
+      if (r < FAR_CELL * 0.7) break;
+      vec2 n = vec2(cos(ang), sin(ang));
+      vec2 pc = c + n * (h01(vec2(path, float(k)), 17.0) - 0.5) * 0.6 * r;
+      float sd = dot(p - pc, n);
+      float side = sd >= 0.0 ? 1.0 : -1.0;
+      if (abs(sd) < dmin) { dmin = abs(sd); nmin = n * side; }
+      c += n * side * r * 0.5;
+      r *= 0.7;
+      path = fract(path * 0.6180 + side * 0.3819 + 0.1) * 977.0;
+      ang += 1.5708 + (h01(vec2(path, 5.0), 19.0) - 0.5) * 0.7;
+    }
+    float fd = length(p + vRock.yz) / FIELD_R;
+    float halfStreet = FAR_HALF_STREET * (1.0 + FAR_STREET_EDGE * fd * fd);
+    street = mix(1.0, smoothstep(halfStreet - 0.5 * px, halfStreet + 0.5 * px, dmin), cellFade);
+    G = mix(G, nmin * 0.6, cellFade);
+    R = mix(R, 0.5 * FAR_CELL, cellFade);
+    if (cellFade > 0.5) seed = floor(fract(path * 0.0137) * 65536.0);
+  }
 
   // fBm: each octave adds about the same slope (scale-free rock).
   vec2 q = p + vRock.yz;
@@ -198,10 +261,23 @@ void main() {
   if (gloss > 0.0) c += uSunColor * gloss * pow(max(0.0, dot(reflect(-L, N), vec3(0.0, 0.0, 1.0))), 24.0);
   c *= uSunLook.y;
   vec3 rgb = vec3(linToSrgb(tone(c.r)), linToSrgb(tone(c.g)), linToSrgb(tone(c.b)));
-  finalColor = vec4(rgb, 1.0) * vColor;
+  // Far-zoom tiles thin toward the field's rim (thin = coarseFieldThin): see-through in rock-sized patches. smoothstep(0.15, 0.85, n)
+  // makes this noise about uniform (measured, within ~1.3 %), so the share
+  // drawn is about 1 - vThin. Patches under ~2 px fall back to plain alpha.
+  float cover = street;
+  if (thin > 0.0) {
+    float n = 0.65 * noised(q / 1200.0 + 41.0, seed + 41.0).x + 0.35 * noised(q / 520.0 + 7.0, seed + 43.0).x;
+    float u = smoothstep(0.15, 0.85, n);
+    float w = clamp(min(thin, 1.0 - thin), 1e-3, 0.08);
+    float f = clamp(520.0 / px * 0.5 - 0.5, 0.0, 1.0);
+    cover *= mix(1.0 - thin, smoothstep(thin - w, thin + w, u), f);
+  }
+  if (cover <= 0.0) discard;
+  finalColor = vec4(rgb, 1.0) * vColor * cover;
 }`;
 
 let program: GlProgram | null = null;
+let batchProgram: GlProgram | null = null;
 let view: UniformGroup | null = null;
 let rockLook: UniformGroup | null = null;
 let sunAzSet = NaN;
@@ -220,8 +296,14 @@ export function setFieldOreStyle(style: FieldOreStyle): void {
 }
 
 export function fieldRockProgram(): GlProgram {
-  program ??= GlProgram.from({ vertex: VERTEX, fragment: FRAGMENT, name: 'field-rock-proc' });
+  program ??= GlProgram.from({ vertex: vertexSource(false), fragment: FRAGMENT, name: 'field-rock-proc' });
   return program;
+}
+
+/** The same rock shader for `RockBatch` (per-vertex axes and colour). */
+export function fieldRockBatchProgram(): GlProgram {
+  batchProgram ??= GlProgram.from({ vertex: vertexSource(true), fragment: FRAGMENT, name: 'field-rock-proc-batch' });
+  return batchProgram;
 }
 
 /** The shared uniforms: the sun and zoom (`fieldRockView`), the rock colour. */

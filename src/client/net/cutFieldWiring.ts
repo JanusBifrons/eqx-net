@@ -30,8 +30,8 @@ export function createGameCutField(host: CutFieldHost): CutFieldClient {
     // The piloted ship, or while spectating our own parked hull (spectate
     // leaves it parked in `ships`, keyed by shipInstanceId), so the field
     // stays loaded around it.
-    // A free-flying spectator camera is not followed yet (its pose lives in
-    // the renderer).
+    // The camera centre is streamed too (`CutFieldClient.setView`, from the
+    // renderer's feedback in the RAF loop).
     localPose: () => {
       const localId = mirror.localPlayerId;
       if (!localId) return null;
@@ -43,6 +43,10 @@ export function createGameCutField(host: CutFieldHost): CutFieldClient {
     draw: {
       setFieldChunk: (cx, cy, outlines, ore = null, bodies = null, moved = null) => {
         (mirror.pendingFieldChunks ??= []).push({ cx, cy, outlines, ore, bodies, moved });
+      },
+      // Far-zoom tiles (B4) ride the same drain queue, tagged.
+      setCoarseTile: (tx, ty, outlines, ore = null) => {
+        (mirror.pendingFieldChunks ??= []).push({ cx: tx, cy: ty, outlines, ore, level: 'coarse' });
       },
     },
     cutter: () => cutter,

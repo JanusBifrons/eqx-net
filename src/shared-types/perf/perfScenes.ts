@@ -34,6 +34,12 @@ export interface PerfScene {
    *  holds these keys for the whole window. The camera then follows the ship
    *  as in play (`camera` is not held). */
   pilotHold?: { keys: string[]; initialAngle: number };
+  /** A moving director camera instead of the held `camera`: cinema holds,
+   *  each eased in over `smoothMs` from its `atMs` (ms after the window
+   *  starts). `scale` is the ABSOLUTE camera scale (screen px per world unit),
+   *  not width-normalised like `camera.zoom`, so a zoom threshold is hit on
+   *  every viewport. */
+  cameraPath?: { atMs: number; smoothMs: number; x: number; y: number; scale: number }[];
 }
 
 const fight = (tag: string, kind: string, x: number, y: number, count: number, atMs = 0): Extract<SceneStep, { action: 'spawn' }> =>
@@ -388,6 +394,30 @@ export const PERF_SCENES: readonly PerfScene[] = [
     spawn: { x: -11_147, y: 20_249 },
     pilotHold: { keys: ['w', 'Shift'], initialAngle: 1.028 },
     camera: { x: -11_147, y: 20_249, zoom: 0.45 },
+    durationMs: 30_000,
+    minSwarm: 1,
+    soak: true,
+  },
+  {
+    // Macro terrain B4: the cut field from far out, where the coarse far-zoom
+    // tiles draw. A battleship pilot (whose own zoom floor is ~0.0048) sits
+    // idle; the director camera holds at that floor for the first half and
+    // just past the far switch (`FAR_FIELD_SWITCH_SCALE` ≈ 0.0215, rock-size
+    // cut fully on) for the second, panning slowly so tiles enter and leave
+    // the view. Scales are absolute (`cameraPath`), so every viewport sees
+    // the same zooms. Runs on a build without the far view too (fair A/B).
+    id: 'cut-field-far',
+    title: 'The cut field from far out: battleship floor zoom, then just past the far switch, panning',
+    room: { droneCount: 0, asteroidConfig: [], cutField: { seed: 'look' }, pilotCapitals: true, sceneScript: [{ atMs: 30_000, action: 'end' }] },
+    spawn: { x: -11_147, y: 20_249 },
+    pilotKind: 'battleship',
+    camera: { x: -11_147, y: 20_249, zoom: 0.02 },
+    cameraPath: [
+      { atMs: 0, smoothMs: 0, x: -30_000, y: 10_000, scale: 0.00484 },
+      { atMs: 500, smoothMs: 13_000, x: 10_000, y: 35_000, scale: 0.00484 },
+      { atMs: 14_000, smoothMs: 1500, x: 0, y: 30_000, scale: 0.0215 },
+      { atMs: 16_000, smoothMs: 13_000, x: -25_000, y: 20_000, scale: 0.0215 },
+    ],
     durationMs: 30_000,
     minSwarm: 1,
     soak: true,

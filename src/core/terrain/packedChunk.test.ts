@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { cutFieldOpts, fieldRockBody } from './chunkStreamer.js';
-import { rocksInChunk, SLICED } from './fieldLayout.js';
+import { coarseFieldTiles, rocksInChunk, SLICED } from './fieldLayout.js';
 import { oreForOutlines, oreSeed } from './fieldOre.js';
-import { collapsePackedRock, packChunk, packedBuffers, packedRockBody, packOutlines } from './packedChunk.js';
+import { collapsePackedRock, packChunk, packCoarseTile, packedBuffers, packedRockBody, packOutlines } from './packedChunk.js';
 
 const field = cutFieldOpts('test-seed');
 const CX = 15, CY = 0; // in the field ring
@@ -86,5 +86,19 @@ describe('dent spot (cut-field-collision.spec, plan C1)', () => {
       }
     }
     expect(clear).toBeGreaterThan(36); // shield bubble 34 u + slack
+  });
+});
+
+describe('packed far-zoom tiles (macro terrain v2, B4)', () => {
+  it('packs a tile with the chunk outline and ore packing (outlines + ore, no bodies)', () => {
+    const tiles = coarseFieldTiles({ ...field, radius: 20_000 });
+    expect(tiles.length).toBeGreaterThan(1);
+    for (const t of tiles) {
+      const p = packCoarseTile(t, field.seed);
+      expect({ tx: p.tx, ty: p.ty }).toEqual({ tx: t.tx, ty: t.ty });
+      expect(p.outlines).toEqual(packOutlines(t.pieces));
+      expect(p.ore).toEqual(oreForOutlines(oreSeed(field.seed), SLICED.radius, p.outlines));
+      expect(Object.keys(p).sort()).toEqual(['ore', 'outlines', 'tx', 'ty']);
+    }
   });
 });

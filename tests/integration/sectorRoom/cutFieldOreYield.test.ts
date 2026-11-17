@@ -1,8 +1,9 @@
 /**
- * Macro terrain v2 F1b (yield by hit point): a mining-laser hit on a cut-field
- * rock pays out the ore the field holds WHERE the beam landed (`oreAt` at the
- * hit point → `oreRow`), through the one ore path (`OreDraw`): a rich spot
- * gives ore, plain rock gives minerals. The pool stays size-based.
+ * Macro terrain v2: a robot harvester or grid Miner drawing from a cut-field
+ * rock gets the ore the field holds at the rock's centre (`oreAt` →
+ * `oreRow`), through the one ore path (`OreDraw.mine`). The mining laser
+ * pays no ore per hit (only its cut pieces' pods do: oreDraw.test.ts), and
+ * neither does any other weapon.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
@@ -10,7 +11,6 @@ import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import type { SwarmEntityRecord } from '../../../src/server/net/SwarmEntityRegistry.js';
 import { getHoldStore } from '../../../src/server/db/PersistenceWorker.js';
-import { ORE_UNITS_PER_DAMAGE } from '../../../src/server/rooms/OreDraw.js';
 import { oreAt, oreSeed } from '../../../src/core/terrain/fieldOre.js';
 import { SLICED } from '../../../src/core/terrain/fieldLayout.js';
 import { oreRow, yieldInto } from '../../../src/shared-types/asteroidResources.js';
@@ -21,15 +21,8 @@ afterEach(async () => { await harness?.cleanup(); harness = undefined; });
 const SEED = 'look';
 const conc = (x: number, y: number) => oreAt(oreSeed(SEED), SLICED.radius, x, y, { ice: 0, crystal: 0 });
 
-/** Points on a resting field rock: its centre and halfway to each corner. */
-function pointsOn(rec: SwarmEntityRecord): Array<{ x: number; y: number }> {
-  const out = [{ x: rec.restX!, y: rec.restY! }];
-  for (const v of rec.vertices ?? []) out.push({ x: rec.restX! + v.x / 2, y: rec.restY! + v.y / 2 });
-  return out;
-}
-
-describe('SectorRoom integration — cut-field ore by hit point (F1b)', () => {
-  it('a mining-laser hit pays the ore at the point it landed', { timeout: 40_000 }, async () => {
+describe('SectorRoom integration — cut-field ore at the rock centre', () => {
+  it('a harvester draws the ore at the rock centre; a mining-laser hit pays nothing', { timeout: 40_000 }, async () => {
     harness = await bootSectorTestServer({ sectorKey: 'sol-prime', testMode: true, cutField: { seed: SEED }, asteroidConfig: [], droneCount: 0 });
     const pid = randomUUID();
     await harness.connectActive(pid, { shipKind: 'fighter', initialHull: 1_000_000, spawnX: -30_120, spawnY: 26_501 });
@@ -50,35 +43,15 @@ describe('SectorRoom integration — cut-field ore by hit point (F1b)', () => {
     expect(rocks.length, 'field rocks streamed in').toBeGreaterThan(0);
     for (const r of rocks) expect([r.restX, r.restY], 'a field rock keeps its rest centre').not.toContain(undefined);
 
-    // The richest and the plainest point on any loaded rock.
-    let rich = { rec: rocks[0]!, x: 0, y: 0, ore: -1 };
-    let plain = { rec: rocks[0]!, x: 0, y: 0, ore: 2 };
-    for (const rec of rocks) for (const p of pointsOn(rec)) {
-      const c = conc(p.x, p.y), ore = c.ice + c.crystal;
-      if (ore > rich.ore) rich = { rec, ...p, ore };
-      if (ore < plain.ore) plain = { rec, ...p, ore };
-    }
-    expect(rich.ore, 'the seed has ore near the lane').toBeGreaterThan(0.2);
-    expect(plain.ore).toBeLessThan(0.05);
-
+    // A mining-laser hit on a field rock: no ore into the hold, none out of the pool.
     const goods = () => ({ ...(getHoldStore().get(shipId)?.hold.goods ?? {}) });
-    for (const spot of [rich, plain]) {
-      const before = goods();
-      const pool0 = spot.rec.resources!;
-      for (let i = 0; i < 12; i++) int.applyDamage(spot.rec.id, pid, 120, spot.x, spot.y, undefined, undefined, 'mining_laser');
-      int.pulseStructureGrid();
-      const drawn = pool0 - spot.rec.resources!;
-      expect(drawn, 'the pool pays by size, as before').toBe(Math.floor(12 * 120 * ORE_UNITS_PER_DAMAGE));
-      const want = yieldInto(oreRow(conc(spot.x, spot.y), {}), drawn, {});
-      const after = goods();
-      for (const g of ['minerals', 'ice', 'crystal'] as const) {
-        expect((after[g] ?? 0) - (before[g] ?? 0), `${g} at the ${spot === rich ? 'rich' : 'plain'} spot`).toBe(want[g] ?? 0);
-      }
-    }
-    const got = goods();
-    expect((got.ice ?? 0) + (got.crystal ?? 0), 'the rich spot paid ore').toBeGreaterThan(0);
+    const hit = rocks[0]!, hitPool0 = hit.resources!;
+    for (let i = 0; i < 12; i++) int.applyDamage(hit.id, pid, 120, hit.restX!, hit.restY!, undefined, undefined, 'mining_laser');
+    int.pulseStructureGrid();
+    expect(hit.resources, 'no ore per hit').toBe(hitPool0);
+    expect(goods(), 'nothing into the hold').toEqual({});
 
-    // No hit point (a robot harvester, the grid Miner): the ore at the rock's centre.
+    // A robot harvester (or the grid Miner): the ore at the rock's centre.
     let core = rocks[0]!, coreOre = -1;
     for (const r of rocks) { const c = conc(r.restX!, r.restY!); if (c.ice + c.crystal > coreOre) { core = r; coreOre = c.ice + c.crystal; } }
     expect(coreOre, 'a rock centred on ore').toBeGreaterThan(0.2);

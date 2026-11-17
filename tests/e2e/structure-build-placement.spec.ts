@@ -91,11 +91,24 @@ test('no ghost↔structure gap after Confirm — the blueprint never vanishes (p
   //
   // This samples EVERY animation frame from just before Confirm until the
   // structure appears and asserts there was never a frame with neither the
-  // ghost (data-placement-world-x) nor the structure (swarm count grown). On
+  // ghost (data-placement-world-x) nor the structure (data-swarm-size grown). On
   // the pre-fix code the ghost clears immediately → ≥1 neither-frame → fails.
+  //
+  // Both signals come from the SAME per-frame E2E dataset write
+  // (gameRafLoop writeE2EDataset), so each sample is one consistent frame; the
+  // HUD swarm-count text is a React render of a store value and can lag it.
+  // That dataset is published every 5th frame, so sampling starts only once
+  // the live ghost is on it: before, the sampler counted 1-2 pre-Confirm
+  // "neither" frames (flaky ~1 in 3 locally, 2026-11-17).
+  const readSwarmSize = (): Promise<number> =>
+    page.evaluate(() =>
+      Number(
+        (document.querySelector('[data-testid="game-surface"]') as HTMLElement | null)?.dataset['swarmSize'] ?? '0',
+      ),
+    );
   const { ctx, page } = await joinClient(browser);
   try {
-    const before = await swarmCount(page);
+    const before = await readSwarmSize();
 
     await page.locator('[data-testid="speed-dial-fab"]').click();
     await page.locator('[data-testid="speed-dial-build"]').click();
@@ -103,16 +116,24 @@ test('no ghost↔structure gap after Confirm — the blueprint never vanishes (p
     await page.locator('[data-testid="build-capital"]').click();
     await expect(page.locator('[data-testid="placement-banner"]')).toBeVisible({ timeout: 5_000 });
 
+    // The live positioning ghost is on the dataset before the sampler starts.
+    await page.waitForFunction(
+      () => {
+        const x = (document.querySelector('[data-testid="game-surface"]') as HTMLElement | null)?.dataset[
+          'placementWorldX'
+        ];
+        return x != null && x !== '';
+      },
+      undefined,
+      { timeout: 5_000 },
+    );
+
     // Start a per-RAF sampler in page context BEFORE confirming.
     await page.evaluate((baseSwarm) => {
       const w = window as unknown as { __placeGap: { neither: number; total: number; appeared: boolean } };
       w.__placeGap = { neither: 0, total: 0, appeared: false };
       const surface = document.querySelector('[data-testid="game-surface"]') as HTMLElement | null;
-      const readSwarm = (): number =>
-        parseInt(
-          (document.querySelector('[data-testid="swarm-count"]')?.textContent ?? '0').replace(/\D/g, '') || '0',
-          10,
-        );
+      const readSwarm = (): number => Number(surface?.dataset['swarmSize'] ?? '0');
       const loop = (): void => {
         const s = w.__placeGap;
         const ghost = surface?.dataset['placementWorldX'];

@@ -16,6 +16,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Hold } from '../../shared-types/goods.js';
 import type { ShipKind } from '../../shared-types/shipKinds/types.js';
+import { getShipKind } from '../../shared-types/shipKinds.js';
 import { salvageConsumable, salvageConsumeMass } from '../../core/combat/salvageTargeting.js';
 import type { PieceStoreView } from '../rooms/wreckLineage.js';
 import { cloneHold, emptyHold, extractRequested, holdBestTier, holdWeight, isHoldEmpty, mergeInto, rollDeathLoss, transferInto, type CargoRequest } from '../../core/cargo/hold.js';
@@ -83,6 +84,10 @@ export interface LootSubsystemDeps {
    *  row (liveness #17 — lingering / dead hulls never collect; no roster row ⇒
    *  no hold ⇒ no pickup). Visitor style: no per-tick allocation (#14). */
   forEachCollector: (visit: (c: LootCollector) => void) => void;
+  /** Fill `c` with ship `shipId`'s collector (`LootCollectors.fill`): true =
+   *  filled; false = a ship that is not collecting; null = not a ship. Absent:
+   *  a pod contact is never a hull touch. */
+  fillCollector?: (shipId: string, c: LootCollector) => boolean | null;
   /** Salvage plan PR 12, hold-zone pickup: is pod `podId` (at x, y) held by a
    *  tractor beam of collector `c` close enough to take it
    *  (`ForceFieldSubsystem.inTractorHold`)? Such a pod is loaded whole (until
@@ -297,6 +302,18 @@ export class LootSubsystem {
       else if (this.d.inTractorHold?.(c, podId, pose.x, pose.y) === true) this.moveOut(c, podId, null);
     }
   };
+
+  /** Reused collector for `hullContact` (no per-contact alloc, #14). */
+  private readonly contactCollector: LootCollector = { playerId: '', shipInstanceId: '', x: 0, y: 0, angle: 0, shieldUp: false, capacity: 0, kind: getShipKind(null) };
+
+  /** A physics contact between `podId` and `otherId`. When `podId` is a loot
+   *  pod and `otherId` a ship, the bump never destroys the pod (true: skip
+   *  its ram damage). Touching never picks up (plan cargo-pods slice 14:
+   *  pickup is the loot window, or a tractor hold). */
+  hullContact(podId: string, otherId: string): boolean {
+    if (!this.pods.has(podId) || this.d.fillCollector === undefined) return false;
+    return this.d.fillCollector(otherId, this.contactCollector) !== null;
+  }
 
   /**
    * Take from an opened pod (the loot window, plan cargo-pods slice 10):

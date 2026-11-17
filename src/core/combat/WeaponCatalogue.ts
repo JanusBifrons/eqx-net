@@ -62,7 +62,7 @@ interface WeaponDefBase {
 
 /** What a hit lands on, for `weaponTargetFactor`: a raised shield, an exposed
  *  (or shieldless) ship hull, a structure, a capital wreck piece, or an
- *  asteroid ('rock': scales the ore a hit draws, server `OreDraw`). */
+ *  asteroid ('rock': scales the wear a hit does to a rock, server `rockCut.ts`). */
 export type WeaponTargetClass = 'shield' | 'hull' | 'structure' | 'wreck' | 'rock';
 
 /** `WeaponDefBase.targetFactor`: a damage multiplier per target class. */

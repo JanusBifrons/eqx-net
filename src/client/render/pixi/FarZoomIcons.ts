@@ -52,6 +52,24 @@ export function isIconOnly(screenDiamPx: number, wasIconOnly: boolean): boolean 
     : screenDiamPx < FAR_ICON.solidPx;
 }
 
+/** The cut field's median rock size (world u), for the far-zoom switch. */
+export const FIELD_MEDIAN_ROCK_U = 650;
+/** Camera scale below which the cut field draws its coarse far-zoom tiles
+ *  only (macro terrain B4): the median rock is `fadeStartPx` across, the size
+ *  at which a ship gets its icon. ≈ 0.0215. */
+export const FAR_FIELD_SWITCH_SCALE = FAR_ICON.fadeStartPx / FIELD_MEDIAN_ROCK_U;
+
+/** The coarse tiles' share of the cut field's draw at camera `scale`: 1 at or
+ *  below `FAR_FIELD_SWITCH_SCALE`, 0 at or above it × `FAR_ICON.hysteresis`,
+ *  linear between (the rock chunks take the rest). Continuous, so it cannot
+ *  flicker at an edge. Pure. */
+export function farFieldMix(scale: number): number {
+  const lo = FAR_FIELD_SWITCH_SCALE, hi = FAR_FIELD_SWITCH_SCALE * FAR_ICON.hysteresis;
+  if (scale <= lo) return 1;
+  if (scale >= hi) return 0;
+  return (hi - scale) / (hi - lo);
+}
+
 export type FarIconRelation = 'self' | 'friendly' | 'hostile' | 'neutral' | 'trader';
 
 /** Relationship of an entity to the local player, as the radar and contacts

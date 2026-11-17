@@ -387,6 +387,7 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
     // alloc field return (the heavy E2E dataset cost is gated above), so this
     // per-frame read is cheap; the actual work fires only on a transition.
     const selFb = feedback ?? renderer.getFeedback();
+    gameClient.setFieldView(selFb.viewX, selFb.viewY, selFb.viewHalf); // the cut field follows the camera
     if (selFb.helmCourseSeq !== _lastHelmCourseSeq) {
       _lastHelmCourseSeq = selFb.helmCourseSeq;
       gameClient.setHelmCourse(selFb.helmCourseX, selFb.helmCourseY);

@@ -2,8 +2,8 @@
  * Unit test for the machine-wide heavy-job queue
  * (`scripts/dev/heavy-queue-core.mjs` + the `heavy-queue.mjs` CLI).
  * Locks: ordering + aging, the single running slot under a race, stale
- * cleanup that never touches a live holder, and two real wrappers never
- * overlapping. Lives under `tests/unit/` because that's where vitest looks.
+ * cleanup that never touches a live holder, dead waiters kept as orphans so a
+ * re-run keeps its place, and two real wrappers never overlapping. Lives under `tests/unit/` because that's where vitest looks.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
@@ -11,8 +11,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import {
-  AGING_MS, decide, effectivePriority, holderOverdue, orderQueue, readRunning,
-  readTickets, releaseRunning, sweepStale, tryClaim, writeTicket,
+  AGING_MS, ORPHAN_GRACE_MS, adoptOrphan, decide, effectivePriority, formatStatus, holderOverdue,
+  orderQueue, readRunning, readTickets, releaseRunning, snapshot, sweepStale, tryClaim, writeTicket,
   // @ts-expect-error — plain .mjs, no .d.ts; runtime import is what we test.
 } from '../../scripts/dev/heavy-queue-core.mjs';
 
@@ -20,7 +20,7 @@ const SCRIPT = path.resolve(__dirname, '../../scripts/dev/heavy-queue.mjs');
 const MIN = 60_000;
 const T0 = 1_000_000_000_000;
 
-interface Ticket { id: string; pid: number; priority: number; joinedAtMs: number; estimateMin?: number | null; startedAtMs?: number; who?: string; kind?: string }
+interface Ticket { id: string; pid: number; priority: number; joinedAtMs: number; estimateMin?: number | null; startedAtMs?: number; who?: string; kind?: string; orphanedAtMs?: number; orphaned?: boolean; expired?: boolean; where?: string }
 const tk = (id: string, priority: number, joinedAtMs: number, pid = process.pid): Ticket =>
   ({ id, pid, priority, joinedAtMs, who: id, kind: 'other', estimateMin: null });
 
@@ -76,20 +76,22 @@ describe('running slot', () => {
     expect(tryClaim(dir, holder.id === 'a' ? b : a)).toBe(true);
   });
 
-  it('sweeps dead-pid tickets and a dead holder, never a live one', () => {
+  it('frees a dead holder at once and orphans a dead waiter, never touches a live one', () => {
     const dead = 2 ** 30; // no such pid
     writeTicket(dir, tk('live', 3, T0));
     writeTicket(dir, tk('gone', 3, T0, dead));
     tryClaim(dir, tk('holder', 3, T0, dead));
-    const removed = sweepStale(dir);
-    expect(removed.map((r: Ticket) => r.id).sort()).toEqual(['gone', 'holder']);
-    expect(readTickets(dir).map((t: Ticket) => t.id)).toEqual(['live']);
-    expect(readRunning(dir)).toBeNull();
+    const changed = sweepStale(dir, { now: T0 });
+    expect(changed.map((r: Ticket) => r.id).sort()).toEqual(['gone', 'holder']);
+    expect(changed.find((r: Ticket) => r.id === 'gone')).toMatchObject({ where: 'queue', orphaned: true });
+    expect(readRunning(dir)).toBeNull(); // dead holder: slot released at once
+    const kept = readTickets(dir).sort((a: Ticket, b: Ticket) => a.id.localeCompare(b.id));
+    expect(kept.map((t: Ticket) => [t.id, t.orphanedAtMs])).toEqual([['gone', T0], ['live', undefined]]);
 
     // A live holder far past its estimate stays (overdue is display-only).
     tryClaim(dir, { ...tk('slow', 3, T0), estimateMin: 1 }, T0);
     expect(holderOverdue(readRunning(dir), T0 + 10 * MIN)).toBe(true);
-    expect(sweepStale(dir)).toEqual([]);
+    expect(sweepStale(dir, { now: T0 })).toEqual([]);
     expect(readRunning(dir).id).toBe('slow');
   });
 
@@ -97,6 +99,60 @@ describe('running slot', () => {
     expect(holderOverdue({ ...tk('a', 3, T0), estimateMin: 10, startedAtMs: T0 }, T0 + 29 * MIN)).toBe(false);
     expect(holderOverdue({ ...tk('a', 3, T0), estimateMin: 10, startedAtMs: T0 }, T0 + 31 * MIN)).toBe(true);
     expect(holderOverdue({ ...tk('a', 3, T0), startedAtMs: T0 }, T0 + 91 * MIN)).toBe(true);
+  });
+});
+
+describe('orphaned tickets (reaped waiter keeps its place)', () => {
+  const dead = 2 ** 30;
+  const orphanAt = (id: string, joinedAtMs: number, who = id, kind = 'perf') => {
+    writeTicket(dir, { ...tk(id, 3, joinedAtMs, dead), who, kind });
+    sweepStale(dir, { now: T0 });
+  };
+
+  it('stays through the grace, is deleted after it, and is never re-stamped', () => {
+    orphanAt('gone', T0 - 5 * MIN);
+    expect(sweepStale(dir, { now: T0 + ORPHAN_GRACE_MS })).toEqual([]);
+    expect(readTickets(dir)[0].orphanedAtMs).toBe(T0);
+    const changed = sweepStale(dir, { now: T0 + ORPHAN_GRACE_MS + 1 });
+    expect(changed).toMatchObject([{ id: 'gone', expired: true }]);
+    expect(readTickets(dir)).toEqual([]);
+  });
+
+  it('is left out of the decide order: never blocks and never wins', () => {
+    orphanAt('old', T0 - 60 * MIN);
+    writeTicket(dir, tk('me', 3, T0));
+    const tickets = readTickets(dir);
+    const base = { tickets, running: null, freeGb: 8, minGb: 4, now: T0 };
+    expect(decide({ ...base, meId: 'me' })).toMatchObject({ go: true, position: 1 });
+    expect(decide({ ...base, meId: 'old' })).toMatchObject({ go: false, reason: 'ticket missing' });
+    const snap = snapshot(dir, T0 + MIN);
+    expect(snap.queue.map((q: Ticket) => q.id)).toEqual(['me']);
+    expect(snap.orphaned).toMatchObject([{ id: 'old', orphanedMs: MIN, expiresInMs: ORPHAN_GRACE_MS - MIN }]);
+    expect(formatStatus(snap)).toContain('orphaned: old [perf] 1m00s');
+    expect(formatStatus(snap)).toContain('rejoin with same --who to keep place');
+  });
+
+  it('a re-run with the same who + kind inherits joinedAtMs and replaces the orphan', () => {
+    orphanAt('gone', T0 - 30 * MIN, 'perf-a', 'perf');
+    writeTicket(dir, tk('other', 3, T0 - 10 * MIN));
+    const fresh = { ...tk('fresh', 3, T0 + MIN), who: 'perf-a', kind: 'perf' };
+    expect(adoptOrphan(dir, fresh, T0 + MIN)).toMatchObject({ id: 'gone' });
+    expect(fresh.joinedAtMs).toBe(T0 - 30 * MIN);
+    writeTicket(dir, fresh);
+    expect(readTickets(dir).map((t: Ticket) => t.id).sort()).toEqual(['fresh', 'other']);
+    // Kept its age, so it is ahead of the ticket that joined after it.
+    expect(decide({ meId: 'fresh', tickets: readTickets(dir), running: null, freeGb: 8, minGb: 4, now: T0 + MIN }))
+      .toMatchObject({ go: true, position: 1 });
+  });
+
+  it('a different who, a different kind, or an expired orphan is not adopted', () => {
+    orphanAt('gone', T0 - 30 * MIN, 'perf-a', 'perf');
+    for (const [who, kind, now] of [['perf-b', 'perf', T0], ['perf-a', 'e2e', T0], ['perf-a', 'perf', T0 + ORPHAN_GRACE_MS + 1]] as const) {
+      const t = { ...tk('x', 3, now), who, kind };
+      expect(adoptOrphan(dir, t, now)).toBeUndefined();
+      expect(t.joinedAtMs).toBe(now);
+    }
+    expect(readTickets(dir).map((t: Ticket) => t.id)).toEqual(['gone']);
   });
 });
 

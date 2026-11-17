@@ -87,13 +87,29 @@ describe('SectorRoom integration — the size ladder: laser sizes work pieces by
     const fire = (id: string, slotId: string): void => {
       client.send('fire', { type: 'fire', tick: int().serverTick, clientShotId: id, weapon: 'hitscan', dirAngle: 0, slotId });
     };
+    // One shot per FIRE_TICKS of game time (~120 ms), bounded by the room's
+    // serverTick, never wall time: a loaded host runs fewer ticks per wall
+    // second, so a wall-clock cadence fired a host-load-dependent number of
+    // shots per game second (see #713).
+    const FIRE_TICKS = 7;
+    const fireEvery = async (prefix: string, slotId: string, shots: number, done: () => boolean = () => false): Promise<void> => {
+      for (let i = 0; i < shots && !done(); i++) {
+        fire(`${prefix}${i}`, slotId);
+        const t0 = int().serverTick;
+        await waitUntil(() => int().serverTick - t0 >= FIRE_TICKS, 5_000, 'game ticks pass');
+      }
+    };
     // 1. The XL laser cuts the rock apart; each group's lock follows the two biggest pieces.
-    for (let i = 0; i < 60 && int().swarmRegistry.get('rock-1') != null; i++) {
-      fire(`r${i}`, 'fore'); await new Promise((r) => setTimeout(r, 120));
-    }
+    await fireEvery('r', 'fore', 60, () => int().swarmRegistry.get('rock-1') == null);
     expect(int().swarmRegistry.get('rock-1') ?? null, 'the XL laser cut the rock').toBeNull();
     const pieceLocks = (g: string): SnapGroups['l'] => locksOf(g).filter((l) => l.t !== rockKey && l.f !== undefined);
     await waitUntil(() => ['fore', 'aft'].every((g) => pieceLocks(g).length > 0), 5_000, 'locks on the pieces');
+    // A lock can reach the wire on a just-cut piece one snapshot before its
+    // tier settles (tier none); wait for settled tiers. Pieces that really are
+    // too heavy for any tractor never settle, so this times out and fails.
+    await waitUntil(
+      () => pieceLocks('fore').every((l) => lockTierOf(l.f!) !== SALVAGE_TIER_NONE), 5_000, 'piece tiers settle',
+    );
     const tiers = pieceLocks('fore').map((l) => lockTierOf(l.f!));
     // Pieces a tractor can pull, above the AA rung: the XL laser leaves them, the AA laser cuts them.
     for (const t of tiers) {
@@ -105,13 +121,13 @@ describe('SectorRoom integration — the size ladder: laser sizes work pieces by
 
     // 2. The XL laser has no piece it may cut: no aim, every shot refused, no wear.
     const wear0 = wear();
-    for (let i = 0; i < 8; i++) { fire(`x${i}`, 'fore'); await new Promise((r) => setTimeout(r, 120)); }
+    await fireEvery('x', 'fore', 8);
     await waitUntil(() => [...acks.keys()].filter((k) => k.startsWith('x')).length >= 8, 4_000, 'acks (XL)');
     expect([...acks].filter(([id, rej]) => id.startsWith('x') && !rej), 'the XL laser leaves tractor-sized pieces').toEqual([]);
     expect(wear(), 'no wear from the XL laser').toBe(wear0);
 
     // 3. The AA laser (the ship's next smaller size), on the same pieces, cuts them.
-    for (let i = 0; i < 12 && wear() === wear0; i++) { fire(`a${i}`, 'aft'); await new Promise((r) => setTimeout(r, 120)); }
+    await fireEvery('a', 'aft', 12, () => wear() !== wear0);
     await waitUntil(() => wear() !== wear0, 4_000, 'the AA laser cuts a piece');
     expect([...acks].some(([id, rej]) => id.startsWith('a') && !rej), 'the AA laser fires').toBe(true);
   }, 60_000);

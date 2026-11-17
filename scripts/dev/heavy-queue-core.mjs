@@ -10,8 +10,12 @@
  *  - the head may start only when nothing is running and free RAM >= the
  *    threshold; it claims the single `running` slot with an exclusive create
  *    (`wx`), so of two racers exactly one wins;
- *  - a ticket or `running` file whose pid is dead is stale and any waiter
- *    deletes it. A live holder is never touched, however overdue.
+ *  - a `running` file whose pid is dead is stale and any waiter deletes it
+ *    at once. A live holder is never touched, however overdue;
+ *  - a queue ticket whose pid is dead (the reaper killed a waiting shell) is
+ *    ORPHANED, not deleted: stamped `orphanedAtMs`, left out of the order,
+ *    and deleted after ORPHAN_GRACE_MS. A re-run with the same who + kind
+ *    adopts it and keeps its joinedAtMs, so it keeps its place.
  *
  * Dependency-free Node ESM. No shebang (CRLF checkouts break vitest imports).
  */
@@ -25,6 +29,11 @@ export const NO_ESTIMATE_OVERDUE_MIN = 90;
 export const RUNNING_FILE = 'running';
 /** An unreadable (half-written) `running` file older than this is stale. */
 export const GARBLED_GRACE_MS = 30_000;
+/** A dead waiter's ticket is kept this long so a re-run can keep its place. */
+export const ORPHAN_GRACE_MS = 15 * 60_000;
+
+/** True for a dead waiter's ticket kept for re-join (never in the order). */
+export const isOrphaned = (t) => t.orphanedAtMs != null;
 
 /** Base priority + 1 per full 10 min waited. */
 export function effectivePriority(t, now) {
@@ -67,7 +76,7 @@ export function holderOverdue(r, now) {
  * an unreadable slot, or null. `freeGb` may be null when not yet measured.
  */
 export function decide({ meId, tickets, running, freeGb, minGb, now }) {
-  const order = orderQueue(tickets, now);
+  const order = orderQueue(tickets.filter((t) => !isOrphaned(t)), now);
   const position = order.findIndex((t) => t.id === meId) + 1;
   if (position === 0) return { go: false, position: 0, reason: 'ticket missing' };
   if (running) return { go: false, position, reason: 'busy' };
@@ -76,6 +85,17 @@ export function decide({ meId, tickets, running, freeGb, minGb, now }) {
     return { go: false, position, reason: 'low-ram' };
   }
   return { go: true, position, reason: 'head' };
+}
+
+/**
+ * The orphan a new run with this who + kind takes over (oldest first), or
+ * undefined. Expired orphans never match.
+ */
+export function findAdoptable(tickets, { who, kind }, now) {
+  return tickets
+    .filter((t) => isOrphaned(t) && t.who === who && t.kind === kind
+      && now - t.orphanedAtMs <= ORPHAN_GRACE_MS)
+    .sort((a, b) => a.joinedAtMs - b.joinedAtMs)[0];
 }
 
 // ── file layer ────────────────────────────────────────────────────────────
@@ -164,13 +184,22 @@ export function releaseRunning(dir, id) {
 }
 
 /**
- * Delete tickets and the running slot whose owner pid is dead. Never touches a
- * live process. Returns what it removed (for logging).
+ * Orphan queue tickets whose owner pid is dead (delete them once past
+ * ORPHAN_GRACE_MS); free the running slot at once if its holder is dead. Never
+ * touches a live process. Returns what it changed (for logging): `where` is
+ * 'queue' with `orphaned` or `expired`, or 'running'.
  */
 export function sweepStale(dir, { isAlive = isPidAlive, now = Date.now() } = {}) {
   const removed = [];
   for (const t of readTickets(dir)) {
-    if (isStale(t, isAlive)) { removeTicket(dir, t.id); removed.push({ ...t, where: 'queue' }); }
+    if (isOrphaned(t)) {
+      if (now - t.orphanedAtMs > ORPHAN_GRACE_MS) {
+        removeTicket(dir, t.id); removed.push({ ...t, where: 'queue', expired: true });
+      }
+    } else if (isStale(t, isAlive)) {
+      const o = { ...t, orphanedAtMs: now };
+      writeTicket(dir, o); removed.push({ ...o, where: 'queue', orphaned: true });
+    }
   }
   const r = readRunning(dir, now);
   if (r) {
@@ -190,6 +219,20 @@ export function sweepStale(dir, { isAlive = isPidAlive, now = Date.now() } = {})
   return removed;
 }
 
+/**
+ * Re-join: if an orphan with `t`'s who + kind is within grace, `t` takes its
+ * joinedAtMs (so its age and place) and the orphan file is removed. Call after
+ * sweepStale and before writeTicket. Returns the adopted orphan or undefined.
+ */
+export function adoptOrphan(dir, t, now = Date.now()) {
+  const o = findAdoptable(readTickets(dir), t, now);
+  if (!o) return undefined;
+  t.joinedAtMs = o.joinedAtMs;
+  t.joinedAt = o.joinedAt ?? new Date(o.joinedAtMs).toISOString();
+  removeTicket(dir, o.id);
+  return o;
+}
+
 // ── formatting ────────────────────────────────────────────────────────────
 
 export function fmtDur(ms) {
@@ -203,7 +246,13 @@ export function fmtDur(ms) {
 /** Status snapshot (also the `--json` shape). */
 export function snapshot(dir, now = Date.now()) {
   const running = readRunning(dir, now);
-  const queue = orderQueue(readTickets(dir), now).map((t, i) => ({
+  const all = readTickets(dir);
+  const orphaned = all.filter(isOrphaned).sort((a, b) => a.joinedAtMs - b.joinedAtMs).map((t) => ({
+    id: t.id, who: t.who, kind: t.kind, pid: t.pid, priority: t.priority,
+    waitedMs: now - t.joinedAtMs, orphanedMs: now - t.orphanedAtMs,
+    expiresInMs: Math.max(0, t.orphanedAtMs + ORPHAN_GRACE_MS - now), command: t.command,
+  }));
+  const queue = orderQueue(all.filter((t) => !isOrphaned(t)), now).map((t, i) => ({
     position: i + 1,
     id: t.id, who: t.who, kind: t.kind, pid: t.pid, cwd: t.cwd,
     priority: t.priority, effectivePriority: effectivePriority(t, now),
@@ -220,7 +269,7 @@ export function snapshot(dir, now = Date.now()) {
       overdue: holderOverdue(running, now), command: running.command,
     };
   }
-  return { dir, running: run, queue };
+  return { dir, running: run, queue, orphaned };
 }
 
 export function formatStatus(snap) {
@@ -240,6 +289,10 @@ export function formatStatus(snap) {
       lines.push(`  ${String(q.position).padEnd(2)} ${String(q.who).slice(0, 25).padEnd(25)} ${q.kind.padEnd(8)} ${prio.padEnd(5)} `
         + `${fmtDur(q.waitedMs).padEnd(8)} ${q.estimateMin ? `${q.estimateMin}m` : '-'}`);
     }
+  }
+  for (const o of snap.orphaned ?? []) {
+    lines.push(`orphaned: ${o.who} [${o.kind}] ${fmtDur(o.orphanedMs)} (joined ${fmtDur(o.waitedMs)} ago),`
+      + ` rejoin with same --who to keep place (expires in ${fmtDur(o.expiresInMs)})`);
   }
   return lines.join('\n');
 }

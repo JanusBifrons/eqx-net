@@ -633,8 +633,10 @@ export interface RenderMirror {
    *  crystal] per rock-fan vertex (`oreForOutlines`), for the ore look.
    *  `bodies`: the packed chunk (each rock's body and convex parts), so the
    *  link preview tests an awake rock's real shape (C5c). `moved`: [index, x,
-   *  y, angle] per moved rock (C2 deep sleep), drawn there instead. */
-  pendingFieldChunks?: Array<{ cx: number; cy: number; outlines: Float32Array | null; ore?: Float32Array | null; bodies?: PackedChunk | null; moved?: Float64Array | null }>;
+   *  y, angle] per moved rock (C2 deep sleep), drawn there instead.
+   *  `level: 'coarse'`: a far-zoom tile (B4; cx, cy are the tile coords),
+   *  outlines and ore only, drawn instead of the chunks when zoomed far out. */
+  pendingFieldChunks?: Array<{ cx: number; cy: number; outlines: Float32Array | null; ore?: Float32Array | null; bodies?: PackedChunk | null; moved?: Float64Array | null; level?: 'coarse' }>;
   /** Missile detonations to play this frame. The renderer drains the
    *  array, spawns explosion VFX at each `(x, y)`, sizes the sprite to
    *  `splashRadius`, and triggers a camera shake with magnitude inverse
@@ -1039,6 +1041,16 @@ export interface RendererFeedback {
    * surface — not consumed by gameplay logic.
    */
   miningBeamCount: number;
+  /**
+   * The camera: its centre in game space and the larger half of the visible
+   * world (game units; 0 before the first frame). The cut field draws around
+   * it as well as the own ship (`CutFieldClient.setView`), so the command
+   * view panned away, or a far zoom, still shows rocks. Phase-gate review:
+   * three numbers a frame on the worker post.
+   */
+  viewX: number;
+  viewY: number;
+  viewHalf: number;
 }
 
 export interface IRenderer {

@@ -92,6 +92,7 @@ import { CutFieldLayer } from './field/CutFieldLayer';
 import { StarfieldBackground } from './StarfieldBackground';
 import { logEvent, isDiagEnabled } from '../debug/ClientLogger';
 import { getShipKind } from '../../shared-types/shipKinds';
+import { zoomFloorFor } from '../../shared-types/shipScale/commandZoom.js';
 import {
   buildGhostGfx,
   applyMountOffset,
@@ -622,7 +623,7 @@ export class PixiRenderer implements IRenderer {
     selectedPickId: null,
     selectedPickKind: null,
     hoveredPickId: null,
-    miningBeamCount: 0,
+    miningBeamCount: 0, viewX: 0, viewY: 0, viewHalf: 0,
   };
 
   /**
@@ -985,6 +986,9 @@ export class PixiRenderer implements IRenderer {
     this.shipContainer.addChild(this._warpFx.layer);
     // Warp spool-up: the engines overcharge (glow + sparks, under the hulls).
     this.shipContainer.addChild(this._spoolFx.layer);
+    // Placed rocks and cut rock pieces: one mesh for all of them (rockBatch.ts),
+    // under the hulls and the wreck pieces' cut-edge glow.
+    this.shipContainer.addChild(this._cutField.rockBatch.layer);
 
     // 2026-05-26 heap-growth gate step 12 — pool ctx objects for the
     // per-frame sprite updaters. All fields are permanent references;
@@ -1960,7 +1964,6 @@ export class PixiRenderer implements IRenderer {
     this._zoomKindId = id;
     const kind = getShipKind(id);
     zoomRangeForKind(kind, DEFAULT_GAMEPLAY_ZOOM, this._zoomRange, NAVAL_RANGE, this._viewW, this._viewH);
-    this.camera.setMinScale(this._zoomRange.minScale);
     this.applyZoomCap();
     const f = hullZoomFactor(kind);
     if (f !== this._zoomFactor) {
@@ -1978,14 +1981,15 @@ export class PixiRenderer implements IRenderer {
     this.camera.setScreenSize(w, h);
     if (this._zoomKindId === null) return;
     zoomRangeForKind(getShipKind(this._zoomKindId), DEFAULT_GAMEPLAY_ZOOM, this._zoomRange, NAVAL_RANGE, w, h);
-    this.camera.setMinScale(this._zoomRange.minScale);
     this.applyZoomCap();
   }
 
   /** The zoom-in cap: the hull you fly fits on screen (`zoomCeilingForView`,
    *  owner decision 2026-11-12), eased down by the Camera, never snapped.
-   *  Spectator keeps the ordinary cap (there may be no ship to fit). */
+   *  Spectator keeps the ordinary cap (there may be no ship to fit). Also the
+   *  zoom-out floor: command view reaches the widest ship floor (`zoomFloorFor`). */
   private applyZoomCap(): void {
+    if (this._zoomKindId !== null) this.camera.setMinScale(zoomFloorFor(getShipKind(this._zoomKindId), this._spectator, this._viewW, this._viewH, NAVAL_RANGE));
     this.camera.setMaxScale(this._spectator || this._zoomKindId === null ? GAMEPLAY_MAX_ZOOM : this._zoomRange.maxScale);
   }
 
@@ -2726,7 +2730,7 @@ export class PixiRenderer implements IRenderer {
       this.feedback.selectionScreenY = null;
     }
 
-    this._cutField.update(mirror, this._artCtx.sunAz, this.camera.scale.x); // cut-field chunks + view
+    this._cutField.update(mirror, this._artCtx.sunAz, this.camera.scale.x, this.camera.visibleBoundsInto(this._swarmViewScratch)); // cut-field chunks + view (far-zoom tiles culled to it)
 
     // Phase 1 — name labels above remote ships and drones (skip self).
     this.labels?.update(mirror);
@@ -2760,6 +2764,8 @@ export class PixiRenderer implements IRenderer {
     }
     this.feedback.haloArrowCount = this.halo.getDebugVisibleArrowCount();
     this.feedback.damageNumberActiveCount = this.damageNumbers?.getActiveCount() ?? 0;
+    const vb = this.camera.visibleBoundsInto(this._swarmViewScratch); // Pixi space: y flips back to game
+    this.feedback.viewX = (vb[0]! + vb[2]!) / 2; this.feedback.viewY = -(vb[1]! + vb[3]!) / 2; this.feedback.viewHalf = Math.max(vb[2]! - vb[0]!, vb[3]! - vb[1]!) / 2;
     // Join-render readiness signal: latch true once we've painted a frame the
     // player can see. Piloting → require the LOCAL player's own ship in the
     // mirror (not just any remote ship). SPECTATING → there is no own ship, so a

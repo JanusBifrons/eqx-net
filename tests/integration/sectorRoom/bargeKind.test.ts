@@ -100,15 +100,16 @@ describe('SectorRoom integration — the mining barge kind', () => {
       expect(f.force).toBe(getWeapon('tractor').tractor!.force * MOUNT_SIZE_TUNING[m.size ?? 'S'].power);
     }
 
-    // Mining lasers on a rock: hits owe ore, the pulse draws it.
+    // Mining lasers on a rock: hits wear (cut) it; no ore per hit (all mined ore comes as pods).
     putHold({});
     const rock = int().swarmRegistry.get(rockId)!;
     const pool0 = rock.resources!;
     harness.lockTarget(pid, rockId, 'laser');
-    // The XL lasers slew slowly (0.18 rad/s) onto it: fire until the pulse draws ore.
-    for (let i = 0; i < 80; i++) { fire('laser'); await harness.advance(100); int().pulseStructureGrid(); if (rock.resources! < pool0) break; }
-    const drawn = pool0 - rock.resources!;
-    expect(drawn, 'the mining lasers hit the rock').toBeGreaterThan(0);
-    expect(getHoldStore().get(shipId)?.hold.goods.minerals ?? 0).toBe(drawn);
+    // The XL lasers slew slowly (0.18 rad/s) onto it: fire until a hit wears the rock.
+    const hit = (): boolean => int().swarmRegistry.get(rockId) === null || (int().wreckIntegrity(rockId) ?? 0) > 0;
+    for (let i = 0; i < 80 && !hit(); i++) { fire('laser'); await harness.advance(100); int().pulseStructureGrid(); }
+    expect(hit(), 'the mining lasers hit the rock').toBe(true);
+    expect(rock.resources, 'no ore drawn per hit').toBe(pool0);
+    expect(getHoldStore().get(shipId)?.hold.goods.minerals ?? 0, 'nothing straight into the hold').toBe(0);
   });
 });

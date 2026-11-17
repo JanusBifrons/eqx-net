@@ -336,7 +336,8 @@ import { LabCancelSchema, LabQuerySchema, LabStartSchema, type LabStart, type La
 import { LootSubsystem, type LootCollector } from '../cargo/LootSubsystem.js';
 import { LootSearch } from '../cargo/LootSearch.js';
 import { clampRequest, isRequestEmpty, searchView } from '../../core/cargo/lootSearch.js';
-import { OreDraw, type OreHolder } from './OreDraw.js';
+import { LootCollectors } from '../cargo/LootCollectors.js';
+import { OreDraw } from './OreDraw.js';
 import { StorageService, fittedModuleIds, isOperationalStorage, structureUid, DEPOSIT_DWELL_TICKS, DEPOSIT_RANGE, REPAIR_CREDITS_PER_HP, RESPEC_CREDIT_COST } from '../cargo/StorageService.js';
 import { addPacked, cloneHold, emptyHold, extractRequested, holdWeight, isHoldEmpty, mergeInto, packedCount, takePacked, transferInto, type CargoRequest } from '../../core/cargo/hold.js';
 import type { HolderType, HoldRecord } from '../cargo/HoldStore.js';
@@ -1122,7 +1123,7 @@ export class SectorRoom extends Room<SectorState> {
   /** Loot window search time per (viewer, pod) (cargo-pods slice 12). */
   private readonly lootSearch = new LootSearch();
   /** Asteroid ore: the one draw path (Miner, harvesters, mining-laser hits paid on the pulse). */
-  private readonly oreDraw = new OreDraw({ swarmRegistry: this.swarmRegistry, holderOf: (id, out) => this.oreHolderOf(id, out), sectorKey: () => this.sectorKey, oreAtHit: (r, x, y, out) => this.cutField?.oreAtHit(r, x, y, out) ?? false });
+  private readonly oreDraw = new OreDraw({ swarmRegistry: this.swarmRegistry, sectorKey: () => this.sectorKey, oreAtCentre: (r, out) => this.cutField?.oreAtCentre(r, out) ?? false });
   /** Living World P1a-2 — base storage holds (deposit / refine / spill). */
   private storage!: StorageService;
   /** Economy v2 W3 — Research Lab jobs (research / copy / combine). */
@@ -1194,8 +1195,8 @@ export class SectorRoom extends Room<SectorState> {
    *  from your own storage isn't banked straight back 2 s later. */
   private readonly manualCargo = new Set<string>();
   private readonly _podPoseScratch = { x: 0, y: 0 };
-  /** Reused per-collector scratch (forEachLootCollector — no per-tick alloc, #14). */
-  private readonly _collectorScratch: LootCollector = { playerId: '', shipInstanceId: '', x: 0, y: 0, angle: 0, shieldUp: false, capacity: 0, kind: getShipKind(null) };
+  /** The hulls that collect loot: the pickup pass, a pod's hull contact, auto-deposit. */
+  private readonly lootCollectors = new LootCollectors({ sectorKey: () => this.sectorKey, pilots: this.playerToSlot, activeShip: (pid) => this.getActiveShip(pid), hasHold: (id) => this.hasHold(id), pilotPose: (pid) => this.shipPoseCache.get(pid), cargoCapacity: (k, id) => this.shipCargoCapacity(k, id), swarm: this.swarmRegistry, sab: () => this.sabF32 });
   /** Placed-structure bookkeeping (structures plan, Phase 2). */
   private readonly structureRegistry = new StructureRegistry();
   /** Equinox Phase 9 (item 5) — sliding-window tally of recent destruction
@@ -2922,7 +2923,7 @@ export class SectorRoom extends Room<SectorState> {
         p.y = this.sabF32[b + SLOT_Y_OFF]!;
         return p;
       },
-      forEachCollector: (visit) => this.forEachLootCollector(visit),
+      forEachCollector: (visit) => this.lootCollectors.forEach(visit), fillCollector: (id, c) => this.lootCollectors.fill(id, c),
       // Tractor hold zone (emitter id: a pilot's playerId or an AI ship's swarm id): a pod is picked up, a wreck piece stored whole; a consumable piece near the hull too.
       inTractorHold: (c, podId, x, y) => this.forceFields.inTractorHold(c.playerId, podId, x, y),
       heldPieces: { any: () => this.forceFields.tractorCount > 0 || (this.capitalWrecks?.liveCount() ?? 0) > 0, forEach: (c, visit) => this.forceFields.forEachHeldPiece(c.playerId, visit), near: (x, y, reach, maxM, visit) => this.capitalWrecks?.forEachPieceNear(x, y, reach, maxM, visit), store: (id, out) => this.capitalWrecks?.pieceStore(id, out) === true, remove: (id) => this.capitalWrecks?.storePiece(id) },
@@ -5569,7 +5570,6 @@ export class SectorRoom extends Room<SectorState> {
     }
     // Phase 4 warp travel: a ship on its run is out of the world (an NPC's too, W2a).
     if (this.warpTravel.isTravelling(targetId)) return false;
-    if (weaponId !== undefined && damage > 0) this.oreDraw.onHit(targetId, shooterId, damage, weaponId, hitX, hitY);
     if (this.npcWarps.size > 0 && this.botWarpPhase(targetId) === 2) return false;
     // v4 A — alien gates can't be damaged; whoever hits one is disabled.
     if (this.gateGuard.gateCount > 0 && this.gateGuard.isGate(targetId)) {
@@ -6036,7 +6036,6 @@ export class SectorRoom extends Room<SectorState> {
     this.hostileActs.sweep(this.gameClock.now());
     if (this.patrols.count > 0) this.patrols.tick(this.gameClock.now());
     this.gateGuard.sweep(this.gameClock.now());
-    this.oreDraw.flush(); // mining-laser ore owed since the last pulse
     if (this.structureRegistry.size === 0) return;
     const result = this.structureGrid.pulse(this.gameClock.now());
     // P2b — processors take inputs from and put outputs into network storage.
@@ -6837,21 +6836,6 @@ export class SectorRoom extends Room<SectorState> {
    *  allocate a closure per call (it runs per-miner per grid-pulse). */
   private readonly _asteroidNotExhausted = (rec: SwarmEntityRecord): boolean =>
     rec.resources === undefined || rec.resources > 0;
-
-  /** Where a shooter's mined ore goes (`OreDraw.flush`): a live pilot's
-   *  rostered hull (#17 ACTIVE + alive, as loot pickup), or a `collectsLoot`
-   *  NPC's ownerless hold. Anything else has no hold: the rock keeps its ore. */
-  private oreHolderOf(id: string, out: OreHolder): boolean {
-    const ship = this.getActiveShip(id);
-    if (ship?.alive === true && ship.isActive && this.sectorKey !== null && getPlayerShipStore().get(ship.shipInstanceId) !== null) {
-      out.uid = ship.shipInstanceId; out.ownerId = id; out.capacity = this.shipCargoCapacity(ship.kind, ship.shipInstanceId);
-      return true;
-    }
-    const rec = this.swarmRegistry.get(id);
-    if (rec?.kind !== 1 || getShipKind(rec.shipKind).collectsLoot !== true) return false;
-    out.uid = rec.id; out.ownerId = null; out.capacity = cargoCapacityForMaxHealth(getShipKind(rec.shipKind));
-    return true;
-  }
 
   /** WS-4 Phase 3 / R2.27 — apply the mining beam's light player-damage RAY:
    *  any ACTIVE player ship whose pose intersects the miner→asteroid segment
@@ -9406,8 +9390,8 @@ export class SectorRoom extends Room<SectorState> {
               damageB,
               tick,
             });
-            if (damageA > 0) this.applyDamage(p.aId, p.bId, damageA);
-            if (damageB > 0) this.applyDamage(p.bId, p.aId, damageB);
+            if (damageA > 0 && !this.loot.hullContact(p.aId, p.bId)) this.applyDamage(p.aId, p.bId, damageA);
+            if (damageB > 0 && !this.loot.hullContact(p.bId, p.aId)) this.applyDamage(p.bId, p.aId, damageB);
           }
         }
       },
@@ -11553,63 +11537,13 @@ export class SectorRoom extends Room<SectorState> {
   private hasHold(shipInstanceId: string): boolean {
     return this.sectorKey !== null && shipInstanceId !== '' && getPlayerShipStore().get(shipInstanceId) !== null;
   }
-  /**
-   * Visit every hull allowed to collect loot this tick (#17 liveness: ACTIVE +
-   * alive hulls only — lingering and dead hulls never collect; and only hulls
-   * WITH a roster row, since a ship with no roster row has nowhere to keep a
-   * hold — hostile-review A2). Reuses one scratch object (no per-tick alloc).
-   */
-  private forEachLootCollector(visit: (c: LootCollector) => void): void {
-    if (this.sectorKey === null) return; // engineering rooms: no roster ⇒ no holds
-    const c = this._collectorScratch;
-    for (const [pid] of this.playerToSlot) {
-      if (this.pilotCollector(pid) !== null) visit(c);
-    }
-    // NPC loot collectors (the `collectsLoot` kind trait, e.g. robot
-    // harvesters) collect too (#17: a live swarm entity, kind 1; its hold is
-    // keyed by its swarm id). Capacity is the kind's cargo capacity.
-    for (const rec of this.swarmRegistry.all()) {
-      if (rec.kind !== 1) continue;
-      const kindDef = getShipKind(rec.shipKind);
-      if (kindDef.collectsLoot !== true) continue;
-      const b = slotBase(rec.slot);
-      c.playerId = rec.id;
-      c.shipInstanceId = rec.id;
-      c.x = this.sabF32[b + SLOT_X_OFF]!;
-      c.y = this.sabF32[b + SLOT_Y_OFF]!; c.angle = this.sabF32[b + SLOT_ANGLE_OFF]!; c.shieldUp = !rec.shieldDown;
-      c.capacity = cargoCapacityForMaxHealth(kindDef);
-      c.kind = kindDef;
-      c.npc = true;
-      visit(c);
-    }
-  }
-
-  /** Pilot `pid`'s active hull as a loot collector (the reused scratch),
-   *  or null with no live hold-carrying hull (#17: ACTIVE + alive only). */
-  private pilotCollector(pid: string): LootCollector | null {
-    const ship = this.getActiveShip(pid);
-    if (!ship?.alive || !ship.isActive || !this.hasHold(ship.shipInstanceId)) return null;
-    const pose = this.shipPoseCache.get(pid);
-    if (!pose) return null;
-    const c = this._collectorScratch;
-    c.playerId = pid;
-    c.shipInstanceId = ship.shipInstanceId;
-    c.x = pose.x;
-    c.y = pose.y; c.angle = pose.angle; c.shieldUp = ship.shield > 0; // the hull-touch pickup's shape
-    // P5 — a fitted Cargo Expander raises the capacity (shared helper, #15).
-    c.capacity = this.shipCargoCapacity(ship.kind, ship.shipInstanceId);
-    c.kind = getShipKind(ship.kind); // its hull radius + mounts: the pieces it consumes
-    c.npc = false;
-    return c;
-  }
-
   /** A loot pod opened in the loot window (plan cargo-pods slice 11): free
    *  for all within `LOOT_OPEN_REACH`; `take` only (a pod is never filled). */
   private podCargo(playerId: string, entityId: number, podId: string, move: { dir: 'take' | 'put'; items: CargoRequest } | null): CargoState {
     const closed = (message: string): CargoState => ({
       type: 'cargo_state', entityId, open: false, hold: null, used: 0, capacity: 0, ship: null, shipCapacity: 0, message, ...(move ? { ok: false } : {}),
     });
-    const c = this.pilotCollector(playerId);
+    const c = this.lootCollectors.pilotCollector(playerId);
     if (c === null) return closed('You need a ship to take loot.');
     const inReach = this.loot.inOpenReach(c, podId);
     const elapsed = this.lootSearch.advance(playerId, podId, this.gameClock.now(), inReach);
@@ -11858,7 +11792,7 @@ export class SectorRoom extends Room<SectorState> {
       this.manualCargo.clear();
       return;
     }
-    this.forEachLootCollector(this.visitDepositor);
+    this.lootCollectors.forEach(this.visitDepositor);
   }
 
   /** Bound once (no per-tick closure allocation, #14). */
