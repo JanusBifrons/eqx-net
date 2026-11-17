@@ -41,12 +41,12 @@ describe('cargoCapacity kind override (cargoCapacityForMaxHealth)', () => {
   });
 
   // Invariant #15: the server clamp (SectorRoom.shipCargoCapacity, the NPC
-  // loot collectors) and the client HUD (ColyseusClient cargo slice) must
+  // loot collectors in LootCollectors.ts) and the client HUD (ColyseusClient cargo slice) must
   // agree. The function takes the KIND RECORD (src typecheck rejects a bare
   // maxHealth); this scan fails if either side stops calling it, or calls it
   // on something other than a kind record.
   it('server and client both derive capacity from the same kind-record call', () => {
-    for (const [file, min] of [['src/server/rooms/SectorRoom.ts', 2], ['src/client/net/ColyseusClient.ts', 1]] as const) {
+    for (const [file, min] of [['src/server/rooms/SectorRoom.ts', 1], ['src/server/cargo/LootCollectors.ts', 1], ['src/client/net/ColyseusClient.ts', 1]] as const) {
       const lines = readFileSync(resolve(ROOT, file), 'utf8')
         .split('\n')
         .filter((l) => l.includes('cargoCapacityForMaxHealth(') && !l.trimStart().startsWith('import'));
