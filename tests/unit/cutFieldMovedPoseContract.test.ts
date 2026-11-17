@@ -25,7 +25,7 @@ import { FIELD_LAYOUT_VERSION, rocksInChunk } from '../../src/core/terrain/field
 import type { PackedChunk } from '../../src/core/terrain/packedChunk.js';
 import type { SwarmEntityRegistry } from '../../src/server/net/SwarmEntityRegistry.js';
 import type { SwarmSpawner } from '../../src/server/spawn/SwarmSpawner.js';
-import type { TerrainRecordStore } from '../../src/server/db/terrainSql.js';
+import type { RockRecordStore } from '../../src/server/db/terrainSql.js';
 import { CutFieldSubsystem, toRestFrame } from '../../src/server/rooms/CutFieldSubsystem.js';
 import { WelcomeSchema } from '../../src/shared-types/messages/snapshotMessages.js';
 import { CutFieldClient } from '../../src/client/net/CutFieldClient.js';
@@ -42,9 +42,9 @@ describe('cut-field moved pose: server keeps = client draws (C2, #15)', () => {
 
   it('the welcome pose moves the drawn rock and its predWorld body to exactly that pose', () => {
     // Server: the saved record, loaded at start, into the welcome.
-    const store: TerrainRecordStore = {
+    const store: RockRecordStore = {
       sectorKey: 's', put: () => {}, warn: () => {},
-      load: () => [{ rockKey: rock.key, layoutVersion: FIELD_LAYOUT_VERSION, pool: null, consumed: false, pose }],
+      load: () => [{ rockKey: rock.key, layoutVersion: FIELD_LAYOUT_VERSION, pool: null, consumed: false, pose, lineage: null }],
     };
     const clock = { now: () => 0, every: () => ({ cancel: () => {} }) } as unknown as GameClock;
     const registry = { get: () => null, all: () => [] } as unknown as SwarmEntityRegistry;
