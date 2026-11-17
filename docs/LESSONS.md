@@ -3175,3 +3175,8 @@ Owner: "make it more like micro machines and make fights a bit longer. Also don'
 
 - **Finding:** a showcase shot targeting a real galaxy sector keeps one server for every take. Each take's player disconnects at the end and its ship lingers, and the next take's player lands at the same home-pocket spot, so take 3 filmed three battleships side by side. A galaxy join also lands in Command view, so a course tap before Fly (and picking the ship from its menu) steers nothing.
 - **Rule:** film a galaxy-sector shot that spawns a ship with `EQX_SHOWCASE_TAKES=1` (a restart keeps the DB, so it keeps the ships), and have the shot tap Fly and pick the ship the way a player does.
+
+## 2026-11-17 — a backing inside a faded element fades with it
+
+- **Finding:** the resting touch stick fades to 40 % opacity, and a dark wash added to its own background faded with it, so the ring stayed invisible over bright asteroid rock however dark the wash was.
+- **Rule:** a readability backing goes on its own element beside the faded one (`FloatingStick`'s `-backing` layer moves with the ring but keeps full opacity); HUD panels use `HUD.color.panel` (0.72) so they read over rock.
