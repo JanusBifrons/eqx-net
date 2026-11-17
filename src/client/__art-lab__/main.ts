@@ -26,6 +26,8 @@ import { ArtCache, PIXEL_ROT_STEPS, SUN_STEPS, type PixelSettings, type ShipArt,
 import { buildScene, parseStructStyle, SCENE_IDS, structFootprint, structScale, type Cam, type Pose, type Scene, type SceneId, type ShipE, type Shot } from './scenes.js';
 import { ConnectorRenderer } from '../render/pixi/ConnectorRenderer.js';
 import { readLineLook } from '../render/pixi/connectorLineLooks.js';
+import { readRigsFlag, StructureRigView, type StructureRigInput } from '../render/pixi/structureRigs.js';
+import { rigForStructureKind } from '../../core/articulation/rigCatalogue.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import type { RenderMirror, StructureRenderState, SwarmRenderState } from '../../core/contracts/IRenderer.js';
 import { hash01, valueNoise } from '../render/art/fields.js';
@@ -64,6 +66,9 @@ function structExtra(): { accent?: number; livery?: { team: number; sigil: numbe
     ...(RESTYLE !== 'current' ? { style: RESTYLE } : {}),
   };
 }
+/** `?rigs=1` (restyle 2c): structures draw their articulation rig parts,
+ *  driven by `__artlab.playRig`. */
+const RIGS = readRigsFlag(location.search);
 const ZOOM = qs.has('zoom') ? Number(qs.get('zoom')) : undefined;
 const BENCH_N = qs.has('n') ? Number(qs.get('n')) : 40;
 const PX_OVERRIDE = qs.has('px') ? Number(qs.get('px')) : 0;
@@ -244,6 +249,12 @@ async function main(): Promise<void> {
   host.appendChild(app.canvas);
 
   const scene: Scene = buildScene(SCENE, ZOOM, BENCH_N, { w: W, h: H });
+  // Restyle 2c: the outpost gets a pop-up turret (rig sandbox) north of the
+  // power station, only with `?rigs=1` (the scene is unchanged without it).
+  if (RIGS && SCENE === 'outpost') {
+    scene.structs.push({ id: 'turret', x: 1000, y: -800, rot: 0, seed: 13, size: 200 });
+    scene.edges?.push([6, scene.structs.length - 1]);
+  }
   const cache = new ArtCache();
   const t0Bake = performance.now();
   // Machined: bake everything the scene needs on worker threads first
@@ -269,6 +280,14 @@ async function main(): Promise<void> {
   world.addChild(lineL, structL, litL, trailL, shipL, glowL, fxL);
   const labelL = new Container();
   world.addChild(labelL);
+  // Restyle 2c rig parts: under + plane with the structures, over above the
+  // ships (the game's zIndex bands, as lab layers).
+  const rigUnderL = new Container(), rigPlaneL = new Container(), rigOverL = new Container();
+  if (RIGS) {
+    world.addChildAt(rigPlaneL, world.getChildIndex(structL) + 1);
+    world.addChildAt(rigUnderL, world.getChildIndex(structL) + 1);
+    world.addChildAt(rigOverL, world.getChildIndex(shipL) + 1);
+  }
   // The game's exhaust (flame + ribbon per nozzle, PR #288), not the lab's
   // old dots, on the art styles. `?oldengines=1` restores the dots.
   const fxEng = (STYLE === 'machined' || STYLE === 'lit') && qs.get('oldengines') !== '1'
@@ -368,6 +387,22 @@ async function main(): Promise<void> {
     }
     return v;
   });
+
+  // ---- rigs (restyle 2c): one view per structure whose kind has a rig
+  const rigs: Array<{ i: number; view: StructureRigView; input: StructureRigInput | null }> = [];
+  if (RIGS) {
+    scene.structs.forEach((st, i) => {
+      const rig = rigForStructureKind(st.id);
+      if (rig === null) return;
+      const view = new StructureRigView(rig);
+      const k = structScale(st);
+      for (const [g, layer] of [[view.under, rigUnderL], [view.plane, rigPlaneL], [view.over, rigOverL]] as const) {
+        g.position.set(st.x, st.y); g.rotation = st.rot; g.scale.set(k);
+        layer.addChild(g);
+      }
+      rigs.push({ i, view, input: null });
+    });
+  }
 
   // ---- grid lines: the game's ConnectorRenderer over a minimal mirror
   // (game space is y-up, so y flips; entity ids are struct index + 1).
@@ -721,6 +756,12 @@ async function main(): Promise<void> {
       }
     }
 
+    // Rigs: game pose of each host (y-up), clip time in ticks.
+    for (const r of rigs) {
+      const st = scene.structs[r.i]!;
+      r.view.update(r.input, t * 60, st.x, -st.y, -st.rot, structScale(st));
+    }
+
     // GPU-lit hulls: now every light and occluder of this frame is known.
     for (const v of ships) if (v.lit) v.lit.setLight(cache.rig, v.pose.x, v.pose.y, v.pose.rot, litScene);
     for (const v of structs) if (v.litMesh) v.litMesh.setLight(cache.rig, v.x, v.y, v.rot, litScene);
@@ -737,6 +778,20 @@ async function main(): Promise<void> {
     scene: SCENE,
     duration: scene.duration,
     seek(ms: number): void { update(ms / 1000); },
+    /** Restyle 2c (`?rigs=1`): play `clipId` on a structure's rig from the
+     *  current time. `kindOrIndex` = a structure kind id (its first one) or
+     *  a scene structure index. A targeted clip with no target reaches the
+     *  structure's centre (a dock's bay). Target = world point, y-down lab
+     *  coords (as the scene). Returns the structure index, or -1. */
+    playRig(kindOrIndex: string | number, clipId: string, targetX?: number, targetY?: number): number {
+      const i = typeof kindOrIndex === 'number' ? kindOrIndex : scene.structs.findIndex((st) => st.id === kindOrIndex);
+      const r = rigs.find((x) => x.i === i);
+      if (r === undefined) return -1;
+      const st = scene.structs[i]!;
+      r.input = { clipId, startTick: curT * 60, targetX: targetX ?? st.x, targetY: -(targetY ?? st.y) };
+      update(curT);
+      return i;
+    },
     stats() {
       return {
         style: STYLE, restyle: RESTYLE, scene: SCENE, bakeMs, t: curT,

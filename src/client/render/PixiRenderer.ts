@@ -23,6 +23,7 @@ import { raiseBeamsOverHulls } from './pixi/beamsOverHulls.js';
 import { LegacyExplosionSprites } from './pixi/legacyExplosionSprites.js';
 import { ConnectorRenderer } from './pixi/ConnectorRenderer.js';
 import { readLineLook } from './pixi/connectorLineLooks.js';
+import { readRigsFlag, StructureRigs } from './pixi/structureRigs.js';
 import { updateProjectileSprites, type ProjectileSpriteCtx } from './pixi/projectileSpriteUpdater.js';
 import { updateMissileSprites, type MissileSpriteCtx } from './pixi/missileSpriteUpdater.js';
 import { interpolateSwarmPose, type InterpolatedPose } from '../net/swarmInterpolation';
@@ -439,6 +440,9 @@ export class PixiRenderer implements IRenderer {
   /** Dying capitals drawn at their last pose until their wreck pieces are
    *  (capital-breakup take B, 2026-11-13: the hull vanished ~0.5 s first). */
   private readonly _dyingHulls = new DyingHullHold();
+  /** Structure restyle 2c (`?rigs=1`, main thread): rig views + their per-structure
+   *  clip inputs (`structureRigs.inputs`). Null with the flag off. */
+  structureRigs: StructureRigs | null = null;
   /** Sprite key → the ship kind it was built for (every ship, swarm).
    *  Bound once (no per-frame closure, #14). */
   private readonly _spriteShipKind = (id: string): string | null | undefined => {
@@ -1061,6 +1065,11 @@ export class PixiRenderer implements IRenderer {
       }, () => wreckRippleCap(this.effects?.getQuality() ?? 'medium'), () => this.effects?.getQuality() ?? 'medium'),
       dyingHulls: this._dyingHulls,
     };
+    // Structure restyle 2c rig parts (look R&D; main-thread renderer only): `?rigs=1`.
+    if (isDom && readRigsFlag(window.location.search)) {
+      this.structureRigs = new StructureRigs(this.shipContainer);
+      this._swarmUpdaterCtx.structureRigs = this.structureRigs;
+    }
     this._projectileUpdaterCtx = {
       shipContainer: this.shipContainer,
       projectileSprites: this.projectileSprites,

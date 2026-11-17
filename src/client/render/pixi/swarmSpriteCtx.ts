@@ -10,6 +10,7 @@ import type { InterpolatedPose } from '../../net/swarmInterpolation';
 import type { WreckGeometryStore } from '../../net/wreckGeometryStore';
 import type { WreckArtState } from './wreckArt.js';
 import type { DyingHullHold } from './dyingHullHold.js';
+import type { StructureRigs } from './structureRigs.js';
 
 /** Campaign 3.2 — everything (besides the pose-core kind, tracked separately
  *  in `spriteKinds` for #20 back-compat) that a swarm sprite's VISUAL is built
@@ -92,4 +93,7 @@ export interface SwarmSpriteCtx {
   /** Where far-zoom wreck specks draw (one batch for all of them). Absent:
    *  in place, inside each piece. */
   wreckFarLayer?: RenderLayer;
+  /** Structure restyle 2c (`?rigs=1`): articulated rig parts on structures.
+   *  Absent (flag off) ⇒ no rig is created or posed. */
+  structureRigs?: StructureRigs;
 }
