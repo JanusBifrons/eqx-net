@@ -9,7 +9,9 @@
  * (invariant #14).
  *
  * Rules:
- *  - no clip, an unknown clip id, or `nowTick < startTick`: every part at rest;
+ *  - no clip record (`playing` null): the rig's idle pose, its `idleClip`'s
+ *    held end pose (every part at rest when it has none);
+ *  - an unknown clip id, or `nowTick < startTick`: every part at rest;
  *  - a part without a track in the clip stays at rest;
  *  - a track's first key after tick 0 eases from rest at tick 0;
  *  - after a track's last key it holds that key;
@@ -23,7 +25,7 @@
  * (`nearestTurn`), so the blend goes the short way round.
  */
 import { applyEase } from './easing.js';
-import { JOINT_HINGE, JOINT_SLIDE, type Rig } from './rig.js';
+import { JOINT_HINGE, JOINT_LIFT, JOINT_SLIDE, liftProgress, type Rig } from './rig.js';
 
 /** A clip playing on a rig: the whole wire record (2e). */
 export interface PlayingClip {
@@ -167,6 +169,9 @@ export function evaluateRig(
       const cs = rig.clips;
       for (let i = 0; i < cs.length; i++) if (cs[i]!.id === playing.clipId) { clipIdx = i; break; }
     }
+  } else if (rig.idleClip >= 0) {
+    clipIdx = rig.idleClip;
+    t = rig.clips[clipIdx]!.endTick;
   }
   const clip = clipIdx >= 0 ? rig.clips[clipIdx]! : null;
   const target = playing !== null ? playing.target : undefined;
@@ -239,6 +244,26 @@ export function clipFinished(rig: Rig, playing: PlayingClip, nowTick: number): b
   const cs = rig.clips;
   for (let i = 0; i < cs.length; i++) {
     if (cs[i]!.id === playing.clipId) return nowTick - playing.startTick >= cs[i]!.endTick;
+  }
+  return true;
+}
+
+/**
+ * Is the rig DEPLOYED at `nowTick` under clip record `playing` (null = no
+ * clip: the rig's idle pose)? True when the rig has no lift joint, or every
+ * lift joint is fully raised (`liftProgress` 1). A pop-up weapon fires only
+ * while deployed: one packed under its hatch, or still rising or sinking,
+ * holds fire. Pure; poses into the caller's `scratch` (`createRigPose(rig)`),
+ * allocation-free.
+ */
+export function rigDeployed(rig: Rig, playing: PlayingClip | null, nowTick: number, scratch: RigPose): boolean {
+  const jt = rig.jointType;
+  let anyLift = false;
+  for (let i = 0; i < rig.partCount; i++) if (jt[i] === JOINT_LIFT) { anyLift = true; break; }
+  if (!anyLift) return true;
+  evaluateRig(rig, playing, nowTick, scratch);
+  for (let i = 0; i < rig.partCount; i++) {
+    if (jt[i] === JOINT_LIFT && liftProgress(rig, i, scratch.value[i]!) < 1) return false;
   }
   return true;
 }

@@ -98,10 +98,15 @@ describe('PhysicsWorld rig parts (structure-restyle 2d)', () => {
     const w = await PhysicsWorld.create();
     spawnHost(w, 'turret-1');
     w.attachRig('turret-1', rigById('sandbox-door-turret')!);
+    // No clip: the idle pose (deployed, hatch open).
+    expect(w.rigPartPose('turret-1', 'door-left')!.x).toBeCloseTo(-42, 6);
+    w.setRigClip('turret-1', 'door-open', 10);
+    // Before the clip starts: at rest, the leaves over the socket.
+    w.stepRigs(1);
+    w.tick(1 / 60);
     expect(w.rigPartPose('turret-1', 'door-left')!.x).toBeCloseTo(-12, 6);
     expect(w.rigPartPose('turret-1', 'door-left')!.y).toBeCloseTo(0, 6);
-    w.setRigClip('turret-1', 'door-open', 10);
-    for (let t = 0; t < 40; t++) {
+    for (let t = 1; t < 40; t++) {
       w.stepRigs(t + 1);
       w.tick(1 / 60);
     }

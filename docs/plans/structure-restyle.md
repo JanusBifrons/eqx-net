@@ -203,6 +203,12 @@ parallel).
 6. **2f** Sandbox demos (door, pop-up turret, crane reach/abort), filmed once →
    **owner reviews the clip.**
 7. **2g** Fix bugs found in review.
+8. **2h** Stowed turrets hold fire. A rig's `idleClip` is its pose with no
+   clip record (the pop-up turret idles deployed: hatch open, gun up), on the
+   server, the physics worker and the client alike. `rigDeployed` (no lift
+   joint, or every lift fully raised) gates structure-turret targeting and fire
+   (`StructureGridSubsystem.tickTurrets`). A sunk riser casts no shadow; the
+   shadow fades in with the rise.
 
 **Stage 3 — gameplay.** Planned after sign-off.
 

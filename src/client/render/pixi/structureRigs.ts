@@ -47,7 +47,7 @@ export function readRigsFlag(search: string): boolean {
 
 /**
  * A clip input to `StructureRigView.update` (null = no clip:
- * every part at rest). The game fills it from the structure row's `rigClip`
+ * the rig's idle pose, e.g. a pop-up turret deployed). The game fills it from the structure row's `rigClip`
  * (`StructureRigs.update`); the art lab sets its own. `targetX/Y` are WORLD game coordinates (Y-up) of a
  * targeted clip's goal (e.g. the parked ship's hold).
  */
@@ -131,12 +131,12 @@ export interface RigPartLook {
   shadowAlpha: number;
   /** Pop-up lift (2g): riser + gun scale at rest (sunk in its socket) and
    *  fully risen, the extra host-frame shadow offset at full lift, and the
-   *  shadow alpha at rest / full lift. Seen top-down, a lift reads only as
-   *  growth and a widening shadow. */
+   *  shadow alpha at full lift. Seen top-down, a lift reads only as growth
+   *  and a widening shadow. The shadow fades in from 0 with the rise: a
+   *  fully sunk riser casts none (2h). */
   liftScaleRest: number;
   liftScaleUp: number;
   liftShadow: number;
-  liftShadowAlphaRest: number;
   liftShadowAlphaUp: number;
   /** Hatch slot under the door leaves (seen as they part). */
   slot: number;
@@ -147,7 +147,7 @@ export const RIG_LOOK_C: RigPartLook = {
   hazard: 0xd9a92a, pad: 0x1c1e21, mark: 0xb9b4a2, rim: 0x98a5b1, weight: 0x2c3035,
   lamp: 0xffa030, boomW: 28, jibW: 22, headScale: 1.6,
   shadowOver: 11, shadowPlane: 6, shadowAlpha: 0.5,
-  liftScaleRest: 0.88, liftScaleUp: 1.14, liftShadow: 12, liftShadowAlphaRest: 0.2, liftShadowAlphaUp: 0.6,
+  liftScaleRest: 0.88, liftScaleUp: 1.14, liftShadow: 12, liftShadowAlphaUp: 0.6,
   slot: 0x020304,
 };
 
@@ -630,12 +630,16 @@ export class StructureRigView {
       g.rotation = xf.rotation;
       const sh = this.shadows[i]!;
       if (i === ri && sh !== null) {
+        // Fully sunk under the shut hatch: no riser art, no shadow (like the gun).
+        const up = lift > 0;
+        g.visible = up;
+        sh.visible = up;
         g.scale.set(this.liftScale);
         const d = this.shadowOff[i]! + look.liftShadow * lift;
         sh.position.set(xf.x + d, xf.y + d);
         sh.rotation = xf.rotation;
         sh.scale.set(this.liftScale * (1 + 0.08 * lift));
-        sh.alpha = look.liftShadowAlphaRest + (look.liftShadowAlphaUp - look.liftShadowAlphaRest) * lift;
+        sh.alpha = look.liftShadowAlphaUp * lift;
       } else if (sh !== null) {
         const d = this.shadowOff[i]!;
         sh.position.set(xf.x + d, xf.y + d);
