@@ -26,8 +26,9 @@ function rig() {
   const removed: string[] = [];
   const pods: Array<{ qty: number; ore: WreckOre | undefined }> = [];
   let rockLive = true;
+  const clock = { tick: 9000 };
   const sys = new CapitalWreckSubsystem({
-    serverTick: () => 9000,
+    serverTick: () => clock.tick,
     wreckKindOf: () => null,
     positionOf: () => null,
     spawnPiece: (s) => { spawned.push(s); poses.set(s.id, { x: s.x, y: s.y, vx: s.vx, vy: s.vy, angle: s.angle, angvel: s.angvel }); return true; },
@@ -42,7 +43,7 @@ function rig() {
     rockOf: (id) => (id === ROCK_ID && rockLive ? { shape: asteroidShapeSeed(ROCK_ID), radius: R, resource: 'ice', resources: 50_000 } : null),
   });
   sys.forcedSeed = 3;
-  return { sys, spawned, removed, pods, poses };
+  return { sys, spawned, removed, pods, poses, clock };
 }
 
 /** The descriptors as the snapshot carries them (a JSON round trip). */
@@ -87,7 +88,7 @@ describe('rock cut: server bodies == client rebuild (#15, #16)', () => {
   });
 
   it('a rock piece re-cuts like a wreck piece; the child resolves through the rock root; slivers pod the rock ore', () => {
-    const { sys, spawned, pods, poses } = rig();
+    const { sys, spawned, pods, poses, clock } = rig();
     for (let i = 0; i < 400 && sys.descriptors().length === 0; i++) sys.onWreckHit(ROCK_ID, 420, -195, 1, 0.05, 120, 'mining_laser', 'p1');
     const root = wire(sys)[0]!;
     const big = spawned.reduce((a, b) => (b.mass > a.mass ? b : a));
@@ -115,7 +116,9 @@ describe('rock cut: server bodies == client rebuild (#15, #16)', () => {
       expect(pods.length).toBeGreaterThan(0);
     }
     // Grind everything to pods: each carries the rock's ore, never salvage.
-    for (let round = 0; round < 60; round++) {
+    // One round per server tick (re-splits are budgeted per tick): the swept
+    // cut leaves chunky pieces, so it takes a few generations to reach pods.
+    for (let round = 0; round < 60; round++, clock.tick++) {
       const live = [...poses.keys()].filter((id) => id !== ROCK_ID);
       if (live.length === 0) break;
       for (const id of live) {
@@ -123,6 +126,7 @@ describe('rock cut: server bodies == client rebuild (#15, #16)', () => {
         if (q) sys.onWreckHit(id, q.x - 1, q.y, 1, 0, 1e4, 'mining_laser', 'p1');
       }
     }
+    expect([...poses.keys()].filter((id) => id !== ROCK_ID), 'the whole rock ended as pods').toEqual([]);
     expect(pods.length).toBeGreaterThan(0);
     for (const pod of pods) {
       expect(pod.ore).toEqual({ rockId: ROCK_ID, resource: 'ice', perArea: expect.any(Number) });

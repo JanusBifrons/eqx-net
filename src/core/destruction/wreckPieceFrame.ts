@@ -118,6 +118,7 @@ export function wreckRootFracture(input: WreckFractureInputs): FracturePiece[] {
     chunkyPieces: opts.chunkyPieces,
     chunkyMinWidthBeams: opts.chunkyMinWidthBeams,
     soundMinShare: opts.soundMinShare,
+    sweepCuts: opts.sweepCuts,
     extraChunkChance: opts.extraChunkChance,
     jag: opts.jag,
     cutBurnMinShare: opts.cutBurnMinShare,
