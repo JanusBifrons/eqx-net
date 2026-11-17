@@ -5,6 +5,7 @@ import { startZoomForScale } from '../../src/shared-types/shipScale/tuning.js';
 import { getShipKind } from '../../src/shared-types/shipKinds.js';
 import { localPose, flyTo } from './_pilot.js';
 import type { ShotContext } from '../types.js';
+import { touch } from '../touch.js';
 
 /** Steer through waypoints with W / A / D (the flight shot's keys): turn
  *  toward the next point, thrust when roughly facing it, pass within `arrive`.
@@ -619,5 +620,67 @@ export const capitalBreakup: Shot = {
     // Hold on the cruiser so the break-up fills the frame.
     await ctx.cinema.play([{ atMs: 0, smoothMs: 0, shot: { kind: 'hold', x: 4000, y: -350, zoom: 0.17 * k } }]); // the cruiser is parked at its explicit spawn
     await ctx.sleep(31_500); // ~14 s after the kill for the pieces to drift apart
+  },
+};
+
+/**
+ * Player capitals: a player flies a battleship in a real galaxy sector (the
+ * living world on, Sol Prime), on a phone held sideways. The join lands in
+ * Command view, so the pilot taps Fly and picks the battleship, taps a course and the helm steers onto
+ * it, then pinches out to the capital's zoom floor to see the sector round
+ * it, and back in. Film with EQX_SHOWCASE_TAKES=1: a retake's player lands at
+ * the same home-pocket spot beside the earlier takes' lingering battleships.
+ */
+export const playerCapitalSector: Shot = {
+  id: 'player-capital-sector',
+  section: 'mechanics',
+  title: 'Your own battleship',
+  caption: 'Battleships and cruisers are free on the ship screen: fly one in any sector, on a phone too.',
+  features: ['CAP'],
+  docs: ['capital-ships'],
+  reel: false,
+  server: 'living',
+  viewport: 'phone-landscape',
+  target: { galaxy: 'sol-prime', params: { shipKind: 'battleship', art: 'machined', fx: 'new' } },
+  hud: 'full',
+  durationMs: 24_000,
+  async startWhen(ctx) {
+    await artSettled(ctx);
+  },
+  async run(ctx) {
+    const pad = await touch(ctx.page, ctx.log);
+    const { width: w, height: h } = ctx.viewport;
+    await ctx.sleep(1200);
+    // A galaxy join lands in Command view (your ships AI-flown): tap Fly to
+    // take the battleship's controls, as a player does.
+    const fly = await ctx.page.getByTestId('pilot-toggle').boundingBox();
+    if (fly) await pad.finger().tap(fly.x + fly.width / 2, fly.y + fly.height / 2);
+    await ctx.sleep(900);
+    // Fly opens the menu of your ships here: tap the battleship.
+    const item = await ctx.page.locator('[data-testid^="pilot-menu-ship-"]').first().boundingBox();
+    if (item) await pad.finger().tap(item.x + item.width / 2, item.y + item.height / 2);
+    await ctx.sleep(1500);
+    // A real tap on empty space up and to the right: the helm takes the course.
+    for (let i = 0; i < 5; i++) {
+      await pad.finger().tap(w * 0.78, h * 0.3);
+      const on = await ctx.page.evaluate(() => (globalThis as { __eqxStore?: { getState(): { helmActive?: boolean } } }).__eqxStore?.getState().helmActive === true);
+      if (on) break;
+      await ctx.sleep(300);
+    }
+    await ctx.sleep(6000);
+    // Pinch out (fingers together) toward the capital zoom floor, then back in.
+    const pinch = async (from: number, to: number): Promise<void> => {
+      const a = pad.finger(), b = pad.finger();
+      await a.down(w / 2 - from, h / 2); await b.down(w / 2 + from, h / 2);
+      await Promise.all([a.dragTo(w / 2 - to, h / 2, { ms: 900 }), b.dragTo(w / 2 + to, h / 2, { ms: 900 })]);
+      await a.up(); await b.up();
+    };
+    await pinch(w * 0.3, w * 0.05);
+    await ctx.sleep(300);
+    await pinch(w * 0.3, w * 0.05);
+    await ctx.sleep(6000);
+    await pinch(w * 0.05, w * 0.3);
+    await ctx.sleep(4000);
+    await pad.dispose();
   },
 };
