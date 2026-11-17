@@ -102,6 +102,11 @@ describe('SectorRoom integration — the barge-mining take: the rock ends up in 
     const splits = new Set<string>();
     const pods = new Set<string>();
     const tick0 = int().serverTick;
+    /** Pods lost on the way in (seen on film 2026-11-17: tractored pods hit the hull and died to their ram damage, uncredited). */
+    const lost: string[] = [];
+    const loot = int().loot;
+    const podDestroyed = loot.onPodDestroyed.bind(loot);
+    loot.onPodDestroyed = (id: string): void => { lost.push(id); podDestroyed(id); };
     const t0 = Date.now();
     while (Date.now() - t0 < 60_000) {
       cut ||= int().swarmRegistry.get('mine-rock-a') == null;
@@ -131,6 +136,7 @@ describe('SectorRoom integration — the barge-mining take: the rock ends up in 
     expect(stall, 'every piece cut down to ore pods').toBe('');
     expect(pods.size, 'the line ends in ore pods').toBeGreaterThan(0);
     expect(int().loot.podCount(), 'every pod taken in').toBe(0);
+    expect(lost, 'no pod destroyed on the way in').toEqual([]);
     expect(holdGoods().minerals ?? 0, 'the rock is ore in the hold').toBeGreaterThan(0);
     expect(splits.size, 'several cut generations').toBeGreaterThan(1);
   });
