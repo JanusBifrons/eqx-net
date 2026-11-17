@@ -1,5 +1,8 @@
 /**
- * Macro terrain v2 (room option `cutField`): the room's side of a cut field.
+ * Macro terrain v2 (room option `cutField`): the room's chunk-streaming host
+ * and its rock source. The host (one streamer: one timer, one ship scan, one
+ * work budget) exists when the sector has ANY chunk source: the field's rocks
+ * (`seed`) and/or the room's other sources (wreck fields R7).
  * Streams the chunks near ships in as fixed rock colliders on the streamer's
  * own game-clock timer (never the room tick, #14), wakes the rocks a ram
  * touches (C2), and carries the seed for the welcome (#16: a joiner cuts the
@@ -11,7 +14,7 @@
  */
 import type { GameClock, GameTimer } from '../../core/clock/GameClock.js';
 import {
-  CutFieldStreamer, cutFieldOpts, fieldRockBody, fieldRockId, fieldRockMass, fieldRocksInBox, fieldRockWakes,
+  CutFieldStreamer, cutFieldOpts, type ChunkSource, fieldRockBody, fieldRockId, fieldRockMass, fieldRocksInBox, fieldRockWakes,
   FIELD_WAKES_PER_TICK, STEP_EVERY_MS,
 } from '../../core/terrain/chunkStreamer.js';
 import { FIELD_LAYOUT_VERSION, SLICED, type ChunkOpts, type FieldClearing } from '../../core/terrain/fieldLayout.js';
@@ -27,7 +30,7 @@ import {
 import { serverLogEvent } from '../debug/ServerEventLog.js';
 import { fieldRockOnWire, type SwarmEntityRecord, type SwarmEntityRegistry } from '../net/SwarmEntityRegistry.js';
 import type { SwarmSpawner } from '../spawn/SwarmSpawner.js';
-import type { RockRecordStore } from '../db/terrainSql.js';
+import { loadRecords, type RockRecordStore } from '../db/terrainSql.js';
 import { guarded } from './guardedLoop.js';
 import type { WorkerCmd } from './PhysicsWorkerProxy.js';
 
@@ -87,12 +90,14 @@ export class CutFieldSubsystem {
   private readonly minedPool = new Map<number, number>();
   private readonly consumed = new Set<number>();
   private readonly movedPose = new Map<number, RockPose>();
-  private readonly seed: string;
+  /** The field's seed and cut options; null: no rocks (a sector with only
+   *  other chunk sources sends no `cutField` welcome). */
+  private readonly seed: string | null;
   private readonly gameClock: GameClock;
-  private readonly opts: ChunkOpts;
+  private readonly opts: ChunkOpts | null;
 
   constructor(
-    seed: string,
+    seed: string | null,
     gameClock: GameClock,
     private readonly registry: SwarmEntityRegistry,
     spawner: SwarmSpawner,
@@ -100,14 +105,17 @@ export class CutFieldSubsystem {
     /** Open pockets cut out of the field (galaxy sectors, F4); none in test
      *  and showcase rooms. On the welcome so the client cuts the same rocks. */
     clearings?: readonly FieldClearing[],
+    /** The room's other chunk sources (wreck fields), sharing the streamer's
+     *  ship scan, `needed` set and budget after the rocks. */
+    sources: readonly ChunkSource[] = [],
   ) {
     this.seed = seed;
     this.gameClock = gameClock;
-    this.oreBase = oreSeed(seed);
-    this.loadRecords();
+    this.oreBase = seed !== null ? oreSeed(seed) : 0;
+    if (seed !== null) this.loadRockRecords();
     // More than the welcome carries would leave joiners cutting other rocks (#15).
     if ((clearings?.length ?? 0) > MAX_WELCOME_CLEARINGS) throw new Error(`cut field: ${clearings!.length} clearings, the welcome carries ${MAX_WELCOME_CLEARINGS}`);
-    this.opts = cutFieldOpts(seed, clearings);
+    this.opts = seed !== null ? cutFieldOpts(seed, clearings) : null;
     this.streamer = new CutFieldStreamer(this.opts, {
       // Pilots and AI hulls keep rocks loaded. Slow cadence (STEP_EVERY_MS).
       visitShips: (cb) => {
@@ -152,7 +160,7 @@ export class CutFieldSubsystem {
         hooks.evict(rec, fieldRockOnWire(rec));
       },
       nowMs: () => gameClock.now(),
-    });
+    }, undefined, undefined, undefined, sources);
     this.timer = gameClock.every(STEP_EVERY_MS, guarded('cut-field', () => this.streamer.step()));
   }
 
@@ -238,26 +246,24 @@ export class CutFieldSubsystem {
     });
   }
 
-  /** The saved record, once at start. Rows cut under another
-   *  FIELD_LAYOUT_VERSION name other rocks: ignored (one warning), and
-   *  overwritten if their key is written again. */
-  private loadRecords(): void {
+  /** The rock partition's saved record, once at start (`loadRecords`:
+   *  rows cut under another FIELD_LAYOUT_VERSION are ignored with one
+   *  warning, and overwritten if their key is written again). */
+  private loadRockRecords(): void {
     const store = this.hooks.records;
     if (!store) return;
-    let stale = 0;
-    for (const r of store.load()) {
-      if (r.layoutVersion !== FIELD_LAYOUT_VERSION) { stale++; continue; }
+    for (const r of loadRecords(store, FIELD_LAYOUT_VERSION)) {
       if (r.consumed) { this.consumed.add(r.rockKey); continue; }
       if (r.pool !== null) this.minedPool.set(r.rockKey, r.pool);
       if (r.pose !== null) this.movedPose.set(r.rockKey, { x: r.pose.x, y: r.pose.y, angle: r.pose.angle });
     }
-    if (stale > 0) store.warn({ sectorKey: store.sectorKey, stale, layoutVersion: FIELD_LAYOUT_VERSION }, 'terrain_records: rows from another field layout ignored');
   }
 
   /** Spread into every welcome: the seed, the clearings (F4, when any), the
    *  consumed keys (C3) and the moved rocks' poses (C2), #16. A join is
-   *  rare, so the lists are built per call. */
-  get welcome(): { cutField: CutFieldWelcome } {
+   *  rare, so the lists are built per call. No rocks: nothing. */
+  get welcome(): { cutField?: CutFieldWelcome } {
+    if (this.seed === null || this.opts === null) return {};
     const cutField: CutFieldWelcome = { seed: this.seed };
     const clearings = this.opts.clearings;
     if (clearings?.length) cutField.clearings = clearings.map((c) => ({ x: c.x, y: c.y, r: c.r }));
@@ -284,6 +290,7 @@ export class CutFieldSubsystem {
    *  broken-up rock is gone; a live one is already in `out` from the registry.
    *  A discrete player action, never per tick. */
   dormantObstacles(box: ObstacleBox, out: GridObstacle[]): void {
+    if (this.opts === null) return;
     for (const r of fieldRocksInBox(this.opts, box.x0, box.y0, box.x1, box.y1)) {
       if (this.consumed.has(r.key) || this.registry.get(fieldRockId(r.key))) continue;
       const b = fieldRockBody(r);

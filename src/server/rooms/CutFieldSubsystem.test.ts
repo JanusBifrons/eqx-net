@@ -309,3 +309,22 @@ describe('CutFieldSubsystem.dormantObstacles (C5: placement sees unloaded field 
     expect(live).not.toContainEqual(expect.objectContaining({ x: body.x, y: body.y, radius: body.radius }));
   });
 });
+
+describe('CutFieldSubsystem as a host with no rocks (wreck fields R7)', () => {
+  it('runs its other sources on the one streamer and sends no cutField welcome', () => {
+    let step: (() => void) | null = null;
+    const clock = { now: () => 0, every: (_ms: number, fn: () => void) => { step = fn; return { cancel: () => {} }; } } as unknown as GameClock;
+    const registry = { get: () => null, all: () => [] } as unknown as SwarmEntityRegistry;
+    const budgets: number[] = [];
+    const sub = new CutFieldSubsystem(null, clock, registry, {} as SwarmSpawner, {
+      shipSlots: () => [0], sab: () => new Float32Array(64), post: () => {}, evict: () => {}, broadcast: () => {},
+    }, undefined, [{ step: (needed, budget) => { budgets.push(needed.size, budget); return 0; } }]);
+    step!();
+    expect(budgets).toEqual([25, 2]); // one ship at the origin: its 5x5 ring, the whole budget
+    expect(sub.welcome).toEqual({});
+    expect(sub.streamer.stats.chunksLoaded).toBe(0);
+    const out: GridObstacle[] = [];
+    sub.dormantObstacles({ x0: -100, y0: -100, x1: 100, y1: 100 }, out);
+    expect(out).toEqual([]);
+  });
+});

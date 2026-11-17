@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { CutFieldStreamer, MAX_CHUNKS_PER_STEP, FIELD_CHAIN_WAKE_SPEED, cutFieldOpts, fieldRockBody, fieldRockCircle, fieldRocksInBox, fieldRockWakes, fieldRockMass, FIELD_ROCK_BATTLESHIP_MASSES } from './chunkStreamer.js';
+import { CutFieldStreamer, chunkKey, type ChunkSource, MAX_CHUNKS_PER_STEP, FIELD_CHAIN_WAKE_SPEED, cutFieldOpts, fieldRockBody, fieldRockCircle, fieldRocksInBox, fieldRockWakes, fieldRockMass, FIELD_ROCK_BATTLESHIP_MASSES } from './chunkStreamer.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { shipBodyMass } from '../../shared-types/shipScale/tuning.js';
 import { CHUNK_SIZE, rocksInChunk } from './fieldLayout.js';
@@ -52,6 +52,90 @@ describe('CutFieldStreamer (macro terrain v2, cut-field slice 1)', () => {
     const { s, live } = rig(null);
     s.step();
     expect(live.size).toBe(0);
+  });
+
+  it('reuses its chunk records: none made once the streamer has cycled (#14)', () => {
+    const ship = { x: 5000, y: -3000 };
+    const { s, advance } = rig(ship);
+    const cycle = () => {
+      for (let i = 0; i < 5; i++) s.step();
+      ship.x += 10 * CHUNK_SIZE;
+      advance(2000);
+      for (let i = 0; i < 5; i++) s.step();
+      ship.x -= 10 * CHUNK_SIZE;
+      advance(2000);
+    };
+    cycle();
+    const made = s.stats.chunkRecordsMade;
+    expect(made).toBeGreaterThanOrEqual(9);
+    for (let k = 0; k < 3; k++) cycle();
+    expect(s.stats.chunkRecordsMade).toBe(made);
+  });
+});
+
+/** A fake second source (wreck fields R7): records what it was given, and
+ *  spends `want` units a step (capped by its budget). */
+function fakeSource(want: number) {
+  const seen = { budgets: [] as number[], needed: [] as number[][], sameSet: true, last: null as ReadonlySet<number> | null };
+  const src: ChunkSource = {
+    step: (needed, budget) => {
+      if (seen.last && seen.last !== needed) seen.sameSet = false;
+      seen.last = needed;
+      seen.budgets.push(budget);
+      seen.needed.push([...needed]);
+      return Math.min(want, budget);
+    },
+  };
+  return { src, seen };
+}
+
+describe('CutFieldStreamer sources (wreck fields R7: one streamer, several sources)', () => {
+  function rig2(ship: { x: number; y: number }, field: boolean, want: number) {
+    const live = new Set<string>();
+    const extra = fakeSource(want);
+    const s = new CutFieldStreamer(field ? FIELD : null, {
+      visitShips: (cb) => cb(ship.x, ship.y),
+      spawnRock: (id) => { live.add(id); return true; },
+      removeRock: (id) => { live.delete(id); },
+      nowMs: () => 0,
+    }, 1, 1000, MAX_CHUNKS_PER_STEP, [extra.src]);
+    return { s, live, extra };
+  }
+
+  it('a second source gets what the rocks left of the one budget, and the same needed set', () => {
+    const { s, extra } = rig2({ x: 5000, y: -3000 }, true, 99);
+    s.step();
+    // The rocks cut first and spent the whole budget: nothing left.
+    expect(s.stats.cutsThisStep).toBe(MAX_CHUNKS_PER_STEP);
+    expect(extra.seen.budgets[0]).toBe(0);
+    expect(s.stats.workThisStep).toBe(MAX_CHUNKS_PER_STEP);
+    for (let i = 0; i < 5; i++) s.step(); // every rock chunk loaded
+    expect(s.stats.cutsThisStep).toBe(0);
+    expect(extra.seen.budgets.at(-1)).toBe(MAX_CHUNKS_PER_STEP);
+    expect(s.stats.workThisStep).toBe(MAX_CHUNKS_PER_STEP);
+    // One ship scan: the source sees the streamer's own needed set, the
+    // ship's 3x3 ring with its own chunk first.
+    expect(extra.seen.sameSet).toBe(true);
+    expect(extra.seen.last).toBe(s.neededChunks);
+    const own = chunkKey(Math.floor(5000 / CHUNK_SIZE), Math.floor(-3000 / CHUNK_SIZE));
+    expect(extra.seen.needed.at(-1)![0]).toBe(own);
+    expect(extra.seen.needed.at(-1)!.length).toBe(9);
+  });
+
+  it('a source never gets more than the budget, and over-spending is clamped', () => {
+    const { s, extra } = rig2({ x: 5000, y: -3000 }, false, 99);
+    s.step();
+    expect(extra.seen.budgets[0]).toBe(MAX_CHUNKS_PER_STEP);
+    expect(s.stats.workThisStep).toBe(MAX_CHUNKS_PER_STEP);
+  });
+
+  it('no field: no rocks, the host still scans ships for its other sources', () => {
+    const { s, live, extra } = rig2({ x: 5000, y: -3000 }, false, 0);
+    for (let i = 0; i < 3; i++) s.step();
+    expect(live.size).toBe(0);
+    expect(s.stats.chunksLoaded).toBe(0);
+    expect(extra.seen.needed.at(-1)!.length).toBe(9);
+    expect(s.stats.workThisStep).toBe(0);
   });
 });
 
