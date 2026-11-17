@@ -20,11 +20,14 @@
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { shipBodyMass } from '../../shared-types/shipScale/tuning.js';
 import { convexParts } from '../geometry/shipHullDecomp.js';
-import { CHUNK_SIZE, FIELD_COLLIDER_SIMPLIFY, rocksInChunk, slicedField, type ChunkOpts, type ChunkRock, type SlicedRock } from './fieldLayout.js';
+import { CHUNK_SIZE, FIELD_COLLIDER_SIMPLIFY, fieldShape, rocksInChunk, slicedField, type ChunkOpts, type ChunkRock, type FieldClearing, type SlicedRock } from './fieldLayout.js';
 
-/** The cut options for a field seed: one source for both sides (#15). */
-export function cutFieldOpts(seed: string): ChunkOpts {
-  return { seed, battleshipLength: getShipKind('battleship').radius * 2, fighterLength: getShipKind('fighter').radius * 2 };
+/** The cut options for a field seed and its clearings (galaxy sectors, F4;
+ *  none in test rooms): one source for both sides (#15). */
+export function cutFieldOpts(seed: string, clearings?: readonly FieldClearing[]): ChunkOpts {
+  const o: ChunkOpts = { seed, battleshipLength: getShipKind('battleship').radius * 2, fighterLength: getShipKind('fighter').radius * 2 };
+  if (clearings?.length) o.clearings = clearings;
+  return o;
 }
 
 /** A field rock as a body: centred on its outline's vertex mean, the outline
@@ -91,7 +94,7 @@ export interface FieldRockCircle { key: number; x: number; y: number; radius: nu
 export function fieldRocksInBox(o: ChunkOpts, x0: number, y0: number, x1: number, y1: number): FieldRockCircle[] {
   const cut = slicedField({
     seed: o.seed, battleshipLength: o.battleshipLength, fighterLength: o.fighterLength,
-    view: { x0, y0, x1, y1 }, ...(o.radius !== undefined ? { radius: o.radius } : {}),
+    view: { x0, y0, x1, y1 }, ...fieldShape(o),
   });
   const out: FieldRockCircle[] = [];
   let chunks: Map<string, ChunkRock[]> | null = null;
