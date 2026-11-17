@@ -1,4 +1,4 @@
-import { shipRayHit } from '@core/combat/shipHitShape';
+import { beamShieldEdgeDist, updateRemoteBeamDists } from '../combat/remoteBeamRay.js';
 import { decodeStructureState, emptyStructureRow } from './structureStateDecode.js';
 import { SWARM_KIND_STRUCTURE } from '../../shared-types/swarmWireFormat.js';
 import {
@@ -8,7 +8,8 @@ import {
   forEachStructureMountAngles,
   type StructureStateView,
 } from '../../shared-types/structureStateWire.js';
-import { forEachBeamLink, type BeamLinkVisitor } from '../../shared-types/beamLinksWire.js';
+import type { BeamLinkVisitor } from '../../shared-types/beamLinksWire.js';
+import { TractorLinkClient } from './tractorLinks.js';
 import { Client, Room } from 'colyseus.js';
 import type { RenderMirror, ShipRenderState, StructureRenderState, SwarmRenderState } from '@core/contracts/IRenderer';
 import type { IAudio } from '@core/contracts/IAudio';
@@ -171,10 +172,10 @@ import { tuningFor } from '@shared-types/shipScale/lookup';
 // A group fires only when a barrel bears on its lock: the shared rule (#15).
 import { fillFireTargetShape, fillRangeShape, mountFiresOn, newFireTargetShape, type FireTargetShape } from '@core/combat/fireControlBearing';
 import { FcMountPicker, fcNeedsPick, type FcMountDef } from './fcMountPick';
-import { hasTurretFireControl, mountWeaponReach, weaponIdReach, type MountRangeTarget } from '@core/combat/mountReach';
+import { hasTurretFireControl, mountRangeFactor, mountWeaponReach, weaponIdReach, type MountRangeTarget } from '@core/combat/mountReach';
 /** No aim guides (the mirror's `localAimMountIds`): the lock rings replace them. */
 const EMPTY_AIM_IDS: readonly string[] = Object.freeze([]);
-import { getWeapon, isMiningTool, weaponAutoFireRange, type WeaponDef, type WeaponId } from '@core/combat/WeaponCatalogue';
+import { getWeapon, isMiningTool, type WeaponDef, type WeaponId } from '@core/combat/WeaponCatalogue';
 import { canAfford, spendEnergy, regenEnergyStep, resolveSlotEnergyCost, BOOST_TICK_COST } from '@core/combat/Energy';
 import { gateDisabledInput, type ControlBits } from '@core/combat/disable';
 import { DEAD_RECKON_BACK_MS, DEAD_RECKON_CAP_MS, RENDER_DUE_SLEW_MS, RENDER_DUE_SNAP_MS, slewTickDue, tickBoundaryDueMs } from './renderTickPhase';
@@ -192,7 +193,7 @@ import {
 } from '../combat/HitPrediction.client';
 import { localFireSpawnsGhost, localFirePredicts, liveBeamVisible, LIVE_BEAM_PERSIST_MS } from '../combat/LocalBeam';
 import { flowMaterialToCode } from '../render/pixi/connectorVisual';
-import { findMount, isSustainedBeamMount, remoteBeamTtlMs } from '../render/beamStyles';
+import { findMount, isSustainedBeamMount, mountMuzzleRay, remoteBeamTtlMs, type MuzzleRay } from '../render/beamStyles';
 import type { TouchInput } from '../input/TouchInput';
 import { joystickToInput, IDLE_INPUT_STATE, type JoystickInputState } from '../input/joystickToInput';
 import { aimInput } from '../input/AimInput';
@@ -312,8 +313,8 @@ const NO_LOCKED_BY: ReadonlyArray<{ t: string; s: number; p: number }> = [];
 /** A welcome from a wreck room with no live wreck (slice 3). */
 const NO_WRECK_LIST: readonly import('@shared-types/messages/snapshotMessages').WreckDescriptor[] = [];
 
-export { isNoDamageNumberTarget, isWreckPieceTarget } from './damageNumberTargets.js';
-import { isNoDamageNumberTarget, isWreckPieceTarget } from './damageNumberTargets.js';
+export { isNoDamageNumberTarget, isUnseenSwarmTarget, isWreckPieceTarget } from './damageNumberTargets.js';
+import { isNoDamageNumberTarget, isUnseenSwarmTarget, isWreckPieceTarget } from './damageNumberTargets.js';
 
 export class ColyseusGameClient {
   /**
@@ -470,7 +471,6 @@ export class ColyseusGameClient {
     pendingDamageNumbers: [],
     pendingDamageNumberCancels: [],
     pendingHealthBarHits: [],
-    pendingWarpEvents: [],
     pendingMissileExplosions: [],
     pendingEffectTriggers: [],
     pendingLevelUps: [],
@@ -1067,6 +1067,7 @@ export class ColyseusGameClient {
   private _syncMirrorRanThisRaf = false;
   private _pendingStateForSync: unknown = null;
   private readonly _liveBeamMountIdsScratch = new Set<string>();
+  private readonly _liveRayScratch: MuzzleRay = { fromX: 0, fromY: 0, fwdX: 0, fwdY: 0 };
   private readonly _syncProjectilesSeenScratch = new Set<string>();
   /** Pre-bound drop path for the `routeSnapshotShipStates` ctx (bound once,
    *  no per-snapshot closure; heap-growth gate step 12). */
@@ -2277,19 +2278,14 @@ export class ColyseusGameClient {
       }
     });
 
-    // Remote-warp visual broadcasts. Both `warp_in` (a ship just arrived
-    // at this sector) and `warp_out` (a ship just left) push a single
-    // entry onto `mirror.pendingWarpEvents` with the world position; the
-    // renderer drains the array each frame and fires `triggerWarpIn`
-    // (the same direction-agnostic flash + burst ripple) at each one.
-    // Local-player events are never reflected here — the server's
-    // `except: client` filter excludes the originating connection.
+    // Warp broadcasts. `warp_in` (a ship just arrived at this sector) and
+    // `warp_out` (a ship just left) are logged for diagnostics; the local
+    // player's own `warp_in` schedules the curtain drop. No renderer visual:
+    // WarpFx draws every ship's warp from the snapshot's warp phase (#16).
     const handleWarpEvent = (msg: WarpInEvent | WarpOutEvent, kind: 'warp_in' | 'warp_out'): void => {
       // Render-jitter-fix Phase 1b (2026-05-21): log every warp event so
       // we can correlate drone-warp triggers with RAF stalls in the
-      // diag capture. PRE-FIX the handler pushed silently into
-      // `pendingWarpEvents` and the renderer drained it — invisible to
-      // diagnostics. Drone warps (Living World hunter migrations) fire
+      // diag capture. Drone warps (Living World hunter migrations) fire
       // these every few seconds; if the per-event renderer cost is what
       // builds the spiral, each event will line up with the next slow
       // RAF in the trace.
@@ -2301,8 +2297,8 @@ export class ColyseusGameClient {
         arrivalTick: typeof arrivalTick === 'number' ? arrivalTick : null,
         isLocal: msg.playerId === this.mirror.localPlayerId,
       });
-      // Plan: crispy-kazoo, Commit 9 — synchronised arrival, split
-      // curtain-drop from warp-in flash.
+      // Plan: crispy-kazoo, Commit 9 — synchronised arrival: the curtain
+      // drops just before the arrival tick.
       //
       // SEQUENCE for the joiner:
       //   T0      receive `warp_in { arrivalTick }`
@@ -2312,9 +2308,8 @@ export class ColyseusGameClient {
       //                                     → useWarpOrchestration calls
       //                                     `renderer.setLoadCurtain(false)`,
       //                                     a 380 ms fade)
-      //   T0+~600ms (= arrivalTick):       warp-in flash fires
-      //                                     (pendingWarpEvents push;
-      //                                     curtain is gone by now)
+      //   T0+~600ms (= arrivalTick):       the ship arrives (WarpFx);
+      //                                     curtain is gone by now
       //
       // The wall-clock-anchored server-tick estimate is mandatory:
       // `this.inputTick` is stuck at welcome's serverTick because
@@ -2337,7 +2332,7 @@ export class ColyseusGameClient {
         const ticksUntilArrival = Math.max(0, arrivalTick - serverTickEstimate);
         const msUntilArrival = ticksUntilArrival * (1000 / 60);
         // 450 ms before arrival → curtain fade-out starts (380 ms fade
-        // + 70 ms slack to ensure it's fully gone before the flash).
+        // + 70 ms slack to ensure it's fully gone before the arrival).
         const CURTAIN_LEAD_MS = 450;
         const msUntilCurtainDrop = Math.max(0, msUntilArrival - CURTAIN_LEAD_MS);
         setTimeout(() => {
@@ -2939,8 +2934,12 @@ export class ColyseusGameClient {
     // showed this number (de-dupe: exactly one number per confirmed hit).
     // Everything else in handleDamage stays unconditional — this remains
     // the SOLE HP/HUD/flash/healthbar/hostility authority.
-    if (!suppressNumber && !debris && !isNoDamageNumberTarget(evt.targetId, this.mirror.swarm) && this.mirror.pendingDamageNumbers) {
-      const targetShip = this.mirror.ships.get(evt.targetId);
+    // A swarm target the client never drew (spawned and killed between two
+    // snapshots: the salvage pod a beam wore out of a wreck piece and burned
+    // with its next pulse) gets no number: it would float over empty space.
+    const targetShip = this.mirror.ships.get(evt.targetId);
+    const unseen = targetShip === undefined && isUnseenSwarmTarget(evt.targetId, this.mirror.swarm);
+    if (!suppressNumber && !debris && !unseen && !isNoDamageNumberTarget(evt.targetId, this.mirror.swarm) && this.mirror.pendingDamageNumbers) {
       const x = evt.hitX ?? targetShip?.x ?? 0;
       const y = evt.hitY ?? targetShip?.y ?? 0;
       this.mirror.pendingDamageNumbers.push({ targetId: evt.targetId, x, y, damage: evt.damage });
@@ -4181,8 +4180,9 @@ export class ColyseusGameClient {
   };
 
   /** Beam links (shared-types/beamLinksWire.ts): structure turret / mining
-   *  targets onto their rows. Ship tractor links decode here and are drawn and
-   *  predicted by the tractor client slice (salvage plan PR 11b). Bound once. */
+   *  targets onto their rows; ship tractor links go to the tractor client
+   *  slice (`tractorLinks.ts`: mirror rows + predWorld fields). Bound once. */
+  private readonly _tractors = new TractorLinkClient(this.mirror, this._swarmBodyKeyCache);
   private readonly _beamLinkVisitor: BeamLinkVisitor = {
     structure: (sid, turret, mining) => {
       const row = this._structureMap?.get(sid);
@@ -4193,7 +4193,7 @@ export class ColyseusGameClient {
       else if (turret !== STRUCTURE_TARGET_NONE) row.turretTargetId = turret;
       if (mining !== STRUCTURE_TARGET_NONE) row.miningTargetId = mining;
     },
-    tractor: () => {},
+    tractor: this._tractors.add,
   };
 
   /** Coastal defences — copy one structure's server turret angles onto its
@@ -4248,9 +4248,10 @@ export class ColyseusGameClient {
         const sw = this.mirror.swarm?.get(id);
         if (sw && sw.kind === SWARM_KIND_STRUCTURE) this.mirror.swarm!.delete(id);
       }
-      if (targets) forEachBeamLink(targets, this._beamLinkVisitor);
       if (mountAngles) forEachStructureMountAngles(mountAngles, this._applyStructureMountAngles);
     }
+    // Beam links walk with or without structures: a tractor needs none.
+    this._tractors.sync(targets, this._beamLinkVisitor, this.predWorld);
     this.syncPredWalls();
     this.syncForceFields();
     this.syncMines();
@@ -5145,6 +5146,9 @@ export class ColyseusGameClient {
         }
         if (perShooter.size === 0) this.mirror.remoteLasers.delete(shooterId);
       }
+      // Heavy beams follow the live barrel to the client ray's stop (remoteBeamRay.ts).
+      const skipRay = ColyseusGameClient.SKIP_HITSCAN_VISUAL_FLAG || !this.predWorld;
+      updateRemoteBeamDists(this.mirror, skipRay ? null : this.displayHitscan());
     }
 
     // Phase F — drone hostility flag, driven by the per-drone AI behaviour's
@@ -5978,30 +5982,24 @@ export class ColyseusGameClient {
     for (const m of mounts) if (!bearingOnly || this._fcBearing.has(m.id)) mountIds.add(m.id);
     for (const id of liveBeams.keys()) if (!mountIds.has(id)) liveBeams.delete(id);
 
-    const cosA = Math.cos(ship.angle);
-    const sinA = Math.sin(ship.angle);
     const mountAngles = ship.mountAngles;
     for (let i = 0; i < mounts.length; i++) {
       const mount = mounts[i]!;
       if (!mountIds.has(mount.id)) continue;
-      const mountWorldX = ship.x + (mount.localX * cosA - mount.localY * sinA);
-      const mountWorldY = ship.y + (mount.localX * sinA + mount.localY * cosA);
       const angleIdx = this.instanceMountIndex(ship.kind, ship.activatedMounts, mount.id);
       const currentMountAngle = angleIdx >= 0 ? (mountAngles?.[angleIdx] ?? 0) : 0;
-      const mountAngle = ship.angle + mount.baseAngle + currentMountAngle;
-      const fwdX = -Math.sin(mountAngle);
-      const fwdY = Math.cos(mountAngle);
-      const muzzleD = this.localMuzzle(mount);
-      const fromX = mountWorldX + fwdX * muzzleD;
-      const fromY = mountWorldY + fwdY * muzzleD;
+      // The shared muzzle maths (beamStyles `mountMuzzleRay`), as the remote heavy beam's ray.
+      const r = mountMuzzleRay(ship.x, ship.y, ship.angle, mount, currentMountAngle, this.localMuzzle(mount), this._liveRayScratch);
+      const fromX = r.fromX, fromY = r.fromY, fwdX = r.fwdX, fwdY = r.fwdY;
       // P3.13 / campaign 5.2 — the beam bands DERIVE from the catalogue def
       // via the unit-locked `beamBands` seam (the SAME numbers the server
       // damage falloff reads, so the visible taper == the damage band by
       // construction). SOLID to optimal (== the aim guide), fading to nothing
       // across optimal→max. Alloc-free: cached lookup + scalar helpers (#14).
       const wdef = getWeapon(mount.weaponId);
-      const optimalDist = beamOptimalDist(wdef);
-      const beamMax = beamMaxDist(wdef);
+      const rangeMul = mountRangeFactor(mount.weaponId, mount.size); // a mining tool's sized beam, as the server ray
+      const optimalDist = beamOptimalDist(wdef, rangeMul);
+      const beamMax = beamMaxDist(wdef, rangeMul);
       // Remote drones/scrap are tested at their DRAWN pose (the pose the
       // turret aims at), not their predicted-timeline body.
       const hit = skipHitscan ? null : this.displayHitscan().hitscan(fromX, fromY, fwdX, fwdY, beamMax, localId, beamHalfWidth(wdef), isMiningTool(mount.weaponId));
@@ -6053,24 +6051,7 @@ export class ColyseusGameClient {
     fromX: number, fromY: number, fwdX: number, fwdY: number,
     maxRange: number = HITSCAN_RANGE, halfWidth = 0,
   ): number {
-    const hitId = hit.hitId;
-    if (hitId.startsWith('swarm-')) {
-      const sw = this.mirror.swarm?.get(Number(hitId.slice(6)));
-      // Drones only (kind===1); asteroids (kind===0) have no shield.
-      if (sw && sw.kind === 1 && sw.shieldDown !== true && sw.shipKind) {
-        // The shared ship hit shape, as the server resolves it (#15).
-        const d = shipRayHit(sw.shipKind, true, fromX, fromY, fwdX, fwdY, maxRange, sw.x, sw.y, sw.angle, halfWidth);
-        if (d !== null) return d;
-      }
-      return hit.dist;
-    }
-    const ship = this.mirror.ships.get(hitId);
-    if (ship && ship.shieldDown !== true) {
-      // The same shape as a drone of that kind (`SectorRoom.playerHitscanDist`, #15).
-      const d = shipRayHit(ship.kind ?? null, true, fromX, fromY, fwdX, fwdY, maxRange, ship.x, ship.y, ship.angle, halfWidth);
-      if (d !== null) return d;
-    }
-    return hit.dist;
+    return beamShieldEdgeDist(this.mirror, hit, fromX, fromY, fwdX, fwdY, maxRange, halfWidth);
   }
 
   /** Resolve the local player's currently-active slot's mount list. Returns
@@ -6150,7 +6131,7 @@ export class ColyseusGameClient {
   }
 
   /** A weapon group's lock-reach basis (u, before `LOCK_TUNING.reachSlack`) for the local
-   *  ship: the same `weaponAutoFireRange` max the server's `groupGeometry` uses. 0 = unknown.
+   *  ship: the same `mountWeaponReach` max the server's `groupGeometry` uses. 0 = unknown.
    *  Read by the contacts overview at 4 Hz, never per frame. */
   fcGroupReach(groupId: string): number {
     const id = this.mirror.localPlayerId;
@@ -6343,10 +6324,10 @@ export class ColyseusGameClient {
         const m = mounts[mi]!;
         const w = getWeapon(m.weaponId);
         if (w.cooldownTicks > cd) cd = w.cooldownTicks;
-        const r = weaponAutoFireRange(w);
+        const r = mountWeaponReach(m);
         if (r > reach) reach = r;
         this._fcMountGroup.set(m.id, slot.id);
-        this._fcMountDef.set(m.id, { mount: m, ordinal: mi, reach: mountWeaponReach(m), group: mounts });
+        this._fcMountDef.set(m.id, { mount: m, ordinal: mi, reach: r, group: mounts });
       }
       this._fcInfo.set(slot.id, {
         cooldownMs: (cd * 1000) / 60,
@@ -6529,15 +6510,16 @@ export class ColyseusGameClient {
     return false;
   }
 
-  /** May this one mount (world origin + barrel angle) fire at its group's aim target (`mountFiresOn`)? */
-  private fcMountBears(mountId: string, weaponId: WeaponId, ox: number, oy: number, angle: number): boolean {
+  /** May this one mount (world origin + barrel angle) fire at its group's aim target (`mountFiresOn`)?
+   *  `size`: the mount's (a mining tool's reach scales with it, `weaponIdReach`). */
+  private fcMountBears(mountId: string, weaponId: WeaponId, size: WeaponMount['size'], ox: number, oy: number, angle: number): boolean {
     // Capitals fire one turret at a time: only the mounts in this salvo.
     if (this._fcSalvo.size > 0 && !this._fcSalvo.has(mountId)) return false;
     const localId = this.mirror.localPlayerId;
     const ship = localId ? this.mirror.ships.get(localId) : undefined;
     const key = this.fcMountAimKey(mountId, ship?.x ?? ox, ship?.y ?? oy, ship?.angle ?? 0);
     if (key === null || !this.fcTargetPose(key, this._fcBearPose)) return false;
-    return mountFiresOn(weaponId, weaponIdReach(weaponId), ox, oy, angle, this._fcBearPose);
+    return mountFiresOn(weaponId, weaponIdReach(weaponId, size), ox, oy, angle, this._fcBearPose);
   }
   private readonly _fcBearPose: FireTargetShape = newFireTargetShape();
 
@@ -7041,7 +7023,7 @@ export class ColyseusGameClient {
         // Fire control: the server fires only mounts that bear on their lock,
         // so a mount that doesn't gets no predicted bolt (the "ghost bolts"
         // from capital turrets still slewing). Same rule, shared (#15).
-        if (this._fireSlotOverride !== null && !this.fcMountBears(mount.id, mount.weaponId, mountWorldX, mountWorldY, mountFireAngle)) continue;
+        if (this._fireSlotOverride !== null && !this.fcMountBears(mount.id, mount.weaponId, mount.size, mountWorldX, mountWorldY, mountFireAngle)) continue;
         const fwdX = -Math.sin(mountFireAngle);
         const fwdY = Math.cos(mountFireAngle);
         const muzzleD = this.localMuzzle(mount);

@@ -71,9 +71,13 @@ export interface LockEntry {
   track: LockTrack;
   /** AUTO picked this target itself; switching the group to MAN cancels it if not yet locked. */
   auto: boolean;
-  /** Salvage bits of the target (`LOCK_SALVAGE` | `LOCK_HAULABLE`, turretLockPick.ts),
+  /** Salvage bits of the target (`LOCK_SALVAGE` | tier | `LOCK_CONSUMABLE`, turretLockPick.ts),
    *  refreshed by the server's lock step; 0 for any other target. */
   flags: number;
+  /** Wreck lineage (`LiveWreck.root`) the lock works: a locked rock or wreck
+   *  piece's, kept through its cuts and pods, so the lock moves on to the
+   *  next live piece of it instead of ending (server lockSplit.ts); -1 none. */
+  root: number;
 }
 
 export const LOCK_TRACK = { commit: 0, held: 1, released: 2 } as const;
@@ -82,7 +86,7 @@ export type LockTrack = 0 | 1 | 2;
 export type LockEvent = 'none' | 'commit' | 'locked' | 'dropped';
 
 export function newLock(target: string, hostile: boolean, track: LockTrack = LOCK_TRACK.commit): LockEntry {
-  return { target, stage: hostile ? 'acquiring' : 'failsafe', progress: 0, lostFor: 0, track, auto: false, flags: 0 };
+  return { target, stage: hostile ? 'acquiring' : 'failsafe', progress: 0, lostFor: 0, track, auto: false, flags: 0, root: -1 };
 }
 
 /**

@@ -22,6 +22,7 @@ import { getWeapon } from '../../../src/core/combat/WeaponCatalogue.js';
 import { MOUNT_SIZE_TUNING } from '../../../src/shared-types/shipScale/tuning.js';
 import { forEachBeamLink } from '../../../src/shared-types/beamLinksWire.js';
 import type { TractorForceField } from '../../../src/core/physics/forceFields.js';
+import { getHoldStore } from '../../../src/server/db/PersistenceWorker.js';
 
 interface SnapGroups { id: string; m: number; l: Array<{ t: string; s: number; p: number }> }
 
@@ -43,10 +44,10 @@ describe('SectorRoom integration — tractor beam weapon', () => {
     if (harness) await harness.cleanup();
   }, 10_000);
 
-  it('lock + fire on a rock holds a tractor field on it; the snapshot links it; it lapses without fire; no damage, no hostility', async () => {
+  it('lock + fire on a wreck piece holds a tractor field on it; the snapshot links it; it lapses without fire; no damage, no hostility', async () => {
     for (const m of mounts) m.weaponId = 'tractor';
     harness = await bootSectorTestServer({
-      sectorKey: 'sol-prime', droneCount: 0, testMode: true, peacefulDrones: true, asteroidConfig: [],
+      sectorKey: 'sol-prime', droneCount: 0, testMode: true, peacefulDrones: true, asteroidConfig: [], subcapWrecks: true,
     });
     const pid = randomUUID();
     const client = (await harness.connectActive(pid, {
@@ -67,16 +68,30 @@ describe('SectorRoom integration — tractor beam weapon', () => {
     client.onMessage('swarm', () => {});
     const room = harness.getServerRoom() as unknown as SectorRoom;
     const int = (): SectorRoom['_internals'] => room._internals;
+    // A full hold: a ship with a tractor would otherwise take this crumb
+    // straight in on touch (the factory line), and nothing tows a consumable piece.
+    for (const [id, s] of room.state.ships) {
+      if (s.playerId !== pid) continue;
+      getHoldStore().put({ holderUid: id, holderType: 'ship', ownerId: pid, sectorKey: 'sol-prime', x: null, y: null, hold: { goods: { salvage: 1_000_000 }, blueprints: [] }, expiresAt: null }, false);
+    }
 
-    // A rock dead ahead (+y is forward), and a peaceful NPC fighter.
-    expect(int().spawnTestAsteroid('rock-1', 0, 400, 30)).toBe(true);
+    // A wreck piece dead ahead (+y is forward: a fighter broken by a heavy bolt;
+    // light enough for this ship's S tractor, the size ladder; a whole field
+    // rock is never towed), and a peaceful NPC fighter.
+    expect(int().spawnTestDrone('f1', 0, 400, 'fighter')).toBe(true);
+    await harness.advance(100);
+    const at = int().wreckState('f1')!;
+    int().spawnTestProjectile('shooter-x', at.x + 600, at.y, -4000, 0, 'laser', 1e6);
+    for (let t = 0; t < 40 && int().swarmRegistry.get('f1'); t++) await harness.advance(50);
+    for (const pod of [...int().loot.podIds()]) int().loot.onPodDestroyed(pod); // its loot drop is not under test
     expect(int().spawnTestDrone('bystander', 600, 600, 'fighter')).toBe(true);
-    const rock = int().swarmRegistry.get('rock-1')!;
+    const rock = [...int().swarmRegistry.all()].find((r) => r.kind === 4)!;
     const key = `s:${rock.entityId}`;
     client.send('lock_request', { type: 'lock_request', groupId: 'primary', target: key });
     harness.sendThrust(client);
-    await waitUntil(() => groups?.[0]?.l.some((l) => l.t === key && l.s === 2) === true, 5_000, 'rock locked');
+    await waitUntil(() => groups?.[0]?.l.some((l) => l.t === key && l.s === 2) === true, 5_000, 'piece locked');
     harness.events.clear();
+    damage = 0; // the bolt that broke the fighter
 
     const fire = (id: string): void => {
       client.send('fire', { type: 'fire', tick: int().serverTick, clientShotId: id, weapon: 'hitscan', dirAngle: 0, slotId: 'primary' });
@@ -87,11 +102,12 @@ describe('SectorRoom integration — tractor beam weapon', () => {
     const m = mounts.find((mm) => int().forceFields.get(fieldId(mm)) !== undefined)!;
     const f = int().forceFields.get(fieldId(m)) as TractorForceField;
     expect(f.kind).toBe('tractor');
-    expect(f.target).toBe('rock-1');
+    expect(f.target).toBe(rock.id);
     expect(f.emitter).toBe(pid);
     expect(f.force).toBe(getWeapon('tractor').tractor!.force * MOUNT_SIZE_TUNING[m.size ?? 'S'].power);
     expect(f.active).toBe(true);
-    expect(f.lineCount).toBe(0); // nothing else on the beam line
+    // Only bodies crossing the line (a sibling piece may), never the target itself.
+    expect(f.lineIds.slice(0, f.lineCount)).not.toContain(rock.id);
     await waitUntil(() => links.some((l) => l.e === pid && l.t === rock.entityId), 3_000, 'snapshot beam link');
     const link = links.find((l) => l.e === pid)!;
     expect(link.b - link.a).toBeGreaterThanOrEqual(getWeapon('tractor').tractor!.leaseTicks);

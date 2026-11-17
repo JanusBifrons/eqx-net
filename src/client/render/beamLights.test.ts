@@ -187,7 +187,7 @@ describe('heavy beam: a violet light source at the muzzle, along the beam and at
  * Hostile film review 2026-11-15 (beam take 7): on the frame after the kill
  * the heavy cruiser's violet light went out (hull back to plain grey) while the
  * follow-through beam burned on through the wreck at full strength for ~1.1 s.
- * The follow-through pulses pass debris, so they have no hit (`laser.hit`
+ * The follow-through pulses run through the burned gap, so they have no hit (`laser.hit`
  * false, end at max range): no hit spot, and the line lights from the muzzle
  * (at most 4–6 × 900 u) never reach an 8 km target. The beam still crosses the
  * wreck, so the cut stays lit where it crosses (`BeamHitMemory`), until the

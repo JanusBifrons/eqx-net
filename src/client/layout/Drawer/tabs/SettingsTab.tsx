@@ -6,8 +6,12 @@ import { useState } from 'react';
 import { loadArtPreference, loadLightingPreference, loadSpeedFxPreference, saveArtPreference, saveLightingPreference, saveSpeedFxPreference } from '../../../render/art/artMode';
 import { defaultLightingPreset, type LightingPreset } from '../../../render/art/lightingSettings';
 import { isTouchDevice } from '../../../input/TouchInput';
+import { DEFAULT_GRAPHICS_QUALITY, loadGraphicsQualityPreference, saveGraphicsQualityPreference, type EdgeSmoothing, type GraphicsQuality } from '../../../render/graphicsQuality';
 
 const LIGHTING_LABELS: ReadonlyArray<[LightingPreset, string]> = [['baked', 'Baked'], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High']];
+const AA_LABELS: ReadonlyArray<[EdgeSmoothing, string]> = [['off', 'Off'], ['msaa', 'Standard'], ['fxaa', 'Post'], ['max', 'Max']];
+const SCALE_LABELS: ReadonlyArray<[number, string]> = [[0.75, 'Saver'], [1, 'Screen'], [1.5, '1.5×'], [2, '2×']];
+const SOFT_LABELS: ReadonlyArray<[number, string]> = [[0, 'Off'], [0.5, 'Light'], [1, 'Strong']];
 const LIGHTING_GROUP_SX = { mt: 0.5, '& .MuiToggleButton-root': { fontSize: 11, px: 1, py: 0.25 } } as const;
 
 /**
@@ -53,6 +57,14 @@ export function SettingsTab(): JSX.Element {
     if (!p) return;
     setLighting(p);
     saveLightingPreference(p);
+  };
+
+  // Graphics quality (smoothing jagged edges): per device, next load.
+  const [quality, setQuality] = useState<GraphicsQuality>(() => ({ ...DEFAULT_GRAPHICS_QUALITY, ...(loadGraphicsQualityPreference() ?? {}) }));
+  const onQuality = (patch: Partial<GraphicsQuality>): void => {
+    const next = { ...quality, ...patch };
+    setQuality(next);
+    saveGraphicsQualityPreference(next);
   };
 
   const onReturnToMenu = (): void => {
@@ -137,6 +149,39 @@ export function SettingsTab(): JSX.Element {
           </ToggleButtonGroup>
           <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
             Ships and structures lit live: long shadows, light from engines, weapons and explosions, and less texture memory. Lower levels suit slower devices; Baked is the older look. Needs detailed art. Applies the next time the game loads.
+          </Typography>
+        </Box>
+        <Box sx={{ mt: 1 }}>
+          <Typography variant="body2">Edge smoothing</Typography>
+          <ToggleButtonGroup exclusive size="small" value={quality.aa} onChange={(_e, v: EdgeSmoothing | null) => { if (v) onQuality({ aa: v }); }} sx={LIGHTING_GROUP_SX} data-testid="settings-aa" data-value={quality.aa}>
+            {AA_LABELS.map(([id, label]) => (
+              <ToggleButton key={id} value={id} data-testid={`settings-aa-${id}`}>{label}</ToggleButton>
+            ))}
+          </ToggleButtonGroup>
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+            Smooths jagged edges. Standard smooths outlines; Post also smooths lines painted on hulls and rocks, a little softer; Max does both. Applies the next time the game loads.
+          </Typography>
+        </Box>
+        <Box sx={{ mt: 1 }}>
+          <Typography variant="body2">Render sharpness</Typography>
+          <ToggleButtonGroup exclusive size="small" value={quality.renderScale} onChange={(_e, v: number | null) => { if (v) onQuality({ renderScale: v }); }} sx={LIGHTING_GROUP_SX} data-testid="settings-render-scale" data-value={quality.renderScale}>
+            {SCALE_LABELS.map(([id, label]) => (
+              <ToggleButton key={id} value={id} data-testid={`settings-render-scale-${id}`}>{label}</ToggleButton>
+            ))}
+          </ToggleButtonGroup>
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+            Draws the game at more pixels than the screen and shrinks it down: the smoothest picture, but much harder work for the graphics chip. Saver draws fewer pixels for slow phones. Applies the next time the game loads.
+          </Typography>
+        </Box>
+        <Box sx={{ mt: 1 }}>
+          <Typography variant="body2">Texture softening</Typography>
+          <ToggleButtonGroup exclusive size="small" value={quality.texSoft} onChange={(_e, v: number | null) => { if (v !== null) onQuality({ texSoft: v }); }} sx={LIGHTING_GROUP_SX} data-testid="settings-tex-soft" data-value={quality.texSoft}>
+            {SOFT_LABELS.map(([id, label]) => (
+              <ToggleButton key={id} value={id} data-testid={`settings-tex-soft-${id}`}>{label}</ToggleButton>
+            ))}
+          </ToggleButtonGroup>
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+            Softens fine detail on distant hulls so panel lines stop shimmering as ships turn. Free. Needs live lighting. Applies the next time the game loads.
           </Typography>
         </Box>
       </Box>

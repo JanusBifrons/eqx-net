@@ -8,8 +8,10 @@
  */
 import { BurnLines, BURN_LINE_MERGE_GAP_PER_RADIUS, hullPointInto } from '../../core/destruction/burnLines.js';
 import { WEAPONS, type WeaponId } from '../../core/combat/WeaponCatalogue.js';
+import { unitDirFromSteps } from '../../core/geometry/unitDir.js';
 import { shipShapeScale } from '../../core/geometry/shipHullOutline.js';
 import { getShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
+import { killCutStripWidth } from '../../shared-types/shipScale/destruction.js';
 import type { WreckDeathPose } from '../../core/destruction/wreckPieces.js';
 import type { CapitalWreckDeps, PieceKnock } from './capitalWreckTypes.js';
 import type { WreckPiecePose } from './wreckResplit.js';
@@ -17,13 +19,15 @@ import type { WreckPiecePose } from './wreckResplit.js';
 /** Scratch for a burn line's target pose (#14). */
 const BURN_POSE: WreckPiecePose = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
 const BURN_PT = { x: 0, y: 0 };
+const MAIN_STRIP = { off: 0, w: 0 };
 
-/** The world width of a weapon's cut, or -1 when it does not cut (no
- *  `killCut`): only cutting beams burn lines. */
+/** The world width of a weapon's cut strip (`killCutStripWidth`: a wide
+ *  slice's burned gap), or -1 when it does not cut (no `killCut`): only
+ *  cutting beams burn lines. */
 function cutWidthOf(weaponId: WeaponId | null | undefined): number {
   if (weaponId === undefined || weaponId === null) return -1;
   const kc = WEAPONS.get(weaponId)?.killCut;
-  return kc === undefined ? -1 : (kc.width ?? 0);
+  return kc === undefined ? -1 : killCutStripWidth(kc);
 }
 
 /** A hit on a live hull (`noteHit`): a cutting beam burns its line into the
@@ -71,10 +75,29 @@ export function burnPieceHit(
 
 /** At a cut kill (`onDeath`): the other beams that burned the hull in the
  *  last moment cut their own lines too (the killing shot's, through world
- *  point (`killX`, `killY`) at hull-local `cutAng`, is the main cut). */
+ *  point `kill` at hull-local `cutAng`, strip `main.w` (1× frame), is the
+ *  main cut). Every heavy beam on the hull at its death cuts its own gap:
+ *  another beam's wide strip that overlaps the main one (two turrets of one
+ *  ship side by side) widens the main strip to cover both instead of being
+ *  dropped (`BurnLines.extraCuts`' `main`): `main.w` becomes its width and
+ *  `kill` moves onto its centre line (in place). */
 export function deathExtraCuts(
-  burn: BurnLines, pose: WreckDeathPose, kindId: ShipKindId, killX: number, killY: number, tick: number, cutAng: number, cutW: number,
+  burn: BurnLines, pose: WreckDeathPose, kindId: ShipKindId, kill: { x: number; y: number }, tick: number, cutAng: number,
+  main: { w: number },
 ): ReturnType<BurnLines['extraCuts']> {
-  hullPointInto(pose.x, pose.y, pose.angle, shipShapeScale(getShipKind(kindId)), killX, killY, BURN_PT);
-  return burn.extraCuts(tick, BURN_PT.x, BURN_PT.y, cutAng, cutW);
+  const s = shipShapeScale(getShipKind(kindId));
+  hullPointInto(pose.x, pose.y, pose.angle, s, kill.x, kill.y, BURN_PT);
+  const extra = burn.extraCuts(tick, BURN_PT.x, BURN_PT.y, cutAng, main.w, MAIN_STRIP);
+  if (!(MAIN_STRIP.w > main.w)) return extra;
+  main.w = MAIN_STRIP.w;
+  // The shift is along the main cut's normal (-dir.y, dir.x), hull 1×
+  // Pixi-up frame → scaled math-up (y flips) → world (turned by the pose).
+  const d = unitDirFromSteps(cutAng, BURN_PT);
+  const mx = -d.y * MAIN_STRIP.off * s;
+  const my = -d.x * MAIN_STRIP.off * s;
+  const c = Math.cos(pose.angle);
+  const sn = Math.sin(pose.angle);
+  kill.x += mx * c - my * sn;
+  kill.y += mx * sn + my * c;
+  return extra;
 }

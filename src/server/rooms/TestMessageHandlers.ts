@@ -1,6 +1,6 @@
 /**
  * Test-only message handlers (`test_aggro`, `test_reload_turrets`,
- * `test_kill_capitals`, `test_fleet_warp`): cues integration and E2E tests
+ * `test_kill_capitals`, `test_fleet_warp`, `test_tractor`): cues integration and E2E tests
  * send to skip a long setup. Every handler is gated on the room's testMode
  * (or `EQX_ALLOW_DEV_OVERRIDES=1`); a production client's message is ignored.
  *
@@ -17,6 +17,7 @@ import {
   TestReloadTurretsSchema,
   TestKillCapitalsSchema,
   TestFleetWarpSchema,
+  TestTractorSchema,
 } from '../../shared-types/messages.js';
 import { isCapitalKindId } from '../../core/combat/capitalHits.js';
 import type { SwarmEntityRegistry } from '../net/SwarmEntityRegistry.js';
@@ -35,6 +36,9 @@ export interface TestMessageHandlersDeps {
   applyDamage: (targetId: string, shooterId: string, damage: number, hitX: number, hitY: number) => void;
   warpBot: (botId: string, x: number, y: number) => void;
   setBotMoveTarget: (botId: string, x: number, y: number) => void;
+  /** Hold a tractor from the player's first mount on swarm entity `entityId`
+   *  for `ticks` (`ForceFieldSubsystem.renewTractor`). */
+  testTractor: (playerId: string, entityId: number, ticks: number) => void;
 }
 
 export class TestMessageHandlers {
@@ -109,5 +113,21 @@ export class TestMessageHandlers {
       d.warpBot(ids[i]!, tx, ty);
       d.setBotMoveTarget(ids[i]!, tx, ty); // hold there after the drop
     }
+  }
+
+  /** Salvage plan PR 11b showcase — `test_tractor`: the sender's first mount
+   *  holds a tractor beam on a swarm entity, as if it carried the tractor
+   *  (no ship kind does until the barge). */
+  tractor(client: Client, raw: unknown): void {
+    const d = this.deps;
+    if (!(d.testMode || d.allowDevOverrides)) return;
+    const playerId = d.sessionToPlayer.get(client.sessionId);
+    if (!playerId) return;
+    const parsed = TestTractorSchema.safeParse(raw);
+    if (!parsed.success) {
+      d.malformed.record(client.sessionId, 'test_tractor');
+      return;
+    }
+    d.testTractor(playerId, parsed.data.target, parsed.data.ticks);
   }
 }

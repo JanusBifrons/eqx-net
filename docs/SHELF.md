@@ -4,6 +4,73 @@ Design work deliberately parked, to revisit. Each entry says what we found,
 why it waits, and what doing it properly involves. Remove an entry in the PR
 that picks it up.
 
+## Graphics-quality leftovers (parked 2026-11-16)
+
+Found while adding the edge-smoothing, render-sharpness and texture-softening
+settings (#754; [graphics-quality.md](features/graphics-quality.md)). Every
+item stays optional and cosmetic, like the settings themselves.
+
+- **Time the options.** No cost is measured yet: the `perf:scenes` A/B on
+  2026-11-16 came back INVALID because other sessions' servers kept the host
+  busy. Doing it properly, on a quiet host (no foreign game server or Vite,
+  ≥ 4 GB free): `pnpm perf:scenes --scenes fleet-fight --reps 4 --base HEAD
+  --head-params aa=fxaa`, then the same with `renderscale=2` and `aa=off`;
+  repeat with `--device phone-proxy --cpu-rate 2`. Put the verdicts in the
+  guide's "Costs" section. Until then, nothing claims a cost.
+- **Show texture softening in motion.** It only changes lit hulls as they
+  turn, so stills cannot show it. Film one short clip of a small ship turning
+  at `?texsoft=0` and `?texsoft=1`, same run.
+- **Softer baked edges.** Bake a one-pixel fade into the edges of the
+  generated ship and rock art. Free per frame and helps phones, where screen
+  filters are off. Bump `FORGE_VERSION`; Baked mode must stay byte-identical
+  when it is off.
+- **Minimum line width for thin lines** (grid, lock and aim lines), so they
+  don't break into dashes when zoomed out.
+- **Smoothing inside the destruction shockwave.** `DestructionFx`'s filter
+  draws without multisampling while it runs; give it `antialias: 'inherit'`
+  (or 'on') and check the cost.
+- **An "Auto" edge-smoothing choice** that picks Standard or Post per device
+  from measured frame times. Needs the timings first.
+- **Look extras** (bloom on engines and lasers, a soft vignette, film grain).
+  Taste calls: stills to the owner first, behind a setting.
+
+Not ours, seen on the way: CI `perf-counts` was red on several unrelated
+branches the same day (`fleet-fight/high` draw-call p95 about 325 against a
+230 budget; `wide-view/high` 34–38 against 32). It needs a new measurement
+(budgets are raised only on one), not a wider budget.
+
+## Weapon-cuts leftovers (parked 2026-11-16)
+
+Found while reworking heavy-beam fire and kill cuts (#698, #730, #737, #745,
+#747; [capital-destruction.md](architecture/capital-destruction.md),
+[fire-control.md](architecture/fire-control.md)). Each is its own small piece
+of work; none blocks the cuts.
+
+- **Turrets vanish on a wreck.** A capital's turrets disappear the moment it
+  breaks, so the wreck pieces look bare (owner, reviewing take 20: "the
+  turrets vanish on a wreck, which is an issue that we need to circle back
+  to"). Doing it properly: turrets stay drawn on the wreck piece their
+  mount sits on (dead, not aiming), derived client-side from the wreck
+  descriptor like the rest of the piece (#11: no geometry on the wire).
+- **Sides come from the owner, not the ship kind.** Owner: "Any faction, any
+  player can theoretically pilot any ship." Today every capital kind carries
+  an `allegiance` (all `drones`), so two AI capitals never fight each other.
+  Doing it properly: remove kind `allegiance`; a ship's side comes only from
+  its owner through `relationOf` ([relations.md](architecture/relations.md)).
+  Its own stream.
+- **An owned capital may keep a dead enemy as its target.** Seen once, not
+  verified. Check the target is dropped when the target dies, through the
+  liveness predicates (#17).
+- **Orange bolt / missile volleys keep firing at the empty kill spot** after
+  the target dies (seen 18–24 s into weapon-cuts take 15). The volley should
+  stop or retarget when its target is gone.
+- **`aiTurretFacesShot` can fail under host load** (an interceptor beam
+  0.088 rad off its drawn barrel, once). Likely the same race #745 fixed for
+  capital turrets: the shot re-reads the hull pose from shared physics
+  memory a worker step after the aim. The non-capital fire path still does;
+  the fix is to cast from the pose that was aimed with (LESSONS.md "two SAB
+  reads in one room tick can be a worker step apart").
+
 ## Cargo holds that drop as cargo among the scrap (parked 2026-11-13)
 
 **Owner (2026-11-13),** reviewing the sub-capital break-up (plan

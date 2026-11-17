@@ -90,9 +90,12 @@ test('a scout (bolt loadout) fires projectiles, not a beam', async ({ browser })
       }, undefined,
       { timeout: 10_000 },
     );
+    // The wait above already saw a bolt in flight with no beam in the same
+    // frame; that is the assertion. No second read of the projectile count:
+    // the drone is 150 u away at 10x game time, so the bolt can hit and be
+    // gone before a later read (it raced to 0 on CI, PR #727).
     // A bolt ship must NOT have an active hitscan beam.
     expect(await surface(page).getAttribute('data-beam-active')).not.toBe('1');
-    expect(await getProjectileCount(page)).toBeGreaterThan(0);
   } finally {
     await ctx.close();
   }

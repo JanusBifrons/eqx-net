@@ -162,8 +162,6 @@ describe('renderer-worker protocol', () => {
       { name: 'SET_TICKER_FPS number', msg: { type: 'SET_TICKER_FPS', fps: 30 } },
       { name: 'SET_TICKER_FPS null', msg: { type: 'SET_TICKER_FPS', fps: null } },
       { name: 'SET_TICKER_FPS undefined', msg: { type: 'SET_TICKER_FPS', fps: undefined } },
-      { name: 'SET_WARP_MODE on', msg: { type: 'SET_WARP_MODE', active: true } },
-      { name: 'SET_WARP_MODE off', msg: { type: 'SET_WARP_MODE', active: false } },
       { name: 'SET_DIAG_MARKERS on', msg: { type: 'SET_DIAG_MARKERS', enabled: true } },
       { name: 'SET_DIAG_MARKERS off', msg: { type: 'SET_DIAG_MARKERS', enabled: false } },
       { name: 'POINTER_EVENT', msg: { type: 'POINTER_EVENT', native: pointerSample } },
@@ -278,7 +276,6 @@ describe('renderer-worker protocol', () => {
             rendererUpdateMs: 4.2,
             spriteCount: 12,
             warpTickMs: 1.1,
-            filterCount: 4,
             gridLabelSpecMs: 0.8,
             gridTextCreateMs: 0.3,
             gridCleanupMs: 0.05,
@@ -311,7 +308,6 @@ describe('renderer-worker protocol', () => {
         expect(back.markers.rendererUpdateMs).toBe(4.2);
         expect(back.markers.spriteCount).toBe(12);
         expect(back.markers.warpTickMs).toBe(1.1);
-        expect(back.markers.filterCount).toBe(4);
         expect(back.markers.gridLabelSpecMs).toBe(0.8);
         expect(back.markers.gridTextCreateMs).toBe(0.3);
         expect(back.markers.gridCleanupMs).toBe(0.05);
@@ -337,7 +333,6 @@ describe('renderer-worker protocol', () => {
           case 'RESIZE':
           case 'SET_TICKER_FPS':
           case 'PERF_PROBE':
-          case 'SET_WARP_MODE':
           case 'SET_DIAG_MARKERS':
           case 'POINTER_EVENT':
           case 'WHEEL_EVENT':
@@ -376,7 +371,6 @@ describe('renderer-worker protocol', () => {
             rendererUpdateMs: 0,
             spriteCount: 0,
             warpTickMs: 0,
-            filterCount: 0,
             gridLabelSpecMs: 0,
             gridTextCreateMs: 0,
             gridCleanupMs: 0,

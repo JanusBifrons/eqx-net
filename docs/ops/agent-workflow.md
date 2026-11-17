@@ -26,9 +26,31 @@ Commit at every milestone where the inner loop (`pnpm typecheck && pnpm lint && 
 ## Clean up at every stage (standing user directive)
 
 "Clean up as much memory as you can at each stage" (a plan step, a commit, a test/netgate/showcase run, the session end):
-1. **RAM / processes:** when a run finishes, and before EVERY recording (showcase take, perf scene), stop what this session started (dev 2567/5173, showcase 2767/5373, netgate vite/proxies, headless Chrome, ffmpeg, `tsx watch`; never the user's own Chrome) and check free RAM.
+1. **RAM / processes:** when a run finishes, and before EVERY recording (showcase take, perf scene), stop what this session started (dev 2567/5173, showcase 2767/5373, netgate vite/proxies, headless Chrome, ffmpeg, `tsx watch`; never the user's own Chrome). The recording itself goes through the [heavy-job queue](#heavy-job-queue), which checks free RAM.
 2. **Disk:** scratch lives in the session scratchpad, not `diag/_*`; delete it when its stage ends. Remove a `.claude/worktrees/<x>` worktree once its branch is merged and clean (keep `netgate-baseline` / `netgate-head`). Never delete committed evidence or a dirty worktree without asking.
 3. **Auto-memory:** keep `MEMORY.md` under 24 KB, one ~150-char line per note; collapse or delete notes when their plan finishes or a later note supersedes them.
+
+## Heavy-job queue
+
+Many sessions share one desktop. When each checked "4 GB free" on its own, they all started heavy work at once, starved each other, and the low-memory reaper killed the jobs: nothing finished. Now ONE heavy job runs at a time, machine-wide; slower, but everything finishes. This replaces the retired `.claude/recording.lock` and the bare RAM check.
+
+- **Heavy (queue it):** showcase take, e2e / netgate run, `pnpm perf:scenes`, the full `pnpm test` suite, an integration batch.
+- **Light (never queue):** typecheck, lint, a unit file or single test, a server boot.
+- **How:** `pnpm heavy run --kind <film|e2e|netgate|perf|suite|other> [--priority 1-5] [--minutes <estimate>] [--who <label>] -- <command…>`. The wrapper joins the queue, waits until it is first, nothing else runs and free RAM ≥ 4 GB (`HEAVY_QUEUE_MIN_GB`), then runs the command with your stdio and returns its exit code. Its ticket and slot are removed on exit, Ctrl+C or crash; a running slot whose process died is freed at once by any waiter. No live job is ever killed.
+- **Reaped while waiting? Re-run it.** A waiting ticket whose process died (e.g. the low-memory reaper killed the background shell) is kept as *orphaned* for 15 min: it blocks no one, and re-running with the same `--who` and `--kind` takes it over and keeps its place (age). After 15 min it is deleted.
+- **Run it with `run_in_background`.** A wait can exceed the 10-min foreground tool timeout; you are notified when it exits. While waiting it prints one line every 30 s (position, who runs, waited, free RAM).
+- **See the queue:** `pnpm heavy status` (`--json` for tools). Tickets live in `<main checkout>/.claude/heavy-queue/`, shared by every worktree.
+- **Priorities:** owner waiting on a film = 5; CI-blocking rerun = 4; default = 3; background perf / exploratory = 2; 1 = whenever. Waiting raises priority by 1 per 10 min, so nothing starves. Order: highest priority, then oldest.
+- **Subagent briefs repeat the rule** (a subagent does not see this page).
+
+Examples:
+
+```sh
+pnpm heavy run --kind film --priority 5 --minutes 12 --who weapon-cuts -- pnpm showcase --shot "fc-*"
+pnpm heavy run --kind netgate --priority 4 --minutes 20 -- pnpm e2e:netgate
+pnpm heavy run --kind perf --priority 2 --minutes 30 -- pnpm perf:scenes --base origin/main
+pnpm heavy status
+```
 
 ## NEVER build a parallel system (standing user directive)
 

@@ -28,7 +28,7 @@
  * attached beam instead of a 1-tick flicker. PROJECTILE fires still spawn
  * a ghost — the bolt actually travels, so the moving ghost IS the visual.
  *
- * Pure helpers, exhaustively tested (mirrors the `shouldDetachWarpVisual`
+ * Pure helpers, exhaustively tested (mirrors the `spriteUpdateDecisions`
  * precedent: the side-effecting `sendFire` / renderer defer to these).
  */
 import { describe, it, expect } from 'vitest';

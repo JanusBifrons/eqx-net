@@ -38,6 +38,12 @@ describe('rendererArgsFromBoot (worker BOOT → PixiRenderer)', () => {
     expect(art).toEqual({ mode: 'machined', delayMs: 5, fx: true, speedFx: false });
   });
 
+  it('carries the graphics quality to the worker', () => {
+    const quality = { aa: 'max' as const, renderScale: 1.5, texSoft: 0.5 };
+    expect(rendererArgsFromBoot(boot({ quality }))[1].quality).toEqual(quality);
+    expect(rendererArgsFromBoot(boot({}))[1].quality).toBeUndefined();
+  });
+
   it('carries the cut-field ore look to the worker', () => {
     expect(rendererArgsFromBoot(boot({ ore: 'veins' }))[1].ore).toBe('veins');
   });

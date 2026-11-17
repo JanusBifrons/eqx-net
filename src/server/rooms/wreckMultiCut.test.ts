@@ -152,3 +152,37 @@ describe('multi-cut: a worn-out piece re-splits along every beam that burned it'
     expect(sawPod, 'some corner cut leaves a child under the floor: a pod').toBe(true);
   });
 });
+
+describe('multi-cut: every heavy beam on the hull at its death burns its own gap', () => {
+  it('one ship\'s two heavy-beam turrets ~18 u apart: the wreck leaves both beams a clear lane', () => {
+    // The diagnostic case (showcase beam-collateral-edge): two turrets of
+    // one battlecruiser pulse together on parallel lines 18 u apart, then
+    // one kills. Both beams must shine through the wreck (owner: a burned
+    // gap "exactly the width of the laser" per beam), so no piece may lie
+    // in either beam's lane.
+    const { sys, spawned, setTick } = make();
+    const beamHalf = 30; // HEAVY_BEAM_WIDTH / 2
+    for (const seed of [7, 11, 23]) {
+      sys.forcedSeed = seed;
+      const t0 = 1000 + seed * 1000;
+      const before = spawned.length;
+      for (let p = 0; p < 3; p++) {
+        setTick(t0 + p * 10);
+        if (p < 2) sys.noteHit('cap', 'lance', 100, -2000, 18, 1, 0, 'heavy_beam');
+        sys.noteHit('cap', 'lance', 100, -2000, 0, 1, 0, 'heavy_beam');
+      }
+      expect(sys.onDeath('cap', 'battleship', { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 }, 1e6).pieces).toBeGreaterThan(0);
+      const pieces = spawned.slice(before);
+      for (const lane of [0, 18]) {
+        for (const p of pieces) {
+          for (const part of p.parts) {
+            let lo = Infinity, hi = -Infinity;
+            for (const v of part) { lo = Math.min(lo, p.y + v.y); hi = Math.max(hi, p.y + v.y); }
+            const clear = hi <= lane - beamHalf + 1e-6 || lo >= lane + beamHalf - 1e-6;
+            expect(clear, `seed ${seed}: ${p.id} [${lo.toFixed(1)}, ${hi.toFixed(1)}] blocks the beam at y=${lane}`).toBe(true);
+          }
+        }
+      }
+    }
+  });
+});

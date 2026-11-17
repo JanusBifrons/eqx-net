@@ -86,6 +86,17 @@ describe('ForceFieldSubsystem — tractor leases', () => {
     expect(lastField(s.posted).force).toBe(spec.force);
   });
 
+  it('a leaseTicks override (the test_tractor cue) holds the lease that long', () => {
+    const { ff, st } = rig();
+    ff.renewTractor('ship', mount('S'), 'pod', 600);
+    st.tick += 599;
+    ff.tickTractors();
+    expect(ff.tractorCount).toBe(1);
+    st.tick += 1;
+    ff.tickTractors();
+    expect(ff.tractorCount).toBe(0);
+  });
+
   it('expires leaseTicks after the last renew (REMOVE_FORCE_FIELD); a renew in time keeps it', () => {
     const { ff, posted, st } = rig();
     ff.renewTractor('ship', mount('S'), 'pod');

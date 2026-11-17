@@ -81,6 +81,10 @@ export type WorkerCmd =
    *  `ForceFieldSubsystem`; nothing else posts these. */
   | { type: 'SET_FORCE_FIELD';    id: string; field: ForceField }
   | { type: 'REMOVE_FORCE_FIELD'; id: string }
+  /** Several commands in ONE message, handled in order with no physics step
+   *  between them (`beginBatch` / `endBatch`): one wreck's piece spawns and
+   *  kicks, so every piece starts on the same step. */
+  | { type: 'BATCH'; cmds: WorkerCmd[] }
 ;
 
 /** Per-tick contact payload extracted from the worker's CONTACT_BATCH message.
@@ -173,9 +177,47 @@ export class PhysicsWorkerProxy {
    *  `EQX_WAKE_CENSUS=1`, `core/physics/wakeCensus.ts`); null otherwise. */
   lastWakeCensus: unknown = null;
 
+  /** Commands held by an open batch (reused, #14) and the batch depth. */
+  private readonly batchCmds: WorkerCmd[] = [];
+  private readonly batchMsg: { type: 'BATCH'; cmds: WorkerCmd[] } = { type: 'BATCH', cmds: this.batchCmds };
+  private batchDepth = 0;
+
   /** Type-safe postMessage facade — the only sanctioned path to the worker. */
   postCommand(cmd: WorkerCmd): void {
-    this.world?.post(cmd);
+    if (this.batchDepth === 0) {
+      this.world?.post(cmd);
+      return;
+    }
+    // A sender that reuses one command object (#14) and posts it again
+    // inside the batch would overwrite the held one: send what is held first.
+    if (this.batchCmds.includes(cmd)) this.flushBatch();
+    this.batchCmds.push(cmd);
+  }
+
+  /**
+   * Hold every `postCommand` until the matching `endBatch`, then send them
+   * as ONE `BATCH` message (nests; the outermost end sends). The worker
+   * handles each message as its own task and may step between two, so
+   * commands that must land on the same physics step (one wreck's piece
+   * spawns with the dead hull's despawn; its pieces' kicks) go in one.
+   * A held command is cloned only at `endBatch`: don't mutate it before.
+   */
+  beginBatch(): void {
+    this.batchDepth++;
+  }
+
+  /** Close a `beginBatch`; the outermost one posts the held commands. */
+  endBatch(): void {
+    if (this.batchDepth === 0) return;
+    if (--this.batchDepth === 0) this.flushBatch();
+  }
+
+  private flushBatch(): void {
+    const cmds = this.batchCmds;
+    if (cmds.length === 1) this.world?.post(cmds[0]!);
+    // postMessage clones synchronously, so the message and list are reused.
+    else if (cmds.length > 1) this.world?.post(this.batchMsg);
+    cmds.length = 0;
   }
 
   /** Used by `onDispose`: frees this room's world (the pool worker stays). */

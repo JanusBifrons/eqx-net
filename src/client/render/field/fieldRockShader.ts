@@ -14,7 +14,8 @@
  * `setFieldRockView` runs, a compare unless the zoom or the sun moved.
  */
 import { GlProgram, UniformGroup } from 'pixi.js';
-import { lin, ROCK_COLORS } from '../art/fields';
+import { lin } from '../art/fields';
+import { ROCK_COLORS } from '../art/rockForge';
 import { DEFAULT_RIG } from '../art/shade';
 import { cutFieldOpts } from '../../../core/terrain/chunkStreamer';
 import { FIELD_FAR_ROCK_CELL, fieldStreet, SLICED } from '../../../core/terrain/fieldLayout';

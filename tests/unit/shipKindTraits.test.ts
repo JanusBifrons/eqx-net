@@ -33,9 +33,9 @@ describe('cargoCapacity kind override (cargoCapacityForMaxHealth)', () => {
     }
   });
 
-  it('only the robot harvester sets an override, and it equals the harvester capacity (byte-identical)', () => {
-    const overridden = SHIP_KINDS_LIST.filter((k) => k.cargoCapacity !== undefined).map((k) => k.id);
-    expect(overridden).toEqual(['robot-harvester']);
+  it('only the robot harvester and the mining barge set an override; the harvester keeps its capacity (byte-identical)', () => {
+    const overridden = SHIP_KINDS_LIST.filter((k) => k.cargoCapacity !== undefined && k.id !== 'barge-look').map((k) => k.id);
+    expect(overridden).toEqual(['robot-harvester', 'barge']);
     expect(cargoCapacityForMaxHealth(getShipKind('robot-harvester'))).toBe(400);
     expect(HARVESTER_CAPACITY).toBe(400);
   });
@@ -81,10 +81,10 @@ describe('randomSpawn: false opt-out', () => {
     expect(ShipKindSchema.safeParse({ ...raw, randomSpawn: true }).success).toBe(false);
   });
 
-  it('no existing kind opts out — the gameplay pool is unchanged', () => {
-    expect(SHIP_KINDS_LIST.some((k) => k.randomSpawn === false)).toBe(false);
+  it('only the mining barge opts out — the rest of the gameplay pool is unchanged', () => {
+    expect(SHIP_KINDS_LIST.filter((k) => k.randomSpawn === false && k.id !== 'barge-look').map((k) => k.id)).toEqual(['barge']);
     expect(GAMEPLAY_SHIP_KINDS_LIST.map((k) => k.id)).toEqual(
-      SHIP_KINDS_LIST.filter((k) => !k.engineeringOnly && !k.npcOnly).map((k) => k.id),
+      SHIP_KINDS_LIST.filter((k) => !k.engineeringOnly && !k.npcOnly && k.id !== 'barge').map((k) => k.id),
     );
     for (const k of GAMEPLAY_SHIP_KINDS_LIST) expect(PLAYABLE_SHIP_KINDS_LIST).toContain(k);
   });

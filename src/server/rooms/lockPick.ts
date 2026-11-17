@@ -27,7 +27,7 @@ export class LockPicker {
 
   /**
    * The lock key mount `mounts[ordinal]` (on a hull at `s`) aims at: null = no
-   * aim (`TURRET_NO_LOCK`, a mining laser whose locks are all haulable),
+   * aim (`TURRET_NO_LOCK`, a mining laser or tractor with no piece its size may work),
    * undefined = the group has no LOCKED target. `resolve` fills `target`
    * (scratch) for a key, false when it is gone.
    */

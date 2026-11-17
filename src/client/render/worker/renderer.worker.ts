@@ -218,33 +218,9 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
         break;
       }
 
-      case 'SET_WARP_MODE': {
-        if (!renderer) return;
-        renderer.setWarpMode(msg.active);
-        break;
-      }
-
-      case 'SET_WARP_PARAMS': {
-        if (!renderer) return;
-        renderer.setWarpParams(msg.params);
-        break;
-      }
-
-      case 'SET_WARP_CENTER': {
-        if (!renderer) return;
-        renderer.setWarpCenter(msg.center);
-        break;
-      }
-
       case 'SET_CAMERA_CENTER': {
         if (!renderer) return;
         renderer.setCameraCenter(msg.worldX, msg.worldY);
-        break;
-      }
-
-      case 'TRIGGER_WARP_IN': {
-        if (!renderer) return;
-        renderer.triggerWarpIn(msg.center);
         break;
       }
 

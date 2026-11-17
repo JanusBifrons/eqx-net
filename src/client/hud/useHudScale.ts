@@ -42,3 +42,19 @@ export function useHudSize(): HudSize {
 export function hudScale(size: HudSize): number {
   return size === 'phone' ? 1 : size === 'tablet' ? 1.2 : 1.35;
 }
+
+/** True while the viewport is wider than tall; re-renders on rotate. */
+export function useIsLandscape(): boolean {
+  const q = '(orientation: landscape)';
+  const [landscape, setLandscape] = useState<boolean>(
+    () => typeof window !== 'undefined' && window.matchMedia?.(q).matches === true,
+  );
+  useEffect(() => {
+    const mq = window.matchMedia?.(q);
+    if (!mq) return;
+    const on = (): void => setLandscape(mq.matches);
+    mq.addEventListener('change', on);
+    return () => mq.removeEventListener('change', on);
+  }, []);
+  return landscape;
+}

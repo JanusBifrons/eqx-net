@@ -131,10 +131,9 @@ vaporised)`, an active hull through `spawnActiveHullWreck` noting
 **Placement.** Every kill pod (AI or player) spawns beside the dead hull, to
 the side of the killer's line (`killPodSpot`: 1.2 hull radii plus the pod's
 radius, side seeded from the ship), so the rest of a salvo and a heavy beam's
-kill follow-through (`followThroughTicks`, which runs on down that line) pass
-it. AI and turret shots never hit a loot pod anyway (`isLootPod`); only a
-pilot's own shot can, except mining tools (the mining laser and the tractor,
-`isMiningTool`), which pass it so a miner never shoots its own ore.
+kill follow-through (`followThroughTicks`, which runs on down that line, through
+the gap the kill burned) pass it. AI and turret shots never hit a loot pod anyway (`isLootPod`); only a
+pilot's own shot can.
 
 Example, a fighter (default table, `maxHealth / 50` scale): a normal kill
 rolling 14 salvage drops 14; vaporised, 21.
@@ -351,6 +350,7 @@ Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each r
   - **Who trades with whom:** the ConvoyDirector pairs it with NPC bases only.
   - **When money moves:** it prices and clamps the order at planning. The wallet op lands in the SAME group as the goods: a credit at pickup via `extraOpsFor(taken)`, a debit at delivery with the release.
 - Lock: `tests/integration/sectorRoom/cargoAccess.test.ts`. Story: [docs/features/loot-and-cargo.md](../features/loot-and-cargo.md) Part 3.
+- **Wreck pieces into the hold (`LootSubsystem` piece store):** on each collect pass a ship's wreck piece goes WHOLE into a collector's hold when its own tractor holds it in the hold zone, or when it is consumable for that ship (`salvageConsumable`: mass ≤ the AA size, `salvageConsumeMass`, for a kind with a mining tool, fits the free hold) and it touches the hull (`shipWithinHullReach` with the piece's radius, the shield bubble while up; `CapitalWreckSubsystem.forEachPieceNear` pre-filters by `shipHitBound`; pieces in a crack hold wait). One `HoldStore` commit of salvage, then `CapitalWreckSubsystem.storePiece`; all or nothing, no pod. A ROCK piece is never stored whole (owner 2026-11-16): it is cut to ore pods, and a pod goes in on the fly-over circle, on hull touch (`LOOT_TOUCH_REACH`) or in the hold zone. Lock: `LootSubsystem.test.ts`, `tests/integration/sectorRoom/factoryLine.test.ts`. Story: [mining-and-salvage](mining-and-salvage.md#the-factory-line-small-pieces-go-straight-into-the-hold).
 
 ### From the server Thresholds section
 
