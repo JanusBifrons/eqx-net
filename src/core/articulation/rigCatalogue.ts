@@ -12,6 +12,7 @@
  * +x along its footprint width, +y along its height), as `structureOutline`
  * uses. Angles: `a` -> `(cos a, sin a)` (same as `ik.ts`).
  */
+import { FREIGHT_DOCK } from '../../shared-types/structureKinds.js';
 import { buildRig, type PartDef, type Rig, type RigDef } from './rig.js';
 
 /** Axis-aligned box outline [x0, x1] × [y0, y1] in a part's frame, CCW. */
@@ -21,53 +22,57 @@ function box(x0: number, y0: number, x1: number, y1: number): number[] {
 
 // ── dock-crane (freight_dock) ────────────────────────────────────────────────
 //
-// freight_dock footprint: 520 × 240 (half extents 260 × 120). The footprint is
-// SOLID (plane layer, collides), so the parking bay is OUTSIDE it, beyond the
-// dock's open long edge. Host frame is game space, y-up.
+// Medium dock (structure-restyle 2c++, Ladder A "M"): the footprint comes from
+// the kind catalogue (`FREIGHT_DOCK.footprint`, 1000 × 400, half extents
+// 500 × 200), so the server collider, outline, art and this rig all follow
+// one size source. The footprint is SOLID (plane layer, collides), so the
+// loading pad is OUTSIDE it, beyond the dock's open long edge. Host frame is
+// game space, y-up.
 //
 // Open side = +y. Evidence: style C `dock()` (structureStyleC.ts) draws in
-// pixi space (`outlinePx` maps game (x, y) -> (x, -y)); its hazard apron,
-// chevrons and bay-mouth truss sit at pixi y < 0 (-hh .. lipY), i.e. game
-// +y, and the dock house fills the rest (game -y). Styles A/B say the same
-// ("floor strips on the -y side", pixi). The server has no berth side today.
+// pixi space (`outlinePx` maps game (x, y) -> (x, -y)); its open-edge hazard
+// strip and crane tower sit at pixi y < 0 (game +y), the dock house fills
+// the rest (game -y). The server has no berth side today.
 //
-// Bay: x in ±208 (±40 % of the dock width, DOCK_BAY_HALF_W), y in 130..290:
-// a 10 u gap past the +y edge (y = 120), then 160 deep. Centre
-// (DOCK_BAY_CX, DOCK_BAY_CY) = (0, 210), half extents 208 × 80. Sized for a
-// hauler (trader-hauler extent 68, i.e. 136 long: fits nose-in or broadside)
-// and ships up to ~300 long parked broadside (416 wide).
+// Pad (bay): 900 × 500 (x in ±450, 90 % of the dock width; y in 210..710):
+// a 10 u gap past the +y edge (y = 200), then 500 deep. Centre (0, 460).
+// A trader-hauler draws ≈ 136 long (extent 68) and ≈ 80 wide: three park
+// side by side nose-in with room between (3 × 80 ≪ 900), or one ship up to
+// ~850 long broadside.
 //
-// Deposit relation: `StorageService.DEPOSIT_RANGE` = 400 is a circle around
-// the dock CENTRE (any side). The bay's farthest corners (±208, 290) are
-// ≈ 357 from the centre, so the whole bay lies inside today's deposit range,
-// and parking in the bay already triggers the 2 s dwell
-// (`DEPOSIT_DWELL_TICKS`). Stage 3 retargets the dwell to this bay zone.
+// Deposit relation: `DOCK_DEPOSIT_RANGE` (below) is the freight dock's own
+// deposit circle around its CENTRE: the far apron corners (±462, 722) are
+// ≈ 857 out, so 900 covers the whole pad. `StorageService.depositRangeOf`
+// uses it for docks; other storage keeps `DEPOSIT_RANGE` (400).
 //
-// Crane: pivot on the plinth 24 in from the open edge, at its middle:
-// (0, 96). Boom 165 + jib 165: max reach 330; min reach (jib folded to its
-// 3.0 rad limit) = 330·sin(0.07) ≈ 23. From the pivot the nearest bay point
-// (0, 130) is 34 away (11 spare) and the far corners (±208, 290) ≈ 284
-// (46 spare), so the whole bay is inside the reach annulus. Boom limits
-// -2.8 .. 2.4 about the plinth's +π/2 facing: the elbow only bends CCW, so
-// near-edge targets put the boom up to ≈ 53° below the edge line (relative
-// ≈ -2.5); it can never swing straight back into the dock (-π/2).
-// Stowed (rest): boom along the edge toward -x (shoulder +π/2), jib folded
-// back over it (elbow 3.0) so the clamp tucks INTO the dock, ≈ 23 below the
-// pivot: every part origin sits inside the footprint.
+// Crane: the pivot is the centre of the crane tower on the roof, 60 in from
+// the open edge, at its middle: (0, 140). Boom 390 + jib 390: max reach 780;
+// min reach (jib folded to its 3.0 rad limit) = 780·cos(1.5) ≈ 55. From the
+// pivot the nearest pad point (0, 210) is 70 away (15 spare) and the far
+// corners (±450, 710) ≈ 726 (54 spare), so the whole pad is inside the reach
+// annulus. Boom limits -2.8 .. 2.4 about the plinth's +π/2 facing: the elbow
+// only bends CCW, so near-corner targets put the boom down to ≈ -2.35
+// relative; it can never swing straight back into the dock (-π/2).
+// Stowed (rest): boom along the roof toward -x (shoulder +π/2, elbow at
+// (-390, 140), inside the ±500 width), jib folded back over it (elbow 3.0)
+// so the clamp tucks INTO the dock, ≈ 55 below the pivot: every part origin
+// sits inside the footprint.
 //
-// The `lip` under-layer part is the painted landing apron: the bay floor
-// (bay + 12 margin on x and at the far end), from the open edge out to
-// y = 302. Cosmetic, no collider; the arm parts are over-layer cosmetic.
+// The `lip` under-layer part is the painted landing apron: the pad floor
+// (pad + 12 margin on x and at the far end), from the open edge out to
+// y = 722. Cosmetic, no collider; the arm parts are over-layer cosmetic.
 
-export const FREIGHT_DOCK_HALF_W = 260;
-export const FREIGHT_DOCK_HALF_H = 120;
+export const FREIGHT_DOCK_HALF_W = FREIGHT_DOCK.footprint.w / 2;
+export const FREIGHT_DOCK_HALF_H = FREIGHT_DOCK.footprint.h / 2;
+/** Crane pivot inset from the open edge: the roof tower's centre. */
+export const DOCK_CRANE_TOWER_INSET = 60;
 export const DOCK_CRANE_PIVOT_X = 0;
-export const DOCK_CRANE_PIVOT_Y = FREIGHT_DOCK_HALF_H - 24;
-export const DOCK_CRANE_BOOM = 165;
-export const DOCK_CRANE_JIB = 165;
-/** Bay half-extents the crane is sized to reach (±40 % of the dock width × 80). */
-export const DOCK_BAY_HALF_W = 0.4 * 2 * FREIGHT_DOCK_HALF_W;
-export const DOCK_BAY_HALF_H = 80;
+export const DOCK_CRANE_PIVOT_Y = FREIGHT_DOCK_HALF_H - DOCK_CRANE_TOWER_INSET;
+export const DOCK_CRANE_BOOM = 390;
+export const DOCK_CRANE_JIB = 390;
+/** Pad half-extents the crane is sized to reach (±45 % of the dock width × 250). */
+export const DOCK_BAY_HALF_W = 0.45 * 2 * FREIGHT_DOCK_HALF_W;
+export const DOCK_BAY_HALF_H = 250;
 /** Gap between the dock's open (+y) edge and the bay's near edge. */
 const DOCK_BAY_GAP = 10;
 /** Bay centre in the dock's host frame (game units, y-up): outside the open edge. */
@@ -78,6 +83,11 @@ export const DOCK_CRANE_REACH_TICKS = 60;
 const BOOM_REST = Math.PI / 2;
 const JIB_FOLD = 3.0;
 const APRON_MARGIN = 12;
+const APRON_X = DOCK_BAY_HALF_W + APRON_MARGIN;
+const APRON_DEPTH = DOCK_BAY_GAP + 2 * DOCK_BAY_HALF_H + APRON_MARGIN;
+/** A freight dock's deposit circle (around its centre): covers the whole
+ *  landing apron, rounded up to 50 (= 900 at 1000 × 400). */
+export const DOCK_DEPOSIT_RANGE = Math.ceil(Math.hypot(DOCK_BAY_CX + APRON_X, FREIGHT_DOCK_HALF_H + APRON_DEPTH) / 50) * 50;
 
 const lockedHinge = { type: 'hinge', min: 0, max: 0 } as const;
 
@@ -92,27 +102,28 @@ const DOCK_CRANE_PARTS: readonly PartDef[] = [
       DOCK_BAY_CX + DOCK_BAY_HALF_W + APRON_MARGIN, DOCK_BAY_GAP + 2 * DOCK_BAY_HALF_H + APRON_MARGIN,
     ),
   },
-  // Plinth: the fixed slewing base near the open edge, facing out over the bay (+y).
+  // Plinth: the fixed slewing base on top of the roof crane tower (the
+  // style C dock art draws the tower under it), facing out over the pad (+y).
   {
     id: 'plinth', parent: null, anchorX: DOCK_CRANE_PIVOT_X, anchorY: DOCK_CRANE_PIVOT_Y,
     baseAngle: Math.PI / 2, joint: lockedHinge, rest: 0, layer: 'over', kind: 'cosmetic',
-    outline: [-14, -14, 14, -14, 18, 0, 14, 14, -14, 14, -18, 0],
+    outline: [-24, -24, 24, -24, 30, 0, 24, 24, -24, 24, -30, 0],
   },
   {
     id: 'boom', parent: 'plinth', anchorX: 0, anchorY: 0,
     joint: { type: 'hinge', min: -2.8, max: 2.4 }, rest: BOOM_REST, layer: 'over', kind: 'cosmetic',
-    outline: box(-8, -7, DOCK_CRANE_BOOM + 6, 7),
+    outline: box(-10, -17, DOCK_CRANE_BOOM + 8, 17),
   },
   {
     id: 'jib', parent: 'boom', anchorX: DOCK_CRANE_BOOM, anchorY: 0,
     joint: { type: 'hinge', min: 0, max: JIB_FOLD }, rest: JIB_FOLD, layer: 'over', kind: 'cosmetic',
-    outline: box(-6, -5, DOCK_CRANE_JIB, 5),
+    outline: box(-8, -13, DOCK_CRANE_JIB, 13),
   },
   // Clamp head at the jib tip (its origin IS the IK end effector).
   {
     id: 'clamp', parent: 'jib', anchorX: DOCK_CRANE_JIB, anchorY: 0,
     joint: lockedHinge, rest: 0, layer: 'over', kind: 'cosmetic',
-    outline: [-4, -12, 10, -12, 14, -6, 8, -6, 8, 6, 14, 6, 10, 12, -4, 12],
+    outline: [-6, -18, 15, -18, 21, -9, 12, -9, 12, 9, 21, 9, 15, 18, -6, 18],
   },
 ];
 

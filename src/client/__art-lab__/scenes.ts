@@ -9,6 +9,7 @@ import { getStructureKind } from '../../shared-types/structureKinds.js';
 import { buildStructureVisual } from '../render/pixi/structureVisuals.js';
 import { parseStructureStyle, STRUCTURE_STYLE_IDS, type StructureStyleId } from '../render/pixi/structureStyles.js';
 import { shipExtent } from '../render/art/fields.js';
+import { DOCK_BAY_CX, DOCK_BAY_CY, DOCK_BAY_HALF_H, DOCK_BAY_HALF_W } from '../../core/articulation/rigCatalogue.js';
 
 export interface Pose { x: number; y: number; rot: number; thrust: number }
 
@@ -78,7 +79,7 @@ export const parseStructStyle = parseStructureStyle;
 /** The restyle's "Ladder A" sizes (Small 150–300, Medium 600–1,200) for the
  *  refining outpost, as the longest side in world units. Art lab only. */
 export const OUTPOST_SIZES: Record<string, number> = {
-  capital: 900, connector: 160, reactor: 700, cargo_bay: 300, refinery: 900, freight_dock: 900,
+  capital: 900, connector: 160, reactor: 700, cargo_bay: 300, refinery: 900, freight_dock: 1000,
 };
 
 /** Today's footprint (w × h, world units) of a structure kind. */
@@ -203,6 +204,13 @@ function fleet(t0: number): ShipE[] {
  * sits beside the long side of the viewport so both phone orientations
  * frame the whole outpost; the camera fits the bounds to `view`.
  */
+/** Outpost dock centres (scene units): far enough apart that the two medium
+ *  docks (1000 wide) and their pads (900 wide) never touch. */
+const DOCK_X = 620;
+const DOCK_Y = -1250;
+/** Lane spacing of the parked haulers: one on the intake pad's centre line, one a lane to its side. */
+const HAULER_SPACING = 240;
+
 export function outpostScene(view: View, zoomOr: (z: number) => number): Scene {
   const s = OUTPOST_SIZES;
   const at = (id: string, x: number, y: number, seed: number, label?: string): StructE => ({ id, x, y, rot: 0, seed, size: s[id], label });
@@ -214,8 +222,8 @@ export function outpostScene(view: View, zoomOr: (z: number) => number): Scene {
     at('connector', -640, 0, 5), // 4 W node
     at('refinery', -1250, 0, 6), // 5
     at('reactor', 1150, 0, 7), // 6 power station
-    at('freight_dock', -520, -1150, 8, 'INTAKE'), // 7
-    at('freight_dock', 520, -1150, 9, 'OUTLET'), // 8
+    at('freight_dock', -DOCK_X, DOCK_Y, 8, 'INTAKE'), // 7
+    at('freight_dock', DOCK_X, DOCK_Y, 9, 'OUTLET'), // 8
     at('cargo_bay', -360, 1050, 10), // 9
     at('cargo_bay', 0, 1100, 11), // 10
     at('cargo_bay', 360, 1050, 12), // 11
@@ -226,10 +234,13 @@ export function outpostScene(view: View, zoomOr: (z: number) => number): Scene {
   const ships: ShipE[] = [
     // Destroyer: idling alongside, its length along the viewport's long side.
     { id: 'destroyer', trail: false, pose: (t, o) => { o.x = dx; o.y = dy + Math.sin(t * 0.4) * 6; o.rot = portrait ? Math.PI / 2 : 0; o.thrust = 0.15; } },
-    // Hauler: parked just off the intake dock, nose to the dock.
-    { id: 'trader-hauler', trail: false, pose: (t, o) => { o.x = -520; o.y = -1560 + Math.sin(t * 0.8) * 3; o.rot = Math.PI; o.thrust = 0.1; } },
-    // Fighter: a slow pass above the docks.
-    flyer('fighter', (t) => [150 + t * 60, -1700 + Math.sin(t * 0.7) * 40]),
+    // Haulers: two parked side by side on the intake dock's loading pad, one in the centre lane (the crane's default reach target)
+    // (scene y is down: the pad lies at -y of the dock), nose to the dock.
+    ...[0, -1].map((sx): ShipE => ({ id: 'trader-hauler', trail: false, pose: (t, o) => {
+      o.x = -DOCK_X + DOCK_BAY_CX + sx * HAULER_SPACING; o.y = DOCK_Y - DOCK_BAY_CY + Math.sin(t * 0.8 + sx) * 3; o.rot = Math.PI; o.thrust = 0.1;
+    } })),
+    // Fighter: a slow pass above the docks' pads.
+    flyer('fighter', (t) => [150 + t * 60, DOCK_Y - DOCK_BAY_CY - DOCK_BAY_HALF_H - 100 + Math.sin(t * 0.7) * 40]),
   ];
   // Bounds of every structure (at its override size) and ship, for the fit.
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
@@ -237,6 +248,11 @@ export function outpostScene(view: View, zoomOr: (z: number) => number): Scene {
     const fp = structFootprint(st.id), k = structScale(st);
     x0 = Math.min(x0, st.x - (fp.w * k) / 2); x1 = Math.max(x1, st.x + (fp.w * k) / 2);
     y0 = Math.min(y0, st.y - (fp.h * k) / 2); y1 = Math.max(y1, st.y + (fp.h * k) / 2);
+    if (st.id === 'freight_dock') {
+      // The loading pad, outside the dock's open edge (scene -y).
+      x0 = Math.min(x0, st.x - DOCK_BAY_HALF_W * k); x1 = Math.max(x1, st.x + DOCK_BAY_HALF_W * k);
+      y0 = Math.min(y0, st.y - (DOCK_BAY_CY + DOCK_BAY_HALF_H) * k);
+    }
   }
   const p: Pose = { x: 0, y: 0, rot: 0, thrust: 0 };
   for (const sh of ships) {

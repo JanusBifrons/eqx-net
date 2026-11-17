@@ -234,12 +234,19 @@ function sectorBasePlan(sectorKey: string): GalaxyBasePlan[] {
   return out;
 }
 
+/** Per-sector cap on the extra bases beside base 0, for a sector whose
+ *  bases don't all fit a base gap apart (`galaxyBases.test.ts`, the room's
+ *  site rule). cygnus-arm: its two outposts and the transit hub stopped
+ *  fitting when the freight dock grew to the medium size (structure-restyle
+ *  2c++), so it drops its trade outpost b1 (no transit links). */
+const EXTRA_BASES_MAX: Readonly<Record<string, number>> = { 'cygnus-arm': 0 };
+
 /** Up to two more outposts or settlements beside base 0 (in place). */
 function addExtraBases(sectorKey: string, ctx: ReturnType<typeof contextForSector>, seed0: number, out: GalaxyBasePlan[]): void {
   let used = TIER_MAX_STRUCTURES[out[0]!.profile.tier];
   const rnd = seededRandom(seed0 ^ 0x2c1b3c6d);
   // About half the sectors get a second base, about a fifth a third.
-  const extra = (rnd() < 0.5 ? 1 : 0) + (rnd() < 0.2 ? 1 : 0);
+  const extra = Math.min((rnd() < 0.5 ? 1 : 0) + (rnd() < 0.2 ? 1 : 0), EXTRA_BASES_MAX[sectorKey] ?? 2);
   for (let i = 1, tries = 0; out.length <= extra && tries < 6; tries++, i++) {
     const seed = hashString(`${sectorKey}#b${i}`);
     const profile = baseProfileFor(ctx, seed);

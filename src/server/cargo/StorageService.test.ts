@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { StorageService, structureUid, DEPOSIT_RANGE, SALVAGE_TO_MINERALS } from './StorageService.js';
+import { StorageService, structureUid, depositRangeOf, DEPOSIT_RANGE, SALVAGE_TO_MINERALS } from './StorageService.js';
+import { DOCK_BAY_CX, DOCK_BAY_CY, DOCK_BAY_HALF_H, DOCK_BAY_HALF_W } from '../../core/articulation/rigCatalogue.js';
 import { HoldStore } from './HoldStore.js';
 import { StructureRegistry, type StructureRecord } from '../structures/StructureRegistry.js';
 import { structureKindToIndex, type StructureKindId } from '../../shared-types/structureKinds.js';
@@ -71,6 +72,21 @@ describe('StorageService (P1a-2)', () => {
     expect(t.svc.nearestOwnStorage('p1', 0, 0)).toBeNull();
     t.registry.add(rec('z', 'cargo_bay', DEPOSIT_RANGE + 50, 0));
     expect(t.svc.nearestOwnStorage('p1', 0, 0)).toBeNull();
+  });
+
+  it('a freight dock deposit range covers its whole loading pad; other storage keeps DEPOSIT_RANGE', () => {
+    expect(depositRangeOf('cargo_bay')).toBe(DEPOSIT_RANGE);
+    expect(depositRangeOf('capital')).toBe(DEPOSIT_RANGE);
+    const far = Math.hypot(Math.abs(DOCK_BAY_CX) + DOCK_BAY_HALF_W, DOCK_BAY_CY + DOCK_BAY_HALF_H);
+    expect(depositRangeOf('freight_dock')).toBeGreaterThanOrEqual(far);
+    const t = setup();
+    // A ship on the pad's far corner (dock at the origin, unrotated): the dock
+    // is found, a cargo bay at the same distance is not.
+    t.registry.add(rec('d', 'freight_dock', 0, 0));
+    expect(t.svc.nearestOwnStorage('p1', DOCK_BAY_HALF_W, DOCK_BAY_CY + DOCK_BAY_HALF_H)?.id).toBe('d');
+    const u = setup();
+    u.registry.add(rec('b', 'cargo_bay', 0, 0));
+    expect(u.svc.nearestOwnStorage('p1', DOCK_BAY_HALF_W, DOCK_BAY_CY + DOCK_BAY_HALF_H)).toBeNull();
   });
 
   it('refine turns network salvage into Capital minerals', () => {

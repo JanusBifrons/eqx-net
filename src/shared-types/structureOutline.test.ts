@@ -156,6 +156,8 @@ describe('structureOutline', () => {
       hh ^= json.charCodeAt(i);
       hh = Math.imul(hh, 0x01000193) >>> 0;
     }
-    expect(hh.toString(16)).toBe('19c521cb');
+    // Re-pinned in 2c++: FREIGHT_DOCK's footprint grew to 1000×400 (every
+    // style's outline is footprint-derived; nothing else moved).
+    expect(hh.toString(16)).toBe('55a60991');
   });
 });

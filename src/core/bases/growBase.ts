@@ -38,8 +38,10 @@ import type { GoodId } from '../../shared-types/goods.js';
  *  seed, so a change moves every base).
  *  9→10 (plan coastal-defences): bases buy a tiered mix of gun batteries
  *  (AA, 5" mounts, coastal guns, region-heart super-guns) from their own
- *  random stream; casemates face outward. */
-export const BASE_GROWTH_VERSION = 10;
+ *  random stream; casemates face outward.
+ *  10→11 (structure-restyle 2c++): the freight dock grew to 1000×400, so
+ *  every base with a dock lays out wider. */
+export const BASE_GROWTH_VERSION = 11;
 
 /**
  * Most structures a base of each tier may have (fence included). Measured

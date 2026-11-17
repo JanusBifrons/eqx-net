@@ -138,7 +138,7 @@ value is superseded, move its row to [History](#history). Values were checked ag
 | Tractor hold-zone pickup | 1.2 × the tractor's `hold` (300 u today) from the beam's muzzle | `TRACTOR_PICKUP_HOLD_MUL`, `src/server/rooms/ForceFieldSubsystem.ts` | A pod held in the collector's own tractor beam is picked up as if flown over | `tractorPickup.test.ts`, `ForceFieldSubsystem.test.ts` |
 | Derelict TTL | 1 h | `DERELICT_TTL_MS`, `src/server/cargo/LootSubsystem.ts` | Abandoned-hull pods | `LootSubsystem.test.ts` |
 | Storage capacity | Capital 5000, Cargo Bay 2000 (others per kind) | `StructureKind.holdCapacity`, `src/shared-types/structureKinds.ts` | Base storage | `StorageService.test.ts` |
-| Auto-deposit | within 400 u for 120 ticks | `DEPOSIT_RANGE`, `DEPOSIT_DWELL_TICKS`, `src/server/cargo/StorageService.ts` | When cargo deposits itself | `tests/integration/sectorRoom/storageDeposit.test.ts` |
+| Auto-deposit | within 400 u (a freight dock: 900 u, its whole loading pad) for 120 ticks | `DEPOSIT_RANGE`, `depositRangeOf`, `DOCK_DEPOSIT_RANGE` (rigCatalogue.ts), `DEPOSIT_DWELL_TICKS`, `src/server/cargo/StorageService.ts` | When cargo deposits itself | `tests/integration/sectorRoom/storageDeposit.test.ts` |
 | Standing scale | −100..100 in 0.1 steps; scale version 1 | `STANDING_SCALE_VERSION`, `src/server/economy/EconomyStore.ts` | Faction standing ([factions](factions.md)) | — |
 | Packed item markup | × 1.3 on pack-recipe value | `PACKED_MARKUP`, `src/core/economy/market.ts` | Trader offers of packed structures | `tests/integration/sectorRoom/packedBuy.test.ts` |
 | Packed hull offers | 2 on the board | `PACKED_HULL_OFFERS_ON_BOARD`, `src/server/economy/TradeDirector.ts` | Hull supply from traders | `tests/integration/sectorRoom/shipyard.test.ts` |

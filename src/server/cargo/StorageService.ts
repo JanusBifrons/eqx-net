@@ -31,12 +31,19 @@ export function fittedModuleIds(h: Hold): string[] {
 }
 import type { PersistOp } from '../../core/contracts/IPersistenceSink.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
+import { DOCK_DEPOSIT_RANGE } from '../../core/articulation/rigCatalogue.js';
 import { cloneHold, emptyHold, extractRequested, holdWeight, isHoldEmpty, mergeInto, transferInto, type CargoRequest } from '../../core/cargo/hold.js';
 import type { HolderType, HoldRecord, HoldStore } from './HoldStore.js';
 import type { StructureRecord, StructureRegistry } from '../structures/StructureRegistry.js';
 
 /** Fly within this distance of your own storage to deposit. */
 export const DEPOSIT_RANGE = 400;
+/** Deposit range around storage of `kindId`: a freight dock's covers its
+ *  whole landing pad (`DOCK_DEPOSIT_RANGE`, rigCatalogue.ts); other storage
+ *  uses `DEPOSIT_RANGE`. */
+export function depositRangeOf(kindId: string): number {
+  return kindId === 'freight_dock' ? Math.max(DEPOSIT_RANGE, DOCK_DEPOSIT_RANGE) : DEPOSIT_RANGE;
+}
 /** Hold position this long (60 Hz ticks) to deposit — 2 s. */
 export const DEPOSIT_DWELL_TICKS = 120;
 /** Refine: 1 salvage → this many minerals (weight-neutral: 1 vs 10 × 0.1). */
@@ -160,14 +167,17 @@ export class StorageService {
     if (puts.length > 0) this.d.holdStore.commit(puts, [], this.persist());
   }
 
-  /** Nearest OPERATIONAL storage owned by `owner` within `range` of (x, y). */
-  nearestOwnStorage(owner: string, x: number, y: number, range = DEPOSIT_RANGE): StructureRecord | null {
+  /** Nearest OPERATIONAL storage owned by `owner` within deposit range of
+   *  (x, y): each structure's own `depositRangeOf(kind)`, or `range` for all
+   *  when given. */
+  nearestOwnStorage(owner: string, x: number, y: number, range?: number): StructureRecord | null {
     let best: StructureRecord | null = null;
-    let bestD2 = range * range;
+    let bestD2 = Infinity;
     for (const rec of this.d.registry.all()) {
       if (rec.owner !== owner || !isOperationalStorage(rec)) continue;
       const d2 = (rec.x - x) ** 2 + (rec.y - y) ** 2;
-      if (d2 <= bestD2) { bestD2 = d2; best = rec; }
+      const r = range ?? depositRangeOf(rec.kind);
+      if (d2 <= r * r && d2 <= bestD2) { bestD2 = d2; best = rec; }
     }
     return best;
   }

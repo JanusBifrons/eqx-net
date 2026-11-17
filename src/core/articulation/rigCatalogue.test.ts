@@ -6,7 +6,7 @@ import { createRigPose, evaluateRig, type PlayingClip } from './evaluate.js';
 import { twoBoneIkSolve } from './ikAdapter.js';
 import {
   DOCK_BAY_CX, DOCK_BAY_CY, DOCK_BAY_HALF_H, DOCK_BAY_HALF_W, DOCK_CRANE_BOOM, DOCK_CRANE_JIB, DOCK_CRANE_PIVOT_X, DOCK_CRANE_PIVOT_Y, DOCK_CRANE_REACH_TICKS,
-  DOOR_TURRET_MOUNT, DOOR_TURRET_SLIDE_TRAVEL, FREIGHT_DOCK_HALF_H, FREIGHT_DOCK_HALF_W,
+  DOCK_DEPOSIT_RANGE, DOOR_TURRET_MOUNT, DOOR_TURRET_SLIDE_TRAVEL, FREIGHT_DOCK_HALF_H, FREIGHT_DOCK_HALF_W,
   RIG_DEFS, rigById, rigForStructureKind,
 } from './rigCatalogue.js';
 
@@ -28,6 +28,9 @@ describe('rig catalogue (structure-restyle 2b+)', () => {
   it('freight_dock footprint matches the numbers the crane is sized from', () => {
     const dock = STRUCTURE_KINDS_LIST.find((k) => k.id === 'freight_dock')!;
     expect(dock.footprint).toEqual({ w: 2 * FREIGHT_DOCK_HALF_W, h: 2 * FREIGHT_DOCK_HALF_H });
+    // Ladder A medium (600–1,200 longest side), the size the owner picked.
+    expect(dock.footprint.w).toBe(1000);
+    expect(dock.radius).toBeGreaterThanOrEqual(Math.hypot(FREIGHT_DOCK_HALF_W, FREIGHT_DOCK_HALF_H));
   });
 
   it('authored clip values sit within joint limits and clips never leave them', () => {
@@ -137,8 +140,24 @@ describe('dock-crane', () => {
     );
   });
 
+  it('the pad fits three trader-haulers side by side (nose-in, 80 wide, 136 long)', () => {
+    // Drawn hauler size (shipExtent('trader-hauler') = 68 half-length; ~80 wide).
+    expect(2 * DOCK_BAY_HALF_W).toBeGreaterThanOrEqual(3 * 80 + 4 * 60);
+    expect(2 * DOCK_BAY_HALF_H).toBeGreaterThanOrEqual(136 + 2 * 60);
+    expect(2 * DOCK_BAY_HALF_W).toBeGreaterThanOrEqual(850); // ~900 × 500, the owner's pick
+    expect(2 * DOCK_BAY_HALF_H).toBeGreaterThanOrEqual(480);
+  });
+
+  it('the deposit circle covers the whole landing apron', () => {
+    const lip = rig.parts[rigPartIndex(rig, 'lip')]!;
+    const o = lip.outline!;
+    for (let k = 0; k < o.length; k += 2) {
+      expect(Math.hypot(lip.anchorX + o[k]!, lip.anchorY + o[k + 1]!)).toBeLessThanOrEqual(DOCK_DEPOSIT_RANGE);
+    }
+  });
+
   it('reports not-reached well outside the bay', () => {
-    for (const [x, y] of [[600, 0], [-600, 0], [0, 500], [0, -500], [500, 400], [-500, 400]] as const) {
+    for (const [x, y] of [[1300, 0], [-1300, 0], [0, 1100], [0, -1100], [1000, 800], [-1000, 800]] as const) {
       expect(reachTo(x, y).reached, `(${x}, ${y})`).toBe(false);
     }
   });
@@ -163,9 +182,9 @@ describe('dock-crane', () => {
     expect(pose.x[boom]).toBeCloseTo(DOCK_CRANE_PIVOT_X, 9);
     expect(pose.y[boom]).toBeCloseTo(DOCK_CRANE_PIVOT_Y, 9);
     expect(Math.cos(pose.angle[boom]!)).toBeCloseTo(-1, 9); // boom lies along the edge (-x)
-    // jib folded back into the dock: 165·sin 3.0 ≈ 23 below the pivot
+    // jib folded back into the dock: 2·390·cos 1.5 ≈ 55 below the pivot
     expect(pose.y[clamp]!).toBeLessThan(DOCK_CRANE_PIVOT_Y);
-    expect(DOCK_CRANE_PIVOT_Y - pose.y[clamp]!).toBeLessThan(30);
+    expect(DOCK_CRANE_PIVOT_Y - pose.y[clamp]!).toBeLessThan(60);
   });
 
   it('arm-hold sits on the target; arm-retract returns to rest', () => {
