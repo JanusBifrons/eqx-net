@@ -266,6 +266,7 @@ import { isEngageablePilotHull, isLingeringHull, isPilotedActive } from '../../c
 import { MalformedMessageTracker } from './MalformedMessageTracker.js';
 import { guarded } from './guardedLoop.js';
 import { CutFieldSubsystem } from './CutFieldSubsystem.js';
+import type { ChunkSource } from '../../core/terrain/chunkStreamer.js';
 import { SectorPersistence } from './SectorPersistence.js';
 import { LivingWorldBotHooks } from './LivingWorldBotHooks.js';
 import { SceneScriptRunner, SceneScriptSchema, type SceneStatus } from './scene/SceneScriptRunner.js';
@@ -3233,7 +3234,9 @@ export class SectorRoom extends Room<SectorState> {
     this.selectionStatsTimer.unref?.();
 
     if (this.testMode) this.persistSector = roomOpts.persistSector !== false; // cut field before any seeding: placement sees its rocks (C5)
-    if (roomOpts.cutField) this.cutField = new CutFieldSubsystem(roomOpts.cutField.seed, this.gameClock, this.swarmRegistry, this.swarmSpawner, { shipSlots: () => this.playerToSlot.values(), sab: () => this.sabF32, post: (cmd) => this.postToWorker(cmd), evict: (rec, broadcast) => this.evictSwarmEntity(rec, { broadcast, emitDestroyed: false }), broadcast: (type, msg) => this.broadcast(type, msg), shipMass: (id) => { const s = this.getActiveShip(id); return s ? shipBodyMass(getShipKind(s.kind)) : undefined; }, records: this.persistSector && this.sectorKey !== null ? terrainRecordStoreFor(`${this.sectorKey}|${roomOpts.cutField.seed}`) : undefined }, roomOpts.cutField.clearings);
+    // The chunk-streaming host exists when the sector has ANY chunk source: the field's rocks today; wreck-field sources join `chunkSources` (wreck fields R7).
+    const fieldSeed = roomOpts.cutField?.seed ?? null, chunkSources: ChunkSource[] = [];
+    if (fieldSeed !== null || chunkSources.length > 0) this.cutField = new CutFieldSubsystem(fieldSeed, this.gameClock, this.swarmRegistry, this.swarmSpawner, { shipSlots: () => this.playerToSlot.values(), sab: () => this.sabF32, post: (cmd) => this.postToWorker(cmd), evict: (rec, broadcast) => this.evictSwarmEntity(rec, { broadcast, emitDestroyed: false }), broadcast: (type, msg) => this.broadcast(type, msg), shipMass: (id) => { const s = this.getActiveShip(id); return s ? shipBodyMass(getShipKind(s.kind)) : undefined; }, records: this.persistSector && this.sectorKey !== null && fieldSeed !== null ? terrainRecordStoreFor(`${this.sectorKey}|${fieldSeed}`) : undefined }, roomOpts.cutField?.clearings, chunkSources);
     // Structures plan (Phase 3-5) — testMode scenario seeding: a pre-built,
     // powered grid + drones/asteroids, for deterministic E2E (no place-ahead
     // overlap, no construction wait).
