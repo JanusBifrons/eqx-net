@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { Hold } from '../goods.js';
 import type { BeamLinks } from '../beamLinksWire.js';
+import { FactionLookWireSchema, MAX_FACTION_LOOKS, type FactionLookWire } from '../factions.js';
 import { ShellSalvoSchema, type ShellKeyRecord, type ShellSalvo } from './shellEvents.js';
 import { MAX_WELCOME_WRECKS, WreckDescriptorSchema, type WreckDescriptor, type WreckSync } from './wreckDescriptor.js';
 
@@ -64,6 +65,9 @@ export interface WelcomeMessage {
    *  moved rock was left (C2 deep sleep; later moves arrive as `field_moved`).
    *  Absent = no cut field. */
   cutField?: { seed: string; consumed?: number[]; moved?: FieldRockPose[] };
+  /** Every claimed faction ship look (galaxy-wide, #16); later claims arrive
+   *  as `faction_look_claimed`. Absent = none known (older server). */
+  factionLooks?: FactionLookWire[];
 }
 
 /** Macro terrain C3: a packed field rock key (`rockKey`, u32). */
@@ -150,6 +154,7 @@ export const WelcomeSchema = z
       consumed: z.array(RockKeySchema).max(MAX_WELCOME_CONSUMED_ROCKS).optional(),
       moved: z.array(FieldRockPoseSchema).max(MAX_WELCOME_MOVED_ROCKS).optional(),
     }).strict().optional(),
+    factionLooks: z.array(FactionLookWireSchema).max(MAX_FACTION_LOOKS).optional(),
   })
   .strict();
 

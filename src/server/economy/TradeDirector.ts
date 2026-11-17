@@ -70,6 +70,7 @@ import type { AcceptOfferMsg, SendGiftMsg, TradeSink, TradeVerdict } from './tra
 import type { Wallet } from './Wallet.js';
 import type { PersistOp } from '../../core/contracts/IPersistenceSink.js';
 import type { FactionLookClaim, FactionPolicy, PlayerPolicyWire } from '../../shared-types/factions.js';
+import type { FactionLookClaimed } from '../../shared-types/messages/factionMessages.js';
 import { gameNow, gameSetInterval, gameClearTimer, type GameTimer } from '../time/gameTime.js';
 
 /** The room surface the trade director drives (SectorRoom implements it). */
@@ -87,6 +88,7 @@ export interface TradeRoom {
   tradeDropAt(hold: Hold, x: number, y: number): void;
   /** Send a trade notice to `playerId` if they are connected to this room. */
   tradeNotify(playerId: string, notice: TradeNotice): void;
+  broadcastFactionLook?(msg: FactionLookClaimed): void;
 }
 
 export interface TradeDirectorOptions {
@@ -511,20 +513,18 @@ export class TradeDirector implements TradeSink {
     return this.store.rep(playerId, 'traders');
   }
 
-  standing(from: string, to: string): number {
-    return this.store.standing(from, to);
-  }
-
-  adjustStanding(from: string, to: string, delta: number): void {
-    this.store.adjustStanding(from, to, delta);
-  }
-
-  policyOf(faction: string): FactionPolicy {
-    return this.store.policyOf(faction);
-  }
-
+  standing(from: string, to: string): number { return this.store.standing(from, to); }
+  adjustStanding(from: string, to: string, delta: number): void { this.store.adjustStanding(from, to, delta); }
+  policyOf(faction: string): FactionPolicy { return this.store.policyOf(faction); }
   setPlayerPolicy(playerId: string, policy: PlayerPolicyWire): void { this.store.setPlayerPolicy(playerId, policy); }
-  claimFactionLook(playerId: string, colorSlot: number, sigil: number): FactionLookClaim { return this.store.claimLook(playerId, colorSlot, sigil); }
+
+  /** Claim a look; a success reaches every room at once (late joiners: welcome). */
+  claimFactionLook(playerId: string, colorSlot: number, sigil: number): FactionLookClaim {
+    const claim = this.store.claimLook(playerId, colorSlot, sigil);
+    const msg = { type: 'faction_look_claimed', look: { factionId: playerId, colorSlot, sigil } } as const;
+    if (claim === 'ok') for (const room of this.rooms.values()) room.broadcastFactionLook?.(msg);
+    return claim;
+  }
 
   tollPref(playerId: string, faction: string): 'always' | 'never' | undefined {
     return this.store.tollPref(playerId, faction);

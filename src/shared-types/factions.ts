@@ -373,18 +373,21 @@ export const FactionLookWireSchema = z.object({
   sigil: z.number().int().min(0).max(SIGIL_COUNT - 1),
 });
 export type FactionLookWire = z.infer<typeof FactionLookWireSchema>;
+/** Most claims that can exist (one per pair): the wire bound on a full list. */
+export const MAX_FACTION_LOOKS = PLAYER_LIVERY.length * SIGIL_COUNT;
 
 /** The Factions tab reply (`GET /trade/factions`); `looks` is every claimed
  *  look (all players), so every client paints the same pairs. */
 export const PlayerFactionsViewSchema = z.object({
   rows: z.array(FactionRowSchema),
   policy: PlayerPolicyWireSchema,
-  looks: z.array(FactionLookWireSchema).default([]),
+  looks: z.array(FactionLookWireSchema).max(MAX_FACTION_LOOKS).default([]),
 });
 export type PlayerFactionsView = z.infer<typeof PlayerFactionsViewSchema>;
 
 /** Why a claim failed, or 'ok'. */
-export type FactionLookClaim = 'ok' | 'npc' | 'range' | 'taken';
+export const FACTION_LOOK_CLAIMS = ['ok', 'npc', 'range', 'taken'] as const;
+export type FactionLookClaim = (typeof FACTION_LOOK_CLAIMS)[number];
 
 const FACTION_LOOKS = new Map<FactionId, FactionLook>();
 /** Packed pair (`slot << 12 | sigil`) → the faction holding it. */

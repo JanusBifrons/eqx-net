@@ -123,11 +123,13 @@ A player may claim a unique **look**: a palette colour slot (`PLAYER_LIVERY`, 12
 
 - **One system.** The claims live in `shared-types/factions.ts` beside `NPC_FACTIONS`, and `teamColorOf` / `teamSigilOf` / `teamEdgeOf` read them first (one Map lookup). The sigil seed is `slot << 12 | sigil`, the hash default's layout; the edge comes from the claimed sigil. Ships, and anything else, take a faction's colours only from those three helpers.
 - **Reserved.** NPC factions can't claim, and no claim may take an NPC faction's own sigil seed.
-- **Server.** `claim_faction_look` (strict zod: slot and sigil in range) → `TradeSink.claimFactionLook` → `EconomyStore.claimLook`, which claims in the registry and, on success only, persists the pair on the player's economy row (`look`). Boot hydrate rebuilds the registry from the rows. A taken pair is a silent no-op.
-- **Client.** The `GET /trade/factions` reply carries `looks` (every claim); `fetchFactions` applies it with `setFactionLooks`. `ownerLivery` drops its per-owner cache when `factionLookVersion()` changes, so a claim repaints that faction's ships.
+- **Server.** `claim_faction_look` (strict zod: slot and sigil in range) → `TradeSink.claimFactionLook` → `EconomyStore.claimLook`, which claims in the registry and, on success only, persists the pair on the player's economy row (`look`). Boot hydrate rebuilds the registry from the rows.
+- **Sync to everyone (step 0b).** The claimant always gets `claim_faction_look_result` (`ok`, or `reason` npc / range / taken; a toast). A success is broadcast by `TradeDirector` to every room (`broadcastFactionLook` → `faction_look_claimed`), the same galaxy-wide loop the directors use for `broadcastWorldNotice`. Every welcome carries `factionLooks` (all claims), so a late joiner converges without the broadcast (#16).
+- **Client.** The welcome applies `factionLooks` with `setFactionLooks`; `faction_look_claimed` claims locally (`net/factionLookSync.ts`); the `GET /trade/factions` reply's `looks` resyncs too. `ownerLivery` drops its per-owner cache when `factionLookVersion()` changes, so a claim repaints that faction's ships.
+- **Renderer worker.** The worker has its own copy of the registry. `WorkerRendererClient.update` posts `SET_FACTION_LOOKS` (every claim) before the frame's mirror whenever the main thread's `factionLookVersion()` has moved, and `renderer.worker.ts` applies it with `setFactionLooks`.
 - **Picker:** next step (`freeSigilsFor(slot)` lists the free sigils).
 
-**Locks:** `factions.livery.test.ts` (registry), `factionMessages.test.ts` (schema), `EconomyStore.test.ts` (persist + hydrate), `factionStanding.test.ts` (a taken pair is refused), `shipSpriteUpdater.livery.test.ts` (a claim repaints a cached owner).
+**Locks:** `factions.livery.test.ts` (registry), `factionMessages.test.ts` (schemas + replies), `EconomyStore.test.ts` (persist + hydrate), `factionStanding.test.ts` (a taken pair is refused; verdict, broadcast and welcome), `shipSpriteUpdater.livery.test.ts` (a claim repaints a cached owner), `factionLookSync.test.ts` (A's claim changes B's livery on the main thread and through the worker post), `protocol.test.ts` (SET_FACTION_LOOKS clones).
 
 ## Next
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { ClaimFactionLookSchema } from './factionMessages.js';
-import { PLAYER_LIVERY, SIGIL_COUNT } from '../factions.js';
+import { ClaimFactionLookResultSchema, ClaimFactionLookSchema, FactionLookClaimedSchema, claimFactionLookResult } from './factionMessages.js';
+import { FACTION_LOOK_CLAIMS, PLAYER_LIVERY, SIGIL_COUNT } from '../factions.js';
 
 describe('claim_faction_look schema', () => {
   const ok = { type: 'claim_faction_look', colorSlot: 0, sigil: 0 };
@@ -22,5 +22,29 @@ describe('claim_faction_look schema', () => {
     ['wrong type', { ...ok, type: 'set_faction_policy' }],
   ])('rejects %s', (_label, msg) => {
     expect(ClaimFactionLookSchema.safeParse(msg).success).toBe(false);
+  });
+});
+
+describe('claim_faction_look_result reply', () => {
+  it.each(FACTION_LOOK_CLAIMS)('the server-built reply for %s passes the client schema', (claim) => {
+    const reply = claimFactionLookResult(claim);
+    expect(ClaimFactionLookResultSchema.parse(reply)).toEqual(reply);
+    expect(reply.ok).toBe(claim === 'ok');
+    expect(reply.reason).toBe(claim === 'ok' ? undefined : claim);
+  });
+
+  it("rejects reason 'ok' and unknown keys", () => {
+    const base = { type: 'claim_faction_look_result', ok: false, message: 'x' };
+    expect(ClaimFactionLookResultSchema.safeParse({ ...base, reason: 'ok' }).success).toBe(false);
+    expect(ClaimFactionLookResultSchema.safeParse({ ...base, extra: 1 }).success).toBe(false);
+  });
+});
+
+describe('faction_look_claimed broadcast', () => {
+  const ok = { type: 'faction_look_claimed', look: { factionId: 'p', colorSlot: 0, sigil: SIGIL_COUNT - 1 } };
+  it('accepts a claim and rejects an out-of-range or padded one', () => {
+    expect(FactionLookClaimedSchema.safeParse(ok).success).toBe(true);
+    expect(FactionLookClaimedSchema.safeParse({ ...ok, look: { ...ok.look, sigil: SIGIL_COUNT } }).success).toBe(false);
+    expect(FactionLookClaimedSchema.safeParse({ ...ok, look: { ...ok.look, extra: 1 } }).success).toBe(false);
   });
 });
