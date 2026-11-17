@@ -58,10 +58,13 @@ describe('solar-system sector arrivals', () => {
 });
 
 describe('solar-system sector belts', () => {
-  it('each belt pocket holds a mining field of rocks inside it, with unique ids', async () => {
+  it('a sector with no cut field: each belt pocket holds a mining field of rocks inside it, with unique ids', async () => {
     const reg = await import('../galaxy/GalaxyRegistry.js');
-    const cfg = reg.resolveSectorConfig('sol-prime');
-    const belts = sites.sectorSites('sol-prime').filter((s) => s.kind === 'belt');
+    // vega-reach has no `asteroid` mark, so no cut field (macro terrain F4):
+    // its belts keep the authored rings.
+    const cfg = reg.resolveSectorConfig('vega-reach');
+    expect(cfg.cutField).toBeUndefined();
+    const belts = sites.sectorSites('vega-reach').filter((s) => s.kind === 'belt');
     expect(belts.length).toBeGreaterThan(0);
     for (const b of belts) {
       const rocks = cfg.asteroidConfig.filter((a) => a.id.startsWith(`${b.id}-`));

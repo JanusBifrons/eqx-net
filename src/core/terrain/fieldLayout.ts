@@ -271,10 +271,35 @@ export function slicedField(o: SlicedOpts): SlicedRock[] {
     stack.length = 0; stack.push(...next);
   }
   const clearings = o.clearings ?? [];
-  const inClearing = (c: Pt, size: number): boolean => {
+  // A clearing is exact: a piece wholly inside one goes (with all its rocks);
+  // a piece reaching into one is cut on down to rocks (no big or far-zoom
+  // stop), and a rock whose final (warped) outline reaches in goes. Tested
+  // before the warp with its reach added, so no warped vertex escapes.
+  const reach = (poly: Pt[], c: Pt): number => {
+    let r2 = 0;
+    for (const p of poly) { const dx = p.x - c.x, dy = p.y - c.y; r2 = Math.max(r2, dx * dx + dy * dy); }
+    return Math.sqrt(r2);
+  };
+  /** 2: wholly inside a clearing; 1: reaches into one; 0: clear of all. */
+  const clearingHit = (c: Pt, rad: number): 0 | 1 | 2 => {
+    let hit: 0 | 1 = 0;
     for (let i = 0; i < clearings.length; i++) {
-      const k = clearings[i]!, dx = c.x - k.x, dy = c.y - k.y;
-      if (size < k.r && dx * dx + dy * dy < k.r * k.r) return true;
+      const k = clearings[i]!, kx = c.x - k.x, ky = c.y - k.y, d = Math.sqrt(kx * kx + ky * ky);
+      if (d + rad + pad < k.r) return 2;
+      if (d - rad - pad < k.r) hit = 1;
+    }
+    return hit;
+  };
+  const rockInClearing = (verts: Pt[]): boolean => {
+    for (let i = 0; i < clearings.length; i++) {
+      const k = clearings[i]!;
+      for (const p of verts) { const dx = p.x - k.x, dy = p.y - k.y; if (dx * dx + dy * dy < k.r * k.r) return true; }
+      let inside = false; // the clearing's centre under the rock (a rock bigger than it)
+      for (let a = 0, b = verts.length - 1; a < verts.length; b = a++) {
+        const pa = verts[a]!, pb = verts[b]!;
+        if ((pa.y > k.y) !== (pb.y > k.y) && k.x < ((pb.x - pa.x) * (k.y - pa.y)) / (pb.y - pa.y) + pa.x) inside = !inside;
+      }
+      if (inside) return true;
     }
     return false;
   };
@@ -293,10 +318,11 @@ export function slicedField(o: SlicedOpts): SlicedRock[] {
     const size = Math.sqrt(areaOf(poly));
     const d = Math.sqrt(c.x * c.x + c.y * c.y) / R; // 0 core .. ~1 rim
     if (d < S.holeShare && size < R * 0.2) continue; // the open core
-    if (inClearing(c, size)) continue;
+    const cut = clearings.length > 0 ? clearingHit(c, reach(poly, c)) : 0;
+    if (cut === 2) continue;
     const small = F * (S.smallMinF + (S.smallMaxF - S.smallMinF) * rnd(path, 3));
-    const bigStop = size <= 2 * B && size >= B && rnd(path, 4) < S.bigChance;
-    const lodStop = o.minSize !== undefined && size < o.minSize;
+    const bigStop = cut === 0 && size <= 2 * B && size >= B && rnd(path, 4) < S.bigChance;
+    const lodStop = cut === 0 && o.minSize !== undefined && size < o.minSize;
     if (size <= small || bigStop || lodStop || depth > 40 || !touchesView(poly)) {
       if (!touchesView(poly)) continue;
       if (own && !(c.x >= own.x0 && c.x < own.x1 && c.y >= own.y0 && c.y < own.y1)) continue;
@@ -310,7 +336,10 @@ export function slicedField(o: SlicedOpts): SlicedRock[] {
       if (rnd(path, 5) > keep) continue;
       const street = fieldStreet(d, F);
       const v = inset(poly, street / 2);
-      if (v) out.push({ verts: warpAll(roughen(v, path, rnd), base), cx: c.x, cy: c.y, size, path });
+      if (!v) continue;
+      const verts = warpAll(roughen(v, path, rnd), base);
+      if (cut === 1 && rockInClearing(verts)) continue;
+      out.push({ verts, cx: c.x, cy: c.y, size, path });
       continue;
     }
     // Cut ACROSS the piece's longest dimension (no slivers), at a seeded
