@@ -5231,6 +5231,9 @@ export class ColyseusGameClient {
     this.rafStallDetector.detectGap(elapsedMs, this.inputTick, this.clock.now());
   }
 
+  /** The camera (`RendererFeedback.viewX/viewY/viewHalf`), each frame: the cut field draws around it too. */
+  setFieldView(x: number, y: number, viewHalf: number): void { this._cutField.setView(x, y, viewHalf); }
+
   /** Helm orders: set the course point (game space). Only a ship that takes
    *  helm orders (a capital) accepts one. */
   setHelmCourse(x: number, y: number): void {

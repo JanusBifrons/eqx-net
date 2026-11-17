@@ -102,6 +102,7 @@ function emptyFeedback(): RendererFeedback {
     selectedPickKind: null,
     hoveredPickId: null,
     miningBeamCount: 0,
+    viewX: 0, viewY: 0, viewHalf: 0,
   };
 }
 
@@ -794,6 +795,7 @@ export class WorkerRendererClient implements IRenderer {
         this.feedback.selectedPickKind = msg.feedback.selectedPickKind;
         this.feedback.hoveredPickId = msg.feedback.hoveredPickId;
         this.feedback.miningBeamCount = msg.feedback.miningBeamCount;
+        this.feedback.viewX = msg.feedback.viewX; this.feedback.viewY = msg.feedback.viewY; this.feedback.viewHalf = msg.feedback.viewHalf;
         this.feedback.mountCounts.clear();
         for (const [k, v] of msg.feedback.mountCounts) {
           this.feedback.mountCounts.set(k, v);

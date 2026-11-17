@@ -1039,6 +1039,16 @@ export interface RendererFeedback {
    * surface — not consumed by gameplay logic.
    */
   miningBeamCount: number;
+  /**
+   * The camera: its centre in game space and the larger half of the visible
+   * world (game units; 0 before the first frame). The cut field draws around
+   * it as well as the own ship (`CutFieldClient.setView`), so the command
+   * view panned away, or a far zoom, still shows rocks. Phase-gate review:
+   * three numbers a frame on the worker post.
+   */
+  viewX: number;
+  viewY: number;
+  viewHalf: number;
 }
 
 export interface IRenderer {

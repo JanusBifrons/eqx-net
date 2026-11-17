@@ -622,7 +622,7 @@ export class PixiRenderer implements IRenderer {
     selectedPickId: null,
     selectedPickKind: null,
     hoveredPickId: null,
-    miningBeamCount: 0,
+    miningBeamCount: 0, viewX: 0, viewY: 0, viewHalf: 0,
   };
 
   /**
@@ -2759,6 +2759,8 @@ export class PixiRenderer implements IRenderer {
     }
     this.feedback.haloArrowCount = this.halo.getDebugVisibleArrowCount();
     this.feedback.damageNumberActiveCount = this.damageNumbers?.getActiveCount() ?? 0;
+    const vb = this.camera.visibleBoundsInto(this._swarmViewScratch); // Pixi space: y flips back to game
+    this.feedback.viewX = (vb[0]! + vb[2]!) / 2; this.feedback.viewY = -(vb[1]! + vb[3]!) / 2; this.feedback.viewHalf = Math.max(vb[2]! - vb[0]!, vb[3]! - vb[1]!) / 2;
     // Join-render readiness signal: latch true once we've painted a frame the
     // player can see. Piloting → require the LOCAL player's own ship in the
     // mirror (not just any remote ship). SPECTATING → there is no own ship, so a
