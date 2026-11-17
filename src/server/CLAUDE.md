@@ -208,9 +208,9 @@ How each subsystem works (and its history) is in the "Server notes" section of t
 - **Shield-wall bodies live in `PhysicsWorld.wallBodies`**; a pylon with an active wall takes no damage.
 - Full text and locks: [structures-and-power-grid.md](../../docs/architecture/structures-and-power-grid.md#server-implementation-notes).
 
-## Abandon → scrap (no wrecks)
+## Abandon → scrap or wreck
 
-- **An abandoned hull (active or lingering) shatters to scrap and leaves the world**; no wreck entity exists. The lingering path is `shipInstanceId`-keyed and never touches a `playerId`-keyed map. Locks: `abandonToScrap.test.ts`, `abandonLingeringToScrap.test.ts`. Detail: [composite-ships-and-scrap.md](../../docs/architecture/composite-ships-and-scrap.md#server-implementation-notes).
+- **An abandoned hull (active or lingering) breaks up exactly as its death would** (`spawnCapitalWreck` then `spawnHullScrap`) and leaves the world. The lingering path is `shipInstanceId`-keyed and never touches a `playerId`-keyed map. Locks: `abandonToScrap.test.ts`, `abandonLingeringToScrap.test.ts`, `abandonCapitalToWreck.test.ts`. Detail: [composite-ships-and-scrap.md](../../docs/architecture/composite-ships-and-scrap.md#server-implementation-notes).
 
 ## Same-sector instant pilot swap — `pilot_ship`
 
