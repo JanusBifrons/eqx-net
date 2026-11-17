@@ -90,6 +90,20 @@ function tipAt(playing: PlayingClip, tick: number): { x: number; y: number; boom
 }
 const angleGap = (a: number, b: number): number => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
 
+/** Abort a reach to `target` at `abortTick` and retract from the tip it got to
+ *  (as `rigClipTip` does): the first violation, or a pose jump at the start, or null. */
+function abortViolation(target: { x: number; y: number }, abortTick: number): string | null {
+  const tip = tipAt({ clipId: 'arm-reach', startTick: 0, target }, abortTick);
+  const retract: PlayingClip = { clipId: 'arm-retract', startTick: abortTick, target: { x: tip.x, y: tip.y } };
+  const v = firstViolation(retract);
+  if (v !== null) return v;
+  const start = tipAt(retract, abortTick);
+  // Same pose, not just the same tip: no flip of the boom or the jib.
+  const inPlace = Math.hypot(start.x - tip.x, start.y - tip.y) < 0.5
+    && angleGap(start.boom, tip.boom) < 0.01 && angleGap(start.jib, tip.jib) < 0.01;
+  return inPlace ? null : `retract starts off the aborted pose`;
+}
+
 const X0 = DOCK_BAY_CX - DOCK_BAY_HALF_W, X1 = DOCK_BAY_CX + DOCK_BAY_HALF_W;
 const Y0 = DOCK_BAY_CY - DOCK_BAY_HALF_H, Y1 = DOCK_BAY_CY + DOCK_BAY_HALF_H;
 const padPoint = fc.record({
@@ -132,15 +146,20 @@ describe('dock crane path (structure-restyle 2g): never through its own dock', (
   it('property: an aborted reach (retract from the current tip) stays out, starting in place', () => {
     fc.assert(fc.property(
       padPoint, fc.integer({ min: 1, max: DOCK_CRANE_REACH_TICKS - 1 }),
-      (target, abortTick) => {
-        const tip = tipAt({ clipId: 'arm-reach', startTick: 0, target }, abortTick);
-        const retract: PlayingClip = { clipId: 'arm-retract', startTick: abortTick, target: { x: tip.x, y: tip.y } };
-        if (firstViolation(retract) !== null) return false;
-        const start = tipAt(retract, abortTick);
-        // Same pose, not just the same tip: no flip of the boom or the jib.
-        return Math.hypot(start.x - tip.x, start.y - tip.y) < 0.5
-          && angleGap(start.boom, tip.boom) < 0.01 && angleGap(start.jib, tip.jib) < 0.01;
-      },
+      (target, abortTick) => abortViolation(target, abortTick) === null,
     ), { numRuns: 400 });
+  });
+
+  it('regression: aborting a reach to the far left corner (-445.1, 710) at tick 53 stays on the apron', () => {
+    // fast-check counterexample [{"x":-445.1157531738281,"y":710},53]: the
+    // retract from that mid-reach tip used to lift the clamp out to y 722.0,
+    // past the apron edge, instead of retracing the reach.
+    const target = { x: Math.fround(-445.1157531738281), y: 710 };
+    expect(abortViolation(target, 53)).toBeNull();
+    for (const t of [target, ...NAMED]) {
+      for (let abortTick = 1; abortTick < DOCK_CRANE_REACH_TICKS; abortTick++) {
+        expect(abortViolation(t, abortTick), `(${t.x}, ${t.y}) aborted at ${abortTick}`).toBeNull();
+      }
+    }
   });
 });
