@@ -13,27 +13,28 @@ Part 2 (P1a-2) adds base storage, auto-deposit, derelicts and credit sinks.
 ## What the player sees
 
 - **Every kill drops loot.** A destroyed ship, whoever flew it, leaves a
-  small glowing diamond, a *loot pod*, just beside where it died (off to the
-  side of the shot that killed it, so the rest of the volley doesn't blow it
-  up). AI-vs-AI kills drop loot too, so a
+  small glowing diamond, a *loot pod*, just beside where it died. AI-vs-AI
+  kills drop loot too, so a
   battlefield you stumble onto is worth picking over. A ship burned away
   whole by a heavy beam or a railgun (vaporised) leaves half as much salvage
   again: the beam rendered the whole ship down.
-- **Fly over a pod to collect it.** No button: touching a pod with free cargo
-  space moves its contents into your ship's hold. A popup confirms what you
-  got ("+7 Salvage · +30 cr").
+- **Open a pod to loot it.** Flying over or touching a pod takes nothing. Come
+  within about 80 u of it (more on a big ship) and open its loot window, then
+  take what you want; what does not fit stays in the pod. A pod your own
+  tractor holds close loads whole. A popup confirms what you got
+  ("+7 Salvage · +30 cr").
 - **Your hold is on your ship.** The top-left chip shows weight / capacity,
   credits and blueprints (`▣ 340/500  ¢1,250  ★1`). It turns amber at 80 %
   and red when full; tap it for a per-good breakdown. A full hold still
-  picks up credits and blueprints (they weigh nothing); the rest stays in the
+  takes credits and blueprints (they weigh nothing); the rest stays in the
   pod.
 - **Hardcore.** If your ship dies, everything it carries spills as a bright
   magenta pod beside where it died, with the salvage its hull is worth (the
   same as an AI pilot's ship of that kind), free for anyone to grab. The dead ship keeps
   nothing. Abandoning a ship spills its hold too (P1a-2 turns that into a
   salvageable hulk).
-- **Pods don't last.** A pod expires after 15 minutes, and a pod can be shot
-  and destroyed (its contents are lost).
+- **Pods don't last.** A pod expires after 15 minutes (its contents are
+  lost). Shots and rams never destroy a pod.
 
 ## Goods
 
@@ -51,8 +52,9 @@ as live ships among the wreckage). Cargo capacity is derived
 from the ship's toughness (`maxHealth × 2`), so heavier hulls haul more, unless
 the kind sets a `cargoCapacity` override (the robot harvester's 400; later a
 mining barge). Server clamp, client HUD and NPC collectors all call the one
-`cargoCapacityForMaxHealth(kind)`. An NPC kind with `collectsLoot: true` scoops
-pods through the same pickup path as players (`SectorRoom.forEachLootCollector`).
+`cargoCapacityForMaxHealth(kind)`. An NPC kind with `collectsLoot: true` has no loot
+window: it takes whole pods within the same open reach (`LootCollectors`,
+`LootSubsystem.visitCollector`).
 
 ## How it works
 
@@ -302,7 +304,7 @@ Ships have cargo you can open too. Select one and use **Open cargo**:
   cap, TTL, spill, restore), `src/server/db/holdsGroup.test.ts` (atomic
   group rollback, idempotent upsert), `lootView.test.ts`, `CargoChip.test.tsx`.
 - Integration: `tests/integration/sectorRoom/lootLoop.test.ts` (kill → pod,
-  fly-over → hold in the own-ship snapshot, death spills and keeps nothing),
+  open and take → hold in the own-ship snapshot, death spills and keeps nothing),
   `lingeringDeathDeletesRoster.test.ts` (A1, failing-first).
 - Test trigger: the `initialCargo` join option (testMode) seeds a hold.
 

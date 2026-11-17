@@ -60,6 +60,7 @@ export function clampRequest(from: Hold, want: CargoRequest): CargoRequest {
   const got = extractRequested(cloneHold(from), want);
   const out: CargoRequest = { goods: got.goods };
   if (got.blueprints.length > 0) out.blueprints = got.blueprints.map((b) => b.uid);
-  if (got.packed && got.packed.length > 0) out.packed = got.packed.map((p) => p.product);
+  // A rock chunk is asked for by its uid (`takePacked`), a packed product by name.
+  if (got.packed && got.packed.length > 0) out.packed = got.packed.map((p) => p.uid ?? p.product);
   return out;
 }

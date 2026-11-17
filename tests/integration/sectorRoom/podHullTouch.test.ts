@@ -11,7 +11,7 @@ import type { SectorState } from '../../../src/server/rooms/schema/SectorState.j
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import { getHoldStore } from '../../../src/server/db/PersistenceWorker.js';
 import { shipWithinHullReach } from '../../../src/core/combat/shipHitShape.js';
-import { LOOT_TOUCH_REACH } from '../../../src/server/cargo/LootSubsystem.js';
+import { getShipKind } from '../../../src/shared-types/shipKinds.js';
 
 describe('SectorRoom integration — a pod that hits the hull survives the bump', () => {
   let harness: SectorTestHarness;
@@ -27,10 +27,12 @@ describe('SectorRoom integration — a pod that hits the hull survives the bump'
     const ship = [...room.state.ships.values()].find((s) => s.playerId === pid)!;
     await harness.advance(200);
     const pose = int().playerPose(pid)!;
+    // A pod's own reach (the old touch pickup was twice its radius), well clear.
+    const REACH = getShipKind('cargo-pod').radius * 2;
     // Just outside the barge's touch reach (along its local +y), flying straight at it.
     const nx = -Math.sin(pose.angle), ny = Math.cos(pose.angle);
     let d = 0;
-    while (shipWithinHullReach('barge', false, pose.x + nx * d, pose.y + ny * d, pose.x, pose.y, pose.angle, LOOT_TOUCH_REACH * 4)) d += 10;
+    while (shipWithinHullReach('barge', false, pose.x + nx * d, pose.y + ny * d, pose.x, pose.y, pose.angle, REACH * 4)) d += 10;
     const speed = 3000; // a tractored pod's arrival: its ram damage is far over a pod's hull
     const loot = int().loot;
     const podId = loot.drop({ goods: { minerals: 40 }, blueprints: [] }, pose.x + nx * (d + 150), pose.y + ny * (d + 150), -nx * speed, -ny * speed);

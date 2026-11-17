@@ -43,4 +43,9 @@ describe('loot window search (cargo-pods slice 12)', () => {
     const seen = searchView(pod(), 500).revealed;
     expect(clampRequest(seen, { goods: { salvage: 9, core: 1 }, blueprints: ['bp-1'] })).toEqual({ goods: { salvage: 4 } });
   });
+
+  it('clampRequest keeps a found rock chunk by its uid (takePacked matches a chunk only by uid)', () => {
+    const h: Hold = { goods: {}, blueprints: [], packed: [{ product: 'chunk:rock', quality: 0, uid: 'rc-1', weight: 400, ore: {} }] };
+    expect(clampRequest(h, { goods: {}, packed: ['rc-1'] })).toEqual({ goods: {}, packed: ['rc-1'] });
+  });
 });
