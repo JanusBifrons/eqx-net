@@ -1479,8 +1479,9 @@ async function main(): Promise<void> {
         // Robots are hostile to every player on sight: the robot director's bots
         // AND an active incursion's raiders both show as enemies on the map.
         extraEnemyCounts: () => sumCounts(robotDirector?.activeBotCountsBySector() ?? EMPTY_COUNTS, eventDirector?.hostileCountsBySector() ?? EMPTY_COUNTS),
-        // P3 — robot-held sectors show the robots as owner on the galaxy map.
-        sectorOwner: (key) => robotTerritory?.sectorOwner(key) ?? null,
+        // The control meter for every side: whichever side holds the sector
+        // (null = neutral). Without the meter, the static controller shows.
+        sectorOwner: (key) => (robotTerritory ? robotTerritory.sectorOwner(key) : undefined),
         // P4a — named elites: ticked on the drone director's control loop and
         // marked on the galaxy map.
         onTick: (now) => {

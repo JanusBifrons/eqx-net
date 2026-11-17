@@ -255,9 +255,10 @@ export interface LivingWorldHooks {
   respawnAnchor?: () => { sectorKey: string; x: number; y: number } | null;
   /** P3 — called at the tail of every control tick (robot territory). */
   onTick?: (nowMs: number) => void;
-  /** P3 — a sector's live owner override for `/galaxy/snapshot` (robot-held
-   *  territory), or null ⇒ the sector's static region. */
-  sectorOwner?: (sectorKey: string) => SectorOwner | null;
+  /** A sector's live owner for `/galaxy/snapshot` from the control meter for
+   *  every side (`RobotTerritory`): the holding side, or null for neutral
+   *  ground. Undefined (or no hook) ⇒ the sector's static controller. */
+  sectorOwner?: (sectorKey: string) => SectorOwner | null | undefined;
   /** P4a — the name of a named elite roaming a sector (galaxy snapshot), or null. */
   sectorElite?: (sectorKey: string) => string | null;
   /** W2a — a flagship fleet in a sector (galaxy snapshot), or null. */
@@ -778,15 +779,16 @@ export class LivingWorldDirector {
       );
       const neutrals = Math.max(0, totalDrones - enemies);
       const controller = sectorController(key);
+      const liveOwner = this.hooks.sectorOwner?.(key);
       out.push({
         key,
         players: counts.players,
         enemies,
         neutrals,
         structures: counts.structures,
-        // P3 — a robot-held sector shows the robots as its owner. Factions F2:
-        // otherwise the controlling power, or null on neutral ground.
-        owner: this.hooks.sectorOwner?.(key) ?? (controller ? { factionId: controller, contested: false } : null),
+        // The live control meter's holder (any side; null = neutral ground).
+        // With no meter: the static controlling power, or null.
+        owner: liveOwner !== undefined ? liveOwner : (controller ? { factionId: controller, contested: false } : null),
         // Equinox Phase 9 (item 5) — recent-combat tally (null when quiet); the
         // room owns the sliding window, the director just forwards it.
         recentCombat: room.recentCombat?.() ?? null,

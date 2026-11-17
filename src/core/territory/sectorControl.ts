@@ -1,14 +1,11 @@
 /**
- * Robot sector control (plan peppy-jumping-pinwheel P3). Pure, zone-blind.
+ * Sector control for EVERY side (galaxy-map plan, Step 1). Pure, zone-blind.
+ * The live game steps it from `RobotTerritory` on the control tick.
  *
- * Each sector carries a control PRESSURE in [-100, 100]. Robots present push
- * it up (a living nexus pushes hard); player structures and players present
- * push it down. Pressure moves toward that target at a bounded rate, so a
- * passing squad doesn't flip a sector instantly. Ownership has HYSTERESIS:
- * robots CLAIM a sector at ≥ CLAIM_AT and only RELEASE it at ≤ RELEASE_AT, so a
- * contested frontier doesn't flicker on the galaxy map.
- *
- * Contested = robots hold it while players (or their bases) are present too.
+ * Shares move toward their targets at a bounded rate, so a passing squad
+ * doesn't flip a sector instantly. Ownership has HYSTERESIS: a side CLAIMS a
+ * sector at >= CLAIM_AT and only loses it at <= RELEASE_AT, so a contested
+ * frontier doesn't flicker on the galaxy map.
  */
 
 export const CONTROL_MAX = 100;
@@ -20,73 +17,20 @@ export const PRESSURE_RATE_PER_S = 1.5;
 /** Pressure contributions (balance knobs). */
 export const PRESSURE_PER_ROBOT = 12;
 export const PRESSURE_NEXUS = 80;
-export const PRESSURE_PER_PLAYER_STRUCTURE = 6;
-export const PRESSURE_PER_PLAYER = 15;
-
-export interface ControlInputs {
-  /** Active robot bots in the sector. */
-  robots: number;
-  /** A living robot nexus is in the sector. */
-  nexus: boolean;
-  /** Player-owned structures in the sector. */
-  playerStructures: number;
-  /** Players present in the sector. */
-  players: number;
-}
-
-export interface SectorControlState {
-  pressure: number;
-  robotHeld: boolean;
-}
-
-export function freshControl(): SectorControlState {
-  return { pressure: 0, robotHeld: false };
-}
-
-/** The pressure a sector is heading toward for these inputs. */
-export function targetPressure(i: ControlInputs): number {
-  const raw =
-    i.robots * PRESSURE_PER_ROBOT +
-    (i.nexus ? PRESSURE_NEXUS : 0) -
-    i.playerStructures * PRESSURE_PER_PLAYER_STRUCTURE -
-    i.players * PRESSURE_PER_PLAYER;
-  return Math.max(-CONTROL_MAX, Math.min(CONTROL_MAX, raw));
-}
-
-/**
- * Advance one sector by `dtMs`. Mutates `s`; returns true when ownership
- * changed (claimed or released).
- */
-export function stepControl(s: SectorControlState, i: ControlInputs, dtMs: number): boolean {
-  const target = targetPressure(i);
-  const maxStep = (PRESSURE_RATE_PER_S * Math.max(0, dtMs)) / 1000;
-  const delta = target - s.pressure;
-  s.pressure += Math.abs(delta) <= maxStep ? delta : Math.sign(delta) * maxStep;
-  const was = s.robotHeld;
-  if (!s.robotHeld && s.pressure >= CLAIM_AT) s.robotHeld = true;
-  else if (s.robotHeld && s.pressure <= RELEASE_AT) s.robotHeld = false;
-  return was !== s.robotHeld;
-}
-
-export function isContested(s: SectorControlState, i: ControlInputs): boolean {
-  return s.robotHeld && (i.playerStructures > 0 || i.players > 0);
-}
+export const PRESSURE_PER_STRUCTURE = 6;
+export const PRESSURE_PER_SHIP = 15;
 
 // ---------------------------------------------------------------------------
-// Control for EVERY side (galaxy-map plan, Step 1). Owner rules 2026-11-17:
-// one meter for everyone, everything capturable, any faction may hold.
-//
-// The robot-only API above is retired once RobotTerritory moves onto this
-// stepper (Step 1c); until then both live here, in ONE file, sharing the knobs.
+// One meter for everyone (owner rules): everything capturable, any faction
+// may hold.
 //
 // Model:
 //  - Each side present pushes RAW pressure: ships×15 + structures×6 +
-//    robots×12 + nexus×80 (the same knobs as the robot meter).
+//    robots×12 + nexus×80.
 //  - A side's target share = support − opposition, clamped to [0, 100]:
 //      support    = raw of every present side that does NOT oppose it (itself
 //                   and its friends — allies never weaken each other),
 //      opposition = raw of every present side that opposes it.
-//    With only robots vs players this is exactly the robot formula above.
 //  - Shares move toward their targets at PRESSURE_RATE_PER_S.
 //  - Holder hysteresis: the holder loses the sector at ≤ RELEASE_AT (it
 //    becomes neutral ground); with no holder, the leading side claims at
@@ -122,9 +66,6 @@ export interface ControlStepResult {
   /** Holder before this step (only meaningful when `flipped`). */
   previousHolder: string | null;
 }
-
-export const PRESSURE_PER_SHIP = PRESSURE_PER_PLAYER;
-export const PRESSURE_PER_STRUCTURE = PRESSURE_PER_PLAYER_STRUCTURE;
 
 export function freshMultiControl(holder: string | null = null): MultiControlState {
   const shares = new Map<string, number>();

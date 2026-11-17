@@ -3,13 +3,10 @@ import {
   CLAIM_AT,
   RELEASE_AT,
   challengerOf,
-  freshControl,
   freshMultiControl,
   holderTrend,
   isMultiContested,
-  stepControl,
   stepMultiControl,
-  targetPressure,
   targetShare,
   type MultiControlState,
   type OpposesFn,
@@ -33,34 +30,27 @@ function run(s: MultiControlState, p: SectorPresence, op: OpposesFn, seconds: nu
 }
 
 describe('sector control for every side', () => {
-  it('parity: robots vs players hits the same target as the robot meter', () => {
+  it('robots vs players: robots push up, players and their bases push back', () => {
     for (const [robots, nexus, structures, ships] of [
       [4, false, 0, 0], [6, true, 3, 2], [1, false, 6, 1], [0, true, 0, 5], [100, true, 0, 0],
     ] as const) {
-      const old = targetPressure({ robots, nexus, playerStructures: structures, players: ships });
+      const want = Math.max(0, Math.min(100, robots * 12 + (nexus ? 80 : 0) - structures * 6 - ships * 15));
       const p = presence({ robots: { robots, nexus }, alice: { ships, structures } });
-      expect(targetShare('robots', p, ALL_HOSTILE)).toBe(Math.max(0, old));
+      expect(targetShare('robots', p, ALL_HOSTILE)).toBe(want);
     }
   });
 
-  it('parity: robots claim and release on the same ticks as the robot meter', () => {
-    const old = freshControl();
-    const neo = freshMultiControl();
-    const phases: [number, Parameters<typeof stepControl>[1]][] = [
-      [120, { robots: 2, nexus: true, playerStructures: 0, players: 0 }],
-      [60, { robots: 2, nexus: true, playerStructures: 0, players: 2 }],
-      [120, { robots: 0, nexus: false, playerStructures: 4, players: 3 }],
-    ];
-    for (const [secs, i] of phases) {
-      const p = presence({ robots: { robots: i.robots, nexus: i.nexus }, alice: { ships: i.players, structures: i.playerStructures } });
-      for (let t = 0; t < secs; t++) {
-        const a = stepControl(old, i, 1000);
-        const b = stepMultiControl(neo, p, ALL_HOSTILE, 1000).flipped;
-        // Robot gain/loss matches the old meter while its pressure is ≥ 0.
-        if (old.pressure >= 0) expect(b && neo.holder !== 'alice').toBe(a);
-        if (old.pressure >= 0) expect(neo.shares.get('robots') ?? 0).toBeCloseTo(old.pressure, 6);
-      }
-    }
+  it('robots claim a nexus sector, hold it through a dip, and lose it to players + bases', () => {
+    const s = freshMultiControl();
+    expect(run(s, presence({ robots: { robots: 2, nexus: true } }), ALL_HOSTILE, 120)).toBe(1);
+    expect(s.holder).toBe('robots');
+    // Players push back a little: the share falls but stays above RELEASE_AT.
+    expect(run(s, presence({ robots: { robots: 2, nexus: true }, alice: { ships: 2 } }), ALL_HOSTILE, 60)).toBe(0);
+    expect(s.shares.get('robots')!).toBeGreaterThan(RELEASE_AT);
+    expect(isMultiContested(s, presence({ robots: { nexus: true }, alice: { ships: 1 } }), ALL_HOSTILE)).toBe(true);
+    expect(isMultiContested(s, presence({ robots: { nexus: true } }), ALL_HOSTILE)).toBe(false);
+    run(s, presence({ alice: { ships: 3, structures: 4 } }), ALL_HOSTILE, 120);
+    expect(s.holder).not.toBe('robots');
   });
 
   it('any side can claim neutral ground — not only robots', () => {
