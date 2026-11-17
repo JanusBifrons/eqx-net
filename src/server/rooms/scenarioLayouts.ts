@@ -120,11 +120,13 @@ export function rigSandboxScene(lead: number): unknown[] {
     { atMs: t(20.0), action: 'move', tag: H, x: -700, y: 1400, speed: 320 },
     { atMs: t(20.1), action: 'rigClip', structure: 'freight_dock', clip: 'arm-retract', fromTip: true },
     // 4. The turret: hatch open + shut, then the turret deploys and retracts.
-    { atMs: t(22.0), action: 'rigClip', structure: 'turret', clip: 'door-open' },
-    { atMs: t(23.0), action: 'rigClip', structure: 'turret', clip: 'door-close' },
-    { atMs: t(24.0), action: 'rigClip', structure: 'turret', clip: 'turret-deploy' },
-    { atMs: t(26.5), action: 'rigClip', structure: 'turret', clip: 'turret-retract' },
-    { atMs: t(29.0), action: 'end' },
+    // The retract above ends at ~21.1 s; a camera pan keyed to the scene
+    // clock (`GET /dev/perf` scene.elapsedMs) at ~21.6 s lands before 23.5 s.
+    { atMs: t(23.5), action: 'rigClip', structure: 'turret', clip: 'door-open' },
+    { atMs: t(24.8), action: 'rigClip', structure: 'turret', clip: 'door-close' },
+    { atMs: t(26.0), action: 'rigClip', structure: 'turret', clip: 'turret-deploy' },
+    { atMs: t(28.5), action: 'rigClip', structure: 'turret', clip: 'turret-retract' },
+    { atMs: t(31.0), action: 'end' },
   ];
 }
 

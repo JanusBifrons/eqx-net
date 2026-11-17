@@ -9,7 +9,7 @@ import { Container } from 'pixi.js';
 import type { Graphics } from 'pixi.js';
 import {
   readRigsFlag, rigLayerZ, rigPartRole, RIG_OVER_Z, partLocalTransform, worldToHost,
-  StructureRigView, StructureRigs, type PixiXform,
+  StructureRigView, StructureRigs, RIG_LOOK_C, type PixiXform,
 } from './structureRigs.js';
 import { BEAMS_OVER_HULL_Z } from './beamsOverHulls.js';
 import { updateSwarmSprites, type SwarmSpriteCtx } from './swarmSpriteUpdater.js';
@@ -192,7 +192,7 @@ describe('updateSwarmSprites with rigs', () => {
     expect(labelsUnder(ctx.shipContainer).some((l) => l.startsWith('rig-'))).toBe(false);
   });
 
-  it('turret-deploy carries the mount cluster up the slide; the barrel angle is untouched', () => {
+  it('turret-deploy pops the mount cluster up in place (scale, no slide); the barrel angle is untouched', () => {
     const ctx = makeCtx();
     const rigs = new StructureRigs(ctx.shipContainer);
     ctx.structureRigs = rigs;
@@ -203,14 +203,17 @@ describe('updateSwarmSprites with rigs', () => {
     expect(view.mountPart).toBeGreaterThanOrEqual(0);
     const clusterC = (ctx.mountVisuals as unknown as { clusters: Map<string, { container: Container }> })
       .clusters.get('swarm-5')!.container;
-    const restY = clusterC.y;
+    const restY = clusterC.y, restX = clusterC.x;
+    expect(clusterC.scale.x).toBeCloseTo(RIG_LOOK_C.liftScaleRest, 6);
     mirror.structures!.get(5)!.rigClip = { clipId: 'turret-deploy', startTick: 0 };
     ctx.fxNowMs = 0;
     updateSwarmSprites(mirror, ctx);
     ctx.fxNowMs = 2000; // 120 ticks: past the 60-tick deploy
     updateSwarmSprites(mirror, ctx);
-    // Slide +y (game) = -y (Pixi) by the full travel.
-    expect(clusterC.y - restY).toBeCloseTo(-DOOR_TURRET_SLIDE_TRAVEL, 3);
+    // A pop-up rises over its socket: no in-plane travel, it grows.
+    expect(clusterC.y).toBeCloseTo(restY, 6);
+    expect(clusterC.x).toBeCloseTo(restX, 6);
+    expect(clusterC.scale.x).toBeCloseTo(RIG_LOOK_C.liftScaleUp, 6);
     expect(clusterC.rotation).toBeCloseTo(0, 9);
   });
 
@@ -278,15 +281,43 @@ describe('rig clip clock (2e): wire start tick vs the client tick clock', () => 
     updateSwarmSprites(mirror, ctx);
     const clusterC = (ctx.mountVisuals as unknown as { clusters: Map<string, { container: Container }> })
       .clusters.get('swarm-5')!.container;
-    const deployedY = clusterC.y;
-    // Same structure seen with no clip: the rest pose.
+    expect(clusterC.scale.x).toBeCloseTo(RIG_LOOK_C.liftScaleUp, 6);
+    // Same structure seen with no clip: the rest pose (sunk).
     mirror.structures!.get(5)!.rigClip = undefined;
     updateSwarmSprites(mirror, ctx);
-    expect(deployedY - clusterC.y).toBeCloseTo(-DOOR_TURRET_SLIDE_TRAVEL, 3);
+    expect(clusterC.scale.x).toBeCloseTo(RIG_LOOK_C.liftScaleRest, 6);
   });
 });
 
 describe('rig part look (2c+)', () => {
+  it('pop-up riser rises in place: grows, its shadow widens and drifts; slide progress drives it', () => {
+    const rig = rigForStructureKind('turret')!;
+    const v = new StructureRigView(rig);
+    const r = v.riserPart;
+    expect(r).toBe(v.mountPart);
+    v.update(null, 0, 0, 0, 0);
+    const x0 = v.parts[r]!.x, y0 = v.parts[r]!.y, s0 = v.shadows[r]!.x - x0, a0 = v.shadows[r]!.alpha;
+    expect(v.parts[r]!.scale.x).toBeCloseTo(RIG_LOOK_C.liftScaleRest, 6);
+    v.update({ clipId: 'turret-deploy', startTick: 0 }, 1000, 0, 0, 0);
+    expect(v.pose.value[r]).toBeCloseTo(DOOR_TURRET_SLIDE_TRAVEL, 6);
+    expect(v.parts[r]!.x).toBeCloseTo(x0, 6);
+    expect(v.parts[r]!.y).toBeCloseTo(y0, 6);
+    expect(v.parts[r]!.scale.x).toBeCloseTo(RIG_LOOK_C.liftScaleUp, 6);
+    expect(v.shadows[r]!.x - x0).toBeCloseTo(s0 + RIG_LOOK_C.liftShadow, 6);
+    expect(v.shadows[r]!.alpha).toBeGreaterThan(a0);
+  });
+
+  it('door leaves sit over a dark hatch slot (under every plane part); no slot on a rig without leaves', () => {
+    const v = new StructureRigView(rigForStructureKind('turret')!);
+    expect(v.slot).not.toBeNull();
+    expect(v.plane.getChildIndex(v.slot!)).toBe(0);
+    const b = v.slot!.getLocalBounds();
+    // Spans both shut leaves (2 x 30 wide), around the hatch row.
+    expect(b.width).toBeGreaterThanOrEqual(60);
+    expect(new StructureRigView(rigForStructureKind('freight_dock')!).slot).toBeNull();
+  });
+
+
   it('reads each part role from the rig shape', () => {
     const crane = rigForStructureKind('freight_dock')!;
     const roles = crane.parts.map((_, i) => `${crane.parts[i]!.id}:${rigPartRole(crane, i)}`);
