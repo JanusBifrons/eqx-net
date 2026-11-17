@@ -14,6 +14,7 @@ import { sendBreakIn, sendBreakInCancel, sendCargoMove, sendCargoQuery, sendSetA
 import { GOOD_DEFS, GOOD_IDS, type GoodId } from '../../shared-types/goods';
 import { holdWeight } from '../../core/cargo/hold';
 import { allOf, cargoRows, type CargoRow } from './cargoRows';
+import { DROP_SIDE_ATTR, useTileDrag, type TileDrag } from './useTileDrag';
 import { MAX_FREIGHT_ORDERS, type CargoItems, type FreightOrder } from '../../shared-types/messages/cargoMessages';
 
 export const CARGO_POLL_MS = 1000;
@@ -52,25 +53,28 @@ const SPIN_SX = {
 
 /** Cargo pods slice 17: one side of the loot window. A tile per stack, then
  *  a "?" tile per stack still being searched (the first spins). Tap a tile to
- *  move the whole stack; no `onMove` = look only (a peek). */
-function Grid({ title, rows, hidden, testPrefix, onMove }: {
+ *  move the whole stack, or (slice 18) drag it onto the other grid; no
+ *  `onMove` = look only (a peek). */
+function Grid({ title, rows, hidden, testPrefix, onMove, drag }: {
   title: string;
   rows: CargoRow[];
   hidden: number;
   testPrefix: 'here' | 'aboard';
   onMove?: (items: CargoItems) => void;
+  drag?: TileDrag;
 }): JSX.Element {
   const qs: number[] = [];
   for (let i = 0; i < hidden; i++) qs.push(i);
   return (
     <Box>
       <Box sx={PANE_TITLE_SX}>{title}</Box>
-      <Box sx={GRID_SX} data-testid={`cargo-${testPrefix}-grid`}>
+      <Box sx={GRID_SX} data-testid={`cargo-${testPrefix}-grid`} {...{ [DROP_SIDE_ATTR]: testPrefix }}>
         {rows.map((r) => (
           <Box
             key={r.key} data-testid={`cargo-${testPrefix}-row`} data-key={r.key} data-count={r.count} title={r.label}
-            onClick={onMove !== undefined ? () => onMove(r.all) : undefined}
-            sx={{ ...TILE_SX, border: `1px solid ${TIER_EDGE[r.tier]}`, cursor: onMove !== undefined ? 'pointer' : 'default' }}
+            onClick={onMove !== undefined ? () => { if (drag?.consumeClick() !== true) onMove(r.all); } : undefined}
+            onPointerDown={onMove !== undefined && drag !== undefined ? (e) => drag.start(e, testPrefix, r.key) : undefined}
+            sx={{ ...TILE_SX, border: `1px solid ${TIER_EDGE[r.tier]}`, cursor: onMove !== undefined ? 'grab' : 'default', touchAction: 'none' }}
           >
             {r.label}
             {r.count > 1 && <Box component="span" sx={COUNT_SX}>{r.count}</Box>}
@@ -251,6 +255,11 @@ export const CargoPanel = memo(function CargoPanel({ entityId, ship }: CargoPane
 
   const here = cargoRows(state?.hold ?? null);
   const aboard = cargoRows(state?.ship ?? null);
+  // Slice 18: a tile dropped on the other grid moves its whole stack.
+  const drag = useTileDrag((from, key) => {
+    const row = (from === 'here' ? here : aboard).find((r) => r.key === key);
+    if (row !== undefined) sendCargoMove(target, from === 'here' ? 'take' : 'put', row.all);
+  });
   const market = state?.market;
   // Slice 13: a peek (living stranger's cargo) is open to look, never to move.
   const peek = state?.open === true && state.takeable === false;
@@ -285,13 +294,13 @@ export const CargoPanel = memo(function CargoPanel({ entityId, ship }: CargoPane
       {peek && <Grid title="Theirs (look only)" rows={here} hidden={state.hidden ?? 0} testPrefix="here" />}
       {state?.open === true && !peek && !market && (
         <>
-          <Grid title="Theirs" rows={here} hidden={state.hidden ?? 0} testPrefix="here" onMove={(items) => sendCargoMove(target, 'take', items)} />
+          <Grid title="Theirs" rows={here} hidden={state.hidden ?? 0} testPrefix="here" onMove={(items) => sendCargoMove(target, 'take', items)} drag={drag} />
           {here.length > 0 && (
             <Box sx={{ ...BTN_SX, display: 'inline-block', mt: '3px' }} data-testid="cargo-take-found" onClick={() => sendCargoMove(target, 'take', allOf(here))}>
               {state.hidden !== undefined ? 'Take all found' : 'Take all'}
             </Box>
           )}
-          <Grid title="Yours" rows={aboard} hidden={0} testPrefix="aboard" onMove={(items) => sendCargoMove(target, 'put', items)} />
+          <Grid title="Yours" rows={aboard} hidden={0} testPrefix="aboard" onMove={(items) => sendCargoMove(target, 'put', items)} drag={drag} />
           <WeightBar used={state.ship !== null ? holdWeight(state.ship) : 0} capacity={state.shipCapacity} />
           {entityId !== undefined && (state.autoUnload !== undefined || state.acceptAutoUnload !== undefined) && (
             <AutoUnload entityId={entityId} ship={state.autoUnload} storage={state.acceptAutoUnload} />

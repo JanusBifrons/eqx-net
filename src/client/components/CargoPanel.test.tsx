@@ -92,6 +92,38 @@ describe('CargoPanel (C1)', () => {
     expect(send).toHaveBeenLastCalledWith('set_auto_unload', { type: 'set_auto_unload', side: 'storage', on: true, entityId: 9 });
   });
 
+  it('slice 18: dragging a tile onto the other grid moves the stack; a short wiggle is still a tap', () => {
+    render(<CargoPanel entityId={9} />);
+    act(() => useUIStore.getState().setCargoState(state()));
+    const tile = screen.getByTestId('cargo-here-row');
+    const aboardGrid = screen.getByTestId('cargo-aboard-grid');
+    const spot = vi.fn(() => aboardGrid as Element);
+    Object.defineProperty(document, 'elementFromPoint', { value: spot, configurable: true });
+    const ptr = (type: string, x: number, y: number): void => { window.dispatchEvent(new MouseEvent(type, { clientX: x, clientY: y })); };
+    try {
+      fireEvent.pointerDown(tile, { clientX: 10, clientY: 10 });
+      expect(document.querySelector('[data-drag-ghost]'), 'a ghost follows the pointer').not.toBeNull();
+      act(() => { ptr('pointermove', 60, 90); ptr('pointerup', 60, 90); });
+      expect(send).toHaveBeenLastCalledWith('cargo_move', { type: 'cargo_move', entityId: 9, dir: 'take', items: { goods: { alloy: 20 } } });
+      expect(document.querySelector('[data-drag-ghost]'), 'the ghost goes on release').toBeNull();
+      send.mockClear();
+      fireEvent.click(tile); // the click that trails a drag moves nothing more
+      expect(send).not.toHaveBeenCalledWith('cargo_move', expect.anything());
+      // Dropped back on its own grid: nothing moves.
+      spot.mockReturnValue(screen.getByTestId('cargo-here-grid'));
+      fireEvent.pointerDown(tile, { clientX: 10, clientY: 10 });
+      act(() => { ptr('pointermove', 40, 10); ptr('pointerup', 40, 10); });
+      expect(send).not.toHaveBeenCalledWith('cargo_move', expect.anything());
+      // A 3 px wiggle is a tap: the click moves the stack.
+      fireEvent.pointerDown(tile, { clientX: 10, clientY: 10 });
+      act(() => { ptr('pointermove', 13, 10); ptr('pointerup', 13, 10); });
+      fireEvent.click(tile);
+      expect(send).toHaveBeenLastCalledWith('cargo_move', { type: 'cargo_move', entityId: 9, dir: 'take', items: { goods: { alloy: 20 } } });
+    } finally {
+      Reflect.deleteProperty(document, 'elementFromPoint');
+    }
+  });
+
   it('slice 17: no switches on storage that is not yours', () => {
     render(<CargoPanel entityId={9} />);
     act(() => useUIStore.getState().setCargoState(state()));
