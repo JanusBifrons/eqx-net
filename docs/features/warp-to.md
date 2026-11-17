@@ -6,7 +6,7 @@ Solar-system sectors are ±200 km with a few busy pockets (bases, belts, gates, 
 
 1. **Spool (3 s).** The pilot asks to warp to a pocket. The drive turns the ship to face it (the pilot's turn keys are ignored while it does) and a glow builds at the engines. A slow-turning hull (a capital) keeps spooling past 3 s until it is within 0.06 rad of the jump, turning at least 9°/s, so it never snaps round when the run starts; the same hold as an NPC warp (`World.applyInput` / `World.botWarp`, lock `World.pilotWarpAlign.test.ts`). The ship is still in the world and can be shot; dropping the request cancels it.
 2. **The run.** The ship accelerates away at 20,000 u/s. On board: speed lines rush past and a short streak trails the hull, while the system's own sky drifts by.
-3. **The drop.** The ship drops out at the pocket's rim on the side facing it, at the nearest spot clear of anything there, with a short flash and reverse streak. The search reaches as far as the ship's own clearance plus the largest hull's (at least 6 km), so a capital landing beside a parked capital finds the gap instead of dropping on top of it (`landingReach`, lock `landingReach.test.ts`).
+3. **The drop.** The ship drops out at the pocket's rim on the side facing it, at the nearest spot clear of anything there, with a short flash and reverse streak. The search reaches as far as the ship's own clearance plus the largest hull's (at least 6 km), so a capital landing beside a parked capital finds the gap instead of dropping on top of it (`landingReach`, lock `core/bases/landingReach.test.ts`).
 
 ## What everyone else sees
 

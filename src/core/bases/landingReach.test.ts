@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { nearestClearPoint } from '../../core/bases/baseSite';
-import { landingReach } from './landingReach';
-import { tuningFor } from './lookup';
+import { nearestClearPoint } from './baseSite';
+import { landingReach } from '../../shared-types/shipScale/landingReach';
+import { tuningFor } from '../../shared-types/shipScale/lookup';
 
 describe('landingReach', () => {
   it('a battleship landing beside a parked battleship finds the gap, not the overlapping point', () => {
