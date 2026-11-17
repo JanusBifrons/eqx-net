@@ -364,13 +364,16 @@ export class ArtService {
     return this.acquire({ type: 'ship', id, paint, ...(rings ? { rings } : {}), ...(dead ? { dead } : {}), ...(livery ? { livery } : {}) }, urgent);
   }
 
-  /** `livery`: the owner's colours and sigil (`?structLivery=1`); its tag
-   *  joins the bake key. Absent = today's job, exactly. */
-  struct(id: string, seed: number, rot = 0, accent?: number, urgent = true, rings = false, livery?: StructLivery): ArtHandle {
-    const job: BakeJob = rings
+  /** `livery`: the owner's colours and sigil (`?structLivery=1`); `style`:
+   *  a `?restyle=` structure style. Each joins the bake key; absent (or
+   *  style `current`) = today's job, exactly. */
+  struct(id: string, seed: number, rot = 0, accent?: number, urgent = true, rings = false, livery?: StructLivery, style?: string): ArtHandle {
+    const job: Extract<BakeJob, { type: 'struct' }> = rings
       ? { type: 'struct', id, seed: seedVariant(seed), rot, accent, rings }
       : { type: 'struct', id, seed: seedVariant(seed), rot, accent };
-    return this.acquire(livery ? { ...job, livery } : job, urgent);
+    if (livery) job.livery = livery;
+    if (style && style !== 'current') job.style = style;
+    return this.acquire(job, urgent);
   }
 
   /** Queue background bakes for art the player is likely to see soon (see

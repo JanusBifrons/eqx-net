@@ -28,6 +28,8 @@ import { ConnectorRenderer } from '../render/pixi/ConnectorRenderer.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import type { RenderMirror, StructureRenderState, SwarmRenderState } from '../../core/contracts/IRenderer.js';
 import { hash01, valueNoise } from '../render/art/fields.js';
+import { readStructLivery } from '../render/art/artMode.js';
+import { ownerLivery } from '../render/art/shipArtSprites.js';
 import { seedVariant, type BakeJob } from '../render/art/bake.js';
 import { LitScene, LitShipMesh, litTileFromMaps } from '../render/art/litShipShader.js';
 import { engineLightAstern, engineLightHeight, engineLightIntensity, engineLightReach, lightingFromSearch } from '../render/art/lightingSettings.js';
@@ -50,6 +52,17 @@ const SCENE = ((SCENE_IDS as readonly string[]).includes(qs.get('scene') ?? '') 
 /** Structure style direction (restyle §4), `?restyle=current` (only arm so far).
  *  Not `?style=`: that already picks the lab's render arm (current/machined/…). */
 const RESTYLE = parseStructStyle(qs.get('restyle'));
+/** `?structLivery=1`: structures wear an owner's livery (the game's
+ *  `ownerLivery`, for a stand-in owner), as in game. */
+const STRUCT_LIVERY = readStructLivery(location.search) ? ownerLivery('art-lab-owner') : undefined;
+/** The livery + style a Machined structure bake carries (the accent is the
+ *  team colour, as `structHandleFor` bakes it). */
+function structExtra(): { accent?: number; livery?: { team: number; sigil: number }; style?: string } {
+  return {
+    ...(STRUCT_LIVERY ? { accent: STRUCT_LIVERY.team, livery: { team: STRUCT_LIVERY.team, sigil: STRUCT_LIVERY.sigil } } : {}),
+    ...(RESTYLE !== 'current' ? { style: RESTYLE } : {}),
+  };
+}
 const ZOOM = qs.has('zoom') ? Number(qs.get('zoom')) : undefined;
 const BENCH_N = qs.has('n') ? Number(qs.get('n')) : 40;
 const PX_OVERRIDE = qs.has('px') ? Number(qs.get('px')) : 0;
@@ -236,7 +249,7 @@ async function main(): Promise<void> {
   // (`?workers=0` bakes on the main thread instead, for comparison).
   if (MACHINED && qs.get('workers') !== '0') {
     const jobs: BakeJob[] = [];
-    for (const st of scene.structs) jobs.push({ type: 'struct', id: st.id, seed: seedVariant(st.seed) });
+    for (const st of scene.structs) jobs.push({ type: 'struct', id: st.id, seed: seedVariant(st.seed), ...structExtra() });
     for (const sh of scene.ships) jobs.push({ type: 'ship', id: sh.id, paint: sh.paint });
     await cache.prebake(jobs, Number(qs.get('workers') ?? 4), qs.get('persist') !== '0');
   }
@@ -322,7 +335,7 @@ async function main(): Promise<void> {
     }
     let art: StructArt;
     if (MACHINED) {
-      art = cache.machinedStruct(st.id, st.seed);
+      art = cache.machinedStruct(st.id, st.seed, STRUCT_LIVERY?.team, structExtra());
       v.lit = new Sprite(art.albedo!);
       v.lit.anchor.set(0.5); v.lit.scale.set((2 * k) / art.density); // half-res albedo v.lit.position.set(st.x, st.y);
       v.lit.alpha = 0; v.lit.tint = 0xffb070;

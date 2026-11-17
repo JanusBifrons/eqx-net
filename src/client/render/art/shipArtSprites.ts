@@ -32,6 +32,8 @@ export interface ShipArtCtx {
   /** Structure livery (`?structLivery=1`, owner's colours + sigil on
    *  structures; off by default until the owner signs the look off). */
   structLivery?: boolean;
+  /** Structure style (`?restyle=a`, `structureStyles.ts`); absent = today's art. */
+  structStyle?: string;
 }
 
 /** The handle a ship should use now (re-acquired only on a kind/paint change).
@@ -69,11 +71,11 @@ export function structHandleFor(actx: ShipArtCtx, key: string, kindId: string, r
   const lv = actx.structLivery === true && owner !== undefined ? ownerLivery(owner) : undefined;
   const jl = h?.job.type === 'struct' ? h.job.livery : undefined;
   const liveryChanged = lv === undefined ? jl !== undefined : jl === undefined || jl.team !== lv.team || jl.sigil !== lv.sigil;
-  if (!h || h.stale === true || h.job.type !== 'struct' || h.job.id !== kindId || (!h.job.lit && quarterTurns(h.job.rot ?? 0) !== quarterTurns(rot)) || (h.job.rings === true) !== rings || liveryChanged) {
+  if (!h || h.stale === true || h.job.type !== 'struct' || h.job.id !== kindId || (!h.job.lit && quarterTurns(h.job.rot ?? 0) !== quarterTurns(rot)) || (h.job.rings === true) !== rings || liveryChanged || h.job.style !== actx.structStyle) {
     // The owner's team colour is the plan's accent; the livery adds bands + sigil slots.
     h = lv
-      ? actx.art.struct(kindId, 1, rot, lv.team, true, rings, { team: lv.team, sigil: lv.sigil })
-      : actx.art.struct(kindId, 1, rot, undefined, true, rings);
+      ? actx.art.struct(kindId, 1, rot, lv.team, true, rings, { team: lv.team, sigil: lv.sigil }, actx.structStyle)
+      : actx.art.struct(kindId, 1, rot, undefined, true, rings, undefined, actx.structStyle);
     actx.handles.set(key, h);
   }
   return h;
