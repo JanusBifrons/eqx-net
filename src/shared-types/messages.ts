@@ -21,6 +21,7 @@ export {
   TestKillCapitalsSchema,
   TestFleetWarpSchema,
   TestTractorSchema,
+  TestDropPodsSchema,
   ClientReadyMessageSchema,
   PlaceStructureSchema,
   RemoveStructureSchema,

@@ -1,6 +1,6 @@
 /**
  * Test-only message handlers (`test_aggro`, `test_reload_turrets`,
- * `test_kill_capitals`, `test_fleet_warp`, `test_tractor`): cues integration and E2E tests
+ * `test_kill_capitals`, `test_fleet_warp`, `test_tractor`, `test_drop_pods`): cues integration and E2E tests
  * send to skip a long setup. Every handler is gated on the room's testMode
  * (or `EQX_ALLOW_DEV_OVERRIDES=1`); a production client's message is ignored.
  *
@@ -18,6 +18,7 @@ import {
   TestKillCapitalsSchema,
   TestFleetWarpSchema,
   TestTractorSchema,
+  TestDropPodsSchema,
 } from '../../shared-types/messages.js';
 import { isCapitalKindId } from '../../core/combat/capitalHits.js';
 import type { SwarmEntityRegistry } from '../net/SwarmEntityRegistry.js';
@@ -39,6 +40,8 @@ export interface TestMessageHandlersDeps {
   /** Hold a tractor from the player's first mount on swarm entity `entityId`
    *  for `ticks` (`ForceFieldSubsystem.renewTractor`). */
   testTractor: (playerId: string, entityId: number, ticks: number) => void;
+  /** Drop one loot pod per size class beside the player's ship. */
+  dropTestPods: (playerId: string) => void;
 }
 
 export class TestMessageHandlers {
@@ -129,5 +132,18 @@ export class TestMessageHandlers {
       return;
     }
     d.testTractor(playerId, parsed.data.target, parsed.data.ticks);
+  }
+
+  /** Cargo pods look gate — `test_drop_pods`: a row of pods, one per size. */
+  dropPods(client: Client, raw: unknown): void {
+    const d = this.deps;
+    if (!(d.testMode || d.allowDevOverrides)) return;
+    const playerId = d.sessionToPlayer.get(client.sessionId);
+    if (!playerId) return;
+    if (!TestDropPodsSchema.safeParse(raw).success) {
+      d.malformed.record(client.sessionId, 'test_drop_pods');
+      return;
+    }
+    d.dropTestPods(playerId);
   }
 }

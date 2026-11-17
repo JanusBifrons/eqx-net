@@ -217,6 +217,14 @@ export const TestTractorSchema = z
   })
   .strict();
 
+/** testMode only (cargo pods look gate): drop one loot pod of each size
+ *  class in a row ahead of the sender's ship, each with a different beacon. */
+export const TestDropPodsSchema = z
+  .object({
+    type: z.literal('test_drop_pods'),
+  })
+  .strict();
+
 /** Client → server: cancel an in-flight spool. No effect once the server
  *  has committed (state is IN_TRANSIT or beyond). */
 export const CancelTransitSchema = z
@@ -544,6 +552,7 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
   SetGroupModeSchema,
   TestFleetWarpSchema,
   TestTractorSchema,
+  TestDropPodsSchema,
   ClientReadyMessageSchema,
   PlaceStructureSchema,
   RemoveStructureSchema,

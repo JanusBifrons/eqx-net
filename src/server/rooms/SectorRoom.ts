@@ -231,7 +231,7 @@ import type { SnapshotMessage, TimeScaleKeyframe } from '../../shared-types/mess
 // Mount/slot geometry helpers moved to ./mountGeometry.ts.
 import { resolveSlotMounts, mountWorldOrigin } from './mountGeometry.js';
 import { isLatentSlot, resolveInstanceMounts, resolveInstanceFireMounts } from '../../shared-types/shipKinds/slots.js';
-import { podSizeClass } from '../../shared-types/shipKinds/cargoPod.js';
+import { podSizeClass, podComponentIndex } from '../../shared-types/shipKinds/cargoPod.js';
 import { ROSTER_SOFT_GUARD, type ActivatedMount } from '../playerShips/PlayerShipStore.js';
 import { WeaponMountTicker } from './WeaponMountTicker.js';
 import { LockSubsystem, newLockTargetView, type LockTargetView } from './LockSubsystem.js';
@@ -3559,12 +3559,26 @@ export class SectorRoom extends Room<SectorState> {
         const m = getShipKind(this.getActiveShip(pid)?.kind ?? null).mounts?.[0], t = this.swarmRegistry.getByEntityId(entityId);
         if (m && t) this.forceFields.renewTractor(pid, { ...m, weaponId: 'tractor' }, t.id, ticks);
       },
+      dropTestPods: (pid) => {
+        const p = this.shipPoseCache.get(pid);
+        if (!p) return;
+        // Sizes 0..3 left to right, beacons grey, blue, gold, magenta (spill).
+        const holds: Array<Partial<Record<'salvage' | 'alloy' | 'core', number>>> = [{ salvage: 4 }, { alloy: 4 }, { core: 2 }, { salvage: 9 }];
+        let x = p.x + 120;
+        for (let size = 0; size < holds.length; size++) {
+          const half = scrapColliderFor('cargo-pod', podComponentIndex(size, 0))?.radius ?? 20;
+          x += half;
+          this.loot.drop({ goods: holds[size]!, blueprints: [] }, x, p.y - 160, 0, 0, { size, alone: true, spill: size === 3 });
+          x += half + 40;
+        }
+      },
     });
     this.onMessage('test_tractor', (client: Client, raw: unknown) => testHandlers.tractor(client, raw));
     this.onMessage('test_aggro', (client: Client, raw: unknown) => testHandlers.aggro(client, raw));
     this.onMessage('test_reload_turrets', (client: Client, raw: unknown) => testHandlers.reloadTurrets(client, raw));
     this.onMessage('test_kill_capitals', (client: Client, raw: unknown) => testHandlers.killCapitals(client, raw));
     this.onMessage('test_fleet_warp', (client: Client, raw: unknown) => testHandlers.fleetWarp(client, raw));
+    this.onMessage('test_drop_pods', (client: Client, raw: unknown) => testHandlers.dropPods(client, raw));
 
     this.onMessage('cancel_transit', (client: Client, raw: unknown) => {
       const playerId = this.sessionToPlayer.get(client.sessionId);

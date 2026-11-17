@@ -3,7 +3,8 @@
  * The pod's wire `componentIndex` carries size class and glow tier together.
  */
 import { describe, expect, it } from 'vitest';
-import { podComponentIndex, podSizeClass, podSizeOf, podTierOf, POD_TIERS, POD_SIZE_SCALES } from './cargoPod.js';
+import { podComponentIndex, podSizeClass, podSizeOf, podTierOf, POD_TIERS, POD_SIZE_SCALES, POD_TIER_COLORS } from './cargoPod.js';
+import { shipScrapGroups } from '../../core/geometry/shipScrapGroups.js';
 import { scrapColliderFor } from '../../core/geometry/scrapCollider.js';
 import { getShipKind } from '../shipKinds.js';
 
@@ -37,6 +38,19 @@ describe('cargo pod size classes', () => {
       expect(c, `size ${s}`).not.toBeNull();
       expect(c!.radius).toBeGreaterThan(last);
       last = c!.radius;
+    }
+  });
+});
+
+describe('cargo pod art (owner 2026-11-17: a red black box, beacon shows the best tier)', () => {
+  it('each (size, tier) draws one red box, its seam and one beacon in the tier colour', () => {
+    for (let s = 0; s < POD_SIZE_SCALES.length; s++) {
+      for (let t = 0; t < POD_TIERS; t++) {
+        const g = shipScrapGroups('cargo-pod')[podComponentIndex(s, t)]!;
+        expect(g.parts.length, `size ${s} tier ${t}`).toBe(3);
+        expect(g.parts[0]!.color).toBe(0xc4302a);
+        expect(g.parts[2]!.color).toBe(POD_TIER_COLORS[t]);
+      }
     }
   });
 });
