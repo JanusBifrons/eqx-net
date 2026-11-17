@@ -87,7 +87,7 @@ The mining barge carries it (below).
 
 ## Mining asteroids
 
-- **All mined ore arrives as ore pods** (owner 2026-11-17). The mining laser puts nothing straight into your hold: it cuts the rock, the rock's whole ore is shared out to its pieces, and the last of each piece is an ore pod your tractors bring in. Nothing is lost on the way, and nothing is counted twice.
+- **All mined ore arrives as ore pods** (owner 2026-11-17). The mining laser puts nothing straight into your hold: it cuts the rock, and the ore leaves only through ore pods your tractors bring in. Each worn-out sliver drops one pod of up to a pod's size (610 minerals for plain rock); the rest of the rock's pool is not mined. (The pool is far larger than its pods can carry; its size is pending an owner decision.)
 - **Guns do not mine.** Shooting a rock with any other weapon takes nothing out of it.
 - **The mining laser cuts rock, exactly like a wreck.** Keep the beam on a rock and it wears down (hidden, like a wreck piece's wear). Worn out, it breaks along the line of every beam that burned it in the last moment, into two or three chunks. Only the mining laser wears rock: guns, the heavy beam and the railgun never do.
 - **The chunks are loose rock.** Each piece drifts and tumbles like wreck debris and can be cut again the same way. A piece is as heavy as its size (area × the rock density), so a tractor hauls small pieces easily and barely moves a big one.
@@ -140,6 +140,6 @@ To see one in the game, start the server with `EQX_BARGE_LOOK=A` (or B, C) and o
 
 ## Under the hood
 
-Ore draw (`src/server/rooms/OreDraw.ts`): robot harvesters draw into a hold through `OreDraw.mine` (`SectorRoom.mineAsteroid`), over the one pool decrement `OreDraw.draw` (the grid Miner's `drawAsteroidResources` hook). The mining laser draws nothing per hit (owner 2026-11-17; the per-hit payout of #706 is gone): the rock's pool stays whole until it breaks, `rockCut.ts` shares it out to the pieces by area (`perArea`), and each worn-out piece's pod carries its share through `OreDraw.cutYield` (`pieceOreUnits`, rounded, up to a pod's size). Lock: `tests/integration/sectorRoom/oreDraw.test.ts` (no hold rise while cutting; the pods carry the rock's full pool).
+Ore draw (`src/server/rooms/OreDraw.ts`): robot harvesters draw into a hold through `OreDraw.mine` (`SectorRoom.mineAsteroid`), over the one pool decrement `OreDraw.draw` (the grid Miner's `drawAsteroidResources` hook). The mining laser draws nothing per hit (owner 2026-11-17; the per-hit payout of #706 is gone): the rock's pool stays whole until it breaks, `rockCut.ts` shares it out to the pieces by area (`perArea`), and each worn-out sliver drops one pod through `OreDraw.cutYield` carrying its share capped at a pod's size (`pieceOreUnits`: `SALVAGE_POD_MAX_WEIGHT`, 610 minerals). The rest of the pool is not mined (pool size pending an owner decision). Lock: `tests/integration/sectorRoom/oreDraw.test.ts` (no hold rise while cutting; every sliver drops a full pod).
 
 The numbers and the rules (per-target damage factors, why a 0-damage hit is not an attack, the beam's look) are in [weapon-mounts](../architecture/weapon-mounts.md) ("Per-target damage factors", "The mining laser", "Tractor beam"); the tractor's force field and leases in [physics-worker](../architecture/physics-worker.md#force-fields).

@@ -52,8 +52,7 @@ describe('SectorRoom integration — mining-laser ore arrives only as ore pods',
     harness.lockTarget(pid, rockId);
     await harness.advance(100);
     let tick = 100;
-    const end = Date.now() + 2_500;
-    while (Date.now() < end) {
+    for (let i = 0; i < 25; i++) { // 25 fires, 100 ms of game apart
       cr.send('fire', { type: 'fire', tick, clientShotId: `f${tick}`, weapon: 'hitscan', dirAngle: 0, slotId: 'primary' });
       tick += 10;
       await harness.advance(100);
