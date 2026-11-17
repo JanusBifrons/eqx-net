@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import fc from 'fast-check';
-import { STRUCTURE_KINDS_LIST } from '../../shared-types/structureKinds.js';
+import { STRUCTURE_KINDS_LIST, structureOutline } from '../../shared-types/structureKinds.js';
 import { buildRig, rigPartIndex, JOINT_HINGE, type Rig } from './rig.js';
 import { createRigPose, evaluateRig, type PlayingClip } from './evaluate.js';
 import { twoBoneIkSolve } from './ikAdapter.js';
 import {
-  DOCK_BAY_HALF_H, DOCK_BAY_HALF_W, DOCK_CRANE_PIVOT_X, DOCK_CRANE_PIVOT_Y, DOCK_CRANE_REACH_TICKS,
+  DOCK_BAY_CX, DOCK_BAY_CY, DOCK_BAY_HALF_H, DOCK_BAY_HALF_W, DOCK_CRANE_BOOM, DOCK_CRANE_JIB, DOCK_CRANE_PIVOT_X, DOCK_CRANE_PIVOT_Y, DOCK_CRANE_REACH_TICKS,
   DOOR_TURRET_MOUNT, DOOR_TURRET_SLIDE_TRAVEL, FREIGHT_DOCK_HALF_H, FREIGHT_DOCK_HALF_W,
   RIG_DEFS, rigById, rigForStructureKind,
 } from './rigCatalogue.js';
@@ -79,48 +79,97 @@ describe('dock-crane', () => {
     expect(rig.jointType[rigPartIndex(rig, 'lip')]).toBe(JOINT_HINGE);
   });
 
-  it('reaches the bay centre and the bay edges (±40 % of the dock width)', () => {
-    for (const [x, y] of [[0, 0], [DOCK_BAY_HALF_W, 0], [-DOCK_BAY_HALF_W, 0],
-      [DOCK_BAY_HALF_W, DOCK_BAY_HALF_H], [-DOCK_BAY_HALF_W, DOCK_BAY_HALF_H],
-      [DOCK_BAY_HALF_W, -DOCK_BAY_HALF_H], [-DOCK_BAY_HALF_W, -DOCK_BAY_HALF_H]] as const) {
+  const bx0 = DOCK_BAY_CX - DOCK_BAY_HALF_W, bx1 = DOCK_BAY_CX + DOCK_BAY_HALF_W;
+  const by0 = DOCK_BAY_CY - DOCK_BAY_HALF_H, by1 = DOCK_BAY_CY + DOCK_BAY_HALF_H;
+
+  it('the bay lies entirely outside the dock footprint, beyond its open (+y) edge', () => {
+    expect(by0).toBeGreaterThan(FREIGHT_DOCK_HALF_H);
+    for (const style of ['c', undefined]) {
+      const outline = structureOutline('freight_dock', style);
+      expect(outline.length).toBeGreaterThanOrEqual(3);
+      // The bay is a box wholly above the outline's highest point: a separating line.
+      const topY = Math.max(...outline.map((p) => p.y));
+      expect(topY, `style ${style ?? 'default'}`).toBeLessThan(by0);
+    }
+  });
+
+  it('the lip apron covers the bay floor, outside the building', () => {
+    const lip = rigPartIndex(rig, 'lip');
+    const part = rig.parts[lip]!;
+    expect(part.kind).toBe('cosmetic');
+    evaluateRig(rig, null, 0, pose);
+    const ox = pose.x[lip]!, oy = pose.y[lip]!;
+    const xs: number[] = [], ys: number[] = [];
+    const o = part.outline!;
+    for (let i = 0; i < o.length; i += 2) { xs.push(ox + o[i]!); ys.push(oy + o[i + 1]!); }
+    expect(Math.min(...xs)).toBeLessThanOrEqual(bx0);
+    expect(Math.max(...xs)).toBeGreaterThanOrEqual(bx1);
+    expect(Math.min(...ys)).toBeLessThanOrEqual(by0);
+    expect(Math.max(...ys)).toBeGreaterThanOrEqual(by1);
+    expect(Math.min(...ys)).toBeGreaterThanOrEqual(FREIGHT_DOCK_HALF_H); // starts at the open edge
+  });
+
+  it('reaches the bay centre, edge midpoints and all four corners', () => {
+    for (const [x, y] of [[DOCK_BAY_CX, DOCK_BAY_CY],
+      [bx0, DOCK_BAY_CY], [bx1, DOCK_BAY_CY], [DOCK_BAY_CX, by0], [DOCK_BAY_CX, by1],
+      [bx0, by0], [bx1, by0], [bx0, by1], [bx1, by1]] as const) {
       const r = reachTo(x, y);
       expect(r.reached, `(${x}, ${y})`).toBe(true);
       expect(r.err).toBeLessThan(1e-6);
     }
   });
 
+  it('reaches the bay with margin: far corners inside max reach, near edge outside min reach', () => {
+    const far = Math.hypot(bx1 - DOCK_CRANE_PIVOT_X, by1 - DOCK_CRANE_PIVOT_Y);
+    expect(DOCK_CRANE_BOOM + DOCK_CRANE_JIB - far).toBeGreaterThan(30);
+    const minReach = Math.sqrt(DOCK_CRANE_BOOM ** 2 + DOCK_CRANE_JIB ** 2 + 2 * DOCK_CRANE_BOOM * DOCK_CRANE_JIB * Math.cos(3.0));
+    expect(by0 - DOCK_CRANE_PIVOT_Y - minReach).toBeGreaterThan(5);
+  });
+
   it('property: every point of the bay is reached', () => {
     fc.assert(
       fc.property(
-        fc.double({ min: -DOCK_BAY_HALF_W, max: DOCK_BAY_HALF_W, noNaN: true }),
-        fc.double({ min: -DOCK_BAY_HALF_H, max: DOCK_BAY_HALF_H, noNaN: true }),
+        fc.double({ min: bx0, max: bx1, noNaN: true }),
+        fc.double({ min: by0, max: by1, noNaN: true }),
         (x, y) => { const r = reachTo(x, y); return r.reached && r.err < 1e-6; },
       ),
       { numRuns: 300 },
     );
   });
 
-  it('reports not-reached well outside the dock', () => {
-    for (const [x, y] of [[600, 0], [-600, 0], [0, 500], [0, -500]] as const) {
+  it('reports not-reached well outside the bay', () => {
+    for (const [x, y] of [[600, 0], [-600, 0], [0, 500], [0, -500], [500, 400], [-500, 400]] as const) {
       expect(reachTo(x, y).reached, `(${x}, ${y})`).toBe(false);
     }
   });
 
-  it('rest is stowed along the dock edge, inside the footprint', () => {
+  it('rest is stowed along the open edge, inside the footprint plus the plinth', () => {
     evaluateRig(rig, null, 0, pose);
-    for (let i = 0; i < rig.partCount; i++) {
-      expect(Math.abs(pose.x[i]!)).toBeLessThanOrEqual(FREIGHT_DOCK_HALF_W);
-      expect(Math.abs(pose.y[i]!)).toBeLessThanOrEqual(FREIGHT_DOCK_HALF_H);
+    for (const id of ['plinth', 'boom', 'jib', 'clamp']) {
+      const i = rigPartIndex(rig, id);
+      expect(Math.abs(pose.x[i]!), id).toBeLessThanOrEqual(FREIGHT_DOCK_HALF_W);
+      expect(Math.abs(pose.y[i]!), id).toBeLessThanOrEqual(FREIGHT_DOCK_HALF_H);
+      // Every outline vertex, too (the plinth's base hugs the edge).
+      const o = rig.parts[i]!.outline!;
+      const c = Math.cos(pose.angle[i]!), sn = Math.sin(pose.angle[i]!);
+      for (let k = 0; k < o.length; k += 2) {
+        const vx = pose.x[i]! + o[k]! * c - o[k + 1]! * sn;
+        const vy = pose.y[i]! + o[k]! * sn + o[k + 1]! * c;
+        expect(Math.abs(vx), `${id} x`).toBeLessThanOrEqual(FREIGHT_DOCK_HALF_W);
+        expect(vy, `${id} y`).toBeLessThanOrEqual(FREIGHT_DOCK_HALF_H);
+      }
     }
     const boom = rigPartIndex(rig, 'boom');
     expect(pose.x[boom]).toBeCloseTo(DOCK_CRANE_PIVOT_X, 9);
     expect(pose.y[boom]).toBeCloseTo(DOCK_CRANE_PIVOT_Y, 9);
-    expect(Math.cos(pose.angle[boom]!)).toBeCloseTo(1, 9); // boom lies along the edge (+x)
-    expect(pose.y[clamp]! - DOCK_CRANE_PIVOT_Y).toBeLessThan(25); // jib folded back: 140·sin 3.0 ≈ 20 in from the pivot
+    expect(Math.cos(pose.angle[boom]!)).toBeCloseTo(-1, 9); // boom lies along the edge (-x)
+    // jib folded back into the dock: 165·sin 3.0 ≈ 23 below the pivot
+    expect(pose.y[clamp]!).toBeLessThan(DOCK_CRANE_PIVOT_Y);
+    expect(DOCK_CRANE_PIVOT_Y - pose.y[clamp]!).toBeLessThan(30);
   });
 
   it('arm-hold sits on the target; arm-retract returns to rest', () => {
-    const target = { x: 120, y: 20 };
+    const target = { x: 120, y: DOCK_BAY_CY };
     evaluateRig(rig, play('arm-hold', 0, target), 5, pose, twoBoneIkSolve);
     expect(Math.hypot(pose.x[clamp]! - target.x, pose.y[clamp]! - target.y)).toBeLessThan(1e-6);
     evaluateRig(rig, play('arm-retract', 0, target), 0, pose, twoBoneIkSolve);
