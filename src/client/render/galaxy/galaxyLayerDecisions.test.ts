@@ -14,6 +14,8 @@ import {
   clusterFitFraction,
   hoverShrinkTargetScale,
   HOVER_SHRINK_SCALE,
+  labelFit,
+  LABEL_MIN_SCALE,
 } from './galaxyLayerDecisions';
 import { isNeighbour } from '@core/galaxy/galaxy';
 
@@ -117,5 +119,20 @@ describe('isSectorWarpable (Equinox Phase 7 / Item 1)', () => {
 
   it('nothing is warpable before the current sector is known (the landing map)', () => {
     expect(isSectorWarpable({ docked: true, currentSectorKey: null, sectorKey: OUTER })).toBe(false);
+  });
+});
+
+describe('labelFit (sector names stay inside their hex)', () => {
+  it('leaves a name that fits alone', () => {
+    expect(labelFit(80, 90)).toEqual({ scale: 1, wrap: false });
+  });
+  it('shrinks a slightly long name, no smaller than LABEL_MIN_SCALE', () => {
+    const f = labelFit(100, 90);
+    expect(f.wrap).toBe(false);
+    expect(f.scale).toBeCloseTo(0.9);
+    expect(f.scale).toBeGreaterThanOrEqual(LABEL_MIN_SCALE);
+  });
+  it('wraps a name too long to shrink legibly', () => {
+    expect(labelFit(200, 90)).toEqual({ scale: 1, wrap: true });
   });
 });

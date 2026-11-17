@@ -506,6 +506,20 @@ and *dynamic*, and give the sector UI a proper home on mobile + desktop.
 Everything is client-render or off-tick HTTP, so **no netgate** is required; PR CI
 runs the full suite + netgate as the backstop.
 
+## Map look (territory hexes)
+
+The full-page map draws each sector as an opaque hex tinted by its owner. Decisions are pure and unit-tested in `render/galaxy/galaxyTerritories.ts` and `galaxyLayerDecisions.ts`; `galaxyHexDraw.ts` turns them into Pixi calls; `GalaxyMapLayer` composes them.
+
+- **Owner tint.** The fill is the owner's ship colour (`teamColorOf`, no galaxy-only palette), lifted toward violet in a nebula sector; neutral ground is grey; drone ground carries a hatch.
+- **Seams.** Each territory draws an inset perimeter in its owner's border colour: thin on the map edge, bold on a front. Both sides of a front draw their own line, so a front reads as a two-colour seam.
+- **Split hex.** A contested sector splits down the middle, holder left, challenger right (`splitChallenger`). An owned sector splits as soon as a challenger has any share. A sector nobody owns splits grey / leader only once the leader holds at least 40% (`UNOWNED_SPLIT_MIN_SHARE`). The Ancients never count for capture, so the map never splits for them.
+- **Owner sigil.** A held sector shows its owner's sigil, the same emblem its ships wear (`teamSigilOf`), bottom-centre in the owner's border colour; one texture per owner, baked once. Neutral sectors have none.
+- **Threat brackets.** Amber corner brackets grow with threat 1-3 (more corners, longer arms, thicker).
+- **Lock and trend.** A locked sector shows a lock glyph top-right; a split sector shows a trend arrow top-left (up in the holder's colour, down in the challenger's).
+- **Flip ring.** A dashed ring in the new owner's colour marks a flip the client saw change between two polls, fading over 30 s (`FLIP_RING_MS`); the first poll never rings.
+- **Names.** A sector name shrinks to fit inside its hex (no smaller than 0.8x), else wraps to two lines (`labelFit`).
+- **Nebula backdrop.** The shared `nebulaField` is sampled once into a coarse, blurred alpha grid that fades to zero at its border, and shown as one linear-filtered sprite behind the cluster: soft cloud, no per-frame cost.
+
 ## Client rules in detail
 
 Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each rule and points here.

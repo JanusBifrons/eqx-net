@@ -10,6 +10,7 @@ import {
   frontEdges,
   HEX_EDGE_NEIGHBOUR_DIRS,
   splitChallenger,
+  UNOWNED_SPLIT_MIN_SHARE,
   threatBracketStyle,
   flipRingStrength,
   FLIP_RING_MS,
@@ -230,8 +231,20 @@ describe('split hex', () => {
     expect(splitChallenger(ctl({ challenger: 'robots', challengerShare: 30 }), 'core')).toBe('robots');
   });
 
-  it('a neutral sector with a leader splits grey / leader', () => {
+  it('a neutral sector splits grey / leader only from 40% share', () => {
+    expect(UNOWNED_SPLIT_MIN_SHARE).toBe(40);
+    expect(splitChallenger(ctl({ holderShare: 0, challenger: 'robots', challengerShare: 39 }), NEUTRAL_OWNER)).toBeNull();
     expect(splitChallenger(ctl({ holderShare: 0, challenger: 'robots', challengerShare: 40 }), NEUTRAL_OWNER)).toBe('robots');
+    expect(splitChallenger(ctl({ holderShare: 0, challenger: 'robots', challengerShare: 10 }), '')).toBeNull();
+  });
+
+  it('an owned sector keeps splitting below 40%', () => {
+    expect(splitChallenger(ctl({ challenger: 'robots', challengerShare: 5 }), 'core')).toBe('robots');
+  });
+
+  it('never splits for the Ancients (they never count for capture)', () => {
+    expect(splitChallenger(ctl({ challenger: 'ancients', challengerShare: 80 }), 'core')).toBeNull();
+    expect(splitChallenger(ctl({ holderShare: 0, challenger: 'ancients', challengerShare: 90 }), NEUTRAL_OWNER)).toBeNull();
   });
 });
 

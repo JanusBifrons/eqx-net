@@ -1,4 +1,4 @@
-import { Container, Graphics, Text, TextStyle, Ticker } from 'pixi.js';
+import { Container, Graphics, Sprite, Text, TextStyle, Texture, Ticker } from 'pixi.js';
 import {
   GALAXY_SECTORS,
   axialToPixel,
@@ -30,7 +30,7 @@ import {
   drawHatch,
   drawSectorControl,
   drawFlipRing,
-  drawNebulaClouds,
+  makeNebulaSprite, ownerSigilSprite, fitSectorLabel,
   drawGalaxyStarfield,
   drawFeatureGlyphs,
   drawTerritoryBorder,
@@ -165,6 +165,8 @@ interface HexEntry {
 }
 
 const HEX_VERTS_BASE = hexVertices(HEX_SIZE_BASE);
+/** Widest a sector name draws (map px): hex width inside the inset border, less a margin. */
+const LABEL_MAX_WIDTH = HEX_SIZE_BASE * Math.sqrt(3) * BORDER_INSET - 14;
 
 export class GalaxyMapLayer extends Container {
   private readonly onSelect: (sectorKey: string) => void;
@@ -198,8 +200,10 @@ export class GalaxyMapLayer extends Container {
   /** Per-territory dashed "just flipped" rings. Drawn on a flip, faded by
    *  alpha in the ticker (no per-frame redraw). */
   private readonly territoryFlipRings: Graphics[] = [];
-  /** Static nebula clouds behind the hexes (`nebulaField`), full-page only. */
-  private readonly nebulaBackdrop = new Graphics();
+  /** Static nebula clouds behind the hexes (`nebulaField`), one baked soft sprite, full-page only. */
+  private readonly nebulaBackdrop: Sprite;
+  /** Owner sigil textures (the ships' `teamSigilOf` emblem), one per owner. */
+  private readonly sigilTextures = new Map<string, Texture>();
   /** Last `control.flippedAtMs` per sector (undefined before the first poll). */
   private readonly lastFlippedAt = new Map<string, number | null>();
   /** Layer UI clock (ms) at which the client saw each sector's latest flip. */
@@ -273,7 +277,7 @@ export class GalaxyMapLayer extends Container {
     this.starfield.visible = false;
     this.addChild(this.backdrop);
     this.addChild(this.starfield);
-    drawNebulaClouds(this.nebulaBackdrop, HEX_SIZE_BASE, COLOR_NEBULA);
+    this.nebulaBackdrop = makeNebulaSprite(HEX_SIZE_BASE, COLOR_NEBULA);
     this.clusterRoot.addChild(this.nebulaBackdrop);
     this.clusterRoot.addChild(this.hexLayer);
     this.addChild(this.clusterRoot);
@@ -698,7 +702,11 @@ export class GalaxyMapLayer extends Container {
     if (this.disposed) return;
     this.disposed = true;
     Ticker.shared.remove(this.tick);
+    const nebulaTexture = this.nebulaBackdrop.texture;
     super.destroy({ children: true });
+    nebulaTexture.destroy(true);
+    for (const t of this.sigilTextures.values()) t.destroy(true);
+    this.sigilTextures.clear();
   }
 
   private isSelectable(sec: GalaxySector): boolean {
@@ -711,14 +719,9 @@ export class GalaxyMapLayer extends Container {
   }
 
   private buildHexes(): void {
-    // Group sectors into OWNER-contiguous territories (Phase 4a; Equinox Phase 9
-    // item 1 — DYNAMIC, via the `resolveSectorOwner` seam, NOT the baked region).
-    // Each territory becomes a sub-container at its centroid; member hexes hang
-    // off it at an offset, so scaling the container shrinks the region toward its
-    // centre. Campaign 4.4: ownership resolves from the LIVE snapshot state
-    // (`liveStateByKey`, absent pre-first-poll ⇒ all NEUTRAL ⇒ one territory);
-    // `setGalaxyStats` re-runs this via `rebuildTerritoryGrouping` when the
-    // ownership signature changes.
+    // Group sectors into owner-contiguous territories (live `resolveSectorOwner`;
+    // all NEUTRAL before the first poll), each a sub-container at its centroid so
+    // the hover-shrink scales the region; re-run by `rebuildTerritoryGrouping`.
     for (const s of GALAXY_SECTORS) {
       this.ownerByHexKey.set(`${s.hex.q},${s.hex.r}`, resolveSectorOwner(s.key, this.liveStateByKey));
     }
@@ -770,6 +773,7 @@ export class GalaxyMapLayer extends Container {
         }),
       });
       label.anchor.set(0.5);
+      fitSectorLabel(label, LABEL_MAX_WIDTH);
       label.x = ox;
       label.y = oy - HEX_SIZE_BASE * 0.18; // upper-centre, leaving room for the badge row
       container.addChild(label);
@@ -814,6 +818,10 @@ export class GalaxyMapLayer extends Container {
         countSegs.push({ box, num });
       }
       container.addChild(countRow);
+
+      // The owner's sigil (its ships' emblem) below the count row; none on neutral ground.
+      const sigil = ownerSigilSprite(this.sigilTextures, this.territories[ti]?.ownerId ?? '', ox, oy + HEX_SIZE_BASE * 0.62);
+      if (sigil) container.addChild(sigil);
 
       // Equinox Phase 9 (item 5) — "recent combat" glyph at the TOP of the hex,
       // shown by setGalaxyStats when the sector saw fighting/kills recently.

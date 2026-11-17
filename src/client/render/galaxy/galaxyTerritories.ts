@@ -128,12 +128,24 @@ export function mixColor(a: number, b: number, t: number): number {
 
 // ── Control overlays (galaxy feed `control`) ────────────────────────────────
 
+/** A sector nobody owns shows a split only once the leader holds at least
+ *  this share (0-100), so a stray pass does not paint unclaimed ground. */
+export const UNOWNED_SPLIT_MIN_SHARE = 40;
+
+/** Factions that never count for capture (the Ancients guard, never claim).
+ *  The server meter leaves them out; the map never splits for them either. */
+const NON_CAPTURING_OWNERS: ReadonlySet<string> = new Set(['ancients']);
+
 /** The challenger a contested sector splits with, or null (draw a whole hex).
  *  Contested = the meter names a challenger other than the holder, with some
- *  share. A neutral sector's "challenger" is its leader: it splits grey/leader. */
+ *  share. A sector nobody owns splits grey / leader only once the leader holds
+ *  {@link UNOWNED_SPLIT_MIN_SHARE}. A non-capturing faction never splits. */
 export function splitChallenger(control: SectorControl | null | undefined, holderId: string): string | null {
   if (!control || control.challenger === null) return null;
   if (control.challenger === holderId || control.challengerShare <= 0) return null;
+  if (NON_CAPTURING_OWNERS.has(control.challenger)) return null;
+  const unowned = holderId === NEUTRAL_OWNER || holderId === '';
+  if (unowned && control.challengerShare < UNOWNED_SPLIT_MIN_SHARE) return null;
   return control.challenger;
 }
 

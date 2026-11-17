@@ -92,3 +92,19 @@ export function isSectorWarpable(args: {
   if (args.sectorKey === args.currentSectorKey) return false;
   return isNeighbour(args.currentSectorKey, args.sectorKey);
 }
+
+/** Smallest scale a sector name shrinks to before it wraps to two lines
+ *  (below this it gets too small to read on a phone). */
+export const LABEL_MIN_SCALE = 0.8;
+
+/**
+ * Fit a sector name of `textWidth` into `maxWidth` (both map pixels): as is
+ * when it fits, scaled down to no less than {@link LABEL_MIN_SCALE}, else
+ * wrapped to two lines (the caller re-measures and scales the wrapped text by
+ * the same rule, with `wrap` then ignored).
+ */
+export function labelFit(textWidth: number, maxWidth: number): { scale: number; wrap: boolean } {
+  if (!(textWidth > maxWidth)) return { scale: 1, wrap: false };
+  const scale = maxWidth / textWidth;
+  return scale >= LABEL_MIN_SCALE ? { scale, wrap: false } : { scale: 1, wrap: true };
+}

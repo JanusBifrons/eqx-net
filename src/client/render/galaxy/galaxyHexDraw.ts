@@ -1,4 +1,8 @@
-import type { Graphics } from 'pixi.js';
+import { BufferImageSource, Sprite, Texture, type Graphics, type Text } from 'pixi.js';
+import { teamSigilOf } from '../../../shared-types/factions.js';
+import { sigilRgba } from '../art/sigil.js';
+import { labelFit } from './galaxyLayerDecisions';
+import { NEUTRAL_OWNER } from './sectorOwnership';
 import { GALAXY_SECTORS, axialToPixel, getSector, type SectorFeature } from '@core/galaxy/galaxy';
 import { galaxyNebula, NEBULA_SECTOR_SPACING } from '@core/galaxy/nebulaField';
 import type { SectorControl } from '../../../shared-types/galaxySnapshot.js';
@@ -150,39 +154,137 @@ export function drawFlipRing(g: Graphics, ox: number, oy: number, r: number, col
   g.stroke({ color, width: 2.5, alpha: 1 });
 }
 
-/** Nebula density band floors for the backdrop clouds. */
-const NEBULA_BANDS: readonly number[] = [0.08, 0.3, 0.55, 0.8];
+/** The baked nebula backdrop: a coarse alpha grid in map pixels. */
+export interface NebulaBake {
+  /** Grid size in texels. */
+  readonly w: number;
+  readonly h: number;
+  /** Map-pixel position of texel (0, 0)'s top-left corner. */
+  readonly x0: number;
+  readonly y0: number;
+  /** Map pixels per texel. */
+  readonly texel: number;
+  /** Row-major alpha, 0-255. */
+  readonly alpha: Uint8ClampedArray;
+}
 
-/** Static nebula clouds round the cluster (map pixels at `hexSize`), sampled
- *  once from the shared `nebulaField`: layered low-alpha discs in four density
- *  bands, four fills in one Graphics. */
-export function drawNebulaClouds(g: Graphics, hexSize: number, color: number): void {
-  g.clear();
+/** Map pixels per nebula texel: coarse on purpose, the GPU's linear filter
+ *  stretches it into soft cloud. */
+export const NEBULA_TEXEL = 8;
+/** Peak cloud opacity (deepest nebula). */
+export const NEBULA_MAX_ALPHA = 0.34;
+
+/**
+ * Sample the shared `nebulaField` once round the cluster (map pixels at
+ * `hexSize`) into a soft alpha grid: density through a smoothstep, a box blur
+ * so no edge is hard, and a fade to zero at the grid's border so the backdrop
+ * never shows a rectangle. Built once; the layer shows it as one sprite.
+ */
+export function bakeNebulaAlpha(hexSize: number): NebulaBake {
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
   for (const s of GALAXY_SECTORS) {
     const p = axialToPixel(s.hex, hexSize);
     minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
     minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
   }
-  const pad = hexSize * 2;
+  const pad = hexSize * 3;
+  const texel = NEBULA_TEXEL;
+  const x0 = minX - pad, y0 = minY - pad;
+  const w = Math.ceil((maxX - minX + 2 * pad) / texel);
+  const h = Math.ceil((maxY - minY + 2 * pad) / texel);
   // Map pixels -> nebula galaxy space (game axes, Y up).
   const k = NEBULA_SECTOR_SPACING / Math.sqrt(3) / hexSize;
-  const step = 26;
-  const radius = 22;
-  for (let band = 0; band < NEBULA_BANDS.length; band++) {
-    const lo = NEBULA_BANDS[band]!;
-    const hi = NEBULA_BANDS[band + 1] ?? 2;
-    let any = false;
-    for (let y = minY - pad; y <= maxY + pad; y += step) {
-      for (let x = minX - pad; x <= maxX + pad; x += step) {
-        const d = galaxyNebula(x * k, -y * k);
-        if (d < lo || d >= hi) continue;
-        g.circle(x, y, radius);
-        any = true;
-      }
+  const fadeTexels = (hexSize * 1.5) / texel;
+  let a: Float32Array = new Float32Array(w * h);
+  for (let j = 0; j < h; j++) {
+    for (let i = 0; i < w; i++) {
+      const d = galaxyNebula((x0 + (i + 0.5) * texel) * k, -(y0 + (j + 0.5) * texel) * k);
+      const t = Math.min(1, Math.max(0, (d - 0.05) / 0.8));
+      const edge = Math.min(1, Math.min(i, j, w - 1 - i, h - 1 - j) / fadeTexels);
+      a[j * w + i] = t * t * (3 - 2 * t) * edge;
     }
-    if (any) g.fill({ color, alpha: 0.06 + 0.05 * band });
   }
+  // Two separable box-blur passes (radius 2 texels) soften any lump.
+  for (let pass = 0; pass < 2; pass++) a = boxBlur(a, w, h, 2);
+  const alpha = new Uint8ClampedArray(w * h);
+  for (let n = 0; n < alpha.length; n++) alpha[n] = Math.round(a[n]! * NEBULA_MAX_ALPHA * 255);
+  return { w, h, x0, y0, texel, alpha };
+}
+
+/** The baked nebula as one soft sprite in map pixels (built once; one draw). */
+export function makeNebulaSprite(hexSize: number, color: number): Sprite {
+  const neb = bakeNebulaAlpha(hexSize);
+  const rgba = new Uint8ClampedArray(neb.w * neb.h * 4);
+  for (let n = 0; n < neb.alpha.length; n++) {
+    rgba[n * 4] = (color >> 16) & 255; rgba[n * 4 + 1] = (color >> 8) & 255;
+    rgba[n * 4 + 2] = color & 255; rgba[n * 4 + 3] = neb.alpha[n]!;
+  }
+  const sprite = new Sprite(new Texture({ source: new BufferImageSource({
+    resource: rgba, width: neb.w, height: neb.h, alphaMode: 'no-premultiply-alpha', scaleMode: 'linear',
+  }) }));
+  sprite.position.set(neb.x0, neb.y0);
+  sprite.scale.set(neb.texel);
+  return sprite;
+}
+
+/** Held-sector owner sigil: texels baked per owner, and drawn size (map px). */
+const SIGIL_TEXELS = 48;
+const SIGIL_SIZE = 18;
+
+/** An owner's sigil texture: the SAME emblem its ships wear (`teamSigilOf`),
+ *  in the owner's border colour. Bake once per owner and share it. */
+function makeSigilTexture(owner: string): Texture {
+  return new Texture({ source: new BufferImageSource({
+    resource: sigilRgba(teamSigilOf(owner), factionBorderColor(owner), SIGIL_TEXELS),
+    width: SIGIL_TEXELS, height: SIGIL_TEXELS,
+    alphaMode: 'no-premultiply-alpha', scaleMode: 'linear', autoGenerateMipmaps: true,
+  }) });
+}
+
+/** A held sector's owner sigil centred at (x, y), its texture baked once per
+ *  owner into `cache`; null on neutral ground (no sigil). */
+export function ownerSigilSprite(cache: Map<string, Texture>, owner: string, x: number, y: number): Sprite | null {
+  if (owner === NEUTRAL_OWNER || owner === '') return null;
+  let tex = cache.get(owner);
+  if (!tex) cache.set(owner, (tex = makeSigilTexture(owner)));
+  const s = new Sprite(tex);
+  s.anchor.set(0.5);
+  s.width = SIGIL_SIZE;
+  s.height = SIGIL_SIZE;
+  s.position.set(x, y);
+  return s;
+}
+
+/** Fit a sector name inside its hex (`labelFit`): shrink a little, else wrap
+ *  to two centred lines and shrink those if still too wide. */
+export function fitSectorLabel(label: Text, maxWidth: number): void {
+  if (labelFit(label.width, maxWidth).wrap) {
+    label.style.wordWrap = true;
+    label.style.wordWrapWidth = maxWidth;
+    label.style.align = 'center';
+    label.style.lineHeight = 13;
+  }
+  label.scale.set(labelFit(label.width, maxWidth).scale);
+}
+
+function boxBlur(src: Float32Array, w: number, h: number, r: number): Float32Array {
+  const tmp = new Float32Array(w * h);
+  const out = new Float32Array(w * h);
+  for (let j = 0; j < h; j++) {
+    for (let i = 0; i < w; i++) {
+      let sum = 0, n = 0;
+      for (let o = -r; o <= r; o++) { const x = i + o; if (x >= 0 && x < w) { sum += src[j * w + x]!; n++; } }
+      tmp[j * w + i] = sum / n;
+    }
+  }
+  for (let j = 0; j < h; j++) {
+    for (let i = 0; i < w; i++) {
+      let sum = 0, n = 0;
+      for (let o = -r; o <= r; o++) { const y = j + o; if (y >= 0 && y < h) { sum += tmp[y * w + i]!; n++; } }
+      out[j * w + i] = sum / n;
+    }
+  }
+  return out;
 }
 
 /**
