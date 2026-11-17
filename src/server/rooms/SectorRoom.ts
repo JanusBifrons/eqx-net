@@ -415,6 +415,7 @@ import { shipBodyMass, shellViewHalfExtent } from '../../shared-types/shipScale/
 import { ShellEventHub, type ShellViewer } from './ShellEventHub.js';
 import { type ShellSalvo } from '../../shared-types/messages/shellEvents.js';
 import { tuningFor, GLOBAL_SHIP_TUNING } from '../../shared-types/shipScale/lookup.js';
+import { landingReach } from '../../shared-types/shipScale/landingReach.js';
 import { shipRayHit, shipSweepHit } from '../../core/combat/shipHitShape.js';
 import { mayBeInReach, maxShipRangeBound, mountsReachTarget, type MountRangeTarget } from '../../core/combat/mountReach.js';
 import { CapitalWreckSubsystem, type WreckPiecePose } from './CapitalWreckSubsystem.js';
@@ -12052,7 +12053,8 @@ export class SectorRoom extends Room<SectorState> {
     playerId: string, x: number, y: number, kind: string | undefined, onlySkipShipId?: string,
   ): { x: number; y: number } {
     const skipOwn = onlySkipShipId === undefined;
-    const near = 8000;
+    const ownClear = kind ? tuningFor(kind).spawnClearance : 60;
+    const { near, maxDistance } = landingReach(ownClear);
     const boxes: SiteBox[] = [];
     for (const r of this.structureRegistry.all()) pushSolidBoxes(r, boxes);
     const circles: Array<{ x: number; y: number; r: number }> = [];
@@ -12073,7 +12075,7 @@ export class SectorRoom extends Room<SectorState> {
       if (skipOwn && hull?.playerId === playerId) continue;
       circles.push({ x: pose.x, y: pose.y, r: hull?.kind ? tuningFor(hull.kind).spawnClearance : 60 });
     }
-    return nearestClearPoint(x, y, boxes, kind ? tuningFor(kind).spawnClearance : 60, 6000, circles);
+    return nearestClearPoint(x, y, boxes, ownClear, maxDistance, circles);
   }
 
   /** Every other hull in the sector as a circle of its own extent (hull
