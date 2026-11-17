@@ -7,17 +7,20 @@ import { ShipSilhouette } from '../render/shipShapeSvg';
 import { EntityBadge } from './EntityBadge';
 import { entityLabel, type EntityKind } from '../render/entityVisuals';
 import { Z } from '../layout/zIndex';
-import type { SectorTooltipData, SectorShipEntry } from './galaxyTooltip';
+import { ownerLine, type SectorTooltipData, type SectorShipEntry } from './galaxyTooltip';
 import type { RecentCombat } from '../../shared-types/galaxySnapshot';
 import { isTouchDevice } from '../input/TouchInput';
-import { focusPanelDock, SHEET_FRAC_LANDSCAPE, SHEET_FRAC_PORTRAIT, SHEET_MAX_H } from '../render/galaxy/galaxyFocus';
+import {
+  focusPanelDock, PANEL_RIGHT_W, PANEL_TOUCH_FRAC, PANEL_TOUCH_MIN_W, PANEL_TOUCH_TOP, SHEET_FRAC_PORTRAIT, SHEET_MAX_H,
+} from '../render/galaxy/galaxyFocus';
 import { SectorHistorySparkline } from './SectorHistorySparkline';
 
 /**
  * Equinox Phase 9 (item 2) — the sector info DRAWER. Replaces the old fixed
- * popover (the desktop hover tooltip is separate + kept). Docks RIGHT on a
- * landscape desktop and as a BOTTOM sheet on a phone or in portrait (the map's
- * focus view frames the sector in the space left: `focusPanelDock`). OVERLAYS the
+ * popover (the desktop hover tooltip is separate + kept). Docks RIGHT on any
+ * landscape screen (narrower on a phone, below its top-right toolbar) and as a
+ * BOTTOM sheet upright (the map's focus view frames the sector in the space
+ * left: `focusPanelDock` / `focusPanelInsets`). OVERLAYS the
  * map without a scrim (MUI `persistent` variant — NOT a `temporary`/Modal
  * drawer, so the map behind stays interactive + re-selectable, and there are no
  * global touch listeners → the SwipeableDrawer RTT regression is avoided). A
@@ -51,7 +54,7 @@ const PAPER_COMMON = {
 
 const PAPER_RIGHT = {
   ...PAPER_COMMON,
-  width: 296,
+  width: PANEL_RIGHT_W,
   maxWidth: '92vw',
   top: 'var(--app-bar-h, 48px)',
   // dvh tracks the VISIBLE viewport (mobile address/nav bars), so the panel
@@ -73,8 +76,14 @@ const PAPER_BOTTOM = {
   borderRadius: '10px 10px 0 0',
 } as const;
 
-/** Phone held sideways: the sheet takes half the (short) height. */
-const PAPER_SHEET_LANDSCAPE = { ...PAPER_BOTTOM, height: `min(${SHEET_FRAC_LANDSCAPE * 100}dvh, ${SHEET_MAX_H}px)` } as const;
+/** Phone held sideways: a narrow side panel (`focusPanelWidth`) that starts
+ *  below the top-right toolbar (full-screen chip), so the hex keeps the height. */
+const PAPER_RIGHT_TOUCH = {
+  ...PAPER_RIGHT,
+  width: `clamp(${PANEL_TOUCH_MIN_W}px, ${PANEL_TOUCH_FRAC * 100}vw, ${PANEL_RIGHT_W}px)`,
+  top: `${PANEL_TOUCH_TOP}px`,
+  height: `calc(100dvh - ${PANEL_TOUCH_TOP}px)`,
+} as const;
 
 const HEADER_SX = {
   display: 'flex',
@@ -217,7 +226,7 @@ export function SectorInfoDrawer({
   warpBlockedHint = null,
 }: SectorInfoDrawerProps): JSX.Element {
   const portrait = useMediaQuery('(orientation: portrait)');
-  const anchor = focusPanelDock(portrait, isTouchDevice());
+  const anchor = focusPanelDock(portrait);
   const isWarp = context === 'warp';
 
   // Scoped swipe-to-close on the grab handle (no global listeners — avoids the
@@ -279,7 +288,7 @@ export function SectorInfoDrawer({
       data-testid="sector-info-drawer"
       PaperProps={{
         ref: paperRef,
-        sx: anchor === 'right' ? PAPER_RIGHT : portrait ? PAPER_BOTTOM : PAPER_SHEET_LANDSCAPE,
+        sx: anchor === 'bottom' ? PAPER_BOTTOM : isTouchDevice() ? PAPER_RIGHT_TOUCH : PAPER_RIGHT,
         // E2E hook for the live selection.
         ['data-drawer-sector' as string]: sectorKey ?? '',
       }}
@@ -322,10 +331,8 @@ export function SectorInfoDrawer({
                 {tip.name}
               </Typography>
               <Typography sx={{ color: '#8fe9c0', fontSize: 9, letterSpacing: 0.5, textTransform: 'uppercase' }}>
-                {/* Everything is NEUTRAL today (no capture/faction mechanics — Phase 9
-                    item 1); the server's region `owner` is cosmetic-static. Show
-                    Neutral until real ownership exists, then switch to `tip.status`. */}
-                Neutral
+                {/* The feed's owner + control, as the hex draws them. */}
+                {ownerLine(tip)}
               </Typography>
             </Box>
             {recentCombat && (

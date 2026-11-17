@@ -329,8 +329,8 @@ export class GalaxyMapLayer extends Container {
     const result = this.panZoomCamera.onPointerUp(pointerId, screenX, screenY, stamp);
     if (result.wasTap) {
       // Plain map: a hex selects, empty space deselects (closes the drawer). In
-      // focus: a door hops, the focused hex is a no-op, anything else backs out.
-      const t = this.focus.tap(screenX, screenY, this.hitTest(screenX, screenY));
+      // focus: a lit neighbour hops, the focused hex is a no-op, else back out.
+      const t = this.focus.tap(this.hitTest(screenX, screenY));
       if (t.kind === 'select') this.onSelect(t.key);
       else if (t.kind === 'deselect') this.onDeselect?.();
     }
@@ -350,12 +350,12 @@ export class GalaxyMapLayer extends Container {
   getDebugTransform(): { x: number; y: number; scale: number } {
     return { x: this.clusterRoot.x, y: this.clusterRoot.y, scale: this.clusterRoot.scale.x };
   }
-  /** DEV `__eqxGalaxyFocus` E2E hook: focus phase, sector, door keys. */
-  getDebugFocus(): { phase: string; key: string | null; doors: string[] } { return this.focus.debug(); }
+  /** DEV `__eqxGalaxyFocus` E2E hook: focus phase, sector, lit neighbours. */
+  getDebugFocus(): { phase: string; key: string | null; neighbours: string[] } { return this.focus.debug(); }
 
   /** Focus the selected sector (the info panel's), or back out on null. */
   setFocus(key: string | null): void {
-    if (this.mode === 'selector' && this.visible) this.focus.set(key, this.screenW, this.screenH, this.isTouch);
+    if (this.mode === 'selector' && this.visible) { this.clearHover(); this.focus.set(key, this.screenW, this.screenH, this.isTouch); }
   }
 
   /** VISIBLE count badges drawn for a sector (`__eqxGalaxyBadgeCount` E2E hook:
@@ -603,7 +603,10 @@ export class GalaxyMapLayer extends Container {
    * pointer crosses into a different hex or off the map).
    */
   private updateHover(screenX: number, screenY: number): void {
-    const { key, selectable } = this.sectorAtScreen(screenX, screenY);
+    const hit = this.sectorAtScreen(screenX, screenY);
+    // No tooltip while the focus glides, nor over the focused hex.
+    const key = hit.key !== null && this.focus.hidesHover(hit.key) ? null : hit.key;
+    const selectable = hit.selectable;
     if (key === this.hoveredSectorKey) return;
     this.hoveredSectorKey = key;
     this.repaint();
@@ -1018,7 +1021,7 @@ export class GalaxyMapLayer extends Container {
     // toward HOVER_SHRINK_SCALE; every other eases back to 1.0. Lerping ALL of them
     // each frame IS the smooth incoming/outgoing transition.
     this.focus.tick(Ticker.shared.deltaMS);
-    // No shrink in focus: the veil's hole is cut at the unshrunk hex.
+    // No shrink in focus: the veil and lit edges are drawn at the unshrunk hexes.
     const active = this.focus.key !== null ? -1 : this.hoveredTerritory >= 0 ? this.hoveredTerritory : this.currentTerritoryIndex();
     const territoryCount = this.territoryContainers.length;
     for (let i = 0; i < territoryCount; i++) {
