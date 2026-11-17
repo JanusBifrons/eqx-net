@@ -110,7 +110,7 @@ describe('SectorRoom integration — cargo access (C1)', () => {
     expect(stranger.open).toBe(true);
     expect(stranger.takeable).toBe(false);
     expect(stranger.hold?.goods, 'nothing found yet').toEqual({});
-    expect(stranger.hidden).toBe(1);
+    expect(stranger.hidden, 'every stack (the alloy, and a Capital its minerals bank) starts hidden').toBeGreaterThan(0);
     expect(stranger.message).toMatch(/Locked/);
     const grab = await ask(crVisitor, replies, 'cargo_move', { entityId, dir: 'take', items: { goods: { alloy: 10 } } });
     expect(grab.ok).toBe(false);

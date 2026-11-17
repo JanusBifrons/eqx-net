@@ -26,7 +26,10 @@ import { sendPilotShip } from '../ships/shipActionsClient';
 import { BountyAction } from './BountyAction';
 import { BlueprintInstall } from './BlueprintInstall';
 import { ResearchLabPanel } from './ResearchLabPanel';
-import { CargoAction } from './CargoPanel';
+import { CargoAction, PodOpen } from './CargoPanel';
+import { isLootPod } from '@shared-types/swarmWireFormat';
+import { podSizeOf } from '@shared-types/shipKinds/cargoPod';
+import { withinLootOpenReach } from '@core/cargo/lootReach';
 import { ForeignTeleporterPanel, TeleporterPanel } from './TeleporterPanel';
 import { isAlienGateKind, isTeleporterKind } from '../../shared-types/teleport';
 import { alienGateLine } from './alienGateInfo';
@@ -170,6 +173,9 @@ interface PanelData {
   /** Economy v2 W5a — an OWNED storage's packed product ids, comma-joined
    *  (the Unpack-hull chips). Absent when it holds none. */
   packed?: string;
+  /** Cargo pods 16 — a selected pod: is my ship within the open reach?
+   *  (the same `withinLootOpenReach` the server gates on). */
+  podOpen?: boolean;
 }
 
 export function EntityStatsPanel(): JSX.Element | null {
@@ -475,6 +481,7 @@ export function EntityStatsPanel(): JSX.Element | null {
       {data.isForeignTeleporter === true && data.entityId !== undefined && <ForeignTeleporterPanel key={data.entityId} entityId={data.entityId} />}
       {data.hasCargo === true && data.entityId !== undefined && <CargoAction key={data.entityId} entityId={data.entityId} />}
       {data.cargoShip !== undefined && <CargoAction key={data.cargoShip} ship={data.cargoShip} />}
+      {data.podOpen !== undefined && data.entityId !== undefined && <PodOpen key={data.entityId} entityId={data.entityId} inReach={data.podOpen} />}
       <TargetAction isOwn={data.isOwn === true || data.pilotShipId !== undefined} />
       {data.pilotShipId !== undefined && (
         // Phase 4 WS-A2 — in-world Pilot action on the local player's OWN
@@ -508,7 +515,7 @@ const PANEL_DATA_KEYS: ReadonlyArray<keyof PanelData> = [
   'entityId', 'isOwn', 'isDeconstructing', 'isConnector', 'level', 'canUpgrade', 'pilotShipId',
   'holdLine', 'holdUse', 'canRefine', 'gateAccess', 'bountyTarget', 'blueprints',
   'recipe', 'prodStatus', 'canChangeRecipe', 'needsBlueprint', 'blueprintLine', 'gunLine', 'noAmmo', 'noFuel', 'breach', 'upgradeGoods',
-  'isLab', 'hasCargo', 'cargoShip', 'packed', 'isTeleporter', 'isForeignTeleporter', 'alienGateLine',
+  'isLab', 'hasCargo', 'cargoShip', 'packed', 'isTeleporter', 'isForeignTeleporter', 'alienGateLine', 'podOpen',
 ];
 
 /** The next gate access setting in the cycle (owner + allies → owner only →
@@ -698,6 +705,21 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
         : `SIZE ${Math.round(sw.radius)}`,
     };
   }
+  // CARGO POD (cargo pods 15/16) — indestructible loot: no hull bar; Open
+  // works within about a ship length (the server re-checks every request).
+  if (kind === 'pod' && id.startsWith('swarm-')) {
+    const swarmId = parseInt(id.slice('swarm-'.length), 10);
+    const sw = Number.isNaN(swarmId) ? undefined : client.mirror.swarm?.get(swarmId);
+    if (!sw || !isLootPod(sw)) return null;
+    const localId = client.mirror.localPlayerId;
+    const me = localId !== null ? client.mirror.ships.get(localId) : undefined;
+    const near = me !== undefined && withinLootOpenReach(me.kind, me.shieldDown !== true, sw.x, sw.y, me.x, me.y, me.angle);
+    return {
+      name: 'Cargo pod', hpPct: 0, shieldPct: null, noHull: true,
+      infoLine: POD_SIZE_NAMES[podSizeOf(sw.componentIndex ?? 0)] ?? '',
+      entityId: swarmId, podOpen: near,
+    };
+  }
   // LINGERING HULL (R2.23) — the name line already shows WHOSE hull it is (the
   // owner's server-propagated display name); never surface the raw ownerPlayerId
   // (no ids in the UI). Absent name ⇒ "Abandoned hull"; the info line is the kind.
@@ -724,6 +746,9 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
   }
   return null;
 }
+
+/** Pod size class → the panel's size line (a fighter's pod up to a capital's). */
+const POD_SIZE_NAMES: readonly string[] = ['Small', 'Medium', 'Large', 'Huge'];
 
 /** Parse the numeric swarm entityId from a selection id (`swarm-<n>` or `<n>`).
  *  Undefined when not numeric. */

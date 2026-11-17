@@ -13,8 +13,7 @@ import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import type { SectorState } from '../../../src/server/rooms/schema/SectorState.js';
 import type { CargoState } from '../../../src/shared-types/messages/cargoMessages.js';
-import { getHoldStore } from '../../../src/server/db/PersistenceWorker.js';
-import { getPlayerShipStore } from '../../../src/server/playerShips/PlayerShipStore.js';
+import { getHoldStore, getPlayerShipStore } from '../../../src/server/db/PersistenceWorker.js';
 
 function serverRoom(id: string): SectorRoom {
   return matchMaker.getLocalRoomById(id) as unknown as SectorRoom;

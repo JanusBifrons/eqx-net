@@ -23,8 +23,8 @@ import { stream } from '../../core/random/rng.js';
 import { hashString } from '../../core/bases/baseProfile.js';
 import { POD_TIER_SPILL, podComponentIndex } from '../../shared-types/shipKinds/cargoPod.js';
 import type { HoldRecord, HoldStore } from './HoldStore.js';
-import { LOOT_OPEN_REACH } from '../../shared-types/shipScale/lookup.js';
 import { shipHitBound, shipWithinHullReach } from '../../core/combat/shipHitShape.js';
+import { withinLootOpenReach } from '../../core/cargo/lootReach.js';
 
 /** Max live loot pods per sector — a separate budget from `MAX_LIVE_SCRAP`. */
 export const MAX_LIVE_LOOT_PER_SECTOR = 64;
@@ -333,7 +333,7 @@ export class LootSubsystem {
   /** Is pod `podId` within `LOOT_OPEN_REACH` of `c`'s hull (the loot window's open rule)? */
   inOpenReach(c: LootCollector, podId: string): boolean {
     const pose = this.d.podPose(podId);
-    return pose !== null && shipWithinHullReach(c.kind.id, c.shieldUp, pose.x, pose.y, c.x, c.y, c.angle, LOOT_OPEN_REACH);
+    return pose !== null && withinLootOpenReach(c.kind.id, c.shieldUp, pose.x, pose.y, c.x, c.y, c.angle);
   }
 
   /** Commit one pod → ship move as ONE atomic group; an emptied pod's row is

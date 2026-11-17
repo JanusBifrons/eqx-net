@@ -215,6 +215,29 @@ const TOGGLE_ROW_SX = { display: 'flex', gap: '4px', alignItems: 'center', point
 const TOGGLE_BTN_SX = { color: '#8fe0bd', p: 0.5 };
 const TOGGLE_ICON_SX = { fontSize: { xs: 16, sm: 22 } };
 
+/** Cargo pods 16 — a selected pod's Open button: live within the open reach
+ *  (`withinLootOpenReach`), greyed with a hint beyond it. The window it opens
+ *  shuts again when the ship leaves the reach. */
+export const PodOpen = memo(function PodOpen({ entityId, inReach }: { entityId: number; inReach: boolean }): JSX.Element {
+  const [open, setOpen] = useState(false);
+  const shown = open && inReach;
+  return (
+    <Box>
+      <Box sx={TOGGLE_ROW_SX}>
+        <Box
+          component="button" data-testid="pod-open" data-in-reach={inReach ? '1' : '0'} disabled={!inReach}
+          onClick={() => setOpen((v) => !v)}
+          sx={{ ...BTN_SX, py: '2px', px: 1, fontWeight: 700, letterSpacing: 1, opacity: inReach ? 1 : 0.45, cursor: inReach ? 'pointer' : 'default' }}
+        >
+          {shown ? 'CLOSE' : 'OPEN'}
+        </Box>
+        {!inReach && <Box sx={{ fontSize: 9, color: '#9fb8ad' }}>Fly closer to open</Box>}
+      </Box>
+      {shown && <CargoPanel entityId={entityId} />}
+    </Box>
+  );
+});
+
 /** The inspector's "Cargo" toggle for a storage structure: opens the panel
  *  (which asks the server, so a locked or far structure says why). */
 export const CargoAction = memo(function CargoAction({ entityId, ship }: CargoPanelProps): JSX.Element {

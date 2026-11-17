@@ -11,8 +11,9 @@ import { getGameClient } from '../net/clientSingleton';
 import { groupColourHex } from '../hud/groupColours';
 
 /** Another player's AI-flown ship is selected as a `'lingering'` entity and is
- *  lockable like any player's ship (your own fleet arrives with `isOwn`). */
-const LOCKABLE = new Set(['ship', 'lingering', 'drone', 'structure']);
+ *  lockable like any player's ship (your own fleet arrives with `isOwn`). A
+ *  cargo pod locks for the tractor (moves it; never loads it). */
+const LOCKABLE = new Set(['ship', 'lingering', 'drone', 'structure', 'pod']);
 
 export function TargetAction({ isOwn }: { isOwn: boolean }): JSX.Element | null {
   const kind = useUIStore((s) => s.selection.focusKind);
