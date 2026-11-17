@@ -5,7 +5,7 @@
  * in the bake workers (`bake.worker.ts`). A bake is a list of RGBA frames plus
  * the few facts the runtime needs (size, density, light and nozzle spots).
  */
-import { forgeScrap, forgeShip, forgeStructure, forgeTurretGun, shipExtent, TURRET_COVER_REACH, type Fields, type GunFamily, type Livery } from './fields.js';
+import { forgeScrap, forgeShip, forgeStructure, forgeTurretGun, shipExtent, TURRET_COVER_REACH, type Fields, type GunFamily, type Livery, type StructLivery } from './fields.js';
 import { forgeRock } from './rockForge.js';
 import { forgeTractorDish } from './tractorDish.js';
 import { shipTurrets, structureTurrets } from './turretLayout.js';
@@ -74,7 +74,7 @@ export type BakeJob =
   /** `rot`: the structure's sprite rotation (radians, quarter turns). The sun
    *  is baked relative to it, so a turned structure is still lit from the
    *  sector's sun rather than having its lighting turn with it. */
-  | ({ type: 'struct'; id: string; seed: number; accent?: number; rot?: number; rings?: boolean } & LitFlag)
+  | ({ type: 'struct'; id: string; seed: number; accent?: number; rot?: number; rings?: boolean; livery?: StructLivery } & LitFlag)
   /** The turning part of a turret (R&D, rnd/turrets); lit at every sun step like a ship. */
   | ({ type: 'turret'; id: GunFamily; paint: number; len: number; wid: number; cap: number; ppu: number; naval?: { barrels: number; houseW: number; houseL: number; part?: 'house' | 'barrel' } } & LitFlag)
   /** One component of a destroyed ship; tumbles, so baked like a ship. */
@@ -97,7 +97,7 @@ export function bakeKey(j: BakeJob): string {
   if (j.type === 'fx') return `x:${FX_VERSION}:${j.id}:${j.variant ?? ''}:${j.seed ?? ''}`;
   if (j.type === 'rock') return `r:${j.shapeSeed}:${j.radius}:${j.resource ?? ''}:${quarterTurnsFine(j.rot ?? 0)}`;
   const q = quarterTurns(j.rot ?? 0);
-  return `m:${j.id}:${j.seed}:${j.accent ?? ''}${q ? `:r${q}` : ''}${j.rings ? ':R' : ''}`;
+  return `m:${j.id}:${j.seed}:${j.accent ?? ''}${q ? `:r${q}` : ''}${j.rings ? ':R' : ''}${j.livery ? structLiveryTag(j.livery) : ''}`;
 }
 
 /** A kind's turret bases (pivot + 1.4 x the larger of ring and cap): what a
@@ -107,13 +107,16 @@ export function turretCoverOf(id: string): Array<{ x: number; y: number; reach: 
   return shipTurrets(id).map((t) => ({ x: t.px, y: t.py, reach: TURRET_COVER_REACH * Math.max(t.ring, t.cap) }));
 }
 
+/** A liveried structure's key suffix (`?structLivery=1`; absent adds nothing). */
+function structLiveryTag(l: StructLivery): string { return `:SL${l.team.toString(16)}:${l.sigil.toString(16)}`; }
+
 /** A liveried ship's key suffix (absent livery adds nothing). */
 function liveryTag(l: Livery): string { return `:L${l.treatment}${l.team.toString(16)}:${l.sigil.toString(16)}${l.edge ? `:${l.edge}` : ''}`; }
 
 /** A lit job's key (prefixed `L` by bakeKey): no sun, and no turn for
  *  structures and rocks (the mesh turns; the maps don't change). */
 function litKeyBody(j: Exclude<BakeJob, { type: 'fx' }>): string {
-  if (j.type === 'struct') return `m:${j.id}:${j.seed}:${j.accent ?? ''}${j.rings ? ':R' : ''}`;
+  if (j.type === 'struct') return `m:${j.id}:${j.seed}:${j.accent ?? ''}${j.rings ? ':R' : ''}${j.livery ? structLiveryTag(j.livery) : ''}`;
   if (j.type === 'rock') return `r:${j.shapeSeed}:${j.radius}:${j.resource ?? ''}`;
   return bakeKey({ ...j, lit: false });
 }
@@ -246,7 +249,7 @@ export function runBake(j: BakeJob, rig: LightRig): Baked {
     return { frames, w: f.g.w, h: f.g.h, density: f.g.ppu, nozzles: f.nozzles, navLights: f.navLights, ...(tiles > 1 ? { tiles, tileH: TILE_MAX_SIDE } : {}) };
   }
   const rings = j.rings ? structureTurrets(j.id).map((t) => ({ x: t.px, y: t.py, r: t.ring })) : undefined;
-  const f = forgeStructure(j.id, { ppu: STRUCT_PPU, maxSide: STRUCT_MAX_SIDE, seed: j.seed, accent: j.accent, rings });
+  const f = forgeStructure(j.id, { ppu: STRUCT_PPU, maxSide: STRUCT_MAX_SIDE, seed: j.seed, accent: j.accent, rings, ...(j.livery ? { livery: j.livery } : {}) });
   if (j.lit) return litBaked(f, Infinity);
   return {
     frames: [litFrame(f, rig, rig.sunAz - quarterTurns(j.rot ?? 0) * (Math.PI / 2)), albedoHalf(f)],

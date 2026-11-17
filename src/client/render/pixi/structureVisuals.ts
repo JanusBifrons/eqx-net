@@ -21,6 +21,17 @@ import { PAD_SPECS, padPostCenters } from '../../../shared-types/teleport.js';
 export interface RectOp { x: number; y: number; w: number; h: number; color: number; alpha: number }
 /** A light point (pixi space). */
 export interface LightOp { x: number; y: number; r: number; color: number }
+/**
+ * Livery (structure restyle 1c, `?structLivery=1`): where the OWNER's emblem
+ * goes (pixi space, centre + radius). `screen`: a big lit sigil screen (the
+ * capital, i.e. the beacon); else the emblem is painted flat in the owner's
+ * colour. The forge stamps the owner's procedural sigil here (`sigil.ts`
+ * `stampSigilSlot`); a future PNG sigil replaces only the emblem drawn into
+ * the slot (`slotEmblem`), never the slot itself.
+ */
+export interface SigilSlotOp { x: number; y: number; r: number; screen?: boolean }
+/** Livery: an area painted in the owner's colour (pixi space). */
+export interface LiveryBandOp { x: number; y: number; w: number; h: number }
 
 /** Blend colour `c` toward `target` by `t` (0..1), per channel. */
 export function mixColor(c: number, target: number, t: number): number {
@@ -62,6 +73,10 @@ export interface StructureVisual {
   rects: RectOp[];
   lights: LightOp[];
   footprint: StructureFootprint;
+  /** Owner emblem slots (only with `opts.livery`; absent otherwise). */
+  sigils?: SigilSlotOp[];
+  /** Owner-colour areas (only with `opts.livery`; absent otherwise). */
+  bands?: LiveryBandOp[];
 }
 
 export interface StructureVisualOpts {
@@ -78,6 +93,9 @@ export interface StructureVisualOpts {
   /** Gates in game: leave the shield spans out — the renderer draws them live
    *  from the open state (ConnectorRenderer via derivedWalls). */
   omitSpans?: boolean;
+  /** Owner livery (`?structLivery=1`, off by default): add the sigil slots
+   *  and livery bands. Off = the plan is exactly today's. */
+  livery?: boolean;
 }
 
 /** A gate shield span between two posts: bright when closed, a faint ghost
@@ -222,6 +240,9 @@ export function buildStructureVisual(kindId: string, opts: StructureVisualOpts):
   const lit = (x: number, y: number, r: number, c: number): void => {
     if (live) lights.push({ x, y, r, color: c });
   };
+  const livery = opts.livery === true;
+  const sigils: SigilSlotOp[] = [];
+  const bands: LiveryBandOp[] = [];
 
   switch (kindId) {
     case 'capital': {
@@ -258,7 +279,18 @@ export function buildStructureVisual(kindId: string, opts: StructureVisualOpts):
       lit(x0 + W - 14, y0 + 14, 10, RED);
       lit(x0 + 14, y0 + H - 14, 10, RED);
       lit(x0 + W - 14, y0 + H - 14, 10, RED);
-      lit(0, 0, 26, accent);
+      if (livery) {
+        // The beacon: a big sigil screen over the core (it replaces the core
+        // lamp, whose glow would wash the emblem out), and owner-colour bands
+        // down the four connecting halls.
+        sigils.push({ x: 0, y: 0, r: (c - 60) / 2 - 8, screen: true });
+        bands.push({ x: x0 + wing + 6, y: y0 + 70, w: W - 2 * wing - 12, h: 10 });
+        bands.push({ x: x0 + wing + 6, y: y0 + H - 80, w: W - 2 * wing - 12, h: 10 });
+        bands.push({ x: x0 + 70, y: y0 + wing + 6, w: 10, h: H - 2 * wing - 12 });
+        bands.push({ x: x0 + W - 80, y: y0 + wing + 6, w: 10, h: H - 2 * wing - 12 });
+      } else {
+        lit(0, 0, 26, accent);
+      }
       break;
     }
     case 'connector': {
@@ -315,6 +347,8 @@ export function buildStructureVisual(kindId: string, opts: StructureVisualOpts):
       }
       lit(x0 + 8, y0 + 8, 6, WARM);
       lit(x0 + W - 8, y0 + H - 8, 6, WARM);
+      // Livery: the emblem on the middle container's roof.
+      if (livery) sigils.push({ x: x0 + 14 + (cw + 10) + cw / 2, y: y0 + 14 + (ch + 9) + ch / 2, r: ch / 2 - 6 });
       break;
     }
     case 'turret':
@@ -438,6 +472,11 @@ export function buildStructureVisual(kindId: string, opts: StructureVisualOpts):
       for (let y = y0 + 40; y < y0 + H - 40; y += 30) box(rects, x0 + W - 100, y, 60, 6, STEEL_LIGHT);
       box(rects, x0 + 18, y0 + H / 2 - 4, W - 140, 8, STEEL_LIGHT, 0.8);
       lit(x0 + W - 70, y0 + 30, 8, RED);
+      // Livery: the emblem on the cracking column, an owner band at its head.
+      if (livery) {
+        sigils.push({ x: x0 + W - 70, y: 0, r: 30 });
+        bands.push({ x: x0 + W - 104, y: y0 + 26, w: 68, h: 10 });
+      }
       break;
     }
     case 'silicon_works': {
@@ -505,6 +544,12 @@ export function buildStructureVisual(kindId: string, opts: StructureVisualOpts):
       hazard(rects, x0, y0 + H - 12, W, 12);
       lit(x0 + 14, y0 + H - 20, 7, 0x7fe0a4);
       lit(x0 + W - 14, y0 + H - 20, 7, 0x7fe0a4);
+      // Livery: the emblem between the middle cranes, an owner band along
+      // the berth edge of the pier block.
+      if (livery) {
+        sigils.push({ x: x0 + 30 + 90 * 2 + 70, y: y0 + H * 0.225, r: Math.min(24, H * 0.225 - 10) });
+        bands.push({ x: x0 + 8, y: y0 + H * 0.45 - 16, w: W - 16, h: 8 });
+      }
       break;
     }
     case 'deep_core_rig': {
@@ -734,5 +779,5 @@ export function buildStructureVisual(kindId: string, opts: StructureVisualOpts):
       slab(rects, x0, y0, W, H, mixColor(STEEL, accent, 0.25), 6);
   }
   if (opts.built === false) for (const r of rects) r.alpha *= 0.45;
-  return { rects, lights, footprint: fp };
+  return livery ? { rects, lights, footprint: fp, sigils, bands } : { rects, lights, footprint: fp };
 }

@@ -410,22 +410,8 @@ export function stampSigils(
     for (let tx = 0; tx < g.w; tx++) if (f.cov[ty * g.w + tx]! > 0.5) h = Math.max(h, Math.abs(tx + 0.5 - g.ox));
     return h;
   };
-  const team = lin(teamPaint);
-  const paintAt = (i: number, a: number): void => {
-    if (!ok[i] || a <= 0.02) return;
-    if (a >= 0.5) { paintEnamel(f, i, teamPaint, 1); return; }
-    for (let c = 0; c < 3; c++) f.albedo[i * 3 + c] = f.albedo[i * 3 + c]! * (1 - a) + team[c]! * a;
-  };
-  /** Stamp a mark of radius R (texels) centred at texel coords (cx, cy). */
-  const stamp = (cx: number, cy: number, R: number, cover: (u: number, v: number, px: number) => number): void => {
-    for (let ty = Math.max(0, Math.floor(cy - R)); ty <= Math.min(g.h - 1, Math.ceil(cy + R)); ty++) {
-      for (let tx = Math.max(0, Math.floor(cx - R)); tx <= Math.min(g.w - 1, Math.ceil(cx + R)); tx++) {
-        paintAt(ty * g.w + tx, cover((tx + 0.5 - cx) / R, -(ty + 0.5 - cy) / R, 1 / R));
-      }
-    }
-  };
-  const design = sigilDesign(livery.sigil);
-  const emblem = (u: number, v: number, px: number): number => sigilCoverage(design, u, v, px);
+  const stamp = (cx: number, cy: number, R: number, cover: EmblemCover): void => stampMark(f, teamPaint, cx, cy, R, cover, ok, 0);
+  const emblem = slotEmblem(livery.sigil);
   const mid = g.w / 2 - 0.5; // the centreline, in texel index
   const marks: NonNullable<Fields['sigils']> = [];
   const spots: Array<{ xs: number[]; cy: number; R: number }> = [];
@@ -484,4 +470,79 @@ export function stampSigils(
     }
   }
   if (marks.length > 0) f.sigils = marks;
+}
+
+/** An emblem's coverage 0..1 at emblem-local (u, v) in [-1, 1], `px` = one
+ *  texel in emblem units (the shape `sigilCoverage` and `sigilChevron` have). */
+export type EmblemCover = (u: number, v: number, px: number) => number;
+
+/**
+ * The emblem an owner's sigil seed draws: today always the procedural one.
+ * PNG seam (structure restyle §2 "leave room for a PNG sigil"): a faction
+ * with an image sigil returns a sampler of that image's alpha here (bilinear
+ * over u, v), and every stamp (ships and structure slots) draws it unchanged.
+ */
+export function slotEmblem(sigil: number): EmblemCover {
+  const design = sigilDesign(sigil);
+  return (u, v, px) => sigilCoverage(design, u, v, px);
+}
+
+/**
+ * Stamp one mark of radius R (texels) centred at texel coords (cx, cy) in
+ * the team colour: coverage >= 0.5 is livery enamel, the antialiased edge a
+ * blend. `ok`: the texels it may touch (null: any covered texel). `glow` > 0
+ * also makes the mark emissive (a lit screen).
+ */
+function stampMark(
+  f: Fields, teamPaint: number, cx: number, cy: number, R: number, cover: EmblemCover, ok: Float32Array | null, glow: number,
+): void {
+  const g = f.g;
+  const team = lin(teamPaint);
+  for (let ty = Math.max(0, Math.floor(cy - R)); ty <= Math.min(g.h - 1, Math.ceil(cy + R)); ty++) {
+    for (let tx = Math.max(0, Math.floor(cx - R)); tx <= Math.min(g.w - 1, Math.ceil(cx + R)); tx++) {
+      const i = ty * g.w + tx;
+      const a = cover((tx + 0.5 - cx) / R, -(ty + 0.5 - cy) / R, 1 / R);
+      if ((ok ? !ok[i] : f.cov[i]! <= 0.5) || a <= 0.02) continue;
+      if (a >= 0.5) paintEnamel(f, i, teamPaint, 1);
+      else for (let c = 0; c < 3; c++) f.albedo[i * 3 + c] = f.albedo[i * 3 + c]! * (1 - a) + team[c]! * a;
+      if (glow > 0) for (let c = 0; c < 3; c++) f.emis[i * 3 + c] = Math.max(f.emis[i * 3 + c]!, team[c]! * glow * Math.min(1, a));
+    }
+  }
+}
+
+/** A sigil screen's dark glass, and how bright its emblem and bezel glow. */
+const SCREEN_GLASS = 0x0b1018, SCREEN_GLOW = 0.9, SCREEN_EMBLEM = 0.74, SCREEN_BEZEL = 0.9;
+
+/**
+ * Structure livery (structure restyle 1c, `?structLivery=1`): the owner's
+ * emblem in a planned slot (`structureVisuals` `SigilSlotOp`; local world
+ * units). The slot is authoritative (no clear-area search, unlike
+ * `stampSigils`'s hulls). `screen`: the beacon's big sigil screen, a dark
+ * glass disc with a team-colour bezel and the emblem glowing on it.
+ */
+export function stampSigilSlot(
+  f: Fields, sigil: number, teamPaint: number, x: number, y: number, r: number, screen: boolean,
+): void {
+  const g = f.g;
+  const cx = x * g.ppu + g.ox, cy = y * g.ppu + g.oy, R = r * g.ppu;
+  if (R < 2) return;
+  const emblem = slotEmblem(sigil);
+  if (screen) {
+    const glass = lin(SCREEN_GLASS), team = lin(teamPaint);
+    for (let ty = Math.max(0, Math.floor(cy - R)); ty <= Math.min(g.h - 1, Math.ceil(cy + R)); ty++) {
+      for (let tx = Math.max(0, Math.floor(cx - R)); tx <= Math.min(g.w - 1, Math.ceil(cx + R)); tx++) {
+        const i = ty * g.w + tx;
+        const k = Math.hypot(tx + 0.5 - cx, ty + 0.5 - cy) / R;
+        if (k > 1 || f.cov[i]! <= 0.5) continue;
+        if (k > SCREEN_BEZEL) { paintEnamel(f, i, teamPaint, 1); continue; }
+        f.mat[i] = MAT.WINDOW;
+        f.key[i] = SCREEN_GLASS;
+        for (let c = 0; c < 3; c++) { f.albedo[i * 3 + c] = glass[c]!; f.emis[i * 3 + c] = team[c]! * 0.05; }
+      }
+    }
+    stampMark(f, teamPaint, cx, cy, R * SCREEN_EMBLEM, emblem, null, SCREEN_GLOW);
+  } else {
+    stampMark(f, teamPaint, cx, cy, R, emblem, null, 0);
+  }
+  (f.sigils ??= []).push({ x, y, r, kind: 'sigil' });
 }

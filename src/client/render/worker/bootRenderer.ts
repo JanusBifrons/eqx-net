@@ -25,6 +25,7 @@ export function rendererArgsFromBoot(
       ...(msg.nebLook ? { nebLook: msg.nebLook } : {}),
       ...(msg.lighting ? { lighting: msg.lighting } : {}),
       ...(msg.livery ? { livery: msg.livery } : {}),
+      ...(msg.structLivery ? { structLivery: true } : {}),
       ...(msg.ore ? { ore: msg.ore } : {}),
       ...(msg.quality ? { quality: msg.quality } : {}),
     },

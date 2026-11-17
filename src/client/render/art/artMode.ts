@@ -39,6 +39,10 @@ export interface ArtOptions {
   /** Ship livery treatment: `DEFAULT_LIVERY` unless `?livery=off` (none) or
    *  another treatment (look R&D). Absent = the pre-livery paint. Machined only. */
   livery?: LiveryTreatment;
+  /** Structure livery (`?structLivery=1`, structure restyle 1c): structures
+   *  wear their owner's colours and sigil. Off by default (look not yet
+   *  signed off); off = today's structure bakes, byte-identical. Machined only. */
+  structLivery?: boolean;
   /** Cut-field ore look (`?ore=off|tint|veins|seams`, F1c); absent = veins (owner's pick). */
   ore?: FieldOreLook;
   /** Graphics quality (edge smoothing, render scale, texture softening);
@@ -89,6 +93,11 @@ export function readLivery(search: string): LiveryTreatment | undefined {
   const p = readLiveryParam(search);
   if (p === 'off') return undefined;
   return p ?? DEFAULT_LIVERY;
+}
+
+/** `?structLivery=1`: structures wear their owner's livery (off by default). */
+export function readStructLivery(search: string): boolean {
+  return /[?&]structLivery=1\b/.test(search);
 }
 
 /** `?shiplight=gpu|high|medium|low|baked` (gpu = high), or null. */
