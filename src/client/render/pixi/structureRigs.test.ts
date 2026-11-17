@@ -197,6 +197,8 @@ describe('updateSwarmSprites with rigs', () => {
     const rigs = new StructureRigs(ctx.shipContainer);
     ctx.structureRigs = rigs;
     const mirror = mirrorOf([[5, structureEntry('turret', 0, 0, 0)]]);
+    // Stowed: the hatch shut over the sunk turret (no clip would idle deployed).
+    mirror.structures!.get(5)!.rigClip = { clipId: 'door-close', startTick: -1000 };
     ctx.fxNowMs = 0;
     updateSwarmSprites(mirror, ctx);
     const view = rigs.viewFor('swarm-5')!;
@@ -285,20 +287,60 @@ describe('rig clip clock (2e): wire start tick vs the client tick clock', () => 
     const clusterC = (ctx.mountVisuals as unknown as { clusters: Map<string, { container: Container }> })
       .clusters.get('swarm-5')!.container;
     expect(clusterC.scale.x).toBeCloseTo(RIG_LOOK_C.liftScaleUp, 6);
-    // Same structure seen with no clip: the rest pose (sunk).
-    mirror.structures!.get(5)!.rigClip = undefined;
+    // Packed away: the sunk pose, the gun hidden under the hatch.
+    mirror.structures!.get(5)!.rigClip = { clipId: 'turret-retract', startTick: 100 };
     updateSwarmSprites(mirror, ctx);
     expect(clusterC.scale.x).toBeCloseTo(RIG_LOOK_C.liftScaleRest, 6);
+    expect(clusterC.visible).toBe(false);
+    // Same structure seen with no clip: the idle pose (deployed, gun up),
+    // as the server fires it (`rigDeployed`).
+    mirror.structures!.get(5)!.rigClip = undefined;
+    updateSwarmSprites(mirror, ctx);
+    expect(clusterC.scale.x).toBeCloseTo(RIG_LOOK_C.liftScaleUp, 6);
+    expect(clusterC.visible).toBe(true);
   });
 });
 
 describe('rig part look (2c+)', () => {
+  it('a fully sunk riser casts no shadow and draws nothing; the shadow fades in with the rise (2h)', () => {
+    const rig = rigForStructureKind('turret')!;
+    const v = new StructureRigView(rig);
+    const r = v.riserPart;
+    const sh = v.shadows[r]!;
+    // Packed under the shut hatch: no shadow peeks past the leaves.
+    v.update({ clipId: 'turret-retract', startTick: 0 }, 1000, 0, 0, 0);
+    expect(v.lift).toBe(0);
+    expect(sh.visible).toBe(false);
+    expect(sh.alpha).toBe(0);
+    expect(v.parts[r]!.visible).toBe(false);
+    // Rising: the shadow fades in, never popping to a fixed alpha.
+    let prev = 0;
+    for (let tick = 16; tick <= 60; tick += 4) {
+      v.update({ clipId: 'turret-deploy', startTick: 0 }, tick, 0, 0, 0);
+      expect(sh.visible).toBe(true);
+      expect(v.parts[r]!.visible).toBe(true);
+      expect(sh.alpha).toBeCloseTo(RIG_LOOK_C.liftShadowAlphaUp * v.lift, 9);
+      expect(sh.alpha).toBeGreaterThan(prev);
+      prev = sh.alpha;
+    }
+    // Just off the floor the shadow is faint.
+    v.update({ clipId: 'turret-deploy', startTick: 0 }, 16, 0, 0, 0);
+    expect(sh.alpha).toBeLessThan(0.05);
+    // Fully risen: full shadow.
+    v.update({ clipId: 'turret-deploy', startTick: 0 }, 1000, 0, 0, 0);
+    expect(sh.alpha).toBeCloseTo(RIG_LOOK_C.liftShadowAlphaUp, 9);
+    // No clip: the idle pose is deployed (as the server fires it).
+    v.update(null, 0, 0, 0, 0);
+    expect(v.lift).toBe(1);
+    expect(sh.visible).toBe(true);
+  });
+
   it('pop-up riser rises in place: grows, its shadow widens and drifts; lift progress drives it', () => {
     const rig = rigForStructureKind('turret')!;
     const v = new StructureRigView(rig);
     const r = v.riserPart;
     expect(r).toBe(v.mountPart);
-    v.update(null, 0, 0, 0, 0);
+    v.update({ clipId: 'door-close', startTick: 0 }, 1000, 0, 0, 0);
     const x0 = v.parts[r]!.x, y0 = v.parts[r]!.y, s0 = v.shadows[r]!.x - x0, a0 = v.shadows[r]!.alpha;
     expect(v.parts[r]!.scale.x).toBeCloseTo(RIG_LOOK_C.liftScaleRest, 6);
     v.update({ clipId: 'turret-deploy', startTick: 0 }, 1000, 0, 0, 0);

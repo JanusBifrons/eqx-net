@@ -118,6 +118,11 @@ export interface RigDef {
   readonly id: string;
   readonly parts: readonly PartDef[];
   readonly clips: readonly ClipDef[];
+  /** The pose with NO clip record (never played, or cleared): this clip's
+   *  held end pose. Absent: every part at rest. A pop-up turret idles
+   *  deployed (hatch open, gun up), so a structure no clip has touched looks
+   *  and fights as it always has. Must name an untargeted clip (no IK). */
+  readonly idleClip?: string;
 }
 
 export const JOINT_HINGE = 0;
@@ -174,6 +179,8 @@ export interface Rig {
   readonly clips: readonly CompiledClip[];
   /** Longest IK chain over all clips (sizes the pose's IK scratch). */
   readonly maxChain: number;
+  /** Clip index of `RigDef.idleClip` (the no-clip pose), or -1 (rest). */
+  readonly idleClip: number;
 }
 
 function fail(rig: string, msg: string): never {
@@ -303,10 +310,17 @@ export function buildRig(def: RigDef): Rig {
     };
   });
 
+  let idleClip = -1;
+  if (def.idleClip !== undefined) {
+    idleClip = clips.findIndex((c) => c.id === def.idleClip);
+    if (idleClip < 0) fail(rid, `unknown idle clip '${def.idleClip}'`);
+    if (clips[idleClip]!.chain.length > 0) fail(rid, `idle clip '${def.idleClip}' is targeted`);
+  }
+
   return {
     id: rid, partCount: n, partIds: ordered.map((p) => p.id), parts: ordered,
     parent, jointType, anchorX, anchorY, baseAngle, axisX, axisY, min, max, rest,
-    clips, maxChain,
+    clips, maxChain, idleClip,
   };
 }
 

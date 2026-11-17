@@ -188,6 +188,9 @@ export const DOCK_CRANE_DEF: RigDef = {
 //    `liftScaleUp` ≈ 1.14× risen, so ±20.5 × ±22.8); open, each slides 30
 //    out, its meeting edge at |x| = 30, clear of the risen riser.
 // The riser is listed first so the leaves draw over it.
+// With no clip record the turret idles DEPLOYED (`idleClip`: hatch open, gun
+// up): every turret in the game fires today, and a stowed one holds fire
+// (`rigDeployed`), so "never clipped" must read as deployed on every side.
 
 export const DOOR_TURRET_LEAF_HALF_W = 12;
 export const DOOR_TURRET_LEAF_HALF_H = 24;
@@ -201,6 +204,7 @@ const LEAF_OUTLINE = box(-DOOR_TURRET_LEAF_HALF_W, -DOOR_TURRET_LEAF_HALF_H, DOO
 
 export const SANDBOX_DOOR_TURRET_DEF: RigDef = {
   id: 'sandbox-door-turret',
+  idleClip: 'turret-deploy',
   parts: [
     {
       id: 'turret-lift', parent: null, anchorX: 0, anchorY: 0,

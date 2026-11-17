@@ -3017,6 +3017,7 @@ export class SectorRoom extends Room<SectorState> {
       findNearestDrone: (x, y, range, owner) => this.findNearestTurretTarget(x, y, range, owner),
       // Coastal defences — every hostile in reach, for per-mount fire control.
       turretTargets: (x, y, range, owner, out) => this.collectTurretTargets(x, y, range, owner, out),
+      rigTick: () => this.serverTick, // restyle 2h: a stowed pop-up turret holds fire
       applyDamage: (targetId, shooterId, damage) => this.applyDamage(targetId, shooterId, damage),
       blockBeamAtWall: (fx, fy, dx, dy, maxDist, damage) => this.blockShotAtWall(fx, fy, dx, dy, maxDist, damage),
       // Friendly fire: a turret beam lands on the first thing in its path.

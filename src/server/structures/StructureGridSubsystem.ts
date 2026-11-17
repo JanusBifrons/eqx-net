@@ -53,6 +53,9 @@ import { structureMountMuzzle, structureNavalTurret, navalBarrelOffset } from '.
 import type { WeaponMount } from '../../shared-types/shipKinds.js';
 import type { StructureKind } from '../../shared-types/structureKinds.js';
 import { StructureMountTicker, type TurretTargetView } from './StructureMountTicker.js';
+import { createRigPose, rigDeployed, type RigPose } from '../../core/articulation/evaluate.js';
+import { rigForStructureKind } from '../../core/articulation/rigCatalogue.js';
+import type { Rig } from '../../core/articulation/rig.js';
 import type { LockEntry } from '../../core/combat/lockState.js';
 import type { StructureRecord, StructureRegistry } from './StructureRegistry.js';
 
@@ -199,6 +202,11 @@ export interface StructureGridHooks {
   /** Economy v2 — a PREPAID structure (placed from a packed item) finished
    *  deconstructing: the room repacks it. Called BEFORE it is despawned. */
   onRepack?: (rec: StructureRecord) => void;
+  /** Structure-restyle 2h: the room's game tick (`serverTick`), what a rig
+   *  clip record is timed in. A turret whose rig is stowed (a pop-up packed
+   *  under its hatch, or still rising) holds fire (`rigDeployed`). Absent ⇒
+   *  no rig gate (unit harnesses). */
+  rigTick?: () => number;
 }
 
 export interface GridPulseResult {
@@ -224,6 +232,8 @@ export class StructureGridSubsystem {
 
   /** Coastal defences — per-mount fire control for every defence structure. */
   private readonly mounts: StructureMountTicker;
+  /** Rig pose scratch per rig (`turretDeployed`), made once per rig. */
+  private readonly rigScratch = new Map<Rig, RigPose>();
   /** Quad AA: the next barrel to fire, per structure. */
   private readonly aaBarrel = new Map<string, number>();
   private turretTicks = 0;
@@ -310,6 +320,14 @@ export class StructureGridSubsystem {
         this.setActive(rec, false);
         continue;
       }
+      // A stowed pop-up turret neither acquires nor fires (its barrels stay put).
+      if (!this.turretDeployed(rec)) {
+        rec.turretTargetEntityId = undefined;
+        rec.turretTargetPlayer = undefined;
+        this.mounts.idle(rec);
+        this.setActive(rec, false);
+        continue;
+      }
       // Reach is the gun's, whatever the level (a level upgrades damage +
       // HP; `fireMount` reads the damage factor).
       const target = this.mounts.tick(rec, kind, mounts, nowMs, dt);
@@ -324,6 +342,20 @@ export class StructureGridSubsystem {
       this.mounts.prune((id) => reg.get(id) !== undefined);
       for (const id of this.aaBarrel.keys()) if (reg.get(id) === undefined) this.aaBarrel.delete(id);
     }
+  }
+
+  /** Structure-restyle 2h: is `rec`'s rig deployed (no rig, no lift joint,
+   *  or every lift fully raised at the room's tick)? No clip record ⇒ the
+   *  rig's idle pose (a pop-up turret idles deployed). Allocation-free after
+   *  the first call per rig. */
+  private turretDeployed(rec: StructureRecord): boolean {
+    const tickOf = this.hooks.rigTick;
+    if (tickOf === undefined) return true;
+    const rig = rigForStructureKind(rec.kind);
+    if (rig === null) return true;
+    let scratch = this.rigScratch.get(rig);
+    if (scratch === undefined) { scratch = createRigPose(rig); this.rigScratch.set(rig, scratch); }
+    return rigDeployed(rig, rec.rigClip ?? null, tickOf(), scratch);
   }
 
   /** Every hostile in range (the room's hook), else the nearest one from

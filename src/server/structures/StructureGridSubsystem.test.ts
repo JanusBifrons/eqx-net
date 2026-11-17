@@ -27,6 +27,8 @@ function makeHarness(
   const projectiles: Array<{ shooterId: string; x: number; y: number; vx: number; vy: number; damage: number; radius: number; maxTicks: number; weaponId: string }> = [];
   const missiles: Array<{ shooterId: string; x: number; y: number; dirX: number; dirY: number; weaponId: string }> = [];
   let counter = 0;
+  /** The room's game tick the rig gate reads (`rigTick`). */
+  const clock = { tick: 0 };
 
   const placement = new StructurePlacementSubsystem({
     spawnStructure: () => true,
@@ -76,6 +78,7 @@ function makeHarness(
       projectiles.push({ shooterId, x, y, vx, vy, damage: dmg, radius, maxTicks, weaponId }),
     spawnMissile: (shooterId, x, y, dirX, dirY, def) =>
       missiles.push({ shooterId, x, y, dirX, dirY, weaponId: def.id }),
+    rigTick: () => clock.tick,
   });
   // These tests cover cadence, weapon modes and ammo, not lock timing
   // (StructureMountTicker.test.ts locks that): opt into the testMode instant
@@ -84,7 +87,7 @@ function makeHarness(
 
   let now = 0;
   const pulse = () => { now += 1000; return grid.pulse(now); };
-  return { registry, health, despawned, damage, beams, projectiles, missiles, placement, placeRaw, grid, pulse, asteroid };
+  return { registry, health, despawned, damage, beams, projectiles, missiles, placement, placeRaw, grid, pulse, asteroid, clock };
 }
 
 const OWNER = 'player-1';
@@ -748,6 +751,56 @@ describe('StructureGridSubsystem — turrets (Phase 5)', () => {
     // worth, just spread across multiple small hits instead of one lump.
     const totalOver600 = h.damage.reduce((s, d) => s + d.amount, 0);
     expect(totalOver600).toBeCloseTo(2 * beam.perHitDamage, 3);
+  });
+
+  it('restyle 2h: a stowed pop-up turret holds fire; deployed or never clipped, it fires', () => {
+    const drone = { id: 'swarm-5', entityId: 5, x: -130, y: 900 };
+    const h = makeHarness(undefined, drone);
+    h.placement.place(OWNER, 'capital', 0, 0);
+    relayConnectorRaw(h, 0, 350);
+    h.placeRaw(OWNER, 'solar', 250, 400);
+    const turret = h.placeRaw(OWNER, 'turret', -130, 400)!;
+    for (let i = 0; i < 120; i++) h.pulse();
+    const rec = h.registry.get(turret)!;
+    expect(rec.isConstructed).toBe(true);
+    const kind = getStructureKind('turret');
+    const gap = kind.fireRateMs! + 1;
+    let now = 10_000;
+
+    // Never clipped: the idle pose is deployed, it fires as it always has.
+    expect(rec.rigClip).toBeUndefined();
+    h.grid.tickTurrets(now);
+    expect(h.damage.length).toBe(1);
+
+    // Packed under its hatch (retract finished): no target, no shot.
+    h.clock.tick = 1000;
+    rec.rigClip = { clipId: 'turret-retract', startTick: 0 };
+    for (let i = 0; i < 5; i++) h.grid.tickTurrets(now += gap);
+    expect(h.damage.length).toBe(1);
+    expect(rec.turretTargetEntityId).toBeUndefined();
+
+    // Rising, not yet up: still holds fire.
+    rec.rigClip = { clipId: 'turret-deploy', startTick: 1000 };
+    h.clock.tick = 1040;
+    h.grid.tickTurrets(now += gap);
+    expect(h.damage.length).toBe(1);
+
+    // Fully up: it acquires and fires again.
+    h.clock.tick = 1060;
+    h.grid.tickTurrets(now += gap);
+    expect(h.damage.length).toBe(2);
+    expect(rec.turretTargetEntityId).toBe(5);
+
+    // A clip that leaves the turret sunk (the hatch opened over it) holds fire.
+    rec.rigClip = { clipId: 'door-open', startTick: 2000 };
+    h.clock.tick = 2100;
+    h.grid.tickTurrets(now += gap);
+    expect(h.damage.length).toBe(2);
+
+    // Cleared clip (null): the idle pose again, deployed.
+    rec.rigClip = null;
+    h.grid.tickTurrets(now += gap);
+    expect(h.damage.length).toBe(3);
   });
 
   it('an UNPOWERED turret does not fire', () => {

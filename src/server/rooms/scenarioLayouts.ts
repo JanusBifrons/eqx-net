@@ -115,6 +115,9 @@ export function rigSandboxScene(lead: number): unknown[] {
   const t = (s: number): number => Math.round(lead + s * 1000);
   const H = 'hauler';
   return [
+    // 0. Before the take rolls: the turret (idling deployed) packs away, so
+    //    step 4 starts from the shut hatch.
+    { atMs: 0, action: 'rigClip', structure: 'turret', clip: 'turret-retract' },
     // 1. Fly in, stop on the pad; after ~1 s the crane reaches, holds, retracts; out.
     { atMs: t(0), action: 'spawn', tag: H, kind: 'trader-hauler', count: 1, ...RIG_SANDBOX.haulerEntry },
     { atMs: t(0), action: 'move', tag: H, ...RIG_SANDBOX.pad, speed: 320 },

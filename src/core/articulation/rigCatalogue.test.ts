@@ -2,12 +2,12 @@ import { describe, expect, it } from 'vitest';
 import fc from 'fast-check';
 import { STRUCTURE_KINDS_LIST, structureOutline } from '../../shared-types/structureKinds.js';
 import { buildRig, liftProgress, rigPartIndex, JOINT_HINGE, JOINT_LIFT, type Rig } from './rig.js';
-import { createRigPose, evaluateRig, type PlayingClip } from './evaluate.js';
+import { createRigPose, evaluateRig, rigDeployed, type PlayingClip } from './evaluate.js';
 import { twoBoneIkSolve } from './ikAdapter.js';
 import {
   DOCK_BAY_CX, DOCK_BAY_CY, DOCK_BAY_HALF_H, DOCK_BAY_HALF_W, DOCK_CRANE_BOOM, DOCK_CRANE_JIB, DOCK_CRANE_PIVOT_X, DOCK_CRANE_PIVOT_Y, DOCK_CRANE_REACH_TICKS,
-  DOCK_DEPOSIT_RANGE, DOOR_TURRET_LIFT, DOOR_TURRET_MOUNT, FREIGHT_DOCK_HALF_H, FREIGHT_DOCK_HALF_W,
-  RIG_DEFS, rigById, rigForStructureKind,
+  DOCK_DEPOSIT_RANGE, DOOR_TURRET_LEAF_TRAVEL, DOOR_TURRET_LIFT, DOOR_TURRET_MOUNT, FREIGHT_DOCK_HALF_H, FREIGHT_DOCK_HALF_W,
+  RIG_DEFS, SANDBOX_DOOR_TURRET_DEF, rigById, rigForStructureKind,
 } from './rigCatalogue.js';
 
 const play = (clipId: string, startTick: number, target?: { x: number; y: number }): PlayingClip =>
@@ -246,7 +246,7 @@ describe('sandbox-door-turret', () => {
   });
 
   it('closed, the leaves meet at the centre and cover the riser (even fully risen in size)', () => {
-    evaluateRig(rig, null, 0, pose);
+    evaluateRig(rig, play('door-close', 0), 100, pose);
     const l = boxOf('door-left'), r = boxOf('door-right'), riser = boxOf('turret-lift', RISEN);
     expect(l.x1).toBeCloseTo(0, 9);
     expect(r.x0).toBeCloseTo(0, 9);
@@ -295,5 +295,51 @@ describe('sandbox-door-turret', () => {
     expect(pose.x[P('door-right')]!).toBeGreaterThan(40); // still open as it sinks
     evaluateRig(rig, play('turret-retract', 0), 100, pose);
     expect(pose.x[P('door-right')]).toBeCloseTo(12, 9);
+  });
+});
+
+describe('rigDeployed + idle pose (structure-restyle 2h)', () => {
+  const rig: Rig = rigForStructureKind('turret')!;
+  const pose = createRigPose(rig);
+  const P = (id: string): number => rigPartIndex(rig, id);
+
+  it('no clip record: the turret idles deployed (hatch open, gun fully up)', () => {
+    evaluateRig(rig, null, 0, pose);
+    expect(liftProgress(rig, P('turret-lift'), pose.value[P('turret-lift')]!)).toBe(1);
+    expect(pose.value[P('door-left')]).toBeCloseTo(DOOR_TURRET_LEAF_TRAVEL, 9);
+    expect(pose.value[P('door-right')]).toBeCloseTo(DOOR_TURRET_LEAF_TRAVEL, 9);
+    expect(rigDeployed(rig, null, 0, pose)).toBe(true);
+    expect(rigDeployed(rig, null, 123_456, pose)).toBe(true);
+  });
+
+  it('stowed, rising or sinking holds; only fully raised is deployed', () => {
+    expect(rigDeployed(rig, play('turret-retract', 0), 1000, pose)).toBe(false); // packed away
+    expect(rigDeployed(rig, play('turret-retract', 0), 20, pose)).toBe(false); // sinking
+    expect(rigDeployed(rig, play('door-open', 0), 1000, pose)).toBe(false); // hatch open over a sunk gun
+    expect(rigDeployed(rig, play('door-close', 0), 1000, pose)).toBe(false);
+    expect(rigDeployed(rig, play('turret-deploy', 0), 59, pose)).toBe(false); // rising
+    expect(rigDeployed(rig, play('turret-deploy', 0), 60, pose)).toBe(true);
+    expect(rigDeployed(rig, play('turret-deploy', 0), 1000, pose)).toBe(true);
+    // A clip scheduled but not started: rest (sunk).
+    expect(rigDeployed(rig, play('turret-deploy', 500), 100, pose)).toBe(false);
+  });
+
+  it('a rig with no lift joint is always deployed', () => {
+    const crane = rigForStructureKind('freight_dock')!;
+    const cp = createRigPose(crane);
+    expect(rigDeployed(crane, null, 0, cp)).toBe(true);
+    expect(rigDeployed(crane, play('arm-retract', 0), 5, cp)).toBe(true);
+  });
+
+  it('a rig without idleClip rests with no clip; a bad idleClip fails the build', () => {
+    const { idleClip: _omit, ...plain } = SANDBOX_DOOR_TURRET_DEF;
+    const r = buildRig(plain);
+    expect(r.idleClip).toBe(-1);
+    const p = createRigPose(r);
+    expect(rigDeployed(r, null, 0, p)).toBe(false);
+    expect(() => buildRig({ ...SANDBOX_DOOR_TURRET_DEF, idleClip: 'nope' })).toThrow(/unknown idle clip/);
+    const dock = RIG_DEFS.find((d) => d.id === 'dock-crane')!;
+    const targeted = dock.clips.find((c) => c.ik !== undefined)!;
+    expect(() => buildRig({ ...dock, idleClip: targeted.id })).toThrow(/targeted/);
   });
 });
