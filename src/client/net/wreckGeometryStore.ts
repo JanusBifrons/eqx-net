@@ -30,17 +30,14 @@
  * the wire while a descendant lives; an ancestor that leaves first leaves
  * its descendants unresolved (null) until it is back.
  */
-import { wreckPieceGeometry, type WreckPieceGeometry } from '@core/destruction/wreckPieces';
-import { wreckChildGeometry, wreckChildSeed, type WreckChildStep } from '@core/destruction/wreckChildren';
-import { FRACTURE_ALGO_VERSION } from '@core/destruction/fractureHull';
-import { isShipKindId, type ShipKindId } from '@shared-types/shipKinds';
+import { MAX_WRECK_CHAIN_DEPTH, rebuildWreckPieces, resolveChildWreckPieces, wreckDescriptorUsable } from '@core/destruction/wreckDescriptorGeometry';
+import type { WreckPieceGeometry } from '@core/destruction/wreckPieces';
 import { isWreckDescriptor, isWreckId, type SnapshotMessage, type WreckDescriptor, type WreckSync } from '@shared-types/messages/snapshotMessages';
 import { WRECK_ROCK_PARENT_KIND, type WreckRockRef } from '@shared-types/messages/wreckDescriptor';
-import type { WreckFractureInputs } from '@core/destruction/wreckPieceFrame';
 
-/** Deepest child chain the client resolves (a guard against a parent cycle
- *  on a malformed wire; real chains are a few breaks deep). */
-export const MAX_WRECK_CHAIN_DEPTH = 16;
+// The pure descriptor → geometry resolver lives in core (shared with the
+// server's wreck restore); re-exported for the client's existing callers.
+export { MAX_WRECK_CHAIN_DEPTH, rebuildWreckPieces, resolveChildWreckPieces, wreckDescriptorUsable };
 
 interface Entry {
   desc: WreckDescriptor;
@@ -63,11 +60,6 @@ function sameInputs(a: WreckDescriptor, b: WreckDescriptor): boolean {
     && a.rock?.id === b.rock?.id && a.rock?.shape === b.rock?.shape && a.rock?.r === b.rock?.r;
 }
 
-/** A root descriptor's source: its rock (rock cut), else its ship kind. */
-function rootSource(d: WreckDescriptor): Pick<WreckFractureInputs, 'kindId' | 'rock'> {
-  return d.rock !== undefined ? { rock: d.rock } : { kindId: d.parentKind as ShipKindId };
-}
-
 /** Fracture v12: the same further cut lines, in the same order. */
 function sameExtraCuts(a: WreckDescriptor['extraCuts'], b: WreckDescriptor['extraCuts']): boolean {
   if (a === undefined || b === undefined) return a === b;
@@ -78,77 +70,6 @@ function sameExtraCuts(a: WreckDescriptor['extraCuts'], b: WreckDescriptor['extr
     if (p.x !== q.x || p.y !== q.y || p.ang !== q.ang || p.w !== q.w) return false;
   }
   return true;
-}
-
-/** The step a child descriptor names (its break of its parent's piece). */
-function stepOf(d: WreckDescriptor): WreckChildStep {
-  return {
-    pieceIndex: d.parentPiece!, killX: d.killX, killY: d.killY, cutKind: d.cutKind, cutAng: d.cutAng, cutW: d.cutW,
-    extraCuts: d.extraCuts,
-  };
-}
-
-/**
- * The pieces of a child descriptor, resolving its chain through `lookup`
- * (pure; the parity tests call it). Null when an ancestor is unknown, the
- * chain is deeper than `MAX_WRECK_CHAIN_DEPTH`, or a link disagrees with its
- * parent (kind, fracture version, or a seed that is not
- * `wreckChildSeed(parent.seed, parentPiece)`). `ancOut`, when given, gets the
- * ancestor descriptors parent first.
- */
-export function resolveChildWreckPieces(
-  d: WreckDescriptor,
-  lookup: (wreckId: number) => WreckDescriptor | undefined,
-  ancOut?: WreckDescriptor[],
-): WreckPieceGeometry[] | null {
-  const steps: WreckChildStep[] = [];
-  let cur = d;
-  while (cur.parentWreck !== undefined) {
-    if (steps.length >= MAX_WRECK_CHAIN_DEPTH) return null;
-    const p = lookup(cur.parentWreck);
-    if (p === undefined || p.parentKind !== cur.parentKind || p.algoVersion !== cur.algoVersion
-      || cur.seed !== wreckChildSeed(p.seed, cur.parentPiece!)) return null;
-    steps.push(stepOf(cur));
-    ancOut?.push(p);
-    cur = p;
-  }
-  steps.reverse();
-  if (cur.parentKind === WRECK_ROCK_PARENT_KIND && cur.rock === undefined) return null;
-  return wreckChildGeometry({
-    root: {
-      ...rootSource(cur), seed: cur.seed, killX: cur.killX, killY: cur.killY,
-      killBlowDamage: cur.killBlowDamage, recentDamageRate: cur.recentDamageRate, snapChance: cur.snapChance,
-      cutKind: cur.cutKind, cutAng: cur.cutAng, cutW: cur.cutW, extraCuts: cur.extraCuts,
-    },
-    steps,
-  });
-}
-
-/** Is this descriptor one this client can rebuild? A rock's wreck (rock
- *  cut) names `WRECK_ROCK_PARENT_KIND`; its root carries the rock. */
-export function wreckDescriptorUsable(d: WreckDescriptor): boolean {
-  if (d.algoVersion !== FRACTURE_ALGO_VERSION) return false;
-  if (d.parentKind === WRECK_ROCK_PARENT_KIND) return d.rock !== undefined || d.parentWreck !== undefined;
-  return isShipKindId(d.parentKind);
-}
-
-/** The deterministic pieces of one wreck (pure; the parity tests call it). */
-export function rebuildWreckPieces(d: WreckDescriptor): WreckPieceGeometry[] {
-  return wreckPieceGeometry({
-    ...rootSource(d),
-    seed: d.seed,
-    killX: d.killX,
-    killY: d.killY,
-    killBlowDamage: d.killBlowDamage,
-    recentDamageRate: d.recentDamageRate,
-    snapChance: d.snapChance,
-    // The v9 kill cut rides as-is (absent = no cut).
-    cutKind: d.cutKind,
-    cutAng: d.cutAng,
-    cutW: d.cutW,
-    // v12 multi-cut: the other beams' lines, as-is too.
-    extraCuts: d.extraCuts,
-  });
 }
 
 export class WreckGeometryStore {

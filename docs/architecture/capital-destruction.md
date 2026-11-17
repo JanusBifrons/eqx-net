@@ -954,6 +954,11 @@ fracture); the server sends 0.
   `wreckChildGeometry` (`resolveChildWreckPieces`, pure). A link that
   disagrees with its parent (kind, version, seed) or a chain deeper than
   `MAX_WRECK_CHAIN_DEPTH` (16, a cycle guard) resolves to nothing.
+- **Resolver in core.** The descriptor→geometry resolver
+  (`resolveChildWreckPieces`, `rebuildWreckPieces`, `wreckDescriptorUsable`)
+  lives in `core/destruction/wreckDescriptorGeometry.ts`, takes the ancestor
+  lookup as a parameter, and is shared by client and server (the server's
+  wreck restore will use it for saved wrecks).
 - **Out of order is normal.** A child can land before its parent (an add
   before the resync chunk holding the parent, the renderer seeing the mirror
   in id order). The store keeps it DEFERRED: its pieces read null (no body,
