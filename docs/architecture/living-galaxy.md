@@ -357,14 +357,23 @@ The cosmetic v1 must not box us in. The expansion ladder, in order:
 
 1. **v1 (this roadmap):** static per-region faction tint; counts live; ownership
    model present but `owner.factionId` = static, `contested` = false.
-2. **Derived ownership:** compute `owner` from `StructureRegistry` (dominant Capital
-   holder); set `contested` when multiple base owners coexist. Reuses the existing
-   [`FactionLedger`](../../src/server/faction/FactionLedger.ts) /
-   [`Faction.ts`](../../src/core/faction/Faction.ts) system — no new wire.
+2. **Derived ownership (built: the live control meter).** `owner` comes from the
+   control meter for every side (`core/territory/sectorControl.ts`
+   `stepMultiControl`, stepped by `RobotTerritory` on the control tick from each
+   side's ships, structures and robots), read through `RobotTerritory.sectorOwner`
+   into the snapshot; `contested` is set while a challenger is pushing. The static
+   controllers (`core/galaxy/control.ts` `sectorController`, the region hearts) are
+   only the seed. No new wire. Story: [robot-territory](../features/robot-territory.md).
 3. **Named NPC factions:** introduce 2-3 named factions that own/contest territory
    (eqx-peri empires) — a net-new faction-membership model.
-4. **Sector conquest:** capture objectives/timers (eqx-peri's Territory Control
-   Unit) flip ownership — its own multi-phase effort.
+4. **Sector conquest (built: presence flips, locks hold).** A sector flips when a
+   side's share on the meter claims it (claim 60, release 20); an empty sector
+   keeps its holder. Territory locks freeze the holder until the lock dies
+   (`stepMultiControl(…, lockedBy)`, fed by `RobotTerritory.locksFor`): the robots'
+   living nexus, a built Territory Lock (`territory_lock`, reported as the room's
+   `lockSides`), and each power's heart, which starts locked by the power's own base there.
+   Bases keep their owner after a flip and must be fought. Detail:
+   [robot-territory](../features/robot-territory.md#how-territory-works).
 
 The `SectorLiveState.owner` shape is the stable seam across all four.
 
