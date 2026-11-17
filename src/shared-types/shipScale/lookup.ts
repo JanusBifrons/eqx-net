@@ -17,3 +17,9 @@ export function tuningFor(kindId: string | null | undefined): ShipTuning {
 
 /** The default fighter's tuning at the current scale. */
 export const GLOBAL_SHIP_TUNING: ShipTuning = shipTuning(getShipKind(DEFAULT_SHIP_KIND));
+
+/** How close a ship must be to OPEN a cargo pod's loot window (plan
+ *  cargo-pods: about a ship length): the pod centre within this of the
+ *  ship's outer surface (`shipWithinHullReach`). Shared so the client greys
+ *  the Open button with the same rule the server enforces. */
+export const LOOT_OPEN_REACH = GLOBAL_SHIP_TUNING.lootPickup;

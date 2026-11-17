@@ -398,3 +398,55 @@ describe('LootSubsystem: consumable pieces are taken in by proximity (the factor
     expect(removed).toEqual([]);
   });
 });
+
+describe('LootSubsystem.take: the loot window (plan cargo-pods slice 10)', () => {
+  // Pods dropped far off (fly-over never fires: no collectors); `take` is the only move.
+  const near = (x = 0, y = 0): LootCollector => ({ ...SHIP, x, y });
+
+  it('Take all moves the whole pod into the ship and deletes the pod in ONE atomic group', () => {
+    const t = setup();
+    const pod = t.loot.drop(h({ salvage: 5, alloy: 2 }), 60, 0, 0, 0, { alone: true })!;
+    t.ops.length = 0;
+    const r = t.loot.take(near(), pod, null);
+    expect(r.ok).toBe(true);
+    expect(t.store.get('ship-1')!.hold.goods).toEqual({ salvage: 5, alloy: 2 });
+    expect(t.store.get(pod)).toBeUndefined();
+    expect(t.despawned).toEqual([pod]);
+    expect(t.ops).toHaveLength(1);
+    expect(t.ops[0]!.type).toBe('GROUP');
+    expect(t.collected).toEqual([{ moved: h({ salvage: 5, alloy: 2 }), podId: pod }]);
+  });
+
+  it('taking one stack leaves the rest in the pod (pod row updated, entity kept)', () => {
+    const t = setup();
+    const pod = t.loot.drop(h({ salvage: 5, alloy: 2 }), 60, 0, 0, 0, { alone: true })!;
+    const r = t.loot.take(near(), pod, { goods: { alloy: 2 } });
+    expect(r).toEqual({ ok: true, moved: h({ alloy: 2 }) });
+    expect(t.store.get('ship-1')!.hold.goods).toEqual({ alloy: 2 });
+    expect(t.store.get(pod)!.hold.goods).toEqual({ salvage: 5 });
+    expect(t.despawned).toEqual([]);
+  });
+
+  it('out of reach: nothing moves', () => {
+    const t = setup();
+    const pod = t.loot.drop(h({ salvage: 5 }), 2_000, 0, 0, 0, { alone: true })!;
+    expect(t.loot.take(near(), pod, null)).toEqual({ ok: false, reason: 'out_of_reach' });
+    expect(t.store.get('ship-1')).toBeUndefined();
+    expect(t.store.get(pod)!.hold.goods.salvage).toBe(5);
+  });
+
+  it('weight is the only limit: a near-full hold takes what fits, the rest stays; a full one takes nothing', () => {
+    const t = setup();
+    const pod = t.loot.drop(h({ salvage: 10 }), 60, 0, 0, 0, { alone: true })!;
+    const r = t.loot.take({ ...near(), capacity: 4 }, pod, { goods: { salvage: 10 } });
+    expect(r).toEqual({ ok: true, moved: h({ salvage: 4 }) });
+    expect(t.store.get(pod)!.hold.goods.salvage).toBe(6);
+    expect(t.loot.take({ ...near(), capacity: 4 }, pod, null)).toEqual({ ok: false, reason: 'hold_full' });
+    expect(t.store.get(pod)!.hold.goods.salvage).toBe(6);
+  });
+
+  it('a pod that is gone answers gone', () => {
+    const t = setup();
+    expect(t.loot.take(near(), 'no-such-pod', null)).toEqual({ ok: false, reason: 'gone' });
+  });
+});

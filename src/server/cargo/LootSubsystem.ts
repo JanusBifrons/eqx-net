@@ -18,12 +18,12 @@ import type { Hold } from '../../shared-types/goods.js';
 import type { ShipKind } from '../../shared-types/shipKinds/types.js';
 import { salvageConsumable, salvageConsumeMass } from '../../core/combat/salvageTargeting.js';
 import type { PieceStoreView } from '../rooms/wreckLineage.js';
-import { cloneHold, emptyHold, holdBestTier, holdWeight, isHoldEmpty, mergeInto, rollDeathLoss, transferInto, transferUpTo } from '../../core/cargo/hold.js';
+import { cloneHold, emptyHold, extractRequested, holdBestTier, holdWeight, isHoldEmpty, mergeInto, rollDeathLoss, transferInto, transferUpTo, type CargoRequest } from '../../core/cargo/hold.js';
 import { stream } from '../../core/random/rng.js';
 import { hashString } from '../../core/bases/baseProfile.js';
 import { POD_TIER_SPILL, podComponentIndex } from '../../shared-types/shipKinds/cargoPod.js';
 import type { HoldRecord, HoldStore } from './HoldStore.js';
-import { GLOBAL_SHIP_TUNING } from '../../shared-types/shipScale/lookup.js';
+import { GLOBAL_SHIP_TUNING, LOOT_OPEN_REACH } from '../../shared-types/shipScale/lookup.js';
 import { shipHitBound, shipWithinHullReach } from '../../core/combat/shipHitShape.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 
@@ -46,6 +46,9 @@ export const LOOT_POD_TTL_MS = 15 * 60_000;
 const POSE_RESAVE_EPS = 5;
 
 export interface PodPose { x: number; y: number }
+
+/** `take`'s answer: what moved, or why nothing did. */
+export type TakeResult = { ok: true; moved: Hold } | { ok: false; reason: 'gone' | 'out_of_reach' | 'hold_full' };
 
 export interface LootCollector {
   playerId: string;
@@ -321,15 +324,7 @@ export class LootSubsystem {
       ? transferUpTo(shipHold, podHold, c.capacity, DERELICT_SALVAGE_STEP)
       : transferInto(shipHold, podHold, c.capacity);
     if (isHoldEmpty(moved)) return; // hold full — the pod stays
-    const shipNext = this.shipRecord(c, shipHold);
-    if (srcEmptied) {
-      // ONE atomic group: ship gains + pod row deleted.
-      this.d.holdStore.commit([shipNext], [podId], this.persist());
-      this.pods.delete(podId);
-      this.d.despawnPodEntity(podId);
-    } else {
-      this.d.holdStore.commit([shipNext, { ...podRec, hold: podHold }], [], this.persist());
-    }
+    this.commitMove(c, podId, podRec, shipHold, podHold, srcEmptied);
     if (live?.derelict) {
       // Throttle salvage popups: accumulate, notify on empty or every N steps.
       const key = `${c.playerId}|${podId}`;
@@ -344,6 +339,43 @@ export class LootSubsystem {
       return;
     }
     this.d.onCollected?.(c, moved, podId);
+  }
+
+  /**
+   * Take from an opened pod (the loot window, plan cargo-pods slice 10):
+   * `want` = the items dragged or clicked, `null` = Take all. Free for all;
+   * the ship must be within `LOOT_OPEN_REACH` of its hull. Weight is the only
+   * limit: what does not fit stays in the pod. The same atomic commit as the
+   * fly-over pickup (ship gains + pod loses in ONE group).
+   */
+  take(c: LootCollector, podId: string, want: CargoRequest | null): TakeResult {
+    const podRec = this.d.holdStore.get(podId);
+    const pose = this.d.podPose(podId);
+    if (!this.pods.has(podId) || podRec === undefined || pose === null) return { ok: false, reason: 'gone' };
+    if (!shipWithinHullReach(c.kind.id, c.shieldUp, pose.x, pose.y, c.x, c.y, c.angle, LOOT_OPEN_REACH)) return { ok: false, reason: 'out_of_reach' };
+    const shipRec = this.d.holdStore.get(c.shipInstanceId);
+    const shipHold = shipRec ? cloneHold(shipRec.hold) : emptyHold();
+    const podHold = cloneHold(podRec.hold);
+    const picked = want === null ? podHold : extractRequested(podHold, want);
+    const { moved } = transferInto(shipHold, picked, c.capacity);
+    if (picked !== podHold) mergeInto(podHold, picked); // what did not fit goes back
+    if (isHoldEmpty(moved)) return { ok: false, reason: isHoldEmpty(podRec.hold) ? 'gone' : 'hold_full' };
+    this.commitMove(c, podId, podRec, shipHold, podHold, isHoldEmpty(podHold));
+    this.d.onCollected?.(c, moved, podId);
+    return { ok: true, moved };
+  }
+
+  /** Commit one pod → ship move as ONE atomic group; an emptied pod's row is
+   *  deleted in that group and its entity despawned. */
+  private commitMove(c: LootCollector, podId: string, podRec: HoldRecord, shipHold: Hold, podHold: Hold, podEmptied: boolean): void {
+    const shipNext = this.shipRecord(c, shipHold);
+    if (podEmptied) {
+      this.d.holdStore.commit([shipNext], [podId], this.persist());
+      this.pods.delete(podId);
+      this.d.despawnPodEntity(podId);
+    } else {
+      this.d.holdStore.commit([shipNext, { ...podRec, hold: podHold }], [], this.persist());
+    }
   }
 
   /** Collector `c`'s next hold record (a pilot's ship row, or an NPC's
